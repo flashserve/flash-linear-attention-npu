@@ -37,7 +37,8 @@ enum class Pipe : std::uint8_t {
     Mte3,
 };
 
-// 具名的同核依赖。这些是可观测的设计约束，不表示任何 CANN 版本中的具体 HardEvent 写法。
+// 具名的同核依赖。这些是可观测的语义约束：Arch22 由成对 HardEvent 落地，
+// Arch35 则由下方独立的 Mutex 轨迹证明具体流水和物理槽生命周期。
 enum class LocalDependency : std::uint8_t {
     Mte2ToVectorInputs,
     VectorToMte3Outputs,
@@ -445,6 +446,95 @@ struct LocalSyncTrace {
     }
 };
 
+// Mutex 只管理 Arch35 同一个 AI Core 内的异步流水，不能替代 AIC/AIV 之间的
+// ready/free 票据。本方案采用静态 Tensor/静态 UB-L1 地址范式，因此 MutexID
+// 由编译期表管理；按官方约束只使用建议的 0..27，不占用系统预留的 28..31。
+using SymbolicMutexId = std::uint8_t;
+constexpr SymbolicMutexId kInvalidMutexId =
+    std::numeric_limits<SymbolicMutexId>::max();
+constexpr SymbolicMutexId kArch35StaticMutexIdLimit = 28U;
+
+enum class MutexAction : std::uint8_t {
+    Lock,
+    Unlock,
+    PipeBarrier,
+};
+
+enum class MutexResource : std::uint8_t {
+    AivUbBank,
+    AicL1Bank,
+    AicL0OperandBank,
+    AicL0cLowerHalf,
+    AicL0cUpperHalf,
+    Mte2Overwrite,
+};
+
+struct MutexRecord {
+    MutexAction action = MutexAction::Lock;
+    MutexResource resource = MutexResource::AivUbBank;
+    SymbolicMutexId mutexId = kInvalidMutexId;
+    std::uint32_t ownerId = 0U;
+    Stage stage = Stage::V0;
+    Pipe pipe = Pipe::Control;
+    std::uint64_t order = 0U;
+};
+
+struct MutexTrace {
+    static constexpr std::size_t kCapacity = 4096U;
+    std::array<MutexRecord, kCapacity> records{};
+    std::size_t size = 0U;
+    bool overflow = false;
+
+    void Push(MutexAction action, MutexResource resource,
+              SymbolicMutexId mutexId, std::uint32_t ownerId, Stage stage,
+              Pipe pipe, std::uint64_t order) noexcept
+    {
+        if (size == records.size()) {
+            overflow = true;
+            return;
+        }
+        records[size++] = {action, resource, mutexId, ownerId,
+                           stage, pipe, order};
+    }
+};
+
+struct Arch35VectorMutexIds {
+    static constexpr SymbolicMutexId UbBank(std::uint32_t localSlot) noexcept
+    {
+        return static_cast<SymbolicMutexId>(localSlot);
+    }
+
+    static constexpr SymbolicMutexId kCount = kHeadsPerAiv;
+};
+
+struct Arch35CubeMutexIds {
+    static constexpr SymbolicMutexId L1Bank(std::uint32_t bank) noexcept
+    {
+        return static_cast<SymbolicMutexId>(bank);
+    }
+
+    static constexpr SymbolicMutexId L0OperandBank(
+        std::uint32_t bank) noexcept
+    {
+        return static_cast<SymbolicMutexId>(kHeadsPerGroup + bank);
+    }
+
+    static constexpr SymbolicMutexId L0cLowerHalf(
+        std::uint32_t bank) noexcept
+    {
+        return static_cast<SymbolicMutexId>(kHeadsPerGroup + 1U + bank);
+    }
+
+    static constexpr SymbolicMutexId L0cUpperHalf(
+        std::uint32_t bank) noexcept
+    {
+        return static_cast<SymbolicMutexId>(2U * kHeadsPerGroup + 1U + bank);
+    }
+
+    static constexpr SymbolicMutexId kCount =
+        3U * kHeadsPerGroup + 1U;
+};
+
 enum class OperationKind : std::uint8_t {
     Load,
     RunVf,
@@ -526,6 +616,7 @@ struct SyncLedger {
     SyncTrace *trace = nullptr;
     LocalSyncTrace *localTrace = nullptr;
     TraceClock *clock = nullptr;
+    MutexTrace *mutexTrace = nullptr;
 
     std::uint64_t NextOrder() const noexcept
     {
@@ -536,6 +627,35 @@ struct SyncLedger {
     {
         if (localTrace != nullptr) {
             localTrace->Push(dependency, stage, NextOrder());
+        }
+    }
+
+    void MutexLock(MutexResource resource, SymbolicMutexId mutexId,
+                   std::uint32_t ownerId, Stage stage, Pipe pipe) const noexcept
+    {
+        if (mutexTrace != nullptr) {
+            mutexTrace->Push(MutexAction::Lock, resource, mutexId, ownerId,
+                             stage, pipe, NextOrder());
+        }
+    }
+
+    void MutexUnlock(MutexResource resource, SymbolicMutexId mutexId,
+                     std::uint32_t ownerId, Stage stage,
+                     Pipe pipe) const noexcept
+    {
+        if (mutexTrace != nullptr) {
+            mutexTrace->Push(MutexAction::Unlock, resource, mutexId, ownerId,
+                             stage, pipe, NextOrder());
+        }
+    }
+
+    void PipeBarrier(MutexResource resource, std::uint32_t ownerId,
+                     Stage stage, Pipe pipe) const noexcept
+    {
+        if (mutexTrace != nullptr) {
+            mutexTrace->Push(MutexAction::PipeBarrier, resource,
+                             kInvalidMutexId, ownerId, stage, pipe,
+                             NextOrder());
         }
     }
 

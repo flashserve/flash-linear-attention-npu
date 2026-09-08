@@ -888,12 +888,30 @@ bool CheckSpanIdentity(const BufferSpan &span, const char *name,
            span.ownerRole == ownerRole && span.ownerId == ownerId;
 }
 
-bool SamePhysicalSpan(const BufferSpan &lhs, const BufferSpan &rhs) noexcept
+bool SamePhysicalAllocation(const BufferSpan &lhs,
+                            const BufferSpan &rhs) noexcept
 {
-    return lhs.space == rhs.space && lhs.byteOffset == rhs.byteOffset &&
-           lhs.byteSize == rhs.byteSize && lhs.slot == rhs.slot &&
+    return lhs.space == rhs.space && lhs.slot == rhs.slot &&
            lhs.generation == rhs.generation &&
            lhs.ownerRole == rhs.ownerRole && lhs.ownerId == rhs.ownerId;
+}
+
+bool PhysicalByteRangesOverlap(const BufferSpan &lhs,
+                               const BufferSpan &rhs) noexcept
+{
+    if (!SamePhysicalAllocation(lhs, rhs) || lhs.byteSize == 0U ||
+        rhs.byteSize == 0U) {
+        return false;
+    }
+    const std::uint64_t lhsEnd = lhs.byteOffset + lhs.byteSize;
+    const std::uint64_t rhsEnd = rhs.byteOffset + rhs.byteSize;
+    return lhs.byteOffset < rhsEnd && rhs.byteOffset < lhsEnd;
+}
+
+bool SamePhysicalSpan(const BufferSpan &lhs, const BufferSpan &rhs) noexcept
+{
+    return SamePhysicalAllocation(lhs, rhs) &&
+           lhs.byteOffset == rhs.byteOffset && lhs.byteSize == rhs.byteSize;
 }
 
 bool CheckMatrixSpan(const BufferSpan &span, std::uint32_t rows,
@@ -1088,6 +1106,381 @@ bool FindNthLocalOrder(const LocalSyncTrace &trace,
     return false;
 }
 
+bool EmptyMutexTrace(const MutexTrace &trace) noexcept
+{
+    return !trace.overflow && trace.size == 0U;
+}
+
+bool ClaimMutexId(
+    std::array<bool, kArch35StaticMutexIdLimit> &claimed,
+    SymbolicMutexId mutexId) noexcept
+{
+    if (mutexId >= kArch35StaticMutexIdLimit || claimed[mutexId]) {
+        return false;
+    }
+    claimed[mutexId] = true;
+    return true;
+}
+
+bool CheckArch35StaticMutexIdTable() noexcept
+{
+    if (Arch35VectorMutexIds::kCount != 2U ||
+        Arch35CubeMutexIds::kCount != 13U) {
+        return false;
+    }
+
+    // AIV 和 AIC 位于不同的物理核，各自在独立 MutexID 命名空间内验重。
+    std::array<bool, kArch35StaticMutexIdLimit> aivClaimed{};
+    for (std::uint32_t localSlot = 0U; localSlot < kHeadsPerAiv;
+         ++localSlot) {
+        const SymbolicMutexId mutexId =
+            Arch35VectorMutexIds::UbBank(localSlot);
+        if (mutexId != localSlot || !ClaimMutexId(aivClaimed, mutexId)) {
+            return false;
+        }
+    }
+
+    std::array<bool, kArch35StaticMutexIdLimit> aicClaimed{};
+    for (std::uint32_t bank = 0U; bank < kHeadsPerGroup; ++bank) {
+        const SymbolicMutexId mutexId =
+            Arch35CubeMutexIds::L1Bank(bank);
+        if (mutexId != bank || !ClaimMutexId(aicClaimed, mutexId)) {
+            return false;
+        }
+    }
+    const SymbolicMutexId l0Operand =
+        Arch35CubeMutexIds::L0OperandBank(0U);
+    if (l0Operand != 4U || !ClaimMutexId(aicClaimed, l0Operand)) {
+        return false;
+    }
+    for (std::uint32_t bank = 0U; bank < kHeadsPerGroup; ++bank) {
+        const SymbolicMutexId mutexId =
+            Arch35CubeMutexIds::L0cLowerHalf(bank);
+        if (mutexId != 5U + bank || !ClaimMutexId(aicClaimed, mutexId)) {
+            return false;
+        }
+    }
+    for (std::uint32_t bank = 0U; bank < kHeadsPerGroup; ++bank) {
+        const SymbolicMutexId mutexId =
+            Arch35CubeMutexIds::L0cUpperHalf(bank);
+        if (mutexId != 9U + bank || !ClaimMutexId(aicClaimed, mutexId)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::size_t CountMutexRecords(const MutexTrace &trace,
+                              MutexAction action,
+                              MutexResource resource,
+                              SymbolicMutexId mutexId,
+                              std::uint32_t ownerId, Stage stage,
+                              Pipe pipe) noexcept
+{
+    std::size_t count = 0U;
+    for (std::size_t index = 0U; index < trace.size; ++index) {
+        const MutexRecord &record = trace.records[index];
+        if (record.action == action && record.resource == resource &&
+            record.mutexId == mutexId && record.ownerId == ownerId &&
+            record.stage == stage && record.pipe == pipe) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+std::size_t CountMutexStageOwner(const MutexTrace &trace, Stage stage,
+                                 std::uint32_t ownerId) noexcept
+{
+    std::size_t count = 0U;
+    for (std::size_t index = 0U; index < trace.size; ++index) {
+        const MutexRecord &record = trace.records[index];
+        if (record.stage == stage && record.ownerId == ownerId) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+bool FindNthMutexOrder(const MutexTrace &trace, MutexAction action,
+                       MutexResource resource, SymbolicMutexId mutexId,
+                       std::uint32_t ownerId, Stage stage, Pipe pipe,
+                       std::size_t ordinal,
+                       std::uint64_t &order) noexcept
+{
+    std::size_t match = 0U;
+    for (std::size_t index = 0U; index < trace.size; ++index) {
+        const MutexRecord &record = trace.records[index];
+        if (record.action != action || record.resource != resource ||
+            record.mutexId != mutexId || record.ownerId != ownerId ||
+            record.stage != stage || record.pipe != pipe) {
+            continue;
+        }
+        if (match == ordinal) {
+            order = record.order;
+            return true;
+        }
+        ++match;
+    }
+    return false;
+}
+
+bool FindUniqueMutexOrder(const MutexTrace &trace, MutexAction action,
+                          MutexResource resource,
+                          SymbolicMutexId mutexId,
+                          std::uint32_t ownerId, Stage stage, Pipe pipe,
+                          std::uint64_t &order) noexcept
+{
+    return CountMutexRecords(trace, action, resource, mutexId, ownerId,
+                             stage, pipe) == 1U &&
+           FindNthMutexOrder(trace, action, resource, mutexId, ownerId,
+                             stage, pipe, 0U, order);
+}
+
+bool IsOrderInsideMutexInterval(
+    const MutexTrace &trace, MutexResource resource,
+    SymbolicMutexId mutexId, std::uint32_t ownerId, Stage stage, Pipe pipe,
+    std::uint64_t operationOrder) noexcept
+{
+    bool held = false;
+    bool found = false;
+    std::uint64_t lockOrder = 0U;
+    for (std::size_t index = 0U; index < trace.size; ++index) {
+        const MutexRecord &record = trace.records[index];
+        if (record.resource != resource || record.mutexId != mutexId ||
+            record.ownerId != ownerId || record.stage != stage ||
+            record.pipe != pipe ||
+            record.action == MutexAction::PipeBarrier) {
+            continue;
+        }
+        if (record.action == MutexAction::Lock) {
+            if (held) {
+                return false;
+            }
+            held = true;
+            lockOrder = record.order;
+            continue;
+        }
+        if (!held) {
+            return false;
+        }
+        if (lockOrder < operationOrder && operationOrder < record.order) {
+            if (found) {
+                return false;
+            }
+            found = true;
+        }
+        held = false;
+    }
+    return !held && found;
+}
+
+bool FindUniqueOwnerSyncOrderOnPipe(
+    const SyncTrace &trace, SyncAction action, SyncPoint point,
+    std::uint32_t ownerId, std::uint64_t generation, Stage stage, Pipe pipe,
+    std::uint64_t &order) noexcept
+{
+    bool found = false;
+    for (std::size_t index = 0U; index < trace.size; ++index) {
+        const SyncRecord &record = trace.records[index];
+        if (record.action != action || record.point != point ||
+            record.ownerId != ownerId ||
+            record.generation != generation ||
+            record.aivId != kNoAivId || !record.hasActiveHead ||
+            record.stage != stage) {
+            continue;
+        }
+        if (found || record.pipe != pipe) {
+            return false;
+        }
+        found = true;
+        order = record.order;
+    }
+    return found;
+}
+
+bool HasStageOperationBetween(const OperationTrace &trace, Stage stage,
+                              std::uint64_t begin,
+                              std::uint64_t end) noexcept
+{
+    for (std::size_t index = 0U; index < trace.size; ++index) {
+        const OperationRecord &record = trace.records[index];
+        if (record.stage == stage && record.order > begin &&
+            record.order < end) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool IsAllowedVectorMutexPipe(Pipe pipe) noexcept
+{
+    return pipe == Pipe::Mte2 || pipe == Pipe::Vector ||
+           pipe == Pipe::Mte3;
+}
+
+bool CheckArch35MutexRecordMapping(const MutexRecord &record,
+                                   bool vectorTrace,
+                                   std::uint32_t aivId) noexcept
+{
+    if (record.action == MutexAction::PipeBarrier) {
+        return !vectorTrace &&
+               record.resource == MutexResource::Mte2Overwrite &&
+               record.mutexId == kInvalidMutexId &&
+               record.ownerId < kHeadsPerGroup &&
+               record.stage == Stage::C4 && record.pipe == Pipe::Mte2;
+    }
+    if (record.mutexId >= kArch35StaticMutexIdLimit ||
+        record.resource == MutexResource::Mte2Overwrite) {
+        return false;
+    }
+    if (vectorTrace) {
+        return record.resource == MutexResource::AivUbBank &&
+               record.ownerId < kHeadsPerGroup &&
+               record.ownerId / kHeadsPerAiv == aivId &&
+               record.mutexId == Arch35VectorMutexIds::UbBank(
+                                     record.ownerId % kHeadsPerAiv) &&
+               IsAllowedVectorMutexPipe(record.pipe);
+    }
+
+    switch (record.resource) {
+        case MutexResource::AicL1Bank:
+            return record.ownerId < kHeadsPerGroup &&
+                   record.mutexId ==
+                       Arch35CubeMutexIds::L1Bank(record.ownerId) &&
+                   (record.pipe == Pipe::Mte2 ||
+                    record.pipe == Pipe::Mte1 ||
+                    record.pipe == Pipe::Fixpipe);
+        case MutexResource::AicL0OperandBank:
+            return record.ownerId == 0U &&
+                   record.mutexId ==
+                       Arch35CubeMutexIds::L0OperandBank(0U) &&
+                   (record.pipe == Pipe::Mte1 ||
+                    record.pipe == Pipe::Cube);
+        case MutexResource::AicL0cLowerHalf:
+            return record.ownerId < kHeadsPerGroup &&
+                   record.mutexId ==
+                       Arch35CubeMutexIds::L0cLowerHalf(record.ownerId) &&
+                   (record.pipe == Pipe::Cube ||
+                    record.pipe == Pipe::Fixpipe);
+        case MutexResource::AicL0cUpperHalf:
+            return record.ownerId < kHeadsPerGroup &&
+                   record.mutexId ==
+                       Arch35CubeMutexIds::L0cUpperHalf(record.ownerId) &&
+                   (record.pipe == Pipe::Cube ||
+                    record.pipe == Pipe::Fixpipe);
+        default:
+            return false;
+    }
+}
+
+bool CheckArch35MutexTrace(const MutexTrace &trace, bool vectorTrace,
+                           std::uint32_t aivId = 0U) noexcept
+{
+    if (trace.overflow) {
+        return false;
+    }
+    std::array<bool, kArch35StaticMutexIdLimit> held{};
+    std::array<MutexResource, kArch35StaticMutexIdLimit> heldResource{};
+    std::array<std::uint32_t, kArch35StaticMutexIdLimit> heldOwner{};
+    std::array<Pipe, kArch35StaticMutexIdLimit> heldPipe{};
+    std::uint64_t previousOrder = 0U;
+    for (std::size_t index = 0U; index < trace.size; ++index) {
+        const MutexRecord &record = trace.records[index];
+        if ((index != 0U && record.order <= previousOrder) ||
+            !CheckArch35MutexRecordMapping(record, vectorTrace, aivId)) {
+            return false;
+        }
+        previousOrder = record.order;
+        if (record.action == MutexAction::PipeBarrier) {
+            continue;
+        }
+        const std::size_t mutexId = record.mutexId;
+        if (record.action == MutexAction::Lock) {
+            if (held[mutexId]) {
+                return false;
+            }
+            held[mutexId] = true;
+            heldResource[mutexId] = record.resource;
+            heldOwner[mutexId] = record.ownerId;
+            heldPipe[mutexId] = record.pipe;
+            continue;
+        }
+        if (!held[mutexId] || heldResource[mutexId] != record.resource ||
+            heldOwner[mutexId] != record.ownerId ||
+            heldPipe[mutexId] != record.pipe) {
+            return false;
+        }
+        held[mutexId] = false;
+    }
+    for (bool isHeld : held) {
+        if (isHeld) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool CheckArch35RetiredLocalSyncPoints(const SyncTrace &trace) noexcept
+{
+    for (std::size_t index = 0U; index < trace.size; ++index) {
+        switch (trace.records[index].point) {
+            case SyncPoint::LocalBankFree:
+            case SyncPoint::V0ExportDone:
+            case SyncPoint::V0BetaReady:
+            case SyncPoint::V0ContextReady:
+            case SyncPoint::V3LocalSourceFree:
+            case SyncPoint::L1BankFree:
+            case SyncPoint::L0cBankFree:
+            case SyncPoint::C2ScoreL1Free:
+            case SyncPoint::C4TReady:
+            case SyncPoint::C4AkkPrepReady:
+            case SyncPoint::C5AkkReady:
+                return false;
+            default:
+                break;
+        }
+    }
+    return true;
+}
+
+bool IsWaitAction(SyncAction action) noexcept
+{
+    return action == SyncAction::Wait || action == SyncAction::AicWait ||
+           action == SyncAction::AivWait;
+}
+
+std::size_t CountStageWaitActions(const SyncTrace &trace,
+                                  Stage stage) noexcept
+{
+    std::size_t count = 0U;
+    for (std::size_t index = 0U; index < trace.size; ++index) {
+        if (trace.records[index].stage == stage &&
+            IsWaitAction(trace.records[index].action)) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+bool CheckStageWaitsBeforeOrder(const SyncTrace &trace, Stage stage,
+                                std::size_t expectedCount,
+                                std::uint64_t beforeOrder) noexcept
+{
+    std::size_t count = 0U;
+    for (std::size_t index = 0U; index < trace.size; ++index) {
+        const SyncRecord &record = trace.records[index];
+        if (record.stage != stage || !IsWaitAction(record.action)) {
+            continue;
+        }
+        if (record.order >= beforeOrder) {
+            return false;
+        }
+        ++count;
+    }
+    return count == expectedCount;
+}
+
 bool FindUniqueActivePairSyncOrder(const SyncTrace &trace,
                                    SyncPoint point, Stage stage,
                                    Pipe pipe,
@@ -1162,6 +1555,120 @@ bool CheckVectorStagePipeline(const OperationTrace &operations,
                                 stage, inputReady) &&
            firstLoad <= lastLoad && lastLoad < inputReady &&
            inputReady < runVf->order;
+}
+
+bool CheckArch35VectorStageMutex(
+    const OperationTrace &operations, const SyncTrace &synchronization,
+    const LocalSyncTrace &localDependencies, const MutexTrace &mutexes,
+    Stage stage, bool hasInputLoads, std::size_t expectedWaits,
+    SyncPoint requiredReady) noexcept
+{
+    constexpr std::uint32_t kOwner = 0U;
+    const SymbolicMutexId mutexId = Arch35VectorMutexIds::UbBank(0U);
+    const OperationRecord *runVf = FindUniqueOperation(
+        operations, OperationKind::RunVf, stage);
+    std::uint64_t vectorLock = 0U;
+    std::uint64_t vectorUnlock = 0U;
+    std::uint64_t mte3Lock = 0U;
+    std::uint64_t mte3Unlock = 0U;
+    std::uint64_t outputReady = 0U;
+    std::uint64_t firstStore = 0U;
+    std::uint64_t lastStore = 0U;
+    std::uint64_t requiredReadyOrder = 0U;
+    if (runVf == nullptr ||
+        CountMutexStageOwner(mutexes, stage, kOwner) !=
+            (hasInputLoads ? 6U : 4U) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Lock, MutexResource::AivUbBank,
+            mutexId, kOwner, stage, Pipe::Vector, vectorLock) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Unlock, MutexResource::AivUbBank,
+            mutexId, kOwner, stage, Pipe::Vector, vectorUnlock) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Lock, MutexResource::AivUbBank,
+            mutexId, kOwner, stage, Pipe::Mte3, mte3Lock) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Unlock, MutexResource::AivUbBank,
+            mutexId, kOwner, stage, Pipe::Mte3, mte3Unlock) ||
+        CountLocalDependencies(
+            localDependencies, LocalDependency::VectorToMte3Outputs,
+            stage) != 1U ||
+        !FindUniqueLocalOrder(
+            localDependencies, LocalDependency::VectorToMte3Outputs,
+            stage, outputReady) ||
+        !FindOperationOrderRange(operations, OperationKind::Store, stage,
+                                 firstStore, lastStore) ||
+        !FindUniqueSyncOrder(synchronization, SyncAction::Set,
+                             requiredReady, kOwner, 0U, stage, Pipe::Mte3,
+                             requiredReadyOrder) ||
+        !(vectorLock < runVf->order &&
+          runVf->order < vectorUnlock && vectorUnlock < outputReady &&
+          outputReady < mte3Lock && mte3Lock < firstStore &&
+          firstStore <= lastStore && lastStore < mte3Unlock &&
+          mte3Unlock < requiredReadyOrder)) {
+        return false;
+    }
+
+    // 同阶段的跨核发布都必须晚于该 head 的最后一次 MTE3 Unlock。
+    for (std::size_t index = 0U; index < synchronization.size; ++index) {
+        const SyncRecord &record = synchronization.records[index];
+        if (record.action == SyncAction::Set && record.stage == stage &&
+            record.order <= mte3Unlock) {
+            return false;
+        }
+    }
+
+    std::uint64_t firstLoad = 0U;
+    std::uint64_t lastLoad = 0U;
+    const bool foundLoads = FindOperationOrderRange(
+        operations, OperationKind::Load, stage, firstLoad, lastLoad);
+    const std::size_t inputEdges = CountLocalDependencies(
+        localDependencies, LocalDependency::Mte2ToVectorInputs, stage);
+    if (!hasInputLoads) {
+        return !foundLoads && inputEdges == 0U &&
+               CheckStageWaitsBeforeOrder(synchronization, stage,
+                                          expectedWaits, vectorLock);
+    }
+
+    std::uint64_t mte2Lock = 0U;
+    std::uint64_t mte2Unlock = 0U;
+    std::uint64_t inputReady = 0U;
+    return foundLoads && inputEdges == 1U &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Lock, MutexResource::AivUbBank,
+               mutexId, kOwner, stage, Pipe::Mte2, mte2Lock) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Unlock, MutexResource::AivUbBank,
+               mutexId, kOwner, stage, Pipe::Mte2, mte2Unlock) &&
+           FindUniqueLocalOrder(localDependencies,
+                                LocalDependency::Mte2ToVectorInputs,
+                                stage, inputReady) &&
+           mte2Lock < firstLoad && firstLoad <= lastLoad &&
+           lastLoad < mte2Unlock && mte2Unlock < inputReady &&
+           inputReady < vectorLock &&
+           CheckStageWaitsBeforeOrder(synchronization, stage,
+                                      expectedWaits, mte2Lock);
+}
+
+bool CheckArch35VectorMutexPipelines(
+    const OperationTrace &operations, const SyncTrace &synchronization,
+    const LocalSyncTrace &localDependencies,
+    const MutexTrace &mutexes) noexcept
+{
+    return CheckArch35MutexTrace(mutexes, true, 0U) &&
+           CheckArch35RetiredLocalSyncPoints(synchronization) &&
+           CheckArch35VectorStageMutex(
+               operations, synchronization, localDependencies, mutexes,
+               Stage::V0, true, 2U, SyncPoint::QkCacheReady) &&
+           CheckArch35VectorStageMutex(
+               operations, synchronization, localDependencies, mutexes,
+               Stage::V1, false, 0U, SyncPoint::V1ScoreReady) &&
+           CheckArch35VectorStageMutex(
+               operations, synchronization, localDependencies, mutexes,
+               Stage::V3, false, 2U, SyncPoint::V3VcsReady) &&
+           CheckArch35VectorStageMutex(
+               operations, synchronization, localDependencies, mutexes,
+               Stage::V6, true, 1U, SyncPoint::V6RhsReady);
 }
 
 bool MatchOwner(TraceCursor &cursor, SyncAction action, SyncPoint point,
@@ -1813,21 +2320,24 @@ bool RunTraceCase(std::uint32_t heads, std::uint32_t totalChunks,
 
     std::array<SyncTrace, kAivPerWorkgroup> aivTraces{};
     std::array<LocalSyncTrace, kAivPerWorkgroup> aivLocalTraces{};
+    std::array<MutexTrace, kAivPerWorkgroup> aivMutexTraces{};
     SyncTrace aicTrace{};
     LocalSyncTrace aicLocalTrace{};
+    MutexTrace aicMutexTrace{};
     VectorOps vectorOps{};
     CubeOps cubeOps{};
     for (std::uint32_t aiv = 0U; aiv < kAivPerWorkgroup; ++aiv) {
         WorkspaceView workspace{};
         workspace.backingBytes = sizing.totalBytes;
-        SyncLedger sync{&aivTraces[aiv], &aivLocalTraces[aiv]};
+        SyncLedger sync{&aivTraces[aiv], &aivLocalTraces[aiv], nullptr,
+                        &aivMutexTraces[aiv]};
         RunChunkKdaFwdPreparePseudocode(
             tiling, workgroupId, CoreRole::Aiv, aiv, workspace, sync,
             vectorOps, cubeOps, resolveChunk);
     }
     WorkspaceView workspace{};
     workspace.backingBytes = sizing.totalBytes;
-    SyncLedger sync{&aicTrace, &aicLocalTrace};
+    SyncLedger sync{&aicTrace, &aicLocalTrace, nullptr, &aicMutexTrace};
     RunChunkKdaFwdPreparePseudocode(
         tiling, workgroupId, CoreRole::Aic, 0U, workspace, sync, vectorOps,
         cubeOps, resolveChunk);
@@ -1836,13 +2346,15 @@ bool RunTraceCase(std::uint32_t heads, std::uint32_t totalChunks,
         if (!CheckAivTrace(aivTraces[aiv], tiling, workgroupId, aiv,
                            resolveChunk) ||
             !CheckAivLocalTrace(aivLocalTraces[aiv], tiling, workgroupId,
-                                aiv, resolveChunk)) {
+                                aiv, resolveChunk) ||
+            !EmptyMutexTrace(aivMutexTraces[aiv])) {
             return false;
         }
     }
     return CheckAicTrace(aicTrace, tiling, workgroupId, resolveChunk) &&
            CheckAicLocalTrace(aicLocalTrace, tiling, workgroupId,
-                              resolveChunk);
+                              resolveChunk) &&
+           EmptyMutexTrace(aicMutexTrace);
 }
 
 bool RunTraceCaseForBothAbis(std::uint32_t heads,
@@ -1922,6 +2434,7 @@ bool CheckRuntimeScaleVfDispatch(const OperationTrace &operations,
 bool CheckArch35VectorOperations(const OperationTrace &operations,
                                  const SyncTrace &synchronization,
                                  const LocalSyncTrace &localDependencies,
+                                 const MutexTrace &mutexes,
                                  std::uint32_t validRows,
                                  PrepareAbi abi, bool useExp2,
                                  GateStorage gateStorage,
@@ -1931,18 +2444,8 @@ bool CheckArch35VectorOperations(const OperationTrace &operations,
         localDependencies.overflow ||
         !CheckPow2VfDispatch(operations, useExp2) ||
         !CheckRuntimeScaleVfDispatch(operations, abi, runtimeScale) ||
-        !CheckVectorStagePipeline(
-            operations, synchronization, localDependencies, Stage::V0,
-            true, SyncPoint::V0ContextReady, false) ||
-        !CheckVectorStagePipeline(
-            operations, synchronization, localDependencies, Stage::V1,
-            false, SyncPoint::V1ScoreReady, false) ||
-        !CheckVectorStagePipeline(
-            operations, synchronization, localDependencies, Stage::V3,
-            false, SyncPoint::V3LocalSourceFree, false) ||
-        !CheckVectorStagePipeline(
-            operations, synchronization, localDependencies, Stage::V6,
-            true, SyncPoint::V6RhsReady, false)) {
+        !CheckArch35VectorMutexPipelines(
+            operations, synchronization, localDependencies, mutexes)) {
         return false;
     }
     for (Stage stage : {Stage::V0, Stage::V1, Stage::V3, Stage::V6}) {
@@ -2141,8 +2644,34 @@ bool CheckArch35VectorOperations(const OperationTrace &operations,
            readyOrder > lastStableWrite;
 }
 
+std::size_t CountC4PhysicalFillLoadOverlaps(
+    const OperationTrace &operations) noexcept
+{
+    std::size_t count = 0U;
+    for (std::size_t fillIndex = 0U; fillIndex < operations.size;
+         ++fillIndex) {
+        const OperationRecord &fill = operations.records[fillIndex];
+        if (fill.stage != Stage::C4 || fill.kind != OperationKind::Fill) {
+            continue;
+        }
+        for (std::size_t loadIndex = 0U; loadIndex < operations.size;
+             ++loadIndex) {
+            const OperationRecord &load = operations.records[loadIndex];
+            if (load.stage == Stage::C4 &&
+                load.kind == OperationKind::Load &&
+                fill.order < load.order &&
+                PhysicalByteRangesOverlap(fill.destination,
+                                          load.destination)) {
+                ++count;
+            }
+        }
+    }
+    return count;
+}
+
 bool CheckArch35C4FillOrder(const OperationTrace &operations,
                             const LocalSyncTrace &localDependencies,
+                            const MutexTrace &mutexes,
                             std::uint32_t validRows,
                             PrepareAbi abi) noexcept
 {
@@ -2151,11 +2680,17 @@ bool CheckArch35C4FillOrder(const OperationTrace &operations,
                            validRows != 32U && validRows != 64U;
     const std::size_t edgeCount = CountLocalDependencies(
         localDependencies, LocalDependency::Mte2FillToLoadWaw, Stage::C4);
-    if (!needsFill) {
-        return edgeCount == 0U;
-    }
-    if (edgeCount != 1U) {
+    const std::size_t barrierCount = CountMutexRecords(
+        mutexes, MutexAction::PipeBarrier, MutexResource::Mte2Overwrite,
+        kInvalidMutexId, 0U, Stage::C4, Pipe::Mte2);
+    const std::size_t overlapCount =
+        CountC4PhysicalFillLoadOverlaps(operations);
+    if ((overlapCount == 1U) != needsFill || edgeCount != overlapCount ||
+        barrierCount != overlapCount) {
         return false;
+    }
+    if (!needsFill) {
+        return true;
     }
     const char *fillName = hasQ10 ? "Akk-q11" : "Akk-q00";
     const char *loadSource = hasQ10 ? "AkkOut-q11-valid-ld64"
@@ -2168,11 +2703,20 @@ bool CheckArch35C4FillOrder(const OperationTrace &operations,
         operations, OperationKind::Load, Stage::C4, loadSource,
         loadDestination);
     std::uint64_t edgeOrder = 0U;
+    std::uint64_t barrierOrder = 0U;
     return fill != nullptr && load != nullptr &&
+           PhysicalByteRangesOverlap(fill->destination, load->destination) &&
            FindUniqueLocalOrder(localDependencies,
                                 LocalDependency::Mte2FillToLoadWaw,
                                 Stage::C4, edgeOrder) &&
-           fill->order < edgeOrder && edgeOrder < load->order;
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::PipeBarrier,
+               MutexResource::Mte2Overwrite, kInvalidMutexId, 0U,
+               Stage::C4, Pipe::Mte2, barrierOrder) &&
+           fill->order < edgeOrder && edgeOrder < barrierOrder &&
+           barrierOrder < load->order &&
+           !HasStageOperationBetween(operations, Stage::C4, fill->order,
+                                     barrierOrder);
 }
 
 bool CheckOperandReleaseOrder(
@@ -2252,6 +2796,26 @@ bool FindFirstStageComputeWriteOrder(const OperationTrace &operations,
             continue;
         }
         if (!found || record.order < order) {
+            order = record.order;
+            found = true;
+        }
+    }
+    return found;
+}
+
+bool FindLastStageComputeWriteOrder(const OperationTrace &operations,
+                                    Stage stage,
+                                    std::uint64_t &order) noexcept
+{
+    bool found = false;
+    for (std::size_t index = 0U; index < operations.size; ++index) {
+        const OperationRecord &record = operations.records[index];
+        if (record.stage != stage ||
+            (record.kind != OperationKind::Store &&
+             record.kind != OperationKind::StoreRounded)) {
+            continue;
+        }
+        if (!found || record.order > order) {
             order = record.order;
             found = true;
         }
@@ -2489,6 +3053,7 @@ bool CheckC7ComputePipeline(const OperationTrace &operations,
 
 bool CheckArch35C4Transfers(const OperationTrace &operations,
                             const LocalSyncTrace &localDependencies,
+                            const MutexTrace &mutexes,
                             std::uint32_t validRows,
                             PrepareAbi abi) noexcept
 {
@@ -2502,8 +3067,8 @@ bool CheckArch35C4Transfers(const OperationTrace &operations,
                : (current && validRows < kQuadrant ? 1U : 0U);
     if (CountOperations(operations, OperationKind::Fill, Stage::C4) !=
             expectedFills ||
-        !CheckArch35C4FillOrder(operations, localDependencies, validRows,
-                                abi)) {
+        !CheckArch35C4FillOrder(operations, localDependencies, mutexes,
+                                validRows, abi)) {
         return false;
     }
     if (expectedFills != 0U) {
@@ -2873,17 +3438,588 @@ bool CheckArch35MmadDescriptors(const OperationTrace &operations,
                               false);
 }
 
+bool CheckArch35C2MutexPipeline(
+    const OperationTrace &operations, const SyncTrace &synchronization,
+    const LocalSyncTrace &localDependencies, const MutexTrace &mutexes,
+    std::size_t activeBlocks) noexcept
+{
+    constexpr std::uint32_t kOwner = 0U;
+    const SymbolicMutexId l1 = Arch35CubeMutexIds::L1Bank(kOwner);
+    const SymbolicMutexId l0 = Arch35CubeMutexIds::L0OperandBank(0U);
+    const SymbolicMutexId lower =
+        Arch35CubeMutexIds::L0cLowerHalf(kOwner);
+    std::uint64_t l1Mte2Lock = 0U;
+    std::uint64_t l1Mte2Unlock = 0U;
+    std::uint64_t l1Mte1Lock = 0U;
+    std::uint64_t l1Mte1Unlock = 0U;
+    std::uint64_t firstLoad = 0U;
+    std::uint64_t lastLoad = 0U;
+    std::uint64_t inputReady = 0U;
+    std::uint64_t payloadFree = 0U;
+    std::uint64_t rawReady = 0U;
+    if (CountMutexStageOwner(mutexes, Stage::C2, kOwner) !=
+            4U + 8U * activeBlocks ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Lock, MutexResource::AicL1Bank, l1,
+            kOwner, Stage::C2, Pipe::Mte2, l1Mte2Lock) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Unlock, MutexResource::AicL1Bank, l1,
+            kOwner, Stage::C2, Pipe::Mte2, l1Mte2Unlock) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Lock, MutexResource::AicL1Bank, l1,
+            kOwner, Stage::C2, Pipe::Mte1, l1Mte1Lock) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Unlock, MutexResource::AicL1Bank, l1,
+            kOwner, Stage::C2, Pipe::Mte1, l1Mte1Unlock) ||
+        !FindOperationOrderRange(operations, OperationKind::Load,
+                                 Stage::C2, firstLoad, lastLoad) ||
+        !FindUniqueLocalOrder(localDependencies,
+                              LocalDependency::Mte2ToMte1Inputs,
+                              Stage::C2, inputReady) ||
+        !FindUniqueSyncOrder(synchronization, SyncAction::Set,
+                             SyncPoint::C2ScorePayloadFree, kOwner, 0U,
+                             Stage::C2, Pipe::Mte2, payloadFree) ||
+        !FindUniqueSyncOrder(synchronization, SyncAction::Set,
+                             SyncPoint::C2RawReady, kOwner, 0U,
+                             Stage::C2, Pipe::Fixpipe, rawReady) ||
+        !(l1Mte2Lock < firstLoad && firstLoad <= lastLoad &&
+          lastLoad < l1Mte2Unlock && l1Mte2Unlock < inputReady &&
+          l1Mte2Unlock < payloadFree && inputReady < l1Mte1Lock) ||
+        !CheckStageWaitsBeforeOrder(synchronization, Stage::C2, 3U,
+                                    l1Mte2Lock)) {
+        return false;
+    }
+
+    std::uint64_t finalFixpipeUnlock = 0U;
+    for (std::size_t block = 0U; block < activeBlocks; ++block) {
+        std::uint64_t l0Mte1Lock = 0U;
+        std::uint64_t l0Mte1Unlock = 0U;
+        std::uint64_t lowerCubeLock = 0U;
+        std::uint64_t lowerCubeUnlock = 0U;
+        std::uint64_t l0CubeLock = 0U;
+        std::uint64_t l0CubeUnlock = 0U;
+        std::uint64_t lowerFixpipeLock = 0U;
+        std::uint64_t lowerFixpipeUnlock = 0U;
+        std::uint64_t mmad = 0U;
+        std::uint64_t operandReleased = 0U;
+        std::uint64_t cubeReady = 0U;
+        std::uint64_t firstStore = 0U;
+        std::uint64_t secondStore = 0U;
+        if (!FindNthMutexOrder(
+                mutexes, MutexAction::Lock,
+                MutexResource::AicL0OperandBank, l0, 0U, Stage::C2,
+                Pipe::Mte1, block, l0Mte1Lock) ||
+            !FindNthMutexOrder(
+                mutexes, MutexAction::Unlock,
+                MutexResource::AicL0OperandBank, l0, 0U, Stage::C2,
+                Pipe::Mte1, block, l0Mte1Unlock) ||
+            !FindNthMutexOrder(
+                mutexes, MutexAction::Lock,
+                MutexResource::AicL0cLowerHalf, lower, kOwner,
+                Stage::C2, Pipe::Cube, block, lowerCubeLock) ||
+            !FindNthMutexOrder(
+                mutexes, MutexAction::Unlock,
+                MutexResource::AicL0cLowerHalf, lower, kOwner,
+                Stage::C2, Pipe::Cube, block, lowerCubeUnlock) ||
+            !FindNthMutexOrder(
+                mutexes, MutexAction::Lock,
+                MutexResource::AicL0OperandBank, l0, 0U, Stage::C2,
+                Pipe::Cube, block, l0CubeLock) ||
+            !FindNthMutexOrder(
+                mutexes, MutexAction::Unlock,
+                MutexResource::AicL0OperandBank, l0, 0U, Stage::C2,
+                Pipe::Cube, block, l0CubeUnlock) ||
+            !FindNthMutexOrder(
+                mutexes, MutexAction::Lock,
+                MutexResource::AicL0cLowerHalf, lower, kOwner,
+                Stage::C2, Pipe::Fixpipe, block, lowerFixpipeLock) ||
+            !FindNthMutexOrder(
+                mutexes, MutexAction::Unlock,
+                MutexResource::AicL0cLowerHalf, lower, kOwner,
+                Stage::C2, Pipe::Fixpipe, block, lowerFixpipeUnlock) ||
+            !FindNthOperationOrder(
+                operations, OperationKind::MmadRowStackedLhs,
+                Stage::C2, block, mmad) ||
+            !FindNthLocalOrder(
+                localDependencies,
+                LocalDependency::CubeToMte1OperandReuse, Stage::C2,
+                block, operandReleased) ||
+            !FindNthLocalOrder(
+                localDependencies, LocalDependency::CubeToFixpipeOutput,
+                Stage::C2, block, cubeReady) ||
+            !FindNthOperationOrder(operations, OperationKind::Store,
+                                   Stage::C2, 2U * block, firstStore) ||
+            !FindNthOperationOrder(operations, OperationKind::Store,
+                                   Stage::C2, 2U * block + 1U,
+                                   secondStore) ||
+            !(l1Mte1Lock < l0Mte1Lock &&
+              l0Mte1Lock < l0Mte1Unlock &&
+              l0Mte1Unlock < lowerCubeLock &&
+              lowerCubeLock < l0CubeLock && l0CubeLock < mmad &&
+              mmad < l0CubeUnlock && l0CubeUnlock < lowerCubeUnlock &&
+              lowerCubeUnlock < operandReleased &&
+              operandReleased < cubeReady &&
+              cubeReady < lowerFixpipeLock &&
+              lowerFixpipeLock < firstStore && firstStore < secondStore &&
+              secondStore < lowerFixpipeUnlock)) {
+            return false;
+        }
+        finalFixpipeUnlock = lowerFixpipeUnlock;
+    }
+    return finalFixpipeUnlock < l1Mte1Unlock &&
+           l1Mte1Unlock < rawReady;
+}
+
+bool CheckArch35C4MutexPipeline(
+    const OperationTrace &operations, const SyncTrace &synchronization,
+    const LocalSyncTrace &localDependencies, const MutexTrace &mutexes,
+    bool hasQ10, bool hasBarrier, PrepareAbi abi) noexcept
+{
+    constexpr std::uint32_t kOwner = 0U;
+    const SymbolicMutexId l1 = Arch35CubeMutexIds::L1Bank(kOwner);
+    const SymbolicMutexId l0 = Arch35CubeMutexIds::L0OperandBank(0U);
+    const SymbolicMutexId lower =
+        Arch35CubeMutexIds::L0cLowerHalf(kOwner);
+    std::uint64_t l1Mte2Lock = 0U;
+    std::uint64_t l1Mte2Unlock = 0U;
+    std::uint64_t firstLoad = 0U;
+    std::uint64_t lastLoad = 0U;
+    std::uint64_t payloadFree = 0U;
+    const Pipe payloadFreePipe =
+        !hasQ10 && abi == PrepareAbi::Current ? Pipe::Control : Pipe::Mte2;
+    const std::size_t expectedRecords =
+        (hasQ10 ? 14U : 2U) + (hasBarrier ? 1U : 0U);
+    if (CountMutexStageOwner(mutexes, Stage::C4, kOwner) !=
+            expectedRecords ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Lock, MutexResource::AicL1Bank, l1,
+            kOwner, Stage::C4, Pipe::Mte2, l1Mte2Lock) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Unlock, MutexResource::AicL1Bank, l1,
+            kOwner, Stage::C4, Pipe::Mte2, l1Mte2Unlock) ||
+        !FindOperationOrderRange(operations, OperationKind::Load,
+                                 Stage::C4, firstLoad, lastLoad) ||
+        !FindUniqueOwnerSyncOrderOnPipe(
+            synchronization, SyncAction::Set, SyncPoint::C4PayloadFree,
+            kOwner, 0U, Stage::C4, payloadFreePipe, payloadFree) ||
+        !(l1Mte2Lock < firstLoad && firstLoad <= lastLoad &&
+          lastLoad < l1Mte2Unlock && l1Mte2Unlock < payloadFree) ||
+        !CheckStageWaitsBeforeOrder(synchronization, Stage::C4, 1U,
+                                    l1Mte2Lock)) {
+        return false;
+    }
+    for (std::size_t index = 0U; index < operations.size; ++index) {
+        const OperationRecord &record = operations.records[index];
+        if (record.stage == Stage::C4 &&
+            (record.kind == OperationKind::Load ||
+             record.kind == OperationKind::Fill) &&
+            !(l1Mte2Lock < record.order &&
+              record.order < l1Mte2Unlock)) {
+            return false;
+        }
+    }
+    if (!hasQ10) {
+        return true;
+    }
+
+    std::uint64_t inputReady = 0U;
+    std::uint64_t l1Mte1Lock = 0U;
+    std::uint64_t l1Mte1Unlock = 0U;
+    std::uint64_t l0Mte1Lock = 0U;
+    std::uint64_t l0Mte1Unlock = 0U;
+    std::uint64_t lowerCubeLock = 0U;
+    std::uint64_t lowerCubeUnlock = 0U;
+    std::uint64_t l0CubeLock = 0U;
+    std::uint64_t l0CubeUnlock = 0U;
+    std::uint64_t operandReleased = 0U;
+    std::uint64_t cubeReady = 0U;
+    std::uint64_t lowerFixpipeLock = 0U;
+    std::uint64_t lowerFixpipeUnlock = 0U;
+    std::uint64_t l1FixpipeLock = 0U;
+    std::uint64_t l1FixpipeUnlock = 0U;
+    std::uint64_t mmad = 0U;
+    std::uint64_t firstWrite = 0U;
+    std::uint64_t lastWrite = 0U;
+    return FindUniqueLocalOrder(
+               localDependencies, LocalDependency::Mte2ToMte1Inputs,
+               Stage::C4, inputReady) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Lock, MutexResource::AicL1Bank, l1,
+               kOwner, Stage::C4, Pipe::Mte1, l1Mte1Lock) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Unlock,
+               MutexResource::AicL1Bank, l1, kOwner, Stage::C4,
+               Pipe::Mte1, l1Mte1Unlock) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Lock,
+               MutexResource::AicL0OperandBank, l0, 0U, Stage::C4,
+               Pipe::Mte1, l0Mte1Lock) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Unlock,
+               MutexResource::AicL0OperandBank, l0, 0U, Stage::C4,
+               Pipe::Mte1, l0Mte1Unlock) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Lock,
+               MutexResource::AicL0cLowerHalf, lower, kOwner, Stage::C4,
+               Pipe::Cube, lowerCubeLock) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Unlock,
+               MutexResource::AicL0cLowerHalf, lower, kOwner, Stage::C4,
+               Pipe::Cube, lowerCubeUnlock) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Lock,
+               MutexResource::AicL0OperandBank, l0, 0U, Stage::C4,
+               Pipe::Cube, l0CubeLock) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Unlock,
+               MutexResource::AicL0OperandBank, l0, 0U, Stage::C4,
+               Pipe::Cube, l0CubeUnlock) &&
+           FindUniqueLocalOrder(
+               localDependencies,
+               LocalDependency::CubeToMte1OperandReuse, Stage::C4,
+               operandReleased) &&
+           FindUniqueLocalOrder(
+               localDependencies, LocalDependency::CubeToFixpipeOutput,
+               Stage::C4, cubeReady) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Lock,
+               MutexResource::AicL0cLowerHalf, lower, kOwner, Stage::C4,
+               Pipe::Fixpipe, lowerFixpipeLock) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Unlock,
+               MutexResource::AicL0cLowerHalf, lower, kOwner, Stage::C4,
+               Pipe::Fixpipe, lowerFixpipeUnlock) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Lock, MutexResource::AicL1Bank, l1,
+               kOwner, Stage::C4, Pipe::Fixpipe, l1FixpipeLock) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Unlock,
+               MutexResource::AicL1Bank, l1, kOwner, Stage::C4,
+               Pipe::Fixpipe, l1FixpipeUnlock) &&
+           FindNthMmadOrder(operations, Stage::C4, 0U, mmad) &&
+           FindFirstStageComputeWriteOrder(operations, Stage::C4,
+                                           firstWrite) &&
+           FindLastStageComputeWriteOrder(operations, Stage::C4,
+                                          lastWrite) &&
+           l1Mte2Unlock < inputReady && inputReady < l1Mte1Lock &&
+           l1Mte1Lock < l0Mte1Lock && l0Mte1Lock < l0Mte1Unlock &&
+           l0Mte1Unlock < l1Mte1Unlock &&
+           l1Mte1Unlock < lowerCubeLock &&
+           lowerCubeLock < l0CubeLock && l0CubeLock < mmad &&
+           mmad < l0CubeUnlock && l0CubeUnlock < lowerCubeUnlock &&
+           lowerCubeUnlock < operandReleased &&
+           operandReleased < cubeReady && cubeReady < lowerFixpipeLock &&
+           lowerFixpipeLock < l1FixpipeLock &&
+           l1FixpipeLock < firstWrite && firstWrite <= lastWrite &&
+           lastWrite < l1FixpipeUnlock &&
+           l1FixpipeUnlock < lowerFixpipeUnlock;
+}
+
+bool CheckArch35C5MutexPipeline(
+    const OperationTrace &operations, const SyncTrace &synchronization,
+    const LocalSyncTrace &localDependencies, const MutexTrace &mutexes,
+    bool hasQ10) noexcept
+{
+    constexpr std::uint32_t kOwner = 0U;
+    if (!hasQ10) {
+        return CountMutexStageOwner(mutexes, Stage::C5, kOwner) == 0U &&
+               CountStageMmad(operations, Stage::C5) == 0U &&
+               CountStageComputeWrites(operations, Stage::C5) == 0U;
+    }
+    for (std::size_t index = 0U; index < synchronization.size; ++index) {
+        if (synchronization.records[index].stage == Stage::C5) {
+            return false;
+        }
+    }
+    const SymbolicMutexId l1 = Arch35CubeMutexIds::L1Bank(kOwner);
+    const SymbolicMutexId l0 = Arch35CubeMutexIds::L0OperandBank(0U);
+    const SymbolicMutexId lower =
+        Arch35CubeMutexIds::L0cLowerHalf(kOwner);
+    std::uint64_t l1Mte1Lock = 0U;
+    std::uint64_t l1Mte1Unlock = 0U;
+    std::uint64_t l0Mte1Lock = 0U;
+    std::uint64_t l0Mte1Unlock = 0U;
+    std::uint64_t lowerCubeLock = 0U;
+    std::uint64_t lowerCubeUnlock = 0U;
+    std::uint64_t l0CubeLock = 0U;
+    std::uint64_t l0CubeUnlock = 0U;
+    std::uint64_t operandReleased = 0U;
+    std::uint64_t cubeReady = 0U;
+    std::uint64_t lowerFixpipeLock = 0U;
+    std::uint64_t lowerFixpipeUnlock = 0U;
+    std::uint64_t l1FixpipeLock = 0U;
+    std::uint64_t l1FixpipeUnlock = 0U;
+    std::uint64_t mmad = 0U;
+    std::uint64_t firstWrite = 0U;
+    std::uint64_t lastWrite = 0U;
+    return CountMutexStageOwner(mutexes, Stage::C5, kOwner) == 12U &&
+           CountLocalDependencies(
+               localDependencies, LocalDependency::Mte2ToMte1Inputs,
+               Stage::C5) == 0U &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Lock, MutexResource::AicL1Bank, l1,
+               kOwner, Stage::C5, Pipe::Mte1, l1Mte1Lock) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Unlock,
+               MutexResource::AicL1Bank, l1, kOwner, Stage::C5,
+               Pipe::Mte1, l1Mte1Unlock) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Lock,
+               MutexResource::AicL0OperandBank, l0, 0U, Stage::C5,
+               Pipe::Mte1, l0Mte1Lock) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Unlock,
+               MutexResource::AicL0OperandBank, l0, 0U, Stage::C5,
+               Pipe::Mte1, l0Mte1Unlock) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Lock,
+               MutexResource::AicL0cLowerHalf, lower, kOwner, Stage::C5,
+               Pipe::Cube, lowerCubeLock) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Unlock,
+               MutexResource::AicL0cLowerHalf, lower, kOwner, Stage::C5,
+               Pipe::Cube, lowerCubeUnlock) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Lock,
+               MutexResource::AicL0OperandBank, l0, 0U, Stage::C5,
+               Pipe::Cube, l0CubeLock) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Unlock,
+               MutexResource::AicL0OperandBank, l0, 0U, Stage::C5,
+               Pipe::Cube, l0CubeUnlock) &&
+           FindUniqueLocalOrder(
+               localDependencies,
+               LocalDependency::CubeToMte1OperandReuse, Stage::C5,
+               operandReleased) &&
+           FindUniqueLocalOrder(
+               localDependencies, LocalDependency::CubeToFixpipeOutput,
+               Stage::C5, cubeReady) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Lock,
+               MutexResource::AicL0cLowerHalf, lower, kOwner, Stage::C5,
+               Pipe::Fixpipe, lowerFixpipeLock) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Unlock,
+               MutexResource::AicL0cLowerHalf, lower, kOwner, Stage::C5,
+               Pipe::Fixpipe, lowerFixpipeUnlock) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Lock, MutexResource::AicL1Bank, l1,
+               kOwner, Stage::C5, Pipe::Fixpipe, l1FixpipeLock) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Unlock,
+               MutexResource::AicL1Bank, l1, kOwner, Stage::C5,
+               Pipe::Fixpipe, l1FixpipeUnlock) &&
+           FindNthMmadOrder(operations, Stage::C5, 0U, mmad) &&
+           FindFirstStageComputeWriteOrder(operations, Stage::C5,
+                                           firstWrite) &&
+           FindLastStageComputeWriteOrder(operations, Stage::C5,
+                                          lastWrite) &&
+           l1Mte1Lock < l0Mte1Lock && l0Mte1Lock < l0Mte1Unlock &&
+           l0Mte1Unlock < l1Mte1Unlock &&
+           l1Mte1Unlock < lowerCubeLock &&
+           lowerCubeLock < l0CubeLock && l0CubeLock < mmad &&
+           mmad < l0CubeUnlock && l0CubeUnlock < lowerCubeUnlock &&
+           lowerCubeUnlock < operandReleased &&
+           operandReleased < cubeReady && cubeReady < lowerFixpipeLock &&
+           lowerFixpipeLock < l1FixpipeLock &&
+           l1FixpipeLock < firstWrite && firstWrite <= lastWrite &&
+           lastWrite < l1FixpipeUnlock &&
+           l1FixpipeUnlock < lowerFixpipeUnlock;
+}
+
+bool CheckArch35C7MutexPipeline(
+    const OperationTrace &operations, const SyncTrace &synchronization,
+    const LocalSyncTrace &localDependencies,
+    const MutexTrace &mutexes) noexcept
+{
+    constexpr std::uint32_t kOwner = 0U;
+    const SymbolicMutexId l1 = Arch35CubeMutexIds::L1Bank(kOwner);
+    const SymbolicMutexId l0 = Arch35CubeMutexIds::L0OperandBank(0U);
+    const SymbolicMutexId lower =
+        Arch35CubeMutexIds::L0cLowerHalf(kOwner);
+    const SymbolicMutexId upper =
+        Arch35CubeMutexIds::L0cUpperHalf(kOwner);
+    std::uint64_t rhsReady = 0U;
+    std::uint64_t l1Mte2Lock = 0U;
+    std::uint64_t l1Mte2Unlock = 0U;
+    std::uint64_t firstLoad = 0U;
+    std::uint64_t lastLoad = 0U;
+    std::uint64_t inputReady = 0U;
+    std::uint64_t l1Mte1Lock = 0U;
+    std::uint64_t l1Mte1Unlock = 0U;
+    std::uint64_t l0Mte1Lock = 0U;
+    std::uint64_t l0Mte1Unlock = 0U;
+    std::uint64_t l0CubeLock = 0U;
+    std::uint64_t l0CubeUnlock = 0U;
+    std::uint64_t lowerCubeLock = 0U;
+    std::uint64_t lowerCubeUnlock = 0U;
+    std::uint64_t lowerFixpipeLock = 0U;
+    std::uint64_t lowerFixpipeUnlock = 0U;
+    std::uint64_t upperCubeLock = 0U;
+    std::uint64_t upperCubeUnlock = 0U;
+    std::uint64_t upperFixpipeLock = 0U;
+    std::uint64_t upperFixpipeUnlock = 0U;
+    std::uint64_t firstMmad = 0U;
+    std::uint64_t secondMmad = 0U;
+    std::uint64_t firstStore = 0U;
+    std::uint64_t secondStore = 0U;
+    std::uint64_t firstCubeReady = 0U;
+    std::uint64_t secondCubeReady = 0U;
+    std::uint64_t operandReleased = 0U;
+    std::uint64_t slotFree = 0U;
+    if (CountMutexStageOwner(mutexes, Stage::C7, kOwner) != 16U ||
+        !FindUniqueSyncOrder(synchronization, SyncAction::Wait,
+                             SyncPoint::V6RhsReady, kOwner, 0U,
+                             Stage::C7, Pipe::Mte2, rhsReady) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Lock, MutexResource::AicL1Bank, l1,
+            kOwner, Stage::C7, Pipe::Mte2, l1Mte2Lock) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Unlock, MutexResource::AicL1Bank, l1,
+            kOwner, Stage::C7, Pipe::Mte2, l1Mte2Unlock) ||
+        !FindOperationOrderRange(operations, OperationKind::Load,
+                                 Stage::C7, firstLoad, lastLoad) ||
+        !FindUniqueLocalOrder(localDependencies,
+                              LocalDependency::Mte2ToMte1Inputs,
+                              Stage::C7, inputReady) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Lock, MutexResource::AicL1Bank, l1,
+            kOwner, Stage::C7, Pipe::Mte1, l1Mte1Lock) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Unlock, MutexResource::AicL1Bank, l1,
+            kOwner, Stage::C7, Pipe::Mte1, l1Mte1Unlock) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Lock,
+            MutexResource::AicL0OperandBank, l0, 0U, Stage::C7,
+            Pipe::Mte1, l0Mte1Lock) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Unlock,
+            MutexResource::AicL0OperandBank, l0, 0U, Stage::C7,
+            Pipe::Mte1, l0Mte1Unlock) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Lock,
+            MutexResource::AicL0OperandBank, l0, 0U, Stage::C7,
+            Pipe::Cube, l0CubeLock) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Unlock,
+            MutexResource::AicL0OperandBank, l0, 0U, Stage::C7,
+            Pipe::Cube, l0CubeUnlock) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Lock,
+            MutexResource::AicL0cLowerHalf, lower, kOwner, Stage::C7,
+            Pipe::Cube, lowerCubeLock) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Unlock,
+            MutexResource::AicL0cLowerHalf, lower, kOwner, Stage::C7,
+            Pipe::Cube, lowerCubeUnlock) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Lock,
+            MutexResource::AicL0cLowerHalf, lower, kOwner, Stage::C7,
+            Pipe::Fixpipe, lowerFixpipeLock) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Unlock,
+            MutexResource::AicL0cLowerHalf, lower, kOwner, Stage::C7,
+            Pipe::Fixpipe, lowerFixpipeUnlock) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Lock,
+            MutexResource::AicL0cUpperHalf, upper, kOwner, Stage::C7,
+            Pipe::Cube, upperCubeLock) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Unlock,
+            MutexResource::AicL0cUpperHalf, upper, kOwner, Stage::C7,
+            Pipe::Cube, upperCubeUnlock) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Lock,
+            MutexResource::AicL0cUpperHalf, upper, kOwner, Stage::C7,
+            Pipe::Fixpipe, upperFixpipeLock) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Unlock,
+            MutexResource::AicL0cUpperHalf, upper, kOwner, Stage::C7,
+            Pipe::Fixpipe, upperFixpipeUnlock) ||
+        !FindNthMmadOrder(operations, Stage::C7, 0U, firstMmad) ||
+        !FindNthMmadOrder(operations, Stage::C7, 1U, secondMmad) ||
+        !FindNthOperationOrder(operations, OperationKind::StoreRounded,
+                               Stage::C7, 0U, firstStore) ||
+        !FindNthOperationOrder(operations, OperationKind::StoreRounded,
+                               Stage::C7, 1U, secondStore) ||
+        !FindNthLocalOrder(
+            localDependencies, LocalDependency::CubeToFixpipeOutput,
+            Stage::C7, 0U, firstCubeReady) ||
+        !FindNthLocalOrder(
+            localDependencies, LocalDependency::CubeToFixpipeOutput,
+            Stage::C7, 1U, secondCubeReady) ||
+        !FindUniqueLocalOrder(
+            localDependencies,
+            LocalDependency::CubeToMte1OperandReuse, Stage::C7,
+            operandReleased) ||
+        !FindUniqueSyncOrder(synchronization, SyncAction::Set,
+                             SyncPoint::SlotFree, kOwner, 1U,
+                             Stage::C7, Pipe::Fixpipe, slotFree)) {
+        return false;
+    }
+    return CheckStageWaitsBeforeOrder(synchronization, Stage::C7, 1U,
+                                      l1Mte2Lock) &&
+           rhsReady < l1Mte2Lock && l1Mte2Lock < firstLoad &&
+           firstLoad <= lastLoad && lastLoad < l1Mte2Unlock &&
+           l1Mte2Unlock < inputReady && inputReady < l1Mte1Lock &&
+           l1Mte1Lock < l0Mte1Lock && l0Mte1Lock < l0Mte1Unlock &&
+           l0Mte1Unlock < l1Mte1Unlock && l1Mte1Unlock < l0CubeLock &&
+           l0CubeLock < lowerCubeLock && lowerCubeLock < firstMmad &&
+           firstMmad < lowerCubeUnlock &&
+           lowerCubeUnlock < firstCubeReady &&
+           firstCubeReady < lowerFixpipeLock &&
+           lowerFixpipeLock < firstStore && firstStore < lowerFixpipeUnlock &&
+           lowerFixpipeUnlock < upperCubeLock &&
+           upperCubeLock < secondMmad && secondMmad < upperCubeUnlock &&
+           upperCubeUnlock < l0CubeUnlock &&
+           l0CubeUnlock < operandReleased &&
+           operandReleased < secondCubeReady &&
+           secondCubeReady < upperFixpipeLock &&
+           upperFixpipeLock < secondStore &&
+           secondStore < upperFixpipeUnlock &&
+           upperFixpipeUnlock < slotFree;
+}
+
+bool CheckArch35CubeMutexPipelines(
+    const OperationTrace &operations, const SyncTrace &synchronization,
+    const LocalSyncTrace &localDependencies, const MutexTrace &mutexes,
+    std::uint32_t validRows, PrepareAbi abi) noexcept
+{
+    const bool hasQ10 = validRows > 32U;
+    const bool hasBarrier = abi == PrepareAbi::Current &&
+                            validRows != 32U && validRows != 64U;
+    const std::size_t activeBlocks =
+        (static_cast<std::size_t>(validRows) + 15U) / 16U;
+    return CheckArch35MutexTrace(mutexes, false) &&
+           CheckArch35RetiredLocalSyncPoints(synchronization) &&
+           CheckArch35C2MutexPipeline(
+               operations, synchronization, localDependencies, mutexes,
+               activeBlocks) &&
+           CheckArch35C4MutexPipeline(
+               operations, synchronization, localDependencies, mutexes,
+               hasQ10, hasBarrier, abi) &&
+           CheckArch35C5MutexPipeline(
+               operations, synchronization, localDependencies, mutexes,
+               hasQ10) &&
+           CheckArch35C7MutexPipeline(
+               operations, synchronization, localDependencies, mutexes);
+}
+
 bool CheckArch35CubeOperations(const OperationTrace &operations,
                                const SyncTrace &synchronization,
                                const LocalSyncTrace &localDependencies,
+                               const MutexTrace &mutexes,
                                std::uint32_t validRows,
                                const ProposedTilingKey &key) noexcept
 {
     const PrepareAbi abi = key.abi;
     if (operations.overflow || synchronization.overflow ||
         localDependencies.overflow ||
-        !CheckArch35C4Transfers(operations, localDependencies, validRows,
-                                abi) ||
+        !CheckArch35C4Transfers(operations, localDependencies, mutexes,
+                                validRows, abi) ||
+        !CheckArch35CubeMutexPipelines(
+            operations, synchronization, localDependencies, mutexes,
+            validRows, abi) ||
         !CheckArch35MmadDescriptors(operations, validRows, key)) {
         return false;
     }
@@ -2895,8 +4031,6 @@ bool CheckArch35CubeOperations(const OperationTrace &operations,
                              true) ||
         !CheckSingleMmadPhase(operations, synchronization,
                               localDependencies, Stage::C4, hasQ10, true) ||
-        !CheckSingleMmadPhase(operations, synchronization,
-                              localDependencies, Stage::C5, hasQ10, false) ||
         !CheckC7ComputePipeline(operations, localDependencies, true) ||
         !CheckOperandReleaseOrder(operations, localDependencies,
                                   Stage::C2, activeBlocks) ||
@@ -2999,26 +4133,6 @@ bool CheckArch35CubeOperations(const OperationTrace &operations,
         }
     }
 
-    std::uint64_t readyOrder = 0U;
-    if (!FindUniqueSyncOrder(synchronization, SyncAction::Set,
-                             SyncPoint::C5AkkReady, 0U, 0U, Stage::C5,
-                             hasQ10 ? Pipe::Fixpipe : Pipe::Control,
-                             readyOrder)) {
-        return false;
-    }
-    if (hasQ10) {
-        std::uint64_t lastQ10Write = 0U;
-        for (std::size_t index = 0U; index < operations.size; ++index) {
-            const OperationRecord &record = operations.records[index];
-            if (record.kind == OperationKind::StoreRounded &&
-                record.stage == Stage::C5 && record.order > lastQ10Write) {
-                lastQ10Write = record.order;
-            }
-        }
-        if (lastQ10Write == 0U || readyOrder <= lastQ10Write) {
-            return false;
-        }
-    }
     return true;
 }
 
@@ -3451,9 +4565,11 @@ bool CheckArch22CubeOperations(const OperationTrace &operations,
 struct MultiHeadAddressTrace {
     std::array<OperationTrace, kAivPerWorkgroup> aivOperations{};
     std::array<SyncTrace, kAivPerWorkgroup> aivSynchronization{};
+    std::array<MutexTrace, kAivPerWorkgroup> aivMutexes{};
     OperationTrace aicOperations{};
     SyncTrace aicSynchronization{};
     LocalSyncTrace aicLocalDependencies{};
+    MutexTrace aicMutexes{};
 };
 
 std::size_t CountSyncRecords(const SyncTrace &trace, SyncAction action,
@@ -3635,7 +4751,8 @@ bool CaptureMultiHeadAddressTrace(Architecture architecture,
         VectorOps vectorOps{};
         vectorOps.trace = &trace.aivOperations[aiv];
         vectorOps.clock = &clock;
-        SyncLedger sync{&trace.aivSynchronization[aiv], nullptr, &clock};
+        SyncLedger sync{&trace.aivSynchronization[aiv], nullptr, &clock,
+                        &trace.aivMutexes[aiv]};
         WorkspaceView workspace{};
         workspace.backingBytes = sizing.totalBytes;
         RunChunkKdaFwdPreparePseudocode(
@@ -3649,7 +4766,8 @@ bool CaptureMultiHeadAddressTrace(Architecture architecture,
     cubeOps.clock = &clock;
     VectorOps unusedVectorOps{};
     SyncLedger sync{&trace.aicSynchronization,
-                    &trace.aicLocalDependencies, &clock};
+                    &trace.aicLocalDependencies, &clock,
+                    &trace.aicMutexes};
     WorkspaceView workspace{};
     workspace.backingBytes = sizing.totalBytes;
     RunChunkKdaFwdPreparePseudocode(
@@ -3657,12 +4775,35 @@ bool CaptureMultiHeadAddressTrace(Architecture architecture,
         cubeOps, ResolveDense);
 
     if (trace.aicOperations.overflow || trace.aicSynchronization.overflow ||
-        trace.aicLocalDependencies.overflow) {
+        trace.aicLocalDependencies.overflow || trace.aicMutexes.overflow) {
         return false;
     }
     for (std::uint32_t aiv = 0U; aiv < kAivPerWorkgroup; ++aiv) {
         if (trace.aivOperations[aiv].overflow ||
-            trace.aivSynchronization[aiv].overflow) {
+            trace.aivSynchronization[aiv].overflow ||
+            trace.aivMutexes[aiv].overflow) {
+            return false;
+        }
+    }
+    if (architecture == Architecture::Arch22) {
+        if (!EmptyMutexTrace(trace.aicMutexes)) {
+            return false;
+        }
+        for (const MutexTrace &mutexes : trace.aivMutexes) {
+            if (!EmptyMutexTrace(mutexes)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    if (!CheckArch35MutexTrace(trace.aicMutexes, false) ||
+        !CheckArch35RetiredLocalSyncPoints(trace.aicSynchronization)) {
+        return false;
+    }
+    for (std::uint32_t aiv = 0U; aiv < kAivPerWorkgroup; ++aiv) {
+        if (!CheckArch35MutexTrace(trace.aivMutexes[aiv], true, aiv) ||
+            !CheckArch35RetiredLocalSyncPoints(
+                trace.aivSynchronization[aiv])) {
             return false;
         }
     }
@@ -4052,15 +5193,21 @@ bool CheckCompleteQkCohortPartition(Architecture architecture,
         CubeOps unusedCubeOps{};
         for (std::uint32_t aiv = 0U; aiv < kAivPerWorkgroup; ++aiv) {
             OperationTrace operations{};
+            MutexTrace mutexes{};
+            TraceClock clock{};
             VectorOps vectorOps{};
             vectorOps.trace = &operations;
-            SyncLedger sync{};
+            vectorOps.clock = &clock;
+            SyncLedger sync{nullptr, nullptr, &clock, &mutexes};
             WorkspaceView workspace{};
             workspace.backingBytes = sizing.totalBytes;
             RunChunkKdaFwdPreparePseudocode(
                 tiling, workgroup, CoreRole::Aiv, aiv, workspace, sync,
                 vectorOps, unusedCubeOps, ResolveDense);
-            if (operations.overflow) {
+            if (operations.overflow || mutexes.overflow ||
+                (architecture == Architecture::Arch22
+                     ? !EmptyMutexTrace(mutexes)
+                     : !CheckArch35MutexTrace(mutexes, true, aiv))) {
                 return false;
             }
             for (std::size_t index = 0U; index < operations.size; ++index) {
@@ -4303,6 +5450,340 @@ bool CheckArch22MultiHeadAddresses(std::uint32_t heads) noexcept
     return true;
 }
 
+bool MatchesAivLocalSpan(const BufferSpan &span,
+                         const HeadTask &head) noexcept
+{
+    return span.name != nullptr && span.space == MemorySpace::Ub &&
+           span.ownerRole == CoreRole::Aiv && span.ownerId == head.aivId &&
+           span.slot == head.localBankId &&
+           span.generation == head.localGeneration;
+}
+
+bool IsAivOperationForHead(const OperationRecord &record,
+                           const HeadTask &head) noexcept
+{
+    switch (record.kind) {
+        case OperationKind::RunVf:
+            return record.headId == head.headId;
+        case OperationKind::Load:
+        case OperationKind::Zero:
+        case OperationKind::ZeroUndefined:
+            return MatchesAivLocalSpan(record.destination, head);
+        case OperationKind::Store:
+            return MatchesAivLocalSpan(record.source, head);
+        default:
+            return false;
+    }
+}
+
+bool IsAivOperationInsideMutex(const OperationRecord &record,
+                               const MutexTrace &mutexes,
+                               const HeadTask &head) noexcept
+{
+    Pipe pipe = Pipe::Control;
+    switch (record.kind) {
+        case OperationKind::Load:
+        case OperationKind::Zero:
+        case OperationKind::ZeroUndefined:
+            pipe = Pipe::Mte2;
+            break;
+        case OperationKind::RunVf:
+            pipe = Pipe::Vector;
+            break;
+        case OperationKind::Store:
+            pipe = Pipe::Mte3;
+            break;
+        default:
+            return false;
+    }
+    return IsOrderInsideMutexInterval(
+        mutexes, MutexResource::AivUbBank,
+        Arch35VectorMutexIds::UbBank(head.aivLocalSlot), head.localBankId,
+        record.stage, pipe, record.order);
+}
+
+bool MatchesAicL1Span(const BufferSpan &span,
+                      const HeadTask &head) noexcept
+{
+    return span.name != nullptr && span.space == MemorySpace::L1 &&
+           span.ownerRole == CoreRole::Aic && span.ownerId == 0U &&
+           span.slot == head.l1BankId &&
+           span.generation == head.l1Generation;
+}
+
+bool MatchesAicL0cSpan(const BufferSpan &span,
+                       const HeadTask &head) noexcept
+{
+    return span.name != nullptr && span.space == MemorySpace::L0 &&
+           span.ownerRole == CoreRole::Aic && span.ownerId == 0U &&
+           span.slot == head.l0cBankId &&
+           span.generation == head.l0cGeneration;
+}
+
+bool IsAicOperationForHead(const OperationRecord &record,
+                           const HeadTask &head) noexcept
+{
+    switch (record.kind) {
+        case OperationKind::Load:
+        case OperationKind::Fill:
+            return MatchesAicL1Span(record.destination, head);
+        case OperationKind::Mmad:
+        case OperationKind::MmadRowStackedLhs:
+        case OperationKind::MmadQuadrantPackedLhs:
+            return record.headId == head.headId;
+        case OperationKind::Store:
+        case OperationKind::StoreRounded:
+            return MatchesAicL0cSpan(record.source, head);
+        default:
+            return false;
+    }
+}
+
+bool UsesUpperC7L0c(const OperationRecord &record,
+                    const HeadTask &head) noexcept
+{
+    if (record.stage != Stage::C7) {
+        return false;
+    }
+    const std::uint64_t upperOffset =
+        L0cPolicy::HeadLaneBase(head.groupLocalHead) +
+        L0cPolicy::kC7U.offset;
+    const BufferSpan &l0c =
+        record.kind == OperationKind::StoreRounded ? record.source
+                                                   : record.destination;
+    return l0c.byteOffset == upperOffset;
+}
+
+bool IsAicOperationInsideMutex(const OperationRecord &record,
+                               const MutexTrace &mutexes,
+                               const HeadTask &head) noexcept
+{
+    const SymbolicMutexId l1 = Arch35CubeMutexIds::L1Bank(head.l1BankId);
+    if (record.kind == OperationKind::Load ||
+        record.kind == OperationKind::Fill) {
+        return IsOrderInsideMutexInterval(
+            mutexes, MutexResource::AicL1Bank, l1, head.l1BankId,
+            record.stage, Pipe::Mte2, record.order);
+    }
+
+    const bool compute = record.kind == OperationKind::Mmad ||
+                         record.kind == OperationKind::MmadRowStackedLhs ||
+                         record.kind ==
+                             OperationKind::MmadQuadrantPackedLhs;
+    const bool fixpipe = record.kind == OperationKind::Store ||
+                         record.kind == OperationKind::StoreRounded;
+    if (!compute && !fixpipe) {
+        return false;
+    }
+    const bool upper = UsesUpperC7L0c(record, head);
+    const MutexResource l0cResource =
+        upper ? MutexResource::AicL0cUpperHalf
+              : MutexResource::AicL0cLowerHalf;
+    const SymbolicMutexId l0cMutex =
+        upper ? Arch35CubeMutexIds::L0cUpperHalf(head.l0cBankId)
+              : Arch35CubeMutexIds::L0cLowerHalf(head.l0cBankId);
+    if (!IsOrderInsideMutexInterval(
+            mutexes, l0cResource, l0cMutex, head.l0cBankId,
+            record.stage, compute ? Pipe::Cube : Pipe::Fixpipe,
+            record.order)) {
+        return false;
+    }
+    if (compute &&
+        !IsOrderInsideMutexInterval(
+            mutexes, MutexResource::AicL0OperandBank,
+            Arch35CubeMutexIds::L0OperandBank(head.l0OperandBankId),
+            head.l0OperandBankId, record.stage, Pipe::Cube,
+            record.order)) {
+        return false;
+    }
+    if (fixpipe &&
+        (record.stage == Stage::C4 || record.stage == Stage::C5) &&
+        !IsOrderInsideMutexInterval(
+            mutexes, MutexResource::AicL1Bank, l1, head.l1BankId,
+            record.stage, Pipe::Fixpipe, record.order)) {
+        return false;
+    }
+    return true;
+}
+
+bool CheckUniqueWaitBefore(const SyncTrace &synchronization,
+                           SyncPoint point, std::uint32_t ownerId,
+                           std::uint64_t generation, Stage stage, Pipe pipe,
+                           std::uint64_t firstLock) noexcept
+{
+    std::uint64_t waitOrder = 0U;
+    return FindUniqueSyncOrder(synchronization, SyncAction::Wait, point,
+                               ownerId, generation, stage, pipe, waitOrder) &&
+           waitOrder < firstLock;
+}
+
+bool CheckArch35AivHeadWaits(const SyncTrace &synchronization,
+                             const MutexTrace &mutexes,
+                             const HeadTask &head) noexcept
+{
+    const SymbolicMutexId ub =
+        Arch35VectorMutexIds::UbBank(head.aivLocalSlot);
+    std::uint64_t v0Lock = 0U;
+    std::uint64_t v3Lock = 0U;
+    std::uint64_t v6Lock = 0U;
+    if (!FindUniqueMutexOrder(
+            mutexes, MutexAction::Lock, MutexResource::AivUbBank, ub,
+            head.localBankId, Stage::V0, Pipe::Mte2, v0Lock) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Lock, MutexResource::AivUbBank, ub,
+            head.localBankId, Stage::V3, Pipe::Vector, v3Lock) ||
+        !FindUniqueMutexOrder(
+            mutexes, MutexAction::Lock, MutexResource::AivUbBank, ub,
+            head.localBankId, Stage::V6, Pipe::Mte2, v6Lock) ||
+        !CheckUniqueWaitBefore(
+            synchronization, SyncPoint::SlotFree, head.workspaceSlot,
+            head.workspaceGeneration, Stage::V0, Pipe::Control, v0Lock) ||
+        !CheckUniqueWaitBefore(
+            synchronization,
+            head.qkOwner ? SyncPoint::QkCacheFree
+                         : SyncPoint::QkCacheReady,
+            head.qkCacheSlot, head.qkCacheGeneration, Stage::V0,
+            Pipe::Mte2, v0Lock) ||
+        !CheckUniqueWaitBefore(
+            synchronization, SyncPoint::C2ScorePayloadFree,
+            head.workspaceSlot, head.workspaceGeneration, Stage::V3,
+            Pipe::Mte3, v3Lock) ||
+        !CheckUniqueWaitBefore(
+            synchronization, SyncPoint::C2RawReady, head.localBankId,
+            head.localGeneration, Stage::V3, Pipe::Vector, v3Lock) ||
+        !CheckUniqueWaitBefore(
+            synchronization, SyncPoint::C4PayloadFree,
+            head.workspaceSlot, head.workspaceGeneration, Stage::V6,
+            Pipe::Mte2, v6Lock)) {
+        return false;
+    }
+    return CountMutexStageOwner(mutexes, Stage::V0, head.localBankId) == 6U &&
+           CountMutexStageOwner(mutexes, Stage::V1, head.localBankId) == 4U &&
+           CountMutexStageOwner(mutexes, Stage::V3, head.localBankId) == 4U &&
+           CountMutexStageOwner(mutexes, Stage::V6, head.localBankId) == 6U;
+}
+
+bool CheckArch35AicHeadWaits(const SyncTrace &synchronization,
+                             const MutexTrace &mutexes,
+                             const HeadTask &head) noexcept
+{
+    const SymbolicMutexId l1 = Arch35CubeMutexIds::L1Bank(head.l1BankId);
+    std::uint64_t c2Lock = 0U;
+    std::uint64_t c4Lock = 0U;
+    std::uint64_t c7Lock = 0U;
+    return FindUniqueMutexOrder(
+               mutexes, MutexAction::Lock, MutexResource::AicL1Bank, l1,
+               head.l1BankId, Stage::C2, Pipe::Mte2, c2Lock) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Lock, MutexResource::AicL1Bank, l1,
+               head.l1BankId, Stage::C4, Pipe::Mte2, c4Lock) &&
+           FindUniqueMutexOrder(
+               mutexes, MutexAction::Lock, MutexResource::AicL1Bank, l1,
+               head.l1BankId, Stage::C7, Pipe::Mte2, c7Lock) &&
+           CheckUniqueWaitBefore(
+               synchronization, SyncPoint::V1ScoreReady,
+               head.workspaceSlot, head.workspaceGeneration, Stage::C2,
+               Pipe::Mte2, c2Lock) &&
+           CheckUniqueWaitBefore(
+               synchronization, SyncPoint::V1MainSourceFree,
+               head.localBankId, head.localGeneration, Stage::C2,
+               Pipe::Fixpipe, c2Lock) &&
+           CheckUniqueWaitBefore(
+               synchronization, SyncPoint::C2RawDstFree,
+               head.localBankId, head.localGeneration, Stage::C2,
+               Pipe::Fixpipe, c2Lock) &&
+           CheckUniqueWaitBefore(
+               synchronization, SyncPoint::V3VcsReady,
+               head.workspaceSlot, head.workspaceGeneration, Stage::C4,
+               Pipe::Mte2, c4Lock) &&
+           CheckUniqueWaitBefore(
+               synchronization, SyncPoint::V6RhsReady,
+               head.workspaceSlot, head.workspaceGeneration, Stage::C7,
+               Pipe::Mte2, c7Lock);
+}
+
+bool CheckArch35MultiHeadMutexWindows(
+    const MultiHeadAddressTrace &trace, const HeadGroup &group) noexcept
+{
+    for (std::uint32_t aiv = 0U; aiv < kAivPerWorkgroup; ++aiv) {
+        std::size_t ownedHeads = 0U;
+        for (const HeadTask &head : group.heads) {
+            if (!head.active || head.aivId != aiv) {
+                continue;
+            }
+            ++ownedHeads;
+            if (!CheckArch35AivHeadWaits(trace.aivSynchronization[aiv],
+                                         trace.aivMutexes[aiv], head)) {
+                return false;
+            }
+        }
+        if (CountStageWaitActions(trace.aivSynchronization[aiv], Stage::V0) !=
+                2U * ownedHeads ||
+            CountStageWaitActions(trace.aivSynchronization[aiv], Stage::V1) !=
+                0U ||
+            CountStageWaitActions(trace.aivSynchronization[aiv], Stage::V3) !=
+                2U * ownedHeads ||
+            CountStageWaitActions(trace.aivSynchronization[aiv], Stage::V6) !=
+                ownedHeads) {
+            return false;
+        }
+        const OperationTrace &operations = trace.aivOperations[aiv];
+        for (std::size_t index = 0U; index < operations.size; ++index) {
+            const OperationRecord &record = operations.records[index];
+            std::size_t claims = 0U;
+            for (const HeadTask &head : group.heads) {
+                if (head.active && head.aivId == aiv &&
+                    IsAivOperationForHead(record, head)) {
+                    ++claims;
+                    if (!IsAivOperationInsideMutex(record,
+                                                   trace.aivMutexes[aiv],
+                                                   head)) {
+                        return false;
+                    }
+                }
+            }
+            if (claims != 1U) {
+                return false;
+            }
+        }
+    }
+
+    for (const HeadTask &head : group.heads) {
+        if (head.active &&
+            !CheckArch35AicHeadWaits(trace.aicSynchronization,
+                                     trace.aicMutexes, head)) {
+            return false;
+        }
+    }
+    const std::size_t activeHeads = group.activeHeads;
+    if (CountStageWaitActions(trace.aicSynchronization, Stage::C2) !=
+            3U * activeHeads ||
+        CountStageWaitActions(trace.aicSynchronization, Stage::C4) !=
+            activeHeads ||
+        CountStageWaitActions(trace.aicSynchronization, Stage::C5) != 0U ||
+        CountStageWaitActions(trace.aicSynchronization, Stage::C7) !=
+            activeHeads) {
+        return false;
+    }
+    for (std::size_t index = 0U; index < trace.aicOperations.size; ++index) {
+        const OperationRecord &record = trace.aicOperations.records[index];
+        std::size_t claims = 0U;
+        for (const HeadTask &head : group.heads) {
+            if (head.active && IsAicOperationForHead(record, head)) {
+                ++claims;
+                if (!IsAicOperationInsideMutex(record, trace.aicMutexes,
+                                               head)) {
+                    return false;
+                }
+            }
+        }
+        if (claims != 1U) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool CheckArch35MultiHeadAddresses() noexcept
 {
     constexpr std::uint32_t kHeads = 4U;
@@ -4313,6 +5794,9 @@ bool CheckArch35MultiHeadAddresses() noexcept
     OwnerTicketState tickets{};
     const HeadGroup group = BuildHeadGroup(
         ResolveDense(0U), 0U, kHeads, Architecture::Arch35, tickets);
+    if (!CheckArch35MultiHeadMutexWindows(trace, group)) {
+        return false;
+    }
     constexpr std::array<std::uint32_t, 4U> kExpectedAiv = {{
         0U, 0U, 1U, 1U,
     }};
@@ -4326,7 +5810,27 @@ bool CheckArch35MultiHeadAddresses() noexcept
         if (!head.active || head.headId != local || head.aivId != aiv ||
             head.aivLocalSlot != aivLocalSlot ||
             head.localBankId != local || head.l1BankId != local ||
-            head.l0cBankId != local) {
+            head.l0cBankId != local ||
+            CountMutexRecords(
+                trace.aivMutexes[aiv], MutexAction::Lock,
+                MutexResource::AivUbBank,
+                Arch35VectorMutexIds::UbBank(aivLocalSlot),
+                head.localBankId, Stage::V0, Pipe::Mte2) != 1U ||
+            CountMutexRecords(
+                trace.aicMutexes, MutexAction::Lock,
+                MutexResource::AicL1Bank,
+                Arch35CubeMutexIds::L1Bank(head.l1BankId),
+                head.l1BankId, Stage::C2, Pipe::Mte2) != 1U ||
+            CountMutexRecords(
+                trace.aicMutexes, MutexAction::Lock,
+                MutexResource::AicL0cLowerHalf,
+                Arch35CubeMutexIds::L0cLowerHalf(head.l0cBankId),
+                head.l0cBankId, Stage::C2, Pipe::Cube) != 4U ||
+            CountMutexRecords(
+                trace.aicMutexes, MutexAction::Lock,
+                MutexResource::AicL0cUpperHalf,
+                Arch35CubeMutexIds::L0cUpperHalf(head.l0cBankId),
+                head.l0cBankId, Stage::C7, Pipe::Cube) != 1U) {
             return false;
         }
 
@@ -4396,7 +5900,12 @@ bool CheckArch35MultiHeadAddresses() noexcept
         }
     }
 
-    return CountAivOperations(trace, OperationKind::Load, Stage::V0, "q",
+    return CountMutexRecords(
+               trace.aicMutexes, MutexAction::Lock,
+               MutexResource::AicL0OperandBank,
+               Arch35CubeMutexIds::L0OperandBank(0U), 0U, Stage::C7,
+               Pipe::Cube) == kHeads &&
+           CountAivOperations(trace, OperationKind::Load, Stage::V0, "q",
                               "q-to-qhat") == kHeads &&
            CountAivOperations(trace, OperationKind::Load, Stage::V0, "beta",
                               "beta-raw") == kHeads &&
@@ -5039,7 +6548,8 @@ bool CheckMixedValueStorage(Architecture architecture) noexcept
 
 bool RunMultiHeadAddressContracts() noexcept
 {
-    return CheckCompleteQkCohortPartitions() &&
+    return CheckArch35StaticMutexIdTable() &&
+           CheckCompleteQkCohortPartitions() &&
            CheckArch22MultiHeadAddresses(4U) &&
            CheckArch22MultiHeadAddresses(3U) &&
            CheckArch35MultiHeadAddresses() &&
@@ -5087,13 +6597,14 @@ bool RunArch22OperationCase(ResolveChunk resolveChunk,
     OperationTrace vectorOperations{};
     SyncTrace vectorSynchronization{};
     LocalSyncTrace vectorLocalDependencies{};
+    MutexTrace vectorMutexes{};
     TraceClock vectorClock{};
     VectorOps vectorOps{};
     vectorOps.trace = &vectorOperations;
     vectorOps.clock = &vectorClock;
     CubeOps unusedCubeOps{};
     SyncLedger vectorSync{&vectorSynchronization, &vectorLocalDependencies,
-                          &vectorClock};
+                          &vectorClock, &vectorMutexes};
     WorkspaceView vectorWorkspace{};
     vectorWorkspace.backingBytes = sizing.totalBytes;
     for (std::uint32_t aiv = 0U; aiv < kAivPerWorkgroup; ++aiv) {
@@ -5105,20 +6616,22 @@ bool RunArch22OperationCase(ResolveChunk resolveChunk,
     OperationTrace cubeOperations{};
     SyncTrace cubeSynchronization{};
     LocalSyncTrace cubeLocalDependencies{};
+    MutexTrace cubeMutexes{};
     TraceClock cubeClock{};
     CubeOps cubeOps{};
     cubeOps.trace = &cubeOperations;
     cubeOps.clock = &cubeClock;
     VectorOps unusedVectorOps{};
     SyncLedger cubeSync{&cubeSynchronization, &cubeLocalDependencies,
-                        &cubeClock};
+                        &cubeClock, &cubeMutexes};
     WorkspaceView cubeWorkspace{};
     cubeWorkspace.backingBytes = sizing.totalBytes;
     RunChunkKdaFwdPreparePseudocode(
         tiling, 0U, CoreRole::Aic, 0U, cubeWorkspace, cubeSync,
         unusedVectorOps, cubeOps, resolveChunk);
 
-    return CheckArch22VectorOperations(
+    return EmptyMutexTrace(vectorMutexes) && EmptyMutexTrace(cubeMutexes) &&
+           CheckArch22VectorOperations(
                vectorOperations, vectorSynchronization,
                vectorLocalDependencies, validRows, abi, useExp2,
                gateStorage, tiling.scale) &&
@@ -5181,13 +6694,14 @@ bool RunArch35OperationCase(ResolveChunk resolveChunk,
     OperationTrace vectorOperations{};
     SyncTrace vectorSynchronization{};
     LocalSyncTrace vectorLocalDependencies{};
+    MutexTrace vectorMutexes{};
     TraceClock vectorClock{};
     VectorOps vectorOps{};
     vectorOps.trace = &vectorOperations;
     vectorOps.clock = &vectorClock;
     CubeOps unusedCubeOps{};
     SyncLedger vectorSync{&vectorSynchronization, &vectorLocalDependencies,
-                          &vectorClock};
+                          &vectorClock, &vectorMutexes};
     WorkspaceView vectorWorkspace{};
     vectorWorkspace.backingBytes = sizing.totalBytes;
     RunChunkKdaFwdPreparePseudocode(
@@ -5197,13 +6711,14 @@ bool RunArch35OperationCase(ResolveChunk resolveChunk,
     OperationTrace cubeOperations{};
     SyncTrace cubeSynchronization{};
     LocalSyncTrace cubeLocalDependencies{};
+    MutexTrace cubeMutexes{};
     TraceClock cubeClock{};
     CubeOps cubeOps{};
     cubeOps.trace = &cubeOperations;
     cubeOps.clock = &cubeClock;
     VectorOps unusedVectorOps{};
     SyncLedger cubeSync{&cubeSynchronization, &cubeLocalDependencies,
-                        &cubeClock};
+                        &cubeClock, &cubeMutexes};
     WorkspaceView cubeWorkspace{};
     cubeWorkspace.backingBytes = sizing.totalBytes;
     RunChunkKdaFwdPreparePseudocode(
@@ -5212,11 +6727,11 @@ bool RunArch35OperationCase(ResolveChunk resolveChunk,
 
     return CheckArch35VectorOperations(
                vectorOperations, vectorSynchronization,
-               vectorLocalDependencies, validRows, abi, useExp2,
-               gateStorage, tiling.scale) &&
+               vectorLocalDependencies, vectorMutexes, validRows, abi,
+               useExp2, gateStorage, tiling.scale) &&
            CheckArch35CubeOperations(cubeOperations, cubeSynchronization,
-                                     cubeLocalDependencies, validRows,
-                                     tiling.key);
+                                     cubeLocalDependencies, cubeMutexes,
+                                     validRows, tiling.key);
 }
 
 bool RunArch35OperationCasesForBothAbis(ResolveChunk resolveChunk,

@@ -199,42 +199,6 @@ inline Offset AkkFp32Resident(const HeadTask &head)
            head.groupLocalHead * L1Policy::AkkFp32Resident::kAkkStride;
 }
 
-inline void RequireMte2ToMte1Inputs(const SyncLedger &sync,
-                                    Stage stage) noexcept
-{
-    // 待实现的本核输入就绪依赖。该阶段内所有 GM/工作区 -> L1 MTE2 搬运
-    // 必须先完成，MTE1 才能搬运 MMAD 操作数。具体 A5/CANN HardEvent
-    // 仍需以目标版本编译验证为准。
-    sync.Local(LocalDependency::Mte2ToMte1Inputs, stage);
-}
-
-inline void RequireCubeToMte1OperandReuse(const SyncLedger &sync,
-                                          Stage stage) noexcept
-{
-    // 待实现的本核操作数释放依赖。仅当当前 C2 分带或 Cube 阶段的所有独立
-    // MMAD 读取方均已消费各自 L0A/L0B 通道后才能调用；此后下一次 MTE1
-    // 搬运才可以覆盖该通道。
-    sync.Local(LocalDependency::CubeToMte1OperandReuse, stage);
-}
-
-inline void RequireMte2FillToLoadWaw(const SyncLedger &sync,
-                                     Stage stage) noexcept
-{
-    // 待实现的本核 MTE2 WAW 依赖。部分公开 AkkOut 重新装载会先将最终紧凑 L1
-    // 象限清零，再仅覆盖有效行。源码顺序不能替代目标 A5/CANN 版本的
-    // 事件或屏障。
-    sync.Local(LocalDependency::Mte2FillToLoadWaw, stage);
-}
-
-inline void RequireCubeToFixpipeOutput(const SyncLedger &sync,
-                                       Stage stage) noexcept
-{
-    // 待实现的本核结果就绪依赖。Cube 必须先完成指定 L0C 区域的生成，
-    // Fixpipe 才能读取。仅靠带 Fixpipe 标签的所有者令牌，无法保证前序
-    // Store 或 StoreRounded 的安全性。
-    sync.Local(LocalDependency::CubeToFixpipeOutput, stage);
-}
-
 } // namespace cube_detail
 
 inline void RunC2(const CubeStageArgs &args)
@@ -252,10 +216,6 @@ inline void RunC2(const CubeStageArgs &args)
         const Offset lane = cube_detail::LaneBase(head);
         const Offset l0cLane =
             L0cPolicy::HeadLaneBase(head.groupLocalHead);
-        args.sync->Wait(SyncPoint::L0cBankFree, head.l0cBankId,
-                        head.l0cGeneration, Stage::C2, Pipe::Cube);
-        args.sync->Wait(SyncPoint::L1BankFree, head.l1BankId,
-                        l1Generation, Stage::C2, Pipe::Mte2);
         args.sync->Wait(SyncPoint::V1ScoreReady, head.workspaceSlot,
                         workspaceGeneration, Stage::C2, Pipe::Mte2);
         args.sync->Wait(SyncPoint::V1MainSourceFree, head.localBankId,
@@ -263,19 +223,35 @@ inline void RunC2(const CubeStageArgs &args)
         args.sync->Wait(SyncPoint::C2RawDstFree, head.localBankId,
                         localGeneration, Stage::C2, Pipe::Fixpipe);
 
+        const SymbolicMutexId l1Mutex =
+            Arch35CubeMutexIds::L1Bank(head.l1BankId);
+        const SymbolicMutexId l0OperandMutex =
+            Arch35CubeMutexIds::L0OperandBank(head.l0OperandBankId);
+        const SymbolicMutexId l0cLowerMutex =
+            Arch35CubeMutexIds::L0cLowerHalf(head.l0cBankId);
+
         // 仅执行一次 72 KiB GM->L1 搬运，不按 s 或分块重复搬运。
         const BufferSpan payload = args.workspace->Span(
             WorkspaceRegion::SharedPayload, head.workspaceSlot,
             workspaceGeneration);
+        args.sync->MutexLock(MutexResource::AicL1Bank, l1Mutex,
+                             head.l1BankId, Stage::C2, Pipe::Mte2);
         args.ops->Load(
             Stage::C2,
             cube_detail::CubeSubspan(payload, "packed-score", 0U,
                                      ShapePolicy::kScorePayloadBytes),
             cube_detail::L1Span(head, "C2-current-lane", args.workgroupId,
                                 lane, L1Policy::kLaneBytes, l1Generation));
-        cube_detail::RequireMte2ToMte1Inputs(*args.sync, Stage::C2);
+        args.sync->MutexUnlock(MutexResource::AicL1Bank, l1Mutex,
+                               head.l1BankId, Stage::C2, Pipe::Mte2);
+        args.sync->Local(LocalDependency::Mte2ToMte1Inputs, Stage::C2);
         args.sync->Set(SyncPoint::C2ScorePayloadFree, head.workspaceSlot,
                        workspaceGeneration, Stage::C2, Pipe::Mte2);
+
+        // 一次持有本 head 的 L1 消费锁，覆盖四个有效分带的全部 MTE1 读取；
+        // C4 的下一次 MTE2 复用必须等待这里的 Unlock<PIPE_MTE1>。
+        args.sync->MutexLock(MutexResource::AicL1Bank, l1Mutex,
+                             head.l1BankId, Stage::C2, Pipe::Mte1);
 
         const std::uint32_t validRows = args.work->group.chunk.validRows;
         const std::uint32_t activeBlocks =
@@ -341,15 +317,39 @@ inline void RunC2(const CubeStageArgs &args)
             // MTE1 将 Qplus/Kplus 两个 16 行 L1 源分别装入 zN L0A 的逻辑
             // rows[0,16)/rows[16,32) tile，然后一次 32x128 @ 128xN MMAD
             // 同时生成 Aqk/Akk。两个 tile 不是连续物理半区，也不需要在 L1 搬位。
+            args.sync->MutexLock(MutexResource::AicL0OperandBank,
+                                 l0OperandMutex, head.l0OperandBankId,
+                                 Stage::C2, Pipe::Mte1);
+            // 下述数学记录携带 L1/L0 描述符；正式实现先在当前锁区间发出
+            // L1->L0A/L0B 搬运，再由 PIPE_M 消费同一组 L0 操作数。
+            args.sync->MutexUnlock(MutexResource::AicL0OperandBank,
+                                   l0OperandMutex, head.l0OperandBankId,
+                                   Stage::C2, Pipe::Mte1);
+            args.sync->MutexLock(MutexResource::AicL0cLowerHalf,
+                                 l0cLowerMutex, head.l0cBankId, Stage::C2,
+                                 Pipe::Cube);
+            args.sync->MutexLock(MutexResource::AicL0OperandBank,
+                                 l0OperandMutex, head.l0OperandBankId,
+                                 Stage::C2, Pipe::Cube);
             args.ops->MmadRowStackedLhs(
                 Stage::C2, qBand, kBand, kMinus, packedL0c, stackedL0a,
                 qL0aTile, kL0aTile, kMinusL0b,
                 FromScoreStorage(args.key.scoreStorage),
                 FromScoreStorage(args.key.scoreStorage), C2Policy::kM,
                 C2Policy::kM, physicalN, C2Policy::kK, true);
-            cube_detail::RequireCubeToMte1OperandReuse(*args.sync,
-                                                       Stage::C2);
-            cube_detail::RequireCubeToFixpipeOutput(*args.sync, Stage::C2);
+            args.sync->MutexUnlock(MutexResource::AicL0OperandBank,
+                                   l0OperandMutex, head.l0OperandBankId,
+                                   Stage::C2, Pipe::Cube);
+            args.sync->MutexUnlock(MutexResource::AicL0cLowerHalf,
+                                   l0cLowerMutex, head.l0cBankId, Stage::C2,
+                                   Pipe::Cube);
+            args.sync->Local(LocalDependency::CubeToMte1OperandReuse,
+                             Stage::C2);
+            args.sync->Local(LocalDependency::CubeToFixpipeOutput,
+                             Stage::C2);
+            args.sync->MutexLock(MutexResource::AicL0cLowerHalf,
+                                 l0cLowerMutex, head.l0cBankId, Stage::C2,
+                                 Pipe::Fixpipe);
             args.ops->Store(
                 Stage::C2, rawAqkL0c,
                 cube_detail::CubeMatrixSubspan(
@@ -364,6 +364,9 @@ inline void RunC2(const CubeStageArgs &args)
                     C2Policy::kM, physicalN,
                     C2Policy::kRawLeadingDimension,
                     ShapePolicy::kFp32Bytes));
+            args.sync->MutexUnlock(MutexResource::AicL0cLowerHalf,
+                                   l0cLowerMutex, head.l0cBankId, Stage::C2,
+                                   Pipe::Fixpipe);
 
             // 待确认的 API 约束：必须通过 MakeLayoutL0C(32,N) 的逻辑 tile
             // 选择 packed L0C 的上、下 16 行，再分别写入
@@ -371,8 +374,8 @@ inline void RunC2(const CubeStageArgs &args)
             // 禁止按 row-major 字节偏移切 L0C；目标 CANN 必须验证可直接写入配对
             // AIV 的 UB，且目标行跨度为 64。
         }
-        args.sync->Set(SyncPoint::C2ScoreL1Free, head.l1BankId, l1Generation,
-                       Stage::C2, Pipe::Mte1);
+        args.sync->MutexUnlock(MutexResource::AicL1Bank, l1Mutex,
+                               head.l1BankId, Stage::C2, Pipe::Mte1);
         // 不启动无效分带，也不启动有效分带的尾部列。V3 将原始数据搬运限制在
         // 该物理定义域内。
         args.sync->Set(SyncPoint::C2RawReady, head.localBankId, localGeneration,
@@ -398,10 +401,16 @@ inline void RunC4(const CubeStageArgs &args)
         const Offset quadrantRows = Akk2BPackPolicy::kQuadrantRows;
         const bool hasQ10 = validRows > quadrantRows;
         const bool currentAbi = args.key.abi == PrepareAbi::Current;
-        args.sync->Wait(SyncPoint::C2ScoreL1Free, head.l1BankId,
-                        l1Generation, Stage::C4, Pipe::Mte2);
         args.sync->Wait(SyncPoint::V3VcsReady, head.workspaceSlot,
                         workspaceGeneration, Stage::C4, Pipe::Mte2);
+        const SymbolicMutexId l1Mutex =
+            Arch35CubeMutexIds::L1Bank(head.l1BankId);
+        const SymbolicMutexId l0OperandMutex =
+            Arch35CubeMutexIds::L0OperandBank(head.l0OperandBankId);
+        const SymbolicMutexId l0cLowerMutex =
+            Arch35CubeMutexIds::L0cLowerHalf(head.l0cBankId);
+        args.sync->MutexLock(MutexResource::AicL1Bank, l1Mutex,
+                             head.l1BankId, Stage::C4, Pipe::Mte2);
 
         if (!hasQ10) {
             const Offset akk = cube_detail::Akk2BResident(head);
@@ -414,8 +423,11 @@ inline void RunC4(const CubeStageArgs &args)
             if (currentAbi) {
                 if (validRows < quadrantRows) {
                     args.ops->Fill(Stage::C4, q00, 0U);
-                    cube_detail::RequireMte2FillToLoadWaw(*args.sync,
-                                                          Stage::C4);
+                    args.sync->Local(LocalDependency::Mte2FillToLoadWaw,
+                                     Stage::C4);
+                    args.sync->PipeBarrier(MutexResource::Mte2Overwrite,
+                                           head.l1BankId, Stage::C4,
+                                           Pipe::Mte2);
                 }
                 // 待确认的二维 DataCopy 约束：公开 AkkOut 的 ld=64，而最终常驻的
                 // q00 是紧凑 ld=32。完成这次从跨步布局到紧凑布局的直接搬运后，
@@ -444,11 +456,11 @@ inline void RunC4(const CubeStageArgs &args)
                         ShapePolicy::kStorageBytes),
                     q00);
             }
+            args.sync->MutexUnlock(MutexResource::AicL1Bank, l1Mutex,
+                                   head.l1BankId, Stage::C4, Pipe::Mte2);
             args.sync->Set(SyncPoint::C4PayloadFree, head.workspaceSlot,
                            workspaceGeneration, Stage::C4,
                            currentAbi ? Pipe::Control : Pipe::Mte2);
-            args.sync->Set(SyncPoint::C4AkkPrepReady, head.l1BankId,
-                           l1Generation, Stage::C4, Pipe::Mte2);
             continue;
         }
 
@@ -511,8 +523,11 @@ inline void RunC4(const CubeStageArgs &args)
                 args.ops->Fill(Stage::C4, q01, 0U);
                 if (bottomRows < quadrantRows) {
                     args.ops->Fill(Stage::C4, q11, 0U);
-                    cube_detail::RequireMte2FillToLoadWaw(*args.sync,
-                                                          Stage::C4);
+                    args.sync->Local(LocalDependency::Mte2FillToLoadWaw,
+                                     Stage::C4);
+                    args.sync->PipeBarrier(MutexResource::Mte2Overwrite,
+                                           head.l1BankId, Stage::C4,
+                                           Pipe::Mte2);
                 }
                 args.ops->Load(
                     Stage::C4,
@@ -557,12 +572,13 @@ inline void RunC4(const CubeStageArgs &args)
                 0U);
         }
 
+        args.sync->MutexUnlock(MutexResource::AicL1Bank, l1Mutex,
+                               head.l1BankId, Stage::C4, Pipe::Mte2);
+
         // 仅当上述所有已选择的 MTE2 搬运完成后，该载荷存储区才能切换语义
         // 并供下一阶段复用。
         args.sync->Set(SyncPoint::C4PayloadFree, head.workspaceSlot,
                        workspaceGeneration, Stage::C4, Pipe::Mte2);
-        args.sync->Set(SyncPoint::C4AkkPrepReady, head.l1BankId,
-                       l1Generation, Stage::C4, Pipe::Mte2);
 
         // C4 只消费阶段入口已有的 B/X0；本阶段生成的 T 不在 C4 内读取。
         const Offset t = cube_detail::TResident(head, args.key.akkStorage);
@@ -579,18 +595,50 @@ inline void RunC4(const CubeStageArgs &args)
             head, "C4-X0-L0B", MemorySpace::L0B, args.workgroupId,
             L0bPolicy::kC45Operand.offset, L0bPolicy::kC45Operand.size,
             operandGeneration);
-        cube_detail::RequireMte2ToMte1Inputs(*args.sync, Stage::C4);
+        args.sync->Local(LocalDependency::Mte2ToMte1Inputs, Stage::C4);
+        args.sync->MutexLock(MutexResource::AicL1Bank, l1Mutex,
+                             head.l1BankId, Stage::C4, Pipe::Mte1);
+        args.sync->MutexLock(MutexResource::AicL0OperandBank,
+                             l0OperandMutex, head.l0OperandBankId,
+                             Stage::C4, Pipe::Mte1);
+        // 正式实现中的 L1->L0A/L0B 搬运位于这两个 MTE1 锁之间。
+        args.sync->MutexUnlock(MutexResource::AicL0OperandBank,
+                               l0OperandMutex, head.l0OperandBankId,
+                               Stage::C4, Pipe::Mte1);
+        args.sync->MutexUnlock(MutexResource::AicL1Bank, l1Mutex,
+                               head.l1BankId, Stage::C4, Pipe::Mte1);
+        args.sync->MutexLock(MutexResource::AicL0cLowerHalf,
+                             l0cLowerMutex, head.l0cBankId, Stage::C4,
+                             Pipe::Cube);
+        args.sync->MutexLock(MutexResource::AicL0OperandBank,
+                             l0OperandMutex, head.l0OperandBankId,
+                             Stage::C4, Pipe::Cube);
         args.ops->Mmad(Stage::C4, bCurrent, x0Resident, tL0c, bL0a, x0L0b,
                        MatrixStorage::Fp32, MatrixStorage::Fp32, 32U, 32U,
                        32U);
-        cube_detail::RequireCubeToMte1OperandReuse(*args.sync, Stage::C4);
-        cube_detail::RequireCubeToFixpipeOutput(*args.sync, Stage::C4);
+        args.sync->MutexUnlock(MutexResource::AicL0OperandBank,
+                               l0OperandMutex, head.l0OperandBankId,
+                               Stage::C4, Pipe::Cube);
+        args.sync->MutexUnlock(MutexResource::AicL0cLowerHalf,
+                               l0cLowerMutex, head.l0cBankId, Stage::C4,
+                               Pipe::Cube);
+        args.sync->Local(LocalDependency::CubeToMte1OperandReuse,
+                         Stage::C4);
+        args.sync->Local(LocalDependency::CubeToFixpipeOutput, Stage::C4);
+        args.sync->MutexLock(MutexResource::AicL0cLowerHalf,
+                             l0cLowerMutex, head.l0cBankId, Stage::C4,
+                             Pipe::Fixpipe);
+        args.sync->MutexLock(MutexResource::AicL1Bank, l1Mutex,
+                             head.l1BankId, Stage::C4, Pipe::Fixpipe);
         args.ops->Store(
             Stage::C4, tL0c,
             cube_detail::L1Span(head, "T-resident", args.workgroupId, t,
                                 0x1000U, l1Generation));
-        args.sync->Set(SyncPoint::C4TReady, head.l1BankId, l1Generation,
-                       Stage::C4, Pipe::Fixpipe);
+        args.sync->MutexUnlock(MutexResource::AicL1Bank, l1Mutex,
+                               head.l1BankId, Stage::C4, Pipe::Fixpipe);
+        args.sync->MutexUnlock(MutexResource::AicL0cLowerHalf,
+                               l0cLowerMutex, head.l0cBankId, Stage::C4,
+                               Pipe::Fixpipe);
     }
 }
 
@@ -607,23 +655,21 @@ inline void RunC5(const CubeStageArgs &args)
         const Offset validRows = args.work->group.chunk.validRows;
         const bool hasQ10 = validRows > Akk2BPackPolicy::kQuadrantRows;
         if (!hasQ10) {
-            // C4 的 MTE2 完成后 q00 已常驻。该尾块不生成 T 或 q10，因此 C5
-            // 只透传阶段及所有权凭据。
-            args.sync->Wait(SyncPoint::C4AkkPrepReady, head.l1BankId,
-                            l1Generation, Stage::C5, Pipe::Control);
-            args.sync->Set(SyncPoint::C5AkkReady, head.l1BankId,
-                           l1Generation, Stage::C5, Pipe::Control);
+            // C4 的 MTE2 完成后 q00 已常驻；该尾块不生成 T 或 q10。
+            // C7 对同一 L1 MutexID 的首次访问会直接等待 C4 完成。
             continue;
         }
         const std::uint64_t workspaceGeneration = head.workspaceGeneration;
         const Offset l0cLane =
             L0cPolicy::HeadLaneBase(head.groupLocalHead);
-        // 两个生产者都不可缺少：T 来自 Fixpipe，X1 和稳定的 Akk 象限来自
-        // C4 的 MTE2 搬运。
-        args.sync->Wait(SyncPoint::C4TReady, head.l1BankId, l1Generation,
-                        Stage::C5, Pipe::Mte1);
-        args.sync->Wait(SyncPoint::C4AkkPrepReady, head.l1BankId,
-                        l1Generation, Stage::C5, Pipe::Mte1);
+        // 同一 L1 MutexID 汇合 C4 的 MTE2 与 Fixpipe 两个生产者，C5 的
+        // MTE1 无需再消费两个独立的同核 flag。
+        const SymbolicMutexId l1Mutex =
+            Arch35CubeMutexIds::L1Bank(head.l1BankId);
+        const SymbolicMutexId l0OperandMutex =
+            Arch35CubeMutexIds::L0OperandBank(head.l0OperandBankId);
+        const SymbolicMutexId l0cLowerMutex =
+            Arch35CubeMutexIds::L0cLowerHalf(head.l0cBankId);
         const BufferSpan x1 = cube_detail::L1Span(
             head, "X1-resident", args.workgroupId,
             cube_detail::X1Resident(head, args.key.akkStorage), 0x1000U,
@@ -645,11 +691,40 @@ inline void RunC5(const CubeStageArgs &args)
             head, "C5-T-L0B", MemorySpace::L0B, args.workgroupId,
             L0bPolicy::kC45Operand.offset, L0bPolicy::kC45Operand.size,
             operandGeneration);
+        args.sync->MutexLock(MutexResource::AicL1Bank, l1Mutex,
+                             head.l1BankId, Stage::C5, Pipe::Mte1);
+        args.sync->MutexLock(MutexResource::AicL0OperandBank,
+                             l0OperandMutex, head.l0OperandBankId,
+                             Stage::C5, Pipe::Mte1);
+        // 正式实现中的 L1->L0A/L0B 搬运位于这两个 MTE1 锁之间。
+        args.sync->MutexUnlock(MutexResource::AicL0OperandBank,
+                               l0OperandMutex, head.l0OperandBankId,
+                               Stage::C5, Pipe::Mte1);
+        args.sync->MutexUnlock(MutexResource::AicL1Bank, l1Mutex,
+                               head.l1BankId, Stage::C5, Pipe::Mte1);
+        args.sync->MutexLock(MutexResource::AicL0cLowerHalf,
+                             l0cLowerMutex, head.l0cBankId, Stage::C5,
+                             Pipe::Cube);
+        args.sync->MutexLock(MutexResource::AicL0OperandBank,
+                             l0OperandMutex, head.l0OperandBankId,
+                             Stage::C5, Pipe::Cube);
         args.ops->Mmad(Stage::C5, x1, t, y, x1L0a, tL0b,
                        MatrixStorage::Fp32,
                        MatrixStorage::Fp32, 32U, 32U, 32U, false, true);
-        cube_detail::RequireCubeToMte1OperandReuse(*args.sync, Stage::C5);
-        cube_detail::RequireCubeToFixpipeOutput(*args.sync, Stage::C5);
+        args.sync->MutexUnlock(MutexResource::AicL0OperandBank,
+                               l0OperandMutex, head.l0OperandBankId,
+                               Stage::C5, Pipe::Cube);
+        args.sync->MutexUnlock(MutexResource::AicL0cLowerHalf,
+                               l0cLowerMutex, head.l0cBankId, Stage::C5,
+                               Pipe::Cube);
+        args.sync->Local(LocalDependency::CubeToMte1OperandReuse,
+                         Stage::C5);
+        args.sync->Local(LocalDependency::CubeToFixpipeOutput, Stage::C5);
+        args.sync->MutexLock(MutexResource::AicL0cLowerHalf,
+                             l0cLowerMutex, head.l0cBankId, Stage::C5,
+                             Pipe::Fixpipe);
+        args.sync->MutexLock(MutexResource::AicL1Bank, l1Mutex,
+                             head.l1BankId, Stage::C5, Pipe::Fixpipe);
         if (args.key.akkStorage == AkkStorage::TwoByteAbi) {
             const Offset q10 = cube_detail::Akk2BResident(head) +
                                Akk2BPackPolicy::kQ10.offset;
@@ -688,8 +763,11 @@ inline void RunC5(const CubeStageArgs &args)
                 cube_detail::L1Span(head, "Akk-q10-fp32", args.workgroupId,
                                     q10, 0x1000U, l1Generation));
         }
-        args.sync->Set(SyncPoint::C5AkkReady, head.l1BankId, l1Generation,
-                       Stage::C5, Pipe::Fixpipe);
+        args.sync->MutexUnlock(MutexResource::AicL1Bank, l1Mutex,
+                               head.l1BankId, Stage::C5, Pipe::Fixpipe);
+        args.sync->MutexUnlock(MutexResource::AicL0cLowerHalf,
+                               l0cLowerMutex, head.l0cBankId, Stage::C5,
+                               Pipe::Fixpipe);
     }
 }
 
@@ -707,8 +785,6 @@ inline void RunC7(const CubeStageArgs &args)
         const Offset validRows = args.work->group.chunk.validRows;
         const Offset l0cLane =
             L0cPolicy::HeadLaneBase(head.groupLocalHead);
-        args.sync->Wait(SyncPoint::C5AkkReady, head.l1BankId, l1Generation,
-                        Stage::C7, Pipe::Mte1);
         args.sync->Wait(SyncPoint::V6RhsReady, head.workspaceSlot,
                         workspaceGeneration, Stage::C7, Pipe::Mte2);
         if (head.qkLastConsumer) {
@@ -730,9 +806,19 @@ inline void RunC7(const CubeStageArgs &args)
             hasQ10 ? ShapePolicy::kBt : Akk2BPackPolicy::kQuadrantRows;
         const Offset rhsPlaneBytes =
             rhsRows * ShapePolicy::kK * ShapePolicy::kStorageBytes;
+        const SymbolicMutexId l1Mutex =
+            Arch35CubeMutexIds::L1Bank(head.l1BankId);
+        const SymbolicMutexId l0OperandMutex =
+            Arch35CubeMutexIds::L0OperandBank(head.l0OperandBankId);
+        const SymbolicMutexId l0cLowerMutex =
+            Arch35CubeMutexIds::L0cLowerHalf(head.l0cBankId);
+        const SymbolicMutexId l0cUpperMutex =
+            Arch35CubeMutexIds::L0cUpperHalf(head.l0cBankId);
         const BufferSpan rhs = cube_detail::L1Span(
             head, "C7-planar-RHS", args.workgroupId, lane, 0x8000U,
             l1Generation);
+        args.sync->MutexLock(MutexResource::AicL1Bank, l1Mutex,
+                             head.l1BankId, Stage::C7, Pipe::Mte2);
         if (hasQ10) {
             args.ops->Load(
                 Stage::C7,
@@ -755,7 +841,9 @@ inline void RunC7(const CubeStageArgs &args)
                 cube_detail::CubeSubspan(rhs, "V-beta-top32", 0x4000U,
                                          rhsPlaneBytes));
         }
-        cube_detail::RequireMte2ToMte1Inputs(*args.sync, Stage::C7);
+        args.sync->MutexUnlock(MutexResource::AicL1Bank, l1Mutex,
+                               head.l1BankId, Stage::C7, Pipe::Mte2);
+        args.sync->Local(LocalDependency::Mte2ToMte1Inputs, Stage::C7);
         // GM 载荷是两个平面式 [64,128] 矩阵，不是按行交错的 [64,256]。
         // 因此完整路径将一个逻辑乘积展开为两个 N=128、按象限打包的
         // MMAD；仅上半区有效的尾块则使用 q00 和各平面右操作数的前 32 行。
@@ -790,6 +878,23 @@ inline void RunC7(const CubeStageArgs &args)
         const BufferSpan vBetaL0b = cube_detail::L0OperandSpan(
             head, "C7-Vbeta-L0B", MemorySpace::L0B, args.workgroupId,
             L0bPolicy::kC7VBeta.offset, rhsPlaneBytes, operandGeneration);
+        args.sync->MutexLock(MutexResource::AicL1Bank, l1Mutex,
+                             head.l1BankId, Stage::C7, Pipe::Mte1);
+        args.sync->MutexLock(MutexResource::AicL0OperandBank,
+                             l0OperandMutex, head.l0OperandBankId,
+                             Stage::C7, Pipe::Mte1);
+        // 正式实现一次装入 Akk、Kbeta 和 Vbeta，随后两次 MMAD 只读复用。
+        args.sync->MutexUnlock(MutexResource::AicL0OperandBank,
+                               l0OperandMutex, head.l0OperandBankId,
+                               Stage::C7, Pipe::Mte1);
+        args.sync->MutexUnlock(MutexResource::AicL1Bank, l1Mutex,
+                               head.l1BankId, Stage::C7, Pipe::Mte1);
+        args.sync->MutexLock(MutexResource::AicL0OperandBank,
+                             l0OperandMutex, head.l0OperandBankId,
+                             Stage::C7, Pipe::Cube);
+        args.sync->MutexLock(MutexResource::AicL0cLowerHalf,
+                             l0cLowerMutex, head.l0cBankId, Stage::C7,
+                             Pipe::Cube);
         // W 和 U 的 L0C 目标互不重叠，因此第二个 MMAD 不会覆盖第一个 MMAD
         // 仍被 Fixpipe 读取的源数据。
         if (hasQ10) {
@@ -821,7 +926,13 @@ inline void RunC7(const CubeStageArgs &args)
                 Akk2BPackPolicy::kQuadrantRows, ShapePolicy::kK,
                 Akk2BPackPolicy::kQuadrantColumns);
         }
-        cube_detail::RequireCubeToFixpipeOutput(*args.sync, Stage::C7);
+        args.sync->MutexUnlock(MutexResource::AicL0cLowerHalf,
+                               l0cLowerMutex, head.l0cBankId, Stage::C7,
+                               Pipe::Cube);
+        args.sync->Local(LocalDependency::CubeToFixpipeOutput, Stage::C7);
+        args.sync->MutexLock(MutexResource::AicL0cLowerHalf,
+                             l0cLowerMutex, head.l0cBankId, Stage::C7,
+                             Pipe::Fixpipe);
         if (validRows != 0U) {
             args.ops->StoreRounded(
                 Stage::C7,
@@ -835,9 +946,15 @@ inline void RunC7(const CubeStageArgs &args)
                     ShapePolicy::kStorageBytes, workspaceGeneration),
                 args.key.inputStorage);
         }
+        args.sync->MutexUnlock(MutexResource::AicL0cLowerHalf,
+                               l0cLowerMutex, head.l0cBankId, Stage::C7,
+                               Pipe::Fixpipe);
         // C7 将 Kbeta/Vbeta 放在互不重叠的 L0B 区域，并共享同一只读 Akk
         // L0A 操作数。第二个 MMAD 的目标是 +32 KiB 处的 uL0c；policy.h 已证明
         // 两个乘积完成后统一释放不会与 MTE1 竞争。
+        args.sync->MutexLock(MutexResource::AicL0cUpperHalf,
+                             l0cUpperMutex, head.l0cBankId, Stage::C7,
+                             Pipe::Cube);
         if (hasQ10) {
             args.ops->MmadQuadrantPackedLhs(
                 Stage::C7, akk, vBeta, uL0c, akkL0a, vBetaL0b,
@@ -863,10 +980,18 @@ inline void RunC7(const CubeStageArgs &args)
                 Akk2BPackPolicy::kQuadrantRows, ShapePolicy::kV,
                 Akk2BPackPolicy::kQuadrantColumns);
         }
-        cube_detail::RequireCubeToMte1OperandReuse(*args.sync, Stage::C7);
-        cube_detail::RequireCubeToFixpipeOutput(*args.sync, Stage::C7);
-        args.sync->Set(SyncPoint::L1BankFree, head.l1BankId,
-                       l1Generation + 1U, Stage::C7, Pipe::Mte1);
+        args.sync->MutexUnlock(MutexResource::AicL0cUpperHalf,
+                               l0cUpperMutex, head.l0cBankId, Stage::C7,
+                               Pipe::Cube);
+        args.sync->MutexUnlock(MutexResource::AicL0OperandBank,
+                               l0OperandMutex, head.l0OperandBankId,
+                               Stage::C7, Pipe::Cube);
+        args.sync->Local(LocalDependency::CubeToMte1OperandReuse,
+                         Stage::C7);
+        args.sync->Local(LocalDependency::CubeToFixpipeOutput, Stage::C7);
+        args.sync->MutexLock(MutexResource::AicL0cUpperHalf,
+                             l0cUpperMutex, head.l0cBankId, Stage::C7,
+                             Pipe::Fixpipe);
         if (validRows != 0U) {
             args.ops->StoreRounded(
                 Stage::C7,
@@ -880,9 +1005,9 @@ inline void RunC7(const CubeStageArgs &args)
                     ShapePolicy::kStorageBytes, workspaceGeneration),
                 args.key.valueStorage);
         }
-        args.sync->Set(SyncPoint::L0cBankFree, head.l0cBankId,
-                       head.l0cGeneration + 1U, Stage::C7,
-                       Pipe::Fixpipe);
+        args.sync->MutexUnlock(MutexResource::AicL0cUpperHalf,
+                               l0cUpperMutex, head.l0cBankId, Stage::C7,
+                               Pipe::Fixpipe);
         // V0/V3/V6/C5 的就绪关系可传递地保证此前所有已启用的公开输出搬出均已完成。
         // 因此本次 Fixpipe 完成后即为该槽位的最后一个使用方，并直接归还
         // 下一代工作区凭据。

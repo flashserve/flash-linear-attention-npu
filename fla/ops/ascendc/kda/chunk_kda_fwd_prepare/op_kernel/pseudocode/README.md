@@ -5,9 +5,10 @@
 文件命名和 kernel 侧分层参考 `chunk_fwd_h`，但本目录**不参与构建**，不会创建算子定义、
 Host Tiling、CMake target、aclnn/Python API 或设备 kernel ABI。
 
-`VectorOps`、`CubeOps`、`SyncLedger` 中类似 Ascend C API 的名字都只是符号化数据流标记，
-不代表已经确认目标 CANN 的函数重载、内存通路、event mode、flag ID 或同步能力。
-所有这类边界均明确标为 **PROPOSED**。
+`VectorOps`、`CubeOps` 中类似 Ascend C API 的名字仍只是符号化数据流标记。Arch35
+`SyncLedger::MutexLock/MutexUnlock` 则明确映射为官方
+`Mutex::Lock<pipe>(id)/Mutex::Unlock<pipe>(id)` 的核内流水合同，但当前文件记录的是可执行 host
+轨迹，不是设备 API 调用。尚未确认的内存通路、矩阵布局和设备接口继续标为 **PROPOSED**。
 
 ## 文件结构
 
@@ -58,6 +59,22 @@ score block 或硬件 tile 分 pass。Cube 的独立逻辑 MMAD 可在编译期�
   VF 的 CANN 接口、寄存器压力或数值顺序，因此不能据此把八 Stage 降为七 Stage。
 - Arch22 的 C2 raw，以及 `M>32` 时的 C4 `T`、C5 `q10`，分别形成 GM relay producer/consumer 边；不能把相邻 Cube
   Stage 合并后读取本 Stage 的 Cube/Fixpipe 新输出。
+
+## 主循环展开
+
+`RunChunkKdaFwdPreparePseudocode` 已去掉
+`DispatchHeadPartition -> Dispatch -> RunArch*Branch -> Make*Args` 四层调度包装。主循环现在直接展示
+`chunk -> head partition -> head group -> AIV/AIC` 的控制结构，并在角色分支中按物理顺序发射：
+
+```text
+Arch35 AIV: V0 -> V1 -> V3 -> V6
+Arch35 AIC: C2 -> C4 -> C5 -> C7
+Arch22 AIV: pair-wise (V0 -> V1) -> pair-wise V3 -> pair-wise V6
+Arch22 AIC: C2 -> C4 -> C5 -> C7
+```
+
+保留 `RunV*`/`RunC*` 是为了表达不可合并的物理 Stage，而不是继续隐藏调度。各 Stage 内部仍自行
+等待跨核 ready/free，因此上面的源码顺序不表示 AIV 与 AIC 之间存在隐式先后关系。
 
 V0 的核心数学不能被一个含糊的 `ApplyFrozen*` 隐藏。候选 TilingKey 必须显式携带以下
 **PROPOSED** 语义轴，但当前伪代码不冻结它们的数值编码：
@@ -157,6 +174,40 @@ packed TileMmad 宏格，不构成 GM 重读或语义 pass。
 下表中的地址都是 owner 内的 byte half-open range。hard pad/reserve 不能借给另一个 head、
 generation 或未登记 scratch；Stage overlay 只能在上一语义的最后异步 reader 完成后原址改名，
 不能通过 UB/L1 内搬位整理碎片。
+
+### 静态本地内存与 Arch35 Mutex
+
+当前方案确定采用**静态 Tensor/静态 offset** 管理，不使用 `TPipe/TQue` 动态分配：AIV 的 UB
+`MAIN/AUX`、AIC 的 L1 resident/current lane、L0A/L0B operand 和 L0C head lane 都由编译期常量
+确定地址，Stage 只在既定地址上改变语义。因而 Arch35 的 `MutexID` 也由编译期表静态指定，
+不调用仅用于 `TPipe/TQue` 范式的 `AllocMutexID/ReleaseMutexID`。
+
+每个物理 core 都有独立的 MutexID 命名空间，当前只使用如下 ID：
+
+| Arch35 core | MutexID | 静态资源 |
+| --- | --- | --- |
+| 每个 AIV | `0..1` | 本 AIV 的 local UB slot 0、1 |
+| AIC | `0..3` | 四个 group-local head 的 L1 bank |
+| AIC | `4` | 四个 head 共用的 L0A/L0B operand bank |
+| AIC | `5..8` | head 0..3 的 L0C lower half |
+| AIC | `9..12` | head 0..3 的 L0C upper half |
+
+`13..27` 当前不用，系统保留的 `28..31` 绝不占用。每个
+`Mutex::Lock<pipe>(id)` 必须与同一 ID、同一 pipe 的 `Mutex::Unlock<pipe>(id)` 成对；同一 ID
+在前一个 Lock/Unlock 区间闭合前不得再次 Lock，也不能跨 pipe 嵌套。L0C lower/upper 使用不同
+ID，正是为了让 C7 的 W Fixpipe 读取 lower half 时，U 的 Cube 计算可以在 upper half 上重叠，
+而不把两个独立生命周期串行化。
+
+Mutex 只负责 Arch35 **同一核内** MTE2、MTE1、Cube、Fixpipe、Vector、MTE3 异步流水间的
+先后关系，不能替代 AIC/AIV 之间的 `V1ScoreReady`、`C2RawReady`、`V3VcsReady`、
+`C4PayloadFree`、`V6RhsReady`、`SlotFree` 或 Q/K cache ready/free。Arch22 不改：核内仍按
+目标 CANN 9.1 支持的成对 HardEvent 设计，核间仍使用 mode-0x2 collective/ready-free 合同。
+
+Mutex 也不建立同一 pipe 内的指令顺序。C4 中 MTE2 对同一最终 L1 象限先 `Fill` 再 `Load`
+属于同 pipe WAW，必须显式使用 `PipeBarrier<PIPE_MTE2>()`；禁止使用
+`PipeBarrier<PIPE_ALL>()` 扩大同步范围。MutexID 范围、Lock/Unlock 配对、禁止嵌套和 barrier
+位置均由 host 合同测试检查；设备 kernel 不加入断言。同步语义依据
+[Ascend C Mutex 官方文档](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/latest/API/ascendcopapi/docs/zh/api/SIMD-API/basic_api/sync_control/intra_core_sync/Mutex_ISASI.md)。
 
 ### Arch35 UB：每个 AIV 248 KiB
 
@@ -318,8 +369,9 @@ C7 在每条 lane 内同时保留 `W[0x0000,0x8000)` 与 `U[0x8000,0x10000)` 两
 目标，避免 U MMAD 覆盖仍被 W Fixpipe 读取的 source。四个 head 的 C7 峰值因此是完整
 `0x40000 = 256 KiB`，这是本候选的 L0C 容量下界。相邻 head、相邻 Stage 或下一 head-group
 复用任何 L0A/L0B/L0C 地址前，仍必须等待对应 MTE1/Cube/Fixpipe 最后 reader；本表不提供隐式
-执行顺序。目标 A5 是否提供至少 256 KiB 可用 L0C、上述 MMAD/Fixpipe layout 表达能力及所需
-HardEvent 组合，尚未由目标 CANN 头文件和最小设备编译证明，均为 **PROPOSED** API gate。
+执行顺序。目标 A5 是否提供至少 256 KiB 可用 L0C，以及上述 MMAD/Fixpipe layout 表达能力，
+尚未由最小设备编译证明，仍是 **PROPOSED** API gate；其核内流水同步固定使用上面的
+lower/upper MutexID，不再设计额外的 event 组合。
 
 ### Arch22 L0C：两个 stage-use lane
 
@@ -509,7 +561,8 @@ wavefront。workspace 的 Q/K cache 子区与同 slot 的每-HV G/beta/payload �
 前者只由 `QkCacheFree/Ready` 管理，允许在 owner 自身 `SlotFree` 后继续存活；后者由
 `SlotFree` 管理。private UB、shared UB、AIC L1 与 AIC L0C 同样是独立 owner，不能只用一个
 slot/generation 表示。每个 workgroup 的 AIC 与两个 AIV 按完全相同的 `WorkItem` 顺序维护。
-Arch35 保持原四域 transaction ticket；Arch22 增加 shared stage-use，并把 L0C 改为 stage-use：
+Arch35 的 workspace/QK cache 保留跨 AIC/AIV transaction ticket，本核 UB/L1/L0 operand/L0C
+改由静态 MutexID 管理；Arch22 增加 shared stage-use，并把 L0C 改为 stage-use：
 
 ```text
 OwnerTicketState:
@@ -562,9 +615,11 @@ Both architectures in actual AIC execution order:
 Arch22 的 shared generation 按 `V01 slot0, V01 slot1, V6 slot0, V6 slot1` 的每-AIV真实顺序
 分配；L0C generation 按 Stage-major、pair-wave 次序分配。它们不能在
 `HeadTask` 上各存一个 transaction-long generation，否则 head2 会拿到错误的初始 credit 并覆盖
-head0 的异步 reader。Arch35 仍由 C7 归还 transaction-long L0C ticket。
-L0 operand generation 也按 AIC 的 Stage-major 顺序分配，但只约束 L0A/L0B：Arch35 在唯一
-bank 上连续，Arch22 在两条 physical lane 上分别连续。未执行的 C2 tail band、`M<=32` 时跳过的
+head0 的异步 reader。Arch35 的 `l0cGeneration` 只保留为 host 轨迹中的 transaction-long
+owner 标签；设备流水由 C2 到 C7 对应 lower/upper MutexID 的 Lock/Unlock 链闭环，不再发送
+`L0cBankFree` ticket。L0 operand generation 也按 AIC 的 Stage-major 顺序分配，但只作为
+L0A/L0B owner 的 host 轨迹标签：Arch35 在唯一 bank 上连续，Arch22 在两条 physical lane 上分别
+连续。未执行的 C2 tail band、`M<=32` 时跳过的
 C4/C5 都不占 generation；一个 epoch 内所有 L0 operand descriptor 必须具有相同 bank 和 generation。
 Arch22 的 `pairCollectiveGenerations[2]` 则按 pair owner 独立连续：partial pair 仍分配一张 ticket，
 完全空 pair 不分配；inactive head 不递增 per-head owner，但其 AIV 必须参与 partial pair dummy arrive。
@@ -574,11 +629,12 @@ workgroup balanced begin、ChunkOnly 与 ChunkHeadGroup fallback 都从每个物
 开始且严格连续。`HV=1..17` 的 ratio-1 路径以及 `R=2/3/4/8` cohort、两种分核模式、不同非零
 begin 由 host 合同覆盖。
 
-除 level-triggered `QkCacheReady` 外，owner credit 都采用点对点 ticket：初始化只预置
-`Free[0]`；当前 owner 先
-`Wait(Free[currentGeneration])`，最后消费者只发布一次 `Set(Free[currentGeneration+1])`，下一 owner
-的 generation 恰好加一。禁止 Set 同代，否则同一个 token 会同时充当 acquire 前置和重复发布。
-Arch35 由 V0/V6 负责 local UB ticket，C2/C7 负责 L1 和 transaction-long L0C ticket。Arch22 的
+跨核 owner credit 和 Arch22 本地 owner credit 采用有界点对点 ticket：初始化只预置
+`Free[0]`；当前 owner 先 `Wait(Free[currentGeneration])`，最后消费者只发布一次
+`Set(Free[currentGeneration+1])`，下一 owner 的 generation 恰好加一。禁止 Set 同代，否则
+同一个 token 会同时充当 acquire 前置和重复发布。Arch35 的 workspace slot 与 Q/K cache 仍按
+该规则跨 AIC/AIV 闭环；其 local UB、L1、L0 operand 和 L0C 不再占 flag/ticket，而由各自静态
+MutexID 的流水链保护。Arch22 的
 V0/V1 与 V6 分别闭环 shared ticket，V3 只使用 private bank；每个 Cube Stage 的最后 Fixpipe reader分别闭环本 Stage
 L0C ticket。C7 最终 W/U Fixpipe 完成负责 workspace slot ticket。其余边按真实资源域选择 ticket：context/payload/transaction 使用
 `(workspaceSlot, workspaceGeneration)`，beta/raw/local-source 使用
@@ -591,8 +647,9 @@ GM slot 不增加 UB：Arch35 是两份 `112 KiB MAIN + 12 KiB AUX`；Arch22 是
 bank加一份40 KiB shared arena。上一 workspace generation 的 output drain 与 `SlotFree` 未闭环前，
 禁止新 generation 复用同一 slot 的每-HV G/beta/payload；即使 `SlotFree` 已归还，只要
 `QkCacheFree` 未闭环，任何后续事务仍不得覆盖该 slot 的 Qhat/Khat cache 子区。上一 local
-generation 未归还前也禁止覆盖同一物理 UB bank。
-上一 L0C generation 未由对应架构定义的最后 Fixpipe reader 归还前，不得写入同一物理 lane。
+generation 的 AIV Mutex 链未闭合前也禁止覆盖同一物理 UB bank。Arch35 的 L0C lower/upper
+Mutex 链、Arch22 的 L0C stage-use generation 未由各自最后 Fixpipe reader 闭合前，都不得写入
+同一物理 lane。
 
 ## Ready/free 合同
 
@@ -603,24 +660,22 @@ generation 未归还前也禁止覆盖同一物理 UB bank。
 
 | Producer -> consumer | Arch35 必须保留的边 |
 | --- | --- |
-| slot owner -> `V0` | `SlotFree(workspaceSlot, workspaceGeneration)` 与独立的 `LocalBankFree(localBankId, localGeneration)`；V6 最后使用 UB 后发布 `LocalBankFree(localBankId, localGeneration+1)` |
-| L1 owner -> `C2` | `L1BankFree(l1BankId, l1Generation)`；C7 最后读取本 lane/Akk resident 后发布 `L1BankFree(l1BankId, l1Generation+1)` |
-| L0C owner -> `C2` | `L0cBankFree(l0cBankId, l0cGeneration)`；C7 最后一个 U Fixpipe reader 完成后发布 `L0cBankFree(l0cBankId, l0cGeneration+1)` |
-| `V0` -> `V1` | local `V0ExportDone`；V1 只能在 V0 的所有 MTE3 source reader 完成后 overlay 同一 MAIN source |
-| HK cache owner -> mapped HV `V0/V6` | owner 等待 `QkCacheFree(slot,generation)`，MTE3 完成 Qhat/Khat 后发布一次 level-triggered `QkCacheReady`；同 cohort 的非 owner V0 可多次 acquire，但不能消费或清除 ready；每个 HV 的 `V0ContextReady` 传递其 V0 已 acquire cache-ready 的先行关系，V6 直接回读 owner cache |
-| `V0` -> `V3` | `V0BetaReady` 保留 `betaEff`；V3/V6 的后续 local 生命周期最终由 `LocalBankFree` next-ticket 闭环 |
-| `V0` -> `V6` | workspace `V0ContextReady`；它表示本 HV 的所选 G source 已写完，且其 V0 已 acquire owner Q/K cache：Fused 为 context G，Current 为公开 `gk`；只由 V6 消费，不是 V1 的 local 前置 |
+| slot owner -> `V0` | AIC/AIV 间保留 `SlotFree(workspaceSlot, workspaceGeneration)`；同 AIV 的 UB slot 复用由静态 MutexID `0/1` 串接，不再占 `LocalBankFree` flag |
+| local UB `V0 -> V1 -> V3 -> V6 -> next V0` | 每个 Stage 的 MTE2/Vector/MTE3 按实际参与 pipe 对同一 UB MutexID 依次 Lock/Unlock；后续 pipe 首次 Lock 等待前序 pipe Unlock，最后一个 MTE3 reader 闭合后才能由下一使用者复用 |
+| HK cache owner -> mapped HV `V0/V6` | owner 等待 `QkCacheFree(slot,generation)`，MTE3 完成 Qhat/Khat 后发布一次 level-triggered `QkCacheReady`；同 cohort 的非 owner V0 可多次 acquire，但不能消费或清除 ready；该 acquire 的先行关系由本 AIV 后续 UB Mutex 链传到 V6，V6 直接回读 owner cache |
+| `V0` -> `V1/V3/V6` | V0 的 context/G 写出及 AUX `betaEff` 生命周期均由同一 UB Mutex 链传递；不再额外发布 `V0ExportDone`、`V0BetaReady` 或 `V0ContextReady` |
 | `V1` UB source -> `C2` raw destination | score 的最后一个 MTE3 source reader 完成后发布 `V1MainSourceFree`；C2 写 raw 前还要持有对应 generation 的 `C2RawDstFree` credit |
-| `V1` -> `C2` | `V1ScoreReady`；C2 一次 MTE2 读完 GM payload 后返回 `C2ScorePayloadFree`，最后一个 MTE1 reader 完成后另发 `C2ScoreL1Free` |
-| `C2` -> `V3` | 来自真实 raw-score producer pipe 的 `C2RawReady`；`C2RawDstFree` 只由当前 V1 source drain 发布并被当前 C2 消费，跨代物理 UB 复用统一由 `LocalBankFree` 管理 |
+| `V1` -> `C2` | AIV 发布 `V1ScoreReady`；C2 一次 MTE2 读完 GM payload 后返回 `C2ScorePayloadFree`。C2 的 L1 MTE2/MTE1 生命周期由对应 L1 MutexID 串接，不再发布 `C2ScoreL1Free` |
+| `C2` -> `V3` | 来自真实 raw-score producer pipe 的 `C2RawReady`；`C2RawDstFree` 只由当前 V1 source drain 发布并被当前 C2 消费，V3 等待 ready 后再进入本 AIV 的 UB Mutex 链 |
 | `V3` -> `C4` | `M>32` 为 VCS 与稳定 Akk source 完成后的 `V3VcsReady`；`M<=32` 只保证 q00 source 已提交。Fused 的 stable Akk source 是 tight payload，Current 是公开 ld64 AkkOut |
-| `V3` -> `V6` | 所有 V3 MTE3 source reader 完成后的独立 `V3LocalSourceFree` |
-| `C4` -> `C5` | `M>32` 保留 Fixpipe `C4TReady` 与 resident `C4AkkPrepReady` 两条边；`M<=32` 不产生 T，C5 以 Control wait/set 把 Akk ready 继续传给 C7 |
+| `V3` -> `V6` | 所有 V3 MTE3 source reader 完成后，通过同一 UB MutexID 的后续 `Lock<PIPE_MTE2>` 交接，不再发布 `V3LocalSourceFree` |
+| `C2 -> C4 -> C5 -> C7` 的 L1 resident | head 0..3 分别使用 L1 MutexID `0..3`，按 MTE2/MTE1/Fixpipe 的实际 reader/writer 串接；`C4TReady`、`C4AkkPrepReady`、`C5AkkReady` 这类本核 flag 被取消 |
+| 各 Cube Stage 的 L0 operand | 全部 head 共用 MutexID `4`；每次 MTE1 装载完成后交给 Cube，当前 epoch 的最后 MMAD reader Unlock 后下一 epoch 才能覆盖 L0A/L0B |
+| 各 Cube Stage 的 L0C result | 每个 head 分别使用 lower MutexID `5..8` 与 upper MutexID `9..12`；Cube 生产后交给 Fixpipe，C7 的 W lower Fixpipe 与 U upper Cube/Fixpipe 可合法重叠 |
 | `C4` -> `V6` | C4 一次读完全部所选 payload 段后的 `C4PayloadFree` |
-| `C5` -> `C7` | `M>32` 为最终 resident quadrant 提交后的 `C5AkkReady`；`M<=32` 为 C4 tight q00 ready 的 Control 传递 |
 | `V6` -> `C7` | 对应 32/64 行 RHS drain 后的 `V6RhsReady` |
 | all mapped `V6` -> AIC C7 -> next HK owner | 每个 HV 在 Qhat/Khat MTE2 source read、VF 和 RHS MTE3 完成后发布 `V6RhsReady`；Arch35 C7 依次等待 cohort 全部 head，Arch22 C7 依次等待覆盖 cohort 的全部 pair collective；AIC coordinator 观察完整集合后只发布一次 `QkCacheFree(slot,generation+1)`。逻辑最后 HV 不能自行 free；ready/free 是 generation 状态，不能用一次性单消费者 flag 冒充广播 cache |
-| `C7` -> owner | C7 最后一个 MTE1 reader 完成后发布 `L1BankFree(l1BankId, l1Generation+1)`；最终 U Fixpipe reader 完成后发布 `L0cBankFree(l0cBankId, l0cGeneration+1)`，并直接发布只覆盖每-HV G/beta/payload 子区的 `SlotFree(workspaceSlot, workspaceGeneration+1)`；Q/K cache 子区只走上面的 cohort free |
+| `C7` -> owner | 最终 U Fixpipe 完成后跨核发布只覆盖每-HV G/beta/payload 子区的 `SlotFree(workspaceSlot, workspaceGeneration+1)`；L1/L0C 本核地址分别由其 Mutex 链闭环，Q/K cache 子区只走上面的 cohort free |
 
 Arch22 保留相同的数学 data-ready 名称，但资源 owner 和 relay 语义不同：
 
@@ -648,30 +703,29 @@ collective flag。每条 channel 只在上一逻辑 token 已 wait/ACK 后复用
 必须具有完全相同的 set/wait 次数；tail pair 的 inactive AIV 发 dummy token，完全不存在的 pair wave
 则三方一致跳过。物理 flag ID、counter depth、与 Matmul 内部 flag 的冲突仍需 CANN 9.1 最小编译验证。
 
-`V6` 必须三路汇聚 `V0ContextReady + V3LocalSourceFree + C4PayloadFree`；`C7` 必须两路汇聚
-`C5AkkReady + V6RhsReady`。context ready 不等于 local bank free，VCS ready 也不等于 payload free，
-即使 profiling 中某个生产者总是先完成，也不能合并这些状态。
+Arch35 的跨核汇聚只保留真实跨 AIC/AIV 的边：V6 等待 `C4PayloadFree`，同时由本 AIV 的 UB
+Mutex 链继承 V0/V3 的完成关系；C7 等待 `V6RhsReady`，同时由 AIC 的 L1 Mutex 链继承 C4/C5
+的 Akk 完成关系。Mutex 不能替代前两条跨核 ready，也不能把 `V3VcsReady` 与
+`C4PayloadFree` 合并。Arch22 继续使用上表中的显式三路/两路 ticket 汇聚。
 
-当前实现不引入额外的 output-drain coordinator 或 C7 中间完成状态。每条 ready 只覆盖其具名
-consumer 数据：`V3VcsReady` 覆盖 VCS 与 stable Akk source，Fused ABI 不必等待独立的公开 Aqk
-drain；`V3LocalSourceFree` 在 V3 全部公开输出完成后保护 V6 的 local bank 复用；`V6RhsReady` 与
-`C5AkkReady` 分别在 RHS 和 q10 的所有启用写出完成后发布。C7 等待后两条边，再在最终 U
-Fixpipe 完成后发布 L0C 与 workspace 两个 next-ticket。若以后增加不受这些具名 ready 覆盖的
-输出，必须重开 coordinator 合同，不能直接沿用本闭环。
+当前实现不引入额外的 output-drain coordinator 或 C7 中间完成状态。`V3VcsReady` 覆盖 VCS 与
+stable Akk source，`V6RhsReady` 覆盖 RHS 的全部启用写出；C7 最终 U Fixpipe 完成后发布
+workspace next-ticket，并在汇聚完整 HK cohort 后发布 Q/K cache next-ticket。若以后增加不受这些
+具名 ready 或静态 Mutex 链覆盖的输出，必须重开同步合同，不能直接沿用本闭环。
 
-本目录禁止 `PipeBarrier<PIPE_ALL>()`，也没有任何真实 barrier 调用。未来实现只有在证明是同核
-V-pipe RAW/WAR/WAW 时才能考虑 `PipeBarrier<PIPE_V>()`；它不能替代 MTE/Cube/Fixpipe 的硬事件，
-更不能替代核间 ready/free。
+Arch35 每个 Vector Stage 仍显式记录本核 `MTE2 -> V` input-ready 与 `V -> MTE3`
+output-ready 语义；设备实现以同一 UB MutexID 在各参与 pipe 上的 Lock/Unlock 顺序落地。每个
+Cube Stage 同理保留 `MTE2 -> MTE1` operand-ready、`Cube/M -> MTE1` L0A/L0B operand-release
+和 `Cube/M -> Fixpipe` result-ready；设备实现分别由 L1、L0 operand、L0C Mutex 链承载，而不是
+额外的 event flag。每条 operand release 必须晚于当前
+`(l0OperandBankId,l0OperandGeneration)` 的最后 MMAD reader：C2 每个 band 一次，C4/C5 各一次，
+C7 的 W/U 两个 product 全部完成后一次，下一 band/head/stage 的 MTE1 才能覆盖同一 lane。
 
-每个 Vector Stage 还显式保留命名的本核 `MTE2 -> V` input-ready 与 `V -> MTE3`
-output-ready 边；每个有数据搬运的 Cube Stage 保留 `MTE2 -> MTE1` operand-ready、
-`Cube/M -> MTE1` L0A/L0B operand-release 和 `Cube/M -> Fixpipe` result-ready 边。每条 operand
-release 必须晚于当前 `(l0OperandBankId,l0OperandGeneration)` 的最后 MMAD reader。C2 每个 band
-的单次 `MmadRowStackedLhs` 完成后发布一次 operand-release，C4/C5 各一次，C7 的两个 RHS product 都完成
-后发布一次，才能让下一 band/head/stage 的 MTE1 覆盖同一 lane。Arch22 另有 payload overlay 的
-MTE2/Fixpipe 反向保护、条件化 Fixpipe->MTE2 relay 和 C7 fill/load WAW。它们目前都是
-**PROPOSED** helper，正式编码时必须用目标 CANN 版本支持的成对 HardEvent 落地，不能因源码
-调用顺序或跨核 ticket 已存在而省略。
+唯一登记的同 pipe barrier 是 Arch35 C4 的 MTE2 `Fill -> Load` WAW：使用
+`PipeBarrier<PIPE_MTE2>()`。本目录禁止 `PipeBarrier<PIPE_ALL>()`，也不允许用 Mutex 冒充同 pipe
+顺序。Arch22 的 payload overlay 反向保护、条件化 Fixpipe->MTE2 relay、C7 fill/load WAW 以及
+普通 Vector/Cube 核内边保持不变；这些 **PROPOSED** helper 仍须以目标 CANN 9.1 支持的成对
+HardEvent 落地，不能因源码调用顺序或跨核 ticket 已存在而省略。
 
 ## 资源和 API 边界
 
@@ -702,10 +756,10 @@ MTE2/Fixpipe 反向保护、条件化 Fixpipe->MTE2 relay 和 C7 fill/load WAW�
 - `useExp2` 必须随公开 Prepare 参数进入 Host dispatch，并分别实例化两架构 V1/V6 的
   `EvaluatePow2<true/false>`；不得只在接口或 TilingKey 留一个未被 kernel 消费的字段。
 - workspace 精确 offset、公开输出集合、Akk cast 边界、Arch35 Fixpipe 直写配对 AIV UB、Arch22
-  mode-0x2 collective/GM relay/ND2NZ、split L0C tile Fixpipe、flag/event 分配、Matmul/VF API、
-  TilingKey 编码和 launch ABI
-  均为 **PROPOSED**，必须结合目标 CANN 官方文档、
-  随包头文件和实现源码确认后才能编码。
+  mode-0x2 collective/GM relay/ND2NZ、split L0C tile Fixpipe、Arch22 flag/event 分配、Matmul/VF
+  API、TilingKey 编码和 launch ABI 均为 **PROPOSED**，必须结合目标 CANN 官方文档、随包头文件
+  和实现源码确认后才能编码。Arch35 Mutex 的官方签名、静态 ID 范围与配对规则已冻结在上述
+  合同中，但仍需随完整设备 kernel 一起做最小编译和设备验证。
 
 ## Host 语法检查
 
@@ -719,9 +773,12 @@ g++ -std=c++17 -Wall -Wextra -Werror -fsyntax-only \
 本目录另有可执行 host 合同测试。Arch22 部分运行真实伪调度，覆盖 `H=1..17` 的三个连续
 chunk、`M=16/32/33/64` 边界、Current/Fused ABI，以及 chunk-only/head fallback 的多 workgroup
 映射。测试为两个 AIV 和 AIC 分别记录完整事件流，按实际源码顺序逐项检查普通 owner
-wait/set、pair arrive/wait/publish、inactive dummy、SyncPoint、stage、pipe、owner 与 generation；
-独立 local-edge trace 同时检查 `MTE2/V/MTE1/Cube/Fixpipe/MTE3` 的命名依赖位置。Arch22/Arch35
-都记录 Current/Fused 在 `M=16/32/33/64` 下的 Vector/Cube 外部操作轨迹，检查 G source、
+wait/set、pair arrive/wait/publish、inactive dummy、SyncPoint、stage、pipe、owner 与 generation。
+Arch22 的 local-edge trace 继续检查 HardEvent 语义位置。
+Arch35 的 Mutex trace 检查 AIV `0..1`、AIC `0..12` 的静态映射、同 ID/同 pipe 配对、禁止嵌套、
+lower/upper 生命周期，以及仅在 C4 MTE2 `Fill -> Load` 位置出现的 barrier。所有违规都由 host
+合同测试报告，设备 kernel 不增加断言。
+Arch22/Arch35 都记录 Current/Fused 在 `M=16/32/33/64` 下的 Vector/Cube 外部操作轨迹，检查 G source、
 Qhat/Khat 有效行搬运、Akk quadrant writer、q01 fill/relay 分支、`ld64 -> tight`、partial fill、
 top-only RHS 收缩、MMAD 操作数/模式，以及 ready 晚于对应最后写入。VF 内部逐元素循环仍由
 共享的语义伪代码描述；合同另用可执行 probe 验证 `useExp2=true` 只走截断 Exp2、false 只走

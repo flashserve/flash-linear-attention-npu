@@ -145,26 +145,7 @@ inline bool IsSupportedKey(const ProposedTilingKey &key)
     return IsSupportedTilingKey(key);
 }
 
-inline void RequireMte2ToVectorInputs(const SyncLedger &sync,
-                                      Stage stage) noexcept
-{
-    // 待实现的本核输入就绪依赖。该阶段内所有 GM/工作区 -> UB MTE2 搬运
-    // 必须先完成，Vector 才能读取目标。具体 A5/CANN HardEvent 仍需以目标
-    // 版本编译验证为准。
-    sync.Local(LocalDependency::Mte2ToVectorInputs, stage);
-}
-
-inline void RequireVectorToMte3Outputs(const SyncLedger &sync,
-                                       Stage stage) noexcept
-{
-    // 待实现的本核输出就绪依赖。Vector 必须先写完所有指定的 UB 源，随后才能
-    // 启动对应的 GM/工作区 MTE3 搬运。跨核就绪令牌不能替代这一本核
-    // 依赖。
-    sync.Local(LocalDependency::VectorToMte3Outputs, stage);
-}
-
-// 这些依赖伪接口不会在仅主机的设计构建中实例化；它们只冻结操作顺序，
-// 不代表任何具体 Ascend C API。
+// VF 伪接口不会在仅主机的设计构建中实例化；它只冻结一次 VF 内的数学顺序。
 template <typename Vf>
 inline void V0OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
                     const ProposedTilingKey &key, float epsilon,
@@ -570,8 +551,6 @@ inline void RunV0(const VectorStageArgs &args)
         args.sync->Wait(SyncPoint::SlotFree, head.workspaceSlot,
                         workspaceGeneration,
                         Stage::V0, Pipe::Control);
-        args.sync->Wait(SyncPoint::LocalBankFree, head.localBankId,
-                        localGeneration, Stage::V0, Pipe::Mte2);
         if (head.qkOwner) {
             args.sync->Wait(SyncPoint::QkCacheFree, head.qkCacheSlot,
                             head.qkCacheGeneration, Stage::V0,
@@ -583,6 +562,11 @@ inline void RunV0(const VectorStageArgs &args)
                             head.qkCacheGeneration, Stage::V0,
                             Pipe::Mte2);
         }
+
+        const SymbolicMutexId ubMutex =
+            Arch35VectorMutexIds::UbBank(head.aivLocalSlot);
+        args.sync->MutexLock(MutexResource::AivUbBank, ubMutex,
+                             head.localBankId, Stage::V0, Pipe::Mte2);
 
         const bool gate2B = IsTwoByteGateStorage(args.key.gateStorage);
         const Offset validRows = args.work->group.chunk.validRows;
@@ -667,18 +651,23 @@ inline void RunV0(const VectorStageArgs &args)
                     localGeneration));
         }
 
-        detail::RequireMte2ToVectorInputs(*args.sync, Stage::V0);
+        args.sync->MutexUnlock(MutexResource::AivUbBank, ubMutex,
+                               head.localBankId, Stage::V0, Pipe::Mte2);
+        args.sync->Local(LocalDependency::Mte2ToVectorInputs, Stage::V0);
+        args.sync->MutexLock(MutexResource::AivUbBank, ubMutex,
+                             head.localBankId, Stage::V0, Pipe::Vector);
         // 仅调用一次；所需函数体为 detail::V0OneVf，并传入 args.key 以及已冻结
         // 的 epsilon/lowerBound 标量属性。
         args.ops->RunVf(Stage::V0, head);
-        args.sync->Set(SyncPoint::V0BetaReady, head.localBankId,
-                       localGeneration,
-                       Stage::V0, Pipe::Vector);
+        args.sync->MutexUnlock(MutexResource::AivUbBank, ubMutex,
+                               head.localBankId, Stage::V0, Pipe::Vector);
 
         const BufferSpan context = args.workspace->Span(
             WorkspaceRegion::Context, head.workspaceSlot,
             workspaceGeneration);
-        detail::RequireVectorToMte3Outputs(*args.sync, Stage::V0);
+        args.sync->Local(LocalDependency::VectorToMte3Outputs, Stage::V0);
+        args.sync->MutexLock(MutexResource::AivUbBank, ubMutex,
+                             head.localBankId, Stage::V0, Pipe::Mte3);
         const Region gResult = gate2B ? V0Gate2BLayout::kG : V0GateFp32Layout::kG;
         if (head.qkOwner) {
             args.ops->Store(
@@ -713,17 +702,14 @@ inline void RunV0(const VectorStageArgs &args)
                 detail::Subspan(context, "G-context", 0x8200U,
                                 gOutputBytes));
         }
+        args.sync->MutexUnlock(MutexResource::AivUbBank, ubMutex,
+                               head.localBankId, Stage::V0, Pipe::Mte3);
 
-        // 仅在最后一个已启用的 MTE3/输出搬运完成后，两个同步点才可见。具体
-        // HardEvent 和 CrossCore ID 仍需通过 API 验证。
+        // 仅在最后一个已启用的 MTE3/输出搬运完成后，跨核状态才可见。
         if (head.qkOwner) {
             args.sync->Set(SyncPoint::QkCacheReady, head.qkCacheSlot,
                            head.qkCacheGeneration, Stage::V0, Pipe::Mte3);
         }
-        args.sync->Set(SyncPoint::V0ContextReady, head.workspaceSlot,
-                       workspaceGeneration, Stage::V0, Pipe::Mte3);
-        args.sync->Set(SyncPoint::V0ExportDone, head.localBankId,
-                       localGeneration, Stage::V0, Pipe::Mte3);
     }
 }
 
@@ -738,15 +724,20 @@ inline void RunV1(const VectorStageArgs &args)
         }
         const std::uint64_t workspaceGeneration = head.workspaceGeneration;
         const std::uint64_t localGeneration = head.localGeneration;
-        args.sync->Wait(SyncPoint::V0ExportDone, head.localBankId,
-                        localGeneration,
-                        Stage::V1, Pipe::Vector);
+        const SymbolicMutexId ubMutex =
+            Arch35VectorMutexIds::UbBank(head.aivLocalSlot);
+        args.sync->MutexLock(MutexResource::AivUbBank, ubMutex,
+                             head.localBankId, Stage::V1, Pipe::Vector);
         // 仅调用一次。主机分发根据 args.key 中的输入/门控/分数存储类型
         // 特化 detail::V1OneVf<useExp2>；两个 2^x 计算点以及所有饱和与舍入点
         // 都保留在同一次 VF 中。
         args.ops->RunVf(Stage::V1, head,
                         ResolvePow2Primitive(args.key.useExp2));
-        detail::RequireVectorToMte3Outputs(*args.sync, Stage::V1);
+        args.sync->MutexUnlock(MutexResource::AivUbBank, ubMutex,
+                               head.localBankId, Stage::V1, Pipe::Vector);
+        args.sync->Local(LocalDependency::VectorToMte3Outputs, Stage::V1);
+        args.sync->MutexLock(MutexResource::AivUbBank, ubMutex,
+                             head.localBankId, Stage::V1, Pipe::Mte3);
 
         const BufferSpan payload = args.workspace->Span(
             WorkspaceRegion::SharedPayload, head.workspaceSlot,
@@ -772,6 +763,8 @@ inline void RunV1(const VectorStageArgs &args)
                                     copy.size));
             }
         }
+        args.sync->MutexUnlock(MutexResource::AivUbBank, ubMutex,
+                               head.localBankId, Stage::V1, Pipe::Mte3);
         // 一个回写阶段恰好包含两个固定的 MTE3 区域，并非一次连续 DataCopy。
         // 随后发布的三个同步状态均位于最后一个源读取方之后，且各自由指定所有者消费一次。
         args.sync->Set(SyncPoint::V1MainSourceFree, head.localBankId,
@@ -795,21 +788,26 @@ inline void RunV3(const VectorStageArgs &args)
         const std::uint64_t workspaceGeneration = head.workspaceGeneration;
         const std::uint64_t localGeneration = head.localGeneration;
         const Offset validRows = args.work->group.chunk.validRows;
-        args.sync->Wait(SyncPoint::V0BetaReady, head.localBankId,
-                        localGeneration,
-                        Stage::V3, Pipe::Vector);
         args.sync->Wait(SyncPoint::C2ScorePayloadFree, head.workspaceSlot,
                         workspaceGeneration, Stage::V3, Pipe::Mte3);
         args.sync->Wait(SyncPoint::C2RawReady, head.localBankId,
                         localGeneration,
                         Stage::V3, Pipe::Vector);
+        const SymbolicMutexId ubMutex =
+            Arch35VectorMutexIds::UbBank(head.aivLocalSlot);
+        args.sync->MutexLock(MutexResource::AivUbBank, ubMutex,
+                             head.localBankId, Stage::V3, Pipe::Vector);
         // 仅调用一次；detail::V3OneVf 还接收 ABI、AkkStorage、InputStorage 和
         // 显式运行时缩放。缩放仅对 Aqk 应用一次。
         // 原始数据读取方仅访问 C2 定义的有效因果域；其余输出通道均不读取
         // 原始 UB，直接生成结果。
         args.ops->RunVf(Stage::V3, head, args.scale, RuntimeScaleUse::Aqk,
                         1U);
-        detail::RequireVectorToMte3Outputs(*args.sync, Stage::V3);
+        args.sync->MutexUnlock(MutexResource::AivUbBank, ubMutex,
+                               head.localBankId, Stage::V3, Pipe::Vector);
+        args.sync->Local(LocalDependency::VectorToMte3Outputs, Stage::V3);
+        args.sync->MutexLock(MutexResource::AivUbBank, ubMutex,
+                             head.localBankId, Stage::V3, Pipe::Mte3);
         const BufferSpan payload = args.workspace->Span(
             WorkspaceRegion::SharedPayload, head.workspaceSlot,
             workspaceGeneration);
@@ -845,14 +843,6 @@ inline void RunV3(const VectorStageArgs &args)
                     detail::Subspan(payload, "X1-tau", 0x3800U, 0x0800U));
             }
         }
-        // Fused 没有公开 AkkOut 中转数据，因此其稳定象限通过紧凑的工作区载荷
-        // 变为可见。Current 仅在下方唯一一次公开 AkkOut 搬运完成后发布；
-        // 禁止将这些象限重复写入该载荷。
-        if (args.key.abi == PrepareAbi::Fused) {
-            args.sync->Set(SyncPoint::V3VcsReady, head.workspaceSlot,
-                           workspaceGeneration, Stage::V3, Pipe::Mte3);
-        }
-
         // Aqk 与可选 AkkOut 使用相互独立的公开 GM 地址。其 ABI 偏移和类型转换
         // 刻意保持符号化，但归还本地 MAIN/AUX 所有权前必须包含对应的 MTE3
         // 搬运。
@@ -912,13 +902,16 @@ inline void RunV3(const VectorStageArgs &args)
                         kQuadrant, bottom, kQuadrant, ShapePolicy::kBt,
                         ShapePolicy::kStorageBytes, workspaceGeneration));
             }
-            // C4 使用同一代公开 AkkOut 作为 Current ABI 的中转数据。仅在
-            // q00/q01/q11 的 MTE3 搬运可见后发布。
+        }
+        args.sync->MutexUnlock(MutexResource::AivUbBank, ubMutex,
+                               head.localBankId, Stage::V3, Pipe::Mte3);
+        // Fused 发布紧凑稳定象限；Current 发布唯一一次公开 AkkOut 搬运。
+        // 两条路径都必须在最后一个 MTE3 源读取方完成后再通知 C4。
+        if (args.key.abi == PrepareAbi::Fused ||
+            args.key.akkStorage == AkkStorage::TwoByteAbi) {
             args.sync->Set(SyncPoint::V3VcsReady, head.workspaceSlot,
                            workspaceGeneration, Stage::V3, Pipe::Mte3);
         }
-        args.sync->Set(SyncPoint::V3LocalSourceFree, head.localBankId,
-                       localGeneration, Stage::V3, Pipe::Mte3);
     }
 }
 
@@ -938,13 +931,14 @@ inline void RunV6(const VectorStageArgs &args)
             validRows * ShapePolicy::kV * ShapePolicy::kStorageBytes;
         const Offset gBytes =
             validRows * ShapePolicy::kK * ShapePolicy::kFp32Bytes;
-        // 这是符号化的三输入汇合点，不表示目标 CANN 提供具有该语义的单条指令。
-        args.sync->Wait(SyncPoint::V0ContextReady, head.workspaceSlot,
-                        workspaceGeneration, Stage::V6, Pipe::Mte2);
-        args.sync->Wait(SyncPoint::V3LocalSourceFree, head.localBankId,
-                        localGeneration, Stage::V6, Pipe::Mte2);
+        // C4PayloadFree 是跨核前置；V0/V3 对同一 UB 槽的本核释放由 ubMutex
+        // 在 MTE3 -> MTE2 之间直接串接，不再占用额外 flag。
         args.sync->Wait(SyncPoint::C4PayloadFree, head.workspaceSlot,
                         workspaceGeneration, Stage::V6, Pipe::Mte2);
+        const SymbolicMutexId ubMutex =
+            Arch35VectorMutexIds::UbBank(head.aivLocalSlot);
+        args.sync->MutexLock(MutexResource::AivUbBank, ubMutex,
+                             head.localBankId, Stage::V6, Pipe::Mte2);
 
         const BufferSpan context = args.workspace->Span(
             WorkspaceRegion::Context, head.workspaceSlot,
@@ -989,7 +983,11 @@ inline void RunV6(const VectorStageArgs &args)
                            head, "V-to-Vbeta",
                            {V6Layout::kVToVBeta.offset, tokenStorageBytes},
                            localGeneration));
-        detail::RequireMte2ToVectorInputs(*args.sync, Stage::V6);
+        args.sync->MutexUnlock(MutexResource::AivUbBank, ubMutex,
+                               head.localBankId, Stage::V6, Pipe::Mte2);
+        args.sync->Local(LocalDependency::Mte2ToVectorInputs, Stage::V6);
+        args.sync->MutexLock(MutexResource::AivUbBank, ubMutex,
+                             head.localBankId, Stage::V6, Pipe::Vector);
         // 仅调用一次；主机分发特化 detail::V6OneVf<useExp2>，并传入相互
         // 独立的 Q/K 存储类型、V 存储类型及运行时缩放。Current 在 V6
         // 不执行缩放乘法；Fused 在 qg 第一次舍入后恰好应用一次。两个直接
@@ -1000,7 +998,11 @@ inline void RunV6(const VectorStageArgs &args)
                             ? RuntimeScaleUse::FusedQg
                             : RuntimeScaleUse::None,
                         args.key.abi == PrepareAbi::Fused ? 1U : 0U);
-        detail::RequireVectorToMte3Outputs(*args.sync, Stage::V6);
+        args.sync->MutexUnlock(MutexResource::AivUbBank, ubMutex,
+                               head.localBankId, Stage::V6, Pipe::Vector);
+        args.sync->Local(LocalDependency::VectorToMte3Outputs, Stage::V6);
+        args.sync->MutexLock(MutexResource::AivUbBank, ubMutex,
+                             head.localBankId, Stage::V6, Pipe::Mte3);
 
         const BufferSpan payload = args.workspace->Span(
             WorkspaceRegion::SharedPayload, head.workspaceSlot,
@@ -1058,10 +1060,11 @@ inline void RunV6(const VectorStageArgs &args)
                                    tokenStorageBytes,
                                    workspaceGeneration));
 
+        args.sync->MutexUnlock(MutexResource::AivUbBank, ubMutex,
+                               head.localBankId, Stage::V6, Pipe::Mte3);
+
         args.sync->Set(SyncPoint::V6RhsReady, head.workspaceSlot,
                        workspaceGeneration, Stage::V6, Pipe::Mte3);
-        args.sync->Set(SyncPoint::LocalBankFree, head.localBankId,
-                       localGeneration + 1U, Stage::V6, Pipe::Mte3);
     }
 }
 

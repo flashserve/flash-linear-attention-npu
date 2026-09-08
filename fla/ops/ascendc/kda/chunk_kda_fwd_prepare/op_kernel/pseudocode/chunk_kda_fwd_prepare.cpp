@@ -51,176 +51,6 @@ ChunkTask ResolveDenseChunk(std::uint32_t chunkOrdinal) noexcept
     return {0, chunkOrdinal, chunkOrdinal, kChunkRows};
 }
 
-VectorStageArgs MakeVectorArgs(const WorkItem &item,
-                               Architecture architecture,
-                               std::uint32_t workgroupId,
-                               std::uint32_t aivId,
-                               WorkspaceView &workspace, SyncLedger &sync,
-                               VectorOps &ops,
-                               const RuntimeTiling &tiling) noexcept
-{
-    return {&item,
-            &workspace,
-            &sync,
-            &ops,
-            architecture,
-            tiling.key,
-            tiling.epsilon,
-            tiling.lowerBound,
-            tiling.scale,
-            tiling.hasDtBias,
-            workgroupId,
-            aivId,
-            kAllGroupLocalHeads};
-}
-
-void RunArch35AivBranch(const WorkItem &item, std::uint32_t workgroupId,
-                        std::uint32_t aivId, WorkspaceView &workspace,
-                        SyncLedger &sync, VectorOps &ops,
-                        const RuntimeTiling &tiling) noexcept
-{
-    VectorStageArgs args = MakeVectorArgs(
-        item, Architecture::Arch35, workgroupId, aivId, workspace, sync, ops,
-        tiling);
-
-    // 每个函数对应一个物理 Vector 阶段和一次符号化 VF 调用。
-    // V3 和 V6 自行执行等待，因此此处源码顺序不表示 AIV 一定先于对应的 AIC 分支执行。
-    arch35::RunV0(args);
-    arch35::RunV1(args);
-    arch35::RunV3(args);
-    arch35::RunV6(args);
-}
-
-void RunArch22AivBranch(const WorkItem &item, std::uint32_t workgroupId,
-                        std::uint32_t aivId, WorkspaceView &workspace,
-                        SyncLedger &sync, VectorOps &ops,
-                        const RuntimeTiling &tiling) noexcept
-{
-    VectorStageArgs args = MakeVectorArgs(
-        item, Architecture::Arch22, workgroupId, aivId, workspace, sync, ops,
-        tiling);
-    const std::uint32_t pairWaves = static_cast<std::uint32_t>(
-        CeilDiv(item.group.activeHeads, kAivPerWorkgroup));
-
-    // Arch22 的每个 AIV 只有一块 40 KiB 共享区。先针对配对波次中的一个头完成
-    // V0 -> V1，再选择下一块 72 KiB 私有缓冲区，从而保留共享区中的 G。
-    // 非活动伙伴仍需进入 Arch22 辅助函数，使 0x2 模式集合操作能发出必需的空令牌。
-    for (std::uint32_t pair = 0; pair < pairWaves; ++pair) {
-        args.selectedGroupLocalHead = pair * kAivPerWorkgroup + aivId;
-        arch22::RunV0(args);
-        arch22::RunV1(args);
-    }
-    for (std::uint32_t pair = 0; pair < pairWaves; ++pair) {
-        args.selectedGroupLocalHead = pair * kAivPerWorkgroup + aivId;
-        arch22::RunV3(args);
-    }
-    for (std::uint32_t pair = 0; pair < pairWaves; ++pair) {
-        args.selectedGroupLocalHead = pair * kAivPerWorkgroup + aivId;
-        arch22::RunV6(args);
-    }
-}
-
-CubeStageArgs MakeCubeArgs(const WorkItem &item,
-                           Architecture architecture,
-                           std::uint32_t workgroupId,
-                           WorkspaceView &workspace, SyncLedger &sync,
-                           CubeOps &ops,
-                           const RuntimeTiling &tiling) noexcept
-{
-    return {&item,
-            &workspace,
-            &sync,
-            &ops,
-            architecture,
-            tiling.key,
-            tiling.epsilon,
-            tiling.lowerBound,
-            tiling.scale,
-            workgroupId};
-}
-
-void RunArch35AicBranch(const WorkItem &item, std::uint32_t workgroupId,
-                        WorkspaceView &workspace, SyncLedger &sync,
-                        CubeOps &ops, const RuntimeTiling &tiling) noexcept
-{
-    CubeStageArgs args = MakeCubeArgs(item, Architecture::Arch35, workgroupId,
-                                      workspace, sync, ops, tiling);
-
-    // 对每个 head，C2 将八个数学分数乘积按 Qplus/Kplus 行堆叠为四次 MMAD
-    // 提交。C4、C5 和 C7 各自消费前序阶段的结果，因此必须是独立的物理阶段。
-    arch35::RunC2(args);
-    arch35::RunC4(args);
-    arch35::RunC5(args);
-    arch35::RunC7(args);
-}
-
-void RunArch22AicBranch(const WorkItem &item, std::uint32_t workgroupId,
-                        WorkspaceView &workspace, SyncLedger &sync,
-                        CubeOps &ops, const RuntimeTiling &tiling) noexcept
-{
-    CubeStageArgs args = MakeCubeArgs(item, Architecture::Arch22, workgroupId,
-                                      workspace, sync, ops, tiling);
-    arch22::RunC2(args);
-    arch22::RunC4(args);
-    arch22::RunC5(args);
-    arch22::RunC7(args);
-}
-
-void Dispatch(const WorkItem &item, CoreRole role, std::uint32_t workgroupId,
-              std::uint32_t aivId, WorkspaceView &workspace,
-              SyncLedger &sync, VectorOps &vectorOps,
-              CubeOps &cubeOps, const RuntimeTiling &tiling) noexcept
-{
-    if (item.group.activeHeads == 0) {
-        return;
-    }
-    if (role == CoreRole::Aiv) {
-        if (aivId < kAivPerWorkgroup) {
-            if (tiling.architecture == Architecture::Arch22) {
-                RunArch22AivBranch(item, workgroupId, aivId, workspace, sync,
-                                   vectorOps, tiling);
-            } else {
-                RunArch35AivBranch(item, workgroupId, aivId, workspace, sync,
-                                   vectorOps, tiling);
-            }
-        }
-        return;
-    }
-    if (role == CoreRole::Aic) {
-        if (tiling.architecture == Architecture::Arch22) {
-            RunArch22AicBranch(item, workgroupId, workspace, sync, cubeOps,
-                               tiling);
-        } else {
-            RunArch35AicBranch(item, workgroupId, workspace, sync, cubeOps,
-                               tiling);
-        }
-    }
-}
-
-void DispatchHeadPartition(
-    const CorePlan &plan, std::uint64_t ordinal, const ChunkTask &chunk,
-    std::uint32_t partitionOrdinal, const RuntimeTiling &tiling,
-    CoreRole role, std::uint32_t workgroupId, std::uint32_t aivId,
-    WorkspaceView &workspace, SyncLedger &sync, VectorOps &vectorOps,
-    CubeOps &cubeOps, OwnerTicketState &ownerTickets) noexcept
-{
-    const std::uint32_t headBegin = PartitionValueHeadBegin(
-        partitionOrdinal, tiling.headCount, tiling.qkHeadCount);
-    const std::uint32_t headEnd = PartitionValueHeadEnd(
-        partitionOrdinal, tiling.headCount, tiling.qkHeadCount);
-    std::uint32_t groupOrdinal =
-        partitionOrdinal * HeadGroupsPerPartition(
-                               tiling.headCount, tiling.qkHeadCount);
-    for (std::uint32_t groupBegin = headBegin; groupBegin < headEnd;
-         groupBegin += kHeadsPerGroup, ++groupOrdinal) {
-        const WorkItem item = BuildWorkItemRange(
-            plan, ordinal, chunk, groupOrdinal, groupBegin, headEnd,
-            tiling.headCount, ownerTickets, tiling.qkHeadCount);
-        Dispatch(item, role, workgroupId, aivId, workspace, sync, vectorOps,
-                 cubeOps, tiling);
-    }
-}
-
 } // namespace
 
 // 仅为待实现的控制入口。此处刻意不实现为 __global__ 核函数，也不声明 GM ABI、
@@ -261,25 +91,118 @@ void RunChunkKdaFwdPreparePseudocode(
             continue;
         }
 
-        if (plan.mode == PartitionMode::ChunkOnly) {
-            // 分块优先：一个工作组拥有完整分块。内部顺序遵循完整的 HK 同源头组，
-            // 使每个 HK 仅生成一次的 Q/K 缓存在所有映射的 HV 消费者间保持存活。
-            for (partitionOrdinal = 0U;
-                 partitionOrdinal < plan.headPartitionCount;
-                 ++partitionOrdinal) {
-                DispatchHeadPartition(
-                    plan, ordinal, chunk, partitionOrdinal, tiling, role,
-                    workgroupId, aivId, workspace, sync, vectorOps, cubeOps,
-                    ownerTickets);
-            }
-            continue;
-        }
+        // 分块优先时，一个工作组顺序遍历该分块的所有 HK 同源头分区；只有分块数
+        // 不足时才处理展平任务指定的单个头分区。两种模式在此后共用同一段主循环。
+        const std::uint32_t partitionBegin =
+            plan.mode == PartitionMode::ChunkOnly ? 0U : partitionOrdinal;
+        const std::uint32_t partitionEnd =
+            plan.mode == PartitionMode::ChunkOnly
+                ? plan.headPartitionCount
+                : partitionOrdinal + 1U;
+        for (std::uint32_t partition = partitionBegin;
+             partition < partitionEnd; ++partition) {
+            const std::uint32_t headBegin = PartitionValueHeadBegin(
+                partition, tiling.headCount, tiling.qkHeadCount);
+            const std::uint32_t headEnd = PartitionValueHeadEnd(
+                partition, tiling.headCount, tiling.qkHeadCount);
+            std::uint32_t groupOrdinal =
+                partition * HeadGroupsPerPartition(tiling.headCount,
+                                                   tiling.qkHeadCount);
 
-        // 只有分块无法填满 AIC 工作组时才回退到头分核。展平单元是由完整 HK 同源头组
-        // 组成的不可拆分任务包，而不是任意四个 HV 组成的分组，因此不会重复执行 HK 归一化。
-        DispatchHeadPartition(plan, ordinal, chunk, partitionOrdinal, tiling,
-                              role, workgroupId, aivId, workspace, sync,
-                              vectorOps, cubeOps, ownerTickets);
+            // 分组边界始终与完整 HK 同源头组对齐，避免同一份 Q/K 归一化结果
+            // 被不同任务重复生成。
+            for (std::uint32_t groupBegin = headBegin;
+                 groupBegin < headEnd;
+                 groupBegin += kHeadsPerGroup, ++groupOrdinal) {
+                const WorkItem item = BuildWorkItemRange(
+                    plan, ordinal, chunk, groupOrdinal, groupBegin, headEnd,
+                    tiling.headCount, ownerTickets, tiling.qkHeadCount);
+                if (item.group.activeHeads == 0U) {
+                    continue;
+                }
+
+                if (role == CoreRole::Aiv) {
+                    if (aivId >= kAivPerWorkgroup) {
+                        continue;
+                    }
+                    VectorStageArgs args = {
+                        &item,
+                        &workspace,
+                        &sync,
+                        &vectorOps,
+                        tiling.architecture,
+                        tiling.key,
+                        tiling.epsilon,
+                        tiling.lowerBound,
+                        tiling.scale,
+                        tiling.hasDtBias,
+                        workgroupId,
+                        aivId,
+                        kAllGroupLocalHeads};
+
+                    if (tiling.architecture == Architecture::Arch22) {
+                        const std::uint32_t pairWaves =
+                            static_cast<std::uint32_t>(CeilDiv(
+                                item.group.activeHeads, kAivPerWorkgroup));
+
+                        // Arch22 每个 AIV 只有一块 40 KiB 共享区。每个配对波次
+                        // 必须先完成 V0 -> V1，再选择下一块 72 KiB 私有缓冲区，
+                        // 从而保留共享区中的 G。非活动伙伴仍进入阶段并发出空令牌。
+                        for (std::uint32_t pair = 0U; pair < pairWaves;
+                             ++pair) {
+                            args.selectedGroupLocalHead =
+                                pair * kAivPerWorkgroup + aivId;
+                            arch22::RunV0(args);
+                            arch22::RunV1(args);
+                        }
+                        for (std::uint32_t pair = 0U; pair < pairWaves;
+                             ++pair) {
+                            args.selectedGroupLocalHead =
+                                pair * kAivPerWorkgroup + aivId;
+                            arch22::RunV3(args);
+                        }
+                        for (std::uint32_t pair = 0U; pair < pairWaves;
+                             ++pair) {
+                            args.selectedGroupLocalHead =
+                                pair * kAivPerWorkgroup + aivId;
+                            arch22::RunV6(args);
+                        }
+                    } else {
+                        // Arch35 的四个调用分别对应一次物理 VF。V3/V6 在阶段
+                        // 内等待 AIC，因此源码相邻不代表跨核存在隐式先后关系。
+                        arch35::RunV0(args);
+                        arch35::RunV1(args);
+                        arch35::RunV3(args);
+                        arch35::RunV6(args);
+                    }
+                    continue;
+                }
+
+                if (role != CoreRole::Aic) {
+                    continue;
+                }
+                CubeStageArgs args = {
+                    &item,          &workspace,    &sync,
+                    &cubeOps,       tiling.architecture,
+                    tiling.key,     tiling.epsilon,
+                    tiling.lowerBound,
+                    tiling.scale,   workgroupId};
+
+                if (tiling.architecture == Architecture::Arch22) {
+                    arch22::RunC2(args);
+                    arch22::RunC4(args);
+                    arch22::RunC5(args);
+                    arch22::RunC7(args);
+                } else {
+                    // C2 将八个数学分数乘积按 Qplus/Kplus 行堆叠为四次
+                    // MMAD 提交；C4/C5/C7 各自消费前序结果，必须保持独立阶段。
+                    arch35::RunC2(args);
+                    arch35::RunC4(args);
+                    arch35::RunC5(args);
+                    arch35::RunC7(args);
+                }
+            }
+        }
     }
 }
 
