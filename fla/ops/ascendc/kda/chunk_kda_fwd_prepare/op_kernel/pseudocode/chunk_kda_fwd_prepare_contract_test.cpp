@@ -3175,7 +3175,7 @@ bool CheckStandardMmad(const OperationRecord &record, Stage stage,
 {
     return record.kind == OperationKind::Mmad && record.stage == stage &&
            SameName(record.source.name, lhs) &&
-           SameName(record.auxiliary.name, rhs) &&
+           SameName(record.rhsOperand.name, rhs) &&
            SameName(record.destination.name, destination) &&
            record.lhsStorage == lhsStorage &&
            record.rhsStorage == rhsStorage && record.m == m &&
@@ -3197,7 +3197,7 @@ bool CheckRowStackedMmad(const OperationRecord &record,
            record.stage == Stage::C2 &&
            SameName(record.source.name, "Qplus-band") &&
            SameName(record.secondarySource.name, "Kplus-band") &&
-           SameName(record.auxiliary.name, "Kminus-prefix") &&
+           SameName(record.rhsOperand.name, "Kminus-prefix") &&
            SameName(record.destination.name, destination) &&
            SameName(record.l0aOperand.name, "C2-QK-stacked-L0A") &&
            SameName(record.l0bOperand.name, "C2-Kminus-L0B") &&
@@ -3208,7 +3208,7 @@ bool CheckRowStackedMmad(const OperationRecord &record,
            record.lhsBottomRows == kBandRows && record.transposeRhs &&
            !record.negate && record.source.byteSize == kBandBytes &&
            record.secondarySource.byteSize == kBandBytes &&
-           record.auxiliary.byteSize ==
+           record.rhsOperand.byteSize ==
                static_cast<std::size_t>(n) * kInner * 2U &&
            record.destination.byteSize ==
                static_cast<std::size_t>(2U * kBandRows) * n * 4U &&
@@ -3391,7 +3391,7 @@ bool CheckQuadrantMmad(const OperationRecord &record, const char *rhs,
     return record.kind == OperationKind::MmadQuadrantPackedLhs &&
            record.stage == Stage::C7 &&
            SameName(record.source.name, "Akk-resident") &&
-           SameName(record.auxiliary.name, rhs) &&
+           SameName(record.rhsOperand.name, rhs) &&
            SameName(record.destination.name, destination) &&
            record.lhsStorage == lhsStorage &&
            record.rhsStorage == rhsStorage &&
@@ -5306,7 +5306,7 @@ bool TouchesInactiveArch22Head(const MultiHeadAddressTrace &trace,
                 return true;
             }
             const std::array<const BufferSpan *, 3U> spans = {{
-                &record.source, &record.auxiliary, &record.destination,
+                &record.source, &record.rhsOperand, &record.destination,
             }};
             for (const BufferSpan *span : spans) {
                 if (span->name == nullptr) {
@@ -5325,7 +5325,7 @@ bool TouchesInactiveArch22Head(const MultiHeadAddressTrace &trace,
     for (std::size_t index = 0U; index < trace.aicOperations.size; ++index) {
         const OperationRecord &record = trace.aicOperations.records[index];
         const std::array<const BufferSpan *, 3U> spans = {{
-            &record.source, &record.auxiliary, &record.destination,
+            &record.source, &record.rhsOperand, &record.destination,
         }};
         for (const BufferSpan *span : spans) {
             if (span->name == nullptr) {
@@ -5876,11 +5876,12 @@ bool CheckArch35MultiHeadAddresses() noexcept
         const OperationRecord *betaLoad = FindUniqueOperationForSlots(
             trace.aivOperations[aiv], OperationKind::Load, Stage::V0, "beta",
             "beta-raw", head.workspaceSlot, head.localBankId);
-        const std::uint64_t auxOffset =
-            UbPolicy::kAuxBase[aivLocalSlot] + AuxLayout::kBetaRaw.offset;
+        const std::uint64_t vectorStateOffset =
+            UbPolicy::kVectorStateBase[aivLocalSlot] +
+            VectorStateLayout::kBetaRaw.offset;
         if (betaLoad == nullptr ||
             !CheckSpanIdentity(betaLoad->destination, "beta-raw",
-                               MemorySpace::Ub, auxOffset, 0x0100U,
+                               MemorySpace::Ub, vectorStateOffset, 0x0100U,
                                head.localBankId, head.localGeneration,
                                CoreRole::Aiv, aiv)) {
             return false;
@@ -6560,8 +6561,8 @@ bool CheckMixedValueStorage(Architecture architecture) noexcept
         arch22 ? "U-L0C-valid" : "U-valid-fp32-ld128",
         arch22 ? "U-output" : "U-valid-output-ld128");
     return w != nullptr && u != nullptr && wOutput != nullptr &&
-           uOutput != nullptr && SameName(w->auxiliary.name, wRhs) &&
-           SameName(u->auxiliary.name, uRhs) &&
+           uOutput != nullptr && SameName(w->rhsOperand.name, wRhs) &&
+           SameName(u->rhsOperand.name, uRhs) &&
            w->lhsStorage == MatrixStorage::Bf16 &&
            u->lhsStorage == MatrixStorage::Bf16 &&
            w->rhsStorage == MatrixStorage::Bf16 &&

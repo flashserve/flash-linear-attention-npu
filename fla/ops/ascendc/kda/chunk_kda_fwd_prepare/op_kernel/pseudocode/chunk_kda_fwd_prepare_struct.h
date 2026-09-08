@@ -560,7 +560,7 @@ struct OperationRecord {
     Stage stage = Stage::V0;
     BufferSpan source{};
     BufferSpan secondarySource{};
-    BufferSpan auxiliary{};
+    BufferSpan rhsOperand{};
     BufferSpan destination{};
     BufferSpan l0aOperand{};
     BufferSpan lhsTopL0aTile{};
@@ -930,7 +930,7 @@ struct CubeOps {
             record.kind = OperationKind::Mmad;
             record.stage = stage;
             record.source = lhs;
-            record.auxiliary = rhs;
+            record.rhsOperand = rhs;
             record.destination = output;
             record.l0aOperand = l0aOperand;
             record.l0bOperand = l0bOperand;
@@ -965,7 +965,7 @@ struct CubeOps {
             record.stage = stage;
             record.source = lhsTop;
             record.secondarySource = lhsBottom;
-            record.auxiliary = rhs;
+            record.rhsOperand = rhs;
             record.destination = output;
             record.l0aOperand = l0aOperand;
             record.lhsTopL0aTile = lhsTopL0aTile;
@@ -998,7 +998,7 @@ struct CubeOps {
             record.kind = OperationKind::MmadQuadrantPackedLhs;
             record.stage = stage;
             record.source = lhs;
-            record.auxiliary = rhs;
+            record.rhsOperand = rhs;
             record.destination = output;
             record.l0aOperand = l0aOperand;
             record.l0bOperand = l0bOperand;

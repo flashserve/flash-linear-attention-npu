@@ -42,10 +42,10 @@ pseudocode/
 | `V0` | Vector | HK cohort owner 从公开 GM 一次装入 raw `q/k`；其余 HV head 从 owner 的只读 Q/K cache 装入已归一化值；每个 HV 另完整装入 `beta` 及所选 gate 输入 | 每个 HV 仍只有一次 VF：仅 `owner+L2` 对该 HK 做唯一一次 Q/K norm，Identity owner 和其余 head 直接保留已在最终 UB 地址的 2-byte MTE2 结果，不做重复 convert/round；同一次 VF 完成本 HV 的 beta、gate/cumsum。只有 owner 写一份 `Qhat/Khat` cache，非 owner 不复制到各自 context；Fused ABI 另存每 HV 的 G context，Current ABI 只写一次公开 `gk` 并由 V6 复用；Arch35 另物化 `G_ref[4]`，Arch22 不物化 |
 | `V1` | Vector | 同一 head 仍驻留在 UB 的 V0 local source | 一次 VF 先按 `ScoreStorage` 截断 base-2 指数，再按 `useExp2` 选择 `exp2(x)` 或 `exp(x*ln2)`，物化全部 `S=4` 的 `Qplus/Kplus/Kminus`；Arch22 必须 `V0(head)->V1(head)` 后才能复用 shared arena，score drain 只读取该 head 的 private bank |
 | `C2` | Cube | 一次把完整 72 KiB score 搬入 L1 | 四个 row band；每个 band 将 `Qplus/Kplus` 沿行堆叠为 `[32,128]`，通过一次 `MmadRowStackedLhs`（packed TileMmad）同时生成 `rawAqk/rawAkk`；Arch35 直达配对 AIV UB，Arch22 先写 compact raw GM relay |
-| `V3` | Vector | UB 中完整 raw score；Arch35 从 AUX 取保留的 `betaEff`，Arch22 从 workspace 重载 | 一次 VF 完成无效区清零、causal mask、`Aqk/Lkk` 和 VCS 两个叶子 `B/X0/X1`；已知为零的 q01 只在 Current ABI 作为公开 Akk 输出写回，Arch22 Fused full 因完整 ND 转换限制保留一次 relay，Fused top 不物化 |
+| `V3` | Vector | UB 中完整 raw score；Arch35 从每头 UB 向量状态区读取常驻 `betaEff`，Arch22 从 workspace 重载 | 一次 VF 完成无效区清零、causal mask、`Aqk/Lkk` 和 VCS 两个叶子 `B/X0/X1`；已知为零的 q01 只在 Current ABI 作为公开 Akk 输出写回，Arch22 Fused full 因完整 ND 转换限制保留一次 relay，Fused top 不物化 |
 | `C4` | Cube | 所需 GM/workspace source 已 ready；`M>32` 装入 `B/X0/X1`，Arch35 另把 stable Akk 装入最终 L1 resident | `M>32` 用一个 MMAD 计算 `T = B @ X0`；Arch35 在最终 L1 地址直接清零 q01，Arch22 把 FP32 `T` 写 GM relay；`M<=32` 时 Arch35 只装 q00、Arch22 走 control，两者都不启动 MMAD |
 | `C5` | Cube | `M>32` 时前一 Stage 的 `T`、`X1`、Akk prepack 均 ready | `M>32` 用一个 MMAD 计算 `Y = -X1 @ T`；Arch35 提交 resident quadrant，Arch22 把 2-byte `q10` 写入 row-major Akk GM relay；`M<=32` 只做 control pass-through |
-| `V6` | Vector | `Qhat/Khat` context、Fused 的 G context 或 Current 的公开 `gk`、`V` 以及三条 data-ready 边；Arch35 从 AUX 取常驻 `betaEff`，Arch22 从 workspace 重载 | 一次 VF 以 `[-80,80]` 截断 direct base-2 指数，按同一 `useExp2` 轴求 `2^x`，并生成 `Qg/qg`、`kg`、`K_beta_g`、`V_beta`；两个 RHS plane 固定 base，`M<=32` 各 drain 32 行，`M>32` 各 drain 64 行 |
+| `V6` | Vector | `Qhat/Khat` context、Fused 的 G context 或 Current 的公开 `gk`、`V` 以及三条 data-ready 边；Arch35 从每头 UB 向量状态区读取常驻 `betaEff`，Arch22 从 workspace 重载 | 一次 VF 以 `[-80,80]` 截断 direct base-2 指数，按同一 `useExp2` 轴求 `2^x`，并生成 `Qg/qg`、`kg`、`K_beta_g`、`V_beta`；两个 RHS plane 固定 base，`M<=32` 各 drain 32 行，`M>32` 各 drain 64 行 |
 | `C7` | Cube | 有效 Akk 与对应 32/64 行 RHS | 一个逻辑 MMAD 计算 `Akk @ [K_beta_g \| V_beta]`，提交 `[W \| U]`；两架构的 top-only tail 都把有效 q00 直接装成 tight 32x32 Cube operand 并做 `K=32`，Arch22 full 才从 GM relay 做完整 ND 到 Cube-ready 转换 |
 
 每个 Stage 只包含 Cube 或 Vector 之一。`V0/V1/V3/V6` 各只允许一次 VF，不按 token、
@@ -55,7 +55,7 @@ score block 或硬件 tile 分 pass。Cube 的独立逻辑 MMAD 可在编译期�
 八 Stage 是冻结的跨架构物理合同。Arch35 的容量/依赖下界与 Arch22 的 relay 依赖分别为：
 
 - `V0+V1` 必须同时保留 context 和 72 KiB score，而单 local head 只有固定
-  `112 KiB MAIN + 12 KiB AUX`，容量不成立。
+  112 KiB 主计算区和 12 KiB 向量状态与临时区，容量不成立。
 - `C4` 产生 `T`，`C5` 才能消费；二者不能合并。
 - `C7` 既依赖 C5 新完成的 Akk，又要汇聚独立的 V6 RHS；`C5/C7` 不能合并。
 - `V6` 必须等 V3 归还 local bank 且 C4 归还 payload owner，不能提前覆盖任一存活区。
@@ -92,10 +92,10 @@ V0 的核心数学不能被一个含糊的 `ApplyFrozen*` 隐藏。候选 Tiling
   分母；`epsilon` 是 runtime 正有限标量，公共默认值为 `1e-6`。
 - beta 是每 token 一个 FP32 标量；L2 公开入口即使接受 BF16/FP32，也必须在下发 Prepare 前统一
   cast 到 FP32，所以 beta storage 不是 kernel 模板轴。full chunk 逻辑输入为 256 Byte，可放入
-  0x200 Byte 的对齐 AUX region；剩余字节只是 hard pad。
+  每头向量状态与临时区内 0x200 Byte 对齐的 `betaRaw` 子区；剩余字节只是 hard pad。
   `BetaMode::{Raw,Sigmoid,TwoSigmoid}` 只决定该 FP32 标量的数学变换。
 - `GateMode::{PrecomputedStep,Softplus,SafeSigmoid}`；后两种按冻结公式消费必需 `A_log`、
-  runtime `lowerBound`（公共默认 `-5`）和可选 `dt_bias`。`hasDtBias=false` 必须把最终 AUX 地址显式置零，且不能
+  runtime `lowerBound`（公共默认 `-5`）和可选 `dt_bias`。`hasDtBias=false` 必须把最终 `dt_bias` UB 落点显式置零，且不能
   构造或读取虚假的 GM source。
 - `InputStorage::{Fp16,Bf16}` 选择 `q/k` 及其派生输出的公开 2-byte dtype；独立的
   `valueStorage::{Fp16,Bf16}` 选择 `v/u` dtype，二者允许不同且不改变容量。`ScoreStorage::{Fp16,Bf16}`
@@ -184,9 +184,9 @@ generation 或未登记 scratch；Stage overlay 只能在上一语义的最后�
 
 ### 静态本地内存与 Arch35 Mutex
 
-当前方案确定采用**静态 Tensor/静态 offset** 管理，不使用 `TPipe/TQue` 动态分配：AIV 的 UB
-`MAIN/AUX`、AIC 的 L1 resident/current lane、L0A/L0B operand 和 L0C head lane 都由编译期常量
-确定地址，Stage 只在既定地址上改变语义。因而 Arch35 的 `MutexID` 也由编译期表静态指定，
+当前方案确定采用**静态 Tensor/静态 offset** 管理，不使用 `TPipe/TQue` 动态分配：AIV 的每头 UB
+主计算区和向量状态与临时区、AIC 的 L1 resident/current lane、L0A/L0B operand 和 L0C head lane
+都由编译期常量确定地址，Stage 只在既定地址上改变语义。因而 Arch35 的 `MutexID` 也由编译期表静态指定，
 不调用仅用于 `TPipe/TQue` 范式的 `AllocMutexID/ReleaseMutexID`。
 
 每个物理 core 都有独立的 MutexID 命名空间，当前只使用如下 ID：
@@ -220,14 +220,14 @@ Mutex 也不建立同一 pipe 内的指令顺序。C4 中 MTE2 对同一最终 L
 
 | AIV 绝对 UB range | 大小 | 固定 owner |
 | --- | ---: | --- |
-| `[0x00000,0x1C000)` | 112 KiB | local head 0 `MAIN` |
-| `[0x1C000,0x38000)` | 112 KiB | local head 1 `MAIN` |
-| `[0x38000,0x3B000)` | 12 KiB | local head 0 `AUX` |
-| `[0x3B000,0x3E000)` | 12 KiB | local head 1 `AUX` |
+| `[0x00000,0x1C000)` | 112 KiB | local head 0 主计算区 |
+| `[0x1C000,0x38000)` | 112 KiB | local head 1 主计算区 |
+| `[0x38000,0x3B000)` | 12 KiB | local head 0 向量状态与临时区 |
+| `[0x3B000,0x3E000)` | 12 KiB | local head 1 向量状态与临时区 |
 
-每个 local head 的 MAIN 相对布局按 Stage 改变语义，但地址不移动：
+每个 local head 的主计算区相对布局按 Stage 改变语义，但地址不移动：
 
-| Stage/template | `[0x0000,0x1C000)` 的完整 MAIN 分段 |
+| Stage/template | `[0x0000,0x1C000)` 的完整主计算区分段 |
 | --- | --- |
 | `V0/GATE_2B` | `Qhat[0000,4000) Khat[4000,8000) gate->G[8000,C000) G[C000,14000) work[14000,1C000)` |
 | `V0/GATE_FP32` | `Qhat[0000,4000) Khat[4000,8000) gate->G[8000,10000) work[10000,18000) hard[18000,1C000)` |
@@ -236,9 +236,9 @@ Mutex 也不建立同一 pipe 内的指令顺序。C4 中 MTE2 对同一最终 L
 | `V3` | `rawAqk/Aqk[0000,4000) rawAkk[4000,8000) leaf0[8000,9000) leaf1[9000,A000) B[A000,B000) X0[B000,C000) X1[C000,D000) work[D000,E000) optional-pack[E000,10000) hard[10000,1C000)` |
 | `V6` | `Qhat->Qg[0000,4000) Khat->kg[4000,8000) V->Vbeta[8000,C000) G-input[C000,14000) KbetaG[14000,18000) VF-scratch[18000,1C000)`；`Qg_scaled[C000,10000)`只在该行全部 G reader 完成后原位覆盖 |
 
-每个 local head 的 AUX 相对布局固定为：
+每个 local head 的 12 KiB UB 向量状态与临时区相对布局固定为：
 
-| AUX range | 大小 | 语义与生命周期 |
+| 区内相对 range | 大小 | 语义与生命周期 |
 | --- | ---: | --- |
 | `[0x0000,0x0200)` | 512 B | FP32 `betaRaw` 有效 256 B，其余 hard pad |
 | `[0x0200,0x0400)` | 512 B | FP32 `betaEff` 有效 256 B；V0 产生后原址常驻到 V6 最后读取 |
@@ -441,7 +441,7 @@ Arch22 仍使用 `slotStride=0x22400`，但每个四-head group 只占 `headId%4
 对应范围 hard unused；G region 同样只供 Fused ABI 使用；Current ABI 的 V6
 直接重读 V0 唯一写出的公开 `gk`。`betaEff` FP32 的 256 Byte 放
 `[0x8000,0x8100)`，`[0x8100,0x8200)` 保持 hard pad。它在 V0 drain 后供 V3/V6 重载，不能沿用
-Arch35 的 AUX 常驻假设。
+Arch35 将 `betaEff` 常驻每头 UB 向量状态区的假设。
 
 Arch22 control page 复用同一 32 Byte record 格式。四个物理 cache slot 使用
 `[0x89000,0x89080)`，`[0x89080,0x89100)` 是为统一表格式保留的 pad，
@@ -651,8 +651,9 @@ L0C ticket。C7 最终 W/U Fixpipe 完成负责 workspace slot ticket。其余�
 `(l0cBankId,l0cStageGenerations[stage])`。V6/C7 这类跨域
 汇聚必须逐条 Wait，不能拿单一 ID 的 Join 伪装成同一计数器。
 
-GM slot 不增加 UB：Arch35 是两份 `112 KiB MAIN + 12 KiB AUX`；Arch22 是两份72 KiB private
-bank加一份40 KiB shared arena。上一 workspace generation 的 output drain 与 `SlotFree` 未闭环前，
+GM slot 不增加 UB：Arch35 的两个 local head 各自占用 112 KiB 主计算区和 12 KiB
+向量状态与临时区；Arch22 是两份72 KiB private bank加一份40 KiB shared arena。上一 workspace
+generation 的 output drain 与 `SlotFree` 未闭环前，
 禁止新 generation 复用同一 slot 的每-HV G/beta/payload；即使 `SlotFree` 已归还，只要
 `QkCacheFree` 未闭环，任何后续事务仍不得覆盖该 slot 的 Qhat/Khat cache 子区。上一 local
 generation 的 AIV Mutex 链未闭合前也禁止覆盖同一物理 UB bank。Arch35 的 L0C lower/upper
@@ -671,7 +672,7 @@ Mutex 链、Arch22 的 L0C stage-use generation 未由各自最后 Fixpipe reade
 | slot owner -> `V0` | AIC/AIV 间保留 `SlotFree(workspaceSlot, workspaceGeneration)`；同 AIV 的 UB slot 复用由静态 MutexID `0/1` 串接，不再占 `LocalBankFree` flag |
 | local UB `V0 -> V1 -> V3 -> V6 -> next V0` | 每个 Stage 的 MTE2/Vector/MTE3 按实际参与 pipe 对同一 UB MutexID 依次 Lock/Unlock；后续 pipe 首次 Lock 等待前序 pipe Unlock，最后一个 MTE3 reader 闭合后才能由下一使用者复用 |
 | HK cache owner -> mapped HV `V0/V6` | owner 等待 `QkCacheFree(slot,generation)`，MTE3 完成 Qhat/Khat 后发布一次 level-triggered `QkCacheReady`；同 cohort 的非 owner V0 可多次 acquire，但不能消费或清除 ready；该 acquire 的先行关系由本 AIV 后续 UB Mutex 链传到 V6，V6 直接回读 owner cache |
-| `V0` -> `V1/V3/V6` | V0 的 context/G 写出及 AUX `betaEff` 生命周期均由同一 UB Mutex 链传递；不再额外发布 `V0ExportDone`、`V0BetaReady` 或 `V0ContextReady` |
+| `V0` -> `V1/V3/V6` | V0 的 context/G 写出及向量状态区内 `betaEff` 的生命周期均由同一 UB Mutex 链传递；不再额外发布 `V0ExportDone`、`V0BetaReady` 或 `V0ContextReady` |
 | `V1` UB source -> `C2` raw destination | score 的最后一个 MTE3 source reader 完成后发布 `V1MainSourceFree`；C2 写 raw 前还要持有对应 generation 的 `C2RawDstFree` credit |
 | `V1` -> `C2` | AIV 发布 `V1ScoreReady`；C2 一次 MTE2 读完 GM payload 后返回 `C2ScorePayloadFree`。C2 的 L1 MTE2/MTE1 生命周期由对应 L1 MutexID 串接，不再发布 `C2ScoreL1Free` |
 | `C2` -> `V3` | 来自真实 raw-score producer pipe 的 `C2RawReady`；`C2RawDstFree` 只由当前 V1 source drain 发布并被当前 C2 消费，V3 等待 ready 后再进入本 AIV 的 UB Mutex 链 |
@@ -748,7 +749,7 @@ HardEvent 落地，不能因源码调用顺序或跨核 ticket 已存在而省�
   Fused ABI 存有效行；Current ABI 不写该区，V6 复用公开 `gk`，避免同一 Vector 数据重复
   GM write/read。Qhat/Khat 的槽位容量固定为 64 行，但 V0 写回和 V6 回读都只传
   `validRows * 128 * 2 Byte`，tail padding 不产生无消费者的 GM 流量。Arch35 的
-  `[0x8000,0x8200)` 全为 hard pad，`betaEff` 在 AUX 常驻到 V6；Arch22 用
+  `[0x8000,0x8200)` 全为 hard pad，`betaEff` 在每头 UB 向量状态区常驻到 V6；Arch22 用
   `[0x8000,0x8100)` 保存有效 FP32 betaEff，剩余 `[0x8100,0x8200)` 仍为 hard pad。
 - `AkkStorage::Fp32Internal` 为 **BLOCKED**，目前只是通过容量推导的 L1 布局候选；FP32 Akk 与 2-byte RHS 的
   C7 Cube operand 组合及对应目标 CANN API 尚未证明。当前 `RunV0/V1/V3/V6` 与

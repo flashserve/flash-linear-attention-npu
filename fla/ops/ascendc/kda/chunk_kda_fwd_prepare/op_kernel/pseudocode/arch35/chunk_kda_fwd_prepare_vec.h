@@ -44,11 +44,13 @@ inline BufferSpan UbMainSpan(const HeadTask &head, const char *name,
             head.aivId};
 }
 
-inline BufferSpan UbAuxSpan(const HeadTask &head, const char *name,
-                            const Region &region, std::uint64_t generation)
+inline BufferSpan UbVectorStateSpan(const HeadTask &head, const char *name,
+                                    const Region &region,
+                                    std::uint64_t generation)
 {
     return {name, MemorySpace::Ub,
-            static_cast<std::uint64_t>(UbPolicy::kAuxBase[head.aivLocalSlot]) +
+            static_cast<std::uint64_t>(
+                UbPolicy::kVectorStateBase[head.aivLocalSlot]) +
                 region.offset,
             region.size, head.localBankId, generation, CoreRole::Aiv,
             head.aivId};
@@ -160,14 +162,14 @@ inline void V0OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
     auto dtBias = vf.ZeroFp32Row(ShapePolicy::kK);
     if (usesSelectiveGate) {
         // 每个头的系数和 K 向量偏置只在词元扫描外搬运或
-        // 计算一次。它们的 AUX 地址与 GRef[0:2] 复用；本循环消费完两个值后，
-        // 才物化 GRef[0:2]。
+        // 计算一次。它们在每头 UB 向量状态区中的地址与 GRef[0:2] 复用；
+        // 本循环消费完两个值后，才物化 GRef[0:2]。
         gateCoefficient = vf.Exp(vf.LoadALogScalarOnce(
-            UbPolicy::kAuxBase[head.aivLocalSlot] +
-            AuxLayout::kALogOrGateAttrs.offset));
+            UbPolicy::kVectorStateBase[head.aivLocalSlot] +
+            VectorStateLayout::kALogOrGateAttrs.offset));
         dtBias = vf.LoadDtBiasRow(
-            UbPolicy::kAuxBase[head.aivLocalSlot] +
-            AuxLayout::kDtBias.offset);
+            UbPolicy::kVectorStateBase[head.aivLocalSlot] +
+            VectorStateLayout::kDtBias.offset);
     }
     auto carry = vf.ZeroFp32Row(ShapePolicy::kK);
     auto zeroInputStorage = vf.RoundToInputStorage(
@@ -182,8 +184,8 @@ inline void V0OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
         }
         auto gateRaw = vf.LoadGateRow(row, key.gateStorage);
         auto betaRaw = vf.LoadBetaFp32Scalar(
-            UbPolicy::kAuxBase[head.aivLocalSlot] +
-                AuxLayout::kBetaRaw.offset,
+            UbPolicy::kVectorStateBase[head.aivLocalSlot] +
+                VectorStateLayout::kBetaRaw.offset,
             row);
         auto betaEff = betaRaw;
         if (key.betaMode == BetaMode::Sigmoid) {
@@ -248,14 +250,14 @@ inline void V0OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
         const std::uint32_t end = std::min(begin + ShapePolicy::kScoreBlockRows,
                                            validRows);
         if (begin >= end) {
-            vf.ZeroFp32Row(UbPolicy::kAuxBase[head.aivLocalSlot] +
-                           AuxLayout::kGRef[s].offset);
+            vf.ZeroFp32Row(UbPolicy::kVectorStateBase[head.aivLocalSlot] +
+                           VectorStateLayout::kGRef[s].offset);
             continue;
         }
         const std::uint32_t referenceRow = begin + (end - begin) / 2U;
         auto reference = vf.LoadFp32Row(gOffset, referenceRow);
-        vf.StoreFp32Row(UbPolicy::kAuxBase[head.aivLocalSlot] +
-                            AuxLayout::kGRef[s].offset,
+        vf.StoreFp32Row(UbPolicy::kVectorStateBase[head.aivLocalSlot] +
+                            VectorStateLayout::kGRef[s].offset,
                         reference);
     }
     vf.StoreGLast(carry);
@@ -288,8 +290,8 @@ inline void V1OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
             auto g = vf.LoadFp32Row(gOffset, row);
             const std::uint32_t owner = row / ShapePolicy::kScoreBlockRows;
             auto ownerRef = vf.LoadFp32Row(
-                UbPolicy::kAuxBase[head.aivLocalSlot] +
-                AuxLayout::kGRef[owner].offset);
+                UbPolicy::kVectorStateBase[head.aivLocalSlot] +
+                VectorStateLayout::kGRef[owner].offset);
             auto plusFactor = EvaluatePow2<UseExp2>(
                 vf, vf.Sub(g, ownerRef), exp2InputMin, exp2InputMax);
             auto qPlus = vf.Mul(qHat, plusFactor);
@@ -307,8 +309,8 @@ inline void V1OneVf(Vf &vf, const HeadTask &head, std::uint32_t validRows,
                 }
                 if (s < activeBlocks && row < logicalEnd) {
                     auto reference = vf.LoadFp32Row(
-                        UbPolicy::kAuxBase[head.aivLocalSlot] +
-                        AuxLayout::kGRef[s].offset);
+                        UbPolicy::kVectorStateBase[head.aivLocalSlot] +
+                        VectorStateLayout::kGRef[s].offset);
                     auto minusFactor = EvaluatePow2<UseExp2>(
                         vf, vf.Sub(reference, g), exp2InputMin,
                         exp2InputMax);
@@ -620,15 +622,17 @@ inline void RunV0(const VectorStageArgs &args)
         args.ops->Load(Stage::V0,
                        detail::SymbolicGmSpan(head, "beta", betaInputBytes,
                                               workspaceGeneration),
-                       detail::UbAuxSpan(
+                       detail::UbVectorStateSpan(
                            head, "beta-raw",
-                           {AuxLayout::kBetaRaw.offset, betaInputBytes},
+                           {VectorStateLayout::kBetaRaw.offset,
+                            betaInputBytes},
                            localGeneration));
         if (args.key.gateMode != GateMode::PrecomputedStep) {
             // 每个选择性门控输入只搬运一次。可选 dt_bias 缺失时，必须在
-            // 该最终 AUX 地址清零，不能越过空指针或过短的 GM 张量读取。
-            const BufferSpan dtBias = detail::UbAuxSpan(
-                head, "dt-bias", AuxLayout::kDtBias, localGeneration);
+            // 该 dt_bias UB 落点清零，不能越过空指针或过短的 GM 张量读取。
+            const BufferSpan dtBias = detail::UbVectorStateSpan(
+                head, "dt-bias", VectorStateLayout::kDtBias,
+                localGeneration);
             if (args.hasDtBias) {
                 args.ops->Load(
                     Stage::V0,
@@ -644,9 +648,9 @@ inline void RunV0(const VectorStageArgs &args)
                 Stage::V0,
                 detail::SymbolicGmSpan(head, "A-log", ShapePolicy::kFp32Bytes,
                                        workspaceGeneration),
-                detail::UbAuxSpan(
+                detail::UbVectorStateSpan(
                     head, "A-log",
-                    {AuxLayout::kALogOrGateAttrs.offset,
+                    {VectorStateLayout::kALogOrGateAttrs.offset,
                      ShapePolicy::kFp32Bytes},
                     localGeneration));
         }
@@ -844,8 +848,8 @@ inline void RunV3(const VectorStageArgs &args)
             }
         }
         // Aqk 与可选 AkkOut 使用相互独立的公开 GM 地址。其 ABI 偏移和类型转换
-        // 刻意保持符号化，但归还本地 MAIN/AUX 所有权前必须包含对应的 MTE3
-        // 搬运。
+        // 刻意保持符号化，但归还本地主计算区和向量状态与临时区所有权前
+        // 必须包含对应的 MTE3 搬运。
         if (validRows != 0U) {
             args.ops->Store(
                 Stage::V3,

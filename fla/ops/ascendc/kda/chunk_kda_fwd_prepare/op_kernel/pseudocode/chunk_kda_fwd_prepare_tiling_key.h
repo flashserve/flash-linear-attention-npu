@@ -54,7 +54,7 @@ constexpr std::size_t kArch35UbBytes = 248 * kKiB;
 constexpr std::size_t kUbBytes = 248 * kKiB;
 constexpr std::size_t kL1Bytes = 512 * kKiB;
 constexpr std::size_t kMainBytesPerLocalHead = 112 * kKiB;
-constexpr std::size_t kAuxBytesPerLocalHead = 12 * kKiB;
+constexpr std::size_t kVectorStateBytesPerLocalHead = 12 * kKiB;
 constexpr std::uint64_t kWorkspaceSlotStrideBytes = 0x22400ULL;
 constexpr std::uint64_t kWorkspaceControlBytes = 0x1000ULL;
 constexpr std::uint64_t kArch22WorkspaceSlotsEndBytes = 0x89000ULL;
@@ -141,9 +141,10 @@ static_assert(kWorkspaceSlotsEndBytes + kWorkspaceControlBytes ==
                   kWorkspaceWorkgroupStrideBytes,
               "workspace workgroup stride must include the control region");
 static_assert(kHeadsPerAiv *
-                      (kMainBytesPerLocalHead + kAuxBytesPerLocalHead) ==
+                      (kMainBytesPerLocalHead +
+                       kVectorStateBytesPerLocalHead) ==
                   kUbBytes,
-              "each AIV owns two 112 KiB MAIN + 12 KiB AUX banks");
+              "each AIV owns two per-head layouts of 112 KiB main-compute plus 12 KiB vector-state");
 static_assert(2 * kArch22PrivateBankBytes + kArch22SharedArenaBytes ==
                   kArch22UbBytes,
               "Arch22 must exactly use two 72 KiB banks plus one 40 KiB arena");

@@ -161,12 +161,12 @@ struct ShapePolicy {
 struct UbPolicy {
     static constexpr Offset kCapacity = 0x3E000U;  // 每个 AIV 248 KiB。
     static constexpr Offset kMainBytes = 0x1C000U; // 每个本地头 112 KiB。
-    static constexpr Offset kAuxBytes = 0x03000U;  // 每个本地头 12 KiB。
+    static constexpr Offset kVectorStateBytes = 0x03000U; // 每个本地头 12 KiB。
     static constexpr std::array<Offset, 2> kMainBase = {0x00000U, 0x1C000U};
-    static constexpr std::array<Offset, 2> kAuxBase = {0x38000U, 0x3B000U};
+    static constexpr std::array<Offset, 2> kVectorStateBase = {0x38000U, 0x3B000U};
 };
 
-struct AuxLayout {
+struct VectorStateLayout {
     static constexpr Region kBetaRaw{0x0000U, 0x0200U};
     static constexpr Region kBetaEff{0x0200U, 0x0200U};
     static constexpr std::array<Region, 4> kGRef = {{{0x0400U, 0x0200U},
@@ -406,9 +406,9 @@ static_assert(ShapePolicy::kQBytes == 0x4000U && ShapePolicy::kKBytes == 0x4000U
                   ShapePolicy::kBetaInputBytes == 0x0100U &&
                   ShapePolicy::kBetaEffBytes == 0x0100U,
               "Context byte sizes do not match the fixed address contract");
-static_assert(ShapePolicy::kBetaInputBytes <= AuxLayout::kBetaRaw.size &&
-                  ShapePolicy::kBetaEffBytes <= AuxLayout::kBetaEff.size,
-              "aligned AUX regions must contain FP32 token-scalar beta arrays");
+static_assert(ShapePolicy::kBetaInputBytes <= VectorStateLayout::kBetaRaw.size &&
+                  ShapePolicy::kBetaEffBytes <= VectorStateLayout::kBetaEff.size,
+              "aligned per-head UB vector-state regions must contain FP32 beta arrays");
 static_assert(ShapePolicy::kKMinusTotalBytes == 0xA000U,
               "Causal Kminus prefixes must occupy 4+8+12+16 KiB");
 static_assert(ShapePolicy::kKMinusBytes[0] ==
@@ -427,26 +427,36 @@ static_assert(ShapePolicy::kKMinusBytes[0] ==
 static_assert(ShapePolicy::kScorePayloadBytes == 0x12000U,
               "The S=4 causal-prefix score payload must be exactly 72 KiB");
 
-static_assert(2U * UbPolicy::kMainBytes + 2U * UbPolicy::kAuxBytes == UbPolicy::kCapacity,
-              "Two fixed MAIN/AUX head slots must exactly cover 248 KiB UB");
-static_assert(UbPolicy::kMainBase[1] + UbPolicy::kMainBytes == UbPolicy::kAuxBase[0] &&
-                  UbPolicy::kAuxBase[1] + UbPolicy::kAuxBytes == UbPolicy::kCapacity,
-              "MAIN/AUX absolute offsets overlap or leave an unowned tail");
-static_assert(AuxLayout::kVfScratch.size == 0x2000U &&
-                  AuxLayout::kVfScratch.End() == UbPolicy::kAuxBytes,
-              "the full 8 KiB AUX scratch must end at the 12 KiB boundary");
-static_assert(AuxLayout::kDtBias.offset == AuxLayout::kGRef[0].offset &&
-                  AuxLayout::kDtBias.size == AuxLayout::kGRef[0].size &&
-                  AuxLayout::kALogOrGateAttrs.offset ==
-                      AuxLayout::kGRef[1].offset &&
-                  AuxLayout::kALogOrGateAttrs.size ==
-                      AuxLayout::kGRef[1].size,
+static_assert(2U * UbPolicy::kMainBytes +
+                      2U * UbPolicy::kVectorStateBytes ==
+                  UbPolicy::kCapacity,
+              "two per-head main-compute plus vector-state layouts must exactly cover 248 KiB UB");
+static_assert(UbPolicy::kMainBase[1] + UbPolicy::kMainBytes ==
+                      UbPolicy::kVectorStateBase[0] &&
+                  UbPolicy::kVectorStateBase[1] +
+                          UbPolicy::kVectorStateBytes ==
+                      UbPolicy::kCapacity,
+              "main-compute and vector-state offsets overlap or leave an unowned tail");
+static_assert(VectorStateLayout::kVfScratch.size == 0x2000U &&
+                  VectorStateLayout::kVfScratch.End() ==
+                      UbPolicy::kVectorStateBytes,
+              "the full 8 KiB VF scratch must end at the 12 KiB vector-state boundary");
+static_assert(VectorStateLayout::kDtBias.offset ==
+                      VectorStateLayout::kGRef[0].offset &&
+                  VectorStateLayout::kDtBias.size ==
+                      VectorStateLayout::kGRef[0].size &&
+                  VectorStateLayout::kALogOrGateAttrs.offset ==
+                      VectorStateLayout::kGRef[1].offset &&
+                  VectorStateLayout::kALogOrGateAttrs.size ==
+                      VectorStateLayout::kGRef[1].size,
               "selective-gate temporaries must exactly overlay late GRef outputs");
-static_assert(Disjoint(AuxLayout::kBetaRaw, AuxLayout::kDtBias) &&
-                  Disjoint(AuxLayout::kBetaEff,
-                           AuxLayout::kALogOrGateAttrs) &&
-                  Disjoint(AuxLayout::kGLast, AuxLayout::kVfScratch),
-              "AUX overlay must not consume beta or the 8 KiB VF scratch");
+static_assert(Disjoint(VectorStateLayout::kBetaRaw,
+                       VectorStateLayout::kDtBias) &&
+                  Disjoint(VectorStateLayout::kBetaEff,
+                           VectorStateLayout::kALogOrGateAttrs) &&
+                  Disjoint(VectorStateLayout::kGLast,
+                           VectorStateLayout::kVfScratch),
+              "vector-state overlays must not consume beta or the 8 KiB VF scratch");
 
 static_assert(V0Gate2BLayout::kWork.End() == UbPolicy::kMainBytes &&
                   V0GateFp32Layout::kReserve.End() == UbPolicy::kMainBytes,
