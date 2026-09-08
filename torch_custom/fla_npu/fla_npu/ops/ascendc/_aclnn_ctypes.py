@@ -1602,10 +1602,14 @@ def npu_chunk_gated_delta_rule_fwd(
     scale=None,
     use_exp2=False,
     use_qk_l2norm_in_kernel=False,
+    use_gate_in_kernel=False,
+    use_beta_sigmoid_in_kernel=False,
+    allow_neg_eigval=False,
+    output_a=True,
     state_v_first=False,
     layout="BNSD",
 ):
-    """Call the final Phase 6 single-kernel GDN core."""
+    """Call the fused GDN forward interface."""
     import torch
 
     q_shape = _shape(q)
@@ -1661,11 +1665,31 @@ def npu_chunk_gated_delta_rule_fwd(
             raise RuntimeError("npu_chunk_gated_delta_rule_fwd: chunk_indices must use canonical sequence-major order.")
 
     output_final_state = _optional_bool(output_final_state, False)
+    use_exp2 = _optional_bool(use_exp2, False)
+    use_qk_l2norm_in_kernel = _optional_bool(use_qk_l2norm_in_kernel, False)
+    use_gate_in_kernel = _optional_bool(use_gate_in_kernel, False)
+    use_beta_sigmoid_in_kernel = _optional_bool(use_beta_sigmoid_in_kernel, False)
+    allow_neg_eigval = _optional_bool(allow_neg_eigval, False)
+    output_a = _optional_bool(output_a, True)
     state_v_first = _optional_bool(state_v_first, False)
+    if use_gate_in_kernel:
+        raise ValueError("use_gate_in_kernel currently only supports False.")
+    if use_beta_sigmoid_in_kernel and not (use_exp2 and use_qk_l2norm_in_kernel):
+        raise ValueError(
+            "use_beta_sigmoid_in_kernel=True requires use_exp2=True and "
+            "use_qk_l2norm_in_kernel=True."
+        )
+    if allow_neg_eigval and not use_beta_sigmoid_in_kernel:
+        raise ValueError("allow_neg_eigval=True requires use_beta_sigmoid_in_kernel=True.")
     scale = _optional_float(scale, float(k_dim) ** -0.5)
     o = _empty((batch, tokens, v_heads, v_dim), v)
     g_cumsum = _empty((batch, tokens, v_heads), g, dtype=torch.float32)
     A = _empty((batch, v_heads, tokens, int(chunk_size)), q)
+    beta_eff = (
+        _empty((batch, tokens, v_heads), beta, dtype=torch.float32)
+        if use_beta_sigmoid_in_kernel
+        else None
+    )
     final_state = None
     if output_final_state:
         seq_num = len(cu_seqlens) - 1 if cu_seqlens is not None else batch
@@ -1693,9 +1717,9 @@ def npu_chunk_gated_delta_rule_fwd(
             ctypes.cast(layout_buffer, ctypes.c_char_p),
             ctypes.c_double(scale),
             ctypes.c_int64(int(chunk_size)),
-            ctypes.c_bool(_optional_bool(use_exp2, False)),
-            ctypes.c_bool(_optional_bool(use_qk_l2norm_in_kernel, False)),
-            ctypes.c_bool(False),
+            ctypes.c_bool(use_exp2),
+            ctypes.c_bool(use_qk_l2norm_in_kernel),
+            ctypes.c_bool(allow_neg_eigval),
             ctypes.c_bool(state_v_first),
             ctx.tensor(o, "o"),
             ctx.tensor(final_state, "final_state"),
@@ -1703,9 +1727,9 @@ def npu_chunk_gated_delta_rule_fwd(
             ctx.tensor(None, "k_hat"),
             ctx.tensor(None, "q_rstd"),
             ctx.tensor(None, "k_rstd"),
-            ctx.tensor(None, "beta_eff"),
+            ctx.tensor(beta_eff, "beta_eff"),
             ctx.tensor(g_cumsum, "g_cumsum"),
-            ctx.tensor(A, "A"),
+            ctx.tensor(A if output_a else None, "A"),
             ctx.tensor(None, "h"),
         ],
         outputs,
