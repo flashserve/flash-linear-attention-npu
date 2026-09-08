@@ -17,6 +17,7 @@
 
 #include "kernel_operator.h"
 #include "lib/matmul_intf.h"
+#include "kernel_utils/vector/regbase.hpp"
 #include "../recurrent_gated_delta_rule_tiling_data.h"
 
 namespace RecurrentGatedDeltaRule {
@@ -29,18 +30,14 @@ constexpr uint32_t MAX_OUT_BUFFER_NUM = 2;
 constexpr uint64_t MAX_MTP = 8;
 constexpr uint64_t BF16_NUM_PER_BLOCK = 16;
 constexpr uint64_t FP32_NUM_PER_BLOCK = 8;
-constexpr uint32_t REPEAT_LENTH = 64; // 256Byte for float
-constexpr uint32_t MAX_REPEAT_TIME = 255;
-constexpr uint32_t ADD_FOLD_REDUCE_MIN_K = 128;
 constexpr uint16_t V_LENGTH = VECTOR_REG_WIDTH / sizeof(float);
-constexpr uint16_t TWO_V_LENGTH = 2 * V_LENGTH;
 
 constexpr CastTrait castTraitB16ToB32 = {
     RegLayout::ZERO, SatMode::UNKNOWN, MaskMergeMode::ZEROING, RoundMode::UNKNOWN};
-
-#ifndef RGDR_ENABLE_ADD_FOLD_REDUCE
-#define RGDR_ENABLE_ADD_FOLD_REDUCE  1
-#endif
+constexpr static CastTrait castTraitFp32ToB16ZeroRint = {
+    RegLayout::ZERO, SatMode::NO_SAT, MaskMergeMode::MERGING, RoundMode::CAST_RINT};
+constexpr static CastTrait castTraitFp32ToB16OneRint = {
+    RegLayout::ONE, SatMode::NO_SAT, MaskMergeMode::ZEROING, RoundMode::CAST_RINT};
 struct RGDRInitParams {
     GM_ADDR query;
     GM_ADDR key;
@@ -55,6 +52,171 @@ struct RGDRInitParams {
     GM_ADDR attnOut;
     GM_ADDR finalState;
 };
+
+template <typename stateType, typename outType, bool hasGama, bool hasGamaK>
+__simd_vf__ inline void ComputeRecurrentGatedDeltaRuleVF(
+    __ubuf__ float *state, __ubuf__ float *key, __ubuf__ float *query, __ubuf__ float *value,
+    __ubuf__ float *gamaK, __ubuf__ stateType *stateOut, __ubuf__ outType *attnOut,
+    __ubuf__ float *attnTmp, uint16_t rows, uint16_t kLength, float gama, float beta,
+    bool runtimeHasGama, bool runtimeHasGamaK)
+{
+    // The public interface fixes Dk to 128, i.e. two FP32 vector registers on A5.
+    // Keeping the complete recurrence in one VF lets both state halves remain in registers
+    // across gate, dot-product, rank-one update, output projection and output conversion.
+    constexpr uint16_t FP32_PER_REG = VECTOR_REG_WIDTH / sizeof(float);
+    MaskReg fullFp32Mask = CreateMask<float, MaskPattern::ALL>();
+    MaskReg fullB16Mask = CreateMask<bfloat16_t, MaskPattern::ALL>();
+
+    RegTensor<float> key0;
+    RegTensor<float> key1;
+    RegTensor<float> query0;
+    RegTensor<float> query1;
+    if constexpr (std::is_same<stateType, float32_t>()) {
+        DataCopy(key0, key);
+        DataCopy(key1, key + FP32_PER_REG);
+        DataCopy(query0, query);
+        DataCopy(query1, query + FP32_PER_REG);
+    } else {
+        DataCopy<float, LoadDist::DIST_DINTLV_B32>(key0, key1, key);
+        DataCopy<float, LoadDist::DIST_DINTLV_B32>(query0, query1, query);
+    }
+
+    RegTensor<float> gamaK0;
+    RegTensor<float> gamaK1;
+    if constexpr (std::is_same<stateType, float32_t>()) {
+        if (runtimeHasGamaK) {
+            DataCopy(gamaK0, gamaK);
+            DataCopy(gamaK1, gamaK + FP32_PER_REG);
+        }
+    } else if constexpr (hasGamaK) {
+        DataCopy<float, LoadDist::DIST_DINTLV_B32>(gamaK0, gamaK1, gamaK);
+    }
+
+    for (uint16_t row = 0; row < rows; ++row) {
+        const uint32_t rowOffset = static_cast<uint32_t>(row) * kLength;
+        RegTensor<float> state0;
+        RegTensor<float> state1;
+        if constexpr (std::is_same<stateType, float32_t>()) {
+            DataCopy(state0, state + rowOffset);
+            DataCopy(state1, state + rowOffset + FP32_PER_REG);
+        } else {
+            DataCopy<float, LoadDist::DIST_DINTLV_B32>(state0, state1, state + rowOffset);
+        }
+
+        if constexpr (std::is_same<stateType, float32_t>()) {
+            if (runtimeHasGama) {
+                Muls(state0, state0, gama, fullFp32Mask);
+                Muls(state1, state1, gama, fullFp32Mask);
+            }
+            if (runtimeHasGamaK) {
+                Mul(state0, state0, gamaK0, fullFp32Mask);
+                Mul(state1, state1, gamaK1, fullFp32Mask);
+            }
+        } else {
+            if constexpr (hasGama) {
+                Muls(state0, state0, gama, fullFp32Mask);
+                Muls(state1, state1, gama, fullFp32Mask);
+            }
+            if constexpr (hasGamaK) {
+                Mul(state0, state0, gamaK0, fullFp32Mask);
+                Mul(state1, state1, gamaK1, fullFp32Mask);
+            }
+        }
+
+        RegTensor<float> dot0;
+        RegTensor<float> dot1;
+        RegTensor<float> dotSum;
+        Mul(dot0, state0, key0, fullFp32Mask);
+        Mul(dot1, state1, key1, fullFp32Mask);
+        Add(dot0, dot0, dot1, fullFp32Mask);
+        ReduceSum(dotSum, dot0, fullFp32Mask);
+        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(attnTmp + row, dotSum, fullFp32Mask);
+        if constexpr (std::is_same<stateType, float32_t>()) {
+            DataCopy(state + rowOffset, state0, fullFp32Mask);
+            DataCopy(state + rowOffset + FP32_PER_REG, state1, fullFp32Mask);
+        } else {
+            DataCopy<float, StoreDist::DIST_INTLV_B32>(state + rowOffset, state0, state1, fullFp32Mask);
+        }
+    }
+
+    LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+    for (uint16_t row = 0; row < rows; ++row) {
+        const uint32_t rowOffset = static_cast<uint32_t>(row) * kLength;
+
+        RegTensor<float> attn;
+        RegTensor<float> delta;
+        DataCopy<float, LoadDist::DIST_BRC_B32>(attn, value + row);
+        RegTensor<float> dotSum;
+        DataCopy<float, LoadDist::DIST_BRC_B32>(dotSum, attnTmp + row);
+        Sub(attn, attn, dotSum, fullFp32Mask);
+        Muls(delta, attn, beta, fullFp32Mask);
+
+        RegTensor<float> state0;
+        RegTensor<float> state1;
+        if constexpr (std::is_same<stateType, float32_t>()) {
+            DataCopy(state0, state + rowOffset);
+            DataCopy(state1, state + rowOffset + FP32_PER_REG);
+        } else {
+            DataCopy<float, LoadDist::DIST_DINTLV_B32>(state0, state1, state + rowOffset);
+        }
+        RegTensor<float> update0;
+        RegTensor<float> update1;
+        Mul(update0, delta, key0, fullFp32Mask);
+        Mul(update1, delta, key1, fullFp32Mask);
+        Add(state0, state0, update0, fullFp32Mask);
+        Add(state1, state1, update1, fullFp32Mask);
+        if constexpr (std::is_same<stateType, float32_t>()) {
+            DataCopy(state + rowOffset, state0, fullFp32Mask);
+            DataCopy(state + rowOffset + FP32_PER_REG, state1, fullFp32Mask);
+        } else {
+            DataCopy<float, StoreDist::DIST_INTLV_B32>(state + rowOffset, state0, state1, fullFp32Mask);
+        }
+
+        RegTensor<float> out0;
+        RegTensor<float> out1;
+        RegTensor<float> outSum;
+        Mul(out0, state0, query0, fullFp32Mask);
+        Mul(out1, state1, query1, fullFp32Mask);
+        Add(out0, out0, out1, fullFp32Mask);
+        ReduceSum(outSum, out0, fullFp32Mask);
+        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(attnTmp + row, outSum, fullFp32Mask);
+
+        if constexpr (std::is_same<stateType, float32_t>()) {
+            DataCopy(stateOut + rowOffset, state0, fullFp32Mask);
+            DataCopy(stateOut + rowOffset + FP32_PER_REG, state1, fullFp32Mask);
+        } else {
+            RegTensor<stateType> stateOutReg;
+            Cast<stateType, float, castTraitFp32ToB16OneRint>(
+                stateOutReg, state1, fullFp32Mask);
+            Cast<stateType, float, castTraitFp32ToB16ZeroRint>(
+                stateOutReg, state0, fullFp32Mask);
+            StoreAlign(stateOut + rowOffset, stateOutReg, fullB16Mask);
+        }
+    }
+
+    LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+    if constexpr (std::is_same<outType, float32_t>()) {
+        uint32_t remaining = rows;
+        for (uint16_t offset = 0; offset < rows; offset += FP32_PER_REG) {
+            MaskReg mask = UpdateMask<float>(remaining);
+            RegTensor<float> output;
+            DataCopy(output, attnTmp + offset);
+            DataCopy(attnOut + offset, output, mask);
+        }
+    } else {
+        RegTensor<float> output0;
+        RegTensor<float> output1;
+        RegTensor<outType> output;
+        DataCopy<float, LoadDist::DIST_DINTLV_B32>(output0, output1, attnTmp);
+        Cast<outType, float, castTraitFp32ToB16OneRint>(
+            output, output1, fullFp32Mask);
+        Cast<outType, float, castTraitFp32ToB16ZeroRint>(
+            output, output0, fullFp32Mask);
+        uint32_t remaining = rows;
+        MaskReg outputMask = UpdateMask<outType>(remaining);
+        StoreAlign(attnOut, output, outputMask);
+    }
+}
 
 template <typename inType, typename outType, typename stateType>
 class RGDR {
@@ -74,7 +236,6 @@ public:
         hasAcceptedTokens_ = (tilingData->hasAcceptedTokens == 1);
         hasGama_ = (tilingData->hasGama == 1);
         hasGamaK_ = (tilingData->hasGamaK == 1);
-        useAddFoldReduce_ = (RGDR_ENABLE_ADD_FOLD_REDUCE != 0);
         vStep_ = tilingData->vStep;
         stateOutBufferNum_ = (tilingData->stateOutBufferNum == MAX_OUT_BUFFER_NUM) ? MAX_OUT_BUFFER_NUM : BUFFER_NUM;
         attnOutBufferNum_ = (tilingData->attnOutBufferNum == MAX_OUT_BUFFER_NUM) ? MAX_OUT_BUFFER_NUM : BUFFER_NUM;
@@ -136,8 +297,6 @@ public:
         pipe_->InitBuffer(attnOutQueue_, attnOutBufferNum_, vStep_ * sizeof(outType));
         pipe_->InitBuffer(tmpBuff, restUbSize_);
         uint32_t buffOffset = 0;
-        deltaInUb = tmpBuff.GetWithOffset<float>(static_cast<uint32_t>(vStep_), buffOffset);
-        buffOffset += singleVSize;
         attnInUb = tmpBuff.GetWithOffset<float>(static_cast<uint32_t>(vStep_), buffOffset);
         buffOffset += singleVSize;
         vInUb = tmpBuff.GetWithOffset<float>(static_cast<uint32_t>(MAX_MTP * alignV_), buffOffset);
@@ -147,8 +306,6 @@ public:
         kInUb = tmpBuff.GetWithOffset<float>(static_cast<uint32_t>(MAX_MTP * alignK_), buffOffset);
         buffOffset += kSize;
         stateInUb = tmpBuff.GetWithOffset<float>(static_cast<uint32_t>(alignK_ * vStep_), buffOffset);
-        buffOffset += cubeSize;
-        broadTmpInUb = tmpBuff.GetWithOffset<float>(static_cast<uint32_t>(alignK_ * vStep_), buffOffset);
         buffOffset += cubeSize;
         betaInUb = tmpBuff.GetWithOffset<float>(static_cast<uint32_t>(betaNumAlign), buffOffset);
         buffOffset += betaUbSize;
@@ -274,179 +431,6 @@ private:
         stateInQueue_.FreeTensor(stateLocal);
     }
 
-    __aicore__ inline void MatVecMul(const LocalTensor<float> &cubeTensor, const LocalTensor<float> &vecTensor,
-                                          LocalTensor<float> &dstTensor, uint32_t rows)
-    {
-        __ubuf__ float* cubeAddr = (__ubuf__ float*)cubeTensor.GetPhyAddr();
-        __ubuf__ float* vecAddr = (__ubuf__ float*)vecTensor.GetPhyAddr();
-        __ubuf__ float* dstAddr = (__ubuf__ float*)dstTensor.GetPhyAddr();
-
-        uint16_t rowNum = static_cast<uint16_t>(rows);
-        uint16_t colLoopTimes = static_cast<uint16_t>(Ceil(alignK_, V_LENGTH));
-        uint32_t colLength = alignK_;
-        __VEC_SCOPE__
-        {
-            RegTensor<float> cube;
-            RegTensor<float> vec;
-            RegTensor<float> dst;
-            MaskReg pregLoop;
-            for (uint16_t j = 0; j < colLoopTimes; j++) {
-                pregLoop = UpdateMask<float>(colLength);
-                DataCopy(vec, vecAddr + j * V_LENGTH);
-                for (uint16_t i = 0; i < rowNum; i ++) {
-                    DataCopy(cube, cubeAddr + i * alignK_ + j * V_LENGTH);
-                    Mul(dst, cube, vec, pregLoop);
-                    DataCopy(dstAddr + i * alignK_ + j * V_LENGTH, dst, pregLoop);
-                }
-            }
-        }
-    }
-
-    __aicore__ inline void ProcessKQ(const LocalTensor<float> &cubeTensor, const LocalTensor<float> &vec1Tensor,
-                                          LocalTensor<float> &dst1Tensor, const LocalTensor<float> &vec2Tensor,
-                                          LocalTensor<float> &dst2Tensor, uint32_t rows)
-    {
-        __ubuf__ float* cubeAddr = (__ubuf__ float*)cubeTensor.GetPhyAddr();
-        __ubuf__ float* vec1Addr = (__ubuf__ float*)vec1Tensor.GetPhyAddr();
-        __ubuf__ float* vec2Addr = (__ubuf__ float*)vec2Tensor.GetPhyAddr();
-        __ubuf__ float* dst1Addr = (__ubuf__ float*)dst1Tensor.GetPhyAddr();
-        __ubuf__ float* dst2Addr = (__ubuf__ float*)dst2Tensor.GetPhyAddr();
-
-        uint16_t rowNum = static_cast<uint16_t>(rows);
-        uint16_t colLoopTimes = static_cast<uint16_t>(Ceil(alignK_, V_LENGTH));
-        uint32_t colLength = alignK_;
-        __VEC_SCOPE__
-        {
-            RegTensor<float> cube;
-            RegTensor<float> vec1;
-            RegTensor<float> vec2;
-            RegTensor<float> dst1;
-            RegTensor<float> dst2;
-            MaskReg pregLoop;
-            for (uint16_t j = 0; j < colLoopTimes; j++) {
-                pregLoop = UpdateMask<float>(colLength);
-                DataCopy(vec1, vec1Addr + j * V_LENGTH);
-                DataCopy(vec2, vec2Addr + j * V_LENGTH);
-                for (uint16_t i = 0; i < rowNum; i ++) {
-                    DataCopy<float, LoadDist::DIST_BRC_B32>(cube, cubeAddr + i);
-                    DataCopy(dst1, dst1Addr + i * alignK_ + j * V_LENGTH);
-                    Mul(cube, cube, vec1, pregLoop);
-                    Add(dst1, dst1, cube, pregLoop);
-                    Mul(dst2, dst1, vec2, pregLoop);
-                    DataCopy(dst1Addr + i * alignK_ + j * V_LENGTH, dst1, pregLoop);
-                    DataCopy(dst2Addr + i * alignK_ + j * V_LENGTH, dst2, pregLoop);
-                }
-            }
-        }
-    }
-
-    __aicore__ inline void ReduceSum64(__ubuf__ float* dstAddr, __ubuf__ float* srcAddr, uint16_t rowNum)
-    {
-        uint32_t colLength = alignK_;
-        __VEC_SCOPE__
-        {
-            RegTensor<float> src;
-            RegTensor<float> sum;
-            MaskReg pregLoop = UpdateMask<float>(colLength);
-            for (uint16_t i = 0;i < rowNum;i ++) {
-                DataCopy(src, srcAddr + i * alignK_);
-                ReduceSum(sum, src, pregLoop);
-                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dstAddr + i, sum, pregLoop);
-            }
-        }
-    }
-
-    __aicore__ inline void ReduceSum128(__ubuf__ float* dstAddr, __ubuf__ float* srcAddr, uint16_t rowNum)
-    {
-        uint32_t colLength = alignK_ - V_LENGTH;
-        __VEC_SCOPE__
-        {
-            RegTensor<float> src1;
-            RegTensor<float> src2;
-            RegTensor<float> sum;
-            MaskReg pregFull = CreateMask<float, MaskPattern::ALL>();
-            MaskReg pregLoop = UpdateMask<float>(colLength);
-            for (uint16_t i = 0;i < rowNum;i ++) {
-                DataCopy(src1, srcAddr + i * alignK_);
-                DataCopy(src2, srcAddr + i * alignK_ + V_LENGTH);
-                Add<float, MaskMergeMode::MERGING>(src1, src1, src2, pregLoop);
-                ReduceSum(sum, src1, pregFull);
-                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dstAddr + i, sum, pregFull);
-            }
-        }
-    }
-
-    __aicore__ inline void ReduceSumVF(__ubuf__ float* dstAddr, __ubuf__ float* srcAddr, uint16_t rowNum)
-    {
-        uint16_t colLoopTimes = static_cast<uint16_t>(Ceil(alignK_, V_LENGTH));
-        __VEC_SCOPE__
-        {
-            RegTensor<float> src;
-            RegTensor<float> tmp;
-            RegTensor<float> sum;
-            MaskReg pregFull = CreateMask<float, MaskPattern::ALL>();
-            MaskReg pregLoop;
-            for (uint16_t i = 0;i < rowNum;i ++) {
-                uint32_t colLength = alignK_;
-                Duplicate(tmp, 0.0f);
-                for (uint16_t j = 0; j < colLoopTimes; j++) {
-                    pregLoop = UpdateMask<float>(colLength);
-                    DataCopy(src, srcAddr + i * alignK_ + j * V_LENGTH);
-                    Add<float, MaskMergeMode::MERGING>(tmp, tmp, src, pregLoop);
-                }
-                ReduceSum(sum, tmp, pregFull);
-                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dstAddr + i, sum, pregFull);
-            }
-        }
-    }
-
-    __aicore__ inline void ReduceSumDispatch(LocalTensor<float> &dstTensor, LocalTensor<float> &srcTensor,
-                                             uint32_t rows)
-    {
-        __ubuf__ float* srcAddr = (__ubuf__ float*)srcTensor.GetPhyAddr();
-        __ubuf__ float* dstAddr = (__ubuf__ float*)dstTensor.GetPhyAddr();
-        uint16_t rowNum = static_cast<uint16_t>(rows);
-        if (alignK_ <= V_LENGTH) {
-            ReduceSum64(dstAddr, srcAddr, rowNum);
-        } else if (alignK_ <= TWO_V_LENGTH) {
-            ReduceSum128(dstAddr, srcAddr, rowNum);
-        } else {
-            ReduceSumVF(dstAddr, srcAddr, rowNum);
-        }
-    }
-
-    __aicore__ inline void SubMasked(LocalTensor<float> &dstTensor, const LocalTensor<float> &src0Tensor,
-                                    const LocalTensor<float> &src1Tensor, uint32_t count)
-    {
-        BinaryRepeatParams repeatParams{1, 1, 1, FP32_NUM_PER_BLOCK, FP32_NUM_PER_BLOCK, FP32_NUM_PER_BLOCK};
-        uint8_t repeatTime = static_cast<uint8_t>(count / V_LENGTH);
-        uint32_t tailCount = count % V_LENGTH;
-        if (repeatTime > 0) {
-            Sub(dstTensor, src0Tensor, src1Tensor, static_cast<uint64_t>(V_LENGTH), repeatTime, repeatParams);
-        }
-        if (tailCount > 0) {
-            uint32_t tailOffset = count - tailCount;
-            Sub(dstTensor[tailOffset], src0Tensor[tailOffset], src1Tensor[tailOffset],
-                static_cast<uint64_t>(tailCount), 1, repeatParams);
-        }
-    }
-
-    __aicore__ inline void MulsMasked(LocalTensor<float> &dstTensor, const LocalTensor<float> &srcTensor,
-                                     float scalar, uint32_t count)
-    {
-        UnaryRepeatParams repeatParams{1, 1, FP32_NUM_PER_BLOCK, FP32_NUM_PER_BLOCK};
-        uint8_t repeatTime = static_cast<uint8_t>(count / V_LENGTH);
-        uint32_t tailCount = count % V_LENGTH;
-        if (repeatTime > 0) {
-            Muls(dstTensor, srcTensor, scalar, static_cast<uint64_t>(V_LENGTH), repeatTime, repeatParams);
-        }
-        if (tailCount > 0) {
-            uint32_t tailOffset = count - tailCount;
-            Muls(dstTensor[tailOffset], srcTensor[tailOffset], scalar, static_cast<uint64_t>(tailCount), 1,
-                 repeatParams);
-        }
-    }
-
     __aicore__ inline void ExpMasked(LocalTensor<float> &dstTensor, const LocalTensor<float> &srcTensor,
                                     uint32_t count)
     {
@@ -464,35 +448,48 @@ private:
 
     __aicore__ inline void Compute(uint32_t curSingleV, uint64_t curQKOffset, uint64_t curVOffset)
     {
-        if (hasGama_) {
-            Muls(stateInUb, stateInUb, gama_, alignK_ * curSingleV);
-        }
-        if (hasGamaK_) {
-            MatVecMul(stateInUb, gamaKInUb[curQKOffset], stateInUb, curSingleV);
-        }
-        if (hasGama_ || hasGamaK_) {
-            AscendC::PipeBarrier<PIPE_V>();
-        }
-        MatVecMul(stateInUb, kInUb[curQKOffset], broadTmpInUb, curSingleV);
-        AscendC::PipeBarrier<PIPE_V>();
-        ReduceSumDispatch(deltaInUb, broadTmpInUb, curSingleV);
-        AscendC::PipeBarrier<PIPE_V>();
-        SubMasked(attnInUb, vInUb[curVOffset], deltaInUb, curSingleV);
-        AscendC::PipeBarrier<PIPE_V>();
-        MulsMasked(deltaInUb, attnInUb, beta_, curSingleV);
-        AscendC::PipeBarrier<PIPE_V>();
-        ProcessKQ(deltaInUb, kInUb[curQKOffset], stateInUb, qInUb[curQKOffset], broadTmpInUb, curSingleV);
-        AscendC::PipeBarrier<PIPE_V>();
-        ReduceSumDispatch(attnInUb, broadTmpInUb, curSingleV);
         LocalTensor<stateType> stateOutLocal = stateOutQueue_.AllocTensor<stateType>();
         LocalTensor<outType> attnOutLocal = attnOutQueue_.AllocTensor<outType>();
+        __ubuf__ float *stateAddr = reinterpret_cast<__ubuf__ float *>(stateInUb.GetPhyAddr());
+        __ubuf__ float *keyAddr = reinterpret_cast<__ubuf__ float *>(kInUb[curQKOffset].GetPhyAddr());
+        __ubuf__ float *queryAddr = reinterpret_cast<__ubuf__ float *>(qInUb[curQKOffset].GetPhyAddr());
+        __ubuf__ float *valueAddr = reinterpret_cast<__ubuf__ float *>(vInUb[curVOffset].GetPhyAddr());
+        __ubuf__ float *gamaKAddr = hasGamaK_
+            ? reinterpret_cast<__ubuf__ float *>(gamaKInUb[curQKOffset].GetPhyAddr())
+            : stateAddr;
+        __ubuf__ stateType *stateOutAddr =
+            reinterpret_cast<__ubuf__ stateType *>(stateOutLocal.GetPhyAddr());
+        __ubuf__ outType *attnOutAddr = reinterpret_cast<__ubuf__ outType *>(attnOutLocal.GetPhyAddr());
+        __ubuf__ float *attnTmpAddr = reinterpret_cast<__ubuf__ float *>(attnInUb.GetPhyAddr());
         if constexpr (std::is_same<stateType, float32_t>()) {
-            DataCopy(stateOutLocal, stateInUb, alignK_ * curSingleV);
+            ComputeRecurrentGatedDeltaRuleVF<stateType, outType, false, false>(
+                stateAddr, keyAddr, queryAddr, valueAddr, gamaKAddr, stateOutAddr, attnOutAddr,
+                attnTmpAddr, static_cast<uint16_t>(curSingleV), static_cast<uint16_t>(alignK_),
+                gama_, beta_, hasGama_, hasGamaK_);
+        } else if (hasGama_) {
+            if (hasGamaK_) {
+                ComputeRecurrentGatedDeltaRuleVF<stateType, outType, true, true>(
+                    stateAddr, keyAddr, queryAddr, valueAddr, gamaKAddr, stateOutAddr, attnOutAddr,
+                    attnTmpAddr, static_cast<uint16_t>(curSingleV), static_cast<uint16_t>(alignK_),
+                    gama_, beta_, true, true);
+            } else {
+                ComputeRecurrentGatedDeltaRuleVF<stateType, outType, true, false>(
+                    stateAddr, keyAddr, queryAddr, valueAddr, gamaKAddr, stateOutAddr, attnOutAddr,
+                    attnTmpAddr, static_cast<uint16_t>(curSingleV), static_cast<uint16_t>(alignK_),
+                    gama_, beta_, true, false);
+            }
+        } else if (hasGamaK_) {
+            ComputeRecurrentGatedDeltaRuleVF<stateType, outType, false, true>(
+                stateAddr, keyAddr, queryAddr, valueAddr, gamaKAddr, stateOutAddr, attnOutAddr,
+                attnTmpAddr, static_cast<uint16_t>(curSingleV), static_cast<uint16_t>(alignK_),
+                gama_, beta_, false, true);
         } else {
-            Cast(stateOutLocal, stateInUb, AscendC::RoundMode::CAST_RINT, alignK_ * curSingleV);
+            ComputeRecurrentGatedDeltaRuleVF<stateType, outType, false, false>(
+                stateAddr, keyAddr, queryAddr, valueAddr, gamaKAddr, stateOutAddr, attnOutAddr,
+                attnTmpAddr, static_cast<uint16_t>(curSingleV), static_cast<uint16_t>(alignK_),
+                gama_, beta_, false, false);
         }
         stateOutQueue_.EnQue<stateType>(stateOutLocal);
-        Cast(attnOutLocal, attnInUb, AscendC::RoundMode::CAST_RINT, curSingleV);
         attnOutQueue_.EnQue<outType>(attnOutLocal);
     }
 
@@ -646,8 +643,6 @@ private:
     LocalTensor<float> gamaInUb;
     LocalTensor<float> gamaKInUb;
     LocalTensor<float> betaInUb;
-    LocalTensor<float> deltaInUb;
-    LocalTensor<float> broadTmpInUb;
     LocalTensor<float> attnInUb;
     LocalTensor<float> stateInUb;
     uint32_t B_;
@@ -668,7 +663,6 @@ private:
     bool hasAcceptedTokens_;
     bool hasGama_;
     bool hasGamaK_;
-    bool useAddFoldReduce_;
     float gama_;
     float beta_;
     float scale_;
