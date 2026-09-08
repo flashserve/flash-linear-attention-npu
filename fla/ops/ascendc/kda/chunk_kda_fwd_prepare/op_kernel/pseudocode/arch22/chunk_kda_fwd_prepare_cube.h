@@ -7,853 +7,656 @@
 #ifndef PSEUDOCODE_ARCH22_CHUNK_KDA_FWD_PREPARE_CUBE_H
 #define PSEUDOCODE_ARCH22_CHUNK_KDA_FWD_PREPARE_CUBE_H
 
-#include <algorithm>
-#include <cstddef>
 #include <cstdint>
-
+#include <type_traits>
+#include "kernel_operator.h"
 #include "../chunk_kda_fwd_prepare_policy.h"
 #include "../chunk_kda_fwd_prepare_struct.h"
-#include "../chunk_kda_fwd_prepare_tiling_key.h"
+#include "../chunk_kda_fwd_prepare_utils.h"
 
-namespace kda_prepare_pseudocode::arch22 {
+namespace KdaPrepare::Arch22 {
 
-inline constexpr bool kCubeDesignCovered = true;
+constexpr AscendC::FixpipeConfig kFixpipeNz = {
+    AscendC::CO2Layout::NZ, false};
 
-namespace cube_detail {
-
-inline BufferSpan Subspan(const BufferSpan &parent, const char *name,
-                          Offset relativeOffset, Offset bytes)
-{
-    BufferSpan span = parent;
-    span.name = name;
-    span.byteOffset += relativeOffset;
-    span.byteSize = bytes;
-    span.rows = 0U;
-    span.columns = 0U;
-    span.leadingDimension = 0U;
-    span.elementBytes = 0U;
-    return span;
-}
-
-constexpr Offset MatrixFootprintBytes(Offset rows, Offset columns,
-                                      Offset leadingDimension,
-                                      Offset elementBytes)
-{
-    return rows == 0U || columns == 0U
-               ? 0U
-               : ((rows - 1U) * leadingDimension + columns) * elementBytes;
-}
-
-inline BufferSpan MatrixRect(const BufferSpan &parent, const char *name,
-                             Offset row, Offset column, Offset rows,
-                             Offset columns, Offset leadingDimension,
-                             Offset elementBytes)
-{
-    // 待实现的二维描述符：byteSize 覆盖完整的跨步视图，rows/columns
-    // 保留其逻辑载荷尺寸。
-    BufferSpan span = parent;
-    span.name = name;
-    span.byteOffset +=
-        (static_cast<std::uint64_t>(row) * leadingDimension + column) *
-        elementBytes;
-    span.byteSize = MatrixFootprintBytes(rows, columns, leadingDimension,
-                                         elementBytes);
-    span.rows = rows;
-    span.columns = columns;
-    span.leadingDimension = leadingDimension;
-    span.elementBytes = elementBytes;
-    return span;
-}
-
-inline BufferSpan SymbolicGmRows(const HeadTask &head, const char *name,
-                                 Offset rows, Offset columns,
-                                 Offset leadingDimension,
-                                 Offset elementBytes)
-{
-    BufferSpan span{name,
-                    MemorySpace::Gm,
-                    0U,
-                    MatrixFootprintBytes(rows, columns, leadingDimension,
-                                         elementBytes),
-                    head.workspaceSlot,
-                    head.workspaceGeneration,
-                    CoreRole::Shared,
-                    0U,
-                    rows,
-                    columns,
-                    leadingDimension,
-                    elementBytes};
-    span.logicalHeadId = head.headId;
-    return span;
-}
-
-inline BufferSpan Payload(const CubeStageArgs &args, const HeadTask &head)
-{
-    return args.workspace->Span(WorkspaceRegion::SharedPayload,
-                                head.workspaceSlot,
-                                head.workspaceGeneration);
-}
-
-inline BufferSpan L1Span(const CubeStageArgs &args, const HeadTask &head,
-                         const char *name, const Region &region)
-{
-    return {name, MemorySpace::L1, region.offset, region.size, head.l1BankId,
-            head.l1Generation, CoreRole::Aic, args.workgroupId};
-}
-
-inline BufferSpan CurrentLane(const CubeStageArgs &args,
-                              const HeadTask &head, const char *name)
-{
-    return L1Span(
-        args, head, name,
-        {arch22_policy::L1Policy::kLaneBase[head.groupLocalHead],
-         arch22_policy::L1Policy::kLaneBytes});
-}
-
-inline BufferSpan Resident32(const CubeStageArgs &args, const HeadTask &head,
-                             const char *name, Offset regionBase)
-{
-    return L1Span(
-        args, head, name,
-        {regionBase + head.groupLocalHead *
-                          arch22_policy::L1Policy::Akk2BResident::kMatrixStride,
-         0x1000U});
-}
-
-inline BufferSpan X0Resident(const CubeStageArgs &args,
-                             const HeadTask &head)
-{
-    return Resident32(args, head, "X0-resident",
-                      arch22_policy::L1Policy::Akk2BResident::kX0.offset);
-}
-
-inline BufferSpan X1Resident(const CubeStageArgs &args,
-                             const HeadTask &head)
-{
-    return Resident32(args, head, "X1-resident",
-                      arch22_policy::L1Policy::Akk2BResident::kX1.offset);
-}
-
-inline BufferSpan TResident(const CubeStageArgs &args,
-                            const HeadTask &head)
-{
-    return Resident32(args, head, "T-resident",
-                      arch22_policy::L1Policy::Akk2BResident::kT.offset);
-}
-
-inline BufferSpan AkkResident(const CubeStageArgs &args,
-                              const HeadTask &head)
-{
-    const Offset base =
-        arch22_policy::L1Policy::Akk2BResident::kAkkTau.offset +
-        head.groupLocalHead *
-            arch22_policy::L1Policy::Akk2BResident::kAkkStride;
-    return L1Span(args, head, "Akk-cube-ready-resident", {base, 0x2000U});
-}
-
-inline BufferSpan L0cSpan(const CubeStageArgs &args, const HeadTask &head,
-                          L0cStageUse use, const char *name,
-                          const Region &withinLane)
-{
-    const Offset lane = arch22_policy::PhysicalLane(head.groupLocalHead);
-    const Offset base = arch22_policy::L0cPolicy::HeadLaneBase(lane);
-    return {name,
-            MemorySpace::L0,
-            static_cast<std::uint64_t>(base) + withinLane.offset,
-            withinLane.size,
-            head.l0cBankId,
-            L0cGenerationFor(head, use, Architecture::Arch22),
-            CoreRole::Aic,
-            args.workgroupId};
-}
-
-inline BufferSpan L0OperandSpan(const CubeStageArgs &args,
-                                const HeadTask &head, const char *name,
-                                MemorySpace space, Offset offset,
-                                Offset bytes, std::uint64_t generation)
-{
-    const Offset physicalLane =
-        arch22_policy::PhysicalLane(head.groupLocalHead);
-    BufferSpan span{name, space, offset, bytes, physicalLane, generation,
-                    CoreRole::Aic, args.workgroupId};
-    span.logicalHeadId = head.headId;
-    return span;
-}
-
-inline BufferSpan AkkRelay(const CubeStageArgs &args, const HeadTask &head,
-                           Offset validRows)
-{
-    if (args.key.abi == PrepareAbi::Current) {
-        return SymbolicGmRows(head, "Akk-output-and-C7-relay", validRows,
-                              ShapePolicy::kBt, ShapePolicy::kBt,
-                              ShapePolicy::kStorageBytes);
-    }
-    const BufferSpan relay = Subspan(
-        Payload(args, head), "Akk-row-major-relay",
-        arch22_policy::WorkspacePolicy::kAkkRowMajor.offset,
-        arch22_policy::WorkspacePolicy::kAkkRowMajor.size);
-    return MatrixRect(relay, "Akk-row-major-relay-valid", 0U, 0U,
-                      validRows, ShapePolicy::kBt, ShapePolicy::kBt,
-                      ShapePolicy::kStorageBytes);
-}
-
-inline bool ValidArgs(const CubeStageArgs &args)
-{
-    return args.work != nullptr && args.workspace != nullptr &&
-           args.sync != nullptr && args.ops != nullptr &&
-           IsSupportedTilingKey(args.key);
-}
-
-constexpr std::uint32_t ActiveScoreBlocks(std::uint32_t validRows) noexcept
-{
-    return std::min<std::uint32_t>(
-        ShapePolicy::kScoreBlockCount,
-        (validRows + ShapePolicy::kScoreBlockRows - 1U) /
-            ShapePolicy::kScoreBlockRows);
-}
-
-inline void RequireMte2ToFixpipePayloadReuse(const SyncLedger &sync,
-                                             Stage stage) noexcept
-{
-    // 待实现：分数数据的 MTE2 搬运必须先完成，紧凑数据的 Fixpipe 写入方
-    // 才能复用同一段 GM 载荷区；跨核就绪令牌不能替代这个核内事件。
-    sync.Local(LocalDependency::Mte2ToFixpipePayloadReuse, stage);
-}
-
-inline void RequireFixpipeToMte2Relay(const SyncLedger &sync,
-                                      Stage stage) noexcept
-{
-    // 待实现 c220 的 FIX->MTE2 事件与 ND2NZ 搬运。具体 API/格式是编译
-    // 门禁；禁止使用 PIPE_ALL 或臆造的 PipeBarrier。
-    sync.Local(LocalDependency::FixpipeToMte2Relay, stage);
-}
-
-inline void RequireMte2FillToLoadWaw(const SyncLedger &sync,
-                                     Stage stage) noexcept
-{
-    // 待实现 c220 的 MTE2 WAW 依赖。异步全 L1 清零必须先完成，随后 GM->L1
-    // 才能向相同地址写入有效 Akk 行。仅靠源码顺序不够；具体实现必须使用
-    // 经最小编译验证的目标版本 MTE2 屏障/事件。
-    sync.Local(LocalDependency::Mte2FillToLoadWaw, stage);
-}
-
-inline void RequireMte2ToMte1Inputs(const SyncLedger &sync,
-                                    Stage stage) noexcept
-{
-    // 待实现的本核输入就绪依赖。本阶段的所有 GM/工作空间 -> L1 MTE2
-    // 搬入必须先完成，MTE1 随后才能搬运 MMAD 操作数。具体 c220 HardEvent
-    // 仍是目标版本的编译门禁。
-    sync.Local(LocalDependency::Mte2ToMte1Inputs, stage);
-}
-
-inline void RequireCubeToMte1OperandReuse(const SyncLedger &sync,
-                                          Stage stage) noexcept
-{
-    // 待实现的本核操作数释放依赖。仅当当前 C2 分带或 Cube 阶段的所有
-    // 独立 MMAD 读取方均已消费各自 L0A/L0B 通道后，后续 MTE1 搬运
-    // 才可覆盖该通道。
-    sync.Local(LocalDependency::CubeToMte1OperandReuse, stage);
-}
-
-inline void RequireCubeToFixpipeOutput(const SyncLedger &sync,
-                                       Stage stage) noexcept
-{
-    // 待实现的本核结果就绪依赖。Cube 必须先完成指定 L0C 区域的生成，
-    // Fixpipe 随后才能读取。后续带 Fixpipe 标签的就绪/释放令牌不能
-    // 反向保证前序 Store 本身安全。
-    sync.Local(LocalDependency::CubeToFixpipeOutput, stage);
-}
-
-} // namespace cube_detail
-
-inline void StageC2_AicComputeRawAqkAkk(const CubeStageArgs &args)
-{
-    // 输入：S=4 的 Qplus、Kplus、Kminus[s] 紧凑分数操作数。
-    // 计算：每个有效分带将 Qplus/Kplus 按行堆叠，一次 MMAD 同时得到
-    //       rawAqk_s=Qplus_s@Kminus[s]^T 和
-    //       rawAkk_s=Kplus_s@Kminus[s]^T。
-    // 输出：紧凑 rawAqk/rawAkk GM 中转数据，供配对 AIV 的 V3 消费。
-    if (!cube_detail::ValidArgs(args)) {
-        return;
-    }
-    for (Offset pair = 0U; pair < 2U; ++pair) {
-        if (!PairHasActiveHead(args.work->group, pair)) {
-            continue;
+template <typename InputT, typename ValueT, typename ScoreT, typename Policy>
+class ChunkKdaFwdPrepareCube {
+public:
+    __aicore__ inline void Init(const PrepareKernelArgs &args, AscendC::TPipe *pipe)
+    {
+        args_ = args;
+        pipe_ = pipe;
+        workgroup_ = WorkgroupId();
+        coreCount_ = args_.tiling.usedCoreNum;
+        if (coreCount_ == 0) {
+            return;
         }
-        const std::uint64_t collectiveGeneration =
-            PairCollectiveGenerationFor(args.work->group, pair);
-        args.sync->AicWaitPair(SyncPoint::V1ScoreReady, pair,
-                               collectiveGeneration, Stage::C2, Pipe::Mte2);
-        for (const HeadTask &head : args.work->group.heads) {
-            if (!head.active ||
-                arch22_policy::PairWave(head.groupLocalHead) != pair) {
+        wGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args_.w));
+        uGm_.SetGlobalBuffer(reinterpret_cast<__gm__ ValueT *>(args_.u));
+
+        pipe_->InitBuffer(l1Buf_, L1::kPeak);
+        pipe_->InitBuffer(l0ABuf_, 0x10000);
+        pipe_->InitBuffer(l0BBuf_, 0x10000);
+        pipe_->InitBuffer(l0CBuf_, 0x10000);
+
+        mte2ToMte1_ = pipe_->AllocEventID<AscendC::HardEvent::MTE2_MTE1>();
+        mte1ToM_ = pipe_->AllocEventID<AscendC::HardEvent::MTE1_M>();
+        mToMte1_ = pipe_->AllocEventID<AscendC::HardEvent::M_MTE1>();
+        mToFix_ = pipe_->AllocEventID<AscendC::HardEvent::M_FIX>();
+        fixToM_ = pipe_->AllocEventID<AscendC::HardEvent::FIX_M>();
+        mte2ToFix_ = pipe_->AllocEventID<AscendC::HardEvent::MTE2_FIX>();
+        for (uint32_t head = 0; head < Shape::kHeadsPerGroup; ++head) {
+            fixToMte2_[head] =
+                pipe_->AllocEventID<AscendC::HardEvent::FIX_MTE2>();
+            tReady_[head] =
+                pipe_->AllocEventID<AscendC::HardEvent::MTE2_MTE1>();
+            fixToMte1_[head] =
+                pipe_->AllocEventID<AscendC::HardEvent::FIX_MTE1>();
+        }
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(fixToM_);
+    }
+
+    __aicore__ inline void Process()
+    {
+        if (coreCount_ == 0) {
+            return;
+        }
+        const uint32_t total = TotalWorkItems(args_.tiling);
+        const uint32_t workBegin = WorkBegin(total, workgroup_, coreCount_);
+        const uint32_t workEnd = WorkEnd(total, workgroup_, coreCount_);
+        if (workgroup_ >= coreCount_ || workBegin >= workEnd) {
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
+            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(fixToM_);
+            ReleaseEvents();
+            return;
+        }
+
+        // 两个 pair 的初始许可由 AIC 发布；后续许可由 C7 写回完成后发布。
+        for (uint32_t pair = 0; pair < 2; ++pair) {
+            AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(
+                Arch22FlagId(Arch22CrossCore::kFreeBase, pair));
+        }
+
+        for (uint32_t work = workBegin; work < workEnd; ++work) {
+            uint32_t globalChunk = 0;
+            uint32_t headPartition = 0;
+            DecodeWorkItem(args_.tiling, work, globalChunk, headPartition);
+            ChunkRange chunk{};
+            if (!ResolveChunk(args_, globalChunk, chunk)) {
                 continue;
             }
-            const std::uint64_t l0cGeneration = L0cGenerationFor(
-                head, L0cStageUse::C2, Architecture::Arch22);
-            args.sync->Wait(SyncPoint::L1BankFree, head.l1BankId,
-                            head.l1Generation, Stage::C2, Pipe::Mte2);
-            args.sync->Wait(SyncPoint::L0cBankFree, head.l0cBankId,
-                            l0cGeneration, Stage::C2, Pipe::Cube);
+            uint32_t headBegin = 0;
+            uint32_t headEnd = 0;
+            HeadRange(args_.tiling, headPartition, headBegin, headEnd);
+            for (uint32_t groupBegin = headBegin; groupBegin < headEnd;
+                 groupBegin += Shape::kHeadsPerGroup) {
+                // C2：一次 pair wait 汇聚两个 AIV，再消费该 pair 的两个 local head。
+                for (uint32_t pair = 0; pair < 2; ++pair) {
+                    AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
+                        Arch22FlagId(Arch22CrossCore::kReadyBase, pair));
+                    for (uint32_t peer = 0; peer < 2; ++peer) {
+                        const uint32_t localHead = pair * 2 + peer;
+                        const uint32_t valueHead = groupBegin + localHead;
+                        if (valueHead < headEnd) {
+                            StageC2(chunk, localHead);
+                        }
+                    }
+                    AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(
+                        Arch22FlagId(Arch22CrossCore::kFreeBase, pair));
+                }
 
-            const BufferSpan payload = cube_detail::Payload(args, head);
-            const BufferSpan scoreL1 =
-                cube_detail::CurrentLane(args, head, "packed-score-L1");
-            args.ops->Load(Stage::C2, payload, scoreL1);
-            cube_detail::RequireMte2ToFixpipePayloadReuse(*args.sync,
-                                                          Stage::C2);
-            cube_detail::RequireMte2ToMte1Inputs(*args.sync, Stage::C2);
+                // C4：读取 V3 的 B/X0/negX1，计算 T=B@X0 并常驻 L1。
+                for (uint32_t pair = 0; pair < 2; ++pair) {
+                    AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
+                        Arch22FlagId(Arch22CrossCore::kReadyBase, pair));
+                    for (uint32_t peer = 0; peer < 2; ++peer) {
+                        const uint32_t localHead = pair * 2 + peer;
+                        const uint32_t valueHead = groupBegin + localHead;
+                        if (valueHead < headEnd) {
+                            StageC4(chunk, localHead);
+                        }
+                    }
+                    AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(
+                        Arch22FlagId(Arch22CrossCore::kFreeBase, pair));
+                }
 
-            const Offset activeBlocks =
-                cube_detail::ActiveScoreBlocks(
-                    args.work->group.chunk.validRows);
-            const Offset physicalLane =
-                arch22_policy::PhysicalLane(head.groupLocalHead);
-            const Offset c2L0aBase =
-                arch22_policy::L0aPolicy::C2LaneBase(physicalLane);
-            const Offset c2L0bBase =
-                arch22_policy::L0bPolicy::C2LaneBase(physicalLane);
-            for (Offset s = 0U; s < activeBlocks; ++s) {
-                const Offset n = arch22_policy::C2Policy::kN[s];
-                const Offset packedResultBytes =
-                    arch22_policy::L0cPolicy::kC2PackedResultBytes[s];
-                const Offset resultBytes =
-                    arch22_policy::L0cPolicy::kC2ResultBytes[s];
-                const BufferSpan qBand = cube_detail::Subspan(
-                    scoreL1, "Qplus-band",
-                    arch22_policy::C2Policy::kQBandOffset[s], 0x1000U);
-                const BufferSpan kBand = cube_detail::Subspan(
-                    scoreL1, "Kplus-band",
-                    arch22_policy::C2Policy::kKBandOffset[s], 0x1000U);
-                const BufferSpan kMinus = cube_detail::Subspan(
-                    scoreL1, "Kminus-prefix",
-                    arch22_policy::C2Policy::kKMinusOffset[s],
-                    ShapePolicy::kKMinusBytes[s]);
-                const BufferSpan packedL0c = NativeMatrixOwner(
-                    cube_detail::L0cSpan(
-                        args, head, L0cStageUse::C2,
-                        "Aqk-Akk-stacked-L0C",
-                        {arch22_policy::L0cPolicy::kC2PackedOffset[s],
-                         packedResultBytes}),
-                    "Aqk-Akk-stacked-L0C",
-                    NativeMatrixLayout::L0cFractal,
-                    arch22_policy::C2Policy::kPackedM, n,
-                    ShapePolicy::kFp32Bytes);
-                const std::uint64_t operandGeneration =
-                    L0OperandGenerationFor(head, C2L0OperandUse(s));
-                // Qplus/Kplus 分别装入 zZ L0A 的逻辑行 [0,16) 和
-                // [16,32) 子块；二者不按行主序连续半区寻址。
-                const BufferSpan qkL0a = NativeMatrixOwner(
-                    cube_detail::L0OperandSpan(
-                        args, head, "C2-QK-stacked-L0A", MemorySpace::L0A,
-                        c2L0aBase, arch22_policy::L0aPolicy::kC2LaneBytes,
-                        operandGeneration),
-                    "C2-QK-stacked-L0A", NativeMatrixLayout::L0aZZ,
-                    arch22_policy::C2Policy::kPackedM,
-                    arch22_policy::C2Policy::kK,
-                    ShapePolicy::kStorageBytes);
-                const BufferSpan qL0aTile = NativeMatrixTile(
-                    qkL0a, "C2-Qplus-L0A-tile", 0U, 0U,
-                    arch22_policy::C2Policy::kM,
-                    arch22_policy::C2Policy::kK);
-                const BufferSpan kL0aTile = NativeMatrixTile(
-                    qkL0a, "C2-Kplus-L0A-tile",
-                    arch22_policy::C2Policy::kM, 0U,
-                    arch22_policy::C2Policy::kM,
-                    arch22_policy::C2Policy::kK);
-                const BufferSpan kMinusL0b = cube_detail::L0OperandSpan(
-                    args, head, "C2-Kminus-L0B", MemorySpace::L0B,
-                    c2L0bBase, ShapePolicy::kKMinusBytes[s],
-                    operandGeneration);
+                // C5：只在下半块存在时计算 Akk[32:M,0:32]=negX1@T。
+                for (uint32_t localHead = 0; localHead < Shape::kHeadsPerGroup;
+                     ++localHead) {
+                    const uint32_t valueHead = groupBegin + localHead;
+                    if (valueHead < headEnd) {
+                        StageC5(chunk, valueHead, localHead);
+                    }
+                }
 
-                args.ops->MmadRowStackedLhs(
-                    Stage::C2, MatrixFormula::RawAqkAndAkk, qBand, kBand,
-                    kMinus, packedL0c, qkL0a,
-                    qL0aTile, kL0aTile, kMinusL0b,
-                    FromScoreStorage(args.key.scoreStorage),
-                    FromScoreStorage(args.key.scoreStorage), 16U, 16U, n,
-                    ShapePolicy::kK, true);
-                cube_detail::RequireCubeToMte1OperandReuse(*args.sync,
-                                                           Stage::C2);
-                cube_detail::RequireCubeToFixpipeOutput(*args.sync,
-                                                        Stage::C2);
-                const BufferSpan aqkRelay = cube_detail::Subspan(
-                    payload, "Aqk-compact-relay",
-                    arch22_policy::WorkspacePolicy::kRelayRawAqk[s].offset,
-                    resultBytes);
-                const BufferSpan akkRelay = cube_detail::Subspan(
-                    payload, "Akk-compact-relay",
-                    arch22_policy::WorkspacePolicy::kRelayRawAkk[s].offset,
-                    resultBytes);
-                // 待确认的 Arch22 API 约束：必须从同一个
-                // MakeLayoutL0C(32,N) 所属存储中选择上下两个逻辑行子块，
-                // 再分别由 Fixpipe 写入紧凑 GM 中转区。精确的源布局、步长、
-                // 模式和 API 均为待验证设计，必须在 CANN 9.1/Arch2201
-                // 上完成最小编译与设备验证；禁止按行主序字节切半。
-                args.ops->Store(
-                    Stage::C2,
-                    NativeMatrixTile(packedL0c, "Aqk-compact-L0C", 0U,
-                                     0U, 16U, n),
-                    cube_detail::MatrixRect(aqkRelay, "Aqk-compact-relay",
-                                            0U, 0U, 16U, n, n,
-                                            ShapePolicy::kFp32Bytes));
-                args.ops->Store(
-                    Stage::C2,
-                    NativeMatrixTile(packedL0c, "Akk-compact-L0C", 16U,
-                                     0U, 16U, n),
-                    cube_detail::MatrixRect(akkRelay, "Akk-compact-relay",
-                                            0U, 0U, 16U, n, n,
-                                            ShapePolicy::kFp32Bytes));
+                // C7：每个 pair 一次调用；先搬完两个 head 的 RHS 并归还
+                // workspace，再分别计算 W 与 U。
+                for (uint32_t pair = 0; pair < 2; ++pair) {
+                    AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
+                        Arch22FlagId(Arch22CrossCore::kReadyBase, pair));
+                    StageC7(chunk, groupBegin, headEnd, pair);
+                }
             }
-            args.sync->Set(SyncPoint::C2ScoreL1Free, head.l1BankId,
-                           head.l1Generation, Stage::C2, Pipe::Mte1);
-            args.sync->Set(SyncPoint::L0cBankFree, head.l0cBankId,
-                           l0cGeneration + 1U, Stage::C2, Pipe::Fixpipe);
         }
-        args.sync->AicPublishPair(SyncPoint::C2RawReady, pair,
-                                  collectiveGeneration, Stage::C2,
-                                  Pipe::Fixpipe);
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(fixToM_);
+        ReleaseEvents();
     }
-}
 
-inline void StageC4_AicComputeTEqualsBMatmulX0(const CubeStageArgs &args)
-{
-    // M>32：从工作区装入 B/X0/X1，将 X0/X1 放入 L1，计算 T=B@X0，
-    //       再把 T 写入 GM 中转区供 C5 使用。
-    // M<=32：不读取 B/X0/X1，不写 L1 或 T，只传递同步状态。
-    if (!cube_detail::ValidArgs(args)) {
-        return;
+private:
+    __aicore__ inline uint32_t ActiveSubChunks(uint32_t validRows) const
+    {
+        const uint32_t count = CeilDiv(validRows, Shape::kSubChunkRows);
+        return count > Shape::kSubChunkCount ? Shape::kSubChunkCount : count;
     }
-    for (Offset pair = 0U; pair < 2U; ++pair) {
-        if (!PairHasActiveHead(args.work->group, pair)) {
-            continue;
+
+    __aicore__ inline void StageC2(const ChunkRange &chunk, uint32_t localHead)
+    {
+        const uint64_t slot = WorkspaceSlotBase(
+            workgroup_, localHead, Workspace::kArch22WorkgroupStride);
+        AscendC::GlobalTensor<ScoreT> payload;
+        AscendC::GlobalTensor<float> rawPayload;
+        payload.SetGlobalBuffer(reinterpret_cast<__gm__ ScoreT *>(
+            args_.workspace + slot + Workspace::kPayload));
+        rawPayload.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+            args_.workspace + slot + Workspace::kPayload));
+        auto l1Bytes = l1Buf_.Get<uint8_t>();
+        auto scoreL1 = l1Bytes[L1::kHeadLane[localHead]].template ReinterpretCast<ScoreT>();
+        auto l0A = l0ABuf_.Get<ScoreT>();
+        auto l0B = l0BBuf_.Get<ScoreT>();
+        auto l0C = l0CBuf_.Get<float>();
+
+        // 每个源矩阵只搬一次；MTE2 在搬运时把 ND 转为 L1 NZ。
+        AscendC::Nd2NzParams copy{};
+        copy.ndNum = 1;
+        copy.dValue = Shape::kHeadDim;
+        copy.srcDValue = Shape::kHeadDim;
+        copy.srcNdMatrixStride = 0;
+        copy.dstNzNStride = 1;
+        copy.dstNzMatrixStride = 0;
+        copy.nValue = Shape::kChunkRows;
+        copy.dstNzC0Stride = Shape::kChunkRows;
+        AscendC::DataCopy(scoreL1[ScorePayload::kQPlus / sizeof(ScoreT)],
+                          payload[ScorePayload::kQPlus / sizeof(ScoreT)], copy);
+        AscendC::DataCopy(scoreL1[ScorePayload::kKPlus / sizeof(ScoreT)],
+                          payload[ScorePayload::kKPlus / sizeof(ScoreT)], copy);
+        for (uint32_t s = 0; s < Shape::kSubChunkCount; ++s) {
+            copy.nValue = Shape::kPrefixRows[s];
+            copy.dstNzC0Stride = Shape::kPrefixRows[s];
+            AscendC::DataCopy(scoreL1[ScorePayload::kKMinus[s] / sizeof(ScoreT)],
+                              payload[ScorePayload::kKMinus[s] / sizeof(ScoreT)], copy);
         }
-        const std::uint64_t collectiveGeneration =
-            PairCollectiveGenerationFor(args.work->group, pair);
-        const bool hasQ10 = args.work->group.chunk.validRows > 32U;
-        args.sync->AicWaitPair(SyncPoint::V3VcsReady, pair,
-                               collectiveGeneration, Stage::C4,
-                               hasQ10 ? Pipe::Mte2 : Pipe::Control);
-        for (const HeadTask &head : args.work->group.heads) {
-            if (!head.active ||
-                arch22_policy::PairWave(head.groupLocalHead) != pair) {
-                continue;
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(mte2ToMte1_);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_FIX>(mte2ToFix_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(mte2ToMte1_);
+
+        uint32_t stackedElements = 0;
+        const uint32_t active = ActiveSubChunks(chunk.validRows);
+        for (uint32_t s = 0; s < active; ++s) {
+            const uint32_t n = Shape::kPrefixRows[s];
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
+
+            AscendC::LoadData2DParamsV2 loadQ{};
+            // TODO：用目标 c220 头文件确认 mStartPosition/srcStride/dstStride 的分形单位。
+            loadQ.mStartPosition = s;
+            loadQ.kStartPosition = 0;
+            loadQ.mStep = 1;
+            loadQ.kStep = Shape::kHeadDim / 16;
+            loadQ.srcStride = Shape::kChunkRows / 16;
+            loadQ.dstStride = 2;
+            loadQ.ifTranspose = false;
+            loadQ.sid = 0;
+            AscendC::LoadData(l0A, scoreL1[ScorePayload::kQPlus / sizeof(ScoreT)], loadQ);
+
+            AscendC::LoadData2DParamsV2 loadK = loadQ;
+            // TODO：确认 stacked 下半 16 行对应的 L0A 分形偏移。
+            AscendC::LoadData(l0A[16 * Shape::kHeadDim],
+                              scoreL1[ScorePayload::kKPlus / sizeof(ScoreT)], loadK);
+
+            AscendC::LoadData2DParamsV2 loadKMinus{};
+            // TODO：确认转置装入 L0B 时 mStep/kStep 和两个 stride 的单位。
+            loadKMinus.mStartPosition = 0;
+            loadKMinus.kStartPosition = 0;
+            loadKMinus.mStep = Shape::kHeadDim / 16;
+            loadKMinus.kStep = n / 16;
+            loadKMinus.srcStride = n / 16;
+            loadKMinus.dstStride = Shape::kHeadDim / 16;
+            loadKMinus.ifTranspose = true;
+            loadKMinus.sid = 0;
+            AscendC::LoadData(l0B,
+                scoreL1[ScorePayload::kKMinus[s] / sizeof(ScoreT)], loadKMinus);
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
+            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(fixToM_);
+
+            AscendC::MmadParams mmad{};
+            mmad.m = 32;
+            mmad.n = n;
+            mmad.k = Shape::kHeadDim;
+            mmad.cmatrixInitVal = true;
+            mmad.cmatrixSource = false;
+            mmad.unitFlag = 0;
+            // 一次 MMAD 同时得到上半 rawAqk 和下半 rawAkk。
+            AscendC::Mmad(l0C, l0A, l0B, mmad);
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
+            AscendC::SetFlag<AscendC::HardEvent::M_FIX>(mToFix_);
+            AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(mToFix_);
+            if (s == 0) {
+                // payload 即将原址换义，必须确认整段 MTE2 输入已搬完。
+                AscendC::WaitFlag<AscendC::HardEvent::MTE2_FIX>(mte2ToFix_);
             }
-            const std::uint64_t l0cGeneration = L0cGenerationFor(
-                head, L0cStageUse::C4, Architecture::Arch22);
-            args.sync->Wait(SyncPoint::C2ScoreL1Free, head.l1BankId,
-                            head.l1Generation, Stage::C4,
-                            hasQ10 ? Pipe::Mte2 : Pipe::Control);
-            args.sync->Wait(SyncPoint::L0cBankFree, head.l0cBankId,
-                            l0cGeneration, Stage::C4,
-                            hasQ10 ? Pipe::Cube : Pipe::Control);
 
-            if (!hasQ10) {
-                // V3 已经完成所有仍有效的 Akk 象限；不加载 VCS、也不生成 T，
-                // 仅维持 L1/L0C 代际许可链。
-                args.sync->Set(SyncPoint::C4AkkPrepReady, head.l1BankId,
-                               head.l1Generation, Stage::C4, Pipe::Control);
-                args.sync->Set(SyncPoint::L0cBankFree, head.l0cBankId,
-                               l0cGeneration + 1U, Stage::C4,
-                               Pipe::Control);
-                continue;
-            }
-
-            const BufferSpan payload = cube_detail::Payload(args, head);
-            const BufferSpan current =
-                cube_detail::CurrentLane(args, head, "C4-current-L1");
-            const BufferSpan bL1 = cube_detail::Subspan(
-                current, "B-L1", 0U,
-                arch22_policy::WorkspacePolicy::kVcsB.size);
-            const BufferSpan x0L1 = cube_detail::X0Resident(args, head);
-            const BufferSpan x1L1 = cube_detail::X1Resident(args, head);
-            args.ops->Load(
-                Stage::C4,
-                cube_detail::Subspan(
-                    payload, "B-relay",
-                    arch22_policy::WorkspacePolicy::kVcsB.offset,
-                    arch22_policy::WorkspacePolicy::kVcsB.size),
-                bL1);
-            args.ops->Load(
-                Stage::C4,
-                cube_detail::Subspan(
-                    payload, "X0-relay",
-                    arch22_policy::WorkspacePolicy::kVcsX0.offset,
-                    arch22_policy::WorkspacePolicy::kVcsX0.size),
-                x0L1);
-            args.ops->Load(
-                Stage::C4,
-                cube_detail::Subspan(
-                    payload, "X1-relay",
-                    arch22_policy::WorkspacePolicy::kVcsX1.offset,
-                    arch22_policy::WorkspacePolicy::kVcsX1.size),
-                x1L1);
-            args.sync->Set(SyncPoint::C4AkkPrepReady, head.l1BankId,
-                           head.l1Generation, Stage::C4, Pipe::Mte2);
-            cube_detail::RequireMte2ToMte1Inputs(*args.sync, Stage::C4);
-
-            const BufferSpan tL0c = cube_detail::L0cSpan(
-                args, head, L0cStageUse::C4, "T-L0C",
-                arch22_policy::L0cPolicy::kC4T);
-            const Offset physicalLane =
-                arch22_policy::PhysicalLane(head.groupLocalHead);
-            const std::uint64_t operandGeneration =
-                L0OperandGenerationFor(head, L0OperandUse::C4);
-            const BufferSpan bL0a = cube_detail::L0OperandSpan(
-                args, head, "C4-B-L0A", MemorySpace::L0A,
-                arch22_policy::L0aPolicy::C2LaneBase(physicalLane),
-                0x1000U, operandGeneration);
-            const BufferSpan x0L0b = cube_detail::L0OperandSpan(
-                args, head, "C4-X0-L0B", MemorySpace::L0B,
-                arch22_policy::L0bPolicy::C2LaneBase(physicalLane),
-                0x1000U, operandGeneration);
-            args.ops->SetHf32Mode(Stage::C4, false);
-            args.ops->Mmad(
-                Stage::C4, MatrixFormula::TEqualsBMatmulX0, bL1, x0L1,
-                tL0c, bL0a, x0L0b, MatrixStorage::Fp32,
-                MatrixStorage::Fp32, 32U, 32U, 32U);
-            cube_detail::RequireCubeToMte1OperandReuse(*args.sync,
-                                                       Stage::C4);
-            cube_detail::RequireCubeToFixpipeOutput(*args.sync, Stage::C4);
-            const BufferSpan tRelay = cube_detail::Subspan(
-                payload, "T-fp32-relay",
-                arch22_policy::WorkspacePolicy::kRelayT.offset,
-                arch22_policy::WorkspacePolicy::kRelayT.size);
-            args.ops->Store(
-                Stage::C4,
-                cube_detail::MatrixRect(tL0c, "T-L0C", 0U, 0U, 32U, 32U,
-                                        32U, ShapePolicy::kFp32Bytes),
-                cube_detail::MatrixRect(tRelay, "T-fp32-relay", 0U, 0U,
-                                        32U, 32U, 32U,
-                                        ShapePolicy::kFp32Bytes));
-            args.sync->Set(SyncPoint::C4TReady, head.workspaceSlot,
-                           head.workspaceGeneration, Stage::C4,
-                           Pipe::Fixpipe);
-            args.sync->Set(SyncPoint::L0cBankFree, head.l0cBankId,
-                           l0cGeneration + 1U, Stage::C4, Pipe::Fixpipe);
-        }
-        // T/Akk 驻留在载荷区中互不重叠的后缀。确实存在 q10 时，配对发布
-        // 位于两个 MTE2 读取方之后；仅含上半部分的尾块没有 VCS 读取方，
-        // 通过 Control 传递阶段状态。
-        args.sync->AicPublishPair(
-            SyncPoint::C4PayloadFree, pair, collectiveGeneration, Stage::C4,
-            hasQ10 ? Pipe::Mte2 : Pipe::Control);
-    }
-}
-
-inline void StageC5_AicComputeAkkQ10EqualsNegX1MatmulT(
-    const CubeStageArgs &args)
-{
-    // M>32：读取 C4 常驻的 X1 和 T 中转数据，计算
-    //       Akk_q10=-X1@T，再把 q10 写入 Akk GM 中转区。
-    // M<=32：不读取 X1/T，不提交 MMAD，只传递同步状态。
-    if (!cube_detail::ValidArgs(args)) {
-        return;
-    }
-    for (Offset pair = 0U; pair < 2U; ++pair) {
-        if (!PairHasActiveHead(args.work->group, pair)) {
-            continue;
-        }
-        for (const HeadTask &head : args.work->group.heads) {
-            if (!head.active ||
-                arch22_policy::PairWave(head.groupLocalHead) != pair) {
-                continue;
-            }
-            const std::uint64_t l0cGeneration = L0cGenerationFor(
-                head, L0cStageUse::C5, Architecture::Arch22);
-            const Offset validRows = args.work->group.chunk.validRows;
-            const Offset bottomRows =
-                validRows > 32U ? validRows - 32U : 0U;
-            if (bottomRows == 0U) {
-                args.sync->Wait(SyncPoint::C4AkkPrepReady, head.l1BankId,
-                                head.l1Generation, Stage::C5,
-                                Pipe::Control);
-                args.sync->Wait(SyncPoint::L0cBankFree, head.l0cBankId,
-                                l0cGeneration, Stage::C5, Pipe::Control);
-                args.sync->Set(SyncPoint::C5AkkReady, head.workspaceSlot,
-                               head.workspaceGeneration, Stage::C5,
-                               Pipe::Control);
-                args.sync->Set(SyncPoint::L0cBankFree, head.l0cBankId,
-                               l0cGeneration + 1U, Stage::C5,
-                               Pipe::Control);
-                continue;
-            }
-            args.sync->Wait(SyncPoint::C4TReady, head.workspaceSlot,
-                            head.workspaceGeneration, Stage::C5, Pipe::Mte2);
-            args.sync->Wait(SyncPoint::C4AkkPrepReady, head.l1BankId,
-                            head.l1Generation, Stage::C5, Pipe::Mte1);
-            args.sync->Wait(SyncPoint::L0cBankFree, head.l0cBankId,
-                            l0cGeneration, Stage::C5, Pipe::Cube);
-
-            const BufferSpan payload = cube_detail::Payload(args, head);
-            const BufferSpan tRelay = cube_detail::Subspan(
-                payload, "T-fp32-relay",
-                arch22_policy::WorkspacePolicy::kRelayT.offset,
-                arch22_policy::WorkspacePolicy::kRelayT.size);
-            cube_detail::RequireFixpipeToMte2Relay(*args.sync, Stage::C5);
-            args.ops->Load(
-                Stage::C5,
-                cube_detail::MatrixRect(tRelay, "T-fp32-relay", 0U, 0U,
-                                        32U, 32U, 32U,
-                                        ShapePolicy::kFp32Bytes),
-                cube_detail::TResident(args, head));
-            cube_detail::RequireMte2ToMte1Inputs(*args.sync, Stage::C5);
-
-            const BufferSpan yL0c = cube_detail::L0cSpan(
-                args, head, L0cStageUse::C5, "negative-X1T-L0C",
-                arch22_policy::L0cPolicy::kC5Y);
-            const Offset physicalLane =
-                arch22_policy::PhysicalLane(head.groupLocalHead);
-            const std::uint64_t operandGeneration =
-                L0OperandGenerationFor(head, L0OperandUse::C5);
-            const BufferSpan x1L0a = cube_detail::L0OperandSpan(
-                args, head, "C5-X1-L0A", MemorySpace::L0A,
-                arch22_policy::L0aPolicy::C2LaneBase(physicalLane),
-                0x1000U, operandGeneration);
-            const BufferSpan tL0b = cube_detail::L0OperandSpan(
-                args, head, "C5-T-L0B", MemorySpace::L0B,
-                arch22_policy::L0bPolicy::C2LaneBase(physicalLane),
-                0x1000U, operandGeneration);
-            args.ops->SetHf32Mode(Stage::C5, false);
-            args.ops->Mmad(
-                Stage::C5,
-                MatrixFormula::AkkLowerLeftEqualsNegX1MatmulT,
-                cube_detail::X1Resident(args, head),
-                cube_detail::TResident(args, head), yL0c, x1L0a, tL0b,
-                MatrixStorage::Fp32, MatrixStorage::Fp32, 32U, 32U, 32U,
-                false, true);
-            cube_detail::RequireCubeToMte1OperandReuse(*args.sync,
-                                                       Stage::C5);
-            cube_detail::RequireCubeToFixpipeOutput(*args.sync, Stage::C5);
-            const BufferSpan akkRelay =
-                cube_detail::AkkRelay(args, head, validRows);
-            args.ops->StoreRounded(
-                Stage::C5,
-                cube_detail::MatrixRect(
-                    yL0c, "Akk-q10-L0C", 0U, 0U, bottomRows, 32U, 32U,
-                    ShapePolicy::kFp32Bytes),
-                cube_detail::MatrixRect(
-                    akkRelay, "Akk-q10-row-major", 32U, 0U, bottomRows,
-                    32U, ShapePolicy::kBt, ShapePolicy::kStorageBytes),
-                args.key.inputStorage);
-            args.sync->Set(SyncPoint::C5AkkReady, head.workspaceSlot,
-                           head.workspaceGeneration, Stage::C5,
-                           Pipe::Fixpipe);
-            args.sync->Set(SyncPoint::L0cBankFree, head.l0cBankId,
-                           l0cGeneration + 1U, Stage::C5, Pipe::Fixpipe);
+            auto fix = AscendC::FixpipeParamsV220(
+                n, 2 * Shape::kSubChunkRows,
+                2 * Shape::kSubChunkRows, n, false);
+            fix.quantPre = QuantMode_t::NoQuant;
+            // 上下两组结果一次写成连续 [32,n]，不对 L0C 的 NZ
+            // 物理地址做 ND 偏移猜测；V3 再按已知 row-major 结果解包。
+            AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(
+                rawPayload[(Workspace::kRawScore / sizeof(float)) +
+                           stackedElements],
+                l0C, fix);
+            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(fixToM_);
+            stackedElements += 2 * Shape::kSubChunkRows * n;
         }
     }
-}
 
-inline void StageC7_AicComputeWAndU(const CubeStageArgs &args)
-{
-    // 输入：C5 完成的 Akk 中转数据，以及 V6 生成的 K_beta_g、V_beta。
-    // 计算：W=Akk@K_beta_g，U=Akk@V_beta；仅上半区有效的尾块只消费 q00。
-    // 输出：将有效行 W、U 分别舍入并写回公开 GM 输出。
-    if (!cube_detail::ValidArgs(args)) {
-        return;
+    __aicore__ inline void StageC4(const ChunkRange &chunk,
+                                   uint32_t localHead)
+    {
+        const uint64_t slot = WorkspaceSlotBase(
+            workgroup_, localHead, Workspace::kArch22WorkgroupStride);
+        auto l1Bytes = l1Buf_.Get<uint8_t>();
+        auto akkL1 = l1Bytes[L1::kAkk + localHead * L1::kAkkStride]
+                         .template ReinterpretCast<InputT>();
+        AscendC::GlobalTensor<InputT> akkSource;
+        akkSource.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(
+            args_.workspace + slot + Workspace::kPayload + Workspace::kAkk));
+        AscendC::Nd2NzParams akkCopy{};
+        akkCopy.ndNum = 1;
+        akkCopy.nValue = Shape::kChunkRows;
+        akkCopy.dValue = Shape::kChunkRows;
+        akkCopy.srcDValue = Shape::kChunkRows;
+        akkCopy.srcNdMatrixStride = 0;
+        akkCopy.dstNzNStride = 1;
+        akkCopy.dstNzC0Stride = Shape::kChunkRows;
+        akkCopy.dstNzMatrixStride = 0;
+        AscendC::DataCopy(akkL1, akkSource, akkCopy);
+
+        if (chunk.validRows <= 32) {
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(mte2ToMte1_);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(mte2ToMte1_);
+            return;
+        }
+
+        AscendC::GlobalTensor<float> payload;
+        payload.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+            args_.workspace + slot + Workspace::kPayload));
+        auto bL1 = l1Bytes[L1::kHeadLane[localHead]].template ReinterpretCast<float>();
+        auto x0L1 = l1Bytes[L1::kX0 + localHead * L1::kQuadrantStride]
+                        .template ReinterpretCast<float>();
+        auto negX1L1 = l1Bytes[L1::kNegX1 + localHead * L1::kQuadrantStride]
+                           .template ReinterpretCast<float>();
+        auto tL1 = l1Bytes[L1::kT + localHead * L1::kQuadrantStride]
+                       .template ReinterpretCast<float>();
+        AscendC::GlobalTensor<float> tRelay;
+        tRelay.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+            args_.workspace + slot + Workspace::kPayload + Workspace::kTArch22));
+        AscendC::Nd2NzParams copy{};
+        copy.ndNum = 1;
+        copy.nValue = 32;
+        copy.dValue = 32;
+        copy.srcDValue = 32;
+        copy.srcNdMatrixStride = 0;
+        copy.dstNzNStride = 1;
+        copy.dstNzC0Stride = 32;
+        copy.dstNzMatrixStride = 0;
+        AscendC::DataCopy(bL1, payload[Workspace::kB / sizeof(float)], copy);
+        AscendC::DataCopy(x0L1, payload[Workspace::kX0 / sizeof(float)], copy);
+        AscendC::DataCopy(negX1L1, payload[Workspace::kNegX1 / sizeof(float)], copy);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(mte2ToMte1_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(mte2ToMte1_);
+
+        // T[32,32] = B[32,32] @ X0[32,32]。
+        auto l0A = l0ABuf_.Get<float>();
+        auto l0B = l0BBuf_.Get<float>();
+        auto l0C = l0CBuf_.Get<float>();
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
+        AscendC::LoadData2DParamsV2 load{};
+        // TODO：确认 c220 FP32 NZ 到 L0A/L0B 的分形参数与步长单位。
+        load.mStartPosition = 0;
+        load.kStartPosition = 0;
+        load.mStep = 2;
+        load.kStep = 4;
+        load.srcStride = 2;
+        load.dstStride = 2;
+        load.ifTranspose = false;
+        load.sid = 0;
+        AscendC::LoadData(l0A, bL1, load);
+        load.ifTranspose = true;
+        AscendC::LoadData(l0B, x0L1, load);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(fixToM_);
+        AscendC::SetHF32Mode(false);
+        AscendC::MmadParams tMmad{};
+        tMmad.m = 32;
+        tMmad.n = 32;
+        tMmad.k = 32;
+        tMmad.cmatrixInitVal = true;
+        tMmad.cmatrixSource = false;
+        tMmad.unitFlag = 0;
+        AscendC::Mmad(l0C, l0A, l0B, tMmad);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
+        AscendC::SetFlag<AscendC::HardEvent::M_FIX>(mToFix_);
+        AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(mToFix_);
+
+        auto fix = AscendC::FixpipeParamsV220(32, 32, 32, 32, false);
+        fix.quantPre = QuantMode_t::NoQuant;
+        // C220 不支持 FP32 L0C 直写 L1：先按 NZ 写 GM，再原样搬回 L1。
+        AscendC::Fixpipe<float, float, kFixpipeNz>(
+            tRelay, l0C, fix);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(fixToM_);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_MTE2>(fixToMte2_[localHead]);
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE2>(fixToMte2_[localHead]);
+        AscendC::DataCopy(tL1, tRelay, AscendC::DataCopyParams(1, 128, 0, 0));
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(tReady_[localHead]);
     }
-    for (Offset pair = 0U; pair < 2U; ++pair) {
-        if (!PairHasActiveHead(args.work->group, pair)) {
-            continue;
-        }
-        const std::uint64_t collectiveGeneration =
-            PairCollectiveGenerationFor(args.work->group, pair);
-        args.sync->AicWaitPair(SyncPoint::V6RhsReady, pair,
-                               collectiveGeneration, Stage::C7, Pipe::Mte2);
-        // 配对等待汇聚两个 AIV。C7 按配对波次顺序遍历，并已处理所有更早的
-        // 本地分组；若当前配对包含协作组的最后一个头，则所有映射的 HV 均已
-        // 发布 V6RhsReady；此后只能由 AIC 协调者释放共享 Q/K 缓存代际。
-        for (const HeadTask &head : args.work->group.heads) {
-            if (head.active && head.qkLastConsumer &&
-                arch22_policy::PairWave(head.groupLocalHead) == pair) {
-                args.sync->Set(SyncPoint::QkCacheFree, head.qkCacheSlot,
-                               head.qkCacheGeneration + 1U, Stage::C7,
-                               Pipe::Control);
-            }
-        }
-        for (const HeadTask &head : args.work->group.heads) {
-            if (!head.active ||
-                arch22_policy::PairWave(head.groupLocalHead) != pair) {
-                continue;
-            }
-            const std::uint64_t l0cGeneration = L0cGenerationFor(
-                head, L0cStageUse::C7, Architecture::Arch22);
-            args.sync->Wait(SyncPoint::C5AkkReady, head.workspaceSlot,
-                            head.workspaceGeneration, Stage::C7, Pipe::Mte2);
-            args.sync->Wait(SyncPoint::L0cBankFree, head.l0cBankId,
-                            l0cGeneration, Stage::C7, Pipe::Cube);
 
-            const Offset validRows = args.work->group.chunk.validRows;
-            const bool hasQ10 = validRows > 32U;
-            const BufferSpan akkL1 = cube_detail::AkkResident(args, head);
-            const BufferSpan akkRelay =
-                cube_detail::AkkRelay(args, head, validRows);
-            BufferSpan akkMmad = akkL1;
-            if (hasQ10) {
-                // 待实现一次性行主序 GM -> 完整 Cube 就绪搬运。Fill 补齐
-                // 底部尾行；完整行搬运特意包含 q01，因为 Arch22 在最终地址
-                // 执行 NZ 子矩阵填充的方案尚未通过编译门禁。
-                args.ops->Fill(Stage::C7, akkL1, 0U);
-                cube_detail::RequireMte2FillToLoadWaw(*args.sync,
-                                                      Stage::C7);
-                // 只有左下角 q10 存在 C5 Fixpipe 生产者。对于仅含顶部的尾块，
-                // C5 只经 Control 透传；等待不存在的 Fixpipe 事件会导致死锁。
-                cube_detail::RequireFixpipeToMte2Relay(*args.sync,
-                                                       Stage::C7);
-                args.ops->Load(Stage::C7, akkRelay, akkL1);
+    __aicore__ inline void StageC5(const ChunkRange &chunk, uint32_t valueHead,
+                                   uint32_t localHead)
+    {
+        if (chunk.validRows <= 32) {
+            return;
+        }
+        auto l1Bytes = l1Buf_.Get<uint8_t>();
+        auto negX1L1 = l1Bytes[L1::kNegX1 + localHead * L1::kQuadrantStride]
+                           .template ReinterpretCast<float>();
+        auto tL1 = l1Bytes[L1::kT + localHead * L1::kQuadrantStride]
+                       .template ReinterpretCast<float>();
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(tReady_[localHead]);
+
+        // Akk[32:M,0:32] = negX1[32:M,0:32] @ T[32,32]。
+        auto l0A = l0ABuf_.Get<float>();
+        auto l0B = l0BBuf_.Get<float>();
+        auto l0C = l0CBuf_.Get<float>();
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
+        AscendC::LoadData2DParamsV2 load{};
+        // TODO：确认 c220 FP32 NZ 到 L0A/L0B 的分形参数与步长单位。
+        load.mStartPosition = 0;
+        load.kStartPosition = 0;
+        load.mStep = 2;
+        load.kStep = 4;
+        load.srcStride = 2;
+        load.dstStride = 2;
+        load.ifTranspose = false;
+        load.sid = 0;
+        AscendC::LoadData(l0A, negX1L1, load);
+        load.ifTranspose = true;
+        AscendC::LoadData(l0B, tL1, load);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(fixToM_);
+        AscendC::SetHF32Mode(false);
+        AscendC::MmadParams akkMmad{};
+        akkMmad.m = 32;
+        akkMmad.n = 32;
+        akkMmad.k = 32;
+        akkMmad.cmatrixInitVal = true;
+        akkMmad.cmatrixSource = false;
+        akkMmad.unitFlag = 0;
+        AscendC::Mmad(l0C, l0A, l0B, akkMmad);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
+        AscendC::SetFlag<AscendC::HardEvent::M_FIX>(mToFix_);
+        AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(mToFix_);
+
+        const uint32_t bottomRows = chunk.validRows - 32;
+        auto l1Fix = AscendC::FixpipeParamsV220(
+            32, bottomRows, 32, Shape::kChunkRows, false);
+        if constexpr (std::is_same_v<InputT, half>) {
+            l1Fix.quantPre = QuantMode_t::F322F16;
+        } else if constexpr (std::is_same_v<InputT, bfloat16_t>) {
+            l1Fix.quantPre = QuantMode_t::F322BF16;
+        } else {
+            l1Fix.quantPre = QuantMode_t::NoQuant;
+        }
+        auto akkL1 = l1Bytes[L1::kAkk + localHead * L1::kAkkStride]
+                         .template ReinterpretCast<InputT>();
+        // q10 在两字节 NZ 中从 (N1=0,M1=2) 开始，即 32*16 个元素；
+        // dstStride=64 个 datablock 跨过完整 64 行 M 轴。
+        AscendC::Fixpipe<InputT, float, kFixpipeNz>(
+            akkL1[L1::kAkkQ10Elements], l0C, l1Fix);
+        if constexpr (Policy::abi == PrepareAbi::Current) {
+            AscendC::GlobalTensor<InputT> akkOutput;
+            akkOutput.SetGlobalBuffer(
+                reinterpret_cast<__gm__ InputT *>(args_.akk) +
+                AOutputOffset(args_.tiling, chunk, valueHead));
+            auto outputFix = AscendC::FixpipeParamsV220(
+                32, bottomRows, 32, Shape::kChunkRows, false);
+            if constexpr (std::is_same_v<InputT, half>) {
+                outputFix.quantPre = QuantMode_t::F322F16;
+            } else if constexpr (std::is_same_v<InputT, bfloat16_t>) {
+                outputFix.quantPre = QuantMode_t::F322BF16;
             } else {
-                // 不要从未完整填充的 64x64 NZ 视图派生 q00。这里直接执行
-                // 按有效行数、主维度 64 从 GM -> 紧凑 32x32 Cube 就绪搬运，
-                // 并写入最终 L1 操作数地址。
-                constexpr Offset kQuadrant = 32U;
-                const BufferSpan q00Tight = cube_detail::MatrixRect(
-                    akkL1, "Akk-q00-tight-cube-ready", 0U, 0U,
-                    kQuadrant, kQuadrant, kQuadrant,
-                    ShapePolicy::kStorageBytes);
-                args.ops->Fill(Stage::C7, q00Tight, 0U);
-                cube_detail::RequireMte2FillToLoadWaw(*args.sync,
-                                                      Stage::C7);
-                args.ops->Load(
-                    Stage::C7,
-                    cube_detail::MatrixRect(
-                        akkRelay, "Akk-q00-relay-ld64", 0U, 0U,
-                        validRows, kQuadrant, ShapePolicy::kBt,
-                        ShapePolicy::kStorageBytes),
-                    cube_detail::MatrixRect(
-                        q00Tight, "Akk-q00-valid-tight", 0U, 0U,
-                        validRows, kQuadrant, kQuadrant,
-                        ShapePolicy::kStorageBytes));
-                akkMmad = q00Tight;
+                outputFix.quantPre = QuantMode_t::NoQuant;
             }
-            const BufferSpan current =
-                cube_detail::CurrentLane(args, head, "C7-RHS-L1");
-            const Offset rhsRows = hasQ10 ? ShapePolicy::kBt : 32U;
-            const Offset rhsPlaneBytes =
-                rhsRows * ShapePolicy::kK * ShapePolicy::kStorageBytes;
-            const BufferSpan kBetaL1 = cube_detail::Subspan(
-                current, "K-beta-g-L1", 0U, rhsPlaneBytes);
-            const BufferSpan vBetaL1 = cube_detail::Subspan(
-                current, "V-beta-L1", 0x4000U, rhsPlaneBytes);
-            const BufferSpan payload = cube_detail::Payload(args, head);
-            args.ops->Load(
-                Stage::C7,
-                cube_detail::Subspan(
-                    payload, "K-beta-g-relay",
-                    arch22_policy::WorkspacePolicy::kPostKBetaG.offset,
-                    rhsPlaneBytes),
-                kBetaL1);
-            args.ops->Load(
-                Stage::C7,
-                cube_detail::Subspan(
-                    payload, "V-beta-relay",
-                    arch22_policy::WorkspacePolicy::kPostVBeta.offset,
-                    rhsPlaneBytes),
-                vBetaL1);
-            cube_detail::RequireMte2ToMte1Inputs(*args.sync, Stage::C7);
-
-            const BufferSpan wL0c = cube_detail::L0cSpan(
-                args, head, L0cStageUse::C7, "W-L0C",
-                arch22_policy::L0cPolicy::kC7W);
-            const BufferSpan uL0c = cube_detail::L0cSpan(
-                args, head, L0cStageUse::C7, "U-L0C",
-                arch22_policy::L0cPolicy::kC7U);
-            const Offset physicalLane =
-                arch22_policy::PhysicalLane(head.groupLocalHead);
-            const Offset c7L0aBase =
-                arch22_policy::L0aPolicy::C7LaneBase(physicalLane);
-            const Offset c7L0bBase =
-                arch22_policy::L0bPolicy::C7LaneBase(physicalLane);
-            const Offset akkL0aBytes = hasQ10
-                                                  ? arch22_policy::L0aPolicy::
-                                                        kC7AkkLaneBytes
-                                                  : 0x0800U;
-            const std::uint64_t operandGeneration =
-                L0OperandGenerationFor(head, L0OperandUse::C7);
-            const BufferSpan akkL0a = cube_detail::L0OperandSpan(
-                args, head, "C7-Akk-L0A", MemorySpace::L0A, c7L0aBase,
-                akkL0aBytes, operandGeneration);
-            const BufferSpan kBetaL0b = cube_detail::L0OperandSpan(
-                args, head, "C7-Kbeta-L0B", MemorySpace::L0B,
-                c7L0bBase + arch22_policy::L0bPolicy::kC7KbetaOffset,
-                rhsPlaneBytes, operandGeneration);
-            const BufferSpan vBetaL0b = cube_detail::L0OperandSpan(
-                args, head, "C7-Vbeta-L0B", MemorySpace::L0B,
-                c7L0bBase + arch22_policy::L0bPolicy::kC7VbetaOffset,
-                rhsPlaneBytes, operandGeneration);
-            if (hasQ10) {
-                args.ops->Mmad(Stage::C7,
-                               MatrixFormula::WEqualsAkkMatmulKBetaG,
-                               akkMmad, kBetaL1, wL0c, akkL0a, kBetaL0b,
-                               FromInputStorage(args.key.inputStorage),
-                               FromInputStorage(args.key.inputStorage),
-                               ShapePolicy::kBt, ShapePolicy::kK,
-                               ShapePolicy::kBt);
-                args.ops->Mmad(Stage::C7,
-                               MatrixFormula::UEqualsAkkMatmulVBeta,
-                               akkMmad, vBetaL1, uL0c, akkL0a, vBetaL0b,
-                               FromInputStorage(args.key.inputStorage),
-                               FromInputStorage(args.key.valueStorage),
-                               ShapePolicy::kBt, ShapePolicy::kV,
-                               ShapePolicy::kBt);
-            } else {
-                const BufferSpan kBetaTop = cube_detail::MatrixRect(
-                    kBetaL1, "K-beta-g-top32", 0U, 0U, 32U,
-                    ShapePolicy::kK, ShapePolicy::kK,
-                    ShapePolicy::kStorageBytes);
-                const BufferSpan vBetaTop = cube_detail::MatrixRect(
-                    vBetaL1, "V-beta-top32", 0U, 0U, 32U,
-                    ShapePolicy::kV, ShapePolicy::kV,
-                    ShapePolicy::kStorageBytes);
-                args.ops->Mmad(Stage::C7,
-                               MatrixFormula::WEqualsAkkMatmulKBetaG,
-                               akkMmad, kBetaTop, wL0c, akkL0a, kBetaL0b,
-                               FromInputStorage(args.key.inputStorage),
-                               FromInputStorage(args.key.inputStorage), 32U,
-                               ShapePolicy::kK, 32U);
-                args.ops->Mmad(Stage::C7,
-                               MatrixFormula::UEqualsAkkMatmulVBeta,
-                               akkMmad, vBetaTop, uL0c, akkL0a, vBetaL0b,
-                               FromInputStorage(args.key.inputStorage),
-                               FromInputStorage(args.key.valueStorage), 32U,
-                               ShapePolicy::kV, 32U);
-            }
-            cube_detail::RequireCubeToMte1OperandReuse(*args.sync,
-                                                       Stage::C7);
-            cube_detail::RequireCubeToFixpipeOutput(*args.sync, Stage::C7);
-            args.sync->Set(SyncPoint::L1BankFree, head.l1BankId,
-                           head.l1Generation + 1U, Stage::C7, Pipe::Mte1);
-            args.ops->StoreRounded(
-                Stage::C7,
-                cube_detail::MatrixRect(
-                    wL0c, "W-L0C-valid", 0U, 0U, validRows,
-                    ShapePolicy::kK, ShapePolicy::kK,
-                    ShapePolicy::kFp32Bytes),
-                cube_detail::SymbolicGmRows(
-                    head, "W-output", validRows, ShapePolicy::kK,
-                    ShapePolicy::kK, ShapePolicy::kStorageBytes),
-                args.key.inputStorage);
-            args.ops->StoreRounded(
-                Stage::C7,
-                cube_detail::MatrixRect(
-                    uL0c, "U-L0C-valid", 0U, 0U, validRows,
-                    ShapePolicy::kV, ShapePolicy::kV,
-                    ShapePolicy::kFp32Bytes),
-                cube_detail::SymbolicGmRows(
-                    head, "U-output", validRows, ShapePolicy::kV,
-                    ShapePolicy::kV, ShapePolicy::kStorageBytes),
-                args.key.valueStorage);
-            args.sync->Set(SyncPoint::L0cBankFree, head.l0cBankId,
-                           l0cGeneration + 1U, Stage::C7, Pipe::Fixpipe);
+            AscendC::Fixpipe<InputT, float, AscendC::CFG_ROW_MAJOR>(
+                akkOutput[32 * Shape::kChunkRows], l0C,
+                outputFix);
         }
-        // 两条物理通道均完成 U 的 Fixpipe 写回后，才把配对许可广播给
-        // 两个 AIV，供下一笔事务使用。
-        args.sync->AicPublishPair(SyncPoint::SlotFree, pair,
-                                  collectiveGeneration + 1U, Stage::C7,
-                                  Pipe::Fixpipe);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(fixToMte1_[localHead]);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(fixToM_);
     }
-}
 
-} // namespace kda_prepare_pseudocode::arch22
+    __aicore__ inline void StageC7(const ChunkRange &chunk,
+                                   uint32_t groupBegin,
+                                   uint32_t headEnd,
+                                   uint32_t pair)
+    {
+        const bool hasBottom = chunk.validRows > 32;
+        const uint32_t m = hasBottom ? 64 : 32;
+        auto l1Bytes = l1Buf_.Get<uint8_t>();
+
+        // 先把同一 pair 两个有效 head 的 K_beta_g/V_beta 全部搬入独立 L1 lane。
+        AscendC::Nd2NzParams rhsCopy{};
+        rhsCopy.ndNum = 1;
+        rhsCopy.nValue = m;
+        rhsCopy.dValue = Shape::kHeadDim;
+        rhsCopy.srcDValue = Shape::kHeadDim;
+        rhsCopy.srcNdMatrixStride = 0;
+        rhsCopy.dstNzNStride = 1;
+        rhsCopy.dstNzC0Stride = m;
+        rhsCopy.dstNzMatrixStride = 0;
+        for (uint32_t peer = 0; peer < 2; ++peer) {
+            const uint32_t localHead = pair * 2 + peer;
+            const uint32_t valueHead = groupBegin + localHead;
+            if (valueHead >= headEnd) {
+                continue;
+            }
+            const uint64_t slot = WorkspaceSlotBase(
+                workgroup_, localHead, Workspace::kArch22WorkgroupStride);
+            auto kBetaL1 =
+                l1Bytes[L1::kHeadLane[localHead]].template ReinterpretCast<InputT>();
+            auto vBetaL1 =
+                l1Bytes[L1::kHeadLane[localHead] + Shape::kTwoByteMatrixBytes]
+                    .template ReinterpretCast<ValueT>();
+            AscendC::GlobalTensor<InputT> kBetaRelay;
+            AscendC::GlobalTensor<ValueT> vBetaRelay;
+            kBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(
+                args_.workspace + slot + Workspace::kPayload +
+                Workspace::kKBetaG));
+            vBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ ValueT *>(
+                args_.workspace + slot + Workspace::kPayload +
+                Workspace::kVBeta));
+            AscendC::DataCopy(kBetaL1, kBetaRelay, rhsCopy);
+            AscendC::DataCopy(vBetaL1, vBetaRelay, rhsCopy);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(mte2ToMte1_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(mte2ToMte1_);
+
+        // RHS 已全部离开 workspace；一次 collective free 同时归还 pair 的两个 slot。
+        AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(
+            Arch22FlagId(Arch22CrossCore::kFreeBase, pair));
+
+        // 再逐 head 消费 L1 常驻的 Akk 与两个 RHS，分别计算 W、U。
+        for (uint32_t peer = 0; peer < 2; ++peer) {
+            const uint32_t localHead = pair * 2 + peer;
+            const uint32_t valueHead = groupBegin + localHead;
+            if (valueHead >= headEnd) {
+                continue;
+            }
+            if (hasBottom) {
+                AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE1>(
+                    fixToMte1_[localHead]);
+            }
+
+            auto akkL1 =
+                l1Bytes[L1::kAkk + localHead * L1::kAkkStride]
+                    .template ReinterpretCast<InputT>();
+            auto kBetaL1 =
+                l1Bytes[L1::kHeadLane[localHead]].template ReinterpretCast<InputT>();
+            auto vBetaL1 =
+                l1Bytes[L1::kHeadLane[localHead] + Shape::kTwoByteMatrixBytes]
+                    .template ReinterpretCast<ValueT>();
+            const uint64_t outputOffset = HeadTensorOffset(
+                args_.tiling, chunk, valueHead, Shape::kHeadDim);
+
+            // W = Akk @ K_beta_g。
+            auto l0A = l0ABuf_.Get<InputT>();
+            auto l0BForW = l0BBuf_.Get<InputT>();
+            auto l0C = l0CBuf_.Get<float>();
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
+            AscendC::LoadData2DParamsV2 loadA{};
+            // TODO：确认 m=32/64 时 NZ 到 L0A/L0B 的 V2 参数与分形步长。
+            loadA.mStartPosition = 0;
+            loadA.kStartPosition = 0;
+            loadA.mStep = m / 16;
+            loadA.kStep = m / 16;
+            // Akk 在 L1 中始终按 64x64 NZ 常驻，尾 chunk 只缩小 mStep。
+            loadA.srcStride = Shape::kChunkRows / 16;
+            loadA.dstStride = m / 16;
+            loadA.ifTranspose = false;
+            loadA.sid = 0;
+            AscendC::LoadData(l0A, akkL1, loadA);
+            AscendC::LoadData2DParamsV2 loadW{};
+            loadW.mStartPosition = 0;
+            loadW.kStartPosition = 0;
+            loadW.mStep = m / 16;
+            loadW.kStep = Shape::kHeadDim / 16;
+            loadW.srcStride = m / 16;
+            loadW.dstStride = m / 16;
+            loadW.ifTranspose = true;
+            loadW.sid = 0;
+            AscendC::LoadData(l0BForW, kBetaL1, loadW);
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
+            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(fixToM_);
+            AscendC::MmadParams wMmad{};
+            wMmad.m = m;
+            wMmad.n = Shape::kHeadDim;
+            wMmad.k = m;
+            wMmad.cmatrixInitVal = true;
+            wMmad.cmatrixSource = false;
+            wMmad.unitFlag = 0;
+            AscendC::Mmad(l0C, l0A, l0BForW, wMmad);
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
+            AscendC::SetFlag<AscendC::HardEvent::M_FIX>(mToFix_);
+            AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(mToFix_);
+            auto wFix = AscendC::FixpipeParamsV220(
+                Shape::kHeadDim, chunk.validRows, m,
+                Shape::kHeadDim, false);
+            if constexpr (std::is_same_v<InputT, half>) {
+                wFix.quantPre = QuantMode_t::F322F16;
+            } else if constexpr (std::is_same_v<InputT, bfloat16_t>) {
+                wFix.quantPre = QuantMode_t::F322BF16;
+            } else {
+                wFix.quantPre = QuantMode_t::NoQuant;
+            }
+            AscendC::Fixpipe<InputT, float, AscendC::CFG_ROW_MAJOR>(
+                wGm_[outputOffset], l0C, wFix);
+            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(fixToM_);
+
+            // U = Akk @ V_beta；复用 L0 前等待 W 的 reader 与 Fixpipe 完成。
+            auto l0BForU = l0BBuf_.Get<ValueT>();
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
+            AscendC::LoadData(l0A, akkL1, loadA);
+            AscendC::LoadData2DParamsV2 loadU{};
+            loadU.mStartPosition = 0;
+            loadU.kStartPosition = 0;
+            loadU.mStep = m / 16;
+            loadU.kStep = Shape::kHeadDim / 16;
+            loadU.srcStride = m / 16;
+            loadU.dstStride = m / 16;
+            loadU.ifTranspose = true;
+            loadU.sid = 0;
+            AscendC::LoadData(l0BForU, vBetaL1, loadU);
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
+            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(fixToM_);
+            AscendC::MmadParams uMmad{};
+            uMmad.m = m;
+            uMmad.n = Shape::kHeadDim;
+            uMmad.k = m;
+            uMmad.cmatrixInitVal = true;
+            uMmad.cmatrixSource = false;
+            uMmad.unitFlag = 0;
+            AscendC::Mmad(l0C, l0A, l0BForU, uMmad);
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
+            AscendC::SetFlag<AscendC::HardEvent::M_FIX>(mToFix_);
+            AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(mToFix_);
+            auto uFix = AscendC::FixpipeParamsV220(
+                Shape::kHeadDim, chunk.validRows, m,
+                Shape::kHeadDim, false);
+            if constexpr (std::is_same_v<ValueT, half>) {
+                uFix.quantPre = QuantMode_t::F322F16;
+            } else if constexpr (std::is_same_v<ValueT, bfloat16_t>) {
+                uFix.quantPre = QuantMode_t::F322BF16;
+            } else {
+                uFix.quantPre = QuantMode_t::NoQuant;
+            }
+            AscendC::Fixpipe<ValueT, float, AscendC::CFG_ROW_MAJOR>(
+                uGm_[outputOffset], l0C, uFix);
+            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(fixToM_);
+        }
+    }
+
+    __aicore__ inline void ReleaseEvents()
+    {
+        pipe_->ReleaseEventID<AscendC::HardEvent::MTE2_MTE1>(mte2ToMte1_);
+        pipe_->ReleaseEventID<AscendC::HardEvent::MTE1_M>(mte1ToM_);
+        pipe_->ReleaseEventID<AscendC::HardEvent::M_MTE1>(mToMte1_);
+        pipe_->ReleaseEventID<AscendC::HardEvent::M_FIX>(mToFix_);
+        pipe_->ReleaseEventID<AscendC::HardEvent::FIX_M>(fixToM_);
+        pipe_->ReleaseEventID<AscendC::HardEvent::MTE2_FIX>(mte2ToFix_);
+        for (uint32_t head = 0; head < Shape::kHeadsPerGroup; ++head) {
+            pipe_->ReleaseEventID<AscendC::HardEvent::FIX_MTE2>(fixToMte2_[head]);
+            pipe_->ReleaseEventID<AscendC::HardEvent::MTE2_MTE1>(tReady_[head]);
+            pipe_->ReleaseEventID<AscendC::HardEvent::FIX_MTE1>(fixToMte1_[head]);
+        }
+    }
+
+    PrepareKernelArgs args_{};
+    AscendC::TPipe *pipe_ = nullptr;
+    uint32_t workgroup_ = 0;
+    uint32_t coreCount_ = 0;
+    AscendC::TBuf<AscendC::TPosition::A1> l1Buf_{};
+    AscendC::TBuf<AscendC::TPosition::A2> l0ABuf_{};
+    AscendC::TBuf<AscendC::TPosition::B2> l0BBuf_{};
+    AscendC::TBuf<AscendC::TPosition::CO1> l0CBuf_{};
+    AscendC::TEventID mte2ToMte1_{};
+    AscendC::TEventID mte1ToM_{};
+    AscendC::TEventID mToMte1_{};
+    AscendC::TEventID mToFix_{};
+    AscendC::TEventID fixToM_{};
+    AscendC::TEventID mte2ToFix_{};
+    AscendC::TEventID fixToMte2_[Shape::kHeadsPerGroup]{};
+    AscendC::TEventID tReady_[Shape::kHeadsPerGroup]{};
+    AscendC::TEventID fixToMte1_[Shape::kHeadsPerGroup]{};
+    AscendC::GlobalTensor<InputT> wGm_{};
+    AscendC::GlobalTensor<ValueT> uGm_{};
+};
+
+} // namespace KdaPrepare::Arch22
 
 #endif // PSEUDOCODE_ARCH22_CHUNK_KDA_FWD_PREPARE_CUBE_H

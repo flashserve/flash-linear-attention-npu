@@ -4,1134 +4,1150 @@
  * the BSD 3-Clause License (the "License").
  */
 
-#ifndef FLA_OPS_ASCENDC_KDA_CHUNK_KDA_FWD_PREPARE_PSEUDOCODE_ARCH35_VEC_H
-#define FLA_OPS_ASCENDC_KDA_CHUNK_KDA_FWD_PREPARE_PSEUDOCODE_ARCH35_VEC_H
+#ifndef PSEUDOCODE_ARCH35_CHUNK_KDA_FWD_PREPARE_VEC_H
+#define PSEUDOCODE_ARCH35_CHUNK_KDA_FWD_PREPARE_VEC_H
 
-#include <algorithm>
-#include <cstddef>
-#include <cstdint>
+#include <type_traits>
+
+#include "catlass/arch/arch.hpp"
+#include "catlass/arch/resource.hpp"
+#include "kernel_operator.h"
+#include "kernel_utils/vector/regbase.hpp"
 
 #include "../chunk_kda_fwd_prepare_policy.h"
 #include "../chunk_kda_fwd_prepare_struct.h"
-#include "../chunk_kda_fwd_prepare_tiling_key.h"
 #include "../chunk_kda_fwd_prepare_utils.h"
 
-namespace kda_prepare_pseudocode {
-namespace arch35 {
-namespace detail {
+namespace KdaPrepare::Arch35 {
 
-inline BufferSpan Subspan(const BufferSpan &parent, const char *name,
-                          Offset relativeOffset, Offset bytes)
+namespace Detail {
+
+using namespace AscendC::MicroAPI;
+
+constexpr float kFp16Max = 65504.0F;
+
+constexpr static CastTrait kFp32ToB16RintZero = {
+    RegLayout::ZERO,
+    SatMode::NO_SAT,
+    MaskMergeMode::MERGING,
+    AscendC::RoundMode::CAST_RINT,
+};
+constexpr static CastTrait kFp32ToB16RintOne = {
+    RegLayout::ONE,
+    SatMode::NO_SAT,
+    MaskMergeMode::ZEROING,
+    AscendC::RoundMode::CAST_RINT,
+};
+
+template <typename T>
+__simd_callee__ inline void CastFp32ToB16Rint(
+    RegTensor<T> &dst, RegTensor<float> &low, RegTensor<float> &high,
+    MaskReg &mask)
 {
-    BufferSpan span = parent;
-    span.name = name;
-    span.byteOffset += relativeOffset;
-    span.byteSize = bytes;
-    span.rows = 0U;
-    span.columns = 0U;
-    span.leadingDimension = 0U;
-    span.elementBytes = 0U;
-    return span;
+    Cast<T, float, kFp32ToB16RintOne>(dst, high, mask);
+    Cast<T, float, kFp32ToB16RintZero>(dst, low, mask);
 }
 
-inline BufferSpan UbMainSpan(const HeadTask &head, const char *name,
-                             const Region &region, std::uint64_t generation)
+template <typename T>
+__simd_callee__ inline void Load128AsFp32(
+    RegTensor<float> &low, RegTensor<float> &high, __ubuf__ T *src)
 {
-    return {name, MemorySpace::Ub,
-            static_cast<std::uint64_t>(UbPolicy::kMainBase[head.aivLocalSlot]) +
-                region.offset,
-            region.size, head.localBankId, generation, CoreRole::Aiv,
-            head.aivId};
+    if constexpr (std::is_same<T, float>::value) {
+        LoadAlign<float, LoadDist::DIST_NORM>(low, src);
+        LoadAlign<float, LoadDist::DIST_NORM>(high, src + 64);
+    } else {
+        RegTensor<T> packed;
+        LoadIn<T, false>(packed, src);
+        MaskReg packedMask = CreateMask<T, MaskPattern::ALL>();
+        CastHalf2Float<T>(low, high, packed, packedMask);
+    }
 }
 
-inline BufferSpan UbVectorStateSpan(const HeadTask &head, const char *name,
-                                    const Region &region,
-                                    std::uint64_t generation)
+template <typename T>
+__simd_callee__ inline void Store128FromFp32(
+    __ubuf__ T *dst, RegTensor<float> &low, RegTensor<float> &high)
 {
-    return {name, MemorySpace::Ub,
-            static_cast<std::uint64_t>(
-                UbPolicy::kVectorStateBase[head.aivLocalSlot]) +
-                region.offset,
-            region.size, head.localBankId, generation, CoreRole::Aiv,
-            head.aivId};
-}
-
-inline BufferSpan SymbolicGmSpan(const HeadTask &head, const char *name,
-                                 Offset bytes, std::uint64_t generation,
-                                 std::uint32_t logicalHeadId =
-                                     kAllGroupLocalHeads)
-{
-    // 公开跨步和规范 GM 偏移仍需由 ABI/切分参数确认。这里的零值是刻意
-    // 保留的符号占位，不能照搬到真实核函数中。
-    BufferSpan span{name, MemorySpace::Gm, 0U, bytes, head.workspaceSlot,
-                    generation, CoreRole::Shared, 0U};
-    span.logicalHeadId = logicalHeadId == kAllGroupLocalHeads
-                             ? head.headId
-                             : logicalHeadId;
-    return span;
-}
-
-constexpr Offset MatrixFootprintBytes(Offset rows, Offset columns,
-                                      Offset leadingDimension,
-                                      Offset elementBytes)
-{
-    return rows == 0U || columns == 0U
-               ? 0U
-               : ((rows - 1U) * leadingDimension + columns) * elementBytes;
-}
-
-inline BufferSpan UbMainMatrixSpan(
-    const HeadTask &head, const char *name, Offset base, Offset row,
-    Offset column, Offset rows, Offset columns, Offset leadingDimension,
-    Offset elementBytes, std::uint64_t generation)
-{
-    const Offset relativeOffset =
-        base + (row * leadingDimension + column) * elementBytes;
-    BufferSpan span = UbMainSpan(
-        head, name,
-        {relativeOffset, MatrixFootprintBytes(
-                             rows, columns, leadingDimension, elementBytes)},
-        generation);
-    span.rows = rows;
-    span.columns = columns;
-    span.leadingDimension = leadingDimension;
-    span.elementBytes = elementBytes;
-    return span;
-}
-
-inline BufferSpan SymbolicGmMatrixSpan(
-    const HeadTask &head, const char *name, Offset row, Offset column,
-    Offset rows, Offset columns, Offset leadingDimension,
-    Offset elementBytes, std::uint64_t generation)
-{
-    // 该伪接口刻意保留 row/column/rows/columns/leadingDimension。
-    // BufferSpan 保存跨步视图精确的物理覆盖范围；真实 ABI 必须冻结并编码对应的
-    // 二维 DataCopy。
-    const Offset relativeOffset =
-        (row * leadingDimension + column) * elementBytes;
-    const Offset footprint = MatrixFootprintBytes(
-        rows, columns, leadingDimension, elementBytes);
-    BufferSpan span{name,
-                    MemorySpace::Gm,
-                    relativeOffset,
-                    footprint,
-                    head.workspaceSlot,
-                    generation,
-                    CoreRole::Shared,
-                    0U,
-                    rows,
-                    columns,
-                    leadingDimension,
-                    elementBytes};
-    span.logicalHeadId = head.headId;
-    return span;
-}
-
-inline bool IsOwnedActiveHead(const HeadTask &head,
-                              const VectorStageArgs &args)
-{
-    return head.active && head.aivId == args.aivId;
-}
-
-inline std::uint32_t ActiveScoreBlocks(std::uint32_t validRows)
-{
-    return std::min<std::uint32_t>(ShapePolicy::kScoreBlockCount,
-                                   (validRows + ShapePolicy::kScoreBlockRows - 1U) /
-                                       ShapePolicy::kScoreBlockRows);
-}
-
-inline bool IsSupportedKey(const ProposedTilingKey &key)
-{
-    // FP32Internal 仍是容量已证明可行的布局候选，但目标平台混合使用
-    // FP32 Akk 与双字节右操作数的 Cube 操作数合同尚未验证。
-    return IsSupportedTilingKey(key);
-}
-
-// 每个合同类型同时绑定数学体、Stage 和轨迹公式，Stage 与语义测试不能绕过它。
-struct QkNormGateCumsumBetaVf {
-    static constexpr Stage kStage = Stage::V0;
-    static constexpr VectorFormula kFormula = VectorFormula::QkNormGateCumsumBeta;
-
-    template <typename Vf>
-    static inline void Evaluate(Vf &vf, const HeadTask &head, std::uint32_t validRows,
-                                const ProposedTilingKey &key, float epsilon,
-                                float lowerBound)
-    {
-        const Offset gOffset = IsTwoByteGateStorage(key.gateStorage)
-                                   ? V0Gate2BLayout::kG.offset
-                                   : V0GateFp32Layout::kG.offset;
-        const bool usesSelectiveGate = key.gateMode != GateMode::PrecomputedStep;
-        auto gateCoefficient = vf.OneFp32();
-        auto dtBias = vf.ZeroFp32Row(ShapePolicy::kK);
-        if (usesSelectiveGate) {
-            // 每个头的系数和 K 向量偏置只在词元扫描外搬运或
-            // 计算一次。它们在每头 UB 向量状态区中的地址与 GRef[0:2] 复用；
-            // 本循环消费完两个值后，才物化 GRef[0:2]。
-            gateCoefficient = vf.Exp(
-                vf.LoadALogScalarOnce(UbPolicy::kVectorStateBase[head.aivLocalSlot] +
-                                      VectorStateLayout::kALogOrGateAttrs.offset));
-            dtBias = vf.LoadDtBiasRow(UbPolicy::kVectorStateBase[head.aivLocalSlot] +
-                                      VectorStateLayout::kDtBias.offset);
+    MaskReg floatMask = CreateMask<float, MaskPattern::ALL>();
+    if constexpr (std::is_same<T, float>::value) {
+        StoreAlign(dst, low, floatMask);
+        StoreAlign(dst + 64, high, floatMask);
+    } else {
+        if constexpr (std::is_same<T, half>::value) {
+            Mins(low, low, kFp16Max, floatMask);
+            Mins(high, high, kFp16Max, floatMask);
+            Maxs(low, low, -kFp16Max, floatMask);
+            Maxs(high, high, -kFp16Max, floatMask);
         }
-        auto carry = vf.ZeroFp32Row(ShapePolicy::kK);
-        auto zeroInputStorage = vf.RoundToInputStorage(
-            vf.ClampForInputStorage(vf.ZeroFp32(), key.inputStorage), key.inputStorage);
-        for (std::uint32_t row = 0; row < ShapePolicy::kBt; ++row) {
-            if (row >= validRows) {
-                vf.StoreZeroQHatKHatAndGPadding(row, zeroInputStorage,
-                                                key.inputStorage);
-                vf.StoreBetaEffScalar(row, 0.0F);
-                continue;
-            }
-            auto gateRaw = vf.LoadGateRow(row, key.gateStorage);
-            auto betaRaw =
-                vf.LoadBetaFp32Scalar(UbPolicy::kVectorStateBase[head.aivLocalSlot] +
-                                          VectorStateLayout::kBetaRaw.offset,
-                                      row);
-            auto betaEff = betaRaw;
-            if (key.betaMode == BetaMode::Sigmoid) {
-                betaEff = vf.Sigmoid(betaRaw);
-            } else if (key.betaMode == BetaMode::TwoSigmoid) {
-                betaEff = vf.Mul(2.0F, vf.Sigmoid(betaRaw));
-            }
+        RegTensor<T> packed;
+        CastFp32ToB16Rint<T>(packed, low, high, floatMask);
+        MaskReg packedMask = CreateMask<T, MaskPattern::ALL>();
+        StoreAlign(dst, packed, packedMask);
+    }
+}
 
-            if (head.qkOwner && key.qkNormMode == QkNormMode::L2) {
-                // 与仓库内 FLA L2 核函数及精度标杆保持一致，归一化公式为：
-                // x_hat = x * rsqrt(sum_d(x_d^2) + epsilon)。
-                const auto q = vf.ToFp32(vf.LoadQStorageRow(row, key.inputStorage));
-                const auto k = vf.ToFp32(vf.LoadKStorageRow(row, key.inputStorage));
-                const auto qHat = vf.L2NormalizeRsqrtSumPlusEpsilon(q, epsilon);
-                const auto kHat = vf.L2NormalizeRsqrtSumPlusEpsilon(k, epsilon);
-                vf.StoreStorageRow(V0Gate2BLayout::kQHat.offset, row,
-                                   vf.RoundToInputStorage(
-                                       vf.ClampForInputStorage(qHat, key.inputStorage),
-                                       key.inputStorage),
-                                   key.inputStorage);
-                vf.StoreStorageRow(V0Gate2BLayout::kKHat.offset, row,
-                                   vf.RoundToInputStorage(
-                                       vf.ClampForInputStorage(kHat, key.inputStorage),
-                                       key.inputStorage),
-                                   key.inputStorage);
-            }
+template <typename T>
+__simd_callee__ inline void Store64FromFp32(
+    __ubuf__ T *dst, RegTensor<float> &value)
+{
+    MaskReg floatMask = CreateMask<float, MaskPattern::ALL>();
+    if constexpr (std::is_same<T, float>::value) {
+        StoreAlign(dst, value, floatMask);
+    } else {
+        if constexpr (std::is_same<T, half>::value) {
+            Mins(value, value, kFp16Max, floatMask);
+            Maxs(value, value, -kFp16Max, floatMask);
+        }
+        RegTensor<float> zero;
+        RegTensor<T> packed;
+        Duplicate(zero, 0.0F, floatMask);
+        CastFp32ToB16Rint<T>(packed, value, zero, floatMask);
+        uint32_t active = 64;
+        MaskReg outputMask = UpdateMask<T>(active);
+        StoreAlign(dst, packed, outputMask);
+    }
+}
 
-            auto gateStep = gateRaw;
-            if (key.gateMode == GateMode::PrecomputedStep) {
-                gateStep = vf.Div(gateRaw, vf.Ln2());
+template <typename T>
+__simd_callee__ inline void Store32FromFp32(
+    __ubuf__ T *dst, RegTensor<float> &value)
+{
+    MaskReg floatMask = CreateMask<float, MaskPattern::ALL>();
+    if constexpr (std::is_same<T, float>::value) {
+        uint32_t active = 32;
+        MaskReg outputMask = UpdateMask<float>(active);
+        StoreAlign(dst, value, outputMask);
+    } else {
+        if constexpr (std::is_same<T, half>::value) {
+            Mins(value, value, kFp16Max, floatMask);
+            Maxs(value, value, -kFp16Max, floatMask);
+        }
+        RegTensor<float> zero;
+        RegTensor<T> packed;
+        Duplicate(zero, 0.0F, floatMask);
+        CastFp32ToB16Rint<T>(packed, value, zero, floatMask);
+        uint32_t active = 32;
+        MaskReg outputMask = UpdateMask<T>(active);
+        StoreAlign(dst, packed, outputMask);
+    }
+}
+
+template <typename T>
+__simd_callee__ inline void LoadScalarAsFp32(
+    RegTensor<float> &dst, __ubuf__ T *src)
+{
+    if constexpr (std::is_same<T, float>::value) {
+        LoadIn<float, true>(dst, src);
+    } else {
+        RegTensor<T> raw;
+        RegTensor<float> unused;
+        MaskReg inputMask = CreateMask<T, MaskPattern::ALL>();
+        LoadIn<T, true>(raw, src);
+        CastHalf2Float<T>(dst, unused, raw, inputMask);
+    }
+}
+
+template <bool USE_EXP2>
+__simd_callee__ inline void ExpPair(
+    RegTensor<float> &low, RegTensor<float> &high, float lower, float upper)
+{
+    using Domain = ExpDomainTraits<USE_EXP2>;
+    MaskReg mask = CreateMask<float, MaskPattern::ALL>();
+    Maxs(low, low, lower, mask);
+    Maxs(high, high, lower, mask);
+    Mins(low, low, upper, mask);
+    Mins(high, high, upper, mask);
+    if constexpr (Domain::useExp2) {
+        Muls(low, low, Domain::expInputScale, mask);
+        Muls(high, high, Domain::expInputScale, mask);
+    }
+    Exp(low, low, mask);
+    Exp(high, high, mask);
+}
+
+// V0 的循环和指令均属于一次 VF。这里直接展示寄存器级数据流；L2 归约
+// 的 ReduceSum 结果广播形式仍需用目标 CANN 9.1.0 头文件做最小编译确认。
+template <typename InputT, typename GateT, typename BetaT, typename Policy>
+__simd_vf__ inline void StageV0Vf(
+    __ubuf__ InputT *q, __ubuf__ InputT *k, __ubuf__ GateT *rawGate,
+    __ubuf__ BetaT *betaRaw, __ubuf__ float *dtBias, __ubuf__ float *aLog,
+    __ubuf__ float *g, __ubuf__ float *gRef, __ubuf__ float *gLast,
+    __ubuf__ float *betaEff, uint16_t validRows, float epsilon,
+    float lowerBound, bool hasDtBias, bool hasALog)
+{
+    using Domain = ExpDomainTraits<Policy::useExp2>;
+    MaskReg mask = CreateMask<float, MaskPattern::ALL>();
+    uint32_t scalarCount = 1;
+    MaskReg scalarMask = UpdateMask<float>(scalarCount);
+    RegTensor<float> carryLow;
+    RegTensor<float> carryHigh;
+    Duplicate(carryLow, 0.0F, mask);
+    Duplicate(carryHigh, 0.0F, mask);
+
+    for (uint16_t row = 0; row < Shape::kChunkRows; ++row) {
+        RegTensor<float> qLow;
+        RegTensor<float> qHigh;
+        RegTensor<float> kLow;
+        RegTensor<float> kHigh;
+        if (row < validRows) {
+            Load128AsFp32(qLow, qHigh, q + row * Shape::kHeadDim);
+            Load128AsFp32(kLow, kHigh, k + row * Shape::kHeadDim);
+            if constexpr (Policy::normMode == QkNormMode::L2) {
+                RegTensor<float> qSquareLow;
+                RegTensor<float> qSquareHigh;
+                RegTensor<float> kSquareLow;
+                RegTensor<float> kSquareHigh;
+                RegTensor<float> qSumLow;
+                RegTensor<float> qSumHigh;
+                RegTensor<float> kSumLow;
+                RegTensor<float> kSumHigh;
+                Mul(qSquareLow, qLow, qLow, mask);
+                Mul(qSquareHigh, qHigh, qHigh, mask);
+                Mul(kSquareLow, kLow, kLow, mask);
+                Mul(kSquareHigh, kHigh, kHigh, mask);
+                ReduceSum(qSumLow, qSquareLow, mask);
+                ReduceSum(qSumHigh, qSquareHigh, mask);
+                ReduceSum(kSumLow, kSquareLow, mask);
+                ReduceSum(kSumHigh, kSquareHigh, mask);
+                // ReduceSum 只保证首 lane 有效。先按单 lane 合并两半，
+                // 按冻结语义加 epsilon 后开方，再借 betaEff 的未使用标量区
+                // 落 UB 并显式广播。
+                Add(qSumLow, qSumLow, qSumHigh, scalarMask);
+                Add(kSumLow, kSumLow, kSumHigh, scalarMask);
+                Adds(qSumLow, qSumLow, epsilon, scalarMask);
+                Adds(kSumLow, kSumLow, epsilon, scalarMask);
+                Sqrt(qSumLow, qSumLow, scalarMask);
+                Sqrt(kSumLow, kSumLow, scalarMask);
+                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
+                    betaEff + row, qSumLow, scalarMask);
+                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
+                    betaEff + Shape::kChunkRows + row, kSumLow,
+                    scalarMask);
+                LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+                LoadAlign<float, LoadDist::DIST_BRC_B32>(
+                    qSumLow, betaEff + row);
+                LoadAlign<float, LoadDist::DIST_BRC_B32>(
+                    kSumLow, betaEff + Shape::kChunkRows + row);
+                Div(qLow, qLow, qSumLow, mask);
+                Div(qHigh, qHigh, qSumLow, mask);
+                Div(kLow, kLow, kSumLow, mask);
+                Div(kHigh, kHigh, kSumLow, mask);
+            }
+        } else {
+            Duplicate(qLow, 0.0F, mask);
+            Duplicate(qHigh, 0.0F, mask);
+            Duplicate(kLow, 0.0F, mask);
+            Duplicate(kHigh, 0.0F, mask);
+        }
+        Store128FromFp32(q + row * Shape::kHeadDim, qLow, qHigh);
+        Store128FromFp32(k + row * Shape::kHeadDim, kLow, kHigh);
+
+        if (row >= validRows) {
+            RegTensor<float> zero;
+            Duplicate(zero, 0.0F, mask);
+            StoreAlign(g + row * Shape::kHeadDim, zero, mask);
+            StoreAlign(g + row * Shape::kHeadDim + 64, zero, mask);
+            continue;
+        }
+        RegTensor<float> gateLow;
+        RegTensor<float> gateHigh;
+        Load128AsFp32(gateLow, gateHigh,
+                      rawGate + row * Shape::kHeadDim);
+        if constexpr (Policy::gateMode != GateMode::PrecomputedStep) {
+            RegTensor<float> biasLow;
+            RegTensor<float> biasHigh;
+            if (hasDtBias) {
+                LoadAlign(biasLow, dtBias);
+                LoadAlign(biasHigh, dtBias + 64);
             } else {
-                auto x = vf.Add(gateRaw, dtBias);
-                if (key.gateMode == GateMode::Softplus) {
-                    auto stableSoftplus = vf.Add(vf.Max(x, vf.ZeroFp32()),
-                                                 vf.Log1p(vf.Exp(vf.Neg(vf.Abs(x)))));
-                    gateStep = vf.Div(vf.Neg(vf.Mul(gateCoefficient, stableSoftplus)),
-                                      vf.Ln2());
-                } else {
-                    gateStep = vf.Div(
-                        vf.Mul(lowerBound, vf.Sigmoid(vf.Mul(gateCoefficient, x))),
-                        vf.Ln2());
-                }
+                Duplicate(biasLow, 0.0F, mask);
+                Duplicate(biasHigh, 0.0F, mask);
             }
-            carry = vf.Add(carry, gateStep); // 词元顺序构成真实的扫描依赖。
-            // 恒等路径所有者和映射到它的非所有者保留已常驻 Qhat/Khat 的 2 字节
-            // MTE2 结果。再次转换和舍入只会造成重复向量计算，无法提高精度。
-            vf.StoreFp32Row(gOffset, row, carry);
-            vf.StoreBetaEffScalar(row, betaEff);
-        }
+            Add(gateLow, gateLow, biasLow, mask);
+            Add(gateHigh, gateHigh, biasHigh, mask);
 
-        for (std::uint32_t s = 0; s < ShapePolicy::kScoreBlockCount; ++s) {
-            const std::uint32_t begin = s * ShapePolicy::kScoreBlockRows;
-            const std::uint32_t end =
-                std::min(begin + ShapePolicy::kScoreBlockRows, validRows);
-            if (begin >= end) {
-                vf.ZeroFp32Row(UbPolicy::kVectorStateBase[head.aivLocalSlot] +
-                               VectorStateLayout::kGRef[s].offset);
-                continue;
-            }
-            const std::uint32_t referenceRow = begin + (end - begin) / 2U;
-            auto reference = vf.LoadFp32Row(gOffset, referenceRow);
-            vf.StoreFp32Row(UbPolicy::kVectorStateBase[head.aivLocalSlot] +
-                                VectorStateLayout::kGRef[s].offset,
-                            reference);
-        }
-        vf.StoreGLast(carry);
-    }
-
-    static inline void Record(const VectorOps &ops, const HeadTask &head) noexcept
-    {
-        VectorVfTraceMetadata metadata{};
-        metadata.stage = kStage;
-        metadata.formula = kFormula;
-        ops.RecordOneVf(head, metadata);
-    }
-};
-
-struct S4ScoreOperandsVf {
-    static constexpr Stage kStage = Stage::V1;
-    static constexpr VectorFormula kFormula = VectorFormula::S4ScoreOperands;
-
-    template <bool UseExp2, typename Vf>
-    static inline void Evaluate(Vf &vf, const HeadTask &head, std::uint32_t validRows,
-                                GateStorage gateStorage, InputStorage inputStorage,
-                                ScoreStorage scoreStorage)
-    {
-        const Offset gOffset = IsTwoByteGateStorage(gateStorage)
-                                   ? V1Gate2BLayout::kLiveG.offset
-                                   : V1GateFp32Layout::kLiveG.offset;
-        const auto &kMinus = IsTwoByteGateStorage(gateStorage)
-                                 ? V1Gate2BLayout::kKMinus
-                                 : V1GateFp32Layout::kKMinus;
-        const std::uint32_t activeBlocks = ActiveScoreBlocks(validRows);
-        const float exp2InputMin = ScoreExp2InputMin(scoreStorage);
-        const float exp2InputMax = ScoreExp2InputMax(scoreStorage);
-        auto zeroScoreStorage = vf.RoundToScoreStorage(
-            vf.ClampForScoreStorage(vf.ZeroFp32(), scoreStorage), scoreStorage);
-
-        for (std::uint32_t row = 0; row < ShapePolicy::kBt; ++row) {
-            if (row < validRows) {
-                // 在任何存在别名的 Q/K 写入前，先将三个源行读入临时寄存器。
-                auto qHat = vf.ToFp32(vf.LoadStorageRow(V1Gate2BLayout::kQPlus.offset,
-                                                        row, inputStorage));
-                auto kHat = vf.ToFp32(vf.LoadStorageRow(V1Gate2BLayout::kKPlus.offset,
-                                                        row, inputStorage));
-                auto g = vf.LoadFp32Row(gOffset, row);
-                const std::uint32_t owner = row / ShapePolicy::kScoreBlockRows;
-                auto ownerRef =
-                    vf.LoadFp32Row(UbPolicy::kVectorStateBase[head.aivLocalSlot] +
-                                   VectorStateLayout::kGRef[owner].offset);
-                auto plusFactor = EvaluatePow2<UseExp2>(vf, vf.Sub(g, ownerRef),
-                                                        exp2InputMin, exp2InputMax);
-                auto qPlus = vf.Mul(qHat, plusFactor);
-                auto kPlus = vf.Mul(kHat, plusFactor);
-
-                // 在所有所需前缀生成完成前，Khat 一直保留在寄存器中；所有
-                // Kminus 目标均不与仍在生命周期内的 G 重叠。
-                for (std::uint32_t s = 0; s < ShapePolicy::kScoreBlockCount; ++s) {
-                    const std::uint32_t physicalEnd = ShapePolicy::kPrefixRows[s];
-                    const std::uint32_t logicalEnd =
-                        ShapePolicy::LogicalPrefixRows(s, validRows);
-                    if (row >= physicalEnd) {
-                        continue;
-                    }
-                    if (s < activeBlocks && row < logicalEnd) {
-                        auto reference = vf.LoadFp32Row(
-                            UbPolicy::kVectorStateBase[head.aivLocalSlot] +
-                            VectorStateLayout::kGRef[s].offset);
-                        auto minusFactor = EvaluatePow2<UseExp2>(
-                            vf, vf.Sub(reference, g), exp2InputMin, exp2InputMax);
-                        auto kMinusStorage = vf.RoundToScoreStorage(
-                            vf.ClampForScoreStorage(vf.Mul(kHat, minusFactor),
-                                                    scoreStorage),
-                            scoreStorage);
-                        vf.StoreStorageRow(kMinus[s].offset, row, kMinusStorage,
-                                           scoreStorage);
-                    } else {
-                        vf.StoreStorageRow(kMinus[s].offset, row, zeroScoreStorage,
-                                           scoreStorage);
-                    }
-                }
-                auto qPlusStorage = vf.RoundToScoreStorage(
-                    vf.ClampForScoreStorage(qPlus, scoreStorage), scoreStorage);
-                auto kPlusStorage = vf.RoundToScoreStorage(
-                    vf.ClampForScoreStorage(kPlus, scoreStorage), scoreStorage);
-                vf.StoreStorageRow(V1Gate2BLayout::kQPlus.offset, row, qPlusStorage,
-                                   scoreStorage);
-                vf.StoreStorageRow(V1Gate2BLayout::kKPlus.offset, row, kPlusStorage,
-                                   scoreStorage);
+            RegTensor<float> a;
+            if (hasALog) {
+                LoadScalarAsFp32(a, aLog);
+                Exp(a, a, mask); // 计算 a_h=exp(A_log[h])。
             } else {
-                vf.StoreStorageRow(V1Gate2BLayout::kQPlus.offset, row, zeroScoreStorage,
-                                   scoreStorage);
-                vf.StoreStorageRow(V1Gate2BLayout::kKPlus.offset, row, zeroScoreStorage,
-                                   scoreStorage);
-                for (std::uint32_t s = 0; s < ShapePolicy::kScoreBlockCount; ++s) {
-                    // 尾块保留固定的 B_s 字节区段，并显式清零
-                    // [b_s=min(B_s,M), B_s)；不会缩小物理槽位。
-                    if (row < ShapePolicy::kPrefixRows[s]) {
-                        vf.StoreStorageRow(kMinus[s].offset, row, zeroScoreStorage,
-                                           scoreStorage);
-                    }
-                }
+                Duplicate(a, 1.0F, mask);
+            }
+            if constexpr (Policy::safeGate ||
+                          Policy::gateMode == GateMode::SafeSigmoid) {
+                RegTensor<float> one;
+                Duplicate(one, 1.0F, mask);
+                Mul(gateLow, gateLow, a, mask);
+                Mul(gateHigh, gateHigh, a, mask);
+                Muls(gateLow, gateLow, -1.0F, mask);
+                Muls(gateHigh, gateHigh, -1.0F, mask);
+                Exp(gateLow, gateLow, mask);
+                Exp(gateHigh, gateHigh, mask);
+                Adds(gateLow, gateLow, 1.0F, mask);
+                Adds(gateHigh, gateHigh, 1.0F, mask);
+                Div(gateLow, one, gateLow, mask);
+                Div(gateHigh, one, gateHigh, mask);
+                Muls(gateLow, gateLow, lowerBound, mask);
+                Muls(gateHigh, gateHigh, lowerBound, mask);
+            } else {
+                RegTensor<float> positiveLow;
+                RegTensor<float> positiveHigh;
+                RegTensor<float> softplusLow;
+                RegTensor<float> softplusHigh;
+                Maxs(positiveLow, gateLow, 0.0F, mask);
+                Maxs(positiveHigh, gateHigh, 0.0F, mask);
+                Abs(softplusLow, gateLow, mask);
+                Abs(softplusHigh, gateHigh, mask);
+                Muls(softplusLow, softplusLow, -1.0F, mask);
+                Muls(softplusHigh, softplusHigh, -1.0F, mask);
+                Exp(softplusLow, softplusLow, mask);
+                Exp(softplusHigh, softplusHigh, mask);
+                Adds(softplusLow, softplusLow, 1.0F, mask);
+                Adds(softplusHigh, softplusHigh, 1.0F, mask);
+                Ln(softplusLow, softplusLow, mask);
+                Ln(softplusHigh, softplusHigh, mask);
+                Add(gateLow, positiveLow, softplusLow, mask);
+                Add(gateHigh, positiveHigh, softplusHigh, mask);
+                Mul(gateLow, gateLow, a, mask);
+                Mul(gateHigh, gateHigh, a, mask);
+                Muls(gateLow, gateLow, -1.0F, mask);
+                Muls(gateHigh, gateHigh, -1.0F, mask);
             }
         }
-    }
-
-    static inline void Record(const VectorOps &ops, const HeadTask &head,
-                              Pow2Primitive pow2Primitive) noexcept
-    {
-        VectorVfTraceMetadata metadata{};
-        metadata.stage = kStage;
-        metadata.formula = kFormula;
-        metadata.pow2Primitive = pow2Primitive;
-        metadata.hasPow2Primitive = true;
-        ops.RecordOneVf(head, metadata);
-    }
-};
-
-template <typename Vf>
-inline void BuildAqkAndLkkFromRaw(Vf &vf, std::uint32_t validRows, float scale)
-{
-    for (std::uint32_t row = 0; row < ShapePolicy::kBt; ++row) {
-        for (std::uint32_t col = 0; col < ShapePolicy::kBt; ++col) {
-            const bool readAqk = V3AqkRawReadRequired(validRows, row, col);
-            const bool readAkk = V3AkkRawReadRequired(validRows, row, col);
-            auto aqk = readAqk ? vf.Mul(scale, vf.LoadRawAqk(row, col)) : vf.ZeroFp32();
-            auto lkk = readAkk ? vf.Mul(vf.LoadBetaEff(row), vf.LoadRawAkk(row, col))
-                               : vf.ZeroFp32();
-            vf.StoreAqk(row, col, aqk);
-            vf.StoreLkkOrIdentityPadding(row, col, lkk, validRows);
+        // USE_EXP2=true 时 G 保存 log2 值，后续用 Exp(G*ln2)；
+        // false 时 G 保存自然对数值，后续直接 Exp(G)。
+        if constexpr (Domain::useExp2) {
+            Muls(gateLow, gateLow, Domain::stepScale, mask);
+            Muls(gateHigh, gateHigh, Domain::stepScale, mask);
         }
+        Add(carryLow, carryLow, gateLow, mask);
+        Add(carryHigh, carryHigh, gateHigh, mask);
+        StoreAlign(g + row * Shape::kHeadDim, carryLow, mask);
+        StoreAlign(g + row * Shape::kHeadDim + 64, carryHigh, mask);
+
+        for (uint16_t s = 0; s < Shape::kSubChunkCount; ++s) {
+            const uint16_t begin = s * Shape::kSubChunkRows;
+            const uint16_t end = validRows < begin + Shape::kSubChunkRows
+                                     ? validRows
+                                     : begin + Shape::kSubChunkRows;
+            const uint16_t refRow = (begin + end) / 2;
+            if (begin < end && row == refRow) {
+                StoreAlign(gRef + s * Shape::kHeadDim, carryLow, mask);
+                StoreAlign(gRef + s * Shape::kHeadDim + 64, carryHigh, mask);
+            }
+        }
+        if (row + 1 == validRows) {
+            StoreAlign(gLast, carryLow, mask);
+            StoreAlign(gLast + 64, carryHigh, mask);
+        }
+    }
+
+    for (uint16_t row = 0; row < Shape::kChunkRows; ++row) {
+        RegTensor<float> beta;
+        if (row < validRows) {
+            RegTensor<float> one;
+            LoadScalarAsFp32(beta, betaRaw + row);
+            Duplicate(one, 1.0F, mask);
+            if constexpr (Policy::betaMode != BetaMode::Raw) {
+                Muls(beta, beta, -1.0F, mask);
+                Exp(beta, beta, mask);
+                Adds(beta, beta, 1.0F, mask);
+                Div(beta, one, beta, mask);
+                if constexpr (Policy::betaMode == BetaMode::TwoSigmoid) {
+                    Muls(beta, beta, 2.0F, mask);
+                }
+            }
+        } else {
+            Duplicate(beta, 0.0F, mask);
+        }
+        StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
+            betaEff + row, beta, mask);
     }
 }
 
-struct AqkAndAkkFactorsVf {
-    static constexpr Stage kStage = Stage::V3;
-    static constexpr VectorFormula kFormula = VectorFormula::AqkAndAkkFactors;
+template <typename InputT, typename ScoreT, typename Policy>
+__simd_vf__ inline void StageV1Vf(
+    __ubuf__ InputT *qHat, __ubuf__ InputT *kHat, __ubuf__ float *g,
+    __ubuf__ float *gRef, __ubuf__ ScoreT *qPlus, __ubuf__ ScoreT *kPlus,
+    __ubuf__ ScoreT *kMinus, uint16_t validRows)
+{
+    using Domain = ExpDomainTraits<Policy::useExp2>;
+    MaskReg mask = CreateMask<float, MaskPattern::ALL>();
+    constexpr uint32_t prefixBase[4] = {0, 16 * 128, 48 * 128, 96 * 128};
 
-    template <typename Vf>
-    static inline void Evaluate(Vf &vf, const HeadTask &head, std::uint32_t validRows,
-                                PrepareAbi abi, AkkStorage akkStorage,
-                                InputStorage inputStorage, float scale)
-    {
-        (void)head;
-        // 此处仍只调用一次 VF。每次原始数据搬运都由谓词限定在共享物理写入域和
-        // 有效因果域内；无效输出直接生成，不读取残留的原始数据存储。
-        BuildAqkAndLkkFromRaw(vf, validRows, scale);
-        // 将单位下三角矩阵 I+Lkk 分块为 [[A00,0],[B,A11]]：
-        // X0=A00^-1，X1=A11^-1，最终
-        // Akk=[[X0,0],[-X1@B@X0,X1]]。本 Stage 生成 X0/X1/B，
-        // C4/C5 再依次计算 T=B@X0 和左下象限 -X1@T。
-        vf.InvertUnitLowerTriangularLeaves32();
-        vf.MaterializeAkkFactorsX0X1AndBAtFinalOffsets();
-        if (akkStorage == AkkStorage::TwoByteAbi) {
-            // q00/q01/q11 直接写入各自最终的紧凑象限优先布局地址。
-            // ClampForInputStorage 只对 FP16 执行有限值 +/-65504 饱和；随后
-            // FP16 和 BF16 分别使用各自的舍入方式。
-            auto zeroStorage = vf.RoundToInputStorage(
-                vf.ClampForInputStorage(vf.ZeroFp32(), inputStorage), inputStorage);
-            for (std::uint32_t row = 0U; row < Akk2BPackPolicy::kQuadrantRows; ++row) {
-                for (std::uint32_t col = 0U; col < Akk2BPackPolicy::kQuadrantColumns;
-                     ++col) {
-                    // q00/q11 暂存在其最终 UB 偏移。Current 还需要 q01 作为公开
-                    // Akk 输出；Fused 不物化这个已知零值，由 C4 在最终 L1 地址
-                    // 填充 q01。
-                    if (V3StableAkkWriteRequired(Architecture::Arch35, abi, validRows,
-                                                 row, col)) {
-                        auto q00 =
-                            vf.LoadStableAkkQ00OrZeroColumnPadding(row, col, validRows);
-                        auto q00Storage = vf.RoundToInputStorage(
-                            vf.ClampForInputStorage(q00, inputStorage), inputStorage);
-                        vf.StoreInputStorageMatrix(V3Layout::kX0Tau.offset, row, col,
-                                                   q00Storage, inputStorage);
-                    }
-                    if (V3StableAkkWriteRequired(Architecture::Arch35, abi, validRows,
-                                                 row, col + 32U)) {
-                        vf.StoreInputStorageMatrix(V3Layout::kQ01Zero.offset, row, col,
-                                                   zeroStorage, inputStorage);
-                    }
-                    if (V3StableAkkWriteRequired(Architecture::Arch35, abi, validRows,
-                                                 row + 32U, col + 32U)) {
-                        auto q11 =
-                            vf.LoadStableAkkQ11OrZeroColumnPadding(row, col, validRows);
-                        auto q11Storage = vf.RoundToInputStorage(
-                            vf.ClampForInputStorage(q11, inputStorage), inputStorage);
-                        vf.StoreInputStorageMatrix(V3Layout::kX1Tau.offset, row, col,
-                                                   q11Storage, inputStorage);
-                    }
-                }
+    // 先生成 Kminus，再原位覆盖 qHat/kHat 为 Qplus/Kplus，避免额外保存 Khat。
+    for (uint16_t s = 0; s < Shape::kSubChunkCount; ++s) {
+        const uint16_t prefixRows = Shape::kPrefixRows[s];
+        const uint16_t bandBegin = s * Shape::kSubChunkRows;
+        for (uint16_t row = 0; row < prefixRows; ++row) {
+            RegTensor<float> outLow;
+            RegTensor<float> outHigh;
+            if (bandBegin < validRows && row < validRows) {
+                RegTensor<float> gateLow;
+                RegTensor<float> gateHigh;
+                RegTensor<float> refLow;
+                RegTensor<float> refHigh;
+                RegTensor<float> kLow;
+                RegTensor<float> kHigh;
+                LoadAlign(gateLow, g + row * Shape::kHeadDim);
+                LoadAlign(gateHigh, g + row * Shape::kHeadDim + 64);
+                LoadAlign(refLow, gRef + s * Shape::kHeadDim);
+                LoadAlign(refHigh, gRef + s * Shape::kHeadDim + 64);
+                Sub(refLow, refLow, gateLow, mask);
+                Sub(refHigh, refHigh, gateHigh, mask);
+                constexpr float base2Lower =
+                    std::is_same<ScoreT, bfloat16_t>::value
+                        ? ExpDomain::kV1Bf16LowerBase2
+                        : ExpDomain::kV1Fp16LowerBase2;
+                constexpr float base2Upper =
+                    std::is_same<ScoreT, bfloat16_t>::value
+                        ? ExpDomain::kV1Bf16UpperBase2
+                        : ExpDomain::kV1Fp16UpperBase2;
+                constexpr float lower = Domain::StoredBound(base2Lower);
+                constexpr float upper = Domain::StoredBound(base2Upper);
+                ExpPair<Policy::useExp2>(refLow, refHigh, lower, upper);
+                Load128AsFp32(kLow, kHigh,
+                              kHat + row * Shape::kHeadDim);
+                Mul(outLow, kLow, refLow, mask);
+                Mul(outHigh, kHigh, refHigh, mask);
+            } else {
+                Duplicate(outLow, 0.0F, mask);
+                Duplicate(outHigh, 0.0F, mask);
             }
-        }
-        // Aqk 此后不再有 FP32 读取方。以相同基址在原地向低地址执行类型转换；
-        // 按行、列正序处理时只会覆盖已经读取的值。这不属于 UB 数据移动，
-        // 也不是第二次 VF 调用。
-        for (std::uint32_t row = 0U; row < ShapePolicy::kBt; ++row) {
-            for (std::uint32_t col = 0U; col < ShapePolicy::kBt; ++col) {
-                auto aqkStorage = vf.RoundToInputStorage(
-                    vf.ClampForInputStorage(vf.LoadAqk(row, col), inputStorage),
-                    inputStorage);
-                vf.StoreAqkStorageInPlace(row, col, aqkStorage, inputStorage);
-            }
+            Store128FromFp32(
+                kMinus + prefixBase[s] + row * Shape::kHeadDim,
+                outLow, outHigh);
         }
     }
 
-    static inline void Record(const VectorOps &ops, const HeadTask &head,
-                              float runtimeScale, RuntimeScaleUse runtimeScaleUse,
-                              std::uint32_t runtimeScaleMultiplyCount) noexcept
-    {
-        VectorVfTraceMetadata metadata{};
-        metadata.stage = kStage;
-        metadata.formula = kFormula;
-        metadata.runtimeScale = runtimeScale;
-        metadata.runtimeScaleUse = runtimeScaleUse;
-        metadata.runtimeScaleMultiplyCount = runtimeScaleMultiplyCount;
-        metadata.hasRuntimeScale = true;
-        ops.RecordOneVf(head, metadata);
+    for (uint16_t row = 0; row < Shape::kChunkRows; ++row) {
+        RegTensor<float> qLow;
+        RegTensor<float> qHigh;
+        RegTensor<float> kLow;
+        RegTensor<float> kHigh;
+        RegTensor<float> expLow;
+        RegTensor<float> expHigh;
+        if (row < validRows) {
+            const uint16_t s = row / Shape::kSubChunkRows;
+            LoadAlign(expLow, g + row * Shape::kHeadDim);
+            LoadAlign(expHigh, g + row * Shape::kHeadDim + 64);
+            RegTensor<float> refLow;
+            RegTensor<float> refHigh;
+            LoadAlign(refLow, gRef + s * Shape::kHeadDim);
+            LoadAlign(refHigh, gRef + s * Shape::kHeadDim + 64);
+            Sub(expLow, expLow, refLow, mask);
+            Sub(expHigh, expHigh, refHigh, mask);
+            constexpr float base2Lower =
+                std::is_same<ScoreT, bfloat16_t>::value
+                    ? ExpDomain::kV1Bf16LowerBase2
+                    : ExpDomain::kV1Fp16LowerBase2;
+            constexpr float base2Upper =
+                std::is_same<ScoreT, bfloat16_t>::value
+                    ? ExpDomain::kV1Bf16UpperBase2
+                    : ExpDomain::kV1Fp16UpperBase2;
+            constexpr float lower = Domain::StoredBound(base2Lower);
+            constexpr float upper = Domain::StoredBound(base2Upper);
+            ExpPair<Policy::useExp2>(expLow, expHigh, lower, upper);
+            Load128AsFp32(qLow, qHigh, qHat + row * Shape::kHeadDim);
+            Load128AsFp32(kLow, kHigh, kHat + row * Shape::kHeadDim);
+            Mul(qLow, qLow, expLow, mask);
+            Mul(qHigh, qHigh, expHigh, mask);
+            Mul(kLow, kLow, expLow, mask);
+            Mul(kHigh, kHigh, expHigh, mask);
+        } else {
+            Duplicate(qLow, 0.0F, mask);
+            Duplicate(qHigh, 0.0F, mask);
+            Duplicate(kLow, 0.0F, mask);
+            Duplicate(kHigh, 0.0F, mask);
+        }
+        Store128FromFp32(qPlus + row * Shape::kHeadDim, qLow, qHigh);
+        Store128FromFp32(kPlus + row * Shape::kHeadDim, kLow, kHigh);
     }
-};
+}
 
-struct PostWuOperandsVf {
-    static constexpr Stage kStage = Stage::V6;
-    static constexpr VectorFormula kFormula = VectorFormula::PostWuOperands;
+template <typename InputT>
+__simd_vf__ inline void StageV3Vf(
+    __ubuf__ float *rawScore,
+    __ubuf__ float *betaEff, __ubuf__ InputT *aqk,
+    __ubuf__ float *lkk, __ubuf__ float *b, __ubuf__ float *x0,
+    __ubuf__ float *x1, __ubuf__ float *negX1,
+    __ubuf__ InputT *akk, uint16_t validRows, float scale)
+{
+    MaskReg full = CreateMask<float, MaskPattern::ALL>();
+    uint32_t halfCount = 32;
+    MaskReg lowerHalf = UpdateMask<float>(halfCount);
+    RegTensor<int32_t> column;
+    MaskReg upperHalf;
+    Arange<int32_t, IndexOrder::INCREASE_ORDER>(column, 0);
+    CompareScalar<int32_t, CMPMODE::GE>(upperHalf, column, 32, full);
+    constexpr uint32_t stackedBase[4] = {
+        0, 32 * 16, 32 * 48, 32 * 96};
 
-    template <bool UseExp2, typename Vf>
-    static inline void Evaluate(Vf &vf, const HeadTask &head, std::uint32_t validRows,
-                                PrepareAbi abi, InputStorage inputStorage,
-                                InputStorage valueStorage, float scale)
-    {
-        (void)head;
-        auto zeroQkStorage = vf.RoundToInputStorage(
-            vf.ClampForInputStorage(vf.ZeroFp32(), inputStorage), inputStorage);
-        auto zeroValueStorage = vf.RoundToInputStorage(
-            vf.ClampForInputStorage(vf.ZeroFp32(), valueStorage), valueStorage);
-        const std::uint32_t rhsRows = validRows > Akk2BPackPolicy::kQuadrantRows
-                                          ? ShapePolicy::kBt
-                                          : Akk2BPackPolicy::kQuadrantRows;
-        if (validRows == 0U) {
-            for (std::uint32_t row = 0; row < rhsRows; ++row) {
-                vf.StoreZeroV6OutputRows(row, abi, zeroQkStorage, zeroValueStorage,
-                                         inputStorage, valueStorage);
+    // 从后往前展开 compact 行，避免 dense 目的区覆盖尚未读取的 compact 源。
+    for (int32_t row = Shape::kChunkRows - 1; row >= 0; --row) {
+        RegTensor<float> aqkRow;
+        RegTensor<float> akkRow;
+        RegTensor<float> zero;
+        Duplicate(zero, 0.0F, full);
+        if (row < validRows) {
+            const uint16_t s = static_cast<uint16_t>(row) / Shape::kSubChunkRows;
+            const uint16_t bandRow = static_cast<uint16_t>(row) % Shape::kSubChunkRows;
+            const uint16_t columns = Shape::kPrefixRows[s];
+            LoadAlign(aqkRow,
+                      rawScore + stackedBase[s] + bandRow * columns);
+            LoadAlign(akkRow,
+                      rawScore + stackedBase[s] +
+                          Shape::kSubChunkRows * columns +
+                          bandRow * columns);
+            uint32_t aqkCount = static_cast<uint32_t>(row) + 1;
+            uint32_t akkCount = static_cast<uint32_t>(row);
+            MaskReg aqkMask = UpdateMask<float>(aqkCount);
+            MaskReg akkMask = UpdateMask<float>(akkCount);
+            Select(aqkRow, aqkRow, zero, aqkMask);
+            Select(akkRow, akkRow, zero, akkMask);
+            Muls(aqkRow, aqkRow, scale, full);
+            RegTensor<float> beta;
+            LoadAlign<float, LoadDist::DIST_BRC_B32>(
+                beta, betaEff + row);
+            Mul(akkRow, akkRow, beta, full);
+        } else {
+            Duplicate(aqkRow, 0.0F, full);
+            Duplicate(akkRow, 0.0F, full);
+        }
+        // ScoreT 只用于 V1/C2 操作数；公开 Aqk 按 InputT RINT。
+        Store64FromFp32(aqk + row * Shape::kChunkRows, aqkRow);
+        if (row < 32) {
+            StoreAlign(lkk + row * Shape::kChunkRows, akkRow, lowerHalf);
+        } else {
+            // rawAkk 的低 32 列就是最终 B；高 32 列仅写入 L11。
+            StoreAlign(b + (row - 32) * 32, akkRow, lowerHalf);
+            StoreAlign(lkk + row * Shape::kChunkRows, akkRow, upperHalf);
+        }
+    }
+    LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+
+    // LoadAlign 每次读取 64 个 FP32 lane，先清零两个 32x32 结果区的全部
+    // 物理空间，避免逐行递推读取相邻行尚未写入的高 32 lane。
+    RegTensor<float> xZero;
+    Duplicate(xZero, 0.0F, full);
+    for (uint16_t offset = 0; offset < 32 * 32; offset += 64) {
+        StoreAlign(x0 + offset, xZero, full);
+        StoreAlign(x1 + offset, xZero, full);
+    }
+    LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+
+    // 两个 32x32 叶子独立执行单位下三角前代：X0=(I+L00)^-1，
+    // X1=(I+L11)^-1；B=L10。下面的 VEC_STORE->VEC_LOAD 屏障是同一
+    // VF 内逐行递推所必需的，不是额外 VF。
+    for (uint16_t leaf = 0; leaf < 2; ++leaf) {
+        const uint16_t rowBase = leaf * 32;
+        uint32_t rowCount = 32;
+        MaskReg rowMask = UpdateMask<float>(rowCount);
+        __ubuf__ float *x = leaf == 0 ? x0 : x1;
+        for (uint16_t row = 0; row < 32; ++row) {
+            RegTensor<float> result;
+            RegTensor<float> zero;
+            RegTensor<float> one;
+            RegTensor<int32_t> index;
+            MaskReg diagonal;
+            Duplicate(zero, 0.0F, rowMask);
+            Duplicate(one, 1.0F, rowMask);
+            Arange<int32_t, IndexOrder::INCREASE_ORDER>(index, 0);
+            CompareScalar<int32_t, CMPMODE::EQ>(
+                diagonal, index, static_cast<int32_t>(row), rowMask);
+            Select(result, one, zero, diagonal);
+            for (uint16_t source = 0; source < row; ++source) {
+                RegTensor<float> factor;
+                RegTensor<float> sourceRow;
+                RegTensor<float> product;
+                LoadAlign<float, LoadDist::DIST_BRC_B32>(
+                    factor, lkk + (rowBase + row) * 64 + rowBase + source);
+                LoadAlign(sourceRow, x + source * 32);
+                Mul(product, sourceRow, factor, rowMask);
+                Sub(result, result, product, rowMask);
             }
+            StoreAlign(x + row * 32, result, rowMask);
+            LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+        }
+    }
+    for (uint16_t row = 0; row < 32; ++row) {
+        RegTensor<float> x1Row;
+        uint32_t rowCount = 32;
+        MaskReg rowMask = UpdateMask<float>(rowCount);
+        LoadAlign(x1Row, x1 + row * 32);
+        Muls(x1Row, x1Row, -1.0F, rowMask);
+        StoreAlign(negX1 + row * 32, x1Row, rowMask);
+    }
+    // q00/q11 写入最终 64x64 行主序 Akk；q01/q10 先置零，C5 只补 q10。
+    RegTensor<float> zero;
+    Duplicate(zero, 0.0F, full);
+    for (uint16_t row = 0; row < 32; ++row) {
+        RegTensor<float> diagonalRow;
+        LoadAlign(diagonalRow, x0 + row * 32);
+        Store32FromFp32(akk + row * 64, diagonalRow);
+        Store32FromFp32(akk + row * 64 + 32, zero);
+    }
+    for (uint16_t row = 0; row < 32; ++row) {
+        RegTensor<float> diagonalRow;
+        Store32FromFp32(akk + (row + 32) * 64, zero);
+        LoadAlign(diagonalRow, x1 + row * 32);
+        Store32FromFp32(akk + (row + 32) * 64 + 32, diagonalRow);
+    }
+}
+
+template <typename InputT, typename ValueT, typename Policy>
+__simd_vf__ inline void StageV6Vf(
+    __ubuf__ InputT *qHat, __ubuf__ InputT *kHat,
+    __ubuf__ ValueT *v, __ubuf__ float *g, __ubuf__ float *gLast,
+    __ubuf__ float *betaEff, __ubuf__ InputT *qg, __ubuf__ InputT *kg,
+    __ubuf__ InputT *kBetaG, __ubuf__ ValueT *vBeta,
+    uint16_t validRows, float scale)
+{
+    using Domain = ExpDomainTraits<Policy::useExp2>;
+    MaskReg mask = CreateMask<float, MaskPattern::ALL>();
+    for (uint16_t row = 0; row < Shape::kChunkRows; ++row) {
+        RegTensor<float> qLow;
+        RegTensor<float> qHigh;
+        RegTensor<float> kLow;
+        RegTensor<float> kHigh;
+        RegTensor<float> vLow;
+        RegTensor<float> vHigh;
+        if (row < validRows) {
+            RegTensor<float> gateLow;
+            RegTensor<float> gateHigh;
+            RegTensor<float> lastLow;
+            RegTensor<float> lastHigh;
+            RegTensor<float> beta;
+            LoadAlign(gateLow, g + row * 128);
+            LoadAlign(gateHigh, g + row * 128 + 64);
+            LoadAlign(lastLow, gLast);
+            LoadAlign(lastHigh, gLast + 64);
+            LoadAlign<float, LoadDist::DIST_BRC_B32>(beta, betaEff + row);
+            Load128AsFp32(qLow, qHigh, qHat + row * 128);
+            Load128AsFp32(kLow, kHigh, kHat + row * 128);
+            Load128AsFp32(vLow, vHigh, v + row * 128);
+
+            RegTensor<float> posLow;
+            RegTensor<float> posHigh;
+            RegTensor<float> kPosLow;
+            RegTensor<float> kPosHigh;
+            Adds(posLow, gateLow, 0.0F, mask);
+            Adds(posHigh, gateHigh, 0.0F, mask);
+            constexpr float lower =
+                Domain::StoredBound(ExpDomain::kV6LowerBase2);
+            constexpr float upper =
+                Domain::StoredBound(ExpDomain::kV6UpperBase2);
+            ExpPair<Policy::useExp2>(posLow, posHigh, lower, upper);
+            Mul(qLow, qLow, posLow, mask);
+            Mul(qHigh, qHigh, posHigh, mask);
+            Mul(kPosLow, kLow, posLow, mask);
+            Mul(kPosHigh, kHigh, posHigh, mask);
+            // 第一次舍入先落到最终 kBetaG 物理区，随后立即回读 FP32。
+            Store128FromFp32(kBetaG + row * 128, kPosLow, kPosHigh);
+
+            Sub(lastLow, lastLow, gateLow, mask);
+            Sub(lastHigh, lastHigh, gateHigh, mask);
+            ExpPair<Policy::useExp2>(lastLow, lastHigh, lower, upper);
+            Mul(kLow, kLow, lastLow, mask);
+            Mul(kHigh, kHigh, lastHigh, mask);
+            Store128FromFp32(kg + row * 128, kLow, kHigh);
+
+            // K_beta_g 保留两次 2-byte 舍入：先写 Khat*E(G)，再回读乘 beta。
+            LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+            Load128AsFp32(kLow, kHigh, kBetaG + row * 128);
+            Mul(kLow, kLow, beta, mask);
+            Mul(kHigh, kHigh, beta, mask);
+            Mul(vLow, vLow, beta, mask);
+            Mul(vHigh, vHigh, beta, mask);
+        } else {
+            Duplicate(qLow, 0.0F, mask);
+            Duplicate(qHigh, 0.0F, mask);
+            Duplicate(kLow, 0.0F, mask);
+            Duplicate(kHigh, 0.0F, mask);
+            Duplicate(vLow, 0.0F, mask);
+            Duplicate(vHigh, 0.0F, mask);
+        }
+        Store128FromFp32(qg + row * 128, qLow, qHigh);
+        if constexpr (Policy::abi == PrepareAbi::Fused) {
+            // Fused ABI 保留 Qg 的第一次两字节舍入，再乘 scale 后二次舍入。
+            LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+            Load128AsFp32(qLow, qHigh, qg + row * 128);
+            Muls(qLow, qLow, scale, mask);
+            Muls(qHigh, qHigh, scale, mask);
+            Store128FromFp32(qg + row * 128, qLow, qHigh);
+        }
+        Store128FromFp32(kBetaG + row * 128, kLow, kHigh);
+        Store128FromFp32(vBeta + row * 128, vLow, vHigh);
+    }
+}
+
+} // namespace Detail
+
+template <typename InputT, typename ValueT, typename GateT, typename BetaT,
+          typename ScoreT, typename Policy>
+class ChunkKdaFwdPrepareVec {
+public:
+    __aicore__ inline void Init(const PrepareKernelArgs &args)
+    {
+        args_ = args;
+        workgroup_ = WorkgroupId();
+        aiv_ = AscendC::GetSubBlockIdx();
+        qGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args.q));
+        kGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args.k));
+        vGm_.SetGlobalBuffer(reinterpret_cast<__gm__ ValueT *>(args.v));
+        gateGm_.SetGlobalBuffer(reinterpret_cast<__gm__ GateT *>(args.rawGate));
+        betaGm_.SetGlobalBuffer(reinterpret_cast<__gm__ BetaT *>(args.beta));
+        if (args.dtBias != nullptr) {
+            dtBiasGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.dtBias));
+        }
+        if (args.aLog != nullptr) {
+            aLogGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.aLog));
+        }
+        qgGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args.qg));
+        kgGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args.kg));
+        gkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.gk));
+        aqkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args.aqk));
+        if (args.akk != nullptr) {
+            akkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args.akk));
+        }
+    }
+
+    __aicore__ inline void Process()
+    {
+        if (args_.tiling.usedCoreNum == 0 ||
+            workgroup_ >= args_.tiling.usedCoreNum) {
             return;
         }
-        auto gLast = vf.LoadFp32Row(V6Layout::kGInput.offset, validRows - 1U);
-        for (std::uint32_t row = 0; row < rhsRows; ++row) {
-            if (row >= validRows) {
-                vf.StoreZeroV6OutputRows(row, abi, zeroQkStorage, zeroValueStorage,
-                                         inputStorage, valueStorage);
+        bool usedLocalSlot[2] = {false, false};
+        const uint32_t total = TotalWorkItems(args_.tiling);
+        const uint32_t workBegin = WorkBegin(
+            total, workgroup_, args_.tiling.usedCoreNum);
+        const uint32_t workEnd = WorkEnd(
+            total, workgroup_, args_.tiling.usedCoreNum);
+        for (uint32_t work = workBegin; work < workEnd; ++work) {
+            uint32_t globalChunk = 0;
+            uint32_t headPartition = 0;
+            DecodeWorkItem(args_.tiling, work, globalChunk, headPartition);
+            ChunkRange chunk{};
+            if (!ResolveChunk(args_, globalChunk, chunk)) {
                 continue;
             }
-            // 在 Q/K/V 原地写入以及可选的 2 字节 QgScaled 压缩到 FP32 G
-            // 低半区前，先将本行所有源操作数读入寄存器。
-            auto qHat = vf.ToFp32(
-                vf.LoadStorageRow(V6Layout::kQHatToQg.offset, row, inputStorage));
-            auto kHat = vf.ToFp32(
-                vf.LoadStorageRow(V6Layout::kKHatToKg.offset, row, inputStorage));
-            auto v = vf.ToFp32(
-                vf.LoadStorageRow(V6Layout::kVToVBeta.offset, row, valueStorage));
-            auto g = vf.LoadFp32Row(V6Layout::kGInput.offset, row);
-            auto beta = vf.LoadBetaEff(row);
-            auto expG =
-                EvaluatePow2<UseExp2>(vf, g, kDirectExp2InputMin, kDirectExp2InputMax);
-            auto qgFp32 = vf.Mul(qHat, expG);
-            auto kgFp32 = vf.Mul(kHat, EvaluatePow2<UseExp2>(vf, vf.Sub(gLast, g),
-                                                             kDirectExp2InputMin,
-                                                             kDirectExp2InputMax));
-            auto qgStorage = vf.RoundToInputStorage(
-                vf.ClampForInputStorage(qgFp32, inputStorage), inputStorage);
-            auto kgStorage = vf.RoundToInputStorage(
-                vf.ClampForInputStorage(kgFp32, inputStorage), inputStorage);
-
-            // 保持拆分 Prepare 的双重舍入点。kHat*exp2(G) 先物化到
-            // InputStorage，再提升回 FP32 参与 beta 计算，最后为 K_beta_g
-            // 再次执行饱和与舍入。
-            auto kGateStorage = vf.RoundToInputStorage(
-                vf.ClampForInputStorage(vf.Mul(kHat, expG), inputStorage),
-                inputStorage);
-            auto kBetaGFp32 = vf.Mul(beta, vf.ToFp32(kGateStorage));
-            auto kBetaGStorage = vf.RoundToInputStorage(
-                vf.ClampForInputStorage(kBetaGFp32, inputStorage), inputStorage);
-            auto vBetaStorage = vf.RoundToInputStorage(
-                vf.ClampForInputStorage(vf.Mul(beta, v), valueStorage), valueStorage);
-
-            vf.StoreStorageRow(V6Layout::kQHatToQg.offset, row, qgStorage,
-                               inputStorage);
-            vf.StoreStorageRow(V6Layout::kKHatToKg.offset, row, kgStorage,
-                               inputStorage);
-            vf.StoreStorageRow(V6Layout::kKBetaG.offset, row, kBetaGStorage,
-                               inputStorage);
-            vf.StoreStorageRow(V6Layout::kVToVBeta.offset, row, vBetaStorage,
-                               valueStorage);
-            if (abi == PrepareAbi::Fused) {
-                // 2 字节目标与 FP32 G 的 floor(row/2) 行复用，该行不会晚于当前
-                // row。当前 G 行已在上方完整读取。缩放先消费第一次舍入后的
-                // qg，再执行 FUSED ABI 要求的第二次 InputStorage 饱和与舍入。
-                auto qgScaledStorage = vf.RoundToInputStorage(
-                    vf.ClampForInputStorage(vf.Mul(scale, vf.ToFp32(qgStorage)),
-                                            inputStorage),
-                    inputStorage);
-                vf.StoreStorageRow(V6Layout::kQgScaled.offset, row, qgScaledStorage,
-                                   inputStorage);
+            uint32_t headBegin = 0;
+            uint32_t headEnd = 0;
+            HeadRange(args_.tiling, headPartition, headBegin, headEnd);
+            for (uint32_t groupBegin = headBegin; groupBegin < headEnd;
+                 groupBegin += Shape::kHeadsPerGroup) {
+                for (uint32_t localSlot = 0; localSlot < 2; ++localSlot) {
+                    const uint32_t localHead = aiv_ * 2 + localSlot;
+                    const uint32_t valueHead = groupBegin + localHead;
+                    if (valueHead >= headEnd) {
+                        continue;
+                    }
+                    usedLocalSlot[localSlot] = true;
+                    // 初始 free 或上一组 C7 free；V0 首个消费者是 MTE2。
+                    AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
+                        Arch35AivFlagId(Arch35CrossCore::kFreeBase,
+                                        localSlot));
+                    StageV0(chunk, valueHead, localHead, localSlot);
+                    StageV1(chunk, localHead, localSlot);
+                    // V1 的 72 KiB score payload 已经写入 workspace。
+                    AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
+                        Arch35AivFlagId(Arch35CrossCore::kReadyBase,
+                                        localSlot));
+                }
+                for (uint32_t localSlot = 0; localSlot < 2; ++localSlot) {
+                    const uint32_t localHead = aiv_ * 2 + localSlot;
+                    const uint32_t valueHead = groupBegin + localHead;
+                    if (valueHead >= headEnd) {
+                        continue;
+                    }
+                    // C2 已写回 raw Aqk/Akk，且不再读取 V1 payload。
+                    AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
+                        Arch35AivFlagId(Arch35CrossCore::kFreeBase,
+                                        localSlot));
+                    StageV3(chunk, valueHead, localHead, localSlot);
+                    AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
+                        Arch35AivFlagId(Arch35CrossCore::kReadyBase,
+                                        localSlot));
+                }
+                for (uint32_t localSlot = 0; localSlot < 2; ++localSlot) {
+                    const uint32_t localHead = aiv_ * 2 + localSlot;
+                    const uint32_t valueHead = groupBegin + localHead;
+                    if (valueHead >= headEnd) {
+                        continue;
+                    }
+                    // C4 已一次性读完 B/X0/negX1/Akk，V6 可以原址换义。
+                    AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
+                        Arch35AivFlagId(Arch35CrossCore::kFreeBase,
+                                        localSlot));
+                    StageV6(chunk, valueHead, localHead, localSlot);
+                    AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
+                        Arch35AivFlagId(Arch35CrossCore::kReadyBase,
+                                        localSlot));
+                }
+            }
+        }
+        // 消费最后一次 C7 free，保证每次 set 都有对应 wait。
+        for (uint32_t localSlot = 0; localSlot < 2; ++localSlot) {
+            if (usedLocalSlot[localSlot]) {
+                AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
+                    Arch35AivFlagId(Arch35CrossCore::kFreeBase,
+                                    localSlot));
             }
         }
     }
 
-    static inline void Record(const VectorOps &ops, const HeadTask &head,
-                              Pow2Primitive pow2Primitive, float runtimeScale,
-                              RuntimeScaleUse runtimeScaleUse,
-                              std::uint32_t runtimeScaleMultiplyCount) noexcept
+private:
+    __aicore__ inline void StageV0(const ChunkRange &chunk,
+                                    uint32_t valueHead,
+                                    uint32_t localHead,
+                                    uint32_t localSlot)
     {
-        VectorVfTraceMetadata metadata{};
-        metadata.stage = kStage;
-        metadata.formula = kFormula;
-        metadata.pow2Primitive = pow2Primitive;
-        metadata.hasPow2Primitive = true;
-        metadata.runtimeScale = runtimeScale;
-        metadata.runtimeScaleUse = runtimeScaleUse;
-        metadata.runtimeScaleMultiplyCount = runtimeScaleMultiplyCount;
-        metadata.hasRuntimeScale = true;
-        ops.RecordOneVf(head, metadata);
+        const uint8_t mutex = Arch35Mutex::kAivUb[localSlot];
+        const uint32_t computeSlot = Arch35Ub::kComputeSlotBase[localSlot];
+        const uint32_t state = Arch35Ub::kStateBase[localSlot];
+        auto q = resource_.ubBuf.template GetBufferByByte<InputT>(
+            computeSlot + Arch35Ub::kQ);
+        auto k = resource_.ubBuf.template GetBufferByByte<InputT>(
+            computeSlot + Arch35Ub::kK);
+        auto gate = resource_.ubBuf.template GetBufferByByte<GateT>(
+            computeSlot + Arch35Ub::kGateInput);
+        auto g = resource_.ubBuf.template GetBufferByByte<float>(
+            computeSlot + Arch35Ub::kG);
+        auto beta = resource_.ubBuf.template GetBufferByByte<BetaT>(
+            state + Arch35Ub::kBetaRaw);
+        auto betaEff = resource_.ubBuf.template GetBufferByByte<float>(
+            state + Arch35Ub::kBetaEff);
+        auto gRef = resource_.ubBuf.template GetBufferByByte<float>(
+            state + Arch35Ub::kGRef[0]);
+        auto gLast = resource_.ubBuf.template GetBufferByByte<float>(
+            state + Arch35Ub::kGLast);
+        auto dtBias = resource_.ubBuf.template GetBufferByByte<float>(
+            computeSlot + Arch35Ub::kV0Work);
+        auto aLog = dtBias[Shape::kHeadDim];
+
+        const uint32_t qkHead = QkHeadForValueHead(args_.tiling, valueHead);
+        const uint64_t qkOffset = QkInputOffset(args_.tiling, chunk, qkHead);
+        const uint64_t gateOffset =
+            RawGateInputOffset(args_.tiling, chunk, valueHead);
+        const uint64_t betaOffset =
+            HeadScalarOffset(args_.tiling, chunk, valueHead);
+        const uint32_t qkStride = args_.tiling.inputSequenceMajor
+                                      ? (args_.tiling.qkHeadNum - 1) *
+                                            Shape::kHeadDim * sizeof(InputT)
+                                      : 0;
+        const uint32_t gateStride = args_.tiling.inputSequenceMajor
+                                        ? (args_.tiling.valueHeadNum - 1) *
+                                              Shape::kHeadDim * sizeof(GateT)
+                                        : 0;
+
+        AscendC::Mutex::Lock<PIPE_MTE2>(mutex);
+        AscendC::DataCopyPad(q, qGm_[qkOffset],
+            {static_cast<uint16_t>(chunk.validRows),
+             Shape::kHeadDim * sizeof(InputT), qkStride, 0, 0},
+            {false, 0, 0, 0});
+        AscendC::DataCopyPad(k, kGm_[qkOffset],
+            {static_cast<uint16_t>(chunk.validRows),
+             Shape::kHeadDim * sizeof(InputT), qkStride, 0, 0},
+            {false, 0, 0, 0});
+        AscendC::DataCopyPad(gate, gateGm_[gateOffset],
+            {static_cast<uint16_t>(chunk.validRows),
+             Shape::kHeadDim * sizeof(GateT), gateStride, 0, 0},
+            {false, 0, 0, 0});
+        AscendC::DataCopyPad(beta, betaGm_[betaOffset],
+            {1, chunk.validRows * sizeof(BetaT), 0, 0, 0},
+            {false, 0, 0, 0});
+        if constexpr (Policy::gateMode != GateMode::PrecomputedStep) {
+            if (args_.tiling.hasDtBias) {
+                AscendC::DataCopy(dtBias,
+                    dtBiasGm_[valueHead * Shape::kHeadDim],
+                    Shape::kHeadDim);
+            }
+            if (args_.aLog != nullptr) {
+                AscendC::DataCopyExtParams scalarCopy{
+                    1, sizeof(float), 0, 0, 0};
+                AscendC::DataCopyPadExtParams<float> scalarPad{
+                    false, 0, 0, 0};
+                AscendC::DataCopyPad(aLog, aLogGm_[valueHead], scalarCopy,
+                                     scalarPad);
+            }
+        }
+        AscendC::Mutex::Unlock<PIPE_MTE2>(mutex);
+
+        AscendC::Mutex::Lock<PIPE_V>(mutex);
+        AscendC::VF_CALL<Detail::StageV0Vf<InputT, GateT, BetaT, Policy>>(
+            reinterpret_cast<__ubuf__ InputT *>(q.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ InputT *>(k.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ GateT *>(gate.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ BetaT *>(beta.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(dtBias.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(aLog.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(g.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(gRef.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(gLast.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(betaEff.GetPhyAddr()),
+            static_cast<uint16_t>(chunk.validRows), args_.tiling.epsilon,
+            args_.tiling.lowerBound, args_.tiling.hasDtBias,
+            args_.aLog != nullptr);
+        AscendC::Mutex::Unlock<PIPE_V>(mutex);
+
+        const uint64_t slot = WorkspaceSlotBase(
+            workgroup_, localHead, Workspace::kArch35WorkgroupStride);
+        AscendC::GlobalTensor<InputT> qContext;
+        AscendC::GlobalTensor<InputT> kContext;
+        qContext.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(
+            args_.workspace + slot + Workspace::kQHat));
+        kContext.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(
+            args_.workspace + slot + Workspace::kKHat));
+        AscendC::Mutex::Lock<PIPE_MTE3>(mutex);
+        AscendC::DataCopy(qContext, q,
+            chunk.validRows * Shape::kHeadDim);
+        AscendC::DataCopy(kContext, k,
+            chunk.validRows * Shape::kHeadDim);
+        if constexpr (Policy::abi == PrepareAbi::Current) {
+            AscendC::DataCopy(gkGm_[HeadTensorOffset(
+                args_.tiling, chunk, valueHead, Shape::kHeadDim)],
+                g,
+                chunk.validRows * Shape::kHeadDim);
+        } else {
+            AscendC::GlobalTensor<float> gContext;
+            gContext.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+                args_.workspace + slot + Workspace::kG));
+            AscendC::DataCopy(gContext, g,
+                chunk.validRows * Shape::kHeadDim);
+        }
+        AscendC::Mutex::Unlock<PIPE_MTE3>(mutex);
     }
+
+    __aicore__ inline void StageV1(const ChunkRange &chunk,
+                                    uint32_t localHead,
+                                    uint32_t localSlot)
+    {
+        const uint8_t mutex = Arch35Mutex::kAivUb[localSlot];
+        const uint32_t computeSlot = Arch35Ub::kComputeSlotBase[localSlot];
+        const uint32_t state = Arch35Ub::kStateBase[localSlot];
+        auto qPlus = resource_.ubBuf.template GetBufferByByte<ScoreT>(
+            computeSlot + Arch35Ub::kQ);
+        auto kPlus = resource_.ubBuf.template GetBufferByByte<ScoreT>(
+            computeSlot + Arch35Ub::kK);
+        auto g = resource_.ubBuf.template GetBufferByByte<float>(
+            computeSlot + Arch35Ub::kG);
+        auto gRef = resource_.ubBuf.template GetBufferByByte<float>(
+            state + Arch35Ub::kGRef[0]);
+        auto kMinus = resource_.ubBuf.template GetBufferByByte<ScoreT>(
+            computeSlot + Arch35Ub::kKMinus);
+
+        AscendC::Mutex::Lock<PIPE_V>(mutex);
+        AscendC::VF_CALL<Detail::StageV1Vf<InputT, ScoreT, Policy>>(
+            reinterpret_cast<__ubuf__ InputT *>(qPlus.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ InputT *>(kPlus.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(g.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(gRef.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ ScoreT *>(qPlus.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ ScoreT *>(kPlus.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ ScoreT *>(kMinus.GetPhyAddr()),
+            static_cast<uint16_t>(chunk.validRows));
+        AscendC::Mutex::Unlock<PIPE_V>(mutex);
+
+        AscendC::GlobalTensor<ScoreT> payload;
+        payload.SetGlobalBuffer(reinterpret_cast<__gm__ ScoreT *>(
+            args_.workspace + WorkspaceSlotBase(
+                workgroup_, localHead, Workspace::kArch35WorkgroupStride) +
+            Workspace::kPayload));
+        AscendC::Mutex::Lock<PIPE_MTE3>(mutex);
+        AscendC::DataCopy(payload, qPlus,
+            2 * Shape::kChunkRows * Shape::kHeadDim);
+        AscendC::DataCopy(payload[2 * Shape::kChunkRows * Shape::kHeadDim],
+            kMinus, 40 * 1024 / sizeof(ScoreT));
+        AscendC::Mutex::Unlock<PIPE_MTE3>(mutex);
+    }
+
+    __aicore__ inline void StageV3(const ChunkRange &chunk,
+                                    uint32_t valueHead,
+                                    uint32_t localHead,
+                                    uint32_t localSlot)
+    {
+        const uint8_t mutex = Arch35Mutex::kAivUb[localSlot];
+        const uint32_t computeSlot = Arch35Ub::kComputeSlotBase[localSlot];
+        const uint32_t state = Arch35Ub::kStateBase[localSlot];
+        auto rawScore = resource_.ubBuf.template GetBufferByByte<float>(
+            computeSlot + Arch35Ub::kRawScore);
+        auto aqk = resource_.ubBuf.template GetBufferByByte<InputT>(
+            computeSlot + Arch35Ub::kAqk);
+        auto lkk = resource_.ubBuf.template GetBufferByByte<float>(
+            computeSlot + Arch35Ub::kLkk);
+        auto b = resource_.ubBuf.template GetBufferByByte<float>(
+            computeSlot + Arch35Ub::kB);
+        auto x0 = resource_.ubBuf.template GetBufferByByte<float>(
+            computeSlot + Arch35Ub::kX0);
+        auto x1 = resource_.ubBuf.template GetBufferByByte<float>(
+            computeSlot + Arch35Ub::kX1);
+        auto negX1 = resource_.ubBuf.template GetBufferByByte<float>(
+            computeSlot + Arch35Ub::kNegX1);
+        auto akk = resource_.ubBuf.template GetBufferByByte<InputT>(
+            computeSlot + Arch35Ub::kAkkPack);
+        auto betaEff = resource_.ubBuf.template GetBufferByByte<float>(
+            state + Arch35Ub::kBetaEff);
+
+        AscendC::Mutex::Lock<PIPE_V>(mutex);
+        AscendC::VF_CALL<Detail::StageV3Vf<InputT>>(
+            reinterpret_cast<__ubuf__ float *>(rawScore.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(betaEff.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ InputT *>(aqk.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(lkk.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(b.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(x0.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(x1.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(negX1.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ InputT *>(akk.GetPhyAddr()),
+            static_cast<uint16_t>(chunk.validRows), args_.tiling.scale);
+        AscendC::Mutex::Unlock<PIPE_V>(mutex);
+
+        AscendC::GlobalTensor<float> payload;
+        payload.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+            args_.workspace + WorkspaceSlotBase(
+                workgroup_, localHead, Workspace::kArch35WorkgroupStride) +
+            Workspace::kPayload));
+        AscendC::Mutex::Lock<PIPE_MTE3>(mutex);
+        AscendC::DataCopy(aqkGm_[AOutputOffset(
+            args_.tiling, chunk, valueHead)], aqk,
+            chunk.validRows * Shape::kChunkRows);
+        AscendC::DataCopy(payload[Workspace::kB / sizeof(float)], b, 1024);
+        AscendC::DataCopy(payload[Workspace::kX0 / sizeof(float)], x0, 1024);
+        AscendC::DataCopy(payload[Workspace::kNegX1 / sizeof(float)],
+                          negX1, 1024);
+        // C4 固定读取完整 64x64 矩阵，因此补零后的中转矩阵始终写入
+        // 工作空间；公开 Akk 只有 T 行，尾 chunk 只能写有效行。
+        AscendC::GlobalTensor<InputT> akkRelay;
+        akkRelay.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(
+            args_.workspace + WorkspaceSlotBase(
+                workgroup_, localHead, Workspace::kArch35WorkgroupStride) +
+            Workspace::kPayload + Workspace::kAkk));
+        AscendC::DataCopy(akkRelay, akk,
+            Shape::kChunkRows * Shape::kChunkRows);
+        if constexpr (Policy::abi == PrepareAbi::Current) {
+            AscendC::DataCopy(akkGm_[AOutputOffset(
+                args_.tiling, chunk, valueHead)], akk,
+                chunk.validRows * Shape::kChunkRows);
+        }
+        AscendC::Mutex::Unlock<PIPE_MTE3>(mutex);
+    }
+
+    __aicore__ inline void StageV6(const ChunkRange &chunk,
+                                    uint32_t valueHead,
+                                    uint32_t localHead,
+                                    uint32_t localSlot)
+    {
+        const uint8_t mutex = Arch35Mutex::kAivUb[localSlot];
+        const uint32_t computeSlot = Arch35Ub::kComputeSlotBase[localSlot];
+        const uint32_t state = Arch35Ub::kStateBase[localSlot];
+        auto qg = resource_.ubBuf.template GetBufferByByte<InputT>(
+            computeSlot + Arch35Ub::kQg);
+        auto kg = resource_.ubBuf.template GetBufferByByte<InputT>(
+            computeSlot + Arch35Ub::kKg);
+        auto vBeta = resource_.ubBuf.template GetBufferByByte<ValueT>(
+            computeSlot + Arch35Ub::kVBeta);
+        auto g = resource_.ubBuf.template GetBufferByByte<float>(
+            computeSlot + Arch35Ub::kGForPost);
+        auto kBetaG = resource_.ubBuf.template GetBufferByByte<InputT>(
+            computeSlot + Arch35Ub::kKBetaG);
+        auto betaEff = resource_.ubBuf.template GetBufferByByte<float>(
+            state + Arch35Ub::kBetaEff);
+        auto gLast = resource_.ubBuf.template GetBufferByByte<float>(
+            state + Arch35Ub::kGLast);
+        const uint64_t slot = WorkspaceSlotBase(
+            workgroup_, localHead, Workspace::kArch35WorkgroupStride);
+        AscendC::GlobalTensor<InputT> qContext;
+        AscendC::GlobalTensor<InputT> kContext;
+        qContext.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(
+            args_.workspace + slot + Workspace::kQHat));
+        kContext.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(
+            args_.workspace + slot + Workspace::kKHat));
+
+        AscendC::Mutex::Lock<PIPE_MTE2>(mutex);
+        AscendC::DataCopy(qg, qContext,
+            chunk.validRows * Shape::kHeadDim);
+        AscendC::DataCopy(kg, kContext,
+            chunk.validRows * Shape::kHeadDim);
+        if constexpr (Policy::abi == PrepareAbi::Current) {
+            AscendC::DataCopy(g,
+                gkGm_[HeadTensorOffset(
+                    args_.tiling, chunk, valueHead, Shape::kHeadDim)],
+                chunk.validRows * Shape::kHeadDim);
+        } else {
+            AscendC::GlobalTensor<float> gContext;
+            gContext.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+                args_.workspace + slot + Workspace::kG));
+            AscendC::DataCopy(g, gContext,
+                chunk.validRows * Shape::kHeadDim);
+        }
+        const uint64_t vOffset =
+            ValueInputOffset(args_.tiling, chunk, valueHead);
+        const uint32_t vStride = args_.tiling.inputSequenceMajor
+                                     ? (args_.tiling.valueHeadNum - 1) *
+                                           Shape::kValueDim * sizeof(ValueT)
+                                     : 0;
+        AscendC::DataCopyPad(vBeta, vGm_[vOffset],
+            {static_cast<uint16_t>(chunk.validRows),
+             Shape::kValueDim * sizeof(ValueT), vStride, 0, 0},
+            {false, 0, 0, 0});
+        AscendC::Mutex::Unlock<PIPE_MTE2>(mutex);
+
+        AscendC::Mutex::Lock<PIPE_V>(mutex);
+        AscendC::VF_CALL<Detail::StageV6Vf<InputT, ValueT, Policy>>(
+            reinterpret_cast<__ubuf__ InputT *>(qg.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ InputT *>(kg.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ ValueT *>(vBeta.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(g.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(gLast.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(betaEff.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ InputT *>(qg.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ InputT *>(kg.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ InputT *>(kBetaG.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ ValueT *>(vBeta.GetPhyAddr()),
+            static_cast<uint16_t>(chunk.validRows), args_.tiling.scale);
+        AscendC::Mutex::Unlock<PIPE_V>(mutex);
+
+        AscendC::GlobalTensor<InputT> kBetaRelay;
+        AscendC::GlobalTensor<ValueT> vBetaRelay;
+        kBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(
+            args_.workspace + slot + Workspace::kPayload +
+            Workspace::kKBetaG));
+        vBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ ValueT *>(
+            args_.workspace + slot + Workspace::kPayload +
+            Workspace::kVBeta));
+        const uint32_t rhsRows = chunk.validRows > 32 ? 64 : 32;
+        AscendC::Mutex::Lock<PIPE_MTE3>(mutex);
+        const uint64_t out = HeadTensorOffset(
+            args_.tiling, chunk, valueHead, Shape::kHeadDim);
+        AscendC::DataCopy(qgGm_[out], qg,
+            chunk.validRows * Shape::kHeadDim);
+        AscendC::DataCopy(kgGm_[out], kg,
+            chunk.validRows * Shape::kHeadDim);
+        AscendC::DataCopy(kBetaRelay, kBetaG,
+            rhsRows * Shape::kHeadDim);
+        AscendC::DataCopy(vBetaRelay, vBeta,
+            rhsRows * Shape::kValueDim);
+        AscendC::Mutex::Unlock<PIPE_MTE3>(mutex);
+    }
+
+    PrepareKernelArgs args_{};
+    uint32_t workgroup_ = 0;
+    uint32_t aiv_ = 0;
+    Catlass::Arch::Resource<Catlass::Arch::Ascend950> resource_{};
+    AscendC::GlobalTensor<InputT> qGm_{};
+    AscendC::GlobalTensor<InputT> kGm_{};
+    AscendC::GlobalTensor<ValueT> vGm_{};
+    AscendC::GlobalTensor<GateT> gateGm_{};
+    AscendC::GlobalTensor<BetaT> betaGm_{};
+    AscendC::GlobalTensor<float> dtBiasGm_{};
+    AscendC::GlobalTensor<float> aLogGm_{};
+    AscendC::GlobalTensor<InputT> qgGm_{};
+    AscendC::GlobalTensor<InputT> kgGm_{};
+    AscendC::GlobalTensor<float> gkGm_{};
+    AscendC::GlobalTensor<InputT> aqkGm_{};
+    AscendC::GlobalTensor<InputT> akkGm_{};
 };
 
-inline bool ValidArgs(const VectorStageArgs &args)
-{
-    return args.work != nullptr && args.workspace != nullptr && args.sync != nullptr &&
-           args.ops != nullptr && IsSupportedKey(args.key);
-}
+} // namespace KdaPrepare::Arch35
 
-} // namespace detail
-
-inline void StageV0_AivNormalizeQkGateCumsumBeta(const VectorStageArgs &args)
-{
-    // 输入：Q、K、原始 gate、beta，以及选择性 gate 所需的 A_log/dt_bias。
-    // 计算：按 key 完成 Q/K 归一化、beta 变换、gate 步长和
-    //       G_i = G_{i-1} + deltaG_i，并从四个 16 行分块提取 G_ref。
-    // 输出：Qhat/Khat 共享缓存、G（或公开 gk）、常驻 betaEff 和 G_ref。
-    if (!detail::ValidArgs(args)) {
-        return;
-    }
-    for (const HeadTask &head : args.work->group.heads) {
-        if (!detail::IsOwnedActiveHead(head, args)) {
-            continue;
-        }
-        const std::uint64_t workspaceGeneration = head.workspaceGeneration;
-        const std::uint64_t localGeneration = head.localGeneration;
-        args.sync->Wait(SyncPoint::SlotFree, head.workspaceSlot,
-                        workspaceGeneration,
-                        Stage::V0, Pipe::Control);
-        if (head.qkOwner) {
-            args.sync->Wait(SyncPoint::QkCacheFree, head.qkCacheSlot,
-                            head.qkCacheGeneration, Stage::V0,
-                            Pipe::Mte2);
-        } else {
-            // QkCacheReady 是工作区控制页中的电平式（非消费式）代际状态。
-            // 多个映射到该缓存的 HV 头获取同一次发布，但不会消费它。
-            args.sync->Wait(SyncPoint::QkCacheReady, head.qkCacheSlot,
-                            head.qkCacheGeneration, Stage::V0,
-                            Pipe::Mte2);
-        }
-
-        const SymbolicMutexId ubMutex =
-            Arch35VectorMutexIds::UbBank(head.aivLocalSlot);
-        args.sync->MutexLock(MutexResource::AivUbBank, ubMutex,
-                             head.localBankId, Stage::V0, Pipe::Mte2);
-
-        const bool gate2B = IsTwoByteGateStorage(args.key.gateStorage);
-        const Offset validRows = args.work->group.chunk.validRows;
-        const Offset qkInputBytes =
-            validRows * ShapePolicy::kK * ShapePolicy::kStorageBytes;
-        const Offset gateInputBytes =
-            validRows * ShapePolicy::kK *
-            (gate2B ? ShapePolicy::kStorageBytes : ShapePolicy::kFp32Bytes);
-        const Offset gOutputBytes =
-            validRows * ShapePolicy::kK * ShapePolicy::kFp32Bytes;
-        const Offset betaInputBytes =
-            validRows * ShapePolicy::kFp32Bytes;
-        const Region q = gate2B ? V0Gate2BLayout::kQHat : V0GateFp32Layout::kQHat;
-        const Region k = gate2B ? V0Gate2BLayout::kKHat : V0GateFp32Layout::kKHat;
-        const Region g = gate2B ? V0Gate2BLayout::kGateRaw : V0GateFp32Layout::kG;
-        const BufferSpan qkCache = args.workspace->Span(
-            WorkspaceRegion::Context, head.qkCacheSlot,
-            head.qkCacheGeneration);
-        const BufferSpan qSource =
-            head.qkOwner
-                ? detail::SymbolicGmSpan(
-                      head, "q", qkInputBytes, workspaceGeneration,
-                      head.qkHeadId)
-                : detail::Subspan(qkCache, "qhat-HK-cache", 0x0000U,
-                                  qkInputBytes);
-        const BufferSpan kSource =
-            head.qkOwner
-                ? detail::SymbolicGmSpan(
-                      head, "k", qkInputBytes, workspaceGeneration,
-                      head.qkHeadId)
-                : detail::Subspan(qkCache, "khat-HK-cache", 0x4000U,
-                                  qkInputBytes);
-        args.ops->Load(Stage::V0,
-                       qSource,
-                       detail::UbMainSpan(
-                           head, "q-to-qhat", {q.offset, qkInputBytes},
-                           localGeneration));
-        args.ops->Load(Stage::V0,
-                       kSource,
-                       detail::UbMainSpan(
-                           head, "k-to-khat", {k.offset, qkInputBytes},
-                           localGeneration));
-        args.ops->Load(Stage::V0,
-                       detail::SymbolicGmSpan(head, "gate", gateInputBytes,
-                                              workspaceGeneration),
-                       detail::UbMainSpan(
-                           head, "gate-to-G", {g.offset, gateInputBytes},
-                           localGeneration));
-        // 拆分前向核函数边界上的 beta 为 FP32。公开的 2 字节 beta 在本次
-        // 搬运前由 op_api/L2 完成类型转换，因此 V0 恰好读取 M 个标量。
-        args.ops->Load(Stage::V0,
-                       detail::SymbolicGmSpan(head, "beta", betaInputBytes,
-                                              workspaceGeneration),
-                       detail::UbVectorStateSpan(
-                           head, "beta-raw",
-                           {VectorStateLayout::kBetaRaw.offset,
-                            betaInputBytes},
-                           localGeneration));
-        if (args.key.gateMode != GateMode::PrecomputedStep) {
-            // 每个选择性门控输入只搬运一次。可选 dt_bias 缺失时，必须在
-            // 该 dt_bias UB 落点清零，不能越过空指针或过短的 GM 张量读取。
-            const BufferSpan dtBias = detail::UbVectorStateSpan(
-                head, "dt-bias", VectorStateLayout::kDtBias,
-                localGeneration);
-            if (args.hasDtBias) {
-                args.ops->Load(
-                    Stage::V0,
-                    detail::SymbolicGmSpan(
-                        head, "dt-bias",
-                        ShapePolicy::kK * ShapePolicy::kFp32Bytes,
-                        workspaceGeneration),
-                    dtBias);
-            } else {
-                args.ops->Zero(Stage::V0, dtBias);
-            }
-            args.ops->Load(
-                Stage::V0,
-                detail::SymbolicGmSpan(head, "A-log", ShapePolicy::kFp32Bytes,
-                                       workspaceGeneration),
-                detail::UbVectorStateSpan(
-                    head, "A-log",
-                    {VectorStateLayout::kALogOrGateAttrs.offset,
-                     ShapePolicy::kFp32Bytes},
-                    localGeneration));
-        }
-
-        args.sync->MutexUnlock(MutexResource::AivUbBank, ubMutex,
-                               head.localBankId, Stage::V0, Pipe::Mte2);
-        args.sync->Local(LocalDependency::Mte2ToVectorInputs, Stage::V0);
-        args.sync->MutexLock(MutexResource::AivUbBank, ubMutex,
-                             head.localBankId, Stage::V0, Pipe::Vector);
-        // 仅调用一次；QkNormGateCumsumBetaVf::Evaluate 冻结具体数学顺序，
-        // 并接收 args.key 以及 epsilon/lowerBound 标量属性。
-        detail::QkNormGateCumsumBetaVf::Record(*args.ops, head);
-        args.sync->MutexUnlock(MutexResource::AivUbBank, ubMutex,
-                               head.localBankId, Stage::V0, Pipe::Vector);
-
-        const BufferSpan context = args.workspace->Span(
-            WorkspaceRegion::Context, head.workspaceSlot,
-            workspaceGeneration);
-        args.sync->Local(LocalDependency::VectorToMte3Outputs, Stage::V0);
-        args.sync->MutexLock(MutexResource::AivUbBank, ubMutex,
-                             head.localBankId, Stage::V0, Pipe::Mte3);
-        const Region gResult = gate2B ? V0Gate2BLayout::kG : V0GateFp32Layout::kG;
-        if (head.qkOwner) {
-            args.ops->Store(
-                Stage::V0,
-                detail::UbMainSpan(head, "qhat", {q.offset, qkInputBytes},
-                                   localGeneration),
-                detail::Subspan(
-                    qkCache, "qhat-HK-cache", 0x0000U, qkInputBytes));
-            args.ops->Store(
-                Stage::V0,
-                detail::UbMainSpan(head, "khat", {k.offset, qkInputBytes},
-                                   localGeneration),
-                detail::Subspan(
-                    qkCache, "khat-HK-cache", 0x4000U, qkInputBytes));
-        }
-        if (args.key.abi == PrepareAbi::Current) {
-            // Current 已将 G 作为 gk 公开。V6 复用这一份 GM 数据，不再在
-            // 上下文中物化相同的 Vector 数据。
-            args.ops->Store(
-                Stage::V0,
-                detail::UbMainSpan(
-                    head, "G-output", {gResult.offset, gOutputBytes},
-                    localGeneration),
-                detail::SymbolicGmSpan(head, "gk-output", gOutputBytes,
-                                       workspaceGeneration));
-        } else {
-            args.ops->Store(
-                Stage::V0,
-                detail::UbMainSpan(head, "G-context-source",
-                                   {gResult.offset, gOutputBytes},
-                                   localGeneration),
-                detail::Subspan(context, "G-context", 0x8200U,
-                                gOutputBytes));
-        }
-        args.sync->MutexUnlock(MutexResource::AivUbBank, ubMutex,
-                               head.localBankId, Stage::V0, Pipe::Mte3);
-
-        // 仅在最后一个已启用的 MTE3/输出搬运完成后，跨核状态才可见。
-        if (head.qkOwner) {
-            args.sync->Set(SyncPoint::QkCacheReady, head.qkCacheSlot,
-                           head.qkCacheGeneration, Stage::V0, Pipe::Mte3);
-        }
-    }
-}
-
-inline void StageV1_AivBuildS4ScoreOperands(const VectorStageArgs &args)
-{
-    // 输入：Qhat、Khat、完整 G，以及四个 16 行分块的 G_ref[s]。
-    // 计算：令 s(i)=floor(i/16)，Qplus_i/Kplus_i =
-    //       Qhat_i/Khat_i * 2^(G_i-G_ref_s(i))；并为每个 s 计算
-    //       Kminus_s,j = Khat_j * 2^(G_ref_s-G_j)，全程只调用一次 VF。
-    // 输出：S=4 的 Qplus、Kplus、Kminus 紧凑分数操作数。
-    if (!detail::ValidArgs(args)) {
-        return;
-    }
-    for (const HeadTask &head : args.work->group.heads) {
-        if (!detail::IsOwnedActiveHead(head, args)) {
-            continue;
-        }
-        const std::uint64_t workspaceGeneration = head.workspaceGeneration;
-        const std::uint64_t localGeneration = head.localGeneration;
-        const SymbolicMutexId ubMutex =
-            Arch35VectorMutexIds::UbBank(head.aivLocalSlot);
-        args.sync->MutexLock(MutexResource::AivUbBank, ubMutex,
-                             head.localBankId, Stage::V1, Pipe::Vector);
-        // 仅调用一次。主机分发根据 args.key 中的输入/门控/分数存储类型
-        // 特化 S4ScoreOperandsVf::Evaluate<useExp2>；两个 2^x 计算点以及
-        // 所有饱和与舍入点都保留在同一次 VF 中。
-        detail::S4ScoreOperandsVf::Record(
-            *args.ops, head, ResolvePow2Primitive(args.key.useExp2));
-        args.sync->MutexUnlock(MutexResource::AivUbBank, ubMutex,
-                               head.localBankId, Stage::V1, Pipe::Vector);
-        args.sync->Local(LocalDependency::VectorToMte3Outputs, Stage::V1);
-        args.sync->MutexLock(MutexResource::AivUbBank, ubMutex,
-                             head.localBankId, Stage::V1, Pipe::Mte3);
-
-        const BufferSpan payload = args.workspace->Span(
-            WorkspaceRegion::SharedPayload, head.workspaceSlot,
-            workspaceGeneration);
-        if (IsTwoByteGateStorage(args.key.gateStorage)) {
-            for (const CopyRegion &copy : V1Gate2BLayout::kScoreWriteback) {
-                const Region source{copy.source, copy.size};
-                args.ops->Store(
-                    Stage::V1,
-                    detail::UbMainSpan(head, "score-source-2b", source,
-                                       localGeneration),
-                    detail::Subspan(payload, "packed-score", copy.destination,
-                                    copy.size));
-            }
-        } else {
-            for (const CopyRegion &copy : V1GateFp32Layout::kScoreWriteback) {
-                const Region source{copy.source, copy.size};
-                args.ops->Store(
-                    Stage::V1,
-                    detail::UbMainSpan(head, "score-source-fp32", source,
-                                       localGeneration),
-                    detail::Subspan(payload, "packed-score", copy.destination,
-                                    copy.size));
-            }
-        }
-        args.sync->MutexUnlock(MutexResource::AivUbBank, ubMutex,
-                               head.localBankId, Stage::V1, Pipe::Mte3);
-        // 一个回写阶段恰好包含两个固定的 MTE3 区域，并非一次连续 DataCopy。
-        // 随后发布的三个同步状态均位于最后一个源读取方之后，且各自由指定所有者消费一次。
-        args.sync->Set(SyncPoint::V1MainSourceFree, head.localBankId,
-                       localGeneration, Stage::V1, Pipe::Mte3);
-        args.sync->Set(SyncPoint::C2RawDstFree, head.localBankId,
-                       localGeneration, Stage::V1, Pipe::Mte3);
-        args.sync->Set(SyncPoint::V1ScoreReady, head.workspaceSlot,
-                       workspaceGeneration, Stage::V1, Pipe::Mte3);
-    }
-}
-
-inline void StageV3_AivBuildAqkAndAkkFactors(const VectorStageArgs &args)
-{
-    // 输入：C2 生成的 rawAqk/rawAkk、betaEff 和运行时 scale。
-    // 计算：Aqk_ij=scale*rawAqk_ij*1[j<=i]，
-    //       Lkk_ij=beta_i*rawAkk_ij*1[j<i]，
-    //       再完成两个 32x32 叶子求逆并构造稳定 Akk 象限。
-    // 输出：公开 Aqk、供 C4/C5 消费的 X0/X1/B，以及稳定 Akk 数据。
-    if (!detail::ValidArgs(args)) {
-        return;
-    }
-    for (const HeadTask &head : args.work->group.heads) {
-        if (!detail::IsOwnedActiveHead(head, args)) {
-            continue;
-        }
-        const std::uint64_t workspaceGeneration = head.workspaceGeneration;
-        const std::uint64_t localGeneration = head.localGeneration;
-        const Offset validRows = args.work->group.chunk.validRows;
-        args.sync->Wait(SyncPoint::C2ScorePayloadFree, head.workspaceSlot,
-                        workspaceGeneration, Stage::V3, Pipe::Mte3);
-        args.sync->Wait(SyncPoint::C2RawReady, head.localBankId,
-                        localGeneration,
-                        Stage::V3, Pipe::Vector);
-        const SymbolicMutexId ubMutex =
-            Arch35VectorMutexIds::UbBank(head.aivLocalSlot);
-        args.sync->MutexLock(MutexResource::AivUbBank, ubMutex,
-                             head.localBankId, Stage::V3, Pipe::Vector);
-        // 仅调用一次；AqkAndAkkFactorsVf::Evaluate 还接收 ABI、
-        // AkkStorage、InputStorage 和显式运行时缩放，缩放仅对 Aqk 应用一次。
-        // 原始数据读取方仅访问 C2 定义的有效因果域；其余输出通道均不读取
-        // 原始 UB，直接生成结果。
-        detail::AqkAndAkkFactorsVf::Record(
-            *args.ops, head, args.scale, RuntimeScaleUse::Aqk, 1U);
-        args.sync->MutexUnlock(MutexResource::AivUbBank, ubMutex,
-                               head.localBankId, Stage::V3, Pipe::Vector);
-        args.sync->Local(LocalDependency::VectorToMte3Outputs, Stage::V3);
-        args.sync->MutexLock(MutexResource::AivUbBank, ubMutex,
-                             head.localBankId, Stage::V3, Pipe::Mte3);
-        const BufferSpan payload = args.workspace->Span(
-            WorkspaceRegion::SharedPayload, head.workspaceSlot,
-            workspaceGeneration);
-        const bool hasQ10 = validRows > Akk2BPackPolicy::kQuadrantRows;
-        if (hasQ10) {
-            args.ops->Store(
-                Stage::V3,
-                detail::UbMainSpan(head, "X0", V3Layout::kX0,
-                                   localGeneration),
-                detail::Subspan(payload, "X0-fp32", 0x0000U, 0x1000U));
-            args.ops->Store(
-                Stage::V3,
-                detail::UbMainSpan(head, "X1", V3Layout::kX1,
-                                   localGeneration),
-                detail::Subspan(payload, "X1-fp32", 0x1000U, 0x1000U));
-            args.ops->Store(
-                Stage::V3,
-                detail::UbMainSpan(head, "B", V3Layout::kB,
-                                   localGeneration),
-                detail::Subspan(payload, "B-fp32", 0x2000U, 0x1000U));
-        }
-        if (args.key.abi == PrepareAbi::Fused &&
-            args.key.akkStorage == AkkStorage::TwoByteAbi) {
-            args.ops->Store(Stage::V3,
-                            detail::UbMainSpan(head, "X0-tau", V3Layout::kX0Tau,
-                                               localGeneration),
-                            detail::Subspan(payload, "X0-tau", 0x3000U, 0x0800U));
-            if (hasQ10) {
-                args.ops->Store(
-                    Stage::V3,
-                    detail::UbMainSpan(head, "X1-tau", V3Layout::kX1Tau,
-                                       localGeneration),
-                    detail::Subspan(payload, "X1-tau", 0x3800U, 0x0800U));
-            }
-        }
-        // Aqk 与可选 AkkOut 使用相互独立的公开 GM 地址。其 ABI 偏移和类型转换
-        // 刻意保持符号化，但归还本地主计算区和向量状态与临时区所有权前
-        // 必须包含对应的 MTE3 搬运。
-        if (validRows != 0U) {
-            args.ops->Store(
-                Stage::V3,
-                detail::UbMainMatrixSpan(
-                    head, "Aqk-valid-ld64", V3Layout::kRawAqk.offset, 0U,
-                    0U, validRows, ShapePolicy::kBt, ShapePolicy::kBt,
-                    ShapePolicy::kStorageBytes, localGeneration),
-                detail::SymbolicGmMatrixSpan(
-                    head, "Aqk-output-valid-ld64", 0U, 0U, validRows,
-                    ShapePolicy::kBt, ShapePolicy::kBt,
-                    ShapePolicy::kStorageBytes, workspaceGeneration));
-        }
-        if (args.key.abi == PrepareAbi::Current &&
-            args.key.akkStorage == AkkStorage::TwoByteAbi) {
-            constexpr Offset kQuadrant = 32U;
-            const Offset top = std::min(validRows, kQuadrant);
-            const Offset bottom = validRows > kQuadrant
-                                      ? validRows - kQuadrant
-                                      : 0U;
-            if (top != 0U) {
-                args.ops->Store(
-                    Stage::V3,
-                    detail::UbMainMatrixSpan(
-                        head, "Akk-q00-valid-ld32",
-                        V3Layout::kX0Tau.offset, 0U, 0U, top, kQuadrant,
-                        kQuadrant, ShapePolicy::kStorageBytes,
-                        localGeneration),
-                    detail::SymbolicGmMatrixSpan(
-                        head, "AkkOut-q00-valid-ld64", 0U, 0U, top,
-                        kQuadrant, ShapePolicy::kBt,
-                        ShapePolicy::kStorageBytes, workspaceGeneration));
-                args.ops->Store(
-                    Stage::V3,
-                    detail::UbMainMatrixSpan(
-                        head, "Akk-q01-valid-ld32",
-                        V3Layout::kQ01Zero.offset, 0U, 0U, top, kQuadrant,
-                        kQuadrant, ShapePolicy::kStorageBytes,
-                        localGeneration),
-                    detail::SymbolicGmMatrixSpan(
-                        head, "AkkOut-q01-valid-ld64", 0U, kQuadrant, top,
-                        kQuadrant, ShapePolicy::kBt,
-                        ShapePolicy::kStorageBytes, workspaceGeneration));
-            }
-            if (bottom != 0U) {
-                args.ops->Store(
-                    Stage::V3,
-                    detail::UbMainMatrixSpan(
-                        head, "Akk-q11-valid-ld32",
-                        V3Layout::kX1Tau.offset, 0U, 0U, bottom, kQuadrant,
-                        kQuadrant, ShapePolicy::kStorageBytes,
-                        localGeneration),
-                    detail::SymbolicGmMatrixSpan(
-                        head, "AkkOut-q11-valid-ld64", kQuadrant,
-                        kQuadrant, bottom, kQuadrant, ShapePolicy::kBt,
-                        ShapePolicy::kStorageBytes, workspaceGeneration));
-            }
-        }
-        args.sync->MutexUnlock(MutexResource::AivUbBank, ubMutex,
-                               head.localBankId, Stage::V3, Pipe::Mte3);
-        // Fused 发布紧凑稳定象限；Current 发布唯一一次公开 AkkOut 搬运。
-        // 两条路径都必须在最后一个 MTE3 源读取方完成后再通知 C4。
-        if (args.key.abi == PrepareAbi::Fused ||
-            args.key.akkStorage == AkkStorage::TwoByteAbi) {
-            args.sync->Set(SyncPoint::V3VcsReady, head.workspaceSlot,
-                           workspaceGeneration, Stage::V3, Pipe::Mte3);
-        }
-    }
-}
-
-inline void StageV6_AivBuildPostWuOperands(const VectorStageArgs &args)
-{
-    // 输入：Qhat、Khat、V、G、G_last 和 betaEff。
-    // 计算：Qg=Qhat*2^G，kg=Khat*2^(G_last-G)，
-    //       K_beta_g=betaEff*(Khat*2^G)，V_beta=betaEff*V；Fused ABI
-    //       另在 Qg 首次舍入后恰好乘一次运行时 scale。
-    // 输出：Qg/qg、kg，以及 C7 使用的 K_beta_g、V_beta 两个矩阵乘右操作数平面。
-    if (!detail::ValidArgs(args)) {
-        return;
-    }
-    for (const HeadTask &head : args.work->group.heads) {
-        if (!detail::IsOwnedActiveHead(head, args)) {
-            continue;
-        }
-        const std::uint64_t workspaceGeneration = head.workspaceGeneration;
-        const std::uint64_t localGeneration = head.localGeneration;
-        const Offset validRows = args.work->group.chunk.validRows;
-        const Offset tokenStorageBytes =
-            validRows * ShapePolicy::kV * ShapePolicy::kStorageBytes;
-        const Offset gBytes =
-            validRows * ShapePolicy::kK * ShapePolicy::kFp32Bytes;
-        // C4PayloadFree 是跨核前置；V0/V3 对同一 UB 槽的本核释放由 ubMutex
-        // 在 MTE3 -> MTE2 之间直接串接，不再占用额外标志。
-        args.sync->Wait(SyncPoint::C4PayloadFree, head.workspaceSlot,
-                        workspaceGeneration, Stage::V6, Pipe::Mte2);
-        const SymbolicMutexId ubMutex =
-            Arch35VectorMutexIds::UbBank(head.aivLocalSlot);
-        args.sync->MutexLock(MutexResource::AivUbBank, ubMutex,
-                             head.localBankId, Stage::V6, Pipe::Mte2);
-
-        const BufferSpan context = args.workspace->Span(
-            WorkspaceRegion::Context, head.workspaceSlot,
-            workspaceGeneration);
-        // 每个映射到该缓存的 HV 都直接从所有者副本重新装载 Qhat/Khat。C7 在
-        // 释放缓存前汇聚所有映射头发布的 V6RhsReady；非所有者上下文
-        // 的 Q/K 区间从不物化。
-        const BufferSpan qkContext = args.workspace->Span(
-            WorkspaceRegion::Context, head.qkCacheSlot,
-            head.qkCacheGeneration);
-        args.ops->Load(
-            Stage::V6,
-            detail::Subspan(qkContext, "qhat-HK-cache", 0x0000U,
-                            tokenStorageBytes),
-            detail::UbMainSpan(
-                head, "qhat-to-qg",
-                {V6Layout::kQHatToQg.offset, tokenStorageBytes},
-                localGeneration));
-        args.ops->Load(
-            Stage::V6,
-            detail::Subspan(qkContext, "khat-HK-cache", 0x4000U,
-                            tokenStorageBytes),
-            detail::UbMainSpan(
-                head, "khat-to-kg",
-                {V6Layout::kKHatToKg.offset, tokenStorageBytes},
-                localGeneration));
-        const BufferSpan gSource =
-            args.key.abi == PrepareAbi::Current
-                ? detail::SymbolicGmSpan(
-                      head, "gk-output-reuse", gBytes,
-                      workspaceGeneration)
-                : detail::Subspan(context, "G-context", 0x8200U, gBytes);
-        args.ops->Load(Stage::V6, gSource,
-                       detail::UbMainSpan(
-                           head, "G",
-                           {V6Layout::kGInput.offset, gBytes},
-                           localGeneration));
-        args.ops->Load(Stage::V6,
-                       detail::SymbolicGmSpan(head, "V", tokenStorageBytes,
-                                              workspaceGeneration),
-                       detail::UbMainSpan(
-                           head, "V-to-Vbeta",
-                           {V6Layout::kVToVBeta.offset, tokenStorageBytes},
-                           localGeneration));
-        args.sync->MutexUnlock(MutexResource::AivUbBank, ubMutex,
-                               head.localBankId, Stage::V6, Pipe::Mte2);
-        args.sync->Local(LocalDependency::Mte2ToVectorInputs, Stage::V6);
-        args.sync->MutexLock(MutexResource::AivUbBank, ubMutex,
-                             head.localBankId, Stage::V6, Pipe::Vector);
-        // 仅调用一次；主机分发特化 PostWuOperandsVf::Evaluate<useExp2>，
-        // 并传入相互独立的 Q/K 存储类型、V 存储类型及运行时缩放。Current 在 V6
-        // 不执行缩放乘法；Fused 在 qg 第一次舍入后恰好应用一次。两个直接
-        // 2^x 计算点和所有存储舍入点都在此执行。
-        detail::PostWuOperandsVf::Record(
-            *args.ops, head, ResolvePow2Primitive(args.key.useExp2),
-            args.scale,
-            args.key.abi == PrepareAbi::Fused
-                ? RuntimeScaleUse::FusedQg
-                : RuntimeScaleUse::None,
-            args.key.abi == PrepareAbi::Fused ? 1U : 0U);
-        args.sync->MutexUnlock(MutexResource::AivUbBank, ubMutex,
-                               head.localBankId, Stage::V6, Pipe::Vector);
-        args.sync->Local(LocalDependency::VectorToMte3Outputs, Stage::V6);
-        args.sync->MutexLock(MutexResource::AivUbBank, ubMutex,
-                             head.localBankId, Stage::V6, Pipe::Mte3);
-
-        const BufferSpan payload = args.workspace->Span(
-            WorkspaceRegion::SharedPayload, head.workspaceSlot,
-            workspaceGeneration);
-        const Offset rhsRows =
-            validRows > Akk2BPackPolicy::kQuadrantRows
-                ? ShapePolicy::kBt
-                : Akk2BPackPolicy::kQuadrantRows;
-        const Offset rhsPlaneBytes =
-            rhsRows * ShapePolicy::kK * ShapePolicy::kStorageBytes;
-        // 各平面基址保持固定。仅上半区有效的尾块在每个平面只搬运 32 个
-        // 物理行；完整尾块搬运全部 64 行。
-        args.ops->Store(
-            Stage::V6,
-            detail::UbMainSpan(
-                head, "K-beta-g",
-                {V6Layout::kKBetaG.offset, rhsPlaneBytes}, localGeneration),
-            detail::Subspan(payload, "K-beta-g", 0x0000U,
-                            rhsPlaneBytes));
-        args.ops->Store(
-            Stage::V6,
-            detail::UbMainSpan(
-                head, "V-beta",
-                {V6Layout::kVToVBeta.offset, rhsPlaneBytes},
-                localGeneration),
-            detail::Subspan(payload, "V-beta", 0x4000U, rhsPlaneBytes));
-
-        if (args.key.abi == PrepareAbi::Current) {
-            args.ops->Store(
-                Stage::V6,
-                detail::UbMainSpan(
-                    head, "qg",
-                    {V6Layout::kQHatToQg.offset, tokenStorageBytes},
-                    localGeneration),
-                detail::SymbolicGmSpan(head, "qg-output", tokenStorageBytes,
-                                       workspaceGeneration));
-        } else {
-            args.ops->Store(
-                Stage::V6,
-                detail::UbMainSpan(
-                    head, "Qg-scaled",
-                    {V6Layout::kQgScaled.offset, tokenStorageBytes},
-                    localGeneration),
-                detail::SymbolicGmSpan(head, "Qg-scaled-output",
-                                       tokenStorageBytes,
-                                       workspaceGeneration));
-        }
-        args.ops->Store(
-            Stage::V6,
-            detail::UbMainSpan(
-                head, "kg",
-                {V6Layout::kKHatToKg.offset, tokenStorageBytes},
-                localGeneration),
-            detail::SymbolicGmSpan(head, "kg-output-or-handoff",
-                                   tokenStorageBytes,
-                                   workspaceGeneration));
-
-        args.sync->MutexUnlock(MutexResource::AivUbBank, ubMutex,
-                               head.localBankId, Stage::V6, Pipe::Mte3);
-
-        args.sync->Set(SyncPoint::V6RhsReady, head.workspaceSlot,
-                       workspaceGeneration, Stage::V6, Pipe::Mte3);
-    }
-}
-
-} // namespace arch35
-} // namespace kda_prepare_pseudocode
-
-#endif // FLA_OPS_ASCENDC_KDA_CHUNK_KDA_FWD_PREPARE_PSEUDOCODE_ARCH35_VEC_H
+#endif // PSEUDOCODE_ARCH35_CHUNK_KDA_FWD_PREPARE_VEC_H

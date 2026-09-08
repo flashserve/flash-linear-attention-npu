@@ -4,1041 +4,639 @@
  * the BSD 3-Clause License (the "License").
  */
 
-#ifndef FLA_OPS_ASCENDC_KDA_CHUNK_KDA_FWD_PREPARE_PSEUDOCODE_ARCH35_CUBE_H
-#define FLA_OPS_ASCENDC_KDA_CHUNK_KDA_FWD_PREPARE_PSEUDOCODE_ARCH35_CUBE_H
+#ifndef PSEUDOCODE_ARCH35_CHUNK_KDA_FWD_PREPARE_CUBE_H
+#define PSEUDOCODE_ARCH35_CHUNK_KDA_FWD_PREPARE_CUBE_H
 
-#include <algorithm>
-#include <cstddef>
 #include <cstdint>
+#include <type_traits>
+
+#include "catlass/arch/arch.hpp"
+#include "catlass/arch/resource.hpp"
+#include "kernel_operator.h"
 
 #include "../chunk_kda_fwd_prepare_policy.h"
 #include "../chunk_kda_fwd_prepare_struct.h"
-#include "../chunk_kda_fwd_prepare_tiling_key.h"
 #include "../chunk_kda_fwd_prepare_utils.h"
 
-namespace kda_prepare_pseudocode {
-namespace arch35 {
-namespace cube_detail {
+namespace KdaPrepare::Arch35 {
 
-inline BufferSpan CubeSubspan(const BufferSpan &parent, const char *name,
-                              Offset relativeOffset, Offset bytes)
-{
-    BufferSpan span = parent;
-    span.name = name;
-    span.byteOffset += relativeOffset;
-    span.byteSize = bytes;
-    span.rows = 0U;
-    span.columns = 0U;
-    span.leadingDimension = 0U;
-    span.elementBytes = 0U;
-    return span;
-}
+constexpr AscendC::FixpipeConfig kFixpipeRowMajorUb = {
+    AscendC::CO2Layout::ROW_MAJOR, true};
+constexpr AscendC::FixpipeConfig kFixpipeNzL1 = {
+    AscendC::CO2Layout::NZ, false};
 
-constexpr Offset MatrixFootprintBytes(Offset rows, Offset columns,
-                                      Offset leadingDimension,
-                                      Offset elementBytes)
-{
-    return rows == 0U || columns == 0U
-               ? 0U
-               : ((rows - 1U) * leadingDimension + columns) * elementBytes;
-}
-
-inline BufferSpan CubeMatrixSubspan(
-    const BufferSpan &parent, const char *name, Offset row, Offset column,
-    Offset rows, Offset columns, Offset leadingDimension, Offset elementBytes)
-{
-    const Offset relativeOffset =
-        (row * leadingDimension + column) * elementBytes;
-    BufferSpan span = CubeSubspan(
-        parent, name, relativeOffset,
-        MatrixFootprintBytes(rows, columns, leadingDimension, elementBytes));
-    span.rows = rows;
-    span.columns = columns;
-    span.leadingDimension = leadingDimension;
-    span.elementBytes = elementBytes;
-    return span;
-}
-
-inline BufferSpan L1Span(const HeadTask &head, const char *name,
-                         std::uint32_t aicId, Offset offset, Offset bytes,
-                         std::uint64_t generation)
-{
-    return {name, MemorySpace::L1, offset, bytes, head.l1BankId,
-            generation, CoreRole::Aic, aicId};
-}
-
-inline BufferSpan L1MatrixSpan(
-    const HeadTask &head, const char *name, std::uint32_t aicId,
-    Offset offset, Offset rows, Offset columns, Offset leadingDimension,
-    Offset elementBytes, std::uint64_t generation)
-{
-    BufferSpan span = L1Span(
-        head, name, aicId, offset,
-        MatrixFootprintBytes(rows, columns, leadingDimension, elementBytes),
-        generation);
-    span.rows = rows;
-    span.columns = columns;
-    span.leadingDimension = leadingDimension;
-    span.elementBytes = elementBytes;
-    return span;
-}
-
-inline BufferSpan PairedAivUbSpan(const HeadTask &head, const char *name,
-                                  Offset offset, Offset bytes,
-                                  std::uint64_t generation)
-{
-    return {name, MemorySpace::Ub,
-            static_cast<std::uint64_t>(UbPolicy::kMainBase[head.aivLocalSlot]) +
-                offset,
-            bytes, head.localBankId, generation, CoreRole::Aiv, head.aivId};
-}
-
-inline BufferSpan SymbolicL0cSpan(const HeadTask &head, const char *name,
-                                  std::uint32_t aicId, Offset bytes,
-                                  Offset offset = 0U)
-{
-    return {name, MemorySpace::L0, offset, bytes, head.l0cBankId,
-            head.l0cGeneration, CoreRole::Aic, aicId};
-}
-
-inline BufferSpan L0OperandSpan(const HeadTask &head, const char *name,
-                                MemorySpace space, std::uint32_t aicId,
-                                Offset offset, Offset bytes,
-                                std::uint64_t generation)
-{
-    BufferSpan span{name, space, offset, bytes, head.l0OperandBankId,
-                    generation, CoreRole::Aic, aicId};
-    span.logicalHeadId = head.headId;
-    return span;
-}
-
-inline BufferSpan SymbolicGmMatrixSpan(
-    const HeadTask &head, const char *name, Offset row, Offset column,
-    Offset rows, Offset columns, Offset leadingDimension,
-    Offset elementBytes, std::uint64_t generation)
-{
-    const Offset relativeOffset =
-        (row * leadingDimension + column) * elementBytes;
-    const Offset footprint = MatrixFootprintBytes(
-        rows, columns, leadingDimension, elementBytes);
-    BufferSpan span{name,
-                    MemorySpace::Gm,
-                    relativeOffset,
-                    footprint,
-                    head.workspaceSlot,
-                    generation,
-                    CoreRole::Shared,
-                    0U,
-                    rows,
-                    columns,
-                    leadingDimension,
-                    elementBytes};
-    span.logicalHeadId = head.headId;
-    return span;
-}
-
-inline bool ValidArgs(const CubeStageArgs &args)
-{
-    return args.work != nullptr && args.workspace != nullptr &&
-           args.sync != nullptr && args.ops != nullptr &&
-           IsSupportedTilingKey(args.key);
-}
-
-inline std::uint32_t ActiveScoreBlocks(std::uint32_t validRows)
-{
-    return std::min<std::uint32_t>(ShapePolicy::kScoreBlockCount,
-                                   (validRows + ShapePolicy::kScoreBlockRows - 1U) /
-                                       ShapePolicy::kScoreBlockRows);
-}
-
-inline Offset LaneBase(const HeadTask &head)
-{
-    return L1Policy::kLaneBase[head.groupLocalHead];
-}
-
-inline Offset X0Resident(const HeadTask &head, AkkStorage storage)
-{
-    if (storage == AkkStorage::Fp32Internal) {
-        return L1Policy::AkkFp32Resident::kAkk.offset +
-               head.groupLocalHead * L1Policy::AkkFp32Resident::kAkkStride;
-    }
-    return L1Policy::Akk2BResident::kX0.offset +
-           head.groupLocalHead * L1Policy::Akk2BResident::kMatrixStride;
-}
-
-inline Offset X1Resident(const HeadTask &head, AkkStorage storage)
-{
-    if (storage == AkkStorage::Fp32Internal) {
-        return L1Policy::AkkFp32Resident::kAkk.offset +
-               head.groupLocalHead * L1Policy::AkkFp32Resident::kAkkStride +
-               0x3000U;
-    }
-    return L1Policy::Akk2BResident::kX1.offset +
-           head.groupLocalHead * L1Policy::Akk2BResident::kMatrixStride;
-}
-
-inline Offset TResident(const HeadTask &head, AkkStorage storage)
-{
-    if (storage == AkkStorage::Fp32Internal) {
-        return L1Policy::AkkFp32Resident::kT.offset +
-               head.groupLocalHead * L1Policy::AkkFp32Resident::kTStride;
-    }
-    return L1Policy::Akk2BResident::kT.offset +
-           head.groupLocalHead * L1Policy::Akk2BResident::kMatrixStride;
-}
-
-inline Offset Akk2BResident(const HeadTask &head)
-{
-    return L1Policy::Akk2BResident::kAkkTau.offset +
-           head.groupLocalHead * L1Policy::Akk2BResident::kAkkStride;
-}
-
-inline Offset AkkFp32Resident(const HeadTask &head)
-{
-    return L1Policy::AkkFp32Resident::kAkk.offset +
-           head.groupLocalHead * L1Policy::AkkFp32Resident::kAkkStride;
-}
-
-} // namespace cube_detail
-
-inline void StageC2_AicComputeRawAqkAkk(const CubeStageArgs &args)
-{
-    // 输入：S=4 的 Qplus、Kplus、Kminus[s] 紧凑分数操作数。
-    // 计算：每个有效分带用一次行堆叠 MMAD 同时得到
-    //       rawAqk_s=Qplus_s@Kminus[s]^T 和
-    //       rawAkk_s=Kplus_s@Kminus[s]^T。
-    // 输出：按有效因果域紧凑保存的 rawAqk/rawAkk，供配对 AIV 的 V3 消费。
-    if (!cube_detail::ValidArgs(args)) {
-        return;
-    }
-    for (const HeadTask &head : args.work->group.heads) {
-        if (!head.active) {
-            continue;
+template <typename InputT, typename ValueT, typename ScoreT, typename Policy>
+class ChunkKdaFwdPrepareCube {
+public:
+    __aicore__ inline void Init(const PrepareKernelArgs &args)
+    {
+        args_ = args;
+        workgroup_ = WorkgroupId();
+        if (args.akk != nullptr) {
+            akkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args.akk));
         }
-        const std::uint64_t workspaceGeneration = head.workspaceGeneration;
-        const std::uint64_t localGeneration = head.localGeneration;
-        const std::uint64_t l1Generation = head.l1Generation;
-        const Offset lane = cube_detail::LaneBase(head);
-        const Offset l0cLane =
-            L0cPolicy::HeadLaneBase(head.groupLocalHead);
-        args.sync->Wait(SyncPoint::V1ScoreReady, head.workspaceSlot,
-                        workspaceGeneration, Stage::C2, Pipe::Mte2);
-        args.sync->Wait(SyncPoint::V1MainSourceFree, head.localBankId,
-                        localGeneration, Stage::C2, Pipe::Fixpipe);
-        args.sync->Wait(SyncPoint::C2RawDstFree, head.localBankId,
-                        localGeneration, Stage::C2, Pipe::Fixpipe);
-
-        const SymbolicMutexId l1Mutex =
-            Arch35CubeMutexIds::L1Bank(head.l1BankId);
-        const SymbolicMutexId l0OperandMutex =
-            Arch35CubeMutexIds::L0OperandBank(head.l0OperandBankId);
-        const SymbolicMutexId l0cLowerMutex =
-            Arch35CubeMutexIds::L0cLowerHalf(head.l0cBankId);
-
-        // 仅执行一次 72 KiB GM->L1 搬运，不按 s 或分块重复搬运。
-        const BufferSpan payload = args.workspace->Span(
-            WorkspaceRegion::SharedPayload, head.workspaceSlot,
-            workspaceGeneration);
-        args.sync->MutexLock(MutexResource::AicL1Bank, l1Mutex,
-                             head.l1BankId, Stage::C2, Pipe::Mte2);
-        args.ops->Load(
-            Stage::C2,
-            cube_detail::CubeSubspan(payload, "packed-score", 0U,
-                                     ShapePolicy::kScorePayloadBytes),
-            cube_detail::L1Span(head, "C2-current-lane", args.workgroupId,
-                                lane, L1Policy::kLaneBytes, l1Generation));
-        args.sync->MutexUnlock(MutexResource::AicL1Bank, l1Mutex,
-                               head.l1BankId, Stage::C2, Pipe::Mte2);
-        args.sync->Local(LocalDependency::Mte2ToMte1Inputs, Stage::C2);
-        args.sync->Set(SyncPoint::C2ScorePayloadFree, head.workspaceSlot,
-                       workspaceGeneration, Stage::C2, Pipe::Mte2);
-
-        // 一次持有本头的 L1 消费锁，覆盖四个有效分带的全部 MTE1 读取；
-        // C4 的下一次 MTE2 复用必须等待这里的 Unlock<PIPE_MTE1>。
-        args.sync->MutexLock(MutexResource::AicL1Bank, l1Mutex,
-                             head.l1BankId, Stage::C2, Pipe::Mte1);
-
-        const std::uint32_t validRows = args.work->group.chunk.validRows;
-        const std::uint32_t activeBlocks =
-            cube_detail::ActiveScoreBlocks(validRows);
-        const BufferSpan rawAqkParent = cube_detail::PairedAivUbSpan(
-            head, "raw-Aqk-parent", V3Layout::kRawAqk.offset,
-            V3Layout::kRawAqk.size, localGeneration);
-        const BufferSpan rawAkkParent = cube_detail::PairedAivUbSpan(
-            head, "raw-Akk-parent", V3Layout::kRawAkk.offset,
-            V3Layout::kRawAkk.size, localGeneration);
-        for (std::uint32_t s = 0; s < activeBlocks; ++s) {
-            const std::uint32_t physicalN = C2Policy::kN[s];
-            // Qplus/Kplus 各有 16 个物理行。V1 将无效查询行及 Kminus 的
-            // [min(N,M),N) 区间清零，因此每个有效 MMAD 都可使用固定且对齐的
-            // N={16,32,48,64}，不会读取无效数据。
-            const BufferSpan qBand = cube_detail::L1Span(
-                head, "Qplus-band", args.workgroupId,
-                lane + C2Policy::kQBandOffset[s], 0x1000U, l1Generation);
-            const BufferSpan kBand = cube_detail::L1Span(
-                head, "Kplus-band", args.workgroupId,
-                lane + C2Policy::kKBandOffset[s], 0x1000U, l1Generation);
-            const BufferSpan kMinus = cube_detail::L1Span(
-                head, "Kminus-prefix", args.workgroupId,
-                lane + C2Policy::kKMinusOffset[s],
-                ShapePolicy::kKMinusBytes[s], l1Generation);
-            const Offset rawRow = s * C2Policy::kM;
-            const Offset packedResultBytes =
-                L0cPolicy::kC2PackedResultBytes[s];
-            const std::uint64_t operandGeneration =
-                L0OperandGenerationFor(head, C2L0OperandUse(s));
-            const BufferSpan packedL0c = NativeMatrixOwner(
-                cube_detail::SymbolicL0cSpan(
-                    head, "raw-Aqk-Akk-packed-L0C", args.workgroupId,
-                    packedResultBytes,
-                    l0cLane + L0cPolicy::kC2PackedOffset[s]),
-                "raw-Aqk-Akk-packed-L0C",
-                NativeMatrixLayout::L0cFractal, C2Policy::kPackedM,
-                physicalN, ShapePolicy::kFp32Bytes);
-            const BufferSpan rawAqkL0c = NativeMatrixTile(
-                packedL0c, "raw-Aqk-L0C", 0U, 0U, C2Policy::kM,
-                physicalN);
-            const BufferSpan rawAkkL0c = NativeMatrixTile(
-                packedL0c, "raw-Akk-L0C", C2Policy::kM, 0U,
-                C2Policy::kM, physicalN);
-            const BufferSpan stackedL0a = NativeMatrixOwner(
-                cube_detail::L0OperandSpan(
-                    head, "C2-QK-stacked-L0A", MemorySpace::L0A,
-                    args.workgroupId, L0aPolicy::kC2StackedQK.offset,
-                    L0aPolicy::kC2StackedQK.size, operandGeneration),
-                "C2-QK-stacked-L0A", NativeMatrixLayout::L0aZN,
-                C2Policy::kPackedM, C2Policy::kK,
-                ShapePolicy::kStorageBytes);
-            const BufferSpan qL0aTile = NativeMatrixTile(
-                stackedL0a, "C2-Qplus-L0A-tile", 0U, 0U,
-                C2Policy::kM, C2Policy::kK);
-            const BufferSpan kL0aTile = NativeMatrixTile(
-                stackedL0a, "C2-Kplus-L0A-tile", C2Policy::kM, 0U,
-                C2Policy::kM, C2Policy::kK);
-            const BufferSpan kMinusL0b = cube_detail::L0OperandSpan(
-                head, "C2-Kminus-L0B", MemorySpace::L0B,
-                args.workgroupId, L0bPolicy::kC2KMinus.offset,
-                ShapePolicy::kKMinusBytes[s], operandGeneration);
-            // MTE1 将 Qplus/Kplus 两个 16 行 L1 源分别装入 zN L0A 的逻辑行
-            // [0,16)/[16,32) 子块，然后一次 32x128 @ 128xN MMAD
-            // 同时生成 Aqk/Akk。两个子块不是连续物理半区，也不需要在 L1 搬位。
-            args.sync->MutexLock(MutexResource::AicL0OperandBank,
-                                 l0OperandMutex, head.l0OperandBankId,
-                                 Stage::C2, Pipe::Mte1);
-            // 下述数学记录携带 L1/L0 描述符；正式实现先在当前锁区间发出
-            // L1->L0A/L0B 搬运，再由 PIPE_M 消费同一组 L0 操作数。
-            args.sync->MutexUnlock(MutexResource::AicL0OperandBank,
-                                   l0OperandMutex, head.l0OperandBankId,
-                                   Stage::C2, Pipe::Mte1);
-            args.sync->MutexLock(MutexResource::AicL0cLowerHalf,
-                                 l0cLowerMutex, head.l0cBankId, Stage::C2,
-                                 Pipe::Cube);
-            args.sync->MutexLock(MutexResource::AicL0OperandBank,
-                                 l0OperandMutex, head.l0OperandBankId,
-                                 Stage::C2, Pipe::Cube);
-            args.ops->MmadRowStackedLhs(
-                Stage::C2, MatrixFormula::RawAqkAndAkk, qBand, kBand,
-                kMinus, packedL0c, stackedL0a, qL0aTile, kL0aTile,
-                kMinusL0b,
-                FromScoreStorage(args.key.scoreStorage),
-                FromScoreStorage(args.key.scoreStorage), C2Policy::kM,
-                C2Policy::kM, physicalN, C2Policy::kK, true);
-            args.sync->MutexUnlock(MutexResource::AicL0OperandBank,
-                                   l0OperandMutex, head.l0OperandBankId,
-                                   Stage::C2, Pipe::Cube);
-            args.sync->MutexUnlock(MutexResource::AicL0cLowerHalf,
-                                   l0cLowerMutex, head.l0cBankId, Stage::C2,
-                                   Pipe::Cube);
-            args.sync->Local(LocalDependency::CubeToMte1OperandReuse,
-                             Stage::C2);
-            args.sync->Local(LocalDependency::CubeToFixpipeOutput,
-                             Stage::C2);
-            args.sync->MutexLock(MutexResource::AicL0cLowerHalf,
-                                 l0cLowerMutex, head.l0cBankId, Stage::C2,
-                                 Pipe::Fixpipe);
-            args.ops->Store(
-                Stage::C2, rawAqkL0c,
-                cube_detail::CubeMatrixSubspan(
-                    rawAqkParent, "raw-Aqk-band-ld64", rawRow, 0U,
-                    C2Policy::kM, physicalN,
-                    C2Policy::kRawLeadingDimension,
-                    ShapePolicy::kFp32Bytes));
-            args.ops->Store(
-                Stage::C2, rawAkkL0c,
-                cube_detail::CubeMatrixSubspan(
-                    rawAkkParent, "raw-Akk-band-ld64", rawRow, 0U,
-                    C2Policy::kM, physicalN,
-                    C2Policy::kRawLeadingDimension,
-                    ShapePolicy::kFp32Bytes));
-            args.sync->MutexUnlock(MutexResource::AicL0cLowerHalf,
-                                   l0cLowerMutex, head.l0cBankId, Stage::C2,
-                                   Pipe::Fixpipe);
-
-            // 待确认的 API 约束：必须通过 MakeLayoutL0C(32,N) 的逻辑子块
-            // 选择紧凑拼装的 L0C 上、下 16 行，再分别写入
-            // UBM + rawBase + (16*s+r)*0x100 + c*4，且 c<physicalN。
-            // 禁止按行主序字节偏移切 L0C；目标 CANN 必须验证可直接写入配对
-            // AIV 的 UB，且目标行跨度为 64。
-        }
-        args.sync->MutexUnlock(MutexResource::AicL1Bank, l1Mutex,
-                               head.l1BankId, Stage::C2, Pipe::Mte1);
-        // 不启动无效分带，也不启动有效分带的尾部列。V3 将原始数据搬运限制在
-        // 该物理定义域内。
-        args.sync->Set(SyncPoint::C2RawReady, head.localBankId, localGeneration,
-                       Stage::C2, Pipe::Fixpipe);
+        wGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args.w));
+        uGm_.SetGlobalBuffer(reinterpret_cast<__gm__ ValueT *>(args.u));
     }
-}
 
-inline void StageC4_AicComputeTEqualsBMatmulX0(const CubeStageArgs &args)
-{
-    // M>32：装入 B/X0/X1 和稳定 Akk 象限，计算 T=B@X0，再把
-    //       T 与 C7 所需 Akk 象限写入最终 L1 常驻地址。
-    // M<=32：只把 q00 放入最终 L1，不读取 B/X1，不生成 T。
-    if (!cube_detail::ValidArgs(args)) {
-        return;
-    }
-    for (const HeadTask &head : args.work->group.heads) {
-        if (!head.active) {
-            continue;
+    __aicore__ inline void Process()
+    {
+        if (args_.tiling.usedCoreNum == 0) {
+            return;
         }
-        const std::uint64_t workspaceGeneration = head.workspaceGeneration;
-        const std::uint64_t l1Generation = head.l1Generation;
-        const BufferSpan payload = args.workspace->Span(
-            WorkspaceRegion::SharedPayload, head.workspaceSlot,
-            workspaceGeneration);
-        const Offset validRows = args.work->group.chunk.validRows;
-        const Offset quadrantRows = Akk2BPackPolicy::kQuadrantRows;
-        const bool hasQ10 = validRows > quadrantRows;
-        const bool currentAbi = args.key.abi == PrepareAbi::Current;
-        args.sync->Wait(SyncPoint::V3VcsReady, head.workspaceSlot,
-                        workspaceGeneration, Stage::C4, Pipe::Mte2);
-        const SymbolicMutexId l1Mutex =
-            Arch35CubeMutexIds::L1Bank(head.l1BankId);
-        const SymbolicMutexId l0OperandMutex =
-            Arch35CubeMutexIds::L0OperandBank(head.l0OperandBankId);
-        const SymbolicMutexId l0cLowerMutex =
-            Arch35CubeMutexIds::L0cLowerHalf(head.l0cBankId);
-        args.sync->MutexLock(MutexResource::AicL1Bank, l1Mutex,
-                             head.l1BankId, Stage::C4, Pipe::Mte2);
 
-        if (!hasQ10) {
-            const Offset akk = cube_detail::Akk2BResident(head);
-            const BufferSpan q00 = cube_detail::L1MatrixSpan(
-                head, "Akk-q00", args.workgroupId,
-                akk + Akk2BPackPolicy::kQ00.offset, quadrantRows,
-                Akk2BPackPolicy::kQuadrantColumns,
-                Akk2BPackPolicy::kQuadrantColumns,
-                ShapePolicy::kStorageBytes, l1Generation);
-            if (currentAbi) {
-                if (validRows < quadrantRows) {
-                    args.ops->Fill(Stage::C4, q00, 0U);
-                    args.sync->Local(LocalDependency::Mte2FillToLoadWaw,
-                                     Stage::C4);
-                    args.sync->PipeBarrier(MutexResource::Mte2Overwrite,
-                                           head.l1BankId, Stage::C4,
-                                           Pipe::Mte2);
+        // free[localHead] 初始只发布一次。以后每一组的 V0 会消费上一组
+        // C7 发布的 free，不能在组首重复 set 同一个计数器。
+        bool freeInitialized[Shape::kHeadsPerGroup] = {false, false, false, false};
+        if (workgroup_ >= args_.tiling.usedCoreNum) {
+            return;
+        }
+        const uint32_t total = TotalWorkItems(args_.tiling);
+        const uint32_t workBegin = WorkBegin(
+            total, workgroup_, args_.tiling.usedCoreNum);
+        const uint32_t workEnd = WorkEnd(
+            total, workgroup_, args_.tiling.usedCoreNum);
+        for (uint32_t work = workBegin; work < workEnd; ++work) {
+            uint32_t globalChunk = 0;
+            uint32_t headPartition = 0;
+            DecodeWorkItem(args_.tiling, work, globalChunk, headPartition);
+            ChunkRange chunk{};
+            if (!ResolveChunk(args_, globalChunk, chunk)) {
+                continue;
+            }
+
+            uint32_t headBegin = 0;
+            uint32_t headEnd = 0;
+            HeadRange(args_.tiling, headPartition, headBegin, headEnd);
+            for (uint32_t groupBegin = headBegin; groupBegin < headEnd;
+                 groupBegin += Shape::kHeadsPerGroup) {
+                for (uint32_t localHead = 0;
+                     localHead < Shape::kHeadsPerGroup; ++localHead) {
+                    if (groupBegin + localHead >= headEnd ||
+                        freeInitialized[localHead]) {
+                        continue;
+                    }
+                    AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
+                        Arch35AicFlagId(Arch35CrossCore::kFreeBase,
+                                       localHead));
+                    freeInitialized[localHead] = true;
                 }
-                // 待确认的二维 DataCopy 约束：公开 AkkOut 的 ld=64，而最终常驻的
-                // q00 是紧凑 ld=32。完成这次从跨步布局到紧凑布局的直接搬运后，
-                // 不允许再在 L1 内移动数据。
-                args.ops->Load(
-                    Stage::C4,
-                    cube_detail::SymbolicGmMatrixSpan(
-                        head, "AkkOut-q00-valid-ld64", 0U, 0U, validRows,
-                        Akk2BPackPolicy::kQuadrantColumns, ShapePolicy::kBt,
-                        ShapePolicy::kStorageBytes, workspaceGeneration),
-                    cube_detail::L1MatrixSpan(
-                        head, "Akk-q00-valid-ld32", args.workgroupId,
-                        akk + Akk2BPackPolicy::kQ00.offset, validRows,
-                        Akk2BPackPolicy::kQuadrantColumns,
-                        Akk2BPackPolicy::kQuadrantColumns,
-                        ShapePolicy::kStorageBytes, l1Generation));
+
+                // C2：逐 HEAD 等 V1 的 72 KiB 分数操作数。一次装入 L1 后，
+                // 尾块只提交有效 sub-chunk 的 32x128 @ 128xN MMAD。
+                for (uint32_t localHead = 0;
+                     localHead < Shape::kHeadsPerGroup; ++localHead) {
+                    if (groupBegin + localHead >= headEnd) {
+                        continue;
+                    }
+                    AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
+                        Arch35AicFlagId(Arch35CrossCore::kReadyBase,
+                                       localHead));
+                    StageC2(chunk, localHead);
+                    AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
+                        Arch35AicFlagId(Arch35CrossCore::kFreeBase,
+                                       localHead));
+                }
+
+                // C4 在一次性读完 B/X0/negX1/Akk 后立即归还 workspace
+                // payload；随后 T=B@X0、C5=negX1@T 可以与配对 AIV 的 V6
+                // 并行。StageC4 内部在 MTE2 搬运结束处直接发布 free。
+                for (uint32_t localHead = 0;
+                     localHead < Shape::kHeadsPerGroup; ++localHead) {
+                    const uint32_t valueHead = groupBegin + localHead;
+                    if (valueHead >= headEnd) {
+                        continue;
+                    }
+                    AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
+                        Arch35AicFlagId(Arch35CrossCore::kReadyBase,
+                                       localHead));
+                    StageC4(chunk, localHead);
+                    StageC5(chunk, valueHead, localHead);
+                }
+
+                // C7：V6 已将两个 RHS 平面写入 workspace。Akk 继续使用
+                // C4/C5 的 L1 常驻副本，分别计算 W 和 U，最后归还槽位。
+                for (uint32_t localHead = 0;
+                     localHead < Shape::kHeadsPerGroup; ++localHead) {
+                    const uint32_t valueHead = groupBegin + localHead;
+                    if (valueHead >= headEnd) {
+                        continue;
+                    }
+                    AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
+                        Arch35AicFlagId(Arch35CrossCore::kReadyBase,
+                                       localHead));
+                    StageC7(chunk, valueHead, localHead);
+                }
+            }
+        }
+    }
+
+private:
+    __aicore__ inline void StageC2(const ChunkRange &chunk,
+                                   uint32_t localHead)
+    {
+        const uint64_t slot = WorkspaceSlotBase(
+            workgroup_, localHead, Workspace::kArch35WorkgroupStride);
+        const uint32_t lane = L1::kHeadLane[localHead];
+        const uint8_t l1Mutex = Arch35Mutex::kAicL1[localHead];
+        const uint8_t operandMutex = Arch35Mutex::kAicL0Operand;
+        const uint8_t l0cMutex = Arch35Mutex::kAicL0cLower[localHead];
+        const uint8_t ownerAiv = static_cast<uint8_t>(localHead / 2);
+        const uint32_t localSlot = localHead % 2;
+        const uint32_t l0cLane = localHead * 64 * 1024;
+
+        AscendC::GlobalTensor<ScoreT> payload;
+        payload.SetGlobalBuffer(reinterpret_cast<__gm__ ScoreT *>(
+            args_.workspace + slot + Workspace::kPayload));
+        auto scoreL1 = resource_.l1Buf.template GetBufferByByte<ScoreT>(lane);
+
+        // Stage 入口把 Qplus、Kplus 和四个 Kminus 前缀一次性搬完，共 72 KiB。
+        // 这里的 DataCopy 是 GM(ND)->L1(NZ)，后面的四次 MMAD 不再读 GM。
+        AscendC::Mutex::Lock<PIPE_MTE2>(l1Mutex);
+        AscendC::Nd2NzParams qkCopy{};
+        qkCopy.ndNum = 1;
+        qkCopy.nValue = Shape::kChunkRows;
+        qkCopy.dValue = Shape::kHeadDim;
+        qkCopy.srcDValue = Shape::kHeadDim;
+        qkCopy.srcNdMatrixStride = 0;
+        qkCopy.dstNzNStride = 1;
+        qkCopy.dstNzC0Stride = Shape::kChunkRows;
+        qkCopy.dstNzMatrixStride = 0;
+        // TODO：用目标 CANN 9.1.0 头文件确认 ScoreT 的 NZ C0 与
+        // dstNzC0Stride 单位；确认前不得把下列参数复制到正式 kernel。
+        AscendC::DataCopy(
+            scoreL1[ScorePayload::kQPlus / sizeof(ScoreT)],
+            payload[ScorePayload::kQPlus / sizeof(ScoreT)], qkCopy);
+        AscendC::DataCopy(
+            scoreL1[ScorePayload::kKPlus / sizeof(ScoreT)],
+            payload[ScorePayload::kKPlus / sizeof(ScoreT)], qkCopy);
+        for (uint32_t s = 0; s < Shape::kSubChunkCount; ++s) {
+            AscendC::Nd2NzParams prefixCopy = qkCopy;
+            prefixCopy.nValue = Shape::kPrefixRows[s];
+            prefixCopy.dstNzC0Stride = Shape::kPrefixRows[s];
+            AscendC::DataCopy(
+                scoreL1[ScorePayload::kKMinus[s] / sizeof(ScoreT)],
+                payload[ScorePayload::kKMinus[s] / sizeof(ScoreT)],
+                prefixCopy);
+        }
+        AscendC::Mutex::Unlock<PIPE_MTE2>(l1Mutex);
+
+        auto stackedQkL0 =
+            resource_.l0ABuf.template GetBufferByByte<ScoreT>(0);
+        auto kMinusL0 =
+            resource_.l0BBuf.template GetBufferByByte<ScoreT>(0);
+        // 四个 HEAD 各占一条 64 KiB L0C 通道，和 Mutex 5..8/9..12
+        // 一一对应；不同 Mutex 保护的语义不能落到同一物理地址。
+        // TODO：正式实现前必须用目标 A5 头文件和最小 kernel 确认该资源
+        // 确实暴露 256 KiB L0C；容量不足时要改为同一 Mutex 下顺序复用。
+        auto rawL0c =
+            resource_.l0CBuf.template GetBufferByByte<float>(l0cLane);
+        auto rawScoreUb = resource_.ubBuf.template GetBufferByByte<float>(
+            Arch35Ub::kComputeSlotBase[localSlot] + Arch35Ub::kRawScore);
+
+        uint32_t stackedElements = 0;
+        const uint32_t active = CeilDiv(
+            chunk.validRows, Shape::kSubChunkRows);
+        for (uint32_t s = 0; s < active; ++s) {
+            const uint32_t n = Shape::kPrefixRows[s];
+
+            AscendC::Mutex::Lock<PIPE_MTE1>(l1Mutex);
+            AscendC::Mutex::Lock<PIPE_MTE1>(operandMutex);
+            AscendC::LoadData2DParamsV2 loadQ{};
+            loadQ.mStartPosition = s;
+            loadQ.kStartPosition = 0;
+            loadQ.mStep = 1;
+            loadQ.kStep = Shape::kHeadDim / 16;
+            loadQ.srcStride = Shape::kChunkRows / 16;
+            loadQ.dstStride = 2;
+            loadQ.ifTranspose = false;
+            loadQ.sid = 0;
+            AscendC::LoadData(
+                stackedQkL0,
+                scoreL1[ScorePayload::kQPlus / sizeof(ScoreT)], loadQ);
+            // TODO：目标版本最小编译确认 zN L0A 的下半 16 行物理偏移；
+            // 语义必须是 [Qplus_s; Kplus_s]，不能在 L1 内重排。
+            AscendC::LoadData(
+                stackedQkL0[Shape::kSubChunkRows * Shape::kHeadDim],
+                scoreL1[ScorePayload::kKPlus / sizeof(ScoreT)], loadQ);
+
+            AscendC::LoadData2DParamsV2 loadKMinus{};
+            loadKMinus.mStartPosition = 0;
+            loadKMinus.kStartPosition = 0;
+            loadKMinus.mStep = Shape::kHeadDim / 16;
+            loadKMinus.kStep = n / 16;
+            loadKMinus.srcStride = n / 16;
+            loadKMinus.dstStride = Shape::kHeadDim / 16;
+            loadKMinus.ifTranspose = true;
+            loadKMinus.sid = 0;
+            // TODO：确认 Kminus 的 L1 NZ 到 L0B 转置装载中 mStep、
+            // kStep、srcStride、dstStride 的分形单位。
+            AscendC::LoadData(
+                kMinusL0,
+                scoreL1[ScorePayload::kKMinus[s] / sizeof(ScoreT)],
+                loadKMinus);
+            AscendC::Mutex::Unlock<PIPE_MTE1>(operandMutex);
+            AscendC::Mutex::Unlock<PIPE_MTE1>(l1Mutex);
+
+            AscendC::Mutex::Lock<PIPE_M>(operandMutex);
+            AscendC::Mutex::Lock<PIPE_M>(l0cMutex);
+            AscendC::MmadParams mmad{};
+            mmad.m = 2 * Shape::kSubChunkRows;
+            mmad.n = n;
+            mmad.k = Shape::kHeadDim;
+            mmad.cmatrixInitVal = true;
+            mmad.cmatrixSource = false;
+            mmad.unitFlag = 0;
+            // 一次 API 提交包含两个数学乘积：
+            // 上 16 行 Qplus_s@Kminus_s^T，下 16 行 Kplus_s@Kminus_s^T。
+            AscendC::Mmad(rawL0c, stackedQkL0, kMinusL0, mmad);
+            AscendC::Mutex::Unlock<PIPE_M>(l0cMutex);
+            AscendC::Mutex::Unlock<PIPE_M>(operandMutex);
+
+            AscendC::Mutex::Lock<PIPE_FIX>(l0cMutex);
+            AscendC::FixpipeParamsC310<AscendC::CO2Layout::ROW_MAJOR> fix{};
+            fix.nSize = n;
+            fix.mSize = 2 * Shape::kSubChunkRows;
+            fix.srcStride = 2 * Shape::kSubChunkRows;
+            fix.dstStride = n;
+            fix.quantPre = QuantMode_t::NoQuant;
+            fix.reluEn = false;
+            fix.unitFlag = 0;
+            fix.dualDstCtl = 0;
+            fix.subBlockId = ownerAiv;
+            AscendC::Fixpipe<float, float, kFixpipeRowMajorUb>(
+                rawScoreUb[stackedElements], rawL0c, fix);
+            AscendC::Mutex::Unlock<PIPE_FIX>(l0cMutex);
+
+            stackedElements += 2 * Shape::kSubChunkRows * n;
+        }
+    }
+
+    __aicore__ inline void StageC4(const ChunkRange &chunk,
+                                   uint32_t localHead)
+    {
+        const uint64_t slot = WorkspaceSlotBase(
+            workgroup_, localHead, Workspace::kArch35WorkgroupStride);
+        const uint32_t lane = L1::kHeadLane[localHead];
+        const uint8_t l1Mutex = Arch35Mutex::kAicL1[localHead];
+        const uint8_t operandMutex = Arch35Mutex::kAicL0Operand;
+        const uint8_t l0cMutex = Arch35Mutex::kAicL0cLower[localHead];
+        const uint32_t l0cLane = localHead * 64 * 1024;
+
+        AscendC::GlobalTensor<float> payload;
+        payload.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+            args_.workspace + slot + Workspace::kPayload));
+        AscendC::GlobalTensor<InputT> akkSource;
+        akkSource.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(
+            args_.workspace + slot + Workspace::kPayload + Workspace::kAkk));
+
+        auto bL1 = resource_.l1Buf.template GetBufferByByte<float>(lane);
+        auto x0L1 = resource_.l1Buf.template GetBufferByByte<float>(
+            L1::kX0 + localHead * L1::kQuadrantStride);
+        auto negX1L1 = resource_.l1Buf.template GetBufferByByte<float>(
+            L1::kNegX1 + localHead * L1::kQuadrantStride);
+        auto tL1 = resource_.l1Buf.template GetBufferByByte<float>(
+            L1::kT + localHead * L1::kQuadrantStride);
+        auto akkL1 = resource_.l1Buf.template GetBufferByByte<InputT>(
+            L1::kAkk + localHead * L1::kAkkStride);
+
+        // V3 写出的所有后续 Cube 输入只在这里搬一次。即使 M<=32，Akk
+        // 仍须进入最终 L1 常驻地址，C7 直接复用；B/X0/negX1 则无需搬入。
+        AscendC::Mutex::Lock<PIPE_MTE2>(l1Mutex);
+        AscendC::Nd2NzParams akkCopy{};
+        akkCopy.ndNum = 1;
+        akkCopy.nValue = Shape::kChunkRows;
+        akkCopy.dValue = Shape::kChunkRows;
+        akkCopy.srcDValue = Shape::kChunkRows;
+        akkCopy.srcNdMatrixStride = 0;
+        akkCopy.dstNzNStride = 1;
+        akkCopy.dstNzC0Stride = Shape::kChunkRows;
+        akkCopy.dstNzMatrixStride = 0;
+        // TODO：确认 64x64 InputT ND->NZ 后四个 32x32 象限的物理次序，
+        // C5 必须能直接写 q10，C7 必须能直接按 64x64 装入 L0A。
+        AscendC::DataCopy(akkL1, akkSource, akkCopy);
+
+        if (chunk.validRows > 32) {
+            AscendC::Nd2NzParams quadrantCopy{};
+            quadrantCopy.ndNum = 1;
+            quadrantCopy.nValue = 32;
+            quadrantCopy.dValue = 32;
+            quadrantCopy.srcDValue = 32;
+            quadrantCopy.srcNdMatrixStride = 0;
+            quadrantCopy.dstNzNStride = 1;
+            quadrantCopy.dstNzC0Stride = 32;
+            quadrantCopy.dstNzMatrixStride = 0;
+            AscendC::DataCopy(
+                bL1, payload[Workspace::kB / sizeof(float)], quadrantCopy);
+            AscendC::DataCopy(
+                x0L1, payload[Workspace::kX0 / sizeof(float)], quadrantCopy);
+            AscendC::DataCopy(
+                negX1L1,
+                payload[Workspace::kNegX1 / sizeof(float)], quadrantCopy);
+        }
+        AscendC::Mutex::Unlock<PIPE_MTE2>(l1Mutex);
+
+        // 载荷已完全离开 workspace，立即允许 AIV 在同一地址生成 V6 RHS。
+        AscendC::CrossCoreSetFlag<0x4, PIPE_MTE2>(
+            Arch35AicFlagId(Arch35CrossCore::kFreeBase, localHead));
+        if (chunk.validRows <= 32) {
+            return;
+        }
+
+        auto l0A = resource_.l0ABuf.template GetBufferByByte<float>(0);
+        auto l0B = resource_.l0BBuf.template GetBufferByByte<float>(0);
+        auto l0C =
+            resource_.l0CBuf.template GetBufferByByte<float>(l0cLane);
+
+        AscendC::Mutex::Lock<PIPE_MTE1>(l1Mutex);
+        AscendC::Mutex::Lock<PIPE_MTE1>(operandMutex);
+        AscendC::LoadData2DParamsV2 load{};
+        load.mStartPosition = 0;
+        load.kStartPosition = 0;
+        load.mStep = 2;
+        load.kStep = 4;
+        load.srcStride = 2;
+        load.dstStride = 2;
+        load.ifTranspose = false;
+        load.sid = 0;
+        // TODO：确认 Arch35 FP32 NZ 的 C0=8 以及四个步长字段的单位。
+        AscendC::LoadData(l0A, bL1, load);
+        load.ifTranspose = true;
+        AscendC::LoadData(l0B, x0L1, load);
+        AscendC::Mutex::Unlock<PIPE_MTE1>(operandMutex);
+        AscendC::Mutex::Unlock<PIPE_MTE1>(l1Mutex);
+
+        AscendC::Mutex::Lock<PIPE_M>(operandMutex);
+        AscendC::Mutex::Lock<PIPE_M>(l0cMutex);
+        AscendC::SetHF32Mode(false);
+        AscendC::MmadParams mmad{};
+        mmad.m = 32;
+        mmad.n = 32;
+        mmad.k = 32;
+        mmad.cmatrixInitVal = true;
+        mmad.cmatrixSource = false;
+        mmad.unitFlag = 0;
+        AscendC::Mmad(l0C, l0A, l0B, mmad); // 计算 T=B@X0。
+        AscendC::Mutex::Unlock<PIPE_M>(l0cMutex);
+        AscendC::Mutex::Unlock<PIPE_M>(operandMutex);
+
+        AscendC::Mutex::Lock<PIPE_FIX>(l0cMutex);
+        AscendC::Mutex::Lock<PIPE_FIX>(l1Mutex);
+        AscendC::FixpipeParamsArch3510<AscendC::CO2Layout::NZ> fix{};
+        fix.nSize = 32;
+        fix.mSize = 32;
+        fix.srcStride = 32;
+        fix.dstStride = 32 * 16;
+        fix.quantPre = QuantMode_t::NoQuant;
+        fix.isChannelSplit = false;
+        // TODO：用目标头文件确认 NZ 到 L1 的 dstStride 分形单位。
+        AscendC::Fixpipe<float, float, kFixpipeNzL1>(tL1, l0C, fix);
+        AscendC::Mutex::Unlock<PIPE_FIX>(l1Mutex);
+        AscendC::Mutex::Unlock<PIPE_FIX>(l0cMutex);
+    }
+
+    __aicore__ inline void StageC5(const ChunkRange &chunk,
+                                    uint32_t valueHead,
+                                    uint32_t localHead)
+    {
+        if (chunk.validRows <= 32) {
+            return;
+        }
+
+        const uint8_t l1Mutex = Arch35Mutex::kAicL1[localHead];
+        const uint8_t operandMutex = Arch35Mutex::kAicL0Operand;
+        const uint8_t l0cMutex = Arch35Mutex::kAicL0cLower[localHead];
+        const uint32_t l0cLane = localHead * 64 * 1024;
+        auto negX1L1 = resource_.l1Buf.template GetBufferByByte<float>(
+            L1::kNegX1 + localHead * L1::kQuadrantStride);
+        auto tL1 = resource_.l1Buf.template GetBufferByByte<float>(
+            L1::kT + localHead * L1::kQuadrantStride);
+        auto akkL1 = resource_.l1Buf.template GetBufferByByte<InputT>(
+            L1::kAkk + localHead * L1::kAkkStride);
+        auto l0A = resource_.l0ABuf.template GetBufferByByte<float>(0);
+        auto l0B = resource_.l0BBuf.template GetBufferByByte<float>(0);
+        // C5 使用当前 HEAD 通道的第二个 4 KiB 区域，避免和 C4 的 T
+        // Fixpipe 源发生物理重叠。
+        auto l0C = resource_.l0CBuf.template GetBufferByByte<float>(
+            l0cLane + 4 * 1024);
+
+        AscendC::Mutex::Lock<PIPE_MTE1>(l1Mutex);
+        AscendC::Mutex::Lock<PIPE_MTE1>(operandMutex);
+        AscendC::LoadData2DParamsV2 load{};
+        load.mStartPosition = 0;
+        load.kStartPosition = 0;
+        load.mStep = 2;
+        load.kStep = 4;
+        load.srcStride = 2;
+        load.dstStride = 2;
+        load.ifTranspose = false;
+        load.sid = 0;
+        AscendC::LoadData(l0A, negX1L1, load);
+        load.ifTranspose = true;
+        AscendC::LoadData(l0B, tL1, load);
+        AscendC::Mutex::Unlock<PIPE_MTE1>(operandMutex);
+        AscendC::Mutex::Unlock<PIPE_MTE1>(l1Mutex);
+
+        AscendC::Mutex::Lock<PIPE_M>(operandMutex);
+        AscendC::Mutex::Lock<PIPE_M>(l0cMutex);
+        AscendC::SetHF32Mode(false);
+        AscendC::MmadParams mmad{};
+        mmad.m = 32;
+        mmad.n = 32;
+        mmad.k = 32;
+        mmad.cmatrixInitVal = true;
+        mmad.cmatrixSource = false;
+        mmad.unitFlag = 0;
+        AscendC::Mmad(l0C, l0A, l0B, mmad); // 计算 Akk 的 q10=negX1@T。
+        AscendC::Mutex::Unlock<PIPE_M>(l0cMutex);
+        AscendC::Mutex::Unlock<PIPE_M>(operandMutex);
+
+        AscendC::Mutex::Lock<PIPE_FIX>(l0cMutex);
+        AscendC::Mutex::Lock<PIPE_FIX>(l1Mutex);
+        AscendC::FixpipeParamsArch3510<AscendC::CO2Layout::NZ> l1Fix{};
+        l1Fix.nSize = 32;
+        l1Fix.mSize = 32;
+        l1Fix.srcStride = 32;
+        l1Fix.dstStride = Shape::kChunkRows * 16;
+        l1Fix.isChannelSplit = false;
+        if constexpr (std::is_same_v<InputT, half>) {
+            l1Fix.quantPre = QuantMode_t::F322F16;
+        } else {
+            l1Fix.quantPre = QuantMode_t::F322BF16;
+        }
+        // q10 在两字节 NZ 中从 (N1=0,M1=2) 开始，即 32*16 个元素。
+        // dstStride=64*16 个元素跨过完整 64 行 M 轴。
+        AscendC::Fixpipe<InputT, float, kFixpipeNzL1>(
+            akkL1[L1::kAkkQ10Elements], l0C, l1Fix);
+        AscendC::Mutex::Unlock<PIPE_FIX>(l1Mutex);
+
+        if constexpr (Policy::abi == PrepareAbi::Current) {
+            const uint32_t bottomRows = chunk.validRows - 32;
+            auto gmFix = AscendC::FixpipeParamsV220(
+                32, bottomRows, 32, Shape::kChunkRows, false);
+            if constexpr (std::is_same_v<InputT, half>) {
+                gmFix.quantPre = QuantMode_t::F322F16;
             } else {
-                args.ops->Load(
-                    Stage::C4,
-                    cube_detail::CubeMatrixSubspan(
-                        cube_detail::CubeSubspan(
-                            payload, "X0-tau-parent", 0x3000U, 0x0800U),
-                        "X0-tau", 0U, 0U, quadrantRows,
-                        Akk2BPackPolicy::kQuadrantColumns,
-                        Akk2BPackPolicy::kQuadrantColumns,
-                        ShapePolicy::kStorageBytes),
-                    q00);
+                gmFix.quantPre = QuantMode_t::F322BF16;
             }
-            args.sync->MutexUnlock(MutexResource::AicL1Bank, l1Mutex,
-                                   head.l1BankId, Stage::C4, Pipe::Mte2);
-            args.sync->Set(SyncPoint::C4PayloadFree, head.workspaceSlot,
-                           workspaceGeneration, Stage::C4,
-                           currentAbi ? Pipe::Control : Pipe::Mte2);
-            continue;
+            AscendC::Fixpipe<InputT, float, AscendC::CFG_ROW_MAJOR>(
+                akkGm_[AOutputOffset(args_.tiling, chunk, valueHead) +
+                       32 * Shape::kChunkRows],
+                l0C, gmFix);
+            // V3 已写回 q00/q01/q11；本次 q10 Fixpipe 完成后，公开 Akk
+            // 的四个象限全部为最终值，不需要再从 GM 回读或重复 MMAD。
         }
-
-        const Offset lane = cube_detail::LaneBase(head);
-        const Offset l0cLane =
-            L0cPolicy::HeadLaneBase(head.groupLocalHead);
-        const BufferSpan bCurrent = cube_detail::L1Span(
-            head, "B-current", args.workgroupId, lane, 0x1000U,
-            l1Generation);
-        args.ops->Load(
-            Stage::C4,
-            cube_detail::CubeSubspan(payload, "B-fp32", 0x2000U, 0x1000U),
-            bCurrent);
-        const Offset x0 = cube_detail::X0Resident(head, args.key.akkStorage);
-        const Offset x1 = cube_detail::X1Resident(head, args.key.akkStorage);
-        const BufferSpan x0Resident = cube_detail::L1Span(
-            head, "X0-resident", args.workgroupId, x0, 0x1000U,
-            l1Generation);
-        const BufferSpan x1Resident = cube_detail::L1Span(
-            head, "X1-resident", args.workgroupId, x1, 0x1000U,
-            l1Generation);
-        args.ops->Load(
-            Stage::C4,
-            cube_detail::CubeSubspan(payload, "X0-fp32", 0x0000U, 0x1000U),
-            x0Resident);
-        args.ops->Load(
-            Stage::C4,
-            cube_detail::CubeSubspan(payload, "X1-fp32", 0x1000U, 0x1000U),
-            x1Resident);
-
-        if (args.key.akkStorage == AkkStorage::TwoByteAbi) {
-            const Offset akk = cube_detail::Akk2BResident(head);
-            const Offset columns = Akk2BPackPolicy::kQuadrantColumns;
-            const Offset bottomRows = validRows - quadrantRows;
-            const BufferSpan q00 = cube_detail::L1MatrixSpan(
-                head, "Akk-q00", args.workgroupId,
-                akk + Akk2BPackPolicy::kQ00.offset, quadrantRows, columns,
-                columns, ShapePolicy::kStorageBytes, l1Generation);
-            const BufferSpan q01 = cube_detail::L1MatrixSpan(
-                head, "Akk-q01", args.workgroupId,
-                akk + Akk2BPackPolicy::kQ01.offset, quadrantRows, columns,
-                columns, ShapePolicy::kStorageBytes, l1Generation);
-            const BufferSpan q11 = cube_detail::L1MatrixSpan(
-                head, "Akk-q11", args.workgroupId,
-                akk + Akk2BPackPolicy::kQ11.offset, quadrantRows, columns,
-                columns, ShapePolicy::kStorageBytes, l1Generation);
-            if (currentAbi) {
-                // 待确认的二维 DataCopy 约束：每个源都是 ld=64 的公开 AkkOut
-                // 矩形区域，每个目标都是其最终紧凑 ld=32 象限。这些搬运是
-                // Current ABI 唯一的中转路径。
-                args.ops->Load(
-                    Stage::C4,
-                    cube_detail::SymbolicGmMatrixSpan(
-                        head, "AkkOut-q00-ld64", 0U, 0U, quadrantRows,
-                        columns, ShapePolicy::kBt,
-                        ShapePolicy::kStorageBytes, workspaceGeneration),
-                    q00);
-                // q01 是必需的公开输出，但不是有用的 GM 输入：直接在最终 L1
-                // 地址写入其已知零值，不再回读公开的零值分块。
-                args.ops->Fill(Stage::C4, q01, 0U);
-                if (bottomRows < quadrantRows) {
-                    args.ops->Fill(Stage::C4, q11, 0U);
-                    args.sync->Local(LocalDependency::Mte2FillToLoadWaw,
-                                     Stage::C4);
-                    args.sync->PipeBarrier(MutexResource::Mte2Overwrite,
-                                           head.l1BankId, Stage::C4,
-                                           Pipe::Mte2);
-                }
-                args.ops->Load(
-                    Stage::C4,
-                    cube_detail::SymbolicGmMatrixSpan(
-                        head, "AkkOut-q11-valid-ld64", quadrantRows,
-                        quadrantRows, bottomRows, columns, ShapePolicy::kBt,
-                        ShapePolicy::kStorageBytes, workspaceGeneration),
-                    cube_detail::L1MatrixSpan(
-                        head, "Akk-q11-valid-ld32", args.workgroupId,
-                        akk + Akk2BPackPolicy::kQ11.offset, bottomRows,
-                        columns, columns, ShapePolicy::kStorageBytes,
-                        l1Generation));
-            } else {
-                args.ops->Load(
-                    Stage::C4,
-                    cube_detail::CubeMatrixSubspan(
-                        cube_detail::CubeSubspan(
-                            payload, "X0-tau-parent", 0x3000U, 0x0800U),
-                        "X0-tau", 0U, 0U, quadrantRows, columns, columns,
-                            ShapePolicy::kStorageBytes),
-                    q00);
-                // q01 在数学上恒为零。直接在最终 L1 地址写入一次，避免写出再
-                // 重新装载 GM 零值分块。
-                args.ops->Fill(Stage::C4, q01, 0U);
-                args.ops->Load(
-                    Stage::C4,
-                    cube_detail::CubeMatrixSubspan(
-                        cube_detail::CubeSubspan(
-                            payload, "X1-tau-parent", 0x3800U, 0x0800U),
-                        "X1-tau", 0U, 0U, quadrantRows, columns, columns,
-                        ShapePolicy::kStorageBytes),
-                    q11);
-            }
-        } else {
-            // X0/X1 已占用 q00/q11。q01 必须通过已验证的 MTE2 填充操作直接在
-            // 最终地址清零，禁止通过 L1 内部移动实现。
-            const Offset q01 = cube_detail::AkkFp32Resident(head) + 0x1000U;
-            args.ops->Fill(
-                Stage::C4,
-                cube_detail::L1Span(head, "Akk-q01-zero", args.workgroupId,
-                                    q01, 0x1000U, l1Generation),
-                0U);
-        }
-
-        args.sync->MutexUnlock(MutexResource::AicL1Bank, l1Mutex,
-                               head.l1BankId, Stage::C4, Pipe::Mte2);
-
-        // 仅当上述所有已选择的 MTE2 搬运完成后，该载荷存储区才能切换语义
-        // 并供下一阶段复用。
-        args.sync->Set(SyncPoint::C4PayloadFree, head.workspaceSlot,
-                       workspaceGeneration, Stage::C4, Pipe::Mte2);
-
-        // C4 只消费阶段入口已有的 B/X0；本阶段生成的 T 不在 C4 内读取。
-        const Offset t = cube_detail::TResident(head, args.key.akkStorage);
-        const BufferSpan tL0c = cube_detail::SymbolicL0cSpan(
-            head, "T-L0C", args.workgroupId, L0cPolicy::kC4T.size,
-            l0cLane + L0cPolicy::kC4T.offset);
-        const std::uint64_t operandGeneration =
-            L0OperandGenerationFor(head, L0OperandUse::C4);
-        const BufferSpan bL0a = cube_detail::L0OperandSpan(
-            head, "C4-B-L0A", MemorySpace::L0A, args.workgroupId,
-            L0aPolicy::kC45Operand.offset, L0aPolicy::kC45Operand.size,
-            operandGeneration);
-        const BufferSpan x0L0b = cube_detail::L0OperandSpan(
-            head, "C4-X0-L0B", MemorySpace::L0B, args.workgroupId,
-            L0bPolicy::kC45Operand.offset, L0bPolicy::kC45Operand.size,
-            operandGeneration);
-        args.sync->Local(LocalDependency::Mte2ToMte1Inputs, Stage::C4);
-        args.sync->MutexLock(MutexResource::AicL1Bank, l1Mutex,
-                             head.l1BankId, Stage::C4, Pipe::Mte1);
-        args.sync->MutexLock(MutexResource::AicL0OperandBank,
-                             l0OperandMutex, head.l0OperandBankId,
-                             Stage::C4, Pipe::Mte1);
-        // 正式实现中的 L1->L0A/L0B 搬运位于这两个 MTE1 锁之间。
-        args.sync->MutexUnlock(MutexResource::AicL0OperandBank,
-                               l0OperandMutex, head.l0OperandBankId,
-                               Stage::C4, Pipe::Mte1);
-        args.sync->MutexUnlock(MutexResource::AicL1Bank, l1Mutex,
-                               head.l1BankId, Stage::C4, Pipe::Mte1);
-        args.sync->MutexLock(MutexResource::AicL0cLowerHalf,
-                             l0cLowerMutex, head.l0cBankId, Stage::C4,
-                             Pipe::Cube);
-        args.sync->MutexLock(MutexResource::AicL0OperandBank,
-                             l0OperandMutex, head.l0OperandBankId,
-                             Stage::C4, Pipe::Cube);
-        args.ops->Mmad(Stage::C4, MatrixFormula::TEqualsBMatmulX0,
-                       bCurrent, x0Resident, tL0c, bL0a, x0L0b,
-                       MatrixStorage::Fp32, MatrixStorage::Fp32, 32U, 32U,
-                       32U);
-        args.sync->MutexUnlock(MutexResource::AicL0OperandBank,
-                               l0OperandMutex, head.l0OperandBankId,
-                               Stage::C4, Pipe::Cube);
-        args.sync->MutexUnlock(MutexResource::AicL0cLowerHalf,
-                               l0cLowerMutex, head.l0cBankId, Stage::C4,
-                               Pipe::Cube);
-        args.sync->Local(LocalDependency::CubeToMte1OperandReuse,
-                         Stage::C4);
-        args.sync->Local(LocalDependency::CubeToFixpipeOutput, Stage::C4);
-        args.sync->MutexLock(MutexResource::AicL0cLowerHalf,
-                             l0cLowerMutex, head.l0cBankId, Stage::C4,
-                             Pipe::Fixpipe);
-        args.sync->MutexLock(MutexResource::AicL1Bank, l1Mutex,
-                             head.l1BankId, Stage::C4, Pipe::Fixpipe);
-        args.ops->Store(
-            Stage::C4, tL0c,
-            cube_detail::L1Span(head, "T-resident", args.workgroupId, t,
-                                0x1000U, l1Generation));
-        args.sync->MutexUnlock(MutexResource::AicL1Bank, l1Mutex,
-                               head.l1BankId, Stage::C4, Pipe::Fixpipe);
-        args.sync->MutexUnlock(MutexResource::AicL0cLowerHalf,
-                               l0cLowerMutex, head.l0cBankId, Stage::C4,
-                               Pipe::Fixpipe);
+        AscendC::Mutex::Unlock<PIPE_FIX>(l0cMutex);
     }
-}
 
-inline void StageC5_AicComputeAkkQ10EqualsNegX1MatmulT(
-    const CubeStageArgs &args)
-{
-    // M>32：读取 C4 常驻的 X1/T，计算 Akk_q10=-X1@T，再把 q10
-    //       写入最终 Akk 常驻区。
-    // M<=32：q00 已由 C4 常驻，本 Stage 不读取 X1/T，也不提交 MMAD。
-    if (!cube_detail::ValidArgs(args)) {
-        return;
-    }
-    for (const HeadTask &head : args.work->group.heads) {
-        if (!head.active) {
-            continue;
-        }
-        const std::uint64_t l1Generation = head.l1Generation;
-        const Offset validRows = args.work->group.chunk.validRows;
-        const bool hasQ10 = validRows > Akk2BPackPolicy::kQuadrantRows;
-        if (!hasQ10) {
-            // C4 的 MTE2 完成后 q00 已常驻；该尾块不生成 T 或 q10。
-            // C7 对同一 L1 MutexID 的首次访问会直接等待 C4 完成。
-            continue;
-        }
-        const std::uint64_t workspaceGeneration = head.workspaceGeneration;
-        const Offset l0cLane =
-            L0cPolicy::HeadLaneBase(head.groupLocalHead);
-        // 同一 L1 MutexID 汇合 C4 的 MTE2 与 Fixpipe 两个生产者，C5 的
-        // MTE1 无需再消费两个独立的同核标志。
-        const SymbolicMutexId l1Mutex =
-            Arch35CubeMutexIds::L1Bank(head.l1BankId);
-        const SymbolicMutexId l0OperandMutex =
-            Arch35CubeMutexIds::L0OperandBank(head.l0OperandBankId);
-        const SymbolicMutexId l0cLowerMutex =
-            Arch35CubeMutexIds::L0cLowerHalf(head.l0cBankId);
-        const BufferSpan x1 = cube_detail::L1Span(
-            head, "X1-resident", args.workgroupId,
-            cube_detail::X1Resident(head, args.key.akkStorage), 0x1000U,
-            l1Generation);
-        const BufferSpan t = cube_detail::L1Span(
-            head, "T-resident", args.workgroupId,
-            cube_detail::TResident(head, args.key.akkStorage), 0x1000U,
-            l1Generation);
-        const BufferSpan y = cube_detail::SymbolicL0cSpan(
-            head, "Y-fp32-L0C", args.workgroupId, L0cPolicy::kC5Y.size,
-            l0cLane + L0cPolicy::kC5Y.offset);
-        const std::uint64_t operandGeneration =
-            L0OperandGenerationFor(head, L0OperandUse::C5);
-        const BufferSpan x1L0a = cube_detail::L0OperandSpan(
-            head, "C5-X1-L0A", MemorySpace::L0A, args.workgroupId,
-            L0aPolicy::kC45Operand.offset, L0aPolicy::kC45Operand.size,
-            operandGeneration);
-        const BufferSpan tL0b = cube_detail::L0OperandSpan(
-            head, "C5-T-L0B", MemorySpace::L0B, args.workgroupId,
-            L0bPolicy::kC45Operand.offset, L0bPolicy::kC45Operand.size,
-            operandGeneration);
-        args.sync->MutexLock(MutexResource::AicL1Bank, l1Mutex,
-                             head.l1BankId, Stage::C5, Pipe::Mte1);
-        args.sync->MutexLock(MutexResource::AicL0OperandBank,
-                             l0OperandMutex, head.l0OperandBankId,
-                             Stage::C5, Pipe::Mte1);
-        // 正式实现中的 L1->L0A/L0B 搬运位于这两个 MTE1 锁之间。
-        args.sync->MutexUnlock(MutexResource::AicL0OperandBank,
-                               l0OperandMutex, head.l0OperandBankId,
-                               Stage::C5, Pipe::Mte1);
-        args.sync->MutexUnlock(MutexResource::AicL1Bank, l1Mutex,
-                               head.l1BankId, Stage::C5, Pipe::Mte1);
-        args.sync->MutexLock(MutexResource::AicL0cLowerHalf,
-                             l0cLowerMutex, head.l0cBankId, Stage::C5,
-                             Pipe::Cube);
-        args.sync->MutexLock(MutexResource::AicL0OperandBank,
-                             l0OperandMutex, head.l0OperandBankId,
-                             Stage::C5, Pipe::Cube);
-        args.ops->Mmad(
-            Stage::C5, MatrixFormula::AkkLowerLeftEqualsNegX1MatmulT,
-            x1, t, y, x1L0a, tL0b, MatrixStorage::Fp32,
-            MatrixStorage::Fp32, 32U, 32U, 32U, false, true);
-        args.sync->MutexUnlock(MutexResource::AicL0OperandBank,
-                               l0OperandMutex, head.l0OperandBankId,
-                               Stage::C5, Pipe::Cube);
-        args.sync->MutexUnlock(MutexResource::AicL0cLowerHalf,
-                               l0cLowerMutex, head.l0cBankId, Stage::C5,
-                               Pipe::Cube);
-        args.sync->Local(LocalDependency::CubeToMte1OperandReuse,
-                         Stage::C5);
-        args.sync->Local(LocalDependency::CubeToFixpipeOutput, Stage::C5);
-        args.sync->MutexLock(MutexResource::AicL0cLowerHalf,
-                             l0cLowerMutex, head.l0cBankId, Stage::C5,
-                             Pipe::Fixpipe);
-        args.sync->MutexLock(MutexResource::AicL1Bank, l1Mutex,
-                             head.l1BankId, Stage::C5, Pipe::Fixpipe);
-        if (args.key.akkStorage == AkkStorage::TwoByteAbi) {
-            const Offset q10 = cube_detail::Akk2BResident(head) +
-                               Akk2BPackPolicy::kQ10.offset;
-            args.ops->StoreRounded(
-                Stage::C5, y,
-                cube_detail::L1Span(head, "Akk-q10-cast", args.workgroupId,
-                                    q10, Akk2BPackPolicy::kQ10.size,
-                                    l1Generation),
-                args.key.inputStorage);
-            if (args.key.abi == PrepareAbi::Current) {
-                // 待确认的 API 约束：同一份 L0C 结果必须支持第二个 Fixpipe 类型转换
-                // 目标，其 GM ld=64。不允许重复 MMAD，也不允许临时重排 L1/UB。
-                constexpr Offset kQuadrant = 32U;
-                const Offset bottom = validRows > kQuadrant
-                                          ? validRows - kQuadrant
-                                          : 0U;
-                if (bottom != 0U) {
-                    args.ops->StoreRounded(
-                        Stage::C5,
-                        cube_detail::CubeMatrixSubspan(
-                            y, "Y-q10-valid-ld32", 0U, 0U, bottom,
-                            kQuadrant, kQuadrant,
-                            ShapePolicy::kFp32Bytes),
-                        cube_detail::SymbolicGmMatrixSpan(
-                            head, "AkkOut-q10-valid-ld64", kQuadrant, 0U,
-                            bottom, kQuadrant, ShapePolicy::kBt,
-                            ShapePolicy::kStorageBytes,
-                            workspaceGeneration),
-                        args.key.inputStorage);
-                }
-            }
+    __aicore__ inline void StageC7(const ChunkRange &chunk,
+                                    uint32_t valueHead,
+                                    uint32_t localHead)
+    {
+        const uint32_t m = chunk.validRows > 32 ? 64 : 32;
+        const uint64_t slot = WorkspaceSlotBase(
+            workgroup_, localHead, Workspace::kArch35WorkgroupStride);
+        const uint32_t lane = L1::kHeadLane[localHead];
+        const uint8_t l1Mutex = Arch35Mutex::kAicL1[localHead];
+        const uint8_t operandMutex = Arch35Mutex::kAicL0Operand;
+        const uint8_t lowerL0cMutex = Arch35Mutex::kAicL0cLower[localHead];
+        const uint8_t upperL0cMutex = Arch35Mutex::kAicL0cUpper[localHead];
+        const uint32_t l0cLane = localHead * 64 * 1024;
+
+        AscendC::GlobalTensor<InputT> kBetaRelay;
+        AscendC::GlobalTensor<ValueT> vBetaRelay;
+        kBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(
+            args_.workspace + slot + Workspace::kPayload +
+            Workspace::kKBetaG));
+        vBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ ValueT *>(
+            args_.workspace + slot + Workspace::kPayload +
+            Workspace::kVBeta));
+
+        auto akkL1 = resource_.l1Buf.template GetBufferByByte<InputT>(
+            L1::kAkk + localHead * L1::kAkkStride);
+        auto kBetaL1 =
+            resource_.l1Buf.template GetBufferByByte<InputT>(lane);
+        auto vBetaL1 = resource_.l1Buf.template GetBufferByByte<ValueT>(
+            lane + Shape::kTwoByteMatrixBytes);
+
+        // 两个 RHS 平面各搬一次；它们在 L1 中保持独立平面，不拼成
+        // [M,256]，也不在 L1 内移动。
+        AscendC::Mutex::Lock<PIPE_MTE2>(l1Mutex);
+        AscendC::Nd2NzParams rhsCopy{};
+        rhsCopy.ndNum = 1;
+        rhsCopy.nValue = m;
+        rhsCopy.dValue = Shape::kHeadDim;
+        rhsCopy.srcDValue = Shape::kHeadDim;
+        rhsCopy.srcNdMatrixStride = 0;
+        rhsCopy.dstNzNStride = 1;
+        rhsCopy.dstNzC0Stride = m;
+        rhsCopy.dstNzMatrixStride = 0;
+        // TODO：InputT 与 ValueT 均为两字节编译分支；若后续开放其他
+        // dtype，必须重新计算第二平面的固定字节偏移和 NZ 参数。
+        AscendC::DataCopy(kBetaL1, kBetaRelay, rhsCopy);
+        AscendC::DataCopy(vBetaL1, vBetaRelay, rhsCopy);
+        AscendC::Mutex::Unlock<PIPE_MTE2>(l1Mutex);
+        // 两个 RHS 已完整进入 L1，后续 Cube 不再读取 workspace；立即归还
+        // 当前 slot，使下一组 V0/V1 与本组 C7 的 MMAD/Fixpipe 重叠。
+        AscendC::CrossCoreSetFlag<0x4, PIPE_MTE2>(
+            Arch35AicFlagId(Arch35CrossCore::kFreeBase, localHead));
+
+        auto akkL0 = resource_.l0ABuf.template GetBufferByByte<InputT>(0);
+        auto kBetaL0 =
+            resource_.l0BBuf.template GetBufferByByte<InputT>(0);
+        auto vBetaL0 = resource_.l0BBuf.template GetBufferByByte<ValueT>(
+            Shape::kTwoByteMatrixBytes);
+        auto wL0c =
+            resource_.l0CBuf.template GetBufferByByte<float>(l0cLane);
+        auto uL0c = resource_.l0CBuf.template GetBufferByByte<float>(
+            l0cLane + 32 * 1024);
+
+        AscendC::Mutex::Lock<PIPE_MTE1>(l1Mutex);
+        AscendC::Mutex::Lock<PIPE_MTE1>(operandMutex);
+        AscendC::LoadData2DParamsV2 loadA{};
+        loadA.mStartPosition = 0;
+        loadA.kStartPosition = 0;
+        loadA.mStep = m / 16;
+        loadA.kStep = m / 16;
+        loadA.srcStride = Shape::kChunkRows / 16;
+        loadA.dstStride = m / 16;
+        loadA.ifTranspose = false;
+        loadA.sid = 0;
+        // TODO：确认 C4/C5 的 q00/q01/q10/q11 NZ 常驻布局可由这一次
+        // LoadData 直接组装为 m x m L0A，禁止在 L1 内重排。
+        AscendC::LoadData(akkL0, akkL1, loadA);
+
+        AscendC::LoadData2DParamsV2 loadRhs{};
+        loadRhs.mStartPosition = 0;
+        loadRhs.kStartPosition = 0;
+        loadRhs.mStep = m / 16;
+        loadRhs.kStep = Shape::kHeadDim / 16;
+        loadRhs.srcStride = m / 16;
+        loadRhs.dstStride = m / 16;
+        loadRhs.ifTranspose = true;
+        loadRhs.sid = 0;
+        AscendC::LoadData(kBetaL0, kBetaL1, loadRhs);
+        AscendC::LoadData(vBetaL0, vBetaL1, loadRhs);
+        AscendC::Mutex::Unlock<PIPE_MTE1>(operandMutex);
+        AscendC::Mutex::Unlock<PIPE_MTE1>(l1Mutex);
+
+        AscendC::MmadParams mmad{};
+        mmad.m = m;
+        mmad.n = Shape::kHeadDim;
+        mmad.k = m;
+        mmad.cmatrixInitVal = true;
+        mmad.cmatrixSource = false;
+        mmad.unitFlag = 0;
+
+        AscendC::Mutex::Lock<PIPE_M>(operandMutex);
+        AscendC::Mutex::Lock<PIPE_M>(lowerL0cMutex);
+        AscendC::Mmad(wL0c, akkL0, kBetaL0, mmad); // 计算 W=Akk@K_beta_g。
+        AscendC::Mutex::Unlock<PIPE_M>(lowerL0cMutex);
+        AscendC::Mutex::Unlock<PIPE_M>(operandMutex);
+
+        AscendC::Mutex::Lock<PIPE_M>(operandMutex);
+        AscendC::Mutex::Lock<PIPE_M>(upperL0cMutex);
+        AscendC::Mmad(uL0c, akkL0, vBetaL0, mmad); // 计算 U=Akk@V_beta。
+        AscendC::Mutex::Unlock<PIPE_M>(upperL0cMutex);
+        AscendC::Mutex::Unlock<PIPE_M>(operandMutex);
+
+        const uint64_t outputOffset = HeadTensorOffset(
+            args_.tiling, chunk, valueHead, Shape::kHeadDim);
+        AscendC::Mutex::Lock<PIPE_FIX>(lowerL0cMutex);
+        auto wFix = AscendC::FixpipeParamsV220(
+            Shape::kHeadDim, chunk.validRows, m,
+            Shape::kHeadDim, false);
+        if constexpr (std::is_same_v<InputT, half>) {
+            wFix.quantPre = QuantMode_t::F322F16;
         } else {
-            const Offset q10 = cube_detail::AkkFp32Resident(head) + 0x2000U;
-            args.ops->Store(
-                Stage::C5, y,
-                cube_detail::L1Span(head, "Akk-q10-fp32", args.workgroupId,
-                                    q10, 0x1000U, l1Generation));
+            wFix.quantPre = QuantMode_t::F322BF16;
         }
-        args.sync->MutexUnlock(MutexResource::AicL1Bank, l1Mutex,
-                               head.l1BankId, Stage::C5, Pipe::Fixpipe);
-        args.sync->MutexUnlock(MutexResource::AicL0cLowerHalf,
-                               l0cLowerMutex, head.l0cBankId, Stage::C5,
-                               Pipe::Fixpipe);
-    }
-}
+        AscendC::Fixpipe<InputT, float, AscendC::CFG_ROW_MAJOR>(
+            wGm_[outputOffset], wL0c, wFix);
+        AscendC::Mutex::Unlock<PIPE_FIX>(lowerL0cMutex);
 
-inline void StageC7_AicComputeWAndU(const CubeStageArgs &args)
-{
-    // 输入：C5 完成的 Akk，以及 V6 生成的 K_beta_g、V_beta 两个矩阵乘右操作数平面。
-    // 计算：W=Akk@K_beta_g，U=Akk@V_beta；仅上半区有效的尾块只消费 q00。
-    // 输出：将有效行 W、U 分别舍入并写回公开 GM 输出。
-    if (!cube_detail::ValidArgs(args)) {
-        return;
-    }
-    for (const HeadTask &head : args.work->group.heads) {
-        if (!head.active) {
-            continue;
-        }
-        const std::uint64_t workspaceGeneration = head.workspaceGeneration;
-        const std::uint64_t l1Generation = head.l1Generation;
-        const Offset validRows = args.work->group.chunk.validRows;
-        const Offset l0cLane =
-            L0cPolicy::HeadLaneBase(head.groupLocalHead);
-        args.sync->Wait(SyncPoint::V6RhsReady, head.workspaceSlot,
-                        workspaceGeneration, Stage::C7, Pipe::Mte2);
-        if (head.qkLastConsumer) {
-            // 协作组内的头连续排列，C7 按升序访问；R>4 时也包含更早的本地
-            // 分组。因此到达最后一个头时，该 AIC 已观察到所有 AIV 缓存
-            // 读取方发出的 V6RhsReady，与 AIV 的完成顺序无关。
-            args.sync->Set(SyncPoint::QkCacheFree, head.qkCacheSlot,
-                           head.qkCacheGeneration + 1U, Stage::C7,
-                           Pipe::Control);
-        }
-
-        const BufferSpan payload = args.workspace->Span(
-            WorkspaceRegion::SharedPayload, head.workspaceSlot,
-            workspaceGeneration);
-        const Offset lane = cube_detail::LaneBase(head);
-        const bool hasQ10 =
-            validRows > Akk2BPackPolicy::kQuadrantRows;
-        const Offset rhsRows =
-            hasQ10 ? ShapePolicy::kBt : Akk2BPackPolicy::kQuadrantRows;
-        const Offset rhsPlaneBytes =
-            rhsRows * ShapePolicy::kK * ShapePolicy::kStorageBytes;
-        const SymbolicMutexId l1Mutex =
-            Arch35CubeMutexIds::L1Bank(head.l1BankId);
-        const SymbolicMutexId l0OperandMutex =
-            Arch35CubeMutexIds::L0OperandBank(head.l0OperandBankId);
-        const SymbolicMutexId l0cLowerMutex =
-            Arch35CubeMutexIds::L0cLowerHalf(head.l0cBankId);
-        const SymbolicMutexId l0cUpperMutex =
-            Arch35CubeMutexIds::L0cUpperHalf(head.l0cBankId);
-        const BufferSpan rhs = cube_detail::L1Span(
-            head, "C7-planar-RHS", args.workgroupId, lane, 0x8000U,
-            l1Generation);
-        args.sync->MutexLock(MutexResource::AicL1Bank, l1Mutex,
-                             head.l1BankId, Stage::C7, Pipe::Mte2);
-        if (hasQ10) {
-            args.ops->Load(
-                Stage::C7,
-                cube_detail::CubeSubspan(payload, "Kbeta-and-Vbeta",
-                                         0x0000U, 0x8000U),
-                rhs);
+        AscendC::Mutex::Lock<PIPE_FIX>(upperL0cMutex);
+        auto uFix = AscendC::FixpipeParamsV220(
+            Shape::kValueDim, chunk.validRows, m,
+            Shape::kValueDim, false);
+        if constexpr (std::is_same_v<ValueT, half>) {
+            uFix.quantPre = QuantMode_t::F322F16;
         } else {
-            // 保持固定的平面偏移，同时跳过两个未使用的下半区；不发生 L1
-            // 内部移动，也不根据尾块切换语义。
-            args.ops->Load(
-                Stage::C7,
-                cube_detail::CubeSubspan(payload, "K-beta-g-top32", 0x0000U,
-                                         rhsPlaneBytes),
-                cube_detail::CubeSubspan(rhs, "K-beta-g-top32", 0x0000U,
-                                         rhsPlaneBytes));
-            args.ops->Load(
-                Stage::C7,
-                cube_detail::CubeSubspan(payload, "V-beta-top32", 0x4000U,
-                                         rhsPlaneBytes),
-                cube_detail::CubeSubspan(rhs, "V-beta-top32", 0x4000U,
-                                         rhsPlaneBytes));
+            uFix.quantPre = QuantMode_t::F322BF16;
         }
-        args.sync->MutexUnlock(MutexResource::AicL1Bank, l1Mutex,
-                               head.l1BankId, Stage::C7, Pipe::Mte2);
-        args.sync->Local(LocalDependency::Mte2ToMte1Inputs, Stage::C7);
-        // GM 载荷是两个平面式 [64,128] 矩阵，不是按行交错的 [64,256]。
-        // 因此完整路径将一个逻辑乘积展开为两个 N=128、按象限打包的
-        // MMAD；仅上半区有效的尾块则使用 q00 和各平面右操作数的前 32 行。
-        const BufferSpan akk = cube_detail::L1Span(
-            head, "Akk-resident", args.workgroupId,
-            args.key.akkStorage == AkkStorage::TwoByteAbi
-                ? cube_detail::Akk2BResident(head)
-                : cube_detail::AkkFp32Resident(head),
-            args.key.akkStorage == AkkStorage::TwoByteAbi ? 0x2000U : 0x4000U,
-            l1Generation);
-        const BufferSpan kBetaG = cube_detail::CubeSubspan(
-            rhs, "K-beta-g-RHS", 0x0000U, rhsPlaneBytes);
-        const BufferSpan vBeta = cube_detail::CubeSubspan(
-            rhs, "V-beta-RHS", 0x4000U, rhsPlaneBytes);
-        const BufferSpan wL0c = cube_detail::SymbolicL0cSpan(
-            head, "W-fp32-L0C", args.workgroupId, L0cPolicy::kC7W.size,
-            l0cLane + L0cPolicy::kC7W.offset);
-        const BufferSpan uL0c = cube_detail::SymbolicL0cSpan(
-            head, "U-fp32-L0C", args.workgroupId, L0cPolicy::kC7U.size,
-            l0cLane + L0cPolicy::kC7U.offset);
-        const Offset akkL0aBytes =
-            hasQ10 ? L0aPolicy::kC7Akk.size
-                   : Akk2BPackPolicy::kQuadrantBytes;
-        const std::uint64_t operandGeneration =
-            L0OperandGenerationFor(head, L0OperandUse::C7);
-        const BufferSpan akkL0a = cube_detail::L0OperandSpan(
-            head, "C7-Akk-L0A", MemorySpace::L0A, args.workgroupId,
-            L0aPolicy::kC7Akk.offset, akkL0aBytes, operandGeneration);
-        const BufferSpan kBetaL0b = cube_detail::L0OperandSpan(
-            head, "C7-Kbeta-L0B", MemorySpace::L0B, args.workgroupId,
-            L0bPolicy::kC7KBeta.offset, rhsPlaneBytes, operandGeneration);
-        const BufferSpan vBetaL0b = cube_detail::L0OperandSpan(
-            head, "C7-Vbeta-L0B", MemorySpace::L0B, args.workgroupId,
-            L0bPolicy::kC7VBeta.offset, rhsPlaneBytes, operandGeneration);
-        args.sync->MutexLock(MutexResource::AicL1Bank, l1Mutex,
-                             head.l1BankId, Stage::C7, Pipe::Mte1);
-        args.sync->MutexLock(MutexResource::AicL0OperandBank,
-                             l0OperandMutex, head.l0OperandBankId,
-                             Stage::C7, Pipe::Mte1);
-        // 正式实现一次装入 Akk、Kbeta 和 Vbeta，随后两次 MMAD 只读复用。
-        args.sync->MutexUnlock(MutexResource::AicL0OperandBank,
-                               l0OperandMutex, head.l0OperandBankId,
-                               Stage::C7, Pipe::Mte1);
-        args.sync->MutexUnlock(MutexResource::AicL1Bank, l1Mutex,
-                               head.l1BankId, Stage::C7, Pipe::Mte1);
-        args.sync->MutexLock(MutexResource::AicL0OperandBank,
-                             l0OperandMutex, head.l0OperandBankId,
-                             Stage::C7, Pipe::Cube);
-        args.sync->MutexLock(MutexResource::AicL0cLowerHalf,
-                             l0cLowerMutex, head.l0cBankId, Stage::C7,
-                             Pipe::Cube);
-        // W 和 U 的 L0C 目标互不重叠，因此第二个 MMAD 不会覆盖第一个 MMAD
-        // 仍被 Fixpipe 读取的源数据。
-        if (hasQ10) {
-            // 待确认的 API 约束：MTE1 必须将四个紧凑的 q00/q01/q10/q11
-            // 象限直接拼装到 L0A；不允许在 L1 内移动数据。
-            args.ops->MmadQuadrantPackedLhs(
-                Stage::C7, MatrixFormula::WEqualsAkkMatmulKBetaG, akk,
-                kBetaG, wL0c, akkL0a, kBetaL0b,
-                FromInputStorage(args.key.inputStorage),
-                FromInputStorage(args.key.inputStorage),
-                Akk2BPackPolicy::kQuadrantRows,
-                Akk2BPackPolicy::kQuadrantColumns, 128U, 64U);
-        } else {
-            // M<=32 时，q01 在数学上恒为零，且输出下半行会被丢弃。仅消费 V3
-            // 的紧凑 q00 和右操作数前 32 行；q10/q11 既不物化，也不读取。
-            const BufferSpan q00 = cube_detail::CubeMatrixSubspan(
-                akk, "Akk-q00", 0U, 0U,
-                Akk2BPackPolicy::kQuadrantRows,
-                Akk2BPackPolicy::kQuadrantColumns,
-                Akk2BPackPolicy::kQuadrantColumns,
-                ShapePolicy::kStorageBytes);
-            const BufferSpan kBetaGTop = cube_detail::CubeMatrixSubspan(
-                kBetaG, "K-beta-g-top32", 0U, 0U,
-                Akk2BPackPolicy::kQuadrantRows, ShapePolicy::kK,
-                ShapePolicy::kK, ShapePolicy::kStorageBytes);
-            args.ops->Mmad(
-                Stage::C7, MatrixFormula::WEqualsAkkMatmulKBetaG, q00,
-                kBetaGTop, wL0c, akkL0a, kBetaL0b,
-                FromInputStorage(args.key.inputStorage),
-                FromInputStorage(args.key.inputStorage),
-                Akk2BPackPolicy::kQuadrantRows, ShapePolicy::kK,
-                Akk2BPackPolicy::kQuadrantColumns);
-        }
-        args.sync->MutexUnlock(MutexResource::AicL0cLowerHalf,
-                               l0cLowerMutex, head.l0cBankId, Stage::C7,
-                               Pipe::Cube);
-        args.sync->Local(LocalDependency::CubeToFixpipeOutput, Stage::C7);
-        args.sync->MutexLock(MutexResource::AicL0cLowerHalf,
-                             l0cLowerMutex, head.l0cBankId, Stage::C7,
-                             Pipe::Fixpipe);
-        if (validRows != 0U) {
-            args.ops->StoreRounded(
-                Stage::C7,
-                cube_detail::CubeMatrixSubspan(
-                    wL0c, "W-valid-fp32-ld128", 0U, 0U, validRows,
-                    ShapePolicy::kK, ShapePolicy::kK,
-                    ShapePolicy::kFp32Bytes),
-                cube_detail::SymbolicGmMatrixSpan(
-                    head, "W-valid-output-ld128", 0U, 0U, validRows,
-                    ShapePolicy::kK, ShapePolicy::kK,
-                    ShapePolicy::kStorageBytes, workspaceGeneration),
-                args.key.inputStorage);
-        }
-        args.sync->MutexUnlock(MutexResource::AicL0cLowerHalf,
-                               l0cLowerMutex, head.l0cBankId, Stage::C7,
-                               Pipe::Fixpipe);
-        // C7 将 Kbeta/Vbeta 放在互不重叠的 L0B 区域，并共享同一只读 Akk
-        // L0A 操作数。第二个 MMAD 的目标是 +32 KiB 处的 uL0c；policy.h 已证明
-        // 两个乘积完成后统一释放不会与 MTE1 竞争。
-        args.sync->MutexLock(MutexResource::AicL0cUpperHalf,
-                             l0cUpperMutex, head.l0cBankId, Stage::C7,
-                             Pipe::Cube);
-        if (hasQ10) {
-            args.ops->MmadQuadrantPackedLhs(
-                Stage::C7, MatrixFormula::UEqualsAkkMatmulVBeta, akk,
-                vBeta, uL0c, akkL0a, vBetaL0b,
-                FromInputStorage(args.key.inputStorage),
-                FromInputStorage(args.key.valueStorage),
-                Akk2BPackPolicy::kQuadrantRows,
-                Akk2BPackPolicy::kQuadrantColumns, 128U, 64U);
-        } else {
-            const BufferSpan q00 = cube_detail::CubeMatrixSubspan(
-                akk, "Akk-q00", 0U, 0U,
-                Akk2BPackPolicy::kQuadrantRows,
-                Akk2BPackPolicy::kQuadrantColumns,
-                Akk2BPackPolicy::kQuadrantColumns,
-                ShapePolicy::kStorageBytes);
-            const BufferSpan vBetaTop = cube_detail::CubeMatrixSubspan(
-                vBeta, "V-beta-top32", 0U, 0U,
-                Akk2BPackPolicy::kQuadrantRows, ShapePolicy::kV,
-                ShapePolicy::kV, ShapePolicy::kStorageBytes);
-            args.ops->Mmad(
-                Stage::C7, MatrixFormula::UEqualsAkkMatmulVBeta, q00,
-                vBetaTop, uL0c, akkL0a, vBetaL0b,
-                FromInputStorage(args.key.inputStorage),
-                FromInputStorage(args.key.valueStorage),
-                Akk2BPackPolicy::kQuadrantRows, ShapePolicy::kV,
-                Akk2BPackPolicy::kQuadrantColumns);
-        }
-        args.sync->MutexUnlock(MutexResource::AicL0cUpperHalf,
-                               l0cUpperMutex, head.l0cBankId, Stage::C7,
-                               Pipe::Cube);
-        args.sync->MutexUnlock(MutexResource::AicL0OperandBank,
-                               l0OperandMutex, head.l0OperandBankId,
-                               Stage::C7, Pipe::Cube);
-        args.sync->Local(LocalDependency::CubeToMte1OperandReuse,
-                         Stage::C7);
-        args.sync->Local(LocalDependency::CubeToFixpipeOutput, Stage::C7);
-        args.sync->MutexLock(MutexResource::AicL0cUpperHalf,
-                             l0cUpperMutex, head.l0cBankId, Stage::C7,
-                             Pipe::Fixpipe);
-        if (validRows != 0U) {
-            args.ops->StoreRounded(
-                Stage::C7,
-                cube_detail::CubeMatrixSubspan(
-                    uL0c, "U-valid-fp32-ld128", 0U, 0U, validRows,
-                    ShapePolicy::kV, ShapePolicy::kV,
-                    ShapePolicy::kFp32Bytes),
-                cube_detail::SymbolicGmMatrixSpan(
-                    head, "U-valid-output-ld128", 0U, 0U, validRows,
-                    ShapePolicy::kV, ShapePolicy::kV,
-                    ShapePolicy::kStorageBytes, workspaceGeneration),
-                args.key.valueStorage);
-        }
-        args.sync->MutexUnlock(MutexResource::AicL0cUpperHalf,
-                               l0cUpperMutex, head.l0cBankId, Stage::C7,
-                               Pipe::Fixpipe);
-        // V0/V3/V6/C5 的就绪关系可传递地保证此前所有已启用的公开输出搬出均已完成。
-        // 因此本次 Fixpipe 完成后即为该槽位的最后一个使用方，并直接归还
-        // 下一代工作区凭据。
-        args.sync->Set(SyncPoint::SlotFree, head.workspaceSlot,
-                       workspaceGeneration + 1U, Stage::C7, Pipe::Fixpipe);
+        AscendC::Fixpipe<ValueT, float, AscendC::CFG_ROW_MAJOR>(
+            uGm_[outputOffset], uL0c, uFix);
+        AscendC::Mutex::Unlock<PIPE_FIX>(upperL0cMutex);
     }
-}
 
-} // namespace arch35
-} // namespace kda_prepare_pseudocode
+    PrepareKernelArgs args_{};
+    uint32_t workgroup_ = 0;
+    Catlass::Arch::Resource<Catlass::Arch::Ascend950> resource_{};
+    AscendC::GlobalTensor<InputT> akkGm_{};
+    AscendC::GlobalTensor<InputT> wGm_{};
+    AscendC::GlobalTensor<ValueT> uGm_{};
+};
 
-#endif // FLA_OPS_ASCENDC_KDA_CHUNK_KDA_FWD_PREPARE_PSEUDOCODE_ARCH35_CUBE_H
+} // namespace KdaPrepare::Arch35
+
+#endif // PSEUDOCODE_ARCH35_CHUNK_KDA_FWD_PREPARE_CUBE_H
