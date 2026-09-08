@@ -19,7 +19,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwd(gert::TilingContext *context)
                 OP_LOGE("ChunkGatedDeltaRuleFwd", "Invalid tiling context."),
                 return ge::GRAPH_FAILED);
     const platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
-    if (platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950) {
+    if (platform.GetCurNpuArch() == NpuArch::DAV_3510) {
         return Tiling4ChunkGatedDeltaRuleFwdArch35(context);
     }
     return Tiling4ChunkGatedDeltaRuleFwdArch22(context);
