@@ -530,6 +530,7 @@ private:
         AscendC::GlobalTensor<GateT> gateGm;
         gateGm.SetGlobalBuffer(reinterpret_cast<__gm__ GateT *>(
             CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G ? args_.g : args_.gk));
+        gateGm.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
             const uint64_t gateOffset = GateOffset(unit, chunk, head);
             if (chunk.validTokens == FWD_H_CHUNK) {
@@ -711,6 +712,7 @@ private:
         }
         AscendC::GlobalTensor<bfloat16_t> u;
         u.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.u));
+        u.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         AscendC::DataCopy(WorkBf16Slot(inputSlot), u[UOffset(unit, chunk, head)],
                           chunk.validTokens * FWD_H_V);
         if (writeRight) {
@@ -742,6 +744,7 @@ private:
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
             AscendC::GlobalTensor<bfloat16_t> u;
             u.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.u));
+            u.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
             AscendC::DataCopy(WorkBf16Slot(slot), u[UOffset(unit, chunk, head)], chunk.validTokens * FWD_H_V);
             if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
                 if (writeRight) {

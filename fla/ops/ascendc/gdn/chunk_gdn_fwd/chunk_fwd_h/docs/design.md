@@ -63,6 +63,12 @@ AIC 将当前 `W[M,K]` 与 `H[K,V]` 从 GM 搬到四个 round-head L1 槽，随�
 `P=W@H`。Stage0 不读取 kg/k_raw。tail chunk 先用 MTE2 `InitConstValue` 清零当前 W 槽，
 再覆盖有效 ND 行；Cube M 取 `AlignUp(valid_tokens,16)`。
 
+`W`、`U` 和 `g/gk` 的 GM 数据在一次算子执行中只消费一次，GM 读取使用 L2 cache bypass，
+避免流式数据挤占递推数据的缓存空间。若当前 work unit 完整覆盖一个 key head 的全部
+value-head consumer，则该份 `K` 只从 GM 读取一次并使用 bypass；consumer 跨 work unit 时
+保留默认 L2 策略。`initial_state`、递推 `H` 和 Stage1 `right` 存在跨 AIV/AIC 的重复读取
+或刚写即读关系，保留默认 L2 策略。
+
 - A2/A3：L0C 经 Fixpipe 将对齐后的 M 行写入 P GM scratch，补齐行恒为零；AIV 再以
   MTE2 只读取 `valid_tokens` 个有效行。
 - A5：L0C 经 Fixpipe 直接将有效行写入配对 AIV 的 local UB slot。

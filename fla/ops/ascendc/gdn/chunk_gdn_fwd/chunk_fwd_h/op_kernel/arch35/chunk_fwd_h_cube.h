@@ -313,6 +313,7 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(WReadyEvent(wSlot));
         AscendC::GlobalTensor<bfloat16_t> gmW;
         gmW.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.w) + WOffset(unit, chunk, head));
+        gmW.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         if (chunk.validTokens < FWD_H_CHUNK) {
             ClearL1(L1W(wSlot), FWD_H_L1_W_SLOT_BYTES);
         }
@@ -442,6 +443,18 @@ private:
         const uint64_t offset = FwdHKOffset(args_.tiling, unit.sequence.physicalBatch,
                                             binding.kh, chunk.tokenBegin);
         gmKg.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.k) + offset);
+        bool readOnce = true;
+        if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
+            const uint32_t groupSize = static_cast<uint32_t>(args_.tiling.vNumHead) /
+                                       static_cast<uint32_t>(args_.tiling.kNumHead);
+            const uint32_t groupBegin = binding.kh * groupSize;
+            const uint32_t unitBegin = unit.headRound.heads[0].hv;
+            const uint32_t unitEnd = unitBegin + unit.headRound.activeHeadCount;
+            readOnce = unitBegin <= groupBegin && unitEnd >= groupBegin + groupSize;
+        }
+        if (readOnce) {
+            gmKg.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+        }
         if constexpr (!STATE_V_FIRST) {
             auto gmLayout = tla::MakeLayout<bfloat16_t, LayoutLeftS2>(FWD_H_K, chunk.validTokens);
             auto tensorGm = tla::MakeTensor(gmKg, gmLayout, Catlass::Arch::PositionGM{});
