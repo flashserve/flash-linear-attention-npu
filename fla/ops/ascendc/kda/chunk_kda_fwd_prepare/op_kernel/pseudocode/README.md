@@ -48,14 +48,16 @@ TilingData 只承载 shape、调度和标量参数；设备架构不进入运行
 
 `USE_EXP2` 是独立的编译期布尔轴，`false` 和 `true` 都必须生成实例。正式
 TilingKey 声明应与 `chunk_fwd_h` 一致使用
-`ASCENDC_TPL_BOOL_DECL(USE_EXP2, 0, 1)`；当前其他 dtype/模式轴尚未冻结，
+`ASCENDC_TPL_BOOL_DECL(USE_EXP2, 0, 1)`；`q/k/v`、score 操作数及
+`Aqk/Akk/w/u/qg/kg/qg_scaled` 固定为 BF16，`gk` 固定为 FP32，gate/beta
+只允许 FP32 或 BF16。当前 gate/beta dtype 编码与其他模式轴尚未冻结，
 因此本伪代码只冻结该轴的 `0/1` 编码，不提交一个参数不完整的注册声明。
 正式 selector 的笛卡尔积中，每个合法的 dtype/模式组合都必须由
 `SEL_EXP` 一类宏同时展开 `USE_EXP2=0` 和 `USE_EXP2=1`，op_host 再把公开
 `use_exp2` 属性原样传给 `GET_TPL_TILING_KEY`。当前 host 小测试只验证
 `PrecomputedStep` policy 能选择两份 `ExpDomainTraits`，以及其中
 step 缩放、base-2 边界换算和 `Exp` 输入倍率的纯数值合同；它不编译架构头，也不验证
-设备 `Muls/Exp/Cast`、两字节舍入或尚未接入的 op_host 可达性。
+设备 `Muls/Exp/Cast`、BF16 舍入或尚未接入的 op_host 可达性。
 现有 `chunk_gated_delta_rule_fwd_prepare` 参考实现仍拦截 `false`，不能作为双分支
 依据；本设计新增的 `false` 路径以已支持双值的 `chunk_fwd_h` TilingKey 方式为准。
 
@@ -80,13 +82,13 @@ G[i,d] = sum(t=0..i, deltaG_ln[t,d] * gateScale)
 E(x) = exp(x * ln(2)), USE_EXP2=true
      = exp(x),         USE_EXP2=false
 
-qg = round_2B(Qhat * E(G))
-qg_scaled = round_2B(float(qg) * scale)
-kg = round_2B(Khat * E(Glast - G))
+qg = round_BF16(Qhat * E(G))
+qg_scaled = round_BF16(float(qg) * scale)
+kg = round_BF16(Khat * E(Glast - G))
 ```
 
 公开输出固定为 `gk/Aqk/Akk/w/u/qg/kg/qg_scaled`。`qg` 与 `qg_scaled` 是两块
-独立输出，后者必须从已经写成两字节的 `qg` 回读到 FP32 后再乘 `scale`，不能合并
+独立输出，后者必须从已经写成 BF16 的 `qg` 回读到 FP32 后再乘 `scale`，不能合并
 两次舍入。`K_beta_g/V_beta` 只在 V6 到 C7 之间中转，不是公开输出。
 
 `PrecomputedStep` 的输入是自然对数域、尚未累计的单 token `deltaG_ln`。该模式
@@ -242,7 +244,7 @@ Prepare/Finalize。
 连续 VF scratch。每个 112 KiB 区的 Stage 语义及 offset 直接定义在
 `chunk_kda_fwd_prepare_policy.h`，代码用
 `resource.ubBuf.GetBufferByByte<T>(offset)` 绑定 `LocalTensor`。
-V6 的 112 KiB 正好由 `qg/kg/V_beta/qgScaled/K_beta_g` 五块 16 KiB 两字节
+V6 的 112 KiB 正好由 `qg/kg/V_beta/qgScaled/K_beta_g` 五块 16 KiB BF16
 矩阵和一块 32 KiB FP32 `G` 组成，不再保留含义不明的 post scratch。
 
 ### Arch22
@@ -260,10 +262,9 @@ V6 的 112 KiB 正好由 `qg/kg/V_beta/qgScaled/K_beta_g` 五块 16 KiB 两字�
 `V_MTE2` shared-free 事件保证前一个 pair 的共享区消费者完成后，下一个 pair 的
 MTE2 才能覆盖共享 G/scratch；V6 还要先等 qgScaled 的 MTE3 读完共享区，不能仅
 依赖源码调用顺序。
-当前输入只支持 FP16/BF16。V6 按 token 行正序读取 FP32 `G[r]` 后，把同一行
-两字节 `qgScaled[r]` 写到共享 G 起始地址的 `256*r` 字节处；该地址始终位于下一条
-尚未读取的 G 行之前，因此无需移动 UB 数据。若以后支持 FP32 q dtype，这个覆盖关系
-不再成立，必须重新设计布局。
+当前 `q/k/v` 只支持 BF16。V6 按 token 行正序读取 FP32 `G[r]` 后，把同一行
+BF16 `qgScaled[r]` 写到共享 G 起始地址的 `256*r` 字节处；该地址始终位于下一条
+尚未读取的 G 行之前，因此无需移动 UB 数据。
 
 ## L1 和 workspace
 
@@ -275,7 +276,7 @@ L1 只供 Cube：
 | `[0x48000,0x4C000)` | 16 KiB | 四份 X0 |
 | `[0x4C000,0x50000)` | 16 KiB | 四份 X1/negX1 |
 | `[0x50000,0x54000)` | 16 KiB | 四份 T |
-| `[0x54000,0x5C000)` | 32 KiB | 四份 2-byte Akk 象限包 |
+| `[0x54000,0x5C000)` | 32 KiB | 四份 BF16 Akk 象限包 |
 | `[0x5C000,0x80000)` | 144 KiB | 保留 |
 
 每个 workspace slot 固定为 `0x1A400` 字节：
@@ -400,7 +401,7 @@ Mutex 只处理同核 pipe 交接，不是核间同步。AIC/AIV 仍用 mode `0x
 | AIC | `FIX_MTE1` | `fixToMte1_[0..3]` | `0/1/2/3` |
 
 两个 pair 复用共享 G/scratch 时，`V_MTE2` ID 0 是 shared-free：V0/V3/V6 的
-MTE2 写前 wait，V1/V3 在最后一次 V 读取后 set。V6 把两字节 qgScaled 原址写入
+MTE2 写前 wait，V1/V3 在最后一次 V 读取后 set。V6 把 BF16 qgScaled 原址写入
 FP32 G 的低 16 KiB，并在 MTE3 搬完 qgScaled 后通过 `MTE3_V -> V_MTE2` 传递
 shared-free。两个私有 UB slot 的内部 ping-pong 分别使用各 HardEvent 池的 ID 0/1。
 
@@ -434,12 +435,11 @@ MMAD 与 Fixpipe 不再读取 workspace，可以和 AIV 对下一组 slot 的生
   计算，始终使用自然底，与门控累计量选择 `USE_EXP2=true/false` 无关。
 - `gk` 的单位随该属性变化；消费它的 `chunk_fwd_h` 必须使用相同的
   `use_exp2`，禁止把自然对数 `gk` 交给 exp2 分支，或反向错配。
-- V1 的 base-2 等价截断范围按 score dtype 选择：BF16 为 `[-126,120]`，
-  FP16 为 `[-80,80]`；V6 固定为 `[-80,80]`。
+- V1 的 BF16 base-2 等价截断范围为 `[-126,120]`；V6 固定为 `[-80,80]`。
 - 目标 CANN 9.1 的 SIMD/Reg API 只提供自然底 `Exp`，因此两条分支都调用
   `Exp`，不能把 SIMT `Exp2` 混入单次 VF。
-- FP16 写回前先饱和到 `[-65504,65504]` 再 RINT；BF16 只做 BF16 RINT。
-- `K_beta_g` 保留两次 2-byte 舍入：
+- BF16 写回执行 BF16 RINT。
+- `K_beta_g` 保留两次 BF16 舍入：
   `round(Khat*E(G))`，转回 FP32 乘 beta，再次 round。
 - `qg_scaled` 先生成并舍入 `qg`，再转回 FP32 乘 scale 并二次舍入；两者都写入
   独立公开输出。
@@ -455,7 +455,7 @@ MMAD 与 Fixpipe 不再读取 workspace，可以和 AIV 对下一组 slot 的生
 2. C2 每次把完整 `[32,Ns]` L0C 以一条 Fixpipe 写成
    `[rawAqk_s; rawAkk_s]` 时的源布局和 stride。
 3. Arch35 `FixpipeParamsArch3510` 的 NZ/L1 与 row-major/UB 配置。
-4. Arch22 `FixpipeParamsV220` 的 BF16/FP16 quant 模式及 workspace 原址覆盖前
+4. Arch22 `FixpipeParamsV220` 的 BF16 quant 模式及 workspace 原址覆盖前
    可用的 MTE2/FIX 事件组合。
 5. C7 的四象限 Akk pack 到 L0A 的真实 NZ 排列。
 6. 四个单次 VF 的寄存器、mask、repeat/stride 和自然底 `Exp` 参数。

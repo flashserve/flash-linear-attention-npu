@@ -21,20 +21,17 @@
 
 namespace KdaPrepare {
 
-template <typename InputT, typename ValueT, typename GateT, typename BetaT,
-          typename ScoreT, typename CompilePolicy>
+template <typename GateT, typename BetaT, typename CompilePolicy>
 __aicore__ inline void RunPrepare(const PrepareKernelArgs &args)
 {
     if ASCEND_IS_AIV {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        Arch35::ChunkKdaFwdPrepareVec<InputT, ValueT, GateT, BetaT, ScoreT,
-                                      CompilePolicy>
+        Arch35::ChunkKdaFwdPrepareVec<GateT, BetaT, CompilePolicy>
             vec;
         vec.Init(args);
 #else
         AscendC::TPipe pipe;
-        Arch22::ChunkKdaFwdPrepareVec<InputT, ValueT, GateT, BetaT, ScoreT,
-                                      CompilePolicy>
+        Arch22::ChunkKdaFwdPrepareVec<GateT, BetaT, CompilePolicy>
             vec;
         vec.Init(args, &pipe);
 #endif
@@ -43,11 +40,11 @@ __aicore__ inline void RunPrepare(const PrepareKernelArgs &args)
 
     if ASCEND_IS_AIC {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        Arch35::ChunkKdaFwdPrepareCube<InputT, ValueT, ScoreT> cube;
+        Arch35::ChunkKdaFwdPrepareCube cube;
         cube.Init(args);
 #else
         AscendC::TPipe pipe;
-        Arch22::ChunkKdaFwdPrepareCube<InputT, ValueT, ScoreT> cube;
+        Arch22::ChunkKdaFwdPrepareCube cube;
         cube.Init(args, &pipe);
 #endif
         cube.Process();
@@ -58,8 +55,7 @@ __aicore__ inline void RunPrepare(const PrepareKernelArgs &args)
 
 // 本文件仍是公开接口布局尚未冻结的设计伪代码。入口形态直接使用真实
 // Ascend C kernel API，便于后续把已验证的 Stage 逐个迁移到正式算子目录。
-template <typename InputT, typename ValueT, typename GateT, typename BetaT,
-          typename ScoreT,
+template <typename GateT, typename BetaT,
           KdaPrepare::QkNormMode NORM_MODE,
           KdaPrepare::BetaMode BETA_MODE,
           KdaPrepare::GateMode GATE_MODE,
@@ -111,5 +107,5 @@ __global__ __aicore__ void chunk_kda_fwd_prepare_pseudocode(
 
     using Policy = KdaPrepare::PrepareCompilePolicy<
         NORM_MODE, BETA_MODE, GATE_MODE, USE_EXP2, SAFE_GATE>;
-    KdaPrepare::RunPrepare<InputT, ValueT, GateT, BetaT, ScoreT, Policy>(args);
+    KdaPrepare::RunPrepare<GateT, BetaT, Policy>(args);
 }

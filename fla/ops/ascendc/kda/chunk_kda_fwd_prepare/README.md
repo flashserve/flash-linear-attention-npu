@@ -14,6 +14,8 @@ ready/free 合同。代码直接采用 `GlobalTensor/LocalTensor`、`DataCopy`�
 也在申请或主循环现场逐项列出。
 `USE_EXP2=false` 与 `USE_EXP2=true` 都是必须保留的编译期路径，分别在自然对数域和
 log2 域完成同一组门控计算。
+本设计的 `q/k/v`、score 操作数及 `Aqk/Akk/w/u/qg/kg/qg_scaled` 固定为
+BF16，`gk` 固定为 FP32，gate/beta 只允许 FP32 或 BF16。
 设计只保留一套公开输出接口：`gk/Aqk/Akk/w/u/qg/kg/qg_scaled` 都写回 GM，
 不再按输出是否公开拆分编译模式。
 尚未由目标 CANN 头文件确认的布局和参数在调用现场标为 **TODO**；因此不能据此声称 A2/A3/A5

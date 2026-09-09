@@ -8,9 +8,7 @@
 #define PSEUDOCODE_ARCH22_CHUNK_KDA_FWD_PREPARE_CUBE_H
 
 #include <cstdint>
-#include <type_traits>
 #include "kernel_operator.h"
-#include "../chunk_kda_fwd_prepare_policy.h"
 #include "../chunk_kda_fwd_prepare_struct.h"
 #include "../chunk_kda_fwd_prepare_utils.h"
 
@@ -19,7 +17,6 @@ namespace KdaPrepare::Arch22 {
 constexpr AscendC::FixpipeConfig kFixpipeNz = {
     AscendC::CO2Layout::NZ, false};
 
-template <typename InputT, typename ValueT, typename ScoreT>
 class ChunkKdaFwdPrepareCube {
 public:
     __aicore__ inline void Init(const PrepareKernelArgs &args, AscendC::TPipe *pipe)
@@ -31,8 +28,8 @@ public:
         if (coreCount_ == 0) {
             return;
         }
-        wGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args_.w));
-        uGm_.SetGlobalBuffer(reinterpret_cast<__gm__ ValueT *>(args_.u));
+        wGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.w));
+        uGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.u));
 
         pipe_->InitBuffer(l1Buf_, L1::kPeak);
         pipe_->InitBuffer(l0ABuf_, 0x10000);
@@ -167,16 +164,16 @@ private:
     {
         const uint64_t slot = WorkspaceSlotBase(
             workgroup_, localHead, Workspace::kArch22WorkgroupStride);
-        AscendC::GlobalTensor<ScoreT> payload;
+        AscendC::GlobalTensor<bfloat16_t> payload;
         AscendC::GlobalTensor<float> rawPayload;
-        payload.SetGlobalBuffer(reinterpret_cast<__gm__ ScoreT *>(
+        payload.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + slot + Workspace::kPayload));
         rawPayload.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
             args_.workspace + slot + Workspace::kPayload));
         auto l1Bytes = l1Buf_.Get<uint8_t>();
-        auto scoreL1 = l1Bytes[L1::kHeadLane[localHead]].template ReinterpretCast<ScoreT>();
-        auto l0A = l0ABuf_.Get<ScoreT>();
-        auto l0B = l0BBuf_.Get<ScoreT>();
+        auto scoreL1 = l1Bytes[L1::kHeadLane[localHead]].template ReinterpretCast<bfloat16_t>();
+        auto l0A = l0ABuf_.Get<bfloat16_t>();
+        auto l0B = l0BBuf_.Get<bfloat16_t>();
         auto l0C = l0CBuf_.Get<float>();
 
         // 每个源矩阵只搬一次；MTE2 在搬运时把 ND 转为 L1 NZ。
@@ -189,15 +186,15 @@ private:
         copy.dstNzMatrixStride = 0;
         copy.nValue = Shape::kChunkRows;
         copy.dstNzC0Stride = Shape::kChunkRows;
-        AscendC::DataCopy(scoreL1[ScorePayload::kQPlus / sizeof(ScoreT)],
-                          payload[ScorePayload::kQPlus / sizeof(ScoreT)], copy);
-        AscendC::DataCopy(scoreL1[ScorePayload::kKPlus / sizeof(ScoreT)],
-                          payload[ScorePayload::kKPlus / sizeof(ScoreT)], copy);
+        AscendC::DataCopy(scoreL1[ScorePayload::kQPlus / sizeof(bfloat16_t)],
+                          payload[ScorePayload::kQPlus / sizeof(bfloat16_t)], copy);
+        AscendC::DataCopy(scoreL1[ScorePayload::kKPlus / sizeof(bfloat16_t)],
+                          payload[ScorePayload::kKPlus / sizeof(bfloat16_t)], copy);
         for (uint32_t s = 0; s < Shape::kSubChunkCount; ++s) {
             copy.nValue = Shape::kPrefixRows[s];
             copy.dstNzC0Stride = Shape::kPrefixRows[s];
-            AscendC::DataCopy(scoreL1[ScorePayload::kKMinus[s] / sizeof(ScoreT)],
-                              payload[ScorePayload::kKMinus[s] / sizeof(ScoreT)], copy);
+            AscendC::DataCopy(scoreL1[ScorePayload::kKMinus[s] / sizeof(bfloat16_t)],
+                              payload[ScorePayload::kKMinus[s] / sizeof(bfloat16_t)], copy);
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(mte2ToMte1_);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_FIX>(mte2ToFix_);
@@ -219,12 +216,12 @@ private:
             loadQ.dstStride = 2;
             loadQ.ifTranspose = false;
             loadQ.sid = 0;
-            AscendC::LoadData(l0A, scoreL1[ScorePayload::kQPlus / sizeof(ScoreT)], loadQ);
+            AscendC::LoadData(l0A, scoreL1[ScorePayload::kQPlus / sizeof(bfloat16_t)], loadQ);
 
             AscendC::LoadData2DParamsV2 loadK = loadQ;
             // TODO：确认 stacked 下半 16 行对应的 L0A 分形偏移。
             AscendC::LoadData(l0A[16 * Shape::kHeadDim],
-                              scoreL1[ScorePayload::kKPlus / sizeof(ScoreT)], loadK);
+                              scoreL1[ScorePayload::kKPlus / sizeof(bfloat16_t)], loadK);
 
             AscendC::LoadData2DParamsV2 loadKMinus{};
             // TODO：确认转置装入 L0B 时 mStep/kStep 和两个 stride 的单位。
@@ -237,7 +234,7 @@ private:
             loadKMinus.ifTranspose = true;
             loadKMinus.sid = 0;
             AscendC::LoadData(l0B,
-                scoreL1[ScorePayload::kKMinus[s] / sizeof(ScoreT)], loadKMinus);
+                scoreL1[ScorePayload::kKMinus[s] / sizeof(bfloat16_t)], loadKMinus);
             AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
             AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(fixToM_);
@@ -281,9 +278,9 @@ private:
             workgroup_, localHead, Workspace::kArch22WorkgroupStride);
         auto l1Bytes = l1Buf_.Get<uint8_t>();
         auto akkL1 = l1Bytes[L1::kAkk + localHead * L1::kAkkStride]
-                         .template ReinterpretCast<InputT>();
-        AscendC::GlobalTensor<InputT> akkSource;
-        akkSource.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(
+                         .template ReinterpretCast<bfloat16_t>();
+        AscendC::GlobalTensor<bfloat16_t> akkSource;
+        akkSource.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + slot + Workspace::kPayload + Workspace::kAkk));
         AscendC::Nd2NzParams akkCopy{};
         akkCopy.ndNum = 1;
@@ -426,33 +423,21 @@ private:
         const uint32_t bottomRows = chunk.validRows - 32;
         auto l1Fix = AscendC::FixpipeParamsV220(
             32, bottomRows, 32, Shape::kChunkRows, false);
-        if constexpr (std::is_same_v<InputT, half>) {
-            l1Fix.quantPre = QuantMode_t::F322F16;
-        } else if constexpr (std::is_same_v<InputT, bfloat16_t>) {
-            l1Fix.quantPre = QuantMode_t::F322BF16;
-        } else {
-            l1Fix.quantPre = QuantMode_t::NoQuant;
-        }
+        l1Fix.quantPre = QuantMode_t::F322BF16;
         auto akkL1 = l1Bytes[L1::kAkk + localHead * L1::kAkkStride]
-                         .template ReinterpretCast<InputT>();
+                         .template ReinterpretCast<bfloat16_t>();
         // q10 在两字节 NZ 中从 (N1=0,M1=2) 开始，即 32*16 个元素；
         // dstStride=64 个 datablock 跨过完整 64 行 M 轴。
-        AscendC::Fixpipe<InputT, float, kFixpipeNz>(
+        AscendC::Fixpipe<bfloat16_t, float, kFixpipeNz>(
             akkL1[L1::kAkkQ10Elements], l0C, l1Fix);
-        AscendC::GlobalTensor<InputT> akkOutput;
+        AscendC::GlobalTensor<bfloat16_t> akkOutput;
         akkOutput.SetGlobalBuffer(
-            reinterpret_cast<__gm__ InputT *>(args_.akk) +
+            reinterpret_cast<__gm__ bfloat16_t *>(args_.akk) +
             AOutputOffset(args_.tiling, chunk, valueHead));
         auto outputFix = AscendC::FixpipeParamsV220(
             32, bottomRows, 32, Shape::kChunkRows, false);
-        if constexpr (std::is_same_v<InputT, half>) {
-            outputFix.quantPre = QuantMode_t::F322F16;
-        } else if constexpr (std::is_same_v<InputT, bfloat16_t>) {
-            outputFix.quantPre = QuantMode_t::F322BF16;
-        } else {
-            outputFix.quantPre = QuantMode_t::NoQuant;
-        }
-        AscendC::Fixpipe<InputT, float, AscendC::CFG_ROW_MAJOR>(
+        outputFix.quantPre = QuantMode_t::F322BF16;
+        AscendC::Fixpipe<bfloat16_t, float, AscendC::CFG_ROW_MAJOR>(
             akkOutput[32 * Shape::kChunkRows], l0C, outputFix);
         AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(fixToMte1_[localHead]);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(fixToM_);
@@ -487,16 +472,16 @@ private:
             const uint64_t slot = WorkspaceSlotBase(
                 workgroup_, localHead, Workspace::kArch22WorkgroupStride);
             auto kBetaL1 =
-                l1Bytes[L1::kHeadLane[localHead]].template ReinterpretCast<InputT>();
+                l1Bytes[L1::kHeadLane[localHead]].template ReinterpretCast<bfloat16_t>();
             auto vBetaL1 =
-                l1Bytes[L1::kHeadLane[localHead] + Shape::kTwoByteMatrixBytes]
-                    .template ReinterpretCast<ValueT>();
-            AscendC::GlobalTensor<InputT> kBetaRelay;
-            AscendC::GlobalTensor<ValueT> vBetaRelay;
-            kBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(
+                l1Bytes[L1::kHeadLane[localHead] + Shape::kBf16MatrixBytes]
+                    .template ReinterpretCast<bfloat16_t>();
+            AscendC::GlobalTensor<bfloat16_t> kBetaRelay;
+            AscendC::GlobalTensor<bfloat16_t> vBetaRelay;
+            kBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
                 args_.workspace + slot + Workspace::kPayload +
                 Workspace::kKBetaG));
-            vBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ ValueT *>(
+            vBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
                 args_.workspace + slot + Workspace::kPayload +
                 Workspace::kVBeta));
             AscendC::DataCopy(kBetaL1, kBetaRelay, rhsCopy);
@@ -523,18 +508,18 @@ private:
 
             auto akkL1 =
                 l1Bytes[L1::kAkk + localHead * L1::kAkkStride]
-                    .template ReinterpretCast<InputT>();
+                    .template ReinterpretCast<bfloat16_t>();
             auto kBetaL1 =
-                l1Bytes[L1::kHeadLane[localHead]].template ReinterpretCast<InputT>();
+                l1Bytes[L1::kHeadLane[localHead]].template ReinterpretCast<bfloat16_t>();
             auto vBetaL1 =
-                l1Bytes[L1::kHeadLane[localHead] + Shape::kTwoByteMatrixBytes]
-                    .template ReinterpretCast<ValueT>();
+                l1Bytes[L1::kHeadLane[localHead] + Shape::kBf16MatrixBytes]
+                    .template ReinterpretCast<bfloat16_t>();
             const uint64_t outputOffset = HeadTensorOffset(
                 args_.tiling, chunk, valueHead, Shape::kHeadDim);
 
             // W = Akk @ K_beta_g。
-            auto l0A = l0ABuf_.Get<InputT>();
-            auto l0BForW = l0BBuf_.Get<InputT>();
+            auto l0A = l0ABuf_.Get<bfloat16_t>();
+            auto l0BForW = l0BBuf_.Get<bfloat16_t>();
             auto l0C = l0CBuf_.Get<float>();
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
             AscendC::LoadData2DParamsV2 loadA{};
@@ -576,19 +561,13 @@ private:
             auto wFix = AscendC::FixpipeParamsV220(
                 Shape::kHeadDim, chunk.validRows, m,
                 Shape::kHeadDim, false);
-            if constexpr (std::is_same_v<InputT, half>) {
-                wFix.quantPre = QuantMode_t::F322F16;
-            } else if constexpr (std::is_same_v<InputT, bfloat16_t>) {
-                wFix.quantPre = QuantMode_t::F322BF16;
-            } else {
-                wFix.quantPre = QuantMode_t::NoQuant;
-            }
-            AscendC::Fixpipe<InputT, float, AscendC::CFG_ROW_MAJOR>(
+            wFix.quantPre = QuantMode_t::F322BF16;
+            AscendC::Fixpipe<bfloat16_t, float, AscendC::CFG_ROW_MAJOR>(
                 wGm_[outputOffset], l0C, wFix);
             AscendC::SetFlag<AscendC::HardEvent::FIX_M>(fixToM_);
 
             // U = Akk @ V_beta；复用 L0 前等待 W 的 reader 与 Fixpipe 完成。
-            auto l0BForU = l0BBuf_.Get<ValueT>();
+            auto l0BForU = l0BBuf_.Get<bfloat16_t>();
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
             AscendC::LoadData(l0A, akkL1, loadA);
             AscendC::LoadData2DParamsV2 loadU{};
@@ -618,14 +597,8 @@ private:
             auto uFix = AscendC::FixpipeParamsV220(
                 Shape::kHeadDim, chunk.validRows, m,
                 Shape::kHeadDim, false);
-            if constexpr (std::is_same_v<ValueT, half>) {
-                uFix.quantPre = QuantMode_t::F322F16;
-            } else if constexpr (std::is_same_v<ValueT, bfloat16_t>) {
-                uFix.quantPre = QuantMode_t::F322BF16;
-            } else {
-                uFix.quantPre = QuantMode_t::NoQuant;
-            }
-            AscendC::Fixpipe<ValueT, float, AscendC::CFG_ROW_MAJOR>(
+            uFix.quantPre = QuantMode_t::F322BF16;
+            AscendC::Fixpipe<bfloat16_t, float, AscendC::CFG_ROW_MAJOR>(
                 uGm_[outputOffset], l0C, uFix);
             AscendC::SetFlag<AscendC::HardEvent::FIX_M>(fixToM_);
         }
@@ -663,8 +636,8 @@ private:
     AscendC::TEventID fixToMte2_[Shape::kHeadsPerGroup]{};
     AscendC::TEventID tReady_[Shape::kHeadsPerGroup]{};
     AscendC::TEventID fixToMte1_[Shape::kHeadsPerGroup]{};
-    AscendC::GlobalTensor<InputT> wGm_{};
-    AscendC::GlobalTensor<ValueT> uGm_{};
+    AscendC::GlobalTensor<bfloat16_t> wGm_{};
+    AscendC::GlobalTensor<bfloat16_t> uGm_{};
 };
 
 } // namespace KdaPrepare::Arch22

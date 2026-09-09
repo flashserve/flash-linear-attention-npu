@@ -32,8 +32,6 @@ enum class GateMode : uint8_t {
 namespace ExpDomain {
 constexpr float kLn2 = 0.69314718055994530942F;
 constexpr float kRcpLn2 = 1.44269504088896340736F;
-constexpr float kV1Fp16LowerBase2 = -80.0F;
-constexpr float kV1Fp16UpperBase2 = 80.0F;
 constexpr float kV1Bf16LowerBase2 = -126.0F;
 constexpr float kV1Bf16UpperBase2 = 120.0F;
 constexpr float kV6LowerBase2 = -80.0F;

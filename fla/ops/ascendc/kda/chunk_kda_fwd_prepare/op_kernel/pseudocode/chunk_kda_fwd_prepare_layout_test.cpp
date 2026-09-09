@@ -59,8 +59,6 @@ bool CheckExpDomainPair()
         float upper;
     };
     constexpr Base2Bounds kBounds[] = {
-        {KdaPrepare::ExpDomain::kV1Fp16LowerBase2,
-         KdaPrepare::ExpDomain::kV1Fp16UpperBase2},
         {KdaPrepare::ExpDomain::kV1Bf16LowerBase2,
          KdaPrepare::ExpDomain::kV1Bf16UpperBase2},
         {KdaPrepare::ExpDomain::kV6LowerBase2,
@@ -114,18 +112,6 @@ float RoundToBf16(float value)
     return value;
 }
 
-float RoundNormalToFp16(float value)
-{
-    const float magnitude = std::fabs(value) > 65504.0F
-                                ? 65504.0F
-                                : std::fabs(value);
-    int exponent = 0;
-    const float fraction = std::frexp(magnitude, &exponent);
-    const float roundedSignificand = std::nearbyint(fraction * 2048.0F);
-    return std::copysign(
-        std::ldexp(roundedSignificand, exponent - 11), value);
-}
-
 bool CheckArch22QgScaledOverlay()
 {
     constexpr uint32_t kGRowBytes =
@@ -175,8 +161,8 @@ int main()
     if (kMinusBytes != 40 * 1024 ||
         Shape::kScorePayloadBytes != 72 * 1024 ||
         ScorePayload::kQPlus != 0 ||
-        ScorePayload::kKPlus != Shape::kTwoByteMatrixBytes ||
-        ScorePayload::kKMinus[0] != 2 * Shape::kTwoByteMatrixBytes ||
+        ScorePayload::kKPlus != Shape::kBf16MatrixBytes ||
+        ScorePayload::kKMinus[0] != 2 * Shape::kBf16MatrixBytes ||
         ScorePayload::kKMinus[0] + Shape::kKMinusBytes[0] !=
             ScorePayload::kKMinus[1] ||
         ScorePayload::kKMinus[1] + Shape::kKMinusBytes[1] !=
@@ -193,28 +179,28 @@ int main()
         Arch35Ub::kStateBase[1] + Arch35Ub::kStateBytes !=
             Arch35Ub::kCapacity ||
         Arch35Ub::kRawScore + 20 * 1024 != Arch35Ub::kAqk ||
-        Arch35Ub::kAqk + Shape::kTwoByteMatrixBytes != Arch35Ub::kLkk ||
+        Arch35Ub::kAqk + Shape::kBf16MatrixBytes != Arch35Ub::kLkk ||
         Arch35Ub::kLkk + Shape::kScoreMatrixBytes != Arch35Ub::kB ||
         Arch35Ub::kB + Shape::kQuadrantFp32Bytes != Arch35Ub::kX0 ||
         Arch35Ub::kX0 + Shape::kQuadrantFp32Bytes != Arch35Ub::kX1 ||
         Arch35Ub::kX1 + Shape::kQuadrantFp32Bytes != Arch35Ub::kNegX1 ||
         Arch35Ub::kNegX1 + Shape::kQuadrantFp32Bytes !=
             Arch35Ub::kAkkPack ||
-        Arch35Ub::kAkkPack + 4 * Shape::kQuadrant2BBytes >
+        Arch35Ub::kAkkPack + 4 * Shape::kQuadrantBf16Bytes >
             Arch35Ub::kComputeSlotBytes) {
         return 4;
     }
 
     if (Arch35Ub::kQg != 0 ||
-        Arch35Ub::kQg + Shape::kTwoByteMatrixBytes != Arch35Ub::kKg ||
-        Arch35Ub::kKg + Shape::kTwoByteMatrixBytes != Arch35Ub::kVBeta ||
-        Arch35Ub::kVBeta + Shape::kTwoByteMatrixBytes !=
+        Arch35Ub::kQg + Shape::kBf16MatrixBytes != Arch35Ub::kKg ||
+        Arch35Ub::kKg + Shape::kBf16MatrixBytes != Arch35Ub::kVBeta ||
+        Arch35Ub::kVBeta + Shape::kBf16MatrixBytes !=
             Arch35Ub::kGForPost ||
         Arch35Ub::kGForPost + Shape::kGateMatrixBytes !=
             Arch35Ub::kKBetaG ||
-        Arch35Ub::kKBetaG + Shape::kTwoByteMatrixBytes !=
+        Arch35Ub::kKBetaG + Shape::kBf16MatrixBytes !=
             Arch35Ub::kQgScaled ||
-        Arch35Ub::kQgScaled + Shape::kTwoByteMatrixBytes !=
+        Arch35Ub::kQgScaled + Shape::kBf16MatrixBytes !=
             Arch35Ub::kComputeSlotBytes) {
         return 5;
     }
@@ -222,7 +208,7 @@ int main()
     if (2 * Arch22Ub::kPrivateBytes + 40 * 1024 !=
             Arch22Ub::kUsableBytes ||
         Arch22Ub::kV6QgScaled != Arch22Ub::kSharedG ||
-        Arch22Ub::kV6QgScaled + Shape::kTwoByteMatrixBytes >
+        Arch22Ub::kV6QgScaled + Shape::kBf16MatrixBytes >
             Arch22Ub::kSharedScratch ||
         !CheckArch22QgScaledOverlay() ||
         Arch22Ub::kKMinus[3] + Shape::kKMinusBytes[3] !=
@@ -239,11 +225,11 @@ int main()
         Workspace::kRawScore + 20 * 1024 > Shape::kScorePayloadBytes ||
         Workspace::kB + Shape::kQuadrantFp32Bytes > Workspace::kTArch22 ||
         Workspace::kTArch22 + Shape::kQuadrantFp32Bytes > Workspace::kAkk ||
-        Workspace::kAkk + 4 * Shape::kQuadrant2BBytes >
+        Workspace::kAkk + 4 * Shape::kQuadrantBf16Bytes >
             Shape::kScorePayloadBytes ||
-        Workspace::kKBetaG + Shape::kTwoByteMatrixBytes !=
+        Workspace::kKBetaG + Shape::kBf16MatrixBytes !=
             Workspace::kVBeta ||
-        Workspace::kVBeta + Shape::kTwoByteMatrixBytes >
+        Workspace::kVBeta + Shape::kBf16MatrixBytes >
             Shape::kScorePayloadBytes) {
         return 7;
     }
@@ -282,18 +268,5 @@ int main()
         return 10;
     }
 
-    constexpr float kQgFp32ForFp16 = 1.0003F;
-    constexpr float kFp16Scale = 1.3F;
-    const float qgFp16 = RoundNormalToFp16(kQgFp32ForFp16);
-    const float qgScaledFp16 = RoundNormalToFp16(qgFp16 * kFp16Scale);
-    const float mergedRoundFp16 =
-        RoundNormalToFp16(kQgFp32ForFp16 * kFp16Scale);
-    if (!NearlyEqual(qgFp16, 1.0F) ||
-        !NearlyEqual(qgScaledFp16, 1.2998046875F) ||
-        NearlyEqual(qgScaledFp16, mergedRoundFp16) ||
-        !NearlyEqual(RoundNormalToFp16(70000.0F), 65504.0F) ||
-        !NearlyEqual(RoundNormalToFp16(-70000.0F), -65504.0F)) {
-        return 11;
-    }
     return 0;
 }

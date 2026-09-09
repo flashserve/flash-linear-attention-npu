@@ -19,11 +19,11 @@ constexpr uint32_t kSubChunkRows = 16;
 constexpr uint32_t kSubChunkCount = 4;
 constexpr uint32_t kHeadsPerGroup = 4;
 constexpr uint32_t kAivPerAic = 2;
-constexpr uint32_t kTwoByteMatrixBytes = 0x4000; // [64,128] * 2 B
+constexpr uint32_t kBf16MatrixBytes = 0x4000;    // [64,128] * BF16
 constexpr uint32_t kGateMatrixBytes = 0x8000;    // [64,128] * FP32
 constexpr uint32_t kScoreMatrixBytes = 0x4000;   // [64,64] * FP32
 constexpr uint32_t kQuadrantFp32Bytes = 0x1000;  // [32,32] * FP32
-constexpr uint32_t kQuadrant2BBytes = 0x0800;    // [32,32] * 2 B
+constexpr uint32_t kQuadrantBf16Bytes = 0x0800;  // [32,32] * BF16
 constexpr uint32_t kPrefixRows[kSubChunkCount] = {16, 32, 48, 64};
 constexpr uint32_t kKMinusBytes[kSubChunkCount] = {
     0x1000, 0x2000, 0x3000, 0x4000};
@@ -74,7 +74,7 @@ constexpr uint32_t kT = 0x50000;
 constexpr uint32_t kAkk = 0x54000;
 constexpr uint32_t kQuadrantStride = 0x1000;
 constexpr uint32_t kAkkStride = 0x2000;
-// 两字节 NZ 为 [N1,M1,M0,N0]；q10=(row 32,col 0) 的元素偏移。
+// BF16 NZ 为 [N1,M1,M0,N0]；q10=(row 32,col 0) 的元素偏移。
 constexpr uint32_t kAkkQ10Elements = 32 * 16;
 constexpr uint32_t kPeak = 0x5C000;
 } // namespace L1
@@ -161,7 +161,7 @@ constexpr uint32_t kV6Qg = 0x0000;
 constexpr uint32_t kV6Kg = 0x4000;
 constexpr uint32_t kV6VBeta = 0x8000;
 constexpr uint32_t kV6KBetaG = 0xC000;
-// V6 正序消费 FP32 G 后，将两字节 qgScaled 压缩写入同一共享区低 16 KiB。
+// V6 正序消费 FP32 G 后，将 BF16 qgScaled 压缩写入同一共享区低 16 KiB。
 constexpr uint32_t kV6QgScaled = kSharedG;
 } // namespace Arch22Ub
 

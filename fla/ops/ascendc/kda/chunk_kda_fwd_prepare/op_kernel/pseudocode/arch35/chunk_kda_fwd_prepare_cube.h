@@ -8,8 +8,6 @@
 #define PSEUDOCODE_ARCH35_CHUNK_KDA_FWD_PREPARE_CUBE_H
 
 #include <cstdint>
-#include <type_traits>
-
 #include "catlass/arch/arch.hpp"
 #include "catlass/arch/resource.hpp"
 #include "kernel_operator.h"
@@ -25,16 +23,15 @@ constexpr AscendC::FixpipeConfig kFixpipeRowMajorUb = {
 constexpr AscendC::FixpipeConfig kFixpipeNzL1 = {
     AscendC::CO2Layout::NZ, false};
 
-template <typename InputT, typename ValueT, typename ScoreT>
 class ChunkKdaFwdPrepareCube {
 public:
     __aicore__ inline void Init(const PrepareKernelArgs &args)
     {
         args_ = args;
         workgroup_ = WorkgroupId();
-        akkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args.akk));
-        wGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args.w));
-        uGm_.SetGlobalBuffer(reinterpret_cast<__gm__ ValueT *>(args.u));
+        akkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.akk));
+        wGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.w));
+        uGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.u));
     }
 
     __aicore__ inline void Process()
@@ -146,10 +143,11 @@ private:
         const uint32_t localSlot = localHead % 2;
         const uint32_t l0cLane = localHead * 64 * 1024;
 
-        AscendC::GlobalTensor<ScoreT> payload;
-        payload.SetGlobalBuffer(reinterpret_cast<__gm__ ScoreT *>(
+        AscendC::GlobalTensor<bfloat16_t> payload;
+        payload.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + slot + Workspace::kPayload));
-        auto scoreL1 = resource_.l1Buf.template GetBufferByByte<ScoreT>(lane);
+        auto scoreL1 =
+            resource_.l1Buf.template GetBufferByByte<bfloat16_t>(lane);
 
         // Stage 入口把 Qplus、Kplus 和四个 Kminus 前缀一次性搬完，共 72 KiB。
         // 这里的 DataCopy 是 GM(ND)->L1(NZ)，后面的四次 MMAD 不再读 GM。
@@ -163,29 +161,29 @@ private:
         qkCopy.dstNzNStride = 1;
         qkCopy.dstNzC0Stride = Shape::kChunkRows;
         qkCopy.dstNzMatrixStride = 0;
-        // TODO：用目标 CANN 9.1.0 头文件确认 ScoreT 的 NZ C0 与
+        // TODO：用目标 CANN 9.1.0 头文件确认 BF16 的 NZ C0 与
         // dstNzC0Stride 单位；确认前不得把下列参数复制到正式 kernel。
         AscendC::DataCopy(
-            scoreL1[ScorePayload::kQPlus / sizeof(ScoreT)],
-            payload[ScorePayload::kQPlus / sizeof(ScoreT)], qkCopy);
+            scoreL1[ScorePayload::kQPlus / sizeof(bfloat16_t)],
+            payload[ScorePayload::kQPlus / sizeof(bfloat16_t)], qkCopy);
         AscendC::DataCopy(
-            scoreL1[ScorePayload::kKPlus / sizeof(ScoreT)],
-            payload[ScorePayload::kKPlus / sizeof(ScoreT)], qkCopy);
+            scoreL1[ScorePayload::kKPlus / sizeof(bfloat16_t)],
+            payload[ScorePayload::kKPlus / sizeof(bfloat16_t)], qkCopy);
         for (uint32_t s = 0; s < Shape::kSubChunkCount; ++s) {
             AscendC::Nd2NzParams prefixCopy = qkCopy;
             prefixCopy.nValue = Shape::kPrefixRows[s];
             prefixCopy.dstNzC0Stride = Shape::kPrefixRows[s];
             AscendC::DataCopy(
-                scoreL1[ScorePayload::kKMinus[s] / sizeof(ScoreT)],
-                payload[ScorePayload::kKMinus[s] / sizeof(ScoreT)],
+                scoreL1[ScorePayload::kKMinus[s] / sizeof(bfloat16_t)],
+                payload[ScorePayload::kKMinus[s] / sizeof(bfloat16_t)],
                 prefixCopy);
         }
         AscendC::Mutex::Unlock<PIPE_MTE2>(l1Mutex);
 
         auto stackedQkL0 =
-            resource_.l0ABuf.template GetBufferByByte<ScoreT>(0);
+            resource_.l0ABuf.template GetBufferByByte<bfloat16_t>(0);
         auto kMinusL0 =
-            resource_.l0BBuf.template GetBufferByByte<ScoreT>(0);
+            resource_.l0BBuf.template GetBufferByByte<bfloat16_t>(0);
         // 四个 HEAD 各占一条 64 KiB L0C 通道，和 Mutex 5..8/9..12
         // 一一对应；不同 Mutex 保护的语义不能落到同一物理地址。
         // TODO：正式实现前必须用目标 A5 头文件和最小 kernel 确认该资源
@@ -214,12 +212,12 @@ private:
             loadQ.sid = 0;
             AscendC::LoadData(
                 stackedQkL0,
-                scoreL1[ScorePayload::kQPlus / sizeof(ScoreT)], loadQ);
+                scoreL1[ScorePayload::kQPlus / sizeof(bfloat16_t)], loadQ);
             // TODO：目标版本最小编译确认 zN L0A 的下半 16 行物理偏移；
             // 语义必须是 [Qplus_s; Kplus_s]，不能在 L1 内重排。
             AscendC::LoadData(
                 stackedQkL0[Shape::kSubChunkRows * Shape::kHeadDim],
-                scoreL1[ScorePayload::kKPlus / sizeof(ScoreT)], loadQ);
+                scoreL1[ScorePayload::kKPlus / sizeof(bfloat16_t)], loadQ);
 
             AscendC::LoadData2DParamsV2 loadKMinus{};
             loadKMinus.mStartPosition = 0;
@@ -234,7 +232,7 @@ private:
             // kStep、srcStride、dstStride 的分形单位。
             AscendC::LoadData(
                 kMinusL0,
-                scoreL1[ScorePayload::kKMinus[s] / sizeof(ScoreT)],
+                scoreL1[ScorePayload::kKMinus[s] / sizeof(bfloat16_t)],
                 loadKMinus);
             AscendC::Mutex::Unlock<PIPE_MTE1>(operandMutex);
             AscendC::Mutex::Unlock<PIPE_MTE1>(l1Mutex);
@@ -288,8 +286,8 @@ private:
         AscendC::GlobalTensor<float> payload;
         payload.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
             args_.workspace + slot + Workspace::kPayload));
-        AscendC::GlobalTensor<InputT> akkSource;
-        akkSource.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(
+        AscendC::GlobalTensor<bfloat16_t> akkSource;
+        akkSource.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + slot + Workspace::kPayload + Workspace::kAkk));
 
         auto bL1 = resource_.l1Buf.template GetBufferByByte<float>(lane);
@@ -299,7 +297,7 @@ private:
             L1::kNegX1 + localHead * L1::kQuadrantStride);
         auto tL1 = resource_.l1Buf.template GetBufferByByte<float>(
             L1::kT + localHead * L1::kQuadrantStride);
-        auto akkL1 = resource_.l1Buf.template GetBufferByByte<InputT>(
+        auto akkL1 = resource_.l1Buf.template GetBufferByByte<bfloat16_t>(
             L1::kAkk + localHead * L1::kAkkStride);
 
         // V3 写出的所有后续 Cube 输入只在这里搬一次。即使 M<=32，Akk
@@ -314,7 +312,7 @@ private:
         akkCopy.dstNzNStride = 1;
         akkCopy.dstNzC0Stride = Shape::kChunkRows;
         akkCopy.dstNzMatrixStride = 0;
-        // TODO：确认 64x64 InputT ND->NZ 后四个 32x32 象限的物理次序，
+        // TODO：确认 64x64 BF16 ND->NZ 后四个 32x32 象限的物理次序，
         // C5 必须能直接写 q10，C7 必须能直接按 64x64 装入 L0A。
         AscendC::DataCopy(akkL1, akkSource, akkCopy);
 
@@ -413,7 +411,7 @@ private:
             L1::kNegX1 + localHead * L1::kQuadrantStride);
         auto tL1 = resource_.l1Buf.template GetBufferByByte<float>(
             L1::kT + localHead * L1::kQuadrantStride);
-        auto akkL1 = resource_.l1Buf.template GetBufferByByte<InputT>(
+        auto akkL1 = resource_.l1Buf.template GetBufferByByte<bfloat16_t>(
             L1::kAkk + localHead * L1::kAkkStride);
         auto l0A = resource_.l0ABuf.template GetBufferByByte<float>(0);
         auto l0B = resource_.l0BBuf.template GetBufferByByte<float>(0);
@@ -461,26 +459,18 @@ private:
         l1Fix.srcStride = 32;
         l1Fix.dstStride = Shape::kChunkRows * 16;
         l1Fix.isChannelSplit = false;
-        if constexpr (std::is_same_v<InputT, half>) {
-            l1Fix.quantPre = QuantMode_t::F322F16;
-        } else {
-            l1Fix.quantPre = QuantMode_t::F322BF16;
-        }
+        l1Fix.quantPre = QuantMode_t::F322BF16;
         // q10 在两字节 NZ 中从 (N1=0,M1=2) 开始，即 32*16 个元素。
         // dstStride=64*16 个元素跨过完整 64 行 M 轴。
-        AscendC::Fixpipe<InputT, float, kFixpipeNzL1>(
+        AscendC::Fixpipe<bfloat16_t, float, kFixpipeNzL1>(
             akkL1[L1::kAkkQ10Elements], l0C, l1Fix);
         AscendC::Mutex::Unlock<PIPE_FIX>(l1Mutex);
 
         const uint32_t bottomRows = chunk.validRows - 32;
         auto gmFix = AscendC::FixpipeParamsV220(
             32, bottomRows, 32, Shape::kChunkRows, false);
-        if constexpr (std::is_same_v<InputT, half>) {
-            gmFix.quantPre = QuantMode_t::F322F16;
-        } else {
-            gmFix.quantPre = QuantMode_t::F322BF16;
-        }
-        AscendC::Fixpipe<InputT, float, AscendC::CFG_ROW_MAJOR>(
+        gmFix.quantPre = QuantMode_t::F322BF16;
+        AscendC::Fixpipe<bfloat16_t, float, AscendC::CFG_ROW_MAJOR>(
             akkGm_[AOutputOffset(args_.tiling, chunk, valueHead) +
                    32 * Shape::kChunkRows],
             l0C, gmFix);
@@ -506,21 +496,21 @@ private:
             static_cast<uint8_t>(9 + localHead); // 9..12
         const uint32_t l0cLane = localHead * 64 * 1024;
 
-        AscendC::GlobalTensor<InputT> kBetaRelay;
-        AscendC::GlobalTensor<ValueT> vBetaRelay;
-        kBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(
+        AscendC::GlobalTensor<bfloat16_t> kBetaRelay;
+        AscendC::GlobalTensor<bfloat16_t> vBetaRelay;
+        kBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + slot + Workspace::kPayload +
             Workspace::kKBetaG));
-        vBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ ValueT *>(
+        vBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + slot + Workspace::kPayload +
             Workspace::kVBeta));
 
-        auto akkL1 = resource_.l1Buf.template GetBufferByByte<InputT>(
+        auto akkL1 = resource_.l1Buf.template GetBufferByByte<bfloat16_t>(
             L1::kAkk + localHead * L1::kAkkStride);
         auto kBetaL1 =
-            resource_.l1Buf.template GetBufferByByte<InputT>(lane);
-        auto vBetaL1 = resource_.l1Buf.template GetBufferByByte<ValueT>(
-            lane + Shape::kTwoByteMatrixBytes);
+            resource_.l1Buf.template GetBufferByByte<bfloat16_t>(lane);
+        auto vBetaL1 = resource_.l1Buf.template GetBufferByByte<bfloat16_t>(
+            lane + Shape::kBf16MatrixBytes);
 
         // 两个 RHS 平面各搬一次；它们在 L1 中保持独立平面，不拼成
         // [M,256]，也不在 L1 内移动。
@@ -534,8 +524,8 @@ private:
         rhsCopy.dstNzNStride = 1;
         rhsCopy.dstNzC0Stride = m;
         rhsCopy.dstNzMatrixStride = 0;
-        // TODO：InputT 与 ValueT 均为两字节编译分支；若后续开放其他
-        // dtype，必须重新计算第二平面的固定字节偏移和 NZ 参数。
+        // 两个 RHS 均固定为 BF16，第二平面按一个完整 BF16
+        // 矩阵的字节数偏移。
         AscendC::DataCopy(kBetaL1, kBetaRelay, rhsCopy);
         AscendC::DataCopy(vBetaL1, vBetaRelay, rhsCopy);
         AscendC::Mutex::Unlock<PIPE_MTE2>(l1Mutex);
@@ -544,11 +534,11 @@ private:
         AscendC::CrossCoreSetFlag<0x4, PIPE_MTE2>(
             slotReusableFlagId);
 
-        auto akkL0 = resource_.l0ABuf.template GetBufferByByte<InputT>(0);
+        auto akkL0 = resource_.l0ABuf.template GetBufferByByte<bfloat16_t>(0);
         auto kBetaL0 =
-            resource_.l0BBuf.template GetBufferByByte<InputT>(0);
-        auto vBetaL0 = resource_.l0BBuf.template GetBufferByByte<ValueT>(
-            Shape::kTwoByteMatrixBytes);
+            resource_.l0BBuf.template GetBufferByByte<bfloat16_t>(0);
+        auto vBetaL0 = resource_.l0BBuf.template GetBufferByByte<bfloat16_t>(
+            Shape::kBf16MatrixBytes);
         auto wL0c =
             resource_.l0CBuf.template GetBufferByByte<float>(l0cLane);
         auto uL0c = resource_.l0CBuf.template GetBufferByByte<float>(
@@ -609,12 +599,8 @@ private:
         auto wFix = AscendC::FixpipeParamsV220(
             Shape::kHeadDim, chunk.validRows, m,
             Shape::kHeadDim, false);
-        if constexpr (std::is_same_v<InputT, half>) {
-            wFix.quantPre = QuantMode_t::F322F16;
-        } else {
-            wFix.quantPre = QuantMode_t::F322BF16;
-        }
-        AscendC::Fixpipe<InputT, float, AscendC::CFG_ROW_MAJOR>(
+        wFix.quantPre = QuantMode_t::F322BF16;
+        AscendC::Fixpipe<bfloat16_t, float, AscendC::CFG_ROW_MAJOR>(
             wGm_[outputOffset], wL0c, wFix);
         AscendC::Mutex::Unlock<PIPE_FIX>(wL0cMutex);
 
@@ -622,12 +608,8 @@ private:
         auto uFix = AscendC::FixpipeParamsV220(
             Shape::kValueDim, chunk.validRows, m,
             Shape::kValueDim, false);
-        if constexpr (std::is_same_v<ValueT, half>) {
-            uFix.quantPre = QuantMode_t::F322F16;
-        } else {
-            uFix.quantPre = QuantMode_t::F322BF16;
-        }
-        AscendC::Fixpipe<ValueT, float, AscendC::CFG_ROW_MAJOR>(
+        uFix.quantPre = QuantMode_t::F322BF16;
+        AscendC::Fixpipe<bfloat16_t, float, AscendC::CFG_ROW_MAJOR>(
             uGm_[outputOffset], uL0c, uFix);
         AscendC::Mutex::Unlock<PIPE_FIX>(uL0cMutex);
     }
@@ -635,9 +617,9 @@ private:
     PrepareKernelArgs args_{};
     uint32_t workgroup_ = 0;
     Catlass::Arch::Resource<Catlass::Arch::Ascend950> resource_{};
-    AscendC::GlobalTensor<InputT> akkGm_{};
-    AscendC::GlobalTensor<InputT> wGm_{};
-    AscendC::GlobalTensor<ValueT> uGm_{};
+    AscendC::GlobalTensor<bfloat16_t> akkGm_{};
+    AscendC::GlobalTensor<bfloat16_t> wGm_{};
+    AscendC::GlobalTensor<bfloat16_t> uGm_{};
 };
 
 } // namespace KdaPrepare::Arch35

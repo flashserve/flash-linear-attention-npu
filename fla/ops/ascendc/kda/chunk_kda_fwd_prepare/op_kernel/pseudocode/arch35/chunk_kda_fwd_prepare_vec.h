@@ -24,28 +24,26 @@ namespace Detail {
 
 using namespace AscendC::MicroAPI;
 
-constexpr float kFp16Max = 65504.0F;
-
-constexpr static CastTrait kFp32ToB16RintZero = {
+constexpr static CastTrait kFp32ToBf16RintZero = {
     RegLayout::ZERO,
     SatMode::NO_SAT,
     MaskMergeMode::MERGING,
     AscendC::RoundMode::CAST_RINT,
 };
-constexpr static CastTrait kFp32ToB16RintOne = {
+constexpr static CastTrait kFp32ToBf16RintOne = {
     RegLayout::ONE,
     SatMode::NO_SAT,
     MaskMergeMode::ZEROING,
     AscendC::RoundMode::CAST_RINT,
 };
 
-template <typename T>
-__simd_callee__ inline void CastFp32ToB16Rint(
-    RegTensor<T> &dst, RegTensor<float> &low, RegTensor<float> &high,
+__simd_callee__ inline void CastFp32ToBf16Rint(
+    RegTensor<bfloat16_t> &dst, RegTensor<float> &low,
+    RegTensor<float> &high,
     MaskReg &mask)
 {
-    Cast<T, float, kFp32ToB16RintOne>(dst, high, mask);
-    Cast<T, float, kFp32ToB16RintZero>(dst, low, mask);
+    Cast<bfloat16_t, float, kFp32ToBf16RintOne>(dst, high, mask);
+    Cast<bfloat16_t, float, kFp32ToBf16RintZero>(dst, low, mask);
 }
 
 template <typename T>
@@ -63,72 +61,41 @@ __simd_callee__ inline void Load128AsFp32(
     }
 }
 
-template <typename T>
 __simd_callee__ inline void Store128FromFp32(
-    __ubuf__ T *dst, RegTensor<float> &low, RegTensor<float> &high)
+    __ubuf__ bfloat16_t *dst, RegTensor<float> &low,
+    RegTensor<float> &high)
 {
     MaskReg floatMask = CreateMask<float, MaskPattern::ALL>();
-    if constexpr (std::is_same<T, float>::value) {
-        StoreAlign(dst, low, floatMask);
-        StoreAlign(dst + 64, high, floatMask);
-    } else {
-        if constexpr (std::is_same<T, half>::value) {
-            Mins(low, low, kFp16Max, floatMask);
-            Mins(high, high, kFp16Max, floatMask);
-            Maxs(low, low, -kFp16Max, floatMask);
-            Maxs(high, high, -kFp16Max, floatMask);
-        }
-        RegTensor<T> packed;
-        CastFp32ToB16Rint<T>(packed, low, high, floatMask);
-        MaskReg packedMask = CreateMask<T, MaskPattern::ALL>();
-        StoreAlign(dst, packed, packedMask);
-    }
+    RegTensor<bfloat16_t> packed;
+    CastFp32ToBf16Rint(packed, low, high, floatMask);
+    MaskReg packedMask = CreateMask<bfloat16_t, MaskPattern::ALL>();
+    StoreAlign(dst, packed, packedMask);
 }
 
-template <typename T>
 __simd_callee__ inline void Store64FromFp32(
-    __ubuf__ T *dst, RegTensor<float> &value)
+    __ubuf__ bfloat16_t *dst, RegTensor<float> &value)
 {
     MaskReg floatMask = CreateMask<float, MaskPattern::ALL>();
-    if constexpr (std::is_same<T, float>::value) {
-        StoreAlign(dst, value, floatMask);
-    } else {
-        if constexpr (std::is_same<T, half>::value) {
-            Mins(value, value, kFp16Max, floatMask);
-            Maxs(value, value, -kFp16Max, floatMask);
-        }
-        RegTensor<float> zero;
-        RegTensor<T> packed;
-        Duplicate(zero, 0.0F, floatMask);
-        CastFp32ToB16Rint<T>(packed, value, zero, floatMask);
-        uint32_t active = 64;
-        MaskReg outputMask = UpdateMask<T>(active);
-        StoreAlign(dst, packed, outputMask);
-    }
+    RegTensor<float> zero;
+    RegTensor<bfloat16_t> packed;
+    Duplicate(zero, 0.0F, floatMask);
+    CastFp32ToBf16Rint(packed, value, zero, floatMask);
+    uint32_t active = 64;
+    MaskReg outputMask = UpdateMask<bfloat16_t>(active);
+    StoreAlign(dst, packed, outputMask);
 }
 
-template <typename T>
 __simd_callee__ inline void Store32FromFp32(
-    __ubuf__ T *dst, RegTensor<float> &value)
+    __ubuf__ bfloat16_t *dst, RegTensor<float> &value)
 {
     MaskReg floatMask = CreateMask<float, MaskPattern::ALL>();
-    if constexpr (std::is_same<T, float>::value) {
-        uint32_t active = 32;
-        MaskReg outputMask = UpdateMask<float>(active);
-        StoreAlign(dst, value, outputMask);
-    } else {
-        if constexpr (std::is_same<T, half>::value) {
-            Mins(value, value, kFp16Max, floatMask);
-            Maxs(value, value, -kFp16Max, floatMask);
-        }
-        RegTensor<float> zero;
-        RegTensor<T> packed;
-        Duplicate(zero, 0.0F, floatMask);
-        CastFp32ToB16Rint<T>(packed, value, zero, floatMask);
-        uint32_t active = 32;
-        MaskReg outputMask = UpdateMask<T>(active);
-        StoreAlign(dst, packed, outputMask);
-    }
+    RegTensor<float> zero;
+    RegTensor<bfloat16_t> packed;
+    Duplicate(zero, 0.0F, floatMask);
+    CastFp32ToBf16Rint(packed, value, zero, floatMask);
+    uint32_t active = 32;
+    MaskReg outputMask = UpdateMask<bfloat16_t>(active);
+    StoreAlign(dst, packed, outputMask);
 }
 
 template <typename T>
@@ -166,15 +133,16 @@ __simd_callee__ inline void ExpPair(
 
 // V0 的循环和指令均属于一次 VF。这里直接展示寄存器级数据流；L2 归约
 // 的 ReduceSum 结果广播形式仍需用目标 CANN 9.1.0 头文件做最小编译确认。
-template <typename InputT, typename GateT, typename BetaT, typename Policy>
+template <typename GateT, typename BetaT, typename CompilePolicy>
 __simd_vf__ inline void StageV0Vf(
-    __ubuf__ InputT *q, __ubuf__ InputT *k, __ubuf__ GateT *rawGate,
+    __ubuf__ bfloat16_t *q, __ubuf__ bfloat16_t *k,
+    __ubuf__ GateT *rawGate,
     __ubuf__ BetaT *betaRaw, __ubuf__ float *dtBias, __ubuf__ float *aLog,
     __ubuf__ float *g, __ubuf__ float *gRef, __ubuf__ float *gLast,
     __ubuf__ float *betaEff, uint16_t validRows, float epsilon,
     float lowerBound, bool hasDtBias, bool hasALog)
 {
-    using Domain = ExpDomainTraits<Policy::useExp2>;
+    using Domain = ExpDomainTraits<CompilePolicy::useExp2>;
     MaskReg mask = CreateMask<float, MaskPattern::ALL>();
     uint32_t scalarCount = 1;
     MaskReg scalarMask = UpdateMask<float>(scalarCount);
@@ -191,7 +159,7 @@ __simd_vf__ inline void StageV0Vf(
         if (row < validRows) {
             Load128AsFp32(qLow, qHigh, q + row * Shape::kHeadDim);
             Load128AsFp32(kLow, kHigh, k + row * Shape::kHeadDim);
-            if constexpr (Policy::normMode == QkNormMode::L2) {
+            if constexpr (CompilePolicy::normMode == QkNormMode::L2) {
                 RegTensor<float> qSquareLow;
                 RegTensor<float> qSquareHigh;
                 RegTensor<float> kSquareLow;
@@ -252,7 +220,7 @@ __simd_vf__ inline void StageV0Vf(
         RegTensor<float> gateHigh;
         Load128AsFp32(gateLow, gateHigh,
                       rawGate + row * Shape::kHeadDim);
-        if constexpr (Policy::gateMode != GateMode::PrecomputedStep) {
+        if constexpr (CompilePolicy::gateMode != GateMode::PrecomputedStep) {
             RegTensor<float> biasLow;
             RegTensor<float> biasHigh;
             if (hasDtBias) {
@@ -272,8 +240,8 @@ __simd_vf__ inline void StageV0Vf(
             } else {
                 Duplicate(a, 1.0F, mask);
             }
-            if constexpr (Policy::safeGate ||
-                          Policy::gateMode == GateMode::SafeSigmoid) {
+            if constexpr (CompilePolicy::safeGate ||
+                          CompilePolicy::gateMode == GateMode::SafeSigmoid) {
                 RegTensor<float> one;
                 Duplicate(one, 1.0F, mask);
                 Mul(gateLow, gateLow, a, mask);
@@ -347,12 +315,12 @@ __simd_vf__ inline void StageV0Vf(
             RegTensor<float> one;
             LoadScalarAsFp32(beta, betaRaw + row);
             Duplicate(one, 1.0F, mask);
-            if constexpr (Policy::betaMode != BetaMode::Raw) {
+            if constexpr (CompilePolicy::betaMode != BetaMode::Raw) {
                 Muls(beta, beta, -1.0F, mask);
                 Exp(beta, beta, mask);
                 Adds(beta, beta, 1.0F, mask);
                 Div(beta, one, beta, mask);
-                if constexpr (Policy::betaMode == BetaMode::TwoSigmoid) {
+                if constexpr (CompilePolicy::betaMode == BetaMode::TwoSigmoid) {
                     Muls(beta, beta, 2.0F, mask);
                 }
             }
@@ -364,13 +332,14 @@ __simd_vf__ inline void StageV0Vf(
     }
 }
 
-template <typename InputT, typename ScoreT, typename Policy>
+template <typename CompilePolicy>
 __simd_vf__ inline void StageV1Vf(
-    __ubuf__ InputT *qHat, __ubuf__ InputT *kHat, __ubuf__ float *g,
-    __ubuf__ float *gRef, __ubuf__ ScoreT *qPlus, __ubuf__ ScoreT *kPlus,
-    __ubuf__ ScoreT *kMinus, uint16_t validRows)
+    __ubuf__ bfloat16_t *qHat, __ubuf__ bfloat16_t *kHat,
+    __ubuf__ float *g, __ubuf__ float *gRef,
+    __ubuf__ bfloat16_t *qPlus, __ubuf__ bfloat16_t *kPlus,
+    __ubuf__ bfloat16_t *kMinus, uint16_t validRows)
 {
-    using Domain = ExpDomainTraits<Policy::useExp2>;
+    using Domain = ExpDomainTraits<CompilePolicy::useExp2>;
     MaskReg mask = CreateMask<float, MaskPattern::ALL>();
     constexpr uint32_t prefixBase[4] = {0, 16 * 128, 48 * 128, 96 * 128};
 
@@ -395,16 +364,13 @@ __simd_vf__ inline void StageV1Vf(
                 Sub(refLow, refLow, gateLow, mask);
                 Sub(refHigh, refHigh, gateHigh, mask);
                 constexpr float base2Lower =
-                    std::is_same<ScoreT, bfloat16_t>::value
-                        ? ExpDomain::kV1Bf16LowerBase2
-                        : ExpDomain::kV1Fp16LowerBase2;
+                    ExpDomain::kV1Bf16LowerBase2;
                 constexpr float base2Upper =
-                    std::is_same<ScoreT, bfloat16_t>::value
-                        ? ExpDomain::kV1Bf16UpperBase2
-                        : ExpDomain::kV1Fp16UpperBase2;
+                    ExpDomain::kV1Bf16UpperBase2;
                 constexpr float lower = Domain::StoredBound(base2Lower);
                 constexpr float upper = Domain::StoredBound(base2Upper);
-                ExpPair<Policy::useExp2>(refLow, refHigh, lower, upper);
+                ExpPair<CompilePolicy::useExp2>(
+                    refLow, refHigh, lower, upper);
                 Load128AsFp32(kLow, kHigh,
                               kHat + row * Shape::kHeadDim);
                 Mul(outLow, kLow, refLow, mask);
@@ -437,16 +403,13 @@ __simd_vf__ inline void StageV1Vf(
             Sub(expLow, expLow, refLow, mask);
             Sub(expHigh, expHigh, refHigh, mask);
             constexpr float base2Lower =
-                std::is_same<ScoreT, bfloat16_t>::value
-                    ? ExpDomain::kV1Bf16LowerBase2
-                    : ExpDomain::kV1Fp16LowerBase2;
+                ExpDomain::kV1Bf16LowerBase2;
             constexpr float base2Upper =
-                std::is_same<ScoreT, bfloat16_t>::value
-                    ? ExpDomain::kV1Bf16UpperBase2
-                    : ExpDomain::kV1Fp16UpperBase2;
+                ExpDomain::kV1Bf16UpperBase2;
             constexpr float lower = Domain::StoredBound(base2Lower);
             constexpr float upper = Domain::StoredBound(base2Upper);
-            ExpPair<Policy::useExp2>(expLow, expHigh, lower, upper);
+            ExpPair<CompilePolicy::useExp2>(
+                expLow, expHigh, lower, upper);
             Load128AsFp32(qLow, qHigh, qHat + row * Shape::kHeadDim);
             Load128AsFp32(kLow, kHigh, kHat + row * Shape::kHeadDim);
             Mul(qLow, qLow, expLow, mask);
@@ -464,21 +427,20 @@ __simd_vf__ inline void StageV1Vf(
     }
 }
 
-template <typename InputT>
 __simd_vf__ inline void StageV3Vf(
     __ubuf__ float *rawScore,
-    __ubuf__ float *betaEff, __ubuf__ InputT *aqk,
+    __ubuf__ float *betaEff, __ubuf__ bfloat16_t *aqk,
     __ubuf__ float *lkk, __ubuf__ float *b, __ubuf__ float *x0,
     __ubuf__ float *x1, __ubuf__ float *negX1,
-    __ubuf__ InputT *akk, uint16_t validRows, float scale)
+    __ubuf__ bfloat16_t *akk, uint16_t validRows, float scale)
 {
     MaskReg full = CreateMask<float, MaskPattern::ALL>();
-    uint32_t halfCount = 32;
-    MaskReg lowerHalf = UpdateMask<float>(halfCount);
+    uint32_t lowerColumnCount = 32;
+    MaskReg lowerColumnMask = UpdateMask<float>(lowerColumnCount);
     RegTensor<int32_t> column;
-    MaskReg upperHalf;
+    MaskReg upperColumnMask;
     Arange<int32_t, IndexOrder::INCREASE_ORDER>(column, 0);
-    CompareScalar<int32_t, CMPMODE::GE>(upperHalf, column, 32, full);
+    CompareScalar<int32_t, CMPMODE::GE>(upperColumnMask, column, 32, full);
     constexpr uint32_t stackedBase[4] = {
         0, 32 * 16, 32 * 48, 32 * 96};
 
@@ -513,14 +475,17 @@ __simd_vf__ inline void StageV3Vf(
             Duplicate(aqkRow, 0.0F, full);
             Duplicate(akkRow, 0.0F, full);
         }
-        // ScoreT 只用于 V1/C2 操作数；公开 Aqk 按 InputT RINT。
+        // V1/C2 操作数和公开 Aqk 都固定按 BF16 RINT。
         Store64FromFp32(aqk + row * Shape::kChunkRows, aqkRow);
         if (row < 32) {
-            StoreAlign(lkk + row * Shape::kChunkRows, akkRow, lowerHalf);
+            StoreAlign(lkk + row * Shape::kChunkRows,
+                       akkRow, lowerColumnMask);
         } else {
             // rawAkk 的低 32 列就是最终 B；高 32 列仅写入 L11。
-            StoreAlign(b + (row - 32) * 32, akkRow, lowerHalf);
-            StoreAlign(lkk + row * Shape::kChunkRows, akkRow, upperHalf);
+            StoreAlign(b + (row - 32) * 32,
+                       akkRow, lowerColumnMask);
+            StoreAlign(lkk + row * Shape::kChunkRows,
+                       akkRow, upperColumnMask);
         }
     }
     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
@@ -594,16 +559,16 @@ __simd_vf__ inline void StageV3Vf(
     }
 }
 
-template <typename InputT, typename ValueT, typename Policy>
+template <typename CompilePolicy>
 __simd_vf__ inline void StageV6Vf(
-    __ubuf__ InputT *qHat, __ubuf__ InputT *kHat,
-    __ubuf__ ValueT *v, __ubuf__ float *g, __ubuf__ float *gLast,
-    __ubuf__ float *betaEff, __ubuf__ InputT *qg, __ubuf__ InputT *kg,
-    __ubuf__ InputT *qgScaled, __ubuf__ InputT *kBetaG,
-    __ubuf__ ValueT *vBeta,
+    __ubuf__ bfloat16_t *qHat, __ubuf__ bfloat16_t *kHat,
+    __ubuf__ bfloat16_t *v, __ubuf__ float *g, __ubuf__ float *gLast,
+    __ubuf__ float *betaEff, __ubuf__ bfloat16_t *qg,
+    __ubuf__ bfloat16_t *kg, __ubuf__ bfloat16_t *qgScaled,
+    __ubuf__ bfloat16_t *kBetaG, __ubuf__ bfloat16_t *vBeta,
     uint16_t validRows, float scale)
 {
-    using Domain = ExpDomainTraits<Policy::useExp2>;
+    using Domain = ExpDomainTraits<CompilePolicy::useExp2>;
     MaskReg mask = CreateMask<float, MaskPattern::ALL>();
     for (uint16_t row = 0; row < Shape::kChunkRows; ++row) {
         RegTensor<float> qLow;
@@ -637,7 +602,8 @@ __simd_vf__ inline void StageV6Vf(
                 Domain::StoredBound(ExpDomain::kV6LowerBase2);
             constexpr float upper =
                 Domain::StoredBound(ExpDomain::kV6UpperBase2);
-            ExpPair<Policy::useExp2>(posLow, posHigh, lower, upper);
+            ExpPair<CompilePolicy::useExp2>(
+                posLow, posHigh, lower, upper);
             Mul(qLow, qLow, posLow, mask);
             Mul(qHigh, qHigh, posHigh, mask);
             Mul(kPosLow, kLow, posLow, mask);
@@ -647,12 +613,13 @@ __simd_vf__ inline void StageV6Vf(
 
             Sub(lastLow, lastLow, gateLow, mask);
             Sub(lastHigh, lastHigh, gateHigh, mask);
-            ExpPair<Policy::useExp2>(lastLow, lastHigh, lower, upper);
+            ExpPair<CompilePolicy::useExp2>(
+                lastLow, lastHigh, lower, upper);
             Mul(kLow, kLow, lastLow, mask);
             Mul(kHigh, kHigh, lastHigh, mask);
             Store128FromFp32(kg + row * 128, kLow, kHigh);
 
-            // K_beta_g 保留两次 2-byte 舍入：先写 Khat*E(G)，再回读乘 beta。
+            // K_beta_g 保留两次 BF16 舍入：先写 Khat*E(G)，再回读乘 beta。
             LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
             Load128AsFp32(kLow, kHigh, kBetaG + row * 128);
             Mul(kLow, kLow, beta, mask);
@@ -669,7 +636,7 @@ __simd_vf__ inline void StageV6Vf(
         }
         Store128FromFp32(qg + row * 128, qLow, qHigh);
         if (row < validRows) {
-            // qgScaled 必须从已舍入的公开 qg 回读，保留两次两字节舍入。
+            // qgScaled 必须从已舍入的公开 qg 回读，保留两次 BF16 舍入。
             LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
             Load128AsFp32(qLow, qHigh, qg + row * 128);
             Muls(qLow, qLow, scale, mask);
@@ -683,8 +650,7 @@ __simd_vf__ inline void StageV6Vf(
 
 } // namespace Detail
 
-template <typename InputT, typename ValueT, typename GateT, typename BetaT,
-          typename ScoreT, typename Policy>
+template <typename GateT, typename BetaT, typename CompilePolicy>
 class ChunkKdaFwdPrepareVec {
 public:
     __aicore__ inline void Init(const PrepareKernelArgs &args)
@@ -692,9 +658,9 @@ public:
         args_ = args;
         workgroup_ = WorkgroupId();
         aiv_ = AscendC::GetSubBlockIdx();
-        qGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args.q));
-        kGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args.k));
-        vGm_.SetGlobalBuffer(reinterpret_cast<__gm__ ValueT *>(args.v));
+        qGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.q));
+        kGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.k));
+        vGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.v));
         gateGm_.SetGlobalBuffer(reinterpret_cast<__gm__ GateT *>(args.rawGate));
         betaGm_.SetGlobalBuffer(reinterpret_cast<__gm__ BetaT *>(args.beta));
         if (args.dtBias != nullptr) {
@@ -703,13 +669,13 @@ public:
         if (args.aLog != nullptr) {
             aLogGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.aLog));
         }
-        qgGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args.qg));
+        qgGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.qg));
         qgScaledGm_.SetGlobalBuffer(
-            reinterpret_cast<__gm__ InputT *>(args.qgScaled));
-        kgGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args.kg));
+            reinterpret_cast<__gm__ bfloat16_t *>(args.qgScaled));
+        kgGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.kg));
         gkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.gk));
-        aqkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args.aqk));
-        akkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args.akk));
+        aqkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.aqk));
+        akkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.akk));
     }
 
     __aicore__ inline void Process()
@@ -803,9 +769,9 @@ private:
         const uint8_t mutex = static_cast<uint8_t>(localSlot); // slot0=0，slot1=1
         const uint32_t computeSlot = Arch35Ub::kComputeSlotBase[localSlot];
         const uint32_t state = Arch35Ub::kStateBase[localSlot];
-        auto q = resource_.ubBuf.template GetBufferByByte<InputT>(
+        auto q = resource_.ubBuf.template GetBufferByByte<bfloat16_t>(
             computeSlot + Arch35Ub::kQ);
-        auto k = resource_.ubBuf.template GetBufferByByte<InputT>(
+        auto k = resource_.ubBuf.template GetBufferByByte<bfloat16_t>(
             computeSlot + Arch35Ub::kK);
         auto gate = resource_.ubBuf.template GetBufferByByte<GateT>(
             computeSlot + Arch35Ub::kGateInput);
@@ -831,7 +797,7 @@ private:
             HeadScalarOffset(args_.tiling, chunk, valueHead);
         const uint32_t qkStride = args_.tiling.inputSequenceMajor
                                       ? (args_.tiling.qkHeadNum - 1) *
-                                            Shape::kHeadDim * sizeof(InputT)
+                                            Shape::kHeadDim * sizeof(bfloat16_t)
                                       : 0;
         const uint32_t gateStride = args_.tiling.inputSequenceMajor
                                         ? (args_.tiling.valueHeadNum - 1) *
@@ -841,11 +807,11 @@ private:
         AscendC::Mutex::Lock<PIPE_MTE2>(mutex);
         AscendC::DataCopyPad(q, qGm_[qkOffset],
             {static_cast<uint16_t>(chunk.validRows),
-             Shape::kHeadDim * sizeof(InputT), qkStride, 0, 0},
+             Shape::kHeadDim * sizeof(bfloat16_t), qkStride, 0, 0},
             {false, 0, 0, 0});
         AscendC::DataCopyPad(k, kGm_[qkOffset],
             {static_cast<uint16_t>(chunk.validRows),
-             Shape::kHeadDim * sizeof(InputT), qkStride, 0, 0},
+             Shape::kHeadDim * sizeof(bfloat16_t), qkStride, 0, 0},
             {false, 0, 0, 0});
         AscendC::DataCopyPad(gate, gateGm_[gateOffset],
             {static_cast<uint16_t>(chunk.validRows),
@@ -854,7 +820,7 @@ private:
         AscendC::DataCopyPad(beta, betaGm_[betaOffset],
             {1, chunk.validRows * sizeof(BetaT), 0, 0, 0},
             {false, 0, 0, 0});
-        if constexpr (Policy::gateMode != GateMode::PrecomputedStep) {
+        if constexpr (CompilePolicy::gateMode != GateMode::PrecomputedStep) {
             if (args_.tiling.hasDtBias) {
                 AscendC::DataCopy(dtBias,
                     dtBiasGm_[valueHead * Shape::kHeadDim],
@@ -872,9 +838,9 @@ private:
         AscendC::Mutex::Unlock<PIPE_MTE2>(mutex);
 
         AscendC::Mutex::Lock<PIPE_V>(mutex);
-        AscendC::VF_CALL<Detail::StageV0Vf<InputT, GateT, BetaT, Policy>>(
-            reinterpret_cast<__ubuf__ InputT *>(q.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ InputT *>(k.GetPhyAddr()),
+        AscendC::VF_CALL<Detail::StageV0Vf<GateT, BetaT, CompilePolicy>>(
+            reinterpret_cast<__ubuf__ bfloat16_t *>(q.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()),
             reinterpret_cast<__ubuf__ GateT *>(gate.GetPhyAddr()),
             reinterpret_cast<__ubuf__ BetaT *>(beta.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(dtBias.GetPhyAddr()),
@@ -890,11 +856,11 @@ private:
 
         const uint64_t slot = WorkspaceSlotBase(
             workgroup_, localHead, Workspace::kArch35WorkgroupStride);
-        AscendC::GlobalTensor<InputT> qContext;
-        AscendC::GlobalTensor<InputT> kContext;
-        qContext.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(
+        AscendC::GlobalTensor<bfloat16_t> qContext;
+        AscendC::GlobalTensor<bfloat16_t> kContext;
+        qContext.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + slot + Workspace::kQHat));
-        kContext.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(
+        kContext.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + slot + Workspace::kKHat));
         AscendC::Mutex::Lock<PIPE_MTE3>(mutex);
         AscendC::DataCopy(qContext, q,
@@ -914,31 +880,31 @@ private:
         const uint8_t mutex = static_cast<uint8_t>(localSlot); // slot0=0，slot1=1
         const uint32_t computeSlot = Arch35Ub::kComputeSlotBase[localSlot];
         const uint32_t state = Arch35Ub::kStateBase[localSlot];
-        auto qPlus = resource_.ubBuf.template GetBufferByByte<ScoreT>(
+        auto qPlus = resource_.ubBuf.template GetBufferByByte<bfloat16_t>(
             computeSlot + Arch35Ub::kQ);
-        auto kPlus = resource_.ubBuf.template GetBufferByByte<ScoreT>(
+        auto kPlus = resource_.ubBuf.template GetBufferByByte<bfloat16_t>(
             computeSlot + Arch35Ub::kK);
         auto g = resource_.ubBuf.template GetBufferByByte<float>(
             computeSlot + Arch35Ub::kG);
         auto gRef = resource_.ubBuf.template GetBufferByByte<float>(
             state + Arch35Ub::kGRef[0]);
-        auto kMinus = resource_.ubBuf.template GetBufferByByte<ScoreT>(
+        auto kMinus = resource_.ubBuf.template GetBufferByByte<bfloat16_t>(
             computeSlot + Arch35Ub::kKMinus);
 
         AscendC::Mutex::Lock<PIPE_V>(mutex);
-        AscendC::VF_CALL<Detail::StageV1Vf<InputT, ScoreT, Policy>>(
-            reinterpret_cast<__ubuf__ InputT *>(qPlus.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ InputT *>(kPlus.GetPhyAddr()),
+        AscendC::VF_CALL<Detail::StageV1Vf<CompilePolicy>>(
+            reinterpret_cast<__ubuf__ bfloat16_t *>(qPlus.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(kPlus.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(g.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(gRef.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ ScoreT *>(qPlus.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ ScoreT *>(kPlus.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ ScoreT *>(kMinus.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(qPlus.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(kPlus.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(kMinus.GetPhyAddr()),
             static_cast<uint16_t>(chunk.validRows));
         AscendC::Mutex::Unlock<PIPE_V>(mutex);
 
-        AscendC::GlobalTensor<ScoreT> payload;
-        payload.SetGlobalBuffer(reinterpret_cast<__gm__ ScoreT *>(
+        AscendC::GlobalTensor<bfloat16_t> payload;
+        payload.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + WorkspaceSlotBase(
                 workgroup_, localHead, Workspace::kArch35WorkgroupStride) +
             Workspace::kPayload));
@@ -946,7 +912,7 @@ private:
         AscendC::DataCopy(payload, qPlus,
             2 * Shape::kChunkRows * Shape::kHeadDim);
         AscendC::DataCopy(payload[2 * Shape::kChunkRows * Shape::kHeadDim],
-            kMinus, 40 * 1024 / sizeof(ScoreT));
+            kMinus, 40 * 1024 / sizeof(bfloat16_t));
         AscendC::Mutex::Unlock<PIPE_MTE3>(mutex);
     }
 
@@ -960,7 +926,7 @@ private:
         const uint32_t state = Arch35Ub::kStateBase[localSlot];
         auto rawScore = resource_.ubBuf.template GetBufferByByte<float>(
             computeSlot + Arch35Ub::kRawScore);
-        auto aqk = resource_.ubBuf.template GetBufferByByte<InputT>(
+        auto aqk = resource_.ubBuf.template GetBufferByByte<bfloat16_t>(
             computeSlot + Arch35Ub::kAqk);
         auto lkk = resource_.ubBuf.template GetBufferByByte<float>(
             computeSlot + Arch35Ub::kLkk);
@@ -972,22 +938,22 @@ private:
             computeSlot + Arch35Ub::kX1);
         auto negX1 = resource_.ubBuf.template GetBufferByByte<float>(
             computeSlot + Arch35Ub::kNegX1);
-        auto akk = resource_.ubBuf.template GetBufferByByte<InputT>(
+        auto akk = resource_.ubBuf.template GetBufferByByte<bfloat16_t>(
             computeSlot + Arch35Ub::kAkkPack);
         auto betaEff = resource_.ubBuf.template GetBufferByByte<float>(
             state + Arch35Ub::kBetaEff);
 
         AscendC::Mutex::Lock<PIPE_V>(mutex);
-        AscendC::VF_CALL<Detail::StageV3Vf<InputT>>(
+        AscendC::VF_CALL<Detail::StageV3Vf>(
             reinterpret_cast<__ubuf__ float *>(rawScore.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(betaEff.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ InputT *>(aqk.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(aqk.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(lkk.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(b.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(x0.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(x1.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(negX1.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ InputT *>(akk.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(akk.GetPhyAddr()),
             static_cast<uint16_t>(chunk.validRows), args_.tiling.scale);
         AscendC::Mutex::Unlock<PIPE_V>(mutex);
 
@@ -1006,8 +972,8 @@ private:
                           negX1, 1024);
         // C4 固定读取完整 64x64 矩阵，因此补零后的中转矩阵始终写入
         // 工作空间；公开 Akk 只有 T 行，尾 chunk 只能写有效行。
-        AscendC::GlobalTensor<InputT> akkRelay;
-        akkRelay.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(
+        AscendC::GlobalTensor<bfloat16_t> akkRelay;
+        akkRelay.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + WorkspaceSlotBase(
                 workgroup_, localHead, Workspace::kArch35WorkgroupStride) +
             Workspace::kPayload + Workspace::kAkk));
@@ -1027,17 +993,17 @@ private:
         const uint8_t mutex = static_cast<uint8_t>(localSlot); // slot0=0，slot1=1
         const uint32_t computeSlot = Arch35Ub::kComputeSlotBase[localSlot];
         const uint32_t state = Arch35Ub::kStateBase[localSlot];
-        auto qg = resource_.ubBuf.template GetBufferByByte<InputT>(
+        auto qg = resource_.ubBuf.template GetBufferByByte<bfloat16_t>(
             computeSlot + Arch35Ub::kQg);
-        auto kg = resource_.ubBuf.template GetBufferByByte<InputT>(
+        auto kg = resource_.ubBuf.template GetBufferByByte<bfloat16_t>(
             computeSlot + Arch35Ub::kKg);
-        auto vBeta = resource_.ubBuf.template GetBufferByByte<ValueT>(
+        auto vBeta = resource_.ubBuf.template GetBufferByByte<bfloat16_t>(
             computeSlot + Arch35Ub::kVBeta);
         auto g = resource_.ubBuf.template GetBufferByByte<float>(
             computeSlot + Arch35Ub::kGForPost);
-        auto kBetaG = resource_.ubBuf.template GetBufferByByte<InputT>(
+        auto kBetaG = resource_.ubBuf.template GetBufferByByte<bfloat16_t>(
             computeSlot + Arch35Ub::kKBetaG);
-        auto qgScaled = resource_.ubBuf.template GetBufferByByte<InputT>(
+        auto qgScaled = resource_.ubBuf.template GetBufferByByte<bfloat16_t>(
             computeSlot + Arch35Ub::kQgScaled);
         auto betaEff = resource_.ubBuf.template GetBufferByByte<float>(
             state + Arch35Ub::kBetaEff);
@@ -1045,11 +1011,11 @@ private:
             state + Arch35Ub::kGLast);
         const uint64_t slot = WorkspaceSlotBase(
             workgroup_, localHead, Workspace::kArch35WorkgroupStride);
-        AscendC::GlobalTensor<InputT> qContext;
-        AscendC::GlobalTensor<InputT> kContext;
-        qContext.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(
+        AscendC::GlobalTensor<bfloat16_t> qContext;
+        AscendC::GlobalTensor<bfloat16_t> kContext;
+        qContext.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + slot + Workspace::kQHat));
-        kContext.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(
+        kContext.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + slot + Workspace::kKHat));
 
         AscendC::Mutex::Lock<PIPE_MTE2>(mutex);
@@ -1065,36 +1031,36 @@ private:
             ValueInputOffset(args_.tiling, chunk, valueHead);
         const uint32_t vStride = args_.tiling.inputSequenceMajor
                                      ? (args_.tiling.valueHeadNum - 1) *
-                                           Shape::kValueDim * sizeof(ValueT)
+                                           Shape::kValueDim * sizeof(bfloat16_t)
                                      : 0;
         AscendC::DataCopyPad(vBeta, vGm_[vOffset],
             {static_cast<uint16_t>(chunk.validRows),
-             Shape::kValueDim * sizeof(ValueT), vStride, 0, 0},
+             Shape::kValueDim * sizeof(bfloat16_t), vStride, 0, 0},
             {false, 0, 0, 0});
         AscendC::Mutex::Unlock<PIPE_MTE2>(mutex);
 
         AscendC::Mutex::Lock<PIPE_V>(mutex);
-        AscendC::VF_CALL<Detail::StageV6Vf<InputT, ValueT, Policy>>(
-            reinterpret_cast<__ubuf__ InputT *>(qg.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ InputT *>(kg.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ ValueT *>(vBeta.GetPhyAddr()),
+        AscendC::VF_CALL<Detail::StageV6Vf<CompilePolicy>>(
+            reinterpret_cast<__ubuf__ bfloat16_t *>(qg.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(kg.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(vBeta.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(g.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(gLast.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(betaEff.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ InputT *>(qg.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ InputT *>(kg.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ InputT *>(qgScaled.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ InputT *>(kBetaG.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ ValueT *>(vBeta.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(qg.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(kg.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(qgScaled.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(kBetaG.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(vBeta.GetPhyAddr()),
             static_cast<uint16_t>(chunk.validRows), args_.tiling.scale);
         AscendC::Mutex::Unlock<PIPE_V>(mutex);
 
-        AscendC::GlobalTensor<InputT> kBetaRelay;
-        AscendC::GlobalTensor<ValueT> vBetaRelay;
-        kBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(
+        AscendC::GlobalTensor<bfloat16_t> kBetaRelay;
+        AscendC::GlobalTensor<bfloat16_t> vBetaRelay;
+        kBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + slot + Workspace::kPayload +
             Workspace::kKBetaG));
-        vBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ ValueT *>(
+        vBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + slot + Workspace::kPayload +
             Workspace::kVBeta));
         const uint32_t rhsRows = chunk.validRows > 32 ? 64 : 32;
@@ -1118,19 +1084,19 @@ private:
     uint32_t workgroup_ = 0;
     uint32_t aiv_ = 0;
     Catlass::Arch::Resource<Catlass::Arch::Ascend950> resource_{};
-    AscendC::GlobalTensor<InputT> qGm_{};
-    AscendC::GlobalTensor<InputT> kGm_{};
-    AscendC::GlobalTensor<ValueT> vGm_{};
+    AscendC::GlobalTensor<bfloat16_t> qGm_{};
+    AscendC::GlobalTensor<bfloat16_t> kGm_{};
+    AscendC::GlobalTensor<bfloat16_t> vGm_{};
     AscendC::GlobalTensor<GateT> gateGm_{};
     AscendC::GlobalTensor<BetaT> betaGm_{};
     AscendC::GlobalTensor<float> dtBiasGm_{};
     AscendC::GlobalTensor<float> aLogGm_{};
-    AscendC::GlobalTensor<InputT> qgGm_{};
-    AscendC::GlobalTensor<InputT> qgScaledGm_{};
-    AscendC::GlobalTensor<InputT> kgGm_{};
+    AscendC::GlobalTensor<bfloat16_t> qgGm_{};
+    AscendC::GlobalTensor<bfloat16_t> qgScaledGm_{};
+    AscendC::GlobalTensor<bfloat16_t> kgGm_{};
     AscendC::GlobalTensor<float> gkGm_{};
-    AscendC::GlobalTensor<InputT> aqkGm_{};
-    AscendC::GlobalTensor<InputT> akkGm_{};
+    AscendC::GlobalTensor<bfloat16_t> aqkGm_{};
+    AscendC::GlobalTensor<bfloat16_t> akkGm_{};
 };
 
 } // namespace KdaPrepare::Arch35
