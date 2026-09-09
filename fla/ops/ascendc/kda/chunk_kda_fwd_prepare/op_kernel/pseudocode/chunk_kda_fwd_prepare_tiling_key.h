@@ -29,11 +29,6 @@ enum class GateMode : uint8_t {
     SafeSigmoid,
 };
 
-enum class PrepareAbi : uint8_t {
-    Current,
-    Fused,
-};
-
 namespace ExpDomain {
 constexpr float kLn2 = 0.69314718055994530942F;
 constexpr float kRcpLn2 = 1.44269504088896340736F;
@@ -75,12 +70,11 @@ struct ExpDomainTraits {
 // 其余轴尚未冻结，所以这里不伪造参数不完整的 ASCENDC_TPL_ARGS_DECL；
 // 正式声明必须包含 ASCENDC_TPL_BOOL_DECL(USE_EXP2, 0, 1)。
 template <QkNormMode NORM_MODE, BetaMode BETA_MODE, GateMode GATE_MODE,
-          PrepareAbi ABI, bool USE_EXP2, bool SAFE_GATE>
+          bool USE_EXP2, bool SAFE_GATE>
 struct PrepareCompilePolicy {
     static constexpr QkNormMode normMode = NORM_MODE;
     static constexpr BetaMode betaMode = BETA_MODE;
     static constexpr GateMode gateMode = GATE_MODE;
-    static constexpr PrepareAbi abi = ABI;
     static constexpr bool useExp2 = USE_EXP2;
     static constexpr bool safeGate = SAFE_GATE;
 };

@@ -31,13 +31,12 @@ constexpr uint32_t kScorePayloadBytes = 0x12000; // 16K Q+ + 16K K+ + 40K K-
 } // namespace Shape
 
 namespace Workspace {
-// 每个 slot 的 context 固定在前 65 KiB，72 KiB stage payload 固定在末尾。
+// 每个 slot 的 context 固定在前 33 KiB，72 KiB stage payload 固定在末尾。
 constexpr uint32_t kQHat = 0x00000;
 constexpr uint32_t kKHat = 0x04000;
 constexpr uint32_t kBetaEff = 0x08000;
-constexpr uint32_t kG = 0x08200;
-constexpr uint32_t kPayload = 0x10400;
-constexpr uint32_t kSlotStride = 0x22400;
+constexpr uint32_t kPayload = 0x08400;
+constexpr uint32_t kSlotStride = 0x1A400;
 
 // payload 在不同 Stage 原址换义，不在 UB/L1 内搬位。
 // C2 按 sub-chunk 顺序写 [rawAqk_s; rawAkk_s]，四段合计 20 KiB。
@@ -113,7 +112,7 @@ constexpr uint32_t kKg = 0x4000;
 constexpr uint32_t kVBeta = 0x8000;
 constexpr uint32_t kGForPost = 0xC000;
 constexpr uint32_t kKBetaG = 0x14000;
-constexpr uint32_t kPostScratch = 0x18000;
+constexpr uint32_t kQgScaled = 0x18000;
 
 // 每个 local head 的向量状态与临时区。
 constexpr uint32_t kBetaRaw = 0x0000;
@@ -162,6 +161,8 @@ constexpr uint32_t kV6Qg = 0x0000;
 constexpr uint32_t kV6Kg = 0x4000;
 constexpr uint32_t kV6VBeta = 0x8000;
 constexpr uint32_t kV6KBetaG = 0xC000;
+// V6 正序消费 FP32 G 后，将两字节 qgScaled 压缩写入同一共享区低 16 KiB。
+constexpr uint32_t kV6QgScaled = kSharedG;
 } // namespace Arch22Ub
 
 } // namespace KdaPrepare

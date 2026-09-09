@@ -8,6 +8,8 @@
 #include "chunk_kda_fwd_prepare_tiling_key.h"
 
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 
 namespace {
 
@@ -102,35 +104,68 @@ float L2NormalizationScale(const float *values, uint32_t count, float epsilon)
     return 1.0F / std::sqrt(squareSum + epsilon);
 }
 
+float RoundToBf16(float value)
+{
+    uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    bits += 0x7FFFU + ((bits >> 16U) & 1U);
+    bits &= 0xFFFF0000U;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+float RoundNormalToFp16(float value)
+{
+    const float magnitude = std::fabs(value) > 65504.0F
+                                ? 65504.0F
+                                : std::fabs(value);
+    int exponent = 0;
+    const float fraction = std::frexp(magnitude, &exponent);
+    const float roundedSignificand = std::nearbyint(fraction * 2048.0F);
+    return std::copysign(
+        std::ldexp(roundedSignificand, exponent - 11), value);
+}
+
+bool CheckArch22QgScaledOverlay()
+{
+    constexpr uint32_t kGRowBytes =
+        KdaPrepare::Shape::kHeadDim * sizeof(float);
+    constexpr uint32_t kQgScaledRowBytes =
+        KdaPrepare::Shape::kHeadDim * 2U;
+    for (uint32_t validRows = 1; validRows <= KdaPrepare::Shape::kChunkRows;
+         ++validRows) {
+        const uint32_t gLastBegin = (validRows - 1U) * kGRowBytes;
+        for (uint32_t row = 0; row < validRows; ++row) {
+            const uint32_t qgScaledEnd = (row + 1U) * kQgScaledRowBytes;
+            const uint32_t nextGRowBegin = (row + 1U) * kGRowBytes;
+            if (qgScaledEnd > nextGRowBegin ||
+                (row + 1U < validRows && qgScaledEnd > gLastBegin)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 int main()
 {
     using namespace KdaPrepare;
 
-    using CurrentExp2Policy = PrepareCompilePolicy<
+    using Exp2Policy = PrepareCompilePolicy<
         QkNormMode::L2, BetaMode::Sigmoid, GateMode::PrecomputedStep,
-        PrepareAbi::Current, true, false>;
-    using CurrentExpPolicy = PrepareCompilePolicy<
+        true, false>;
+    using ExpPolicy = PrepareCompilePolicy<
         QkNormMode::L2, BetaMode::Sigmoid, GateMode::PrecomputedStep,
-        PrepareAbi::Current, false, false>;
-    using FusedExp2Policy = PrepareCompilePolicy<
-        QkNormMode::L2, BetaMode::Sigmoid, GateMode::PrecomputedStep,
-        PrepareAbi::Fused, true, false>;
-    using FusedExpPolicy = PrepareCompilePolicy<
-        QkNormMode::L2, BetaMode::Sigmoid, GateMode::PrecomputedStep,
-        PrepareAbi::Fused, false, false>;
-    static_assert(CurrentExp2Policy::gateMode == GateMode::PrecomputedStep);
-    static_assert(CurrentExpPolicy::abi == PrepareAbi::Current);
-    static_assert(FusedExp2Policy::gateMode == GateMode::PrecomputedStep);
-    static_assert(FusedExpPolicy::abi == PrepareAbi::Fused);
-    if (!CurrentExp2Policy::useExp2 || CurrentExpPolicy::useExp2 ||
-        !FusedExp2Policy::useExp2 || FusedExpPolicy::useExp2) {
+        false, false>;
+    static_assert(Exp2Policy::gateMode == GateMode::PrecomputedStep);
+    static_assert(ExpPolicy::gateMode == GateMode::PrecomputedStep);
+    if (!Exp2Policy::useExp2 || ExpPolicy::useExp2) {
         return 1;
     }
 
-    if (!CheckExpDomainPair<CurrentExp2Policy, CurrentExpPolicy>() ||
-        !CheckExpDomainPair<FusedExp2Policy, FusedExpPolicy>()) {
+    if (!CheckExpDomainPair<Exp2Policy, ExpPolicy>()) {
         return 2;
     }
 
@@ -178,13 +213,18 @@ int main()
         Arch35Ub::kGForPost + Shape::kGateMatrixBytes !=
             Arch35Ub::kKBetaG ||
         Arch35Ub::kKBetaG + Shape::kTwoByteMatrixBytes !=
-            Arch35Ub::kPostScratch ||
-        Arch35Ub::kPostScratch >= Arch35Ub::kComputeSlotBytes) {
+            Arch35Ub::kQgScaled ||
+        Arch35Ub::kQgScaled + Shape::kTwoByteMatrixBytes !=
+            Arch35Ub::kComputeSlotBytes) {
         return 5;
     }
 
     if (2 * Arch22Ub::kPrivateBytes + 40 * 1024 !=
             Arch22Ub::kUsableBytes ||
+        Arch22Ub::kV6QgScaled != Arch22Ub::kSharedG ||
+        Arch22Ub::kV6QgScaled + Shape::kTwoByteMatrixBytes >
+            Arch22Ub::kSharedScratch ||
+        !CheckArch22QgScaledOverlay() ||
         Arch22Ub::kKMinus[3] + Shape::kKMinusBytes[3] !=
             Arch22Ub::kPrivateBytes ||
         L1::kHeadLane[3] + L1::kHeadLaneBytes != L1::kX0 ||
@@ -228,6 +268,32 @@ int main()
     if (!NearlyEqual(smallNormalized, expectedSmall) ||
         NearlyEqual(smallNormalized, legacySmall)) {
         return 9;
+    }
+
+    // qgScaled 必须消费已经舍入的 qg，不能把 scale 合并到第一次写回前。
+    constexpr float kQgFp32 = 1.003F;
+    constexpr float kScale = 0.7F;
+    const float qgBf16 = RoundToBf16(kQgFp32);
+    const float qgScaledBf16 = RoundToBf16(qgBf16 * kScale);
+    const float mergedRoundBf16 = RoundToBf16(kQgFp32 * kScale);
+    if (!NearlyEqual(qgBf16, 1.0F) ||
+        !NearlyEqual(qgScaledBf16, 0.69921875F) ||
+        NearlyEqual(qgScaledBf16, mergedRoundBf16)) {
+        return 10;
+    }
+
+    constexpr float kQgFp32ForFp16 = 1.0003F;
+    constexpr float kFp16Scale = 1.3F;
+    const float qgFp16 = RoundNormalToFp16(kQgFp32ForFp16);
+    const float qgScaledFp16 = RoundNormalToFp16(qgFp16 * kFp16Scale);
+    const float mergedRoundFp16 =
+        RoundNormalToFp16(kQgFp32ForFp16 * kFp16Scale);
+    if (!NearlyEqual(qgFp16, 1.0F) ||
+        !NearlyEqual(qgScaledFp16, 1.2998046875F) ||
+        NearlyEqual(qgScaledFp16, mergedRoundFp16) ||
+        !NearlyEqual(RoundNormalToFp16(70000.0F), 65504.0F) ||
+        !NearlyEqual(RoundNormalToFp16(-70000.0F), -65504.0F)) {
+        return 11;
     }
     return 0;
 }

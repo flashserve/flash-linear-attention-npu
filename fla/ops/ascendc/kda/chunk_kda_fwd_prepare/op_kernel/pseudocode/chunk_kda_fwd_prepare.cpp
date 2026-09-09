@@ -43,13 +43,11 @@ __aicore__ inline void RunPrepare(const PrepareKernelArgs &args)
 
     if ASCEND_IS_AIC {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        Arch35::ChunkKdaFwdPrepareCube<InputT, ValueT, ScoreT, CompilePolicy>
-            cube;
+        Arch35::ChunkKdaFwdPrepareCube<InputT, ValueT, ScoreT> cube;
         cube.Init(args);
 #else
         AscendC::TPipe pipe;
-        Arch22::ChunkKdaFwdPrepareCube<InputT, ValueT, ScoreT, CompilePolicy>
-            cube;
+        Arch22::ChunkKdaFwdPrepareCube<InputT, ValueT, ScoreT> cube;
         cube.Init(args, &pipe);
 #endif
         cube.Process();
@@ -58,19 +56,19 @@ __aicore__ inline void RunPrepare(const PrepareKernelArgs &args)
 
 } // namespace KdaPrepare
 
-// 本文件仍是 ABI 尚未冻结的设计伪代码。入口形态直接使用真实 Ascend C kernel
-// API，便于后续把已验证的 Stage 逐个迁移到正式算子目录。
+// 本文件仍是公开接口布局尚未冻结的设计伪代码。入口形态直接使用真实
+// Ascend C kernel API，便于后续把已验证的 Stage 逐个迁移到正式算子目录。
 template <typename InputT, typename ValueT, typename GateT, typename BetaT,
           typename ScoreT,
           KdaPrepare::QkNormMode NORM_MODE,
           KdaPrepare::BetaMode BETA_MODE,
           KdaPrepare::GateMode GATE_MODE,
-          KdaPrepare::PrepareAbi ABI, bool USE_EXP2, bool SAFE_GATE>
+          bool USE_EXP2, bool SAFE_GATE>
 __global__ __aicore__ void chunk_kda_fwd_prepare_pseudocode(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR rawGate, GM_ADDR beta,
     GM_ADDR dtBias, GM_ADDR aLog, GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
-    GM_ADDR qg, GM_ADDR kg, GM_ADDR gk, GM_ADDR aqk, GM_ADDR akk, GM_ADDR w,
-    GM_ADDR u, GM_ADDR workspace, GM_ADDR tiling)
+    GM_ADDR gk, GM_ADDR aqk, GM_ADDR akk, GM_ADDR w, GM_ADDR u, GM_ADDR qg,
+    GM_ADDR kg, GM_ADDR qgScaled, GM_ADDR workspace, GM_ADDR tiling)
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
 
@@ -84,13 +82,14 @@ __global__ __aicore__ void chunk_kda_fwd_prepare_pseudocode(
     args.aLog = aLog;
     args.cuSeqlens = cuSeqlens;
     args.chunkIndices = chunkIndices;
-    args.qg = qg;
-    args.kg = kg;
     args.gk = gk;
     args.aqk = aqk;
     args.akk = akk;
     args.w = w;
     args.u = u;
+    args.qg = qg;
+    args.kg = kg;
+    args.qgScaled = qgScaled;
     args.workspace = AscendC::GetUserWorkspace(workspace);
     __gm__ const KdaPrepare::ChunkKdaFwdPrepareTilingData *tilingData =
         reinterpret_cast<__gm__ const KdaPrepare::ChunkKdaFwdPrepareTilingData *>(
@@ -111,6 +110,6 @@ __global__ __aicore__ void chunk_kda_fwd_prepare_pseudocode(
     args.tiling.hasDtBias = tilingData->hasDtBias;
 
     using Policy = KdaPrepare::PrepareCompilePolicy<
-        NORM_MODE, BETA_MODE, GATE_MODE, ABI, USE_EXP2, SAFE_GATE>;
+        NORM_MODE, BETA_MODE, GATE_MODE, USE_EXP2, SAFE_GATE>;
     KdaPrepare::RunPrepare<InputT, ValueT, GateT, BetaT, ScoreT, Policy>(args);
 }

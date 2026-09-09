@@ -25,16 +25,14 @@ constexpr AscendC::FixpipeConfig kFixpipeRowMajorUb = {
 constexpr AscendC::FixpipeConfig kFixpipeNzL1 = {
     AscendC::CO2Layout::NZ, false};
 
-template <typename InputT, typename ValueT, typename ScoreT, typename Policy>
+template <typename InputT, typename ValueT, typename ScoreT>
 class ChunkKdaFwdPrepareCube {
 public:
     __aicore__ inline void Init(const PrepareKernelArgs &args)
     {
         args_ = args;
         workgroup_ = WorkgroupId();
-        if (args.akk != nullptr) {
-            akkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args.akk));
-        }
+        akkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args.akk));
         wGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args.w));
         uGm_.SetGlobalBuffer(reinterpret_cast<__gm__ ValueT *>(args.u));
     }
@@ -474,22 +472,20 @@ private:
             akkL1[L1::kAkkQ10Elements], l0C, l1Fix);
         AscendC::Mutex::Unlock<PIPE_FIX>(l1Mutex);
 
-        if constexpr (Policy::abi == PrepareAbi::Current) {
-            const uint32_t bottomRows = chunk.validRows - 32;
-            auto gmFix = AscendC::FixpipeParamsV220(
-                32, bottomRows, 32, Shape::kChunkRows, false);
-            if constexpr (std::is_same_v<InputT, half>) {
-                gmFix.quantPre = QuantMode_t::F322F16;
-            } else {
-                gmFix.quantPre = QuantMode_t::F322BF16;
-            }
-            AscendC::Fixpipe<InputT, float, AscendC::CFG_ROW_MAJOR>(
-                akkGm_[AOutputOffset(args_.tiling, chunk, valueHead) +
-                       32 * Shape::kChunkRows],
-                l0C, gmFix);
-            // V3 已写回 q00/q01/q11；本次 q10 Fixpipe 完成后，公开 Akk
-            // 的四个象限全部为最终值，不需要再从 GM 回读或重复 MMAD。
+        const uint32_t bottomRows = chunk.validRows - 32;
+        auto gmFix = AscendC::FixpipeParamsV220(
+            32, bottomRows, 32, Shape::kChunkRows, false);
+        if constexpr (std::is_same_v<InputT, half>) {
+            gmFix.quantPre = QuantMode_t::F322F16;
+        } else {
+            gmFix.quantPre = QuantMode_t::F322BF16;
         }
+        AscendC::Fixpipe<InputT, float, AscendC::CFG_ROW_MAJOR>(
+            akkGm_[AOutputOffset(args_.tiling, chunk, valueHead) +
+                   32 * Shape::kChunkRows],
+            l0C, gmFix);
+        // V3 已写回 q00/q01/q11；本次 q10 Fixpipe 完成后，公开 Akk
+        // 的四个象限全部为最终值，不需要再从 GM 回读或重复 MMAD。
         AscendC::Mutex::Unlock<PIPE_FIX>(l0cMutex);
     }
 

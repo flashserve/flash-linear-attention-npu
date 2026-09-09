@@ -50,10 +50,10 @@ TilingData 只承载 shape、调度和标量参数；设备架构不进入运行
 TilingKey 声明应与 `chunk_fwd_h` 一致使用
 `ASCENDC_TPL_BOOL_DECL(USE_EXP2, 0, 1)`；当前其他 dtype/模式轴尚未冻结，
 因此本伪代码只冻结该轴的 `0/1` 编码，不提交一个参数不完整的注册声明。
-正式 selector 的笛卡尔积中，每个合法的 dtype/模式/ABI 组合都必须由
+正式 selector 的笛卡尔积中，每个合法的 dtype/模式组合都必须由
 `SEL_EXP` 一类宏同时展开 `USE_EXP2=0` 和 `USE_EXP2=1`，op_host 再把公开
 `use_exp2` 属性原样传给 `GET_TPL_TILING_KEY`。当前 host 小测试只验证
-Current/Fused 的 `PrecomputedStep` policy 能选择两份 `ExpDomainTraits`，以及其中
+`PrecomputedStep` policy 能选择两份 `ExpDomainTraits`，以及其中
 step 缩放、base-2 边界换算和 `Exp` 输入倍率的纯数值合同；它不编译架构头，也不验证
 设备 `Muls/Exp/Cast`、两字节舍入或尚未接入的 op_host 可达性。
 现有 `chunk_gated_delta_rule_fwd_prepare` 参考实现仍拦截 `false`，不能作为双分支
@@ -79,7 +79,15 @@ gateScale = 1/ln(2), USE_EXP2=true
 G[i,d] = sum(t=0..i, deltaG_ln[t,d] * gateScale)
 E(x) = exp(x * ln(2)), USE_EXP2=true
      = exp(x),         USE_EXP2=false
+
+qg = round_2B(Qhat * E(G))
+qg_scaled = round_2B(float(qg) * scale)
+kg = round_2B(Khat * E(Glast - G))
 ```
+
+公开输出固定为 `gk/Aqk/Akk/w/u/qg/kg/qg_scaled`。`qg` 与 `qg_scaled` 是两块
+独立输出，后者必须从已经写成两字节的 `qg` 回读到 FP32 后再乘 `scale`，不能合并
+两次舍入。`K_beta_g/V_beta` 只在 V6 到 C7 之间中转，不是公开输出。
 
 `PrecomputedStep` 的输入是自然对数域、尚未累计的单 token `deltaG_ln`。该模式
 不读取或应用 `dt_bias/A_log`，但 V0 仍按 `USE_EXP2` 缩放每个 step，并执行
@@ -132,7 +140,7 @@ Kminus[s,j,d] = Khat[j,d] * E(Gref[s,d] - G[j,d])
 | `V3` | Vector | 因果 mask、beta、两个 32x32 叶子逆，生成 `Aqk/B/X0/X1/negX1` |
 | `C4` | Cube | `M>32` 时计算 `T=B@X0` |
 | `C5` | Cube | `M>32` 时计算下左象限 `q10=negX1@T` |
-| `V6` | Vector | 生成 `Qg/kg/K_beta_g/V_beta` |
+| `V6` | Vector | 生成 `qg/qg_scaled/kg/K_beta_g/V_beta` |
 | `C7` | Cube | `W=Akk@K_beta_g`、`U=Akk@V_beta` |
 
 八段不能压成六段：
@@ -179,8 +187,8 @@ V0 的一次 VF 和回写完成后：
 | scan scratch/carry | 否 | `G/Glast/Gref` 已完成 |
 | `Qhat/Khat` | 是 | V1、V6 需要 |
 | `G/Gref` | 是到 V1 | S=4 score 需要 |
-| `G/Glast` 的 context | 是到 V6 | post-WU 需要 |
-| `betaEff` | 是到 V6 | V3、V6 需要 |
+| 公开 `gk` | 是 | V6 从 GM 回读，且供后续算子使用 |
+| `betaEff` | 是到 V6 | Arch22 放 workspace，Arch35 放每 head 状态区 |
 
 释放表示该静态地址在最后一个异步 reader 完成后可以换义，不表示在 UB 内移动数据。
 
@@ -234,6 +242,8 @@ Prepare/Finalize。
 连续 VF scratch。每个 112 KiB 区的 Stage 语义及 offset 直接定义在
 `chunk_kda_fwd_prepare_policy.h`，代码用
 `resource.ubBuf.GetBufferByByte<T>(offset)` 绑定 `LocalTensor`。
+V6 的 112 KiB 正好由 `qg/kg/V_beta/qgScaled/K_beta_g` 五块 16 KiB 两字节
+矩阵和一块 32 KiB FP32 `G` 组成，不再保留含义不明的 post scratch。
 
 ### Arch22
 
@@ -242,13 +252,18 @@ Prepare/Finalize。
 | 地址 | 大小 | 所有者 |
 | --- | ---: | --- |
 | `[0x00000,0x12000)` | 72 KiB | pair 0 私有区 |
-| `[0x12000,0x1C000)` | 40 KiB | 两个 pair 分时复用的 G + VF scratch |
+| `[0x12000,0x1C000)` | 40 KiB | 两个 pair 分时复用的 G/qgScaled + VF scratch |
 | `[0x1C000,0x2E000)` | 72 KiB | pair 1 私有区 |
 | `[0x2E000,0x30000)` | 8 KiB | CANN 保留，不使用 |
 
 同一 AIV 必须执行 `V0(pair0)->V1(pair0)->V0(pair1)->V1(pair1)`，并用
-`V_MTE2` shared-free 事件保证前一个 pair 的最后一次 V 读取完成后，下一个
-pair 的 MTE2 才能覆盖共享 G/scratch；不能仅依赖源码调用顺序。
+`V_MTE2` shared-free 事件保证前一个 pair 的共享区消费者完成后，下一个 pair 的
+MTE2 才能覆盖共享 G/scratch；V6 还要先等 qgScaled 的 MTE3 读完共享区，不能仅
+依赖源码调用顺序。
+当前输入只支持 FP16/BF16。V6 按 token 行正序读取 FP32 `G[r]` 后，把同一行
+两字节 `qgScaled[r]` 写到共享 G 起始地址的 `256*r` 字节处；该地址始终位于下一条
+尚未读取的 G 行之前，因此无需移动 UB 数据。若以后支持 FP32 q dtype，这个覆盖关系
+不再成立，必须重新设计布局。
 
 ## L1 和 workspace
 
@@ -263,19 +278,19 @@ L1 只供 Cube：
 | `[0x54000,0x5C000)` | 32 KiB | 四份 2-byte Akk 象限包 |
 | `[0x5C000,0x80000)` | 144 KiB | 保留 |
 
-每个 workspace slot 固定为 `0x22400` 字节：
+每个 workspace slot 固定为 `0x1A400` 字节：
 
 | slot 内 offset | 内容 |
 | --- | --- |
 | `0x00000` | Qhat，16 KiB |
 | `0x04000` | Khat，16 KiB |
 | `0x08000` | Arch22 的 betaEff context，512 B；Arch35 不写该区 |
-| `0x08200` | G，32 KiB |
-| `0x10200` | 对齐保留，512 B |
-| `0x10400` | Stage payload，72 KiB |
+| `0x08200` | 对齐保留，512 B |
+| `0x08400` | Stage payload，72 KiB |
 
-`Qhat/Khat` 和 ABI 对应的 `G` context 都只搬运 `validRows`。Current ABI 的
-`G` 直接写入并从公开 `gk` 回读；只有 Fused ABI 使用 slot 内的 `G` context。
+`Qhat/Khat/betaEff` context 都只搬运 `validRows`。`G` 始终写入公开 `gk`，
+V6 从该公开输出回读，不再在 workspace 保留第二份 G context。
+因此每个 slot 从 137 KiB 降为 105 KiB，四个 slot 共减少 128 KiB workspace。
 
 Arch35 和 Arch22 每个 workgroup 都只分配 4 个 slot，对应一个 AIC wave 的四个
 group-local head。下一组 head 必须先消费上一组的 C7 free，再原址复用这 4 个 slot，
@@ -289,8 +304,8 @@ head 的 L1 T 常驻区。每个 head 使用独立的 `MTE2_MTE1` ready 事件�
 Arch35 支持 FP32 L0C 直写 L1，不经过这段 relay。
 
 V3 会把完整补零的 `Akk[64,64]` 固定写到 payload 内 `0x5800`，C4 始终读取这份
-workspace relay。Current ABI 的公开 `Akk` 只写 `validRows` 行，不能把尾 chunk 的
-公开输出当成 64 行 relay；Fused ABI 不写公开 `Akk`。
+workspace relay。公开 `Akk` 同时只写 `validRows` 行，不能把尾 chunk 的公开输出
+当成 64 行 relay。
 
 ## 同步
 
@@ -373,7 +388,7 @@ Mutex 只处理同核 pipe 交接，不是核间同步。AIC/AIV 仍用 mode `0x
 | AIV | `MTE3_MTE2` | `ioFree_[0/1]` | `0/1` |
 | AIV | `MTE2_V` | `inputReady_[0/1]` | `0/1` |
 | AIV | `V_MTE3` | `outputReady_[0/1]` | `0/1` |
-| AIV | `MTE3_V` | `v0StoreDone_[0/1]` | `0/1` |
+| AIV | `MTE3_V` | `mte3ToV_[0/1]` | `0/1`，V0 写 context 后通知 V1；V6 搬出 qgScaled 后通知 V 释放共享区 |
 | AIC | `MTE2_MTE1` | `mte2ToMte1_` | `0` |
 | AIC | `MTE2_MTE1` | `tReady_[0..3]` | `1/2/3/4` |
 | AIC | `MTE1_M` | `mte1ToM_` | `0` |
@@ -385,8 +400,9 @@ Mutex 只处理同核 pipe 交接，不是核间同步。AIC/AIV 仍用 mode `0x
 | AIC | `FIX_MTE1` | `fixToMte1_[0..3]` | `0/1/2/3` |
 
 两个 pair 复用共享 G/scratch 时，`V_MTE2` ID 0 是 shared-free：V0/V3/V6 的
-MTE2 写前 wait，V1/V3/V6 最后一次 V 读后 set。两个私有 UB slot 的内部
-ping-pong 则分别使用各 HardEvent 池的 ID 0/1。
+MTE2 写前 wait，V1/V3 在最后一次 V 读取后 set。V6 把两字节 qgScaled 原址写入
+FP32 G 的低 16 KiB，并在 MTE3 搬完 qgScaled 后通过 `MTE3_V -> V_MTE2` 传递
+shared-free。两个私有 UB slot 的内部 ping-pong 分别使用各 HardEvent 池的 ID 0/1。
 
 核间使用 mode `0x2`，固定 ID 已在 AIV/AIC 两侧主循环直接列成数组：
 
@@ -425,7 +441,8 @@ MMAD 与 Fixpipe 不再读取 workspace，可以和 AIV 对下一组 slot 的生
 - FP16 写回前先饱和到 `[-65504,65504]` 再 RINT；BF16 只做 BF16 RINT。
 - `K_beta_g` 保留两次 2-byte 舍入：
   `round(Khat*E(G))`，转回 FP32 乘 beta，再次 round。
-- Fused `Qg_scaled` 先生成并舍入 `Qg`，再转回 FP32 乘 scale 并二次舍入。
+- `qg_scaled` 先生成并舍入 `qg`，再转回 FP32 乘 scale 并二次舍入；两者都写入
+  独立公开输出。
 - C5 不使用不存在的 `Mmad negate` 参数。V3 直接生成 `negX1`，C5 做普通
   `Mmad(negX1,T)`。
 

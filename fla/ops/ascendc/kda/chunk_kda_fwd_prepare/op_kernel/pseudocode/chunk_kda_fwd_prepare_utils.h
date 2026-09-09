@@ -249,7 +249,7 @@ __aicore__ inline uint64_t RawGateInputOffset(
            Shape::kHeadDim;
 }
 
-// beta、Qg/kg/gk 以及矩阵输出沿用当前 KDA 的 head-major ABI。
+// beta、qg/qgScaled/kg/gk 以及矩阵输出沿用当前 KDA 的 head-major 布局。
 __aicore__ inline uint64_t HeadTensorOffset(
     const ChunkKdaFwdPrepareTilingData &tiling, const ChunkRange &chunk,
     uint32_t valueHead, uint32_t dimension)

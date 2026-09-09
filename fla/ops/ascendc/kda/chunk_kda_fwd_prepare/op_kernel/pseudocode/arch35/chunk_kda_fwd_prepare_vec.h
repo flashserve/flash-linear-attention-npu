@@ -599,7 +599,8 @@ __simd_vf__ inline void StageV6Vf(
     __ubuf__ InputT *qHat, __ubuf__ InputT *kHat,
     __ubuf__ ValueT *v, __ubuf__ float *g, __ubuf__ float *gLast,
     __ubuf__ float *betaEff, __ubuf__ InputT *qg, __ubuf__ InputT *kg,
-    __ubuf__ InputT *kBetaG, __ubuf__ ValueT *vBeta,
+    __ubuf__ InputT *qgScaled, __ubuf__ InputT *kBetaG,
+    __ubuf__ ValueT *vBeta,
     uint16_t validRows, float scale)
 {
     using Domain = ExpDomainTraits<Policy::useExp2>;
@@ -667,13 +668,13 @@ __simd_vf__ inline void StageV6Vf(
             Duplicate(vHigh, 0.0F, mask);
         }
         Store128FromFp32(qg + row * 128, qLow, qHigh);
-        if constexpr (Policy::abi == PrepareAbi::Fused) {
-            // Fused ABI 保留 Qg 的第一次两字节舍入，再乘 scale 后二次舍入。
+        if (row < validRows) {
+            // qgScaled 必须从已舍入的公开 qg 回读，保留两次两字节舍入。
             LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
             Load128AsFp32(qLow, qHigh, qg + row * 128);
             Muls(qLow, qLow, scale, mask);
             Muls(qHigh, qHigh, scale, mask);
-            Store128FromFp32(qg + row * 128, qLow, qHigh);
+            Store128FromFp32(qgScaled + row * 128, qLow, qHigh);
         }
         Store128FromFp32(kBetaG + row * 128, kLow, kHigh);
         Store128FromFp32(vBeta + row * 128, vLow, vHigh);
@@ -703,12 +704,12 @@ public:
             aLogGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.aLog));
         }
         qgGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args.qg));
+        qgScaledGm_.SetGlobalBuffer(
+            reinterpret_cast<__gm__ InputT *>(args.qgScaled));
         kgGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args.kg));
         gkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.gk));
         aqkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args.aqk));
-        if (args.akk != nullptr) {
-            akkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args.akk));
-        }
+        akkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ InputT *>(args.akk));
     }
 
     __aicore__ inline void Process()
@@ -900,18 +901,9 @@ private:
             chunk.validRows * Shape::kHeadDim);
         AscendC::DataCopy(kContext, k,
             chunk.validRows * Shape::kHeadDim);
-        if constexpr (Policy::abi == PrepareAbi::Current) {
-            AscendC::DataCopy(gkGm_[HeadTensorOffset(
-                args_.tiling, chunk, valueHead, Shape::kHeadDim)],
-                g,
-                chunk.validRows * Shape::kHeadDim);
-        } else {
-            AscendC::GlobalTensor<float> gContext;
-            gContext.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
-                args_.workspace + slot + Workspace::kG));
-            AscendC::DataCopy(gContext, g,
-                chunk.validRows * Shape::kHeadDim);
-        }
+        AscendC::DataCopy(gkGm_[HeadTensorOffset(
+            args_.tiling, chunk, valueHead, Shape::kHeadDim)],
+            g, chunk.validRows * Shape::kHeadDim);
         AscendC::Mutex::Unlock<PIPE_MTE3>(mutex);
     }
 
@@ -1021,11 +1013,9 @@ private:
             Workspace::kPayload + Workspace::kAkk));
         AscendC::DataCopy(akkRelay, akk,
             Shape::kChunkRows * Shape::kChunkRows);
-        if constexpr (Policy::abi == PrepareAbi::Current) {
-            AscendC::DataCopy(akkGm_[AOutputOffset(
-                args_.tiling, chunk, valueHead)], akk,
-                chunk.validRows * Shape::kChunkRows);
-        }
+        AscendC::DataCopy(akkGm_[AOutputOffset(
+            args_.tiling, chunk, valueHead)], akk,
+            chunk.validRows * Shape::kChunkRows);
         AscendC::Mutex::Unlock<PIPE_MTE3>(mutex);
     }
 
@@ -1047,6 +1037,8 @@ private:
             computeSlot + Arch35Ub::kGForPost);
         auto kBetaG = resource_.ubBuf.template GetBufferByByte<InputT>(
             computeSlot + Arch35Ub::kKBetaG);
+        auto qgScaled = resource_.ubBuf.template GetBufferByByte<InputT>(
+            computeSlot + Arch35Ub::kQgScaled);
         auto betaEff = resource_.ubBuf.template GetBufferByByte<float>(
             state + Arch35Ub::kBetaEff);
         auto gLast = resource_.ubBuf.template GetBufferByByte<float>(
@@ -1065,18 +1057,10 @@ private:
             chunk.validRows * Shape::kHeadDim);
         AscendC::DataCopy(kg, kContext,
             chunk.validRows * Shape::kHeadDim);
-        if constexpr (Policy::abi == PrepareAbi::Current) {
-            AscendC::DataCopy(g,
-                gkGm_[HeadTensorOffset(
-                    args_.tiling, chunk, valueHead, Shape::kHeadDim)],
-                chunk.validRows * Shape::kHeadDim);
-        } else {
-            AscendC::GlobalTensor<float> gContext;
-            gContext.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
-                args_.workspace + slot + Workspace::kG));
-            AscendC::DataCopy(g, gContext,
-                chunk.validRows * Shape::kHeadDim);
-        }
+        AscendC::DataCopy(g,
+            gkGm_[HeadTensorOffset(
+                args_.tiling, chunk, valueHead, Shape::kHeadDim)],
+            chunk.validRows * Shape::kHeadDim);
         const uint64_t vOffset =
             ValueInputOffset(args_.tiling, chunk, valueHead);
         const uint32_t vStride = args_.tiling.inputSequenceMajor
@@ -1099,6 +1083,7 @@ private:
             reinterpret_cast<__ubuf__ float *>(betaEff.GetPhyAddr()),
             reinterpret_cast<__ubuf__ InputT *>(qg.GetPhyAddr()),
             reinterpret_cast<__ubuf__ InputT *>(kg.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ InputT *>(qgScaled.GetPhyAddr()),
             reinterpret_cast<__ubuf__ InputT *>(kBetaG.GetPhyAddr()),
             reinterpret_cast<__ubuf__ ValueT *>(vBeta.GetPhyAddr()),
             static_cast<uint16_t>(chunk.validRows), args_.tiling.scale);
@@ -1117,6 +1102,8 @@ private:
         const uint64_t out = HeadTensorOffset(
             args_.tiling, chunk, valueHead, Shape::kHeadDim);
         AscendC::DataCopy(qgGm_[out], qg,
+            chunk.validRows * Shape::kHeadDim);
+        AscendC::DataCopy(qgScaledGm_[out], qgScaled,
             chunk.validRows * Shape::kHeadDim);
         AscendC::DataCopy(kgGm_[out], kg,
             chunk.validRows * Shape::kHeadDim);
@@ -1139,6 +1126,7 @@ private:
     AscendC::GlobalTensor<float> dtBiasGm_{};
     AscendC::GlobalTensor<float> aLogGm_{};
     AscendC::GlobalTensor<InputT> qgGm_{};
+    AscendC::GlobalTensor<InputT> qgScaledGm_{};
     AscendC::GlobalTensor<InputT> kgGm_{};
     AscendC::GlobalTensor<float> gkGm_{};
     AscendC::GlobalTensor<InputT> aqkGm_{};

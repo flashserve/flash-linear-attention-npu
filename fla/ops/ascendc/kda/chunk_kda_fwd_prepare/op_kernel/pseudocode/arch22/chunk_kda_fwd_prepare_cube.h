@@ -19,7 +19,7 @@ namespace KdaPrepare::Arch22 {
 constexpr AscendC::FixpipeConfig kFixpipeNz = {
     AscendC::CO2Layout::NZ, false};
 
-template <typename InputT, typename ValueT, typename ScoreT, typename Policy>
+template <typename InputT, typename ValueT, typename ScoreT>
 class ChunkKdaFwdPrepareCube {
 public:
     __aicore__ inline void Init(const PrepareKernelArgs &args, AscendC::TPipe *pipe)
@@ -439,24 +439,21 @@ private:
         // dstStride=64 个 datablock 跨过完整 64 行 M 轴。
         AscendC::Fixpipe<InputT, float, kFixpipeNz>(
             akkL1[L1::kAkkQ10Elements], l0C, l1Fix);
-        if constexpr (Policy::abi == PrepareAbi::Current) {
-            AscendC::GlobalTensor<InputT> akkOutput;
-            akkOutput.SetGlobalBuffer(
-                reinterpret_cast<__gm__ InputT *>(args_.akk) +
-                AOutputOffset(args_.tiling, chunk, valueHead));
-            auto outputFix = AscendC::FixpipeParamsV220(
-                32, bottomRows, 32, Shape::kChunkRows, false);
-            if constexpr (std::is_same_v<InputT, half>) {
-                outputFix.quantPre = QuantMode_t::F322F16;
-            } else if constexpr (std::is_same_v<InputT, bfloat16_t>) {
-                outputFix.quantPre = QuantMode_t::F322BF16;
-            } else {
-                outputFix.quantPre = QuantMode_t::NoQuant;
-            }
-            AscendC::Fixpipe<InputT, float, AscendC::CFG_ROW_MAJOR>(
-                akkOutput[32 * Shape::kChunkRows], l0C,
-                outputFix);
+        AscendC::GlobalTensor<InputT> akkOutput;
+        akkOutput.SetGlobalBuffer(
+            reinterpret_cast<__gm__ InputT *>(args_.akk) +
+            AOutputOffset(args_.tiling, chunk, valueHead));
+        auto outputFix = AscendC::FixpipeParamsV220(
+            32, bottomRows, 32, Shape::kChunkRows, false);
+        if constexpr (std::is_same_v<InputT, half>) {
+            outputFix.quantPre = QuantMode_t::F322F16;
+        } else if constexpr (std::is_same_v<InputT, bfloat16_t>) {
+            outputFix.quantPre = QuantMode_t::F322BF16;
+        } else {
+            outputFix.quantPre = QuantMode_t::NoQuant;
         }
+        AscendC::Fixpipe<InputT, float, AscendC::CFG_ROW_MAJOR>(
+            akkOutput[32 * Shape::kChunkRows], l0C, outputFix);
         AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(fixToMte1_[localHead]);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(fixToM_);
     }

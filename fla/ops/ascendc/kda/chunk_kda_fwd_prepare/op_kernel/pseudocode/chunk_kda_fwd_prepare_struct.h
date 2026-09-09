@@ -36,13 +36,14 @@ struct PrepareKernelArgs {
     GM_ADDR cuSeqlens = nullptr;
     GM_ADDR chunkIndices = nullptr;
 
-    GM_ADDR qg = nullptr;
-    GM_ADDR kg = nullptr;
     GM_ADDR gk = nullptr;
     GM_ADDR aqk = nullptr;
     GM_ADDR akk = nullptr;
     GM_ADDR w = nullptr;
     GM_ADDR u = nullptr;
+    GM_ADDR qg = nullptr;
+    GM_ADDR kg = nullptr;
+    GM_ADDR qgScaled = nullptr;
     GM_ADDR workspace = nullptr;
 
     ChunkKdaFwdPrepareTilingData tiling{};
