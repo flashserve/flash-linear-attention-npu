@@ -18,6 +18,12 @@ log2 域完成同一组门控计算。
 BF16，`gk` 固定为 FP32，gate/beta 只允许 FP32 或 BF16。
 设计只保留一套公开输出接口：`gk/Aqk/Akk/w/u/qg/kg/qg_scaled` 都写回 GM，
 不再按输出是否公开拆分编译模式。
+
+这些输出按消费者分类时允许重叠：`gk/w/u/kg` 是后续 FwdH 的输入，
+`Aqk/qg_scaled` 是 Finalize 的输入；`Aqk/Akk/gk/w/qg/kg` 还会被反向直接使用或按
+重计算策略保存，`u` 仅为对齐既有返回策略而随禁用重计算路径保留，当前反向不读取它。
+`h/final_state` 由后续 FwdH 产生，不是 Prepare 输出；其中内部 `hCompute` 始终供
+Finalize 使用，只有公开 `hOut` 和 `final_state` 属于用户可选状态结果。
 尚未由目标 CANN 头文件确认的布局和参数在调用现场标为 **TODO**；因此不能据此声称 A2/A3/A5
 已经具备可构建、可调用的生产支持。详细说明见
 [`op_kernel/pseudocode/README.md`](op_kernel/pseudocode/README.md)。

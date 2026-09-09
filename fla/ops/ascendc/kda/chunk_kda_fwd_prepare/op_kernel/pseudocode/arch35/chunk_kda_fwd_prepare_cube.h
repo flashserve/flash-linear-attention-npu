@@ -96,9 +96,12 @@ public:
                         kAicToAivSlotReusableFlagId[localHead]);
                 }
 
-                // C4 在一次性读完 B/X0/negX1/Akk 后立即归还 workspace
-                // payload；随后 T=B@X0、C5=negX1@T 可以与配对 AIV 的 V6
-                // 并行。StageC4 内部在 MTE2 搬运结束处直接发布 free。
+                // 先为所有有效 HEAD 提交 C4，再统一提交 C5。若逐 HEAD 交替
+                // 提交 C4/C5，C5 的 MTE1 会等待同 HEAD 的 C4 Fixpipe 写完 T，
+                // 并阻塞后续 HEAD 的独立 C4；两轮提交允许下一 HEAD 的
+                // MTE1/MMAD 与上一 HEAD 的 Fixpipe 排空重叠。
+                // C4 一次性读完 B/X0/negX1/Akk 后立即归还 workspace payload，
+                // 后续 C4/C5 只访问每 HEAD 独立的 L1 常驻数据。
                 for (uint32_t localHead = 0;
                      localHead < Shape::kHeadsPerGroup; ++localHead) {
                     const uint32_t valueHead = groupBegin + localHead;
@@ -109,6 +112,13 @@ public:
                         kAivToAicPayloadReadyFlagId[localHead]);
                     StageC4(chunk, localHead,
                             kAicToAivSlotReusableFlagId[localHead]);
+                }
+                for (uint32_t localHead = 0;
+                     localHead < Shape::kHeadsPerGroup; ++localHead) {
+                    const uint32_t valueHead = groupBegin + localHead;
+                    if (valueHead >= headEnd) {
+                        continue;
+                    }
                     StageC5(chunk, valueHead, localHead);
                 }
 

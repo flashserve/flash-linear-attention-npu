@@ -128,6 +128,22 @@ Kminus[s,j,d] = Khat[j,d] * E(Gref[s,d] - G[j,d])
 这不是四份完整 `Kminus[64,128]`。每个 `s` 只保留该 16 行 query band
 能够访问的 key 前缀。
 
+## 输出分类
+
+本伪代码固定把 `gk/Aqk/Akk/w/u/qg/kg/qg_scaled` 八个结果全部写回 GM。
+“公开输出”只表示它们都位于算子边界；按实际消费者分类时，各类允许重叠：
+
+| 类别 | 数据 | 实际用途 |
+| --- | --- | --- |
+| 后续正向必需 | `gk/w/u/kg` | FwdH 计算 `v_new` 与 chunk 状态递推 |
+| 后续正向必需 | `Aqk/qg_scaled` | Finalize 计算 `attn_out=qg_scaled@h+Aqk@v_new` |
+| 反向使用或保存 | `Aqk/Akk/gk/w/qg/kg` | `Aqk/Akk` 始终保留；其余按 gate 与重计算策略保存或在反向重算；`u` 会随禁用重计算路径兼容保留，但当前反向不读取 |
+| 用户可选状态结果 | `hOut/final_state` | 由后续 FwdH 产生，不属于 Prepare 的八个输出 |
+
+其中 `qg_scaled` 只服务正向 Finalize，`Akk/qg` 在 Prepare 已包含 Post-WU 的边界
+之后不再被正向消费。内部 head-major `hCompute` 即使不导出也必须存在；它供 Finalize
+使用，不能与可选公开的 `hOut` 混为一类。
+
 ## 八个 Stage
 
 每个 Stage 只能包含 Cube 或 Vector 操作之一。Vector Stage 只调用一次 VF，不按 token、
@@ -144,6 +160,20 @@ Kminus[s,j,d] = Khat[j,d] * E(Gref[s,d] - G[j,d])
 | `C5` | Cube | `M>32` 时计算下左象限 `q10=negX1@T` |
 | `V6` | Vector | 生成 `qg/qg_scaled/kg/K_beta_g/V_beta` |
 | `C7` | Cube | `W=Akk@K_beta_g`、`U=Akk@V_beta` |
+
+Arch35 的 C4/C5 按两轮提交：
+
+```text
+C4(head0), C4(head1), C4(head2), C4(head3)
+C5(head0), C5(head1), C5(head2), C5(head3)
+```
+
+C5 仍通过同一 head 的 L1 Mutex 等待 C4 的 Fixpipe 把 `T` 写入 L1，但不会先于
+其他 head 的独立 C4 排进 MTE1 队列。这样下一 head 的 C4 MTE1/MMAD 可以与上一 head
+的 C4 Fixpipe 排空重叠；AIC 仍只有一条 M 管线，不表示多个 MMAD 同时执行。C4 在
+MTE2 搬完 `B/X0/negX1/Akk` 后即发布 workspace 可复用信号，C4/C5 随后只读各 head
+独立的 L1 常驻区，因此 AIV 的 V6 可以并行覆盖原 payload。Arch22 原本就是先完成
+全部 C4、再完成全部 C5，并用每 head 的 `tReady` EventID 保证相同依赖。
 
 八段不能压成六段：
 
