@@ -53,13 +53,25 @@ __simd_vf__ inline void QkmaskCausalMaskVf(
 
     uint32_t gbrcEnd = gbrcStart + mActualThisStage;
 
+    // Hardware Loop 规范（asc-devkit vf_loop_optimization）：边界/基址外提，三元与
+    // clamp 只出现在循环外；归纳变量 uint16_t、零基、步长 1。段 2 的 up 行基址
+    // upBase2 = upAddr + (seg2Start - gbrcStart) * alignedNActual 恒非负——原实现
+    // 以 absRow(从 64 起) - gbrcStart 计行号，gbrcStart > 64 时（chunk128 的
+    // subBlock1/stage1）前段迭代无符号下溢，靠地址回绕落在死缓冲才未出错。
+    uint32_t seg1End = gbrcEnd > VL ? VL : gbrcEnd;
+    uint32_t loop1Cnt = seg1End > gbrcStart ? seg1End - gbrcStart : 0;
+    uint32_t seg2Start = gbrcStart > VL ? gbrcStart : VL;
+    uint32_t loop2Cnt = gbrcEnd > seg2Start ? gbrcEnd - seg2Start : 0;
+    __ubuf__ float* maskBase1 = maskBase + gbrcStart * VL;
+    __ubuf__ float* maskBase2 = maskBase + (seg2Start - VL) * VL;
+    __ubuf__ float* upBase2 = upAddr + (seg2Start - gbrcStart) * alignedNActual;
+
     // 第一个循环：absRow < 64，对角线在第一个 64 列 tile 内
     //   列 [0, 64):   Mins(0)→Exp→Mul(maskUbTensor[absRow]) 因果掩码
     //   列 [64, 128): 置零（远未来区域）
-    for (uint32_t absRow = gbrcStart; absRow < (gbrcEnd > 64 ? 64 : gbrcEnd); ++absRow) {
-        uint32_t row = absRow - gbrcStart;
+    for (uint16_t row = 0; row < static_cast<uint16_t>(loop1Cnt); ++row) {
         __ubuf__ float* rowAddr = upAddr + row * alignedNActual;
-        __ubuf__ float* maskRowAddr = maskBase + absRow * VL;
+        __ubuf__ float* maskRowAddr = maskBase1 + row * VL;
 
         LoadAlign<float, LoadDist::DIST_NORM>(vregUp, rowAddr);
         LoadAlign<float, LoadDist::DIST_NORM>(vregMask, maskRowAddr);
@@ -73,10 +85,9 @@ __simd_vf__ inline void QkmaskCausalMaskVf(
     // 第二个循环：absRow >= 64，对角线在第二个 64 列 tile 内
     //   列 [0, 64):   Mins(0)→Exp 保留（全部 j < 64 <= absRow，无需 mask）
     //   列 [64, 128): Mins(0)→Exp→Mul(maskUbTensor[absRow-64]) 因果掩码
-    for (uint32_t absRow = 64; absRow < gbrcEnd; ++absRow) {
-        uint32_t row = absRow - gbrcStart;
-        __ubuf__ float* rowAddr = upAddr + row * alignedNActual;
-        __ubuf__ float* maskRowAddr = maskBase + (absRow - 64) * VL;
+    for (uint16_t row = 0; row < static_cast<uint16_t>(loop2Cnt); ++row) {
+        __ubuf__ float* rowAddr = upBase2 + row * alignedNActual;
+        __ubuf__ float* maskRowAddr = maskBase2 + row * VL;
 
         LoadAlign<float, LoadDist::DIST_NORM>(vregUp, rowAddr);
         Mins(vregUp, vregUp, 0.0f, maskFull);
@@ -127,13 +138,22 @@ __simd_vf__ inline void QkmaskCausalMaskVfTail(
     MaskReg maskTail1 = UpdateMask<float>(tailWidth1);
     MaskReg maskTail2 = UpdateMask<float>(tailWidth2);
 
+    // 同满块版：边界/基址外提 + 零基 uint16_t 归纳变量（Hardware Loop 规范）
+    uint32_t seg1End = gbrcEnd > VL ? VL : gbrcEnd;
+    uint32_t loop1Cnt = seg1End > gbrcStart ? seg1End - gbrcStart : 0;
+    uint32_t seg2Start = gbrcStart > VL ? gbrcStart : VL;
+    uint32_t loop2Cnt = gbrcEnd > seg2Start ? gbrcEnd - seg2Start : 0;
+    __ubuf__ float* maskBase1 = maskBase + gbrcStart * VL;
+    __ubuf__ float* maskBase2 = maskBase + (seg2Start - VL) * VL;
+    __ubuf__ float* upBase2 = upAddr + (seg2Start - gbrcStart) * alignedNActual;
+    (void)tailWidth;
+
     // 第一个循环：absRow < 64，对角线在第一个 64 列 tile 内
     //   列 [0, 64):      Mins(0)→Exp→Mul(mask[absRow])
     //   列 [64, N):       置零（tailWidth 个）
-    for (uint32_t absRow = gbrcStart; absRow < (gbrcEnd > 64 ? 64 : gbrcEnd); ++absRow) {
-        uint32_t row = absRow - gbrcStart;
+    for (uint16_t row = 0; row < static_cast<uint16_t>(loop1Cnt); ++row) {
         __ubuf__ float* rowAddr = upAddr + row * alignedNActual;
-        __ubuf__ float* maskRowAddr = maskBase + absRow * VL;
+        __ubuf__ float* maskRowAddr = maskBase1 + row * VL;
 
         LoadAlign<float, LoadDist::DIST_NORM>(vregUp, rowAddr);
         LoadAlign<float, LoadDist::DIST_NORM>(vregMask, maskRowAddr);
@@ -146,10 +166,9 @@ __simd_vf__ inline void QkmaskCausalMaskVfTail(
     // 第二个循环：absRow >= 64，对角线在第二个 64 列 tile 内
     //   列 [0, 64):      Mins(0)→Exp 保留
     //   列 [64, N):       Mins(0)→Exp→Mul(mask[absRow-64])（tailWidth 个）
-    for (uint32_t absRow = 64; absRow < gbrcEnd; ++absRow) {
-        uint32_t row = absRow - gbrcStart;
-        __ubuf__ float* rowAddr = upAddr + row * alignedNActual;
-        __ubuf__ float* maskRowAddr = maskBase + (absRow - 64) * VL;
+    for (uint16_t row = 0; row < static_cast<uint16_t>(loop2Cnt); ++row) {
+        __ubuf__ float* rowAddr = upBase2 + row * alignedNActual;
+        __ubuf__ float* maskRowAddr = maskBase2 + row * VL;
 
         LoadAlign<float, LoadDist::DIST_NORM>(vregUp, rowAddr);
         Mins(vregUp, vregUp, 0.0f, maskTail1);

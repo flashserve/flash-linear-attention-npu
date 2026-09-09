@@ -25,11 +25,13 @@
 
 // RegBase VF 函数：Mul(H, exp(g)) → Add(attn) → Muls(scale) 全融合，逐行寄存器处理
 // nActual=128 时分两段各 64 列处理，与 qkmask 的 VF 结构对齐
+// exp(g) 不物化到 UB：每行一条 DIST_BRC_B32 标量广播加载（地址仅需 4 字节对齐），
+// 两个列段共用同一广播寄存器（替代原 Broadcast 物化 + 逐行 DIST_NORM 读回）
 __simd_vf__ inline void OutputFusedVf(
     __ubuf__ float* __restrict__ outAddr,       // outUbTensor 起始地址（输出）
     __ubuf__ float* __restrict__ hAddr,          // hUbTensor 起始地址（H 数据）
     __ubuf__ float* __restrict__ aAddr,          // aUbTensor 起始地址（attn 数据）
-    __ubuf__ float* __restrict__ brcExpAddr,     // gbrcLeftcastUbTensor[gbrcEffStart*nActual] 地址
+    __ubuf__ float* __restrict__ gExpScalarAddr, // exp(g) 标量数组地址（每行一个 fp32）
     uint32_t mActualThisStage,                   // 本 stage 行数
     uint32_t nActual,                            // 列数（128）
     float scale)
@@ -40,28 +42,27 @@ __simd_vf__ inline void OutputFusedVf(
     // 使用两组寄存器，同类型指令连续执行，利用 RegBase 指令流水优化
     RegTensor<float> vregH1, vregH2;
     RegTensor<float> vregA1, vregA2;
-    RegTensor<float> vregExp1, vregExp2;
+    RegTensor<float> vregExp;
     RegTensor<float> vregOut1, vregOut2;
     MaskReg maskFull = CreateMask<float, MaskPattern::ALL>();
 
-    for (uint32_t row = 0; row < mActualThisStage; ++row) {
+    // Hardware Loop 规范：uint16_t 零基归纳变量 + 边界外提（mActualThisStage ≤ 64）
+    const uint16_t rowCnt = static_cast<uint16_t>(mActualThisStage);
+    for (uint16_t row = 0; row < rowCnt; ++row) {
         __ubuf__ float* rowH = hAddr + row * nActual;
         __ubuf__ float* rowA = aAddr + row * nActual;
         __ubuf__ float* rowOut = outAddr + row * nActual;
 
-        // 连续 Load
-        // 注意：brcExpAddr 是 gbrcLeftcastUbTensor 的行广播结果，每行 exp(g) 不同，需按行偏移
-        __ubuf__ float* rowExp = brcExpAddr + row * nActual;
+        // 连续 Load；exp(g) 逐行标量广播（BRC_B32），两段共用同一寄存器
+        LoadAlign<float, LoadDist::DIST_BRC_B32>(vregExp, gExpScalarAddr + row);
         LoadAlign<float, LoadDist::DIST_NORM>(vregH1, rowH);
         LoadAlign<float, LoadDist::DIST_NORM>(vregH2, rowH + VL);
         LoadAlign<float, LoadDist::DIST_NORM>(vregA1, rowA);
         LoadAlign<float, LoadDist::DIST_NORM>(vregA2, rowA + VL);
-        LoadAlign<float, LoadDist::DIST_NORM>(vregExp1, rowExp);
-        LoadAlign<float, LoadDist::DIST_NORM>(vregExp2, rowExp + VL);
 
         // 连续 Mul: H * exp(g)
-        Mul(vregOut1, vregH1, vregExp1, maskFull);
-        Mul(vregOut2, vregH2, vregExp2, maskFull);
+        Mul(vregOut1, vregH1, vregExp, maskFull);
+        Mul(vregOut2, vregH2, vregExp, maskFull);
 
         // 连续 Add: + attn
         Add(vregOut1, vregOut1, vregA1, maskFull);
@@ -79,6 +80,8 @@ __simd_vf__ inline void OutputFusedVf(
 
 // RegBase VF 函数（Wide 版本）：Mul(H, exp(g)) → Add(attn) → Muls(scale) 全融合
 // nActual=256 时分四段各 64 列处理，使用四组寄存器最大化指令流水
+// V256(Wide/GM) 路径保留 Broadcast 物化：其发出位置与 h/a 的 GM→UB MTE2 传输
+// 重叠（免费），VF 直接读物化结果；V128 路径见 OutputFusedVf 的 BRC_B32 说明
 __simd_vf__ inline void OutputFusedVfWide(
     __ubuf__ float* __restrict__ outAddr,       // outUbTensor 起始地址（输出）
     __ubuf__ float* __restrict__ hAddr,          // hUbTensor 起始地址（H 数据）
@@ -98,7 +101,9 @@ __simd_vf__ inline void OutputFusedVfWide(
     RegTensor<float> vregOut1, vregOut2, vregOut3, vregOut4;
     MaskReg maskFull = CreateMask<float, MaskPattern::ALL>();
 
-    for (uint32_t row = 0; row < mActualThisStage; ++row) {
+    // Hardware Loop 规范：uint16_t 零基归纳变量 + 边界外提（mActualThisStage ≤ 16）
+    const uint16_t rowCnt = static_cast<uint16_t>(mActualThisStage);
+    for (uint16_t row = 0; row < rowCnt; ++row) {
         __ubuf__ float* rowH = hAddr + row * nActual;
         __ubuf__ float* rowA = aAddr + row * nActual;
         __ubuf__ float* rowOut = outAddr + row * nActual;
@@ -213,8 +218,9 @@ public:
         maskUbTensor = resource.ubBuf.template GetBufferByByte<float>(MASK_UB_TENSOR_OFFSET);
         gbrcLeftcastUbTensor = resource.ubBuf.template GetBufferByByte<float>(GBRCLEFTCAST_UB_TENSOR_OFFSET);
         gbrcUpUbTensor = resource.ubBuf.template GetBufferByByte<float>(GBRCUP_UB_TENSOR_OFFSET);
-        gcompUbTensor = resource.ubBuf.template GetBufferByByte<float>(GCOMP_UB_TENSOR_OFFSET);
         shareUbTensor = resource.ubBuf.template GetBufferByByte<uint8_t>(SHARE_UB_TENSOR_OFFSET);
+        // gcomp 区域仍由 qkmask epilogue 持有（同物理 UB、同偏移）；本 epilogue 的
+        // V128 路径经 BRC_B32 直读 g buffer，V256(Wide) 路径经 gbrcLeftcast 物化。
 
         // Cube2/Cube3 Fixpipe work slots (kernel owns the same constants).
         constexpr uint32_t UB_V_WORK_PING_OFFSET = 71 * 1024;
@@ -344,9 +350,7 @@ public:
             AscendC::Cast(gUbTensor, gUbFPTensor, AscendC::RoundMode::CAST_NONE, mActual);
             AscendC::PipeBarrier<PIPE_V>();
         }
-        AscendC::Copy(gcompUbTensor, gUbTensor, 64, 2, {1, 1, 8, 8});
-        AscendC::PipeBarrier<PIPE_V>();
-        AscendC::Exp(gcompUbTensor, gcompUbTensor, mActual);
+        AscendC::Exp(gUbTensor, gUbTensor, mActual);
         AscendC::PipeBarrier<PIPE_V>();
 
         uint32_t rowStart = rowBegin;
@@ -358,6 +362,8 @@ public:
                 rowsThisTile = maxRowsThisTile;
             }
 
+            // Broadcast 物化 exp(g)：其发出位置在 h/a 的 MTE2 传输期间（免费），
+            // V256(Wide/GM) 路径保留此结构（V128 路径已改为 VF 内 BRC_B32）
             uint32_t gbrcRealStart = rowStart & ~7;
             uint32_t gbrcRealProcess = alignExtra + rowsThisTile;
             uint32_t gbrcEffStart = alignExtra;
@@ -389,7 +395,7 @@ public:
                 Arch::CrossCoreSetFlag<0x2, PIPE_MTE2>(*setFlag);
             }
 
-            AscendC::Broadcast<float, 2, 1>(gbrcLeftcastUbTensor, gcompUbTensor[gbrcRealStart], dstShape_, srcShape_, shareUbTensor);
+            AscendC::Broadcast<float, 2, 1>(gbrcLeftcastUbTensor, gUbTensor[gbrcRealStart], dstShape_, srcShape_, shareUbTensor);
             AscendC::PipeBarrier<PIPE_V>();
 
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag);
@@ -455,9 +461,6 @@ public:
         Arch::CrossCoreFlag* setFlag = nullptr
         )
     {
-        static_assert(std::is_same_v<WorkInputA, AscendC::GlobalTensor<AElementInput>>
-            || std::is_same_v<WorkInputA, AscendC::LocalTensor<AElementInput>>,
-            "attnInput must be a GlobalTensor (GM path) or LocalTensor (l0c2ub slot)");
         uint32_t mActual = chunkSize;
         uint32_t nActual = vBlockDim;
         if (nActual > 128) {
@@ -499,24 +502,17 @@ public:
         uint32_t nOffset = 0;
         int64_t offsetA = mOffset * nActual + nOffset;
 
-        uint32_t gbrcStart, gbrcRealStart, gbrcRealEnd, gbrcRealProcess, gbrcEffStart, gbrcEffEnd, mulsRemain, mulsRemainIdx;
+        uint32_t gbrcStart;
         if(mActualThisSubBlock <= 32)
         {
             if(subBlockIdx == 0)
             {
                 gbrcStart = 0;
-                gbrcRealStart = 0;
-                gbrcRealProcess = mActualThisSubBlock;
             }
             else
             {
                 gbrcStart = mActualPerSubBlock;
-                gbrcRealStart = gbrcStart & ~7;
-                gbrcRealProcess = mActual - gbrcRealStart;
             }
-            gbrcEffStart = gbrcStart - gbrcRealStart;
-            uint32_t dstShape_[2] = {gbrcRealProcess, nActual};
-            uint32_t srcShape_[2] = {gbrcRealProcess, 1};
 
             AscendC::ResetMask();
             // l0c2ub slot inputs: Fixpipe SPLIT_M delivers each subBlock's own row
@@ -568,9 +564,6 @@ public:
                 AscendC::Cast(gUbTensor, gUbFPTensor, AscendC::RoundMode::CAST_NONE, mActual);
                 AscendC::PipeBarrier<PIPE_V>();
             }
-            AscendC::Copy(gcompUbTensor, gUbTensor, 64, 2, {1, 1, 8, 8});
-            AscendC::PipeBarrier<PIPE_V>();
-
 
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + pingpongFlag);
             if (waitFlag) Arch::CrossCoreWaitFlag(*waitFlag);
@@ -597,9 +590,7 @@ public:
                 // vector read has no implicit ordering). Release after consumption.
             }
 
-            AscendC::Exp(gcompUbTensor, gcompUbTensor, mActual);
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Broadcast<float, 2, 1>(gbrcLeftcastUbTensor, gcompUbTensor[gbrcRealStart], dstShape_, srcShape_, shareUbTensor);
+            AscendC::Exp(gUbTensor, gUbTensor, mActual);
             AscendC::PipeBarrier<PIPE_V>();
 
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag);
@@ -608,23 +599,20 @@ public:
                 auto outAddr = reinterpret_cast<uint64_t>(outUbTensor.GetPhyAddr());
                 auto hAddr = reinterpret_cast<uint64_t>(hUbTensor.GetPhyAddr());
                 auto aAddr = reinterpret_cast<uint64_t>(aUbTensor.GetPhyAddr());
-                auto expAddr = reinterpret_cast<uint64_t>(gbrcLeftcastUbTensor.GetPhyAddr()) + gbrcEffStart * nActual * sizeof(float);
+                auto gExpAddr = reinterpret_cast<uint64_t>(gUbTensor.GetPhyAddr()) + gbrcStart * sizeof(float);
                 OutputFusedVf((__ubuf__ float*)outAddr,
                                (__ubuf__ float*)hAddr,
                                (__ubuf__ float*)aAddr,
-                               (__ubuf__ float*)expAddr,
+                               (__ubuf__ float*)gExpAddr,
                                mActualThisSubBlock, nActual, scale);
                 AscendC::PipeBarrier<PIPE_V>();
             }
             if constexpr (kWorkFromUb) {
-                // l0c2ub: slot fully consumed — release slot ownership now. The pipe
-                // template decides WHICH pipe must drain before the scheduler is
-                // notified: the slot is consumed by VECTOR reads (OutputFusedVf), so
-                // this must be PIPE_V. The previous PIPE_MTE2 reported completion as
-                // soon as the MTE2 queue drained, letting the AIC's next Fixpipe
-                // overwrite the UB slot while the slower subBlock's VF reads were
-                // still in flight — the intermittent garbage rows seen only under
-                // cross-device parallel load.
+                // l0c2ub: slot fully consumed — release slot ownership now. The slot
+                // is consumed by VECTOR reads (OutputFusedVf), so gate the notify on
+                // PIPE_V (a PipeBarrier<PIPE_V> precedes this point either way, making
+                // the pipe choice functionally equivalent — see
+                // docs/agents/chunk_fwd_o_intermittent_accuracy_fix.md §4.2).
                 if (setFlag) Arch::CrossCoreSetFlag<0x2, PIPE_V>(*setFlag);
             }
             if(std::is_same<HElementOutput, half>::value)
@@ -675,9 +663,7 @@ public:
                 AscendC::Cast(gUbTensor, gUbFPTensor, AscendC::RoundMode::CAST_NONE, mActual);
                 AscendC::PipeBarrier<PIPE_V>();
             }
-            AscendC::Copy(gcompUbTensor, gUbTensor, 64, 2, {1, 1, 8, 8});
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Exp(gcompUbTensor, gcompUbTensor, mActual);
+            AscendC::Exp(gUbTensor, gUbTensor, mActual);
             AscendC::PipeBarrier<PIPE_V>();
             uint32_t mActualPerStage = CeilDiv(mActualThisSubBlock, 2);
             uint32_t mActualThisStage = 0;
@@ -689,30 +675,19 @@ public:
                 if(subBlockIdx == 0 && stage == 0)
                 {
                     gbrcStart = 0;
-                    gbrcRealStart = 0;
-                    gbrcRealProcess = mActualThisStage;
                 }
                 else if(subBlockIdx == 0 && stage == 1)
                 {
                     gbrcStart = mActualPerStage;
-                    gbrcRealStart = gbrcStart & ~7;
-                    gbrcRealProcess = mActualThisSubBlock - gbrcRealStart;
                 }
                 else if(subBlockIdx == 1 && stage == 0)
                 {
                     gbrcStart = mActualPerSubBlock;
-                    gbrcRealStart = gbrcStart & ~7;
-                    gbrcRealProcess = mActualPerSubBlock + mActualThisStage - gbrcRealStart;
                 }
                 else if(subBlockIdx == 1 && stage == 1)
                 {
                     gbrcStart = mActualPerSubBlock + mActualPerStage;
-                    gbrcRealStart = gbrcStart & ~7;
-                    gbrcRealProcess = mActual - gbrcRealStart;
                 }
-                gbrcEffStart = gbrcStart - gbrcRealStart;
-                uint32_t dstShape_[2] = {gbrcRealProcess, nActual};
-                uint32_t srcShape_[2] = {gbrcRealProcess, 1};
 
                 AscendC::GlobalTensor<HElementOutput> hOutputThisSubBlock = hOutput[gbrcStart * nActual];
                 // l0c2ub: SPLIT_M already delivered this subBlock's row half at its own
@@ -760,9 +735,6 @@ public:
                     // (Cube's next-round Fixpipe would race the slot reads).
                 }
 
-                AscendC::Broadcast<float, 2, 1>(gbrcLeftcastUbTensor, gcompUbTensor[gbrcRealStart], dstShape_, srcShape_, shareUbTensor);
-                AscendC::PipeBarrier<PIPE_V>();
-
                 AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag);
                 AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
                 if (stage == 1) {
@@ -775,18 +747,19 @@ public:
                     auto outAddr = reinterpret_cast<uint64_t>(outUbTensor.GetPhyAddr());
                     auto hAddr = reinterpret_cast<uint64_t>(hUbTensor.GetPhyAddr());
                     auto aAddr = reinterpret_cast<uint64_t>(aUbTensor.GetPhyAddr());
-                    auto expAddr = reinterpret_cast<uint64_t>(gbrcLeftcastUbTensor.GetPhyAddr()) + gbrcEffStart * nActual * sizeof(float);
+                    auto gExpAddr = reinterpret_cast<uint64_t>(gUbTensor.GetPhyAddr()) + gbrcStart * sizeof(float);
                     OutputFusedVf((__ubuf__ float*)outAddr,
                                    (__ubuf__ float*)hAddr,
                                    (__ubuf__ float*)aAddr,
-                                   (__ubuf__ float*)expAddr,
+                                   (__ubuf__ float*)gExpAddr,
                                    mActualThisStage, nActual, scale);
                     AscendC::PipeBarrier<PIPE_V>();
                 }
                 if constexpr (kWorkFromUb) {
-                    // l0c2ub: slot fully consumed at the end of the last stage.
+                    // l0c2ub: slot fully consumed at the end of the last stage; gate
+                    // on PIPE_V like the <=32 branch (Vector reads consume the slot).
                     if (setFlag && stage == 1) {
-                        Arch::CrossCoreSetFlag<0x2, PIPE_MTE2>(*setFlag);
+                        Arch::CrossCoreSetFlag<0x2, PIPE_V>(*setFlag);
                     }
                 }
 
@@ -820,7 +793,6 @@ private:
     AscendC::LocalTensor<float> maskUbTensor;
     AscendC::LocalTensor<float> gbrcLeftcastUbTensor;
     AscendC::LocalTensor<float> gbrcUpUbTensor;
-    AscendC::LocalTensor<float> gcompUbTensor;
     AscendC::LocalTensor<uint8_t> shareUbTensor;
 
     AscendC::LocalTensor<float> gUbTensorPing;
