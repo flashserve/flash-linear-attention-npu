@@ -306,8 +306,8 @@ Stage 的 `Lock/Unlock` 前直接计算，不再通过公共 helper 隐藏：
 | AIV | `localSlot=0/1` | 两个 UB local slot，即 `0/1` |
 | AIC | `localHead=0..3` | 四个 L1 head lane，即 `0/1/2/3` |
 | AIC | `4` | 共享 L0A/L0B operand |
-| AIC | `5+localHead` | 四个 lower L0C lane，即 `5/6/7/8` |
-| AIC | `9+localHead` | 四个 upper L0C lane，即 `9/10/11/12` |
+| AIC | `5+localHead` | 四个 `W=Akk@K_beta_g` 的 L0C 结果区，即 `5/6/7/8` |
+| AIC | `9+localHead` | 四个 `U=Akk@V_beta` 的 L0C 结果区，即 `9/10/11/12` |
 
 `13..27` 不用，`28..31` 为系统保留。相同物理区跨 pipe 使用同一 ID：
 
@@ -326,7 +326,16 @@ Mutex 只处理同核 pipe 交接，不是核间同步。AIC/AIV 仍用 mode `0x
 直接写出的固定 ID；AIV1 的 `+16` 只出现在 AIC 视角，AIV1 本身仍使用本地
 `0/1/4/5`：
 
-| local head | AIV / local slot | AIV ready / free | AIC ready / free |
+- `payload ready` 表示 AIV 已把当前阶段的 payload 写入该 head 的 workspace slot，AIC
+  可以开始读取；由 AIV `set`，由 AIC `wait`。
+- `slot reusable` 表示 AIC 已把当前 payload 搬离 workspace，AIV 可以复用同一 slot 写入
+  下一阶段的数据；由 AIC `set`，由 AIV `wait`。
+- C2 发布 `slot reusable` 时还同时保证 raw score 已通过 Fixpipe 到达对应 AIV 的
+  UB，因此它也是 V3 的输入 ready 信号。
+- 这些编号是 AIV/AIC 间的 CrossCore flag，不是核内 Mutex ID，也不是 Arch22
+  `AllocEventID` 返回的 HardEvent ID。
+
+| local head | AIV / local slot | AIV payload ready / slot reusable | AIC peer flagId |
 | ---: | --- | --- | --- |
 | 0 | AIV0 / 0 | `0 / 4` | `0 / 4` |
 | 1 | AIV0 / 1 | `1 / 5` | `1 / 5` |

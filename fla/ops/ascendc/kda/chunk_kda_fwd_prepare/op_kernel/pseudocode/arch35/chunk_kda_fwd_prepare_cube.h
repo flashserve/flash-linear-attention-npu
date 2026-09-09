@@ -47,8 +47,10 @@ public:
 
         // AIC 视角下四个 local head 的固定核间编号。AIV1 的两个本地
         // ready 0/1、free 4/5 在 AIC 侧映射为 16/17、20/21。
-        constexpr uint16_t kReadyFlagId[4] = {0, 1, 16, 17};
-        constexpr uint16_t kFreeFlagId[4] = {4, 5, 20, 21};
+        constexpr uint16_t kAivToAicPayloadReadyFlagId[4] = {
+            0, 1, 16, 17};
+        constexpr uint16_t kAicToAivSlotReusableFlagId[4] = {
+            4, 5, 20, 21};
         // free[localHead] 初始只发布一次。以后每一组的 V0 会消费上一组
         // C7 发布的 free，不能在组首重复 set 同一个计数器。
         bool freeInitialized[Shape::kHeadsPerGroup] = {false, false, false, false};
@@ -81,7 +83,7 @@ public:
                         continue;
                     }
                     AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
-                        kFreeFlagId[localHead]);
+                        kAicToAivSlotReusableFlagId[localHead]);
                     freeInitialized[localHead] = true;
                 }
 
@@ -93,10 +95,10 @@ public:
                         continue;
                     }
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
-                        kReadyFlagId[localHead]);
+                        kAivToAicPayloadReadyFlagId[localHead]);
                     StageC2(chunk, localHead);
                     AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
-                        kFreeFlagId[localHead]);
+                        kAicToAivSlotReusableFlagId[localHead]);
                 }
 
                 // C4 在一次性读完 B/X0/negX1/Akk 后立即归还 workspace
@@ -109,8 +111,9 @@ public:
                         continue;
                     }
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
-                        kReadyFlagId[localHead]);
-                    StageC4(chunk, localHead, kFreeFlagId[localHead]);
+                        kAivToAicPayloadReadyFlagId[localHead]);
+                    StageC4(chunk, localHead,
+                            kAicToAivSlotReusableFlagId[localHead]);
                     StageC5(chunk, valueHead, localHead);
                 }
 
@@ -123,9 +126,9 @@ public:
                         continue;
                     }
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
-                        kReadyFlagId[localHead]);
+                        kAivToAicPayloadReadyFlagId[localHead]);
                     StageC7(chunk, valueHead, localHead,
-                            kFreeFlagId[localHead]);
+                            kAicToAivSlotReusableFlagId[localHead]);
                 }
             }
         }
@@ -274,7 +277,7 @@ private:
 
     __aicore__ inline void StageC4(const ChunkRange &chunk,
                                    uint32_t localHead,
-                                   uint16_t freeFlagId)
+                                   uint16_t slotReusableFlagId)
     {
         const uint64_t slot = WorkspaceSlotBase(
             workgroup_, localHead, Workspace::kArch35WorkgroupStride);
@@ -339,7 +342,7 @@ private:
 
         // 载荷已完全离开 workspace，立即允许 AIV 在同一地址生成 V6 RHS。
         AscendC::CrossCoreSetFlag<0x4, PIPE_MTE2>(
-            freeFlagId);
+            slotReusableFlagId);
         if (chunk.validRows <= 32) {
             return;
         }
@@ -493,7 +496,7 @@ private:
     __aicore__ inline void StageC7(const ChunkRange &chunk,
                                     uint32_t valueHead,
                                     uint32_t localHead,
-                                    uint16_t freeFlagId)
+                                    uint16_t slotReusableFlagId)
     {
         const uint32_t m = chunk.validRows > 32 ? 64 : 32;
         const uint64_t slot = WorkspaceSlotBase(
@@ -501,9 +504,9 @@ private:
         const uint32_t lane = L1::kHeadLane[localHead];
         const uint8_t l1Mutex = static_cast<uint8_t>(localHead); // 0..3
         const uint8_t operandMutex = 4;
-        const uint8_t lowerL0cMutex =
+        const uint8_t wL0cMutex =
             static_cast<uint8_t>(5 + localHead); // 5..8
-        const uint8_t upperL0cMutex =
+        const uint8_t uL0cMutex =
             static_cast<uint8_t>(9 + localHead); // 9..12
         const uint32_t l0cLane = localHead * 64 * 1024;
 
@@ -543,7 +546,7 @@ private:
         // 两个 RHS 已完整进入 L1，后续 Cube 不再读取 workspace；立即归还
         // 当前 slot，使下一组 V0/V1 与本组 C7 的 MMAD/Fixpipe 重叠。
         AscendC::CrossCoreSetFlag<0x4, PIPE_MTE2>(
-            freeFlagId);
+            slotReusableFlagId);
 
         auto akkL0 = resource_.l0ABuf.template GetBufferByByte<InputT>(0);
         auto kBetaL0 =
@@ -593,20 +596,20 @@ private:
         mmad.unitFlag = 0;
 
         AscendC::Mutex::Lock<PIPE_M>(operandMutex);
-        AscendC::Mutex::Lock<PIPE_M>(lowerL0cMutex);
+        AscendC::Mutex::Lock<PIPE_M>(wL0cMutex);
         AscendC::Mmad(wL0c, akkL0, kBetaL0, mmad); // 计算 W=Akk@K_beta_g。
-        AscendC::Mutex::Unlock<PIPE_M>(lowerL0cMutex);
+        AscendC::Mutex::Unlock<PIPE_M>(wL0cMutex);
         AscendC::Mutex::Unlock<PIPE_M>(operandMutex);
 
         AscendC::Mutex::Lock<PIPE_M>(operandMutex);
-        AscendC::Mutex::Lock<PIPE_M>(upperL0cMutex);
+        AscendC::Mutex::Lock<PIPE_M>(uL0cMutex);
         AscendC::Mmad(uL0c, akkL0, vBetaL0, mmad); // 计算 U=Akk@V_beta。
-        AscendC::Mutex::Unlock<PIPE_M>(upperL0cMutex);
+        AscendC::Mutex::Unlock<PIPE_M>(uL0cMutex);
         AscendC::Mutex::Unlock<PIPE_M>(operandMutex);
 
         const uint64_t outputOffset = HeadTensorOffset(
             args_.tiling, chunk, valueHead, Shape::kHeadDim);
-        AscendC::Mutex::Lock<PIPE_FIX>(lowerL0cMutex);
+        AscendC::Mutex::Lock<PIPE_FIX>(wL0cMutex);
         auto wFix = AscendC::FixpipeParamsV220(
             Shape::kHeadDim, chunk.validRows, m,
             Shape::kHeadDim, false);
@@ -617,9 +620,9 @@ private:
         }
         AscendC::Fixpipe<InputT, float, AscendC::CFG_ROW_MAJOR>(
             wGm_[outputOffset], wL0c, wFix);
-        AscendC::Mutex::Unlock<PIPE_FIX>(lowerL0cMutex);
+        AscendC::Mutex::Unlock<PIPE_FIX>(wL0cMutex);
 
-        AscendC::Mutex::Lock<PIPE_FIX>(upperL0cMutex);
+        AscendC::Mutex::Lock<PIPE_FIX>(uL0cMutex);
         auto uFix = AscendC::FixpipeParamsV220(
             Shape::kValueDim, chunk.validRows, m,
             Shape::kValueDim, false);
@@ -630,7 +633,7 @@ private:
         }
         AscendC::Fixpipe<ValueT, float, AscendC::CFG_ROW_MAJOR>(
             uGm_[outputOffset], uL0c, uFix);
-        AscendC::Mutex::Unlock<PIPE_FIX>(upperL0cMutex);
+        AscendC::Mutex::Unlock<PIPE_FIX>(uL0cMutex);
     }
 
     PrepareKernelArgs args_{};
