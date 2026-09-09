@@ -127,7 +127,8 @@ aclnnStatus aclnnRecomputeWUFwdGetWorkspaceSize(
 {
     RecomputeWUFwdParams params{k, v, beta, a, g, gk,cuSeqlensOptional, chunkIndicesOptional, chunkSize, wOut, uOut};
     // Standard syntax, Check parameters.
-    L2_DFX_PHASE_1(aclnnRecomputeWUFwd, DFX_IN(k, v, beta, a, g, gk, cuSeqlensOptional, chunkIndicesOptional),
+    L2_DFX_PHASE_1(aclnnRecomputeWUFwd,
+                   DFX_IN(k, v, beta, a, g, gk, cuSeqlensOptional, chunkIndicesOptional, chunkSize),
                    DFX_OUT(wOut, uOut));
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();

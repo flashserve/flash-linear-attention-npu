@@ -2,6 +2,7 @@ import torch
 from typing import Optional
 import math
 
+
 def prepare_lens(cu_seqlens: torch.LongTensor) -> torch.LongTensor:
     return cu_seqlens[1:] - cu_seqlens[:-1]
 
@@ -81,7 +82,7 @@ def chunk_bwd_dv_local_fix(
             m_A = pos_mask & valid_mask  # [BT, BT]
             g_i = b_g.unsqueeze(1)   # [chunk_len, 1]
             g_j = b_g.unsqueeze(0)  # [1, chunk_len]
-            g_factor = torch.exp(g_j - g_i)  * scale  # [chunk_len, chunk_len]
+            g_factor = torch.exp(torch.clamp(g_j - g_i, max=0.0)) * scale  # [chunk_len, chunk_len]
             b_A_gated = torch.zeros_like(b_A)
             b_A_gated[:chunk_len, :chunk_len] = b_A[:chunk_len, :chunk_len] * g_factor # [BT, BT] 门控缩放后的注意力核矩阵
             # 应用掩码
@@ -168,7 +169,7 @@ def chunk_bwd_dv_local_variable(
             m_A = pos_mask & valid_mask  # [BT, BT]
             g_i = b_g.unsqueeze(1)  # [chunk_len, 1]
             g_j = b_g.unsqueeze(0)  # [1, chunk_len]
-            g_factor = torch.exp(g_j - g_i)  # [chunk_len, chunk_len]
+            g_factor = torch.exp(torch.clamp(g_j - g_i, max=0.0))  # [chunk_len, chunk_len]
             b_A_gated = torch.zeros_like(b_A)
             # print(f"==== g_factor.shape = {g_factor.shape} ")
             # for i in range(g_factor.shape[0]):

@@ -194,8 +194,11 @@ aclnnStatus aclnnChunkBwdDqkwgGetWorkspaceSize(
     CHECK_COND(use_exp2 == false && transpose_state_layout == false, ACLNN_ERR_INNER,
                "use_exp2 and transpose_state_layout must be false.");
     // Standard syntax, Check parameters.
-    L2_DFX_PHASE_1(aclnnChunkBwdDqkwg, DFX_IN(q, k, v, g, h, dox, dh, dv, cuSeqlensOptional, chunkIndicesOptional, w, gGamma),
-                   DFX_OUT(dqOut, dkOut, dwOut, dgOut));
+    L2_DFX_PHASE_1(
+        aclnnChunkBwdDqkwg,
+        DFX_IN(q, k, v, g, h, dox, dh, dv, cuSeqlensOptional, chunkIndicesOptional, w, gGamma, scale, chunkSize,
+               use_exp2, transpose_state_layout),
+        DFX_OUT(dqOut, dkOut, dwOut, dgOut));
 
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();

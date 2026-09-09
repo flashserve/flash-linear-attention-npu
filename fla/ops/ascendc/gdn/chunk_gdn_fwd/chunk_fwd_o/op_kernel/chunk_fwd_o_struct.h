@@ -19,6 +19,13 @@
 
 namespace GDN {
 
+enum ChunkFwdOOutputLayout : int64_t {
+    CHUNK_FWD_O_LAYOUT_BNSD = 0,
+    CHUNK_FWD_O_LAYOUT_BSND = 1,
+    CHUNK_FWD_O_LAYOUT_TND = 2,
+    CHUNK_FWD_O_LAYOUT_NTD = 3,
+};
+
 struct ChunkFwdOTilingData {
     int64_t shapeBatch;
     int64_t seqlen;
@@ -36,7 +43,14 @@ struct ChunkFwdOTilingData {
     int64_t attnWorkspaceOffset;
     int64_t aftermaskWorkspaceOffset;
     int64_t maskWorkspaceOffset;
+    int64_t stateVFirst;
+    int64_t outputLayout;
     float scale;
+    int64_t chunkNum;
+    int64_t hvPerHk;
+    int64_t taskGroupSize;
+    int64_t numChunksPerBatch;
+    int64_t aPrimeWorkspaceOffset;
 };
 
 } // namespace GDN

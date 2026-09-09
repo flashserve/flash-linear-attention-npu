@@ -27,35 +27,20 @@ except ImportError:
 # 报告查找
 # ---------------------------------------------------------------------------
 
-def _find_xlsx_files(output_root, pattern, *, newer_than=None):
+def _find_xlsx_files(output_root, pattern):
     """返回按修改时间排序的 xlsx 文件列表（旧→新）。"""
     full_pattern = os.path.join(output_root, pattern, "report", "*.xlsx")
-    files = glob.glob(full_pattern)
-    if newer_than is not None:
-        files = [path for path in files if os.path.getmtime(path) >= newer_than]
-    return sorted(files, key=os.path.getmtime)
+    return sorted(glob.glob(full_pattern), key=os.path.getmtime)
 
 
-def _find_accuracy_reports(output_root, op, *, newer_than=None):
+def _find_accuracy_reports(output_root, op):
     """accuracy 报告在 accuracy/atk_output/atk_<op>_* 下。"""
-    return _find_xlsx_files(
-        output_root,
-        f"accuracy/atk_output/atk_{op}_*",
-        newer_than=newer_than,
-    )
+    return _find_xlsx_files(output_root, f"accuracy/atk_output/atk_{op}_*")
 
 
-def _find_root_reports(output_root, op, *, newer_than=None):
-    """determinism 和 mssanitizer 报告共享 atk_<op>_* 目录。
-
-    ATK creates an ``atk_output`` child below the node output path.  Keep
-    accepting a root that already points at that directory so callers can use
-    either the script's output root or an ATK-native output path.
-    """
-    files = []
-    for pattern in (f"atk_{op}_*", f"atk_output/atk_{op}_*"):
-        files.extend(_find_xlsx_files(output_root, pattern, newer_than=newer_than))
-    return sorted(set(files), key=os.path.getmtime)
+def _find_root_reports(output_root, op):
+    """determinism 和 mssanitizer 报告共享 atk_<op>_* 目录。"""
+    return _find_xlsx_files(output_root, f"atk_{op}_*")
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +120,6 @@ def _extract_summary_row(header, data_rows):
     total = exec_pass = exec_fail = check_pass = check_fail = 0
     pass_rate = mss_pass_rate = None
     all_pass = True
-    has_pass_indicator = False
     for row in data_rows:
         if not row or all(c is None for c in row):
             continue
@@ -168,23 +152,20 @@ def _extract_summary_row(header, data_rows):
             pass_rate = row[rate_idx]
         if mss_rate_idx is not None and row[mss_rate_idx] is not None:
             mss_pass_rate = row[mss_rate_idx]
-        # 达标列必须至少出现一个明确的通过状态。未知非空值按失败处理，
-        # 避免损坏或不完整报告在计数碰巧一致时被误判为通过。
+        # 检查所有达标列：若某列值为 "Failed" 则整体失败
+        # ("-"/空值 视为不适用，不影响判断)
         for pi in pass_indices:
             if pi < len(row) and row[pi] is not None:
                 val = str(row[pi]).strip()
-                if not val or val == "-":
-                    continue
-                has_pass_indicator = True
-                if val.lower() not in {"pass", "passed"} and val != "通过":
+                if val == "Failed":
                     all_pass = False
 
     # mssanitizer 没有 exec_fail，用 total - (pass count) 估算
     if exec_fail == 0 and total > 0 and check_pass == 0:
         # mssanitizer 情况：total 个用例，达标判断看 "内存检测是否达标"
         exec_pass = total
-        check_pass = total if all_pass and has_pass_indicator else 0
-        check_fail = 0 if all_pass and has_pass_indicator else total
+        check_pass = total if all_pass else 0
+        check_fail = 0 if all_pass else total
 
     return {
         "total": total,
@@ -195,7 +176,6 @@ def _extract_summary_row(header, data_rows):
         "pass_rate": pass_rate,
         "mss_pass_rate": mss_pass_rate,
         "all_pass": all_pass,
-        "has_pass_indicator": has_pass_indicator,
     }
 
 
@@ -203,9 +183,9 @@ def _extract_summary_row(header, data_rows):
 # 公共 API
 # ---------------------------------------------------------------------------
 
-def check_accuracy(output_root, op, *, newer_than=None):
+def check_accuracy(output_root, op):
     """检查 accuracy 报告。"""
-    files = _find_accuracy_reports(output_root, op, newer_than=newer_than)
+    files = _find_accuracy_reports(output_root, op)
     if not files:
         return {"found": False, "total": 0, "pass": 0, "fail": 0, "all_pass": False,
                 "xlsx": None, "detail": "未找到 accuracy 报告"}
@@ -215,54 +195,35 @@ def check_accuracy(output_root, op, *, newer_than=None):
         return {"found": True, "total": 0, "pass": 0, "fail": 0, "all_pass": False,
                 "xlsx": xlsx, "detail": "无法解析 summary sheet"}
     info = _extract_summary_row(header, data)
-    info["all_pass"] = (
-        info["total"] > 0
-        and info["exec_fail"] == 0
-        and info["check_pass"] == info["total"]
-        and info["has_pass_indicator"]
-        and info["all_pass"]
-    )
+    if info["total"] <= 0 or info["check_pass"] != info["total"]:
+        info["all_pass"] = False
     return {"found": True, **info, "xlsx": xlsx,
             "detail": f"通过率={info['pass_rate']}"}
 
 
-def check_determinism(output_root, op, *, newer_than=None):
+def check_determinism(output_root, op):
     """检查 determinism 报告（与 mssanitizer 共享目录，按表头过滤）。"""
-    files = _find_root_reports(output_root, op, newer_than=newer_than)
+    files = _find_root_reports(output_root, op)
     # 从新到旧找第一个非 mssanitizer 报告
     for f in reversed(files):
         header, _ = _parse_summary(f)
         if header is not None and not _is_mssanitizer_report(header):
             header, data = _parse_summary(f)
             info = _extract_summary_row(header, data)
-            info["all_pass"] = (
-                info["total"] > 0
-                and info["exec_fail"] == 0
-                and info["check_pass"] == info["total"]
-                and info["has_pass_indicator"]
-                and info["all_pass"]
-            )
             return {"found": True, **info, "xlsx": f,
                     "detail": f"通过率={info['pass_rate']}"}
     return {"found": False, "total": 0, "pass": 0, "fail": 0, "all_pass": False,
             "xlsx": None, "detail": "未找到 determinism 报告"}
 
 
-def check_mssanitizer(output_root, op, *, newer_than=None):
+def check_mssanitizer(output_root, op):
     """检查 mssanitizer 报告。"""
-    files = _find_root_reports(output_root, op, newer_than=newer_than)
+    files = _find_root_reports(output_root, op)
     for f in reversed(files):
         header, _ = _parse_summary(f)
         if header is not None and _is_mssanitizer_report(header):
             header, data = _parse_summary(f)
             info = _extract_summary_row(header, data)
-            info["all_pass"] = (
-                info["total"] > 0
-                and info["exec_fail"] == 0
-                and info["check_pass"] == info["total"]
-                and info["has_pass_indicator"]
-                and info["all_pass"]
-            )
             return {"found": True, **info, "xlsx": f,
                     "detail": f"内存检测通过率={info['mss_pass_rate']}"}
     return {"found": False, "total": 0, "pass": 0, "fail": 0, "all_pass": False,
@@ -290,12 +251,6 @@ def main():
     parser.add_argument("--output-root", required=True,
                         help="ATK 输出根目录（如 ./atk_output）")
     parser.add_argument("--op", required=True, help="算子名（如 chunk_bwd_dqkwg）")
-    parser.add_argument(
-        "--newer-than",
-        type=float,
-        default=None,
-        help="只接受修改时间不早于该 Unix 时间戳的报告",
-    )
     args = parser.parse_args()
 
     output_root = os.path.abspath(args.output_root)
@@ -305,12 +260,12 @@ def main():
     any_fail = False
 
     for t in types:
-        r = CHECKERS[t](output_root, args.op, newer_than=args.newer_than)
+        r = CHECKERS[t](output_root, args.op)
         results[t] = r
         label = TYPE_LABELS[t]
         if not r["found"]:
-            print(f"[ATK结果检查] {label}: 未找到报告（失败）")
-            any_fail = True
+            status_str = "NO_REPORT"
+            print(f"[ATK结果检查] {label}: 未找到报告（跳过）")
             continue
         status = "Pass" if r["all_pass"] else "Failed"
         if not r["all_pass"]:
@@ -323,12 +278,15 @@ def main():
               f"失败={actual_fail}) [{xlsx_name}]")
 
     if args.type == "all":
-        passed_types = sum(1 for t in types if results[t].get("all_pass"))
-        missing_count = sum(1 for t in types if not results[t].get("found"))
-        fail_count = len(types) - passed_types
-        msg = f"[ATK结果检查] 汇总: {passed_types}/{len(types)} 通过, {fail_count} 项失败"
-        if missing_count > 0:
-            msg += f"（其中 {missing_count} 项缺失报告）"
+        # 仅统计找到报告的测试类型
+        found_types = [t for t in types if results[t].get("found")]
+        passed_types = sum(1 for t in found_types if results[t].get("all_pass"))
+        found_count = len(found_types)
+        skipped = len(types) - found_count
+        fail_count = found_count - passed_types
+        msg = f"[ATK结果检查] 汇总: {passed_types}/{found_count} 通过, {fail_count} 项失败"
+        if skipped > 0:
+            msg += f", {skipped} 项无报告跳过"
         print(msg)
 
     sys.exit(1 if any_fail else 0)

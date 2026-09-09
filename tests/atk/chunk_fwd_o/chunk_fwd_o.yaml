@@ -47,7 +47,7 @@ inputs:
       values: [non_param]
     ranges:
       valid:
-        values: ["{\"name\":\"bf16_small\",\"dtype\":\"bf16\",\"B\":1,\"HK\":1,\"HV\":1,\"T\":16,\"K\":128,\"V\":128,\"chunk_size\":64,\"op\":\"chunk_fwd_o\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}"]
+        values: ["{\"name\":\"bf16_small\",\"dtype\":\"bf16\",\"B\":1,\"HK\":1,\"HV\":1,\"T\":16,\"K\":128,\"V\":128,\"chunk_size\":64,\"use_exp2\":true,\"output_layout\":\"BSND\",\"op\":\"chunk_fwd_o\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}"]
       invalid:
         values: []
   - name: dtype
@@ -128,6 +128,26 @@ inputs:
     ranges:
       valid:
         values: [64]
+      invalid:
+        values: []
+  - name: use_exp2
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [true]
+      invalid:
+        values: []
+  - name: output_layout
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: ["BSND"]
       invalid:
         values: []
   - name: case_id

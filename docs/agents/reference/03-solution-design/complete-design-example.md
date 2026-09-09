@@ -3,7 +3,7 @@
 > 方案设计规则版本：`V1`
 >
 > 本案例只规定方案设计文档的章节结构、推导过程和细节深度。新算子设计以
-> [`03-solution-design.md`](../../03-solution-design.md) 的 `R01`–`R19` 为准；具体公式、
+> [`03-方案设计.md`](../../03-方案设计.md) 的 `R01`–`R21` 为准；具体公式、
 > Stage、shape、地址和资源配置由当前算子根据已确认接口、CPU 标杆和目标硬件约束独立推导。
 
 ## 1. 目标
@@ -113,10 +113,10 @@ golden 单 chunk 中将 `h/dh` 读取为逻辑 `[V,K]`，将 `A` 读取为逻辑
 接口名称固定为：
 
 ```text
-GE/Ascend C 算子名：ChunkGdnBwdFinalize
-ACLNN workspace：  aclnnChunkGdnBwdFinalizeGetWorkspaceSize
-ACLNN execute：    aclnnChunkGdnBwdFinalize
-Python：           fla_npu.ops.ascendc.chunk_gdn_bwd_finalize
+GE/Ascend C 算子名：ChunkGatedDeltaRuleBwdFinalize
+ACLNN workspace：  aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize
+ACLNN execute：    aclnnChunkGatedDeltaRuleBwdFinalize
+Python：           fla_npu.ops.ascendc.chunk_gated_delta_rule_bwd_finalize
 ```
 
 ### 3.1 输入
@@ -127,7 +127,7 @@ Python：           fla_npu.ops.ascendc.chunk_gdn_bwd_finalize
 | `k` | `[B,HK,T,K]` | bf16 | 归一化 K |
 | `v` | `[B,HV,T,V]` | 同 `q` | prepare backward |
 | `v_new` | `[B,HV,T,V]` | 同 `q` | dqkwg value 输入 |
-| `dox` | `[B,HV,T,V]` | 同 `q` | 上游输出梯度 |
+| `do` | `[B,HV,T,V]` | 同 `q` | 上游输出梯度 |
 | `du` | `[B,HV,T,V]` | 同 `q` | 原始 value 梯度 |
 | `g` | `[B,HV,T]` | bf16/fp32 | 变换后的 chunk gate |
 | `beta` | `[B,HV,T]` | 同 `g` | sigmoid 后 beta |
@@ -1061,8 +1061,8 @@ dg = suffixSum(dg_chunk + dg_prepare)          # dg: [BT]
 
 ## 5. 新 Stage 资源分配方案
 
-本案例按照 [`03-solution-design.md`](../../03-solution-design.md) 的 `R01`–`R19` 完成
-Stage 划分、逐 Stage 详设和资源核算。规则正文统一由 `03-solution-design.md` 维护；
+本案例按照 [`03-方案设计.md`](../../03-方案设计.md) 的 `R01`–`R21` 完成
+Stage 划分、逐 Stage 详设和资源核算。规则正文统一由 `03-方案设计.md` 维护；
 下文只保留本算子的具体推导和证据。
 
 完整 DAG 核算中，S10 的全部 UB 活跃数据已占 211.5 KiB。无依赖的 S9 若将
@@ -1309,7 +1309,7 @@ Vector 输入第一次从 GM 搬入 UB 后，只要后续 Vector Stage 仍会使
 Stage 切换时，完整 `UB[0,248)` 和 `L1[0,512)` 内已结束生命周期的地址均可改变
 tensor 语义。任何复用都必须以真实末次消费者完成为前提。
 
-### 5.5 `R01`–`R19` 检查表
+### 5.5 `R01`–`R21` 检查表
 
 | 规则 | 结论 | 本案例证据位置 |
 |---|---|---|
@@ -1332,3 +1332,5 @@ tensor 语义。任何复用都必须以真实末次消费者完成为前提。
 | `R17` | 满足 | 5.2、5.3 的绝对地址、末次消费、复用条件和连续空闲区 |
 | `R18` | 满足 | 4.1 的 head/task 映射和第 4 章各 Stage 的统一存放规则 |
 | `R19` | 满足 | 5.1 的 16 个 Stage 最小性说明 |
+| `R20` | 满足 | 4.1 的 head 分工说明，以及 5.1 的任务映射 |
+| `R21` | 满足 | 第 4 章各 Stage 的计算 dtype、输入与中间值范围、cast 和 mask 设计 |

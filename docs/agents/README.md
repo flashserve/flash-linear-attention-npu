@@ -15,17 +15,19 @@
        -> 用户提供 GPU 服务器：运行原始 GPU 参考实现
        -> 只有 NPU 服务器：独立运行 Triton Ascend 参考实现
        -> 用户直接提供 CPU 标杆：验收并补全
-  -> 完成 CPU 标杆对齐或验收
+  -> 生成或初步验收 CPU 标杆
+  -> 校准并固化输入值域和混合容差
+  -> 存在参考实现时完成标杆对齐
   -> 方案设计：读取 03 和同版本完整案例
-       -> 仅依据接口、CPU 标杆、目标硬件约束和 03 的 R01–R19 推导当前方案
+       -> 仅依据接口、CPU 标杆、目标硬件约束和 03 的 R01–R21 推导当前方案
        -> Stage 划分、逐 Stage 详设和全局空间分配共同完成 -> 整体评审
   -> 算子开发：按 chunk 依赖类型读取对应的阶段 4 开发参考，再参考仓内工程写法
   -> 算子测试
 ```
 
-GPU 和 Triton Ascend 路径都使用相同输入与 CPU 标杆比较。用户直接提供 CPU 标杆时，直接使用该实现生成预期结果，并确认它与接口一致、可以运行且通过纯 CPU 路径独立计算；详细规则见 [`02-reference-generation.md`](02-reference-generation.md)。
+GPU 和 Triton Ascend 路径都使用相同输入与 CPU 标杆比较。用户直接提供 CPU 标杆时，直接使用该实现生成预期结果，并确认它与接口一致、可以运行且通过纯 CPU 路径独立计算；详细规则见 [`02-标杆生成.md`](02-标杆生成.md)。
 
-新算子首次进入方案设计时，完整读取 `03` 和与其当前规则版本一致的案例。案例提供章节结构、推导过程和细节深度；当前方案的公式、Stage 和资源仍根据已确认接口、CPU 标杆、目标硬件约束及 `R01`–`R19` 独立推导。设计文档在开头记录当前规则版本，整体评审通过后进入 `04`。
+新算子首次进入方案设计时，完整读取 `03` 和与其当前规则版本一致的案例。案例提供推导过程和细节深度，章节结构以 `03` 的当前要求为准；当前方案的公式、Stage 和资源仍根据 `docs/api.md` 中已确认的接口、CPU 标杆、目标硬件约束及 `R01`–`R21` 独立推导。`docs/design.md` 在开头记录当前规则版本，开发期验证计划写入临时的 `docs/validation.md`，整体评审通过后进入 `04`。
 
 ### 既有算子的接口或功能修改
 
@@ -33,7 +35,7 @@ GPU 和 Triton Ascend 路径都使用相同输入与 CPU 标杆比较。用户�
 
 ```text
 当前算子 + 本次接口或功能修改要求
-  -> 读取当前 docs/design.md 并核对 03 的当前规则版本
+  -> 读取当前 docs/api.md、docs/design.md、算子 ATK README 及存在时的 docs/validation.md，并核对 03 的当前规则版本
        -> 版本一致：使用当前设计文档
        -> 版本较旧或未记录：读取 03 的版本记录和当前规则，检查并更新受影响设计
   -> 接口、语义、支持范围或 CPU 标杆需要变化
@@ -51,14 +53,14 @@ GPU 和 Triton Ascend 路径都使用相同输入与 CPU 标杆比较。用户�
 “优化、提速、降低时延、提升吞吐、减少 workspace”从当前实现进入 `03`，继续使用已经确认的 `01` 接口和 `02` CPU 标杆，无需重新执行这两个阶段：
 
 ```text
-当前工作树的设计、实现、CPU 标杆、测试和 profiling
+当前工作树的接口、设计、ATK 验收结果、存在时的开发期验证记录、实现、CPU 标杆、测试和 profiling
   -> 核对设计文档记录的规则版本
        -> 版本一致：使用当前设计文档
        -> 版本较旧或未记录：按 03 的当前规则更新受影响设计
   -> 先运行精度和性能测试，记录优化前数据
-  -> 对照代码更新当前设计文档
+  -> 对照代码更新当前设计文档，新建或更新开发期验证记录
   -> 03 设计候选方案并进行实验 -> 用户确认采用
-  -> 04 同步修改算子代码和设计文档
+  -> 04 同步修改算子代码、设计文档和开发期验证记录
   -> 05 精度、目标性能和其他支持场景回归
 ```
 
@@ -68,16 +70,19 @@ GPU 和 Triton Ascend 路径都使用相同输入与 CPU 标杆比较。用户�
 
 | 阶段 | 文件 | 主要输入 | 阶段输出 | 完成条件 |
 | --- | --- | --- | --- | --- |
-| 1. 接口确认 | [`01-interface-confirmation.md`](01-interface-confirmation.md) | 用户提供的参考资料、需求和支持范围 | 接口契约、支持范围、待确认问题 | 用户确认接口和语义 |
-| 2. 标杆生成 | [`02-reference-generation.md`](02-reference-generation.md) | 已确认接口、用户提供的参考实现或 CPU 标杆 | 参考实现分析、独立 CPU 标杆、基础对齐用例 | CPU 标杆完成对齐或验收，所有差异均已确认并解决 |
-| 3. 方案设计 | [`03-solution-design.md`](03-solution-design.md) | 接口契约、CPU 标杆、目标 SoC/性能要求 | 归档在算子目录、记录当前规则版本的完整设计文档和验证计划 | 完整设计通过当前版本 `R01`–`R19` 检查和整体评审 |
-| 4. 算子开发 | [`04-operator-development.md`](04-operator-development.md) | 已评审的完整设计文档、CPU 标杆、与 chunk 依赖类型匹配的阶段 4 开发参考 | op_host、tiling、kernel、op_api 和适配代码 | 最小合法精度用例能够运行并通过 |
-| 5. 算子测试 | [`05-operator-testing.md`](05-operator-testing.md) | 当前实现、CPU 标杆、接口与设计 | 精度、边界、确定性、内存、性能和回归结论 | 所有必测项均已执行并通过 |
+| 1. 接口确认 | [`01-接口确认.md`](01-接口确认.md) | 用户提供的参考资料、需求和支持范围 | 归档在算子目录的 `docs/api.md`、支持范围、待确认问题 | 用户确认接口和语义 |
+| 2. 标杆生成 | [`02-标杆生成.md`](02-标杆生成.md) | 已确认接口、用户提供的参考实现或 CPU 标杆 | CPU 标杆、已校准值域、混合容差和对齐用例 | CPU 标杆完成对齐或验收，值域已校准且所有差异均已解决 |
+| 3. 方案设计 | [`03-方案设计.md`](03-方案设计.md) | `docs/api.md`、CPU 标杆、目标 SoC/性能要求，以及存在性能目标时的用户模型 case | 记录当前规则版本的 `docs/design.md` 与开发期 `docs/validation.md` | 完整设计通过当前版本 `R01`–`R21` 检查和整体评审；存在性能目标时逐模型 case 的基线、目标和统计方式完整 |
+| 4. 算子开发 | [`04-算子开发.md`](04-算子开发.md) | `docs/api.md`、已评审的 `docs/design.md`、开发期 `docs/validation.md`、CPU 标杆和阶段 4 开发参考 | op_host、tiling、kernel、op_api、适配代码和开发期实现追溯 | 最小合法精度用例能够运行并通过 |
+| 5. 算子测试 | [`05-算子测试.md`](05-算子测试.md) | 当前实现、CPU 标杆、`docs/api.md`、`docs/design.md` 与开发期 `docs/validation.md` | 完整的精度、性能、内存检测与确定性用例文件，以及 ATK README 中的覆盖与验收结论 | 三类用例及其映射完整，`all` 和其它必测项通过；存在性能目标时逐模型 case 给出达标结论；最终结果已归档且 `docs/validation.md` 已删除 |
 
 前一阶段的结论发生变化时，从发生变化的阶段开始，重新检查并更新后续所有阶段的文档、代码和测试。
 
 ## 参考资料分层
 
+- [`reference/精度对比与定位.md`](reference/精度对比与定位.md) 是阶段 2、阶段 4 和阶段 5 的精度
+  对比、校准与问题定位入口，统一维护场景路由、判断规则、失败输出采集和分析方法，并单向链接
+  ATK 的环境准备和正式精度执行；ATK README 不反向依赖精度规则。
 - [`reference/03-solution-design/`](reference/03-solution-design/) 保存方案设计案例；新算子在阶段 3 读取完整案例，既有算子优先读取自己的设计文档。
 - [`reference/04-operator-development/`](reference/04-operator-development/) 保存阶段 4 的实现参考；根据 chunk 依赖类型选择并读取其中一份开发参考。
 - 参考资料按所属阶段分目录维护，阶段入口仍是 `01`–`05` 五个主文件。
@@ -86,15 +91,17 @@ GPU 和 Triton Ascend 路径都使用相同输入与 CPU 标杆比较。用户�
 
 | 任务 | 必读文件 |
 | --- | --- |
-| 修改既有算子的接口或功能 | 包括修改属性、支持范围和异常行为。先读取当前接口、CPU 标杆、设计、实现和测试，核对设计文档的规则版本，再按 `01-interface-confirmation.md` 的既有算子修改流程选择后续阶段 |
-| 修改既有算子的内部实现（对外行为不变） | 包括性能优化，以及数据依赖、stage、workspace、同步、tiling、op_host、kernel、op_api 或 Python 适配调整。读取当前算子的 README/设计、实现和测试，以及 `03-solution-design.md`、`04-operator-development.md`、`05-operator-testing.md`；设计版本较旧时按 `03` 的当前规则更新受影响内容 |
-| 修改或新增算子测试 | 包括 ATK、精度、性能和回归用例。读取 `05-operator-testing.md`、[`../../tests/atk/README.md`](../../tests/atk/README.md) 和当前算子的 ATK README |
+| 修改既有算子的接口或功能 | 包括修改属性、支持范围和异常行为。先读取当前 `docs/api.md`、CPU 标杆、`docs/design.md`、算子 ATK README、实现和测试；开发期 `docs/validation.md` 存在时同时读取。核对设计文档的规则版本，再按 `01-接口确认.md` 的既有算子修改流程选择后续阶段 |
+| 修改既有算子的内部实现（对外行为不变） | 包括性能优化，以及数据依赖、stage、workspace、同步、tiling、op_host、kernel、op_api 或 Python 适配调整。读取当前算子的 README、`docs/api.md`、`docs/design.md`、算子 ATK README、实现和测试，以及 `03-方案设计.md`、`04-算子开发.md`、`05-算子测试.md`；开发期 `docs/validation.md` 存在时同时读取，设计版本较旧时按 `03` 的当前规则更新受影响内容 |
+| 修改或新增算子测试 | 包括 ATK、精度、性能和回归用例。读取 `05-算子测试.md`、[`../../tests/atk/README.md`](../../tests/atk/README.md) 和当前算子的 ATK README；涉及 CPU 标杆对齐、输入值域、精度规则或精度失败时，同时按下一行进入精度路由 |
+| 对齐 CPU 标杆、校准精度值域或定位精度问题 | 读取 [`reference/精度对比与定位.md`](reference/精度对比与定位.md) 选择场景，再按该文件指向的执行方法操作 |
 | 修改公共组件、公共 ABI、代码生成模板或 runtime | [`../architecture/torch-npu-decoupled-architecture.md`](../architecture/torch-npu-decoupled-architecture.md) 和所有受影响算子的阶段文档 |
 
 ## 内容存放位置
 
 - 每条规则由一个阶段文件维护；跨阶段强制规则统一写在根 `AGENTS.md`。
-- ATK 命令、参数、环境变量和目录资产只写在 `tests/atk/README.md`。
+- ATK 正式验收的命令、参数、环境变量和目录资产写在 `tests/atk/README.md`；精度失败后的输出
+  采集命令写在 `reference/精度对比与定位.md`。
 - Python runtime、wheel、动态库、device、stream、autograd 和图编译架构只写在 `docs/architecture/`。
-- 算子方案统一归档在对应算子目录的 `docs/design.md`，并在文件开头记录方案设计规则版本；具体 shape、资源数字、TilingKey、slot、同步协议和性能结果写在该设计文档或 ATK README。
+- 算子接口和支持范围归档在 `docs/api.md`；方案详设归档在 `docs/design.md` 并记录规则版本；开发期间以 `docs/validation.md` 维护验证计划、实现追溯、实验过程和实测结果。最终交付前把仍有效的测试与性能结论收敛到算子 ATK README，删除 `docs/validation.md`；失败实验和临时追溯不作为最终交付件。
 - 新增知识归入它实际约束的阶段，并明确适用边界。

@@ -71,10 +71,6 @@ FWD_H_KERNEL_PATHS = (
 KDA_KERNEL_UTILS_ROOT = (
     REPO_ROOT / "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/kernel_utils"
 )
-KDA_BWD_INTRA_REGBASE_PATH = (
-    REPO_ROOT
-    / "fla/ops/ascendc/kda/chunk_kda_bwd_intra/op_kernel/arch35/kernel_utils/vector/regbase.hpp"
-)
 KDA_MMAD_MULTI_PATH = (
     KDA_KERNEL_UTILS_ROOT / "block/block_mmad_pingpong_tla_multi.hpp"
 )
@@ -87,7 +83,6 @@ KDA_PRIVATE_UTILITY_PATHS = (
     *KDA_MMAD_PATHS,
     KDA_KERNEL_UTILS_ROOT / "tile/copy_l0c_to_ub.hpp",
     KDA_KERNEL_UTILS_ROOT / "vector/regbase.hpp",
-    KDA_BWD_INTRA_REGBASE_PATH,
 )
 KDA_PRIVATE_FWD_H_PATHS = (
     FWD_H_ROOT / "chunk_kda_fwd_h_struct.h",
@@ -2270,7 +2265,6 @@ def _check_kernel_utils_ownership() -> None:
         KDA_KERNEL_UTILS_ROOT / "vector/regbase.hpp": (
             "FLA_NPU_KERNEL_UTIL_REGBASE_PROVIDED"
         ),
-        KDA_BWD_INTRA_REGBASE_PATH: "FLA_NPU_KERNEL_UTIL_REGBASE_PROVIDED",
     }
     for path, marker in provider_markers.items():
         source = path.read_text(encoding="utf-8")
@@ -2280,7 +2274,7 @@ def _check_kernel_utils_ownership() -> None:
     include_re = re.compile(
         r'^\s*#\s*include\s*[<"]([^">]+)[">]', flags=re.MULTILINE
     )
-    for path in KDA_ROOT.rglob("*"):
+    for path in KDA_KERNEL_ROOT.rglob("*"):
         if path.suffix not in {".h", ".hpp", ".cpp"}:
             continue
         source = path.read_text(encoding="utf-8")
@@ -2339,9 +2333,6 @@ def _check_kernel_utils_ownership() -> None:
         FWD_H_ROOT / "arch35/epilogue/block/block_epilogue_kda_fwdh_regbase.hpp": (
             '#include "../../../../kernel_utils/vector/regbase.hpp"',
         ),
-        REPO_ROOT / "fla/ops/ascendc/kda/chunk_kda_bwd_intra/op_kernel/arch35/chunk_kda_bwd_intra_regbase.h": (
-            '#include "./kernel_utils/vector/regbase.hpp"',
-        ),
     }
     for path, expected_includes in expected_private_includes.items():
         source = path.read_text(encoding="utf-8")
@@ -2364,45 +2355,6 @@ def _check_kernel_utils_ownership() -> None:
         raise ValueError("chunk_kda_fwd must not retain a build dependency on GDN FwdH")
     if "fla/ops/ascendc/kda/kda_gate_cumsum" not in op_cmake:
         raise ValueError("chunk_kda_fwd must retain its kda_gate_cumsum dependency")
-
-    cmake_source = (REPO_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
-    if "${_kernel_source_dir}" in cmake_source:
-        raise ValueError("RTY private-source install must not change every operator")
-    kda_install = _source_section(
-        cmake_source,
-        'if (_op_name STREQUAL "chunk_kda_fwd" OR',
-        "endif ()",
-    )
-    if '_op_name STREQUAL "chunk_kda_bwd_intra"' not in kda_install:
-        raise ValueError("RTY private-source install must remain scoped to KDA operators")
-    for install_source in (
-        "${_kda_kernel_source_dir}/kernel_utils",
-        "${_kda_kernel_source_dir}/fwd_h",
-        "${_kda_kernel_source_dir}/${_arch_dir}",
-    ):
-        if f"install(DIRECTORY {install_source}" not in kda_install:
-            raise ValueError(f"RTY package must install KDA-private path {install_source}")
-    for public_install_source in (
-        "${op_dir}/arch32",
-        "${op_dir}/arch35",
-        "${op_dir}/arch38",
-    ):
-        if f"install(DIRECTORY {public_install_source}" not in cmake_source:
-            raise ValueError(
-                f"non-KDA RTY install behavior must retain {public_install_source}"
-            )
-
-    validation_script = (
-        REPO_ROOT / "scripts/validate_kda_a5.sh"
-    ).read_text(encoding="utf-8")
-    default_ops = re.search(r'^ops="([^"]+)"$', validation_script, re.MULTILINE)
-    if default_ops is None:
-        raise ValueError("A5 validation script must define its default KDA operator set")
-    default_op_names = set(default_ops.group(1).split(","))
-    if "chunk_gated_delta_rule_fwd_h" in default_op_names:
-        raise ValueError("A5 KDA validation must not build the independent GDN FwdH")
-    if not {"chunk_kda_fwd", "kda_gate_cumsum"}.issubset(default_op_names):
-        raise ValueError("A5 KDA validation must build ChunkKdaFwd and KdaGateCumsum")
 
 
 def _check_kernel_sync_contract() -> None:

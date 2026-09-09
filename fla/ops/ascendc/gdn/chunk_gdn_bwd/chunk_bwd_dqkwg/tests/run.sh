@@ -32,7 +32,7 @@ if [ "$compi" = "$compi_y" ]; then
         exit 1
     fi
     unset ASCEND_CUSTOM_OPP_PATH
-    bash ${code_path}/build/fla-npu-custom_linux-aarch64.run #--install-path=${custom_path}
+    bash ${code_path}/build/fla_npu_linux-aarch64.run #--install-path=${custom_path}
     if [ $? -ne 0 ]; then
         exit 1
     fi

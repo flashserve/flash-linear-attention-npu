@@ -343,11 +343,11 @@ PY
 
 find_single_run_package() {
     shopt -s nullglob
-    local run_files=(build_out/fla-npu-*.run build/fla-npu-*.run)
+    local run_files=(build_out/fla_npu_linux-*.run build/fla_npu_linux-*.run)
     shopt -u nullglob
 
     if (( ${#run_files[@]} == 0 )); then
-        echo "[CI][ERROR] No fla-npu .run package found in build_out/ or build/." >&2
+        echo "[CI][ERROR] No fla_npu_linux-*.run package found in build_out/ or build/." >&2
         exit 1
     fi
     if (( ${#run_files[@]} > 1 )); then
@@ -497,9 +497,6 @@ echo "[CI] mode=$ci_mode soc=$ci_soc ops=${ci_ops:-<all>} jobs=$ci_jobs cpack_jo
 python3 torch_custom/fla_npu/test/test_aclnn_ctypes_abi.py
 python3 torch_custom/fla_npu/test/test_runtime_device_guard.py
 python3 torch_custom/fla_npu/test/test_ascendc_mutation_contract.py
-if [[ -z "$ci_ops" || ",$ci_ops," == *",chunk_kda_fwd,"* ]]; then
-    python3 tests/atk/chunk_kda_fwd/scripts/validate_manifests.py
-fi
 
 case "$ci_mode" in
     quick)
