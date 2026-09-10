@@ -106,7 +106,8 @@ struct ChunkGatedDeltaRuleFwdStageTilingData {
     // 1: chunk_indices GM is [2 * numChunks] pairs (seqId, localChunk).
     int64_t hasChunkIndexTable;
 
-    // Always 1 this version: q' = q/||q||, k' = k/||k||; write q_hat, k_hat, rstd.
+    // 1: q' = q/||q||, k' = k/||k||; write q_hat, k_hat, rstd.
+    // 0: skip L2Norm; kkt/kbg use k; q_hat/k_hat/rstd outputs omitted.
     int64_t enableQueryKeyL2NormInKernel;
 
     // 1: g_raw = -exp(a_log) * softplus(g + dt_bias) before chunk-local cumsum.

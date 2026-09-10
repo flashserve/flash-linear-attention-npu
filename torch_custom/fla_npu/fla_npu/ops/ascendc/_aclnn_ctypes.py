@@ -606,8 +606,6 @@ def npu_chunk_gated_delta_rule_fwd_prepare(
     use_exp2 = _optional_bool(use_exp2, False)
     output_a = _optional_bool(output_a, True)
 
-    if not use_qk_l2norm_in_kernel:
-        raise ValueError("use_qk_l2norm_in_kernel currently only supports True.")
     if use_gate_in_kernel:
         raise ValueError("use_gate_in_kernel currently only supports False.")
     if not use_exp2:

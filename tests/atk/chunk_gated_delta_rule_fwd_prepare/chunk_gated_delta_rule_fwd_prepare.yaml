@@ -47,7 +47,7 @@ inputs:
       values: [non_param]
     ranges:
       valid:
-        values: ["{\"name\":\"gva_B2_T256_bf16\",\"dtype\":\"bf16\",\"B\":2,\"HK\":16,\"HV\":32,\"T\":256,\"K\":128,\"V\":128,\"chunk_size\":64,\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend950\"}"]
+        values: ["{\"name\":\"r1_T4160_V128_l2_sig1_neg1\",\"dtype\":\"bf16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":4160,\"K\":128,\"V\":128,\"chunk_size\":64,\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"l2_sig1_neg1\"}"]
       invalid:
         values: []
   - name: dtype

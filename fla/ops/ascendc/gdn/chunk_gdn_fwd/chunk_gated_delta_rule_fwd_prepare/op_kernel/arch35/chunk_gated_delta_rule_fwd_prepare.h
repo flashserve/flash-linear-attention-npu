@@ -108,10 +108,15 @@ public:
         if (outputA != 0) {
             gmA.SetGlobalBuffer(reinterpret_cast<__gm__ InDtype *>(aOut));
         }
-        gmQHat.SetGlobalBuffer(reinterpret_cast<__gm__ InDtype *>(qHat));
-        gmKHat.SetGlobalBuffer(reinterpret_cast<__gm__ InDtype *>(kHat));
-        gmQRstd.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(qRstd));
-        gmKRstd.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(kRstd));
+        if (useQkL2norm != 0) {
+            gmQHat.SetGlobalBuffer(reinterpret_cast<__gm__ InDtype *>(qHat));
+            gmKHat.SetGlobalBuffer(reinterpret_cast<__gm__ InDtype *>(kHat));
+            gmQRstd.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(qRstd));
+            gmKRstd.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(kRstd));
+        } else {
+            // Stage6 reloads k̂; without in-kernel L2Norm that is the k input.
+            gmKHat.SetGlobalBuffer(reinterpret_cast<__gm__ InDtype *>(k));
+        }
         hasBetaOut = 0;
         if (betaEff != nullptr) {
             gmBetaEff.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(betaEff));
@@ -174,8 +179,8 @@ public:
         ubVcsIdx = buf.template GetBuffer<BufferType::ASCEND_UB, uint32_t>(kUbVcsIdx);
 
         // UB[1.00, 9.00) KiB = 8 KiB, fp32 ND [32, 64].
-        // I_vcs = concat along K of two I_32 identity leaves. Stage3 VCS
-        // copies this to ubResVcs and overwrites with (I+Lii)^{-1}.
+        // I_vcs = concat along K of two I_32 identity leaves. Prefetched to
+        // ubResVcs before WaitCubeKktDone; VCS then overwrites with (I+Lii)^{-1}.
         ubIVcs = buf.template GetBuffer<BufferType::ASCEND_UB, float>(kUbIVcs);
 
         // UB[9.00, 25.00) KiB unused (old Cube NZ I). Overlaps g'/beta.
@@ -347,8 +352,9 @@ public:
     }
 
     // ========================= Stage 1 =========================
-    // Per-task g' (cumsum) and β_eff. Owner HK also L2Norm k then q, store
-    // hat/rstd, k' ND→L1 NZ C0=16, NotifyAicStage1Done so Cube kkt can
+    // Per-task g' (cumsum) and β_eff. Owner HK: L2Norm k then q when
+    // useQkL2norm, else k as-is (no q load). Store hat/rstd only on the
+    // L2Norm path. k' ND→L1 NZ C0=16, NotifyAicStage1Done so Cube kkt can
     // overlap Q/gate. k' aliases NegL: Wait pack N Stage4 before the L1
     // write so Stage1 can overlap pack N Stage5/7 (V3 G=1 schedule).
     // Sibling HV skip K/Q and still wait Stage4 to consume the flag.
@@ -380,9 +386,11 @@ public:
         if (isTail) {
             if (ownsHk) {
                 Duplicate(ubK[db], static_cast<InDtype>(0), nPad * static_cast<int32_t>(K));
-                Duplicate(ubKHat[db], static_cast<InDtype>(0), nPad * static_cast<int32_t>(K));
-                Duplicate(ubQ[db], static_cast<InDtype>(0), nPad * static_cast<int32_t>(K));
-                Duplicate(ubQHat[db], static_cast<InDtype>(0), nPad * static_cast<int32_t>(K));
+                if (useQkL2norm != 0) {
+                    Duplicate(ubKHat[db], static_cast<InDtype>(0), nPad * static_cast<int32_t>(K));
+                    Duplicate(ubQ[db], static_cast<InDtype>(0), nPad * static_cast<int32_t>(K));
+                    Duplicate(ubQHat[db], static_cast<InDtype>(0), nPad * static_cast<int32_t>(K));
+                }
             }
             Duplicate(ubGfp, 0.0f, nPad);
             Duplicate(ubBfp, 0.0f, nPad);
@@ -394,23 +402,31 @@ public:
             DataCopy(ubK[db], gmK[offQk], nElem);
             SetFlag<HardEvent::MTE2_V>(0);
             WaitFlag<HardEvent::MTE2_V>(0);
-            L2NormK128VF<InDtype>(ubK[db], ubKHat[db], ubKRstd[db], static_cast<uint32_t>(nValid), kGdnL2NormEps);
-            SetFlag<HardEvent::V_MTE3>(0);
-            WaitFlag<HardEvent::V_MTE3>(0);
-            WaitAicStage4Done(taskIdx);
-            UploadBf16NdToL1(l1K, ubKHat[db], static_cast<uint32_t>(K));
-            NotifyAicStage1Done(taskIdx);
-            DataCopy(gmKHat[offQk], ubKHat[db], nElem);
-            CopyUbToGmElems(gmKRstd[offRstd], ubKRstd[db], static_cast<uint32_t>(nValid));
+            if (useQkL2norm != 0) {
+                L2NormK128VF<InDtype>(ubK[db], ubKHat[db], ubKRstd[db], static_cast<uint32_t>(nValid), kGdnL2NormEps);
+                SetFlag<HardEvent::V_MTE3>(0);
+                WaitFlag<HardEvent::V_MTE3>(0);
+                WaitAicStage4Done(taskIdx);
+                UploadBf16NdToL1(l1K, ubKHat[db], static_cast<uint32_t>(K));
+                NotifyAicStage1Done(taskIdx);
+                DataCopy(gmKHat[offQk], ubKHat[db], nElem);
+                CopyUbToGmElems(gmKRstd[offRstd], ubKRstd[db], static_cast<uint32_t>(nValid));
 
-            DataCopy(ubQ[db], gmQ[offQk], nElem);
-            SetFlag<HardEvent::MTE2_V>(0);
-            WaitFlag<HardEvent::MTE2_V>(0);
-            L2NormK128VF<InDtype>(ubQ[db], ubQHat[db], ubQRstd[db], static_cast<uint32_t>(nValid), kGdnL2NormEps);
-            SetFlag<HardEvent::V_MTE3>(0);
-            WaitFlag<HardEvent::V_MTE3>(0);
-            DataCopy(gmQHat[offQk], ubQHat[db], nElem);
-            CopyUbToGmElems(gmQRstd[offRstd], ubQRstd[db], static_cast<uint32_t>(nValid));
+                DataCopy(ubQ[db], gmQ[offQk], nElem);
+                SetFlag<HardEvent::MTE2_V>(0);
+                WaitFlag<HardEvent::MTE2_V>(0);
+                L2NormK128VF<InDtype>(ubQ[db], ubQHat[db], ubQRstd[db], static_cast<uint32_t>(nValid), kGdnL2NormEps);
+                SetFlag<HardEvent::V_MTE3>(0);
+                WaitFlag<HardEvent::V_MTE3>(0);
+                DataCopy(gmQHat[offQk], ubQHat[db], nElem);
+                CopyUbToGmElems(gmQRstd[offRstd], ubQRstd[db], static_cast<uint32_t>(nValid));
+            } else {
+                SetFlag<HardEvent::MTE2_MTE3>(0);
+                WaitFlag<HardEvent::MTE2_MTE3>(0);
+                WaitAicStage4Done(taskIdx);
+                UploadBf16NdToL1(l1K, ubK[db], static_cast<uint32_t>(K));
+                NotifyAicStage1Done(taskIdx);
+            }
         } else {
             WaitAicStage4Done(taskIdx);
         }
@@ -530,12 +546,14 @@ public:
     }
 
     // ========================= Stage 3 =========================
-    // Gate (no kkt) is emitted before WaitCubeKktDone so Exp overlaps Cube
-    // kkt. After kkt: L = kkt ⊙ G, pack, -L UB→L1 on MTE3, VCS on V, leaves.
+    // Gate (no kkt) plus I_vcs → ubResVcs, both before WaitCubeKktDone so Exp
+    // and the MTE3 copy overlap Cube kkt. I dst is ubResVcs, not ubLFull.
+    // After kkt: L = kkt ⊙ G, pack leaves (must see -L), -L UB→L1, VCS on V.
     __aicore__ inline void Stage3_PrepareGate(int64_t taskIdx)
     {
         const int32_t db = PingPongSlot(taskIdx);
         GateLowerLVF(ubGPrime[db], ubBetaEff[db], ubLFull[db]);
+        DataCopy(ubResVcs[db], ubIVcs, static_cast<int32_t>(kVcsPackedElems32));
     }
 
     __aicore__ inline void Stage3_AivOne(int64_t hv, int64_t taskIdx)
@@ -547,7 +565,6 @@ public:
         SetFlag<HardEvent::V_MTE3>(0);
         WaitFlag<HardEvent::V_MTE3>(0);
         PackDiagLeavesFromUb(ubLPacked[db], ubLFull[db]);
-        DataCopy(ubResVcs[db], ubIVcs, static_cast<int32_t>(kVcsPackedElems32));
         SetFlag<HardEvent::MTE3_V>(4);
         WaitFlag<HardEvent::MTE3_V>(4);
         UbNd64ToL1Nz8(l1NegL[taskIdx], ubLFull[db]);

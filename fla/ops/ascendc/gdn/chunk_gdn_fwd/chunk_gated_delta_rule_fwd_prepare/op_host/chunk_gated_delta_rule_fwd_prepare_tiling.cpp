@@ -26,11 +26,6 @@ const gert::Shape &LogicalShape(const gert::StorageShape *shape)
     return origin.GetDimNum() >= storage.GetDimNum() ? origin : storage;
 }
 
-bool HasOutput(const gert::TilingContext *context, size_t index)
-{
-    return context->GetOutputDesc(index) != nullptr && context->GetOutputShape(index) != nullptr;
-}
-
 } // namespace
 
 static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext *context)
@@ -113,22 +108,12 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
     const bool hasDtBias = HasTensor(context->GetOptionalInputShape(PREPARE_INPUT_DT_BIAS));
     const bool hasCuSeqlens = HasTensor(context->GetOptionalInputShape(PREPARE_INPUT_CU_SEQLENS));
     const bool hasChunkIndices = HasTensor(context->GetOptionalInputShape(PREPARE_INPUT_CHUNK_INDICES));
-    const bool hasQHat = HasOutput(context, PREPARE_OUTPUT_Q_HAT);
-    const bool hasKHat = HasOutput(context, PREPARE_OUTPUT_K_HAT);
-    const bool hasQRstd = HasOutput(context, PREPARE_OUTPUT_Q_RSTD);
-    const bool hasKRstd = HasOutput(context, PREPARE_OUTPUT_K_RSTD);
-    const bool hasBetaEff = HasOutput(context, PREPARE_OUTPUT_BETA_EFF);
-    if (!hasQHat || !hasKHat || !hasQRstd || !hasKRstd) {
-        printf("[ChunkGatedDeltaRuleFwdPrepare][Tiling] q_hat/k_hat/q_rstd/k_rstd are required "
-               "(this version always runs Q/K L2Norm). qHat=%d kHat=%d qRstd=%d kRstd=%d\n",
-               static_cast<int>(hasQHat), static_cast<int>(hasKHat),
-               static_cast<int>(hasQRstd), static_cast<int>(hasKRstd));
-        fflush(stdout);
-        return ge::GRAPH_FAILED;
-    }
+    // Optional outputs pack when omitted (beta_eff can land in the q_hat slot).
+    // use_qk_l2norm is set by ACLNN from whether hats were actually passed.
+    const bool hasQHat = useQkL2normAttr;
+    const bool hasKHat = useQkL2normAttr;
 
     // Prefer ACLNN-inferred attrs: optional outputs can be packed and indices shift.
-    // This version always runs in-kernel Q/K L2Norm; the attr is not a kernel switch.
     const bool useGateInKernel = useGateAttr || hasALog;
     const bool useBetaSigmoid = useBetaAttr;
 
@@ -191,11 +176,6 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
         fflush(stdout);
         return ge::GRAPH_FAILED;
     }
-    if (!useQkL2normAttr) {
-        printf("[ChunkGatedDeltaRuleFwdPrepare][Tiling] use_qk_l2norm currently must be true\n");
-        fflush(stdout);
-        return ge::GRAPH_FAILED;
-    }
     if (useGateInKernel) {
         printf("[ChunkGatedDeltaRuleFwdPrepare][Tiling] use_gate_in_kernel currently must be false\n");
         fflush(stdout);
@@ -229,7 +209,7 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
     tiling.set_packedSequenceCount(seqNum);
     tiling.set_isVariableLengthPacked(hasCuSeqlens ? 1 : 0);
     tiling.set_hasChunkIndexTable(hasChunkIndices ? 1 : 0);
-    tiling.set_enableQueryKeyL2NormInKernel(1);
+    tiling.set_enableQueryKeyL2NormInKernel(useQkL2normAttr ? 1 : 0);
     tiling.set_enableFusedGateSoftplus(useGateInKernel ? 1 : 0);
     tiling.set_enableBetaSigmoid(useBetaSigmoid ? 1 : 0);
     tiling.set_hasGateDtBias(hasDtBias ? 1 : 0);

@@ -2,7 +2,7 @@
  {
   "id": 0,
   "default_seed": 20260817,
-  "name": "chunk_gated_delta_rule_fwd_prepare_0000_gva_B2_T256_sig1_neg1",
+  "name": "chunk_gated_delta_rule_fwd_prepare_0000_r1_T4160_V128_l2_sig1_neg1",
   "aclnn_name": null,
   "triton_name": null,
   "kernel_name": null,
@@ -62,7 +62,7 @@
     "required": true,
     "dtype": "non_param",
     "shape": null,
-    "range_values": "{\"name\":\"gva_B2_T256_sig1_neg1\",\"B\":2,\"HK\":16,\"HV\":32,\"T\":256,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"sig1_neg1\"}",
+    "range_values": "{\"name\":\"r1_T4160_V128_l2_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":4160,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"l2_sig1_neg1\"}",
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -84,7 +84,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 2,
+    "range_values": 1,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -95,7 +95,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 16,
+    "range_values": 4,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -106,7 +106,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 32,
+    "range_values": 4,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -117,7 +117,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 256,
+    "range_values": 4160,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -202,9 +202,9 @@
   ]
  },
  {
-  "id": 27,
-  "default_seed": 20260844,
-  "name": "chunk_gated_delta_rule_fwd_prepare_0027_r1_T256_V128_sig1_neg1",
+  "id": 6,
+  "default_seed": 20260823,
+  "name": "chunk_gated_delta_rule_fwd_prepare_0006_r2_T2112_V128_l2_sig1_neg1",
   "aclnn_name": null,
   "triton_name": null,
   "kernel_name": null,
@@ -264,209 +264,7 @@
     "required": true,
     "dtype": "non_param",
     "shape": null,
-    "range_values": "{\"name\":\"r1_T256_V128_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":256,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":27,\"seed\":20260844,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"sig1_neg1\"}",
-    "backward": false,
-    "align_32B": null,
-    "outlier_values": null
-   },
-   {
-    "name": "dtype",
-    "type": "attr",
-    "required": true,
-    "dtype": "string",
-    "shape": null,
-    "range_values": "bf16",
-    "backward": false,
-    "align_32B": null,
-    "outlier_values": null
-   },
-   {
-    "name": "B",
-    "type": "attr",
-    "required": true,
-    "dtype": "int",
-    "shape": null,
-    "range_values": 1,
-    "backward": false,
-    "align_32B": null,
-    "outlier_values": null
-   },
-   {
-    "name": "HK",
-    "type": "attr",
-    "required": true,
-    "dtype": "int",
-    "shape": null,
-    "range_values": 4,
-    "backward": false,
-    "align_32B": null,
-    "outlier_values": null
-   },
-   {
-    "name": "HV",
-    "type": "attr",
-    "required": true,
-    "dtype": "int",
-    "shape": null,
-    "range_values": 4,
-    "backward": false,
-    "align_32B": null,
-    "outlier_values": null
-   },
-   {
-    "name": "T",
-    "type": "attr",
-    "required": true,
-    "dtype": "int",
-    "shape": null,
-    "range_values": 256,
-    "backward": false,
-    "align_32B": null,
-    "outlier_values": null
-   },
-   {
-    "name": "K",
-    "type": "attr",
-    "required": true,
-    "dtype": "int",
-    "shape": null,
-    "range_values": 128,
-    "backward": false,
-    "align_32B": null,
-    "outlier_values": null
-   },
-   {
-    "name": "V",
-    "type": "attr",
-    "required": true,
-    "dtype": "int",
-    "shape": null,
-    "range_values": 128,
-    "backward": false,
-    "align_32B": null,
-    "outlier_values": null
-   },
-   {
-    "name": "chunk_size",
-    "type": "attr",
-    "required": true,
-    "dtype": "int",
-    "shape": null,
-    "range_values": 64,
-    "backward": false,
-    "align_32B": null,
-    "outlier_values": null
-   },
-   {
-    "name": "case_id",
-    "type": "attr",
-    "required": true,
-    "dtype": "int",
-    "shape": null,
-    "range_values": 27,
-    "backward": false,
-    "align_32B": null,
-    "outlier_values": null
-   },
-   {
-    "name": "seed",
-    "type": "attr",
-    "required": true,
-    "dtype": "int",
-    "shape": null,
-    "range_values": 20260844,
-    "backward": false,
-    "align_32B": null,
-    "outlier_values": null
-   },
-   {
-    "name": "soc",
-    "type": "attr",
-    "required": true,
-    "dtype": "string",
-    "shape": null,
-    "range_values": "ascend950",
-    "backward": false,
-    "align_32B": null,
-    "outlier_values": null
-   },
-   {
-    "name": "route",
-    "type": "attr",
-    "required": true,
-    "dtype": "string",
-    "shape": null,
-    "range_values": "ascendc",
-    "backward": false,
-    "align_32B": null,
-    "outlier_values": null
-   }
-  ]
- },
- {
-  "id": 39,
-  "default_seed": 20260856,
-  "name": "chunk_gated_delta_rule_fwd_prepare_0039_r2_T256_V128_sig1_neg1",
-  "aclnn_name": null,
-  "triton_name": null,
-  "kernel_name": null,
-  "version": "v2.1",
-  "expected_error_msg": null,
-  "api": "pytorch",
-  "api_type": "executor_chunk_gated_delta_rule_fwd_prepare",
-  "aclnn_api_type": "aclnn_function",
-  "triton_api_type": "triton_function",
-  "fusion_api_type": "fusion_function",
-  "fusion_mode": null,
-  "dist_api_type": "dist_function",
-  "kernel_api_type": "kernel_function",
-  "backward": false,
-  "standard": {
-   "acc": "mixed_tolerance_bm",
-   "perf": "not_key",
-   "mem": 1.1
-  },
-  "outputs": null,
-  "inputs": [
-   {
-    "name": "low_precision_marker",
-    "type": "tensor",
-    "required": true,
-    "dtype": "bf16",
-    "shape": [
-     1
-    ],
-    "range_values": [
-     0,
-     0
-    ],
-    "backward": true,
-    "align_32B": null,
-    "outlier_values": null
-   },
-   {
-    "name": "fp32_marker",
-    "type": "tensor",
-    "required": true,
-    "dtype": "fp32",
-    "shape": [
-     1
-    ],
-    "range_values": [
-     0,
-     0
-    ],
-    "backward": true,
-    "align_32B": null,
-    "outlier_values": null
-   },
-   {
-    "name": "case_spec",
-    "type": "attr",
-    "required": true,
-    "dtype": "non_param",
-    "shape": null,
-    "range_values": "{\"name\":\"r2_T256_V128_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":8,\"T\":256,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":39,\"seed\":20260856,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"sig1_neg1\"}",
+    "range_values": "{\"name\":\"r2_T2112_V128_l2_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":8,\"T\":2112,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":6,\"seed\":20260823,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"l2_sig1_neg1\"}",
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -521,7 +319,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 256,
+    "range_values": 2112,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -565,7 +363,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 39,
+    "range_values": 6,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -576,7 +374,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 20260856,
+    "range_values": 20260823,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -606,9 +404,9 @@
   ]
  },
  {
-  "id": 51,
-  "default_seed": 20260868,
-  "name": "chunk_gated_delta_rule_fwd_prepare_0051_r3_T256_V128_sig1_neg1",
+  "id": 12,
+  "default_seed": 20260829,
+  "name": "chunk_gated_delta_rule_fwd_prepare_0012_r3_T1408_V128_l2_sig1_neg1",
   "aclnn_name": null,
   "triton_name": null,
   "kernel_name": null,
@@ -668,7 +466,7 @@
     "required": true,
     "dtype": "non_param",
     "shape": null,
-    "range_values": "{\"name\":\"r3_T256_V128_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":12,\"T\":256,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":51,\"seed\":20260868,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"sig1_neg1\"}",
+    "range_values": "{\"name\":\"r3_T1408_V128_l2_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":12,\"T\":1408,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":12,\"seed\":20260829,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"l2_sig1_neg1\"}",
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -723,7 +521,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 256,
+    "range_values": 1408,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -767,7 +565,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 51,
+    "range_values": 12,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -778,7 +576,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 20260868,
+    "range_values": 20260829,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -808,9 +606,9 @@
   ]
  },
  {
-  "id": 63,
-  "default_seed": 20260880,
-  "name": "chunk_gated_delta_rule_fwd_prepare_0063_r4_T256_V128_sig1_neg1",
+  "id": 18,
+  "default_seed": 20260835,
+  "name": "chunk_gated_delta_rule_fwd_prepare_0018_r4_T1088_V128_l2_sig1_neg1",
   "aclnn_name": null,
   "triton_name": null,
   "kernel_name": null,
@@ -870,7 +668,7 @@
     "required": true,
     "dtype": "non_param",
     "shape": null,
-    "range_values": "{\"name\":\"r4_T256_V128_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":16,\"T\":256,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":63,\"seed\":20260880,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"sig1_neg1\"}",
+    "range_values": "{\"name\":\"r4_T1088_V128_l2_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":16,\"T\":1088,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":18,\"seed\":20260835,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"l2_sig1_neg1\"}",
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -925,7 +723,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 256,
+    "range_values": 1088,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -969,7 +767,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 63,
+    "range_values": 18,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -980,7 +778,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 20260880,
+    "range_values": 20260835,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -1010,9 +808,9 @@
   ]
  },
  {
-  "id": 75,
-  "default_seed": 20260892,
-  "name": "chunk_gated_delta_rule_fwd_prepare_0075_r1_T256_V256_sig1_neg1",
+  "id": 24,
+  "default_seed": 20260841,
+  "name": "chunk_gated_delta_rule_fwd_prepare_0024_r1_T4160_V256_l2_sig1_neg1",
   "aclnn_name": null,
   "triton_name": null,
   "kernel_name": null,
@@ -1072,7 +870,7 @@
     "required": true,
     "dtype": "non_param",
     "shape": null,
-    "range_values": "{\"name\":\"r1_T256_V256_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":256,\"K\":128,\"V\":256,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":75,\"seed\":20260892,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"sig1_neg1\"}",
+    "range_values": "{\"name\":\"r1_T4160_V256_l2_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":4160,\"K\":128,\"V\":256,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":24,\"seed\":20260841,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"l2_sig1_neg1\"}",
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -1127,7 +925,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 256,
+    "range_values": 4160,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -1171,7 +969,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 75,
+    "range_values": 24,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -1182,7 +980,209 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 20260892,
+    "range_values": 20260841,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ]
+ },
+ {
+  "id": 30,
+  "default_seed": 20260847,
+  "name": "chunk_gated_delta_rule_fwd_prepare_0030_r2_T2112_V256_l2_sig1_neg1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_fwd_prepare",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"r2_T2112_V256_l2_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":8,\"T\":2112,\"K\":128,\"V\":256,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":30,\"seed\":20260847,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"l2_sig1_neg1\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 8,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 2112,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 30,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20260847,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
