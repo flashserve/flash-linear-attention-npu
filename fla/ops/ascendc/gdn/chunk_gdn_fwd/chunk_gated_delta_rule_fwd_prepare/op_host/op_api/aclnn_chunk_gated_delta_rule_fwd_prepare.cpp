@@ -80,14 +80,14 @@ static aclnnStatus CheckNotNull(const ChunkGatedDeltaRuleFwdPrepareParams &param
     CHECK_COND(params.wOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "wOut must not be nullptr.");
     CHECK_COND(params.uOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "uOut must not be nullptr.");
     CHECK_COND(params.aOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "aOut must not be nullptr.");
-    CHECK_COND(params.qHatOptional != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-               "qHat is required: this version always runs Q/K L2Norm.");
-    CHECK_COND(params.kHatOptional != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-               "kHat is required: this version always runs Q/K L2Norm.");
-    CHECK_COND(params.qRstdOptional != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-               "qRstd is required: this version always runs Q/K L2Norm.");
-    CHECK_COND(params.kRstdOptional != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-               "kRstd is required: this version always runs Q/K L2Norm.");
+    {
+        const bool hasQHat = params.qHatOptional != nullptr;
+        const bool hasKHat = params.kHatOptional != nullptr;
+        const bool hasQRstd = params.qRstdOptional != nullptr;
+        const bool hasKRstd = params.kRstdOptional != nullptr;
+        CHECK_COND(hasQHat == hasKHat && hasQHat == hasQRstd && hasQHat == hasKRstd, ACLNN_ERR_PARAM_INVALID,
+                   "qHat/kHat/qRstd/kRstd must all be set or all be nullptr.");
+    }
     CHECK_COND(params.chunkSize == CHUNK_SIZE, ACLNN_ERR_PARAM_INVALID,
                "chunkSize currently only supports 64.");
     CHECK_COND(params.aLogOptional == nullptr, ACLNN_ERR_PARAM_INVALID,
@@ -128,14 +128,16 @@ static aclnnStatus CheckDtype(const ChunkGatedDeltaRuleFwdPrepareParams &params)
         CHECK_COND(IsGateDtype(params.dtBiasOptional->GetDataType()), ACLNN_ERR_PARAM_INVALID,
                    "dtBiasOptional must be fp32/bf16/fp16.");
     }
-    CHECK_COND(params.qHatOptional->GetDataType() == params.q->GetDataType(), ACLNN_ERR_PARAM_INVALID,
-               "qHat dtype must match q.");
-    CHECK_COND(params.kHatOptional->GetDataType() == params.k->GetDataType(), ACLNN_ERR_PARAM_INVALID,
-               "kHat dtype must match k.");
-    CHECK_COND(params.qRstdOptional->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
-               "qRstd must be fp32.");
-    CHECK_COND(params.kRstdOptional->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
-               "kRstd must be fp32.");
+    if (params.qHatOptional != nullptr) {
+        CHECK_COND(params.qHatOptional->GetDataType() == params.q->GetDataType(), ACLNN_ERR_PARAM_INVALID,
+                   "qHat dtype must match q.");
+        CHECK_COND(params.kHatOptional->GetDataType() == params.k->GetDataType(), ACLNN_ERR_PARAM_INVALID,
+                   "kHat dtype must match k.");
+        CHECK_COND(params.qRstdOptional->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
+                   "qRstd must be fp32.");
+        CHECK_COND(params.kRstdOptional->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
+                   "kRstd must be fp32.");
+    }
     if (params.betaEffOptional != nullptr) {
         CHECK_COND(params.betaEffOptional->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
                    "betaEffOptional must be fp32.");
@@ -198,19 +200,21 @@ static aclnnStatus CheckShape(const ChunkGatedDeltaRuleFwdPrepareParams &params)
     if (params.cuSeqlensOptional != nullptr) {
         CHECK_COND(B == 1, ACLNN_ERR_PARAM_INVALID, "varlen requires B=1.");
     }
-    CHECK_COND(ShapeEqual(params.qHatOptional->GetViewShape(), qShape), ACLNN_ERR_PARAM_INVALID,
-               "qHat shape must match q.");
-    CHECK_COND(ShapeEqual(params.kHatOptional->GetViewShape(), kShape), ACLNN_ERR_PARAM_INVALID,
-               "kHat shape must match k.");
-    {
-        const op::Shape qRstd = params.qRstdOptional->GetViewShape();
-        CHECK_COND(qRstd.GetDimNum() == DIM_3 && qRstd.GetDim(0) == B && qRstd.GetDim(1) == HK &&
-                       qRstd.GetDim(2) == T,
-                   ACLNN_ERR_PARAM_INVALID, "qRstd must be [B, Hk, T].");
-        const op::Shape kRstd = params.kRstdOptional->GetViewShape();
-        CHECK_COND(kRstd.GetDimNum() == DIM_3 && kRstd.GetDim(0) == B && kRstd.GetDim(1) == HK &&
-                       kRstd.GetDim(2) == T,
-                   ACLNN_ERR_PARAM_INVALID, "kRstd must be [B, Hk, T].");
+    if (params.qHatOptional != nullptr) {
+        CHECK_COND(ShapeEqual(params.qHatOptional->GetViewShape(), qShape), ACLNN_ERR_PARAM_INVALID,
+                   "qHat shape must match q.");
+        CHECK_COND(ShapeEqual(params.kHatOptional->GetViewShape(), kShape), ACLNN_ERR_PARAM_INVALID,
+                   "kHat shape must match k.");
+        {
+            const op::Shape qRstd = params.qRstdOptional->GetViewShape();
+            CHECK_COND(qRstd.GetDimNum() == DIM_3 && qRstd.GetDim(0) == B && qRstd.GetDim(1) == HK &&
+                           qRstd.GetDim(2) == T,
+                       ACLNN_ERR_PARAM_INVALID, "qRstd must be [B, Hk, T].");
+            const op::Shape kRstd = params.kRstdOptional->GetViewShape();
+            CHECK_COND(kRstd.GetDimNum() == DIM_3 && kRstd.GetDim(0) == B && kRstd.GetDim(1) == HK &&
+                           kRstd.GetDim(2) == T,
+                       ACLNN_ERR_PARAM_INVALID, "kRstd must be [B, Hk, T].");
+        }
     }
     if (params.betaEffOptional != nullptr) {
         CHECK_COND(ShapeEqual(params.betaEffOptional->GetViewShape(), gShape), ACLNN_ERR_PARAM_INVALID,
@@ -330,7 +334,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
     auto result = l0op::ChunkGatedDeltaRuleFwdPrepare(
         params.q, params.k, params.v, params.g, params.beta, params.aLogOptional, params.dtBiasOptional,
         params.cuSeqlensOptional, params.chunkIndicesOptional, params.chunkSize, params.allowNegEigval,
-        params.useExp2, true,
+        params.useExp2, params.qHatOptional != nullptr,
         params.aLogOptional != nullptr, params.betaEffOptional != nullptr, params.outputA,
         params.gOut, params.wOut, params.uOut, params.aOut, params.qHatOptional, params.kHatOptional, params.qRstdOptional,
         params.kRstdOptional, params.betaEffOptional, executorPtr);
