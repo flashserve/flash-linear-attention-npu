@@ -185,7 +185,9 @@ QK 头组不跨 workgroup。
 
 每个 Stage 只能包含 Cube 或 Vector 操作之一。Vector Stage 只调用一次 VF，不按 token、
 子块或硬件 tile 分 pass；Cube Stage 可以在编译期展开独立 MMAD，但所有输入必须在 Stage
-入口前 ready。
+入口前 ready。VF 及其 SIMD helper 的所有 `for` 循环体禁止普通 `if` 和运行时条件表达式，
+只允许 `if constexpr`；有效区/尾区、上下半区和 active/inactive sub-chunk 必须通过独立循环
+或循环外分支表达。
 
 | Stage | 核 | 计算 |
 | --- | --- | --- |

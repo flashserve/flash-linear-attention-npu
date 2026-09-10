@@ -131,8 +131,9 @@ __simd_callee__ inline void ExpPair(
     Exp(high, high, mask);
 }
 
-// V0 的循环和指令均属于一次 VF。这里直接展示寄存器级数据流；L2 归约
-// 的 ReduceSum 结果广播形式仍需用目标 CANN 9.1.0 头文件做最小编译确认。
+// V0 的循环和指令均属于一次 VF。有效行和尾行分开执行，
+// 保证循环体中只有编译期模式分支。L2 归约的 ReduceSum 广播
+// 形式仍需用目标 CANN 9.1.0 头文件做最小编译确认。
 template <typename GateT, typename BetaT, typename CompilePolicy>
 __simd_vf__ inline void StageV0Vf(
     __ubuf__ bfloat16_t *q, __ubuf__ bfloat16_t *k,
@@ -149,116 +150,95 @@ __simd_vf__ inline void StageV0Vf(
     MaskReg scalarMask = UpdateMask<float>(scalarCount);
     RegTensor<float> carryLow;
     RegTensor<float> carryHigh;
+    RegTensor<float> biasLow;
+    RegTensor<float> biasHigh;
+    RegTensor<float> a;
     Duplicate(carryLow, 0.0F, mask);
     Duplicate(carryHigh, 0.0F, mask);
 
-    for (uint16_t row = 0; row < Shape::kChunkRows; ++row) {
+    // dt_bias 和 A_log 都是 head 常量，在行循环前只判断和读取一次。
+    if constexpr (CompilePolicy::gateMode != GateMode::PrecomputedStep) {
+        if (hasDtBias) {
+            LoadAlign(biasLow, dtBias);
+            LoadAlign(biasHigh, dtBias + 64);
+        } else {
+            Duplicate(biasLow, 0.0F, mask);
+            Duplicate(biasHigh, 0.0F, mask);
+        }
+        if (hasALog) {
+            LoadScalarAsFp32(a, aLog);
+            Exp(a, a, mask); // 计算 a_h=exp(A_log[h])。
+        } else {
+            Duplicate(a, 1.0F, mask);
+        }
+    }
+
+    // 有效行内直接展示 Q/K 归一化、gate 变换和前缀和。
+    for (uint16_t row = 0; row < validRows; ++row) {
         RegTensor<float> qLow;
         RegTensor<float> qHigh;
         RegTensor<float> kLow;
         RegTensor<float> kHigh;
-        if (row < validRows) {
-            Load128AsFp32(qLow, qHigh, q + row * Shape::kHeadDim);
-            Load128AsFp32(kLow, kHigh, k + row * Shape::kHeadDim);
-            if constexpr (CompilePolicy::normMode == QkNormMode::L2) {
-                RegTensor<float> qSquareLow;
-                RegTensor<float> qSquareHigh;
-                RegTensor<float> kSquareLow;
-                RegTensor<float> kSquareHigh;
-                RegTensor<float> qSumLow;
-                RegTensor<float> qSumHigh;
-                RegTensor<float> kSumLow;
-                RegTensor<float> kSumHigh;
-                Mul(qSquareLow, qLow, qLow, mask);
-                Mul(qSquareHigh, qHigh, qHigh, mask);
-                Mul(kSquareLow, kLow, kLow, mask);
-                Mul(kSquareHigh, kHigh, kHigh, mask);
-                ReduceSum(qSumLow, qSquareLow, mask);
-                ReduceSum(qSumHigh, qSquareHigh, mask);
-                ReduceSum(kSumLow, kSquareLow, mask);
-                ReduceSum(kSumHigh, kSquareHigh, mask);
-                // ReduceSum 只保证首 lane 有效。先按单 lane 合并两半，
-                // 按冻结语义计算 rstd=1/sqrt(sum(x^2)+epsilon)；两份
-                // rstd 既供当前归一化广播，也由 MTE3 作为反向保存量写回。
-                Add(qSumLow, qSumLow, qSumHigh, scalarMask);
-                Add(kSumLow, kSumLow, kSumHigh, scalarMask);
-                Adds(qSumLow, qSumLow, epsilon, scalarMask);
-                Adds(kSumLow, kSumLow, epsilon, scalarMask);
-                Sqrt(qSumLow, qSumLow, scalarMask);
-                Sqrt(kSumLow, kSumLow, scalarMask);
-                RegTensor<float> one;
-                Duplicate(one, 1.0F, scalarMask);
-                Div(qSumLow, one, qSumLow, scalarMask);
-                Div(kSumLow, one, kSumLow, scalarMask);
-                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
-                    qRstd + row, qSumLow, scalarMask);
-                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
-                    kRstd + row, kSumLow, scalarMask);
-                LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
-                LoadAlign<float, LoadDist::DIST_BRC_B32>(
-                    qSumLow, qRstd + row);
-                LoadAlign<float, LoadDist::DIST_BRC_B32>(
-                    kSumLow, kRstd + row);
-                Mul(qLow, qLow, qSumLow, mask);
-                Mul(qHigh, qHigh, qSumLow, mask);
-                Mul(kLow, kLow, kSumLow, mask);
-                Mul(kHigh, kHigh, kSumLow, mask);
-            } else {
-                // Identity 模式也固定产生公开输出，避免不同
-                // TilingKey 下 q_rstd/k_rstd 未初始化。
-                RegTensor<float> one;
-                Duplicate(one, 1.0F, scalarMask);
-                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
-                    qRstd + row, one, scalarMask);
-                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
-                    kRstd + row, one, scalarMask);
-            }
+        Load128AsFp32(qLow, qHigh, q + row * Shape::kHeadDim);
+        Load128AsFp32(kLow, kHigh, k + row * Shape::kHeadDim);
+        if constexpr (CompilePolicy::normMode == QkNormMode::L2) {
+            RegTensor<float> qSquareLow;
+            RegTensor<float> qSquareHigh;
+            RegTensor<float> kSquareLow;
+            RegTensor<float> kSquareHigh;
+            RegTensor<float> qSumLow;
+            RegTensor<float> qSumHigh;
+            RegTensor<float> kSumLow;
+            RegTensor<float> kSumHigh;
+            Mul(qSquareLow, qLow, qLow, mask);
+            Mul(qSquareHigh, qHigh, qHigh, mask);
+            Mul(kSquareLow, kLow, kLow, mask);
+            Mul(kSquareHigh, kHigh, kHigh, mask);
+            ReduceSum(qSumLow, qSquareLow, mask);
+            ReduceSum(qSumHigh, qSquareHigh, mask);
+            ReduceSum(kSumLow, kSquareLow, mask);
+            ReduceSum(kSumHigh, kSquareHigh, mask);
+            // ReduceSum 只保证首 lane 有效。rstd 同时供当前行
+            // 归一化广播，并由 MTE3 作为反向保存量写回。
+            Add(qSumLow, qSumLow, qSumHigh, scalarMask);
+            Add(kSumLow, kSumLow, kSumHigh, scalarMask);
+            Adds(qSumLow, qSumLow, epsilon, scalarMask);
+            Adds(kSumLow, kSumLow, epsilon, scalarMask);
+            Sqrt(qSumLow, qSumLow, scalarMask);
+            Sqrt(kSumLow, kSumLow, scalarMask);
+            RegTensor<float> one;
+            Duplicate(one, 1.0F, scalarMask);
+            Div(qSumLow, one, qSumLow, scalarMask);
+            Div(kSumLow, one, kSumLow, scalarMask);
+            DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
+                qRstd + row, qSumLow, scalarMask);
+            DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
+                kRstd + row, kSumLow, scalarMask);
+            LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+            LoadAlign<float, LoadDist::DIST_BRC_B32>(qSumLow, qRstd + row);
+            LoadAlign<float, LoadDist::DIST_BRC_B32>(kSumLow, kRstd + row);
+            Mul(qLow, qLow, qSumLow, mask);
+            Mul(qHigh, qHigh, qSumLow, mask);
+            Mul(kLow, kLow, kSumLow, mask);
+            Mul(kHigh, kHigh, kSumLow, mask);
         } else {
-            Duplicate(qLow, 0.0F, mask);
-            Duplicate(qHigh, 0.0F, mask);
-            Duplicate(kLow, 0.0F, mask);
-            Duplicate(kHigh, 0.0F, mask);
-            RegTensor<float> zero;
-            Duplicate(zero, 0.0F, scalarMask);
+            // Identity 模式也固定产生公开的 rstd=1。
+            RegTensor<float> one;
+            Duplicate(one, 1.0F, scalarMask);
             DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
-                qRstd + row, zero, scalarMask);
+                qRstd + row, one, scalarMask);
             DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
-                kRstd + row, zero, scalarMask);
+                kRstd + row, one, scalarMask);
         }
         Store128FromFp32(q + row * Shape::kHeadDim, qLow, qHigh);
         Store128FromFp32(k + row * Shape::kHeadDim, kLow, kHigh);
 
-        if (row >= validRows) {
-            RegTensor<float> zero;
-            Duplicate(zero, 0.0F, mask);
-            StoreAlign(g + row * Shape::kHeadDim, zero, mask);
-            StoreAlign(g + row * Shape::kHeadDim + 64, zero, mask);
-            continue;
-        }
         RegTensor<float> gateLow;
         RegTensor<float> gateHigh;
-        Load128AsFp32(gateLow, gateHigh,
-                      rawGate + row * Shape::kHeadDim);
+        Load128AsFp32(gateLow, gateHigh, rawGate + row * Shape::kHeadDim);
         if constexpr (CompilePolicy::gateMode != GateMode::PrecomputedStep) {
-            RegTensor<float> biasLow;
-            RegTensor<float> biasHigh;
-            if (hasDtBias) {
-                LoadAlign(biasLow, dtBias);
-                LoadAlign(biasHigh, dtBias + 64);
-            } else {
-                Duplicate(biasLow, 0.0F, mask);
-                Duplicate(biasHigh, 0.0F, mask);
-            }
             Add(gateLow, gateLow, biasLow, mask);
             Add(gateHigh, gateHigh, biasHigh, mask);
-
-            RegTensor<float> a;
-            if (hasALog) {
-                LoadScalarAsFp32(a, aLog);
-                Exp(a, a, mask); // 计算 a_h=exp(A_log[h])。
-            } else {
-                Duplicate(a, 1.0F, mask);
-            }
             if constexpr (CompilePolicy::safeGate ||
                           CompilePolicy::gateMode == GateMode::SafeSigmoid) {
                 RegTensor<float> one;
@@ -300,8 +280,7 @@ __simd_vf__ inline void StageV0Vf(
                 Muls(gateHigh, gateHigh, -1.0F, mask);
             }
         }
-        // USE_EXP2=true 时 G 保存 log2 值，后续用 Exp(G*ln2)；
-        // false 时 G 保存自然对数值，后续直接 Exp(G)。
+        // USE_EXP2=true 时 G 保存 log2 值；false 时保存自然对数值。
         if constexpr (Domain::useExp2) {
             Muls(gateLow, gateLow, Domain::stepScale, mask);
             Muls(gateHigh, gateHigh, Domain::stepScale, mask);
@@ -310,46 +289,152 @@ __simd_vf__ inline void StageV0Vf(
         Add(carryHigh, carryHigh, gateHigh, mask);
         StoreAlign(g + row * Shape::kHeadDim, carryLow, mask);
         StoreAlign(g + row * Shape::kHeadDim + 64, carryHigh, mask);
-
-        for (uint16_t s = 0; s < Shape::kSubChunkCount; ++s) {
-            const uint16_t begin = s * Shape::kSubChunkRows;
-            const uint16_t end = validRows < begin + Shape::kSubChunkRows
-                                     ? validRows
-                                     : begin + Shape::kSubChunkRows;
-            const uint16_t refRow = (begin + end) / 2;
-            if (begin < end && row == refRow) {
-                StoreAlign(gRef + s * Shape::kHeadDim, carryLow, mask);
-                StoreAlign(gRef + s * Shape::kHeadDim + 64, carryHigh, mask);
-            }
-        }
-        if (row + 1 == validRows) {
-            StoreAlign(gLast, carryLow, mask);
-            StoreAlign(gLast + 64, carryHigh, mask);
-        }
     }
 
-    for (uint16_t row = 0; row < Shape::kChunkRows; ++row) {
+    // 尾行不参与任何数学计算，统一清零其本地占位。
+    for (uint16_t row = validRows; row < Shape::kChunkRows; ++row) {
+        RegTensor<float> zero;
+        Duplicate(zero, 0.0F, mask);
+        Store128FromFp32(q + row * Shape::kHeadDim, zero, zero);
+        Store128FromFp32(k + row * Shape::kHeadDim, zero, zero);
+        StoreAlign(g + row * Shape::kHeadDim, zero, mask);
+        StoreAlign(g + row * Shape::kHeadDim + 64, zero, mask);
+        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
+            qRstd + row, zero, scalarMask);
+        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
+            kRstd + row, zero, scalarMask);
+    }
+
+    // G 先完整落到 UB，然后在循环外取四个局部参考行。
+    LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+    RegTensor<float> refLow;
+    RegTensor<float> refHigh;
+    if (validRows == 0) {
+        RegTensor<float> zero;
+        Duplicate(zero, 0.0F, mask);
+        StoreAlign(gRef, zero, mask);
+        StoreAlign(gRef + 64, zero, mask);
+        StoreAlign(gRef + Shape::kHeadDim, zero, mask);
+        StoreAlign(gRef + Shape::kHeadDim + 64, zero, mask);
+        StoreAlign(gRef + 2 * Shape::kHeadDim, zero, mask);
+        StoreAlign(gRef + 2 * Shape::kHeadDim + 64, zero, mask);
+        StoreAlign(gRef + 3 * Shape::kHeadDim, zero, mask);
+        StoreAlign(gRef + 3 * Shape::kHeadDim + 64, zero, mask);
+        StoreAlign(gLast, zero, mask);
+        StoreAlign(gLast + 64, zero, mask);
+    }
+    if (validRows > 0) {
+        const uint16_t end = validRows < 16 ? validRows : 16;
+        const uint16_t refRow = end / 2;
+        LoadAlign(refLow, g + refRow * Shape::kHeadDim);
+        LoadAlign(refHigh, g + refRow * Shape::kHeadDim + 64);
+        StoreAlign(gRef, refLow, mask);
+        StoreAlign(gRef + 64, refHigh, mask);
+    }
+    if (validRows > 16) {
+        const uint16_t end = validRows < 32 ? validRows : 32;
+        const uint16_t refRow = (16 + end) / 2;
+        LoadAlign(refLow, g + refRow * Shape::kHeadDim);
+        LoadAlign(refHigh, g + refRow * Shape::kHeadDim + 64);
+        StoreAlign(gRef + Shape::kHeadDim, refLow, mask);
+        StoreAlign(gRef + Shape::kHeadDim + 64, refHigh, mask);
+    }
+    if (validRows > 32) {
+        const uint16_t end = validRows < 48 ? validRows : 48;
+        const uint16_t refRow = (32 + end) / 2;
+        LoadAlign(refLow, g + refRow * Shape::kHeadDim);
+        LoadAlign(refHigh, g + refRow * Shape::kHeadDim + 64);
+        StoreAlign(gRef + 2 * Shape::kHeadDim, refLow, mask);
+        StoreAlign(gRef + 2 * Shape::kHeadDim + 64, refHigh, mask);
+    }
+    if (validRows > 48) {
+        const uint16_t refRow = (48 + validRows) / 2;
+        LoadAlign(refLow, g + refRow * Shape::kHeadDim);
+        LoadAlign(refHigh, g + refRow * Shape::kHeadDim + 64);
+        StoreAlign(gRef + 3 * Shape::kHeadDim, refLow, mask);
+        StoreAlign(gRef + 3 * Shape::kHeadDim + 64, refHigh, mask);
+    }
+    if (validRows > 0) {
+        const uint16_t lastRow = validRows - 1;
+        LoadAlign(refLow, g + lastRow * Shape::kHeadDim);
+        LoadAlign(refHigh, g + lastRow * Shape::kHeadDim + 64);
+        StoreAlign(gLast, refLow, mask);
+        StoreAlign(gLast + 64, refHigh, mask);
+    }
+
+    for (uint16_t row = 0; row < validRows; ++row) {
         RegTensor<float> beta;
-        if (row < validRows) {
-            RegTensor<float> one;
-            LoadScalarAsFp32(beta, betaRaw + row);
-            Duplicate(one, 1.0F, mask);
-            // Raw 模式只把 BF16/FP32 输入统一转成 FP32，不做非线性变换。
-            // 其余模式在下面生成对应的有效 beta。
-            if constexpr (CompilePolicy::betaMode != BetaMode::Raw) {
-                Muls(beta, beta, -1.0F, mask);
-                Exp(beta, beta, mask);
-                Adds(beta, beta, 1.0F, mask);
-                Div(beta, one, beta, mask);
-                if constexpr (CompilePolicy::betaMode == BetaMode::TwoSigmoid) {
-                    Muls(beta, beta, 2.0F, mask);
-                }
+        RegTensor<float> one;
+        LoadScalarAsFp32(beta, betaRaw + row);
+        Duplicate(one, 1.0F, mask);
+        // Raw 模式只把 BF16/FP32 输入统一转成 FP32。
+        if constexpr (CompilePolicy::betaMode != BetaMode::Raw) {
+            Muls(beta, beta, -1.0F, mask);
+            Exp(beta, beta, mask);
+            Adds(beta, beta, 1.0F, mask);
+            Div(beta, one, beta, mask);
+            if constexpr (CompilePolicy::betaMode == BetaMode::TwoSigmoid) {
+                Muls(beta, beta, 2.0F, mask);
             }
-        } else {
-            Duplicate(beta, 0.0F, mask);
         }
         StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
             betaEff + row, beta, mask);
+    }
+    for (uint16_t row = validRows; row < Shape::kChunkRows; ++row) {
+        RegTensor<float> zero;
+        Duplicate(zero, 0.0F, mask);
+        StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
+            betaEff + row, zero, mask);
+    }
+}
+
+template <uint16_t BAND, typename CompilePolicy>
+__simd_callee__ inline void ComputeStageV1KMinusBand(
+    __ubuf__ bfloat16_t *kHat, __ubuf__ float *g,
+    __ubuf__ float *gRef, __ubuf__ bfloat16_t *kMinus,
+    uint16_t validRows, MaskReg &mask)
+{
+    using Domain = ExpDomainTraits<CompilePolicy::useExp2>;
+    constexpr uint16_t prefixRows = Shape::kPrefixRows[BAND];
+    constexpr uint16_t bandBegin = BAND * Shape::kSubChunkRows;
+    constexpr uint32_t prefixBase[4] = {0, 16 * 128, 48 * 128, 96 * 128};
+    const uint16_t rowsInChunk = validRows < prefixRows
+                                     ? validRows
+                                     : prefixRows;
+    const uint16_t computeRows = bandBegin < validRows ? rowsInChunk : 0;
+    for (uint16_t row = 0; row < computeRows; ++row) {
+        RegTensor<float> gateLow;
+        RegTensor<float> gateHigh;
+        RegTensor<float> refLow;
+        RegTensor<float> refHigh;
+        RegTensor<float> kLow;
+        RegTensor<float> kHigh;
+        RegTensor<float> outLow;
+        RegTensor<float> outHigh;
+        LoadAlign(gateLow, g + row * Shape::kHeadDim);
+        LoadAlign(gateHigh, g + row * Shape::kHeadDim + 64);
+        LoadAlign(refLow, gRef + BAND * Shape::kHeadDim);
+        LoadAlign(refHigh, gRef + BAND * Shape::kHeadDim + 64);
+        Sub(refLow, refLow, gateLow, mask);
+        Sub(refHigh, refHigh, gateHigh, mask);
+        constexpr float lower =
+            Domain::StoredBound(ExpDomain::kV1Bf16LowerBase2);
+        constexpr float upper =
+            Domain::StoredBound(ExpDomain::kV1Bf16UpperBase2);
+        ExpPair<CompilePolicy::useExp2>(refLow, refHigh, lower, upper);
+        Load128AsFp32(kLow, kHigh, kHat + row * Shape::kHeadDim);
+        Mul(outLow, kLow, refLow, mask);
+        Mul(outHigh, kHigh, refHigh, mask);
+        Store128FromFp32(
+            kMinus + prefixBase[BAND] + row * Shape::kHeadDim,
+            outLow, outHigh);
+    }
+    for (uint16_t row = computeRows; row < prefixRows; ++row) {
+        RegTensor<float> zero;
+        Duplicate(zero, 0.0F, mask);
+        Store128FromFp32(
+            kMinus + prefixBase[BAND] + row * Shape::kHeadDim,
+            zero, zero);
     }
 }
 
@@ -362,90 +447,82 @@ __simd_vf__ inline void StageV1Vf(
 {
     using Domain = ExpDomainTraits<CompilePolicy::useExp2>;
     MaskReg mask = CreateMask<float, MaskPattern::ALL>();
-    constexpr uint32_t prefixBase[4] = {0, 16 * 128, 48 * 128, 96 * 128};
 
-    // 先生成 Kminus，再原位覆盖 qHat/kHat 为 Qplus/Kplus，避免额外保存 Khat。
-    for (uint16_t s = 0; s < Shape::kSubChunkCount; ++s) {
-        const uint16_t prefixRows = Shape::kPrefixRows[s];
-        const uint16_t bandBegin = s * Shape::kSubChunkRows;
-        for (uint16_t row = 0; row < prefixRows; ++row) {
-            RegTensor<float> outLow;
-            RegTensor<float> outHigh;
-            if (bandBegin < validRows && row < validRows) {
-                RegTensor<float> gateLow;
-                RegTensor<float> gateHigh;
-                RegTensor<float> refLow;
-                RegTensor<float> refHigh;
-                RegTensor<float> kLow;
-                RegTensor<float> kHigh;
-                LoadAlign(gateLow, g + row * Shape::kHeadDim);
-                LoadAlign(gateHigh, g + row * Shape::kHeadDim + 64);
-                LoadAlign(refLow, gRef + s * Shape::kHeadDim);
-                LoadAlign(refHigh, gRef + s * Shape::kHeadDim + 64);
-                Sub(refLow, refLow, gateLow, mask);
-                Sub(refHigh, refHigh, gateHigh, mask);
-                constexpr float base2Lower =
-                    ExpDomain::kV1Bf16LowerBase2;
-                constexpr float base2Upper =
-                    ExpDomain::kV1Bf16UpperBase2;
-                constexpr float lower = Domain::StoredBound(base2Lower);
-                constexpr float upper = Domain::StoredBound(base2Upper);
-                ExpPair<CompilePolicy::useExp2>(
-                    refLow, refHigh, lower, upper);
-                Load128AsFp32(kLow, kHigh,
-                              kHat + row * Shape::kHeadDim);
-                Mul(outLow, kLow, refLow, mask);
-                Mul(outHigh, kHigh, refHigh, mask);
-            } else {
-                Duplicate(outLow, 0.0F, mask);
-                Duplicate(outHigh, 0.0F, mask);
-            }
-            Store128FromFp32(
-                kMinus + prefixBase[s] + row * Shape::kHeadDim,
-                outLow, outHigh);
-        }
-    }
+    // 四个 Kminus 前缀区固定展开，每区再分有效行和尾行。
+    ComputeStageV1KMinusBand<0, CompilePolicy>(
+        kHat, g, gRef, kMinus, validRows, mask);
+    ComputeStageV1KMinusBand<1, CompilePolicy>(
+        kHat, g, gRef, kMinus, validRows, mask);
+    ComputeStageV1KMinusBand<2, CompilePolicy>(
+        kHat, g, gRef, kMinus, validRows, mask);
+    ComputeStageV1KMinusBand<3, CompilePolicy>(
+        kHat, g, gRef, kMinus, validRows, mask);
 
-    for (uint16_t row = 0; row < Shape::kChunkRows; ++row) {
+    // Kminus 完成后再生成 Qplus/Kplus，避免 Khat 被提前覆盖。
+    for (uint16_t row = 0; row < validRows; ++row) {
         RegTensor<float> qLow;
         RegTensor<float> qHigh;
         RegTensor<float> kLow;
         RegTensor<float> kHigh;
         RegTensor<float> expLow;
         RegTensor<float> expHigh;
-        if (row < validRows) {
-            const uint16_t s = row / Shape::kSubChunkRows;
-            LoadAlign(expLow, g + row * Shape::kHeadDim);
-            LoadAlign(expHigh, g + row * Shape::kHeadDim + 64);
-            RegTensor<float> refLow;
-            RegTensor<float> refHigh;
-            LoadAlign(refLow, gRef + s * Shape::kHeadDim);
-            LoadAlign(refHigh, gRef + s * Shape::kHeadDim + 64);
-            Sub(expLow, expLow, refLow, mask);
-            Sub(expHigh, expHigh, refHigh, mask);
-            constexpr float base2Lower =
-                ExpDomain::kV1Bf16LowerBase2;
-            constexpr float base2Upper =
-                ExpDomain::kV1Bf16UpperBase2;
-            constexpr float lower = Domain::StoredBound(base2Lower);
-            constexpr float upper = Domain::StoredBound(base2Upper);
-            ExpPair<CompilePolicy::useExp2>(
-                expLow, expHigh, lower, upper);
-            Load128AsFp32(qLow, qHigh, qHat + row * Shape::kHeadDim);
-            Load128AsFp32(kLow, kHigh, kHat + row * Shape::kHeadDim);
-            Mul(qLow, qLow, expLow, mask);
-            Mul(qHigh, qHigh, expHigh, mask);
-            Mul(kLow, kLow, expLow, mask);
-            Mul(kHigh, kHigh, expHigh, mask);
-        } else {
-            Duplicate(qLow, 0.0F, mask);
-            Duplicate(qHigh, 0.0F, mask);
-            Duplicate(kLow, 0.0F, mask);
-            Duplicate(kHigh, 0.0F, mask);
-        }
+        const uint16_t band = row / Shape::kSubChunkRows;
+        LoadAlign(expLow, g + row * Shape::kHeadDim);
+        LoadAlign(expHigh, g + row * Shape::kHeadDim + 64);
+        RegTensor<float> refLow;
+        RegTensor<float> refHigh;
+        LoadAlign(refLow, gRef + band * Shape::kHeadDim);
+        LoadAlign(refHigh, gRef + band * Shape::kHeadDim + 64);
+        Sub(expLow, expLow, refLow, mask);
+        Sub(expHigh, expHigh, refHigh, mask);
+        constexpr float lower =
+            Domain::StoredBound(ExpDomain::kV1Bf16LowerBase2);
+        constexpr float upper =
+            Domain::StoredBound(ExpDomain::kV1Bf16UpperBase2);
+        ExpPair<CompilePolicy::useExp2>(expLow, expHigh, lower, upper);
+        Load128AsFp32(qLow, qHigh, qHat + row * Shape::kHeadDim);
+        Load128AsFp32(kLow, kHigh, kHat + row * Shape::kHeadDim);
+        Mul(qLow, qLow, expLow, mask);
+        Mul(qHigh, qHigh, expHigh, mask);
+        Mul(kLow, kLow, expLow, mask);
+        Mul(kHigh, kHigh, expHigh, mask);
         Store128FromFp32(qPlus + row * Shape::kHeadDim, qLow, qHigh);
         Store128FromFp32(kPlus + row * Shape::kHeadDim, kLow, kHigh);
     }
+    for (uint16_t row = validRows; row < Shape::kChunkRows; ++row) {
+        RegTensor<float> zero;
+        Duplicate(zero, 0.0F, mask);
+        Store128FromFp32(qPlus + row * Shape::kHeadDim, zero, zero);
+        Store128FromFp32(kPlus + row * Shape::kHeadDim, zero, zero);
+    }
+}
+
+__simd_callee__ inline void ComputeStageV3ValidRow(
+    __ubuf__ float *rawScore, __ubuf__ float *betaEff, uint16_t row,
+    float scale, RegTensor<float> &aqkRow, RegTensor<float> &akkRow,
+    MaskReg &full)
+{
+    constexpr uint32_t stackedBase[4] = {
+        0, 32 * 16, 32 * 48, 32 * 96};
+    const uint16_t band = row / Shape::kSubChunkRows;
+    const uint16_t bandRow = row % Shape::kSubChunkRows;
+    const uint16_t columns = Shape::kPrefixRows[band];
+    LoadAlign(aqkRow, rawScore + stackedBase[band] + bandRow * columns);
+    LoadAlign(akkRow,
+              rawScore + stackedBase[band] +
+                  Shape::kSubChunkRows * columns + bandRow * columns);
+    uint32_t aqkCount = static_cast<uint32_t>(row) + 1;
+    uint32_t akkCount = static_cast<uint32_t>(row);
+    MaskReg aqkMask = UpdateMask<float>(aqkCount);
+    MaskReg akkMask = UpdateMask<float>(akkCount);
+    RegTensor<float> zero;
+    Duplicate(zero, 0.0F, full);
+    Select(aqkRow, aqkRow, zero, aqkMask);
+    Select(akkRow, akkRow, zero, akkMask);
+    Muls(aqkRow, aqkRow, scale, full);
+    RegTensor<float> beta;
+    LoadAlign<float, LoadDist::DIST_BRC_B32>(beta, betaEff + row);
+    Mul(akkRow, akkRow, beta, full);
 }
 
 __simd_vf__ inline void StageV3Vf(
@@ -462,52 +539,46 @@ __simd_vf__ inline void StageV3Vf(
     MaskReg upperColumnMask;
     Arange<int32_t, IndexOrder::INCREASE_ORDER>(column, 0);
     CompareScalar<int32_t, CMPMODE::GE>(upperColumnMask, column, 32, full);
-    constexpr uint32_t stackedBase[4] = {
-        0, 32 * 16, 32 * 48, 32 * 96};
+    const int32_t lowerValidRows = validRows < 32 ? validRows : 32;
+    const int32_t upperValidEnd = validRows > 32 ? validRows : 32;
 
     // 从后往前展开 compact 行，避免 dense 目的区覆盖尚未读取的 compact 源。
-    for (int32_t row = Shape::kChunkRows - 1; row >= 0; --row) {
-        RegTensor<float> aqkRow;
-        RegTensor<float> akkRow;
+    // 先清理无效的上半区行。
+    for (int32_t row = Shape::kChunkRows - 1; row >= upperValidEnd; --row) {
         RegTensor<float> zero;
         Duplicate(zero, 0.0F, full);
-        if (row < validRows) {
-            const uint16_t s = static_cast<uint16_t>(row) / Shape::kSubChunkRows;
-            const uint16_t bandRow = static_cast<uint16_t>(row) % Shape::kSubChunkRows;
-            const uint16_t columns = Shape::kPrefixRows[s];
-            LoadAlign(aqkRow,
-                      rawScore + stackedBase[s] + bandRow * columns);
-            LoadAlign(akkRow,
-                      rawScore + stackedBase[s] +
-                          Shape::kSubChunkRows * columns +
-                          bandRow * columns);
-            uint32_t aqkCount = static_cast<uint32_t>(row) + 1;
-            uint32_t akkCount = static_cast<uint32_t>(row);
-            MaskReg aqkMask = UpdateMask<float>(aqkCount);
-            MaskReg akkMask = UpdateMask<float>(akkCount);
-            Select(aqkRow, aqkRow, zero, aqkMask);
-            Select(akkRow, akkRow, zero, akkMask);
-            Muls(aqkRow, aqkRow, scale, full);
-            RegTensor<float> beta;
-            LoadAlign<float, LoadDist::DIST_BRC_B32>(
-                beta, betaEff + row);
-            Mul(akkRow, akkRow, beta, full);
-        } else {
-            Duplicate(aqkRow, 0.0F, full);
-            Duplicate(akkRow, 0.0F, full);
-        }
-        // V1/C2 操作数和公开 Aqk 都固定按 BF16 RINT。
+        Store64FromFp32(aqk + row * Shape::kChunkRows, zero);
+        StoreAlign(b + (row - 32) * 32, zero, lowerColumnMask);
+        StoreAlign(lkk + row * Shape::kChunkRows, zero, upperColumnMask);
+    }
+    // 上半区有效行产生 Aqk、B=L10 和 L11。
+    for (int32_t row = static_cast<int32_t>(validRows) - 1;
+         row >= 32; --row) {
+        RegTensor<float> aqkRow;
+        RegTensor<float> akkRow;
+        ComputeStageV3ValidRow(
+            rawScore, betaEff, static_cast<uint16_t>(row), scale,
+            aqkRow, akkRow, full);
         Store64FromFp32(aqk + row * Shape::kChunkRows, aqkRow);
-        if (row < 32) {
-            StoreAlign(lkk + row * Shape::kChunkRows,
-                       akkRow, lowerColumnMask);
-        } else {
-            // rawAkk 的低 32 列就是最终 B；高 32 列仅写入 L11。
-            StoreAlign(b + (row - 32) * 32,
-                       akkRow, lowerColumnMask);
-            StoreAlign(lkk + row * Shape::kChunkRows,
-                       akkRow, upperColumnMask);
-        }
+        StoreAlign(b + (row - 32) * 32, akkRow, lowerColumnMask);
+        StoreAlign(lkk + row * Shape::kChunkRows, akkRow, upperColumnMask);
+    }
+    // 再清理无效的下半区行。
+    for (int32_t row = 31; row >= lowerValidRows; --row) {
+        RegTensor<float> zero;
+        Duplicate(zero, 0.0F, full);
+        Store64FromFp32(aqk + row * Shape::kChunkRows, zero);
+        StoreAlign(lkk + row * Shape::kChunkRows, zero, lowerColumnMask);
+    }
+    // 最后展开下半区有效行，只写 L00。
+    for (int32_t row = lowerValidRows - 1; row >= 0; --row) {
+        RegTensor<float> aqkRow;
+        RegTensor<float> akkRow;
+        ComputeStageV3ValidRow(
+            rawScore, betaEff, static_cast<uint16_t>(row), scale,
+            aqkRow, akkRow, full);
+        Store64FromFp32(aqk + row * Shape::kChunkRows, aqkRow);
+        StoreAlign(lkk + row * Shape::kChunkRows, akkRow, lowerColumnMask);
     }
     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
 
@@ -521,39 +592,62 @@ __simd_vf__ inline void StageV3Vf(
     }
     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
 
-    // 两个 32x32 叶子独立执行单位下三角前代：X0=(I+L00)^-1，
-    // X1=(I+L11)^-1；B=L10。下面的 VEC_STORE->VEC_LOAD 屏障是同一
-    // VF 内逐行递推所必需的，不是额外 VF。
-    for (uint16_t leaf = 0; leaf < 2; ++leaf) {
-        const uint16_t rowBase = leaf * 32;
-        uint32_t rowCount = 32;
-        MaskReg rowMask = UpdateMask<float>(rowCount);
-        __ubuf__ float *x = leaf == 0 ? x0 : x1;
-        for (uint16_t row = 0; row < 32; ++row) {
-            RegTensor<float> result;
-            RegTensor<float> zero;
-            RegTensor<float> one;
-            RegTensor<int32_t> index;
-            MaskReg diagonal;
-            Duplicate(zero, 0.0F, rowMask);
-            Duplicate(one, 1.0F, rowMask);
-            Arange<int32_t, IndexOrder::INCREASE_ORDER>(index, 0);
-            CompareScalar<int32_t, CMPMODE::EQ>(
-                diagonal, index, static_cast<int32_t>(row), rowMask);
-            Select(result, one, zero, diagonal);
-            for (uint16_t source = 0; source < row; ++source) {
-                RegTensor<float> factor;
-                RegTensor<float> sourceRow;
-                RegTensor<float> product;
-                LoadAlign<float, LoadDist::DIST_BRC_B32>(
-                    factor, lkk + (rowBase + row) * 64 + rowBase + source);
-                LoadAlign(sourceRow, x + source * 32);
-                Mul(product, sourceRow, factor, rowMask);
-                Sub(result, result, product, rowMask);
-            }
-            StoreAlign(x + row * 32, result, rowMask);
-            LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+    // X0=(I+L00)^-1。VEC_STORE->VEC_LOAD 屏障是同一 VF 内逐行
+    // 前代所必需的，不是额外 VF。
+    uint32_t rowCount = 32;
+    MaskReg rowMask = UpdateMask<float>(rowCount);
+    for (uint16_t row = 0; row < 32; ++row) {
+        RegTensor<float> result;
+        RegTensor<float> zero;
+        RegTensor<float> one;
+        RegTensor<int32_t> index;
+        MaskReg diagonal;
+        Duplicate(zero, 0.0F, rowMask);
+        Duplicate(one, 1.0F, rowMask);
+        Arange<int32_t, IndexOrder::INCREASE_ORDER>(index, 0);
+        CompareScalar<int32_t, CMPMODE::EQ>(
+            diagonal, index, static_cast<int32_t>(row), rowMask);
+        Select(result, one, zero, diagonal);
+        for (uint16_t source = 0; source < row; ++source) {
+            RegTensor<float> factor;
+            RegTensor<float> sourceRow;
+            RegTensor<float> product;
+            LoadAlign<float, LoadDist::DIST_BRC_B32>(
+                factor, lkk + row * 64 + source);
+            LoadAlign(sourceRow, x0 + source * 32);
+            Mul(product, sourceRow, factor, rowMask);
+            Sub(result, result, product, rowMask);
         }
+        StoreAlign(x0 + row * 32, result, rowMask);
+        LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+    }
+
+    // X1=(I+L11)^-1，B=L10。两个叶子显式分开，避免在循环中
+    // 通过运行时条件选择当前叶子和 UB 地址。
+    for (uint16_t row = 0; row < 32; ++row) {
+        RegTensor<float> result;
+        RegTensor<float> zero;
+        RegTensor<float> one;
+        RegTensor<int32_t> index;
+        MaskReg diagonal;
+        Duplicate(zero, 0.0F, rowMask);
+        Duplicate(one, 1.0F, rowMask);
+        Arange<int32_t, IndexOrder::INCREASE_ORDER>(index, 0);
+        CompareScalar<int32_t, CMPMODE::EQ>(
+            diagonal, index, static_cast<int32_t>(row), rowMask);
+        Select(result, one, zero, diagonal);
+        for (uint16_t source = 0; source < row; ++source) {
+            RegTensor<float> factor;
+            RegTensor<float> sourceRow;
+            RegTensor<float> product;
+            LoadAlign<float, LoadDist::DIST_BRC_B32>(
+                factor, lkk + (row + 32) * 64 + 32 + source);
+            LoadAlign(sourceRow, x1 + source * 32);
+            Mul(product, sourceRow, factor, rowMask);
+            Sub(result, result, product, rowMask);
+        }
+        StoreAlign(x1 + row * 32, result, rowMask);
+        LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
     }
     for (uint16_t row = 0; row < 32; ++row) {
         RegTensor<float> x1Row;
@@ -591,81 +685,75 @@ __simd_vf__ inline void StageV6Vf(
 {
     using Domain = ExpDomainTraits<CompilePolicy::useExp2>;
     MaskReg mask = CreateMask<float, MaskPattern::ALL>();
-    for (uint16_t row = 0; row < Shape::kChunkRows; ++row) {
+    for (uint16_t row = 0; row < validRows; ++row) {
         RegTensor<float> qLow;
         RegTensor<float> qHigh;
         RegTensor<float> kLow;
         RegTensor<float> kHigh;
         RegTensor<float> vLow;
         RegTensor<float> vHigh;
-        if (row < validRows) {
-            RegTensor<float> gateLow;
-            RegTensor<float> gateHigh;
-            RegTensor<float> lastLow;
-            RegTensor<float> lastHigh;
-            RegTensor<float> beta;
-            LoadAlign(gateLow, g + row * 128);
-            LoadAlign(gateHigh, g + row * 128 + 64);
-            LoadAlign(lastLow, gLast);
-            LoadAlign(lastHigh, gLast + 64);
-            LoadAlign<float, LoadDist::DIST_BRC_B32>(beta, betaEff + row);
-            Load128AsFp32(qLow, qHigh, qHat + row * 128);
-            Load128AsFp32(kLow, kHigh, kHat + row * 128);
-            Load128AsFp32(vLow, vHigh, v + row * 128);
+        RegTensor<float> gateLow;
+        RegTensor<float> gateHigh;
+        RegTensor<float> lastLow;
+        RegTensor<float> lastHigh;
+        RegTensor<float> beta;
+        LoadAlign(gateLow, g + row * 128);
+        LoadAlign(gateHigh, g + row * 128 + 64);
+        LoadAlign(lastLow, gLast);
+        LoadAlign(lastHigh, gLast + 64);
+        LoadAlign<float, LoadDist::DIST_BRC_B32>(beta, betaEff + row);
+        Load128AsFp32(qLow, qHigh, qHat + row * 128);
+        Load128AsFp32(kLow, kHigh, kHat + row * 128);
+        Load128AsFp32(vLow, vHigh, v + row * 128);
 
-            RegTensor<float> posLow;
-            RegTensor<float> posHigh;
-            RegTensor<float> kPosLow;
-            RegTensor<float> kPosHigh;
-            Adds(posLow, gateLow, 0.0F, mask);
-            Adds(posHigh, gateHigh, 0.0F, mask);
-            constexpr float lower =
-                Domain::StoredBound(ExpDomain::kV6LowerBase2);
-            constexpr float upper =
-                Domain::StoredBound(ExpDomain::kV6UpperBase2);
-            ExpPair<CompilePolicy::useExp2>(
-                posLow, posHigh, lower, upper);
-            Mul(qLow, qLow, posLow, mask);
-            Mul(qHigh, qHigh, posHigh, mask);
-            Mul(kPosLow, kLow, posLow, mask);
-            Mul(kPosHigh, kHigh, posHigh, mask);
-            // 第一次舍入先落到最终 kBetaG 物理区，随后立即回读 FP32。
-            Store128FromFp32(kBetaG + row * 128, kPosLow, kPosHigh);
+        RegTensor<float> posLow;
+        RegTensor<float> posHigh;
+        RegTensor<float> kPosLow;
+        RegTensor<float> kPosHigh;
+        Adds(posLow, gateLow, 0.0F, mask);
+        Adds(posHigh, gateHigh, 0.0F, mask);
+        constexpr float lower =
+            Domain::StoredBound(ExpDomain::kV6LowerBase2);
+        constexpr float upper =
+            Domain::StoredBound(ExpDomain::kV6UpperBase2);
+        ExpPair<CompilePolicy::useExp2>(posLow, posHigh, lower, upper);
+        Mul(qLow, qLow, posLow, mask);
+        Mul(qHigh, qHigh, posHigh, mask);
+        Mul(kPosLow, kLow, posLow, mask);
+        Mul(kPosHigh, kHigh, posHigh, mask);
+        // 第一次舍入先落到最终 kBetaG 物理区，随后立即回读 FP32。
+        Store128FromFp32(kBetaG + row * 128, kPosLow, kPosHigh);
 
-            Sub(lastLow, lastLow, gateLow, mask);
-            Sub(lastHigh, lastHigh, gateHigh, mask);
-            ExpPair<CompilePolicy::useExp2>(
-                lastLow, lastHigh, lower, upper);
-            Mul(kLow, kLow, lastLow, mask);
-            Mul(kHigh, kHigh, lastHigh, mask);
-            Store128FromFp32(kg + row * 128, kLow, kHigh);
+        Sub(lastLow, lastLow, gateLow, mask);
+        Sub(lastHigh, lastHigh, gateHigh, mask);
+        ExpPair<CompilePolicy::useExp2>(lastLow, lastHigh, lower, upper);
+        Mul(kLow, kLow, lastLow, mask);
+        Mul(kHigh, kHigh, lastHigh, mask);
+        Store128FromFp32(kg + row * 128, kLow, kHigh);
 
-            // K_beta_g 保留两次 BF16 舍入：先写 Khat*E(G)，再回读乘 beta。
-            LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
-            Load128AsFp32(kLow, kHigh, kBetaG + row * 128);
-            Mul(kLow, kLow, beta, mask);
-            Mul(kHigh, kHigh, beta, mask);
-            Mul(vLow, vLow, beta, mask);
-            Mul(vHigh, vHigh, beta, mask);
-        } else {
-            Duplicate(qLow, 0.0F, mask);
-            Duplicate(qHigh, 0.0F, mask);
-            Duplicate(kLow, 0.0F, mask);
-            Duplicate(kHigh, 0.0F, mask);
-            Duplicate(vLow, 0.0F, mask);
-            Duplicate(vHigh, 0.0F, mask);
-        }
+        // K_beta_g 保留两次 BF16 舍入：先写 Khat*E(G)，再回读乘 beta。
+        LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+        Load128AsFp32(kLow, kHigh, kBetaG + row * 128);
+        Mul(kLow, kLow, beta, mask);
+        Mul(kHigh, kHigh, beta, mask);
+        Mul(vLow, vLow, beta, mask);
+        Mul(vHigh, vHigh, beta, mask);
         Store128FromFp32(qg + row * 128, qLow, qHigh);
-        if (row < validRows) {
-            // qgScaled 必须从已舍入的公开 qg 回读，保留两次 BF16 舍入。
-            LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
-            Load128AsFp32(qLow, qHigh, qg + row * 128);
-            Muls(qLow, qLow, scale, mask);
-            Muls(qHigh, qHigh, scale, mask);
-            Store128FromFp32(qgScaled + row * 128, qLow, qHigh);
-        }
+        // qgScaled 必须从已舍入的公开 qg 回读，保留两次 BF16 舍入。
+        LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+        Load128AsFp32(qLow, qHigh, qg + row * 128);
+        Muls(qLow, qLow, scale, mask);
+        Muls(qHigh, qHigh, scale, mask);
+        Store128FromFp32(qgScaled + row * 128, qLow, qHigh);
         Store128FromFp32(kBetaG + row * 128, kLow, kHigh);
         Store128FromFp32(vBeta + row * 128, vLow, vHigh);
+    }
+    for (uint16_t row = validRows; row < Shape::kChunkRows; ++row) {
+        RegTensor<float> zero;
+        Duplicate(zero, 0.0F, mask);
+        Store128FromFp32(qg + row * 128, zero, zero);
+        Store128FromFp32(kBetaG + row * 128, zero, zero);
+        Store128FromFp32(vBeta + row * 128, zero, zero);
     }
 }
 

@@ -679,28 +679,33 @@ private:
         constexpr float clampMin = Domain::StoredBound(base2Min);
         constexpr float clampMax = Domain::StoredBound(base2Max);
         auto work = scratch[Shape::kHeadDim];
+        const uint32_t active = CeilDiv(validRows, Shape::kSubChunkRows);
+        const uint32_t blockEnds[Shape::kSubChunkCount] = {
+            validRows < 16 ? validRows : 16,
+            validRows < 32 ? validRows : 32,
+            validRows < 48 ? validRows : 48,
+            validRows,
+        };
 
         // Kplus 与 Khat 原位复用，所以必须先生成完四个 Kminus 前缀。
         // 否则后一个参考块会错误读取已经舍入成 Kplus 的数据。
         for (uint32_t s = 0; s < Shape::kSubChunkCount; ++s) {
-            const uint32_t blockBegin = s * Shape::kSubChunkRows;
             auto kMinusBlock = kMinus[
                 (Arch22Ub::kKMinus[s] - Arch22Ub::kGateOrKMinus) /
                 sizeof(bfloat16_t)];
             AscendC::Duplicate(kMinusBlock, static_cast<bfloat16_t>(0),
                                Shape::kPrefixRows[s] * Shape::kHeadDim);
             AscendC::PipeBarrier<PIPE_V>();
-            if (blockBegin >= validRows) {
-                continue;
-            }
-            const uint32_t blockEnd = blockBegin + Shape::kSubChunkRows < validRows
-                                          ? blockBegin + Shape::kSubChunkRows
-                                          : validRows;
+        }
+        for (uint32_t s = 0; s < active; ++s) {
+            const uint32_t blockBegin = s * Shape::kSubChunkRows;
+            const uint32_t blockEnd = blockEnds[s];
+            auto kMinusBlock = kMinus[
+                (Arch22Ub::kKMinus[s] - Arch22Ub::kGateOrKMinus) /
+                sizeof(bfloat16_t)];
             // 半开区间 [begin,end) 的中点取 floor((begin+end)/2)。
             const uint32_t midpoint = (blockBegin + blockEnd) / 2;
-            const uint32_t prefix = Shape::kPrefixRows[s] < validRows
-                                        ? Shape::kPrefixRows[s]
-                                        : validRows;
+            const uint32_t prefix = blockEnd;
             for (uint32_t row = 0; row < prefix; ++row) {
                 AscendC::Sub(scratch, g[midpoint * Shape::kHeadDim],
                              g[row * Shape::kHeadDim], Shape::kHeadDim);
@@ -728,14 +733,9 @@ private:
 
         // 四个 Kminus 都已完成，此时可以把 Qhat/Khat 原位改写为
         // Qplus/Kplus；无效行沿用 V0 写入的零。
-        for (uint32_t s = 0; s < Shape::kSubChunkCount; ++s) {
+        for (uint32_t s = 0; s < active; ++s) {
             const uint32_t blockBegin = s * Shape::kSubChunkRows;
-            if (blockBegin >= validRows) {
-                continue;
-            }
-            const uint32_t blockEnd = blockBegin + Shape::kSubChunkRows < validRows
-                                          ? blockBegin + Shape::kSubChunkRows
-                                          : validRows;
+            const uint32_t blockEnd = blockEnds[s];
             const uint32_t midpoint = (blockBegin + blockEnd) / 2;
             for (uint32_t row = blockBegin; row < blockEnd; ++row) {
                 AscendC::Sub(scratch, g[row * Shape::kHeadDim],
@@ -784,49 +784,72 @@ private:
         AscendC::Duplicate(aqk, static_cast<bfloat16_t>(0),
                            Shape::kChunkRows * Shape::kChunkRows);
         AscendC::Duplicate(b, 0.0F, 1024);
-        uint32_t stackedBand = 0;
-        const uint32_t active = CeilDiv(validRows, Shape::kSubChunkRows);
-        for (uint32_t s = 0; s < active; ++s) {
+        // C2 按 s 堆叠 [rawAqk, rawAkk]，s 之前的 FP32 元素数为
+        // subChunkRows^2*s*(s+1)。按全局行解包后，
+        // 每个循环不再需要根据行号分支。
+        for (uint32_t globalRow = 0; globalRow < validRows; ++globalRow) {
+            const uint32_t s = globalRow / Shape::kSubChunkRows;
+            const uint32_t row = globalRow % Shape::kSubChunkRows;
             const uint32_t n = Shape::kPrefixRows[s];
-            const uint32_t rows = validRows - s * Shape::kSubChunkRows <
-                                          Shape::kSubChunkRows
-                                      ? validRows - s * Shape::kSubChunkRows
-                                      : Shape::kSubChunkRows;
-            for (uint32_t row = 0; row < rows; ++row) {
-                const uint32_t globalRow = s * Shape::kSubChunkRows + row;
-                const uint32_t aqkCount = globalRow + 1 < n ? globalRow + 1 : n;
-                const uint32_t akkCount = globalRow < n ? globalRow : n;
-                auto rawAqk = raw[stackedBand + row * n];
+            const uint32_t stackedBand = Shape::kSubChunkRows *
+                                         Shape::kSubChunkRows * s * (s + 1);
+            auto rawAqk = raw[stackedBand + row * n];
+            const uint32_t aqkCount = globalRow + 1;
+            AscendC::Muls(rawAqk, rawAqk, scale, aqkCount);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Cast(aqk[globalRow * Shape::kChunkRows], rawAqk,
+                          AscendC::RoundMode::CAST_RINT, aqkCount);
+        }
+
+        const uint32_t topRows = validRows < 32 ? validRows : 32;
+        // A00 的第 0 行没有严格下三角元素，从第 1 行开始写。
+        for (uint32_t globalRow = 1; globalRow < topRows; ++globalRow) {
+            const uint32_t s = globalRow / Shape::kSubChunkRows;
+            const uint32_t row = globalRow % Shape::kSubChunkRows;
+            const uint32_t n = Shape::kPrefixRows[s];
+            const uint32_t stackedBand = Shape::kSubChunkRows *
+                                         Shape::kSubChunkRows * s * (s + 1);
+            auto rawAkk = raw[stackedBand + Shape::kSubChunkRows * n +
+                              row * n];
+            const float betaValue = ReadScalar(betaEff, globalRow);
+            AscendC::Muls(lkk[globalRow * Shape::kChunkRows], rawAkk,
+                          betaValue, globalRow);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+
+        if (validRows > 32) {
+            constexpr uint32_t firstBottomRow = 32;
+            constexpr uint32_t firstBottomSubChunk =
+                firstBottomRow / Shape::kSubChunkRows;
+            constexpr uint32_t firstBottomN =
+                Shape::kPrefixRows[firstBottomSubChunk];
+            constexpr uint32_t firstBottomBand =
+                Shape::kSubChunkRows * Shape::kSubChunkRows *
+                firstBottomSubChunk * (firstBottomSubChunk + 1);
+            auto firstBottomRawAkk =
+                raw[firstBottomBand + Shape::kSubChunkRows * firstBottomN];
+            const float firstBottomBeta = ReadScalar(betaEff, firstBottomRow);
+            AscendC::Muls(b, firstBottomRawAkk, firstBottomBeta, 32);
+            AscendC::PipeBarrier<PIPE_V>();
+
+            // 第 32 行的 L11 长度为 0，单独处理后，余下行同时写 B 和 L11。
+            for (uint32_t globalRow = firstBottomRow + 1;
+                 globalRow < validRows; ++globalRow) {
+                const uint32_t s = globalRow / Shape::kSubChunkRows;
+                const uint32_t row = globalRow % Shape::kSubChunkRows;
+                const uint32_t n = Shape::kPrefixRows[s];
+                const uint32_t stackedBand = Shape::kSubChunkRows *
+                                             Shape::kSubChunkRows * s *
+                                             (s + 1);
                 auto rawAkk = raw[stackedBand + Shape::kSubChunkRows * n +
                                   row * n];
-                AscendC::Muls(rawAqk, rawAqk, scale, aqkCount);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Cast(aqk[globalRow * Shape::kChunkRows],
-                              rawAqk, AscendC::RoundMode::CAST_RINT,
-                              aqkCount);
                 const float betaValue = ReadScalar(betaEff, globalRow);
-                if (globalRow < 32) {
-                    if (akkCount != 0) {
-                        AscendC::Muls(
-                            lkk[globalRow * Shape::kChunkRows], rawAkk,
-                            betaValue, akkCount);
-                    }
-                } else {
-                    // rawAkk 的低 32 列直接落到最终 B，其余列只写 L11。
-                    AscendC::Muls(b[(globalRow - 32) * 32], rawAkk,
-                                  betaValue, 32);
-                    const uint32_t l11Count = globalRow - 32;
-                    if (l11Count != 0) {
-                        AscendC::Muls(
-                            lkk[globalRow * Shape::kChunkRows + 32],
-                            rawAkk[32], betaValue, l11Count);
-                    }
-                }
-                if (akkCount != 0) {
-                    AscendC::PipeBarrier<PIPE_V>();
-                }
+                AscendC::Muls(b[(globalRow - 32) * 32], rawAkk,
+                              betaValue, 32);
+                AscendC::Muls(lkk[globalRow * Shape::kChunkRows + 32],
+                              rawAkk[32], betaValue, globalRow - 32);
+                AscendC::PipeBarrier<PIPE_V>();
             }
-            stackedBand += 2 * Shape::kSubChunkRows * n;
         }
 
         AscendC::PipeBarrier<PIPE_V>();
@@ -834,7 +857,6 @@ private:
         AscendC::Duplicate(x0, 0.0F, 1024);
         AscendC::Duplicate(x1, 0.0F, 1024);
         AscendC::PipeBarrier<PIPE_V>();
-        const uint32_t topRows = validRows < 32 ? validRows : 32;
         const uint32_t bottomRows = validRows > 32 ? validRows - 32 : 0;
         // 单位下三角逆逐行前代：X[i,:]=-sum(k<i,L[i,k]*X[k,:])，X[i,i]=1。
         // raw 已全部消费，其低地址在本段作为一行 FP32 临时区，不发生 UB 搬位。
@@ -905,21 +927,9 @@ private:
             return;
         }
         const uint32_t last = (validRows - 1) * Shape::kHeadDim;
-        for (uint32_t row = 0; row < rhsRows; ++row) {
+        for (uint32_t row = 0; row < validRows; ++row) {
             const uint32_t offset = row * Shape::kHeadDim;
             auto work = scratch[Shape::kHeadDim];
-            if (row >= validRows) {
-                AscendC::Duplicate(qg[offset], static_cast<bfloat16_t>(0),
-                                   Shape::kHeadDim);
-                AscendC::Duplicate(kg[offset], static_cast<bfloat16_t>(0),
-                                   Shape::kHeadDim);
-                AscendC::Duplicate(kBetaG[offset], static_cast<bfloat16_t>(0),
-                                   Shape::kHeadDim);
-                AscendC::Duplicate(vBeta[offset], static_cast<bfloat16_t>(0),
-                                   Shape::kValueDim);
-                continue;
-            }
-
             constexpr float directMin =
                 Domain::StoredBound(ExpDomain::kV6LowerBase2);
             constexpr float directMax =
@@ -999,6 +1009,18 @@ private:
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::Cast(qgScaled[offset], work,
                           AscendC::RoundMode::CAST_RINT, Shape::kHeadDim);
+        }
+        // 有效行与补零行分开，VF 循环体内不做 runtime 分支。
+        for (uint32_t row = validRows; row < rhsRows; ++row) {
+            const uint32_t offset = row * Shape::kHeadDim;
+            AscendC::Duplicate(qg[offset], static_cast<bfloat16_t>(0),
+                               Shape::kHeadDim);
+            AscendC::Duplicate(kg[offset], static_cast<bfloat16_t>(0),
+                               Shape::kHeadDim);
+            AscendC::Duplicate(kBetaG[offset], static_cast<bfloat16_t>(0),
+                               Shape::kHeadDim);
+            AscendC::Duplicate(vBeta[row * Shape::kValueDim],
+                               static_cast<bfloat16_t>(0), Shape::kValueDim);
         }
     }
 
