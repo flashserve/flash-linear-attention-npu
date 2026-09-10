@@ -155,16 +155,14 @@ q_hat, k_hat, q_rstd, k_rstd, beta_eff
 
 | 类别 | 数据 | 实际用途 |
 | --- | --- | --- |
-| 后续正向必需 | `gk/w/u/kg` | FwdH 计算 `v_new` 与 chunk 状态递推 |
-| 后续正向必需 | `Aqk/qg_scaled` | Finalize 计算 `attn_out=qg_scaled@h+Aqk@v_new` |
-| 反向保存 | `q_hat/k_hat/q_rstd/k_rstd/beta_eff` | KDA 反向消费有效 Q/K 与 beta；启用 L2Norm 时，其反向另消费归一化 Q/K 和 rstd |
-| 反向使用或按策略保存 | `Aqk/Akk/gk/w/qg/kg` | `Aqk/Akk` 始终保留；其余按 gate 与重计算策略保存或在反向重算 |
-| 兼容保留 | `u` | 随禁用重计算路径保留，但当前反向不读取 |
+| 后续正向使用 | FwdH：`gk/w/u/kg`；Finalize：`Aqk/qg_scaled` | FwdH 计算 `v_new` 与 chunk 状态递推；Finalize 计算 `attn_out=qg_scaled@h+Aqk@v_new` |
+| 反向使用或保存 | `q_hat/k_hat/q_rstd/k_rstd/beta_eff/Aqk/Akk/gk/w/qg/kg` | 前五项是反向保存量；`Aqk/Akk` 始终保留，其余按 gate 与重计算策略保存或重算；启用 L2Norm 时反向消费 `q_rstd/k_rstd` |
 | 用户可选状态结果 | `hOut/final_state` | 由后续 FwdH 产生，不属于 Prepare 的 13 个输出 |
 
 其中 `qg_scaled` 只服务正向 Finalize，`Akk/qg` 在 Prepare 已包含 Post-WU 的边界
 之后不再被正向消费。内部 head-major `hCompute` 即使不导出也必须存在；它供 Finalize
-使用，不能与可选公开的 `hOut` 混为一类。
+使用，不能与可选公开的 `hOut` 混为一类。`u` 服务 FwdH，并随禁用重计算路径兼容
+保留，但当前反向不读取。
 
 所有 Prepare 输出均固定为 head-major；输入的 `inputSequenceMajor` 不改变输出布局：
 

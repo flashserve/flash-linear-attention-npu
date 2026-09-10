@@ -36,7 +36,8 @@ q_hat, k_hat, q_rstd, k_rstd, beta_eff
 | `q_rstd/k_rstd` | `[B,H_k,T]` | `[H_k,T]` | FP32 |
 | `beta_eff` | `[B,H_v,T]` | `[H_v,T]` | FP32 |
 
-这些输出按消费者分类时允许重叠：`gk/w/u/kg` 是后续 FwdH 的输入，
+这些数据按“后续正向使用、反向使用或保存、用户可选状态结果”三类整理，类别允许
+重叠：`gk/w/u/kg` 是后续 FwdH 的输入，
 `Aqk/qg_scaled` 是 Finalize 的输入；`q_hat/k_hat/q_rstd/k_rstd/beta_eff` 是反向
 保存量，其中 `q_rstd/k_rstd` 在启用 L2Norm 时由其反向消费；
 `Aqk/Akk/gk/w/qg/kg` 也会被反向直接使用或按重计算策略保存。
