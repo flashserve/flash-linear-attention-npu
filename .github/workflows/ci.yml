@@ -26,6 +26,11 @@ on:
         description: "Optional comma-separated operator list"
         required: false
         default: ''
+
+concurrency:
+  group: npu-ci-${{ github.repository }}-${{ (github.event_name == 'workflow_dispatch' && inputs.pr_number) || (contains(github.event.comment.body, '/run-npu-ci') && github.event.issue.number) || github.run_id }}
+  cancel-in-progress: false
+
 jobs:
   prepare:
     name: 准备 NPU CI
@@ -77,8 +82,9 @@ jobs:
               return;
             }
 
-            const contextName = 'NPU CI / 手动验证';
-            const accuracyContextName = 'NPU CI / 精度检查';
+            const contextName = 'NPU CI / A2+A5 手动验证';
+            const accuracyContextName = 'NPU CI / A2+A5 精度检查';
+            const platformContract = 'A2+A5';
             let prNumber;
             let ciMode = 'quick';
             let ops = '';
@@ -132,7 +138,8 @@ jobs:
               if (!status || status.state !== 'pending') {
                 return false;
               }
-              if (!(status.description || '').includes('+example')) {
+              const description = status.description || '';
+              if (!description.includes('+example') || !description.includes(platformContract)) {
                 return false;
               }
               const targetUrl = status.target_url || '';
@@ -204,15 +211,21 @@ jobs:
               .filter((status) => status.context === contextName)
               .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
             const latestExecutionCi = manualCiStatuses
-              .find((status) => (status.description || '').includes('+example'));
+              .find((status) => {
+                const description = status.description || '';
+                return description.includes('+example') && description.includes(platformContract);
+              });
             const accuracyStatuses = statuses
               .filter((status) => status.context === accuracyContextName)
               .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-            const latestAccuracyCi = accuracyStatuses[0];
+            const latestAccuracyCi = accuracyStatuses
+              .find((status) => (status.description || '').includes(platformContract));
             const latestPassedWithExample = latestExecutionCi &&
               latestExecutionCi.state === 'success' &&
               latestAccuracyCi &&
-              latestAccuracyCi.state === 'success';
+              latestAccuracyCi.state === 'success' &&
+              latestExecutionCi.target_url &&
+              latestExecutionCi.target_url === latestAccuracyCi.target_url;
             if (latestPassedWithExample) {
               core.notice(`${pr.head.sha} 已经通过 NPU CI 和精度检查，跳过重复运行。`);
               commentId = await upsertComment(
@@ -222,6 +235,7 @@ jobs:
                   '',
                   `- 请求模式：\`${ciMode}\``,
                   `- 触发人：@${actor}`,
+                  '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
                   '- Example ST：已覆盖',
                   '- 精度检查：已覆盖',
                   '- Example ST 用例：全部 enabled 用例',
@@ -246,6 +260,7 @@ jobs:
                   '',
                   `- 请求模式：\`${ciMode}\``,
                   `- 触发人：@${actor}`,
+                  '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
                   '- 当前状态：排队或运行中',
                   '- Example ST：必跑',
                   '- Example ST 用例：全部 enabled 用例',
@@ -264,15 +279,26 @@ jobs:
             }
 
             const targetUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: pr.head.sha,
-              state: 'pending',
-              context: contextName,
-              description: `NPU CI 已由 @${actor} 触发 (${ciMode}+example)`,
-              target_url: targetUrl,
-            });
+            await Promise.all([
+              github.rest.repos.createCommitStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                sha: pr.head.sha,
+                state: 'pending',
+                context: contextName,
+                description: `NPU CI 已由 @${actor} 触发 (${ciMode}+example,${platformContract})`,
+                target_url: targetUrl,
+              }),
+              github.rest.repos.createCommitStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                sha: pr.head.sha,
+                state: 'pending',
+                context: accuracyContextName,
+                description: `${platformContract} 精度检查等待执行`,
+                target_url: targetUrl,
+              }),
+            ]);
             commentId = await upsertComment(
               pr,
               [
@@ -280,6 +306,7 @@ jobs:
                 '',
                 `- 模式：\`${ciMode}\``,
                 `- 触发人：@${actor}`,
+                '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
                 '- Example ST：必跑',
                 '- Example ST 用例：全部 enabled 用例',
                 ops ? `- 算子：\`${ops}\`` : '',
@@ -297,27 +324,51 @@ jobs:
             core.setOutput('comment_id', commentId);
 
   ascend-npu:
-    name: Ascend NPU 验证
+    name: Ascend NPU 验证 (${{ matrix.name }})
     needs: prepare
     if: needs.prepare.outputs.should_run == 'true'
-    runs-on: [self-hosted, linux, arm64, npu, flash-linear-attention-npu]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: a2
+            name: A2 / ascend910b
+            runner_labels: '["self-hosted","linux","arm64","npu","flash-linear-attention-npu"]'
+            soc: ascend910b
+            image: fla-npu-ci:9.1.0-910b
+            dockerfile: ci/Dockerfile
+            require_preloaded_image: 'false'
+            tmpdir: ''
+          - platform: a5
+            name: A5 / ascend950
+            runner_labels: '["self-hosted","linux","x64","npu","ascend950","flash-linear-attention-npu-a5"]'
+            soc: ascend950
+            image: fla-npu-ci:9.1.0-950
+            dockerfile: ci/Dockerfile.ascend950
+            require_preloaded_image: 'true'
+            tmpdir: /tmp/fla-npu-ci
+    runs-on: ${{ fromJSON(matrix.runner_labels) }}
     timeout-minutes: 240
     permissions:
       contents: read
-      issues: write
       pull-requests: read
-      statuses: write
     env:
       CI_MODE: ${{ needs.prepare.outputs.ci_mode }}
       CI_OPS: ${{ needs.prepare.outputs.ops }}
+      CI_SOC: ${{ matrix.soc }}
+      FLA_NPU_SOC: ${{ matrix.soc }}
       CI_RUN_EXAMPLE_ST: 'true'
       CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK: 'true'
       CI_RUN_SCOPED_WHEEL_INSTALL_CHECK: 'true'
-      CI_ACCURACY_REPORT_FILE: .ci-tmp/gdr_accuracy_report.json
+      CI_ACCURACY_PLATFORM: ${{ matrix.platform }}
+      CI_ACCURACY_REPORT_FILE: .ci-tmp/gdr_accuracy_report-${{ matrix.platform }}.json
       CI_ACCURACY_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
       CI_ACCURACY_RUN_ID: ${{ github.run_id }}
       CI_ACCURACY_RUN_ATTEMPT: ${{ github.run_attempt }}
-      CI_IMAGE: fla-npu-ci:9.1.0-910b
+      CI_IMAGE: ${{ matrix.image }}
+      CI_DOCKERFILE: ${{ matrix.dockerfile }}
+      CI_REQUIRE_PRELOADED_IMAGE: ${{ matrix.require_preloaded_image }}
+      CI_TMPDIR: ${{ matrix.tmpdir }}
     steps:
       - name: 拉取当前目标分支代码（第 1 次）
         id: checkout_pr_1
@@ -331,7 +382,7 @@ jobs:
           path: repo
 
       - name: 启动代理并获取端口
-        if: steps.checkout_pr_1.outcome == 'failure'
+        if: steps.checkout_pr_1.outcome == 'failure' && matrix.platform == 'a2'
         run: |
           # 1. 备份现有环境变量
           echo "========== 备份原有代理配置 =========="
@@ -572,16 +623,19 @@ jobs:
             cp "$tmp_cases" repo/ci/example_st_cases.json
           fi
 
-      - name: 运行 NPU CI 容器
+      - name: 运行 ${{ matrix.name }} NPU CI 容器
         working-directory: repo
         env:
           GITHUB_TOKEN: ${{ github.token }}
           NPU_CI_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
           NPU_CI_TARGET_SHA: ${{ needs.prepare.outputs.head_sha }}
           NPU_CI_HEAD_POLL_SECONDS: '60'
-          CI_CONTAINER_NAME: fla-npu-ci-${{ github.run_id }}-${{ github.run_attempt }}
+          CI_CONTAINER_NAME: fla-npu-ci-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
+
+          mkdir -p "$(dirname "$CI_ACCURACY_REPORT_FILE")"
+          rm -f "$CI_ACCURACY_REPORT_FILE" "$CI_ACCURACY_REPORT_FILE.tmp"
 
           get_pr_head_sha() {
             python3 - <<'PY'
@@ -651,37 +705,96 @@ jobs:
           fi
           wait "$ci_pid"
 
-      - name: 发布 NPU CI 状态
+      - name: 记录 ${{ matrix.name }} 执行结果
+        if: always()
+        env:
+          NPU_PLATFORM_JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          mkdir -p repo/.ci-tmp
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          platform = os.environ["CI_ACCURACY_PLATFORM"]
+          result = {
+              "schema": "npu-ci-platform-result-v1",
+              "metadata": {
+                  "platform": platform,
+                  "soc": os.environ["CI_SOC"],
+                  "head_sha": os.environ["CI_ACCURACY_HEAD_SHA"],
+                  "run_id": os.environ["CI_ACCURACY_RUN_ID"],
+                  "run_attempt": os.environ["CI_ACCURACY_RUN_ATTEMPT"],
+              },
+              "status": os.environ["NPU_PLATFORM_JOB_STATUS"],
+          }
+          path = Path("repo/.ci-tmp") / f"npu-ci-result-{platform}.json"
+          tmp_path = path.with_suffix(path.suffix + ".tmp")
+          tmp_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+          tmp_path.replace(path)
+          PY
+
+      - name: 上传 ${{ matrix.name }} 结果
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npu-ci-result-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            repo/.ci-tmp/npu-ci-result-${{ matrix.platform }}.json
+            repo/${{ env.CI_ACCURACY_REPORT_FILE }}
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
+
+  finalize:
+    name: 汇总 A2 + A5 NPU CI
+    needs: [prepare, ascend-npu]
+    if: always() && needs.prepare.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: read
+      statuses: write
+    steps:
+      - name: 下载双平台结果
+        id: download_results
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: npu-ci-result-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: accuracy-reports
+          merge-multiple: true
+
+      - name: 发布双平台 NPU CI 状态
         if: always()
         uses: actions/github-script@v7
+        env:
+          NPU_MATRIX_RESULT: ${{ needs.ascend-npu.result }}
+          NPU_EXPECTED_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+          NPU_EXPECTED_RUN_ID: ${{ github.run_id }}
+          NPU_EXPECTED_RUN_ATTEMPT: ${{ github.run_attempt }}
         with:
           github-token: ${{ github.token }}
           script: |
             const fs = require('fs');
-            const jobState = '${{ job.status }}' === 'success' ? 'success' : 'failure';
+            const path = require('path');
             const mode = ${{ toJson(needs.prepare.outputs.ci_mode) }};
             const ops = ${{ toJson(needs.prepare.outputs.ops) }};
-            const sha = ${{ toJson(needs.prepare.outputs.head_sha) }};
             const prNumber = ${{ toJson(needs.prepare.outputs.pr_number) }};
             const commentId = ${{ toJson(needs.prepare.outputs.comment_id) }};
+            const sha = process.env.NPU_EXPECTED_HEAD_SHA;
+            const expectedRunId = process.env.NPU_EXPECTED_RUN_ID;
+            const expectedRunAttempt = process.env.NPU_EXPECTED_RUN_ATTEMPT;
+            const matrixResult = process.env.NPU_MATRIX_RESULT || 'failure';
             const targetUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            let currentHeadSha = process.env.NPU_CI_STALE_HEAD || sha;
-            let staleRun = process.env.NPU_CI_STALE === 'true';
-            try {
-              const { data: currentPr } = await github.rest.pulls.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: Number(prNumber),
-              });
-              currentHeadSha = currentPr.head.sha;
-              staleRun = staleRun || currentHeadSha !== sha;
-            } catch (error) {
-              core.warning(`Unable to inspect current PR head before publishing NPU CI status: ${error.message}`);
-            }
-            const state = staleRun ? 'failure' : jobState;
-            const staleDescription = `PR head 已变化，本次结果失效`;
-            const accuracyReportPath = `repo/${process.env.CI_ACCURACY_REPORT_FILE || 'output/gdr_accuracy_report.json'}`;
-            const expectedRunId = String(context.runId);
+            const platformDefs = [
+              { key: 'a2', label: 'A2', soc: 'ascend910b' },
+              { key: 'a5', label: 'A5', soc: 'ascend950' },
+            ];
+            const truncateDescription = (value) => value.length > 140 ? `${value.slice(0, 137)}...` : value;
             const formatValue = (value) => {
               if (typeof value === 'number') {
                 return Number.isFinite(value) ? value.toExponential(3) : String(value);
@@ -691,141 +804,238 @@ jobs:
               }
               return value === undefined || value === null || value === '' ? '-' : String(value);
             };
-            const truncateDescription = (value) => value.length > 140 ? `${value.slice(0, 137)}...` : value;
-            const readAccuracyReport = () => {
+            const escapeCell = (value) => formatValue(value).replace(/\|/g, '\\|').replace(/[\r\n]+/g, ' ');
+            const readJson = (filePath, description, errors) => {
+              if (!fs.existsSync(filePath)) {
+                errors.push(`${description}未生成`);
+                return null;
+              }
               try {
-                if (!fs.existsSync(accuracyReportPath)) {
-                  return null;
-                }
-                return JSON.parse(fs.readFileSync(accuracyReportPath, 'utf8'));
+                return JSON.parse(fs.readFileSync(filePath, 'utf8'));
               } catch (error) {
-                core.warning(`Unable to read GDR accuracy report: ${error.message}`);
+                errors.push(`${description}无法解析`);
+                core.warning(`Unable to parse ${filePath}: ${error.message}`);
                 return null;
               }
             };
-            const accuracyReport = readAccuracyReport();
-            const accuracyStatus = (() => {
-              if (staleRun) {
-                return { state: 'failure', description: staleDescription };
+            const validateIdentity = (metadata, def, description, errors) => {
+              if (!metadata || typeof metadata !== 'object') {
+                errors.push(`${description}缺少身份信息`);
+                return;
               }
-              if (!accuracyReport || !accuracyReport.summary) {
-                return { state: 'failure', description: '精度报告未生成' };
-              }
-              const metadata = accuracyReport.metadata || {};
-              if (!metadata.head_sha || !metadata.run_id) {
-                return { state: 'failure', description: '精度报告缺少本次触发标签' };
-              }
-              if (metadata.head_sha !== sha || String(metadata.run_id) !== expectedRunId) {
-                return { state: 'failure', description: '精度报告不属于本次触发' };
-              }
-              const summary = accuracyReport.summary;
-              const total = Number(summary.accuracy_total || 0);
-              const passed = Number(summary.accuracy_passed || 0);
-              const failed = Number(summary.accuracy_failed || 0);
-              const notRun = Number(summary.accuracy_not_run || 0);
-              if (total === 0) {
-                return { state: 'failure', description: '未发现精度检查用例' };
-              }
-              if (failed > 0 || notRun > 0) {
-                return {
-                  state: 'failure',
-                  description: truncateDescription(`精度检查失败：通过 ${passed}/${total}，失败 ${failed}，未执行 ${notRun}`),
-                };
-              }
-              return {
-                state: 'success',
-                description: truncateDescription(`精度检查通过：${passed}/${total} 个用例`),
+              const expected = {
+                platform: def.key,
+                soc: def.soc,
+                head_sha: sha,
+                run_id: expectedRunId,
+                run_attempt: expectedRunAttempt,
               };
-            })();
-            const formatAccuracyComment = (report) => {
-              const lines = ['', '### 精度检查详情', ''];
-              if (!report || !report.summary) {
-                lines.push('未生成精度报告。');
-                return lines;
+              for (const [key, value] of Object.entries(expected)) {
+                if (String(metadata[key] || '') !== String(value)) {
+                  errors.push(`${description}${key}不属于本次触发`);
+                }
               }
-              const summary = report.summary;
-              const metadata = report.metadata || {};
-              lines.push(
-                `精度用例：通过 ${summary.accuracy_passed || 0}/${summary.accuracy_total || 0}，` +
-                  `失败 ${summary.accuracy_failed || 0}，未执行 ${summary.accuracy_not_run || 0}。`
-              );
-              lines.push(`报告标签：commit \`${metadata.head_sha || '-'}\`，run \`${metadata.run_id || '-'}\`。`);
-              lines.push('');
-              lines.push('| 用例 | Tensor | 结果 | tol | cosine | cos_min | max_abs | mean_abs | rmse | bad_frac | golden |');
-              lines.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |');
-              for (const item of report.cases || []) {
-                const caseName = item.name || '-';
-                const caseStatus = item.accuracy_status || item.status || '-';
-                const golden = item.golden || '-';
-                const metrics = item.metrics || [];
+            };
+            const validatePlatform = (def) => {
+              const errors = [];
+              const executionErrors = [];
+              const accuracyErrors = [];
+              const resultPath = path.join('accuracy-reports', `npu-ci-result-${def.key}.json`);
+              const reportPath = path.join('accuracy-reports', `gdr_accuracy_report-${def.key}.json`);
+              const execution = readJson(resultPath, '执行结果', executionErrors);
+              if (execution) {
+                if (execution.schema !== 'npu-ci-platform-result-v1') {
+                  executionErrors.push('执行结果 schema 不受支持');
+                }
+                validateIdentity(execution.metadata, def, '执行结果', executionErrors);
+                if (execution.status !== 'success') {
+                  executionErrors.push(`执行状态为 ${execution.status || 'unknown'}`);
+                }
+              }
+              const report = readJson(reportPath, '精度报告', accuracyErrors);
+              let summary = null;
+              if (report) {
+                if (report.schema !== 'gdr-accuracy-report-v1') {
+                  accuracyErrors.push('精度报告 schema 不受支持');
+                }
+                validateIdentity(report.metadata, def, '精度报告', accuracyErrors);
+                if (!Array.isArray(report.cases)) {
+                  accuracyErrors.push('精度报告 cases 无效');
+                }
+                summary = report.summary;
+                if (!summary || typeof summary !== 'object') {
+                  accuracyErrors.push('精度报告 summary 无效');
+                } else {
+                  const fields = ['accuracy_total', 'accuracy_passed', 'accuracy_failed', 'accuracy_not_run'];
+                  const values = Object.fromEntries(fields.map((field) => [field, Number(summary[field])]));
+                  if (fields.some((field) => !Number.isInteger(values[field]) || values[field] < 0)) {
+                    accuracyErrors.push('精度报告计数无效');
+                  } else if (values.accuracy_total === 0) {
+                    accuracyErrors.push('未发现精度检查用例');
+                  } else if (
+                    values.accuracy_passed + values.accuracy_failed + values.accuracy_not_run !== values.accuracy_total
+                  ) {
+                    accuracyErrors.push('精度报告计数不一致');
+                  } else if (values.accuracy_failed > 0 || values.accuracy_not_run > 0 || values.accuracy_passed !== values.accuracy_total) {
+                    accuracyErrors.push(
+                      `精度未通过 (${values.accuracy_passed}/${values.accuracy_total}，失败 ${values.accuracy_failed}，未执行 ${values.accuracy_not_run})`
+                    );
+                  }
+                }
+              }
+              errors.push(...executionErrors, ...accuracyErrors);
+              return {
+                ...def,
+                execution,
+                report,
+                summary,
+                executionOk: executionErrors.length === 0,
+                accuracyOk: accuracyErrors.length === 0,
+                executionErrors,
+                accuracyErrors,
+                errors,
+              };
+            };
+
+            let currentHeadSha = '';
+            let headCheckError = '';
+            try {
+              const { data: currentPr } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: Number(prNumber),
+              });
+              currentHeadSha = currentPr.head.sha;
+            } catch (error) {
+              headCheckError = error.message;
+              core.warning(`Unable to inspect current PR head before publishing NPU CI status: ${error.message}`);
+            }
+            const staleRun = Boolean(currentHeadSha) && currentHeadSha !== sha;
+            const platforms = platformDefs.map(validatePlatform);
+            const executionOk = !headCheckError && !staleRun && matrixResult === 'success' && platforms.every((item) => item.executionOk);
+            const accuracyOk = !headCheckError && !staleRun && platforms.every((item) => item.accuracyOk);
+            const invalidReason = headCheckError
+              ? '无法确认 PR head，本次 A2+A5 结果失效'
+              : (staleRun ? 'PR head 已变化，本次 A2+A5 结果失效' : '');
+            const executionDescription = invalidReason || (
+              executionOk
+                ? `NPU CI 通过 (${mode}+example,A2+A5)`
+                : `NPU CI 失败 (${mode}+example,A2+A5)`
+            );
+            const accuracyTotals = platforms.reduce(
+              (totals, item) => {
+                if (item.summary) {
+                  totals.total += Number(item.summary.accuracy_total || 0);
+                  totals.passed += Number(item.summary.accuracy_passed || 0);
+                  totals.failed += Number(item.summary.accuracy_failed || 0);
+                  totals.notRun += Number(item.summary.accuracy_not_run || 0);
+                }
+                return totals;
+              },
+              { total: 0, passed: 0, failed: 0, notRun: 0 }
+            );
+            const failedPlatformSummary = platforms
+              .filter((item) => !item.accuracyOk)
+              .map((item) => `${item.label}: ${item.accuracyErrors.join('；') || '精度失败'}`)
+              .join('；');
+            const accuracyDescription = invalidReason || (accuracyOk
+              ? `A2+A5 精度通过：${accuracyTotals.passed}/${accuracyTotals.total} 个用例`
+              : truncateDescription(`A2+A5 精度失败：${failedPlatformSummary || '报告不完整'}`));
+
+            await Promise.all([
+              github.rest.repos.createCommitStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                sha,
+                state: executionOk ? 'success' : 'failure',
+                context: 'NPU CI / A2+A5 手动验证',
+                description: truncateDescription(executionDescription),
+                target_url: targetUrl,
+              }),
+              github.rest.repos.createCommitStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                sha,
+                state: accuracyOk ? 'success' : 'failure',
+                context: 'NPU CI / A2+A5 精度检查',
+                description: truncateDescription(accuracyDescription),
+                target_url: targetUrl,
+              }),
+            ]);
+
+            const commentBody = [
+              `<!-- npu-ci:pr=${prNumber}:sha=${sha} -->`,
+              `NPU CI ${executionOk && accuracyOk ? '通过' : '失败'}：\`${sha}\`。`,
+              '',
+              `- 模式：\`${mode}\``,
+              `- 触发人：@${context.actor}`,
+              '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
+              invalidReason ? `- 失效原因：${invalidReason}` : null,
+              `- 执行矩阵：\`${matrixResult}\``,
+              '- Example ST：两平台均必跑',
+              `- 精度检查：${accuracyDescription}`,
+              ops ? `- 算子：\`${ops}\`` : null,
+              `- 运行链接：[NPU CI #${context.runNumber}](${targetUrl})`,
+              '',
+              '### 双平台汇总',
+              '',
+              '| 平台 | SOC | 执行 | 精度 | 精度用例 | 说明 |',
+              '| --- | --- | --- | --- | --- | --- |',
+              ...platforms.map((item) => {
+                const summary = item.summary || {};
+                const accuracyCases = `${summary.accuracy_passed || 0}/${summary.accuracy_total || 0}`;
+                return `| ${item.label} | \`${item.soc}\` | ${item.executionOk ? '通过' : '失败'} | ${item.accuracyOk ? '通过' : '失败'} | ${accuracyCases} | ${escapeCell(item.errors.join('；'))} |`;
+              }),
+            ].filter((line) => line !== null);
+
+            for (const item of platforms) {
+              if (!item.report || !Array.isArray(item.report.cases)) {
+                continue;
+              }
+              commentBody.push('', `### ${item.label} 精度详情`, '');
+              commentBody.push('| 用例 | Tensor | 结果 | tol | cosine | cos_min | max_abs | mean_abs | rmse | bad_frac | golden |');
+              commentBody.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |');
+              for (const caseItem of item.report.cases) {
+                const metrics = Array.isArray(caseItem.metrics) ? caseItem.metrics : [];
                 if (metrics.length === 0) {
-                  lines.push(`| ${caseName} | - | ${caseStatus} | - | - | - | - | - | - | - | ${golden} |`);
+                  commentBody.push(
+                    `| ${escapeCell(caseItem.name)} | - | ${escapeCell(caseItem.accuracy_status || caseItem.status)} | - | - | - | - | - | - | - | ${escapeCell(caseItem.golden)} |`
+                  );
                   continue;
                 }
                 for (const metric of metrics) {
                   const metricOk = metric.finite === true && metric.allclose === true && metric.cosine_ok === true;
-                  lines.push(
-                    `| ${caseName} | ${metric.tensor || '-'} | ${metricOk ? '通过' : '失败'} | ` +
-                      `${formatValue(metric.tol)} | ${formatValue(metric.cosine)} | ${formatValue(metric.cos_min)} | ` +
-                      `${formatValue(metric.max_abs)} | ${formatValue(metric.mean_abs)} | ${formatValue(metric.rmse)} | ` +
-                      `${formatValue(metric.bad_frac)} | ${golden} |`
+                  commentBody.push(
+                    `| ${escapeCell(caseItem.name)} | ${escapeCell(metric.tensor)} | ${metricOk ? '通过' : '失败'} | ` +
+                      `${escapeCell(metric.tol)} | ${escapeCell(metric.cosine)} | ${escapeCell(metric.cos_min)} | ` +
+                      `${escapeCell(metric.max_abs)} | ${escapeCell(metric.mean_abs)} | ${escapeCell(metric.rmse)} | ` +
+                      `${escapeCell(metric.bad_frac)} | ${escapeCell(caseItem.golden)} |`
                   );
                 }
               }
-              return lines;
-            };
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha,
-              state,
-              context: 'NPU CI / 手动验证',
-              description: staleRun
-                ? staleDescription
-                : (state === 'success' ? `NPU CI 通过 (${mode}+example)` : `NPU CI 失败 (${mode}+example)`),
-              target_url: targetUrl,
-            });
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha,
-              state: accuracyStatus.state,
-              context: 'NPU CI / 精度检查',
-              description: accuracyStatus.description,
-              target_url: targetUrl,
-            });
-            const result = state === 'success' ? '通过' : '失败';
-            const commentBody = [
-              `<!-- npu-ci:pr=${prNumber}:sha=${sha} -->`,
-              `NPU CI ${result}：\`${sha}\`。`,
-              '',
-              `- 模式：\`${mode}\``,
-              `- 触发人：@${context.actor}`,
-              staleRun ? `- 失效原因：PR head 已变化，触发时 \`${sha}\`，当前 \`${currentHeadSha}\`` : '',
-              '- Example ST：必跑',
-              '- Example ST 用例：全部 enabled 用例',
-              `- 精度检查：${accuracyStatus.description}`,
-              ops ? `- 算子：\`${ops}\`` : '',
-              `- 运行链接：[NPU CI #${context.runNumber}](${targetUrl})`,
-              ...formatAccuracyComment(accuracyReport),
-            ].filter(Boolean).join('\n');
+            }
 
             try {
+              const body = commentBody.join('\n');
               if (commentId) {
                 await github.rest.issues.updateComment({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   comment_id: Number(commentId),
-                  body: commentBody,
+                  body,
                 });
               } else if (prNumber) {
                 await github.rest.issues.createComment({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   issue_number: Number(prNumber),
-                  body: commentBody,
+                  body,
                 });
               }
             } catch (error) {
               core.warning(`Unable to create or update PR comment: ${error.message}`);
+            }
+
+            if (!executionOk || !accuracyOk) {
+              core.setFailed('A2+A5 NPU CI 汇总未通过。');
             }

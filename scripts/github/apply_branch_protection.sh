@@ -22,7 +22,8 @@ curl -fsSL \
   "required_status_checks": {
     "strict": true,
     "contexts": [
-      "NPU CI / 手动验证"
+      "NPU CI / A2+A5 手动验证",
+      "NPU CI / A2+A5 精度检查"
     ]
   },
   "enforce_admins": true,

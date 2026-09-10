@@ -275,6 +275,8 @@ def _summarize_report(cases: list[dict[str, Any]]) -> dict[str, int]:
 
 def _report_metadata(args: argparse.Namespace) -> dict[str, Any]:
     return {
+        "platform": os.environ.get("CI_ACCURACY_PLATFORM", ""),
+        "soc": os.environ.get("CI_SOC") or os.environ.get("FLA_NPU_SOC", ""),
         "head_sha": os.environ.get("CI_ACCURACY_HEAD_SHA") or os.environ.get("NPU_CI_TARGET_SHA", ""),
         "run_id": os.environ.get("CI_ACCURACY_RUN_ID") or os.environ.get("GITHUB_RUN_ID", ""),
         "run_attempt": os.environ.get("CI_ACCURACY_RUN_ATTEMPT") or os.environ.get("GITHUB_RUN_ATTEMPT", ""),
