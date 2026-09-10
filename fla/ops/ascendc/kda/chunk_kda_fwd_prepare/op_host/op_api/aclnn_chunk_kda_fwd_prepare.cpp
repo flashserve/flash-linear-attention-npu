@@ -404,10 +404,14 @@ aclnnStatus CheckModesAndOptionalInputs(
     CHECK_COND(params.chunkSize == PREPARE_CHUNK_SIZE,
                ACLNN_ERR_PARAM_INVALID,
                "chunkSize 仅支持 64，当前值=%ld。", params.chunkSize);
-    CHECK_COND(std::isfinite(params.scale) && std::isfinite(params.epsilon) &&
-                   params.epsilon > 0.0 && std::isfinite(params.lowerBound),
+    // Tiling 和 kernel 均以 FP32 保存这些属性，必须按实际落盘精度校验。
+    const float scaleFp32 = static_cast<float>(params.scale);
+    const float epsilonFp32 = static_cast<float>(params.epsilon);
+    const float lowerBoundFp32 = static_cast<float>(params.lowerBound);
+    CHECK_COND(std::isfinite(scaleFp32) && std::isfinite(epsilonFp32) &&
+                   epsilonFp32 > 0.0F && std::isfinite(lowerBoundFp32),
                ACLNN_ERR_PARAM_INVALID,
-               "scale/lowerBound 必须为有限数，epsilon 必须为正有限数。");
+               "scale/lowerBound 转为 FP32 后必须为有限数，epsilon 转为 FP32 后必须为正有限数。");
     CHECK_COND(!params.allowNegEigval || params.useBetaSigmoidInKernel,
                ACLNN_ERR_PARAM_INVALID,
                "allowNegEigval=true 要求 useBetaSigmoidInKernel=true。");
@@ -435,7 +439,7 @@ aclnnStatus CheckModesAndOptionalInputs(
             info.valueHeadNum, info.kDim);
     }
     if (params.safeGate) {
-        CHECK_COND(params.lowerBound >= -5.0 && params.lowerBound < 0.0,
+        CHECK_COND(lowerBoundFp32 >= -5.0F && lowerBoundFp32 < 0.0F,
                    ACLNN_ERR_PARAM_INVALID,
                    "safeGate=true 时 lowerBound 必须在 [-5,0) 内，当前值=%f。",
                    params.lowerBound);

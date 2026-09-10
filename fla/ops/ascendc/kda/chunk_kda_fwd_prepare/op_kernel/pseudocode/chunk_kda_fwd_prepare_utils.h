@@ -14,7 +14,7 @@ namespace KdaPrepare {
 
 __aicore__ inline uint32_t CeilDiv(uint32_t value, uint32_t divisor)
 {
-    return divisor == 0 ? 0 : (value + divisor - 1) / divisor;
+    return divisor == 0 ? 0 : value / divisor + (value % divisor != 0);
 }
 
 __aicore__ inline uint32_t WorkgroupId()
@@ -53,7 +53,7 @@ __aicore__ inline uint32_t WorkEnd(uint32_t total, uint32_t rank,
 }
 
 __aicore__ inline bool UseHeadSplit(
-    const ChunkKdaFwdPrepareTilingData &tiling)
+    const PrepareRuntimeTiling &tiling)
 {
     const uint32_t chunkWork = tiling.isVarLen
                                    ? tiling.totalChunks
@@ -62,7 +62,7 @@ __aicore__ inline bool UseHeadSplit(
 }
 
 __aicore__ inline uint32_t HeadPartitionCount(
-    const ChunkKdaFwdPrepareTilingData &tiling)
+    const PrepareRuntimeTiling &tiling)
 {
     const uint32_t headsPerPartition =
         tiling.headsPerPartition == 0 ? tiling.valueHeadNum
@@ -71,7 +71,7 @@ __aicore__ inline uint32_t HeadPartitionCount(
 }
 
 __aicore__ inline uint32_t TotalWorkItems(
-    const ChunkKdaFwdPrepareTilingData &tiling)
+    const PrepareRuntimeTiling &tiling)
 {
     // dense 的 totalChunks 是每个 batch 的 chunk 数；varlen 的 totalChunks
     // 已经是所有 sequence 的压平总数，与现有 chunk_kda_fwd tiling 一致。
@@ -84,7 +84,7 @@ __aicore__ inline uint32_t TotalWorkItems(
 }
 
 __aicore__ inline void DecodeWorkItem(
-    const ChunkKdaFwdPrepareTilingData &tiling, uint32_t workItem,
+    const PrepareRuntimeTiling &tiling, uint32_t workItem,
     uint32_t &chunk, uint32_t &headPartition)
 {
     if (UseHeadSplit(tiling)) {
@@ -98,7 +98,7 @@ __aicore__ inline void DecodeWorkItem(
 }
 
 __aicore__ inline void HeadRange(
-    const ChunkKdaFwdPrepareTilingData &tiling, uint32_t headPartition,
+    const PrepareRuntimeTiling &tiling, uint32_t headPartition,
     uint32_t &headBegin, uint32_t &headEnd)
 {
     if (!UseHeadSplit(tiling)) {
@@ -194,7 +194,7 @@ __aicore__ inline bool ResolveChunk(const PrepareKernelArgs &args,
 }
 
 __aicore__ inline uint32_t QkHeadForValueHead(
-    const ChunkKdaFwdPrepareTilingData &tiling, uint32_t valueHead)
+    const PrepareRuntimeTiling &tiling, uint32_t valueHead)
 {
     if (tiling.qkHeadNum == 0 || tiling.valueHeadNum < tiling.qkHeadNum ||
         tiling.valueHeadNum % tiling.qkHeadNum != 0) {
@@ -210,7 +210,7 @@ __aicore__ inline uint32_t QkHeadForValueHead(
 // Q/K 归一化结果按 HK 保存。GVA 中一个 HK 对应多个连续 HV，只有该
 // QK 头组的第一个 HV 写公开输出，避免多个 AIV 重叠写同一段 GM。
 __aicore__ inline bool IsQkOutputOwner(
-    const ChunkKdaFwdPrepareTilingData &tiling, uint32_t valueHead)
+    const PrepareRuntimeTiling &tiling, uint32_t valueHead)
 {
     if (tiling.qkHeadNum == 0 || tiling.valueHeadNum < tiling.qkHeadNum ||
         tiling.valueHeadNum % tiling.qkHeadNum != 0) {
@@ -221,7 +221,7 @@ __aicore__ inline bool IsQkOutputOwner(
 }
 
 __aicore__ inline uint64_t QkInputOffset(
-    const ChunkKdaFwdPrepareTilingData &tiling, const ChunkRange &chunk,
+    const PrepareRuntimeTiling &tiling, const ChunkRange &chunk,
     uint32_t qkHead)
 {
     if (tiling.inputSequenceMajor) {
@@ -238,7 +238,7 @@ __aicore__ inline uint64_t QkInputOffset(
 // q_hat/k_hat/q_rstd/k_rstd 固定写成 head-major，供反向直接读取；
 // 输入即使是 sequence-major，也只影响上面的 QkInputOffset。
 __aicore__ inline uint64_t QkHeadTensorOffset(
-    const ChunkKdaFwdPrepareTilingData &tiling, const ChunkRange &chunk,
+    const PrepareRuntimeTiling &tiling, const ChunkRange &chunk,
     uint32_t qkHead, uint32_t dimension)
 {
     return ((static_cast<uint64_t>(chunk.batchIndex) * tiling.qkHeadNum +
@@ -246,7 +246,7 @@ __aicore__ inline uint64_t QkHeadTensorOffset(
 }
 
 __aicore__ inline uint64_t QkHeadScalarOffset(
-    const ChunkKdaFwdPrepareTilingData &tiling, const ChunkRange &chunk,
+    const PrepareRuntimeTiling &tiling, const ChunkRange &chunk,
     uint32_t qkHead)
 {
     return (static_cast<uint64_t>(chunk.batchIndex) * tiling.qkHeadNum +
@@ -254,7 +254,7 @@ __aicore__ inline uint64_t QkHeadScalarOffset(
 }
 
 __aicore__ inline uint64_t ValueInputOffset(
-    const ChunkKdaFwdPrepareTilingData &tiling, const ChunkRange &chunk,
+    const PrepareRuntimeTiling &tiling, const ChunkRange &chunk,
     uint32_t valueHead)
 {
     if (tiling.inputSequenceMajor) {
@@ -268,7 +268,7 @@ __aicore__ inline uint64_t ValueInputOffset(
 }
 
 __aicore__ inline uint64_t RawGateInputOffset(
-    const ChunkKdaFwdPrepareTilingData &tiling, const ChunkRange &chunk,
+    const PrepareRuntimeTiling &tiling, const ChunkRange &chunk,
     uint32_t valueHead)
 {
     if (tiling.inputSequenceMajor) {
@@ -281,9 +281,21 @@ __aicore__ inline uint64_t RawGateInputOffset(
            Shape::kHeadDim;
 }
 
-// beta、qg/qgScaled/kg/gk 以及矩阵输出沿用当前 KDA 的 head-major 布局。
+__aicore__ inline uint64_t BetaInputOffset(
+    const PrepareRuntimeTiling &tiling, const ChunkRange &chunk,
+    uint32_t valueHead)
+{
+    if (tiling.inputSequenceMajor) {
+        return (static_cast<uint64_t>(chunk.batchIndex) * tiling.seqLen +
+                chunk.tokenBegin) * tiling.valueHeadNum + valueHead;
+    }
+    return (static_cast<uint64_t>(chunk.batchIndex) * tiling.valueHeadNum +
+            valueHead) * tiling.seqLen + chunk.tokenBegin;
+}
+
+// betaEff、qg/qgScaled/kg/gk 以及矩阵输出固定使用 head-major 布局。
 __aicore__ inline uint64_t HeadTensorOffset(
-    const ChunkKdaFwdPrepareTilingData &tiling, const ChunkRange &chunk,
+    const PrepareRuntimeTiling &tiling, const ChunkRange &chunk,
     uint32_t valueHead, uint32_t dimension)
 {
     return ((static_cast<uint64_t>(chunk.batchIndex) * tiling.valueHeadNum +
@@ -291,7 +303,7 @@ __aicore__ inline uint64_t HeadTensorOffset(
 }
 
 __aicore__ inline uint64_t HeadScalarOffset(
-    const ChunkKdaFwdPrepareTilingData &tiling, const ChunkRange &chunk,
+    const PrepareRuntimeTiling &tiling, const ChunkRange &chunk,
     uint32_t valueHead)
 {
     return (static_cast<uint64_t>(chunk.batchIndex) * tiling.valueHeadNum +
@@ -299,7 +311,7 @@ __aicore__ inline uint64_t HeadScalarOffset(
 }
 
 __aicore__ inline uint64_t AOutputOffset(
-    const ChunkKdaFwdPrepareTilingData &tiling, const ChunkRange &chunk,
+    const PrepareRuntimeTiling &tiling, const ChunkRange &chunk,
     uint32_t valueHead)
 {
     return ((static_cast<uint64_t>(chunk.batchIndex) * tiling.valueHeadNum +

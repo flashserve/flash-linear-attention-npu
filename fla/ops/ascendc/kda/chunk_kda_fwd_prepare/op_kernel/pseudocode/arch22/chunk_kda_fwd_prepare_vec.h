@@ -59,6 +59,15 @@ public:
         // 基础 API 能看到占用状态；注释给出 CANN 9.1 分配器的预期返回值。
         scalarRead_ = pipe_->AllocEventID<AscendC::HardEvent::V_S>(); // ID 0
         scalarWrite_ = pipe_->AllocEventID<AscendC::HardEvent::S_V>(); // ID 0
+        if (args_.tiling.inputSequenceMajor) {
+            auto offsets = ubBuf_.Get<uint8_t>()[Arch22Ub::kBetaGatherOffsets]
+                               .template ReinterpretCast<uint32_t>();
+            for (uint32_t row = 0; row < Shape::kChunkRows; ++row) {
+                offsets.SetValue(row, row * 32U);
+            }
+            AscendC::SetFlag<AscendC::HardEvent::S_V>(scalarWrite_);
+            AscendC::WaitFlag<AscendC::HardEvent::S_V>(scalarWrite_);
+        }
         sharedFree_ = pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>(); // ID 0
         // 两个 pair 分时复用共享 G/scratch；初始许可只发布一次。
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(sharedFree_);
@@ -108,15 +117,18 @@ public:
             uint32_t headBegin = 0;
             uint32_t headEnd = 0;
             HeadRange(args_.tiling, headPartition, headBegin, headEnd);
-            for (uint32_t groupBegin = headBegin; groupBegin < headEnd;
-                 groupBegin += Shape::kHeadsPerGroup) {
+            for (uint32_t groupBegin = headBegin; groupBegin < headEnd;) {
+                uint32_t activeHeads = headEnd - groupBegin;
+                if (activeHeads > Shape::kHeadsPerGroup) {
+                    activeHeads = Shape::kHeadsPerGroup;
+                }
                 // AIV0 处理 0/2，AIV1 处理 1/3；两个 pair 分时复用共享 G 区。
                 for (uint32_t pair = 0; pair < 2; ++pair) {
                     const uint32_t localHead = pair * 2 + aiv_;
                     AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
                         kFreeFlagId[pair]);
-                    const uint32_t valueHead = groupBegin + localHead;
-                    if (valueHead < headEnd) {
+                    if (localHead < activeHeads) {
+                        const uint32_t valueHead = groupBegin + localHead;
                         StageV0(chunk, valueHead, localHead, pair);
                         StageV1(chunk, localHead, pair);
                     }
@@ -128,8 +140,8 @@ public:
                     const uint32_t localHead = pair * 2 + aiv_;
                     AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
                         kFreeFlagId[pair]);
-                    const uint32_t valueHead = groupBegin + localHead;
-                    if (valueHead < headEnd) {
+                    if (localHead < activeHeads) {
+                        const uint32_t valueHead = groupBegin + localHead;
                         StageV3(chunk, valueHead, localHead, pair);
                     }
                     AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(
@@ -139,13 +151,14 @@ public:
                     const uint32_t localHead = pair * 2 + aiv_;
                     AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
                         kFreeFlagId[pair]);
-                    const uint32_t valueHead = groupBegin + localHead;
-                    if (valueHead < headEnd) {
+                    if (localHead < activeHeads) {
+                        const uint32_t valueHead = groupBegin + localHead;
                         StageV6(chunk, valueHead, localHead, pair);
                     }
                     AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(
                         kReadyFlagId[pair]);
                 }
+                groupBegin += activeHeads;
             }
         }
         // 消费最后一次 C7 发布，保证每次 set 都有对应 wait。
@@ -193,6 +206,8 @@ private:
         const uint32_t gateBase = sizeof(GateT) == 4 ? Arch22Ub::kSharedG
                                                      : base + Arch22Ub::kGateOrKMinus;
         auto gate = ub[gateBase].template ReinterpretCast<GateT>();
+        auto betaStrided = ub[base + Arch22Ub::kBetaRawStrided]
+                               .template ReinterpretCast<BetaT>();
         auto beta = ub[base + Arch22Ub::kBetaRaw].template ReinterpretCast<BetaT>();
         auto betaEff = ub[base + Arch22Ub::kBetaEff].template ReinterpretCast<float>();
         auto dtBias = ub[base + Arch22Ub::kDtBias].template ReinterpretCast<float>();
@@ -205,52 +220,79 @@ private:
         const uint64_t qkOffset = QkInputOffset(args_.tiling, chunk, qkHead);
         const uint64_t gateOffset =
             RawGateInputOffset(args_.tiling, chunk, valueHead);
+        const uint64_t betaOffset =
+            BetaInputOffset(args_.tiling, chunk, valueHead);
         const uint64_t headOutputOffset =
             HeadTensorOffset(args_.tiling, chunk, valueHead, Shape::kHeadDim);
         const uint32_t qkStride = args_.tiling.inputSequenceMajor
-                                      ? (args_.tiling.qkHeadNum - 1) *
-                                            Shape::kHeadDim * sizeof(bfloat16_t)
+                                      ? static_cast<uint32_t>(
+                                            static_cast<uint64_t>(
+                                                args_.tiling.qkHeadNum - 1) *
+                                            Shape::kHeadDim * sizeof(bfloat16_t))
                                       : 0;
         const uint32_t gateStride = args_.tiling.inputSequenceMajor
-                                        ? (args_.tiling.valueHeadNum - 1) *
-                                              Shape::kHeadDim * sizeof(GateT)
+                                        ? static_cast<uint32_t>(
+                                              static_cast<uint64_t>(
+                                                  args_.tiling.valueHeadNum - 1) *
+                                              Shape::kHeadDim * sizeof(GateT))
                                         : 0;
         // 获得共享 G/scratch 的独占许可；V1 完成最后一次 V 读取后归还。
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(sharedFree_);
         AscendC::DataCopyExtParams qkCopy{static_cast<uint16_t>(chunk.validRows),
-            Shape::kHeadDim * sizeof(bfloat16_t), qkStride, 0, 0};
+            static_cast<uint32_t>(Shape::kHeadDim * sizeof(bfloat16_t)),
+            qkStride, 0, 0};
         AscendC::DataCopyPadExtParams<bfloat16_t> qkPad{false, 0, 0, 0};
         AscendC::DataCopyPad(q, qGm_[qkOffset], qkCopy, qkPad);
         AscendC::DataCopyPad(k, kGm_[qkOffset], qkCopy, qkPad);
         AscendC::DataCopyExtParams gateCopy{static_cast<uint16_t>(chunk.validRows),
-            Shape::kHeadDim * sizeof(GateT), gateStride, 0, 0};
+            static_cast<uint32_t>(Shape::kHeadDim * sizeof(GateT)),
+            gateStride, 0, 0};
         AscendC::DataCopyPadExtParams<GateT> gatePad{false, 0, 0, 0};
         AscendC::DataCopyPad(gate, gateGm_[gateOffset], gateCopy, gatePad);
-        AscendC::DataCopyExtParams betaCopy{
-            1, chunk.validRows * sizeof(BetaT), 0, 0, 0};
         AscendC::DataCopyPadExtParams<BetaT> betaPad{false, 0, 0, 0};
         AscendC::DataCopyPadExtParams<float> fp32Pad{false, 0, 0, 0};
-        AscendC::DataCopyPad(beta,
-            betaGm_[KdaPrepare::HeadScalarOffset(args_.tiling, chunk, valueHead)],
-            betaCopy, betaPad);
+        if (args_.tiling.inputSequenceMajor) {
+            const uint32_t betaStride =
+                static_cast<uint32_t>(static_cast<uint64_t>(
+                    args_.tiling.valueHeadNum - 1) * sizeof(BetaT));
+            AscendC::DataCopyPad(betaStrided, betaGm_[betaOffset],
+                AscendC::DataCopyExtParams{
+                    static_cast<uint16_t>(chunk.validRows),
+                    static_cast<uint32_t>(sizeof(BetaT)), betaStride, 0, 0},
+                betaPad);
+        } else {
+            AscendC::DataCopyPad(beta, betaGm_[betaOffset],
+                AscendC::DataCopyExtParams{
+                    1, static_cast<uint32_t>(chunk.validRows * sizeof(BetaT)),
+                    0, 0, 0}, betaPad);
+        }
         if constexpr (CompilePolicy::gateMode != GateMode::PrecomputedStep) {
             if (args_.tiling.hasDtBias) {
-                // TODO：dt_bias 的 batch/head 排列需由公开接口冻结。
+                // 公开接口将 dt_bias 固定为展平的 [HV,K]。
                 AscendC::DataCopyPad(dtBias, dtBiasGm_[valueHead * Shape::kHeadDim],
-                    AscendC::DataCopyExtParams{1, Shape::kHeadDim * sizeof(float), 0, 0, 0}, fp32Pad);
+                    AscendC::DataCopyExtParams{
+                        1, static_cast<uint32_t>(Shape::kHeadDim * sizeof(float)),
+                        0, 0, 0}, fp32Pad);
             }
             if (args_.aLog != nullptr) {
-                // TODO：A_log 的 head 索引需由公开接口冻结。
+                // 公开接口将 a_log 固定为 [HV]。
                 AscendC::DataCopyPad(aLog, aLogGm_[valueHead],
-                    AscendC::DataCopyExtParams{1, sizeof(float), 0, 0, 0},
+                    AscendC::DataCopyExtParams{
+                        1, static_cast<uint32_t>(sizeof(float)), 0, 0, 0},
                     fp32Pad);
             }
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(inputReady_[pair]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(inputReady_[pair]);
-        // 唯一一次 VF：Q/K 可选 L2 norm，beta 变换，gate 变换和逐 token cumsum；
-        // 生成 Qhat/Khat/qRstd/kRstd/G/Glast/betaEff，并清零所有无效行。
-        // TODO：按目标 c220 头文件补齐寄存器、mask、归约和 repeat/stride 参数。
+        if (args_.tiling.inputSequenceMajor) {
+            auto offsets = ub[Arch22Ub::kBetaGatherOffsets]
+                               .template ReinterpretCast<uint32_t>();
+            AscendC::Gather(beta, betaStrided, offsets,
+                            static_cast<uint32_t>(0), chunk.validRows);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+        // 本 Stage 的一次向量计算完成 Q/K 可选 L2 norm、beta 变换、
+        // gate 变换和逐 token cumsum，并生成全部公开中间量。
         V0Vf(q, k, qRstd, kRstd, gate, beta, betaEff, dtBias, aLog, g,
              scratch, chunk.validRows);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[pair]);
@@ -266,7 +308,9 @@ private:
         AscendC::DataCopy(qhatContext, q, chunk.validRows * Shape::kHeadDim);
         AscendC::DataCopy(khatContext, k, chunk.validRows * Shape::kHeadDim);
         AscendC::DataCopyPad(betaContext, betaEff,
-            AscendC::DataCopyExtParams{1, chunk.validRows * sizeof(float), 0, 0, 0});
+            AscendC::DataCopyExtParams{
+                1, static_cast<uint32_t>(chunk.validRows * sizeof(float)),
+                0, 0, 0});
         // Q/K 保存量按 HK 写回。GVA 中只有 QK 头组的第一个 HV 是 owner，
         // 其余 HV 仍保留各自 workspace context，供本 kernel 的 V1/V6 使用。
         if (IsQkOutputOwner(args_.tiling, valueHead)) {
@@ -280,15 +324,19 @@ private:
                               chunk.validRows * Shape::kHeadDim);
             AscendC::DataCopyPad(qRstdGm_[rstdOutputOffset], qRstd,
                 AscendC::DataCopyExtParams{
-                    1, chunk.validRows * sizeof(float), 0, 0, 0});
+                    1, static_cast<uint32_t>(chunk.validRows * sizeof(float)),
+                    0, 0, 0});
             AscendC::DataCopyPad(kRstdGm_[rstdOutputOffset], kRstd,
                 AscendC::DataCopyExtParams{
-                    1, chunk.validRows * sizeof(float), 0, 0, 0});
+                    1, static_cast<uint32_t>(chunk.validRows * sizeof(float)),
+                    0, 0, 0});
         }
         AscendC::DataCopyPad(
             betaEffGm_[HeadScalarOffset(args_.tiling, chunk, valueHead)],
             betaEff, AscendC::DataCopyExtParams{
-                         1, chunk.validRows * sizeof(float), 0, 0, 0});
+                         1, static_cast<uint32_t>(
+                                chunk.validRows * sizeof(float)),
+                         0, 0, 0});
         AscendC::DataCopy(gkGm_[headOutputOffset], g,
                           chunk.validRows * Shape::kHeadDim);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_[pair]);
@@ -357,12 +405,13 @@ private:
         AscendC::DataCopy(raw, payload, compactElements);
         AscendC::DataCopyPadExtParams<float> pad{false, 0, 0, 0};
         AscendC::DataCopyPad(betaEff, betaContext,
-            AscendC::DataCopyExtParams{1, chunk.validRows * sizeof(float), 0, 0, 0}, pad);
+            AscendC::DataCopyExtParams{
+                1, static_cast<uint32_t>(chunk.validRows * sizeof(float)),
+                0, 0, 0}, pad);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(inputReady_[pair]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(inputReady_[pair]);
-        // 唯一一次 VF：因果 mask、scale、beta、两个 32x32 叶逆，以及
-        // Aqk/B/X0/X1/negX1/稳定 Akk；negX1 供 C5 做普通 Mmad。
-        // TODO：按目标 c220 头文件补齐叶逆寄存器分块和谓词参数。
+        // 本 Stage 一次完成因果 mask、scale、beta 和两个 32x32 叶逆，
+        // 生成 Aqk/B/X0/X1/negX1/稳定 Akk；negX1 供 C5 做普通 Mmad。
         V3Vf(raw, betaEff, aqk, lkk, b, x0, x1, negX1, akkPack,
              chunk.validRows, args_.tiling.scale);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(sharedFree_);
@@ -415,25 +464,29 @@ private:
         AscendC::DataCopy(kg, khat, chunk.validRows * Shape::kHeadDim);
         AscendC::DataCopyPadExtParams<float> pad{false, 0, 0, 0};
         AscendC::DataCopyPad(betaEff, betaContext,
-            AscendC::DataCopyExtParams{1, chunk.validRows * sizeof(float), 0, 0, 0}, pad);
+            AscendC::DataCopyExtParams{
+                1, static_cast<uint32_t>(chunk.validRows * sizeof(float)),
+                0, 0, 0}, pad);
         AscendC::DataCopy(g,
                           gkGm_[HeadTensorOffset(args_.tiling, chunk, valueHead,
                                                 Shape::kHeadDim)],
                           chunk.validRows * Shape::kHeadDim);
         const uint32_t vStride = args_.tiling.inputSequenceMajor
-                                     ? (args_.tiling.valueHeadNum - 1) *
-                                           Shape::kValueDim * sizeof(bfloat16_t)
+                                     ? static_cast<uint32_t>(
+                                           static_cast<uint64_t>(
+                                               args_.tiling.valueHeadNum - 1) *
+                                           Shape::kValueDim * sizeof(bfloat16_t))
                                      : 0;
         AscendC::DataCopyPad(vBeta,
             vGm_[ValueInputOffset(args_.tiling, chunk, valueHead)],
             AscendC::DataCopyExtParams{static_cast<uint16_t>(chunk.validRows),
-                Shape::kValueDim * sizeof(bfloat16_t), vStride, 0, 0},
+                static_cast<uint32_t>(Shape::kValueDim * sizeof(bfloat16_t)),
+                vStride, 0, 0},
             AscendC::DataCopyPadExtParams<bfloat16_t>{false, 0, 0, 0});
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(inputReady_[pair]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(inputReady_[pair]);
-        // 唯一一次 VF：qg、qgScaled、kg、两次舍入的 K_beta_g 和 V_beta；
-        // 两条编译路径使用等价的 base-2/自然对数截断范围。
-        // TODO：按目标 c220 头文件补齐 Exp 的饱和和舍入参数。
+        // 本 Stage 一次生成 qg、qgScaled、kg、两次舍入的 K_beta_g 和
+        // V_beta；两条编译路径先在对应域截断，再统一调用自然底 Exp。
         V6Vf(qg, qgScaled, kg, vBeta, kBetaG, g, betaEff, scratch,
              chunk.validRows, args_.tiling.scale);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[pair]);
@@ -475,8 +528,9 @@ private:
     {
         const uint32_t count = validRows * Shape::kHeadDim;
         if constexpr (CompilePolicy::normMode == QkNormMode::L2) {
-            // 每行按冻结语义执行 x * rsqrt(sum(x^2) + epsilon)。
-            // TODO：确认 c220 ReduceSum 临时区大小和地址对齐。
+            // 每行按冻结语义执行 x * rsqrt(sum(x^2) + epsilon)。AR
+            // ReduceSum 以 isReuseSource=true 调用，归约复用平方结果区；
+            // 传入的临时区从 1 KiB 对齐地址开始，不额外占用 UB。
             uint32_t reduceShape[2] = {1, Shape::kHeadDim};
             for (uint32_t row = 0; row < validRows; ++row) {
                 AscendC::Cast(scratch, q[row * Shape::kHeadDim],
@@ -858,10 +912,35 @@ private:
         AscendC::Duplicate(x1, 0.0F, 1024);
         AscendC::PipeBarrier<PIPE_V>();
         const uint32_t bottomRows = validRows > 32 ? validRows - 32 : 0;
+        // FP32 向量指令要求 UB 首地址按 32 Byte 对齐，不能直接从
+        // x[row, row] 发起长度为 1 的 Duplicate。按对角元素在 32 Byte
+        // block 内的 lane 分组：同一 lane 相邻两个对角元素跨 8 行，
+        // repeat stride 为 8 * 4 + 1 = 33 个 block。
+        constexpr uint32_t kFp32PerBlock = 8;
+        constexpr uint16_t kDiagonalBlockStride = 1;
+        constexpr uint8_t kDiagonalRepeatStride = 33;
+        const uint32_t topDiagonalLanes =
+            topRows < kFp32PerBlock ? topRows : kFp32PerBlock;
+        for (uint32_t lane = 0; lane < topDiagonalLanes; ++lane) {
+            uint64_t diagonalMask[2] = {1ULL << lane, 0};
+            const uint8_t repeat = static_cast<uint8_t>(
+                CeilDiv(topRows - lane, kFp32PerBlock));
+            AscendC::Duplicate(x0[lane * 32], 1.0F, diagonalMask, repeat,
+                               kDiagonalBlockStride, kDiagonalRepeatStride);
+        }
+        const uint32_t bottomDiagonalLanes =
+            bottomRows < kFp32PerBlock ? bottomRows : kFp32PerBlock;
+        for (uint32_t lane = 0; lane < bottomDiagonalLanes; ++lane) {
+            uint64_t diagonalMask[2] = {1ULL << lane, 0};
+            const uint8_t repeat = static_cast<uint8_t>(
+                CeilDiv(bottomRows - lane, kFp32PerBlock));
+            AscendC::Duplicate(x1[lane * 32], 1.0F, diagonalMask, repeat,
+                               kDiagonalBlockStride, kDiagonalRepeatStride);
+        }
+        AscendC::PipeBarrier<PIPE_V>();
         // 单位下三角逆逐行前代：X[i,:]=-sum(k<i,L[i,k]*X[k,:])，X[i,i]=1。
         // raw 已全部消费，其低地址在本段作为一行 FP32 临时区，不发生 UB 搬位。
         for (uint32_t row = 0; row < topRows; ++row) {
-            AscendC::Duplicate(x0[row * 32 + row], 1.0F, 1);
             for (uint32_t kIndex = 0; kIndex < row; ++kIndex) {
                 const float coefficient =
                     -ReadScalar(lkk, row * Shape::kChunkRows + kIndex);
@@ -872,7 +951,6 @@ private:
             }
         }
         for (uint32_t row = 0; row < bottomRows; ++row) {
-            AscendC::Duplicate(x1[row * 32 + row], 1.0F, 1);
             for (uint32_t kIndex = 0; kIndex < row; ++kIndex) {
                 const float coefficient = -ReadScalar(
                     lkk, (row + 32) * Shape::kChunkRows + 32 + kIndex);

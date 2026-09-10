@@ -1,4 +1,4 @@
-"""ChunkKdaFwdPrepare 的 direct launch 静态合同。"""
+"""ChunkKdaFwdPrepare 的 direct launch 源码合同。"""
 
 import json
 from pathlib import Path
@@ -13,13 +13,14 @@ DIRECT = (
 )
 
 
-def test_direct_launch_covers_declared_route_cases():
+def test_direct_launch_source_declares_representative_instantiations():
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     case_ids = {
         case["id"]
         for case in manifest["cases"]
         if "direct_launch" in case["run_on"]
     }
+    assert manifest["route_validation"]["direct_launch"] == "source_contract"
     source = DIRECT.read_text(encoding="utf-8")
     assert case_ids == {
         "prepare_dense_bnsd_raw",

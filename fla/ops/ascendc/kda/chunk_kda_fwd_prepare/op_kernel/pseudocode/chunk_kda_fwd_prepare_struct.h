@@ -13,6 +13,43 @@
 
 namespace KdaPrepare {
 
+// 与 host 侧 TILING_DATA_FIELD_DEF 的字段顺序和类型严格一致。
+// 该结构只描述 GM 中的序列化布局，运行时计算使用下方的精简副本。
+struct ChunkKdaFwdPrepareTilingData {
+    uint32_t batch;
+    uint32_t seqNum;
+    uint32_t seqLen;
+    uint32_t qkHeadNum;
+    uint32_t valueHeadNum;
+    uint32_t totalChunks;
+    uint32_t usedCoreNum;
+    uint32_t headsPerPartition;
+    float epsilon;
+    float lowerBound;
+    float scale;
+    bool isVarLen;
+    bool inputSequenceMajor;
+    bool hasDtBias;
+};
+
+// 入口从框架生成的 tiling 数据中一次性复制这些字段，Stage 不再读取 GM tiling。
+struct PrepareRuntimeTiling {
+    uint32_t batch = 0;
+    uint32_t seqNum = 0;
+    uint32_t seqLen = 0;
+    uint32_t qkHeadNum = 0;
+    uint32_t valueHeadNum = 0;
+    uint32_t totalChunks = 0;
+    uint32_t usedCoreNum = 0;
+    uint32_t headsPerPartition = 0;
+    float epsilon = 1.0e-6F;
+    float lowerBound = -5.0F;
+    float scale = 1.0F;
+    bool isVarLen = false;
+    bool inputSequenceMajor = false;
+    bool hasDtBias = false;
+};
+
 // 一个实际 chunk 的直接索引。Stage 只接收这些标量，不再传递通用 StageArgs。
 struct ChunkRange {
     // dense: batchIndex=sequence，tokenBegin 为序列内位置；
@@ -31,8 +68,8 @@ struct PrepareKernelArgs {
     GM_ADDR v = nullptr;
     GM_ADDR rawGate = nullptr;
     GM_ADDR beta = nullptr;
-    GM_ADDR dtBias = nullptr;
     GM_ADDR aLog = nullptr;
+    GM_ADDR dtBias = nullptr;
     GM_ADDR cuSeqlens = nullptr;
     GM_ADDR chunkIndices = nullptr;
 
@@ -51,7 +88,7 @@ struct PrepareKernelArgs {
     GM_ADDR betaEff = nullptr;
     GM_ADDR workspace = nullptr;
 
-    ChunkKdaFwdPrepareTilingData tiling{};
+    PrepareRuntimeTiling tiling{};
 };
 
 } // namespace KdaPrepare

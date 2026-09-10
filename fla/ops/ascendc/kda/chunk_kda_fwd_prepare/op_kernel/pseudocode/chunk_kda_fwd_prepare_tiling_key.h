@@ -9,24 +9,41 @@
 
 #include <cstdint>
 
+#ifndef TORCH_MODE
+#include "ascendc/host_api/tiling/template_argument.h"
+#endif
+
+#define CHUNK_KDA_FWD_PREPARE_TPL_BF16 10
+#define CHUNK_KDA_FWD_PREPARE_TPL_FP32 30
+
+#define CHUNK_KDA_FWD_PREPARE_NORM_IDENTITY 0
+#define CHUNK_KDA_FWD_PREPARE_NORM_L2 1
+
+#define CHUNK_KDA_FWD_PREPARE_BETA_RAW 0
+#define CHUNK_KDA_FWD_PREPARE_BETA_SIGMOID 1
+#define CHUNK_KDA_FWD_PREPARE_BETA_TWO_SIGMOID 2
+
+#define CHUNK_KDA_FWD_PREPARE_GATE_PRECOMPUTED_STEP 0
+#define CHUNK_KDA_FWD_PREPARE_GATE_SOFTPLUS 1
+#define CHUNK_KDA_FWD_PREPARE_GATE_SAFE_SIGMOID 2
+
 namespace KdaPrepare {
 
-// 这些枚举表示正式实现应放入编译期 TilingKey 的语义轴，本文不冻结数值编码。
 enum class QkNormMode : uint8_t {
-    Identity,
-    L2,
+    Identity = CHUNK_KDA_FWD_PREPARE_NORM_IDENTITY,
+    L2 = CHUNK_KDA_FWD_PREPARE_NORM_L2,
 };
 
 enum class BetaMode : uint8_t {
-    Raw,
-    Sigmoid,
-    TwoSigmoid,
+    Raw = CHUNK_KDA_FWD_PREPARE_BETA_RAW,
+    Sigmoid = CHUNK_KDA_FWD_PREPARE_BETA_SIGMOID,
+    TwoSigmoid = CHUNK_KDA_FWD_PREPARE_BETA_TWO_SIGMOID,
 };
 
 enum class GateMode : uint8_t {
-    PrecomputedStep,
-    Softplus,
-    SafeSigmoid,
+    PrecomputedStep = CHUNK_KDA_FWD_PREPARE_GATE_PRECOMPUTED_STEP,
+    Softplus = CHUNK_KDA_FWD_PREPARE_GATE_SOFTPLUS,
+    SafeSigmoid = CHUNK_KDA_FWD_PREPARE_GATE_SAFE_SIGMOID,
 };
 
 namespace ExpDomain {
@@ -64,9 +81,6 @@ struct ExpDomainTraits {
     }
 };
 
-// USE_EXP2 编译轴的 0/1 编码已经冻结；正式 Host Tiling 必须为两个值都生成实例。
-// 其余轴尚未冻结，所以这里不伪造参数不完整的 ASCENDC_TPL_ARGS_DECL；
-// 正式声明必须包含 ASCENDC_TPL_BOOL_DECL(USE_EXP2, 0, 1)。
 template <QkNormMode NORM_MODE, BetaMode BETA_MODE, GateMode GATE_MODE,
           bool USE_EXP2, bool SAFE_GATE>
 struct PrepareCompilePolicy {
@@ -77,24 +91,95 @@ struct PrepareCompilePolicy {
     static constexpr bool safeGate = SAFE_GATE;
 };
 
-// 正式实现中由 op_host 生成；这里只保存 shape、调度和标量参数。
-// Arch22/Arch35 由 __CCE_AICORE__ 在编译期选择。
-struct ChunkKdaFwdPrepareTilingData {
-    uint32_t batch = 0;
-    uint32_t seqNum = 0;
-    uint32_t seqLen = 0;
-    uint32_t qkHeadNum = 0;
-    uint32_t valueHeadNum = 0;
-    uint32_t totalChunks = 0;
-    uint32_t usedCoreNum = 0;
-    uint32_t headsPerPartition = 0;
-    float epsilon = 1.0e-6F;
-    float lowerBound = -5.0F;
-    float scale = 1.0F;
-    bool isVarLen = false;
-    bool inputSequenceMajor = false;
-    bool hasDtBias = false;
-};
+#ifndef TORCH_MODE
+ASCENDC_TPL_ARGS_DECL(
+    ChunkKdaFwdPrepare,
+    ASCENDC_TPL_DTYPE_DECL(D_T_GATE, CHUNK_KDA_FWD_PREPARE_TPL_BF16,
+                           CHUNK_KDA_FWD_PREPARE_TPL_FP32),
+    ASCENDC_TPL_DTYPE_DECL(D_T_BETA, CHUNK_KDA_FWD_PREPARE_TPL_BF16,
+                           CHUNK_KDA_FWD_PREPARE_TPL_FP32),
+    ASCENDC_TPL_UINT_DECL(NORM_MODE, 1, ASCENDC_TPL_UI_LIST,
+                          CHUNK_KDA_FWD_PREPARE_NORM_IDENTITY,
+                          CHUNK_KDA_FWD_PREPARE_NORM_L2),
+    ASCENDC_TPL_UINT_DECL(BETA_MODE, 2, ASCENDC_TPL_UI_LIST,
+                          CHUNK_KDA_FWD_PREPARE_BETA_RAW,
+                          CHUNK_KDA_FWD_PREPARE_BETA_SIGMOID,
+                          CHUNK_KDA_FWD_PREPARE_BETA_TWO_SIGMOID),
+    ASCENDC_TPL_UINT_DECL(GATE_MODE, 2, ASCENDC_TPL_UI_LIST,
+                          CHUNK_KDA_FWD_PREPARE_GATE_PRECOMPUTED_STEP,
+                          CHUNK_KDA_FWD_PREPARE_GATE_SOFTPLUS,
+                          CHUNK_KDA_FWD_PREPARE_GATE_SAFE_SIGMOID),
+    ASCENDC_TPL_BOOL_DECL(USE_EXP2, 0, 1),
+    ASCENDC_TPL_BOOL_DECL(SAFE_GATE, 0, 1));
+
+// SAFE_GATE 只为 SafeSigmoid 置位，避免生成数学等价的重复实例。
+#define CHUNK_KDA_FWD_PREPARE_SEL_ONE(                                      \
+    GATE_TYPE, BETA_TYPE, NORM_VALUE, BETA_VALUE, GATE_VALUE, EXP_VALUE,    \
+    SAFE_VALUE)                                                              \
+    ASCENDC_TPL_ARGS_SEL(                                                     \
+        ASCENDC_TPL_DTYPE_SEL(D_T_GATE, GATE_TYPE),                          \
+        ASCENDC_TPL_DTYPE_SEL(D_T_BETA, BETA_TYPE),                          \
+        ASCENDC_TPL_UINT_SEL(NORM_MODE, ASCENDC_TPL_UI_LIST, NORM_VALUE),    \
+        ASCENDC_TPL_UINT_SEL(BETA_MODE, ASCENDC_TPL_UI_LIST, BETA_VALUE),    \
+        ASCENDC_TPL_UINT_SEL(GATE_MODE, ASCENDC_TPL_UI_LIST, GATE_VALUE),    \
+        ASCENDC_TPL_BOOL_SEL(USE_EXP2, EXP_VALUE),                           \
+        ASCENDC_TPL_BOOL_SEL(SAFE_GATE, SAFE_VALUE))
+
+#define CHUNK_KDA_FWD_PREPARE_SEL_EXP(                                      \
+    GATE_TYPE, BETA_TYPE, NORM_VALUE, BETA_VALUE, GATE_VALUE, SAFE_VALUE)   \
+    CHUNK_KDA_FWD_PREPARE_SEL_ONE(                                           \
+        GATE_TYPE, BETA_TYPE, NORM_VALUE, BETA_VALUE, GATE_VALUE, 0,        \
+        SAFE_VALUE),                                                         \
+    CHUNK_KDA_FWD_PREPARE_SEL_ONE(                                           \
+        GATE_TYPE, BETA_TYPE, NORM_VALUE, BETA_VALUE, GATE_VALUE, 1,        \
+        SAFE_VALUE)
+
+#define CHUNK_KDA_FWD_PREPARE_SEL_GATE(                                     \
+    GATE_TYPE, BETA_TYPE, NORM_VALUE, BETA_VALUE)                            \
+    CHUNK_KDA_FWD_PREPARE_SEL_EXP(                                           \
+        GATE_TYPE, BETA_TYPE, NORM_VALUE, BETA_VALUE,                        \
+        CHUNK_KDA_FWD_PREPARE_GATE_PRECOMPUTED_STEP, 0),                     \
+    CHUNK_KDA_FWD_PREPARE_SEL_EXP(                                           \
+        GATE_TYPE, BETA_TYPE, NORM_VALUE, BETA_VALUE,                        \
+        CHUNK_KDA_FWD_PREPARE_GATE_SOFTPLUS, 0),                             \
+    CHUNK_KDA_FWD_PREPARE_SEL_EXP(                                           \
+        GATE_TYPE, BETA_TYPE, NORM_VALUE, BETA_VALUE,                        \
+        CHUNK_KDA_FWD_PREPARE_GATE_SAFE_SIGMOID, 1)
+
+#define CHUNK_KDA_FWD_PREPARE_SEL_BETA_MODE(                                \
+    GATE_TYPE, BETA_TYPE, NORM_VALUE)                                        \
+    CHUNK_KDA_FWD_PREPARE_SEL_GATE(                                          \
+        GATE_TYPE, BETA_TYPE, NORM_VALUE, CHUNK_KDA_FWD_PREPARE_BETA_RAW),  \
+    CHUNK_KDA_FWD_PREPARE_SEL_GATE(                                          \
+        GATE_TYPE, BETA_TYPE, NORM_VALUE,                                    \
+        CHUNK_KDA_FWD_PREPARE_BETA_SIGMOID),                                 \
+    CHUNK_KDA_FWD_PREPARE_SEL_GATE(                                          \
+        GATE_TYPE, BETA_TYPE, NORM_VALUE,                                    \
+        CHUNK_KDA_FWD_PREPARE_BETA_TWO_SIGMOID)
+
+#define CHUNK_KDA_FWD_PREPARE_SEL_NORM(GATE_TYPE, BETA_TYPE)                \
+    CHUNK_KDA_FWD_PREPARE_SEL_BETA_MODE(                                     \
+        GATE_TYPE, BETA_TYPE, CHUNK_KDA_FWD_PREPARE_NORM_IDENTITY),         \
+    CHUNK_KDA_FWD_PREPARE_SEL_BETA_MODE(                                     \
+        GATE_TYPE, BETA_TYPE, CHUNK_KDA_FWD_PREPARE_NORM_L2)
+
+#define CHUNK_KDA_FWD_PREPARE_SEL_BETA_TYPE(GATE_TYPE)                      \
+    CHUNK_KDA_FWD_PREPARE_SEL_NORM(                                          \
+        GATE_TYPE, CHUNK_KDA_FWD_PREPARE_TPL_BF16),                          \
+    CHUNK_KDA_FWD_PREPARE_SEL_NORM(                                          \
+        GATE_TYPE, CHUNK_KDA_FWD_PREPARE_TPL_FP32)
+
+ASCENDC_TPL_SEL(
+    CHUNK_KDA_FWD_PREPARE_SEL_BETA_TYPE(CHUNK_KDA_FWD_PREPARE_TPL_BF16),
+    CHUNK_KDA_FWD_PREPARE_SEL_BETA_TYPE(CHUNK_KDA_FWD_PREPARE_TPL_FP32));
+
+#undef CHUNK_KDA_FWD_PREPARE_SEL_BETA_TYPE
+#undef CHUNK_KDA_FWD_PREPARE_SEL_NORM
+#undef CHUNK_KDA_FWD_PREPARE_SEL_BETA_MODE
+#undef CHUNK_KDA_FWD_PREPARE_SEL_GATE
+#undef CHUNK_KDA_FWD_PREPARE_SEL_EXP
+#undef CHUNK_KDA_FWD_PREPARE_SEL_ONE
+#endif
 
 } // namespace KdaPrepare
 

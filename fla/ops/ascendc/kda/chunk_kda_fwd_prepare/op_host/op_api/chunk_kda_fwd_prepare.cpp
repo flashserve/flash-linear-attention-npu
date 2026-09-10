@@ -94,6 +94,10 @@ ChunkKdaFwdPrepareOutputs ChunkKdaFwdPrepare(
         return {};
     }
 
+    const float scaleAttr = static_cast<float>(scale);
+    const float epsilonAttr = static_cast<float>(epsilon);
+    const float lowerBoundAttr = static_cast<float>(lowerBound);
+
     const auto status = ADD_TO_LAUNCHER_LIST_AICORE(
         ChunkKdaFwdPrepare,
         OP_INPUT(q, k, v, g, beta, aLogOptional, dtBiasOptional,
@@ -101,9 +105,9 @@ ChunkKdaFwdPrepareOutputs ChunkKdaFwdPrepare(
         OP_OUTPUT(gkOut, aqkOut, akkOut, wOut, uOut, qgOut, kgOut,
                   qgScaledOut, qHatOut, kHatOut, qRstdOut, kRstdOut,
                   betaEffOut),
-        OP_ATTR(layout, scale, chunkSize, epsilon, useQkL2normInKernel,
+        OP_ATTR(layout, scaleAttr, chunkSize, epsilonAttr, useQkL2normInKernel,
                 useGateInKernel, useBetaSigmoidInKernel, allowNegEigval,
-                safeGate, lowerBound, useExp2));
+                safeGate, lowerBoundAttr, useExp2));
     if (status != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID,
                 "添加 ChunkKdaFwdPrepare AI Core 任务失败。");

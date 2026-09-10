@@ -36,6 +36,12 @@ constexpr static CastTrait kFp32ToBf16RintOne = {
     MaskMergeMode::ZEROING,
     AscendC::RoundMode::CAST_RINT,
 };
+constexpr static CastTrait kFp32ToBf16RintZeroing = {
+    RegLayout::ZERO,
+    SatMode::NO_SAT,
+    MaskMergeMode::ZEROING,
+    AscendC::RoundMode::CAST_RINT,
+};
 
 __simd_callee__ inline void CastFp32ToBf16Rint(
     RegTensor<bfloat16_t> &dst, RegTensor<float> &low,
@@ -51,8 +57,9 @@ __simd_callee__ inline void Load128AsFp32(
     RegTensor<float> &low, RegTensor<float> &high, __ubuf__ T *src)
 {
     if constexpr (std::is_same<T, float>::value) {
-        LoadAlign<float, LoadDist::DIST_NORM>(low, src);
-        LoadAlign<float, LoadDist::DIST_NORM>(high, src + 64);
+        // 连续的 128 个 FP32 元素按偶、奇维拆入两个 64-lane 寄存器，
+        // 与 BF16 的 CastHalf2Float 结果保持同一维度语义。
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(low, high, src);
     } else {
         RegTensor<T> packed;
         LoadIn<T, false>(packed, src);
@@ -76,26 +83,23 @@ __simd_callee__ inline void Store64FromFp32(
     __ubuf__ bfloat16_t *dst, RegTensor<float> &value)
 {
     MaskReg floatMask = CreateMask<float, MaskPattern::ALL>();
-    RegTensor<float> zero;
     RegTensor<bfloat16_t> packed;
-    Duplicate(zero, 0.0F, floatMask);
-    CastFp32ToBf16Rint(packed, value, zero, floatMask);
-    uint32_t active = 64;
-    MaskReg outputMask = UpdateMask<bfloat16_t>(active);
-    StoreAlign(dst, packed, outputMask);
+    Cast<bfloat16_t, float, kFp32ToBf16RintZeroing>(
+        packed, value, floatMask);
+    StoreAlign<bfloat16_t, StoreDist::DIST_PACK_B32>(
+        dst, packed, floatMask);
 }
 
 __simd_callee__ inline void Store32FromFp32(
     __ubuf__ bfloat16_t *dst, RegTensor<float> &value)
 {
-    MaskReg floatMask = CreateMask<float, MaskPattern::ALL>();
-    RegTensor<float> zero;
-    RegTensor<bfloat16_t> packed;
-    Duplicate(zero, 0.0F, floatMask);
-    CastFp32ToBf16Rint(packed, value, zero, floatMask);
     uint32_t active = 32;
-    MaskReg outputMask = UpdateMask<bfloat16_t>(active);
-    StoreAlign(dst, packed, outputMask);
+    MaskReg floatMask = UpdateMask<float>(active);
+    RegTensor<bfloat16_t> packed;
+    Cast<bfloat16_t, float, kFp32ToBf16RintZeroing>(
+        packed, value, floatMask);
+    StoreAlign<bfloat16_t, StoreDist::DIST_PACK_B32>(
+        dst, packed, floatMask);
 }
 
 template <typename T>
@@ -159,8 +163,8 @@ __simd_vf__ inline void StageV0Vf(
     // dt_bias 和 A_log 都是 head 常量，在行循环前只判断和读取一次。
     if constexpr (CompilePolicy::gateMode != GateMode::PrecomputedStep) {
         if (hasDtBias) {
-            LoadAlign(biasLow, dtBias);
-            LoadAlign(biasHigh, dtBias + 64);
+            LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
+                biasLow, biasHigh, dtBias);
         } else {
             Duplicate(biasLow, 0.0F, mask);
             Duplicate(biasHigh, 0.0F, mask);
@@ -287,8 +291,8 @@ __simd_vf__ inline void StageV0Vf(
         }
         Add(carryLow, carryLow, gateLow, mask);
         Add(carryHigh, carryHigh, gateHigh, mask);
-        StoreAlign(g + row * Shape::kHeadDim, carryLow, mask);
-        StoreAlign(g + row * Shape::kHeadDim + 64, carryHigh, mask);
+        StoreAlign<float, StoreDist::DIST_INTLV_B32>(
+            g + row * Shape::kHeadDim, carryLow, carryHigh, mask);
     }
 
     // 尾行不参与任何数学计算，统一清零其本地占位。
@@ -297,8 +301,8 @@ __simd_vf__ inline void StageV0Vf(
         Duplicate(zero, 0.0F, mask);
         Store128FromFp32(q + row * Shape::kHeadDim, zero, zero);
         Store128FromFp32(k + row * Shape::kHeadDim, zero, zero);
-        StoreAlign(g + row * Shape::kHeadDim, zero, mask);
-        StoreAlign(g + row * Shape::kHeadDim + 64, zero, mask);
+        StoreAlign<float, StoreDist::DIST_INTLV_B32>(
+            g + row * Shape::kHeadDim, zero, zero, mask);
         DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
             qRstd + row, zero, scalarMask);
         DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
@@ -326,38 +330,38 @@ __simd_vf__ inline void StageV0Vf(
     if (validRows > 0) {
         const uint16_t end = validRows < 16 ? validRows : 16;
         const uint16_t refRow = end / 2;
-        LoadAlign(refLow, g + refRow * Shape::kHeadDim);
-        LoadAlign(refHigh, g + refRow * Shape::kHeadDim + 64);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
+            refLow, refHigh, g + refRow * Shape::kHeadDim);
         StoreAlign(gRef, refLow, mask);
         StoreAlign(gRef + 64, refHigh, mask);
     }
     if (validRows > 16) {
         const uint16_t end = validRows < 32 ? validRows : 32;
         const uint16_t refRow = (16 + end) / 2;
-        LoadAlign(refLow, g + refRow * Shape::kHeadDim);
-        LoadAlign(refHigh, g + refRow * Shape::kHeadDim + 64);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
+            refLow, refHigh, g + refRow * Shape::kHeadDim);
         StoreAlign(gRef + Shape::kHeadDim, refLow, mask);
         StoreAlign(gRef + Shape::kHeadDim + 64, refHigh, mask);
     }
     if (validRows > 32) {
         const uint16_t end = validRows < 48 ? validRows : 48;
         const uint16_t refRow = (32 + end) / 2;
-        LoadAlign(refLow, g + refRow * Shape::kHeadDim);
-        LoadAlign(refHigh, g + refRow * Shape::kHeadDim + 64);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
+            refLow, refHigh, g + refRow * Shape::kHeadDim);
         StoreAlign(gRef + 2 * Shape::kHeadDim, refLow, mask);
         StoreAlign(gRef + 2 * Shape::kHeadDim + 64, refHigh, mask);
     }
     if (validRows > 48) {
         const uint16_t refRow = (48 + validRows) / 2;
-        LoadAlign(refLow, g + refRow * Shape::kHeadDim);
-        LoadAlign(refHigh, g + refRow * Shape::kHeadDim + 64);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
+            refLow, refHigh, g + refRow * Shape::kHeadDim);
         StoreAlign(gRef + 3 * Shape::kHeadDim, refLow, mask);
         StoreAlign(gRef + 3 * Shape::kHeadDim + 64, refHigh, mask);
     }
     if (validRows > 0) {
         const uint16_t lastRow = validRows - 1;
-        LoadAlign(refLow, g + lastRow * Shape::kHeadDim);
-        LoadAlign(refHigh, g + lastRow * Shape::kHeadDim + 64);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
+            refLow, refHigh, g + lastRow * Shape::kHeadDim);
         StoreAlign(gLast, refLow, mask);
         StoreAlign(gLast + 64, refHigh, mask);
     }
@@ -414,8 +418,8 @@ __simd_callee__ inline void ComputeStageV1KMinusBand(
         RegTensor<float> kHigh;
         RegTensor<float> outLow;
         RegTensor<float> outHigh;
-        LoadAlign(gateLow, g + row * Shape::kHeadDim);
-        LoadAlign(gateHigh, g + row * Shape::kHeadDim + 64);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
+            gateLow, gateHigh, g + row * Shape::kHeadDim);
         LoadAlign(refLow, gRef + BAND * Shape::kHeadDim);
         LoadAlign(refHigh, gRef + BAND * Shape::kHeadDim + 64);
         Sub(refLow, refLow, gateLow, mask);
@@ -470,8 +474,8 @@ __simd_callee__ inline void ComputeStageV1PlusBand(
         RegTensor<float> expHigh;
         RegTensor<float> refLow;
         RegTensor<float> refHigh;
-        LoadAlign(expLow, g + row * Shape::kHeadDim);
-        LoadAlign(expHigh, g + row * Shape::kHeadDim + 64);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
+            expLow, expHigh, g + row * Shape::kHeadDim);
         LoadAlign(refLow, gRef + BAND * Shape::kHeadDim);
         LoadAlign(refHigh, gRef + BAND * Shape::kHeadDim + 64);
         Sub(expLow, expLow, refLow, mask);
@@ -632,11 +636,26 @@ __simd_vf__ inline void StageV3Vf(
     }
     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
 
-    // X0=(I+L00)^-1。VEC_STORE->VEC_LOAD 屏障是同一 VF 内逐行
-    // 前代所必需的，不是额外 VF。
+    // X0=(I+L00)^-1，X1=(I+L11)^-1。第 0 行先在递推循环外就绪；
+    // 递推从 row=1 开始，避免将带环间 RAW 依赖的外层循环编成
+    // Hardware Loop。每行的 VEC_STORE->VEC_LOAD 屏障保证下一行
+    // 读到已完成的前代，全部计算仍在同一次 VF 内。
     uint32_t rowCount = 32;
     MaskReg rowMask = UpdateMask<float>(rowCount);
-    for (uint16_t row = 0; row < 32; ++row) {
+    RegTensor<float> firstRow;
+    RegTensor<float> one;
+    RegTensor<int32_t> firstRowIndex;
+    MaskReg firstColumn;
+    Duplicate(one, 1.0F, rowMask);
+    Arange<int32_t, IndexOrder::INCREASE_ORDER>(firstRowIndex, 0);
+    CompareScalar<int32_t, AscendC::CMPMODE::EQ>(
+        firstColumn, firstRowIndex, 0, rowMask);
+    Select(firstRow, one, xZero, firstColumn);
+    StoreAlign(x0, firstRow, rowMask);
+    StoreAlign(x1, firstRow, rowMask);
+    LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+
+    for (uint16_t row = 1; row < 32; ++row) {
         RegTensor<float> result;
         RegTensor<float> zero;
         RegTensor<float> one;
@@ -662,9 +681,9 @@ __simd_vf__ inline void StageV3Vf(
         LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
     }
 
-    // X1=(I+L11)^-1，B=L10。两个叶子显式分开，避免在循环中
+    // B=L10。两个叶子显式分开，避免在循环中
     // 通过运行时条件选择当前叶子和 UB 地址。
-    for (uint16_t row = 0; row < 32; ++row) {
+    for (uint16_t row = 1; row < 32; ++row) {
         RegTensor<float> result;
         RegTensor<float> zero;
         RegTensor<float> one;
@@ -737,8 +756,8 @@ __simd_vf__ inline void StageV6Vf(
         RegTensor<float> lastLow;
         RegTensor<float> lastHigh;
         RegTensor<float> beta;
-        LoadAlign(gateLow, g + row * 128);
-        LoadAlign(gateHigh, g + row * 128 + 64);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
+            gateLow, gateHigh, g + row * 128);
         LoadAlign(lastLow, gLast);
         LoadAlign(lastHigh, gLast + 64);
         LoadAlign<float, LoadDist::DIST_BRC_B32>(beta, betaEff + row);

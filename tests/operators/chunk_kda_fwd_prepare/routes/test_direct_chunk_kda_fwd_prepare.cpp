@@ -4,8 +4,8 @@
  * the terms and conditions of the BSD 3-Clause License (the "License").
  */
 
-// 该文件由 Ascend C 直调测试目标编译。tiling、blockDim 和 workspace 由
-// tests/op_cases/chunk_kda_fwd_prepare.json 中的 route case 推导。
+// 该文件只锁定 Ascend C 直调源码合同，尚未接入独立的编译和设备执行目标。
+// 两个模板实例与 tests/op_cases/chunk_kda_fwd_prepare.json 中声明的代表 case 对应。
 #include "acl/acl.h"
 #include "kernel_operator.h"
 

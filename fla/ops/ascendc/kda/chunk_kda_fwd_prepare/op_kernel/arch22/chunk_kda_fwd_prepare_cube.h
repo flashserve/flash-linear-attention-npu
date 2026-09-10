@@ -106,8 +106,8 @@ public:
                 for (uint32_t pair = 0; pair < 2; ++pair) {
                     AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
                         kReadyFlagId[pair]);
-                    for (uint32_t peer = 0; peer < 2; ++peer) {
-                        const uint32_t localHead = pair * 2 + peer;
+                    for (uint32_t headInPair = 0; headInPair < 2; ++headInPair) {
+                        const uint32_t localHead = pair * 2 + headInPair;
                         if (localHead < activeHeads) {
                             StageC2(chunk, localHead);
                         }
@@ -120,8 +120,8 @@ public:
                 for (uint32_t pair = 0; pair < 2; ++pair) {
                     AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
                         kReadyFlagId[pair]);
-                    for (uint32_t peer = 0; peer < 2; ++peer) {
-                        const uint32_t localHead = pair * 2 + peer;
+                    for (uint32_t headInPair = 0; headInPair < 2; ++headInPair) {
+                        const uint32_t localHead = pair * 2 + headInPair;
                         if (localHead < activeHeads) {
                             StageC4(chunk, localHead);
                         }
@@ -232,15 +232,15 @@ private:
                         s * kBf16FractalElements],
                 loadQ);
 
-            // Kminus 在 L1 中是 [n,128] zN。其分形顺序与目标
-            // [128,n] nZ 一致，只需逐个 16x16 分形做内部转置。
+            // Kminus 的 ND [n,128] 经 Nd2Nz 后，分形顺序已经与
+            // L0B 中数学上的 [128,n] 一致；不能再转置 16x16 分形。
             AscendC::LoadData2DParams loadKMinus{};
             loadKMinus.startIndex = 0;
             loadKMinus.repeatTimes =
                 (Shape::kHeadDim / 16) * (n / 16);
             loadKMinus.srcStride = 1;
             loadKMinus.dstGap = 0;
-            loadKMinus.ifTranspose = true;
+            loadKMinus.ifTranspose = false;
             loadKMinus.sid = 0;
             loadKMinus.addrMode = 0;
             AscendC::LoadData(l0B,
@@ -321,7 +321,7 @@ private:
                        .template ReinterpretCast<float>();
         AscendC::GlobalTensor<float> tRelay;
         tRelay.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
-            args_.workspace + slot + Workspace::kPayload + Workspace::kTArch22));
+            args_.workspace + slot + Workspace::kPayload + Workspace::kTRelay));
         AscendC::Nd2NzParams copy{};
         copy.ndNum = 1;
         copy.nValue = 32;
@@ -361,19 +361,28 @@ private:
                 bL1[rowFractal * kFp32FractalElements], loadA);
         }
 
-        // c220 的 FP32 zN->L0B nZ 使用 Catlass 已验证的 fmatrix
-        // 右矩阵路径；LoadData2DParamsV2 在该架构明确不支持。
-        constexpr uint8_t kNoPadding[4] = {0, 0, 0, 0};
-        AscendC::SetFmatrix(1, 32, kNoPadding,
-                           AscendC::FmatrixMode::FMATRIX_RIGHT);
-        static constexpr AscendC::IsResetLoad3dConfig kKeepFmatrix = {
-            false, false};
+        // c220 的 FP32 L1 zN 到 L0B Zn 使用 3Dv2。参数完整描述
+        // [32,32] 矩阵，默认 LoadData 同时设置 FMatrix 和 padding。
         AscendC::LoadData3DParamsV2<float> loadB{};
+        loadB.l1H = 1;
+        loadB.l1W = 32;
+        loadB.channelSize = 32;
         loadB.kExtension = 32;
         loadB.mExtension = 32;
-        loadB.channelSize = 32;
-        loadB.fMatrixCtrl = true;
-        AscendC::LoadData<float, kKeepFmatrix>(l0B, x0L1, loadB);
+        loadB.kStartPt = 0;
+        loadB.mStartPt = 0;
+        loadB.strideW = 1;
+        loadB.strideH = 1;
+        loadB.filterW = 1;
+        loadB.filterH = 1;
+        loadB.dilationFilterW = 1;
+        loadB.dilationFilterH = 1;
+        loadB.enTranspose = true;
+        loadB.enSmallK = false;
+        loadB.filterSizeW = false;
+        loadB.filterSizeH = false;
+        loadB.fMatrixCtrl = false;
+        AscendC::LoadData(l0B, x0L1, loadB);
         AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(fixToM_);
@@ -392,7 +401,9 @@ private:
 
         auto fix = AscendC::FixpipeParamsV220(32, 32, 32, 32, false);
         fix.quantPre = QuantMode_t::NoQuant;
-        // C220 不支持 FP32 L0C 直写 L1：先按 NZ 写 GM，再原样搬回 L1。
+        fix.isChannelSplit = true;
+        // C220 不支持 FP32 L0C 直写 L1：先按标准 FP32 16x8 NZ 分形写 GM，
+        // 再原样搬回 L1 供 C5 消费。
         AscendC::Fixpipe<float, float, kFixpipeNz>(
             tRelay, l0C, fix);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(fixToM_);
@@ -439,17 +450,26 @@ private:
                 negX1L1[rowFractal * kFp32FractalElements], loadA);
         }
 
-        constexpr uint8_t kNoPadding[4] = {0, 0, 0, 0};
-        AscendC::SetFmatrix(1, 32, kNoPadding,
-                           AscendC::FmatrixMode::FMATRIX_RIGHT);
-        static constexpr AscendC::IsResetLoad3dConfig kKeepFmatrix = {
-            false, false};
         AscendC::LoadData3DParamsV2<float> loadB{};
+        loadB.l1H = 1;
+        loadB.l1W = 32;
+        loadB.channelSize = 32;
         loadB.kExtension = 32;
         loadB.mExtension = 32;
-        loadB.channelSize = 32;
-        loadB.fMatrixCtrl = true;
-        AscendC::LoadData<float, kKeepFmatrix>(l0B, tL1, loadB);
+        loadB.kStartPt = 0;
+        loadB.mStartPt = 0;
+        loadB.strideW = 1;
+        loadB.strideH = 1;
+        loadB.filterW = 1;
+        loadB.filterH = 1;
+        loadB.dilationFilterW = 1;
+        loadB.dilationFilterH = 1;
+        loadB.enTranspose = true;
+        loadB.enSmallK = false;
+        loadB.filterSizeW = false;
+        loadB.filterSizeH = false;
+        loadB.fMatrixCtrl = false;
+        AscendC::LoadData(l0B, tL1, loadB);
         AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(fixToM_);
@@ -509,8 +529,8 @@ private:
         rhsCopy.dstNzNStride = 1;
         rhsCopy.dstNzC0Stride = m;
         rhsCopy.dstNzMatrixStride = 0;
-        for (uint32_t peer = 0; peer < 2; ++peer) {
-            const uint32_t localHead = pair * 2 + peer;
+        for (uint32_t headInPair = 0; headInPair < 2; ++headInPair) {
+            const uint32_t localHead = pair * 2 + headInPair;
             if (localHead >= activeHeads) {
                 continue;
             }
@@ -541,8 +561,8 @@ private:
             freeFlagId);
 
         // 再逐 head 消费 L1 常驻的 Akk 与两个 RHS，分别计算 W、U。
-        for (uint32_t peer = 0; peer < 2; ++peer) {
-            const uint32_t localHead = pair * 2 + peer;
+        for (uint32_t headInPair = 0; headInPair < 2; ++headInPair) {
+            const uint32_t localHead = pair * 2 + headInPair;
             if (localHead >= activeHeads) {
                 continue;
             }

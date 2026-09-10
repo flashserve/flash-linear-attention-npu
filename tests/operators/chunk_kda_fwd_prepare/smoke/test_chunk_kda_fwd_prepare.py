@@ -1,4 +1,4 @@
-"""按统一 JSON 执行 ChunkKdaFwdPrepare 的稳定入口用例。"""
+"""按统一 JSON 执行 ChunkKdaFwdPrepare 的设备烟测。"""
 
 from __future__ import annotations
 
@@ -20,12 +20,12 @@ from runtime import (  # noqa: E402
 
 
 @pytest.mark.npu
-def test_json_cases_launch_and_match_output_contract():
+def test_json_smoke_cases_launch_and_match_output_contract():
     torch, device = require_npu_test_environment()
     if torch is None:
         pytest.skip("set FLA_NPU_RUN_OPERATOR_TESTS=1 on an NPU test host")
 
-    cases = select_cases(route="ascendc", tag="accuracy")
+    cases = select_cases(route="ascendc", tag="smoke")
     assert cases, "no stable Ascend C case is selected"
     for case in cases:
         outputs = run_stable_aclnn_case(torch, device, case)

@@ -231,14 +231,14 @@ private:
             AscendC::LoadData2DParamsV2 loadKMinus{};
             loadKMinus.mStartPosition = 0;
             loadKMinus.kStartPosition = 0;
-            loadKMinus.mStep = Shape::kHeadDim / 16;
-            loadKMinus.kStep = n / 16;
+            loadKMinus.mStep = n / 16;
+            loadKMinus.kStep = Shape::kHeadDim / 16;
             loadKMinus.srcStride = n / 16;
             loadKMinus.dstStride = n / 16;
-            loadKMinus.ifTranspose = true;
+            loadKMinus.ifTranspose = false;
             loadKMinus.sid = 0;
-            // 源 [n,128] zN 与目标 [128,n] nZ 的外层分形次序一致；
-            // src/dst stride 都是 n/16 个 512B 分形。
+            // L1 中的源是 [n,128] NZ。作为 B 矩阵时，非转置加载会按
+            // [n,k] 解释为数学上的 [k,n]，与 Qplus @ Kminus^T 一致。
             AscendC::LoadData(
                 kMinusL0,
                 scoreL1[ScorePayload::kKMinus[s] / sizeof(bfloat16_t)],
@@ -295,6 +295,10 @@ private:
         AscendC::GlobalTensor<float> payload;
         payload.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
             args_.workspace + slot + Workspace::kPayload));
+        AscendC::GlobalTensor<float> tRelay;
+        tRelay.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+            args_.workspace + slot + Workspace::kPayload +
+            Workspace::kTRelay));
         AscendC::GlobalTensor<bfloat16_t> akkSource;
         akkSource.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + slot + Workspace::kPayload + Workspace::kAkk));
@@ -395,13 +399,20 @@ private:
         fix.nSize = 32;
         fix.mSize = 32;
         fix.srcStride = 32;
-        fix.dstStride = 32 * 16;
+        fix.dstStride = 32 * 8;
         fix.quantPre = QuantMode_t::NoQuant;
-        fix.isChannelSplit = false;
-        // NZ->L1 的 dstStride 以目的元素计；32*16 保持 32 行 zN 间距。
-        AscendC::Fixpipe<float, float, kFixpipeNzL1>(tL1, l0C, fix);
+        fix.isChannelSplit = true;
+        // Ascend950 的 FP32 L0C 不能以 channel-split 格式直写 L1。
+        // 先写独立 GM relay，再按相同 NZ 字节布局搬入 C5 的 L1 输入。
+        AscendC::Fixpipe<float, float, kFixpipeNzL1>(tRelay, l0C, fix);
         AscendC::Mutex::Unlock<PIPE_FIX>(l1Mutex);
         AscendC::Mutex::Unlock<PIPE_FIX>(l0cMutex);
+
+        AscendC::Mutex::Lock<PIPE_MTE2>(l1Mutex);
+        AscendC::DataCopy(
+            tL1, tRelay,
+            AscendC::DataCopyParams(1, 32 * 32 / 8, 0, 0));
+        AscendC::Mutex::Unlock<PIPE_MTE2>(l1Mutex);
     }
 
     __aicore__ inline void StageC5(const ChunkRange &chunk,

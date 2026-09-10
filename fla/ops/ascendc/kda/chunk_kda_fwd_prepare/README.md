@@ -51,6 +51,9 @@ BF16 或 FP32，`a_log/dt_bias` 固定为 FP32。
 | `a_log` | `[HV]` | `[HV]` | 仅 kernel 内计算 gate 时必传 |
 | `dt_bias` | `[HV*128]` | `[HV*128]` | 可选，逻辑 shape 为 `[HV,128]` |
 
+`cu_seqlens` 和 `chunk_indices` 是可选 host int array，不是 tensor。前者 shape 为
+`[sequence_count+1]`；后者若提供，扁平长度必须为 `2*total_chunks`。
+
 `B/T/HK/HV` 必须为正数且可由 `uint32_t` 表示；GVA 要求 `0 < HK <= HV` 且
 `HV % HK == 0`。所有输出固定为 head-major：
 

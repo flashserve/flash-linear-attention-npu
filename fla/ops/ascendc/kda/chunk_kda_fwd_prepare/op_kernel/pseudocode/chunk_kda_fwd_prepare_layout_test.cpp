@@ -4,6 +4,10 @@
  * the BSD 3-Clause License (the "License").
  */
 
+#ifndef TORCH_MODE
+#define TORCH_MODE
+#endif
+
 #include "chunk_kda_fwd_prepare_policy.h"
 #include "chunk_kda_fwd_prepare_tiling_key.h"
 
@@ -228,8 +232,8 @@ int main()
     if (Workspace::kPayload + Shape::kScorePayloadBytes !=
             Workspace::kSlotStride ||
         Workspace::kRawScore + 20 * 1024 > Shape::kScorePayloadBytes ||
-        Workspace::kB + Shape::kQuadrantFp32Bytes > Workspace::kTArch22 ||
-        Workspace::kTArch22 + Shape::kQuadrantFp32Bytes > Workspace::kAkk ||
+        Workspace::kB + Shape::kQuadrantFp32Bytes > Workspace::kTRelay ||
+        Workspace::kTRelay + Shape::kQuadrantFp32Bytes > Workspace::kAkk ||
         Workspace::kAkk + 4 * Shape::kQuadrantBf16Bytes >
             Shape::kScorePayloadBytes ||
         Workspace::kKBetaG + Shape::kBf16MatrixBytes !=

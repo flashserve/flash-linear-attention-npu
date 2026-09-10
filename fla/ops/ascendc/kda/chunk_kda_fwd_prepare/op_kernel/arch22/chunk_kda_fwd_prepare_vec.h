@@ -912,10 +912,35 @@ private:
         AscendC::Duplicate(x1, 0.0F, 1024);
         AscendC::PipeBarrier<PIPE_V>();
         const uint32_t bottomRows = validRows > 32 ? validRows - 32 : 0;
+        // FP32 向量指令要求 UB 首地址按 32 Byte 对齐，不能直接从
+        // x[row, row] 发起长度为 1 的 Duplicate。按对角元素在 32 Byte
+        // block 内的 lane 分组：同一 lane 相邻两个对角元素跨 8 行，
+        // repeat stride 为 8 * 4 + 1 = 33 个 block。
+        constexpr uint32_t kFp32PerBlock = 8;
+        constexpr uint16_t kDiagonalBlockStride = 1;
+        constexpr uint8_t kDiagonalRepeatStride = 33;
+        const uint32_t topDiagonalLanes =
+            topRows < kFp32PerBlock ? topRows : kFp32PerBlock;
+        for (uint32_t lane = 0; lane < topDiagonalLanes; ++lane) {
+            uint64_t diagonalMask[2] = {1ULL << lane, 0};
+            const uint8_t repeat = static_cast<uint8_t>(
+                CeilDiv(topRows - lane, kFp32PerBlock));
+            AscendC::Duplicate(x0[lane * 32], 1.0F, diagonalMask, repeat,
+                               kDiagonalBlockStride, kDiagonalRepeatStride);
+        }
+        const uint32_t bottomDiagonalLanes =
+            bottomRows < kFp32PerBlock ? bottomRows : kFp32PerBlock;
+        for (uint32_t lane = 0; lane < bottomDiagonalLanes; ++lane) {
+            uint64_t diagonalMask[2] = {1ULL << lane, 0};
+            const uint8_t repeat = static_cast<uint8_t>(
+                CeilDiv(bottomRows - lane, kFp32PerBlock));
+            AscendC::Duplicate(x1[lane * 32], 1.0F, diagonalMask, repeat,
+                               kDiagonalBlockStride, kDiagonalRepeatStride);
+        }
+        AscendC::PipeBarrier<PIPE_V>();
         // 单位下三角逆逐行前代：X[i,:]=-sum(k<i,L[i,k]*X[k,:])，X[i,i]=1。
         // raw 已全部消费，其低地址在本段作为一行 FP32 临时区，不发生 UB 搬位。
         for (uint32_t row = 0; row < topRows; ++row) {
-            AscendC::Duplicate(x0[row * 32 + row], 1.0F, 1);
             for (uint32_t kIndex = 0; kIndex < row; ++kIndex) {
                 const float coefficient =
                     -ReadScalar(lkk, row * Shape::kChunkRows + kIndex);
@@ -926,7 +951,6 @@ private:
             }
         }
         for (uint32_t row = 0; row < bottomRows; ++row) {
-            AscendC::Duplicate(x1[row * 32 + row], 1.0F, 1);
             for (uint32_t kIndex = 0; kIndex < row; ++kIndex) {
                 const float coefficient = -ReadScalar(
                     lkk, (row + 32) * Shape::kChunkRows + 32 + kIndex);

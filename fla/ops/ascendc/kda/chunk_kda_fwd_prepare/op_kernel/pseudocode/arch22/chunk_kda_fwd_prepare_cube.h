@@ -97,16 +97,18 @@ public:
             uint32_t headBegin = 0;
             uint32_t headEnd = 0;
             HeadRange(args_.tiling, headPartition, headBegin, headEnd);
-            for (uint32_t groupBegin = headBegin; groupBegin < headEnd;
-                 groupBegin += Shape::kHeadsPerGroup) {
+            for (uint32_t groupBegin = headBegin; groupBegin < headEnd;) {
+                uint32_t activeHeads = headEnd - groupBegin;
+                if (activeHeads > Shape::kHeadsPerGroup) {
+                    activeHeads = Shape::kHeadsPerGroup;
+                }
                 // C2：一次 pair wait 汇聚两个 AIV，再消费该 pair 的两个 local head。
                 for (uint32_t pair = 0; pair < 2; ++pair) {
                     AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
                         kReadyFlagId[pair]);
-                    for (uint32_t peer = 0; peer < 2; ++peer) {
-                        const uint32_t localHead = pair * 2 + peer;
-                        const uint32_t valueHead = groupBegin + localHead;
-                        if (valueHead < headEnd) {
+                    for (uint32_t headInPair = 0; headInPair < 2; ++headInPair) {
+                        const uint32_t localHead = pair * 2 + headInPair;
+                        if (localHead < activeHeads) {
                             StageC2(chunk, localHead);
                         }
                     }
@@ -118,10 +120,9 @@ public:
                 for (uint32_t pair = 0; pair < 2; ++pair) {
                     AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
                         kReadyFlagId[pair]);
-                    for (uint32_t peer = 0; peer < 2; ++peer) {
-                        const uint32_t localHead = pair * 2 + peer;
-                        const uint32_t valueHead = groupBegin + localHead;
-                        if (valueHead < headEnd) {
+                    for (uint32_t headInPair = 0; headInPair < 2; ++headInPair) {
+                        const uint32_t localHead = pair * 2 + headInPair;
+                        if (localHead < activeHeads) {
                             StageC4(chunk, localHead);
                         }
                     }
@@ -132,8 +133,8 @@ public:
                 // C5：只在下半块存在时计算 Akk[32:M,0:32]=negX1@T。
                 for (uint32_t localHead = 0; localHead < Shape::kHeadsPerGroup;
                      ++localHead) {
-                    const uint32_t valueHead = groupBegin + localHead;
-                    if (valueHead < headEnd) {
+                    if (localHead < activeHeads) {
+                        const uint32_t valueHead = groupBegin + localHead;
                         StageC5(chunk, valueHead, localHead);
                     }
                 }
@@ -143,9 +144,10 @@ public:
                 for (uint32_t pair = 0; pair < 2; ++pair) {
                     AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(
                         kReadyFlagId[pair]);
-                    StageC7(chunk, groupBegin, headEnd, pair,
+                    StageC7(chunk, groupBegin, activeHeads, pair,
                             kFreeFlagId[pair]);
                 }
+                groupBegin += activeHeads;
             }
         }
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
@@ -206,33 +208,41 @@ private:
             const uint32_t n = Shape::kPrefixRows[s];
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
 
-            AscendC::LoadData2DParamsV2 loadQ{};
-            // TODO：用目标 c220 头文件确认 mStartPosition/srcStride/dstStride 的分形单位。
-            loadQ.mStartPosition = s;
-            loadQ.kStartPosition = 0;
-            loadQ.mStep = 1;
-            loadQ.kStep = Shape::kHeadDim / 16;
+            // L1 zN 的同一 16 行在 8 个 K 分形间隔 4 个分形；
+            // L0A zZ 中同一行块的 K 分形连续排列。
+            constexpr uint32_t kBf16FractalElements = 16 * 16;
+            AscendC::LoadData2DParams loadQ{};
+            loadQ.startIndex = 0;
+            loadQ.repeatTimes = Shape::kHeadDim / 16;
             loadQ.srcStride = Shape::kChunkRows / 16;
-            loadQ.dstStride = 2;
+            loadQ.dstGap = 0;
             loadQ.ifTranspose = false;
             loadQ.sid = 0;
-            AscendC::LoadData(l0A, scoreL1[ScorePayload::kQPlus / sizeof(bfloat16_t)], loadQ);
+            loadQ.addrMode = 0;
+            AscendC::LoadData(
+                l0A,
+                scoreL1[ScorePayload::kQPlus / sizeof(bfloat16_t) +
+                        s * kBf16FractalElements],
+                loadQ);
 
-            AscendC::LoadData2DParamsV2 loadK = loadQ;
-            // TODO：确认 stacked 下半 16 行对应的 L0A 分形偏移。
-            AscendC::LoadData(l0A[16 * Shape::kHeadDim],
-                              scoreL1[ScorePayload::kKPlus / sizeof(bfloat16_t)], loadK);
+            // c220 的 L0A 是 zZ，Kplus 的 16 行紧跟完整的 Qplus 行块。
+            AscendC::LoadData(
+                l0A[(Shape::kHeadDim / 16) * kBf16FractalElements],
+                scoreL1[ScorePayload::kKPlus / sizeof(bfloat16_t) +
+                        s * kBf16FractalElements],
+                loadQ);
 
-            AscendC::LoadData2DParamsV2 loadKMinus{};
-            // TODO：确认转置装入 L0B 时 mStep/kStep 和两个 stride 的单位。
-            loadKMinus.mStartPosition = 0;
-            loadKMinus.kStartPosition = 0;
-            loadKMinus.mStep = Shape::kHeadDim / 16;
-            loadKMinus.kStep = n / 16;
-            loadKMinus.srcStride = n / 16;
-            loadKMinus.dstStride = Shape::kHeadDim / 16;
-            loadKMinus.ifTranspose = true;
+            // Kminus 的 ND [n,128] 经 Nd2Nz 后，分形顺序已经与
+            // L0B 中数学上的 [128,n] 一致；不能再转置 16x16 分形。
+            AscendC::LoadData2DParams loadKMinus{};
+            loadKMinus.startIndex = 0;
+            loadKMinus.repeatTimes =
+                (Shape::kHeadDim / 16) * (n / 16);
+            loadKMinus.srcStride = 1;
+            loadKMinus.dstGap = 0;
+            loadKMinus.ifTranspose = false;
             loadKMinus.sid = 0;
+            loadKMinus.addrMode = 0;
             AscendC::LoadData(l0B,
                 scoreL1[ScorePayload::kKMinus[s] / sizeof(bfloat16_t)], loadKMinus);
             AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
@@ -311,7 +321,7 @@ private:
                        .template ReinterpretCast<float>();
         AscendC::GlobalTensor<float> tRelay;
         tRelay.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
-            args_.workspace + slot + Workspace::kPayload + Workspace::kTArch22));
+            args_.workspace + slot + Workspace::kPayload + Workspace::kTRelay));
         AscendC::Nd2NzParams copy{};
         copy.ndNum = 1;
         copy.nValue = 32;
@@ -332,19 +342,47 @@ private:
         auto l0B = l0BBuf_.Get<float>();
         auto l0C = l0CBuf_.Get<float>();
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
-        AscendC::LoadData2DParamsV2 load{};
-        // TODO：确认 c220 FP32 NZ 到 L0A/L0B 的分形参数与步长单位。
-        load.mStartPosition = 0;
-        load.kStartPosition = 0;
-        load.mStep = 2;
-        load.kStep = 4;
-        load.srcStride = 2;
-        load.dstStride = 2;
-        load.ifTranspose = false;
-        load.sid = 0;
-        AscendC::LoadData(l0A, bL1, load);
-        load.ifTranspose = true;
-        AscendC::LoadData(l0B, x0L1, load);
+        constexpr uint32_t kFp32FractalElements = 16 * 8;
+        constexpr uint32_t kFp32RowFractals = 2;
+        constexpr uint32_t kFp32ColumnFractals = 4;
+        AscendC::LoadData2DParams loadA{};
+        loadA.startIndex = 0;
+        loadA.repeatTimes = kFp32ColumnFractals;
+        loadA.srcStride = kFp32RowFractals;
+        loadA.dstGap = 0;
+        loadA.ifTranspose = false;
+        loadA.sid = 0;
+        loadA.addrMode = 0;
+        for (uint32_t rowFractal = 0; rowFractal < kFp32RowFractals;
+             ++rowFractal) {
+            AscendC::LoadData(
+                l0A[rowFractal * kFp32ColumnFractals *
+                     kFp32FractalElements],
+                bL1[rowFractal * kFp32FractalElements], loadA);
+        }
+
+        // c220 的 FP32 L1 zN 到 L0B Zn 使用 3Dv2。参数完整描述
+        // [32,32] 矩阵，默认 LoadData 同时设置 FMatrix 和 padding。
+        AscendC::LoadData3DParamsV2<float> loadB{};
+        loadB.l1H = 1;
+        loadB.l1W = 32;
+        loadB.channelSize = 32;
+        loadB.kExtension = 32;
+        loadB.mExtension = 32;
+        loadB.kStartPt = 0;
+        loadB.mStartPt = 0;
+        loadB.strideW = 1;
+        loadB.strideH = 1;
+        loadB.filterW = 1;
+        loadB.filterH = 1;
+        loadB.dilationFilterW = 1;
+        loadB.dilationFilterH = 1;
+        loadB.enTranspose = true;
+        loadB.enSmallK = false;
+        loadB.filterSizeW = false;
+        loadB.filterSizeH = false;
+        loadB.fMatrixCtrl = false;
+        AscendC::LoadData(l0B, x0L1, loadB);
         AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(fixToM_);
@@ -363,7 +401,9 @@ private:
 
         auto fix = AscendC::FixpipeParamsV220(32, 32, 32, 32, false);
         fix.quantPre = QuantMode_t::NoQuant;
-        // C220 不支持 FP32 L0C 直写 L1：先按 NZ 写 GM，再原样搬回 L1。
+        fix.isChannelSplit = true;
+        // C220 不支持 FP32 L0C 直写 L1：先按标准 FP32 16x8 NZ 分形写 GM，
+        // 再原样搬回 L1 供 C5 消费。
         AscendC::Fixpipe<float, float, kFixpipeNz>(
             tRelay, l0C, fix);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(fixToM_);
@@ -391,19 +431,45 @@ private:
         auto l0B = l0BBuf_.Get<float>();
         auto l0C = l0CBuf_.Get<float>();
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
-        AscendC::LoadData2DParamsV2 load{};
-        // TODO：确认 c220 FP32 NZ 到 L0A/L0B 的分形参数与步长单位。
-        load.mStartPosition = 0;
-        load.kStartPosition = 0;
-        load.mStep = 2;
-        load.kStep = 4;
-        load.srcStride = 2;
-        load.dstStride = 2;
-        load.ifTranspose = false;
-        load.sid = 0;
-        AscendC::LoadData(l0A, negX1L1, load);
-        load.ifTranspose = true;
-        AscendC::LoadData(l0B, tL1, load);
+        constexpr uint32_t kFp32FractalElements = 16 * 8;
+        constexpr uint32_t kFp32RowFractals = 2;
+        constexpr uint32_t kFp32ColumnFractals = 4;
+        AscendC::LoadData2DParams loadA{};
+        loadA.startIndex = 0;
+        loadA.repeatTimes = kFp32ColumnFractals;
+        loadA.srcStride = kFp32RowFractals;
+        loadA.dstGap = 0;
+        loadA.ifTranspose = false;
+        loadA.sid = 0;
+        loadA.addrMode = 0;
+        for (uint32_t rowFractal = 0; rowFractal < kFp32RowFractals;
+             ++rowFractal) {
+            AscendC::LoadData(
+                l0A[rowFractal * kFp32ColumnFractals *
+                     kFp32FractalElements],
+                negX1L1[rowFractal * kFp32FractalElements], loadA);
+        }
+
+        AscendC::LoadData3DParamsV2<float> loadB{};
+        loadB.l1H = 1;
+        loadB.l1W = 32;
+        loadB.channelSize = 32;
+        loadB.kExtension = 32;
+        loadB.mExtension = 32;
+        loadB.kStartPt = 0;
+        loadB.mStartPt = 0;
+        loadB.strideW = 1;
+        loadB.strideH = 1;
+        loadB.filterW = 1;
+        loadB.filterH = 1;
+        loadB.dilationFilterW = 1;
+        loadB.dilationFilterH = 1;
+        loadB.enTranspose = true;
+        loadB.enSmallK = false;
+        loadB.filterSizeW = false;
+        loadB.filterSizeH = false;
+        loadB.fMatrixCtrl = false;
+        AscendC::LoadData(l0B, tL1, loadB);
         AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(fixToM_);
@@ -445,7 +511,7 @@ private:
 
     __aicore__ inline void StageC7(const ChunkRange &chunk,
                                    uint32_t groupBegin,
-                                   uint32_t headEnd,
+                                   uint32_t activeHeads,
                                    uint32_t pair,
                                    uint16_t freeFlagId)
     {
@@ -463,12 +529,12 @@ private:
         rhsCopy.dstNzNStride = 1;
         rhsCopy.dstNzC0Stride = m;
         rhsCopy.dstNzMatrixStride = 0;
-        for (uint32_t peer = 0; peer < 2; ++peer) {
-            const uint32_t localHead = pair * 2 + peer;
-            const uint32_t valueHead = groupBegin + localHead;
-            if (valueHead >= headEnd) {
+        for (uint32_t headInPair = 0; headInPair < 2; ++headInPair) {
+            const uint32_t localHead = pair * 2 + headInPair;
+            if (localHead >= activeHeads) {
                 continue;
             }
+            const uint32_t valueHead = groupBegin + localHead;
             const uint64_t slot = WorkspaceSlotBase(
                 workgroup_, localHead, Workspace::kArch22WorkgroupStride);
             auto kBetaL1 =
@@ -495,12 +561,12 @@ private:
             freeFlagId);
 
         // 再逐 head 消费 L1 常驻的 Akk 与两个 RHS，分别计算 W、U。
-        for (uint32_t peer = 0; peer < 2; ++peer) {
-            const uint32_t localHead = pair * 2 + peer;
-            const uint32_t valueHead = groupBegin + localHead;
-            if (valueHead >= headEnd) {
+        for (uint32_t headInPair = 0; headInPair < 2; ++headInPair) {
+            const uint32_t localHead = pair * 2 + headInPair;
+            if (localHead >= activeHeads) {
                 continue;
             }
+            const uint32_t valueHead = groupBegin + localHead;
             if (hasBottom) {
                 AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE1>(
                     fixToMte1_[localHead]);
@@ -522,28 +588,39 @@ private:
             auto l0BForW = l0BBuf_.Get<bfloat16_t>();
             auto l0C = l0CBuf_.Get<float>();
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
-            AscendC::LoadData2DParamsV2 loadA{};
-            // TODO：确认 m=32/64 时 NZ 到 L0A/L0B 的 V2 参数与分形步长。
-            loadA.mStartPosition = 0;
-            loadA.kStartPosition = 0;
-            loadA.mStep = m / 16;
-            loadA.kStep = m / 16;
-            // Akk 在 L1 中始终按 64x64 NZ 常驻，尾 chunk 只缩小 mStep。
+            constexpr uint32_t kBf16FractalElements = 16 * 16;
+            const uint32_t mFractals = m / 16;
+            AscendC::LoadData2DParams loadA{};
+            loadA.startIndex = 0;
+            loadA.repeatTimes = mFractals;
+            // Akk 在 L1 中始终按 64x64 zN 常驻。
             loadA.srcStride = Shape::kChunkRows / 16;
-            loadA.dstStride = m / 16;
+            loadA.dstGap = 0;
             loadA.ifTranspose = false;
             loadA.sid = 0;
-            AscendC::LoadData(l0A, akkL1, loadA);
-            AscendC::LoadData2DParamsV2 loadW{};
-            loadW.mStartPosition = 0;
-            loadW.kStartPosition = 0;
-            loadW.mStep = m / 16;
-            loadW.kStep = Shape::kHeadDim / 16;
-            loadW.srcStride = m / 16;
-            loadW.dstStride = m / 16;
+            loadA.addrMode = 0;
+            for (uint32_t rowFractal = 0; rowFractal < mFractals;
+                 ++rowFractal) {
+                AscendC::LoadData(
+                    l0A[rowFractal * mFractals * kBf16FractalElements],
+                    akkL1[rowFractal * kBf16FractalElements], loadA);
+            }
+
+            AscendC::LoadData2DParams loadW{};
+            loadW.startIndex = 0;
+            loadW.repeatTimes = Shape::kHeadDim / 16;
+            loadW.srcStride = mFractals;
+            loadW.dstGap = 0;
             loadW.ifTranspose = true;
             loadW.sid = 0;
-            AscendC::LoadData(l0BForW, kBetaL1, loadW);
+            loadW.addrMode = 0;
+            for (uint32_t rowFractal = 0; rowFractal < mFractals;
+                 ++rowFractal) {
+                AscendC::LoadData(
+                    l0BForW[rowFractal * (Shape::kHeadDim / 16) *
+                            kBf16FractalElements],
+                    kBetaL1[rowFractal * kBf16FractalElements], loadW);
+            }
             AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
             AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(fixToM_);
@@ -569,17 +646,16 @@ private:
             // U = Akk @ V_beta；复用 L0 前等待 W 的 reader 与 Fixpipe 完成。
             auto l0BForU = l0BBuf_.Get<bfloat16_t>();
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
-            AscendC::LoadData(l0A, akkL1, loadA);
-            AscendC::LoadData2DParamsV2 loadU{};
-            loadU.mStartPosition = 0;
-            loadU.kStartPosition = 0;
-            loadU.mStep = m / 16;
-            loadU.kStep = Shape::kHeadDim / 16;
-            loadU.srcStride = m / 16;
-            loadU.dstStride = m / 16;
-            loadU.ifTranspose = true;
-            loadU.sid = 0;
-            AscendC::LoadData(l0BForU, vBetaL1, loadU);
+            for (uint32_t rowFractal = 0; rowFractal < mFractals;
+                 ++rowFractal) {
+                AscendC::LoadData(
+                    l0A[rowFractal * mFractals * kBf16FractalElements],
+                    akkL1[rowFractal * kBf16FractalElements], loadA);
+                AscendC::LoadData(
+                    l0BForU[rowFractal * (Shape::kHeadDim / 16) *
+                            kBf16FractalElements],
+                    vBetaL1[rowFractal * kBf16FractalElements], loadW);
+            }
             AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
             AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(fixToM_);

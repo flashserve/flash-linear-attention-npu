@@ -58,7 +58,8 @@ C2 得到两个因果 score 矩阵后，V3 施加 mask 和 beta，完成两个 3
 qg = cast_bf16(q_hat * E(G))
 qg_scaled = cast_bf16(fp32(qg) * scale)
 kg = cast_bf16(k_hat * E(Glast-G))
-K_beta_g = cast_bf16(fp32(kg) * beta_eff)
+K_positive = cast_bf16(k_hat * E(G))
+K_beta_g = cast_bf16(fp32(K_positive) * beta_eff)
 V_beta = cast_bf16(fp32(v) * beta_eff)
 ```
 
@@ -101,6 +102,11 @@ Q/K head 的完整 GVA value-head 组。
 每个 AIC workgroup 一轮最多处理 4 个 value head。A5 的 AIV0 处理 local head 0/1，AIV1
 处理 2/3；A2/A3 的两个 AIV 按 pair wave 处理 0/2 和 1/3。不同 value head 即使映射到同一
 Q/K head，也只允许 GVA 组首 owner 写 `q_hat/k_hat/q_rstd/k_rstd`，避免 GM 重叠写。
+
+当前实现仍按 value-head slot 搬运和归一化 Q/K。多个 value head 映射到同一 Q/K head 时，
+会从 GM 重读对应 Q/K；这样无需引入跨 AIV 的 UB 共享、额外 VF 调用或 UB 搬位，同时保持
+静态双缓冲和既定 Stage 合同。后续若消除该重读，必须同时证明跨 AIV 共享与成对同步不会
+破坏当前生命周期。
 
 ## 6. 静态内存
 

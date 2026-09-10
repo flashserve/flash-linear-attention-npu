@@ -104,11 +104,13 @@ aclnnStatus aclnnChunkKdaFwdPrepare(
 | `beta` | BF16/FP32 | 与 `v` 的 B/HV/T 一致 |
 | `a_log` | FP32 | kernel 内 gate 模式必传，shape `[HV]` |
 | `dt_bias` | FP32 | 可空；shape `[HV*128]` |
+| `cu_seqlens` | host int array | 可空；变长模式为 `[sequence_count+1]`，首元素为 0，末元素为 T，且非递减 |
+| `chunk_indices` | host int array | 可空；仅能与 `cu_seqlens` 同时传入，内容为规范的 sequence-major `(sequence_id, local_chunk_id)` 序列 |
 | `layout` | string | `BNSD`、`BSND`、`NTD` 或 `TND`，区分大小写 |
-| `scale` | float | 有限值 |
+| `scale` | float | 转为 FP32 后为有限值 |
 | `chunk_size` | int | 固定为 64 |
-| `epsilon` | float | 有限且大于 0 |
-| `lower_bound` | float | SafeSigmoid 模式要求 `[-5,0)` |
+| `epsilon` | float | 转为 FP32 后有限且大于 0 |
+| `lower_bound` | float | 转为 FP32 后有限；SafeSigmoid 模式要求 `[-5,0)` |
 
 `B/T/HK/HV` 必须为正数且可由 `uint32_t` 表示；GVA 要求 `0 < HK <= HV` 且
 `HV % HK == 0`。tensor descriptor 必须使用标准、

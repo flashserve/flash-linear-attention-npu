@@ -1,10 +1,11 @@
-"""生成 chunk_kda_fwd_prepare 的冻结 ATK 用例矩阵。"""
+"""从统一用例清单生成 chunk_kda_fwd_prepare 的冻结 ATK 用例。"""
 
 from __future__ import annotations
 
 import argparse
 import json
 from copy import deepcopy
+from itertools import product
 from pathlib import Path
 
 try:
@@ -20,83 +21,79 @@ except ModuleNotFoundError as exc:
 
 
 OP_NAME = "chunk_kda_fwd_prepare"
-SEED_BASE = 20260910
-STANDARD = {"acc": "mixed_tolerance_bm", "perf": "not_key", "mem": 1.1}
-GATE_DTYPES = ("bf16", "fp32")
-BETA_DTYPES = ("bf16", "fp32")
-NORM_VALUES = (False, True)
-BETA_MODES = ("raw", "sigmoid", "two_sigmoid")
-GATE_MODES = ("precomputed", "softplus", "safe")
-EXP_VALUES = (False, True)
+MANIFEST_PATH = (
+    Path(__file__).resolve().parents[2] / "op_cases" / f"{OP_NAME}.json"
+)
+
+
+def _load_generation_config() -> dict:
+    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    if manifest.get("op") != OP_NAME:
+        raise ValueError(
+            f"{MANIFEST_PATH}: op must be {OP_NAME!r}, "
+            f"got {manifest.get('op')!r}"
+        )
+    try:
+        return manifest["atk_generation"]
+    except KeyError as exc:
+        raise ValueError(
+            f"{MANIFEST_PATH}: missing atk_generation"
+        ) from exc
+
+
+GENERATION = _load_generation_config()
+SEED_BASE = int(GENERATION["seed_base"])
+STANDARD = deepcopy(GENERATION["standard"])
+DEFAULT_SPEC = deepcopy(GENERATION["defaults"])
+TEMPLATE_MATRIX = GENERATION["template_matrix"]
 
 
 def _positive(case_key: str, **updates) -> dict:
-    spec = {
-        "case_key": case_key,
-        "tags": "accuracy,regression",
-        "route": "ascendc",
-        "soc": "all",
-        "dtype": "bf16",
-        "B": 1,
-        "HK": 1,
-        "HV": 1,
-        "T": 65,
-        "K": 128,
-        "V": 128,
-        "layout": "BNSD",
-        "chunk_size": 64,
-        "gate_dtype": "bf16",
-        "beta_dtype": "bf16",
-        "scale": 1.0,
-        "epsilon": 1e-6,
-        "use_qk_l2norm_in_kernel": False,
-        "use_gate_in_kernel": False,
-        "use_beta_sigmoid_in_kernel": False,
-        "allow_neg_eigval": False,
-        "safe_gate": False,
-        "lower_bound": -5.0,
-        "use_exp2": False,
-        "dt_bias": False,
-        "cu_seqlens": "",
-        "explicit_chunk_indices": False,
-        "data_scale": 0.08,
-        "gate_scale": 1.0,
-        "beta_scale": 1.0,
-    }
+    spec = {"case_key": case_key, **deepcopy(DEFAULT_SPEC)}
     spec.update(updates)
     return spec
 
 
-def _mode_values(beta_mode: str, gate_mode: str) -> dict:
-    if beta_mode == "raw":
-        use_beta_sigmoid = False
-        allow_neg = False
-    elif beta_mode == "sigmoid":
-        use_beta_sigmoid = True
-        allow_neg = False
-    elif beta_mode == "two_sigmoid":
-        use_beta_sigmoid = True
-        allow_neg = True
-    else:
-        raise ValueError(f"unknown beta mode: {beta_mode}")
+def _named_specs(group: str) -> list[dict]:
+    specs = []
+    for declaration in GENERATION[group]:
+        overrides = deepcopy(declaration.get("overrides", {}))
+        repeat = overrides.pop("cu_seqlens_repeat", None)
+        if repeat is not None:
+            values = [repeat["value"]] * int(repeat["count"])
+            values.extend(repeat.get("tail", ()))
+            overrides["cu_seqlens"] = ",".join(str(value) for value in values)
+        specs.append(
+            _positive(
+                declaration["case_key"],
+                **overrides,
+            )
+        )
+    return specs
 
-    if gate_mode == "precomputed":
-        use_gate = False
-        safe_gate = False
-    elif gate_mode == "softplus":
-        use_gate = True
-        safe_gate = False
-    elif gate_mode == "safe":
-        use_gate = True
-        safe_gate = True
-    else:
-        raise ValueError(f"unknown gate mode: {gate_mode}")
-    return {
-        "use_beta_sigmoid_in_kernel": use_beta_sigmoid,
-        "allow_neg_eigval": allow_neg,
-        "use_gate_in_kernel": use_gate,
-        "safe_gate": safe_gate,
-    }
+
+def _mode_values(beta_mode: str, gate_mode: str) -> dict:
+    try:
+        beta_values = TEMPLATE_MATRIX["beta_mode_values"][beta_mode]
+        gate_values = TEMPLATE_MATRIX["gate_mode_values"][gate_mode]
+    except KeyError as exc:
+        raise ValueError(
+            f"unknown template mode: beta={beta_mode}, gate={gate_mode}"
+        ) from exc
+    return {**deepcopy(beta_values), **deepcopy(gate_values)}
+
+
+def _as_template_spec(spec: dict) -> bool:
+    axes = TEMPLATE_MATRIX["axes"]
+    return (
+        spec["gate_dtype"] in axes["gate_dtype"]
+        and spec["beta_dtype"] in axes["beta_dtype"]
+        and (not spec["allow_neg_eigval"] or spec["use_beta_sigmoid_in_kernel"])
+        and (
+            spec["use_gate_in_kernel"]
+            or (not spec["safe_gate"] and not spec["dt_bias"])
+        )
+    )
 
 
 def _template_signature(spec: dict) -> tuple:
@@ -122,72 +119,57 @@ def _template_signature(spec: dict) -> tuple:
     )
 
 
-def _as_template_spec(spec: dict) -> bool:
-    return (
-        spec["gate_dtype"] in GATE_DTYPES
-        and spec["beta_dtype"] in BETA_DTYPES
-        and (not spec["allow_neg_eigval"] or spec["use_beta_sigmoid_in_kernel"])
-        and (
-            spec["use_gate_in_kernel"]
-            or (not spec["safe_gate"] and not spec["dt_bias"])
-        )
-    )
-
-
-EXPECTED_TEMPLATE_SIGNATURES = frozenset(
-    (
-        gate_dtype,
-        beta_dtype,
-        norm,
-        beta_mode,
-        gate_mode,
-        use_exp2,
-    )
-    for gate_dtype in GATE_DTYPES
-    for beta_dtype in BETA_DTYPES
-    for norm in NORM_VALUES
-    for beta_mode in BETA_MODES
-    for gate_mode in GATE_MODES
-    for use_exp2 in EXP_VALUES
-)
-
-
-def _template_specs(prefix: str, tags: str, **updates) -> list[dict]:
+def _template_specs(suite_name: str) -> list[dict]:
+    axes = TEMPLATE_MATRIX["axes"]
+    suite = TEMPLATE_MATRIX["suites"][suite_name]
+    dt_bias_rule = TEMPLATE_MATRIX["dt_bias_rule"]
     specs = []
-    for gate_dtype in GATE_DTYPES:
-        for beta_dtype in BETA_DTYPES:
-            for norm in NORM_VALUES:
-                for beta_mode in BETA_MODES:
-                    for gate_mode in GATE_MODES:
-                        for use_exp2 in EXP_VALUES:
-                            values = {
-                                "gate_dtype": gate_dtype,
-                                "beta_dtype": beta_dtype,
-                                "use_qk_l2norm_in_kernel": norm,
-                                "use_exp2": use_exp2,
-                                **_mode_values(beta_mode, gate_mode),
-                                **updates,
-                            }
-                            values["dt_bias"] = (
-                                gate_mode != "precomputed"
-                                and len(specs) % 2 == 0
-                            )
-                            key = (
-                                f"{prefix}_{gate_dtype}_{beta_dtype}_"
-                                f"{'l2' if norm else 'identity'}_{beta_mode}_"
-                                f"{gate_mode}_{'exp2' if use_exp2 else 'exp'}"
-                            )
-                            specs.append(_positive(key, tags=tags, **values))
+    combinations = product(
+        axes["gate_dtype"],
+        axes["beta_dtype"],
+        axes["norm"],
+        axes["beta_mode"],
+        axes["gate_mode"],
+        axes["use_exp2"],
+    )
+    for gate_dtype, beta_dtype, norm, beta_mode, gate_mode, use_exp2 in combinations:
+        values = {
+            "gate_dtype": gate_dtype,
+            "beta_dtype": beta_dtype,
+            "use_qk_l2norm_in_kernel": norm,
+            "use_exp2": use_exp2,
+            **_mode_values(beta_mode, gate_mode),
+            **deepcopy(suite.get("overrides", {})),
+        }
+        values["dt_bias"] = (
+            gate_mode in dt_bias_rule["gate_modes"]
+            and bool(use_exp2) == bool(dt_bias_rule["use_exp2"])
+        )
+        key = (
+            f"{suite['prefix']}_{gate_dtype}_{beta_dtype}_"
+            f"{'l2' if norm else 'identity'}_{beta_mode}_{gate_mode}_"
+            f"{'exp2' if use_exp2 else 'exp'}"
+        )
+        specs.append(_positive(key, tags=suite["tags"], **values))
     return specs
 
 
 def _assert_template_matrix(name: str, specs: list[dict]) -> None:
+    axes = TEMPLATE_MATRIX["axes"]
+    expected_signatures = frozenset(
+        product(
+            axes["gate_dtype"],
+            axes["beta_dtype"],
+            axes["norm"],
+            axes["beta_mode"],
+            axes["gate_mode"],
+            axes["use_exp2"],
+        )
+    )
     signatures = [_template_signature(spec) for spec in specs]
-    if len(specs) != 144:
-        raise AssertionError(f"{name}: expected 144 cases, got {len(specs)}")
     if len(signatures) != len(set(signatures)):
         raise AssertionError(f"{name}: duplicate template signatures")
-    if frozenset(signatures) != EXPECTED_TEMPLATE_SIGNATURES:
+    if frozenset(signatures) != expected_signatures:
         raise AssertionError(f"{name}: incomplete template matrix")
 
 
@@ -195,232 +177,6 @@ def _assert_unique(name: str, specs: list[dict]) -> None:
     keys = [spec["case_key"] for spec in specs]
     if len(keys) != len(set(keys)):
         raise AssertionError(f"{name}: duplicate case_key")
-
-
-FUNCTIONAL_SPECS = [
-    _positive("dense_bnsd_min", tags="accuracy,boundary,min", T=1),
-    _positive("dense_bsnd_tail15", layout="BSND", T=15),
-    _positive("dense_ntd_tail16", layout="NTD", T=16),
-    _positive("dense_tnd_tail17", layout="TND", T=17),
-    _positive("dense_bnsd_tail31", T=31),
-    _positive("dense_bnsd_tail32", T=32),
-    _positive("dense_bnsd_tail33", T=33),
-    _positive("dense_bnsd_tail47", T=47),
-    _positive("dense_bnsd_tail48", T=48),
-    _positive("dense_bnsd_tail49", T=49),
-    _positive("dense_bnsd_full_chunk", T=64),
-    _positive("dense_two_chunks_tail1", T=65),
-    _positive(
-        "dense_bsnd_batch2",
-        layout="BSND",
-        B=2,
-        HK=3,
-        HV=15,
-        T=65,
-        gate_dtype="fp32",
-        beta_dtype="fp32",
-    ),
-    _positive(
-        "dense_gva_ratio5_cross_wave",
-        HK=3,
-        HV=15,
-        T=33,
-        use_qk_l2norm_in_kernel=True,
-    ),
-    _positive(
-        "dense_gva_ratio8",
-        HK=2,
-        HV=16,
-        T=17,
-        use_exp2=True,
-    ),
-    _positive(
-        "dense_head_partition_33",
-        HK=11,
-        HV=33,
-        T=1,
-        gate_dtype="fp32",
-        beta_dtype="fp32",
-    ),
-    _positive(
-        "dense_hv160_no_artificial_limit",
-        tags="accuracy,boundary,head_partition,gva",
-        HK=32,
-        HV=160,
-        T=1,
-        gate_dtype="fp32",
-    ),
-    _positive(
-        "varlen_tnd_auto_indices",
-        layout="TND",
-        T=146,
-        cu_seqlens="0,1,17,81,146",
-        HK=1,
-        HV=5,
-    ),
-    _positive(
-        "varlen_ntd_explicit_indices",
-        layout="NTD",
-        T=146,
-        cu_seqlens="0,1,17,81,146",
-        explicit_chunk_indices=True,
-        HK=2,
-        HV=8,
-        use_exp2=True,
-    ),
-    _positive(
-        "varlen_bnsd_rank4",
-        layout="BNSD",
-        T=129,
-        cu_seqlens="0,64,129",
-        explicit_chunk_indices=True,
-    ),
-    _positive(
-        "varlen_more_than_1024_sequences",
-        tags="accuracy,boundary,varlen",
-        layout="TND",
-        T=1,
-        cu_seqlens=",".join(["0"] * 1025 + ["1"]),
-        explicit_chunk_indices=True,
-    ),
-    _positive(
-        "gate_softplus_without_bias",
-        use_gate_in_kernel=True,
-        gate_dtype="fp32",
-        T=65,
-    ),
-    _positive(
-        "gate_softplus_with_bias",
-        use_gate_in_kernel=True,
-        dt_bias=True,
-        gate_dtype="bf16",
-        T=65,
-    ),
-    _positive(
-        "gate_safe_exp2",
-        use_gate_in_kernel=True,
-        safe_gate=True,
-        dt_bias=True,
-        lower_bound=-3.0,
-        use_exp2=True,
-        T=65,
-    ),
-    _positive(
-        "beta_sigmoid",
-        use_beta_sigmoid_in_kernel=True,
-        beta_dtype="fp32",
-    ),
-    _positive(
-        "beta_two_sigmoid",
-        use_beta_sigmoid_in_kernel=True,
-        allow_neg_eigval=True,
-        beta_dtype="bf16",
-    ),
-    _positive(
-        "l2norm_small_epsilon",
-        use_qk_l2norm_in_kernel=True,
-        epsilon=1e-12,
-    ),
-]
-
-ACCURACY_TEMPLATE_SPECS = _template_specs(
-    "matrix",
-    "accuracy,template_key_matrix,full_chunk",
-    T=64,
-)
-MSS_TEMPLATE_SPECS = _template_specs(
-    "mss_matrix",
-    "determinism,sanitizer,template_key_matrix,slot_reuse,tail1",
-    T=65,
-)
-
-PERF_SPECS = [
-    _positive(
-        "model_b2_hk16_hv32_t11264",
-        tags="performance,model_target",
-        B=2,
-        HK=16,
-        HV=32,
-        T=11264,
-        gate_dtype="fp32",
-        beta_dtype="bf16",
-        scale=0.08838834764831845,
-        use_qk_l2norm_in_kernel=True,
-        use_gate_in_kernel=True,
-        use_beta_sigmoid_in_kernel=True,
-        dt_bias=True,
-        use_exp2=True,
-    ),
-    _positive(
-        "model_b1_hk16_hv32_t11264",
-        tags="performance,model_target",
-        HK=16,
-        HV=32,
-        T=11264,
-        gate_dtype="fp32",
-        beta_dtype="bf16",
-        scale=0.08838834764831845,
-        use_qk_l2norm_in_kernel=True,
-        use_gate_in_kernel=True,
-        use_beta_sigmoid_in_kernel=True,
-        dt_bias=True,
-        use_exp2=True,
-    ),
-    _positive(
-        "model_b1_h32_t11264",
-        tags="performance,model_target",
-        HK=32,
-        HV=32,
-        T=11264,
-        gate_dtype="fp32",
-        beta_dtype="fp32",
-        use_exp2=True,
-    ),
-    _positive(
-        "dense_b4_h96_t128",
-        tags="performance,head_partition",
-        B=4,
-        HK=96,
-        HV=96,
-        T=128,
-        gate_dtype="fp32",
-        use_exp2=True,
-    ),
-    _positive(
-        "dense_gva_ratio8_t2048",
-        tags="performance,gva,cross_wave",
-        HK=4,
-        HV=32,
-        T=2048,
-        gate_dtype="fp32",
-        beta_dtype="fp32",
-    ),
-    _positive(
-        "dense_bsnd_tail_t1084",
-        tags="performance,layout,tail",
-        layout="BSND",
-        HK=12,
-        HV=12,
-        T=1084,
-        gate_dtype="fp32",
-        use_gate_in_kernel=True,
-        safe_gate=True,
-        dt_bias=True,
-        use_exp2=True,
-    ),
-    _positive(
-        "varlen_tnd_t65536",
-        tags="performance,varlen",
-        layout="TND",
-        HK=1,
-        HV=4,
-        T=65536,
-        cu_seqlens="0,8192,16384,24576,32768,40960,49152,57344,65536",
-        explicit_chunk_indices=True,
-        gate_dtype="fp32",
-        use_exp2=True,
-    ),
-]
 
 
 def _number_specs(specs: list[dict], seed_offset: int) -> list[dict]:
@@ -433,17 +189,19 @@ def _number_specs(specs: list[dict], seed_offset: int) -> list[dict]:
 
 
 def build_accuracy_specs() -> list[dict]:
-    _assert_template_matrix("accuracy", ACCURACY_TEMPLATE_SPECS)
-    return _number_specs(FUNCTIONAL_SPECS + ACCURACY_TEMPLATE_SPECS, 0)
+    matrix = _template_specs("accuracy")
+    _assert_template_matrix("accuracy", matrix)
+    return _number_specs(_named_specs("functional_cases") + matrix, 0)
 
 
 def build_perf_specs() -> list[dict]:
-    return _number_specs(PERF_SPECS, 1000)
+    return _number_specs(_named_specs("performance_cases"), 1000)
 
 
 def build_mss_specs() -> list[dict]:
-    _assert_template_matrix("mss", MSS_TEMPLATE_SPECS)
-    return _number_specs(MSS_TEMPLATE_SPECS, 2000)
+    matrix = _template_specs("mss")
+    _assert_template_matrix("mss", matrix)
+    return _number_specs(matrix, 2000)
 
 
 def _input(
@@ -572,10 +330,10 @@ if GENERATOR_REGISTRY is not None:
 
 
 def _write(path: Path, specs: list[dict]) -> None:
-    path.write_text(
-        json.dumps(_payloads(specs), ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    with path.open("w", encoding="utf-8", newline="\n") as stream:
+        stream.write(
+            json.dumps(_payloads(specs), ensure_ascii=False, indent=2) + "\n"
+        )
 
 
 def main() -> None:

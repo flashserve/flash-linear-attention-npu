@@ -36,6 +36,12 @@ constexpr static CastTrait kFp32ToBf16RintOne = {
     MaskMergeMode::ZEROING,
     AscendC::RoundMode::CAST_RINT,
 };
+constexpr static CastTrait kFp32ToBf16RintZeroing = {
+    RegLayout::ZERO,
+    SatMode::NO_SAT,
+    MaskMergeMode::ZEROING,
+    AscendC::RoundMode::CAST_RINT,
+};
 
 __simd_callee__ inline void CastFp32ToBf16Rint(
     RegTensor<bfloat16_t> &dst, RegTensor<float> &low,
@@ -51,8 +57,9 @@ __simd_callee__ inline void Load128AsFp32(
     RegTensor<float> &low, RegTensor<float> &high, __ubuf__ T *src)
 {
     if constexpr (std::is_same<T, float>::value) {
-        LoadAlign<float, LoadDist::DIST_NORM>(low, src);
-        LoadAlign<float, LoadDist::DIST_NORM>(high, src + 64);
+        // 连续的 128 个 FP32 元素按偶、奇维拆入两个 64-lane 寄存器，
+        // 与 BF16 的 CastHalf2Float 结果保持同一维度语义。
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(low, high, src);
     } else {
         RegTensor<T> packed;
         LoadIn<T, false>(packed, src);
@@ -76,26 +83,23 @@ __simd_callee__ inline void Store64FromFp32(
     __ubuf__ bfloat16_t *dst, RegTensor<float> &value)
 {
     MaskReg floatMask = CreateMask<float, MaskPattern::ALL>();
-    RegTensor<float> zero;
     RegTensor<bfloat16_t> packed;
-    Duplicate(zero, 0.0F, floatMask);
-    CastFp32ToBf16Rint(packed, value, zero, floatMask);
-    uint32_t active = 64;
-    MaskReg outputMask = UpdateMask<bfloat16_t>(active);
-    StoreAlign(dst, packed, outputMask);
+    Cast<bfloat16_t, float, kFp32ToBf16RintZeroing>(
+        packed, value, floatMask);
+    StoreAlign<bfloat16_t, StoreDist::DIST_PACK_B32>(
+        dst, packed, floatMask);
 }
 
 __simd_callee__ inline void Store32FromFp32(
     __ubuf__ bfloat16_t *dst, RegTensor<float> &value)
 {
-    MaskReg floatMask = CreateMask<float, MaskPattern::ALL>();
-    RegTensor<float> zero;
-    RegTensor<bfloat16_t> packed;
-    Duplicate(zero, 0.0F, floatMask);
-    CastFp32ToBf16Rint(packed, value, zero, floatMask);
     uint32_t active = 32;
-    MaskReg outputMask = UpdateMask<bfloat16_t>(active);
-    StoreAlign(dst, packed, outputMask);
+    MaskReg floatMask = UpdateMask<float>(active);
+    RegTensor<bfloat16_t> packed;
+    Cast<bfloat16_t, float, kFp32ToBf16RintZeroing>(
+        packed, value, floatMask);
+    StoreAlign<bfloat16_t, StoreDist::DIST_PACK_B32>(
+        dst, packed, floatMask);
 }
 
 template <typename T>
@@ -132,9 +136,9 @@ __simd_callee__ inline void ExpPair(
 }
 
 // V0 的循环和指令均属于一次 VF。有效行和尾行分开执行，
-// 保证循环体中只有编译期模式分支。L2 归约的 ReduceSum 广播
-// 形式仍需用目标 CANN 9.1.0 头文件做最小编译确认。
-template <typename GateT, typename BetaT, typename CompilePolicy>
+// 保证循环体中只有编译期模式分支。
+template <typename GateT, typename BetaT, typename CompilePolicy,
+          bool BETA_SEQUENCE_MAJOR>
 __simd_vf__ inline void StageV0Vf(
     __ubuf__ bfloat16_t *q, __ubuf__ bfloat16_t *k,
     __ubuf__ GateT *rawGate,
@@ -159,8 +163,8 @@ __simd_vf__ inline void StageV0Vf(
     // dt_bias 和 A_log 都是 head 常量，在行循环前只判断和读取一次。
     if constexpr (CompilePolicy::gateMode != GateMode::PrecomputedStep) {
         if (hasDtBias) {
-            LoadAlign(biasLow, dtBias);
-            LoadAlign(biasHigh, dtBias + 64);
+            LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
+                biasLow, biasHigh, dtBias);
         } else {
             Duplicate(biasLow, 0.0F, mask);
             Duplicate(biasHigh, 0.0F, mask);
@@ -287,8 +291,8 @@ __simd_vf__ inline void StageV0Vf(
         }
         Add(carryLow, carryLow, gateLow, mask);
         Add(carryHigh, carryHigh, gateHigh, mask);
-        StoreAlign(g + row * Shape::kHeadDim, carryLow, mask);
-        StoreAlign(g + row * Shape::kHeadDim + 64, carryHigh, mask);
+        StoreAlign<float, StoreDist::DIST_INTLV_B32>(
+            g + row * Shape::kHeadDim, carryLow, carryHigh, mask);
     }
 
     // 尾行不参与任何数学计算，统一清零其本地占位。
@@ -297,8 +301,8 @@ __simd_vf__ inline void StageV0Vf(
         Duplicate(zero, 0.0F, mask);
         Store128FromFp32(q + row * Shape::kHeadDim, zero, zero);
         Store128FromFp32(k + row * Shape::kHeadDim, zero, zero);
-        StoreAlign(g + row * Shape::kHeadDim, zero, mask);
-        StoreAlign(g + row * Shape::kHeadDim + 64, zero, mask);
+        StoreAlign<float, StoreDist::DIST_INTLV_B32>(
+            g + row * Shape::kHeadDim, zero, zero, mask);
         DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
             qRstd + row, zero, scalarMask);
         DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
@@ -326,38 +330,38 @@ __simd_vf__ inline void StageV0Vf(
     if (validRows > 0) {
         const uint16_t end = validRows < 16 ? validRows : 16;
         const uint16_t refRow = end / 2;
-        LoadAlign(refLow, g + refRow * Shape::kHeadDim);
-        LoadAlign(refHigh, g + refRow * Shape::kHeadDim + 64);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
+            refLow, refHigh, g + refRow * Shape::kHeadDim);
         StoreAlign(gRef, refLow, mask);
         StoreAlign(gRef + 64, refHigh, mask);
     }
     if (validRows > 16) {
         const uint16_t end = validRows < 32 ? validRows : 32;
         const uint16_t refRow = (16 + end) / 2;
-        LoadAlign(refLow, g + refRow * Shape::kHeadDim);
-        LoadAlign(refHigh, g + refRow * Shape::kHeadDim + 64);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
+            refLow, refHigh, g + refRow * Shape::kHeadDim);
         StoreAlign(gRef + Shape::kHeadDim, refLow, mask);
         StoreAlign(gRef + Shape::kHeadDim + 64, refHigh, mask);
     }
     if (validRows > 32) {
         const uint16_t end = validRows < 48 ? validRows : 48;
         const uint16_t refRow = (32 + end) / 2;
-        LoadAlign(refLow, g + refRow * Shape::kHeadDim);
-        LoadAlign(refHigh, g + refRow * Shape::kHeadDim + 64);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
+            refLow, refHigh, g + refRow * Shape::kHeadDim);
         StoreAlign(gRef + 2 * Shape::kHeadDim, refLow, mask);
         StoreAlign(gRef + 2 * Shape::kHeadDim + 64, refHigh, mask);
     }
     if (validRows > 48) {
         const uint16_t refRow = (48 + validRows) / 2;
-        LoadAlign(refLow, g + refRow * Shape::kHeadDim);
-        LoadAlign(refHigh, g + refRow * Shape::kHeadDim + 64);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
+            refLow, refHigh, g + refRow * Shape::kHeadDim);
         StoreAlign(gRef + 3 * Shape::kHeadDim, refLow, mask);
         StoreAlign(gRef + 3 * Shape::kHeadDim + 64, refHigh, mask);
     }
     if (validRows > 0) {
         const uint16_t lastRow = validRows - 1;
-        LoadAlign(refLow, g + lastRow * Shape::kHeadDim);
-        LoadAlign(refHigh, g + lastRow * Shape::kHeadDim + 64);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
+            refLow, refHigh, g + lastRow * Shape::kHeadDim);
         StoreAlign(gLast, refLow, mask);
         StoreAlign(gLast + 64, refHigh, mask);
     }
@@ -365,7 +369,9 @@ __simd_vf__ inline void StageV0Vf(
     for (uint16_t row = 0; row < validRows; ++row) {
         RegTensor<float> beta;
         RegTensor<float> one;
-        LoadScalarAsFp32(beta, betaRaw + row);
+        constexpr uint16_t kBetaRowElements =
+            BETA_SEQUENCE_MAJOR ? 32 / sizeof(BetaT) : 1;
+        LoadScalarAsFp32(beta, betaRaw + row * kBetaRowElements);
         Duplicate(one, 1.0F, mask);
         // Raw 模式只把 BF16/FP32 输入统一转成 FP32。
         if constexpr (CompilePolicy::betaMode != BetaMode::Raw) {
@@ -397,7 +403,8 @@ __simd_callee__ inline void ComputeStageV1KMinusBand(
     using Domain = ExpDomainTraits<CompilePolicy::useExp2>;
     constexpr uint16_t prefixRows = Shape::kPrefixRows[BAND];
     constexpr uint16_t bandBegin = BAND * Shape::kSubChunkRows;
-    constexpr uint32_t prefixBase[4] = {0, 16 * 128, 48 * 128, 96 * 128};
+    constexpr uint32_t prefixBase =
+        Shape::kSubChunkRows * Shape::kHeadDim * BAND * (BAND + 1) / 2;
     const uint16_t rowsInChunk = validRows < prefixRows
                                      ? validRows
                                      : prefixRows;
@@ -411,8 +418,8 @@ __simd_callee__ inline void ComputeStageV1KMinusBand(
         RegTensor<float> kHigh;
         RegTensor<float> outLow;
         RegTensor<float> outHigh;
-        LoadAlign(gateLow, g + row * Shape::kHeadDim);
-        LoadAlign(gateHigh, g + row * Shape::kHeadDim + 64);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
+            gateLow, gateHigh, g + row * Shape::kHeadDim);
         LoadAlign(refLow, gRef + BAND * Shape::kHeadDim);
         LoadAlign(refHigh, gRef + BAND * Shape::kHeadDim + 64);
         Sub(refLow, refLow, gateLow, mask);
@@ -426,15 +433,70 @@ __simd_callee__ inline void ComputeStageV1KMinusBand(
         Mul(outLow, kLow, refLow, mask);
         Mul(outHigh, kHigh, refHigh, mask);
         Store128FromFp32(
-            kMinus + prefixBase[BAND] + row * Shape::kHeadDim,
+            kMinus + prefixBase + row * Shape::kHeadDim,
             outLow, outHigh);
     }
     for (uint16_t row = computeRows; row < prefixRows; ++row) {
         RegTensor<float> zero;
         Duplicate(zero, 0.0F, mask);
         Store128FromFp32(
-            kMinus + prefixBase[BAND] + row * Shape::kHeadDim,
+            kMinus + prefixBase + row * Shape::kHeadDim,
             zero, zero);
+    }
+}
+
+template <uint16_t BAND, typename CompilePolicy>
+__simd_callee__ inline void ComputeStageV1PlusBand(
+    __ubuf__ bfloat16_t *qHat, __ubuf__ bfloat16_t *kHat,
+    __ubuf__ float *g, __ubuf__ float *gRef,
+    __ubuf__ bfloat16_t *qPlus, __ubuf__ bfloat16_t *kPlus,
+    uint16_t validRows, MaskReg &mask)
+{
+    using Domain = ExpDomainTraits<CompilePolicy::useExp2>;
+    constexpr uint16_t kBandBegin = BAND * Shape::kSubChunkRows;
+    const uint16_t bandEnd = validRows < kBandBegin + Shape::kSubChunkRows
+                                 ? validRows
+                                 : kBandBegin + Shape::kSubChunkRows;
+    const uint16_t computeRows = validRows > kBandBegin
+                                     ? bandEnd - kBandBegin
+                                     : 0;
+    for (uint16_t bandRow = 0; bandRow < computeRows; ++bandRow) {
+        constexpr float lower =
+            Domain::StoredBound(ExpDomain::kV1Bf16LowerBase2);
+        constexpr float upper =
+            Domain::StoredBound(ExpDomain::kV1Bf16UpperBase2);
+        const uint16_t row = kBandBegin + bandRow;
+        RegTensor<float> qLow;
+        RegTensor<float> qHigh;
+        RegTensor<float> kLow;
+        RegTensor<float> kHigh;
+        RegTensor<float> expLow;
+        RegTensor<float> expHigh;
+        RegTensor<float> refLow;
+        RegTensor<float> refHigh;
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
+            expLow, expHigh, g + row * Shape::kHeadDim);
+        LoadAlign(refLow, gRef + BAND * Shape::kHeadDim);
+        LoadAlign(refHigh, gRef + BAND * Shape::kHeadDim + 64);
+        Sub(expLow, expLow, refLow, mask);
+        Sub(expHigh, expHigh, refHigh, mask);
+        ExpPair<CompilePolicy::useExp2>(expLow, expHigh, lower, upper);
+        Load128AsFp32(qLow, qHigh, qHat + row * Shape::kHeadDim);
+        Load128AsFp32(kLow, kHigh, kHat + row * Shape::kHeadDim);
+        Mul(qLow, qLow, expLow, mask);
+        Mul(qHigh, qHigh, expHigh, mask);
+        Mul(kLow, kLow, expLow, mask);
+        Mul(kHigh, kHigh, expHigh, mask);
+        Store128FromFp32(qPlus + row * Shape::kHeadDim, qLow, qHigh);
+        Store128FromFp32(kPlus + row * Shape::kHeadDim, kLow, kHigh);
+    }
+    for (uint16_t bandRow = computeRows;
+         bandRow < Shape::kSubChunkRows; ++bandRow) {
+        const uint16_t row = kBandBegin + bandRow;
+        RegTensor<float> zero;
+        Duplicate(zero, 0.0F, mask);
+        Store128FromFp32(qPlus + row * Shape::kHeadDim, zero, zero);
+        Store128FromFp32(kPlus + row * Shape::kHeadDim, zero, zero);
     }
 }
 
@@ -445,7 +507,6 @@ __simd_vf__ inline void StageV1Vf(
     __ubuf__ bfloat16_t *qPlus, __ubuf__ bfloat16_t *kPlus,
     __ubuf__ bfloat16_t *kMinus, uint16_t validRows)
 {
-    using Domain = ExpDomainTraits<CompilePolicy::useExp2>;
     MaskReg mask = CreateMask<float, MaskPattern::ALL>();
 
     // 四个 Kminus 前缀区固定展开，每区再分有效行和尾行。
@@ -458,71 +519,79 @@ __simd_vf__ inline void StageV1Vf(
     ComputeStageV1KMinusBand<3, CompilePolicy>(
         kHat, g, gRef, kMinus, validRows, mask);
 
-    // Kminus 完成后再生成 Qplus/Kplus，避免 Khat 被提前覆盖。
-    for (uint16_t row = 0; row < validRows; ++row) {
-        RegTensor<float> qLow;
-        RegTensor<float> qHigh;
-        RegTensor<float> kLow;
-        RegTensor<float> kHigh;
-        RegTensor<float> expLow;
-        RegTensor<float> expHigh;
-        const uint16_t band = row / Shape::kSubChunkRows;
-        LoadAlign(expLow, g + row * Shape::kHeadDim);
-        LoadAlign(expHigh, g + row * Shape::kHeadDim + 64);
-        RegTensor<float> refLow;
-        RegTensor<float> refHigh;
-        LoadAlign(refLow, gRef + band * Shape::kHeadDim);
-        LoadAlign(refHigh, gRef + band * Shape::kHeadDim + 64);
-        Sub(expLow, expLow, refLow, mask);
-        Sub(expHigh, expHigh, refHigh, mask);
-        constexpr float lower =
-            Domain::StoredBound(ExpDomain::kV1Bf16LowerBase2);
-        constexpr float upper =
-            Domain::StoredBound(ExpDomain::kV1Bf16UpperBase2);
-        ExpPair<CompilePolicy::useExp2>(expLow, expHigh, lower, upper);
-        Load128AsFp32(qLow, qHigh, qHat + row * Shape::kHeadDim);
-        Load128AsFp32(kLow, kHigh, kHat + row * Shape::kHeadDim);
-        Mul(qLow, qLow, expLow, mask);
-        Mul(qHigh, qHigh, expHigh, mask);
-        Mul(kLow, kLow, expLow, mask);
-        Mul(kHigh, kHigh, expHigh, mask);
-        Store128FromFp32(qPlus + row * Shape::kHeadDim, qLow, qHigh);
-        Store128FromFp32(kPlus + row * Shape::kHeadDim, kLow, kHigh);
-    }
-    for (uint16_t row = validRows; row < Shape::kChunkRows; ++row) {
-        RegTensor<float> zero;
-        Duplicate(zero, 0.0F, mask);
-        Store128FromFp32(qPlus + row * Shape::kHeadDim, zero, zero);
-        Store128FromFp32(kPlus + row * Shape::kHeadDim, zero, zero);
-    }
+    // Kminus 完成后再按四段生成 Qplus/Kplus，避免 Khat 被提前覆盖，
+    // 同时让 Gref 地址在每个 VF callee 中保持编译期常量。
+    ComputeStageV1PlusBand<0, CompilePolicy>(
+        qHat, kHat, g, gRef, qPlus, kPlus, validRows, mask);
+    ComputeStageV1PlusBand<1, CompilePolicy>(
+        qHat, kHat, g, gRef, qPlus, kPlus, validRows, mask);
+    ComputeStageV1PlusBand<2, CompilePolicy>(
+        qHat, kHat, g, gRef, qPlus, kPlus, validRows, mask);
+    ComputeStageV1PlusBand<3, CompilePolicy>(
+        qHat, kHat, g, gRef, qPlus, kPlus, validRows, mask);
 }
 
-__simd_callee__ inline void ComputeStageV3ValidRow(
-    __ubuf__ float *rawScore, __ubuf__ float *betaEff, uint16_t row,
-    float scale, RegTensor<float> &aqkRow, RegTensor<float> &akkRow,
-    MaskReg &full)
+template <uint16_t BAND>
+__simd_callee__ inline void UnpackStageV3Band(
+    __ubuf__ float *rawScore, __ubuf__ float *betaEff,
+    __ubuf__ bfloat16_t *aqk, __ubuf__ float *lkk, __ubuf__ float *b,
+    uint16_t validBandRows, float scale, MaskReg &full,
+    MaskReg &lowerColumnMask, MaskReg &upperColumnMask)
 {
-    constexpr uint32_t stackedBase[4] = {
-        0, 32 * 16, 32 * 48, 32 * 96};
-    const uint16_t band = row / Shape::kSubChunkRows;
-    const uint16_t bandRow = row % Shape::kSubChunkRows;
-    const uint16_t columns = Shape::kPrefixRows[band];
-    LoadAlign(aqkRow, rawScore + stackedBase[band] + bandRow * columns);
-    LoadAlign(akkRow,
-              rawScore + stackedBase[band] +
-                  Shape::kSubChunkRows * columns + bandRow * columns);
-    uint32_t aqkCount = static_cast<uint32_t>(row) + 1;
-    uint32_t akkCount = static_cast<uint32_t>(row);
-    MaskReg aqkMask = UpdateMask<float>(aqkCount);
-    MaskReg akkMask = UpdateMask<float>(akkCount);
-    RegTensor<float> zero;
-    Duplicate(zero, 0.0F, full);
-    Select(aqkRow, aqkRow, zero, aqkMask);
-    Select(akkRow, akkRow, zero, akkMask);
-    Muls(aqkRow, aqkRow, scale, full);
-    RegTensor<float> beta;
-    LoadAlign<float, LoadDist::DIST_BRC_B32>(beta, betaEff + row);
-    Mul(akkRow, akkRow, beta, full);
+    constexpr uint16_t kBandBegin = BAND * Shape::kSubChunkRows;
+    constexpr uint16_t kColumns = (BAND + 1) * Shape::kSubChunkRows;
+    constexpr uint32_t kStackedBase =
+        Shape::kSubChunkRows * Shape::kSubChunkRows * BAND * (BAND + 1);
+    constexpr uint32_t kAkkBandOffset =
+        Shape::kSubChunkRows * kColumns;
+
+    for (uint16_t bandRow = 0; bandRow < validBandRows; ++bandRow) {
+        const uint16_t row = kBandBegin + bandRow;
+        RegTensor<float> aqkRow;
+        RegTensor<float> akkRow;
+        LoadAlign(aqkRow,
+                  rawScore + kStackedBase + bandRow * kColumns);
+        LoadAlign(akkRow,
+                  rawScore + kStackedBase + kAkkBandOffset +
+                      bandRow * kColumns);
+        uint32_t aqkCount = static_cast<uint32_t>(row) + 1;
+        uint32_t akkCount = static_cast<uint32_t>(row);
+        MaskReg aqkMask = UpdateMask<float>(aqkCount);
+        MaskReg akkMask = UpdateMask<float>(akkCount);
+        RegTensor<float> zero;
+        Duplicate(zero, 0.0F, full);
+        Select(aqkRow, aqkRow, zero, aqkMask);
+        Select(akkRow, akkRow, zero, akkMask);
+        Muls(aqkRow, aqkRow, scale, full);
+        RegTensor<float> beta;
+        LoadAlign<float, LoadDist::DIST_BRC_B32>(
+            beta, betaEff + row);
+        Mul(akkRow, akkRow, beta, full);
+        Store64FromFp32(aqk + row * Shape::kChunkRows, aqkRow);
+        if constexpr (BAND < 2) {
+            StoreAlign(lkk + row * Shape::kChunkRows,
+                       akkRow, lowerColumnMask);
+        } else {
+            StoreAlign(b + (row - 32) * 32, akkRow, lowerColumnMask);
+            StoreAlign(lkk + row * Shape::kChunkRows,
+                       akkRow, upperColumnMask);
+        }
+    }
+    for (uint16_t bandRow = validBandRows;
+         bandRow < Shape::kSubChunkRows; ++bandRow) {
+        const uint16_t row = kBandBegin + bandRow;
+        RegTensor<float> zero;
+        Duplicate(zero, 0.0F, full);
+        Store64FromFp32(aqk + row * Shape::kChunkRows, zero);
+        if constexpr (BAND < 2) {
+            StoreAlign(lkk + row * Shape::kChunkRows,
+                       zero, lowerColumnMask);
+        } else {
+            StoreAlign(b + (row - 32) * 32, zero, lowerColumnMask);
+            StoreAlign(lkk + row * Shape::kChunkRows,
+                       zero, upperColumnMask);
+        }
+    }
 }
 
 __simd_vf__ inline void StageV3Vf(
@@ -530,7 +599,9 @@ __simd_vf__ inline void StageV3Vf(
     __ubuf__ float *betaEff, __ubuf__ bfloat16_t *aqk,
     __ubuf__ float *lkk, __ubuf__ float *b, __ubuf__ float *x0,
     __ubuf__ float *x1, __ubuf__ float *negX1,
-    __ubuf__ bfloat16_t *akk, uint16_t validRows, float scale)
+    __ubuf__ bfloat16_t *akk, uint16_t band0Rows,
+    uint16_t band1Rows, uint16_t band2Rows, uint16_t band3Rows,
+    float scale)
 {
     MaskReg full = CreateMask<float, MaskPattern::ALL>();
     uint32_t lowerColumnCount = 32;
@@ -538,48 +609,21 @@ __simd_vf__ inline void StageV3Vf(
     RegTensor<int32_t> column;
     MaskReg upperColumnMask;
     Arange<int32_t, IndexOrder::INCREASE_ORDER>(column, 0);
-    CompareScalar<int32_t, CMPMODE::GE>(upperColumnMask, column, 32, full);
-    const int32_t lowerValidRows = validRows < 32 ? validRows : 32;
-    const int32_t upperValidEnd = validRows > 32 ? validRows : 32;
-
-    // 从后往前展开 compact 行，避免 dense 目的区覆盖尚未读取的 compact 源。
-    // 先清理无效的上半区行。
-    for (int32_t row = Shape::kChunkRows - 1; row >= upperValidEnd; --row) {
-        RegTensor<float> zero;
-        Duplicate(zero, 0.0F, full);
-        Store64FromFp32(aqk + row * Shape::kChunkRows, zero);
-        StoreAlign(b + (row - 32) * 32, zero, lowerColumnMask);
-        StoreAlign(lkk + row * Shape::kChunkRows, zero, upperColumnMask);
-    }
-    // 上半区有效行产生 Aqk、B=L10 和 L11。
-    for (int32_t row = static_cast<int32_t>(validRows) - 1;
-         row >= 32; --row) {
-        RegTensor<float> aqkRow;
-        RegTensor<float> akkRow;
-        ComputeStageV3ValidRow(
-            rawScore, betaEff, static_cast<uint16_t>(row), scale,
-            aqkRow, akkRow, full);
-        Store64FromFp32(aqk + row * Shape::kChunkRows, aqkRow);
-        StoreAlign(b + (row - 32) * 32, akkRow, lowerColumnMask);
-        StoreAlign(lkk + row * Shape::kChunkRows, akkRow, upperColumnMask);
-    }
-    // 再清理无效的下半区行。
-    for (int32_t row = 31; row >= lowerValidRows; --row) {
-        RegTensor<float> zero;
-        Duplicate(zero, 0.0F, full);
-        Store64FromFp32(aqk + row * Shape::kChunkRows, zero);
-        StoreAlign(lkk + row * Shape::kChunkRows, zero, lowerColumnMask);
-    }
-    // 最后展开下半区有效行，只写 L00。
-    for (int32_t row = lowerValidRows - 1; row >= 0; --row) {
-        RegTensor<float> aqkRow;
-        RegTensor<float> akkRow;
-        ComputeStageV3ValidRow(
-            rawScore, betaEff, static_cast<uint16_t>(row), scale,
-            aqkRow, akkRow, full);
-        Store64FromFp32(aqk + row * Shape::kChunkRows, aqkRow);
-        StoreAlign(lkk + row * Shape::kChunkRows, akkRow, lowerColumnMask);
-    }
+    CompareScalar<int32_t, AscendC::CMPMODE::GE>(
+        upperColumnMask, column, 32, full);
+    // 四段 compact score 以编译期 BAND 展开，VF 内不做动态数组索引。
+    UnpackStageV3Band<0>(rawScore, betaEff, aqk, lkk, b,
+                         band0Rows, scale, full,
+                         lowerColumnMask, upperColumnMask);
+    UnpackStageV3Band<1>(rawScore, betaEff, aqk, lkk, b,
+                         band1Rows, scale, full,
+                         lowerColumnMask, upperColumnMask);
+    UnpackStageV3Band<2>(rawScore, betaEff, aqk, lkk, b,
+                         band2Rows, scale, full,
+                         lowerColumnMask, upperColumnMask);
+    UnpackStageV3Band<3>(rawScore, betaEff, aqk, lkk, b,
+                         band3Rows, scale, full,
+                         lowerColumnMask, upperColumnMask);
     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
 
     // LoadAlign 每次读取 64 个 FP32 lane，先清零两个 32x32 结果区的全部
@@ -592,11 +636,26 @@ __simd_vf__ inline void StageV3Vf(
     }
     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
 
-    // X0=(I+L00)^-1。VEC_STORE->VEC_LOAD 屏障是同一 VF 内逐行
-    // 前代所必需的，不是额外 VF。
+    // X0=(I+L00)^-1，X1=(I+L11)^-1。第 0 行先在递推循环外就绪；
+    // 递推从 row=1 开始，避免将带环间 RAW 依赖的外层循环编成
+    // Hardware Loop。每行的 VEC_STORE->VEC_LOAD 屏障保证下一行
+    // 读到已完成的前代，全部计算仍在同一次 VF 内。
     uint32_t rowCount = 32;
     MaskReg rowMask = UpdateMask<float>(rowCount);
-    for (uint16_t row = 0; row < 32; ++row) {
+    RegTensor<float> firstRow;
+    RegTensor<float> one;
+    RegTensor<int32_t> firstRowIndex;
+    MaskReg firstColumn;
+    Duplicate(one, 1.0F, rowMask);
+    Arange<int32_t, IndexOrder::INCREASE_ORDER>(firstRowIndex, 0);
+    CompareScalar<int32_t, AscendC::CMPMODE::EQ>(
+        firstColumn, firstRowIndex, 0, rowMask);
+    Select(firstRow, one, xZero, firstColumn);
+    StoreAlign(x0, firstRow, rowMask);
+    StoreAlign(x1, firstRow, rowMask);
+    LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+
+    for (uint16_t row = 1; row < 32; ++row) {
         RegTensor<float> result;
         RegTensor<float> zero;
         RegTensor<float> one;
@@ -605,7 +664,7 @@ __simd_vf__ inline void StageV3Vf(
         Duplicate(zero, 0.0F, rowMask);
         Duplicate(one, 1.0F, rowMask);
         Arange<int32_t, IndexOrder::INCREASE_ORDER>(index, 0);
-        CompareScalar<int32_t, CMPMODE::EQ>(
+        CompareScalar<int32_t, AscendC::CMPMODE::EQ>(
             diagonal, index, static_cast<int32_t>(row), rowMask);
         Select(result, one, zero, diagonal);
         for (uint16_t source = 0; source < row; ++source) {
@@ -622,9 +681,9 @@ __simd_vf__ inline void StageV3Vf(
         LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
     }
 
-    // X1=(I+L11)^-1，B=L10。两个叶子显式分开，避免在循环中
+    // B=L10。两个叶子显式分开，避免在循环中
     // 通过运行时条件选择当前叶子和 UB 地址。
-    for (uint16_t row = 0; row < 32; ++row) {
+    for (uint16_t row = 1; row < 32; ++row) {
         RegTensor<float> result;
         RegTensor<float> zero;
         RegTensor<float> one;
@@ -633,7 +692,7 @@ __simd_vf__ inline void StageV3Vf(
         Duplicate(zero, 0.0F, rowMask);
         Duplicate(one, 1.0F, rowMask);
         Arange<int32_t, IndexOrder::INCREASE_ORDER>(index, 0);
-        CompareScalar<int32_t, CMPMODE::EQ>(
+        CompareScalar<int32_t, AscendC::CMPMODE::EQ>(
             diagonal, index, static_cast<int32_t>(row), rowMask);
         Select(result, one, zero, diagonal);
         for (uint16_t source = 0; source < row; ++source) {
@@ -697,8 +756,8 @@ __simd_vf__ inline void StageV6Vf(
         RegTensor<float> lastLow;
         RegTensor<float> lastHigh;
         RegTensor<float> beta;
-        LoadAlign(gateLow, g + row * 128);
-        LoadAlign(gateHigh, g + row * 128 + 64);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
+            gateLow, gateHigh, g + row * 128);
         LoadAlign(lastLow, gLast);
         LoadAlign(lastHigh, gLast + 64);
         LoadAlign<float, LoadDist::DIST_BRC_B32>(beta, betaEff + row);
@@ -819,14 +878,17 @@ public:
             uint32_t headBegin = 0;
             uint32_t headEnd = 0;
             HeadRange(args_.tiling, headPartition, headBegin, headEnd);
-            for (uint32_t groupBegin = headBegin; groupBegin < headEnd;
-                 groupBegin += Shape::kHeadsPerGroup) {
+            for (uint32_t groupBegin = headBegin; groupBegin < headEnd;) {
+                uint32_t activeHeads = headEnd - groupBegin;
+                if (activeHeads > Shape::kHeadsPerGroup) {
+                    activeHeads = Shape::kHeadsPerGroup;
+                }
                 for (uint32_t localSlot = 0; localSlot < 2; ++localSlot) {
                     const uint32_t localHead = aiv_ * 2 + localSlot;
-                    const uint32_t valueHead = groupBegin + localHead;
-                    if (valueHead >= headEnd) {
+                    if (localHead >= activeHeads) {
                         continue;
                     }
+                    const uint32_t valueHead = groupBegin + localHead;
                     usedLocalSlot[localSlot] = true;
                     // 初始 free 或上一组 C7 free；V0 首个消费者是 MTE2。
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
@@ -839,10 +901,10 @@ public:
                 }
                 for (uint32_t localSlot = 0; localSlot < 2; ++localSlot) {
                     const uint32_t localHead = aiv_ * 2 + localSlot;
-                    const uint32_t valueHead = groupBegin + localHead;
-                    if (valueHead >= headEnd) {
+                    if (localHead >= activeHeads) {
                         continue;
                     }
+                    const uint32_t valueHead = groupBegin + localHead;
                     // C2 已写回 raw Aqk/Akk，且不再读取 V1 payload。
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
                         kAicToAivSlotReusableFlagId[localSlot]);
@@ -852,10 +914,10 @@ public:
                 }
                 for (uint32_t localSlot = 0; localSlot < 2; ++localSlot) {
                     const uint32_t localHead = aiv_ * 2 + localSlot;
-                    const uint32_t valueHead = groupBegin + localHead;
-                    if (valueHead >= headEnd) {
+                    if (localHead >= activeHeads) {
                         continue;
                     }
+                    const uint32_t valueHead = groupBegin + localHead;
                     // C4 已一次性读完 B/X0/negX1/Akk，V6 可以原址换义。
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
                         kAicToAivSlotReusableFlagId[localSlot]);
@@ -863,6 +925,7 @@ public:
                     AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
                         kAivToAicPayloadReadyFlagId[localSlot]);
                 }
+                groupBegin += activeHeads;
             }
         }
         // 消费最后一次 C7 free，保证每次 set 都有对应 wait。
@@ -912,32 +975,50 @@ private:
         const uint64_t gateOffset =
             RawGateInputOffset(args_.tiling, chunk, valueHead);
         const uint64_t betaOffset =
-            HeadScalarOffset(args_.tiling, chunk, valueHead);
+            BetaInputOffset(args_.tiling, chunk, valueHead);
         const uint32_t qkStride = args_.tiling.inputSequenceMajor
-                                      ? (args_.tiling.qkHeadNum - 1) *
-                                            Shape::kHeadDim * sizeof(bfloat16_t)
+                                      ? static_cast<uint32_t>(
+                                            static_cast<uint64_t>(
+                                                args_.tiling.qkHeadNum - 1) *
+                                            Shape::kHeadDim * sizeof(bfloat16_t))
                                       : 0;
         const uint32_t gateStride = args_.tiling.inputSequenceMajor
-                                        ? (args_.tiling.valueHeadNum - 1) *
-                                              Shape::kHeadDim * sizeof(GateT)
+                                        ? static_cast<uint32_t>(
+                                              static_cast<uint64_t>(
+                                                  args_.tiling.valueHeadNum - 1) *
+                                              Shape::kHeadDim * sizeof(GateT))
                                         : 0;
 
         AscendC::Mutex::Lock<PIPE_MTE2>(mutex);
         AscendC::DataCopyPad(q, qGm_[qkOffset],
             {static_cast<uint16_t>(chunk.validRows),
-             Shape::kHeadDim * sizeof(bfloat16_t), qkStride, 0, 0},
+             static_cast<uint32_t>(Shape::kHeadDim * sizeof(bfloat16_t)),
+             qkStride, 0, 0},
             {false, 0, 0, 0});
         AscendC::DataCopyPad(k, kGm_[qkOffset],
             {static_cast<uint16_t>(chunk.validRows),
-             Shape::kHeadDim * sizeof(bfloat16_t), qkStride, 0, 0},
+             static_cast<uint32_t>(Shape::kHeadDim * sizeof(bfloat16_t)),
+             qkStride, 0, 0},
             {false, 0, 0, 0});
         AscendC::DataCopyPad(gate, gateGm_[gateOffset],
             {static_cast<uint16_t>(chunk.validRows),
-             Shape::kHeadDim * sizeof(GateT), gateStride, 0, 0},
+             static_cast<uint32_t>(Shape::kHeadDim * sizeof(GateT)),
+             gateStride, 0, 0},
             {false, 0, 0, 0});
-        AscendC::DataCopyPad(beta, betaGm_[betaOffset],
-            {1, chunk.validRows * sizeof(BetaT), 0, 0, 0},
-            {false, 0, 0, 0});
+        if (args_.tiling.inputSequenceMajor) {
+            const uint32_t betaStride = static_cast<uint32_t>(
+                static_cast<uint64_t>(args_.tiling.valueHeadNum - 1) *
+                sizeof(BetaT));
+            AscendC::DataCopyPad(beta, betaGm_[betaOffset],
+                {static_cast<uint16_t>(chunk.validRows),
+                 static_cast<uint32_t>(sizeof(BetaT)), betaStride, 0, 0},
+                {false, 0, 0, 0});
+        } else {
+            AscendC::DataCopyPad(beta, betaGm_[betaOffset],
+                {1, static_cast<uint32_t>(chunk.validRows * sizeof(BetaT)),
+                 0, 0, 0},
+                {false, 0, 0, 0});
+        }
         if constexpr (CompilePolicy::gateMode != GateMode::PrecomputedStep) {
             if (args_.tiling.hasDtBias) {
                 AscendC::DataCopy(dtBias,
@@ -946,7 +1027,7 @@ private:
             }
             if (args_.aLog != nullptr) {
                 AscendC::DataCopyExtParams scalarCopy{
-                    1, sizeof(float), 0, 0, 0};
+                    1, static_cast<uint32_t>(sizeof(float)), 0, 0, 0};
                 AscendC::DataCopyPadExtParams<float> scalarPad{
                     false, 0, 0, 0};
                 AscendC::DataCopyPad(aLog, aLogGm_[valueHead], scalarCopy,
@@ -956,22 +1037,43 @@ private:
         AscendC::Mutex::Unlock<PIPE_MTE2>(mutex);
 
         AscendC::Mutex::Lock<PIPE_V>(mutex);
-        AscendC::VF_CALL<Detail::StageV0Vf<GateT, BetaT, CompilePolicy>>(
-            reinterpret_cast<__ubuf__ bfloat16_t *>(q.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ GateT *>(gate.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ BetaT *>(beta.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(dtBias.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(aLog.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(g.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(gRef.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(gLast.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(qRstd.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(kRstd.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(betaEff.GetPhyAddr()),
-            static_cast<uint16_t>(chunk.validRows), args_.tiling.epsilon,
-            args_.tiling.lowerBound, args_.tiling.hasDtBias,
-            args_.aLog != nullptr);
+        if (args_.tiling.inputSequenceMajor) {
+            AscendC::VF_CALL<Detail::StageV0Vf<
+                GateT, BetaT, CompilePolicy, true>>(
+                reinterpret_cast<__ubuf__ bfloat16_t *>(q.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ GateT *>(gate.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ BetaT *>(beta.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(dtBias.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(aLog.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(g.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(gRef.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(gLast.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(qRstd.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(kRstd.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(betaEff.GetPhyAddr()),
+                static_cast<uint16_t>(chunk.validRows), args_.tiling.epsilon,
+                args_.tiling.lowerBound, args_.tiling.hasDtBias,
+                args_.aLog != nullptr);
+        } else {
+            AscendC::VF_CALL<Detail::StageV0Vf<
+                GateT, BetaT, CompilePolicy, false>>(
+                reinterpret_cast<__ubuf__ bfloat16_t *>(q.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ GateT *>(gate.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ BetaT *>(beta.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(dtBias.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(aLog.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(g.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(gRef.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(gLast.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(qRstd.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(kRstd.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(betaEff.GetPhyAddr()),
+                static_cast<uint16_t>(chunk.validRows), args_.tiling.epsilon,
+                args_.tiling.lowerBound, args_.tiling.hasDtBias,
+                args_.aLog != nullptr);
+        }
         AscendC::Mutex::Unlock<PIPE_V>(mutex);
 
         const uint64_t slot = WorkspaceSlotBase(
@@ -1085,6 +1187,21 @@ private:
         auto betaEff = resource_.ubBuf.template GetBufferByByte<float>(
             state + Arch35Ub::kBetaEff);
 
+        uint16_t remainingRows = static_cast<uint16_t>(chunk.validRows);
+        const uint16_t band0Rows = remainingRows > Shape::kSubChunkRows
+                                       ? Shape::kSubChunkRows
+                                       : remainingRows;
+        remainingRows -= band0Rows;
+        const uint16_t band1Rows = remainingRows > Shape::kSubChunkRows
+                                       ? Shape::kSubChunkRows
+                                       : remainingRows;
+        remainingRows -= band1Rows;
+        const uint16_t band2Rows = remainingRows > Shape::kSubChunkRows
+                                       ? Shape::kSubChunkRows
+                                       : remainingRows;
+        remainingRows -= band2Rows;
+        const uint16_t band3Rows = remainingRows;
+
         AscendC::Mutex::Lock<PIPE_V>(mutex);
         AscendC::VF_CALL<Detail::StageV3Vf>(
             reinterpret_cast<__ubuf__ float *>(rawScore.GetPhyAddr()),
@@ -1096,7 +1213,8 @@ private:
             reinterpret_cast<__ubuf__ float *>(x1.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(negX1.GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(akk.GetPhyAddr()),
-            static_cast<uint16_t>(chunk.validRows), args_.tiling.scale);
+            band0Rows, band1Rows, band2Rows, band3Rows,
+            args_.tiling.scale);
         AscendC::Mutex::Unlock<PIPE_V>(mutex);
 
         AscendC::GlobalTensor<float> payload;
@@ -1172,12 +1290,15 @@ private:
         const uint64_t vOffset =
             ValueInputOffset(args_.tiling, chunk, valueHead);
         const uint32_t vStride = args_.tiling.inputSequenceMajor
-                                     ? (args_.tiling.valueHeadNum - 1) *
-                                           Shape::kValueDim * sizeof(bfloat16_t)
+                                     ? static_cast<uint32_t>(
+                                           static_cast<uint64_t>(
+                                               args_.tiling.valueHeadNum - 1) *
+                                           Shape::kValueDim * sizeof(bfloat16_t))
                                      : 0;
         AscendC::DataCopyPad(vBeta, vGm_[vOffset],
             {static_cast<uint16_t>(chunk.validRows),
-             Shape::kValueDim * sizeof(bfloat16_t), vStride, 0, 0},
+             static_cast<uint32_t>(Shape::kValueDim * sizeof(bfloat16_t)),
+             vStride, 0, 0},
             {false, 0, 0, 0});
         AscendC::Mutex::Unlock<PIPE_MTE2>(mutex);
 

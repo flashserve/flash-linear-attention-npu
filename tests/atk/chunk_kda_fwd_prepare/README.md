@@ -39,6 +39,10 @@ safe sigmoid。GVA 用例包含大于 4 的比例以及 `HV=160`，只要求
 `HV >= HK` 且 `HV % HK == 0`，不施加额外 head 数上限。
 变长边界用例还覆盖 1025 条空/非空混合序列，不施加额外序列数上限。
 
+所有矩阵轴、功能 case、性能 case、默认值和随机种子均声明在
+`tests/op_cases/chunk_kda_fwd_prepare.json` 的 `atk_generation` 字段中；本目录的
+生成器只负责展开声明并生成 ATK 格式，不再维护第二份 shape 或属性列表。
+
 ## 执行方式
 
 ```bash

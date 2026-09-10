@@ -45,8 +45,8 @@ constexpr uint32_t kRawScore = 0x0000;
 constexpr uint32_t kX0 = 0x0000;
 constexpr uint32_t kNegX1 = 0x2000;
 constexpr uint32_t kB = 0x3000;
-// Arch22 的 C220 不支持 FP32 L0C 直写 L1；C4 在这里暂存 32x32 NZ T。
-constexpr uint32_t kTArch22 = 0x4000;
+// C4 在这里暂存 32x32 FP32 NZ T；Arch22/Arch35 都经 GM relay 回到 L1。
+constexpr uint32_t kTRelay = 0x4000;
 constexpr uint32_t kAkk = 0x5800;
 constexpr uint32_t kKBetaG = 0x7800;
 constexpr uint32_t kVBeta = 0xB800;

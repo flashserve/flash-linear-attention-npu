@@ -69,12 +69,14 @@ public:
             uint32_t headBegin = 0;
             uint32_t headEnd = 0;
             HeadRange(args_.tiling, headPartition, headBegin, headEnd);
-            for (uint32_t groupBegin = headBegin; groupBegin < headEnd;
-                 groupBegin += Shape::kHeadsPerGroup) {
+            for (uint32_t groupBegin = headBegin; groupBegin < headEnd;) {
+                uint32_t activeHeads = headEnd - groupBegin;
+                if (activeHeads > Shape::kHeadsPerGroup) {
+                    activeHeads = Shape::kHeadsPerGroup;
+                }
                 for (uint32_t localHead = 0;
                      localHead < Shape::kHeadsPerGroup; ++localHead) {
-                    if (groupBegin + localHead >= headEnd ||
-                        freeInitialized[localHead]) {
+                    if (localHead >= activeHeads || freeInitialized[localHead]) {
                         continue;
                     }
                     AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
@@ -86,7 +88,7 @@ public:
                 // 尾块只提交有效 sub-chunk 的 32x128 @ 128xN MMAD。
                 for (uint32_t localHead = 0;
                      localHead < Shape::kHeadsPerGroup; ++localHead) {
-                    if (groupBegin + localHead >= headEnd) {
+                    if (localHead >= activeHeads) {
                         continue;
                     }
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
@@ -104,8 +106,7 @@ public:
                 // 后续 C4/C5 只访问每 HEAD 独立的 L1 常驻数据。
                 for (uint32_t localHead = 0;
                      localHead < Shape::kHeadsPerGroup; ++localHead) {
-                    const uint32_t valueHead = groupBegin + localHead;
-                    if (valueHead >= headEnd) {
+                    if (localHead >= activeHeads) {
                         continue;
                     }
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
@@ -115,10 +116,10 @@ public:
                 }
                 for (uint32_t localHead = 0;
                      localHead < Shape::kHeadsPerGroup; ++localHead) {
-                    const uint32_t valueHead = groupBegin + localHead;
-                    if (valueHead >= headEnd) {
+                    if (localHead >= activeHeads) {
                         continue;
                     }
+                    const uint32_t valueHead = groupBegin + localHead;
                     StageC5(chunk, valueHead, localHead);
                 }
 
@@ -126,15 +127,16 @@ public:
                 // C4/C5 的 L1 常驻副本，分别计算 W 和 U，最后归还槽位。
                 for (uint32_t localHead = 0;
                      localHead < Shape::kHeadsPerGroup; ++localHead) {
-                    const uint32_t valueHead = groupBegin + localHead;
-                    if (valueHead >= headEnd) {
+                    if (localHead >= activeHeads) {
                         continue;
                     }
+                    const uint32_t valueHead = groupBegin + localHead;
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
                         kAivToAicPayloadReadyFlagId[localHead]);
                     StageC7(chunk, valueHead, localHead,
                             kAicToAivSlotReusableFlagId[localHead]);
                 }
+                groupBegin += activeHeads;
             }
         }
     }
@@ -171,8 +173,7 @@ private:
         qkCopy.dstNzNStride = 1;
         qkCopy.dstNzC0Stride = Shape::kChunkRows;
         qkCopy.dstNzMatrixStride = 0;
-        // TODO：用目标 CANN 9.1.0 头文件确认 BF16 的 NZ C0 与
-        // dstNzC0Stride 单位；确认前不得把下列参数复制到正式 kernel。
+        // BF16 zN 的 C0 为 16，dstNzC0Stride 以元素计，取常驻矩阵的 M。
         AscendC::DataCopy(
             scoreL1[ScorePayload::kQPlus / sizeof(bfloat16_t)],
             payload[ScorePayload::kQPlus / sizeof(bfloat16_t)], qkCopy);
@@ -194,10 +195,8 @@ private:
             resource_.l0ABuf.template GetBufferByByte<bfloat16_t>(0);
         auto kMinusL0 =
             resource_.l0BBuf.template GetBufferByByte<bfloat16_t>(0);
-        // 四个 HEAD 各占一条 64 KiB L0C 通道，和 Mutex 5..8/9..12
-        // 一一对应；不同 Mutex 保护的语义不能落到同一物理地址。
-        // TODO：正式实现前必须用目标 A5 头文件和最小 kernel 确认该资源
-        // 确实暴露 256 KiB L0C；容量不足时要改为同一 Mutex 下顺序复用。
+        // Ascend950 提供 256 KiB L0C。四个 HEAD 各占一条 64 KiB 通道，
+        // 与 Mutex 5..8/9..12 一一对应，独立流水不共享物理地址。
         auto rawL0c =
             resource_.l0CBuf.template GetBufferByByte<float>(l0cLane);
         auto rawScoreUb = resource_.ubBuf.template GetBufferByByte<float>(
@@ -223,23 +222,23 @@ private:
             AscendC::LoadData(
                 stackedQkL0,
                 scoreL1[ScorePayload::kQPlus / sizeof(bfloat16_t)], loadQ);
-            // TODO：目标版本最小编译确认 zN L0A 的下半 16 行物理偏移；
-            // 语义必须是 [Qplus_s; Kplus_s]，不能在 L1 内重排。
+            // Ascend950 的 L0A 为 zN。每个 K 分形内先放 Qplus 的 16 行，
+            // 再放 Kplus 的 16 行，因此第二个起点只偏移一个分形。
             AscendC::LoadData(
-                stackedQkL0[Shape::kSubChunkRows * Shape::kHeadDim],
+                stackedQkL0[Shape::kSubChunkRows * 16],
                 scoreL1[ScorePayload::kKPlus / sizeof(bfloat16_t)], loadQ);
 
             AscendC::LoadData2DParamsV2 loadKMinus{};
             loadKMinus.mStartPosition = 0;
             loadKMinus.kStartPosition = 0;
-            loadKMinus.mStep = Shape::kHeadDim / 16;
-            loadKMinus.kStep = n / 16;
+            loadKMinus.mStep = n / 16;
+            loadKMinus.kStep = Shape::kHeadDim / 16;
             loadKMinus.srcStride = n / 16;
-            loadKMinus.dstStride = Shape::kHeadDim / 16;
-            loadKMinus.ifTranspose = true;
+            loadKMinus.dstStride = n / 16;
+            loadKMinus.ifTranspose = false;
             loadKMinus.sid = 0;
-            // TODO：确认 Kminus 的 L1 NZ 到 L0B 转置装载中 mStep、
-            // kStep、srcStride、dstStride 的分形单位。
+            // L1 中的源是 [n,128] NZ。作为 B 矩阵时，非转置加载会按
+            // [n,k] 解释为数学上的 [k,n]，与 Qplus @ Kminus^T 一致。
             AscendC::LoadData(
                 kMinusL0,
                 scoreL1[ScorePayload::kKMinus[s] / sizeof(bfloat16_t)],
@@ -296,6 +295,10 @@ private:
         AscendC::GlobalTensor<float> payload;
         payload.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
             args_.workspace + slot + Workspace::kPayload));
+        AscendC::GlobalTensor<float> tRelay;
+        tRelay.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+            args_.workspace + slot + Workspace::kPayload +
+            Workspace::kTRelay));
         AscendC::GlobalTensor<bfloat16_t> akkSource;
         akkSource.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + slot + Workspace::kPayload + Workspace::kAkk));
@@ -322,8 +325,8 @@ private:
         akkCopy.dstNzNStride = 1;
         akkCopy.dstNzC0Stride = Shape::kChunkRows;
         akkCopy.dstNzMatrixStride = 0;
-        // TODO：确认 64x64 BF16 ND->NZ 后四个 32x32 象限的物理次序，
-        // C5 必须能直接写 q10，C7 必须能直接按 64x64 装入 L0A。
+        // DataCopy 生成标准 64x64 zN；q10 从 (M1=2,N1=0) 开始，
+        // C5 可原址写入，C7 可直接按 64x64 装入 L0A。
         AscendC::DataCopy(akkL1, akkSource, akkCopy);
 
         if (chunk.validRows > 32) {
@@ -369,7 +372,7 @@ private:
         load.dstStride = 2;
         load.ifTranspose = false;
         load.sid = 0;
-        // TODO：确认 Arch35 FP32 NZ 的 C0=8 以及四个步长字段的单位。
+        // FP32 zN 的 C0 为 8；32x32 对应 M=2、K/N=4 个分形。
         AscendC::LoadData(l0A, bL1, load);
         load.ifTranspose = true;
         AscendC::LoadData(l0B, x0L1, load);
@@ -396,13 +399,20 @@ private:
         fix.nSize = 32;
         fix.mSize = 32;
         fix.srcStride = 32;
-        fix.dstStride = 32 * 16;
+        fix.dstStride = 32 * 8;
         fix.quantPre = QuantMode_t::NoQuant;
-        fix.isChannelSplit = false;
-        // TODO：用目标头文件确认 NZ 到 L1 的 dstStride 分形单位。
-        AscendC::Fixpipe<float, float, kFixpipeNzL1>(tL1, l0C, fix);
+        fix.isChannelSplit = true;
+        // Ascend950 的 FP32 L0C 不能以 channel-split 格式直写 L1。
+        // 先写独立 GM relay，再按相同 NZ 字节布局搬入 C5 的 L1 输入。
+        AscendC::Fixpipe<float, float, kFixpipeNzL1>(tRelay, l0C, fix);
         AscendC::Mutex::Unlock<PIPE_FIX>(l1Mutex);
         AscendC::Mutex::Unlock<PIPE_FIX>(l0cMutex);
+
+        AscendC::Mutex::Lock<PIPE_MTE2>(l1Mutex);
+        AscendC::DataCopy(
+            tL1, tRelay,
+            AscendC::DataCopyParams(1, 32 * 32 / 8, 0, 0));
+        AscendC::Mutex::Unlock<PIPE_MTE2>(l1Mutex);
     }
 
     __aicore__ inline void StageC5(const ChunkRange &chunk,
@@ -565,8 +575,8 @@ private:
         loadA.dstStride = m / 16;
         loadA.ifTranspose = false;
         loadA.sid = 0;
-        // TODO：确认 C4/C5 的 q00/q01/q10/q11 NZ 常驻布局可由这一次
-        // LoadData 直接组装为 m x m L0A，禁止在 L1 内重排。
+        // Akk 始终按 64x64 zN 常驻；srcStride=4 允许 m=32/64
+        // 直接抽取左上 m x m，不在 L1 内重排。
         AscendC::LoadData(akkL0, akkL1, loadA);
 
         AscendC::LoadData2DParamsV2 loadRhs{};
@@ -575,7 +585,8 @@ private:
         loadRhs.mStep = m / 16;
         loadRhs.kStep = Shape::kHeadDim / 16;
         loadRhs.srcStride = m / 16;
-        loadRhs.dstStride = m / 16;
+        // L0B nZ 的 K 行分形间隔由 N=128 决定，与 m 无关。
+        loadRhs.dstStride = Shape::kHeadDim / 16;
         loadRhs.ifTranspose = true;
         loadRhs.sid = 0;
         AscendC::LoadData(kBetaL0, kBetaL1, loadRhs);

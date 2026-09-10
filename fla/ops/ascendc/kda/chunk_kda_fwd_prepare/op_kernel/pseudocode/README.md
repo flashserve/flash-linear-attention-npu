@@ -6,11 +6,12 @@
 L2 norm + gate cumsum + prepare + post-WU
 ```
 
-它是面向 A2/A3（Arch22）和 A5（Arch35）的设备代码设计稿，作为正式实现的公式、资源和
-同步合同继续保留，不参与算子构建。已接入 Host Tiling、CMake、aclnn 与 Python API 的代码
-位于同级 `op_kernel/` 及算子目录的 `op_host/`。伪代码直接使用真实 Ascend C API 的写法，
-目的是让搬运、同步和计算顺序能够从代码现场读出；带 `TODO` 的调用仍只表示设计意图，
-实际可构建参数以正式实现为准。
+它是面向 A2/A3（Arch22）和 A5（Arch35）的设备代码设计稿，也是正式 kernel 的可读镜像，
+作为公式、资源和同步合同继续保留，不参与算子构建。已接入 Host Tiling、CMake、aclnn 与
+Python API 的代码位于同级 `op_kernel/` 及算子目录的 `op_host/`。除 `PSEUDOCODE_`
+include guard 和入口文件中的
+“不参与构建”说明外，这里的计算、搬运、同步及 Ascend C API 参数必须与正式实现保持一致；
+正式实现是唯一执行来源。
 
 ## 代码结构
 
@@ -47,20 +48,17 @@ pseudocode/
 
 TilingData 只承载 shape、调度和标量参数；设备架构不进入运行时分支。
 
-`USE_EXP2` 是独立的编译期布尔轴，`false` 和 `true` 都必须生成实例。正式
-TilingKey 声明应与 `chunk_fwd_h` 一致使用
+`USE_EXP2` 是独立的编译期布尔轴，`false` 和 `true` 都生成实例。TilingKey 使用
 `ASCENDC_TPL_BOOL_DECL(USE_EXP2, 0, 1)`；`q/k/v`、score 操作数及
 `Aqk/Akk/w/u/qg/kg/qg_scaled/q_hat/k_hat` 固定为 BF16，
 `gk/q_rstd/k_rstd/beta_eff` 固定为 FP32，gate/beta 只允许 FP32 或 BF16。
-gate/beta dtype 编码与其他模式轴已由正式 TilingKey 冻结；本伪代码继续只表达该轴的
-`0/1` 设计编码。正式 selector 的笛卡尔积中，每个合法的 dtype/模式组合都由
+gate/beta dtype 编码与其他模式轴已由 TilingKey 冻结。selector 的笛卡尔积中，每个合法
+的 dtype/模式组合都由
 `SEL_EXP` 一类宏同时展开 `USE_EXP2=0` 和 `USE_EXP2=1`，op_host 再把公开
-`use_exp2` 属性原样传给 `GET_TPL_TILING_KEY`。当前 host 小测试只验证
+`use_exp2` 属性原样传给 `GET_TPL_TILING_KEY`。当前布局测试只验证
 `PrecomputedStep` policy 能选择两份 `ExpDomainTraits`，以及其中
-step 缩放、base-2 边界换算和 `Exp` 输入倍率的纯数值合同；它不编译架构头，也不验证
-设备 `Muls/Exp/Cast`、BF16 舍入或尚未接入的 op_host 可达性。
-现有 `chunk_gated_delta_rule_fwd_prepare` 参考实现仍拦截 `false`，不能作为双分支
-依据；本设计新增的 `false` 路径以已支持双值的 `chunk_fwd_h` TilingKey 方式为准。
+step 缩放、base-2 边界换算和 `Exp` 输入倍率的纯数值合同；它不替代架构编译、设备
+`Muls/Exp/Cast`、BF16 舍入和端到端精度验证。
 
 ## 数学定义
 
@@ -207,9 +205,10 @@ C4(head0), C4(head1), C4(head2), C4(head3)
 C5(head0), C5(head1), C5(head2), C5(head3)
 ```
 
-C5 仍通过同一 head 的 L1 Mutex 等待 C4 的 Fixpipe 把 `T` 写入 L1，但不会先于
-其他 head 的独立 C4 排进 MTE1 队列。这样下一 head 的 C4 MTE1/MMAD 可以与上一 head
-的 C4 Fixpipe 排空重叠；AIC 仍只有一条 M 管线，不表示多个 MMAD 同时执行。C4 在
+C4 先把 channel-split 的 `T` 写入独立 GM relay，再由 MTE2 搬入 L1；C5 通过同一
+head 的 L1 Mutex 等待该链路完成，但不会先于其他 head 的独立 C4 排进 MTE1 队列。
+这样下一 head 的 C4 MTE1/MMAD 可以与上一 head 的 C4 Fixpipe 排空重叠；AIC 仍只有
+一条 M 管线，不表示多个 MMAD 同时执行。C4 在
 MTE2 搬完 `B/X0/negX1/Akk` 后即发布 workspace 可复用信号，C4/C5 随后只读各 head
 独立的 L1 常驻区，因此 AIV 的 V6 可以并行覆盖原 payload。Arch22 原本就是先完成
 全部 C4、再完成全部 C5，并用每 head 的 `tReady` EventID 保证相同依赖。
@@ -375,11 +374,12 @@ group-local head。下一组 head 必须先消费上一组的 C7 free，再原�
 因此不额外分配不可达的第二组 slot。payload 在 V1、V3、C4/C5、V6 间原址换义；
 只有生产者确认旧 reader 完成后才能覆盖。
 
-Arch22 的 C4 还把 payload 的 `[0x4000,0x5000)` 用作一份 4 KiB `T[32,32]`
-NZ relay。目标 C220 不支持 FP32 L0C 直接写 FP32 L1，因此 C4 先由 Fixpipe 写入
-这段 GM，再通过成对的 `FIX_MTE2` 事件等待写出完成，最后由 MTE2 原样搬入每个
-head 的 L1 T 常驻区。每个 head 使用独立的 `MTE2_MTE1` ready 事件交给 C5；
-Arch35 支持 FP32 L0C 直写 L1，不经过这段 relay。
+Arch35 和 Arch22 的 C4 都把 payload 的 `[0x4000,0x5000)` 用作一份 4 KiB
+`T[32,32]` NZ relay。目标 C220 不支持 FP32 L0C 直接写 FP32 L1，因此 Arch22
+先由 Fixpipe 写入这段 GM，再通过成对的 `FIX_MTE2` 事件等待写出完成，最后由 MTE2
+原样搬入每个 head 的 L1 T 常驻区；每个 head 使用独立的 `MTE2_MTE1` ready 事件
+交给 C5。Arch35 的 channel-split FP32 Fixpipe 同样先写 GM relay，再由 MTE2 搬入
+L1，并用每个 head 的 L1 Mutex 顺序约束 Fixpipe、MTE2 与 C5 的 MTE1 读取。
 
 V3 会把完整补零的 `Akk[64,64]` 固定写到 payload 内 `0x5800`，C4 始终读取这份
 workspace relay。公开 `Akk` 同时只写 `validRows` 行，不能把尾 chunk 的公开输出
@@ -428,7 +428,7 @@ Mutex 只处理同核 pipe 交接，不是核间同步。AIC/AIV 仍用 mode `0x
 - 这些编号是 AIV/AIC 间的 CrossCore flag，不是核内 Mutex ID，也不是 Arch22
   `AllocEventID` 返回的 HardEvent ID。
 
-| local head | AIV / local slot | AIV payload ready / slot reusable | AIC peer flagId |
+| local head | AIV / local slot | AIV payload ready / slot reusable | AIC 对应 flagId |
 | ---: | --- | --- | --- |
 | 0 | AIV0 / 0 | `0 / 4` | `0 / 4` |
 | 1 | AIV0 / 1 | `1 / 5` | `1 / 5` |
@@ -528,22 +528,16 @@ MMAD 与 Fixpipe 不再读取 workspace，可以和 AIV 对下一组 slot 的生
 - C5 不使用不存在的 `Mmad negate` 参数。V3 直接生成 `negX1`，C5 做普通
   `Mmad(negX1,T)`。
 
-## 正式实现前的编译门禁
+## 编译与验证门禁
 
-下列项目必须按目标 CANN 版本头文件和最小设备用例确认：
-
-1. Arch35/Arch22 把 72 KiB packed score 从 L1 装入堆叠 L0A、转置 L0B 的
-   `LoadData2DParamsV2` 参数和 stride 单位。
-2. C2 每次把完整 `[32,Ns]` L0C 以一条 Fixpipe 写成
-   `[rawAqk_s; rawAkk_s]` 时的源布局和 stride。
-3. Arch35 `FixpipeParamsArch3510` 的 NZ/L1 与 row-major/UB 配置。
-4. Arch22 `FixpipeParamsV220` 的 BF16 quant 模式及 workspace 原址覆盖前
-   可用的 MTE2/FIX 事件组合。
-5. C7 的四象限 Akk pack 到 L0A 的真实 NZ 排列。
-6. 四个单次 VF 的寄存器、mask、repeat/stride 和自然底 `Exp` 参数。
-7. 已冻结的 CrossCore flag ID 在目标版本上的 mode 映射、计数深度，以及与
-   Catlass/Matmul 内部占用是否冲突。
-8. A2、A3、A5 的目标编译、精度、性能和 sanitizer 验证。
+- 正式版与本目录对应源码的逐文件语义 diff 只能包含 `PSEUDOCODE_` include guard 和
+  “不参与构建”说明。
+- A2、A3、A5 分别完成目标编译，并覆盖 `USE_EXP2=false/true`、两种输入布局、尾 chunk
+  和 GVA。
+- 设备精度检查覆盖全部 13 个公开输出；性能结论使用 profiling，内存与同步检查使用
+  sanitizer。
+- 修改 Ascend C API 参数、静态地址或同步协议时，先核对目标 CANN 版本头文件，再同步
+  修改正式版和本设计稿。
 
 设备 kernel 内不使用断言。容量和静态 offset 由 host 小测试、编译资源报告和
 sanitizer 分别验证。
