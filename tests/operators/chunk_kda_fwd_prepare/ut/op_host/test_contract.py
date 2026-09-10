@@ -62,3 +62,13 @@ def test_l0_uses_placeholders_for_null_l2_outputs():
     assert "OutputOrEmptyDescriptor" in l0_source
     assert "AllocTensor(MakeShape({0})" in l0_source
     assert "useExp2, outputMode" in l0_source
+
+
+def test_l2_helpers_keep_cpp_internal_linkage():
+    l2_source = (OP_HOST / "op_api/aclnn_chunk_kda_fwd_prepare.cpp").read_text(
+        encoding="utf-8"
+    )
+    namespace_begin = l2_source.index("namespace {")
+    namespace_end = l2_source.index("} // namespace")
+    c_linkage_begin = l2_source.index('extern "C" {')
+    assert namespace_begin < namespace_end < c_linkage_begin

@@ -27,10 +27,6 @@
 
 using namespace op;
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 namespace {
 
 constexpr int64_t PREPARE_CHUNK_SIZE = 64;
@@ -700,6 +696,10 @@ aclnnStatus MakeInputsContiguous(ChunkKdaFwdPrepareParams &params,
 }
 
 } // namespace
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 aclnnStatus aclnnChunkKdaFwdPrepareGetWorkspaceSize(
     const aclTensor *q,
