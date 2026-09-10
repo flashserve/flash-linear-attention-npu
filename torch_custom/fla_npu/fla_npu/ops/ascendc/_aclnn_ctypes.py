@@ -1620,6 +1620,7 @@ def npu_chunk_gated_delta_rule_fwd(
     use_beta_sigmoid_in_kernel=False,
     allow_neg_eigval=False,
     disable_recompute=False,
+    return_intermediate_states=False,
     state_v_first=False,
     layout="BNSD",
 ):
@@ -1685,6 +1686,7 @@ def npu_chunk_gated_delta_rule_fwd(
     use_beta_sigmoid_in_kernel = _optional_bool(use_beta_sigmoid_in_kernel, False)
     allow_neg_eigval = _optional_bool(allow_neg_eigval, False)
     disable_recompute = _optional_bool(disable_recompute, False)
+    return_intermediate_states = _optional_bool(return_intermediate_states, False)
     state_v_first = _optional_bool(state_v_first, False)
     scale = _optional_float(scale, float(k_dim) ** -0.5)
     o = _empty((batch, tokens, v_heads, v_dim), v)
@@ -1713,8 +1715,22 @@ def npu_chunk_gated_delta_rule_fwd(
             state_dtype = initial_state.dtype
         state_tail = (v_dim, k_dim) if state_v_first else (k_dim, v_dim)
         final_state = _empty((seq_num, v_heads, *state_tail), q, dtype=state_dtype)
+    h = None
+    if return_intermediate_states:
+        chunks = (
+            sum(
+                (right - left + chunk_size - 1) // chunk_size
+                for left, right in zip(cu_seqlens, cu_seqlens[1:])
+            )
+            if cu_seqlens is not None
+            else (tokens + chunk_size - 1) // chunk_size
+        )
+        state_tail = (v_dim, k_dim) if state_v_first else (k_dim, v_dim)
+        h = _empty((batch, v_heads, chunks, *state_tail), q)
     layout_buffer = ctypes.create_string_buffer(layout.encode("utf-8"))
     outputs = (o, final_state, g_cumsum, A)
+    if return_intermediate_states:
+        outputs += (h,)
     return _call_aclnn(
         "aclnnChunkGatedDeltaRuleFwd",
         lambda ctx: [
@@ -1744,7 +1760,7 @@ def npu_chunk_gated_delta_rule_fwd(
             ctx.tensor(beta_eff, "beta_eff"),
             ctx.tensor(g_cumsum, "g_cumsum"),
             ctx.tensor(A, "A"),
-            ctx.tensor(None, "h"),
+            ctx.tensor(h, "h"),
         ],
         outputs,
     )
