@@ -7,6 +7,11 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
+/*!
+ * \file causal_conv1d_tiling_planner.h
+ * \brief CausalConv1d tiling planning utilities.
+ */
+
 #ifndef CAUSAL_CONV1D_TILING_PLANNER_H
 #define CAUSAL_CONV1D_TILING_PLANNER_H
 
@@ -272,12 +277,6 @@ inline FnHostPlan ChooseFnHostPlan(gert::TilingContext *context, const CausalCon
         plan.baseDimChoice = ChooseFnTokenDimCoSplitBaseDimChoice(context, tiling.dim, ubSize, coreNum);
     }
 
-    if (tiling.isOutReshape) {
-        int64_t headDim = tiling.dim / tiling.headNum; //isOutReshape indicates headNum must larger than 0
-        plan.baseDimChoice.baseDim = (plan.baseDimChoice.baseDim / headDim) * headDim;
-        plan.baseDimChoice.baseDimCnt = CeilDivInt64(tiling.dim, plan.baseDimChoice.baseDim);
-    }
-
     if (plan.baseDimChoice.baseDim <= 0 || plan.baseDimChoice.baseDimCnt <= 0) {
         return {};
     }
@@ -301,6 +300,6 @@ inline FnHostPlan ChooseFnHostPlan(gert::TilingContext *context, const CausalCon
     return plan;
 }
 
-} // namespace optiling::causal_conv1d_host
+}
 
-#endif // CAUSAL_CONV1D_TILING_PLANNER_H
+#endif

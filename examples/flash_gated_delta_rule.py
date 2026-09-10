@@ -25,7 +25,7 @@ import torch_npu
 
 from fla_npu.ops import ascendc as ascendc_ops
 from fla_npu.ops.ascendc import (
-    causal_conv1d as ascendc_causal_conv1d,
+    causal_conv1d_fn as ascendc_causal_conv1d_fn,
     causal_conv1d_bwd as ascendc_causal_conv1d_bwd,
     chunk_bwd_dqkwg as ascendc_chunk_bwd_dqkwg,
     chunk_bwd_dv_local as ascendc_chunk_bwd_dv_local,
@@ -349,18 +349,27 @@ class AscendCCausalConv1dFunction(torch.autograd.Function):
             width=width,
             dim=dim,
         )
-        initial_state_mode = [1] * num_sequences if initial_state is not None else None
+        query_start_loc_device = (
+            cu_seqlens.to(device=op_x.device, dtype=torch.int32).contiguous()
+            if cu_seqlens is not None
+            else None
+        )
+        has_initial_state = (
+            torch.ones(num_sequences, dtype=torch.bool, device=op_x.device)
+            if initial_state is not None
+            else None
+        )
 
-        preactivation = ascendc_causal_conv1d(
+        preactivation = ascendc_causal_conv1d_fn(
             op_x,
             op_weight,
             bias,
             conv_states,
-            query_start_loc=query_start_loc,
-            initial_state_mode=initial_state_mode,
-            activation_mode=0,
+            query_start_loc=query_start_loc_device,
+            has_initial_state=has_initial_state,
+            activation=None,
             pad_slot_id=-1,
-            run_mode=0,
+            null_block_id=None,
             head_num=H,
         )
         if is_varlen:

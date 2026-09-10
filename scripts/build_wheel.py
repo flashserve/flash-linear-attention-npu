@@ -13,7 +13,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-from fla_npu_artifacts import get_wheel_filename  # noqa: E402
 
 
 def _resolve_output_dir(value: str) -> Path:
@@ -169,8 +168,6 @@ def main() -> int:
 
     wheel_dir = _resolve_output_dir(args.wheel_dir)
     wheel_dir.mkdir(parents=True, exist_ok=True)
-    wheel_path = wheel_dir / get_wheel_filename(REPO_ROOT)
-
     command = [
         sys.executable,
         "-m",
@@ -189,8 +186,12 @@ def main() -> int:
         env["FLA_NPU_BUILD_ARGS"] = build_args
     subprocess.run(command, cwd=REPO_ROOT, check=True, env=env)
 
-    if not wheel_path.is_file():
-        raise RuntimeError(f"Expected wheel was not produced: {wheel_path}")
+    # With the thin launcher enabled the wheel is no longer py3-none-any
+    # (it embeds a cpXXX-linux_aarch64 extension), so resolve the actual file.
+    wheel_files = sorted(wheel_dir.glob("flash_linear_attention_npu-*.whl"))
+    if not wheel_files:
+        raise RuntimeError(f"Expected wheel was not produced under {wheel_dir}")
+    wheel_path = wheel_files[-1]
 
     print(f"[fla-npu build] Wheel: {wheel_path}", flush=True)
     print(f"[fla-npu build] Install command:", flush=True)

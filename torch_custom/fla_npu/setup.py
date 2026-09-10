@@ -96,6 +96,37 @@ def _setup_pure_python():
     )
 
 
+def _setup_thin_extension():
+    """Build the optional C++ thin launcher (fla_npu._C_thin).
+
+    Enable with FLA_NPU_BUILD_THIN=1. Only torch/CANN runtime symbols are used;
+    no torch_npu headers or libraries are required at build time.
+    """
+    from torch.utils.cpp_extension import BuildExtension, CppExtension
+
+    csrc_thin = SETUP_DIR / "csrc_thin"
+    sources = sorted(str(p) for p in (csrc_thin / "src").glob("*.cpp"))
+    include_dirs = [str(csrc_thin / "include")]
+    ext = CppExtension(
+        name="fla_npu._C_thin",
+        sources=sources,
+        include_dirs=include_dirs,
+        extra_compile_args=["-std=c++17"],
+    )
+    setup(
+        name=PACKAGE_NAME,
+        version=_package_version(),
+        description="FLA NPU Python runtime with optional C++ thin launcher",
+        packages=_packages(),
+        package_dir=_package_dir(),
+        ext_modules=[ext],
+        cmdclass={"build_ext": BuildExtension, "build_py": CleanBuildPy},
+        package_data={"fla_npu": OPP_PACKAGE_DATA},
+        include_package_data=True,
+        zip_safe=False,
+    )
+
+
 def _setup_legacy_extension():
     import torch
     import torch_npu
@@ -218,7 +249,18 @@ def _setup_legacy_extension():
     )
 
 
-if _env_flag("FLA_NPU_BUILD_LEGACY_EXTENSION"):
+def _thin_build_enabled() -> bool:
+    """Thin launcher is compiled by default; disable with FLA_NPU_BUILD_THIN=0."""
+
+    value = os.getenv("FLA_NPU_BUILD_THIN")
+    if value is None:
+        return True
+    return value.upper() not in {"0", "FALSE", "NO", "OFF"}
+
+
+if _thin_build_enabled():
+    _setup_thin_extension()
+elif _env_flag("FLA_NPU_BUILD_LEGACY_EXTENSION"):
     _setup_legacy_extension()
 else:
     _setup_pure_python()

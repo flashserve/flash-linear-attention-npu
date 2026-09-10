@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import os
 import types
 import warnings
 from typing import Callable, Optional
@@ -29,6 +30,8 @@ _ASCENDC_OPS = (
     "npu_fast_gelu_custom",
     "npu_fast_gelu_custom_backward",
     "npu_causal_conv1d",
+    "npu_causal_conv1d_fn",
+    "npu_causal_conv1d_update",
     "npu_causal_conv1d_bwd",
     "npu_prepare_wy_repr_bwd_full",
     "npu_prepare_wy_repr_bwd",
@@ -64,14 +67,20 @@ BACKWARD_OPS = {
     "fast_gelu_custom": "fast_gelu_custom_backward",
     "npu_fast_gelu_custom": "npu_fast_gelu_custom_backward",
     "causal_conv1d": "causal_conv1d_bwd",
+    "causal_conv1d_fn": "causal_conv1d_bwd",
     "npu_causal_conv1d": "npu_causal_conv1d_bwd",
+    "npu_causal_conv1d_fn": "npu_causal_conv1d_bwd",
 }
 
 # ctypes 直接写 tensor storage 时，PyTorch 无法从 Python 调用自动发现副作用。
 # 这里集中声明被修改的参数，由 direct-op wrapper 负责 grad 限制和版本计数。
 MUTATED_ARGUMENTS = {
     "causal_conv1d": ("conv_states",),
+    "causal_conv1d_fn": ("conv_states",),
+    "causal_conv1d_update": ("conv_state",),
     "npu_causal_conv1d": ("conv_states",),
+    "npu_causal_conv1d_fn": ("conv_states",),
+    "npu_causal_conv1d_update": ("conv_state",),
     "npu_recurrent_kda": ("initial_state",),
     "recurrent_gated_delta_rule": ("state",),
     "npu_recurrent_gated_delta_rule": ("state",),
@@ -147,11 +156,35 @@ def _get_torch_op(name: str):
 @functools.lru_cache(maxsize=None)
 def _get_direct_op(name: str):
     _prepare_direct_runtime()
+    thin_op = _get_thin_op(name)
+    if thin_op is not None:
+        return _wrap_mutable_direct_op(name, thin_op)
     try:
         op = ASCENDC_CTYPES_OPS[name]
     except KeyError as exc:
         raise AttributeError(f"fla_npu.ops.ascendc has no ctypes Ascend C op {name}.") from exc
     return _wrap_mutable_direct_op(name, op)
+
+
+_THIN_SUPPORTED_OPS = frozenset(
+    {"npu_recurrent_gated_delta_rule", "npu_causal_conv1d_update"}
+)
+
+
+def _get_thin_op(name: str):
+    """Return the thin C++ adapter for *name* when enabled, else None."""
+
+    flag = os.environ.get("FLA_NPU_THIN_LAUNCHER")
+    if flag is not None and flag.upper() in {"0", "FALSE", "NO", "OFF"}:
+        return None
+    canonical = name if name.startswith("npu_") else f"npu_{name}"
+    if canonical not in _THIN_SUPPORTED_OPS:
+        return None
+    try:
+        from . import _thin
+    except Exception:
+        return None
+    return getattr(_thin, canonical, None)
 
 
 def _wrap_mutable_direct_op(name: str, op: Callable) -> Callable:
@@ -160,31 +193,45 @@ def _wrap_mutable_direct_op(name: str, op: Callable) -> Callable:
         return op
 
     signature = inspect.signature(op)
+    predicate = MUTATION_PREDICATES.get(name)
+    parameters = list(signature.parameters.values())
+    mutated_positions = [
+        i for i, param in enumerate(parameters) if param.name in mutated_names
+    ]
+    can_fast_path = predicate is None and mutated_positions
 
     @functools.wraps(op)
     def wrapper(*args, **kwargs):
-        bound = signature.bind(*args, **kwargs)
-        bound.apply_defaults()
-        active_mutated_names = mutated_names
-        predicate = MUTATION_PREDICATES.get(name)
-        if predicate is not None and not predicate(bound.arguments):
-            active_mutated_names = ()
-        mutated_tensors = [bound.arguments[arg_name] for arg_name in active_mutated_names]
-
         try:
             import torch
         except Exception as exc:
             raise RuntimeError("Mutable Ascend C operators require the torch Python runtime.") from exc
 
-        mutated_tensors = [tensor for tensor in mutated_tensors if isinstance(tensor, torch.Tensor)]
+        if (
+            can_fast_path
+            and not any(key in kwargs for key in mutated_names)
+            and len(args) > max(mutated_positions)
+        ):
+            raw_mutated = [args[pos] for pos in mutated_positions]
+        else:
+            bound = signature.bind(*args, **kwargs)
+            bound.apply_defaults()
+            active_mutated_names = mutated_names
+            if predicate is not None and not predicate(bound.arguments):
+                active_mutated_names = ()
+            raw_mutated = [
+                bound.arguments[arg_name] for arg_name in active_mutated_names
+            ]
+
+        mutated_tensors = [
+            tensor for tensor in raw_mutated if isinstance(tensor, torch.Tensor)
+        ]
         requiring_grad = [
-            arg_name for arg_name in active_mutated_names
-            if getattr(bound.arguments[arg_name], "requires_grad", False)
+            tensor for tensor in mutated_tensors if tensor.requires_grad
         ]
         if requiring_grad:
-            names = ", ".join(requiring_grad)
             raise RuntimeError(
-                f"{name} mutates {names} in place through ctypes. Mutable state tensors "
+                f"{name} mutates state tensors in place. Mutable state tensors "
                 "must not require gradients; use a functional state API for training."
             )
 
@@ -261,6 +308,9 @@ def _make_raw_wrapper(name: str) -> Callable:
     wrapper.__name__ = name
     wrapper.__qualname__ = name
     wrapper.__doc__ = f"Call the direct Ascend C binding for {name}."
+    op = ASCENDC_CTYPES_OPS.get(name)
+    if op is not None:
+        wrapper.__signature__ = inspect.signature(op)
     return wrapper
 
 
@@ -322,13 +372,20 @@ def causal_conv1d(
     run_mode=0,
     head_num=0,
 ):
-    """Causal conv1d with automatic backward binding for prefill mode.
+    """Deprecated causal conv1d API kept for source compatibility.
 
-    ``conv_states`` is mutable state in every mode and must not require gradients.
-    Decode/speculative modes are left on the raw op path; prefill only binds
-    gradients for ``x``, ``weight`` and ``bias``.
+    This preserves the pre-``bd55f7c`` signature and automatic backward binding
+    for the supported prefill path. ``conv_states`` is mutable state in every
+    mode and must not require gradients.
     """
 
+    warnings.warn(
+        "fla_npu.ops.ascendc.causal_conv1d is a deprecated compatibility API "
+        "and will be removed in 2027/02. Use causal_conv1d_fn or "
+        "causal_conv1d_update instead.",
+        FutureWarning,
+        stacklevel=2,
+    )
     can_bind_backward = (
         run_mode == 0
         and activation_mode == 0
@@ -436,10 +493,7 @@ def install_legacy_torch_ops_warning() -> None:
 
 for _name in _ASCENDC_OPS:
     globals()[_name] = _make_raw_wrapper(_name)
-    globals()[_strip_npu_prefix(_name)] = globals()[_name]
-
-globals()["fast_gelu_custom"] = fast_gelu_custom
-globals()["causal_conv1d"] = causal_conv1d
+    globals().setdefault(_strip_npu_prefix(_name), globals()[_name])
 
 _prepare_direct_runtime(raise_on_error=False)
 
