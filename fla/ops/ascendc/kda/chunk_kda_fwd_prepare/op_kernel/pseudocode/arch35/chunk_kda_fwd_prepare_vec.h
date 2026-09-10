@@ -139,6 +139,7 @@ __simd_vf__ inline void StageV0Vf(
     __ubuf__ GateT *rawGate,
     __ubuf__ BetaT *betaRaw, __ubuf__ float *dtBias, __ubuf__ float *aLog,
     __ubuf__ float *g, __ubuf__ float *gRef, __ubuf__ float *gLast,
+    __ubuf__ float *qRstd, __ubuf__ float *kRstd,
     __ubuf__ float *betaEff, uint16_t validRows, float epsilon,
     float lowerBound, bool hasDtBias, bool hasALog)
 {
@@ -177,34 +178,52 @@ __simd_vf__ inline void StageV0Vf(
                 ReduceSum(kSumLow, kSquareLow, mask);
                 ReduceSum(kSumHigh, kSquareHigh, mask);
                 // ReduceSum 只保证首 lane 有效。先按单 lane 合并两半，
-                // 按冻结语义加 epsilon 后开方，再借 betaEff 的未使用标量区
-                // 落 UB 并显式广播。
+                // 按冻结语义计算 rstd=1/sqrt(sum(x^2)+epsilon)；两份
+                // rstd 既供当前归一化广播，也由 MTE3 作为反向保存量写回。
                 Add(qSumLow, qSumLow, qSumHigh, scalarMask);
                 Add(kSumLow, kSumLow, kSumHigh, scalarMask);
                 Adds(qSumLow, qSumLow, epsilon, scalarMask);
                 Adds(kSumLow, kSumLow, epsilon, scalarMask);
                 Sqrt(qSumLow, qSumLow, scalarMask);
                 Sqrt(kSumLow, kSumLow, scalarMask);
+                RegTensor<float> one;
+                Duplicate(one, 1.0F, scalarMask);
+                Div(qSumLow, one, qSumLow, scalarMask);
+                Div(kSumLow, one, kSumLow, scalarMask);
                 DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
-                    betaEff + row, qSumLow, scalarMask);
+                    qRstd + row, qSumLow, scalarMask);
                 DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
-                    betaEff + Shape::kChunkRows + row, kSumLow,
-                    scalarMask);
+                    kRstd + row, kSumLow, scalarMask);
                 LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
                 LoadAlign<float, LoadDist::DIST_BRC_B32>(
-                    qSumLow, betaEff + row);
+                    qSumLow, qRstd + row);
                 LoadAlign<float, LoadDist::DIST_BRC_B32>(
-                    kSumLow, betaEff + Shape::kChunkRows + row);
-                Div(qLow, qLow, qSumLow, mask);
-                Div(qHigh, qHigh, qSumLow, mask);
-                Div(kLow, kLow, kSumLow, mask);
-                Div(kHigh, kHigh, kSumLow, mask);
+                    kSumLow, kRstd + row);
+                Mul(qLow, qLow, qSumLow, mask);
+                Mul(qHigh, qHigh, qSumLow, mask);
+                Mul(kLow, kLow, kSumLow, mask);
+                Mul(kHigh, kHigh, kSumLow, mask);
+            } else {
+                // Identity 模式也固定产生公开输出，避免不同
+                // TilingKey 下 q_rstd/k_rstd 未初始化。
+                RegTensor<float> one;
+                Duplicate(one, 1.0F, scalarMask);
+                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
+                    qRstd + row, one, scalarMask);
+                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
+                    kRstd + row, one, scalarMask);
             }
         } else {
             Duplicate(qLow, 0.0F, mask);
             Duplicate(qHigh, 0.0F, mask);
             Duplicate(kLow, 0.0F, mask);
             Duplicate(kHigh, 0.0F, mask);
+            RegTensor<float> zero;
+            Duplicate(zero, 0.0F, scalarMask);
+            DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
+                qRstd + row, zero, scalarMask);
+            DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
+                kRstd + row, zero, scalarMask);
         }
         Store128FromFp32(q + row * Shape::kHeadDim, qLow, qHigh);
         Store128FromFp32(k + row * Shape::kHeadDim, kLow, kHigh);
@@ -315,6 +334,8 @@ __simd_vf__ inline void StageV0Vf(
             RegTensor<float> one;
             LoadScalarAsFp32(beta, betaRaw + row);
             Duplicate(one, 1.0F, mask);
+            // Raw 模式只把 BF16/FP32 输入统一转成 FP32，不做非线性变换。
+            // 其余模式在下面生成对应的有效 beta。
             if constexpr (CompilePolicy::betaMode != BetaMode::Raw) {
                 Muls(beta, beta, -1.0F, mask);
                 Exp(beta, beta, mask);
@@ -676,6 +697,11 @@ public:
         gkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.gk));
         aqkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.aqk));
         akkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.akk));
+        qHatGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.qHat));
+        kHatGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.kHat));
+        qRstdGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.qRstd));
+        kRstdGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.kRstd));
+        betaEffGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.betaEff));
     }
 
     __aicore__ inline void Process()
@@ -781,6 +807,10 @@ private:
             state + Arch35Ub::kBetaRaw);
         auto betaEff = resource_.ubBuf.template GetBufferByByte<float>(
             state + Arch35Ub::kBetaEff);
+        auto qRstd = resource_.ubBuf.template GetBufferByByte<float>(
+            state + Arch35Ub::kQRstd);
+        auto kRstd = resource_.ubBuf.template GetBufferByByte<float>(
+            state + Arch35Ub::kKRstd);
         auto gRef = resource_.ubBuf.template GetBufferByByte<float>(
             state + Arch35Ub::kGRef[0]);
         auto gLast = resource_.ubBuf.template GetBufferByByte<float>(
@@ -848,6 +878,8 @@ private:
             reinterpret_cast<__ubuf__ float *>(g.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(gRef.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(gLast.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(qRstd.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(kRstd.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(betaEff.GetPhyAddr()),
             static_cast<uint16_t>(chunk.validRows), args_.tiling.epsilon,
             args_.tiling.lowerBound, args_.tiling.hasDtBias,
@@ -862,6 +894,9 @@ private:
             args_.workspace + slot + Workspace::kQHat));
         kContext.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + slot + Workspace::kKHat));
+        const AscendC::DataCopyExtParams scalarOutputCopy{
+            1, static_cast<uint32_t>(chunk.validRows * sizeof(float)),
+            0, 0, 0};
         AscendC::Mutex::Lock<PIPE_MTE3>(mutex);
         AscendC::DataCopy(qContext, q,
             chunk.validRows * Shape::kHeadDim);
@@ -870,6 +905,25 @@ private:
         AscendC::DataCopy(gkGm_[HeadTensorOffset(
             args_.tiling, chunk, valueHead, Shape::kHeadDim)],
             g, chunk.validRows * Shape::kHeadDim);
+        AscendC::DataCopyPad(betaEffGm_[HeadScalarOffset(
+            args_.tiling, chunk, valueHead)], betaEff, scalarOutputCopy);
+        if (IsQkOutputOwner(args_.tiling, valueHead)) {
+            // q/k 归一化保存量按 HK 的 head-major 布局输出。
+            // GVA 中只允许 QK 头组的首个 HV 写回，避免多 AIV
+            // 对同一 QK head 发生重叠写。
+            const uint64_t qkOut = QkHeadTensorOffset(
+                args_.tiling, chunk, qkHead, Shape::kHeadDim);
+            const uint64_t qkRstdOut = QkHeadScalarOffset(
+                args_.tiling, chunk, qkHead);
+            AscendC::DataCopy(qHatGm_[qkOut], q,
+                chunk.validRows * Shape::kHeadDim);
+            AscendC::DataCopy(kHatGm_[qkOut], k,
+                chunk.validRows * Shape::kHeadDim);
+            AscendC::DataCopyPad(
+                qRstdGm_[qkRstdOut], qRstd, scalarOutputCopy);
+            AscendC::DataCopyPad(
+                kRstdGm_[qkRstdOut], kRstd, scalarOutputCopy);
+        }
         AscendC::Mutex::Unlock<PIPE_MTE3>(mutex);
     }
 
@@ -1097,6 +1151,11 @@ private:
     AscendC::GlobalTensor<float> gkGm_{};
     AscendC::GlobalTensor<bfloat16_t> aqkGm_{};
     AscendC::GlobalTensor<bfloat16_t> akkGm_{};
+    AscendC::GlobalTensor<bfloat16_t> qHatGm_{};
+    AscendC::GlobalTensor<bfloat16_t> kHatGm_{};
+    AscendC::GlobalTensor<float> qRstdGm_{};
+    AscendC::GlobalTensor<float> kRstdGm_{};
+    AscendC::GlobalTensor<float> betaEffGm_{};
 };
 
 } // namespace KdaPrepare::Arch35

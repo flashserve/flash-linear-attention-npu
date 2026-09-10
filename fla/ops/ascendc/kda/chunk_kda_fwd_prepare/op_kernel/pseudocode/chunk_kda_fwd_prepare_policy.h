@@ -24,6 +24,7 @@ constexpr uint32_t kGateMatrixBytes = 0x8000;    // [64,128] * FP32
 constexpr uint32_t kScoreMatrixBytes = 0x4000;   // [64,64] * FP32
 constexpr uint32_t kQuadrantFp32Bytes = 0x1000;  // [32,32] * FP32
 constexpr uint32_t kQuadrantBf16Bytes = 0x0800;  // [32,32] * BF16
+constexpr uint32_t kRstdBytes = 0x0100;          // [64] * FP32
 constexpr uint32_t kPrefixRows[kSubChunkCount] = {16, 32, 48, 64};
 constexpr uint32_t kKMinusBytes[kSubChunkCount] = {
     0x1000, 0x2000, 0x3000, 0x4000};
@@ -118,7 +119,8 @@ constexpr uint32_t kQgScaled = 0x18000;
 constexpr uint32_t kBetaRaw = 0x0000;
 constexpr uint32_t kBetaEff = 0x0200;
 constexpr uint32_t kGRef[4] = {0x0400, 0x0600, 0x0800, 0x0A00};
-constexpr uint32_t kScanCarry = 0x0C00;
+constexpr uint32_t kQRstd = 0x0C00;
+constexpr uint32_t kKRstd = 0x0D00;
 constexpr uint32_t kGLast = 0x0E00;
 constexpr uint32_t kVfScratch = 0x1000;
 } // namespace Arch35Ub
@@ -140,7 +142,8 @@ constexpr uint32_t kBetaRaw = 0x10000;
 constexpr uint32_t kBetaEff = 0x10200;
 constexpr uint32_t kDtBias = 0x10400;
 constexpr uint32_t kALog = 0x10600;
-constexpr uint32_t kScanCarry = 0x10C00;
+constexpr uint32_t kQRstd = 0x10800;
+constexpr uint32_t kKRstd = 0x10900;
 constexpr uint32_t kGLast = 0x10E00;
 
 constexpr uint32_t kV3Aqk = 0x0000;

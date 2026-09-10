@@ -46,6 +46,11 @@ public:
         gkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.gk));
         aqkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.aqk));
         akkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.akk));
+        qHatGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.qHat));
+        kHatGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.kHat));
+        qRstdGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.qRstd));
+        kRstdGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.kRstd));
+        betaEffGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.betaEff));
         if (coreCount_ == 0) {
             return;
         }
@@ -192,10 +197,12 @@ private:
         auto betaEff = ub[base + Arch22Ub::kBetaEff].template ReinterpretCast<float>();
         auto dtBias = ub[base + Arch22Ub::kDtBias].template ReinterpretCast<float>();
         auto aLog = ub[base + Arch22Ub::kALog].template ReinterpretCast<float>();
+        auto qRstd = ub[base + Arch22Ub::kQRstd].template ReinterpretCast<float>();
+        auto kRstd = ub[base + Arch22Ub::kKRstd].template ReinterpretCast<float>();
         auto g = ub[Arch22Ub::kSharedG].template ReinterpretCast<float>();
         auto scratch = ub[Arch22Ub::kSharedScratch].template ReinterpretCast<float>();
-        const uint64_t qkOffset = QkInputOffset(
-            args_.tiling, chunk, QkHeadForValueHead(args_.tiling, valueHead));
+        const uint32_t qkHead = QkHeadForValueHead(args_.tiling, valueHead);
+        const uint64_t qkOffset = QkInputOffset(args_.tiling, chunk, qkHead);
         const uint64_t gateOffset =
             RawGateInputOffset(args_.tiling, chunk, valueHead);
         const uint64_t headOutputOffset =
@@ -242,9 +249,10 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(inputReady_[pair]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(inputReady_[pair]);
         // 唯一一次 VF：Q/K 可选 L2 norm，beta 变换，gate 变换和逐 token cumsum；
-        // 生成 Qhat/Khat/G/Glast/betaEff，并清零所有无效行。
+        // 生成 Qhat/Khat/qRstd/kRstd/G/Glast/betaEff，并清零所有无效行。
         // TODO：按目标 c220 头文件补齐寄存器、mask、归约和 repeat/stride 参数。
-        V0Vf(q, k, gate, beta, betaEff, dtBias, aLog, g, scratch, chunk.validRows);
+        V0Vf(q, k, qRstd, kRstd, gate, beta, betaEff, dtBias, aLog, g,
+             scratch, chunk.validRows);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[pair]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[pair]);
         const uint64_t slot = WorkspaceSlotBase(
@@ -259,6 +267,28 @@ private:
         AscendC::DataCopy(khatContext, k, chunk.validRows * Shape::kHeadDim);
         AscendC::DataCopyPad(betaContext, betaEff,
             AscendC::DataCopyExtParams{1, chunk.validRows * sizeof(float), 0, 0, 0});
+        // Q/K 保存量按 HK 写回。GVA 中只有 QK 头组的第一个 HV 是 owner，
+        // 其余 HV 仍保留各自 workspace context，供本 kernel 的 V1/V6 使用。
+        if (IsQkOutputOwner(args_.tiling, valueHead)) {
+            const uint64_t qkOutputOffset = QkHeadTensorOffset(
+                args_.tiling, chunk, qkHead, Shape::kHeadDim);
+            const uint64_t rstdOutputOffset =
+                QkHeadScalarOffset(args_.tiling, chunk, qkHead);
+            AscendC::DataCopy(qHatGm_[qkOutputOffset], q,
+                              chunk.validRows * Shape::kHeadDim);
+            AscendC::DataCopy(kHatGm_[qkOutputOffset], k,
+                              chunk.validRows * Shape::kHeadDim);
+            AscendC::DataCopyPad(qRstdGm_[rstdOutputOffset], qRstd,
+                AscendC::DataCopyExtParams{
+                    1, chunk.validRows * sizeof(float), 0, 0, 0});
+            AscendC::DataCopyPad(kRstdGm_[rstdOutputOffset], kRstd,
+                AscendC::DataCopyExtParams{
+                    1, chunk.validRows * sizeof(float), 0, 0, 0});
+        }
+        AscendC::DataCopyPad(
+            betaEffGm_[HeadScalarOffset(args_.tiling, chunk, valueHead)],
+            betaEff, AscendC::DataCopyExtParams{
+                         1, chunk.validRows * sizeof(float), 0, 0, 0});
         AscendC::DataCopy(gkGm_[headOutputOffset], g,
                           chunk.validRows * Shape::kHeadDim);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_[pair]);
@@ -437,6 +467,7 @@ private:
 
     __aicore__ inline void V0Vf(
         AscendC::LocalTensor<bfloat16_t> q, AscendC::LocalTensor<bfloat16_t> k,
+        AscendC::LocalTensor<float> qRstd, AscendC::LocalTensor<float> kRstd,
         AscendC::LocalTensor<GateT> gate, AscendC::LocalTensor<BetaT> beta,
         AscendC::LocalTensor<float> betaEff, AscendC::LocalTensor<float> dtBias,
         AscendC::LocalTensor<float> aLog, AscendC::LocalTensor<float> g,
@@ -467,8 +498,13 @@ private:
                 AscendC::Duplicate(qOne, 1.0F, 1);
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Div(betaEff, qOne, betaEff, 1);
-                AscendC::Muls(scratch, scratch, ReadScalar(betaEff, 0),
-                              Shape::kHeadDim);
+                AscendC::SetFlag<AscendC::HardEvent::V_S>(scalarRead_);
+                AscendC::WaitFlag<AscendC::HardEvent::V_S>(scalarRead_);
+                const float qScale = betaEff.GetValue(0);
+                qRstd.SetValue(row, qScale);
+                AscendC::SetFlag<AscendC::HardEvent::S_V>(scalarWrite_);
+                AscendC::WaitFlag<AscendC::HardEvent::S_V>(scalarWrite_);
+                AscendC::Muls(scratch, scratch, qScale, Shape::kHeadDim);
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Cast(q[row * Shape::kHeadDim], scratch,
                               AscendC::RoundMode::CAST_RINT, Shape::kHeadDim);
@@ -493,16 +529,28 @@ private:
                 AscendC::Duplicate(kOne, 1.0F, 1);
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Div(betaEff, kOne, betaEff, 1);
-                AscendC::Muls(scratch, scratch, ReadScalar(betaEff, 0),
-                              Shape::kHeadDim);
+                AscendC::SetFlag<AscendC::HardEvent::V_S>(scalarRead_);
+                AscendC::WaitFlag<AscendC::HardEvent::V_S>(scalarRead_);
+                const float kScale = betaEff.GetValue(0);
+                kRstd.SetValue(row, kScale);
+                AscendC::SetFlag<AscendC::HardEvent::S_V>(scalarWrite_);
+                AscendC::WaitFlag<AscendC::HardEvent::S_V>(scalarWrite_);
+                AscendC::Muls(scratch, scratch, kScale, Shape::kHeadDim);
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Cast(k[row * Shape::kHeadDim], scratch,
                               AscendC::RoundMode::CAST_RINT, Shape::kHeadDim);
                 AscendC::PipeBarrier<PIPE_V>();
             }
+        } else {
+            // 固定输出合同下 Identity 仍写确定值；反向关闭 L2Norm 时不会
+            // 使用 rstd，但不能留下未初始化输出。
+            AscendC::Duplicate(qRstd, 1.0F, validRows);
+            AscendC::Duplicate(kRstd, 1.0F, validRows);
+            AscendC::PipeBarrier<PIPE_V>();
         }
 
         if constexpr (CompilePolicy::betaMode == BetaMode::Raw) {
+            // Raw 模式只统一转成 FP32，公开 betaEff 不做 sigmoid 变换。
             if constexpr (std::is_same_v<BetaT, float>) {
                 AscendC::Adds(betaEff, beta, 0.0F, validRows);
             } else {
@@ -980,6 +1028,11 @@ private:
     AscendC::GlobalTensor<float> gkGm_{};
     AscendC::GlobalTensor<bfloat16_t> aqkGm_{};
     AscendC::GlobalTensor<bfloat16_t> akkGm_{};
+    AscendC::GlobalTensor<bfloat16_t> qHatGm_{};
+    AscendC::GlobalTensor<bfloat16_t> kHatGm_{};
+    AscendC::GlobalTensor<float> qRstdGm_{};
+    AscendC::GlobalTensor<float> kRstdGm_{};
+    AscendC::GlobalTensor<float> betaEffGm_{};
 };
 
 } // namespace KdaPrepare::Arch22

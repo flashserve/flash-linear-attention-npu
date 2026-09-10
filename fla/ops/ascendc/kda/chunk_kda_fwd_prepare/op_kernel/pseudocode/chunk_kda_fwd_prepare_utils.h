@@ -196,7 +196,8 @@ __aicore__ inline bool ResolveChunk(const PrepareKernelArgs &args,
 __aicore__ inline uint32_t QkHeadForValueHead(
     const ChunkKdaFwdPrepareTilingData &tiling, uint32_t valueHead)
 {
-    if (tiling.qkHeadNum == 0 || tiling.valueHeadNum < tiling.qkHeadNum) {
+    if (tiling.qkHeadNum == 0 || tiling.valueHeadNum < tiling.qkHeadNum ||
+        tiling.valueHeadNum % tiling.qkHeadNum != 0) {
         return 0;
     }
     const uint32_t headsPerQk = tiling.valueHeadNum / tiling.qkHeadNum;
@@ -204,6 +205,19 @@ __aicore__ inline uint32_t QkHeadForValueHead(
         return 0;
     }
     return valueHead / headsPerQk;
+}
+
+// Q/K 归一化结果按 HK 保存。GVA 中一个 HK 对应多个连续 HV，只有该
+// QK 头组的第一个 HV 写公开输出，避免多个 AIV 重叠写同一段 GM。
+__aicore__ inline bool IsQkOutputOwner(
+    const ChunkKdaFwdPrepareTilingData &tiling, uint32_t valueHead)
+{
+    if (tiling.qkHeadNum == 0 || tiling.valueHeadNum < tiling.qkHeadNum ||
+        tiling.valueHeadNum % tiling.qkHeadNum != 0) {
+        return false;
+    }
+    const uint32_t headsPerQk = tiling.valueHeadNum / tiling.qkHeadNum;
+    return headsPerQk != 0 && valueHead % headsPerQk == 0;
 }
 
 __aicore__ inline uint64_t QkInputOffset(
@@ -219,6 +233,24 @@ __aicore__ inline uint64_t QkInputOffset(
     }
     return ((static_cast<uint64_t>(chunk.batchIndex) * tiling.qkHeadNum +
              qkHead) * tiling.seqLen + chunk.tokenBegin) * Shape::kHeadDim;
+}
+
+// q_hat/k_hat/q_rstd/k_rstd 固定写成 head-major，供反向直接读取；
+// 输入即使是 sequence-major，也只影响上面的 QkInputOffset。
+__aicore__ inline uint64_t QkHeadTensorOffset(
+    const ChunkKdaFwdPrepareTilingData &tiling, const ChunkRange &chunk,
+    uint32_t qkHead, uint32_t dimension)
+{
+    return ((static_cast<uint64_t>(chunk.batchIndex) * tiling.qkHeadNum +
+             qkHead) * tiling.seqLen + chunk.tokenBegin) * dimension;
+}
+
+__aicore__ inline uint64_t QkHeadScalarOffset(
+    const ChunkKdaFwdPrepareTilingData &tiling, const ChunkRange &chunk,
+    uint32_t qkHead)
+{
+    return (static_cast<uint64_t>(chunk.batchIndex) * tiling.qkHeadNum +
+            qkHead) * tiling.seqLen + chunk.tokenBegin;
 }
 
 __aicore__ inline uint64_t ValueInputOffset(

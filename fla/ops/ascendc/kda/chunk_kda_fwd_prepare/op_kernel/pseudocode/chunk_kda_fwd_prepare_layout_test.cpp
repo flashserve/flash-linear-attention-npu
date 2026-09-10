@@ -178,6 +178,9 @@ int main()
             Arch35Ub::kStateBase[0] ||
         Arch35Ub::kStateBase[1] + Arch35Ub::kStateBytes !=
             Arch35Ub::kCapacity ||
+        Shape::kRstdBytes != Shape::kChunkRows * sizeof(float) ||
+        Arch35Ub::kQRstd + Shape::kRstdBytes != Arch35Ub::kKRstd ||
+        Arch35Ub::kKRstd + Shape::kRstdBytes != Arch35Ub::kGLast ||
         Arch35Ub::kRawScore + 20 * 1024 != Arch35Ub::kAqk ||
         Arch35Ub::kAqk + Shape::kBf16MatrixBytes != Arch35Ub::kLkk ||
         Arch35Ub::kLkk + Shape::kScoreMatrixBytes != Arch35Ub::kB ||
@@ -210,6 +213,8 @@ int main()
         Arch22Ub::kV6QgScaled != Arch22Ub::kSharedG ||
         Arch22Ub::kV6QgScaled + Shape::kBf16MatrixBytes >
             Arch22Ub::kSharedScratch ||
+        Arch22Ub::kQRstd + Shape::kRstdBytes != Arch22Ub::kKRstd ||
+        Arch22Ub::kKRstd + Shape::kRstdBytes > Arch22Ub::kGLast ||
         !CheckArch22QgScaledOverlay() ||
         Arch22Ub::kKMinus[3] + Shape::kKMinusBytes[3] !=
             Arch22Ub::kPrivateBytes ||

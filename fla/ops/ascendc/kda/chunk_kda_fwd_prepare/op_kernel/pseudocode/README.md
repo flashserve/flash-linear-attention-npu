@@ -49,8 +49,9 @@ TilingData 只承载 shape、调度和标量参数；设备架构不进入运行
 `USE_EXP2` 是独立的编译期布尔轴，`false` 和 `true` 都必须生成实例。正式
 TilingKey 声明应与 `chunk_fwd_h` 一致使用
 `ASCENDC_TPL_BOOL_DECL(USE_EXP2, 0, 1)`；`q/k/v`、score 操作数及
-`Aqk/Akk/w/u/qg/kg/qg_scaled` 固定为 BF16，`gk` 固定为 FP32，gate/beta
-只允许 FP32 或 BF16。当前 gate/beta dtype 编码与其他模式轴尚未冻结，
+`Aqk/Akk/w/u/qg/kg/qg_scaled/q_hat/k_hat` 固定为 BF16，
+`gk/q_rstd/k_rstd/beta_eff` 固定为 FP32，gate/beta 只允许 FP32 或 BF16。
+当前 gate/beta dtype 编码与其他模式轴尚未冻结，
 因此本伪代码只冻结该轴的 `0/1` 编码，不提交一个参数不完整的注册声明。
 正式 selector 的笛卡尔积中，每个合法的 dtype/模式组合都必须由
 `SEL_EXP` 一类宏同时展开 `USE_EXP2=0` 和 `USE_EXP2=1`，op_host 再把公开
@@ -66,8 +67,14 @@ step 缩放、base-2 边界换算和 `Exp` 输入倍率的纯数值合同；它�
 对每个长度不超过 64、维度为 128 的 chunk：
 
 ```text
-Qhat = optional_l2_norm(Q)
-Khat = optional_l2_norm(K)
+q_rstd[i] = 1/sqrt(sum_d(Q[i,d]^2) + epsilon), L2
+             1,                                      Identity
+k_rstd[i] = 1/sqrt(sum_d(K[i,d]^2) + epsilon), L2
+             1,                                      Identity
+Qhat = round_BF16(Q * q_rstd), L2
+       Q,                       Identity
+Khat = round_BF16(K * k_rstd), L2
+       K,                       Identity
 beta_eff = beta,               Raw
            sigmoid(beta),      Sigmoid
            2*sigmoid(beta),    TwoSigmoid
@@ -87,9 +94,16 @@ qg_scaled = round_BF16(float(qg) * scale)
 kg = round_BF16(Khat * E(Glast - G))
 ```
 
-公开输出固定为 `gk/Aqk/Akk/w/u/qg/kg/qg_scaled`。`qg` 与 `qg_scaled` 是两块
-独立输出，后者必须从已经写成 BF16 的 `qg` 回读到 FP32 后再乘 `scale`，不能合并
-两次舍入。`K_beta_g/V_beta` 只在 V6 到 C7 之间中转，不是公开输出。
+公开输出固定为
+`gk/Aqk/Akk/w/u/qg/kg/qg_scaled/q_hat/k_hat/q_rstd/k_rstd/beta_eff`。
+`qg` 与 `qg_scaled` 是两块独立输出，后者必须从已经写成 BF16 的 `qg` 回读到
+FP32 后再乘 `scale`，不能合并两次舍入。`K_beta_g/V_beta` 只在 V6 到 C7
+之间中转，不是公开输出。
+
+`QkNormMode::Identity` 不允许跳过五个新增输出的写回：`q_hat/k_hat` 分别等于
+BF16 输入 Q/K，`q_rstd/k_rstd` 的所有有效 token 固定写 FP32 `1`。
+`BetaMode::Raw` 也不表示直接透传输入地址，而是把 beta 转为 FP32 后写入独立的
+`beta_eff` 输出。尾 chunk 只写真实 token 对应的行，不把 UB 中的补零行写出张量边界。
 
 `PrecomputedStep` 的输入是自然对数域、尚未累计的单 token `deltaG_ln`。该模式
 不读取或应用 `dt_bias/A_log`，但 V0 仍按 `USE_EXP2` 缩放每个 step，并执行
@@ -130,19 +144,44 @@ Kminus[s,j,d] = Khat[j,d] * E(Gref[s,d] - G[j,d])
 
 ## 输出分类
 
-本伪代码固定把 `gk/Aqk/Akk/w/u/qg/kg/qg_scaled` 八个结果全部写回 GM。
+本伪代码固定把以下 13 个结果全部写回 GM：
+
+```text
+gk, Aqk, Akk, w, u, qg, kg, qg_scaled,
+q_hat, k_hat, q_rstd, k_rstd, beta_eff
+```
+
 “公开输出”只表示它们都位于算子边界；按实际消费者分类时，各类允许重叠：
 
 | 类别 | 数据 | 实际用途 |
 | --- | --- | --- |
 | 后续正向必需 | `gk/w/u/kg` | FwdH 计算 `v_new` 与 chunk 状态递推 |
 | 后续正向必需 | `Aqk/qg_scaled` | Finalize 计算 `attn_out=qg_scaled@h+Aqk@v_new` |
-| 反向使用或保存 | `Aqk/Akk/gk/w/qg/kg` | `Aqk/Akk` 始终保留；其余按 gate 与重计算策略保存或在反向重算；`u` 会随禁用重计算路径兼容保留，但当前反向不读取 |
-| 用户可选状态结果 | `hOut/final_state` | 由后续 FwdH 产生，不属于 Prepare 的八个输出 |
+| 反向保存 | `q_hat/k_hat/q_rstd/k_rstd/beta_eff` | KDA 反向消费有效 Q/K 与 beta；启用 L2Norm 时，其反向另消费归一化 Q/K 和 rstd |
+| 反向使用或按策略保存 | `Aqk/Akk/gk/w/qg/kg` | `Aqk/Akk` 始终保留；其余按 gate 与重计算策略保存或在反向重算 |
+| 兼容保留 | `u` | 随禁用重计算路径保留，但当前反向不读取 |
+| 用户可选状态结果 | `hOut/final_state` | 由后续 FwdH 产生，不属于 Prepare 的 13 个输出 |
 
 其中 `qg_scaled` 只服务正向 Finalize，`Akk/qg` 在 Prepare 已包含 Post-WU 的边界
 之后不再被正向消费。内部 head-major `hCompute` 即使不导出也必须存在；它供 Finalize
 使用，不能与可选公开的 `hOut` 混为一类。
+
+所有 Prepare 输出均固定为 head-major；输入的 `inputSequenceMajor` 不改变输出布局：
+
+| 输出 | dense shape | varlen shape | dtype |
+| --- | --- | --- | --- |
+| `gk/w/qg/kg/qg_scaled` | `[B,H_v,T,128]` | `[H_v,T,128]` | `gk` 为 FP32，其余为 BF16 |
+| `u` | `[B,H_v,T,128]` | `[H_v,T,128]` | BF16 |
+| `Aqk/Akk` | `[B,H_v,T,64]` | `[H_v,T,64]` | BF16 |
+| `q_hat/k_hat` | `[B,H_k,T,128]` | `[H_k,T,128]` | BF16 |
+| `q_rstd/k_rstd` | `[B,H_k,T]` | `[H_k,T]` | FP32 |
+| `beta_eff` | `[B,H_v,T]` | `[H_v,T]` | FP32 |
+
+GVA 中 `q_hat/k_hat/q_rstd/k_rstd` 按 `H_k` 编址。每个 Q/K head 映射到一组
+连续 value head，只有该 QK 头组的首个 value head 是这四个公开输出的 owner；其他
+value head 仍可为 V1/V6 生成各自的内部 Qhat/Khat context，但不得写同一公开地址。
+`beta_eff` 按 `H_v` 编址，每个 value head 都独立写回。Host Tiling 仍必须保证完整
+QK 头组不跨 workgroup。
 
 ## 八个 Stage
 
@@ -152,7 +191,7 @@ Kminus[s,j,d] = Khat[j,d] * E(Gref[s,d] - G[j,d])
 
 | Stage | 核 | 计算 |
 | --- | --- | --- |
-| `V0` | Vector | Q/K L2 norm、beta 变换、gate 变换、cumsum，生成 `Qhat/Khat/G/Gref/Glast/betaEff` |
+| `V0` | Vector | Q/K L2 norm、beta 变换、gate 变换、cumsum，生成 `Qhat/Khat/qRstd/kRstd/G/Gref/Glast/betaEff`，并写回五个新增公开输出 |
 | `V1` | Vector | 一次 VF 生成 S=4 的 `Qplus/Kplus/Kminus`，写 72 KiB payload |
 | `C2` | Cube | 四个 band 的 `rawAqk=Qplus@Kminus^T` 和 `rawAkk=Kplus@Kminus^T` |
 | `V3` | Vector | 因果 mask、beta、两个 32x32 叶子逆，生成 `Aqk/B/X0/X1/negX1` |
@@ -214,13 +253,15 @@ V0 的一次 VF 和回写完成后：
 | --- | --- | --- |
 | raw Q/K | 否 | 已生成 `Qhat/Khat` |
 | raw gate | 否 | 已生成 `G` |
-| norm reduction work | 否 | L2 norm 完成 |
+| norm reduction work | 否 | 已生成 FP32 `qRstd/kRstd`；其临时归约区可以释放 |
 | `dt_bias/A_log` | 否 | gate 变换完成 |
 | scan scratch/carry | 否 | `G/Glast/Gref` 已完成 |
-| `Qhat/Khat` | 是 | V1、V6 需要 |
+| UB 中的 `Qhat/Khat` | 是到 V1 | V1 原址消费并覆盖为 Qplus/Kplus |
+| workspace 中的 `Qhat/Khat` context | 是到 V6 | V6 回读；公开 `q_hat/k_hat` 则作为反向保存量持续存在 |
+| UB 中的 `qRstd/kRstd` | 否 | V0 的 MTE3 写回完成后没有本算子内部消费者 |
 | `G/Gref` | 是到 V1 | S=4 score 需要 |
 | 公开 `gk` | 是 | V6 从 GM 回读，且供后续算子使用 |
-| `betaEff` | 是到 V6 | Arch22 放 workspace，Arch35 放每 head 状态区 |
+| 内部 `betaEff` | 是到 V6 | Arch22 放 workspace，Arch35 放每 head 状态区；公开 `beta_eff` 作为反向保存量持续存在 |
 
 释放表示该静态地址在最后一个异步 reader 完成后可以换义，不表示在 UB 内移动数据。
 
@@ -240,12 +281,12 @@ totalChunks < usedCoreNum:
     workItem = chunk x headPartition
 ```
 
-`headsPerPartition` 由 Host 按完整 HK（Q/K head）cohort 生成，不能切开共享同一 Q/K
+`headsPerPartition` 由 Host 以完整 HK（Q/K head）对应的 QK 头组为单位生成，不能切开共享同一 Q/K
 源的 HV（value/gate head）集合。每个 AIC wave 最多处理 4 个 HV。Arch35 中 AIV0
 处理 group-local head 0/1，AIV1 处理 2/3；Arch22 中 AIV0 处理 0/2，
 AIV1 处理 1/3，以两次 pair wave 复用 40 KiB 共享区。
 
-当前 GQA 伪代码仍按 HV slot 独立搬运并归一化对应的 Q/K。同一 HK cohort 跨越
+当前 GVA 伪代码仍按 HV slot 独立搬运并归一化对应的 Q/K。同一 HK 对应的 QK 头组跨越
 两个 AIV 时没有可共享的 UB，同时还要保持单次 VF、静态 slot 和不做 UB 位置移动，
 因此这里明确采用“条件无法同时闭合时允许 GM 重读”的兜底规则。正式性能实现若要
 去掉这部分重复，必须在不破坏单次 VF 和静态地址合同的前提下增加跨 AIV 数据共享与
@@ -270,8 +311,10 @@ Prepare/Finalize。
 | `[0x38000,0x3B000)` | 12 KiB | local head 0 向量状态与临时区 |
 | `[0x3B000,0x3E000)` | 12 KiB | local head 1 向量状态与临时区 |
 
-每个 12 KiB 区固定保存 `betaRaw/betaEff/Gref[4]/scanCarry/Glast` 和 8 KiB
-连续 VF scratch。每个 112 KiB 区的 Stage 语义及 offset 直接定义在
+每个 12 KiB 区固定保存 `betaRaw/betaEff/Gref[4]/qRstd/kRstd/Glast` 和
+8 KiB 连续 VF scratch。`qRstd/kRstd` 分别位于区内 `0x0C00/0x0D00`，各占
+256 B，只保留到 V0 的 MTE3 写回完成；cumsum carry 保持在同一次 VF 的寄存器中，
+不另占静态 UB。每个 112 KiB 区的 Stage 语义及 offset 直接定义在
 `chunk_kda_fwd_prepare_policy.h`，代码用
 `resource.ubBuf.GetBufferByByte<T>(offset)` 绑定 `LocalTensor`。
 V6 的 112 KiB 正好由 `qg/kg/V_beta/qgScaled/K_beta_g` 五块 16 KiB BF16
@@ -295,6 +338,9 @@ MTE2 才能覆盖共享 G/scratch；V6 还要先等 qgScaled 的 MTE3 读完共�
 当前 `q/k/v` 只支持 BF16。V6 按 token 行正序读取 FP32 `G[r]` 后，把同一行
 BF16 `qgScaled[r]` 写到共享 G 起始地址的 `256*r` 字节处；该地址始终位于下一条
 尚未读取的 G 行之前，因此无需移动 UB 数据。
+每个 72 KiB 私有区还固定预留 `qRstd=0x10800`、`kRstd=0x10900`，各占
+256 B；两块区域只在 V0 使用，并在对应公开输出的 MTE3 写回完成后释放，不与
+`betaRaw/betaEff/dtBias/aLog/Glast` 或 Kminus payload 重叠。
 
 ## L1 和 workspace
 
@@ -469,6 +515,11 @@ MMAD 与 Fixpipe 不再读取 workspace，可以和 AIV 对下一组 slot 的生
 - 目标 CANN 9.1 的 SIMD/Reg API 只提供自然底 `Exp`，因此两条分支都调用
   `Exp`，不能把 SIMT `Exp2` 混入单次 VF。
 - BF16 写回执行 BF16 RINT。
+- L2Norm 的 `q_rstd/k_rstd` 在 FP32 中按
+  `1/sqrt(sum(x^2)+epsilon)` 生成并直接写回；不能把暂存的 `sqrt(...)` 当作 rstd。
+  Identity 分支写 FP32 `1`，保证固定输出始终初始化。
+- `beta_eff` 始终以 FP32 写回；Raw 分支等于 beta 的 FP32 值，Sigmoid 与
+  TwoSigmoid 分支分别写 `sigmoid(beta)` 与 `2*sigmoid(beta)`。
 - `K_beta_g` 保留两次 BF16 舍入：
   `round(Khat*E(G))`，转回 FP32 乘 beta，再次 round。
 - `qg_scaled` 先生成并舍入 `qg`，再转回 FP32 乘 scale 并二次舍入；两者都写入
