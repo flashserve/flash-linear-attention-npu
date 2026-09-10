@@ -36,14 +36,14 @@ __aicore__ inline const __gm__ ChunkRecomputeWUFwdHOTrailer *GetPhase5Trailer(GM
     const uint64_t oTilingOffset = AlignPhase6(
         sizeof(ChunkGatedDeltaRuleFwdHTilingData), PHASE6_TILING_ALIGNMENT);
     return reinterpret_cast<const __gm__ ChunkRecomputeWUFwdHOTrailer *>(
-        tiling + oTilingOffset + sizeof(ChunkFwdOTilingData));
+        tiling + oTilingOffset + sizeof(ChunkGatedDeltaRuleFwdOTilingData));
 }
 
 __aicore__ inline const __gm__ Arch22ChunkGatedDeltaRuleFwdTrailer *GetPhase6Trailer(GM_ADDR tiling)
 {
     const uint64_t oTilingOffset = AlignPhase6(
         sizeof(ChunkGatedDeltaRuleFwdHTilingData), PHASE6_TILING_ALIGNMENT);
-    const uint64_t phase5End = oTilingOffset + sizeof(ChunkFwdOTilingData) +
+    const uint64_t phase5End = oTilingOffset + sizeof(ChunkGatedDeltaRuleFwdOTilingData) +
                                sizeof(ChunkRecomputeWUFwdHOTrailer);
     return reinterpret_cast<const __gm__ Arch22ChunkGatedDeltaRuleFwdTrailer *>(
         tiling + AlignPhase6(phase5End, PHASE6_TILING_ALIGNMENT));
@@ -322,9 +322,9 @@ __aicore__ inline void RunPhase6(
 
     const uint64_t oTilingOffset =
         AlignPhase6(sizeof(ChunkGatedDeltaRuleFwdHTilingData), PHASE6_TILING_ALIGNMENT);
-    const __gm__ ChunkFwdOTilingData *gmOTiling =
-        reinterpret_cast<const __gm__ ChunkFwdOTilingData *>(tiling + oTilingOffset);
-    ChunkFwdOTilingData oTiling{};
+    const __gm__ ChunkGatedDeltaRuleFwdOTilingData *gmOTiling =
+        reinterpret_cast<const __gm__ ChunkGatedDeltaRuleFwdOTilingData *>(tiling + oTilingOffset);
+    ChunkGatedDeltaRuleFwdOTilingData oTiling{};
     CopyOTiling(gmOTiling, oTiling);
     DispatchFwdO<InputT>(q, k, vNew, h, gCumsumBht, cuSeqlens, chunkIndices, o,
                  userWorkspace, &oTiling);

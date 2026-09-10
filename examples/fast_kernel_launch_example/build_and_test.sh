@@ -17,7 +17,7 @@ OP_NAME="${1:-}"
 
 usage() {
     echo "Usage: $0 [OP_NAME]"
-    echo "  OP_NAME: operator name to test (e.g., add, grouped_matmul, chunk_bwd_dv_local, chunk_fwd_o)"
+    echo "  OP_NAME: operator name to test (e.g., add, grouped_matmul, chunk_bwd_dv_local, chunk_gated_delta_rule_fwd_o)"
     echo "  If not specified, all tests will be run."
     exit 1
 }

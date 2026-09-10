@@ -64,7 +64,7 @@ done
 # ================================================================
 # 常量定义
 # ================================================================
-ALL_OPS="causal_conv1d,chunk_bwd_dv_local,chunk_bwd_dqkwg,chunk_gated_delta_rule_bwd_dhu,prepare_wy_repr_bwd_da,prepare_wy_repr_bwd_full,chunk_fwd_o,chunk_gated_delta_rule_fwd_h,recurrent_gated_delta_rule,recompute_w_u_fwd,chunk_local_cumsum"
+ALL_OPS="causal_conv1d,chunk_bwd_dv_local,chunk_bwd_dqkwg,chunk_gated_delta_rule_bwd_dhu,prepare_wy_repr_bwd_da,prepare_wy_repr_bwd_full,chunk_gated_delta_rule_fwd_o,chunk_gated_delta_rule_fwd_h,recurrent_gated_delta_rule,recompute_w_u_fwd,chunk_local_cumsum"
 TEST_OPS=(
     "prepare_wy_repr_bwd_full"
     "chunk_gated_delta_rule_bwd_dhu"

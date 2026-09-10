@@ -18,7 +18,7 @@
 
 1. NPU DUT：`chunk_gated_delta_rule_fwd`；
 2. NPU benchmark：公开算子链 `chunk_local_cumsum`、`chunk_scaled_dot_kkt`、`solve_tri`、
-   `recompute_w_u_fwd`、`chunk_gated_delta_rule_fwd_h`、`chunk_fwd_o`；
+   `recompute_w_u_fwd`、`chunk_gated_delta_rule_fwd_h`、`chunk_gated_delta_rule_fwd_o`；
 3. CPU golden：相同冻结输入上的 FP64 recurrence。
 
 公开 `solve_tri` 来自 main 已合入的 PR 398；融合 kernel 不引用该公开实现，只有双标杆链路调用它。

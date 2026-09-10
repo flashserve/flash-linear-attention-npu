@@ -100,7 +100,7 @@ FLA_NPU_SOC=ascend910b python scripts/build_wheel.py
 | 环境变量                          | 可选范围                                          | 作用 / 建议                                                                                                                        | 默认           |
 | --------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------- |
 | `FLA_NPU_SOC`                   | `ascend910b` / `ascend910_93` / `ascend950` | 目标芯片；按实际运行机器选择                                                                                                       | `ascend910b` |
-| `FLA_NPU_OPS`                   | 算子名，逗号分隔（如 `chunk_fwd_o,chunk_bwd_dv_local`） | 只构建指定算子的 wheel；适合已安装完整 wheel 后快速替换少量算子的 Ascend C 产物，未设置则全量构建 | 空（全量） |
+| `FLA_NPU_OPS`                   | 算子名，逗号分隔（如 `chunk_gated_delta_rule_fwd_o,chunk_bwd_dv_local`） | 只构建指定算子的 wheel；适合已安装完整 wheel 后快速替换少量算子的 Ascend C 产物，未设置则全量构建 | 空（全量） |
 | `FLA_NPU_BUILD_OFFLINE_BUNDLE` | `TRUE` / `FALSE` | 是否在 wheel 内嵌离线 third-party bundle 供离线二次编译；需 `third_party/` 缓存完整，否则打包阶段报错 | `FALSE` |
 | `FLA_NPU_DISABLE_LOCAL_VERSION` | `TRUE` / `FALSE`                              | wheel 版本号不追加 SOC/torch/ABI 本地版本；内部统一发版需要固定版本号时可设`TRUE`，日常构建建议保持 `FALSE` 以区分产物兼容范围 | `FALSE`      |
 
@@ -148,7 +148,7 @@ wheel 内嵌 OPP；wheel 通过绝对路径加载 `libcust_opapi.so`，不会再
 
 ```sh
 python -c "import fla_npu; print('ok')"
-python -c "from fla_npu.ops import ascendc; print(hasattr(ascendc, 'chunk_fwd_o'))"
+python -c "from fla_npu.ops import ascendc; print(hasattr(ascendc, 'chunk_gated_delta_rule_fwd_o'))"
 python scripts/check_packaged_wheel_api.py
 ```
 
@@ -188,7 +188,7 @@ bash tests/atk/run_test_cpu.sh -op=causal_conv1d -npu_device_id=0
 - `causal_conv1d_bwd`
 - `chunk_bwd_dqkwg`
 - `chunk_bwd_dv_local`
-- `chunk_fwd_o`
+- `chunk_gated_delta_rule_fwd_o`
 - `chunk_gated_delta_rule_bwd_dhu`
 - `chunk_gated_delta_rule_fwd_h`
 - `chunk_kda_fwd`
@@ -279,7 +279,7 @@ NPU CI 的 Example/ST 用例由 [`ci/example_st_cases.json`](ci/example_st_cases
 │       │   └── gdn                    # GDN 算子
 │       │       ├── chunk_gdn_fwd      # 前向传播算子
 │       │       │   ├── chunk_fwd_h
-│       │       │   ├── chunk_fwd_o
+│       │       │   ├── chunk_gated_delta_rule_fwd_o
 │       │       │   ├── chunk_gated_delta_rule_fwd_h
 │       │       │   └── recompute_w_u_fwd
 │       │       ├── chunk_gdn_bwd      # 反向传播算子

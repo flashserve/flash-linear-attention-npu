@@ -6,7 +6,7 @@
 
 #include "../../../op_kernel/internal/arch22/operators/chunk_gated_delta_rule_fwd_h/op_host/chunk_gated_delta_rule_fwd_h_tiling.h"
 #include "../../../op_kernel/internal/arch22/operators/chunk_gated_delta_rule_fwd_h/op_host/chunk_gated_delta_rule_fwd_h_tiling_processor.h"
-#include "../../../op_kernel/internal/arch22/operators/chunk_fwd_o/op_kernel/chunk_fwd_o_struct.h"
+#include "../../../op_kernel/internal/arch22/operators/chunk_gated_delta_rule_fwd_o/op_kernel/chunk_gated_delta_rule_fwd_o_struct.h"
 #include "../../../op_kernel/internal/arch22/operators/recompute_w_u_fwd/op_host/op_tiling/recompute_w_u_fwd_tiling_processor.h"
 #include "../../../op_kernel/internal/arch22/operators/chunk_recompute_wu_fwd_ho/op_kernel/chunk_recompute_wu_fwd_ho_struct.h"
 
@@ -97,7 +97,7 @@ void FillHMacroTiling(const ::ChunkGatedDeltaRuleFwdHTilingData &src,
     dst.set_numChunksWorkspaceOffset(src.numChunksWorkspaceOffset);
 }
 
-size_t FillOTilingWorkspace(GDN::ChunkFwdOTilingData &tiling, uint32_t aicCoreNum,
+size_t FillOTilingWorkspace(GDN::ChunkGatedDeltaRuleFwdOTilingData &tiling, uint32_t aicCoreNum,
                             size_t baseOffset)
 {
     size_t offset = baseOffset;
@@ -298,7 +298,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
 
     ChunkGatedDeltaRuleFwdHTilingData hTiling;
     FillHMacroTiling(hPlain, hTiling);
-    GDN::ChunkFwdOTilingData oTiling{};
+    GDN::ChunkGatedDeltaRuleFwdOTilingData oTiling{};
     oTiling.shapeBatch = isVarlen ? 1 : batch;
     oTiling.seqlen = seqlen;
     oTiling.kNumHead = kNumHead;

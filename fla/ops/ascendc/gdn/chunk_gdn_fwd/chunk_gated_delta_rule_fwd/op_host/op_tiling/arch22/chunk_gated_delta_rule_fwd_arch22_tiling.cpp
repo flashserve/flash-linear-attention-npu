@@ -4,7 +4,7 @@
  */
 #include "../../chunk_gated_delta_rule_fwd_tiling.h"
 
-#include "../../../op_kernel/internal/arch22/operators/chunk_fwd_o/op_kernel/chunk_fwd_o_struct.h"
+#include "../../../op_kernel/internal/arch22/operators/chunk_gated_delta_rule_fwd_o/op_kernel/chunk_gated_delta_rule_fwd_o_struct.h"
 #include "../../../op_kernel/internal/arch22/operators/chunk_gated_delta_rule_fwd_h/op_host/chunk_gated_delta_rule_fwd_h_tiling.h"
 #include "../../../op_kernel/internal/arch22/operators/chunk_gated_delta_rule_fwd_h/op_kernel/chunk_gated_delta_rule_fwd_h_struct.h"
 #include "../../../op_kernel/internal/arch22/operators/chunk_recompute_wu_fwd_ho/op_kernel/chunk_recompute_wu_fwd_ho_struct.h"
@@ -298,7 +298,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
                         hTilingSize, sizeof(::ChunkGatedDeltaRuleFwdHTilingData)),
                 return ge::GRAPH_FAILED);
     const uint64_t oTilingOffset = AlignUp(hTilingSize, TILING_ALIGNMENT);
-    const uint64_t phase5TrailerEnd = oTilingOffset + sizeof(GDN::ChunkFwdOTilingData) +
+    const uint64_t phase5TrailerEnd = oTilingOffset + sizeof(GDN::ChunkGatedDeltaRuleFwdOTilingData) +
                                       sizeof(GDN::ChunkRecomputeWUFwdHOTrailer);
     const uint64_t phase6TrailerOffset = AlignUp(phase5TrailerEnd, TILING_ALIGNMENT);
     auto *rawTiling = context->GetRawTilingData();

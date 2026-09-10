@@ -6,7 +6,7 @@
 
 #include "chunk_gated_delta_rule_fwd.h"
 #include "../../../chunk_fwd_h/op_host/op_api/chunk_fwd_h.h"
-#include "../../../chunk_fwd_o/op_host/op_api/chunk_fwd_o.h"
+#include "../../../chunk_gated_delta_rule_fwd_o/op_host/op_api/chunk_gated_delta_rule_fwd_o.h"
 #include "../../../chunk_gated_delta_rule_fwd_prepare/op_host/op_api/chunk_gated_delta_rule_fwd_prepare.h"
 
 #include "acl/acl.h"
@@ -652,7 +652,7 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
             params.chunkSize, true, params.useExp2, params.stateVFirst, h, vNew, finalState, executorPtr);
         GDN_STAGE_CHECK(hResult[0] != nullptr && hResult[1] != nullptr, 169105);
 
-        auto oResult = l0op::ChunkFwdO(
+        auto oResult = l0op::ChunkGatedDeltaRuleFwdO(
             qHat, kHat, vNew, h, gCumsumBht, params.cuSeqlensOptional,
             params.chunkIndicesOptional, params.scale, params.chunkSize, params.useExp2, params.stateVFirst,
             "BSND", params.oOut, executorPtr);

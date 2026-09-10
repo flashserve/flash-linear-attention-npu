@@ -373,7 +373,7 @@ at::Tensor npu_prepare_wy_repr_bwd_da(const at::Tensor & k, const at::Tensor & v
     return std::make_tuple(dq, dk, dw, dg);
 }
 
-at::Tensor npu_chunk_fwd_o(
+at::Tensor npu_chunk_gated_delta_rule_fwd_o(
     const at::Tensor & q, 
     const at::Tensor & k, 
     const at::Tensor & v, 
@@ -412,7 +412,7 @@ at::Tensor npu_chunk_fwd_o(
 
     // 调用ACLNN算子
     EXEC_NPU_CMD_EXT(
-        aclnnChunkFwdO,
+        aclnnChunkGatedDeltaRuleFwdO,
         q, k, v, h, g_,
         cu_seqlens, chunk_indices, scale, chunk_size_,
         use_exp2_, state_v_first_, output_layout_cstr,

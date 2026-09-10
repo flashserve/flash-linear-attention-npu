@@ -5,7 +5,7 @@
 `ChunkGatedDeltaRuleFwd` 实现 Gated Delta Rule 的分块前向计算。仅当 `useExp2=false`、
 `useQkL2norm=false`、`useGateInKernel=false`、不启用 beta sigmoid、`allowNegEigval=false`、输出 A、
 `stateVFirst=false` 且 layout 为 `BNSD/NTD` 时使用原 Phase6 kernel；任意条件不满足时，
-A5 依次调度 `ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkFwdO`。
+A5 依次调度 `ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkGatedDeltaRuleFwdO`。
 新路径不支持的参数组合由 `ChunkGatedDeltaRuleFwdPrepare` 报错。当前实现支持定长和变长序列、GVA、可选初始状态
 以及可选最终状态输出。
 
@@ -16,7 +16,7 @@ A5 依次调度 `ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkFwdO`。
 3. `SolveTri`（`solve_tri`）；
 4. `RecomputeWUFwd`（`recompute_w_u_fwd`）；
 5. `ChunkFwdH`（`chunk_fwd_h`，固定 `use_exp2=true`）；
-6. `ChunkFwdO`（`chunk_fwd_o`）。
+6. `ChunkGatedDeltaRuleFwdO`（`chunk_gated_delta_rule_fwd_o`）。
 
 融合 kernel 内部实现上述等价计算阶段，不调用或链接这些公开算子的 ACLNN 实现。
 公开算子链只作为 ATK 精度标杆使用。

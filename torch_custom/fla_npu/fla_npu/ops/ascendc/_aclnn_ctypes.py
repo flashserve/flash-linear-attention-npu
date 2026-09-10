@@ -44,7 +44,7 @@ from ._runtime import (
 # strings or otherwise ambiguous scalar conversion are listed here to prevent
 # ctypes from narrowing or mis-converting arguments.
 _GET_WORKSPACE_ARGTYPES = {
-    "aclnnChunkFwdO": [
+    "aclnnChunkGatedDeltaRuleFwdO": [
         ctypes.c_void_p,  # q
         ctypes.c_void_p,  # k
         ctypes.c_void_p,  # v
@@ -908,7 +908,7 @@ def npu_chunk_bwd_dqkwg(
     )
 
 
-def npu_chunk_fwd_o(
+def npu_chunk_gated_delta_rule_fwd_o(
     q,
     k,
     v,
@@ -941,7 +941,7 @@ def npu_chunk_fwd_o(
     out = _empty(out_shape, v)
     layout_buffer = ctypes.create_string_buffer(output_layout.encode("utf-8"))
     return _call_aclnn(
-        "aclnnChunkFwdO",
+        "aclnnChunkGatedDeltaRuleFwdO",
         lambda ctx: [
             ctx.tensor(q, "q"),
             ctx.tensor(k, "k"),

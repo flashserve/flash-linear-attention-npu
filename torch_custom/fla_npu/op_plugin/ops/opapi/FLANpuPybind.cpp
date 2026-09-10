@@ -100,7 +100,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> npu_chunk_bwd_dqkwg(
     c10::optional<bool> use_exp2,
     c10::optional<bool> transpose_state_layout);
 
-at::Tensor npu_chunk_fwd_o(
+at::Tensor npu_chunk_gated_delta_rule_fwd_o(
     const at::Tensor &q,
     const at::Tensor &k,
     const at::Tensor &v,
@@ -342,7 +342,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> py_npu_chunk_bwd_dqkw
         optional_value<bool>(transpose_state_layout));
 }
 
-at::Tensor py_npu_chunk_fwd_o(
+at::Tensor py_npu_chunk_gated_delta_rule_fwd_o(
     const at::Tensor &q,
     const at::Tensor &k,
     const at::Tensor &v,
@@ -359,7 +359,7 @@ at::Tensor py_npu_chunk_fwd_o(
 {
     const auto cu_seqlens_vec = optional_int_array(cu_seqlens);
     const auto chunk_indices_vec = optional_int_array(chunk_indices);
-    return op_api::npu_chunk_fwd_o(
+    return op_api::npu_chunk_gated_delta_rule_fwd_o(
         q, k, v, h, scale,
         optional_tensor(g),
         optional_tensor(g_gamma),
@@ -607,8 +607,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
         py::arg("use_exp2") = py::none(),
         py::arg("transpose_state_layout") = py::none());
     m.def(
-        "npu_chunk_fwd_o",
-        &py_npu_chunk_fwd_o,
+        "npu_chunk_gated_delta_rule_fwd_o",
+        &py_npu_chunk_gated_delta_rule_fwd_o,
         py::arg("q"),
         py::arg("k"),
         py::arg("v"),

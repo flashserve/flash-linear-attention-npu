@@ -5,13 +5,13 @@
 ```python
 from fla_npu.ops import ascendc as ascendc_ops
 
-out = ascendc_ops.npu_chunk_fwd_o(...)
+out = ascendc_ops.npu_chunk_gated_delta_rule_fwd_o(...)
 ```
 
 也可以按公开短名导入：
 
 ```python
-from fla_npu.ops.ascendc import chunk_fwd_o
+from fla_npu.ops.ascendc import chunk_gated_delta_rule_fwd_o
 ```
 
 默认路径通过 Python `ctypes` 直调当前 `fla_npu` 包内 OPP 的 `libcust_opapi.so`，不依赖 PyTorch dispatcher 注册，也不会默认编译或加载 `torch_npu` 自定义扩展。旧的 `torch.ops.npu.*` / `torch_npu.ops.*` 兼容路径仍可做，但只作为迁移期可选能力，不推荐新增代码使用，也不会默认使能。
@@ -169,7 +169,7 @@ python3 scripts/check_packaged_wheel_api.py
 单算子 run 包覆盖已安装 wheel 内嵌 OPP 或 standalone wheel 已安装 OPP 时：
 
 ```bash
-bash build.sh --pkg --soc=ascend910b --vendor_name=fla_npu --ops=chunk_fwd_o
+bash build.sh --pkg --soc=ascend910b --vendor_name=fla_npu --ops=chunk_gated_delta_rule_fwd_o
 ./build_out/fla_npu_linux-*.run --full
 ```
 
