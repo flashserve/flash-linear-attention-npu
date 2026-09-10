@@ -157,9 +157,10 @@ public:
                 // Each AIV sees every other head and alternates its own two UB
                 // slots: AIV0 h0/h2, AIV1 h1/h3, then wrap.
                 const uint32_t slot = static_cast<uint32_t>((generation >> 1U) & 1U);
+                // dAqk: wait for BF16 Cube output, cast, mask/scale, then write FP32.
                 AscendC::CrossCoreWaitFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_V>(
                     KDA_PREPARE_READY_FLAG_BASE + slot);
-                const int64_t out = TokenOffset(*tiling_, chunk, head, tiling_->chunkSize);
+                const int64_t dAqkOffset = TokenOffset(*tiling_, chunk, head, tiling_->chunkSize);
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_[slot]);
                 CastBf16ToFloatRegbase(
                     (__ubuf__ float *)reinterpret_cast<uint64_t>(output_[slot].GetPhyAddr()),
@@ -175,7 +176,7 @@ public:
                     KDA_PREPARE_FREE_FLAG_BASE + slot);
                 AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
                 AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
-                AscendC::DataCopy(dAqk_[out], output_[slot],
+                AscendC::DataCopy(dAqk_[dAqkOffset], output_[slot],
                                   static_cast<uint32_t>(chunk.validRows * tiling_->chunkSize));
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_[slot]);
 
@@ -183,11 +184,11 @@ public:
                 // transfer entirely on MTE3 so Vector does not serialize the
                 // A post-process, and publish FREE from PIPE_MTE3 only after
                 // the corresponding GM write has completed.
-                const int64_t qdOut = TokenOffset(*tiling_, chunk, head, tiling_->V);
+                const int64_t tokenOffset = TokenOffset(*tiling_, chunk, head, tiling_->V);
                 AscendC::CrossCoreWaitFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_MTE3>(
                     KDA_PREPARE_Q_READY_FLAG);
                 AscendC::DataCopy(
-                    dqRaw_[qdOut], qRaw_,
+                    dqRaw_[tokenOffset], qRaw_,
                     static_cast<uint32_t>(chunk.validRows * tiling_->V));
                 AscendC::CrossCoreSetFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_MTE3>(
                     KDA_PREPARE_Q_FREE_FLAG);
@@ -195,7 +196,7 @@ public:
                 AscendC::CrossCoreWaitFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_MTE3>(
                     KDA_PREPARE_D_READY_FLAG);
                 AscendC::DataCopy(
-                    dv_[qdOut], dRaw_,
+                    dv_[tokenOffset], dRaw_,
                     static_cast<uint32_t>(chunk.validRows * tiling_->V));
                 AscendC::CrossCoreSetFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_MTE3>(
                     KDA_PREPARE_D_FREE_FLAG);

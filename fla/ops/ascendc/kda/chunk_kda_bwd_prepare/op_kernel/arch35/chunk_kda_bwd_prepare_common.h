@@ -48,8 +48,9 @@ constexpr uint32_t KDA_PREPARE_A5_UB_BUDGET_BYTES = 192 * 1024;
 static_assert(KDA_PREPARE_TOTAL_UB_BYTES <= KDA_PREPARE_A5_UB_BUDGET_BYTES,
               "KernelA AIV buffers exceed the A5 192 KiB UB budget.");
 
+// Chunk metadata shared by Cube and Vector; head is decoded separately.
 struct ChunkInfo {
-    int64_t b = 0;
+    int64_t batchIndex = 0; // Dense: batch index. Varlen: packed storage uses batch 0.
     int64_t seq = 0;
     int64_t localChunk = 0;
     int64_t stateIndex = 0;
@@ -72,13 +73,13 @@ __aicore__ inline void ResolveChunk(
         return;
     }
     if (tiling.isVariable == 0) {
-        info.b = task / tiling.denseChunkNum;
-        info.seq = info.b;
-        info.localChunk = task - info.b * tiling.denseChunkNum;
+        info.batchIndex = task / tiling.denseChunkNum;
+        info.seq = info.batchIndex;
+        info.localChunk = task - info.batchIndex * tiling.denseChunkNum;
         info.stateIndex = info.localChunk;
         info.tokenStart = info.localChunk * tiling.chunkSize;
         info.validRows = KdaMin(tiling.chunkSize, tiling.T - info.tokenStart);
-        info.valid = info.b >= 0 && info.b < tiling.B && info.validRows > 0;
+        info.valid = info.batchIndex >= 0 && info.batchIndex < tiling.B && info.validRows > 0;
         return;
     }
     if (cuSeqlens == nullptr || chunkIndices == nullptr) {
@@ -95,7 +96,7 @@ __aicore__ inline void ResolveChunk(
     }
     const int64_t seqBegin = cu.GetValue(info.seq);
     const int64_t seqEnd = cu.GetValue(info.seq + 1);
-    info.b = 0;
+    info.batchIndex = 0;
     info.stateIndex = task;
     info.tokenStart = seqBegin + info.localChunk * tiling.chunkSize;
     info.validRows = KdaMin(tiling.chunkSize, seqEnd - info.tokenStart);
@@ -109,7 +110,7 @@ __aicore__ inline int64_t TokenOffset(
     if (tiling.isVariable != 0) {
         return (head * tiling.T + chunk.tokenStart) * width;
     }
-    return ((chunk.b * tiling.NV + head) * tiling.T + chunk.tokenStart) * width;
+    return ((chunk.batchIndex * tiling.NV + head) * tiling.T + chunk.tokenStart) * width;
 }
 
 __aicore__ inline int64_t StateOffset(
@@ -118,7 +119,7 @@ __aicore__ inline int64_t StateOffset(
     if (tiling.isVariable != 0) {
         return (head * tiling.totalChunkNum + chunk.stateIndex) * tiling.K * tiling.V;
     }
-    return ((chunk.b * tiling.NV + head) * tiling.denseChunkNum + chunk.stateIndex) *
+    return ((chunk.batchIndex * tiling.NV + head) * tiling.denseChunkNum + chunk.stateIndex) *
            tiling.K * tiling.V;
 }
 
