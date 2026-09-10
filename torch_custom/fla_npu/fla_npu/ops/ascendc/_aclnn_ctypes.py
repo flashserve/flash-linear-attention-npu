@@ -1728,7 +1728,9 @@ def npu_chunk_gated_delta_rule_fwd(
         state_tail = (v_dim, k_dim) if state_v_first else (k_dim, v_dim)
         h = _empty((batch, v_heads, chunks, *state_tail), q)
     layout_buffer = ctypes.create_string_buffer(layout.encode("utf-8"))
-    outputs = (o, final_state, g_cumsum, A)
+    outputs = (o, final_state)
+    if not disable_recompute:
+        outputs += (g_cumsum, A)
     if return_intermediate_states:
         outputs += (h,)
     return _call_aclnn(

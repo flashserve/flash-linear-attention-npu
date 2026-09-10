@@ -56,9 +56,10 @@ A5 依次调度 `ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkFwdO`。
 | `betaEffOutOptional` | A5 `useExp2=true` 可选 | 与 beta 同 shape；FP32 | 非空时启用并输出 beta sigmoid |
 | `hOutOptional` | A5 `useExp2=true` 可选 | `stateVFirst=false` 时末两维为 `[K,V]`，否则为 `[V,K]`；与 q 同 dtype | 分块状态 |
 
-Python ctypes 入口通过 `disable_recompute=False` 选择训练输出，返回 `gCumsum` 和 `A`；
-设为 `True` 选择推理输出，仍返回四元组，但后两项为 `None`，底层公共输出指针也为空。
-设置 `return_intermediate_states=True` 时在原返回值末尾追加分块状态 `h`，
+Python ctypes 入口默认使用 `disable_recompute=False`，返回
+`(o, finalState, gCumsum, A)` 四元组；
+设为 `True` 选择推理输出，返回值中不包含 `gCumsum` 和 `A`，底层公共输出指针也为空。
+设置 `return_intermediate_states=True` 时在当前返回值末尾追加分块状态 `h`，
 其 shape 为 `[B,Hv,NT,K,V]`；`state_v_first=True` 时末两维为 `[V,K]`。
 
 ## 属性
