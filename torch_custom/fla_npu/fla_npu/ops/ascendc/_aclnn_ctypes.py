@@ -253,6 +253,23 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.POINTER(ctypes.c_uint64),
         ctypes.POINTER(ctypes.c_void_p),
     ],
+    "aclnnChunkKdaFwdPrepare": [
+        *([ctypes.c_void_p] * 9),  # q/k/v/g/beta、可选参数和变长元数据
+        ctypes.c_char_p,  # layout
+        ctypes.c_double,  # scale
+        ctypes.c_int64,  # chunkSize
+        ctypes.c_double,  # epsilon
+        ctypes.c_bool,  # useQkL2normInKernel
+        ctypes.c_bool,  # useGateInKernel
+        ctypes.c_bool,  # useBetaSigmoidInKernel
+        ctypes.c_bool,  # allowNegEigval
+        ctypes.c_bool,  # safeGate
+        ctypes.c_double,  # lowerBound
+        ctypes.c_bool,  # useExp2
+        *([ctypes.c_void_p] * 13),  # 固定的 13 个公开输出
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
     "aclnnChunkKdaBwdIntra": [
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -2920,6 +2937,320 @@ def npu_chunk_kda_bwd(
                 value = value.narrow(0, 0, original_heads)
         restored.append(value.contiguous() if padded_tail or padded_head else value)
     return tuple(restored)
+
+
+def _chunk_kda_fwd_prepare_int_tuple(values):
+    if values is None:
+        return None
+    if hasattr(values, "detach"):
+        values = values.detach().cpu().reshape(-1).tolist()
+    return tuple(int(value) for value in values)
+
+
+def npu_chunk_kda_fwd_prepare(
+    q,
+    k,
+    v,
+    g,
+    beta,
+    scale=1.0,
+    *,
+    layout="BNSD",
+    chunk_size=64,
+    epsilon=1e-6,
+    use_qk_l2norm_in_kernel=False,
+    use_gate_in_kernel=False,
+    use_beta_sigmoid_in_kernel=False,
+    allow_neg_eigval=False,
+    safe_gate=False,
+    lower_bound=-5.0,
+    use_exp2=False,
+    a_log=None,
+    dt_bias=None,
+    cu_seqlens=None,
+    chunk_indices=None,
+):
+    """执行 KDA 前向的 norm、gate cumsum、prepare 和 post-WU 阶段。"""
+    import math
+    import torch
+
+    op_name = "npu_chunk_kda_fwd_prepare"
+    layout = str(layout)
+    if layout not in {"BNSD", "BSND", "NTD", "TND"}:
+        raise RuntimeError(
+            f"{op_name}: layout must be uppercase and one of BNSD, BSND, NTD, TND."
+        )
+
+    chunk_size = _optional_int(chunk_size, 64)
+    if chunk_size != 64:
+        raise RuntimeError(f"{op_name}: chunk_size must be 64.")
+    scale = float(scale)
+    epsilon = _optional_float(epsilon, 1e-6)
+    lower_bound = _optional_float(lower_bound, -5.0)
+    if not math.isfinite(scale):
+        raise RuntimeError(f"{op_name}: scale must be finite.")
+    if not math.isfinite(epsilon) or epsilon <= 0.0:
+        raise RuntimeError(f"{op_name}: epsilon must be finite and greater than zero.")
+    if not math.isfinite(lower_bound):
+        raise RuntimeError(f"{op_name}: lower_bound must be finite.")
+
+    use_qk_l2norm_in_kernel = _optional_bool(use_qk_l2norm_in_kernel, False)
+    use_gate_in_kernel = _optional_bool(use_gate_in_kernel, False)
+    use_beta_sigmoid_in_kernel = _optional_bool(use_beta_sigmoid_in_kernel, False)
+    allow_neg_eigval = _optional_bool(allow_neg_eigval, False)
+    safe_gate = _optional_bool(safe_gate, False)
+    use_exp2 = _optional_bool(use_exp2, False)
+    if allow_neg_eigval and not use_beta_sigmoid_in_kernel:
+        raise RuntimeError(
+            f"{op_name}: allow_neg_eigval=True requires "
+            "use_beta_sigmoid_in_kernel=True."
+        )
+    if not use_gate_in_kernel and (a_log is not None or dt_bias is not None or safe_gate):
+        raise RuntimeError(
+            f"{op_name}: a_log, dt_bias and safe_gate require use_gate_in_kernel=True."
+        )
+
+    q_shape, k_shape, v_shape, g_shape, beta_shape = map(
+        _shape, (q, k, v, g, beta)
+    )
+    expected_rank = 3 if layout in {"NTD", "TND"} else 4
+    if any(len(shape) != expected_rank for shape in (q_shape, k_shape, v_shape, g_shape)):
+        raise RuntimeError(f"{op_name}: q/k/v/g rank does not match layout {layout}.")
+    if len(beta_shape) != expected_rank - 1:
+        raise RuntimeError(f"{op_name}: beta rank does not match layout {layout}.")
+    if q_shape != k_shape:
+        raise RuntimeError(f"{op_name}: q and k must have identical shapes.")
+
+    if layout == "BNSD":
+        batch, key_heads, seqlen, key_dim = q_shape
+        value_heads, value_dim = v_shape[1], v_shape[3]
+        expected_v = (batch, value_heads, seqlen, value_dim)
+        expected_g = (batch, value_heads, seqlen, key_dim)
+        expected_beta = (batch, value_heads, seqlen)
+    elif layout == "BSND":
+        batch, seqlen, key_heads, key_dim = q_shape
+        value_heads, value_dim = v_shape[2], v_shape[3]
+        expected_v = (batch, seqlen, value_heads, value_dim)
+        expected_g = (batch, seqlen, value_heads, key_dim)
+        expected_beta = (batch, seqlen, value_heads)
+    elif layout == "NTD":
+        key_heads, seqlen, key_dim = q_shape
+        batch = 1
+        value_heads, value_dim = v_shape[0], v_shape[2]
+        expected_v = (value_heads, seqlen, value_dim)
+        expected_g = (value_heads, seqlen, key_dim)
+        expected_beta = (value_heads, seqlen)
+    else:
+        seqlen, key_heads, key_dim = q_shape
+        batch = 1
+        value_heads, value_dim = v_shape[1], v_shape[2]
+        expected_v = (seqlen, value_heads, value_dim)
+        expected_g = (seqlen, value_heads, key_dim)
+        expected_beta = (seqlen, value_heads)
+
+    if v_shape != expected_v or g_shape != expected_g or beta_shape != expected_beta:
+        raise RuntimeError(
+            f"{op_name}: v/g/beta shapes do not match layout {layout} and q shape."
+        )
+    dimensions = (batch, key_heads, value_heads, seqlen, key_dim, value_dim)
+    if min(dimensions) <= 0 or max(dimensions) > (1 << 32) - 1:
+        raise RuntimeError(
+            f"{op_name}: all shape dimensions must be positive and fit uint32."
+        )
+    if key_dim != 128 or value_dim != 128:
+        raise RuntimeError(f"{op_name}: K and V must both be 128.")
+    if value_heads < key_heads or value_heads % key_heads != 0:
+        raise RuntimeError(
+            f"{op_name}: GVA requires HV >= HK and HV % HK == 0."
+        )
+    if q.dtype != torch.bfloat16 or k.dtype != q.dtype or v.dtype != q.dtype:
+        raise RuntimeError(f"{op_name}: q, k and v must all use bfloat16.")
+    if g.dtype not in {torch.bfloat16, torch.float32}:
+        raise RuntimeError(f"{op_name}: g must use bfloat16 or float32.")
+    if beta.dtype not in {torch.bfloat16, torch.float32}:
+        raise RuntimeError(f"{op_name}: beta must use bfloat16 or float32.")
+    if layout in {"BSND", "TND"}:
+        uint32_max = (1 << 32) - 1
+        gate_bytes = 4 if g.dtype == torch.float32 else 2
+        beta_bytes = 4 if beta.dtype == torch.float32 else 2
+        strides = (
+            (key_heads - 1) * 128 * 2,
+            (value_heads - 1) * 128 * 2,
+            (value_heads - 1) * 128 * gate_bytes,
+            (value_heads - 1) * beta_bytes,
+        )
+        if max(strides) > uint32_max:
+            raise RuntimeError(
+                f"{op_name}: sequence-major cross-head DMA strides must fit uint32."
+            )
+
+    required_tensors = (q, k, v, g, beta)
+    if any(tensor.device != q.device for tensor in required_tensors[1:]):
+        raise RuntimeError(f"{op_name}: q, k, v, g and beta must be on the same device.")
+
+    if use_gate_in_kernel:
+        if a_log is None:
+            raise RuntimeError(f"{op_name}: a_log is required when use_gate_in_kernel=True.")
+        if _shape(a_log) != (value_heads,) or a_log.dtype != torch.float32:
+            raise RuntimeError(f"{op_name}: a_log must be float32 [HV].")
+        if a_log.device != q.device:
+            raise RuntimeError(f"{op_name}: a_log must be on the same device as q.")
+        if dt_bias is not None:
+            if _shape(dt_bias) != (value_heads * key_dim,) or dt_bias.dtype != torch.float32:
+                raise RuntimeError(f"{op_name}: dt_bias must be float32 [HV*K].")
+            if dt_bias.device != q.device:
+                raise RuntimeError(f"{op_name}: dt_bias must be on the same device as q.")
+        if safe_gate and not (-5.0 <= lower_bound < 0.0):
+            raise RuntimeError(
+                f"{op_name}: lower_bound must be in [-5, 0) when safe_gate=True."
+            )
+
+    cu = _chunk_kda_fwd_prepare_int_tuple(cu_seqlens)
+    indices = _chunk_kda_fwd_prepare_int_tuple(chunk_indices)
+    if cu is None:
+        if indices is not None:
+            raise RuntimeError(
+                f"{op_name}: chunk_indices can only be provided with cu_seqlens."
+            )
+    else:
+        if len(cu) < 2 or cu[0] != 0 or cu[-1] != seqlen:
+            raise RuntimeError(
+                f"{op_name}: cu_seqlens must start at 0 and end at T."
+            )
+        if any(left > right for left, right in zip(cu, cu[1:])):
+            raise RuntimeError(f"{op_name}: cu_seqlens must be nondecreasing.")
+        if expected_rank == 4 and batch != 1:
+            raise RuntimeError(f"{op_name}: rank-4 varlen input requires B=1.")
+        canonical_indices = _kda_build_chunk_indices(cu, chunk_size)
+        if indices is None:
+            indices = canonical_indices
+        elif indices != canonical_indices:
+            raise RuntimeError(
+                f"{op_name}: chunk_indices must use canonical sequence-major order."
+            )
+
+    if expected_rank == 4:
+        value_shape = (batch, value_heads, seqlen, 128)
+        key_shape = (batch, key_heads, seqlen, 128)
+        value_scalar_shape = (batch, value_heads, seqlen)
+        key_scalar_shape = (batch, key_heads, seqlen)
+        matrix_shape = (batch, value_heads, seqlen, chunk_size)
+    else:
+        value_shape = (value_heads, seqlen, 128)
+        key_shape = (key_heads, seqlen, 128)
+        value_scalar_shape = (value_heads, seqlen)
+        key_scalar_shape = (key_heads, seqlen)
+        matrix_shape = (value_heads, seqlen, chunk_size)
+
+    gk = _empty(value_shape, q, dtype=torch.float32)
+    aqk = _empty(matrix_shape, q)
+    akk = _empty(matrix_shape, q)
+    w = _empty(value_shape, q)
+    u = _empty(value_shape, q)
+    qg = _empty(value_shape, q)
+    kg = _empty(value_shape, q)
+    qg_scaled = _empty(value_shape, q)
+    q_hat = _empty(key_shape, q)
+    k_hat = _empty(key_shape, q)
+    q_rstd = _empty(key_scalar_shape, q, dtype=torch.float32)
+    k_rstd = _empty(key_scalar_shape, q, dtype=torch.float32)
+    beta_eff = _empty(value_scalar_shape, q, dtype=torch.float32)
+    outputs = (
+        gk,
+        aqk,
+        akk,
+        w,
+        u,
+        qg,
+        kg,
+        qg_scaled,
+        q_hat,
+        k_hat,
+        q_rstd,
+        k_rstd,
+        beta_eff,
+    )
+    layout_buffer = ctypes.create_string_buffer(layout.encode("utf-8"))
+
+    def nd_tensor(ctx, tensor, name):
+        if tensor is None:
+            return ctx.tensor(None, name)
+        loaded_torch_npu = sys.modules.get("torch_npu")
+        if loaded_torch_npu is not None:
+            try:
+                actual_format = int(loaded_torch_npu.get_npu_format(tensor))
+            except Exception as exc:
+                raise RuntimeError(
+                    f"{op_name}: cannot determine the real NPU format of {name}."
+                ) from exc
+        else:
+            actual_format = _acl_format(tensor)
+        if actual_format not in {
+            ACL_FORMAT_NCHW,
+            ACL_FORMAT_ND,
+            ACL_FORMAT_NCDHW,
+            ACL_FORMAT_NCL,
+        }:
+            raise RuntimeError(
+                f"{op_name}: {name} must use a standard contiguous-compatible layout; "
+                f"private NPU format {actual_format} is not supported."
+            )
+        storage_shape = (
+            _shape(tensor)
+            if tensor.is_contiguous() and int(tensor.storage_offset()) == 0
+            else None
+        )
+        return ctx.tensor(
+            tensor,
+            name,
+            acl_format_override=ACL_FORMAT_ND,
+            storage_shape_override=storage_shape,
+        )
+
+    return _call_aclnn(
+        "aclnnChunkKdaFwdPrepare",
+        lambda ctx: [
+            nd_tensor(ctx, q, "q"),
+            nd_tensor(ctx, k, "k"),
+            nd_tensor(ctx, v, "v"),
+            nd_tensor(ctx, g, "g"),
+            nd_tensor(ctx, beta, "beta"),
+            nd_tensor(ctx, a_log, "a_log"),
+            nd_tensor(ctx, dt_bias, "dt_bias"),
+            ctx.int_array(cu),
+            ctx.int_array(indices),
+            ctypes.cast(layout_buffer, ctypes.c_char_p),
+            ctypes.c_double(scale),
+            ctypes.c_int64(chunk_size),
+            ctypes.c_double(epsilon),
+            ctypes.c_bool(use_qk_l2norm_in_kernel),
+            ctypes.c_bool(use_gate_in_kernel),
+            ctypes.c_bool(use_beta_sigmoid_in_kernel),
+            ctypes.c_bool(allow_neg_eigval),
+            ctypes.c_bool(safe_gate),
+            ctypes.c_double(lower_bound),
+            ctypes.c_bool(use_exp2),
+            *(nd_tensor(ctx, tensor, name) for tensor, name in zip(
+                outputs,
+                (
+                    "gk",
+                    "aqk",
+                    "akk",
+                    "w",
+                    "u",
+                    "qg",
+                    "kg",
+                    "qg_scaled",
+                    "q_hat",
+                    "k_hat",
+                    "q_rstd",
+                    "k_rstd",
+                    "beta_eff",
+                ),
+            )),
+        ],
+        outputs,
+    )
 
 
 def npu_chunk_kda_fwd(

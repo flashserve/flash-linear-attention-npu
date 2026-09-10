@@ -1,0 +1,320 @@
+{
+  "schema_version": 1,
+  "op": "chunk_kda_fwd_prepare",
+  "implementation": "ascendc",
+  "model": "kda",
+  "capability": {
+    "soc": [
+      "ascend910b",
+      "ascend910_93",
+      "ascend950"
+    ],
+    "dtypes": {
+      "q_k_v": [
+        "bfloat16"
+      ],
+      "g_beta": [
+        "bfloat16",
+        "float32"
+      ],
+      "a_log_dt_bias": [
+        "float32"
+      ]
+    },
+    "layouts": [
+      "BNSD",
+      "BSND",
+      "NTD",
+      "TND"
+    ],
+    "routes": [
+      "ascendc",
+      "aclnn",
+      "direct_launch"
+    ]
+  },
+  "coverage_requirements": {
+    "inputs": [
+      "q",
+      "k",
+      "v",
+      "g",
+      "beta",
+      "a_log",
+      "dt_bias",
+      "cu_seqlens",
+      "chunk_indices"
+    ],
+    "attrs": [
+      "layout",
+      "scale",
+      "chunk_size",
+      "epsilon",
+      "use_qk_l2norm_in_kernel",
+      "use_gate_in_kernel",
+      "use_beta_sigmoid_in_kernel",
+      "allow_neg_eigval",
+      "safe_gate",
+      "lower_bound",
+      "use_exp2"
+    ],
+    "outputs": [
+      "gk",
+      "aqk",
+      "akk",
+      "w",
+      "u",
+      "qg",
+      "kg",
+      "qg_scaled",
+      "q_hat",
+      "k_hat",
+      "q_rstd",
+      "k_rstd",
+      "beta_eff"
+    ]
+  },
+  "cases": [
+    {
+      "id": "prepare_dense_bnsd_raw",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "HK": 1,
+        "HV": 2,
+        "T": 64,
+        "K": 128,
+        "V": 128
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g": "float32",
+        "beta": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "layout": "BNSD",
+        "scale": 0.0883883476,
+        "chunk_size": 64,
+        "epsilon": 0.000001,
+        "use_qk_l2norm_in_kernel": false,
+        "use_gate_in_kernel": false,
+        "use_beta_sigmoid_in_kernel": false,
+        "allow_neg_eigval": false,
+        "safe_gate": false,
+        "lower_bound": -5.0,
+        "use_exp2": false
+      },
+      "optional_inputs": {
+        "a_log": null,
+        "dt_bias": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "direct_launch"
+      ],
+      "reference": "tests/atk/chunk_kda_fwd_prepare/executor_chunk_kda_fwd_prepare.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "output_count": 13,
+        "finite_outputs": true
+      },
+      "seed": 20260910
+    },
+    {
+      "id": "prepare_dense_bsnd_fused",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "HK": 2,
+        "HV": 4,
+        "T": 64,
+        "K": 128,
+        "V": 128
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g": "bfloat16",
+        "beta": "bfloat16"
+      },
+      "layout": "BSND",
+      "attrs": {
+        "layout": "BSND",
+        "scale": 0.125,
+        "chunk_size": 64,
+        "epsilon": 0.000001,
+        "use_qk_l2norm_in_kernel": true,
+        "use_gate_in_kernel": true,
+        "use_beta_sigmoid_in_kernel": true,
+        "allow_neg_eigval": true,
+        "safe_gate": true,
+        "lower_bound": -5.0,
+        "use_exp2": true
+      },
+      "optional_inputs": {
+        "a_log": "present",
+        "dt_bias": "present",
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "direct_launch"
+      ],
+      "reference": "tests/atk/chunk_kda_fwd_prepare/executor_chunk_kda_fwd_prepare.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "output_count": 13,
+        "finite_outputs": true
+      },
+      "seed": 20260911
+    },
+    {
+      "id": "prepare_ntd_tail",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary",
+        "tail"
+      ],
+      "shape": {
+        "B": 1,
+        "HK": 2,
+        "HV": 4,
+        "T": 65,
+        "K": 128,
+        "V": 128
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g": "float32",
+        "beta": "bfloat16"
+      },
+      "layout": "NTD",
+      "attrs": {
+        "layout": "NTD",
+        "scale": 0.0883883476,
+        "chunk_size": 64,
+        "epsilon": 0.000001,
+        "use_qk_l2norm_in_kernel": true,
+        "use_gate_in_kernel": false,
+        "use_beta_sigmoid_in_kernel": true,
+        "allow_neg_eigval": false,
+        "safe_gate": false,
+        "lower_bound": -5.0,
+        "use_exp2": false
+      },
+      "optional_inputs": {
+        "a_log": null,
+        "dt_bias": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "tests/atk/chunk_kda_fwd_prepare/executor_chunk_kda_fwd_prepare.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "output_count": 13,
+        "finite_outputs": true
+      },
+      "seed": 20260912
+    },
+    {
+      "id": "prepare_tnd_varlen",
+      "tags": [
+        "accuracy",
+        "generalization",
+        "boundary",
+        "varlen"
+      ],
+      "shape": {
+        "B": 1,
+        "HK": 1,
+        "HV": 2,
+        "T": 65,
+        "K": 128,
+        "V": 128
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g": "bfloat16",
+        "beta": "float32"
+      },
+      "layout": "TND",
+      "attrs": {
+        "layout": "TND",
+        "scale": 0.0883883476,
+        "chunk_size": 64,
+        "epsilon": 0.000001,
+        "use_qk_l2norm_in_kernel": false,
+        "use_gate_in_kernel": true,
+        "use_beta_sigmoid_in_kernel": false,
+        "allow_neg_eigval": false,
+        "safe_gate": false,
+        "lower_bound": -5.0,
+        "use_exp2": true
+      },
+      "optional_inputs": {
+        "a_log": "present",
+        "dt_bias": null,
+        "cu_seqlens": [
+          0,
+          33,
+          65
+        ],
+        "chunk_indices": [
+          0,
+          0,
+          1,
+          0
+        ]
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "tests/atk/chunk_kda_fwd_prepare/executor_chunk_kda_fwd_prepare.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "output_count": 13,
+        "finite_outputs": true
+      },
+      "seed": 20260913
+    }
+  ]
+}

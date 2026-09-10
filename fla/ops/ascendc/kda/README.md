@@ -22,7 +22,9 @@
 | `chunk_size` | chunk 长度 |
 | `N_c` | 当前调用的 chunk 总数 |
 
-Head 映射必须满足 `0 < H_k <= H_v <= 128` 且 `H_v % H_k == 0`。
+Head 映射必须满足 `0 < H_k <= H_v` 且 `H_v % H_k == 0`。各算子的实现上限见其
+README；现有组合算子通常限制 `H_v<=128`，`ChunkKdaFwdPrepare` 不施加该人工上限，
+但要求维度和 sequence-major DMA stride 可由公开接口规定的整数类型表示。
 
 ## 输入布局
 
@@ -33,7 +35,9 @@ Head 映射必须满足 `0 < H_k <= H_v <= 128` 且 `H_v % H_k == 0`。
 | `TND` | `[T,H_k,K]` | `[T,H_v,V/K]` | `[T,H_v]` |
 | `NTD` | `[H_k,T,K]` | `[H_v,T,V/K]` | `[H_v,T]` |
 
-BSND/TND 输入在 L2 接口中通过 `l0op::Transpose` 转为内部 head-major 布局。仓内不再维护独立 layout-swap 算子。
+组合算子的 BSND/TND 输入可在 L2 接口中转为内部 head-major 布局；
+`ChunkKdaFwdPrepare` 由 kernel 直接读取 sequence-major 输入，不执行整 tensor 转置。
+仓内不再维护独立 layout-swap 算子。
 
 ## 固定输出布局
 
@@ -41,9 +45,12 @@ BSND/TND 输入在 L2 接口中通过 `l0op::Transpose` 转为内部 head-major 
 | --- | --- | --- | --- |
 | `attn_out` | `[B,T,H_v,V]` | `[T,H_v,V]` | 固定 sequence-major |
 | `final_state` | `[N,H_v,K,V]` 或 `[N,H_v,V,K]` | 同左 | 固定 sequence-major；末两维由 `state_v_first` 控制 |
-| `gk/w/qg/kg` | `[B,H_v,T,K]` | `[H_v,T,K]` | 供反向使用，固定 head-major |
-| `u/v_new` | `[B,H_v,T,V]` | `[H_v,T,V]` | 供反向使用，固定 head-major |
+| `gk/w/qg/kg/qg_scaled` | `[B,H_v,T,K]` | `[H_v,T,K]` | 供后续正向或反向使用，固定 head-major |
+| `u/v_new` | `[B,H_v,T,V]` | `[H_v,T,V]` | 供后续正向或反向使用，固定 head-major |
 | `Aqk/Akk` | `[B,H_v,T,chunk_size]` | `[H_v,T,chunk_size]` | 供反向使用，固定 head-major |
+| `q_hat/k_hat` | `[B,H_k,T,K]` | `[H_k,T,K]` | Prepare 的归一化保存量，固定 head-major |
+| `q_rstd/k_rstd` | `[B,H_k,T]` | `[H_k,T]` | Prepare 的 FP32 归一化保存量，固定 head-major |
+| `beta_eff` | `[B,H_v,T]` | `[H_v,T]` | Prepare 的 FP32 beta 保存量，固定 head-major |
 | `h` | `[B,H_v,N_c,K,V]` 或 `[B,H_v,N_c,V,K]` | 去掉 B 维 | 供反向使用，固定 head-major |
 
 ## 变长元数据

@@ -1,61 +1,121 @@
-# Chunk KDA Forward Prepare
+# ChunkKdaFwdPrepare
 
-本目录当前只包含 `op_kernel/pseudocode/` 下的 A2/A3 Arch22 与 A5 Arch35 设计伪代码，
-不是已注册算子。
-仓库构建系统、Host Tiling、算子定义、aclnn/Python API 和设备入口参数均未接入，
-因此不能从本目录导入、构建或运行 `chunk_kda_fwd_prepare`。
-`chunk_kda_fwd_finalize` 的设计与实现也不在本目录范围内。
+[设计文档](docs/design.md) | [API 文档](docs/api.md) | [设计伪代码](op_kernel/pseudocode/README.md)
 
-伪代码用于冻结共享的八 Stage 数据流、S=4 causal-prefix 72 KiB score packing、chunk-first 分核，
-`HK` Q/K head 到 `HV` value/gate head 的 QK 头组映射、静态 UB/L1/workspace 生命周期和
-ready/free 合同。代码直接采用 `GlobalTensor/LocalTensor`、`DataCopy`、`LoadData`、
-`Mmad`、`Fixpipe`、HardEvent 和 Arch35 Mutex 的真实 API 形态，各 Stage 的搬运、
-计算与同步都在对应函数内直接展开；核内 EventID/Mutex ID 和核间 ready/free flag ID
-也在申请或主循环现场逐项列出。
-`USE_EXP2=false` 与 `USE_EXP2=true` 都是必须保留的编译期路径，分别在自然对数域和
-log2 域完成同一组门控计算。
-本设计的 `q/k/v`、score 操作数及
-`Aqk/Akk/w/u/qg/kg/qg_scaled/q_hat/k_hat` 固定为 BF16，
-`gk/q_rstd/k_rstd/beta_eff` 固定为 FP32，gate/beta 只允许 FP32 或 BF16。
-设计只保留一套公开输出接口，以下 13 个结果都写回 GM，不再按输出是否公开拆分
-编译模式：
+## 功能
+
+`ChunkKdaFwdPrepare` 完成 KDA 前向中的 Q/K 归一化、gate 前缀和、chunk 内三角系统准备和
+Post-WU 计算。它只负责 Prepare 边界，不计算 chunk 间状态递推和最终 attention 输出。
+
+稳定 Python 入口为：
+
+```python
+from fla_npu.ops.ascendc import chunk_kda_fwd_prepare
+
+outputs = chunk_kda_fwd_prepare(
+    q,
+    k,
+    v,
+    g,
+    beta,
+    scale=1.0,
+    layout="BNSD",
+    chunk_size=64,
+    epsilon=1e-6,
+    use_qk_l2norm_in_kernel=False,
+    use_gate_in_kernel=False,
+    use_beta_sigmoid_in_kernel=False,
+    allow_neg_eigval=False,
+    safe_gate=False,
+    lower_bound=-5.0,
+    use_exp2=False,
+    a_log=None,
+    dt_bias=None,
+    cu_seqlens=None,
+    chunk_indices=None,
+)
+```
+
+该入口通过 ctypes 直调 `aclnnChunkKdaFwdPrepare`，不注册 legacy `torch.ops.npu` 接口。
+
+## 输入输出
+
+`q/k/v` 固定为 BF16，K/V 维固定为 128，`chunk_size` 固定为 64。`g/beta` 支持
+BF16 或 FP32，`a_log/dt_bias` 固定为 FP32。
+
+| 输入 | dense shape | 无 batch shape | 说明 |
+| --- | --- | --- | --- |
+| `q/k` | BNSD `[B,HK,T,128]`；BSND `[B,T,HK,128]` | NTD `[HK,T,128]`；TND `[T,HK,128]` | BF16 |
+| `v/g` | BNSD `[B,HV,T,128]`；BSND `[B,T,HV,128]` | NTD `[HV,T,128]`；TND `[T,HV,128]` | `v` 为 BF16；`g` 为 BF16/FP32 |
+| `beta` | BNSD `[B,HV,T]`；BSND `[B,T,HV]` | NTD `[HV,T]`；TND `[T,HV]` | BF16/FP32 |
+| `a_log` | `[HV]` | `[HV]` | 仅 kernel 内计算 gate 时必传 |
+| `dt_bias` | `[HV*128]` | `[HV*128]` | 可选，逻辑 shape 为 `[HV,128]` |
+
+`B/T/HK/HV` 必须为正数且可由 `uint32_t` 表示；GVA 要求 `0 < HK <= HV` 且
+`HV % HK == 0`。所有输出固定为 head-major：
+
+`BSND/TND` 输入按 token 读取同一行内的各个 head，跨 head DMA stride 必须可由
+`uint32_t` 表示。具体要求为 `(HK-1)*128*2`、`(HV-1)*128*2`、
+`(HV-1)*128*sizeof(g)` 和 `(HV-1)*sizeof(beta)` 均不超过 `UINT32_MAX`。
+
+| 输出 | dense shape | 无 batch shape | dtype |
+| --- | --- | --- | --- |
+| `gk` | `[B,HV,T,128]` | `[HV,T,128]` | FP32 |
+| `Aqk/Akk` | `[B,HV,T,64]` | `[HV,T,64]` | BF16 |
+| `w/u/qg/kg/qg_scaled` | `[B,HV,T,128]` | `[HV,T,128]` | BF16 |
+| `q_hat/k_hat` | `[B,HK,T,128]` | `[HK,T,128]` | BF16 |
+| `q_rstd/k_rstd` | `[B,HK,T]` | `[HK,T]` | FP32 |
+| `beta_eff` | `[B,HV,T]` | `[HV,T]` | FP32 |
+
+返回顺序固定为：
 
 ```text
 gk, Aqk, Akk, w, u, qg, kg, qg_scaled,
 q_hat, k_hat, q_rstd, k_rstd, beta_eff
 ```
 
-输出固定为 head-major。dense 与 varlen 的 shape 分别为：
+按实际消费者分类时，同一个公开输出可以同时属于正向与反向保存量：
 
-| 输出 | dense shape | varlen shape | dtype |
-| --- | --- | --- | --- |
-| `gk/w/qg/kg/qg_scaled` | `[B,H_v,T,128]` | `[H_v,T,128]` | `gk` 为 FP32，其余为 BF16 |
-| `u` | `[B,H_v,T,128]` | `[H_v,T,128]` | BF16 |
-| `Aqk/Akk` | `[B,H_v,T,64]` | `[H_v,T,64]` | BF16 |
-| `q_hat/k_hat` | `[B,H_k,T,128]` | `[H_k,T,128]` | BF16 |
-| `q_rstd/k_rstd` | `[B,H_k,T]` | `[H_k,T]` | FP32 |
-| `beta_eff` | `[B,H_v,T]` | `[H_v,T]` | FP32 |
+| 类别 | 数据 | 消费方 |
+| --- | --- | --- |
+| 后续正向使用 | `gk/w/u/kg`；`Aqk/qg_scaled` | FwdH；Finalize |
+| 反向使用或保存 | `q_hat/k_hat/q_rstd/k_rstd/beta_eff/Aqk/Akk/gk/w/qg/kg` | KDA backward 或重计算策略 |
+| 后续算子的可选状态结果 | `h/final_state` | 由 FwdH 产生，不属于 Prepare 的 13 个输出 |
 
-这些数据按“后续正向使用、反向使用或保存、用户可选状态结果”三类整理，类别允许
-重叠：`gk/w/u/kg` 是后续 FwdH 的输入，
-`Aqk/qg_scaled` 是 Finalize 的输入；`q_hat/k_hat/q_rstd/k_rstd/beta_eff` 是反向
-保存量，其中 `q_rstd/k_rstd` 在启用 L2Norm 时由其反向消费；
-`Aqk/Akk/gk/w/qg/kg` 也会被反向直接使用或按重计算策略保存。
-`u` 仅为对齐既有返回策略而随禁用重计算路径保留，当前反向不读取它。
-`h/final_state` 由后续 FwdH 产生，不是 Prepare 输出；其中内部 `hCompute` 始终供
-Finalize 使用，只有公开 `hOut` 和 `final_state` 属于用户可选状态结果。
+其中 `qg_scaled` 只服务正向 Finalize；`Akk/qg` 在 Prepare 完成 Post-WU 后不再被
+正向消费。`u` 服务 FwdH，并为禁用重计算的反向路径保留。
 
-`QkNormMode::Identity` 仍完整写出 `q_hat=q`、`k_hat=k`，并把有效 token 的
-`q_rstd/k_rstd` 写为 FP32 `1`；`BetaMode::Raw` 把 beta 转为 FP32 后写入
-`beta_eff`。因此固定接口在任一合法编译模式下都不存在未初始化输出。
-GVA 下前四个 Q/K 保存量按 `H_k` 编址，一个 Q/K head 对应的连续 value head
-组成一个 QK 头组，只有首个 value head 是公开输出 owner；其余 value head 可以保留本 head 的内部计算
-副本，但不得重叠写同一段公开 GM。`beta_eff` 按 `H_v` 编址，由每个 value head
-分别写回。
-尚未由目标 CANN 头文件确认的布局和参数在调用现场标为 **TODO**；因此不能据此声称 A2/A3/A5
-已经具备可构建、可调用的生产支持。详细说明见
-[`op_kernel/pseudocode/README.md`](op_kernel/pseudocode/README.md)。
+## 模式
 
-所有标为 **TODO** 的设备 API 参数、同步 mode 映射与计数深度、内存布局、TilingKey
-与公开接口必须在正式实现前依据目标 CANN 版本重新确认；资源账本 host 测试不等价于
-NPU 编译或测试。
+- `use_qk_l2norm_in_kernel=false`：`q_hat=q`、`k_hat=k`，有效 token 的 rstd 为 1。
+- `use_gate_in_kernel=false`：`g` 是自然对数域的单 token gate step；算子仍执行 cumsum。
+- `use_gate_in_kernel=true`：由 `g + dt_bias` 和 `a_log` 计算 Softplus 或 SafeSigmoid gate。
+- `use_beta_sigmoid_in_kernel=false`：`beta_eff=fp32(beta)`。
+- `use_beta_sigmoid_in_kernel=true`：`beta_eff=sigmoid(beta)`；启用
+  `allow_neg_eigval` 时为 `2*sigmoid(beta)`。
+- `use_exp2=false/true`：分别在自然对数域或 log2 域保存累计 gate，数学语义等价。
+
+`safe_gate=true` 只允许和 `use_gate_in_kernel=true` 一起使用，此时 `lower_bound` 必须位于
+`[-5,0)`。`allow_neg_eigval=true` 必须同时启用 `use_beta_sigmoid_in_kernel`。
+
+## 变长序列
+
+`cu_seqlens` 是 host int array，必须从 0 开始、以总 token 数结束并单调不减。
+`chunk_indices` 若提供，必须严格等于按 `chunk_size=64` 生成的
+sequence-major `(sequence_id, local_chunk_id)` 序列。rank-4 变长容器要求 `B=1`。
+
+## 实现
+
+内核支持 A2、A3 和 A5，采用 MIX AIC/AIV 八阶段流水：
+
+```text
+V0 -> V1 -> C2 -> V3 -> C4 -> C5 -> V6 -> C7
+```
+
+Prepare 首先按 chunk 分核，只有 chunk 数不足以覆盖已用核时才按完整 GVA Q/K 头组切分
+head。S 固定为 4，C2 以四个 16 行 query band 生成因果 score。UB、L1 和 workspace 均为
+静态地址规划；A5 使用 Mutex 表达核内 pipe 生命周期，A2/A3 使用 HardEvent。跨核采用
+ready/free 双向握手，生产者不会覆盖仍被消费者使用的 slot。
+
+生产实现位于 `op_kernel/`；`op_kernel/pseudocode/` 作为资源账本、公式和同步合同的设计稿
+继续保留，不参与算子构建。

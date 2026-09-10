@@ -6,10 +6,11 @@
 L2 norm + gate cumsum + prepare + post-WU
 ```
 
-它是面向 A2/A3（Arch22）和 A5（Arch35）的设备代码设计稿，尚未接入算子定义、
-Host Tiling、CMake、aclnn 或 Python API。伪代码直接使用真实 Ascend C API 的写法，
-目的是让搬运、同步和计算顺序能够从代码现场读出；未由目标 CANN 版本确认的参数在调用旁
-保留 `TODO`，不能据此声称当前目录已经可构建或可运行。
+它是面向 A2/A3（Arch22）和 A5（Arch35）的设备代码设计稿，作为正式实现的公式、资源和
+同步合同继续保留，不参与算子构建。已接入 Host Tiling、CMake、aclnn 与 Python API 的代码
+位于同级 `op_kernel/` 及算子目录的 `op_host/`。伪代码直接使用真实 Ascend C API 的写法，
+目的是让搬运、同步和计算顺序能够从代码现场读出；带 `TODO` 的调用仍只表示设计意图，
+实际可构建参数以正式实现为准。
 
 ## 代码结构
 
@@ -51,9 +52,8 @@ TilingKey 声明应与 `chunk_fwd_h` 一致使用
 `ASCENDC_TPL_BOOL_DECL(USE_EXP2, 0, 1)`；`q/k/v`、score 操作数及
 `Aqk/Akk/w/u/qg/kg/qg_scaled/q_hat/k_hat` 固定为 BF16，
 `gk/q_rstd/k_rstd/beta_eff` 固定为 FP32，gate/beta 只允许 FP32 或 BF16。
-当前 gate/beta dtype 编码与其他模式轴尚未冻结，
-因此本伪代码只冻结该轴的 `0/1` 编码，不提交一个参数不完整的注册声明。
-正式 selector 的笛卡尔积中，每个合法的 dtype/模式组合都必须由
+gate/beta dtype 编码与其他模式轴已由正式 TilingKey 冻结；本伪代码继续只表达该轴的
+`0/1` 设计编码。正式 selector 的笛卡尔积中，每个合法的 dtype/模式组合都由
 `SEL_EXP` 一类宏同时展开 `USE_EXP2=0` 和 `USE_EXP2=1`，op_host 再把公开
 `use_exp2` 属性原样传给 `GET_TPL_TILING_KEY`。当前 host 小测试只验证
 `PrecomputedStep` policy 能选择两份 `ExpDomainTraits`，以及其中
@@ -311,10 +311,10 @@ Prepare/Finalize。
 | `[0x38000,0x3B000)` | 12 KiB | local head 0 向量状态与临时区 |
 | `[0x3B000,0x3E000)` | 12 KiB | local head 1 向量状态与临时区 |
 
-每个 12 KiB 区固定保存 `betaRaw/betaEff/Gref[4]/qRstd/kRstd/Glast` 和
-8 KiB 连续 VF scratch。`qRstd/kRstd` 分别位于区内 `0x0C00/0x0D00`，各占
-256 B，只保留到 V0 的 MTE3 写回完成；cumsum carry 保持在同一次 VF 的寄存器中，
-不另占静态 UB。每个 112 KiB 区的 Stage 语义及 offset 直接定义在
+每个 12 KiB 区固定保存 2 KiB 的 sequence-major beta 暂存、
+`betaEff/Gref[4]/qRstd/kRstd/Glast` 和连续 VF scratch。`qRstd/kRstd` 分别位于
+区内 `0x1200/0x1300`，各占 256 B，只保留到 V0 的 MTE3 写回完成；cumsum carry
+保持在同一次 VF 的寄存器中，不另占静态 UB。每个 112 KiB 区的 Stage 语义及 offset 直接定义在
 `chunk_kda_fwd_prepare_policy.h`，代码用
 `resource.ubBuf.GetBufferByByte<T>(offset)` 绑定 `LocalTensor`。
 V6 的 112 KiB 正好由 `qg/kg/V_beta/qgScaled/K_beta_g` 五块 16 KiB BF16
@@ -338,8 +338,9 @@ MTE2 才能覆盖共享 G/scratch；V6 还要先等 qgScaled 的 MTE3 读完共�
 当前 `q/k/v` 只支持 BF16。V6 按 token 行正序读取 FP32 `G[r]` 后，把同一行
 BF16 `qgScaled[r]` 写到共享 G 起始地址的 `256*r` 字节处；该地址始终位于下一条
 尚未读取的 G 行之前，因此无需移动 UB 数据。
-每个 72 KiB 私有区还固定预留 `qRstd=0x10800`、`kRstd=0x10900`，各占
-256 B；两块区域只在 V0 使用，并在对应公开输出的 MTE3 写回完成后释放，不与
+每个 72 KiB 私有区还固定预留 sequence-major beta 的 2 KiB 暂存，并在 Gather 后
+得到连续 beta；`qRstd=0x10F00`、`kRstd=0x11000`，各占 256 B。两块 rstd 区域只在
+V0 使用，并在对应公开输出的 MTE3 写回完成后释放，不与
 `betaRaw/betaEff/dtBias/aLog/Glast` 或 Kminus payload 重叠。
 
 ## L1 和 workspace

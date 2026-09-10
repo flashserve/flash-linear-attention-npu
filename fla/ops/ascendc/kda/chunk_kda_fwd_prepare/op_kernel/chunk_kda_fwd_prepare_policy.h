@@ -4,8 +4,8 @@
  * the BSD 3-Clause License (the "License").
  */
 
-#ifndef PSEUDOCODE_CHUNK_KDA_FWD_PREPARE_POLICY_H
-#define PSEUDOCODE_CHUNK_KDA_FWD_PREPARE_POLICY_H
+#ifndef CHUNK_KDA_FWD_PREPARE_POLICY_H
+#define CHUNK_KDA_FWD_PREPARE_POLICY_H
 
 #include <cstdint>
 
@@ -176,4 +176,4 @@ constexpr uint32_t kV6QgScaled = kSharedG;
 
 } // namespace KdaPrepare
 
-#endif // PSEUDOCODE_CHUNK_KDA_FWD_PREPARE_POLICY_H
+#endif // CHUNK_KDA_FWD_PREPARE_POLICY_H
