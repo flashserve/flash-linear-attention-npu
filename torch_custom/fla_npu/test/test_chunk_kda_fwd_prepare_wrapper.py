@@ -340,6 +340,57 @@ class ChunkKdaFwdPrepareWrapperTest(unittest.TestCase):
                     ],
                 )
 
+    def test_backward_modes_keep_fixed_slots_and_select_expected_outputs(self):
+        expected_masks = {
+            "none": (
+                True, True, False, True, True, False, True, True,
+                False, False, False, False, False,
+            ),
+            "recompute": (
+                True, True, True, True, True, False, True, True,
+                True, True, True, True, True,
+            ),
+            "save": (True,) * 13,
+        }
+        for backward_mode, expected_mask in expected_masks.items():
+            with self.subTest(backward_mode=backward_mode):
+                outputs, captured = self._run(
+                    _make_inputs("BNSD"),
+                    layout="BNSD",
+                    backward_mode=backward_mode,
+                )
+                self.assertEqual(len(outputs), 13)
+                self.assertEqual(
+                    tuple(output is not None for output in outputs),
+                    expected_mask,
+                )
+                self.assertEqual(
+                    tuple(
+                        tensor is not None
+                        for _, tensor, *_ in captured["descriptors"][-13:]
+                    ),
+                    expected_mask,
+                )
+                self.assertEqual(len(captured["args"]), 33)
+
+    def test_backward_mode_defaults_to_save(self):
+        outputs, _ = self._run(_make_inputs("BNSD"), layout="BNSD")
+        self.assertEqual(tuple(output is not None for output in outputs), (True,) * 13)
+
+    def test_invalid_backward_mode_fails_before_launch(self):
+        with mock.patch.dict(sys.modules, {"torch": FAKE_TORCH}):
+            with mock.patch.object(ACLNN_CTYPES, "_call_aclnn") as call:
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "backward_mode must be one of: none, recompute, save",
+                ):
+                    ACLNN_CTYPES.npu_chunk_kda_fwd_prepare(
+                        *_make_inputs("BNSD"),
+                        layout="BNSD",
+                        backward_mode="invalid",
+                    )
+        call.assert_not_called()
+
     def test_varlen_metadata_is_canonical_and_optional(self):
         inputs = _make_inputs("TND", key_heads=1, value_heads=7, tokens=130)
         _, captured = self._run(

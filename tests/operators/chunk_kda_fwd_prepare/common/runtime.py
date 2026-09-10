@@ -200,6 +200,7 @@ def run_stable_aclnn_case(torch, device, case: dict[str, Any]):
         dt_bias=dt_bias,
         cu_seqlens=optional["cu_seqlens"],
         chunk_indices=optional["chunk_indices"],
+        backward_mode=str(attrs.get("backward_mode", "save")),
     )
     torch.npu.synchronize()
     return outputs
@@ -207,11 +208,23 @@ def run_stable_aclnn_case(torch, device, case: dict[str, Any]):
 
 def check_output_contract(torch, case: dict[str, Any], outputs):
     expected = expected_output_specs(torch, case)
+    present_outputs = set(
+        case.get("expect", {}).get("present_outputs", OUTPUT_NAMES)
+    )
     if len(outputs) != len(OUTPUT_NAMES):
         raise AssertionError(
             f"{case['id']}: expected {len(OUTPUT_NAMES)} outputs, got {len(outputs)}"
         )
     for name, output, (shape, dtype) in zip(OUTPUT_NAMES, outputs, expected):
+        if name not in present_outputs:
+            if output is not None:
+                raise AssertionError(
+                    f"{case['id']}:{name} must be None for "
+                    f"backward_mode={case['attrs'].get('backward_mode', 'save')}"
+                )
+            continue
+        if output is None:
+            raise AssertionError(f"{case['id']}:{name} is unexpectedly None")
         if tuple(output.shape) != shape:
             raise AssertionError(
                 f"{case['id']}:{name} shape {tuple(output.shape)} != {shape}"

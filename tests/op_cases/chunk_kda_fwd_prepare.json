@@ -38,7 +38,85 @@
     "aclnn": "device_smoke",
     "direct_launch": "source_contract"
   },
+  "output_policy": {
+    "fixed_slots": [
+      "gk",
+      "aqk",
+      "akk",
+      "w",
+      "u",
+      "qg",
+      "kg",
+      "qg_scaled",
+      "q_hat",
+      "k_hat",
+      "q_rstd",
+      "k_rstd",
+      "beta_eff"
+    ],
+    "forward_required": [
+      "gk",
+      "aqk",
+      "w",
+      "u",
+      "kg",
+      "qg_scaled"
+    ],
+    "backward_modes": {
+      "none": [
+        "gk",
+        "aqk",
+        "w",
+        "u",
+        "kg",
+        "qg_scaled"
+      ],
+      "recompute": [
+        "gk",
+        "aqk",
+        "akk",
+        "w",
+        "u",
+        "kg",
+        "qg_scaled",
+        "q_hat",
+        "k_hat",
+        "q_rstd",
+        "k_rstd",
+        "beta_eff"
+      ],
+      "save": [
+        "gk",
+        "aqk",
+        "akk",
+        "w",
+        "u",
+        "qg",
+        "kg",
+        "qg_scaled",
+        "q_hat",
+        "k_hat",
+        "q_rstd",
+        "k_rstd",
+        "beta_eff"
+      ]
+    },
+    "orthogonal_state_outputs": {
+      "output_final_state": "final_state",
+      "return_intermediate_states": "h"
+    }
+  },
   "negative_cases": [
+    {
+      "id": "reject_unknown_backward_mode",
+      "fixture": {"layout": "BNSD"},
+      "kwargs": {"layout": "BNSD", "backward_mode": "unknown"},
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "python_exception": "RuntimeError",
+        "message": "backward_mode must be one of"
+      }
+    },
     {
       "id": "reject_lowercase_layout",
       "fixture": {"layout": "BNSD"},
@@ -271,7 +349,8 @@
       "allow_neg_eigval",
       "safe_gate",
       "lower_bound",
-      "use_exp2"
+      "use_exp2",
+      "backward_mode"
     ],
     "outputs": [
       "gk",
@@ -320,6 +399,7 @@
       "safe_gate": false,
       "lower_bound": -5.0,
       "use_exp2": false,
+      "backward_mode": "save",
       "dt_bias": false,
       "cu_seqlens": "",
       "explicit_chunk_indices": false,
@@ -330,11 +410,20 @@
     "functional_cases": [
       {
         "case_key": "dense_bnsd_min",
-        "overrides": {"tags": "accuracy,boundary,min", "T": 1}
+        "overrides": {
+          "tags": "accuracy,boundary,min,output_none",
+          "T": 1,
+          "backward_mode": "none"
+        }
       },
       {
         "case_key": "dense_bsnd_tail15",
-        "overrides": {"layout": "BSND", "T": 15}
+        "overrides": {
+          "tags": "accuracy,output_recompute",
+          "layout": "BSND",
+          "T": 15,
+          "backward_mode": "recompute"
+        }
       },
       {
         "case_key": "dense_ntd_tail16",
@@ -495,7 +584,8 @@
           "use_gate_in_kernel": true,
           "use_beta_sigmoid_in_kernel": true,
           "dt_bias": true,
-          "use_exp2": true
+          "use_exp2": true,
+          "backward_mode": "none"
         }
       },
       {
@@ -512,7 +602,8 @@
           "use_gate_in_kernel": true,
           "use_beta_sigmoid_in_kernel": true,
           "dt_bias": true,
-          "use_exp2": true
+          "use_exp2": true,
+          "backward_mode": "none"
         }
       },
       {
@@ -524,7 +615,8 @@
           "T": 11264,
           "gate_dtype": "fp32",
           "beta_dtype": "fp32",
-          "use_exp2": true
+          "use_exp2": true,
+          "backward_mode": "none"
         }
       },
       {
@@ -536,7 +628,8 @@
           "HV": 96,
           "T": 128,
           "gate_dtype": "fp32",
-          "use_exp2": true
+          "use_exp2": true,
+          "backward_mode": "none"
         }
       },
       {
@@ -547,7 +640,8 @@
           "HV": 32,
           "T": 2048,
           "gate_dtype": "fp32",
-          "beta_dtype": "fp32"
+          "beta_dtype": "fp32",
+          "backward_mode": "none"
         }
       },
       {
@@ -562,7 +656,8 @@
           "use_gate_in_kernel": true,
           "safe_gate": true,
           "dt_bias": true,
-          "use_exp2": true
+          "use_exp2": true,
+          "backward_mode": "none"
         }
       },
       {
@@ -576,7 +671,8 @@
           "cu_seqlens": "0,8192,16384,24576,32768,40960,49152,57344,65536",
           "explicit_chunk_indices": true,
           "gate_dtype": "fp32",
-          "use_exp2": true
+          "use_exp2": true,
+          "backward_mode": "none"
         }
       }
     ],
@@ -660,7 +756,8 @@
         "allow_neg_eigval": false,
         "safe_gate": false,
         "lower_bound": -5.0,
-        "use_exp2": false
+        "use_exp2": false,
+        "backward_mode": "none"
       },
       "optional_inputs": {
         "a_log": null,
@@ -682,7 +779,8 @@
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "output_count": 13,
-        "finite_outputs": true
+        "finite_outputs": true,
+        "present_outputs": ["gk", "aqk", "w", "u", "kg", "qg_scaled"]
       },
       "seed": 20260910
     },
@@ -719,7 +817,8 @@
         "allow_neg_eigval": true,
         "safe_gate": true,
         "lower_bound": -5.0,
-        "use_exp2": true
+        "use_exp2": true,
+        "backward_mode": "recompute"
       },
       "optional_inputs": {
         "a_log": "present",
@@ -741,7 +840,11 @@
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "output_count": 13,
-        "finite_outputs": true
+        "finite_outputs": true,
+        "present_outputs": [
+          "gk", "aqk", "akk", "w", "u", "kg", "qg_scaled",
+          "q_hat", "k_hat", "q_rstd", "k_rstd", "beta_eff"
+        ]
       },
       "seed": 20260911
     },
@@ -779,7 +882,8 @@
         "allow_neg_eigval": false,
         "safe_gate": false,
         "lower_bound": -5.0,
-        "use_exp2": false
+        "use_exp2": false,
+        "backward_mode": "save"
       },
       "optional_inputs": {
         "a_log": null,
@@ -800,7 +904,11 @@
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "output_count": 13,
-        "finite_outputs": true
+        "finite_outputs": true,
+        "present_outputs": [
+          "gk", "aqk", "akk", "w", "u", "qg", "kg", "qg_scaled",
+          "q_hat", "k_hat", "q_rstd", "k_rstd", "beta_eff"
+        ]
       },
       "seed": 20260912
     },
@@ -838,7 +946,8 @@
         "allow_neg_eigval": false,
         "safe_gate": false,
         "lower_bound": -5.0,
-        "use_exp2": true
+        "use_exp2": true,
+        "backward_mode": "none"
       },
       "optional_inputs": {
         "a_log": "present",
@@ -868,7 +977,8 @@
       "expect": {
         "return_code": "ACLNN_SUCCESS",
         "output_count": 13,
-        "finite_outputs": true
+        "finite_outputs": true,
+        "present_outputs": ["gk", "aqk", "w", "u", "kg", "qg_scaled"]
       },
       "seed": 20260913
     }

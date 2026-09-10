@@ -17,6 +17,7 @@ namespace KdaPrepare::Arch22 {
 constexpr AscendC::FixpipeConfig kFixpipeNz = {
     AscendC::CO2Layout::NZ, false};
 
+template <typename CompilePolicy>
 class ChunkKdaFwdPrepareCube {
 public:
     __aicore__ inline void Init(const PrepareKernelArgs &args, AscendC::TPipe *pipe)
@@ -496,15 +497,17 @@ private:
         // dstStride=64 个 datablock 跨过完整 64 行 M 轴。
         AscendC::Fixpipe<bfloat16_t, float, kFixpipeNz>(
             akkL1[L1::kAkkQ10Elements], l0C, l1Fix);
-        AscendC::GlobalTensor<bfloat16_t> akkOutput;
-        akkOutput.SetGlobalBuffer(
-            reinterpret_cast<__gm__ bfloat16_t *>(args_.akk) +
-            AOutputOffset(args_.tiling, chunk, valueHead));
-        auto outputFix = AscendC::FixpipeParamsV220(
-            32, bottomRows, 32, Shape::kChunkRows, false);
-        outputFix.quantPre = QuantMode_t::F322BF16;
-        AscendC::Fixpipe<bfloat16_t, float, AscendC::CFG_ROW_MAJOR>(
-            akkOutput[32 * Shape::kChunkRows], l0C, outputFix);
+        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            AscendC::GlobalTensor<bfloat16_t> akkOutput;
+            akkOutput.SetGlobalBuffer(
+                reinterpret_cast<__gm__ bfloat16_t *>(args_.akk) +
+                AOutputOffset(args_.tiling, chunk, valueHead));
+            auto outputFix = AscendC::FixpipeParamsV220(
+                32, bottomRows, 32, Shape::kChunkRows, false);
+            outputFix.quantPre = QuantMode_t::F322BF16;
+            AscendC::Fixpipe<bfloat16_t, float, AscendC::CFG_ROW_MAJOR>(
+                akkOutput[32 * Shape::kChunkRows], l0C, outputFix);
+        }
         AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(fixToMte1_[localHead]);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(fixToM_);
     }

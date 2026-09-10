@@ -63,6 +63,20 @@ class ChunkKdaFwdPrepareAtkGenerationTest(unittest.TestCase):
                 self.assertEqual(len(frozen), expected_count)
                 self.assertEqual(frozen, GENERATOR._payloads(specs))
 
+    def test_output_modes_cover_accuracy_and_inference_performance(self):
+        accuracy_modes = {
+            spec["backward_mode"]
+            for spec in GENERATOR.build_accuracy_specs()
+        }
+        self.assertEqual(accuracy_modes, {"none", "recompute", "save"})
+        self.assertEqual(
+            {
+                spec["backward_mode"]
+                for spec in GENERATOR.build_perf_specs()
+            },
+            {"none"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

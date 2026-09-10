@@ -8,6 +8,7 @@
 #define OP_API_INC_LEVEL0_CHUNK_KDA_FWD_PREPARE_H
 
 #include <array>
+#include <cstdint>
 
 #include "opdev/op_executor.h"
 
@@ -49,6 +50,7 @@ ChunkKdaFwdPrepareOutputs ChunkKdaFwdPrepare(
     const aclTensor *qRstdOut,
     const aclTensor *kRstdOut,
     const aclTensor *betaEffOut,
+    int64_t outputMode,
     aclOpExecutor *executor);
 
 } // namespace l0op

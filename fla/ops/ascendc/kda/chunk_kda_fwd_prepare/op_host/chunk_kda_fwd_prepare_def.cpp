@@ -85,6 +85,8 @@ public:
         this->Attr("safe_gate").AttrType(OPTIONAL).Bool(false);
         this->Attr("lower_bound").AttrType(OPTIONAL).Float(-5.0F);
         this->Attr("use_exp2").AttrType(OPTIONAL).Bool(false);
+        // L2 根据 nullptr 输出组合设置；仅用于选择编译期搬出策略。
+        this->Attr("output_mode").AttrType(OPTIONAL).Int(2);
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)

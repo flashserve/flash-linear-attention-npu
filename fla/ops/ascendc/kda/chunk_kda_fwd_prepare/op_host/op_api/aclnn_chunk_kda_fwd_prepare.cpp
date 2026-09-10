@@ -6,6 +6,7 @@
 
 #include "aclnn_chunk_kda_fwd_prepare.h"
 #include "chunk_kda_fwd_prepare.h"
+#include "../chunk_kda_fwd_prepare_output_mask.h"
 
 #include <cstddef>
 #include <cmath>
@@ -158,19 +159,54 @@ aclnnStatus CheckNotNull(const ChunkKdaFwdPrepareParams &params)
     }
 
     const aclTensor *outputs[] = {
+        params.gkOut, params.aqkOut, params.wOut,
+        params.uOut, params.kgOut, params.qgScaledOut};
+    const char *outputNames[] = {
+        "gkOut", "aqkOut", "wOut", "uOut", "kgOut", "qgScaledOut"};
+    for (size_t index = 0; index < sizeof(outputs) / sizeof(outputs[0]); ++index) {
+        CHECK_COND(outputs[index] != nullptr, ACLNN_ERR_PARAM_NULLPTR,
+                   "%s 是必选公开输出，不能为 nullptr。", outputNames[index]);
+    }
+    return ACLNN_SUCCESS;
+}
+
+uint32_t GetOutputMask(const ChunkKdaFwdPrepareParams &params)
+{
+    const aclTensor *outputs[] = {
         params.gkOut,       params.aqkOut,  params.akkOut,
         params.wOut,        params.uOut,    params.qgOut,
         params.kgOut,       params.qgScaledOut,
         params.qHatOut,     params.kHatOut, params.qRstdOut,
         params.kRstdOut,    params.betaEffOut};
-    const char *outputNames[] = {
-        "gkOut",       "aqkOut",  "akkOut",      "wOut",      "uOut",
-        "qgOut",       "kgOut",   "qgScaledOut", "qHatOut",   "kHatOut",
-        "qRstdOut",    "kRstdOut", "betaEffOut"};
+    uint32_t outputMask = 0;
     for (size_t index = 0; index < sizeof(outputs) / sizeof(outputs[0]); ++index) {
-        CHECK_COND(outputs[index] != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-                   "%s 是必选公开输出，不能为 nullptr。", outputNames[index]);
+        if (outputs[index] != nullptr) {
+            outputMask |= 1U << index;
+        }
     }
+    return outputMask;
+}
+
+int64_t GetOutputMode(const ChunkKdaFwdPrepareParams &params)
+{
+    const uint32_t outputMask = GetOutputMask(params);
+    if (outputMask == optiling::PREPARE_REQUIRED_OUTPUT_MASK) {
+        return optiling::PREPARE_OUTPUT_MODE_NONE;
+    }
+    if (outputMask == optiling::PREPARE_RECOMPUTE_OUTPUT_MASK) {
+        return optiling::PREPARE_OUTPUT_MODE_RECOMPUTE;
+    }
+    if (outputMask == optiling::PREPARE_SAVE_OUTPUT_MASK) {
+        return optiling::PREPARE_OUTPUT_MODE_SAVE;
+    }
+    return -1;
+}
+
+aclnnStatus CheckOutputMode(const ChunkKdaFwdPrepareParams &params)
+{
+    CHECK_COND(GetOutputMode(params) >= 0, ACLNN_ERR_PARAM_INVALID,
+               "输出 nullptr 组合只支持 none/recompute/save 三档，当前 outputMask=0x%x。",
+               GetOutputMask(params));
     return ACLNN_SUCCESS;
 }
 
@@ -217,6 +253,9 @@ aclnnStatus CheckFormat(const ChunkKdaFwdPrepareParams &params)
         "qgOut",       "kgOut",   "qgScaledOut", "qHatOut",   "kHatOut",
         "qRstdOut",    "kRstdOut", "betaEffOut"};
     for (size_t index = 0; index < sizeof(outputs) / sizeof(outputs[0]); ++index) {
+        if (outputs[index] == nullptr) {
+            continue;
+        }
         CHECK_COND(IsContiguous(outputs[index]), ACLNN_ERR_PARAM_INVALID,
                    "%s 由 kernel 直接写入，必须连续。", outputNames[index]);
     }
@@ -251,6 +290,9 @@ aclnnStatus CheckDtype(const ChunkKdaFwdPrepareParams &params)
         params.qgOut, params.kgOut, params.qgScaledOut,
         params.qHatOut, params.kHatOut};
     for (const aclTensor *output : bf16Outputs) {
+        if (output == nullptr) {
+            continue;
+        }
         CHECK_COND(output->GetDataType() == DataType::DT_BF16,
                    ACLNN_ERR_PARAM_INVALID,
                    "Aqk/Akk/w/u/qg/kg/qgScaled/qHat/kHat 输出必须为 BF16。");
@@ -258,6 +300,9 @@ aclnnStatus CheckDtype(const ChunkKdaFwdPrepareParams &params)
     const aclTensor *fp32Outputs[] = {
         params.gkOut, params.qRstdOut, params.kRstdOut, params.betaEffOut};
     for (const aclTensor *output : fp32Outputs) {
+        if (output == nullptr) {
+            continue;
+        }
         CHECK_COND(output->GetDataType() == DataType::DT_FLOAT,
                    ACLNN_ERR_PARAM_INVALID,
                    "gk/qRstd/kRstd/betaEff 输出必须为 FP32。");
@@ -552,36 +597,47 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdPrepareParams &params,
     CHECK_COND(valueMatrixValid(params.gkOut, info.kDim),
                ACLNN_ERR_PARAM_INVALID,
                "gkOut 必须使用固定 head-major [B,HV,T,K]/[HV,T,K] shape。");
-    CHECK_COND(valueMatrixValid(params.aqkOut, params.chunkSize) &&
+    CHECK_COND(valueMatrixValid(params.aqkOut, params.chunkSize),
+               ACLNN_ERR_PARAM_INVALID,
+               "aqkOut 必须使用固定 head-major [B,HV,T,64]/[HV,T,64] shape。");
+    CHECK_COND(params.akkOut == nullptr ||
                    valueMatrixValid(params.akkOut, params.chunkSize),
                ACLNN_ERR_PARAM_INVALID,
-               "aqkOut/akkOut 必须使用固定 head-major [B,HV,T,64]/[HV,T,64] shape。");
+               "非空 akkOut 必须使用固定 head-major [B,HV,T,64]/[HV,T,64] shape。");
     CHECK_COND(valueMatrixValid(params.wOut, info.kDim) &&
-                   valueMatrixValid(params.qgOut, info.kDim) &&
                    valueMatrixValid(params.kgOut, info.kDim) &&
                    valueMatrixValid(params.qgScaledOut, info.kDim),
                ACLNN_ERR_PARAM_INVALID,
-               "wOut/qgOut/kgOut/qgScaledOut 必须使用固定 head-major [B,HV,T,K]/[HV,T,K] shape。");
+               "wOut/kgOut/qgScaledOut 必须使用固定 head-major [B,HV,T,K]/[HV,T,K] shape。");
+    CHECK_COND(params.qgOut == nullptr ||
+                   valueMatrixValid(params.qgOut, info.kDim),
+               ACLNN_ERR_PARAM_INVALID,
+               "非空 qgOut 必须使用固定 head-major [B,HV,T,K]/[HV,T,K] shape。");
     CHECK_COND(valueMatrixValid(params.uOut, info.vDim),
                ACLNN_ERR_PARAM_INVALID,
                "uOut 必须使用固定 head-major [B,HV,T,V]/[HV,T,V] shape。");
-    CHECK_COND(qkMatrixValid(params.qHatOut) &&
-                   qkMatrixValid(params.kHatOut),
-               ACLNN_ERR_PARAM_INVALID,
-               "qHatOut/kHatOut 必须使用固定 head-major [B,HK,T,K]/[HK,T,K] shape。");
-    CHECK_COND(qkScalarValid(params.qRstdOut) &&
-                   qkScalarValid(params.kRstdOut),
-               ACLNN_ERR_PARAM_INVALID,
-               "qRstdOut/kRstdOut 必须使用固定 head-major [B,HK,T]/[HK,T] shape。");
-    CHECK_COND(valueScalarValid(params.betaEffOut),
-               ACLNN_ERR_PARAM_INVALID,
-               "betaEffOut 必须使用固定 head-major [B,HV,T]/[HV,T] shape。");
+    CHECK_COND((params.qHatOut == nullptr || qkMatrixValid(params.qHatOut)) &&
+                   (params.kHatOut == nullptr || qkMatrixValid(params.kHatOut)),
+                ACLNN_ERR_PARAM_INVALID,
+                "非空 qHatOut/kHatOut 必须使用固定 head-major [B,HK,T,K]/[HK,T,K] shape。");
+    CHECK_COND((params.qRstdOut == nullptr || qkScalarValid(params.qRstdOut)) &&
+                   (params.kRstdOut == nullptr || qkScalarValid(params.kRstdOut)),
+                ACLNN_ERR_PARAM_INVALID,
+                "非空 qRstdOut/kRstdOut 必须使用固定 head-major [B,HK,T]/[HK,T] shape。");
+    CHECK_COND(params.betaEffOut == nullptr ||
+                   valueScalarValid(params.betaEffOut),
+                ACLNN_ERR_PARAM_INVALID,
+                "非空 betaEffOut 必须使用固定 head-major [B,HV,T]/[HV,T] shape。");
     return ACLNN_SUCCESS;
 }
 
 aclnnStatus CheckParams(const ChunkKdaFwdPrepareParams &params)
 {
     aclnnStatus status = CheckNotNull(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = CheckOutputMode(params);
     if (status != ACLNN_SUCCESS) {
         return status;
     }
@@ -734,10 +790,11 @@ aclnnStatus aclnnChunkKdaFwdPrepareGetWorkspaceSize(
         params.gkOut, params.aqkOut, params.akkOut, params.wOut, params.uOut,
         params.qgOut, params.kgOut, params.qgScaledOut, params.qHatOut,
         params.kHatOut, params.qRstdOut, params.kRstdOut, params.betaEffOut,
-        executorPtr);
-    for (const aclTensor *output : result) {
-        CHECK_RET(output != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    }
+        GetOutputMode(params), executorPtr);
+    CHECK_RET(result[0] != nullptr && result[1] != nullptr &&
+                  result[3] != nullptr && result[4] != nullptr &&
+                  result[6] != nullptr && result[7] != nullptr,
+              ACLNN_ERR_INNER_NULLPTR);
 
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);

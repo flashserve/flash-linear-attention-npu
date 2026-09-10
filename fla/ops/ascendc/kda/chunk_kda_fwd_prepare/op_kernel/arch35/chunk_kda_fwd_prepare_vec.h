@@ -798,7 +798,7 @@ __simd_vf__ inline void StageV6Vf(
         Mul(vLow, vLow, beta, mask);
         Mul(vHigh, vHigh, beta, mask);
         Store128FromFp32(qg + row * 128, qLow, qHigh);
-        // qgScaled 必须从已舍入的公开 qg 回读，保留两次 BF16 舍入。
+        // qgScaled 必须从已舍入的 BF16 qg 中间量回读，保留两次 BF16 舍入。
         LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
         Load128AsFp32(qLow, qHigh, qg + row * 128);
         Muls(qLow, qLow, scale, mask);
@@ -837,18 +837,32 @@ public:
         if (args.aLog != nullptr) {
             aLogGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.aLog));
         }
-        qgGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.qg));
+        if constexpr (CompilePolicy::outputMode == OutputMode::Save) {
+            qgGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.qg));
+        }
         qgScaledGm_.SetGlobalBuffer(
             reinterpret_cast<__gm__ bfloat16_t *>(args.qgScaled));
         kgGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.kg));
         gkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.gk));
         aqkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.aqk));
-        akkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.akk));
-        qHatGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.qHat));
-        kHatGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.kHat));
-        qRstdGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.qRstd));
-        kRstdGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.kRstd));
-        betaEffGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.betaEff));
+        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            akkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.akk));
+        }
+        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            qHatGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.qHat));
+        }
+        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            kHatGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.kHat));
+        }
+        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            qRstdGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.qRstd));
+        }
+        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            kRstdGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.kRstd));
+        }
+        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            betaEffGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.betaEff));
+        }
     }
 
     __aicore__ inline void Process()
@@ -1095,8 +1109,10 @@ private:
         AscendC::DataCopy(gkGm_[HeadTensorOffset(
             args_.tiling, chunk, valueHead, Shape::kHeadDim)],
             g, chunk.validRows * Shape::kHeadDim);
-        AscendC::DataCopyPad(betaEffGm_[HeadScalarOffset(
-            args_.tiling, chunk, valueHead)], betaEff, scalarOutputCopy);
+        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            AscendC::DataCopyPad(betaEffGm_[HeadScalarOffset(
+                args_.tiling, chunk, valueHead)], betaEff, scalarOutputCopy);
+        }
         if (IsQkOutputOwner(args_.tiling, valueHead)) {
             // q/k 归一化保存量按 HK 的 head-major 布局输出。
             // GVA 中只允许 QK 头组的首个 HV 写回，避免多 AIV
@@ -1105,14 +1121,22 @@ private:
                 args_.tiling, chunk, qkHead, Shape::kHeadDim);
             const uint64_t qkRstdOut = QkHeadScalarOffset(
                 args_.tiling, chunk, qkHead);
-            AscendC::DataCopy(qHatGm_[qkOut], q,
-                chunk.validRows * Shape::kHeadDim);
-            AscendC::DataCopy(kHatGm_[qkOut], k,
-                chunk.validRows * Shape::kHeadDim);
-            AscendC::DataCopyPad(
-                qRstdGm_[qkRstdOut], qRstd, scalarOutputCopy);
-            AscendC::DataCopyPad(
-                kRstdGm_[qkRstdOut], kRstd, scalarOutputCopy);
+            if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+                AscendC::DataCopy(qHatGm_[qkOut], q,
+                    chunk.validRows * Shape::kHeadDim);
+            }
+            if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+                AscendC::DataCopy(kHatGm_[qkOut], k,
+                    chunk.validRows * Shape::kHeadDim);
+            }
+            if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+                AscendC::DataCopyPad(
+                    qRstdGm_[qkRstdOut], qRstd, scalarOutputCopy);
+            }
+            if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+                AscendC::DataCopyPad(
+                    kRstdGm_[qkRstdOut], kRstd, scalarOutputCopy);
+            }
         }
         AscendC::Mutex::Unlock<PIPE_MTE3>(mutex);
     }
@@ -1239,9 +1263,11 @@ private:
             Workspace::kPayload + Workspace::kAkk));
         AscendC::DataCopy(akkRelay, akk,
             Shape::kChunkRows * Shape::kChunkRows);
-        AscendC::DataCopy(akkGm_[AOutputOffset(
-            args_.tiling, chunk, valueHead)], akk,
-            chunk.validRows * Shape::kChunkRows);
+        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            AscendC::DataCopy(akkGm_[AOutputOffset(
+                args_.tiling, chunk, valueHead)], akk,
+                chunk.validRows * Shape::kChunkRows);
+        }
         AscendC::Mutex::Unlock<PIPE_MTE3>(mutex);
     }
 
@@ -1330,8 +1356,10 @@ private:
         AscendC::Mutex::Lock<PIPE_MTE3>(mutex);
         const uint64_t out = HeadTensorOffset(
             args_.tiling, chunk, valueHead, Shape::kHeadDim);
-        AscendC::DataCopy(qgGm_[out], qg,
-            chunk.validRows * Shape::kHeadDim);
+        if constexpr (CompilePolicy::outputMode == OutputMode::Save) {
+            AscendC::DataCopy(qgGm_[out], qg,
+                chunk.validRows * Shape::kHeadDim);
+        }
         AscendC::DataCopy(qgScaledGm_[out], qgScaled,
             chunk.validRows * Shape::kHeadDim);
         AscendC::DataCopy(kgGm_[out], kg,

@@ -280,6 +280,16 @@ inputs:
         values: [false, true]
       invalid:
         values: []
+  - name: backward_mode
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: [none, recompute, save]
+      invalid:
+        values: []
   - name: dt_bias
     type: attr
     required: true

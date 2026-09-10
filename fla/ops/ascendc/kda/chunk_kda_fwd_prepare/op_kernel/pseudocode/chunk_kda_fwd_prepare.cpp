@@ -55,11 +55,11 @@ __aicore__ inline void RunPrepare(const PrepareKernelArgs &args)
 
     if ASCEND_IS_AIC {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        Arch35::ChunkKdaFwdPrepareCube cube;
+        Arch35::ChunkKdaFwdPrepareCube<CompilePolicy> cube;
         cube.Init(args);
 #else
         AscendC::TPipe pipe;
-        Arch22::ChunkKdaFwdPrepareCube cube;
+        Arch22::ChunkKdaFwdPrepareCube<CompilePolicy> cube;
         cube.Init(args, &pipe);
 #endif
         cube.Process();
@@ -71,7 +71,7 @@ __aicore__ inline void RunPrepare(const PrepareKernelArgs &args)
 #ifndef TORCH_MODE
 template <int D_T_GATE, int D_T_BETA, uint32_t NORM_MODE,
           uint32_t BETA_MODE, uint32_t GATE_MODE,
-          bool USE_EXP2, bool SAFE_GATE>
+          bool USE_EXP2, bool SAFE_GATE, uint32_t OUTPUT_MODE>
 __global__ __aicore__ void chunk_kda_fwd_prepare(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR beta,
     GM_ADDR a_log, GM_ADDR dt_bias, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
@@ -132,7 +132,8 @@ __global__ __aicore__ void chunk_kda_fwd_prepare(
     using Policy = KdaPrepare::PrepareCompilePolicy<
         static_cast<KdaPrepare::QkNormMode>(NORM_MODE),
         static_cast<KdaPrepare::BetaMode>(BETA_MODE),
-        static_cast<KdaPrepare::GateMode>(GATE_MODE), USE_EXP2, SAFE_GATE>;
+        static_cast<KdaPrepare::GateMode>(GATE_MODE), USE_EXP2, SAFE_GATE,
+        static_cast<KdaPrepare::OutputMode>(OUTPUT_MODE)>;
     using GateT = typename KdaPrepare::PrepareStorageType<D_T_GATE>::type;
     using BetaT = typename KdaPrepare::PrepareStorageType<D_T_BETA>::type;
     KdaPrepare::RunPrepare<GateT, BetaT, Policy>(args);

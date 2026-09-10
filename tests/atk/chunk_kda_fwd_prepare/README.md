@@ -17,14 +17,15 @@ q_hat, k_hat, q_rstd, k_rstd, beta_eff
 中间值的二次消费，避免把两次 cast 错误合并为一次。
 
 输入从相同 seed 的 FP32 随机数生成，并先量化到接口声明的 BF16/FP32，再分别送入
-CPU 和 NPU 节点。ATK 使用 `mixed_tolerance_bm` 比较全部 13 个输出。
+CPU 和 NPU 节点。ATK 使用 `mixed_tolerance_bm` 比较当前模式下真实返回的输出；
+`none/recompute/save` 均有精度用例，未保留的固定槽位返回 `None`。
 
 ## 用例矩阵
 
 | 文件 | 用例数 | 覆盖内容 |
 | --- | ---: | --- |
-| `atk_chunk_kda_fwd_prepare.json` | 171 | 四种 layout、dense/varlen、tail、GVA 和 144 个编译组合 |
-| `atk_chunk_kda_fwd_prepare_perf.json` | 7 | 模型 shape、跨 wave GVA、layout 与 varlen |
+| `atk_chunk_kda_fwd_prepare.json` | 171 | 四种 layout、dense/varlen、tail、GVA、三档输出策略和 144 个编译组合 |
+| `atk_chunk_kda_fwd_prepare_perf.json` | 7 | `none` 纯推理模式下的模型 shape、跨 wave GVA、layout 与 varlen |
 | `atk_chunk_kda_fwd_prepare_mss.json` | 144 | 每个编译组合的双 chunk 同步与内存检查 |
 
 144 个编译组合来自：

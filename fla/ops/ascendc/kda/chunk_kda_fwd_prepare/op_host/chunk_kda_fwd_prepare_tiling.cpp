@@ -26,6 +26,11 @@ constexpr int64_t PREPARE_K_DIM = 128;
 constexpr int64_t PREPARE_V_DIM = 128;
 constexpr uint32_t PREPARE_MIX_BATCH_MODE = 1;
 
+static_assert(PREPARE_OUTPUT_MODE_NONE == CHUNK_KDA_FWD_PREPARE_OUTPUT_NONE);
+static_assert(PREPARE_OUTPUT_MODE_RECOMPUTE ==
+              CHUNK_KDA_FWD_PREPARE_OUTPUT_RECOMPUTE);
+static_assert(PREPARE_OUTPUT_MODE_SAVE == CHUNK_KDA_FWD_PREPARE_OUTPUT_SAVE);
+
 enum class PrepareLayout {
     BNSD,
     BSND,
@@ -371,16 +376,20 @@ bool CheckOptionalInput(gert::TilingContext *context,
 
 void PrintTiling(gert::TilingContext *context,
                  ChunkKdaFwdPrepareTilingData &tiling,
-                 uint64_t tilingKey, uint64_t workspaceBytes)
+                 uint64_t outputMode, uint64_t tilingKey,
+                 uint64_t workspaceBytes)
 {
     OP_LOGD(context->GetNodeName(),
             "ChunkKdaFwdPrepare tiling: B=%u, N=%u, T=%u, HK=%u, HV=%u, "
-            "chunks=%u, cores=%u, headsPerPartition=%u, varlen=%d, "
-            "sequenceMajor=%d, tilingKey=%lu, workspace=%lu.",
+            "chunks=%u, cores=%u, headsPerPartition=%u, outputMode=%lu, "
+            "varlen=%d, sequenceMajor=%d, tilingKey=%lu, "
+            "workspace=%lu.",
             tiling.get_batch(), tiling.get_seqNum(), tiling.get_seqLen(),
             tiling.get_qkHeadNum(), tiling.get_valueHeadNum(),
             tiling.get_totalChunks(), tiling.get_usedCoreNum(),
-            tiling.get_headsPerPartition(), static_cast<int>(tiling.get_isVarLen()),
+            tiling.get_headsPerPartition(),
+            static_cast<unsigned long>(outputMode),
+            static_cast<int>(tiling.get_isVarLen()),
             static_cast<int>(tiling.get_inputSequenceMajor()),
             static_cast<unsigned long>(tilingKey),
             static_cast<unsigned long>(workspaceBytes));
@@ -463,6 +472,15 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
                 layout);
         return ge::GRAPH_FAILED;
     }
+    const auto *outputModePtr =
+        attrs->GetAttrPointer<int64_t>(PREPARE_ATTR_OUTPUT_MODE);
+    if (outputModePtr == nullptr || *outputModePtr < PREPARE_OUTPUT_MODE_NONE ||
+        *outputModePtr > PREPARE_OUTPUT_MODE_SAVE) {
+        OP_LOGE(context->GetNodeName(),
+                "output_mode 只支持 0(none)、1(recompute)、2(save)。");
+        return ge::GRAPH_FAILED;
+    }
+    const uint64_t outputMode = static_cast<uint64_t>(*outputModePtr);
     if (!FitsUint32(shape.batch) || !FitsUint32(shape.seqLen) ||
         !FitsUint32(shape.qkHeadNum) || !FitsUint32(shape.valueHeadNum) ||
         shape.kDim != PREPARE_K_DIM || shape.vDim != PREPARE_V_DIM ||
@@ -569,7 +587,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     const uint64_t tilingKey = GET_TPL_TILING_KEY(
         gateDtypeToken, betaDtypeToken, normMode, betaMode, gateMode,
         static_cast<uint64_t>(*useExp2Ptr),
-        static_cast<uint64_t>(*safeGatePtr));
+        static_cast<uint64_t>(*safeGatePtr), outputMode);
 
     ChunkKdaFwdPrepareTilingData tiling;
     tiling.set_batch(static_cast<uint32_t>(shape.batch));
@@ -604,7 +622,8 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(),
                         context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
-    PrintTiling(context, tiling, tilingKey, schedule.workspaceBytes);
+    PrintTiling(context, tiling, outputMode, tilingKey,
+                schedule.workspaceBytes);
     return ge::GRAPH_SUCCESS;
 }
 

@@ -21,7 +21,11 @@ from __future__ import annotations
 import ctypes
 import sys
 
-from ._kda_policy import kda_fwd_optional_output_mask
+from ._kda_policy import (
+    KDA_FWD_PREPARE_OUTPUT_NAMES,
+    kda_fwd_optional_output_mask,
+    kda_fwd_prepare_output_mask,
+)
 from ._runtime import (
     ACL_FORMAT_NCDHW,
     ACL_FORMAT_NCHW,
@@ -2614,12 +2618,17 @@ def npu_chunk_kda_fwd_prepare(
     dt_bias=None,
     cu_seqlens=None,
     chunk_indices=None,
+    backward_mode="save",
 ):
     """执行 KDA 前向的 norm、gate cumsum、prepare 和 post-WU 阶段。"""
     import math
     import torch
 
     op_name = "npu_chunk_kda_fwd_prepare"
+    try:
+        output_mask = kda_fwd_prepare_output_mask(backward_mode=backward_mode)
+    except ValueError as exc:
+        raise RuntimeError(f"{op_name}: {exc}") from exc
     layout = str(layout)
     if layout not in {"BNSD", "BSND", "NTD", "TND"}:
         raise RuntimeError(
@@ -2792,17 +2801,29 @@ def npu_chunk_kda_fwd_prepare(
 
     gk = _empty(value_shape, q, dtype=torch.float32)
     aqk = _empty(matrix_shape, q)
-    akk = _empty(matrix_shape, q)
+    akk = _empty(matrix_shape, q) if output_mask[2] else None
     w = _empty(value_shape, q)
     u = _empty(value_shape, q)
-    qg = _empty(value_shape, q)
+    qg = _empty(value_shape, q) if output_mask[5] else None
     kg = _empty(value_shape, q)
     qg_scaled = _empty(value_shape, q)
-    q_hat = _empty(key_shape, q)
-    k_hat = _empty(key_shape, q)
-    q_rstd = _empty(key_scalar_shape, q, dtype=torch.float32)
-    k_rstd = _empty(key_scalar_shape, q, dtype=torch.float32)
-    beta_eff = _empty(value_scalar_shape, q, dtype=torch.float32)
+    q_hat = _empty(key_shape, q) if output_mask[8] else None
+    k_hat = _empty(key_shape, q) if output_mask[9] else None
+    q_rstd = (
+        _empty(key_scalar_shape, q, dtype=torch.float32)
+        if output_mask[10]
+        else None
+    )
+    k_rstd = (
+        _empty(key_scalar_shape, q, dtype=torch.float32)
+        if output_mask[11]
+        else None
+    )
+    beta_eff = (
+        _empty(value_scalar_shape, q, dtype=torch.float32)
+        if output_mask[12]
+        else None
+    )
     outputs = (
         gk,
         aqk,
@@ -2880,21 +2901,7 @@ def npu_chunk_kda_fwd_prepare(
             ctypes.c_bool(use_exp2),
             *(nd_tensor(ctx, tensor, name) for tensor, name in zip(
                 outputs,
-                (
-                    "gk",
-                    "aqk",
-                    "akk",
-                    "w",
-                    "u",
-                    "qg",
-                    "kg",
-                    "qg_scaled",
-                    "q_hat",
-                    "k_hat",
-                    "q_rstd",
-                    "k_rstd",
-                    "beta_eff",
-                ),
+                (name.lower() for name in KDA_FWD_PREPARE_OUTPUT_NAMES),
             )),
         ],
         outputs,

@@ -23,13 +23,16 @@ constexpr AscendC::FixpipeConfig kFixpipeRowMajorUb = {
 constexpr AscendC::FixpipeConfig kFixpipeNzL1 = {
     AscendC::CO2Layout::NZ, false};
 
+template <typename CompilePolicy>
 class ChunkKdaFwdPrepareCube {
 public:
     __aicore__ inline void Init(const PrepareKernelArgs &args)
     {
         args_ = args;
         workgroup_ = WorkgroupId();
-        akkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.akk));
+        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            akkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.akk));
+        }
         wGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.w));
         uGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.u));
     }
@@ -486,16 +489,18 @@ private:
             akkL1[L1::kAkkQ10Elements], l0C, l1Fix);
         AscendC::Mutex::Unlock<PIPE_FIX>(l1Mutex);
 
-        const uint32_t bottomRows = chunk.validRows - 32;
-        auto gmFix = AscendC::FixpipeParamsV220(
-            32, bottomRows, 32, Shape::kChunkRows, false);
-        gmFix.quantPre = QuantMode_t::F322BF16;
-        AscendC::Fixpipe<bfloat16_t, float, AscendC::CFG_ROW_MAJOR>(
-            akkGm_[AOutputOffset(args_.tiling, chunk, valueHead) +
-                   32 * Shape::kChunkRows],
-            l0C, gmFix);
-        // V3 已写回 q00/q01/q11；本次 q10 Fixpipe 完成后，公开 Akk
-        // 的四个象限全部为最终值，不需要再从 GM 回读或重复 MMAD。
+        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            const uint32_t bottomRows = chunk.validRows - 32;
+            auto gmFix = AscendC::FixpipeParamsV220(
+                32, bottomRows, 32, Shape::kChunkRows, false);
+            gmFix.quantPre = QuantMode_t::F322BF16;
+            AscendC::Fixpipe<bfloat16_t, float, AscendC::CFG_ROW_MAJOR>(
+                akkGm_[AOutputOffset(args_.tiling, chunk, valueHead) +
+                       32 * Shape::kChunkRows],
+                l0C, gmFix);
+        }
+        // 启用公开 Akk 时，V3 已写回 q00/q01/q11；本次 q10 Fixpipe
+        // 完成后四个象限全部为最终值，不需要再从 GM 回读或重复 MMAD。
         AscendC::Mutex::Unlock<PIPE_FIX>(l0cMutex);
     }
 

@@ -247,6 +247,7 @@ ATTR_DTYPES = {
     "safe_gate": "bool",
     "lower_bound": "float",
     "use_exp2": "bool",
+    "backward_mode": "string",
     "dt_bias": "bool",
     "cu_seqlens": "string",
     "explicit_chunk_indices": "bool",

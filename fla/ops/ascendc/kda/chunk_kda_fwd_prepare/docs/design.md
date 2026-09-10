@@ -8,8 +8,9 @@
 Q/K L2 norm + gate cumsum + prepare + post-WU
 ```
 
-算子固定输出 Prepare 后续正向和反向所需的 13 个 tensor。chunk 间状态递推由 FwdH 完成，
-最终 attention 输出由 Finalize 完成，二者不属于本算子。
+算子返回固定的 13 槽位合同。`gk/Aqk/w/u/kg/qg_scaled` 是 Prepare 与 FwdH/Finalize
+之间的正向必需输出；其余七项是可按反向策略裁剪的检查点。chunk 间状态递推由 FwdH
+完成，最终 attention 输出由 Finalize 完成，二者不属于本算子。
 
 Shape 符号沿用 [KDA 模型符号表](../../README.md#核心符号)，公开输入输出与已知限制统一见
 [算子 README](../README.md#输入输出)。
@@ -64,6 +65,32 @@ V_beta = cast_bf16(fp32(v) * beta_eff)
 ```
 
 C7 最后计算 `W=Akk@K_beta_g` 和 `U=Akk@V_beta`。BF16 操作数均使用 FP32 累加。
+
+### 2.1 输出生命周期
+
+三种公开输出策略如下：
+
+```text
+none:
+    gk, Aqk, w, u, kg, qg_scaled
+
+recompute:
+    none 的六项
+    + Akk, q_hat, k_hat, q_rstd, k_rstd, beta_eff
+
+save:
+    recompute 的十二项 + qg
+```
+
+策略只影响最终的公开 GM store。V0 仍生成 norm、gate、beta 状态；V3 仍把 `Akk` 写入
+workspace 并供 C4/C5/C7 使用；V6 仍生成 UB 中的 `qg`，再基于其 BF16 舍入值计算
+`qg_scaled`。因此三档的公式、UB/L1/workspace 布局、VF 调用数和同步协议一致。
+
+算子 IR 和 kernel ABI 固定保留 13 个 `REQUIRED` 输出槽位。L2 未请求的槽位传
+`nullptr`，L0 用不会被当前编译实例写入的合法 descriptor 占位，防止 launcher 压缩参数。
+
+`output_final_state` 与 `return_intermediate_states` 属于完整 forward，分别控制用户可见的
+`final_state/h`，和本节的反向策略正交；Prepare 不接收这两个属性。
 
 ## 3. 八阶段流水
 
@@ -139,8 +166,11 @@ B/X0/negX1/Akk 搬入每 head 独立 L1 后即可归还 workspace payload，V6 �
 ## 8. 模板轴
 
 TilingKey 编译期选择 gate dtype、beta dtype、norm 模式、beta 模式、gate 模式、
-`use_exp2` 和 `safe_gate`。`q/k/v` 不进入 dtype 模板轴，固定为 BF16。架构通过
+`use_exp2`、`safe_gate` 和三档 `OUTPUT_MODE`。`q/k/v` 不进入 dtype 模板轴，固定为 BF16。架构通过
 `__CCE_AICORE__` 编译宏选择，kernel 内没有运行时 Arch22/Arch35 分支。
+
+输出搬出在模板实例中使用 `if constexpr` 消除；设备侧 tiling 不保存运行时
+`outputMask`，Stage 和 VF 循环都不执行运行时输出判断。
 
 详细资源偏移、VF 约束和 Stage 内指令顺序仍保留在
 [设计伪代码](../op_kernel/pseudocode/README.md) 中；正式实现以 `op_kernel/` 为准。

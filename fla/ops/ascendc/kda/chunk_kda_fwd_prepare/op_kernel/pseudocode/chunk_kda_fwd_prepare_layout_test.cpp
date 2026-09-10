@@ -145,12 +145,14 @@ int main()
 
     using Exp2Policy = PrepareCompilePolicy<
         QkNormMode::L2, BetaMode::Sigmoid, GateMode::PrecomputedStep,
-        true, false>;
+        true, false, OutputMode::Save>;
     using ExpPolicy = PrepareCompilePolicy<
         QkNormMode::L2, BetaMode::Sigmoid, GateMode::PrecomputedStep,
-        false, false>;
+        false, false, OutputMode::Recompute>;
     static_assert(Exp2Policy::gateMode == GateMode::PrecomputedStep);
     static_assert(ExpPolicy::gateMode == GateMode::PrecomputedStep);
+    static_assert(Exp2Policy::outputMode == OutputMode::Save);
+    static_assert(ExpPolicy::outputMode == OutputMode::Recompute);
     if (!Exp2Policy::useExp2 || ExpPolicy::useExp2) {
         return 1;
     }

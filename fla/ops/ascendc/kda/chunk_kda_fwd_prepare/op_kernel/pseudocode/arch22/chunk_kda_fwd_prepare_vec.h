@@ -39,18 +39,32 @@ public:
         if (args_.aLog != nullptr) {
             aLogGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.aLog));
         }
-        qgGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.qg));
+        if constexpr (CompilePolicy::outputMode == OutputMode::Save) {
+            qgGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.qg));
+        }
         qgScaledGm_.SetGlobalBuffer(
             reinterpret_cast<__gm__ bfloat16_t *>(args_.qgScaled));
         kgGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.kg));
         gkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.gk));
         aqkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.aqk));
-        akkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.akk));
-        qHatGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.qHat));
-        kHatGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.kHat));
-        qRstdGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.qRstd));
-        kRstdGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.kRstd));
-        betaEffGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.betaEff));
+        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            akkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.akk));
+        }
+        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            qHatGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.qHat));
+        }
+        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            kHatGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.kHat));
+        }
+        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            qRstdGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.qRstd));
+        }
+        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            kRstdGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.kRstd));
+        }
+        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            betaEffGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.betaEff));
+        }
         if (coreCount_ == 0) {
             return;
         }
@@ -292,7 +306,7 @@ private:
             AscendC::PipeBarrier<PIPE_V>();
         }
         // 本 Stage 的一次向量计算完成 Q/K 可选 L2 norm、beta 变换、
-        // gate 变换和逐 token cumsum，并生成全部公开中间量。
+        // gate 变换和逐 token cumsum，并生成后续 Stage 所需中间量。
         V0Vf(q, k, qRstd, kRstd, gate, beta, betaEff, dtBias, aLog, g,
              scratch, chunk.validRows);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[pair]);
@@ -318,25 +332,35 @@ private:
                 args_.tiling, chunk, qkHead, Shape::kHeadDim);
             const uint64_t rstdOutputOffset =
                 QkHeadScalarOffset(args_.tiling, chunk, qkHead);
-            AscendC::DataCopy(qHatGm_[qkOutputOffset], q,
-                              chunk.validRows * Shape::kHeadDim);
-            AscendC::DataCopy(kHatGm_[qkOutputOffset], k,
-                              chunk.validRows * Shape::kHeadDim);
-            AscendC::DataCopyPad(qRstdGm_[rstdOutputOffset], qRstd,
-                AscendC::DataCopyExtParams{
-                    1, static_cast<uint32_t>(chunk.validRows * sizeof(float)),
-                    0, 0, 0});
-            AscendC::DataCopyPad(kRstdGm_[rstdOutputOffset], kRstd,
-                AscendC::DataCopyExtParams{
-                    1, static_cast<uint32_t>(chunk.validRows * sizeof(float)),
-                    0, 0, 0});
+            if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+                AscendC::DataCopy(qHatGm_[qkOutputOffset], q,
+                                  chunk.validRows * Shape::kHeadDim);
+            }
+            if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+                AscendC::DataCopy(kHatGm_[qkOutputOffset], k,
+                                  chunk.validRows * Shape::kHeadDim);
+            }
+            if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+                AscendC::DataCopyPad(qRstdGm_[rstdOutputOffset], qRstd,
+                    AscendC::DataCopyExtParams{
+                        1, static_cast<uint32_t>(chunk.validRows * sizeof(float)),
+                        0, 0, 0});
+            }
+            if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+                AscendC::DataCopyPad(kRstdGm_[rstdOutputOffset], kRstd,
+                    AscendC::DataCopyExtParams{
+                        1, static_cast<uint32_t>(chunk.validRows * sizeof(float)),
+                        0, 0, 0});
+            }
         }
-        AscendC::DataCopyPad(
-            betaEffGm_[HeadScalarOffset(args_.tiling, chunk, valueHead)],
-            betaEff, AscendC::DataCopyExtParams{
-                         1, static_cast<uint32_t>(
-                                chunk.validRows * sizeof(float)),
-                         0, 0, 0});
+        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            AscendC::DataCopyPad(
+                betaEffGm_[HeadScalarOffset(args_.tiling, chunk, valueHead)],
+                betaEff, AscendC::DataCopyExtParams{
+                             1, static_cast<uint32_t>(
+                                    chunk.validRows * sizeof(float)),
+                             0, 0, 0});
+        }
         AscendC::DataCopy(gkGm_[headOutputOffset], g,
                           chunk.validRows * Shape::kHeadDim);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_[pair]);
@@ -426,9 +450,11 @@ private:
             args_.workspace + slot + Workspace::kPayload + Workspace::kAkk));
         AscendC::DataCopy(akkRelay, akkPack,
                           Shape::kChunkRows * Shape::kChunkRows);
-        AscendC::DataCopy(
-            akkGm_[AOutputOffset(args_.tiling, chunk, valueHead)],
-            akkPack, chunk.validRows * Shape::kChunkRows);
+        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            AscendC::DataCopy(
+                akkGm_[AOutputOffset(args_.tiling, chunk, valueHead)],
+                akkPack, chunk.validRows * Shape::kChunkRows);
+        }
         if (chunk.validRows > 32) {
             AscendC::DataCopy(payload[Workspace::kX0 / sizeof(float)], x0, 1024);
             AscendC::DataCopy(payload[Workspace::kNegX1 / sizeof(float)], negX1, 1024);
@@ -498,7 +524,10 @@ private:
         AscendC::DataCopy(qgScaledGm_[out], qgScaled,
                           chunk.validRows * Shape::kHeadDim);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_[pair]);
-        AscendC::DataCopy(qgGm_[out], qg, chunk.validRows * Shape::kHeadDim);
+        if constexpr (CompilePolicy::outputMode == OutputMode::Save) {
+            AscendC::DataCopy(qgGm_[out], qg,
+                              chunk.validRows * Shape::kHeadDim);
+        }
         AscendC::DataCopy(kgGm_[out], kg, chunk.validRows * Shape::kHeadDim);
         const uint32_t rhsRows = chunk.validRows > 32 ? 64 : 32;
         AscendC::GlobalTensor<bfloat16_t> kBetaRelay;
@@ -1078,7 +1107,7 @@ private:
             AscendC::Cast(vBeta[row * Shape::kValueDim], work,
                           AscendC::RoundMode::CAST_RINT, Shape::kValueDim);
             AscendC::PipeBarrier<PIPE_V>();
-            // qgScaled 从已舍入的公开 qg 回读。正序处理时，BF16 输出
+            // qgScaled 从已舍入的 BF16 qg 中间量回读。正序处理时，BF16 输出
             // 只覆盖已经消费完的 FP32 G 低地址，不会覆盖后续 G 行。
             AscendC::Cast(work, qg[offset], AscendC::RoundMode::CAST_NONE,
                           Shape::kHeadDim);

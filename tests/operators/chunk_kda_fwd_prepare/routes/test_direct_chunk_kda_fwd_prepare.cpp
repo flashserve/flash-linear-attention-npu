@@ -22,7 +22,8 @@
 namespace ChunkKdaFwdPrepareDirectTest {
 
 template <int GateType, int BetaType, uint32_t NormMode,
-          uint32_t BetaMode, uint32_t GateMode, bool UseExp2, bool SafeGate>
+          uint32_t BetaMode, uint32_t GateMode, bool UseExp2, bool SafeGate,
+          uint32_t OutputMode>
 __global__ __aicore__ void DirectKernel(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR beta,
     GM_ADDR aLog, GM_ADDR dtBias, GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
@@ -80,14 +81,16 @@ __global__ __aicore__ void DirectKernel(
     using Policy = KdaPrepare::PrepareCompilePolicy<
         static_cast<KdaPrepare::QkNormMode>(NormMode),
         static_cast<KdaPrepare::BetaMode>(BetaMode),
-        static_cast<KdaPrepare::GateMode>(GateMode), UseExp2, SafeGate>;
+        static_cast<KdaPrepare::GateMode>(GateMode), UseExp2, SafeGate,
+        static_cast<KdaPrepare::OutputMode>(OutputMode)>;
     using GateT = typename KdaPrepare::PrepareStorageType<GateType>::type;
     using BetaT = typename KdaPrepare::PrepareStorageType<BetaType>::type;
     KdaPrepare::RunPrepare<GateT, BetaT, Policy>(args);
 }
 
 template <int GateType, int BetaType, uint32_t NormMode,
-          uint32_t BetaMode, uint32_t GateMode, bool UseExp2, bool SafeGate>
+          uint32_t BetaMode, uint32_t GateMode, bool UseExp2, bool SafeGate,
+          uint32_t OutputMode>
 void Launch(
     uint32_t blockDim, aclrtStream stream,
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR beta,
@@ -98,7 +101,7 @@ void Launch(
     const KdaPrepare::ChunkKdaFwdPrepareTilingData &tiling)
 {
     DirectKernel<GateType, BetaType, NormMode, BetaMode, GateMode, UseExp2,
-                 SafeGate><<<blockDim, nullptr, stream>>>(
+                 SafeGate, OutputMode><<<blockDim, nullptr, stream>>>(
         q, k, v, g, beta, aLog, dtBias, cuSeqlens, chunkIndices,
         gk, aqk, akk, w, u, qg, kg, qgScaled, qHat, kHat,
         qRstd, kRstd, betaEff, workspace, tiling);
@@ -112,7 +115,8 @@ template void Launch<
     CHUNK_KDA_FWD_PREPARE_BETA_RAW,
     CHUNK_KDA_FWD_PREPARE_GATE_PRECOMPUTED_STEP,
     false,
-    false>(
+    false,
+    CHUNK_KDA_FWD_PREPARE_OUTPUT_NONE>(
     uint32_t, aclrtStream,
     GM_ADDR, GM_ADDR, GM_ADDR, GM_ADDR, GM_ADDR,
     GM_ADDR, GM_ADDR, GM_ADDR, GM_ADDR,
@@ -129,7 +133,8 @@ template void Launch<
     CHUNK_KDA_FWD_PREPARE_BETA_TWO_SIGMOID,
     CHUNK_KDA_FWD_PREPARE_GATE_SAFE_SIGMOID,
     true,
-    true>(
+    true,
+    CHUNK_KDA_FWD_PREPARE_OUTPUT_RECOMPUTE>(
     uint32_t, aclrtStream,
     GM_ADDR, GM_ADDR, GM_ADDR, GM_ADDR, GM_ADDR,
     GM_ADDR, GM_ADDR, GM_ADDR, GM_ADDR,

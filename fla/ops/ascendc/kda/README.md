@@ -45,12 +45,13 @@ README；现有组合算子通常限制 `H_v<=128`，`ChunkKdaFwdPrepare` 不施
 | --- | --- | --- | --- |
 | `attn_out` | `[B,T,H_v,V]` | `[T,H_v,V]` | 固定 sequence-major |
 | `final_state` | `[N,H_v,K,V]` 或 `[N,H_v,V,K]` | 同左 | 固定 sequence-major；末两维由 `state_v_first` 控制 |
-| `gk/w/qg/kg/qg_scaled` | `[B,H_v,T,K]` | `[H_v,T,K]` | 供后续正向或反向使用，固定 head-major |
-| `u/v_new` | `[B,H_v,T,V]` | `[H_v,T,V]` | 供后续正向或反向使用，固定 head-major |
-| `Aqk/Akk` | `[B,H_v,T,chunk_size]` | `[H_v,T,chunk_size]` | 供反向使用，固定 head-major |
-| `q_hat/k_hat` | `[B,H_k,T,K]` | `[H_k,T,K]` | Prepare 的归一化保存量，固定 head-major |
-| `q_rstd/k_rstd` | `[B,H_k,T]` | `[H_k,T]` | Prepare 的 FP32 归一化保存量，固定 head-major |
-| `beta_eff` | `[B,H_v,T]` | `[H_v,T]` | Prepare 的 FP32 beta 保存量，固定 head-major |
+| `gk/w/kg/qg_scaled` | `[B,H_v,T,K]` | `[H_v,T,K]` | Prepare 后续正向阶段必需，固定 head-major |
+| `qg` | `[B,H_v,T,K]` | `[H_v,T,K]` | 禁用反向重计算时保存，固定 head-major |
+| `u/v_new` | `[B,H_v,T,V]` | `[H_v,T,V]` | `u` 是 Prepare 后续正向阶段必需数据；`v_new` 由 FwdH 产生 |
+| `Aqk/Akk` | `[B,H_v,T,chunk_size]` | `[H_v,T,chunk_size]` | `Aqk` 是 Finalize 必需数据；`Akk` 是反向检查点 |
+| `q_hat/k_hat` | `[B,H_k,T,K]` | `[H_k,T,K]` | Prepare 的可选反向归一化检查点，固定 head-major |
+| `q_rstd/k_rstd` | `[B,H_k,T]` | `[H_k,T]` | Prepare 的可选 FP32 归一化检查点，固定 head-major |
+| `beta_eff` | `[B,H_v,T]` | `[H_v,T]` | Prepare 的可选 FP32 beta 检查点，固定 head-major |
 | `h` | `[B,H_v,N_c,K,V]` 或 `[B,H_v,N_c,V,K]` | 去掉 B 维 | 供反向使用，固定 head-major |
 
 ## 变长元数据

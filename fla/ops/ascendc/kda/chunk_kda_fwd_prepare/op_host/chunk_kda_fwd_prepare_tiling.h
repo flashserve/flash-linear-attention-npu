@@ -8,6 +8,7 @@
 #define CHUNK_KDA_FWD_PREPARE_TILING_H
 
 #include <cstddef>
+#include "chunk_kda_fwd_prepare_output_mask.h"
 #include "register/tilingdata_base.h"
 
 namespace optiling {
@@ -44,22 +45,6 @@ enum ChunkKdaFwdPrepareInputIndex : size_t {
     PREPARE_INPUT_CHUNK_INDICES,
 };
 
-enum ChunkKdaFwdPrepareOutputIndex : size_t {
-    PREPARE_OUTPUT_GK = 0,
-    PREPARE_OUTPUT_AQK,
-    PREPARE_OUTPUT_AKK,
-    PREPARE_OUTPUT_W,
-    PREPARE_OUTPUT_U,
-    PREPARE_OUTPUT_QG,
-    PREPARE_OUTPUT_KG,
-    PREPARE_OUTPUT_QG_SCALED,
-    PREPARE_OUTPUT_Q_HAT,
-    PREPARE_OUTPUT_K_HAT,
-    PREPARE_OUTPUT_Q_RSTD,
-    PREPARE_OUTPUT_K_RSTD,
-    PREPARE_OUTPUT_BETA_EFF,
-};
-
 enum ChunkKdaFwdPrepareAttrIndex : size_t {
     PREPARE_ATTR_LAYOUT = 0,
     PREPARE_ATTR_SCALE,
@@ -72,6 +57,7 @@ enum ChunkKdaFwdPrepareAttrIndex : size_t {
     PREPARE_ATTR_SAFE_GATE,
     PREPARE_ATTR_LOWER_BOUND,
     PREPARE_ATTR_USE_EXP2,
+    PREPARE_ATTR_OUTPUT_MODE,
 };
 
 struct ChunkKdaFwdPrepareCompileInfo {};

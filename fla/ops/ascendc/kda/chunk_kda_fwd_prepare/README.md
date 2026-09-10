@@ -33,6 +33,7 @@ outputs = chunk_kda_fwd_prepare(
     dt_bias=None,
     cu_seqlens=None,
     chunk_indices=None,
+    backward_mode="save",
 )
 ```
 
@@ -70,12 +71,16 @@ BF16 或 FP32，`a_log/dt_bias` 固定为 FP32。
 | `q_rstd/k_rstd` | `[B,HK,T]` | `[HK,T]` | FP32 |
 | `beta_eff` | `[B,HV,T]` | `[HV,T]` | FP32 |
 
-返回顺序固定为：
+返回顺序固定为 13 个槽位；未按当前策略保留的槽位返回 `None`：
 
 ```text
 gk, Aqk, Akk, w, u, qg, kg, qg_scaled,
 q_hat, k_hat, q_rstd, k_rstd, beta_eff
 ```
+
+算子 IR 和 kernel ABI 中这 13 个输出全部声明为 `REQUIRED`，因此输出编号以及 workspace、
+tiling 参数位置不会随策略变化。L2 接口允许未保留的七项传 `nullptr`；L0 在交给 launcher
+前使用不会被当前编译实例写入的合法 descriptor 占位，避免部分 CANN 版本压缩空输出。
 
 按实际消费者分类时，同一个公开输出可以同时属于正向与反向保存量：
 
@@ -86,7 +91,27 @@ q_hat, k_hat, q_rstd, k_rstd, beta_eff
 | 后续算子的可选状态结果 | `h/final_state` | 由 FwdH 产生，不属于 Prepare 的 13 个输出 |
 
 其中 `qg_scaled` 只服务正向 Finalize；`Akk/qg` 在 Prepare 完成 Post-WU 后不再被
-正向消费。`u` 服务 FwdH，并为禁用重计算的反向路径保留。
+正向消费。`u` 服务 FwdH。`gk/Aqk/w/u/kg/qg_scaled` 是跨算子正向流水必需数据，
+不受反向策略影响。
+
+### 输出保留策略
+
+`backward_mode` 只控制反向检查点的公开分配和 GM 写回，支持以下三档：
+
+| `backward_mode` | 场景 | 13 个返回槽位中非空的数据 |
+| --- | --- | --- |
+| `"none"` | 完全不需要反向 | `gk/Aqk/w/u/kg/qg_scaled` |
+| `"recompute"` | 有反向，允许重计算 chunk-local 中间量 | 上述六项，加 `Akk/q_hat/k_hat/q_rstd/k_rstd/beta_eff` |
+| `"save"` | 有反向，不重计算 | 全部 13 项；相对 `recompute` 额外保存 `qg` |
+
+默认值为 `"save"`，保持原来 13 项全部返回的兼容行为。三档都执行相同的前向数学计算、
+静态 UB/L1 布局和跨核同步，仅关闭未请求结果的公开 GM 写回；`Akk/qg` 等数据在本算子
+内部仍按 C4/C5/C7 或 BF16 舍入语义使用。三档由 TilingKey 的编译期 `OUTPUT_MODE`
+选择，Stage 内不读取运行时输出 mask。
+
+完整 forward 的 `output_final_state` 与 `return_intermediate_states` 是和
+`backward_mode` 正交的用户输出开关，只控制 `final_state/h`。这两个数据由 FwdH/完整
+forward 产生，不属于 Prepare 的 13 个输出，也不会进入 Prepare 的 tiling 或 kernel 分支。
 
 ## 模式
 

@@ -27,6 +27,12 @@
 #define CHUNK_KDA_FWD_PREPARE_GATE_SOFTPLUS 1
 #define CHUNK_KDA_FWD_PREPARE_GATE_SAFE_SIGMOID 2
 
+// 13 个输出形参始终保留；该模式只在编译期裁剪公开 GM 搬出，
+// 不改变 Prepare 内部为后续 Stage 生成 workspace/L1 数据的计算。
+#define CHUNK_KDA_FWD_PREPARE_OUTPUT_NONE 0
+#define CHUNK_KDA_FWD_PREPARE_OUTPUT_RECOMPUTE 1
+#define CHUNK_KDA_FWD_PREPARE_OUTPUT_SAVE 2
+
 namespace KdaPrepare {
 
 enum class QkNormMode : uint8_t {
@@ -44,6 +50,15 @@ enum class GateMode : uint8_t {
     PrecomputedStep = CHUNK_KDA_FWD_PREPARE_GATE_PRECOMPUTED_STEP,
     Softplus = CHUNK_KDA_FWD_PREPARE_GATE_SOFTPLUS,
     SafeSigmoid = CHUNK_KDA_FWD_PREPARE_GATE_SAFE_SIGMOID,
+};
+
+enum class OutputMode : uint8_t {
+    // 只搬出 fwd_h/finalize 必需输出。
+    None = CHUNK_KDA_FWD_PREPARE_OUTPUT_NONE,
+    // 额外搬出反向重计算需要的 Akk、归一化结果和 beta_eff。
+    Recompute = CHUNK_KDA_FWD_PREPARE_OUTPUT_RECOMPUTE,
+    // 再额外搬出 qg，保留全部反向中间量。
+    Save = CHUNK_KDA_FWD_PREPARE_OUTPUT_SAVE,
 };
 
 namespace ExpDomain {
@@ -82,13 +97,14 @@ struct ExpDomainTraits {
 };
 
 template <QkNormMode NORM_MODE, BetaMode BETA_MODE, GateMode GATE_MODE,
-          bool USE_EXP2, bool SAFE_GATE>
+          bool USE_EXP2, bool SAFE_GATE, OutputMode OUTPUT_MODE>
 struct PrepareCompilePolicy {
     static constexpr QkNormMode normMode = NORM_MODE;
     static constexpr BetaMode betaMode = BETA_MODE;
     static constexpr GateMode gateMode = GATE_MODE;
     static constexpr bool useExp2 = USE_EXP2;
     static constexpr bool safeGate = SAFE_GATE;
+    static constexpr OutputMode outputMode = OUTPUT_MODE;
 };
 
 #ifndef TORCH_MODE
@@ -110,12 +126,16 @@ ASCENDC_TPL_ARGS_DECL(
                           CHUNK_KDA_FWD_PREPARE_GATE_SOFTPLUS,
                           CHUNK_KDA_FWD_PREPARE_GATE_SAFE_SIGMOID),
     ASCENDC_TPL_BOOL_DECL(USE_EXP2, 0, 1),
-    ASCENDC_TPL_BOOL_DECL(SAFE_GATE, 0, 1));
+    ASCENDC_TPL_BOOL_DECL(SAFE_GATE, 0, 1),
+    ASCENDC_TPL_UINT_DECL(OUTPUT_MODE, 2, ASCENDC_TPL_UI_LIST,
+                          CHUNK_KDA_FWD_PREPARE_OUTPUT_NONE,
+                          CHUNK_KDA_FWD_PREPARE_OUTPUT_RECOMPUTE,
+                          CHUNK_KDA_FWD_PREPARE_OUTPUT_SAVE));
 
 // SAFE_GATE 只为 SafeSigmoid 置位，避免生成数学等价的重复实例。
 #define CHUNK_KDA_FWD_PREPARE_SEL_ONE(                                      \
     GATE_TYPE, BETA_TYPE, NORM_VALUE, BETA_VALUE, GATE_VALUE, EXP_VALUE,    \
-    SAFE_VALUE)                                                              \
+    SAFE_VALUE, OUTPUT_VALUE)                                                \
     ASCENDC_TPL_ARGS_SEL(                                                     \
         ASCENDC_TPL_DTYPE_SEL(D_T_GATE, GATE_TYPE),                          \
         ASCENDC_TPL_DTYPE_SEL(D_T_BETA, BETA_TYPE),                          \
@@ -123,14 +143,28 @@ ASCENDC_TPL_ARGS_DECL(
         ASCENDC_TPL_UINT_SEL(BETA_MODE, ASCENDC_TPL_UI_LIST, BETA_VALUE),    \
         ASCENDC_TPL_UINT_SEL(GATE_MODE, ASCENDC_TPL_UI_LIST, GATE_VALUE),    \
         ASCENDC_TPL_BOOL_SEL(USE_EXP2, EXP_VALUE),                           \
-        ASCENDC_TPL_BOOL_SEL(SAFE_GATE, SAFE_VALUE))
+        ASCENDC_TPL_BOOL_SEL(SAFE_GATE, SAFE_VALUE),                         \
+        ASCENDC_TPL_UINT_SEL(OUTPUT_MODE, ASCENDC_TPL_UI_LIST, OUTPUT_VALUE))
+
+#define CHUNK_KDA_FWD_PREPARE_SEL_OUTPUT(                                   \
+    GATE_TYPE, BETA_TYPE, NORM_VALUE, BETA_VALUE, GATE_VALUE, EXP_VALUE,    \
+    SAFE_VALUE)                                                              \
+    CHUNK_KDA_FWD_PREPARE_SEL_ONE(                                           \
+        GATE_TYPE, BETA_TYPE, NORM_VALUE, BETA_VALUE, GATE_VALUE,           \
+        EXP_VALUE, SAFE_VALUE, CHUNK_KDA_FWD_PREPARE_OUTPUT_NONE),          \
+    CHUNK_KDA_FWD_PREPARE_SEL_ONE(                                           \
+        GATE_TYPE, BETA_TYPE, NORM_VALUE, BETA_VALUE, GATE_VALUE,           \
+        EXP_VALUE, SAFE_VALUE, CHUNK_KDA_FWD_PREPARE_OUTPUT_RECOMPUTE),     \
+    CHUNK_KDA_FWD_PREPARE_SEL_ONE(                                           \
+        GATE_TYPE, BETA_TYPE, NORM_VALUE, BETA_VALUE, GATE_VALUE,           \
+        EXP_VALUE, SAFE_VALUE, CHUNK_KDA_FWD_PREPARE_OUTPUT_SAVE)
 
 #define CHUNK_KDA_FWD_PREPARE_SEL_EXP(                                      \
     GATE_TYPE, BETA_TYPE, NORM_VALUE, BETA_VALUE, GATE_VALUE, SAFE_VALUE)   \
-    CHUNK_KDA_FWD_PREPARE_SEL_ONE(                                           \
+    CHUNK_KDA_FWD_PREPARE_SEL_OUTPUT(                                        \
         GATE_TYPE, BETA_TYPE, NORM_VALUE, BETA_VALUE, GATE_VALUE, 0,        \
         SAFE_VALUE),                                                         \
-    CHUNK_KDA_FWD_PREPARE_SEL_ONE(                                           \
+    CHUNK_KDA_FWD_PREPARE_SEL_OUTPUT(                                        \
         GATE_TYPE, BETA_TYPE, NORM_VALUE, BETA_VALUE, GATE_VALUE, 1,        \
         SAFE_VALUE)
 
@@ -178,6 +212,7 @@ ASCENDC_TPL_SEL(
 #undef CHUNK_KDA_FWD_PREPARE_SEL_BETA_MODE
 #undef CHUNK_KDA_FWD_PREPARE_SEL_GATE
 #undef CHUNK_KDA_FWD_PREPARE_SEL_EXP
+#undef CHUNK_KDA_FWD_PREPARE_SEL_OUTPUT
 #undef CHUNK_KDA_FWD_PREPARE_SEL_ONE
 #endif
 

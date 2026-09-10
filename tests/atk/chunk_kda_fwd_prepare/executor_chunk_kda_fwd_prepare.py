@@ -412,7 +412,7 @@ def _block_inverse(
 def _reference(
     inputs: PreparedInputs,
     spec: dict[str, Any],
-) -> tuple[torch.Tensor, ...]:
+) -> tuple[Optional[torch.Tensor], ...]:
     layout = str(spec["layout"])
     q = _layout_to_bsnd(inputs.q, layout).to(torch.float64)
     k = _layout_to_bsnd(inputs.k, layout).to(torch.float64)
@@ -535,7 +535,28 @@ def _reference(
     )
     if layout in {"TND", "NTD"}:
         outputs = tuple(output.squeeze(0) for output in outputs)
-    return outputs
+    output_masks = {
+        "none": (
+            True, True, False, True, True, False, True, True,
+            False, False, False, False, False,
+        ),
+        "recompute": (
+            True, True, True, True, True, False, True, True,
+            True, True, True, True, True,
+        ),
+        "save": (True,) * 13,
+    }
+    backward_mode = str(spec.get("backward_mode", "save"))
+    try:
+        output_mask = output_masks[backward_mode]
+    except KeyError as exc:
+        raise ValueError(
+            "backward_mode 必须是 none、recompute 或 save。"
+        ) from exc
+    return tuple(
+        output if enabled else None
+        for output, enabled in zip(outputs, output_mask)
+    )
 
 
 def run_cpu(spec: dict[str, Any], inputs: PreparedInputs):
@@ -570,6 +591,7 @@ def run_npu(spec: dict[str, Any], inputs: PreparedInputs):
         dt_bias=inputs.dt_bias,
         cu_seqlens=inputs.cu_seqlens,
         chunk_indices=inputs.chunk_indices,
+        backward_mode=str(spec.get("backward_mode", "save")),
     )
 
 
