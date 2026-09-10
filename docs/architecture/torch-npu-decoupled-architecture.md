@@ -251,7 +251,7 @@ import 不会因此导入 `torch`、`torch_npu` 或注册 legacy dispatcher。
 新代码统一使用：
 
 ```python
-from fla_npu.ops.ascendc import chunk_fwd_o
+from fla_npu.ops.ascendc import chunk_gated_delta_rule_fwd_o
 from fla_npu.ops.triton import chunk_local_cumsum
 ```
 

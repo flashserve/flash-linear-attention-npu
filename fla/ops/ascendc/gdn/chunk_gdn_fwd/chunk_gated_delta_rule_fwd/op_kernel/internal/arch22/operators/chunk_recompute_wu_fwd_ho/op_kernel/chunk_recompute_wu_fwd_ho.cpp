@@ -5,8 +5,8 @@
 #include "../../chunk_gated_delta_rule_fwd_h/op_kernel/chunk_gated_delta_rule_fwd_h_struct.h"
 #include "../../chunk_gated_delta_rule_fwd_h/op_kernel/gemm/kernel/gdn_fwd_h_kernel.hpp"
 #undef CATLASS_ARCH
-#include "../../chunk_fwd_o/op_kernel/chunk_fwd_o_struct.h"
-#include "../../chunk_fwd_o/op_kernel/gemm/kernel/gdn_fwd_o_kernel.hpp"
+#include "../../chunk_gated_delta_rule_fwd_o/op_kernel/chunk_gated_delta_rule_fwd_o_struct.h"
+#include "../../chunk_gated_delta_rule_fwd_o/op_kernel/gemm/kernel/gdn_fwd_o_kernel.hpp"
 #include "../../recompute_w_u_fwd/op_kernel/recompute_w_u_fwd_common.h"
 #include "../../recompute_w_u_fwd/op_kernel/recompute_w_u_fwd_cube.h"
 #include "../../recompute_w_u_fwd/op_kernel/recompute_w_u_fwd_vector.h"
@@ -180,7 +180,7 @@ __aicore__ inline void DispatchFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, 
 
 #endif
 
-__aicore__ inline void CopyOTiling(const __gm__ ChunkFwdOTilingData *src, ChunkFwdOTilingData &dst)
+__aicore__ inline void CopyOTiling(const __gm__ ChunkGatedDeltaRuleFwdOTilingData *src, ChunkGatedDeltaRuleFwdOTilingData &dst)
 {
     dst.shapeBatch = src->shapeBatch;
     dst.seqlen = src->seqlen;
@@ -222,7 +222,7 @@ __aicore__ inline void CopyRecomputeTiling(const __gm__ RecomputeWUFwdTilingData
 template <typename InputT, typename GT>
 __aicore__ inline void RunFwdO(GM_ADDR q, GM_ADDR k, GM_ADDR vNew, GM_ADDR h, GM_ADDR g,
                                GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR o,
-                               GM_ADDR userWorkspace, const ChunkFwdOTilingData *tiling)
+                               GM_ADDR userWorkspace, const ChunkGatedDeltaRuleFwdOTilingData *tiling)
 {
     using Kernel = Catlass::Gemm::Kernel::GDNFwdOKernel<InputT, GT, float, true>;
     Kernel kernel;
@@ -273,7 +273,7 @@ __aicore__ inline void DispatchRecompute(
 template <typename InputT>
 __aicore__ inline void DispatchFwdO(GM_ADDR q, GM_ADDR k, GM_ADDR vNew, GM_ADDR h, GM_ADDR g,
                                     GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR o,
-                                    GM_ADDR userWorkspace, const ChunkFwdOTilingData *tiling)
+                                    GM_ADDR userWorkspace, const ChunkGatedDeltaRuleFwdOTilingData *tiling)
 {
     RunFwdO<InputT, float>(q, k, vNew, h, g, cuSeqlens, chunkIndices, o, userWorkspace, tiling);
 }
@@ -281,7 +281,7 @@ __aicore__ inline void DispatchFwdO(GM_ADDR q, GM_ADDR k, GM_ADDR vNew, GM_ADDR 
 #ifndef GDN_CHUNK_RECOMPUTE_WU_FWD_HO_IMPL_ONLY
 __aicore__ inline void DispatchFwdO(GM_ADDR q, GM_ADDR k, GM_ADDR vNew, GM_ADDR h, GM_ADDR g,
                                     GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR o,
-                                    GM_ADDR userWorkspace, const ChunkFwdOTilingData *tiling)
+                                    GM_ADDR userWorkspace, const ChunkGatedDeltaRuleFwdOTilingData *tiling)
 {
     if (tiling->dataType == 1) {
         if (tiling->gDataType == 2) {
@@ -306,11 +306,11 @@ __aicore__ inline void RunFused(
 {
     GM_ADDR userWorkspace = AscendC::GetUserWorkspace(workspace);
     const uint64_t oTilingOffset = AlignTilingSize(sizeof(ChunkGatedDeltaRuleFwdHTilingData));
-    const __gm__ ChunkFwdOTilingData *gmOTiling =
-        reinterpret_cast<const __gm__ ChunkFwdOTilingData *>(tiling + oTilingOffset);
+    const __gm__ ChunkGatedDeltaRuleFwdOTilingData *gmOTiling =
+        reinterpret_cast<const __gm__ ChunkGatedDeltaRuleFwdOTilingData *>(tiling + oTilingOffset);
     const __gm__ ChunkRecomputeWUFwdHOTrailer *trailer =
         reinterpret_cast<const __gm__ ChunkRecomputeWUFwdHOTrailer *>(
-            tiling + oTilingOffset + sizeof(ChunkFwdOTilingData));
+            tiling + oTilingOffset + sizeof(ChunkGatedDeltaRuleFwdOTilingData));
     GM_ADDR w = userWorkspace + trailer->wIntermediateOffset;
     GM_ADDR u = userWorkspace + trailer->uIntermediateOffset;
     GM_ADDR h = userWorkspace + trailer->hIntermediateOffset;
@@ -342,7 +342,7 @@ __aicore__ inline void RunFused(
     DispatchFwdH<TileShapes>(k, w, u, g, gk, initialState, cuSeqlens, chunkIndices,
                              h, vNew, finalState, tiling, userWorkspace);
 
-    ChunkFwdOTilingData oTiling{};
+    ChunkGatedDeltaRuleFwdOTilingData oTiling{};
     CopyOTiling(gmOTiling, oTiling);
     DispatchFwdO(q, k, vNew, h, g, cuSeqlens, chunkIndices, o, userWorkspace, &oTiling);
 }

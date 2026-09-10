@@ -384,7 +384,7 @@ install_custom_opp_package() {
 }
 
 check_scoped_wheel_opp_install() {
-    local scoped_op="${CI_SCOPED_WHEEL_INSTALL_OP:-chunk_fwd_o}"
+    local scoped_op="${CI_SCOPED_WHEEL_INSTALL_OP:-chunk_gated_delta_rule_fwd_o}"
     local run_file
     local install_log
 

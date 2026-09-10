@@ -1,0 +1,112 @@
+/**
+ * Copyright (c) 2026 Tianjin University, Ltd.
+ * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+ * the BSD 3-Clause License (the "License").
+ * Please refer to the License for details. You may not use this file except in compliance with the License.
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+ */
+
+/*!
+ * \file chunk_gated_delta_rule_fwd_o.cpp
+ * \brief
+ */
+
+#include "chunk_gated_delta_rule_fwd_o_struct.h"
+#include "chunk_gated_delta_rule_fwd_o_tiling_key.h"
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#include "arch35/gemm/kernel/gdn_fwd_o_kernel.hpp"
+#else
+#include "gemm/kernel/gdn_fwd_o_kernel.hpp"
+#endif
+#ifndef TORCH_MODE
+#include "lib/matmul_intf.h"
+#endif
+
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#include "arch35/chunk_gated_delta_rule_fwd_o_a5.h"
+#endif
+
+namespace GDN {
+
+constexpr int64_t CHUNK_GATED_DELTA_RULE_FWD_O_DTYPE_BF16 = 1;
+constexpr int64_t CHUNK_GATED_DELTA_RULE_FWD_O_DTYPE_FP32 = 2;
+
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+
+template <bool UseExp2>
+__aicore__ inline void ChunkGatedDeltaRuleFwdOA5DispatchByGateType(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR h, GM_ADDR g,
+                                                    GM_ADDR cuSeqlens, GM_ADDR chunkOffsets, GM_ADDR o,
+                                                    GM_ADDR workspace, const ChunkGatedDeltaRuleFwdOTilingData *tilingData)
+{
+    if (tilingData->gDataType == CHUNK_GATED_DELTA_RULE_FWD_O_DTYPE_FP32) {
+        ChunkGatedDeltaRuleFwdOA5Dispatch<float, UseExp2>(q, k, v, h, g, cuSeqlens, chunkOffsets, o, workspace, tilingData);
+    } else {
+        ChunkGatedDeltaRuleFwdOA5Dispatch<bfloat16_t, UseExp2>(q, k, v, h, g, cuSeqlens, chunkOffsets, o, workspace, tilingData);
+    }
+}
+
+#endif
+
+template <typename InputT, typename GT, typename WorkspaceT>
+__aicore__ inline void ChunkGatedDeltaRuleFwdOKernelImpl(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR h, GM_ADDR g,
+                                           GM_ADDR cuSeqlens, GM_ADDR chunkOffsets, GM_ADDR o,
+                                           GM_ADDR userWorkspace, const ChunkGatedDeltaRuleFwdOTilingData *tilingData)
+{
+    using GDNFwdOKernel = Catlass::Gemm::Kernel::GDNFwdOKernel<InputT, GT, WorkspaceT>;
+    GDNFwdOKernel gdnFwdO;
+    gdnFwdO.Init(q, k, v, h, g, cuSeqlens, chunkOffsets, o, tilingData, userWorkspace);
+    gdnFwdO.Process();
+}
+
+template <bool UseExp2>
+__aicore__ inline void ChunkGatedDeltaRuleFwdODispatch(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR h, GM_ADDR g,
+                                         GM_ADDR cuSeqlens, GM_ADDR chunkOffsets, GM_ADDR o,
+                                         GM_ADDR userWorkspace, const ChunkGatedDeltaRuleFwdOTilingData *tilingData)
+{
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    if constexpr (UseExp2) {
+        ChunkGatedDeltaRuleFwdOA5DispatchByGateType<UseExp2>(q, k, v, h, g, cuSeqlens, chunkOffsets, o, userWorkspace,
+                                              tilingData);
+        return;
+    }
+#endif
+    if constexpr (!UseExp2) {
+        using WorkspaceT = float;
+        if (tilingData->dataType == CHUNK_GATED_DELTA_RULE_FWD_O_DTYPE_BF16) {
+            if (tilingData->gDataType == CHUNK_GATED_DELTA_RULE_FWD_O_DTYPE_FP32) {
+                ChunkGatedDeltaRuleFwdOKernelImpl<bfloat16_t, float, WorkspaceT>(q, k, v, h, g, cuSeqlens, chunkOffsets, o,
+                                                                   userWorkspace, tilingData);
+            } else {
+                ChunkGatedDeltaRuleFwdOKernelImpl<bfloat16_t, bfloat16_t, WorkspaceT>(q, k, v, h, g, cuSeqlens, chunkOffsets, o,
+                                                                        userWorkspace, tilingData);
+            }
+        } else {
+            if (tilingData->gDataType == CHUNK_GATED_DELTA_RULE_FWD_O_DTYPE_FP32) {
+                ChunkGatedDeltaRuleFwdOKernelImpl<half, float, WorkspaceT>(q, k, v, h, g, cuSeqlens, chunkOffsets, o,
+                                                             userWorkspace, tilingData);
+            } else {
+                ChunkGatedDeltaRuleFwdOKernelImpl<half, half, WorkspaceT>(q, k, v, h, g, cuSeqlens, chunkOffsets, o,
+                                                            userWorkspace, tilingData);
+            }
+        }
+    }
+}
+
+} // namespace GDN
+
+#ifndef TORCH_MODE
+template <bool USE_EXP2>
+__global__ __aicore__ void chunk_gated_delta_rule_fwd_o(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR h,
+                                                   GM_ADDR g, GM_ADDR cu_seqlens, GM_ADDR chunk_offsets,
+                                                   GM_ADDR o, GM_ADDR workspace, GM_ADDR tiling)
+{
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
+
+    GM_ADDR user = AscendC::GetUserWorkspace(workspace);
+    REGISTER_TILING_DEFAULT(GDN::ChunkGatedDeltaRuleFwdOTilingData);
+    GET_TILING_DATA_WITH_STRUCT(GDN::ChunkGatedDeltaRuleFwdOTilingData, tilingData, tiling);
+
+    GDN::ChunkGatedDeltaRuleFwdODispatch<USE_EXP2>(q, k, v, h, g, cu_seqlens, chunk_offsets, o, user, &tilingData);
+}
+#endif

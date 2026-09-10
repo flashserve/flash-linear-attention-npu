@@ -38,7 +38,7 @@ _ASCENDC_OPS = (
     "npu_chunk_bwd_dv_local",
     "npu_prepare_wy_repr_bwd_da",
     "npu_chunk_bwd_dqkwg",
-    "npu_chunk_fwd_o",
+    "npu_chunk_gated_delta_rule_fwd_o",
     "npu_chunk_gated_delta_rule_fwd_h",
     "npu_chunk_fwd_h",
     "npu_recompute_w_u_fwd",

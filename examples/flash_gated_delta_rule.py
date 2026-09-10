@@ -29,7 +29,7 @@ from fla_npu.ops.ascendc import (
     causal_conv1d_bwd as ascendc_causal_conv1d_bwd,
     chunk_bwd_dqkwg as ascendc_chunk_bwd_dqkwg,
     chunk_bwd_dv_local as ascendc_chunk_bwd_dv_local,
-    chunk_fwd_o as ascendc_chunk_fwd_o,
+    chunk_gated_delta_rule_fwd_o as ascendc_chunk_gated_delta_rule_fwd_o,
     chunk_gated_delta_rule_fwd as ascendc_chunk_gated_delta_rule_fwd,
     chunk_gated_delta_rule_bwd_dhu as ascendc_chunk_gated_delta_rule_bwd_dhu,
     chunk_gated_delta_rule_fwd_h as ascendc_chunk_gated_delta_rule_fwd_h,
@@ -886,7 +886,7 @@ def flash_chunk_gated_delta_rule_fwd(
         cu_seqlens=cu_list,
         chunk_indices=chunk_list,
     )
-    o = ascendc_chunk_fwd_o(
+    o = ascendc_chunk_gated_delta_rule_fwd_o(
         q,
         k,
         v_new,

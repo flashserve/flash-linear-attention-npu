@@ -283,7 +283,7 @@ if __name__ == "__main__":
         output_tensor = gen_ref_data(gdn_fwd_o_input, input_tensor)
 
     # torch.npu.synchronize()
-    # result = custom_ops.npu_chunk_fwd_o(
+    # result = custom_ops.npu_chunk_gated_delta_rule_fwd_o(
     #     input_tensor.q.npu(),
     #     input_tensor.k.npu(),
     #     input_tensor.v.npu(),
@@ -321,7 +321,7 @@ if __name__ == "__main__":
     torch.npu.synchronize()
     print("step 6: before custom op")
 
-    result = ascendc_ops.npu_chunk_fwd_o(
+    result = ascendc_ops.npu_chunk_gated_delta_rule_fwd_o(
         q,
         k,
         v,

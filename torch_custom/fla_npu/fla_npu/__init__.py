@@ -206,7 +206,7 @@ def load_legacy_torch_ops() -> pathlib.Path:
     ``import fla_npu`` initializes the decoupled Ascend C runtime, but does not
     import torch, torch_npu, or register ``torch.ops.npu`` kernels. Call this
     function only when old call sites such as
-    ``torch.ops.npu.npu_chunk_fwd_o(...)`` must keep working during the
+    ``torch.ops.npu.npu_chunk_gated_delta_rule_fwd_o(...)`` must keep working during the
     migration to the decoupled ``fla_npu.ops.ascendc`` API.
     """
 

@@ -8,7 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""ChunkFwdO workspace 流水回归，覆盖 fixed/varlen、MHA/GVA、chunk 64/128 和尾块。"""
+"""ChunkGatedDeltaRuleFwdO workspace 流水回归，覆盖 fixed/varlen、MHA/GVA、chunk 64/128 和尾块。"""
 
 from __future__ import annotations
 
@@ -121,7 +121,7 @@ def _run_case(case: FwdOCase) -> None:
     reference_fp64 = _reference(case, q, k, v, h, g, scale, npu_aligned=False)
     reference_npu = _reference(case, q, k, v, h, g, scale, npu_aligned=True)
     chunk_indices = _chunk_indices(case.cu_seqlens, case.chunk_size) if case.cu_seqlens is not None else None
-    output = ascendc_ops.npu_chunk_fwd_o(
+    output = ascendc_ops.npu_chunk_gated_delta_rule_fwd_o(
         q.npu(),
         k.npu(),
         v.npu(),

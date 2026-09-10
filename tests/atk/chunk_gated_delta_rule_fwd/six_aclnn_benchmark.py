@@ -13,7 +13,7 @@ SIX_ACLNN_OPS = (
     "solve_tri",
     "recompute_w_u_fwd",
     "chunk_gated_delta_rule_fwd_h",
-    "chunk_fwd_o",
+    "chunk_gated_delta_rule_fwd_o",
 )
 
 VARLEN_CUMSUM_TRANSPORT = "public_chunk_local_cumsum"
@@ -124,7 +124,7 @@ def run_six_aclnn_core(
         chunk_indices=chunk_list,
         state_v_first=False,
     )
-    o = ascendc.chunk_fwd_o(
+    o = ascendc.chunk_gated_delta_rule_fwd_o(
         q,
         k,
         v_new,
