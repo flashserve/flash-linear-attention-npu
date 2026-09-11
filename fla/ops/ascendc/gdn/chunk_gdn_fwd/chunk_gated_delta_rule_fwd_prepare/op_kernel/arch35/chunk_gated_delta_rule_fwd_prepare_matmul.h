@@ -33,14 +33,12 @@ __aicore__ inline void FillLoad2D(AscendC::LoadData2DParamsV2 &p, uint16_t mStep
 }
 
 template <typename InDtype>
-__aicore__ inline void MatmulToL0C(AscendC::LocalTensor<InDtype> l1A,
-                                   AscendC::LocalTensor<InDtype> l1B,
-                                   AscendC::LocalTensor<InDtype> l0A,
-                                   AscendC::LocalTensor<InDtype> l0B,
-                                   AscendC::LocalTensor<float> l0C,
-                                   int32_t m, int32_t n, int32_t k,
-                                   bool initC, bool transposeB, bool transposeA = false,
-                                   uint8_t evt = 0)
+__aicore__ inline void LoadL1NzToL0AB(AscendC::LocalTensor<InDtype> l1A,
+                                      AscendC::LocalTensor<InDtype> l1B,
+                                      AscendC::LocalTensor<InDtype> l0A,
+                                      AscendC::LocalTensor<InDtype> l0B,
+                                      int32_t m, int32_t n, int32_t k,
+                                      bool transposeB, bool transposeA, uint8_t evt)
 {
     constexpr uint32_t c0 = 32 / sizeof(InDtype);
     constexpr bool kFp32 = sizeof(InDtype) == sizeof(float);
@@ -64,6 +62,14 @@ __aicore__ inline void MatmulToL0C(AscendC::LocalTensor<InDtype> l1A,
 
     SetFlag<AscendC::HardEvent::MTE1_M>(evt);
     WaitFlag<AscendC::HardEvent::MTE1_M>(evt);
+}
+
+template <typename InDtype>
+__aicore__ inline void MmadL0ABToL0C(AscendC::LocalTensor<InDtype> l0A,
+                                     AscendC::LocalTensor<InDtype> l0B,
+                                     AscendC::LocalTensor<float> l0C,
+                                     int32_t m, int32_t n, int32_t k, bool initC, uint8_t evt)
+{
     WaitFlag<AscendC::HardEvent::FIX_M>(evt);
     AscendC::MmadParams mmad;
     mmad.m = m;
@@ -73,6 +79,20 @@ __aicore__ inline void MatmulToL0C(AscendC::LocalTensor<InDtype> l1A,
     mmad.cmatrixSource = false;
     mmad.unitFlag = 0;
     AscendC::Mmad(l0C, l0A, l0B, mmad);
+}
+
+template <typename InDtype>
+__aicore__ inline void MatmulToL0C(AscendC::LocalTensor<InDtype> l1A,
+                                   AscendC::LocalTensor<InDtype> l1B,
+                                   AscendC::LocalTensor<InDtype> l0A,
+                                   AscendC::LocalTensor<InDtype> l0B,
+                                   AscendC::LocalTensor<float> l0C,
+                                   int32_t m, int32_t n, int32_t k,
+                                   bool initC, bool transposeB, bool transposeA = false,
+                                   uint8_t evt = 0)
+{
+    LoadL1NzToL0AB<InDtype>(l1A, l1B, l0A, l0B, m, n, k, transposeB, transposeA, evt);
+    MmadL0ABToL0C<InDtype>(l0A, l0B, l0C, m, n, k, initC, evt);
 }
 
 // C = A[m,k] @ B[k,n]. One MMAD. A is 64x64 (kStep=4). B is 64x128

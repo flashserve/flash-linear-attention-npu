@@ -467,6 +467,10 @@ constexpr uint32_t kL0S7Slot = 16 * kPrepareKb;
 constexpr uint32_t kL0S7Ping = 32 * kPrepareKb;
 constexpr uint32_t kL0S7Pong = 48 * kPrepareKb;
 constexpr uint32_t kL0C1 = 64 * kPrepareKb;
+// Stage4/5: one 64x64 fp32 C tile per pack task. 64 KiB stride so the four
+// views sit on L0C [0,256) without sharing a 64 KiB bank. Tile itself is 16 KiB.
+constexpr uint32_t kL0CTaskStride = 64 * kPrepareKb;
+constexpr uint32_t kL0CTaskElems = kChunk64 * kChunk64;
 
 __aicore__ inline uint32_t L1KHat(uint32_t taskIdx)
 {
