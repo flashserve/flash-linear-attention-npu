@@ -163,6 +163,7 @@ fi
 export PYTORCH_VERSION
 
 python3 tests/test_wheel_environment.py
+python3 ci/tests/test_workflow_archive_security.py
 
 bash ci/prepare_ci_cache.sh
 

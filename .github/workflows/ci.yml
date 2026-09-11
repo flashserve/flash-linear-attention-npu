@@ -47,14 +47,16 @@ jobs:
       actions: read
       contents: read
       issues: write
-      pull-requests: read
+      pull-requests: write
       statuses: write
     outputs:
       should_run: ${{ steps.prepare.outputs.should_run }}
       pr_number: ${{ steps.prepare.outputs.pr_number }}
       base_ref: ${{ steps.prepare.outputs.base_ref }}
+      base_sha: ${{ steps.prepare.outputs.base_sha }}
       head_repo: ${{ steps.prepare.outputs.head_repo }}
       head_sha: ${{ steps.prepare.outputs.head_sha }}
+      trusted_ci_sha: ${{ steps.prepare.outputs.trusted_ci_sha }}
       ci_mode: ${{ steps.prepare.outputs.ci_mode }}
       ops: ${{ steps.prepare.outputs.ops }}
       comment_id: ${{ steps.prepare.outputs.comment_id }}
@@ -62,6 +64,8 @@ jobs:
       - name: 解析 PR 和 CI 参数
         id: prepare
         uses: actions/github-script@v7
+        env:
+          NPU_CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
         with:
           github-token: ${{ github.token }}
           script: |
@@ -201,6 +205,20 @@ jobs:
               core.setFailed(`PR #${prNumber} 仍是草稿，请先标记为 ready for review 后再运行 NPU CI。`);
               return;
             }
+            const { data: baseBranch } = await github.rest.repos.getBranch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              branch: pr.base.ref,
+            });
+            const baseSha = baseBranch.commit.sha;
+            const workflowSha = process.env.NPU_CI_WORKFLOW_SHA || '';
+            const trustedCiSha = context.eventName === 'workflow_dispatch' ? workflowSha : baseSha;
+            if (!/^[0-9a-f]{40}$/.test(baseSha) || !/^[0-9a-f]{40}$/.test(trustedCiSha)) {
+              core.setFailed('无法确定本次 NPU CI 的 base 或可信 CI commit。');
+              return;
+            }
+            core.setOutput('base_sha', baseSha);
+            core.setOutput('trusted_ci_sha', trustedCiSha);
 
             const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, {
               owner: context.repo.owner,
@@ -371,14 +389,244 @@ jobs:
       CI_REQUIRE_PRELOADED_IMAGE: ${{ matrix.require_preloaded_image }}
       CI_TMPDIR: ${{ matrix.tmpdir }}
     steps:
+      - name: 通过 GitHub API 准备 A5 源码
+        if: matrix.platform == 'a5'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NPU_CI_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
+          NPU_CI_BASE_REF: ${{ needs.prepare.outputs.base_ref }}
+          NPU_CI_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+          NPU_CI_TARGET_SHA: ${{ needs.prepare.outputs.head_sha }}
+          NPU_CI_TRUSTED_SHA: ${{ needs.prepare.outputs.trusted_ci_sha }}
+        run: |
+          set -euo pipefail
+
+          archive_dir="${RUNNER_TEMP}/fla-npu-source-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          rm -rf repo trusted-ci "$archive_dir"
+          mkdir -p repo trusted-ci "$archive_dir"
+          export NPU_CI_ARCHIVE_DIR="$archive_dir"
+
+          python3 - <<'PY'
+          import json
+          import os
+          import shutil
+          import stat
+          import tarfile
+          import time
+          import urllib.request
+          from pathlib import Path, PurePosixPath
+
+          api_url = os.environ["GITHUB_API_URL"]
+          repository = os.environ["GITHUB_REPOSITORY"]
+          token = os.environ["GITHUB_TOKEN"]
+          pr_number = os.environ["NPU_CI_PR_NUMBER"]
+          expected_base_ref = os.environ["NPU_CI_BASE_REF"]
+          expected_base_sha = os.environ["NPU_CI_BASE_SHA"]
+          expected_head_sha = os.environ["NPU_CI_TARGET_SHA"]
+          trusted_sha = os.environ["NPU_CI_TRUSTED_SHA"]
+          archive_dir = Path(os.environ["NPU_CI_ARCHIVE_DIR"])
+          headers = {
+              "Accept": "application/vnd.github+json",
+              "Authorization": f"Bearer {token}",
+              "X-GitHub-Api-Version": "2022-11-28",
+          }
+
+          def get_json(path):
+              request = urllib.request.Request(
+                  f"{api_url}/repos/{repository}/{path}", headers=headers
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return json.load(response)
+
+          merge_sha = ""
+          base_sha = expected_base_sha
+          last_error = "GitHub has not produced a current test merge commit"
+          for attempt in range(12):
+              pr = get_json(f"pulls/{pr_number}")
+              head_sha = pr["head"]["sha"]
+              base_ref = pr["base"]["ref"]
+              if head_sha != expected_head_sha:
+                  raise RuntimeError(
+                      f"PR head changed before archive download: expected={expected_head_sha}, actual={head_sha}"
+                  )
+              if base_ref != expected_base_ref:
+                  raise RuntimeError(
+                      f"PR base changed before archive download: expected={expected_base_ref}, actual={base_ref}"
+                  )
+              merge_sha = pr.get("merge_commit_sha") or ""
+              if merge_sha:
+                  merge_commit = get_json(f"commits/{merge_sha}")
+                  parents = [parent["sha"] for parent in merge_commit.get("parents", [])]
+                  if parents == [base_sha, head_sha]:
+                      break
+                  last_error = (
+                      "test merge parents do not match the current base and head: "
+                      f"merge={merge_sha}, parents={parents}"
+                  )
+              if attempt < 11:
+                  time.sleep(5)
+          else:
+              raise RuntimeError(last_error)
+
+          def download_archive(sha, destination):
+              request = urllib.request.Request(
+                  f"{api_url}/repos/{repository}/tarball/{sha}", headers=headers
+              )
+              with urllib.request.urlopen(request, timeout=120) as response:
+                  with destination.open("wb") as output:
+                      shutil.copyfileobj(response, output)
+
+          def extract_archive(archive_path, destination):
+              if not stat.S_ISDIR(destination.lstat().st_mode):
+                  raise RuntimeError(f"archive destination is not a directory: {destination}")
+              if any(destination.iterdir()):
+                  raise RuntimeError(f"archive destination is not empty: {destination}")
+
+              checked_members = []
+              seen_paths = set()
+              root_name = None
+              root_entry_seen = False
+              with tarfile.open(archive_path, "r:gz") as archive:
+                  for member in archive.getmembers():
+                      member_path = PurePosixPath(member.name)
+                      parts = member_path.parts
+                      if (
+                          not parts
+                          or member_path.is_absolute()
+                          or any(part in {"", ".."} for part in parts)
+                      ):
+                          raise RuntimeError(f"unsafe archive member path: {member.name!r}")
+
+                      if root_name is None:
+                          root_name = parts[0]
+                      elif parts[0] != root_name:
+                          raise RuntimeError("archive contains multiple top-level directories")
+
+                      if len(parts) == 1:
+                          if not member.isdir():
+                              raise RuntimeError("archive top-level member is not a directory")
+                          if root_entry_seen:
+                              raise RuntimeError("duplicate archive top-level directory")
+                          root_entry_seen = True
+                          continue
+
+                      relative_parts = parts[1:]
+                      if relative_parts in seen_paths:
+                          raise RuntimeError(f"duplicate archive member: {member.name!r}")
+                      seen_paths.add(relative_parts)
+                      if not (member.isdir() or member.isfile()):
+                          raise RuntimeError(
+                              f"unsupported archive member type: {member.name!r}"
+                          )
+                      checked_members.append((member, relative_parts))
+
+                  if root_name is None:
+                      raise RuntimeError("archive is empty")
+
+                  directory_modes = []
+                  nofollow = getattr(os, "O_NOFOLLOW", 0)
+                  if not nofollow:
+                      raise RuntimeError("O_NOFOLLOW is required for safe archive extraction")
+                  for member, relative_parts in checked_members:
+                      target = destination.joinpath(*relative_parts)
+                      if member.isdir():
+                          target.mkdir(parents=True, exist_ok=True)
+                          directory_modes.append((target, member.mode & 0o777))
+                          continue
+
+                      target.parent.mkdir(parents=True, exist_ok=True)
+                      source = archive.extractfile(member)
+                      if source is None:
+                          raise RuntimeError(f"cannot read archive member: {member.name!r}")
+                      flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow
+                      output_fd = os.open(target, flags, member.mode & 0o777)
+                      with source, os.fdopen(output_fd, "wb") as output:
+                          shutil.copyfileobj(source, output)
+                      os.chmod(target, member.mode & 0o777)
+
+                  for target, mode in reversed(directory_modes):
+                      os.chmod(target, mode)
+
+          def copy_case_file(repo_directory, destination):
+              nofollow = getattr(os, "O_NOFOLLOW", 0)
+              directory = getattr(os, "O_DIRECTORY", 0)
+              if not nofollow or not directory:
+                  raise RuntimeError("O_NOFOLLOW and O_DIRECTORY are required")
+
+              repo_fd = os.open(
+                  repo_directory, os.O_RDONLY | directory | nofollow
+              )
+              try:
+                  try:
+                      ci_fd = os.open(
+                          "ci", os.O_RDONLY | directory | nofollow, dir_fd=repo_fd
+                      )
+                  except FileNotFoundError:
+                      return False
+                  try:
+                      try:
+                          case_fd = os.open(
+                              "example_st_cases.json",
+                              os.O_RDONLY | os.O_NONBLOCK | nofollow,
+                              dir_fd=ci_fd,
+                          )
+                      except FileNotFoundError:
+                          return False
+                      with os.fdopen(case_fd, "rb") as case_file:
+                          if not stat.S_ISREG(os.fstat(case_file.fileno()).st_mode):
+                              raise RuntimeError("Example/ST case path is not a regular file")
+                          case_data = case_file.read()
+                  finally:
+                      os.close(ci_fd)
+              finally:
+                  os.close(repo_fd)
+
+              json.loads(case_data.decode("utf-8"))
+              parent_fd = os.open(
+                  destination.parent, os.O_RDONLY | directory | nofollow
+              )
+              try:
+                  output_fd = os.open(
+                      destination.name,
+                      os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow,
+                      0o600,
+                      dir_fd=parent_fd,
+                  )
+                  with os.fdopen(output_fd, "wb") as output:
+                      output.write(case_data)
+              finally:
+                  os.close(parent_fd)
+              return True
+
+          download_archive(merge_sha, archive_dir / "merge.tar.gz")
+          download_archive(trusted_sha, archive_dir / "trusted.tar.gz")
+          extract_archive(archive_dir / "merge.tar.gz", Path("repo"))
+          extract_archive(archive_dir / "trusted.tar.gz", Path("trusted-ci"))
+          copy_case_file(
+              Path("repo"), archive_dir / "example_st_cases.json"
+          )
+          print(
+              "Validated A5 source archive: "
+              f"merge={merge_sha}, base={base_sha}, head={expected_head_sha}, trusted={trusted_sha}"
+          )
+          PY
+
+          rm -rf repo/ci
+          cp -a trusted-ci/ci repo/ci
+          if [ -f "$archive_dir/example_st_cases.json" ]; then
+            cp "$archive_dir/example_st_cases.json" repo/ci/example_st_cases.json
+          fi
+          rm -rf trusted-ci "$archive_dir"
+
       - name: 拉取当前目标分支代码（第 1 次）
         id: checkout_pr_1
+        if: matrix.platform == 'a2'
         continue-on-error: true
         timeout-minutes: 5
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository }}
-          ref: refs/heads/${{ needs.prepare.outputs.base_ref }}
+          ref: ${{ needs.prepare.outputs.base_sha }}
           fetch-depth: 50
           path: repo
 
@@ -465,40 +713,41 @@ jobs:
           git config --global http.postBuffer 524288000
 
       - name: 等待后重试拉取目标分支代码
-        if: steps.checkout_pr_1.outcome == 'failure'
+        if: matrix.platform == 'a2' && steps.checkout_pr_1.outcome == 'failure'
         run: |
           rm -rf repo
           sleep 15
 
       - name: 拉取当前目标分支代码（第 2 次）
         id: checkout_pr_2
-        if: steps.checkout_pr_1.outcome == 'failure'
+        if: matrix.platform == 'a2' && steps.checkout_pr_1.outcome == 'failure'
         continue-on-error: true
         timeout-minutes: 10
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository }}
-          ref: refs/heads/${{ needs.prepare.outputs.base_ref }}
+          ref: ${{ needs.prepare.outputs.base_sha }}
           fetch-depth: 50
           path: repo
 
       - name: 再次等待后重试拉取目标分支代码
-        if: steps.checkout_pr_1.outcome == 'failure' && steps.checkout_pr_2.outcome == 'failure'
+        if: matrix.platform == 'a2' && steps.checkout_pr_1.outcome == 'failure' && steps.checkout_pr_2.outcome == 'failure'
         run: |
           rm -rf repo
           sleep 30
 
       - name: 拉取当前目标分支代码（第 3 次）
-        if: steps.checkout_pr_1.outcome == 'failure' && steps.checkout_pr_2.outcome == 'failure'
+        if: matrix.platform == 'a2' && steps.checkout_pr_1.outcome == 'failure' && steps.checkout_pr_2.outcome == 'failure'
         timeout-minutes: 10
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository }}
-          ref: refs/heads/${{ needs.prepare.outputs.base_ref }}
+          ref: ${{ needs.prepare.outputs.base_sha }}
           fetch-depth: 50
           path: repo
 
       - name: 现场合并 PR 代码
+        if: matrix.platform == 'a2'
         working-directory: repo
         run: |
           set -euo pipefail
@@ -561,68 +810,130 @@ jobs:
 
       - name: 拉取可信 CI 脚本（第 1 次）
         id: checkout_trusted_ci_1
+        if: matrix.platform == 'a2'
         continue-on-error: true
         timeout-minutes: 10
         uses: actions/checkout@v4
         with:
-          ref: refs/heads/${{ needs.prepare.outputs.base_ref }}
+          ref: ${{ needs.prepare.outputs.trusted_ci_sha }}
           fetch-depth: 1
           path: trusted-ci
 
       - name: 等待后重试拉取可信 CI 脚本
-        if: steps.checkout_trusted_ci_1.outcome == 'failure'
+        if: matrix.platform == 'a2' && steps.checkout_trusted_ci_1.outcome == 'failure'
         run: |
           rm -rf trusted-ci
           sleep 15
 
       - name: 拉取可信 CI 脚本（第 2 次）
         id: checkout_trusted_ci_2
-        if: steps.checkout_trusted_ci_1.outcome == 'failure'
+        if: matrix.platform == 'a2' && steps.checkout_trusted_ci_1.outcome == 'failure'
         continue-on-error: true
         timeout-minutes: 10
         uses: actions/checkout@v4
         with:
-          ref: refs/heads/${{ needs.prepare.outputs.base_ref }}
+          ref: ${{ needs.prepare.outputs.trusted_ci_sha }}
           fetch-depth: 1
           path: trusted-ci
 
       - name: 再次等待后重试拉取可信 CI 脚本
-        if: steps.checkout_trusted_ci_1.outcome == 'failure' && steps.checkout_trusted_ci_2.outcome == 'failure'
+        if: matrix.platform == 'a2' && steps.checkout_trusted_ci_1.outcome == 'failure' && steps.checkout_trusted_ci_2.outcome == 'failure'
         run: |
           rm -rf trusted-ci
           sleep 30
 
       - name: 拉取可信 CI 脚本（第 3 次）
-        if: steps.checkout_trusted_ci_1.outcome == 'failure' && steps.checkout_trusted_ci_2.outcome == 'failure'
+        if: matrix.platform == 'a2' && steps.checkout_trusted_ci_1.outcome == 'failure' && steps.checkout_trusted_ci_2.outcome == 'failure'
         timeout-minutes: 10
         uses: actions/checkout@v4
         with:
-          ref: refs/heads/${{ needs.prepare.outputs.base_ref }}
+          ref: ${{ needs.prepare.outputs.trusted_ci_sha }}
           fetch-depth: 1
           path: trusted-ci
 
       - name: 使用可信 CI 脚本
+        if: matrix.platform == 'a2'
         run: |
-          # CI 执行脚本必须来自 PR 目标分支，避免 PR 修改脚本后影响 runner，
-          # 同时保证维护分支使用与自身代码匹配的 CI 规则。
+          # issue_comment 使用 prepare 固定的 PR base commit；workflow_dispatch 仅允许仓库
+          # Admin 触发，并使用定义当前 job 的 workflow commit。两种路径都通过不可变 SHA
+          # 选择可信 CI，同时允许 CI 自身修改在合入前验证。
           # 但 Example/ST 用例配置属于被验证内容：新 PR 中新增或修改的 enabled 用例
           # 必须跟随当前目标分支和 PR head 的现场合并结果一起进入容器，并被 /run-npu-ci quick 实际执行验证。
-          tmp_cases="$(mktemp)"
-          if [ -f repo/ci/example_st_cases.json ]; then
-            cp repo/ci/example_st_cases.json "$tmp_cases"
-            python3 -m json.tool "$tmp_cases" >/dev/null
-          else
-            rm -f "$tmp_cases"
-          fi
+          case_archive="$(mktemp -d "${RUNNER_TEMP}/example-st-cases.XXXXXX")"
+          export NPU_CI_CASE_ARCHIVE="$case_archive"
+          python3 - <<'PY'
+          import json
+          import os
+          import stat
+          from pathlib import Path
+
+          def copy_case_file(repo_directory, destination):
+              nofollow = getattr(os, "O_NOFOLLOW", 0)
+              directory = getattr(os, "O_DIRECTORY", 0)
+              if not nofollow or not directory:
+                  raise RuntimeError("O_NOFOLLOW and O_DIRECTORY are required")
+
+              repo_fd = os.open(
+                  repo_directory, os.O_RDONLY | directory | nofollow
+              )
+              try:
+                  try:
+                      ci_fd = os.open(
+                          "ci", os.O_RDONLY | directory | nofollow, dir_fd=repo_fd
+                      )
+                  except FileNotFoundError:
+                      return False
+                  try:
+                      try:
+                          case_fd = os.open(
+                              "example_st_cases.json",
+                              os.O_RDONLY | os.O_NONBLOCK | nofollow,
+                              dir_fd=ci_fd,
+                          )
+                      except FileNotFoundError:
+                          return False
+                      with os.fdopen(case_fd, "rb") as case_file:
+                          if not stat.S_ISREG(os.fstat(case_file.fileno()).st_mode):
+                              raise RuntimeError("Example/ST case path is not a regular file")
+                          case_data = case_file.read()
+                  finally:
+                      os.close(ci_fd)
+              finally:
+                  os.close(repo_fd)
+
+              json.loads(case_data.decode("utf-8"))
+              parent_fd = os.open(
+                  destination.parent, os.O_RDONLY | directory | nofollow
+              )
+              try:
+                  output_fd = os.open(
+                      destination.name,
+                      os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow,
+                      0o600,
+                      dir_fd=parent_fd,
+                  )
+                  with os.fdopen(output_fd, "wb") as output:
+                      output.write(case_data)
+              finally:
+                  os.close(parent_fd)
+              return True
+
+          copy_case_file(
+              Path("repo"),
+              Path(os.environ["NPU_CI_CASE_ARCHIVE"])
+              / "example_st_cases.json",
+          )
+          PY
 
           rm -rf repo/ci
           cp -a trusted-ci/ci repo/ci
 
           # 覆盖可信 CI 脚本后，再恢复 PR 自身的 case 文件。
           # 因此后续 PR 只补充 ci/example_st_cases.json 时，NPU CI 会跑到新增用例。
-          if [ -f "$tmp_cases" ]; then
-            cp "$tmp_cases" repo/ci/example_st_cases.json
+          if [ -f "$case_archive/example_st_cases.json" ]; then
+            cp "$case_archive/example_st_cases.json" repo/ci/example_st_cases.json
           fi
+          rm -rf "$case_archive"
 
       - name: 运行 ${{ matrix.name }} NPU CI 容器
         working-directory: repo
@@ -757,7 +1068,7 @@ jobs:
       actions: read
       contents: read
       issues: write
-      pull-requests: read
+      pull-requests: write
       statuses: write
     steps:
       - name: 下载双平台结果

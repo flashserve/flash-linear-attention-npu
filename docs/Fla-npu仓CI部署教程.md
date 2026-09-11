@@ -50,6 +50,15 @@
 12. **CI 容器内日志默认只保留 7 天。**
     每次 NPU CI 容器启动时都会执行 `ci/cleanup_ci_logs.sh`，删除超过 7 天的 CI/Ascend/NPU 日志。这个策略只管理 CI 容器和仓库工作目录里的日志，不等同于 GitHub Actions 网页日志保留时间。
 
+13. **A5 源码通过 GitHub API 归档下载。**
+    A5 runner 不依赖 `github.com` 的 Git smart-HTTP：workflow 会从 `api.github.com` / `codeload.github.com` 下载精确 test-merge commit 和可信 CI commit，并校验 test-merge 的父提交必须对应 prepare 固定的 base/head。归档解包前会拒绝绝对路径、路径穿越、重复成员、链接和特殊文件。A5 网络策略至少需要允许这两个 HTTPS 域名。prepare 会读取目标分支当前 tip 并固定为不可变 SHA；评论触发时，可信 CI 脚本使用该 base SHA，手动 dispatch 仅允许仓库 Admin 触发并固定为 `github.workflow_sha`，因此维护分支继续使用自身规则，CI 自身改动也能在合入前验证。
+
+    归档解包与用例文件读取的安全边界测试仅依赖 Python 和仓库 requirements，可在 Linux 环境执行：
+
+    ```sh
+    python3 ci/tests/test_workflow_archive_security.py
+    ```
+
 ## 流程图
 
 PR 新建或更新默认状态流程：
@@ -77,7 +86,7 @@ flowchart TD
     G -- "是" --> H["更新机器人评论：已在运行，不重复启动"]
     G -- "否" --> I["写入执行和精度两个 pending 状态"]
     I --> J["A2 runner / ascend910b"]
-    I --> K["A5 runner / ascend950"]
+    I --> K["A5 runner / ascend950：API 下载并校验源码归档"]
     J --> L["上传带本次 run 身份的执行和精度结果"]
     K --> L
     L --> M["GitHub-hosted finalize 校验并唯一写入两个最终状态"]
