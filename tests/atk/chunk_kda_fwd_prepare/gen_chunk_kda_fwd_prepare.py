@@ -46,6 +46,12 @@ SEED_BASE = int(GENERATION["seed_base"])
 STANDARD = deepcopy(GENERATION["standard"])
 DEFAULT_SPEC = deepcopy(GENERATION["defaults"])
 TEMPLATE_MATRIX = GENERATION["template_matrix"]
+ACCURACY_SEED_PLAN = GENERATION["accuracy_seed_plan"]
+
+DTYPE_TOKENS = {"bf16": 10, "fp32": 30}
+BETA_MODE_TOKENS = {"raw": 0, "sigmoid": 1, "two_sigmoid": 2}
+GATE_MODE_TOKENS = {"precomputed": 0, "softplus": 1, "safe": 2}
+OUTPUT_MODE_TOKENS = {"none": 0, "recompute": 1, "save": 2}
 
 
 def _positive(case_key: str, **updates) -> dict:
@@ -88,6 +94,7 @@ def _as_template_spec(spec: dict) -> bool:
     return (
         spec["gate_dtype"] in axes["gate_dtype"]
         and spec["beta_dtype"] in axes["beta_dtype"]
+        and spec["backward_mode"] in axes["output_mode"]
         and (not spec["allow_neg_eigval"] or spec["use_beta_sigmoid_in_kernel"])
         and (
             spec["use_gate_in_kernel"]
@@ -96,7 +103,7 @@ def _as_template_spec(spec: dict) -> bool:
     )
 
 
-def _template_signature(spec: dict) -> tuple:
+def _template_signature(spec: dict, *, include_output_mode: bool) -> tuple:
     if not _as_template_spec(spec):
         raise ValueError(f"invalid template spec: {spec['case_key']}")
     beta_mode = (
@@ -109,7 +116,7 @@ def _template_signature(spec: dict) -> tuple:
         if not spec["use_gate_in_kernel"]
         else ("safe" if spec["safe_gate"] else "softplus")
     )
-    return (
+    signature = (
         spec["gate_dtype"],
         spec["beta_dtype"],
         bool(spec["use_qk_l2norm_in_kernel"]),
@@ -117,12 +124,36 @@ def _template_signature(spec: dict) -> tuple:
         gate_mode,
         bool(spec["use_exp2"]),
     )
+    if include_output_mode:
+        return signature + (spec["backward_mode"],)
+    return signature
+
+
+def _expected_tiling_key(spec: dict) -> int:
+    signature = _template_signature(spec, include_output_mode=True)
+    gate_dtype, beta_dtype, norm, beta_mode, gate_mode, use_exp2, output_mode = signature
+    safe_gate = gate_mode == "safe"
+    return (
+        DTYPE_TOKENS[gate_dtype]
+        + (DTYPE_TOKENS[beta_dtype] << 8)
+        + (int(norm) << 16)
+        + (BETA_MODE_TOKENS[beta_mode] << 17)
+        + (GATE_MODE_TOKENS[gate_mode] << 19)
+        + (int(use_exp2) << 21)
+        + (int(safe_gate) << 22)
+        + (OUTPUT_MODE_TOKENS[output_mode] << 23)
+    )
 
 
 def _template_specs(suite_name: str) -> list[dict]:
     axes = TEMPLATE_MATRIX["axes"]
     suite = TEMPLATE_MATRIX["suites"][suite_name]
     dt_bias_rule = TEMPLATE_MATRIX["dt_bias_rule"]
+    if dt_bias_rule.get("selection") != "matrix_index_even":
+        raise ValueError("unsupported dt_bias selection rule")
+    include_output_mode = bool(suite.get("include_output_mode", False))
+    output_modes = axes["output_mode"] if include_output_mode else (None,)
+    profiles = suite.get("profiles", ())
     specs = []
     combinations = product(
         axes["gate_dtype"],
@@ -131,8 +162,18 @@ def _template_specs(suite_name: str) -> list[dict]:
         axes["beta_mode"],
         axes["gate_mode"],
         axes["use_exp2"],
+        output_modes,
     )
-    for gate_dtype, beta_dtype, norm, beta_mode, gate_mode, use_exp2 in combinations:
+    for matrix_index, combination in enumerate(combinations):
+        (
+            gate_dtype,
+            beta_dtype,
+            norm,
+            beta_mode,
+            gate_mode,
+            use_exp2,
+            output_mode,
+        ) = combination
         values = {
             "gate_dtype": gate_dtype,
             "beta_dtype": beta_dtype,
@@ -143,18 +184,54 @@ def _template_specs(suite_name: str) -> list[dict]:
         }
         values["dt_bias"] = (
             gate_mode in dt_bias_rule["gate_modes"]
-            and bool(use_exp2) == bool(dt_bias_rule["use_exp2"])
+            and matrix_index % 2 == 0
         )
+        output_suffix = ""
+        if output_mode is not None:
+            values["backward_mode"] = output_mode
+            output_suffix = f"_{output_mode}"
+        profile_suffix = ""
+        tags = suite["tags"]
+        if profiles:
+            profile_group = matrix_index // len(output_modes)
+            profile_index = (
+                profile_group % len(profiles)
+                + profile_group // len(profiles)
+            ) % len(profiles)
+            profile = profiles[profile_index]
+            values.update(deepcopy(profile["overrides"]))
+            values["mss_profile"] = profile["name"]
+            tags = f"{tags},{profile['tags']}"
+            profile_suffix = f"_{profile['name']}"
         key = (
             f"{suite['prefix']}_{gate_dtype}_{beta_dtype}_"
             f"{'l2' if norm else 'identity'}_{beta_mode}_{gate_mode}_"
-            f"{'exp2' if use_exp2 else 'exp'}"
+            f"{'exp2' if use_exp2 else 'exp'}{output_suffix}{profile_suffix}"
         )
-        specs.append(_positive(key, tags=suite["tags"], **values))
+        spec = _positive(key, tags=tags, **values)
+        expected_signature = (
+            gate_dtype,
+            beta_dtype,
+            bool(norm),
+            beta_mode,
+            gate_mode,
+            bool(use_exp2),
+        )
+        if include_output_mode:
+            expected_signature += (output_mode,)
+        if _template_signature(
+            spec, include_output_mode=include_output_mode
+        ) != expected_signature:
+            raise AssertionError(
+                f"{suite_name}: profile changed template signature: {key}"
+            )
+        specs.append(spec)
     return specs
 
 
-def _assert_template_matrix(name: str, specs: list[dict]) -> None:
+def _assert_template_matrix(
+    name: str, specs: list[dict], *, include_output_mode: bool
+) -> None:
     axes = TEMPLATE_MATRIX["axes"]
     expected_signatures = frozenset(
         product(
@@ -166,7 +243,16 @@ def _assert_template_matrix(name: str, specs: list[dict]) -> None:
             axes["use_exp2"],
         )
     )
-    signatures = [_template_signature(spec) for spec in specs]
+    if include_output_mode:
+        expected_signatures = frozenset(
+            (*signature, output_mode)
+            for signature in expected_signatures
+            for output_mode in axes["output_mode"]
+        )
+    signatures = [
+        _template_signature(spec, include_output_mode=include_output_mode)
+        for spec in specs
+    ]
     if len(signatures) != len(set(signatures)):
         raise AssertionError(f"{name}: duplicate template signatures")
     if frozenset(signatures) != expected_signatures:
@@ -185,13 +271,35 @@ def _number_specs(specs: list[dict], seed_offset: int) -> list[dict]:
     for case_id, spec in enumerate(numbered):
         spec["case_id"] = case_id
         spec.setdefault("seed", SEED_BASE + seed_offset + case_id)
+        spec["expected_tiling_key"] = _expected_tiling_key(spec)
     return numbered
 
 
 def build_accuracy_specs() -> list[dict]:
-    matrix = _template_specs("accuracy")
-    _assert_template_matrix("accuracy", matrix)
-    return _number_specs(_named_specs("functional_cases") + matrix, 0)
+    logical_specs = _named_specs("functional_cases")
+    minimum = int(ACCURACY_SEED_PLAN["minimum_per_logical_case"])
+    total = int(ACCURACY_SEED_PLAN["total_cases"])
+    if minimum < 3:
+        raise AssertionError("accuracy: every logical case needs at least 3 seeds")
+    if len(logical_specs) * minimum > total:
+        raise AssertionError("accuracy: seed plan cannot fit the requested total")
+    specs = []
+    remaining = total - len(logical_specs) * minimum
+    for logical_id, logical_spec in enumerate(logical_specs):
+        repeat_count = minimum + int(logical_id < remaining)
+        for seed_index in range(repeat_count):
+            spec = deepcopy(logical_spec)
+            logical_key = spec["case_key"]
+            spec["logical_case_key"] = logical_key
+            spec["seed_index"] = seed_index
+            spec["case_key"] = f"{logical_key}_seed{seed_index}"
+            spec["seed"] = SEED_BASE + logical_id * 10 + seed_index
+            specs.append(spec)
+    if len(specs) != total:
+        raise AssertionError(
+            f"accuracy: expected {total} cases, got {len(specs)}"
+        )
+    return _number_specs(specs, 0)
 
 
 def build_perf_specs() -> list[dict]:
@@ -200,8 +308,14 @@ def build_perf_specs() -> list[dict]:
 
 def build_mss_specs() -> list[dict]:
     matrix = _template_specs("mss")
-    _assert_template_matrix("mss", matrix)
-    return _number_specs(matrix, 2000)
+    _assert_template_matrix("determinism/mss", matrix, include_output_mode=True)
+    specs = _number_specs(matrix, 2000)
+    tiling_keys = [spec["expected_tiling_key"] for spec in specs]
+    if len(tiling_keys) != 432 or len(set(tiling_keys)) != 432:
+        raise AssertionError(
+            "determinism/mss: expected 432 unique reachable tiling keys"
+        )
+    return specs
 
 
 def _input(

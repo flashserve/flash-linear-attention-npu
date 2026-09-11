@@ -33,6 +33,7 @@ show_usage() {
   DETERMINISM_START/END          确定性 case 范围
   MSS_START/MSS_END              mssanitizer case 范围
   MSS_TOOL                       mssanitizer 工具，默认 memcheck
+  MSS_TIMEOUT                    内存检测单用例超时；默认不设置，由 ATK 使用自身默认值
   MSS_LOG_PATH                   ATK -msl 日志路径，默认 ${ATK_OUTPUT_ROOT}/mssanitizer_<op>_<时间戳>.log
   GEN_CASES_DTYPE_NUMBERS        生成用例时传给 atk case -dt，默认 100；双 dtype 算子生成 200 条
   GEN_CASES_EXTRA_NUMBERS        生成用例时传给 atk case -en，默认 0
@@ -201,6 +202,7 @@ PERFORMANCE_TIMEOUT="${PERFORMANCE_TIMEOUT:-2000}"
 CASE_START="${CASE_START:-}"
 CASE_END="${CASE_END:-}"
 MSS_TOOL="${MSS_TOOL:-memcheck}"
+MSS_TIMEOUT="${MSS_TIMEOUT:-}"
 MSS_LOG_PATH="${MSS_LOG_PATH:-}"
 GEN_CASES_DTYPE_NUMBERS="${GEN_CASES_DTYPE_NUMBERS:-100}"
 GEN_CASES_EXTRA_NUMBERS="${GEN_CASES_EXTRA_NUMBERS:-0}"
@@ -438,6 +440,12 @@ if should_run mssanitizer; then
   log_info "开始内存检测：mssanitizer ${MSS_TOOL}"
   log_info "ATK mssanitizer 日志：${MSS_LOG_PATH}"
   set_case_range_args "内存检测 case 范围" "$MSS_START" "$MSS_END"
+  MSS_TIMEOUT_ARGS=()
+  if [[ -n "$MSS_TIMEOUT" ]]; then
+    [[ "$MSS_TIMEOUT" =~ ^[1-9][0-9]*$ ]] || \
+      die "MSS_TIMEOUT 必须是正整数，当前值：${MSS_TIMEOUT}"
+    MSS_TIMEOUT_ARGS=(-to "$MSS_TIMEOUT")
+  fi
   touch "$MSS_LOG_PATH"
   mssanitizer --tool="$MSS_TOOL" -- \
     "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
@@ -447,6 +455,7 @@ if should_run mssanitizer; then
       --task run \
       --mssanitizer \
       -msl "$MSS_LOG_PATH" \
+      "${MSS_TIMEOUT_ARGS[@]}" \
       "${CASE_RANGE_ARGS[@]}"
   log_info "完成内存检测"
   record_ran_type mssanitizer

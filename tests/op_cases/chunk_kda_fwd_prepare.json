@@ -375,6 +375,10 @@
       "perf": "not_key",
       "mem": 1.1
     },
+    "accuracy_seed_plan": {
+      "minimum_per_logical_case": 3,
+      "total_cases": 200
+    },
     "defaults": {
       "tags": "accuracy,regression",
       "route": "ascendc",
@@ -566,6 +570,181 @@
       {
         "case_key": "l2norm_small_epsilon",
         "overrides": {"use_qk_l2norm_in_kernel": true, "epsilon": 1e-12}
+      },
+      {
+        "case_key": "dense_bnsd_tail63",
+        "overrides": {"T": 63, "backward_mode": "none"}
+      },
+      {
+        "case_key": "dense_bsnd_full_chunk",
+        "overrides": {"layout": "BSND", "T": 64, "backward_mode": "recompute"}
+      },
+      {
+        "case_key": "dense_ntd_full_chunk",
+        "overrides": {"layout": "NTD", "T": 64}
+      },
+      {
+        "case_key": "dense_tnd_full_chunk",
+        "overrides": {"layout": "TND", "T": 64, "backward_mode": "none"}
+      },
+      {
+        "case_key": "dense_bsnd_two_chunks_tail1",
+        "overrides": {"layout": "BSND", "T": 65}
+      },
+      {
+        "case_key": "dense_ntd_two_chunks_tail1",
+        "overrides": {"layout": "NTD", "T": 65, "backward_mode": "recompute"}
+      },
+      {
+        "case_key": "dense_tnd_two_chunks_tail1",
+        "overrides": {"layout": "TND", "T": 65}
+      },
+      {
+        "case_key": "dense_bnsd_exact_two_chunks",
+        "overrides": {"T": 128, "backward_mode": "none"}
+      },
+      {
+        "case_key": "dense_bsnd_three_chunks_tail1",
+        "overrides": {"layout": "BSND", "T": 129}
+      },
+      {
+        "case_key": "dense_ntd_three_chunks_tail1",
+        "overrides": {"layout": "NTD", "T": 129, "backward_mode": "recompute"}
+      },
+      {
+        "case_key": "dense_tnd_three_chunks_tail1",
+        "overrides": {"layout": "TND", "T": 129}
+      },
+      {
+        "case_key": "dense_batch4_small",
+        "overrides": {"B": 4, "HK": 2, "HV": 4, "T": 17}
+      },
+      {
+        "case_key": "dense_gva_ratio2",
+        "overrides": {"HK": 2, "HV": 4, "T": 65, "backward_mode": "none"}
+      },
+      {
+        "case_key": "dense_gva_ratio3",
+        "overrides": {"HK": 4, "HV": 12, "T": 33, "backward_mode": "recompute"}
+      },
+      {
+        "case_key": "dense_gva_ratio4",
+        "overrides": {"HK": 3, "HV": 12, "T": 49}
+      },
+      {
+        "case_key": "dense_gva_ratio6",
+        "overrides": {"HK": 2, "HV": 12, "T": 31, "backward_mode": "none"}
+      },
+      {
+        "case_key": "dense_head_partition_5",
+        "overrides": {"HK": 1, "HV": 5, "T": 17}
+      },
+      {
+        "case_key": "dense_head_partition_6",
+        "overrides": {"HK": 6, "HV": 6, "T": 33, "backward_mode": "recompute"}
+      },
+      {
+        "case_key": "dense_head_partition_7",
+        "overrides": {"HK": 7, "HV": 7, "T": 1}
+      },
+      {
+        "case_key": "varlen_bnsd_auto_with_empty",
+        "overrides": {
+          "layout": "BNSD",
+          "HK": 1,
+          "HV": 2,
+          "T": 65,
+          "cu_seqlens": "0,0,1,1,65",
+          "backward_mode": "none"
+        }
+      },
+      {
+        "case_key": "varlen_bsnd_explicit_with_empty",
+        "overrides": {
+          "layout": "BSND",
+          "HK": 2,
+          "HV": 4,
+          "T": 65,
+          "cu_seqlens": "0,0,1,1,65",
+          "explicit_chunk_indices": true,
+          "backward_mode": "recompute"
+        }
+      },
+      {
+        "case_key": "varlen_ntd_auto_mixed",
+        "overrides": {
+          "layout": "NTD",
+          "HK": 1,
+          "HV": 3,
+          "T": 129,
+          "cu_seqlens": "0,16,48,65,129"
+        }
+      },
+      {
+        "case_key": "varlen_tnd_explicit_mixed",
+        "overrides": {
+          "layout": "TND",
+          "HK": 2,
+          "HV": 8,
+          "T": 129,
+          "cu_seqlens": "0,16,48,65,129",
+          "explicit_chunk_indices": true
+        }
+      },
+      {
+        "case_key": "varlen_exact_chunk_boundaries",
+        "overrides": {
+          "layout": "TND",
+          "T": 128,
+          "cu_seqlens": "0,64,128",
+          "explicit_chunk_indices": true,
+          "backward_mode": "none"
+        }
+      },
+      {
+        "case_key": "gate_softplus_exp2_with_bias",
+        "overrides": {
+          "use_gate_in_kernel": true,
+          "dt_bias": true,
+          "use_exp2": true,
+          "gate_dtype": "fp32",
+          "backward_mode": "recompute"
+        }
+      },
+      {
+        "case_key": "gate_safe_exp_without_bias",
+        "overrides": {
+          "use_gate_in_kernel": true,
+          "safe_gate": true,
+          "lower_bound": -3.0,
+          "use_exp2": false
+        }
+      },
+      {
+        "case_key": "beta_sigmoid_bf16_output_none",
+        "overrides": {
+          "use_beta_sigmoid_in_kernel": true,
+          "beta_dtype": "bf16",
+          "backward_mode": "none"
+        }
+      },
+      {
+        "case_key": "beta_two_sigmoid_fp32_output_recompute",
+        "overrides": {
+          "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": true,
+          "beta_dtype": "fp32",
+          "backward_mode": "recompute"
+        }
+      },
+      {
+        "case_key": "l2norm_exp2_small_epsilon_output_none",
+        "overrides": {
+          "use_qk_l2norm_in_kernel": true,
+          "epsilon": 1e-12,
+          "use_exp2": true,
+          "backward_mode": "none"
+        }
       }
     ],
     "performance_cases": [
@@ -579,10 +758,13 @@
           "T": 11264,
           "gate_dtype": "fp32",
           "beta_dtype": "bf16",
-          "scale": 0.08838834764831845,
+          "scale": 0.08838,
           "use_qk_l2norm_in_kernel": true,
           "use_gate_in_kernel": true,
           "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": true,
+          "safe_gate": true,
+          "lower_bound": -5.0,
           "dt_bias": true,
           "use_exp2": true,
           "backward_mode": "none"
@@ -597,10 +779,13 @@
           "T": 11264,
           "gate_dtype": "fp32",
           "beta_dtype": "bf16",
-          "scale": 0.08838834764831845,
+          "scale": 0.08838,
           "use_qk_l2norm_in_kernel": true,
           "use_gate_in_kernel": true,
           "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": true,
+          "safe_gate": true,
+          "lower_bound": -5.0,
           "dt_bias": true,
           "use_exp2": true,
           "backward_mode": "none"
@@ -674,6 +859,55 @@
           "use_exp2": true,
           "backward_mode": "none"
         }
+      },
+      {
+        "case_key": "model_b1_h96_t8192_inference",
+        "overrides": {
+          "tags": "performance,model_target,inference,dense,BNSD",
+          "B": 1,
+          "HK": 96,
+          "HV": 96,
+          "T": 8192,
+          "layout": "BNSD",
+          "gate_dtype": "fp32",
+          "beta_dtype": "bf16",
+          "scale": 0.08838,
+          "use_qk_l2norm_in_kernel": true,
+          "use_gate_in_kernel": true,
+          "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": true,
+          "safe_gate": true,
+          "lower_bound": -5.0,
+          "dt_bias": true,
+          "use_exp2": true,
+          "backward_mode": "none",
+          "performance_target_us": 2700
+        }
+      },
+      {
+        "case_key": "model_b1_h96_t16384_varlen_inference",
+        "overrides": {
+          "tags": "performance,model_target,inference,varlen,BNSD",
+          "B": 1,
+          "HK": 96,
+          "HV": 96,
+          "T": 16384,
+          "layout": "BNSD",
+          "cu_seqlens": "0,7,75,76,436,690,982,1036,1156,1764,2434,2883,2898,2982,3142,3392,3459,3694,3717,4395,4510,4717,4822,5074,5168,5199,5370,5834,6223,6241,6302,6503,6728,6920,6948,7134,7205,7289,7904,8026,8114,8124,8238,8828,9045,10151,10257,10274,10444,10812,10930,11023,11305,11643,11973,13602,14050,14527,14832,15290,15362,16018,16267,16308,16384",
+          "gate_dtype": "fp32",
+          "beta_dtype": "bf16",
+          "scale": 0.08838,
+          "use_qk_l2norm_in_kernel": true,
+          "use_gate_in_kernel": true,
+          "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": true,
+          "safe_gate": true,
+          "lower_bound": -5.0,
+          "dt_bias": true,
+          "use_exp2": true,
+          "backward_mode": "none",
+          "performance_target_us": 5600
+        }
       }
     ],
     "template_matrix": {
@@ -683,7 +917,8 @@
         "norm": [false, true],
         "beta_mode": ["raw", "sigmoid", "two_sigmoid"],
         "gate_mode": ["precomputed", "softplus", "safe"],
-        "use_exp2": [false, true]
+        "use_exp2": [false, true],
+        "output_mode": ["none", "recompute", "save"]
       },
       "beta_mode_values": {
         "raw": {
@@ -706,18 +941,88 @@
       },
       "dt_bias_rule": {
         "gate_modes": ["softplus", "safe"],
-        "use_exp2": false
+        "selection": "matrix_index_even"
       },
       "suites": {
-        "accuracy": {
-          "prefix": "matrix",
-          "tags": "accuracy,template_key_matrix,full_chunk",
-          "overrides": {"T": 64}
-        },
         "mss": {
           "prefix": "mss_matrix",
-          "tags": "determinism,sanitizer,template_key_matrix,slot_reuse,tail1",
-          "overrides": {"T": 65}
+          "tags": "determinism,sanitizer,template_key_matrix",
+          "include_output_mode": true,
+          "profiles": [
+            {
+              "name": "dense_bnsd_chunk_partition",
+              "tags": "dense,BNSD,chunk_partition,active1,tail1",
+              "overrides": {"layout": "BNSD", "HK": 1, "HV": 1, "T": 65}
+            },
+            {
+              "name": "dense_bsnd_gva",
+              "tags": "dense,BSND,gva,head_split,active2,tail1",
+              "overrides": {"layout": "BSND", "HK": 2, "HV": 4, "T": 65}
+            },
+            {
+              "name": "dense_ntd_active3",
+              "tags": "dense,NTD,gva,active3,tail33",
+              "overrides": {"layout": "NTD", "HK": 1, "HV": 3, "T": 33}
+            },
+            {
+              "name": "dense_tnd_active4",
+              "tags": "dense,TND,gva,active4,tail63",
+              "overrides": {"layout": "TND", "HK": 1, "HV": 4, "T": 63}
+            },
+            {
+              "name": "varlen_bnsd_auto",
+              "tags": "varlen,BNSD,auto_indices,empty_sequence",
+              "overrides": {
+                "layout": "BNSD", "HK": 1, "HV": 2, "T": 65,
+                "cu_seqlens": "0,0,1,1,65"
+              }
+            },
+            {
+              "name": "varlen_bsnd_explicit",
+              "tags": "varlen,BSND,explicit_indices,head_split,active2",
+              "overrides": {
+                "layout": "BSND", "HK": 2, "HV": 4, "T": 129,
+                "cu_seqlens": "0,64,65,129", "explicit_chunk_indices": true
+              }
+            },
+            {
+              "name": "varlen_ntd_grid_stride_auto",
+              "tags": "varlen,NTD,auto_indices,grid_stride,active1",
+              "overrides": {
+                "layout": "NTD", "HK": 1, "HV": 1, "T": 129,
+                "cu_seqlens": "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129"
+              }
+            },
+            {
+              "name": "varlen_tnd_grid_stride_explicit",
+              "tags": "varlen,TND,explicit_indices,grid_stride,active1",
+              "overrides": {
+                "layout": "TND", "HK": 1, "HV": 1, "T": 129,
+                "cu_seqlens": "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129",
+                "explicit_chunk_indices": true
+              }
+            },
+            {
+              "name": "dense_bnsd_grid_stride_gva_chunk_only",
+              "tags": "dense,BNSD,gva,chunk_partition,chunk_only,no_head_split,grid_stride,active4,tail1",
+              "overrides": {"layout": "BNSD", "B": 65, "HK": 2, "HV": 4, "T": 65}
+            },
+            {
+              "name": "dense_bsnd_active5",
+              "tags": "dense,BSND,gva,active5,slot_reuse",
+              "overrides": {"layout": "BSND", "HK": 1, "HV": 5, "T": 1}
+            },
+            {
+              "name": "dense_bnsd_active12",
+              "tags": "dense,BNSD,gva,active12,slot_reuse",
+              "overrides": {"layout": "BNSD", "HK": 1, "HV": 12, "T": 1}
+            },
+            {
+              "name": "dense_tnd_gva_ratio8",
+              "tags": "dense,TND,gva,active8,slot_reuse,tail17",
+              "overrides": {"layout": "TND", "HK": 1, "HV": 8, "T": 17}
+            }
+          ]
         }
       }
     }

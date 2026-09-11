@@ -97,7 +97,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1, 2, 4]
+        values: [1, 2, 4, 65]
       invalid:
         values: []
   - name: HK
@@ -107,7 +107,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1, 2, 3, 4, 11, 12, 16, 32, 96]
+        values: [1, 2, 3, 4, 6, 7, 11, 12, 16, 32, 96]
       invalid:
         values: []
   - name: HV
@@ -117,7 +117,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1, 4, 5, 8, 12, 15, 16, 32, 33, 96, 160]
+        values: [1, 2, 3, 4, 5, 6, 7, 8, 12, 15, 16, 32, 33, 96, 160]
       invalid:
         values: []
   - name: T
@@ -127,7 +127,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1, 15, 16, 17, 31, 32, 33, 47, 48, 49, 64, 65, 128, 129, 146, 1025, 1084, 2048, 11264, 65536]
+        values: [1, 15, 16, 17, 25, 31, 32, 33, 47, 48, 49, 63, 64, 65, 128, 129, 146, 1025, 1084, 1601, 2048, 8192, 11264, 16384, 65536]
       invalid:
         values: []
   - name: K
@@ -197,7 +197,7 @@ inputs:
       values: [float]
     ranges:
       valid:
-        values: [0.08838834764831845, 1.0]
+        values: [0.08838, 0.08838834764831845, 1.0]
       invalid:
         values: []
   - name: epsilon

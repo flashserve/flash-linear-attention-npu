@@ -28,6 +28,47 @@ DTYPES = {
     "bf16": torch.bfloat16,
     "fp32": torch.float32,
 }
+OUTPUT_NAMES = (
+    "gk",
+    "aqk",
+    "akk",
+    "w",
+    "u",
+    "qg",
+    "kg",
+    "qg_scaled",
+    "q_hat",
+    "k_hat",
+    "q_rstd",
+    "k_rstd",
+    "beta_eff",
+)
+OUTPUT_MASKS = {
+    "none": (
+        True, True, False, True, True, False, True, True,
+        False, False, False, False, False,
+    ),
+    "recompute": (
+        True, True, True, True, True, False, True, True,
+        True, True, True, True, True,
+    ),
+    "save": (True,) * 13,
+}
+OUTPUT_DTYPES = (
+    torch.float32,
+    torch.bfloat16,
+    torch.bfloat16,
+    torch.bfloat16,
+    torch.bfloat16,
+    torch.bfloat16,
+    torch.bfloat16,
+    torch.bfloat16,
+    torch.bfloat16,
+    torch.bfloat16,
+    torch.float32,
+    torch.float32,
+    torch.float32,
+)
 
 
 def _as_bool(value: Any) -> bool:
@@ -70,12 +111,14 @@ def _layout_from_bsnd(
     if layout == "BSND":
         return tensor.contiguous()
     if layout == "BNSD":
-        return tensor.permute(0, 2, 1) if scalar else tensor.permute(0, 2, 1, 3)
+        result = tensor.permute(0, 2, 1) if scalar else tensor.permute(0, 2, 1, 3)
+        return result.contiguous()
     if layout == "TND":
         return tensor.squeeze(0).contiguous()
     if layout == "NTD":
         tensor = tensor.squeeze(0)
-        return tensor.permute(1, 0) if scalar else tensor.permute(1, 0, 2)
+        result = tensor.permute(1, 0) if scalar else tensor.permute(1, 0, 2)
+        return result.contiguous()
     raise ValueError(f"{OP_NAME}: unsupported layout {layout!r}")
 
 
@@ -535,20 +578,9 @@ def _reference(
     )
     if layout in {"TND", "NTD"}:
         outputs = tuple(output.squeeze(0) for output in outputs)
-    output_masks = {
-        "none": (
-            True, True, False, True, True, False, True, True,
-            False, False, False, False, False,
-        ),
-        "recompute": (
-            True, True, True, True, True, False, True, True,
-            True, True, True, True, True,
-        ),
-        "save": (True,) * 13,
-    }
     backward_mode = str(spec.get("backward_mode", "save"))
     try:
-        output_mask = output_masks[backward_mode]
+        output_mask = OUTPUT_MASKS[backward_mode]
     except KeyError as exc:
         raise ValueError(
             "backward_mode 必须是 none、recompute 或 save。"
@@ -566,7 +598,7 @@ def run_cpu(spec: dict[str, Any], inputs: PreparedInputs):
 def run_npu(spec: dict[str, Any], inputs: PreparedInputs):
     from fla_npu.ops.ascendc import chunk_kda_fwd_prepare
 
-    return chunk_kda_fwd_prepare(
+    outputs = chunk_kda_fwd_prepare(
         inputs.q,
         inputs.k,
         inputs.v,
@@ -593,6 +625,80 @@ def run_npu(spec: dict[str, Any], inputs: PreparedInputs):
         chunk_indices=inputs.chunk_indices,
         backward_mode=str(spec.get("backward_mode", "save")),
     )
+    return outputs
+
+
+def _expected_output_shapes(spec: dict[str, Any]) -> tuple[tuple[int, ...], ...]:
+    batch = int(spec["B"])
+    key_heads = int(spec["HK"])
+    value_heads = int(spec["HV"])
+    tokens = int(spec["T"])
+    packed = str(spec["layout"]) in {"NTD", "TND"}
+    if packed:
+        value_matrix = (value_heads, tokens, HEAD_DIM)
+        value_block = (value_heads, tokens, CHUNK_SIZE)
+        key_matrix = (key_heads, tokens, HEAD_DIM)
+        key_scalar = (key_heads, tokens)
+        value_scalar = (value_heads, tokens)
+    else:
+        value_matrix = (batch, value_heads, tokens, HEAD_DIM)
+        value_block = (batch, value_heads, tokens, CHUNK_SIZE)
+        key_matrix = (batch, key_heads, tokens, HEAD_DIM)
+        key_scalar = (batch, key_heads, tokens)
+        value_scalar = (batch, value_heads, tokens)
+    return (
+        value_matrix,
+        value_block,
+        value_block,
+        value_matrix,
+        value_matrix,
+        value_matrix,
+        value_matrix,
+        value_matrix,
+        key_matrix,
+        key_matrix,
+        key_scalar,
+        key_scalar,
+        value_scalar,
+    )
+
+
+def _validate_output_contract(
+    spec: dict[str, Any],
+    outputs,
+    *,
+    check_dtype: bool,
+) -> None:
+    if not isinstance(outputs, (tuple, list)) or len(outputs) != len(OUTPUT_NAMES):
+        raise RuntimeError(
+            f"{OP_NAME}: expected {len(OUTPUT_NAMES)} output slots, "
+            f"got {type(outputs).__name__} with "
+            f"{len(outputs) if isinstance(outputs, (tuple, list)) else 'unknown'}"
+        )
+    mode = str(spec.get("backward_mode", "save"))
+    mask = OUTPUT_MASKS[mode]
+    shapes = _expected_output_shapes(spec)
+    for name, output, enabled, shape, dtype in zip(
+        OUTPUT_NAMES, outputs, mask, shapes, OUTPUT_DTYPES
+    ):
+        if not enabled:
+            if output is not None:
+                raise RuntimeError(
+                    f"{OP_NAME}: output {name} must be None in {mode} mode"
+                )
+            continue
+        if not isinstance(output, torch.Tensor):
+            raise RuntimeError(
+                f"{OP_NAME}: output {name} is required in {mode} mode"
+            )
+        if tuple(output.shape) != shape:
+            raise RuntimeError(
+                f"{OP_NAME}: output {name} shape {tuple(output.shape)} != {shape}"
+            )
+        if check_dtype and output.dtype != dtype:
+            raise RuntimeError(
+                f"{OP_NAME}: output {name} dtype {output.dtype} != {dtype}"
+            )
 
 
 @register("executor_chunk_kda_fwd_prepare")
@@ -613,7 +719,6 @@ class FunctionApi(BaseApi):
         )
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
-        del with_output
         if self.spec is None or self.inputs is None:
             self.init_by_input_data(input_data)
         if self.spec is None or self.inputs is None:
@@ -626,6 +731,21 @@ class FunctionApi(BaseApi):
             raise RuntimeError(
                 f"{OP_NAME} only supports CPU golden and NPU DUT nodes, "
                 f"got {self.device!r}"
+            )
+        _validate_output_contract(
+            self.spec,
+            outputs,
+            check_dtype=self.device in {"npu", "pyaclnn"},
+        )
+        if self.device in {"npu", "pyaclnn"}:
+            torch.npu.synchronize()
+        if not with_output:
+            return None
+        if self.device in {"npu", "pyaclnn"}:
+            # 精度比较才执行 D2H；性能和 sanitizer 只采集被测算子。
+            outputs = tuple(
+                None if output is None else output.detach().cpu()
+                for output in outputs
             )
         return _finite_tuple(outputs, golden=self.device == "cpu")
 
@@ -642,4 +762,7 @@ class FunctionApi(BaseApi):
             "T": int(self.spec["T"]),
             "gate_dtype": str(self.spec["gate_dtype"]),
             "beta_dtype": str(self.spec["beta_dtype"]),
+            "backward_mode": str(self.spec["backward_mode"]),
+            "expected_tiling_key": int(self.spec["expected_tiling_key"]),
+            "mss_profile": str(self.spec.get("mss_profile", "")),
         }
