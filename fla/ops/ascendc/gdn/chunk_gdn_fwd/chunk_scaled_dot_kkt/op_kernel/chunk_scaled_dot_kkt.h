@@ -403,6 +403,11 @@ private:
         using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<KktScoreDispatchPolicy, L1TileShape, L0TileShape, KType,
                                                               KType, float, void, TileCopy>;
 
+        Catlass::Arch::Resource<KktArchTag> resource;
+        BlockMmad blockMmad(resource);
+        // Keep one event lifecycle while preserving task boundaries before L0 buffers are reused.
+        blockMmad.preSetFlags();
+
         int64_t scoreGroupSeq = 0;
         // Score blocks are computed once per key head; epilogue fans each block out to hvPerHk value heads.
         const int64_t scoreBlockTaskNum = B_ * NT_ * Hk_ * ScoreRowBlockCount();
@@ -414,7 +419,6 @@ private:
             if (scoreGroupSeq >= SCORE_WORKSPACE_BUFFER_NUM) {
                 Catlass::Arch::CrossCoreWaitFlag(scoreDoneFlag_[scoreSlot]);
             }
-            Catlass::Arch::Resource<KktArchTag> resource;
             for (int64_t batchIdx = 0; batchIdx < scoreGroupBatch; ++batchIdx) {
                 const int64_t scoreBlockTask = scoreGroupBase + batchIdx * usedAicNum_;
                 if (scoreBlockTask >= scoreBlockTaskNum) {
@@ -428,14 +432,13 @@ private:
                     continue;
                 }
                 const int64_t scoreOffset = GetScoreOffset(cubeIdx, scoreSlot, batchIdx);
-                BlockMmad blockMmad(resource);
-                blockMmad.preSetFlags();
                 ComputeCatlassScoreBlock(meta, rowBegin, rowCount, colCount, scoreOffset, blockMmad);
-                blockMmad.finalWaitFlags();
+                AscendC::PipeBarrier<PIPE_ALL>();
             }
             Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(scoreReadyFlag_[scoreSlot]);
             ++scoreGroupSeq;
         }
+        blockMmad.finalWaitFlags();
         const int64_t pendingSlots = MinI64(scoreGroupSeq, static_cast<int64_t>(SCORE_WORKSPACE_BUFFER_NUM));
         for (int64_t slot = 0; slot < pendingSlots; ++slot) {
             Catlass::Arch::CrossCoreWaitFlag(scoreDoneFlag_[slot]);
