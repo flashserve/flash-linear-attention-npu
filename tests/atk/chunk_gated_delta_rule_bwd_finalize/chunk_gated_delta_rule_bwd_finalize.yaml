@@ -193,6 +193,16 @@ inputs:
         values: [false, true]
       invalid:
         values: []
+  - name: allow_neg_eigval
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [false, true]
+      invalid:
+        values: []
   - name: state_v_first
     type: attr
     required: true

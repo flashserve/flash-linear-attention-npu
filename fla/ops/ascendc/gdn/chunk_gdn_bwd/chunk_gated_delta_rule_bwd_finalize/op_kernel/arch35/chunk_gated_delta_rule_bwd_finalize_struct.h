@@ -14,30 +14,34 @@ namespace GDN {
 
 #ifndef TORCH_MODE
 // Stage 0 主张量只支持 BF16，g/beta 使用相同的 BF16 或 FP32 dtype。
-// 两个独立 backward 开关进入 TilingKey，使无效输入搬运和 VF 指令在编译期裁掉。
+// backward 开关进入 TilingKey，使无效输入搬运和 VF 指令在编译期裁掉。
 ASCENDC_TPL_ARGS_DECL(ChunkGatedDeltaRuleBwdFinalize,
     ASCENDC_TPL_DTYPE_DECL(D_T_Q, TPL_BF16),
     ASCENDC_TPL_DTYPE_DECL(D_T_G, TPL_BF16, TPL_FP32),
     ASCENDC_TPL_BOOL_DECL(USE_QK_L2NORM, 0, 1),
     ASCENDC_TPL_BOOL_DECL(USE_BETA_SIGMOID, 0, 1),
+    ASCENDC_TPL_BOOL_DECL(ALLOW_NEG_EIGVAL, 0, 1),
 );
 
-#define TPL_SEL_ONE(Q, G, USE_QK_L2NORM_VALUE, USE_BETA_SIGMOID_VALUE) \
+#define TPL_SEL_ONE(Q, G, USE_QK_L2NORM_VALUE, USE_BETA_SIGMOID_VALUE, ALLOW_NEG_EIGVAL_VALUE) \
     ASCENDC_TPL_ARGS_SEL( \
         ASCENDC_TPL_DTYPE_SEL(D_T_Q, Q), \
         ASCENDC_TPL_DTYPE_SEL(D_T_G, G), \
         ASCENDC_TPL_BOOL_SEL(USE_QK_L2NORM, USE_QK_L2NORM_VALUE), \
         ASCENDC_TPL_BOOL_SEL(USE_BETA_SIGMOID, USE_BETA_SIGMOID_VALUE), \
+        ASCENDC_TPL_BOOL_SEL(ALLOW_NEG_EIGVAL, ALLOW_NEG_EIGVAL_VALUE), \
     )
 
 #define TPL_SEL_FOR_DTYPE(Q, G) \
-    TPL_SEL_ONE(Q, G, 0, 0), \
-    TPL_SEL_ONE(Q, G, 0, 1), \
-    TPL_SEL_ONE(Q, G, 1, 0), \
-    TPL_SEL_ONE(Q, G, 1, 1)
+    TPL_SEL_ONE(Q, G, 0, 0, 0), \
+    TPL_SEL_ONE(Q, G, 0, 1, 0), \
+    TPL_SEL_ONE(Q, G, 0, 1, 1), \
+    TPL_SEL_ONE(Q, G, 1, 0, 0), \
+    TPL_SEL_ONE(Q, G, 1, 1, 0), \
+    TPL_SEL_ONE(Q, G, 1, 1, 1)
 
 ASCENDC_TPL_SEL(
-    // g/beta 共用 dtype 模板参数，两个开关独立组合，共 8 个实例。
+    // g/beta 共用 dtype 模板参数；allow_neg_eigval 仅在 beta sigmoid 开启时可达，共 12 个实例。
     TPL_SEL_FOR_DTYPE(TPL_BF16, TPL_BF16),
     TPL_SEL_FOR_DTYPE(TPL_BF16, TPL_FP32),
 );

@@ -31,10 +31,12 @@ VECTOR_GRAD_INPUTS = frozenset({"v_new", "do", "du", "h", "dh", "a"})
 SCALAR_DTYPES = ("bf16", "fp32")
 BOOL_VALUES = (False, True)
 EXPECTED_TEMPLATE_SIGNATURES = frozenset(
-    (scalar_dtype, use_qk_l2norm, use_beta_sigmoid)
+    (scalar_dtype, use_qk_l2norm, use_beta_sigmoid, allow_neg_eigval)
     for scalar_dtype in SCALAR_DTYPES
     for use_qk_l2norm in BOOL_VALUES
     for use_beta_sigmoid in BOOL_VALUES
+    for allow_neg_eigval in BOOL_VALUES
+    if use_beta_sigmoid or not allow_neg_eigval
 )
 
 
@@ -56,6 +58,7 @@ def _base(case_key: str, **updates) -> dict:
         "varlen": False,
         "use_qk_l2norm": False,
         "use_beta_sigmoid": False,
+        "allow_neg_eigval": False,
         "state_v_first": False,
         "use_gate_in_kernel": False,
         "use_exp2": True,
@@ -70,19 +73,24 @@ def _template_matrix(prefix: str, tags: str, **updates) -> list[dict]:
     for scalar_dtype in SCALAR_DTYPES:
         for use_qk_l2norm in BOOL_VALUES:
             for use_beta_sigmoid in BOOL_VALUES:
-                state_v_first = use_beta_sigmoid
-                specs.append(
-                    _base(
-                        f"{prefix}_{scalar_dtype}_qk{int(use_qk_l2norm)}_"
-                        f"beta{int(use_beta_sigmoid)}_state{int(state_v_first)}",
-                        tags=tags,
-                        scalar_dtype=scalar_dtype,
-                        use_qk_l2norm=use_qk_l2norm,
-                        use_beta_sigmoid=use_beta_sigmoid,
-                        state_v_first=state_v_first,
-                        **updates,
+                for allow_neg_eigval in BOOL_VALUES:
+                    if allow_neg_eigval and not use_beta_sigmoid:
+                        continue
+                    state_v_first = use_beta_sigmoid
+                    specs.append(
+                        _base(
+                            f"{prefix}_{scalar_dtype}_qk{int(use_qk_l2norm)}_"
+                            f"beta{int(use_beta_sigmoid)}_neg{int(allow_neg_eigval)}_"
+                            f"state{int(state_v_first)}",
+                            tags=tags,
+                            scalar_dtype=scalar_dtype,
+                            use_qk_l2norm=use_qk_l2norm,
+                            use_beta_sigmoid=use_beta_sigmoid,
+                            allow_neg_eigval=allow_neg_eigval,
+                            state_v_first=state_v_first,
+                            **updates,
+                        )
                     )
-                )
     return specs
 
 
@@ -91,6 +99,7 @@ def _signature(spec: dict) -> tuple:
         str(spec["scalar_dtype"]),
         bool(spec["use_qk_l2norm"]),
         bool(spec["use_beta_sigmoid"]),
+        bool(spec["allow_neg_eigval"]),
     )
 
 
@@ -330,6 +339,7 @@ def _case_payload(case_id: int, spec: dict) -> dict:
         ("varlen", "bool"),
         ("use_qk_l2norm", "bool"),
         ("use_beta_sigmoid", "bool"),
+        ("allow_neg_eigval", "bool"),
         ("state_v_first", "bool"),
         ("scale", "float"),
         ("seed", "int"),

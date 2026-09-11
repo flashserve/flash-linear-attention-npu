@@ -122,6 +122,7 @@ def run_cpu(spec, input_data: InputDataset):
     ) = prepared
     use_qk_l2norm = bool(spec["use_qk_l2norm"])
     use_beta_sigmoid = bool(spec["use_beta_sigmoid"])
+    allow_neg_eigval = bool(spec["allow_neg_eigval"])
     q_rstd = (
         torch.rsqrt((q.float() * q.float()).sum(dim=-1) + 1.0e-6)
         if use_qk_l2norm else None
@@ -141,6 +142,7 @@ def run_cpu(spec, input_data: InputDataset):
         chunk_size=int(spec.get("chunk_size", CHUNK_SIZE)),
         use_qk_l2_norm_in_kernel=use_qk_l2norm,
         use_beta_sigmoid_in_kernel=use_beta_sigmoid,
+        allow_neg_eigval=allow_neg_eigval,
         use_gate_in_kernel=False,
         state_v_first=bool(spec["state_v_first"]),
         use_exp2=True,
@@ -157,6 +159,7 @@ def run_npu(spec, input_data: InputDataset):
     ) = prepared
     use_qk_l2norm = bool(spec["use_qk_l2norm"])
     use_beta_sigmoid = bool(spec["use_beta_sigmoid"])
+    allow_neg_eigval = bool(spec["allow_neg_eigval"])
     q_rstd = (
         torch.rsqrt((q.float() * q.float()).sum(dim=-1) + 1.0e-6)
         if use_qk_l2norm else None
@@ -179,6 +182,7 @@ def run_npu(spec, input_data: InputDataset):
         chunk_size=int(spec.get("chunk_size", CHUNK_SIZE)),
         use_qk_l2_norm_in_kernel=use_qk_l2norm,
         use_beta_sigmoid_in_kernel=use_beta_sigmoid,
+        allow_neg_eigval=allow_neg_eigval,
         use_gate_in_kernel=False,
         state_v_first=bool(spec["state_v_first"]),
         use_exp2=True,

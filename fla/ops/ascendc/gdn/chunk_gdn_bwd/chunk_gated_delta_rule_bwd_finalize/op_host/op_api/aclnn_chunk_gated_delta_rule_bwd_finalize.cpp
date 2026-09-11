@@ -37,7 +37,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
     const aclTensor *betaRawOptional,
     const aclIntArray *cuSeqlensOptional, const aclIntArray *chunkIndicesOptional,
     double scale, int64_t chunkSize, bool useQkL2NormInKernel,
-    bool useBetaSigmoidInKernel, bool useGateInKernel, bool stateVFirst,
+    bool useBetaSigmoidInKernel, bool allowNegEigval, bool useGateInKernel, bool stateVFirst,
     bool useExp2,
     const aclTensor *dqOut, const aclTensor *dkOut, const aclTensor *dvOut,
     const aclTensor *dbetaOut, const aclTensor *dgOut,
@@ -60,6 +60,8 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
     CHECK_COND(chunkSize == 64, ACLNN_ERR_PARAM_INVALID, "chunkSize only supports 64.");
     CHECK_COND(!useGateInKernel, ACLNN_ERR_PARAM_INVALID,
                "useGateInKernel only supports false.");
+    CHECK_COND(!allowNegEigval || useBetaSigmoidInKernel, ACLNN_ERR_PARAM_INVALID,
+               "allowNegEigval=true requires useBetaSigmoidInKernel=true.");
     CHECK_COND(useExp2, ACLNN_ERR_PARAM_INVALID, "useExp2 only supports true.");
     CHECK_COND((cuSeqlensOptional == nullptr) == (chunkIndicesOptional == nullptr),
                ACLNN_ERR_PARAM_INVALID,
@@ -89,7 +91,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
         qRstdOptional, kRstdOptional, betaRawOptional,
         cuSeqlensOptional, chunkIndicesOptional,
         scale, chunkSize, useQkL2NormInKernel,
-        useBetaSigmoidInKernel, useGateInKernel, stateVFirst, useExp2,
+        useBetaSigmoidInKernel, allowNegEigval, useGateInKernel, stateVFirst, useExp2,
         dqOut, dkOut, dvOut, dbetaOut, dgOut,
         executorPtr);
     for (const aclTensor *tensor : result) {

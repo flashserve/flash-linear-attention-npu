@@ -26,6 +26,7 @@ dq, dk, dv, dbeta, dg = chunk_gated_delta_rule_bwd_finalize(
     chunk_size=64,
     use_qk_l2_norm_in_kernel=False,
     use_beta_sigmoid_in_kernel=False,
+    allow_neg_eigval=False,
     use_gate_in_kernel=False,
     state_v_first=False,
     use_exp2=True,
@@ -55,6 +56,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
     double scale, int64_t chunkSize,
     bool useQkL2NormInKernel,
     bool useBetaSigmoidInKernel,
+    bool allowNegEigval,
     bool useGateInKernel,
     bool stateVFirst,
     bool useExp2,
@@ -97,11 +99,13 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalize(
 | `chunk_size` | `64` | 只支持 64 |
 | `use_qk_l2_norm_in_kernel` | `false` | `true` 时必须提供 `q_rstd/k_rstd` |
 | `use_beta_sigmoid_in_kernel` | `false` | `true` 时必须提供 `beta_raw` |
+| `allow_neg_eigval` | `false` | 支持 `false/true`；`true` 要求开启 beta sigmoid，并将 sigmoid backward 系数乘 2 |
 | `use_gate_in_kernel` | `false` | 只支持 `false` |
 | `state_v_first` | `false` | 支持 `false/true`，控制 `h/dh` 末两维的存储顺序 |
 | `use_exp2` | `true` | 只支持 `true` |
 
-两个可选反向开关相互独立，四种组合均由 TilingKey 模板支持。关闭某个开关时，
+可选反向开关由 TilingKey 模板支持；`allow_neg_eigval=true` 仅在
+`use_beta_sigmoid_in_kernel=true` 时可达。关闭某个开关时，
 对应可选输入允许为空，kernel 不读取该地址。
 
 ## 输出

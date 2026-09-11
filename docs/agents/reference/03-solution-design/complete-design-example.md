@@ -148,6 +148,7 @@ Python：           fla_npu.ops.ascendc.chunk_gated_delta_rule_bwd_finalize
 | `chunk_size` | int64 | 64 |
 | `use_qk_l2norm_in_kernel` | bool | true |
 | `use_beta_sigmoid_in_kernel` | bool | true |
+| `allow_neg_eigval` | bool | false |
 
 `du` 必须保持调用本算子前的原始值。dqkwg 只用它生成 `dw0`，不能先覆盖成其它
 `dv` 再传入 prepare 路径。
@@ -158,6 +159,8 @@ Python：           fla_npu.ops.ascendc.chunk_gated_delta_rule_bwd_finalize
 - `chunk_size` 为兼容上层调用保留，但只接受 `64`；
 - `use_qk_l2norm_in_kernel=True` 时 `q_rstd/k_rstd` 必须非空；
 - `use_beta_sigmoid_in_kernel=True` 时 `beta_raw` 必须非空；
+- `allow_neg_eigval=True` 要求 `use_beta_sigmoid_in_kernel=True`，并将
+  beta sigmoid backward 的导数系数乘 2；
 - 本算子固定对标 `use_gate_in_kernel=False`，输入 `g` 已是 chunk local cumsum 后的
   log-space gate；接口不接收 `g_input/A_log/dt_bias`；
 - `cu_seqlens/chunk_indices` 必须同时为 `None` 或同时非空；
@@ -1041,7 +1044,8 @@ beta sigmoid backward：
 
 ```text
 s     = sigmoid(beta_raw)                     # s: [BT]
-dbeta = db_prepare * s * (1-s)                # dbeta: [BT]
+coef  = 2 if allow_neg_eigval else 1
+dbeta = db_prepare * s * (1-s) * coef         # dbeta: [BT]
 ```
 
 关闭 `use_beta_sigmoid_in_kernel` 时：

@@ -151,11 +151,13 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     const int32_t *chunkSize = attrs->GetAttrPointer<int32_t>(1);
     const bool *useL2Norm = attrs->GetAttrPointer<bool>(2);
     const bool *useBetaSigmoid = attrs->GetAttrPointer<bool>(3);
-    const bool *useGate = attrs->GetAttrPointer<bool>(4);
-    const bool *stateVFirst = attrs->GetAttrPointer<bool>(5);
-    const bool *useExp2 = attrs->GetAttrPointer<bool>(6);
+    const bool *allowNegEigval = attrs->GetAttrPointer<bool>(4);
+    const bool *useGate = attrs->GetAttrPointer<bool>(5);
+    const bool *stateVFirst = attrs->GetAttrPointer<bool>(6);
+    const bool *useExp2 = attrs->GetAttrPointer<bool>(7);
     const bool useL2NormValue = useL2Norm == nullptr ? false : *useL2Norm;
     const bool useBetaSigmoidValue = useBetaSigmoid == nullptr ? false : *useBetaSigmoid;
+    const bool allowNegEigvalValue = allowNegEigval == nullptr ? false : *allowNegEigval;
     const bool useGateValue = useGate == nullptr ? false : *useGate;
     const bool useExp2Value = useExp2 == nullptr ? true : *useExp2;
     const bool stateVFirstValue = stateVFirst == nullptr ? false : *stateVFirst;
@@ -164,6 +166,10 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
                 OP_LOGE(context->GetNodeName(), "chunk_size only supports 64."), return ge::GRAPH_FAILED);
     OP_CHECK_IF(useGateValue,
                 OP_LOGE(context->GetNodeName(), "use_gate_in_kernel only supports false."),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(allowNegEigvalValue && !useBetaSigmoidValue,
+                OP_LOGE(context->GetNodeName(),
+                        "allow_neg_eigval=true requires use_beta_sigmoid_in_kernel=true."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(!useExp2Value,
                 OP_LOGE(context->GetNodeName(), "use_exp2 only supports true."),
@@ -320,11 +326,12 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     workspaceSizes[0] = platform.GetLibApiWorkSpaceSize() + userWorkspace;
 
     // 主张量固定 BF16，g/beta 共用一个 BF16 或 FP32 模板参数；
-    // 两个 backward 开关独立控制输入搬运和 VF 公式，共 8 个模板。
+    // allow_neg_eigval 仅在 beta sigmoid 开启时可达，共 12 个模板。
     // state_v_first 只选择 state GM 布局解释，作为运行时 tiling 数据不扩展 key。
     const uint64_t tilingKey = GET_TPL_TILING_KEY(
         static_cast<uint64_t>(qKey), static_cast<uint64_t>(gKey),
-        static_cast<uint64_t>(useL2NormValue), static_cast<uint64_t>(useBetaSigmoidValue));
+        static_cast<uint64_t>(useL2NormValue), static_cast<uint64_t>(useBetaSigmoidValue),
+        static_cast<uint64_t>(allowNegEigvalValue));
     context->SetTilingKey(tilingKey);
     context->SetBlockDim(blockDim);
     context->SetScheduleMode(1);

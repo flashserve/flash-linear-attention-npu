@@ -818,7 +818,7 @@ __simd_vf__ inline void Stage10VF(
 
 // Stage 12 每次 VF 处理一个 HV。所有 GM 输入在调用前完整进入 UB；本 VF
 // 同时生成 dk_prepare、dbeta、dq_base 和 ds，不拆分 pass。
-template <typename DT, typename BT, bool USE_BETA_SIGMOID>
+template <typename DT, typename BT, bool USE_BETA_SIGMOID, bool ALLOW_NEG_EIGVAL>
 __simd_vf__ inline void Stage12VF(
     __ubuf__ DT *dkb, __ubuf__ DT *dkbT, __ubuf__ DT *ds,
     __ubuf__ DT *doG, __ubuf__ DT *vDecay, __ubuf__ DT *dkPrepare, __ubuf__ DT *k,
@@ -942,6 +942,9 @@ __simd_vf__ inline void Stage12VF(
         Sub(resultReg, oneReg, betaRawReg, floatMask);
         Mul(betaRawReg, betaRawReg, resultReg, floatMask);
         Mul(scalarReg, scalarReg, betaRawReg, floatMask);
+        if constexpr (ALLOW_NEG_EIGVAL) {
+            Muls(scalarReg, scalarReg, 2.0f, floatMask);
+        }
         StoreAlign(dbV, scalarReg, floatMask);
     }
     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
@@ -1416,7 +1419,8 @@ __simd_vf__ inline void Stage15NormVF(
     }
 }
 
-template <typename DT, typename GT, typename BT, bool USE_QK_L2NORM, bool USE_BETA_SIGMOID>
+template <typename DT, typename GT, typename BT, bool USE_QK_L2NORM, bool USE_BETA_SIGMOID,
+          bool ALLOW_NEG_EIGVAL>
 class ChunkGatedDeltaRuleBwdFinalizeVector {
 public:
     __aicore__ inline void Init(
@@ -1977,7 +1981,7 @@ public:
                         dkbT_[streamSlot_], dkbTInGm_[workspaceVectorOffset], chunk.chunkLen * K_SIZE_128);
                     AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[streamSlot_]);
                     AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[streamSlot_]);
-                    Stage12VF<DT, BT, USE_BETA_SIGMOID>(
+                    Stage12VF<DT, BT, USE_BETA_SIGMOID, ALLOW_NEG_EIGVAL>(
                         reinterpret_cast<__ubuf__ DT *>(dkb_[streamSlot_].GetPhyAddr()),
                         reinterpret_cast<__ubuf__ DT *>(dkbT_[streamSlot_].GetPhyAddr()),
                         reinterpret_cast<__ubuf__ DT *>(ds_[streamSlot_].GetPhyAddr()),

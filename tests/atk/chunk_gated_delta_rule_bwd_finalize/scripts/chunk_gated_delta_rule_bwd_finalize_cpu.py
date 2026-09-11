@@ -3,7 +3,7 @@ def chunk_gated_delta_rule_bwd_finalize_golden(
     q_rstd=None, k_rstd=None, beta_raw=None, cu_seqlens=None,
     chunk_indices=None, scale=None, chunk_size=64,
     use_qk_l2_norm_in_kernel=False, use_beta_sigmoid_in_kernel=False,
-    use_gate_in_kernel=False, state_v_first=False, use_exp2=True,
+    allow_neg_eigval=False, use_gate_in_kernel=False, state_v_first=False, use_exp2=True,
 ):
     """CPU reference for the fused gated-delta-rule backward finalize range.
 
@@ -27,6 +27,8 @@ def chunk_gated_delta_rule_bwd_finalize_golden(
         raise ValueError("q_rstd and k_rstd are required when Q/K L2Norm backward is enabled.")
     if use_beta_sigmoid_in_kernel and beta_raw is None:
         raise ValueError("beta_raw is required when beta sigmoid backward is enabled.")
+    if allow_neg_eigval and not use_beta_sigmoid_in_kernel:
+        raise ValueError("allow_neg_eigval=True requires use_beta_sigmoid_in_kernel=True.")
     if bool(use_gate_in_kernel):
         raise ValueError("use_gate_in_kernel only supports False.")
     if not bool(use_exp2):
@@ -267,6 +269,7 @@ def chunk_gated_delta_rule_bwd_finalize_golden(
                 )
                 dbeta[batch_idx, hv, token_start:token_end] = (
                     db_prepare_chunk * beta_sigmoid * (1.0 - beta_sigmoid)
+                    * (2.0 if allow_neg_eigval else 1.0)
                 )
             else:
                 dbeta[batch_idx, hv, token_start:token_end] = db_prepare_chunk
