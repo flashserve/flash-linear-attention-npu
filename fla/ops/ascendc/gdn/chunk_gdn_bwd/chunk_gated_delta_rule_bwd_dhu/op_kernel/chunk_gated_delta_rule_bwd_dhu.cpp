@@ -31,7 +31,7 @@ namespace GDN {
 
 template <typename DT, typename GT, int V_DIM, int USE_GK>
 __aicore__ inline void ChunkGatedDeltaRuleBwdDhuKernelImpl(
-    GM_ADDR q, GM_ADDR k, GM_ADDR w, GM_ADDR d_o, GM_ADDR dv, GM_ADDR gate,
+    GM_ADDR q, GM_ADDR k, GM_ADDR w, GM_ADDR d_o, GM_ADDR dv, GM_ADDR gate, GM_ADDR dht,
     GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR dh, GM_ADDR dh0, GM_ADDR dv2,
     GM_ADDR workspace, const ChunkGatedDeltaRuleBwdDhuTilingData *tilingData)
 {
@@ -43,7 +43,7 @@ __aicore__ inline void ChunkGatedDeltaRuleBwdDhuKernelImpl(
     if ASCEND_IS_AIV {
         AscendC::TPipe pipe;
         ChunkGatedDeltaRuleBwdDhuVector<DT, GT, USE_GK> vec;
-        vec.Init(q, gate, dv, cu_seqlens, chunk_indices, dh, dh0, dv2, workspace, tilingData, &pipe);
+        vec.Init(q, gate, dv, dht, cu_seqlens, chunk_indices, dh, dh0, dv2, workspace, tilingData, &pipe);
         vec.Process();
     }
 }
@@ -76,7 +76,6 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_dhu(
     GM_ADDR dh, GM_ADDR dh0, GM_ADDR dv2, GM_ADDR workspace, GM_ADDR tiling)
 {
     (void)h0;
-    (void)dht;
 
     AscendC::AscendCUtils::SetOverflow(1);
 
@@ -93,6 +92,6 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_dhu(
     using GType = typename GDN::ChunkGatedDeltaRuleBwdDhuDTypeTraits<D_T_G>::type;
     GM_ADDR gate = (USE_GK == 0) ? g : gk;
     GDN::ChunkGatedDeltaRuleBwdDhuKernelImpl<QType, GType, V, USE_GK>(
-        q, k, w, d_o, dv, gate, cu_seqlens, chunk_indices, dh, dh0, dv2, userWS, &tilingData);
+        q, k, w, d_o, dv, gate, dht, cu_seqlens, chunk_indices, dh, dh0, dv2, userWS, &tilingData);
 }
 #endif

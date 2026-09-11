@@ -7,7 +7,7 @@
 - `q/k` 必须为 `[B,HK,T,K]`，且二者形状完全一致。
 - `w` 必须为 `[B,HV,T,K]`；`dO/dv/dv2` 必须为 `[B,HV,T,V]`，且 `dO` 与 `dv` 形状完全一致。
 - `g` 与 `gk` 必须二选一：`g=[B,HV,T]`，`gk=[B,HV,T,K]`；门控 dtype 需要为 `FLOAT` 或与 `q/k` 一致。
-- `h0/dht` 如提供，形状为 `[B,HV,K,V]`；`dh` 输出为 `[B,HV,NT,K,V]`。
+- `h0/dht` 如提供，形状为 `[N,HV,K,V]`；定长模式下 `N=B`，变长模式下 `N=len(cu_seqlens)-1`。`dh0` 与状态同形，`dh` 输出为 `[B,HV,NT,K,V]`。
 - `q/k` 与 `w/dO/dv/g` 的 `B`、`T` 必须一致；`HV % HK == 0`。
 - tiling 要求 `K=128`，`V` 支持 `128/256`，`chunk_size` 仅支持 `64/128`。
 - 变长模式下 `cu_seqlens` 与 `chunk_indices` 必须同时提供，`chunk_indices` 长度为正偶数，且 `B=1`。

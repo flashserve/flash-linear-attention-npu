@@ -30,14 +30,18 @@ class ChunkGatedDeltaRuleBwdDhuVector {
 public:
     __aicore__ inline ChunkGatedDeltaRuleBwdDhuVector() = default;
 
-    __aicore__ inline void Init(GM_ADDR q, GM_ADDR gate, GM_ADDR dv, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR dh,
-                                GM_ADDR dh0, GM_ADDR dv2, GM_ADDR workspace,
+    __aicore__ inline void Init(GM_ADDR q, GM_ADDR gate, GM_ADDR dv, GM_ADDR dht, GM_ADDR cuSeqlens,
+                                GM_ADDR chunkIndices, GM_ADDR dh, GM_ADDR dh0, GM_ADDR dv2, GM_ADDR workspace,
                                 const ChunkGatedDeltaRuleBwdDhuTilingData *__restrict tilingData,
                                 AscendC::TPipe *pipe)
     {
         qGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(q));
         gateGm_.SetGlobalBuffer(reinterpret_cast<__gm__ GT *>(gate));
         dvGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dv));
+        if (dht != nullptr) {
+            dhtGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dht));
+            hasDht_ = true;
+        }
         cuSeqlens_ = cuSeqlens;
         chunkIndices_ = chunkIndices;
         dhGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dh));
@@ -180,7 +184,14 @@ public:
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2Event_[stateIdx]);
                     AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stateMte3ToMte2Event_[stateIdx]);
                     AscendC::LocalTensor<float> stateFp32 = stateBuf_[stateIdx];
-                    AscendC::Duplicate(stateFp32, 0.0f, elems);
+                    if (hasDht_) {
+                        const uint32_t dhtIdx = CopyInRows(
+                            dhtGm_, qInputBuf_[curQInputPingPong_], StateOffset(seqIdx, hvBase + headOffset, rowOffset),
+                            elems);
+                        CastInputRows(stateFp32, qInputBuf_[dhtIdx], elems, dhtIdx);
+                    } else {
+                        AscendC::Duplicate(stateFp32, 0.0f, elems);
+                    }
                     AscendC::PipeBarrier<PIPE_V>();
                     CopyOutStateRows(stateIdx, stateFp32, StateWorkspaceFloatOffset(workspaceBase, rowOffset), elems);
                     curStatePingPong_ ^= 1U;
@@ -442,20 +453,7 @@ public:
                     const int64_t workspaceSlot = windowStartSlot + headOffset;
                     const int64_t workspaceBase = WorkspaceBase(coreIdx, workspaceSlot);
                     const int64_t hv = hvBase + headOffset;
-                    const int64_t b = isVariable_ != 0 ? 0 : seqIdx;
-                    int64_t outputChunkIdx = 0;
-                    if (isVariable_ != 0) {
-                        outputChunkIdx = seqInfo.outputChunkBase;
-                        if (outputChunkIdx >= totalChunkNum_ ||
-                            !ChunkIndexMatches(chunkIndices_, outputChunkIdx, seqIdx, 0)) {
-                            outputChunkIdx = FindVarlenChunkOutputIdx(chunkIndices_, *tiling_, seqIdx, 0);
-                        }
-                        if (outputChunkIdx < 0) {
-                            continue;
-                        }
-                    }
-
-                    const int64_t dh0Base = DhOffset(b, hv, outputChunkIdx);
+                    const int64_t dh0Base = StateOffset(seqIdx, hv, 0);
                     for (int64_t rowOffset = 0; rowOffset < K_; rowOffset += vecRow_) {
                         const int64_t curRows = Min(vecRow_, K_ - rowOffset);
                         const uint32_t elems = static_cast<uint32_t>(curRows * V_);
@@ -626,6 +624,11 @@ private:
         return ((b * HV_ + hv) * totalChunkNum_ + chunkIdx) * K_ * V_;
     }
 
+    __aicore__ inline int64_t StateOffset(int64_t seqIdx, int64_t hv, int64_t row) const
+    {
+        return ((seqIdx * HV_ + hv) * K_ + row) * V_;
+    }
+
     __aicore__ inline int64_t WorkspaceBase(int64_t coreIdx, int64_t workspaceSlot) const
     {
         return (coreIdx * WORKSPACE_BUFFER_COUNT + workspaceSlot) * workspaceElemsPerSubBlock_;
@@ -641,6 +644,7 @@ private:
     AscendC::GlobalTensor<DT> qGm_;
     AscendC::GlobalTensor<GT> gateGm_;
     AscendC::GlobalTensor<DT> dvGm_;
+    AscendC::GlobalTensor<DT> dhtGm_;
     AscendC::GlobalTensor<DT> dhGm_;
     AscendC::GlobalTensor<DT> dh0Gm_;
     AscendC::GlobalTensor<DT> dv2Gm_;
@@ -708,6 +712,7 @@ private:
     int64_t isVariable_ = 0;
     float scale_ = 1.0f;
     bool hasDh0_ = false;
+    bool hasDht_ = false;
     int64_t dh0ClearCoreNum_ = 0;
     int64_t dh0ClearElemsPerCore_ = 0;
     int64_t dh0ClearTailElems_ = 0;

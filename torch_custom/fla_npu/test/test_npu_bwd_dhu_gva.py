@@ -54,6 +54,7 @@ class BwdDhuCase:
     varlen: bool = True
     cu_seqlens_len: Optional[int] = None
     dtype: str = "bf16"
+    with_state: bool = False
     supported: bool = True
     skip_reason: str = ""
 
@@ -66,6 +67,10 @@ class BwdDhuCase:
 
 # 覆盖泛化表中的 fixed/varlen、V=128/256、chunk=64/128 和 MHA/GVA 组合。
 CASES = [
+    BwdDhuCase("smoke_fixed_state_t128_v128", 1, 2, 4, 128, v_dim=128, chunk_size=64,
+               varlen=False, with_state=True),
+    BwdDhuCase("smoke_varlen_state_t128_v128", 1, 2, 4, 128, v_dim=128, chunk_size=64,
+               cu_seqlens_len=3, with_state=True),
     BwdDhuCase("smoke_varlen_t256_v256", 1, 16, 32, 256, chunk_size=64, cu_seqlens_len=5),
     BwdDhuCase("smoke_fixed_mha_t257_v128", 1, 4, 4, 257, v_dim=128, chunk_size=128,
                varlen=False),
@@ -122,8 +127,14 @@ def _build_inputs(case: BwdDhuCase, seed: int = 0):
         segment_max = max(128, math.ceil(case.tokens / sequence_count))
         cu_seqlens = generate_cu_seqlens(case.cu_seqlens_len, case.tokens, seg_min=1, seg_max=segment_max)
         chunk_indices = prepare_chunk_indices(cu_seqlens, case.chunk_size)
+    sequence_num = case.batch if cu_seqlens is None else len(cu_seqlens) - 1
+    h0 = dht = None
+    if case.with_state:
+        state_shape = (sequence_num, case.v_h, case.k_dim, case.v_dim)
+        h0 = torch.zeros(state_shape, dtype=ktype)
+        dht = (torch.rand(state_shape, dtype=torch.float32) * 2e-2 - 1e-2).to(ktype)
     scale = scale_for_compute_dtype(effective_scale(1.0 / math.sqrt(case.k_dim), case.k_dim), ktype)
-    return q, k, w, do, dv, g, cu_seqlens, chunk_indices, scale
+    return q, k, w, do, dv, g, h0, dht, cu_seqlens, chunk_indices, scale
 
 
 def run_case(case: BwdDhuCase, device: int, out_root: str, seed: int = 0) -> tuple[str, str]:
@@ -137,31 +148,38 @@ def run_case(case: BwdDhuCase, device: int, out_root: str, seed: int = 0) -> tup
         flush=True,
     )
 
-    q, k, w, do, dv, g, cu_seqlens, chunk_indices, scale = _build_inputs(case, seed=seed)
+    q, k, w, do, dv, g, h0, dht, cu_seqlens, chunk_indices, scale = _build_inputs(case, seed=seed)
 
-    dh_fp64, _, dv2_fp64 = chunk_gated_delta_rule_bwd_dhu_cpu(
-        q, k, w, do, dv, cu_seqlens, chunk_indices, g=g, scale=scale,
+    dh_fp64, dh0_fp64, dv2_fp64 = chunk_gated_delta_rule_bwd_dhu_cpu(
+        q, k, w, do, dv, cu_seqlens, chunk_indices, g=g, h0=h0, dht=dht, scale=scale,
         chunk_size=case.chunk_size, golden_mode="fp64",
     )
-    dh_npu_bench, _, dv2_npu_bench = chunk_gated_delta_rule_bwd_dhu_cpu(
-        q, k, w, do, dv, cu_seqlens, chunk_indices, g=g, scale=scale,
+    dh_npu_bench, dh0_npu_bench, dv2_npu_bench = chunk_gated_delta_rule_bwd_dhu_cpu(
+        q, k, w, do, dv, cu_seqlens, chunk_indices, g=g, h0=h0, dht=dht, scale=scale,
         chunk_size=case.chunk_size, golden_mode="npu",
     )
 
-    dh_npu, _, dv2_npu = ascendc_ops.npu_chunk_gated_delta_rule_bwd_dhu(
+    dh_npu, dh0_npu, dv2_npu = ascendc_ops.npu_chunk_gated_delta_rule_bwd_dhu(
         q.npu(), k.npu(), w.npu(), do.npu(), dv.npu(),
         scale=scale,
         chunk_size=case.chunk_size,
         g=g.npu(),
         gK=None,
-        h0=None,
-        dht=None,
+        h0=None if h0 is None else h0.npu(),
+        dht=None if dht is None else dht.npu(),
         cu_seqlens=cu_seqlens,
         chunk_indices=chunk_indices,
     )
 
     dh_ok, _, _ = _dual_check("dh", dh_npu, dh_fp64, dh_npu_bench)
     dv2_ok, _, _ = _dual_check("dv2", dv2_npu, dv2_fp64, dv2_npu_bench)
+    dh0_ok = True
+    if dh0_npu is not None:
+        if tuple(dh0_npu.shape) != tuple(h0.shape):
+            dh0_ok = False
+            print(f"[dh0] shape FAIL: got={tuple(dh0_npu.shape)} expected={tuple(h0.shape)}", flush=True)
+        else:
+            dh0_ok, _, _ = _dual_check("dh0", dh0_npu, dh0_fp64, dh0_npu_bench)
 
     case_dir = os.path.join(out_root, case.name)
     if os.environ.get("BWD_HU_SAVE_OUT", "1") == "1":
@@ -169,16 +187,19 @@ def run_case(case: BwdDhuCase, device: int, out_root: str, seed: int = 0) -> tup
         torch.save({
             "case": case.name,
             "dh_npu": dh_npu.cpu(),
+            "dh0_npu": None if dh0_npu is None else dh0_npu.cpu(),
             "dv2_npu": dv2_npu.cpu(),
             "dh_fp64": dh_fp64.cpu(),
+            "dh0_fp64": None if dh0_fp64 is None else dh0_fp64.cpu(),
             "dh_npu_bench": dh_npu_bench.cpu(),
             "dv2_fp64": dv2_fp64.cpu(),
             "dv2_npu_bench": dv2_npu_bench.cpu(),
         }, os.path.join(case_dir, "outputs.pt"))
 
-    if dh_ok and dv2_ok:
-        return "PASS", f"dh=PASS dv2=PASS | out={case_dir}"
-    return "FAIL", f"dh={'PASS' if dh_ok else 'FAIL'} dv2={'PASS' if dv2_ok else 'FAIL'}"
+    if dh_ok and dh0_ok and dv2_ok:
+        return "PASS", f"dh=PASS dh0=PASS dv2=PASS | out={case_dir}"
+    return "FAIL", (f"dh={'PASS' if dh_ok else 'FAIL'} dh0={'PASS' if dh0_ok else 'FAIL'} "
+                    f"dv2={'PASS' if dv2_ok else 'FAIL'}")
 
 
 def main():
