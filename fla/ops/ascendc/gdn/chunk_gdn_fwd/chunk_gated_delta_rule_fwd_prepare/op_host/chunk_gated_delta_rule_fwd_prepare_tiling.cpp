@@ -237,7 +237,7 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
     if (ws == nullptr) {
         return ge::GRAPH_FAILED;
     }
-    // Per-core user WS: gmWsY 16 KiB + gmWsA 4×16 KiB, padded to 128 KiB.
+    // Per-core user WS: gmWsY 4×16 KiB + gmWsA 4×16 KiB = 128 KiB.
     // Must match kWsPerCoreBytes.
     ws[0] = sysWorkspaceSize + static_cast<size_t>(coreNum) * 128 * 1024;
     return ge::GRAPH_SUCCESS;
