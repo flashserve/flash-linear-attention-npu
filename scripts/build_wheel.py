@@ -78,9 +78,8 @@ def _native_build_args(args: argparse.Namespace) -> list:
     - --sanitizer    -> ccec_g,sanitizer,dump_cce（插桩并保留可定位的 CCE 产物）
     - --oom          -> oom（kernel 侧 OOM 检查）
 
-    同一组值会同时走 build.sh 的 --op_debug_config 和 --bisheng_flags：
-    前者通过 add_opc_config 生成真实的 -g/-sanitizer 编译选项，后者保留
-    asc_opc 的调试配置。只设置后者不会保证 Bisheng 启用 sanitizer 插桩。
+    配置统一通过 build.sh 的 --bisheng_flags 下发。V2 构建链会同时将其
+    映射为 -g/-sanitizer 编译选项；旧构建链仍沿用 asc_opc 调试配置。
     """
     configs = []
     if args.debug:
@@ -105,14 +104,8 @@ def _assemble_build_args(args: argparse.Namespace) -> str:
     build_args = _drop_option(build_args, "--bisheng_flags")
     build_args = _drop_option(build_args, "--op_debug_config")
     merged = list(dict.fromkeys(native + existing))
-    values = ",".join(merged)
-    # build.sh 的两个入口拼写不同：OP_DEBUG_CONFIG 使用空格，
-    # BISHENG_FLAGS 只识别等号。两条链缺一不可。
-    tail = (
-        f"--op_debug_config {values} --bisheng_flags={values}"
-        if values
-        else ""
-    )
+    # 只下发旧构建链原本支持的入口；V2 编译选项由 CMake 映射生成。
+    tail = f"--bisheng_flags={','.join(merged)}" if merged else ""
     return f"{build_args} {tail}".strip()
 
 

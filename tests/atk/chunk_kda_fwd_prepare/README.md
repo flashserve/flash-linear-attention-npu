@@ -118,8 +118,8 @@ FLA_NPU_SOC="$KDA_PREPARE_ATK_SOC" FLA_NPU_OPS=chunk_kda_fwd_prepare \
   python3 scripts/build_wheel.py --sanitizer --wheel-dir dist
 ```
 
-`--sanitizer` 会同时经 `--op_debug_config` 生成 `-g/-sanitizer`
-Bisheng 编译选项，并保留 `asc_opc` 的 sanitizer 调试配置。仅出现
+`--sanitizer` 通过 `--bisheng_flags` 保留 `asc_opc` 调试配置；V2 构建链还会
+将同一配置映射为 `-g/-sanitizer` Bisheng 编译选项。仅出现
 `asc_opc --op_debug_config=sanitizer` 不代表对象已经插桩；正式矩阵仍会用
 `nm` 检查安装包内每个 kernel 对象的 sanitizer 符号。
 

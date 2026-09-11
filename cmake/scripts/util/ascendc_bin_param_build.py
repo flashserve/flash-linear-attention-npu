@@ -511,15 +511,23 @@ check_stop
 
         print(f"bisheng_flags is: {bisheng_flags}")
 
-        debug_configs = set(filter(None, bisheng_flags.split(',')))
-        debug_configs.update(self.op_debug_config)
-        if {'sanitizer', 'check_flag_sanitizer'} & debug_configs:
+        # BISHENG_FLAGS 和 V2 配置文件可能携带同一组选项。这里统一合并，
+        # 保证 asc_opc 只收到一个 --op_debug_config，避免后一个参数覆盖前一个。
+        debug_configs = []
+        config_sources = (
+            filter(None, bisheng_flags.split(',')),
+            sorted(self.op_debug_config),
+        )
+        for configs in config_sources:
+            for config in configs:
+                if config not in debug_configs:
+                    debug_configs.append(config)
+        if {'sanitizer', 'check_flag_sanitizer'} & set(debug_configs):
             # sanitizer 结果必须能映射回 CCE 指令，因此强制保留一级调试信息。
             build_cmd_var += " --op_debug_level=1"
 
-        if bisheng_flags:
-            # 如果 bisheng_flags 非空，直接使用其值
-            build_cmd_var += f" --op_debug_config={bisheng_flags}"
+        if debug_configs:
+            build_cmd_var += f" --op_debug_config={','.join(debug_configs)}"
 
         enable_tiling_keys = False
 
@@ -532,10 +540,6 @@ check_stop
             tiling_key_str = ','.join([str(_key) for _key in tiling_keys_list])
             build_cmd_var += f' --tiling_key="{tiling_key_str}"'
             enable_tiling_keys = True
-
-        if self.op_debug_config:
-            op_debug_str = ','.join([str(_key) for _key in list(self.op_debug_config)])
-            build_cmd_var += f' --op_debug_config={op_debug_str}'
 
         if super_mode and self.op_super_config:
             op_super_config_str = ' '.join([str(_key) for _key in list(self.op_super_config)])

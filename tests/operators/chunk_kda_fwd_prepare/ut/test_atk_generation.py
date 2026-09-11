@@ -25,6 +25,7 @@ GENERATOR_PATH = (
 ATK_DIR = GENERATOR_PATH.parent
 VERIFIER_PATH = ATK_DIR / "scripts/verify_matrix.py"
 BUILD_WHEEL_PATH = ROOT / "scripts/build_wheel.py"
+BIN_PARAM_BUILDER_PATH = ROOT / "cmake/scripts/util/ascendc_bin_param_build.py"
 
 
 def _load_generator():
@@ -67,6 +68,27 @@ def _load_build_wheel():
 
 
 BUILD_WHEEL = _load_build_wheel()
+
+
+def _load_bin_param_builder():
+    module_name = "chunk_kda_fwd_prepare_bin_param_builder_test"
+    util_dir = str(BIN_PARAM_BUILDER_PATH.parent)
+    sys.path.insert(0, util_dir)
+    try:
+        spec = importlib.util.spec_from_file_location(
+            module_name, BIN_PARAM_BUILDER_PATH
+        )
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"cannot load {BIN_PARAM_BUILDER_PATH}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        sys.path.remove(util_dir)
+
+
+BIN_PARAM_BUILDER = _load_bin_param_builder()
 
 
 def _runtime_manifest_fixture(
@@ -126,7 +148,6 @@ class ChunkKdaFwdPrepareAtkGenerationTest(unittest.TestCase):
         )
         self.assertEqual(
             BUILD_WHEEL._assemble_build_args(args),
-            "--op_debug_config ccec_g,sanitizer,dump_cce "
             "--bisheng_flags=ccec_g,sanitizer,dump_cce",
         )
         generator = (
@@ -138,6 +159,12 @@ class ChunkKdaFwdPrepareAtkGenerationTest(unittest.TestCase):
         self.assertIn('list(APPEND _OPC_CONFIG "-g")', cmake_helpers)
         self.assertIn('STREQUAL "sanitizer"', cmake_helpers)
         self.assertIn('list(APPEND _OPC_CONFIG "-sanitizer")', cmake_helpers)
+        custom_build = (ROOT / "cmake/custom_build.cmake").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "CONFIG ${OP_DEBUG_CONFIG} ${BISHENG_FLAGS}", custom_build
+        )
 
     def test_sanitizer_build_preserves_and_deduplicates_explicit_configs(self):
         args = SimpleNamespace(
@@ -152,8 +179,44 @@ class ChunkKdaFwdPrepareAtkGenerationTest(unittest.TestCase):
         values = "ccec_g,sanitizer,dump_cce,oom,dump_bin"
         self.assertEqual(
             BUILD_WHEEL._assemble_build_args(args),
-            f"-O3 --op_debug_config {values} --bisheng_flags={values}",
+            f"-O3 --bisheng_flags={values}",
         )
+
+    def test_final_asc_opc_command_merges_debug_configs_once(self):
+        builder = object.__new__(BIN_PARAM_BUILDER.BinParamBuilder)
+        builder.soc = "ascend950"
+        builder.op_type = "ChunkKdaFwdPrepare"
+        builder.op_file = "chunk_kda_fwd_prepare"
+        builder.op_intf = "chunk_kda_fwd_prepare"
+        builder.tiling_keys = set()
+        builder.op_debug_config = {"dump_bin", "dump_cce"}
+        builder.op_super_config = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            builder.out_path = tmpdir
+            with mock.patch.dict(os.environ, {"CI_MODE": "TRUE"}, clear=False):
+                with mock.patch.object(
+                    BIN_PARAM_BUILDER.BinParamBuilder,
+                    "_generate_check_result",
+                    return_value="",
+                ):
+                    builder._write_build_cmd(
+                        "params.json",
+                        "kernel_bin",
+                        0,
+                        tmpdir,
+                        "ccec_g,sanitizer,dump_cce,oom",
+                    )
+            command = (
+                Path(tmpdir) / "ChunkKdaFwdPrepare-chunk_kda_fwd_prepare-0.sh"
+            ).read_text(encoding="utf-8")
+
+        self.assertEqual(command.count("--op_debug_config="), 1)
+        self.assertIn(
+            "--op_debug_config=ccec_g,sanitizer,dump_cce,oom,dump_bin",
+            command,
+        )
+        self.assertIn("--op_debug_level=1", command)
 
     def test_generation_config_comes_from_canonical_manifest(self):
         manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
