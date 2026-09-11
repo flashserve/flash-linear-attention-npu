@@ -259,6 +259,19 @@ class ChunkKdaFwdPrepareAtkGenerationTest(unittest.TestCase):
         self.assertIn("if not with_output:", source)
         self.assertIn("output.detach().cpu()", source)
 
+    def test_timed_atk_scopes_use_single_process_scheduling(self):
+        source = (ROOT / "tests/atk/run_test_cpu.sh").read_text(
+            encoding="utf-8"
+        )
+        accuracy = source.split("if should_run accuracy; then", 1)[1].split(
+            "if should_run performance; then", 1
+        )[0]
+        determinism = source.split("if should_run determinism; then", 1)[1].split(
+            "if should_run mssanitizer; then", 1
+        )[0]
+        self.assertIn("-sp", accuracy)
+        self.assertIn("-sp", determinism)
+
     def test_matrix_verifier_requires_matching_host_and_launch_keys(self):
         key = 8391178
         log = (

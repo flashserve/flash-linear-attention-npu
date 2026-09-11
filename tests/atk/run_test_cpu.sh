@@ -401,6 +401,7 @@ if should_run accuracy; then
       -p "./executor_${OP}.py" \
       "${CASE_RANGE_ARGS[@]}" \
       "${GM_INIT_ARGS[@]}" \
+      -sp \
       -to "$ATK_TIMEOUT"
   log_info "完成精度与 NaN 检测"
   record_ran_type accuracy
@@ -432,6 +433,7 @@ if should_run determinism; then
       -p "executor_${OP}.py" \
       --task accuracy_dc \
       --dc_loop_nums "$DC_LOOP_NUMS" \
+      -sp \
       -to "$DC_TIMEOUT" \
       "${CASE_RANGE_ARGS[@]}"
   log_info "完成确定性测试"
