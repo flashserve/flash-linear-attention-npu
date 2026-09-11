@@ -162,9 +162,10 @@ jobs:
             };
 
             if (context.eventName === 'workflow_dispatch') {
-              prNumber = Number(core.getInput('pr_number', { required: true }));
-              ciMode = core.getInput('ci_mode') || 'quick';
-              ops = core.getInput('ops') || '';
+              const workflowInputs = context.payload.inputs || {};
+              prNumber = Number(workflowInputs.pr_number);
+              ciMode = workflowInputs.ci_mode || 'quick';
+              ops = workflowInputs.ops || '';
             } else {
               prNumber = context.payload.issue.number;
               const body = (context.payload.comment.body || '').trim();
