@@ -38,9 +38,12 @@
  * Stage1 ping then pong (Set taskIdx after k' L1, owners only). AIC Wait
  * that flag, kkt, then Set every sibling id (PIPE_FIX) so Stage3 can run.
  * After Stage3 L1 writes, AIV Set taskIdx+4; AIC Wait that (4, 21, 6, 23).
- * Stage4 prefills I@I into four L0C slots before Wait Stage3, then
- * LeafLeft@NegL ping-pong on L0A/B after Wait. Stage4 is pure AIC: the
- * pack's Stage4 tasks finish before any Stage5. Stage6
+ * Stage4 prefills I@I into four L0C slots before Wait Stage3 (event
+ * bank=t&1, Wait M_FIX after each MMAD so Acc never sees a live Cube
+ * write). After Wait Stage3, LeafLeft@NegL accumulates on P L0 banks;
+ * Dump(t-1) overlaps Acc(t). Each task has its own gmWsY slot so Dump
+ * Fixpipe cannot overwrite an in-flight MTE2 copy. Events 0/1 only.
+ * Stage4 is pure AIC: the pack's Stage4 tasks finish before any Stage5. Stage6
  * is AIV after Stage3 (same 0,2 / 1,3 ping-pong). It reads k'/v from GM
  * and resident g'/β, so it does not wait Stage4/5. vb/kbg stay bf16 ND,
  * then DataCopy (64,1,srcGap,0) into L1 NZ with C0=16 (not fp32 C0=8).
@@ -79,8 +82,9 @@ public:
         GM_ADDR userWs = GetUserWorkspace(workspace);
         const uint32_t wsBase = static_cast<uint32_t>(coreIdx) * kWsPerCoreBytes;
         if (userWs != nullptr) {
-            gmWsY.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(userWs + wsBase));
-            gmWsA.SetGlobalBuffer(reinterpret_cast<__gm__ InDtype *>(userWs + wsBase + kWsYBytes),
+            gmWsY.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(userWs + wsBase),
+                                  kWsYSlots * kWsYElems);
+            gmWsA.SetGlobalBuffer(reinterpret_cast<__gm__ InDtype *>(userWs + wsBase + kWsYTotalBytes),
                                   kWsASlots * kWsAElems);
         } else {
             gmWsY.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(uOut));
@@ -582,9 +586,12 @@ public:
     }
 
     // ========================= Stage 4 =========================
-    // Y = I + LeafLeft @ (-L). Prefill I@I into l0CTask[0..nThis) with one
-    // L0A/B Load of I, then after Wait Stage3 accumulate LeafLeft@NegL with
-    // L0A/B ping-pong so MTE1 overlaps Cube M. Dump stays serial on gmWsY.
+    // Y = I + LeafLeft @ (-L). Prefill loads resident I once and MMADs I@I
+    // into each task's L0C slot before Wait Stage3 (hidden under Vector).
+    // Event bank=t&1; Wait M_FIX after each I@I so Acc Wait FIX_M(bank)
+    // is that slot's Cube-idle credit, not ProcessAic's init FIX_M(1).
+    // Acc uses P L0 banks (ping keeps I). Dump(t-1) overlaps Acc(t);
+    // each task Fixpipes into its own gmWsY slot.
     __aicore__ inline void Stage4_PrefillI(int64_t nThis)
     {
         const int32_t bt = static_cast<int32_t>(chunkSize);
@@ -594,10 +601,12 @@ public:
         WaitFlag<HardEvent::M_MTE1>(0);
         LoadL1NzToL0AB<float>(l1I, l1I, l0Af, l0Bf, bt, bt, bt, true, false, 0);
         for (int64_t t = 0; t < nThis; ++t) {
-            MmadL0ABToL0C<float>(l0Af, l0Bf, l0CTask[t], bt, bt, bt, true, 0);
-            SetFlag<HardEvent::FIX_M>(0);
+            const uint8_t bank = static_cast<uint8_t>(t & 1);
+            MmadL0ABToL0C<float>(l0Af, l0Bf, l0CTask[t], bt, bt, bt, true, bank);
+            SetFlag<HardEvent::M_FIX>(bank);
+            WaitFlag<HardEvent::M_FIX>(bank);
+            SetFlag<HardEvent::FIX_M>(bank);
         }
-        SetFlag<HardEvent::M_FIX>(0);
         SetFlag<HardEvent::M_MTE1>(0);
     }
 
@@ -608,10 +617,10 @@ public:
         WaitFlag<HardEvent::M_MTE1>(bank);
         if (bank == 0) {
             MatmulToL0C<float>(l1LeafLeft[taskIdx], l1NegL[taskIdx], l0AfP, l0BfP, l0CTask[taskIdx], bt, bt, bt, false,
-                               true, true, bank);
+                               true, true, 0);
         } else {
             MatmulToL0C<float>(l1LeafLeft[taskIdx], l1NegL[taskIdx], l0AfP1, l0BfP1, l0CTask[taskIdx], bt, bt, bt, false,
-                               true, true, bank);
+                               true, true, 1);
         }
         SetFlag<HardEvent::M_FIX>(bank);
         SetFlag<HardEvent::M_MTE1>(bank);
@@ -621,11 +630,11 @@ public:
     {
         const uint8_t bank = static_cast<uint8_t>(taskIdx & 1);
         WaitFlag<HardEvent::M_FIX>(bank);
-        FixpipeL0cToGmNzCs(gmWsY, l0CTask[taskIdx], kChunk64);
+        FixpipeL0cToGmNzCs(gmWsY[WsYOffset(taskIdx)], l0CTask[taskIdx], kChunk64);
         SetFlag<HardEvent::FIX_M>(bank);
         SetFlag<HardEvent::FIX_MTE2>(bank);
         WaitFlag<HardEvent::FIX_MTE2>(bank);
-        CopyGmNzToL1Fp32(l1Y[taskIdx], gmWsY, kChunk64);
+        CopyGmNzToL1Fp32(l1Y[taskIdx], gmWsY[WsYOffset(taskIdx)], kChunk64);
         NotifyAivStage4Done(taskIdx);
         SetFlag<HardEvent::MTE2_MTE1>(taskIdx);
     }
@@ -633,8 +642,7 @@ public:
     // ========================= Stage 5 =========================
     // A = LeafLeft + Y @ LeafRight. tmp = I @ LeafLeft (init) then
     // Y @ LeafRight accumulate. Intra-task second Load uses L0 [32,48)/[48,64)
-    // so MTE1 overlaps the first Cube M. Inter-task: four live L0C slots so
-    // Dump(t-1) Fixpipe overlaps Compute(t).
+    // so MTE1 overlaps the first Cube M. Dump stays per-task after both MMADs.
     __aicore__ inline void Stage5_Compute(int64_t taskIdx)
     {
         const int32_t bt = static_cast<int32_t>(chunkSize);
@@ -908,7 +916,6 @@ public:
             Stage4_PrefillI(nThis);
             if (nThis > 0) {
                 WaitAivStage3Done(0);
-                WaitFlag<HardEvent::M_FIX>(0);
                 Stage4_AccIssue(0);
                 for (int64_t t = 1; t < nThis; ++t) {
                     WaitAivStage3Done(t);
@@ -918,16 +925,12 @@ public:
                 Stage4_Dump(nThis - 1);
             }
             if (nThis > 0) {
-                WaitFlag<HardEvent::MTE2_MTE1>(0);
-                Stage5_Compute(0);
-                for (int64_t t = 1; t < nThis; ++t) {
+                for (int64_t t = 0; t < nThis; ++t) {
                     WaitFlag<HardEvent::MTE2_MTE1>(t);
                     Stage5_Compute(t);
-                    const int64_t prev = PackWorkId(base, nThis, t - 1);
-                    Stage5_Dump(GetChunkRange(*this, gmCu, gmIdx, prev / HV), prev % HV, t - 1);
+                    const int64_t workId = PackWorkId(base, nThis, t);
+                    Stage5_Dump(GetChunkRange(*this, gmCu, gmIdx, workId / HV), workId % HV, t);
                 }
-                const int64_t last = PackWorkId(base, nThis, nThis - 1);
-                Stage5_Dump(GetChunkRange(*this, gmCu, gmIdx, last / HV), last % HV, nThis - 1);
             }
             for (int64_t t = 0; t < nThis; ++t) {
                 const int64_t workId = PackWorkId(base, nThis, t);

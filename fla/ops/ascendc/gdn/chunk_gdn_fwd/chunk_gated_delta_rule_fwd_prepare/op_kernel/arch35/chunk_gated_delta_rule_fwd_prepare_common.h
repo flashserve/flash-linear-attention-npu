@@ -429,6 +429,11 @@ constexpr uint32_t kBytesK128 = 64 * 128 * 2;
 constexpr uint32_t kBytesVb256 = 64 * 256 * 2;
 constexpr uint32_t kBytesFp32Nz64 = 64 * 64 * 4;
 constexpr uint32_t kWsYBytes = 16 * kPrepareKb;
+// Four Y slots so Acc/Dump pipeline Dump(t) Fixpipe does not overwrite
+// Dump(t-1) MTE2 still reading gmWsY. 64x64 fp32 NZ is 16 KiB.
+constexpr uint32_t kWsYSlots = 4;
+constexpr uint32_t kWsYElems = kWsYBytes / sizeof(float);
+constexpr uint32_t kWsYTotalBytes = kWsYSlots * kWsYBytes;
 // One 64x64 bf16 ND tile is 8 KiB; slot kept at 16 KiB. Four slots so pack
 // tasks 0..3 do not share gmWsA (Stage5 Fixpipe vs in-flight MTE2 Copy).
 constexpr uint32_t kWsABytes = 16 * kPrepareKb;
@@ -436,6 +441,11 @@ constexpr uint32_t kWsAElems = kWsABytes / 2;
 constexpr uint32_t kWsASlots = 4;
 constexpr uint32_t kWsATotalBytes = kWsASlots * kWsABytes;
 constexpr uint32_t kWsPerCoreBytes = 128 * kPrepareKb;
+
+__aicore__ inline int64_t WsYOffset(int64_t taskIdx)
+{
+    return taskIdx * static_cast<int64_t>(kWsYElems);
+}
 
 __aicore__ inline int64_t WsAOffset(int64_t taskIdx)
 {
