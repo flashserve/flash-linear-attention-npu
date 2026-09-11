@@ -102,28 +102,36 @@ python3 -m unittest tests.operators.chunk_kda_fwd_prepare.ut.test_atk_generation
 
 ## 执行方式
 
-200 条精度和 432 条确定性/内存矩阵使用可恢复分片入口。ATK 的 `-to` 从整批
-任务下发时开始计时，一次提交完整矩阵会让仍在队列中的 case 被误判超时，因此每个
-分片都启动 fresh ATK 进程；单 case 超时上限为 60 秒。正式精度矩阵强制开启 GM
-预填充，确定性矩阵强制执行 50 轮。
+200 条精度和 432 条确定性/内存矩阵使用可恢复分片入口。每个 ATK 进程只下发一条
+case，并使用多进程任务模式，使 `-to 60` 真实约束当前 case，不把排队时间算入其他
+case。正式精度矩阵关闭 ATK 的整卡 GM 预填充；该步骤不受单进程 `-to` 约束，在大
+显存设备上不能满足 60 秒合同。未初始化、越界、竞争和同步问题由四种 sanitizer 的
+完整 432-key 矩阵覆盖；确定性矩阵固定执行 50 轮。
 
 内存检查必须先安装通过 `--sanitizer` 构建的单算子 wheel。该选项同时启用
 `sanitizer`、`dump_cce` 和 `--op_debug_level=1`：
 
 ```bash
-FLA_NPU_OPS=chunk_kda_fwd_prepare \
+# A2 使用 ascend910b，A3 使用 ascend910_93，A5 使用 ascend950
+export KDA_PREPARE_ATK_SOC=ascend950
+FLA_NPU_SOC="$KDA_PREPARE_ATK_SOC" FLA_NPU_OPS=chunk_kda_fwd_prepare \
   python3 scripts/build_wheel.py --sanitizer --wheel-dir dist
 ```
+
+`FLA_NPU_SOC` 必须与后续 `KDA_PREPARE_ATK_SOC` 完全一致；安装该 wheel 并加载其
+custom OPP 后再执行内存矩阵，禁止用其他平台或普通优化包代替 sanitizer 包。正式
+矩阵必须显式设置 `KDA_PREPARE_ATK_SOC`，不接受 `auto`；该值会同时约束运行时
+kernel 指纹和实际选中物理卡的 SoC。
 
 `run_matrix.sh` 会在下发前逐个检查 metadata 引用的 `.o` 含 sanitizer 符号；运行后
 从工具启动日志提取实际 kernel 名中的 TilingKey，并要求其集合与该分片的期望 key
 完全一致，同时拒绝任何目标 kernel 的 `No active sanitizer tool` 记录。
 
 ```bash
-# 200 条精度，默认 8 x 25
+# 200 条精度，每次独立执行 1 条
 bash tests/atk/chunk_kda_fwd_prepare/scripts/run_matrix.sh accuracy 0
 
-# 432 个 key，每条重复 50 次，默认 108 x 4
+# 432 个 key，每条重复 50 次，每次独立执行 1 条
 bash tests/atk/chunk_kda_fwd_prepare/scripts/run_matrix.sh determinism 0
 
 # 同一 432-key 矩阵分别执行四种内存/同步检查
@@ -140,6 +148,12 @@ MSS_TOOL=synccheck \
 python3 tests/atk/chunk_kda_fwd_prepare/scripts/verify_matrix.py \
   sanitizer-suite \
   --case-file tests/atk/chunk_kda_fwd_prepare/atk_chunk_kda_fwd_prepare_mss.json \
+  --soc "$KDA_PREPARE_ATK_SOC" \
+  --test-artifact tests/atk/chunk_kda_fwd_prepare/executor_chunk_kda_fwd_prepare.py \
+  --test-artifact tests/atk/chunk_kda_fwd_prepare/chunk_kda_fwd_prepare.yaml \
+  --test-artifact tests/atk/run_test_cpu.sh \
+  --test-artifact tests/atk/chunk_kda_fwd_prepare/scripts/run_matrix.sh \
+  --test-artifact tests/atk/chunk_kda_fwd_prepare/scripts/verify_matrix.py \
   --aggregate <memcheck根目录>/aggregate_summary.json \
   --aggregate <racecheck根目录>/aggregate_summary.json \
   --aggregate <initcheck根目录>/aggregate_summary.json \
@@ -154,10 +168,11 @@ bash tests/atk/run_test_cpu.sh \
   -op=chunk_kda_fwd_prepare -npu_device_id=0 -scope=performance
 ```
 
-分片大小可通过 `KDA_PREPARE_ATK_SHARD_SIZE` 调整，三类超时参数只能设为
-1 到 60 秒，正式确定性矩阵固定执行 50 轮。续跑时同时设置既有
+正式矩阵的分片大小固定为 1，三类超时参数只能设为 1 到 60 秒，正式确定性矩阵固定
+执行 50 轮。续跑时同时设置既有
 `KDA_PREPARE_ATK_MATRIX_ROOT` 和 `KDA_PREPARE_ATK_MATRIX_START`；已有分片只有在
-scope、工具、范围、用例哈希、运行参数、二进制指纹和 case ID 均匹配时才会复用。最终
+scope、工具、范围、用例哈希、运行参数、二进制指纹和 case ID 均匹配，且重新解析的
+原始 xlsx/console/sanitizer 日志与原摘要完全一致时才会复用。最终
 `aggregate_summary.json` 必须显示完整 case 集合闭合且 `passed=true`。
 
 重建三份冻结 JSON：

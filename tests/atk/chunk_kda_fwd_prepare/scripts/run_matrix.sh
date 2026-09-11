@@ -9,20 +9,20 @@ show_help() {
   bash tests/atk/chunk_kda_fwd_prepare/scripts/run_matrix.sh <scope> [device]
 
 scope：
-  accuracy       200 条精度矩阵，默认每片 25 条
-  determinism    432 个 TilingKey 的确定性矩阵，默认每片 4 条
-  mssanitizer    432 个 TilingKey 的内存矩阵，默认每片 4 条
+  accuracy       200 条精度矩阵，每个 ATK 进程只执行 1 条
+  determinism    432 个 TilingKey 的确定性矩阵，每个进程只执行 1 条
+  mssanitizer    432 个 TilingKey 的内存矩阵，每个进程只执行 1 条
 
 环境变量：
   KDA_PREPARE_ATK_MATRIX_ROOT   指定或续跑结果目录
-  KDA_PREPARE_ATK_SHARD_SIZE    覆盖默认分片大小
+  KDA_PREPARE_ATK_SHARD_SIZE    正式矩阵固定为 1
   KDA_PREPARE_ATK_MATRIX_START  从指定 case 继续，默认 0
-  KDA_PREPARE_ATK_SOC           目标 SoC，默认 auto
+  KDA_PREPARE_ATK_SOC           目标 SoC，正式矩阵必须显式指定
   MSS_TOOL                      内存工具，默认 memcheck
   ATK_TIMEOUT/DC_TIMEOUT/MSS_TIMEOUT
                                 单 case 超时，均默认 60 秒
   DC_LOOP_NUMS                  确定性循环次数，正式矩阵固定为 50
-  ATK_GM_INIT_MODE              正式精度矩阵固定为 on
+  ATK_GM_INIT_MODE              正式精度矩阵固定为 off
 EOF
 }
 
@@ -43,12 +43,15 @@ op_dir=$(cd -- "$script_dir/.." && pwd)
 repo_root=$(cd -- "$op_dir/../../.." && pwd)
 runner="$repo_root/tests/atk/run_test_cpu.sh"
 verifier="$script_dir/verify_matrix.py"
-soc=${KDA_PREPARE_ATK_SOC:-auto}
+soc=${KDA_PREPARE_ATK_SOC:-}
 matrix_start=${KDA_PREPARE_ATK_MATRIX_START:-0}
 tool=""
 
 case "$soc" in
-  auto) ;;
+  ""|auto)
+    echo "正式矩阵必须显式设置 KDA_PREPARE_ATK_SOC，不能使用 auto" >&2
+    exit 2
+    ;;
   a2|A2|ascend910b) soc=ascend910b ;;
   a3|A3|ascend910_93) soc=ascend910_93 ;;
   a5|A5|ascend950) soc=ascend950 ;;
@@ -58,15 +61,15 @@ esac
 case "$scope" in
   accuracy)
     case_file="$op_dir/atk_chunk_kda_fwd_prepare.json"
-    default_shard_size=25
+    default_shard_size=1
     ;;
   determinism)
     case_file="$op_dir/atk_chunk_kda_fwd_prepare_mss.json"
-    default_shard_size=4
+    default_shard_size=1
     ;;
   mssanitizer)
     case_file="$op_dir/atk_chunk_kda_fwd_prepare_mss.json"
-    default_shard_size=4
+    default_shard_size=1
     tool=${MSS_TOOL:-memcheck}
     case "$tool" in
       memcheck|racecheck|initcheck|synccheck) ;;
@@ -122,7 +125,7 @@ accuracy_timeout=${ATK_TIMEOUT:-60}
 determinism_timeout=${DC_TIMEOUT:-60}
 sanitizer_timeout=${MSS_TIMEOUT:-60}
 determinism_loops=${DC_LOOP_NUMS:-50}
-accuracy_gm_mode=${ATK_GM_INIT_MODE:-on}
+accuracy_gm_mode=${ATK_GM_INIT_MODE:-off}
 case "$scope" in
   accuracy) validate_timeout ATK_TIMEOUT "$accuracy_timeout" ;;
   determinism) validate_timeout DC_TIMEOUT "$determinism_timeout" ;;
@@ -132,13 +135,17 @@ if [[ "$scope" == "determinism" && "$determinism_loops" != "50" ]]; then
   echo "正式确定性矩阵要求 DC_LOOP_NUMS=50" >&2
   exit 2
 fi
-if [[ "$scope" == "accuracy" && "$accuracy_gm_mode" != "on" ]]; then
-  echo "正式精度矩阵要求 ATK_GM_INIT_MODE=on" >&2
+if [[ "$scope" == "accuracy" && "$accuracy_gm_mode" != "off" ]]; then
+  echo "正式精度矩阵要求 ATK_GM_INIT_MODE=off" >&2
   exit 2
 fi
 
 [[ "$shard_size" =~ ^[1-9][0-9]*$ ]] || {
   echo "KDA_PREPARE_ATK_SHARD_SIZE 必须是正整数" >&2
+  exit 2
+}
+[[ "$shard_size" == "1" ]] || {
+  echo "为保证 ATK 的 60 秒超时逐 case 生效，正式矩阵分片大小固定为 1" >&2
   exit 2
 }
 [[ "$matrix_start" =~ ^[0-9]+$ ]] || {
@@ -170,6 +177,10 @@ fi
   echo "KDA_PREPARE_ATK_MATRIX_START 超出用例总数 $case_count" >&2
   exit 2
 }
+if (( matrix_start < case_count && matrix_start % shard_size != 0 )); then
+  echo "KDA_PREPARE_ATK_MATRIX_START 必须位于当前分片边界" >&2
+  exit 2
+fi
 if (( matrix_start > 0 )) && [[ -z "$matrix_root_override" ]]; then
   echo "从非零 case 续跑时必须指定 KDA_PREPARE_ATK_MATRIX_ROOT" >&2
   exit 2
@@ -181,7 +192,7 @@ case "$scope" in
   accuracy)
     contract_timeout=$accuracy_timeout
     contract_loops=1
-    contract_gm_init=on
+    contract_gm_init=off
     ;;
   determinism)
     contract_timeout=$determinism_timeout
@@ -196,12 +207,20 @@ case "$scope" in
 esac
 
 runtime_manifest="$matrix_root/runtime_manifest.json"
+test_artifacts=(
+  "$op_dir/executor_chunk_kda_fwd_prepare.py"
+  "$op_dir/chunk_kda_fwd_prepare.yaml"
+  "$runner"
+  "$script_dir/run_matrix.sh"
+  "$verifier"
+)
 runtime_args=(
   runtime --case-file "$case_file" --soc "$soc"
-  --test-artifact "$op_dir/executor_chunk_kda_fwd_prepare.py"
-  --test-artifact "$op_dir/chunk_kda_fwd_prepare.yaml"
   --output "$runtime_manifest"
 )
+for artifact in "${test_artifacts[@]}"; do
+  runtime_args+=(--test-artifact "$artifact")
+done
 if [[ "$scope" == "mssanitizer" ]]; then
   runtime_args+=(--require-sanitizer)
 fi
@@ -215,6 +234,7 @@ verifier_common=(
   --runtime-manifest "$runtime_manifest"
   --timeout "$contract_timeout" --loop-nums "$contract_loops"
   --gm-init-mode "$contract_gm_init"
+  --single-process-mode off
 )
 
 require_tiling_args=()
@@ -226,6 +246,26 @@ if [[ "$scope" != "accuracy" ]]; then
   export ASCEND_LOG_SYNC_SAVE=1
   require_tiling_args=(--require-tiling-log)
 fi
+
+# 续跑前先从原始报告和日志重验完整前缀，损坏证据不能带入新矩阵。
+for ((start = 0; start < matrix_start; start += shard_size)); do
+  end=$((start + shard_size))
+  if (( end > matrix_start )); then
+    end=$matrix_start
+  fi
+  shard_root="$matrix_root/shard_${start}_${end}"
+  summary="$shard_root/summary.json"
+  console_log="$shard_root/console.log"
+  [[ -f "$summary" ]] || {
+    echo "续跑前缀缺少完整分片：$shard_root" >&2
+    exit 2
+  }
+  python3 "$verifier" shard \
+    "${verifier_common[@]}" \
+    --shard-root "$shard_root" --console-log "$console_log" \
+    --start "$start" --end "$end" --summary "$summary" \
+    "${require_tiling_args[@]}"
+done
 
 for ((start = matrix_start; start < case_count; start += shard_size)); do
   end=$((start + shard_size))
@@ -255,6 +295,7 @@ for ((start = matrix_start; start < case_count; start += shard_size)); do
     ATK_OUTPUT_ROOT="$shard_root"
     CASE_START="$start"
     CASE_END="$end"
+    ATK_SINGLE_PROCESS=off
   )
   case "$scope" in
     accuracy)
@@ -290,8 +331,12 @@ for ((start = matrix_start; start < case_count; start += shard_size)); do
     "${require_tiling_args[@]}"
 done
 
+aggregate_runtime_args=(--soc "$soc")
+for artifact in "${test_artifacts[@]}"; do
+  aggregate_runtime_args+=(--test-artifact "$artifact")
+done
 python3 "$verifier" aggregate \
-  "${verifier_common[@]}" \
+  "${verifier_common[@]}" "${aggregate_runtime_args[@]}" \
   --matrix-root "$matrix_root" --output "$matrix_root/aggregate_summary.json" \
   "${require_tiling_args[@]}"
 echo "完整矩阵校验通过：$matrix_root"

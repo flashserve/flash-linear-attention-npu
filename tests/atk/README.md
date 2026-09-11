@@ -119,6 +119,7 @@ npu-smi info
 | `FLA_NPU_ENV`          | `fla_npu_transformer` 的 `set_env.bash` 路径；设置后脚本会 source                  |
 | `ATK_OUTPUT_ROOT`      | ATK 输出根目录，默认是算子目录下的`./atk_output`                                     |
 | `ATK_GM_INIT_MODE`     | GM 数据初始化模式，默认`on`；可设 `on/off`                                        |
+| `ATK_SINGLE_PROCESS`   | 是否向 ATK 传入 `-sp`，默认 `on`；设为 `off` 时单 case 超时由 ATK worker 强制执行 |
 | `REQUIRED_ATK_VERSION` | ATK 最低版本要求，默认`26.8.8`；一般无需修改                                         |
 | `ATK_TIMEOUT`          | 精度阶段超时时间，默认`14400`                                                        |
 | `DC_LOOP_NUMS`         | 确定性循环次数，默认`50`                                                             |

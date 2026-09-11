@@ -23,6 +23,7 @@ show_usage() {
   FLA_NPU_ENV                    fla_npu_transformer set_env.bash 路径，设置后 source
   ATK_OUTPUT_ROOT                输出根目录，默认 ./atk_output
   ATK_GM_INIT_MODE               GM 数据初始化模式，默认 on；可设 on/off
+  ATK_SINGLE_PROCESS             是否向 ATK 传 -sp，默认 on；可设 on/off
   ATK_TIMEOUT                    精度阶段超时，默认 14400
   DC_LOOP_NUMS                   确定性循环次数，默认 50（与 ATK 一致）
   DC_TIMEOUT                     确定性阶段超时，默认 3600
@@ -142,21 +143,57 @@ set_case_range_args() {
   fi
 }
 
-# 从 npu-smi 探测真实 SOC，返回 ascend910b/ascend910_93/ascend950；探测失败返回空。
+resolve_physical_device_id() {
+  local logical_id="$1" visible physical_id
+  [[ "$logical_id" =~ ^[0-9]+$ ]] || return 1
+  visible="${ASCEND_RT_VISIBLE_DEVICES:-${ASCEND_VISIBLE_DEVICES:-}}"
+  if [[ -z "$visible" ]]; then
+    echo "$logical_id"
+    return 0
+  fi
+
+  local -a physical_ids
+  IFS=',' read -r -a physical_ids <<< "$visible"
+  (( logical_id < ${#physical_ids[@]} )) || return 1
+  physical_id="${physical_ids[$logical_id]}"
+  physical_id="${physical_id//[[:space:]]/}"
+  [[ "$physical_id" =~ ^[0-9]+$ ]] || return 1
+  echo "$physical_id"
+}
+
+# 从 npu-smi 中只解析当前 ATK 逻辑卡对应的物理卡型号。
 detect_soc_from_npu() {
-  local name
-  name=$(npu-smi info 2>/dev/null | awk -F'|' '/^\|[[:space:]]*[0-9]+[[:space:]]+[^[:space:]]+[[:space:]]*\|/ {
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2);
-      split($2, fields, /[[:space:]]+/);
-      print fields[2];
-      exit;
-  }' || true)
-  case "$name" in
-    *910B*|*910b*) echo "ascend910b" ;;
-    *910_93*|*910*93*) echo "ascend910_93" ;;
-    *950*|*Ascend950*) echo "ascend950" ;;
-    *) echo "" ;;
-  esac
+  local logical_id="$1" physical_id name normalized
+  physical_id=$(resolve_physical_device_id "$logical_id") || return 0
+  name=$(npu-smi info 2>/dev/null | awk -F'|' -v target="$physical_id" '
+      {
+          first = $2;
+          second = $3;
+          gsub(/^[[:space:]]+|[[:space:]]+$/, "", first);
+          gsub(/^[[:space:]]+|[[:space:]]+$/, "", second);
+          split(first, fields, /[[:space:]]+/);
+          if (fields[1] == target && fields[2] != "") {
+              print fields[2];
+              exit;
+          }
+          if (first == target && second != "") {
+              print second;
+              exit;
+          }
+      }
+  ' || true)
+  normalized=$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')
+
+  if [[ "$normalized" == ASCEND950* || "$normalized" == 950* \
+      || "$normalized" =~ ^957[0-9A-F]$ ]]; then
+    echo "ascend950"
+  elif [[ "$normalized" =~ 910[_[:space:]-]*93 ]]; then
+    echo "ascend910_93"
+  elif [[ "$normalized" =~ 910B[0-9]* ]]; then
+    echo "ascend910b"
+  else
+    echo ""
+  fi
 }
 
 # 校验 ATK 版本不低于 REQUIRED_ATK_VERSION（使用 GNU sort -V 比较）。
@@ -190,11 +227,20 @@ resolve_gm_init_args() {
   log_info "GM 数据初始化（ATK_GM_INIT_MODE=${mode}）：${enable}"
 }
 
+resolve_single_process_args() {
+  case "$ATK_SINGLE_PROCESS" in
+    on|enable|true|1) SINGLE_PROCESS_ARGS=(-sp) ;;
+    off|disable|false|0) SINGLE_PROCESS_ARGS=() ;;
+    *) die "不支持的 ATK_SINGLE_PROCESS：${ATK_SINGLE_PROCESS}，请使用 on/off" ;;
+  esac
+}
+
 OP=""
 NPU_DEVICE_ID="${NPU_DEVICE_ID:-0}"
 SOC="${SOC:-auto}"
 RUN_SCOPE="${RUN_SCOPE:-all}"
 ATK_GM_INIT_MODE="${ATK_GM_INIT_MODE:-on}"
+ATK_SINGLE_PROCESS="${ATK_SINGLE_PROCESS:-on}"
 REQUIRED_ATK_VERSION="${REQUIRED_ATK_VERSION:-26.8.8}"
 ATK_TIMEOUT="${ATK_TIMEOUT:-14400}"
 DC_LOOP_NUMS="${DC_LOOP_NUMS:-50}"
@@ -330,15 +376,16 @@ case "$RUN_SCOPE" in
   determinism|mssanitizer) validate_case_json "内存检测与确定性用例文件" "$MSS_CASE_FILE" ;;
 esac
 
-# SOC 为 auto 时探测真实芯片，用于 ATK_GM_INIT_MODE 判定与日志展示
-if [[ "$SOC" == "auto" ]]; then
-  detected_soc="$(detect_soc_from_npu)"
-  if [[ -n "$detected_soc" ]]; then
+# 实际执行时必须校验物理 SoC，避免把一个平台的证据记到另一个平台名下。
+if [[ "$RUN_SCOPE" != "gen_cases" ]]; then
+  detected_soc="$(detect_soc_from_npu "$NPU_DEVICE_ID")"
+  [[ -n "$detected_soc" ]] || die "无法从 npu-smi 解析实际 NPU SoC"
+  if [[ "$SOC" == "auto" ]]; then
     SOC="$detected_soc"
-  else
-    log_info "无法从 npu-smi 解析 NPU 型号，按 ascend910b 处理 GM 初始化"
-    SOC="ascend910b"
+  elif [[ "$SOC" != "$detected_soc" ]]; then
+    die "目标 SoC 与实际 NPU 不一致：目标 ${SOC}，实际 ${detected_soc}"
   fi
+  log_info "实际 NPU SoC：${detected_soc}"
 fi
 
 ACCURACY_START="${ACCURACY_START:-$CASE_START}"
@@ -375,6 +422,7 @@ log_info "ATK 路径：${ATK_BIN}"
 log_info "输出根目录：${ATK_OUTPUT_ROOT}"
 check_atk_version
 resolve_gm_init_args
+resolve_single_process_args
 
 if should_run gen_cases; then
   log_info "开始生成精度候选用例：atk case -dt ${GEN_CASES_DTYPE_NUMBERS} -en ${GEN_CASES_EXTRA_NUMBERS}"
@@ -388,7 +436,7 @@ if should_run gen_cases; then
 fi
 
 if should_run accuracy; then
-  log_info "开始精度与 NaN 检测：mixed_tolerance_bm + CPU单标杆 + GM 初始化"
+  log_info "开始精度与 NaN 检测：mixed_tolerance_bm + CPU单标杆"
   set_case_range_args "精度与 NaN 检测 case 范围" "$ACCURACY_START" "$ACCURACY_END"
   "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
       --output_path "${ATK_OUTPUT_ROOT}/accuracy" \
@@ -401,7 +449,7 @@ if should_run accuracy; then
       -p "./executor_${OP}.py" \
       "${CASE_RANGE_ARGS[@]}" \
       "${GM_INIT_ARGS[@]}" \
-      -sp \
+      "${SINGLE_PROCESS_ARGS[@]}" \
       -to "$ATK_TIMEOUT"
   log_info "完成精度与 NaN 检测"
   record_ran_type accuracy
@@ -418,7 +466,7 @@ if should_run performance; then
       -p "executor_${OP}.py" \
       "${CASE_RANGE_ARGS[@]}" \
       --save_data profile \
-      -sp \
+      "${SINGLE_PROCESS_ARGS[@]}" \
       -to "$PERFORMANCE_TIMEOUT"
   log_info "完成性能测试"
 fi
@@ -433,7 +481,7 @@ if should_run determinism; then
       -p "executor_${OP}.py" \
       --task accuracy_dc \
       --dc_loop_nums "$DC_LOOP_NUMS" \
-      -sp \
+      "${SINGLE_PROCESS_ARGS[@]}" \
       -to "$DC_TIMEOUT" \
       "${CASE_RANGE_ARGS[@]}"
   log_info "完成确定性测试"
@@ -452,7 +500,7 @@ if should_run mssanitizer; then
     MSS_TIMEOUT_ARGS=(-to "$MSS_TIMEOUT")
   fi
   touch "$MSS_LOG_PATH"
-  mssanitizer --tool="$MSS_TOOL" -- \
+  mssanitizer --tool="$MSS_TOOL" --log-file "$MSS_LOG_PATH" -- \
     "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
     --output_path "${ATK_OUTPUT_ROOT}/mssanitizer" \
     task \
@@ -461,7 +509,7 @@ if should_run mssanitizer; then
       --task run \
       --mssanitizer \
       -msl "$MSS_LOG_PATH" \
-      -sp \
+      "${SINGLE_PROCESS_ARGS[@]}" \
       "${MSS_TIMEOUT_ARGS[@]}" \
       "${CASE_RANGE_ARGS[@]}"
   log_info "完成内存检测"
