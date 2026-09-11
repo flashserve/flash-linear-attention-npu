@@ -343,6 +343,19 @@ class ChunkKdaFwdPrepareAtkGenerationTest(unittest.TestCase):
             )
             op_api_lib.parent.mkdir(parents=True)
             op_api_lib.write_bytes(b"op_api")
+            package_root = root / "python/fla_npu"
+            for relative in (
+                "__init__.py",
+                "ops/ascendc/__init__.py",
+                "ops/ascendc/_aclnn_ctypes.py",
+                "ops/ascendc/_runtime.py",
+            ):
+                path = package_root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(f"# {relative}\n", encoding="utf-8")
+            package_spec = SimpleNamespace(
+                submodule_search_locations=[str(package_root)]
+            )
             case_file = root / "cases.json"
             case_file.write_text(
                 json.dumps(
@@ -362,7 +375,9 @@ class ChunkKdaFwdPrepareAtkGenerationTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            with mock.patch.dict(
+            with mock.patch.object(
+                VERIFIER.importlib.util, "find_spec", return_value=package_spec
+            ), mock.patch.dict(
                 "os.environ",
                 {
                     "FLA_NPU_OPP_PATH": str(root),
@@ -377,7 +392,9 @@ class ChunkKdaFwdPrepareAtkGenerationTest(unittest.TestCase):
             self.assertEqual(manifest["platform"], "ascend950")
             self.assertEqual(manifest["object_count"], 1)
             self.assertEqual(manifest["compiled_tiling_key_count"], 2)
-            with mock.patch.dict(
+            with mock.patch.object(
+                VERIFIER.importlib.util, "find_spec", return_value=package_spec
+            ), mock.patch.dict(
                 "os.environ",
                 {
                     "FLA_NPU_OPP_PATH": str(root),
@@ -423,24 +440,29 @@ class ChunkKdaFwdPrepareAtkGenerationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             case_file = root / "cases.json"
-            case_file.write_text(
-                json.dumps(
-                    [
+            cases = [
+                {
+                    "id": case_id,
+                    "inputs": [
                         {
-                            "id": 0,
-                            "inputs": [
-                                {
-                                    "name": "case_spec",
-                                    "range_values": json.dumps(
-                                        {"expected_tiling_key": 2570}
-                                    ),
-                                }
-                            ],
+                            "name": "case_spec",
+                            "range_values": json.dumps(
+                                {"expected_tiling_key": 1000 + case_id}
+                            ),
                         }
-                    ]
-                ),
+                    ],
+                }
+                for case_id in range(432)
+            ]
+            case_file.write_text(
+                json.dumps(cases),
                 encoding="utf-8",
             )
+            pair_digest = hashlib.sha256(
+                "".join(
+                    f"{case_id},{1000 + case_id}\n" for case_id in range(432)
+                ).encode("ascii")
+            ).hexdigest()
             aggregates = []
             for tool in ("memcheck", "racecheck", "initcheck", "synccheck"):
                 path = root / f"{tool}.json"
@@ -452,18 +474,16 @@ class ChunkKdaFwdPrepareAtkGenerationTest(unittest.TestCase):
                             "tool": tool,
                             "timeout_seconds": 60,
                             "runtime_manifest_sha256": "runtime",
-                            "expected_cases": 1,
-                            "observed_cases": 1,
+                            "expected_cases": 432,
+                            "observed_cases": 432,
                             "case_json_sha256": hashlib.sha256(
                                 case_file.read_bytes()
                             ).hexdigest(),
-                            "expected_tiling_key_count": 1,
-                            "host_tiling_key_count": 1,
-                            "launch_tiling_key_count": 1,
-                            "sanitizer_started_tiling_key_count": 1,
-                            "key_pair_sha256": hashlib.sha256(
-                                b"0,2570\n"
-                            ).hexdigest(),
+                            "expected_tiling_key_count": 432,
+                            "host_tiling_key_count": 432,
+                            "launch_tiling_key_count": 432,
+                            "sanitizer_started_tiling_key_count": 432,
+                            "key_pair_sha256": pair_digest,
                             "complete": True,
                             "passed": True,
                         }

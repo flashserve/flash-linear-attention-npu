@@ -134,6 +134,7 @@ def _runtime_manifest(
     soc: str,
     require_sanitizer: bool,
     require_complete_key_set: bool = False,
+    test_artifacts: tuple[Path, ...] = (),
 ) -> dict:
     kernel_dir = _find_runtime_kernel_dir(soc)
     op_api_lib = _runtime_op_api_lib()
@@ -195,6 +196,31 @@ def _runtime_manifest(
     digest.update(op_api_lib.read_bytes())
     digest.update(b"\0")
 
+    test_artifact_hashes = {}
+    for path in test_artifacts:
+        resolved = path.resolve()
+        test_artifact_hashes[resolved.name] = _file_hash(resolved)
+        digest.update(f"test/{resolved.name}\0".encode("utf-8"))
+        digest.update(resolved.read_bytes())
+        digest.update(b"\0")
+
+    wrapper_hashes = {}
+    package_spec = importlib.util.find_spec("fla_npu")
+    if package_spec is None or not package_spec.submodule_search_locations:
+        raise ValueError("找不到实际加载的 fla_npu Python 包")
+    package_root = Path(next(iter(package_spec.submodule_search_locations))).resolve()
+    for relative in (
+        "__init__.py",
+        "ops/ascendc/__init__.py",
+        "ops/ascendc/_aclnn_ctypes.py",
+        "ops/ascendc/_runtime.py",
+    ):
+        path = package_root / relative
+        wrapper_hashes[relative] = _file_hash(path)
+        digest.update(f"python/{relative}\0".encode("utf-8"))
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+
     sanitizer_objects = 0
     if require_sanitizer:
         for path in object_files:
@@ -215,6 +241,8 @@ def _runtime_manifest(
         "platform": kernel_dir.parent.name,
         "runtime_sha256": digest.hexdigest(),
         "op_api_sha256": _file_hash(op_api_lib),
+        "test_artifact_sha256": test_artifact_hashes,
+        "python_wrapper_sha256": wrapper_hashes,
         "object_count": len(object_files),
         "metadata_count": len(metadata_files),
         "compiled_tiling_key_count": len(compiled_keys),
@@ -231,6 +259,7 @@ def verify_runtime(args: argparse.Namespace) -> int:
         args.soc,
         args.require_sanitizer,
         args.require_complete_key_set,
+        tuple(args.test_artifact),
     )
     if args.output.exists():
         existing = json.loads(args.output.read_text(encoding="utf-8"))
@@ -687,6 +716,10 @@ def verify_sanitizer_suite(args: argparse.Namespace) -> int:
     cases = _load_cases(args.case_file)
     _, expected_pairs = _expected_slice(cases, 0, len(cases))
     expected_keys = {key for _, key in expected_pairs}
+    if len(cases) != 432 or len(expected_keys) != 432:
+        raise ValueError(
+            "sanitizer suite 要求 432 条 case 对应 432 个唯一 TilingKey"
+        )
     expected_tools = {"memcheck", "racecheck", "initcheck", "synccheck"}
     if len(args.aggregate) != len(expected_tools):
         raise ValueError("必须提供四种 sanitizer 的 aggregate_summary.json")
@@ -771,6 +804,9 @@ def main() -> int:
     runtime.add_argument("--soc", default="auto")
     runtime.add_argument("--require-sanitizer", action="store_true")
     runtime.add_argument("--require-complete-key-set", action="store_true")
+    runtime.add_argument(
+        "--test-artifact", type=Path, action="append", default=[]
+    )
     runtime.add_argument("--output", type=Path, required=True)
     runtime.set_defaults(func=verify_runtime)
 

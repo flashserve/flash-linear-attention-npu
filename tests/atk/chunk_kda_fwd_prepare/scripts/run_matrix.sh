@@ -47,6 +47,14 @@ soc=${KDA_PREPARE_ATK_SOC:-auto}
 matrix_start=${KDA_PREPARE_ATK_MATRIX_START:-0}
 tool=""
 
+case "$soc" in
+  auto) ;;
+  a2|A2|ascend910b) soc=ascend910b ;;
+  a3|A3|ascend910_93) soc=ascend910_93 ;;
+  a5|A5|ascend950) soc=ascend950 ;;
+  *) echo "不支持的 SoC：$soc" >&2; exit 2 ;;
+esac
+
 case "$scope" in
   accuracy)
     case_file="$op_dir/atk_chunk_kda_fwd_prepare.json"
@@ -75,7 +83,9 @@ source_checked_env() {
     exit 2
   }
   # shellcheck disable=SC1090
+  set +u
   source "$path"
+  set -u
 }
 
 # 指纹校验与统一 runner 必须处于同一套环境，避免校验和执行加载不同 OPP。
@@ -188,6 +198,8 @@ esac
 runtime_manifest="$matrix_root/runtime_manifest.json"
 runtime_args=(
   runtime --case-file "$case_file" --soc "$soc"
+  --test-artifact "$op_dir/executor_chunk_kda_fwd_prepare.py"
+  --test-artifact "$op_dir/chunk_kda_fwd_prepare.yaml"
   --output "$runtime_manifest"
 )
 if [[ "$scope" == "mssanitizer" ]]; then
