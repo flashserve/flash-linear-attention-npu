@@ -751,11 +751,12 @@
       {
         "case_key": "model_b2_hk16_hv32_t11264",
         "overrides": {
-          "tags": "performance,model_target",
+          "tags": "performance,model_target,inference,dense,BNSD,gva",
           "B": 2,
           "HK": 16,
           "HV": 32,
           "T": 11264,
+          "layout": "BNSD",
           "gate_dtype": "fp32",
           "beta_dtype": "bf16",
           "scale": 0.08838,
@@ -773,10 +774,39 @@
       {
         "case_key": "model_b1_hk16_hv32_t11264",
         "overrides": {
-          "tags": "performance,model_target",
+          "tags": "performance,model_target,inference,dense,BNSD,gva",
+          "B": 1,
           "HK": 16,
           "HV": 32,
           "T": 11264,
+          "layout": "BNSD",
+          "gate_dtype": "fp32",
+          "beta_dtype": "bf16",
+          "scale": 0.08838,
+          "use_qk_l2norm_in_kernel": true,
+          "use_gate_in_kernel": true,
+          "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": true,
+          "safe_gate": true,
+          "lower_bound": -5.0,
+          "dt_bias": true,
+          "use_exp2": true,
+          "backward_mode": "none",
+          "performance_baseline_us": 1494.04,
+          "performance_statistic": "msopprof kernel duration"
+        }
+      },
+      {
+        "case_key": "model_b1_hk32_hv32_t65536_varlen",
+        "overrides": {
+          "tags": "performance,model_target,inference,varlen,BNSD",
+          "B": 1,
+          "HK": 32,
+          "HV": 32,
+          "T": 65536,
+          "layout": "BNSD",
+          "cu_seqlens": "0,2365,2409,2536,3008,3681,6545,8416,11615,12599,12844,12982,13209,15561,16291,16669,17755,21365,21416,25267,26084,26364,26833,27900,28033,29011,29291,29576,30471,30733,30906,31202,32264,32393,34233,34274,34589,40060,41075,41272,42123,42257,43054,44349,46396,46875,48850,49338,49457,50062,50509,54275,55763,56093,56473,56941,56964,57218,57274,58855,58926,60953,63436,63524,65536",
+          "explicit_chunk_indices": true,
           "gate_dtype": "fp32",
           "beta_dtype": "bf16",
           "scale": 0.08838,
@@ -792,76 +822,99 @@
         }
       },
       {
-        "case_key": "model_b1_h32_t11264",
+        "case_key": "model_b4_hk96_hv96_t128",
         "overrides": {
-          "tags": "performance,model_target",
-          "HK": 32,
-          "HV": 32,
-          "T": 11264,
-          "gate_dtype": "fp32",
-          "beta_dtype": "fp32",
-          "use_exp2": true,
-          "backward_mode": "none"
-        }
-      },
-      {
-        "case_key": "dense_b4_h96_t128",
-        "overrides": {
-          "tags": "performance,head_partition",
+          "tags": "performance,model_target,inference,dense,BNSD,head_partition",
           "B": 4,
           "HK": 96,
           "HV": 96,
           "T": 128,
+          "layout": "BNSD",
           "gate_dtype": "fp32",
-          "use_exp2": true,
-          "backward_mode": "none"
-        }
-      },
-      {
-        "case_key": "dense_gva_ratio8_t2048",
-        "overrides": {
-          "tags": "performance,gva,cross_wave",
-          "HK": 4,
-          "HV": 32,
-          "T": 2048,
-          "gate_dtype": "fp32",
-          "beta_dtype": "fp32",
-          "backward_mode": "none"
-        }
-      },
-      {
-        "case_key": "dense_bsnd_tail_t1084",
-        "overrides": {
-          "tags": "performance,layout,tail",
-          "layout": "BSND",
-          "HK": 12,
-          "HV": 12,
-          "T": 1084,
-          "gate_dtype": "fp32",
+          "beta_dtype": "bf16",
+          "scale": 0.08838,
+          "use_qk_l2norm_in_kernel": true,
           "use_gate_in_kernel": true,
+          "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": true,
           "safe_gate": true,
+          "lower_bound": -5.0,
           "dt_bias": true,
           "use_exp2": true,
           "backward_mode": "none"
         }
       },
       {
-        "case_key": "varlen_tnd_t65536",
+        "case_key": "model_b1_hk32_hv32_t160",
         "overrides": {
-          "tags": "performance,varlen",
-          "layout": "TND",
-          "HK": 1,
-          "HV": 4,
-          "T": 65536,
-          "cu_seqlens": "0,8192,16384,24576,32768,40960,49152,57344,65536",
-          "explicit_chunk_indices": true,
+          "tags": "performance,model_target,inference,dense,BNSD,tail",
+          "B": 1,
+          "HK": 32,
+          "HV": 32,
+          "T": 160,
+          "layout": "BNSD",
           "gate_dtype": "fp32",
+          "beta_dtype": "bf16",
+          "scale": 0.08838,
+          "use_qk_l2norm_in_kernel": true,
+          "use_gate_in_kernel": true,
+          "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": true,
+          "safe_gate": true,
+          "lower_bound": -5.0,
+          "dt_bias": true,
           "use_exp2": true,
           "backward_mode": "none"
         }
       },
       {
-        "case_key": "model_b1_h96_t8192_inference",
+        "case_key": "model_b6_hk6_hv6_t1084",
+        "overrides": {
+          "tags": "performance,model_target,inference,dense,BNSD,tail",
+          "B": 6,
+          "HK": 6,
+          "HV": 6,
+          "T": 1084,
+          "layout": "BNSD",
+          "gate_dtype": "fp32",
+          "beta_dtype": "bf16",
+          "scale": 0.08838,
+          "use_qk_l2norm_in_kernel": true,
+          "use_gate_in_kernel": true,
+          "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": true,
+          "safe_gate": true,
+          "lower_bound": -5.0,
+          "dt_bias": true,
+          "use_exp2": true,
+          "backward_mode": "none"
+        }
+      },
+      {
+        "case_key": "model_b1_hk12_hv12_t1084",
+        "overrides": {
+          "tags": "performance,model_target,inference,dense,BNSD,tail",
+          "B": 1,
+          "HK": 12,
+          "HV": 12,
+          "T": 1084,
+          "layout": "BNSD",
+          "gate_dtype": "fp32",
+          "beta_dtype": "bf16",
+          "scale": 0.08838,
+          "use_qk_l2norm_in_kernel": true,
+          "use_gate_in_kernel": true,
+          "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": true,
+          "safe_gate": true,
+          "lower_bound": -5.0,
+          "dt_bias": true,
+          "use_exp2": true,
+          "backward_mode": "none"
+        }
+      },
+      {
+        "case_key": "model_b1_hk96_hv96_t8192_inference",
         "overrides": {
           "tags": "performance,model_target,inference,dense,BNSD",
           "B": 1,
@@ -881,11 +934,13 @@
           "dt_bias": true,
           "use_exp2": true,
           "backward_mode": "none",
+          "performance_baseline_us": 3221.331,
+          "performance_statistic": "msopprof kernel duration",
           "performance_target_us": 2700
         }
       },
       {
-        "case_key": "model_b1_h96_t16384_varlen_inference",
+        "case_key": "model_b1_hk96_hv96_t16384_varlen_inference",
         "overrides": {
           "tags": "performance,model_target,inference,varlen,BNSD",
           "B": 1,
@@ -906,7 +961,32 @@
           "dt_bias": true,
           "use_exp2": true,
           "backward_mode": "none",
+          "performance_baseline_us": 7131.371,
+          "performance_statistic": "msopprof kernel duration",
           "performance_target_us": 5600
+        }
+      },
+      {
+        "case_key": "model_b1_hk8_hv24_t32768",
+        "overrides": {
+          "tags": "performance,model_target,inference,dense,BNSD,gva",
+          "B": 1,
+          "HK": 8,
+          "HV": 24,
+          "T": 32768,
+          "layout": "BNSD",
+          "gate_dtype": "fp32",
+          "beta_dtype": "bf16",
+          "scale": 0.08838,
+          "use_qk_l2norm_in_kernel": true,
+          "use_gate_in_kernel": true,
+          "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": true,
+          "safe_gate": true,
+          "lower_bound": -5.0,
+          "dt_bias": true,
+          "use_exp2": true,
+          "backward_mode": "none"
         }
       }
     ],

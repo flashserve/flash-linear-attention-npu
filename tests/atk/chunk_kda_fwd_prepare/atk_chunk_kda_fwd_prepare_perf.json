@@ -50,7 +50,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":2,\"HK\":16,\"HV\":32,\"K\":128,\"T\":11264,\"V\":128,\"allow_neg_eigval\":true,\"backward_mode\":\"none\",\"beta_dtype\":\"bf16\",\"beta_scale\":1.0,\"case_id\":0,\"case_key\":\"model_b2_hk16_hv32_t11264\",\"chunk_size\":64,\"cu_seqlens\":\"\",\"data_scale\":0.08,\"dt_bias\":true,\"dtype\":\"bf16\",\"epsilon\":1e-06,\"expected_tiling_key\":7670302,\"explicit_chunk_indices\":false,\"gate_dtype\":\"fp32\",\"gate_scale\":1.0,\"layout\":\"BNSD\",\"lower_bound\":-5.0,\"route\":\"ascendc\",\"safe_gate\":true,\"scale\":0.08838,\"seed\":20261910,\"soc\":\"all\",\"tags\":\"performance,model_target\",\"use_beta_sigmoid_in_kernel\":true,\"use_exp2\":true,\"use_gate_in_kernel\":true,\"use_qk_l2norm_in_kernel\":true}",
+        "range_values": "{\"B\":2,\"HK\":16,\"HV\":32,\"K\":128,\"T\":11264,\"V\":128,\"allow_neg_eigval\":true,\"backward_mode\":\"none\",\"beta_dtype\":\"bf16\",\"beta_scale\":1.0,\"case_id\":0,\"case_key\":\"model_b2_hk16_hv32_t11264\",\"chunk_size\":64,\"cu_seqlens\":\"\",\"data_scale\":0.08,\"dt_bias\":true,\"dtype\":\"bf16\",\"epsilon\":1e-06,\"expected_tiling_key\":7670302,\"explicit_chunk_indices\":false,\"gate_dtype\":\"fp32\",\"gate_scale\":1.0,\"layout\":\"BNSD\",\"lower_bound\":-5.0,\"route\":\"ascendc\",\"safe_gate\":true,\"scale\":0.08838,\"seed\":20261910,\"soc\":\"all\",\"tags\":\"performance,model_target,inference,dense,BNSD,gva\",\"use_beta_sigmoid_in_kernel\":true,\"use_exp2\":true,\"use_gate_in_kernel\":true,\"use_qk_l2norm_in_kernel\":true}",
         "backward": false
       },
       {
@@ -302,7 +302,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "performance,model_target",
+        "range_values": "performance,model_target,inference,dense,BNSD,gva",
         "backward": false
       },
       {
@@ -368,7 +368,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":16,\"HV\":32,\"K\":128,\"T\":11264,\"V\":128,\"allow_neg_eigval\":true,\"backward_mode\":\"none\",\"beta_dtype\":\"bf16\",\"beta_scale\":1.0,\"case_id\":1,\"case_key\":\"model_b1_hk16_hv32_t11264\",\"chunk_size\":64,\"cu_seqlens\":\"\",\"data_scale\":0.08,\"dt_bias\":true,\"dtype\":\"bf16\",\"epsilon\":1e-06,\"expected_tiling_key\":7670302,\"explicit_chunk_indices\":false,\"gate_dtype\":\"fp32\",\"gate_scale\":1.0,\"layout\":\"BNSD\",\"lower_bound\":-5.0,\"route\":\"ascendc\",\"safe_gate\":true,\"scale\":0.08838,\"seed\":20261911,\"soc\":\"all\",\"tags\":\"performance,model_target\",\"use_beta_sigmoid_in_kernel\":true,\"use_exp2\":true,\"use_gate_in_kernel\":true,\"use_qk_l2norm_in_kernel\":true}",
+        "range_values": "{\"B\":1,\"HK\":16,\"HV\":32,\"K\":128,\"T\":11264,\"V\":128,\"allow_neg_eigval\":true,\"backward_mode\":\"none\",\"beta_dtype\":\"bf16\",\"beta_scale\":1.0,\"case_id\":1,\"case_key\":\"model_b1_hk16_hv32_t11264\",\"chunk_size\":64,\"cu_seqlens\":\"\",\"data_scale\":0.08,\"dt_bias\":true,\"dtype\":\"bf16\",\"epsilon\":1e-06,\"expected_tiling_key\":7670302,\"explicit_chunk_indices\":false,\"gate_dtype\":\"fp32\",\"gate_scale\":1.0,\"layout\":\"BNSD\",\"lower_bound\":-5.0,\"performance_baseline_us\":1494.04,\"performance_statistic\":\"msopprof kernel duration\",\"route\":\"ascendc\",\"safe_gate\":true,\"scale\":0.08838,\"seed\":20261911,\"soc\":\"all\",\"tags\":\"performance,model_target,inference,dense,BNSD,gva\",\"use_beta_sigmoid_in_kernel\":true,\"use_exp2\":true,\"use_gate_in_kernel\":true,\"use_qk_l2norm_in_kernel\":true}",
         "backward": false
       },
       {
@@ -620,7 +620,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "performance,model_target",
+        "range_values": "performance,model_target,inference,dense,BNSD,gva",
         "backward": false
       },
       {
@@ -638,7 +638,7 @@
   {
     "id": 2,
     "default_seed": 20261912,
-    "name": "chunk_kda_fwd_prepare_0002_model_b1_h32_t11264",
+    "name": "chunk_kda_fwd_prepare_0002_model_b1_hk32_hv32_t65536_varlen",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
@@ -686,7 +686,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":32,\"HV\":32,\"K\":128,\"T\":11264,\"V\":128,\"allow_neg_eigval\":false,\"backward_mode\":\"none\",\"beta_dtype\":\"fp32\",\"beta_scale\":1.0,\"case_id\":2,\"case_key\":\"model_b1_h32_t11264\",\"chunk_size\":64,\"cu_seqlens\":\"\",\"data_scale\":0.08,\"dt_bias\":false,\"dtype\":\"bf16\",\"epsilon\":1e-06,\"expected_tiling_key\":2104862,\"explicit_chunk_indices\":false,\"gate_dtype\":\"fp32\",\"gate_scale\":1.0,\"layout\":\"BNSD\",\"lower_bound\":-5.0,\"route\":\"ascendc\",\"safe_gate\":false,\"scale\":1.0,\"seed\":20261912,\"soc\":\"all\",\"tags\":\"performance,model_target\",\"use_beta_sigmoid_in_kernel\":false,\"use_exp2\":true,\"use_gate_in_kernel\":false,\"use_qk_l2norm_in_kernel\":false}",
+        "range_values": "{\"B\":1,\"HK\":32,\"HV\":32,\"K\":128,\"T\":65536,\"V\":128,\"allow_neg_eigval\":true,\"backward_mode\":\"none\",\"beta_dtype\":\"bf16\",\"beta_scale\":1.0,\"case_id\":2,\"case_key\":\"model_b1_hk32_hv32_t65536_varlen\",\"chunk_size\":64,\"cu_seqlens\":\"0,2365,2409,2536,3008,3681,6545,8416,11615,12599,12844,12982,13209,15561,16291,16669,17755,21365,21416,25267,26084,26364,26833,27900,28033,29011,29291,29576,30471,30733,30906,31202,32264,32393,34233,34274,34589,40060,41075,41272,42123,42257,43054,44349,46396,46875,48850,49338,49457,50062,50509,54275,55763,56093,56473,56941,56964,57218,57274,58855,58926,60953,63436,63524,65536\",\"data_scale\":0.08,\"dt_bias\":true,\"dtype\":\"bf16\",\"epsilon\":1e-06,\"expected_tiling_key\":7670302,\"explicit_chunk_indices\":true,\"gate_dtype\":\"fp32\",\"gate_scale\":1.0,\"layout\":\"BNSD\",\"lower_bound\":-5.0,\"route\":\"ascendc\",\"safe_gate\":true,\"scale\":0.08838,\"seed\":20261912,\"soc\":\"all\",\"tags\":\"performance,model_target,inference,varlen,BNSD\",\"use_beta_sigmoid_in_kernel\":true,\"use_exp2\":true,\"use_gate_in_kernel\":true,\"use_qk_l2norm_in_kernel\":true}",
         "backward": false
       },
       {
@@ -695,7 +695,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "model_b1_h32_t11264",
+        "range_values": "model_b1_hk32_hv32_t65536_varlen",
         "backward": false
       },
       {
@@ -758,7 +758,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 11264,
+        "range_values": 65536,
         "backward": false
       },
       {
@@ -812,7 +812,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "fp32",
+        "range_values": "bf16",
         "backward": false
       },
       {
@@ -821,7 +821,7 @@
         "required": true,
         "dtype": "float",
         "shape": null,
-        "range_values": 1.0,
+        "range_values": 0.08838,
         "backward": false
       },
       {
@@ -839,7 +839,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": false,
+        "range_values": true,
         "backward": false
       },
       {
@@ -848,7 +848,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": false,
+        "range_values": true,
         "backward": false
       },
       {
@@ -857,7 +857,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": false,
+        "range_values": true,
         "backward": false
       },
       {
@@ -866,7 +866,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": false,
+        "range_values": true,
         "backward": false
       },
       {
@@ -875,7 +875,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": false,
+        "range_values": true,
         "backward": false
       },
       {
@@ -911,7 +911,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": false,
+        "range_values": true,
         "backward": false
       },
       {
@@ -920,7 +920,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "",
+        "range_values": "0,2365,2409,2536,3008,3681,6545,8416,11615,12599,12844,12982,13209,15561,16291,16669,17755,21365,21416,25267,26084,26364,26833,27900,28033,29011,29291,29576,30471,30733,30906,31202,32264,32393,34233,34274,34589,40060,41075,41272,42123,42257,43054,44349,46396,46875,48850,49338,49457,50062,50509,54275,55763,56093,56473,56941,56964,57218,57274,58855,58926,60953,63436,63524,65536",
         "backward": false
       },
       {
@@ -929,7 +929,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": false,
+        "range_values": true,
         "backward": false
       },
       {
@@ -938,7 +938,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "performance,model_target",
+        "range_values": "performance,model_target,inference,varlen,BNSD",
         "backward": false
       },
       {
@@ -956,7 +956,7 @@
   {
     "id": 3,
     "default_seed": 20261913,
-    "name": "chunk_kda_fwd_prepare_0003_dense_b4_h96_t128",
+    "name": "chunk_kda_fwd_prepare_0003_model_b4_hk96_hv96_t128",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
@@ -1004,7 +1004,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":4,\"HK\":96,\"HV\":96,\"K\":128,\"T\":128,\"V\":128,\"allow_neg_eigval\":false,\"backward_mode\":\"none\",\"beta_dtype\":\"bf16\",\"beta_scale\":1.0,\"case_id\":3,\"case_key\":\"dense_b4_h96_t128\",\"chunk_size\":64,\"cu_seqlens\":\"\",\"data_scale\":0.08,\"dt_bias\":false,\"dtype\":\"bf16\",\"epsilon\":1e-06,\"expected_tiling_key\":2099742,\"explicit_chunk_indices\":false,\"gate_dtype\":\"fp32\",\"gate_scale\":1.0,\"layout\":\"BNSD\",\"lower_bound\":-5.0,\"route\":\"ascendc\",\"safe_gate\":false,\"scale\":1.0,\"seed\":20261913,\"soc\":\"all\",\"tags\":\"performance,head_partition\",\"use_beta_sigmoid_in_kernel\":false,\"use_exp2\":true,\"use_gate_in_kernel\":false,\"use_qk_l2norm_in_kernel\":false}",
+        "range_values": "{\"B\":4,\"HK\":96,\"HV\":96,\"K\":128,\"T\":128,\"V\":128,\"allow_neg_eigval\":true,\"backward_mode\":\"none\",\"beta_dtype\":\"bf16\",\"beta_scale\":1.0,\"case_id\":3,\"case_key\":\"model_b4_hk96_hv96_t128\",\"chunk_size\":64,\"cu_seqlens\":\"\",\"data_scale\":0.08,\"dt_bias\":true,\"dtype\":\"bf16\",\"epsilon\":1e-06,\"expected_tiling_key\":7670302,\"explicit_chunk_indices\":false,\"gate_dtype\":\"fp32\",\"gate_scale\":1.0,\"layout\":\"BNSD\",\"lower_bound\":-5.0,\"route\":\"ascendc\",\"safe_gate\":true,\"scale\":0.08838,\"seed\":20261913,\"soc\":\"all\",\"tags\":\"performance,model_target,inference,dense,BNSD,head_partition\",\"use_beta_sigmoid_in_kernel\":true,\"use_exp2\":true,\"use_gate_in_kernel\":true,\"use_qk_l2norm_in_kernel\":true}",
         "backward": false
       },
       {
@@ -1013,7 +1013,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "dense_b4_h96_t128",
+        "range_values": "model_b4_hk96_hv96_t128",
         "backward": false
       },
       {
@@ -1139,7 +1139,7 @@
         "required": true,
         "dtype": "float",
         "shape": null,
-        "range_values": 1.0,
+        "range_values": 0.08838,
         "backward": false
       },
       {
@@ -1157,7 +1157,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": false,
+        "range_values": true,
         "backward": false
       },
       {
@@ -1166,7 +1166,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": false,
+        "range_values": true,
         "backward": false
       },
       {
@@ -1175,7 +1175,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": false,
+        "range_values": true,
         "backward": false
       },
       {
@@ -1184,7 +1184,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": false,
+        "range_values": true,
         "backward": false
       },
       {
@@ -1193,7 +1193,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": false,
+        "range_values": true,
         "backward": false
       },
       {
@@ -1229,7 +1229,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": false,
+        "range_values": true,
         "backward": false
       },
       {
@@ -1256,7 +1256,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "performance,head_partition",
+        "range_values": "performance,model_target,inference,dense,BNSD,head_partition",
         "backward": false
       },
       {
@@ -1274,7 +1274,7 @@
   {
     "id": 4,
     "default_seed": 20261914,
-    "name": "chunk_kda_fwd_prepare_0004_dense_gva_ratio8_t2048",
+    "name": "chunk_kda_fwd_prepare_0004_model_b1_hk32_hv32_t160",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
@@ -1322,7 +1322,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":4,\"HV\":32,\"K\":128,\"T\":2048,\"V\":128,\"allow_neg_eigval\":false,\"backward_mode\":\"none\",\"beta_dtype\":\"fp32\",\"beta_scale\":1.0,\"case_id\":4,\"case_key\":\"dense_gva_ratio8_t2048\",\"chunk_size\":64,\"cu_seqlens\":\"\",\"data_scale\":0.08,\"dt_bias\":false,\"dtype\":\"bf16\",\"epsilon\":1e-06,\"expected_tiling_key\":7710,\"explicit_chunk_indices\":false,\"gate_dtype\":\"fp32\",\"gate_scale\":1.0,\"layout\":\"BNSD\",\"lower_bound\":-5.0,\"route\":\"ascendc\",\"safe_gate\":false,\"scale\":1.0,\"seed\":20261914,\"soc\":\"all\",\"tags\":\"performance,gva,cross_wave\",\"use_beta_sigmoid_in_kernel\":false,\"use_exp2\":false,\"use_gate_in_kernel\":false,\"use_qk_l2norm_in_kernel\":false}",
+        "range_values": "{\"B\":1,\"HK\":32,\"HV\":32,\"K\":128,\"T\":160,\"V\":128,\"allow_neg_eigval\":true,\"backward_mode\":\"none\",\"beta_dtype\":\"bf16\",\"beta_scale\":1.0,\"case_id\":4,\"case_key\":\"model_b1_hk32_hv32_t160\",\"chunk_size\":64,\"cu_seqlens\":\"\",\"data_scale\":0.08,\"dt_bias\":true,\"dtype\":\"bf16\",\"epsilon\":1e-06,\"expected_tiling_key\":7670302,\"explicit_chunk_indices\":false,\"gate_dtype\":\"fp32\",\"gate_scale\":1.0,\"layout\":\"BNSD\",\"lower_bound\":-5.0,\"route\":\"ascendc\",\"safe_gate\":true,\"scale\":0.08838,\"seed\":20261914,\"soc\":\"all\",\"tags\":\"performance,model_target,inference,dense,BNSD,tail\",\"use_beta_sigmoid_in_kernel\":true,\"use_exp2\":true,\"use_gate_in_kernel\":true,\"use_qk_l2norm_in_kernel\":true}",
         "backward": false
       },
       {
@@ -1331,7 +1331,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "dense_gva_ratio8_t2048",
+        "range_values": "model_b1_hk32_hv32_t160",
         "backward": false
       },
       {
@@ -1376,7 +1376,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 4,
+        "range_values": 32,
         "backward": false
       },
       {
@@ -1394,7 +1394,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 2048,
+        "range_values": 160,
         "backward": false
       },
       {
@@ -1448,7 +1448,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "fp32",
+        "range_values": "bf16",
         "backward": false
       },
       {
@@ -1457,7 +1457,7 @@
         "required": true,
         "dtype": "float",
         "shape": null,
-        "range_values": 1.0,
+        "range_values": 0.08838,
         "backward": false
       },
       {
@@ -1475,7 +1475,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": false,
+        "range_values": true,
         "backward": false
       },
       {
@@ -1484,7 +1484,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": false,
+        "range_values": true,
         "backward": false
       },
       {
@@ -1493,7 +1493,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": false,
+        "range_values": true,
         "backward": false
       },
       {
@@ -1502,7 +1502,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": false,
+        "range_values": true,
         "backward": false
       },
       {
@@ -1511,7 +1511,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": false,
+        "range_values": true,
         "backward": false
       },
       {
@@ -1529,7 +1529,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": false,
+        "range_values": true,
         "backward": false
       },
       {
@@ -1547,7 +1547,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": false,
+        "range_values": true,
         "backward": false
       },
       {
@@ -1574,7 +1574,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "performance,gva,cross_wave",
+        "range_values": "performance,model_target,inference,dense,BNSD,tail",
         "backward": false
       },
       {
@@ -1592,7 +1592,7 @@
   {
     "id": 5,
     "default_seed": 20261915,
-    "name": "chunk_kda_fwd_prepare_0005_dense_bsnd_tail_t1084",
+    "name": "chunk_kda_fwd_prepare_0005_model_b6_hk6_hv6_t1084",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
@@ -1640,7 +1640,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":12,\"HV\":12,\"K\":128,\"T\":1084,\"V\":128,\"allow_neg_eigval\":false,\"backward_mode\":\"none\",\"beta_dtype\":\"bf16\",\"beta_scale\":1.0,\"case_id\":5,\"case_key\":\"dense_bsnd_tail_t1084\",\"chunk_size\":64,\"cu_seqlens\":\"\",\"data_scale\":0.08,\"dt_bias\":true,\"dtype\":\"bf16\",\"epsilon\":1e-06,\"expected_tiling_key\":7342622,\"explicit_chunk_indices\":false,\"gate_dtype\":\"fp32\",\"gate_scale\":1.0,\"layout\":\"BSND\",\"lower_bound\":-5.0,\"route\":\"ascendc\",\"safe_gate\":true,\"scale\":1.0,\"seed\":20261915,\"soc\":\"all\",\"tags\":\"performance,layout,tail\",\"use_beta_sigmoid_in_kernel\":false,\"use_exp2\":true,\"use_gate_in_kernel\":true,\"use_qk_l2norm_in_kernel\":false}",
+        "range_values": "{\"B\":6,\"HK\":6,\"HV\":6,\"K\":128,\"T\":1084,\"V\":128,\"allow_neg_eigval\":true,\"backward_mode\":\"none\",\"beta_dtype\":\"bf16\",\"beta_scale\":1.0,\"case_id\":5,\"case_key\":\"model_b6_hk6_hv6_t1084\",\"chunk_size\":64,\"cu_seqlens\":\"\",\"data_scale\":0.08,\"dt_bias\":true,\"dtype\":\"bf16\",\"epsilon\":1e-06,\"expected_tiling_key\":7670302,\"explicit_chunk_indices\":false,\"gate_dtype\":\"fp32\",\"gate_scale\":1.0,\"layout\":\"BNSD\",\"lower_bound\":-5.0,\"route\":\"ascendc\",\"safe_gate\":true,\"scale\":0.08838,\"seed\":20261915,\"soc\":\"all\",\"tags\":\"performance,model_target,inference,dense,BNSD,tail\",\"use_beta_sigmoid_in_kernel\":true,\"use_exp2\":true,\"use_gate_in_kernel\":true,\"use_qk_l2norm_in_kernel\":true}",
         "backward": false
       },
       {
@@ -1649,7 +1649,325 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "dense_bsnd_tail_t1084",
+        "range_values": "model_b6_hk6_hv6_t1084",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "all",
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascendc",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 6,
+        "backward": false
+      },
+      {
+        "name": "HK",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 6,
+        "backward": false
+      },
+      {
+        "name": "HV",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 6,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1084,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BNSD",
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "gate_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
+        "backward": false
+      },
+      {
+        "name": "beta_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.08838,
+        "backward": false
+      },
+      {
+        "name": "epsilon",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 1e-06,
+        "backward": false
+      },
+      {
+        "name": "use_qk_l2norm_in_kernel",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "use_gate_in_kernel",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "use_beta_sigmoid_in_kernel",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "allow_neg_eigval",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "safe_gate",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "lower_bound",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": -5.0,
+        "backward": false
+      },
+      {
+        "name": "use_exp2",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "backward_mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "none",
+        "backward": false
+      },
+      {
+        "name": "dt_bias",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
+      },
+      {
+        "name": "explicit_chunk_indices",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "tags",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "performance,model_target,inference,dense,BNSD,tail",
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261915,
+        "backward": false
+      }
+    ],
+    "save_name": "chunk_kda_fwd_prepare"
+  },
+  {
+    "id": 6,
+    "default_seed": 20261916,
+    "name": "chunk_kda_fwd_prepare_0006_model_b1_hk12_hv12_t1084",
+    "aclnn_name": null,
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_fwd_prepare",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "mixed_tolerance_bm",
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"B\":1,\"HK\":12,\"HV\":12,\"K\":128,\"T\":1084,\"V\":128,\"allow_neg_eigval\":true,\"backward_mode\":\"none\",\"beta_dtype\":\"bf16\",\"beta_scale\":1.0,\"case_id\":6,\"case_key\":\"model_b1_hk12_hv12_t1084\",\"chunk_size\":64,\"cu_seqlens\":\"\",\"data_scale\":0.08,\"dt_bias\":true,\"dtype\":\"bf16\",\"epsilon\":1e-06,\"expected_tiling_key\":7670302,\"explicit_chunk_indices\":false,\"gate_dtype\":\"fp32\",\"gate_scale\":1.0,\"layout\":\"BNSD\",\"lower_bound\":-5.0,\"route\":\"ascendc\",\"safe_gate\":true,\"scale\":0.08838,\"seed\":20261916,\"soc\":\"all\",\"tags\":\"performance,model_target,inference,dense,BNSD,tail\",\"use_beta_sigmoid_in_kernel\":true,\"use_exp2\":true,\"use_gate_in_kernel\":true,\"use_qk_l2norm_in_kernel\":true}",
+        "backward": false
+      },
+      {
+        "name": "case_key",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "model_b1_hk12_hv12_t1084",
         "backward": false
       },
       {
@@ -1739,7 +2057,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "BSND",
+        "range_values": "BNSD",
         "backward": false
       },
       {
@@ -1775,7 +2093,7 @@
         "required": true,
         "dtype": "float",
         "shape": null,
-        "range_values": 1.0,
+        "range_values": 0.08838,
         "backward": false
       },
       {
@@ -1793,7 +2111,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": false,
+        "range_values": true,
         "backward": false
       },
       {
@@ -1811,7 +2129,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": false,
+        "range_values": true,
         "backward": false
       },
       {
@@ -1820,7 +2138,7 @@
         "required": true,
         "dtype": "bool",
         "shape": null,
-        "range_values": false,
+        "range_values": true,
         "backward": false
       },
       {
@@ -1892,325 +2210,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "performance,layout,tail",
-        "backward": false
-      },
-      {
-        "name": "seed",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 20261915,
-        "backward": false
-      }
-    ],
-    "save_name": "chunk_kda_fwd_prepare"
-  },
-  {
-    "id": 6,
-    "default_seed": 20261916,
-    "name": "chunk_kda_fwd_prepare_0006_varlen_tnd_t65536",
-    "aclnn_name": null,
-    "version": "v2.1",
-    "api": "pytorch",
-    "api_type": "executor_chunk_kda_fwd_prepare",
-    "expected_error_msg": null,
-    "backward": false,
-    "standard": {
-      "acc": "mixed_tolerance_bm",
-      "perf": "not_key",
-      "mem": 1.1
-    },
-    "outputs": null,
-    "inputs": [
-      {
-        "name": "low_precision_marker",
-        "type": "tensor",
-        "required": true,
-        "dtype": "bf16",
-        "shape": [
-          1
-        ],
-        "range_values": [
-          0,
-          0
-        ],
-        "backward": false
-      },
-      {
-        "name": "fp32_marker",
-        "type": "tensor",
-        "required": true,
-        "dtype": "fp32",
-        "shape": [
-          1
-        ],
-        "range_values": [
-          0,
-          0
-        ],
-        "backward": false
-      },
-      {
-        "name": "case_spec",
-        "type": "attr",
-        "required": true,
-        "dtype": "non_param",
-        "shape": null,
-        "range_values": "{\"B\":1,\"HK\":1,\"HV\":4,\"K\":128,\"T\":65536,\"V\":128,\"allow_neg_eigval\":false,\"backward_mode\":\"none\",\"beta_dtype\":\"bf16\",\"beta_scale\":1.0,\"case_id\":6,\"case_key\":\"varlen_tnd_t65536\",\"chunk_size\":64,\"cu_seqlens\":\"0,8192,16384,24576,32768,40960,49152,57344,65536\",\"data_scale\":0.08,\"dt_bias\":false,\"dtype\":\"bf16\",\"epsilon\":1e-06,\"expected_tiling_key\":2099742,\"explicit_chunk_indices\":true,\"gate_dtype\":\"fp32\",\"gate_scale\":1.0,\"layout\":\"TND\",\"lower_bound\":-5.0,\"route\":\"ascendc\",\"safe_gate\":false,\"scale\":1.0,\"seed\":20261916,\"soc\":\"all\",\"tags\":\"performance,varlen\",\"use_beta_sigmoid_in_kernel\":false,\"use_exp2\":true,\"use_gate_in_kernel\":false,\"use_qk_l2norm_in_kernel\":false}",
-        "backward": false
-      },
-      {
-        "name": "case_key",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "varlen_tnd_t65536",
-        "backward": false
-      },
-      {
-        "name": "soc",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "all",
-        "backward": false
-      },
-      {
-        "name": "route",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "ascendc",
-        "backward": false
-      },
-      {
-        "name": "dtype",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "bf16",
-        "backward": false
-      },
-      {
-        "name": "B",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 1,
-        "backward": false
-      },
-      {
-        "name": "HK",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 1,
-        "backward": false
-      },
-      {
-        "name": "HV",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 4,
-        "backward": false
-      },
-      {
-        "name": "T",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 65536,
-        "backward": false
-      },
-      {
-        "name": "K",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 128,
-        "backward": false
-      },
-      {
-        "name": "V",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 128,
-        "backward": false
-      },
-      {
-        "name": "layout",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "TND",
-        "backward": false
-      },
-      {
-        "name": "chunk_size",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 64,
-        "backward": false
-      },
-      {
-        "name": "gate_dtype",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "fp32",
-        "backward": false
-      },
-      {
-        "name": "beta_dtype",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "bf16",
-        "backward": false
-      },
-      {
-        "name": "scale",
-        "type": "attr",
-        "required": true,
-        "dtype": "float",
-        "shape": null,
-        "range_values": 1.0,
-        "backward": false
-      },
-      {
-        "name": "epsilon",
-        "type": "attr",
-        "required": true,
-        "dtype": "float",
-        "shape": null,
-        "range_values": 1e-06,
-        "backward": false
-      },
-      {
-        "name": "use_qk_l2norm_in_kernel",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "use_gate_in_kernel",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "use_beta_sigmoid_in_kernel",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "allow_neg_eigval",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "safe_gate",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "lower_bound",
-        "type": "attr",
-        "required": true,
-        "dtype": "float",
-        "shape": null,
-        "range_values": -5.0,
-        "backward": false
-      },
-      {
-        "name": "use_exp2",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": true,
-        "backward": false
-      },
-      {
-        "name": "backward_mode",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "none",
-        "backward": false
-      },
-      {
-        "name": "dt_bias",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": false,
-        "backward": false
-      },
-      {
-        "name": "cu_seqlens",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "0,8192,16384,24576,32768,40960,49152,57344,65536",
-        "backward": false
-      },
-      {
-        "name": "explicit_chunk_indices",
-        "type": "attr",
-        "required": true,
-        "dtype": "bool",
-        "shape": null,
-        "range_values": true,
-        "backward": false
-      },
-      {
-        "name": "tags",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "performance,varlen",
+        "range_values": "performance,model_target,inference,dense,BNSD,tail",
         "backward": false
       },
       {
@@ -2228,7 +2228,7 @@
   {
     "id": 7,
     "default_seed": 20261917,
-    "name": "chunk_kda_fwd_prepare_0007_model_b1_h96_t8192_inference",
+    "name": "chunk_kda_fwd_prepare_0007_model_b1_hk96_hv96_t8192_inference",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
@@ -2276,7 +2276,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":96,\"HV\":96,\"K\":128,\"T\":8192,\"V\":128,\"allow_neg_eigval\":true,\"backward_mode\":\"none\",\"beta_dtype\":\"bf16\",\"beta_scale\":1.0,\"case_id\":7,\"case_key\":\"model_b1_h96_t8192_inference\",\"chunk_size\":64,\"cu_seqlens\":\"\",\"data_scale\":0.08,\"dt_bias\":true,\"dtype\":\"bf16\",\"epsilon\":1e-06,\"expected_tiling_key\":7670302,\"explicit_chunk_indices\":false,\"gate_dtype\":\"fp32\",\"gate_scale\":1.0,\"layout\":\"BNSD\",\"lower_bound\":-5.0,\"performance_target_us\":2700,\"route\":\"ascendc\",\"safe_gate\":true,\"scale\":0.08838,\"seed\":20261917,\"soc\":\"all\",\"tags\":\"performance,model_target,inference,dense,BNSD\",\"use_beta_sigmoid_in_kernel\":true,\"use_exp2\":true,\"use_gate_in_kernel\":true,\"use_qk_l2norm_in_kernel\":true}",
+        "range_values": "{\"B\":1,\"HK\":96,\"HV\":96,\"K\":128,\"T\":8192,\"V\":128,\"allow_neg_eigval\":true,\"backward_mode\":\"none\",\"beta_dtype\":\"bf16\",\"beta_scale\":1.0,\"case_id\":7,\"case_key\":\"model_b1_hk96_hv96_t8192_inference\",\"chunk_size\":64,\"cu_seqlens\":\"\",\"data_scale\":0.08,\"dt_bias\":true,\"dtype\":\"bf16\",\"epsilon\":1e-06,\"expected_tiling_key\":7670302,\"explicit_chunk_indices\":false,\"gate_dtype\":\"fp32\",\"gate_scale\":1.0,\"layout\":\"BNSD\",\"lower_bound\":-5.0,\"performance_baseline_us\":3221.331,\"performance_statistic\":\"msopprof kernel duration\",\"performance_target_us\":2700,\"route\":\"ascendc\",\"safe_gate\":true,\"scale\":0.08838,\"seed\":20261917,\"soc\":\"all\",\"tags\":\"performance,model_target,inference,dense,BNSD\",\"use_beta_sigmoid_in_kernel\":true,\"use_exp2\":true,\"use_gate_in_kernel\":true,\"use_qk_l2norm_in_kernel\":true}",
         "backward": false
       },
       {
@@ -2285,7 +2285,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "model_b1_h96_t8192_inference",
+        "range_values": "model_b1_hk96_hv96_t8192_inference",
         "backward": false
       },
       {
@@ -2546,7 +2546,7 @@
   {
     "id": 8,
     "default_seed": 20261918,
-    "name": "chunk_kda_fwd_prepare_0008_model_b1_h96_t16384_varlen_inference",
+    "name": "chunk_kda_fwd_prepare_0008_model_b1_hk96_hv96_t16384_varlen_inference",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
@@ -2594,7 +2594,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":96,\"HV\":96,\"K\":128,\"T\":16384,\"V\":128,\"allow_neg_eigval\":true,\"backward_mode\":\"none\",\"beta_dtype\":\"bf16\",\"beta_scale\":1.0,\"case_id\":8,\"case_key\":\"model_b1_h96_t16384_varlen_inference\",\"chunk_size\":64,\"cu_seqlens\":\"0,7,75,76,436,690,982,1036,1156,1764,2434,2883,2898,2982,3142,3392,3459,3694,3717,4395,4510,4717,4822,5074,5168,5199,5370,5834,6223,6241,6302,6503,6728,6920,6948,7134,7205,7289,7904,8026,8114,8124,8238,8828,9045,10151,10257,10274,10444,10812,10930,11023,11305,11643,11973,13602,14050,14527,14832,15290,15362,16018,16267,16308,16384\",\"data_scale\":0.08,\"dt_bias\":true,\"dtype\":\"bf16\",\"epsilon\":1e-06,\"expected_tiling_key\":7670302,\"explicit_chunk_indices\":false,\"gate_dtype\":\"fp32\",\"gate_scale\":1.0,\"layout\":\"BNSD\",\"lower_bound\":-5.0,\"performance_target_us\":5600,\"route\":\"ascendc\",\"safe_gate\":true,\"scale\":0.08838,\"seed\":20261918,\"soc\":\"all\",\"tags\":\"performance,model_target,inference,varlen,BNSD\",\"use_beta_sigmoid_in_kernel\":true,\"use_exp2\":true,\"use_gate_in_kernel\":true,\"use_qk_l2norm_in_kernel\":true}",
+        "range_values": "{\"B\":1,\"HK\":96,\"HV\":96,\"K\":128,\"T\":16384,\"V\":128,\"allow_neg_eigval\":true,\"backward_mode\":\"none\",\"beta_dtype\":\"bf16\",\"beta_scale\":1.0,\"case_id\":8,\"case_key\":\"model_b1_hk96_hv96_t16384_varlen_inference\",\"chunk_size\":64,\"cu_seqlens\":\"0,7,75,76,436,690,982,1036,1156,1764,2434,2883,2898,2982,3142,3392,3459,3694,3717,4395,4510,4717,4822,5074,5168,5199,5370,5834,6223,6241,6302,6503,6728,6920,6948,7134,7205,7289,7904,8026,8114,8124,8238,8828,9045,10151,10257,10274,10444,10812,10930,11023,11305,11643,11973,13602,14050,14527,14832,15290,15362,16018,16267,16308,16384\",\"data_scale\":0.08,\"dt_bias\":true,\"dtype\":\"bf16\",\"epsilon\":1e-06,\"expected_tiling_key\":7670302,\"explicit_chunk_indices\":false,\"gate_dtype\":\"fp32\",\"gate_scale\":1.0,\"layout\":\"BNSD\",\"lower_bound\":-5.0,\"performance_baseline_us\":7131.371,\"performance_statistic\":\"msopprof kernel duration\",\"performance_target_us\":5600,\"route\":\"ascendc\",\"safe_gate\":true,\"scale\":0.08838,\"seed\":20261918,\"soc\":\"all\",\"tags\":\"performance,model_target,inference,varlen,BNSD\",\"use_beta_sigmoid_in_kernel\":true,\"use_exp2\":true,\"use_gate_in_kernel\":true,\"use_qk_l2norm_in_kernel\":true}",
         "backward": false
       },
       {
@@ -2603,7 +2603,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "model_b1_h96_t16384_varlen_inference",
+        "range_values": "model_b1_hk96_hv96_t16384_varlen_inference",
         "backward": false
       },
       {
@@ -2856,6 +2856,324 @@
         "dtype": "int",
         "shape": null,
         "range_values": 20261918,
+        "backward": false
+      }
+    ],
+    "save_name": "chunk_kda_fwd_prepare"
+  },
+  {
+    "id": 9,
+    "default_seed": 20261919,
+    "name": "chunk_kda_fwd_prepare_0009_model_b1_hk8_hv24_t32768",
+    "aclnn_name": null,
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_fwd_prepare",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "mixed_tolerance_bm",
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"B\":1,\"HK\":8,\"HV\":24,\"K\":128,\"T\":32768,\"V\":128,\"allow_neg_eigval\":true,\"backward_mode\":\"none\",\"beta_dtype\":\"bf16\",\"beta_scale\":1.0,\"case_id\":9,\"case_key\":\"model_b1_hk8_hv24_t32768\",\"chunk_size\":64,\"cu_seqlens\":\"\",\"data_scale\":0.08,\"dt_bias\":true,\"dtype\":\"bf16\",\"epsilon\":1e-06,\"expected_tiling_key\":7670302,\"explicit_chunk_indices\":false,\"gate_dtype\":\"fp32\",\"gate_scale\":1.0,\"layout\":\"BNSD\",\"lower_bound\":-5.0,\"route\":\"ascendc\",\"safe_gate\":true,\"scale\":0.08838,\"seed\":20261919,\"soc\":\"all\",\"tags\":\"performance,model_target,inference,dense,BNSD,gva\",\"use_beta_sigmoid_in_kernel\":true,\"use_exp2\":true,\"use_gate_in_kernel\":true,\"use_qk_l2norm_in_kernel\":true}",
+        "backward": false
+      },
+      {
+        "name": "case_key",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "model_b1_hk8_hv24_t32768",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "all",
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascendc",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "HK",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 8,
+        "backward": false
+      },
+      {
+        "name": "HV",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 24,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 32768,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BNSD",
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "gate_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
+        "backward": false
+      },
+      {
+        "name": "beta_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.08838,
+        "backward": false
+      },
+      {
+        "name": "epsilon",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 1e-06,
+        "backward": false
+      },
+      {
+        "name": "use_qk_l2norm_in_kernel",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "use_gate_in_kernel",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "use_beta_sigmoid_in_kernel",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "allow_neg_eigval",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "safe_gate",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "lower_bound",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": -5.0,
+        "backward": false
+      },
+      {
+        "name": "use_exp2",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "backward_mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "none",
+        "backward": false
+      },
+      {
+        "name": "dt_bias",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
+      },
+      {
+        "name": "explicit_chunk_indices",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "tags",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "performance,model_target,inference,dense,BNSD,gva",
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261919,
         "backward": false
       }
     ],

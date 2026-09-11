@@ -22,20 +22,21 @@ show_usage() {
   CANN_ENV                       CANN set_env.sh 路径，设置后 source
   FLA_NPU_ENV                    fla_npu_transformer set_env.bash 路径，设置后 source
   ATK_OUTPUT_ROOT                输出根目录，默认 ./atk_output
-  ATK_GM_INIT_MODE               GM 数据初始化模式，默认 on；可设 on/off
-  ATK_SINGLE_PROCESS             是否向 ATK 传 -sp，默认 on；可设 on/off
-  ATK_TIMEOUT                    精度阶段超时，默认 14400
+  ATK_GM_INIT_MODE               GM 数据初始化模式，默认 on（Prepare 默认 off）；可设 on/off
+  ATK_SINGLE_PROCESS             是否向 ATK 传 -sp，默认 on（Prepare 默认 off）；可设 on/off
+  ATK_TIMEOUT                    精度阶段超时，默认 14400（Prepare 默认 60）
   DC_LOOP_NUMS                   确定性循环次数，默认 50（与 ATK 一致）
-  DC_TIMEOUT                     确定性阶段超时，默认 3600
-  PERFORMANCE_TIMEOUT            性能阶段超时，默认 2000
+  DC_TIMEOUT                     确定性阶段超时，默认 3600（Prepare 默认 60）
+  PERFORMANCE_TIMEOUT            性能阶段超时，默认 2000（Prepare 默认 60）
   CASE_START/CASE_END            通用 case 顺序范围；不设置时不传 -s/-e，ATK 执行全部用例
   ACCURACY_START/ACCURACY_END    精度与 NaN 检测 case 范围
-  PERFORMANCE_START/END          性能 case 范围
-  DETERMINISM_START/END          确定性 case 范围
+  PERFORMANCE_START/PERFORMANCE_END  性能 case 范围
+  DETERMINISM_START/DETERMINISM_END  确定性 case 范围
   MSS_START/MSS_END              mssanitizer case 范围
   MSS_TOOL                       mssanitizer 工具，默认 memcheck
-  MSS_TIMEOUT                    内存检测单用例超时；默认不设置，由 ATK 使用自身默认值
+  MSS_TIMEOUT                    内存检测单用例超时；默认不设置（Prepare 默认 60）
   MSS_LOG_PATH                   ATK -msl 日志路径，默认 ${ATK_OUTPUT_ROOT}/mssanitizer_<op>_<时间戳>.log
+  MSS_SANITIZER_LOG_PATH         外层 mssanitizer 原始日志；Prepare 必须与 MSS_LOG_PATH 相同
   GEN_CASES_DTYPE_NUMBERS        生成用例时传给 atk case -dt，默认 100；双 dtype 算子生成 200 条
   GEN_CASES_EXTRA_NUMBERS        生成用例时传给 atk case -en，默认 0
   GEN_CASES_SEED                 生成用例随机种子，默认 20260813
@@ -60,6 +61,7 @@ die() {
 # 全局变量：记录已执行的测试类型与未通过项数
 RAN_TYPES=()
 RESULT_FAIL_COUNT=0
+PERFORMANCE_RUN_START_NS=""
 
 # 记录已执行的测试阶段，供最终汇总使用。
 record_ran_type() {
@@ -70,6 +72,9 @@ record_ran_type() {
 # 多项时输出每项结果 + 汇总行；单项时仅输出该项结果，不显示汇总行。
 print_result_summary() {
   if [[ ! -f "$RESULT_CHECK_PY" ]]; then
+    if [[ "$OP" == "chunk_kda_fwd_prepare" ]]; then
+      die "Prepare 必须执行结果检查，但找不到 ${RESULT_CHECK_PY}"
+    fi
     log_info "跳过结果检查：找不到 ${RESULT_CHECK_PY}"
     return 0
   fi
@@ -77,8 +82,28 @@ print_result_summary() {
   [[ $ran -gt 0 ]] || return 0
   local pass=0
   for t in "${RAN_TYPES[@]}"; do
-    if python3 "$RESULT_CHECK_PY" --type "$t" \
-        --output-root "$ATK_OUTPUT_ROOT" --op "$OP"; then
+    local checker_args=(
+      --type "$t"
+      --output-root "$ATK_OUTPUT_ROOT"
+      --op "$OP"
+    )
+    if [[ "$OP" == "chunk_kda_fwd_prepare" && "$t" == "accuracy" ]]; then
+      checker_args+=(--require-accuracy-pass)
+    fi
+    if [[ "$OP" == "chunk_kda_fwd_prepare" && "$t" == "performance" ]]; then
+      checker_args+=(--expected-case-file "$PERFORMANCE_CASE_FILE")
+      checker_args+=(--require-performance-stability)
+      if [[ -n "$PERFORMANCE_START" || -n "$PERFORMANCE_END" ]]; then
+        checker_args+=(
+          --expected-case-start "$PERFORMANCE_START"
+          --expected-case-end "$PERFORMANCE_END"
+        )
+      fi
+    fi
+    if [[ "$t" == "performance" && -n "$PERFORMANCE_RUN_START_NS" ]]; then
+      checker_args+=(--report-min-mtime-ns "$PERFORMANCE_RUN_START_NS")
+    fi
+    if python3 "$RESULT_CHECK_PY" "${checker_args[@]}"; then
       pass=$((pass + 1))
     else
       fail=$((fail + 1))
@@ -110,6 +135,45 @@ should_run() {
     return
   fi
   [[ "$RUN_SCOPE" == "all" || "$RUN_SCOPE" == "$stage" ]]
+}
+
+validate_bounded_timeout() {
+  local name="$1"
+  local value="$2"
+  [[ "$value" =~ ^[1-9][0-9]*$ ]] && (( value <= 60 )) || \
+    die "${name} 必须是 1 到 60 秒之间的整数"
+}
+
+# Prepare 的正式矩阵要求超时真正作用于每条 worker case。统一入口也做硬
+# 校验，避免绕过算子专用分片脚本后退回 -sp 或数千秒的公共默认值。
+validate_chunk_kda_fwd_prepare_contract() {
+  [[ "$OP" == "chunk_kda_fwd_prepare" ]] || return 0
+  [[ "$RUN_SCOPE" == "gen_cases" ]] && return 0
+  [[ "$RUN_SCOPE" != "all" ]] || \
+    die "chunk_kda_fwd_prepare 的 all 不能闭合四种 sanitizer，请使用算子 README 中的 run_matrix.sh"
+
+  case "$ATK_SINGLE_PROCESS" in
+    off|disable|false|0) ;;
+    *) die "chunk_kda_fwd_prepare 正式测试要求 ATK_SINGLE_PROCESS=off" ;;
+  esac
+  if should_run accuracy; then
+    validate_bounded_timeout ATK_TIMEOUT "$ATK_TIMEOUT"
+    case "$ATK_GM_INIT_MODE" in
+      off|disable|false|0) ;;
+      *) die "chunk_kda_fwd_prepare 正式精度测试要求 ATK_GM_INIT_MODE=off" ;;
+    esac
+  fi
+  if should_run performance; then
+    validate_bounded_timeout PERFORMANCE_TIMEOUT "$PERFORMANCE_TIMEOUT"
+  fi
+  if should_run determinism; then
+    validate_bounded_timeout DC_TIMEOUT "$DC_TIMEOUT"
+    [[ "$DC_LOOP_NUMS" == "50" ]] || \
+      die "chunk_kda_fwd_prepare 正式确定性测试要求 DC_LOOP_NUMS=50"
+  fi
+  if should_run mssanitizer; then
+    validate_bounded_timeout MSS_TIMEOUT "$MSS_TIMEOUT"
+  fi
 }
 
 validate_case_json() {
@@ -239,18 +303,19 @@ OP=""
 NPU_DEVICE_ID="${NPU_DEVICE_ID:-0}"
 SOC="${SOC:-auto}"
 RUN_SCOPE="${RUN_SCOPE:-all}"
-ATK_GM_INIT_MODE="${ATK_GM_INIT_MODE:-on}"
-ATK_SINGLE_PROCESS="${ATK_SINGLE_PROCESS:-on}"
+ATK_GM_INIT_MODE="${ATK_GM_INIT_MODE:-}"
+ATK_SINGLE_PROCESS="${ATK_SINGLE_PROCESS:-}"
 REQUIRED_ATK_VERSION="${REQUIRED_ATK_VERSION:-26.8.8}"
-ATK_TIMEOUT="${ATK_TIMEOUT:-14400}"
+ATK_TIMEOUT="${ATK_TIMEOUT:-}"
 DC_LOOP_NUMS="${DC_LOOP_NUMS:-50}"
-DC_TIMEOUT="${DC_TIMEOUT:-3600}"
-PERFORMANCE_TIMEOUT="${PERFORMANCE_TIMEOUT:-2000}"
+DC_TIMEOUT="${DC_TIMEOUT:-}"
+PERFORMANCE_TIMEOUT="${PERFORMANCE_TIMEOUT:-}"
 CASE_START="${CASE_START:-}"
 CASE_END="${CASE_END:-}"
 MSS_TOOL="${MSS_TOOL:-memcheck}"
 MSS_TIMEOUT="${MSS_TIMEOUT:-}"
 MSS_LOG_PATH="${MSS_LOG_PATH:-}"
+MSS_SANITIZER_LOG_PATH="${MSS_SANITIZER_LOG_PATH:-}"
 GEN_CASES_DTYPE_NUMBERS="${GEN_CASES_DTYPE_NUMBERS:-100}"
 GEN_CASES_EXTRA_NUMBERS="${GEN_CASES_EXTRA_NUMBERS:-0}"
 GEN_CASES_SEED="${GEN_CASES_SEED:-20260813}"
@@ -332,6 +397,29 @@ case "$SOC" in
   *) die "不支持的 SOC：${SOC}，请使用 ascend910b/A2、ascend910_93/A3 或 ascend950/A5" ;;
 esac
 
+if [[ "$OP" == "chunk_kda_fwd_prepare" ]]; then
+  # Prepare 的正式矩阵要求每条 worker case 使用 60 秒合同。
+  ATK_GM_INIT_MODE="${ATK_GM_INIT_MODE:-off}"
+  ATK_SINGLE_PROCESS="${ATK_SINGLE_PROCESS:-off}"
+  ATK_TIMEOUT="${ATK_TIMEOUT:-60}"
+  DC_TIMEOUT="${DC_TIMEOUT:-60}"
+  PERFORMANCE_TIMEOUT="${PERFORMANCE_TIMEOUT:-60}"
+  MSS_TIMEOUT="${MSS_TIMEOUT:-60}"
+else
+  ATK_GM_INIT_MODE="${ATK_GM_INIT_MODE:-on}"
+  ATK_SINGLE_PROCESS="${ATK_SINGLE_PROCESS:-on}"
+  ATK_TIMEOUT="${ATK_TIMEOUT:-14400}"
+  DC_TIMEOUT="${DC_TIMEOUT:-3600}"
+  PERFORMANCE_TIMEOUT="${PERFORMANCE_TIMEOUT:-2000}"
+fi
+
+# Prepare 性能报告必须给出可验收的波动校验列；ATK 默认关闭该检查时会
+# 将该列写成 None，无法区分未检查和通过。
+PERFORMANCE_FLUCTUATION_ARGS=()
+if [[ "$OP" == "chunk_kda_fwd_prepare" ]]; then
+  PERFORMANCE_FLUCTUATION_ARGS=(--fluctuation_check)
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OP_DIR="${SCRIPT_DIR}/${OP}"
 RESULT_CHECK_PY="${SCRIPT_DIR}/common/check_atk_result.py"
@@ -343,6 +431,7 @@ MSS_CASE_FILE="${OP_DIR}/atk_${OP}_mss.json"
 EXECUTOR_FILE="${OP_DIR}/executor_${OP}.py"
 YAML_FILE="${OP_DIR}/${OP}.yaml"
 GEN_FILE="${OP_DIR}/gen_${OP}.py"
+SANITIZER_VERIFIER_FILE="${OP_DIR}/scripts/verify_matrix.py"
 
 [[ -d "$OP_DIR" ]] || die "找不到 ATK 算子目录：${OP_DIR}"
 if should_run gen_cases; then
@@ -361,6 +450,10 @@ fi
 if [[ -n "${FLA_NPU_ENV:-${FLA_NPU_OPP_ENV:-}}" ]]; then
   source_env_file "fla_npu_transformer环境" "${FLA_NPU_ENV:-${FLA_NPU_OPP_ENV:-}}"
 fi
+
+# 环境脚本可能设置同名变量；必须在全部环境加载后再执行正式合同校验，
+# 防止 Prepare 的 60 秒、禁用 -sp/GM 初始化等约束被覆盖。
+validate_chunk_kda_fwd_prepare_contract
 
 ATK_BIN="$(command -v atk || true)"
 [[ -n "$ATK_BIN" ]] || die "找不到 atk，请先安装并激活 ATK 环境"
@@ -412,6 +505,26 @@ mkdir -p "${ATK_OUTPUT_ROOT}/accuracy" "${ATK_OUTPUT_ROOT}/perf" \
 # mssanitizer 日志路径：未显式指定时使用 ATK_OUTPUT_ROOT 下的带时间戳绝对路径
 # ATK celery worker 工作目录与脚本不同，必须用绝对路径，否则无法找到日志文件
 MSS_LOG_PATH="${MSS_LOG_PATH:-$(cd "${ATK_OUTPUT_ROOT}" && pwd)/mssanitizer_${OP}_$(date +%Y%m%d_%H%M%S).log}"
+if [[ "$OP" == "chunk_kda_fwd_prepare" ]]; then
+  # ATK 文档要求外层 mssanitizer 与 ATK -msl 共用同一个原始日志文件，
+  # 否则 Start/Finish 记录可能被分散到不同文件，无法证明每个 kernel 闭环完成。
+  MSS_SANITIZER_LOG_PATH="${MSS_SANITIZER_LOG_PATH:-$MSS_LOG_PATH}"
+  if should_run mssanitizer; then
+    # ATK worker 可能切换工作目录；日志路径必须先固定为绝对路径。
+    # realpath -m 允许目标文件尚不存在，同时保留后续 verifier 的文件存在性检查。
+    [[ ! -L "$MSS_LOG_PATH" ]] || die "MSS_LOG_PATH 不能是符号链接：${MSS_LOG_PATH}"
+    [[ ! -L "$MSS_SANITIZER_LOG_PATH" ]] || \
+      die "MSS_SANITIZER_LOG_PATH 不能是符号链接：${MSS_SANITIZER_LOG_PATH}"
+    MSS_LOG_PATH="$(realpath -m -- "$MSS_LOG_PATH")" || \
+      die "无法规范化 MSS_LOG_PATH：${MSS_LOG_PATH}"
+    MSS_SANITIZER_LOG_PATH="$(realpath -m -- "$MSS_SANITIZER_LOG_PATH")" || \
+      die "无法规范化 MSS_SANITIZER_LOG_PATH：${MSS_SANITIZER_LOG_PATH}"
+    [[ "$MSS_SANITIZER_LOG_PATH" == "$MSS_LOG_PATH" ]] || \
+      die "Prepare 的外层 sanitizer 日志必须与 ATK -msl 日志相同"
+  fi
+else
+  MSS_SANITIZER_LOG_PATH="${MSS_SANITIZER_LOG_PATH:-$MSS_LOG_PATH}"
+fi
 
 log_info "算子：${OP}"
 log_info "SOC：${SOC}"
@@ -458,6 +571,8 @@ fi
 if should_run performance; then
   log_info "开始性能测试：performance_device"
   set_case_range_args "性能测试 case 范围" "$PERFORMANCE_START" "$PERFORMANCE_END"
+  # 绑定本次性能报告，避免复用同一输出目录中历史成功的 xlsx。
+  PERFORMANCE_RUN_START_NS="$(python3 -c 'import time; print(time.time_ns())')"
   "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
       --output_path "${ATK_OUTPUT_ROOT}/perf" \
     task \
@@ -467,8 +582,10 @@ if should_run performance; then
       "${CASE_RANGE_ARGS[@]}" \
       --save_data profile \
       "${SINGLE_PROCESS_ARGS[@]}" \
+      "${PERFORMANCE_FLUCTUATION_ARGS[@]}" \
       -to "$PERFORMANCE_TIMEOUT"
   log_info "完成性能测试"
+  record_ran_type performance
 fi
 
 if should_run determinism; then
@@ -499,7 +616,8 @@ if should_run mssanitizer; then
       die "MSS_TIMEOUT 必须是正整数，当前值：${MSS_TIMEOUT}"
     MSS_TIMEOUT_ARGS=(-to "$MSS_TIMEOUT")
   fi
-  touch "$MSS_LOG_PATH"
+  # 每次执行先清空旧证据，避免复用路径时把上一次 clean finish 误当成本次结果。
+  : > "$MSS_LOG_PATH"
   mssanitizer --tool="$MSS_TOOL" --log-file "$MSS_LOG_PATH" -- \
     "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
     --output_path "${ATK_OUTPUT_ROOT}/mssanitizer" \
@@ -512,6 +630,19 @@ if should_run mssanitizer; then
       "${SINGLE_PROCESS_ARGS[@]}" \
       "${MSS_TIMEOUT_ARGS[@]}" \
       "${CASE_RANGE_ARGS[@]}"
+  if [[ "$OP" == "chunk_kda_fwd_prepare" ]]; then
+    expected_finish_count=432
+    if [[ -n "$MSS_START" || -n "$MSS_END" ]]; then
+      [[ "$MSS_START" =~ ^[0-9]+$ && "$MSS_END" =~ ^[0-9]+$ ]] || \
+        die "MSS_START/MSS_END 必须是非负整数"
+      (( MSS_END > MSS_START )) || die "MSS_END 必须大于 MSS_START"
+      expected_finish_count=$((MSS_END - MSS_START))
+    fi
+    python3 "$SANITIZER_VERIFIER_FILE" sanitizer-log \
+      --tool "$MSS_TOOL" \
+      --log "$MSS_LOG_PATH" \
+      --expected-finish-count "$expected_finish_count"
+  fi
   log_info "完成内存检测"
   record_ran_type mssanitizer
 fi

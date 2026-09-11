@@ -36,6 +36,27 @@ def _check_frozen(generator, name: str, specs: list[dict]) -> None:
         raise AssertionError(f"{name} 与统一用例清单不一致，请重新生成")
 
 
+def _check_accuracy_seeds(specs: list[dict]) -> None:
+    groups: dict[str, list[dict]] = {}
+    for spec in specs:
+        groups.setdefault(spec["logical_case_key"], []).append(spec)
+    if len(specs) != 200 or len(groups) != 56:
+        raise AssertionError("精度用例必须是 200 条、56 个逻辑场景")
+    for logical_key, group in groups.items():
+        seeds = [spec["seed"] for spec in group]
+        seed_indices = [spec["seed_index"] for spec in group]
+        if len(group) not in (3, 4):
+            raise AssertionError(
+                f"精度逻辑场景 {logical_key} 必须包含 3 或 4 条用例"
+            )
+        if len(set(seeds)) != len(group):
+            raise AssertionError(f"精度逻辑场景 {logical_key} 存在重复 seed")
+        if sorted(seed_indices) != list(range(len(group))):
+            raise AssertionError(
+                f"精度逻辑场景 {logical_key} 的 seed_index 必须从 0 连续编号"
+            )
+
+
 def main() -> None:
     generator = _load_generator()
     accuracy = generator.build_accuracy_specs()
@@ -46,9 +67,27 @@ def main() -> None:
     _check_frozen(generator, "atk_chunk_kda_fwd_prepare_perf.json", performance)
     _check_frozen(generator, "atk_chunk_kda_fwd_prepare_mss.json", mss)
 
+    _check_accuracy_seeds(accuracy)
     logical_counts = Counter(spec["logical_case_key"] for spec in accuracy)
-    if len(accuracy) != 200 or min(logical_counts.values()) < 3:
-        raise AssertionError("精度用例必须是 200 条且每个逻辑场景至少 3 个固定种子")
+
+    expected_model_shapes = [
+        (2, 16, 32, 11264),
+        (1, 16, 32, 11264),
+        (1, 32, 32, 65536),
+        (4, 96, 96, 128),
+        (1, 32, 32, 160),
+        (6, 6, 6, 1084),
+        (1, 12, 12, 1084),
+        (1, 96, 96, 8192),
+        (1, 96, 96, 16384),
+        (1, 8, 24, 32768),
+    ]
+    model_shapes = [
+        (spec["B"], spec["HK"], spec["HV"], spec["T"])
+        for spec in performance
+    ]
+    if model_shapes != expected_model_shapes:
+        raise AssertionError("性能用例没有原样保留 10 个用户模型 shape")
 
     keys = [spec["expected_tiling_key"] for spec in mss]
     key_digest = hashlib.sha256(

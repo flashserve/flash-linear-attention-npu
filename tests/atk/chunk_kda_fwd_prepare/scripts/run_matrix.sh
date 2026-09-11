@@ -43,6 +43,7 @@ op_dir=$(cd -- "$script_dir/.." && pwd)
 repo_root=$(cd -- "$op_dir/../../.." && pwd)
 runner="$repo_root/tests/atk/run_test_cpu.sh"
 verifier="$script_dir/verify_matrix.py"
+coverage_checker="$script_dir/check_coverage.py"
 soc=${KDA_PREPARE_ATK_SOC:-}
 matrix_start=${KDA_PREPARE_ATK_MATRIX_START:-0}
 tool=""
@@ -102,6 +103,9 @@ if [[ -n "${FLA_NPU_ENV:-${FLA_NPU_OPP_ENV:-}}" ]]; then
   source_checked_env \
     "fla_npu_transformer 环境" "${FLA_NPU_ENV:-${FLA_NPU_OPP_ENV:-}}"
 fi
+
+# 在第一条 case 下发前校验三份冻结 JSON、200 条多 seed 合同和 432-key 集合。
+python3 "$coverage_checker"
 
 shard_size=${KDA_PREPARE_ATK_SHARD_SIZE:-$default_shard_size}
 timestamp=$(date +%Y%m%d_%H%M%S)
@@ -185,8 +189,27 @@ if (( matrix_start > 0 )) && [[ -z "$matrix_root_override" ]]; then
   echo "从非零 case 续跑时必须指定 KDA_PREPARE_ATK_MATRIX_ROOT" >&2
   exit 2
 fi
-mkdir -p "$matrix_root"
-matrix_root=$(cd -- "$matrix_root" && pwd)
+# 在创建或规范化前拒绝用户提供的根目录符号链接；否则 mkdir/cd 会把
+# 结果写到链接目标，后续校验无法知道原始路径是否被替换。分别计算不
+# 展开符号链接和物理 realpath，连同祖先目录的链接一并拒绝。
+if [[ -L "$matrix_root" ]]; then
+  echo "KDA_PREPARE_ATK_MATRIX_ROOT 不能是符号链接：$matrix_root" >&2
+  exit 2
+fi
+matrix_root_nosymlink=$(realpath -m -s -- "$matrix_root") || {
+  echo "无法规范化 KDA_PREPARE_ATK_MATRIX_ROOT：$matrix_root" >&2
+  exit 2
+}
+matrix_root_realpath=$(realpath -m -- "$matrix_root") || {
+  echo "无法解析 KDA_PREPARE_ATK_MATRIX_ROOT：$matrix_root" >&2
+  exit 2
+}
+if [[ "$matrix_root_nosymlink" != "$matrix_root_realpath" ]]; then
+  echo "KDA_PREPARE_ATK_MATRIX_ROOT 路径包含符号链接：$matrix_root" >&2
+  exit 2
+fi
+mkdir -p "$matrix_root_realpath"
+matrix_root="$matrix_root_realpath"
 
 case "$scope" in
   accuracy)
@@ -210,7 +233,12 @@ runtime_manifest="$matrix_root/runtime_manifest.json"
 test_artifacts=(
   "$op_dir/executor_chunk_kda_fwd_prepare.py"
   "$op_dir/chunk_kda_fwd_prepare.yaml"
+  "$op_dir/gen_chunk_kda_fwd_prepare.py"
+  "$repo_root/tests/op_cases/chunk_kda_fwd_prepare.json"
+  "$repo_root/tests/atk/common/_ascendc_common_executor.py"
+  "$repo_root/tests/atk/common/check_atk_result.py"
   "$runner"
+  "$coverage_checker"
   "$script_dir/run_matrix.sh"
   "$verifier"
 )
@@ -299,17 +327,25 @@ for ((start = matrix_start; start < case_count; start += shard_size)); do
   )
   case "$scope" in
     accuracy)
+      common_env+=(ACCURACY_START="$start")
+      common_env+=(ACCURACY_END="$end")
       common_env+=(ATK_GM_INIT_MODE="$accuracy_gm_mode")
       common_env+=(ATK_TIMEOUT="$accuracy_timeout")
       ;;
     determinism)
+      common_env+=(DETERMINISM_START="$start")
+      common_env+=(DETERMINISM_END="$end")
       common_env+=(DC_LOOP_NUMS="$determinism_loops")
       common_env+=(DC_TIMEOUT="$determinism_timeout")
       ;;
     mssanitizer)
+      common_env+=(MSS_START="$start")
+      common_env+=(MSS_END="$end")
       common_env+=(MSS_TOOL="$tool")
       common_env+=(MSS_TIMEOUT="$sanitizer_timeout")
       common_env+=(MSS_LOG_PATH="$shard_root/${tool}.log")
+      # ATK -msl 与外层 mssanitizer 共用同一份原始日志。
+      common_env+=(MSS_SANITIZER_LOG_PATH="$shard_root/${tool}.log")
       ;;
   esac
 
