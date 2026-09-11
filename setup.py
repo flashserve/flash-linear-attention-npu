@@ -603,6 +603,44 @@ def _stage_offline_bundle(build_lib: Path) -> None:
     print(f"[fla-npu build] Offline third-party bundle staged at {third_party_dst}", flush=True)
 
 
+def _thin_build_enabled() -> bool:
+    """Compile the optional C++ thin launcher by default.
+
+    Disable with FLA_NPU_BUILD_THIN=0 to keep the pure-Python wheel.
+    """
+
+    value = os.getenv("FLA_NPU_BUILD_THIN")
+    if value is None:
+        return True
+    return value.upper() not in {"0", "FALSE", "NO", "OFF"}
+
+
+def _build_thin_inplace():
+    """Compile the thin launcher into the source package before wheel staging.
+
+    Mirrors the legacy extension flow: torch.utils.cpp_extension builds the
+    .so in-place inside torch_custom/fla_npu/fla_npu, then FlaNpuBuildPy copies
+    it into the wheel's build_lib. Avoids PEP 517 absolute-source validation.
+    """
+
+    if not _thin_build_enabled():
+        return
+    for so_file in FLA_NPU_PACKAGE_DIR.glob("_C_thin*.so"):
+        so_file.unlink()
+    _run(
+        [sys.executable, "setup.py", "build_ext", "--force", "--inplace"],
+        TORCH_EXTENSION_DIR,
+    )
+    so_files = sorted(FLA_NPU_PACKAGE_DIR.glob("_C_thin*.so"))
+    if not so_files:
+        raise RuntimeError(
+            "_C_thin*.so was not produced under " f"{FLA_NPU_PACKAGE_DIR}"
+        )
+
+
+_THIN_BUILD_ENABLED = _thin_build_enabled()
+
+
 class FlaNpuBuildPy(_build_py):
     def run(self):
         global _EXTERNAL_BUILD_DONE, _RUN_PACKAGE
@@ -610,6 +648,7 @@ class FlaNpuBuildPy(_build_py):
             _check_build_environment()
             _RUN_PACKAGE = _build_run_package()
             _build_torch_extension_inplace()
+            _build_thin_inplace()
             _EXTERNAL_BUILD_DONE = True
 
         built_package_dir = Path(self.build_lib) / "fla_npu"
@@ -624,14 +663,19 @@ class FlaNpuBuildPy(_build_py):
             src = opp_env_src / name
             if src.exists():
                 shutil.copyfile(str(src), str(Path(self.build_lib) / name))
+        for so_file in FLA_NPU_PACKAGE_DIR.glob("_C_thin*.so"):
+            shutil.copy2(
+                str(so_file),
+                str(Path(self.build_lib) / "fla_npu" / so_file.name),
+            )
 
 
 class BinaryDistribution(Distribution):
     def is_pure(self):
-        return True
+        return not _THIN_BUILD_ENABLED
 
     def has_ext_modules(self):
-        return False
+        return _THIN_BUILD_ENABLED
 
 
 CMDCLASS = {"build_py": FlaNpuBuildPy}
@@ -641,7 +685,7 @@ if _bdist_wheel is not None:
     class FlaNpuBdistWheel(_bdist_wheel):
         def finalize_options(self):
             super().finalize_options()
-            self.root_is_pure = True
+            self.root_is_pure = not _THIN_BUILD_ENABLED
             build_tag = get_wheel_build_tag(REPO_ROOT)
             if build_tag:
                 self.build_number = build_tag

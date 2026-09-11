@@ -1,0 +1,66 @@
+{
+  "aclnn_name": "aclnnRecurrentKda",
+  "python_name": "npu_recurrent_kda",
+  "nd_only": true,
+  "mutated": ["initial_state"],
+  "outputs": [
+    {
+      "arg": "attn_out",
+      "source": "v",
+      "dtype": "same"
+    },
+    {
+      "arg": "final_state",
+      "return_when": "output_final_state",
+      "alloc": "(inplace_final_state && initial_state.has_value() && initial_state->defined()) ? *initial_state : at::empty({(cu_seqlens.has_value() && cu_seqlens->defined() ? (cu_seqlens->size(0) - 1) : (layout == \"TND\" ? 1 : q.size(0))), (layout == \"TND\" ? v.size(1) : v.size(2)), (state_v_first ? (layout == \"TND\" ? v.size(2) : v.size(3)) : (layout == \"TND\" ? k.size(2) : k.size(3))), (state_v_first ? (layout == \"TND\" ? k.size(2) : k.size(3)) : (layout == \"TND\" ? v.size(2) : v.size(3)))}, (initial_state.has_value() && initial_state->defined()) ? initial_state->options() : q.options().dtype(at::kFloat))"
+    }
+  ],
+  "python": {
+    "positional": ["q", "k", "v", "g", "beta", "initial_state"],
+    "pre": "import torch as _torch\nlayout = str(layout)\nif scale is None:\n    _kd = k.shape[2] if layout == \"TND\" else k.shape[3]\n    scale = _kd ** -0.5\ninplace_final_state = True if inplace_final_state is None else bool(inplace_final_state)\nif inplace_final_state and initial_state is None:\n    raise RuntimeError(\"npu_recurrent_kda: inplace_final_state=True requires initial_state.\")\nif initial_state is None:\n    _seq = 1 if layout == \"TND\" else q.shape[0]\n    _hv = v.shape[1] if layout == \"TND\" else v.shape[2]\n    _kk = k.shape[2] if layout == \"TND\" else k.shape[3]\n    _vv = v.shape[2] if layout == \"TND\" else v.shape[3]\n    _tail = (_vv, _kk) if state_v_first else (_kk, _vv)\n    initial_state = _torch.zeros((_seq, _hv) + _tail, dtype=_torch.float32, device=v.device)",
+    "defaults": {
+      "cu_seqlens": "None",
+      "ssm_state_indices": "None",
+      "A_log": "None",
+      "dt_bias": "None",
+      "num_accepted_tokens": "None",
+      "layout": "\"BSND\"",
+      "scale": "None",
+      "output_final_state": "False",
+      "inplace_final_state": "True",
+      "use_qk_l2norm_in_kernel": "False",
+      "use_gate_in_kernel": "False",
+      "use_beta_sigmoid_in_kernel": "False",
+      "allow_neg_eigval": "False",
+      "safe_gate": "False",
+      "lower_bound": "None",
+      "state_v_first": "False"
+    }
+  },
+  "args": [
+    {"name": "q", "kind": "tensor"},
+    {"name": "k", "kind": "tensor"},
+    {"name": "v", "kind": "tensor"},
+    {"name": "g", "kind": "tensor"},
+    {"name": "beta", "kind": "tensor"},
+    {"name": "initial_state", "kind": "optional_tensor"},
+    {"name": "cu_seqlens", "kind": "optional_tensor"},
+    {"name": "ssm_state_indices", "kind": "optional_tensor"},
+    {"name": "A_log", "kind": "optional_tensor"},
+    {"name": "dt_bias", "kind": "optional_tensor"},
+    {"name": "num_accepted_tokens", "kind": "optional_tensor"},
+    {"name": "layout", "kind": "char_ptr"},
+    {"name": "scale", "kind": "double"},
+    {"name": "output_final_state", "kind": "bool"},
+    {"name": "inplace_final_state", "kind": "bool"},
+    {"name": "use_qk_l2norm_in_kernel", "kind": "bool"},
+    {"name": "use_gate_in_kernel", "kind": "bool"},
+    {"name": "use_beta_sigmoid_in_kernel", "kind": "bool"},
+    {"name": "allow_neg_eigval", "kind": "bool"},
+    {"name": "safe_gate", "kind": "bool"},
+    {"name": "lower_bound", "kind": "double", "default": "-5.0"},
+    {"name": "state_v_first", "kind": "bool"},
+    {"name": "attn_out", "kind": "out_tensor"},
+    {"name": "final_state", "kind": "out_tensor"}
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "aclnn_name": "aclnnChunkFwdO",
+  "python_name": "npu_chunk_fwd_o",
+  "nd_only": true,
+  "mutated": [],
+  "output": {
+    "arg": "out",
+    "alloc": "(output_layout == \"BNSD\") ? at::empty({v.size(0), v.size(1), v.size(2), v.size(3)}, v.options()) : (output_layout == \"BSND\") ? at::empty({v.size(0), v.size(2), v.size(1), v.size(3)}, v.options()) : (output_layout == \"TND\") ? at::empty({v.size(2), v.size(1), v.size(3)}, v.options()) : at::empty({v.size(1), v.size(2), v.size(3)}, v.options())"
+  },
+  "python": {
+    "positional": ["q", "k", "v", "h", "scale"],
+    "ignored": ["g_gamma"],
+    "defaults": {
+      "g": "None",
+      "g_gamma": "None",
+      "cu_seqlens": "None",
+      "chunk_indices": "None",
+      "chunk_size": "None",
+      "use_exp2": "False",
+      "transpose_state_layout": "False",
+      "output_layout": "\"BNSD\""
+    }
+  },
+  "args": [
+    {"name": "q", "kind": "tensor"},
+    {"name": "k", "kind": "tensor"},
+    {"name": "v", "kind": "tensor"},
+    {"name": "h", "kind": "tensor"},
+    {"name": "g", "kind": "optional_tensor"},
+    {"name": "cu_seqlens", "kind": "int_array"},
+    {"name": "chunk_indices", "kind": "int_array"},
+    {"name": "scale", "kind": "double"},
+    {"name": "chunk_size", "kind": "int64", "default": "64"},
+    {"name": "use_exp2", "kind": "bool"},
+    {"name": "transpose_state_layout", "kind": "bool"},
+    {"name": "output_layout", "kind": "char_ptr"},
+    {"name": "out", "kind": "out_tensor"}
+  ]
+}

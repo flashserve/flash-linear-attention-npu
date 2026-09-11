@@ -1,0 +1,28 @@
+{
+  "aclnn_name": "aclnnPrepareWyReprBwdDa",
+  "python_name": "npu_prepare_wy_repr_bwd_da",
+  "nd_only": true,
+  "mutated": [],
+  "output": {"arg": "out", "source": "A", "dtype": "same"},
+  "python": {
+    "positional": ["k", "v", "beta", "A", "dw", "du", "g"],
+    "defaults": {
+      "chunk_size": "None",
+      "cu_seqlens": "None",
+      "chunk_indices": "None"
+    }
+  },
+  "args": [
+    {"name": "k", "kind": "tensor"},
+    {"name": "v", "kind": "tensor"},
+    {"name": "beta", "kind": "tensor"},
+    {"name": "A", "kind": "tensor"},
+    {"name": "dw", "kind": "tensor"},
+    {"name": "du", "kind": "tensor"},
+    {"name": "g", "kind": "tensor"},
+    {"name": "cu_seqlens", "kind": "int_array"},
+    {"name": "chunk_indices", "kind": "int_array"},
+    {"name": "chunk_size", "kind": "int64"},
+    {"name": "out", "kind": "out_tensor"}
+  ]
+}

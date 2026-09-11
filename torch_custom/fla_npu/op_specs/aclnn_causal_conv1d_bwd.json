@@ -1,0 +1,48 @@
+{
+  "aclnn_name": "aclnnCausalConv1dBwd",
+  "python_name": "npu_causal_conv1d_bwd",
+  "nd_only": true,
+  "mutated": [],
+  "outputs": [
+    {
+      "arg": "dx",
+      "source": "x",
+      "dtype": "same"
+    },
+    {
+      "arg": "dw",
+      "alloc": "at::empty({weight.size(0), weight.size(1)}, weight.options())"
+    },
+    {
+      "arg": "db",
+      "alloc": "at::empty({weight.size(1)}, weight.options())"
+    },
+    {
+      "arg": "dh0",
+      "alloc": "at::empty({(input_layout == \"TND\" || input_layout == \"NTD\") ? (query_start_loc.empty() ? int64_t{0} : static_cast<int64_t>(query_start_loc.size() - 1)) : x.size(0), weight.size(0), weight.size(1)}, x.options())"
+    }
+  ],
+  "python": {
+    "positional": ["x", "y", "weight", "dy", "initial_state", "dht"],
+    "defaults": {
+      "query_start_loc": "None",
+      "activation": "0",
+      "input_layout": "\"BSND\""
+    }
+  },
+  "args": [
+    {"name": "x", "kind": "tensor"},
+    {"name": "y", "kind": "optional_tensor"},
+    {"name": "weight", "kind": "tensor"},
+    {"name": "dy", "kind": "tensor"},
+    {"name": "initial_state", "kind": "optional_tensor"},
+    {"name": "dht", "kind": "optional_tensor"},
+    {"name": "query_start_loc", "kind": "int_array"},
+    {"name": "activation", "kind": "int64"},
+    {"name": "input_layout", "kind": "char_ptr"},
+    {"name": "dx", "kind": "out_tensor"},
+    {"name": "dw", "kind": "out_tensor"},
+    {"name": "db", "kind": "out_tensor"},
+    {"name": "dh0", "kind": "out_tensor"}
+  ]
+}

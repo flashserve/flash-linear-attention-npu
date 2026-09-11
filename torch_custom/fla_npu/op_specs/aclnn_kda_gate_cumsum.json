@@ -1,0 +1,18 @@
+{
+  "aclnn_name": "aclnnKdaGateCumsum",
+  "python_name": "npu_kda_gate_cumsum",
+  "nd_only": true,
+  "mutated": [],
+  "output": {"arg": "gk", "source": "g", "dtype": "float32"},
+  "args": [
+    {"name": "g", "kind": "tensor"},
+    {"name": "A_log", "kind": "optional_tensor"},
+    {"name": "dt_bias", "kind": "optional_tensor"},
+    {"name": "cu_seqlens", "kind": "int_array"},
+    {"name": "chunk_size", "kind": "int64"},
+    {"name": "use_gate_in_kernel", "kind": "bool"},
+    {"name": "safe_gate", "kind": "bool"},
+    {"name": "lower_bound", "kind": "double"},
+    {"name": "gk", "kind": "out_tensor"}
+  ]
+}

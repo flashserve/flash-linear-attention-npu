@@ -1,0 +1,63 @@
+{
+  "aclnn_name": "aclnnChunkGatedDeltaRuleBwdFinalize",
+  "python_name": "npu_chunk_gated_delta_rule_bwd_finalize",
+  "nd_only": true,
+  "mutated": [],
+  "outputs": [
+    {"arg": "dq", "source": "q", "dtype": "same"},
+    {"arg": "dk", "source": "k", "dtype": "same"},
+    {"arg": "dv", "source": "v", "dtype": "same"},
+    {"arg": "dbeta", "source": "beta", "dtype": "same"},
+    {"arg": "dg", "source": "g", "dtype": "same"}
+  ],
+  "python": {
+    "positional": [
+      "q", "k", "v", "v_new", "do", "du", "g", "beta", "h", "dh", "a"
+    ],
+    "pre": "scale = (128.0 ** -0.5) if scale is None else float(scale)\nif int(chunk_size) != 64 or bool(use_gate_in_kernel) or not bool(use_exp2):\n    from fla_npu.ops.ascendc import _aclnn_ctypes as _ct\n    return _ct.npu_chunk_gated_delta_rule_bwd_finalize(q, k, v, v_new, do, du, g, beta, h, dh, a, q_rstd=q_rstd, k_rstd=k_rstd, beta_raw=beta_raw, cu_seqlens=cu_seqlens, chunk_indices=chunk_indices, scale=scale, chunk_size=chunk_size, use_qk_l2_norm_in_kernel=use_qk_l2_norm_in_kernel, use_beta_sigmoid_in_kernel=use_beta_sigmoid_in_kernel, use_gate_in_kernel=use_gate_in_kernel, state_v_first=state_v_first, use_exp2=use_exp2)",
+    "defaults": {
+      "q_rstd": "None",
+      "k_rstd": "None",
+      "beta_raw": "None",
+      "cu_seqlens": "None",
+      "chunk_indices": "None",
+      "scale": "None",
+      "chunk_size": "64",
+      "use_qk_l2_norm_in_kernel": "False",
+      "use_beta_sigmoid_in_kernel": "False",
+      "use_gate_in_kernel": "False",
+      "state_v_first": "False",
+      "use_exp2": "True"
+    }
+  },
+  "args": [
+    {"name": "q", "kind": "tensor"},
+    {"name": "k", "kind": "tensor"},
+    {"name": "v", "kind": "tensor"},
+    {"name": "v_new", "kind": "tensor"},
+    {"name": "do", "cpp": "d_o", "kind": "tensor"},
+    {"name": "du", "kind": "tensor"},
+    {"name": "g", "kind": "tensor"},
+    {"name": "beta", "kind": "tensor"},
+    {"name": "h", "kind": "tensor"},
+    {"name": "dh", "kind": "tensor"},
+    {"name": "a", "kind": "tensor"},
+    {"name": "q_rstd", "kind": "optional_tensor"},
+    {"name": "k_rstd", "kind": "optional_tensor"},
+    {"name": "beta_raw", "kind": "optional_tensor"},
+    {"name": "cu_seqlens", "kind": "int_array"},
+    {"name": "chunk_indices", "kind": "int_array"},
+    {"name": "scale", "kind": "double"},
+    {"name": "chunk_size", "kind": "int64"},
+    {"name": "use_qk_l2_norm_in_kernel", "kind": "bool"},
+    {"name": "use_beta_sigmoid_in_kernel", "kind": "bool"},
+    {"name": "use_gate_in_kernel", "kind": "bool"},
+    {"name": "state_v_first", "kind": "bool"},
+    {"name": "use_exp2", "kind": "bool"},
+    {"name": "dq", "kind": "out_tensor"},
+    {"name": "dk", "kind": "out_tensor"},
+    {"name": "dv", "kind": "out_tensor"},
+    {"name": "dbeta", "kind": "out_tensor"},
+    {"name": "dg", "kind": "out_tensor"}
+  ]
+}

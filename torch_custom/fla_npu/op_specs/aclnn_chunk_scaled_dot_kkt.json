@@ -1,0 +1,34 @@
+{
+  "aclnn_name": "aclnnChunkScaledDotKkt",
+  "python_name": "npu_chunk_scaled_dot_kkt",
+  "nd_only": true,
+  "mutated": [],
+  "output": {
+    "arg": "out",
+    "source": "k",
+    "dtype": "float32",
+    "shape": [
+      {"arg": "k", "dim": 0},
+      {"arg": "g", "dim": 1},
+      {"arg": "k", "dim": 2},
+      {"arg": "chunk_size"}
+    ]
+  },
+  "python": {
+    "positional": ["k", "g", "beta"],
+    "defaults": {
+      "cu_seqlens": "None",
+      "chunk_indices": "None",
+      "chunk_size": "64"
+    }
+  },
+  "args": [
+    {"name": "k", "kind": "tensor"},
+    {"name": "g", "kind": "tensor"},
+    {"name": "beta", "kind": "tensor"},
+    {"name": "cu_seqlens", "kind": "int_array"},
+    {"name": "chunk_indices", "kind": "int_array"},
+    {"name": "chunk_size", "kind": "int64"},
+    {"name": "out", "kind": "out_tensor"}
+  ]
+}

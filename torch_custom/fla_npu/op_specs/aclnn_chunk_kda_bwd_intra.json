@@ -1,0 +1,46 @@
+{
+  "aclnn_name": "aclnnChunkKdaBwdIntra",
+  "python_name": "npu_chunk_kda_bwd_intra",
+  "nd_only": true,
+  "mutated": [],
+  "outputs": [
+    {"arg": "dq_out", "source": "dq", "dtype": "same"},
+    {"arg": "dk_out", "source": "dk", "dtype": "same"},
+    {"arg": "db_out", "source": "db", "dtype": "same"},
+    {"arg": "dg_out", "source": "dg", "dtype": "same"}
+  ],
+  "python": {
+    "positional": [
+      "q", "k", "gk", "beta", "dAqk", "dAkk", "dq", "dk", "db", "dg"
+    ],
+    "pre": "layout = str(layout)\nif not (layout == \"BNSD\" and cu_seqlens is None and chunk_indices is None and int(chunk_size) == 64 and bool(safe_gate)):\n    from fla_npu.ops.ascendc import _aclnn_ctypes as _ct\n    return _ct.npu_chunk_kda_bwd_intra(q, k, gk, beta, dAqk, dAkk, dq, dk, db, dg, cu_seqlens=cu_seqlens, chunk_indices=chunk_indices, chunk_size=chunk_size, safe_gate=safe_gate, layout=layout)",
+    "defaults": {
+      "cu_seqlens": "None",
+      "chunk_indices": "None",
+      "chunk_size": "64",
+      "safe_gate": "True",
+      "layout": "\"BSND\""
+    }
+  },
+  "args": [
+    {"name": "q", "kind": "tensor"},
+    {"name": "k", "kind": "tensor"},
+    {"name": "gk", "kind": "tensor"},
+    {"name": "beta", "kind": "tensor"},
+    {"name": "dAqk", "kind": "tensor"},
+    {"name": "dAkk", "kind": "tensor"},
+    {"name": "dq", "kind": "tensor"},
+    {"name": "dk", "kind": "tensor"},
+    {"name": "db", "kind": "tensor"},
+    {"name": "dg", "kind": "tensor"},
+    {"name": "cu_seqlens", "kind": "int_array"},
+    {"name": "chunk_indices", "kind": "int_array"},
+    {"name": "chunk_size", "kind": "int64"},
+    {"name": "safe_gate", "kind": "bool"},
+    {"name": "layout", "kind": "char_ptr"},
+    {"name": "dq_out", "kind": "out_tensor"},
+    {"name": "dk_out", "kind": "out_tensor"},
+    {"name": "db_out", "kind": "out_tensor"},
+    {"name": "dg_out", "kind": "out_tensor"}
+  ]
+}

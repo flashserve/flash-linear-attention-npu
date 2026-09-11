@@ -1,0 +1,38 @@
+{
+  "aclnn_name": "aclnnPrepareWyReprBwdFull",
+  "python_name": "npu_prepare_wy_repr_bwd_full",
+  "nd_only": true,
+  "mutated": [],
+  "outputs": [
+    {"arg": "dk", "source": "k", "dtype": "same"},
+    {"arg": "dv", "source": "v", "dtype": "same"},
+    {"arg": "dbeta", "source": "beta", "dtype": "same"},
+    {"arg": "dg", "source": "g", "dtype": "same"}
+  ],
+  "python": {
+    "positional": [
+      "k", "v", "beta", "A", "dA", "dw", "du", "g", "chunk_size"
+    ],
+    "defaults": {
+      "cu_seqlens": "None",
+      "chunk_indices": "None"
+    }
+  },
+  "args": [
+    {"name": "k", "kind": "tensor"},
+    {"name": "v", "kind": "tensor"},
+    {"name": "beta", "kind": "tensor"},
+    {"name": "A", "kind": "tensor"},
+    {"name": "dA", "kind": "tensor"},
+    {"name": "dw", "kind": "tensor"},
+    {"name": "du", "kind": "tensor"},
+    {"name": "g", "kind": "tensor"},
+    {"name": "cu_seqlens", "kind": "int_array"},
+    {"name": "chunk_indices", "kind": "int_array"},
+    {"name": "chunk_size", "kind": "int64"},
+    {"name": "dk", "kind": "out_tensor"},
+    {"name": "dv", "kind": "out_tensor"},
+    {"name": "dbeta", "kind": "out_tensor"},
+    {"name": "dg", "kind": "out_tensor"}
+  ]
+}

@@ -1,0 +1,96 @@
+{
+  "aclnn_name": "aclnnChunkGatedDeltaRuleFwd",
+  "python_name": "npu_chunk_gated_delta_rule_fwd",
+  "nd_only": true,
+  "mutated": [],
+  "helpers": "inline bool gdn_fwd_head_first(const std::string& layout) {\n  return layout != \"BSND\" && layout != \"TND\";\n}\ninline int64_t gdn_fwd_tokens(const at::Tensor& q, const std::string& layout) {\n  return gdn_fwd_head_first(layout) ? q.size(2) : q.size(1);\n}\ninline int64_t gdn_fwd_kheads(const at::Tensor& q, const std::string& layout) {\n  return gdn_fwd_head_first(layout) ? q.size(1) : q.size(2);\n}\ninline int64_t gdn_fwd_vheads(const at::Tensor& v, const std::string& layout) {\n  return gdn_fwd_head_first(layout) ? v.size(1) : v.size(2);\n}\ninline int64_t gdn_fwd_seq_num(const std::vector<int64_t>& cu_seqlens, int64_t batch) {\n  return cu_seqlens.empty() ? batch : static_cast<int64_t>(cu_seqlens.size()) - 1;\n}\ninline int64_t gdn_fwd_chunks(const std::vector<int64_t>& cu_seqlens, const std::vector<int64_t>& chunk_indices, int64_t chunk_size, int64_t tokens) {\n  if (!chunk_indices.empty()) {\n    return static_cast<int64_t>(chunk_indices.size()) / 2;\n  }\n  if (!cu_seqlens.empty()) {\n    int64_t chunks = 0;\n    for (size_t i = 0; i + 1 < cu_seqlens.size(); ++i) {\n      const int64_t len = cu_seqlens[i + 1] - cu_seqlens[i];\n      chunks += (len + chunk_size - 1) / chunk_size;\n    }\n    return chunks;\n  }\n  return (tokens + chunk_size - 1) / chunk_size;\n}",
+  "outputs": [
+    {
+      "arg": "o",
+      "alloc": "at::empty({q.size(0), gdn_fwd_tokens(q, layout), gdn_fwd_vheads(v, layout), v.size(3)}, v.options())"
+    },
+    {
+      "arg": "final_state",
+      "when": "output_final_state",
+      "alloc": "at::empty({gdn_fwd_seq_num(cu_seqlens, q.size(0)), gdn_fwd_vheads(v, layout), (state_v_first ? v.size(3) : q.size(3)), (state_v_first ? q.size(3) : v.size(3))}, initial_state.has_value() && initial_state->defined() ? initial_state->options() : q.options().dtype(at::kFloat))"
+    },
+    {"arg": "q_hat", "alloc": "at::Tensor()"},
+    {"arg": "k_hat", "alloc": "at::Tensor()"},
+    {"arg": "q_rstd", "alloc": "at::Tensor()"},
+    {"arg": "k_rstd", "alloc": "at::Tensor()"},
+    {"arg": "beta_eff", "alloc": "at::Tensor()"},
+    {
+      "arg": "g_cumsum",
+      "when": "!disable_recompute",
+      "alloc": "at::empty({q.size(0), gdn_fwd_tokens(q, layout), gdn_fwd_vheads(v, layout)}, g.options().dtype(at::kFloat))"
+    },
+    {
+      "arg": "A",
+      "when": "!disable_recompute",
+      "alloc": "at::empty({q.size(0), gdn_fwd_vheads(v, layout), gdn_fwd_tokens(q, layout), chunk_size}, q.options())"
+    },
+    {
+      "arg": "h",
+      "when": "return_intermediate_states",
+      "alloc": "at::empty({q.size(0), gdn_fwd_vheads(v, layout), gdn_fwd_chunks(cu_seqlens, chunk_indices, chunk_size, gdn_fwd_tokens(q, layout)), (state_v_first ? v.size(3) : q.size(3)), (state_v_first ? q.size(3) : v.size(3))}, q.options())"
+    }
+  ],
+  "python": {
+    "positional": ["q", "k", "v", "g", "beta"],
+    "pre": "layout = str(layout)\nif scale is None:\n    scale = float(q.shape[3]) ** -0.5\nif cu_seqlens is not None and chunk_indices is None:\n    chunk_indices = []\n    for _seq in range(len(cu_seqlens) - 1):\n        _len = cu_seqlens[_seq + 1] - cu_seqlens[_seq]\n        for _c in range((_len + int(chunk_size) - 1) // int(chunk_size)):\n            chunk_indices.extend((_seq, _c))\na_log = None\ndt_bias = None",
+    "return_code": "out = [result[0]]\nif output_final_state:\n    out.append(result[1])\nelse:\n    out.append(None)\nif not disable_recompute:\n    out.append(result[7])\n    out.append(result[8])\nif return_intermediate_states:\n    out.append(result[9])\nreturn tuple(out)",
+    "defaults": {
+      "a_log": "None",
+      "dt_bias": "None",
+      "initial_state": "None",
+      "output_final_state": "False",
+      "chunk_size": "64",
+      "cu_seqlens": "None",
+      "chunk_indices": "None",
+      "scale": "None",
+      "use_exp2": "False",
+      "use_qk_l2norm_in_kernel": "False",
+      "allow_neg_eigval": "False",
+      "disable_recompute": "False",
+      "return_intermediate_states": "False",
+      "state_v_first": "False",
+      "layout": "\"BNSD\"",
+      "use_gate_in_kernel": "False",
+      "use_beta_sigmoid_in_kernel": "False"
+    }
+  },
+  "args": [
+    {"name": "q", "kind": "tensor"},
+    {"name": "k", "kind": "tensor"},
+    {"name": "v", "kind": "tensor"},
+    {"name": "g", "kind": "tensor"},
+    {"name": "beta", "kind": "tensor"},
+    {"name": "a_log", "kind": "optional_tensor"},
+    {"name": "dt_bias", "kind": "optional_tensor"},
+    {"name": "initial_state", "kind": "optional_tensor"},
+    {"name": "cu_seqlens", "kind": "int_array"},
+    {"name": "chunk_indices", "kind": "int_array"},
+    {"name": "layout", "kind": "char_ptr"},
+    {"name": "scale", "kind": "double"},
+    {"name": "chunk_size", "kind": "int64"},
+    {"name": "use_exp2", "kind": "bool"},
+    {"name": "use_qk_l2norm_in_kernel", "kind": "bool"},
+    {"name": "allow_neg_eigval", "kind": "bool"},
+    {"name": "state_v_first", "kind": "bool"},
+    {"name": "output_final_state", "kind": "bool", "cpp_only": true},
+    {"name": "disable_recompute", "kind": "bool", "cpp_only": true},
+    {"name": "return_intermediate_states", "kind": "bool", "cpp_only": true},
+    {"name": "use_gate_in_kernel", "kind": "bool", "cpp_only": true},
+    {"name": "use_beta_sigmoid_in_kernel", "kind": "bool", "cpp_only": true},
+    {"name": "o", "kind": "out_tensor"},
+    {"name": "final_state", "kind": "out_tensor"},
+    {"name": "q_hat", "kind": "out_tensor"},
+    {"name": "k_hat", "kind": "out_tensor"},
+    {"name": "q_rstd", "kind": "out_tensor"},
+    {"name": "k_rstd", "kind": "out_tensor"},
+    {"name": "beta_eff", "kind": "out_tensor"},
+    {"name": "g_cumsum", "kind": "out_tensor"},
+    {"name": "A", "kind": "out_tensor"},
+    {"name": "h", "kind": "out_tensor"}
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "aclnn_name": "aclnnRecurrentGatedDeltaRule",
+  "python_name": "npu_recurrent_gated_delta_rule",
+  "nd_only": true,
+  "mutated": [
+    "state"
+  ],
+  "args": [
+    {
+      "name": "query",
+      "kind": "tensor"
+    },
+    {
+      "name": "key",
+      "kind": "tensor"
+    },
+    {
+      "name": "value",
+      "kind": "tensor"
+    },
+    {
+      "name": "beta",
+      "kind": "tensor"
+    },
+    {
+      "name": "state",
+      "kind": "tensor"
+    },
+    {
+      "name": "actual_seq_lengths",
+      "kind": "tensor"
+    },
+    {
+      "name": "ssm_state_indices",
+      "kind": "tensor"
+    },
+    {
+      "name": "g",
+      "kind": "optional_tensor"
+    },
+    {
+      "name": "gk",
+      "kind": "optional_tensor"
+    },
+    {
+      "name": "num_accepted_tokens",
+      "kind": "optional_tensor"
+    },
+    {
+      "name": "scale",
+      "kind": "float"
+    },
+    {
+      "name": "out",
+      "kind": "out_tensor"
+    }
+  ],
+  "output": {
+    "arg": "out",
+    "source": "value",
+    "dtype": "bfloat16"
+  }
+}
