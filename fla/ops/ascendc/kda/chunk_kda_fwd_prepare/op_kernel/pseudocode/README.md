@@ -18,8 +18,8 @@ include guard 和入口文件中的
 ```text
 pseudocode/
 |-- README.md
-|-- chunk_kda_fwd_prepare_tiling_key.h  # 编译期语义轴和 runtime tiling
-|-- chunk_kda_fwd_prepare_policy.h      # 静态 UB/L1/workspace 地址
+|-- chunk_kda_fwd_prepare_tiling_key.h  # Ascend C TilingKey 声明和合法组合
+|-- chunk_kda_fwd_prepare_policy.h      # 编译期计算策略和静态 UB/L1/workspace 地址
 |-- chunk_kda_fwd_prepare_struct.h      # GM 参数和 chunk 索引
 |-- chunk_kda_fwd_prepare_utils.h       # chunk-first 分核和地址计算
 |-- chunk_kda_fwd_prepare.cpp           # MIX AIC/AIV 编译期分架构入口

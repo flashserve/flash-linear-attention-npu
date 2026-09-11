@@ -9,15 +9,7 @@
 #include "acl/acl.h"
 #include "kernel_operator.h"
 
-#ifndef TORCH_MODE
-#define TORCH_MODE
-#define CHUNK_KDA_FWD_PREPARE_TEST_UNDEF_TORCH_MODE
-#endif
 #include "fla/ops/ascendc/kda/chunk_kda_fwd_prepare/op_kernel/chunk_kda_fwd_prepare.cpp"
-#ifdef CHUNK_KDA_FWD_PREPARE_TEST_UNDEF_TORCH_MODE
-#undef TORCH_MODE
-#undef CHUNK_KDA_FWD_PREPARE_TEST_UNDEF_TORCH_MODE
-#endif
 
 namespace ChunkKdaFwdPrepareDirectTest {
 

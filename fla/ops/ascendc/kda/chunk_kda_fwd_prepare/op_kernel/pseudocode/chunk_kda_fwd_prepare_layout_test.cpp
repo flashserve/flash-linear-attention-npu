@@ -4,12 +4,7 @@
  * the BSD 3-Clause License (the "License").
  */
 
-#ifndef TORCH_MODE
-#define TORCH_MODE
-#endif
-
 #include "chunk_kda_fwd_prepare_policy.h"
-#include "chunk_kda_fwd_prepare_tiling_key.h"
 
 #include <cmath>
 #include <cstdint>

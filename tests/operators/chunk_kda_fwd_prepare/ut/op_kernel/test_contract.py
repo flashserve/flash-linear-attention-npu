@@ -32,6 +32,17 @@ def _function_body(source, marker):
     raise AssertionError(f"函数没有闭合: {marker}")
 
 
+def test_prepare_does_not_use_test_only_build_switch():
+    forbidden_macro = "TORCH" + "_MODE"
+    sources = [DIRECT.read_text(encoding="utf-8")]
+    sources.extend(
+        path.read_text(encoding="utf-8")
+        for path in KERNEL.rglob("*")
+        if path.is_file() and path.suffix in {".h", ".cpp"}
+    )
+    assert all(forbidden_macro not in source for source in sources)
+
+
 def test_direct_launch_source_declares_representative_instantiations():
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     case_ids = {
@@ -57,13 +68,14 @@ def test_direct_launch_source_declares_representative_instantiations():
 
 def test_output_modes_are_compile_time_template_values():
     for prefix in (Path(), Path("pseudocode")):
+        policy = _read_kernel(prefix / "chunk_kda_fwd_prepare_policy.h")
         key = _read_kernel(prefix / "chunk_kda_fwd_prepare_tiling_key.h")
         compact = " ".join(key.split())
-        assert "#define CHUNK_KDA_FWD_PREPARE_OUTPUT_NONE 0" in key
-        assert "#define CHUNK_KDA_FWD_PREPARE_OUTPUT_RECOMPUTE 1" in key
-        assert "#define CHUNK_KDA_FWD_PREPARE_OUTPUT_SAVE 2" in key
+        assert "#define CHUNK_KDA_FWD_PREPARE_OUTPUT_NONE 0" in policy
+        assert "#define CHUNK_KDA_FWD_PREPARE_OUTPUT_RECOMPUTE 1" in policy
+        assert "#define CHUNK_KDA_FWD_PREPARE_OUTPUT_SAVE 2" in policy
         assert "ASCENDC_TPL_UINT_DECL(OUTPUT_MODE, 2, ASCENDC_TPL_UI_LIST" in compact
-        assert "static constexpr OutputMode outputMode = OUTPUT_MODE;" in compact
+        assert "static constexpr OutputMode outputMode = OUTPUT_MODE;" in policy
 
 
 def test_output_mode_is_not_forwarded_as_runtime_tiling_data():

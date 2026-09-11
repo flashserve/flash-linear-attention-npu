@@ -9,7 +9,99 @@
 
 #include <cstdint>
 
+#define CHUNK_KDA_FWD_PREPARE_TPL_BF16 10
+#define CHUNK_KDA_FWD_PREPARE_TPL_FP32 30
+
+#define CHUNK_KDA_FWD_PREPARE_NORM_IDENTITY 0
+#define CHUNK_KDA_FWD_PREPARE_NORM_L2 1
+
+#define CHUNK_KDA_FWD_PREPARE_BETA_RAW 0
+#define CHUNK_KDA_FWD_PREPARE_BETA_SIGMOID 1
+#define CHUNK_KDA_FWD_PREPARE_BETA_TWO_SIGMOID 2
+
+#define CHUNK_KDA_FWD_PREPARE_GATE_PRECOMPUTED_STEP 0
+#define CHUNK_KDA_FWD_PREPARE_GATE_SOFTPLUS 1
+#define CHUNK_KDA_FWD_PREPARE_GATE_SAFE_SIGMOID 2
+
+// 13 个输出形参始终保留；该模式只在编译期裁剪公开 GM 搬出，
+// 不改变 Prepare 内部为后续 Stage 生成 workspace/L1 数据的计算。
+#define CHUNK_KDA_FWD_PREPARE_OUTPUT_NONE 0
+#define CHUNK_KDA_FWD_PREPARE_OUTPUT_RECOMPUTE 1
+#define CHUNK_KDA_FWD_PREPARE_OUTPUT_SAVE 2
+
 namespace KdaPrepare {
+
+enum class QkNormMode : uint8_t {
+    Identity = CHUNK_KDA_FWD_PREPARE_NORM_IDENTITY,
+    L2 = CHUNK_KDA_FWD_PREPARE_NORM_L2,
+};
+
+enum class BetaMode : uint8_t {
+    Raw = CHUNK_KDA_FWD_PREPARE_BETA_RAW,
+    Sigmoid = CHUNK_KDA_FWD_PREPARE_BETA_SIGMOID,
+    TwoSigmoid = CHUNK_KDA_FWD_PREPARE_BETA_TWO_SIGMOID,
+};
+
+enum class GateMode : uint8_t {
+    PrecomputedStep = CHUNK_KDA_FWD_PREPARE_GATE_PRECOMPUTED_STEP,
+    Softplus = CHUNK_KDA_FWD_PREPARE_GATE_SOFTPLUS,
+    SafeSigmoid = CHUNK_KDA_FWD_PREPARE_GATE_SAFE_SIGMOID,
+};
+
+enum class OutputMode : uint8_t {
+    // 只搬出 fwd_h/finalize 必需输出。
+    None = CHUNK_KDA_FWD_PREPARE_OUTPUT_NONE,
+    // 额外搬出反向重计算需要的 Akk、归一化结果和 beta_eff。
+    Recompute = CHUNK_KDA_FWD_PREPARE_OUTPUT_RECOMPUTE,
+    // 再额外搬出 qg，保留全部反向中间量。
+    Save = CHUNK_KDA_FWD_PREPARE_OUTPUT_SAVE,
+};
+
+namespace ExpDomain {
+constexpr float kLn2 = 0.69314718055994530942F;
+constexpr float kRcpLn2 = 1.44269504088896340736F;
+constexpr float kV1Bf16LowerBase2 = -126.0F;
+constexpr float kV1Bf16UpperBase2 = 120.0F;
+constexpr float kV6LowerBase2 = -80.0F;
+constexpr float kV6UpperBase2 = 80.0F;
+} // namespace ExpDomain
+
+// 两套架构共同消费这一份域合同，host 测试只验证这里的纯数值选择。
+template <bool USE_EXP2>
+struct ExpDomainTraits {
+    static constexpr bool useExp2 = USE_EXP2;
+    static constexpr float stepScale = USE_EXP2 ? ExpDomain::kRcpLn2 : 1.0F;
+    static constexpr float expInputScale = USE_EXP2 ? ExpDomain::kLn2 : 1.0F;
+
+    static constexpr float StoredBound(float base2Bound)
+    {
+        return USE_EXP2 ? base2Bound : base2Bound * ExpDomain::kLn2;
+    }
+
+    static constexpr float ClampStored(float value, float base2Lower,
+                                       float base2Upper)
+    {
+        const float lower = StoredBound(base2Lower);
+        const float upper = StoredBound(base2Upper);
+        return value < lower ? lower : (value > upper ? upper : value);
+    }
+
+    static constexpr float ToExpInput(float storedExponent)
+    {
+        return storedExponent * expInputScale;
+    }
+};
+
+template <QkNormMode NORM_MODE, BetaMode BETA_MODE, GateMode GATE_MODE,
+          bool USE_EXP2, bool SAFE_GATE, OutputMode OUTPUT_MODE>
+struct PrepareCompilePolicy {
+    static constexpr QkNormMode normMode = NORM_MODE;
+    static constexpr BetaMode betaMode = BETA_MODE;
+    static constexpr GateMode gateMode = GATE_MODE;
+    static constexpr bool useExp2 = USE_EXP2;
+    static constexpr bool safeGate = SAFE_GATE;
+    static constexpr OutputMode outputMode = OUTPUT_MODE;
+};
 
 namespace Shape {
 constexpr uint32_t kChunkRows = 64;

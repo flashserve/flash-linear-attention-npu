@@ -68,7 +68,6 @@ __aicore__ inline void RunPrepare(const PrepareKernelArgs &args)
 
 } // namespace KdaPrepare
 
-#ifndef TORCH_MODE
 template <int D_T_GATE, int D_T_BETA, uint32_t NORM_MODE,
           uint32_t BETA_MODE, uint32_t GATE_MODE,
           bool USE_EXP2, bool SAFE_GATE, uint32_t OUTPUT_MODE>
@@ -138,4 +137,3 @@ __global__ __aicore__ void chunk_kda_fwd_prepare(
     using BetaT = typename KdaPrepare::PrepareStorageType<D_T_BETA>::type;
     KdaPrepare::RunPrepare<GateT, BetaT, Policy>(args);
 }
-#endif
