@@ -81,7 +81,12 @@ def _parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument("result_root", type=Path, help="ATK output directory to scan")
-    parser.add_argument("--case-id", type=int, default=250)
+    parser.add_argument(
+        "--case-id",
+        type=int,
+        default=0,
+        help="accuracy manifest case id to analyze (default: 0)",
+    )
     parser.add_argument(
         "--case-json",
         type=Path,
