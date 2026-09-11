@@ -125,6 +125,7 @@ npu-smi info
 | `DC_TIMEOUT`           | 确定性阶段超时时间，默认`3600`                                                       |
 | `PERFORMANCE_TIMEOUT`  | 性能阶段超时时间，默认`2000`                                                         |
 | `MSS_TOOL`             | mssanitizer 工具，默认`memcheck`                                                     |
+| `MSS_TIMEOUT`          | mssanitizer 单 case 超时；默认不传，由 ATK 使用自身默认值                           |
 | `MSS_LOG_PATH`         | ATK`-msl` 日志路径；默认 `${ATK_OUTPUT_ROOT}/mssanitizer_<op>_<时间戳>.log`        |
 
 ## 统一脚本

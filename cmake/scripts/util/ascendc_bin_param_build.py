@@ -511,6 +511,12 @@ check_stop
 
         print(f"bisheng_flags is: {bisheng_flags}")
 
+        debug_configs = set(filter(None, bisheng_flags.split(',')))
+        debug_configs.update(self.op_debug_config)
+        if {'sanitizer', 'check_flag_sanitizer'} & debug_configs:
+            # sanitizer 结果必须能映射回 CCE 指令，因此强制保留一级调试信息。
+            build_cmd_var += " --op_debug_level=1"
+
         if bisheng_flags:
             # 如果 bisheng_flags 非空，直接使用其值
             build_cmd_var += f" --op_debug_config={bisheng_flags}"

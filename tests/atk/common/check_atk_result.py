@@ -38,9 +38,16 @@ def _find_accuracy_reports(output_root, op):
     return _find_xlsx_files(output_root, f"accuracy/atk_output/atk_{op}_*")
 
 
-def _find_root_reports(output_root, op):
-    """determinism 和 mssanitizer 报告共享 atk_<op>_* 目录。"""
-    return _find_xlsx_files(output_root, f"atk_{op}_*")
+def _find_stage_reports(output_root, op, stage):
+    """查找分阶段输出目录，并兼容旧版直接写在输出根目录的报告。"""
+    files = []
+    for pattern in (
+        f"{stage}/atk_output/atk_{op}_*",
+        f"{stage}/atk_{op}_*",
+        f"atk_{op}_*",
+    ):
+        files.extend(_find_xlsx_files(output_root, pattern))
+    return sorted(set(files), key=os.path.getmtime)
 
 
 # ---------------------------------------------------------------------------
@@ -202,8 +209,8 @@ def check_accuracy(output_root, op):
 
 
 def check_determinism(output_root, op):
-    """检查 determinism 报告（与 mssanitizer 共享目录，按表头过滤）。"""
-    files = _find_root_reports(output_root, op)
+    """检查 determinism 报告。"""
+    files = _find_stage_reports(output_root, op, "determinism")
     # 从新到旧找第一个非 mssanitizer 报告
     for f in reversed(files):
         header, _ = _parse_summary(f)
@@ -218,7 +225,7 @@ def check_determinism(output_root, op):
 
 def check_mssanitizer(output_root, op):
     """检查 mssanitizer 报告。"""
-    files = _find_root_reports(output_root, op)
+    files = _find_stage_reports(output_root, op, "mssanitizer")
     for f in reversed(files):
         header, _ = _parse_summary(f)
         if header is not None and _is_mssanitizer_report(header):
@@ -264,8 +271,8 @@ def main():
         results[t] = r
         label = TYPE_LABELS[t]
         if not r["found"]:
-            status_str = "NO_REPORT"
-            print(f"[ATK结果检查] {label}: 未找到报告（跳过）")
+            print(f"[ATK结果检查] {label}: 未找到报告（失败）")
+            any_fail = True
             continue
         status = "Pass" if r["all_pass"] else "Failed"
         if not r["all_pass"]:
@@ -278,16 +285,12 @@ def main():
               f"失败={actual_fail}) [{xlsx_name}]")
 
     if args.type == "all":
-        # 仅统计找到报告的测试类型
-        found_types = [t for t in types if results[t].get("found")]
-        passed_types = sum(1 for t in found_types if results[t].get("all_pass"))
-        found_count = len(found_types)
-        skipped = len(types) - found_count
-        fail_count = found_count - passed_types
-        msg = f"[ATK结果检查] 汇总: {passed_types}/{found_count} 通过, {fail_count} 项失败"
-        if skipped > 0:
-            msg += f", {skipped} 项无报告跳过"
-        print(msg)
+        passed_types = sum(1 for t in types if results[t].get("all_pass"))
+        fail_count = len(types) - passed_types
+        print(
+            f"[ATK结果检查] 汇总: {passed_types}/{len(types)} 通过, "
+            f"{fail_count} 项失败"
+        )
 
     sys.exit(1 if any_fail else 0)
 

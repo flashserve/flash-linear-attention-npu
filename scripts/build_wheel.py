@@ -75,7 +75,7 @@ def _native_build_args(args: argparse.Namespace) -> list:
     """Map 一键编包的原生 -g / --sanitizer / --oom 选项到 asc_opc 合法值。
 
     - -g / --debug   -> ccec_g（kernel 调试信息）
-    - --sanitizer    -> sanitizer（asc_opc 内存越界插桩，CANN 9.1.0 起合法）
+    - --sanitizer    -> sanitizer,dump_cce（插桩并保留 CCE 调试产物）
     - --oom          -> oom（kernel 侧 OOM 检查）
 
     值通过 build.sh --bisheng_flags 或 --op_debug_config 传递，最终由
@@ -89,7 +89,7 @@ def _native_build_args(args: argparse.Namespace) -> list:
     if args.debug:
         configs.append("ccec_g")
     if args.sanitizer:
-        configs.append("sanitizer")
+        configs.extend(("sanitizer", "dump_cce"))
     if args.oom:
         configs.append("oom")
     return configs
@@ -137,8 +137,8 @@ def main() -> int:
         action="store_true",
         help=(
             "enable Ascend kernel memory sanitizer support for mssanitizer. "
-            "Maps to sanitizer (asc_opc --op_debug_config=sanitizer), which "
-            "instruments kernels to detect memory errors. Runtime detection is "
+            "Maps to sanitizer,dump_cce and op_debug_level=1, which instruments "
+            "kernels and retains the required debug artifacts. Runtime detection is "
             "done by mssanitizer via LD_PRELOAD injection "
             "(libmssanitizer_injection.so). Requires the Ascend toolkit's "
             "mssanitizer debug environment when running."

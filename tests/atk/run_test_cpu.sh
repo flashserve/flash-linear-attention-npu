@@ -163,7 +163,8 @@ detect_soc_from_npu() {
 check_atk_version() {
   local required="$REQUIRED_ATK_VERSION"
   local installed
-  installed="$("$ATK_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
+  installed="$("$ATK_BIN" --version 2>/dev/null | sed -nE \
+    's/^[[:space:]]*([0-9]+\.[0-9]+\.[0-9]+)[[:space:]]*$/\1/p' | head -n1 || true)"
   [[ -n "$installed" ]] || die "无法获取 ATK 版本，请确认 atk 可正常执行（atk --version）"
   if printf '%s\n%s\n' "$required" "$installed" | sort -V -C 2>/dev/null; then
     log_info "ATK 版本：${installed}（要求 >= ${required}）"
@@ -359,7 +360,8 @@ fi
 
 cd "$OP_DIR"
 ATK_OUTPUT_ROOT="${ATK_OUTPUT_ROOT:-./atk_output}"
-mkdir -p "${ATK_OUTPUT_ROOT}/accuracy" "${ATK_OUTPUT_ROOT}/perf"
+mkdir -p "${ATK_OUTPUT_ROOT}/accuracy" "${ATK_OUTPUT_ROOT}/perf" \
+  "${ATK_OUTPUT_ROOT}/determinism" "${ATK_OUTPUT_ROOT}/mssanitizer"
 # mssanitizer 日志路径：未显式指定时使用 ATK_OUTPUT_ROOT 下的带时间戳绝对路径
 # ATK celery worker 工作目录与脚本不同，必须用绝对路径，否则无法找到日志文件
 MSS_LOG_PATH="${MSS_LOG_PATH:-$(cd "${ATK_OUTPUT_ROOT}" && pwd)/mssanitizer_${OP}_$(date +%Y%m%d_%H%M%S).log}"
@@ -424,6 +426,7 @@ if should_run determinism; then
   log_info "开始确定性测试：accuracy_dc（循环次数=${DC_LOOP_NUMS}，超时=${DC_TIMEOUT}s）"
   set_case_range_args "确定性测试 case 范围" "$DETERMINISM_START" "$DETERMINISM_END"
   "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
+    --output_path "${ATK_OUTPUT_ROOT}/determinism" \
     task \
       -c "atk_${OP}_mss.json" \
       -p "executor_${OP}.py" \
@@ -449,12 +452,14 @@ if should_run mssanitizer; then
   touch "$MSS_LOG_PATH"
   mssanitizer --tool="$MSS_TOOL" -- \
     "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
+    --output_path "${ATK_OUTPUT_ROOT}/mssanitizer" \
     task \
       -c "atk_${OP}_mss.json" \
       -p "executor_${OP}.py" \
       --task run \
       --mssanitizer \
       -msl "$MSS_LOG_PATH" \
+      -sp \
       "${MSS_TIMEOUT_ARGS[@]}" \
       "${CASE_RANGE_ARGS[@]}"
   log_info "完成内存检测"
