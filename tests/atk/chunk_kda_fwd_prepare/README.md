@@ -118,6 +118,11 @@ FLA_NPU_SOC="$KDA_PREPARE_ATK_SOC" FLA_NPU_OPS=chunk_kda_fwd_prepare \
   python3 scripts/build_wheel.py --sanitizer --wheel-dir dist
 ```
 
+`--sanitizer` 会同时经 `--op_debug_config` 生成 `-g/-sanitizer`
+Bisheng 编译选项，并保留 `asc_opc` 的 sanitizer 调试配置。仅出现
+`asc_opc --op_debug_config=sanitizer` 不代表对象已经插桩；正式矩阵仍会用
+`nm` 检查安装包内每个 kernel 对象的 sanitizer 符号。
+
 `FLA_NPU_SOC` 必须与后续 `KDA_PREPARE_ATK_SOC` 完全一致；安装该 wheel 并加载其
 custom OPP 后再执行内存矩阵，禁止用其他平台或普通优化包代替 sanitizer 包。正式
 矩阵必须显式设置 `KDA_PREPARE_ATK_SOC`，不接受 `auto`；该值会同时约束运行时

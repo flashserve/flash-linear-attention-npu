@@ -126,12 +126,34 @@ class ChunkKdaFwdPrepareAtkGenerationTest(unittest.TestCase):
         )
         self.assertEqual(
             BUILD_WHEEL._assemble_build_args(args),
-            "--bisheng_flags=sanitizer,dump_cce",
+            "--op_debug_config ccec_g,sanitizer,dump_cce "
+            "--bisheng_flags=ccec_g,sanitizer,dump_cce",
         )
         generator = (
             ROOT / "cmake/scripts/util/ascendc_bin_param_build.py"
         ).read_text(encoding="utf-8")
         self.assertIn('build_cmd_var += " --op_debug_level=1"', generator)
+        cmake_helpers = (ROOT / "cmake/func.cmake").read_text(encoding="utf-8")
+        self.assertIn('STREQUAL "ccec_g"', cmake_helpers)
+        self.assertIn('list(APPEND _OPC_CONFIG "-g")', cmake_helpers)
+        self.assertIn('STREQUAL "sanitizer"', cmake_helpers)
+        self.assertIn('list(APPEND _OPC_CONFIG "-sanitizer")', cmake_helpers)
+
+    def test_sanitizer_build_preserves_and_deduplicates_explicit_configs(self):
+        args = SimpleNamespace(
+            build_args=[
+                "-O3 --bisheng_flags=ccec_g,oom "
+                "--op_debug_config dump_bin,sanitizer"
+            ],
+            debug=False,
+            sanitizer=True,
+            oom=False,
+        )
+        values = "ccec_g,sanitizer,dump_cce,oom,dump_bin"
+        self.assertEqual(
+            BUILD_WHEEL._assemble_build_args(args),
+            f"-O3 --op_debug_config {values} --bisheng_flags={values}",
+        )
 
     def test_generation_config_comes_from_canonical_manifest(self):
         manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))

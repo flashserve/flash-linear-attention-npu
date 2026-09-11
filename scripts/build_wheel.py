@@ -72,24 +72,21 @@ def _drop_option(build_args: str, option: str) -> str:
 
 
 def _native_build_args(args: argparse.Namespace) -> list:
-    """Map 一键编包的原生 -g / --sanitizer / --oom 选项到 asc_opc 合法值。
+    """将一键编包的原生选项映射到构建链识别的调试配置。
 
     - -g / --debug   -> ccec_g（kernel 调试信息）
-    - --sanitizer    -> sanitizer,dump_cce（插桩并保留 CCE 调试产物）
+    - --sanitizer    -> ccec_g,sanitizer,dump_cce（插桩并保留可定位的 CCE 产物）
     - --oom          -> oom（kernel 侧 OOM 检查）
 
-    值通过 build.sh --bisheng_flags 或 --op_debug_config 传递，最终由
-    ascendc_bin_param_build.py 拼成 asc_opc 的 --op_debug_config=<values>。
-    CANN 9.1.0 的 asc_opc 合法值表为
-    (oom, dump_cce, dump_bin, dump_loc, ccec_O0, ccec_g, check_flag, sanitizer)，
-    因此 --sanitizer 必须映射为 sanitizer，不能使用更高版本才识别的
-    check_flag_sanitizer。
+    同一组值会同时走 build.sh 的 --op_debug_config 和 --bisheng_flags：
+    前者通过 add_opc_config 生成真实的 -g/-sanitizer 编译选项，后者保留
+    asc_opc 的调试配置。只设置后者不会保证 Bisheng 启用 sanitizer 插桩。
     """
     configs = []
     if args.debug:
         configs.append("ccec_g")
     if args.sanitizer:
-        configs.extend(("sanitizer", "dump_cce"))
+        configs.extend(("ccec_g", "sanitizer", "dump_cce"))
     if args.oom:
         configs.append("oom")
     return configs
@@ -100,10 +97,7 @@ def _assemble_build_args(args: argparse.Namespace) -> str:
     native = _native_build_args(args)
     if not native:
         return build_args
-    # 原生选项优先：将 --bisheng_flags 与 --op_debug_config 中已经存在的
-    # 用户显式值全部取出，与原生值合并去重后只传一次，保留 dump_cce 等
-    # 用户显式配置（review 之前的问题：直接丢弃用户的配置）。
-    option = "--bisheng_flags"
+    # 原生选项优先，同时保留用户通过两个入口显式给出的配置并稳定去重。
     existing = (
         _extract_values(build_args, "--bisheng_flags")
         + _extract_values(build_args, "--op_debug_config")
@@ -111,8 +105,14 @@ def _assemble_build_args(args: argparse.Namespace) -> str:
     build_args = _drop_option(build_args, "--bisheng_flags")
     build_args = _drop_option(build_args, "--op_debug_config")
     merged = list(dict.fromkeys(native + existing))
-    # build.sh 只识别 --bisheng_flags=<values> 的等号写法，不能用空格分隔。
-    tail = f"{option}={','.join(merged)}" if merged else ""
+    values = ",".join(merged)
+    # build.sh 的两个入口拼写不同：OP_DEBUG_CONFIG 使用空格，
+    # BISHENG_FLAGS 只识别等号。两条链缺一不可。
+    tail = (
+        f"--op_debug_config {values} --bisheng_flags={values}"
+        if values
+        else ""
+    )
     return f"{build_args} {tail}".strip()
 
 
@@ -137,9 +137,10 @@ def main() -> int:
         action="store_true",
         help=(
             "enable Ascend kernel memory sanitizer support for mssanitizer. "
-            "Maps to sanitizer,dump_cce and op_debug_level=1, which instruments "
-            "kernels and retains the required debug artifacts. Runtime detection is "
-            "done by mssanitizer via LD_PRELOAD injection "
+            "Maps to ccec_g,sanitizer,dump_cce on both compile-option and "
+            "asc_opc debug-config paths, which instruments kernels and retains "
+            "the required debug artifacts. Runtime detection is done by "
+            "mssanitizer via LD_PRELOAD injection "
             "(libmssanitizer_injection.so). Requires the Ascend toolkit's "
             "mssanitizer debug environment when running."
         ),
