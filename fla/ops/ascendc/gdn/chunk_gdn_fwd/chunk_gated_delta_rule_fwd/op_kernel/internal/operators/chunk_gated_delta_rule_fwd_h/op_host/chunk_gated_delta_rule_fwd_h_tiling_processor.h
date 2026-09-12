@@ -27,6 +27,7 @@
 #include "../op_kernel/chunk_gated_delta_rule_fwd_h_struct.h"
 
 namespace optiling {
+namespace {
 
 // dtype enum convention shared with the kernel: 0 - fp16, 1 - bf16, 2 - fp32
 static constexpr int64_t GDN_FWD_H_DTYPE_FP16 = 0;
@@ -149,6 +150,7 @@ private:
     const ChunkGatedDeltaRuleFwdHTilingContext &ctx_;
 };
 
+} // namespace
 } // namespace optiling
 
 #endif // CHUNK_GATED_DELTA_RULE_FWD_H_TILING_PROCESSOR_H
