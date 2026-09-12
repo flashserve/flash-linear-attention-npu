@@ -12,8 +12,8 @@
  * \brief Tiling processor shared by aclnn tiling and fast kernel launch.
  */
 
-#ifndef RECOMPUTE_W_U_FWD_TILING_PROCESSOR_H
-#define RECOMPUTE_W_U_FWD_TILING_PROCESSOR_H
+#ifndef GDN_MEGA_ARCH35_RECOMPUTE_W_U_FWD_TILING_PROCESSOR_H
+#define GDN_MEGA_ARCH35_RECOMPUTE_W_U_FWD_TILING_PROCESSOR_H
 
 #include <cstddef>
 #include <cstdint>
@@ -24,7 +24,7 @@
 #include "tiling_base/tiling_templates_registry.h"
 #include "../../op_kernel/recompute_w_u_fwd_struct.h"
 
-using GDN::RecomputeWUFwdTilingData;
+using GDN::GdnMegaArch35RecomputeWUTilingData;
 
 namespace optiling {
 namespace {
@@ -94,7 +94,7 @@ struct RecomputeWUFwdTilingContext {
 
 class RecomputeWUFwdTilingProcessor {
     RecomputeWUFwdTilingContext &ctx_;
-    RecomputeWUFwdTilingData &tiling_;
+    GdnMegaArch35RecomputeWUTilingData &tiling_;
     size_t workspaceSize_ = 0;
     int64_t B = 0;
     int64_t Hk = 0;
@@ -106,7 +106,7 @@ class RecomputeWUFwdTilingProcessor {
     int64_t chunkSize = 0;
 
 public:
-    explicit RecomputeWUFwdTilingProcessor(RecomputeWUFwdTilingContext &ctx, RecomputeWUFwdTilingData &tiling)
+    explicit RecomputeWUFwdTilingProcessor(RecomputeWUFwdTilingContext &ctx, GdnMegaArch35RecomputeWUTilingData &tiling)
         : ctx_(ctx), tiling_(tiling)
     {
     }
@@ -483,4 +483,4 @@ public:
 } // namespace
 } // namespace optiling
 
-#endif // RECOMPUTE_W_U_FWD_TILING_PROCESSOR_H
+#endif // GDN_MEGA_ARCH35_RECOMPUTE_W_U_FWD_TILING_PROCESSOR_H

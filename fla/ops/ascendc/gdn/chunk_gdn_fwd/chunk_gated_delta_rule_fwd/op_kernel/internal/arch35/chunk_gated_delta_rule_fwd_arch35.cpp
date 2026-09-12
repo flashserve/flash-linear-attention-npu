@@ -36,16 +36,16 @@ __aicore__ inline uint64_t AlignPhase6(uint64_t value, uint64_t alignment)
 __aicore__ inline const __gm__ ChunkGatedDeltaRuleStateOutputTrailer *GetStateOutputTrailer(GM_ADDR tiling)
 {
     const uint64_t oTilingOffset = AlignPhase6(
-        sizeof(ChunkGatedDeltaRuleFwdHTilingData), PHASE6_TILING_ALIGNMENT);
+        sizeof(GdnMegaArch35FwdHTilingData), PHASE6_TILING_ALIGNMENT);
     return reinterpret_cast<const __gm__ ChunkGatedDeltaRuleStateOutputTrailer *>(
-        tiling + oTilingOffset + sizeof(ChunkFwdOTilingData));
+        tiling + oTilingOffset + sizeof(GdnMegaArch35FwdOTilingData));
 }
 
 __aicore__ inline const __gm__ Arch35ChunkGatedDeltaRuleFwdTrailer *GetPhase6Trailer(GM_ADDR tiling)
 {
     const uint64_t oTilingOffset = AlignPhase6(
-        sizeof(ChunkGatedDeltaRuleFwdHTilingData), PHASE6_TILING_ALIGNMENT);
-    const uint64_t stateOutputTilingEnd = oTilingOffset + sizeof(ChunkFwdOTilingData) +
+        sizeof(GdnMegaArch35FwdHTilingData), PHASE6_TILING_ALIGNMENT);
+    const uint64_t stateOutputTilingEnd = oTilingOffset + sizeof(GdnMegaArch35FwdOTilingData) +
                                           sizeof(ChunkGatedDeltaRuleStateOutputTrailer);
     return reinterpret_cast<const __gm__ Arch35ChunkGatedDeltaRuleFwdTrailer *>(
         tiling + AlignPhase6(stateOutputTilingEnd, PHASE6_TILING_ALIGNMENT));
@@ -347,7 +347,7 @@ __aicore__ inline void RunPhase6(
     GM_ADDR u = userWorkspace + stateOutputTiling->uIntermediateOffset;
     GM_ADDR h = userWorkspace + stateOutputTiling->hIntermediateOffset;
     GM_ADDR vNew = userWorkspace + stateOutputTiling->vNewIntermediateOffset;
-    RecomputeWUFwdTilingData recomputeTiling{};
+    GdnMegaArch35RecomputeWUTilingData recomputeTiling{};
     CopyRecomputeTiling(&stateOutputTiling->recompute, recomputeTiling);
     if constexpr (Arch35GdnSyncTraits<Variant>::kB30) {
         DispatchRecompute<InputT, float, 128, true>(
@@ -379,10 +379,10 @@ __aicore__ inline void RunPhase6(
 #endif
 
     const uint64_t oTilingOffset =
-        AlignPhase6(sizeof(ChunkGatedDeltaRuleFwdHTilingData), PHASE6_TILING_ALIGNMENT);
-    const __gm__ ChunkFwdOTilingData *gmOTiling =
-        reinterpret_cast<const __gm__ ChunkFwdOTilingData *>(tiling + oTilingOffset);
-    ChunkFwdOTilingData oTiling{};
+        AlignPhase6(sizeof(GdnMegaArch35FwdHTilingData), PHASE6_TILING_ALIGNMENT);
+    const __gm__ GdnMegaArch35FwdOTilingData *gmOTiling =
+        reinterpret_cast<const __gm__ GdnMegaArch35FwdOTilingData *>(tiling + oTilingOffset);
+    GdnMegaArch35FwdOTilingData oTiling{};
     CopyOTiling(gmOTiling, oTiling);
     DispatchFwdO<InputT, Variant>(q, k, vNew, h, gCumsumBht, cuSeqlens, chunkIndices, o,
                  userWorkspace, &oTiling);

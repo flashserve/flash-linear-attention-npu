@@ -12,7 +12,7 @@
 namespace GDN {
 
 struct ChunkGatedDeltaRuleStateOutputTrailer {
-    RecomputeWUFwdTilingData recompute;
+    GdnMegaArch35RecomputeWUTilingData recompute;
     int64_t recomputeWorkspaceOffset;
     int64_t wIntermediateOffset;
     int64_t uIntermediateOffset;

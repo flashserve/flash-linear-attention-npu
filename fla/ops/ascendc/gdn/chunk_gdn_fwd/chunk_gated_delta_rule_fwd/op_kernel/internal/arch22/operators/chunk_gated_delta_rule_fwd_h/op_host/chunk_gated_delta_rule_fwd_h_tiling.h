@@ -22,7 +22,7 @@ namespace optiling {
 // Fusion-only serialization type; the standalone operator owns its registration.
 namespace {
 
-BEGIN_TILING_DATA_DEF(ChunkGatedDeltaRuleFwdHTilingData)
+BEGIN_TILING_DATA_DEF(GdnMegaArch22FwdHTilingData)
 TILING_DATA_FIELD_DEF(int64_t, batch);
 TILING_DATA_FIELD_DEF(int64_t, seqlen);
 TILING_DATA_FIELD_DEF(int64_t, kNumHead);

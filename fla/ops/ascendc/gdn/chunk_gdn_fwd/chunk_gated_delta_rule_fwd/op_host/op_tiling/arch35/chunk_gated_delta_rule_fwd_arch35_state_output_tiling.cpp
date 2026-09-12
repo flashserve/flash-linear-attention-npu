@@ -68,8 +68,8 @@ bool IsRank(const gert::StorageShape *shape, size_t rank)
     return shape != nullptr && shape->GetStorageShape().GetDimNum() == rank;
 }
 
-void FillHMacroTiling(const ::ChunkGatedDeltaRuleFwdHTilingData &src,
-                      ChunkGatedDeltaRuleFwdHTilingData &dst)
+void FillHMacroTiling(const ::GdnMegaArch35FwdHTilingData &src,
+                      GdnMegaArch35FwdHTilingData &dst)
 {
     dst.set_batch(src.batch);
     dst.set_seqlen(src.seqlen);
@@ -95,7 +95,7 @@ void FillHMacroTiling(const ::ChunkGatedDeltaRuleFwdHTilingData &src,
     dst.set_numChunksWorkspaceOffset(src.numChunksWorkspaceOffset);
 }
 
-size_t FillOTilingWorkspace(GDN::ChunkFwdOTilingData &tiling, uint32_t aicCoreNum,
+size_t FillOTilingWorkspace(GDN::GdnMegaArch35FwdOTilingData &tiling, uint32_t aicCoreNum,
                             size_t baseOffset)
 {
     size_t offset = baseOffset;
@@ -244,7 +244,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(gert::TilingConte
     const int64_t *cuSeqlensData = cuSeqlensTensor == nullptr ? nullptr : cuSeqlensTensor->GetData<int64_t>();
     const int64_t *chunkIndicesData =
         chunkIndicesTensor == nullptr ? nullptr : chunkIndicesTensor->GetData<int64_t>();
-    GDN::RecomputeWUFwdTilingData recomputeTiling{};
+    GDN::GdnMegaArch35RecomputeWUTilingData recomputeTiling{};
     RecomputeWUFwdTilingContext recomputeContext{
         context->GetNodeName(),
         context->GetRequiredInputShape(INPUT_K),
@@ -290,15 +290,15 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(gert::TilingConte
     hContext.aicCoreNum = aicCoreNum;
     hContext.libApiWorkSpaceSize = sysWorkspaceSize;
 
-    ::ChunkGatedDeltaRuleFwdHTilingData hPlain{};
+    ::GdnMegaArch35FwdHTilingData hPlain{};
     uint32_t hBlockDim = 0;
     size_t hWorkspaceSize = 0;
     ChunkGatedDeltaRuleFwdHTilingProcessor hProcessor(hContext);
     hProcessor.Process(hPlain, hBlockDim, hWorkspaceSize);
 
-    ChunkGatedDeltaRuleFwdHTilingData hTiling;
+    GdnMegaArch35FwdHTilingData hTiling;
     FillHMacroTiling(hPlain, hTiling);
-    GDN::ChunkFwdOTilingData oTiling{};
+    GDN::GdnMegaArch35FwdOTilingData oTiling{};
     oTiling.shapeBatch = isVarlen ? 1 : batch;
     oTiling.seqlen = seqlen;
     oTiling.kNumHead = kNumHead;
@@ -322,7 +322,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(gert::TilingConte
     const size_t defaultHoBase = sysWorkspaceSize + WORKSPACE_RESERVE;
     const size_t hoBase = AlignUp(std::max(defaultHoBase, wuEnd), WORKSPACE_ALIGNMENT);
     const size_t hoShift = hoBase - defaultHoBase;
-    auto ShiftHWorkspace = [hoShift](ChunkGatedDeltaRuleFwdHTilingData &tiling) {
+    auto ShiftHWorkspace = [hoShift](GdnMegaArch35FwdHTilingData &tiling) {
         tiling.set_vWorkspaceOffset(tiling.get_vWorkspaceOffset() + static_cast<int64_t>(hoShift));
         tiling.set_vUpdateWorkspaceOffset(tiling.get_vUpdateWorkspaceOffset() + static_cast<int64_t>(hoShift));
         tiling.set_kDecayWorkspaceOffset(tiling.get_kDecayWorkspaceOffset() + static_cast<int64_t>(hoShift));

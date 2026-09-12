@@ -64,8 +64,8 @@ __aicore__ inline void DispatchFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, 
                                     GM_ADDR h, GM_ADDR vNew, GM_ADDR finalState, GM_ADDR tiling,
                                     GM_ADDR userWorkspace)
 {
-    const __gm__ ChunkGatedDeltaRuleFwdHTilingData *hTiling =
-        reinterpret_cast<const __gm__ ChunkGatedDeltaRuleFwdHTilingData *>(tiling);
+    const __gm__ GdnMegaArch35FwdHTilingData *hTiling =
+        reinterpret_cast<const __gm__ GdnMegaArch35FwdHTilingData *>(tiling);
     // Mega's input dtype is fixed by the generated DTYPE_Q variant, and its
     // cumsum/gk contract is FP32. State remains runtime-selected: a disabled
     // final-state output is an FP32 placeholder, not the initial-state dtype.
@@ -100,7 +100,7 @@ __aicore__ inline void DispatchFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, 
     }
 }
 
-__aicore__ inline void CopyOTiling(const __gm__ ChunkFwdOTilingData *src, ChunkFwdOTilingData &dst)
+__aicore__ inline void CopyOTiling(const __gm__ GdnMegaArch35FwdOTilingData *src, GdnMegaArch35FwdOTilingData &dst)
 {
     dst.shapeBatch = src->shapeBatch;
     dst.seqlen = src->seqlen;
@@ -121,8 +121,8 @@ __aicore__ inline void CopyOTiling(const __gm__ ChunkFwdOTilingData *src, ChunkF
     dst.scale = src->scale;
 }
 
-__aicore__ inline void CopyRecomputeTiling(const __gm__ RecomputeWUFwdTilingData *src,
-                                            RecomputeWUFwdTilingData &dst)
+__aicore__ inline void CopyRecomputeTiling(const __gm__ GdnMegaArch35RecomputeWUTilingData *src,
+                                            GdnMegaArch35RecomputeWUTilingData &dst)
 {
     // Tiling data is serialized in GM; the recompute process consumes a local-memory copy.
     dst.B = src->B;
@@ -142,7 +142,7 @@ __aicore__ inline void CopyRecomputeTiling(const __gm__ RecomputeWUFwdTilingData
 template <typename InputT, typename GT, Arch35GdnSyncVariant Variant>
 __aicore__ inline void RunFwdO(GM_ADDR q, GM_ADDR k, GM_ADDR vNew, GM_ADDR h, GM_ADDR g,
                                GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR o,
-                               GM_ADDR userWorkspace, const ChunkFwdOTilingData *tiling)
+                               GM_ADDR userWorkspace, const GdnMegaArch35FwdOTilingData *tiling)
 {
     using Sync = Arch35GdnSyncTraits<Variant>;
     using Kernel = Catlass::Gemm::Kernel::GDNFwdOKernel<
@@ -157,7 +157,7 @@ template <typename kType, typename betaType, int VDim, typename TileShapes,
 __aicore__ inline void RunRecompute(
     GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR A, GM_ADDR g, GM_ADDR cuSeqlens,
     GM_ADDR chunkIndices, GM_ADDR w, GM_ADDR u, GM_ADDR workspace,
-    const RecomputeWUFwdTilingData *tiling)
+    const GdnMegaArch35RecomputeWUTilingData *tiling)
 {
     if ASCEND_IS_AIC {
         RecomputeWUFwdProcess<kType, betaType, typename TileShapes::L1TileShape,
@@ -179,7 +179,7 @@ template <typename kType, typename betaType, int VDim, bool kCoefficientGenerati
 __aicore__ inline void DispatchRecompute(
     GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR A, GM_ADDR g, GM_ADDR cuSeqlens,
     GM_ADDR chunkIndices, GM_ADDR w, GM_ADDR u, GM_ADDR workspace,
-    const RecomputeWUFwdTilingData *tiling)
+    const GdnMegaArch35RecomputeWUTilingData *tiling)
 {
     if constexpr (VDim == 256) {
         RunRecompute<kType, betaType, VDim,
@@ -195,7 +195,7 @@ __aicore__ inline void DispatchRecompute(
 template <typename InputT, Arch35GdnSyncVariant Variant>
 __aicore__ inline void DispatchFwdO(GM_ADDR q, GM_ADDR k, GM_ADDR vNew, GM_ADDR h, GM_ADDR g,
                                     GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR o,
-                                    GM_ADDR userWorkspace, const ChunkFwdOTilingData *tiling)
+                                    GM_ADDR userWorkspace, const GdnMegaArch35FwdOTilingData *tiling)
 {
     RunFwdO<InputT, float, Variant>(q, k, vNew, h, g, cuSeqlens, chunkIndices, o, userWorkspace, tiling);
 }

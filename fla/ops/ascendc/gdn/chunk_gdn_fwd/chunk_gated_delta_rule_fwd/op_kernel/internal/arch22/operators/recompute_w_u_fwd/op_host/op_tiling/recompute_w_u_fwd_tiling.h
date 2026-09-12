@@ -18,7 +18,7 @@
 
 namespace optiling {
 
-using GDN::RecomputeWUFwdTilingData;
+using GDN::GdnMegaArch22RecomputeWUTilingData;
 
 struct RecomputeWUFwdCompileInfo {};
 

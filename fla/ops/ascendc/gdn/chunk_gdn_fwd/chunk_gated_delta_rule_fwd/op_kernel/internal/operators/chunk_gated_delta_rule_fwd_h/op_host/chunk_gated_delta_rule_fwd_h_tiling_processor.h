@@ -14,12 +14,12 @@
  *
  * The caller is responsible for resolving framework-specific information (shapes, dtypes,
  * platform core number, lib-api workspace size) into the plain context struct below. The
- * processor then fills the plain ChunkGatedDeltaRuleFwdHTilingData together with the block
+ * processor then fills the plain GdnMegaArch35FwdHTilingData together with the block
  * dim and the total workspace size, mirroring exactly the original Tiling4ChunkGatedDeltaRuleFwdH.
  */
 
-#ifndef CHUNK_GATED_DELTA_RULE_FWD_H_TILING_PROCESSOR_H
-#define CHUNK_GATED_DELTA_RULE_FWD_H_TILING_PROCESSOR_H
+#ifndef GDN_MEGA_ARCH35_CHUNK_GATED_DELTA_RULE_FWD_H_TILING_PROCESSOR_H
+#define GDN_MEGA_ARCH35_CHUNK_GATED_DELTA_RULE_FWD_H_TILING_PROCESSOR_H
 
 #include <cstddef>
 #include <cstdint>
@@ -70,7 +70,7 @@ public:
     explicit ChunkGatedDeltaRuleFwdHTilingProcessor(const ChunkGatedDeltaRuleFwdHTilingContext &ctx) : ctx_(ctx) {}
 
     // Fills the plain tiling struct, the block dim and the total workspace size.
-    void Process(::ChunkGatedDeltaRuleFwdHTilingData &tiling, uint32_t &blockDim, size_t &workspaceSize) const
+    void Process(::GdnMegaArch35FwdHTilingData &tiling, uint32_t &blockDim, size_t &workspaceSize) const
     {
         int64_t isVariedLen;
         int64_t shapeBatch;
@@ -153,4 +153,4 @@ private:
 } // namespace
 } // namespace optiling
 
-#endif // CHUNK_GATED_DELTA_RULE_FWD_H_TILING_PROCESSOR_H
+#endif // GDN_MEGA_ARCH35_CHUNK_GATED_DELTA_RULE_FWD_H_TILING_PROCESSOR_H
