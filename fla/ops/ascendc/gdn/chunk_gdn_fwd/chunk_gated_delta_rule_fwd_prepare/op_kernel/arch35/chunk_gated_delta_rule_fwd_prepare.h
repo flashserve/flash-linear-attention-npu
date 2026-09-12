@@ -449,12 +449,10 @@ public:
         WaitFlag<HardEvent::MTE2_V>(0);
 
         if (useGateInKernel != 0) {
-            SetFlag<HardEvent::V_S>(0);
-            WaitFlag<HardEvent::V_S>(2);
             float aLog = ScalarToFp32(gmALog.GetValue(hv));
             float dt = (hasDtBias != 0) ? ScalarToFp32(gmDt.GetValue(hv)) : 0.0f;
-            SetFlag<HardEvent::S_V>(2);
-            WaitFlag<HardEvent::S_V>(2);
+            SetFlag<HardEvent::S_V>(0);
+            WaitFlag<HardEvent::S_V>(0);
             GateSoftplusVF<GateDtype>(ubGRaw, ubGfp, aLog, dt, static_cast<uint32_t>(nValid));
         } else if constexpr (!IsSameType<GateDtype, float>::value) {
             CastToFp32VF<GateDtype>(ubGRaw, ubGfp, static_cast<uint32_t>(nValid));
@@ -561,8 +559,11 @@ public:
     __aicore__ inline void Stage3_PrepareGate(int64_t taskIdx)
     {
         const int32_t db = PingPongSlot(taskIdx);
-        GateLowerLVF(ubGPrime[db], ubBetaEff[db], ubLFull[db],
-                     useExp2 != 0 ? kGdnLn2 : 1.0f);
+        if (useExp2 != 0) {
+            GateLowerLVF<true>(ubGPrime[db], ubBetaEff[db], ubLFull[db]);
+        } else {
+            GateLowerLVF<false>(ubGPrime[db], ubBetaEff[db], ubLFull[db]);
+        }
         DataCopy(ubResVcs[db], ubIVcs, static_cast<int32_t>(kVcsPackedElems32));
     }
 
@@ -736,9 +737,11 @@ public:
         DataCopy(ubKnd, gmKHat[offK], nK);
         SetFlag<HardEvent::MTE2_V>(1);
         WaitFlag<HardEvent::MTE2_V>(1);
-        ScaleRowsBetaExpGVF<InDtype>(ubKnd, ubKnd, beta, g,
-                                     useExp2 != 0 ? kGdnLn2 : 1.0f,
-                                     static_cast<uint32_t>(chunkSize));
+        if (useExp2 != 0) {
+            ScaleRowsBetaExp2gVF<InDtype, true>(ubKnd, ubKnd, beta, g, static_cast<uint32_t>(chunkSize));
+        } else {
+            ScaleRowsBetaExp2gVF<InDtype, false>(ubKnd, ubKnd, beta, g, static_cast<uint32_t>(chunkSize));
+        }
         SetFlag<HardEvent::V_MTE3>(1);
         WaitFlag<HardEvent::V_MTE3>(1);
         UploadBf16NdToL1(l1Kbg[taskIdx], ubKnd, static_cast<uint32_t>(K));

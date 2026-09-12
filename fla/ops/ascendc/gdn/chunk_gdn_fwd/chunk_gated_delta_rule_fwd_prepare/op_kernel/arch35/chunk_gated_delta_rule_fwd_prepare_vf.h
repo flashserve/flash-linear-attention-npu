@@ -335,12 +335,13 @@ __aicore__ inline void BetaSigmoidVF(LocalTensor<T> &betaIn, LocalTensor<float> 
 
 /**
  * function: 构造与 kkt 无关的下三角 gate。
- *           G[i,j] = -beta[i] * exp(expScale * clip(g[i]-g[j], -50, 50)), i>j；其余为 0。
- * input:  g [64] fp32, beta [64] fp32, expScale
+ *           G[i,j] = -beta[i] * exp*(clip(g[i]-g[j], -50, 50)), i>j；其余为 0。
+ *           UseExp2: exp2 via *ln2 then Exp; otherwise natural Exp.
+ * input:  g [64] fp32, beta [64] fp32
  * output: G [64,64] fp32
  */
-__aicore__ inline void GateLowerLVF(LocalTensor<float> &g, LocalTensor<float> &beta, LocalTensor<float> &G,
-                                    float expScale)
+template <bool UseExp2>
+__aicore__ inline void GateLowerLVF(LocalTensor<float> &g, LocalTensor<float> &beta, LocalTensor<float> &G)
 {
     __ubuf__ float *gAddr = (__ubuf__ float *)g.GetPhyAddr();
     __ubuf__ float *betaAddr = (__ubuf__ float *)beta.GetPhyAddr();
@@ -373,8 +374,10 @@ __aicore__ inline void GateLowerLVF(LocalTensor<float> &g, LocalTensor<float> &b
             Max(d1, d1, lo, pregAll);
             Min(d0, d0, hi, pregAll);
             Min(d1, d1, hi, pregAll);
-            Muls(d0, d0, expScale, pregAll);
-            Muls(d1, d1, expScale, pregAll);
+            if constexpr (UseExp2) {
+                Muls(d0, d0, kGdnLn2, pregAll);
+                Muls(d1, d1, kGdnLn2, pregAll);
+            }
             Exp(gate0, d0, pregAll);
             Exp(gate1, d1, pregAll);
             Mul(out0, gate0, b0, pregAll);
@@ -516,13 +519,14 @@ __aicore__ inline void ScaleRowsK256VF(LocalTensor<T> &x, LocalTensor<T> &y, Loc
 }
 
 /**
- * function: kbg 缩放，最后一维 128。y[t,:] = x[t,:] * beta[t] * exp(expScale * g[t])。
- * input:  x [rows,128] T(bf16), beta [rows] fp32, g [rows] fp32, expScale, rows
+ * function: kbg 缩放，最后一维 128。y[t,:] = x[t,:] * beta[t] * exp*(g[t])。
+ *           UseExp2: exp2 via *ln2 then Exp; otherwise natural Exp.
+ * input:  x [rows,128] T(bf16), beta [rows] fp32, g [rows] fp32, rows
  * output: y [rows,128] T
  */
-template <typename T>
-__aicore__ inline void ScaleRowsBetaExpGVF(LocalTensor<T> &x, LocalTensor<T> &y, LocalTensor<float> &beta,
-                                           LocalTensor<float> &g, float expScale, uint32_t rows)
+template <typename T, bool UseExp2>
+__aicore__ inline void ScaleRowsBetaExp2gVF(LocalTensor<T> &x, LocalTensor<T> &y, LocalTensor<float> &beta,
+                                            LocalTensor<float> &g, uint32_t rows)
 {
     constexpr uint32_t kRow = 2 * VL;
     constexpr uint32_t kPairElems = 2 * kRow;
@@ -545,8 +549,10 @@ __aicore__ inline void ScaleRowsBetaExpGVF(LocalTensor<T> &x, LocalTensor<T> &y,
             LoadCastB16<T>(xAddr + p * kPairElems + VL, k01, pregAll);
             LoadCastB16<T>(xAddr + p * kPairElems + kRow, k10, pregAll);
             LoadCastB16<T>(xAddr + p * kPairElems + kRow + VL, k11, pregAll);
-            Muls(g0, g0, expScale, pregAll);
-            Muls(g1, g1, expScale, pregAll);
+            if constexpr (UseExp2) {
+                Muls(g0, g0, kGdnLn2, pregAll);
+                Muls(g1, g1, kGdnLn2, pregAll);
+            }
             Exp(g0, g0, pregAll);
             Exp(g1, g1, pregAll);
             Mul(g0, g0, b0, pregAll);
@@ -565,7 +571,9 @@ __aicore__ inline void ScaleRowsBetaExpGVF(LocalTensor<T> &x, LocalTensor<T> &y,
             LoadAlign<float, LoadDist::DIST_BRC_B32>(b0, bAddr + nPair * 2);
             LoadCastB16<T>(xAddr + nPair * kPairElems, k00, pregAll);
             LoadCastB16<T>(xAddr + nPair * kPairElems + VL, k01, pregAll);
-            Muls(g0, g0, expScale, pregAll);
+            if constexpr (UseExp2) {
+                Muls(g0, g0, kGdnLn2, pregAll);
+            }
             Exp(g0, g0, pregAll);
             Mul(g0, g0, b0, pregAll);
             Mul(y00, k00, g0, pregAll);

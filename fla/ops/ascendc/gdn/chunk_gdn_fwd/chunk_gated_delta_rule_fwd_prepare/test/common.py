@@ -85,8 +85,8 @@ def generate_inputs(
     for name in out:
         out[name] = out[name].to(device=device, dtype=dtype)
     if a_log is not None:
-        out["A_log"] = a_log.to(device=device, dtype=dtype)
-        out["dt_bias"] = dt_bias.to(device=device, dtype=dtype)
+        out["A_log"] = a_log.to(device=device, dtype=torch.float32)
+        out["dt_bias"] = dt_bias.to(device=device, dtype=torch.float32)
     if cu is not None:
         out["cu_seqlens"] = cu.to(device=device)
     return out
