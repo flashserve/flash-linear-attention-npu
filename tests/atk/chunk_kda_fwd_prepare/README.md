@@ -223,6 +223,8 @@ TilingKey，并要求其集合与该分片的期望 key 完全一致，同时拒
 `<tool>.log` 同时是 ATK `-msl` 和外层 mssanitizer 的原始日志；分片摘要记录其哈希，
 续跑和聚合时重新检查 clean-finish、诊断行、文件哈希及 case/kernel 调度绑定摘要；
 四种工具还必须命中同一组完整绑定，不能只凭 ATK xlsx 判定通过。
+内存检查 scope 会在启动 Python/ATK 前设置 `PYTORCH_NO_NPU_MEMORY_CACHING=1`，
+使 msSanitizer 能看到 PyTorch 张量的真实 GM 分配边界；其他 scope 不改变内存池配置。
 
 ```bash
 # 200 条精度，每次独立执行 1 条

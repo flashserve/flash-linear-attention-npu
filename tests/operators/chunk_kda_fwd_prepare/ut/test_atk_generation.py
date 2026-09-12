@@ -1237,6 +1237,15 @@ class ChunkKdaFwdPrepareAtkGenerationTest(unittest.TestCase):
         self.assertIn('sanitizer-log', mssanitizer)
         self.assertIn('"${SINGLE_PROCESS_ARGS[@]}"', mssanitizer)
         self.assertIn('"${MSS_TIMEOUT_ARGS[@]}"', mssanitizer)
+        self.assertIn(
+            'export PYTORCH_NO_NPU_MEMORY_CACHING=1', mssanitizer
+        )
+        before_mssanitizer = source.split(
+            "if should_run mssanitizer; then", 1
+        )[0]
+        self.assertNotIn(
+            'export PYTORCH_NO_NPU_MEMORY_CACHING=1', before_mssanitizer
+        )
 
     def test_sanitizer_log_requires_clean_finish_for_each_kernel(self):
         kernels = [

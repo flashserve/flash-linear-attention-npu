@@ -608,6 +608,8 @@ fi
 
 if should_run mssanitizer; then
   command -v mssanitizer >/dev/null 2>&1 || die "找不到 mssanitizer，请先加载支持 sanitizer 的 CANN/调试环境"
+  # PyTorch 内存池会隐藏真实 GM 分配边界，导致 memcheck 越界判断不准确。
+  export PYTORCH_NO_NPU_MEMORY_CACHING=1
   log_info "开始内存检测：mssanitizer ${MSS_TOOL}"
   log_info "ATK mssanitizer 日志：${MSS_LOG_PATH}"
   set_case_range_args "内存检测 case 范围" "$MSS_START" "$MSS_END"
