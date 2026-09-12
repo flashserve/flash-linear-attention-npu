@@ -16,6 +16,25 @@ HEADER = ROOT / (
 )
 IMPLEMENTATION = HEADER.with_suffix(".cpp")
 CTYPES = ROOT / "torch_custom/fla_npu/fla_npu/ops/ascendc/_aclnn_ctypes.py"
+PREPARE_API = ROOT / (
+    "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_prepare/"
+    "op_host/op_api/aclnn_chunk_gated_delta_rule_fwd_prepare.cpp"
+)
+PREPARE_TILING = ROOT / (
+    "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_prepare/"
+    "op_host/chunk_gated_delta_rule_fwd_prepare_tiling.cpp"
+)
+PREPARE_KERNEL = ROOT / (
+    "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_prepare/"
+    "op_kernel/arch35/chunk_gated_delta_rule_fwd_prepare.h"
+)
+FWD_O_TILING = ROOT / (
+    "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/"
+    "op_host/chunk_fwd_o_tiling_processor.h"
+)
+FWD_O_KERNEL = ROOT / (
+    "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/op_kernel/chunk_fwd_o.cpp"
+)
 SYMBOL = "aclnnChunkGatedDeltaRuleFwd"
 
 EXPECTED_PARAMETERS = (
@@ -135,6 +154,8 @@ def main() -> None:
         "NTD legacy layout": r'std::strcmp\(params\.layout,\s*"NTD"\)\s*==\s*0',
         "prepare path A5 guard": r"if\s*\(UsePreparePath\(params\)\)\s*\{\s*"
         r"CHECK_COND\(IsAscend950\(\),\s*ACLNN_ERR_PARAM_INVALID",
+        "direct BSND output": r"ChunkFwdO\(.*?params\.useExp2,\s*params\.stateVFirst,\s*"
+        r'"BSND",\s*params\.oOut,\s*executorPtr\)',
         "gCumsum scratch": r"gCumsumCompute\s*=\s*executorPtr->AllocTensor",
         "A scratch": r"aCompute\s*=\s*executorPtr->AllocTensor",
     }
@@ -146,6 +167,47 @@ def main() -> None:
     if missing:
         raise SystemExit(f"ACLNN 默认路径映射缺失：{missing}")
 
+    prepare_api = PREPARE_API.read_text(encoding="utf-8")
+    prepare_tiling = PREPARE_TILING.read_text(encoding="utf-8")
+    prepare_kernel = PREPARE_KERNEL.read_text(encoding="utf-8")
+    forbidden_exp2_guards = {
+        "prepare ACLNN": (prepare_api, r"CHECK_COND\(params\.useExp2"),
+        "prepare tiling": (prepare_tiling, r"if\s*\(\s*!useExp2\s*\)"),
+        "prepare Torch wrapper": (CTYPES.read_text(encoding="utf-8"),
+                                  r"use_exp2 currently only supports True"),
+    }
+    rejected = [
+        name for name, (text, pattern) in forbidden_exp2_guards.items()
+        if re.search(pattern, text) is not None
+    ]
+    if rejected:
+        raise SystemExit(f"useExp2=false 仍被拒绝：{rejected}")
+    if re.search(
+        r"float\s+scale\s*=\s*\(useExp2\s*!=\s*0\)\s*\?\s*kGdnRcpLn2\s*:\s*1\.0f",
+        prepare_kernel,
+    ) is None:
+        raise SystemExit("prepare kernel 缺少 useExp2 对应的累计缩放选择")
+    if len(re.findall(r"useExp2\s*!=\s*0\s*\?\s*kGdnLn2\s*:\s*1\.0f", prepare_kernel)) != 2:
+        raise SystemExit("prepare kernel 缺少非 exp2 模式的局部指数换底选择")
+    if implementation.count("params.useExp2") < 4:
+        raise SystemExit("大融合新路径未完整透传 useExp2")
+
+    fwd_o_tiling = FWD_O_TILING.read_text(encoding="utf-8")
+    fwd_o_kernel = FWD_O_KERNEL.read_text(encoding="utf-8")
+    if "processor.GetOutputTokenFirst()" not in (ROOT / (
+        "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/op_host/chunk_fwd_o_tiling.cpp"
+    )).read_text(encoding="utf-8"):
+        raise SystemExit("chunk_fwd_o TilingKey 未按输出的 token-first 分类")
+    if re.search(r"if constexpr\s*\(OutputTokenFirst\).*?"
+                 r"ChunkFwdOA5DispatchByGateType<UseExp2>",
+                 fwd_o_kernel, re.DOTALL) is None:
+        raise SystemExit("chunk_fwd_o 未按输出的 token-first 分类选择优化实现")
+    fwd_o_tiling_key = (ROOT / (
+        "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/op_kernel/chunk_fwd_o_tiling_key.h"
+    )).read_text(encoding="utf-8")
+    if len(re.findall(r"CHUNK_FWD_O_TPL_SEL_ENTRY\([01], [01]\)", fwd_o_tiling_key)) != 3:
+        raise SystemExit("chunk_fwd_o 应只注册三个有效的 useExp2/token-first TilingKey 组合")
+
     print(
         json.dumps(
             {
@@ -155,6 +217,7 @@ def main() -> None:
                 "parameter_count": len(parameters),
                 "final_state_selector": "finalStateOutOptional != nullptr",
                 "legacy_layouts": ["BNSD", "NTD"],
+                "prepare_path_use_exp2": [False, True],
             },
             ensure_ascii=False,
             indent=2,

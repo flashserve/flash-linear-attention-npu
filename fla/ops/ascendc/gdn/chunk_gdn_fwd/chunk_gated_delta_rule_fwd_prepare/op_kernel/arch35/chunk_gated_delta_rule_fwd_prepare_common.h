@@ -67,6 +67,7 @@ private:
 constexpr int64_t kGdnChunkSize = 64;
 constexpr int64_t kGdnHeadDimK = 128;
 constexpr float kGdnRcpLn2 = 1.4426950216f;
+constexpr float kGdnLn2 = 0.6931471825f;
 constexpr float kGdnL2NormEps = 1e-6f;
 constexpr float kGdnGateClip = 50.0f;
 
@@ -106,7 +107,8 @@ struct ChunkGatedDeltaRuleFwdStageTilingData {
     // 1: chunk_indices GM is [2 * numChunks] pairs (seqId, localChunk).
     int64_t hasChunkIndexTable;
 
-    // Always 1 this version: q' = q/||q||, k' = k/||k||; write q_hat, k_hat, rstd.
+    // 1: q' = q/||q||, k' = k/||k||; write q_hat, k_hat, rstd.
+    // 0: skip L2Norm; kkt/kbg use k; q_hat/k_hat/rstd outputs omitted.
     int64_t enableQueryKeyL2NormInKernel;
 
     // 1: g_raw = -exp(a_log) * softplus(g + dt_bias) before chunk-local cumsum.
@@ -427,6 +429,11 @@ constexpr uint32_t kBytesK128 = 64 * 128 * 2;
 constexpr uint32_t kBytesVb256 = 64 * 256 * 2;
 constexpr uint32_t kBytesFp32Nz64 = 64 * 64 * 4;
 constexpr uint32_t kWsYBytes = 16 * kPrepareKb;
+// Four Y slots so Acc/Dump pipeline Dump(t) Fixpipe does not overwrite
+// Dump(t-1) MTE2 still reading gmWsY. 64x64 fp32 NZ is 16 KiB.
+constexpr uint32_t kWsYSlots = 4;
+constexpr uint32_t kWsYElems = kWsYBytes / sizeof(float);
+constexpr uint32_t kWsYTotalBytes = kWsYSlots * kWsYBytes;
 // One 64x64 bf16 ND tile is 8 KiB; slot kept at 16 KiB. Four slots so pack
 // tasks 0..3 do not share gmWsA (Stage5 Fixpipe vs in-flight MTE2 Copy).
 constexpr uint32_t kWsABytes = 16 * kPrepareKb;
@@ -434,6 +441,11 @@ constexpr uint32_t kWsAElems = kWsABytes / 2;
 constexpr uint32_t kWsASlots = 4;
 constexpr uint32_t kWsATotalBytes = kWsASlots * kWsABytes;
 constexpr uint32_t kWsPerCoreBytes = 128 * kPrepareKb;
+
+__aicore__ inline int64_t WsYOffset(int64_t taskIdx)
+{
+    return taskIdx * static_cast<int64_t>(kWsYElems);
+}
 
 __aicore__ inline int64_t WsAOffset(int64_t taskIdx)
 {
@@ -465,6 +477,10 @@ constexpr uint32_t kL0S7Slot = 16 * kPrepareKb;
 constexpr uint32_t kL0S7Ping = 32 * kPrepareKb;
 constexpr uint32_t kL0S7Pong = 48 * kPrepareKb;
 constexpr uint32_t kL0C1 = 64 * kPrepareKb;
+// Stage4/5: one 64x64 fp32 C tile per pack task. 64 KiB stride so the four
+// views sit on L0C [0,256) without sharing a 64 KiB bank. Tile itself is 16 KiB.
+constexpr uint32_t kL0CTaskStride = 64 * kPrepareKb;
+constexpr uint32_t kL0CTaskElems = kChunk64 * kChunk64;
 
 __aicore__ inline uint32_t L1KHat(uint32_t taskIdx)
 {
