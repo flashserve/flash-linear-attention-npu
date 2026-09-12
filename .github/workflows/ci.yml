@@ -63,7 +63,7 @@ jobs:
     steps:
       - name: 解析 PR 和 CI 参数
         id: prepare
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           NPU_CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
         with:
@@ -1153,7 +1153,7 @@ jobs:
 
       - name: 发布双平台 NPU CI 状态
         if: always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           NPU_CI_MODE: ${{ needs.prepare.outputs.ci_mode }}
           NPU_OPS: ${{ needs.prepare.outputs.ops }}

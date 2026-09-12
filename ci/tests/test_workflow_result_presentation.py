@@ -24,7 +24,7 @@ class WorkflowResultPresentationTest(unittest.TestCase):
         cls.finalize_action = next(
             step
             for step in cls.finalize_steps
-            if step.get("uses") == "actions/github-script@v7"
+            if step.get("uses") == "actions/github-script@v8"
         )
         cls.finalize_loader = cls.finalize_action["with"]["script"]
         cls.finalize_script = PUBLISH_SCRIPT_PATH.read_text(encoding="utf-8")
