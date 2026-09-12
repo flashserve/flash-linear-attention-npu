@@ -308,7 +308,7 @@ class ChunkKdaFwdPrepareAtkGenerationTest(unittest.TestCase):
         self.assertIn('STREQUAL "sanitizer"', cmake_helpers)
         self.assertIn('list(APPEND _OPC_CONFIG "-sanitizer")', cmake_helpers)
         self.assertIn('STREQUAL "ascend950"', cmake_helpers)
-        self.assertIn("COMPUTE_UNIT ${_compute_unit}", cmake_helpers)
+        self.assertIn("COMPUTE_UNIT ascend950pr_9599", cmake_helpers)
         self.assertIn("OPTIONS --cce-enable-sanitizer", cmake_helpers)
         custom_build = (ROOT / "cmake/custom_build.cmake").read_text(
             encoding="utf-8"

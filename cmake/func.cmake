@@ -371,7 +371,7 @@ function(add_opc_config)
                 # CANN 9.1 的 c310 分支会识别 sanitizer 配置，但不会自动加入实际插桩开关。
                 add_ops_compile_options(
                         OP_NAME ${OP_COMPILE_OP_NAME}
-                        COMPUTE_UNIT ${_compute_unit}
+                        COMPUTE_UNIT ascend950pr_9599
                         OPTIONS --cce-enable-sanitizer
                 )
             endif()
