@@ -145,6 +145,37 @@ validate_bounded_timeout() {
     die "${name} 必须是 1 到 ${upper_bound} 秒之间的整数"
 }
 
+# ATK 的 -to 是 worker soft timeout；原生 NPU 调用不响应 soft timeout 时，
+# 仍需由进程级截止回收整个 ATK 进程组。额外 30 秒只留给进程启动与清理，
+# 每条 case 的逻辑超时仍由传给 ATK 的 60/1000 秒控制。
+run_with_prepare_hard_deadline() {
+  local logical_timeout="$1"
+  local case_start="$2"
+  local case_end="$3"
+  shift 3
+  if [[ "$OP" != "chunk_kda_fwd_prepare" ]] ||
+     [[ -z "$case_start" || -z "$case_end" ]] ||
+     [[ ! "$case_start" =~ ^[0-9]+$ || ! "$case_end" =~ ^[0-9]+$ ]] ||
+     (( case_end - case_start != 1 )); then
+    "$@"
+    return
+  fi
+
+  command -v timeout >/dev/null 2>&1 || \
+    die "chunk_kda_fwd_prepare 正式测试需要 GNU timeout 提供进程级硬截止"
+  local hard_timeout=$((logical_timeout + 30))
+  local command_rc=0
+  if timeout --signal=TERM --kill-after=10s "${hard_timeout}s" "$@"; then
+    return 0
+  else
+    command_rc=$?
+  fi
+  if (( command_rc == 124 || command_rc == 137 )); then
+    echo "chunk_kda_fwd_prepare 测试超过进程级硬截止 ${hard_timeout}s（case 合同 ${logical_timeout}s）" >&2
+  fi
+  return "$command_rc"
+}
+
 # Prepare 的正式矩阵要求超时真正作用于每条 worker case。统一入口也按
 # 各 scope 的约定上限做硬校验，避免绕过算子专用分片脚本。
 validate_chunk_kda_fwd_prepare_contract() {
@@ -552,7 +583,9 @@ fi
 if should_run accuracy; then
   log_info "开始精度与 NaN 检测：mixed_tolerance_bm + CPU单标杆"
   set_case_range_args "精度与 NaN 检测 case 范围" "$ACCURACY_START" "$ACCURACY_END"
-  "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
+  run_with_prepare_hard_deadline \
+    "$ATK_TIMEOUT" "$ACCURACY_START" "$ACCURACY_END" \
+    "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
       --output_path "${ATK_OUTPUT_ROOT}/accuracy" \
     node --name cpu_golden --backend cpu \
       --output_path "${ATK_OUTPUT_ROOT}/accuracy" \
@@ -574,7 +607,9 @@ if should_run performance; then
   set_case_range_args "性能测试 case 范围" "$PERFORMANCE_START" "$PERFORMANCE_END"
   # 绑定本次性能报告，避免复用同一输出目录中历史成功的 xlsx。
   PERFORMANCE_RUN_START_NS="$(python3 -c 'import time; print(time.time_ns())')"
-  "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
+  run_with_prepare_hard_deadline \
+    "$PERFORMANCE_TIMEOUT" "$PERFORMANCE_START" "$PERFORMANCE_END" \
+    "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
       --output_path "${ATK_OUTPUT_ROOT}/perf" \
     task \
       -c "atk_${OP}_perf.json" \
@@ -592,7 +627,9 @@ fi
 if should_run determinism; then
   log_info "开始确定性测试：accuracy_dc（循环次数=${DC_LOOP_NUMS}，超时=${DC_TIMEOUT}s）"
   set_case_range_args "确定性测试 case 范围" "$DETERMINISM_START" "$DETERMINISM_END"
-  "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
+  run_with_prepare_hard_deadline \
+    "$DC_TIMEOUT" "$DETERMINISM_START" "$DETERMINISM_END" \
+    "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
     --output_path "${ATK_OUTPUT_ROOT}/determinism" \
     task \
       -c "atk_${OP}_mss.json" \
@@ -621,7 +658,9 @@ if should_run mssanitizer; then
   fi
   # 每次执行先清空旧证据，避免复用路径时把上一次 clean finish 误当成本次结果。
   : > "$MSS_LOG_PATH"
-  mssanitizer --tool="$MSS_TOOL" --log-file "$MSS_LOG_PATH" -- \
+  run_with_prepare_hard_deadline \
+    "$MSS_TIMEOUT" "$MSS_START" "$MSS_END" \
+    mssanitizer --tool="$MSS_TOOL" --log-file "$MSS_LOG_PATH" -- \
     "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
     --output_path "${ATK_OUTPUT_ROOT}/mssanitizer" \
     task \

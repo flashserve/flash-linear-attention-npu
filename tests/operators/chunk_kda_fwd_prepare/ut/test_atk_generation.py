@@ -1306,6 +1306,24 @@ done
 exit 96
 """,
             )
+            bash_env = fixture_root / "bash_env.sh"
+            bash_env.write_text(
+                """timeout() {
+  {
+    printf 'cache=%s\n' "${PYTORCH_NO_NPU_MEMORY_CACHING-<unset>}"
+  for arg in "$@"; do
+      printf 'arg=%s\n' "$arg"
+    done
+  } > "$RUNNER_FIXTURE_TIMEOUT_LOG"
+  if [[ "${RUNNER_FIXTURE_FORCE_TIMEOUT:-0}" == "1" ]]; then
+    return 124
+  fi
+  shift 3
+  "$@"
+}
+""",
+                encoding="utf-8",
+            )
 
             base_env = os.environ.copy()
             for name in (
@@ -1319,12 +1337,14 @@ exit 96
             ):
                 base_env.pop(name, None)
             base_env["PATH"] = str(fake_bin) + os.pathsep + base_env["PATH"]
+            base_env["BASH_ENV"] = bash_env.as_posix()
             base_env["PYTHONDONTWRITEBYTECODE"] = "1"
 
             for scope in ("accuracy", "determinism", "mssanitizer"):
                 with self.subTest(scope=scope):
                     atk_trace = fixture_root / f"{scope}_atk.log"
                     mss_trace = fixture_root / f"{scope}_mss.log"
+                    timeout_trace = fixture_root / f"{scope}_timeout.log"
                     output_root = fixture_root / f"{scope}_output"
                     sanitizer_log = fixture_root / f"{scope}_sanitizer.log"
                     env = base_env.copy()
@@ -1333,6 +1353,7 @@ exit 96
                             "ATK_OUTPUT_ROOT": output_root.as_posix(),
                             "RUNNER_FIXTURE_ATK_LOG": atk_trace.as_posix(),
                             "RUNNER_FIXTURE_MSS_LOG": mss_trace.as_posix(),
+                            "RUNNER_FIXTURE_TIMEOUT_LOG": timeout_trace.as_posix(),
                             "MSS_LOG_PATH": sanitizer_log.as_posix(),
                             "MSS_SANITIZER_LOG_PATH": sanitizer_log.as_posix(),
                             "CASE_START": "0",
@@ -1377,16 +1398,35 @@ exit 96
                     )
                     self.assertNotIn("-sp", atk_args)
 
+                    timeout_cache, timeout_args = read_trace(timeout_trace)
+                    expected_hard_timeout = (
+                        "1030s" if scope == "mssanitizer" else "90s"
+                    )
+                    self.assertEqual(
+                        timeout_args[:3],
+                        [
+                            "--signal=TERM",
+                            "--kill-after=10s",
+                            expected_hard_timeout,
+                        ],
+                    )
+                    self.assertEqual(
+                        Path(timeout_args[3]).name,
+                        "mssanitizer" if scope == "mssanitizer" else "atk",
+                    )
+
                     if scope == "determinism":
                         self.assertEqual(
                             value_after(atk_args, "--dc_loop_nums"), "50"
                         )
                     if scope != "mssanitizer":
+                        self.assertEqual(timeout_cache, "<unset>")
                         self.assertEqual(cache, "<unset>")
                         self.assertFalse(mss_trace.exists())
                         continue
 
                     self.assertEqual(cache, "1")
+                    self.assertEqual(timeout_cache, "1")
                     self.assertIn("--mssanitizer", atk_args)
                     mss_cache, mss_args = read_trace(mss_trace)
                     self.assertEqual(mss_cache, "1")
@@ -1395,6 +1435,77 @@ exit 96
                         value_after(mss_args, "--log-file"),
                         value_after(atk_args, "-msl"),
                     )
+
+            timeout_trace = fixture_root / "forced_timeout.log"
+            env = base_env.copy()
+            env.update(
+                {
+                    "ATK_OUTPUT_ROOT": (
+                        fixture_root / "forced_timeout_output"
+                    ).as_posix(),
+                    "RUNNER_FIXTURE_TIMEOUT_LOG": timeout_trace.as_posix(),
+                    "RUNNER_FIXTURE_FORCE_TIMEOUT": "1",
+                    "CASE_START": "0",
+                    "CASE_END": "1",
+                }
+            )
+            result = subprocess.run(
+                [
+                    bash,
+                    "tests/atk/run_test_cpu.sh",
+                    "-op=chunk_kda_fwd_prepare",
+                    "-npu_device_id=0",
+                    "-soc=ascend950",
+                    "-scope=accuracy",
+                ],
+                cwd=ROOT,
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+                errors="replace",
+            )
+            self.assertEqual(result.returncode, 124)
+            self.assertIn("90s", result.stderr)
+            _, timeout_args = read_trace(timeout_trace)
+            self.assertEqual(timeout_args[2], "90s")
+
+            multi_case_atk_trace = fixture_root / "multi_case_atk.log"
+            multi_case_timeout_trace = fixture_root / "multi_case_timeout.log"
+            env = base_env.copy()
+            env.update(
+                {
+                    "ATK_OUTPUT_ROOT": (
+                        fixture_root / "multi_case_output"
+                    ).as_posix(),
+                    "RUNNER_FIXTURE_ATK_LOG": multi_case_atk_trace.as_posix(),
+                    "RUNNER_FIXTURE_TIMEOUT_LOG": (
+                        multi_case_timeout_trace.as_posix()
+                    ),
+                    "RUNNER_FIXTURE_FORCE_TIMEOUT": "1",
+                    "CASE_START": "0",
+                    "CASE_END": "2",
+                }
+            )
+            result = subprocess.run(
+                [
+                    bash,
+                    "tests/atk/run_test_cpu.sh",
+                    "-op=chunk_kda_fwd_prepare",
+                    "-npu_device_id=0",
+                    "-soc=ascend950",
+                    "-scope=accuracy",
+                ],
+                cwd=ROOT,
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+                errors="replace",
+            )
+            self.assertEqual(result.returncode, 97, result.stderr)
+            self.assertTrue(multi_case_atk_trace.exists())
+            self.assertFalse(multi_case_timeout_trace.exists())
 
     def test_sanitizer_log_requires_clean_finish_for_each_kernel(self):
         kernels = [
