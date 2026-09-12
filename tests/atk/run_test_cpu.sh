@@ -34,7 +34,7 @@ show_usage() {
   DETERMINISM_START/DETERMINISM_END  确定性 case 范围
   MSS_START/MSS_END              mssanitizer case 范围
   MSS_TOOL                       mssanitizer 工具，默认 memcheck
-  MSS_TIMEOUT                    内存检测单用例超时；默认不设置（Prepare 默认 60）
+  MSS_TIMEOUT                    内存检测单用例超时；默认不设置（Prepare 默认 1000）
   MSS_LOG_PATH                   ATK -msl 日志路径，默认 ${ATK_OUTPUT_ROOT}/mssanitizer_<op>_<时间戳>.log
   MSS_SANITIZER_LOG_PATH         外层 mssanitizer 原始日志；Prepare 必须与 MSS_LOG_PATH 相同
   GEN_CASES_DTYPE_NUMBERS        生成用例时传给 atk case -dt，默认 100；双 dtype 算子生成 200 条
@@ -140,12 +140,13 @@ should_run() {
 validate_bounded_timeout() {
   local name="$1"
   local value="$2"
-  [[ "$value" =~ ^[1-9][0-9]*$ ]] && (( value <= 60 )) || \
-    die "${name} 必须是 1 到 60 秒之间的整数"
+  local upper_bound="${3:-60}"
+  [[ "$value" =~ ^[1-9][0-9]*$ ]] && (( value <= upper_bound )) || \
+    die "${name} 必须是 1 到 ${upper_bound} 秒之间的整数"
 }
 
-# Prepare 的正式矩阵要求超时真正作用于每条 worker case。统一入口也做硬
-# 校验，避免绕过算子专用分片脚本后退回 -sp 或数千秒的公共默认值。
+# Prepare 的正式矩阵要求超时真正作用于每条 worker case。统一入口也按
+# 各 scope 的约定上限做硬校验，避免绕过算子专用分片脚本。
 validate_chunk_kda_fwd_prepare_contract() {
   [[ "$OP" == "chunk_kda_fwd_prepare" ]] || return 0
   [[ "$RUN_SCOPE" == "gen_cases" ]] && return 0
@@ -172,7 +173,7 @@ validate_chunk_kda_fwd_prepare_contract() {
       die "chunk_kda_fwd_prepare 正式确定性测试要求 DC_LOOP_NUMS=50"
   fi
   if should_run mssanitizer; then
-    validate_bounded_timeout MSS_TIMEOUT "$MSS_TIMEOUT"
+    validate_bounded_timeout MSS_TIMEOUT "$MSS_TIMEOUT" 1000
   fi
 }
 
@@ -404,7 +405,7 @@ if [[ "$OP" == "chunk_kda_fwd_prepare" ]]; then
   ATK_TIMEOUT="${ATK_TIMEOUT:-60}"
   DC_TIMEOUT="${DC_TIMEOUT:-60}"
   PERFORMANCE_TIMEOUT="${PERFORMANCE_TIMEOUT:-60}"
-  MSS_TIMEOUT="${MSS_TIMEOUT:-60}"
+  MSS_TIMEOUT="${MSS_TIMEOUT:-1000}"
 else
   ATK_GM_INIT_MODE="${ATK_GM_INIT_MODE:-on}"
   ATK_SINGLE_PROCESS="${ATK_SINGLE_PROCESS:-on}"

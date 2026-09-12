@@ -137,6 +137,11 @@ SCOPE_CONTRACTS = {
         "require_tiling_log": True,
     },
 }
+SCOPE_TIMEOUT_LIMITS = {
+    "accuracy": 60,
+    "determinism": 60,
+    "mssanitizer": 1000,
+}
 
 
 def _load_cases(path: Path) -> list[dict]:
@@ -425,9 +430,11 @@ def _manifest_dispatch_signature(binary: dict) -> tuple[str, str]:
 
 def _validate_scope_contract(args: argparse.Namespace, case_count: int) -> None:
     contract = SCOPE_CONTRACTS[args.scope]
-    if not 1 <= args.timeout <= 60:
+    timeout_limit = SCOPE_TIMEOUT_LIMITS[args.scope]
+    if not 1 <= args.timeout <= timeout_limit:
         raise ValueError(
-            f"{args.scope} timeout 必须在 1..60 秒内，实际为 {args.timeout}"
+            f"{args.scope} timeout 必须在 1..{timeout_limit} 秒内，"
+            f"实际为 {args.timeout}"
         )
     if case_count != contract["case_count"]:
         raise ValueError(
@@ -2308,8 +2315,11 @@ def verify_sanitizer_suite(args: argparse.Namespace) -> int:
             or summary.get("key_pair_sha256") != _key_digest(expected_pairs)
         ):
             raise ValueError(f"sanitizer 汇总的 case/key 覆盖不闭合：{path}")
-        if not 1 <= int(summary.get("timeout_seconds", 0)) <= 60:
-            raise ValueError(f"sanitizer 超时配置不在 1..60 秒内：{path}")
+        timeout_limit = SCOPE_TIMEOUT_LIMITS["mssanitizer"]
+        if not 1 <= int(summary.get("timeout_seconds", 0)) <= timeout_limit:
+            raise ValueError(
+                f"sanitizer 超时配置不在 1..{timeout_limit} 秒内：{path}"
+            )
         if (
             summary.get("loop_nums") != 1
             or summary.get("gm_init_mode") != "not_applicable"

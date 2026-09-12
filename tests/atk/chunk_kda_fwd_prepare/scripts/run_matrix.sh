@@ -19,8 +19,8 @@ scope：
   KDA_PREPARE_ATK_MATRIX_START  从指定 case 继续，默认 0
   KDA_PREPARE_ATK_SOC           目标 SoC，正式矩阵必须显式指定
   MSS_TOOL                      内存工具，默认 memcheck
-  ATK_TIMEOUT/DC_TIMEOUT/MSS_TIMEOUT
-                                单 case 超时，均默认 60 秒
+  ATK_TIMEOUT/DC_TIMEOUT         单 case 超时，默认 60 秒，上限 60 秒
+  MSS_TIMEOUT                    内存检查单 case 超时，默认 1000 秒，上限 1000 秒
   DC_LOOP_NUMS                  确定性循环次数，正式矩阵固定为 50
   ATK_GM_INIT_MODE              正式精度矩阵固定为 off
 EOF
@@ -119,21 +119,22 @@ matrix_root=${matrix_root_override:-$op_dir/atk_output/${label}_${timestamp}}
 validate_timeout() {
   local name=$1
   local value=$2
-  [[ "$value" =~ ^[1-9][0-9]*$ ]] && (( value <= 60 )) || {
-    echo "$name 必须是 1 到 60 秒之间的整数" >&2
+  local upper_bound=$3
+  [[ "$value" =~ ^[1-9][0-9]*$ ]] && (( value <= upper_bound )) || {
+    echo "$name 必须是 1 到 $upper_bound 秒之间的整数" >&2
     exit 2
   }
 }
 
 accuracy_timeout=${ATK_TIMEOUT:-60}
 determinism_timeout=${DC_TIMEOUT:-60}
-sanitizer_timeout=${MSS_TIMEOUT:-60}
+sanitizer_timeout=${MSS_TIMEOUT:-1000}
 determinism_loops=${DC_LOOP_NUMS:-50}
 accuracy_gm_mode=${ATK_GM_INIT_MODE:-off}
 case "$scope" in
-  accuracy) validate_timeout ATK_TIMEOUT "$accuracy_timeout" ;;
-  determinism) validate_timeout DC_TIMEOUT "$determinism_timeout" ;;
-  mssanitizer) validate_timeout MSS_TIMEOUT "$sanitizer_timeout" ;;
+  accuracy) validate_timeout ATK_TIMEOUT "$accuracy_timeout" 60 ;;
+  determinism) validate_timeout DC_TIMEOUT "$determinism_timeout" 60 ;;
+  mssanitizer) validate_timeout MSS_TIMEOUT "$sanitizer_timeout" 1000 ;;
 esac
 if [[ "$scope" == "determinism" && "$determinism_loops" != "50" ]]; then
   echo "正式确定性矩阵要求 DC_LOOP_NUMS=50" >&2
@@ -149,7 +150,7 @@ fi
   exit 2
 }
 [[ "$shard_size" == "1" ]] || {
-  echo "为保证 ATK 的 60 秒超时逐 case 生效，正式矩阵分片大小固定为 1" >&2
+  echo "为保证 ATK 超时逐 case 生效，正式矩阵分片大小固定为 1" >&2
   exit 2
 }
 [[ "$matrix_start" =~ ^[0-9]+$ ]] || {

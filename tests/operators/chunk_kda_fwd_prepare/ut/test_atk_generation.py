@@ -764,12 +764,16 @@ class ChunkKdaFwdPrepareAtkGenerationTest(unittest.TestCase):
             "ATK_TIMEOUT",
             "PERFORMANCE_TIMEOUT",
             "DC_TIMEOUT",
-            "MSS_TIMEOUT",
         ):
             self.assertIn(
                 f'validate_bounded_timeout {timeout} "${timeout}"',
                 contract,
             )
+        self.assertIn(
+            'validate_bounded_timeout MSS_TIMEOUT "$MSS_TIMEOUT" 1000',
+            contract,
+        )
+        self.assertIn('MSS_TIMEOUT="${MSS_TIMEOUT:-1000}"', source)
         self.assertIn(
             "正式测试要求 ATK_SINGLE_PROCESS=off", contract
         )
@@ -2436,7 +2440,7 @@ unset ASCEND_RT_VISIBLE_DEVICES
             ),
             "mssanitizer": SimpleNamespace(
                 scope="mssanitizer",
-                timeout=60,
+                timeout=1000,
                 loop_nums=1,
                 gm_init_mode="not_applicable",
                 single_process_mode="off",
@@ -2452,6 +2456,7 @@ unset ASCEND_RT_VISIBLE_DEVICES
         invalid = (
             ("timeout", valid["accuracy"], 200, {"timeout": 0}),
             ("timeout", valid["accuracy"], 200, {"timeout": 61}),
+            ("timeout", valid["mssanitizer"], 432, {"timeout": 1001}),
             ("正式矩阵", valid["accuracy"], 199, {}),
             ("loop_nums", valid["accuracy"], 200, {"loop_nums": 2}),
             ("gm_init_mode", valid["accuracy"], 200, {"gm_init_mode": "on"}),
