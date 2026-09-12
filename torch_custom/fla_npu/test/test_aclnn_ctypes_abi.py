@@ -48,6 +48,7 @@ ACLNN_CTYPES = load_aclnn_ctypes_module()
 class FakeTensor:
     def __init__(self, shape, dtype=None, *, device_type="npu", contiguous=True):
         self.shape = tuple(shape)
+        self.ndim = len(self.shape)
         self.dtype = dtype
         self.device = types.SimpleNamespace(type=device_type)
         self._contiguous = contiguous
@@ -82,6 +83,73 @@ class FakeCallContext:
 
 
 class AclnnCtypesAbiTest(unittest.TestCase):
+    def test_chunk_gdn_bwd_intra_signature_has_no_debug_stage(self):
+        import inspect
+
+        expected_argtypes = [
+            *([ctypes.c_void_p] * 9),
+            ctypes.c_double,
+            ctypes.c_int64,
+            ctypes.c_bool,
+            *([ctypes.c_void_p] * 3),
+            ctypes.POINTER(ctypes.c_uint64),
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        self.assertEqual(
+            ACLNN_CTYPES._GET_WORKSPACE_ARGTYPES["aclnnChunkGdnBwdIntra"],
+            expected_argtypes,
+        )
+        signature = inspect.signature(ACLNN_CTYPES.npu_chunk_gdn_bwd_intra)
+        self.assertNotIn("stage", signature.parameters)
+        self.assertIs(signature.parameters["use_exp2"].default, True)
+
+        captured = {}
+        fake_torch = types.ModuleType("torch")
+        fake_torch.Tensor = FakeTensor
+        fake_torch.float16 = object()
+        fake_torch.bfloat16 = object()
+        fake_torch.float32 = object()
+
+        def fake_empty(shape, like, **kwargs):
+            return FakeTensor(shape, kwargs.get("dtype", like.dtype))
+
+        def fake_empty_like(tensor, **kwargs):
+            return FakeTensor(tensor.shape, kwargs.get("dtype", tensor.dtype))
+
+        def fake_call_aclnn(name, build_args, outputs):
+            context = FakeCallContext()
+            captured["name"] = name
+            captured["args"] = build_args(context)
+            return outputs
+
+        dtype = fake_torch.bfloat16
+        q = FakeTensor((1, 3, 65, 128), dtype)
+        k = FakeTensor(q.shape, dtype)
+        v = FakeTensor((1, 6, 65, 128), dtype)
+        g = FakeTensor((1, 6, 65), fake_torch.float32)
+        beta = FakeTensor((1, 6, 65), fake_torch.bfloat16)
+        a = FakeTensor((1, 6, 65, 64), dtype)
+        d_o = FakeTensor(v.shape, dtype)
+
+        with mock.patch.dict(sys.modules, {"torch": fake_torch}):
+            with mock.patch.object(ACLNN_CTYPES, "_empty", side_effect=fake_empty):
+                with mock.patch.object(
+                    ACLNN_CTYPES, "_empty_like", side_effect=fake_empty_like
+                ):
+                    with mock.patch.object(
+                        ACLNN_CTYPES, "_call_aclnn", side_effect=fake_call_aclnn
+                    ):
+                        outputs = ACLNN_CTYPES.npu_chunk_gdn_bwd_intra(
+                            q, k, v, g, beta, a, d_o, 0.125, 64
+                        )
+
+        operator_argtypes = expected_argtypes[:-2]
+        self.assertEqual(captured["name"], "aclnnChunkGdnBwdIntra")
+        self.assertEqual(len(outputs), 3)
+        self.assertEqual(len(captured["args"]), len(operator_argtypes))
+        self.assertEqual([type(arg) for arg in captured["args"]], operator_argtypes)
+        self.assertTrue(captured["args"][11].value)
+
     def test_chunk_gated_delta_rule_bwd_dhu_signature_and_default_use_exp2(self):
         import inspect
 
@@ -180,9 +248,9 @@ class AclnnCtypesAbiTest(unittest.TestCase):
         inputs = {
             "query": FakeTensor((5, 4, 128), fake_torch.bfloat16),
             "key": FakeTensor((5, 4, 128), fake_torch.bfloat16),
-            "value": FakeTensor((5, 8, 96), fake_torch.bfloat16),
+            "value": FakeTensor((5, 8, 128), fake_torch.bfloat16),
             "state": FakeTensor(
-                (5, 8, 96, 128),
+                (5, 8, 128, 128),
                 fake_torch.float32,
                 contiguous=False,
             ),

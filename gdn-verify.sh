@@ -181,7 +181,7 @@ detect_soc_from_npu() {
 }
 
 find_run_file() {
-    ls "$SCRIPT_DIR/build_out"/fla-npu-*.run 2>/dev/null | head -1
+    ls "$SCRIPT_DIR/build_out"/fla_npu_linux-*.run 2>/dev/null | head -1
 }
 
 source_vendor_env() {

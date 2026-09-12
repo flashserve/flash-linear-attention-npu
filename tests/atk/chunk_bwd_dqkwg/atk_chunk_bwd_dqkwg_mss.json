@@ -18,7 +18,7 @@
     "kernel_api_type": "kernel_function",
     "backward": false,
     "standard": {
-      "acc": "cv_fused_double_benchmark",
+      "acc": "mixed_tolerance_bm",
       "perf": "not_key",
       "mem": 1.1
     },

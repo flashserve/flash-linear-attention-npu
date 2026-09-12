@@ -24,6 +24,10 @@ cmake-build-*
 /build_out/
 /output/
 /.ci-cache/
+/dist/
+
+# Offline third-party bundle produced by scripts/tools/prepare_offline_bundle.py
+/offline_bundle/
 
 # binary files
 *.so

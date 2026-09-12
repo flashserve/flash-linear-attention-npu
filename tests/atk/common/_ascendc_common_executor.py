@@ -149,8 +149,8 @@ def _num_chunks(total: int, chunk_size: int) -> int:
     return (int(total) + int(chunk_size) - 1) // int(chunk_size)
 
 
-def _finite_tuple(outputs) -> Tuple[torch.Tensor, ...]:
-    """过滤 None 输出，并在 ATK 读取前检查浮点输出是否有限。"""
+def _finite_tuple(outputs, *, golden: bool = False) -> Tuple[torch.Tensor, ...]:
+    """过滤 None 输出，规范 golden dtype，并检查浮点输出是否有限。"""
     if isinstance(outputs, torch.Tensor):
         outputs = (outputs,)
     visible = []
@@ -160,5 +160,9 @@ def _finite_tuple(outputs) -> Tuple[torch.Tensor, ...]:
         check = output.detach()
         if check.is_floating_point() and not torch.isfinite(check.float()).all().item():
             raise RuntimeError("输出包含 NaN 或 Inf")
+        if golden and output.dtype == torch.float64:
+            output = output.to(torch.float32)
+        elif golden and output.dtype == torch.complex128:
+            output = output.to(torch.complex64)
         visible.append(output)
     return tuple(visible)

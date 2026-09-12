@@ -18,13 +18,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -237,13 +231,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -456,13 +444,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -675,13 +657,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -894,13 +870,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -1113,13 +1083,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -1332,13 +1296,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -1551,13 +1509,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -1770,13 +1722,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -1989,13 +1935,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -2208,13 +2148,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -2427,13 +2361,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -2646,13 +2574,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -2865,13 +2787,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -3084,13 +3000,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -3303,13 +3213,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -3522,13 +3426,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -3741,13 +3639,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -3960,13 +3852,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -4179,13 +4065,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -4398,13 +4278,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -4617,13 +4491,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -4836,13 +4704,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -5055,13 +4917,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -5274,13 +5130,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -5493,13 +5343,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -5712,13 +5556,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -5931,13 +5769,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -6150,13 +5982,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -6369,13 +6195,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -6588,13 +6408,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -6807,13 +6621,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -7026,13 +6834,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -7245,13 +7047,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -7464,13 +7260,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -7683,13 +7473,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -7902,13 +7686,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -8121,13 +7899,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -8340,13 +8112,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -8559,13 +8325,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -8778,13 +8538,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -8997,13 +8751,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -9216,13 +8964,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -9435,13 +9177,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -9654,13 +9390,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -9873,13 +9603,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -10092,13 +9816,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -10311,13 +10029,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -10530,13 +10242,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -10749,13 +10455,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -10968,13 +10668,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -11187,13 +10881,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -11406,13 +11094,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -11625,13 +11307,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -11844,13 +11520,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -12063,13 +11733,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -12282,13 +11946,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -12501,13 +12159,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -12720,13 +12372,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -12939,13 +12585,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -13158,13 +12798,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -13377,13 +13011,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -13596,13 +13224,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -13815,13 +13437,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -14034,13 +13650,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -14253,13 +13863,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -14472,13 +14076,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -14691,13 +14289,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -14910,13 +14502,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -15129,13 +14715,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -15348,13 +14928,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -15567,13 +15141,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -15786,13 +15354,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -16005,13 +15567,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -16224,13 +15780,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -16443,13 +15993,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -16662,13 +16206,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -16881,13 +16419,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -17100,13 +16632,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -17319,13 +16845,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -17538,13 +17058,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -17757,13 +17271,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -17976,13 +17484,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -18195,13 +17697,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -18414,13 +17910,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -18633,13 +18123,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -18852,13 +18336,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -19071,13 +18549,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -19290,13 +18762,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -19509,13 +18975,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -19728,13 +19188,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -19947,13 +19401,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -20166,13 +19614,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -20385,13 +19827,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -20604,13 +20040,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -20823,13 +20253,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -21042,13 +20466,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -21261,13 +20679,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -21480,13 +20892,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -21699,13 +21105,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -21918,13 +21318,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -22137,13 +21531,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -22356,13 +21744,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -22575,13 +21957,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -22794,13 +22170,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -23013,13 +22383,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -23232,13 +22596,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -23451,13 +22809,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -23670,13 +23022,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -23889,13 +23235,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -24108,13 +23448,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -24327,13 +23661,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -24546,13 +23874,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -24765,13 +24087,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -24984,13 +24300,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -25203,13 +24513,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -25422,13 +24726,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -25641,13 +24939,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -25860,13 +25152,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -26079,13 +25365,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -26298,13 +25578,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -26517,13 +25791,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -26736,13 +26004,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -26955,13 +26217,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -27174,13 +26430,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -27393,13 +26643,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -27612,13 +26856,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -27831,13 +27069,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -28050,13 +27282,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -28269,13 +27495,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -28488,13 +27708,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -28707,13 +27921,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -28926,13 +28134,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -29145,13 +28347,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -29364,13 +28560,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -29583,13 +28773,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -29802,13 +28986,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -30021,13 +29199,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -30240,13 +29412,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -30459,13 +29625,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -30678,13 +29838,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -30897,13 +30051,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -31116,13 +30264,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -31335,13 +30477,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -31554,13 +30690,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -31773,13 +30903,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -31992,13 +31116,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -32211,13 +31329,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -32430,13 +31542,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -32649,13 +31755,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -32868,13 +31968,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -33087,13 +32181,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -33306,13 +32394,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -33525,13 +32607,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -33744,13 +32820,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -33963,13 +33033,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -34182,13 +33246,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -34401,13 +33459,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -34620,13 +33672,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -34839,13 +33885,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -35058,13 +34098,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -35277,13 +34311,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -35496,13 +34524,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -35715,13 +34737,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -35934,13 +34950,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -36153,13 +35163,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -36372,13 +35376,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -36591,13 +35589,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -36810,13 +35802,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -37029,13 +36015,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -37248,13 +36228,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -37467,13 +36441,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -37686,13 +36654,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -37905,13 +36867,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -38124,13 +37080,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -38343,13 +37293,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -38562,13 +37506,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -38781,13 +37719,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -39000,13 +37932,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -39219,13 +38145,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -39438,13 +38358,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -39657,13 +38571,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -39876,13 +38784,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -40095,13 +38997,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -40314,13 +39210,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -40533,13 +39423,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -40752,13 +39636,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -40971,13 +39849,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -41190,13 +40062,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -41409,13 +40275,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -41628,13 +40488,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -41847,13 +40701,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -42066,13 +40914,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -42285,13 +41127,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -42504,13 +41340,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -42723,13 +41553,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -42942,13 +41766,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -43161,13 +41979,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -43380,13 +42192,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },
@@ -43599,13 +42405,7 @@
   "kernel_api_type": "kernel_function",
   "backward": false,
   "standard": {
-   "acc": {
-    "cv_fused_double_benchmark": {
-     "max_re_ratio": 10,
-     "avg_re_ratio": 3,
-     "root_mean_squared_ratio": 3
-    }
-   },
+   "acc": "mixed_tolerance_bm",
    "perf": "not_key",
    "mem": 1.1
   },

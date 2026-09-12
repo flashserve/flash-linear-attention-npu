@@ -144,7 +144,8 @@ aclnnStatus aclnnPrepareWyReprBwdFullGetWorkspaceSize(
 {
     PrepareWyReprBwdFullParams params{k, v, beta, a, dA, dw, du, g, cuSeqlensOptional, chunkIndicesOptional, chunkSize, dkOut, dvOut, dbetaOut, dgOut};
     // Standard syntax, Check parameters.
-    L2_DFX_PHASE_1(aclnnPrepareWyReprBwdFull, DFX_IN(k, v, beta, a, dA, dw, du, g, cuSeqlensOptional, chunkIndicesOptional),
+    L2_DFX_PHASE_1(aclnnPrepareWyReprBwdFull,
+                   DFX_IN(k, v, beta, a, dA, dw, du, g, cuSeqlensOptional, chunkIndicesOptional, chunkSize),
                    DFX_OUT(dkOut, dvOut, dbetaOut, dgOut));
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();

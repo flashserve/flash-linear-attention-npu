@@ -73,9 +73,11 @@ o_t = S @ q_t
 ## 5. 整体架构
 
 - `op_host/op_api/aclnn_recurrent_kda.cpp`：校验 dtype、layout、shape、可选输入组合；不读取 device metadata 的值；
-  对非 state tensor 做连续化；非连续 state 以 `CreateView` 保留真实存储信息；创建 L0 executor。
-- `op_host/recurrent_kda_tiling.cpp`：读取输入/输出 state stride、shape、属性和可选输入存在性，填充
-  `RecurrentKdaTilingData`，计算 block dim 与 UB 切分。
+  对规则非连续 Q/K/V 保留 stride/storage offset，已验证布局回退连续化，token/head 置换或
+  正 stride 重叠 descriptor 明确拒绝；非连续 state 以
+  `CreateView` 保留真实存储信息；创建 L0 executor。
+- `op_host/recurrent_kda_tiling.cpp`：读取 Q/K/V 与输入/输出 state stride、shape、属性和可选输入存在性，
+  填充 `RecurrentKdaTilingData`，计算 block dim 与 UB 切分。
 - `op_kernel/recurrent_kda.cpp`：单个 AIV kernel 完成 q/k normalize、raw gate 转换、state decay、delta 更新、输出和最终状态写回。
 - `torch_custom/fla_npu/fla_npu/ops/ascendc/_aclnn_ctypes.py`：提供解耦 Python ctypes 入口，不注册 `torch.ops.npu`。
 - legacy `torch.ops.npu.npu_recurrent_kda` 不属于当前支持范围，不作为公共接口维护。
@@ -86,8 +88,8 @@ o_t = S @ q_t
 
 Tiling 按逻辑序列和 value head 拆分任务。提供 `cu_seqlens` 时，`seq_num=len(cu_seqlens)-1`，使用与
 fla-org 一致的累计边界语义，第 `i` 条序列范围为 `[cu_seqlens[i], cu_seqlens[i+1])`；未提供时，
-BSND 按 batch 行划分序列，TND 视为一条序列。当前单任务面向 recurrent 小步长，每个相邻 offset
-的差值或 dense 序列长度限制为 `<=8`。提供 `cu_seqlens` 时，末项表示有效 token 数，可小于图捕获的
+BSND 按 batch 行划分序列，TND 视为一条序列。接口面向 decode / MTP 短序列：每个相邻 offset
+的差值（varlen 每段长度）与 dense 单序列长度均限制为 `<=8`。提供 `cu_seqlens` 时，末项表示有效 token 数，可小于图捕获的
 token capacity。
 
 ### 6.2 Tiling Data
@@ -101,6 +103,8 @@ token capacity。
 | `nv` / `dv` | `uint32_t` | value head 数与 V 维 |
 | `sBlockNum` / `b` | `uint32_t` | state pool 容量与逻辑序列数 |
 | `ssmStateStride` | `uint32_t` | 二维 speculative state 索引的行 stride；packed 一维索引时为 0 |
+| `query/key/value TokenStride` | `uint64_t` | Q/K/V 相邻逻辑 token 的元素 stride |
+| `query/key/value HeadStride` | `uint64_t` | Q/K/V 相邻 head 的元素 stride |
 | `vStep` | `uint32_t` | 单次处理的 V 方向步长 |
 | `stateOutBufferNum` / `attnOutBufferNum` | `uint32_t` | UB ring buffer 数 |
 | `scale` / `lowerBound` | `float` | query scale 与 safe gate 下界 |
@@ -120,7 +124,8 @@ tiling data 驱动，避免把 runtime shape 组合扩张到 tiling key。
 
 1. 解析当前任务对应的逻辑序列、value head、query/key head 和状态槽。
 2. 加载初始状态到 UB 工作区；Python 仅在非原位模式下允许 `initial_state=None`，并预先创建全零状态。
-3. 对每个 token 加载 `q/k/v/g/beta`，按属性执行 q/k normalize、raw gate 转换和 beta sigmoid。
+3. 按 Q/K/V 各自 token/head stride 计算 GM 首地址并二维搬运到紧凑 UB；随后按属性执行 q/k
+   normalize、raw gate 转换和 beta sigmoid。
 4. 对状态做 gate decay，计算 `S @ k`、delta 和 outer 更新。
 5. 计算 `S @ q` 写回 `out`，并把状态原位写回命中的 state pool 槽。
 
@@ -195,6 +200,9 @@ A2/A5 精度验证过程中修复以下问题：
 ## 13. 已知限制与演进计划
 
 - 当前仅支持 BF16 QKV。
+- Q/K/V 直接非连续访问仅支持 feature 致密、head/token 不重叠的正 stride；BSND `B>1` 还要求
+  batch 维可按 `T * tokenStride` 扁平化。已验证的 feature-gap、zero-stride、batch-gap view
+  自动回退连续化；token/head 置换或正 stride 重叠 descriptor 明确拒绝。
 - 当前 `K/V` 仅支持 `K=128,V=128` 或 `K=128,V=256`。
 - 当前每段 recurrent 序列长度限制为 `<=8`。
 - state 最后两维必须为行主序稠密矩阵；slot/head 维可有间隔但不得重叠。

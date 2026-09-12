@@ -13,7 +13,7 @@
 """
 Accuracy test for npu_recurrent_gated_delta_rule.
 
-Compares NPU output against CPU golden reference from PTA.
+Compares NPU output against the canonical CPU reference from tests/atk.
 """
 
 import os
@@ -25,14 +25,15 @@ import pytest
 import torch
 import torch_npu
 
-_PTA_DIR = (
+_ATK_DIR = (
     Path(__file__).resolve().parents[4]
-    / "fla/ops/ascendc/gdn/recurrent_gdn/recurrent_gated_delta_rule/tests/pta"
+    / "tests/atk/recurrent_gated_delta_rule"
 )
-sys.path.insert(0, str(_PTA_DIR))
+sys.path.insert(0, str(_ATK_DIR))
 
-from golden import recurrent_gated_delta_rule_golden
-from utils import compare_tensors_by_ratio
+from reference_recurrent_gated_delta_rule import (
+    recurrent_gated_delta_rule_reference,
+)
 
 
 STATE_HEAD_PREFIX_PADDING = 16
@@ -102,7 +103,7 @@ def make_inputs(
 
 def run_golden(inp):
     """Run CPU golden implementation."""
-    return recurrent_gated_delta_rule_golden(
+    return recurrent_gated_delta_rule_reference(
         query=inp["query"],
         key=inp["key"],
         value=inp["value"],
@@ -206,8 +207,17 @@ def run_npu(inp, state_layout, api_mode):
 
 
 def assert_compare_tensors_by_ratio(golden, actual, name, rtol=0.01, atol=0.004):
-    passed = compare_tensors_by_ratio(golden, actual, name, rtol=rtol, atol=atol)
-    assert passed, f"{name} comparison failed (rtol={rtol}, atol={atol})"
+    assert golden.shape == actual.shape, (
+        f"{name} shape mismatch: golden={golden.shape}, actual={actual.shape}"
+    )
+    golden_float = golden.float()
+    actual_float = actual.float()
+    close_mask = torch.isclose(actual_float, golden_float, rtol=rtol, atol=atol)
+    failed_count = int((~close_mask).sum().item())
+    assert failed_count == 0, (
+        f"{name} comparison failed: failed={failed_count}/{golden.numel()}, "
+        f"rtol={rtol}, atol={atol}"
+    )
 
 
 def test_recurrent_gated_delta_rule_interface_exist():

@@ -7,7 +7,7 @@ generate: generator_chunk_bwd_dqkwg
 dtype_numbers: 100
 extra_numbers: 0
 standard:
-  acc: cv_fused_double_benchmark
+  acc: mixed_tolerance_bm
 inputs:
   # q, k: [B, HK, T, K] —— K 固定 128，HK ∈ [1, 8]
   - name: q

@@ -57,8 +57,8 @@ private:
     Strategy strategy;
     Catlass::Arch::CrossCoreFlagWithReverse<> aivToAicGatedReadyFlag{
         SYNC_AIV_AIC_GATED_READY_FLAG, SYNC_AIC_AIV_GATED_FREE_FLAG};
-    Catlass::Arch::CrossCoreFlagWithReverse<> aicToAivQkReadyFlag{
-        SYNC_AIC_AIV_QK_READY_FLAG, SYNC_AIV_AIC_QK_FREE_FLAG};
+    Catlass::Arch::CrossCoreFlag aicToAivQkReadyFlag{SYNC_AIC_AIV_QK_READY_FLAG};
+    Catlass::Arch::CrossCoreFlag aivToAicQkFreeFlag{SYNC_AIV_AIC_QK_FREE_FLAG};
 
 public:
     __aicore__ inline ChunkBwdDvLocalCube(const Strategy &s) : strategy(s)
@@ -167,6 +167,8 @@ __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy, V>::Process()
             if (scheduleIdx >= p1SlotNum) {
                 int64_t qkHead = scheduleIdx - p1SlotNum;
                 if (qkHead < H_qk) {
+                    // Retire the QK credit before consuming the matching gated workspace.
+                    Catlass::Arch::CrossCoreWaitFlag(aivToAicQkFreeFlag);
                     for (int64_t doGroup = 0; doGroup < hRatio; doGroup++) {
                         Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(aivToAicGatedReadyFlag);
                     }
@@ -214,7 +216,7 @@ __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy, V>::Process()
                 auto tensorBlockC =
                     GetTile(tensorC, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShapeQK.m(), actualBlockShapeQK.n()));
                 blockMmadQK(tensorBlockA, tensorBlockB, tensorBlockC, actualBlockShapeQK);
-                Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(aicToAivQkReadyFlag);
+                Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(aicToAivQkReadyFlag);
             }
         }
     }

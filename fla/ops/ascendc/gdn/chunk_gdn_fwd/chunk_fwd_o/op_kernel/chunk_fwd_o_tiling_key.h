@@ -1,0 +1,26 @@
+#ifndef CHUNK_FWD_O_TILING_KEY_H
+#define CHUNK_FWD_O_TILING_KEY_H
+
+#ifndef TORCH_MODE
+#include "ascendc/host_api/tiling/template_argument.h"
+#endif
+
+#ifndef TORCH_MODE
+ASCENDC_TPL_ARGS_DECL(
+    ChunkFwdO,
+    ASCENDC_TPL_BOOL_DECL(USE_EXP2, 0, 1)
+);
+
+#define CHUNK_FWD_O_TPL_SEL_ENTRY(USE_EXP2_VALUE) \
+    ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_KERNEL_TYPE_SEL(ASCENDC_TPL_MIX_AIC_1_2), \
+                         ASCENDC_TPL_BOOL_SEL(USE_EXP2, USE_EXP2_VALUE))
+
+ASCENDC_TPL_SEL(
+    CHUNK_FWD_O_TPL_SEL_ENTRY(0),
+    CHUNK_FWD_O_TPL_SEL_ENTRY(1)
+);
+
+#undef CHUNK_FWD_O_TPL_SEL_ENTRY
+#endif
+
+#endif // CHUNK_FWD_O_TILING_KEY_H

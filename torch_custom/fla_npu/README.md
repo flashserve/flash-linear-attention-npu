@@ -151,7 +151,7 @@ site-packages/fla_npu/opp/vendors/fla_npu_transformer/
 
 ```bash
 bash build.sh --pkg --soc=ascend910b --vendor_name=fla_npu
-./build_out/fla-npu-*.run --full
+./build_out/fla_npu_linux-*.run --full
 ```
 
 安装完成后，`site-packages/fla_npu/opp/vendors/fla_npu_transformer` 下会包含 `libcust_opapi.so`、aclnn 头文件、host/tiling/proto 动态库和 kernel 产物，`from fla_npu.ops.ascendc import 算子名` 的运行时布局与一键 wheel 保持一致。standalone wheel 的分发包名与一键 wheel 保持一致，均为 `flash-linear-attention-npu`；Python 导入名仍为 `fla_npu`。
@@ -170,7 +170,7 @@ python3 scripts/check_packaged_wheel_api.py
 
 ```bash
 bash build.sh --pkg --soc=ascend910b --vendor_name=fla_npu --ops=chunk_fwd_o
-./build_out/fla-npu-*.run --full
+./build_out/fla_npu_linux-*.run --full
 ```
 
 安装器会列出 scoped run 包覆盖后的算子状态。`WARNING` 表示安装后不可用，`NOTICE` 表示需要人工关注，`OK` 表示 ABI 一致并继续可用。

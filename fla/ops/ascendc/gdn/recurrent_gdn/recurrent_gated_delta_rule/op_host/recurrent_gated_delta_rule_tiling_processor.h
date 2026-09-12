@@ -43,6 +43,7 @@ static constexpr size_t RGDR_DIM_3 = 3;
 
 static constexpr size_t RGDR_MAX_MTP = 8;
 static constexpr size_t RGDR_SYS_WORKSPACE_SIZE = 16U * 1024U * 1024U;
+static constexpr uint32_t RGDR_REQUIRED_DIM = 128;
 
 struct RecurrentGatedDeltaRuleTilingContext {
     const char *nodeName = "RecurrentGatedDeltaRule";
@@ -214,11 +215,11 @@ private:
 
     ge::graphStatus CheckShapeValueRangeAndRule(const RecurrentGatedDeltaRuleTilingData &tiling) const
     {
-        OP_CHECK_IF(tiling.nk > 256 || tiling.nv > 256 || tiling.dk > 512 || tiling.dv > 512,
+        OP_CHECK_IF(tiling.nk > 256 || tiling.nv > 256 || tiling.dk != RGDR_REQUIRED_DIM || tiling.dv != RGDR_REQUIRED_DIM,
                     OP_LOGE(ctx_.nodeName,
-                            "nk and nv should no bigger than 256, dk and dv should no bigger than 512, but nk is %u, "
+                            "nk and nv should no bigger than 256, dk and dv should be exactly %u, but nk is %u, "
                             "nv is %u, dk is %u, dv is %u",
-                            tiling.nk, tiling.nv, tiling.dk, tiling.dv),
+                            RGDR_REQUIRED_DIM, tiling.nk, tiling.nv, tiling.dk, tiling.dv),
                     return ge::GRAPH_FAILED);
 
         OP_CHECK_IF(tiling.nv % tiling.nk != 0,

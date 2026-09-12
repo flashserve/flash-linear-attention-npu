@@ -116,7 +116,6 @@ def chunk_bwd_dqkwg_torch(
     scale: Optional[float],
     cu_seqlens: Optional[torch.LongTensor],
     chunk_size: int = 64,
-    benchmark: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
     q_t = q.transpose(1, 2).contiguous()
     k_t = k.transpose(1, 2).contiguous()
@@ -131,8 +130,7 @@ def chunk_bwd_dqkwg_torch(
     cu_seqlens_tensor = torch.tensor(cu_seqlens, dtype=torch.int64) if cu_seqlens is not None else None
 
     dq, dk, dw, dg = chunk_bwd_dqkwg_cpu(
-        q_t, k_t, v_t, do_t, h_t, dh_t, w_t, g_t, dv_t, scale, cu_seqlens_tensor, chunk_size,
-        benchmark=benchmark
+        q_t, k_t, v_t, do_t, h_t, dh_t, w_t, g_t, dv_t, scale, cu_seqlens_tensor, chunk_size
     )
 
     dq = dq.transpose(1, 2).contiguous()
@@ -150,44 +148,7 @@ class FunctionApi(BaseApi):
         super(FunctionApi, self).__init__(task_result)
         self.qkv_type = None
 
-    def cpu(self, input_data: InputDataset, with_output: bool = False):
-        q = input_data.kwargs["q"]
-        k = input_data.kwargs["k"]
-        v = input_data.kwargs["v"]
-        do = input_data.kwargs["do"]
-        h = input_data.kwargs["h"]
-        dh = input_data.kwargs["dh"]
-        w = input_data.kwargs.get("w", None)
-        g = input_data.kwargs["g"]
-        dv = input_data.kwargs["dv"]
-        cu_seqlens = input_data.kwargs.get("cu_seqlens", None)
-        chunk_size = input_data.kwargs["chunk_size"]
-        scale = input_data.kwargs["scale"]
-
-        dq, dk, dw_out, dg = chunk_bwd_dqkwg_torch(
-            q, k, v, do, h, dh, w, g, dv, scale, cu_seqlens, chunk_size
-        )
-
-        if self.qkv_type == "bf16":
-            dq = dq.to(torch.bfloat16)
-            dk = dk.to(torch.bfloat16)
-            dw_out = dw_out.to(torch.bfloat16) if dw_out is not None else None
-        if self.qkv_type == "fp16":
-            dq = dq.to(torch.float16)
-            dk = dk.to(torch.float16)
-            dw_out = dw_out.to(torch.float16) if dw_out is not None else None
-
-        is_mix = input_data.kwargs.get("is_mix", True)
-        if not is_mix:
-            if self.qkv_type == "bf16":
-                dg = dg.to(torch.bfloat16)
-            if self.qkv_type == "fp16":
-                dg = dg.to(torch.float16)
-        # print("[cpu output] dq:", dq.shape, dq.dtype, "dk:", dk.shape, dk.dtype, "dw_out:", dw_out.shape, dw_out.dtype, "dg:", dg.shape, dg.dtype)
-
-        return dq, dk, dw_out, dg
-
-    def cpu_benchmark(self, input_data: InputDataset, with_output: bool = False):
+    def cpu_golden(self, input_data: InputDataset, with_output: bool = False):
         q = input_data.kwargs["q"].to(torch.float64)
         k = input_data.kwargs["k"].to(torch.float64)
         v = input_data.kwargs["v"].to(torch.float64)
@@ -204,12 +165,12 @@ class FunctionApi(BaseApi):
         scale = input_data.kwargs["scale"]
 
         dq, dk, dw_out, dg = chunk_bwd_dqkwg_torch(
-            q, k, v, do, h, dh, w, g, dv, scale, cu_seqlens, chunk_size,
-            benchmark=True
+            q, k, v, do, h, dh, w, g, dv, scale, cu_seqlens, chunk_size
         )
-        # print("[cpu bench output] dq:", dq.shape, dq.dtype, "dk:", dk.shape, dk.dtype, "dw_out:", dw_out.shape, dw_out.dtype, "dg:", dg.shape, dg.dtype)
-
-        return dq, dk, dw_out, dg
+        return tuple(
+            output.to(torch.float32) if isinstance(output, torch.Tensor) and output.is_floating_point() else output
+            for output in (dq, dk, dw_out, dg)
+        )
 
     def npu_chunk_bwd_dqkwg(self, input_data: InputDataset, with_output: bool = False):
         q = input_data.kwargs["q"]
@@ -234,13 +195,11 @@ class FunctionApi(BaseApi):
         return dq, dk, dw, dg
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
-        q = input_data.kwargs["q"]
         if self.device == "npu":
             return self.npu_chunk_bwd_dqkwg(input_data, with_output)
-        elif q.dtype == torch.float64:
-            return self.cpu_benchmark(input_data, with_output)
-        else:
-            return self.cpu(input_data, with_output)
+        if self.device == "cpu":
+            return self.cpu_golden(input_data, with_output)
+        raise RuntimeError(f"chunk_bwd_dqkwg only supports an NPU DUT or CPU golden node, got {self.device!r}")
 
     def init_by_input_data(self, input_data: InputDataset):
         B, HK, T_json, K = input_data.kwargs["q"].shape

@@ -352,7 +352,7 @@ private:
         if (rowCount <= 0) {
             return false;
         }
-        colCount = BT_;
+        colCount = meta.valid;
         return colCount > 0;
     }
 
@@ -490,7 +490,7 @@ private:
         auto blockB = GetTile(tensorB, tla::MakeCoord(0, 0), tla::MakeShape(shape.k(), shape.n()));
         auto blockC = GetTile(tensorC, tla::MakeCoord(0, 0), tla::MakeShape(shape.m(), shape.n()));
 
-        blockMmad(blockA, blockB, blockC, shape);
+        blockMmad(blockA, blockB, blockC, shape, Catlass::EmptyClass{}, meta.valid < BT_);
     }
 
     __aicore__ inline void ProcessAivCatlass()
@@ -812,13 +812,15 @@ private:
                                           int64_t rowCount,
                                           int64_t colCount)
     {
+        const int64_t copyBytes = colCount * static_cast<int64_t>(sizeof(float));
+        const int64_t alignedCopyBytes = (copyBytes + UB_ALIGN_BYTES - 1) / UB_ALIGN_BYTES * UB_ALIGN_BYTES;
         DataCopyExtParams scoreParams;
         scoreParams.blockCount = static_cast<uint16_t>(rowCount);
-        scoreParams.blockLen = static_cast<uint32_t>(colCount * static_cast<int64_t>(sizeof(float)));
-        scoreParams.srcStride = static_cast<uint32_t>((BT_ - colCount) * static_cast<int64_t>(sizeof(float)) /
-                                                      UB_ALIGN_BYTES);
-        scoreParams.dstStride = static_cast<uint32_t>((btAlign_ - colCount) * static_cast<int64_t>(sizeof(float)) /
-                                                      UB_ALIGN_BYTES);
+        scoreParams.blockLen = static_cast<uint32_t>(copyBytes);
+        // GM gaps are in bytes; UB gaps follow the 32-byte-aligned copied row.
+        scoreParams.srcStride = static_cast<uint32_t>((BT_ - colCount) * static_cast<int64_t>(sizeof(float)));
+        scoreParams.dstStride = static_cast<uint32_t>((btAlign_ * static_cast<int64_t>(sizeof(float)) -
+                                                       alignedCopyBytes) / UB_ALIGN_BYTES);
         scoreParams.rsv = 0;
         DataCopyPadExtParams<float> padParams{false, 0, 0, 0.0f};
         DataCopyPad(scoreTileLocal, scoreGm[scoreBaseOffset], scoreParams, padParams);

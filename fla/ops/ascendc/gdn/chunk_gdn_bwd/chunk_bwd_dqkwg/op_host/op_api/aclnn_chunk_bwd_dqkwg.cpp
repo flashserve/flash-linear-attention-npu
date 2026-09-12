@@ -194,8 +194,11 @@ aclnnStatus aclnnChunkBwdDqkwgGetWorkspaceSize(
     CHECK_COND(use_exp2 == false && transpose_state_layout == false, ACLNN_ERR_INNER,
                "use_exp2 and transpose_state_layout must be false.");
     // Standard syntax, Check parameters.
-    L2_DFX_PHASE_1(aclnnChunkBwdDqkwg, DFX_IN(q, k, v, g, h, dox, dh, dv, cuSeqlensOptional, chunkIndicesOptional, w, gGamma),
-                   DFX_OUT(dqOut, dkOut, dwOut, dgOut));
+    L2_DFX_PHASE_1(
+        aclnnChunkBwdDqkwg,
+        DFX_IN(q, k, v, g, h, dox, dh, dv, cuSeqlensOptional, chunkIndicesOptional, w, gGamma, scale, chunkSize,
+               use_exp2, transpose_state_layout),
+        DFX_OUT(dqOut, dkOut, dwOut, dgOut));
 
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
@@ -206,7 +209,7 @@ aclnnStatus aclnnChunkBwdDqkwgGetWorkspaceSize(
     CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
                "ParamsDataContiguous failed.");
-    auto result = l0op::ChunkBwdDqkwg(params.q, params.k, params.v, params.g, params.h, params.dox, params.dh, params.dv, params.cuSeqlensOptional, params.chunkIndicesOptional, params.w, params.gGamma, params.scale, params.chunkSize, params.dqOut, params.dkOut, params.dwOut, params.dgOut, executorPtr);
+    auto result = l0op::ChunkBwdDqkwg(params.q, params.k, params.v, params.g, params.h, params.dox, params.dh, params.dv, params.cuSeqlensOptional, params.chunkIndicesOptional, params.w, params.gGamma, params.scale, params.chunkSize, executorPtr);
 
     CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(result[1] != nullptr, ACLNN_ERR_PARAM_NULLPTR);

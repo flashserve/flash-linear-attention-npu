@@ -1,0 +1,2481 @@
+[
+ {
+  "id": 0,
+  "default_seed": 20260817,
+  "name": "chunk_gated_delta_rule_fwd_prepare_0000_gva_B2_T256_sig1_neg1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_fwd_prepare",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"gva_B2_T256_sig1_neg1\",\"B\":2,\"HK\":16,\"HV\":32,\"T\":256,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"sig1_neg1\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 2,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 16,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 32,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 0,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20260817,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ]
+ },
+ {
+  "id": 6,
+  "default_seed": 20260823,
+  "name": "chunk_gated_delta_rule_fwd_prepare_0006_tail_T160_sig1_neg1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_fwd_prepare",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"tail_T160_sig1_neg1\",\"B\":1,\"HK\":8,\"HV\":8,\"T\":160,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":6,\"seed\":20260823,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"sig1_neg1\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 8,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 8,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 160,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 6,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20260823,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ]
+ },
+ {
+  "id": 15,
+  "default_seed": 20260832,
+  "name": "chunk_gated_delta_rule_fwd_prepare_0015_partial_pack_HV6_sig1_neg1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_fwd_prepare",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"partial_pack_HV6_sig1_neg1\",\"B\":1,\"HK\":6,\"HV\":6,\"T\":64,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":15,\"seed\":20260832,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"sig1_neg1\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 6,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 6,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 15,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20260832,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ]
+ },
+ {
+  "id": 78,
+  "default_seed": 20260895,
+  "name": "chunk_gated_delta_rule_fwd_prepare_0078_r2_T64_V256_sig1_neg1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_fwd_prepare",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"r2_T64_V256_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":8,\"T\":64,\"K\":128,\"V\":256,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":78,\"seed\":20260895,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"sig1_neg1\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 8,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 78,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20260895,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ]
+ },
+ {
+  "id": 117,
+  "default_seed": 20260934,
+  "name": "chunk_gated_delta_rule_fwd_prepare_0117_varlen_g1_tail_sig1_neg1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_fwd_prepare",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"varlen_g1_tail_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":224,\"K\":128,\"V\":128,\"chunk_size\":64,\"seqlens\":[80,48,96],\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":117,\"seed\":20260934,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"sig1_neg1\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 224,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 117,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20260934,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seqlens",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "[80,48,96]",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ]
+ },
+ {
+  "id": 120,
+  "default_seed": 20260937,
+  "name": "chunk_gated_delta_rule_fwd_prepare_0120_varlen_g2_v256_sig1_neg1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_fwd_prepare",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"varlen_g2_v256_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":8,\"T\":160,\"K\":128,\"V\":256,\"chunk_size\":64,\"seqlens\":[96,64],\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":120,\"seed\":20260937,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"sig1_neg1\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 8,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 160,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 120,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20260937,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seqlens",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "[96,64]",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ]
+ },
+ {
+  "id": 123,
+  "default_seed": 20260940,
+  "name": "chunk_gated_delta_rule_fwd_prepare_0123_varlen_g3_mix_sig1_neg1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_fwd_prepare",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"varlen_g3_mix_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":12,\"T\":176,\"K\":128,\"V\":128,\"chunk_size\":64,\"seqlens\":[32,64,80],\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":123,\"seed\":20260940,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"sig1_neg1\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 12,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 176,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 123,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20260940,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seqlens",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "[32,64,80]",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ]
+ },
+ {
+  "id": 129,
+  "default_seed": 20260946,
+  "name": "chunk_gated_delta_rule_fwd_prepare_0129_varlen_near_chunk_sig1_neg1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_fwd_prepare",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"varlen_near_chunk_sig1_neg1\",\"B\":1,\"HK\":8,\"HV\":8,\"T\":192,\"K\":128,\"V\":128,\"chunk_size\":64,\"seqlens\":[65,127],\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":129,\"seed\":20260946,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"sig1_neg1\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 8,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 8,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 192,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 129,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20260946,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seqlens",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "[65,127]",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ]
+ },
+ {
+  "id": 1,
+  "default_seed": 20260818,
+  "name": "chunk_gated_delta_rule_fwd_prepare_0001_gva_B2_T256_sig1_neg0",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_fwd_prepare",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"gva_B2_T256_sig1_neg0\",\"B\":2,\"HK\":16,\"HV\":32,\"T\":256,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":1,\"seed\":20260818,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":false,\"use_exp2\":true,\"flag_tag\":\"sig1_neg0\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 2,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 16,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 32,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20260818,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ]
+ },
+ {
+  "id": 2,
+  "default_seed": 20260819,
+  "name": "chunk_gated_delta_rule_fwd_prepare_0002_gva_B2_T256_sig0_neg0",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_fwd_prepare",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"gva_B2_T256_sig0_neg0\",\"B\":2,\"HK\":16,\"HV\":32,\"T\":256,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":2,\"seed\":20260819,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":false,\"allow_neg_eigval\":false,\"use_exp2\":true,\"flag_tag\":\"sig0_neg0\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 2,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 16,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 32,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 2,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20260819,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ]
+ },
+ {
+  "id": 122,
+  "default_seed": 20260939,
+  "name": "chunk_gated_delta_rule_fwd_prepare_0122_varlen_g2_v256_sig0_neg0",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_fwd_prepare",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"varlen_g2_v256_sig0_neg0\",\"B\":1,\"HK\":4,\"HV\":8,\"T\":160,\"K\":128,\"V\":256,\"chunk_size\":64,\"seqlens\":[96,64],\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":122,\"seed\":20260939,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":false,\"allow_neg_eigval\":false,\"use_exp2\":true,\"flag_tag\":\"sig0_neg0\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 8,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 160,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 122,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20260939,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seqlens",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "[96,64]",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ]
+ },
+ {
+  "id": 79,
+  "default_seed": 20260896,
+  "name": "chunk_gated_delta_rule_fwd_prepare_0079_r2_T64_V256_sig1_neg0",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_fwd_prepare",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"r2_T64_V256_sig1_neg0\",\"B\":1,\"HK\":4,\"HV\":8,\"T\":64,\"K\":128,\"V\":256,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":79,\"seed\":20260896,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":false,\"use_exp2\":true,\"flag_tag\":\"sig1_neg0\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 8,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 79,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20260896,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ]
+ }
+]

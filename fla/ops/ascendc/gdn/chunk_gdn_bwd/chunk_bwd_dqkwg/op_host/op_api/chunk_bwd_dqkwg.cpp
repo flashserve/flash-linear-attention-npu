@@ -17,7 +17,7 @@ using namespace op;
 namespace l0op {
 OP_TYPE_REGISTER(ChunkBwdDqkwg);
 
-const std::array<const aclTensor *, 4> ChunkBwdDqkwg(
+const std::array<aclTensor *, 4> ChunkBwdDqkwg(
     const aclTensor *q,
     const aclTensor *k,
     const aclTensor *v,
@@ -32,13 +32,9 @@ const std::array<const aclTensor *, 4> ChunkBwdDqkwg(
     const aclTensor *gGamma,
     float scale,
     int64_t chunkSize,
-    const aclTensor *dqOut,
-    const aclTensor *dkOut,
-    const aclTensor *dwOut,
-    const aclTensor *dgOut,
     aclOpExecutor *executor)
 {
-    L0_DFX(ChunkBwdDqkwg, q, k, v, g, h, dox, dh, dv, cuSeqlensOptional, chunkIndicesOptional, w, gGamma, scale, chunkSize, dqOut, dkOut, dwOut, dgOut);
+    L0_DFX(ChunkBwdDqkwg, q, k, v, g, h, dox, dh, dv, cuSeqlensOptional, chunkIndicesOptional, w, gGamma, scale, chunkSize);
 
     const aclTensor *actualCuSeqQLen = nullptr;
     if (cuSeqlensOptional) {
@@ -60,10 +56,18 @@ const std::array<const aclTensor *, 4> ChunkBwdDqkwg(
         actualChunkIndices = nullptr;
     }
 
+    op::Shape dwShape = q->GetViewShape();
+    dwShape.SetDim(1, v->GetViewShape().GetDim(1));
+
+    auto dqOut = executor->AllocTensor(q->GetViewShape(), q->GetDataType(), Format::FORMAT_ND);
+    auto dkOut = executor->AllocTensor(k->GetViewShape(), k->GetDataType(), Format::FORMAT_ND);
+    auto dwOut = executor->AllocTensor(dwShape, q->GetDataType(), Format::FORMAT_ND);
+    auto dgOut = executor->AllocTensor(g->GetViewShape(), g->GetDataType(), Format::FORMAT_ND);
+
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(ChunkBwdDqkwg,
         OP_INPUT(q, k, v, g, h, dox, dh, dv, actualCuSeqQLen, actualChunkIndices, w, gGamma),
         OP_OUTPUT(dqOut, dkOut, dwOut, dgOut),
-        OP_ATTR(scale, chunkSize, 0));
+        OP_ATTR(scale, chunkSize));
 
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");

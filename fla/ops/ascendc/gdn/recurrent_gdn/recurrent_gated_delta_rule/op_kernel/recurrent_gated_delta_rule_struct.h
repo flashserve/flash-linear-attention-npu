@@ -17,7 +17,29 @@
 
 #include <cstdint>
 
+#ifndef TORCH_MODE
+#include "ascendc/host_api/tiling/template_argument.h"
+#endif
+
 namespace RecurrentGatedDeltaRule {
+
+#define RGDR_TPL_BF16 10
+#define RGDR_TPL_FP32 30
+
+#ifndef TORCH_MODE
+ASCENDC_TPL_ARGS_DECL(RecurrentGatedDeltaRule,
+    ASCENDC_TPL_DTYPE_DECL(D_T_STATE, RGDR_TPL_BF16, RGDR_TPL_FP32),
+);
+
+ASCENDC_TPL_SEL(
+    ASCENDC_TPL_ARGS_SEL(
+        ASCENDC_TPL_DTYPE_SEL(D_T_STATE, RGDR_TPL_BF16),
+    ),
+    ASCENDC_TPL_ARGS_SEL(
+        ASCENDC_TPL_DTYPE_SEL(D_T_STATE, RGDR_TPL_FP32),
+    ),
+);
+#endif
 
 #pragma pack(push, 8)
 struct alignas(8) RecurrentGatedDeltaRuleTilingData {

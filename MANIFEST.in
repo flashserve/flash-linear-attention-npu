@@ -17,6 +17,7 @@ prune build
 prune build_out
 prune dist
 prune output
+prune offline_bundle
 prune torch_custom/fla_npu/build
 prune torch_custom/fla_npu/dist
 global-exclude __pycache__

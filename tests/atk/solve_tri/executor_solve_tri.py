@@ -90,8 +90,8 @@ def _calc_dtype(name: str, high_precision: bool):
     return _orig_dtype(name)
 
 
-def _finite_tuple(outputs):
-    """过滤 None 输出，并在 ATK 读取前检查浮点输出是否有限。"""
+def _finite_tuple(outputs, *, golden: bool = False):
+    """过滤 None 输出，检查有限值，并规范 CPU golden 的比较精度。"""
     if isinstance(outputs, torch.Tensor):
         outputs = (outputs,)
     visible = []
@@ -101,6 +101,11 @@ def _finite_tuple(outputs):
         check = output.detach()
         if check.is_floating_point() and not torch.isfinite(check.float()).all().item():
             raise RuntimeError("输出包含 NaN 或 Inf")
+        if golden:
+            if output.dtype == torch.float64:
+                output = output.to(torch.float32)
+            elif output.dtype == torch.complex128:
+                output = output.to(torch.complex64)
         visible.append(output)
     return tuple(visible)
 
@@ -535,8 +540,7 @@ class FunctionApi(BaseApi):
 
     def __init__(self, task_result: TaskResult):
         super(FunctionApi, self).__init__(task_result)
-        self.is_benchmark_task = bool(task_result.is_benchmark_task)
-        self.high_precision = self.device == "cpu" and self.is_benchmark_task
+        self.high_precision = self.device == "cpu"
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
         spec = _case_spec(input_data, OP_NAME)
@@ -546,4 +550,4 @@ class FunctionApi(BaseApi):
             outputs = run_cpu(spec, self.high_precision)
         else:
             raise RuntimeError(f"{OP_NAME} 仅支持 NPU DUT 与 CPU 标杆节点，当前设备：{self.device!r}")
-        return _finite_tuple(outputs)
+        return _finite_tuple(outputs, golden=self.device == "cpu")

@@ -70,7 +70,7 @@ def _recompute_w_u_ref(inputs):
     chunk_size = int(inputs["chunk_size"])
     high = k.dtype == torch.float64
     calc = torch.float64 if high else torch.float32
-    # matmul 不升精度：同精度路径把 matmul 操作数量化到元素精度（与 NPU 一致），
+    # 非高精度辅助调用会把 matmul 操作数量化到元素精度，
     # 累加保持 fp32；高精度路径全程 fp64（ATK 自动生成的高精度标杆）。
     elem = torch.float64 if high else k.dtype
 
@@ -95,7 +95,7 @@ def _recompute_w_u_ref(inputs):
 
 
 def run_cpu(spec: dict[str, Any], high_precision: bool = False):
-    """运行 CPU 同精度或 fp64 高精度标杆。"""
+    """运行 CPU 高精度 golden。"""
     inputs = build_inputs(spec, torch.device("cpu"), high_precision=high_precision)
     return _recompute_w_u_ref(inputs)
 
@@ -114,8 +114,7 @@ class FunctionApi(BaseApi):
 
     def __init__(self, task_result: TaskResult):
         super(FunctionApi, self).__init__(task_result)
-        self.is_benchmark_task = bool(task_result.is_benchmark_task)
-        self.high_precision = self.device == "cpu" and self.is_benchmark_task
+        self.high_precision = self.device == "cpu"
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
         spec = _case_spec(input_data, OP_NAME)
@@ -125,4 +124,4 @@ class FunctionApi(BaseApi):
             outputs = run_cpu(spec, self.high_precision)
         else:
             raise RuntimeError(f"{OP_NAME} 仅支持 NPU DUT 与 CPU 标杆节点，当前设备：{self.device!r}")
-        return _finite_tuple(outputs)
+        return _finite_tuple(outputs, golden=self.device == "cpu")

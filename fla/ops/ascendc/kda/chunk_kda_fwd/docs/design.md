@@ -54,6 +54,10 @@ w, u, kg, v_new_seed
 
 `Akk` 的 head 循环按 `H_v` 执行，GQA 映射只在读取 q/k head 时换算，避免按 `H_k` 重复或漏算。
 
+变长尾块中 `w_seed` 与 `w` 可复用同一段 GM。两个 AIV 按 K 维列区间独占写回，并从高行向低行
+处理，保证下三角计算依赖的源行在最后一次读取前不会被原位覆盖。`u_seed` 与 `u` 使用独立存储，
+仍按行区间并行。
+
 ### FwdH state propagation
 
 读取 `kg/w/u/gk` 和可选 `initial_state`，计算 chunk 间递推：

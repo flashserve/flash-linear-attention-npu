@@ -34,8 +34,8 @@ def _find_xlsx_files(output_root, pattern):
 
 
 def _find_accuracy_reports(output_root, op):
-    """accuracy 报告在 cpu_dual_reference/atk_output/atk_<op>_* 下。"""
-    return _find_xlsx_files(output_root, f"cpu_dual_reference/atk_output/atk_{op}_*")
+    """accuracy 报告在 accuracy/atk_output/atk_<op>_* 下。"""
+    return _find_xlsx_files(output_root, f"accuracy/atk_output/atk_{op}_*")
 
 
 def _find_root_reports(output_root, op):
@@ -195,6 +195,8 @@ def check_accuracy(output_root, op):
         return {"found": True, "total": 0, "pass": 0, "fail": 0, "all_pass": False,
                 "xlsx": xlsx, "detail": "无法解析 summary sheet"}
     info = _extract_summary_row(header, data)
+    if info["total"] <= 0 or info["check_pass"] != info["total"]:
+        info["all_pass"] = False
     return {"found": True, **info, "xlsx": xlsx,
             "detail": f"通过率={info['pass_rate']}"}
 
