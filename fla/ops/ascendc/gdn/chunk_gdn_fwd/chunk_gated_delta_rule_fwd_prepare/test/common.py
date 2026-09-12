@@ -36,8 +36,9 @@ def generate_inputs(
     Fixed BSND is ``[B, T, H, D]``; BNSD is ``[B, H, T, D]``.
     ``seqlens`` packs sequences on T (FLA varlen, ``B=1``).
 
-    When ``use_qk_l2norm_in_kernel`` is False, ``k`` is L2-normalized along the
-    last dim. The kernel will not normalize it again.
+    When ``use_qk_l2norm_in_kernel`` is False, ``q`` and ``k`` are L2-normalized
+    along the last dim before the operator (WY on unnormalized k goes inf/nan).
+    The kernel will not normalize them again.
     """
     layout = normalize_layout(layout)
     gen = torch.Generator(device="cpu")
@@ -57,6 +58,7 @@ def generate_inputs(
     q = torch.randn(batch, seq_len, num_k_heads, head_k, generator=gen, dtype=torch.float32)
     k = torch.randn(batch, seq_len, num_k_heads, head_k, generator=gen, dtype=torch.float32)
     if not use_qk_l2norm_in_kernel:
+        q = torch.nn.functional.normalize(q, p=2, dim=-1)
         k = torch.nn.functional.normalize(k, p=2, dim=-1)
     v = torch.randn(batch, seq_len, num_v_heads, head_v, generator=gen, dtype=torch.float32)
     if use_gate_in_kernel:
