@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -1215,37 +1216,185 @@ class ChunkKdaFwdPrepareAtkGenerationTest(unittest.TestCase):
                 {},
             )
 
-    def test_mssanitizer_uses_one_log_for_outer_and_atk_for_prepare(self):
-        source = (ROOT / "tests/atk/run_test_cpu.sh").read_text(
-            encoding="utf-8"
-        )
-        mssanitizer = source.split("if should_run mssanitizer; then", 1)[1]
-        self.assertIn(
-            'mssanitizer --tool="$MSS_TOOL" --log-file "$MSS_LOG_PATH" --',
-            mssanitizer,
-        )
-        self.assertIn('-msl "$MSS_LOG_PATH"', mssanitizer)
-        self.assertIn('MSS_SANITIZER_LOG_PATH', source)
-        self.assertIn(': > "$MSS_LOG_PATH"', mssanitizer)
-        self.assertIn('[[ ! -L "$MSS_LOG_PATH" ]]', mssanitizer)
-        self.assertIn('realpath -m -- "$MSS_LOG_PATH"', mssanitizer)
-        self.assertIn('realpath -m -- "$MSS_SANITIZER_LOG_PATH"', mssanitizer)
-        self.assertIn(
-            '[[ "$MSS_SANITIZER_LOG_PATH" == "$MSS_LOG_PATH" ]]',
-            mssanitizer,
-        )
-        self.assertIn('sanitizer-log', mssanitizer)
-        self.assertIn('"${SINGLE_PROCESS_ARGS[@]}"', mssanitizer)
-        self.assertIn('"${MSS_TIMEOUT_ARGS[@]}"', mssanitizer)
-        self.assertIn(
-            'export PYTORCH_NO_NPU_MEMORY_CACHING=1', mssanitizer
-        )
-        before_mssanitizer = source.split(
-            "if should_run mssanitizer; then", 1
-        )[0]
-        self.assertNotIn(
-            'export PYTORCH_NO_NPU_MEMORY_CACHING=1', before_mssanitizer
-        )
+    def test_prepare_runner_scopes_timeout_and_memory_cache_env(self):
+        bash = shutil.which("bash")
+        if os.name == "nt":
+            git_bash = Path(os.environ.get("ProgramFiles", "C:/Program Files"))
+            git_bash /= "Git/bin/bash.exe"
+            if git_bash.is_file():
+                bash = str(git_bash)
+        if bash is None:
+            self.skipTest("需要 Bash 执行 runner fixture")
+
+        def write_executable(directory: Path, name: str, source: str) -> None:
+            path = directory / name
+            path.write_bytes(source.encode("utf-8"))
+            path.chmod(0o755)
+
+        def read_trace(path: Path) -> tuple[str, list[str]]:
+            lines = path.read_text(encoding="utf-8").splitlines()
+            cache = next(
+                line.removeprefix("cache=")
+                for line in lines
+                if line.startswith("cache=")
+            )
+            args = [
+                line.removeprefix("arg=")
+                for line in lines
+                if line.startswith("arg=")
+            ]
+            return cache, args
+
+        def value_after(args: list[str], option: str) -> str:
+            index = args.index(option)
+            self.assertLess(index + 1, len(args))
+            return args[index + 1]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture_root = Path(temp_dir)
+            fake_bin = fixture_root / "bin"
+            fake_bin.mkdir()
+            python_executable = shlex.quote(Path(sys.executable).as_posix())
+            write_executable(
+                fake_bin,
+                "python3",
+                "#!/usr/bin/env bash\n"
+                f'exec {python_executable} "$@"\n',
+            )
+            write_executable(
+                fake_bin,
+                "npu-smi",
+                "#!/usr/bin/env bash\n"
+                "printf '%s\\n' '| 0 | 9579 | OK | fixture |'\n",
+            )
+            write_executable(
+                fake_bin,
+                "atk",
+                """#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "--version" ]]; then
+  printf '%s\n' '26.8.8'
+  exit 0
+fi
+{
+  printf 'cache=%s\n' "${PYTORCH_NO_NPU_MEMORY_CACHING-<unset>}"
+  for arg in "$@"; do
+    printf 'arg=%s\n' "$arg"
+  done
+} > "$RUNNER_FIXTURE_ATK_LOG"
+exit 97
+""",
+            )
+            write_executable(
+                fake_bin,
+                "mssanitizer",
+                """#!/usr/bin/env bash
+set -euo pipefail
+{
+  printf 'cache=%s\n' "${PYTORCH_NO_NPU_MEMORY_CACHING-<unset>}"
+  for arg in "$@"; do
+    printf 'arg=%s\n' "$arg"
+  done
+} > "$RUNNER_FIXTURE_MSS_LOG"
+while (($# > 0)); do
+  if [[ "$1" == "--" ]]; then
+    shift
+    exec "$@"
+  fi
+  shift
+done
+exit 96
+""",
+            )
+
+            base_env = os.environ.copy()
+            for name in (
+                "ASCEND_RT_VISIBLE_DEVICES",
+                "ASCEND_VISIBLE_DEVICES",
+                "ATK_ENV",
+                "CANN_ENV",
+                "FLA_NPU_ENV",
+                "FLA_NPU_OPP_ENV",
+                "PYTORCH_NO_NPU_MEMORY_CACHING",
+            ):
+                base_env.pop(name, None)
+            base_env["PATH"] = str(fake_bin) + os.pathsep + base_env["PATH"]
+            base_env["PYTHONDONTWRITEBYTECODE"] = "1"
+
+            for scope in ("accuracy", "determinism", "mssanitizer"):
+                with self.subTest(scope=scope):
+                    atk_trace = fixture_root / f"{scope}_atk.log"
+                    mss_trace = fixture_root / f"{scope}_mss.log"
+                    output_root = fixture_root / f"{scope}_output"
+                    sanitizer_log = fixture_root / f"{scope}_sanitizer.log"
+                    env = base_env.copy()
+                    env.update(
+                        {
+                            "ATK_OUTPUT_ROOT": output_root.as_posix(),
+                            "RUNNER_FIXTURE_ATK_LOG": atk_trace.as_posix(),
+                            "RUNNER_FIXTURE_MSS_LOG": mss_trace.as_posix(),
+                            "MSS_LOG_PATH": sanitizer_log.as_posix(),
+                            "MSS_SANITIZER_LOG_PATH": sanitizer_log.as_posix(),
+                            "CASE_START": "0",
+                            "CASE_END": "1",
+                        }
+                    )
+                    result = subprocess.run(
+                        [
+                            bash,
+                            "tests/atk/run_test_cpu.sh",
+                            "-op=chunk_kda_fwd_prepare",
+                            "-npu_device_id=0",
+                            "-soc=ascend950",
+                            f"-scope={scope}",
+                        ],
+                        cwd=ROOT,
+                        env=env,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                        errors="replace",
+                    )
+                    self.assertEqual(
+                        result.returncode,
+                        97,
+                        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+                    )
+                    cache, atk_args = read_trace(atk_trace)
+                    expected_timeout = (
+                        "1000" if scope == "mssanitizer" else "60"
+                    )
+                    expected_task = {
+                        "accuracy": "accuracy",
+                        "determinism": "accuracy_dc",
+                        "mssanitizer": "run",
+                    }[scope]
+                    self.assertEqual(
+                        value_after(atk_args, "-to"), expected_timeout
+                    )
+                    self.assertEqual(
+                        value_after(atk_args, "--task"), expected_task
+                    )
+                    self.assertNotIn("-sp", atk_args)
+
+                    if scope == "determinism":
+                        self.assertEqual(
+                            value_after(atk_args, "--dc_loop_nums"), "50"
+                        )
+                    if scope != "mssanitizer":
+                        self.assertEqual(cache, "<unset>")
+                        self.assertFalse(mss_trace.exists())
+                        continue
+
+                    self.assertEqual(cache, "1")
+                    self.assertIn("--mssanitizer", atk_args)
+                    mss_cache, mss_args = read_trace(mss_trace)
+                    self.assertEqual(mss_cache, "1")
+                    self.assertIn("--tool=memcheck", mss_args)
+                    self.assertEqual(
+                        value_after(mss_args, "--log-file"),
+                        value_after(atk_args, "-msl"),
+                    )
 
     def test_sanitizer_log_requires_clean_finish_for_each_kernel(self):
         kernels = [

@@ -1340,7 +1340,9 @@ def _tool_version_output(command: tuple[str, ...], label: str) -> str:
             stderr=subprocess.STDOUT,
             text=True,
             errors="replace",
-            timeout=10,
+            # 部分 ATK 环境首次导入依赖较慢，版本指纹探测不应误占用
+            # 或替代后续逐 case 的 60/1000 秒执行门限。
+            timeout=60,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         raise ValueError(f"无法执行 {label} 版本查询：{error}") from error
