@@ -161,8 +161,12 @@ private:
         AscendC::GlobalTensor<bfloat16_t> payload;
         payload.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + slot + Workspace::kPayload));
-        auto scoreL1 =
-            resource_.l1Buf.template GetBufferByByte<bfloat16_t>(lane);
+        // 每个矩阵直接绑定自己的 L1 字节基址，避免元素偏移与
+        // LOAD_L1_2D 的地址编码单位混用。
+        auto qPlusL1 = resource_.l1Buf.template GetBufferByByte<bfloat16_t>(
+            lane + ScorePayload::kQPlus);
+        auto kPlusL1 = resource_.l1Buf.template GetBufferByByte<bfloat16_t>(
+            lane + ScorePayload::kKPlus);
 
         // Stage 入口把 Qplus、Kplus 和四个 Kminus 前缀一次性搬完，共 72 KiB。
         // 这里的 DataCopy 是 GM(ND)->L1(NZ)，后面的四次 MMAD 不再读 GM。
@@ -178,33 +182,36 @@ private:
         qkCopy.dstNzMatrixStride = 0;
         // BF16 zN 的 C0 为 16，dstNzC0Stride 以元素计，取常驻矩阵的 M。
         AscendC::DataCopy(
-            scoreL1[ScorePayload::kQPlus / sizeof(bfloat16_t)],
+            qPlusL1,
             payload[ScorePayload::kQPlus / sizeof(bfloat16_t)], qkCopy);
         AscendC::DataCopy(
-            scoreL1[ScorePayload::kKPlus / sizeof(bfloat16_t)],
+            kPlusL1,
             payload[ScorePayload::kKPlus / sizeof(bfloat16_t)], qkCopy);
         for (uint32_t s = 0; s < Shape::kSubChunkCount; ++s) {
             AscendC::Nd2NzParams prefixCopy = qkCopy;
             prefixCopy.nValue = Shape::kPrefixRows[s];
             prefixCopy.dstNzC0Stride = Shape::kPrefixRows[s];
+            auto kMinusL1 =
+                resource_.l1Buf.template GetBufferByByte<bfloat16_t>(
+                    lane + ScorePayload::kKMinus[s]);
             AscendC::DataCopy(
-                scoreL1[ScorePayload::kKMinus[s] / sizeof(bfloat16_t)],
+                kMinusL1,
                 payload[ScorePayload::kKMinus[s] / sizeof(bfloat16_t)],
                 prefixCopy);
         }
         AscendC::Mutex::Unlock<PIPE_MTE2>(l1Mutex);
 
-        auto stackedQkL0 =
+        auto qkL0 =
             resource_.l0ABuf.template GetBufferByByte<bfloat16_t>(0);
+        auto kPlusL0 =
+            resource_.l0ABuf.template GetBufferByByte<bfloat16_t>(
+                Shape::kSubChunkRows * 16 * sizeof(bfloat16_t));
         auto kMinusL0 =
             resource_.l0BBuf.template GetBufferByByte<bfloat16_t>(0);
         // Ascend950 提供 256 KiB L0C。四个 HEAD 各占一条 64 KiB 通道，
         // 与 Mutex 5..8/9..12 一一对应，独立流水不共享物理地址。
         auto rawL0c =
             resource_.l0CBuf.template GetBufferByByte<float>(l0cLane);
-        auto rawScoreUb = resource_.ubBuf.template GetBufferByByte<float>(
-            Arch35Ub::kComputeSlotBase[localSlot] + Arch35Ub::kRawScore);
-
         uint32_t stackedElements = 0;
         const uint32_t active = CeilDiv(
             chunk.validRows, Shape::kSubChunkRows);
@@ -223,13 +230,13 @@ private:
             loadQ.ifTranspose = false;
             loadQ.sid = 0;
             AscendC::LoadData(
-                stackedQkL0,
-                scoreL1[ScorePayload::kQPlus / sizeof(bfloat16_t)], loadQ);
+                qkL0,
+                qPlusL1, loadQ);
             // Ascend950 的 L0A 为 zN。每个 K 分形内先放 Qplus 的 16 行，
             // 再放 Kplus 的 16 行，因此第二个起点只偏移一个分形。
             AscendC::LoadData(
-                stackedQkL0[Shape::kSubChunkRows * 16],
-                scoreL1[ScorePayload::kKPlus / sizeof(bfloat16_t)], loadQ);
+                kPlusL0,
+                kPlusL1, loadQ);
 
             AscendC::LoadData2DParamsV2 loadKMinus{};
             loadKMinus.mStartPosition = 0;
@@ -242,10 +249,12 @@ private:
             loadKMinus.sid = 0;
             // L1 中的源是 [n,128] NZ。作为 B 矩阵时，非转置加载会按
             // [n,k] 解释为数学上的 [k,n]，与 Qplus @ Kminus^T 一致。
+            auto kMinusL1 =
+                resource_.l1Buf.template GetBufferByByte<bfloat16_t>(
+                    lane + ScorePayload::kKMinus[s]);
             AscendC::LoadData(
                 kMinusL0,
-                scoreL1[ScorePayload::kKMinus[s] / sizeof(bfloat16_t)],
-                loadKMinus);
+                kMinusL1, loadKMinus);
             AscendC::Mutex::Unlock<PIPE_MTE1>(operandMutex);
             AscendC::Mutex::Unlock<PIPE_MTE1>(l1Mutex);
 
@@ -260,7 +269,7 @@ private:
             mmad.unitFlag = 0;
             // 一次 API 提交包含两个数学乘积：
             // 上 16 行 Qplus_s@Kminus_s^T，下 16 行 Kplus_s@Kminus_s^T。
-            AscendC::Mmad(rawL0c, stackedQkL0, kMinusL0, mmad);
+            AscendC::Mmad(rawL0c, qkL0, kMinusL0, mmad);
             AscendC::Mutex::Unlock<PIPE_M>(l0cMutex);
             AscendC::Mutex::Unlock<PIPE_M>(operandMutex);
 
@@ -275,8 +284,12 @@ private:
             fix.unitFlag = 0;
             fix.dualDstCtl = 0;
             fix.subBlockId = ownerAiv;
+            auto rawScoreBlockUb =
+                resource_.ubBuf.template GetBufferByByte<float>(
+                    Arch35Ub::kComputeSlotBase[localSlot] +
+                    Arch35Ub::kRawScore + stackedElements * sizeof(float));
             AscendC::Fixpipe<float, float, kFixpipeRowMajorUb>(
-                rawScoreUb[stackedElements], rawL0c, fix);
+                rawScoreBlockUb, rawL0c, fix);
             AscendC::Mutex::Unlock<PIPE_FIX>(l0cMutex);
 
             stackedElements += 2 * Shape::kSubChunkRows * n;
@@ -434,8 +447,9 @@ private:
             L1::kNegX1 + localHead * L1::kQuadrantStride);
         auto tL1 = resource_.l1Buf.template GetBufferByByte<float>(
             L1::kT + localHead * L1::kQuadrantStride);
-        auto akkL1 = resource_.l1Buf.template GetBufferByByte<bfloat16_t>(
-            L1::kAkk + localHead * L1::kAkkStride);
+        auto akkQ10L1 = resource_.l1Buf.template GetBufferByByte<bfloat16_t>(
+            L1::kAkk + localHead * L1::kAkkStride +
+            L1::kAkkQ10Elements * sizeof(bfloat16_t));
         auto l0A = resource_.l0ABuf.template GetBufferByByte<float>(0);
         auto l0B = resource_.l0BBuf.template GetBufferByByte<float>(0);
         // C5 使用当前 HEAD 通道的第二个 4 KiB 区域，避免和 C4 的 T
@@ -486,7 +500,7 @@ private:
         // q10 在两字节 NZ 中从 (N1=0,M1=2) 开始，即 32*16 个元素。
         // dstStride=64*16 个元素跨过完整 64 行 M 轴。
         AscendC::Fixpipe<bfloat16_t, float, kFixpipeNzL1>(
-            akkL1[L1::kAkkQ10Elements], l0C, l1Fix);
+            akkQ10L1, l0C, l1Fix);
         AscendC::Mutex::Unlock<PIPE_FIX>(l1Mutex);
 
         if constexpr (CompilePolicy::outputMode != OutputMode::None) {

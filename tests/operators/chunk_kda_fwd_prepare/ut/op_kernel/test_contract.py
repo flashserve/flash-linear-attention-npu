@@ -114,6 +114,19 @@ def test_optional_output_guards_stay_outside_vf_functions():
                 assert "CompilePolicy::outputMode" not in body
 
 
+def test_arch35_load2d_sources_use_direct_byte_addresses():
+    for prefix in (Path(), Path("pseudocode")):
+        source = _read_kernel(prefix / "arch35/chunk_kda_fwd_prepare_cube.h")
+        compact = " ".join(source.split())
+        assert "lane + ScorePayload::kQPlus" in compact
+        assert "lane + ScorePayload::kKPlus" in compact
+        assert "lane + ScorePayload::kKMinus[s]" in compact
+        assert "scoreL1[" not in source
+        assert "stackedQkL0[" not in source
+        assert "rawScoreUb[" not in source
+        assert "akkL1[L1::kAkkQ10Elements]" not in source
+
+
 def test_only_non_forward_outputs_use_compile_time_store_guards():
     implementation_paths = (
         "arch22/chunk_kda_fwd_prepare_vec.h",
