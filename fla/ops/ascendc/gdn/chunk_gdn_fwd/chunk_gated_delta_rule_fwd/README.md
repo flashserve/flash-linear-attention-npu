@@ -71,7 +71,7 @@ Python ctypes 入口默认使用 `disable_recompute=True`，用于训练，返�
 | `scale` | 通常为 `K**-0.5` | Query 缩放因子 |
 | `chunkSize` | `64`、`128` | 分块大小 |
 | `useExp2` | A5 新路径支持 `true/false` | 只控制门控累计和后续状态、输出阶段使用 `exp2` 或 `exp`，三个小算子均按新路径规格选择优化实现 |
-| `useQkL2norm` | A5 新路径支持 `true` | true 时走三小算子拼接路径；新路径收到 false 时由 prepare 校验 |
+| `useQkL2norm` | A5 新路径支持 `true/false` | true 时由 prepare 生成归一化 Q/K；false 时 H/O 直接使用输入 Q/K |
 | `allowNegEigval` | A5 新路径支持 | 为 true 时必须提供 `betaEffOutOptional` |
 | `stateVFirst` | A5 新路径支持 `true/false` | 控制初始状态、分块状态和最终状态的末两维采用 `[V,K]` 或 `[K,V]` |
 
@@ -81,7 +81,7 @@ Python ctypes 入口默认使用 `disable_recompute=True`，用于训练，返�
 
 - A2（`ascend910b`）、A3（`ascend910_93`）、A5（`ascend950`）。
 - 原 Phase6 路径支持 FP16、BF16，`K=128`、`V=128/256`、`chunkSize=64/128`。
-- A5 新路径支持 `useExp2=true/false`、BF16、`K=V=128`、`chunkSize=64`、`Hv/Hk in {1,2,3,4}`。
+- A5 新路径支持 `useExp2=true/false`、`useQkL2norm=true/false`、BF16、`K=V=128`、`chunkSize=64`、`Hv/Hk in {1,2,3,4}`。
 - 支持 MHA、GVA、定长和变长序列。
 - A2/A3 使用 `arch22` 私有实现，A5 使用 `arch35` 私有实现；两套架构代码隔离维护。
 

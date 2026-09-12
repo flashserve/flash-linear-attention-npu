@@ -344,6 +344,11 @@ static aclnnStatus CheckSupportedL2Contract(const ChunkGatedDeltaRuleFwdParams &
                        std::strcmp(params.layout, "NTD") == 0 || std::strcmp(params.layout, "TND") == 0,
                    ACLNN_ERR_PARAM_INVALID,
                    "The Ascend950 prepare path supports BNSD, BSND, NTD and TND.");
+        CHECK_COND(params.useQkL2norm ||
+                       (params.qHatOutOptional == nullptr && params.kHatOutOptional == nullptr &&
+                        params.qRstdOutOptional == nullptr && params.kRstdOutOptional == nullptr),
+                   ACLNN_ERR_PARAM_INVALID,
+                   "Q/K L2Norm outputs must be omitted when useQkL2norm is false.");
         return ACLNN_SUCCESS;
     }
     CHECK_COND(std::strcmp(params.layout, "BNSD") == 0 || std::strcmp(params.layout, "NTD") == 0,
@@ -606,10 +611,18 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         const aclTensor *w = executorPtr->AllocTensor(wShape, dtype, Format::FORMAT_ND);
         const aclTensor *u = executorPtr->AllocTensor(vShape, dtype, Format::FORMAT_ND);
         const aclTensor *a = executorPtr->AllocTensor(aShape, dtype, Format::FORMAT_ND);
-        const aclTensor *qHat = executorPtr->AllocTensor(qkShape, dtype, Format::FORMAT_ND);
-        const aclTensor *kHat = executorPtr->AllocTensor(qkShape, dtype, Format::FORMAT_ND);
-        const aclTensor *qRstd = executorPtr->AllocTensor(scalarQkShape, DataType::DT_FLOAT, Format::FORMAT_ND);
-        const aclTensor *kRstd = executorPtr->AllocTensor(scalarQkShape, DataType::DT_FLOAT, Format::FORMAT_ND);
+        const aclTensor *qHat = params.useQkL2norm
+                                    ? executorPtr->AllocTensor(qkShape, dtype, Format::FORMAT_ND)
+                                    : nullptr;
+        const aclTensor *kHat = params.useQkL2norm
+                                    ? executorPtr->AllocTensor(qkShape, dtype, Format::FORMAT_ND)
+                                    : nullptr;
+        const aclTensor *qRstd = params.useQkL2norm
+                                     ? executorPtr->AllocTensor(scalarQkShape, DataType::DT_FLOAT, Format::FORMAT_ND)
+                                     : nullptr;
+        const aclTensor *kRstd = params.useQkL2norm
+                                     ? executorPtr->AllocTensor(scalarQkShape, DataType::DT_FLOAT, Format::FORMAT_ND)
+                                     : nullptr;
         const aclTensor *betaEffBht = params.betaEffOutOptional == nullptr
                                           ? nullptr
                                           : executorPtr->AllocTensor(scalarHvShape, DataType::DT_FLOAT,
@@ -620,7 +633,8 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
                                           ? executorPtr->AllocTensor(stateShape, stateDtype, Format::FORMAT_ND)
                                           : params.finalStateOutOptional;
         GDN_STAGE_CHECK(gCumsumBht != nullptr && w != nullptr && u != nullptr && a != nullptr &&
-                            qHat != nullptr && kHat != nullptr && qRstd != nullptr && kRstd != nullptr &&
+                            (!params.useQkL2norm ||
+                             (qHat != nullptr && kHat != nullptr && qRstd != nullptr && kRstd != nullptr)) &&
                             h != nullptr && vNew != nullptr && finalState != nullptr &&
                             (params.betaEffOutOptional == nullptr || betaEffBht != nullptr),
                         169103);
@@ -634,6 +648,8 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
             vHead = TransposeContiguous(params.v, {0, 2, 1, 3}, executorPtr);
         }
         GDN_STAGE_CHECK(qHead != nullptr && kHead != nullptr && vHead != nullptr, 169108);
+        const aclTensor *qCompute = params.useQkL2norm ? qHat : qHead;
+        const aclTensor *kCompute = params.useQkL2norm ? kHat : kHead;
 
         auto prepareResult = l0op::ChunkGatedDeltaRuleFwdPrepare(
             qHead, kHead, vHead, gBht, betaBht, params.aLogOptional, params.dtBiasOptional,
@@ -643,18 +659,19 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
             params.aOutOptional != nullptr, gCumsumBht, w, u, a, qHat, kHat, qRstd,
             kRstd, betaEffBht, executorPtr);
         GDN_STAGE_CHECK(prepareResult[0] != nullptr && prepareResult[1] != nullptr &&
-                            prepareResult[2] != nullptr && prepareResult[4] != nullptr &&
-                            prepareResult[5] != nullptr,
+                            prepareResult[2] != nullptr &&
+                            (!params.useQkL2norm ||
+                             (prepareResult[4] != nullptr && prepareResult[5] != nullptr)),
                         169104);
 
         auto hResult = l0op::ChunkFwdH(
-            kHat, w, u, gCumsumBht, nullptr, params.initialStateOptional,
+            kCompute, w, u, gCumsumBht, nullptr, params.initialStateOptional,
             params.cuSeqlensOptional, params.chunkIndicesOptional, outputFinalState,
             params.chunkSize, true, params.useExp2, params.stateVFirst, h, vNew, finalState, executorPtr);
         GDN_STAGE_CHECK(hResult[0] != nullptr && hResult[1] != nullptr, 169105);
 
         auto oResult = l0op::ChunkFwdO(
-            qHat, kHat, vNew, h, gCumsumBht, params.cuSeqlensOptional,
+            qCompute, kCompute, vNew, h, gCumsumBht, params.cuSeqlensOptional,
             params.chunkIndicesOptional, params.scale, params.chunkSize, params.useExp2, params.stateVFirst,
             "BSND", params.oOut, executorPtr);
         GDN_STAGE_CHECK(oResult[0] != nullptr, 169106);

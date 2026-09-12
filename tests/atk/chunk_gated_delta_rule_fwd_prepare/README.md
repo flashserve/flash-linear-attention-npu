@@ -16,7 +16,7 @@
 - 尾块 `T % 64 != 0`：只在该 chunk 填 0，按有效行写出。
 - 精度 JSON 含 packed varlen；性能 JSON 只取定长 `T>=256` 且 `l2_sig1_neg1` 的前 6 条，不把变长和其它 flag 算进基线。
 
-非法组合由 host 直接拒绝，不进精度 JSON：`use_gate=True`、`use_exp2=False`、`allow_neg_eigval=True` 且 sigmoid=False。
+非法组合由 host 直接拒绝，不进精度 JSON：`use_gate=True`、`allow_neg_eigval=True` 且 sigmoid=False。
 
 ## 中型精度矩阵
 
