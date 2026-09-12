@@ -36,7 +36,9 @@ PR 合入前仍需要 2 个 approval。该要求由 GitHub 分支保护原生能
 
 ## NPU CI 门禁
 
-NPU 资源有限，`NPU CI` 不会由 PR 新建、重开或 push 新 commit 自动执行。PR 新建、重开或 push 新 commit 时，会自动给当前 head commit 写入 `NPU CI / 手动验证 pending`，描述为“未执行”，并在 PR 评论区提示可请求仓库 Admin 权限账号触发。PR 合入前必须让当前 head commit 具备成功的 `NPU CI / 手动验证` 状态；当 PR 更新 commit 后，旧 commit 上的 CI 成功状态自动失效，需要仓库 Admin 权限账号重新触发。
+NPU 资源有限，`NPU CI` 不会由 PR 新建、重开或 push 新 commit 自动执行。PR 新建、重开或 push 新 commit 时，会自动给当前 head commit 写入 `NPU CI / A2+A5 手动验证 pending` 和 `NPU CI / A2+A5 精度检查 pending`，描述为“未执行”，并在 PR 评论区提示可请求仓库 Admin 权限账号触发。PR 合入前必须让当前 head commit 同时具备成功的 `NPU CI / A2+A5 手动验证` 和 `NPU CI / A2+A5 精度检查` 状态；当 PR 更新 commit 后，旧 commit 上的 CI 成功状态自动失效，需要仓库 Admin 权限账号重新触发。
+
+一次触发固定并行验证 A2（`ascend910b`）和 A5（`ascend950`）。两个 self-hosted job 只上传带平台、SOC、commit、Actions run 和 attempt 身份的结果；GitHub-hosted 汇总 job 校验两平台结果后，才唯一写入上述两个 aggregate context。两个 context 必须来自同一次 A2+A5 Actions run，任一平台缺席、执行失败、精度未通过或报告身份不匹配都不能满足门禁。
 
 仓库 Admin 权限账号可以通过两种方式触发：
 
@@ -50,9 +52,9 @@ NPU 资源有限，`NPU CI` 不会由 PR 新建、重开或 push 新 commit 自�
 /run-npu-ci quick ops=causal_conv1d,chunk_bwd_dv_local
 ```
 
-如果当前 commit 已经通过 `NPU CI / 手动验证`，重复触发会被跳过，不会再次占用 NPU。如果同一 PR 的同一 commit 已经有 NPU CI 处于排队或运行中，重复评论只会更新机器人评论为“已在运行”，不会启动新的 runner job。runner 宿主机还会用 `/tmp/fla-npu-ci-npu-<id>.lock` 对物理 NPU 加锁，避免多个任务抢同一张卡。
+如果当前 commit 的两个 aggregate context 已由同一次 A2+A5 run 通过，重复触发会被跳过，不会再次占用 NPU。同一 PR 的触发通过 workflow concurrency 串行化；同一 commit 已有 A2+A5 NPU CI 处于排队或运行中时，重复评论只会更新机器人评论为“已在运行”，不会启动新的 runner job。runner 宿主机还会用 `/tmp/fla-npu-ci-npu-<id>.lock` 对物理 NPU 加锁，避免多个任务抢同一张卡。
 
-仓库管理员应将 `NPU CI / 手动验证` 也配置为 `main` 分支必需状态检查。
+仓库管理员应将 `NPU CI / A2+A5 手动验证` 和 `NPU CI / A2+A5 精度检查` 都配置为 `main` 分支必需状态检查。双平台 context 使用独立名称，避免升级前的 A2-only 历史成功状态被误认为已经覆盖 A5。
 
 NPU CI 的 self-hosted runner、Docker 镜像、`--privileged`、触发方式和排障步骤见 [`Fla-npu仓CI部署教程.md`](Fla-npu仓CI部署教程.md)。
 
@@ -64,4 +66,4 @@ NPU CI 的 self-hosted runner、Docker 镜像、`--privileged`、触发方式和
 GITHUB_TOKEN=<admin-token> scripts/github/apply_branch_protection.sh main
 ```
 
-该 token 需要具备仓库 administration 写权限。脚本会要求 `NPU CI / 手动验证` 通过，并配置 2 个 approval、Code Owners review、stale review dismiss、Admin 也必须遵守分支保护，以及仅 `weinachuan` 具备 bypass。
+该 token 需要具备仓库 administration 写权限。脚本会要求 `NPU CI / A2+A5 手动验证` 和 `NPU CI / A2+A5 精度检查` 都通过，并配置 2 个 approval、Code Owners review、stale review dismiss、Admin 也必须遵守分支保护，以及仅 `weinachuan` 具备 bypass。

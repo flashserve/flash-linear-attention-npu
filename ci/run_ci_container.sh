@@ -15,6 +15,9 @@ repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_dir"
 
 image="${CI_IMAGE:-fla-npu-ci:9.1.0-910b}"
+dockerfile="${CI_DOCKERFILE:-ci/Dockerfile}"
+require_preloaded_image="${CI_REQUIRE_PRELOADED_IMAGE:-false}"
+rebuild_image="${CI_REBUILD_IMAGE:-false}"
 container_name="${CI_CONTAINER_NAME:-fla-npu-ci-$(date +%s)}"
 cache_root="${CI_CACHE_ROOT:-}"
 npu_lock_fd=""
@@ -90,9 +93,24 @@ acquire_npu_lock() {
     done
 }
 
-if ! docker image inspect "$image" >/dev/null 2>&1 || [[ "${CI_REBUILD_IMAGE:-false}" == "true" ]]; then
-    echo "[CI] Building Docker image: $image"
-    docker build -t "$image" -f ci/Dockerfile .
+if [[ "$require_preloaded_image" == "true" ]]; then
+    if [[ "$rebuild_image" == "true" ]]; then
+        echo "[CI][ERROR] CI_REBUILD_IMAGE=true conflicts with CI_REQUIRE_PRELOADED_IMAGE=true." >&2
+        exit 2
+    fi
+    if ! docker image inspect "$image" >/dev/null 2>&1; then
+        echo "[CI][ERROR] Required preloaded Docker image is missing: $image" >&2
+        echo "[CI][ERROR] Build or load it during runner maintenance; CI will not build this image on demand." >&2
+        exit 1
+    fi
+    echo "[CI] Using required preloaded Docker image: $image"
+elif ! docker image inspect "$image" >/dev/null 2>&1 || [[ "$rebuild_image" == "true" ]]; then
+    if [[ ! -f "$dockerfile" ]]; then
+        echo "[CI][ERROR] Dockerfile does not exist: $dockerfile" >&2
+        exit 1
+    fi
+    echo "[CI] Building Docker image: $image from $dockerfile"
+    docker build -t "$image" -f "$dockerfile" .
 fi
 
 acquire_npu_lock
@@ -178,6 +196,7 @@ docker run --rm \
     -e CI_EXAMPLE_CASES_FILE="${CI_EXAMPLE_CASES_FILE:-ci/example_st_cases.json}" \
     -e CI_EXAMPLE_CASE_FILTER="${CI_EXAMPLE_CASE_FILTER:-}" \
     -e CI_ACCURACY_REPORT_FILE="${CI_ACCURACY_REPORT_FILE:-output/gdr_accuracy_report.json}" \
+    -e CI_ACCURACY_PLATFORM="${CI_ACCURACY_PLATFORM:-}" \
     -e CI_ACCURACY_HEAD_SHA="${CI_ACCURACY_HEAD_SHA:-${NPU_CI_TARGET_SHA:-}}" \
     -e CI_ACCURACY_RUN_ID="${CI_ACCURACY_RUN_ID:-${GITHUB_RUN_ID:-}}" \
     -e CI_ACCURACY_RUN_ATTEMPT="${CI_ACCURACY_RUN_ATTEMPT:-${GITHUB_RUN_ATTEMPT:-}}" \
