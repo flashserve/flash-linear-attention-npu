@@ -99,18 +99,24 @@ def assert_tile_rel(name, got, ref, batch, n_head, t_len, dim, bt=BT, limit=8e-2
         raise AssertionError(f"{name} tile-rel max={worst:.4g} (need <= {limit})")
 
 
-def run_npu_prepare(q, k, v, g, beta, *, flags, cu_seqlens=None):
+def run_npu_prepare(q, k, v, g, beta, *, flags, cu_seqlens=None, a_log=None, dt_bias=None):
     kw = dict(
         chunk_size=flags["chunk_size"],
         use_qk_l2norm_in_kernel=flags["use_qk_l2norm_in_kernel"],
         use_gate_in_kernel=flags["use_gate_in_kernel"],
         use_beta_sigmoid_in_kernel=flags["use_beta_sigmoid_in_kernel"],
         allow_neg_eigval=flags["allow_neg_eigval"],
-        use_exp2=True,
+        use_exp2=flags.get("use_exp2", True),
         output_a=flags.get("output_a", True),
     )
     if cu_seqlens is not None:
         kw["cu_seqlens"] = cu_seqlens.contiguous().npu()
+    if flags.get("use_gate_in_kernel"):
+        if a_log is None:
+            raise ValueError("a_log is required when use_gate_in_kernel=True")
+        kw["a_log"] = a_log.contiguous().npu()
+        if dt_bias is not None:
+            kw["dt_bias"] = dt_bias.contiguous().npu()
     outs = ascendc_ops.chunk_gated_delta_rule_fwd_prepare(
         q.contiguous().npu(),
         k.contiguous().npu(),
@@ -123,7 +129,7 @@ def run_npu_prepare(q, k, v, g, beta, *, flags, cu_seqlens=None):
     return [t.cpu() if t is not None else None for t in outs]
 
 
-def check_against_ref(q, k, v, g, beta, outs, flags, cu_seqlens=None):
+def check_against_ref(q, k, v, g, beta, outs, flags, cu_seqlens=None, a_log=None, dt_bias=None):
     q_hat, k_hat, q_rstd, k_rstd, beta_out, g_cumsum, w, u, A = outs
     ref = cpu_gdn_fwd_l2norm_to_recompute(
         q, k, v, g, beta,
@@ -132,8 +138,11 @@ def check_against_ref(q, k, v, g, beta, outs, flags, cu_seqlens=None):
         use_gate_in_kernel=flags["use_gate_in_kernel"],
         use_beta_sigmoid_in_kernel=flags["use_beta_sigmoid_in_kernel"],
         allow_neg_eigval=flags["allow_neg_eigval"],
+        a_log=None if a_log is None else a_log.float(),
+        dt_bias=None if dt_bias is None else dt_bias.float(),
         cu_seqlens=cu_seqlens,
         layout="bnsd",
+        use_exp2=flags.get("use_exp2", True),
     )
     B, HK, T, K = q.shape
     HV, V = v.shape[1], v.shape[3]
@@ -271,6 +280,66 @@ def run_l2norm_false_case():
     run_gdn_case(case)
 
 
+def run_gate_true_case():
+    """Fused gate: g is raw dt logits; a_log / dt_bias [HV]."""
+    case = GdnCase(
+        case_id=12,
+        batch=1,
+        hk=4,
+        hv=8,
+        seq_len=192,
+        head_k=128,
+        head_v=128,
+        chunk_size=64,
+        use_qk_l2norm_in_kernel=True,
+        use_gate_in_kernel=True,
+        use_beta_sigmoid_in_kernel=True,
+        allow_neg_eigval=True,
+        use_exp2=True,
+    )
+    run_gdn_case(case)
+
+
+def run_exp2_false_case():
+    """Natural-exp path: cumsum scale=1, later Exp not Exp2."""
+    case = GdnCase(
+        case_id=13,
+        batch=1,
+        hk=4,
+        hv=8,
+        seq_len=192,
+        head_k=128,
+        head_v=128,
+        chunk_size=64,
+        use_qk_l2norm_in_kernel=True,
+        use_gate_in_kernel=False,
+        use_beta_sigmoid_in_kernel=True,
+        allow_neg_eigval=True,
+        use_exp2=False,
+    )
+    run_gdn_case(case)
+
+
+def run_gate_exp2_false_case():
+    """Fused gate + natural exp (both new polarities together)."""
+    case = GdnCase(
+        case_id=14,
+        batch=1,
+        hk=4,
+        hv=8,
+        seq_len=160,
+        head_k=128,
+        head_v=128,
+        chunk_size=64,
+        use_qk_l2norm_in_kernel=True,
+        use_gate_in_kernel=True,
+        use_beta_sigmoid_in_kernel=True,
+        allow_neg_eigval=False,
+        use_exp2=False,
+    )
+    run_gdn_case(case)
+
+
 def run_gdn_case(case):
     skip = case.skip_reason()
     print(describe_case(case), flush=True)
@@ -284,15 +353,20 @@ def run_gdn_case(case):
     g = inp["g"].float()
     beta = inp["beta"].float()
     cu = inp.get("cu_seqlens")
+    a_log = inp.get("A_log")
+    dt_bias = inp.get("dt_bias")
     flags = dict(
         chunk_size=case.chunk_size,
         use_qk_l2norm_in_kernel=case.use_qk_l2norm_in_kernel,
         use_gate_in_kernel=case.use_gate_in_kernel,
         use_beta_sigmoid_in_kernel=case.use_beta_sigmoid_in_kernel,
         allow_neg_eigval=case.allow_neg_eigval,
+        use_exp2=case.use_exp2,
     )
-    outs = run_npu_prepare(q, k, v, g, beta, flags=flags, cu_seqlens=cu)
-    check_against_ref(q, k, v, g, beta, outs, flags, cu_seqlens=cu)
+    outs = run_npu_prepare(q, k, v, g, beta, flags=flags, cu_seqlens=cu,
+                           a_log=a_log, dt_bias=dt_bias)
+    check_against_ref(q, k, v, g, beta, outs, flags, cu_seqlens=cu,
+                      a_log=a_log, dt_bias=dt_bias)
     print(f"PASS case{case.case_id}")
 
 
@@ -302,7 +376,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--case-id", type=int, default=None,
                         help="0=bring-up G=2; 1-6=GdnCase; 7=V=256; 8=G=3; 9=G=4; 10=small varlen; "
-                             "11=l2norm False (pre-norm qk); omit=1-6 then 0,7-11")
+                             "11=l2norm False; 12=gate True; 13=exp2 False; 14=gate+exp2 False; "
+                             "omit=1-6 then 0,7-14")
     args = parser.parse_args()
     setup_npu()
     try:
@@ -315,6 +390,9 @@ def main():
             run_g_ratio_case(9, hk=2, hv=8, seq_len=96)
             run_small_varlen_case()
             run_l2norm_false_case()
+            run_gate_true_case()
+            run_exp2_false_case()
+            run_gate_exp2_false_case()
         elif args.case_id == 0:
             run_required_case()
         elif args.case_id == 7:
@@ -327,6 +405,12 @@ def main():
             run_small_varlen_case()
         elif args.case_id == 11:
             run_l2norm_false_case()
+        elif args.case_id == 12:
+            run_gate_true_case()
+        elif args.case_id == 13:
+            run_exp2_false_case()
+        elif args.case_id == 14:
+            run_gate_exp2_false_case()
         else:
             picked = [c for c in gdn_cases() if c.case_id == args.case_id]
             if not picked:

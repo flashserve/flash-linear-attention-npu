@@ -62,6 +62,7 @@ def main():
         use_beta_sigmoid_in_kernel=True,
         allow_neg_eigval=True,
         output_a=os.environ.get("OUTPUT_A", "1") != "0",
+        use_exp2=True,
     )
     print(f"golden={GDN_DIR}")
     print(f"pipe-acc: B={B} HK={HK} HV={HV} T={T} K={K} V={V} BT={BT} BF16")

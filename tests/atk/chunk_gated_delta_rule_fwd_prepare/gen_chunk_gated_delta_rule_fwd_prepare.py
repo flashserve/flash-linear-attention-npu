@@ -1,21 +1,18 @@
 """chunk_gated_delta_rule_fwd_prepare 的 ATK 泛化用例生成器。
 
-50 个中型 shape × 6 条合法 flag = 300（bf16）。
+50 个中型 shape × 24 条合法 flag = 1200（bf16）。
 中型按 tiling 的 totalChunks：dense 为 B*HV*ceil(T/64)，
 varlen 为 HV*sum(ceil(s/64))，必须 **>256** 且 ≤384。
 G≠3 时 pack=4：256 tiles = 64 packs = 32 AIC × 2 pack；>256 保证每核至少 2 pack。
-约束：chunk_size=64，K=128，V∈{128,256}，HV/HK∈{1,2,3,4}，
-use_exp2=True，use_gate=False。含 packed varlen（B=1 + seqlens）。
-use_qk_l2norm True/False 都覆盖；False 时 executor 在调用前对 q/k 做 L2norm。
+约束：chunk_size=64，K=128，V∈{128,256}，HV/HK∈{1,2,3,4}。
+含 packed varlen（B=1 + seqlens）。
+use_qk_l2norm True/False、use_gate True/False、use_exp2 True/False 都覆盖。
+False 时 executor 在调用前对 q/k 做 L2norm。
 
-合法 flag（l2 / gate=F / sigmoid / neg）：
-
-    T F T T   l2_sig1_neg1     核内 L2norm，beta_eff=2*sigmoid
-    T F T F   l2_sig1_neg0     核内 L2norm，beta_eff=sigmoid
-    T F F F   l2_sig0_neg0     核内 L2norm，不做 sigmoid
-    F F T T   nol2_sig1_neg1   调用前归一化 qk，2*sigmoid
-    F F T F   nol2_sig1_neg0   调用前归一化 qk，sigmoid
-    F F F F   nol2_sig0_neg0   调用前归一化 qk，不做 sigmoid
+合法 flag = l2 × gate × {(sig,neg)=(T,T),(T,F),(F,F)} × exp2，共 24 组。
+allow_neg=True 要求 sigmoid=True，非法组合不进 JSON。
+顺序：先 exp2=True 后 False；每组内 gate=False 后 True；再 l2=True 后 False；
+再 (sig1_neg1, sig1_neg0, sig0_neg0)。
 """
 
 from __future__ import annotations
@@ -37,15 +34,40 @@ except ModuleNotFoundError as exc:
 
 OP_NAME = "chunk_gated_delta_rule_fwd_prepare"
 
-# (tag, l2norm, sigmoid, neg). gate=False is fixed by the kernel.
-SUPPORTED_FLAGS = (
-    ("l2_sig1_neg1", True, True, True),
-    ("l2_sig1_neg0", True, True, False),
-    ("l2_sig0_neg0", True, False, False),
-    ("nol2_sig1_neg1", False, True, True),
-    ("nol2_sig1_neg0", False, True, False),
-    ("nol2_sig0_neg0", False, False, False),
-)
+# (sigmoid, allow_neg); allow_neg requires sigmoid
+_SIG_NEG = ((True, True), (True, False), (False, False))
+
+
+def _flag_tag(l2: bool, gate: bool, sigmoid: bool, neg: bool, exp2: bool) -> str:
+    parts = ["l2" if l2 else "nol2"]
+    if gate:
+        parts.append("gate1")
+    parts.append("sig1" if sigmoid else "sig0")
+    parts.append("neg1" if neg else "neg0")
+    if not exp2:
+        parts.append("exp0")
+    return "_".join(parts)
+
+
+def _all_legal_flags() -> tuple[tuple, ...]:
+    flags = []
+    for exp2 in (True, False):
+        for gate in (False, True):
+            for l2 in (True, False):
+                for sigmoid, neg in _SIG_NEG:
+                    flags.append(
+                        (_flag_tag(l2, gate, sigmoid, neg, exp2), l2, gate, sigmoid, neg, exp2)
+                    )
+    if len(flags) != 24:
+        raise RuntimeError(f"expected 24 legal flags, got {len(flags)}")
+    tags = [f[0] for f in flags]
+    if len(set(tags)) != len(tags):
+        raise RuntimeError(f"duplicate flag tags: {tags}")
+    return tuple(flags)
+
+
+# (tag, l2norm, gate, sigmoid, neg, exp2)
+SUPPORTED_FLAGS = _all_legal_flags()
 
 N_SHAPES = 50
 N_FLAGS = len(SUPPORTED_FLAGS)
@@ -195,7 +217,7 @@ def _make_profiles() -> list[dict]:
     profiles = []
     case_id = 0
     for shape in _shape_table():
-        for tag, l2, sigmoid, neg in SUPPORTED_FLAGS:
+        for tag, l2, gate, sigmoid, neg, exp2 in SUPPORTED_FLAGS:
             spec = dict(shape)
             spec.update(
                 dtype="bf16",
@@ -205,10 +227,10 @@ def _make_profiles() -> list[dict]:
                 route="ascendc",
                 soc="ascend950",
                 use_qk_l2norm_in_kernel=l2,
-                use_gate_in_kernel=False,
+                use_gate_in_kernel=gate,
                 use_beta_sigmoid_in_kernel=sigmoid,
                 allow_neg_eigval=neg,
-                use_exp2=True,
+                use_exp2=exp2,
                 flag_tag=tag,
             )
             spec["name"] = f"{shape['name']}_{tag}"
@@ -338,7 +360,8 @@ def dump_json_files(out_dir: Path | None = None) -> dict:
                 return i
         raise RuntimeError(f"no profile matching {substr!r} tag={tag!r}")
 
-    # TilingKey 固定为 0。MSS 覆盖 V128/256、尾块、不满 pack、varlen、G=2/3/4、B>1、6 组 flag。
+    # TilingKey 固定为 0。MSS 覆盖 V128/256、尾块、不满 pack、varlen、G=2/3/4、B>1，
+    # 以及全部 24 组合法 flag（新 flag 落在 r1_T4160_V128）。
     mss_idx = [
         _first("r1_T4160_V128", "l2_sig1_neg1"),
         _first("r1_T4192_V128", "l2_sig1_neg1"),
@@ -355,6 +378,25 @@ def dump_json_files(out_dir: Path | None = None) -> dict:
         _first("r4_T1088_V256", "nol2_sig1_neg0"),
         _first("partial_HV5_T3328", "nol2_sig1_neg1"),
         _first("varlen_g2_v256", "nol2_sig0_neg0"),
+        _first("r1_T4160_V128", "l2_gate1_sig1_neg1"),
+        _first("r1_T4192_V128", "l2_gate1_sig1_neg1"),
+        _first("varlen_g1_tail", "l2_gate1_sig1_neg1"),
+        _first("r1_T4160_V128", "nol2_gate1_sig1_neg1"),
+        _first("r1_T4160_V128", "l2_sig1_neg1_exp0"),
+        _first("r1_T4160_V128", "l2_gate1_sig1_neg1_exp0"),
+        _first("varlen_g2_v256", "l2_gate1_sig1_neg1_exp0"),
+        _first("r1_T4160_V128", "nol2_gate1_sig1_neg0"),
+        _first("r1_T4160_V128", "nol2_gate1_sig0_neg0"),
+        _first("r1_T4160_V128", "l2_sig1_neg0_exp0"),
+        _first("r1_T4160_V128", "l2_sig0_neg0_exp0"),
+        _first("r1_T4160_V128", "nol2_sig1_neg1_exp0"),
+        _first("r1_T4160_V128", "nol2_sig1_neg0_exp0"),
+        _first("r1_T4160_V128", "nol2_sig0_neg0_exp0"),
+        _first("r1_T4160_V128", "l2_gate1_sig1_neg0_exp0"),
+        _first("r1_T4160_V128", "l2_gate1_sig0_neg0_exp0"),
+        _first("r1_T4160_V128", "nol2_gate1_sig1_neg1_exp0"),
+        _first("r1_T4160_V128", "nol2_gate1_sig1_neg0_exp0"),
+        _first("r1_T4160_V128", "nol2_gate1_sig0_neg0_exp0"),
     ]
     if len(mss_idx) != len(set(mss_idx)):
         raise RuntimeError(f"duplicate mss indices: {mss_idx}")
