@@ -851,7 +851,10 @@ def npu_chunk_gated_delta_rule_fwd_prepare(
     output_a = _optional_bool(output_a, True)
 
     if use_gate_in_kernel:
-        raise ValueError("use_gate_in_kernel currently only supports False.")
+        if a_log is None:
+            raise ValueError("a_log is required when use_gate_in_kernel=True.")
+    elif a_log is not None or dt_bias is not None:
+        raise ValueError("a_log and dt_bias require use_gate_in_kernel=True.")
     if allow_neg_eigval and not use_beta_sigmoid_in_kernel:
         raise ValueError("allow_neg_eigval=True requires use_beta_sigmoid_in_kernel=True.")
     if a_log is not None and _shape(a_log) != (HV,):
