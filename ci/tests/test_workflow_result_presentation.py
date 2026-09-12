@@ -12,6 +12,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+PUBLISH_SCRIPT_PATH = REPO_ROOT / ".github" / "scripts" / "publish_npu_ci_status.js"
 
 
 class WorkflowResultPresentationTest(unittest.TestCase):
@@ -20,11 +21,13 @@ class WorkflowResultPresentationTest(unittest.TestCase):
         workflow = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
         cls.matrix_steps = workflow["jobs"]["ascend-npu"]["steps"]
         cls.finalize_steps = workflow["jobs"]["finalize"]["steps"]
-        cls.finalize_script = next(
-            step["with"]["script"]
+        cls.finalize_action = next(
+            step
             for step in cls.finalize_steps
             if step.get("uses") == "actions/github-script@v7"
         )
+        cls.finalize_loader = cls.finalize_action["with"]["script"]
+        cls.finalize_script = PUBLISH_SCRIPT_PATH.read_text(encoding="utf-8")
 
     def _run_finalize_script(
         self,
@@ -219,16 +222,6 @@ class WorkflowResultPresentationTest(unittest.TestCase):
                         json.dumps(payload, ensure_ascii=False), encoding="utf-8"
                     )
 
-            script = self.finalize_script
-            replacements = {
-                "${{ toJson(needs.prepare.outputs.ci_mode) }}": json.dumps("quick"),
-                "${{ toJson(needs.prepare.outputs.ops) }}": json.dumps(""),
-                "${{ toJson(needs.prepare.outputs.pr_number) }}": json.dumps("527"),
-                "${{ toJson(needs.prepare.outputs.comment_id) }}": json.dumps("123"),
-            }
-            for source, replacement in replacements.items():
-                script = script.replace(source, replacement)
-
             wrapper = """
 globalThis.context = {
   serverUrl: 'https://github.com',
@@ -255,7 +248,12 @@ globalThis.core = {
   setFailed: (message) => record('failed', message),
 };
 (async () => {
-""" + script + """
+  const publishNpuCiStatus = require(process.env.NPU_PUBLISH_SCRIPT_PATH);
+  await publishNpuCiStatus({
+    github: globalThis.github,
+    context: globalThis.context,
+    core: globalThis.core,
+  });
 })().catch((error) => {
   console.error(error && error.stack || error);
   process.exitCode = 1;
@@ -268,6 +266,11 @@ globalThis.core = {
                 {
                     "COMMENT_FILE": str(comment_file),
                     "RECORD_FILE": str(record_file),
+                    "NPU_PUBLISH_SCRIPT_PATH": str(PUBLISH_SCRIPT_PATH),
+                    "NPU_CI_MODE": "quick",
+                    "NPU_OPS": "",
+                    "NPU_PR_NUMBER": "527",
+                    "NPU_COMMENT_ID": "123",
                     "NPU_EXPECTED_HEAD_SHA": sha,
                     "NPU_EXPECTED_RUN_ID": run_id,
                     "NPU_EXPECTED_RUN_ATTEMPT": run_attempt,
@@ -322,6 +325,24 @@ globalThis.core = {
         upload = next(index for index, name in enumerate(names) if name.startswith("上传 "))
         self.assertLess(cleanup, record)
         self.assertLess(record, upload)
+
+    def test_finalize_loader_uses_trusted_workflow_revision(self):
+        checkout = next(
+            step
+            for step in self.finalize_steps
+            if step.get("name") == "检出受信任的状态发布脚本"
+        )
+        self.assertEqual(checkout["uses"], "actions/checkout@v4")
+        self.assertEqual(checkout["with"]["ref"], "${{ github.workflow_sha }}")
+        self.assertEqual(
+            checkout["with"]["sparse-checkout"],
+            ".github/scripts/publish_npu_ci_status.js",
+        )
+        self.assertFalse(checkout["with"]["persist-credentials"])
+        self.assertIn("publish_npu_ci_status.js", self.finalize_loader)
+        self.assertNotIn("${{", self.finalize_loader)
+        self.assertLess(len(self.finalize_loader), 21000)
+        self.assertIn("module.exports = async function", self.finalize_script)
 
     def test_pr_comment_only_expands_failed_diagnostics(self):
         script = self.finalize_script
