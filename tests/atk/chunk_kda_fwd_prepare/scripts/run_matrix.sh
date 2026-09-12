@@ -238,6 +238,7 @@ test_artifacts=(
   "$repo_root/tests/op_cases/chunk_kda_fwd_prepare.json"
   "$repo_root/tests/atk/common/_ascendc_common_executor.py"
   "$repo_root/tests/atk/common/check_atk_result.py"
+  "$repo_root/tests/atk/common/run_with_process_deadline.py"
   "$runner"
   "$coverage_checker"
   "$script_dir/run_matrix.sh"

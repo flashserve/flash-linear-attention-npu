@@ -146,8 +146,8 @@ validate_bounded_timeout() {
 }
 
 # ATK 的 -to 是 worker soft timeout；原生 NPU 调用不响应 soft timeout 时，
-# 仍需由进程级截止回收整个 ATK 进程组。额外 30 秒只留给进程启动与清理，
-# 每条 case 的逻辑超时仍由传给 ATK 的 60/1000 秒控制。
+# 仍需由独立进程组 watchdog 回收 ATK 及其全部 worker。额外 30 秒只留给
+# 进程启动与清理，每条 case 的逻辑超时仍由传给 ATK 的 60/1000 秒控制。
 run_with_prepare_hard_deadline() {
   local logical_timeout="$1"
   local case_start="$2"
@@ -161,17 +161,16 @@ run_with_prepare_hard_deadline() {
     return
   fi
 
-  command -v timeout >/dev/null 2>&1 || \
-    die "chunk_kda_fwd_prepare 正式测试需要 GNU timeout 提供进程级硬截止"
+  [[ -f "$PROCESS_DEADLINE_PY" ]] || \
+    die "找不到进程级 hard deadline 工具：${PROCESS_DEADLINE_PY}"
   local hard_timeout=$((logical_timeout + 30))
   local command_rc=0
-  if timeout --signal=TERM --kill-after=10s "${hard_timeout}s" "$@"; then
+  if python3 "$PROCESS_DEADLINE_PY" \
+      --deadline-seconds "$hard_timeout" \
+      --term-grace-seconds 10 -- "$@"; then
     return 0
   else
     command_rc=$?
-  fi
-  if (( command_rc == 124 || command_rc == 137 )); then
-    echo "chunk_kda_fwd_prepare 测试超过进程级硬截止 ${hard_timeout}s（case 合同 ${logical_timeout}s）" >&2
   fi
   return "$command_rc"
 }
@@ -455,6 +454,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OP_DIR="${SCRIPT_DIR}/${OP}"
 RESULT_CHECK_PY="${SCRIPT_DIR}/common/check_atk_result.py"
+PROCESS_DEADLINE_PY="${SCRIPT_DIR}/common/run_with_process_deadline.py"
 
 # NPU 后端固定为 npu
 CASE_FILE="${OP_DIR}/atk_${OP}.json"

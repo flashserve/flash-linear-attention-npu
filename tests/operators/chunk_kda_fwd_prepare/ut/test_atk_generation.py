@@ -9,9 +9,11 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from collections import Counter
 from pathlib import Path
@@ -1258,7 +1260,27 @@ class ChunkKdaFwdPrepareAtkGenerationTest(unittest.TestCase):
             write_executable(
                 fake_bin,
                 "python3",
-                "#!/usr/bin/env bash\n"
+                """#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == */run_with_process_deadline.py ]]; then
+  shift
+  {
+    printf 'cache=%s\n' "${PYTORCH_NO_NPU_MEMORY_CACHING-<unset>}"
+    for arg in "$@"; do
+      printf 'arg=%s\n' "$arg"
+    done
+  } > "$RUNNER_FIXTURE_TIMEOUT_LOG"
+  if [[ "${RUNNER_FIXTURE_FORCE_TIMEOUT:-0}" == "1" ]]; then
+    printf '%s\n' '进程级 hard deadline 已触发：90s' >&2
+    exit 124
+  fi
+  while [[ "${1:-}" != "--" ]]; do
+    shift
+  done
+  shift
+  exec "$@"
+fi
+"""
                 f'exec {python_executable} "$@"\n',
             )
             write_executable(
@@ -1306,25 +1328,6 @@ done
 exit 96
 """,
             )
-            bash_env = fixture_root / "bash_env.sh"
-            bash_env.write_text(
-                """timeout() {
-  {
-    printf 'cache=%s\n' "${PYTORCH_NO_NPU_MEMORY_CACHING-<unset>}"
-  for arg in "$@"; do
-      printf 'arg=%s\n' "$arg"
-    done
-  } > "$RUNNER_FIXTURE_TIMEOUT_LOG"
-  if [[ "${RUNNER_FIXTURE_FORCE_TIMEOUT:-0}" == "1" ]]; then
-    return 124
-  fi
-  shift 3
-  "$@"
-}
-""",
-                encoding="utf-8",
-            )
-
             base_env = os.environ.copy()
             for name in (
                 "ASCEND_RT_VISIBLE_DEVICES",
@@ -1337,10 +1340,14 @@ exit 96
             ):
                 base_env.pop(name, None)
             base_env["PATH"] = str(fake_bin) + os.pathsep + base_env["PATH"]
-            base_env["BASH_ENV"] = bash_env.as_posix()
             base_env["PYTHONDONTWRITEBYTECODE"] = "1"
 
-            for scope in ("accuracy", "determinism", "mssanitizer"):
+            for scope in (
+                "accuracy",
+                "performance",
+                "determinism",
+                "mssanitizer",
+            ):
                 with self.subTest(scope=scope):
                     atk_trace = fixture_root / f"{scope}_atk.log"
                     mss_trace = fixture_root / f"{scope}_mss.log"
@@ -1387,6 +1394,7 @@ exit 96
                     )
                     expected_task = {
                         "accuracy": "accuracy",
+                        "performance": "performance_device",
                         "determinism": "accuracy_dc",
                         "mssanitizer": "run",
                     }[scope]
@@ -1400,18 +1408,20 @@ exit 96
 
                     timeout_cache, timeout_args = read_trace(timeout_trace)
                     expected_hard_timeout = (
-                        "1030s" if scope == "mssanitizer" else "90s"
+                        "1030" if scope == "mssanitizer" else "90"
                     )
                     self.assertEqual(
-                        timeout_args[:3],
+                        timeout_args[:5],
                         [
-                            "--signal=TERM",
-                            "--kill-after=10s",
+                            "--deadline-seconds",
                             expected_hard_timeout,
+                            "--term-grace-seconds",
+                            "10",
+                            "--",
                         ],
                     )
                     self.assertEqual(
-                        Path(timeout_args[3]).name,
+                        Path(timeout_args[5]).name,
                         "mssanitizer" if scope == "mssanitizer" else "atk",
                     )
 
@@ -1468,7 +1478,7 @@ exit 96
             self.assertEqual(result.returncode, 124)
             self.assertIn("90s", result.stderr)
             _, timeout_args = read_trace(timeout_trace)
-            self.assertEqual(timeout_args[2], "90s")
+            self.assertEqual(timeout_args[1], "90")
 
             multi_case_atk_trace = fixture_root / "multi_case_atk.log"
             multi_case_timeout_trace = fixture_root / "multi_case_timeout.log"
@@ -1506,6 +1516,236 @@ exit 96
             self.assertEqual(result.returncode, 97, result.stderr)
             self.assertTrue(multi_case_atk_trace.exists())
             self.assertFalse(multi_case_timeout_trace.exists())
+
+    @unittest.skipUnless(os.name == "posix", "进程组测试仅在 POSIX 系统执行")
+    def test_process_deadline_kills_worker_after_parent_exits_on_term(self):
+        helper = ROOT / "tests/atk/common/run_with_process_deadline.py"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            parent_pid_file = root / "parent.pid"
+            worker_pid_file = root / "worker.pid"
+            worker_code = (
+                "import os, signal, time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                f"open({str(worker_pid_file)!r}, 'w').write(str(os.getpid())); "
+                "time.sleep(60)"
+            )
+            parent_code = (
+                "import os, signal, subprocess, sys, time; "
+                f"open({str(parent_pid_file)!r}, 'w').write(str(os.getpid())); "
+                f"subprocess.Popen([sys.executable, '-c', {worker_code!r}]); "
+                "signal.signal(signal.SIGTERM, lambda *_: sys.exit(0)); "
+                "time.sleep(60)"
+            )
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(helper),
+                    "--deadline-seconds",
+                    "0.5",
+                    "--term-grace-seconds",
+                    "0.5",
+                    "--",
+                    sys.executable,
+                    "-c",
+                    parent_code,
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            self.assertEqual(result.returncode, 124, result.stderr)
+            self.assertTrue(parent_pid_file.exists())
+            self.assertTrue(worker_pid_file.exists())
+            process_group_id = int(parent_pid_file.read_text())
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                try:
+                    os.killpg(process_group_id, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.05)
+            else:
+                self.fail("hard deadline 返回后仍有进程组成员存活")
+
+    @unittest.skipUnless(os.name == "posix", "进程组测试仅在 POSIX 系统执行")
+    def test_process_deadline_rejects_worker_left_by_exited_parent(self):
+        helper = ROOT / "tests/atk/common/run_with_process_deadline.py"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            parent_pid_file = root / "parent.pid"
+            worker_pid_file = root / "worker.pid"
+            worker_code = (
+                "import os, signal, time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                f"open({str(worker_pid_file)!r}, 'w').write(str(os.getpid())); "
+                "time.sleep(60)"
+            )
+            parent_code = (
+                "import os, subprocess, sys, time; "
+                f"open({str(parent_pid_file)!r}, 'w').write(str(os.getpid())); "
+                f"subprocess.Popen([sys.executable, '-c', {worker_code!r}]); "
+                "time.sleep(0.2)"
+            )
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(helper),
+                    "--deadline-seconds",
+                    "3",
+                    "--term-grace-seconds",
+                    "0.5",
+                    "--",
+                    sys.executable,
+                    "-c",
+                    parent_code,
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            self.assertEqual(result.returncode, 125, result.stderr)
+            self.assertIn("仍有进程组成员存活", result.stderr)
+            self.assertTrue(parent_pid_file.exists())
+            self.assertTrue(worker_pid_file.exists())
+            process_group_id = int(parent_pid_file.read_text())
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                try:
+                    os.killpg(process_group_id, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.05)
+            else:
+                self.fail("父进程提前退出后仍有进程组成员存活")
+
+    @unittest.skipUnless(os.name == "posix", "进程组测试仅在 POSIX 系统执行")
+    def test_process_deadline_forwards_external_term_and_cleans_group(self):
+        helper = ROOT / "tests/atk/common/run_with_process_deadline.py"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            parent_pid_file = root / "parent.pid"
+            worker_pid_file = root / "worker.pid"
+            worker_code = (
+                "import os, signal, time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                f"open({str(worker_pid_file)!r}, 'w').write(str(os.getpid())); "
+                "time.sleep(60)"
+            )
+            parent_code = (
+                "import os, signal, subprocess, sys, time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                f"open({str(parent_pid_file)!r}, 'w').write(str(os.getpid())); "
+                f"subprocess.Popen([sys.executable, '-c', {worker_code!r}]); "
+                "time.sleep(60)"
+            )
+            helper_process = subprocess.Popen(
+                [
+                    sys.executable,
+                    str(helper),
+                    "--deadline-seconds",
+                    "30",
+                    "--term-grace-seconds",
+                    "0.5",
+                    "--",
+                    sys.executable,
+                    "-c",
+                    parent_code,
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            process_group_id = None
+            group_cleaned = False
+            try:
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    if parent_pid_file.exists() and worker_pid_file.exists():
+                        break
+                    time.sleep(0.05)
+                else:
+                    self.fail("父进程和 worker 未在预期时间内启动")
+
+                process_group_id = int(parent_pid_file.read_text())
+                helper_process.send_signal(signal.SIGTERM)
+                _, stderr = helper_process.communicate(timeout=5)
+                self.assertEqual(helper_process.returncode, 143, stderr)
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    try:
+                        os.killpg(process_group_id, 0)
+                    except ProcessLookupError:
+                        group_cleaned = True
+                        break
+                    time.sleep(0.05)
+                else:
+                    self.fail("外部 TERM 后仍有进程组成员存活")
+            finally:
+                if helper_process.poll() is None:
+                    helper_process.kill()
+                    try:
+                        helper_process.communicate(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        pass
+                if not group_cleaned and process_group_id is None:
+                    if parent_pid_file.exists():
+                        process_group_id = int(parent_pid_file.read_text())
+                if not group_cleaned and process_group_id is not None:
+                    try:
+                        os.killpg(process_group_id, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+    @unittest.skipUnless(os.name == "posix", "进程组测试仅在 POSIX 系统执行")
+    def test_process_deadline_does_not_relabel_command_sigkill(self):
+        helper = ROOT / "tests/atk/common/run_with_process_deadline.py"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(helper),
+                "--deadline-seconds",
+                "3",
+                "--term-grace-seconds",
+                "0.5",
+                "--",
+                sys.executable,
+                "-c",
+                "import os, signal; os.kill(os.getpid(), signal.SIGKILL)",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        self.assertEqual(result.returncode, 137, result.stderr)
+        self.assertNotIn("hard deadline 已触发", result.stderr)
+
+    def test_process_deadline_reports_failed_group_cleanup(self):
+        helper = ROOT / "tests/atk/common/run_with_process_deadline.py"
+        spec = importlib.util.spec_from_file_location(
+            "process_deadline_for_cleanup_test", helper
+        )
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        process = mock.Mock()
+        process.poll.return_value = None
+        with mock.patch.object(module, "_signal_group") as signal_group:
+            with mock.patch.object(
+                module, "_wait_group_exit", side_effect=(False, False)
+            ):
+                cleanup_ok = module._terminate_group(process, 1234, 0.1)
+        self.assertFalse(cleanup_ok)
+        self.assertEqual(
+            signal_group.call_args_list,
+            [
+                mock.call(1234, module._TERMINATE_SIGNAL),
+                mock.call(1234, module._KILL_SIGNAL),
+            ],
+        )
 
     def test_sanitizer_log_requires_clean_finish_for_each_kernel(self):
         kernels = [

@@ -191,10 +191,11 @@ case。精度和确定性单 case 上限为 60 秒；内存检查需要对全量
 插桩预处理，单 case 上限放宽为 1000 秒。正式精度矩阵关闭 ATK 的整卡 GM 预填充；
 该步骤不受单进程 `-to` 约束，在大显存设备上不能满足 60 秒合同。未初始化、越界、
 竞争和同步问题由四种 sanitizer 的完整 432-key 矩阵覆盖；确定性矩阵固定执行 50 轮。
-除 ATK 的逐 case soft timeout 外，正式矩阵的单 case 进程还使用 GNU `timeout`
-设置硬截止：只额外预留 30 秒用于 ATK 启动和进程清理，并在退出无响应 10 秒后
-强制回收进程组。这 30 秒不改变逐 case 的 60/1000 秒合同；一次执行多条 case 时
-不设置整批进程截止，避免把整批累计耗时误判为单 case 超时。
+除 ATK 的逐 case soft timeout 外，正式矩阵的单 case 进程还在独立进程组中运行，
+由 watchdog 设置硬截止：只额外预留 30 秒用于 ATK 启动和进程清理；截止后先向
+整个进程组发送 TERM，10 秒后仍有 worker 存活则发送 KILL。这 30 秒不改变逐 case
+的 60/1000 秒合同；一次执行多条 case 时不设置整批进程截止，避免把整批累计耗时
+误判为单 case 超时。
 
 内存检查必须先安装通过 `--sanitizer` 构建的单算子 wheel。该选项同时启用
 `sanitizer`、`dump_cce` 和 `--op_debug_level=1`：
@@ -258,6 +259,7 @@ python3 tests/atk/chunk_kda_fwd_prepare/scripts/verify_matrix.py \
   --test-artifact tests/op_cases/chunk_kda_fwd_prepare.json \
   --test-artifact tests/atk/common/_ascendc_common_executor.py \
   --test-artifact tests/atk/common/check_atk_result.py \
+  --test-artifact tests/atk/common/run_with_process_deadline.py \
   --test-artifact tests/atk/run_test_cpu.sh \
   --test-artifact tests/atk/chunk_kda_fwd_prepare/scripts/check_coverage.py \
   --test-artifact tests/atk/chunk_kda_fwd_prepare/scripts/run_matrix.sh \
