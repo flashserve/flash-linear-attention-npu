@@ -51,6 +51,7 @@ _ASCENDC_OPS = (
     "npu_chunk_scaled_dot_kkt",
     "npu_solve_tri",
     "npu_chunk_kda_fwd",
+    "npu_chunk_kda_bwd_prepare",
     "npu_chunk_kda_bwd",
     "npu_chunk_kda_bwd_intra",
     "npu_chunk_kda_bwd_recompute",
