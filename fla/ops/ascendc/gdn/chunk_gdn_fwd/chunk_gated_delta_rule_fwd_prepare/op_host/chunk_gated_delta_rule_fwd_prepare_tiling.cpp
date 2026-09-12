@@ -171,8 +171,13 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
         fflush(stdout);
         return ge::GRAPH_FAILED;
     }
-    if (useGateInKernel) {
-        printf("[ChunkGatedDeltaRuleFwdPrepare][Tiling] use_gate_in_kernel currently must be false\n");
+    if (useGateInKernel && !hasALog) {
+        printf("[ChunkGatedDeltaRuleFwdPrepare][Tiling] use_gate_in_kernel requires a_log\n");
+        fflush(stdout);
+        return ge::GRAPH_FAILED;
+    }
+    if (hasDtBias && !hasALog) {
+        printf("[ChunkGatedDeltaRuleFwdPrepare][Tiling] dt_bias requires a_log (use_gate_in_kernel)\n");
         fflush(stdout);
         return ge::GRAPH_FAILED;
     }
