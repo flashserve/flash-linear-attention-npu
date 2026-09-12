@@ -1,0 +1,1371 @@
+{
+  "schema_version": 1,
+  "op": "chunk_kda_fwd_prepare",
+  "implementation": "ascendc",
+  "model": "kda",
+  "capability": {
+    "soc": [
+      "ascend910b",
+      "ascend910_93",
+      "ascend950"
+    ],
+    "dtypes": {
+      "q_k_v": [
+        "bfloat16"
+      ],
+      "g_beta": [
+        "bfloat16",
+        "float32"
+      ],
+      "a_log_dt_bias": [
+        "float32"
+      ]
+    },
+    "layouts": [
+      "BNSD",
+      "BSND",
+      "NTD",
+      "TND"
+    ],
+    "routes": [
+      "ascendc",
+      "aclnn",
+      "direct_launch"
+    ]
+  },
+  "route_validation": {
+    "ascendc": "device_smoke",
+    "aclnn": "device_smoke",
+    "direct_launch": "source_contract"
+  },
+  "output_policy": {
+    "fixed_slots": [
+      "gk",
+      "aqk",
+      "akk",
+      "w",
+      "u",
+      "qg",
+      "kg",
+      "qg_scaled",
+      "q_hat",
+      "k_hat",
+      "q_rstd",
+      "k_rstd",
+      "beta_eff"
+    ],
+    "forward_required": [
+      "gk",
+      "aqk",
+      "w",
+      "u",
+      "kg",
+      "qg_scaled"
+    ],
+    "backward_modes": {
+      "none": [
+        "gk",
+        "aqk",
+        "w",
+        "u",
+        "kg",
+        "qg_scaled"
+      ],
+      "recompute": [
+        "gk",
+        "aqk",
+        "akk",
+        "w",
+        "u",
+        "kg",
+        "qg_scaled",
+        "q_hat",
+        "k_hat",
+        "q_rstd",
+        "k_rstd",
+        "beta_eff"
+      ],
+      "save": [
+        "gk",
+        "aqk",
+        "akk",
+        "w",
+        "u",
+        "qg",
+        "kg",
+        "qg_scaled",
+        "q_hat",
+        "k_hat",
+        "q_rstd",
+        "k_rstd",
+        "beta_eff"
+      ]
+    },
+    "orthogonal_state_outputs": {
+      "output_final_state": "final_state",
+      "return_intermediate_states": "h"
+    }
+  },
+  "negative_cases": [
+    {
+      "id": "reject_unknown_backward_mode",
+      "fixture": {"layout": "BNSD"},
+      "kwargs": {"layout": "BNSD", "backward_mode": "unknown"},
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "python_exception": "RuntimeError",
+        "message": "backward_mode must be one of"
+      }
+    },
+    {
+      "id": "reject_lowercase_layout",
+      "fixture": {"layout": "BNSD"},
+      "kwargs": {"layout": "bnsd"},
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "python_exception": "RuntimeError",
+        "message": "layout must be uppercase"
+      }
+    },
+    {
+      "id": "reject_chunk_size_32",
+      "fixture": {"layout": "BNSD"},
+      "kwargs": {"layout": "BNSD", "chunk_size": 32},
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "python_exception": "RuntimeError",
+        "message": "chunk_size must be 64"
+      }
+    },
+    {
+      "id": "reject_zero_epsilon",
+      "fixture": {"layout": "BNSD"},
+      "kwargs": {"layout": "BNSD", "epsilon": 0.0},
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "python_exception": "RuntimeError",
+        "message": "epsilon must be finite and greater than zero"
+      }
+    },
+    {
+      "id": "reject_scale_overflows_fp32",
+      "fixture": {"layout": "BNSD"},
+      "kwargs": {"layout": "BNSD", "scale": 1e300},
+      "raw_aclnn": {"argument": "scale", "value": 1e300},
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "python_exception": "RuntimeError",
+        "message": "scale must be finite"
+      }
+    },
+    {
+      "id": "reject_epsilon_underflows_fp32",
+      "fixture": {"layout": "BNSD"},
+      "kwargs": {"layout": "BNSD", "epsilon": 1e-300},
+      "raw_aclnn": {"argument": "epsilon", "value": 1e-300},
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "python_exception": "RuntimeError",
+        "message": "epsilon must be finite and greater than zero"
+      }
+    },
+    {
+      "id": "reject_null_q_aclnn",
+      "fixture": {"layout": "BNSD"},
+      "kwargs": {"layout": "BNSD"},
+      "raw_only": true,
+      "raw_aclnn": {"argument": "q", "value": null},
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_NULLPTR",
+        "python_exception": "RuntimeError",
+        "message": "q, k, v, g and beta must not be nullptr"
+      }
+    },
+    {
+      "id": "reject_fp16_qkv",
+      "fixture": {"layout": "BNSD", "q_dtype": "float16"},
+      "kwargs": {"layout": "BNSD"},
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "python_exception": "RuntimeError",
+        "message": "q, k and v must all use bfloat16"
+      }
+    },
+    {
+      "id": "reject_fp16_gate",
+      "fixture": {"layout": "BNSD", "gate_dtype": "float16"},
+      "kwargs": {"layout": "BNSD"},
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "python_exception": "RuntimeError",
+        "message": "g must use bfloat16 or float32"
+      }
+    },
+    {
+      "id": "reject_fp16_beta",
+      "fixture": {"layout": "BNSD", "beta_dtype": "float16"},
+      "kwargs": {"layout": "BNSD"},
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "python_exception": "RuntimeError",
+        "message": "beta must use bfloat16 or float32"
+      }
+    },
+    {
+      "id": "reject_non_integral_gva_ratio",
+      "fixture": {"layout": "BNSD", "key_heads": 3, "value_heads": 10},
+      "kwargs": {"layout": "BNSD"},
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "python_exception": "RuntimeError",
+        "message": "GVA requires"
+      }
+    },
+    {
+      "id": "reject_negative_eigenvalue_without_sigmoid",
+      "fixture": {"layout": "BNSD"},
+      "kwargs": {"layout": "BNSD", "allow_neg_eigval": true},
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "python_exception": "RuntimeError",
+        "message": "requires use_beta_sigmoid_in_kernel=True"
+      }
+    },
+    {
+      "id": "reject_gate_optional_input_in_precomputed_mode",
+      "fixture": {"layout": "BNSD"},
+      "kwargs": {
+        "layout": "BNSD",
+        "a_log": {"fake_tensor": {"shape": [10], "dtype": "float32"}}
+      },
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "python_exception": "RuntimeError",
+        "message": "require use_gate_in_kernel=True"
+      }
+    },
+    {
+      "id": "reject_missing_a_log_in_fused_gate_mode",
+      "fixture": {"layout": "BNSD"},
+      "kwargs": {"layout": "BNSD", "use_gate_in_kernel": true},
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_NULLPTR",
+        "python_exception": "RuntimeError",
+        "message": "a_log is required"
+      }
+    },
+    {
+      "id": "reject_safe_gate_lower_bound_zero",
+      "fixture": {"layout": "BNSD"},
+      "kwargs": {
+        "layout": "BNSD",
+        "use_gate_in_kernel": true,
+        "safe_gate": true,
+        "lower_bound": 0.0,
+        "a_log": {"fake_tensor": {"shape": [10], "dtype": "float32"}}
+      },
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "python_exception": "RuntimeError",
+        "message": "lower_bound must be in"
+      }
+    },
+    {
+      "id": "reject_chunk_indices_without_cu_seqlens",
+      "fixture": {"layout": "TND"},
+      "kwargs": {"layout": "TND", "chunk_indices": [0, 0]},
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "python_exception": "RuntimeError",
+        "message": "can only be provided with cu_seqlens"
+      }
+    },
+    {
+      "id": "reject_noncanonical_chunk_indices",
+      "fixture": {"layout": "TND", "tokens": 65},
+      "kwargs": {
+        "layout": "TND",
+        "cu_seqlens": [0, 65],
+        "chunk_indices": [0, 1]
+      },
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "python_exception": "RuntimeError",
+        "message": "canonical sequence-major order"
+      }
+    },
+    {
+      "id": "reject_dimension_larger_than_uint32",
+      "fixture": {
+        "layout": "BSND",
+        "key_heads": 4294967296,
+        "value_heads": 4294967296,
+        "tokens": 1
+      },
+      "kwargs": {"layout": "BSND"},
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "python_exception": "RuntimeError",
+        "message": "fit uint32"
+      }
+    },
+    {
+      "id": "reject_sequence_major_dma_stride_overflow",
+      "fixture": {
+        "layout": "TND",
+        "key_heads": 8388610,
+        "value_heads": 8388610,
+        "tokens": 1,
+        "gate_dtype": "float32"
+      },
+      "kwargs": {"layout": "TND"},
+      "expect": {
+        "return_code": "ACLNN_ERR_PARAM_INVALID",
+        "python_exception": "RuntimeError",
+        "message": "cross-head DMA strides must fit uint32"
+      }
+    }
+  ],
+  "coverage_requirements": {
+    "inputs": [
+      "q",
+      "k",
+      "v",
+      "g",
+      "beta",
+      "a_log",
+      "dt_bias",
+      "cu_seqlens",
+      "chunk_indices"
+    ],
+    "attrs": [
+      "layout",
+      "scale",
+      "chunk_size",
+      "epsilon",
+      "use_qk_l2norm_in_kernel",
+      "use_gate_in_kernel",
+      "use_beta_sigmoid_in_kernel",
+      "allow_neg_eigval",
+      "safe_gate",
+      "lower_bound",
+      "use_exp2",
+      "backward_mode"
+    ],
+    "outputs": [
+      "gk",
+      "aqk",
+      "akk",
+      "w",
+      "u",
+      "qg",
+      "kg",
+      "qg_scaled",
+      "q_hat",
+      "k_hat",
+      "q_rstd",
+      "k_rstd",
+      "beta_eff"
+    ]
+  },
+  "atk_generation": {
+    "seed_base": 20260910,
+    "standard": {
+      "acc": "mixed_tolerance_bm",
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "accuracy_seed_plan": {
+      "minimum_per_logical_case": 3,
+      "total_cases": 200
+    },
+    "defaults": {
+      "tags": "accuracy,regression",
+      "route": "ascendc",
+      "soc": "all",
+      "dtype": "bf16",
+      "B": 1,
+      "HK": 1,
+      "HV": 1,
+      "T": 65,
+      "K": 128,
+      "V": 128,
+      "layout": "BNSD",
+      "chunk_size": 64,
+      "gate_dtype": "bf16",
+      "beta_dtype": "bf16",
+      "scale": 1.0,
+      "epsilon": 0.000001,
+      "use_qk_l2norm_in_kernel": false,
+      "use_gate_in_kernel": false,
+      "use_beta_sigmoid_in_kernel": false,
+      "allow_neg_eigval": false,
+      "safe_gate": false,
+      "lower_bound": -5.0,
+      "use_exp2": false,
+      "backward_mode": "save",
+      "dt_bias": false,
+      "cu_seqlens": "",
+      "explicit_chunk_indices": false,
+      "data_scale": 0.08,
+      "gate_scale": 1.0,
+      "beta_scale": 1.0
+    },
+    "functional_cases": [
+      {
+        "case_key": "dense_bnsd_min",
+        "overrides": {
+          "tags": "accuracy,boundary,min,output_none",
+          "T": 1,
+          "backward_mode": "none"
+        }
+      },
+      {
+        "case_key": "dense_bsnd_tail15",
+        "overrides": {
+          "tags": "accuracy,output_recompute",
+          "layout": "BSND",
+          "T": 15,
+          "backward_mode": "recompute"
+        }
+      },
+      {
+        "case_key": "dense_ntd_tail16",
+        "overrides": {"layout": "NTD", "T": 16}
+      },
+      {
+        "case_key": "dense_tnd_tail17",
+        "overrides": {"layout": "TND", "T": 17}
+      },
+      {"case_key": "dense_bnsd_tail31", "overrides": {"T": 31}},
+      {"case_key": "dense_bnsd_tail32", "overrides": {"T": 32}},
+      {"case_key": "dense_bnsd_tail33", "overrides": {"T": 33}},
+      {"case_key": "dense_bnsd_tail47", "overrides": {"T": 47}},
+      {"case_key": "dense_bnsd_tail48", "overrides": {"T": 48}},
+      {"case_key": "dense_bnsd_tail49", "overrides": {"T": 49}},
+      {"case_key": "dense_bnsd_full_chunk", "overrides": {"T": 64}},
+      {"case_key": "dense_two_chunks_tail1", "overrides": {"T": 65}},
+      {
+        "case_key": "dense_bsnd_batch2",
+        "overrides": {
+          "layout": "BSND",
+          "B": 2,
+          "HK": 3,
+          "HV": 15,
+          "T": 65,
+          "gate_dtype": "fp32",
+          "beta_dtype": "fp32"
+        }
+      },
+      {
+        "case_key": "dense_gva_ratio5_cross_wave",
+        "overrides": {
+          "HK": 3,
+          "HV": 15,
+          "T": 33,
+          "use_qk_l2norm_in_kernel": true
+        }
+      },
+      {
+        "case_key": "dense_gva_ratio8",
+        "overrides": {"HK": 2, "HV": 16, "T": 17, "use_exp2": true}
+      },
+      {
+        "case_key": "dense_head_partition_33",
+        "overrides": {
+          "HK": 11,
+          "HV": 33,
+          "T": 1,
+          "gate_dtype": "fp32",
+          "beta_dtype": "fp32"
+        }
+      },
+      {
+        "case_key": "dense_hv160_no_artificial_limit",
+        "overrides": {
+          "tags": "accuracy,boundary,head_partition,gva",
+          "HK": 32,
+          "HV": 160,
+          "T": 1,
+          "gate_dtype": "fp32"
+        }
+      },
+      {
+        "case_key": "varlen_tnd_auto_indices",
+        "overrides": {
+          "layout": "TND",
+          "T": 146,
+          "cu_seqlens": "0,1,17,81,146",
+          "HK": 1,
+          "HV": 5
+        }
+      },
+      {
+        "case_key": "varlen_ntd_explicit_indices",
+        "overrides": {
+          "layout": "NTD",
+          "T": 146,
+          "cu_seqlens": "0,1,17,81,146",
+          "explicit_chunk_indices": true,
+          "HK": 2,
+          "HV": 8,
+          "use_exp2": true
+        }
+      },
+      {
+        "case_key": "varlen_bnsd_rank4",
+        "overrides": {
+          "layout": "BNSD",
+          "T": 129,
+          "cu_seqlens": "0,64,129",
+          "explicit_chunk_indices": true
+        }
+      },
+      {
+        "case_key": "varlen_more_than_1024_sequences",
+        "overrides": {
+          "tags": "accuracy,boundary,varlen",
+          "layout": "TND",
+          "T": 1,
+          "cu_seqlens_repeat": {"value": 0, "count": 1025, "tail": [1]},
+          "explicit_chunk_indices": true
+        }
+      },
+      {
+        "case_key": "gate_softplus_without_bias",
+        "overrides": {"use_gate_in_kernel": true, "gate_dtype": "fp32", "T": 65}
+      },
+      {
+        "case_key": "gate_softplus_with_bias",
+        "overrides": {
+          "use_gate_in_kernel": true,
+          "dt_bias": true,
+          "gate_dtype": "bf16",
+          "T": 65
+        }
+      },
+      {
+        "case_key": "gate_safe_exp2",
+        "overrides": {
+          "use_gate_in_kernel": true,
+          "safe_gate": true,
+          "dt_bias": true,
+          "lower_bound": -3.0,
+          "use_exp2": true,
+          "T": 65
+        }
+      },
+      {
+        "case_key": "beta_sigmoid",
+        "overrides": {"use_beta_sigmoid_in_kernel": true, "beta_dtype": "fp32"}
+      },
+      {
+        "case_key": "beta_two_sigmoid",
+        "overrides": {
+          "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": true,
+          "beta_dtype": "bf16"
+        }
+      },
+      {
+        "case_key": "l2norm_small_epsilon",
+        "overrides": {"use_qk_l2norm_in_kernel": true, "epsilon": 1e-12}
+      },
+      {
+        "case_key": "dense_bnsd_tail63",
+        "overrides": {"T": 63, "backward_mode": "none"}
+      },
+      {
+        "case_key": "dense_bsnd_full_chunk",
+        "overrides": {"layout": "BSND", "T": 64, "backward_mode": "recompute"}
+      },
+      {
+        "case_key": "dense_ntd_full_chunk",
+        "overrides": {"layout": "NTD", "T": 64}
+      },
+      {
+        "case_key": "dense_tnd_full_chunk",
+        "overrides": {"layout": "TND", "T": 64, "backward_mode": "none"}
+      },
+      {
+        "case_key": "dense_bsnd_two_chunks_tail1",
+        "overrides": {"layout": "BSND", "T": 65}
+      },
+      {
+        "case_key": "dense_ntd_two_chunks_tail1",
+        "overrides": {"layout": "NTD", "T": 65, "backward_mode": "recompute"}
+      },
+      {
+        "case_key": "dense_tnd_two_chunks_tail1",
+        "overrides": {"layout": "TND", "T": 65}
+      },
+      {
+        "case_key": "dense_bnsd_exact_two_chunks",
+        "overrides": {"T": 128, "backward_mode": "none"}
+      },
+      {
+        "case_key": "dense_bsnd_three_chunks_tail1",
+        "overrides": {"layout": "BSND", "T": 129}
+      },
+      {
+        "case_key": "dense_ntd_three_chunks_tail1",
+        "overrides": {"layout": "NTD", "T": 129, "backward_mode": "recompute"}
+      },
+      {
+        "case_key": "dense_tnd_three_chunks_tail1",
+        "overrides": {"layout": "TND", "T": 129}
+      },
+      {
+        "case_key": "dense_batch4_small",
+        "overrides": {"B": 4, "HK": 2, "HV": 4, "T": 17}
+      },
+      {
+        "case_key": "dense_gva_ratio2",
+        "overrides": {"HK": 2, "HV": 4, "T": 65, "backward_mode": "none"}
+      },
+      {
+        "case_key": "dense_gva_ratio3",
+        "overrides": {"HK": 4, "HV": 12, "T": 33, "backward_mode": "recompute"}
+      },
+      {
+        "case_key": "dense_gva_ratio4",
+        "overrides": {"HK": 3, "HV": 12, "T": 49}
+      },
+      {
+        "case_key": "dense_gva_ratio6",
+        "overrides": {"HK": 2, "HV": 12, "T": 31, "backward_mode": "none"}
+      },
+      {
+        "case_key": "dense_head_partition_5",
+        "overrides": {"HK": 1, "HV": 5, "T": 17}
+      },
+      {
+        "case_key": "dense_head_partition_6",
+        "overrides": {"HK": 6, "HV": 6, "T": 33, "backward_mode": "recompute"}
+      },
+      {
+        "case_key": "dense_head_partition_7",
+        "overrides": {"HK": 7, "HV": 7, "T": 1}
+      },
+      {
+        "case_key": "varlen_bnsd_auto_with_empty",
+        "overrides": {
+          "layout": "BNSD",
+          "HK": 1,
+          "HV": 2,
+          "T": 65,
+          "cu_seqlens": "0,0,1,1,65",
+          "backward_mode": "none"
+        }
+      },
+      {
+        "case_key": "varlen_bsnd_explicit_with_empty",
+        "overrides": {
+          "layout": "BSND",
+          "HK": 2,
+          "HV": 4,
+          "T": 65,
+          "cu_seqlens": "0,0,1,1,65",
+          "explicit_chunk_indices": true,
+          "backward_mode": "recompute"
+        }
+      },
+      {
+        "case_key": "varlen_ntd_auto_mixed",
+        "overrides": {
+          "layout": "NTD",
+          "HK": 1,
+          "HV": 3,
+          "T": 129,
+          "cu_seqlens": "0,16,48,65,129"
+        }
+      },
+      {
+        "case_key": "varlen_tnd_explicit_mixed",
+        "overrides": {
+          "layout": "TND",
+          "HK": 2,
+          "HV": 8,
+          "T": 129,
+          "cu_seqlens": "0,16,48,65,129",
+          "explicit_chunk_indices": true
+        }
+      },
+      {
+        "case_key": "varlen_exact_chunk_boundaries",
+        "overrides": {
+          "layout": "TND",
+          "T": 128,
+          "cu_seqlens": "0,64,128",
+          "explicit_chunk_indices": true,
+          "backward_mode": "none"
+        }
+      },
+      {
+        "case_key": "gate_softplus_exp2_with_bias",
+        "overrides": {
+          "use_gate_in_kernel": true,
+          "dt_bias": true,
+          "use_exp2": true,
+          "gate_dtype": "fp32",
+          "backward_mode": "recompute"
+        }
+      },
+      {
+        "case_key": "gate_safe_exp_without_bias",
+        "overrides": {
+          "use_gate_in_kernel": true,
+          "safe_gate": true,
+          "lower_bound": -3.0,
+          "use_exp2": false
+        }
+      },
+      {
+        "case_key": "beta_sigmoid_bf16_output_none",
+        "overrides": {
+          "use_beta_sigmoid_in_kernel": true,
+          "beta_dtype": "bf16",
+          "backward_mode": "none"
+        }
+      },
+      {
+        "case_key": "beta_two_sigmoid_fp32_output_recompute",
+        "overrides": {
+          "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": true,
+          "beta_dtype": "fp32",
+          "backward_mode": "recompute"
+        }
+      },
+      {
+        "case_key": "l2norm_exp2_small_epsilon_output_none",
+        "overrides": {
+          "use_qk_l2norm_in_kernel": true,
+          "epsilon": 1e-12,
+          "use_exp2": true,
+          "backward_mode": "none"
+        }
+      }
+    ],
+    "performance_cases": [
+      {
+        "case_key": "model_b2_hk16_hv32_t11264",
+        "overrides": {
+          "tags": "performance,model_target,inference,dense,BNSD,gva",
+          "B": 2,
+          "HK": 16,
+          "HV": 32,
+          "T": 11264,
+          "layout": "BNSD",
+          "gate_dtype": "fp32",
+          "beta_dtype": "bf16",
+          "scale": 0.08838,
+          "use_qk_l2norm_in_kernel": true,
+          "use_gate_in_kernel": true,
+          "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": true,
+          "safe_gate": true,
+          "lower_bound": -5.0,
+          "dt_bias": true,
+          "use_exp2": true,
+          "backward_mode": "none"
+        }
+      },
+      {
+        "case_key": "model_b1_hk16_hv32_t11264",
+        "overrides": {
+          "tags": "performance,model_target,inference,dense,BNSD,gva",
+          "B": 1,
+          "HK": 16,
+          "HV": 32,
+          "T": 11264,
+          "layout": "BNSD",
+          "gate_dtype": "fp32",
+          "beta_dtype": "bf16",
+          "scale": 0.08838,
+          "use_qk_l2norm_in_kernel": true,
+          "use_gate_in_kernel": true,
+          "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": true,
+          "safe_gate": true,
+          "lower_bound": -5.0,
+          "dt_bias": true,
+          "use_exp2": true,
+          "backward_mode": "none",
+          "performance_baseline_us": 1494.04,
+          "performance_statistic": "msopprof kernel duration"
+        }
+      },
+      {
+        "case_key": "model_b1_hk32_hv32_t65536_varlen",
+        "overrides": {
+          "tags": "performance,model_target,inference,varlen,BNSD",
+          "B": 1,
+          "HK": 32,
+          "HV": 32,
+          "T": 65536,
+          "layout": "BNSD",
+          "cu_seqlens": "0,2365,2409,2536,3008,3681,6545,8416,11615,12599,12844,12982,13209,15561,16291,16669,17755,21365,21416,25267,26084,26364,26833,27900,28033,29011,29291,29576,30471,30733,30906,31202,32264,32393,34233,34274,34589,40060,41075,41272,42123,42257,43054,44349,46396,46875,48850,49338,49457,50062,50509,54275,55763,56093,56473,56941,56964,57218,57274,58855,58926,60953,63436,63524,65536",
+          "explicit_chunk_indices": true,
+          "gate_dtype": "fp32",
+          "beta_dtype": "bf16",
+          "scale": 0.08838,
+          "use_qk_l2norm_in_kernel": true,
+          "use_gate_in_kernel": true,
+          "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": true,
+          "safe_gate": true,
+          "lower_bound": -5.0,
+          "dt_bias": true,
+          "use_exp2": true,
+          "backward_mode": "none"
+        }
+      },
+      {
+        "case_key": "model_b4_hk96_hv96_t128",
+        "overrides": {
+          "tags": "performance,model_target,inference,dense,BNSD,head_partition",
+          "B": 4,
+          "HK": 96,
+          "HV": 96,
+          "T": 128,
+          "layout": "BNSD",
+          "gate_dtype": "fp32",
+          "beta_dtype": "bf16",
+          "scale": 0.08838,
+          "use_qk_l2norm_in_kernel": true,
+          "use_gate_in_kernel": true,
+          "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": true,
+          "safe_gate": true,
+          "lower_bound": -5.0,
+          "dt_bias": true,
+          "use_exp2": true,
+          "backward_mode": "none"
+        }
+      },
+      {
+        "case_key": "model_b1_hk32_hv32_t160",
+        "overrides": {
+          "tags": "performance,model_target,inference,dense,BNSD,tail",
+          "B": 1,
+          "HK": 32,
+          "HV": 32,
+          "T": 160,
+          "layout": "BNSD",
+          "gate_dtype": "fp32",
+          "beta_dtype": "bf16",
+          "scale": 0.08838,
+          "use_qk_l2norm_in_kernel": true,
+          "use_gate_in_kernel": true,
+          "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": true,
+          "safe_gate": true,
+          "lower_bound": -5.0,
+          "dt_bias": true,
+          "use_exp2": true,
+          "backward_mode": "none"
+        }
+      },
+      {
+        "case_key": "model_b6_hk6_hv6_t1084",
+        "overrides": {
+          "tags": "performance,model_target,inference,dense,BNSD,tail",
+          "B": 6,
+          "HK": 6,
+          "HV": 6,
+          "T": 1084,
+          "layout": "BNSD",
+          "gate_dtype": "fp32",
+          "beta_dtype": "bf16",
+          "scale": 0.08838,
+          "use_qk_l2norm_in_kernel": true,
+          "use_gate_in_kernel": true,
+          "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": true,
+          "safe_gate": true,
+          "lower_bound": -5.0,
+          "dt_bias": true,
+          "use_exp2": true,
+          "backward_mode": "none"
+        }
+      },
+      {
+        "case_key": "model_b1_hk12_hv12_t1084",
+        "overrides": {
+          "tags": "performance,model_target,inference,dense,BNSD,tail",
+          "B": 1,
+          "HK": 12,
+          "HV": 12,
+          "T": 1084,
+          "layout": "BNSD",
+          "gate_dtype": "fp32",
+          "beta_dtype": "bf16",
+          "scale": 0.08838,
+          "use_qk_l2norm_in_kernel": true,
+          "use_gate_in_kernel": true,
+          "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": true,
+          "safe_gate": true,
+          "lower_bound": -5.0,
+          "dt_bias": true,
+          "use_exp2": true,
+          "backward_mode": "none"
+        }
+      },
+      {
+        "case_key": "model_b1_hk96_hv96_t8192_inference",
+        "overrides": {
+          "tags": "performance,model_target,inference,dense,BNSD",
+          "B": 1,
+          "HK": 96,
+          "HV": 96,
+          "T": 8192,
+          "layout": "BNSD",
+          "gate_dtype": "fp32",
+          "beta_dtype": "bf16",
+          "scale": 0.08838,
+          "use_qk_l2norm_in_kernel": true,
+          "use_gate_in_kernel": true,
+          "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": true,
+          "safe_gate": true,
+          "lower_bound": -5.0,
+          "dt_bias": true,
+          "use_exp2": true,
+          "backward_mode": "none",
+          "performance_baseline_us": 3221.331,
+          "performance_statistic": "msopprof kernel duration",
+          "performance_target_us": 2700
+        }
+      },
+      {
+        "case_key": "model_b1_hk96_hv96_t16384_varlen_inference",
+        "overrides": {
+          "tags": "performance,model_target,inference,varlen,BNSD",
+          "B": 1,
+          "HK": 96,
+          "HV": 96,
+          "T": 16384,
+          "layout": "BNSD",
+          "cu_seqlens": "0,7,75,76,436,690,982,1036,1156,1764,2434,2883,2898,2982,3142,3392,3459,3694,3717,4395,4510,4717,4822,5074,5168,5199,5370,5834,6223,6241,6302,6503,6728,6920,6948,7134,7205,7289,7904,8026,8114,8124,8238,8828,9045,10151,10257,10274,10444,10812,10930,11023,11305,11643,11973,13602,14050,14527,14832,15290,15362,16018,16267,16308,16384",
+          "gate_dtype": "fp32",
+          "beta_dtype": "bf16",
+          "scale": 0.08838,
+          "use_qk_l2norm_in_kernel": true,
+          "use_gate_in_kernel": true,
+          "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": true,
+          "safe_gate": true,
+          "lower_bound": -5.0,
+          "dt_bias": true,
+          "use_exp2": true,
+          "backward_mode": "none",
+          "performance_baseline_us": 7131.371,
+          "performance_statistic": "msopprof kernel duration",
+          "performance_target_us": 5600
+        }
+      },
+      {
+        "case_key": "model_b1_hk8_hv24_t32768",
+        "overrides": {
+          "tags": "performance,model_target,inference,dense,BNSD,gva",
+          "B": 1,
+          "HK": 8,
+          "HV": 24,
+          "T": 32768,
+          "layout": "BNSD",
+          "gate_dtype": "fp32",
+          "beta_dtype": "bf16",
+          "scale": 0.08838,
+          "use_qk_l2norm_in_kernel": true,
+          "use_gate_in_kernel": true,
+          "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": true,
+          "safe_gate": true,
+          "lower_bound": -5.0,
+          "dt_bias": true,
+          "use_exp2": true,
+          "backward_mode": "none"
+        }
+      }
+    ],
+    "template_matrix": {
+      "axes": {
+        "gate_dtype": ["bf16", "fp32"],
+        "beta_dtype": ["bf16", "fp32"],
+        "norm": [false, true],
+        "beta_mode": ["raw", "sigmoid", "two_sigmoid"],
+        "gate_mode": ["precomputed", "softplus", "safe"],
+        "use_exp2": [false, true],
+        "output_mode": ["none", "recompute", "save"]
+      },
+      "beta_mode_values": {
+        "raw": {
+          "use_beta_sigmoid_in_kernel": false,
+          "allow_neg_eigval": false
+        },
+        "sigmoid": {
+          "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": false
+        },
+        "two_sigmoid": {
+          "use_beta_sigmoid_in_kernel": true,
+          "allow_neg_eigval": true
+        }
+      },
+      "gate_mode_values": {
+        "precomputed": {"use_gate_in_kernel": false, "safe_gate": false},
+        "softplus": {"use_gate_in_kernel": true, "safe_gate": false},
+        "safe": {"use_gate_in_kernel": true, "safe_gate": true}
+      },
+      "dt_bias_rule": {
+        "gate_modes": ["softplus", "safe"],
+        "selection": "matrix_index_even"
+      },
+      "suites": {
+        "mss": {
+          "prefix": "mss_matrix",
+          "tags": "determinism,sanitizer,template_key_matrix",
+          "include_output_mode": true,
+          "profiles": [
+            {
+              "name": "dense_bnsd_chunk_partition",
+              "tags": "dense,BNSD,chunk_partition,active1,tail1",
+              "overrides": {"layout": "BNSD", "HK": 1, "HV": 1, "T": 65}
+            },
+            {
+              "name": "dense_bsnd_gva",
+              "tags": "dense,BSND,gva,head_split,active2,tail1",
+              "overrides": {"layout": "BSND", "HK": 2, "HV": 4, "T": 65}
+            },
+            {
+              "name": "dense_ntd_active3",
+              "tags": "dense,NTD,gva,active3,tail33",
+              "overrides": {"layout": "NTD", "HK": 1, "HV": 3, "T": 33}
+            },
+            {
+              "name": "dense_tnd_active4",
+              "tags": "dense,TND,gva,active4,tail63",
+              "overrides": {"layout": "TND", "HK": 1, "HV": 4, "T": 63}
+            },
+            {
+              "name": "varlen_bnsd_auto",
+              "tags": "varlen,BNSD,auto_indices,empty_sequence",
+              "overrides": {
+                "layout": "BNSD", "HK": 1, "HV": 2, "T": 65,
+                "cu_seqlens": "0,0,1,1,65"
+              }
+            },
+            {
+              "name": "varlen_bsnd_explicit",
+              "tags": "varlen,BSND,explicit_indices,head_split,active2",
+              "overrides": {
+                "layout": "BSND", "HK": 2, "HV": 4, "T": 129,
+                "cu_seqlens": "0,64,65,129", "explicit_chunk_indices": true
+              }
+            },
+            {
+              "name": "varlen_ntd_grid_stride_auto",
+              "tags": "varlen,NTD,auto_indices,grid_stride,active1",
+              "overrides": {
+                "layout": "NTD", "HK": 1, "HV": 1, "T": 129,
+                "cu_seqlens": "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129"
+              }
+            },
+            {
+              "name": "varlen_tnd_grid_stride_explicit",
+              "tags": "varlen,TND,explicit_indices,grid_stride,active1",
+              "overrides": {
+                "layout": "TND", "HK": 1, "HV": 1, "T": 129,
+                "cu_seqlens": "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129",
+                "explicit_chunk_indices": true
+              }
+            },
+            {
+              "name": "dense_bnsd_grid_stride_gva_chunk_only",
+              "tags": "dense,BNSD,gva,chunk_partition,chunk_only,no_head_split,grid_stride,active4,tail1",
+              "overrides": {"layout": "BNSD", "B": 65, "HK": 2, "HV": 4, "T": 65}
+            },
+            {
+              "name": "dense_bsnd_active5",
+              "tags": "dense,BSND,gva,active5,slot_reuse",
+              "overrides": {"layout": "BSND", "HK": 1, "HV": 5, "T": 1}
+            },
+            {
+              "name": "dense_bnsd_active12",
+              "tags": "dense,BNSD,gva,active12,slot_reuse",
+              "overrides": {"layout": "BNSD", "HK": 1, "HV": 12, "T": 1}
+            },
+            {
+              "name": "dense_tnd_gva_ratio8",
+              "tags": "dense,TND,gva,active8,slot_reuse,tail17",
+              "overrides": {"layout": "TND", "HK": 1, "HV": 8, "T": 17}
+            }
+          ]
+        }
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "prepare_dense_bnsd_raw",
+      "tags": [
+        "accuracy",
+        "smoke",
+        "generalization",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "HK": 1,
+        "HV": 2,
+        "T": 64,
+        "K": 128,
+        "V": 128
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g": "float32",
+        "beta": "float32"
+      },
+      "layout": "BNSD",
+      "attrs": {
+        "layout": "BNSD",
+        "scale": 0.0883883476,
+        "chunk_size": 64,
+        "epsilon": 0.000001,
+        "use_qk_l2norm_in_kernel": false,
+        "use_gate_in_kernel": false,
+        "use_beta_sigmoid_in_kernel": false,
+        "allow_neg_eigval": false,
+        "safe_gate": false,
+        "lower_bound": -5.0,
+        "use_exp2": false,
+        "backward_mode": "none"
+      },
+      "optional_inputs": {
+        "a_log": null,
+        "dt_bias": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "direct_launch"
+      ],
+      "reference": "tests/atk/chunk_kda_fwd_prepare/executor_chunk_kda_fwd_prepare.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "output_count": 13,
+        "finite_outputs": true,
+        "present_outputs": ["gk", "aqk", "w", "u", "kg", "qg_scaled"]
+      },
+      "seed": 20260910
+    },
+    {
+      "id": "prepare_dense_bsnd_fused",
+      "tags": [
+        "accuracy",
+        "smoke",
+        "generalization",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "HK": 2,
+        "HV": 4,
+        "T": 64,
+        "K": 128,
+        "V": 128
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g": "bfloat16",
+        "beta": "bfloat16"
+      },
+      "layout": "BSND",
+      "attrs": {
+        "layout": "BSND",
+        "scale": 0.125,
+        "chunk_size": 64,
+        "epsilon": 0.000001,
+        "use_qk_l2norm_in_kernel": true,
+        "use_gate_in_kernel": true,
+        "use_beta_sigmoid_in_kernel": true,
+        "allow_neg_eigval": true,
+        "safe_gate": true,
+        "lower_bound": -5.0,
+        "use_exp2": true,
+        "backward_mode": "recompute"
+      },
+      "optional_inputs": {
+        "a_log": "present",
+        "dt_bias": "present",
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "direct_launch"
+      ],
+      "reference": "tests/atk/chunk_kda_fwd_prepare/executor_chunk_kda_fwd_prepare.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "output_count": 13,
+        "finite_outputs": true,
+        "present_outputs": [
+          "gk", "aqk", "akk", "w", "u", "kg", "qg_scaled",
+          "q_hat", "k_hat", "q_rstd", "k_rstd", "beta_eff"
+        ]
+      },
+      "seed": 20260911
+    },
+    {
+      "id": "prepare_ntd_tail",
+      "tags": [
+        "accuracy",
+        "smoke",
+        "generalization",
+        "boundary",
+        "tail"
+      ],
+      "shape": {
+        "B": 1,
+        "HK": 2,
+        "HV": 4,
+        "T": 65,
+        "K": 128,
+        "V": 128
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g": "float32",
+        "beta": "bfloat16"
+      },
+      "layout": "NTD",
+      "attrs": {
+        "layout": "NTD",
+        "scale": 0.0883883476,
+        "chunk_size": 64,
+        "epsilon": 0.000001,
+        "use_qk_l2norm_in_kernel": true,
+        "use_gate_in_kernel": false,
+        "use_beta_sigmoid_in_kernel": true,
+        "allow_neg_eigval": false,
+        "safe_gate": false,
+        "lower_bound": -5.0,
+        "use_exp2": false,
+        "backward_mode": "save"
+      },
+      "optional_inputs": {
+        "a_log": null,
+        "dt_bias": null,
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "tests/atk/chunk_kda_fwd_prepare/executor_chunk_kda_fwd_prepare.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "output_count": 13,
+        "finite_outputs": true,
+        "present_outputs": [
+          "gk", "aqk", "akk", "w", "u", "qg", "kg", "qg_scaled",
+          "q_hat", "k_hat", "q_rstd", "k_rstd", "beta_eff"
+        ]
+      },
+      "seed": 20260912
+    },
+    {
+      "id": "prepare_tnd_varlen",
+      "tags": [
+        "accuracy",
+        "smoke",
+        "generalization",
+        "boundary",
+        "varlen"
+      ],
+      "shape": {
+        "B": 1,
+        "HK": 1,
+        "HV": 2,
+        "T": 65,
+        "K": 128,
+        "V": 128
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g": "bfloat16",
+        "beta": "float32"
+      },
+      "layout": "TND",
+      "attrs": {
+        "layout": "TND",
+        "scale": 0.0883883476,
+        "chunk_size": 64,
+        "epsilon": 0.000001,
+        "use_qk_l2norm_in_kernel": false,
+        "use_gate_in_kernel": true,
+        "use_beta_sigmoid_in_kernel": false,
+        "allow_neg_eigval": false,
+        "safe_gate": false,
+        "lower_bound": -5.0,
+        "use_exp2": true,
+        "backward_mode": "none"
+      },
+      "optional_inputs": {
+        "a_log": "present",
+        "dt_bias": null,
+        "cu_seqlens": [
+          0,
+          33,
+          65
+        ],
+        "chunk_indices": [
+          0,
+          0,
+          1,
+          0
+        ]
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn"
+      ],
+      "reference": "tests/atk/chunk_kda_fwd_prepare/executor_chunk_kda_fwd_prepare.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "output_count": 13,
+        "finite_outputs": true,
+        "present_outputs": ["gk", "aqk", "w", "u", "kg", "qg_scaled"]
+      },
+      "seed": 20260913
+    }
+  ]
+}

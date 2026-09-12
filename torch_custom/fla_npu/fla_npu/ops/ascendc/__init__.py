@@ -50,6 +50,7 @@ _ASCENDC_OPS = (
     "npu_chunk_local_cumsum",
     "npu_chunk_scaled_dot_kkt",
     "npu_solve_tri",
+    "npu_chunk_kda_fwd_prepare",
     "npu_chunk_kda_fwd",
     "npu_chunk_kda_bwd",
     "npu_chunk_kda_bwd_intra",
@@ -58,10 +59,11 @@ _ASCENDC_OPS = (
     "npu_recurrent_kda",
 )
 
-# ChunkFwdH 仅提供解耦 ctypes 稳定入口，不注册 torch.ops.npu，也不挂到
+# 新算子只提供解耦 ctypes 稳定入口，不注册 torch.ops.npu，也不挂到
 # torch_npu.ops 的可选兼容命名空间。
+_CTYPES_ONLY_OPS = frozenset({"npu_chunk_fwd_h", "npu_chunk_kda_fwd_prepare"})
 _TORCH_NPU_COMPAT_OPS = tuple(
-    name for name in _ASCENDC_OPS if name != "npu_chunk_fwd_h"
+    name for name in _ASCENDC_OPS if name not in _CTYPES_ONLY_OPS
 )
 
 BACKWARD_OPS = {

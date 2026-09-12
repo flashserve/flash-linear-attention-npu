@@ -118,14 +118,20 @@ npu-smi info
 | `CANN_ENV`             | CANN`set_env.sh` 路径；设置后脚本会 source                                           |
 | `FLA_NPU_ENV`          | `fla_npu_transformer` 的 `set_env.bash` 路径；设置后脚本会 source                  |
 | `ATK_OUTPUT_ROOT`      | ATK 输出根目录，默认是算子目录下的`./atk_output`                                     |
-| `ATK_GM_INIT_MODE`     | GM 数据初始化模式，默认`on`；可设 `on/off`                                        |
+| `ATK_GM_INIT_MODE`     | GM 数据初始化模式，默认`on`；`chunk_kda_fwd_prepare` 正式精度默认`off`；可设 `on/off` |
+| `ATK_SINGLE_PROCESS`   | 是否向 ATK 传入 `-sp`，默认 `on`；`chunk_kda_fwd_prepare` 正式矩阵默认`off`，单 case 超时由 ATK worker 强制执行 |
 | `REQUIRED_ATK_VERSION` | ATK 最低版本要求，默认`26.8.8`；一般无需修改                                         |
-| `ATK_TIMEOUT`          | 精度阶段超时时间，默认`14400`                                                        |
+| `ATK_TIMEOUT`          | 精度阶段超时时间，默认`14400`；`chunk_kda_fwd_prepare` 正式矩阵默认`60`秒             |
 | `DC_LOOP_NUMS`         | 确定性循环次数，默认`50`                                                             |
-| `DC_TIMEOUT`           | 确定性阶段超时时间，默认`3600`                                                       |
-| `PERFORMANCE_TIMEOUT`  | 性能阶段超时时间，默认`2000`                                                         |
+| `DC_TIMEOUT`           | 确定性阶段超时时间，默认`3600`；`chunk_kda_fwd_prepare` 正式矩阵默认`60`秒             |
+| `PERFORMANCE_TIMEOUT`  | 性能阶段超时时间，默认`2000`；`chunk_kda_fwd_prepare` 正式矩阵默认`60`秒               |
 | `MSS_TOOL`             | mssanitizer 工具，默认`memcheck`                                                     |
-| `MSS_LOG_PATH`         | ATK`-msl` 日志路径；默认 `${ATK_OUTPUT_ROOT}/mssanitizer_<op>_<时间戳>.log`        |
+| `MSS_TIMEOUT`          | mssanitizer 单 case 超时；默认不传；`chunk_kda_fwd_prepare` 正式矩阵默认`60`秒         |
+| `MSS_LOG_PATH`         | ATK`-msl` 日志路径；默认 `${ATK_OUTPUT_ROOT}/mssanitizer_<op>_<时间戳>.log`            |
+| `MSS_SANITIZER_LOG_PATH` | 外层 mssanitizer 原始日志；Prepare 必须与 `MSS_LOG_PATH` 相同并在阶段结束时校验       |
+
+`chunk_kda_fwd_prepare` 的直接精度入口还会要求 ATK summary 的“精度是否达标”列明确为
+`Pass`；`-` 或缺少该列均视为未完成。其他算子仍保留公共检查器对不适用列的兼容行为。
 
 ## 统一脚本
 
@@ -145,7 +151,8 @@ bash tests/atk/run_test_cpu.sh -op=<op_name>
 | `-soc=<soc>`          | SOC 标识，支持`ascend910b/A2`、`ascend910_93/A3`、`ascend950/A5`；默认 `auto`，由 `npu-smi` 自动探测 |
 
 `all` 包含 `accuracy`、`performance`、`determinism` 和 `mssanitizer`，并在运行前检查三份
-用例 JSON 均可解析且非空。`gen_cases` 不在 `all` 中，必须显式指定。
+用例 JSON 均可解析且非空；阶段结束后会检查对应报告，性能阶段至少要求 statistic 中
+每条 case 的 `运行结果` 为 `SUCCESS`。`gen_cases` 不在 `all` 中，必须显式指定。
 
 示例：
 
@@ -178,7 +185,8 @@ bash tests/atk/run_test_cpu.sh -op=causal_conv1d
 | `DETERMINISM_START/DETERMINISM_END` | 确定性验证           |
 | `MSS_START/MSS_END`                 | mssanitizer 内存检测 |
 
-如果只设置 start 或 end 中的一个，脚本会直接报错，避免范围表达不完整。
+范围采用 ATK 的半开区间 `[start, end)`。如果只设置 start 或 end 中的一个，脚本会
+直接报错，避免范围表达不完整。
 
 ## 测试动作
 
@@ -201,7 +209,16 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=accuracy
 
 ```bash
 bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=performance
+
+# 只运行性能 JSON 中顺序编号为 7、8 的两条 case
+PERFORMANCE_START=7 PERFORMANCE_END=9 \
+  bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=performance
 ```
+
+统一入口只接受本次 performance 调用开始后生成或更新的 xlsx，复用输出目录时不会把
+历史成功报告当成本次结果。若 `_perf.json` 的 `case_spec` 声明了
+`performance_target_us`，checker 还会要求 `statistic` 中存在 NPU Device 性能（us）
+并逐 case 校验实测值不超过目标；未声明目标的算子保持执行结果检查兼容行为。
 
 ### 确定性执行
 
@@ -250,7 +267,10 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=gen_cases
 正式验收前，根据用户模型 case 准备 `_perf.json`，根据全部可达 TilingKey 准备 `_mss.json`，
 并在算子 ATK README 中完成三类映射。正式验收时固定代码、CPU 标杆、三份测试文件和构建结果，
 不设置 case 范围，对每个受影响算子执行 `all`；精度阶段必须执行全部 `(case, seed)` 组合，所有
-组合均通过后才能判定精度验收通过。
+组合均通过后才能判定精度验收通过。`chunk_kda_fwd_prepare` 的冻结精度矩阵为 200 条，确定性和
+四种 sanitizer 均要求逐一覆盖全部 432 个可达 TilingKey；其 `all` 不能表达四种 sanitizer 的
+完整闭环，统一入口会拒绝该算子的 `all`；必须按该算子 README 使用 `run_matrix.sh` 分别执行
+并运行 `sanitizer-suite` 汇总校验。
 
 ## 算子索引
 
@@ -266,8 +286,9 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=gen_cases
 | `chunk_gated_delta_rule_bwd_dhu` | `fla_npu.ops.ascendc.chunk_gated_delta_rule_bwd_dhu` | 见[`chunk_gated_delta_rule_bwd_dhu/README.md`](./chunk_gated_delta_rule_bwd_dhu/README.md) |
 | `chunk_gated_delta_rule_fwd_h`   | `fla_npu.ops.ascendc.chunk_gated_delta_rule_fwd_h`   | 见[`chunk_gated_delta_rule_fwd_h/README.md`](./chunk_gated_delta_rule_fwd_h/README.md)     |
 | `chunk_gated_delta_rule_fwd_prepare` | `fla_npu.ops.ascendc.chunk_gated_delta_rule_fwd_prepare` | 见[`chunk_gated_delta_rule_fwd_prepare/README.md`](./chunk_gated_delta_rule_fwd_prepare/README.md)；CPU 双标杆 + `mixed_tolerance_bm` |
-| `chunk_kda_fwd`                  | `fla_npu.ops.ascendc.chunk_kda_fwd`                  | 见[`chunk_kda_fwd/README.md`](./chunk_kda_fwd/README.md)                                   |
 | `chunk_kda_bwd_recompute`        | `fla_npu.ops.ascendc.chunk_kda_bwd_recompute`        | 见[`chunk_kda_bwd_recompute/README.md`](./chunk_kda_bwd_recompute/README.md)               |
+| `chunk_kda_fwd`                  | `fla_npu.ops.ascendc.chunk_kda_fwd`                  | 见[`chunk_kda_fwd/README.md`](./chunk_kda_fwd/README.md)                                   |
+| `chunk_kda_fwd_prepare`          | `fla_npu.ops.ascendc.chunk_kda_fwd_prepare`          | 见[`chunk_kda_fwd_prepare/README.md`](./chunk_kda_fwd_prepare/README.md)                   |
 | `chunk_local_cumsum`             | `fla_npu.ops.ascendc.chunk_local_cumsum`             | 见[`chunk_local_cumsum/README.md`](./chunk_local_cumsum/README.md)                         |
 | `chunk_scaled_dot_kkt`           | `fla_npu.ops.ascendc.chunk_scaled_dot_kkt`           | 见[`chunk_scaled_dot_kkt/README.md`](./chunk_scaled_dot_kkt/README.md)                     |
 | `kda_gate_cumsum`                | `fla_npu.ops.ascendc.kda_gate_cumsum`                | 见[`kda_gate_cumsum/README.md`](./kda_gate_cumsum/README.md)                               |
@@ -303,7 +324,7 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=gen_cases
 
 维护要求：
 
-1. 每个可达 key 都要有普通和边界用例；同一 key 的不同运行时分支也要有对应覆盖。
+1. 默认每个可达 key 都要有普通和边界精度用例；同一 key 的不同运行时分支也要有对应覆盖。对于明确采用“固定条数精度矩阵 + 全 key 确定性/MSS”交付合同的算子（当前为 `chunk_kda_fwd_prepare`），精度列可以标记为“未覆盖”，但不得据此声称精度覆盖全部 key；全 key 的确定性和内存覆盖仍必须逐项闭合。
 2. 覆盖表中的每个 key 都必须注明对应的 case id，并能在 `gen_<op>.py` 或生成的 JSON 中找到这些 case。
 3. `atk_<op>_mss.json` 至少放入每个 key 的精简用例；性能路径涉及某个 key 时，`atk_<op>_perf.json` 也要覆盖该 key。
 4. 用例中的输入条件只表示预期 key，必须补充 host tiling UT 或运行时记录确认实际选中的 key。没有实际选择证据时，不得在 README 中标记为已覆盖。

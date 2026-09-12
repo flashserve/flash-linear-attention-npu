@@ -37,6 +37,10 @@ ASCENDC_NAMES = (
     "solve_tri",
 )
 
+DIRECT_ONLY_ASCENDC_NAMES = (
+    "chunk_kda_fwd_prepare",
+)
+
 TRITON_NAMES = (
     "autocast_custom_bwd",
     "autocast_custom_fwd",
@@ -181,7 +185,7 @@ def main() -> int:
     if "torch_npu" in sys.modules and not args.check_legacy_torch_npu:
         raise AssertionError("packaged wheel API check should not import torch_npu by default")
 
-    for name in ASCENDC_NAMES:
+    for name in ASCENDC_NAMES + DIRECT_ONLY_ASCENDC_NAMES:
         _require_attr(ascendc, name, "fla_npu.ops.ascendc")
         _require_attr(ascendc, f"npu_{name}", "fla_npu.ops.ascendc")
 

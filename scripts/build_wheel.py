@@ -72,24 +72,21 @@ def _drop_option(build_args: str, option: str) -> str:
 
 
 def _native_build_args(args: argparse.Namespace) -> list:
-    """Map 一键编包的原生 -g / --sanitizer / --oom 选项到 asc_opc 合法值。
+    """将一键编包的原生选项映射到构建链识别的调试配置。
 
     - -g / --debug   -> ccec_g（kernel 调试信息）
-    - --sanitizer    -> sanitizer（asc_opc 内存越界插桩，CANN 9.1.0 起合法）
+    - --sanitizer    -> ccec_g,sanitizer,dump_cce（插桩并保留可定位的 CCE 产物）
     - --oom          -> oom（kernel 侧 OOM 检查）
 
-    值通过 build.sh --bisheng_flags 或 --op_debug_config 传递，最终由
-    ascendc_bin_param_build.py 拼成 asc_opc 的 --op_debug_config=<values>。
-    CANN 9.1.0 的 asc_opc 合法值表为
-    (oom, dump_cce, dump_bin, dump_loc, ccec_O0, ccec_g, check_flag, sanitizer)，
-    因此 --sanitizer 必须映射为 sanitizer，不能使用更高版本才识别的
-    check_flag_sanitizer。
+    配置统一通过 build.sh 的 --bisheng_flags 下发。V2 构建链会同时将其
+    映射为 -g/-sanitizer 编译选项；ascend950 还会显式加入 c310 所需的
+    --cce-enable-sanitizer；旧构建链仍沿用 asc_opc 调试配置。
     """
     configs = []
     if args.debug:
         configs.append("ccec_g")
     if args.sanitizer:
-        configs.append("sanitizer")
+        configs.extend(("ccec_g", "sanitizer", "dump_cce"))
     if args.oom:
         configs.append("oom")
     return configs
@@ -100,10 +97,7 @@ def _assemble_build_args(args: argparse.Namespace) -> str:
     native = _native_build_args(args)
     if not native:
         return build_args
-    # 原生选项优先：将 --bisheng_flags 与 --op_debug_config 中已经存在的
-    # 用户显式值全部取出，与原生值合并去重后只传一次，保留 dump_cce 等
-    # 用户显式配置（review 之前的问题：直接丢弃用户的配置）。
-    option = "--bisheng_flags"
+    # 原生选项优先，同时保留用户通过两个入口显式给出的配置并稳定去重。
     existing = (
         _extract_values(build_args, "--bisheng_flags")
         + _extract_values(build_args, "--op_debug_config")
@@ -111,8 +105,8 @@ def _assemble_build_args(args: argparse.Namespace) -> str:
     build_args = _drop_option(build_args, "--bisheng_flags")
     build_args = _drop_option(build_args, "--op_debug_config")
     merged = list(dict.fromkeys(native + existing))
-    # build.sh 只识别 --bisheng_flags=<values> 的等号写法，不能用空格分隔。
-    tail = f"{option}={','.join(merged)}" if merged else ""
+    # 只下发旧构建链原本支持的入口；V2 编译选项由 CMake 映射生成。
+    tail = f"--bisheng_flags={','.join(merged)}" if merged else ""
     return f"{build_args} {tail}".strip()
 
 
@@ -137,9 +131,10 @@ def main() -> int:
         action="store_true",
         help=(
             "enable Ascend kernel memory sanitizer support for mssanitizer. "
-            "Maps to sanitizer (asc_opc --op_debug_config=sanitizer), which "
-            "instruments kernels to detect memory errors. Runtime detection is "
-            "done by mssanitizer via LD_PRELOAD injection "
+            "Maps to ccec_g,sanitizer,dump_cce on both compile-option and "
+            "asc_opc debug-config paths; ascend950 also adds the c310 compiler "
+            "instrumentation switch. Runtime detection is done by "
+            "mssanitizer via LD_PRELOAD injection "
             "(libmssanitizer_injection.so). Requires the Ascend toolkit's "
             "mssanitizer debug environment when running."
         ),

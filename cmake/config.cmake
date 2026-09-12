@@ -231,6 +231,12 @@ if (BUILD_OPEN_PROJECT)
             set(EP_OPS_COMPILE_OPTIONS FALSE)
         endif ()
 
+        if (BISHENG_FLAGS)
+            string(REPLACE ";" "::" EP_BISHENG_FLAGS "${BISHENG_FLAGS}")
+        else()
+            set(EP_BISHENG_FLAGS FALSE)
+        endif ()
+
         string(REPLACE ";" "::" EP_ASCEND_COMPUTE_UNIT "${ASCEND_COMPUTE_UNIT}")
 
         string(REPLACE ";" "::" EP_ASCEND_OP_NAME "${ASCEND_OP_NAME}")
@@ -247,6 +253,7 @@ if (BUILD_OPEN_PROJECT)
                 --ascend-cmake-dir ${ASCEND_CMAKE_DIR}
                 --tiling-key ${EP_TILING_KEY}
                 --ops-compile-options ${EP_OPS_COMPILE_OPTIONS}
+                --bisheng-flags ${EP_BISHENG_FLAGS}
                 --check-compatible ${CHECK_COMPATIBLE}
                 --ascend-compute_unit ${EP_ASCEND_COMPUTE_UNIT}
                 --ascend-op_name ${EP_ASCEND_OP_NAME}
