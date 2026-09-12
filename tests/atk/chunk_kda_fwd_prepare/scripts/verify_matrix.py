@@ -957,7 +957,9 @@ def _runtime_manifest(
                 text=True,
                 errors="replace",
             )
-            if result.returncode != 0 or "sanitizer" not in result.stdout.lower():
+            if result.returncode != 0 or not _has_sanitizer_symbol(
+                result.stdout, soc
+            ):
                 raise ValueError(f"kernel 对象缺少 sanitizer 符号：{path.name}")
             sanitizer_objects += 1
 
@@ -984,6 +986,14 @@ def _runtime_manifest(
     if {int(item["tiling_key"]) for item in bindings} != expected_keys:
         raise ValueError("安装包的 case 调度签名覆盖不闭合")
     return manifest
+
+
+def _has_sanitizer_symbol(nm_output: str, soc: str) -> bool:
+    """识别各架构 sanitizer 编译对象中的运行时符号。"""
+    lowered = nm_output.lower()
+    if "sanitizer" in lowered:
+        return True
+    return soc == "ascend950" and "__mstx_dfx_report_stub" in lowered
 
 
 def _verify_current_runtime(args: argparse.Namespace) -> dict:

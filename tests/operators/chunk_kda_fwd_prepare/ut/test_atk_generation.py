@@ -258,6 +258,30 @@ def _runtime_manifest_fixture(
 
 
 class ChunkKdaFwdPrepareAtkGenerationTest(unittest.TestCase):
+    def test_sanitizer_symbol_detection_supports_a5_runtime_marker(self):
+        self.assertTrue(
+            VERIFIER._has_sanitizer_symbol(
+                "00000000 T __sanitizer_cov_trace_pc", "ascend910b"
+            )
+        )
+        self.assertTrue(
+            VERIFIER._has_sanitizer_symbol(
+                "00000000 T __sanitizer_cov_trace_pc", "ascend910_93"
+            )
+        )
+        a5_nm_output = "00000000 T _Z22__mstx_dfx_report_stubjjPv"
+        self.assertTrue(
+            VERIFIER._has_sanitizer_symbol(a5_nm_output, "ascend950")
+        )
+        self.assertFalse(
+            VERIFIER._has_sanitizer_symbol(a5_nm_output, "ascend910b")
+        )
+        self.assertFalse(
+            VERIFIER._has_sanitizer_symbol(
+                "00000000 T ChunkKdaFwdPrepare", "ascend950"
+            )
+        )
+
     def test_runtime_toolchain_parsers_require_unique_identity(self):
         self.assertEqual(
             VERIFIER._parse_atk_version("ATK\n26.8.8\nready\n"),
