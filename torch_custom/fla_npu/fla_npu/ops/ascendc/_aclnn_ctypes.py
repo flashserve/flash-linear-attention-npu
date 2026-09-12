@@ -661,8 +661,6 @@ def npu_chunk_gated_delta_rule_fwd_prepare(
         raise ValueError("use_qk_l2norm_in_kernel currently only supports True.")
     if use_gate_in_kernel:
         raise ValueError("use_gate_in_kernel currently only supports False.")
-    if not use_exp2:
-        raise ValueError("use_exp2 currently only supports True.")
     if allow_neg_eigval and not use_beta_sigmoid_in_kernel:
         raise ValueError("allow_neg_eigval=True requires use_beta_sigmoid_in_kernel=True.")
     if a_log is not None and _shape(a_log) != (HV,):

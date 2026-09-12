@@ -10,7 +10,7 @@
 - `K=128`，`V∈{128,256}`，`chunk_size=64`。
 - `HV % HK == 0` 且 `HV/HK ∈ {1,2,3,4}`。任务按 HV 计数，K 头按 `hk = hv / (HV/HK)` 复用。
 - `q/k/v` 当前仅 `BFLOAT16`；`g/beta` 为 `FLOAT`（golden / DUT 与单元测试一致）。
-- 当前仅支持 `use_qk_l2norm_in_kernel=True`、`use_exp2=True`、`use_gate_in_kernel=False`。
+- 当前仅支持 `use_qk_l2norm_in_kernel=True`、`use_gate_in_kernel=False`；`use_exp2` 支持 True/False。
 - `use_beta_sigmoid_in_kernel` 与 `allow_neg_eigval` 支持 True/False；`allow_neg_eigval=True` 要求 sigmoid。精度 JSON 覆盖全部 3 组合法组合：`sig1_neg1` / `sig1_neg0` / `sig0_neg0`。
 - 变长要求 `B=1` 且 `cu_seqlens` 与 `chunk_indices` 成对（Python 未传 `chunk_indices` 时自动生成）。JSON 用 `seqlens` 列表表示，executor 转成 `cu_seqlens`。
 - 尾块 `T % 64 != 0`：只在该 chunk 填 0，按有效行写出。
@@ -28,7 +28,7 @@ YAML 元信息覆盖 `ascend910b`、`ascend910_93`、`ascend950`。内核当前�
 
 ## 默认用例
 
-`atk_chunk_gated_delta_rule_fwd_prepare.json` 内置 300 条（100 shape × 3 组合法 flag，bf16）。固定 `use_qk_l2norm=True`、`use_exp2=True`、`use_gate=False`。每组 shape 按序覆盖：
+`atk_chunk_gated_delta_rule_fwd_prepare.json` 内置 300 条（100 shape × 3 组合法 flag，bf16）。当前回归集固定 `use_qk_l2norm=True`、`use_exp2=True`、`use_gate=False`；Torch 接口和 kernel 同时支持 `use_exp2=False`。每组 shape 按序覆盖：
 
 | tag | sigmoid | neg | 含义 |
 | --- | --- | --- | --- |

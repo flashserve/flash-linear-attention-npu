@@ -59,19 +59,19 @@ __aicore__ inline void ChunkFwdOKernelImpl(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_A
     gdnFwdO.Process();
 }
 
-template <bool UseExp2>
+template <bool UseExp2, bool OutputTokenFirst>
 __aicore__ inline void ChunkFwdODispatch(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR h, GM_ADDR g,
                                          GM_ADDR cuSeqlens, GM_ADDR chunkOffsets, GM_ADDR o,
                                          GM_ADDR userWorkspace, const ChunkFwdOTilingData *tilingData)
 {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-    if constexpr (UseExp2) {
+    if constexpr (OutputTokenFirst) {
         ChunkFwdOA5DispatchByGateType<UseExp2>(q, k, v, h, g, cuSeqlens, chunkOffsets, o, userWorkspace,
                                               tilingData);
         return;
     }
 #endif
-    if constexpr (!UseExp2) {
+    if constexpr (!UseExp2 && !OutputTokenFirst) {
         using WorkspaceT = float;
         if (tilingData->dataType == CHUNK_FWD_O_DTYPE_BF16) {
             if (tilingData->gDataType == CHUNK_FWD_O_DTYPE_FP32) {
@@ -96,7 +96,7 @@ __aicore__ inline void ChunkFwdODispatch(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADD
 } // namespace GDN
 
 #ifndef TORCH_MODE
-template <bool USE_EXP2>
+template <bool USE_EXP2, bool OUTPUT_TOKEN_FIRST>
 __global__ __aicore__ void chunk_fwd_o(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR h,
                                                    GM_ADDR g, GM_ADDR cu_seqlens, GM_ADDR chunk_offsets,
                                                    GM_ADDR o, GM_ADDR workspace, GM_ADDR tiling)
@@ -107,6 +107,7 @@ __global__ __aicore__ void chunk_fwd_o(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR 
     REGISTER_TILING_DEFAULT(GDN::ChunkFwdOTilingData);
     GET_TILING_DATA_WITH_STRUCT(GDN::ChunkFwdOTilingData, tilingData, tiling);
 
-    GDN::ChunkFwdODispatch<USE_EXP2>(q, k, v, h, g, cu_seqlens, chunk_offsets, o, user, &tilingData);
+    GDN::ChunkFwdODispatch<USE_EXP2, OUTPUT_TOKEN_FIRST>(q, k, v, h, g, cu_seqlens, chunk_offsets, o, user,
+                                                        &tilingData);
 }
 #endif

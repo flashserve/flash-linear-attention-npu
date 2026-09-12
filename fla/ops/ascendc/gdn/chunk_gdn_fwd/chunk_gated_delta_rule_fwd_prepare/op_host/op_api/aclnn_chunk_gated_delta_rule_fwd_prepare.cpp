@@ -90,8 +90,6 @@ static aclnnStatus CheckNotNull(const ChunkGatedDeltaRuleFwdPrepareParams &param
                "kRstd is required: this version always runs Q/K L2Norm.");
     CHECK_COND(params.chunkSize == CHUNK_SIZE, ACLNN_ERR_PARAM_INVALID,
                "chunkSize currently only supports 64.");
-    CHECK_COND(params.useExp2, ACLNN_ERR_PARAM_INVALID,
-               "useExp2 currently only supports true.");
     CHECK_COND(params.aLogOptional == nullptr, ACLNN_ERR_PARAM_INVALID,
                "use_gate_in_kernel currently only supports false (aLog must be nullptr).");
     CHECK_COND(params.dtBiasOptional == nullptr, ACLNN_ERR_PARAM_INVALID,

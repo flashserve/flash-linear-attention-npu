@@ -186,11 +186,6 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
         fflush(stdout);
         return ge::GRAPH_FAILED;
     }
-    if (!useExp2) {
-        printf("[ChunkGatedDeltaRuleFwdPrepare][Tiling] use_exp2 currently must be true\n");
-        fflush(stdout);
-        return ge::GRAPH_FAILED;
-    }
     if (!useQkL2normAttr) {
         printf("[ChunkGatedDeltaRuleFwdPrepare][Tiling] use_qk_l2norm currently must be true\n");
         fflush(stdout);

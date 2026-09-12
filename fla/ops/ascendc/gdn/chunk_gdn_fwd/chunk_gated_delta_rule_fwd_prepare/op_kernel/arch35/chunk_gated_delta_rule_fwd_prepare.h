@@ -535,7 +535,8 @@ public:
     __aicore__ inline void Stage3_PrepareGate(int64_t taskIdx)
     {
         const int32_t db = PingPongSlot(taskIdx);
-        GateLowerLVF(ubGPrime[db], ubBetaEff[db], ubLFull[db]);
+        GateLowerLVF(ubGPrime[db], ubBetaEff[db], ubLFull[db],
+                     useExp2 != 0 ? kGdnLn2 : 1.0f);
     }
 
     __aicore__ inline void Stage3_AivOne(int64_t hv, int64_t taskIdx)
@@ -707,7 +708,9 @@ public:
         DataCopy(ubKnd, gmKHat[offK], nK);
         SetFlag<HardEvent::MTE2_V>(1);
         WaitFlag<HardEvent::MTE2_V>(1);
-        ScaleRowsBetaExp2gVF<InDtype>(ubKnd, ubKnd, beta, g, static_cast<uint32_t>(chunkSize));
+        ScaleRowsBetaExpGVF<InDtype>(ubKnd, ubKnd, beta, g,
+                                     useExp2 != 0 ? kGdnLn2 : 1.0f,
+                                     static_cast<uint32_t>(chunkSize));
         SetFlag<HardEvent::V_MTE3>(1);
         WaitFlag<HardEvent::V_MTE3>(1);
         UploadBf16NdToL1(l1Kbg[taskIdx], ubKnd, static_cast<uint32_t>(K));

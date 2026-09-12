@@ -492,7 +492,7 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
         CHECK_COND(dtype == DataType::DT_BF16 && info.vDim == CHUNK_GATED_DELTA_RULE_FWD_DIM &&
                        params.chunkSize == CHUNK_GATED_DELTA_RULE_FWD_CHUNK_64 && info.hv / info.hq <= 4,
                    ACLNN_ERR_PARAM_INVALID,
-                   "Ascend950 useExp2 path requires BF16, K=V=128, chunkSize=64 and Hv/Hk in {1,2,3,4}.");
+                   "Ascend950 prepare path requires BF16, K=V=128, chunkSize=64 and Hv/Hk in {1,2,3,4}.");
     }
     if (params.initialStateOptional != nullptr) {
         const DataType stateDtype = params.initialStateOptional->GetDataType();

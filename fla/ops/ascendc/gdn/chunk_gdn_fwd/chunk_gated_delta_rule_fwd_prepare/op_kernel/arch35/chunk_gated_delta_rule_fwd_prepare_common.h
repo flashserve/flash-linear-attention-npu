@@ -67,6 +67,7 @@ private:
 constexpr int64_t kGdnChunkSize = 64;
 constexpr int64_t kGdnHeadDimK = 128;
 constexpr float kGdnRcpLn2 = 1.4426950216f;
+constexpr float kGdnLn2 = 0.6931471825f;
 constexpr float kGdnL2NormEps = 1e-6f;
 constexpr float kGdnGateClip = 50.0f;
 
