@@ -79,7 +79,8 @@ def _native_build_args(args: argparse.Namespace) -> list:
     - --oom          -> oom（kernel 侧 OOM 检查）
 
     配置统一通过 build.sh 的 --bisheng_flags 下发。V2 构建链会同时将其
-    映射为 -g/-sanitizer 编译选项；旧构建链仍沿用 asc_opc 调试配置。
+    映射为 -g/-sanitizer 编译选项；ascend950 还会显式加入 c310 所需的
+    --cce-enable-sanitizer；旧构建链仍沿用 asc_opc 调试配置。
     """
     configs = []
     if args.debug:
@@ -131,8 +132,8 @@ def main() -> int:
         help=(
             "enable Ascend kernel memory sanitizer support for mssanitizer. "
             "Maps to ccec_g,sanitizer,dump_cce on both compile-option and "
-            "asc_opc debug-config paths, which instruments kernels and retains "
-            "the required debug artifacts. Runtime detection is done by "
+            "asc_opc debug-config paths; ascend950 also adds the c310 compiler "
+            "instrumentation switch. Runtime detection is done by "
             "mssanitizer via LD_PRELOAD injection "
             "(libmssanitizer_injection.so). Requires the Ascend toolkit's "
             "mssanitizer debug environment when running."

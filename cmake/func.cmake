@@ -331,6 +331,7 @@ function(add_opc_config)
     endif()
 
     set(_OPC_CONFIG)
+    set(_SANITIZER_ENABLED OFF)
 
     if(NOT OP_COMPILE_CONFIG)
         list(APPEND _OPC_CONFIG "-DNOT_DYNAMIC_COMPILE")
@@ -345,6 +346,7 @@ function(add_opc_config)
                 list(APPEND _OPC_CONFIG "-O0")
             elseif("${_option}" STREQUAL "sanitizer")
                 list(APPEND _OPC_CONFIG "-sanitizer")
+                set(_SANITIZER_ENABLED ON)
             elseif("${_option}" STREQUAL "dump_cce")
                 list(APPEND _OPC_CONFIG "--save-temp-files")
             endif()
@@ -361,6 +363,19 @@ function(add_opc_config)
                 OP_NAME ${OP_COMPILE_OP_NAME}
                 OPTIONS ${_OPC_CONFIG}
         )
+    endif()
+
+    if(_SANITIZER_ENABLED)
+        foreach(_compute_unit ${ASCEND_COMPUTE_UNIT})
+            if("${_compute_unit}" STREQUAL "ascend950")
+                # CANN 9.1 的 c310 分支会识别 sanitizer 配置，但不会自动加入实际插桩开关。
+                add_ops_compile_options(
+                        OP_NAME ${OP_COMPILE_OP_NAME}
+                        COMPUTE_UNIT ${_compute_unit}
+                        OPTIONS --cce-enable-sanitizer
+                )
+            endif()
+        endforeach()
     endif()
 endfunction()
 

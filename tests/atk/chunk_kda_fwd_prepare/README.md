@@ -202,7 +202,8 @@ FLA_NPU_SOC="$KDA_PREPARE_ATK_SOC" FLA_NPU_OPS=chunk_kda_fwd_prepare \
 ```
 
 `--sanitizer` 通过 `--bisheng_flags` 保留 `asc_opc` 调试配置；V2 构建链还会
-将同一配置映射为 `-g/-sanitizer` Bisheng 编译选项。仅出现
+将同一配置映射为 `-g/-sanitizer` Bisheng 编译选项，并为 `ascend950` 的 c310
+编译路径显式加入 `--cce-enable-sanitizer`。仅出现
 `asc_opc --op_debug_config=sanitizer` 不代表对象已经插桩；正式矩阵仍会用
 `nm` 检查安装包内每个 kernel 对象的 sanitizer 符号。
 
