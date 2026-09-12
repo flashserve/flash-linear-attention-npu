@@ -320,6 +320,28 @@ class ChunkKdaFwdPrepareAtkGenerationTest(unittest.TestCase):
         self.assertIn(
             "CONFIG ${OP_DEBUG_CONFIG} ${BISHENG_FLAGS}", root_cmake
         )
+        nested_config = (ROOT / "cmake/config.cmake").read_text(encoding="utf-8")
+        self.assertIn("--bisheng-flags ${EP_BISHENG_FLAGS}", nested_config)
+        prepare_script = (ROOT / "cmake/scripts/prepare.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("--bisheng-flags)", prepare_script)
+        self.assertIn('-DBISHENG_FLAGS="${CONVERT_BISHENG_FLAGS}"', prepare_script)
+
+    def test_global_compile_options_merge_platform_specific_entries(self):
+        op = SimpleNamespace(
+            custom_all_compile_options={"__ALLSOC__": ["-g", "-sanitizer"]}
+        )
+        BIN_PARAM_BUILDER.opdesc_parser._set_all_options_to_opdescs(
+            [op], {"ascend950": ["--cce-enable-sanitizer"]}
+        )
+        self.assertEqual(
+            op.custom_all_compile_options,
+            {
+                "__ALLSOC__": ["-g", "-sanitizer"],
+                "ascend950": ["--cce-enable-sanitizer"],
+            },
+        )
 
     def test_sanitizer_build_preserves_and_deduplicates_explicit_configs(self):
         args = SimpleNamespace(

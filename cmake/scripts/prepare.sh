@@ -59,6 +59,10 @@ while [[ $# -gt 0 ]]; do
         OPS_COMPILE_OPTIONS="$2"
         shift 2
         ;;
+    --bisheng-flags)
+        BISHENG_FLAGS="$2"
+        shift 2
+        ;;
     --check-compatible)
         CHECK_COMPATIBLE="$2"
         shift 2
@@ -143,6 +147,8 @@ function set_env() {
 
     CONVERT_OPS_COMPILE_OPTIONS="$(convert_string ${OPS_COMPILE_OPTIONS})"
 
+    CONVERT_BISHENG_FLAGS="$(convert_string ${BISHENG_FLAGS})"
+
     CONVERT_ASCEND_COMPUTE_UNIT="$(convert_string ${ASCEND_COMPUTE_UNIT})"
 
     CONVERT_ASCEND_OP_NAME="$(convert_string ${ASCEND_OP_NAME})"
@@ -162,6 +168,7 @@ function build() {
         -DCHECK_COMPATIBLE=${CHECK_COMPATIBLE} \
         -DTILING_KEY="${CONVERT_TILING_KEY}" \
         -DOPS_COMPILE_OPTIONS="${CONVERT_OPS_COMPILE_OPTIONS}" \
+        -DBISHENG_FLAGS="${CONVERT_BISHENG_FLAGS}" \
         -DASCEND_COMPUTE_UNIT=${CONVERT_ASCEND_COMPUTE_UNIT} \
         -DASCEND_OP_NAME=${CONVERT_ASCEND_OP_NAME} \
         -DENABLE_CCACHE=${ENABLE_CCACHE} \
