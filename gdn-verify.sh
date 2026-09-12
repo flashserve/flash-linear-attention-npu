@@ -5,11 +5,11 @@
 #   1) conda activate wnc && source <cann_path>/set_env.sh   (用户在脚本外完成)
 #   2) bash gdn-verify.sh              # 全量验证（编译+装包+测试+examples）
 #   3) bash gdn-verify.sh --skip-compile   # 跳过编译，只装包+测试
-#   4) bash gdn-verify.sh --mode single --op chunk_bwd_dv_local  # 单算子验证
+#   4) bash gdn-verify.sh --mode single --op chunk_bwd_dv_local  # 指定算子验证，多个算子用逗号分隔
 #
 # 选项:
 #   --mode full|single         验证模式（默认 full）
-#   --op NAME                  单算子模式下的算子名
+#   --op NAME[,NAME...]       single 模式下的算子名
 #   --device N                 指定 NPU device（默认自动选择第一个空闲的）
 #   --skip-compile             跳过阶段1-3（编译+装包）
 #   --skip-test                跳过阶段5（单算子测试）
@@ -17,7 +17,7 @@
 
 set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # ================================================================
@@ -39,7 +39,7 @@ usage() {
 
 选项:
   --mode full|single         验证模式（默认 full）
-  --op NAME                  单算子模式下的算子名
+  --op NAME[,NAME...]       single 模式下的算子名
   --device N                 指定 NPU device（默认自动选择第一个空闲的）
   --skip-compile             跳过编译+装包阶段
   --skip-test                跳过单算子测试阶段
@@ -64,7 +64,7 @@ done
 # ================================================================
 # 常量定义
 # ================================================================
-ALL_OPS="causal_conv1d,chunk_bwd_dv_local,chunk_bwd_dqkwg,chunk_gated_delta_rule_bwd_dhu,prepare_wy_repr_bwd_da,prepare_wy_repr_bwd_full,chunk_fwd_o,chunk_gated_delta_rule_fwd_h,recurrent_gated_delta_rule,recompute_w_u_fwd,chunk_local_cumsum"
+ALL_OPS="causal_conv1d,chunk_bwd_dv_local,chunk_bwd_dqkwg,chunk_gated_delta_rule_bwd_dhu,prepare_wy_repr_bwd_da,prepare_wy_repr_bwd_full,chunk_fwd_o,chunk_gated_delta_rule_fwd_h,recurrent_gated_delta_rule,recompute_w_u_fwd,chunk_local_cumsum,chunk_scaled_dot_kkt"
 TEST_OPS=(
     "prepare_wy_repr_bwd_full"
     "chunk_gated_delta_rule_bwd_dhu"
@@ -76,6 +76,7 @@ TEST_OPS=(
     "gdn_fwd_h"
     "recompute_w_u_fwd"
     "chunk_local_cumsum"
+    "chunk_scaled_dot_kkt"
 )
 TEST_DIR="$SCRIPT_DIR/torch_custom/fla_npu/test"
 TEST_SCRIPT="$TEST_DIR/test.sh"
@@ -86,6 +87,7 @@ declare -A COMPILE_RESULTS=()
 WHL_OK=false
 RUN_OK=false
 declare -A TEST_RESULTS=()
+TEST_STAGE_OK=false
 EXAMPLE_OK=false
 FAIL_DETAILS=""
 SOC_FOR_INSTALL=""
@@ -97,6 +99,35 @@ SKIPPED_COMPILE=false
 # 工具函数
 # ================================================================
 die() { echo "[FATAL] $*" >&2; exit 1; }
+
+print_failure_excerpt() {
+    local log_file="$1"
+    [[ -f "$log_file" ]] || return 0
+
+    local excerpt
+    excerpt=$(
+        grep -iE -B2 -A3 \
+            '(^|[^[:alpha:]])(fatal )?error:|CMake Error|undefined reference|linker command failed|compilation (failed|terminated)' \
+            "$log_file" 2>/dev/null | head -24 || true
+    )
+    if [[ -n "$excerpt" ]]; then
+        echo "    关键错误:"
+        printf '%s\n' "$excerpt"
+        return 0
+    fi
+
+    excerpt=$(
+        grep -iE -B2 -A2 \
+            'ninja: build stopped|make(\[[0-9]+\])?: \*\*\*|subcommand failed' \
+            "$log_file" 2>/dev/null | head -20 || true
+    )
+    echo "    日志尾部:"
+    if [[ -n "$excerpt" ]]; then
+        printf '%s\n' "$excerpt"
+    else
+        tail -20 "$log_file" 2>/dev/null || true
+    fi
+}
 
 detect_cann_version() {
     if [[ -n "${ASCEND_HOME_PATH:-}" ]]; then
@@ -223,8 +254,8 @@ auto_select_device() {
 compile_one() {
     local soc=$1 type=$2 ops=$3
     local key="B_${soc}_${type}"
-    local ops_arg=""
-    [[ -n "$ops" ]] && ops_arg=" --ops=$ops"
+    local build_args=(build.sh --pkg "--soc=$soc" --vendor_name=fla_npu)
+    [[ -n "$ops" ]] && build_args+=("--ops=$ops")
 
     echo ""
     echo "--- 编译: SOC=$soc 类型=$type ---"
@@ -233,7 +264,7 @@ compile_one() {
     local log_file="/tmp/gdn_compile_${soc}_${type}.log"
     local start_ts=$(date +%s)
 
-    if bash build.sh --pkg --soc="$soc" --vendor_name=fla_npu $ops_arg > "$log_file" 2>&1; then
+    if bash "${build_args[@]}" > "$log_file" 2>&1; then
         local end_ts=$(date +%s)
         local elapsed=$((end_ts - start_ts))
         echo "  [OK]  ${elapsed}s  log: $log_file"
@@ -241,10 +272,8 @@ compile_one() {
     else
         local end_ts=$(date +%s)
         local elapsed=$((end_ts - start_ts))
-        local tail_msg
-        tail_msg=$(tail -5 "$log_file" | head -3)
         echo "  [FAIL] ${elapsed}s  log: $log_file"
-        echo "    尾部输出: $tail_msg"
+        print_failure_excerpt "$log_file"
         COMPILE_RESULTS["$key"]="FAIL"
         FAIL_DETAILS+=$'\n'"编译失败: SOC=$soc $type → $log_file"
     fi
@@ -261,7 +290,7 @@ run_compile_stage() {
 
     local ops_for_single
     if [[ "$MODE" == "single" ]]; then
-        ops_for_single="$SINGLE_OP"
+        ops_for_single=$(normalized_requested_build_ops)
     else
         ops_for_single="$ALL_OPS"
     fi
@@ -297,7 +326,7 @@ run_whl_stage() {
         fi
     else
         echo "[FAIL] whl 编译安装失败 → $log_file"
-        tail -10 "$log_file"
+        print_failure_excerpt "$log_file"
         WHL_OK=false
         FAIL_DETAILS+=$'\n'"whl 安装失败 → $log_file"
     fi
@@ -324,6 +353,7 @@ run_install_stage() {
     local compile_log="/tmp/gdn_install_compile.log"
     if ! bash build.sh --pkg --soc="$SOC_FOR_INSTALL" --vendor_name=fla_npu > "$compile_log" 2>&1; then
         echo "[FAIL] 重编失败 → $compile_log"
+        print_failure_excerpt "$compile_log"
         FAIL_DETAILS+=$'\n'".run 安装前重编失败 ($SOC_FOR_INSTALL)"
         RUN_OK=false
         return
@@ -351,7 +381,7 @@ run_install_stage() {
         fi
     else
         echo "[FAIL] .run 包安装失败 → $install_log"
-        tail -20 "$install_log"
+        print_failure_excerpt "$install_log"
         RUN_OK=false
         FAIL_DETAILS+=$'\n'".run 安装失败 → $install_log"
         return
@@ -394,14 +424,28 @@ run_test_stage() {
         return
     fi
 
-    local args="--device $DEVICE_ID"
+    local args=(--device "$DEVICE_ID")
     if [[ "$MODE" == "single" ]]; then
-        args="$args --op $SINGLE_OP"
+        local selected_ops=() skipped_ops=()
+        mapfile -t selected_ops < <(selected_test_ops)
+        mapfile -t skipped_ops < <(selected_ops_without_legacy_test)
+
+        if [[ "${#skipped_ops[@]}" -gt 0 ]]; then
+            echo "[INFO] 无匹配 legacy 单算子测试，后续由 Example/ST/精度阶段验证: ${skipped_ops[*]}"
+        fi
+        if [[ "${#selected_ops[@]}" -eq 0 ]]; then
+            echo "[INFO] 跳过 legacy 单算子测试阶段。"
+            return 0
+        fi
+
+        local selected_csv
+        selected_csv=$(IFS=,; echo "${selected_ops[*]}")
+        args+=(--op "$selected_csv")
     fi
 
     cd "$TEST_DIR"
     local test_output_file="/tmp/gdn_test_output.txt"
-    bash "$TEST_SCRIPT" $args > "$test_output_file" 2>&1
+    bash "$TEST_SCRIPT" "${args[@]}" > "$test_output_file" 2>&1
     local test_exit_code=$?
     cat "$test_output_file"
     cd "$SCRIPT_DIR"
@@ -475,19 +519,23 @@ print_report() {
     echo "-----------------------------------------------------------------"
     echo "一、编译结果 (CANN $CANN_MAJOR_MINOR)"
     echo "-----------------------------------------------------------------"
-    local socs comp_total=0 comp_ok=0
-    socs=$(get_soc_list)
-    for soc in $socs; do
-        for type in "整包" "单算子"; do
-            local key="B_${soc}_${type}"
-            local result="${COMPILE_RESULTS[$key]:--}"
-            comp_total=$((comp_total + 1))
-            [[ "$result" == "OK" ]] && comp_ok=$((comp_ok + 1))
-            printf "| %-20s | %-13s | %-4s | %s\n" "$soc" "$type" "" "$result"
+    if $SKIPPED_COMPILE; then
+        echo "(已跳过)"
+    else
+        local socs comp_total=0 comp_ok=0
+        socs=$(get_soc_list)
+        for soc in $socs; do
+            for type in "整包" "单算子"; do
+                local key="B_${soc}_${type}"
+                local result="${COMPILE_RESULTS[$key]:--}"
+                comp_total=$((comp_total + 1))
+                [[ "$result" == "OK" ]] && comp_ok=$((comp_ok + 1))
+                printf "| %-20s | %-13s | %-4s | %s\n" "$soc" "$type" "" "$result"
+            done
         done
-    done
-    echo ""
-    echo "编译通过: $comp_ok / $comp_total"
+        echo ""
+        echo "编译通过: $comp_ok / $comp_total"
+    fi
 
     # 安装结果
     echo ""
@@ -511,19 +559,19 @@ print_report() {
         echo "(已跳过)"
     else
         local op_names=()
-        if [[ "$MODE" == "single" && -n "$SINGLE_OP" ]]; then
-            op_names=("$SINGLE_OP")
-        else
-            op_names=("${TEST_OPS[@]}")
-        fi
+        mapfile -t op_names < <(selected_test_ops)
         local test_pass=0 test_fail=0 test_timeout=0
-        for op in "${op_names[@]}"; do
-            local result="${TEST_RESULTS[$op]:--}"
-            [[ "$result" == "PASS" ]] && test_pass=$((test_pass + 1))
-            [[ "$result" == "FAIL" ]] && test_fail=$((test_fail + 1))
-            [[ "$result" == "TIMEOUT" ]] && test_timeout=$((test_timeout + 1))
-            printf "| %-36s | %-7s |\n" "$op" "$result"
-        done
+        if [[ "${#op_names[@]}" -eq 0 ]]; then
+            echo "(无适用 legacy 单算子测试)"
+        else
+            for op in "${op_names[@]}"; do
+                local result="${TEST_RESULTS[$op]:--}"
+                [[ "$result" == "PASS" ]] && test_pass=$((test_pass + 1))
+                [[ "$result" == "FAIL" ]] && test_fail=$((test_fail + 1))
+                [[ "$result" == "TIMEOUT" ]] && test_timeout=$((test_timeout + 1))
+                printf "| %-36s | %-7s |\n" "$op" "$result"
+            done
+        fi
         echo ""
         echo "PASS: $test_pass  FAIL: $test_fail  TIMEOUT: $test_timeout"
         echo "详细日志: torch_custom/fla_npu/test/test_output/"
@@ -534,7 +582,11 @@ print_report() {
     echo "-----------------------------------------------------------------"
     echo "四、Examples 整网"
     echo "-----------------------------------------------------------------"
-    echo "flash_gated_delta_rule.py: $($EXAMPLE_OK && echo 'OK' || echo 'FAIL')"
+    if $SKIP_EXAMPLE; then
+        echo "flash_gated_delta_rule.py: (已跳过)"
+    else
+        echo "flash_gated_delta_rule.py: $($EXAMPLE_OK && echo 'OK' || echo 'FAIL')"
+    fi
 
     # 失败详情
     if [[ -n "$FAIL_DETAILS" ]]; then
@@ -549,11 +601,160 @@ print_report() {
     echo "================================================================="
 }
 
+requested_build_ops() {
+    if [[ "$MODE" != "single" || -z "$SINGLE_OP" ]]; then
+        return 0
+    fi
+
+    local requested
+    local requested_ops=()
+    IFS=',' read -ra requested_ops <<< "$SINGLE_OP"
+    for requested in "${requested_ops[@]}"; do
+        requested="${requested#"${requested%%[![:space:]]*}"}"
+        requested="${requested%"${requested##*[![:space:]]}"}"
+        [[ -n "$requested" ]] && printf '%s\n' "$requested"
+    done
+}
+
+normalized_requested_build_ops() {
+    local requested_ops=()
+    mapfile -t requested_ops < <(requested_build_ops)
+    local IFS=,
+    printf '%s\n' "${requested_ops[*]}"
+}
+
+map_build_op_to_legacy_test() {
+    local build_op="$1" test_op
+    case "$build_op" in
+        chunk_fwd_o)
+            echo "gdn_fwd_o"
+            return 0
+            ;;
+        chunk_gated_delta_rule_fwd_h)
+            echo "gdn_fwd_h"
+            return 0
+            ;;
+    esac
+
+    for test_op in "${TEST_OPS[@]}"; do
+        if [[ "$build_op" == "$test_op" ]]; then
+            echo "$test_op"
+            return 0
+        fi
+    done
+    return 1
+}
+
+selected_test_ops() {
+    if [[ "$MODE" != "single" || -z "$SINGLE_OP" ]]; then
+        printf '%s\n' "${TEST_OPS[@]}"
+        return 0
+    fi
+
+    local requested mapped
+    local -A seen=()
+    while IFS= read -r requested; do
+        if mapped=$(map_build_op_to_legacy_test "$requested"); then
+            if [[ -z "${seen[$mapped]+x}" ]]; then
+                printf '%s\n' "$mapped"
+                seen["$mapped"]=1
+            fi
+        fi
+    done < <(requested_build_ops)
+}
+
+selected_ops_without_legacy_test() {
+    local requested
+    while IFS= read -r requested; do
+        if ! map_build_op_to_legacy_test "$requested" >/dev/null; then
+            printf '%s\n' "$requested"
+        fi
+    done < <(requested_build_ops)
+}
+
+is_known_build_op() {
+    local requested="$1" cmake_file op_dir
+    while IFS= read -r -d '' cmake_file; do
+        op_dir=$(dirname "$cmake_file")
+        if [[ "$(basename "$op_dir")" == "op_host" ]]; then
+            op_dir=$(dirname "$op_dir")
+        fi
+        [[ "$(basename "$op_dir")" == "$requested" ]] && return 0
+    done < <(
+        find "$SCRIPT_DIR/fla/ops/ascendc" -type f -name CMakeLists.txt \
+            ! -path '*/tests/*' -print0
+    )
+    return 1
+}
+
+validate_arguments() {
+    if [[ "$MODE" != "full" && "$MODE" != "single" ]]; then
+        echo "[FATAL] --mode 仅支持 full 或 single，当前值: $MODE" >&2
+        return 2
+    fi
+    if [[ "$MODE" == "full" ]]; then
+        if [[ -n "$SINGLE_OP" ]]; then
+            echo "[FATAL] --op 只能与 --mode single 一起使用。" >&2
+            return 2
+        fi
+        return 0
+    fi
+
+    local requested_ops=() requested
+    mapfile -t requested_ops < <(requested_build_ops)
+    if [[ "${#requested_ops[@]}" -eq 0 ]]; then
+        echo "[FATAL] --mode single 必须提供非空 --op。" >&2
+        return 2
+    fi
+    for requested in "${requested_ops[@]}"; do
+        if ! is_known_build_op "$requested"; then
+            echo "[FATAL] 未知算子: $requested" >&2
+            return 2
+        fi
+    done
+    return 0
+}
+
+verification_succeeded() {
+    local soc type key result op
+    if ! $SKIPPED_COMPILE; then
+        for soc in $(get_soc_list); do
+            for type in "整包" "单算子"; do
+                key="B_${soc}_${type}"
+                result="${COMPILE_RESULTS[$key]:-}"
+                [[ "$result" == "OK" ]] || return 1
+            done
+        done
+        $WHL_OK || return 1
+        $RUN_OK || return 1
+    fi
+
+    if ! $SKIP_TEST; then
+        $TEST_STAGE_OK || return 1
+        local op_names=()
+        mapfile -t op_names < <(selected_test_ops)
+        for op in "${op_names[@]}"; do
+            [[ "${TEST_RESULTS[$op]:-}" == "PASS" ]] || return 1
+        done
+    fi
+
+    if ! $SKIP_EXAMPLE; then
+        $EXAMPLE_OK || return 1
+    fi
+    return 0
+}
+
 # ================================================================
 # 主流程
 # ================================================================
 
+main() {
+
 trap 'echo "[中断] 脚本被用户终止"; exit 130' INT
+
+if ! validate_arguments; then
+    return 2
+fi
 
 echo ""
 echo "╔══════════════════════════════════════════╗"
@@ -588,7 +789,11 @@ if $SKIP_TEST; then
     echo ""
     echo "[INFO] 跳过单算子测试阶段"
 else
-    run_test_stage || true
+    if run_test_stage; then
+        TEST_STAGE_OK=true
+    else
+        TEST_STAGE_OK=false
+    fi
 fi
 
 if $SKIP_EXAMPLE; then
@@ -601,4 +806,13 @@ fi
 # --- 报告 ---
 print_report
 
-exit 0
+if ! verification_succeeded; then
+    echo "[FAIL] GDN 验证存在未通过项。"
+    return 1
+fi
+return 0
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main
+fi

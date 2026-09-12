@@ -381,6 +381,9 @@ jobs:
       CI_RUN_SCOPED_WHEEL_INSTALL_CHECK: 'true'
       CI_ACCURACY_PLATFORM: ${{ matrix.platform }}
       CI_ACCURACY_REPORT_FILE: .ci-tmp/gdr_accuracy_report-${{ matrix.platform }}.json
+      CI_RAW_LOG_FILE: .ci-tmp/npu-ci-${{ matrix.platform }}.log
+      CI_DIAGNOSTIC_FILE: .ci-tmp/npu-ci-diagnostics-${{ matrix.platform }}.json
+      CI_SUMMARY_FILE: .ci-tmp/npu-ci-summary-${{ matrix.platform }}.md
       CI_ACCURACY_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
       CI_ACCURACY_RUN_ID: ${{ github.run_id }}
       CI_ACCURACY_RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -946,8 +949,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p "$(dirname "$CI_ACCURACY_REPORT_FILE")"
-          rm -f "$CI_ACCURACY_REPORT_FILE" "$CI_ACCURACY_REPORT_FILE.tmp"
+          mkdir -p "$(dirname "$CI_ACCURACY_REPORT_FILE")" "$(dirname "$CI_RAW_LOG_FILE")"
+          rm -f \
+            "$CI_ACCURACY_REPORT_FILE" \
+            "$CI_ACCURACY_REPORT_FILE.tmp" \
+            "$CI_RAW_LOG_FILE" \
+            "$CI_DIAGNOSTIC_FILE" \
+            "$CI_SUMMARY_FILE"
 
           get_pr_head_sha() {
             python3 - <<'PY'
@@ -975,7 +983,9 @@ jobs:
 
           mark_stale() {
             local current_sha="$1"
-            echo "[CI][ERROR] PR head changed while NPU CI was running; target=${NPU_CI_TARGET_SHA}, current=${current_sha}."
+            local message="[CI][ERROR] PR head changed while NPU CI was running; target=${NPU_CI_TARGET_SHA}, current=${current_sha}."
+            echo "$message" >&2
+            echo "$message" >>"$CI_RAW_LOG_FILE"
             {
               echo "NPU_CI_STALE=true"
               echo "NPU_CI_STALE_HEAD=${current_sha}"
@@ -992,14 +1002,20 @@ jobs:
             echo "[CI][WARN] Unable to check PR head before starting NPU CI; continuing."
           fi
 
-          bash ci/run_ci_container.sh &
+          echo "::group::${{ matrix.name }} 完整构建与测试日志（默认折叠）"
+          (
+            set -o pipefail
+            bash ci/run_ci_container.sh 2>&1 | tee "$CI_RAW_LOG_FILE"
+          ) &
           ci_pid=$!
           stale=0
+          started_at=$SECONDS
           while kill -0 "$ci_pid" >/dev/null 2>&1; do
             sleep "$NPU_CI_HEAD_POLL_SECONDS"
             if ! kill -0 "$ci_pid" >/dev/null 2>&1; then
               break
             fi
+            echo "[CI] ${{ matrix.name }} 仍在运行，已耗时 $((SECONDS - started_at)) 秒。"
             if ! current_sha="$(get_pr_head_sha)"; then
               echo "[CI][WARN] Unable to check PR head while NPU CI is running; continuing."
               continue
@@ -1013,9 +1029,53 @@ jobs:
           done
 
           if [[ "$stale" == "1" ]]; then
-            exit 1
+            ci_status=1
+          elif wait "$ci_pid"; then
+            ci_status=0
+          else
+            ci_status=$?
           fi
-          wait "$ci_pid"
+          echo "::endgroup::"
+
+          summary_status=0
+          python3 ci/summarize_npu_ci.py \
+            --log-file "$CI_RAW_LOG_FILE" \
+            --accuracy-report-file "$CI_ACCURACY_REPORT_FILE" \
+            --platform "$CI_ACCURACY_PLATFORM" \
+            --soc "$CI_SOC" \
+            --mode "$CI_MODE" \
+            --ops "$CI_OPS" \
+            --exit-code "$ci_status" \
+            --head-sha "$CI_ACCURACY_HEAD_SHA" \
+            --run-id "$CI_ACCURACY_RUN_ID" \
+            --run-attempt "$CI_ACCURACY_RUN_ATTEMPT" \
+            --json-out "$CI_DIAGNOSTIC_FILE" \
+            --markdown-out "$CI_SUMMARY_FILE" \
+            --require-accuracy-report || summary_status=$?
+
+          if [[ -f "$CI_SUMMARY_FILE" ]]; then
+            cat "$CI_SUMMARY_FILE"
+            cat "$CI_SUMMARY_FILE" >>"$GITHUB_STEP_SUMMARY"
+          else
+            echo "[CI][ERROR] NPU CI 关键摘要未生成。" >&2
+            summary_status=1
+          fi
+
+          if [[ "$ci_status" -ne 0 ]]; then
+            exit "$ci_status"
+          fi
+          exit "$summary_status"
+
+      - name: 清理 ${{ matrix.name }} 临时完整日志
+        if: always()
+        run: |
+          set -euo pipefail
+          repo_path="$(realpath repo)"
+          raw_log_path="$(realpath -m "repo/${CI_RAW_LOG_FILE}")"
+          case "$raw_log_path" in
+            "$repo_path"/*) rm -f "$raw_log_path" ;;
+            *) echo "[CI][ERROR] Refusing to clean log outside the repository workspace." >&2; exit 1 ;;
+          esac
 
       - name: 记录 ${{ matrix.name }} 执行结果
         if: always()
@@ -1055,6 +1115,8 @@ jobs:
           path: |
             repo/.ci-tmp/npu-ci-result-${{ matrix.platform }}.json
             repo/${{ env.CI_ACCURACY_REPORT_FILE }}
+            repo/${{ env.CI_DIAGNOSTIC_FILE }}
+            repo/${{ env.CI_SUMMARY_FILE }}
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 7
@@ -1116,14 +1178,82 @@ jobs:
               }
               return value === undefined || value === null || value === '' ? '-' : String(value);
             };
-            const escapeCell = (value) => formatValue(value).replace(/\|/g, '\\|').replace(/[\r\n]+/g, ' ');
+            const redactSecretAssignment = (match, quote, key, separator) => {
+              const isSpacedLowercaseTokenVariable = !quote && key === key.toLowerCase() &&
+                /(?:^|[-_])token$/.test(key) && /^\s+[:=]\s+$/.test(separator);
+              return isSpacedLowercaseTokenVariable
+                ? match
+                : `${quote}${key}${quote}${separator}<redacted>`;
+            };
+            const redactHostAssignment = (match, quote, key, separator) => {
+              const isSpacedLowercaseBusinessVariable = !quote &&
+                ['host', 'worker', 'node'].includes(key) && /^\s+[:=]\s+$/.test(separator);
+              return isSpacedLowercaseBusinessVariable
+                ? match
+                : `${quote}${key}${quote}${separator}<internal-host>`;
+            };
+            const sanitizePublicText = (value, maxLength = 800) => String(value ?? '')
+              .replace(/\x1b\[[0-?]*[ -\/]*[@-~]/g, '')
+              .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
+              .replace(/\b(?:10(?:\.\d{1,3}){3}|127(?:\.\d{1,3}){3}|169\.254(?:\.\d{1,3}){2}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})\b/g, '<internal-host>')
+              .replace(/(?<![0-9a-f:])(?:::1|(?:f[cd][0-9a-f]{2}|fe[89ab][0-9a-f]):(?:[0-9a-f]{0,4}:){1,6}[0-9a-f]{0,4})(?![0-9a-f:])/gi, '<internal-host>')
+              .replace(/(https?:\/\/)[^\s\/@:]+:[^\s\/@]+@/gi, '$1<redacted>@')
+              .replace(/(?<![a-z0-9_-])(--(?:[a-z][a-z0-9]*[-_])*(?:authorization|token|password|passwd|secret|api[-_]?key|access[-_]?key|secret[-_]?key|private[-_]?key))(\s*=\s*|\s+)(?:<redacted>|"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[^\s,;\r\n}\]]+)/gi, '$1$2<redacted>')
+              .replace(/(?<![a-z0-9_-])([\"']?)((?:[a-z][a-z0-9]*[-_])*(?:authorization|token|password|passwd|secret|api[-_]?key|access[-_]?key|secret[-_]?key|private[-_]?key))\1(\s*[:=]\s*)(?:<redacted>|\"(?:\\.|[^\"\\\r\n])*\"|'(?:\\.|[^'\\\r\n])*'|(?:bearer\s+|basic\s+)?[^,;\r\n}\]]+?(?=\s+[\"']?[a-z][a-z0-9_-]*[\"']?\s*[:=]|[,;\r\n}\]]|$))/gi, redactSecretAssignment)
+              .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|glpat-[A-Za-z0-9_-]{12,})\b/gi, '<redacted>')
+              .replace(/\b[a-z_][a-z0-9_.-]{0,63}@[a-z0-9_.-]+\b/gi, '<user-host>')
+              .replace(/\b(?:[a-z0-9-]+\.)+(?:local|internal|corp)\b/gi, '<internal-host>')
+              .replace(/(?<![a-z0-9_-])(["']?)(host(?:name)?|runner|machine|worker|node)\1(\s*[:=]\s*)(?:<internal-host>|"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[a-z0-9][a-z0-9_.-]*)/gi, redactHostAssignment)
+              .replace(/\b((?:on|via|from)\s+host\s+)[a-z0-9][a-z0-9_.-]*/gi, '$1<internal-host>')
+              .replace(/\b(?=[a-z0-9-]*(?:runner|worker|host|node))(?=[a-z0-9-]*\d)[a-z0-9]+(?:-[a-z0-9]+)+\b/gi, '<internal-host>')
+              .replace(/[A-Za-z]:\\(?:[^\s\\]+\\)*[^\s]*/g, '<path>')
+              .replace(/(?<![\w.])\/(?:data|workspace|root|home|tmp|opt|usr|var|mnt|etc|srv|run|__w|github|runner)(?:\/[^\s\"'<>:]*)*(?=$|[\s\"'<>:,;.\)\]])/g, '<path>')
+              .replace(/(?<![:\/\w.])\/(?:[^\s\/\"'<>:]+\/)+[^\s\"'<>:]*/g, '<path>')
+              .slice(0, maxLength);
+            const sanitizeInline = (value, maxLength = 800) => sanitizePublicText(value, maxLength)
+              .replace(/[\r\n\t]+/g, ' ')
+              .trim();
+            const sanitizeMarkdownInline = (value, maxLength = 800) => sanitizeInline(value, maxLength)
+              .replace(/@/g, '_at_')
+              .replace(/[`<>\[\]]/g, "'");
+            const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+            const escapeCell = (value) => sanitizeMarkdownInline(formatValue(value), 300)
+              .replace(/\|/g, '\\|');
+            const diagnosticLines = (value) => Array.isArray(value)
+              ? value.slice(0, 4).map((line) => sanitizeInline(line, 280)).filter(Boolean)
+              : [];
+            const renderComment = (lines) => {
+              const maxChars = 48000;
+              const notice = '_其余诊断因评论长度限制已省略，完整结构化结果见平台 artifact。_';
+              const kept = [];
+              let used = 0;
+              let truncated = false;
+              for (const line of lines) {
+                const value = String(line);
+                if (used + value.length + 1 > maxChars - notice.length - 2) {
+                  truncated = true;
+                  break;
+                }
+                kept.push(value);
+                used += value.length + 1;
+              }
+              if (truncated) {
+                kept.push('', notice);
+              }
+              return kept.join('\n');
+            };
             const readJson = (filePath, description, errors) => {
               if (!fs.existsSync(filePath)) {
                 errors.push(`${description}未生成`);
                 return null;
               }
               try {
-                return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+                const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+                if (parsed === null) {
+                  errors.push(`${description}根节点无效`);
+                  return null;
+                }
+                return parsed;
               } catch (error) {
                 errors.push(`${description}无法解析`);
                 core.warning(`Unable to parse ${filePath}: ${error.message}`);
@@ -1131,7 +1261,7 @@ jobs:
               }
             };
             const validateIdentity = (metadata, def, description, errors) => {
-              if (!metadata || typeof metadata !== 'object') {
+              if (!isRecord(metadata)) {
                 errors.push(`${description}缺少身份信息`);
                 return;
               }
@@ -1152,59 +1282,271 @@ jobs:
               const errors = [];
               const executionErrors = [];
               const accuracyErrors = [];
+              const diagnosticErrors = [];
               const resultPath = path.join('accuracy-reports', `npu-ci-result-${def.key}.json`);
               const reportPath = path.join('accuracy-reports', `gdr_accuracy_report-${def.key}.json`);
+              const diagnosticPath = path.join('accuracy-reports', `npu-ci-diagnostics-${def.key}.json`);
               const execution = readJson(resultPath, '执行结果', executionErrors);
-              if (execution) {
-                if (execution.schema !== 'npu-ci-platform-result-v1') {
+              if (execution !== null) {
+                if (!isRecord(execution)) {
+                  executionErrors.push('执行结果根节点无效');
+                } else if (execution.schema !== 'npu-ci-platform-result-v1') {
                   executionErrors.push('执行结果 schema 不受支持');
                 }
-                validateIdentity(execution.metadata, def, '执行结果', executionErrors);
-                if (execution.status !== 'success') {
-                  executionErrors.push(`执行状态为 ${execution.status || 'unknown'}`);
+                if (isRecord(execution)) {
+                  validateIdentity(execution.metadata, def, '执行结果', executionErrors);
+                  if (!['success', 'failure'].includes(execution.status)) {
+                    executionErrors.push('执行结果 status 无效');
+                  } else if (execution.status !== 'success') {
+                    executionErrors.push(`执行状态为 ${execution.status || 'unknown'}`);
+                  }
                 }
               }
               const report = readJson(reportPath, '精度报告', accuracyErrors);
               let summary = null;
-              if (report) {
-                if (report.schema !== 'gdr-accuracy-report-v1') {
+              let reportAccuracyState = null;
+              if (report !== null) {
+                if (!isRecord(report)) {
+                  accuracyErrors.push('精度报告根节点无效');
+                } else if (report.schema !== 'gdr-accuracy-report-v1') {
                   accuracyErrors.push('精度报告 schema 不受支持');
                 }
-                validateIdentity(report.metadata, def, '精度报告', accuracyErrors);
-                if (!Array.isArray(report.cases)) {
-                  accuracyErrors.push('精度报告 cases 无效');
-                }
-                summary = report.summary;
-                if (!summary || typeof summary !== 'object') {
-                  accuracyErrors.push('精度报告 summary 无效');
-                } else {
-                  const fields = ['accuracy_total', 'accuracy_passed', 'accuracy_failed', 'accuracy_not_run'];
-                  const values = Object.fromEntries(fields.map((field) => [field, Number(summary[field])]));
-                  if (fields.some((field) => !Number.isInteger(values[field]) || values[field] < 0)) {
-                    accuracyErrors.push('精度报告计数无效');
-                  } else if (values.accuracy_total === 0) {
-                    accuracyErrors.push('未发现精度检查用例');
-                  } else if (
-                    values.accuracy_passed + values.accuracy_failed + values.accuracy_not_run !== values.accuracy_total
-                  ) {
-                    accuracyErrors.push('精度报告计数不一致');
-                  } else if (values.accuracy_failed > 0 || values.accuracy_not_run > 0 || values.accuracy_passed !== values.accuracy_total) {
-                    accuracyErrors.push(
-                      `精度未通过 (${values.accuracy_passed}/${values.accuracy_total}，失败 ${values.accuracy_failed}，未执行 ${values.accuracy_not_run})`
-                    );
+                if (isRecord(report)) {
+                  validateIdentity(report.metadata, def, '精度报告', accuracyErrors);
+                  if (report.complete !== true) {
+                    accuracyErrors.push('精度报告未完整结束');
+                  }
+                  const derivedExecution = { passed: 0, failed: 0, not_run: 0 };
+                  const derivedAccuracy = { passed: 0, failed: 0, not_run: 0 };
+                  let casesValid = true;
+                  const metricFailures = [];
+                  if (!Array.isArray(report.cases)) {
+                    accuracyErrors.push('精度报告 cases 无效');
+                    casesValid = false;
+                  } else {
+                    for (const [caseIndex, caseItem] of report.cases.entries()) {
+                      if (!isRecord(caseItem)) {
+                        accuracyErrors.push(`精度报告 case ${caseIndex} 不是对象`);
+                        casesValid = false;
+                        continue;
+                      }
+                      const caseName = sanitizeMarkdownInline(caseItem.name || `case-${caseIndex}`, 120);
+                      const caseStatus = String(caseItem.status || 'unknown').toLowerCase();
+                      const accuracyStatus = String(caseItem.accuracy_status || 'not_requested').toLowerCase();
+                      const executionStatusValid = Object.hasOwn(derivedExecution, caseStatus);
+                      const accuracyStatusValid = ['passed', 'failed', 'not_run', 'not_requested'].includes(accuracyStatus);
+                      if (!executionStatusValid) {
+                        accuracyErrors.push(`${caseName}: 执行状态无效`);
+                        casesValid = false;
+                      } else {
+                        derivedExecution[caseStatus] += 1;
+                      }
+                      const returnCode = caseItem.return_code;
+                      const returnCodeValid =
+                        (caseStatus === 'passed' && Number.isInteger(returnCode) && returnCode === 0) ||
+                        (caseStatus === 'failed' && Number.isInteger(returnCode) && returnCode !== 0) ||
+                        (caseStatus === 'not_run' && (returnCode === null || returnCode === undefined));
+                      if (executionStatusValid && !returnCodeValid) {
+                        executionErrors.push(`${caseName}: 执行状态与 return_code 不一致`);
+                        casesValid = false;
+                      }
+                      if (typeof caseItem.accuracy_check !== 'boolean' || !accuracyStatusValid) {
+                        accuracyErrors.push(`${caseName}: 精度状态无效`);
+                        casesValid = false;
+                      }
+                      const isAccuracyCase = caseItem.accuracy_check === true || accuracyStatus === 'not_run';
+                      if ((caseItem.accuracy_check === true && accuracyStatus === 'not_requested') ||
+                          (!isAccuracyCase && accuracyStatus !== 'not_requested')) {
+                        accuracyErrors.push(`${caseName}: 精度状态与检查开关不一致`);
+                        casesValid = false;
+                      } else if (isAccuracyCase && Object.hasOwn(derivedAccuracy, accuracyStatus)) {
+                        derivedAccuracy[accuracyStatus] += 1;
+                      }
+                      if (!Array.isArray(caseItem.metrics)) {
+                        accuracyErrors.push(`${caseName}: metrics 无效`);
+                        casesValid = false;
+                        continue;
+                      }
+                      if (accuracyStatus === 'passed' && caseItem.metrics.length === 0) {
+                        accuracyErrors.push(`${caseName}: 精度通过但缺少 metric`);
+                        casesValid = false;
+                      }
+                      for (const [metricIndex, metric] of caseItem.metrics.entries()) {
+                        if (!isRecord(metric)) {
+                          accuracyErrors.push(`${caseName}: metric ${metricIndex} 不是对象`);
+                          casesValid = false;
+                          continue;
+                        }
+                        if (isAccuracyCase && ['finite', 'allclose', 'cosine_ok'].some((field) => typeof metric[field] !== 'boolean')) {
+                          accuracyErrors.push(`${caseName}: metric ${metricIndex} 检查字段无效`);
+                          casesValid = false;
+                        }
+                        if ((metric.finite === false || metric.allclose === false || metric.cosine_ok === false) && metricFailures.length < 6) {
+                          metricFailures.push(`${caseName}/${sanitizeMarkdownInline(metric.tensor || 'unknown', 80)}`);
+                        }
+                      }
+                    }
+                  }
+                  if (metricFailures.length > 0) {
+                    accuracyErrors.push(`精度异常：${metricFailures.slice(0, 6).join('、')}`);
+                  }
+                  summary = report.summary;
+                  if (!isRecord(summary)) {
+                    accuracyErrors.push('精度报告 summary 无效');
+                  } else {
+                    const fields = ['total', 'passed', 'failed', 'not_run', 'accuracy_total', 'accuracy_passed', 'accuracy_failed', 'accuracy_not_run'];
+                    if (fields.some((field) => !Number.isInteger(summary[field]) || summary[field] < 0)) {
+                      accuracyErrors.push('精度报告计数无效');
+                    } else {
+                      const expected = {
+                        total: Array.isArray(report.cases) ? report.cases.length : 0,
+                        ...derivedExecution,
+                        accuracy_total: Object.values(derivedAccuracy).reduce((sum, value) => sum + value, 0),
+                        accuracy_passed: derivedAccuracy.passed,
+                        accuracy_failed: derivedAccuracy.failed,
+                        accuracy_not_run: derivedAccuracy.not_run,
+                      };
+                      if (!casesValid || fields.some((field) => summary[field] !== expected[field])) {
+                        accuracyErrors.push('精度报告 summary 与 cases 不一致');
+                      } else if (summary.accuracy_total === 0) {
+                        reportAccuracyState = 'failure';
+                        accuracyErrors.push('未发现精度检查用例');
+                      } else if (summary.accuracy_failed > 0 || summary.accuracy_not_run > 0 || summary.accuracy_passed !== summary.accuracy_total) {
+                        reportAccuracyState = 'failure';
+                        accuracyErrors.push(
+                          `精度未通过 (${summary.accuracy_passed}/${summary.accuracy_total}，失败 ${summary.accuracy_failed}，未执行 ${summary.accuracy_not_run})`
+                        );
+                      } else {
+                        reportAccuracyState = 'success';
+                      }
+                    }
                   }
                 }
               }
-              errors.push(...executionErrors, ...accuracyErrors);
+              const diagnostic = readJson(diagnosticPath, '关键诊断', diagnosticErrors);
+              let diagnosticTopValid = false;
+              let diagnosticExecutionValid = false;
+              let diagnosticAccuracyValid = false;
+              let diagnosticHasFailurePayload = false;
+              if (diagnostic !== null) {
+                if (!isRecord(diagnostic)) {
+                  diagnosticErrors.push('关键诊断根节点无效');
+                } else if (diagnostic.schema !== 'npu-ci-diagnostics-v1') {
+                  diagnosticErrors.push('关键诊断 schema 不受支持');
+                }
+                if (isRecord(diagnostic)) {
+                  validateIdentity(diagnostic.metadata, def, '关键诊断', diagnosticErrors);
+                  if (!['success', 'failure'].includes(diagnostic.status)) {
+                    diagnosticErrors.push('关键诊断 status 无效');
+                  } else {
+                    diagnosticTopValid = true;
+                    if (diagnostic.status !== 'success') {
+                      diagnosticErrors.push(`关键诊断状态为 ${diagnostic.status}`);
+                    }
+                  }
+                  if (!isRecord(diagnostic.execution) ||
+                      !['success', 'failure'].includes(diagnostic.execution.status) ||
+                      !Number.isInteger(diagnostic.execution.exit_code)) {
+                    diagnosticErrors.push('关键诊断 execution 无效');
+                  } else {
+                    diagnosticExecutionValid = true;
+                    if ((diagnostic.execution.exit_code === 0) !== (diagnostic.execution.status === 'success')) {
+                      diagnosticErrors.push('关键诊断 execution 状态与退出码不一致');
+                    }
+                  }
+                  const diagnosticAccuracyFields = ['total', 'passed', 'failed', 'not_run'];
+                  if (!isRecord(diagnostic.accuracy) ||
+                      !['success', 'failure', 'not_available'].includes(diagnostic.accuracy.status) ||
+                      !Array.isArray(diagnostic.accuracy.failures) ||
+                      diagnosticAccuracyFields.some((field) =>
+                        !Number.isInteger(diagnostic.accuracy[field]) || diagnostic.accuracy[field] < 0)) {
+                    diagnosticErrors.push('关键诊断 accuracy 无效');
+                  } else {
+                    diagnosticAccuracyValid = true;
+                    if (diagnostic.accuracy.failures.length > 0) {
+                      diagnosticHasFailurePayload = true;
+                      if (diagnostic.accuracy.status === 'success') {
+                        accuracyErrors.push('关键诊断精度成功但包含失败用例');
+                      }
+                    }
+                    for (const [failureIndex, failure] of diagnostic.accuracy.failures.entries()) {
+                      if (!isRecord(failure) || !Array.isArray(failure.metrics)) {
+                        diagnosticErrors.push(`关键诊断 accuracy failure ${failureIndex} 无效`);
+                        continue;
+                      }
+                      for (const [metricIndex, metric] of failure.metrics.entries()) {
+                        if (!isRecord(metric) || !isRecord(metric.details)) {
+                          diagnosticErrors.push(`关键诊断 accuracy metric ${failureIndex}/${metricIndex} 无效`);
+                        }
+                      }
+                    }
+                  }
+                  if (!isRecord(diagnostic.diagnostics)) {
+                    diagnosticErrors.push('关键诊断 diagnostics 无效');
+                  } else {
+                    for (const category of ['compile', 'runtime', 'infrastructure']) {
+                      const blocks = diagnostic.diagnostics[category];
+                      if (!Array.isArray(blocks)) {
+                        diagnosticErrors.push(`关键诊断 ${category} 无效`);
+                        continue;
+                      }
+                      if (blocks.length > 0) {
+                        diagnosticHasFailurePayload = true;
+                      }
+                      for (const [blockIndex, block] of blocks.entries()) {
+                        if (!isRecord(block) || !Array.isArray(block.lines) ||
+                            block.lines.some((line) => typeof line !== 'string')) {
+                          diagnosticErrors.push(`关键诊断 ${category} block ${blockIndex} 无效`);
+                        }
+                      }
+                    }
+                  }
+                  if (!Array.isArray(diagnostic.reproduction) ||
+                      diagnostic.reproduction.some((line) => typeof line !== 'string')) {
+                    diagnosticErrors.push('关键诊断 reproduction 无效');
+                  } else if (diagnostic.reproduction.length > 0) {
+                    diagnosticHasFailurePayload = true;
+                  }
+                  if (diagnosticTopValid && diagnosticExecutionValid && diagnosticAccuracyValid) {
+                    const expectedDiagnosticStatus =
+                      diagnostic.execution.status === 'success' &&
+                      diagnostic.accuracy.status === 'success' &&
+                      !diagnosticHasFailurePayload
+                        ? 'success'
+                        : 'failure';
+                    if (diagnostic.status !== expectedDiagnosticStatus) {
+                      diagnosticErrors.push('关键诊断顶层状态与 execution/accuracy 不一致');
+                    }
+                  }
+                  if (diagnosticTopValid && isRecord(execution) &&
+                      ['success', 'failure'].includes(execution.status) &&
+                      execution.status !== diagnostic.status) {
+                    diagnosticErrors.push('执行结果与关键诊断顶层状态不一致');
+                  }
+                  if (diagnosticAccuracyValid && reportAccuracyState !== null) {
+                    const countsMatch =
+                      diagnostic.accuracy.total === summary.accuracy_total &&
+                      diagnostic.accuracy.passed === summary.accuracy_passed &&
+                      diagnostic.accuracy.failed === summary.accuracy_failed &&
+                      diagnostic.accuracy.not_run === summary.accuracy_not_run;
+                    if (diagnostic.accuracy.status !== reportAccuracyState || !countsMatch) {
+                      accuracyErrors.push('关键诊断 accuracy 与精度报告不一致');
+                    }
+                  }
+                }
+              }
+              errors.push(...executionErrors, ...accuracyErrors, ...diagnosticErrors);
               return {
                 ...def,
                 execution,
                 report,
+                diagnostic,
                 summary,
-                executionOk: executionErrors.length === 0,
+                executionOk: executionErrors.length === 0 && diagnosticErrors.length === 0,
                 accuracyOk: accuracyErrors.length === 0,
                 executionErrors,
                 accuracyErrors,
+                diagnosticErrors,
                 errors,
               };
             };
@@ -1224,12 +1566,17 @@ jobs:
             }
             const staleRun = Boolean(currentHeadSha) && currentHeadSha !== sha;
             const platforms = platformDefs.map(validatePlatform);
+            const matrixArtifactMismatch = matrixResult !== 'success' &&
+              platforms.every((item) => item.executionOk && item.accuracyOk);
+            const matrixFailureReason = matrixArtifactMismatch
+              ? `执行矩阵状态为 ${sanitizeMarkdownInline(matrixResult, 40)}，但双平台 artifact 均记录为通过；请查看失败 job 或 post-action。`
+              : '';
             const executionOk = !headCheckError && !staleRun && matrixResult === 'success' && platforms.every((item) => item.executionOk);
             const accuracyOk = !headCheckError && !staleRun && platforms.every((item) => item.accuracyOk);
             const invalidReason = headCheckError
               ? '无法确认 PR head，本次 A2+A5 结果失效'
               : (staleRun ? 'PR head 已变化，本次 A2+A5 结果失效' : '');
-            const executionDescription = invalidReason || (
+            const executionDescription = invalidReason || matrixFailureReason || (
               executionOk
                 ? `NPU CI 通过 (${mode}+example,A2+A5)`
                 : `NPU CI 失败 (${mode}+example,A2+A5)`
@@ -1279,14 +1626,15 @@ jobs:
               `<!-- npu-ci:pr=${prNumber}:sha=${sha} -->`,
               `NPU CI ${executionOk && accuracyOk ? '通过' : '失败'}：\`${sha}\`。`,
               '',
-              `- 模式：\`${mode}\``,
+              `- 模式：\`${sanitizeMarkdownInline(mode, 40)}\``,
               `- 触发人：@${context.actor}`,
               '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
               invalidReason ? `- 失效原因：${invalidReason}` : null,
-              `- 执行矩阵：\`${matrixResult}\``,
+              `- 执行矩阵：\`${sanitizeMarkdownInline(matrixResult, 40)}\``,
+              matrixFailureReason ? `- 汇总异常：${matrixFailureReason}` : null,
               '- Example ST：两平台均必跑',
               `- 精度检查：${accuracyDescription}`,
-              ops ? `- 算子：\`${ops}\`` : null,
+              ops ? `- 算子：\`${sanitizeMarkdownInline(ops, 500)}\`` : null,
               `- 运行链接：[NPU CI #${context.runNumber}](${targetUrl})`,
               '',
               '### 双平台汇总',
@@ -1295,40 +1643,92 @@ jobs:
               '| --- | --- | --- | --- | --- | --- |',
               ...platforms.map((item) => {
                 const summary = item.summary || {};
-                const accuracyCases = `${summary.accuracy_passed || 0}/${summary.accuracy_total || 0}`;
-                return `| ${item.label} | \`${item.soc}\` | ${item.executionOk ? '通过' : '失败'} | ${item.accuracyOk ? '通过' : '失败'} | ${accuracyCases} | ${escapeCell(item.errors.join('；'))} |`;
+                const accuracyCases = Number.isInteger(summary.accuracy_passed) && Number.isInteger(summary.accuracy_total)
+                  ? `${summary.accuracy_passed}/${summary.accuracy_total}`
+                  : '-/-';
+                return `| ${item.label} | \`${item.soc}\` | ${item.executionOk ? '通过' : '失败'} | ${item.accuracyOk ? '通过' : '失败'} | ${escapeCell(accuracyCases)} | ${escapeCell(item.errors.join('；'))} |`;
               }),
             ].filter((line) => line !== null);
 
-            for (const item of platforms) {
-              if (!item.report || !Array.isArray(item.report.cases)) {
-                continue;
+            const categoryLabels = {
+              compile: '编译错误',
+              runtime: '运行异常',
+              infrastructure: 'CI 环境异常',
+            };
+            for (const item of platforms.filter((platform) => !platform.executionOk || !platform.accuracyOk)) {
+              commentBody.push('', `### ${item.label} 关键诊断`, '');
+              let detailAdded = false;
+              const groups = item.diagnostic && item.diagnostic.diagnostics;
+              if (groups && typeof groups === 'object') {
+                for (const category of ['compile', 'runtime', 'infrastructure']) {
+                  const blocks = Array.isArray(groups[category]) ? groups[category].slice(0, 2) : [];
+                  for (const block of blocks) {
+                    const lines = diagnosticLines(block && block.lines);
+                    if (lines.length === 0) {
+                      continue;
+                    }
+                    const rawOccurrences = Number(block.occurrences || 1);
+                    const occurrences = Number.isSafeInteger(rawOccurrences) && rawOccurrences > 1
+                      ? Math.min(rawOccurrences, 9999)
+                      : 1;
+                    commentBody.push(`#### ${categoryLabels[category]}${occurrences > 1 ? `（重复 ${occurrences} 次）` : ''}`, '');
+                    commentBody.push(...lines.map((line) => `    ${line}`), '');
+                    detailAdded = true;
+                  }
+                }
               }
-              commentBody.push('', `### ${item.label} 精度详情`, '');
-              commentBody.push('| 用例 | Tensor | 结果 | tol | cosine | cos_min | max_abs | mean_abs | rmse | bad_frac | golden |');
-              commentBody.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |');
-              for (const caseItem of item.report.cases) {
-                const metrics = Array.isArray(caseItem.metrics) ? caseItem.metrics : [];
-                if (metrics.length === 0) {
-                  commentBody.push(
-                    `| ${escapeCell(caseItem.name)} | - | ${escapeCell(caseItem.accuracy_status || caseItem.status)} | - | - | - | - | - | - | - | ${escapeCell(caseItem.golden)} |`
-                  );
-                  continue;
+
+              const accuracy = item.diagnostic && item.diagnostic.accuracy;
+              const failures = accuracy && Array.isArray(accuracy.failures)
+                ? accuracy.failures.filter(isRecord).slice(0, 4)
+                : [];
+              if (failures.length > 0) {
+                commentBody.push('#### 精度异常', '');
+                commentBody.push('| 用例 | Tensor | 失败判据 | tol | cosine / cos_min | max_abs | bad_frac | 退出码 |');
+                commentBody.push('| --- | --- | --- | --- | --- | --- | --- | --- |');
+                for (const failure of failures) {
+                  const validMetrics = Array.isArray(failure.metrics)
+                    ? failure.metrics.filter(isRecord).slice(0, 3)
+                    : [];
+                  const metrics = validMetrics.length > 0
+                    ? validMetrics
+                    : [{ output: '-', status: failure.status || 'failed', details: {} }];
+                  for (const metric of metrics) {
+                    const details = isRecord(metric.details) ? metric.details : {};
+                    const failedChecks = ['finite', 'allclose', 'cosine_ok']
+                      .filter((field) => details[field] === false)
+                      .map((field) => `${field}=false`);
+                    const criterion = failedChecks.join(', ') || metric.status || failure.status || 'failed';
+                    commentBody.push(
+                      `| ${escapeCell(failure.name)} | ${escapeCell(metric.output)} | ${escapeCell(criterion)} | ` +
+                      `${escapeCell(details.tol)} | ${escapeCell(details.cosine)} / ${escapeCell(details.cos_min)} | ` +
+                      `${escapeCell(details.max_abs)} | ${escapeCell(details.bad_frac)} | ${escapeCell(failure.return_code)} |`
+                    );
+                  }
                 }
-                for (const metric of metrics) {
-                  const metricOk = metric.finite === true && metric.allclose === true && metric.cosine_ok === true;
-                  commentBody.push(
-                    `| ${escapeCell(caseItem.name)} | ${escapeCell(metric.tensor)} | ${metricOk ? '通过' : '失败'} | ` +
-                      `${escapeCell(metric.tol)} | ${escapeCell(metric.cosine)} | ${escapeCell(metric.cos_min)} | ` +
-                      `${escapeCell(metric.max_abs)} | ${escapeCell(metric.mean_abs)} | ${escapeCell(metric.rmse)} | ` +
-                      `${escapeCell(metric.bad_frac)} | ${escapeCell(caseItem.golden)} |`
-                  );
-                }
+                detailAdded = true;
+              }
+
+              const reproduction = item.diagnostic && Array.isArray(item.diagnostic.reproduction)
+                ? item.diagnostic.reproduction.filter((line) => typeof line === 'string').slice(0, 2).map((line) => sanitizeInline(line, 2400)).filter(Boolean)
+                : [];
+              if (reproduction.length > 0) {
+                commentBody.push('', '#### 复现命令', '', ...reproduction.map((line) => `    ${line}`));
+                detailAdded = true;
+              }
+
+              if (!detailAdded) {
+                const fallback = item.errors.length > 0 ? item.errors : ['未生成可用的关键诊断，请查看对应平台 job。'];
+                commentBody.push(...fallback.slice(0, 5).map((line) => `- ${sanitizeMarkdownInline(line, 300)}`));
               }
             }
 
+            if (executionOk && accuracyOk) {
+              commentBody.push('', '全部检查通过；成功用例的逐 Tensor 指标已收纳到平台 artifact，不在评论中重复展开。');
+            }
+
             try {
-              const body = commentBody.join('\n');
+              const body = renderComment(commentBody);
               if (commentId) {
                 await github.rest.issues.updateComment({
                   owner: context.repo.owner,

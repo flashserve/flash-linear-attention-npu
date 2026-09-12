@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import math
 import os
 import shlex
 import subprocess
@@ -162,7 +163,8 @@ def _parse_metric_value(value: str) -> Any:
     if value == "False":
         return False
     try:
-        return float(value)
+        parsed = float(value)
+        return parsed if math.isfinite(parsed) else value.lower()
     except ValueError:
         return value
 
@@ -226,7 +228,8 @@ def _run_case(cmd: list[str], repo_root: Path, case: dict[str, Any]) -> dict[str
     )
     assert process.stdout is not None
     metrics: list[dict[str, Any]] = []
-    accuracy_check = "--accuracy-check" in cmd
+    accuracy_requested = "--accuracy-check" in cmd
+    accuracy_started = False
     accuracy_passed = False
     golden = "not_requested"
     for line in process.stdout:
@@ -235,23 +238,29 @@ def _run_case(cmd: list[str], repo_root: Path, case: dict[str, Any]) -> dict[str
         if stripped.startswith("accuracy golden:"):
             golden = _golden_action(stripped)
         elif stripped == "accuracy check:":
-            accuracy_check = True
+            accuracy_started = True
         elif stripped == "accuracy check passed":
+            accuracy_started = True
             accuracy_passed = True
         metric = _parse_accuracy_metric(stripped)
         if metric is not None:
-            accuracy_check = True
+            accuracy_started = True
             metrics.append(metric)
     return_code = process.wait()
+    accuracy_check = accuracy_requested or accuracy_started
+    if accuracy_passed and return_code == 0:
+        accuracy_status = "passed"
+    elif accuracy_check:
+        accuracy_status = "not_run" if return_code != 0 and not accuracy_started else "failed"
+    else:
+        accuracy_status = "not_requested"
     report.update(
         {
             "status": "passed" if return_code == 0 else "failed",
             "return_code": return_code,
             "duration_sec": round(time.monotonic() - started, 3),
             "accuracy_check": accuracy_check,
-            "accuracy_status": "passed"
-            if accuracy_passed and return_code == 0
-            else ("failed" if accuracy_check else "not_requested"),
+            "accuracy_status": accuracy_status,
             "golden": golden,
             "metrics": metrics,
         }
@@ -286,18 +295,28 @@ def _report_metadata(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def _write_accuracy_report(path: Optional[Path], cases: list[dict[str, Any]], metadata: dict[str, Any]) -> None:
+def _write_accuracy_report(
+    path: Optional[Path],
+    cases: list[dict[str, Any]],
+    metadata: dict[str, Any],
+    *,
+    complete: bool,
+) -> None:
     if path is None:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     report = {
         "schema": "gdr-accuracy-report-v1",
+        "complete": complete,
         "metadata": metadata,
         "summary": _summarize_report(cases),
         "cases": cases,
     }
     tmp_path = path.with_suffix(path.suffix + ".tmp")
-    tmp_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp_path.write_text(
+        json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False),
+        encoding="utf-8",
+    )
     tmp_path.replace(path)
 
 
@@ -336,15 +355,14 @@ def main() -> int:
             continue
         case_report = _run_case(cmd, repo_root, case)
         case_reports.append(case_report)
-        _write_accuracy_report(report_path, case_reports, metadata)
+        _write_accuracy_report(report_path, case_reports, metadata, complete=False)
         if case_report["return_code"] != 0:
             failed_return_code = int(case_report["return_code"])
             for remaining in cases[index:]:
                 case_reports.append(_blank_case_report(remaining, "not_run"))
-            _write_accuracy_report(report_path, case_reports, metadata)
             break
     if not args.dry_run:
-        _write_accuracy_report(report_path, case_reports, metadata)
+        _write_accuracy_report(report_path, case_reports, metadata, complete=True)
     return failed_return_code
 
 

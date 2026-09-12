@@ -322,7 +322,7 @@ from pathlib import Path
 
 spec = importlib.util.find_spec("fla_npu")
 if spec is None or spec.origin is None:
-    raise SystemExit("Standalone fla_npu wheel is not discoverable")
+    raise SystemExit("[CI][ERROR] Standalone fla_npu wheel is not discoverable")
 package_dir = Path(spec.origin).resolve().parent
 required = [
     package_dir / "opp" / "vendors" / "config.ini",
@@ -330,7 +330,7 @@ required = [
 ]
 missing = [str(path.relative_to(package_dir)) for path in required if not path.exists()]
 if missing:
-    raise SystemExit("Standalone fla_npu wheel is missing OPP skeleton files: " + ", ".join(missing))
+    raise SystemExit("[CI][ERROR] Standalone fla_npu wheel is missing OPP skeleton files: " + ", ".join(missing))
 print("[CI] Standalone torch_custom wheel OPP skeleton check passed.")
 PY
 
@@ -430,14 +430,14 @@ vendor_dir = package_dir / "opp" / "vendors" / "fla_npu_transformer"
 required = [vendor_dir / "op_api" / "lib" / "libcust_opapi.so"]
 missing = [path.name for path in required if not path.exists()]
 if missing:
-    raise SystemExit("Missing scoped wheel OPP files: " + ", ".join(missing))
+    raise SystemExit("[CI][ERROR] Missing scoped wheel OPP files: " + ", ".join(missing))
 alias = vendor_dir / "op_api" / "lib" / "libopapi.so"
 if alias.exists() or alias.is_symlink():
-    raise SystemExit(f"Scoped wheel OPP contains conflicting alias: {alias}")
+    raise SystemExit(f"[CI][ERROR] Scoped wheel OPP contains conflicting alias: {alias}")
 first = fla_npu.load_ascendc_opapi_libraries()
 second = fla_npu.load_ascendc_opapi_libraries()
 if first is not second or not first:
-    raise SystemExit("Scoped wheel OPP runtime loading is not idempotent")
+    raise SystemExit("[CI][ERROR] Scoped wheel OPP runtime loading is not idempotent")
 print("[CI] Scoped wheel OPP install check passed.")
 PY
 
@@ -484,7 +484,7 @@ except Exception as exc:
     missing.append(f"triton-ascend: {exc}")
 
 if missing:
-    raise SystemExit("Missing Python dependencies for Example ST:\n" + "\n".join(missing))
+    raise SystemExit("[CI][ERROR] Missing Python dependencies for Example ST: " + "; ".join(missing))
 PY
 }
 
