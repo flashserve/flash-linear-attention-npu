@@ -236,7 +236,7 @@ public:
     __aicore__ inline void Init(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR inital_state, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
         GM_ADDR h, GM_ADDR v_new, GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user) {
 
-        __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict gdnFwdHTilingData = reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
+        __gm__ GdnMegaArch35FwdHTilingData *__restrict gdnFwdHTilingData = reinterpret_cast<__gm__ GdnMegaArch35FwdHTilingData *__restrict>(tiling);
 
         batch = gdnFwdHTilingData->batch;
         seqlen = gdnFwdHTilingData->seqlen;

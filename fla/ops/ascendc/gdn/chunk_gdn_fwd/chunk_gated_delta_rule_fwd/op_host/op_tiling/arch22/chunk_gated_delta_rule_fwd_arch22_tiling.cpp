@@ -319,15 +319,15 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
     }
     workspaceSizes[0] = systemWorkspace + workspaceOffset;
 
-    ChunkGatedDeltaRuleFwdHTilingData hTiling;
+    GdnMegaArch22FwdHTilingData hTiling;
     const uint64_t hTilingSize = hTiling.GetDataSize();
-    OP_CHECK_IF(hTilingSize != sizeof(::ChunkGatedDeltaRuleFwdHTilingData),
+    OP_CHECK_IF(hTilingSize != sizeof(::GdnMegaArch22FwdHTilingData),
                 OP_LOGE(context->GetNodeName(),
                         "FwdH host/kernel tiling size mismatch: host=%lu, kernel=%zu.",
-                        hTilingSize, sizeof(::ChunkGatedDeltaRuleFwdHTilingData)),
+                        hTilingSize, sizeof(::GdnMegaArch22FwdHTilingData)),
                 return ge::GRAPH_FAILED);
     const uint64_t oTilingOffset = AlignUp(hTilingSize, TILING_ALIGNMENT);
-    const uint64_t phase5TrailerEnd = oTilingOffset + sizeof(GDN::ChunkFwdOTilingData) +
+    const uint64_t phase5TrailerEnd = oTilingOffset + sizeof(GDN::GdnMegaArch22FwdOTilingData) +
                                       sizeof(GDN::ChunkRecomputeWUFwdHOTrailer);
     const uint64_t phase6TrailerOffset = AlignUp(phase5TrailerEnd, TILING_ALIGNMENT);
     auto *rawTiling = context->GetRawTilingData();

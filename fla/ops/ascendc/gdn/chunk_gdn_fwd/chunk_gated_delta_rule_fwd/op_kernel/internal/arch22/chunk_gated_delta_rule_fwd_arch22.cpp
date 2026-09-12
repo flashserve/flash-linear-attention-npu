@@ -38,16 +38,16 @@ __aicore__ inline uint64_t AlignPhase6(uint64_t value, uint64_t alignment)
 __aicore__ inline const __gm__ ChunkRecomputeWUFwdHOTrailer *GetPhase5Trailer(GM_ADDR tiling)
 {
     const uint64_t oTilingOffset = AlignPhase6(
-        sizeof(ChunkGatedDeltaRuleFwdHTilingData), PHASE6_TILING_ALIGNMENT);
+        sizeof(GdnMegaArch22FwdHTilingData), PHASE6_TILING_ALIGNMENT);
     return reinterpret_cast<const __gm__ ChunkRecomputeWUFwdHOTrailer *>(
-        tiling + oTilingOffset + sizeof(ChunkFwdOTilingData));
+        tiling + oTilingOffset + sizeof(GdnMegaArch22FwdOTilingData));
 }
 
 __aicore__ inline const __gm__ Arch22ChunkGatedDeltaRuleFwdTrailer *GetPhase6Trailer(GM_ADDR tiling)
 {
     const uint64_t oTilingOffset = AlignPhase6(
-        sizeof(ChunkGatedDeltaRuleFwdHTilingData), PHASE6_TILING_ALIGNMENT);
-    const uint64_t phase5End = oTilingOffset + sizeof(ChunkFwdOTilingData) +
+        sizeof(GdnMegaArch22FwdHTilingData), PHASE6_TILING_ALIGNMENT);
+    const uint64_t phase5End = oTilingOffset + sizeof(GdnMegaArch22FwdOTilingData) +
                                sizeof(ChunkRecomputeWUFwdHOTrailer);
     return reinterpret_cast<const __gm__ Arch22ChunkGatedDeltaRuleFwdTrailer *>(
         tiling + AlignPhase6(phase5End, PHASE6_TILING_ALIGNMENT));
@@ -342,7 +342,7 @@ __aicore__ inline void RunPhase6(
     GM_ADDR u = userWorkspace + phase5->uIntermediateOffset;
     GM_ADDR h = userWorkspace + phase5->hIntermediateOffset;
     GM_ADDR vNew = userWorkspace + phase5->vNewIntermediateOffset;
-    RecomputeWUFwdTilingData recomputeTiling{};
+    GdnMegaArch22RecomputeWUTilingData recomputeTiling{};
     CopyRecomputeTiling(&phase5->recompute, recomputeTiling);
     if (phase5->recompute.V == 256) {
         DispatchRecompute<InputT, float, 256, true>(
@@ -368,10 +368,10 @@ __aicore__ inline void RunPhase6(
 #endif
 
     const uint64_t oTilingOffset =
-        AlignPhase6(sizeof(ChunkGatedDeltaRuleFwdHTilingData), PHASE6_TILING_ALIGNMENT);
-    const __gm__ ChunkFwdOTilingData *gmOTiling =
-        reinterpret_cast<const __gm__ ChunkFwdOTilingData *>(tiling + oTilingOffset);
-    ChunkFwdOTilingData oTiling{};
+        AlignPhase6(sizeof(GdnMegaArch22FwdHTilingData), PHASE6_TILING_ALIGNMENT);
+    const __gm__ GdnMegaArch22FwdOTilingData *gmOTiling =
+        reinterpret_cast<const __gm__ GdnMegaArch22FwdOTilingData *>(tiling + oTilingOffset);
+    GdnMegaArch22FwdOTilingData oTiling{};
     CopyOTiling(gmOTiling, oTiling);
     DispatchFwdO<InputT>(q, k, vNew, h, gCumsumBht, cuSeqlens, chunkIndices, o,
                  userWorkspace, &oTiling);

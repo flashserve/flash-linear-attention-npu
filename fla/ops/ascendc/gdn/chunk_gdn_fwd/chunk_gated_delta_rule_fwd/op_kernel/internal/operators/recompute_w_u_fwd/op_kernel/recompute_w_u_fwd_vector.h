@@ -26,7 +26,7 @@ using namespace AscendC;
 using namespace AscendC::MicroAPI;
 #endif
 
-using GDN::RecomputeWUFwdTilingData;
+using GDN::GdnMegaArch35RecomputeWUTilingData;
 
 template <typename kType, typename betaType, bool kFlattenHeadTasks = false,
           bool kCoefficientGenerationTaskOrder = false>
@@ -44,7 +44,7 @@ public:
     __aicore__ inline void ProcessVb();
     __aicore__ inline void ProcessKbgExp();
 #endif
-    __aicore__ inline void Init(const RecomputeWUFwdTilingData &tiling, AscendC::TPipe *pipe_);
+    __aicore__ inline void Init(const GdnMegaArch35RecomputeWUTilingData &tiling, AscendC::TPipe *pipe_);
 
 private:
     uint64_t B = 0;
@@ -136,7 +136,7 @@ __aicore__ inline RecomputeWUFwdVectorProcess<kType, betaType,
 template <typename kType, typename betaType, bool kFlattenHeadTasks, bool kCoefficientGenerationTaskOrder>
 __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType, kFlattenHeadTasks,
                                                    kCoefficientGenerationTaskOrder>::Init(
-    const RecomputeWUFwdTilingData &tiling, AscendC::TPipe *pipe_)
+    const GdnMegaArch35RecomputeWUTilingData &tiling, AscendC::TPipe *pipe_)
 {
     pipe = pipe_;
     workSpaceTensor.SetGlobalBuffer((__gm__ kType *)workspace);

@@ -12,14 +12,14 @@
  * \brief Shared tiling data for chunk_fwd_o.
  */
 
-#ifndef CHUNK_FWD_O_STRUCT_H
-#define CHUNK_FWD_O_STRUCT_H
+#ifndef GDN_MEGA_ARCH35_CHUNK_FWD_O_STRUCT_H
+#define GDN_MEGA_ARCH35_CHUNK_FWD_O_STRUCT_H
 
 #include <cstdint>
 
 namespace GDN {
 
-struct ChunkFwdOTilingData {
+struct GdnMegaArch35FwdOTilingData {
     int64_t shapeBatch;
     int64_t seqlen;
     int64_t kNumHead;
@@ -41,4 +41,4 @@ struct ChunkFwdOTilingData {
 
 } // namespace GDN
 
-#endif // CHUNK_FWD_O_STRUCT_H
+#endif // GDN_MEGA_ARCH35_CHUNK_FWD_O_STRUCT_H

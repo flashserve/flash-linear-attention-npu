@@ -253,7 +253,7 @@ public:
     __aicore__ inline GDNFwdOKernel() {}
 
     __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR h, GM_ADDR g,
-        GM_ADDR cu_seqlens, GM_ADDR chunk_offsets, GM_ADDR o, const GDN::ChunkFwdOTilingData *tilingData, GM_ADDR user) {
+        GM_ADDR cu_seqlens, GM_ADDR chunk_offsets, GM_ADDR o, const GDN::GdnMegaArch22FwdOTilingData *tilingData, GM_ADDR user) {
 
         shapeBatch = tilingData->shapeBatch;
         seqlen = tilingData->seqlen;
