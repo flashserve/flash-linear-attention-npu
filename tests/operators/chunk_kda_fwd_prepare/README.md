@@ -10,60 +10,23 @@
 
 | 路径 | 内容 |
 | --- | --- |
-| `smoke/test_chunk_kda_fwd_prepare.py` | 读取 JSON，真实调用 `fla_npu.ops.ascendc.chunk_kda_fwd_prepare`，检查三种反向模式下固定 13 槽位的 `None`/tensor 分布，以及实际 tensor 的 shape、dtype 和有限值；该项是设备烟测，不作为数值精度结论 |
-| `negative/test_invalid_contract.py` | 从统一 JSON 读取负向 case，验证公开参数错误会在 aclnn 启动前被稳定入口拒绝 |
-| `routes/test_ctypes_aclnn_chunk_kda_fwd_prepare.py` | 通过稳定 Python ctypes 入口执行 aclnn 两段式调用 |
-| `routes/test_aclnn_negative_status.py` | 绕过 Python 预校验，直接验证 C++ `GetWorkspaceSize` 的 `ACLNN_ERR_PARAM_NULLPTR`/`ACLNN_ERR_PARAM_INVALID` 返回码 |
 | `routes/test_aclnn_chunk_kda_fwd_prepare.cpp` | 编译期锁定 `GetWorkspaceSize` 和执行接口符号 |
-| `routes/test_direct_chunk_kda_fwd_prepare.cpp` | 仅在源码层声明 canonical none/recompute/save 模板合同，本文件不单独编译；实际 `<<<>>>` 编译、设备比对、私有 NPU format 和非法 FP32 属性负向验证由 `examples/fast_kernel_launch_example` 执行 |
-| `common/` | JSON 筛选、输入构造和 13 输出合同检查 |
 | `ut/op_host/test_contract.py` | 检查调度测试已接入 `ENABLE_TEST` CMake |
-| `ut/op_kernel/test_contract.py` | 检查 direct launch 源码合同与清单中的代表 case 一致 |
-| `ut/test_atk_generation.py` | 检查 ATK 生成声明只来自统一 JSON，且三份冻结 JSON 没有过期 |
+| `ut/op_kernel/test_contract.py` | 检查 A2/A3/A5 kernel 的模板输出、同步、静态内存与伪代码一致性合同 |
+| `ut/test_atk_generation.py` | 检查 21 个公开输入、200 条精度、10 条性能和 432 个 TilingKey 用例合同 |
 
-完整数值标杆继续由
-`tests/atk/chunk_kda_fwd_prepare/executor_chunk_kda_fwd_prepare.py` 提供；本目录的 route 测试
-只验证公开调用链和 ABI，不替代 ATK 精度测试。
+完整数值标杆由
+`tests/atk/chunk_kda_fwd_prepare/executor_chunk_kda_fwd_prepare.py` 提供；本目录保留算子私有的
+C++ 符号检查、host/kernel 合同检查，不替代 ATK 精度测试。稳定 `fla_npu` Python/ctypes
+入口和设备烟测位于 companion PR，避免在本 PR 修改公共文件。
 
 ## 执行
 
-不带 NPU 开关时可先检查 JSON 和公开 ABI 清单：
+不带 NPU 开关时可先检查算子私有合同：
 
 ```bash
-python -m pytest -q \
-  tests/operators/chunk_kda_fwd_prepare/routes/test_ctypes_aclnn_chunk_kda_fwd_prepare.py \
-  tests/operators/chunk_kda_fwd_prepare/negative/test_invalid_contract.py \
-  tests/operators/chunk_kda_fwd_prepare/ut
+python -m pytest -q tests/operators/chunk_kda_fwd_prepare/ut
 ```
-
-安装当前 wheel 和 custom OPP 后，执行稳定 ctypes/aclnn 与四种 layout 的设备烟测：
-
-```bash
-FLA_NPU_RUN_OPERATOR_TESTS=1 \
-python -m pytest -q \
-  tests/operators/chunk_kda_fwd_prepare/routes/test_ctypes_aclnn_chunk_kda_fwd_prepare.py \
-  tests/operators/chunk_kda_fwd_prepare/routes/test_aclnn_negative_status.py \
-  tests/operators/chunk_kda_fwd_prepare/smoke/test_chunk_kda_fwd_prepare.py
-```
-
-可用 `FLA_NPU_SOC` 和 `FLA_NPU_CASE_IDS` 筛选平台及 case。A2、A3、A5 分别使用
-`ascend910b`、`ascend910_93`、`ascend950`。
 
 host 调度测试在 `ENABLE_TEST=ON` 时生成目标
 `chunk_kda_fwd_prepare_tiling_processor_test`，可通过 CTest 或直接执行该目标验证。
-
-安装当前 `flash-linear-attention-npu` wheel 和 custom OPP 后，可分别构建 A2、A3、A5 的
-`<<<>>>` 直调入口，并用 canonical `prepare_dense_bnsd_raw`、
-`prepare_dense_bsnd_fused` 和 `prepare_dense_bsnd_fused_save` 三条用例逐槽位
-bitwise 比对稳定 `fla_npu.ops.ascendc` 入口：
-
-```bash
-cd examples/fast_kernel_launch_example
-NPU_ARCH=ascend910b bash build_and_test.sh chunk_kda_fwd_prepare
-NPU_ARCH=ascend910_93 bash build_and_test.sh chunk_kda_fwd_prepare
-NPU_ARCH=ascend950 bash build_and_test.sh chunk_kda_fwd_prepare
-```
-
-直调和稳定入口均返回固定 13 槽位；未搬出的可选输出保持 `None`，save 模式的
-13 个槽位全部返回 tensor。私有格式设备负向覆盖 q/k/v/g/beta；a_log 和 dt_bias
-为 rank-1 输入，测试会尝试构造 FRACTAL_NZ，目标 torch_npu 不支持该转换时明确记录 SKIP。

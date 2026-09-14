@@ -275,7 +275,7 @@ if (BUILD_OPS_RTY_KERNEL)
 
     add_opc_config(
             OP_NAME "ALL"
-            CONFIG ${OP_DEBUG_CONFIG} ${BISHENG_FLAGS}
+            CONFIG ${OP_DEBUG_CONFIG}
     )
 
     if(ADD_OPS_COMPILE_OPTION_V2)

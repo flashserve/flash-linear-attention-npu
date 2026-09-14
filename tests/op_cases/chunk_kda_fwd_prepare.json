@@ -29,14 +29,12 @@
     ],
     "routes": [
       "ascendc",
-      "aclnn",
-      "direct_launch"
+      "aclnn"
     ]
   },
   "route_validation": {
-    "ascendc": "device_smoke",
-    "aclnn": "device_smoke",
-    "direct_launch": "device_compare"
+    "ascendc": "pending_stable_entry",
+    "aclnn": "pending_stable_entry"
   },
   "output_policy": {
     "fixed_slots": [
@@ -375,9 +373,14 @@
       "perf": "not_key",
       "mem": 1.1
     },
-    "accuracy_seed_plan": {
-      "minimum_per_logical_case": 3,
-      "total_cases": 200
+    "accuracy_case_plan": {
+      "total_cases": 200,
+      "unique_structures": 200,
+      "distribution_counts": {
+        "uniform": 100,
+        "normal": 100
+      },
+      "pairwise_template_attributes": "all_legal_pairs"
     },
     "defaults": {
       "tags": "accuracy,regression",
@@ -1157,8 +1160,7 @@
       ],
       "run_on": [
         "ascendc",
-        "aclnn",
-        "direct_launch"
+        "aclnn"
       ],
       "reference": "tests/atk/chunk_kda_fwd_prepare/executor_chunk_kda_fwd_prepare.py",
       "expect": {
@@ -1218,8 +1220,7 @@
       ],
       "run_on": [
         "ascendc",
-        "aclnn",
-        "direct_launch"
+        "aclnn"
       ],
       "reference": "tests/atk/chunk_kda_fwd_prepare/executor_chunk_kda_fwd_prepare.py",
       "expect": {
@@ -1282,8 +1283,7 @@
       ],
       "run_on": [
         "ascendc",
-        "aclnn",
-        "direct_launch"
+        "aclnn"
       ],
       "reference": "tests/atk/chunk_kda_fwd_prepare/executor_chunk_kda_fwd_prepare.py",
       "expect": {

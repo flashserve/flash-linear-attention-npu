@@ -1,153 +1,137 @@
+name: chunk_kda_fwd_prepare
 api: pytorch
 api_type: executor_chunk_kda_fwd_prepare
+aclnn_name: ChunkKdaFwdPrepare
 version: v2.1
-name: chunk_kda_fwd_prepare
-aclnn_name:
 generate: generator_chunk_kda_fwd_prepare
-dtype_numbers: 1
+dtype_numbers: 100
 extra_numbers: 0
+shape_distributions:
+  - [0, 1.0]
 standard:
   acc: mixed_tolerance_bm
   perf: not_key
 inputs:
-  - name: low_precision_marker
+  - name: q
     type: tensor
     required: true
     dtypes:
       values: [bf16]
     ranges:
-      valid:
-        values: [[0, 0]]
+      valid: &qkv_range
+        values: [[-0.08, 0.08]]
+        random_types:
+          - name: nd
+            mean: [0.0]
+            std: [0.05, 0.25]
+        custom_dist_ratio: [[0.5, 0.0], [0.5, 0.0]]
       invalid:
         values: []
     shapes:
       dim_numbers:
-        values: [1]
+        values: [4]
       dim_values:
-        values: [1]
-  - name: fp32_marker
+        - values: [1]
+        - values: [1]
+        - values: [1]
+        - values: [128]
+    boundary: &positive_boundary
+      has_empty: false
+      has_infnan: false
+      has_scalar: false
+      has_upper_border: false
+      has_lower_border: false
+  - name: k
     type: tensor
     required: true
     dtypes:
-      values: [fp32]
+      values: [bf16]
     ranges:
-      valid:
-        values: [[0, 0]]
+      valid: *qkv_range
       invalid:
         values: []
     shapes:
       dim_numbers:
-        values: [1]
+        values: [4]
       dim_values:
-        values: [1]
-  - name: case_spec
-    type: attr
+        - values: [1]
+        - values: [1]
+        - values: [1]
+        - values: [128]
+    boundary: *positive_boundary
+  - name: v
+    type: tensor
     required: true
     dtypes:
-      values: [non_param]
+      values: [bf16]
     ranges:
-      valid:
-        values: ['{}']
+      valid: *qkv_range
       invalid:
         values: []
-  - name: case_key
-    type: attr
+    shapes:
+      dim_numbers:
+        values: [4]
+      dim_values:
+        - values: [1]
+        - values: [1]
+        - values: [1]
+        - values: [128]
+    boundary: *positive_boundary
+  - name: g
+    type: tensor
     required: true
     dtypes:
-      values: [string]
+      values: [bf16, fp32]
     ranges:
       valid:
-        values: [dense_bnsd_min]
+        values: [[-1.0, 1.0]]
+        random_types:
+          - name: nd
+            mean: [0.0]
+            std: [0.1, 1.25]
+        custom_dist_ratio: [[0.5, 0.0], [0.5, 0.0]]
       invalid:
         values: []
-  - name: soc
-    type: attr
+    shapes:
+      dim_numbers:
+        values: [4]
+      dim_values:
+        - values: [1]
+        - values: [1]
+        - values: [1]
+        - values: [128]
+    boundary: *positive_boundary
+  - name: beta
+    type: tensor
     required: true
     dtypes:
-      values: [string]
+      values: [bf16, fp32]
     ranges:
       valid:
-        values: [all, ascend910b, ascend910_93, ascend950]
+        values: [[0.0, 1.0]]
+        random_types:
+          - name: nd
+            mean: [0.5]
+            std: [0.1]
+        custom_dist_ratio: [[0.5, 0.0], [0.5, 0.0]]
       invalid:
         values: []
-  - name: route
+    shapes:
+      dim_numbers:
+        values: [3]
+      dim_values:
+        - values: [1]
+        - values: [1]
+        - values: [1]
+    boundary: *positive_boundary
+  - name: scale
     type: attr
     required: true
     dtypes:
-      values: [string]
+      values: [float]
     ranges:
       valid:
-        values: [ascendc]
-      invalid:
-        values: []
-  - name: dtype
-    type: attr
-    required: true
-    dtypes:
-      values: [string]
-    ranges:
-      valid:
-        values: [bf16]
-      invalid:
-        values: []
-  - name: B
-    type: attr
-    required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [1, 2, 4, 65]
-      invalid:
-        values: []
-  - name: HK
-    type: attr
-    required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [1, 2, 3, 4, 6, 7, 11, 12, 16, 32, 96]
-      invalid:
-        values: []
-  - name: HV
-    type: attr
-    required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [1, 2, 3, 4, 5, 6, 7, 8, 12, 15, 16, 32, 33, 96, 160]
-      invalid:
-        values: []
-  - name: T
-    type: attr
-    required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [1, 15, 16, 17, 25, 31, 32, 33, 47, 48, 49, 63, 64, 65, 128, 129, 146, 1025, 1084, 1601, 2048, 8192, 11264, 16384, 65536]
-      invalid:
-        values: []
-  - name: K
-    type: attr
-    required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [128]
-      invalid:
-        values: []
-  - name: V
-    type: attr
-    required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [128]
+        values: [0.08838, 1.0]
       invalid:
         values: []
   - name: layout
@@ -170,36 +154,6 @@ inputs:
         values: [64]
       invalid:
         values: []
-  - name: gate_dtype
-    type: attr
-    required: true
-    dtypes:
-      values: [string]
-    ranges:
-      valid:
-        values: [bf16, fp32]
-      invalid:
-        values: []
-  - name: beta_dtype
-    type: attr
-    required: true
-    dtypes:
-      values: [string]
-    ranges:
-      valid:
-        values: [bf16, fp32]
-      invalid:
-        values: []
-  - name: scale
-    type: attr
-    required: true
-    dtypes:
-      values: [float]
-    ranges:
-      valid:
-        values: [0.08838, 0.08838834764831845, 1.0]
-      invalid:
-        values: []
   - name: epsilon
     type: attr
     required: true
@@ -213,9 +167,9 @@ inputs:
   - name: use_qk_l2norm_in_kernel
     type: attr
     required: true
-    dtypes:
+    dtypes: &bool_dtype
       values: [bool]
-    ranges:
+    ranges: &bool_range
       valid:
         values: [false, true]
       invalid:
@@ -223,43 +177,23 @@ inputs:
   - name: use_gate_in_kernel
     type: attr
     required: true
-    dtypes:
-      values: [bool]
-    ranges:
-      valid:
-        values: [false, true]
-      invalid:
-        values: []
+    dtypes: *bool_dtype
+    ranges: *bool_range
   - name: use_beta_sigmoid_in_kernel
     type: attr
     required: true
-    dtypes:
-      values: [bool]
-    ranges:
-      valid:
-        values: [false, true]
-      invalid:
-        values: []
+    dtypes: *bool_dtype
+    ranges: *bool_range
   - name: allow_neg_eigval
     type: attr
     required: true
-    dtypes:
-      values: [bool]
-    ranges:
-      valid:
-        values: [false, true]
-      invalid:
-        values: []
+    dtypes: *bool_dtype
+    ranges: *bool_range
   - name: safe_gate
     type: attr
     required: true
-    dtypes:
-      values: [bool]
-    ranges:
-      valid:
-        values: [false, true]
-      invalid:
-        values: []
+    dtypes: *bool_dtype
+    ranges: *bool_range
   - name: lower_bound
     type: attr
     required: true
@@ -273,13 +207,74 @@ inputs:
   - name: use_exp2
     type: attr
     required: true
+    dtypes: *bool_dtype
+    ranges: *bool_range
+  - name: a_log
+    type: tensor
+    required: false
     dtypes:
-      values: [bool]
+      values: [fp32]
     ranges:
       valid:
-        values: [false, true]
+        values: [[-6.0, -2.0]]
+        random_types:
+          - name: nd
+            mean: [-4.0]
+            std: [0.5]
+        custom_dist_ratio: [[0.5, 0.0], [0.5, 0.0]]
       invalid:
         values: []
+    shapes:
+      dim_numbers:
+        values: [1]
+      dim_values:
+        - values: [1]
+    boundary: *positive_boundary
+  - name: dt_bias
+    type: tensor
+    required: false
+    dtypes:
+      values: [fp32]
+    ranges:
+      valid:
+        values: [[-2.0, 2.0]]
+        random_types:
+          - name: nd
+            mean: [0.0]
+            std: [1.0]
+        custom_dist_ratio: [[0.5, 0.0], [0.5, 0.0]]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [1]
+      dim_values:
+        - values: [128]
+    boundary: *positive_boundary
+  - name: cu_seqlens
+    type: attrs
+    required: false
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [0]
+      invalid:
+        values: []
+    tuple_numbers:
+      values: [1]
+  - name: chunk_indices
+    type: attrs
+    required: false
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [0]
+      invalid:
+        values: []
+    tuple_numbers:
+      values: [1]
   - name: backward_mode
     type: attr
     required: true
@@ -288,55 +283,5 @@ inputs:
     ranges:
       valid:
         values: [none, recompute, save]
-      invalid:
-        values: []
-  - name: dt_bias
-    type: attr
-    required: true
-    dtypes:
-      values: [bool]
-    ranges:
-      valid:
-        values: [false, true]
-      invalid:
-        values: []
-  - name: cu_seqlens
-    type: attr
-    required: true
-    dtypes:
-      values: [string]
-    ranges:
-      valid:
-        values: [""]
-      invalid:
-        values: []
-  - name: explicit_chunk_indices
-    type: attr
-    required: true
-    dtypes:
-      values: [bool]
-    ranges:
-      valid:
-        values: [false, true]
-      invalid:
-        values: []
-  - name: tags
-    type: attr
-    required: true
-    dtypes:
-      values: [string]
-    ranges:
-      valid:
-        values: [accuracy, performance, determinism]
-      invalid:
-        values: []
-  - name: seed
-    type: attr
-    required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [20260910]
       invalid:
         values: []
