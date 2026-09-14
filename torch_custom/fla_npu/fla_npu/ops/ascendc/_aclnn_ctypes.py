@@ -84,6 +84,14 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.POINTER(ctypes.c_uint64),  # workspaceSize
         ctypes.POINTER(ctypes.c_void_p),  # executor
     ],
+    "aclnnChunkKdaFwdFinalize": [
+        *([ctypes.c_void_p] * 6),  # qgScaled, aqk, vNew, h, cuSeqlens, chunkIndices
+        ctypes.c_char_p,  # outputLayout
+        ctypes.c_bool,  # stateVFirst
+        ctypes.c_void_p,  # attnOut
+        ctypes.POINTER(ctypes.c_uint64),  # workspaceSize
+        ctypes.POINTER(ctypes.c_void_p),  # executor
+    ],
     "aclnnChunkGatedDeltaRuleBwdFinalize": [
         *([ctypes.c_void_p] * 14),  # required and optional tensor descriptors
         ctypes.c_void_p,  # cu_seqlens optional
@@ -1537,6 +1545,109 @@ def npu_chunk_fwd_h(
             nd_tensor(ctx, final_state_out, "final_state"),
         ],
         outputs,
+    )
+
+
+def npu_chunk_kda_fwd_finalize(
+    qg_scaled,
+    aqk,
+    v_new,
+    h,
+    *,
+    output_layout="BSND",
+    state_v_first=False,
+    cu_seqlens=None,
+    chunk_indices=None,
+):
+    import torch
+
+    op_name = "npu_chunk_kda_fwd_finalize"
+    if output_layout not in {"BSND", "BNSD", "TND", "NTD"}:
+        raise RuntimeError(f"{op_name}: output_layout must be BSND, BNSD, TND or NTD.")
+    packed = output_layout in {"TND", "NTD"}
+    q_shape = _shape(qg_scaled)
+    if packed:
+        if len(q_shape) != 3 or q_shape[-1] != 128:
+            raise RuntimeError(f"{op_name}: packed qg_scaled must be [HV, T, 128].")
+        heads, seqlen, _ = q_shape
+        batch = 1
+        if _shape(aqk) != (heads, seqlen, 64) or _shape(v_new) not in {
+            (heads, seqlen, 128), (1, heads, seqlen, 128)
+        }:
+            raise RuntimeError(f"{op_name}: packed aqk/v_new shapes do not match qg_scaled.")
+    else:
+        if len(q_shape) != 4 or q_shape[-1] != 128:
+            raise RuntimeError(f"{op_name}: dense qg_scaled must be [B, HV, T, 128].")
+        batch, heads, seqlen, _ = q_shape
+        if _shape(aqk) != (batch, heads, seqlen, 64) or _shape(v_new) != (
+            batch, heads, seqlen, 128
+        ):
+            raise RuntimeError(f"{op_name}: dense aqk/v_new must be head-major [B, HV, T, D].")
+    if batch <= 0 or heads <= 0 or seqlen <= 0:
+        raise RuntimeError(f"{op_name}: B, HV and T must all be positive.")
+    for name, tensor in (("qg_scaled", qg_scaled), ("aqk", aqk), ("v_new", v_new), ("h", h)):
+        if tensor.dtype != torch.bfloat16:
+            raise RuntimeError(f"{op_name}: {name} must use bfloat16.")
+        if tensor.device.type != "npu" or tensor.device != qg_scaled.device:
+            raise RuntimeError(f"{op_name}: {name} must use the same NPU device.")
+
+    cu = None if cu_seqlens is None else tuple(int(value) for value in cu_seqlens)
+    if cu is not None:
+        if batch != 1 or len(cu) < 2 or cu[0] != 0 or cu[-1] != seqlen or any(
+            begin >= end for begin, end in zip(cu, cu[1:])
+        ):
+            raise RuntimeError(
+                f"{op_name}: cu_seqlens requires B=1 and strictly increasing offsets from 0 to T."
+            )
+    canonical_indices = _chunk_fwd_h_build_chunk_indices(cu, 64)
+    indices = canonical_indices if chunk_indices is None else tuple(int(value) for value in chunk_indices)
+    if indices is not None and indices != canonical_indices:
+        raise RuntimeError(f"{op_name}: chunk_indices must be canonical sequence-major pairs.")
+    total_chunks = _chunk_fwd_h_total_chunks(seqlen, 64, cu, indices)
+    if _shape(h) != (batch, heads, total_chunks, 128, 128):
+        raise RuntimeError(f"{op_name}: h must be [B, HV, total_chunks, 128, 128].")
+
+    out_shape = {
+        "BSND": (batch, seqlen, heads, 128),
+        "BNSD": (batch, heads, seqlen, 128),
+        "TND": (seqlen, heads, 128),
+        "NTD": (heads, seqlen, 128),
+    }[output_layout]
+    attn_out = _empty(out_shape, qg_scaled)
+    layout_buffer = ctypes.create_string_buffer(output_layout.encode("utf-8"))
+
+    # 标准物理布局原样透传，仅将 rank-3/4/5 descriptor 标记成算子要求的 ND。
+    def nd_tensor(ctx, tensor, name):
+        loaded_torch_npu = sys.modules.get("torch_npu")
+        if loaded_torch_npu is not None:
+            try:
+                actual_format = int(loaded_torch_npu.get_npu_format(tensor))
+            except Exception as exc:
+                raise RuntimeError(f"{op_name}: cannot determine NPU format of {name}.") from exc
+        else:
+            actual_format = _acl_format(tensor)
+        if actual_format not in {ACL_FORMAT_NCHW, ACL_FORMAT_ND, ACL_FORMAT_NCDHW, ACL_FORMAT_NCL}:
+            raise RuntimeError(f"{op_name}: {name} must not use a private NPU format.")
+        storage_shape = _shape(tensor) if tensor.is_contiguous() and tensor.storage_offset() == 0 else None
+        return ctx.tensor(
+            tensor, name, acl_format_override=ACL_FORMAT_ND,
+            storage_shape_override=storage_shape,
+        )
+
+    return _call_aclnn(
+        "aclnnChunkKdaFwdFinalize",
+        lambda ctx: [
+            nd_tensor(ctx, qg_scaled, "qg_scaled"),
+            nd_tensor(ctx, aqk, "aqk"),
+            nd_tensor(ctx, v_new, "v_new"),
+            nd_tensor(ctx, h, "h"),
+            ctx.int_array(cu),
+            ctx.int_array(indices),
+            ctypes.cast(layout_buffer, ctypes.c_char_p),
+            ctypes.c_bool(_optional_bool(state_v_first, False)),
+            nd_tensor(ctx, attn_out, "attn_out"),
+        ],
+        attn_out,
     )
 
 
