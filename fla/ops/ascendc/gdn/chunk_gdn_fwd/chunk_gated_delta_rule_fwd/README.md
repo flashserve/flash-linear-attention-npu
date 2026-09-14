@@ -5,7 +5,8 @@
 `ChunkGatedDeltaRuleFwd` 实现 Gated Delta Rule 的分块前向计算。仅当 `useExp2=false`、
 `useQkL2norm=false`、`useGateInKernel=false`、不启用 beta sigmoid、`allowNegEigval=false`、不请求分块状态 h、
 `stateVFirst=false` 且 layout 为 `BNSD/NTD` 时使用原 Phase6 kernel，A 可按需输出；任意条件不满足时，
-A5 依次调度 `ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkFwdO`。
+A5 依次调度 `ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkFwdO`，三个阶段统一使用
+调用方传入的 `useExp2`。
 新路径不支持的参数组合由 `ChunkGatedDeltaRuleFwdPrepare` 报错。当前实现支持定长和变长序列、GVA、可选初始状态
 以及可选最终状态输出。
 
@@ -15,7 +16,7 @@ A5 依次调度 `ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkFwdO`。
 2. `ChunkScaledDotKkt`（`chunk_scaled_dot_kkt`）；
 3. `SolveTri`（`solve_tri`）；
 4. `RecomputeWUFwd`（`recompute_w_u_fwd`）；
-5. `ChunkFwdH`（`chunk_fwd_h`，固定 `use_exp2=true`）；
+5. `ChunkFwdH`（`chunk_fwd_h`）；
 6. `ChunkFwdO`（`chunk_fwd_o`）。
 
 融合 kernel 内部实现上述等价计算阶段，不调用或链接这些公开算子的 ACLNN 实现。
@@ -51,10 +52,10 @@ A5 依次调度 `ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkFwdO`。
 | `finalStateOutOptional` | 可选 | 末两维由 `stateVFirst` 决定；与初始状态同 dtype，无初始状态时为 FP32 | 是否为空直接决定是否计算并输出最终状态 |
 | `gCumsumOutOptional` | 可选 | 与 g 同 shape；FP32 | chunk 内门控累加结果；为空时使用内部临时张量 |
 | `aOutOptional` | 可选 | `[B,Hv,T,chunkSize]`；与 q 同 dtype | 系数矩阵；为空时使用内部临时张量 |
-| `qHatOutOptional`、`kHatOutOptional` | A5 `useExp2=true` 可选 | 与 q/k 相同 | L2Norm 结果 |
-| `qRstdOutOptional`、`kRstdOutOptional` | A5 `useExp2=true` 可选 | q/k layout 去掉最后一维；FP32 | L2Norm rstd |
-| `betaEffOutOptional` | A5 `useExp2=true` 可选 | 与 beta 同 shape；FP32 | 非空时启用并输出 beta sigmoid |
-| `hOutOptional` | A5 `useExp2=true` 可选 | `stateVFirst=false` 时末两维为 `[K,V]`，否则为 `[V,K]`；与 q 同 dtype | 分块状态 |
+| `qHatOutOptional`、`kHatOutOptional` | A5 新路径可选 | 与 q/k 相同 | L2Norm 结果 |
+| `qRstdOutOptional`、`kRstdOutOptional` | A5 新路径可选 | q/k layout 去掉最后一维；FP32 | L2Norm rstd |
+| `betaEffOutOptional` | A5 新路径可选 | 与 beta 同 shape；FP32 | 非空时启用并输出 beta sigmoid |
+| `hOutOptional` | A5 新路径可选 | `stateVFirst=false` 时末两维为 `[K,V]`，否则为 `[V,K]`；与 q 同 dtype | 分块状态 |
 
 Python ctypes 入口默认使用 `disable_recompute=True`，用于训练，返回
 `(o, finalState, gCumsum, A)` 四元组；
@@ -69,10 +70,10 @@ Python ctypes 入口默认使用 `disable_recompute=True`，用于训练，返�
 | `layout` | 原 Phase6 路径支持 `BNSD/NTD`；A5 新路径支持 `BNSD/BSND/NTD/TND` | q/k/v 的输入布局；BSND/TND 输入在拼接路径内转为 head-first，o 固定输出 BSND |
 | `scale` | 通常为 `K**-0.5` | Query 缩放因子 |
 | `chunkSize` | `64`、`128` | 分块大小 |
-| `useExp2` | A5 新路径支持 `true` | true 时走三小算子拼接路径；新路径收到 false 时由 prepare 校验 |
-| `useQkL2norm` | A5 新路径支持 `true` | true 时走三小算子拼接路径；新路径收到 false 时由 prepare 校验 |
-| `allowNegEigval` | A5 `useExp2=true` 支持 | 为 true 时必须提供 `betaEffOutOptional` |
-| `stateVFirst` | A5 三小算子拼接路径支持 `true/false` | 控制初始状态、分块状态和最终状态的末两维采用 `[V,K]` 或 `[K,V]` |
+| `useExp2` | A5 新路径支持 `true/false` | 只控制门控累计和后续状态、输出阶段使用 `exp2` 或 `exp`，三个小算子均按新路径规格选择优化实现 |
+| `useQkL2norm` | A5 新路径支持 `true/false` | true 时由 prepare 生成归一化 Q/K；false 时 H/O 直接使用输入 Q/K |
+| `allowNegEigval` | A5 新路径支持 | 为 true 时必须提供 `betaEffOutOptional` |
+| `stateVFirst` | A5 新路径支持 `true/false` | 控制初始状态、分块状态和最终状态的末两维采用 `[V,K]` 或 `[K,V]` |
 
 当前未实现的扩展组合会返回参数错误，不会静默忽略。
 
@@ -80,7 +81,7 @@ Python ctypes 入口默认使用 `disable_recompute=True`，用于训练，返�
 
 - A2（`ascend910b`）、A3（`ascend910_93`）、A5（`ascend950`）。
 - 原 Phase6 路径支持 FP16、BF16，`K=128`、`V=128/256`、`chunkSize=64/128`。
-- A5 `useExp2=true` 路径支持 BF16、`K=V=128`、`chunkSize=64`、`Hv/Hk in {1,2,3,4}`。
+- A5 新路径支持 `useExp2=true/false`、`useQkL2norm=true/false`、BF16、`K=V=128`、`chunkSize=64`、`Hv/Hk in {1,2,3,4}`。
 - 支持 MHA、GVA、定长和变长序列。
 - A2/A3 使用 `arch22` 私有实现，A5 使用 `arch35` 私有实现；两套架构代码隔离维护。
 

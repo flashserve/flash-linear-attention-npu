@@ -96,6 +96,7 @@ struct ChunkFwdOTilingContext {
     bool useExp2;
     bool stateVFirst;
     const char *outputLayout;
+    bool isA5;
     uint32_t aicCoreNum;
     size_t sysWorkspaceSize;
 };
@@ -114,6 +115,12 @@ public:
     size_t GetWorkspaceSize() const
     {
         return workspaceSize_;
+    }
+
+    uint64_t GetOutputTokenFirst() const
+    {
+        return static_cast<uint64_t>(tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_BSND ||
+                                     tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_TND);
     }
 
     bool IsVariableLength() const
@@ -305,18 +312,16 @@ public:
             return ge::GRAPH_FAILED;
         }
 
-        const bool outputLayoutSupported =
-            ctx_.useExp2 ?
-                (tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_BSND ||
-                 tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_TND) :
-                (tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_BNSD ||
-                 tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_NTD);
-        OP_CHECK_IF(!outputLayoutSupported,
-                    OP_LOGE(ctx_.nodeName,
-                            "use_exp2=true supports BSND/TND, while use_exp2=false supports BNSD/NTD."),
+        const bool useOptimizedLayout = tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_BSND ||
+                                        tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_TND;
+        OP_CHECK_IF(useOptimizedLayout && !ctx_.isA5,
+                    OP_LOGE(ctx_.nodeName, "BSND/TND output requires A5."),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(ctx_.stateVFirst && !ctx_.useExp2,
-                    OP_LOGE(ctx_.nodeName, "state_v_first=true requires use_exp2=true."),
+        OP_CHECK_IF(ctx_.useExp2 && !useOptimizedLayout,
+                    OP_LOGE(ctx_.nodeName, "use_exp2=true requires the A5 BSND/TND optimized path."),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(ctx_.stateVFirst && !useOptimizedLayout,
+                    OP_LOGE(ctx_.nodeName, "state_v_first=true requires the A5 BSND/TND optimized path."),
                     return ge::GRAPH_FAILED);
         return ge::GRAPH_SUCCESS;
     }
@@ -404,7 +409,8 @@ public:
         OP_CHECK_IF(CommonTiling() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
         tiling_.stateVFirst = ctx_.stateVFirst ? 1 : 0;
         OP_CHECK_IF(LayoutCheck() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-        if (ctx_.useExp2) {
+        if (tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_BSND ||
+            tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_TND) {
             OP_CHECK_IF(A5ShapeCheck() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
             OP_CHECK_IF(A5ChunkTiling() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
             OP_CHECK_IF(WorkspaceTilingA5() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);

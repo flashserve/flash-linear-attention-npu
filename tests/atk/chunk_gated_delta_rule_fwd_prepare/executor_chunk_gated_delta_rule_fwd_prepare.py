@@ -63,9 +63,14 @@ def build_inputs(spec: dict[str, Any], device: torch.device, high_precision: boo
     g_dtype = torch.float64 if high_precision else torch.float32
     seqlens = _parse_seqlens(spec, B, T)
     cu = None if seqlens is None else seqlens_to_cu(seqlens, device=device, dtype=torch.int64)
+    q = _randn((B, HK, T, K), dtype_name, calc_dtype, device, seed + 1)
+    k = _randn((B, HK, T, K), dtype_name, calc_dtype, device, seed + 2)
+    if not bool(spec.get("use_qk_l2norm_in_kernel", True)):
+        q = torch.nn.functional.normalize(q.float(), p=2, dim=-1).to(q.dtype)
+        k = torch.nn.functional.normalize(k.float(), p=2, dim=-1).to(k.dtype)
     return {
-        "q": _randn((B, HK, T, K), dtype_name, calc_dtype, device, seed + 1),
-        "k": _randn((B, HK, T, K), dtype_name, calc_dtype, device, seed + 2),
+        "q": q,
+        "k": k,
         "v": _randn((B, HV, T, V), dtype_name, calc_dtype, device, seed + 3),
         "g": _randn((B, HV, T), "fp32", g_dtype, device, seed + 4, 0.2),
         "beta": _randn((B, HV, T), "fp32", g_dtype, device, seed + 5, 0.5),

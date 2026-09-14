@@ -117,15 +117,15 @@ def effective_inputs(
     raw_beta: torch.Tensor,
     public_dtype: torch.dtype,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """在 CPU 上冻结三条路径完全一致的实际算子输入。"""
+    """在 CPU 上冻结三条路径完全一致的实际算子输入，不修改输入数值。"""
 
     q = q.detach().cpu().to(public_dtype).contiguous()
     k = k.detach().cpu().to(public_dtype).contiguous()
     v = v.detach().cpu().to(public_dtype).contiguous()
     raw_g = raw_g.detach().cpu().float().contiguous()
     raw_beta = raw_beta.detach().cpu().float().contiguous()
-    g = (-torch.sigmoid(raw_g) * 0.1).to(torch.float32).contiguous()
-    beta = torch.sigmoid(raw_beta).to(public_dtype).contiguous()
+    g = raw_g.to(torch.float32).contiguous()
+    beta = raw_beta.to(public_dtype).contiguous()
     return q, k, v, g, beta
 
 

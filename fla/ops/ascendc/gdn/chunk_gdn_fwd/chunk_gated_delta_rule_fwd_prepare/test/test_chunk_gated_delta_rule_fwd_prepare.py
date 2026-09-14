@@ -3,8 +3,8 @@
 Golden is ``cpu_gdn_fwd_l2norm_to_recompute`` in this test directory.
 
 Default runs ``gdn_cases()`` 1-6 first, then case 0 (T=1792 G=2), case 7
-(V=256), case 8 (G=3), case 9 (G=4), case 10 (small packed varlen). The six
-GdnCase rows::
+(V=256), case 8 (G=3), case 9 (G=4), case 10 (small packed varlen), case 11
+(l2norm False, caller pre-norms q/k). The six GdnCase rows::
 
     1  B=2  HK=16 HV=32 T=11264  G=2  long fixed
     2  B=1  HK=32 HV=32 T=65536  G=1  packed varlen
@@ -32,7 +32,7 @@ from fla_npu.ops import ascendc as ascendc_ops
 
 _TEST_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_TEST_DIR))
-from cases import gdn_cases, describe_case, case_inputs  # noqa: E402
+from cases import GdnCase, gdn_cases, describe_case, case_inputs  # noqa: E402
 from cpu_golden import cpu_gdn_fwd_l2norm_to_recompute  # noqa: E402
 
 GDN_DIR = _TEST_DIR / "cpu_golden.py"
@@ -139,8 +139,14 @@ def check_against_ref(q, k, v, g, beta, outs, flags, cu_seqlens=None):
     HV, V = v.shape[1], v.shape[3]
     assert_close("q_hat", q_hat, ref.q, 2e-2, 2e-2)
     assert_close("k_hat", k_hat, ref.k, 2e-2, 2e-2)
-    assert_close("q_rstd", q_rstd, ref.q_rstd, 5e-3, 5e-3)
-    assert_close("k_rstd", k_rstd, ref.k_rstd, 5e-3, 5e-3)
+    if q_rstd is None and ref.q_rstd is None:
+        print("  q_rstd       skipped (use_qk_l2norm_in_kernel=False)")
+    else:
+        assert_close("q_rstd", q_rstd, ref.q_rstd, 5e-3, 5e-3)
+    if k_rstd is None and ref.k_rstd is None:
+        print("  k_rstd       skipped (use_qk_l2norm_in_kernel=False)")
+    else:
+        assert_close("k_rstd", k_rstd, ref.k_rstd, 5e-3, 5e-3)
     assert_close("beta_out", beta_out, ref.beta, 5e-3, 5e-3)
     assert_close("g_cumsum", g_cumsum, ref.g, 5e-3, 5e-3)
     if flags.get("output_a", True):
@@ -246,6 +252,25 @@ def run_small_varlen_case():
     print("PASS case10")
 
 
+def run_l2norm_false_case():
+    """Caller L2-normalizes q/k; kernel skips in-kernel L2Norm (WY on raw k is inf/nan)."""
+    case = GdnCase(
+        case_id=11,
+        batch=1,
+        hk=4,
+        hv=8,
+        seq_len=256,
+        head_k=128,
+        head_v=128,
+        chunk_size=64,
+        use_qk_l2norm_in_kernel=False,
+        use_gate_in_kernel=False,
+        use_beta_sigmoid_in_kernel=True,
+        allow_neg_eigval=True,
+    )
+    run_gdn_case(case)
+
+
 def run_gdn_case(case):
     skip = case.skip_reason()
     print(describe_case(case), flush=True)
@@ -276,7 +301,8 @@ def main():
     os.environ["PARALLEL_COMPILE"] = "0"
     parser = argparse.ArgumentParser()
     parser.add_argument("--case-id", type=int, default=None,
-                        help="0=bring-up G=2; 1-6=GdnCase; 7=V=256; 8=G=3; 9=G=4; 10=small varlen; omit=1-6 then 0,7-10")
+                        help="0=bring-up G=2; 1-6=GdnCase; 7=V=256; 8=G=3; 9=G=4; 10=small varlen; "
+                             "11=l2norm False (pre-norm qk); omit=1-6 then 0,7-11")
     args = parser.parse_args()
     setup_npu()
     try:
@@ -288,6 +314,7 @@ def main():
             run_g_ratio_case(8, hk=4, hv=12, seq_len=96)
             run_g_ratio_case(9, hk=2, hv=8, seq_len=96)
             run_small_varlen_case()
+            run_l2norm_false_case()
         elif args.case_id == 0:
             run_required_case()
         elif args.case_id == 7:
@@ -298,6 +325,8 @@ def main():
             run_g_ratio_case(9, hk=2, hv=8, seq_len=96)
         elif args.case_id == 10:
             run_small_varlen_case()
+        elif args.case_id == 11:
+            run_l2norm_false_case()
         else:
             picked = [c for c in gdn_cases() if c.case_id == args.case_id]
             if not picked:
