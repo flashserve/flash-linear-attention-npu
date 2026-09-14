@@ -31,18 +31,6 @@ public:
         }
         wGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.w));
         uGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.u));
-        const uint64_t relayElements =
-            static_cast<uint64_t>(args_.tiling.batch) *
-            args_.tiling.valueHeadNum * args_.tiling.seqLen *
-            Shape::kHeadDim / (sizeof(float) / sizeof(bfloat16_t));
-        rawScoreRelayGm_[0].SetGlobalBuffer(
-            reinterpret_cast<__gm__ float *>(args_.w), relayElements);
-        rawScoreRelayGm_[1].SetGlobalBuffer(
-            reinterpret_cast<__gm__ float *>(args_.u), relayElements);
-        rawScoreRelayGm_[2].SetGlobalBuffer(
-            reinterpret_cast<__gm__ float *>(args_.kg), relayElements);
-        rawScoreRelayGm_[3].SetGlobalBuffer(
-            reinterpret_cast<__gm__ float *>(args_.qgScaled), relayElements);
 
         pipe_->InitBuffer(l1Buf_, L1::kPeak);
         pipe_->InitBuffer(l0ABuf_, 0x10000);
@@ -57,7 +45,6 @@ public:
         mToMte1_ = pipe_->AllocEventID<AscendC::HardEvent::M_MTE1>(); // ID 3
         mToFix_ = pipe_->AllocEventID<AscendC::HardEvent::M_FIX>(); // ID 0
         fixToM_ = pipe_->AllocEventID<AscendC::HardEvent::FIX_M>(); // ID 0
-        mte2ToFix_ = pipe_->AllocEventID<AscendC::HardEvent::MTE2_FIX>(); // ID 0
         fixToMte2_[0] = pipe_->AllocEventID<AscendC::HardEvent::FIX_MTE2>(); // ID 0
         fixToMte2_[1] = pipe_->AllocEventID<AscendC::HardEvent::FIX_MTE2>(); // ID 1
         fixToMte2_[2] = pipe_->AllocEventID<AscendC::HardEvent::FIX_MTE2>(); // ID 2
@@ -122,7 +109,7 @@ public:
                     for (uint32_t headInPair = 0; headInPair < 2; ++headInPair) {
                         const uint32_t localHead = pair * 2 + headInPair;
                         if (localHead < activeHeads) {
-                            StageC2(chunk, groupBegin + localHead, localHead);
+                            StageC2(chunk, localHead);
                         }
                     }
                     AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(
@@ -180,11 +167,11 @@ private:
     }
 
     __aicore__ inline void StageC2(const ChunkRange &chunk,
-                                   uint32_t valueHead,
                                    uint32_t localHead)
     {
         const uint64_t slot = WorkspaceSlotBase(
-            workgroup_, localHead, Workspace::kArch22WorkgroupStride);
+            workgroup_, localHead, Workspace::kArch22WorkgroupStride,
+            Workspace::kArch22SlotStride);
         AscendC::GlobalTensor<bfloat16_t> payload;
         payload.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + slot + Workspace::kPayload));
@@ -215,15 +202,17 @@ private:
                               payload[ScorePayload::kKMinus[s] / sizeof(bfloat16_t)], copy);
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(mte2ToMte1_);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_FIX>(mte2ToFix_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(mte2ToMte1_);
 
         const uint32_t active = ActiveSubChunks(chunk.validRows);
-        const uint64_t relayOffset = HeadTensorOffset(
-            args_.tiling, chunk, valueHead, Shape::kHeadDim) /
-            (sizeof(float) / sizeof(bfloat16_t));
+        AscendC::GlobalTensor<float> rawScoreRelay;
+        rawScoreRelay.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+            args_.workspace + slot + Workspace::kArch22CubeRelay),
+            Workspace::kArch22RawScoreBytes / sizeof(float));
         for (uint32_t s = 0; s < active; ++s) {
             const uint32_t n = Shape::kPrefixRows[s];
+            const uint32_t stackedBand = Shape::kSubChunkRows *
+                                         Shape::kSubChunkRows * s * (s + 1);
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
 
             // L1 zN 的同一 16 行在 8 个 K 分形间隔 4 个分形；
@@ -279,11 +268,6 @@ private:
             AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
             AscendC::SetFlag<AscendC::HardEvent::M_FIX>(mToFix_);
             AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(mToFix_);
-            if (s == 0) {
-                // payload 即将原址换义，必须确认整段 MTE2 输入已搬完。
-                AscendC::WaitFlag<AscendC::HardEvent::MTE2_FIX>(mte2ToFix_);
-            }
-
             uint32_t rows = chunk.validRows - s * Shape::kSubChunkRows;
             if (rows > Shape::kSubChunkRows) {
                 rows = Shape::kSubChunkRows;
@@ -293,12 +277,8 @@ private:
                     n, 2 * Shape::kSubChunkRows,
                     2 * Shape::kSubChunkRows, n, false);
                 fix.quantPre = QuantMode_t::NoQuant;
-                AscendC::GlobalTensor<float> rawScores;
-                rawScores.SetGlobalBuffer(
-                    rawScoreRelayGm_[s].GetPhyAddr(relayOffset),
-                    2 * rows * n);
                 AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(
-                    rawScores, l0C, fix);
+                    rawScoreRelay[stackedBand], l0C, fix);
             } else {
                 auto fix = AscendC::FixpipeParamsV220(
                     n, rows, 2 * Shape::kSubChunkRows, n, false);
@@ -307,19 +287,11 @@ private:
                 // 的基础分形为 16x16，下半 16 行从第二个 M1 分形开始。
                 constexpr uint32_t kLowerM1Offset = 16 * 16;
                 const uint32_t relayElements = rows * n;
-                AscendC::GlobalTensor<float> rawAqk;
-                AscendC::GlobalTensor<float> rawAkk;
-                rawAqk.SetGlobalBuffer(
-                    rawScoreRelayGm_[s].GetPhyAddr(relayOffset),
-                    relayElements);
-                rawAkk.SetGlobalBuffer(
-                    rawScoreRelayGm_[s].GetPhyAddr(
-                        relayOffset + relayElements),
-                    relayElements);
                 AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(
-                    rawAqk, l0C, fix);
+                    rawScoreRelay[stackedBand], l0C, fix);
                 AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(
-                    rawAkk, l0C[kLowerM1Offset], fix);
+                    rawScoreRelay[stackedBand + relayElements],
+                    l0C[kLowerM1Offset], fix);
             }
             AscendC::SetFlag<AscendC::HardEvent::FIX_M>(fixToM_);
         }
@@ -329,7 +301,8 @@ private:
                                    uint32_t localHead)
     {
         const uint64_t slot = WorkspaceSlotBase(
-            workgroup_, localHead, Workspace::kArch22WorkgroupStride);
+            workgroup_, localHead, Workspace::kArch22WorkgroupStride,
+            Workspace::kArch22SlotStride);
         auto l1Bytes = l1Buf_.Get<uint8_t>();
         auto akkL1 = l1Bytes[L1::kAkk + localHead * L1::kAkkStride]
                          .template ReinterpretCast<bfloat16_t>();
@@ -365,7 +338,7 @@ private:
                        .template ReinterpretCast<float>();
         AscendC::GlobalTensor<float> tRelay;
         tRelay.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
-            args_.workspace + slot + Workspace::kPayload + Workspace::kTRelay),
+            args_.workspace + slot + Workspace::kArch22TRelay),
             Shape::kQuadrantFp32Bytes / sizeof(float));
         AscendC::Nd2NzParams copy{};
         copy.ndNum = 1;
@@ -585,7 +558,8 @@ private:
             }
             const uint32_t valueHead = groupBegin + localHead;
             const uint64_t slot = WorkspaceSlotBase(
-                workgroup_, localHead, Workspace::kArch22WorkgroupStride);
+                workgroup_, localHead, Workspace::kArch22WorkgroupStride,
+                Workspace::kArch22SlotStride);
             auto kBetaL1 =
                 l1Bytes[L1::kHeadLane[localHead]].template ReinterpretCast<bfloat16_t>();
             auto vBetaL1 =
@@ -736,7 +710,6 @@ private:
         pipe_->ReleaseEventID<AscendC::HardEvent::M_MTE1>(mToMte1_);
         pipe_->ReleaseEventID<AscendC::HardEvent::M_FIX>(mToFix_);
         pipe_->ReleaseEventID<AscendC::HardEvent::FIX_M>(fixToM_);
-        pipe_->ReleaseEventID<AscendC::HardEvent::MTE2_FIX>(mte2ToFix_);
         for (uint32_t head = 0; head < Shape::kHeadsPerGroup; ++head) {
             pipe_->ReleaseEventID<AscendC::HardEvent::FIX_MTE2>(fixToMte2_[head]);
             pipe_->ReleaseEventID<AscendC::HardEvent::MTE2_MTE1>(tReady_[head]);
@@ -757,13 +730,11 @@ private:
     AscendC::TEventID mToMte1_{};
     AscendC::TEventID mToFix_{};
     AscendC::TEventID fixToM_{};
-    AscendC::TEventID mte2ToFix_{};
     AscendC::TEventID fixToMte2_[Shape::kHeadsPerGroup]{};
     AscendC::TEventID tReady_[Shape::kHeadsPerGroup]{};
     AscendC::TEventID fixToMte1_[Shape::kHeadsPerGroup]{};
     AscendC::GlobalTensor<bfloat16_t> wGm_{};
     AscendC::GlobalTensor<bfloat16_t> uGm_{};
-    AscendC::GlobalTensor<float> rawScoreRelayGm_[Shape::kSubChunkCount]{};
 };
 
 } // namespace KdaPrepare::Arch22

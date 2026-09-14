@@ -65,18 +65,6 @@ public:
         if constexpr (CompilePolicy::outputMode != OutputMode::None) {
             betaEffGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.betaEff));
         }
-        const uint64_t relayElements =
-            static_cast<uint64_t>(args_.tiling.batch) *
-            args_.tiling.valueHeadNum * args_.tiling.seqLen *
-            Shape::kHeadDim / (sizeof(float) / sizeof(bfloat16_t));
-        rawScoreRelayGm_[0].SetGlobalBuffer(
-            reinterpret_cast<__gm__ float *>(args_.w), relayElements);
-        rawScoreRelayGm_[1].SetGlobalBuffer(
-            reinterpret_cast<__gm__ float *>(args_.u), relayElements);
-        rawScoreRelayGm_[2].SetGlobalBuffer(
-            reinterpret_cast<__gm__ float *>(args_.kg), relayElements);
-        rawScoreRelayGm_[3].SetGlobalBuffer(
-            reinterpret_cast<__gm__ float *>(args_.qgScaled), relayElements);
         if (coreCount_ == 0) {
             return;
         }
@@ -324,7 +312,8 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[pair]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[pair]);
         const uint64_t slot = WorkspaceSlotBase(
-            workgroup_, localHead, Workspace::kArch22WorkgroupStride);
+            workgroup_, localHead, Workspace::kArch22WorkgroupStride,
+            Workspace::kArch22SlotStride);
         AscendC::GlobalTensor<bfloat16_t> qhatContext;
         AscendC::GlobalTensor<bfloat16_t> khatContext;
         AscendC::GlobalTensor<float> betaContext;
@@ -402,7 +391,8 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[pair]);
         AscendC::GlobalTensor<bfloat16_t> payload;
         const uint64_t slot = WorkspaceSlotBase(
-            workgroup_, localHead, Workspace::kArch22WorkgroupStride);
+            workgroup_, localHead, Workspace::kArch22WorkgroupStride,
+            Workspace::kArch22SlotStride);
         payload.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.workspace + slot + Workspace::kPayload));
         AscendC::DataCopy(payload, qPlus, Shape::kScorePayloadBytes / sizeof(bfloat16_t));
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(ioFree_[pair]);
@@ -425,13 +415,11 @@ private:
         auto akkPack = ub[base + Arch22Ub::kV3AkkPack]
                            .template ReinterpretCast<bfloat16_t>();
         const uint64_t slot = WorkspaceSlotBase(
-            workgroup_, localHead, Workspace::kArch22WorkgroupStride);
+            workgroup_, localHead, Workspace::kArch22WorkgroupStride,
+            Workspace::kArch22SlotStride);
         AscendC::GlobalTensor<float> betaContext;
         betaContext.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.workspace + slot + Workspace::kBetaEff));
         const uint32_t active = CeilDiv(chunk.validRows, Shape::kSubChunkRows);
-        const uint64_t relayOffset = HeadTensorOffset(
-            args_.tiling, chunk, valueHead, Shape::kHeadDim) /
-            (sizeof(float) / sizeof(bfloat16_t));
         uint32_t compactElements = 0;
         for (uint32_t s = 0; s < active; ++s) {
             const uint32_t remaining =
@@ -441,12 +429,14 @@ private:
                                       : Shape::kSubChunkRows;
             const uint32_t bandElements =
                 2 * rows * Shape::kPrefixRows[s];
-            AscendC::DataCopy(raw[compactElements],
-                rawScoreRelayGm_[s][relayOffset], bandElements);
             compactElements += bandElements;
         }
-        // C2 的四个 raw band 固定借用 W/U/kg/qg_scaled 当前输出切片。
-        // V3 在 V6/C7 覆盖这些切片前一次搬回，尾 band 不读取补零行。
+        AscendC::GlobalTensor<float> rawScoreRelay;
+        rawScoreRelay.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+            args_.workspace + slot + Workspace::kArch22CubeRelay),
+            Workspace::kArch22RawScoreBytes / sizeof(float));
+        // C2 按四段连续写入独占 relay；尾 band 只包含有效行。
+        AscendC::DataCopy(raw, rawScoreRelay, compactElements);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(sharedFree_);
         AscendC::DataCopyPadExtParams<float> pad{false, 0, 0, 0};
         AscendC::DataCopyPad(betaEff, betaContext,
@@ -472,9 +462,27 @@ private:
         AscendC::DataCopy(akkRelay, akkPack,
                           Shape::kChunkRows * Shape::kChunkRows);
         if constexpr (CompilePolicy::outputMode != OutputMode::None) {
-            AscendC::DataCopy(
-                akkGm_[AOutputOffset(args_.tiling, chunk, valueHead)],
-                akkPack, chunk.validRows * Shape::kChunkRows);
+            const uint64_t outputOffset =
+                AOutputOffset(args_.tiling, chunk, valueHead);
+            const uint32_t topRows = chunk.validRows < 32
+                                         ? chunk.validRows
+                                         : 32;
+            AscendC::DataCopyPad(
+                akkGm_[outputOffset], akkPack,
+                AscendC::DataCopyExtParams{
+                    1, topRows * Shape::kChunkRows * sizeof(bfloat16_t),
+                    0, 0, 0});
+            if (chunk.validRows > 32) {
+                const uint32_t bottomRows = chunk.validRows - 32;
+                constexpr uint32_t kBottomRightOffset =
+                    32 * Shape::kChunkRows + 32;
+                AscendC::DataCopyPad(
+                    akkGm_[outputOffset + kBottomRightOffset],
+                    akkPack[kBottomRightOffset],
+                    AscendC::DataCopyExtParams{
+                        static_cast<uint16_t>(bottomRows),
+                        32 * sizeof(bfloat16_t), 2, 64, 0});
+            }
         }
         if (chunk.validRows > 32) {
             AscendC::GlobalTensor<float> payload;
@@ -502,7 +510,8 @@ private:
         auto scratch = ub[Arch22Ub::kSharedScratch].template ReinterpretCast<float>();
         auto betaEff = ub[base + Arch22Ub::kBetaEff].template ReinterpretCast<float>();
         const uint64_t slot = WorkspaceSlotBase(
-            workgroup_, localHead, Workspace::kArch22WorkgroupStride);
+            workgroup_, localHead, Workspace::kArch22WorkgroupStride,
+            Workspace::kArch22SlotStride);
         AscendC::GlobalTensor<bfloat16_t> qhat;
         AscendC::GlobalTensor<bfloat16_t> khat;
         AscendC::GlobalTensor<float> betaContext;
@@ -1206,7 +1215,6 @@ private:
     AscendC::GlobalTensor<float> qRstdGm_{};
     AscendC::GlobalTensor<float> kRstdGm_{};
     AscendC::GlobalTensor<float> betaEffGm_{};
-    AscendC::GlobalTensor<float> rawScoreRelayGm_[Shape::kSubChunkCount]{};
 };
 
 } // namespace KdaPrepare::Arch22

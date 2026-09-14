@@ -326,6 +326,14 @@ __aicore__ inline uint64_t WorkspaceSlotBase(
            static_cast<uint64_t>(slot) * Workspace::kSlotStride;
 }
 
+__aicore__ inline uint64_t WorkspaceSlotBase(
+    uint32_t workgroup, uint32_t slot, uint32_t workgroupStride,
+    uint32_t slotStride)
+{
+    return static_cast<uint64_t>(workgroup) * workgroupStride +
+           static_cast<uint64_t>(slot) * slotStride;
+}
+
 } // namespace KdaPrepare
 
 #endif // CHUNK_KDA_FWD_PREPARE_UTILS_H

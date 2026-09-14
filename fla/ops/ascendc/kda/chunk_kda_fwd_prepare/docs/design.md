@@ -143,7 +143,11 @@ Q/K head，也只允许 GVA 组首 owner 写 `q_hat/k_hat/q_rstd/k_rstd`，避�
 - A5 UB 为两个 112 KiB 计算槽和两个 12 KiB 状态槽，总计 248 KiB。
 - A2/A3 使用 184 KiB 可用 UB，按两个私有区和一个共享区规划，尾部 8 KiB 保留。
 - L1 为 512 KiB，四个 head lane 保存 C2 payload，其余区域保存 X0、negX1、T 和 Akk。
-- 每个 workspace slot 为 `0x1A400` Byte，保存 Qhat、Khat、betaEff 和 72 KiB payload。
+- Arch35 每个 workspace slot 为 `0x1A400` Byte，保存 Qhat、Khat、betaEff
+  和 72 KiB payload。
+- Arch22 每个 slot 追加 20 KiB AIC 独占 relay，总计 `0x1F400` Byte；C2
+  写四段 raw score，V3 消费后 C4 在同址前 4 KiB 写 `T`。host 根据目标
+  平台选择 slot 大小，A5 不预留 Arch22 的追加区。
 
 V1 payload 由 16 KiB Qplus、16 KiB Kplus 和 40 KiB Kminus prefix 组成，共 72 KiB。
 
@@ -151,6 +155,9 @@ V1 payload 由 16 KiB Qplus、16 KiB Kplus 和 40 KiB Kminus prefix 组成，共
 
 A5 使用 `AscendC::Mutex` 约束 MTE2、V、MTE3、MTE1、M 和 Fixpipe 对静态本地地址的
 生命周期；A2/A3 使用配对的 HardEvent。核间数据通过 ready/free 双向握手传递：
+
+A5 的 V1/V3 结果只交给 MTE3，因此使用公开 `asc_vf_call` 启动 VF；V 到 MTE3 的
+依赖仍由同一 Mutex ID 的 Unlock/Lock 表达，不额外引入 V 到 Scalar 的等待。
 
 ```text
 AIV: wait free -> 写 workspace/UB -> set ready

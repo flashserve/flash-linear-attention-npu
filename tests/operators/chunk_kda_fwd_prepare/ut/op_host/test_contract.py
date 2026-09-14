@@ -18,6 +18,27 @@ def test_tiling_processor_test_is_built_when_tests_are_enabled():
     assert test_source.is_file()
 
 
+def test_host_workspace_selects_the_slot_for_each_architecture():
+    processor = (
+        OP_HOST / "chunk_kda_fwd_prepare_tiling_processor.h"
+    ).read_text(encoding="utf-8")
+    tiling = (OP_HOST / "chunk_kda_fwd_prepare_tiling.cpp").read_text(
+        encoding="utf-8"
+    )
+    policy = (
+        OP_HOST.parent / "op_kernel/chunk_kda_fwd_prepare_policy.h"
+    ).read_text(encoding="utf-8")
+    assert "CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES = 0x1A400" in processor
+    assert "CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES = 0x1F400" in processor
+    assert '#include "platform/soc_spec.h"' in tiling
+    assert "platform.GetCurNpuArch()" in tiling
+    assert "NpuArch::DAV_3510" in tiling
+    assert "isAscend950 ? CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES" in tiling
+    assert "kArch22SlotStride" in policy
+    assert "kSlotStride = 0x1A400" in policy
+    assert "kArch35SlotStride = kSlotStride" in policy
+
+
 def test_output_mode_is_an_internal_tiling_key_axis():
     tiling_source = (OP_HOST / "chunk_kda_fwd_prepare_tiling.cpp").read_text(
         encoding="utf-8"

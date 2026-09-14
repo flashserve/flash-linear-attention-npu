@@ -363,7 +363,7 @@ L1 只供 Cube：
 | `[0x54000,0x5C000)` | 32 KiB | 四份 BF16 Akk 象限包 |
 | `[0x5C000,0x80000)` | 144 KiB | 保留 |
 
-每个 workspace slot 固定为 `0x1A400` 字节：
+workspace 的公共前缀为 `0x1A400` 字节：
 
 | slot 内 offset | 内容 |
 | --- | --- |
@@ -375,23 +375,24 @@ L1 只供 Cube：
 
 `Qhat/Khat/betaEff` context 都只搬运 `validRows`。`G` 始终写入公开 `gk`，
 V6 从该公开输出回读，不再在 workspace 保留第二份 G context。
-因此每个 slot 从 137 KiB 降为 105 KiB，四个 slot 共减少 128 KiB workspace。
+Arch35 每个 slot 为 105 KiB；Arch22 在公共前缀后追加 20 KiB AIC 独占 relay，
+每个 slot 为 125 KiB。host 根据目标平台选择 slot 大小，A5 不预留 Arch22 追加区。
 
-Arch35 和 Arch22 每个 workgroup 都只分配 4 个 slot，对应一个 AIC wave 的四个
+Arch35 和 Arch22 每个 workgroup 都只使用 4 个 slot，对应一个 AIC wave 的四个
 group-local head。下一组 head 必须先消费上一组的 C7 free，再原址复用这 4 个 slot，
 因此不额外分配不可达的第二组 slot。payload 在 V1、V3、C4/C5、V6 间原址换义；
 只有生产者确认旧 reader 完成后才能覆盖。
 
-Arch35 和 Arch22 的 C4 都把 payload 的 `[0x4000,0x5000)` 用作一份 4 KiB
-`T[32,32]` NZ relay。目标 C220 不支持 FP32 L0C 直接写 FP32 L1，因此 Arch22
-先由 Fixpipe 写入这段 GM，再通过成对的 `FIX_MTE2` 事件等待写出完成，最后由 MTE2
-原样搬入每个 head 的 L1 T 常驻区；每个 head 使用独立的 `MTE2_MTE1` ready 事件
-交给 C5。Arch35 的 channel-split FP32 Fixpipe 同样先写 GM relay，再由 MTE2 搬入
-L1，并用每个 head 的 L1 Mutex 顺序约束 Fixpipe、MTE2 与 C5 的 MTE1 读取。
+Arch22 的追加区 `[0x1A400,0x1F400)` 先由 C2 连续写四段 raw score；V3 搬入 UB
+并通过 `MTE2_V` 确认消费完成后，C4 才复用其前 4 KiB 保存 `T[32,32]` NZ。
+raw score 和 `T` 始终只有 AIC 一个 writer。目标 C220 不支持 FP32 L0C 直接写
+FP32 L1，因此 C4 先由 Fixpipe 写 GM relay，再通过成对的 `FIX_MTE2` 事件等待写出
+完成，最后由 MTE2 原样搬入每个 head 的 L1 T 常驻区。Arch35 仍复用当前 W 输出的
+前 4 KiB 作 `T` relay，并用每个 head 的 L1 Mutex 顺序约束 Fixpipe、MTE2 与 C5。
 
 V3 会把完整补零的 `Akk[64,64]` 固定写到 payload 内 `0x5800`，C4 始终读取这份
-workspace relay。公开 `Akk` 同时只写 `validRows` 行，不能把尾 chunk 的公开输出
-当成 64 行 relay。
+workspace relay。公开 `Akk` 由 V3/AIV 写上半与右下象限，C5/AIC 只写左下象限，
+两个 writer 的地址不重叠；尾 chunk 仍只写有效行，不能把公开输出当成 64 行 relay。
 
 ## 同步
 
@@ -422,6 +423,9 @@ StageV1Compute(...); // 本 Stage 唯一一次 VF
 AscendC::Mutex::Unlock<PIPE_V>(id);
 ```
 
+V1/V3 的结果只交给 MTE3，使用公开 `asc_vf_call` 启动 VF，避免产生无消费者的
+V 到 Scalar scope 等待。V 到 MTE3 的数据依赖仍由上述同一 Mutex ID 保证。
+
 Mutex 只处理同核 pipe 交接，不是核间同步。AIC/AIV 仍用 mode `0x4` 的
 `CrossCoreSetFlag/CrossCoreWaitFlag` 建立 ready/free 双向协议。下表是调用现场
 直接写出的固定 ID；AIV1 的 `+16` 只出现在 AIC 视角，AIV1 本身仍使用本地
@@ -431,8 +435,8 @@ Mutex 只处理同核 pipe 交接，不是核间同步。AIC/AIV 仍用 mode `0x
   可以开始读取；由 AIV `set`，由 AIC `wait`。
 - `slot reusable` 表示 AIC 已把当前 payload 搬离 workspace，AIV 可以复用同一 slot 写入
   下一阶段的数据；由 AIC `set`，由 AIV `wait`。
-- C2 发布 `slot reusable` 时还同时保证 raw score 已通过 Fixpipe 到达对应 AIV 的
-  UB，因此它也是 V3 的输入 ready 信号。
+- C2 发布 `slot reusable` 时保证 raw score 已通过 Fixpipe 到达当前 slot 的 GM relay；
+  V3 收到信号后再用 MTE2 搬入 UB，并以本核 `MTE2_V` 事件保证 VF 读取前就绪。
 - 这些编号是 AIV/AIC 间的 CrossCore flag，不是核内 Mutex ID，也不是 Arch22
   `AllocEventID` 返回的 HardEvent ID。
 
@@ -481,7 +485,6 @@ Mutex 只处理同核 pipe 交接，不是核间同步。AIC/AIV 仍用 mode `0x
 | AIC | `M_MTE1` | `mToMte1_` | `3`，`0/1/2` 由 AIC `TPipe::Init` 预占 |
 | AIC | `M_FIX` | `mToFix_` | `0` |
 | AIC | `FIX_M` | `fixToM_` | `0` |
-| AIC | `MTE2_FIX` | `mte2ToFix_` | `0` |
 | AIC | `FIX_MTE2` | `fixToMte2_[0..3]` | `0/1/2/3` |
 | AIC | `FIX_MTE1` | `fixToMte1_[0..3]` | `0/1/2/3` |
 

@@ -264,6 +264,28 @@ def test_arch35_vector_pseudocode_tracks_runtime_semantics():
     )
 
 
+def test_arch22_pseudocode_tracks_runtime_semantics():
+    for filename, pseudocode_guard, implementation_guard in (
+        (
+            "chunk_kda_fwd_prepare_vec.h",
+            "PSEUDOCODE_ARCH22_CHUNK_KDA_FWD_PREPARE_VEC_H",
+            "ARCH22_CHUNK_KDA_FWD_PREPARE_VEC_H",
+        ),
+        (
+            "chunk_kda_fwd_prepare_cube.h",
+            "PSEUDOCODE_ARCH22_CHUNK_KDA_FWD_PREPARE_CUBE_H",
+            "ARCH22_CHUNK_KDA_FWD_PREPARE_CUBE_H",
+        ),
+    ):
+        implementation = _read_kernel(Path("arch22") / filename)
+        pseudocode = _read_kernel(
+            Path("pseudocode/arch22") / filename
+        ).replace(pseudocode_guard, implementation_guard)
+        assert _normalized_cpp_tokens(pseudocode) == _normalized_cpp_tokens(
+            implementation
+        )
+
+
 def test_arch35_load2d_sources_use_direct_byte_addresses():
     for prefix in (Path(), Path("pseudocode")):
         source = _read_kernel(prefix / "arch35/chunk_kda_fwd_prepare_cube.h")
@@ -325,3 +347,87 @@ def test_masking_does_not_remove_internal_relays_or_required_stores():
             assert "DataCopy(aqkGm_" in source
         for source in (arch22_cube, arch35_cube):
             assert "L1::kAkkQ10Elements" in source
+
+
+def test_arch22_cross_core_gm_relays_have_disjoint_writers():
+    for prefix in (Path(), Path("pseudocode")):
+        policy = _read_kernel(prefix / "chunk_kda_fwd_prepare_policy.h")
+        arch22_vec = _read_kernel(
+            prefix / "arch22/chunk_kda_fwd_prepare_vec.h"
+        )
+        arch22_cube = _read_kernel(
+            prefix / "arch22/chunk_kda_fwd_prepare_cube.h"
+        )
+        compact_vec = " ".join(arch22_vec.split())
+
+        assert "kArch22RawScoreBytes = 0x5000" in policy
+        assert "kArch22SlotStride" in policy
+        assert "Workspace::kArch22CubeRelay" in arch22_vec
+        assert "Workspace::kArch22CubeRelay" in arch22_cube
+        assert "Workspace::kArch22TRelay" in arch22_cube
+        assert "rawScoreRelayGm_" not in arch22_vec + arch22_cube
+        assert "reinterpret_cast<__gm__ float *>(args_.w)" not in arch22_cube
+        assert "reinterpret_cast<__gm__ float *>(args_.u)" not in arch22_cube
+        assert "reinterpret_cast<__gm__ float *>(args_.kg)" not in arch22_cube
+        assert (
+            "DataCopyExtParams{ static_cast<uint16_t>(bottomRows), "
+            "32 * sizeof(bfloat16_t), 2, 64, 0}"
+        ) in compact_vec
+
+
+def test_arch22_relay_and_akk_writer_ranges_cover_every_tail_length():
+    max_rows = 64
+    sub_chunk_rows = 16
+    raw_score_relay_bytes = 0x5000
+
+    for valid_rows in range(1, max_rows + 1):
+        active_sub_chunks = (valid_rows + sub_chunk_rows - 1) // sub_chunk_rows
+        compact_bytes = 0
+        raw_score_ranges = []
+        for sub_chunk in range(active_sub_chunks):
+            rows = min(
+                sub_chunk_rows,
+                valid_rows - sub_chunk * sub_chunk_rows,
+            )
+            prefix_rows = sub_chunk_rows * (sub_chunk + 1)
+            begin = (
+                sub_chunk_rows
+                * sub_chunk_rows
+                * sub_chunk
+                * (sub_chunk + 1)
+                * 4
+            )
+            # C2 的固定 band 起点必须与 V3 的紧凑读取游标一致。
+            assert begin == compact_bytes
+            end = begin + 2 * rows * prefix_rows * 4
+            raw_score_ranges.append(range(begin, end))
+            compact_bytes = end
+
+        assert compact_bytes <= raw_score_relay_bytes
+        assert sum(len(span) for span in raw_score_ranges) == compact_bytes
+
+        # V3 写上半行和右下象限，C5 只写左下象限。
+        top = {
+            (row, column)
+            for row in range(min(valid_rows, 32))
+            for column in range(max_rows)
+        }
+        bottom_right = {
+            (row, column)
+            for row in range(32, valid_rows)
+            for column in range(32, max_rows)
+        }
+        bottom_left = {
+            (row, column)
+            for row in range(32, valid_rows)
+            for column in range(32)
+        }
+        expected = {
+            (row, column)
+            for row in range(valid_rows)
+            for column in range(max_rows)
+        }
+        assert top.isdisjoint(bottom_right)
+        assert top.isdisjoint(bottom_left)
+        assert bottom_right.isdisjoint(bottom_left)
+        assert top | bottom_right | bottom_left == expected

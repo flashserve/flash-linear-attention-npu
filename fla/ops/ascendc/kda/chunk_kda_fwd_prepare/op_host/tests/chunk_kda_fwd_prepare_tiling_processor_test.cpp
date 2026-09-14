@@ -54,7 +54,29 @@ bool CheckChunkOnlySchedule()
         schedule.chunkWorkItems == 32 && schedule.totalWorkItems == 32 &&
         schedule.usedCoreNum == 24 && schedule.headsPerPartition == 8 &&
         schedule.workspaceBytes ==
-            1024 + 24 * optiling::CHUNK_KDA_FWD_PREPARE_WORKGROUP_BYTES;
+            1024 + 24 *
+                optiling::CHUNK_KDA_FWD_PREPARE_ARCH22_WORKGROUP_BYTES;
+}
+
+bool CheckArchSpecificWorkspace()
+{
+    optiling::ChunkKdaFwdPrepareScheduleContext arch22Context{
+        2, 4, 8, 16, 0, 24, 1024, false};
+    auto arch35Context = arch22Context;
+    arch35Context.workspaceSlotBytes =
+        optiling::CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES;
+    optiling::ChunkKdaFwdPrepareSchedule arch22Schedule;
+    optiling::ChunkKdaFwdPrepareSchedule arch35Schedule;
+    return optiling::ChunkKdaFwdPrepareTilingProcessor(arch22Context)
+               .Process(arch22Schedule) &&
+        optiling::ChunkKdaFwdPrepareTilingProcessor(arch35Context)
+            .Process(arch35Schedule) &&
+        arch22Schedule.workspaceBytes ==
+            1024 + 24 *
+                optiling::CHUNK_KDA_FWD_PREPARE_ARCH22_WORKGROUP_BYTES &&
+        arch35Schedule.workspaceBytes ==
+            1024 + 24 *
+                optiling::CHUNK_KDA_FWD_PREPARE_ARCH35_WORKGROUP_BYTES;
 }
 
 bool CheckGvaHeadSplitSchedule()
@@ -109,6 +131,7 @@ int main()
 {
     return CheckOutputMaskContract() && CheckSingleElementOptionalOutputBits() &&
                    CheckChunkOnlySchedule() &&
+                   CheckArchSpecificWorkspace() &&
                    CheckGvaHeadSplitSchedule() &&
                    CheckVarLenSchedule() && CheckInvalidGva() &&
                    CheckChunkWorkItemOverflow() &&

@@ -15,10 +15,15 @@
 namespace optiling {
 
 constexpr uint64_t CHUNK_KDA_FWD_PREPARE_CHUNK_ROWS = 64;
-constexpr uint64_t CHUNK_KDA_FWD_PREPARE_SLOT_BYTES = 0x1A400;
+constexpr uint64_t CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES = 0x1A400;
+constexpr uint64_t CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES = 0x1F400;
 constexpr uint64_t CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP = 4;
-constexpr uint64_t CHUNK_KDA_FWD_PREPARE_WORKGROUP_BYTES =
-    CHUNK_KDA_FWD_PREPARE_SLOT_BYTES * CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP;
+constexpr uint64_t CHUNK_KDA_FWD_PREPARE_ARCH35_WORKGROUP_BYTES =
+    CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES *
+    CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP;
+constexpr uint64_t CHUNK_KDA_FWD_PREPARE_ARCH22_WORKGROUP_BYTES =
+    CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES *
+    CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP;
 
 struct ChunkKdaFwdPrepareScheduleContext {
     uint64_t batch = 0;
@@ -29,6 +34,8 @@ struct ChunkKdaFwdPrepareScheduleContext {
     uint64_t aicCoreNum = 0;
     uint64_t libApiWorkspaceBytes = 0;
     bool isVarLen = false;
+    // 调用方未显式识别平台时按较大的 Arch22 slot 保守分配。
+    uint64_t workspaceSlotBytes = CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES;
 };
 
 struct ChunkKdaFwdPrepareSchedule {
@@ -50,7 +57,11 @@ public:
         if (context_.batch == 0 || context_.qkHeadNum == 0 ||
             context_.valueHeadNum < context_.qkHeadNum ||
             context_.valueHeadNum % context_.qkHeadNum != 0 ||
-            context_.aicCoreNum == 0) {
+            context_.aicCoreNum == 0 ||
+            (context_.workspaceSlotBytes !=
+                 CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES &&
+             context_.workspaceSlotBytes !=
+                 CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES)) {
             return false;
         }
 
@@ -84,9 +95,12 @@ public:
             return false;
         }
         const uint64_t usedCoreNum = std::min(context_.aicCoreNum, totalWorkItems);
+        uint64_t workgroupBytes = 0;
         uint64_t userWorkspaceBytes = 0;
-        if (!CheckedMultiply(usedCoreNum,
-                             CHUNK_KDA_FWD_PREPARE_WORKGROUP_BYTES,
+        if (!CheckedMultiply(context_.workspaceSlotBytes,
+                             CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP,
+                             workgroupBytes) ||
+            !CheckedMultiply(usedCoreNum, workgroupBytes,
                              userWorkspaceBytes) ||
             context_.libApiWorkspaceBytes >
                 std::numeric_limits<uint64_t>::max() - userWorkspaceBytes ||

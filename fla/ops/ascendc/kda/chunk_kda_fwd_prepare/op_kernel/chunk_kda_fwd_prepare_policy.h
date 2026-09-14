@@ -124,30 +124,36 @@ constexpr uint32_t kScorePayloadBytes = 0x12000; // 16K Q+ + 16K K+ + 40K K-
 } // namespace Shape
 
 namespace Workspace {
-// 每个 slot 的 context 固定在前 33 KiB，72 KiB stage payload 固定在末尾。
+// 两套架构共用前 105 KiB：33 KiB context + 72 KiB stage payload。
 constexpr uint32_t kQHat = 0x00000;
 constexpr uint32_t kKHat = 0x04000;
 constexpr uint32_t kBetaEff = 0x08000;
 constexpr uint32_t kPayload = 0x08400;
 constexpr uint32_t kSlotStride = 0x1A400;
+constexpr uint32_t kArch35SlotStride = kSlotStride;
+
+// Arch22 的 Cube 结果先经 GM 交给 Vector。该区只由 AIC 写：
+// C2 放四段连续 raw score，V3 消费后 C4 复用前 4 KiB 放 T。
+constexpr uint32_t kArch22CubeRelay = 0x1A400;
+constexpr uint32_t kArch22RawScoreBytes = 0x5000;
+constexpr uint32_t kArch22TRelay = kArch22CubeRelay;
+constexpr uint32_t kArch22SlotStride =
+    kArch22CubeRelay + kArch22RawScoreBytes;
 
 // payload 在不同 Stage 原址换义，不在 UB/L1 内搬位。
-// 预留的历史 raw-score 区；当前 C2 直接把 raw score relay 到公开输出
-// 的临时切片，V3 再搬回本地 compact 区，因此这里不承载当前 raw score。
-constexpr uint32_t kRawScore = 0x0000;
 constexpr uint32_t kX0 = 0x0000;
 constexpr uint32_t kNegX1 = 0x2000;
 constexpr uint32_t kB = 0x3000;
-// Arch22 的 C4 在这里暂存 32x32 FP32 NZ T；Arch35 复用当前 W 输出切片。
-constexpr uint32_t kTRelay = 0x4000;
 constexpr uint32_t kAkk = 0x5800;
 constexpr uint32_t kKBetaG = 0x7800;
 constexpr uint32_t kVBeta = 0xB800;
 
 constexpr uint32_t kArch22SlotCount = 4;
-constexpr uint32_t kArch22WorkgroupStride = kArch22SlotCount * kSlotStride;
+constexpr uint32_t kArch22WorkgroupStride =
+    kArch22SlotCount * kArch22SlotStride;
 constexpr uint32_t kArch35SlotCount = 4;
-constexpr uint32_t kArch35WorkgroupStride = kArch35SlotCount * kSlotStride;
+constexpr uint32_t kArch35WorkgroupStride =
+    kArch35SlotCount * kSlotStride;
 } // namespace Workspace
 
 namespace ScorePayload {

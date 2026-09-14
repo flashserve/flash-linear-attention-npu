@@ -227,10 +227,15 @@ int main()
     }
 
     if (Workspace::kPayload + Shape::kScorePayloadBytes !=
-            Workspace::kSlotStride ||
-        Workspace::kRawScore + 20 * 1024 > Shape::kScorePayloadBytes ||
-        Workspace::kB + Shape::kQuadrantFp32Bytes > Workspace::kTRelay ||
-        Workspace::kTRelay + Shape::kQuadrantFp32Bytes > Workspace::kAkk ||
+            Workspace::kArch35SlotStride ||
+        Workspace::kArch22CubeRelay != Workspace::kArch35SlotStride ||
+        Workspace::kArch22TRelay != Workspace::kArch22CubeRelay ||
+        Workspace::kArch22TRelay + Shape::kQuadrantFp32Bytes >
+            Workspace::kArch22SlotStride ||
+        Workspace::kArch22RawScoreBytes != 20 * 1024 ||
+        Workspace::kArch22CubeRelay + Workspace::kArch22RawScoreBytes !=
+            Workspace::kArch22SlotStride ||
+        Workspace::kB + Shape::kQuadrantFp32Bytes > Workspace::kAkk ||
         Workspace::kAkk + 4 * Shape::kQuadrantBf16Bytes >
             Shape::kScorePayloadBytes ||
         Workspace::kKBetaG + Shape::kBf16MatrixBytes !=
