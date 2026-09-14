@@ -414,18 +414,28 @@ def dump_json_files(out_dir: Path | None = None) -> dict:
     (out_dir / f"atk_{OP_NAME}_perf.json").write_text(
         json.dumps(perf, indent=1, ensure_ascii=False) + "\n"
     )
-    g2 = [
-        all_cases[i] for i, s in enumerate(PROFILES)
-        if s["HK"] > 0 and s["HV"] // s["HK"] == 2
-    ]
-    (out_dir / f"atk_{OP_NAME}_g2.json").write_text(
-        json.dumps(g2, indent=1, ensure_ascii=False) + "\n"
+    # 精简精度：每种合法 flag 1 条（落在第一个 shape）+ 其余每个 shape 1 条（默认 flag）。
+    # 不去笛卡尔积。保留原精度 case id，便于对照 1200 矩阵。
+    slim_idx = list(range(N_FLAGS))
+    for shape_i in range(1, N_SHAPES):
+        slim_idx.append(shape_i * N_FLAGS)
+    if len(slim_idx) != len(set(slim_idx)):
+        raise RuntimeError(f"duplicate slim indices: {slim_idx}")
+    expected_slim = N_FLAGS + (N_SHAPES - 1)
+    if len(slim_idx) != expected_slim:
+        raise RuntimeError(f"need {expected_slim} slim cases, got {len(slim_idx)}")
+    slim = [all_cases[i] for i in slim_idx]
+    (out_dir / f"atk_{OP_NAME}_slim.json").write_text(
+        json.dumps(slim, indent=1, ensure_ascii=False) + "\n"
     )
+    old_g2 = out_dir / f"atk_{OP_NAME}_g2.json"
+    if old_g2.exists():
+        old_g2.unlink()
     return {
         "accuracy": len(all_cases),
         "mss": [(i, PROFILES[i]["name"]) for i in mss_idx],
         "perf": [(i, PROFILES[i]["name"]) for i in perf_idx],
-        "g2": len(g2),
+        "slim": [(i, PROFILES[i]["name"]) for i in slim_idx],
     }
 
 
@@ -466,4 +476,4 @@ if __name__ == "__main__":
     print(f"shape chunks min={min(tiles)} max={max(tiles)} n={len(tiles)}")
     print("mss:", summary["mss"])
     print("perf:", summary["perf"])
-    print("g2:", summary["g2"])
+    print(f"slim: {len(summary['slim'])}")
