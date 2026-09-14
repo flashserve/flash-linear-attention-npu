@@ -173,6 +173,11 @@ constexpr uint16_t kFlagS6DoneBase = 4;
 // Mode 2 id 0xF.
 constexpr uint16_t kFlagS7Done = 0xF;
 
+// Intra-AIV HardEvent ids. Same numeric id is reused after Wait.
+constexpr uint16_t kHeUb0 = 0;     // S0 I, S1 q/k, S3 L-ready, S6 v
+constexpr uint16_t kHeUb1 = 1;     // S1 tail pad, S6 k'
+constexpr uint16_t kHeS3Pack = 4;  // S3 pack leaves vs -L UB→L1
+
 constexpr uint32_t kChunk64 = 64;
 constexpr int32_t kNumMFracs64 = 4;
 
@@ -324,6 +329,20 @@ struct PrepareState {
             return base + 3 - taskIdx;
         }
         return base + taskIdx;
+    }
+
+    struct PackWalk {
+        int64_t base;
+        int64_t nThis;
+    };
+
+    __aicore__ inline PackWalk MakePackWalk(int64_t pack, int64_t packSize) const
+    {
+        PackWalk w;
+        w.base = pack * packSize;
+        const int64_t remain = totalChunks - w.base;
+        w.nThis = remain < packSize ? remain : packSize;
+        return w;
     }
 
     // First HV of an HK group owns L2Norm(q/k) and Cube kkt.
@@ -481,6 +500,9 @@ constexpr uint32_t kL0C1 = 64 * kPrepareKb;
 // views sit on L0C [0,256) without sharing a 64 KiB bank. Tile itself is 16 KiB.
 constexpr uint32_t kL0CTaskStride = 64 * kPrepareKb;
 constexpr uint32_t kL0CTaskElems = kChunk64 * kChunk64;
+constexpr uint32_t kL0PairOff[2] = {0, kL0Bf16Pair};
+constexpr uint32_t kL0S7Off[2] = {kL0S7Ping, kL0S7Pong};
+constexpr uint32_t kL0CS7Off[2] = {0, kL0C1};
 
 __aicore__ inline uint32_t L1KHat(uint32_t taskIdx)
 {

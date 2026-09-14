@@ -1,6 +1,6 @@
 # ChunkGatedDeltaRuleFwdPrepare ATK 工程
 
-本目录提供 `chunk_gated_delta_rule_fwd_prepare` 的 ATK 单算子工程：`executor_chunk_gated_delta_rule_fwd_prepare.py`、`gen_chunk_gated_delta_rule_fwd_prepare.py`、`chunk_gated_delta_rule_fwd_prepare.yaml`，以及精度 / 性能 / MSS 三份 JSON。
+本目录提供 `chunk_gated_delta_rule_fwd_prepare` 的 ATK 单算子工程：`executor_chunk_gated_delta_rule_fwd_prepare.py`、`gen_chunk_gated_delta_rule_fwd_prepare.py`、`chunk_gated_delta_rule_fwd_prepare.yaml`，以及精度 / 性能 / MSS / 精简四份 JSON。
 
 精度标准为 `mixed_tolerance_bm`（NPU DUT vs CPU 高精度 golden）。CPU 标杆为本目录 `scripts/cpu_golden.py` 的 `cpu_gdn_fwd_l2norm_to_recompute`。
 
@@ -166,13 +166,29 @@ YAML 元信息覆盖 `ascend910b`、`ascend910_93`、`ascend950`。内核当前�
 
 ## 重建 JSON
 
-仓内三份冻结 JSON 由生成器写出（`gen_cases` 只生成精度候选用例，不写 `_perf` / `_mss`）：
+仓内冻结 JSON 由生成器写出（`gen_cases` 只生成精度候选用例，不写 `_perf` / `_mss` / `_slim`）：
 
 ```bash
 python3 tests/atk/chunk_gated_delta_rule_fwd_prepare/gen_chunk_gated_delta_rule_fwd_prepare.py
 ```
 
-修改 shape / flag 矩阵后需要重建并复核三份 JSON。`atk_chunk_gated_delta_rule_fwd_prepare_g2.json` 是 G=2 过滤副本，非正式验收文件。
+修改 shape / flag 矩阵后需要重建并复核精度 / 性能 / MSS / 精简四份 JSON。
+
+## 精简用例
+
+`atk_chunk_gated_delta_rule_fwd_prepare_slim.json` 从 1200 条里各抽 1 条，共 **73**：
+
+- 24 组合法 flag：全部落在 `r1_T4160_V128`（精度 id `0–23`）
+- 其余 49 个 shape：只保留默认 `l2_sig1_neg1`（精度 id `24, 48, …, 1176`）
+
+用于冒烟，不是正式验收入口。`run_test_cpu.sh -scope=accuracy` 默认仍读完整 1200 条。跑精简集：
+
+```bash
+ATK_GM_INIT_MODE=off \
+ATK_ACCURACY_JSON=./atk_chunk_gated_delta_rule_fwd_prepare_slim.json \
+bash tests/atk/run_test_cpu.sh -op=chunk_gated_delta_rule_fwd_prepare \
+  -npu_device_id=0 -scope=accuracy -soc=ascend950
+```
 
 ## 执行方式
 
