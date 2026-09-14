@@ -79,13 +79,14 @@ cd tests/atk/chunk_kda_fwd_prepare
 atk case \
   -f ./chunk_kda_fwd_prepare.yaml \
   -p ./gen_chunk_kda_fwd_prepare.py \
-  -dt 1 -en 0 -s 20260904
+  -en 0 -s 20260904
 ```
 
-冻结三份 JSON 使用同一个生成器写出：
+三份冻结 JSON 是本目录用例的唯一来源。生成器只为 `atk case` 提供精度集，
+不会覆盖这三份已验证的输入。检查数量及用例名是否重复：
 
 ```bash
-python3 ./gen_chunk_kda_fwd_prepare.py --output-dir . --summary
+python3 ./gen_chunk_kda_fwd_prepare.py --summary
 ```
 
 `atk case` 可以合法重排 case 或重写 ID；校验时按 case name 比较 21 个公开输入的
@@ -151,8 +152,6 @@ racecheck、initcheck 和 synccheck，不能复用普通优化包的结论。
 ## 静态检查
 
 ```bash
-python3 -m unittest \
-  tests.operators.chunk_kda_fwd_prepare.ut.test_atk_generation
 python3 -m py_compile \
   tests/atk/chunk_kda_fwd_prepare/gen_chunk_kda_fwd_prepare.py \
   tests/atk/chunk_kda_fwd_prepare/executor_chunk_kda_fwd_prepare.py
