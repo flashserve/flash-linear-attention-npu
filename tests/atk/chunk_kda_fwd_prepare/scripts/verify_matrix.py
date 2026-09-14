@@ -111,6 +111,39 @@ SANITIZER_REGISTER_RE = re.compile(
     rf"Expected default value is\b",
     re.IGNORECASE | re.MULTILINE,
 )
+SANITIZER_REGISTER_LINE_RE = re.compile(
+    r"^[^\r\n]*\bWarning:\s*Register\b[^\r\n]*(?:\r?\n|$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+SANITIZER_FFTS_REGISTER_RE = re.compile(
+    rf"^\s*\[mssanitizer\]\s*Warning:\s*Register\s+"
+    rf"(?P<register>[A-Za-z0-9_]+)\s+was not reset to default in block\s+"
+    rf"(?P<block>(?:aic|aiv)\([0-9]+\))\s+on kernel\s+"
+    rf"(?P<kernel>{KERNEL_NAME_PATTERN}(?:_[A-Za-z0-9]+)+)\.\s+"
+    rf"Expected default value is\s+\((?P<expected>0[xX][0-9a-fA-F]+|[0-9]+)\),\s*"
+    rf"but current value is\s+\((?P<current>0[xX][0-9a-fA-F]+|[0-9]+)\)\s*$",
+    re.IGNORECASE,
+)
+FFTS_HAS_ADDR_RE = re.compile(
+    rf"OpName:\[(?P<op_name>[^\]\r\n]*{KERNEL_NAME_PATTERN}[^\]\r\n]*)\]\s+"
+    rf"Kernel has tiling:\s*hasFftsAddr\s+(?P<has_ffts>[0-9]+)\b",
+    re.IGNORECASE,
+)
+FFTS_PRINT_ARG0_RE = re.compile(
+    rf"OpName:\[(?P<op_name>[^\]\r\n]*{KERNEL_NAME_PATTERN}[^\]\r\n]*)\]\s+"
+    rf"PrintRtArg\[0\]:\s*(?P<arg0>0[xX][0-9a-fA-F]+|[0-9]+)\b",
+    re.IGNORECASE,
+)
+FFTS_LAUNCH_KEY_RE = re.compile(
+    rf"OpName:\[(?P<op_name>[^\]\r\n]*{KERNEL_NAME_PATTERN}[^\]\r\n]*)\]\s+"
+    rf"Tiling Key:\s*(?P<tiling_key>[0-9]+)\b",
+    re.IGNORECASE,
+)
+FFTS_HOST_CORE_RE = re.compile(
+    rf"{KERNEL_NAME_PATTERN}\s+tiling:.*?\bcores=(?P<cores>[0-9]+).*?"
+    rf"\btilingKey=(?P<tiling_key>[0-9]+)\b",
+    re.IGNORECASE,
+)
 SCOPE_CONTRACTS = {
     "accuracy": {
         "case_count": 200,
@@ -493,6 +526,12 @@ def _manifest_kernel_maps(
             raise ValueError(f"runtime manifest 的 kernelName 不一致：{bin_file_name}")
         if binary.get("metadata_bin_sha256") != binary.get("bin_file_sha256"):
             raise ValueError(f"runtime manifest 的对象 SHA256 不一致：{bin_file_name}")
+        if not isinstance(binary.get("metadata_core_type"), str) or not binary.get(
+            "metadata_core_type"
+        ):
+            raise ValueError(f"runtime manifest 的 coreType 非法：{bin_file_name}")
+        if binary.get("metadata_intercore_sync") not in (0, 1):
+            raise ValueError(f"runtime manifest 的 intercoreSync 非法：{bin_file_name}")
         gate_dtype, beta_dtype = _manifest_dispatch_signature(binary)
 
         kernels = binary.get("kernels")
@@ -508,6 +547,22 @@ def _manifest_kernel_maps(
             if kernel_name in kernel_map:
                 raise ValueError(
                     f"runtime manifest 的 kernelName 重复：{kernel_name}"
+                )
+            if not isinstance(item.get("kernel_type"), str) or not item.get(
+                "kernel_type"
+            ):
+                raise ValueError(
+                    f"runtime manifest 的 kernelType 非法：{kernel_name}"
+                )
+            if item.get("cross_core_sync") not in (0, 1):
+                raise ValueError(
+                    f"runtime manifest 的 crossCoreSync 非法：{kernel_name}"
+                )
+            if not isinstance(item.get("task_ratio"), str) or not re.fullmatch(
+                r"[1-9][0-9]*:[1-9][0-9]*", item["task_ratio"]
+            ):
+                raise ValueError(
+                    f"runtime manifest 的 taskRation 非法：{kernel_name}"
                 )
             kernel_map[kernel_name] = tiling_key
             tiling_key_map.setdefault(tiling_key, set()).add(kernel_name)
@@ -828,6 +883,10 @@ def _runtime_manifest(
                 f"kernel metadata 顶层 kernelName 与 binFileName 不一致：{path.name}"
             )
         dispatch_contract = _metadata_dispatch_contract(metadata, path.name)
+        metadata_core_type = str(metadata.get("coreType", ""))
+        metadata_intercore_sync = metadata.get("intercoreSync")
+        if not metadata_core_type or metadata_intercore_sync not in (0, 1):
+            raise ValueError(f"kernel metadata 的 MIX 属性非法：{path.name}")
 
         object_name = f"{bin_file_name}{bin_file_suffix}"
         object_path = kernel_dir / object_name
@@ -864,13 +923,21 @@ def _runtime_manifest(
             compiled_kernel_names.add(kernel_name)
             compiled_keys.add(tiling_key)
             kernels.append(
-                {"kernel_name": kernel_name, "tiling_key": tiling_key}
+                {
+                    "kernel_name": kernel_name,
+                    "tiling_key": tiling_key,
+                    "kernel_type": str(item.get("kernelType", "")),
+                    "cross_core_sync": item.get("crossCoreSync"),
+                    "task_ratio": str(item.get("taskRation", "")),
+                }
             )
         kernel_binaries.append(
             {
                 "metadata_file": path.name,
                 "metadata_sha256": _file_hash(path),
                 "metadata_kernel_name": metadata_kernel_name,
+                "metadata_core_type": metadata_core_type,
+                "metadata_intercore_sync": metadata_intercore_sync,
                 "metadata_bin_sha256": metadata_bin_sha256,
                 "bin_file_name": bin_file_name,
                 "bin_file_suffix": bin_file_suffix,
@@ -1413,11 +1480,157 @@ def _validate_runtime_toolchain(manifest: dict, require_sanitizer: bool) -> None
             raise ValueError("runtime manifest 的 mssanitizer 工具身份非法")
 
 
+def _parse_log_integer(value: str, label: str) -> int:
+    """按日志中的十进制或十六进制形式解析非负整数。"""
+    try:
+        parsed = int(value, 16 if value.lower().startswith("0x") else 10)
+    except ValueError as error:
+        raise ValueError(f"{label} 不是合法整数：{value!r}") from error
+    if parsed < 0:
+        raise ValueError(f"{label} 不能为负数：{value!r}")
+    return parsed
+
+
+def _ffts_warning_context(
+    console_evidence: str,
+    expected_keys: set[int],
+    runtime_manifest: dict,
+    expected_cases: list[dict] | None,
+) -> dict:
+    """建立 Arch22 自动 MIX wrapper 的 FFTS 参数证据链。"""
+    if (
+        expected_cases is None
+        or len(expected_cases) != 1
+        or len(expected_keys) != 1
+        or runtime_manifest.get("sanitizer_required") is not True
+        or runtime_manifest.get("platform") not in {"ascend910b", "ascend910_93"}
+    ):
+        raise ValueError(
+            "检测到寄存器状态异常：FFTS_BASE_ADDR 缺少单 case Arch22 上下文"
+        )
+
+    bindings = _case_kernel_bindings(runtime_manifest, expected_cases)
+    if len(bindings) != 1:
+        raise ValueError("FFTS_BASE_ADDR 寄存器告警的 case/kernel 绑定不唯一")
+    binding = bindings[0]
+    expected_key = next(iter(expected_keys))
+    if int(binding["tiling_key"]) != expected_key:
+        raise ValueError("FFTS_BASE_ADDR 寄存器告警的 case 与 TilingKey 不一致")
+    target_kernel = str(binding["kernel_name"])
+
+    target_binary = None
+    target_kernel_item = None
+    for binary in runtime_manifest["kernel_binaries"]:
+        for item in binary["kernels"]:
+            if item["kernel_name"] == target_kernel:
+                if target_binary is not None:
+                    raise ValueError("FFTS_BASE_ADDR 目标 kernel 在 manifest 中不唯一")
+                target_binary = binary
+                target_kernel_item = item
+    if target_binary is None or target_kernel_item is None:
+        raise ValueError("FFTS_BASE_ADDR 目标 kernel 不在 runtime manifest 中")
+    if (
+        target_binary.get("metadata_core_type") != "MIX"
+        or target_binary.get("metadata_intercore_sync") != 1
+        or target_kernel_item.get("kernel_type") != "MIX_AIC"
+        or target_kernel_item.get("cross_core_sync") != 1
+        or target_kernel_item.get("task_ratio") != "1:2"
+    ):
+        raise ValueError("FFTS_BASE_ADDR 目标不是 Arch22 自动 MIX_AIC wrapper")
+
+    has_ffts = list(FFTS_HAS_ADDR_RE.finditer(console_evidence))
+    print_args = list(FFTS_PRINT_ARG0_RE.finditer(console_evidence))
+    launch_keys = list(FFTS_LAUNCH_KEY_RE.finditer(console_evidence))
+    host_cores = list(FFTS_HOST_CORE_RE.finditer(console_evidence))
+    if not all(len(matches) == 1 for matches in (
+        has_ffts,
+        print_args,
+        launch_keys,
+        host_cores,
+    )):
+        raise ValueError("FFTS_BASE_ADDR 启动日志不是唯一且完整的单次 launch")
+    op_names = {
+        has_ffts[0].group("op_name"),
+        print_args[0].group("op_name"),
+        launch_keys[0].group("op_name"),
+    }
+    if len(op_names) != 1:
+        raise ValueError("FFTS_BASE_ADDR 启动日志的 OpName 上下文不一致")
+    if int(has_ffts[0].group("has_ffts")) != 1:
+        raise ValueError("FFTS_BASE_ADDR 启动日志未声明 hasFftsAddr=1")
+    if int(launch_keys[0].group("tiling_key")) != expected_key:
+        raise ValueError("FFTS_BASE_ADDR 启动日志的 TilingKey 不匹配")
+    if int(host_cores[0].group("tiling_key")) != expected_key:
+        raise ValueError("FFTS_BASE_ADDR Host 日志的 TilingKey 不匹配")
+    core_count = int(host_cores[0].group("cores"))
+    if core_count <= 0:
+        raise ValueError("FFTS_BASE_ADDR Host 日志的 core 数量非法")
+    arg0 = _parse_log_integer(print_args[0].group("arg0"), "PrintRtArg[0]")
+    if arg0 == 0:
+        raise ValueError("FFTS_BASE_ADDR 启动参数不能为 0")
+
+    return {
+        "kernel_name": target_kernel,
+        "warning_kernel_name": f"{target_kernel}_mix_aic",
+        "arg0": arg0,
+        "expected_blocks": frozenset(
+            [f"aic({index})" for index in range(core_count)]
+            + [f"aiv({index})" for index in range(core_count * 2)]
+        ),
+    }
+
+
+def _strip_validated_ffts_warnings(
+    evidence: str,
+    context: dict | None,
+    *,
+    require_complete_blocks: bool,
+) -> tuple[str, set[str]]:
+    """仅移除与本次 launch 参数逐项相等的 FFTS_BASE_ADDR 告警。"""
+    warning_lines = list(SANITIZER_REGISTER_LINE_RE.finditer(evidence))
+    if not warning_lines:
+        return evidence, set()
+    if context is None:
+        raise ValueError("检测到未经上下文证明的寄存器状态异常")
+
+    blocks: set[str] = set()
+    for line_match in warning_lines:
+        line = line_match.group(0).strip()
+        match = SANITIZER_FFTS_REGISTER_RE.fullmatch(line)
+        if match is None:
+            raise ValueError(f"检测到非白名单寄存器状态异常：{line}")
+        if match.group("register") != "FFTS_BASE_ADDR":
+            raise ValueError(f"检测到非 FFTS_BASE_ADDR 寄存器状态异常：{line}")
+        if match.group("kernel") != context["warning_kernel_name"]:
+            raise ValueError("FFTS_BASE_ADDR 告警的 kernel 与本次 launch 不匹配")
+        if _parse_log_integer(match.group("expected"), "FFTS expected") != 0:
+            raise ValueError("FFTS_BASE_ADDR 告警的 expected 值不是 0")
+        if (
+            _parse_log_integer(match.group("current"), "FFTS current")
+            != context["arg0"]
+        ):
+            raise ValueError("FFTS_BASE_ADDR 告警值与 PrintRtArg[0] 不一致")
+        block = match.group("block").lower()
+        if block not in context["expected_blocks"]:
+            raise ValueError(f"FFTS_BASE_ADDR 告警包含非参与 block：{block}")
+        if block in blocks:
+            raise ValueError(f"FFTS_BASE_ADDR 告警 block 重复：{block}")
+        blocks.add(block)
+    if require_complete_blocks and blocks != context["expected_blocks"]:
+        raise ValueError(
+            "FFTS_BASE_ADDR 告警 block 集合不闭合："
+            f"missing={sorted(context['expected_blocks'] - blocks)}, "
+            f"extra={sorted(blocks - context['expected_blocks'])}"
+        )
+    return SANITIZER_REGISTER_LINE_RE.sub("", evidence), blocks
+
+
 def _sanitizer_log_summary(
     log_paths: tuple[Path, ...],
     tool: str,
     expected_finish_count: int,
     expected_kernels: set[str] | None = None,
+    ffts_context: dict | None = None,
 ) -> dict:
     """校验统一 runner 的原始 mssanitizer 日志，不依赖 ATK xlsx。"""
     if tool not in SANITIZER_TOOLS:
@@ -1425,6 +1638,11 @@ def _sanitizer_log_summary(
     if expected_finish_count <= 0:
         raise ValueError("expected_finish_count 必须为正数")
     evidence = _read_sanitizer_logs(log_paths)
+    evidence, ffts_blocks = _strip_validated_ffts_warnings(
+        evidence,
+        ffts_context,
+        require_complete_blocks=True,
+    )
     diagnostic = _sanitizer_diagnostic(evidence, tool)
     if diagnostic is not None:
         raise ValueError(f"{tool} 检测到 sanitizer 异常：{diagnostic}")
@@ -1461,10 +1679,13 @@ def _sanitizer_log_summary(
         raise ValueError(
             f"{tool} sanitizer Finish 次数不为 1：{duplicate_finishes}"
         )
+    expected_status = (
+        "see all detected errors above." if ffts_blocks else "no error detected."
+    )
     failed = {
         name: sorted(statuses)
         for name, statuses in finish_statuses.items()
-        if statuses != {"no error detected."}
+        if statuses != {expected_status}
     }
     if failed:
         raise ValueError(f"{tool} 目标 kernel 的 sanitizer 完成状态失败：{failed}")
@@ -1497,7 +1718,8 @@ def _sanitizer_log_summary(
             or missing_started
         ):
             raise ValueError(
-                f"{tool} sanitizer kernel 集合不匹配："
+                f"{tool} sanitizer kernel 集合不匹配（存在 runtime manifest 之外的 kernel "
+                "或缺少期望 kernel）："
                 f"missing_finish={sorted(missing_finished)}, "
                 f"extra_finish={sorted(unexpected_finished)}, "
                 f"missing_start={sorted(missing_started)}, "
@@ -1591,7 +1813,6 @@ def _sanitizer_evidence(
         re.IGNORECASE,
     )
     finish_re = SANITIZER_FINISH_RE
-    register_re = SANITIZER_REGISTER_RE
     inactive_re = re.compile(
         rf"No\s+active\s+sanitizer\s+tool\s+on\s+kernel[^\r\n]*"
         rf"{KERNEL_NAME_PATTERN}",
@@ -1599,6 +1820,30 @@ def _sanitizer_evidence(
     )
     console_evidence = _read_sanitizer_logs((console_log,))
     sanitizer_evidence = _read_sanitizer_logs((sanitizer_log,))
+    has_register_warning = bool(
+        SANITIZER_REGISTER_LINE_RE.search(console_evidence)
+        or SANITIZER_REGISTER_LINE_RE.search(sanitizer_evidence)
+    )
+    ffts_context = None
+    if has_register_warning:
+        ffts_context = _ffts_warning_context(
+            console_evidence,
+            expected_keys,
+            runtime_manifest,
+            expected_cases,
+        )
+    console_evidence, console_ffts_blocks = _strip_validated_ffts_warnings(
+        console_evidence,
+        ffts_context,
+        require_complete_blocks=False,
+    )
+    sanitizer_evidence, sanitizer_ffts_blocks = _strip_validated_ffts_warnings(
+        sanitizer_evidence,
+        ffts_context,
+        require_complete_blocks=has_register_warning,
+    )
+    if not console_ffts_blocks.issubset(sanitizer_ffts_blocks):
+        raise ValueError("console 与 sanitizer 日志的 FFTS_BASE_ADDR 告警不一致")
     evidence = f"{console_evidence}\n{sanitizer_evidence}"
     # -msl 是权威事件源；控制台可能只镜像其中一部分，但不能出现额外事件。
     def _event_signature(source: str) -> tuple[Counter[str], Counter[tuple[str, str]]]:
@@ -1640,15 +1885,6 @@ def _sanitizer_evidence(
             int(item["tiling_key"]): {str(item["kernel_name"])}
             for item in bindings
         }
-    register_matches = list(register_re.finditer(evidence))
-    if register_matches:
-        names = {match.group("kernel") for match in register_matches}
-        unexpected = names - set(_kernel_name_to_key(key_to_kernels))
-        if unexpected:
-            raise ValueError(
-                f"{tool} 检测到非目标 kernel 的寄存器状态异常：{sorted(unexpected)}"
-            )
-        raise ValueError(f"{tool} 检测到目标 kernel 的寄存器状态异常")
     for diagnostic_re in (
         *SANITIZER_COMMON_DIAGNOSTICS,
         *SANITIZER_TOOL_DIAGNOSTICS[tool],
@@ -1707,10 +1943,15 @@ def _sanitizer_evidence(
             f"{tool} 缺少目标 kernel 的 sanitizer 完成状态："
             f"{sorted(missing_finished)}"
         )
+    expected_finish_status = (
+        "see all detected errors above."
+        if sanitizer_ffts_blocks
+        else "no error detected."
+    )
     failed_finished = {
         name: sorted(statuses)
         for name, statuses in finish_statuses.items()
-        if statuses != {"no error detected."}
+        if statuses != {expected_finish_status}
     }
     if failed_finished:
         raise ValueError(
@@ -1836,10 +2077,28 @@ def _build_shard_summary(args: argparse.Namespace) -> dict:
             )
         # 同一份原始日志同时承载 ATK -msl 和外层 mssanitizer 记录；即使
         # ATK 报告误报通过，也必须有实际选中候选的 clean finish 才能续跑。
+        console_evidence = _read_sanitizer_logs((args.console_log,))
+        sanitizer_evidence = _read_sanitizer_logs((sanitizer_outer_log,))
+        ffts_context = None
+        if (
+            SANITIZER_REGISTER_LINE_RE.search(console_evidence)
+            or SANITIZER_REGISTER_LINE_RE.search(sanitizer_evidence)
+        ):
+            ffts_context = _ffts_warning_context(
+                console_evidence,
+                expected_keys,
+                runtime_manifest,
+                cases[args.start : args.end],
+            )
         _sanitizer_log_summary(
             (sanitizer_outer_log,),
             args.tool,
             expected_finish_count=len(expected_keys),
+            expected_kernels={
+                str(item["kernel_name"])
+                for item in sanitizer_started_kernel_bindings
+            },
+            ffts_context=ffts_context,
         )
         sanitizer_outer_log_sha256 = _file_hash(sanitizer_outer_log)
         (

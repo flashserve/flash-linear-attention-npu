@@ -132,12 +132,13 @@ constexpr uint32_t kPayload = 0x08400;
 constexpr uint32_t kSlotStride = 0x1A400;
 
 // payload 在不同 Stage 原址换义，不在 UB/L1 内搬位。
-// C2 按 sub-chunk 顺序写 [rawAqk_s; rawAkk_s]，四段合计 20 KiB。
+// 预留的历史 raw-score 区；当前 C2 直接把 raw score relay 到公开输出
+// 的临时切片，V3 再搬回本地 compact 区，因此这里不承载当前 raw score。
 constexpr uint32_t kRawScore = 0x0000;
 constexpr uint32_t kX0 = 0x0000;
 constexpr uint32_t kNegX1 = 0x2000;
 constexpr uint32_t kB = 0x3000;
-// C4 在这里暂存 32x32 FP32 NZ T；Arch22/Arch35 都经 GM relay 回到 L1。
+// Arch22 的 C4 在这里暂存 32x32 FP32 NZ T；Arch35 复用当前 W 输出切片。
 constexpr uint32_t kTRelay = 0x4000;
 constexpr uint32_t kAkk = 0x5800;
 constexpr uint32_t kKBetaG = 0x7800;

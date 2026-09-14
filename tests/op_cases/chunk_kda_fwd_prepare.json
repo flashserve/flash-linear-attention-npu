@@ -36,7 +36,7 @@
   "route_validation": {
     "ascendc": "device_smoke",
     "aclnn": "device_smoke",
-    "direct_launch": "source_contract"
+    "direct_launch": "device_compare"
   },
   "output_policy": {
     "fixed_slots": [
@@ -1232,6 +1232,70 @@
         ]
       },
       "seed": 20260911
+    },
+    {
+      "id": "prepare_dense_bsnd_fused_save",
+      "tags": [
+        "accuracy",
+        "smoke",
+        "generalization",
+        "route"
+      ],
+      "shape": {
+        "B": 1,
+        "HK": 2,
+        "HV": 4,
+        "T": 64,
+        "K": 128,
+        "V": 128
+      },
+      "dtype": {
+        "q_k_v": "bfloat16",
+        "g": "bfloat16",
+        "beta": "bfloat16"
+      },
+      "layout": "BSND",
+      "attrs": {
+        "layout": "BSND",
+        "scale": 0.125,
+        "chunk_size": 64,
+        "epsilon": 0.000001,
+        "use_qk_l2norm_in_kernel": true,
+        "use_gate_in_kernel": true,
+        "use_beta_sigmoid_in_kernel": true,
+        "allow_neg_eigval": true,
+        "safe_gate": true,
+        "lower_bound": -5.0,
+        "use_exp2": true,
+        "backward_mode": "save"
+      },
+      "optional_inputs": {
+        "a_log": "present",
+        "dt_bias": "present",
+        "cu_seqlens": null,
+        "chunk_indices": null
+      },
+      "soc": [
+        "ascend910b",
+        "ascend910_93",
+        "ascend950"
+      ],
+      "run_on": [
+        "ascendc",
+        "aclnn",
+        "direct_launch"
+      ],
+      "reference": "tests/atk/chunk_kda_fwd_prepare/executor_chunk_kda_fwd_prepare.py",
+      "expect": {
+        "return_code": "ACLNN_SUCCESS",
+        "output_count": 13,
+        "finite_outputs": true,
+        "present_outputs": [
+          "gk", "aqk", "akk", "w", "u", "qg", "kg", "qg_scaled",
+          "q_hat", "k_hat", "q_rstd", "k_rstd", "beta_eff"
+        ]
+      },
+      "seed": 20260914
     },
     {
       "id": "prepare_ntd_tail",

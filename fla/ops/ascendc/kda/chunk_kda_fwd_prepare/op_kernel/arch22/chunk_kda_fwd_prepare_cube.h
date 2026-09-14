@@ -31,6 +31,18 @@ public:
         }
         wGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.w));
         uGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.u));
+        const uint64_t relayElements =
+            static_cast<uint64_t>(args_.tiling.batch) *
+            args_.tiling.valueHeadNum * args_.tiling.seqLen *
+            Shape::kHeadDim / (sizeof(float) / sizeof(bfloat16_t));
+        rawScoreRelayGm_[0].SetGlobalBuffer(
+            reinterpret_cast<__gm__ float *>(args_.w), relayElements);
+        rawScoreRelayGm_[1].SetGlobalBuffer(
+            reinterpret_cast<__gm__ float *>(args_.u), relayElements);
+        rawScoreRelayGm_[2].SetGlobalBuffer(
+            reinterpret_cast<__gm__ float *>(args_.kg), relayElements);
+        rawScoreRelayGm_[3].SetGlobalBuffer(
+            reinterpret_cast<__gm__ float *>(args_.qgScaled), relayElements);
 
         pipe_->InitBuffer(l1Buf_, L1::kPeak);
         pipe_->InitBuffer(l0ABuf_, 0x10000);
@@ -110,12 +122,16 @@ public:
                     for (uint32_t headInPair = 0; headInPair < 2; ++headInPair) {
                         const uint32_t localHead = pair * 2 + headInPair;
                         if (localHead < activeHeads) {
-                            StageC2(chunk, localHead);
+                            StageC2(chunk, groupBegin + localHead, localHead);
                         }
                     }
                     AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(
                         kFreeFlagId[pair]);
                 }
+
+                // C4 会把同一 L1 head lane 从 score 输入换义为 B；先确认
+                // C2 的 MTE2 搬运全部结束，避免两批异步写访问重叠。
+                AscendC::PipeBarrier<PIPE_MTE2>();
 
                 // C4：读取 V3 的 B/X0/negX1，计算 T=B@X0 并常驻 L1。
                 for (uint32_t pair = 0; pair < 2; ++pair) {
@@ -163,15 +179,14 @@ private:
         return count > Shape::kSubChunkCount ? Shape::kSubChunkCount : count;
     }
 
-    __aicore__ inline void StageC2(const ChunkRange &chunk, uint32_t localHead)
+    __aicore__ inline void StageC2(const ChunkRange &chunk,
+                                   uint32_t valueHead,
+                                   uint32_t localHead)
     {
         const uint64_t slot = WorkspaceSlotBase(
             workgroup_, localHead, Workspace::kArch22WorkgroupStride);
         AscendC::GlobalTensor<bfloat16_t> payload;
-        AscendC::GlobalTensor<float> rawPayload;
         payload.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
-            args_.workspace + slot + Workspace::kPayload));
-        rawPayload.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
             args_.workspace + slot + Workspace::kPayload));
         auto l1Bytes = l1Buf_.Get<uint8_t>();
         auto scoreL1 = l1Bytes[L1::kHeadLane[localHead]].template ReinterpretCast<bfloat16_t>();
@@ -203,8 +218,10 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE2_FIX>(mte2ToFix_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(mte2ToMte1_);
 
-        uint32_t stackedElements = 0;
         const uint32_t active = ActiveSubChunks(chunk.validRows);
+        const uint64_t relayOffset = HeadTensorOffset(
+            args_.tiling, chunk, valueHead, Shape::kHeadDim) /
+            (sizeof(float) / sizeof(bfloat16_t));
         for (uint32_t s = 0; s < active; ++s) {
             const uint32_t n = Shape::kPrefixRows[s];
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
@@ -267,18 +284,31 @@ private:
                 AscendC::WaitFlag<AscendC::HardEvent::MTE2_FIX>(mte2ToFix_);
             }
 
-            auto fix = AscendC::FixpipeParamsV220(
-                n, 2 * Shape::kSubChunkRows,
-                2 * Shape::kSubChunkRows, n, false);
-            fix.quantPre = QuantMode_t::NoQuant;
-            // 上下两组结果一次写成连续 [32,n]，不对 L0C 的 NZ
-            // 物理地址做 ND 偏移猜测；V3 再按已知 row-major 结果解包。
-            AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(
-                rawPayload[(Workspace::kRawScore / sizeof(float)) +
-                           stackedElements],
-                l0C, fix);
+            uint32_t rows = chunk.validRows - s * Shape::kSubChunkRows;
+            if (rows > Shape::kSubChunkRows) {
+                rows = Shape::kSubChunkRows;
+            }
+            if (rows == Shape::kSubChunkRows) {
+                auto fix = AscendC::FixpipeParamsV220(
+                    n, 2 * Shape::kSubChunkRows,
+                    2 * Shape::kSubChunkRows, n, false);
+                fix.quantPre = QuantMode_t::NoQuant;
+                AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(
+                    rawScoreRelayGm_[s][relayOffset], l0C, fix);
+            } else {
+                auto fix = AscendC::FixpipeParamsV220(
+                    n, rows, 2 * Shape::kSubChunkRows, n, false);
+                fix.quantPre = QuantMode_t::NoQuant;
+                // 尾 sub-chunk 只写有效的 Qplus/Kplus 行。FP32 L0C
+                // 的基础分形为 16x16，下半 16 行从第二个 M1 分形开始。
+                constexpr uint32_t kLowerM1Offset = 16 * 16;
+                AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(
+                    rawScoreRelayGm_[s][relayOffset], l0C, fix);
+                AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(
+                    rawScoreRelayGm_[s][relayOffset + rows * n],
+                    l0C[kLowerM1Offset], fix);
+            }
             AscendC::SetFlag<AscendC::HardEvent::FIX_M>(fixToM_);
-            stackedElements += 2 * Shape::kSubChunkRows * n;
         }
     }
 
@@ -717,6 +747,7 @@ private:
     AscendC::TEventID fixToMte1_[Shape::kHeadsPerGroup]{};
     AscendC::GlobalTensor<bfloat16_t> wGm_{};
     AscendC::GlobalTensor<bfloat16_t> uGm_{};
+    AscendC::GlobalTensor<float> rawScoreRelayGm_[Shape::kSubChunkCount]{};
 };
 
 } // namespace KdaPrepare::Arch22

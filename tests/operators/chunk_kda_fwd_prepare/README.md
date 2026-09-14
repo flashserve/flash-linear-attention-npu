@@ -15,7 +15,7 @@
 | `routes/test_ctypes_aclnn_chunk_kda_fwd_prepare.py` | 通过稳定 Python ctypes 入口执行 aclnn 两段式调用 |
 | `routes/test_aclnn_negative_status.py` | 绕过 Python 预校验，直接验证 C++ `GetWorkspaceSize` 的 `ACLNN_ERR_PARAM_NULLPTR`/`ACLNN_ERR_PARAM_INVALID` 返回码 |
 | `routes/test_aclnn_chunk_kda_fwd_prepare.cpp` | 编译期锁定 `GetWorkspaceSize` 和执行接口符号 |
-| `routes/test_direct_chunk_kda_fwd_prepare.cpp` | 锁定 host tiling、workspace、`<<<>>>` 和 raw/fused 模板实例化的源码合同；当前没有独立的编译或设备执行目标 |
+| `routes/test_direct_chunk_kda_fwd_prepare.cpp` | 仅在源码层声明 canonical none/recompute/save 模板合同，本文件不单独编译；实际 `<<<>>>` 编译、设备比对、私有 NPU format 和非法 FP32 属性负向验证由 `examples/fast_kernel_launch_example` 执行 |
 | `common/` | JSON 筛选、输入构造和 13 输出合同检查 |
 | `ut/op_host/test_contract.py` | 检查调度测试已接入 `ENABLE_TEST` CMake |
 | `ut/op_kernel/test_contract.py` | 检查 direct launch 源码合同与清单中的代表 case 一致 |
@@ -51,3 +51,19 @@ python -m pytest -q \
 
 host 调度测试在 `ENABLE_TEST=ON` 时生成目标
 `chunk_kda_fwd_prepare_tiling_processor_test`，可通过 CTest 或直接执行该目标验证。
+
+安装当前 `flash-linear-attention-npu` wheel 和 custom OPP 后，可分别构建 A2、A3、A5 的
+`<<<>>>` 直调入口，并用 canonical `prepare_dense_bnsd_raw`、
+`prepare_dense_bsnd_fused` 和 `prepare_dense_bsnd_fused_save` 三条用例逐槽位
+bitwise 比对稳定 `fla_npu.ops.ascendc` 入口：
+
+```bash
+cd examples/fast_kernel_launch_example
+NPU_ARCH=ascend910b bash build_and_test.sh chunk_kda_fwd_prepare
+NPU_ARCH=ascend910_93 bash build_and_test.sh chunk_kda_fwd_prepare
+NPU_ARCH=ascend950 bash build_and_test.sh chunk_kda_fwd_prepare
+```
+
+直调和稳定入口均返回固定 13 槽位；未搬出的可选输出保持 `None`，save 模式的
+13 个槽位全部返回 tensor。私有格式设备负向覆盖 q/k/v/g/beta；a_log 和 dt_bias
+为 rank-1 输入，测试会尝试构造 FRACTAL_NZ，目标 torch_npu 不支持该转换时明确记录 SKIP。

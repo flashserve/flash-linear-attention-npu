@@ -62,6 +62,7 @@ REQUIRED_TRITON_SOURCES = (
     "utils.py",
 )
 REQUIRED_ASCENDC_CONFIGS = (
+    "chunk_kda_fwd_prepare.json",
     "recompute_w_u_fwd.json",
 )
 FORBIDDEN_ASCENDC_NAMES = (

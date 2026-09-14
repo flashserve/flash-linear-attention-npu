@@ -218,13 +218,16 @@ __simd_vf__ inline void StageV0Vf(
                 qRstd + row, qSumLow, scalarMask);
             DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
                 kRstd + row, kSumLow, scalarMask);
-            LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
-            LoadAlign<float, LoadDist::DIST_BRC_B32>(qSumLow, qRstd + row);
-            LoadAlign<float, LoadDist::DIST_BRC_B32>(kSumLow, kRstd + row);
-            Mul(qLow, qLow, qSumLow, mask);
-            Mul(qHigh, qHigh, qSumLow, mask);
-            Mul(kLow, kLow, kSumLow, mask);
-            Mul(kHigh, kHigh, kSumLow, mask);
+            // ReduceSum 的最低 lane 已是最终 rstd，直接在寄存器内广播。
+            // 对外保存仍写 qRstd/kRstd，不再为当前行计算做 UB 往返。
+            RegTensor<float> qScale;
+            RegTensor<float> kScale;
+            Duplicate(qScale, qSumLow, mask);
+            Duplicate(kScale, kSumLow, mask);
+            Mul(qLow, qLow, qScale, mask);
+            Mul(qHigh, qHigh, qScale, mask);
+            Mul(kLow, kLow, kScale, mask);
+            Mul(kHigh, kHigh, kScale, mask);
         } else {
             // Identity 模式也固定产生公开的 rstd=1。
             RegTensor<float> one;
@@ -293,20 +296,6 @@ __simd_vf__ inline void StageV0Vf(
         Add(carryHigh, carryHigh, gateHigh, mask);
         StoreAlign<float, StoreDist::DIST_INTLV_B32>(
             g + row * Shape::kHeadDim, carryLow, carryHigh, mask);
-    }
-
-    // 尾行不参与任何数学计算，统一清零其本地占位。
-    for (uint16_t row = validRows; row < Shape::kChunkRows; ++row) {
-        RegTensor<float> zero;
-        Duplicate(zero, 0.0F, mask);
-        Store128FromFp32(q + row * Shape::kHeadDim, zero, zero);
-        Store128FromFp32(k + row * Shape::kHeadDim, zero, zero);
-        StoreAlign<float, StoreDist::DIST_INTLV_B32>(
-            g + row * Shape::kHeadDim, zero, zero, mask);
-        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
-            qRstd + row, zero, scalarMask);
-        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
-            kRstd + row, zero, scalarMask);
     }
 
     // G 先完整落到 UB，然后在循环外取四个局部参考行。
@@ -385,12 +374,6 @@ __simd_vf__ inline void StageV0Vf(
         }
         StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
             betaEff + row, beta, mask);
-    }
-    for (uint16_t row = validRows; row < Shape::kChunkRows; ++row) {
-        RegTensor<float> zero;
-        Duplicate(zero, 0.0F, mask);
-        StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
-            betaEff + row, zero, mask);
     }
 }
 
@@ -582,7 +565,6 @@ __simd_callee__ inline void UnpackStageV3Band(
         const uint16_t row = kBandBegin + bandRow;
         RegTensor<float> zero;
         Duplicate(zero, 0.0F, full);
-        Store64FromFp32(aqk + row * Shape::kChunkRows, zero);
         if constexpr (BAND < 2) {
             StoreAlign(lkk + row * Shape::kChunkRows,
                        zero, lowerColumnMask);
@@ -626,108 +608,76 @@ __simd_vf__ inline void StageV3Vf(
                          lowerColumnMask, upperColumnMask);
     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
 
-    // LoadAlign 每次读取 64 个 FP32 lane，先清零两个 32x32 结果区的全部
-    // 物理空间，避免逐行递推读取相邻行尚未写入的高 32 lane。
+    uint32_t rowCount = 32;
+    MaskReg rowMask = UpdateMask<float>(rowCount);
     RegTensor<float> xZero;
+    RegTensor<float> one;
     Duplicate(xZero, 0.0F, full);
-    for (uint16_t offset = 0; offset < 32 * 32; offset += 64) {
+    Duplicate(one, 1.0F, full);
+
+    // LoadAlign 每次读取 64 个 FP32 lane。第一次写同时生成 row0 的单位行
+    // 并清零 row1，剩余物理空间继续清零，避免递推读取未初始化高 lane。
+    MaskReg firstColumn;
+    RegTensor<float> firstTwoRows;
+    CompareScalar<int32_t, AscendC::CMPMODE::EQ>(
+        firstColumn, column, 0, full);
+    Select(firstTwoRows, one, xZero, firstColumn);
+    StoreAlign(x0, firstTwoRows, full);
+    StoreAlign(x1, firstTwoRows, full);
+    for (uint16_t offset = 64; offset < 32 * 32; offset += 64) {
         StoreAlign(x0 + offset, xZero, full);
         StoreAlign(x1 + offset, xZero, full);
     }
     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
 
-    // X0=(I+L00)^-1，X1=(I+L11)^-1。第 0 行先在递推循环外就绪；
-    // 递推从 row=1 开始，避免将带环间 RAW 依赖的外层循环编成
-    // Hardware Loop。每行的 VEC_STORE->VEC_LOAD 屏障保证下一行
-    // 读到已完成的前代，全部计算仍在同一次 VF 内。
-    uint32_t rowCount = 32;
-    MaskReg rowMask = UpdateMask<float>(rowCount);
-    RegTensor<float> firstRow;
-    RegTensor<float> one;
-    RegTensor<int32_t> firstRowIndex;
-    MaskReg firstColumn;
-    Duplicate(one, 1.0F, rowMask);
-    Arange<int32_t, IndexOrder::INCREASE_ORDER>(firstRowIndex, 0);
-    CompareScalar<int32_t, AscendC::CMPMODE::EQ>(
-        firstColumn, firstRowIndex, 0, rowMask);
-    Select(firstRow, one, xZero, firstColumn);
-    StoreAlign(x0, firstRow, rowMask);
-    StoreAlign(x1, firstRow, rowMask);
-    LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
-
+    // X0=(I+L00)^-1，X1=(I+L11)^-1。两条递推链按相同 source
+    // 交错下发，各自累加顺序不变；每行共同使用一次写后读屏障。
     for (uint16_t row = 1; row < 32; ++row) {
-        RegTensor<float> result;
-        RegTensor<float> zero;
-        RegTensor<float> one;
-        RegTensor<int32_t> index;
+        RegTensor<float> result0;
+        RegTensor<float> result1;
         MaskReg diagonal;
-        Duplicate(zero, 0.0F, rowMask);
-        Duplicate(one, 1.0F, rowMask);
-        Arange<int32_t, IndexOrder::INCREASE_ORDER>(index, 0);
         CompareScalar<int32_t, AscendC::CMPMODE::EQ>(
-            diagonal, index, static_cast<int32_t>(row), rowMask);
-        Select(result, one, zero, diagonal);
+            diagonal, column, static_cast<int32_t>(row), rowMask);
+        Select(result0, one, xZero, diagonal);
+        Select(result1, one, xZero, diagonal);
         for (uint16_t source = 0; source < row; ++source) {
-            RegTensor<float> factor;
-            RegTensor<float> sourceRow;
-            RegTensor<float> product;
+            RegTensor<float> factor0;
+            RegTensor<float> factor1;
+            RegTensor<float> sourceRow0;
+            RegTensor<float> sourceRow1;
+            RegTensor<float> product0;
+            RegTensor<float> product1;
             LoadAlign<float, LoadDist::DIST_BRC_B32>(
-                factor, lkk + row * 64 + source);
-            LoadAlign(sourceRow, x0 + source * 32);
-            Mul(product, sourceRow, factor, rowMask);
-            Sub(result, result, product, rowMask);
-        }
-        StoreAlign(x0 + row * 32, result, rowMask);
-        LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
-    }
-
-    // B=L10。两个叶子显式分开，避免在循环中
-    // 通过运行时条件选择当前叶子和 UB 地址。
-    for (uint16_t row = 1; row < 32; ++row) {
-        RegTensor<float> result;
-        RegTensor<float> zero;
-        RegTensor<float> one;
-        RegTensor<int32_t> index;
-        MaskReg diagonal;
-        Duplicate(zero, 0.0F, rowMask);
-        Duplicate(one, 1.0F, rowMask);
-        Arange<int32_t, IndexOrder::INCREASE_ORDER>(index, 0);
-        CompareScalar<int32_t, AscendC::CMPMODE::EQ>(
-            diagonal, index, static_cast<int32_t>(row), rowMask);
-        Select(result, one, zero, diagonal);
-        for (uint16_t source = 0; source < row; ++source) {
-            RegTensor<float> factor;
-            RegTensor<float> sourceRow;
-            RegTensor<float> product;
+                factor0, lkk + row * 64 + source);
             LoadAlign<float, LoadDist::DIST_BRC_B32>(
-                factor, lkk + (row + 32) * 64 + 32 + source);
-            LoadAlign(sourceRow, x1 + source * 32);
-            Mul(product, sourceRow, factor, rowMask);
-            Sub(result, result, product, rowMask);
+                factor1, lkk + (row + 32) * 64 + 32 + source);
+            LoadAlign(sourceRow0, x0 + source * 32);
+            LoadAlign(sourceRow1, x1 + source * 32);
+            Mul(product0, sourceRow0, factor0, rowMask);
+            Mul(product1, sourceRow1, factor1, rowMask);
+            Sub(result0, result0, product0, rowMask);
+            Sub(result1, result1, product1, rowMask);
         }
-        StoreAlign(x1 + row * 32, result, rowMask);
+        StoreAlign(x0 + row * 32, result0, rowMask);
+        StoreAlign(x1 + row * 32, result1, rowMask);
         LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
     }
     for (uint16_t row = 0; row < 32; ++row) {
         RegTensor<float> x1Row;
-        uint32_t rowCount = 32;
-        MaskReg rowMask = UpdateMask<float>(rowCount);
         LoadAlign(x1Row, x1 + row * 32);
         Muls(x1Row, x1Row, -1.0F, rowMask);
         StoreAlign(negX1 + row * 32, x1Row, rowMask);
     }
     // q00/q11 写入最终 64x64 行主序 Akk；q01/q10 先置零，C5 只补 q10。
-    RegTensor<float> zero;
-    Duplicate(zero, 0.0F, full);
     for (uint16_t row = 0; row < 32; ++row) {
         RegTensor<float> diagonalRow;
         LoadAlign(diagonalRow, x0 + row * 32);
         Store32FromFp32(akk + row * 64, diagonalRow);
-        Store32FromFp32(akk + row * 64 + 32, zero);
+        Store32FromFp32(akk + row * 64 + 32, xZero);
     }
     for (uint16_t row = 0; row < 32; ++row) {
         RegTensor<float> diagonalRow;
-        Store32FromFp32(akk + (row + 32) * 64, zero);
+        Store32FromFp32(akk + (row + 32) * 64, xZero);
         LoadAlign(diagonalRow, x1 + row * 32);
         Store32FromFp32(akk + (row + 32) * 64 + 32, diagonalRow);
     }
@@ -744,26 +694,24 @@ __simd_vf__ inline void StageV6Vf(
 {
     using Domain = ExpDomainTraits<CompilePolicy::useExp2>;
     MaskReg mask = CreateMask<float, MaskPattern::ALL>();
+
+    // 第一阶段只生成三个需要 BF16 舍入的中间结果。所有行完成后统一
+    // 建立一次 VEC_STORE->VEC_LOAD 依赖，避免原实现每行两次屏障。
     for (uint16_t row = 0; row < validRows; ++row) {
         RegTensor<float> qLow;
         RegTensor<float> qHigh;
         RegTensor<float> kLow;
         RegTensor<float> kHigh;
-        RegTensor<float> vLow;
-        RegTensor<float> vHigh;
         RegTensor<float> gateLow;
         RegTensor<float> gateHigh;
         RegTensor<float> lastLow;
         RegTensor<float> lastHigh;
-        RegTensor<float> beta;
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
             gateLow, gateHigh, g + row * 128);
         LoadAlign(lastLow, gLast);
         LoadAlign(lastHigh, gLast + 64);
-        LoadAlign<float, LoadDist::DIST_BRC_B32>(beta, betaEff + row);
         Load128AsFp32(qLow, qHigh, qHat + row * 128);
         Load128AsFp32(kLow, kHigh, kHat + row * 128);
-        Load128AsFp32(vLow, vHigh, v + row * 128);
 
         RegTensor<float> posLow;
         RegTensor<float> posHigh;
@@ -780,7 +728,8 @@ __simd_vf__ inline void StageV6Vf(
         Mul(qHigh, qHigh, posHigh, mask);
         Mul(kPosLow, kLow, posLow, mask);
         Mul(kPosHigh, kHigh, posHigh, mask);
-        // 第一次舍入先落到最终 kBetaG 物理区，随后立即回读 FP32。
+        Store128FromFp32(qg + row * 128, qLow, qHigh);
+        // 第一次舍入先落到最终 kBetaG 物理区，第二阶段再回读 FP32。
         Store128FromFp32(kBetaG + row * 128, kPosLow, kPosHigh);
 
         Sub(lastLow, lastLow, gateLow, mask);
@@ -789,28 +738,40 @@ __simd_vf__ inline void StageV6Vf(
         Mul(kLow, kLow, lastLow, mask);
         Mul(kHigh, kHigh, lastHigh, mask);
         Store128FromFp32(kg + row * 128, kLow, kHigh);
+    }
 
-        // K_beta_g 保留两次 BF16 舍入：先写 Khat*E(G)，再回读乘 beta。
-        LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+    LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+
+    // 第二阶段统一完成 beta 和 scale。qg、K_beta_g 仍从 BF16 中间量
+    // 回读，因此数值舍入顺序与原实现一致。
+    for (uint16_t row = 0; row < validRows; ++row) {
+        RegTensor<float> qLow;
+        RegTensor<float> qHigh;
+        RegTensor<float> kLow;
+        RegTensor<float> kHigh;
+        RegTensor<float> vLow;
+        RegTensor<float> vHigh;
+        RegTensor<float> beta;
+        LoadAlign<float, LoadDist::DIST_BRC_B32>(beta, betaEff + row);
+        Load128AsFp32(qLow, qHigh, qg + row * 128);
         Load128AsFp32(kLow, kHigh, kBetaG + row * 128);
+        Load128AsFp32(vLow, vHigh, v + row * 128);
         Mul(kLow, kLow, beta, mask);
         Mul(kHigh, kHigh, beta, mask);
         Mul(vLow, vLow, beta, mask);
         Mul(vHigh, vHigh, beta, mask);
-        Store128FromFp32(qg + row * 128, qLow, qHigh);
-        // qgScaled 必须从已舍入的 BF16 qg 中间量回读，保留两次 BF16 舍入。
-        LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
-        Load128AsFp32(qLow, qHigh, qg + row * 128);
         Muls(qLow, qLow, scale, mask);
         Muls(qHigh, qHigh, scale, mask);
         Store128FromFp32(qgScaled + row * 128, qLow, qHigh);
         Store128FromFp32(kBetaG + row * 128, kLow, kHigh);
         Store128FromFp32(vBeta + row * 128, vLow, vHigh);
     }
-    for (uint16_t row = validRows; row < Shape::kChunkRows; ++row) {
+
+    // C7 按 32/64 行读取两个 RHS，只清零它实际会读取的尾行。
+    const uint16_t rhsRows = validRows > 32 ? 64 : 32;
+    for (uint16_t row = validRows; row < rhsRows; ++row) {
         RegTensor<float> zero;
         Duplicate(zero, 0.0F, mask);
-        Store128FromFp32(qg + row * 128, zero, zero);
         Store128FromFp32(kBetaG + row * 128, zero, zero);
         Store128FromFp32(vBeta + row * 128, zero, zero);
     }

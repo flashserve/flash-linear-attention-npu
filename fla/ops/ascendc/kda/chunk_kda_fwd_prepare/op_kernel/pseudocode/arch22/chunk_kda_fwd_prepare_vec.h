@@ -65,6 +65,18 @@ public:
         if constexpr (CompilePolicy::outputMode != OutputMode::None) {
             betaEffGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.betaEff));
         }
+        const uint64_t relayElements =
+            static_cast<uint64_t>(args_.tiling.batch) *
+            args_.tiling.valueHeadNum * args_.tiling.seqLen *
+            Shape::kHeadDim / (sizeof(float) / sizeof(bfloat16_t));
+        rawScoreRelayGm_[0].SetGlobalBuffer(
+            reinterpret_cast<__gm__ float *>(args_.w), relayElements);
+        rawScoreRelayGm_[1].SetGlobalBuffer(
+            reinterpret_cast<__gm__ float *>(args_.u), relayElements);
+        rawScoreRelayGm_[2].SetGlobalBuffer(
+            reinterpret_cast<__gm__ float *>(args_.kg), relayElements);
+        rawScoreRelayGm_[3].SetGlobalBuffer(
+            reinterpret_cast<__gm__ float *>(args_.qgScaled), relayElements);
         if (coreCount_ == 0) {
             return;
         }
@@ -414,19 +426,28 @@ private:
                            .template ReinterpretCast<bfloat16_t>();
         const uint64_t slot = WorkspaceSlotBase(
             workgroup_, localHead, Workspace::kArch22WorkgroupStride);
-        AscendC::GlobalTensor<float> payload;
         AscendC::GlobalTensor<float> betaContext;
-        payload.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.workspace + slot + Workspace::kPayload));
         betaContext.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.workspace + slot + Workspace::kBetaEff));
         const uint32_t active = CeilDiv(chunk.validRows, Shape::kSubChunkRows);
+        const uint64_t relayOffset = HeadTensorOffset(
+            args_.tiling, chunk, valueHead, Shape::kHeadDim) /
+            (sizeof(float) / sizeof(bfloat16_t));
         uint32_t compactElements = 0;
         for (uint32_t s = 0; s < active; ++s) {
-            compactElements +=
-                2 * Shape::kSubChunkRows * Shape::kPrefixRows[s];
+            const uint32_t remaining =
+                chunk.validRows - s * Shape::kSubChunkRows;
+            const uint32_t rows = remaining < Shape::kSubChunkRows
+                                      ? remaining
+                                      : Shape::kSubChunkRows;
+            const uint32_t bandElements =
+                2 * rows * Shape::kPrefixRows[s];
+            AscendC::DataCopy(raw[compactElements],
+                rawScoreRelayGm_[s][relayOffset], bandElements);
+            compactElements += bandElements;
         }
-        // C2 只写有效 sub-chunk；尾块仍保持一次搬运，但不读取未写 payload。
+        // C2 的四个 raw band 固定借用 W/U/kg/qg_scaled 当前输出切片。
+        // V3 在 V6/C7 覆盖这些切片前一次搬回，尾 band 不读取补零行。
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(sharedFree_);
-        AscendC::DataCopy(raw, payload, compactElements);
         AscendC::DataCopyPadExtParams<float> pad{false, 0, 0, 0};
         AscendC::DataCopyPad(betaEff, betaContext,
             AscendC::DataCopyExtParams{
@@ -456,6 +477,9 @@ private:
                 akkPack, chunk.validRows * Shape::kChunkRows);
         }
         if (chunk.validRows > 32) {
+            AscendC::GlobalTensor<float> payload;
+            payload.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+                args_.workspace + slot + Workspace::kPayload));
             AscendC::DataCopy(payload[Workspace::kX0 / sizeof(float)], x0, 1024);
             AscendC::DataCopy(payload[Workspace::kNegX1 / sizeof(float)], negX1, 1024);
             AscendC::DataCopy(payload[Workspace::kB / sizeof(float)], b, 1024);
@@ -892,7 +916,12 @@ private:
             const uint32_t n = Shape::kPrefixRows[s];
             const uint32_t stackedBand = Shape::kSubChunkRows *
                                          Shape::kSubChunkRows * s * (s + 1);
-            auto rawAkk = raw[stackedBand + Shape::kSubChunkRows * n +
+            const uint32_t bandRemaining =
+                validRows - s * Shape::kSubChunkRows;
+            const uint32_t bandRows = bandRemaining < Shape::kSubChunkRows
+                                          ? bandRemaining
+                                          : Shape::kSubChunkRows;
+            auto rawAkk = raw[stackedBand + bandRows * n +
                               row * n];
             const float betaValue = ReadScalar(betaEff, globalRow);
             AscendC::Muls(lkk[globalRow * Shape::kChunkRows], rawAkk,
@@ -909,8 +938,14 @@ private:
             constexpr uint32_t firstBottomBand =
                 Shape::kSubChunkRows * Shape::kSubChunkRows *
                 firstBottomSubChunk * (firstBottomSubChunk + 1);
+            const uint32_t firstBottomRemaining =
+                validRows - firstBottomSubChunk * Shape::kSubChunkRows;
+            const uint32_t firstBottomBandRows =
+                firstBottomRemaining < Shape::kSubChunkRows
+                    ? firstBottomRemaining
+                    : Shape::kSubChunkRows;
             auto firstBottomRawAkk =
-                raw[firstBottomBand + Shape::kSubChunkRows * firstBottomN];
+                raw[firstBottomBand + firstBottomBandRows * firstBottomN];
             const float firstBottomBeta = ReadScalar(betaEff, firstBottomRow);
             AscendC::Muls(b, firstBottomRawAkk, firstBottomBeta, 32);
             AscendC::PipeBarrier<PIPE_V>();
@@ -924,7 +959,12 @@ private:
                 const uint32_t stackedBand = Shape::kSubChunkRows *
                                              Shape::kSubChunkRows * s *
                                              (s + 1);
-                auto rawAkk = raw[stackedBand + Shape::kSubChunkRows * n +
+                const uint32_t bandRemaining =
+                    validRows - s * Shape::kSubChunkRows;
+                const uint32_t bandRows = bandRemaining < Shape::kSubChunkRows
+                                              ? bandRemaining
+                                              : Shape::kSubChunkRows;
+                auto rawAkk = raw[stackedBand + bandRows * n +
                                   row * n];
                 const float betaValue = ReadScalar(betaEff, globalRow);
                 AscendC::Muls(b[(globalRow - 32) * 32], rawAkk,
@@ -1162,6 +1202,7 @@ private:
     AscendC::GlobalTensor<float> qRstdGm_{};
     AscendC::GlobalTensor<float> kRstdGm_{};
     AscendC::GlobalTensor<float> betaEffGm_{};
+    AscendC::GlobalTensor<float> rawScoreRelayGm_[Shape::kSubChunkCount]{};
 };
 
 } // namespace KdaPrepare::Arch22

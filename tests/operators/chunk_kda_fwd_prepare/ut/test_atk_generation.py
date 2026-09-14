@@ -194,6 +194,7 @@ def _runtime_manifest_fixture(
     sanitizer: bool = False,
     complete: bool = False,
     binary_count: int = 1,
+    platform: str = "ascend950",
 ) -> dict:
     signatures = [
         ("bf16", "bf16"),
@@ -213,7 +214,7 @@ def _runtime_manifest_fixture(
     digest = "a" * 64
     return {
         "schema": "kda-prepare-runtime/v2",
-        "platform": "ascend950",
+        "platform": platform,
         "runtime_sha256": digest,
         "op_api_sha256": digest,
         "test_artifact_sha256": {"runner.py": digest},
@@ -236,6 +237,8 @@ def _runtime_manifest_fixture(
                 "metadata_file": f"{binary_name}.json",
                 "metadata_sha256": digest,
                 "metadata_kernel_name": binary_name,
+                "metadata_core_type": "MIX",
+                "metadata_intercore_sync": 1,
                 "metadata_bin_sha256": digest,
                 "bin_file_name": binary_name,
                 "bin_file_suffix": ".o",
@@ -246,6 +249,9 @@ def _runtime_manifest_fixture(
                     {
                         "kernel_name": f"{binary_name}_{key}",
                         "tiling_key": key,
+                        "kernel_type": "MIX_AIC",
+                        "cross_core_sync": 1,
+                        "task_ratio": "1:2",
                     }
                     for key in sorted(keys)
                 ],
@@ -2054,6 +2060,282 @@ exit 96
                     console, sanitizer, "memcheck", {2570}, runtime_manifest
                 )
 
+    def test_arch22_ffts_warning_requires_exact_launch_context(self):
+        expected_case = {
+            "id": 0,
+            "inputs": [
+                {
+                    "name": "case_spec",
+                    "range_values": {
+                        "expected_tiling_key": 2570,
+                        "gate_dtype": "bf16",
+                        "beta_dtype": "bf16",
+                    },
+                }
+            ],
+        }
+        arg0 = 17514876633088
+        op_name = "aclnnChunkKdaFwdPrepare_0_ChunkKdaFwdPrepare"
+
+        def fixture(platform: str = "ascend910b", sanitizer: bool = True):
+            manifest = _runtime_manifest_fixture(
+                {2570}, sanitizer=sanitizer, platform=platform
+            )
+            kernel = VERIFIER._manifest_dispatch_map(manifest)[
+                (2570, "bf16", "bf16")
+            ]
+            return manifest, kernel
+
+        def console_text(*, has_ffts: int = 1, launch_key: int = 2570):
+            return "\n".join(
+                [
+                    (
+                        "ChunkKdaFwdPrepare tiling: B=1, cores=2, "
+                        f"outputMode=0, tilingKey={launch_key}"
+                    ),
+                    (
+                        f"OpName:[{op_name}] Tiling Key: {launch_key}, "
+                        "len: 48, numBlocks: 2"
+                    ),
+                    (
+                        f"OpName:[{op_name}] Kernel has tiling: "
+                        f"hasFftsAddr {has_ffts}, devArgNum 23"
+                    ),
+                    f"OpName:[{op_name}] PrintRtArg[0]: 0xfee00000000 0x1",
+                ]
+            ) + "\n"
+
+        blocks = [
+            "aic(0)",
+            "aic(1)",
+            "aiv(0)",
+            "aiv(1)",
+            "aiv(2)",
+            "aiv(3)",
+        ]
+
+        def warning_line(
+            kernel: str,
+            block: str,
+            *,
+            register: str = "FFTS_BASE_ADDR",
+            expected: int = 0,
+            current: int = arg0,
+        ) -> str:
+            return (
+                f"[mssanitizer] Warning:Register {register} was not reset "
+                f"to default in block {block} on kernel {kernel}_mix_aic. "
+                f"Expected default value is ({expected}), but current value "
+                f"is ({current})"
+            )
+
+        def sanitizer_text(
+            tool: str,
+            kernel: str,
+            *,
+            warning_blocks: list[str] | None = None,
+            warning_kernel: str | None = None,
+            register: str = "FFTS_BASE_ADDR",
+            expected: int = 0,
+            current: int = arg0,
+            diagnostic: str = "",
+            finish: str = "See all detected errors above.",
+        ) -> str:
+            selected_blocks = blocks if warning_blocks is None else warning_blocks
+            lines = [f"[mssanitizer] Start {tool} sanitizer on kernel {kernel}"]
+            lines.extend(
+                warning_line(
+                    warning_kernel or kernel,
+                    block,
+                    register=register,
+                    expected=expected,
+                    current=current,
+                )
+                for block in selected_blocks
+            )
+            if diagnostic:
+                lines.append(diagnostic)
+            lines.append(
+                f"[mssanitizer] Sanitizer finished on kernel {kernel}. {finish}"
+            )
+            return "\n\n".join(lines) + "\n"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            console = root / "console.log"
+            sanitizer_log = root / "sanitizer.log"
+            for platform in ("ascend910b", "ascend910_93"):
+                manifest, kernel = fixture(platform)
+                for tool in sorted(VERIFIER.SANITIZER_TOOLS):
+                    with self.subTest(platform=platform, tool=tool):
+                        # 控制台允许镜像权威 -msl 日志中的一部分告警。
+                        console.write_text(
+                            console_text() + warning_line(kernel, "aic(0)") + "\n",
+                            encoding="utf-8",
+                        )
+                        sanitizer_log.write_text(
+                            sanitizer_text(tool, kernel), encoding="utf-8"
+                        )
+                        count, keys, names, _, _ = VERIFIER._sanitizer_evidence(
+                            console,
+                            sanitizer_log,
+                            tool,
+                            {2570},
+                            manifest,
+                            [expected_case],
+                        )
+                        self.assertEqual((count, keys, names), (1, {2570}, {kernel}))
+                        context = VERIFIER._ffts_warning_context(
+                            console.read_text(encoding="utf-8"),
+                            {2570},
+                            manifest,
+                            [expected_case],
+                        )
+                        VERIFIER._sanitizer_log_summary(
+                            (sanitizer_log,),
+                            tool,
+                            1,
+                            {kernel},
+                            context,
+                        )
+
+            manifest, kernel = fixture()
+            console.write_text(console_text(), encoding="utf-8")
+            sanitizer_log.write_text(
+                sanitizer_text("memcheck", kernel), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "寄存器状态异常"):
+                # 独立日志模式没有 launch/manifest 证据，不得单独豁免告警。
+                VERIFIER._sanitizer_log_summary(
+                    (sanitizer_log,), "memcheck", 1, {kernel}
+                )
+
+            bad_manifests = []
+            for platform, sanitizer in (("ascend950", True), ("ascend910b", False)):
+                bad_manifests.append(fixture(platform, sanitizer)[0])
+            for field, value in (
+                ("metadata_core_type", "AIC"),
+                ("metadata_intercore_sync", 0),
+            ):
+                bad = json.loads(json.dumps(manifest))
+                bad["kernel_binaries"][0][field] = value
+                bad_manifests.append(bad)
+            for field, value in (
+                ("kernel_type", "AIC"),
+                ("cross_core_sync", 0),
+                ("task_ratio", "1:1"),
+            ):
+                bad = json.loads(json.dumps(manifest))
+                bad["kernel_binaries"][0]["kernels"][0][field] = value
+                bad_manifests.append(bad)
+            for bad_manifest in bad_manifests:
+                with self.subTest(manifest=bad_manifest.get("platform")):
+                    with self.assertRaises(ValueError):
+                        VERIFIER._sanitizer_evidence(
+                            console,
+                            sanitizer_log,
+                            "memcheck",
+                            {2570},
+                            bad_manifest,
+                            [expected_case],
+                        )
+
+            bad_consoles = (
+                console_text(has_ffts=0),
+                console_text(launch_key=2571),
+                console_text() + console_text(),
+                console_text().replace(op_name, "other_ChunkKdaFwdPrepare", 1),
+                console_text().replace("0xfee00000000", "0"),
+                console_text()
+                + warning_line(kernel, "aic(0)", current=arg0 + 1)
+                + "\n",
+                console_text() + warning_line(kernel, "aiv(4)") + "\n",
+            )
+            for bad_console in bad_consoles:
+                console.write_text(bad_console, encoding="utf-8")
+                with self.subTest(console=bad_console[:80]):
+                    with self.assertRaises(ValueError):
+                        VERIFIER._sanitizer_evidence(
+                            console,
+                            sanitizer_log,
+                            "memcheck",
+                            {2570},
+                            manifest,
+                            [expected_case],
+                        )
+
+            console.write_text(console_text(), encoding="utf-8")
+            bad_logs = (
+                sanitizer_text(
+                    "memcheck", kernel, warning_kernel="other_kernel_2570"
+                ),
+                sanitizer_text("memcheck", kernel, register="CTRL_BASE_ADDR"),
+                sanitizer_text("memcheck", kernel, expected=1),
+                sanitizer_text("memcheck", kernel, current=arg0 + 1),
+                sanitizer_text("memcheck", kernel, warning_blocks=blocks[:-1]),
+                sanitizer_text(
+                    "memcheck", kernel, warning_blocks=blocks + ["aic(0)"]
+                ),
+                sanitizer_text(
+                    "memcheck", kernel, warning_blocks=blocks[:-1] + ["aiv(4)"]
+                ),
+                sanitizer_text(
+                    "memcheck",
+                    kernel,
+                    diagnostic="====== WARNING: out of bounds of size 2048",
+                ),
+                sanitizer_text(
+                    "memcheck", kernel, finish="No error detected."
+                ),
+            )
+            for bad_log in bad_logs:
+                sanitizer_log.write_text(bad_log, encoding="utf-8")
+                with self.subTest(log=bad_log[:100]):
+                    with self.assertRaises(ValueError):
+                        VERIFIER._sanitizer_evidence(
+                            console,
+                            sanitizer_log,
+                            "memcheck",
+                            {2570},
+                            manifest,
+                            [expected_case],
+                        )
+
+            clean_log = sanitizer_text(
+                "memcheck",
+                kernel,
+                warning_blocks=[],
+                finish="No error detected.",
+            )
+            sanitizer_log.write_text(clean_log, encoding="utf-8")
+            count, keys, names, _, _ = VERIFIER._sanitizer_evidence(
+                console,
+                sanitizer_log,
+                "memcheck",
+                {2570},
+                manifest,
+                [expected_case],
+            )
+            self.assertEqual((count, keys, names), (1, {2570}, {kernel}))
+            sanitizer_log.write_text(
+                sanitizer_text(
+                    "memcheck",
+                    kernel,
+                    warning_blocks=[],
+                    finish="See all detected errors above.",
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "完成状态失败"):
+                VERIFIER._sanitizer_evidence(
+                    console,
+                    sanitizer_log,
+                    "memcheck",
+                    {2570},
+                    manifest,
+                    [expected_case],
+                )
+
     def test_readme_binds_sanitizer_build_to_matrix_soc(self):
         source = (ATK_DIR / "README.md").read_text(encoding="utf-8")
         self.assertIn("export KDA_PREPARE_ATK_SOC=ascend950", source)
@@ -3024,16 +3306,24 @@ unset ASCEND_RT_VISIBLE_DEVICES
                         "binFileName": binary_name,
                         "binFileSuffix": ".o",
                         "kernelName": binary_name,
+                        "coreType": "MIX",
+                        "intercoreSync": 1,
                         "sha256": object_sha256,
                         "supportInfo": _support_info_fixture("bf16", "bf16"),
                         "kernelList": [
                             {
                                 "tilingKey": 2570,
                                 "kernelName": f"{binary_name}_2570",
+                                "kernelType": "MIX_AIC",
+                                "crossCoreSync": 1,
+                                "taskRation": "1:2",
                             },
                             {
                                 "tilingKey": 8391178,
                                 "kernelName": f"{binary_name}_8391178",
+                                "kernelType": "MIX_AIC",
+                                "crossCoreSync": 1,
+                                "taskRation": "1:2",
                             },
                         ],
                     }
@@ -3137,12 +3427,17 @@ unset ASCEND_RT_VISIBLE_DEVICES
                         "binFileName": second_name,
                         "binFileSuffix": ".o",
                         "kernelName": second_name,
+                        "coreType": "MIX",
+                        "intercoreSync": 1,
                         "sha256": second_sha256,
                         "supportInfo": _support_info_fixture("fp32", "bf16"),
                         "kernelList": [
                             {
                                 "tilingKey": 2570,
                                 "kernelName": f"{second_name}_2570",
+                                "kernelType": "MIX_AIC",
+                                "crossCoreSync": 1,
+                                "taskRation": "1:2",
                             }
                         ],
                     }

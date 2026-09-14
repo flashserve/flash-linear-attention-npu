@@ -33,7 +33,11 @@ public:
         if constexpr (CompilePolicy::outputMode != OutputMode::None) {
             akkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.akk));
         }
-        wGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.w));
+        const uint64_t outputElements =
+            static_cast<uint64_t>(args.tiling.batch) *
+            args.tiling.valueHeadNum * args.tiling.seqLen * Shape::kHeadDim;
+        wGm_.SetGlobalBuffer(
+            reinterpret_cast<__gm__ bfloat16_t *>(args.w), outputElements);
         uGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.u));
     }
 
@@ -114,7 +118,8 @@ public:
                     }
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
                         kAivToAicPayloadReadyFlagId[localHead]);
-                    StageC4(chunk, localHead,
+                    const uint32_t valueHead = groupBegin + localHead;
+                    StageC4(chunk, valueHead, localHead,
                             kAicToAivSlotReusableFlagId[localHead]);
                 }
                 for (uint32_t localHead = 0;
@@ -297,6 +302,7 @@ private:
     }
 
     __aicore__ inline void StageC4(const ChunkRange &chunk,
+                                   uint32_t valueHead,
                                    uint32_t localHead,
                                    uint16_t slotReusableFlagId)
     {
@@ -311,10 +317,11 @@ private:
         AscendC::GlobalTensor<float> payload;
         payload.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
             args_.workspace + slot + Workspace::kPayload));
-        AscendC::GlobalTensor<float> tRelay;
-        tRelay.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
-            args_.workspace + slot + Workspace::kPayload +
-            Workspace::kTRelay));
+        // 复用当前 HEAD/chunk 的 W 前 16 行作为 4 KiB 临时中转区。
+        // C4 仅在有效行数大于 32 时执行，C7 会在算子返回前完整覆盖该区域。
+        auto tRelay = wGm_[HeadTensorOffset(
+            args_.tiling, chunk, valueHead,
+            Shape::kHeadDim)].template ReinterpretCast<float>();
         AscendC::GlobalTensor<bfloat16_t> akkSource;
         akkSource.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + slot + Workspace::kPayload + Workspace::kAkk));
@@ -419,7 +426,7 @@ private:
         fix.quantPre = QuantMode_t::NoQuant;
         fix.isChannelSplit = true;
         // Ascend950 的 FP32 L0C 不能以 channel-split 格式直写 L1。
-        // 先写独立 GM relay，再按相同 NZ 字节布局搬入 C5 的 L1 输入。
+        // 先写 W 的临时中转区，再按相同 NZ 字节布局搬入 C5 的 L1 输入。
         AscendC::Fixpipe<float, float, kFixpipeNzL1>(tRelay, l0C, fix);
         AscendC::Mutex::Unlock<PIPE_FIX>(l1Mutex);
         AscendC::Mutex::Unlock<PIPE_FIX>(l0cMutex);
@@ -636,12 +643,16 @@ private:
         const uint64_t outputOffset = HeadTensorOffset(
             args_.tiling, chunk, valueHead, Shape::kHeadDim);
         AscendC::Mutex::Lock<PIPE_FIX>(wL0cMutex);
+        // C4 从 W 临时中转区搬出 T 后才允许 C7 覆盖，避免 FIX 写与
+        // 前序 MTE2 读形成跨 pipe 的 WAR 冲突。
+        AscendC::Mutex::Lock<PIPE_FIX>(l1Mutex);
         auto wFix = AscendC::FixpipeParamsV220(
             Shape::kHeadDim, chunk.validRows, m,
             Shape::kHeadDim, false);
         wFix.quantPre = QuantMode_t::F322BF16;
         AscendC::Fixpipe<bfloat16_t, float, AscendC::CFG_ROW_MAJOR>(
             wGm_[outputOffset], wL0c, wFix);
+        AscendC::Mutex::Unlock<PIPE_FIX>(l1Mutex);
         AscendC::Mutex::Unlock<PIPE_FIX>(wL0cMutex);
 
         AscendC::Mutex::Lock<PIPE_FIX>(uL0cMutex);
