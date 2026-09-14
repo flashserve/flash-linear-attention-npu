@@ -91,6 +91,43 @@ SANITIZER_TOOL_DIAGNOSTICS = {
 SANITIZER_GENERIC_DIAGNOSTIC = re.compile(
     r"^\s*=+\s*(?:ERROR|WARNING)\s*:", re.IGNORECASE | re.MULTILINE
 )
+A5_VF_JOIN_HEADER_RE = re.compile(
+    r"^\s*=+\s*WARNING\s*:\s*Redundant\s+wait_flag\s+"
+    r"instructions?\s+detected\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+A5_VF_JOIN_BLOCK_RE = re.compile(
+    r"^[ \t]*=+[ \t]*WARNING[ \t]*:[ \t]*Redundant[ \t]+wait_flag[ \t]+"
+    r"instructions?[ \t]+detected[ \t]*(?:\r?\n)"
+    r"(?:^[ \t]*=+[^\r\n]*(?:\r?\n|$))+"
+    r"(?:\r?\n)?",
+    re.IGNORECASE | re.MULTILINE,
+)
+A5_VF_JOIN_FROM_RE = re.compile(
+    rf"^\s*=+\s*from\s+PIPE_V\s+to\s+PIPE_S\s+in\s+"
+    rf"(?P<kernel>{KERNEL_NAME_PATTERN}(?:_[A-Za-z0-9]+)+)\s*$",
+    re.IGNORECASE,
+)
+A5_VF_JOIN_CORE_RE = re.compile(
+    r"^\s*=+\s*in\s+block\s+(?P<block>aiv\([0-9]+\))\s+"
+    r"on\s+device\s+(?P<device>[0-9]+)\s*$",
+    re.IGNORECASE,
+)
+A5_VF_JOIN_PC_RE = re.compile(
+    r"^\s*=+\s*code\s+in\s+pc\s+current\s+"
+    r"(?P<pc>0[xX][0-9a-fA-F]+)\s+"
+    r"\(serialNo:(?P<serial>[0-9]+)\)\s*$",
+    re.IGNORECASE,
+)
+A5_VF_JOIN_FRAME_RE = re.compile(
+    r"^\s*=+\s*#(?P<frame>[0-9]+)\s+"
+    r"(?P<path>[^\r\n:]+(?:[/\\][^\r\n:]+)*):"
+    r"(?P<line>[0-9]+):(?P<column>[0-9]+)\s*$"
+)
+A5_VF_JOIN_SOURCE_SUFFIX = (
+    "/src/chunk_kda_fwd_prepare/op_kernel/arch35/"
+    "chunk_kda_fwd_prepare_vec.h"
+)
 # mssanitizer 有时把错误摘要单独打印成这一行，而不是附在 finish 行上。
 # 该标记明确表示前面存在诊断，不能被当作 clean finish 的旁证。
 SANITIZER_ERROR_MARKER = re.compile(
@@ -1625,12 +1662,199 @@ def _strip_validated_ffts_warnings(
     return SANITIZER_REGISTER_LINE_RE.sub("", evidence), blocks
 
 
+def _a5_vf_join_source_sites() -> dict[int, tuple[str, int]]:
+    """从当前生产源码确定两个同步 VF 调用点，避免把 PC 写死。"""
+    source = (
+        Path(__file__).resolve().parents[4]
+        / "fla/ops/ascendc/kda/chunk_kda_fwd_prepare/op_kernel/arch35/"
+        "chunk_kda_fwd_prepare_vec.h"
+    )
+    _reject_symlink_chain(source, "Arch35 Vector 源码")
+    if not source.is_file():
+        raise ValueError(f"找不到 Arch35 Vector 源码：{source}")
+    expected = {
+        "V1": "asc_vf_call<Detail::StageV1Vf<CompilePolicy>>(",
+        "V3": "asc_vf_call<Detail::StageV3Vf>(",
+    }
+    lines = source.read_text(encoding="utf-8").splitlines()
+    sites: dict[int, tuple[str, int]] = {}
+    for stage, token in expected.items():
+        matches = [
+            (line_number, line.index(token) + 1)
+            for line_number, line in enumerate(lines, start=1)
+            if token in line
+        ]
+        if len(matches) != 1:
+            raise ValueError(
+                f"Arch35 {stage} asc_vf_call 调用点不唯一：{matches}"
+            )
+        line_number, column = matches[0]
+        sites[line_number] = (stage, column)
+    if len(sites) != len(expected):
+        raise ValueError("Arch35 V1/V3 asc_vf_call 调用点发生重叠")
+    return sites
+
+
+def _a5_vf_join_warning_context(
+    tool: str,
+    expected_keys: set[int],
+    runtime_manifest: dict,
+    expected_cases: list[dict] | None,
+) -> dict:
+    """建立 A5 SIMD VF 返回边界的编译器固有 V->S join 证据链。"""
+    if (
+        tool != "synccheck"
+        or expected_cases is None
+        or len(expected_cases) != 1
+        or len(expected_keys) != 1
+        or runtime_manifest.get("sanitizer_required") is not True
+        or runtime_manifest.get("platform") != "ascend950"
+    ):
+        raise ValueError(
+            "检测到 A5 VF join 告警，但缺少单 case Ascend950 synccheck 上下文"
+        )
+
+    bindings = _case_kernel_bindings(runtime_manifest, expected_cases)
+    if len(bindings) != 1:
+        raise ValueError("A5 VF join 告警的 case/kernel 绑定不唯一")
+    binding = bindings[0]
+    expected_key = next(iter(expected_keys))
+    if int(binding["tiling_key"]) != expected_key:
+        raise ValueError("A5 VF join 告警的 case 与 TilingKey 不一致")
+    target_kernel = str(binding["kernel_name"])
+
+    matching_items = []
+    for binary in runtime_manifest["kernel_binaries"]:
+        for item in binary["kernels"]:
+            if item["kernel_name"] == target_kernel:
+                matching_items.append((binary, item))
+    if len(matching_items) != 1:
+        raise ValueError("A5 VF join 告警的目标 kernel 在 manifest 中不唯一")
+    binary, item = matching_items[0]
+    if (
+        binary.get("metadata_core_type") != "MIX"
+        or binary.get("metadata_intercore_sync") != 1
+        or item.get("kernel_type") != "MIX_AIC"
+        or item.get("cross_core_sync") != 1
+        or item.get("task_ratio") != "1:2"
+    ):
+        raise ValueError("A5 VF join 告警的目标不是 Arch35 MIX_AIC kernel")
+    return {
+        "kernel_name": target_kernel,
+        "source_sites": _a5_vf_join_source_sites(),
+        "allowed_blocks": {"aiv(0)", "aiv(2)"},
+    }
+
+
+def _strip_validated_a5_vf_join_warnings(
+    evidence: str,
+    context: dict | None,
+    *,
+    require_complete_pairs: bool,
+) -> tuple[str, Counter[tuple[str, str, str, str, int]]]:
+    """仅移除回溯精确落在 V1/V3 asc_vf_call 的编译器固有 join。"""
+    headers = list(A5_VF_JOIN_HEADER_RE.finditer(evidence))
+    if not headers:
+        return evidence, Counter()
+    if context is None:
+        raise ValueError("检测到未经上下文证明的 A5 VF join 告警")
+
+    blocks = list(A5_VF_JOIN_BLOCK_RE.finditer(evidence))
+    if len(blocks) != len(headers):
+        raise ValueError("A5 VF join 告警块边界不闭合")
+    signatures: Counter[tuple[str, str, str, str, int]] = Counter()
+    stage_counts: Counter[tuple[str, str]] = Counter()
+    stage_pcs: dict[str, set[str]] = {}
+    for block_match in blocks:
+        lines = [line for line in block_match.group(0).splitlines() if line.strip()]
+        if len(lines) < 5 or A5_VF_JOIN_HEADER_RE.fullmatch(lines[0]) is None:
+            raise ValueError("A5 VF join 告警缺少完整回溯")
+        from_match = A5_VF_JOIN_FROM_RE.fullmatch(lines[1])
+        core_match = A5_VF_JOIN_CORE_RE.fullmatch(lines[2])
+        pc_match = A5_VF_JOIN_PC_RE.fullmatch(lines[3])
+        frame_matches = [A5_VF_JOIN_FRAME_RE.fullmatch(line) for line in lines[4:]]
+        if (
+            from_match is None
+            or core_match is None
+            or pc_match is None
+            or any(match is None for match in frame_matches)
+        ):
+            raise ValueError("A5 VF join 告警格式与已验证格式不一致")
+        frames = [match for match in frame_matches if match is not None]
+        if len(frames) != 6 or [
+            int(match.group("frame")) for match in frames
+        ] != list(range(6)):
+            raise ValueError("A5 VF join 告警的回溯帧编号不连续")
+
+        kernel = from_match.group("kernel")
+        block = core_match.group("block").lower()
+        pc = pc_match.group("pc").lower()
+        serial = int(pc_match.group("serial"))
+        first_frame = frames[0]
+        source_path = first_frame.group("path").replace("\\", "/")
+        source_line = int(first_frame.group("line"))
+        source_column = int(first_frame.group("column"))
+        source_site = context["source_sites"].get(source_line)
+        if kernel != context["kernel_name"]:
+            raise ValueError("A5 VF join 告警的 kernel 与本次 launch 不匹配")
+        if block not in context["allowed_blocks"]:
+            raise ValueError(f"A5 VF join 告警包含非参与 AIV：{block}")
+        if not source_path.endswith(A5_VF_JOIN_SOURCE_SUFFIX):
+            raise ValueError("A5 VF join 告警的首帧不是 Arch35 Vector 源码")
+        if source_site is None or source_column != source_site[1]:
+            raise ValueError("A5 VF join 告警未落在 V1/V3 asc_vf_call 调用点")
+        normalized_frames = [
+            match.group("path").replace("\\", "/") for match in frames
+        ]
+        if (
+            not normalized_frames[1].endswith(A5_VF_JOIN_SOURCE_SUFFIX)
+            or not normalized_frames[2].endswith(
+                "/src/chunk_kda_fwd_prepare/op_kernel/"
+                "chunk_kda_fwd_prepare_kernel.h"
+            )
+            or not normalized_frames[3].endswith(
+                "/src/chunk_kda_fwd_prepare/op_kernel/"
+                "chunk_kda_fwd_prepare.cpp"
+            )
+            or normalized_frames[4] != normalized_frames[5]
+            or "/gen/kernel_meta_" not in normalized_frames[4]
+            or not normalized_frames[4].endswith("_kernel.cpp")
+        ):
+            raise ValueError("A5 VF join 告警的完整回溯链不匹配")
+        stage = source_site[0]
+        signature = (kernel, block, stage, pc, serial)
+        signatures[signature] += 1
+        stage_counts[(block, stage)] += 1
+        stage_pcs.setdefault(stage, set()).add(pc)
+
+    if any(count != 1 for count in signatures.values()):
+        raise ValueError("A5 VF join 告警包含重复的 kernel/core/stage/PC/serial")
+    if require_complete_pairs:
+        active_blocks = {block for block, _ in stage_counts}
+        for block in active_blocks:
+            v1_count = stage_counts[(block, "V1")]
+            v3_count = stage_counts[(block, "V3")]
+            if v1_count == 0 or v1_count != v3_count:
+                raise ValueError(
+                    f"A5 VF join 告警的 V1/V3 数量不闭合："
+                    f"block={block}, V1={v1_count}, V3={v3_count}"
+                )
+        if set(stage_pcs) != {"V1", "V3"} or any(
+            len(values) != 1 for values in stage_pcs.values()
+        ):
+            raise ValueError("A5 VF join 告警的 V1/V3 PC 映射不唯一")
+        if stage_pcs["V1"] == stage_pcs["V3"]:
+            raise ValueError("A5 VF join 告警的 V1/V3 PC 不应相同")
+    return A5_VF_JOIN_BLOCK_RE.sub("", evidence), signatures
+
+
 def _sanitizer_log_summary(
     log_paths: tuple[Path, ...],
     tool: str,
     expected_finish_count: int,
     expected_kernels: set[str] | None = None,
     ffts_context: dict | None = None,
+    a5_vf_join_context: dict | None = None,
 ) -> dict:
     """校验统一 runner 的原始 mssanitizer 日志，不依赖 ATK xlsx。"""
     if tool not in SANITIZER_TOOLS:
@@ -1642,6 +1866,11 @@ def _sanitizer_log_summary(
         evidence,
         ffts_context,
         require_complete_blocks=True,
+    )
+    evidence, a5_vf_joins = _strip_validated_a5_vf_join_warnings(
+        evidence,
+        a5_vf_join_context,
+        require_complete_pairs=True,
     )
     diagnostic = _sanitizer_diagnostic(evidence, tool)
     if diagnostic is not None:
@@ -1680,7 +1909,9 @@ def _sanitizer_log_summary(
             f"{tool} sanitizer Finish 次数不为 1：{duplicate_finishes}"
         )
     expected_status = (
-        "see all detected errors above." if ffts_blocks else "no error detected."
+        "see all detected errors above."
+        if ffts_blocks or a5_vf_joins
+        else "no error detected."
     )
     failed = {
         name: sorted(statuses)
@@ -1737,6 +1968,7 @@ def _sanitizer_log_summary(
         "started_kernel_count": len(started),
         "clean_finish_count": len(finished),
         "kernel_names": sorted(finished),
+        "validated_a5_vf_join_warning_count": sum(a5_vf_joins.values()),
         "passed": True,
     }
 
@@ -1844,6 +2076,34 @@ def _sanitizer_evidence(
     )
     if not console_ffts_blocks.issubset(sanitizer_ffts_blocks):
         raise ValueError("console 与 sanitizer 日志的 FFTS_BASE_ADDR 告警不一致")
+    has_a5_vf_join_warning = bool(
+        A5_VF_JOIN_HEADER_RE.search(console_evidence)
+        or A5_VF_JOIN_HEADER_RE.search(sanitizer_evidence)
+    )
+    a5_vf_join_context = None
+    if has_a5_vf_join_warning:
+        a5_vf_join_context = _a5_vf_join_warning_context(
+            tool,
+            expected_keys,
+            runtime_manifest,
+            expected_cases,
+        )
+    console_evidence, console_a5_vf_joins = (
+        _strip_validated_a5_vf_join_warnings(
+            console_evidence,
+            a5_vf_join_context,
+            require_complete_pairs=False,
+        )
+    )
+    sanitizer_evidence, sanitizer_a5_vf_joins = (
+        _strip_validated_a5_vf_join_warnings(
+            sanitizer_evidence,
+            a5_vf_join_context,
+            require_complete_pairs=has_a5_vf_join_warning,
+        )
+    )
+    if console_a5_vf_joins - sanitizer_a5_vf_joins:
+        raise ValueError("console 与 sanitizer 日志的 A5 VF join 告警不一致")
     evidence = f"{console_evidence}\n{sanitizer_evidence}"
     # -msl 是权威事件源；控制台可能只镜像其中一部分，但不能出现额外事件。
     def _event_signature(source: str) -> tuple[Counter[str], Counter[tuple[str, str]]]:
@@ -1945,7 +2205,7 @@ def _sanitizer_evidence(
         )
     expected_finish_status = (
         "see all detected errors above."
-        if sanitizer_ffts_blocks
+        if sanitizer_ffts_blocks or sanitizer_a5_vf_joins
         else "no error detected."
     )
     failed_finished = {
@@ -2046,6 +2306,7 @@ def _build_shard_summary(args: argparse.Namespace) -> dict:
     sanitizer_started_kernel_bindings: list[dict] = []
     sanitizer_log_sha256 = ""
     sanitizer_outer_log_sha256 = ""
+    validated_a5_vf_join_warning_count = 0
     console_log_sha256 = _file_hash(args.console_log)
     if args.scope == "mssanitizer":
         sanitizer_started_kernel_bindings = _case_kernel_bindings(
@@ -2090,7 +2351,18 @@ def _build_shard_summary(args: argparse.Namespace) -> dict:
                 runtime_manifest,
                 cases[args.start : args.end],
             )
-        _sanitizer_log_summary(
+        a5_vf_join_context = None
+        if (
+            A5_VF_JOIN_HEADER_RE.search(console_evidence)
+            or A5_VF_JOIN_HEADER_RE.search(sanitizer_evidence)
+        ):
+            a5_vf_join_context = _a5_vf_join_warning_context(
+                args.tool,
+                expected_keys,
+                runtime_manifest,
+                cases[args.start : args.end],
+            )
+        raw_sanitizer_summary = _sanitizer_log_summary(
             (sanitizer_outer_log,),
             args.tool,
             expected_finish_count=len(expected_keys),
@@ -2099,6 +2371,10 @@ def _build_shard_summary(args: argparse.Namespace) -> dict:
                 for item in sanitizer_started_kernel_bindings
             },
             ffts_context=ffts_context,
+            a5_vf_join_context=a5_vf_join_context,
+        )
+        validated_a5_vf_join_warning_count = int(
+            raw_sanitizer_summary["validated_a5_vf_join_warning_count"]
         )
         sanitizer_outer_log_sha256 = _file_hash(sanitizer_outer_log)
         (
@@ -2161,6 +2437,9 @@ def _build_shard_summary(args: argparse.Namespace) -> dict:
         ),
         "sanitizer_started_kernel_binding_sha256": _binding_digest(
             sanitizer_started_kernel_bindings
+        ),
+        "validated_a5_vf_join_warning_count": (
+            validated_a5_vf_join_warning_count
         ),
         "passed": True,
     }
@@ -2289,6 +2568,7 @@ def _build_matrix_summary(args: argparse.Namespace) -> dict:
     sanitizer_started_kernel_names: set[str] = set()
     sanitizer_started_kernel_bindings: list[dict] = []
     sanitizer_outer_log_hashes: list[str] = []
+    validated_a5_vf_join_warning_count = 0
     runtime_manifest_hash = _file_hash(args.runtime_manifest)
     manifest_kernel_map: dict[str, int] = {}
     if args.scope == "mssanitizer":
@@ -2317,6 +2597,21 @@ def _build_matrix_summary(args: argparse.Namespace) -> dict:
         host_keys.update(int(value) for value in summary["host_tiling_keys"])
         launch_keys.update(int(value) for value in summary["launch_tiling_keys"])
         if args.scope == "mssanitizer":
+            shard_vf_join_count = summary.get(
+                "validated_a5_vf_join_warning_count"
+            )
+            if (
+                not isinstance(shard_vf_join_count, int)
+                or isinstance(shard_vf_join_count, bool)
+                or shard_vf_join_count < 0
+                or (args.tool != "synccheck" and shard_vf_join_count != 0)
+                or (
+                    runtime_manifest.get("platform") != "ascend950"
+                    and shard_vf_join_count != 0
+                )
+            ):
+                raise ValueError("内存分片的 A5 VF join 告警计数非法")
+            validated_a5_vf_join_warning_count += shard_vf_join_count
             outer_hash = str(summary.get("sanitizer_outer_log_sha256", ""))
             if not re.fullmatch(r"[0-9a-f]{64}", outer_hash):
                 raise ValueError("内存分片缺少外层 sanitizer 原始日志哈希")
@@ -2448,6 +2743,9 @@ def _build_matrix_summary(args: argparse.Namespace) -> dict:
         "sanitizer_started_kernel_binding_sha256": _binding_digest(
             sanitizer_started_kernel_bindings
         ),
+        "validated_a5_vf_join_warning_count": (
+            validated_a5_vf_join_warning_count
+        ),
         **(
             {
                 "sanitizer_outer_log_count": len(sanitizer_outer_log_hashes),
@@ -2504,6 +2802,7 @@ def verify_sanitizer_suite(args: argparse.Namespace) -> int:
     runtime_hashes: set[str] = set()
     kernel_name_hashes: set[str] = set()
     kernel_binding_hashes: set[str] = set()
+    a5_vf_join_warning_counts: dict[str, int] = {}
     for path in args.aggregate:
         # 必须在 resolve 前检查用户提供的路径，避免把符号链接目标当作可信汇总。
         _reject_symlink_chain(path, "sanitizer 汇总")
@@ -2545,6 +2844,15 @@ def verify_sanitizer_suite(args: argparse.Namespace) -> int:
             or not summary.get("passed")
         ):
             raise ValueError(f"sanitizer 汇总未通过或 schema 错误：{path}")
+        vf_join_count = summary.get("validated_a5_vf_join_warning_count")
+        if (
+            not isinstance(vf_join_count, int)
+            or isinstance(vf_join_count, bool)
+            or vf_join_count < 0
+            or (tool != "synccheck" and vf_join_count != 0)
+        ):
+            raise ValueError(f"sanitizer 汇总的 A5 VF join 告警计数非法：{path}")
+        a5_vf_join_warning_counts[tool] = vf_join_count
         if summary.get("case_json_sha256") != _case_hash(args.case_file):
             raise ValueError(f"sanitizer 汇总的 case 哈希不一致：{path}")
         if (
@@ -2621,6 +2929,9 @@ def verify_sanitizer_suite(args: argparse.Namespace) -> int:
         "expected_cases_per_tool": len(cases),
         "observed_cases_total": len(cases) * len(expected_tools),
         "tiling_key_count_per_tool": len(expected_keys),
+        "validated_a5_vf_join_warning_count": (
+            a5_vf_join_warning_counts["synccheck"]
+        ),
         "complete": True,
         "passed": True,
     }

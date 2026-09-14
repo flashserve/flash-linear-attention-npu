@@ -156,8 +156,10 @@ V1 payload 由 16 KiB Qplus、16 KiB Kplus 和 40 KiB Kminus prefix 组成，共
 A5 使用 `AscendC::Mutex` 约束 MTE2、V、MTE3、MTE1、M 和 Fixpipe 对静态本地地址的
 生命周期；A2/A3 使用配对的 HardEvent。核间数据通过 ready/free 双向握手传递：
 
-A5 的 V1/V3 结果只交给 MTE3，因此使用公开 `asc_vf_call` 启动 VF；V 到 MTE3 的
-依赖仍由同一 Mutex ID 的 Unlock/Lock 表达，不额外引入 V 到 Scalar 的等待。
+A5 的 V1/V3 使用公开 `asc_vf_call` 启动 VF。目标 CANN 9.1 规定该接口返回时 VF 内部
+Reg 矢量指令已经完成，因此编译器会在调用边界生成 V 到 Scalar 的 join；旧
+`AscendC::VF_CALL` 包装生成同一条 join，当前版本没有可替换的 SIMD 异步入口。Mutex
+仍负责 MTE2、V、MTE3 对静态 UB 槽位的生命周期交接，不能用 VF 返回语义替代。
 
 ```text
 AIV: wait free -> 写 workspace/UB -> set ready

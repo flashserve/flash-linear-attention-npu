@@ -423,8 +423,10 @@ StageV1Compute(...); // 本 Stage 唯一一次 VF
 AscendC::Mutex::Unlock<PIPE_V>(id);
 ```
 
-V1/V3 的结果只交给 MTE3，使用公开 `asc_vf_call` 启动 VF，避免产生无消费者的
-V 到 Scalar scope 等待。V 到 MTE3 的数据依赖仍由上述同一 Mutex ID 保证。
+V1/V3 使用公开 `asc_vf_call` 启动 VF。目标 CANN 9.1 规定该接口返回时 VF 内部 Reg
+矢量指令已经完成，因此编译器会在调用边界生成 V 到 Scalar 的 join；旧
+`AscendC::VF_CALL` 包装也生成同一条 join，不能通过切换包装消除。V 到 MTE3 的
+静态 UB 生命周期交接仍由上述同一 Mutex ID 保证。
 
 Mutex 只处理同核 pipe 交接，不是核间同步。AIC/AIV 仍用 mode `0x4` 的
 `CrossCoreSetFlag/CrossCoreWaitFlag` 建立 ready/free 双向协议。下表是调用现场

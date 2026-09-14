@@ -2060,6 +2060,153 @@ exit 96
                     console, sanitizer, "memcheck", {2570}, runtime_manifest
                 )
 
+    def test_a5_vf_join_warning_requires_exact_compiler_callsite(self):
+        expected_case = {
+            "id": 0,
+            "inputs": [
+                {
+                    "name": "case_spec",
+                    "range_values": {
+                        "expected_tiling_key": 2570,
+                        "gate_dtype": "bf16",
+                        "beta_dtype": "bf16",
+                    },
+                }
+            ],
+        }
+        manifest = _runtime_manifest_fixture(
+            {2570}, sanitizer=True, platform="ascend950"
+        )
+        kernel = VERIFIER._manifest_dispatch_map(manifest)[
+            (2570, "bf16", "bf16")
+        ]
+        source_sites = VERIFIER._a5_vf_join_source_sites()
+        stage_sites = {
+            stage: (line, column)
+            for line, (stage, column) in source_sites.items()
+        }
+        vector_source = (
+            "/workspace/build/binary/ascend950/src/"
+            "chunk_kda_fwd_prepare/op_kernel/arch35/"
+            "chunk_kda_fwd_prepare_vec.h"
+        )
+        generated_source = (
+            "/workspace/build/binary/ascend950/gen/"
+            "kernel_meta_ChunkKdaFwdPrepare_hash/kernel_meta/"
+            "ChunkKdaFwdPrepare_hash_kernel.cpp"
+        )
+
+        def warning_block(
+            stage: str,
+            block: str,
+            pc: str,
+            serial: int,
+        ) -> str:
+            line, column = stage_sites[stage]
+            return "\n".join(
+                [
+                    "====== WARNING: Redundant wait_flag instructions detected",
+                    f"======    from PIPE_V to PIPE_S in {kernel}",
+                    f"======    in block {block} on device 0",
+                    f"======    code in pc current {pc} (serialNo:{serial})",
+                    f"======    #0 {vector_source}:{line}:{column}",
+                    f"======    #1 {vector_source}:{line - 1}:21",
+                    (
+                        "======    #2 /workspace/build/binary/ascend950/src/"
+                        "chunk_kda_fwd_prepare/op_kernel/"
+                        "chunk_kda_fwd_prepare_kernel.h:51:13"
+                    ),
+                    (
+                        "======    #3 /workspace/build/binary/ascend950/src/"
+                        "chunk_kda_fwd_prepare/op_kernel/"
+                        "chunk_kda_fwd_prepare.cpp:78:5"
+                    ),
+                    f"======    #4 {generated_source}:3049:5",
+                    f"======    #5 {generated_source}:3060:5",
+                ]
+            ) + "\n\n"
+
+        warnings = (
+            warning_block("V1", "aiv(0)", "0x434aec", 116)
+            + warning_block("V3", "aiv(0)", "0x435420", 135)
+        )
+        start = f"[mssanitizer] Start synccheck sanitizer on kernel {kernel}\n"
+        finish = (
+            f"[mssanitizer] Sanitizer finished on kernel {kernel}. "
+            "See all detected errors above.\n"
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            console = root / "console.log"
+            sanitizer = root / "synccheck.log"
+            console.write_text(start + finish, encoding="utf-8")
+            sanitizer.write_text(start + warnings + finish, encoding="utf-8")
+            count, keys, names, _, _ = VERIFIER._sanitizer_evidence(
+                console,
+                sanitizer,
+                "synccheck",
+                {2570},
+                manifest,
+                [expected_case],
+            )
+            self.assertEqual((count, keys, names), (1, {2570}, {kernel}))
+            context = VERIFIER._a5_vf_join_warning_context(
+                "synccheck", {2570}, manifest, [expected_case]
+            )
+            raw_summary = VERIFIER._sanitizer_log_summary(
+                (sanitizer,),
+                "synccheck",
+                1,
+                {kernel},
+                a5_vf_join_context=context,
+            )
+            self.assertEqual(
+                raw_summary["validated_a5_vf_join_warning_count"], 2
+            )
+
+            malformed = {
+                "wrong_pipe": warnings.replace("PIPE_S", "PIPE_MTE3", 1),
+                "wrong_core": warnings.replace("aiv(0)", "aiv(1)", 1),
+                "missing_pair": warning_block(
+                    "V1", "aiv(0)", "0x434aec", 116
+                ),
+                "truncated_stack": warnings.replace(
+                    f"======    #5 {generated_source}:3060:5\n", "", 1
+                ),
+                "other_warning": (
+                    warnings
+                    + "====== WARNING: Unpaired set_flag instructions detected\n"
+                ),
+            }
+            for name, value in malformed.items():
+                with self.subTest(name=name):
+                    sanitizer.write_text(
+                        start + value + finish, encoding="utf-8"
+                    )
+                    with self.assertRaisesRegex(ValueError, "A5 VF join|sanitizer 异常"):
+                        VERIFIER._sanitizer_evidence(
+                            console,
+                            sanitizer,
+                            "synccheck",
+                            {2570},
+                            manifest,
+                            [expected_case],
+                        )
+
+            for tool, platform in (
+                ("memcheck", "ascend950"),
+                ("synccheck", "ascend910b"),
+            ):
+                with self.subTest(tool=tool, platform=platform):
+                    bad_manifest = _runtime_manifest_fixture(
+                        {2570}, sanitizer=True, platform=platform
+                    )
+                    with self.assertRaisesRegex(ValueError, "缺少单 case"):
+                        VERIFIER._a5_vf_join_warning_context(
+                            tool, {2570}, bad_manifest, [expected_case]
+                        )
+
     def test_arch22_ffts_warning_requires_exact_launch_context(self):
         expected_case = {
             "id": 0,
@@ -3963,6 +4110,7 @@ unset ASCEND_RT_VISIBLE_DEVICES
                     "sanitizer_started_kernel_binding_sha256": "c" * 64,
                     "sanitizer_outer_log_count": 432,
                     "sanitizer_outer_log_sha256": "b" * 64,
+                    "validated_a5_vf_join_warning_count": 0,
                     "key_pair_sha256": pair_digest,
                     "complete": True,
                     "passed": True,

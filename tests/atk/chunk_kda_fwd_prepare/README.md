@@ -231,6 +231,12 @@ TilingKey，并要求其集合与该分片的期望 key 完全一致，同时拒
 内存检查 scope 会在启动 Python/ATK 前设置 `PYTORCH_NO_NPU_MEMORY_CACHING=1`，
 使 msSanitizer 能看到 PyTorch 张量的真实 GM 分配边界；其他 scope 不改变内存池配置。
 
+Ascend950 的 SIMD `asc_vf_call` 返回边界由编译器生成 V 到 Scalar join。synccheck
+可能把该编译器指令报告为 `Redundant wait_flag`；校验器不会按告警名称整体忽略，
+只接受方向严格为 `PIPE_V -> PIPE_S`、目标 kernel 与当前 case 唯一绑定、完整回溯首帧
+逐行对应 V1/V3 两个 `asc_vf_call` 调用点且两者数量闭合的告警。接受数量写入分片和聚合
+摘要，原始日志及 `See all detected errors above` 状态保持不变；其他同步告警仍判失败。
+
 ```bash
 # 200 条精度，每次独立执行 1 条
 bash tests/atk/chunk_kda_fwd_prepare/scripts/run_matrix.sh accuracy 0

@@ -1121,7 +1121,7 @@ private:
             computeSlot + Arch35Ub::kKMinus);
 
         AscendC::Mutex::Lock<PIPE_V>(mutex);
-        // 后续结果只由 MTE3 消费；Mutex 已表达 V 到 MTE3 的依赖。
+        // asc_vf_call 返回时 VF 已完成；Mutex 继续表达静态 UB 的 V 到 MTE3 生命周期。
         asc_vf_call<Detail::StageV1Vf<CompilePolicy>>(
             reinterpret_cast<__ubuf__ bfloat16_t *>(qPlus.GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(kPlus.GetPhyAddr()),
@@ -1189,7 +1189,7 @@ private:
         const uint16_t band3Rows = remainingRows;
 
         AscendC::Mutex::Lock<PIPE_V>(mutex);
-        // 后续结果只由 MTE3 消费；Mutex 已表达 V 到 MTE3 的依赖。
+        // asc_vf_call 返回时 VF 已完成；Mutex 继续表达静态 UB 的 V 到 MTE3 生命周期。
         asc_vf_call<Detail::StageV3Vf>(
             reinterpret_cast<__ubuf__ float *>(rawScore.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(betaEff.GetPhyAddr()),
