@@ -1,10 +1,11 @@
-"""A2 packed-varlen regression tests for the fused KDA backward operator."""
+"""Packed-varlen regressions for the fused KDA backward operator."""
 
 from __future__ import annotations
 
 import json
 import os
 from pathlib import Path
+from unittest import mock
 
 import pytest
 import torch
@@ -15,6 +16,8 @@ CASE_FILE = Path(__file__).resolve().parents[3] / "op_cases/chunk_kda_bwd.json"
 with CASE_FILE.open(encoding="utf-8") as file:
     MANIFEST = json.load(file)
 CASES = MANIFEST["cases"]
+A2_CASES = [case for case in CASES if "a2" in case["tags"]]
+A5_CASES = [case for case in CASES if "a5" in case["tags"]]
 
 CHUNK_SIZE = 64
 KEY_DIM = 128
@@ -28,7 +31,7 @@ def test_case_manifest_contract():
     assert MANIFEST["implementation"] == "ascendc"
     assert MANIFEST["capability"] == {
         "run_on": ["ascendc"],
-        "soc": ["ascend910b"],
+        "soc": ["ascend910b", "ascend950"],
         "layout": ["BNSD", "NTD"],
     }
     assert len({case["id"] for case in CASES}) == len(CASES)
@@ -48,8 +51,17 @@ def test_case_manifest_contract():
         "value_dim": 128,
     }
     assert {
-        case["shape"]["seq_lengths"][1] % CHUNK_SIZE for case in CASES
+        case["shape"]["seq_lengths"][1] % CHUNK_SIZE for case in A2_CASES
     } == {0, 7, 8, 9, 15, 16, 23, 24, 25, 31, 32}
+    assert {
+        case["id"]: case["shape"]["seq_lengths"] for case in A5_CASES
+    } == {
+        "a5_varlen_lower_a_padding_8": [64, 72],
+        "a5_varlen_lower_a_padding_24": [64, 88],
+        "a5_varlen_lower_a_padding_40": [64, 104],
+        "a5_varlen_lower_a_padding_56": [64, 120],
+        "a5_issue_544_original_tail_15": [640, 783],
+    }
 
 
 def _is_ascend910b() -> bool:
@@ -59,6 +71,17 @@ def _is_ascend910b() -> bool:
         return torch.npu.is_available() and str(
             torch.npu.get_device_name(DEVICE_ID)
         ).startswith("Ascend910B")
+    except (AttributeError, ImportError, RuntimeError):
+        return False
+
+
+def _is_ascend950() -> bool:
+    try:
+        import torch_npu  # noqa: F401
+
+        return torch.npu.is_available() and "950" in str(
+            torch.npu.get_device_name(DEVICE_ID)
+        )
     except (AttributeError, ImportError, RuntimeError):
         return False
 
@@ -124,8 +147,8 @@ def _make_inputs(total: int, heads: int, seed: int, device):
     }
 
 
-def _run_native(inputs, start: int, end: int, cu_seqlens=None):
-    from fla_npu.ops.ascendc import chunk_kda_bwd, chunk_kda_fwd
+def _prepare_native_backward(inputs, start: int, end: int, cu_seqlens=None):
+    from fla_npu.ops.ascendc import chunk_kda_fwd
 
     q, k, v, raw_g, beta, d_o = (
         inputs[name][:, start:end].contiguous()
@@ -193,6 +216,12 @@ def _run_native(inputs, start: int, end: int, cu_seqlens=None):
         )
         raw_g_bwd = _bsnd_to_ntd(raw_g)
 
+    return args, raw_g_bwd, host_cu
+
+
+def _run_backward(inputs, args, raw_g_bwd, host_cu):
+    from fla_npu.ops.ascendc import chunk_kda_bwd
+
     dq, dk, dv, db, dg, _, _, _ = chunk_kda_bwd(
         *args,
         KEY_DIM**-0.5,
@@ -231,9 +260,16 @@ def _run_native(inputs, start: int, end: int, cu_seqlens=None):
     return dict(zip(OUTPUT_NAMES, tensors))
 
 
+def _run_native(inputs, start: int, end: int, cu_seqlens=None):
+    args, raw_g_bwd, host_cu = _prepare_native_backward(
+        inputs, start, end, cu_seqlens
+    )
+    return _run_backward(inputs, args, raw_g_bwd, host_cu)
+
+
 @pytest.mark.npu
 @pytest.mark.skipif(not _is_ascend910b(), reason="requires an Ascend 910B NPU")
-@pytest.mark.parametrize("case", CASES, ids=lambda case: case["id"])
+@pytest.mark.parametrize("case", A2_CASES, ids=lambda case: case["id"])
 @torch.inference_mode()
 def test_packed_varlen_matches_independent_sequences(case):
     torch.npu.set_device(DEVICE_ID)
@@ -253,6 +289,84 @@ def test_packed_varlen_matches_independent_sequences(case):
         expected = torch.cat(
             (independent[0][name], independent[1][name]), dim=1
         )
+        actual_cpu = packed[name].float().cpu()
+        expected_cpu = expected.float().cpu()
+        assert torch.isfinite(actual_cpu).all(), f"{name} contains non-finite values"
+        assert torch.isfinite(expected_cpu).all(), (
+            f"independent {name} contains non-finite values"
+        )
+        torch.testing.assert_close(
+            actual_cpu,
+            expected_cpu,
+            rtol=2e-4,
+            atol=2e-4,
+            msg=f"{case['id']} {name} mismatch",
+        )
+
+
+@pytest.mark.npu
+@pytest.mark.skipif(not _is_ascend950(), reason="requires an Ascend 950 NPU")
+@pytest.mark.parametrize("case", A5_CASES, ids=lambda case: case["id"])
+@torch.inference_mode()
+def test_a5_varlen_lower_a_padding_with_poisoned_workspace(case):
+    from fla_npu.ops.ascendc import _aclnn_ctypes as ascendc_ctypes
+
+    torch.npu.set_device(DEVICE_ID)
+    device = torch.device(f"npu:{DEVICE_ID}")
+    first, second = case["shape"]["seq_lengths"]
+    total = first + second
+    inputs = _make_inputs(total, case["shape"]["heads"], case["seed"], device)
+    packed_args, packed_raw_g, host_cu = _prepare_native_backward(
+        inputs, 0, total, (0, first, total)
+    )
+
+    # Use the very same saved forward tensors for the independent dense baseline.
+    independent = []
+    chunk_begin = 0
+    for begin, end in ((0, first), (first, total)):
+        chunk_count = (end - begin + CHUNK_SIZE - 1) // CHUNK_SIZE
+        # Argument 11 is h (chunk-major); all other arguments are token-major.
+        dense_args = tuple(
+            tensor.narrow(
+                0 if index == 11 else 1,
+                chunk_begin if index == 11 else begin,
+                chunk_count if index == 11 else end - begin,
+            ).unsqueeze(0).contiguous()
+            for index, tensor in enumerate(packed_args)
+        )
+        dense_raw_g = (
+            packed_raw_g.narrow(1, begin, end - begin).unsqueeze(0).contiguous()
+        )
+        independent.append(_run_backward(inputs, dense_args, dense_raw_g, None))
+        chunk_begin += chunk_count
+
+    original_empty = torch.empty
+    poisoned_workspaces = []
+
+    def poison_uint8_workspace(*args, **kwargs):
+        tensor = original_empty(*args, **kwargs)
+        if tensor.dtype == torch.uint8 and tensor.device.type == "npu":
+            tensor.fill_(0xFF)
+            poisoned_workspaces.append(tensor)
+        return tensor
+
+    # Only the packed backward is patched: forward and dense baseline remain native.
+    with mock.patch.object(
+        torch.npu, "get_device_name", return_value="Ascend910_93"
+    ), mock.patch.object(
+        torch, "empty", side_effect=poison_uint8_workspace
+    ), mock.patch.object(
+        ascendc_ctypes, "_call_aclnn", wraps=ascendc_ctypes._call_aclnn
+    ) as aclnn_call:
+        packed = _run_backward(inputs, packed_args, packed_raw_g, host_cu)
+
+    assert aclnn_call.call_count == 1
+    assert aclnn_call.call_args.args[0] == "aclnnChunkKdaBwd"
+    assert len(poisoned_workspaces) == 1
+    torch.npu.synchronize()
+
+    for name in OUTPUT_NAMES:
+        expected = torch.cat((independent[0][name], independent[1][name]), dim=1)
         actual_cpu = packed[name].float().cpu()
         expected_cpu = expected.float().cpu()
         assert torch.isfinite(actual_cpu).all(), f"{name} contains non-finite values"

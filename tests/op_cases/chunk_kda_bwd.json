@@ -4,7 +4,7 @@
   "implementation": "ascendc",
   "capability": {
     "run_on": ["ascendc"],
-    "soc": ["ascend910b"],
+    "soc": ["ascend910b", "ascend950"],
     "layout": ["BNSD", "NTD"]
   },
   "cases": [
@@ -73,6 +73,36 @@
       "tags": ["accuracy", "boundary", "a2", "varlen", "aligned_reduction"],
       "shape": {"seq_lengths": [64, 96], "heads": 2, "key_dim": 128, "value_dim": 128},
       "seed": 20260921
+    },
+    {
+      "id": "a5_varlen_lower_a_padding_8",
+      "tags": ["accuracy", "boundary", "a5", "varlen", "lower_a_padding"],
+      "shape": {"seq_lengths": [64, 72], "heads": 2, "key_dim": 128, "value_dim": 128},
+      "seed": 20260922
+    },
+    {
+      "id": "a5_varlen_lower_a_padding_24",
+      "tags": ["accuracy", "regression", "a5", "varlen", "lower_a_padding"],
+      "shape": {"seq_lengths": [64, 88], "heads": 2, "key_dim": 128, "value_dim": 128},
+      "seed": 20260922
+    },
+    {
+      "id": "a5_varlen_lower_a_padding_40",
+      "tags": ["accuracy", "boundary", "a5", "varlen", "lower_a_padding"],
+      "shape": {"seq_lengths": [64, 104], "heads": 2, "key_dim": 128, "value_dim": 128},
+      "seed": 20260922
+    },
+    {
+      "id": "a5_varlen_lower_a_padding_56",
+      "tags": ["accuracy", "boundary", "a5", "varlen", "lower_a_padding"],
+      "shape": {"seq_lengths": [64, 120], "heads": 2, "key_dim": 128, "value_dim": 128},
+      "seed": 20260922
+    },
+    {
+      "id": "a5_issue_544_original_tail_15",
+      "tags": ["accuracy", "regression", "a5", "varlen", "issue_544"],
+      "shape": {"seq_lengths": [640, 783], "heads": 96, "key_dim": 128, "value_dim": 128},
+      "seed": 20260912
     }
   ]
 }

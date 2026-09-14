@@ -1809,8 +1809,7 @@ private:
                 static_cast<uint64_t>(rowBase) * lowerK;
             StoreRows(
                 workspaceGm_[dstOffset], masked, kProcessRowBlock, prefix, lowerK);
-#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
-            // A2 Cube reduces over lowerK=align16(prefix).  For prefixes
+            // Cube reduces over lowerK=align16(prefix).  For prefixes
             // 8/24/40/56 the row-wise GM destination has an eight-float
             // padding gap that StoreRows(..., prefix, lowerK) does not
             // overwrite.  Clear that small gap on every generation so the
@@ -1818,14 +1817,19 @@ private:
             // launches cannot consume the previous parity-slot contents).
             if (prefix < lowerK) {
                 const uint32_t padCols = lowerK - prefix;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                KdaRegbaseFill(
+                    (__ubuf__ float *)work.GetPhyAddr(), 0.0f,
+                    kProcessRowBlock * padCols);
+#else
                 AscendC::Duplicate(
                     work, 0.0f, kProcessRowBlock * padCols);
+#endif
                 const uint64_t padOffset = dstOffset + prefix;
                 StoreRows(
                     workspaceGm_[padOffset], work,
                     kProcessRowBlock, padCols, lowerK);
             }
-#endif
             return;
         }
 
