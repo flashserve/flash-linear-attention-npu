@@ -470,7 +470,8 @@ private:
             AscendC::DataCopyPad(
                 akkGm_[outputOffset], akkPack,
                 AscendC::DataCopyExtParams{
-                    1, topRows * Shape::kChunkRows * sizeof(bfloat16_t),
+                    1, static_cast<uint32_t>(
+                           topRows * Shape::kChunkRows * sizeof(bfloat16_t)),
                     0, 0, 0});
             if (chunk.validRows > 32) {
                 const uint32_t bottomRows = chunk.validRows - 32;
