@@ -28,6 +28,7 @@ show_usage() {
   DC_LOOP_NUMS                   确定性循环次数，默认 50（与 ATK 一致）
   DC_TIMEOUT                     确定性阶段超时，默认 3600（Prepare 默认 60）
   PERFORMANCE_TIMEOUT            性能阶段超时，默认 2000（Prepare 默认 60）
+  ATK_NODE_PORT                  可选：本次 ATK 调用使用的本地节点端口，便于多进程隔离
   CASE_START/CASE_END            通用 case 顺序范围；不设置时不传 -s/-e，ATK 执行全部用例
   ACCURACY_START/ACCURACY_END    精度与 NaN 检测 case 范围
   PERFORMANCE_START/PERFORMANCE_END  性能 case 范围
@@ -348,6 +349,7 @@ ATK_TIMEOUT="${ATK_TIMEOUT:-}"
 DC_LOOP_NUMS="${DC_LOOP_NUMS:-50}"
 DC_TIMEOUT="${DC_TIMEOUT:-}"
 PERFORMANCE_TIMEOUT="${PERFORMANCE_TIMEOUT:-}"
+ATK_NODE_PORT="${ATK_NODE_PORT:-}"
 CASE_START="${CASE_START:-}"
 CASE_END="${CASE_END:-}"
 MSS_TOOL="${MSS_TOOL:-memcheck}"
@@ -427,6 +429,15 @@ case "$RUN_SCOPE" in
   all|accuracy|performance|determinism|mssanitizer|gen_cases) ;;
   *) die "不支持的执行范围：${RUN_SCOPE}" ;;
 esac
+
+ATK_NODE_ENDPOINT_ARGS=()
+if [[ -n "$ATK_NODE_PORT" ]]; then
+  [[ "$ATK_NODE_PORT" =~ ^[0-9]+$ ]] || \
+    die "ATK_NODE_PORT 必须是 1024 到 65535 之间的整数"
+  (( ATK_NODE_PORT >= 1024 && ATK_NODE_PORT <= 65535 )) || \
+    die "ATK_NODE_PORT 必须是 1024 到 65535 之间的整数"
+  ATK_NODE_ENDPOINT_ARGS=(--host 127.0.0.1 --port "$ATK_NODE_PORT")
+fi
 
 case "$SOC" in
   auto) ;;
@@ -593,9 +604,10 @@ if should_run accuracy; then
   set_case_range_args "精度与 NaN 检测 case 范围" "$ACCURACY_START" "$ACCURACY_END"
   run_with_prepare_hard_deadline \
     "$ATK_TIMEOUT" "$ACCURACY_START" "$ACCURACY_END" \
-    "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
+    "$ATK_BIN" node "${ATK_NODE_ENDPOINT_ARGS[@]}" \
+      --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
       --output_path "${ATK_OUTPUT_ROOT}/accuracy" \
-    node --name cpu_golden --backend cpu \
+    node "${ATK_NODE_ENDPOINT_ARGS[@]}" --name cpu_golden --backend cpu \
       --output_path "${ATK_OUTPUT_ROOT}/accuracy" \
     task \
       -c "./atk_${OP}.json" \
@@ -617,7 +629,8 @@ if should_run performance; then
   PERFORMANCE_RUN_START_NS="$(python3 -c 'import time; print(time.time_ns())')"
   run_with_prepare_hard_deadline \
     "$PERFORMANCE_TIMEOUT" "$PERFORMANCE_START" "$PERFORMANCE_END" \
-    "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
+    "$ATK_BIN" node "${ATK_NODE_ENDPOINT_ARGS[@]}" \
+      --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
       --output_path "${ATK_OUTPUT_ROOT}/perf" \
     task \
       -c "atk_${OP}_perf.json" \
@@ -637,8 +650,9 @@ if should_run determinism; then
   set_case_range_args "确定性测试 case 范围" "$DETERMINISM_START" "$DETERMINISM_END"
   run_with_prepare_hard_deadline \
     "$DC_TIMEOUT" "$DETERMINISM_START" "$DETERMINISM_END" \
-    "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
-    --output_path "${ATK_OUTPUT_ROOT}/determinism" \
+    "$ATK_BIN" node "${ATK_NODE_ENDPOINT_ARGS[@]}" \
+      --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
+      --output_path "${ATK_OUTPUT_ROOT}/determinism" \
     task \
       -c "atk_${OP}_mss.json" \
       -p "executor_${OP}.py" \
@@ -669,8 +683,9 @@ if should_run mssanitizer; then
   run_with_prepare_hard_deadline \
     "$MSS_TIMEOUT" "$MSS_START" "$MSS_END" \
     mssanitizer --tool="$MSS_TOOL" --log-file "$MSS_LOG_PATH" -- \
-    "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
-    --output_path "${ATK_OUTPUT_ROOT}/mssanitizer" \
+    "$ATK_BIN" node "${ATK_NODE_ENDPOINT_ARGS[@]}" \
+      --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
+      --output_path "${ATK_OUTPUT_ROOT}/mssanitizer" \
     task \
       -c "atk_${OP}_mss.json" \
       -p "executor_${OP}.py" \

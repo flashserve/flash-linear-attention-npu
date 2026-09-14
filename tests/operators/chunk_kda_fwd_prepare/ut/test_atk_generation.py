@@ -1258,6 +1258,13 @@ class ChunkKdaFwdPrepareAtkGenerationTest(unittest.TestCase):
             self.assertLess(index + 1, len(args))
             return args[index + 1]
 
+        def values_after(args: list[str], option: str) -> list[str]:
+            return [
+                args[index + 1]
+                for index, value in enumerate(args[:-1])
+                if value == option
+            ]
+
         with tempfile.TemporaryDirectory() as temp_dir:
             fixture_root = Path(temp_dir)
             fake_bin = fixture_root / "bin"
@@ -1343,6 +1350,7 @@ exit 96
                 "FLA_NPU_ENV",
                 "FLA_NPU_OPP_ENV",
                 "PYTORCH_NO_NPU_MEMORY_CACHING",
+                "ATK_NODE_PORT",
             ):
                 base_env.pop(name, None)
             base_env["PATH"] = str(fake_bin) + os.pathsep + base_env["PATH"]
@@ -1371,6 +1379,7 @@ exit 96
                             "MSS_SANITIZER_LOG_PATH": sanitizer_log.as_posix(),
                             "CASE_START": "0",
                             "CASE_END": "1",
+                            "ATK_NODE_PORT": "19091",
                         }
                     )
                     result = subprocess.run(
@@ -1411,6 +1420,15 @@ exit 96
                         value_after(atk_args, "--task"), expected_task
                     )
                     self.assertNotIn("-sp", atk_args)
+                    expected_node_count = 2 if scope == "accuracy" else 1
+                    self.assertEqual(
+                        values_after(atk_args, "--host"),
+                        ["127.0.0.1"] * expected_node_count,
+                    )
+                    self.assertEqual(
+                        values_after(atk_args, "--port"),
+                        ["19091"] * expected_node_count,
+                    )
 
                     timeout_cache, timeout_args = read_trace(timeout_trace)
                     expected_hard_timeout = (
@@ -1485,6 +1503,25 @@ exit 96
             self.assertIn("60s", result.stderr)
             _, timeout_args = read_trace(timeout_trace)
             self.assertEqual(timeout_args[1], "60")
+
+            invalid_port_env = base_env.copy()
+            invalid_port_env["ATK_NODE_PORT"] = "70000"
+            result = subprocess.run(
+                [
+                    bash,
+                    "tests/atk/run_test_cpu.sh",
+                    "-op=chunk_kda_fwd_prepare",
+                    "-scope=accuracy",
+                ],
+                cwd=ROOT,
+                env=invalid_port_env,
+                check=False,
+                capture_output=True,
+                text=True,
+                errors="replace",
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("65535", result.stderr)
 
             multi_case_atk_trace = fixture_root / "multi_case_atk.log"
             multi_case_timeout_trace = fixture_root / "multi_case_timeout.log"
