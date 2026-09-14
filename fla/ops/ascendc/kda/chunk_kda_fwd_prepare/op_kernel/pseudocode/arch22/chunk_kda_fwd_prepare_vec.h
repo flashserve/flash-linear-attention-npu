@@ -745,6 +745,8 @@ private:
                                        Shape::kHeadDim);
                     AscendC::PipeBarrier<PIPE_V>();
                     AscendC::Div(gateRow, gateRow, scratch, Shape::kHeadDim);
+                    // 下一行会复用 scratch，等待本行 Div 完成读取。
+                    AscendC::PipeBarrier<PIPE_V>();
                 }
             }
         }
