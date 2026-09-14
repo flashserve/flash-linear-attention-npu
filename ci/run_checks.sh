@@ -571,8 +571,6 @@ PY
 
 check_environment_contracts() {
     python3 tests/test_wheel_environment.py -b
-    python3 -m unittest discover -s ci/tests -p 'test_*.py' -b
-    bash ci/tests/test_run_checks_stage_pipeline.sh
     python3 torch_custom/fla_npu/test/test_aclnn_ctypes_abi.py -b
     python3 torch_custom/fla_npu/test/test_runtime_device_guard.py -b
     python3 torch_custom/fla_npu/test/test_ascendc_mutation_contract.py -b

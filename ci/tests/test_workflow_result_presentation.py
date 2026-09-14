@@ -823,17 +823,21 @@ globalThis.core = {
         self.assertIn("quick|full)", script)
         self.assertNotIn("bash gdn-verify.sh", script)
 
-    def test_ci_contract_tests_are_wired_with_python_and_node(self):
+    def test_ci_contract_tests_run_outside_the_npu_environment_stage(self):
         run_checks = RUN_CHECKS_PATH.read_text(encoding="utf-8")
         workflow = CONTRACT_TEST_WORKFLOW_PATH.read_text(encoding="utf-8")
         discovery = "python3 -m unittest discover -s ci/tests -p 'test_*.py' -b"
-        self.assertIn(discovery, run_checks)
-        self.assertIn("bash ci/tests/test_run_checks_stage_pipeline.sh", run_checks)
+        self.assertNotIn("-s ci/tests", run_checks)
+        self.assertNotIn("test_run_checks_stage_pipeline.sh", run_checks)
         self.assertIn("actions/setup-python@v6", workflow)
         self.assertIn("actions/setup-node@v6", workflow)
         self.assertIn("node-version: '24'", workflow)
         self.assertIn("python -m unittest discover -s ci/tests -p 'test_*.py' -b", workflow)
         self.assertIn("bash ci/tests/test_run_checks_stage_pipeline.sh", workflow)
+        self.assertLess(
+            workflow.index("actions/setup-node@v6"),
+            workflow.index("python -m unittest discover -s ci/tests"),
+        )
 
     def test_scoped_request_selects_only_opp_package_stage(self):
         workflow = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
@@ -956,6 +960,7 @@ globalThis.core = {
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending[0]["payload"]["context"], SCOPED_STATUS_CONTEXT)
 
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_prepare_does_not_treat_current_rerun_as_an_existing_active_run(self):
         current_run_pending = [
             {
@@ -981,6 +986,7 @@ globalThis.core = {
         pending = [item for item in records if item["kind"] == "status"]
         self.assertEqual(len(pending), len(STATUS_CONTEXTS))
 
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_prepare_rerun_does_not_reuse_previous_attempt_success(self):
         target_url = "https://github.com/example/repo/actions/runs/99"
         previous_success = [
@@ -1038,6 +1044,7 @@ globalThis.core = {
         self.assertIn("CI_SUMMARY_FILE", paths)
         self.assertNotIn("CI_RAW_LOG_FILE", paths)
 
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_partial_rerun_uses_latest_available_attempt_per_platform(self):
         download = next(
             step

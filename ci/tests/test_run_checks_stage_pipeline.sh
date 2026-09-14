@@ -173,6 +173,10 @@ run_case() {
     if [[ "$expected_statuses" != "none" ]]; then
         assert_report "$report_file" "$expected_top_status" "$expected_statuses"
     fi
+    if grep -Eq -- '-s ci/tests|test_run_checks_stage_pipeline\.sh' "$command_log"; then
+        echo "CI control-plane contract tests ran inside the NPU stage." >&2
+        return 1
+    fi
 
     if [[ "$name" == "scoped" ]]; then
         grep -Fq 'bash ci/prepare_ci_cache.sh' "$command_log"

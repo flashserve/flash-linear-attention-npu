@@ -110,8 +110,8 @@ UNIX_ABSOLUTE_PATH_RE = re.compile(
 )
 
 COMPILER_ERROR_RE = re.compile(
-    r"(?i)^(?:.*?:\d+(?::\d+)?:\s*|[A-Za-z0-9_.+-]+:\s*)?"
-    r"(?:fatal\s+)?error:\s*(.+)$"
+    r"^(?:(?i:.*?:\d+(?::\d+)?:\s*|[A-Za-z0-9_.+-]+:\s*))?"
+    r"(?:(?i:fatal)\s+)?error:\s*(.+)$"
 )
 COMPILE_SPECIFIC_RE = re.compile(
     r"(?i)(?:cmake error|undefined reference|ld(?:\.lld)?: error|"
@@ -141,6 +141,8 @@ RUNTIME_RE = re.compile(
 )
 FAILURE_MARKER_RE = re.compile(r"(?i)^\s*\[(?:FAIL|FATAL|TIMEOUT)\]")
 TRACEBACK_END_RE = re.compile(r"^[\w.]+(?:Error|Exception):\s*.+")
+UNITTEST_RESULT_RE = re.compile(r"^(?:ERROR|FAIL):\s+[^\s(]+(?:\s+\(|$)")
+NONCOMPILER_ERROR_RE = re.compile(r"^(?:ERROR|Error):\s*.+")
 WARNING_RE = re.compile(r"(?i)(?:\bwarning:|\[warn(?:ing)?\])")
 PROMOTED_WARNING_RE = re.compile(r"(?i)\bwarning:.*\[-Werror(?:[=,\]])")
 SOURCE_EXCERPT_RE = re.compile(r"^\s*\d+\s*\|")
@@ -384,7 +386,8 @@ def extract_diagnostics(log_file: Path, enabled: bool = True) -> dict[str, list[
     for line in _iter_log_lines(log_file):
         stripped = line.strip()
 
-        compiler_match = COMPILER_ERROR_RE.search(stripped)
+        unittest_result = UNITTEST_RESULT_RE.match(stripped) is not None
+        compiler_match = None if unittest_result else COMPILER_ERROR_RE.search(stripped)
         if pending_compile is not None:
             if compiler_match:
                 finish_compile()
@@ -410,6 +413,19 @@ def extract_diagnostics(log_file: Path, enabled: bool = True) -> dict[str, list[
         if not stripped or (
             WARNING_RE.search(stripped) and not PROMOTED_WARNING_RE.search(stripped)
         ):
+            continue
+
+        if unittest_result:
+            continue
+
+        if NONCOMPILER_ERROR_RE.match(stripped):
+            _add_block(
+                diagnostics["runtime"],
+                seen["runtime"],
+                stripped,
+                [line],
+                priority=True,
+            )
             continue
 
         if compiler_match:
@@ -984,6 +1000,11 @@ def build_markdown(payload: dict[str, Any]) -> str:
                 else ""
             )
             shown_lines = block["lines"][:MAX_MARKDOWN_LINES_PER_BLOCK]
+            if (
+                len(block["lines"]) > MAX_MARKDOWN_LINES_PER_BLOCK
+                and block["lines"][-1] not in shown_lines
+            ):
+                shown_lines[-1] = block["lines"][-1]
             truncated = truncated or len(block["lines"]) > len(shown_lines)
             section = [
                 "",

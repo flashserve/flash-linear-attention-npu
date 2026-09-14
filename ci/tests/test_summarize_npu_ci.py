@@ -346,6 +346,46 @@ RuntimeError: ACL stream synchronize failed, error code 507011
         self.assertIn("RuntimeError: ACL stream synchronize failed", lines)
         self.assertNotIn("/data/example-project", payload_text)
 
+    def test_unittest_error_keeps_root_exception_without_compile_noise(self):
+        traceback = """Traceback (most recent call last):
+  File "/workspace/repo/ci/tests/test_ci.py", line 10, in test_requires_node
+    completed = subprocess.run(["node"])
+  File "/usr/lib/python3.11/subprocess.py", line 548, in run
+    with Popen(*popenargs, **kwargs) as process:
+  File "/usr/lib/python3.11/subprocess.py", line 1026, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+FileNotFoundError: [Errno 2] No such file or directory: 'node'
+"""
+        markers = (
+            "ERROR: test_requires_node (test_ci.WorkflowTest.test_requires_node)",
+            "ERROR: setUpClass (test_ci.WorkflowTest)",
+            "ERROR: test_ci (unittest.loader._FailedTest.test_ci)",
+        )
+
+        for marker in markers:
+            with self.subTest(marker=marker):
+                return_code, payload, _, markdown = self._run(
+                    marker + "\n" + traceback,
+                    exit_code=1,
+                )
+
+                self.assertEqual(return_code, 1)
+                self.assertFalse(payload["diagnostics"]["compile"])
+                self.assertEqual(len(payload["diagnostics"]["runtime"]), 1)
+                self.assertNotIn("编译错误", markdown)
+                self.assertIn("FileNotFoundError", markdown)
+                self.assertIn("No such file or directory: 'node'", markdown)
+
+    def test_capitalized_runtime_error_is_not_a_compile_error(self):
+        log = "Error: Cannot find module 'publish_npu_ci_status.js'\n"
+        return_code, payload, _, markdown = self._run(log, exit_code=1)
+
+        self.assertEqual(return_code, 1)
+        self.assertFalse(payload["diagnostics"]["compile"])
+        self.assertEqual(len(payload["diagnostics"]["runtime"]), 1)
+        self.assertIn("Cannot find module", markdown)
+        self.assertNotIn("编译错误", markdown)
+
     def test_acl_error_and_exit_137_are_classified(self):
         log = "[ERROR] aclnn launch failed: ACL_ERROR_RT_DEVICE_TASK_ABORT\n"
         return_code, payload, _, markdown = self._run(log, exit_code=137)
