@@ -10,8 +10,8 @@
 #include "acl/acl.h"
 #include "kernel_operator.h"
 
-// 直接复用正式实现中的 RunPrepare 和编译期策略，不复制任何 Stage 计算。
-#include "fla/ops/ascendc/kda/chunk_kda_fwd_prepare/op_kernel/chunk_kda_fwd_prepare.cpp"
+// 直接复用正式实现中的 RunPrepare 和编译期策略，不引入正式算子的全局入口。
+#include "fla/ops/ascendc/kda/chunk_kda_fwd_prepare/op_kernel/chunk_kda_fwd_prepare_kernel.h"
 
 namespace KdaPrepareDirect {
 

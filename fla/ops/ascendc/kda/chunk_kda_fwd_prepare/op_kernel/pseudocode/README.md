@@ -23,6 +23,7 @@ pseudocode/
 |-- chunk_kda_fwd_prepare_struct.h      # GM 参数和 chunk 索引
 |-- chunk_kda_fwd_prepare_utils.h       # chunk-first 分核和地址计算
 |-- chunk_kda_fwd_prepare.cpp           # MIX AIC/AIV 编译期分架构入口
+|-- chunk_kda_fwd_prepare_kernel.h      # 正式入口与直调入口共用的 AIC/AIV 调度主体
 |-- chunk_kda_fwd_prepare_layout_test.cpp
 |-- arch35/
 |   |-- chunk_kda_fwd_prepare_vec.h

@@ -9,8 +9,6 @@
 
 #include "kernel_operator.h"
 
-#include "chunk_kda_fwd_prepare_tiling_key.h"
-
 namespace KdaPrepare {
 
 // 与 host 侧 TILING_DATA_FIELD_DEF 的字段顺序和类型严格一致。

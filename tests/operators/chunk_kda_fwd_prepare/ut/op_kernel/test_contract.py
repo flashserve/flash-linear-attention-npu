@@ -121,7 +121,11 @@ def test_direct_launch_source_declares_representative_instantiations():
     assert "ChunkKdaFwdPrepareTilingData" in kernel_source
     assert "SetSysWorkspaceForce" in kernel_source
     assert "RunPrepare" in kernel_source
-    assert "op_kernel/chunk_kda_fwd_prepare.cpp" in kernel_source
+    assert "op_kernel/chunk_kda_fwd_prepare_kernel.h" in kernel_source
+    assert "op_kernel/chunk_kda_fwd_prepare.cpp" not in kernel_source
+    assert "chunk_kda_fwd_prepare_tiling_key.h" not in _read_kernel(
+        Path("chunk_kda_fwd_prepare_struct.h")
+    )
     assert "CHUNK_KDA_FWD_PREPARE_OUTPUT_NONE" in source
     assert "CHUNK_KDA_FWD_PREPARE_OUTPUT_RECOMPUTE" in source
     assert "CHUNK_KDA_FWD_PREPARE_OUTPUT_SAVE" in source

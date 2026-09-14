@@ -259,7 +259,7 @@ std::array<at::Tensor, kOutputCount> MakeOutputs(
 
 GM_ADDR TensorAddress(const at::Tensor &tensor)
 {
-    return tensor.defined() ? reinterpret_cast<GM_ADDR>(tensor.data_ptr()) : nullptr;
+    return tensor.defined() ? (GM_ADDR)tensor.data_ptr() : nullptr;
 }
 
 GM_ADDR OptionalAddress(const c10::optional<at::Tensor> &tensor)
@@ -373,7 +373,7 @@ std::vector<c10::optional<at::Tensor>> ChunkKdaFwdPrepareDirectNpu(
                 TensorAddress(outputs[kAqk]), nullptr, TensorAddress(outputs[kW]),
                 TensorAddress(outputs[kU]), nullptr, TensorAddress(outputs[kKg]),
                 TensorAddress(outputs[kQgScaled]), nullptr, nullptr, nullptr,
-                nullptr, nullptr, reinterpret_cast<GM_ADDR>(workspace.Address()),
+                nullptr, nullptr, (GM_ADDR)workspace.Address(),
                 tiling);
         } else if (outputMode == CHUNK_KDA_FWD_PREPARE_OUTPUT_RECOMPUTE) {
             KdaPrepareDirect::Launch<
@@ -393,7 +393,7 @@ std::vector<c10::optional<at::Tensor>> ChunkKdaFwdPrepareDirectNpu(
                 TensorAddress(outputs[kQgScaled]), TensorAddress(outputs[kQHat]),
                 TensorAddress(outputs[kKHat]), TensorAddress(outputs[kQRstd]),
                 TensorAddress(outputs[kKRstd]), TensorAddress(outputs[kBetaEff]),
-                reinterpret_cast<GM_ADDR>(workspace.Address()), tiling);
+                (GM_ADDR)workspace.Address(), tiling);
         } else {
             KdaPrepareDirect::Launch<
                 CHUNK_KDA_FWD_PREPARE_TPL_BF16,
@@ -413,7 +413,7 @@ std::vector<c10::optional<at::Tensor>> ChunkKdaFwdPrepareDirectNpu(
                 TensorAddress(outputs[kQHat]), TensorAddress(outputs[kKHat]),
                 TensorAddress(outputs[kQRstd]), TensorAddress(outputs[kKRstd]),
                 TensorAddress(outputs[kBetaEff]),
-                reinterpret_cast<GM_ADDR>(workspace.Address()), tiling);
+                (GM_ADDR)workspace.Address(), tiling);
         }
         return 0;
     };
