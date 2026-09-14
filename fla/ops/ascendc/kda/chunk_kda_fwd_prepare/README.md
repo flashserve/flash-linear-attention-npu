@@ -1,6 +1,6 @@
 # ChunkKdaFwdPrepare
 
-[设计文档](docs/design.md) | [API 文档](docs/api.md) | [设计伪代码](op_kernel/pseudocode/README.md)
+[设计文档](docs/design.md) | [API 文档](docs/api.md)
 
 ## 功能
 
@@ -145,5 +145,4 @@ head。S 固定为 4，C2 以四个 16 行 query band 生成因果 score。UB、
 静态地址规划；A5 使用 Mutex 表达核内 pipe 生命周期，A2/A3 使用 HardEvent。跨核采用
 ready/free 双向握手，生产者不会覆盖仍被消费者使用的 slot。
 
-生产实现位于 `op_kernel/`；`op_kernel/pseudocode/` 作为资源账本、公式和同步合同的设计稿
-继续保留，不参与算子构建。
+生产实现位于 `op_kernel/`。
