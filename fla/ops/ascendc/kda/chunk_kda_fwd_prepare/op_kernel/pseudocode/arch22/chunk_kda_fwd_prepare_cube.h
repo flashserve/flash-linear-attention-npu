@@ -293,8 +293,12 @@ private:
                     n, 2 * Shape::kSubChunkRows,
                     2 * Shape::kSubChunkRows, n, false);
                 fix.quantPre = QuantMode_t::NoQuant;
+                AscendC::GlobalTensor<float> rawScores;
+                rawScores.SetGlobalBuffer(
+                    rawScoreRelayGm_[s].GetPhyAddr(relayOffset),
+                    2 * rows * n);
                 AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(
-                    rawScoreRelayGm_[s][relayOffset], l0C, fix);
+                    rawScores, l0C, fix);
             } else {
                 auto fix = AscendC::FixpipeParamsV220(
                     n, rows, 2 * Shape::kSubChunkRows, n, false);
@@ -302,11 +306,20 @@ private:
                 // 尾 sub-chunk 只写有效的 Qplus/Kplus 行。FP32 L0C
                 // 的基础分形为 16x16，下半 16 行从第二个 M1 分形开始。
                 constexpr uint32_t kLowerM1Offset = 16 * 16;
+                const uint32_t relayElements = rows * n;
+                AscendC::GlobalTensor<float> rawAqk;
+                AscendC::GlobalTensor<float> rawAkk;
+                rawAqk.SetGlobalBuffer(
+                    rawScoreRelayGm_[s].GetPhyAddr(relayOffset),
+                    relayElements);
+                rawAkk.SetGlobalBuffer(
+                    rawScoreRelayGm_[s].GetPhyAddr(
+                        relayOffset + relayElements),
+                    relayElements);
                 AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(
-                    rawScoreRelayGm_[s][relayOffset], l0C, fix);
+                    rawAqk, l0C, fix);
                 AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(
-                    rawScoreRelayGm_[s][relayOffset + rows * n],
-                    l0C[kLowerM1Offset], fix);
+                    rawAkk, l0C[kLowerM1Offset], fix);
             }
             AscendC::SetFlag<AscendC::HardEvent::FIX_M>(fixToM_);
         }
@@ -352,7 +365,8 @@ private:
                        .template ReinterpretCast<float>();
         AscendC::GlobalTensor<float> tRelay;
         tRelay.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
-            args_.workspace + slot + Workspace::kPayload + Workspace::kTRelay));
+            args_.workspace + slot + Workspace::kPayload + Workspace::kTRelay),
+            Shape::kQuadrantFp32Bytes / sizeof(float));
         AscendC::Nd2NzParams copy{};
         copy.ndNum = 1;
         copy.nValue = 32;
@@ -531,12 +545,14 @@ private:
             AscendC::GlobalTensor<bfloat16_t> akkOutput;
             akkOutput.SetGlobalBuffer(
                 reinterpret_cast<__gm__ bfloat16_t *>(args_.akk) +
-                AOutputOffset(args_.tiling, chunk, valueHead));
+                    AOutputOffset(args_.tiling, chunk, valueHead) +
+                    32 * Shape::kChunkRows,
+                bottomRows * Shape::kChunkRows);
             auto outputFix = AscendC::FixpipeParamsV220(
                 32, bottomRows, 32, Shape::kChunkRows, false);
             outputFix.quantPre = QuantMode_t::F322BF16;
             AscendC::Fixpipe<bfloat16_t, float, AscendC::CFG_ROW_MAJOR>(
-                akkOutput[32 * Shape::kChunkRows], l0C, outputFix);
+                akkOutput, l0C, outputFix);
         }
         AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(fixToMte1_[localHead]);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(fixToM_);

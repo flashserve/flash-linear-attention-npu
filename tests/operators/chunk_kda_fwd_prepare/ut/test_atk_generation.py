@@ -1277,7 +1277,7 @@ if [[ "${1:-}" == */run_with_process_deadline.py ]]; then
     done
   } > "$RUNNER_FIXTURE_TIMEOUT_LOG"
   if [[ "${RUNNER_FIXTURE_FORCE_TIMEOUT:-0}" == "1" ]]; then
-    printf '%s\n' '进程级 hard deadline 已触发：90s' >&2
+    printf '%s\n' '进程级 hard deadline 已触发：60s' >&2
     exit 124
   fi
   while [[ "${1:-}" != "--" ]]; do
@@ -1414,7 +1414,7 @@ exit 96
 
                     timeout_cache, timeout_args = read_trace(timeout_trace)
                     expected_hard_timeout = (
-                        "1030" if scope == "mssanitizer" else "90"
+                        "1000" if scope == "mssanitizer" else "60"
                     )
                     self.assertEqual(
                         timeout_args[:5],
@@ -1482,9 +1482,9 @@ exit 96
                 errors="replace",
             )
             self.assertEqual(result.returncode, 124)
-            self.assertIn("90s", result.stderr)
+            self.assertIn("60s", result.stderr)
             _, timeout_args = read_trace(timeout_trace)
-            self.assertEqual(timeout_args[1], "90")
+            self.assertEqual(timeout_args[1], "60")
 
             multi_case_atk_trace = fixture_root / "multi_case_atk.log"
             multi_case_timeout_trace = fixture_root / "multi_case_timeout.log"

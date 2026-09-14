@@ -146,8 +146,8 @@ validate_bounded_timeout() {
 }
 
 # ATK 的 -to 是 worker soft timeout；原生 NPU 调用不响应 soft timeout 时，
-# 仍需由独立进程组 watchdog 回收 ATK 及其全部 worker。额外 30 秒只留给
-# 进程启动与清理，每条 case 的逻辑超时仍由传给 ATK 的 60/1000 秒控制。
+# 仍需由独立进程组 watchdog 按相同上限回收 ATK 及其全部 worker。进程清理
+# 宽限只在已经判定超时后生效，不计入单条 case 的 60/1000 秒执行预算。
 run_with_prepare_hard_deadline() {
   local logical_timeout="$1"
   local case_start="$2"
@@ -163,7 +163,7 @@ run_with_prepare_hard_deadline() {
 
   [[ -f "$PROCESS_DEADLINE_PY" ]] || \
     die "找不到进程级 hard deadline 工具：${PROCESS_DEADLINE_PY}"
-  local hard_timeout=$((logical_timeout + 30))
+  local hard_timeout="$logical_timeout"
   local command_rc=0
   if python3 "$PROCESS_DEADLINE_PY" \
       --deadline-seconds "$hard_timeout" \
