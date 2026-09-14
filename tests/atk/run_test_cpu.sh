@@ -23,6 +23,7 @@ show_usage() {
   FLA_NPU_ENV                    fla_npu_transformer set_env.bash 路径，设置后 source
   ATK_OUTPUT_ROOT                输出根目录，默认 ./atk_output
   ATK_GM_INIT_MODE               GM 数据初始化模式，默认 on；可设 on/off
+  ATK_ACCURACY_JSON              精度 JSON 路径（相对算子目录或绝对路径）；默认 ./atk_<op>.json
   ATK_TIMEOUT                    精度阶段超时，默认 14400
   DC_LOOP_NUMS                   确定性循环次数，默认 50（与 ATK 一致）
   DC_TIMEOUT                     确定性阶段超时，默认 3600
@@ -322,7 +323,17 @@ case "$RUN_SCOPE" in
     validate_case_json "性能用例文件" "$PERFORMANCE_CASE_FILE"
     validate_case_json "内存检测与确定性用例文件" "$MSS_CASE_FILE"
     ;;
-  accuracy) validate_case_json "精度用例文件" "$CASE_FILE" ;;
+  accuracy)
+    if [[ -n "${ATK_ACCURACY_JSON:-}" ]]; then
+      if [[ "${ATK_ACCURACY_JSON}" = /* ]]; then
+        validate_case_json "精度用例文件" "$ATK_ACCURACY_JSON"
+      else
+        validate_case_json "精度用例文件" "${OP_DIR}/${ATK_ACCURACY_JSON#./}"
+      fi
+    else
+      validate_case_json "精度用例文件" "$CASE_FILE"
+    fi
+    ;;
   performance) validate_case_json "性能用例文件" "$PERFORMANCE_CASE_FILE" ;;
   determinism|mssanitizer) validate_case_json "内存检测与确定性用例文件" "$MSS_CASE_FILE" ;;
 esac
@@ -391,7 +402,7 @@ if should_run accuracy; then
     node --name cpu_golden --backend cpu \
       --output_path "${ATK_OUTPUT_ROOT}/accuracy" \
     task \
-      -c "./atk_${OP}.json" \
+      -c "${ATK_ACCURACY_JSON:-./atk_${OP}.json}" \
       --task accuracy \
       --bm_device cpu \
       -p "./executor_${OP}.py" \
