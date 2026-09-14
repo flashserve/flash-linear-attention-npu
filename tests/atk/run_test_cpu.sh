@@ -204,6 +204,13 @@ validate_chunk_kda_fwd_prepare_contract() {
   fi
   if should_run mssanitizer; then
     validate_bounded_timeout MSS_TIMEOUT "$MSS_TIMEOUT" 1000
+    case "$KDA_PREPARE_DEFER_SANITIZER_VERIFY" in
+      0) ;;
+      1) ;;
+      *) die "KDA_PREPARE_DEFER_SANITIZER_VERIFY 只能由正式矩阵设置为 0 或 1" ;;
+    esac
+  elif [[ "$KDA_PREPARE_DEFER_SANITIZER_VERIFY" != "0" ]]; then
+    die "KDA_PREPARE_DEFER_SANITIZER_VERIFY 只允许用于 mssanitizer 矩阵"
   fi
 }
 
@@ -347,6 +354,7 @@ MSS_TOOL="${MSS_TOOL:-memcheck}"
 MSS_TIMEOUT="${MSS_TIMEOUT:-}"
 MSS_LOG_PATH="${MSS_LOG_PATH:-}"
 MSS_SANITIZER_LOG_PATH="${MSS_SANITIZER_LOG_PATH:-}"
+KDA_PREPARE_DEFER_SANITIZER_VERIFY="${KDA_PREPARE_DEFER_SANITIZER_VERIFY:-0}"
 GEN_CASES_DTYPE_NUMBERS="${GEN_CASES_DTYPE_NUMBERS:-100}"
 GEN_CASES_EXTRA_NUMBERS="${GEN_CASES_EXTRA_NUMBERS:-0}"
 GEN_CASES_SEED="${GEN_CASES_SEED:-20260813}"
@@ -672,7 +680,8 @@ if should_run mssanitizer; then
       "${SINGLE_PROCESS_ARGS[@]}" \
       "${MSS_TIMEOUT_ARGS[@]}" \
       "${CASE_RANGE_ARGS[@]}"
-  if [[ "$OP" == "chunk_kda_fwd_prepare" ]]; then
+  if [[ "$OP" == "chunk_kda_fwd_prepare" &&
+        "$KDA_PREPARE_DEFER_SANITIZER_VERIFY" != "1" ]]; then
     expected_finish_count=432
     if [[ -n "$MSS_START" || -n "$MSS_END" ]]; then
       [[ "$MSS_START" =~ ^[0-9]+$ && "$MSS_END" =~ ^[0-9]+$ ]] || \

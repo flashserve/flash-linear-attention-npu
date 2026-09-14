@@ -2406,6 +2406,23 @@ exit 96
             'common_env+=(MSS_SANITIZER_LOG_PATH="$shard_root/${tool}.log")',
             source,
         )
+        self.assertIn(
+            "common_env+=(KDA_PREPARE_DEFER_SANITIZER_VERIFY=1)", source
+        )
+        runner = source.index('env "${common_env[@]}" bash "$runner"')
+        strict_shard_verify = source.index('python3 "$verifier" shard', runner)
+        self.assertLess(runner, strict_shard_verify)
+
+        runner_source = (ROOT / "tests/atk/run_test_cpu.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            '"$KDA_PREPARE_DEFER_SANITIZER_VERIFY" != "1"', runner_source
+        )
+        self.assertIn(
+            "KDA_PREPARE_DEFER_SANITIZER_VERIFY 只允许用于 mssanitizer 矩阵",
+            runner_source,
+        )
 
     def test_runner_rejects_requested_and_physical_soc_mismatch(self):
         source = (ROOT / "tests/atk/run_test_cpu.sh").read_text(

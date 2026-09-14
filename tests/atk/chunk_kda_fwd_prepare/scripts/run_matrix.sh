@@ -348,6 +348,9 @@ for ((start = matrix_start; start < case_count; start += shard_size)); do
       common_env+=(MSS_LOG_PATH="$shard_root/${tool}.log")
       # ATK -msl 与外层 mssanitizer 共用同一份原始日志。
       common_env+=(MSS_SANITIZER_LOG_PATH="$shard_root/${tool}.log")
+      # runner 的简化检查没有 Host/Launch 上下文；本命令返回后立即由
+      # shard 校验器结合 runtime manifest 和单 case 控制台证据严格验收。
+      common_env+=(KDA_PREPARE_DEFER_SANITIZER_VERIFY=1)
       ;;
   esac
 
