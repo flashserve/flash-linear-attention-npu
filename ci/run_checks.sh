@@ -39,6 +39,9 @@ print_ci_reproduction() {
         "$stage" "$ci_mode" "$ci_soc" "$ci_soc" >&2
     printf ' CI_IMAGE=%q CI_DOCKERFILE=%q CI_REQUIRE_PRELOADED_IMAGE=%q' \
         "$image" "$dockerfile" "$require_preloaded_image" >&2
+    if [[ "$ci_soc" == "ascend950" ]]; then
+        printf ' CI_TMPDIR=%q' "/tmp/fla-npu-ci" >&2
+    fi
     if [[ -n "$ci_ops" ]]; then
         printf ' CI_OPS=%q' "$ci_ops" >&2
     fi

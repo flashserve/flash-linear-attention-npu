@@ -19,6 +19,7 @@ DEFAULT_STATUS_WORKFLOW_PATH = (
 PUBLISH_SCRIPT_PATH = REPO_ROOT / ".github" / "scripts" / "publish_npu_ci_status.js"
 BRANCH_PROTECTION_PATH = REPO_ROOT / "scripts" / "github" / "apply_branch_protection.sh"
 RUN_CHECKS_PATH = REPO_ROOT / "ci" / "run_checks.sh"
+RUN_CONTAINER_PATH = REPO_ROOT / "ci" / "run_ci_container.sh"
 CONTRACT_TEST_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "ci-contract-tests.yml"
 STAGE_KEYS = (
     "environment-contracts",
@@ -784,6 +785,17 @@ globalThis.core = {
         self.assertIn('cat "$CI_SUMMARY_FILE" >>"$GITHUB_STEP_SUMMARY"', run_script)
         self.assertIn('elif wait "$ci_pid"; then', run_script)
 
+    def test_a5_container_tmpdir_is_backed_by_runner_workspace(self):
+        workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+        container_script = RUN_CONTAINER_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("tmpdir: /tmp/fla-npu-ci", workflow)
+        self.assertIn('host_tmpdir="$repo_dir/.ci-tmp/container-tmp"', container_script)
+        self.assertIn('mount_args+=(-v "$host_tmpdir:$container_tmpdir")', container_script)
+        self.assertIn('CI_TMPDIR must be an absolute container path', container_script)
+        self.assertIn('repo/.ci-tmp/container-tmp', workflow)
+        self.assertIn('rm -rf -- "$container_tmp_path"', workflow)
+
     def test_status_contexts_are_consistent_across_workflows_and_protection(self):
         sources = (
             WORKFLOW_PATH.read_text(encoding="utf-8"),
@@ -814,6 +826,7 @@ globalThis.core = {
         self.assertIn("CI_IMAGE=%q CI_DOCKERFILE=%q CI_REQUIRE_PRELOADED_IMAGE=%q", script)
         self.assertIn('image="fla-npu-ci:9.1.0-950"', script)
         self.assertIn('dockerfile="ci/Dockerfile.ascend950"', script)
+        self.assertIn("CI_TMPDIR=%q", script)
         self.assertIn("manage_npu_ci_stage_report.py", script)
         self.assertLess(
             script.index('manage_npu_ci_stage_report.py --output "$stage_report_file" init'),

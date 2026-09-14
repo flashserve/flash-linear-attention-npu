@@ -20,6 +20,8 @@ require_preloaded_image="${CI_REQUIRE_PRELOADED_IMAGE:-false}"
 rebuild_image="${CI_REBUILD_IMAGE:-false}"
 container_name="${CI_CONTAINER_NAME:-fla-npu-ci-$(date +%s)}"
 cache_root="${CI_CACHE_ROOT:-}"
+container_tmpdir="${CI_TMPDIR:-}"
+host_tmpdir="${CI_HOST_TMPDIR:-}"
 npu_lock_fd=""
 npu_lock_file=""
 
@@ -135,12 +137,27 @@ gdr_accuracy_cache="${CI_GDR_ACCURACY_CACHE:-$cache_root/gdr_accuracy_golden}"
 gdr_accuracy_cache_container="/workspace/gdr_accuracy_golden"
 mkdir -p "$third_party_cache" "$gdr_accuracy_cache"
 
+if [[ -z "$host_tmpdir" && "$container_tmpdir" == /tmp/* ]]; then
+    host_tmpdir="$repo_dir/.ci-tmp/container-tmp"
+fi
+if [[ -n "$host_tmpdir" ]]; then
+    if [[ "$container_tmpdir" != /* ]]; then
+        echo "[CI][ERROR] CI_TMPDIR must be an absolute container path when CI_HOST_TMPDIR is set." >&2
+        exit 2
+    fi
+    mkdir -p "$host_tmpdir"
+    host_tmpdir="$(realpath "$host_tmpdir")"
+fi
+
 mount_args=(
     -v "$repo_dir:/workspace/repo"
     -v "$third_party_cache:/workspace/repo/third_party"
     -v "$gdr_accuracy_cache:$gdr_accuracy_cache_container"
     -w /workspace/repo
 )
+if [[ -n "$host_tmpdir" ]]; then
+    mount_args+=(-v "$host_tmpdir:$container_tmpdir")
+fi
 for path in \
     /usr/local/dcmi \
     /usr/local/bin/npu-smi \
@@ -156,6 +173,9 @@ echo "[CI] Running $container_name on NPU ${NPU_SELECTED_DEVICE} (${NPU_SELECTED
 echo "[CI] third_party cache: $third_party_cache"
 echo "[CI] GDR accuracy golden cache: $gdr_accuracy_cache"
 echo "[CI] container TMPDIR: ${CI_TMPDIR:-auto}"
+if [[ -n "$host_tmpdir" ]]; then
+    echo "[CI] container TMPDIR uses bind-mounted host storage"
+fi
 
 container_command=(bash ci/run_checks.sh)
 if [[ -n "${CI_CONTAINER_COMMAND:-}" ]]; then

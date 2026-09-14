@@ -1110,9 +1110,14 @@ jobs:
           set -euo pipefail
           repo_path="$(realpath repo)"
           raw_log_path="$(realpath -m "repo/${CI_RAW_LOG_FILE}")"
+          container_tmp_path="$(realpath -m "repo/.ci-tmp/container-tmp")"
           case "$raw_log_path" in
             "$repo_path"/*) rm -f "$raw_log_path" ;;
             *) echo "[CI][ERROR] Refusing to clean log outside the repository workspace." >&2; exit 1 ;;
+          esac
+          case "$container_tmp_path" in
+            "$repo_path"/.ci-tmp/container-tmp) rm -rf -- "$container_tmp_path" ;;
+            *) echo "[CI][ERROR] Refusing to clean container temp outside the repository workspace." >&2; exit 1 ;;
           esac
 
       - name: 记录 ${{ matrix.name }} 执行结果

@@ -774,6 +774,7 @@ def build_reproduction(
                 _shell_assignment("CI_IMAGE", "fla-npu-ci:9.1.0-950"),
                 _shell_assignment("CI_DOCKERFILE", "ci/Dockerfile.ascend950"),
                 _shell_assignment("CI_REQUIRE_PRELOADED_IMAGE", "true"),
+                _shell_assignment("CI_TMPDIR", "/tmp/fla-npu-ci"),
             ]
         )
     else:

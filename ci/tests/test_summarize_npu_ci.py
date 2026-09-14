@@ -172,6 +172,7 @@ class SummarizeNpuCiTest(unittest.TestCase):
         self.assertEqual(return_code, 1)
         command = payload["reproduction"][0]
         self.assertIn("CI_STAGE=opp-package", shlex.split(command))
+        self.assertIn("CI_TMPDIR=/tmp/fla-npu-ci", shlex.split(command))
         self.assertIn("CI_STAGE=opp-package", markdown)
 
     def test_failed_stage_with_zero_command_exit_still_fails(self):

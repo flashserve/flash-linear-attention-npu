@@ -268,7 +268,7 @@ A5 job 固定设置 `CI_REQUIRE_PRELOADED_IMAGE=true`。若 `fla-npu-ci:9.1.0-95
 
 A5 Dockerfile 对 PyTorch 和 `torch_npu` wheel 做 SHA256 校验。默认 Python 包源可通过 `PYPI_INDEX_URL` build arg 覆盖，但不能跳过 wheel 版本和校验和约束。
 
-A5 matrix 固定设置 `CI_TMPDIR=/tmp/fla-npu-ci`。A5 Triton/BiShengIR 编译器要求临时目录位于容器 `/tmp` 下；不要把该值改成仓库内目录。这里约束的是容器路径，实际存储仍由 runner 所连接 Docker daemon 的 data-root 承载。
+A5 matrix 固定设置 `CI_TMPDIR=/tmp/fla-npu-ci`。A5 Triton/BiShengIR 编译器要求临时目录位于容器 `/tmp` 下；不要修改这个容器路径。`ci/run_ci_container.sh` 会默认把 runner 工作区内的 `.ci-tmp/container-tmp` bind mount 到该路径，使临时数据与 runner 工作区使用同一数据盘；job 结束后会校验真实路径并清理这个目录。手工运行时可用 `CI_HOST_TMPDIR` 覆盖宿主机临时目录，但 `CI_TMPDIR` 仍须是绝对容器路径。
 
 ## 第 5 步：验证容器能看到 NPU
 
