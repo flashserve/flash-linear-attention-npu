@@ -14,7 +14,7 @@ jobs:
       statuses: write
     steps:
       - name: 写入未执行状态并提示触发人
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ github.token }}
           script: |
@@ -24,8 +24,15 @@ jobs:
               return;
             }
 
-            const contextName = 'NPU CI / A2+A5 手动验证';
-            const accuracyContextName = 'NPU CI / A2+A5 精度检查';
+            const checkContexts = [
+              'NPU CI / A2+A5 / 01 环境、wheel 与运行时契约',
+              'NPU CI / A2+A5 / 02 全量 OPP 构建',
+              'NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局',
+              'NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配',
+              'NPU CI / A2+A5 / 05 GDR Example/ST',
+              'NPU CI / A2+A5 / 06 chunk_fwd_o 局部覆盖安装',
+              'NPU CI / A2+A5 / 07 报告与 commit 校验',
+            ];
             const marker = `<!-- npu-ci:pr=${pr.number}:sha=${pr.head.sha} -->`;
             const isCommitUpdate = context.payload.action === 'synchronize';
             const pendingDescription = isCommitUpdate
@@ -41,45 +48,35 @@ jobs:
               ref: pr.head.sha,
               per_page: 100,
             });
-            const manualCiStatuses = statuses
-              .filter((status) => status.context === contextName)
-              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-            const latestExecutionCi = manualCiStatuses
-              .find((status) => (status.description || '').includes('+example'));
-            const latestNotRunCi = manualCiStatuses
-              .find((status) => (status.description || '').includes('未执行'));
-
-            if (latestExecutionCi) {
-              core.notice(`当前 head commit 已经有 NPU CI 执行状态：${latestExecutionCi.state}。`);
+            const executionStatus = statuses.find((status) =>
+              checkContexts.includes(status.context) &&
+              /\/actions\/runs\/\d+/.test(status.target_url || '')
+            );
+            if (executionStatus) {
+              core.notice(`当前 head commit 已经有 NPU CI 执行状态：${executionStatus.state}。`);
               return;
             }
-
-            if (!latestNotRunCi) {
-              await github.rest.repos.createCommitStatus({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                sha: pr.head.sha,
-                state: 'pending',
-                context: contextName,
-                description: pendingDescription,
-                target_url: pr.html_url,
-              });
+            const latestByContext = new Map();
+            for (const status of [...statuses].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))) {
+              if (!latestByContext.has(status.context)) {
+                latestByContext.set(status.context, status);
+              }
             }
-            const accuracyStatuses = statuses
-              .filter((status) => status.context === accuracyContextName)
-              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-            const latestAccuracyStatus = accuracyStatuses[0];
-
-            if (!latestAccuracyStatus) {
-              await github.rest.repos.createCommitStatus({
+            const missingContexts = checkContexts.filter((statusContext) => !latestByContext.has(statusContext));
+            const pendingResults = await Promise.allSettled(missingContexts.map((statusContext) =>
+              github.rest.repos.createCommitStatus({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 sha: pr.head.sha,
                 state: 'pending',
-                context: accuracyContextName,
+                context: statusContext,
                 description: pendingDescription,
                 target_url: pr.html_url,
-              });
+              })
+            ));
+            const pendingFailures = pendingResults.filter((result) => result.status === 'rejected');
+            if (pendingFailures.length > 0) {
+              core.warning(`有 ${pendingFailures.length} 个 NPU CI 默认状态写入失败。`);
             }
 
             const body = [
@@ -88,7 +85,8 @@ jobs:
               '',
               '- 当前状态：未执行',
               isCommitUpdate ? '- 原因：PR head commit 已变化，旧 commit 的 NPU CI 结果不再生效' : '',
-              '- 合入要求：当前 commit 必须通过 `NPU CI / A2+A5 手动验证` 和 `NPU CI / A2+A5 精度检查`',
+              '- 合入要求：当前 commit 必须通过 7 个 `NPU CI / A2+A5 / 01..07` 分项状态',
+              '- 执行方式：按顺序执行；前置失败时后续项跳过',
               '- 触发命令：仓库 Admin 权限账号在本 PR 评论 `/run-npu-ci quick` 或 `/run-npu-ci full`',
               '- 可请求触发的 CI 账号：仓库 Admin 权限账号',
               '- Example ST：必跑',

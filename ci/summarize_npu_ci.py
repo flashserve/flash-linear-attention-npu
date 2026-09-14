@@ -29,6 +29,14 @@ MAX_MARKDOWN_LINES_PER_BLOCK = 4
 MAX_MARKDOWN_FAILURE_CASES = 4
 MAX_MARKDOWN_METRICS_PER_CASE = 3
 MAX_REPRO_COMMAND_CHARS = 2_000
+STAGE_NAMES = (
+    "environment-contracts",
+    "opp-package",
+    "standalone-layout",
+    "torch-adapter",
+    "gdr-example-st",
+    "scoped-overlay",
+)
 
 ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 CARET_ANSI_RE = re.compile(r"\^\[\[[0-?]*[ -/]*[@-~]")
@@ -732,6 +740,7 @@ def build_reproduction(
     mode: str,
     ops: str,
     failed_cases: list[dict[str, Any]],
+    failed_stage: str = "",
 ) -> list[str]:
     assignments = [
         _shell_assignment("CI_MODE", mode),
@@ -740,6 +749,9 @@ def build_reproduction(
         _shell_assignment("CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK", "true"),
         _shell_assignment("CI_RUN_SCOPED_WHEEL_INSTALL_CHECK", "true"),
     ]
+    reproduction_stage = failed_stage or ("opp-package" if ops else "")
+    if reproduction_stage:
+        assignments.append(_shell_assignment("CI_STAGE", reproduction_stage))
     if platform.lower() == "a5" or soc == "ascend950":
         assignments.extend(
             [
@@ -784,6 +796,62 @@ def build_reproduction(
             )
         )
     return [render(assignments)]
+
+
+def inspect_stage_report(
+    path: Optional[Path], require_report: bool
+) -> tuple[str, Optional[str]]:
+    if path is None or not path.is_file():
+        return (
+            "",
+            "Required NPU CI stage report was not generated" if require_report else None,
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as error:
+        return "", f"NPU CI stage report is invalid: {sanitize_inline(error)}"
+    if not isinstance(payload, dict):
+        return "", "NPU CI stage report root is not an object"
+    if payload.get("schema") != "npu-ci-stage-report-v1":
+        return "", "NPU CI stage report schema is not supported"
+    if payload.get("complete") is not True:
+        return "", "NPU CI stage report is incomplete"
+    stages = payload.get("stages")
+    if not isinstance(stages, dict):
+        return "", "NPU CI stage report stages are invalid"
+    failed_stage = ""
+    for stage in STAGE_NAMES:
+        item = stages.get(stage)
+        if not isinstance(item, dict):
+            return "", f"NPU CI stage report is missing stage {stage}"
+        status = item.get("status")
+        exit_code = item.get("exit_code")
+        if status not in {"success", "failure", "skipped"}:
+            return "", f"NPU CI stage report has unfinished stage {stage}"
+        if (
+            (status == "success" and exit_code != 0)
+            or (
+                status == "failure"
+                and (
+                    isinstance(exit_code, bool)
+                    or not isinstance(exit_code, int)
+                    or exit_code == 0
+                )
+            )
+            or (status == "skipped" and exit_code is not None)
+        ):
+            return "", f"NPU CI stage report has inconsistent result for {stage}"
+        if failed_stage and status != "skipped":
+            return (
+                failed_stage,
+                f"NPU CI stage report must skip {stage} after failure in {failed_stage}",
+            )
+        if status == "failure" and not failed_stage:
+            failed_stage = stage
+    expected_status = "failure" if failed_stage else "success"
+    if payload.get("status") != expected_status:
+        return "", "NPU CI stage report top-level status is inconsistent"
+    return failed_stage, None
 
 
 def _payload_size(payload: dict[str, Any]) -> int:
@@ -951,7 +1019,17 @@ def summarize(args: argparse.Namespace) -> tuple[dict[str, Any], str]:
     )
     execution_failed = args.exit_code != 0
     accuracy_failed = accuracy["status"] == "failure"
-    overall_failed = execution_failed or accuracy_failed or report_error is not None
+    failed_stage, stage_report_error = inspect_stage_report(
+        Path(args.stage_report_file) if args.stage_report_file else None,
+        args.require_stage_report,
+    )
+    overall_failed = (
+        execution_failed
+        or accuracy_failed
+        or bool(failed_stage)
+        or report_error is not None
+        or stage_report_error is not None
+    )
     diagnostics = extract_diagnostics(Path(args.log_file), enabled=overall_failed)
 
     if args.exit_code == 137:
@@ -964,6 +1042,17 @@ def summarize(args: argparse.Namespace) -> tuple[dict[str, Any], str]:
     if report_error and not execution_failed:
         _add_synthetic_block(
             diagnostics, "infrastructure", report_error, priority=True
+        )
+    if stage_report_error and not execution_failed:
+        _add_synthetic_block(
+            diagnostics, "infrastructure", stage_report_error, priority=True
+        )
+    if failed_stage and not execution_failed and stage_report_error is None:
+        _add_synthetic_block(
+            diagnostics,
+            "infrastructure",
+            f"NPU CI stage {failed_stage} failed while the command exit code was 0",
+            priority=True,
         )
     if accuracy_failed:
         _add_synthetic_block(
@@ -1003,6 +1092,7 @@ def summarize(args: argparse.Namespace) -> tuple[dict[str, Any], str]:
             metadata["mode"],
             metadata["ops"],
             accuracy["failures"],
+            failed_stage,
         )
         if overall_failed
         else [],
@@ -1028,6 +1118,8 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument("--run-attempt", required=True)
     parser.add_argument("--log-file", required=True)
     parser.add_argument("--accuracy-report-file", default="")
+    parser.add_argument("--stage-report-file", default="")
+    parser.add_argument("--require-stage-report", action="store_true")
     parser.add_argument("--json-out", required=True)
     parser.add_argument("--markdown-out", required=True)
     parser.add_argument("--require-accuracy-report", action="store_true")

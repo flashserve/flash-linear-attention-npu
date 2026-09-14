@@ -22,8 +22,14 @@ curl -fsSL \
   "required_status_checks": {
     "strict": true,
     "contexts": [
-      "NPU CI / A2+A5 手动验证",
-      "NPU CI / A2+A5 精度检查"
+      "NPU CI / A2+A5 / 01 环境、wheel 与运行时契约",
+      "NPU CI / A2+A5 / 02 全量 OPP 构建",
+      "NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局",
+      "NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配",
+      "NPU CI / A2+A5 / 05 GDR Example/ST",
+      "NPU CI / A2+A5 / 06 chunk_fwd_o 局部覆盖安装",
+      "NPU CI / A2+A5 / 07 报告与 commit 校验",
+      "CI 契约测试"
     ]
   },
   "enforce_admins": true,

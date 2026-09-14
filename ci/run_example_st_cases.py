@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Any, Optional
 
 
@@ -32,6 +33,156 @@ BOOLEAN_FLAGS = (
 )
 
 ACCURACY_TENSORS = {"o", "dq", "dk", "dv", "dbeta", "dg"}
+DEFAULT_ACCURACY_TENSORS = ("o", "dq", "dk", "dv", "dbeta", "dg")
+ACCURACY_THRESHOLDS = {
+    "--accuracy-output-tol": 5e-3,
+    "--accuracy-grad-tol": 8e-3,
+    "--accuracy-beta-grad-tol": 2e-2,
+    "--accuracy-gate-grad-tol": 2e-2,
+    "--accuracy-output-cos-min": 0.999,
+    "--accuracy-grad-cos-min": 0.999,
+    "--accuracy-beta-grad-cos-min": 0.99,
+    "--accuracy-gate-grad-cos-min": 0.99,
+}
+ACCURACY_THRESHOLD_CONTRACT = {
+    option.replace("--accuracy-", "", 1).replace("-", "_"): value
+    for option, value in ACCURACY_THRESHOLDS.items()
+}
+METRIC_THRESHOLD_FIELDS = {
+    "o": ("output_tol", "output_cos_min"),
+    "dq": ("grad_tol", "grad_cos_min"),
+    "dk": ("grad_tol", "grad_cos_min"),
+    "dv": ("grad_tol", "grad_cos_min"),
+    "dbeta": ("beta_grad_tol", "beta_grad_cos_min"),
+    "dg": ("gate_grad_tol", "gate_grad_cos_min"),
+}
+DEFAULT_EXAMPLE_SCRIPT = "examples/flash_gated_delta_rule.py"
+REQUIRED_ACCURACY_CASES = {
+    "case1_current_default",
+    "gdr_accuracy_dense_b2_t128_h2_d128_fp16",
+    "gdr_accuracy_varlen_64_64_h2_d128_fp16",
+    "gdr_accuracy_tnd_3seq_t3991_h2_d128_fp16",
+}
+_BASE_REQUIRED_ACCURACY_CONTRACT = {
+    "script": DEFAULT_EXAMPLE_SCRIPT,
+    "chunk_size": 64,
+    "key_dim": 128,
+    "value_dim": 128,
+    "gate_source": "g",
+    "gate_function": "logsigmoid",
+    "initial_state": "none",
+    "output_final_state": False,
+    "demo_model": False,
+    "conv_kernel": 4,
+    "accuracy_thresholds": ACCURACY_THRESHOLD_CONTRACT,
+}
+REQUIRED_ACCURACY_CONTRACTS = {
+    "case1_current_default": {
+        **_BASE_REQUIRED_ACCURACY_CONTRACT,
+        "batch": 1,
+        "tokens": 4087,
+        "query_heads": 32,
+        "value_heads": 32,
+        "dtype": "bf16",
+        "varlen": True,
+        "cu_seqlens": [
+            0,
+            2049,
+            3060,
+            3573,
+            3829,
+            3957,
+            4022,
+            4054,
+            4070,
+            4077,
+            4081,
+            4086,
+            4087,
+        ],
+        "mean_len": 1024,
+        "qk_l2norm": True,
+        "seed": 20260630,
+        "scale": None,
+        "accuracy_tensors": ["o"],
+    },
+    "gdr_accuracy_dense_b2_t128_h2_d128_fp16": {
+        **_BASE_REQUIRED_ACCURACY_CONTRACT,
+        "batch": 2,
+        "tokens": 128,
+        "query_heads": 2,
+        "value_heads": 2,
+        "dtype": "fp16",
+        "varlen": False,
+        "cu_seqlens": [],
+        "mean_len": 128,
+        "qk_l2norm": False,
+        "seed": 42,
+        "scale": 0.1,
+        "accuracy_tensors": list(DEFAULT_ACCURACY_TENSORS),
+    },
+    "gdr_accuracy_varlen_64_64_h2_d128_fp16": {
+        **_BASE_REQUIRED_ACCURACY_CONTRACT,
+        "batch": 1,
+        "tokens": 128,
+        "query_heads": 2,
+        "value_heads": 2,
+        "dtype": "fp16",
+        "varlen": True,
+        "cu_seqlens": [0, 64, 128],
+        "mean_len": 1024,
+        "qk_l2norm": False,
+        "seed": 43,
+        "scale": 0.1,
+        "accuracy_tensors": list(DEFAULT_ACCURACY_TENSORS),
+    },
+    "gdr_accuracy_tnd_3seq_t3991_h2_d128_fp16": {
+        **_BASE_REQUIRED_ACCURACY_CONTRACT,
+        "batch": 1,
+        "tokens": 3991,
+        "query_heads": 2,
+        "value_heads": 2,
+        "dtype": "fp16",
+        "varlen": True,
+        "cu_seqlens": [0, 1024, 2048, 3991],
+        "mean_len": 1024,
+        "qk_l2norm": False,
+        "seed": 44,
+        "scale": 0.1,
+        "accuracy_tensors": ["o"],
+    },
+}
+REQUIRED_EXACT_CU_SEQLENS = {
+    "gdr_accuracy_dense_b2_t128_h2_d128_fp16": [],
+    "gdr_accuracy_varlen_64_64_h2_d128_fp16": [0, 64, 128],
+}
+REQUIRED_SEQUENCE_COUNTS = {
+    "case1_current_default": None,
+    "gdr_accuracy_dense_b2_t128_h2_d128_fp16": None,
+    "gdr_accuracy_varlen_64_64_h2_d128_fp16": 2,
+    "gdr_accuracy_tnd_3seq_t3991_h2_d128_fp16": 3,
+}
+MANAGED_EXTRA_ARG_FLAGS = {
+    *(arg_name for _, arg_name in FIELD_ARGS),
+    *(arg_name for _, arg_name in BOOLEAN_FLAGS),
+    "--case-name",
+    "--demo-model",
+    "--device",
+    "--dim",
+    "--heads",
+    "--legacy-unfused-core",
+    "--no-qk-l2norm",
+    "--no-varlen",
+    "--qk-l2norm",
+    "--varlen",
+    *ACCURACY_THRESHOLDS,
+}
+UNIQUE_REPORTED_EXTRA_OPTIONS = {
+    "--accuracy-tensors",
+    "--cu-seqlens",
+    "--scale",
+    "--seed",
+}
 
 
 def _read_cases(path: Path) -> list[dict[str, Any]]:
@@ -71,6 +222,99 @@ def _normalize_extra_args(value: Any) -> list[str]:
     if isinstance(value, list) and all(isinstance(item, str) for item in value):
         return value
     raise ValueError("extra_args must be a string or a list of strings.")
+
+
+def _case_script(case: dict[str, Any]) -> str:
+    raw_script = str(case.get("script", DEFAULT_EXAMPLE_SCRIPT)).strip().replace("\\", "/")
+    script = PurePosixPath(raw_script)
+    if not raw_script or script.is_absolute() or ".." in script.parts:
+        raise ValueError(f"invalid Example/ST script path: {raw_script!r}")
+    normalized = script.as_posix()
+    if case.get("name") in REQUIRED_ACCURACY_CASES and normalized != DEFAULT_EXAMPLE_SCRIPT:
+        raise ValueError(
+            f"required accuracy case {case['name']} must use {DEFAULT_EXAMPLE_SCRIPT}"
+        )
+    return normalized
+
+
+def _extra_option_values(extra_args: list[str], option: str) -> list[str]:
+    values: list[str] = []
+    for index, item in enumerate(extra_args):
+        if item == option:
+            if index + 1 >= len(extra_args) or extra_args[index + 1].startswith("--"):
+                raise ValueError(f"{option} requires a value in extra_args")
+            values.append(extra_args[index + 1])
+        elif item.startswith(f"{option}="):
+            value = item.split("=", 1)[1]
+            if not value:
+                raise ValueError(f"{option} requires a value in extra_args")
+            values.append(value)
+    return values
+
+
+def _validate_extra_args(extra_args: list[str]) -> None:
+    protected_options = MANAGED_EXTRA_ARG_FLAGS | UNIQUE_REPORTED_EXTRA_OPTIONS
+    for item in extra_args:
+        option = item.split("=", 1)[0]
+        if option in MANAGED_EXTRA_ARG_FLAGS:
+            raise ValueError(
+                f"extra_args cannot override runner-managed option {option}"
+            )
+        if option not in protected_options and any(
+            protected.startswith(option) for protected in protected_options
+        ):
+            raise ValueError(
+                f"extra_args cannot abbreviate protected option {option}"
+            )
+    for option in UNIQUE_REPORTED_EXTRA_OPTIONS:
+        if len(_extra_option_values(extra_args, option)) > 1:
+            raise ValueError(f"extra_args must specify {option} at most once")
+
+
+def _extra_option_value(
+    extra_args: list[str], option: str, default: Optional[str] = None
+) -> Optional[str]:
+    values = _extra_option_values(extra_args, option)
+    return values[0] if values else default
+
+
+def _extra_int(extra_args: list[str], option: str, default: int) -> int:
+    value = _extra_option_value(extra_args, option)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError as error:
+        raise ValueError(f"{option} must be an integer") from error
+
+
+def _extra_float(
+    extra_args: list[str], option: str, default: Optional[float]
+) -> Optional[float]:
+    value = _extra_option_value(extra_args, option)
+    if value is None:
+        return default
+    try:
+        parsed = float(value)
+    except ValueError as error:
+        raise ValueError(f"{option} must be a number") from error
+    if not math.isfinite(parsed):
+        raise ValueError(f"{option} must be finite")
+    return parsed
+
+
+def _accuracy_tensor_contract(extra_args: list[str]) -> list[str]:
+    raw_value = _extra_option_value(
+        extra_args, "--accuracy-tensors", ",".join(DEFAULT_ACCURACY_TENSORS)
+    )
+    assert raw_value is not None
+    tensors = [item.strip() for item in raw_value.split(",") if item.strip()]
+    if not tensors or len(tensors) != len(set(tensors)):
+        raise ValueError("--accuracy-tensors must contain unique tensor names")
+    unknown = [item for item in tensors if item not in ACCURACY_TENSORS]
+    if unknown:
+        raise ValueError(f"--accuracy-tensors contains unsupported values: {', '.join(unknown)}")
+    return tensors
 
 
 def _normalize_initial_state(value: Any) -> str:
@@ -125,8 +369,32 @@ def _select_cases(cases: list[dict[str, Any]], case_filter: str) -> list[dict[st
     return [by_name[name] for name in wanted]
 
 
+def _required_case_inventory_errors(cases: list[dict[str, Any]]) -> list[str]:
+    by_name = {case["name"]: case for case in cases}
+    errors = []
+    for name in sorted(REQUIRED_ACCURACY_CASES):
+        case = by_name.get(name)
+        if case is None:
+            errors.append(f"missing required accuracy case {name}")
+        elif not case.get("enabled", True):
+            errors.append(f"required accuracy case {name} is disabled")
+    return errors
+
+
 def _build_command(repo_root: Path, device: int, case: dict[str, Any]) -> list[str]:
-    script = repo_root / str(case.get("script", "examples/flash_gated_delta_rule.py"))
+    script_name = _case_script(case)
+    script = (repo_root / script_name).resolve()
+    resolved_root = repo_root.resolve()
+    if script != resolved_root and resolved_root not in script.parents:
+        raise ValueError(f"Example/ST script escapes the repository: {script_name}")
+    extra_args = _normalize_extra_args(case.get("extra_args"))
+    _validate_extra_args(extra_args)
+    contract_errors = _required_case_contract_errors(str(case["name"]), _case_contract(case))
+    if contract_errors:
+        raise ValueError(
+            f"required accuracy case {case['name']} contract mismatch: "
+            + ", ".join(contract_errors)
+        )
     cmd = [
         sys.executable,
         str(script),
@@ -153,7 +421,10 @@ def _build_command(repo_root: Path, device: int, case: dict[str, Any]) -> list[s
         cmd.append("--no-varlen")
     if not _as_bool(case.get("qk_l2norm", case.get("qk-l2norm")), default=True):
         cmd.append("--no-qk-l2norm")
-    cmd.extend(_normalize_extra_args(case.get("extra_args")))
+    if "--accuracy-check" in extra_args:
+        for option, value in ACCURACY_THRESHOLDS.items():
+            cmd.extend([option, str(value)])
+    cmd.extend(extra_args)
     return cmd
 
 
@@ -199,11 +470,173 @@ def _case_expects_accuracy(case: dict[str, Any]) -> bool:
     return "--accuracy-check" in _normalize_extra_args(case.get("extra_args"))
 
 
+def _case_contract(case: dict[str, Any]) -> dict[str, Any]:
+    extra_args = _normalize_extra_args(case.get("extra_args"))
+    _validate_extra_args(extra_args)
+    cu_seqlens: list[int] = []
+    cu_seqlens_value = _extra_option_value(extra_args, "--cu-seqlens")
+    if cu_seqlens_value is not None:
+        try:
+            cu_seqlens = [int(item) for item in cu_seqlens_value.split(",")]
+        except ValueError as error:
+            raise ValueError("--cu-seqlens must contain integers") from error
+    expects_accuracy = _case_expects_accuracy(case)
+    return {
+        "script": _case_script(case),
+        "batch": _case_get(case, ("B", "batch")),
+        "tokens": _case_get(case, ("T", "tokens")),
+        "chunk_size": _case_get(case, ("chunk_size", "chunk-size")),
+        "query_heads": _case_get(case, ("query_head", "query_heads", "query-heads")),
+        "value_heads": _case_get(case, ("value_head", "value_heads", "value-heads")),
+        "key_dim": _case_get(case, ("Kdim", "key_dim", "key-dim")),
+        "value_dim": _case_get(case, ("Vdim", "value_dim", "value-dim")),
+        "dtype": str(case.get("dtype", "")).strip().lower(),
+        "varlen": _as_bool(case.get("varlen"), default=True),
+        "cu_seqlens": cu_seqlens,
+        "mean_len": int(_case_get(case, ("mean_len", "mean-len")) or 1024),
+        "gate_source": str(_case_get(case, ("gate_source", "gate-source", "gate")) or "g").strip().lower(),
+        "gate_function": str(
+            _case_get(case, ("gate_function", "gate-function", "gate_fn", "gate-fn"))
+            or "logsigmoid"
+        ).strip().lower(),
+        "initial_state": _normalize_initial_state(
+            _case_get(case, ("initial_state", "initial-state"))
+        ),
+        "output_final_state": _as_bool(
+            _case_get(case, ("output_final_state", "output-final-state", "final_state", "final-state"))
+        ),
+        "qk_l2norm": _as_bool(
+            case.get("qk_l2norm", case.get("qk-l2norm")), default=True
+        ),
+        "demo_model": _as_bool(case.get("demo_model")),
+        "conv_kernel": int(_case_get(case, ("conv_kernel", "conv-kernel")) or 4),
+        "seed": _extra_int(extra_args, "--seed", 42),
+        "scale": _extra_float(extra_args, "--scale", None),
+        "accuracy_tensors": _accuracy_tensor_contract(extra_args)
+        if expects_accuracy
+        else [],
+        "accuracy_thresholds": ACCURACY_THRESHOLD_CONTRACT if expects_accuracy else {},
+    }
+
+
+def _required_case_contract_errors(name: str, contract: dict[str, Any]) -> list[str]:
+    expected = REQUIRED_ACCURACY_CONTRACTS.get(name)
+    if expected is None:
+        return []
+    if not isinstance(contract, dict):
+        return ["contract"]
+    errors = sorted(
+        key
+        for key in (set(expected) | set(contract)) - {"cu_seqlens"}
+        if contract.get(key) != expected.get(key)
+    )
+    cu_seqlens = contract.get("cu_seqlens")
+    expected_exact = REQUIRED_EXACT_CU_SEQLENS.get(name)
+    valid_boundaries = (
+        isinstance(cu_seqlens, list)
+        and all(type(value) is int for value in cu_seqlens)
+        and (
+            (not expected["varlen"] and cu_seqlens == [])
+            or (
+                expected["varlen"]
+                and len(cu_seqlens) >= 2
+                and cu_seqlens[0] == 0
+                and cu_seqlens[-1] == expected["tokens"]
+                and all(right > left for left, right in zip(cu_seqlens, cu_seqlens[1:]))
+            )
+        )
+    )
+    sequence_count = REQUIRED_SEQUENCE_COUNTS[name]
+    if expected_exact is not None and cu_seqlens != expected_exact:
+        valid_boundaries = False
+    if sequence_count is not None and (
+        not isinstance(cu_seqlens, list) or len(cu_seqlens) != sequence_count + 1
+    ):
+        valid_boundaries = False
+    if not valid_boundaries:
+        errors.append("cu_seqlens")
+    return sorted(errors)
+
+
+def _required_case_report_errors(report: dict[str, Any]) -> list[str]:
+    name = str(report.get("name", ""))
+    expected = REQUIRED_ACCURACY_CONTRACTS.get(name)
+    if expected is None:
+        return []
+    errors = [
+        f"contract mismatch ({', '.join(fields)})"
+        for fields in [_required_case_contract_errors(name, report.get("contract", {}))]
+        if fields
+    ]
+    metrics = report.get("metrics")
+    if not isinstance(metrics, list):
+        return [*errors, "metrics is not an array"]
+    metric_names = [
+        metric.get("tensor", "") if isinstance(metric, dict) else ""
+        for metric in metrics
+    ]
+    duplicates = sorted(
+        {name for name in metric_names if name and metric_names.count(name) > 1}
+    )
+    if duplicates:
+        errors.append(f"duplicate metrics ({', '.join(duplicates)})")
+    expected_names = expected["accuracy_tensors"]
+    if len(metric_names) != len(expected_names) or any(
+        name not in metric_names for name in expected_names
+    ):
+        errors.append(
+            "metric set mismatch "
+            f"(expected {','.join(expected_names)}; actual {','.join(filter(None, metric_names)) or 'empty'})"
+        )
+    for metric in metrics:
+        if not isinstance(metric, dict) or metric.get("tensor") not in METRIC_THRESHOLD_FIELDS:
+            continue
+        if any(metric.get(field) is not True for field in ("finite", "allclose", "cosine_ok")):
+            errors.append(f"metric checks failed ({metric['tensor']})")
+        tol_field, cos_min_field = METRIC_THRESHOLD_FIELDS[metric["tensor"]]
+        if (
+            metric.get("tol") != ACCURACY_THRESHOLD_CONTRACT[tol_field]
+            or metric.get("cos_min") != ACCURACY_THRESHOLD_CONTRACT[cos_min_field]
+        ):
+            errors.append(f"metric threshold mismatch ({metric['tensor']})")
+    return errors
+
+
+def _enforce_required_case_report(report: dict[str, Any]) -> None:
+    if report.get("status") != "passed" or report.get("accuracy_status") != "passed":
+        return
+    errors = _required_case_report_errors(report)
+    if not errors:
+        return
+    report["validation_errors"] = errors
+    report["status"] = "failed"
+    report["return_code"] = report.get("return_code") or 2
+    report["accuracy_status"] = "failed"
+    for error in errors:
+        print(f"[CI][ERROR] {report.get('name', 'unknown')}: {error}", flush=True)
+
+
+def _enforce_accuracy_completion(report: dict[str, Any]) -> None:
+    if (
+        report.get("accuracy_check") is not True
+        or report.get("return_code") != 0
+        or report.get("accuracy_status") == "passed"
+    ):
+        return
+    error = "accuracy check did not complete successfully"
+    report.setdefault("validation_errors", []).append(error)
+    report["status"] = "failed"
+    report["return_code"] = 2
+    report["accuracy_status"] = "failed"
+    print(f"[CI][ERROR] {report.get('name', 'unknown')}: {error}", flush=True)
+
+
 def _blank_case_report(case: dict[str, Any], status: str) -> dict[str, Any]:
     expects_accuracy = _case_expects_accuracy(case)
     return {
         "name": str(case["name"]),
         "description": str(case.get("description", "")).strip(),
+        "contract": _case_contract(case),
         "status": status,
         "return_code": None,
         "duration_sec": 0.0,
@@ -265,6 +698,8 @@ def _run_case(cmd: list[str], repo_root: Path, case: dict[str, Any]) -> dict[str
             "metrics": metrics,
         }
     )
+    _enforce_accuracy_completion(report)
+    _enforce_required_case_report(report)
     return report
 
 
@@ -331,7 +766,15 @@ def main() -> int:
 
     repo_root = Path(__file__).resolve().parents[1]
     cases_file = (repo_root / args.cases_file).resolve()
-    cases = _select_cases(_read_cases(cases_file), args.case_filter)
+    all_cases = _read_cases(cases_file)
+    default_cases_file = (repo_root / "ci/example_st_cases.json").resolve()
+    if cases_file == default_cases_file and not args.case_filter.strip():
+        inventory_errors = _required_case_inventory_errors(all_cases)
+        if inventory_errors:
+            for error in inventory_errors:
+                print(f"[CI][ERROR] {error}", flush=True)
+            return 2
+    cases = _select_cases(all_cases, args.case_filter)
     if not cases:
         raise SystemExit(f"No enabled Example/ST cases found in {cases_file}.")
 

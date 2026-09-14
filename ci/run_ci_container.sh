@@ -176,6 +176,7 @@ docker run --rm \
     -e NPU_SOC="${NPU_SOC}" \
     -e CI_CONTAINER_DEVICE="${CI_CONTAINER_DEVICE:-0}" \
     -e CI_MODE="${CI_MODE:-quick}" \
+    -e CI_STAGE="${CI_STAGE:-all}" \
     -e CI_SOC="${CI_SOC:-${NPU_SOC}}" \
     -e CI_OPS="${CI_OPS:-}" \
     -e CI_JOBS="${CI_JOBS:-}" \
@@ -196,6 +197,7 @@ docker run --rm \
     -e CI_EXAMPLE_CASES_FILE="${CI_EXAMPLE_CASES_FILE:-ci/example_st_cases.json}" \
     -e CI_EXAMPLE_CASE_FILTER="${CI_EXAMPLE_CASE_FILTER:-}" \
     -e CI_ACCURACY_REPORT_FILE="${CI_ACCURACY_REPORT_FILE:-output/gdr_accuracy_report.json}" \
+    -e CI_STAGE_REPORT_FILE="${CI_STAGE_REPORT_FILE:-.ci-tmp/npu-ci-stages.json}" \
     -e CI_ACCURACY_PLATFORM="${CI_ACCURACY_PLATFORM:-}" \
     -e CI_ACCURACY_HEAD_SHA="${CI_ACCURACY_HEAD_SHA:-${NPU_CI_TARGET_SHA:-}}" \
     -e CI_ACCURACY_RUN_ID="${CI_ACCURACY_RUN_ID:-${GITHUB_RUN_ID:-}}" \

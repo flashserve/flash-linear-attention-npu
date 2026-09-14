@@ -57,14 +57,51 @@ def _report(cases, passed, failed=0, not_run=0):
     }
 
 
+def _stage_report(failed_stage):
+    stage_names = (
+        "environment-contracts",
+        "opp-package",
+        "standalone-layout",
+        "torch-adapter",
+        "gdr-example-st",
+        "scoped-overlay",
+    )
+    failed_index = stage_names.index(failed_stage)
+    stages = {}
+    for index, stage in enumerate(stage_names):
+        if index < failed_index:
+            stages[stage] = {"status": "success", "exit_code": 0, "reason": ""}
+        elif index == failed_index:
+            stages[stage] = {
+                "status": "failure",
+                "exit_code": 1,
+                "reason": "stage failed",
+            }
+        else:
+            stages[stage] = {
+                "status": "skipped",
+                "exit_code": None,
+                "reason": "prerequisite failed",
+            }
+    return {
+        "schema": "npu-ci-stage-report-v1",
+        "complete": True,
+        "metadata": {},
+        "status": "failure",
+        "stages": stages,
+    }
+
+
 class SummarizeNpuCiTest(unittest.TestCase):
     def _run(
         self,
         log,
         *,
         report=None,
+        stage_report=None,
         exit_code=0,
         require_report=False,
+        require_stage_report=False,
         platform="a5",
         soc="ascend950",
         ops="chunk_fwd_o",
@@ -73,12 +110,20 @@ class SummarizeNpuCiTest(unittest.TestCase):
             root = Path(temp)
             log_path = root / "raw.log"
             report_path = root / "accuracy.json"
+            stage_report_path = root / "stages.json"
             json_path = root / "diagnostics.json"
             markdown_path = root / "summary.md"
             log_path.write_text(log, encoding="utf-8")
             if report is not None:
                 report_path.write_text(
                     json.dumps(report, ensure_ascii=False), encoding="utf-8"
+                )
+            if stage_report is not None:
+                stage_report_path.write_text(
+                    json.dumps(stage_report, ensure_ascii=False)
+                    if isinstance(stage_report, dict)
+                    else stage_report,
+                    encoding="utf-8",
                 )
             argv = [
                 "--platform",
@@ -101,6 +146,8 @@ class SummarizeNpuCiTest(unittest.TestCase):
                 str(log_path),
                 "--accuracy-report-file",
                 str(report_path),
+                "--stage-report-file",
+                str(stage_report_path),
                 "--json-out",
                 str(json_path),
                 "--markdown-out",
@@ -108,10 +155,112 @@ class SummarizeNpuCiTest(unittest.TestCase):
             ]
             if require_report:
                 argv.append("--require-accuracy-report")
+            if require_stage_report:
+                argv.append("--require-stage-report")
             return_code = summarizer.main(argv)
             payload_text = json_path.read_text(encoding="utf-8")
             markdown = markdown_path.read_text(encoding="utf-8")
             return return_code, json.loads(payload_text), payload_text, markdown
+
+    def test_failed_stage_is_added_to_reproduction_command(self):
+        return_code, payload, _, markdown = self._run(
+            "src/kernel.cpp:7:3: error: compiler failed\n",
+            stage_report=_stage_report("opp-package"),
+            exit_code=1,
+        )
+
+        self.assertEqual(return_code, 1)
+        command = payload["reproduction"][0]
+        self.assertIn("CI_STAGE=opp-package", shlex.split(command))
+        self.assertIn("CI_STAGE=opp-package", markdown)
+
+    def test_failed_stage_with_zero_command_exit_still_fails(self):
+        return_code, payload, _, markdown = self._run(
+            "CI command returned zero\n",
+            stage_report=_stage_report("opp-package"),
+            exit_code=0,
+            ops="",
+        )
+
+        self.assertEqual(return_code, 1)
+        self.assertEqual(payload["status"], "failure")
+        self.assertIn("CI_STAGE=opp-package", shlex.split(payload["reproduction"][0]))
+        self.assertIn("exit code was 0", markdown)
+
+    def test_stage_after_failure_must_be_skipped(self):
+        stage_report = _stage_report("environment-contracts")
+        stage_report["stages"]["opp-package"] = {
+            "status": "success",
+            "exit_code": 0,
+            "reason": "",
+        }
+        return_code, payload, _, markdown = self._run(
+            "CI command returned zero\n",
+            stage_report=stage_report,
+            exit_code=0,
+            ops="",
+        )
+
+        self.assertEqual(return_code, 1)
+        self.assertEqual(payload["status"], "failure")
+        self.assertIn("CI_STAGE=environment-contracts", shlex.split(payload["reproduction"][0]))
+        self.assertIn("must skip opp-package after failure", markdown)
+
+    def test_disabled_stage_may_be_followed_by_success(self):
+        stage_report = _stage_report("scoped-overlay")
+        stage_report["status"] = "success"
+        stage_report["stages"]["standalone-layout"] = {
+            "status": "skipped",
+            "exit_code": None,
+            "reason": "stage is disabled by the current CI configuration",
+        }
+        stage_report["stages"]["scoped-overlay"] = {
+            "status": "skipped",
+            "exit_code": None,
+            "reason": "stage is disabled by the current CI configuration",
+        }
+
+        return_code, payload, _, _ = self._run(
+            "CI command returned zero\n",
+            stage_report=stage_report,
+            exit_code=0,
+            ops="",
+        )
+
+        self.assertEqual(return_code, 0)
+        self.assertEqual(payload["status"], "success")
+
+    def test_scoped_missing_or_invalid_stage_report_reproduces_opp_package(self):
+        for stage_report in (None, "{invalid json"):
+            with self.subTest(stage_report=stage_report):
+                return_code, payload, _, markdown = self._run(
+                    "src/kernel.cpp:7:3: error: compiler failed\n",
+                    stage_report=stage_report,
+                    exit_code=1,
+                )
+
+                self.assertEqual(return_code, 1)
+                command = payload["reproduction"][0]
+                self.assertIn("CI_STAGE=opp-package", shlex.split(command))
+                self.assertIn("CI_STAGE=opp-package", markdown)
+
+    def test_required_missing_or_invalid_stage_report_is_actionable(self):
+        report = _report([_case("case-1")], passed=1)
+        for stage_report in (None, "{invalid json"):
+            with self.subTest(stage_report=stage_report):
+                return_code, payload, _, markdown = self._run(
+                    "CI completed\n",
+                    report=report,
+                    stage_report=stage_report,
+                    require_report=True,
+                    require_stage_report=True,
+                )
+
+                self.assertEqual(return_code, 1)
+                self.assertEqual(payload["status"], "failure")
+                self.assertTrue(payload["diagnostics"]["infrastructure"])
+                self.assertTrue(payload["reproduction"])
+                self.assertIn("bash ci/run_ci_container.sh", markdown)
 
     def test_success_ignores_large_warning_volume(self):
         cases = [_case(f"case-{index}") for index in range(4)]

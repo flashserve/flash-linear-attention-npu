@@ -4,9 +4,17 @@
 
 > **NPU CI 不会在 PR 新建、重开或 push 新 commit 时自动执行。**
 >
-> PR 新建、重开或 push 新 commit 后，GitHub 会自动把当前 head commit 标记为 `NPU CI / A2+A5 手动验证 pending` 和 `NPU CI / A2+A5 精度检查 pending`，说明该 commit 暂未执行双平台 NPU CI。机器人评论会提示可请求仓库 Admin 权限账号触发。
+> PR 新建、重开或 push 新 commit 后，GitHub 会自动把当前 head commit 的以下 7 个 NPU CI 分项状态标记为 pending，说明该 commit 暂未执行双平台 NPU CI：
 >
-> 合入前，当前 head commit 必须具备成功的 `NPU CI / A2+A5 手动验证` 和 `NPU CI / A2+A5 精度检查` 状态，并且满足 GitHub 分支保护要求的 2 个 approval；如果本 PR 后续更新了 commit，旧 commit 的 CI 结果不再有效，需要仓库 Admin 权限账号重新触发。即使已有 2 个 approval，只要当前 commit 未完成 NPU CI，仍不可合入（`weinachuan` 可按仓库保护规则 bypass）。
+> 1. `NPU CI / A2+A5 / 01 环境、wheel 与运行时契约`
+> 2. `NPU CI / A2+A5 / 02 全量 OPP 构建`
+> 3. `NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局`
+> 4. `NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配`
+> 5. `NPU CI / A2+A5 / 05 GDR Example/ST`
+> 6. `NPU CI / A2+A5 / 06 chunk_fwd_o 局部覆盖安装`
+> 7. `NPU CI / A2+A5 / 07 报告与 commit 校验`
+>
+> 每个平台按上述顺序执行前 6 个分项；任一前置分项失败时，后续分项会标记为未执行，不再继续运行。失败结果会保留关键报错，并给出带 `CI_STAGE=<分项>` 的容器复现命令。汇总任务最后执行第 7 项。合入前，当前 head commit 的 7 个状态和自动执行的 `CI 契约测试` 必须全部成功，并且满足 GitHub 分支保护要求的 2 个 approval；如果本 PR 后续更新了 commit，旧 commit 的 CI 结果不再有效，需要仓库 Admin 权限账号重新触发。即使已有 2 个 approval，只要当前 commit 未完成 NPU CI，仍不可合入（`weinachuan` 可按仓库保护规则 bypass）。
 >
 > 触发方式：
 >

@@ -23,7 +23,7 @@ on:
         required: false
         default: quick
       ops:
-        description: "Optional comma-separated operator list"
+        description: "Optional comma-separated operator list for compile diagnostics only"
         required: false
         default: ''
 
@@ -66,6 +66,7 @@ jobs:
         uses: actions/github-script@v8
         env:
           NPU_CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          NPU_CI_RUN_ATTEMPT: ${{ github.run_attempt }}
         with:
           github-token: ${{ github.token }}
           script: |
@@ -86,12 +87,20 @@ jobs:
               return;
             }
 
-            const contextName = 'NPU CI / A2+A5 手动验证';
-            const accuracyContextName = 'NPU CI / A2+A5 精度检查';
-            const platformContract = 'A2+A5';
+            const requiredCheckContexts = [
+              ['NPU CI / A2+A5 / 01 环境、wheel 与运行时契约', '环境、wheel 与运行时契约'],
+              ['NPU CI / A2+A5 / 02 全量 OPP 构建', '全量 OPP 构建'],
+              ['NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局', 'torch_custom wheel 与 OPP 布局'],
+              ['NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配', 'OPP 安装与 PyTorch 适配'],
+              ['NPU CI / A2+A5 / 05 GDR Example/ST', 'GDR Example/ST'],
+              ['NPU CI / A2+A5 / 06 chunk_fwd_o 局部覆盖安装', 'chunk_fwd_o 局部覆盖安装'],
+              ['NPU CI / A2+A5 / 07 报告与 commit 校验', '报告与 commit 校验'],
+            ];
+            const scopedCheckContext = ['NPU CI / A2+A5 / 定向诊断', '定向诊断'];
             let prNumber;
             let ciMode = 'quick';
             let ops = '';
+            let opsArgumentProvided = false;
             let commentId = '';
             const upsertComment = async (pr, body) => {
               if (!prNumber || !pr) {
@@ -142,26 +151,25 @@ jobs:
               if (!status || status.state !== 'pending') {
                 return false;
               }
-              const description = status.description || '';
-              if (!description.includes('+example') || !description.includes(platformContract)) {
-                return false;
-              }
               const targetUrl = status.target_url || '';
               const match = targetUrl.match(/\/actions\/runs\/(\d+)/);
               if (!match) {
-                core.warning('NPU CI pending status has no Actions run URL; treating it as active.');
-                return true;
+                return false;
+              }
+              const pendingRunId = Number(match[1]);
+              if (pendingRunId === Number(context.runId)) {
+                return false;
               }
               try {
                 const { data: run } = await github.rest.actions.getWorkflowRun({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  run_id: Number(match[1]),
+                  run_id: pendingRunId,
                 });
                 return ['queued', 'in_progress', 'waiting', 'pending', 'requested'].includes(run.status);
               } catch (error) {
-                core.warning(`Unable to inspect NPU CI workflow run: ${error.message}`);
-                return true;
+                core.warning(`Unable to inspect NPU CI workflow run; allowing a replacement run: ${error.message}`);
+                return false;
               }
             };
 
@@ -184,6 +192,7 @@ jobs:
                   ciMode = part;
                 } else if (part.startsWith('ops=')) {
                   ops = part.slice('ops='.length);
+                  opsArgumentProvided = true;
                 }
               }
             }
@@ -220,44 +229,69 @@ jobs:
             core.setOutput('base_sha', baseSha);
             core.setOutput('trusted_ci_sha', trustedCiSha);
 
+            const opsItems = ops.split(',').map((item) => item.trim());
+            if ((opsArgumentProvided && !ops.trim()) ||
+                (ops.trim() && opsItems.some((item) =>
+                  !item || !/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(item)))) {
+              core.setFailed('ops 参数必须是以逗号分隔的合法非空算子名。');
+              return;
+            }
+            const normalizedOps = [...new Set(opsItems.filter(Boolean))].sort().join(',');
+            ops = normalizedOps;
+            const requestScope = normalizedOps ? 'scoped' : 'all';
+            const requestKey = requestScope === 'all'
+              ? 'all'
+              : require('crypto').createHash('sha256').update(normalizedOps).digest('hex').slice(0, 10);
+            const requestedModeSuffix = `(${ciMode},${requestKey},A2+A5)`;
+            const isInitialWorkflowAttempt = process.env.NPU_CI_RUN_ATTEMPT === '1';
+            const checkContexts = requestScope === 'all' ? requiredCheckContexts : [scopedCheckContext];
+            const finalContextName = requestScope === 'all'
+              ? requiredCheckContexts.at(-1)[0]
+              : scopedCheckContext[0];
             const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, {
               owner: context.repo.owner,
               repo: context.repo.repo,
               ref: pr.head.sha,
               per_page: 100,
             });
-            const manualCiStatuses = statuses
-              .filter((status) => status.context === contextName)
-              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-            const latestExecutionCi = manualCiStatuses
-              .find((status) => {
-                const description = status.description || '';
-                return description.includes('+example') && description.includes(platformContract);
-              });
-            const accuracyStatuses = statuses
-              .filter((status) => status.context === accuracyContextName)
-              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-            const latestAccuracyCi = accuracyStatuses
-              .find((status) => (status.description || '').includes(platformContract));
-            const latestPassedWithExample = latestExecutionCi &&
-              latestExecutionCi.state === 'success' &&
-              latestAccuracyCi &&
-              latestAccuracyCi.state === 'success' &&
+            const compareStatusRecency = (a, b) =>
+              new Date(b.created_at) - new Date(a.created_at) || Number(b.id || 0) - Number(a.id || 0);
+            const latestStatusForContext = (statusContext) => statuses
+              .filter((status) => status.context === statusContext)
+              .sort(compareStatusRecency)[0];
+            const finalCiStatuses = statuses
+              .filter((status) => status.context === finalContextName)
+              .sort(compareStatusRecency);
+            const latestExecutionCi = finalCiStatuses[0];
+            const latestExecutionMatchesRequest = Boolean(
+              latestExecutionCi &&
+              (latestExecutionCi.description || '').includes(requestedModeSuffix)
+            );
+            const allContextsPassedInSameRun = Boolean(
+              latestExecutionCi &&
               latestExecutionCi.target_url &&
-              latestExecutionCi.target_url === latestAccuracyCi.target_url;
-            if (latestPassedWithExample) {
-              core.notice(`${pr.head.sha} 已经通过 NPU CI 和精度检查，跳过重复运行。`);
+              checkContexts.every(([statusContext]) => {
+                const latestStatus = latestStatusForContext(statusContext);
+                return latestStatus &&
+                  latestStatus.state === 'success' &&
+                  latestStatus.target_url === latestExecutionCi.target_url;
+              })
+            );
+            if (isInitialWorkflowAttempt &&
+                latestExecutionMatchesRequest && latestExecutionCi.state === 'success' &&
+                allContextsPassedInSameRun) {
+              core.notice(`${pr.head.sha} 已经通过本次 NPU CI 请求，跳过重复运行。`);
               commentId = await upsertComment(
                 pr,
                 [
-                  `NPU CI 和精度检查已经在 \`${pr.head.sha}\` 上通过，本次不会重复运行。`,
+                  `本次 NPU CI 请求已经在 \`${pr.head.sha}\` 上通过，不会重复运行。`,
                   '',
                   `- 请求模式：\`${ciMode}\``,
                   `- 触发人：@${actor}`,
                   '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
-                  '- Example ST：已覆盖',
-                  '- 精度检查：已覆盖',
-                  '- Example ST 用例：全部 enabled 用例',
+                  requestScope === 'all'
+                    ? '- 分项结果：7/7 通过'
+                    : '- 类型：定向编译诊断；仅执行 01-02，未改写 01-07 合入门禁状态',
                 ].join('\n')
               );
               core.setOutput('should_run', 'false');
@@ -270,7 +304,7 @@ jobs:
               core.setOutput('comment_id', commentId);
               return;
             }
-            if (await isActivePendingStatus(latestExecutionCi)) {
+            if (latestExecutionMatchesRequest && await isActivePendingStatus(latestExecutionCi)) {
               core.notice(`${pr.head.sha} 已经有 NPU CI 在排队或运行，跳过重复启动。`);
               commentId = await upsertComment(
                 pr,
@@ -281,8 +315,7 @@ jobs:
                   `- 触发人：@${actor}`,
                   '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
                   '- 当前状态：排队或运行中',
-                  '- Example ST：必跑',
-                  '- Example ST 用例：全部 enabled 用例',
+                  '- 执行方式：按顺序执行；前置失败时后续项跳过',
                   latestExecutionCi.target_url ? `- 运行链接：[查看已有 NPU CI](${latestExecutionCi.target_url})` : '',
                 ].filter(Boolean).join('\n')
               );
@@ -298,26 +331,21 @@ jobs:
             }
 
             const targetUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            await Promise.all([
+            const pendingResults = await Promise.allSettled(checkContexts.map(([statusContext, label]) =>
               github.rest.repos.createCommitStatus({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 sha: pr.head.sha,
                 state: 'pending',
-                context: contextName,
-                description: `NPU CI 已由 @${actor} 触发 (${ciMode}+example,${platformContract})`,
+                context: statusContext,
+                description: `${label}等待执行 (${ciMode},${requestKey},A2+A5)`,
                 target_url: targetUrl,
-              }),
-              github.rest.repos.createCommitStatus({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                sha: pr.head.sha,
-                state: 'pending',
-                context: accuracyContextName,
-                description: `${platformContract} 精度检查等待执行`,
-                target_url: targetUrl,
-              }),
-            ]);
+              })
+            ));
+            const pendingFailures = pendingResults.filter((result) => result.status === 'rejected');
+            if (pendingFailures.length > 0) {
+              core.warning(`有 ${pendingFailures.length} 个 NPU CI 分项状态未能写入 pending；最终汇总会再次发布全部状态。`);
+            }
             commentId = await upsertComment(
               pr,
               [
@@ -326,8 +354,10 @@ jobs:
                 `- 模式：\`${ciMode}\``,
                 `- 触发人：@${actor}`,
                 '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
-                '- Example ST：必跑',
-                '- Example ST 用例：全部 enabled 用例',
+                requestScope === 'all'
+                  ? '- 分项：7 项按顺序执行'
+                  : '- 类型：定向编译诊断；仅执行 01-02，不改写 01-07 合入门禁状态',
+                '- 失败处理：前置失败时后续项跳过；失败结果提供对应阶段的复现命令',
                 ops ? `- 算子：\`${ops}\`` : '',
                 `- 运行链接：[NPU CI #${context.runNumber}](${targetUrl})`,
               ].filter(Boolean).join('\n')
@@ -343,7 +373,7 @@ jobs:
             core.setOutput('comment_id', commentId);
 
   ascend-npu:
-    name: Ascend NPU 验证 (${{ matrix.name }})
+    name: NPU CI 分项执行 (${{ matrix.name }})
     needs: prepare
     if: needs.prepare.outputs.should_run == 'true'
     strategy:
@@ -374,6 +404,7 @@ jobs:
     env:
       CI_MODE: ${{ needs.prepare.outputs.ci_mode }}
       CI_OPS: ${{ needs.prepare.outputs.ops }}
+      CI_STAGE: ${{ needs.prepare.outputs.ops == '' && 'all' || 'opp-package' }}
       CI_SOC: ${{ matrix.soc }}
       FLA_NPU_SOC: ${{ matrix.soc }}
       CI_RUN_EXAMPLE_ST: 'true'
@@ -381,6 +412,7 @@ jobs:
       CI_RUN_SCOPED_WHEEL_INSTALL_CHECK: 'true'
       CI_ACCURACY_PLATFORM: ${{ matrix.platform }}
       CI_ACCURACY_REPORT_FILE: .ci-tmp/gdr_accuracy_report-${{ matrix.platform }}.json
+      CI_STAGE_REPORT_FILE: .ci-tmp/npu-ci-stages-${{ matrix.platform }}.json
       CI_RAW_LOG_FILE: .ci-tmp/npu-ci-${{ matrix.platform }}.log
       CI_DIAGNOSTIC_FILE: .ci-tmp/npu-ci-diagnostics-${{ matrix.platform }}.json
       CI_SUMMARY_FILE: .ci-tmp/npu-ci-summary-${{ matrix.platform }}.md
@@ -626,7 +658,7 @@ jobs:
         if: matrix.platform == 'a2'
         continue-on-error: true
         timeout-minutes: 5
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ github.repository }}
           ref: ${{ needs.prepare.outputs.base_sha }}
@@ -726,7 +758,7 @@ jobs:
         if: matrix.platform == 'a2' && steps.checkout_pr_1.outcome == 'failure'
         continue-on-error: true
         timeout-minutes: 10
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ github.repository }}
           ref: ${{ needs.prepare.outputs.base_sha }}
@@ -742,7 +774,7 @@ jobs:
       - name: 拉取当前目标分支代码（第 3 次）
         if: matrix.platform == 'a2' && steps.checkout_pr_1.outcome == 'failure' && steps.checkout_pr_2.outcome == 'failure'
         timeout-minutes: 10
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ github.repository }}
           ref: ${{ needs.prepare.outputs.base_sha }}
@@ -816,7 +848,7 @@ jobs:
         if: matrix.platform == 'a2'
         continue-on-error: true
         timeout-minutes: 10
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ needs.prepare.outputs.trusted_ci_sha }}
           fetch-depth: 1
@@ -833,7 +865,7 @@ jobs:
         if: matrix.platform == 'a2' && steps.checkout_trusted_ci_1.outcome == 'failure'
         continue-on-error: true
         timeout-minutes: 10
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ needs.prepare.outputs.trusted_ci_sha }}
           fetch-depth: 1
@@ -848,7 +880,7 @@ jobs:
       - name: 拉取可信 CI 脚本（第 3 次）
         if: matrix.platform == 'a2' && steps.checkout_trusted_ci_1.outcome == 'failure' && steps.checkout_trusted_ci_2.outcome == 'failure'
         timeout-minutes: 10
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ needs.prepare.outputs.trusted_ci_sha }}
           fetch-depth: 1
@@ -1038,9 +1070,15 @@ jobs:
           echo "::endgroup::"
 
           summary_status=0
+          accuracy_requirement=()
+          if [[ -z "$CI_OPS" ]]; then
+            accuracy_requirement+=(--require-accuracy-report)
+          fi
           python3 ci/summarize_npu_ci.py \
             --log-file "$CI_RAW_LOG_FILE" \
             --accuracy-report-file "$CI_ACCURACY_REPORT_FILE" \
+            --stage-report-file "$CI_STAGE_REPORT_FILE" \
+            --require-stage-report \
             --platform "$CI_ACCURACY_PLATFORM" \
             --soc "$CI_SOC" \
             --mode "$CI_MODE" \
@@ -1051,7 +1089,7 @@ jobs:
             --run-attempt "$CI_ACCURACY_RUN_ATTEMPT" \
             --json-out "$CI_DIAGNOSTIC_FILE" \
             --markdown-out "$CI_SUMMARY_FILE" \
-            --require-accuracy-report || summary_status=$?
+            "${accuracy_requirement[@]}" || summary_status=$?
 
           if [[ -f "$CI_SUMMARY_FILE" ]]; then
             cat "$CI_SUMMARY_FILE"
@@ -1109,12 +1147,13 @@ jobs:
 
       - name: 上传 ${{ matrix.name }} 结果
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: npu-ci-result-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             repo/.ci-tmp/npu-ci-result-${{ matrix.platform }}.json
             repo/${{ env.CI_ACCURACY_REPORT_FILE }}
+            repo/${{ env.CI_STAGE_REPORT_FILE }}
             repo/${{ env.CI_DIAGNOSTIC_FILE }}
             repo/${{ env.CI_SUMMARY_FILE }}
           if-no-files-found: error
@@ -1122,7 +1161,7 @@ jobs:
           retention-days: 7
 
   finalize:
-    name: 汇总 A2 + A5 NPU CI
+    name: 校验并发布 A2 + A5 分项状态
     needs: [prepare, ascend-npu]
     if: always() && needs.prepare.outputs.should_run == 'true'
     runs-on: ubuntu-latest
@@ -1134,7 +1173,7 @@ jobs:
       statuses: write
     steps:
       - name: 检出受信任的状态发布脚本
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.workflow_sha }}
           path: trusted-ci
@@ -1145,13 +1184,14 @@ jobs:
       - name: 下载双平台结果
         id: download_results
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
-          pattern: npu-ci-result-*-${{ github.run_id }}-${{ github.run_attempt }}
+          pattern: npu-ci-result-*-${{ github.run_id }}-*
           path: accuracy-reports
-          merge-multiple: true
+          merge-multiple: false
 
       - name: 发布双平台 NPU CI 状态
+        id: publish_statuses
         if: always()
         uses: actions/github-script@v8
         env:
@@ -1170,3 +1210,48 @@ jobs:
               `${process.env.GITHUB_WORKSPACE}/trusted-ci/.github/scripts/publish_npu_ci_status.js`
             );
             await publishNpuCiStatus({ github, context, core });
+
+      - name: 状态发布异常时收敛全部分项
+        if: always() && steps.publish_statuses.outputs.statuses_published != 'true'
+        uses: actions/github-script@v8
+        env:
+          NPU_EXPECTED_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+          NPU_OPS: ${{ needs.prepare.outputs.ops }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const sha = process.env.NPU_EXPECTED_HEAD_SHA;
+            const contexts = [
+              'NPU CI / A2+A5 / 01 环境、wheel 与运行时契约',
+              'NPU CI / A2+A5 / 02 全量 OPP 构建',
+              'NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局',
+              'NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配',
+              'NPU CI / A2+A5 / 05 GDR Example/ST',
+              'NPU CI / A2+A5 / 06 chunk_fwd_o 局部覆盖安装',
+              'NPU CI / A2+A5 / 07 报告与 commit 校验',
+            ];
+            const scopedContext = 'NPU CI / A2+A5 / 定向诊断';
+            const normalizedOps = [...new Set(
+              (process.env.NPU_OPS || '').split(',').map((item) => item.trim()).filter(Boolean)
+            )].sort().join(',');
+            const statusContexts = normalizedOps ? [scopedContext] : contexts;
+            const targetUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            if (!/^[0-9a-f]{40}$/.test(sha || '')) {
+              core.setFailed('无法确定要收敛的 PR head commit。');
+              return;
+            }
+            const results = await Promise.allSettled(statusContexts.map((statusContext) =>
+              github.rest.repos.createCommitStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                sha,
+                state: 'failure',
+                context: statusContext,
+                description: '状态发布流程异常，请重新运行 NPU CI',
+                target_url: targetUrl,
+              })
+            ));
+            const failures = results.filter((result) => result.status === 'rejected');
+            if (failures.length > 0) {
+              core.setFailed(`仍有 ${failures.length} 个 NPU CI 分项状态未能收敛。`);
+            }
