@@ -242,5 +242,18 @@ __all__ = [
 ]
 
 
+def _run_import_guards() -> None:
+    """Run tier/version guards before the embedded OPP is loaded."""
+    try:
+        from . import _guard as _fla_guard
+
+        _fla_guard.run_guards()
+    except RuntimeError:
+        raise
+    except Exception as exc:  # guard defects must never break import
+        warnings.warn(f"fla_npu environment guard skipped: {exc}", RuntimeWarning)
+
+
+_run_import_guards()
 _warn_if_embedded_opp_not_preconfigured()
 load_ascendc_opapi_libraries()
