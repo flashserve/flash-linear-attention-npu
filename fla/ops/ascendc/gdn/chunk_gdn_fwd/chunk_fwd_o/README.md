@@ -123,6 +123,8 @@ aclnnStatus aclnnChunkFwdO(
 - `q` 和 `v` 的 `B`、`T` 必须一致，head 数允许不同。
 - `g` 的形状必须为 `[B, HV, T]`，head 维与 `v` 对齐。
 - `h` 的形状必须为 `[B, HV, numChunks, K, V]`，head 维与 `v` 对齐，`K` 维与 `q/k` 对齐，`V` 维与 `v` 对齐。
+- `q`、`k`、`v`、`h`、`oOut` 必须使用相同 dtype（`FLOAT16` 或 `BFLOAT16` 之一）。
+- `g` 的 dtype 可为 `FLOAT`或与 `q` 相同，即 `q=BFLOAT16` 时 `g ∈ {FLOAT, BFLOAT16}`，`q=FLOAT16` 时 `g ∈ {FLOAT, FLOAT16}`。
 - GVA 约束：`HV % HK == 0`，映射关系为 `hk = hv / (HV / HK)`。
 - 当前实现要求 `K = 128`。
 - 当前实现要求 `V = 128` 或 `256`。
