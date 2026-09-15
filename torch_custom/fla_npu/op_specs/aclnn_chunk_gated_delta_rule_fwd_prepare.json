@@ -1,0 +1,92 @@
+{
+  "aclnn_name": "aclnnChunkGatedDeltaRuleFwdPrepare",
+  "python_name": "npu_chunk_gated_delta_rule_fwd_prepare",
+  "nd_only": true,
+  "mutated": [],
+  "outputs": [
+    {
+      "arg": "g_cumsum",
+      "alloc": "at::empty({q.size(0), v.size(1), q.size(2)}, q.options().dtype(at::kFloat))"
+    },
+    {
+      "arg": "w",
+      "alloc": "at::empty({q.size(0), v.size(1), q.size(2), k.size(3)}, k.options())"
+    },
+    {
+      "arg": "u",
+      "source": "v",
+      "dtype": "same"
+    },
+    {
+      "arg": "A",
+      "alloc": "at::empty({q.size(0), v.size(1), q.size(2), chunk_size}, k.options())"
+    },
+    {
+      "arg": "q_hat",
+      "source": "q",
+      "dtype": "same"
+    },
+    {
+      "arg": "k_hat",
+      "source": "k",
+      "dtype": "same"
+    },
+    {
+      "arg": "q_rstd",
+      "alloc": "at::empty({q.size(0), q.size(1), q.size(2)}, q.options().dtype(at::kFloat))"
+    },
+    {
+      "arg": "k_rstd",
+      "alloc": "at::empty({k.size(0), k.size(1), k.size(2)}, k.options().dtype(at::kFloat))"
+    },
+    {
+      "arg": "beta_out",
+      "when": "use_beta_sigmoid_in_kernel",
+      "alloc": "at::empty({q.size(0), v.size(1), q.size(2)}, beta.options().dtype(at::kFloat))"
+    }
+  ],
+  "python": {
+    "positional": ["q", "k", "v", "g", "beta", "chunk_size"],
+    "ignored": ["use_qk_l2norm_in_kernel"],
+    "return_code": "if result[8] is None:\n    return (result[4], result[5], result[6], result[7], beta.to(dtype=torch.float32), result[0], result[1], result[2], result[3])\nreturn (result[4], result[5], result[6], result[7], result[8], result[0], result[1], result[2], result[3])",
+    "pre": "import torch\nif not (bool(use_qk_l2norm_in_kernel) and bool(use_exp2) and int(chunk_size) == 64):\n    from fla_npu.ops.ascendc import _aclnn_ctypes as _ct\n    return _ct.npu_chunk_gated_delta_rule_fwd_prepare(q, k, v, g, beta, chunk_size, use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel, use_gate_in_kernel=use_gate_in_kernel, use_beta_sigmoid_in_kernel=use_beta_sigmoid_in_kernel, allow_neg_eigval=allow_neg_eigval, use_exp2=use_exp2, a_log=a_log, dt_bias=dt_bias, cu_seqlens=cu_seqlens, chunk_indices=chunk_indices, output_a=output_a)\nif use_gate_in_kernel:\n    # aclnn rejects a non-null aLogOptional (\"use_gate_in_kernel currently only\n    # supports false\"), and the ctypes reference raises ValueError for the same\n    # request: keep that error surface on the reference path.\n    from fla_npu.ops.ascendc import _aclnn_ctypes as _ct\n    return _ct.npu_chunk_gated_delta_rule_fwd_prepare(q, k, v, g, beta, chunk_size, use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel, use_gate_in_kernel=use_gate_in_kernel, use_beta_sigmoid_in_kernel=use_beta_sigmoid_in_kernel, allow_neg_eigval=allow_neg_eigval, use_exp2=use_exp2, a_log=a_log, dt_bias=dt_bias, cu_seqlens=cu_seqlens, chunk_indices=chunk_indices, output_a=output_a)",
+    "defaults": {
+      "use_qk_l2norm_in_kernel": "False",
+      "use_gate_in_kernel": "False",
+      "use_beta_sigmoid_in_kernel": "False",
+      "allow_neg_eigval": "False",
+      "use_exp2": "False",
+      "a_log": "None",
+      "dt_bias": "None",
+      "cu_seqlens": "None",
+      "chunk_indices": "None",
+      "output_a": "True"
+    }
+  },
+  "args": [
+    {"name": "q", "kind": "tensor"},
+    {"name": "k", "kind": "tensor"},
+    {"name": "v", "kind": "tensor"},
+    {"name": "g", "kind": "tensor"},
+    {"name": "beta", "kind": "tensor"},
+    {"name": "a_log", "kind": "optional_tensor", "when": "use_gate_in_kernel"},
+    {"name": "dt_bias", "kind": "optional_tensor", "when": "use_gate_in_kernel"},
+    {"name": "cu_seqlens", "kind": "int_array"},
+    {"name": "chunk_indices", "kind": "int_array"},
+    {"name": "chunk_size", "kind": "int64"},
+    {"name": "allow_neg_eigval", "kind": "bool"},
+    {"name": "use_exp2", "kind": "bool"},
+    {"name": "output_a", "kind": "bool"},
+    {"name": "use_beta_sigmoid_in_kernel", "kind": "bool", "cpp_only": true},
+    {"name": "use_gate_in_kernel", "kind": "bool", "cpp_only": true},
+    {"name": "g_cumsum", "kind": "out_tensor"},
+    {"name": "w", "kind": "out_tensor"},
+    {"name": "u", "kind": "out_tensor"},
+    {"name": "A", "kind": "out_tensor"},
+    {"name": "q_hat", "kind": "out_tensor"},
+    {"name": "k_hat", "kind": "out_tensor"},
+    {"name": "q_rstd", "kind": "out_tensor"},
+    {"name": "k_rstd", "kind": "out_tensor"},
+    {"name": "beta_out", "kind": "out_tensor"}
+  ]
+}

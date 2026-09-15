@@ -1,0 +1,14 @@
+{
+  "aclnn_name": "aclnnFastGelu",
+  "python_name": "npu_fast_gelu_custom",
+  "nd_only": true,
+  "mutated": [],
+  "output": {"arg": "out", "source": "self", "dtype": "same"},
+  "python": {
+    "positional": ["self"]
+  },
+  "args": [
+    {"name": "self", "kind": "tensor"},
+    {"name": "out", "kind": "out_tensor"}
+  ]
+}

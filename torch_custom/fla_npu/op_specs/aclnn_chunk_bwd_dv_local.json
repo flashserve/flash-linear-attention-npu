@@ -1,0 +1,29 @@
+{
+  "aclnn_name": "aclnnChunkBwdDvLocal",
+  "python_name": "npu_chunk_bwd_dv_local",
+  "nd_only": true,
+  "mutated": [],
+  "output": {"arg": "out", "source": "d_o", "dtype": "same"},
+  "python": {
+    "positional": ["q", "k", "d_o", "g", "scale", "chunk_size"],
+    "defaults": {
+      "g_gamma": "None",
+      "A": "None",
+      "cu_seqlens": "None",
+      "chunk_indices": "None"
+    }
+  },
+  "args": [
+    {"name": "q", "kind": "tensor"},
+    {"name": "k", "kind": "tensor"},
+    {"name": "d_o", "kind": "tensor"},
+    {"name": "g", "kind": "tensor"},
+    {"name": "g_gamma", "kind": "optional_tensor"},
+    {"name": "A", "kind": "optional_tensor"},
+    {"name": "cu_seqlens", "kind": "int_array"},
+    {"name": "chunk_indices", "kind": "int_array"},
+    {"name": "scale", "kind": "double"},
+    {"name": "chunk_size", "kind": "int64"},
+    {"name": "out", "kind": "out_tensor"}
+  ]
+}

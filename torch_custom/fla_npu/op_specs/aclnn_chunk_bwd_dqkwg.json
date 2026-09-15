@@ -1,0 +1,56 @@
+{
+  "aclnn_name": "aclnnChunkBwdDqkwg",
+  "python_name": "npu_chunk_bwd_dqkwg",
+  "nd_only": true,
+  "mutated": [],
+  "outputs": [
+    {"arg": "dq", "source": "q", "dtype": "same"},
+    {"arg": "dk", "source": "k", "dtype": "same"},
+    {
+      "arg": "dw",
+      "source": "q",
+      "dtype": "same",
+      "shape": [
+        {"arg": "q", "dim": 0},
+        {"arg": "v", "dim": 1},
+        {"arg": "q", "dim": 2},
+        {"arg": "q", "dim": 3}
+      ]
+    },
+    {"arg": "dg", "source": "g", "dtype": "same"}
+  ],
+  "python": {
+    "positional": ["q", "k", "v", "g", "h", "dox", "dh", "dv", "chunk_size"],
+    "defaults": {
+      "cu_seqlens": "None",
+      "chunk_indices": "None",
+      "w": "None",
+      "g_gamma": "None",
+      "scale": "None",
+      "use_exp2": "None",
+      "transpose_state_layout": "None"
+    }
+  },
+  "args": [
+    {"name": "q", "kind": "tensor"},
+    {"name": "k", "kind": "tensor"},
+    {"name": "v", "kind": "tensor"},
+    {"name": "g", "kind": "tensor"},
+    {"name": "h", "kind": "tensor"},
+    {"name": "dox", "kind": "tensor"},
+    {"name": "dh", "kind": "tensor"},
+    {"name": "dv", "kind": "tensor"},
+    {"name": "cu_seqlens", "kind": "int_array"},
+    {"name": "chunk_indices", "kind": "int_array"},
+    {"name": "w", "kind": "optional_tensor"},
+    {"name": "g_gamma", "kind": "optional_tensor"},
+    {"name": "scale", "kind": "float", "default": "1.0"},
+    {"name": "chunk_size", "kind": "int64"},
+    {"name": "use_exp2", "kind": "bool", "default": "False"},
+    {"name": "transpose_state_layout", "kind": "bool", "default": "False"},
+    {"name": "dq", "kind": "out_tensor"},
+    {"name": "dk", "kind": "out_tensor"},
+    {"name": "dw", "kind": "out_tensor"},
+    {"name": "dg", "kind": "out_tensor"}
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "aclnn_name": "aclnnRecomputeWUFwd",
+  "python_name": "npu_recompute_w_u_fwd",
+  "nd_only": true,
+  "mutated": [],
+  "outputs": [
+    {
+      "arg": "w",
+      "source": "k",
+      "dtype": "source",
+      "shape": [
+        {"arg": "v", "dim": 0},
+        {"arg": "v", "dim": 1},
+        {"arg": "v", "dim": 2},
+        {"arg": "k", "dim": 3}
+      ]
+    },
+    {"arg": "u", "source": "v", "dtype": "same"}
+  ],
+  "python": {
+    "positional": ["k", "v", "beta", "A", "chunk_size"],
+    "defaults": {
+      "g": "None",
+      "gk": "None",
+      "cu_seqlens": "None",
+      "chunk_indices": "None"
+    }
+  },
+  "args": [
+    {"name": "k", "kind": "tensor"},
+    {"name": "v", "kind": "tensor"},
+    {"name": "beta", "kind": "tensor"},
+    {"name": "A", "kind": "tensor"},
+    {"name": "g", "kind": "optional_tensor"},
+    {"name": "gk", "kind": "optional_tensor"},
+    {"name": "cu_seqlens", "kind": "int_array"},
+    {"name": "chunk_indices", "kind": "int_array"},
+    {"name": "chunk_size", "kind": "int64"},
+    {"name": "w", "kind": "out_tensor"},
+    {"name": "u", "kind": "out_tensor"}
+  ]
+}

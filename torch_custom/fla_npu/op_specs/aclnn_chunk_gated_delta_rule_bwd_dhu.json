@@ -1,0 +1,55 @@
+{
+  "aclnn_name": "aclnnChunkGatedDeltaRuleBwdDhu",
+  "python_name": "npu_chunk_gated_delta_rule_bwd_dhu",
+  "nd_only": true,
+  "mutated": [],
+  "helpers": "inline int64_t bwd_dhu_chunk_count(const std::vector<int64_t>& chunk_indices, int64_t chunk_size, int64_t total_tokens) {\n  if (!chunk_indices.empty()) {\n    return static_cast<int64_t>(chunk_indices.size()) / 2;\n  }\n  return (total_tokens + chunk_size - 1) / chunk_size;\n}",
+  "outputs": [
+    {
+      "arg": "dh",
+      "alloc": "at::empty({q.size(0), dv.size(1), bwd_dhu_chunk_count(chunk_indices, chunk_size, q.size(2)), q.size(3), dv.size(3)}, q.options())"
+    },
+    {
+      "arg": "dh0",
+      "when": "h0.has_value() && h0->defined()",
+      "when_py": "h0 is not None",
+      "alloc": "at::empty({q.size(0), dv.size(1), bwd_dhu_chunk_count(chunk_indices, chunk_size, q.size(2)), q.size(3), dv.size(3)}, q.options())"
+    },
+    {
+      "arg": "dv2",
+      "source": "dv",
+      "dtype": "same"
+    }
+  ],
+  "python": {
+    "positional": ["q", "k", "w", "d_o", "dv", "scale", "chunk_size"],
+    "defaults": {
+      "g": "None",
+      "gK": "None",
+      "h0": "None",
+      "dht": "None",
+      "cu_seqlens": "None",
+      "chunk_indices": "None",
+      "use_exp2": "False"
+    }
+  },
+  "args": [
+    {"name": "q", "kind": "tensor"},
+    {"name": "k", "kind": "tensor"},
+    {"name": "w", "kind": "tensor"},
+    {"name": "d_o", "kind": "tensor"},
+    {"name": "dv", "kind": "tensor"},
+    {"name": "g", "kind": "optional_tensor"},
+    {"name": "gK", "kind": "optional_tensor"},
+    {"name": "h0", "kind": "optional_tensor"},
+    {"name": "dht", "kind": "optional_tensor"},
+    {"name": "cu_seqlens", "kind": "int_array"},
+    {"name": "chunk_indices", "kind": "int_array"},
+    {"name": "scale", "kind": "double"},
+    {"name": "chunk_size", "kind": "int64"},
+    {"name": "use_exp2", "kind": "bool"},
+    {"name": "dh", "kind": "out_tensor"},
+    {"name": "dh0", "kind": "out_tensor"},
+    {"name": "dv2", "kind": "out_tensor"}
+  ]
+}
