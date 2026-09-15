@@ -233,8 +233,9 @@ __simd_vf__ inline void Stage5Fuse64VF(__ubuf__ bfloat16_t *oOutAddr, __ubuf__ f
                                     static_cast<uint32_t>(tile) * CHUNK_FWD_O_A5_BT;
             LoadAlign(oSPrimeReg, oSPrimeAddr + offset);
             LoadAlign(oLReg, oLAddr + offset);
+            Muls(oSPrimeReg, oSPrimeReg, scale, floatMask);
+            Muls(oLReg, oLReg, scale, floatMask);
             Add(oOutReg, oSPrimeReg, oLReg, floatMask);
-            Muls(oOutReg, oOutReg, scale, floatMask);
             Cast<bfloat16_t, float, CHUNK_FWD_O_FP32_TO_B16_PACK>(oOutBf16Reg, oOutReg, floatMask);
             StoreAlign<bfloat16_t, StoreDist::DIST_PACK_B32>(oOutAddr + offset, oOutBf16Reg, floatMask);
         }
