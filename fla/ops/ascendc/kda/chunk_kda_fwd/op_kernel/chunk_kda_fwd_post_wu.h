@@ -22,7 +22,7 @@
 #include "catlass/gemm/tile/tile_copy.hpp"
 #include "catlass/gemm/tile/tile_mmad.hpp"
 #include "catlass/gemm_coord.hpp"
-#include "kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"
+#include "./kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"
 #include "catlass/layout/layout.hpp"
 #include "kernel_operator.h"
 #include "chunk_kda_fwd_varlen.h"

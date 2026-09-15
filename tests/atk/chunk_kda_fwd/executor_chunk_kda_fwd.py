@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -113,6 +114,25 @@ def _target_dtype(original: str, high_precision: bool) -> torch.dtype:
     if not high_precision:
         return _DTYPES[original]
     return torch.float64
+
+
+def _project_public_output(tensor: torch.Tensor, spec: dict, name: str) -> torch.Tensor:
+    if str(spec["q_dtype"]) != "fp16" or name not in {
+        "attn_out",
+        "aqk",
+        "akk",
+        "w",
+        "u",
+        "qg",
+        "kg",
+        "v_new",
+        "h",
+    }:
+        return tensor
+    if not torch.isfinite(tensor).all().item():
+        raise RuntimeError(f"{name} raw CPU reference contains NaN or Inf")
+    limit = torch.finfo(torch.float16).max
+    return tensor.clamp(min=-limit, max=limit)
 
 
 def _random_quantized(
@@ -481,17 +501,35 @@ def _reference_impl(inputs: _PreparedInputs, spec: dict):
             + torch.bmm(qk, v_new_block)
         )
 
-        o[batch_id, start:end] = out_block.permute(1, 0, 2).to(output_dtype)
-        aqk[batch_id, :, start:end, :length] = qk.to(output_dtype)
-        akk[batch_id, :, start:end, :length] = inverse.to(output_dtype)
+        o[batch_id, start:end] = _project_public_output(
+            out_block.permute(1, 0, 2), spec, "attn_out"
+        ).to(output_dtype)
+        aqk[batch_id, :, start:end, :length] = _project_public_output(
+            qk, spec, "aqk"
+        ).to(output_dtype)
+        akk[batch_id, :, start:end, :length] = _project_public_output(
+            inverse, spec, "akk"
+        ).to(output_dtype)
         if export_full:
-            w_out[batch_id, :, start:end] = w_block.to(output_dtype)
-            u_out[batch_id, :, start:end] = u_block.to(output_dtype)
-            qg_out[batch_id, :, start:end] = qg_block.to(output_dtype)
-            kg_out[batch_id, :, start:end] = kg_block.to(output_dtype)
-            v_new_out[batch_id, :, start:end] = v_new_block.to(output_dtype)
+            w_out[batch_id, :, start:end] = _project_public_output(
+                w_block, spec, "w"
+            ).to(output_dtype)
+            u_out[batch_id, :, start:end] = _project_public_output(
+                u_block, spec, "u"
+            ).to(output_dtype)
+            qg_out[batch_id, :, start:end] = _project_public_output(
+                qg_block, spec, "qg"
+            ).to(output_dtype)
+            kg_out[batch_id, :, start:end] = _project_public_output(
+                kg_block, spec, "kg"
+            ).to(output_dtype)
+            v_new_out[batch_id, :, start:end] = _project_public_output(
+                v_new_block, spec, "v_new"
+            ).to(output_dtype)
         if export_h:
-            h_out[batch_id, chunk_id] = previous.to(output_dtype)
+            h_out[batch_id, chunk_id] = _project_public_output(
+                previous, spec, "h"
+            ).to(output_dtype)
 
     final_state = state if _as_bool(spec["output_final_state"]) else None
     if final_state is not None and _as_bool(spec["state_v_first"]):
@@ -658,15 +696,33 @@ def _reference_model_parallel(inputs: _PreparedInputs, spec: dict):
                 + qk_typed @ v_new_typed
             )
 
-            o[batch_id, start:end, hv_index] = out_block.to(output_dtype)
-            aqk[batch_id, hv_index, start:end, :length] = qk.to(output_dtype)
-            akk[batch_id, hv_index, start:end, :length] = inverse.to(output_dtype)
-            w_out[batch_id, hv_index, start:end] = w_block.to(output_dtype)
-            u_out[batch_id, hv_index, start:end] = u_block.to(output_dtype)
-            qg_out[batch_id, hv_index, start:end] = qg_block.to(output_dtype)
-            kg_out[batch_id, hv_index, start:end] = kg_block.to(output_dtype)
-            v_new_out[batch_id, hv_index, start:end] = v_new_block.to(output_dtype)
-            h_out[batch_id, chunk_id, hv_index] = previous.to(output_dtype)
+            o[batch_id, start:end, hv_index] = _project_public_output(
+                out_block, spec, "attn_out"
+            ).to(output_dtype)
+            aqk[batch_id, hv_index, start:end, :length] = _project_public_output(
+                qk, spec, "aqk"
+            ).to(output_dtype)
+            akk[batch_id, hv_index, start:end, :length] = _project_public_output(
+                inverse, spec, "akk"
+            ).to(output_dtype)
+            w_out[batch_id, hv_index, start:end] = _project_public_output(
+                w_block, spec, "w"
+            ).to(output_dtype)
+            u_out[batch_id, hv_index, start:end] = _project_public_output(
+                u_block, spec, "u"
+            ).to(output_dtype)
+            qg_out[batch_id, hv_index, start:end] = _project_public_output(
+                qg_block, spec, "qg"
+            ).to(output_dtype)
+            kg_out[batch_id, hv_index, start:end] = _project_public_output(
+                kg_block, spec, "kg"
+            ).to(output_dtype)
+            v_new_out[batch_id, hv_index, start:end] = _project_public_output(
+                v_new_block, spec, "v_new"
+            ).to(output_dtype)
+            h_out[batch_id, chunk_id, hv_index] = _project_public_output(
+                previous, spec, "h"
+            ).to(output_dtype)
         final_states[:, hv_index] = state
 
     with ThreadPoolExecutor(max_workers=min(_REFERENCE_WORKERS, hv_num)) as pool:
@@ -1125,7 +1181,28 @@ class ChunkKdaFwdApi(BaseApi):
         if self.device == "cpu":
             outputs = _torch_fp64_golden(self.inputs, self.spec)
         elif self.device == "npu":
+            trace_kernel_launch = os.environ.get("KDA_ATK_TRACE_KERNEL_LAUNCH") == "1"
+            launch_id = None
+            if trace_kernel_launch:
+                launch_id = f"{os.getpid()}:{self.runtime_case_id}:{time.monotonic_ns()}"
+                print(
+                    "KDA_ATK_KERNEL_LAUNCH_BEGIN",
+                    f"case_id={self.runtime_case_id}",
+                    f"launch_id={launch_id}",
+                    flush=True,
+                )
             outputs = _run_positive_npu(self.inputs, self.spec)
+            if trace_kernel_launch:
+                assert launch_id is not None
+                torch.npu.synchronize()
+                completed_ns = time.monotonic_ns()
+                print(
+                    "KDA_ATK_KERNEL_LAUNCH_END",
+                    f"case_id={self.runtime_case_id}",
+                    f"launch_id={launch_id}",
+                    f"completed_ns={completed_ns}",
+                    flush=True,
+                )
         else:
             raise RuntimeError(
                 "positive chunk_kda_fwd cases require an NPU DUT or CPU golden node; "

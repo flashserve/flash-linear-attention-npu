@@ -31,9 +31,13 @@ extern "C" {
 
 namespace {
 constexpr int64_t MAX_KDA_K_DIM = 256;
+constexpr int64_t MAX_KDA_V_DIM = 256;
 constexpr int64_t MAX_KDA_HEAD_NUM = 128;
 constexpr int64_t KDA_STAGE_FULL = -1;
 constexpr int64_t KDA_STAGE_GATE_PREPARE = 0;
+constexpr int64_t KDA_STAGE_POST_WU = 1;
+constexpr int64_t KDA_STAGE_FWD_H = 2;
+constexpr int64_t KDA_STAGE_FINALIZE = 3;
 constexpr int64_t KDA_STAGE_COUNT = 4;
 
 constexpr int64_t MAX_KDA_VARLEN_SEQUENCES = 1024;
@@ -74,6 +78,23 @@ struct ChunkKdaFwdParams {
     const aclTensor *kgOut = nullptr;
     const aclTensor *vNewOut = nullptr;
     const aclTensor *hOut = nullptr;
+};
+
+struct KdaStageInputAliases {
+    const aclTensor *gk = nullptr;
+    const aclTensor *aqk = nullptr;
+    const aclTensor *akk = nullptr;
+    const aclTensor *w = nullptr;
+    const aclTensor *u = nullptr;
+    const aclTensor *kg = nullptr;
+    const aclTensor *vNew = nullptr;
+    const aclTensor *h = nullptr;
+    const aclTensor *qgScaled = nullptr;
+    const aclTensor *uSeed = nullptr;
+    const aclTensor *vNewFp32 = nullptr;
+    const aclTensor *hFp32 = nullptr;
+    const aclTensor *akkFp32 = nullptr;
+    const aclTensor *wFp32 = nullptr;
 };
 
 struct KdaShapeInfo {
@@ -457,7 +478,7 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
     CHECK_COND(info.hNum <= MAX_KDA_HEAD_NUM && info.hvNum <= MAX_KDA_HEAD_NUM,
                ACLNN_ERR_PARAM_INVALID, "H and HV must be less than or equal to 128.");
     CHECK_COND(info.kDim >= 16 && info.kDim <= MAX_KDA_K_DIM && info.kDim % 16 == 0 &&
-                   info.vDim >= 16 && info.vDim <= 256 && info.vDim % 16 == 0,
+                   info.vDim >= 16 && info.vDim <= MAX_KDA_V_DIM && info.vDim % 16 == 0,
                ACLNN_ERR_PARAM_INVALID,
                "K/V must be multiples of 16, K must be <=256, and V must be <=256.");
     CHECK_RET(CheckDtypes(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
@@ -628,6 +649,12 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         info.seqlen % params.chunkSize == 0;
     const bool splitStages =
         IsAscend950() && info.totalChunks > 1 && !useDenseA5FastPath;
+    const bool preserveFp32VNew =
+        IsAscend950() && params.q->GetDataType() == DataType::DT_FLOAT16;
+    const bool preserveFp32H =
+        IsAscend950() && params.q->GetDataType() == DataType::DT_FLOAT16;
+    const bool preserveFp32Wu =
+        IsAscend950() && params.q->GetDataType() == DataType::DT_FLOAT16;
 
     const aclTensor *gkCompute = params.gkOut;
     if (gkCompute != nullptr && info.isRank3) {
@@ -725,19 +752,65 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     const aclTensor *uSeedCompute = AllocTensor(
         executorPtr, splitStages ? vShape4 : placeholderShape,
         params.q->GetDataType());
-    CHECK_RET(qgScaledCompute != nullptr && uSeedCompute != nullptr,
+    const aclTensor *vNewFp32Compute = AllocTensor(
+        executorPtr, preserveFp32VNew ? vShape4 : placeholderShape,
+        DataType::DT_FLOAT);
+    const aclTensor *hFp32Compute = AllocTensor(
+        executorPtr, preserveFp32H ? hShape5 : placeholderShape,
+        DataType::DT_FLOAT);
+    const aclTensor *akkFp32Compute = AllocTensor(
+        executorPtr, preserveFp32Wu ? matrixShape4 : placeholderShape,
+        DataType::DT_FLOAT);
+    const aclTensor *wFp32Compute = AllocTensor(
+        executorPtr, preserveFp32Wu ? kShape4 : placeholderShape,
+        DataType::DT_FLOAT);
+    CHECK_RET(qgScaledCompute != nullptr && uSeedCompute != nullptr &&
+                  vNewFp32Compute != nullptr && hFp32Compute != nullptr &&
+                  akkFp32Compute != nullptr && wFp32Compute != nullptr,
               ACLNN_ERR_INNER_NULLPTR);
 
     auto launchStage = [&](int64_t stage) {
+        KdaStageInputAliases stageInputs;
+        if (stage == KDA_STAGE_POST_WU) {
+            stageInputs.gk = gkCompute;
+            stageInputs.akk = akkCompute;
+            stageInputs.akkFp32 = akkFp32Compute;
+            stageInputs.w = wCompute;
+            stageInputs.uSeed = uSeedCompute;
+        } else if (stage == KDA_STAGE_FWD_H) {
+            stageInputs.gk = gkCompute;
+            stageInputs.w = wCompute;
+            stageInputs.u = uCompute;
+            stageInputs.kg = kgCompute;
+            stageInputs.uSeed = uSeedCompute;
+            stageInputs.vNewFp32 = vNewFp32Compute;
+            stageInputs.wFp32 = wFp32Compute;
+        } else if (stage == KDA_STAGE_FINALIZE) {
+            stageInputs.gk = gkCompute;
+            stageInputs.aqk = aqkCompute;
+            stageInputs.vNew = vNewCompute;
+            stageInputs.h = hCompute;
+            stageInputs.qgScaled = qgScaledCompute;
+            stageInputs.vNewFp32 = vNewFp32Compute;
+            stageInputs.hFp32 = hFp32Compute;
+        }
         return l0op::KdaChunkForward(
             qHead, kHead, vHead, gHead, betaHead, params.aLogOptional,
             params.dtBiasOptional, initialStateCompute, params.cuSeqlensOptional,
-            params.chunkIndicesOptional, params.scale, params.chunkSize,
-            params.safeGate, parsedLayout == KdaFwdLayout::BSND,
+            params.chunkIndicesOptional, stageInputs.gk, stageInputs.aqk,
+            stageInputs.akk, stageInputs.w, stageInputs.u, stageInputs.kg,
+            stageInputs.vNew, stageInputs.h, stageInputs.qgScaled,
+            stageInputs.uSeed, stageInputs.vNewFp32, stageInputs.hFp32,
+            stageInputs.akkFp32, stageInputs.wFp32,
+            params.scale,
+            params.chunkSize, params.safeGate,
+            parsedLayout == KdaFwdLayout::BSND,
             params.useGateInKernel, params.lowerBound, attnCompute,
             finalStateCompute, gkCompute, aqkCompute, akkCompute, wCompute,
             uCompute, qgCompute, kgCompute, vNewCompute, hCompute,
-            qgScaledCompute, uSeedCompute, stage, executorPtr);
+            qgScaledCompute, uSeedCompute, vNewFp32Compute, hFp32Compute,
+            akkFp32Compute, wFp32Compute, stage,
+            executorPtr);
     };
     l0op::KdaCoreOutputs result{};
     if (splitStages) {
