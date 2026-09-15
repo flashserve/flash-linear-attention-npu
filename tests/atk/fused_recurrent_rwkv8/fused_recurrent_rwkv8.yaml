@@ -1,0 +1,206 @@
+api: pytorch
+api_type: executor_fused_recurrent_rwkv8
+version: v2.1
+name: fused_recurrent_rwkv8
+aclnn_name:
+generate: generator_fused_recurrent_rwkv8
+dtype_numbers: 1
+extra_numbers: 0
+standard:
+  acc:
+    cv_fused_double_benchmark:
+      max_re_ratio: 5
+      avg_re_ratio: 1.5
+      root_mean_squared_ratio: 1.5
+  perf: not_key
+inputs:
+  - name: low_precision_marker
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16]
+    ranges:
+      valid:
+        values: [[0, 0]]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [1]
+      dim_values:
+        values: [1]
+  - name: fp32_marker
+    type: tensor
+    required: true
+    dtypes:
+      values: [fp32]
+    ranges:
+      valid:
+        values: [[0, 0]]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [1]
+      dim_values:
+        values: [1]
+  - name: case_spec
+    type: attr
+    required: true
+    dtypes:
+      values: [non_param]
+    ranges:
+      valid:
+        values: ["{\"name\":\"fp32_main\",\"dtype\":\"fp32\",\"B\":2,\"H\":4,\"T\":64,\"K\":64,\"V\":64,\"scale\":1.0,\"chunk_len\":16,\"initial_state\":false,\"output_chunk_state\":false,\"output_sa\":false,\"seed\":42,\"op\":\"fused_recurrent_rwkv8\",\"case_id\":0,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}"]
+      invalid:
+        values: []
+  - name: dtype
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: ["fp32", "fp16", "bf16"]
+      invalid:
+        values: []
+  - name: B
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [1, 2]
+      invalid:
+        values: []
+  - name: H
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [2, 4]
+      invalid:
+        values: []
+  - name: T
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [16, 64]
+      invalid:
+        values: []
+  - name: K
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [64]
+      invalid:
+        values: []
+  - name: V
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [32, 64]
+      invalid:
+        values: []
+  - name: scale
+    type: attr
+    required: true
+    dtypes:
+      values: [float]
+    ranges:
+      valid:
+        values: [0.125, 1.0]
+      invalid:
+        values: []
+  - name: chunk_len
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [8, 16]
+      invalid:
+        values: []
+  - name: initial_state
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [true, false]
+      invalid:
+        values: []
+  - name: output_chunk_state
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [true, false]
+      invalid:
+        values: []
+  - name: output_sa
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [true, false]
+      invalid:
+        values: []
+  - name: case_id
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [0]
+      invalid:
+        values: []
+  - name: seed
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [42]
+      invalid:
+        values: []
+  - name: soc
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: ["ascend910b"]
+      invalid:
+        values: []
+  - name: route
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: ["ascendc"]
+      invalid:
+        values: []
