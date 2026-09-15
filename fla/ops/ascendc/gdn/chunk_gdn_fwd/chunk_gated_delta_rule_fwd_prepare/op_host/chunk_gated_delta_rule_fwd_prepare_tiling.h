@@ -36,7 +36,7 @@ BEGIN_TILING_DATA_DEF(ChunkGatedDeltaRuleFwdPrepareTilingData)
     TILING_DATA_FIELD_DEF(int64_t, isVariableLengthPacked);
     // 1 if chunk_indices [2*NT] (seqId, localChunk) pairs are present.
     TILING_DATA_FIELD_DEF(int64_t, hasChunkIndexTable);
-    // Always 1 this version: in-kernel L2norm of q/k, write q_hat / k_hat / rstd.
+    // 1: in-kernel L2norm of q/k, write q_hat / k_hat / rstd. 0: skip; kkt uses k.
     TILING_DATA_FIELD_DEF(int64_t, enableQueryKeyL2NormInKernel);
     // 1: g_raw = -exp(a_log)*softplus(g+dt_bias) before chunk-local cumsum.
     TILING_DATA_FIELD_DEF(int64_t, enableFusedGateSoftplus);

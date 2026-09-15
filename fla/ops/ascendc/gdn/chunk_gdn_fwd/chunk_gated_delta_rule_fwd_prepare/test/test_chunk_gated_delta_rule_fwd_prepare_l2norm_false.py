@@ -1,12 +1,15 @@
-"""Accuracy gate for pipeline edits on chunk_gated_delta_rule_fwd_prepare.
+"""Accuracy gate for use_qk_l2norm_in_kernel=False.
 
-Single case (G=2 long-seq, same generate_inputs as official GDN case 1):
+Same shape as pipe_acc (G=2 long-seq). q and k are L2-normalized in
+``generate_inputs`` before the op; the kernel skips in-kernel L2Norm.
+WY on unnormalized k is inf/nan.
 
   B=1, HK=16, HV=32, T=11264, K=V=128, BT=64, BF16
+  l2norm=False, gate=False, sigmoid=True, neg=True
 
 From the test directory::
 
-  python test_chunk_gated_delta_rule_fwd_prepare_pipe_acc.py
+  python test_chunk_gated_delta_rule_fwd_prepare_l2norm_false.py
 """
 
 from __future__ import annotations
@@ -44,7 +47,7 @@ def main():
         head_k=K,
         head_v=V,
         chunk_size=BT,
-        use_qk_l2norm_in_kernel=True,
+        use_qk_l2norm_in_kernel=False,
         use_gate_in_kernel=False,
         use_beta_sigmoid_in_kernel=True,
         allow_neg_eigval=True,
@@ -57,15 +60,14 @@ def main():
     beta = inp["beta"].float()
     flags = dict(
         chunk_size=BT,
-        use_qk_l2norm_in_kernel=True,
+        use_qk_l2norm_in_kernel=False,
         use_gate_in_kernel=False,
         use_beta_sigmoid_in_kernel=True,
         allow_neg_eigval=True,
         output_a=os.environ.get("OUTPUT_A", "1") != "0",
-        use_exp2=True,
     )
     print(f"golden={GDN_DIR}")
-    print(f"pipe-acc: B={B} HK={HK} HV={HV} T={T} K={K} V={V} BT={BT} BF16")
+    print(f"l2norm-false: B={B} HK={HK} HV={HV} T={T} K={K} V={V} BT={BT} BF16")
     try:
         outs = run_npu_prepare(q, k, v, g, beta, flags=flags)
         check_against_ref(q, k, v, g, beta, outs, flags)

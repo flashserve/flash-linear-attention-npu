@@ -2,51 +2,13 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * BSD 3-Clause License.
  *
- * Fused GDN prepare (arch35). Helpers: chunk_gated_delta_rule_fwd_prepare_common.h,
- * chunk_gated_delta_rule_fwd_prepare_vf.h, chunk_gated_delta_rule_fwd_prepare_datacopy.h,
- * chunk_gated_delta_rule_fwd_prepare_matmul.h.
+ * Fused GDN prepare (arch35 MIX AIC:AIV 1:2). Helpers in *_common/vf/datacopy/matmul.
  * Memory map: design/chunk_gated_delta_rule_fwd_prepare_ascendc-design.md.
- * Init binds every tile with OnChipBuffer::GetBuffer.
  *
- * kkt is Cube k' @ k'^T from L1 NZ k' (Stage1 (64,1,7,0) upload).
- * Cube MBH for strictly-lower L (solve_tri is_lower, LeafLeft driving):
- *   Y = I + LeafLeft @ (-L)
- *   A = LeafLeft + Y @ LeafRight
- *     tmp = I @ LeafLeft            (init_flag=True)
- *     A   = Y @ LeafRight + tmp     (init_flag=False)
- * LeafRight = blkdiag((I+L00)^{-1}, 0), LeafLeft = blkdiag(0, (I+L11)^{-1}).
- * Leaves / -L / I go L1 as 8-col ND->NZ (no UB 5HD). Leaf LoadData flips
- * ifTranspose vs I/-L/Y.
- * A = (I+L)^{-1} = [XR, 0; -XL L10 XR, XL].
- * Stage4 Fixpipe uses Arch3510 isChannelSplit (16x16 -> 16x8) into this
- * tile's u_out slot, then MTE2 back to L1[0, 64). Host audit compares
- * that NZ on u (no second ND Fixpipe). Stage5 Fixpipe L0C ->
- * gmA bf16 ND, then AIC MTE2 GM ND -> L1[256, 288) cube NZ. GET_TILING_DATA
- * / workspace GM are unbound (too many GM_ADDR).
- *
- * L1: Y [0, 64); k' aliases NegL [64, 128). Pack N+1 Stage1 waits pack N
- * Stage4 before the k' L1 write (NegL still live in Stage4). Stage5/6/7 of
- * pack N overlap that next Stage1. Do not gate Stage1 on Stage7: that
- * kills the overlap and regresses G=1 wall time.
- *
- * Scheduling: total work = Ceil(T/BT)*B*Hv. Pack size TG = 3 if G=3 else 4
- * (last pack may be shorter). AIV0: task 0,2; AIV1: task 1,3. A full
- * G=2 pack is reordered as [owner0, owner1, sibling0, sibling1], putting
- * one complete HK group on each AIV. L2Norm(q/k) and Cube kkt run once
- * per HK (OwnsHk: hv % G == 0). G=2 keeps each kkt on its owning AIV;
- * G=3/4 sibling HV reuse kkt through Fixpipe to both AIVs. Each AIV finishes
- * Stage1 ping then pong (Set taskIdx after k' L1, owners only). AIC Wait
- * that flag, kkt, then Set every sibling id (PIPE_FIX) so Stage3 can run.
- * After Stage3 L1 writes, AIV Set taskIdx+4; AIC Wait that (4, 21, 6, 23)
- * and Stage4, same 0,1,2,3 order and even/odd L0 banks as Stage2. Stage4
- * is pure AIC: the pack's Stage4 tasks finish before any Stage5. Stage6
- * is AIV after Stage3 (same 0,2 / 1,3 ping-pong). It reads k'/v from GM
- * and resident g'/β, so it does not wait Stage4/5. vb/kbg stay bf16 ND,
- * then DataCopy (64,1,srcGap,0) into L1 NZ with C0=16 (not fp32 C0=8).
- * Tail tiles (M<BT) zero-fill UB before copy-in and write M rows; aligned
- * tiles skip that. Per task like Stage5: W MMAD ping [32,48)+L0C[0,64),
- * U MMAD pong [48,64)+L0C[64,128), then M_FIX and both Fixpipes.
-
+ * Pack: TG = 3 if G=3 else 4. AIV0 tasks 0,2; AIV1 1,3. kkt once per HK (OwnsHk).
+ * L1: Y [0,64); k' aliases NegL [64,128). Pack N+1 Stage1 waits pack N Stage4
+ * before the k' L1 write so Stage5/6/7 of N can overlap next Stage1.
+ * Do not gate Stage1 on Stage7: that kills the overlap and regresses G=1.
  */
 
 #ifndef CHUNK_GATED_DELTA_RULE_FWD_PREPARE_H
@@ -78,8 +40,9 @@ public:
         GM_ADDR userWs = GetUserWorkspace(workspace);
         const uint32_t wsBase = static_cast<uint32_t>(coreIdx) * kWsPerCoreBytes;
         if (userWs != nullptr) {
-            gmWsY.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(userWs + wsBase));
-            gmWsA.SetGlobalBuffer(reinterpret_cast<__gm__ InDtype *>(userWs + wsBase + kWsYBytes),
+            gmWsY.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(userWs + wsBase),
+                                  kWsYSlots * kWsYElems);
+            gmWsA.SetGlobalBuffer(reinterpret_cast<__gm__ InDtype *>(userWs + wsBase + kWsYTotalBytes),
                                   kWsASlots * kWsAElems);
         } else {
             gmWsY.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(uOut));
@@ -108,10 +71,15 @@ public:
         if (outputA != 0) {
             gmA.SetGlobalBuffer(reinterpret_cast<__gm__ InDtype *>(aOut));
         }
-        gmQHat.SetGlobalBuffer(reinterpret_cast<__gm__ InDtype *>(qHat));
-        gmKHat.SetGlobalBuffer(reinterpret_cast<__gm__ InDtype *>(kHat));
-        gmQRstd.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(qRstd));
-        gmKRstd.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(kRstd));
+        if (useQkL2norm != 0) {
+            gmQHat.SetGlobalBuffer(reinterpret_cast<__gm__ InDtype *>(qHat));
+            gmKHat.SetGlobalBuffer(reinterpret_cast<__gm__ InDtype *>(kHat));
+            gmQRstd.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(qRstd));
+            gmKRstd.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(kRstd));
+        } else {
+            // Stage6 reloads k̂; without in-kernel L2Norm that is the k input.
+            gmKHat.SetGlobalBuffer(reinterpret_cast<__gm__ InDtype *>(k));
+        }
         hasBetaOut = 0;
         if (betaEff != nullptr) {
             gmBetaEff.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(betaEff));
@@ -122,6 +90,19 @@ public:
     // Explicit on-chip map. Offsets match design Stage 0-3.
     __aicore__ inline void InitOnChip()
     {
+        subBlock = AscendC::GetSubBlockIdx();
+        if ASCEND_IS_AIV {
+            // MIX 1:2: GetBlockIdx is 0,1 for cube 0's two Vectors. GetBlockNum
+            // on AIV already equals the cube count (same as AIC, 28 here). The
+            // runtime PRINTF "Block 0/56" is 2*cubes; do not divide again.
+            coreIdx = AscendC::GetBlockIdx() / 2;
+            numCore = AscendC::GetBlockNum();
+        } else {
+            coreIdx = AscendC::GetBlockIdx();
+            numCore = AscendC::GetBlockNum();
+        }
+        auxReady = 0;
+
         OnChipBuffer buf;
 
         // =====================================================================
@@ -174,8 +155,8 @@ public:
         ubVcsIdx = buf.template GetBuffer<BufferType::ASCEND_UB, uint32_t>(kUbVcsIdx);
 
         // UB[1.00, 9.00) KiB = 8 KiB, fp32 ND [32, 64].
-        // I_vcs = concat along K of two I_32 identity leaves. Stage3 VCS
-        // copies this to ubResVcs and overwrites with (I+Lii)^{-1}.
+        // I_vcs = concat along K of two I_32 identity leaves. Prefetched to
+        // ubResVcs before WaitCubeKktDone; VCS then overwrites with (I+Lii)^{-1}.
         ubIVcs = buf.template GetBuffer<BufferType::ASCEND_UB, float>(kUbIVcs);
 
         // UB[9.00, 25.00) KiB unused (old Cube NZ I). Overlaps g'/beta.
@@ -217,16 +198,8 @@ public:
             ubLFull[db] = buf.template GetBuffer<BufferType::ASCEND_UB, float>(kUbS3LFull[db]);
         }
 
-        // HardEvent ids (do not reuse a live id without Wait):
-        //   0  S1 Q/K GM copy; S3 V_MTE3 (L ready / VCS done); S6 v GM
-        //   1  S1 gate/beta GM copy; S6 k' GM copy
-        //   2  S1 L2Norm store / gate scalar aLog
-        //   3  S1 g' / beta_eff GM store
-        //   4  S3 MTE3_V after pack so VCS can overlap -L UB→L1
-        //   5  S1 k' ND -> L1 NZ / S6 vb then kbg UB -> L1
-        //   6  unused (was S3 PRINTF)
-        //   7  unused
-        // Stage4/5 reuse bank 0/1 for FIX_M / M_FIX / FIX_MTE2 / M_MTE1.
+        // AIV UB HardEvent ids: kHeUb0, kHeUb1, kHeS3Pack (common.h).
+        // Cube even/odd stays numeric bank = t&1 (FIX_M / M_MTE1 / FIX_MTE2).
 
         // L1 512 KiB. Four task slots (taskIdx 0..3).
         for (uint32_t t = 0; t < static_cast<uint32_t>(kTasksPerRound); ++t) {
@@ -249,66 +222,33 @@ public:
         // L1[480, 496) KiB = 16 KiB, fp32 cube-NZ I_64, C0=8.
         l1I = buf.template GetBuffer<BufferType::ASCEND_CB, float>(kL1ResidentI);
 
-        // ---- L0A/L0B 64 KiB each, L0C 256 KiB. bf16 and fp32 views alias banks. ----
-
-        // L0A/L0B [0, 16) KiB, bf16. Stage2 AIV0 tasks 0 and 2.
-        l0A = buf.template GetBuffer<BufferType::ASCEND_L0A, InDtype>(0);
-        l0B = buf.template GetBuffer<BufferType::ASCEND_L0B, InDtype>(0);
-
-        // L0A/L0B [16, 32) KiB, bf16. Stage2 AIV1 tasks 1 and 3.
-        l0A1 = buf.template GetBuffer<BufferType::ASCEND_L0A, InDtype>(kL0Bf16Pair);
-        l0B1 = buf.template GetBuffer<BufferType::ASCEND_L0B, InDtype>(kL0Bf16Pair);
-
-        // L0A/L0B [0, 16) KiB, fp32 view of the same banks as l0A/l0B.
-        // Stage4/5 first MMAD (even).
-        l0Af = buf.template GetBuffer<BufferType::ASCEND_L0A, float>(0);
-        l0Bf = buf.template GetBuffer<BufferType::ASCEND_L0B, float>(0);
-
-        // L0A/L0B [16, 32) KiB, fp32. Stage4/5 first MMAD (odd).
-        l0Af1 = buf.template GetBuffer<BufferType::ASCEND_L0A, float>(kL0Fp32Pair);
-        l0Bf1 = buf.template GetBuffer<BufferType::ASCEND_L0B, float>(kL0Fp32Pair);
-
-        // L0A/L0B [32, 48) / [48, 64) KiB, fp32. Stage4/5 second MMAD.
-        // Same physical slots as Stage7; Stage4/5 drain before Stage7.
-        l0AfP = buf.template GetBuffer<BufferType::ASCEND_L0A, float>(kL0S7Ping);
-        l0BfP = buf.template GetBuffer<BufferType::ASCEND_L0B, float>(kL0S7Ping);
-        l0AfP1 = buf.template GetBuffer<BufferType::ASCEND_L0A, float>(kL0S7Pong);
-        l0BfP1 = buf.template GetBuffer<BufferType::ASCEND_L0B, float>(kL0S7Pong);
-
-        // L0C [0, 64) KiB, fp32. Stage2 kkt / Stage4 Y / Stage5 A (even).
-        l0C = buf.template GetBuffer<BufferType::ASCEND_L0C, float>(0);
-
-        // L0C [64, 128) KiB, fp32. Stage2/4/5 odd tasks.
-        l0C1 = buf.template GetBuffer<BufferType::ASCEND_L0C, float>(kL0C1);
-
-        // Stage7 L0A/L0B: [32, 48) even, [48, 64) odd. SetSize(16 KiB) so
+        // L0A/L0B 64 KiB, L0C 256 KiB. bf16 and fp32 views alias the same banks.
+        // [0]=even [0,16)/[32,48)/L0C[0,64); [1]=odd [16,32)/[48,64)/L0C[64,128).
+        // Stage2 kkt uses pair 0/1. Stage4 Acc and Stage5 second MMAD share
+        // Stage7's P slots; Stage4/5 drain before Stage7. SetSize(16 KiB) so
         // ping does not keep the remaining 32 KiB and overlap pong.
-        l0AS7 = buf.template GetBuffer<BufferType::ASCEND_L0A, InDtype>(kL0S7Ping);
-        l0BS7 = buf.template GetBuffer<BufferType::ASCEND_L0B, InDtype>(kL0S7Ping);
-        l0AS71 = buf.template GetBuffer<BufferType::ASCEND_L0A, InDtype>(kL0S7Pong);
-        l0BS71 = buf.template GetBuffer<BufferType::ASCEND_L0B, InDtype>(kL0S7Pong);
-        l0AS7.SetSize(kL0S7Slot / sizeof(InDtype));
-        l0BS7.SetSize(kL0S7Slot / sizeof(InDtype));
-        l0AS71.SetSize(kL0S7Slot / sizeof(InDtype));
-        l0BS71.SetSize(kL0S7Slot / sizeof(InDtype));
-        // L0C: W 64x128 fp32 = 32 KiB at [0,64). U 64x256 = 64 KiB at [64,128).
-        l0CS7 = buf.template GetBuffer<BufferType::ASCEND_L0C, float>(0);
-        l0CS71 = buf.template GetBuffer<BufferType::ASCEND_L0C, float>(kL0C1);
-        l0CS7.SetSize(static_cast<uint32_t>(kChunk64 * 128));
-        l0CS71.SetSize(static_cast<uint32_t>(kChunk64 * 128));
-
-        subBlock = AscendC::GetSubBlockIdx();
-        if ASCEND_IS_AIV {
-            // MIX 1:2: GetBlockIdx is 0,1 for cube 0's two Vectors. GetBlockNum
-            // on AIV already equals the cube count (same as AIC, 28 here). The
-            // runtime PRINTF "Block 0/56" is 2*cubes; do not divide again.
-            coreIdx = AscendC::GetBlockIdx() / 2;
-            numCore = AscendC::GetBlockNum();
-        } else {
-            coreIdx = AscendC::GetBlockIdx();
-            numCore = AscendC::GetBlockNum();
+        for (uint32_t b = 0; b < 2; ++b) {
+            l0A[b] = buf.template GetBuffer<BufferType::ASCEND_L0A, InDtype>(kL0PairOff[b]);
+            l0B[b] = buf.template GetBuffer<BufferType::ASCEND_L0B, InDtype>(kL0PairOff[b]);
+            l0Af[b] = buf.template GetBuffer<BufferType::ASCEND_L0A, float>(kL0PairOff[b]);
+            l0Bf[b] = buf.template GetBuffer<BufferType::ASCEND_L0B, float>(kL0PairOff[b]);
+            l0AfP[b] = buf.template GetBuffer<BufferType::ASCEND_L0A, float>(kL0S7Off[b]);
+            l0BfP[b] = buf.template GetBuffer<BufferType::ASCEND_L0B, float>(kL0S7Off[b]);
+            l0AS7[b] = buf.template GetBuffer<BufferType::ASCEND_L0A, InDtype>(kL0S7Off[b]);
+            l0BS7[b] = buf.template GetBuffer<BufferType::ASCEND_L0B, InDtype>(kL0S7Off[b]);
+            l0AS7[b].SetSize(kL0S7Slot / sizeof(InDtype));
+            l0BS7[b].SetSize(kL0S7Slot / sizeof(InDtype));
+            l0CS7[b] = buf.template GetBuffer<BufferType::ASCEND_L0C, float>(kL0CS7Off[b]);
+            l0CS7[b].SetSize(static_cast<uint32_t>(kChunk64 * 128));
         }
-        auxReady = 0;
+
+        // L0C 256 KiB: four 64 KiB-aligned slots, one 16 KiB C tile each.
+        // Stage2 kkt still uses slots 0/1 (even/odd). Stage4 I@I writes all
+        // nThis slots before Wait Stage3; LeafLeft@NegL accumulates in place.
+        for (uint32_t t = 0; t < static_cast<uint32_t>(kTasksPerRound); ++t) {
+            l0CTask[t] = buf.template GetBuffer<BufferType::ASCEND_L0C, float>(t * kL0CTaskStride);
+            l0CTask[t].SetSize(kL0CTaskStride / sizeof(float));
+        }
     }
 
     // ========================= Stage 0 =========================
@@ -326,77 +266,78 @@ public:
         // AIV1: 1,3). Scatter only rewrites the 32x32 quadrant; TR/BL stay
         // zero if primed once.
         Duplicate(ubS0Zero, 0.0f, static_cast<int32_t>(kChunk64 * kChunk64));
-        SetFlag<HardEvent::V_MTE3>(0);
-        WaitFlag<HardEvent::V_MTE3>(0);
+        SetFlag<HardEvent::V_MTE3>(kHeUb0);
+        WaitFlag<HardEvent::V_MTE3>(kHeUb0);
         for (uint32_t t = static_cast<uint32_t>(subBlock); t < static_cast<uint32_t>(kTasksPerRound); t += 2) {
             UbToL1Fp32(l1LeafLeft[t], ubS0Zero, kChunk64);
             UbToL1Fp32(l1LeafRight[t], ubS0Zero, kChunk64);
         }
-        SetFlag<HardEvent::MTE3_V>(0);
-        WaitFlag<HardEvent::MTE3_V>(0);
+        SetFlag<HardEvent::MTE3_V>(kHeUb0);
+        WaitFlag<HardEvent::MTE3_V>(kHeUb0);
         // Cube I_64 is shared L1: only AIV0 paints ND I and 8-col uploads.
         if (subBlock == 0) {
             Identity64VF(ubS0Zero);
-            SetFlag<HardEvent::V_MTE3>(0);
-            WaitFlag<HardEvent::V_MTE3>(0);
+            SetFlag<HardEvent::V_MTE3>(kHeUb0);
+            WaitFlag<HardEvent::V_MTE3>(kHeUb0);
             UbNd64ToL1Nz8(l1I, ubS0Zero);
-            SetFlag<HardEvent::MTE3_V>(0);
-            WaitFlag<HardEvent::MTE3_V>(0);
+            SetFlag<HardEvent::MTE3_V>(kHeUb0);
+            WaitFlag<HardEvent::MTE3_V>(kHeUb0);
         }
         auxReady = 1;
     }
 
     // ========================= Stage 1 =========================
-    // Per-task g' (cumsum) and β_eff. Owner HK also L2Norm k then q, store
-    // hat/rstd, k' ND→L1 NZ C0=16, NotifyAicStage1Done so Cube kkt can
+    // Per-task g' (cumsum) and β_eff. Owner HK: L2Norm k then q when
+    // useQkL2norm, else k as-is (no q load). Store hat/rstd only on the
+    // L2Norm path. k' ND→L1 NZ C0=16, NotifyAicStage1Done so Cube kkt can
     // overlap Q/gate. k' aliases NegL: Wait pack N Stage4 before the L1
     // write so Stage1 can overlap pack N Stage5/7 (V3 G=1 schedule).
     // Sibling HV skip K/Q and still wait Stage4 to consume the flag.
     // Tail (M<BT) zero-fills this tile before copy-in; aligned tiles skip
-    // Duplicate.
-    __aicore__ inline void Stage1_OneTask(const ChunkRange &chunk, int64_t hv, int64_t taskIdx)
+    // Duplicate. Event order is Pad → k' L1 (Wait Stage4) → Notify → q/gate.
+    __aicore__ inline void Stage1_PadTailIfNeeded(const ChunkRange &chunk, int64_t hv, int64_t taskIdx)
     {
-        const int64_t hk = hv / HRatio;
         const int32_t db = PingPongSlot(taskIdx);
-        const int32_t nElem = static_cast<int32_t>(chunk.M * K);
         const int32_t nValid = static_cast<int32_t>(chunk.M);
         const int32_t nPad = static_cast<int32_t>(chunkSize);
-        const int64_t offQk = OffsetBHTD(chunk.batch, hk, chunk.tokenStart, HK, T, K);
-        const int64_t offG = OffsetBHT(chunk.batch, hv, chunk.tokenStart, HV, T);
-        const int64_t offRstd = OffsetBHT(chunk.batch, hk, chunk.tokenStart, HK, T);
-        LocalTensor<InDtype> l1K = l1KHat[static_cast<uint32_t>(taskIdx)];
-        LocalTensor<float> ubGfp = ubGPrime[db];
-        LocalTensor<float> ubBfp = ubBetaEff[db];
-        LocalTensor<GateDtype> ubGRaw = ubGfp.template ReinterpretCast<GateDtype>();
-        LocalTensor<GateDtype> ubBRaw = ubBfp.template ReinterpretCast<GateDtype>();
-        const bool ownsHk = OwnsHk(hv);
-
-        if (db == 0) {
-            SetFlag<HardEvent::MTE3_MTE2>(0);
-            WaitFlag<HardEvent::MTE3_MTE2>(0);
+        if (nValid >= nPad) {
+            return;
         }
-
-        const bool isTail = (nValid < nPad);
-        if (isTail) {
-            if (ownsHk) {
-                Duplicate(ubK[db], static_cast<InDtype>(0), nPad * static_cast<int32_t>(K));
+        if (OwnsHk(hv)) {
+            Duplicate(ubK[db], static_cast<InDtype>(0), nPad * static_cast<int32_t>(K));
+            if (useQkL2norm != 0) {
                 Duplicate(ubKHat[db], static_cast<InDtype>(0), nPad * static_cast<int32_t>(K));
                 Duplicate(ubQ[db], static_cast<InDtype>(0), nPad * static_cast<int32_t>(K));
                 Duplicate(ubQHat[db], static_cast<InDtype>(0), nPad * static_cast<int32_t>(K));
             }
-            Duplicate(ubGfp, 0.0f, nPad);
-            Duplicate(ubBfp, 0.0f, nPad);
-            SetFlag<HardEvent::V_MTE2>(1);
-            WaitFlag<HardEvent::V_MTE2>(1);
         }
+        Duplicate(ubGPrime[db], 0.0f, nPad);
+        Duplicate(ubBetaEff[db], 0.0f, nPad);
+        SetFlag<HardEvent::V_MTE2>(kHeUb1);
+        WaitFlag<HardEvent::V_MTE2>(kHeUb1);
+    }
 
-        if (ownsHk) {
-            DataCopy(ubK[db], gmK[offQk], nElem);
-            SetFlag<HardEvent::MTE2_V>(0);
-            WaitFlag<HardEvent::MTE2_V>(0);
+    __aicore__ inline void Stage1_UploadK(const ChunkRange &chunk, int64_t hv, int64_t taskIdx)
+    {
+        if (!OwnsHk(hv)) {
+            WaitAicStage4Done(taskIdx);
+            return;
+        }
+        const int64_t hk = hv / HRatio;
+        const int32_t db = PingPongSlot(taskIdx);
+        const int32_t nElem = static_cast<int32_t>(chunk.M * K);
+        const int32_t nValid = static_cast<int32_t>(chunk.M);
+        const int64_t offQk = OffsetBHTD(chunk.batch, hk, chunk.tokenStart, HK, T, K);
+        const int64_t offRstd = OffsetBHT(chunk.batch, hk, chunk.tokenStart, HK, T);
+        LocalTensor<InDtype> l1K = l1KHat[static_cast<uint32_t>(taskIdx)];
+
+        DataCopy(ubK[db], gmK[offQk], nElem);
+        SetFlag<HardEvent::MTE2_V>(kHeUb0);
+        WaitFlag<HardEvent::MTE2_V>(kHeUb0);
+        if (useQkL2norm != 0) {
             L2NormK128VF<InDtype>(ubK[db], ubKHat[db], ubKRstd[db], static_cast<uint32_t>(nValid), kGdnL2NormEps);
-            SetFlag<HardEvent::V_MTE3>(0);
-            WaitFlag<HardEvent::V_MTE3>(0);
+            SetFlag<HardEvent::V_MTE3>(kHeUb0);
+            WaitFlag<HardEvent::V_MTE3>(kHeUb0);
             WaitAicStage4Done(taskIdx);
             UploadBf16NdToL1(l1K, ubKHat[db], static_cast<uint32_t>(K));
             NotifyAicStage1Done(taskIdx);
@@ -404,40 +345,53 @@ public:
             CopyUbToGmElems(gmKRstd[offRstd], ubKRstd[db], static_cast<uint32_t>(nValid));
 
             DataCopy(ubQ[db], gmQ[offQk], nElem);
-            SetFlag<HardEvent::MTE2_V>(0);
-            WaitFlag<HardEvent::MTE2_V>(0);
+            SetFlag<HardEvent::MTE2_V>(kHeUb0);
+            WaitFlag<HardEvent::MTE2_V>(kHeUb0);
             L2NormK128VF<InDtype>(ubQ[db], ubQHat[db], ubQRstd[db], static_cast<uint32_t>(nValid), kGdnL2NormEps);
-            SetFlag<HardEvent::V_MTE3>(0);
-            WaitFlag<HardEvent::V_MTE3>(0);
+            SetFlag<HardEvent::V_MTE3>(kHeUb0);
+            WaitFlag<HardEvent::V_MTE3>(kHeUb0);
             DataCopy(gmQHat[offQk], ubQHat[db], nElem);
             CopyUbToGmElems(gmQRstd[offRstd], ubQRstd[db], static_cast<uint32_t>(nValid));
         } else {
+            SetFlag<HardEvent::MTE2_MTE3>(kHeUb0);
+            WaitFlag<HardEvent::MTE2_MTE3>(kHeUb0);
             WaitAicStage4Done(taskIdx);
+            UploadBf16NdToL1(l1K, ubK[db], static_cast<uint32_t>(K));
+            NotifyAicStage1Done(taskIdx);
         }
+    }
+
+    __aicore__ inline void Stage1_GateAndBeta(const ChunkRange &chunk, int64_t hv, int64_t taskIdx)
+    {
+        const int32_t db = PingPongSlot(taskIdx);
+        const int32_t nValid = static_cast<int32_t>(chunk.M);
+        const int64_t offG = OffsetBHT(chunk.batch, hv, chunk.tokenStart, HV, T);
+        LocalTensor<float> ubGfp = ubGPrime[db];
+        LocalTensor<float> ubBfp = ubBetaEff[db];
+        LocalTensor<GateDtype> ubGRaw = ubGfp.template ReinterpretCast<GateDtype>();
+        LocalTensor<GateDtype> ubBRaw = ubBfp.template ReinterpretCast<GateDtype>();
 
         // g / beta share the resident 256 B slots. GateDtype view of the same
         // address: fp32 copy is identity; b16/fp16 fills the first 128 B, then
         // one VL LoadCast stores 64 fp32. n<=64, load-then-store, no ubQHat.
         CopyGmToUbElems(ubGRaw, gmG[offG], static_cast<uint32_t>(nValid));
         CopyGmToUbElems(ubBRaw, gmBeta[offG], static_cast<uint32_t>(nValid));
-        SetFlag<HardEvent::MTE2_V>(0);
-        WaitFlag<HardEvent::MTE2_V>(0);
+        SetFlag<HardEvent::MTE2_V>(kHeUb0);
+        WaitFlag<HardEvent::MTE2_V>(kHeUb0);
 
         if (useGateInKernel != 0) {
-            SetFlag<HardEvent::V_S>(0);
-            WaitFlag<HardEvent::V_S>(2);
             float aLog = ScalarToFp32(gmALog.GetValue(hv));
             float dt = (hasDtBias != 0) ? ScalarToFp32(gmDt.GetValue(hv)) : 0.0f;
-            SetFlag<HardEvent::S_V>(2);
-            WaitFlag<HardEvent::S_V>(2);
+            SetFlag<HardEvent::S_V>(kHeUb0);
+            WaitFlag<HardEvent::S_V>(kHeUb0);
             GateSoftplusVF<GateDtype>(ubGRaw, ubGfp, aLog, dt, static_cast<uint32_t>(nValid));
         } else if constexpr (!IsSameType<GateDtype, float>::value) {
             CastToFp32VF<GateDtype>(ubGRaw, ubGfp, static_cast<uint32_t>(nValid));
         }
         float scale = (useExp2 != 0) ? kGdnRcpLn2 : 1.0f;
         CumsumScaleVF(ubGfp, scale, static_cast<uint32_t>(nValid));
-        SetFlag<HardEvent::V_MTE3>(0);
-        WaitFlag<HardEvent::V_MTE3>(0);
+        SetFlag<HardEvent::V_MTE3>(kHeUb0);
+        WaitFlag<HardEvent::V_MTE3>(kHeUb0);
         CopyUbToGmElems(gmGOut[offG], ubGfp, static_cast<uint32_t>(nValid));
 
         if (useBetaSigmoid != 0) {
@@ -448,10 +402,22 @@ public:
         }
 
         if (hasBetaOut != 0) {
-            SetFlag<HardEvent::V_MTE3>(0);
-            WaitFlag<HardEvent::V_MTE3>(0);
+            SetFlag<HardEvent::V_MTE3>(kHeUb0);
+            WaitFlag<HardEvent::V_MTE3>(kHeUb0);
             CopyUbToGmElems(gmBetaEff[offG], ubBfp, static_cast<uint32_t>(nValid));
         }
+    }
+
+    __aicore__ inline void Stage1_OneTask(const ChunkRange &chunk, int64_t hv, int64_t taskIdx)
+    {
+        const int32_t db = PingPongSlot(taskIdx);
+        if (db == 0) {
+            SetFlag<HardEvent::MTE3_MTE2>(kHeUb0);
+            WaitFlag<HardEvent::MTE3_MTE2>(kHeUb0);
+        }
+        Stage1_PadTailIfNeeded(chunk, hv, taskIdx);
+        Stage1_UploadK(chunk, hv, taskIdx);
+        Stage1_GateAndBeta(chunk, hv, taskIdx);
     }
 
     // Stage2 helper: dualDstCtl splits M or N across the two AIVs; it does
@@ -504,38 +470,35 @@ public:
     {
         const int32_t bt = static_cast<int32_t>(chunkSize);
         const int32_t kk = static_cast<int32_t>(K);
-        const uint8_t subBlk = static_cast<uint8_t>(taskIdx & 1);
+        const uint8_t bank = static_cast<uint8_t>(taskIdx & 1);
         const int32_t db = PingPongSlot(taskIdx);
         const bool shareBothAiv = (HRatio > 2) || (HRatio == 2 && nThis < kTasksPerRound);
-        if ((taskIdx & 1) == 0) {
-            WaitFlag<HardEvent::M_MTE1>(0);
-            MatmulToL0C<InDtype>(l1KHat[taskIdx], l1KHat[taskIdx], l0A, l0B, l0C, bt, bt, kk, true, false, false, 0);
-            SetFlag<HardEvent::M_FIX>(0);
-            SetFlag<HardEvent::M_MTE1>(0);
-            WaitFlag<HardEvent::M_FIX>(0);
-            DumpKktToUb(l0C, db, subBlk, 0, shareBothAiv);
-            SetFlag<HardEvent::FIX_M>(0);
-        } else {
-            WaitFlag<HardEvent::M_MTE1>(1);
-            MatmulToL0C<InDtype>(l1KHat[taskIdx], l1KHat[taskIdx], l0A1, l0B1, l0C1, bt, bt, kk, true, false, false, 1);
-            SetFlag<HardEvent::M_FIX>(1);
-            SetFlag<HardEvent::M_MTE1>(1);
-            WaitFlag<HardEvent::M_FIX>(1);
-            DumpKktToUb(l0C1, db, subBlk, 1, shareBothAiv);
-            SetFlag<HardEvent::FIX_M>(1);
-        }
+        WaitFlag<HardEvent::M_MTE1>(bank);
+        MatmulToL0C<InDtype>(l1KHat[taskIdx], l1KHat[taskIdx], l0A[bank], l0B[bank], l0CTask[bank], bt, bt, kk, true,
+                             false, false, bank);
+        SetFlag<HardEvent::M_FIX>(bank);
+        SetFlag<HardEvent::M_MTE1>(bank);
+        WaitFlag<HardEvent::M_FIX>(bank);
+        DumpKktToUb(l0CTask[bank], db, bank, bank, shareBothAiv);
+        SetFlag<HardEvent::FIX_M>(bank);
         if (HRatio <= 1) {
             NotifyAivKktDone(taskIdx);
         }
     }
 
     // ========================= Stage 3 =========================
-    // Gate (no kkt) is emitted before WaitCubeKktDone so Exp overlaps Cube
-    // kkt. After kkt: L = kkt ⊙ G, pack, -L UB→L1 on MTE3, VCS on V, leaves.
+    // Gate (no kkt) plus I_vcs → ubResVcs, both before WaitCubeKktDone so Exp
+    // and the MTE3 copy overlap Cube kkt. I dst is ubResVcs, not ubLFull.
+    // After kkt: L = kkt ⊙ G, pack leaves (must see -L), -L UB→L1, VCS on V.
     __aicore__ inline void Stage3_PrepareGate(int64_t taskIdx)
     {
         const int32_t db = PingPongSlot(taskIdx);
-        GateLowerLVF(ubGPrime[db], ubBetaEff[db], ubLFull[db]);
+        if (useExp2 != 0) {
+            GateLowerLVF<true>(ubGPrime[db], ubBetaEff[db], ubLFull[db]);
+        } else {
+            GateLowerLVF<false>(ubGPrime[db], ubBetaEff[db], ubLFull[db]);
+        }
+        DataCopy(ubResVcs[db], ubIVcs, static_cast<int32_t>(kVcsPackedElems32));
     }
 
     __aicore__ inline void Stage3_AivOne(int64_t hv, int64_t taskIdx)
@@ -544,130 +507,119 @@ public:
         const int32_t db = PingPongSlot(taskIdx);
         const int32_t kktDb = PingPongSlot(OwnerTaskIdx(hv, taskIdx));
         MulKktGateVF(ubKkt[kktDb], ubLFull[db]);
-        SetFlag<HardEvent::V_MTE3>(0);
-        WaitFlag<HardEvent::V_MTE3>(0);
+        SetFlag<HardEvent::V_MTE3>(kHeUb0);
+        WaitFlag<HardEvent::V_MTE3>(kHeUb0);
         PackDiagLeavesFromUb(ubLPacked[db], ubLFull[db]);
-        DataCopy(ubResVcs[db], ubIVcs, static_cast<int32_t>(kVcsPackedElems32));
-        SetFlag<HardEvent::MTE3_V>(4);
-        WaitFlag<HardEvent::MTE3_V>(4);
+        SetFlag<HardEvent::MTE3_V>(kHeS3Pack);
+        WaitFlag<HardEvent::MTE3_V>(kHeS3Pack);
         UbNd64ToL1Nz8(l1NegL[taskIdx], ubLFull[db]);
         MulReduceScatterVF32(ubResVcs[db], ubLPacked[db], ubResVcs[db], ubVcsIdx);
-        SetFlag<HardEvent::V_MTE3>(0);
-        WaitFlag<HardEvent::V_MTE3>(0);
+        SetFlag<HardEvent::V_MTE3>(kHeUb0);
+        WaitFlag<HardEvent::V_MTE3>(kHeUb0);
         UploadDiagLeavesToL1(l1LeafRight[taskIdx], l1LeafLeft[taskIdx], ubResVcs[db]);
         NotifyAicStage3Done(taskIdx);
     }
 
     // ========================= Stage 4 =========================
-    // Y = I + LeafLeft @ (-L). Two MMADs (init then accumulate), Fixpipe
-    // NZ C0=8 into workspace, MTE2 to L1 Y. Set FIX_M between MMADs so the
-    // inner Matmul Wait FIX_M can proceed.
-    __aicore__ inline void Stage4_AicOne(const ChunkRange &chunk, int64_t hv, int64_t taskIdx)
+    // Y = I + LeafLeft @ (-L). Prefill loads resident I once and MMADs I@I
+    // into each task's L0C slot before Wait Stage3 (hidden under Vector).
+    // Event bank=t&1; Wait M_FIX after each I@I so Acc Wait FIX_M(bank)
+    // is that slot's Cube-idle credit, not ProcessAic's init FIX_M(1).
+    // Acc uses P L0 banks (ping keeps I). Dump(t-1) overlaps Acc(t);
+    // each task Fixpipes into its own gmWsY slot.
+    __aicore__ inline void Stage4_PrefillI(int64_t nThis)
+    {
+        const int32_t bt = static_cast<int32_t>(chunkSize);
+        if (nThis <= 0) {
+            return;
+        }
+        WaitFlag<HardEvent::M_MTE1>(0);
+        LoadL1NzToL0AB<float>(l1I, l1I, l0Af[0], l0Bf[0], bt, bt, bt, true, false, 0);
+        for (int64_t t = 0; t < nThis; ++t) {
+            const uint8_t bank = static_cast<uint8_t>(t & 1);
+            MmadL0ABToL0C<float>(l0Af[0], l0Bf[0], l0CTask[t], bt, bt, bt, true, bank);
+            SetFlag<HardEvent::M_FIX>(bank);
+            WaitFlag<HardEvent::M_FIX>(bank);
+            SetFlag<HardEvent::FIX_M>(bank);
+        }
+        SetFlag<HardEvent::M_MTE1>(0);
+    }
+
+    __aicore__ inline void Stage4_AccIssue(int64_t taskIdx)
     {
         const int32_t bt = static_cast<int32_t>(chunkSize);
         const uint8_t bank = static_cast<uint8_t>(taskIdx & 1);
-        (void)chunk;
-        (void)hv;
-        if (bank == 0) {
-            WaitFlag<HardEvent::M_MTE1>(0);
-            MatmulToL0C<float>(l1I, l1I, l0Af, l0Bf, l0C, bt, bt, bt, true, true, false, 0);
-            SetFlag<HardEvent::FIX_M>(0);
-            MatmulToL0C<float>(l1LeafLeft[taskIdx], l1NegL[taskIdx], l0AfP, l0BfP, l0C, bt, bt, bt, false, true, true, 0);
-            SetFlag<HardEvent::M_FIX>(0);
-            SetFlag<HardEvent::M_MTE1>(0);
-            WaitFlag<HardEvent::M_FIX>(0);
-            FixpipeL0cToGmNzCs(gmWsY, l0C, kChunk64);
-            SetFlag<HardEvent::FIX_M>(0);
-            SetFlag<HardEvent::FIX_MTE2>(0);
-            WaitFlag<HardEvent::FIX_MTE2>(0);
-            CopyGmNzToL1Fp32(l1Y[taskIdx], gmWsY, kChunk64);
-            NotifyAivStage4Done(taskIdx);
-        } else {
-            WaitFlag<HardEvent::M_MTE1>(1);
-            MatmulToL0C<float>(l1I, l1I, l0Af1, l0Bf1, l0C1, bt, bt, bt, true, true, false, 1);
-            SetFlag<HardEvent::FIX_M>(1);
-            MatmulToL0C<float>(l1LeafLeft[taskIdx], l1NegL[taskIdx], l0AfP1, l0BfP1, l0C1, bt, bt, bt, false, true, true,
-                               1);
-            SetFlag<HardEvent::M_FIX>(1);
-            SetFlag<HardEvent::M_MTE1>(1);
-            WaitFlag<HardEvent::M_FIX>(1);
-            FixpipeL0cToGmNzCs(gmWsY, l0C1, kChunk64);
-            SetFlag<HardEvent::FIX_M>(1);
-            SetFlag<HardEvent::FIX_MTE2>(1);
-            WaitFlag<HardEvent::FIX_MTE2>(1);
-            CopyGmNzToL1Fp32(l1Y[taskIdx], gmWsY, kChunk64);
-            NotifyAivStage4Done(taskIdx);
-        }
+        WaitFlag<HardEvent::M_MTE1>(bank);
+        MatmulToL0C<float>(l1LeafLeft[taskIdx], l1NegL[taskIdx], l0AfP[bank], l0BfP[bank], l0CTask[taskIdx], bt, bt, bt,
+                           false, true, true, bank);
+        SetFlag<HardEvent::M_FIX>(bank);
+        SetFlag<HardEvent::M_MTE1>(bank);
+    }
+
+    __aicore__ inline void Stage4_Dump(int64_t taskIdx)
+    {
+        const uint8_t bank = static_cast<uint8_t>(taskIdx & 1);
+        WaitFlag<HardEvent::M_FIX>(bank);
+        FixpipeL0cToGmNzCs(gmWsY[WsYOffset(taskIdx)], l0CTask[taskIdx], kChunk64);
+        SetFlag<HardEvent::FIX_M>(bank);
+        SetFlag<HardEvent::FIX_MTE2>(bank);
+        WaitFlag<HardEvent::FIX_MTE2>(bank);
+        CopyGmNzToL1Fp32(l1Y[taskIdx], gmWsY[WsYOffset(taskIdx)], kChunk64);
+        NotifyAivStage4Done(taskIdx);
+        SetFlag<HardEvent::MTE2_MTE1>(taskIdx);
     }
 
     // ========================= Stage 5 =========================
-    // A = LeafLeft + Y @ LeafRight. With A output, Fixpipe ND to gmA then
-    // Nd2Nz into L1 A. Without A output, Fixpipe NZ directly to resident L1 A.
-    __aicore__ inline void Stage5_AicOne(const ChunkRange &chunk, int64_t hv, int64_t taskIdx)
+    // A = LeafLeft + Y @ LeafRight. tmp = I @ LeafLeft (init) then
+    // Y @ LeafRight accumulate. Intra-task second Load uses L0 [32,48)/[48,64)
+    // so MTE1 overlaps the first Cube M. Dump stays per-task after both MMADs.
+    __aicore__ inline void Stage5_Compute(int64_t taskIdx)
     {
         const int32_t bt = static_cast<int32_t>(chunkSize);
+        const uint8_t bank = static_cast<uint8_t>(taskIdx & 1);
+        WaitFlag<HardEvent::M_MTE1>(bank);
+        MatmulToL0C<float>(l1I, l1LeafLeft[taskIdx], l0Af[bank], l0Bf[bank], l0CTask[taskIdx], bt, bt, bt, true, false,
+                           false, bank);
+        SetFlag<HardEvent::FIX_M>(bank);
+        MatmulToL0C<float>(l1Y[taskIdx], l1LeafRight[taskIdx], l0AfP[bank], l0BfP[bank], l0CTask[taskIdx], bt, bt, bt,
+                           false, false, false, bank);
+        SetFlag<HardEvent::M_FIX>(bank);
+        SetFlag<HardEvent::M_MTE1>(bank);
+    }
+
+    __aicore__ inline void Stage5_Dump(const ChunkRange &chunk, int64_t hv, int64_t taskIdx)
+    {
         const uint8_t bank = static_cast<uint8_t>(taskIdx & 1);
         const uint32_t n = static_cast<uint32_t>(chunkSize);
         const uint32_t m = static_cast<uint32_t>(chunk.M);
         const int64_t offA = OffsetBHTD(chunk.batch, hv, chunk.tokenStart, HV, T, chunkSize);
-        FixpipeParamsArch3510<CO2Layout::NZ> aFixpipeParams;
-        aFixpipeParams.nSize = n;
-        aFixpipeParams.mSize = n;
-        aFixpipeParams.srcStride = n;
-        aFixpipeParams.dstStride = n * 16;
-        aFixpipeParams.quantPre = QuantMode_t::F322BF16;
-        aFixpipeParams.unitFlag = 0;
-        aFixpipeParams.isChannelSplit = false;
-        if (bank == 0) {
-            WaitFlag<HardEvent::M_MTE1>(0);
-            MatmulToL0C<float>(l1I, l1LeafLeft[taskIdx], l0Af, l0Bf, l0C, bt, bt, bt, true, false, false, 0);
-            SetFlag<HardEvent::FIX_M>(0);
-            MatmulToL0C<float>(l1Y[taskIdx], l1LeafRight[taskIdx], l0AfP, l0BfP, l0C, bt, bt, bt, false, false, false, 0);
-            SetFlag<HardEvent::M_FIX>(0);
-            SetFlag<HardEvent::M_MTE1>(0);
-            WaitFlag<HardEvent::M_FIX>(0);
-            if (outputA != 0) {
-                FixpipeL0cToGmNd<InDtype>(gmA[offA], l0C, m, n, n);
-                SetFlag<HardEvent::FIX_MTE2>(0);
-                WaitFlag<HardEvent::FIX_MTE2>(0);
-                if (m == n) {
-                    CopyGmNdToL1Nz<InDtype>(l1A[taskIdx], gmA[offA], n, n);
-                } else {
-                    FixpipeL0cToGmNd<InDtype>(gmWsA[WsAOffset(taskIdx)], l0C, n, n, n);
-                    SetFlag<HardEvent::FIX_MTE2>(0);
-                    WaitFlag<HardEvent::FIX_MTE2>(0);
-                    CopyGmNdToL1Nz<InDtype>(l1A[taskIdx], gmWsA[WsAOffset(taskIdx)], n, n);
-                }
+        WaitFlag<HardEvent::M_FIX>(bank);
+        if (outputA != 0) {
+            FixpipeL0cToGmNd<InDtype>(gmA[offA], l0CTask[taskIdx], m, n, n);
+            SetFlag<HardEvent::FIX_MTE2>(bank);
+            WaitFlag<HardEvent::FIX_MTE2>(bank);
+            if (m == n) {
+                CopyGmNdToL1Nz<InDtype>(l1A[taskIdx], gmA[offA], n, n);
             } else {
-                Fixpipe<InDtype, float, CFG_NZ_L1>(l1A[taskIdx], l0C, aFixpipeParams);
+                FixpipeL0cToGmNd<InDtype>(gmWsA[WsAOffset(taskIdx)], l0CTask[taskIdx], n, n, n);
+                SetFlag<HardEvent::FIX_MTE2>(bank);
+                WaitFlag<HardEvent::FIX_MTE2>(bank);
+                CopyGmNdToL1Nz<InDtype>(l1A[taskIdx], gmWsA[WsAOffset(taskIdx)], n, n);
             }
-            SetFlag<HardEvent::FIX_M>(0);
+            SetFlag<HardEvent::MTE2_MTE1>(taskIdx);
         } else {
-            WaitFlag<HardEvent::M_MTE1>(1);
-            MatmulToL0C<float>(l1I, l1LeafLeft[taskIdx], l0Af1, l0Bf1, l0C1, bt, bt, bt, true, false, false, 1);
-            SetFlag<HardEvent::FIX_M>(1);
-            MatmulToL0C<float>(l1Y[taskIdx], l1LeafRight[taskIdx], l0AfP1, l0BfP1, l0C1, bt, bt, bt, false, false, false,
-                               1);
-            SetFlag<HardEvent::M_FIX>(1);
-            SetFlag<HardEvent::M_MTE1>(1);
-            WaitFlag<HardEvent::M_FIX>(1);
-            if (outputA != 0) {
-                FixpipeL0cToGmNd<InDtype>(gmA[offA], l0C1, m, n, n);
-                SetFlag<HardEvent::FIX_MTE2>(1);
-                WaitFlag<HardEvent::FIX_MTE2>(1);
-                if (m == n) {
-                    CopyGmNdToL1Nz<InDtype>(l1A[taskIdx], gmA[offA], n, n);
-                } else {
-                    FixpipeL0cToGmNd<InDtype>(gmWsA[WsAOffset(taskIdx)], l0C1, n, n, n);
-                    SetFlag<HardEvent::FIX_MTE2>(1);
-                    WaitFlag<HardEvent::FIX_MTE2>(1);
-                    CopyGmNdToL1Nz<InDtype>(l1A[taskIdx], gmWsA[WsAOffset(taskIdx)], n, n);
-                }
-            } else {
-                Fixpipe<InDtype, float, CFG_NZ_L1>(l1A[taskIdx], l0C1, aFixpipeParams);
-            }
-            SetFlag<HardEvent::FIX_M>(1);
+            FixpipeParamsArch3510<CO2Layout::NZ> aFixpipeParams;
+            aFixpipeParams.nSize = n;
+            aFixpipeParams.mSize = n;
+            aFixpipeParams.srcStride = n;
+            aFixpipeParams.dstStride = n * 16;
+            aFixpipeParams.quantPre = QuantMode_t::F322BF16;
+            aFixpipeParams.unitFlag = 0;
+            aFixpipeParams.isChannelSplit = false;
+            Fixpipe<InDtype, float, CFG_NZ_L1>(l1A[taskIdx], l0CTask[taskIdx], aFixpipeParams);
+            SetFlag<HardEvent::FIX_MTE1>(taskIdx);
         }
+        SetFlag<HardEvent::FIX_M>(bank);
     }
 
     // ========================= Stage 6 =========================
@@ -689,27 +641,31 @@ public:
         LocalTensor<float> beta = ubBetaEff[db];
         LocalTensor<float> g = ubGPrime[db];
         if (nValid < nPad) {
-            SetFlag<HardEvent::MTE3_V>(0);
-            WaitFlag<HardEvent::MTE3_V>(0);
+            SetFlag<HardEvent::MTE3_V>(kHeUb0);
+            WaitFlag<HardEvent::MTE3_V>(kHeUb0);
             Duplicate(ubVnd, static_cast<InDtype>(0), nPad * static_cast<int32_t>(V));
             Duplicate(ubKnd, static_cast<InDtype>(0), nPad * static_cast<int32_t>(K));
-            SetFlag<HardEvent::V_MTE2>(0);
-            WaitFlag<HardEvent::V_MTE2>(0);
+            SetFlag<HardEvent::V_MTE2>(kHeUb0);
+            WaitFlag<HardEvent::V_MTE2>(kHeUb0);
         }
         DataCopy(ubVnd, gmV[offV], nV);
-        SetFlag<HardEvent::MTE2_V>(0);
-        WaitFlag<HardEvent::MTE2_V>(0);
+        SetFlag<HardEvent::MTE2_V>(kHeUb0);
+        WaitFlag<HardEvent::MTE2_V>(kHeUb0);
         ScaleRowsVF<InDtype>(ubVnd, ubVnd, beta, static_cast<uint32_t>(chunkSize), static_cast<uint32_t>(V));
-        SetFlag<HardEvent::V_MTE3>(0);
-        WaitFlag<HardEvent::V_MTE3>(0);
+        SetFlag<HardEvent::V_MTE3>(kHeUb0);
+        WaitFlag<HardEvent::V_MTE3>(kHeUb0);
         UploadBf16NdToL1(l1Vb[taskIdx], ubVnd, static_cast<uint32_t>(V));
 
         DataCopy(ubKnd, gmKHat[offK], nK);
-        SetFlag<HardEvent::MTE2_V>(1);
-        WaitFlag<HardEvent::MTE2_V>(1);
-        ScaleRowsBetaExp2gVF<InDtype>(ubKnd, ubKnd, beta, g, static_cast<uint32_t>(chunkSize));
-        SetFlag<HardEvent::V_MTE3>(1);
-        WaitFlag<HardEvent::V_MTE3>(1);
+        SetFlag<HardEvent::MTE2_V>(kHeUb1);
+        WaitFlag<HardEvent::MTE2_V>(kHeUb1);
+        if (useExp2 != 0) {
+            ScaleRowsBetaExp2gVF<InDtype, true>(ubKnd, ubKnd, beta, g, static_cast<uint32_t>(chunkSize));
+        } else {
+            ScaleRowsBetaExp2gVF<InDtype, false>(ubKnd, ubKnd, beta, g, static_cast<uint32_t>(chunkSize));
+        }
+        SetFlag<HardEvent::V_MTE3>(kHeUb1);
+        WaitFlag<HardEvent::V_MTE3>(kHeUb1);
         UploadBf16NdToL1(l1Kbg[taskIdx], ubKnd, static_cast<uint32_t>(K));
     }
 
@@ -736,17 +692,18 @@ public:
         wuFixpipeParams.params.srcNdStride = 0;
         wuFixpipeParams.params.dstNdStride = 0;
         WaitFlag<HardEvent::M_MTE1>(0);
-        WuMatmulToL0C<InDtype>(l1A[taskIdx], l1Kbg[taskIdx], l0AS7, l0BS7, l0CS7, bt, static_cast<int32_t>(nK), bt, 0);
+        WuMatmulToL0C<InDtype>(l1A[taskIdx], l1Kbg[taskIdx], l0AS7[0], l0BS7[0], l0CS7[0], bt, static_cast<int32_t>(nK),
+                               bt, 0);
         SetFlag<HardEvent::M_FIX>(0);
         WaitFlag<HardEvent::M_FIX>(0);
-        Fixpipe<InDtype, float, CFG_ROW_MAJOR_UB>(ubS7W[db], l0CS7, wuFixpipeParams);
+        Fixpipe<InDtype, float, CFG_ROW_MAJOR_UB>(ubS7W[db], l0CS7[0], wuFixpipeParams);
         SetFlag<HardEvent::FIX_M>(0);
         SetFlag<HardEvent::M_MTE1>(0);
 
         wuFixpipeParams.nSize = kGdnHeadDimK;
         wuFixpipeParams.dstStride = nV;
         WaitFlag<HardEvent::M_MTE1>(1);
-        WuMatmulToL0C<InDtype>(l1A[taskIdx], l1Vb[taskIdx], l0AS71, l0BS71, l0CS71, bt,
+        WuMatmulToL0C<InDtype>(l1A[taskIdx], l1Vb[taskIdx], l0AS7[1], l0BS7[1], l0CS7[1], bt,
                                static_cast<int32_t>(kGdnHeadDimK), bt, 1);
         SetFlag<HardEvent::M_FIX>(1);
         SetFlag<HardEvent::M_MTE1>(1);
@@ -756,24 +713,31 @@ public:
         // cannot hold two 32 KiB tiles, so both 128-col halves go to GM.
         if (nV > kGdnHeadDimK) {
             const int64_t offU = OffsetBHTD(chunk.batch, hv, chunk.tokenStart, HV, T, V);
-            FixpipeL0cToGmNd<InDtype>(gmU[offU], l0CS71, rows, kGdnHeadDimK, nV);
+            FixpipeL0cToGmNd<InDtype>(gmU[offU], l0CS7[1], rows, kGdnHeadDimK, nV);
             SetFlag<HardEvent::FIX_MTE2>(1);
             WaitFlag<HardEvent::FIX_MTE2>(1);
             SetFlag<HardEvent::FIX_M>(1);
             WaitFlag<HardEvent::M_MTE1>(1);
-            WuMatmulToL0C<InDtype>(l1A[taskIdx], l1Vb1[taskIdx], l0AS71, l0BS71, l0CS71, bt,
+            WuMatmulToL0C<InDtype>(l1A[taskIdx], l1Vb1[taskIdx], l0AS7[1], l0BS7[1], l0CS7[1], bt,
                                    static_cast<int32_t>(kGdnHeadDimK), bt, 1);
             SetFlag<HardEvent::M_FIX>(1);
             SetFlag<HardEvent::M_MTE1>(1);
             WaitFlag<HardEvent::M_FIX>(1);
-            FixpipeL0cToGmNd<InDtype>(gmU[offU + kGdnHeadDimK], l0CS71, rows, kGdnHeadDimK, nV);
+            FixpipeL0cToGmNd<InDtype>(gmU[offU + kGdnHeadDimK], l0CS7[1], rows, kGdnHeadDimK, nV);
             SetFlag<HardEvent::FIX_MTE2>(1);
             WaitFlag<HardEvent::FIX_MTE2>(1);
             SetFlag<HardEvent::FIX_M>(1);
         } else {
-            Fixpipe<InDtype, float, CFG_ROW_MAJOR_UB>(ubS7U[db], l0CS71, wuFixpipeParams);
+            Fixpipe<InDtype, float, CFG_ROW_MAJOR_UB>(ubS7U[db], l0CS7[1], wuFixpipeParams);
             SetFlag<HardEvent::FIX_M>(1);
         }
+    }
+
+    __aicore__ inline void DecodeTask(int64_t base, int64_t nThis, int64_t taskIdx, ChunkRange &chunk, int64_t &hv)
+    {
+        const int64_t workId = PackWorkId(base, nThis, taskIdx);
+        hv = workId % HV;
+        chunk = GetChunkRange(*this, gmCu, gmIdx, workId / HV);
     }
 
     __aicore__ inline bool PackHasTail(int64_t base, int64_t nThis)
@@ -786,6 +750,26 @@ public:
         return false;
     }
 
+    __aicore__ inline bool PackHasTail(const PackWalk &w)
+    {
+        return PackHasTail(w.base, w.nThis);
+    }
+
+    __aicore__ inline void DrainPackWuToGm(int64_t base, int64_t nThis)
+    {
+        for (int64_t t = subBlock; t < nThis; t += 2) {
+            ChunkRange chunk;
+            int64_t hv;
+            DecodeTask(base, nThis, t, chunk, hv);
+            CopyUbToGmElems(gmW[OffsetBHTD(chunk.batch, hv, chunk.tokenStart, HV, T, K)],
+                            ubS7W[PingPongSlot(t)], static_cast<uint32_t>(chunk.M * K));
+            if (V <= kGdnHeadDimK) {
+                CopyUbToGmElems(gmU[OffsetBHTD(chunk.batch, hv, chunk.tokenStart, HV, T, V)],
+                                ubS7U[PingPongSlot(t)], static_cast<uint32_t>(chunk.M * V));
+            }
+        }
+    }
+
     __aicore__ inline void ProcessAiv()
     {
         Stage0_GenerateResidentAux();
@@ -793,65 +777,49 @@ public:
         const int64_t packSize = TasksPerPack();
         const int64_t nPacks = CeilDiv(totalChunks, packSize);
         for (int64_t pack = coreIdx; pack < nPacks; pack += numCore) {
-            const int64_t base = pack * packSize;
-            const int64_t nThis = (totalChunks - base) < packSize ? (totalChunks - base) : packSize;
-            const int64_t prevBase = pack == coreIdx ? 0 : (pack - numCore) * packSize;
-            const int64_t prevN = pack == coreIdx ? 0 :
-                ((totalChunks - prevBase) < packSize ? (totalChunks - prevBase) : packSize);
+            const PackWalk cur = MakePackWalk(pack, packSize);
+            PackWalk prev{};
             if (pack != coreIdx) {
-                if (PackHasTail(base, nThis) || PackHasTail(prevBase, prevN)) {
+                prev = MakePackWalk(pack - numCore, packSize);
+            }
+            if (pack != coreIdx) {
+                if (PackHasTail(cur) || PackHasTail(prev)) {
                     WaitAicStage7Done();
                 }
             }
-            for (int64_t t = subBlock; t < nThis; t += 2) {
-                const int64_t workId = PackWorkId(base, nThis, t);
-                Stage1_OneTask(GetChunkRange(*this, gmCu, gmIdx, workId / HV), workId % HV, t);
+            for (int64_t t = subBlock; t < cur.nThis; t += 2) {
+                ChunkRange chunk;
+                int64_t hv;
+                DecodeTask(cur.base, cur.nThis, t, chunk, hv);
+                Stage1_OneTask(chunk, hv, t);
             }
-            SetFlag<HardEvent::MTE3_V>(0);
-            WaitFlag<HardEvent::MTE3_V>(0);
-            for (int64_t t = subBlock; t < nThis; t += 2) {
+            SetFlag<HardEvent::MTE3_V>(kHeUb0);
+            WaitFlag<HardEvent::MTE3_V>(kHeUb0);
+            for (int64_t t = subBlock; t < cur.nThis; t += 2) {
                 Stage3_PrepareGate(t);
             }
-            for (int64_t t = subBlock; t < nThis; t += 2) {
-                const int64_t workId = PackWorkId(base, nThis, t);
-                Stage3_AivOne(workId % HV, t);
+            for (int64_t t = subBlock; t < cur.nThis; t += 2) {
+                Stage3_AivOne(PackWorkId(cur.base, cur.nThis, t) % HV, t);
             }
             if (pack != coreIdx) {
-                for (int64_t t = subBlock; t < prevN; t += 2) {
-                    const int64_t workId = PackWorkId(prevBase, prevN, t);
-                    const ChunkRange chunk = GetChunkRange(*this, gmCu, gmIdx, workId / HV);
-                    CopyUbToGmElems(gmW[OffsetBHTD(chunk.batch, workId % HV, chunk.tokenStart, HV, T, K)],
-                                    ubS7W[PingPongSlot(t)], static_cast<uint32_t>(chunk.M * K));
-                    if (V <= kGdnHeadDimK) {
-                        CopyUbToGmElems(gmU[OffsetBHTD(chunk.batch, workId % HV, chunk.tokenStart, HV, T, V)],
-                                        ubS7U[PingPongSlot(t)], static_cast<uint32_t>(chunk.M * V));
-                    }
-                }
+                DrainPackWuToGm(prev.base, prev.nThis);
             }
-            SetFlag<HardEvent::MTE3_MTE2>(0);
-            WaitFlag<HardEvent::MTE3_MTE2>(0);
+            SetFlag<HardEvent::MTE3_MTE2>(kHeUb0);
+            WaitFlag<HardEvent::MTE3_MTE2>(kHeUb0);
 
-            for (int64_t t = subBlock; t < nThis; t += 2) {
-                const int64_t workId = PackWorkId(base, nThis, t);
-                Stage6_AivOne(GetChunkRange(*this, gmCu, gmIdx, workId / HV), workId % HV, t);
+            for (int64_t t = subBlock; t < cur.nThis; t += 2) {
+                ChunkRange chunk;
+                int64_t hv;
+                DecodeTask(cur.base, cur.nThis, t, chunk, hv);
+                Stage6_AivOne(chunk, hv, t);
                 NotifyAicStage6Done(t);
             }
         }
         if (coreIdx < nPacks) {
             const int64_t pack = coreIdx + (nPacks - 1 - coreIdx) / numCore * numCore;
-            const int64_t base = pack * packSize;
-            const int64_t nThis = (totalChunks - base) < packSize ? (totalChunks - base) : packSize;
+            const PackWalk last = MakePackWalk(pack, packSize);
             WaitAicStage7Done();
-            for (int64_t t = subBlock; t < nThis; t += 2) {
-                const int64_t workId = PackWorkId(base, nThis, t);
-                const ChunkRange chunk = GetChunkRange(*this, gmCu, gmIdx, workId / HV);
-                CopyUbToGmElems(gmW[OffsetBHTD(chunk.batch, workId % HV, chunk.tokenStart, HV, T, K)],
-                                ubS7W[PingPongSlot(t)], static_cast<uint32_t>(chunk.M * K));
-                if (V <= kGdnHeadDimK) {
-                    CopyUbToGmElems(gmU[OffsetBHTD(chunk.batch, workId % HV, chunk.tokenStart, HV, T, V)],
-                                    ubS7U[PingPongSlot(t)], static_cast<uint32_t>(chunk.M * V));
-                }
-            }
+            DrainPackWuToGm(last.base, last.nThis);
         }
     }
 
@@ -868,51 +836,55 @@ public:
         }
         const int64_t nPacks = CeilDiv(totalChunks, packSize);
         for (int64_t pack = coreIdx; pack < nPacks; pack += numCore) {
-            const int64_t base = pack * packSize;
-            const int64_t nThis = (totalChunks - base) < packSize ? (totalChunks - base) : packSize;
+            const PackWalk cur = MakePackWalk(pack, packSize);
             WaitFlag<HardEvent::FIX_MTE1>(0);
-            for (int64_t t = 0; t < nThis; ++t) {
-                const int64_t workId = PackWorkId(base, nThis, t);
-                if (!OwnsHk(workId % HV)) {
+            for (int64_t t = 0; t < cur.nThis; ++t) {
+                if (!OwnsHk(PackWorkId(cur.base, cur.nThis, t) % HV)) {
                     continue;
                 }
                 WaitAivStage1Done(t);
-                Stage2_AicOne(t, nThis);
+                Stage2_AicOne(t, cur.nThis);
                 if (HRatio > 1) {
-                    NotifyKktSiblings(base, nThis, t);
+                    NotifyKktSiblings(cur.base, cur.nThis, t);
                 }
             }
-            for (int64_t t = 0; t < nThis; ++t) {
-                WaitAivStage3Done(t);
-                const int64_t workId = PackWorkId(base, nThis, t);
-                Stage4_AicOne(GetChunkRange(*this, gmCu, gmIdx, workId / HV), workId % HV, t);
-                SetFlag<HardEvent::MTE2_MTE1>(t);
+            Stage4_PrefillI(cur.nThis);
+            if (cur.nThis > 0) {
+                WaitAivStage3Done(0);
+                Stage4_AccIssue(0);
+                for (int64_t t = 1; t < cur.nThis; ++t) {
+                    WaitAivStage3Done(t);
+                    Stage4_AccIssue(t);
+                    Stage4_Dump(t - 1);
+                }
+                Stage4_Dump(cur.nThis - 1);
             }
-            for (int64_t t = 0; t < nThis; ++t) {
-                const int64_t workId = PackWorkId(base, nThis, t);
-                WaitFlag<HardEvent::MTE2_MTE1>(t);
-                Stage5_AicOne(GetChunkRange(*this, gmCu, gmIdx, workId / HV), workId % HV, t);
-                if (outputA != 0) {
-                    SetFlag<HardEvent::MTE2_MTE1>(t);
-                } else {
-                    SetFlag<HardEvent::FIX_MTE1>(t);
+            if (cur.nThis > 0) {
+                for (int64_t t = 0; t < cur.nThis; ++t) {
+                    WaitFlag<HardEvent::MTE2_MTE1>(t);
+                    Stage5_Compute(t);
+                    ChunkRange chunk;
+                    int64_t hv;
+                    DecodeTask(cur.base, cur.nThis, t, chunk, hv);
+                    Stage5_Dump(chunk, hv, t);
                 }
             }
-            for (int64_t t = 0; t < nThis; ++t) {
-                const int64_t workId = PackWorkId(base, nThis, t);
+            for (int64_t t = 0; t < cur.nThis; ++t) {
                 WaitAivStage6Done(t);
                 if (outputA != 0) {
                     WaitFlag<HardEvent::MTE2_MTE1>(t);
                 } else {
                     WaitFlag<HardEvent::FIX_MTE1>(t);
                 }
-                Stage7_AicOne(GetChunkRange(*this, gmCu, gmIdx, workId / HV), workId % HV, t);
+                ChunkRange chunk;
+                int64_t hv;
+                DecodeTask(cur.base, cur.nThis, t, chunk, hv);
+                Stage7_AicOne(chunk, hv, t);
             }
             const int64_t nextPack = pack + numCore;
             if (nextPack < nPacks) {
-                const int64_t nextBase = nextPack * packSize;
-                const int64_t nextN = (totalChunks - nextBase) < packSize ? (totalChunks - nextBase) : packSize;
-                if (PackHasTail(base, nThis) || PackHasTail(nextBase, nextN)) {
+                const PackWalk nxt = MakePackWalk(nextPack, packSize);
+                if (PackHasTail(cur) || PackHasTail(nxt)) {
                     NotifyAivStage7Done();
                 }
             } else {
@@ -981,9 +953,9 @@ private:
     LocalTensor<float> l1NegL[4], l1LeafRight[4], l1LeafLeft[4], l1Y[4];
 
     // L0
-    LocalTensor<InDtype> l0A, l0B, l0A1, l0B1, l0AS7, l0BS7, l0AS71, l0BS71;
-    LocalTensor<float> l0Af, l0Bf, l0Af1, l0Bf1, l0AfP, l0BfP, l0AfP1, l0BfP1;
-    LocalTensor<float> l0C, l0C1, l0CS7, l0CS71;
+    LocalTensor<InDtype> l0A[2], l0B[2], l0AS7[2], l0BS7[2];
+    LocalTensor<float> l0Af[2], l0Bf[2], l0AfP[2], l0BfP[2], l0CS7[2];
+    LocalTensor<float> l0CTask[4];
 
     int64_t hasBetaOut;
 };

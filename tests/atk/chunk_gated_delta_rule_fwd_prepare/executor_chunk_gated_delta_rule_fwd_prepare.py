@@ -63,18 +63,30 @@ def build_inputs(spec: dict[str, Any], device: torch.device, high_precision: boo
     g_dtype = torch.float64 if high_precision else torch.float32
     seqlens = _parse_seqlens(spec, B, T)
     cu = None if seqlens is None else seqlens_to_cu(seqlens, device=device, dtype=torch.int64)
+    q = _randn((B, HK, T, K), dtype_name, calc_dtype, device, seed + 1)
+    k = _randn((B, HK, T, K), dtype_name, calc_dtype, device, seed + 2)
+    if not bool(spec.get("use_qk_l2norm_in_kernel", True)):
+        q = torch.nn.functional.normalize(q.float(), p=2, dim=-1).to(q.dtype)
+        k = torch.nn.functional.normalize(k.float(), p=2, dim=-1).to(k.dtype)
+    use_gate = bool(spec.get("use_gate_in_kernel", False))
+    a_log = dt_bias = None
+    if use_gate:
+        a_log = _randn((HV,), "fp32", g_dtype, device, seed + 6, 0.1)
+        dt_bias = _randn((HV,), "fp32", g_dtype, device, seed + 7, 0.1)
     return {
-        "q": _randn((B, HK, T, K), dtype_name, calc_dtype, device, seed + 1),
-        "k": _randn((B, HK, T, K), dtype_name, calc_dtype, device, seed + 2),
+        "q": q,
+        "k": k,
         "v": _randn((B, HV, T, V), dtype_name, calc_dtype, device, seed + 3),
         "g": _randn((B, HV, T), "fp32", g_dtype, device, seed + 4, 0.2),
         "beta": _randn((B, HV, T), "fp32", g_dtype, device, seed + 5, 0.5),
         "chunk_size": chunk_size,
         "use_qk_l2norm_in_kernel": bool(spec.get("use_qk_l2norm_in_kernel", True)),
-        "use_gate_in_kernel": bool(spec.get("use_gate_in_kernel", False)),
+        "use_gate_in_kernel": use_gate,
         "use_beta_sigmoid_in_kernel": bool(spec.get("use_beta_sigmoid_in_kernel", True)),
         "allow_neg_eigval": bool(spec.get("allow_neg_eigval", False)),
         "use_exp2": bool(spec.get("use_exp2", True)),
+        "a_log": a_log,
+        "dt_bias": dt_bias,
         "cu_seqlens": cu,
     }
 
@@ -91,8 +103,11 @@ def _forward_ref(inputs: dict[str, Any]):
         use_gate_in_kernel=inputs["use_gate_in_kernel"],
         use_beta_sigmoid_in_kernel=inputs["use_beta_sigmoid_in_kernel"],
         allow_neg_eigval=inputs["allow_neg_eigval"],
+        a_log=inputs.get("a_log"),
+        dt_bias=inputs.get("dt_bias"),
         cu_seqlens=inputs.get("cu_seqlens"),
         layout="bnsd",
+        use_exp2=inputs.get("use_exp2", True),
     )
     return (
         ref.q,
@@ -132,7 +147,9 @@ def run_npu(spec: dict[str, Any], input_data: InputDataset):
         use_gate_in_kernel=inputs["use_gate_in_kernel"],
         use_beta_sigmoid_in_kernel=inputs["use_beta_sigmoid_in_kernel"],
         allow_neg_eigval=inputs["allow_neg_eigval"],
-        use_exp2=True,
+        use_exp2=inputs["use_exp2"],
+        a_log=inputs.get("a_log"),
+        dt_bias=inputs.get("dt_bias"),
         cu_seqlens=inputs.get("cu_seqlens"),
     )
     torch.npu.synchronize()
