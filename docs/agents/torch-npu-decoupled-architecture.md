@@ -79,7 +79,7 @@ Python 用户代码
 | 组件 | 上游输入 | 下游输出或调用 | 是否进入默认 wheel 构建 ABI |
 | --- | --- | --- | --- |
 | CANN 构建工具链 | Ascend C kernel、op_host、tiling、op_api 源码 | OPP vendor 树、`libcust_opapi.so`、kernel object 和配置 | 是 |
-| wheel 组装器 | 纯 Python wrapper、Triton Python 源码、OPP vendor 树 | `py3-none-any` wheel | 是，但不编译 CPython/PyTorch extension |
+| wheel 组装器 | 纯 Python wrapper、Triton Python 源码、OPP vendor 树 | `py3-none-<platform>` wheel | 是，但不编译 CPython/PyTorch extension |
 | torch Python tensor API | 目标环境中的 tensor 对象 | data pointer、shape、stride、dtype、device、输出分配 | 否，运行时读取 |
 | Ascend PyTorch NPU 运行时能力 | 通常由目标环境中的 torch_npu 提供 | NPU allocator、device guard、current stream 和 NPU tensor 执行能力 | 否，运行时读取 |
 | Python ctypes bridge | Python wrapper 整理后的 tensor metadata 和参数 | `aclnn*GetWorkspaceSize` / `aclnn*` C 调用 | 否，纯 Python 调用层 |
@@ -94,7 +94,7 @@ Python 用户代码
 | 运行 torchnpugen / op-plugin 生成 C++ dispatcher 代码 | 默认跳过；仅 legacy 构建显式启用 | 不绑定 torch_npu 生成代码和注册机制 |
 | `CppExtension` include/link ATen、c10、libtorch、libtorch_npu | 默认不构建该扩展 | 不绑定 torch minor、torch_npu 和 C++ ABI |
 | 生成 `custom_aclnn_extension_lib*.so` 并由 `torch.ops.load_library()` 加载 | 默认 wheel 不需要该文件 | 不绑定 CPython extension ABI |
-| wheel tag 携带 `cp311`、平台和 C++ ABI 信息 | Python 层使用 `py3-none-any` tag | 同一 host/SoC wheel 可覆盖多个 Python minor 和已验证框架组合 |
+| wheel tag 携带 `cp311`、平台和 C++ ABI 信息 | wheel tag 为 `py3-none-<platform>`：平台照实写，Python 与 ABI 留空 | 同一 host/SoC wheel 可覆盖多个 Python minor 和已验证框架组合 |
 | 每次框架升级重新编译桥接扩展 | 运行时做 capability probe 和测试 | 框架升级不再天然要求重编 OPP wheel |
 
 legacy `torch.ops.npu.*` 兼容路径仍可通过 `FLA_NPU_BUILD_LEGACY_EXTENSION=1` 构建，但它是显式 opt-in，不属于默认解耦交付。
@@ -205,7 +205,7 @@ import 不会因此导入 `torch`、`torch_npu` 或注册 legacy dispatcher。
 | wheel 内嵌 OPP | 提供自定义 op_api、op_host、tiling 和 kernel | 打包完整性检查 + SoC 构建测试 |
 | Triton Ascend | 只服务 `fla_npu.ops.triton` 的 JIT 算子 | 独立版本检查 + JIT smoke |
 
-因此，`py3-none-any` 只表示 Python 层没有 CPython extension ABI，不表示 wheel 与所有机器、SoC 或框架组合天然兼容。发布范围仍以真实测试矩阵为准。
+因此，tag 里的 `none` 只表示 Python 层没有 CPython extension ABI；平台部分（`linux_aarch64` / `linux_x86_64`）是照实写的，SoC 由文件名里的 build tag（`910b`、`950`）区分。发布范围仍以真实测试矩阵为准。
 
 ## 3. 原路径提供了什么，解耦后少了什么
 
@@ -471,11 +471,11 @@ fla_npu 默认不会主动 import、链接或注册 torch_npu dispatcher；目�
 
 ### 为什么一个 wheel 可以覆盖多个 torch 和 Python 版本？
 
-因为默认 Python 调用层没有 CPython/PyTorch C++ extension，wheel tag 是 `py3-none-any`；torch 差异由运行时 Python capability probe 和测试矩阵处理，而不是编译进 `custom_aclnn_extension_lib*.so`。
+因为默认 Python 调用层没有 CPython/PyTorch C++ extension，wheel tag 是 `py3-none-<platform>`：Python 和 ABI 位留空，所以一个 wheel 覆盖多个 Python minor；平台位照实写，所以它不会被装到别的架构上。torch 差异由运行时 Python capability probe 和测试矩阵处理，而不是编译进 `custom_aclnn_extension_lib*.so`。
 
-### `py3-none-any` 是否表示与 CPU 架构和 SoC 无关？
+### 平台由 tag 承担，SoC 由文件名承担
 
-不是。tag 只描述 Python 层兼容性。wheel 内仍包含 host ELF 和目标 SoC kernel，因此发布文件名和测试矩阵仍需区分 aarch64/x86_64 以及 910B、910_93、950。
+wheel 内仍有 host ELF（`libfla_npu_stable.so`）和目标 SoC 的 OPP，所以平台不能写成 `any`——那是默认构建早期的写法，会让 pip 把 aarch64 的包装到 x86_64 上。现在平台位来自 `sysconfig.get_platform()`，SoC 由文件名里的 build tag（`910b`、`950`）区分，测试矩阵照旧按两者分别记录。
 
 ### 不使用 dispatcher 会不会少功能？
 
@@ -522,7 +522,7 @@ fla_npu 默认不会主动 import、链接或注册 torch_npu dispatcher；目�
 | libstdc++ | GCC 常用的 C++ 标准库实现 | 提供 `GLIBCXX_*` 符号，旧扩展需要版本匹配 |
 | libtorch / libtorch_npu | libtorch 是 PyTorch 的 C++ 运行库；libtorch_npu 是昇腾 NPU 适配中的 C++ 运行库 | 旧 C++ extension 加载时需要匹配它们的版本和符号；默认 ctypes 路径不链接它们 |
 | wheel | Python 的可安装发布包，扩展名为 `.whl` | 一键编包的最终交付件 |
-| wheel compatibility tag | wheel 文件名中描述 Python、ABI 和平台兼容范围的标签 | `py3-none-any` 表示 Python 层没有 CPython extension ABI |
+| wheel compatibility tag | wheel 文件名中描述 Python、ABI 和平台兼容范围的标签 | `py3-none-<platform>`：`none` 表示 Python 层没有 CPython extension ABI，平台位照实写 |
 | `site-packages` | 当前 Python/conda 环境安装第三方包的目录 | wheel 安装后的 `fla_npu` 和内嵌 OPP 所在位置 |
 | build time / 构建期 | 编译和组装发布包的阶段 | 新架构只要求 CANN，不读取 torch C++ ABI |
 | runtime / 运行期 | 用户 import 并真正调用算子的阶段 | 此时读取 torch tensor、device、stream 和 CANN runtime 能力 |

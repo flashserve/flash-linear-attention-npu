@@ -1204,6 +1204,40 @@ PAD_SLOT_ID = -1
 NULL_BLOCK_ID = 0
 
 
+
+def _causal_conv1d_state_needs_dense_copy(conv_states) -> bool:
+    """Whether ``conv_states`` cannot be handed to aclnnCausalConv1d as-is.
+
+    ``aclnnCausalConv1d`` never receives the conv_state strides.  Its tiling
+    asks for them with ``context->GetInputStride(CONV_STATES_INDEX)`` and falls
+    back to the dense ``(stateLen * dim, dim, 1)`` strides when that returns
+    nothing -- which is always: the generated aclnn wrapper registers the
+    optional ``convStates`` input without view information (measured on NPU:
+    the op logs ``isview=0 / stride_null=1`` even for a tensor whose innermost
+    stride is not 1, which its own validation would otherwise reject).
+
+    The identical descriptor is what ``RecurrentGatedDeltaRule`` gets, and there
+    the framework does mark the input as a view (``isview=1``, four valid
+    strides), so this is an op/framework-boundary gap for this operator rather
+    than a descriptor bug.  Until it is fixed upstream, a caller that passes a
+    paged (block-strided) conv_state would silently be computed against the
+    wrong memory, and the state write-back would land in the gaps.  Run such
+    calls on a dense copy and copy the updated state back.
+    """
+
+    if conv_states is None or conv_states.numel() == 0:
+        return False
+    try:
+        contiguous = conv_states.is_contiguous()
+        offset = int(conv_states.storage_offset())
+    except AttributeError:
+        return False
+    return (not contiguous) or offset != 0
+
+
+
+
+
 def _launch_causal_conv1d(
     x,
     weight,
@@ -1227,9 +1261,21 @@ def _launch_causal_conv1d(
 ):
     """Build the single aclnnCausalConv1d ABI shared by all Python APIs."""
 
+    # See ``_causal_conv1d_state_needs_dense_copy``.  Non-dense conv states are
+    # staged through a dense copy; the updated state is copied back so the
+    # in-place contract every caller relies on is preserved.
+    conv_state_restore = None
+    if _causal_conv1d_state_needs_dense_copy(conv_states):
+        conv_state_restore = conv_states
+        conv_states = conv_states.contiguous()
+
+    # This is the ctypes reference: it validates in Python, normalises the
+    # metadata and builds the aclnn call, descriptors included.  The stable path
+    # does not come through here any more -- the family has real adapters -- so
+    # this stays the parity baseline and the FLA_NPU_STABLE_VALIDATE=1 target.
     out = _infer_causal_conv1d_y(x, int(head_num), int(run_mode))
     activation_buffer = ctypes.create_string_buffer(str(activation).encode("utf-8"))
-    return _call_aclnn(
+    result = _call_aclnn(
         "aclnnCausalConv1d",
         lambda ctx: [
             ctx.tensor(x, "x"),
@@ -1254,6 +1300,9 @@ def _launch_causal_conv1d(
         ],
         out,
     )
+    if conv_state_restore is not None:
+        conv_state_restore.copy_(conv_states)
+    return result
 
 
 def npu_causal_conv1d_fn(
@@ -2418,6 +2467,23 @@ def npu_chunk_kda_bwd_intra(
 
 
 def npu_solve_tri(x, *, cu_seqlens=None, chunk_indices=None, layout="bsnd"):
+    layout = str(layout)
+    if layout == "tnd":
+        # Measured on Ascend910B3 with the OPP in this tree: the tnd spelling
+        # kills the process inside aclnnSolveTri, with and without cu_seqlens.
+        # Crashing has no defined semantics to be compatible with, so this one
+        # is refused with a message instead -- see
+        # docs/architecture/stable-abi-macro-design.md.
+        #
+        # `ntd` crashes the same way (re-measured: five of six shapes segfault,
+        # the sixth is rejected 161001 -- see the inventory's known limits), and
+        # it is deliberately *not* intercepted here: the reference does not
+        # either, and whether to refuse it is the operator owner's call.
+        raise RuntimeError(
+            "npu_solve_tri: layout='tnd' is refused because the operator "
+            "crashes the process for that spelling on this OPP (verified on "
+            "both the ctypes and the Stable-ABI path). Use layout='bsnd' or "
+            "'bnsd'.")
     x_contig = x.contiguous()
     out = _empty_like(x_contig)
     layout_arg = ctypes.c_char_p(str(layout).encode("utf-8"))
