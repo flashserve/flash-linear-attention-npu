@@ -78,7 +78,7 @@ ge::graphStatus BuildKernelBTiling(
     gert::TilingContext *context, const KDA::ChunkKdaBwdATilingData &a,
     uint64_t ubSize, uint32_t blockDim,
     GDN::ChunkGatedDeltaRuleBwdDhuTilingData &b,
-    uint64_t &userWorkspaceBytes, float scale)
+    uint64_t &userWorkspaceBytes, float scale, bool isAscend950)
 {
     const auto *qgDesc = context->GetInputDesc(INPUT_QG);
     const auto *gkDesc = context->GetInputDesc(INPUT_GK);
@@ -130,6 +130,8 @@ ge::graphStatus BuildKernelBTiling(
     b.scale = scale;
 
     const uint64_t qSize = DtypeSize(qgDesc->GetDataType());
+    // A2/A3 retain both state-update GEMM terms in FP32 until subtraction.
+    const uint64_t termSize = isAscend950 ? qSize : sizeof(float);
     const uint64_t gateSize = DtypeSize(gkDesc->GetDataType());
     const uint64_t maxDim = static_cast<uint64_t>(std::max(b.K, b.V));
     const uint64_t gateElems = static_cast<uint64_t>(
@@ -141,7 +143,8 @@ ge::graphStatus BuildKernelBTiling(
             2 * align32(gateElems * gateSize) +
             align32(4U * gateElems * sizeof(float));
         uint64_t vectorBytes =
-            4 * align32(row * maxDim * qSize) +
+            2 * align32(row * maxDim * qSize) +
+            2 * align32(row * maxDim * termSize) +
             2 * align32(row * maxDim * sizeof(float)) +
             2 * align32(row * static_cast<uint64_t>(b.V) * sizeof(float));
         if (qgDesc->GetDataType() == ge::DT_BF16) {
@@ -159,9 +162,9 @@ ge::graphStatus BuildKernelBTiling(
     b.stateWorkspaceElems = static_cast<int64_t>(
         align32(static_cast<uint64_t>(b.K) * b.V * sizeof(float)) / qSize);
     b.dvStateWorkspaceElems = b.chunkSize * b.V;
-    b.termQWorkspaceElems = b.K * b.V;
+    b.termQWorkspaceElems = b.K * b.V * termSize / qSize;
     b.dv2WorkspaceElems = 0;
-    b.termWWorkspaceElems = b.K * b.V;
+    b.termWWorkspaceElems = b.K * b.V * termSize / qSize;
 
     int64_t offset = 0;
     b.qgWorkspaceOffset = offset;
@@ -278,7 +281,7 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     uint64_t bUserWorkspace = 0;
     OP_CHECK_IF(BuildKernelBTiling(
                     context, aTiling, ubSize, blockDim,
-                    tiling->kernelB, bUserWorkspace, *scale) !=
+                    tiling->kernelB, bUserWorkspace, *scale, isAscend950) !=
                     ge::GRAPH_SUCCESS,
                 , return ge::GRAPH_FAILED);
 
@@ -496,11 +499,8 @@ ge::graphStatus Tiling4KdaGateBwdPost(gert::TilingContext *context)
                             "chunk_indices must contain (sequence, local_chunk) pairs"),
                 return ge::GRAPH_FAILED);
         chunkNum = metadataElems / 2;
-        OP_CHECK_IF(chunkNum > KDA::KDA_GATE_POST_MAX_CHUNKS,
-                    OP_LOGE(context->GetNodeName(),
-                            "KdaGateBwdPost supports at most %d packed chunks",
-                            KDA::KDA_GATE_POST_MAX_CHUNKS),
-                    return ge::GRAPH_FAILED);
+        // DecodeTask reads each pair from GM using a fixed-size scratch buffer.
+        // The packed task count is not limited by a tiling/UB metadata table.
     } else {
         chunkNum = batch * chunkNumPerBatch;
     }
