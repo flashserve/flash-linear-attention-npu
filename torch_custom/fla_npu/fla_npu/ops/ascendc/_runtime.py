@@ -18,6 +18,8 @@ torch tensor 转成 aclnn descriptor，并持有一次 launch 期间需要保活
 from __future__ import annotations
 
 import ctypes
+import os
+import re
 import sys
 from contextlib import contextmanager
 from typing import Iterable, Optional, Sequence
@@ -430,6 +432,123 @@ class _AclnnRuntime:
 
 
 _RUNTIME: Optional[_AclnnRuntime] = None
+
+
+# ---------------------------------------------------------------------------
+# CANN capabilities
+# ---------------------------------------------------------------------------
+# ``aclnnCausalConv1d`` is handed a descriptor for its optional ``convStates``
+# input, but whether its tiling ever sees that descriptor's *view description*
+# is decided by the CANN runtime rather than by the operator.  Measured with one
+# OPP built from one source revision, swapping only the toolkit:
+#
+#   9.1.0  the input reaches the tiling with no strides (the operator logs
+#          ``isview=0 / stride_null=1``), so a block-strided state is read and
+#          written at the dense offsets: the update lands in the gaps between
+#          blocks and the caller keeps its stale rows;
+#   9.2.0  the same call addresses a block-strided view exactly where the caller
+#          keeps it (bit-exact against a dense copy) and rejects a view whose
+#          innermost stride is not 1.
+#
+# The version therefore decides whether a non-dense conv_state may be handed
+# over as it is.  ``FLA_NPU_CONV1D_VIEW_STATE`` overrides the verdict for a
+# runtime whose version cannot be read; an undecided runtime stages the state
+# through a dense copy, which is correct everywhere.
+_CANN_VERSION_FILES = ("opp/version.info", "compiler/version.info")
+_CANN_VERSION_HOMES = ("ASCEND_HOME_PATH", "ASCEND_TOOLKIT_HOME")
+_CONV1D_VIEW_STATE_ENV = "FLA_NPU_CONV1D_VIEW_STATE"
+_CONV1D_VIEW_STATE_MIN = (9, 2, 0)
+_CONV1D_VIEW_STATE: Optional[bool] = None
+
+
+def cann_version() -> Optional[tuple]:
+    """The toolkit version the environment points at, or ``None``.
+
+    Read from the installed ``version.info`` rather than from the runtime: the
+    obvious entry point, ``aclsysGetVersionStr``, segfaults on both 9.1.0 and
+    9.2.0 when it is called outside ``aclInit``, and the answer has to be
+    available from the first operator call.
+    """
+
+    for variable in _CANN_VERSION_HOMES:
+        home = os.environ.get(variable)
+        if not home:
+            continue
+        for relative in _CANN_VERSION_FILES:
+            try:
+                with open(os.path.join(home, relative)) as handle:
+                    text = handle.read()
+            except OSError:
+                continue
+            match = re.search(r"^Version\s*=\s*([0-9]+(?:\.[0-9]+)*)",
+                              text, re.MULTILINE)
+            if match:
+                parts = tuple(int(part) for part in match.group(1).split("."))
+                return (parts + (0, 0, 0))[:3]
+    return None
+
+
+def conv1d_view_state_supported() -> bool:
+    """Whether a non-dense conv_state may be passed to the operator as a view."""
+
+    global _CONV1D_VIEW_STATE
+    if _CONV1D_VIEW_STATE is None:
+        override = os.environ.get(_CONV1D_VIEW_STATE_ENV)
+        if override:
+            _CONV1D_VIEW_STATE = override.strip().lower() not in (
+                "0", "false", "no", "off")
+        else:
+            version = cann_version()
+            _CONV1D_VIEW_STATE = (version is not None
+                                  and version >= _CONV1D_VIEW_STATE_MIN)
+            if not _CONV1D_VIEW_STATE:
+                spelled = (".".join(str(part) for part in version)
+                           if version else "unknown")
+                import warnings
+
+                warnings.warn(
+                    f"the CANN runtime in use ({spelled}) does not hand "
+                    "aclnnCausalConv1d the layout of a conv_state, so a "
+                    "non-contiguous conv cache is staged through a dense copy "
+                    f"on every call; set {_CONV1D_VIEW_STATE_ENV}=1 to skip "
+                    "the staging on a runtime that does (CANN >= 9.2.0)",
+                    RuntimeWarning,
+                    stacklevel=3,
+                )
+    return _CONV1D_VIEW_STATE
+
+
+def conv_state_needs_dense_copy(conv_state) -> bool:
+    """Whether a causal_conv1d state has to be staged through a dense copy.
+
+    The operator addresses the state as (block stride, row stride, 1), which it
+    can only do where the runtime hands its tiling the descriptor's view
+    description.  Both layers that build that descriptor (the ctypes reference
+    and the stable adapter) ask this one question, so the two cannot drift:
+
+      * a state without a dense innermost dimension, or with non-positive outer
+        strides, cannot be addressed by any runtime -> stage it;
+      * a non-contiguous state on a runtime that drops the view -> stage it
+        (that is what both layers did for *every* non-contiguous state before
+        the boundary was measured);
+      * everything else crosses as the descriptor's own view.
+    """
+
+    if conv_state is None or conv_state.numel() == 0:
+        return False
+    try:
+        dims = len(conv_state.shape)
+        stride = tuple(conv_state.stride())
+        contiguous = conv_state.is_contiguous()
+    except AttributeError:
+        return False
+    if dims != 3:
+        return True
+    if not (stride[2] == 1 and stride[0] > 0 and stride[1] > 0):
+        return True
+    if conv1d_view_state_supported():
+        return False
+    return not contiguous
 
 
 def runtime() -> _AclnnRuntime:
