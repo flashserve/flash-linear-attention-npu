@@ -32,22 +32,28 @@ sequence-major 顺序映射，不按 tensor 的 T 维简单除以 64。
 任务少于可用核时增加完整 value head 的分区。输出写回地址按
 `(batch,chunk,head)` 分区，不与其他 AIC 重叠。
 
-Host 根据平台和每核工作量选择两条路径：
+Host 根据平台和每核工作量选择 `USE_AIV_INPUT_MOVER` 编译期模板参数：
 
-- tiling key 1：A2/A3 始终使用，A5 在 head 被拆分或每核不足 8 个
-  chunk 时使用。kernel 为 AIC-only，四个输入由 AIC MTE2 直接从 GM
+- `false`：A2/A3 始终使用，A5 在 head 被拆分或每核不足 8 个 chunk
+  时使用。模板组合指定为 AIC-only，四个输入由 AIC MTE2 直接从 GM
   搬到 L1。
-- tiling key 2：仅 A5 使用，要求每个 work item 包含完整 value head，
-  且每核至少 8 个 chunk。kernel 为 MIX AIC 1:2，两个 AIV 负责
-  GM 到 UB 再到 L1 的格式转换，AIC 只消费已经就绪的 L1 操作数。
+- `true`：仅 A5 使用，要求每个 work item 包含完整 value head，且每核
+  至少 8 个 chunk。模板组合指定为 MIX AIC 1:2，两个 AIV 负责 GM 到
+  UB 再到 L1 的格式转换，AIC 只消费已经就绪的 L1 操作数。
 
-key 1 只有一个 Cube stage：
+TilingKey 由 `GET_TPL_TILING_KEY(USE_AIV_INPUT_MOVER)` 生成；Kernel 全局
+入口直接以同名模板参数实例化，不做数值 key 的运行时
+二次分派。两种模板组合通过 `ASCENDC_TPL_KERNEL_TYPE_SEL` 分别
+声明核类型，因此 AIC-only 路径不会启动空闲 AIV。
+
+`USE_AIV_INPUT_MOVER=false` 只有一个 Cube stage：
 
 | Stage | 核 | 本轮计算 | 阶段结果 |
 | --- | --- | --- | --- |
 | C0 | Cube | MTE2 搬入四个输入；第一次 MMAD 以 `initC=true` 计算 `qg_scaled@h`；第二次以 `initC=false` 将 `Aqk@v_new` 直接累加到同一 L0C | 一次 Fixpipe 以 `F322BF16` 转换并写出 `attn_out` |
 
-key 2 按一个 head 的两组依赖拆成下列流水。V0 发布 Q/H 后即可继续
+`USE_AIV_INPUT_MOVER=true` 按一个 head 的两组依赖拆成下列流水。
+V0 发布 Q/H 后即可继续
 搬 Aqk/V，C1 不必等待四个输入全部到达；同理，C3 消费 L1 后立即
 发布 free，AIV 不等待 Fixpipe 才复用该 head 槽。
 
@@ -78,7 +84,8 @@ M 行，MMAD 的物理 M 补到 16；Fixpipe 与输出仍只写有效行。
 填零和输入搬运都由 MTE2 完成，现有 MTE2 到 MTE1 的事件覆盖两者，
 不会读取未初始化的 L0A 行，也不会改变有效行的计算语义。
 
-key 2 的 UB 采用两个静态槽，基址为 0 和 128 KiB。每槽固定分配
+`USE_AIV_INPUT_MOVER=true` 的 UB 采用两个静态槽，基址为 0 和
+128 KiB。每槽固定分配
 `qg_scaled` 18 KiB、`h` 36 KiB、`Aqk` 10 KiB、`v_new` 18 KiB，
 共 82 KiB；第二槽末端为 210 KiB，小于 A5 的 248 KiB UB。128 列
 BF16 数据的 UB 行 pitch 为 9 个 32B datablock，64 列数据为 5 个，
@@ -86,7 +93,8 @@ BF16 数据的 UB 行 pitch 为 9 个 32B datablock，64 列数据为 5 个，
 移动；Q/H 与 Aqk/V 分别使用 Mutex 0/1 和 2/3 保护同槽 MTE2/MTE3
 并发访问。一次性 GM 输入关闭 L2 cache，避免污染后续可复用数据。
 
-key 2 的 AIV0 负责组内 local head 0/2，AIV1 负责 1/3。mode 0x4 下
+`USE_AIV_INPUT_MOVER=true` 时，AIV0 负责组内 local head 0/2，AIV1
+负责 1/3。mode 0x4 下
 Q/H ready 在 AIV 侧使用 flag 0/1，AIC 侧映射为 0/16/1/17；Aqk/V
 ready 使用 2/3，映射为 2/18/3/19；L1 free 使用 4/5，映射为
 4/20/5/21。每个 ready 都由对应 AIC 消费，每个在途 L1 槽都在复用

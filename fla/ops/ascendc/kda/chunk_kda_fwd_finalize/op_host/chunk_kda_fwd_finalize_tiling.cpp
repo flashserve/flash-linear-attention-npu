@@ -6,6 +6,7 @@
 #include <limits>
 
 #include "chunk_kda_fwd_finalize_tiling_processor.h"
+#include "../op_kernel/chunk_kda_fwd_finalize_tiling_key.h"
 #include "platform/soc_spec.h"
 #include "register/op_impl_registry.h"
 #include "tiling/platform/platform_ascendc.h"
@@ -15,8 +16,6 @@ namespace optiling {
 namespace {
 
 constexpr uint32_t FINALIZE_MIX_BATCH_MODE = 1;
-constexpr uint64_t FINALIZE_AIC_ONLY_TILING_KEY = 1;
-constexpr uint64_t FINALIZE_AIV_MOVER_TILING_KEY = 2;
 constexpr uint64_t FINALIZE_AIV_MOVER_MIN_CHUNKS_PER_CORE = 8;
 
 struct FinalizeShape {
@@ -318,9 +317,12 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     const bool useAivInputMover =
         isA5 && schedule.headsPerPartition == info.heads &&
         minimumChunksPerCore >= FINALIZE_AIV_MOVER_MIN_CHUNKS_PER_CORE;
-    context->SetTilingKey(useAivInputMover
-                              ? FINALIZE_AIV_MOVER_TILING_KEY
-                              : FINALIZE_AIC_ONLY_TILING_KEY);
+    using namespace KdaFinalize;
+    const uint64_t tilingKey = GET_TPL_TILING_KEY(
+        static_cast<uint64_t>(useAivInputMover ? 1 : 0));
+    context->SetTilingKey(tilingKey);
+    OP_LOGD(context->GetNodeName(), "tilingKey: %lu, useAivInputMover: %d",
+            static_cast<unsigned long>(tilingKey), useAivInputMover);
     context->SetBlockDim(schedule.usedCoreNum);
     if (useAivInputMover &&
         context->SetScheduleMode(FINALIZE_MIX_BATCH_MODE) != ge::GRAPH_SUCCESS) {
