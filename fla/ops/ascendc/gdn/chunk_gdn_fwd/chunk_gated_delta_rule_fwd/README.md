@@ -32,7 +32,7 @@ A5 依次调度 `ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkFwdO`，
 | `q` | 必选 | 由 `layout` 决定；FP16/BF16 | Query |
 | `k` | 必选 | 与 q 同 shape/dtype | Key |
 | `v` | 必选 | 由 `layout` 决定；与 q 同 dtype | Value |
-| `g` | 必选 | `[B,T,Hv]`；FP32 | 门控值，固定为 sequence-major |
+| `g` | 必选 | `[B,T,Hv]`；FP32 或与 q 同 dtype | 门控值，固定为 sequence-major |
 | `beta` | 必选 | 与 g 同 shape；FP32 或与 q 同 dtype | Delta 系数 |
 | `aLogOptional` | 当前未支持 | - | 扩展接口预留，必须为空 |
 | `dtBiasOptional` | 当前未支持 | - | 扩展接口预留，必须为空 |
@@ -57,11 +57,16 @@ A5 依次调度 `ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkFwdO`，
 | `betaEffOutOptional` | A5 新路径可选 | 与 beta 同 shape；FP32 | 非空时启用并输出 beta sigmoid |
 | `hOutOptional` | A5 新路径可选 | `stateVFirst=false` 时末两维为 `[K,V]`，否则为 `[V,K]`；与 q 同 dtype | 分块状态 |
 
-Python ctypes 入口默认使用 `disable_recompute=True`，用于训练，返回
-`(o, finalState, gCumsum, A)` 四元组；
-设为 `False` 选择推理输出，返回 `(o, finalState)`，底层公共 `gCumsum/A` 输出指针为空。
-设置 `return_intermediate_states=True` 时在当前返回值末尾追加分块状态 `h`，
-其 shape 为 `[B,Hv,NT,K,V]`；`state_v_first=True` 时末两维为 `[V,K]`。
+Python ctypes 入口固定返回 `(o, final_state, g_cumsum, A, beta_eff, h)` 六元组。
+`disable_recompute=True` 时导出 g_cumsum/A，否则这两项为 None。
+`output_final_state`、`use_beta_sigmoid_in_kernel` 和 `return_intermediate_states`
+分别控制 final_state、beta_eff 和 h 是否为 None。
+h 的 shape 为 `[B,Hv,NT,K,V]`，`state_v_first=True` 时末两维为 `[V,K]`。
+
+`g/beta` 固定以 BSN 输入，在 ACLNN 内转为 BNS；任一输入为 FP32 时，
+另一个先提升为 FP32。两个输入均为主 dtype 时保留该 dtype，后续分支支持范围不变。
+Python 接受 `a_log=None, dt_bias=None` 预留参数；当前仅支持
+`use_gate_in_kernel=False`，非空 a_log/dt_bias 或启用 gate 均报错。
 
 ## 属性
 

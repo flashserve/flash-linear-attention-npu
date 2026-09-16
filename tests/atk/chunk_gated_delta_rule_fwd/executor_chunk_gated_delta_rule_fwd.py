@@ -190,23 +190,20 @@ def run_npu(role: str, inputs, case: GdnCase):
         raise RuntimeError("当前 fla_npu 包未提供 chunk_gated_delta_rule_fwd")
     cu_values = None if case.cu_seqlens is None else list(case.cu_seqlens)
     chunk_indices = canonical_chunk_indices(case.cu_seqlens, case.chunk_size)
-    return _public_outputs(
-        ascendc.chunk_gated_delta_rule_fwd(
-            q,
-            k,
-            v,
-            g,
-            beta,
-            initial_state=initial_state,
-            output_final_state=case.output_final_state,
-            chunk_size=case.chunk_size,
-            cu_seqlens=cu_values,
-            chunk_indices=chunk_indices,
-            scale=case.scale,
-        ),
-        case,
-        "融合算子",
+    o, final_state, g_cumsum, a, _, _ = ascendc.chunk_gated_delta_rule_fwd(
+        q,
+        k,
+        v,
+        g,
+        beta,
+        initial_state=initial_state,
+        output_final_state=case.output_final_state,
+        chunk_size=case.chunk_size,
+        cu_seqlens=cu_values,
+        chunk_indices=chunk_indices,
+        scale=case.scale,
     )
+    return _public_outputs((o, final_state, g_cumsum, a), case, "融合算子")
 
 
 @register("executor_chunk_gated_delta_rule_fwd")

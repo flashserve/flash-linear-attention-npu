@@ -498,8 +498,8 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
                    (params.aOutOptional == nullptr || params.aOutOptional->GetDataType() == dtype),
                ACLNN_ERR_PARAM_INVALID, "q/k/v/oOut/aOutOptional must have the same dtype.");
     CHECK_COND((params.beta->GetDataType() == DataType::DT_FLOAT || params.beta->GetDataType() == dtype) &&
-                   params.g->GetDataType() == DataType::DT_FLOAT,
-               ACLNN_ERR_PARAM_INVALID, "beta must be float32 or match q/k/v, and g must be float32.");
+                   (params.g->GetDataType() == DataType::DT_FLOAT || params.g->GetDataType() == dtype),
+               ACLNN_ERR_PARAM_INVALID, "g and beta must be float32 or match q/k/v.");
     CHECK_COND(params.gCumsumOutOptional == nullptr || params.gCumsumOutOptional->GetDataType() == DataType::DT_FLOAT,
                ACLNN_ERR_PARAM_INVALID, "gCumsumOutOptional must be float32.");
     CHECK_COND((params.qHatOutOptional == nullptr || params.qHatOutOptional->GetDataType() == dtype) &&
@@ -598,17 +598,22 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
     const int64_t vDim = info.vDim;
     const int64_t seqNum = SeqNum(params, batch);
     const bool outputFinalState = params.finalStateOutOptional != nullptr;
-    const aclTensor *gSequence = params.g;
-    const aclTensor *gBht = gSequence == nullptr
+    const aclTensor *betaUsed = params.beta;
+    const aclTensor *gUsed = params.g;
+    if(params.beta->GetDataType() == DataType::DT_FLOAT || params.g->GetDataType() == DataType::DT_FLOAT) {
+        betaUsed = params.beta->GetDataType() == DataType::DT_FLOAT
+                                        ? params.beta
+                                        : l0op::Cast(params.beta, DataType::DT_FLOAT, executorPtr);
+        gUsed = params.g->GetDataType() == DataType::DT_FLOAT
+                                        ? params.g
+                                        : l0op::Cast(params.g, DataType::DT_FLOAT, executorPtr);
+    }
+    const aclTensor *gBht = gUsed == nullptr
                                 ? nullptr
-                                : TransposeContiguous(gSequence, {0, 2, 1}, executorPtr);
-    const aclTensor *betaFloat = params.beta->GetDataType() == DataType::DT_FLOAT
-                                     ? params.beta
-                                     : l0op::Cast(params.beta, DataType::DT_FLOAT, executorPtr);
-    const aclTensor *betaSequence = betaFloat;
-    const aclTensor *betaBht = betaSequence == nullptr
+                                : TransposeContiguous(gUsed, {0, 2, 1}, executorPtr);
+    const aclTensor *betaBht = betaUsed == nullptr
                                    ? nullptr
-                                   : TransposeContiguous(betaSequence, {0, 2, 1}, executorPtr);
+                                   : TransposeContiguous(betaUsed, {0, 2, 1}, executorPtr);
     GDN_STAGE_CHECK(gBht != nullptr && betaBht != nullptr, 169102);
 
     if (UsePreparePath(params)) {

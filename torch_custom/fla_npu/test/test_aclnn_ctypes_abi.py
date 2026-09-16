@@ -121,12 +121,13 @@ class AclnnCtypesAbiTest(unittest.TestCase):
                             outputs = function(
                                 q, q, v, g, beta, initial_state=state,
                                 output_final_state=with_final_state,
-                                return_intermediate_states=with_h, **options,
+                                return_intermediate_states=with_h, a_log=None, dt_bias=None, **options,
                             )
                             tensors = captured["tensors"]
                             self.assertEqual(captured["name"], "aclnnChunkGatedDeltaRuleFwd")
                             self.assertEqual(len(captured["args"]), 27)
-                            self.assertEqual(len(outputs), (4 if training else 2) + int(with_h))
+                            self.assertEqual(len(outputs), 6)
+                            self.assertIsNone(outputs[4])
                             self.assertIs(outputs[0], tensors["o"])
                             self.assertEqual(outputs[0].shape, (1, 65, 4, 256))
                             self.assertIs(outputs[1], tensors["final_state"])
@@ -140,11 +141,25 @@ class AclnnCtypesAbiTest(unittest.TestCase):
                             else:
                                 self.assertIsNone(tensors["g_cumsum"])
                                 self.assertIsNone(tensors["A"])
+                                self.assertIsNone(outputs[2])
+                                self.assertIsNone(outputs[3])
                             if with_h:
                                 self.assertIs(outputs[-1], tensors["h"])
                                 self.assertEqual(outputs[-1].shape, (1, 4, 2, 128, 256))
                             else:
                                 self.assertIsNone(tensors["h"])
+                                self.assertIsNone(outputs[5])
+
+    def test_gdn_reserved_gate_arguments_rejected_before_launch(self):
+        fake_torch = types.ModuleType("torch")
+        q = FakeTensor((1, 2, 65, 128))
+        g = FakeTensor((1, 65, 2))
+        with mock.patch.dict(sys.modules, {"torch": fake_torch}), \
+                mock.patch.object(ACLNN_CTYPES, "_call_aclnn") as launch:
+            for options in ({"a_log": g}, {"dt_bias": g}, {"use_gate_in_kernel": True}):
+                with self.subTest(options=options), self.assertRaises(ValueError):
+                    ACLNN_CTYPES.npu_chunk_gated_delta_rule_fwd(q, q, q, g, g, **options)
+            launch.assert_not_called()
 
     def test_chunk_gdn_bwd_intra_signature_has_no_debug_stage(self):
         import inspect

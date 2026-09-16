@@ -2526,6 +2526,8 @@ def npu_chunk_gated_delta_rule_fwd(
     disable_recompute=True,
     return_intermediate_states=False,
     state_v_first=False,
+    a_log=None,
+    dt_bias=None,
     layout="BNSD",
 ):
     """调用融合 GDN 前向；训练默认导出 gCumsum/A，推理显式设为 False。"""
@@ -2592,6 +2594,10 @@ def npu_chunk_gated_delta_rule_fwd(
     disable_recompute = _optional_bool(disable_recompute, True)
     return_intermediate_states = _optional_bool(return_intermediate_states, False)
     state_v_first = _optional_bool(state_v_first, False)
+    if use_gate_in_kernel:
+        raise ValueError("use_gate_in_kernel=True is not supported.")
+    if a_log is not None or dt_bias is not None:
+        raise ValueError("a_log and dt_bias must be None while gate-in-kernel is unsupported.")
     scale = _optional_float(scale, float(k_dim) ** -0.5)
     o = _empty((batch, tokens, v_heads, v_dim), v)
     g_cumsum = (
@@ -2604,7 +2610,6 @@ def npu_chunk_gated_delta_rule_fwd(
         if disable_recompute
         else None
     )
-    a_log = _empty((v_heads,), g, dtype=torch.float32) if use_gate_in_kernel else None
     beta_eff = (
         _empty((batch, tokens, v_heads), beta, dtype=torch.float32)
         if use_beta_sigmoid_in_kernel
@@ -2632,11 +2637,7 @@ def npu_chunk_gated_delta_rule_fwd(
         state_tail = (v_dim, k_dim) if state_v_first else (k_dim, v_dim)
         h = _empty((batch, v_heads, chunks, *state_tail), q)
     layout_buffer = ctypes.create_string_buffer(layout.encode("utf-8"))
-    outputs = (o, final_state)
-    if disable_recompute:
-        outputs += (g_cumsum, A)
-    if return_intermediate_states:
-        outputs += (h,)
+    outputs = (o, final_state, g_cumsum, A, beta_eff, h,)
     return _call_aclnn(
         "aclnnChunkGatedDeltaRuleFwd",
         lambda ctx: [
@@ -2646,7 +2647,7 @@ def npu_chunk_gated_delta_rule_fwd(
             ctx.tensor(g, "g"),
             ctx.tensor(beta, "beta"),
             ctx.tensor(a_log, "a_log"),
-            ctx.tensor(None, "dt_bias"),
+            ctx.tensor(dt_bias, "dt_bias"),
             ctx.tensor(initial_state, "initial_state"),
             ctx.int_array(cu_seqlens),
             ctx.int_array(chunk_indices),
