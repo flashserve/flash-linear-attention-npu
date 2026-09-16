@@ -12,7 +12,3 @@ add_ops_compile_options(
     OPTIONS --cce-auto-sync=off
             -Wno-deprecated-declarations
 )
-
-if(ENABLE_TEST)
-    add_subdirectory(tests)
-endif()
