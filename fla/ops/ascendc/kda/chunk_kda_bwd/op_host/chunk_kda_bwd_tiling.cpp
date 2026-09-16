@@ -78,8 +78,12 @@ ge::graphStatus BuildKernelBTiling(
     gert::TilingContext *context, const KDA::ChunkKdaBwdATilingData &a,
     uint64_t ubSize, uint32_t blockDim,
     GDN::ChunkGatedDeltaRuleBwdDhuTilingData &b,
-    uint64_t &userWorkspaceBytes, float scale, bool isAscend950)
+    uint64_t &userWorkspaceBytes, float scale)
 {
+    const auto platform =
+        platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
+    const bool isAscend950 =
+        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
     const auto *qgDesc = context->GetInputDesc(INPUT_QG);
     const auto *gkDesc = context->GetInputDesc(INPUT_GK);
     const auto *qShapeStorage = context->GetRequiredInputShape(INPUT_Q);
@@ -282,7 +286,7 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     uint64_t bUserWorkspace = 0;
     OP_CHECK_IF(BuildKernelBTiling(
                     context, aTiling, ubSize, blockDim,
-                    tiling->kernelB, bUserWorkspace, *scale, isAscend950) !=
+                    tiling->kernelB, bUserWorkspace, *scale) !=
                     ge::GRAPH_SUCCESS,
                 , return ge::GRAPH_FAILED);
 
