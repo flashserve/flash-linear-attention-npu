@@ -29,18 +29,34 @@ sequence-major 顺序映射，不按 tensor 的 T 维简单除以 64。
 ## 调度与存储
 
 各 chunk 不存在跨 chunk 数据依赖，先按 chunk 分核；仅当 chunk
-任务少于可用核时增加完整 value head 的分区。一个 AIC workgroup
-一轮最多四个 value head，两个 AIV 各处理两个 head；输出写回
-地址按 `(batch,chunk,head)` 分区，不与其他 workgroup 重叠。
+任务少于可用核时增加完整 value head 的分区。输出写回地址按
+`(batch,chunk,head)` 分区，不与其他 AIC 重叠。
 
-| Stage | 核 | 本轮计算 | 下一阶段依赖 |
+Host 根据平台和每核工作量选择两条路径：
+
+- tiling key 1：A2/A3 始终使用，A5 在 head 被拆分或每核不足 8 个
+  chunk 时使用。kernel 为 AIC-only，四个输入由 AIC MTE2 直接从 GM
+  搬到 L1。
+- tiling key 2：仅 A5 使用，要求每个 work item 包含完整 value head，
+  且每核至少 8 个 chunk。kernel 为 MIX AIC 1:2，两个 AIV 负责
+  GM 到 UB 再到 L1 的格式转换，AIC 只消费已经就绪的 L1 操作数。
+
+key 1 只有一个 Cube stage：
+
+| Stage | 核 | 本轮计算 | 阶段结果 |
 | --- | --- | --- | --- |
-| C0 | Cube | 两个互不依赖的 MMAD：`P=qg_scaled@h`、`R=Aqk@v_new`，各 FP32 `[64,128]` | 两个结果均 ready |
-| V1 | Vector | Arch35 一次 VF 完成 FP32 `P+R` 及最终 BF16 cast；Arch22 同一 Stage 先 `Add`、再 `Cast`；均仅写有效 token 行 | 输出 `attn_out` |
+| C0 | Cube | MTE2 搬入四个输入；第一次 MMAD 以 `initC=true` 计算 `qg_scaled@h`；第二次以 `initC=false` 将 `Aqk@v_new` 直接累加到同一 L0C | 一次 Fixpipe 以 `F322BF16` 转换并写出 `attn_out` |
 
-Arch22 的两条向量 API 属于同一 Vector Stage，不拆分 pass，也不重复从
-GM 读取同一份中间结果；它不满足 Arch35 的“一次 VF 调用”细则，
-是 A2/A3 路径需单独核查的架构兼容差异。
+key 2 按一个 head 的两组依赖拆成下列流水。V0 发布 Q/H 后即可继续
+搬 Aqk/V，C1 不必等待四个输入全部到达；同理，C3 消费 L1 后立即
+发布 free，AIV 不等待 Fixpipe 才复用该 head 槽。
+
+| Stage | 核 | 本轮计算 | 阶段结果 |
+| --- | --- | --- | --- |
+| V0 | Vector | AIV MTE2 将 `qg_scaled/h` 从 GM 搬入 UB，MTE3 跳搬到 L1 并完成 ND2NZ | 发布 Q/H ready |
+| C1 | Cube | 等待 Q/H ready，MTE1 搬入 L0A/L0B，MMAD 以 `initC=true` 计算 `qg_scaled@h` | 第一项保留在 L0C |
+| V2 | Vector | AIV MTE2 将 `Aqk/v_new` 从 GM 搬入 UB，MTE3 跳搬到 L1 并完成 ND2NZ | 发布 Aqk/V ready |
+| C3 | Cube | 等待 Aqk/V ready，第二次 MMAD 以 `initC=false` 累加到同一 L0C；发布 L1 free；Fixpipe 转换并写出 | `attn_out` |
 
 每个 head 的 L1 操作数地址固定：`qg_scaled` 16 KiB、`h` 32 KiB、
 `Aqk` 8 KiB、`v_new` 16 KiB，共 72 KiB；四个 head 为 288 KiB，
@@ -48,42 +64,40 @@ GM 读取同一份中间结果；它不满足 Arch35 的“一次 VF 调用”�
 L1 槽。`h` 的 32 KiB 是 BF16 `[128,128]`，不能和两个 FP32
 计算结果的空间混同。
 
-C0 在 Stage 入口先搬完四个 GM 输入，再开始矩阵乘。两项乘积的
-L0A 区域分别为 `qg_scaled` 16 KiB 和 `Aqk` 8 KiB，共 24 KiB；
-L0B 分别为 `h` 32 KiB 和 `v_new` 16 KiB，共 48 KiB；L0C 的
-`P/R` 各占 32 KiB，共 64 KiB。两次 MMAD 分别写自己的 L0C
-区域，两个 Fixpipe 结果也不共用目标地址；Arch35 以
-PIPE_MTE1/PIPE_M/PIPE_FIX 的 Mutex 约束相应区域的读写，
-Arch22 使用对应的 HardEvent。
+两项矩阵乘的 L0A 区域分别为 `qg_scaled` 16 KiB 和 `Aqk` 8 KiB，
+共 24 KiB；
+L0B 分别为 `h` 32 KiB 和 `v_new` 16 KiB，共 48 KiB。单个 head
+只产生一份 FP32 `[64,128]` 结果；两块 32 KiB L0C 是相邻 head 的
+MMAD/Fixpipe ping-pong 槽，不是两项乘积的独立保存区。第二次 MMAD
+直接读取第一次的 L0C 累加结果，随后每个 head 只提交一次 Fixpipe。
+Arch35 以 PIPE_MTE1/PIPE_M/PIPE_FIX 的 Mutex 约束对应槽位，Arch22
+使用对应的 HardEvent。
 
 A2/A3 的尾块不足 16 行时，L1 左操作数按每个 K 分形只填零无效的
 M 行，MMAD 的物理 M 补到 16；Fixpipe 与输出仍只写有效行。
 填零和输入搬运都由 MTE2 完成，现有 MTE2 到 MTE1 的事件覆盖两者，
 不会读取未初始化的 L0A 行，也不会改变有效行的计算语义。
 
-每个 AIV 的 UB 按两个 head slot 静态划分；每 slot 保存独立
-FP32 `P` 32 KiB、FP32 `R` 32 KiB 和 BF16 输出 16 KiB，共
-80 KiB。两个 slot 占 160 KiB，小于 248 KiB；两个 FP32 plane
-在 V1 完成读取前均不能覆盖，其余 88 KiB 不与这两个槽位重叠。
-UB 不在 Stage 间搬位；输出所在的 16 KiB 区域不能与尚未完成的
-`P/R` 异步写入地址重叠。
+key 2 的 UB 采用两个静态槽，基址为 0 和 128 KiB。每槽固定分配
+`qg_scaled` 18 KiB、`h` 36 KiB、`Aqk` 10 KiB、`v_new` 18 KiB，
+共 82 KiB；第二槽末端为 210 KiB，小于 A5 的 248 KiB UB。128 列
+BF16 数据的 UB 行 pitch 为 9 个 32B datablock，64 列数据为 5 个，
+避免连续物理行反复命中同一组 bank。两槽语义固定，不做 UB 内位置
+移动；Q/H 与 Aqk/V 分别使用 Mutex 0/1 和 2/3 保护同槽 MTE2/MTE3
+并发访问。一次性 GM 输入关闭 L2 cache，避免污染后续可复用数据。
 
-Arch35 的 Fixpipe 将 C0 的两份结果直达配对 AIV 的两个 UB plane；
-Host 除库 API workspace 外不预留结果 relay。Arch22 的 C0 先写
-每个 used AIC 私有 GM relay：`4 heads * 2 planes * 32 KiB =
-256 KiB`；AIV 的 MTE2 将两个 plane 都搬入自己的 UB slot 后即可
-归还该 head 的 relay 空间，后续 V1 只读取 UB。Host 另加当前平台的
-库 API workspace。relay 的两个 plane 必须是独立地址。
+key 2 的 AIV0 负责组内 local head 0/2，AIV1 负责 1/3。mode 0x4 下
+Q/H ready 在 AIV 侧使用 flag 0/1，AIC 侧映射为 0/16/1/17；Aqk/V
+ready 使用 2/3，映射为 2/18/3/19；L1 free 使用 4/5，映射为
+4/20/5/21。每个 ready 都由对应 AIC 消费，每个在途 L1 槽都在复用
+前等待 free，禁止连续无消费地设置同一个 flag。A2/A3 不编译 A5
+Vector mover，也不参与上述跨核同步。
 
-跨核同步为 ready/free 双向握手：C0 两个 FP32 plane 完成后
-通知 AIV。Arch35 的 free 在 V1 完成及输出 MTE3 读完 UB 后发出；
-Arch22 的 free 在 AIV 的 MTE2 搬完该 head 的 GM relay 后发出，
-该 AIV 继续从 UB 消费 `P/R`。AIC 必须等待对应 free 才能覆盖
-结果槽位。Arch35 的 ready 为 AIV local `0/1`（AIC 映射
-`0/1/16/17`），free 为 AIV local `4/5`（AIC 映射
-`4/5/20/21`）；Arch22 的 ready 为 `0/1`，free 为 `2/3`。
-Arch22 的 UB slot 另以 MTE3 到 MTE2 的核内事件保护复用，
-不能以核间 relay free 代替该 UB 生命周期同步。
+两条路径都不把中间结果写入 GM relay，Host 只申请平台库 API
+workspace。Fixpipe 将 L0C FP32 结果直接转换为 BF16：BNSD/NTD
+输出的 `dstStride=128`，BSND/TND 输出的 `dstStride=HV*128`，因此
+四种 layout 都不需要额外 AIV scatter。两个 L0C slot 的复用由 AIC
+内 M/FIX 生命周期保护。
 
 ## layout 与元数据
 

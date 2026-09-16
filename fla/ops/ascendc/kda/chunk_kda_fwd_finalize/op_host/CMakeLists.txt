@@ -12,3 +12,10 @@ add_ops_compile_options(
     OPTIONS --cce-auto-sync=off
             -Wno-deprecated-declarations
 )
+if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
+    add_ops_compile_options(
+        OP_NAME ChunkKdaFwdFinalize
+        COMPUTE_UNIT Ascend950PR_9599
+        OPTIONS -DENABLE_CV_COMM_VIA_SSBUF=true
+    )
+endif()

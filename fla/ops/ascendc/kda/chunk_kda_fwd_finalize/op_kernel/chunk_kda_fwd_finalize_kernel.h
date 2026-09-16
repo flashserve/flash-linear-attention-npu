@@ -10,33 +10,44 @@
 #include "kernel_operator.h"
 #include "lib/matmul_intf.h"
 #include "chunk_kda_fwd_finalize_cube.h"
-
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #include "arch35/chunk_kda_fwd_finalize_vec.h"
-#else
-#include "arch22/chunk_kda_fwd_finalize_vec.h"
 #endif
 
 namespace KdaFinalize {
 
-template <bool StateVFirst, bool OutputSequenceMajor>
+template <bool UseAivInputMover, bool StateVFirst, bool OutputSequenceMajor>
 __aicore__ inline void RunFinalize(const FinalizeArgs &args)
 {
     if ASCEND_IS_AIC {
-        FinalizeCube<StateVFirst> cube;
+        FinalizeCube<StateVFirst, OutputSequenceMajor, UseAivInputMover> cube;
         cube.Init(args);
         cube.Process();
     }
-    if ASCEND_IS_AIV {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        Arch35::FinalizeVec<OutputSequenceMajor> vec;
-        vec.Init(args);
-#else
-        AscendC::TPipe pipe;
-        Arch22::FinalizeVec<OutputSequenceMajor> vec;
-        vec.Init(args, &pipe);
+    if constexpr (UseAivInputMover) {
+        if ASCEND_IS_AIV {
+            Arch35::FinalizeInputMover<StateVFirst> inputMover;
+            inputMover.Init(args);
+            inputMover.Process();
+        }
+    }
 #endif
-        vec.Process();
+}
+
+template <bool UseAivInputMover>
+__aicore__ inline void DispatchFinalize(const FinalizeArgs &args)
+{
+    if (args.tiling.stateVFirst) {
+        if (args.tiling.outputSequenceMajor) {
+            RunFinalize<UseAivInputMover, true, true>(args);
+        } else {
+            RunFinalize<UseAivInputMover, true, false>(args);
+        }
+    } else if (args.tiling.outputSequenceMajor) {
+        RunFinalize<UseAivInputMover, false, true>(args);
+    } else {
+        RunFinalize<UseAivInputMover, false, false>(args);
     }
 }
 

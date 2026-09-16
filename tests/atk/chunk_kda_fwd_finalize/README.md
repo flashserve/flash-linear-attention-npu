@@ -17,15 +17,34 @@ rank-4/rank-5 BF16 形状，packed 时首维仍为 1。`Aqk`
 
 | 文件 | 用例 | 覆盖 |
 | --- | ---: | --- |
-| `atk_chunk_kda_fwd_finalize.json` | 200 | 25 个边界/shape/变长结构 × 4 个输出 layout × 2 种 state 轴顺序 |
+| `atk_chunk_kda_fwd_finalize.json` | 200 | 25 个边界/shape/变长结构 × 4 个输出 layout × 2 种 state 轴顺序，覆盖两个 tiling key |
 | `atk_chunk_kda_fwd_finalize_perf.json` | 10 | 模型大 shape、dense/varlen，供单算 profiling |
-| `atk_chunk_kda_fwd_finalize_mss.json` | 8 | 4 个输出 layout × 2 种 state 轴顺序的尾块确定性输入 |
+| `atk_chunk_kda_fwd_finalize_mss.json` | 12 | 4 个输出 layout × 2 种 state 轴顺序的尾块输入，以及 key2 的 dense/packed、KV/VK 确定性输入 |
 
 精度包括 T 为 `1/15/16/17/31/32/33/63/64/65` 的边界、
 多 chunk、严格递增变长序列、显式/自动 canonical chunk indices、
-不同 HV 及 `B=2` dense。packed 组中 `qg_scaled/Aqk` 是 rank-3，
+不同 HV、`B=2` dense，以及 `B=384,HV=5,T=17` 和由 382 个单
+token 序列加 33/64 行序列组成的 key2 dense/varlen 边界。key2
+用例同时覆盖不足 4 个 head 的尾组、显式 `chunk_indices` 及
+`Aqk` 的 1/2/3/4 个 16-row 数据块。
+packed 组中 `qg_scaled/Aqk` 是 rank-3，
 `v_new` 是 rank-4。独立 Finalize 无 HK 输入，不把这些 case
 记作 GVA 映射验证；需要在三阶段组合链路另测 HK<HV。
+
+## TilingKey 覆盖
+
+| TilingKey | 选择条件 | 精度普通用例 | 精度边界用例 | `_mss.json` 用例 | 适用 SoC | 实际选择证据 |
+| ---: | --- | --- | --- | --- | --- | --- |
+| 1 | A2/A3；或 A5 的 head 被拆分；或最小单核负载不足 8 个 chunk | 64-71 | 0-63、72-87、92-191 | 0-7 | A2/A3/A5 | A5 runtime profile 记录为 AIC-only；A2/A3 编译 metadata 为 AICUBE |
+| 2 | A5、每个 work item 包含完整 value head，且最小单核负载至少 8 个 chunk | 192-199 | 88-91、192-199 | 8-11 | A5 | A5 runtime profile 记录为 MIX AIC 1:2 |
+
+case 88-91 是 dense 的 17 行尾块；case 192-199 在同一变长输入中
+包含 1/33/64 行序列并覆盖四种 layout。两组均使用非 4 倍数 HV，
+因此会进入第二个 head group 并验证不足 4 个 head 的尾组。上述
+runtime profile 只作为实际 key 选择记录：性能 case 2 的 kernel 名后缀
+为 `_1`，`Op Type=cube` 且没有 MIX block；性能 case 3 的 kernel 名
+后缀为 `_2_mix_aic`，`Op Type=mix`，AIC/AIV block 数为 `28/56`。
+性能结论仍以性能 JSON 对应的大 shape profiling 为准。
 
 CPU 节点把四个直接输入恢复为 BF16，使用 FP32 两项矩阵乘并在求和
 后按 BF16 输出舍入；返回 FP32 承载 BF16 结果供 ATK 原生
@@ -85,7 +104,8 @@ msopprof \
   --aic-metrics=BasicInfo --launch-count=1 --warm-up=0 --kill=off
 ```
 
-确定性使用 `_mss.json` 的八种输出布局/状态组合，逐位比较实际
+确定性使用 `_mss.json` 的十二条输入，覆盖八种输出布局/状态组合和
+key2 的 dense/packed、KV/VK 四条分支，逐位比较实际
 可见结果；不能把准备好 `_mss.json` 说成内存检查已通过。当前内存
 检查暂停，恢复后须先构建 sanitizer 对象，并确认运行时真正加载。
 
@@ -93,5 +113,5 @@ msopprof \
 atk node --backend npu --devices 0 task \
   -c ./atk_chunk_kda_fwd_finalize_mss.json \
   --task accuracy_dc -p ./executor_chunk_kda_fwd_finalize.py \
-  -s 0 -e 8 -sp -to 60
+  -s 0 -e 12 -sp -to 60
 ```

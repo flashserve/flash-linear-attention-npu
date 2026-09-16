@@ -8,8 +8,6 @@
 namespace optiling {
 
 constexpr uint64_t FINALIZE_CHUNK_ROWS = 64;
-constexpr uint64_t FINALIZE_ARCH22_WORKSPACE_BYTES_PER_CORE =
-    4 * 2 * FINALIZE_CHUNK_ROWS * 128 * sizeof(float);
 
 struct ChunkKdaFwdFinalizeScheduleContext {
     uint64_t batch = 0;
@@ -19,7 +17,6 @@ struct ChunkKdaFwdFinalizeScheduleContext {
     uint64_t aicCoreNum = 0;
     uint64_t libApiWorkspaceBytes = 0;
     bool isVarLen = false;
-    bool arch22 = true;
 };
 
 struct ChunkKdaFwdFinalizeSchedule {
@@ -63,22 +60,14 @@ public:
             return false;
         }
         const uint64_t cores = std::min(context_.aicCoreNum, workItems);
-        uint64_t userWorkspace = 0;
-        if (context_.arch22 &&
-            !CheckedMultiply(cores, FINALIZE_ARCH22_WORKSPACE_BYTES_PER_CORE,
-                             userWorkspace)) {
-            return false;
-        }
-        if (cores > std::numeric_limits<uint32_t>::max() ||
-            context_.libApiWorkspaceBytes >
-                std::numeric_limits<uint64_t>::max() - userWorkspace) {
+        if (cores > std::numeric_limits<uint32_t>::max()) {
             return false;
         }
         schedule.usedCoreNum = static_cast<uint32_t>(cores);
         schedule.headsPerPartition = static_cast<uint32_t>(headsPerPartition);
         schedule.chunkWorkItems = chunkItems;
         schedule.totalWorkItems = workItems;
-        schedule.workspaceBytes = context_.libApiWorkspaceBytes + userWorkspace;
+        schedule.workspaceBytes = context_.libApiWorkspaceBytes;
         return true;
     }
 

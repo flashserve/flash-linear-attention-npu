@@ -40,7 +40,6 @@ struct FinalizeArgs {
     GM_ADDR cuSeqlens = nullptr;
     GM_ADDR chunkIndices = nullptr;
     GM_ADDR attnOut = nullptr;
-    GM_ADDR workspace = nullptr;
     ChunkKdaFwdFinalizeTilingData tiling{};
 };
 
@@ -48,11 +47,20 @@ namespace Shape {
 constexpr uint32_t kChunkRows = 64;
 constexpr uint32_t kHeadDim = 128;
 constexpr uint32_t kHeadsPerGroup = 4;
-constexpr uint32_t kProducts = 2;
 constexpr uint32_t kProductBytes = kChunkRows * kHeadDim * sizeof(float); // 32 KiB
-constexpr uint32_t kRelayHeadBytes = kProducts * kProductBytes;
-constexpr uint32_t kRelayCoreBytes = kHeadsPerGroup * kRelayHeadBytes;
 } // namespace Shape
+
+namespace A5Sync {
+// mode 0x4 下，两个 AIV 各自使用本地 flag 0/1、2/3 与 4/5；
+// AIC 访问 AIV1 时由硬件 flag 空间加 16。
+constexpr uint8_t kCrossCoreMode = 0x4;
+constexpr uint16_t kAivQhReadyFlagId[2] = {0, 1};
+constexpr uint16_t kAivAvReadyFlagId[2] = {2, 3};
+constexpr uint16_t kAivL1ReusableFlagId[2] = {4, 5};
+constexpr uint16_t kAicQhReadyFlagId[4] = {0, 16, 1, 17};
+constexpr uint16_t kAicAvReadyFlagId[4] = {2, 18, 3, 19};
+constexpr uint16_t kAicL1ReusableFlagId[4] = {4, 20, 5, 21};
+} // namespace A5Sync
 
 __aicore__ inline uint32_t CeilDiv(uint32_t a, uint32_t b)
 {

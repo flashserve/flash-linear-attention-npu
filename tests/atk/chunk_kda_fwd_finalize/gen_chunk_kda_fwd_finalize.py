@@ -40,7 +40,7 @@ def _profiles():
     profiles.extend(
         {"name": "dense_h%d_t%d" % (hv, tokens), "B": batch, "HV": hv, "T": tokens}
         for batch, hv, tokens in (
-            (2, 5, 2), (2, 7, 18), (2, 13, 48),
+            (384, 5, 17), (2, 13, 48),
             (1, 17, 66), (1, 33, 127), (1, 96, 192),
         )
     )
@@ -62,6 +62,10 @@ def _profiles():
         }
         for hv, seqs, explicit in varlen
     )
+    profiles.append({
+        "name": "varlen_key2_h5_a1_a3_a4", "B": 1, "HV": 5, "T": 479,
+        "seqs": (1,) * 382 + (33, 64), "explicit_indices": True,
+    })
     assert len(profiles) == 25
     return profiles
 
@@ -181,6 +185,15 @@ def determinism_cases():
                        "HV": 13, "T": 65, "seqs": (1, 64),
                        "explicit_indices": True}
             cases.append(_case(len(cases), profile, layout, state_v_first))
+    profile = {"name": "determinism_key2_dense_tail", "B": 384,
+               "HV": 2, "T": 17}
+    for state_v_first in (False, True):
+        cases.append(_case(len(cases), profile, "BNSD", state_v_first))
+    profile = {"name": "determinism_key2_packed_tail", "B": 1,
+               "HV": 2, "T": 479, "seqs": (1,) * 382 + (33, 64),
+               "explicit_indices": True}
+    for state_v_first in (False, True):
+        cases.append(_case(len(cases), profile, "TND", state_v_first))
     return cases
 
 

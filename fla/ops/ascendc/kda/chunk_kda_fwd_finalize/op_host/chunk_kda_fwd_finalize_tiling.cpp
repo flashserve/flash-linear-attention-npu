@@ -15,6 +15,9 @@ namespace optiling {
 namespace {
 
 constexpr uint32_t FINALIZE_MIX_BATCH_MODE = 1;
+constexpr uint64_t FINALIZE_AIC_ONLY_TILING_KEY = 1;
+constexpr uint64_t FINALIZE_AIV_MOVER_TILING_KEY = 2;
+constexpr uint64_t FINALIZE_AIV_MOVER_MIN_CHUNKS_PER_CORE = 8;
 
 struct FinalizeShape {
     uint64_t batch = 0;
@@ -291,7 +294,6 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     scheduleContext.aicCoreNum = platform.GetCoreNumAic();
     scheduleContext.libApiWorkspaceBytes = platform.GetLibApiWorkSpaceSize();
     scheduleContext.isVarLen = isVarLen;
-    scheduleContext.arch22 = platform.GetCurNpuArch() != NpuArch::DAV_3510;
     ChunkKdaFwdFinalizeSchedule schedule;
     if (!ChunkKdaFwdFinalizeTilingProcessor(scheduleContext).Process(schedule)) {
         OP_LOGE(context->GetNodeName(), "chunk-first/head 分核或 workspace 规划失败。");
@@ -309,10 +311,21 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     tiling.set_isVarLen(isVarLen);
     tiling.set_outputSequenceMajor(info.sequenceMajor);
     tiling.set_stateVFirst(*stateVFirst);
-    context->SetTilingKey(0);
+    const bool isA5 =
+        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
+    const uint64_t minimumChunksPerCore =
+        schedule.chunkWorkItems / schedule.usedCoreNum;
+    const bool useAivInputMover =
+        isA5 && schedule.headsPerPartition == info.heads &&
+        minimumChunksPerCore >= FINALIZE_AIV_MOVER_MIN_CHUNKS_PER_CORE;
+    context->SetTilingKey(useAivInputMover
+                              ? FINALIZE_AIV_MOVER_TILING_KEY
+                              : FINALIZE_AIC_ONLY_TILING_KEY);
     context->SetBlockDim(schedule.usedCoreNum);
-    if (context->SetScheduleMode(FINALIZE_MIX_BATCH_MODE) !=
-        ge::GRAPH_SUCCESS) {
+    if (useAivInputMover &&
+        context->SetScheduleMode(FINALIZE_MIX_BATCH_MODE) != ge::GRAPH_SUCCESS) {
+        OP_LOGE(context->GetNodeName(),
+                "设置 A5 MIX AIC/AIV batch 调度模式失败。");
         return ge::GRAPH_FAILED;
     }
     size_t *workspace = context->GetWorkspaceSizes(1);
