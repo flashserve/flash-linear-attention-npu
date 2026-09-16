@@ -10,6 +10,7 @@
 #include "../../../../chunk_gdn_fwd/chunk_fwd_h/op_host/op_api/chunk_fwd_h.h"
 
 #include "aclnn_kernels/common/op_error_check.h"
+#include "aclnn_kernels/cast.h"
 #include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/reshape.h"
 #include "aclnn_kernels/transpose.h"
@@ -279,9 +280,9 @@ aclnnStatus CheckLayoutShapes(const Params &params, const ShapeInfo &info)
                                  : HasShape(params.v, {info.batch, info.hv, info.tokens, info.valueDim});
     CHECK_COND(validVShape, ACLNN_ERR_PARAM_INVALID,
                "v shape must follow layout (BNSD/NTD or BSND/TND).");
-    CHECK_COND(HasShape(params.g, {info.batch, info.hv, info.tokens}) &&
-                   HasShape(params.beta, {info.batch, info.hv, info.tokens}),
-               ACLNN_ERR_PARAM_INVALID, "g and beta must be BNS [B,HV,T].");
+    CHECK_COND(HasShape(params.g, {info.batch, info.tokens, info.hv}) &&
+                   HasShape(params.beta, {info.batch, info.tokens, info.hv}),
+               ACLNN_ERR_PARAM_INVALID, "g and beta must be BSN [B,T,HV].");
     CHECK_COND(HasShape(params.dO, {info.batch, info.tokens, info.hv, info.valueDim}),
                ACLNN_ERR_PARAM_INVALID, "d_o must be BSND [B,T,HV,V].");
     CHECK_COND(HasShape(params.a, {info.batch, info.hv, info.tokens, params.chunkSize}),
@@ -357,13 +358,15 @@ aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
                    params.dqOut->GetDataType() == dtype && params.dkOut->GetDataType() == dtype &&
                    params.dvOut->GetDataType() == dtype,
                ACLNN_ERR_PARAM_INVALID, "main tensors must all use BF16.");
-    CHECK_COND(params.g->GetDataType() == params.beta->GetDataType() &&
-                   (params.g->GetDataType() == DataType::DT_BF16 ||
-                    params.g->GetDataType() == DataType::DT_FLOAT) &&
+    const bool validGType = params.g->GetDataType() == DataType::DT_BF16 ||
+                            params.g->GetDataType() == DataType::DT_FLOAT;
+    const bool validBetaType = params.beta->GetDataType() == DataType::DT_BF16 ||
+                               params.beta->GetDataType() == DataType::DT_FLOAT;
+    CHECK_COND(validGType && validBetaType &&
                    params.dGOut->GetDataType() == params.g->GetDataType() &&
                    params.dBetaOut->GetDataType() == params.beta->GetDataType(),
                ACLNN_ERR_PARAM_INVALID,
-               "g/beta and their gradients must use the same BF16 or FP32 dtype.");
+               "g/beta must use BF16 or FP32, and each gradient must match its input dtype.");
     CHECK_COND(!params.useQkL2normInKernel ||
                    (params.qRstd != nullptr && params.kRstd != nullptr),
                ACLNN_ERR_PARAM_NULLPTR,
@@ -470,6 +473,9 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
     const aclTensor *qHead = params.q;
     const aclTensor *kHead = params.k;
     const aclTensor *vHead = params.v;
+    const bool useFp32Gate = params.g->GetDataType() == DataType::DT_FLOAT ||
+                             params.beta->GetDataType() == DataType::DT_FLOAT;
+    const DataType gateType = useFp32Gate ? DataType::DT_FLOAT : DataType::DT_BF16;
     const aclTensor *initialStateKv = params.initialState;
     if (info.sequenceMajor) {
         qHead = TransposeContiguous(params.q, {0, 2, 1, 3}, executorPtr);
@@ -477,8 +483,24 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
         vHead = TransposeContiguous(params.v, {0, 2, 1, 3}, executorPtr);
     }
     const aclTensor *dOHead = TransposeContiguous(params.dO, {0, 2, 1, 3}, executorPtr);
-    const aclTensor *betaRawHead = TransposeContiguous(params.betaRaw, {0, 2, 1}, executorPtr);
+    // Scalar inputs enter as BSN. Compute all gate paths at their common higher precision in BNS.
+    const aclTensor *gCompute = params.g->GetDataType() == gateType
+                                    ? params.g
+                                    : l0op::Cast(params.g, gateType, executorPtr);
+    const aclTensor *betaCompute = params.beta->GetDataType() == gateType
+                                       ? params.beta
+                                       : l0op::Cast(params.beta, gateType, executorPtr);
+    const aclTensor *betaRawCompute = params.betaRaw;
+    if (betaRawCompute != nullptr && betaRawCompute->GetDataType() != gateType) {
+        betaRawCompute = l0op::Cast(betaRawCompute, gateType, executorPtr);
+    }
+
+    const aclTensor *gHead = TransposeContiguous(gCompute, {0, 2, 1}, executorPtr);
+    const aclTensor *betaHead = TransposeContiguous(betaCompute, {0, 2, 1}, executorPtr);
+    const aclTensor *betaRawHead = TransposeContiguous(betaRawCompute, {0, 2, 1}, executorPtr);
+
     CHECK_COND(qHead != nullptr && kHead != nullptr && vHead != nullptr && dOHead != nullptr &&
+                   gHead != nullptr && betaHead != nullptr &&
                    (!params.useBetaSigmoidInKernel || betaRawHead != nullptr),
                ACLNN_ERR_INNER_NULLPTR, "input layout conversion failed.");
     if (params.stateVFirst) {
@@ -488,7 +510,6 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
     }
     const int64_t chunks = ChunkCount(params, info.tokens);
     const DataType dtype = qHead->GetDataType();
-    const DataType gateType = params.g->GetDataType();
     const op::Shape qShape = MakeShape({info.batch, info.hk, info.tokens, info.keyDim});
     const op::Shape vShape = MakeShape({info.batch, info.hv, info.tokens, info.valueDim});
     const op::Shape gateShape = MakeShape({info.batch, info.hv, info.tokens});
@@ -520,7 +541,7 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
                ACLNN_ERR_INNER_NULLPTR, "allocating composite intermediate tensors failed.");
 
     const auto intraResult = l0op::ChunkGdnBwdIntra(
-        qHead, kHead, vHead, params.g, params.beta, params.a, dOHead,
+        qHead, kHead, vHead, gHead, betaHead, params.a, dOHead,
         params.cuSeqlens, params.chunkIndices, params.scale, params.chunkSize,
         params.useExp2, w, u, dvLocal, executorPtr);
     CHECK_COND(intraResult[0] != nullptr && intraResult[1] != nullptr &&
@@ -528,14 +549,14 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
                ACLNN_ERR_INNER_NULLPTR, "ChunkGdnBwdIntra composition failed.");
 
     const auto fwdHResult = l0op::ChunkFwdH(
-        kHead, w, u, params.g, nullptr, initialStateKv,
+        kHead, w, u, gHead, nullptr, initialStateKv,
         params.cuSeqlens, params.chunkIndices, false, params.chunkSize, true,
         params.useExp2, false, h, vNew, nullptr, executorPtr);
     CHECK_COND(fwdHResult[0] != nullptr && fwdHResult[1] != nullptr,
                ACLNN_ERR_INNER_NULLPTR, "ChunkFwdH composition failed.");
 
     const auto dhuResult = l0op::ChunkGatedDeltaRuleBwdDhu(
-        qHead, kHead, w, dOHead, dvLocal, params.g, nullptr,
+        qHead, kHead, w, dOHead, dvLocal, gHead, nullptr,
         params.initialState, params.dht, params.cuSeqlens, params.chunkIndices,
         params.scale, params.chunkSize, params.useExp2, params.stateVFirst, dh, params.dh0Out,
         dv2, executorPtr);
@@ -544,7 +565,7 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
                ACLNN_ERR_INNER_NULLPTR, "ChunkGatedDeltaRuleBwdDhu composition failed.");
 
     const auto finalizeResult = l0op::ChunkGatedDeltaRuleBwdFinalize(
-        qHead, kHead, vHead, vNew, dOHead, dv2, params.g, params.beta, h, dh,
+        qHead, kHead, vHead, vNew, dOHead, dv2, gHead, betaHead, h, dh,
         params.a, params.qRstd, params.kRstd, betaRawHead, params.cuSeqlens,
         params.chunkIndices, params.scale, params.chunkSize,
         params.useQkL2normInKernel, params.useBetaSigmoidInKernel,
@@ -568,6 +589,12 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
     }
     const aclTensor *dBetaSequence = TransposeContiguous(dBetaHead, {0, 2, 1}, executorPtr);
     const aclTensor *dGSequence = TransposeContiguous(dGHead, {0, 2, 1}, executorPtr);
+    if (dBetaSequence != nullptr && dBetaSequence->GetDataType() != params.dBetaOut->GetDataType()) {
+        dBetaSequence = l0op::Cast(dBetaSequence, params.dBetaOut->GetDataType(), executorPtr);
+    }
+    if (dGSequence != nullptr && dGSequence->GetDataType() != params.dGOut->GetDataType()) {
+        dGSequence = l0op::Cast(dGSequence, params.dGOut->GetDataType(), executorPtr);
+    }
     CHECK_RET(ViewCopy(dBetaSequence, params.dBetaOut, executorPtr) == ACLNN_SUCCESS,
               ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(ViewCopy(dGSequence, params.dGOut, executorPtr) == ACLNN_SUCCESS,

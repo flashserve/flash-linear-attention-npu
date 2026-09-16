@@ -615,24 +615,25 @@ def npu_chunk_gated_delta_rule_bwd(
     A,
     d_o,
     scale,
-    chunk_size,
     *,
-    layout="BSND",
+    chunk_size=64,
+    cu_seqlens=None,
+    chunk_indices=None,
     initial_state=None,
     dht=None,
     q_rstd=None,
     k_rstd=None,
     beta_raw=None,
+    use_exp2=False,
+    use_qk_l2norm_in_kernel=False,
+    use_gate_in_kernel=False,
+    use_beta_sigmoid_in_kernel=False,
+    allow_neg_eigval=False,
+    return_intermediate_states=False,
+    state_v_first=False,
     a_log=None,
     dt_bias=None,
-    use_exp2=True,
-    use_gate_in_kernel=False,
-    use_qk_l2norm_in_kernel=False,
-    use_beta_sigmoid_in_kernel=False,
-    state_v_first=False,
-    cu_seqlens=None,
-    chunk_indices=None,
-    return_intermediate_states=False,
+    layout="BNSD",
 ):
     """Run the composite chunk gated delta rule backward graph."""
     import torch
@@ -660,8 +661,14 @@ def npu_chunk_gated_delta_rule_bwd(
         raise ValueError("the composite currently requires K=V=128 and chunk_size=64.")
     if value_heads % key_heads != 0 or value_heads // key_heads not in (1, 2, 3, 4):
         raise ValueError("HV/HK must be an integer in [1, 4].")
-    if _shape(g) != (batch, value_heads, tokens) or _shape(beta) != (batch, value_heads, tokens):
-        raise ValueError("g and beta must be BNS [B, HV, T].")
+    scalar_input_shape = (batch, tokens, value_heads)
+    if _shape(g) != scalar_input_shape or _shape(beta) != scalar_input_shape:
+        raise ValueError("g and beta must be BSN [B, T, HV].")
+    if g.dtype not in (torch.bfloat16, torch.float32) or beta.dtype not in (
+        torch.bfloat16,
+        torch.float32,
+    ):
+        raise ValueError("g and beta must use bfloat16 or float32.")
     if _shape(d_o) != (batch, tokens, value_heads, value_dim):
         raise ValueError("d_o must be BSND [B, T, HV, V].")
     if _shape(A) != (batch, value_heads, tokens, int(chunk_size)):
@@ -715,9 +722,8 @@ def npu_chunk_gated_delta_rule_bwd(
     dq = _empty_like(q)
     dk = _empty_like(k)
     dv = _empty_like(v)
-    scalar_output_shape = (batch, tokens, value_heads)
-    d_beta = _empty(scalar_output_shape, beta)
-    d_g = _empty(scalar_output_shape, g)
+    d_beta = _empty(scalar_input_shape, beta)
+    d_g = _empty(scalar_input_shape, g)
     dh0 = _empty_like(initial_state) if initial_state is not None else None
     d_a_log = None
     d_dt_bias = None

@@ -122,7 +122,16 @@ def build_inputs(spec: dict[str, Any], device: torch.device) -> dict[str, Any]:
     batch, key_heads, value_heads, tokens = (
         int(spec[name]) for name in ("B", "HK", "HV", "T")
     )
-    scalar_dtype = torch.float32 if spec.get("scalar_dtype", "fp32") == "fp32" else torch.bfloat16
+    g_dtype = (
+        torch.float32
+        if spec.get("g_dtype", spec.get("scalar_dtype", "fp32")) == "fp32"
+        else torch.bfloat16
+    )
+    beta_dtype = (
+        torch.float32
+        if spec.get("beta_dtype", spec.get("scalar_dtype", "fp32")) == "fp32"
+        else torch.bfloat16
+    )
     seed = int(spec.get("seed", 20260911))
     seqlens, cu_seqlens, chunk_indices = _canonical_metadata(spec)
     if seqlens is not None and (batch != 1 or sum(seqlens) != tokens):
@@ -131,15 +140,15 @@ def build_inputs(spec: dict[str, Any], device: torch.device) -> dict[str, Any]:
     q = _randn((batch, key_heads, tokens, DIM), seed + 1, 0.12, torch.bfloat16, device)
     k = _randn((batch, key_heads, tokens, DIM), seed + 2, 0.12, torch.bfloat16, device)
     v = _randn((batch, value_heads, tokens, DIM), seed + 3, 0.05, torch.bfloat16, device)
-    g = _gate_values(batch, value_heads, tokens, seqlens, seed + 4, scalar_dtype, device)
+    g = _gate_values(batch, value_heads, tokens, seqlens, seed + 4, g_dtype, device)
     use_beta_sigmoid = _as_bool(spec.get("use_beta_sigmoid", False))
     beta_raw = (
-        _randn((batch, value_heads, tokens), seed + 5, 0.5, scalar_dtype, device)
+        _randn((batch, value_heads, tokens), seed + 5, 0.5, beta_dtype, device)
         if use_beta_sigmoid
         else None
     )
-    beta = torch.sigmoid(beta_raw.float()).to(scalar_dtype) if beta_raw is not None else _rand(
-        (batch, value_heads, tokens), seed + 5, 0.1, 0.9, scalar_dtype, device
+    beta = torch.sigmoid(beta_raw.float()).to(beta_dtype) if beta_raw is not None else _rand(
+        (batch, value_heads, tokens), seed + 5, 0.1, 0.9, beta_dtype, device
     )
     a = _randn((batch, value_heads, tokens, CHUNK_SIZE), seed + 6, 0.02, torch.bfloat16, device)
     d_o = _randn((batch, value_heads, tokens, DIM), seed + 7, 0.12, torch.bfloat16, device)
@@ -205,6 +214,13 @@ def _intra_reference(inputs: dict[str, Any]):
 
 def run_cpu(spec: dict[str, Any]):
     inputs = build_inputs(spec, torch.device("cpu"))
+    g_dtype = inputs["g"].dtype
+    beta_dtype = inputs["beta"].dtype
+    gate_dtype = torch.float32 if torch.float32 in (g_dtype, beta_dtype) else torch.bfloat16
+    inputs["g"] = inputs["g"].to(gate_dtype)
+    inputs["beta"] = inputs["beta"].to(gate_dtype)
+    if inputs["beta_raw"] is not None:
+        inputs["beta_raw"] = inputs["beta_raw"].to(gate_dtype)
     w, u, dv_local = _intra_reference(inputs)
     fwd_inputs = _FWD_H.PreparedInputs(
         k=inputs["k"],
@@ -247,8 +263,8 @@ def run_cpu(spec: dict[str, Any]):
         dq, dk, dv = (
             tensor.transpose(1, 2).contiguous() for tensor in (dq, dk, dv)
         )
-    d_beta = d_beta.transpose(1, 2).contiguous()
-    d_g = d_g.transpose(1, 2).contiguous()
+    d_beta = d_beta.transpose(1, 2).contiguous().to(beta_dtype)
+    d_g = d_g.transpose(1, 2).contiguous().to(g_dtype)
     return dq, dk, dv, d_beta, d_g, dh0, None, None
 
 
@@ -274,11 +290,11 @@ def run_npu(spec: dict[str, Any], input_data: InputDataset):
         _public_layout(inputs["q"], sequence_major),
         _public_layout(inputs["k"], sequence_major),
         _public_layout(inputs["v"], sequence_major),
-        inputs["g"],
-        inputs["beta"],
+        _public_layout(inputs["g"], True),
+        _public_layout(inputs["beta"], True),
         inputs["A"],
         _public_layout(inputs["d_o"], True),
-        inputs["scale"], CHUNK_SIZE, layout=layout,
+        inputs["scale"], chunk_size=CHUNK_SIZE, layout=layout,
         initial_state=initial_state, dht=dht,
         q_rstd=inputs["q_rstd"],
         k_rstd=inputs["k_rstd"],
