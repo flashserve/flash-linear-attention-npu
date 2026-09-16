@@ -41,7 +41,7 @@ usage() {
     echo "  prepare_wy_repr_bwd_full, chunk_gated_delta_rule_bwd_dhu,"
     echo "  chunk_bwd_dv_local, causal_conv1d, prepare_wy_repr_bwd_da,"
     echo "  chunk_bwd_dqkwg, gdn_fwd_o, gdn_fwd_h, recompute_w_u_fwd,"
-    echo "  chunk_local_cumsum, chunk_scaled_dot_kkt"
+    echo "  chunk_local_cumsum, chunk_scaled_dot_kkt, chunk_kda_fwd_finalize"
     exit 1
 }
 
@@ -171,6 +171,7 @@ run_test "gdn_fwd_h"                       "bash run_gdn_fwd_h.sh"
 run_test "recompute_w_u_fwd"                "python3 test_npu_recompute_w_u_fwd.py"
 run_test "chunk_local_cumsum"              "python3 test_npu_chunk_local_cumsum.py"
 run_test "chunk_scaled_dot_kkt"            "python3 test_npu_chunk_scaled_dot_kkt.py"
+run_test "chunk_kda_fwd_finalize"          "timeout --signal=TERM --kill-after=5s 60s python3 test_npu_chunk_kda_fwd_finalize.py"
 
 echo ""
 echo "=========================================="
