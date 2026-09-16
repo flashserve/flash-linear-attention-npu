@@ -10,7 +10,6 @@ attn_out = chunk_kda_fwd_finalize(
     aqk,
     v_new,
     h,
-    *,
     output_layout="BSND",
     state_v_first=False,
     cu_seqlens=None,

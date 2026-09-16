@@ -50,8 +50,9 @@ case 2 命中 `_0`/cube 实例，耗时 908.545 us；性能 case 3 命中
 CPU 节点把四个直接输入恢复为 BF16，使用 FP32 两项矩阵乘并在求和
 后按 BF16 输出舍入；返回 FP32 承载 BF16 结果供 ATK 原生
 `mixed_tolerance_bm` 比较。NPU 节点用本 executor 的窄 aclnn
-直调适配器。该适配器调用共享 runtime 而不修改其源码，不等于
-已交付 `fla_npu.ops.ascendc.chunk_kda_fwd_finalize` 稳定入口。
+直调适配器验证设备实现。公开
+`fla_npu.ops.ascendc.chunk_kda_fwd_finalize` 稳定入口另由 wrapper
+单元测试和实机调用覆盖。
 
 ## 生成与静态核对
 
