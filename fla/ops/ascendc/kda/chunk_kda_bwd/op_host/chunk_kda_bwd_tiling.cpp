@@ -130,8 +130,8 @@ ge::graphStatus BuildKernelBTiling(
     b.scale = scale;
 
     const uint64_t qSize = DtypeSize(qgDesc->GetDataType());
-    // A2/A3 retain both state-update GEMM terms in FP32 until subtraction.
-    const uint64_t termSize = isAscend950 ? qSize : sizeof(float);
+    // Retain both state-update GEMM terms in FP32 until subtraction on all SoCs.
+    const uint64_t termSize = sizeof(float);
     const uint64_t gateSize = DtypeSize(gkDesc->GetDataType());
     const uint64_t maxDim = static_cast<uint64_t>(std::max(b.K, b.V));
     const uint64_t gateElems = static_cast<uint64_t>(
@@ -149,7 +149,8 @@ ge::graphStatus BuildKernelBTiling(
             2 * align32(row * static_cast<uint64_t>(b.V) * sizeof(float));
         if (qgDesc->GetDataType() == ge::DT_BF16) {
             vectorBytes +=
-                2 * align32(row * static_cast<uint64_t>(b.V) * qSize);
+                2 * align32(row * static_cast<uint64_t>(b.V) *
+                            (isAscend950 ? termSize : qSize));
         }
         if (fixedBytes + vectorBytes + 16U * 1024U <= ubSize) {
             break;
