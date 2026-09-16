@@ -16,6 +16,7 @@
 #include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/reshape.h"
 #include "aclnn_kernels/transpose.h"
+#include "external/aclnn_kernels/aclnn_platform.h"
 #include "opdev/common_types.h"
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
@@ -80,7 +81,12 @@ struct GdnShapeInfo {
     int64_t vDim = 0;
 };
 
-static bool IsAscend950();
+static bool IsAscend950()
+{
+    const auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
+    using Ops::Transformer::AclnnUtil::IsRegbase;
+    return IsRegbase(npuArch);
+}
 
 static bool UsePreparePath(const ChunkGatedDeltaRuleFwdParams &params)
 {
@@ -297,12 +303,6 @@ static aclnnStatus CheckRank(const aclTensor *tensor, size_t rank, const char *n
 static aclnnStatus CheckOptionalRank(const aclTensor *tensor, size_t rank, const char *name)
 {
     return tensor == nullptr ? ACLNN_SUCCESS : CheckRank(tensor, rank, name);
-}
-
-static bool IsAscend950()
-{
-    const char *socName = aclrtGetSocName();
-    return socName != nullptr && std::strstr(socName, "Ascend950") != nullptr;
 }
 
 static aclnnStatus ResolveShapeInfo(const ChunkGatedDeltaRuleFwdParams &params, GdnShapeInfo &info)
