@@ -12,6 +12,12 @@ Q/K L2 norm + gate cumsum + prepare + post-WU
 之间的正向必需输出；其余七项是可按反向策略裁剪的检查点。chunk 间状态递推由 FwdH
 完成，最终 attention 输出由 Finalize 完成，二者不属于本算子。
 
+A5 对每个 chunk/value head 仅读取一次的原始 V 和 gate 禁用 L2 cache；
+`HK=HV` 时 Q/K 也禁用 L2，GVA 场景保留 Q/K 的默认缓存策略供多个 value head 复用。
+beta、A_log、dt_bias、workspace 和后续阶段会重读的 gk 保持原缓存策略。
+纯推理 `OutputMode::None` 的 q/k 归一化仍计算 rstd 并在寄存器内使用，
+但不将仅供反向保存的 q_rstd/k_rstd 写入 UB；其他输出模式不变。
+
 Shape 符号沿用 [KDA 模型符号表](../../README.md#核心符号)，公开输入输出与已知限制统一见
 [算子 README](../README.md#输入输出)。
 
@@ -125,6 +131,13 @@ workspace 并供 C4/C5/C7 使用；V6 仍生成 UB 中的 `qg`，再基于其 BF
 Prepare 不存在 chunk 间依赖，Host 首先仅按 chunk 分核。只有 chunk work item 少于可用 AIC
 时才增加 head partition。head partition 的边界按 `group_size=HV/HK` 对齐，禁止拆开共享同一
 Q/K head 的完整 GVA value-head 组。
+
+A5 dense 在全局只有一个 head partition、但 chunk 数不能整除已用核时，继续保持完整轮次只按
+chunk 分核。例如 128 个 chunk、28 个核时，每核先处理 4 个完整 chunk，共 112 个；剩余 16 个
+chunk 已不足以再覆盖全部核，因此只把这部分按 4 个 value head 的硬件处理组展开并均摊。仅当
+`group_size=HV/HK` 能整除 4 时启用该路径，保证尾部边界仍不拆开 GVA 组。AIC 和两个 AIV
+使用完全相同的主体、尾部映射顺序，尾部不同核写入互不重叠的 `(chunk, head)` 区域。变长、
+A2/A3、已经启用全局 head partition 或 GVA 边界不满足条件的场景仍使用原调度。
 
 每个 AIC workgroup 一轮最多处理 4 个 value head。A5 的 AIV0 处理 local head 0/1，AIV1
 处理 2/3；A2/A3 的两个 AIV 按 pair wave 处理 0/2 和 1/3。不同 value head 即使映射到同一

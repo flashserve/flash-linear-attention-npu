@@ -16,7 +16,8 @@ namespace optiling {
 namespace {
 
 constexpr uint32_t FINALIZE_MIX_BATCH_MODE = 1;
-constexpr uint64_t FINALIZE_AIV_MOVER_MIN_CHUNKS_PER_CORE = 8;
+constexpr uint64_t FINALIZE_AIV_MOVER_DENSE_MIN_CHUNKS_PER_CORE = 4;
+constexpr uint64_t FINALIZE_AIV_MOVER_VARLEN_MIN_CHUNKS_PER_CORE = 8;
 
 struct FinalizeShape {
     uint64_t batch = 0;
@@ -314,9 +315,12 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
         platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
     const uint64_t minimumChunksPerCore =
         schedule.chunkWorkItems / schedule.usedCoreNum;
+    const uint64_t moverMinimumChunksPerCore = isVarLen
+        ? FINALIZE_AIV_MOVER_VARLEN_MIN_CHUNKS_PER_CORE
+        : FINALIZE_AIV_MOVER_DENSE_MIN_CHUNKS_PER_CORE;
     const bool useAivInputMover =
         isA5 && schedule.headsPerPartition == info.heads &&
-        minimumChunksPerCore >= FINALIZE_AIV_MOVER_MIN_CHUNKS_PER_CORE;
+        minimumChunksPerCore >= moverMinimumChunksPerCore;
     using namespace KdaFinalize;
     const uint64_t tilingKey = GET_TPL_TILING_KEY(
         static_cast<uint64_t>(useAivInputMover ? 1 : 0));
