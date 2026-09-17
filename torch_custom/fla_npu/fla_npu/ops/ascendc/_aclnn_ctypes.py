@@ -518,6 +518,51 @@ def npu_chunk_bwd_dqkwg(
     use_exp2=None,
     transpose_state_layout=None,
 ):
+    import torch
+
+    # 参数校验: None/标量/维度错误/dtype 错误在 Python 侧崩溃或只会触发 CANN
+    # 的通用报错 (Cannot find binary), 这里提前拦截并给出明确提示。
+    op_name = "npu_chunk_bwd_dqkwg"
+    required_tensors = {
+        "q": q, "k": k, "v": v, "g": g, "h": h,
+        "dox": dox, "dh": dh, "dv": dv,
+    }
+    for name, tensor in required_tensors.items():
+        if not isinstance(tensor, torch.Tensor):
+            raise TypeError(f"{op_name}: {name} must be a torch.Tensor, got {type(tensor)!r}.")
+
+    expected_ranks = {
+        "q": (4, "[B, HK, T, K]"),
+        "k": (4, "[B, HK, T, K]"),
+        "v": (4, "[B, HV, T, V]"),
+        "dox": (4, "[B, HV, T, V]"),
+        "dv": (4, "[B, HV, T, V]"),
+        "g": (3, "[B, HV, T]"),
+        "h": (5, "[B, HV, num_chunks, K, V]"),
+        "dh": (5, "[B, HV, num_chunks, K, V]"),
+    }
+    for name, (rank, layout) in expected_ranks.items():
+        tensor = required_tensors[name]
+        if tensor.dim() != rank:
+            raise ValueError(
+                f"{op_name}: {name} must be a rank-{rank} tensor {layout}, "
+                f"got shape {tuple(tensor.shape)}."
+            )
+
+    supported_dtypes = (torch.float16, torch.bfloat16)
+    for name in ("q", "k", "v", "h", "dox", "dh", "dv"):
+        tensor = required_tensors[name]
+        if tensor.dtype not in supported_dtypes:
+            raise ValueError(
+                f"{op_name}: {name} must use float16 or bfloat16, got {tensor.dtype}."
+            )
+    for name in ("k", "v", "h", "dox", "dh", "dv"):
+        tensor = required_tensors[name]
+        if tensor.dtype != q.dtype:
+            raise ValueError(
+                f"{op_name}: {name} must use the same dtype as q ({q.dtype}), got {tensor.dtype}."
+            )
+
     q_shape = _shape(q)
     value_num_heads = int(v.shape[1])
     dq = _empty_like(q)

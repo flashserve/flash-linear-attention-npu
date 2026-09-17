@@ -347,6 +347,9 @@ class _AclnnRuntime:
 
         self._libraries = fla_npu.load_ascendc_opapi_libraries()
         self._symbols = {}
+        # aclGetRecentErrMsg 用于在 aclnn 调用失败时取出 CANN ErrorManager
+        # 缓存的报错文案；惰性绑定，取不到符号时降级为只报错误码。
+        self._get_recent_err_msg = None
         self.acl_create_tensor = self.symbol("aclCreateTensor")
         self.acl_create_tensor.argtypes = [
             ctypes.POINTER(ctypes.c_int64),
@@ -385,6 +388,36 @@ class _AclnnRuntime:
             return symbol
         raise AttributeError(f"Unable to resolve aclnn symbol {name}.")
 
+    def _recent_error_message(self) -> str:
+        """返回 CANN ErrorManager 缓存的最近一次 aclnn 报错文案，取不到返回空串。"""
+        if self._get_recent_err_msg is None:
+            try:
+                get_recent_err_msg = self.symbol("aclGetRecentErrMsg")
+            except AttributeError:
+                # libopapi/custom opapi 中没有该符号时回退到 libascendcl。
+                try:
+                    get_recent_err_msg = ctypes.CDLL("libascendcl.so").aclGetRecentErrMsg
+                except (OSError, AttributeError):
+                    return ""
+            get_recent_err_msg.restype = ctypes.c_char_p
+            self._get_recent_err_msg = get_recent_err_msg
+        try:
+            raw = self._get_recent_err_msg()
+        except Exception:
+            return ""
+        if not raw:
+            return ""
+        if isinstance(raw, bytes):
+            return raw.decode("utf-8", errors="replace").strip()
+        return str(raw).strip()
+
+    def _aclnn_error(self, name: str, ret: int) -> str:
+        message = f"{name} failed with aclnnStatus={ret}."
+        err_msg = self._recent_error_message()
+        if err_msg:
+            message += f" Error message: {err_msg}"
+        return message
+
     def call(
         self,
         name: str,
@@ -408,7 +441,7 @@ class _AclnnRuntime:
 
         ret = get_workspace(*args, ctypes.byref(workspace_size), ctypes.byref(executor))
         if ret != ACL_SUCCESS:
-            raise RuntimeError(f"{name}GetWorkspaceSize failed with aclnnStatus={ret}.")
+            raise RuntimeError(self._aclnn_error(f"{name}GetWorkspaceSize", ret))
 
         workspace = None
         workspace_ptr = ctypes.c_void_p()
@@ -425,7 +458,7 @@ class _AclnnRuntime:
             ctypes.c_void_p(current_stream_ptr(device)),
         )
         if ret != ACL_SUCCESS:
-            raise RuntimeError(f"{name} failed with aclnnStatus={ret}.")
+            raise RuntimeError(self._aclnn_error(name, ret))
         return workspace
 
 
