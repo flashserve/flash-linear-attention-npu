@@ -1,0 +1,52 @@
+{
+  "aclnn_name": "aclnnChunkGatedDeltaRuleFwdH",
+  "python_name": "npu_chunk_gated_delta_rule_fwd_h",
+  "nd_only": true,
+  "mutated": [],
+  "helpers": "inline int64_t gdn_fwd_h_chunk_count(const std::vector<int64_t>& cu_seqlens, const std::vector<int64_t>& chunk_indices, int64_t chunk_size, int64_t total_tokens) {\n  if (!chunk_indices.empty()) {\n    return static_cast<int64_t>(chunk_indices.size()) / 2;\n  }\n  if (!cu_seqlens.empty()) {\n    int64_t chunks = 0;\n    for (size_t i = 0; i + 1 < cu_seqlens.size(); ++i) {\n      const int64_t len = cu_seqlens[i + 1] - cu_seqlens[i];\n      chunks += (len + chunk_size - 1) / chunk_size;\n    }\n    return chunks;\n  }\n  return (total_tokens + chunk_size - 1) / chunk_size;\n}",
+  "outputs": [
+    {
+      "arg": "h",
+      "alloc": "at::empty({k.size(0), u.size(1), gdn_fwd_h_chunk_count(cu_seqlens, chunk_indices, chunk_size, k.size(2)), (state_v_first ? u.size(3) : k.size(3)), (state_v_first ? k.size(3) : u.size(3))}, k.options())"
+    },
+    {
+      "arg": "v_new",
+      "source": "u",
+      "dtype": "same"
+    },
+    {
+      "arg": "final_state",
+      "when": "output_final_state",
+      "alloc": "(initial_state.has_value() && initial_state->defined()) ? at::empty({(cu_seqlens.empty() ? k.size(0) : static_cast<int64_t>(cu_seqlens.size() - 1)), u.size(1), (state_v_first ? u.size(3) : k.size(3)), (state_v_first ? k.size(3) : u.size(3))}, initial_state->options()) : at::empty({(cu_seqlens.empty() ? k.size(0) : static_cast<int64_t>(cu_seqlens.size() - 1)), u.size(1), (state_v_first ? u.size(3) : k.size(3)), (state_v_first ? k.size(3) : u.size(3))}, k.options().dtype(at::kFloat))"
+    }
+  ],
+  "python": {
+    "positional": ["k", "w", "u", "g"],
+    "derive_chunk_indices": true,
+    "defaults": {
+      "gk": "None",
+      "initial_state": "None",
+      "output_final_state": "False",
+      "chunk_size": "None",
+      "cu_seqlens": "None",
+      "chunk_indices": "None",
+      "state_v_first": "False"
+    }
+  },
+  "args": [
+    {"name": "k", "kind": "tensor"},
+    {"name": "w", "kind": "tensor"},
+    {"name": "u", "kind": "tensor"},
+    {"name": "g", "kind": "optional_tensor"},
+    {"name": "gk", "kind": "optional_tensor"},
+    {"name": "initial_state", "kind": "optional_tensor"},
+    {"name": "output_final_state", "kind": "bool"},
+    {"name": "chunk_size", "kind": "int64", "default": "64"},
+    {"name": "cu_seqlens", "kind": "int_array"},
+    {"name": "chunk_indices", "kind": "int_array"},
+    {"name": "state_v_first", "kind": "bool"},
+    {"name": "h", "kind": "out_tensor"},
+    {"name": "v_new", "kind": "out_tensor"},
+    {"name": "final_state", "kind": "out_tensor"}
+  ]
+}

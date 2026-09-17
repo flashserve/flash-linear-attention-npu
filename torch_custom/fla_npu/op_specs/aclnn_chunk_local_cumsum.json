@@ -1,0 +1,29 @@
+{
+  "aclnn_name": "aclnnChunkLocalCumsum",
+  "python_name": "npu_chunk_local_cumsum",
+  "nd_only": true,
+  "mutated": [],
+  "output": {"arg": "out", "source": "g", "dtype": "output_dtype"},
+  "python": {
+    "positional": ["g", "chunk_size"],
+    "defaults": {
+      "cu_seqlens": "None",
+      "chunk_indices": "None",
+      "reverse": "False",
+      "scale": "1.0",
+      "head_first": "True",
+      "output_dtype": "\"float32\""
+    }
+  },
+  "args": [
+    {"name": "g", "kind": "tensor"},
+    {"name": "cu_seqlens", "kind": "int_array"},
+    {"name": "chunk_indices", "kind": "int_array"},
+    {"name": "chunk_size", "kind": "int64"},
+    {"name": "reverse", "kind": "bool"},
+    {"name": "scale", "kind": "double"},
+    {"name": "head_first", "kind": "bool"},
+    {"name": "output_dtype", "kind": "char_ptr"},
+    {"name": "out", "kind": "out_tensor"}
+  ]
+}
