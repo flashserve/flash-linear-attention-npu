@@ -442,6 +442,7 @@ jobs:
           export NPU_CI_ARCHIVE_DIR="$archive_dir"
 
           python3 - <<'PY'
+          import hashlib
           import json
           import os
           import shutil
@@ -474,6 +475,8 @@ jobs:
                   return json.load(response)
 
           merge_sha = ""
+          stale_base_sha = ""
+          stale_merge_sha = ""
           base_sha = expected_base_sha
           last_error = "GitHub has not produced a current test merge commit"
           for attempt in range(12):
@@ -494,6 +497,12 @@ jobs:
                   parents = [parent["sha"] for parent in merge_commit.get("parents", [])]
                   if parents == [base_sha, head_sha]:
                       break
+                  if len(parents) == 2 and parents[1] == head_sha:
+                      # GitHub keeps serving the test merge computed before the base
+                      # branch advanced.  Keep that merge (the PR head side is already
+                      # resolved in it) so the base delta can be replayed later.
+                      stale_merge_sha = merge_sha
+                      stale_base_sha = parents[0]
                   last_error = (
                       "test merge parents do not match the current base and head: "
                       f"merge={merge_sha}, parents={parents}"
@@ -501,7 +510,9 @@ jobs:
               if attempt < 11:
                   time.sleep(5)
           else:
-              raise RuntimeError(last_error)
+              if not stale_merge_sha:
+                  raise RuntimeError(last_error)
+              merge_sha = stale_merge_sha
 
           def download_archive(sha, destination):
               request = urllib.request.Request(
@@ -582,6 +593,47 @@ jobs:
                   for target, mode in reversed(directory_modes):
                       os.chmod(target, mode)
 
+          def tree_digests(root):
+              digests = {}
+              for path in sorted(root.rglob("*")):
+                  if path.is_file():
+                      relative = path.relative_to(root).as_posix()
+                      digests[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+              return digests
+
+          def replay_base_delta(repo_dir, source_tree, target_tree):
+              """Apply the base branch delta between two commits onto a merged tree.
+
+              ``repo_dir`` holds the PR head merged with ``source_tree``'s commit.
+              Replaying ``source_tree -> target_tree`` turns it into the tree for
+              the base commit the run recorded.  Paths that the PR and the base
+              changed differently cannot be replayed without a rebase, so they are
+              returned instead of being guessed.
+              """
+
+              source_digests = tree_digests(source_tree)
+              target_digests = tree_digests(target_tree)
+              repo_digests = tree_digests(repo_dir)
+              conflicts = []
+              for relative in sorted(set(source_digests) | set(target_digests)):
+                  before = source_digests.get(relative)
+                  after = target_digests.get(relative)
+                  if before == after:
+                      continue
+                  current = repo_digests.get(relative)
+                  if current == after:
+                      continue
+                  if current != before:
+                      conflicts.append(relative)
+                      continue
+                  destination = repo_dir / relative
+                  if after is None:
+                      destination.unlink()
+                      continue
+                  destination.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copy2(target_tree / relative, destination)
+              return conflicts
+
           def copy_case_file(repo_directory, destination):
               nofollow = getattr(os, "O_NOFOLLOW", 0)
               directory = getattr(os, "O_DIRECTORY", 0)
@@ -637,6 +689,33 @@ jobs:
           download_archive(trusted_sha, archive_dir / "trusted.tar.gz")
           extract_archive(archive_dir / "merge.tar.gz", Path("repo"))
           extract_archive(archive_dir / "trusted.tar.gz", Path("trusted-ci"))
+
+          if stale_merge_sha and merge_sha == stale_merge_sha:
+              relation = get_json(f"compare/{stale_base_sha}...{base_sha}")
+              if relation.get("status") not in {"ahead", "behind"}:
+                  raise RuntimeError(last_error)
+              source_tree = archive_dir / "stale-base-tree"
+              target_tree = archive_dir / "current-base-tree"
+              source_tree.mkdir()
+              target_tree.mkdir()
+              download_archive(stale_base_sha, archive_dir / "stale-base.tar.gz")
+              download_archive(base_sha, archive_dir / "current-base.tar.gz")
+              extract_archive(archive_dir / "stale-base.tar.gz", source_tree)
+              extract_archive(archive_dir / "current-base.tar.gz", target_tree)
+              conflicts = replay_base_delta(Path("repo"), source_tree, target_tree)
+              if conflicts:
+                  shown = ", ".join(conflicts[:5])
+                  if len(conflicts) > 5:
+                      shown = f"{shown} 等 {len(conflicts)} 个路径"
+                  raise RuntimeError(
+                      "PR 与最新 base 修改了同一批文件，无法在缓存的 test merge 上重放 base 改动："
+                      f"{shown}。请先将 PR 与 main 同步后重新触发 NPU CI。"
+                  )
+              print(
+                  "[A5][WARN] GitHub 缓存的 test merge 基于过期 base "
+                  f"{stale_base_sha[:8]}，已按当前 base {base_sha[:8]} 重放 base 侧改动。"
+              )
+
           copy_case_file(
               Path("repo"), archive_dir / "example_st_cases.json"
           )
