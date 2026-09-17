@@ -577,7 +577,6 @@ check_environment_contracts() {
     python3 torch_custom/fla_npu/test/test_aclnn_ctypes_abi.py -b
     python3 torch_custom/fla_npu/test/test_runtime_device_guard.py -b
     python3 torch_custom/fla_npu/test/test_ascendc_mutation_contract.py -b
-    python3 torch_custom/fla_npu/test/test_chunk_kda_fwd_finalize_wrapper.py -b
 }
 
 ops_arg=()

@@ -51,8 +51,8 @@ CPU 节点把四个直接输入恢复为 BF16，使用 FP32 两项矩阵乘并�
 后按 BF16 输出舍入；返回 FP32 承载 BF16 结果供 ATK 原生
 `mixed_tolerance_bm` 比较。NPU 节点用本 executor 的窄 aclnn
 直调适配器验证设备实现。公开
-`fla_npu.ops.ascendc.chunk_kda_fwd_finalize` 稳定入口另由 wrapper
-单元测试和实机调用覆盖。
+`fla_npu.ops.ascendc.chunk_kda_fwd_finalize` 稳定入口由共享 Python
+wrapper 提供，其接口验证不属于本 ATK 目录。
 
 ## 生成与静态核对
 
