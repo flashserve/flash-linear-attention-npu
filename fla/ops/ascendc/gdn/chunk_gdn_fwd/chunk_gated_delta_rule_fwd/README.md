@@ -53,11 +53,16 @@ A5 依次调度 `ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkFwdO`，
 | `gCumsumOutOptional` | 可选 | 与 g 同 shape；FP32 | chunk 内门控累加结果；为空时使用内部临时张量 |
 | `aOutOptional` | 可选 | `[B,Hv,T,chunkSize]`；与 q 同 dtype | 系数矩阵；为空时使用内部临时张量 |
 | `qHatOutOptional`、`kHatOutOptional` | A5 新路径可选 | 与 q/k 相同 | L2Norm 结果 |
-| `qRstdOutOptional`、`kRstdOutOptional` | A5 新路径可选 | q/k layout 去掉最后一维；FP32 | L2Norm rstd |
+| `qRstdOutOptional`、`kRstdOutOptional` | A5 新路径可选 | 固定 `[B,Hk,T]`；FP32 | L2Norm rstd |
 | `betaEffOutOptional` | A5 新路径可选 | 与 beta 同 shape；FP32 | 非空时启用并输出 beta sigmoid |
 | `hOutOptional` | A5 新路径可选 | `stateVFirst=false` 时末两维为 `[K,V]`，否则为 `[V,K]`；与 q 同 dtype | 分块状态 |
 
-Python ctypes 入口固定返回 `(o, final_state, g_cumsum, A, beta_eff, h)` 六元组。
+Python ctypes 入口固定返回
+`(o, final_state, g_cumsum, A, beta_eff, h, q_hat, k_hat, q_rstd, k_rstd)` 十元组。
+启用 `use_qk_l2norm_in_kernel` 时，q_hat/k_hat 为归一化结果，shape/layout/dtype 与输入一致，
+q_rstd/k_rstd 为 FP32 `[B,Hk,T]`，不随 layout 改变；关闭时 q_hat/k_hat 分别为原始 q/k
+对象的别名（不分配、不复制），q_rstd/k_rstd 为 None。新增四项不受 disable_recompute 控制。
+旧六项解包调用需要迁移。完整返回合同见 [docs/api.md](docs/api.md)。
 `disable_recompute=True` 时导出 g_cumsum/A，否则这两项为 None。
 `output_final_state`、`use_beta_sigmoid_in_kernel` 和 `return_intermediate_states`
 分别控制 final_state、beta_eff 和 h 是否为 None。

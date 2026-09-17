@@ -445,16 +445,12 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
                    "kHatOutOptional shape must match k.");
     }
     if (params.qRstdOutOptional != nullptr) {
-        const bool valid = info.isSequenceMajor
-                               ? HasShape(params.qRstdOutOptional, {info.batch, info.seqlen, info.hq})
-                               : HasShape(params.qRstdOutOptional, {info.batch, info.hq, info.seqlen});
-        CHECK_COND(valid, ACLNN_ERR_PARAM_INVALID, "qRstdOutOptional shape must follow q layout.");
+        const bool valid = HasShape(params.qRstdOutOptional, {info.batch, info.hq, info.seqlen});
+        CHECK_COND(valid, ACLNN_ERR_PARAM_INVALID, "qRstdOutOptional must have shape [B,Hk,T].");
     }
     if (params.kRstdOutOptional != nullptr) {
-        const bool valid = info.isSequenceMajor
-                               ? HasShape(params.kRstdOutOptional, {info.batch, info.seqlen, info.hq})
-                               : HasShape(params.kRstdOutOptional, {info.batch, info.hq, info.seqlen});
-        CHECK_COND(valid, ACLNN_ERR_PARAM_INVALID, "kRstdOutOptional shape must follow k layout.");
+        const bool valid = HasShape(params.kRstdOutOptional, {info.batch, info.hq, info.seqlen});
+        CHECK_COND(valid, ACLNN_ERR_PARAM_INVALID, "kRstdOutOptional must have shape [B,Hk,T].");
     }
     if (params.betaEffOutOptional != nullptr) {
         CHECK_COND(ShapeEqual(params.betaEffOutOptional->GetViewShape(), params.beta->GetViewShape()),
@@ -718,19 +714,11 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
                       ACLNN_ERR_INNER_NULLPTR);
         }
         if (params.qRstdOutOptional != nullptr) {
-            const aclTensor *qRstdExport = qRstd;
-            if (info.isSequenceMajor) {
-                qRstdExport = TransposeContiguous(qRstdExport, {0, 2, 1}, executorPtr);
-            }
-            CHECK_RET(ViewCopyIfPresent(qRstdExport, params.qRstdOutOptional, executorPtr) == ACLNN_SUCCESS,
+            CHECK_RET(ViewCopyIfPresent(qRstd, params.qRstdOutOptional, executorPtr) == ACLNN_SUCCESS,
                       ACLNN_ERR_INNER_NULLPTR);
         }
         if (params.kRstdOutOptional != nullptr) {
-            const aclTensor *kRstdExport = kRstd;
-            if (info.isSequenceMajor) {
-                kRstdExport = TransposeContiguous(kRstdExport, {0, 2, 1}, executorPtr);
-            }
-            CHECK_RET(ViewCopyIfPresent(kRstdExport, params.kRstdOutOptional, executorPtr) == ACLNN_SUCCESS,
+            CHECK_RET(ViewCopyIfPresent(kRstd, params.kRstdOutOptional, executorPtr) == ACLNN_SUCCESS,
                       ACLNN_ERR_INNER_NULLPTR);
         }
         const aclTensor *aExport = a;

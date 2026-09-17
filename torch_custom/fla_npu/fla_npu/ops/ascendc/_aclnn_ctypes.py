@@ -2639,7 +2639,13 @@ def npu_chunk_gated_delta_rule_fwd(
         state_tail = (v_dim, k_dim) if state_v_first else (k_dim, v_dim)
         h = _empty((batch, v_heads, chunks, *state_tail), q)
     layout_buffer = ctypes.create_string_buffer(layout.encode("utf-8"))
-    outputs = (o, final_state, g_cumsum, A, beta_eff, h,)
+    # Hats alias the original inputs when normalization is disabled.
+    q_hat = _empty(q_shape, q) if use_qk_l2norm_in_kernel else q
+    k_hat = _empty(k_shape, k) if use_qk_l2norm_in_kernel else k
+    norm_shape = (batch, k_heads, tokens)
+    q_rstd = _empty(norm_shape, q, dtype=torch.float32) if use_qk_l2norm_in_kernel else None
+    k_rstd = _empty(norm_shape, k, dtype=torch.float32) if use_qk_l2norm_in_kernel else None
+    outputs = (o, final_state, g_cumsum, A, beta_eff, h, q_hat, k_hat, q_rstd, k_rstd)
     return _call_aclnn(
         "aclnnChunkGatedDeltaRuleFwd",
         lambda ctx: [
@@ -2662,10 +2668,10 @@ def npu_chunk_gated_delta_rule_fwd(
             ctypes.c_bool(state_v_first),
             ctx.tensor(o, "o"),
             ctx.tensor(final_state, "final_state"),
-            ctx.tensor(None, "q_hat"),
-            ctx.tensor(None, "k_hat"),
-            ctx.tensor(None, "q_rstd"),
-            ctx.tensor(None, "k_rstd"),
+            ctx.tensor(q_hat if use_qk_l2norm_in_kernel else None, "q_hat"),
+            ctx.tensor(k_hat if use_qk_l2norm_in_kernel else None, "k_hat"),
+            ctx.tensor(q_rstd, "q_rstd"),
+            ctx.tensor(k_rstd, "k_rstd"),
             ctx.tensor(beta_eff, "beta_eff"),
             ctx.tensor(g_cumsum, "g_cumsum"),
             ctx.tensor(A, "A"),
