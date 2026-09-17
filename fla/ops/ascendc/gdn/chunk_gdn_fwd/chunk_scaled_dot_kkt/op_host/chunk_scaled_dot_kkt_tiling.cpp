@@ -369,6 +369,15 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
     return ge::GRAPH_SUCCESS;
 }
 
+static ge::graphStatus TilingParseForChunkScaledDotKkt(gert::TilingParseContext *context)
+{
+    (void)context;
+    return ge::GRAPH_SUCCESS;
+}
+
+struct ChunkScaledDotKktCompileInfo {};
+
 IMPL_OP_OPTILING(ChunkScaledDotKkt)
-    .Tiling(TilingFunc);
+    .Tiling(TilingFunc)
+    .TilingParse<ChunkScaledDotKktCompileInfo>(TilingParseForChunkScaledDotKkt);
 }  // namespace optiling
