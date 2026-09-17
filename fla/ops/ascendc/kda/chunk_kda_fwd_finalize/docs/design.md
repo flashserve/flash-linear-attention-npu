@@ -32,13 +32,22 @@ sequence-major 顺序映射，不按 tensor 的 T 维简单除以 64。
 任务少于可用核时增加完整 value head 的分区。输出写回地址按
 `(batch,chunk,head)` 分区，不与其他 AIC 重叠。
 
+A5 dense 的主体按完整 chunk 均分；最后不足一轮核数的 chunk，再按
+4 个完整 head 的组均摊。AIC/AIV 使用相同映射和组内消费顺序。例如
+128 个 chunk、96 个 head、28 核时，先每核分 4 个完整 chunk，余下
+16 个 chunk 的 384 个 head 组按每核 13/14 组分配，避免原来每核
+4/5 个 chunk 的负载差。每个 `(chunk,head)` 只由一个核组处理，
+不增加计算、workspace 或同步 flag。变长路径保持原有任务划分。
+
 Host 根据平台和每核工作量选择 `USE_AIV_INPUT_MOVER` 编译期模板参数：
 
-- `false`：A2/A3 始终使用，A5 在 head 被拆分或每核不足 8 个 chunk
-  时使用。模板组合指定为 AIC-only，四个输入由 AIC MTE2 直接从 GM
+- `false`：A2/A3 始终使用，A5 在 Host 已划分 head 分区，或每核完整
+  chunk 数不足阈值时使用（dense 为 4、变长为 8）。模板组合指定为
+  AIC-only，四个输入由 AIC MTE2 直接从 GM
   搬到 L1。
-- `true`：仅 A5 使用，要求每个 work item 包含完整 value head，且每核
-  至少 8 个 chunk。模板组合指定为 MIX AIC 1:2，两个 AIV 负责 GM 到
+- `true`：仅 A5 使用，要求 Host 未划分 head 分区，且每核至少有
+  4 个 dense chunk 或 8 个变长 chunk。dense 尾部负载均衡由 Kernel
+  进一步划分完整 head 组。模板组合指定为 MIX AIC 1:2，两个 AIV 负责 GM 到
   UB 再到 L1 的格式转换，AIC 只消费已经就绪的 L1 操作数。
 
 TilingKey 由 `GET_TPL_TILING_KEY(USE_AIV_INPUT_MOVER)` 生成；Kernel 全局

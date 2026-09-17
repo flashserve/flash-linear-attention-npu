@@ -251,6 +251,20 @@ __simd_vf__ inline void FwdHStage3Arch35Vf(__ubuf__ bfloat16_t *stateBf16,
     if constexpr (SCALAR_G) {
         LoadIn<float, true>(gate0, alpha);
         Adds(gate1, gate0, 0.0f, mask32);
+    } else if constexpr (STATE_V_FIRST) {
+        // 物理 [V,K] 布局的 128 列恰好由一对 FP32 寄存器覆盖。
+        // 所有 V 行使用同一份 E(gk_last)，只计算一次并跨行复用。
+        if constexpr (std::is_same<GateT, float>::value) {
+            FwdHLoadFloatPair(gate0, gate1, gkLast);
+        } else {
+            FwdHLoadAsFloat<GateT>(gate0, gate1, gkLast, mask16);
+        }
+        if constexpr (USE_EXP2) {
+            Muls(gate0, gate0, FWD_H_LN2, mask32);
+            Muls(gate1, gate1, FWD_H_LN2, mask32);
+        }
+        Exp(gate0, gate0, mask32);
+        Exp(gate1, gate1, mask32);
     }
 
     #pragma unroll 2
@@ -271,19 +285,7 @@ __simd_vf__ inline void FwdHStage3Arch35Vf(__ubuf__ bfloat16_t *stateBf16,
             FwdHLoadFloatPair(d0, d1, d + fp32Offset);
 
             if constexpr (!SCALAR_G) {
-                if constexpr (STATE_V_FIRST) {
-                    if constexpr (std::is_same<GateT, float>::value) {
-                        FwdHLoadFloatPair(gate0, gate1, gkLast + col);
-                    } else {
-                        FwdHLoadAsFloat<GateT>(gate0, gate1, gkLast + col, mask16);
-                    }
-                    if constexpr (USE_EXP2) {
-                        Muls(gate0, gate0, FWD_H_LN2, mask32);
-                        Muls(gate1, gate1, FWD_H_LN2, mask32);
-                    }
-                    Exp(gate0, gate0, mask32);
-                    Exp(gate1, gate1, mask32);
-                } else {
+                if constexpr (!STATE_V_FIRST) {
                     FwdHLoadScalar<GateT>(gate0, gkLast + row, mask16, mask32);
                     if constexpr (USE_EXP2) {
                         Muls(gate0, gate0, FWD_H_LN2, mask32);
@@ -386,6 +388,24 @@ private:
         return ub_[byteOffset].template ReinterpretCast<T>();
     }
 
+    // FP32 state 路径让同一 AIV 的两个 head 串行复用数据槽 0；原 localSlot
+    // 保留为 stateSlot，使两个 64 KiB FP32 state 可以跨 chunk 常驻。
+    __aicore__ inline uint32_t DataSlot(const FwdHHeadBinding &head) const
+    {
+        if constexpr (CompilePolicy::STATE_FP32) {
+            return 0;
+        }
+        return head.localSlot;
+    }
+
+    __aicore__ inline uint32_t ActiveDataSlotCount(uint32_t localHeads) const
+    {
+        if constexpr (CompilePolicy::STATE_FP32) {
+            return localHeads == 0 ? 0 : 1;
+        }
+        return localHeads;
+    }
+
     __aicore__ inline AscendC::LocalTensor<uint8_t> LocalSlot(uint32_t slot)
     {
         return UbAt<uint8_t>(slot * FWD_H_UB_LOCAL_SLOT_BYTES);
@@ -413,12 +433,12 @@ private:
 
     __aicore__ inline AscendC::LocalTensor<float> SminusStateSlot(uint32_t slot)
     {
-        return UbAt<float>(64 * 1024 + slot * FWD_H_STATE_FP32_BYTES);
+        return StateFp32(slot);
     }
 
-    __aicore__ inline AscendC::LocalTensor<float> StateFp32()
+    __aicore__ inline AscendC::LocalTensor<float> StateFp32(uint32_t slot)
     {
-        return UbAt<float>(FWD_H_UB_FP32_STATE_BASE);
+        return UbAt<float>(FWD_H_UB_LOCAL1_BASE + slot * FWD_H_STATE_FP32_BYTES);
     }
 
     __aicore__ inline AscendC::LocalTensor<GateT> GateSlot(uint32_t slot)
@@ -621,7 +641,7 @@ private:
         const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk, const FwdHHeadBinding &head,
         uint32_t inputSlot)
     {
-        const uint32_t slot = head.localSlot;
+        const uint32_t slot = DataSlot(head);
         if constexpr (SEPARATE_INPUT) {
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(WorkReadyEvent(inputSlot));
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
@@ -645,7 +665,8 @@ private:
         if constexpr (HAS_P) {
             // Gate decay is independent of P. Queue it before the cross-core P wait so
             // scalar Exp can overlap the producer's Stage0 tail.
-            AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(FwdHAivLocalFlag(FWD_H_P_READY_FLAG, slot));
+            AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
+                FwdHAivLocalFlag(FWD_H_P_READY_FLAG, head.localSlot));
         }
         if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
             AscendC::VF_CALL<FwdHStage1Arch35Vf<HAS_P, true, WRITE_RIGHT, ZERO_STATE, PType>>(
@@ -659,7 +680,8 @@ private:
                 static_cast<uint16_t>(chunk.validTokens));
         }
         if constexpr (HAS_P) {
-            AscendC::CrossCoreSetFlag<0x4, PIPE_V>(FwdHAivLocalFlag(FWD_H_P_FREE_FLAG, slot));
+            AscendC::CrossCoreSetFlag<0x4, PIPE_V>(
+                FwdHAivLocalFlag(FWD_H_P_FREE_FLAG, head.localSlot));
         }
 
         AscendC::GlobalTensor<bfloat16_t> vNew;
@@ -682,8 +704,10 @@ private:
             const uint64_t rightOffset = FwdHCoreSlotOffset(coreIdx_, head.roundHead,
                                                             FWD_H_CHUNK * FWD_H_V);
             AscendC::DataCopy(rightGm[rightOffset], RightSlot(slot), chunk.validTokens * FWD_H_V);
-            AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
-                FwdHAivLocalFlag(FWD_H_RIGHT_READY_FLAG, slot));
+            if constexpr (!CompilePolicy::STATE_FP32) {
+                AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
+                    FwdHAivLocalFlag(FWD_H_RIGHT_READY_FLAG, head.localSlot));
+            }
         }
         if constexpr (!CompilePolicy::STATE_FP32) {
             if (chunk.first) {
@@ -693,7 +717,7 @@ private:
             }
         } else if constexpr (ZERO_STATE) {
             AscendC::DataCopy(h[HOffset(unit, chunk, head)], StateBf16Slot(slot), FWD_H_K * FWD_H_V);
-            // The two BF16 H0 slots alias the single 64 KiB FP32 state bank.
+            // H0 临时区只在首 chunk 使用；对应 FP32 state 在 Stage3 以 ZERO_INIT 生成。
             WaitStateWritebackBeforeVectorReuse(slot);
         }
         if constexpr (SEPARATE_INPUT) {
@@ -707,16 +731,20 @@ private:
         uint32_t inputSlot, bool writeRight)
     {
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(WorkFreeEvent(inputSlot));
-        if (writeRight) {
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(GateFreeEvent(inputSlot));
+        if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
+            if (writeRight) {
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(GateFreeEvent(inputSlot));
+            }
         }
         AscendC::GlobalTensor<bfloat16_t> u;
         u.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.u));
         u.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         AscendC::DataCopy(WorkBf16Slot(inputSlot), u[UOffset(unit, chunk, head)],
                           chunk.validTokens * FWD_H_V);
-        if (writeRight) {
-            CopyGateToUb(unit, chunk, head, inputSlot);
+        if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
+            if (writeRight) {
+                CopyGateToUb(unit, chunk, head, inputSlot);
+            }
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(WorkReadyEvent(inputSlot));
     }
@@ -725,7 +753,7 @@ private:
     {
         // Publish local-slot ownership to V before queuing next-chunk U/g on MTE2;
         // otherwise the current Stage1 would sit behind the lookahead transfer.
-        const uint32_t slot = head.localSlot;
+        const uint32_t slot = DataSlot(head);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
     }
@@ -738,37 +766,64 @@ private:
         const bool writeRight = args_.tiling.storeFinalState != 0 || !chunk.last;
         const bool zeroState = chunk.first && args_.tiling.useInitialState == 0;
         const uint32_t localHeads = FwdHAivHeadCount(unit.headRound.activeHeadCount, aiv_);
-        for (uint32_t coreHeadId = 0; coreHeadId < localHeads; ++coreHeadId) {
-            const FwdHHeadBinding &head = unit.headRound.heads[aiv_ + 2 * coreHeadId];
-            const uint32_t slot = head.localSlot;
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
-            AscendC::GlobalTensor<bfloat16_t> u;
-            u.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.u));
-            u.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
-            AscendC::DataCopy(WorkBf16Slot(slot), u[UOffset(unit, chunk, head)], chunk.validTokens * FWD_H_V);
-            if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
-                if (writeRight) {
-                    CopyGateToUb(unit, chunk, head, slot);
+        if constexpr (CompilePolicy::STATE_FP32) {
+            // U/g 使用两个独立 input bank 预取；P/D 只使用数据槽 0，并由 ready/free
+            // 在两个 head 之间串行传递所有权。这样不增加 round 次数。
+            for (uint32_t coreHeadId = 0; coreHeadId < localHeads; ++coreHeadId) {
+                const FwdHHeadBinding &head = unit.headRound.heads[aiv_ + 2 * coreHeadId];
+                PrefetchStage1Inputs(unit, chunk, head, coreHeadId, writeRight);
+            }
+            for (uint32_t coreHeadId = 0; coreHeadId < localHeads; ++coreHeadId) {
+                const FwdHHeadBinding &head = unit.headRound.heads[aiv_ + 2 * coreHeadId];
+                AcquireStage1LocalSlot(head);
+                DispatchStage1<true>(unit, chunk, head, coreHeadId,
+                                     hasP, writeRight, zeroState);
+            }
+            if (writeRight) {
+                // 两个 head 的 right 共用数据槽高半区。等最后一次 MTE3 读取完成后，
+                // 再按逻辑 slot 发布原有 ready，防止首个 D 提前覆盖第二个 right。
+                for (uint32_t coreHeadId = 0; coreHeadId < localHeads; ++coreHeadId) {
+                    const FwdHHeadBinding &head =
+                        unit.headRound.heads[aiv_ + 2 * coreHeadId];
+                    AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
+                        FwdHAivLocalFlag(FWD_H_RIGHT_READY_FLAG, head.localSlot));
                 }
             }
-            if (!CompilePolicy::STATE_FP32 && chunk.first && args_.tiling.useInitialState != 0) {
-                AscendC::GlobalTensor<bfloat16_t> initial;
-                initial.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.initialState));
-                const uint64_t stateOffset = FwdHStateOffset<STATE_V_FIRST>(
-                    args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
-                AscendC::DataCopy(StateBf16Slot(slot), initial[stateOffset], FWD_H_K * FWD_H_V);
+        } else {
+            for (uint32_t coreHeadId = 0; coreHeadId < localHeads; ++coreHeadId) {
+                const FwdHHeadBinding &head = unit.headRound.heads[aiv_ + 2 * coreHeadId];
+                const uint32_t slot = DataSlot(head);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+                AscendC::GlobalTensor<bfloat16_t> u;
+                u.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.u));
+                u.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+                AscendC::DataCopy(WorkBf16Slot(slot), u[UOffset(unit, chunk, head)],
+                                  chunk.validTokens * FWD_H_V);
+                if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
+                    if (writeRight) {
+                        CopyGateToUb(unit, chunk, head, slot);
+                    }
+                }
+                if (chunk.first && args_.tiling.useInitialState != 0) {
+                    AscendC::GlobalTensor<bfloat16_t> initial;
+                    initial.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.initialState));
+                    const uint64_t stateOffset = FwdHStateOffset<STATE_V_FIRST>(
+                        args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
+                    AscendC::DataCopy(StateBf16Slot(slot), initial[stateOffset], FWD_H_K * FWD_H_V);
+                }
+                AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
+                if (coreHeadId > 0) {
+                    const FwdHHeadBinding &previous =
+                        unit.headRound.heads[aiv_ + 2 * (coreHeadId - 1)];
+                    DispatchStage1<false>(unit, chunk, previous, DataSlot(previous),
+                                          hasP, writeRight, zeroState);
+                }
             }
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
-            if (coreHeadId > 0) {
-                const FwdHHeadBinding &previous = unit.headRound.heads[aiv_ + 2 * (coreHeadId - 1)];
-                DispatchStage1<false>(unit, chunk, previous, previous.localSlot,
+            if (localHeads > 0) {
+                const FwdHHeadBinding &last = unit.headRound.heads[aiv_ + 2 * (localHeads - 1)];
+                DispatchStage1<false>(unit, chunk, last, DataSlot(last),
                                       hasP, writeRight, zeroState);
             }
-        }
-        if (localHeads > 0) {
-            const FwdHHeadBinding &last = unit.headRound.heads[aiv_ + 2 * (localHeads - 1)];
-            DispatchStage1<false>(unit, chunk, last, last.localSlot,
-                                  hasP, writeRight, zeroState);
         }
     }
 
@@ -810,8 +865,10 @@ private:
     {
         static_assert(!RESIDENT_FP32_STATE || CompilePolicy::STATE_FP32,
                       "resident state is only valid for FP32 state");
-        const uint32_t slot = head.localSlot;
-        AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(FwdHAivLocalFlag(FWD_H_D_READY_FLAG, slot));
+        const uint32_t slot = DataSlot(head);
+        const uint32_t stateSlot = head.localSlot;
+        AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
+            FwdHAivLocalFlag(FWD_H_D_READY_FLAG, head.localSlot));
         if constexpr (WAIT_MTE2) {
             // 只有本次 Stage3 确实从 GM 搬入 state/gk 时才等待 MTE2；BF16 g-only
             // 直接消费 Stage1 已驻留的 stateBf16，不能等待不存在的 event credit。
@@ -831,14 +888,14 @@ private:
             AscendC::VF_CALL<FwdHStage3Arch35Vf<CompilePolicy::STATE_FP32, true, STATE_V_FIRST,
                                                 WRITE_H, ZERO_INIT, CompilePolicy::USE_EXP2, GateT>>(
                 reinterpret_cast<__ubuf__ bfloat16_t *>(StateBf16Slot(slot).GetPhyAddr()),
-                reinterpret_cast<__ubuf__ float *>(StateFp32().GetPhyAddr()), d,
+                reinterpret_cast<__ubuf__ float *>(StateFp32(stateSlot).GetPhyAddr()), d,
                 reinterpret_cast<__ubuf__ GateT *>(GateSlot(gateSlot).GetPhyAddr()),
                 reinterpret_cast<__ubuf__ float *>(AlphaSlot(gateSlot).GetPhyAddr()), hNext);
         } else {
             AscendC::VF_CALL<FwdHStage3Arch35Vf<CompilePolicy::STATE_FP32, false, STATE_V_FIRST,
                                                 WRITE_H, ZERO_INIT, CompilePolicy::USE_EXP2, GateT>>(
                 reinterpret_cast<__ubuf__ bfloat16_t *>(StateBf16Slot(slot).GetPhyAddr()),
-                reinterpret_cast<__ubuf__ float *>(StateFp32().GetPhyAddr()), d,
+                reinterpret_cast<__ubuf__ float *>(StateFp32(stateSlot).GetPhyAddr()), d,
                 reinterpret_cast<__ubuf__ GateT *>(GateSlot(gateSlot).GetPhyAddr()),
                 reinterpret_cast<__ubuf__ float *>(AlphaSlot(gateSlot).GetPhyAddr()), hNext);
         }
@@ -850,7 +907,8 @@ private:
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(GateFreeEvent(gateSlot));
         }
         if constexpr (!WRITE_H || !CompilePolicy::STATE_FP32) {
-            AscendC::CrossCoreSetFlag<0x4, PIPE_V>(FwdHAivLocalFlag(FWD_H_D_FREE_FLAG, slot));
+            AscendC::CrossCoreSetFlag<0x4, PIPE_V>(
+                FwdHAivLocalFlag(FWD_H_D_FREE_FLAG, head.localSlot));
         }
 
         AscendC::GlobalTensor<bfloat16_t> h;
@@ -864,7 +922,7 @@ private:
                     state.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.workspace));
                     const uint64_t stateOffset = args_.tiling.kDecayWorkspaceOffset / sizeof(float) +
                         FwdHCoreSlotOffset(coreIdx_, head.roundHead, FWD_H_K * FWD_H_V);
-                    AscendC::DataCopy(state[stateOffset], StateFp32(), FWD_H_K * FWD_H_V);
+                    AscendC::DataCopy(state[stateOffset], StateFp32(stateSlot), FWD_H_K * FWD_H_V);
                     if constexpr (ZERO_INIT) {
                         // Zero-init skips the next head's MTE2 state load, so it needs a
                         // direct MTE3->V fence before reusing the shared FP32 bank.
@@ -880,12 +938,13 @@ private:
                 // PIPE_MTE3 的跨核通知排在 H 写回之后；AIC 收到 D_FREE 时，D slot
                 // 已不再作为 MTE3 输入，可以安全进入下一次 Stage0/Stage2。
                 AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
-                    FwdHAivLocalFlag(FWD_H_D_FREE_FLAG, slot));
+                    FwdHAivLocalFlag(FWD_H_D_FREE_FLAG, head.localSlot));
             } else {
                 AscendC::DataCopy(h[HOffset(unit, next, head)], StateBf16Slot(slot),
                                   FWD_H_K * FWD_H_V);
             }
-            AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(FwdHAivLocalFlag(FWD_H_H_READY_FLAG, slot));
+            AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
+                FwdHAivLocalFlag(FWD_H_H_READY_FLAG, head.localSlot));
         } else {
             if (args_.tiling.storeFinalState != 0) {
                 if constexpr (CompilePolicy::STATE_FP32) {
@@ -893,7 +952,7 @@ private:
                     finalState.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.finalState));
                     const uint64_t offset = FwdHStateOffset<STATE_V_FIRST>(
                         args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
-                    AscendC::DataCopy(finalState[offset], StateFp32(), FWD_H_K * FWD_H_V);
+                    AscendC::DataCopy(finalState[offset], StateFp32(stateSlot), FWD_H_K * FWD_H_V);
                     if constexpr (ZERO_INIT && !RESIDENT_FP32_STATE) {
                         WaitStateWritebackBeforeVectorReuse(slot);
                     }
@@ -923,25 +982,22 @@ private:
         const bool writeH = !chunk.last;
         const uint32_t localHeads = FwdHAivHeadCount(unit.headRound.activeHeadCount, aiv_);
         if constexpr (CompilePolicy::STATE_FP32) {
-            // FP32 state 与仅用于 H0 的两个 BF16 state slot 复用 [128,192) KiB。
-            // 首个 head 覆写共享区前，必须确认本 AIV 当前 round 的全部 MTE3 已完成。
-            for (uint32_t slot = 0; slot < localHeads; ++slot) {
+            // FP32 路径只有一个 P/D 数据槽；进入 Stage3 前收回该槽的最终本地 credit。
+            for (uint32_t slot = 0; slot < ActiveDataSlotCount(localHeads); ++slot) {
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
             }
         }
         for (uint32_t coreHeadId = 0; coreHeadId < localHeads; ++coreHeadId) {
             const FwdHHeadBinding &head = unit.headRound.heads[aiv_ + 2 * coreHeadId];
-            const uint32_t slot = head.localSlot;
-            const uint32_t gateSlot = EXTERNAL_GATE_BANK ? externalGateSlot : slot;
-            if constexpr (CompilePolicy::STATE_FP32) {
-                if (coreHeadId > 0) {
-                    const uint32_t previousSlot = unit.headRound.heads[
-                        aiv_ + 2 * (coreHeadId - 1)].localSlot;
-                    AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(previousSlot));
-                    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(previousSlot));
-                }
-            }
+            const uint32_t slot = DataSlot(head);
+            // externalGateSlot==FWD_H_AIV_HEAD_SLOTS 表示按逻辑 head slot 选择双 gate bank；
+            // 单 head chunk 流水仍直接传入 chunk 奇偶 bank。
+            const uint32_t gateSlot = EXTERNAL_GATE_BANK
+                                          ? (externalGateSlot == FWD_H_AIV_HEAD_SLOTS
+                                                 ? head.localSlot
+                                                 : externalGateSlot)
+                                          : slot;
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
             if constexpr (CompilePolicy::STATE_FP32) {
                 if (chunk.first) {
@@ -950,7 +1006,8 @@ private:
                         initial.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.initialState));
                         const uint64_t initialOffset = FwdHStateOffset<STATE_V_FIRST>(
                             args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
-                        AscendC::DataCopy(StateFp32(), initial[initialOffset], FWD_H_K * FWD_H_V);
+                        AscendC::DataCopy(StateFp32(head.localSlot), initial[initialOffset],
+                                          FWD_H_K * FWD_H_V);
                     }
                 } else if constexpr (!RESIDENT_FP32_STATE) {
                     AscendC::GlobalTensor<float> state;
@@ -958,7 +1015,7 @@ private:
                     state.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.workspace));
                     const uint64_t offset = workspaceBase +
                         FwdHCoreSlotOffset(coreIdx_, head.roundHead, FWD_H_K * FWD_H_V);
-                    AscendC::DataCopy(StateFp32(), state[offset], FWD_H_K * FWD_H_V);
+                    AscendC::DataCopy(StateFp32(head.localSlot), state[offset], FWD_H_K * FWD_H_V);
                 }
             }
             if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::KEY_GK) {
@@ -1030,12 +1087,12 @@ private:
     __aicore__ inline void RunStage3(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk)
     {
         if constexpr (CompilePolicy::STATE_FP32) {
-            // StateFp32() 只有一个 64 KiB bank。activeHeadCount<=2 时每个 AIV
-            // 至多处理一个 head，state 可跨 chunk 常驻；3/4 head 继续走 workspace。
-            if (unit.headRound.activeHeadCount <= FWD_H_AIV_COUNT) {
-                RunStage3Impl<true, false>(unit, chunk, 0);
+            // 每个 AIV 的两个 64 KiB state bank 分别绑定 localSlot 0/1，四 head
+            // 单轮时也可以跨 chunk 常驻。scalar-g 的 alpha 使用对应逻辑 head bank。
+            if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
+                RunStage3Impl<true, true>(unit, chunk, FWD_H_AIV_HEAD_SLOTS);
             } else {
-                RunStage3Impl<false, false>(unit, chunk, 0);
+                RunStage3Impl<true, false>(unit, chunk, 0);
             }
         } else {
             RunStage3Impl<false, false>(unit, chunk, 0);
@@ -1078,6 +1135,11 @@ private:
             const bool zeroState = chunk.first && args_.tiling.useInitialState == 0;
             DispatchStage1<true>(unit, chunk, head, inputSlot, hasP, writeRight, zeroState);
             if (writeRight) {
+                // 单 head 不需要合并等待，保持一份 ready/一次消费的原协议。
+                AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
+                    FwdHAivLocalFlag(FWD_H_RIGHT_READY_FLAG, head.localSlot));
+            }
+            if (writeRight) {
                 RunStage3Impl<true, true>(unit, chunk, inputSlot);
             }
         }
@@ -1097,9 +1159,11 @@ private:
                 for (uint32_t chunkId = 0; chunkId < unit.sequence.chunkCount; ++chunkId) {
                     const FwdHChunkSpan chunk = FwdHBuildChunk(unit.sequence, chunkId);
                     if (chunkId > 0) {
-                        for (uint32_t slot = 0; slot < localHeads; ++slot) {
+                        for (uint32_t coreHeadId = 0; coreHeadId < localHeads; ++coreHeadId) {
+                            const FwdHHeadBinding &head =
+                                unit.headRound.heads[aiv_ + 2 * coreHeadId];
                             AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
-                                FwdHAivLocalFlag(FWD_H_RIGHT_FREE_FLAG, slot));
+                                FwdHAivLocalFlag(FWD_H_RIGHT_FREE_FLAG, head.localSlot));
                         }
                     }
                     RunStage1(unit, chunk);
@@ -1112,9 +1176,11 @@ private:
             for (uint32_t chunkId = 0; chunkId < unit.sequence.chunkCount; ++chunkId) {
                 const FwdHChunkSpan chunk = FwdHBuildChunk(unit.sequence, chunkId);
                 if (chunkId > 0) {
-                    for (uint32_t slot = 0; slot < localHeads; ++slot) {
+                    for (uint32_t coreHeadId = 0; coreHeadId < localHeads; ++coreHeadId) {
+                        const FwdHHeadBinding &head =
+                            unit.headRound.heads[aiv_ + 2 * coreHeadId];
                         AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
-                            FwdHAivLocalFlag(FWD_H_RIGHT_FREE_FLAG, slot));
+                            FwdHAivLocalFlag(FWD_H_RIGHT_FREE_FLAG, head.localSlot));
                     }
                 }
                 RunStage1(unit, chunk);
@@ -1125,14 +1191,15 @@ private:
         }
         const bool lastHasStage2 = args_.tiling.storeFinalState != 0;
         if (lastHasStage2) {
-            for (uint32_t slot = 0; slot < localHeads; ++slot) {
+            for (uint32_t coreHeadId = 0; coreHeadId < localHeads; ++coreHeadId) {
+                const FwdHHeadBinding &head = unit.headRound.heads[aiv_ + 2 * coreHeadId];
                 AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
-                    FwdHAivLocalFlag(FWD_H_RIGHT_FREE_FLAG, slot));
+                    FwdHAivLocalFlag(FWD_H_RIGHT_FREE_FLAG, head.localSlot));
             }
         }
         // 跨 head_round 前必须把本轮所有 VEC->MTE3 写回收口。AIC 收到 ROUND_DONE 后
         // 才能开始下一轮 kg/H/W 的 MTE2，避免上一轮 MTE3 与下一轮预取跨 round 交叠。
-        for (uint32_t slot = 0; slot < localHeads; ++slot) {
+        for (uint32_t slot = 0; slot < ActiveDataSlotCount(localHeads); ++slot) {
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
         }
