@@ -12,8 +12,8 @@
  * \brief Tiling processor shared by aclnn tiling and fast kernel launch.
  */
 
-#ifndef RECOMPUTE_W_U_FWD_TILING_PROCESSOR_H
-#define RECOMPUTE_W_U_FWD_TILING_PROCESSOR_H
+#ifndef GDN_MEGA_ARCH35_RECOMPUTE_W_U_FWD_TILING_PROCESSOR_H
+#define GDN_MEGA_ARCH35_RECOMPUTE_W_U_FWD_TILING_PROCESSOR_H
 
 #include <cstddef>
 #include <cstdint>
@@ -24,9 +24,14 @@
 #include "tiling_base/tiling_templates_registry.h"
 #include "../../op_kernel/recompute_w_u_fwd_struct.h"
 
-using GDN::RecomputeWUFwdTilingData;
+using GDN::GdnMegaArch35RecomputeWUTilingData;
 
 namespace optiling {
+namespace {
+
+// Keep Phase6 helpers local to this translation unit. The standalone WU
+// processor has the same names but a different tiling layout and algorithm.
+// External inline symbols would let the linker substitute either definition.
 
 static constexpr int64_t RECOMPUTE_W_U_FWD_V_DIM_128 = 128;
 static constexpr int64_t RECOMPUTE_W_U_FWD_V_DIM_256 = 256;
@@ -63,6 +68,10 @@ static constexpr uint64_t RECOMPUTE_W_U_FWD_SIZE_HALF = 2;
 static constexpr uint64_t RECOMPUTE_W_U_FWD_SIZE_FP32 = 4;
 static constexpr uint64_t RECOMPUTE_W_U_FWD_ONE_BLOCK_32 = 32;
 
+static constexpr uint64_t RECOMPUTE_W_U_FWD_INTERLEAVED_UB_RESERVED_BYTES = 16 * 1024;
+static constexpr uint64_t RECOMPUTE_W_U_FWD_INTERLEAVED_MIN_VEC_ROW = 8;
+static constexpr uint32_t RECOMPUTE_W_U_FWD_A5_GM_RING_DEPTH = 8;
+
 struct RecomputeWUFwdTilingContext {
     const char *nodeName;
     const gert::StorageShape *kShape;
@@ -79,11 +88,13 @@ struct RecomputeWUFwdTilingContext {
     ge::DataType betaDtype;
     uint64_t ubSize;
     size_t sysWorkspaceSize;
+    uint64_t aicCoreNum;
+    bool enableA5CompactWorkspace;
 };
 
 class RecomputeWUFwdTilingProcessor {
     RecomputeWUFwdTilingContext &ctx_;
-    RecomputeWUFwdTilingData &tiling_;
+    GdnMegaArch35RecomputeWUTilingData &tiling_;
     size_t workspaceSize_ = 0;
     int64_t B = 0;
     int64_t Hk = 0;
@@ -95,7 +106,7 @@ class RecomputeWUFwdTilingProcessor {
     int64_t chunkSize = 0;
 
 public:
-    explicit RecomputeWUFwdTilingProcessor(RecomputeWUFwdTilingContext &ctx, RecomputeWUFwdTilingData &tiling)
+    explicit RecomputeWUFwdTilingProcessor(RecomputeWUFwdTilingContext &ctx, GdnMegaArch35RecomputeWUTilingData &tiling)
         : ctx_(ctx), tiling_(tiling)
     {
     }
@@ -224,6 +235,39 @@ public:
         return ge::GRAPH_SUCCESS;
     }
 
+    ge::graphStatus SetInterleavedVecRow(uint64_t ubSize, ge::DataType kType, ge::DataType betaType)
+    {
+        const uint64_t sizeofKType =
+            kType == ge::DataType::DT_FLOAT ? RECOMPUTE_W_U_FWD_SIZE_FP32 : RECOMPUTE_W_U_FWD_SIZE_HALF;
+        const uint64_t sizeofBetaType =
+            betaType == ge::DataType::DT_FLOAT ? RECOMPUTE_W_U_FWD_SIZE_FP32 : RECOMPUTE_W_U_FWD_SIZE_HALF;
+        OP_CHECK_IF(ubSize <= RECOMPUTE_W_U_FWD_INTERLEAVED_UB_RESERVED_BYTES,
+                    OP_LOGE(ctx_.nodeName, "UB size is too small for the A5 interleaved recompute path."),
+                    return ge::GRAPH_FAILED);
+
+        const uint64_t usableUbSize = ubSize - RECOMPUTE_W_U_FWD_INTERLEAVED_UB_RESERVED_BYTES;
+        const uint64_t dataDim = static_cast<uint64_t>(K > V ? K : V);
+        // data-in, data-out, beta and g queues are all double buffered. The two
+        // data queues use max(K, V) and are reused between Vb and KbgExp.
+        const uint64_t bytesPerRow = 4 * (dataDim * sizeofKType + sizeofBetaType);
+        uint64_t rowNum = static_cast<uint64_t>(chunkSize);
+        uint64_t useUbSize = rowNum * bytesPerRow;
+        while (rowNum > RECOMPUTE_W_U_FWD_INTERLEAVED_MIN_VEC_ROW && useUbSize > usableUbSize) {
+            rowNum /= 2;
+            useUbSize = rowNum * bytesPerRow;
+        }
+        OP_CHECK_IF(rowNum < RECOMPUTE_W_U_FWD_INTERLEAVED_MIN_VEC_ROW || useUbSize > usableUbSize,
+                    OP_LOGE(ctx_.nodeName, "UB size is insufficient for the A5 interleaved recompute path."),
+                    return ge::GRAPH_FAILED);
+
+        // Keep the fused trailer layout unchanged: the A5 vector path consumes
+        // vbVecRow as its shared interleaved row count; the legacy path retains
+        // the independently calculated values on non-A5 devices.
+        tiling_.vbVecRow = static_cast<int64_t>(rowNum);
+        tiling_.kbgExpVecRow = static_cast<int64_t>(rowNum);
+        return ge::GRAPH_SUCCESS;
+    }
+
     ge::graphStatus CommonTiling()
     {
         const gert::Shape kStorageShape = ctx_.kShape->GetStorageShape();
@@ -306,6 +350,10 @@ public:
                     OP_LOGE(ctx_.nodeName, "SetVbVecRow Failed."), return ge::GRAPH_FAILED);
         OP_CHECK_IF(SetKbgExpVecRow(ctx_.ubSize, ctx_.kDtype, ctx_.betaDtype) != ge::GRAPH_SUCCESS,
                     OP_LOGE(ctx_.nodeName, "SetKbgExpVecRow Failed."), return ge::GRAPH_FAILED);
+        if (ctx_.enableA5CompactWorkspace) {
+            OP_CHECK_IF(SetInterleavedVecRow(ctx_.ubSize, ctx_.kDtype, ctx_.betaDtype) != ge::GRAPH_SUCCESS,
+                        OP_LOGE(ctx_.nodeName, "SetInterleavedVecRow Failed."), return ge::GRAPH_FAILED);
+        }
         return ge::GRAPH_SUCCESS;
     }
 
@@ -393,9 +441,20 @@ public:
 
     ge::graphStatus WorkspaceTiling()
     {
-        uint64_t userWorkspaceSize =
-            static_cast<uint64_t>(2) * static_cast<uint64_t>(tiling_.B) * static_cast<uint64_t>(tiling_.Hv) *
-            static_cast<uint64_t>(tiling_.T) * static_cast<uint64_t>(tiling_.V);
+        const uint64_t elementSize = ctx_.kDtype == ge::DataType::DT_FLOAT ?
+            RECOMPUTE_W_U_FWD_SIZE_FP32 : RECOMPUTE_W_U_FWD_SIZE_HALF;
+        uint64_t userWorkspaceSize = elementSize * static_cast<uint64_t>(tiling_.B) *
+            static_cast<uint64_t>(tiling_.Hv) * static_cast<uint64_t>(tiling_.T) *
+            static_cast<uint64_t>(tiling_.V);
+        if (ctx_.enableA5CompactWorkspace) {
+            OP_CHECK_IF(ctx_.aicCoreNum == 0,
+                        OP_LOGE(ctx_.nodeName, "AIC core count must be positive for compact recompute workspace."),
+                        return ge::GRAPH_FAILED);
+            userWorkspaceSize = elementSize * ctx_.aicCoreNum *
+                static_cast<uint64_t>(RECOMPUTE_W_U_FWD_A5_GM_RING_DEPTH) *
+                static_cast<uint64_t>(tiling_.chunkSize) *
+                static_cast<uint64_t>(tiling_.V + tiling_.K);
+        }
         workspaceSize_ = ctx_.sysWorkspaceSize + static_cast<size_t>(userWorkspaceSize);
         return ge::GRAPH_SUCCESS;
     }
@@ -421,6 +480,7 @@ public:
     }
 };
 
+} // namespace
 } // namespace optiling
 
-#endif // RECOMPUTE_W_U_FWD_TILING_PROCESSOR_H
+#endif // GDN_MEGA_ARCH35_RECOMPUTE_W_U_FWD_TILING_PROCESSOR_H

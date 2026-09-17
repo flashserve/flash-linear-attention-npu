@@ -47,7 +47,15 @@ def _dtype(dtype):
 
 def _spec(index):
     profile = deepcopy(PROFILES[index % len(PROFILES)])
-    profile.update({"op": OP_NAME, "case_id": index, "seed": 20260817 + index, "route": "ascendc", "soc": "ascend910b"})
+    profile.update({
+        "use_exp2": True,
+        "output_layout": "BSND",
+        "op": OP_NAME,
+        "case_id": index,
+        "seed": 20260817 + index,
+        "route": "ascendc",
+        "soc": "ascend910b",
+    })
     return profile
 
 if GENERATOR_REGISTRY is not None:

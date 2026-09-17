@@ -9,7 +9,7 @@
 
 /*!
  * \file causal_conv1d_tiling_key.h
- * \brief
+ * \brief CausalConv1d tiling template key definitions.
  */
 
 #ifndef __CAUSAL_CONV1D_TILING_KEY_H__
@@ -60,4 +60,4 @@ ASCENDC_TPL_SEL(
 
 #undef CAUSAL_CONV1D_TPL_SEL_ENTRY
 
-#endif // __CAUSAL_CONV1D_TILING_KEY_H__
+#endif

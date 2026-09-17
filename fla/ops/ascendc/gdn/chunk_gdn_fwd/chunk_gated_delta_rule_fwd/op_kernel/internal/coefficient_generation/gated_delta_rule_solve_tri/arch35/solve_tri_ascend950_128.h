@@ -2,6 +2,7 @@
 #define SOLVE_TRI_ASCEND950_128_H
 
 #include "kernel_operator.h"
+#include "catlass/arch/cross_core_sync.hpp"
 #include "solve_tri_ascend950_common.h"
 #include "mem.h"
 
@@ -540,7 +541,8 @@ public:
         SetFlag<AscendC::HardEvent::MTE1_FIX>(0);
         WaitFlag<AscendC::HardEvent::MTE1_FIX>(0);
         FixpipeL0cToL1MBH(l1_X, l0c_Zero, kChunk128, kChunk128);
-        FixpipeL0cToL1MBH(l1_INPUT, l0c_Zero, kChunk128, kChunk128);
+        // Reuse the completed zero write; a second Fixpipe would race the first MTE2 read.
+        CopyGmNzRectToL1(l1_INPUT, kChunk128, kChunk128);
         SetFlag<AscendC::HardEvent::M_FIX>(1);
         WaitFlag<AscendC::HardEvent::M_FIX>(1);
         SetFlag<AscendC::HardEvent::MTE2_FIX>(0);
@@ -649,6 +651,8 @@ public:
                 }
                 SetFlag<AscendC::HardEvent::MTE3_V>(0);
                 WaitFlag<AscendC::HardEvent::MTE3_V>(0);
+                // Keep both Vector subblocks participating in the mode2
+                // handoff after their local L1 writebacks.
                 AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(0x2);
             }
         }
@@ -668,12 +672,16 @@ public:
                 if (loop_idx == begin) {
                     AscendC::CrossCoreWaitFlag<0x4>(0x3);
                     MbhMatmulToL0C(l1_Zero, l1_Zero, l0a_X, l0b_X, l0c_Zero, kChunk128, true);
+                    // Release the initial zero-MMAD operands before subsequent L0 loads.
+                    SetFlag<AscendC::HardEvent::M_MTE1>(2);
+                    WaitFlag<AscendC::HardEvent::M_MTE1>(2);
                     SetFlag<AscendC::HardEvent::M_FIX>(0);
                     WaitFlag<AscendC::HardEvent::M_FIX>(0);
                 }
 
                 FixpipeL0cToL1MBH(l1_X, l0c_Zero, kChunk128, kChunk128);
-                FixpipeL0cToL1MBH(l1_INPUT, l0c_Zero, kChunk128, kChunk128);
+                // Both L1 buffers consume the same zero matrix from gm_ws.
+                CopyGmNzRectToL1(l1_INPUT, kChunk128, kChunk128);
                 AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(0x1);
                 AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE1>(0x2);
 

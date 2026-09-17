@@ -10,6 +10,11 @@
 
 namespace GDN {
 
+constexpr uint64_t FP32_SOLVE_MERGE_BATCH_SIZE = 16;
+constexpr uint64_t FP32_SOLVE_RESULT_BUFFER_COUNT = 2;
+constexpr uint64_t FP32_SOLVE_SMALL_TEMP_SLOT_COUNT = 16;
+constexpr uint64_t FP32_SOLVE_LARGE_TEMP_SLOT_COUNT = 2;
+
 struct Arch22ChunkGatedDeltaRuleFwdAbcTiling {
     uint64_t B;
     uint64_t Hk;
@@ -51,6 +56,12 @@ struct Arch22ChunkGatedDeltaRuleFwdTrailer {
     uint64_t aWorkspaceOffset;
     uint64_t solveWorkspaceOffset;
     uint64_t gCumsumBhtOffset;
+    // 仅 DAV_2201 的分层 FP32 Solve 使用；其余架构保持零值且不访问。
+    uint64_t solveFp32InputOffset;
+    uint64_t solveD16Offset;
+    uint64_t solveD32Offset;
+    uint64_t solveD64Offset;
+    uint64_t solveSequenceCount;
 };
 
 } // namespace GDN

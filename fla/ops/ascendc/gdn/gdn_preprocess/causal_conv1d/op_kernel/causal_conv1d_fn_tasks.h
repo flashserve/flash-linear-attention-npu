@@ -7,6 +7,11 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
+/*!
+ * \file causal_conv1d_fn_tasks.h
+ * \brief CausalConv1d FN per-core task resolution and chunk processing.
+ */
+
 #ifndef CAUSAL_CONV1D_FN_TASKS_H
 #define CAUSAL_CONV1D_FN_TASKS_H
 
@@ -58,11 +63,6 @@ __aicore__ inline FnDirectBlockTask ResolveFnDirectBlockTask(int32_t blockIdx, i
     return task;
 }
 
-__aicore__ inline bool IsFnInitStateSnapshotOwnerBlock(const FnDirectBlockTask &task)
-{
-    return task.valid && task.tokenTileId == 0;
-}
-
 template <CAUSAL_CONV1D_TEMPLATE_ARGS>
 __aicore__ inline int32_t CAUSAL_CONV1D_CLASS::FindVarlenSeqByToken(int32_t tokenIdx) const
 {
@@ -70,7 +70,7 @@ __aicore__ inline int32_t CAUSAL_CONV1D_CLASS::FindVarlenSeqByToken(int32_t toke
     int32_t right = static_cast<int32_t>(tilingData_->batch);
     while (left < right) {
         const int32_t mid = left + ((right - left) >> 1);
-        const int32_t endVal = static_cast<int32_t>(queryStartLocGm.GetValue(mid + 1));
+        const int32_t endVal = static_cast<int32_t>(ReadQueryStartLoc(mid + 1));
         if (tokenIdx < endVal) {
             right = mid;
         } else {
@@ -93,11 +93,10 @@ __aicore__ inline bool CAUSAL_CONV1D_CLASS::ResolveExplicitTokenTileSeqRange(int
 }
 
 template <CAUSAL_CONV1D_TEMPLATE_ARGS>
-__aicore__ inline void CAUSAL_CONV1D_CLASS::InitRingSeqSplit(int32_t cacheIdx, bool hasInit, int32_t seqStart,
-                                                             int32_t tileStart, int32_t tileLen,
+__aicore__ inline void CAUSAL_CONV1D_CLASS::InitRingSeqSplit(int32_t seq, int32_t cacheIdx, bool hasInit,
+                                                             int32_t seqStart, int32_t tileStart, int32_t tileLen,
                                                              int32_t channelStart, int32_t baseDim, int32_t dim)
 {
-    const int32_t stateLen = tilingData_->stateLen;
     const int32_t width = static_cast<int32_t>(tilingData_->width);
     const int32_t historyCount = width - 1;
     const int32_t ringStart = MAX_WIDTH - width;
@@ -111,44 +110,30 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::InitRingSeqSplit(int32_t cacheIdx, b
         Duplicate(ring[i * MAX_BLOCK_DIM], static_cast<T>(0), baseDim);
         hasVectorInit = true;
     }
-    if (tilingData_->hasInitStateWorkspace != 0) {
-        const int64_t stateBaseOffset = static_cast<int64_t>(cacheIdx) * stateLen * dim + channelStart;
-        for (int32_t i = 0, srcTok = historyStartTok; i < historyCount; ++i, ++srcTok, xHistoryOffset += dim) {
-            LocalTensor<T> histSlot = ring[(ringStart + i) * MAX_BLOCK_DIM];
-            if (srcTok >= seqStart) {
-                DataCopy(histSlot, xGm[xHistoryOffset], baseDim);
-                hasGmHistoryCopy = true;
-            } else if (hasInit) {
-                const int32_t statePos = srcTok - seqStart + historyCount;
-                const int64_t stateOffset = stateBaseOffset + static_cast<int64_t>(statePos) * dim;
-                DataCopy(histSlot, initStateWorkspaceGm_[stateOffset], baseDim);
-                hasGmHistoryCopy = true;
+
+    for (int32_t i = 0, srcTok = historyStartTok; i < historyCount; ++i, ++srcTok, xHistoryOffset += dim) {
+        LocalTensor<T> histSlot = ring[(ringStart + i) * MAX_BLOCK_DIM];
+        if (srcTok >= seqStart) {
+            DataCopy(histSlot, xGm[xHistoryOffset], baseDim);
+            hasGmHistoryCopy = true;
+        } else if (hasInit) {
+            const int32_t statePos = srcTok - seqStart + historyCount;
+            if (tilingData_->hasInitStateWorkspace != 0) {
+                const int64_t snapshotOffset =
+                    (static_cast<int64_t>(seq) * historyCount + statePos) * dim + channelStart;
+                DataCopy(histSlot, initStateWorkspaceGm_[snapshotOffset], baseDim);
             } else {
-                Duplicate(histSlot, static_cast<T>(0), baseDim);
-                hasVectorInit = true;
-            }
-        }
-    } else {
-        const int64_t convStateStride0 = tilingData_->convStateStride0;
-        const int64_t convStateStride1 = tilingData_->convStateStride1;
-        const int64_t stateBaseOffset = static_cast<int64_t>(cacheIdx) * convStateStride0 + channelStart;
-        for (int32_t i = 0, srcTok = historyStartTok; i < historyCount; ++i, ++srcTok, xHistoryOffset += dim) {
-            LocalTensor<T> histSlot = ring[(ringStart + i) * MAX_BLOCK_DIM];
-            if (srcTok >= seqStart) {
-                DataCopy(histSlot, xGm[xHistoryOffset], baseDim);
-                hasGmHistoryCopy = true;
-            } else if (hasInit) {
-                const int32_t statePos = srcTok - seqStart + historyCount;
-                const int64_t stateOffset = stateBaseOffset + static_cast<int64_t>(statePos) * convStateStride1;
+                const int64_t stateOffset = static_cast<int64_t>(cacheIdx) * tilingData_->convStateStride0 +
+                                            static_cast<int64_t>(statePos) * tilingData_->convStateStride1 +
+                                            channelStart;
                 DataCopy(histSlot, convStatesGm[stateOffset], baseDim);
-                hasGmHistoryCopy = true;
-            } else {
-                Duplicate(histSlot, static_cast<T>(0), baseDim);
-                hasVectorInit = true;
             }
+            hasGmHistoryCopy = true;
+        } else {
+            Duplicate(histSlot, static_cast<T>(0), baseDim);
+            hasVectorInit = true;
         }
     }
-
 
     if (hasGmHistoryCopy) {
         SetFlag<HardEvent::MTE2_V>(stateMte2ToVEvent_);
@@ -165,65 +150,85 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::InitRingSeqSplit(int32_t cacheIdx, b
         SetFlag<HardEvent::MTE2_V>(inputMte2ToVEvent_[slot0]);
     }
 
-    if (tileLen > 1) {
+    if (tileLen > 1 && !IsFnRollingFastPathEnabled()) {
         SetFlag<HardEvent::V_MTE2>(inputVToMte2Event_);
     }
 }
 
 template <CAUSAL_CONV1D_TEMPLATE_ARGS>
-__aicore__ inline void CAUSAL_CONV1D_CLASS::ProcessFnChunk(int32_t cacheIdx, bool hasInit, int32_t seqStart,
-                                                           int32_t seqLen, int32_t chunkStart, int32_t chunkLen,
-                                                           int32_t channelStart, int32_t baseDim, int32_t dim)
+__aicore__ inline void CAUSAL_CONV1D_CLASS::ProcessFnChunk(int32_t seq, int32_t cacheIdx, bool hasInit,
+                                                           int32_t seqStart, int32_t seqLen, int32_t chunkStart,
+                                                           int32_t chunkLen, int32_t channelStart, int32_t baseDim,
+                                                           int32_t dim)
 {
-    LoadWeightAndBias(channelStart, baseDim);
-    InitRingSeqSplit(cacheIdx, hasInit, seqStart, chunkStart, chunkLen, channelStart, baseDim, dim);
+    InitRingSeqSplit(seq, cacheIdx, hasInit, seqStart, chunkStart, chunkLen, channelStart, baseDim, dim);
 
     RunSeq(chunkStart, chunkLen, channelStart, baseDim, dim);
 
-    MaybeWriteBackSeqSplitTailChunk(chunkStart, chunkLen, seqStart, seqLen, cacheIdx, channelStart, baseDim, dim);
+    MaybeWriteBackSeqSplitTailChunk(chunkStart, chunkLen, seqStart, seqLen, seq, cacheIdx, hasInit, channelStart,
+                                    baseDim, dim);
     DrainTaskMte3();
 }
 
 template <CAUSAL_CONV1D_TEMPLATE_ARGS>
 __aicore__ inline void
 CAUSAL_CONV1D_CLASS::MaybeWriteBackSeqSplitTailChunk(int32_t chunkStart, int32_t chunkLen, int32_t seqStart,
-                                                     int32_t seqLen, int32_t cacheIdx, int32_t channelStart,
-                                                     int32_t baseDim, int32_t dim)
+                                                     int32_t seqLen, int32_t seq, int32_t cacheIdx, bool hasInit,
+                                                     int32_t channelStart, int32_t baseDim, int32_t dim)
 {
-    if (chunkStart + chunkLen != seqStart + seqLen) {
+    if (!HasConvStates() || chunkStart + chunkLen != seqStart + seqLen) {
         return;
     }
 
     DrainTaskMte3();
-    WriteBackState(cacheIdx, chunkLen, channelStart, baseDim, dim);
+    if (IsFnRollingFastPathEnabled()) {
+
+        WriteBackFnState(seq, cacheIdx, hasInit, seqStart, seqLen, channelStart, baseDim, dim);
+    } else {
+        WriteBackState(cacheIdx, chunkLen, channelStart, baseDim, dim);
+    }
 }
 
 template <CAUSAL_CONV1D_TEMPLATE_ARGS>
-__aicore__ inline void CAUSAL_CONV1D_CLASS::PrefetchInitStatesToWorkspace(int32_t channelStart, int32_t baseDimSize)
+__aicore__ inline void CAUSAL_CONV1D_CLASS::PrefetchInitStatesToWorkspace(
+    int32_t channelStart, int32_t baseDimSize, int32_t ownerIndex, int32_t ownerCount)
 {
-    if (tilingData_->hasInitStateWorkspace == 0) {
+    if (!HasConvStates() || tilingData_->hasInitStateWorkspace == 0 || ownerIndex < 0 || ownerCount <= 0 ||
+        ownerIndex >= ownerCount) {
         return;
     }
 
     const int32_t dim = tilingData_->dim;
-    const int32_t stateLen = tilingData_->stateLen;
-    const int32_t numCacheLines = tilingData_->numCacheLines;
-    const int64_t convStateStride0 = tilingData_->convStateStride0;
-    const int64_t convStateStride1 = tilingData_->convStateStride1;
+    const int32_t historyCount = static_cast<int32_t>(tilingData_->width - 1);
+    const int32_t batch = tilingData_->batch;
+    const bool hasCacheIndices = (tilingData_->hasCacheIndices != 0);
+    const bool hasInitialState = (tilingData_->hasInitialState != 0);
     LocalTensor<T> tmpBuf = inBuf.Get<T>()[0 * MAX_BLOCK_DIM];
 
-    const int64_t totalRows = static_cast<int64_t>(numCacheLines) * stateLen;
-    for (int64_t row = 0; row < totalRows; ++row) {
-        int64_t cacheIdx = row / stateLen;
-        int64_t statePos = row % stateLen;
-        const int64_t rowOffset = cacheIdx * convStateStride0 + statePos * convStateStride1 + channelStart;
-        const int64_t workspaceOffset = row * dim + channelStart;
-        DataCopy(tmpBuf, convStatesGm[rowOffset], baseDimSize);
-        SetFlag<HardEvent::MTE2_MTE3>(initSnapshotMte2ToMte3Event_);
-        WaitFlag<HardEvent::MTE2_MTE3>(initSnapshotMte2ToMte3Event_);
-        DataCopy(initStateWorkspaceGm_[workspaceOffset], tmpBuf, baseDimSize);
-        SetFlag<HardEvent::MTE3_MTE2>(initSnapshotMte3ToMte2Event_);
-        WaitFlag<HardEvent::MTE3_MTE2>(initSnapshotMte3ToMte2Event_);
+    for (int32_t seq = ownerIndex; seq < batch; seq += ownerCount) {
+        if (!ResolveSeqHasInit(seq, hasInitialState)) {
+            continue;
+        }
+
+        int32_t cacheIdx = 0;
+        if (!ResolveSeqCacheIndex(seq, hasCacheIndices, cacheIdx)) {
+            continue;
+        }
+
+        const int64_t stateBaseOffset =
+            static_cast<int64_t>(cacheIdx) * tilingData_->convStateStride0 + channelStart;
+        const int64_t snapshotBaseOffset = static_cast<int64_t>(seq) * historyCount * dim + channelStart;
+        for (int32_t statePos = 0; statePos < historyCount; ++statePos) {
+            const int64_t stateOffset =
+                stateBaseOffset + static_cast<int64_t>(statePos) * tilingData_->convStateStride1;
+            const int64_t snapshotOffset = snapshotBaseOffset + static_cast<int64_t>(statePos) * dim;
+            DataCopy(tmpBuf, convStatesGm[stateOffset], baseDimSize);
+            SetFlag<HardEvent::MTE2_MTE3>(initSnapshotMte2ToMte3Event_);
+            WaitFlag<HardEvent::MTE2_MTE3>(initSnapshotMte2ToMte3Event_);
+            DataCopy(initStateWorkspaceGm_[snapshotOffset], tmpBuf, baseDimSize);
+            SetFlag<HardEvent::MTE3_MTE2>(initSnapshotMte3ToMte2Event_);
+            WaitFlag<HardEvent::MTE3_MTE2>(initSnapshotMte3ToMte2Event_);
+        }
     }
 }
 
@@ -239,21 +244,24 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::ProcessVarlenTokenTiled()
     const int32_t tokenBlockSize = static_cast<int32_t>(tilingData_->tokenBlockSize);
     const int32_t tokenBlockCnt = static_cast<int32_t>(tilingData_->tokenBlockCnt);
     const bool hasCacheIndices = (tilingData_->hasCacheIndices != 0);
-    const bool hasInitialStateMode = (tilingData_->hasInitialStateMode != 0);
+    const bool hasInitialState = (tilingData_->hasInitialState != 0);
     const bool isVarlenMode = (tilingData_->inputMode == 0);
 
     const int32_t blockIdx = static_cast<int32_t>(GetBlockIdx());
     const auto blockTask = ResolveFnDirectBlockTask(blockIdx, tokenBlockCnt, tokenBlockSize, cuSeqlen, baseDimCnt,
                                                     baseDim, dim);
     if (tilingData_->hasInitStateWorkspace != 0) {
-        if (IsFnInitStateSnapshotOwnerBlock(blockTask)) {
-            PrefetchInitStatesToWorkspace(blockTask.channelStart, blockTask.baseDimSize);
+        if (blockTask.valid) {
+            PrefetchInitStatesToWorkspace(blockTask.channelStart, blockTask.baseDimSize, blockTask.tokenTileId,
+                                          tokenBlockCnt);
         }
         SyncAll();
     }
     if (!blockTask.valid) {
         return;
     }
+
+    LoadWeightAndBias(blockTask.channelStart, blockTask.baseDimSize);
 
     int32_t seq = 0;
     int32_t seqUpperBound = batch;
@@ -296,8 +304,8 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::ProcessVarlenTokenTiled()
             continue;
         }
 
-        const bool hasInit = ResolveSeqHasInit(seq, hasInitialStateMode);
-        ProcessFnChunk(cacheIdx, hasInit, seqStart, curSeqLen, cursor, tileLen, blockTask.channelStart,
+        const bool hasInit = ResolveSeqHasInit(seq, hasInitialState);
+        ProcessFnChunk(seq, cacheIdx, hasInit, seqStart, curSeqLen, cursor, tileLen, blockTask.channelStart,
                        blockTask.baseDimSize, dim);
 
         cursor = tileEnd;
@@ -305,4 +313,4 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::ProcessVarlenTokenTiled()
     }
 }
 
-#endif // CAUSAL_CONV1D_FN_TASKS_H
+#endif

@@ -377,7 +377,7 @@ def main() -> int:
     parser.add_argument(
         "--run-package",
         default=None,
-        help="Path to a freshly built fla-npu-*.run package; its libcust_opapi.so is extracted for comparison.",
+        help="Path to a freshly built fla_npu_linux-*.run package; its libcust_opapi.so is extracted for comparison.",
     )
     parser.add_argument(
         "--python",

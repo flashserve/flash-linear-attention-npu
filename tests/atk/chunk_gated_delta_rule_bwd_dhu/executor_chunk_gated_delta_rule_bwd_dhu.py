@@ -68,6 +68,8 @@ def build_inputs(spec: dict[str, Any], device: torch.device, high_precision: boo
     seed = int(spec.get("seed", 20260817))
     B, HK, HV, T, K, V = (int(spec[x]) for x in ("B", "HK", "HV", "T", "K", "V"))
     chunk_size = int(spec["chunk_size"])
+    state_v_first = bool(spec.get("state_v_first", False))
+    state_tail = (V, K) if state_v_first else (K, V)
     return {
         "q": _randn((B, HK, T, K), dtype_name, calc_dtype, device, seed + 1),
         "k": _randn((B, HK, T, K), dtype_name, calc_dtype, device, seed + 2),
@@ -75,6 +77,11 @@ def build_inputs(spec: dict[str, Any], device: torch.device, high_precision: boo
         "do": _randn((B, HV, T, V), dtype_name, calc_dtype, device, seed + 4),
         "dv": _randn((B, HV, T, V), dtype_name, calc_dtype, device, seed + 5),
         "g": _gate((B, HV, T), torch.float64 if high_precision else torch.float32, device, seed + 6),
+        "h0": (
+            _randn((B, HV, *state_tail), dtype_name, calc_dtype, device, seed + 7)
+            if bool(spec.get("with_h0", False))
+            else None
+        ),
         "chunk_size": chunk_size,
         "scale": float(spec.get("scale", 1.0 / math.sqrt(K))),
     }
@@ -90,10 +97,12 @@ def run_cpu(spec: dict[str, Any], high_precision: bool = False):
         inputs["do"],
         inputs["dv"],
         g=inputs["g"],
+        h0=inputs["h0"],
         scale=inputs["scale"],
         chunk_size=inputs["chunk_size"],
         # 公共 CPU 节点始终传入 high_precision=True，使用 fp64 完成标杆计算。
         golden_mode="fp64" if high_precision else "npu",
+        state_v_first=bool(spec.get("state_v_first", False)),
     )
 
 
@@ -102,7 +111,12 @@ def run_npu(spec: dict[str, Any], input_data: InputDataset):
     inputs = build_inputs(spec, _marker_device(input_data), high_precision=False)
     from fla_npu.ops import ascendc
 
-    return ascendc.chunk_gated_delta_rule_bwd_dhu(inputs["q"], inputs["k"], inputs["w"], inputs["do"], inputs["dv"], inputs["scale"], inputs["chunk_size"], g=inputs["g"], gK=None, h0=None, dht=None, cu_seqlens=None, chunk_indices=None, transpose_state_layout=False)
+    return ascendc.chunk_gated_delta_rule_bwd_dhu(
+        inputs["q"], inputs["k"], inputs["w"], inputs["do"], inputs["dv"],
+        inputs["scale"], inputs["chunk_size"], g=inputs["g"], gK=None,
+        h0=inputs["h0"], dht=None, cu_seqlens=None, chunk_indices=None,
+        transpose_state_layout=bool(spec.get("state_v_first", False)),
+    )
 
 
 @register("executor_chunk_gated_delta_rule_bwd_dhu")

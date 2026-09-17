@@ -12,6 +12,7 @@
 #include "opdev/op_dfx.h"
 #include "opdev/make_op_executor.h"
 #include "chunk_fwd_o.h"
+#include <string>
 
 using namespace op;
 
@@ -28,10 +29,14 @@ const std::array<const aclTensor *, 1> ChunkFwdO(
     const aclIntArray *chunkOffsetsOptional,
     double scale,
     int64_t chunkSize,
+    bool useExp2,
+    bool stateVFirst,
+    const char *outputLayout,
     const aclTensor *oOut,
     aclOpExecutor *executor)
 {
-    L0_DFX(ChunkFwdO, q, k, v, h, g, cuSeqlensOptional, chunkOffsetsOptional, scale, chunkSize, oOut);
+    L0_DFX(ChunkFwdO, q, k, v, h, g, cuSeqlensOptional, chunkOffsetsOptional, scale, chunkSize, useExp2, stateVFirst,
+           outputLayout, oOut);
 
     const aclTensor *actualCuSeqlens = nullptr;
     if (cuSeqlensOptional) {
@@ -53,10 +58,11 @@ const std::array<const aclTensor *, 1> ChunkFwdO(
         actualChunkOffsets = nullptr;
     }
 
+    std::string outputLayoutStr(outputLayout == nullptr ? "BNSD" : outputLayout);
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(ChunkFwdO,
         OP_INPUT(q, k, v, h, g, actualCuSeqlens, actualChunkOffsets),
         OP_OUTPUT(oOut),
-        OP_ATTR(scale, chunkSize));
+        OP_ATTR(scale, chunkSize, useExp2, stateVFirst, outputLayoutStr));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return {nullptr};

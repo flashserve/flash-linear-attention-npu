@@ -27,7 +27,7 @@ $$dV_{\text{local}}[doHead] = \left(\text{mask}\!\left(\exp(g[doHead]_{\text{col
 | 阶段 | 执行单元 | 计算 | 说明 |
 |------|----------|------|------|
 | Phase 1 | Cube (AIC) | $W_s[qkHead] = K[qkHead] \times Q[qkHead]^T$ | 对每个 Q/K head 生成 chunk 内 attention score 矩阵 |
-| Phase 1.5 | Vector (AIV) | $W_{s\_gated}[doHead] = \text{mask}(\exp(g[doHead])) \odot W_s[qkHead]$ | 每个 dO head 使用映射到的 Q/K score 做 gating：exp、上三角含对角线 mask、逐元素乘 |
+| Phase 1.5 | Vector (AIV) | $W_{s\_gated}[doHead] = \text{mask}(\exp(g_{col} - g_{row})) \odot W_s[qkHead]$ | 每个 dO head 使用映射到的 Q/K score 做 gating：差值、exp、上三角含对角线 mask、逐元素乘 |
 | Phase 2 | Cube (AIC) | $dV[doHead] = W_{s\_gated}[doHead] \times dO[doHead]$ | 矩阵乘，生成最终梯度输出 |
 
 ---
@@ -81,7 +81,7 @@ aclnnStatus aclnnChunkBwdDvLocal(
 | `q` | 输入 | 必选 | Query 输入张量 | 参与反向计算，使用 Q/K head 数 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H_qk, T, K]` | 支持 |
 | `k` | 输入 | 必选 | Key 输入张量 | 参与反向计算，形状必须与 `q` 一致 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H_qk, T, K]` | 支持 |
 | `dO` | 输入 | 必选 | 前向输出的梯度张量 | 参与反向计算，使用 dO/dV head 数 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, H_do, T, V]` | 支持 |
-| `g` | 输入 | 必选 | Gate 输入张量（门控衰减系数） | 参与 gating 计算，H 轴与 `dO` 一致 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, H_do, T]` | 支持 |
+| `g` | 输入 | 必选 | chunk 内累计 log-decay | H 轴与 `dO` 一致；每个序列的每个有效 chunk 内沿 T 维单调不增 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, H_do, T]` | 支持 |
 | `gGammaOptional` | 输入 | 可选 | 预留门控参数输入 | 当前版本不支持，须传 `None` | `FLOAT` | `ND` | - | - |
 | `aOptional` | 输入 | 可选 | 预留参数输入 | 当前版本不支持，须传 `None` | `FLOAT16`、`BFLOAT16` | `ND` | - | - |
 | `cuSeqlensOptional` | 输入 | 可选 | 变长序列的累计长度信息 | 变长模式输入，形如 `[0, T1, T1+T2, ...]`，形状为 `[N+1]`（N 为 batch 内序列段数，等于 B） | `INT64` | `ND` | 1 维 | - |
@@ -171,6 +171,9 @@ B = 1
 
 ### 4.4 数值语义
 
+- `g` 是 GDN gate activation 后按 chunk 累计得到的 log-decay；在每个序列的每个有效 chunk 内沿 T 维单调不增，序列边界和 chunk 边界重新累计。
+- 对上三角 mask 保留的位置，`g_col - g_row <= 0`，门控因子 `exp(g_col - g_row)` 的取值不超过 1。
+- 非单调 `g` 不满足算子输入契约，不在支持范围内。
 - `scale`：
   - 必须显式传入
   - 推荐设置为：
@@ -178,6 +181,15 @@ B = 1
 ```text
 1 / sqrt(K)
 ```
+
+---
+
+### 4.5 核间同步与 QK 流水
+
+- Cube 通过 3 个 GM ring slot 预填 QK，并为每个 QK head 向两个 Vector 子核发送一次 ready。
+- 两个 Vector 子核消费 ready 后立即共同返回一个 QK free credit；Cube 在淘汰对应的旧 head 时消费该 credit。因此未消费的 QK ready 最多为 3 个，不会触及硬件 flag 计数上限。
+- QK free credit 只负责限制 ready 的在途数量；gated-ready 握手仍保证所有 `hRatio` 个 gated workspace 写回完成后，Cube 才复用对应的 QK slot。
+- QK 与 gated-ready 不使用相同的批量反向确认节奏，避免高 `hRatio` 下两条同步链在计数边界相互等待。
 
 ---
 
@@ -283,7 +295,8 @@ if __name__ == "__main__":
 `qkHead = doHead // hRatio` 复用对应的 Q/K head。定长回归覆盖
 `H_qk=4`、`H_do=16`、`T=198`、`chunkSize=64` 的 BF16 场景，变长回归覆盖
 `H_qk=4`、`H_do=16` 的 FP16 场景。精度检查使用与算子测试一致的同精度标杆和
-高精度标杆，不通过放宽阈值规避误差。
+高精度标杆，不通过放宽阈值规避误差。Fast-Kernel-Launch 还覆盖
+`B=1`、`H_qk=15`、`H_do=120`、`T=1`、`hRatio=8` 的同步边界，验证执行完成并通过 golden 精度对比。
 
 ---
 

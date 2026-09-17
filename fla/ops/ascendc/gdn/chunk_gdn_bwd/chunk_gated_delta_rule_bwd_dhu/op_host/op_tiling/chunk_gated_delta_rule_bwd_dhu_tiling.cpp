@@ -46,6 +46,7 @@ void ChunkGatedDeltaRuleBwdDhuTilingDataPrint(
     OP_LOGD(nodeName, "=== dh0ClearElemsPerCore: %ld", tiling.dh0ClearElemsPerCore);
     OP_LOGD(nodeName, "=== dh0ClearTailElems: %ld", tiling.dh0ClearTailElems);
     OP_LOGD(nodeName, "=== hasGk: %ld", tiling.hasGk);
+    OP_LOGD(nodeName, "=== stateVFirst: %ld", tiling.stateVFirst);
     OP_LOGD(nodeName, "=== workspaceElemsPerSubBlock: %ld", tiling.workspaceElemsPerSubBlock);
     OP_LOGD(nodeName, "=== qgWorkspaceOffset: %ld", tiling.qgWorkspaceOffset);
     OP_LOGD(nodeName, "=== stateWorkspaceOffset: %ld", tiling.stateWorkspaceOffset);
@@ -94,6 +95,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
     const double *scalePtr = attrPtr->GetAttrPointer<double>(CGDR_BWD_DHU_ATTR_SCALE_IDX);
     const int32_t *chunkSizePtr = attrPtr->GetAttrPointer<int32_t>(CGDR_BWD_DHU_ATTR_CHUNK_SIZE_IDX);
     const bool *useExp2Ptr = attrPtr->GetAttrPointer<bool>(CGDR_BWD_DHU_ATTR_USE_EXP2_IDX);
+    const bool *stateVFirstPtr = attrPtr->GetAttrPointer<bool>(CGDR_BWD_DHU_ATTR_STATE_V_FIRST_IDX);
 
     uint64_t ubSize = 0;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
@@ -114,6 +116,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
         hasG,
         hasGk,
         useExp2Ptr != nullptr ? *useExp2Ptr : false,
+        stateVFirstPtr != nullptr ? *stateVFirstPtr : false,
         h0InputShape != nullptr,
         true,
         scalePtr != nullptr ? static_cast<double>(*scalePtr) : 1.0,

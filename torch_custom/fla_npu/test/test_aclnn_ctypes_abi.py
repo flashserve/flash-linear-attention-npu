@@ -48,6 +48,7 @@ ACLNN_CTYPES = load_aclnn_ctypes_module()
 class FakeTensor:
     def __init__(self, shape, dtype=None, *, device_type="npu", contiguous=True):
         self.shape = tuple(shape)
+        self.ndim = len(self.shape)
         self.dtype = dtype
         self.device = types.SimpleNamespace(type=device_type)
         self._contiguous = contiguous
@@ -82,6 +83,151 @@ class FakeCallContext:
 
 
 class AclnnCtypesAbiTest(unittest.TestCase):
+    def test_gdn_training_and_inference_output_contract(self):
+        import inspect
+
+        function = ACLNN_CTYPES.npu_chunk_gated_delta_rule_fwd
+        self.assertIs(inspect.signature(function).parameters["disable_recompute"].default, True)
+        fake_torch = types.ModuleType("torch")
+        fake_torch.float32 = object()
+        fake_torch.bfloat16 = object()
+        q = FakeTensor((1, 2, 65, 128), fake_torch.bfloat16)
+        v = FakeTensor((1, 4, 65, 256), fake_torch.bfloat16)
+        g = FakeTensor((1, 65, 4), fake_torch.float32)
+        beta = FakeTensor(g.shape, fake_torch.bfloat16)
+        state = FakeTensor((1, 4, 128, 256), fake_torch.float32)
+        captured = {}
+
+        def fake_empty(shape, like, **kwargs):
+            return FakeTensor(shape, kwargs.get("dtype", like.dtype))
+
+        def fake_call_aclnn(name, build_args, outputs):
+            context = FakeCallContext()
+            captured["name"] = name
+            captured["args"] = build_args(context)
+            captured["tensors"] = {row[0]: row[1] for row in context.descriptor_metadata}
+            return outputs
+
+        modes = (("default", {}, True), ("none", {"disable_recompute": None}, True),
+                 ("training", {"disable_recompute": True}, True),
+                 ("inference", {"disable_recompute": False}, False))
+        with mock.patch.dict(sys.modules, {"torch": fake_torch}), \
+                mock.patch.object(ACLNN_CTYPES, "_empty", side_effect=fake_empty), \
+                mock.patch.object(ACLNN_CTYPES, "_call_aclnn", side_effect=fake_call_aclnn):
+            for mode, options, training in modes:
+                for with_h in (False, True):
+                    for with_final_state in (False, True):
+                        with self.subTest(mode=mode, h=with_h, final_state=with_final_state):
+                            outputs = function(
+                                q, q, v, g, beta, initial_state=state,
+                                output_final_state=with_final_state,
+                                return_intermediate_states=with_h, a_log=None, dt_bias=None, **options,
+                            )
+                            tensors = captured["tensors"]
+                            self.assertEqual(captured["name"], "aclnnChunkGatedDeltaRuleFwd")
+                            self.assertEqual(len(captured["args"]), 27)
+                            self.assertEqual(len(outputs), 6)
+                            self.assertIsNone(outputs[4])
+                            self.assertIs(outputs[0], tensors["o"])
+                            self.assertEqual(outputs[0].shape, (1, 65, 4, 256))
+                            self.assertIs(outputs[1], tensors["final_state"])
+                            self.assertEqual(outputs[1] is not None, with_final_state)
+                            if training:
+                                self.assertIs(outputs[2], tensors["g_cumsum"])
+                                self.assertIs(outputs[3], tensors["A"])
+                                self.assertEqual(outputs[2].shape, (1, 65, 4))
+                                self.assertIs(outputs[2].dtype, fake_torch.float32)
+                                self.assertEqual(outputs[3].shape, (1, 4, 65, 64))
+                            else:
+                                self.assertIsNone(tensors["g_cumsum"])
+                                self.assertIsNone(tensors["A"])
+                                self.assertIsNone(outputs[2])
+                                self.assertIsNone(outputs[3])
+                            if with_h:
+                                self.assertIs(outputs[-1], tensors["h"])
+                                self.assertEqual(outputs[-1].shape, (1, 4, 2, 128, 256))
+                            else:
+                                self.assertIsNone(tensors["h"])
+                                self.assertIsNone(outputs[5])
+
+    def test_gdn_reserved_gate_arguments_rejected_before_launch(self):
+        fake_torch = types.ModuleType("torch")
+        q = FakeTensor((1, 2, 65, 128))
+        g = FakeTensor((1, 65, 2))
+        with mock.patch.dict(sys.modules, {"torch": fake_torch}), \
+                mock.patch.object(ACLNN_CTYPES, "_call_aclnn") as launch:
+            for options in ({"a_log": g}, {"dt_bias": g}, {"use_gate_in_kernel": True}):
+                with self.subTest(options=options), self.assertRaises(ValueError):
+                    ACLNN_CTYPES.npu_chunk_gated_delta_rule_fwd(q, q, q, g, g, **options)
+            launch.assert_not_called()
+
+    def test_chunk_gdn_bwd_intra_signature_has_no_debug_stage(self):
+        import inspect
+
+        expected_argtypes = [
+            *([ctypes.c_void_p] * 9),
+            ctypes.c_double,
+            ctypes.c_int64,
+            ctypes.c_bool,
+            *([ctypes.c_void_p] * 3),
+            ctypes.POINTER(ctypes.c_uint64),
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        self.assertEqual(
+            ACLNN_CTYPES._GET_WORKSPACE_ARGTYPES["aclnnChunkGdnBwdIntra"],
+            expected_argtypes,
+        )
+        signature = inspect.signature(ACLNN_CTYPES.npu_chunk_gdn_bwd_intra)
+        self.assertNotIn("stage", signature.parameters)
+        self.assertIs(signature.parameters["use_exp2"].default, True)
+
+        captured = {}
+        fake_torch = types.ModuleType("torch")
+        fake_torch.Tensor = FakeTensor
+        fake_torch.float16 = object()
+        fake_torch.bfloat16 = object()
+        fake_torch.float32 = object()
+
+        def fake_empty(shape, like, **kwargs):
+            return FakeTensor(shape, kwargs.get("dtype", like.dtype))
+
+        def fake_empty_like(tensor, **kwargs):
+            return FakeTensor(tensor.shape, kwargs.get("dtype", tensor.dtype))
+
+        def fake_call_aclnn(name, build_args, outputs):
+            context = FakeCallContext()
+            captured["name"] = name
+            captured["args"] = build_args(context)
+            return outputs
+
+        dtype = fake_torch.bfloat16
+        q = FakeTensor((1, 3, 65, 128), dtype)
+        k = FakeTensor(q.shape, dtype)
+        v = FakeTensor((1, 6, 65, 128), dtype)
+        g = FakeTensor((1, 6, 65), fake_torch.float32)
+        beta = FakeTensor((1, 6, 65), fake_torch.bfloat16)
+        a = FakeTensor((1, 6, 65, 64), dtype)
+        d_o = FakeTensor(v.shape, dtype)
+
+        with mock.patch.dict(sys.modules, {"torch": fake_torch}):
+            with mock.patch.object(ACLNN_CTYPES, "_empty", side_effect=fake_empty):
+                with mock.patch.object(
+                    ACLNN_CTYPES, "_empty_like", side_effect=fake_empty_like
+                ):
+                    with mock.patch.object(
+                        ACLNN_CTYPES, "_call_aclnn", side_effect=fake_call_aclnn
+                    ):
+                        outputs = ACLNN_CTYPES.npu_chunk_gdn_bwd_intra(
+                            q, k, v, g, beta, a, d_o, 0.125, 64
+                        )
+
+        operator_argtypes = expected_argtypes[:-2]
+        self.assertEqual(captured["name"], "aclnnChunkGdnBwdIntra")
+        self.assertEqual(len(outputs), 3)
+        self.assertEqual(len(captured["args"]), len(operator_argtypes))
+        self.assertEqual([type(arg) for arg in captured["args"]], operator_argtypes)
+        self.assertTrue(captured["args"][11].value)
+
     def test_chunk_gated_delta_rule_bwd_dhu_signature_and_default_use_exp2(self):
         import inspect
 
@@ -91,6 +237,7 @@ class AclnnCtypesAbiTest(unittest.TestCase):
             *([ctypes.c_void_p] * 11),
             ctypes.c_double,
             ctypes.c_int64,
+            ctypes.c_bool,
             ctypes.c_bool,
             *([ctypes.c_void_p] * 3),
             ctypes.POINTER(ctypes.c_uint64),
@@ -137,6 +284,7 @@ class AclnnCtypesAbiTest(unittest.TestCase):
         self.assertEqual(len(captured["args"]), len(operator_argtypes))
         self.assertEqual([type(arg) for arg in captured["args"]], operator_argtypes)
         self.assertFalse(captured["args"][13].value)
+        self.assertFalse(captured["args"][14].value)
 
     def test_recurrent_gated_delta_rule_requires_at_least_one_gate_before_launch(self):
         with mock.patch.object(ACLNN_CTYPES, "_call_aclnn") as call_aclnn:

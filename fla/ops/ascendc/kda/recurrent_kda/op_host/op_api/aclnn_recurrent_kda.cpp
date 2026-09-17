@@ -102,6 +102,35 @@ static bool SameShape(const aclTensor *lhs, const aclTensor *rhs)
     return true;
 }
 
+static bool SameViewStrides(const aclTensor *lhs, const aclTensor *rhs)
+{
+    const auto &lhsStrides = lhs->GetViewStrides();
+    const auto &rhsStrides = rhs->GetViewStrides();
+    if (lhsStrides.size() != rhsStrides.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < lhsStrides.size(); ++i) {
+        if (lhsStrides[i] != rhsStrides[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool SameTensorView(const aclTensor *lhs, const aclTensor *rhs)
+{
+    if (lhs == rhs) {
+        return true;
+    }
+    void *lhsStorage = lhs->GetStorageAddr();
+    if (lhsStorage == nullptr || lhsStorage != rhs->GetStorageAddr()) {
+        return false;
+    }
+    return lhs->GetStorageOffset() == rhs->GetStorageOffset() &&
+           lhs->GetViewOffset() == rhs->GetViewOffset() && SameShape(lhs, rhs) &&
+           SameViewStrides(lhs, rhs);
+}
+
 static bool ParseLayout(const char *layout, RecurrentKdaLayout &parsed)
 {
     if (layout == nullptr || std::strcmp(layout, "BSND") == 0) {
@@ -514,7 +543,7 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
                           layout, scale, outputFinalState, inplaceFinalState, useQkL2normInKernel,
                           useGateInKernel, useBetaSigmoidInKernel, allowNegEigval, safeGate, lowerBound,
                           stateVFirst),
-                   DFX_OUT(attnOut, initialStateRef, finalState));
+                   DFX_OUT(initialStateRef, attnOut, finalState));
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
@@ -589,7 +618,7 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
     CHECK_RET(result[0] != nullptr && result[1] != nullptr && result[2] != nullptr,
               ACLNN_ERR_INNER_NULLPTR);
     if (params.inplaceFinalState && params.outputFinalState &&
-        params.finalState != params.initialStateRef) {
+        !SameTensorView(params.finalState, params.initialStateRef)) {
         CHECK_RET(l0op::ViewCopy(result[1], params.finalState, executorPtr) != nullptr,
                   ACLNN_ERR_INNER_NULLPTR);
     }

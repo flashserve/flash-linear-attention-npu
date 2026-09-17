@@ -166,7 +166,7 @@ def chunk_bwd_dv_local_fix(
                 m_A = pos_mask & valid_mask
                 g_i = b_g.unsqueeze(1)
                 g_j = b_g.unsqueeze(0)
-                g_factor = torch.exp(g_j - g_i) * scale
+                g_factor = torch.exp(torch.clamp(g_j - g_i, max=0.0)) * scale
                 b_A_gated = torch.zeros_like(b_A)
                 b_A_gated[:chunk_len, :chunk_len] = b_A[:chunk_len, :chunk_len] * g_factor
                 b_A_masked = torch.where(m_A, b_A_gated, torch.zeros_like(b_A_gated))
@@ -241,7 +241,7 @@ def chunk_bwd_dv_local_fix_high_precision(
                 m_A = pos_mask & valid_mask
                 g_i = b_g.unsqueeze(1)
                 g_j = b_g.unsqueeze(0)
-                g_factor = torch.exp(g_j - g_i) * scale
+                g_factor = torch.exp(torch.clamp(g_j - g_i, max=0.0)) * scale
                 b_A_gated = torch.zeros_like(b_A)
                 b_A_gated[:chunk_len, :chunk_len] = b_A[:chunk_len, :chunk_len] * g_factor
                 b_A_masked = torch.where(m_A, b_A_gated, torch.zeros_like(b_A_gated))
@@ -321,7 +321,7 @@ def chunk_bwd_dv_local_variable(
                 m_A = pos_mask & valid_mask
                 g_i = b_g.unsqueeze(1)
                 g_j = b_g.unsqueeze(0)
-                g_factor = torch.exp(g_j - g_i)
+                g_factor = torch.exp(torch.clamp(g_j - g_i, max=0.0))
                 b_A_gated = torch.zeros_like(b_A)
                 b_A_gated[:chunk_len, :chunk_len] = b_A[:chunk_len, :chunk_len] * g_factor * scale
                 b_A_masked = torch.where(m_A, b_A_gated, torch.zeros_like(b_A_gated))
@@ -400,7 +400,7 @@ def chunk_bwd_dv_local_variable_high_precision(
                 m_A = pos_mask & valid_mask
                 g_i = b_g.unsqueeze(1)
                 g_j = b_g.unsqueeze(0)
-                g_factor = torch.exp(g_j - g_i)
+                g_factor = torch.exp(torch.clamp(g_j - g_i, max=0.0))
                 b_A_gated = torch.zeros_like(b_A)
                 b_A_gated[:chunk_len, :chunk_len] = b_A[:chunk_len, :chunk_len] * g_factor * scale
                 b_A_masked = torch.where(m_A, b_A_gated, torch.zeros_like(b_A_gated))

@@ -70,6 +70,48 @@ static aclnnStatus CheckFormat(RecomputeWUFwdParams params)
 
 static aclnnStatus CheckShape(RecomputeWUFwdParams params)
 {
+    const auto kShape = params.k->GetViewShape();
+    const auto vShape = params.v->GetViewShape();
+    const auto betaShape = params.beta->GetViewShape();
+    const auto aShape = params.a->GetViewShape();
+    const auto gShape = params.g->GetViewShape();
+    const auto wOutShape = params.wOut->GetViewShape();
+    const auto uOutShape = params.uOut->GetViewShape();
+
+    CHECK_COND(kShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "k must be [B, HK, T, K].");
+    CHECK_COND(vShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "v must be [B, HV, T, V].");
+    CHECK_COND(betaShape.GetDimNum() == 3, ACLNN_ERR_PARAM_INVALID, "beta must be [B, HV, T].");
+    CHECK_COND(aShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "A must be [B, HV, T, chunkSize].");
+    CHECK_COND(gShape.GetDimNum() == 3, ACLNN_ERR_PARAM_INVALID, "g must be [B, HV, T].");
+    CHECK_COND(wOutShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "wOut must be [B, HV, T, K].");
+    CHECK_COND(uOutShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "uOut must be [B, HV, T, V].");
+
+    const int64_t B = kShape.GetDim(0);
+    const int64_t HK = kShape.GetDim(1);
+    const int64_t T = kShape.GetDim(2);
+    const int64_t K = kShape.GetDim(3);
+    const int64_t HV = vShape.GetDim(1);
+    const int64_t V = vShape.GetDim(3);
+
+    CHECK_COND(HK > 0 && HV > 0 && HV % HK == 0, ACLNN_ERR_PARAM_INVALID,
+               "GVA requires HV divisible by HK.");
+    CHECK_COND(vShape.GetDim(0) == B && vShape.GetDim(2) == T, ACLNN_ERR_PARAM_INVALID,
+               "v must match k batch and sequence dimensions.");
+    CHECK_COND(betaShape.GetDim(0) == B && betaShape.GetDim(1) == HV && betaShape.GetDim(2) == T,
+               ACLNN_ERR_PARAM_INVALID, "beta must be [B, HV, T].");
+    CHECK_COND(aShape.GetDim(0) == B && aShape.GetDim(1) == HV && aShape.GetDim(2) == T &&
+               aShape.GetDim(3) == params.chunkSize, ACLNN_ERR_PARAM_INVALID,
+               "A must be [B, HV, T, chunkSize].");
+    CHECK_COND(gShape.GetDim(0) == B && gShape.GetDim(1) == HV && gShape.GetDim(2) == T,
+               ACLNN_ERR_PARAM_INVALID, "g must be [B, HV, T].");
+    CHECK_COND(wOutShape.GetDim(0) == B && wOutShape.GetDim(1) == HV && wOutShape.GetDim(2) == T &&
+               wOutShape.GetDim(3) == K, ACLNN_ERR_PARAM_INVALID, "wOut must be [B, HV, T, K].");
+    CHECK_COND(uOutShape.GetDim(0) == B && uOutShape.GetDim(1) == HV && uOutShape.GetDim(2) == T &&
+               uOutShape.GetDim(3) == V, ACLNN_ERR_PARAM_INVALID, "uOut must be [B, HV, T, V].");
+    CHECK_COND(params.chunkSize == 64 || params.chunkSize == 128, ACLNN_ERR_PARAM_INVALID,
+               "chunkSize must be 64 or 128.");
+    CHECK_COND(K == 128, ACLNN_ERR_PARAM_INVALID, "K must be 128.");
+    CHECK_COND(V == 128 || V == 256, ACLNN_ERR_PARAM_INVALID, "V must be 128 or 256.");
     return ACLNN_SUCCESS;
 }
 
@@ -98,12 +140,24 @@ static aclnnStatus ParamsDataContiguous(RecomputeWUFwdParams &params, aclOpExecu
 
 static aclnnStatus CheckDtype(RecomputeWUFwdParams params)
 {
+    auto inputDtype = params.k->GetDataType();
+    CHECK_COND(inputDtype == DataType::DT_FLOAT16 || inputDtype == DataType::DT_BF16,
+               ACLNN_ERR_PARAM_INVALID, "k dtype must be float16 or bfloat16.");
+    CHECK_COND(params.v->GetDataType() == inputDtype,
+               ACLNN_ERR_PARAM_INVALID, "v dtype must match k.");
+    CHECK_COND(params.a->GetDataType() == inputDtype,
+               ACLNN_ERR_PARAM_INVALID, "a dtype must match k.");
+    CHECK_COND(params.wOut->GetDataType() == inputDtype && params.uOut->GetDataType() == inputDtype,
+               ACLNN_ERR_PARAM_INVALID, "wOut and uOut dtype must match k.");
+    CHECK_COND(params.beta->GetDataType() == DataType::DT_FLOAT || params.beta->GetDataType() == inputDtype,
+               ACLNN_ERR_PARAM_INVALID, "beta dtype must be float32 or match k dtype.");
+    CHECK_COND(params.g->GetDataType() == DataType::DT_FLOAT || params.g->GetDataType() == inputDtype,
+               ACLNN_ERR_PARAM_INVALID, "g dtype must be float32 or match k dtype.");
     return ACLNN_SUCCESS;
 }
 
 static aclnnStatus CheckParams(RecomputeWUFwdParams params)
 {
-    CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckFormat(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
@@ -127,15 +181,16 @@ aclnnStatus aclnnRecomputeWUFwdGetWorkspaceSize(
 {
     RecomputeWUFwdParams params{k, v, beta, a, g, gk,cuSeqlensOptional, chunkIndicesOptional, chunkSize, wOut, uOut};
     // Standard syntax, Check parameters.
-    L2_DFX_PHASE_1(aclnnRecomputeWUFwd, DFX_IN(k, v, beta, a, g, gk, cuSeqlensOptional, chunkIndicesOptional),
+    L2_DFX_PHASE_1(aclnnRecomputeWUFwd,
+                   DFX_IN(k, v, beta, a, g, gk, cuSeqlensOptional, chunkIndicesOptional, chunkSize),
                    DFX_OUT(wOut, uOut));
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
     // 固定写法，参数检查
-    auto ret = CheckParams(params);
-    CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR);
+    CHECK_RET(CheckParams(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
                "ParamsDataContiguous failed.");
     auto result = l0op::RecomputeWUFwd(params.k, params.v, params.beta, params.a, params.g, params.gk, params.cuSeqlensOptional, params.chunkIndicesOptional, params.chunkSize, params.wOut, params.uOut, executorPtr);

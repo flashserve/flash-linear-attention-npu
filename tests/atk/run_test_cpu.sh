@@ -14,8 +14,8 @@ show_usage() {
   -npu_device_id=0               传给 ATK node --devices 的 NPU 卡号，默认 0；gen_cases 不需要
   -soc=ascend910b                可选：ascend910b/A2、ascend910_93/A3、ascend950/A5；默认 auto 自动探测
   -scope=all                     可选：all、accuracy、performance、determinism、mssanitizer、gen_cases
-                                 all 包含 accuracy/determinism/mssanitizer；
-                                 performance 需单独指定；gen_cases 不在 all 中
+                                 all 包含 accuracy/performance/determinism/mssanitizer；
+                                 gen_cases 只生成精度候选用例，不在 all 中
 
 常用环境变量：
   ATK_ENV                        ATK 虚拟环境目录，设置后 source "$ATK_ENV/bin/activate"
@@ -107,12 +107,27 @@ should_run() {
     [[ "$RUN_SCOPE" == "gen_cases" ]]
     return
   fi
-  # performance 不包含在 all 中，需单独指定 -scope=performance
-  if [[ "$stage" == "performance" ]]; then
-    [[ "$RUN_SCOPE" == "performance" ]]
-    return
-  fi
   [[ "$RUN_SCOPE" == "all" || "$RUN_SCOPE" == "$stage" ]]
+}
+
+validate_case_json() {
+  local label="$1"
+  local file_path="$2"
+  [[ -s "$file_path" ]] || die "${label}不存在或为空：${file_path}"
+  python3 - "$label" "$file_path" <<'PY'
+import json
+import sys
+
+label, file_path = sys.argv[1:]
+try:
+    with open(file_path, "r", encoding="utf-8") as file:
+        data = json.load(file)
+except (OSError, UnicodeError, json.JSONDecodeError) as error:
+    raise SystemExit(f"{label}无法解析：{file_path}：{error}")
+
+if not isinstance(data, (dict, list)) or len(data) == 0:
+    raise SystemExit(f"{label}没有可执行用例：{file_path}")
+PY
 }
 
 set_case_range_args() {
@@ -274,6 +289,8 @@ RESULT_CHECK_PY="${SCRIPT_DIR}/common/check_atk_result.py"
 
 # NPU 后端固定为 npu
 CASE_FILE="${OP_DIR}/atk_${OP}.json"
+PERFORMANCE_CASE_FILE="${OP_DIR}/atk_${OP}_perf.json"
+MSS_CASE_FILE="${OP_DIR}/atk_${OP}_mss.json"
 EXECUTOR_FILE="${OP_DIR}/executor_${OP}.py"
 YAML_FILE="${OP_DIR}/${OP}.yaml"
 GEN_FILE="${OP_DIR}/gen_${OP}.py"
@@ -283,7 +300,6 @@ if should_run gen_cases; then
   [[ -f "$YAML_FILE" ]] || die "找不到 ATK YAML 文件：${YAML_FILE}"
   [[ -f "$GEN_FILE" ]] || die "找不到 ATK 生成器：${GEN_FILE}"
 else
-  [[ -f "$CASE_FILE" ]] || die "找不到 ATK 用例文件：${CASE_FILE}"
   [[ -f "$EXECUTOR_FILE" ]] || die "找不到 ATK 执行器：${EXECUTOR_FILE}"
 fi
 
@@ -299,6 +315,17 @@ fi
 
 ATK_BIN="$(command -v atk || true)"
 [[ -n "$ATK_BIN" ]] || die "找不到 atk，请先安装并激活 ATK 环境"
+
+case "$RUN_SCOPE" in
+  all)
+    validate_case_json "精度用例文件" "$CASE_FILE"
+    validate_case_json "性能用例文件" "$PERFORMANCE_CASE_FILE"
+    validate_case_json "内存检测与确定性用例文件" "$MSS_CASE_FILE"
+    ;;
+  accuracy) validate_case_json "精度用例文件" "$CASE_FILE" ;;
+  performance) validate_case_json "性能用例文件" "$PERFORMANCE_CASE_FILE" ;;
+  determinism|mssanitizer) validate_case_json "内存检测与确定性用例文件" "$MSS_CASE_FILE" ;;
+esac
 
 # SOC 为 auto 时探测真实芯片，用于 ATK_GM_INIT_MODE 判定与日志展示
 if [[ "$SOC" == "auto" ]]; then
@@ -320,6 +347,14 @@ DETERMINISM_END="${DETERMINISM_END:-$CASE_END}"
 MSS_START="${MSS_START:-$CASE_START}"
 MSS_END="${MSS_END:-$CASE_END}"
 
+if [[ "$RUN_SCOPE" == "all" ]] &&
+   [[ -n "$ACCURACY_START" || -n "$ACCURACY_END" ||
+      -n "$PERFORMANCE_START" || -n "$PERFORMANCE_END" ||
+      -n "$DETERMINISM_START" || -n "$DETERMINISM_END" ||
+      -n "$MSS_START" || -n "$MSS_END" ]]; then
+  die "正式验收的 all 必须执行全部用例，不能设置 case 范围"
+fi
+
 cd "$OP_DIR"
 ATK_OUTPUT_ROOT="${ATK_OUTPUT_ROOT:-./atk_output}"
 mkdir -p "${ATK_OUTPUT_ROOT}/accuracy" "${ATK_OUTPUT_ROOT}/perf"
@@ -338,14 +373,14 @@ check_atk_version
 resolve_gm_init_args
 
 if should_run gen_cases; then
-  log_info "开始生成泛化用例：atk case -dt ${GEN_CASES_DTYPE_NUMBERS} -en ${GEN_CASES_EXTRA_NUMBERS}"
+  log_info "开始生成精度候选用例：atk case -dt ${GEN_CASES_DTYPE_NUMBERS} -en ${GEN_CASES_EXTRA_NUMBERS}"
   "$ATK_BIN" case \
     -f "./${OP}.yaml" \
     -p "./gen_${OP}.py" \
     -dt "$GEN_CASES_DTYPE_NUMBERS" \
     -en "$GEN_CASES_EXTRA_NUMBERS" \
     -s "$GEN_CASES_SEED"
-  log_info "完成泛化用例生成：result/${OP}/json/all_${OP}.json"
+  log_info "完成精度候选用例生成：result/${OP}/json/all_${OP}.json"
 fi
 
 if should_run accuracy; then

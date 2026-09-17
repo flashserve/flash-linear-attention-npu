@@ -12,14 +12,14 @@
  * \brief Shared tiling data for recompute_w_u_fwd.
  */
 
-#ifndef RECOMPUTE_W_U_FWD_STRUCT_H
-#define RECOMPUTE_W_U_FWD_STRUCT_H
+#ifndef GDN_MEGA_ARCH35_RECOMPUTE_W_U_FWD_STRUCT_H
+#define GDN_MEGA_ARCH35_RECOMPUTE_W_U_FWD_STRUCT_H
 
 #include <cstdint>
 
 namespace GDN {
 
-struct RecomputeWUFwdTilingData {
+struct GdnMegaArch35RecomputeWUTilingData {
     int64_t B;
     int64_t Hk;
     int64_t Hv;
@@ -36,4 +36,4 @@ struct RecomputeWUFwdTilingData {
 
 } // namespace GDN
 
-#endif // RECOMPUTE_W_U_FWD_STRUCT_H
+#endif // GDN_MEGA_ARCH35_RECOMPUTE_W_U_FWD_STRUCT_H

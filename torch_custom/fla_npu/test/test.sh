@@ -12,7 +12,7 @@
 # GDN 全量测试入口
 # 用法:
 #   bash test.sh --device 0              # 在 device 0 上运行全量测试
-#   bash test.sh --device 0 --op causal_conv1d  # 只测指定算子
+#   bash test.sh --device 0 --op causal_conv1d  # 只测指定算子，多个算子用逗号分隔
 #   bash test.sh --device 0 --mode dry-run      # 只打印要执行的命令
 
 set -uo pipefail
@@ -34,14 +34,14 @@ usage() {
     echo ""
     echo "选项:"
     echo "  --device N    指定 NPU device id（必填）"
-    echo "  --op NAME     只测试指定算子（可选，默认全量）"
+    echo "  --op NAME[,NAME...]  只测试指定算子（可选，默认全量）"
     echo "  --mode dry-run 只打印命令，不执行"
     echo ""
     echo "算子列表:"
     echo "  prepare_wy_repr_bwd_full, chunk_gated_delta_rule_bwd_dhu,"
     echo "  chunk_bwd_dv_local, causal_conv1d, prepare_wy_repr_bwd_da,"
     echo "  chunk_bwd_dqkwg, gdn_fwd_o, gdn_fwd_h, recompute_w_u_fwd,"
-    echo "  chunk_local_cumsum"
+    echo "  chunk_local_cumsum, chunk_scaled_dot_kkt"
     exit 1
 }
 
@@ -61,7 +61,7 @@ fi
 
 export TEST_DEVICE_ID
 export TORCH_DEVICE_BACKEND_AUTOLOAD=1
-export TEST_LOG_DIR="$SCRIPT_DIR/test_output"
+export TEST_LOG_DIR="${TEST_LOG_DIR:-$SCRIPT_DIR/test_output}"
 mkdir -p "$TEST_LOG_DIR"
 
 success_list=()
@@ -70,11 +70,53 @@ timeout_list=()
 
 TIMEOUT_SEC=300
 
+op_selected() {
+    local name="$1" requested
+    [[ -z "$SINGLE_OP" ]] && return 0
+    local requested_ops=()
+    IFS=',' read -ra requested_ops <<< "$SINGLE_OP"
+    for requested in "${requested_ops[@]}"; do
+        requested="${requested#"${requested%%[![:space:]]*}"}"
+        requested="${requested%"${requested##*[![:space:]]}"}"
+        [[ "$requested" == "$name" ]] && return 0
+    done
+    return 1
+}
+
+print_test_failure_excerpt() {
+    local log_file="$1"
+    [[ -f "$log_file" ]] || return 0
+
+    local excerpt
+    excerpt=$(
+        grep -iE -B2 -A4 \
+            'Traceback \(most recent call last\)|[A-Za-z_][A-Za-z0-9_.]*(Error|Exception):|ACL_ERROR|segmentation fault|core dumped' \
+            "$log_file" 2>/dev/null | head -24 || true
+    )
+    if [[ -n "$excerpt" ]]; then
+        echo "    关键错误:"
+        printf '%s\n' "$excerpt"
+        return 0
+    fi
+
+    excerpt=$(
+        grep -iE -B2 -A3 \
+            '\[ERROR\]|(^|[^[:alpha:]])(NPU|kernel|device|stream).*(error|failed)' \
+            "$log_file" 2>/dev/null | head -20 || true
+    )
+    echo "    日志尾部:"
+    if [[ -n "$excerpt" ]]; then
+        printf '%s\n' "$excerpt"
+    else
+        tail -20 "$log_file" 2>/dev/null || true
+    fi
+}
+
 run_test() {
     local name=$1
     local cmd=$2
 
-    if [[ -n "$SINGLE_OP" && "$name" != "$SINGLE_OP" ]]; then
+    if ! op_selected "$name"; then
         return
     fi
 
@@ -96,12 +138,14 @@ run_test() {
         return 0
     elif [[ $? -eq 124 ]]; then
         printf "  [TIMEOUT]      log: %s\n" "$log_file"
+        print_test_failure_excerpt "$log_file"
         timeout_list+=("$name")
         return 124
     else
         local end_ts=$(date +%s)
         local elapsed=$((end_ts - start_ts))
         printf "  [FAIL]  %3ds  log: %s\n" "$elapsed" "$log_file"
+        print_test_failure_excerpt "$log_file"
         fail_list+=("$name")
         return 1
     fi

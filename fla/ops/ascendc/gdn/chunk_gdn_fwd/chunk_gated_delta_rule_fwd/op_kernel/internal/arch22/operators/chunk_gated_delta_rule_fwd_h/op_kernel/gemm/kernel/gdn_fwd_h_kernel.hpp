@@ -236,7 +236,7 @@ public:
     __aicore__ inline void Init(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR inital_state, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
         GM_ADDR h, GM_ADDR v_new, GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user) {
 
-        __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict gdnFwdHTilingData = reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
+        __gm__ GdnMegaArch22FwdHTilingData *__restrict gdnFwdHTilingData = reinterpret_cast<__gm__ GdnMegaArch22FwdHTilingData *__restrict>(tiling);
 
         batch = gdnFwdHTilingData->batch;
         seqlen = gdnFwdHTilingData->seqlen;
@@ -478,7 +478,9 @@ public:
             AscendC::DataCopy(
                 gmHWorkspace[offsets.hWorkOffset + kRow * offsets.vBlockDim],
                 accumUb, offsets.vBlockDim);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID7);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID7);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID7);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID7);
         }
     }
@@ -599,7 +601,7 @@ public:
                             blockMmadWHTail.preSetFlags();
                             blockMmadWHTail(
                                 tensorBlockW, tensorBlockH, tensorBlockV,
-                                cube1Shape, EmptyClass{}, true);
+                                cube1Shape);
                             blockMmadWHTail.finalWaitFlags();
                         } else {
                             blockMmadWH.preSetFlags();
@@ -644,7 +646,7 @@ public:
                                 blockMmadKVTail.preSetFlags();
                                 blockMmadKVTail(
                                     tensorBlockK, tensorBlockVwork, tensorBlockHwork,
-                                    cube2Shape, EmptyClass{}, true);
+                                    cube2Shape);
                                 blockMmadKVTail.finalWaitFlags();
                             } else {
                                 blockMmadKV.preSetFlags();
@@ -755,6 +757,9 @@ public:
                                 AscendC::DataCopy(gmH[hOffset], stateUbTensor, stateTileElems);
                             }
                         } else {
+                            // 将旧搬出完成的MTE2等待传递给复用UB的Vector写入。
+                            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(eventId);
+                            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(eventId);
                             AscendC::Duplicate(hUbTensor, static_cast<ElementH>(0), stateTileElems);
                             AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(eventId);
                             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(eventId);

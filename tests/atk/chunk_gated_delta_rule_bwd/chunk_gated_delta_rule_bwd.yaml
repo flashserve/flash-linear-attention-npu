@@ -1,0 +1,54 @@
+api: pytorch
+api_type: executor_chunk_gated_delta_rule_bwd
+version: v2.1
+name: chunk_gated_delta_rule_bwd
+aclnn_name:
+generate: generator_chunk_gated_delta_rule_bwd
+dtype_numbers: 1
+extra_numbers: 0
+standard:
+  acc:
+    mixed_tolerance_bm:
+      fp32_atol: 0.0001
+  perf: not_key
+inputs:
+  - name: low_precision_marker
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16]
+    ranges:
+      valid:
+        values: [[0, 0]]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [1]
+      dim_values:
+        values: [1]
+  - name: fp32_marker
+    type: tensor
+    required: true
+    dtypes:
+      values: [fp32]
+    ranges:
+      valid:
+        values: [[0, 0]]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [1]
+      dim_values:
+        values: [1]
+  - name: case_spec
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: ['{"B":1,"HK":2,"HV":2,"T":64,"layout":"BNSD","use_exp2":true}']
+      invalid:
+        values: []

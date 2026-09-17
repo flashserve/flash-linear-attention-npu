@@ -12,7 +12,7 @@
 namespace GDN {
 
 struct ChunkRecomputeWUFwdHOTrailer {
-    RecomputeWUFwdTilingData recompute;
+    GdnMegaArch22RecomputeWUTilingData recompute;
     int64_t recomputeWorkspaceOffset;
     int64_t wIntermediateOffset;
     int64_t uIntermediateOffset;

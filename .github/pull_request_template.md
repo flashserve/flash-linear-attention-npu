@@ -4,9 +4,17 @@
 
 > **NPU CI 不会在 PR 新建、重开或 push 新 commit 时自动执行。**
 >
-> PR 新建、重开或 push 新 commit 后，GitHub 会自动把当前 head commit 标记为 `NPU CI / 手动验证 pending`，说明该 commit 暂未执行 NPU CI。机器人评论会提示可请求仓库 Admin 权限账号触发。
+> PR 新建、重开或 push 新 commit 后，GitHub 会自动把当前 head commit 的以下 7 个 NPU CI 分项状态标记为 pending，说明该 commit 暂未执行双平台 NPU CI：
 >
-> 合入前，当前 head commit 必须具备成功的 `NPU CI / 手动验证` 状态，并且满足 GitHub 分支保护要求的 2 个 approval；如果本 PR 后续更新了 commit，旧 commit 的 CI 结果不再有效，需要仓库 Admin 权限账号重新触发。即使已有 2 个 approval，只要当前 commit 未完成 NPU CI，仍不可合入（`weinachuan` 可按仓库保护规则 bypass）。
+> 1. `NPU CI / A2+A5 / 01 环境、wheel 与运行时契约`
+> 2. `NPU CI / A2+A5 / 02 全量 OPP 构建`
+> 3. `NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局`
+> 4. `NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配`
+> 5. `NPU CI / A2+A5 / 05 GDR Example/ST`
+> 6. `NPU CI / A2+A5 / 06 chunk_fwd_o 局部覆盖安装`
+> 7. `NPU CI / A2+A5 / 07 报告与 commit 校验`
+>
+> 每个平台按上述顺序执行前 6 个分项；任一前置分项失败时，后续分项会标记为未执行，不再继续运行。失败结果会保留关键报错，并给出带 `CI_STAGE=<分项>` 的容器复现命令。汇总任务最后执行第 7 项。合入前，当前 head commit 的 7 个状态和自动执行的 `CI 契约测试` 必须全部成功，并且满足 GitHub 分支保护要求的 2 个 approval；如果本 PR 后续更新了 commit，旧 commit 的 CI 结果不再有效，需要仓库 Admin 权限账号重新触发。即使已有 2 个 approval，只要当前 commit 未完成 NPU CI，仍不可合入（`weinachuan` 可按仓库保护规则 bypass）。
 >
 > 触发方式：
 >
@@ -14,7 +22,7 @@
 > - 在 PR 评论区发送 `/run-npu-ci quick` 或 `/run-npu-ci full`。
 > - 同一 PR 的同一 commit 如果已有 NPU CI 在排队或运行，重复评论只会更新机器人评论，不会再次占用 NPU。
 > - NPU CI 会执行 `ci/example_st_cases.json` 中启用的 Example/ST 用例；当前 `case1_current_default` 保持原始 shape。新增 GVA、`Vdim=256` 等场景时，请在用例文件中显式填写 `B`、`T`、`chunk_size`、`query_head`、`value_head`、`Kdim`、`Vdim` 等 shape 字段，以及 `gate_source`、`gate_function`、`initial_state`、`output_final_state`、`qk_l2norm` 等行为字段。
-> - Example ST 必须使用 Ascend PyTorch `v26.1.0-beta.1` 对应的 `torch_npu` 可用版本 wheel（已包含 `torchnpugen` 并修复 GDN stream 同步问题）；PyTorch 小版本可按环境选择，但不要拉取 `op-plugin` 重新编译或安装不属于该 `torch_npu` 可用版本范围的旧版 `torch-npu`。
+> - Example ST 必须使用与平台匹配的已验证 PyTorch/`torch_npu` 组合；A2 与 A5 不得混用 wheel、Python ABI 或 CANN 镜像，也不要拉取 `op-plugin` 重新编译。
 > - 修改算子 `def`、`aclnn` 接口入参类型，或修改 `torch` 接口入参类型等导致不满足 ABI 一致性的改动，必须由 `weinachuan` 在当前 head commit 上检视通过；ABI 敏感路径已由 CODEOWNERS 指向 `weinachuan`。
 > - NPU CI 部署与排障教程见 [`docs/Fla-npu仓CI部署教程.md`](docs/Fla-npu仓CI部署教程.md)。
 

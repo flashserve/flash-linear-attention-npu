@@ -3,6 +3,22 @@
 #include "../../solve_tri/op_kernel/solve_tri_cube.h"
 #include "../../solve_tri/op_kernel/solve_tri_vector.h"
 
+struct GdnFusedSolveTriFp32TilingData {
+    int64_t totalTiles;
+    int64_t numHeads;
+    int64_t seqLen;
+    int64_t batchSize;
+    int64_t tilesPerCore;
+    int64_t numChunks;
+    int64_t lastChunkValidSize;
+    int64_t layoutMode;
+};
+
+// Reuse the public A2 BT64 arithmetic without changing the standalone operator.
+#define SolveTriTilingData GdnFusedSolveTriFp32TilingData
+#include "solve_tri_fp32.h"
+#undef SolveTriTilingData
+
 using namespace AscendC;
 
 namespace {
@@ -14,6 +30,32 @@ __aicore__ inline void RunSolvePhase(GM_ADDR a, GM_ADDR cuSeqlens, GM_ADDR chunk
                                      GM_ADDR out, GM_ADDR workspace,
                                      const TilingData *tilingData)
 {
+    if constexpr (MATRIX_SIZE == 64) {
+        GdnFusedSolveTriFp32TilingData fp32Tiling{
+            tilingData->totalTiles,
+            tilingData->numHeads,
+            tilingData->seqLen,
+            tilingData->batchSize,
+            tilingData->tilesPerCore,
+            tilingData->numChunks,
+            tilingData->lastChunkValidSize,
+            tilingData->layoutMode,
+        };
+        if ASCEND_IS_AIC {
+            CrossCoreWaitFlag(KKT_READY_FLAG);
+            NsSolveTri::SolveTriCubeFp32<T> solve;
+            solve.Init(a, cuSeqlens, chunkIndices, out, workspace, &fp32Tiling);
+            solve.Process();
+        }
+        if ASCEND_IS_AIV {
+            CrossCoreSetFlag<0x2, PIPE_MTE3>(KKT_READY_FLAG);
+            NsSolveTri::SolveTriVectorFp32<T> solve;
+            solve.Init(a, cuSeqlens, chunkIndices, out, workspace, &fp32Tiling);
+            solve.Process();
+        }
+        return;
+    }
+
     if ASCEND_IS_AIC {
         CrossCoreWaitFlag(KKT_READY_FLAG);
         NsSolveTri::SolveTriCube<MATRIX_SIZE, T> solve;

@@ -74,6 +74,7 @@ def chunk_gated_delta_rule_bwd_dhu_cpu(
     chunk_size: int = 64,
     golden_mode: str = "fp32",
     use_exp2: bool = False,
+    state_v_first: bool = False,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
     """GVA 形状 CPU 标杆。golden_mode: fp64 / npu / fp32。"""
     del dht
@@ -175,8 +176,13 @@ def chunk_gated_delta_rule_bwd_dhu_cpu(
             "global_end_t": global_end_t,
         })
 
+    sequence_count = len(cu_seqlens) - 1 if cu_seqlens is not None else B
     dh = torch.zeros(B, Hv, NT, K, V, device=device, dtype=compute_dtype)
-    dh0 = torch.zeros_like(dh) if h0 is not None else None
+    dh0 = (
+        torch.zeros(sequence_count, Hv, K, V, device=device, dtype=compute_dtype)
+        if h0 is not None
+        else None
+    )
     dv2 = dv.clone() if cu_seqlens is not None else torch.zeros(B, Hv, T, V, device=device, dtype=dtype_)
 
     if cu_seqlens is None:
@@ -229,7 +235,7 @@ def chunk_gated_delta_rule_bwd_dhu_cpu(
             b_dh = _store(b_dh_for_update + term1 - term2)
 
         if dh0 is not None:
-            dh0[:, :, 0, :, :] = b_dh
+            dh0.copy_(b_dh)
     else:
         hq = torch.arange(Hv, device=device, dtype=torch.long) // hv_per_hk
         num_tokens = len(cu_seqlens) - 1
@@ -283,8 +289,8 @@ def chunk_gated_delta_rule_bwd_dhu_cpu(
             b_dh_buffers[:, :, i_n, :, :] = _store(b_dh_for_update + term1 - term2)
 
         if dh0 is not None:
-            for info in chunk_info:
-                if info["block_idx_in_token"] == 0:
-                    dh0[:, :, info["i_t"], :, :] = b_dh_buffers[:, :, info["i_n"], :, :]
+            dh0.copy_(b_dh_buffers[0].transpose(0, 1))
 
+    if state_v_first:
+        dh0 = dh0.transpose(-1, -2).contiguous() if dh0 is not None else None
     return dh, dh0, dv2

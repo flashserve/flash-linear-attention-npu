@@ -2,7 +2,7 @@
  {
   "id": 0,
   "default_seed": 20260817,
-  "name": "chunk_gated_delta_rule_bwd_dhu_0000_BSND_noGVA_V128_13_T512_scaled",
+  "name": "chunk_gated_delta_rule_bwd_dhu_0000_BSND_noGVA_V128_13_T512_vfirst",
   "aclnn_name": null,
   "triton_name": null,
   "kernel_name": null,
@@ -62,7 +62,7 @@
     "required": true,
     "dtype": "non_param",
     "shape": null,
-    "range_values": "{\"name\":\"BSND_noGVA_V128_13_T512_scaled\",\"dtype\":\"bf16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":512,\"K\":128,\"V\":128,\"chunk_size\":64,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "range_values": "{\"name\":\"BSND_noGVA_V128_13_T512_vfirst\",\"dtype\":\"bf16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":512,\"K\":128,\"V\":128,\"chunk_size\":64,\"state_v_first\":true,\"with_h0\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -215,7 +215,7 @@
  {
   "id": 1,
   "default_seed": 20260818,
-  "name": "chunk_gated_delta_rule_bwd_dhu_0001_BSND_noGVA_V128_13_T512_scaled",
+  "name": "chunk_gated_delta_rule_bwd_dhu_0001_BSND_noGVA_V128_13_T512_vfirst",
   "aclnn_name": null,
   "triton_name": null,
   "kernel_name": null,
@@ -275,7 +275,7 @@
     "required": true,
     "dtype": "non_param",
     "shape": null,
-    "range_values": "{\"name\":\"BSND_noGVA_V128_13_T512_scaled\",\"dtype\":\"fp16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":512,\"K\":128,\"V\":128,\"chunk_size\":64,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":1,\"seed\":20260818,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "range_values": "{\"name\":\"BSND_noGVA_V128_13_T512_vfirst\",\"dtype\":\"fp16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":512,\"K\":128,\"V\":128,\"chunk_size\":64,\"state_v_first\":true,\"with_h0\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":1,\"seed\":20260818,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
     "backward": false,
     "align_32B": null,
     "outlier_values": null

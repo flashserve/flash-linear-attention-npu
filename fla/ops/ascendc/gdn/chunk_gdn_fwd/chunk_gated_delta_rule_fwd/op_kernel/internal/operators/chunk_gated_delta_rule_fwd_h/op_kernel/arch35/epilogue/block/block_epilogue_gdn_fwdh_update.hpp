@@ -219,9 +219,9 @@ public:
         uint64_t directUbReadyFlagBegin
     )
     {
-        static constexpr uint32_t ROW_TILE = 16;
         uint32_t mActual = kHeadDim;
         uint32_t nActual = vBlockDim;
+        const uint32_t rowTile = nActual == 128 ? KGatedTag::updateRowTile : 16;
         uint32_t outputStride = vHeadDim;
         uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
         uint32_t subBlockNum = AscendC::GetSubBlockNum();
@@ -300,10 +300,10 @@ public:
         bool waitHFromV = storeFinalState && isInitialState && std::is_same<FinalStateElement, float>::value;
         bool waitUpdateFromMte3 = false;
         uint32_t updateReadyEvent = EVENT_ID3 + pingpongFlag;
-        for (uint32_t rowStart = rowBegin; rowStart < rowEnd; rowStart += ROW_TILE) {
+        for (uint32_t rowStart = rowBegin; rowStart < rowEnd; rowStart += rowTile) {
             uint32_t rowsThisTile = rowEnd - rowStart;
-            if (rowsThisTile > ROW_TILE) {
-                rowsThisTile = ROW_TILE;
+            if (rowsThisTile > rowTile) {
+                rowsThisTile = rowTile;
             }
 
             AscendC::GlobalTensor<HElementOutput> hOutputThisTile = hOutput[rowStart * outputStride];
@@ -408,7 +408,9 @@ public:
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
                     CopyUbToGm(finalStateThisTile, hUpdateUbTensorThisTile,
                                rowsThisTile, nActual, outputStride);
-                    AscendC::PipeBarrier<PIPE_ALL>();
+                    if constexpr (!KGatedTag::updateEventOnly) {
+                        AscendC::PipeBarrier<PIPE_ALL>();
+                    }
                     AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(updateReadyEvent);
                     AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(updateReadyEvent);
                     AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(updateReadyEvent);

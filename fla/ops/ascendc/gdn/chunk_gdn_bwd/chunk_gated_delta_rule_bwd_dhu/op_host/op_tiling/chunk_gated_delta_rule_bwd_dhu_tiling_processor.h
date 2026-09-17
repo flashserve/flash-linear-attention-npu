@@ -81,6 +81,7 @@ struct ChunkGatedDeltaRuleBwdDhuTilingContext {
     bool hasG;
     bool hasGk;
     bool useExp2;
+    bool stateVFirst;
     bool hasDh0;
     bool stage0Debug;
     double scale;
@@ -222,7 +223,9 @@ private:
 
     uint64_t VectorTileBytes(uint64_t row, uint64_t maxDim, uint64_t qSize) const
     {
-        uint64_t bytes = 4 * Align32(row * maxDim * qSize) +
+        const uint64_t outputRows = std::max<uint64_t>(row, 16UL);
+        uint64_t bytes = 2 * Align32(row * maxDim * qSize) +
+                         2 * Align32(outputRows * maxDim * qSize) +
                          2 * Align32(row * maxDim * DTYPE_SIZE_FLOAT) +
                          2 * Align32(row * static_cast<uint64_t>(tiling_.V) * DTYPE_SIZE_FLOAT);
         if (ctx_.qDataType == ge::DT_BF16) {
@@ -392,6 +395,7 @@ private:
             return ge::GRAPH_FAILED;
         }
         tiling_.useExp2 = ctx_.useExp2 ? 1 : 0;
+        tiling_.stateVFirst = ctx_.stateVFirst ? 1 : 0;
 
         if (tiling_.K != K_SIZE_128) {
             return ge::GRAPH_FAILED;
@@ -462,9 +466,8 @@ private:
         tiling_.dh0ClearTailElems = 0;
         if (ctx_.hasDh0) {
             const uint64_t dh0Elems =
-                static_cast<uint64_t>(tiling_.B) * static_cast<uint64_t>(tiling_.HV) *
-                static_cast<uint64_t>(tiling_.totalChunkNum) * static_cast<uint64_t>(tiling_.K) *
-                static_cast<uint64_t>(tiling_.V);
+                static_cast<uint64_t>(tiling_.seqNum) * static_cast<uint64_t>(tiling_.HV) *
+                static_cast<uint64_t>(tiling_.K) * static_cast<uint64_t>(tiling_.V);
             const uint64_t dh0Bytes = dh0Elems * qSize;
             if (dh0Bytes > 0) {
                 const uint64_t maxVecCoreNum =

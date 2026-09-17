@@ -12,7 +12,7 @@
  * \brief Plain tiling data struct for chunk_gated_delta_rule_fwd_h.
  *
  * The aclnn/ascendc framework auto-generates a kernel-side tiling struct named
- * ChunkGatedDeltaRuleFwdHTilingData (global scope) from the BEGIN_TILING_DATA_DEF
+ * GdnMegaArch35FwdHTilingData (global scope) from the BEGIN_TILING_DATA_DEF
  * macro in chunk_gated_delta_rule_fwd_h_tiling.h. The fast kernel launch extension
  * compiles the kernel standalone (without that auto-generated header), so it provides
  * the same plain struct here. The field order/types mirror the macro definition so the
@@ -20,12 +20,12 @@
  * to the kernel via the <<<>>> launch (its address is a valid GM_ADDR on Atlas A2).
  */
 
-#ifndef CHUNK_GATED_DELTA_RULE_FWD_H_STRUCT_H
-#define CHUNK_GATED_DELTA_RULE_FWD_H_STRUCT_H
+#ifndef GDN_MEGA_ARCH35_CHUNK_GATED_DELTA_RULE_FWD_H_STRUCT_H
+#define GDN_MEGA_ARCH35_CHUNK_GATED_DELTA_RULE_FWD_H_STRUCT_H
 
 #include <cstdint>
 
-struct ChunkGatedDeltaRuleFwdHTilingData {
+struct GdnMegaArch35FwdHTilingData {
     int64_t batch;
     int64_t seqlen;
     int64_t kNumHead;
@@ -51,4 +51,4 @@ struct ChunkGatedDeltaRuleFwdHTilingData {
     int64_t numChunksWorkspaceOffset;
 };
 
-#endif // CHUNK_GATED_DELTA_RULE_FWD_H_STRUCT_H
+#endif // GDN_MEGA_ARCH35_CHUNK_GATED_DELTA_RULE_FWD_H_STRUCT_H

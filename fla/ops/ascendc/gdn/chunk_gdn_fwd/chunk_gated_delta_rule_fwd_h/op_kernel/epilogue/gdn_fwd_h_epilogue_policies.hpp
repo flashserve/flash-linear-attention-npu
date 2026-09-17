@@ -22,6 +22,14 @@ struct EpilogueAtlasGDNFwdHUpdate {
     using ArchTag = Arch::AtlasA2;
 };
 
+struct EpilogueAtlasGDNFwdHVnewPreload {
+    using ArchTag = Arch::AtlasA2;
+};
+
+struct EpilogueAtlasGDNFwdHUpdatePreload {
+    using ArchTag = Arch::AtlasA2;
+};
+
 }  // namespace Catlass::Epilogue
 
 #endif  // CATLASS_EPILOGUE_GDN_FWD_H_EPILOGUE_POLICIES_HPP

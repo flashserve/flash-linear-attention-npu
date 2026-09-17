@@ -21,7 +21,7 @@ declare -A health=()
 declare -A free=()
 
 while IFS= read -r line; do
-    if [[ "$line" =~ ^\|[[:space:]]*([0-9]+)[[:space:]]+([^[:space:]\|]*[A-Za-z][^[:space:]\|]*)[[:space:]]*\|[[:space:]]*([A-Za-z]+) ]]; then
+    if [[ "$line" =~ ^\|[[:space:]]*([0-9]+)[[:space:]]*[|]?[[:space:]]*([^[:space:]|]*[A-Za-z][^[:space:]|]*)[[:space:]]*\|[[:space:]]*([A-Za-z]+) ]]; then
         id="${BASH_REMATCH[1]}"
         ids+=("$id")
         names["$id"]="${BASH_REMATCH[2]}"

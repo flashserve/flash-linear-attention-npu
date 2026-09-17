@@ -98,6 +98,30 @@ def _prepare_embedded_opp() -> pathlib.Path:
     return vendor_dir
 
 
+def _warn_if_embedded_opp_not_preconfigured() -> None:
+    """Warn when the wheel-embedded custom OPP was not pre-configured.
+
+    CANN discovers custom operator host/tiling/kernel binaries when the runtime
+    is initialized (e.g. at ``import torch_npu``). If CANN initializes before
+    ``import fla_npu``, setting ``ASCEND_CUSTOM_OPP_PATH`` in this process may be
+    too late for the already-initialized kernel registry (issue #429).
+    """
+    try:
+        vendor_dir = _resolve_vendor_dir()
+    except Exception:
+        return
+    parts = [part for part in os.environ.get("ASCEND_CUSTOM_OPP_PATH", "").split(os.pathsep) if part]
+    if str(vendor_dir) in parts:
+        return
+    warnings.warn(
+        "[fla-npu] ASCEND_CUSTOM_OPP_PATH does not contain the custom OPP implements "
+        "before import fla_npu, If you need to use fla_npu operators,  run:\n\n"
+        f"  export ASCEND_CUSTOM_OPP_PATH=\"{vendor_dir}:{vendor_dir / 'op_api' / 'lib'}:${{ASCEND_CUSTOM_OPP_PATH:-}}\"",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+
+
 def _load_shared_library_required(path_or_name) -> ctypes.CDLL:
     mode = (
         getattr(os, "RTLD_LOCAL", 0)
@@ -218,4 +242,5 @@ __all__ = [
 ]
 
 
+_warn_if_embedded_opp_not_preconfigured()
 load_ascendc_opapi_libraries()

@@ -12,20 +12,25 @@
  * \brief Chunk backward dqkwg operator with kernel launch
  */
 
+#include <algorithm>
+#include <tuple>
+#include <type_traits>
+#include <vector>
 #include <ATen/Operators.h>
 #include <torch/all.h>
 #include <torch/library.h>
+#include "acl/acl.h"
 #include "torch_npu/csrc/core/npu/NPUStream.h"
 #include "torch_npu/csrc/framework/OpCommand.h"
 #include "kernel_operator.h"
 #include "platform/platform_ascendc.h"
-#include <type_traits>
 
 #include "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dqkwg/op_host/op_tiling/chunk_bwd_dqkwg_tiling_processor.h"
 #include "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dqkwg/op_kernel/chunk_bwd_dqkwg_common.h"
-#include "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dqkwg/op_kernel/chunk_bwd_dqkwg.cpp"
+#include "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dqkwg/op_kernel/chunk_bwd_dqkwg_cube.h"
+#include "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dqkwg/op_kernel/chunk_bwd_dqkwg_vector.h"
 
-using TilingData = GDN::ChunkBwdDqkwgTilingData;
+using TilingData = ChunkBwdDqkwgTilingData;
 
 
 namespace ascend_ops {
@@ -45,11 +50,12 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> chunk_bwd_dqkwg_meta(
 {
     auto B = v.size(0);
     auto HV = v.size(1);
+    auto HK = q.size(1);
     auto T = v.size(2);
     auto K = k.size(3);
 
-    auto dq = at::empty({B, HV, T, K}, q.options());
-    auto dk = at::empty({B, HV, T, K}, k.options());
+    auto dq = at::empty({B, HK, T, K}, q.options());
+    auto dk = at::empty({B, HK, T, K}, k.options());
     auto dw = at::empty({B, HV, T, K}, k.options());
     auto dg_opts = g.options();
     if (g.scalar_type() == at::kFloat) {
@@ -64,11 +70,17 @@ TORCH_LIBRARY_IMPL(EXTENSION_MODULE_NAME, Meta, m)
     m.impl("chunk_bwd_dqkwg", chunk_bwd_dqkwg_meta);
 }
 
-TilingData calc_tiling_params(const at::Tensor &q, const at::Tensor &k, const at::Tensor &v,
-                               const at::Tensor &g, const at::Tensor &h,
-                               const at::Tensor &dox, const at::Tensor &dh, const at::Tensor &dv,
-                               double scale, int64_t chunk_size,
-                               at::OptionalIntArrayRef cu_seqlens, at::OptionalIntArrayRef chunk_indices)
+struct ChunkBwdDqkwgTilingResult {
+    TilingData tiling;
+    uint32_t blockDim;
+    size_t workspaceSize;
+};
+
+ChunkBwdDqkwgTilingResult calc_tiling_params(const at::Tensor &q, const at::Tensor &k, const at::Tensor &v,
+                                              const at::Tensor &g, const at::Tensor &h,
+                                              const at::Tensor &dox, const at::Tensor &dh, const at::Tensor &dv,
+                                              double scale, int64_t chunk_size,
+                                              at::OptionalIntArrayRef cu_seqlens, at::OptionalIntArrayRef chunk_indices)
 {
     auto q_sizes = q.sizes();
     auto k_sizes = k.sizes();
@@ -106,6 +118,11 @@ TilingData calc_tiling_params(const at::Tensor &q, const at::Tensor &k, const at
         chunkIndicesShapePtr = &chunkIndicesShape;
     }
 
+    auto ascendcPlatform = platform_ascendc::PlatformAscendCManager::GetInstance();
+    TORCH_CHECK(ascendcPlatform != nullptr, "PlatformAscendCManager is null.");
+    uint32_t coreNum = static_cast<uint32_t>(ascendcPlatform->GetCoreNumAic());
+    size_t sysWorkspaceSize = static_cast<size_t>(ascendcPlatform->GetLibApiWorkSpaceSize());
+
     optiling::ChunkBwdDqkwgTilingContext ctx{
         "chunk_bwd_dqkwg",
         &qShape,
@@ -120,17 +137,23 @@ TilingData calc_tiling_params(const at::Tensor &q, const at::Tensor &k, const at
         chunkIndicesShapePtr,
         static_cast<float>(scale),
         static_cast<int32_t>(chunk_size),
+        coreNum,
+        sysWorkspaceSize,
     };
 
-    GDN::ChunkBwdDqkwgTilingData tilingData;
-    optiling::ChunkBwdDqkwgTilingProcessor processor(ctx, tilingData);
+    TilingData tiling{};
+    optiling::ChunkBwdDqkwgTilingProcessor processor(ctx, tiling);
+    TORCH_CHECK(processor.Process() == ge::GRAPH_SUCCESS, "chunk_bwd_dqkwg tiling failed.");
 
-    processor.Process();
-
-    return tilingData;
+    return ChunkBwdDqkwgTilingResult{tiling, processor.GetBlockDim(), processor.GetWorkspaceSize()};
 }
 
-template <typename QKVT, typename GT, int V>
+// Fast-launch kernel: dispatches to ChunkBwdDqkwgCubeProcess on AIC and
+// ChunkBwdDqkwgVectorProcess on AIV of the same mixed core. Tiling is passed by
+// value (going through the <<<>>> argument ABI) and re-encoded inside each Process
+// class. This mirrors the aclnn kernel entry in op_kernel/chunk_bwd_dqkwg.cpp
+// without going through gert::TilingContext / GET_TILING_DATA.
+template <typename QKVT, typename GT>
 __global__ __aicore__ void chunk_bwd_dqkwg_kernel(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR h,
     GM_ADDR do_, GM_ADDR dh, GM_ADDR dv,
@@ -138,27 +161,46 @@ __global__ __aicore__ void chunk_bwd_dqkwg_kernel(
     GM_ADDR w, GM_ADDR g_gamma,
     GM_ADDR dq, GM_ADDR dk, GM_ADDR dw, GM_ADDR dg,
     GM_ADDR workspace,
-    const GDN::ChunkBwdDqkwgTilingData tilingData)
+    const ChunkBwdDqkwgTilingData tilingData)
 {
+    (void)w;
+    (void)g_gamma;
+
+    AscendC::AscendCUtils::SetOverflow(1);
     AscendC::SetSysWorkspaceForce(workspace);
     GM_ADDR userWS = AscendC::GetUserWorkspace(workspace);
     if (userWS == nullptr) {
         return;
     }
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
-    AscendCUtils::SetOverflow(1);
-    if (cu_seqlens == nullptr) {
-        GDN::FixedLengthStrategy fixedStrategy{tilingData.BT, tilingData.T, tilingData.numChunks, tilingData.HV};
-        GDN::ChunkBwdDqkwgKernelImpl<QKVT, GT, V>(q, k, v, g, h, do_, dh, dv, cu_seqlens, chunk_indices,
-                                                     w, g_gamma, dq, dk, dw, dg,
-                                                     userWS, &tilingData, fixedStrategy);
-    } else {
-        GDN::VariableLengthStrategy variableStrategy{tilingData.BT, tilingData.T, tilingData.numChunks,
-                                                       cu_seqlens, chunk_indices};
-        GDN::ChunkBwdDqkwgKernelImpl<QKVT, GT, V>(q, k, v, g, h, do_, dh, dv, cu_seqlens, chunk_indices,
-                                                     w, g_gamma, dq, dk, dw, dg,
-                                                     userWS, &tilingData, variableStrategy);
+
+    if ASCEND_IS_AIC {
+        ChunkBwdDqkwgCubeProcess<QKVT, GT> cubeProcess(q, k, v, h, do_, dh, dv, cu_seqlens, chunk_indices,
+                                                       dq, dk, dw, userWS);
+        cubeProcess.Init(tilingData);
+        cubeProcess.Process();
     }
+    if ASCEND_IS_AIV {
+        AscendC::TPipe tPipe;
+        ChunkBwdDqkwgVectorProcess<QKVT, GT> vectorProcess(q, k, v, g, h, do_, dh, dv, cu_seqlens,
+                                                            chunk_indices, dq, dk, dw, dg, userWS);
+        vectorProcess.Init(tilingData, &tPipe);
+        vectorProcess.Process();
+    }
+}
+
+template <typename QKVT, typename GT>
+void LaunchChunkBwdDqkwg(uint32_t blockDim, aclrtStream stream,
+                          GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR h,
+                          GM_ADDR do_, GM_ADDR dh, GM_ADDR dv,
+                          GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
+                          GM_ADDR dq, GM_ADDR dk, GM_ADDR dw, GM_ADDR dg,
+                          GM_ADDR workspace,
+                          const ChunkBwdDqkwgTilingData &tiling)
+{
+    chunk_bwd_dqkwg_kernel<QKVT, GT><<<blockDim, nullptr, stream>>>(
+        q, k, v, g, h, do_, dh, dv, cu_seqlens, chunk_indices, nullptr, nullptr,
+        dq, dk, dw, dg, workspace, tiling);
 }
 
 std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> chunk_bwd_dqkwg_npu(
@@ -173,7 +215,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> chunk_bwd_dqkwg_npu(
     auto [dq, dk, dw, dg] = chunk_bwd_dqkwg_meta(q, k, v, g, h, dox, dh, dv, scale, chunk_size, w, g_gamma, cu_seqlens, chunk_indices);
     auto stream = c10_npu::getCurrentNPUStream().stream(false);
 
-    auto tiling = calc_tiling_params(q, k, v, g, h, dox, dh, dv, scale, chunk_size, cu_seqlens, chunk_indices);
+    auto tilingResult = calc_tiling_params(q, k, v, g, h, dox, dh, dv, scale, chunk_size, cu_seqlens, chunk_indices);
 
     auto q_ptr = (GM_ADDR)q.data_ptr();
     auto k_ptr = (GM_ADDR)k.data_ptr();
@@ -207,81 +249,35 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> chunk_bwd_dqkwg_npu(
         chunk_indices_ptr = (GM_ADDR)chunk_indices_tensor.data_ptr();
     }
 
-    auto ascendcPlatform = platform_ascendc::PlatformAscendCManager::GetInstance();
-    int64_t coreNum = ascendcPlatform->GetCoreNumAic();
-    uint32_t blockDim = std::min(tiling.B * tiling.numChunks, coreNum);
-
-    uint64_t sysWorkspaceSize = 16U * 1024U * 1024U;
-    uint64_t userWorkspaceSize = static_cast<uint64_t>(tiling.totalWorkspaceSize);
-    uint64_t workspaceSize = sysWorkspaceSize + userWorkspaceSize;
     void *workspace_ptr = nullptr;
-    if (workspaceSize > 0) {
-        auto ret = aclrtMalloc(&workspace_ptr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-        TORCH_CHECK(ret == ACL_SUCCESS, "allocate workspace failed. ERROR: %d", ret);
+    if (tilingResult.workspaceSize > 0) {
+        auto ret = aclrtMalloc(&workspace_ptr, tilingResult.workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
+        TORCH_CHECK(ret == ACL_SUCCESS, "allocate workspace failed. ERROR: ", ret);
     }
+    GM_ADDR workspace_gm = (GM_ADDR)workspace_ptr;
 
     auto q_dtype = q.scalar_type();
     auto g_dtype = g.scalar_type();
-
-    auto workspace_gm = (GM_ADDR)workspace_ptr;
+    auto tiling = tilingResult.tiling;
+    auto blockDim = tilingResult.blockDim;
 
     auto acl_call = [=]() -> int {
         if (q_dtype == at::kBFloat16 && g_dtype == at::kBFloat16) {
-            using QKVT = bfloat16_t;
-            using GT = bfloat16_t;
-            if (tiling.V == 128) {
-                chunk_bwd_dqkwg_kernel<QKVT, GT, 128><<<blockDim, nullptr, stream>>>(
-                    q_ptr, k_ptr, v_ptr, g_ptr, h_ptr, do_ptr, dh_ptr, dv_ptr,
-                    cu_seqlens_ptr, chunk_indices_ptr, nullptr, nullptr,
-                    dq_ptr, dk_ptr, dw_ptr, dg_ptr, workspace_gm, tiling);
-            } else if (tiling.V == 256) {
-                chunk_bwd_dqkwg_kernel<QKVT, GT, 256><<<blockDim, nullptr, stream>>>(
-                    q_ptr, k_ptr, v_ptr, g_ptr, h_ptr, do_ptr, dh_ptr, dv_ptr,
-                    cu_seqlens_ptr, chunk_indices_ptr, nullptr, nullptr,
-                    dq_ptr, dk_ptr, dw_ptr, dg_ptr, workspace_gm, tiling);
-            }
+            LaunchChunkBwdDqkwg<bfloat16_t, bfloat16_t>(
+                blockDim, stream, q_ptr, k_ptr, v_ptr, g_ptr, h_ptr, do_ptr, dh_ptr, dv_ptr,
+                cu_seqlens_ptr, chunk_indices_ptr, dq_ptr, dk_ptr, dw_ptr, dg_ptr, workspace_gm, tiling);
         } else if (q_dtype == at::kHalf && g_dtype == at::kHalf) {
-            using QKVT = half;
-            using GT = half;
-            if (tiling.V == 128) {
-                chunk_bwd_dqkwg_kernel<QKVT, GT, 128><<<blockDim, nullptr, stream>>>(
-                    q_ptr, k_ptr, v_ptr, g_ptr, h_ptr, do_ptr, dh_ptr, dv_ptr,
-                    cu_seqlens_ptr, chunk_indices_ptr, nullptr, nullptr,
-                    dq_ptr, dk_ptr, dw_ptr, dg_ptr, workspace_gm, tiling);
-            } else if (tiling.V == 256) {
-                chunk_bwd_dqkwg_kernel<QKVT, GT, 256><<<blockDim, nullptr, stream>>>(
-                    q_ptr, k_ptr, v_ptr, g_ptr, h_ptr, do_ptr, dh_ptr, dv_ptr,
-                    cu_seqlens_ptr, chunk_indices_ptr, nullptr, nullptr,
-                    dq_ptr, dk_ptr, dw_ptr, dg_ptr, workspace_gm, tiling);
-            }
+            LaunchChunkBwdDqkwg<half, half>(
+                blockDim, stream, q_ptr, k_ptr, v_ptr, g_ptr, h_ptr, do_ptr, dh_ptr, dv_ptr,
+                cu_seqlens_ptr, chunk_indices_ptr, dq_ptr, dk_ptr, dw_ptr, dg_ptr, workspace_gm, tiling);
         } else if (q_dtype == at::kBFloat16 && g_dtype == at::kFloat) {
-            using QKVT = bfloat16_t;
-            using GT = float;
-            if (tiling.V == 128) {
-                chunk_bwd_dqkwg_kernel<QKVT, GT, 128><<<blockDim, nullptr, stream>>>(
-                    q_ptr, k_ptr, v_ptr, g_ptr, h_ptr, do_ptr, dh_ptr, dv_ptr,
-                    cu_seqlens_ptr, chunk_indices_ptr, nullptr, nullptr,
-                    dq_ptr, dk_ptr, dw_ptr, dg_ptr, workspace_gm, tiling);
-            } else if (tiling.V == 256) {
-                chunk_bwd_dqkwg_kernel<QKVT, GT, 256><<<blockDim, nullptr, stream>>>(
-                    q_ptr, k_ptr, v_ptr, g_ptr, h_ptr, do_ptr, dh_ptr, dv_ptr,
-                    cu_seqlens_ptr, chunk_indices_ptr, nullptr, nullptr,
-                    dq_ptr, dk_ptr, dw_ptr, dg_ptr, workspace_gm, tiling);
-            }
+            LaunchChunkBwdDqkwg<bfloat16_t, float>(
+                blockDim, stream, q_ptr, k_ptr, v_ptr, g_ptr, h_ptr, do_ptr, dh_ptr, dv_ptr,
+                cu_seqlens_ptr, chunk_indices_ptr, dq_ptr, dk_ptr, dw_ptr, dg_ptr, workspace_gm, tiling);
         } else if (q_dtype == at::kHalf && g_dtype == at::kFloat) {
-            using QKVT = half;
-            using GT = float;
-            if (tiling.V == 128) {
-                chunk_bwd_dqkwg_kernel<QKVT, GT, 128><<<blockDim, nullptr, stream>>>(
-                    q_ptr, k_ptr, v_ptr, g_ptr, h_ptr, do_ptr, dh_ptr, dv_ptr,
-                    cu_seqlens_ptr, chunk_indices_ptr, nullptr, nullptr,
-                    dq_ptr, dk_ptr, dw_ptr, dg_ptr, workspace_gm, tiling);
-            } else if (tiling.V == 256) {
-                chunk_bwd_dqkwg_kernel<QKVT, GT, 256><<<blockDim, nullptr, stream>>>(
-                    q_ptr, k_ptr, v_ptr, g_ptr, h_ptr, do_ptr, dh_ptr, dv_ptr,
-                    cu_seqlens_ptr, chunk_indices_ptr, nullptr, nullptr,
-                    dq_ptr, dk_ptr, dw_ptr, dg_ptr, workspace_gm, tiling);
-            }
+            LaunchChunkBwdDqkwg<half, float>(
+                blockDim, stream, q_ptr, k_ptr, v_ptr, g_ptr, h_ptr, do_ptr, dh_ptr, dv_ptr,
+                cu_seqlens_ptr, chunk_indices_ptr, dq_ptr, dk_ptr, dw_ptr, dg_ptr, workspace_gm, tiling);
         } else {
             TORCH_CHECK(false, "Unsupported dtype combination: q=", q_dtype, ", g=", g_dtype);
         }
@@ -289,12 +285,9 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> chunk_bwd_dqkwg_npu(
     };
 
     at_npu::native::OpCommand::RunOpApi("ChunkBwdDqkwg", acl_call);
-    auto sync_ret = aclrtSynchronizeStream(stream);
-    TORCH_CHECK(sync_ret == ACL_SUCCESS, "aclrtSynchronizeStream failed. ERROR: ", sync_ret);
 
-    if (workspaceSize > 0 && workspace_ptr != nullptr) {
+    if (workspace_ptr != nullptr) {
         aclrtFree(workspace_ptr);
-        workspace_ptr = nullptr;
     }
 
     return std::make_tuple(dq, dk, dw, dg);

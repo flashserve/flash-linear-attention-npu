@@ -18,7 +18,7 @@
 
 #include "recompute_w_u_fwd_struct.h"
 
-using GDN::RecomputeWUFwdTilingData;
+using GDN::GdnMegaArch35RecomputeWUTilingData;
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #define CATLASS_ARCH 3510
@@ -37,6 +37,7 @@ using GDN::RecomputeWUFwdTilingData;
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
 #include "catlass/arch/cross_core_sync.hpp"
+#include "kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"
 using namespace Catlass;
 using namespace tla;
 namespace Catlass::Gemm::Kernel {
@@ -66,7 +67,16 @@ public:
     using LayoutW = typename BlockMmadW::LayoutC;
     static constexpr bool kFlattenHeadTasks = kFlattenHeadTasks_;
     static constexpr bool kCoefficientGenerationTaskOrder = kCoefficientGenerationTaskOrder_;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    static constexpr uint32_t GM_RING_DEPTH = 8;
+    static_assert(GM_RING_DEPTH <= Arch::MAX_REVERSE_DEPTH,
+                  "Ring window must keep every cross-core flag below the hardware credit limit.");
+    Arch::CrossCoreFlag flagAivVbReady{SYNC_AIV_AIC_FLAG_3};
+    Arch::CrossCoreFlag flagAivKbgExpReady{SYNC_AIV_AIC_FLAG_4};
+    Arch::CrossCoreFlag flagAicSlotFree{SYNC_AIC_AIV_FLAG_5};
+#else
     Arch::CrossCoreFlagWithReverse<> flagAivFinishStore{SYNC_AIC_AIV_FLAG_5, SYNC_AIV_AIC_FLAG_3};
+#endif
     /// Parameters structure
     struct Params {
         // Data members
@@ -124,6 +134,108 @@ public:
     template <>
     CATLASS_DEVICE void operator()<AscendC::AIC>(Params const &params)
     {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        Arch::Resource<ArchTag> resource;
+        const uint32_t coreIdx = AscendC::GetBlockIdx();
+        const uint32_t coreNum = AscendC::GetBlockNum();
+        const uint32_t coreLoops = kFlattenHeadTasks ? params.chunkNum * params.Hv : params.chunkNum;
+        uint32_t loopBegin = coreIdx;
+        uint32_t loopEnd = coreLoops;
+        uint32_t loopStep = coreNum;
+        if constexpr (kCoefficientGenerationTaskOrder) {
+            const uint32_t tasksPerCore = (coreLoops + coreNum - 1) / coreNum;
+            loopBegin = coreIdx * tasksPerCore;
+            loopEnd = (loopBegin + tasksPerCore) < coreLoops ? loopBegin + tasksPerCore : coreLoops;
+            loopStep = 1;
+        }
+
+        // A5 computes U and W for one logical task back-to-back. Besides removing the
+        // phase-wide barrier, this lets the L1-resident BlockMmad retain A while the
+        // vector side publishes Vb and K*beta*exp(g) through independent GM rings.
+        BlockMmadU blockMmad(resource);
+        blockMmad.preSetFlags();
+        AscendC::GlobalTensor<ElementA> gmA;
+        AscendC::GlobalTensor<ElementVb> gmVb;
+        AscendC::GlobalTensor<ElementU> gmU;
+        AscendC::GlobalTensor<ElementKbgExp> gmKbgExp;
+        AscendC::GlobalTensor<ElementW> gmW;
+        uint32_t bos = 0;
+        uint32_t eos = 0;
+        uint32_t taskIdx = 0;
+
+        for (uint32_t loopIdx = loopBegin; loopIdx < loopEnd; loopIdx += loopStep) {
+            uint32_t chunkIdx = 0;
+            uint32_t hBegin = 0;
+            uint32_t hEnd = 0;
+            DecodeRecomputeTask<kFlattenHeadTasks, kCoefficientGenerationTaskOrder>(
+                loopIdx, params.ptrCuSeqLens, params.Hv, params.T, params.chunkSize,
+                params.chunkNum, chunkIdx, hBegin, hEnd);
+            GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.Hv,
+                           params.T, params.chunkSize, chunkIdx, bos, eos);
+            const uint32_t curChunkSize = eos - bos;
+
+            for (uint32_t h = hBegin; h < hEnd; ++h) {
+                const uint32_t slotId = taskIdx % GM_RING_DEPTH;
+                ++taskIdx;
+                const uint64_t ringTask = static_cast<uint64_t>(coreIdx) * GM_RING_DEPTH + slotId;
+                gmA.SetGlobalBuffer((__gm__ ElementA *)params.ptrA +
+                                    (h * params.T + bos) * params.chunkSize);
+                auto tensorA = tla::MakeTensor(gmA, params.layoutA, Arch::PositionGM{});
+
+                Arch::CrossCoreWaitFlag(flagAivVbReady);
+                const uint32_t tileN = tla::get<1>(BdkL1TileShape{});
+                for (uint32_t nOffset = 0; nOffset < params.V; nOffset += tileN) {
+                    const uint32_t curN =
+                        (nOffset + tileN > params.V) ? (params.V - nOffset) : tileN;
+                    GemmCoord actualBlockShape{curChunkSize, curN, curChunkSize};
+                    gmVb.SetGlobalBuffer((__gm__ ElementVb *)params.ptrVb +
+                                         ringTask * params.chunkSize * params.V + nOffset);
+                    gmU.SetGlobalBuffer((__gm__ ElementU *)params.ptrU +
+                                        (h * params.T + bos) * params.V + nOffset);
+                    auto tensorVb = tla::MakeTensor(gmVb, params.layoutVb, Arch::PositionGM{});
+                    auto tensorU = tla::MakeTensor(gmU, params.layoutU, Arch::PositionGM{});
+                    auto tensorBlockA = GetTile(
+                        tensorA, tla::MakeCoord(0, 0),
+                        tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
+                    auto tensorBlockVb = GetTile(
+                        tensorVb, tla::MakeCoord(0, 0),
+                        tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
+                    auto tensorBlockU = GetTile(
+                        tensorU, tla::MakeCoord(0, 0),
+                        tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
+                    blockMmad(tensorBlockA, tensorBlockVb, tensorBlockU, actualBlockShape);
+                }
+
+                Arch::CrossCoreWaitFlag(flagAivKbgExpReady);
+                GemmCoord actualBlockShape{
+                    curChunkSize, static_cast<uint32_t>(params.K), curChunkSize};
+                gmKbgExp.SetGlobalBuffer((__gm__ ElementKbgExp *)params.ptrKbgExp +
+                                         ringTask * params.chunkSize * params.K);
+                gmW.SetGlobalBuffer((__gm__ ElementW *)params.ptrW +
+                                    (h * params.T + bos) * params.K);
+                auto tensorKbgExp =
+                    tla::MakeTensor(gmKbgExp, params.layoutKbgExp, Arch::PositionGM{});
+                auto tensorW = tla::MakeTensor(gmW, params.layoutW, Arch::PositionGM{});
+                auto tensorBlockA = GetTile(
+                    tensorA, tla::MakeCoord(0, 0),
+                    tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
+                auto tensorBlockKbgExp = GetTile(
+                    tensorKbgExp, tla::MakeCoord(0, 0),
+                    tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
+                auto tensorBlockW = GetTile(
+                    tensorW, tla::MakeCoord(0, 0),
+                    tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
+                blockMmad(tensorBlockA, tensorBlockKbgExp, tensorBlockW, actualBlockShape);
+                // Dependency chain inside BlockMmad is GM->L1 (MTE2), MTE2_MTE1 wait,
+                // then L1->L0 (MTE1). Issuing the free notification on PIPE_MTE1 here
+                // orders it after that final L1 read, which transitively proves the GM
+                // source is no longer in use. Mode 0x2 broadcasts one credit to each
+                // paired AIV subcore, matching their independent FIFO waits.
+                Arch::CrossCoreSetFlag<0x2, PIPE_MTE1>(flagAicSlotFree);
+            }
+        }
+        blockMmad.finalWaitFlags();
+#else
         Arch::Resource<ArchTag> resource;
         uint32_t coreIdx = AscendC::GetBlockIdx();
         uint32_t coreLoops = kFlattenHeadTasks ? params.chunkNum * params.Hv : params.chunkNum;
@@ -240,7 +352,7 @@ public:
                 }
             }
         }
-
+#endif
     }
 };
 } // namespace Catlass::Gemm::Kernel
@@ -259,7 +371,7 @@ public:
 
     __aicore__ inline void Process();
 
-    __aicore__ inline void Init(const RecomputeWUFwdTilingData &tiling);
+    __aicore__ inline void Init(const GdnMegaArch35RecomputeWUTilingData &tiling);
 
 private:
     uint64_t B = 0;
@@ -297,7 +409,7 @@ template <typename kType, typename betaType, typename L1TileShape, typename L0Ti
           bool kFlattenHeadTasks, bool kCoefficientGenerationTaskOrder>
 __aicore__ void inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0TileShape,
                                              kFlattenHeadTasks, kCoefficientGenerationTaskOrder>::Init(
-    const RecomputeWUFwdTilingData &tiling)
+    const GdnMegaArch35RecomputeWUTilingData &tiling)
 {
     B = tiling.B;
     T = tiling.T;
@@ -334,8 +446,10 @@ __aicore__ void inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0Til
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     using ArchTag = Arch::Ascend950;
-    // 950: UnitFlag=true 时 L0C_STAGES 必须为 1（见 block_mmad_pingpong_tla.hpp static_assert）
-    using DispatchPolicy = Gemm::MmadPingpong<ArchTag, true>;
+    // UnitFlag keeps L0C single-buffered; L1-resident mode lets the back-to-back
+    // U/W calls reuse A while retaining the multi-stage A5 load/compute pipeline.
+    using DispatchPolicy = Gemm::MmadPingpongTlaMulti<
+        ArchTag, true, false, 1, true, 1, 2, 2, 2>;
 #else
     using ArchTag = Arch::AtlasA2;
     using DispatchPolicy = Gemm::MmadPingpong<ArchTag, true>;
@@ -351,6 +465,14 @@ __aicore__ void inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0Til
         Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagA, kType, LayoutTagKbgExp, kType, LayoutTagW>;
     using BlockMmadW =
         Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, kType, kType, kType, void, TileCopyW>;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    static_assert(BlockMmadU::ENABLE_L1_RESIDENT, "A5 recompute requires L1-resident A.");
+    static_assert(BlockMmadU::L1A_STAGES == 1,
+                  "A5 recompute requires one L1A stage so U and W hit the same resident slot.");
+    static_assert(BlockMmadU::L1B_STAGES == 2 && BlockMmadU::L0A_STAGES == 2 &&
+                      BlockMmadU::L0B_STAGES == 2,
+                  "A5 recompute pipeline stage counts must remain explicit and audited.");
+#endif
 
     auto layoutA = MakeLayoutFromTag(tagA);
     auto layoutVb = MakeLayoutFromTag(tagVb);
@@ -366,7 +488,12 @@ __aicore__ void inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0Til
     MatmulKernel kernel;
 
     GM_ADDR vb = workspace;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    GM_ADDR kbgExp = workspace + static_cast<uint64_t>(AscendC::GetBlockNum()) *
+        MatmulKernel::GM_RING_DEPTH * chunkSize * V * sizeof(kType);
+#else
     GM_ADDR kbgExp = workspace;
+#endif
     typename MatmulKernel::Params param{
         A, layoutA, vb, layoutVb, u,        layoutU,
         kbgExp, layoutKbgExp, w,        layoutW,

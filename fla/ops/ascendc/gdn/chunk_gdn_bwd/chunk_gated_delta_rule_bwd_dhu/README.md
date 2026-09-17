@@ -34,7 +34,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(
     const aclTensor *gOptional, const aclTensor *gkOptional,
     const aclTensor *h0Optional, const aclTensor *dhtOptional,
     const aclIntArray *cuSeqlensOptional, const aclIntArray *chunkIndicesOptional,
-    double scale, int64_t chunkSize, bool useExp2,
+    double scale, int64_t chunkSize, bool useExp2, bool stateVFirst,
     const aclTensor *dhOut, const aclTensor *dh0Out, const aclTensor *dv2Out,
     uint64_t *workspaceSize, aclOpExecutor **executor);
 
@@ -62,8 +62,8 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 | `dv` | 输入 | 必选 | Value 的上游梯度张量 | 将与来自 `dh` 的贡献叠加后输出为 `dv2` | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
 | `gOptional` | 输入 | 可选 | Gate 张量 | 对隐藏状态递推施加指数门控 `exp(g)` | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, T]` | 支持 |
 | `gkOptional` | 输入 | 可选 | Key-wise Gate 张量 | 对每个 Key 维度施加额外门控 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, K]` | 支持 |
-| `h0Optional` | 输入 | 可选 | 初始隐藏状态张量 | 提供时参与递推初始化 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, K, V]` | 支持 |
-| `dhtOptional` | 输入 | 可选 | 末尾隐藏状态的梯度张量 | 反向递推的起始梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, K, V]` | 支持 |
+| `h0Optional` | 输入 | 可选 | 初始隐藏状态张量 | `stateVFirst=false` 时为 `[N,HV,K,V]`，否则为 `[N,HV,V,K]` | `FLOAT16`、`BFLOAT16` | `ND` | 4 维 | 支持 |
+| `dhtOptional` | 输入 | 可选 | 末尾隐藏状态的梯度张量 | `stateVFirst=false` 时为 `[N,HV,K,V]`，否则为 `[N,HV,V,K]` | `FLOAT16`、`BFLOAT16` | `ND` | 4 维 | 支持 |
 | `cuSeqlensOptional` | 输入 | 可选 | 变长序列的累计长度信息 | 变长模式输入，形状为 `[N+1]` | `INT64` | `ND` | 1 维 | - |
 | `chunkIndicesOptional` | 输入 | 可选 | 分块索引信息 | 变长模式输入，扁平化存储 `[seqIdx0, chunkIdx0, ...]`，长度为 `2 * numChunks` | `INT64` | `ND` | 1 维 | - |
 
@@ -74,13 +74,14 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 | `scale` | 输入 | 可选属性，接口侧必传 | 缩放系数 | 推荐设置为 `1 / sqrt(K)` | `double` | 建议按 `1 / sqrt(K)` 设置 |
 | `chunkSize` | 输入 | 可选属性，接口侧必传 | 分块大小 | 默认值为 `64`，仅支持 `64` 或 `128` | `int64_t` | 仅支持 `64` / `128` |
 | `use_exp2` | 输入 | 可选属性，接口侧必传 | 指数门控实现 | `g` 支持 `true`/`false`；`gk` 必须为 `true` | `bool` | `true` / `false` |
+| `stateVFirst` | 输入 | 可选属性，接口侧必传 | 状态布局 | `false` 使用 `[K,V]`，`true` 使用 `[V,K]` | `bool` | `true` / `false` |
 
 ### 3.3 输出参数（Outputs）
 
 | 参数名 | 输入/输出 | 描述 | 数据类型 | 数据格式 | 维度（Shape） | 非连续 Tensor |
 |---|---|---|---|---|---|---|
-| `dhOut` | 输出 | 各 chunk 起始时刻的隐藏状态梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, NT, K, V]` | 支持 |
-| `dh0Out` | 输出 | 初始隐藏状态 `h0` 的梯度（仅当 `h0Optional` 非空时有意义）| `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, K, V]` | 支持 |
+| `dhOut` | 输出 | 各 chunk 起始时刻的隐藏状态梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B,HV,NT,K,V]` | 支持 |
+| `dh0Out` | 输出 | 初始隐藏状态 `h0` 的梯度（仅当 `h0Optional` 非空时有意义）| `FLOAT16`、`BFLOAT16` | `ND` | `[N,HV,K,V]` 或 `[N,HV,V,K]` | 支持 |
 | `dv2Out` | 输出 | 融合了隐藏状态贡献后的 Value 梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
 | `workspaceSize` | 输出 | Device 侧所需 workspace 大小 | `uint64_t` | - | 标量 | - |
 | `executor` | 输出 | 算子执行器，封装了计算流程 | `aclOpExecutor*` | - | - | - |
@@ -95,8 +96,8 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 - `q` 与 `dO`/`dv` 的 `B`、`T` 必须一致，head 数允许不同（GVA）。
 - `gOptional` 的形状必须为 `[B, HV, T]`（若提供）。
 - `gkOptional` 的形状必须为 `[B, HV, T, K]`（若提供）。
-- `h0Optional`、`dhtOptional` 的形状必须为 `[B, HV, K, V]`（若提供）。
-- `dhOut` 的形状必须为 `[B, HV, NT, K, V]`。
+- `h0Optional`、`dhtOptional` 和 `dh0Out` 的状态布局由 `stateVFirst` 指定；定长时 `N=B`，变长时 `N=cuSeqlens.size()-1`。
+- `dhOut` 固定使用 `[B,HV,NT,K,V]`；`stateVFirst` 仅控制 `h0Optional`、`dhtOptional` 和 `dh0Out` 的状态布局。
 - **GVA 约束**：`HV % HK == 0`；读 `q`/`k` 时使用 `hq = hv / (HV / HK)`，读/写 `w`/`dO`/`dv`/`g`/`dh`/`dv2` 使用 value head 索引 `hv`。
 - 当前实现仅支持 `K = 128`；其他 `K` 尺寸会在 tiling 阶段被拒绝。
 - 当前实现仅支持 `V = 128` 或 `V = 256`；其他 `V` 尺寸会在 tiling 阶段被拒绝（Cube tile 原生按 `V` 上限 256 设计，**无**按 V 维切换的 TilingKey）。

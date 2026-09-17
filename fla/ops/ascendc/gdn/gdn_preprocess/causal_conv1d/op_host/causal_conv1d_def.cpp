@@ -9,8 +9,9 @@
 
 /*!
  * \file causal_conv1d_def.cpp
- * \brief
+ * \brief CausalConv1d operator definition and registration.
  */
+
 #include "register/op_def_registry.h"
 
 namespace ops {
@@ -35,29 +36,50 @@ public:
             .FormatList({ge::FORMAT_ND})
             .AutoContiguous();
         this->Input("convStates")
-            .ParamType(REQUIRED)
+            .ParamType(OPTIONAL)
             .DataType({ge::DT_FLOAT16, ge::DT_BF16})
             .FormatList({ge::FORMAT_ND})
             .IgnoreContiguous();
         this->Input("queryStartLoc")
             .ParamType(OPTIONAL)
-            .DataTypeList({ge::DT_INT64})
+            .DataTypeList({ge::DT_INT32})
             .FormatList({ge::FORMAT_ND})
-            .ValueDepend(OPTIONAL)
             .AutoContiguous();
         this->Input("cacheIndices")
             .ParamType(OPTIONAL)
-            .DataTypeList({ge::DT_INT64})
+            .DataTypeList({ge::DT_INT32})
             .FormatList({ge::FORMAT_ND})
-            .ValueDepend(OPTIONAL)
             .AutoContiguous();
-        this->Input("initialStateMode")
+        this->Input("hasInitialState")
+            .ParamType(OPTIONAL)
+            .DataTypeList({ge::DT_BOOL, ge::DT_INT32})
+            .FormatList({ge::FORMAT_ND})
+            .AutoContiguous();
+        this->Input("numAcceptedTokens")
+            .ParamType(OPTIONAL)
+            .DataTypeList({ge::DT_INT32})
+            .FormatList({ge::FORMAT_ND})
+            .AutoContiguous();
+
+        this->Input("queryStartLocCpu")
             .ParamType(OPTIONAL)
             .DataTypeList({ge::DT_INT64})
             .FormatList({ge::FORMAT_ND})
             .ValueDepend(OPTIONAL)
             .AutoContiguous();
-        this->Input("numAcceptedTokens")
+        this->Input("cacheIndicesCpu")
+            .ParamType(OPTIONAL)
+            .DataTypeList({ge::DT_INT64})
+            .FormatList({ge::FORMAT_ND})
+            .ValueDepend(OPTIONAL)
+            .AutoContiguous();
+        this->Input("hasInitialStateCpu")
+            .ParamType(OPTIONAL)
+            .DataTypeList({ge::DT_INT64})
+            .FormatList({ge::FORMAT_ND})
+            .ValueDepend(OPTIONAL)
+            .AutoContiguous();
+        this->Input("numAcceptedTokensCpu")
             .ParamType(OPTIONAL)
             .DataTypeList({ge::DT_INT64})
             .FormatList({ge::FORMAT_ND})
@@ -70,10 +92,17 @@ public:
             .FormatList({ge::FORMAT_ND})
             .AutoContiguous();
 
-        this->Attr("activationMode").AttrType(OPTIONAL).Int(0);
+        this->Attr("activation").AttrType(OPTIONAL).String("none");
+
         this->Attr("padSlotId").AttrType(OPTIONAL).Int(-1);
+        this->Attr("nullBlockId").AttrType(OPTIONAL).Int(-1);
+
         this->Attr("runMode").AttrType(OPTIONAL).Int(0);
+
         this->Attr("headNum").AttrType(OPTIONAL).Int(0);
+
+        // upper bound for runMode=1 varlen update.
+        this->Attr("maxQueryLen").AttrType(OPTIONAL).Int(-1);
 
         OpAICoreConfig aicoreConfig;
         aicoreConfig.DynamicCompileStaticFlag(true)
@@ -94,4 +123,4 @@ public:
 };
 OP_ADD(CausalConv1d);
 
-} // namespace ops
+}

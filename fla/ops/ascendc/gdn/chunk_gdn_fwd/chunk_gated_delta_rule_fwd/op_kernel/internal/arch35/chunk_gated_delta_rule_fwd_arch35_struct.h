@@ -10,6 +10,22 @@
 
 namespace GDN {
 
+// Internal compile-time policy; no change to the serialized tiling ABI.
+enum class Arch35GdnSyncVariant : uint32_t { B0 = 0, B30 = 30 };
+
+template <Arch35GdnSyncVariant Variant>
+struct Arch35GdnSyncTraits {
+    static constexpr bool kB30 = Variant == Arch35GdnSyncVariant::B30;
+    static constexpr bool kHeadMajorSolve64 = kB30;
+    static constexpr bool kKktToSolveGroup = kB30;
+    static constexpr bool kSolveToWuGroup = kB30;
+    static constexpr bool kAggregateQkMask = kB30;
+    static constexpr bool kAggregateOutput = kB30;
+    static_assert(!(kKktToSolveGroup || kSolveToWuGroup || kAggregateQkMask || kAggregateOutput) ||
+                      (kHeadMajorSolve64 && kKktToSolveGroup && kSolveToWuGroup),
+                  "B30 requires the paired head-major coefficient protocol.");
+};
+
 struct Arch35ChunkGatedDeltaRuleCoefficientTiling {
     uint64_t B;
     uint64_t Hk;
@@ -51,6 +67,7 @@ struct Arch35ChunkGatedDeltaRuleFwdTrailer {
     uint64_t aWorkspaceOffset;
     uint64_t solveWorkspaceOffset;
     uint64_t gCumsumBhtOffset;
+    uint64_t writeGCumsum;
 };
 
 } // namespace GDN

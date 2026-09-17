@@ -8,16 +8,22 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-import unittest
-
 import os
+import sys
+import unittest
+import warnings
+from pathlib import Path
+
 import torch
 import torch.nn.functional as F
 
-from fla_npu.ops import ascendc as ascendc_ops
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
 
-
-torch.npu.set_device(int(os.environ.get("TEST_DEVICE_ID", 0)))
+ascendc_ops = None
+if torch.npu.is_available():
+    torch.npu.set_device(int(os.environ.get("TEST_DEVICE_ID", 0)))
 
 
 # CPU golden reference adapted from:
@@ -185,8 +191,43 @@ class TestCausalConv1d(unittest.TestCase):
     rtol = 5e-2
     atol = 5e-2
 
+    @classmethod
+    def setUpClass(cls):
+        global ascendc_ops
+        if ascendc_ops is None:
+            from fla_npu.ops import ascendc as loaded_ascendc_ops
+
+            ascendc_ops = loaded_ascendc_ops
+
     def call_op(self, **kwargs):
         return ascendc_ops.npu_causal_conv1d(**kwargs)
+
+    def test_legacy_python_apis_match_on_npu_and_warn(self):
+        x = make_tensor((1, 4, 16), start=1.0)
+        weight = make_tensor((4, 16), start=101.0)
+        bias = make_tensor((16,), start=201.0)
+        npu_state = make_tensor((1, 3, 16), start=301.0)
+        causal_state = npu_state.clone()
+
+        with self.assertWarnsRegex(FutureWarning, "2027/02"):
+            npu_y = ascendc_ops.npu_causal_conv1d(
+                x,
+                weight,
+                bias,
+                npu_state,
+                activation_mode=1,
+            )
+        with self.assertWarnsRegex(FutureWarning, "2027/02"):
+            causal_y = ascendc_ops.causal_conv1d(
+                x,
+                weight,
+                bias,
+                causal_state,
+                activation_mode=1,
+            )
+
+        self.assertTensorClose(causal_y, npu_y)
+        self.assertTensorClose(causal_state, npu_state)
 
     def assertTensorClose(self, actual: torch.Tensor, expected: torch.Tensor, *, rtol=None, atol=None):
         rtol = self.rtol if rtol is None else rtol
@@ -248,7 +289,7 @@ class TestCausalConv1d(unittest.TestCase):
         bias = make_tensor((32,), start=201.0)
         conv_states = make_tensor((2, 3, 32), start=301.0)
         conv_states_ref = op_conv_states_to_ref(conv_states)
-        head_num = 2;
+        head_num = 2
 
         y = self.call_op(
             x=x,
@@ -273,8 +314,14 @@ class TestCausalConv1d(unittest.TestCase):
             final_states_out=conv_states_ref,
             activation=activation_from_mode(1),
         )
-        b,s,d = x.shape
-        self.assertTensorClose(y, y_ref.permute(0, 2, 1).reshape(b,s,head_num,d//head_num).transpose(1,2).contiguous(), rtol=1e-1, atol=2e-1)
+        batch, seqlen, dim = x.shape
+        expected = (
+            y_ref.permute(0, 2, 1)
+            .reshape(batch, seqlen, head_num, dim // head_num)
+            .transpose(1, 2)
+            .contiguous()
+        )
+        self.assertTensorClose(y, expected, rtol=1e-1, atol=2e-1)
         self.assertTensorClose(
             conv_states,
             final_states_ref.permute(0, 2, 1).contiguous(),
@@ -332,7 +379,7 @@ class TestCausalConv1d(unittest.TestCase):
         self.assertTensorClose(y, y_ref, rtol=1e-1, atol=2e-1)
         self.assertTensorClose(conv_states, conv_states_expected, rtol=1e-1, atol=2e-1)
 
-    def test_npu_causal_conv1d_varlen_initial_state_output_reshape_matches_cpu_golden(self):
+    def test_causal_conv1d_fn_varlen_device_head_num_output_reshape_matches_cpu_golden(self):
         x = make_tensor((5, 32), start=1.0)
         weight_op = make_tensor((4, 32), start=101.0)
         conv_states = make_tensor((2, 3, 32), start=301.0)
@@ -343,18 +390,23 @@ class TestCausalConv1d(unittest.TestCase):
         conv_states_ref = op_conv_states_to_ref(conv_states)
         head_num = 2
 
-        y = self.call_op(
-            x=x,
-            weight=weight_op,
-            bias=None,
-            conv_states=conv_states,
-            query_start_loc=query_start_loc,
-            cache_indices=cache_indices,
-            initial_state_mode=initial_state_mode,
-            activation_mode=0,
-            pad_slot_id=-1,
-            run_mode=0,
-            head_num = head_num
+        y = ascendc_ops.causal_conv1d_fn(
+            x,
+            weight_op,
+            None,
+            conv_states,
+            activation=None,
+            query_start_loc=torch.tensor(
+                query_start_loc, dtype=torch.int32, device=x.device
+            ),
+            cache_indices=torch.tensor(
+                cache_indices, dtype=torch.int32, device=x.device
+            ),
+            has_initial_state=torch.tensor(
+                initial_state_mode, dtype=torch.bool, device=x.device
+            ),
+            null_block_id=None,
+            head_num=head_num,
         )
 
         weight_ref = op_weight_to_ref(weight_op)
@@ -381,9 +433,14 @@ class TestCausalConv1d(unittest.TestCase):
         y_ref = torch.cat(outputs, dim=0)
         conv_states_expected = ref_conv_states_to_op(conv_states_ref)
 
-        s,d = x.shape
-        self.assertTensorClose(y, y_ref.reshape(s, head_num, d//head_num).transpose(0,1).contiguous(), rtol=1e-1, atol=2e-1)
-        self.assertTensorClose(conv_states, conv_states_expected, rtol=1e-1, atol=2e-1) 
+        seqlen, dim = x.shape
+        expected = (
+            y_ref.reshape(seqlen, head_num, dim // head_num)
+            .transpose(0, 1)
+            .contiguous()
+        )
+        self.assertTensorClose(y, expected, rtol=1e-1, atol=2e-1)
+        self.assertTensorClose(conv_states, conv_states_expected, rtol=1e-1, atol=2e-1)
 
     def test_npu_causal_conv1d_update_matches_cpu_golden(self):
         x = make_tensor((2, 16), start=1.0)
@@ -418,6 +475,77 @@ class TestCausalConv1d(unittest.TestCase):
 
         self.assertTensorClose(y, y_ref)
         self.assertTensorClose(conv_states, ref_conv_states_to_op(conv_states_ref))
+
+    def test_vllm_style_varlen_update_uses_max_query_len(self):
+        dim, width, total_tokens = 16, 3, 5
+        x = make_tensor((total_tokens, dim), start=1.0)
+        x_before = x.clone()
+        weight = make_tensor((width, dim), start=101.0)
+        bias = make_tensor((dim,), start=201.0)
+        conv_state = make_tensor((3, width - 1, dim), start=301.0)
+        conv_state_ref = op_conv_states_to_ref(conv_state)
+        query_values = [0, 2, total_tokens]
+        query_start_loc = torch.tensor(
+            query_values, dtype=torch.int32, device=x.device
+        )
+        state_indices = torch.tensor([1, 2], dtype=torch.int32, device=x.device)
+
+        with self.assertRaisesRegex(ValueError, "observed segment length 3"):
+            ascendc_ops.causal_conv1d_update(
+                x,
+                conv_state,
+                weight,
+                bias,
+                activation="silu",
+                conv_state_indices=state_indices,
+                query_start_loc=query_start_loc,
+                max_query_len=2,
+                validate_data=True,
+            )
+
+        returned = ascendc_ops.causal_conv1d_update(
+            x,
+            conv_state,
+            weight,
+            bias,
+            activation="silu",
+            conv_state_indices=state_indices,
+            query_start_loc=query_start_loc,
+            max_query_len=3,
+            validate_data=True,
+        )
+        torch.npu.synchronize()
+
+        expected_parts = []
+        for seq_idx, cache_idx in enumerate((1, 2)):
+            start, end = query_values[seq_idx : seq_idx + 2]
+            selected_state = conv_state_ref[cache_idx : cache_idx + 1]
+            expected_seq = causal_conv1d_update_ref(
+                x_before[start:end]
+                .detach()
+                .cpu()
+                .float()
+                .transpose(0, 1)
+                .unsqueeze(0),
+                selected_state,
+                op_weight_to_ref(weight),
+                bias=bias.detach().cpu().float(),
+                activation="silu",
+            )
+            expected_parts.append(
+                expected_seq.squeeze(0).transpose(0, 1).contiguous()
+            )
+
+        self.assertEqual(returned.data_ptr(), x.data_ptr())
+        self.assertTensorClose(
+            x, torch.cat(expected_parts, dim=0), rtol=1e-1, atol=2e-1
+        )
+        self.assertTensorClose(
+            conv_state,
+            ref_conv_states_to_op(conv_state_ref),
+            rtol=1e-1,
+            atol=2e-1,
+        )
 
     def test_npu_causal_conv1d_spec_decode_matches_cpu_golden(self):
         x = make_tensor((2, 4, 16), start=1.0)
@@ -586,6 +714,187 @@ class TestCausalConv1d(unittest.TestCase):
             self.assertTensorClose(y[start:end], expected, rtol=1e-1, atol=2e-1)
 
         self.assertTensorClose(conv_states, ref_conv_states_to_op(conv_states_ref), rtol=1e-1, atol=2e-1)
+
+    def test_causal_conv1d_fn_device_metadata_matches_cpu_golden(self):
+        total_tokens, dim, width = 5, 16, 4
+        x = make_tensor((total_tokens, dim), start=1.0)
+        weight = make_tensor((width, dim), start=101.0)
+        bias = make_tensor((dim,), start=201.0)
+        conv_states = make_tensor((3, width - 1, dim), start=301.0)
+        conv_states_ref = op_conv_states_to_ref(conv_states)
+        query_start_loc = torch.tensor([0, 2, total_tokens], dtype=torch.int32, device=x.device)
+        cache_indices = torch.tensor([1, 2], dtype=torch.int32, device=x.device)
+        has_initial_state = torch.tensor([False, True], dtype=torch.bool, device=x.device)
+
+        y = ascendc_ops.causal_conv1d_fn(
+            x,
+            weight,
+            bias,
+            conv_states,
+            query_start_loc,
+            cache_indices,
+            has_initial_state,
+            activation="silu",
+            validate_data=True,
+        )
+
+        expected = []
+        x_ref = x.detach().cpu().float()
+        for seq_idx, cache_idx in enumerate([1, 2]):
+            start, end = [0, 2, total_tokens][seq_idx : seq_idx + 2]
+            initial_state = conv_states_ref[cache_idx].unsqueeze(0) if seq_idx == 1 else None
+            y_seq, _ = causal_conv1d_ref(
+                x_ref[start:end].transpose(0, 1).unsqueeze(0),
+                op_weight_to_ref(weight),
+                bias=bias.detach().cpu().float(),
+                initial_states=initial_state,
+                return_final_states=True,
+                final_states_out=conv_states_ref[cache_idx].unsqueeze(0),
+                activation="silu",
+            )
+            expected.append(y_seq.squeeze(0).transpose(0, 1).contiguous())
+
+        self.assertTensorClose(y, torch.cat(expected, dim=0), rtol=1e-1, atol=2e-1)
+        self.assertTensorClose(
+            conv_states,
+            ref_conv_states_to_op(conv_states_ref),
+            rtol=1e-1,
+            atol=2e-1,
+        )
+
+    def test_causal_conv1d_fn_host_metadata_matches_device_metadata_without_warning(self):
+        total_tokens, dim, width = 5, 16, 4
+        x = make_tensor((total_tokens, dim), start=1.0)
+        weight = make_tensor((width, dim), start=101.0)
+        bias = make_tensor((dim,), start=201.0)
+        host_state = make_tensor((3, width - 1, dim), start=301.0)
+        device_state = host_state.clone()
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            host_y = ascendc_ops.causal_conv1d_fn(
+                x,
+                weight,
+                bias,
+                host_state,
+                query_start_loc_cpu=[0, 2, total_tokens],
+                cache_indices_cpu=[1, 2],
+                has_initial_state_cpu=[0, 1],
+                activation="silu",
+                validate_data=True,
+            )
+
+        device_y = ascendc_ops.causal_conv1d_fn(
+            x,
+            weight,
+            bias,
+            device_state,
+            query_start_loc=torch.tensor(
+                [0, 2, total_tokens], dtype=torch.int32, device=x.device
+            ),
+            cache_indices=torch.tensor([1, 2], dtype=torch.int32, device=x.device),
+            has_initial_state=torch.tensor([False, True], dtype=torch.bool, device=x.device),
+            activation="silu",
+            validate_data=True,
+        )
+
+        self.assertFalse(any(item.category is FutureWarning for item in caught))
+        self.assertTensorClose(host_y, device_y, rtol=1e-1, atol=2e-1)
+        self.assertTensorClose(host_state, device_state, rtol=1e-1, atol=2e-1)
+
+    def test_causal_conv1d_fn_batch_matches_cpu_golden(self):
+        batch, seqlen, dim, width = 2, 4, 16, 4
+        x = make_tensor((batch, seqlen, dim), start=1.0)
+        weight = make_tensor((width, dim), start=101.0)
+        bias = make_tensor((dim,), start=201.0)
+
+        y = ascendc_ops.causal_conv1d_fn(
+            x,
+            weight,
+            bias,
+            activation="silu",
+        )
+
+        y_ref, _ = causal_conv1d_ref(
+            op_batch_x_to_ref(x),
+            op_weight_to_ref(weight),
+            bias=bias.detach().cpu().float(),
+            activation="silu",
+        )
+        self.assertTensorClose(
+            y,
+            y_ref.permute(0, 2, 1).contiguous(),
+            rtol=1e-1,
+            atol=2e-1,
+        )
+
+    def test_causal_conv1d_fn_omitted_state_uses_zero_history(self):
+        total_tokens, dim, width = 5, 16, 4
+        x = make_tensor((total_tokens, dim), start=1.0)
+        weight = make_tensor((width, dim), start=101.0)
+        query_start_loc = torch.tensor([0, 2, total_tokens], dtype=torch.int32, device=x.device)
+
+        y = ascendc_ops.causal_conv1d_fn(
+            x,
+            weight,
+            None,
+            query_start_loc=query_start_loc,
+            activation=None,
+        )
+
+        expected = []
+        x_ref = x.detach().cpu().float()
+        for start, end in ((0, 2), (2, total_tokens)):
+            y_seq, _ = causal_conv1d_ref(
+                x_ref[start:end].transpose(0, 1).unsqueeze(0),
+                op_weight_to_ref(weight),
+                initial_states=None,
+                activation=None,
+            )
+            expected.append(y_seq.squeeze(0).transpose(0, 1).contiguous())
+        self.assertTensorClose(y, torch.cat(expected, dim=0), rtol=1e-1, atol=2e-1)
+
+    def test_causal_conv1d_update_preserves_out_and_state_semantics(self):
+        batch, seqlen, dim, width = 2, 3, 16, 3
+        x = make_tensor((batch, seqlen, dim), start=1.0)
+        x_before = x.clone()
+        weight = make_tensor((width, dim), start=101.0)
+        bias = make_tensor((dim,), start=201.0)
+        conv_state = make_tensor((3, width - 1, dim), start=301.0)
+        conv_state_ref = op_conv_states_to_ref(conv_state)
+        indices = torch.tensor([1, 2], dtype=torch.int32, device=x.device)
+        out = torch.empty_like(x)
+
+        returned = ascendc_ops.causal_conv1d_update(
+            x,
+            conv_state,
+            weight,
+            bias,
+            activation="silu",
+            conv_state_indices=indices,
+            out=out,
+        )
+
+        selected_states = conv_state_ref[[1, 2]].clone()
+        expected_ref = causal_conv1d_update_ref(
+            op_batch_x_to_ref(x_before),
+            selected_states,
+            op_weight_to_ref(weight),
+            bias=bias.detach().cpu().float(),
+            activation="silu",
+        )
+        conv_state_ref[1].copy_(selected_states[0])
+        conv_state_ref[2].copy_(selected_states[1])
+
+        self.assertEqual(returned.data_ptr(), out.data_ptr())
+        self.assertTensorClose(x, x_before)
+        self.assertTensorClose(out, expected_ref.permute(0, 2, 1).contiguous(), rtol=1e-1, atol=2e-1)
+        self.assertTensorClose(
+            conv_state,
+            ref_conv_states_to_op(conv_state_ref),
+            rtol=1e-1,
+            atol=2e-1,
+        )
 
 
 if __name__ == "__main__":

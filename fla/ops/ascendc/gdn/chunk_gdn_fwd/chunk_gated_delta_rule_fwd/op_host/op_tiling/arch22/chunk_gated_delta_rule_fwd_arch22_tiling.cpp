@@ -47,6 +47,8 @@ constexpr uint32_t TILING_KEY_V256 = 2;
 constexpr uint64_t WORKSPACE_ALIGNMENT = 512;
 constexpr uint64_t TILING_ALIGNMENT = 8;
 constexpr uint64_t FP32_BLOCK_ELEMS = 8;
+constexpr uint64_t LOW_PRECISION_SOLVE_WORKSPACE_SLOTS = 5;
+constexpr uint64_t FP32_SOLVE_WORKSPACE_SLOTS = 4;
 
 uint64_t CeilDiv(uint64_t value, uint64_t divisor)
 {
@@ -218,6 +220,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
                 return ge::GRAPH_FAILED);
 
     const platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
+    const bool useFp32Solve = platform.GetCurNpuArch() == NpuArch::DAV_2201;
     const uint64_t aicCoreNum = std::max<uint64_t>(1, platform.GetCoreNumAic());
     const uint64_t aivCoreNum = std::max<uint64_t>(1, platform.GetCoreNumAiv());
     const uint64_t systemWorkspace = platform.GetLibApiWorkSpaceSize();
@@ -248,8 +251,23 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
         AlignUp(abc.taskNum * abc.BT * abc.BT * sizeof(float), WORKSPACE_ALIGNMENT);
     abc.aWorkspaceBytes = AlignUp(
         abc.B * abc.Hv * abc.T * abc.BT * sizeof(uint16_t), WORKSPACE_ALIGNMENT);
-    abc.solveWorkspacePerCoreBytes = AlignUp(
-        5 * abc.BT * abc.BT * sizeof(uint16_t), WORKSPACE_ALIGNMENT);
+    const uint64_t solveWorkspaceBytes = abc.BT == CHUNK_64
+        ? FP32_SOLVE_WORKSPACE_SLOTS * abc.BT * abc.BT * sizeof(float)
+        : LOW_PRECISION_SOLVE_WORKSPACE_SLOTS * abc.BT * abc.BT * sizeof(uint16_t);
+    abc.solveWorkspacePerCoreBytes = AlignUp(solveWorkspaceBytes, WORKSPACE_ALIGNMENT);
+    if (useFp32Solve) {
+        // 槽位数来自每核临时区和双缓冲结果环，不是物理核数。
+        const uint64_t resultSlots = GDN::FP32_SOLVE_RESULT_BUFFER_COUNT *
+                                     GDN::FP32_SOLVE_MERGE_BATCH_SIZE;
+        const uint64_t smallMergeElements =
+            (GDN::FP32_SOLVE_SMALL_TEMP_SLOT_COUNT + resultSlots) * 32 * 32;
+        const uint64_t largeMergeElements = abc.BT == CHUNK_128
+            ? (GDN::FP32_SOLVE_LARGE_TEMP_SLOT_COUNT + resultSlots) * 64 * 64
+            : 0;
+        abc.solveWorkspacePerCoreBytes = AlignUp(
+            std::max(smallMergeElements, largeMergeElements) * sizeof(float), WORKSPACE_ALIGNMENT);
+        trailer.solveSequenceCount = isVarlen ? cuShape->GetStorageShape().GetDim(0) - 1 : 0;
+    }
     abc.totalTiles = static_cast<int64_t>(abc.taskNum);
     abc.matrixSize = *chunkSize;
     abc.numHeads = valueHeads;
@@ -284,17 +302,32 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
     workspaceOffset += aicCoreNum * abc.solveWorkspacePerCoreBytes;
     trailer.gCumsumBhtOffset = workspaceOffset;
     workspaceOffset += AlignUp(abc.B * abc.Hv * abc.T * sizeof(float), WORKSPACE_ALIGNMENT);
+    if (useFp32Solve) {
+        // 独立保存 FP32 数据版本；只复用已 drain 的跨层 scratch。
+        const uint64_t rows = abc.B * abc.Hv * abc.T;
+        trailer.solveFp32InputOffset = workspaceOffset;
+        workspaceOffset += AlignUp(rows * abc.BT * sizeof(float), WORKSPACE_ALIGNMENT);
+        trailer.solveD16Offset = workspaceOffset;
+        workspaceOffset += AlignUp(rows * 16 * sizeof(float), WORKSPACE_ALIGNMENT);
+        trailer.solveD32Offset = workspaceOffset;
+        workspaceOffset += AlignUp(rows * 32 * sizeof(float), WORKSPACE_ALIGNMENT);
+        trailer.solveD64Offset = trailer.solveD32Offset;
+        if (abc.BT == CHUNK_128) {
+            trailer.solveD64Offset = workspaceOffset;
+            workspaceOffset += AlignUp(rows * 64 * sizeof(float), WORKSPACE_ALIGNMENT);
+        }
+    }
     workspaceSizes[0] = systemWorkspace + workspaceOffset;
 
-    ChunkGatedDeltaRuleFwdHTilingData hTiling;
+    GdnMegaArch22FwdHTilingData hTiling;
     const uint64_t hTilingSize = hTiling.GetDataSize();
-    OP_CHECK_IF(hTilingSize != sizeof(::ChunkGatedDeltaRuleFwdHTilingData),
+    OP_CHECK_IF(hTilingSize != sizeof(::GdnMegaArch22FwdHTilingData),
                 OP_LOGE(context->GetNodeName(),
                         "FwdH host/kernel tiling size mismatch: host=%lu, kernel=%zu.",
-                        hTilingSize, sizeof(::ChunkGatedDeltaRuleFwdHTilingData)),
+                        hTilingSize, sizeof(::GdnMegaArch22FwdHTilingData)),
                 return ge::GRAPH_FAILED);
     const uint64_t oTilingOffset = AlignUp(hTilingSize, TILING_ALIGNMENT);
-    const uint64_t phase5TrailerEnd = oTilingOffset + sizeof(GDN::ChunkFwdOTilingData) +
+    const uint64_t phase5TrailerEnd = oTilingOffset + sizeof(GDN::GdnMegaArch22FwdOTilingData) +
                                       sizeof(GDN::ChunkRecomputeWUFwdHOTrailer);
     const uint64_t phase6TrailerOffset = AlignUp(phase5TrailerEnd, TILING_ALIGNMENT);
     auto *rawTiling = context->GetRawTilingData();

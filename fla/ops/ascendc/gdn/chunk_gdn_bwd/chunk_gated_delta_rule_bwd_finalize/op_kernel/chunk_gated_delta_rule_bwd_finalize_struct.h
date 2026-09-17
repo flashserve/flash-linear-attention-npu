@@ -1,0 +1,4 @@
+#ifndef CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_STRUCT_COMPAT_H
+#define CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_STRUCT_COMPAT_H
+#include "arch35/chunk_gated_delta_rule_bwd_finalize_struct.h"
+#endif

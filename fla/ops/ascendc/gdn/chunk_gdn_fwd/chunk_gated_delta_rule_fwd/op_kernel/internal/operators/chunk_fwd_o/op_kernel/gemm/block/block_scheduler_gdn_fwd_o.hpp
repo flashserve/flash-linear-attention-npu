@@ -92,7 +92,7 @@ struct BlockSchedulerGdnFwdO {
     BlockSchedulerGdnFwdO() {}
 
     CATLASS_DEVICE
-    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_offsets, const GDN::ChunkFwdOTilingData *tilingData,
+    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_offsets, const GDN::GdnMegaArch35FwdOTilingData *tilingData,
               uint32_t coreIdx, uint32_t coreNum, bool enableChunkPipeline = false,
               bool enableTaskAffinity = false) {
         shapeBatch = tilingData->shapeBatch;
@@ -298,7 +298,7 @@ struct BlockSchedulerGdnFwdOCube : public BlockSchedulerGdnFwdO {
     BlockSchedulerGdnFwdOCube() {}
 
     CATLASS_DEVICE
-    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_offsets, const GDN::ChunkFwdOTilingData *tilingData,
+    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_offsets, const GDN::GdnMegaArch35FwdOTilingData *tilingData,
               bool enableChunkPipeline = false, bool enableTaskAffinity = false) {
         BlockSchedulerGdnFwdO::Init(cu_seqlens, chunk_offsets, tilingData, AscendC::GetBlockIdx(),
                                     AscendC::GetBlockNum(), enableChunkPipeline, enableTaskAffinity);
@@ -353,7 +353,7 @@ struct BlockSchedulerGdnFwdOVec : public BlockSchedulerGdnFwdO {
     BlockSchedulerGdnFwdOVec() {}
 
     CATLASS_DEVICE
-    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_offsets, const GDN::ChunkFwdOTilingData *tilingData,
+    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_offsets, const GDN::GdnMegaArch35FwdOTilingData *tilingData,
               bool enableChunkPipeline = false, bool enableTaskAffinity = false) {
         BlockSchedulerGdnFwdO::Init(cu_seqlens, chunk_offsets, tilingData,
                                     AscendC::GetBlockIdx() / AscendC::GetSubBlockNum(), AscendC::GetBlockNum(),

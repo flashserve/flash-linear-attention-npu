@@ -245,6 +245,8 @@ private:
             auto layoutA = tla::MakeLayout<T, LayoutTagA>(BT_VALUE, K_DIM);
             auto layoutB = tla::MakeLayout<T, LayoutTagB>(K_DIM, BT_VALUE);
             auto layoutC = tla::MakeLayout<float, LayoutTagC>(BT_VALUE, BT_VALUE);
+            // Bound both K operands to valid tokens. The score tensor keeps
+            // its physical BT stride independently of the logical tail width.
             Catlass::GemmCoord shape{static_cast<uint32_t>(valid), static_cast<uint32_t>(valid), K_DIM};
 
             auto tensorA = tla::MakeTensor(kGm[inputOffset], layoutA, Catlass::Arch::PositionGM{});
@@ -256,6 +258,8 @@ private:
 
             BlockMmad blockMmad(resource);
             blockMmad.preSetFlags();
+            // Only valid output columns are consumed; avoid a concurrent
+            // whole-L1 padding write over the valid operands.
             blockMmad(blockA, blockB, blockC, shape);
             blockMmad.finalWaitFlags();
         }

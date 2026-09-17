@@ -28,6 +28,7 @@ ACLNN_API aclnnStatus aclnnChunkGatedDeltaRuleFwdGetWorkspaceSize(
     double scale,
     int64_t chunkSize,
     bool useExp2,
+    bool useQkL2norm,
     bool allowNegEigval,
     bool stateVFirst,
     const aclTensor *oOut,

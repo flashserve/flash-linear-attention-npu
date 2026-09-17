@@ -28,8 +28,8 @@ private:
     Strategy strategy;
     Catlass::Arch::CrossCoreFlagWithReverse<> aivToAicGatedReadyFlag{
         SYNC_AIV_AIC_GATED_READY_FLAG, SYNC_AIC_AIV_GATED_FREE_FLAG};
-    Catlass::Arch::CrossCoreFlagWithReverse<> aicToAivQkReadyFlag{
-        SYNC_AIC_AIV_QK_READY_FLAG, SYNC_AIV_AIC_QK_FREE_FLAG};
+    Catlass::Arch::CrossCoreFlag aicToAivQkReadyFlag{SYNC_AIC_AIV_QK_READY_FLAG};
+    Catlass::Arch::CrossCoreFlag aivToAicQkFreeFlag{SYNC_AIV_AIC_QK_FREE_FLAG};
 
 public:
     __aicore__ inline ChunkBwdDvLocalVector(const Strategy &s) : strategy(s)
@@ -204,7 +204,9 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::ProcessChunk(c
         taskLineNum = taskEndLine - taskStartLine + 1;
         if (taskLineNum == 0) {
             if (doHead % hRatio == 0) {
-                Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(aicToAivQkReadyFlag);
+                Catlass::Arch::CrossCoreWaitFlag(aicToAivQkReadyFlag);
+                // Return the counter credit now; gated-ready still guards workspace reuse.
+                Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE2>(aivToAicQkFreeFlag);
             }
             Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(aivToAicGatedReadyFlag);
             continue;
@@ -296,7 +298,7 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::ProcessChunk(c
         AscendC::PipeBarrier<PIPE_V>();
         AscendC::Muls(gFactorLocalTensor, gFactorLocalTensor, scale, taskLineNum * strategy.chunkSize);
         if (doHead % hRatio == 0) {
-            Catlass::Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(aicToAivQkReadyFlag);
+            Catlass::Arch::CrossCoreWaitFlag(aicToAivQkReadyFlag);
         }
 
         // 搬入 (k@q^T)
@@ -305,6 +307,10 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::ProcessChunk(c
             copyParams.blockLen = taskLineNum * strategy.chunkSize * sizeof(QKVT);
             AscendC::DataCopyPad(kqLocalTensor, workspaceGm[taskReadOffset], copyParams, qkvPadParams);
             kqTQueIn.EnQue(kqLocalTensor);
+        }
+        if (doHead % hRatio == 0) {
+            // The QK slot is reusable after its data is queued into UB.
+            Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE2>(aivToAicQkFreeFlag);
         }
         AscendC::LocalTensor<QKVT> kqLocalTensor = kqTQueIn.DeQue<QKVT>();
         AscendC::Cast(kqFp32LocalTensor, kqLocalTensor, AscendC::RoundMode::CAST_NONE,

@@ -27,6 +27,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(
     double scale,
     int64_t chunkSize,
     bool useExp2,
+    bool stateVFirst,
     const aclTensor *dhOut,
     const aclTensor *dh0Out,
     const aclTensor *dv2Out,

@@ -65,6 +65,7 @@ public:
         headWindowNum_ = tiling_->headWindowNum;
         taskNum_ = tiling_->taskNum;
         isVariable_ = tiling_->isVariable;
+        stateVFirst_ = tiling_->stateVFirst != 0;
         scale_ = tiling_->scale;
         qgWorkspaceOffset_ = tiling_->qgWorkspaceOffset;
         stateWorkspaceOffset_ = tiling_->stateWorkspaceOffset;
@@ -87,13 +88,15 @@ public:
         }
 
         const int64_t inputElems = vecRow_ * (K_ > V_ ? K_ : V_);
+        const int64_t outputRows = vecRow_ > 16 ? vecRow_ : 16;
+        const int64_t outputElems = outputRows * (K_ > V_ ? K_ : V_);
         const int64_t brcbElems = vecRow_ * BRCB_ROW_FLOAT_ELEMS;
         pipe_->InitBuffer(qInputPing_, inputElems * static_cast<int64_t>(sizeof(DT)));
         pipe_->InitBuffer(qInputPong_, inputElems * static_cast<int64_t>(sizeof(DT)));
         pipe_->InitBuffer(gInputPing_, gateElems_ * static_cast<int64_t>(sizeof(GT)));
         pipe_->InitBuffer(gInputPong_, gateElems_ * static_cast<int64_t>(sizeof(GT)));
-        pipe_->InitBuffer(outputPing_, inputElems * static_cast<int64_t>(sizeof(DT)));
-        pipe_->InitBuffer(outputPong_, inputElems * static_cast<int64_t>(sizeof(DT)));
+        pipe_->InitBuffer(outputPing_, outputElems * static_cast<int64_t>(sizeof(DT)));
+        pipe_->InitBuffer(outputPong_, outputElems * static_cast<int64_t>(sizeof(DT)));
         pipe_->InitBuffer(statePing_, vecRow_ * V_ * static_cast<int64_t>(sizeof(float)));
         pipe_->InitBuffer(statePong_, vecRow_ * V_ * static_cast<int64_t>(sizeof(float)));
         pipe_->InitBuffer(qFp32Buf_, inputElems * static_cast<int64_t>(sizeof(float)));
@@ -442,30 +445,21 @@ public:
                     const int64_t workspaceSlot = windowStartSlot + headOffset;
                     const int64_t workspaceBase = WorkspaceBase(coreIdx, workspaceSlot);
                     const int64_t hv = hvBase + headOffset;
-                    const int64_t b = isVariable_ != 0 ? 0 : seqIdx;
-                    int64_t outputChunkIdx = 0;
-                    if (isVariable_ != 0) {
-                        outputChunkIdx = seqInfo.outputChunkBase;
-                        if (outputChunkIdx >= totalChunkNum_ ||
-                            !ChunkIndexMatches(chunkIndices_, outputChunkIdx, seqIdx, 0)) {
-                            outputChunkIdx = FindVarlenChunkOutputIdx(chunkIndices_, *tiling_, seqIdx, 0);
+                    const int64_t dh0Base = (seqIdx * HV_ + hv) * K_ * V_;
+                    if (!stateVFirst_) {
+                        for (int64_t rowOffset = 0; rowOffset < K_; rowOffset += vecRow_) {
+                            const int64_t curRows = Min(vecRow_, K_ - rowOffset);
+                            const uint32_t elems = static_cast<uint32_t>(curRows * V_);
+                            const uint32_t stateIdx = CopyInStateRows(
+                                stateBuf_[curStatePingPong_], StateWorkspaceFloatOffset(workspaceBase, rowOffset), elems);
+                            AscendC::LocalTensor<float> stateFp32 = stateBuf_[stateIdx];
+                            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(stateMte2ToVEvent_[stateIdx]);
+                            CopyOutFp32Rows(dh0Gm_, stateFp32, dh0Base + rowOffset * V_, elems);
+                            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2Event_[stateIdx]);
+                            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stateMte3ToMte2Event_[stateIdx]);
                         }
-                        if (outputChunkIdx < 0) {
-                            continue;
-                        }
-                    }
-
-                    const int64_t dh0Base = DhOffset(b, hv, outputChunkIdx);
-                    for (int64_t rowOffset = 0; rowOffset < K_; rowOffset += vecRow_) {
-                        const int64_t curRows = Min(vecRow_, K_ - rowOffset);
-                        const uint32_t elems = static_cast<uint32_t>(curRows * V_);
-                        const uint32_t stateIdx = CopyInStateRows(
-                            stateBuf_[curStatePingPong_], StateWorkspaceFloatOffset(workspaceBase, rowOffset), elems);
-                        AscendC::LocalTensor<float> stateFp32 = stateBuf_[stateIdx];
-                        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(stateMte2ToVEvent_[stateIdx]);
-                        CopyOutFp32Rows(dh0Gm_, stateFp32, dh0Base + rowOffset * V_, elems);
-                        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2Event_[stateIdx]);
-                        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stateMte3ToMte2Event_[stateIdx]);
+                    } else {
+                        CopyOutDh0VFirst(StateWorkspaceFloatOffset(workspaceBase, 0), dh0Base);
                     }
                 }
             }
@@ -589,6 +583,75 @@ private:
         curOutputPingPong_ ^= 1U;
     }
 
+    __aicore__ inline void TransposeStateTile(AscendC::LocalTensor<DT> dstTensor,
+                                              AscendC::LocalTensor<DT> srcTensor) const
+    {
+        constexpr uint32_t TRANSPOSE_ROWS = 16;
+        constexpr uint32_t ELEMS_PER_BLOCK = 16;
+        uint64_t dstList[TRANSPOSE_ROWS];
+        uint64_t srcList[TRANSPOSE_ROWS];
+        const uint64_t dstAddr = reinterpret_cast<uint64_t>(dstTensor.GetPhyAddr());
+        const uint64_t srcAddr = reinterpret_cast<uint64_t>(srcTensor.GetPhyAddr());
+        const uint16_t repeatTimes = static_cast<uint16_t>(V_ / ELEMS_PER_BLOCK);
+        AscendC::TransDataTo5HDParams transposeParams{
+            false, false, static_cast<uint8_t>(repeatTimes),
+            static_cast<uint16_t>(repeatTimes > 1 ? TRANSPOSE_ROWS : 0),
+            static_cast<uint16_t>(repeatTimes > 1 ? 1 : 0)};
+        for (uint32_t row = 0; row < TRANSPOSE_ROWS; ++row) {
+            srcList[row] = srcAddr + row * V_ * sizeof(uint16_t);
+            dstList[row] = dstAddr + row * TRANSPOSE_ROWS * sizeof(uint16_t);
+        }
+        AscendC::TransDataTo5HD<uint16_t>(dstList, srcList, transposeParams);
+    }
+
+    __aicore__ inline void CopyOutFp32RowsVFirst(AscendC::GlobalTensor<DT> &outTensor,
+                                                  AscendC::LocalTensor<float> srcTensor,
+                                                  int64_t outBase, int64_t rowOffset,
+                                                  int64_t rowCount)
+    {
+        constexpr int64_t TRANSPOSE_ROWS = 16;
+        constexpr uint32_t SRC_OUTPUT_IDX = 0;
+        constexpr uint32_t DST_OUTPUT_IDX = 1;
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3ToVEvent_[SRC_OUTPUT_IDX]);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3ToVEvent_[DST_OUTPUT_IDX]);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToVEvent_[SRC_OUTPUT_IDX]);
+        for (int64_t tileRow = 0; tileRow < rowCount; tileRow += TRANSPOSE_ROWS) {
+            const int64_t curRows = Min(TRANSPOSE_ROWS, rowCount - tileRow);
+            const uint32_t elems = static_cast<uint32_t>(curRows * V_);
+            AscendC::Cast(outputBuf_[SRC_OUTPUT_IDX], srcTensor[tileRow * V_],
+                          AscendC::RoundMode::CAST_RINT, elems);
+            AscendC::PipeBarrier<PIPE_V>();
+            TransposeStateTile(outputBuf_[DST_OUTPUT_IDX], outputBuf_[SRC_OUTPUT_IDX]);
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3Event_[DST_OUTPUT_IDX]);
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3Event_[DST_OUTPUT_IDX]);
+            const AscendC::DataCopyExtParams copyParams{
+                static_cast<uint16_t>(V_), static_cast<uint32_t>(curRows * sizeof(DT)),
+                static_cast<uint32_t>((TRANSPOSE_ROWS - curRows) * sizeof(DT)),
+                static_cast<uint32_t>((K_ - curRows) * sizeof(DT)), 0};
+            AscendC::DataCopyPad(outTensor[outBase + rowOffset + tileRow],
+                                 outputBuf_[DST_OUTPUT_IDX], copyParams);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToVEvent_[DST_OUTPUT_IDX]);
+            if (tileRow + TRANSPOSE_ROWS < rowCount) {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3ToVEvent_[DST_OUTPUT_IDX]);
+            }
+        }
+    }
+
+    __aicore__ inline void CopyOutDh0VFirst(int64_t stateBase, int64_t dh0Base)
+    {
+        for (int64_t rowOffset = 0; rowOffset < K_; rowOffset += vecRow_) {
+            const int64_t curRows = Min(vecRow_, K_ - rowOffset);
+            const uint32_t elems = static_cast<uint32_t>(curRows * V_);
+            const uint32_t stateIdx = CopyInStateRows(
+                stateBuf_[curStatePingPong_], stateBase + rowOffset * V_, elems);
+            AscendC::LocalTensor<float> stateFp32 = stateBuf_[stateIdx];
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(stateMte2ToVEvent_[stateIdx]);
+            CopyOutFp32RowsVFirst(dh0Gm_, stateFp32, dh0Base, rowOffset, curRows);
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2Event_[stateIdx]);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stateMte3ToMte2Event_[stateIdx]);
+        }
+    }
+
     __aicore__ inline uint32_t CopyInStateRows(AscendC::LocalTensor<float> dstTensor, int64_t inputOffset,
                                                uint32_t elements)
     {
@@ -708,6 +771,7 @@ private:
     int64_t isVariable_ = 0;
     float scale_ = 1.0f;
     bool hasDh0_ = false;
+    bool stateVFirst_ = false;
     int64_t dh0ClearCoreNum_ = 0;
     int64_t dh0ClearElemsPerCore_ = 0;
     int64_t dh0ClearTailElems_ = 0;

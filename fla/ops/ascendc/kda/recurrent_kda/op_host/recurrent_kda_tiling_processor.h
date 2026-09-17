@@ -49,8 +49,9 @@ static constexpr uint32_t RKDA_LAYOUT_TND = 1;
 static constexpr size_t RKDA_MAX_MTP = 8;
 static constexpr int64_t RKDA_INPUT_BUFFER_NUM = 2;
 static constexpr int64_t RKDA_UB_GUARD_BYTES = 2048;
-static constexpr int64_t RKDA_FUSED_REDUCE_K = 128;
 static constexpr size_t RKDA_SYS_WORKSPACE_SIZE = 16U * 1024U * 1024U;
+// On A5, broadTmp aliases state in UB when K hits this fused-reduce size.
+static constexpr int64_t RKDA_FUSED_REDUCE_K = 128;
 
 struct RecurrentKdaTilingContext {
     const char *nodeName = "RecurrentKda";
@@ -99,6 +100,7 @@ struct RecurrentKdaTilingContext {
     bool hasStateOutStrides = false;
     uint64_t aivNum = 0;
     uint64_t ubSize = 0;
+    uint32_t isA5 = 0;
 };
 
 class RecurrentKdaTilingProcessor {
@@ -670,7 +672,7 @@ private:
     int64_t CalcComputeUbCoeff(int64_t aDk) const
     {
         int64_t coeff = 4 * aDk + 8; // state and row outputs.
-        if (aDk != RKDA_FUSED_REDUCE_K) {
+        if (ctx_.isA5 == 0 || aDk != RKDA_FUSED_REDUCE_K) {
             coeff += 4 * aDk; // broadTmp for the generic matvec path.
         }
         return coeff;

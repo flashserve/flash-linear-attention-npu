@@ -12,6 +12,7 @@
 - `q/k/v/h/o` 支持 `BFLOAT16/FLOAT16`；`g` 支持 `FLOAT/FLOAT16/BFLOAT16`。
 - 变长模式下 `cu_seqlens` 与 `chunk_indices` 必须同时提供，`chunk_indices` 为 `[seq_id, chunk_id]` 扁平化数组，且 `B=1`。
 - 当前 ATK 用例遵循上述约束，并通过 `case_spec` 固定具体取值；扩展用例时应继续满足这些限制。
+- A5 DUT 调用必须显式传入 `use_exp2=True` 和 `output_layout="BSND"`，不得依赖公开接口的默认值；默认值会选择旧路径。
 
 ## 标杆来源
 

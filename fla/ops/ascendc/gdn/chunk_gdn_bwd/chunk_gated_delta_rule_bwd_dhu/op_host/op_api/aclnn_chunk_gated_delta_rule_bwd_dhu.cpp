@@ -45,6 +45,7 @@ struct ChunkGatedDeltaRuleBwdDhuParams {
     double scale = 1.0;
     int64_t chunkSize = 64;
     bool useExp2 = false;
+    bool stateVFirst = false;
     const aclTensor *dhOut = nullptr;
     const aclTensor *dh0Out = nullptr;
     const aclTensor *dv2Out = nullptr;
@@ -86,9 +87,6 @@ static aclnnStatus CheckDtype(ChunkGatedDeltaRuleBwdDhuParams params)
 
 static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
 {
-    if (IsContiguous(tensor)) {
-        return ACLNN_SUCCESS;
-    }
     tensor = l0op::Contiguous(tensor, executor);
     CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
     return ACLNN_SUCCESS;
@@ -149,6 +147,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(
     double scale,
     int64_t chunkSize,
     bool useExp2,
+    bool stateVFirst,
     const aclTensor *dhOut,
     const aclTensor *dh0Out,
     const aclTensor *dv2Out,
@@ -157,10 +156,11 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(
 {
     ChunkGatedDeltaRuleBwdDhuParams params{
         q, k, w, dO, dv, gOptional, gkOptional, h0Optional, dhtOptional,
-        cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, useExp2, dhOut, dh0Out, dv2Out};
+        cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, useExp2, stateVFirst,
+        dhOut, dh0Out, dv2Out};
     L2_DFX_PHASE_1(aclnnChunkGatedDeltaRuleBwdDhu,
                    DFX_IN(q, k, w, dO, dv, gOptional, gkOptional, h0Optional, dhtOptional,
-                          cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, useExp2),
+                          cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, useExp2, stateVFirst),
                    DFX_OUT(dhOut, dh0Out, dv2Out));
 
     auto uniqueExecutor = CREATE_EXECUTOR();
@@ -174,7 +174,8 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(
     auto result = l0op::ChunkGatedDeltaRuleBwdDhu(
         params.q, params.k, params.w, params.dO, params.dv, params.gOptional, params.gkOptional,
         params.h0Optional, params.dhtOptional, params.cuSeqlensOptional, params.chunkIndicesOptional,
-        params.scale, params.chunkSize, params.useExp2, params.dhOut, params.dh0Out, params.dv2Out, executorPtr);
+        params.scale, params.chunkSize, params.useExp2, params.stateVFirst,
+        params.dhOut, params.dh0Out, params.dv2Out, executorPtr);
     CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(result[1] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(result[2] != nullptr, ACLNN_ERR_PARAM_NULLPTR);

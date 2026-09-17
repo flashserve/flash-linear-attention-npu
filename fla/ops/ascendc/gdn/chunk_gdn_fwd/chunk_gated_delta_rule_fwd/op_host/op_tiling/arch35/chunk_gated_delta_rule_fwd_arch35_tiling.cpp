@@ -33,6 +33,7 @@ constexpr size_t INPUT_GK = 6;
 constexpr size_t INPUT_INITIAL_STATE = 7;
 constexpr size_t INPUT_CU_SEQLENS = 8;
 constexpr size_t INPUT_CHUNK_INDICES = 9;
+constexpr size_t OUTPUT_G_CUMSUM = 2;
 
 constexpr size_t ATTR_OUTPUT_FINAL_STATE = 0;
 constexpr size_t ATTR_CHUNK_SIZE = 1;
@@ -44,6 +45,12 @@ constexpr int64_t CHUNK_64 = 64;
 constexpr int64_t CHUNK_128 = 128;
 constexpr uint32_t TILING_KEY_V128 = 1;
 constexpr uint32_t TILING_KEY_V256 = 2;
+constexpr uint32_t TILING_KEY_B30 = 301;
+constexpr int64_t MAIN_MODEL_BATCH = 1;
+constexpr int64_t MAIN_MODEL_K_HEADS = 16;
+constexpr int64_t MAIN_MODEL_V_HEADS = 32;
+constexpr int64_t MAIN_MODEL_TOKENS = 11274;
+constexpr uint64_t MAIN_MODEL_CHUNKS = 177;
 constexpr uint64_t WORKSPACE_ALIGNMENT = 512;
 constexpr uint64_t TILING_ALIGNMENT = 8;
 constexpr uint64_t FP32_BLOCK_ELEMS = 8;
@@ -218,6 +225,16 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35(gert::TilingContext *context
                 return ge::GRAPH_FAILED);
 
     const platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
+    const auto *initialStateDesc = context->GetOptionalInputDesc(INPUT_INITIAL_STATE);
+    const bool useB30 =
+        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950 &&
+        isBf16 && initialStateDesc != nullptr &&
+        (initialStateDesc->GetDataType() == ge::DT_FLOAT ||
+         initialStateDesc->GetDataType() == ge::DT_BF16) &&
+        isVarlen && batch == MAIN_MODEL_BATCH && heads == MAIN_MODEL_K_HEADS &&
+        valueHeads == MAIN_MODEL_V_HEADS && tokens == MAIN_MODEL_TOKENS &&
+        kDim == SUPPORTED_K_DIM && vDim == SUPPORTED_V_DIM_128 && *chunkSize == CHUNK_64 &&
+        IsShape(cuShape, {2}) && varlenChunks == MAIN_MODEL_CHUNKS && *outputFinalState;
     const uint64_t aicCoreNum = std::max<uint64_t>(1, platform.GetCoreNumAic());
     const uint64_t aivCoreNum = std::max<uint64_t>(1, platform.GetCoreNumAiv());
     const uint64_t systemWorkspace = platform.GetLibApiWorkSpaceSize();
@@ -228,6 +245,19 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35(gert::TilingContext *context
                 return ge::GRAPH_FAILED);
 
     GDN::Arch35ChunkGatedDeltaRuleFwdTrailer trailer{};
+    const auto *gCumsumShape = context->GetOutputShape(OUTPUT_G_CUMSUM);
+    OP_CHECK_NULL_WITH_CONTEXT(context, gCumsumShape);
+    const bool writeGCumsum = IsShape(gCumsumShape, {batch, tokens, valueHeads});
+    OP_CHECK_IF(!writeGCumsum && !IsShape(gCumsumShape, {1}),
+                OP_LOGE(context->GetNodeName(),
+                        "Phase 6 cumsum output must be [B,T,Hv] or the internal [1] placeholder; "
+                        "storage rank=%zu, elements=%ld, origin rank=%zu, elements=%ld.",
+                        gCumsumShape->GetStorageShape().GetDimNum(),
+                        gCumsumShape->GetStorageShape().GetShapeSize(),
+                        gCumsumShape->GetOriginShape().GetDimNum(),
+                        gCumsumShape->GetOriginShape().GetShapeSize()),
+                return ge::GRAPH_FAILED);
+    trailer.writeGCumsum = writeGCumsum ? 1 : 0;
     auto &coefficient = trailer.coefficient;
     coefficient.B = static_cast<uint64_t>(batch);
     coefficient.Hk = static_cast<uint64_t>(heads);
@@ -282,15 +312,15 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35(gert::TilingContext *context
     workspaceOffset += AlignUp(coefficient.B * coefficient.Hv * coefficient.T * sizeof(float), WORKSPACE_ALIGNMENT);
     workspaceSizes[0] = systemWorkspace + workspaceOffset;
 
-    ChunkGatedDeltaRuleFwdHTilingData hTiling;
+    GdnMegaArch35FwdHTilingData hTiling;
     const uint64_t hTilingSize = hTiling.GetDataSize();
-    OP_CHECK_IF(hTilingSize != sizeof(::ChunkGatedDeltaRuleFwdHTilingData),
+    OP_CHECK_IF(hTilingSize != sizeof(::GdnMegaArch35FwdHTilingData),
                 OP_LOGE(context->GetNodeName(),
                         "FwdH host/kernel tiling size mismatch: host=%lu, kernel=%zu.",
-                        hTilingSize, sizeof(::ChunkGatedDeltaRuleFwdHTilingData)),
+                        hTilingSize, sizeof(::GdnMegaArch35FwdHTilingData)),
                 return ge::GRAPH_FAILED);
     const uint64_t oTilingOffset = AlignUp(hTilingSize, TILING_ALIGNMENT);
-    const uint64_t stateOutputTilingEnd = oTilingOffset + sizeof(GDN::ChunkFwdOTilingData) +
+    const uint64_t stateOutputTilingEnd = oTilingOffset + sizeof(GDN::GdnMegaArch35FwdOTilingData) +
                                           sizeof(GDN::ChunkGatedDeltaRuleStateOutputTrailer);
     const uint64_t phase6TrailerOffset = AlignUp(stateOutputTilingEnd, TILING_ALIGNMENT);
     auto *rawTiling = context->GetRawTilingData();
@@ -305,13 +335,15 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35(gert::TilingContext *context
                 OP_LOGE(context->GetNodeName(), "Serialize Phase 6 coefficient trailer failed."),
                 return ge::GRAPH_FAILED);
     rawTiling->SetDataSize(rawTilingSize);
-    context->SetTilingKey(vDim == SUPPORTED_V_DIM_256 ? TILING_KEY_V256 : TILING_KEY_V128);
+    const uint64_t tilingKey = useB30 ? TILING_KEY_B30 :
+        (vDim == SUPPORTED_V_DIM_256 ? TILING_KEY_V256 : TILING_KEY_V128);
+    context->SetTilingKey(tilingKey);
     context->SetScheduleMode(1);
     OP_LOGD(context->GetNodeName(),
-            "Phase 6 tiling: B=%ld, Hk=%ld, Hv=%ld, T=%ld, K=%ld, V=%ld, blocks=%lu, tasks=%lu, suffix=%zu, total=%zu.",
+            "Phase 6 tiling: B=%ld, Hk=%ld, Hv=%ld, T=%ld, K=%ld, V=%ld, blocks=%lu, tasks=%lu, suffix=%zu, total=%zu, key=%lu, writeGCumsum=%lu.",
             batch, heads, valueHeads, tokens, kDim, vDim,
             aicCoreNum, coefficient.taskNum, workspaceSizes[0] - systemWorkspace,
-            workspaceSizes[0]);
+            workspaceSizes[0], tilingKey, trailer.writeGCumsum);
     return ge::GRAPH_SUCCESS;
 }
 

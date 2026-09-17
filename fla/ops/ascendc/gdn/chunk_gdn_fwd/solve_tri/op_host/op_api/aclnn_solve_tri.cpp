@@ -68,7 +68,7 @@
  {
      SolveTriParams params{x, cuSeqlens, chunkIndices, layout, xOut};
  
-     L2_DFX_PHASE_1(aclnnSolveTri, DFX_IN(x, cuSeqlens, chunkIndices), DFX_OUT(xOut));
+     L2_DFX_PHASE_1(aclnnSolveTri, DFX_IN(x, cuSeqlens, chunkIndices, layout), DFX_OUT(xOut));
  
      auto uniqueExecutor = CREATE_EXECUTOR();
      CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);

@@ -17,12 +17,12 @@ namespace {
 constexpr uint32_t OWNER_MTE2_TO_V_EVENT = 0;
 constexpr uint32_t OWNER_V_TO_MTE3_EVENT = 1;
 constexpr uint32_t OWNER_MTE3_TO_V_EVENT = 2;
+constexpr uint32_t PHASE6_SOLVE_FIX_TO_MTE2_EVENT = 0;
 constexpr uint32_t UB_ALIGNMENT = 32;
 constexpr uint32_t PHASE6_TILING_ALIGNMENT = 8;
-// Score completion is the only cross-core dependency before the AIV epilogue.
-// Keep it separate from the later SolveTri hand-off (flag 5).
-constexpr uint64_t PHASE6_SCORE_READY_FLAG = 2;
+constexpr uint64_t PHASE6_SOLVE_AIV_DONE_FLAG = 4;
 constexpr uint64_t PHASE6_SOLVE_DONE_FLAG = 5;
+constexpr uint64_t PHASE6_SOLVE_AIC_ALL_DONE_FLAG = 6;
 constexpr int64_t PHASE6_CUMSUM_FAST_BUFFER_LIMIT = 160 * 1024;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 constexpr AscendC::SyncAllConfig PHASE6_HO_SYNC_CONFIG = {PIPE_MTE3, PIPE_MTE2};
@@ -36,16 +36,16 @@ __aicore__ inline uint64_t AlignPhase6(uint64_t value, uint64_t alignment)
 __aicore__ inline const __gm__ ChunkGatedDeltaRuleStateOutputTrailer *GetStateOutputTrailer(GM_ADDR tiling)
 {
     const uint64_t oTilingOffset = AlignPhase6(
-        sizeof(ChunkGatedDeltaRuleFwdHTilingData), PHASE6_TILING_ALIGNMENT);
+        sizeof(GdnMegaArch35FwdHTilingData), PHASE6_TILING_ALIGNMENT);
     return reinterpret_cast<const __gm__ ChunkGatedDeltaRuleStateOutputTrailer *>(
-        tiling + oTilingOffset + sizeof(ChunkFwdOTilingData));
+        tiling + oTilingOffset + sizeof(GdnMegaArch35FwdOTilingData));
 }
 
 __aicore__ inline const __gm__ Arch35ChunkGatedDeltaRuleFwdTrailer *GetPhase6Trailer(GM_ADDR tiling)
 {
     const uint64_t oTilingOffset = AlignPhase6(
-        sizeof(ChunkGatedDeltaRuleFwdHTilingData), PHASE6_TILING_ALIGNMENT);
-    const uint64_t stateOutputTilingEnd = oTilingOffset + sizeof(ChunkFwdOTilingData) +
+        sizeof(GdnMegaArch35FwdHTilingData), PHASE6_TILING_ALIGNMENT);
+    const uint64_t stateOutputTilingEnd = oTilingOffset + sizeof(GdnMegaArch35FwdOTilingData) +
                                           sizeof(ChunkGatedDeltaRuleStateOutputTrailer);
     return reinterpret_cast<const __gm__ Arch35ChunkGatedDeltaRuleFwdTrailer *>(
         tiling + AlignPhase6(stateOutputTilingEnd, PHASE6_TILING_ALIGNMENT));
@@ -250,7 +250,8 @@ __aicore__ inline void RunPhase6Cumsum(
     cumsum.Process();
 }
 
-template <typename InputT, typename TileShapes>
+template <typename InputT, typename TileShapes,
+          Arch35GdnSyncVariant Variant = Arch35GdnSyncVariant::B0, typename StateT = void>
 __aicore__ inline void RunPhase6(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR rawG, GM_ADDR gk,
     GM_ADDR initialState, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR o,
@@ -281,15 +282,11 @@ __aicore__ inline void RunPhase6(
         RunPhase6Cumsum(rawG, cuSeqlens, chunkIndices, gCumsumBht, coefficient);
     }
 
-    // Cumsum is already complete on each AIV when it reaches this point. The
-    // epilogue only needs the AIC score completion, so avoid draining all
-    // pipelines with a full SyncAll here.
-    if ASCEND_IS_AIC {
-        AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(PHASE6_SCORE_READY_FLAG);
-    }
-    if ASCEND_IS_AIV {
-        AscendC::CrossCoreWaitFlag(PHASE6_SCORE_READY_FLAG);
-    }
+    // Cumsum and coefficient epilogue use different AIV task mappings.  An
+    // epilogue can therefore consume gCumsumBht written by another core, not
+    // merely by its paired AIV.  Publish every cumsum tile together with all
+    // AIC score tiles before any epilogue starts reading either workspace.
+    AscendC::SyncAll<false>();
 
     if ASCEND_IS_AIV {
         AscendC::TPipe kktPipe;
@@ -302,28 +299,61 @@ __aicore__ inline void RunPhase6(
         kktPipe.Reset();
     }
 
-    if (coefficient.BT == 64) {
-        RunSolvePhase<InputT, 64>(aWorkspace, cuSeqlens, chunkIndices, A,
+    if constexpr (Arch35GdnSyncTraits<Variant>::kB30) {
+        RunSolvePhase<InputT, 64, Variant>(aWorkspace, cuSeqlens, chunkIndices, A,
+                                          solveWorkspace, &coefficient);
+    } else if (coefficient.BT == 64) {
+        RunSolvePhase<InputT, 64, Variant>(aWorkspace, cuSeqlens, chunkIndices, A,
                                   solveWorkspace, &coefficient);
     } else {
-        RunSolvePhase<InputT, 128>(aWorkspace, cuSeqlens, chunkIndices, A,
+        RunSolvePhase<InputT, 128, Variant>(aWorkspace, cuSeqlens, chunkIndices, A,
                                    solveWorkspace, &coefficient);
     }
-    // Solve and recompute share a contiguous task range. Publish solved A
-    // before either paired AIV enters its local consumer range.
-    if ASCEND_IS_AIC {
-        AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(PHASE6_SOLVE_DONE_FLAG);
-    }
-    if ASCEND_IS_AIV {
-        AscendC::CrossCoreWaitFlag(PHASE6_SOLVE_DONE_FLAG);
+    if constexpr (Arch35GdnSyncTraits<Variant>::kSolveToWuGroup) {
+        // Matched head-major ownership keeps all consumers in the same group.
+        // PIPE_ALL also retires the last tail's PIPE_MTE1 wait on AIV MTE3 stores.
+        if ASCEND_IS_AIC {
+            AscendC::PipeBarrier<PIPE_ALL>();
+            AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(PHASE6_SOLVE_DONE_FLAG);
+        }
+        if ASCEND_IS_AIV {
+            AscendC::CrossCoreWaitFlag(PHASE6_SOLVE_DONE_FLAG);
+        }
+    } else {
+        // SolveTri may publish A through AIC FIX or AIV MTE3.  Join both AIV
+        // subblocks and send their completed MTE3 generation back to the paired
+        // AIC before any member of the group enters recompute.
+        if ASCEND_IS_AIV {
+            Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(PHASE6_SOLVE_AIV_DONE_FLAG);
+        }
+        if ASCEND_IS_AIC {
+            AscendC::SetFlag<AscendC::HardEvent::FIX_MTE2>(PHASE6_SOLVE_FIX_TO_MTE2_EVENT);
+            AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE2>(PHASE6_SOLVE_FIX_TO_MTE2_EVENT);
+            AscendC::CrossCoreWaitFlag(PHASE6_SOLVE_AIV_DONE_FLAG);
+            // Recompute preserves contiguous producer ownership, but FIX writes
+            // still require the all-AIC completion/visibility step performed by
+            // SyncAll.  Use a phase-private generation so it cannot overlap the
+            // earlier SyncAll that publishes cumsum and score workspaces.
+            AscendC::CrossCoreSetFlag<0x0, PIPE_FIX>(PHASE6_SOLVE_AIC_ALL_DONE_FLAG);
+            AscendC::CrossCoreWaitFlag(PHASE6_SOLVE_AIC_ALL_DONE_FLAG);
+            AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(PHASE6_SOLVE_DONE_FLAG);
+        }
+        if ASCEND_IS_AIV {
+            AscendC::CrossCoreWaitFlag(PHASE6_SOLVE_DONE_FLAG);
+        }
     }
     GM_ADDR w = userWorkspace + stateOutputTiling->wIntermediateOffset;
     GM_ADDR u = userWorkspace + stateOutputTiling->uIntermediateOffset;
     GM_ADDR h = userWorkspace + stateOutputTiling->hIntermediateOffset;
     GM_ADDR vNew = userWorkspace + stateOutputTiling->vNewIntermediateOffset;
-    RecomputeWUFwdTilingData recomputeTiling{};
+    GdnMegaArch35RecomputeWUTilingData recomputeTiling{};
     CopyRecomputeTiling(&stateOutputTiling->recompute, recomputeTiling);
-    if (stateOutputTiling->recompute.V == 256) {
+    if constexpr (Arch35GdnSyncTraits<Variant>::kB30) {
+        DispatchRecompute<InputT, float, 128, true>(
+            k, v, beta, A, gCumsumBht, cuSeqlens, chunkIndices, w, u,
+            userWorkspace + stateOutputTiling->recomputeWorkspaceOffset, &recomputeTiling);
+    } else if (stateOutputTiling->recompute.V == 256) {
         DispatchRecompute<InputT, float, 256, true>(
             k, v, beta, A, gCumsumBht, cuSeqlens, chunkIndices, w, u,
             userWorkspace + stateOutputTiling->recomputeWorkspaceOffset, &recomputeTiling);
@@ -333,9 +363,11 @@ __aicore__ inline void RunPhase6(
             userWorkspace + stateOutputTiling->recomputeWorkspaceOffset, &recomputeTiling);
     }
 
-    WritePublicCumsumRows(gCumsumBht, gCumsumBth, cuSeqlens, chunkIndices, coefficient);
-    DispatchFwdH<TileShapes>(k, w, u, gCumsumBht, gk, initialState, cuSeqlens,
-                             chunkIndices, h, vNew, finalState, tiling, userWorkspace);
+    if (phase6->writeGCumsum != 0) {
+        WritePublicCumsumRows(gCumsumBht, gCumsumBth, cuSeqlens, chunkIndices, coefficient);
+    }
+    DispatchFwdH<InputT, TileShapes, Variant, StateT>(k, w, u, gCumsumBht, gk, initialState, cuSeqlens,
+                                     chunkIndices, h, vNew, finalState, tiling, userWorkspace);
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     // H publishes h/vNew through MTE3 and O first consumes them through MTE2.
@@ -347,12 +379,12 @@ __aicore__ inline void RunPhase6(
 #endif
 
     const uint64_t oTilingOffset =
-        AlignPhase6(sizeof(ChunkGatedDeltaRuleFwdHTilingData), PHASE6_TILING_ALIGNMENT);
-    const __gm__ ChunkFwdOTilingData *gmOTiling =
-        reinterpret_cast<const __gm__ ChunkFwdOTilingData *>(tiling + oTilingOffset);
-    ChunkFwdOTilingData oTiling{};
+        AlignPhase6(sizeof(GdnMegaArch35FwdHTilingData), PHASE6_TILING_ALIGNMENT);
+    const __gm__ GdnMegaArch35FwdOTilingData *gmOTiling =
+        reinterpret_cast<const __gm__ GdnMegaArch35FwdOTilingData *>(tiling + oTilingOffset);
+    GdnMegaArch35FwdOTilingData oTiling{};
     CopyOTiling(gmOTiling, oTiling);
-    DispatchFwdO(q, k, vNew, h, gCumsumBht, cuSeqlens, chunkIndices, o,
+    DispatchFwdO<InputT, Variant>(q, k, vNew, h, gCumsumBht, cuSeqlens, chunkIndices, o,
                  userWorkspace, &oTiling);
 }
 
@@ -369,27 +401,23 @@ extern "C" __global__ __aicore__ void chunk_gated_delta_rule_fwd(
     REGISTER_TILING_DEFAULT(GDN::Arch35ChunkGatedDeltaRuleFwdTrailer);
     if (TILING_KEY_IS(1)) {
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
-        const __gm__ GDN::Arch35ChunkGatedDeltaRuleFwdTrailer *phase6 = GDN::GetPhase6Trailer(tiling);
-        if (phase6->coefficient.dtypeMode == 1) {
-            GDN::RunPhase6<bfloat16_t, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
-                q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
-                o, final_state, g_cumsum_bth, A, workspace, tiling);
-        } else {
-            GDN::RunPhase6<half, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
-                q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
-                o, final_state, g_cumsum_bth, A, workspace, tiling);
-        }
+        GDN::RunPhase6<DTYPE_Q, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
     } else if (TILING_KEY_IS(2)) {
         KERNEL_TASK_TYPE(2, KERNEL_TYPE_MIX_AIC_1_2);
-        const __gm__ GDN::Arch35ChunkGatedDeltaRuleFwdTrailer *phase6 = GDN::GetPhase6Trailer(tiling);
-        if (phase6->coefficient.dtypeMode == 1) {
-            GDN::RunPhase6<bfloat16_t, Catlass::Gemm::Kernel::GDNFwdHTileShapes256>(
-                q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
-                o, final_state, g_cumsum_bth, A, workspace, tiling);
-        } else {
-            GDN::RunPhase6<half, Catlass::Gemm::Kernel::GDNFwdHTileShapes256>(
-                q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
-                o, final_state, g_cumsum_bth, A, workspace, tiling);
-        }
+        GDN::RunPhase6<DTYPE_Q, Catlass::Gemm::Kernel::GDNFwdHTileShapes256>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
+#if defined(ORIG_DTYPE_Q) && (ORIG_DTYPE_Q == DT_BF16) && \
+    defined(ORIG_DTYPE_INITIAL_STATE) && \
+    ((ORIG_DTYPE_INITIAL_STATE == DT_FLOAT) || (ORIG_DTYPE_INITIAL_STATE == DT_BF16))
+    } else if (TILING_KEY_IS(301)) {
+        KERNEL_TASK_TYPE(301, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::RunPhase6<DTYPE_Q, Catlass::Gemm::Kernel::GDNFwdHTileShapes128,
+                      GDN::Arch35GdnSyncVariant::B30, DTYPE_INITIAL_STATE>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
+#endif
     }
 }

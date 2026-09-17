@@ -38,7 +38,7 @@ constexpr uint32_t kWsElems64 = kChunk64 * kChunk64;
 constexpr uint32_t kSlotFp16_64 = kChunk64 * kChunk64 * static_cast<uint32_t>(sizeof(half)); // 8KB
 constexpr uint32_t kSlotFp32_64 = kWsElems64 * static_cast<uint32_t>(sizeof(float));          // 16KB
 
-template <typename InDtype, typename OutDtype>
+template <typename InDtype, typename OutDtype, bool kHeadMajorVarlenOwnership = false>
 class SolveTri64 {
 public:
     template <typename TilingData>
@@ -56,6 +56,7 @@ public:
         chunk_size = tilingData->chunkSize;
         chunk_num_in_seq = tilingData->numChunks;
         chunk_num_total = tilingData->totalTiles;
+        total_chunks = tilingData->totalChunks;
         tiles_per_core = tilingData->tilesPerCore;
         mode = tilingData->layoutMode;
         is_lower = tilingData->isLower;
@@ -245,8 +246,14 @@ public:
             x_gm_offset = (bos + chunk_in_seq_idx * chunk_size) * num_head * chunk_size +
                           head_idx * chunk_size;
         } else {
-            chunk_idx = loop_idx / num_head;
-            head_idx = loop_idx % num_head;
+            if constexpr (kHeadMajorVarlenOwnership) {
+                // Match KKT/WU ownership without changing physical BHT offsets.
+                chunk_idx = loop_idx % total_chunks;
+                head_idx = loop_idx / total_chunks;
+            } else {
+                chunk_idx = loop_idx / num_head;
+                head_idx = loop_idx % num_head;
+            }
             seq_idx = gm_chunk_indices.GetValue(chunk_idx * 2);
             chunk_in_seq_idx = gm_chunk_indices.GetValue(chunk_idx * 2 + 1);
             local_seq_length = gm_cu_seqlens.GetValue(seq_idx + 1) - gm_cu_seqlens.GetValue(seq_idx);
@@ -641,6 +648,7 @@ private:
     int64_t chunk_size;
     int64_t chunk_num_in_seq;
     int64_t chunk_num_total;
+    int64_t total_chunks;
     int64_t tiles_per_core;
     int64_t mode;
     int64_t is_lower;

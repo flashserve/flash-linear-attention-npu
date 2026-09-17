@@ -64,13 +64,15 @@ const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleBwdDhu(
     double scale,
     int64_t chunkSize,
     bool useExp2,
+    bool stateVFirst,
     const aclTensor *dhOut,
     const aclTensor *dh0Out,
     const aclTensor *dv2Out,
     aclOpExecutor *executor)
 {
     L0_DFX(ChunkGatedDeltaRuleBwdDhu, q, k, w, dO, dv, gOptional, gkOptional, h0Optional, dhtOptional,
-           cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, useExp2, dhOut, dh0Out, dv2Out);
+           cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, useExp2, stateVFirst,
+           dhOut, dh0Out, dv2Out);
 
     const aclTensor *actualCuSeqlens = ConvertIntArrayToTensor(cuSeqlensOptional, executor);
     const aclTensor *actualChunkIndices = ConvertIntArrayToTensor(chunkIndicesOptional, executor);
@@ -83,10 +85,10 @@ const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleBwdDhu(
     const aclTensor *dh0OutKernel = dh0Out;
     if (dh0OutKernel == nullptr) {
         dh0OutKernel = executor->AllocTensor(MakeShape({0}), dhOut->GetDataType(), Format::FORMAT_ND);
-        if (dh0OutKernel == nullptr) {
-            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Alloc dh0 placeholder failed.");
-            return {nullptr, nullptr, nullptr};
-        }
+    }
+    if (dh0OutKernel == nullptr) {
+        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Alloc internal dh0 failed.");
+        return {nullptr, nullptr, nullptr};
     }
 
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(
@@ -94,7 +96,7 @@ const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleBwdDhu(
         OP_INPUT(q, k, w, dO, dv, gOptional, gkOptional, h0Optional, dhtOptional,
                  actualCuSeqlens, actualChunkIndices),
         OP_OUTPUT(dhOut, dh0OutKernel, dv2Out),
-        OP_ATTR(scale, chunkSize, useExp2));
+        OP_ATTR(scale, chunkSize, useExp2, stateVFirst));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return {nullptr, nullptr, nullptr};

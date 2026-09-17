@@ -226,7 +226,7 @@ bool ResolveChunkLocalCumsumOutputDtype(
     at::OptionalIntArrayRef cu_seqlens, 
     at::OptionalIntArrayRef chunk_indices, 
     c10::optional<bool> use_exp2, 
-    c10::optional<bool> transpose_state_layout)
+    c10::optional<bool> state_v_first)
 {
     // GVA：q/k 为 [B,Hk,T,K]；w、d_o、dv、g 等为 [B,Hv,T,·]，且 Hv % Hk == 0（与 device tiling 一致）
     auto q_size = q.sizes();
@@ -241,6 +241,8 @@ bool ResolveChunkLocalCumsumOutputDtype(
     int64_t Hv = dv_size[1];
     int64_t V = dv_size[3];
     int64_t chunk_num = (T + chunk_size -1) / chunk_size;
+    int64_t seq_num = cu_seqlens.has_value() ? static_cast<int64_t>(cu_seqlens.value().size()) - 1 : B;
+    bool stateVFirst = state_v_first.value_or(false);
 
     TORCH_CHECK(
         k_size[0] == B && k_size[1] == Hk && k_size[2] == T && k_size[3] == K,
@@ -266,12 +268,13 @@ bool ResolveChunkLocalCumsumOutputDtype(
         chunk_num = chunk_indices_ref.size() / 2;
     }
 
-    // 创建输出 tensor：dh/dh0 与 value 头维 Hv 对齐（device 输出 [B,Hv,chunk_num,K,V]）
+    // dh keeps the per-chunk state; dh0 follows the public recurrent-state layout.
     at::Tensor dv2 = at::empty_like(dv);
     at::Tensor dh = at::empty({B, Hv, chunk_num, K, V}, q.options());
     at::Tensor dh0;
     if (h0.has_value()) {
-        dh0 = at::empty({B, Hv, chunk_num, K, V}, q.options());
+        dh0 = stateVFirst ? at::empty({seq_num, Hv, V, K}, q.options())
+                          : at::empty({seq_num, Hv, K, V}, q.options());
     } else {
         dh0 = at::Tensor();
     }
@@ -288,16 +291,18 @@ bool ResolveChunkLocalCumsumOutputDtype(
             "npu_chunk_gated_delta_rule_bwd_dhu: g must be [B,Hv,T]; g=", g_.sizes());
     }
     if (h0_.defined()) {
+        const auto expected = stateVFirst ? std::vector<int64_t>{seq_num, Hv, V, K}
+                                          : std::vector<int64_t>{seq_num, Hv, K, V};
         TORCH_CHECK(
-            h0_.dim() == 5 && h0_.size(0) == B && h0_.size(1) == Hv && h0_.size(2) == chunk_num,
-            "npu_chunk_gated_delta_rule_bwd_dhu: h0 must be [B,Hv,chunk_num,K,V]; h0=", h0_.sizes(),
-            " chunk_num=", chunk_num);
+            h0_.sizes().vec() == expected,
+            "npu_chunk_gated_delta_rule_bwd_dhu: h0 has invalid state layout; h0=", h0_.sizes());
     }
     if (dht_.defined()) {
+        const auto expected = stateVFirst ? std::vector<int64_t>{seq_num, Hv, V, K}
+                                          : std::vector<int64_t>{seq_num, Hv, K, V};
         TORCH_CHECK(
-            dht_.dim() == 5 && dht_.size(0) == B && dht_.size(1) == Hv && dht_.size(2) == chunk_num,
-            "npu_chunk_gated_delta_rule_bwd_dhu: dht must be [B,Hv,chunk_num,K,V]; dht=", dht_.sizes(),
-            " chunk_num=", chunk_num);
+            dht_.sizes().vec() == expected,
+            "npu_chunk_gated_delta_rule_bwd_dhu: dht has invalid state layout; dht=", dht_.sizes());
     }
 
     // 调用ACLNN算子
@@ -306,7 +311,7 @@ bool ResolveChunkLocalCumsumOutputDtype(
         q, k, w, d_o, dv,
         g_, gK_, h0_, dht_,
         cu_seqlens, chunk_indices,
-        scale, chunk_size, static_cast<bool>(use_exp2.value_or(gK_.defined())),
+        scale, chunk_size, static_cast<bool>(use_exp2.value_or(gK_.defined())), stateVFirst,
         dh, dh0, dv2
     );
     return std::make_tuple(dh, dh0, dv2);
@@ -384,22 +389,38 @@ at::Tensor npu_chunk_fwd_o(
     at::OptionalIntArrayRef cu_seqlens, 
     at::OptionalIntArrayRef chunk_indices, 
     c10::optional<int64_t> chunk_size,
-    c10::optional<bool> transpose_state_layout)
+    c10::optional<bool> transpose_state_layout,
+    c10::optional<bool> use_exp2,
+    c10::string_view output_layout)
 {
-    // 创建输出tensor
-    at::Tensor o = at::empty_like(v);
+    const std::string output_layout_(output_layout.data(), output_layout.size());
+    at::Tensor o;
+    if (output_layout_ == "BNSD") {
+        o = at::empty_like(v);
+    } else if (output_layout_ == "BSND") {
+        o = at::empty({v.size(0), v.size(2), v.size(1), v.size(3)}, v.options());
+    } else {
+        if (output_layout_ == "TND") {
+            o = at::empty({v.size(2), v.size(1), v.size(3)}, v.options());
+        } else {
+            o = at::empty({v.size(1), v.size(2), v.size(3)}, v.options());
+        }
+    }
 
     // chunk_size默认值
     int64_t chunk_size_ = chunk_size.value_or(64);
+    bool use_exp2_ = use_exp2.value_or(false);
+    bool state_v_first_ = transpose_state_layout.value_or(false);
+    const char *output_layout_cstr = output_layout_.c_str();
     const at::Tensor &g_ = c10::value_or_else(g, [] { return at::Tensor(); });
     (void)g_gamma;
-    (void)transpose_state_layout;
 
     // 调用ACLNN算子
     EXEC_NPU_CMD_EXT(
         aclnnChunkFwdO,
         q, k, v, h, g_,
         cu_seqlens, chunk_indices, scale, chunk_size_,
+        use_exp2_, state_v_first_, output_layout_cstr,
         o
     );
     return o;
@@ -910,29 +931,21 @@ at::Tensor infer_y_tensor(
     int64_t head_num,
     int64_t run_mode)
 {
-    at::Tensor y;
-    int64_t x_dim = x.dim();
-
-    if (run_mode == 0 && head_num > 0) {
-        if (x_dim == 3) {
-            auto sizes = x.sizes();
-            int64_t b = sizes[0];
-            int64_t s = sizes[1];
-            int64_t d = sizes[2] / head_num;
-            y = at::empty({b, head_num, s, d}, x.options());
-        } else if (x_dim == 2) {
-            auto sizes = x.sizes();
-            int64_t s = sizes[0];
-            int64_t d = sizes[1] / head_num;
-            y = at::empty({head_num, s, d}, x.options());
-        } else {
-            y = at::empty_like(x);
-        }
-    } else {
-        y = at::empty_like(x);
+    TORCH_CHECK(head_num >= 0, "head_num must be non-negative, got ", head_num);
+    if (head_num == 0) {
+        return at::empty_like(x);
     }
 
-    return y;
+    TORCH_CHECK(run_mode == 0, "head_num > 0 is only supported when run_mode=0, got run_mode=", run_mode);
+    TORCH_CHECK(x.dim() == 2 || x.dim() == 3, "head_num > 0 requires rank-2 or rank-3 x, got rank ", x.dim());
+    const int64_t dim = x.size(-1);
+    TORCH_CHECK(dim % head_num == 0, "head_num must divide the last dimension exactly, got head_num=", head_num,
+                ", dim=", dim);
+    const int64_t head_dim = dim / head_num;
+    if (x.dim() == 2) {
+        return at::empty({head_num, x.size(0), head_dim}, x.options());
+    }
+    return at::empty({x.size(0), head_num, x.size(1), head_dim}, x.options());
 }
 
 at::Tensor npu_causal_conv1d(
@@ -950,23 +963,26 @@ at::Tensor npu_causal_conv1d(
     int64_t head_num = 0)
 {
     at::Tensor y = infer_y_tensor(x, head_num, run_mode);
-
-    const at::Tensor &bias_ = c10::value_or_else(bias, [] { return at::Tensor(); });
-
-    c10::optional<at::IntArrayRef> query_start_loc_ = query_start_loc.has_value()
+    const at::Tensor &bias_tensor = c10::value_or_else(bias, [] { return at::Tensor(); });
+    const c10::optional<at::Tensor> device_metadata = c10::nullopt;
+    c10::optional<at::IntArrayRef> query_start_loc_host = query_start_loc.has_value()
         ? c10::optional<at::IntArrayRef>(query_start_loc.value()) : c10::nullopt;
-    c10::optional<at::IntArrayRef> cache_indices_ = cache_indices.has_value()
+    c10::optional<at::IntArrayRef> cache_indices_host = cache_indices.has_value()
         ? c10::optional<at::IntArrayRef>(cache_indices.value()) : c10::nullopt;
-    c10::optional<at::IntArrayRef> initial_state_mode_ = initial_state_mode.has_value()
+    c10::optional<at::IntArrayRef> has_initial_state_host = initial_state_mode.has_value()
         ? c10::optional<at::IntArrayRef>(initial_state_mode.value()) : c10::nullopt;
-    c10::optional<at::IntArrayRef> num_accepted_tokens_ = num_accepted_tokens.has_value()
+    c10::optional<at::IntArrayRef> num_accepted_tokens_host = num_accepted_tokens.has_value()
         ? c10::optional<at::IntArrayRef>(num_accepted_tokens.value()) : c10::nullopt;
+    TORCH_CHECK(activation_mode == 0 || activation_mode == 1,
+                "activation_mode only supports 0/1, got ", activation_mode);
+    const std::string activation = activation_mode == 0 ? "none" : "silu";
 
     EXEC_NPU_CMD_EXT(
         aclnnCausalConv1d,
-        x, weight, bias_, conv_states,
-        query_start_loc_, cache_indices_, initial_state_mode_, num_accepted_tokens_,
-        activation_mode, pad_slot_id, run_mode, head_num,
+        x, weight, bias_tensor, conv_states,
+        device_metadata, device_metadata, device_metadata, device_metadata,
+        query_start_loc_host, cache_indices_host, has_initial_state_host, num_accepted_tokens_host,
+        activation, pad_slot_id, -1, run_mode, head_num, -1,
         y
     );
     return y;

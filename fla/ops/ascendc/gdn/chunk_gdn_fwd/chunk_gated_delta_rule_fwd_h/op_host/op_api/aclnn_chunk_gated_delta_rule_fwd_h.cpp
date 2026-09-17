@@ -300,8 +300,8 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
                                          finalStateOut};
     // Standard syntax, Check parameters.
     L2_DFX_PHASE_1(aclnnChunkGatedDeltaRuleFwdH,
-                   DFX_IN(k, w, u, gOptional, gkOptional, initialStateOptional, cuSeqlensOptional,
-                          chunkIndicesOptional, outputFinalState, chunkSize, stateVFirst),
+                   DFX_IN(k, w, u, gOptional, gkOptional, initialStateOptional, outputFinalState, chunkSize,
+                          cuSeqlensOptional, chunkIndicesOptional, stateVFirst),
                    DFX_OUT(hOut, vNewOut, finalStateOut));
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);

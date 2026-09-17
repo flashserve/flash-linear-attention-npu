@@ -10,7 +10,12 @@
 
 #define GDN_CHUNK_CUMSUM_KKT_SOLVE_IMPL_ONLY
 #include "operators/chunk_kkt_solve_tri/op_kernel/chunk_cumsum_kkt_solve_tri.cpp"
+#include "operators/chunk_kkt_solve_tri/op_kernel/solve_layout_staging.h"
 #undef GDN_CHUNK_CUMSUM_KKT_SOLVE_IMPL_ONLY
+
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#include "operators/solve_tri_fp32/solve_tri_pipeline.h"
+#endif
 
 namespace GDN {
 namespace {
@@ -33,16 +38,16 @@ __aicore__ inline uint64_t AlignPhase6(uint64_t value, uint64_t alignment)
 __aicore__ inline const __gm__ ChunkRecomputeWUFwdHOTrailer *GetPhase5Trailer(GM_ADDR tiling)
 {
     const uint64_t oTilingOffset = AlignPhase6(
-        sizeof(ChunkGatedDeltaRuleFwdHTilingData), PHASE6_TILING_ALIGNMENT);
+        sizeof(GdnMegaArch22FwdHTilingData), PHASE6_TILING_ALIGNMENT);
     return reinterpret_cast<const __gm__ ChunkRecomputeWUFwdHOTrailer *>(
-        tiling + oTilingOffset + sizeof(ChunkFwdOTilingData));
+        tiling + oTilingOffset + sizeof(GdnMegaArch22FwdOTilingData));
 }
 
 __aicore__ inline const __gm__ Arch22ChunkGatedDeltaRuleFwdTrailer *GetPhase6Trailer(GM_ADDR tiling)
 {
     const uint64_t oTilingOffset = AlignPhase6(
-        sizeof(ChunkGatedDeltaRuleFwdHTilingData), PHASE6_TILING_ALIGNMENT);
-    const uint64_t phase5End = oTilingOffset + sizeof(ChunkFwdOTilingData) +
+        sizeof(GdnMegaArch22FwdHTilingData), PHASE6_TILING_ALIGNMENT);
+    const uint64_t phase5End = oTilingOffset + sizeof(GdnMegaArch22FwdOTilingData) +
                                sizeof(ChunkRecomputeWUFwdHOTrailer);
     return reinterpret_cast<const __gm__ Arch22ChunkGatedDeltaRuleFwdTrailer *>(
         tiling + AlignPhase6(phase5End, PHASE6_TILING_ALIGNMENT));
@@ -143,6 +148,9 @@ __aicore__ inline void WritePublicCumsumRows(
                              (head * static_cast<uint32_t>(tiling.BT) + row) * sizeof(float));
         }
     }
+    // offsets由Scalar写入，Gather读取前建立S到V的依赖。
+    AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID0);
+    AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID0);
     AscendC::PipeBarrier<PIPE_V>();
 
     AscendC::GlobalTensor<float> input;
@@ -226,6 +234,8 @@ __aicore__ inline void RunPhase6(
     GM_ADDR scoreWorkspace = userWorkspace + phase6->scoreWorkspaceOffset;
     GM_ADDR aWorkspace = userWorkspace + phase6->aWorkspaceOffset;
     GM_ADDR solveWorkspaceBase = userWorkspace + phase6->solveWorkspaceOffset;
+    GM_ADDR tndInput = scoreWorkspace;
+    GM_ADDR tndOutput = scoreWorkspace + abc.aWorkspaceBytes;
     GM_ADDR gCumsumBht = userWorkspace + phase6->gCumsumBhtOffset;
     uint64_t coreGroup = static_cast<uint64_t>(AscendC::GetBlockIdx());
     if ASCEND_IS_AIV {
@@ -252,9 +262,69 @@ __aicore__ inline void RunPhase6(
         kktPipe.Reset();
     }
 
-    if (abc.BT == 64) {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+    const bool useTndStaging = abc.BT == 64 && abc.isVarlen != 0;
+    GdnFp32Solve::FullProblem problem{
+        static_cast<int64_t>(abc.B), static_cast<int64_t>(abc.T),
+        static_cast<int64_t>(abc.Hv), static_cast<int64_t>(abc.BT),
+        useTndStaging ? 0 : 1, static_cast<int64_t>(phase6->solveSequenceCount), 0, 0, 0};
+    if (problem.sequences == 0) {
+        problem.tasks32 = (problem.tokens + 31) / 32 * problem.batch * problem.heads;
+        problem.tasks64 = (problem.tokens + 63) / 64 * problem.batch * problem.heads;
+        problem.tasks128 = (problem.tokens + 127) / 128 * problem.batch * problem.heads;
+    } else {
+        AscendC::GlobalTensor<int64_t> solveCu;
+        solveCu.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(cuSeqlens));
+        for (int64_t sequence = 0; sequence < problem.sequences; ++sequence) {
+            const int64_t length = solveCu.GetValue(sequence + 1) - solveCu.GetValue(sequence);
+            problem.tasks32 += (length + 31) / 32 * problem.heads;
+            problem.tasks64 += (length + 63) / 64 * problem.heads;
+            problem.tasks128 += (length + 127) / 128 * problem.heads;
+        }
+    }
+    if (useTndStaging) {
+        // 首版保留主仓 BT64 varlen 的 staging，只替换求解实现。
+        AscendC::SyncAll<false>();
+        NsPhase6SolveLayoutStaging::TransposeBhtTnd<InputT>(
+            aWorkspace, tndInput, &abc, true);
+    }
+    GdnFp32Solve::Run<InputT, InputT>(
+        useTndStaging ? tndInput : aWorkspace,
+        userWorkspace + phase6->solveFp32InputOffset,
+        userWorkspace + phase6->solveD16Offset, userWorkspace + phase6->solveD32Offset,
+        userWorkspace + phase6->solveD64Offset, useTndStaging ? tndOutput : A,
+        solveWorkspaceBase, cuSeqlens, problem);
+    if (useTndStaging) {
+        NsPhase6SolveLayoutStaging::TransposeBhtTnd<InputT>(
+            tndOutput, A, &abc, false);
+        AscendC::SyncAll<false>();
+    }
+    // Run 最后已通过 mixed barrier 发布 AIV/MTE3 输出并 drain 内部 flag。
+#else
+    if (abc.BT == 64 && abc.isVarlen != 0) {
+        // Match the public BT64 SolveTri path exactly: physical TND layout,
+        // chunk-to-head task order, and the native FP32 implementation.
+        AscendC::SyncAll<false>();
+        NsPhase6SolveLayoutStaging::TransposeBhtTnd<InputT>(
+            aWorkspace, tndInput, &abc, true);
+        AscendC::SyncAll<false>();
+
+        Arch22ChunkGatedDeltaRuleFwdAbcTiling solveTiling = abc;
+        solveTiling.layoutMode = 2;
+        RunSolvePhase<InputT, 64>(tndInput, cuSeqlens, chunkIndices,
+                                  tndOutput, solveWorkspaceBase, &solveTiling);
+
+        AscendC::SyncAll<false>();
+        NsPhase6SolveLayoutStaging::TransposeBhtTnd<InputT>(
+            tndOutput, A, &abc, false);
+        AscendC::SyncAll<false>();
+    } else if (abc.BT == 64) {
+        // The public SolveTri runs after a kernel boundary.  Recreate that
+        // visibility point before its FP32 AIC/AIV protocol consumes the
+        // fused KKT epilogue written by all participating vector cores.
+        AscendC::SyncAll<false>();
         RunSolvePhase<InputT, 64>(aWorkspace, cuSeqlens, chunkIndices, A,
-                                  solveWorkspace, &abc);
+                                  solveWorkspaceBase, &abc);
     } else {
         RunSolvePhase<InputT, 128>(aWorkspace, cuSeqlens, chunkIndices, A,
                                    solveWorkspace, &abc);
@@ -267,11 +337,12 @@ __aicore__ inline void RunPhase6(
     if ASCEND_IS_AIV {
         AscendC::CrossCoreWaitFlag(PHASE6_SOLVE_DONE_FLAG);
     }
+#endif
     GM_ADDR w = userWorkspace + phase5->wIntermediateOffset;
     GM_ADDR u = userWorkspace + phase5->uIntermediateOffset;
     GM_ADDR h = userWorkspace + phase5->hIntermediateOffset;
     GM_ADDR vNew = userWorkspace + phase5->vNewIntermediateOffset;
-    RecomputeWUFwdTilingData recomputeTiling{};
+    GdnMegaArch22RecomputeWUTilingData recomputeTiling{};
     CopyRecomputeTiling(&phase5->recompute, recomputeTiling);
     if (phase5->recompute.V == 256) {
         DispatchRecompute<InputT, float, 256, true>(
@@ -284,7 +355,7 @@ __aicore__ inline void RunPhase6(
     }
 
     WritePublicCumsumRows(gCumsumBht, gCumsumBth, cuSeqlens, chunkIndices, abc);
-    DispatchFwdH<TileShapes>(k, w, u, gCumsumBht, gk, initialState, cuSeqlens,
+    DispatchFwdH<InputT, TileShapes>(k, w, u, gCumsumBht, gk, initialState, cuSeqlens,
                              chunkIndices, h, vNew, finalState, tiling, userWorkspace);
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -292,17 +363,17 @@ __aicore__ inline void RunPhase6(
     // Limit the global hand-off to those pipelines instead of draining PIPE_ALL.
     AscendC::SyncAll<false, PHASE6_HO_SYNC_CONFIG>();
 #else
-    // Ascend910B supports only the full-pipeline SyncAll overload.
+    // DAV_2201 supports only the full-pipeline SyncAll overload.
     AscendC::SyncAll<false>();
 #endif
 
     const uint64_t oTilingOffset =
-        AlignPhase6(sizeof(ChunkGatedDeltaRuleFwdHTilingData), PHASE6_TILING_ALIGNMENT);
-    const __gm__ ChunkFwdOTilingData *gmOTiling =
-        reinterpret_cast<const __gm__ ChunkFwdOTilingData *>(tiling + oTilingOffset);
-    ChunkFwdOTilingData oTiling{};
+        AlignPhase6(sizeof(GdnMegaArch22FwdHTilingData), PHASE6_TILING_ALIGNMENT);
+    const __gm__ GdnMegaArch22FwdOTilingData *gmOTiling =
+        reinterpret_cast<const __gm__ GdnMegaArch22FwdOTilingData *>(tiling + oTilingOffset);
+    GdnMegaArch22FwdOTilingData oTiling{};
     CopyOTiling(gmOTiling, oTiling);
-    DispatchFwdO(q, k, vNew, h, gCumsumBht, cuSeqlens, chunkIndices, o,
+    DispatchFwdO<InputT>(q, k, vNew, h, gCumsumBht, cuSeqlens, chunkIndices, o,
                  userWorkspace, &oTiling);
 }
 
@@ -319,27 +390,13 @@ extern "C" __global__ __aicore__ void chunk_gated_delta_rule_fwd(
     REGISTER_TILING_DEFAULT(GDN::Arch22ChunkGatedDeltaRuleFwdTrailer);
     if (TILING_KEY_IS(1)) {
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
-        const __gm__ GDN::Arch22ChunkGatedDeltaRuleFwdTrailer *phase6 = GDN::GetPhase6Trailer(tiling);
-        if (phase6->abc.dtypeMode == 1) {
-            GDN::RunPhase6<bfloat16_t, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
-                q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
-                o, final_state, g_cumsum_bth, A, workspace, tiling);
-        } else {
-            GDN::RunPhase6<half, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
-                q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
-                o, final_state, g_cumsum_bth, A, workspace, tiling);
-        }
+        GDN::RunPhase6<DTYPE_Q, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
     } else if (TILING_KEY_IS(2)) {
         KERNEL_TASK_TYPE(2, KERNEL_TYPE_MIX_AIC_1_2);
-        const __gm__ GDN::Arch22ChunkGatedDeltaRuleFwdTrailer *phase6 = GDN::GetPhase6Trailer(tiling);
-        if (phase6->abc.dtypeMode == 1) {
-            GDN::RunPhase6<bfloat16_t, Catlass::Gemm::Kernel::GDNFwdHTileShapes256>(
-                q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
-                o, final_state, g_cumsum_bth, A, workspace, tiling);
-        } else {
-            GDN::RunPhase6<half, Catlass::Gemm::Kernel::GDNFwdHTileShapes256>(
-                q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
-                o, final_state, g_cumsum_bth, A, workspace, tiling);
-        }
+        GDN::RunPhase6<DTYPE_Q, Catlass::Gemm::Kernel::GDNFwdHTileShapes256>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
     }
 }

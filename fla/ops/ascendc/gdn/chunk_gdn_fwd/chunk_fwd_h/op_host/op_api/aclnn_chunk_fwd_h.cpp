@@ -426,9 +426,8 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
                                          finalStateOut};
     // Standard syntax, Check parameters.
     L2_DFX_PHASE_1(aclnnChunkFwdH,
-                   DFX_IN(k, w, u, gOptional, gkOptional, initialStateOptional, cuSeqlensOptional,
-                          chunkIndicesOptional, outputFinalState, chunkSize, saveNewValue, useExp2,
-                          stateVFirst),
+                   DFX_IN(k, w, u, gOptional, gkOptional, initialStateOptional, outputFinalState, chunkSize,
+                          saveNewValue, cuSeqlensOptional, chunkIndicesOptional, useExp2, stateVFirst),
                    DFX_OUT(hOut, vNewOut, finalStateOut));
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);

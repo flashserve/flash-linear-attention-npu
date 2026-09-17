@@ -92,7 +92,12 @@ def run_npu(spec: dict[str, Any], input_data: InputDataset):
     inputs = build_inputs(spec, _marker_device(input_data), high_precision=False)
     from fla_npu.ops import ascendc
 
-    return ascendc.chunk_fwd_o(inputs["q"], inputs["k"], inputs["v"], inputs["h"], inputs["scale"], g=inputs["g"], g_gamma=None, cu_seqlens=None, chunk_indices=None, chunk_size=inputs["chunk_size"], transpose_state_layout=False)
+    return ascendc.chunk_fwd_o(
+        inputs["q"], inputs["k"], inputs["v"], inputs["h"], inputs["scale"],
+        g=inputs["g"], g_gamma=None, cu_seqlens=None, chunk_indices=None,
+        chunk_size=inputs["chunk_size"], transpose_state_layout=False,
+        use_exp2=True, output_layout="BSND",
+    )
 
 
 @register("executor_chunk_fwd_o")
