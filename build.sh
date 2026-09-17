@@ -48,6 +48,9 @@ ENABLE_BUILT_CUSTOM=FALSE
 ENABLE_STATIC=FALSE
 ENABLE_EXPERIMENTAL=FALSE
 KERNEL_TEMPLATE_INPUT=""
+# --ops / -n operator filter, validated before CMake configuration (issue #482).
+OPS_FILTER_VALUE=""
+OPS_FILTER_SOURCE=""
 ASCEND_SOC_UNITS="ascend910b"
 SUPPORT_COMPUTE_UNIT_SHORT=("ascend910b" "ascend910_93" "ascend950" "ascend310p" "kirinx90" "kirin9030" "mc62cm12a")
 CMAKE_BUILD_MODE=""
@@ -91,6 +94,26 @@ dotted_line="-------------------------------------------------------------------
 # 预定义函数
 ########################################################################################################################
 
+function list_supported_ops() {
+    python3 "${CURRENT_DIR}/scripts/check_build_ops.py" \
+        --repo-root "${CURRENT_DIR}" \
+        --list "$@"
+}
+
+# 前置校验 --ops/-n 传入的算子名：必须在 CMake 配置之前完成（issue #482）
+function check_ops_filter() {
+    if [ -z "${OPS_FILTER_VALUE}" ]; then
+        return 0
+    fi
+    if ! python3 "${CURRENT_DIR}/scripts/check_build_ops.py" \
+        --repo-root="${CURRENT_DIR}" \
+        --ops="${OPS_FILTER_VALUE}" \
+        --source="${OPS_FILTER_SOURCE}" \
+        --origin="${OPS_FILTER_SOURCE} parameter of build.sh"; then
+        exit 1
+    fi
+}
+
 function help_info() {
     local specific_help="$1"
 
@@ -104,6 +127,7 @@ function help_info() {
                 echo "    --soc=soc_version      Compile for specified Ascend SoC (comma-separated for multiple)"
                 echo "    --vendor_name=name     Specify custom operator package vendor name"
                 echo "    --ops=op1,op2,...      Compile specified operators (comma-separated for multiple)"
+                echo "    --list-ops             Print the supported operator names and exit"
                 echo "    -j[n]                  Compile thread nums, default is 8, eg: -j8"
                 echo "    -O[n]                  Compile optimization options, support [O0 O1 O2 O3], eg:-O3"
                 echo "    --experimental         Build experimental version"
@@ -129,6 +153,7 @@ function help_info() {
                 echo "    --noexec               Only compile ut, do not execute"
                 echo "    --cov                  Enable code coverage for unit tests"
                 echo "    --ops=op1,op2,...      Compile specified operators (comma-separated for multiple)"
+                echo "    --list-ops             Print the supported operator names and exit"
                 echo "    --disable_asan         Disable ASAN (Address Sanitizer)"
                 echo "    --soc=soc_version      Run unit tests for specified Ascend SoC"
                 echo "    --valgrind             Run unit tests with valgrind (disables ASAN and noexec)"
@@ -211,6 +236,7 @@ function help_info() {
                 echo "    --opkernel             Build binary kernel"
                 echo "    --soc=soc_version      Compile for specified Ascend SoC (comma-separated for multiple)"
                 echo "    --ops=op1,op2,...      Compile specified operators (comma-separated for multiple)"
+                echo "    --list-ops             Print the supported operator names and exit"
                 echo "    --oom                  Build with oom mode on the kernel side, with options: '-g --cce-enable-oom'"
                 echo "    --kernel_template_input=args0,args1"
  	            echo "                           Specify kernel template input arguments (comma-separated for multiple)"
@@ -229,6 +255,7 @@ function help_info() {
                 echo "    --noexec               Only compile ut, do not execute"
                 echo "    --cov                  Enable code coverage for unit tests"
                 echo "    --ops=op1,op2,...      Compile specified operators (comma-separated for multiple)"
+                echo "    --list-ops             Print the supported operator names and exit"
                 echo "    --disable_asan         Disable ASAN (Address Sanitizer)"
                 echo "    --soc=soc_version      Run unit tests for specified Ascend SoC"
                 echo "    --valgrind             Run unit tests with valgrind (disables ASAN and noexec)"
@@ -244,6 +271,7 @@ function help_info() {
                 echo "    --noexec               Only compile ut, do not execute"
                 echo "    --cov                  Enable code coverage for unit tests"
                 echo "    --ops=op1,op2,...      Compile specified operators (comma-separated for multiple)"
+                echo "    --list-ops             Print the supported operator names and exit"
                 echo "    --disable_asan         Disable ASAN (Address Sanitizer)"
                 echo "    --soc=soc_version      Run unit tests for specified Ascend SoC"
                 echo "    --valgrind             Run unit tests with valgrind (disables ASAN and noexec)"
@@ -259,6 +287,7 @@ function help_info() {
                 echo "    --noexec               Only compile ut, do not execute"
                 echo "    --cov                  Enable code coverage for unit tests"
                 echo "    --ops=op1,op2,...      Compile specified operators (comma-separated for multiple)"
+                echo "    --list-ops             Print the supported operator names and exit"
                 echo "    --disable_asan         Disable ASAN (Address Sanitizer)"
                 echo "    --soc=soc_version      Run unit tests for specified Ascend SoC"
                 echo "    --valgrind             Run unit tests with valgrind (disables ASAN and noexec)"
@@ -319,6 +348,7 @@ function help_info() {
     echo "    --disable_asan Disable ASAN (Address Sanitizer)"
     echo "    --valgrind run ut with valgrind. This option will disable asan, noexec and run utest by valgrind"
     echo "    --ops Compile specified operator, use snake name, like: --ops=add,add_lora, use ',' to separate different operator"
+    echo "    --list-ops Print all operators supported by --ops/FLA_NPU_OPS and exit"
     echo "    --soc Compile binary with specified Ascend SoC, like: --soc=ascend310p,ascend910b, use ',' to separate different SoC"
     echo "    --vendor_name Specify the custom operator package vendor name, like: --vendor_name=customize, default to custom"
     echo "    --opgraph build graph_plugin_transformer.so"
@@ -1052,6 +1082,10 @@ while [[ $# -gt 0 ]]; do
         help_info
         exit
         ;;
+    --list-ops)
+        list_supported_ops
+        exit 0
+        ;;
     --pkg)
         ENABLE_BUILD_PKG=TRUE
         ENABLE_BUILT_IN=TRUE            # 只输入--pkg时编builtin包
@@ -1072,11 +1106,15 @@ while [[ $# -gt 0 ]]; do
         ;;
     -n|--op-name)
         ascend_op_name="$2"
+        OPS_FILTER_VALUE="$2"
+        OPS_FILTER_SOURCE="-n/--op-name"
         shift 2
         ;;
     --ops=*)
         OPTARG=$1
         ascend_op_name=${OPTARG#*=}
+        OPS_FILTER_VALUE="${ascend_op_name}"
+        OPS_FILTER_SOURCE="--ops"
         ENABLE_BUILT_CUSTOM=TRUE
         ENABLE_BUILT_IN=FALSE
         shift
@@ -1371,6 +1409,10 @@ if [ -n "${vendor_name}" ] && [ "${vendor_name}" != "fla_npu" ]; then
     echo "[INFO] --vendor_name is not supported; forcing vendor_name=fla_npu (ignored: ${vendor_name})"
 fi
 vendor_name="fla_npu"
+# 前置校验 --ops/-n 中的算子名，避免非法名称在 CMake 配置后才以
+# OpFileNotExistsError（aic-*-ops-info.ini 缺失）的形式暴露（issue #482）。
+check_ops_filter
+
 set_ut_mode
 
 if [ -n "$KERNEL_TEMPLATE_INPUT" ]; then
