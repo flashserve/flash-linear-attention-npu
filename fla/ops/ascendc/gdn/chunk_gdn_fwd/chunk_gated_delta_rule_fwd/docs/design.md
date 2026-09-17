@@ -18,7 +18,19 @@
 - 非 220 分支继续使用原有 TND fallback；A5 arch35、host/kernel ABI、locate 扫描、
   `full_convert` 和 ring 深度不在本次范围。
 
-## 2. Stage 0–2 完整详设
+本次模型 case 为 A2、BF16、逻辑 B=28/32、每序列 S=1024、Hq=16、Hv=32、K=V=128、
+BT=64、非零初态并输出终态；dense 一次调用的物理形状为 B 条序列，varlen 一次调用的物理
+B=1、T=B*S。对照为优化前 main `9c0ffc175da6f924492282e7c07046639ddfc267` 和
+ops-transformer `ba18b81f534b78163df54240db54cc1ba12e0e87`。
+
+历史 B32 的完整公开调用设备 kernel 合计为 dense 17.831 ms、varlen 33.617 ms、
+ops-transformer 18.274 ms；该数字只用于设计，不代表当前候选已通过。工程验证目标为
+B28/B32 BT64 varlen 分别进入同输入 dense 与 transformer 耗时的 10% 范围，dense 和
+BT128 控制组无超过测量波动且超过 5% 的回退。每个 case 至少两轮同卡交错对照，预热
+不少于 100 次且不少于 3 秒，采样不少于 100 次；按 msprof op_summary 的
+Task Duration(us) 汇总一次公开调用的全部 kernel，并单列融合 kernel。
+
+## 2. 受影响阶段详设
 
 ### 全局符号与任务域
 
@@ -37,24 +49,45 @@
 任务计数为：
 
 ```text
-dense:  Q * H * ceil(T / span)
+dense:  B * H * ceil(T / span)
 varlen: H * sum(ceil(Li / span))
 ```
 
 其中 `span` 分别为 32、64、128。块内输入列仍用 `w.t % BT` 选择，避免非对齐序列
 起点把全局 token 偏移当作块内偏移。
 
-### Stage 0：Vector，KKT epilogue 产生 aWorkspace
+以 B32/S1024 为例，dense 的 B=32,T=1024 与 varlen 的 B=1,T=32768 在 span=32/64/128
+时分别有 32768/16384/8192 个任务。实际启动的 AIC 数由 tiling 与硬件决定，不能在测试
+中硬编码物理核数。
+
+### Stage 0：Vector，KKT epilogue 产生求解输入 aWorkspace
 
 KKT AIC 将 score 写入既有 `scoreWorkspace` 并发布 `SCORE_READY_FLAG`；KKT AIV
 等待后执行 epilogue，将低精度系数写入 `aWorkspace`，其物理布局为
 `[B,H,T,BT]` head-first。该阶段的 workspace offset、producer/consumer 和原有
 同步不变。Stage 0 完成后由 Solve `Run` 的首部 `SyncAll` 统一建立 GM 可见性。
 
-### Stage 1：Mixed，FP32 leaf/merge Solve
+### Stage 1：Vector，转换 FP32 输入
 
 `GdnFp32Solve::Run<In, Out>` 使用 `aWorkspace` 作为 `raw` 输入；当输入不是 FP32
-时，现有 `full_convert` 将连续元素写入 `solveFp32Input`，随后按原有阶段顺序执行：
+时，现有 `full_convert` 将连续元素写入 `solveFp32Input`，转换后的 mixed barrier
+保证后续参与核可见。该步骤只改变存储 dtype，不改变逻辑顺序。
+
+### Stage 2：Vector，生成 D16
+
+`LeafProducer` 从 FP32 输入读取每个有效 16 行对角块，按原有三角递推生成 D16，写入
+`solveD16Offset`。配对 AIV 处理各自半块，尾部无效行不写回。
+
+### Stage 3：Cube，计算非对角块
+
+记当前半块宽度为 s，按原有顺序执行 `M = D1 @ L10`、`P = M @ D0`，实际 shape
+由 n0/n1 有效行数裁剪，原生 FP32 GEMM、HF32 关闭、Fixpipe 和 scratch/result ring
+保持不变。
+
+### Stage 4：Vector，装配各层逆矩阵并发布 A
+
+AIV 组装对角块与 `-P`，上三角填零；最后一层按基线 CAST_RINT 转为公开 dtype 写 A。
+BT64 使用 16->32->64，BT128 继续 16->32->64->128；文档拆分不表示新增阶段屏障。
 
 1. `leaf_merge_pipeline<32>` 读取 `D16`，生成 `D32`。
 2. `BT=64` 直接由 `stage64_merge<32, Out>` 写回 `A`。
@@ -65,7 +98,7 @@ KKT AIC 将 score 写入既有 `scoreWorkspace` 并发布 `SCORE_READY_FLAG`；K
 `solveWorkspaceOffset`。各 stage 的 local event、cross-core ready/free、双槽 scratch
 和尾块 padding 不变；本次不新增 GM、UB、L1、L0、event 或 flag。
 
-### Stage 2：Mixed，A 发布给下游 Recompute
+### 下游边界：A 发布给 Recompute
 
 Solve 末尾 `SyncAll` 完成最后的 AIV/MTE3 drain 后，`A` 已处于原有低精度
 `[B,H,T,BT]` 输出布局，直接作为 Recompute 的输入。Phase6 不再在调用者与 Solve
@@ -81,6 +114,26 @@ Solve 末尾 `SyncAll` 完成最后的 AIV/MTE3 drain 后，`A` 已处于原有�
 DAV_2201 只编译并调用上述私有 pipeline。非 220 分支只在自身条件编译区域包含
 `solve_layout_staging.h`、创建 TND 地址并保留原 `RunSolvePhase` fallback；这不改变
 A3 行为，也不影响 A5 arch35。
+
+| 数据/物理区 | 生产者 -> 消费者 | 依赖与复用条件 |
+| --- | --- | --- |
+| scoreWorkspace | KKT AIC -> KKT AIV | 原 SCORE_READY_FLAG；仍是 KKT 必需区，不再别名为 staging |
+| aWorkspace | KKT AIV -> full_convert AIV | Run 入口 mixed SyncAll 保护跨组 RAW |
+| solveFp32Input | full_convert -> leaf/merge | 转换后 mixed SyncAll；Solve 完成前不覆盖 |
+| D16/D32/D64 | 各层 AIV -> 后继 AIC/AIV | 既有 ready/free 和层间 barrier；BT64 不消费 D64 |
+| scratch/result ring | AIC/FIX -> AIV/MTE2 -> 下一轮 AIC 写 | 保留 ready/free 配对、尾部 drain 和 WAR 保护 |
+| A | 最后 merge AIV/MTE3 -> Recompute | Run 末尾 mixed SyncAll，包括零任务物理组 |
+
+本次资源增量为零，host tiling 序列化和各 workspace offset 不变。FP32 输入、D16、D32
+和仅 BT128 使用的 D64 分别按 R*BT*4、R*16*4、R*32*4、R*64*4 字节规划，R=B*H*T；
+scratch/ring、UB/L1/L0 和事件分配沿用基线。
+
+每次 staging 转置读写 R*BT*sizeof(InputT) 字节，取消两次转置减少四倍该大小的 GM
+搬运。B32 BF16 BT64 对应 512 MiB；以上是优化空间，必须保持 BT64 不变做同输入 A/B。
+
+FP32 计算顺序、cast 时机和有效区 mask 不变。关键风险是非对齐序列起点、短尾块与跨任务
+地址，需对 A、gCumsum、o、final_state 做同输入对照，并覆盖冻结双标杆、确定性和 MSS。
+合法空序列产生零个 Solve task；不因零任务绕过阶段同步。
 
 ### 验收边界
 
