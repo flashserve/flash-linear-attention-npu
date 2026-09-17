@@ -32,9 +32,11 @@ from typing import Iterable, Optional
 DIST_INFO_GLOB = "flash_linear_attention_npu-*.dist-info"
 DIST_NAME = "flash-linear-attention-npu"
 VENDOR_DIR = "fla_npu_transformer"
-# The wheel has to carry ``fla_npu/`` at the archive root; the schemes a wheel may
-# use to hide its payload under ``<dist>-<version>.data/`` are only reported back
-# as a packaging defect.
+# PEP 427 lets a wheel keep its payload under ``<dist>-<version>.data/<scheme>/``
+# instead of the archive root.  ``bdist_wheel`` builds exactly that layout when a
+# distribution reports ``root_is_pure == False`` without extension modules, so the
+# installed tree and the archive no longer share entry names while pip still maps
+# both ``purelib`` and ``platlib`` onto the environment site root.
 WHEEL_PAYLOAD_SCHEMES = ("purelib", "platlib")
 
 
@@ -52,36 +54,30 @@ def _manifest_from_wheel(wheel: Path) -> dict[str, str]:
     result = {}
     with zipfile.ZipFile(wheel) as archive:
         for info in archive.infolist():
-            if info.is_dir() or not info.filename.startswith("fla_npu/opp/"):
+            if info.is_dir():
                 continue
-            result[info.filename] = hashlib.sha256(archive.read(info)).hexdigest()
+            relative = _installed_relative_name(info.filename)
+            if not relative.startswith("fla_npu/opp/"):
+                continue
+            result[relative] = hashlib.sha256(archive.read(info)).hexdigest()
     return result
 
 
-def _nested_payload_entries(wheel: Path) -> list[str]:
-    """Return entries that keep the payload under ``<dist>.data/<scheme>/``.
+def _installed_relative_name(entry: str) -> str:
+    """Map a wheel entry name onto its installed, site-root-relative path.
 
-    ``bdist_wheel`` produces that layout when a distribution reports
-    ``root_is_pure == False`` without extension modules.  pip installs it into
-    the same site root, but the archive and the installed tree stop sharing entry
-    names, so packaging has to keep ``fla_npu/`` at the archive root instead of
-    the CI learning two layouts.
+    ``fla_npu/opp/...`` stays as-is.  ``<dist>-<version>.data/purelib/fla_npu/...``
+    and its ``platlib`` twin resolve to the same installed path, because the
+    environment under test keeps both schemes in one site root.
     """
 
-    nested = []
-    with zipfile.ZipFile(wheel) as archive:
-        for info in archive.infolist():
-            if info.is_dir():
-                continue
-            parts = info.filename.replace("\\", "/").split("/")
-            if (
-                len(parts) > 2
-                and parts[0].endswith(".data")
-                and parts[1] in WHEEL_PAYLOAD_SCHEMES
-                and parts[2] == "fla_npu"
-            ):
-                nested.append(info.filename)
-    return nested
+    name = entry.replace("\\", "/")
+    while name.startswith("./"):
+        name = name[2:]
+    parts = name.split("/")
+    if len(parts) > 2 and parts[0].endswith(".data") and parts[1] in WHEEL_PAYLOAD_SCHEMES:
+        return "/".join(parts[2:])
+    return name
 
 
 def _is_generated_bytecode(path: Path) -> bool:
@@ -108,16 +104,6 @@ def _manifest_from_directory(package_dir: Path) -> dict[str, str]:
 
 
 def _assert_manifest_matches_wheel(package_dir: Path, wheel: Path) -> None:
-    nested = _nested_payload_entries(wheel)
-    if nested:
-        raise AssertionError(
-            "Wheel payload is nested under <dist>.data/<scheme>/ instead of the "
-            f"archive root: {nested[0]}. Keep fla_npu/ at the root of the wheel "
-            "(see the pure/non-pure configuration in setup.py): the installed "
-            "tree is compared against the archive, so both have to describe the "
-            "same layout."
-        )
-
     expected = _manifest_from_wheel(wheel)
     actual = _manifest_from_directory(package_dir)
     if actual == expected:

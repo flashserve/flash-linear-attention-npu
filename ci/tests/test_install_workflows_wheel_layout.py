@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""The installed-OPP manifest check compares the archive with the site root.
+"""The installed-OPP manifest check has to compare installed paths only.
 
 ``bdist_wheel`` moves the whole payload under ``<dist>-<version>.data/<scheme>/``
-when a distribution reports ``root_is_pure == False`` without extension modules.
-pip still installs that into the same site root, so the packaging defect only
-shows up as a manifest mismatch.  The check has to name the layout problem
-instead of blaming every installed OPP file.
+when a distribution reports ``root_is_pure == False`` without extension modules,
+and pip maps that back onto the same site root.  The archive layout is therefore
+not part of the comparison: the check has to fold the scheme directory away and
+keep comparing the installed tree byte for byte.
 """
 
 import runpy
@@ -57,6 +57,21 @@ class InstalledOppManifestTest(unittest.TestCase):
     def setUpClass(cls):
         cls.checker = runpy.run_path(str(CHECKER))
 
+    def _assert_layout_accepted(self, wheel_entries):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            wheel = root / "flash_linear_attention_npu-1.0-py3-none-any.whl"
+            _write_wheel(wheel, wheel_entries)
+            site_root = root / "site-packages"
+            _write_installed_tree(site_root, OPP_FILES)
+            package_dir = site_root / "fla_npu"
+
+            self.assertEqual(
+                self.checker["_manifest_from_wheel"](wheel),
+                self.checker["_manifest_from_directory"](package_dir),
+            )
+            self.checker["_assert_manifest_matches_wheel"](package_dir, wheel)
+
     def _failure_for(self, wheel_entries, installed_entries):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -71,50 +86,51 @@ class InstalledOppManifestTest(unittest.TestCase):
             return str(context.exception)
 
     def test_root_layout_matches_installed_tree(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            wheel = root / "flash_linear_attention_npu-1.0-py3-none-any.whl"
-            _write_wheel(wheel, OPP_FILES)
-            site_root = root / "site-packages"
-            _write_installed_tree(site_root, OPP_FILES)
-            package_dir = site_root / "fla_npu"
+        self._assert_layout_accepted(OPP_FILES)
 
-            self.assertEqual(
-                self.checker["_manifest_from_wheel"](wheel),
-                self.checker["_manifest_from_directory"](package_dir),
-            )
-            self.checker["_assert_manifest_matches_wheel"](package_dir, wheel)
+    def test_data_purelib_layout_matches_installed_tree(self):
+        self._assert_layout_accepted(_data_layout_entries(OPP_FILES))
 
-    def test_data_purelib_payload_is_reported_as_packaging_defect(self):
-        message = self._failure_for(_data_layout_entries(OPP_FILES), OPP_FILES)
-        self.assertIn("<dist>.data/<scheme>/", message)
-        self.assertIn(".data/purelib/fla_npu/opp/vendors/config.ini", message)
-        self.assertNotIn("unexpected=", message)
+    def test_data_platlib_layout_matches_installed_tree(self):
+        self._assert_layout_accepted(
+            {
+                name.replace(".data/purelib/", ".data/platlib/"): payload
+                for name, payload in _data_layout_entries(OPP_FILES).items()
+            }
+        )
 
-    def test_data_platlib_payload_is_reported_as_packaging_defect(self):
+    def test_dot_slash_prefixed_entries_match_installed_tree(self):
+        self._assert_layout_accepted(
+            {f"./{name}": payload for name, payload in OPP_FILES.items()}
+        )
+
+    def test_payload_outside_the_known_schemes_is_still_reported(self):
         wheel_entries = {
-            name.replace(".data/purelib/", ".data/platlib/"): payload
+            name.replace(".data/purelib/", ".data/data/"): payload
             for name, payload in _data_layout_entries(OPP_FILES).items()
         }
         message = self._failure_for(wheel_entries, OPP_FILES)
-        self.assertIn(".data/platlib/fla_npu/opp/vendors/config.ini", message)
+        # Only ``purelib``/``platlib`` map onto the site root; any other scheme
+        # keeps the payload outside the installed OPP tree and must not pass.
+        self.assertIn("missing=[]", message)
+        self.assertIn("unexpected=['fla_npu/opp/vendors/config.ini'", message)
 
     def test_missing_installed_opp_file_is_reported(self):
         installed = dict(OPP_FILES)
         installed.pop("fla_npu/opp/vendors/config.ini")
-        message = self._failure_for(OPP_FILES, installed)
+        message = self._failure_for(_data_layout_entries(OPP_FILES), installed)
         self.assertIn("missing=['fla_npu/opp/vendors/config.ini']", message)
 
     def test_extra_installed_opp_file_is_still_reported(self):
         installed = dict(OPP_FILES)
         installed["fla_npu/opp/vendors/fla_npu_transformer/extra.bin"] = b"x"
-        message = self._failure_for(OPP_FILES, installed)
+        message = self._failure_for(_data_layout_entries(OPP_FILES), installed)
         self.assertIn("unexpected=['fla_npu/opp/vendors/fla_npu_transformer/extra.bin']", message)
 
     def test_changed_installed_opp_file_is_still_reported(self):
         installed = dict(OPP_FILES)
         installed["fla_npu/opp/vendors/config.ini"] = b"load_priority=other\n"
-        message = self._failure_for(OPP_FILES, installed)
+        message = self._failure_for(_data_layout_entries(OPP_FILES), installed)
         self.assertIn("changed=['fla_npu/opp/vendors/config.ini']", message)
 
 
