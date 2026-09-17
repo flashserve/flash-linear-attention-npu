@@ -98,9 +98,8 @@ bash tests/atk/run_test_cpu.sh -op=chunk_gated_delta_rule_fwd -npu_device_id=0 -
 安装包含本次修改的完整 wheel 后运行：
 
 ```bash
-python tests/atk/chunk_gated_delta_rule_fwd/test_norm_outputs.py
-python examples/gdn_fwd_bwd.py
-python examples/gdn_fwd_bwd.py --qk-l2norm
+python torch_custom/fla_npu/test/test_aclnn_ctypes_abi.py
+python torch_custom/fla_npu/test/test_aclnn_ctypes_abi.py NormOutputsTest --npu
 ```
 
 开发回归结果（基于 main `e22e0bf4` 的接口修改）：
