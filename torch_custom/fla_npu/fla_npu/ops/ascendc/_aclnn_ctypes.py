@@ -1203,7 +1203,6 @@ def _validate_causal_conv1d_data_tensors(
 PAD_SLOT_ID = -1
 NULL_BLOCK_ID = 0
 
-
 def _launch_causal_conv1d(
     x,
     weight,
@@ -1227,9 +1226,13 @@ def _launch_causal_conv1d(
 ):
     """Build the single aclnnCausalConv1d ABI shared by all Python APIs."""
 
+    # This is the ctypes reference: it validates in Python, normalises the
+    # metadata and builds the aclnn call, descriptors included.  The stable path
+    # does not come through here any more -- the family has real adapters -- so
+    # this stays the parity baseline and the FLA_NPU_STABLE_VALIDATE=1 target.
     out = _infer_causal_conv1d_y(x, int(head_num), int(run_mode))
     activation_buffer = ctypes.create_string_buffer(str(activation).encode("utf-8"))
-    return _call_aclnn(
+    result = _call_aclnn(
         "aclnnCausalConv1d",
         lambda ctx: [
             ctx.tensor(x, "x"),
@@ -1254,6 +1257,7 @@ def _launch_causal_conv1d(
         ],
         out,
     )
+    return result
 
 
 def npu_causal_conv1d_fn(
@@ -2418,6 +2422,23 @@ def npu_chunk_kda_bwd_intra(
 
 
 def npu_solve_tri(x, *, cu_seqlens=None, chunk_indices=None, layout="bsnd"):
+    layout = str(layout)
+    if layout == "tnd":
+        # Measured on Ascend910B3 with the OPP in this tree: the tnd spelling
+        # kills the process inside aclnnSolveTri, with and without cu_seqlens.
+        # Crashing has no defined semantics to be compatible with, so this one
+        # is refused with a message instead -- see
+        # docs/architecture/stable-abi-macro-design.md.
+        #
+        # `ntd` crashes the same way (re-measured: five of six shapes segfault,
+        # the sixth is rejected 161001 -- see the inventory's known limits), and
+        # it is deliberately *not* intercepted here: the reference does not
+        # either, and whether to refuse it is the operator owner's call.
+        raise RuntimeError(
+            "npu_solve_tri: layout='tnd' is refused because the operator "
+            "crashes the process for that spelling on this OPP (verified on "
+            "both the ctypes and the Stable-ABI path). Use layout='bsnd' or "
+            "'bnsd'.")
     x_contig = x.contiguous()
     out = _empty_like(x_contig)
     layout_arg = ctypes.c_char_p(str(layout).encode("utf-8"))
