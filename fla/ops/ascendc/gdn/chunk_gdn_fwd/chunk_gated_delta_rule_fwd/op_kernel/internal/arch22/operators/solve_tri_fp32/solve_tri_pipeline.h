@@ -13,7 +13,7 @@ using namespace Catlass;
 
 
 struct FullProblem {
-    int64_t batch, tokens, heads, bt, headFirst, sequences;
+    int64_t batch, tokens, heads, bt, sequences;
     int64_t tasks32, tasks64, tasks128;
 };
 struct WorkItem {
@@ -51,11 +51,11 @@ __aicore__ inline WorkItem locate(int64_t task, int span, FullProblem p, GlobalT
 __aicore__ inline int64_t pos(FullProblem p, WorkItem w, int64_t row, int width)
 {
     int64_t t = w.base + row;
-    return (p.headFirst ? (w.b * p.heads + w.h) * p.tokens + t : (w.b * p.tokens + t) * p.heads + w.h) * width;
+    return ((w.b * p.heads + w.h) * p.tokens + t) * width;
 }
-__aicore__ inline int64_t stride(FullProblem p, int width)
+__aicore__ inline int64_t stride(int width)
 {
-    return (p.headFirst ? 1 : p.heads) * width;
+    return width;
 }
 
 template <class In>
@@ -150,7 +150,7 @@ __aicore__ inline void pipeline_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR outpu
                     if (n1 > 0) {
                         auto d1 = d[pos(info, w, w.t + S, S)];
                         auto off = x[pos(info, w, w.t + S, info.bt) + w.t % info.bt];
-                        full_gemm(mm, d1, off, ws[j * E], n1, n0, n1, stride(info, S), stride(info, info.bt), W);
+                        full_gemm(mm, d1, off, ws[j * E], n1, n0, n1, stride(S), stride(info.bt), W);
                     }
                 }
 
@@ -161,7 +161,7 @@ __aicore__ inline void pipeline_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR outpu
                     if (n1 > 0) {
                         int64_t slot = core * BATCH * 2 + (index + j) % (BATCH * 2);
                         auto d0 = d[pos(info, w, w.t, S)];
-                        full_gemm(mm, ws[j * E], d0, batchWs[slot * E], n1, n0, n0, W, stride(info, S), W);
+                        full_gemm(mm, ws[j * E], d0, batchWs[slot * E], n1, n0, n0, W, stride(S), W);
                     }
                 }
 
@@ -179,9 +179,9 @@ __aicore__ inline void pipeline_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR outpu
                 if (n1 > 0) {
                     auto d0 = d[pos(info, w, w.t, S)], d1 = d[pos(info, w, w.t + S, S)];
                     auto off = x[pos(info, w, w.t + S, info.bt) + w.t % info.bt];
-                    full_gemm(mm, d1, off, ws, n1, n0, n1, stride(info, S), stride(info, info.bt), W);
+                    full_gemm(mm, d1, off, ws, n1, n0, n1, stride(S), stride(info.bt), W);
                     PipeBarrier<PIPE_ALL>();
-                    full_gemm(mm, ws, d0, batchWs[slot * E], n1, n0, n0, W, stride(info, S), W);
+                    full_gemm(mm, ws, d0, batchWs[slot * E], n1, n0, n0, W, stride(S), W);
                 }
                 if ((index + 1) % BATCH == 0 || task + 1 == end)
                     CrossCoreSetFlag<0x2, PIPE_FIX>(4 + (index / BATCH) % 2);
@@ -218,7 +218,7 @@ __aicore__ inline void pipeline_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR outpu
             if (rows > 0) {
                 int rounded = (rows + 7) / 8 * 8;
                 DataCopyPadExtParams<float> pad{true, 0, (uint8_t)(rounded - rows), 0};
-                DataCopyExtParams cp{(uint16_t)rows, (uint32_t)(rows * 4), (uint32_t)((stride(info, S) - rows) * 4),
+                DataCopyExtParams cp{(uint16_t)rows, (uint32_t)(rows * 4), (uint32_t)((stride(S) - rows) * 4),
                                      (uint32_t)((2 * S - rounded) / 8), 0};
                 DataCopyPad(f[sub * S], d[pos(info, w, w.t + sub * S, S)], cp, pad);
                 if (sub == 1) {
@@ -241,7 +241,7 @@ __aicore__ inline void pipeline_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR outpu
             WaitFlag<HardEvent::V_MTE3>(0);
             if (rows > 0) {
                 DataCopyExtParams cp{(uint16_t)rows, (uint32_t)(2 * S * sizeof(Out)), 0,
-                                     (uint32_t)((stride(info, 2 * S) - 2 * S) * sizeof(Out)), 0};
+                                     (uint32_t)((stride(2 * S) - 2 * S) * sizeof(Out)), 0};
                 DataCopyPad(y[pos(info, w, w.t + sub * S, 2 * S)], o, cp);
             }
             SetFlag<HardEvent::MTE3_V>(0);
@@ -304,7 +304,7 @@ __aicore__ inline void stage64_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR output
                     if (n1 > 0) {
                         auto d1 = d[pos(info, w, w.t + S, S)];
                         auto off = x[pos(info, w, w.t + S, info.bt) + w.t % info.bt];
-                        full_gemm(mm, d1, off, ws[j * E], n1, n0, n1, stride(info, S), stride(info, info.bt), W);
+                        full_gemm(mm, d1, off, ws[j * E], n1, n0, n1, stride(S), stride(info.bt), W);
                     }
                 }
 
@@ -315,7 +315,7 @@ __aicore__ inline void stage64_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR output
                     if (n1 > 0) {
                         int64_t slot = core * BATCH * 2 + (index + j) % (BATCH * 2);
                         auto d0 = d[pos(info, w, w.t, S)];
-                        full_gemm(mm, ws[j * E], d0, batchWs[slot * E], n1, n0, n0, W, stride(info, S), W);
+                        full_gemm(mm, ws[j * E], d0, batchWs[slot * E], n1, n0, n0, W, stride(S), W);
                     }
                 }
 
@@ -333,9 +333,9 @@ __aicore__ inline void stage64_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR output
                 if (n1 > 0) {
                     auto d0 = d[pos(info, w, w.t, S)], d1 = d[pos(info, w, w.t + S, S)];
                     auto off = x[pos(info, w, w.t + S, info.bt) + w.t % info.bt];
-                    full_gemm(mm, d1, off, ws, n1, n0, n1, stride(info, S), stride(info, info.bt), W);
+                    full_gemm(mm, d1, off, ws, n1, n0, n1, stride(S), stride(info.bt), W);
                     PipeBarrier<PIPE_ALL>();
-                    full_gemm(mm, ws, d0, batchWs[slot * E], n1, n0, n0, W, stride(info, S), W);
+                    full_gemm(mm, ws, d0, batchWs[slot * E], n1, n0, n0, W, stride(S), W);
                 }
                 if ((index + 1) % BATCH == 0 || task + 1 == end)
                     CrossCoreSetFlag<0x2, PIPE_FIX>(4 + (index / BATCH) % 2);
@@ -372,7 +372,7 @@ __aicore__ inline void stage64_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR output
             if (rows > 0) {
                 int rounded = (rows + 7) / 8 * 8;
                 DataCopyPadExtParams<float> pad{true, 0, (uint8_t)(rounded - rows), 0};
-                DataCopyExtParams cp{(uint16_t)rows, (uint32_t)(rows * 4), (uint32_t)((stride(info, S) - rows) * 4),
+                DataCopyExtParams cp{(uint16_t)rows, (uint32_t)(rows * 4), (uint32_t)((stride(S) - rows) * 4),
                                      (uint32_t)((2 * S - rounded) / 8), 0};
                 DataCopyPad(f[sub * S], d[pos(info, w, w.t + sub * S, S)], cp, pad);
                 if (sub == 1) {
@@ -395,7 +395,7 @@ __aicore__ inline void stage64_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR output
             WaitFlag<HardEvent::V_MTE3>(0);
             if (rows > 0) {
                 DataCopyExtParams cp{(uint16_t)rows, (uint32_t)(2 * S * sizeof(Out)), 0,
-                                     (uint32_t)((stride(info, 2 * S) - 2 * S) * sizeof(Out)), 0};
+                                     (uint32_t)((stride(2 * S) - 2 * S) * sizeof(Out)), 0};
                 DataCopyPad(y[pos(info, w, w.t + sub * S, 2 * S)], o, cp);
             }
             SetFlag<HardEvent::MTE3_V>(0);
@@ -452,7 +452,7 @@ public:
             if (n <= 0)
                 continue;
             int rounded = (n + 7) / 8 * 8;
-            DataCopyExtParams cp{(uint16_t)n, (uint32_t)(n * 4), (uint32_t)((stride(info, info.bt) - n) * 4),
+            DataCopyExtParams cp{(uint16_t)n, (uint32_t)(n * 4), (uint32_t)((stride(info.bt) - n) * 4),
                                  (uint32_t)((16 - rounded) / 8), 0};
             DataCopyPadExtParams<float> pad{true, 0, (uint8_t)(rounded - n), 0};
             DataCopyPad(a[leaf * 256], in[pos(info, w, t, info.bt) + t % info.bt], cp, pad);
@@ -495,7 +495,7 @@ public:
             if (rows[leaf] <= 0)
                 continue;
             auto w = jobs[leaf];
-            DataCopyExtParams cp{(uint16_t)rows[leaf], 64, 0, (uint32_t)((stride(info, 16) - 16) * 4), 0};
+            DataCopyExtParams cp{(uint16_t)rows[leaf], 64, 0, (uint32_t)((stride(16) - 16) * 4), 0};
             DataCopyPad(out[pos(info, w, w.t + sub * 16, 16)], a[leaf * 256], cp);
         }
 
@@ -561,7 +561,7 @@ __aicore__ inline void leaf_merge_pipeline(GM_ADDR input, GM_ADDR prev, GM_ADDR 
                     if (n1 > 0) {
                         auto d1 = d[pos(info, w, w.t + S, S)];
                         auto off = x[pos(info, w, w.t + S, info.bt) + w.t % info.bt];
-                        full_gemm(mm, d1, off, ws[j * E], n1, n0, n1, stride(info, S), stride(info, info.bt), W);
+                        full_gemm(mm, d1, off, ws[j * E], n1, n0, n1, stride(S), stride(info.bt), W);
                     }
                 }
 
@@ -572,7 +572,7 @@ __aicore__ inline void leaf_merge_pipeline(GM_ADDR input, GM_ADDR prev, GM_ADDR 
                     if (n1 > 0) {
                         int64_t slot = core * BATCH * 2 + (index + j) % (BATCH * 2);
                         auto d0 = d[pos(info, w, w.t, S)];
-                        full_gemm(mm, ws[j * E], d0, batchWs[slot * E], n1, n0, n0, W, stride(info, S), W);
+                        full_gemm(mm, ws[j * E], d0, batchWs[slot * E], n1, n0, n0, W, stride(S), W);
                     }
                 }
 
@@ -590,9 +590,9 @@ __aicore__ inline void leaf_merge_pipeline(GM_ADDR input, GM_ADDR prev, GM_ADDR 
                 if (n1 > 0) {
                     auto d0 = d[pos(info, w, w.t, S)], d1 = d[pos(info, w, w.t + S, S)];
                     auto off = x[pos(info, w, w.t + S, info.bt) + w.t % info.bt];
-                    full_gemm(mm, d1, off, ws, n1, n0, n1, stride(info, S), stride(info, info.bt), W);
+                    full_gemm(mm, d1, off, ws, n1, n0, n1, stride(S), stride(info.bt), W);
                     PipeBarrier<PIPE_ALL>();
-                    full_gemm(mm, ws, d0, batchWs[slot * E], n1, n0, n0, W, stride(info, S), W);
+                    full_gemm(mm, ws, d0, batchWs[slot * E], n1, n0, n0, W, stride(S), W);
                 }
                 if ((index + 1) % BATCH == 0 || task + 1 == end)
                     CrossCoreSetFlag<0x2, PIPE_FIX>(4 + (index / BATCH) % 2);
@@ -643,7 +643,7 @@ __aicore__ inline void leaf_merge_pipeline(GM_ADDR input, GM_ADDR prev, GM_ADDR 
                 if (rows > 0) {
                     int rounded = (rows + 7) / 8 * 8;
                     DataCopyPadExtParams<float> pad{true, 0, (uint8_t)(rounded - rows), 0};
-                    DataCopyExtParams cp{(uint16_t)rows, (uint32_t)(rows * 4), (uint32_t)((stride(info, S) - rows) * 4),
+                    DataCopyExtParams cp{(uint16_t)rows, (uint32_t)(rows * 4), (uint32_t)((stride(S) - rows) * 4),
                                          (uint32_t)((2 * S - rounded) / 8), 0};
                     DataCopyPad(f[sub * S], d[pos(info, w, w.t + sub * S, S)], cp, pad);
                     if (sub == 1) {
@@ -666,7 +666,7 @@ __aicore__ inline void leaf_merge_pipeline(GM_ADDR input, GM_ADDR prev, GM_ADDR 
                 WaitFlag<HardEvent::V_MTE3>(0);
                 if (rows > 0) {
                     DataCopyExtParams cp{(uint16_t)rows, (uint32_t)(2 * S * sizeof(Out)), 0,
-                                         (uint32_t)((stride(info, 2 * S) - 2 * S) * sizeof(Out)), 0};
+                                         (uint32_t)((stride(2 * S) - 2 * S) * sizeof(Out)), 0};
                     DataCopyPad(y[pos(info, w, w.t + sub * S, 2 * S)], o, cp);
                 }
                 SetFlag<HardEvent::MTE3_V>(0);
@@ -685,7 +685,7 @@ template <class In, class Out>
 __aicore__ inline void Run(GM_ADDR raw, GM_ADDR x, GM_ADDR d16, GM_ADDR d32, GM_ADDR d64, GM_ADDR y, GM_ADDR ws,
                            GM_ADDR cu, FullProblem p)
 {
-    // KKT/staging 的跨组 GM 写入对所有 Solve 消费者可见。
+    // KKT 的跨组 GM 写入对所有 Solve 消费者可见。
     SyncAll<false>();
     if constexpr (sizeof(In) != 4) {
         if ASCEND_IS_AIV {
