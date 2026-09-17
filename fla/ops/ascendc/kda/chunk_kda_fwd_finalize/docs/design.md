@@ -128,5 +128,6 @@ token/head 轴，`TND/NTD` 交换 rank-3 的 token/head 轴。
 独立算子不接收 HK；GVA 复用发生在 Prepare，Finalize 只能验证
 已展开为 HV 的数据。`h/final_state` 的公开保留策略属于 FwdH 或
 完整 forward，Finalize 必须实际收到内部 `h`，即使调用者不请求
-公开 intermediate states。本 PR 不修改共享 Python 注册代码，
-因此算子私有 ATK 直调不等价于稳定 `fla_npu` 主入口验证。
+公开 intermediate states。稳定 `fla_npu.ops.ascendc` 入口通过 ctypes
+直接调用 aclnn，不注册 legacy `torch.ops.npu` 接口。算子私有 ATK
+直调只验证设备实现，不能替代稳定 Python 入口验证。
