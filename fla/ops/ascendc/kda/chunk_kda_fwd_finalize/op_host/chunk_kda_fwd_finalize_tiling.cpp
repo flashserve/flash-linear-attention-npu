@@ -1,6 +1,7 @@
 #include "chunk_kda_fwd_finalize_tiling.h"
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <initializer_list>
 #include <limits>
@@ -16,7 +17,8 @@ namespace optiling {
 namespace {
 
 constexpr uint32_t FINALIZE_MIX_BATCH_MODE = 1;
-constexpr uint64_t FINALIZE_AIV_MOVER_MIN_CHUNKS_PER_CORE = 8;
+constexpr uint64_t FINALIZE_AIV_MOVER_DENSE_MIN_CHUNKS_PER_CORE = 4;
+constexpr uint64_t FINALIZE_AIV_MOVER_VARLEN_MIN_CHUNKS_PER_CORE = 8;
 
 struct FinalizeShape {
     uint64_t batch = 0;
@@ -38,6 +40,43 @@ bool HasShape(const gert::Shape &shape, std::initializer_list<int64_t> dims)
         }
     }
     return true;
+}
+
+// 形状不匹配时把实际输入/输出形状写进日志，便于直接定位调用方 shape 问题。
+void FormatShape(const gert::Shape &shape, char *buffer, size_t bufferSize)
+{
+    size_t offset = 0;
+    const size_t dimNum = shape.GetDimNum();
+    offset += static_cast<size_t>(snprintf(buffer + offset, bufferSize - offset,
+                                          "rank%zu[", dimNum));
+    for (size_t index = 0; index < dimNum && offset < bufferSize; ++index) {
+        offset += static_cast<size_t>(snprintf(buffer + offset, bufferSize - offset, "%s%ld",
+                                              index == 0 ? "" : ",", shape.GetDim(index)));
+    }
+    (void)snprintf(buffer + (offset < bufferSize ? offset : bufferSize - 2),
+                   bufferSize - (offset < bufferSize ? offset : bufferSize - 2), "]");
+}
+
+void FormatInputShape(gert::TilingContext *context, size_t index, char *buffer,
+                      size_t bufferSize)
+{
+    const auto *shape = context->GetInputShape(index);
+    if (shape == nullptr) {
+        (void)snprintf(buffer, bufferSize, "null");
+        return;
+    }
+    FormatShape(shape->GetStorageShape(), buffer, bufferSize);
+}
+
+void FormatOutputShape(gert::TilingContext *context, size_t index, char *buffer,
+                       size_t bufferSize)
+{
+    const auto *shape = context->GetOutputShape(index);
+    if (shape == nullptr) {
+        (void)snprintf(buffer, bufferSize, "null");
+        return;
+    }
+    FormatShape(shape->GetStorageShape(), buffer, bufferSize);
 }
 
 bool ReadLayout(const char *layout, FinalizeShape &shape)
@@ -248,9 +287,20 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
         info.batch > std::numeric_limits<uint32_t>::max() ||
         info.heads > std::numeric_limits<uint32_t>::max() ||
         info.seqLen > std::numeric_limits<uint32_t>::max()) {
+        char qgBuffer[96] = {0};
+        char aqkBuffer[96] = {0};
+        char vNewBuffer[96] = {0};
+        char hBuffer[96] = {0};
+        char outBuffer[96] = {0};
+        FormatInputShape(context, FINALIZE_INPUT_QG_SCALED, qgBuffer, sizeof(qgBuffer));
+        FormatInputShape(context, FINALIZE_INPUT_AQK, aqkBuffer, sizeof(aqkBuffer));
+        FormatInputShape(context, FINALIZE_INPUT_V_NEW, vNewBuffer, sizeof(vNewBuffer));
+        FormatInputShape(context, FINALIZE_INPUT_H, hBuffer, sizeof(hBuffer));
+        FormatOutputShape(context, 0, outBuffer, sizeof(outBuffer));
         OP_LOGE(context->GetNodeName(),
-                "输入/输出必须匹配 head-major BF16、K=V=128、Aqk 末维 64 与 output_layout。当前 layout=%s。",
-                layout);
+                "输入/输出必须匹配 head-major BF16、K=V=128、Aqk 末维 64 与 output_layout。"
+                "当前 layout=%s, qg_scaled=%s, Aqk=%s, v_new=%s, h=%s, attn_out=%s。",
+                layout, qgBuffer, aqkBuffer, vNewBuffer, hBuffer, outBuffer);
         return ge::GRAPH_FAILED;
     }
     const auto *cuDesc = context->GetOptionalInputDesc(
@@ -314,9 +364,12 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
         platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
     const uint64_t minimumChunksPerCore =
         schedule.chunkWorkItems / schedule.usedCoreNum;
+    const uint64_t moverMinimumChunksPerCore = isVarLen
+        ? FINALIZE_AIV_MOVER_VARLEN_MIN_CHUNKS_PER_CORE
+        : FINALIZE_AIV_MOVER_DENSE_MIN_CHUNKS_PER_CORE;
     const bool useAivInputMover =
         isA5 && schedule.headsPerPartition == info.heads &&
-        minimumChunksPerCore >= FINALIZE_AIV_MOVER_MIN_CHUNKS_PER_CORE;
+        minimumChunksPerCore >= moverMinimumChunksPerCore;
     using namespace KdaFinalize;
     const uint64_t tilingKey = GET_TPL_TILING_KEY(
         static_cast<uint64_t>(useAivInputMover ? 1 : 0));

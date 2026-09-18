@@ -9,6 +9,23 @@
 chunk 间状态，也不产生 `h/final_state`。四个输入均已按 value head 展开，
 Finalize 本身不执行 query/value head 映射。
 
+稳定 Python 入口为：
+
+```python
+from fla_npu.ops.ascendc import chunk_kda_fwd_finalize
+
+attn_out = chunk_kda_fwd_finalize(
+    qg_scaled,
+    aqk,
+    v_new,
+    h,
+    output_layout="BSND",
+    state_v_first=False,
+    cu_seqlens=None,
+    chunk_indices=None,
+)
+```
+
 每个长度不超过 64 的 chunk 计算：
 
 ```text
@@ -53,9 +70,10 @@ chunk 数之和。`Aqk` 最后一维始终是 64，包括尾 chunk。
 ## 调用边界
 
 独立算子支持 A2 (`ascend910b`)、A3 (`ascend910_93`) 和 A5
-(`ascend950`)。算子定义和 aclnn 接口属于本目录；本次不改动公共
-`fla_npu.ops.ascendc` 注册文件。要从稳定 Python 入口调用本算子，
-仍需另行接入公共 ctypes wrapper；ATK 中仅使用算子私有的直调适配。
+(`ascend950`)。`fla_npu.ops.ascendc.chunk_kda_fwd_finalize` 通过
+ctypes 直接调用 `aclnnChunkKdaFwdFinalize`，不注册 legacy
+`torch.ops.npu` 接口。Python 入口的形状、dtype、layout 和变长元数据
+约束与 aclnn 接口一致。
 
 ## 验证
 

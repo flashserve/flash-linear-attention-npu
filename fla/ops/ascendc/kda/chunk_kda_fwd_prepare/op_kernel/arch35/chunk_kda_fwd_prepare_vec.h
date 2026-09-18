@@ -202,8 +202,8 @@ __simd_vf__ inline void StageV0Vf(
             ReduceSum(qSumHigh, qSquareHigh, mask);
             ReduceSum(kSumLow, kSquareLow, mask);
             ReduceSum(kSumHigh, kSquareHigh, mask);
-            // ReduceSum 只保证首 lane 有效。rstd 同时供当前行
-            // 归一化广播，并由 MTE3 作为反向保存量写回。
+            // ReduceSum 只保证首 lane 有效。rstd 供当前行归一化广播，
+            // 需要反向保存量时再落入 UB 并由 MTE3 写回。
             Add(qSumLow, qSumLow, qSumHigh, scalarMask);
             Add(kSumLow, kSumLow, kSumHigh, scalarMask);
             Adds(qSumLow, qSumLow, epsilon, scalarMask);
@@ -214,12 +214,14 @@ __simd_vf__ inline void StageV0Vf(
             Duplicate(one, 1.0F, scalarMask);
             Div(qSumLow, one, qSumLow, scalarMask);
             Div(kSumLow, one, kSumLow, scalarMask);
-            DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
-                qRstd + row, qSumLow, scalarMask);
-            DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
-                kRstd + row, kSumLow, scalarMask);
-            // ReduceSum 的最低 lane 已是最终 rstd，直接在寄存器内广播。
-            // 对外保存仍写 qRstd/kRstd，不再为当前行计算做 UB 往返。
+            if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
+                    qRstd + row, qSumLow, scalarMask);
+                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
+                    kRstd + row, kSumLow, scalarMask);
+            }
+            // ReduceSum 的最低 lane 已是最终 rstd，直接在寄存器内广播，
+            // 不再为当前行计算做 UB 往返。
             RegTensor<float> qScale;
             RegTensor<float> kScale;
             Duplicate(qScale, qSumLow, mask);
@@ -229,13 +231,15 @@ __simd_vf__ inline void StageV0Vf(
             Mul(kLow, kLow, kScale, mask);
             Mul(kHigh, kHigh, kScale, mask);
         } else {
-            // Identity 模式也固定产生公开的 rstd=1。
-            RegTensor<float> one;
-            Duplicate(one, 1.0F, scalarMask);
-            DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
-                qRstd + row, one, scalarMask);
-            DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
-                kRstd + row, one, scalarMask);
+            // Identity 模式仅在需要反向保存量时产生公开的 rstd=1。
+            if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+                RegTensor<float> one;
+                Duplicate(one, 1.0F, scalarMask);
+                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
+                    qRstd + row, one, scalarMask);
+                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
+                    kRstd + row, one, scalarMask);
+            }
         }
         Store128FromFp32(q + row * Shape::kHeadDim, qLow, qHigh);
         Store128FromFp32(k + row * Shape::kHeadDim, kLow, kHigh);
@@ -792,6 +796,16 @@ public:
         vGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.v));
         gateGm_.SetGlobalBuffer(reinterpret_cast<__gm__ GateT *>(args.rawGate));
         betaGm_.SetGlobalBuffer(reinterpret_cast<__gm__ BetaT *>(args.beta));
+        // rawGate/V 在每个 chunk/value head 只读取一次，绕过 L2 避免
+        // 流式输入挤占后续阶段会再次读取的 workspace 与 gk 数据。
+        vGm_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+        gateGm_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+        // HK=HV 时 Q/K 与 value head 一一对应，同样只读取一次；GVA 下
+        // 同一个 QK head 会被多个 value head 复用，继续保留默认 L2 策略。
+        if (args.tiling.qkHeadNum == args.tiling.valueHeadNum) {
+            qGm_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+            kGm_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+        }
         if (args.dtBias != nullptr) {
             dtBiasGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.dtBias));
         }
@@ -806,22 +820,22 @@ public:
         kgGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.kg));
         gkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.gk));
         aqkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.aqk));
-        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+        if constexpr (CompilePolicy::outputAkk) {
             akkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.akk));
         }
-        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+        if constexpr (CompilePolicy::outputRecomputeAux) {
             qHatGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.qHat));
         }
-        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+        if constexpr (CompilePolicy::outputRecomputeAux) {
             kHatGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.kHat));
         }
-        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+        if constexpr (CompilePolicy::outputRecomputeAux) {
             qRstdGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.qRstd));
         }
-        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+        if constexpr (CompilePolicy::outputRecomputeAux) {
             kRstdGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.kRstd));
         }
-        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+        if constexpr (CompilePolicy::outputRecomputeAux) {
             betaEffGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.betaEff));
         }
     }
@@ -832,80 +846,95 @@ public:
             workgroup_ >= args_.tiling.usedCoreNum) {
             return;
         }
-        // 每个 AIV 都在自己的本地 flag 空间使用同一组固定编号：
-        // localSlot0/1 的 ready=0/1，free=4/5。AIV1 不能写 16/17/20/21。
-        constexpr uint16_t kAivToAicPayloadReadyFlagId[2] = {0, 1};
-        constexpr uint16_t kAicToAivSlotReusableFlagId[2] = {4, 5};
-        bool usedLocalSlot[2] = {false, false};
-        const uint32_t total = TotalWorkItems(args_.tiling);
-        const uint32_t workBegin = WorkBegin(
-            total, workgroup_, args_.tiling.usedCoreNum);
-        const uint32_t workEnd = WorkEnd(
-            total, workgroup_, args_.tiling.usedCoreNum);
-        for (uint32_t work = workBegin; work < workEnd; ++work) {
-            uint32_t globalChunk = 0;
-            uint32_t headPartition = 0;
-            DecodeWorkItem(args_.tiling, work, globalChunk, headPartition);
-            ChunkRange chunk{};
-            if (!ResolveChunk(args_, globalChunk, chunk)) {
-                continue;
+        const uint32_t coreCount = args_.tiling.usedCoreNum;
+        const uint32_t chunkWork = static_cast<uint32_t>(
+            static_cast<uint64_t>(args_.tiling.batch) *
+            args_.tiling.totalChunks);
+        const uint32_t headsPerQk =
+            args_.tiling.valueHeadNum / args_.tiling.qkHeadNum;
+        const bool fourHeadGroupPreservesGva =
+            headsPerQk != 0 && Shape::kHeadsPerGroup % headsPerQk == 0;
+        const bool balanceDenseTail =
+            !args_.tiling.isVarLen && HeadPartitionCount(args_.tiling) == 1 &&
+            fourHeadGroupPreservesGva && chunkWork >= coreCount &&
+            chunkWork % coreCount != 0;
+        if (!balanceDenseTail) {
+            const uint32_t total = TotalWorkItems(args_.tiling);
+            const uint32_t workBegin = WorkBegin(
+                total, workgroup_, coreCount);
+            const uint32_t workEnd = WorkEnd(
+                total, workgroup_, coreCount);
+            for (uint32_t work = workBegin; work < workEnd; ++work) {
+                uint32_t globalChunk = 0;
+                uint32_t headPartition = 0;
+                DecodeWorkItem(
+                    args_.tiling, work, globalChunk, headPartition);
+                ChunkRange chunk{};
+                if (!ResolveChunk(args_, globalChunk, chunk)) {
+                    continue;
+                }
+                uint32_t headBegin = 0;
+                uint32_t headEnd = 0;
+                HeadRange(
+                    args_.tiling, headPartition, headBegin, headEnd);
+                ProcessChunkHeadRange(chunk, headBegin, headEnd);
             }
-            uint32_t headBegin = 0;
-            uint32_t headEnd = 0;
-            HeadRange(args_.tiling, headPartition, headBegin, headEnd);
-            for (uint32_t groupBegin = headBegin; groupBegin < headEnd;) {
-                uint32_t activeHeads = headEnd - groupBegin;
-                if (activeHeads > Shape::kHeadsPerGroup) {
-                    activeHeads = Shape::kHeadsPerGroup;
+        } else {
+            // 主体 chunk 仍然只按 chunk 分核，每核处理相同数量的完整 head。
+            const uint32_t chunksPerCore = chunkWork / coreCount;
+            const uint32_t bodyChunkCount = chunksPerCore * coreCount;
+            const uint32_t bodyBegin = workgroup_ * chunksPerCore;
+            const uint32_t bodyEnd = bodyBegin + chunksPerCore;
+            for (uint32_t globalChunk = bodyBegin;
+                 globalChunk < bodyEnd; ++globalChunk) {
+                ChunkRange chunk{};
+                if (!ResolveChunk(args_, globalChunk, chunk)) {
+                    continue;
                 }
-                for (uint32_t localSlot = 0; localSlot < 2; ++localSlot) {
-                    const uint32_t localHead = aiv_ * 2 + localSlot;
-                    if (localHead >= activeHeads) {
-                        continue;
-                    }
-                    const uint32_t valueHead = groupBegin + localHead;
-                    usedLocalSlot[localSlot] = true;
-                    // 初始 free 或上一组 C7 free；V0 首个消费者是 MTE2。
-                    AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
-                        kAicToAivSlotReusableFlagId[localSlot]);
-                    StageV0(chunk, valueHead, localHead, localSlot);
-                    StageV1(chunk, localHead, localSlot);
-                    // V1 的 72 KiB score payload 已经写入 workspace。
-                    AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
-                        kAivToAicPayloadReadyFlagId[localSlot]);
+                ProcessChunkHeadRange(
+                    chunk, 0, args_.tiling.valueHeadNum);
+            }
+
+            // 不足一轮的尾部 chunk 再按 4-head group 展开，均摊到全部核。
+            const uint32_t headGroupCount = CeilDiv(
+                args_.tiling.valueHeadNum, Shape::kHeadsPerGroup);
+            const uint32_t tailChunkCount = chunkWork - bodyChunkCount;
+            const uint64_t tailTaskCount =
+                static_cast<uint64_t>(tailChunkCount) * headGroupCount;
+            uint64_t tailTask = tailTaskCount * workgroup_ / coreCount;
+            const uint64_t tailTaskEnd =
+                tailTaskCount * (workgroup_ + 1) / coreCount;
+            while (tailTask < tailTaskEnd) {
+                const uint32_t tailChunk = static_cast<uint32_t>(
+                    tailTask / headGroupCount);
+                const uint32_t firstHeadGroup = static_cast<uint32_t>(
+                    tailTask % headGroupCount);
+                uint64_t segmentEnd =
+                    static_cast<uint64_t>(tailChunk + 1) * headGroupCount;
+                if (segmentEnd > tailTaskEnd) {
+                    segmentEnd = tailTaskEnd;
                 }
-                for (uint32_t localSlot = 0; localSlot < 2; ++localSlot) {
-                    const uint32_t localHead = aiv_ * 2 + localSlot;
-                    if (localHead >= activeHeads) {
-                        continue;
-                    }
-                    const uint32_t valueHead = groupBegin + localHead;
-                    // C2 已写回 raw Aqk/Akk，且不再读取 V1 payload。
-                    AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
-                        kAicToAivSlotReusableFlagId[localSlot]);
-                    StageV3(chunk, valueHead, localHead, localSlot);
-                    AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
-                        kAivToAicPayloadReadyFlagId[localSlot]);
+                const uint32_t segmentGroups = static_cast<uint32_t>(
+                    segmentEnd - tailTask);
+                const uint32_t headBegin =
+                    firstHeadGroup * Shape::kHeadsPerGroup;
+                uint32_t headEnd = (firstHeadGroup + segmentGroups) *
+                    Shape::kHeadsPerGroup;
+                if (headEnd > args_.tiling.valueHeadNum) {
+                    headEnd = args_.tiling.valueHeadNum;
                 }
-                for (uint32_t localSlot = 0; localSlot < 2; ++localSlot) {
-                    const uint32_t localHead = aiv_ * 2 + localSlot;
-                    if (localHead >= activeHeads) {
-                        continue;
-                    }
-                    const uint32_t valueHead = groupBegin + localHead;
-                    // C4 已一次性读完 B/X0/negX1/Akk，V6 可以原址换义。
-                    AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
-                        kAicToAivSlotReusableFlagId[localSlot]);
-                    StageV6(chunk, valueHead, localHead, localSlot);
-                    AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
-                        kAivToAicPayloadReadyFlagId[localSlot]);
+                ChunkRange chunk{};
+                if (ResolveChunk(
+                        args_, bodyChunkCount + tailChunk, chunk)) {
+                    ProcessChunkHeadRange(chunk, headBegin, headEnd);
                 }
-                groupBegin += activeHeads;
+                tailTask = segmentEnd;
             }
         }
         // 消费最后一次 C7 free，保证每次 set 都有对应 wait。
+        constexpr uint16_t kAicToAivSlotReusableFlagId[2] = {4, 5};
         for (uint32_t localSlot = 0; localSlot < 2; ++localSlot) {
-            if (usedLocalSlot[localSlot]) {
+            if (usedLocalSlot_[localSlot]) {
                 AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
                     kAicToAivSlotReusableFlagId[localSlot]);
             }
@@ -913,6 +942,64 @@ public:
     }
 
 private:
+    __aicore__ inline void ProcessChunkHeadRange(
+        const ChunkRange &chunk, uint32_t headBegin, uint32_t headEnd)
+    {
+        // 每个 AIV 都在自己的本地 flag 空间使用同一组固定编号：
+        // localSlot0/1 的 ready=0/1，free=4/5。AIV1 不能写 16/17/20/21。
+        constexpr uint16_t kAivToAicPayloadReadyFlagId[2] = {0, 1};
+        constexpr uint16_t kAicToAivSlotReusableFlagId[2] = {4, 5};
+        for (uint32_t groupBegin = headBegin; groupBegin < headEnd;) {
+            uint32_t activeHeads = headEnd - groupBegin;
+            if (activeHeads > Shape::kHeadsPerGroup) {
+                activeHeads = Shape::kHeadsPerGroup;
+            }
+            for (uint32_t localSlot = 0; localSlot < 2; ++localSlot) {
+                const uint32_t localHead = aiv_ * 2 + localSlot;
+                if (localHead >= activeHeads) {
+                    continue;
+                }
+                const uint32_t valueHead = groupBegin + localHead;
+                usedLocalSlot_[localSlot] = true;
+                // 初始 free 或上一组 C7 free；V0 首个消费者是 MTE2。
+                AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
+                    kAicToAivSlotReusableFlagId[localSlot]);
+                StageV0(chunk, valueHead, localHead, localSlot);
+                StageV1(chunk, localHead, localSlot);
+                // V1 的 72 KiB score payload 已经写入 workspace。
+                AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
+                    kAivToAicPayloadReadyFlagId[localSlot]);
+            }
+            for (uint32_t localSlot = 0; localSlot < 2; ++localSlot) {
+                const uint32_t localHead = aiv_ * 2 + localSlot;
+                if (localHead >= activeHeads) {
+                    continue;
+                }
+                const uint32_t valueHead = groupBegin + localHead;
+                // C2 已写回 raw Aqk/Akk，且不再读取 V1 payload。
+                AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
+                    kAicToAivSlotReusableFlagId[localSlot]);
+                StageV3(chunk, valueHead, localHead, localSlot);
+                AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
+                    kAivToAicPayloadReadyFlagId[localSlot]);
+            }
+            for (uint32_t localSlot = 0; localSlot < 2; ++localSlot) {
+                const uint32_t localHead = aiv_ * 2 + localSlot;
+                if (localHead >= activeHeads) {
+                    continue;
+                }
+                const uint32_t valueHead = groupBegin + localHead;
+                // C4 已一次性读完 B/X0/negX1/Akk，V6 可以原址换义。
+                AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
+                    kAicToAivSlotReusableFlagId[localSlot]);
+                StageV6(chunk, valueHead, localHead, localSlot);
+                AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
+                    kAivToAicPayloadReadyFlagId[localSlot]);
+            }
+            groupBegin += activeHeads;
+        }
+    }
+
     __aicore__ inline void StageV0(const ChunkRange &chunk,
                                     uint32_t valueHead,
                                     uint32_t localHead,
@@ -1070,7 +1157,7 @@ private:
         AscendC::DataCopy(gkGm_[HeadTensorOffset(
             args_.tiling, chunk, valueHead, Shape::kHeadDim)],
             g, chunk.validRows * Shape::kHeadDim);
-        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+        if constexpr (CompilePolicy::outputRecomputeAux) {
             AscendC::DataCopyPad(betaEffGm_[HeadScalarOffset(
                 args_.tiling, chunk, valueHead)], betaEff, scalarOutputCopy);
         }
@@ -1082,19 +1169,19 @@ private:
                 args_.tiling, chunk, qkHead, Shape::kHeadDim);
             const uint64_t qkRstdOut = QkHeadScalarOffset(
                 args_.tiling, chunk, qkHead);
-            if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            if constexpr (CompilePolicy::outputRecomputeAux) {
                 AscendC::DataCopy(qHatGm_[qkOut], q,
                     chunk.validRows * Shape::kHeadDim);
             }
-            if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            if constexpr (CompilePolicy::outputRecomputeAux) {
                 AscendC::DataCopy(kHatGm_[qkOut], k,
                     chunk.validRows * Shape::kHeadDim);
             }
-            if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            if constexpr (CompilePolicy::outputRecomputeAux) {
                 AscendC::DataCopyPad(
                     qRstdGm_[qkRstdOut], qRstd, scalarOutputCopy);
             }
-            if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            if constexpr (CompilePolicy::outputRecomputeAux) {
                 AscendC::DataCopyPad(
                     kRstdGm_[qkRstdOut], kRstd, scalarOutputCopy);
             }
@@ -1226,7 +1313,7 @@ private:
             Workspace::kPayload + Workspace::kAkk));
         AscendC::DataCopy(akkRelay, akk,
             Shape::kChunkRows * Shape::kChunkRows);
-        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+        if constexpr (CompilePolicy::outputAkk) {
             AscendC::DataCopy(akkGm_[AOutputOffset(
                 args_.tiling, chunk, valueHead)], akk,
                 chunk.validRows * Shape::kChunkRows);
@@ -1337,6 +1424,7 @@ private:
     PrepareKernelArgs args_{};
     uint32_t workgroup_ = 0;
     uint32_t aiv_ = 0;
+    bool usedLocalSlot_[2] = {false, false};
     Catlass::Arch::Resource<Catlass::Arch::Ascend950> resource_{};
     AscendC::GlobalTensor<bfloat16_t> qGm_{};
     AscendC::GlobalTensor<bfloat16_t> kGm_{};

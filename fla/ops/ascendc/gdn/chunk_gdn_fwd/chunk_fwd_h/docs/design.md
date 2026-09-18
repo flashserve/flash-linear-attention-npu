@@ -105,13 +105,33 @@ AIV 用 FP32 算术执行 `R_next=decay*R+D`，按 StateT 保存 BF16 或 FP32 r
 AIC L1 固定分区：W `[0,64) KiB`，保留空洞 `[64,128) KiB`，H/right `[128,256) KiB`，
 kg `[256,320) KiB`。kg 区最多四个 16 KiB slot；每个 round 只占用 `requiredKhCount` 个。
 
-A5 每个 AIV 有两个 64 KiB local slot，Stage0 的 P 与 Stage2 的 D 按生命周期复用；BF16
-state、FP32 state、BF16 work 和 gate 区保持固定地址。FP32 work unit 最多包含两个 head 时，
-每个 AIV 最多拥有一个 head，其 64 KiB rolling state 在整个 chunk 循环中常驻 `StateFp32`
-bank；仅首块读取 initial state、末块写 final state，不再逐 chunk 经 GM workspace 回写和恢复。
-work unit 含三个或四个 head 时，同一 AIV 会复用 state bank，继续使用原有 GM workspace
-fallback。A2/A3 使用两个 32 KiB tile local slot 和两个 32 KiB BF16 state slot，P/D 使用每核
-每 round-head 独立的 GM scratch。
+A5 的 FP32 state 路径将物理数据槽和逻辑 head slot 分开管理。每个 AIV 的静态 UB 布局为：
+
+| 地址范围 | 用途 |
+| --- | --- |
+| `[0,64) KiB` | 两个 local head 串行复用的 P/D 数据槽；P 占 `[0,32) KiB`，right 占 `[32,48) KiB`，D 占整个 64 KiB |
+| `[64,128) KiB` | local slot 0 的 FP32 rolling state |
+| `[128,192) KiB` | local slot 1 的 FP32 rolling state |
+| `[192,208) KiB` / `[208,224) KiB` | 两个 head 的 BF16 U/V_new work bank |
+| `[224,226) KiB` | gate、gate-scale 和 alpha bank |
+
+四 head work unit 中，AIV0 处理 round head 0/2，AIV1 处理 1/3。每个 AIV 的两份 64 KiB
+state 分别按逻辑 local slot 0/1 绑定，并在整个 chunk 循环内常驻；仅首块读取 initial state、
+末块写 final state，不再逐 chunk 经 GM workspace 回写和恢复。P 与 D 只使用物理数据槽 0，
+按 `P0 -> P1 -> D0 -> D1` 的生产消费顺序串行复用，不增加 head round。
+
+`StateBf16Slot(0)` 的 `[128,160) KiB` 地址与第二份 FP32 state 的低半区重叠，但两个生命周期
+互斥：它只在“首 chunk、无 initial state”时临时生成全零 H0；该次 H0 MTE3 完成后，Stage3
+才初始化两份 FP32 state。存在 FP32 initial state 时先在 `[64,192) KiB` 完成 S-1 转换，
+Stage1 的 `ZERO_STATE=false`，不会访问该 BF16 地址别名。
+
+A5 的 BF16 state 路径维持两个原始 local slot。A2/A3 使用两个 32 KiB tile local slot 和
+两个 32 KiB BF16 state slot，P/D 使用每核每 round-head 独立的 GM scratch。
+
+A5 的 `gk` 路径在 `state_v_first=true` 时，物理 state 为 `[V,K]`，所有 V 行使用
+同一条 128 维 `E(gk_last)`。Stage3 在行循环前按原有指数公式计算一次，保存在一对
+FP32 向量寄存器中供 128 行复用；不改变 state 更新、BF16 舍入和写回顺序。
+`state_v_first=false` 仍按当前 K 行加载对应 gate，scalar-g 路径保持原有 alpha 复用。
 
 ## 6. 同步协议
 
@@ -120,6 +140,14 @@ A5 每个 local slot 分别维护 `P_READY/P_FREE`、`D_READY/D_FREE`、
 pair 由 AIC set/wait 一次，两个 AIV 对同一 ID 各 wait/set 一次；尾 pair 缺 head 的 AIV
 执行 dummy 同步但不访问数据。ready 由真实生产 pipe 发布，free 由最后消费者发布；同一
 slot/pair 的事件复用前必须完成上一代 wait。
+
+A5 FP32 state 的两个 local head 虽然共享一个 P/D 物理槽，跨核 flag 仍按逻辑 local slot
+0/1 区分，ready/free 的 ID 和 set/wait 次数均不改变。Stage1 可以在 V pipe 完成后尽早发布
+`P_FREE`，因为后一个 P 只覆盖低 32 KiB；但 D 会覆盖完整 64 KiB，必须等第二个 head 的
+right MTE3 读完高 32 KiB。为此，同一 AIV 的两次 `RIGHT_READY` 保持原 ID 和次数，由
+`PIPE_MTE3` 在两个 Stage1 都下发后统一发布。AIC 在搬入第一个 right 前等待 local slot 0 的
+`RIGHT_READY`，因此首个 D 的 Fixpipe 不会与第二个 right 的 MTE3 形成 WAR。单 head 和
+BF16 state 路径仍在各自 right 写回后立即发布 ready。
 
 Stage 内按核内 head id 统一写一套流程，`headId&1` 选择 ping/pong L0 slot。当前 slot 的
 MTE2 完成即可启动该 slot 的 VEC/Cube，不等待另一 slot；Cube->Fixpipe 和 VEC->MTE3 同理。
@@ -177,7 +205,7 @@ head round 的展开数组。kernel 在进入 chunk 循环前，按 `kNumHead/vN
 | `tokenBatch` | varlen 的 sequence 数；dense 固定为 1 |
 | `vWorkspaceOffset` | A2/A3 P 的 GM scratch，按 FP32 slot stride 预留 `[blockDim,4,64,128]`；实际元素为 PType |
 | `vUpdateWorkspaceOffset` | Stage1 BF16 right 的 GM workspace，形状为 `[blockDim,4,64,128]` |
-| `kDecayWorkspaceOffset` | FP32 rolling state 的 GM workspace，形状为 `[blockDim,4,128,128]`；A5 每 AIV 单 head 的常驻路径不访问该段，3/4-head fallback 仍使用 |
+| `kDecayWorkspaceOffset` | FP32 rolling state 的 GM workspace，形状为 `[blockDim,4,128,128]`；A5 使用每 AIV 两份常驻 state，不访问该段 |
 | `hWorkspaceOffset` | A2/A3 D 的 FP32 GM scratch，形状为 `[blockDim,4,128,128]` |
 
 workspace 的 core 维使用实际 `blockDim`，各段按 512 Byte 对齐，并在 CANN lib-api workspace

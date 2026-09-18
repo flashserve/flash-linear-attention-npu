@@ -34,7 +34,8 @@ ASCENDC_TPL_ARGS_DECL(
     ASCENDC_TPL_UINT_DECL(OUTPUT_MODE, 2, ASCENDC_TPL_UI_LIST,
                           CHUNK_KDA_FWD_PREPARE_OUTPUT_NONE,
                           CHUNK_KDA_FWD_PREPARE_OUTPUT_RECOMPUTE,
-                          CHUNK_KDA_FWD_PREPARE_OUTPUT_SAVE));
+                          CHUNK_KDA_FWD_PREPARE_OUTPUT_SAVE,
+                          CHUNK_KDA_FWD_PREPARE_OUTPUT_FORWARD));
 
 // SAFE_GATE 只为 SafeSigmoid 置位，避免生成数学等价的重复实例。
 #define CHUNK_KDA_FWD_PREPARE_SEL_ONE(                                      \
@@ -61,7 +62,10 @@ ASCENDC_TPL_ARGS_DECL(
         EXP_VALUE, SAFE_VALUE, CHUNK_KDA_FWD_PREPARE_OUTPUT_RECOMPUTE),     \
     CHUNK_KDA_FWD_PREPARE_SEL_ONE(                                           \
         GATE_TYPE, BETA_TYPE, NORM_VALUE, BETA_VALUE, GATE_VALUE,           \
-        EXP_VALUE, SAFE_VALUE, CHUNK_KDA_FWD_PREPARE_OUTPUT_SAVE)
+        EXP_VALUE, SAFE_VALUE, CHUNK_KDA_FWD_PREPARE_OUTPUT_SAVE),          \
+    CHUNK_KDA_FWD_PREPARE_SEL_ONE(                                           \
+        GATE_TYPE, BETA_TYPE, NORM_VALUE, BETA_VALUE, GATE_VALUE,           \
+        EXP_VALUE, SAFE_VALUE, CHUNK_KDA_FWD_PREPARE_OUTPUT_FORWARD)
 
 #define CHUNK_KDA_FWD_PREPARE_SEL_EXP(                                      \
     GATE_TYPE, BETA_TYPE, NORM_VALUE, BETA_VALUE, GATE_VALUE, SAFE_VALUE)   \

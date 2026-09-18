@@ -175,12 +175,24 @@ run_npu_chunk_kda_bwd_recompute(
 constexpr const char* kChunkKdaFwdLayoutNames[] = {"BSND", "BNSD", "TND",
                                                    "NTD"};
 
+// V2 的三算子组合（ChunkKdaFwdPrepare + ChunkFwdH + ChunkKdaFwdFinalize）与融合
+// 入口共用同一套数学；组合入口在大工作量下更快，但 ChunkFwdH 的耗时对 head 数
+// 不敏感，当 (chunk, head) 总工作量偏小时整链会慢于单 kernel 的融合实现。
+// 这里只按工作量门控，并与 ctypes 参考
+// （_aclnn_ctypes.py 的 _CHUNK_KDA_FWD_V2_MIN_WORK_ITEMS）保持同一条判据，
+// 两条后端才会逐位一致。门控值取自 A2 实测：head 数 16、T=8192（2048 work item）
+// 时组合略慢，head 数 32 及以上组合领先 15% 以上。
+constexpr int64_t kChunkKdaFwdV2MinWorkItems = 4096;
+constexpr double kChunkKdaFwdDefaultEpsilon = 1e-6;
+
 constexpr const char* kSchema_chunk_kda_fwd =
     "npu_chunk_kda_fwd(Tensor q, Tensor k, Tensor v, Tensor g, Tensor beta, "
     "Tensor? A_log, Tensor? dt_bias, Tensor? initial_state, "
     "Tensor? cu_seqlens, Tensor? chunk_indices, int layout, float scale, "
     "int chunk_size, bool safe_gate, float lower_bound, "
-    "bool use_gate_in_kernel, bool state_v_first, bool output_final_state, "
+    "bool use_gate_in_kernel, bool state_v_first, float epsilon, "
+    "bool use_qk_l2norm_in_kernel, bool use_beta_sigmoid_in_kernel, "
+    "bool allow_neg_eigval, bool use_exp2, bool output_final_state, "
     "bool disable_recompute, bool return_intermediate_states, int stream) "
     "-> (Tensor, Tensor?, Tensor?, Tensor, Tensor, Tensor?, Tensor?, Tensor?, "
     "Tensor?, Tensor?, Tensor?)";
@@ -195,6 +207,8 @@ run_npu_chunk_kda_fwd(
     std::optional<Tensor> cu_seqlens, std::optional<Tensor> chunk_indices,
     int64_t layout, double scale, int64_t chunk_size, bool safe_gate,
     double lower_bound, bool use_gate_in_kernel, bool state_v_first,
+    double epsilon, bool use_qk_l2norm_in_kernel,
+    bool use_beta_sigmoid_in_kernel, bool allow_neg_eigval, bool use_exp2,
     bool output_final_state, bool disable_recompute,
     bool return_intermediate_states, int64_t stream) {
   const TensorMeta q_meta = meta_of(q);
@@ -263,6 +277,55 @@ run_npu_chunk_kda_fwd(
     out_h = allocate_sizes(h_sizes, q_dtype, q_meta);
   }
 
+  // 场景选择：命中三个独立算子的组合场景且工作量足够时走 aclnnChunkKdaFwdV2，
+  // 其余场景回落到签名未变的 aclnnChunkKdaFwd（私有 L0 融合实现）。
+  // 非默认 gate/L2norm 开关只有组合入口支持，此时必须命中组合场景（wrapper
+  // 已在 Python 侧按参考实现拦截非法组合）。
+  bool cu_strictly_increasing = true;
+  for (size_t idx = 0; idx + 1 < cu.size(); ++idx) {
+    if (cu[idx] >= cu[idx + 1]) {
+      cu_strictly_increasing = false;
+      break;
+    }
+  }
+  const bool switches_requested =
+      epsilon != kChunkKdaFwdDefaultEpsilon || use_qk_l2norm_in_kernel ||
+      use_beta_sigmoid_in_kernel || allow_neg_eigval || !use_exp2;
+  const bool v2_scenario =
+      q_meta.scalar_type == kBFloat16 && k_dim == 128 && v_dim == 128 &&
+      chunk_size == 64 && cu_strictly_increasing;
+  const int64_t work_items =
+      heads * layout_math::chunks(cu, ci, chunk_size, tokens);
+  const bool use_v2 = v2_scenario &&
+                      (switches_requested ||
+                       work_items >= kChunkKdaFwdV2MinWorkItems);
+
+  if (use_v2) {
+    FLA_STABLE_EXEC(
+        "aclnnChunkKdaFwdV2", q_meta, stream, tensor(q_meta),
+        tensor(meta_of(k)), tensor(v_meta), tensor(meta_of(g)),
+        tensor(meta_of(beta)), optional_tensor(A_log), optional_tensor(dt_bias),
+        optional_tensor(initial_state), int_array(cu), int_array(ci),
+        cstr(kChunkKdaFwdLayoutNames, layout), scalar(scale),
+        scalar(chunk_size), scalar(safe_gate), scalar(lower_bound),
+        scalar(use_gate_in_kernel), scalar(state_v_first), scalar(epsilon),
+        scalar(use_qk_l2norm_in_kernel), scalar(use_beta_sigmoid_in_kernel),
+        scalar(allow_neg_eigval), scalar(use_exp2),
+        out_tensor(meta_of(out_attn)),
+        out_tensor(out_final_state.has_value() ? meta_of(*out_final_state)
+                                               : TensorMeta()),
+        out_tensor(out_gk.has_value() ? meta_of(*out_gk) : TensorMeta()),
+        out_tensor(meta_of(out_aqk)), out_tensor(meta_of(out_akk)),
+        out_tensor(out_w.has_value() ? meta_of(*out_w) : TensorMeta()),
+        out_tensor(out_u.has_value() ? meta_of(*out_u) : TensorMeta()),
+        out_tensor(out_qg.has_value() ? meta_of(*out_qg) : TensorMeta()),
+        out_tensor(out_kg.has_value() ? meta_of(*out_kg) : TensorMeta()),
+        out_tensor(out_v_new.has_value() ? meta_of(*out_v_new) : TensorMeta()),
+        out_tensor(out_h.has_value() ? meta_of(*out_h) : TensorMeta()));
+    return std::make_tuple(out_attn, out_final_state, out_gk, out_aqk, out_akk,
+                           out_w, out_u, out_qg, out_kg, out_v_new, out_h);
+  }
+
   FLA_STABLE_EXEC(
       "aclnnChunkKdaFwd", q_meta, stream, tensor(q_meta), tensor(meta_of(k)),
       tensor(v_meta), tensor(meta_of(g)), tensor(meta_of(beta)),
@@ -284,6 +347,56 @@ run_npu_chunk_kda_fwd(
       out_tensor(out_h.has_value() ? meta_of(*out_h) : TensorMeta()));
   return std::make_tuple(out_attn, out_final_state, out_gk, out_aqk, out_akk,
                          out_w, out_u, out_qg, out_kg, out_v_new, out_h);
+}
+
+// ---------------------------------------------------------------------------
+// npu_chunk_kda_fwd_finalize
+// ---------------------------------------------------------------------------
+
+constexpr const char* kChunkKdaFwdFinalizeLayoutNames[] = {"BSND", "BNSD",
+                                                           "TND", "NTD"};
+
+// 只有 attn_out 是输出：它是 sequence-major（BSND/TND）或 head-major
+// （BNSD/NTD）的 rank-4，packed 拼写是 rank-3。qg_scaled/aqk/v_new/h 始终是
+// head-major，packed 时没有 batch 轴——与 ctypes 参考完全一致。
+constexpr const char* kSchema_chunk_kda_fwd_finalize =
+    "npu_chunk_kda_fwd_finalize(Tensor qg_scaled, Tensor aqk, Tensor v_new, "
+    "Tensor h, Tensor? cu_seqlens, Tensor? chunk_indices, int output_layout, "
+    "bool state_v_first, int stream) -> Tensor";
+
+Tensor run_npu_chunk_kda_fwd_finalize(
+    Tensor qg_scaled, Tensor aqk, Tensor v_new, Tensor h,
+    std::optional<Tensor> cu_seqlens, std::optional<Tensor> chunk_indices,
+    int64_t output_layout, bool state_v_first, int64_t stream) {
+  const TensorMeta qg_meta = meta_of(qg_scaled);
+  const std::vector<int64_t> cu = int_values(cu_seqlens);
+  const std::vector<int64_t> ci = int_values(chunk_indices);
+  // BSND/TND are sequence-major outputs; BNSD/NTD are head-major.  The inputs
+  // are head-major either way, so batch/heads/tokens are read from the input
+  // with the head-major spelling and only the output layout is switched.
+  const bool packed = layout_math::packed(output_layout);
+  const int64_t batch = packed ? 1 : size_of(qg_meta, 0);
+  const int64_t heads = packed ? size_of(qg_meta, 0) : size_of(qg_meta, 1);
+  const int64_t tokens = packed ? size_of(qg_meta, 1) : size_of(qg_meta, 2);
+  const int64_t head_dim = 128;
+  const bool sequence_major = output_layout == 0 || output_layout == 2;
+  std::vector<int64_t> attn_sizes;
+  if (packed) {
+    attn_sizes = sequence_major ? std::vector<int64_t>{tokens, heads, head_dim}
+                                : std::vector<int64_t>{heads, tokens, head_dim};
+  } else {
+    attn_sizes = sequence_major
+                     ? std::vector<int64_t>{batch, tokens, heads, head_dim}
+                     : std::vector<int64_t>{batch, heads, tokens, head_dim};
+  }
+  Tensor out_attn = allocate_sizes(attn_sizes, qg_meta.scalar_type, qg_meta);
+  FLA_STABLE_EXEC(
+      "aclnnChunkKdaFwdFinalize", qg_meta, stream, nd_tensor(qg_meta),
+      nd_tensor(meta_of(aqk)), nd_tensor(meta_of(v_new)), nd_tensor(meta_of(h)),
+      int_array(cu), int_array(ci),
+      cstr(kChunkKdaFwdFinalizeLayoutNames, output_layout),
+      scalar(state_v_first), nd_out_tensor(meta_of(out_attn)));
+  return out_attn;
 }
 
 // ---------------------------------------------------------------------------

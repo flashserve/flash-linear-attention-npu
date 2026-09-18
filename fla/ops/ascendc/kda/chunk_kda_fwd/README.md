@@ -96,6 +96,11 @@ Python 返回顺序为：
 | `disable_recompute` | `false` | bool |
 | `return_intermediate_states` | `false` | bool |
 | `state_v_first` | `false` | bool |
+| `epsilon` | `1e-6` | `use_qk_l2norm_in_kernel=true` 时的 rsqrt 下限 |
+| `use_qk_l2norm_in_kernel` | `false` | true 时由算子内部归一化 q/k |
+| `use_beta_sigmoid_in_kernel` | `false` | true 时由算子内部对 beta 取 sigmoid |
+| `allow_neg_eigval` | `false` | true 时必须同时 `use_beta_sigmoid_in_kernel=true` |
+| `use_exp2` | `true` | true 走 `exp2` 门控，false 走自然指数 |
 
 ## 支持范围
 
@@ -104,6 +109,52 @@ Python 返回顺序为：
 - `chunk_size` 为 64/128。
 - TND/NTD 均支持多 head。
 - 变长调用最多 1024 条逻辑序列，rank-4 变长输入要求 B=1。
+
+## 场景分发
+
+Python 入口 `fla_npu.ops.ascendc.npu_chunk_kda_fwd` 负责场景选择：
+
+| 场景 | 走的 aclnn 入口 | L0 实现 |
+| --- | --- | --- |
+| `q/k/v` 为 BF16、`K=V=128`、`chunk_size=64`、`cu_seqlens` 严格递增、输出连续 | `aclnnChunkKdaFwdV2` | `ChunkKdaFwdPrepare -> ChunkFwdH -> ChunkKdaFwdFinalize` 三个独立算子组合 |
+| 其余场景（FP16、`K/V` 非 128、`chunk_size=128`、含空序列、输出非连续） | `aclnnChunkKdaFwd`（签名与 ABI 未变） | 本算子的私有 L0 融合实现 |
+
+两个入口共用同一套参数校验、输出语义和返回码契约：`state_v_first` 均由算子原生解释，
+公开的 `gk/Aqk/Akk/w/u/qg/kg/v_new` 始终是 head-major，`h` 始终是 sequence-major。
+
+组合分支与融合分支共用同一组归一化/gate 开关，默认值即历史语义（q/k 由调用方预先归一化、
+beta 由调用方预先 sigmoid、门控走 `exp2`）：
+
+| 参数 | 默认值 |
+| --- | --- |
+| `epsilon` | `1e-6` |
+| `useQkL2normInKernel` | `false` |
+| `useBetaSigmoidInKernel` | `false` |
+| `allowNegEigval` | `false` |
+| `useExp2` | `true` |
+
+私有 L0 融合实现只覆盖这组默认值，开关取非默认值时调用必须落在三算子组合的场景范围内，
+否则返回 `ACLNN_ERR_PARAM_INVALID`。`ChunkKdaFwdPrepare` 的编译期输出档位由公开输出指针
+组合推导（`none`/`forward`/`save`）：`Aqk/Akk` 是公开必选输出，`forward` 档只额外搬出 `Akk`，
+不再像 `recompute` 档那样多搬 `qHat/kHat/qRstd/kRstd/betaEff`。
+
+分发规则见 [API 文档](docs/api.md#l0-实现按场景分发)。
+
+### 编译依赖
+
+组合分支在 `chunk_kda_fwd_three_stage.cpp` 里直接 include 并调用另外三个独立算子的 op_api，
+因此按算子裁剪编译时必须把这四个算子一起编，否则产物缺少子算子的 tiling / kernel 注册，
+`aclnnChunkKdaFwdV2GetWorkspaceSize` 会在 tiling 阶段失败（只编 `chunk_kda_fwd` 时
+`libcust_opapi.so` 甚至会缺 `l0op::ChunkKdaFwdPrepare/ChunkFwdH/ChunkKdaFwdFinalize` 符号）：
+
+```sh
+FLA_NPU_SOC=ascend910b \
+FLA_NPU_OPS=chunk_kda_fwd,chunk_kda_fwd_prepare,chunk_kda_fwd_finalize,chunk_fwd_h \
+python scripts/build_wheel.py
+```
+
+融合分支（`aclnnChunkKdaFwd`）只依赖 `chunk_kda_fwd` 自身及其 kernel 源码依赖，
+只编 `chunk_kda_fwd` 时可用；但它不会带上组合分支需要的三个独立算子。
 
 ## 验证
 
