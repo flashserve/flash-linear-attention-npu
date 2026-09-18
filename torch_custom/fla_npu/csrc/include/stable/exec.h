@@ -179,6 +179,13 @@ inline OutTensorArg out_tensor(const TensorMeta& meta) {
 inline OutTensorArg nd_out_tensor(const TensorMeta& meta) {
   return OutTensorArg(meta, kAclFormatNd);
 }
+// The same ND spelling with the reference's `storage_shape_override=` logical
+// storage shape.  `aclnnChunkKdaFwdFinalize` is the one operator that reads it
+// on an *output*: given a flat rank-1 storage shape it fails its own tiling and
+// reports ACLNN_ERR_INNER_NULLPTR (561103) instead of writing anything.
+inline OutTensorArg nd_logical_out_tensor(const TensorMeta& meta) {
+  return OutTensorArg(meta, kAclFormatNd, /*logical_storage=*/true);
+}
 inline OutTensorArg out_tensor(const torch::stable::Tensor& value) {
   return OutTensorArg(meta_of(value));
 }

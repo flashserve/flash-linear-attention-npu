@@ -35,6 +35,7 @@ using fla_npu_stable::stable::cstr;
 using fla_npu_stable::stable::int_array;
 using fla_npu_stable::stable::int_values;
 using fla_npu_stable::stable::meta_of;
+using fla_npu_stable::stable::nd_logical_out_tensor;
 using fla_npu_stable::stable::nd_optional_tensor;
 using fla_npu_stable::stable::nd_out_tensor;
 using fla_npu_stable::stable::nd_tensor;
@@ -395,7 +396,7 @@ Tensor run_npu_chunk_kda_fwd_finalize(
       nd_tensor(meta_of(aqk)), nd_tensor(meta_of(v_new)), nd_tensor(meta_of(h)),
       int_array(cu), int_array(ci),
       cstr(kChunkKdaFwdFinalizeLayoutNames, output_layout),
-      scalar(state_v_first), nd_out_tensor(meta_of(out_attn)));
+      scalar(state_v_first), nd_logical_out_tensor(meta_of(out_attn)));
   return out_attn;
 }
 
