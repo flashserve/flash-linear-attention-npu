@@ -1,10 +1,13 @@
 """Deterministic ATK matrix for chunk_kda_fwd.
 
-The generated IDs are frozen by profile:
-  * 0-199: A2 positive accuracy cases
-  * 200-249: A2 negative interception cases
-  * 250-449: A5 positive accuracy cases
-  * 450-499: A5 negative interception cases
+The generated IDs are frozen by profile, in this order:
+  * ``[0, POSITIVE_COUNT)``: A2 positive accuracy cases
+  * ``[POSITIVE_COUNT, POSITIVE_COUNT + NEGATIVE_COUNT)``: A2 negative cases
+  * ``[... , + POSITIVE_COUNT)``: A5 positive accuracy cases
+  * ``[... , end)``: A5 negative cases
+
+``NEGATIVE_COUNT`` is the length of ``NEGATIVE_CASES`` so that adding an
+interception cannot silently push a case out of the generated matrix.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ except ModuleNotFoundError as exc:
 
 SEED_BASE = 20260810
 L1_STANDARD = {"acc": "mixed_tolerance_bm", "perf": "not_key"}
+POSITIVE_COUNT = 200
 
 
 def _balanced(total: int, count: int) -> list[int]:
@@ -181,12 +185,12 @@ NEGATIVE_CASES = (
     ("hv_lt_h", "ACLNN_ERR_PARAM_INVALID", 161002, "HV must be greater than or equal to H"),
     ("hv_not_divisible", "ACLNN_ERR_PARAM_INVALID", 161002, "HV must be divisible by H"),
     ("h_gt_128", "ACLNN_ERR_PARAM_INVALID", 161002, "H and HV must be less than or equal to 128"),
-    ("k_lt_16", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must be multiples of 16"),
-    ("k_gt_256", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must be multiples of 16"),
-    ("k_unaligned", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must be multiples of 16"),
-    ("v_lt_16", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must be multiples of 16"),
-    ("v_gt_256", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must be multiples of 16"),
-    ("v_unaligned", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must be multiples of 16"),
+    ("k_lt_16", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must both be 64 or both be 128"),
+    ("k_gt_256", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must both be 64 or both be 128"),
+    ("k_unaligned", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must both be 64 or both be 128"),
+    ("v_lt_16", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must both be 64 or both be 128"),
+    ("v_gt_256", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must both be 64 or both be 128"),
+    ("v_unaligned", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must both be 64 or both be 128"),
     ("q_fp32", "ACLNN_ERR_PARAM_INVALID", 161002, "q, k and v must use the same float16 or bfloat16 dtype"),
     ("k_dtype", "ACLNN_ERR_PARAM_INVALID", 161002, "q, k and v must use the same float16 or bfloat16 dtype"),
     ("v_dtype", "ACLNN_ERR_PARAM_INVALID", 161002, "q, k and v must use the same float16 or bfloat16 dtype"),
@@ -211,7 +215,12 @@ NEGATIVE_CASES = (
     ("lower_low", "ACLNN_ERR_PARAM_INVALID", 161002, "lowerBound must be in [-5, 0)"),
     ("lower_high", "ACLNN_ERR_PARAM_INVALID", 161002, "lowerBound must be in [-5, 0)"),
     ("null_akk", "ACLNN_ERR_PARAM_NULLPTR", 161001, "aqkOut and akkOut must not be nullptr"),
+    # 追加在末尾：既有负向用例的 id 与 dtype 奇偶分配保持不变。
+    ("k_mixed", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must both be 64 or both be 128"),
+    ("v_mixed", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must both be 64 or both be 128"),
 )
+
+NEGATIVE_COUNT = len(NEGATIVE_CASES)
 
 
 def _negative_case(local_id: int, soc: str) -> dict:
@@ -257,8 +266,12 @@ def _negative_case(local_id: int, soc: str) -> dict:
 def build_specs() -> list[dict]:
     specs = []
     for soc in ("ascend910b", "ascend950"):
-        specs.extend(_positive_case(local_id, soc) for local_id in range(200))
-        specs.extend(_negative_case(local_id, soc) for local_id in range(50))
+        specs.extend(
+            _positive_case(local_id, soc) for local_id in range(POSITIVE_COUNT)
+        )
+        specs.extend(
+            _negative_case(local_id, soc) for local_id in range(NEGATIVE_COUNT)
+        )
     return specs
 
 
@@ -276,11 +289,17 @@ def _input(name: str, dtype: str, value, *, input_type: str = "attr", shape=None
 
 def _case_payload(case_id: int, spec: dict) -> dict:
     marker_dtype = spec["q_dtype"]
+    a2_accuracy_end = POSITIVE_COUNT
+    a2_negative_end = POSITIVE_COUNT + NEGATIVE_COUNT
+    a5_accuracy_end = 2 * POSITIVE_COUNT + NEGATIVE_COUNT
     metadata = {
-        "profile": "a2_accuracy" if case_id < 200 else (
-            "a2_negative" if case_id < 250 else ("a5_accuracy" if case_id < 450 else "a5_negative")
+        "profile": (
+            "a2_accuracy" if case_id < a2_accuracy_end else
+            "a2_negative" if case_id < a2_negative_end else
+            "a5_accuracy" if case_id < a5_accuracy_end else
+            "a5_negative"
         ),
-        "soc": "ascend910b" if case_id < 250 else "ascend950",
+        "soc": "ascend910b" if case_id < a2_negative_end else "ascend950",
         "shape_spec": f"B={spec['B']},H={spec['H']},HV={spec['HV']},T={spec['T']},K={spec['K']},V={spec['V']}",
         "optional_spec": (
             f"initial={spec['initial_state']},final={spec['output_final_state']},"
@@ -381,9 +400,22 @@ def main() -> None:
         encoding="utf-8",
     )
     if args.summary:
-        print("total=500 a2_accuracy=200 a2_negative=50 a5_accuracy=200 a5_negative=50")
-        print("a2_accuracy_ids=0-199 a2_negative_ids=200-249")
-        print("a5_accuracy_ids=250-449 a5_negative_ids=450-499")
+        total = 2 * (POSITIVE_COUNT + NEGATIVE_COUNT)
+        a2_accuracy_end = POSITIVE_COUNT
+        a2_negative_end = POSITIVE_COUNT + NEGATIVE_COUNT
+        a5_accuracy_end = 2 * POSITIVE_COUNT + NEGATIVE_COUNT
+        print(
+            f"total={total} a2_accuracy={POSITIVE_COUNT} a2_negative={NEGATIVE_COUNT} "
+            f"a5_accuracy={POSITIVE_COUNT} a5_negative={NEGATIVE_COUNT}"
+        )
+        print(
+            f"a2_accuracy_ids=0-{a2_accuracy_end - 1} "
+            f"a2_negative_ids={a2_accuracy_end}-{a2_negative_end - 1}"
+        )
+        print(
+            f"a5_accuracy_ids={a2_negative_end}-{a5_accuracy_end - 1} "
+            f"a5_negative_ids={a5_accuracy_end}-{total - 1}"
+        )
 
 
 if __name__ == "__main__":

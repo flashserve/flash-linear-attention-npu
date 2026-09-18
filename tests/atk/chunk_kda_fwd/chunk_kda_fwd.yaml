@@ -116,10 +116,11 @@ inputs:
     dtypes:
       values: [int]
     ranges:
+      # K/V 只交付两档且必须同档：K=V=64 或 K=V=128；固化精度矩阵使用 K=V=128。
       valid:
-        values: [128]
+        values: [64, 128]
       invalid:
-        values: [8, 24, 272]
+        values: [8, 24, 256, 272]
   - name: value_dim
     type: attr
     required: true
@@ -127,9 +128,9 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [128]
+        values: [64, 128]
       invalid:
-        values: [8, 24, 272]
+        values: [8, 24, 256, 272]
   - name: chunk_size
     type: attr
     required: true

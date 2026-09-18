@@ -93,7 +93,9 @@ test_chunk_kda_fwd_ntd_direct_matches_reference
 
 ## 5. 当前边界与后续优化
 
-- 当前交付验证范围为 `Kdim=128`、`Vdim=128/256`、`chunk_size=64/128`、FP16/BF16。
+- 本次验证范围为 `Kdim=128`、`Vdim=128/256`、`chunk_size=64/128`、FP16/BF16。
+  注意：公开契约后续收紧为 `K=V=64` 与 `K=V=128` 两档（不支持混合档与其它取值，含
+  `V=256`），上面 `V=256` 的数据是收紧之前的验证记录，参数校验现在会直接拒绝该 shape。
 - varlen partial chunk 已保证正确性，当前使用完整 tile 补中性值并只回写有效区；仍可增加专用 partial 性能模板。
 - Prepare 仍占长序列链路约 `62%~72%`，后续优先降低 score scratch 往返、score block 控制开销和 solve 串行段。
 - BSND 大 head 场景还受到 layout swap 影响；上游已提供 BNSD/NTD 时应直接使用性能 layout。
