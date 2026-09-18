@@ -60,8 +60,8 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 | `w` | 输入 | 必选 | Weight（衰减权重）输入张量 | 参与隐藏状态更新 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, K]` | 支持 |
 | `dO` | 输入 | 必选 | 前向输出 `o` 的梯度张量 | 即上游输出梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
 | `dv` | 输入 | 必选 | Value 的上游梯度张量 | 将与来自 `dh` 的贡献叠加后输出为 `dv2` | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
-| `gOptional` | 输入 | 可选 | Gate 张量 | 对隐藏状态递推施加指数门控 `exp(g)` | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, T]` | 支持 |
-| `gkOptional` | 输入 | 可选 | Key-wise Gate 张量 | 对每个 Key 维度施加额外门控 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, T, K]` | 支持 |
+| `gOptional` | 输入 | 可选 | Gate 张量 | 对隐藏状态递推施加指数门控 `exp(g)`，与输入`gkOptional`二选一 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, T]` | 支持 |
+| `gkOptional` | 输入 | 可选 | Key-wise Gate 张量 | 对每个 Key 维度施加额外门控，与输入`gOptional`二选一 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, T, K]` | 支持 |
 | `h0Optional` | 输入 | 可选 | 初始隐藏状态张量 | `stateVFirst=false` 时为 `[N,HV,K,V]`，否则为 `[N,HV,V,K]` | `FLOAT16`、`BFLOAT16` | `ND` | 4 维 | 支持 |
 | `dhtOptional` | 输入 | 可选 | 末尾隐藏状态的梯度张量 | `stateVFirst=false` 时为 `[N,HV,K,V]`，否则为 `[N,HV,V,K]` | `FLOAT16`、`BFLOAT16` | `ND` | 4 维 | 支持 |
 | `cuSeqlensOptional` | 输入 | 可选 | 变长序列的累计长度信息 | 变长模式输入，形状为 `[N+1]` | `INT64` | `ND` | 1 维 | - |
@@ -126,6 +126,9 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
   - 必须同时提供或同时省略
   - 同时出现时启用变长模式（varlen）
   - 变长模式仅支持 `B = 1`
+
+- `gOptional` 与 `gkOptional`：
+  - 二者必须二选一（提供且只提供一个）
 
 - `gOptional`：
   - 数据类型可以为 `FLOAT16`、`BFLOAT16` 或 `FLOAT`
