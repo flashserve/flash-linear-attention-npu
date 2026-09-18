@@ -145,5 +145,6 @@ key2 下使用其对应单 launch 实现。tiling key 和私有 `stage` 均不�
 - dtype：FP16/BF16。
 - layout：BSND/BNSD/TND/NTD。
 - gate：raw/已激活、safe true/false。
-- Shape：K=128，V=128/256，chunk=64/128，dense/varlen/tail/GQA。
+- Shape：`K=V=64` 或 `K=V=128`（两档且必须同档，混合档与其它取值由参数校验拒绝），
+  chunk=64/128，dense/varlen/tail/GQA。
 - 属性：final state、重计算策略、`state_v_first`。

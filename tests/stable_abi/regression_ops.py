@@ -1179,6 +1179,16 @@ def scenario_chunk_kda_fwd_variants():
                 torch.randn(seq_num, HV, K, V, dtype=torch.float32,
                             device="npu") * 1e-2)
         torch.npu.synchronize()
+        tag = (f"chunk_kda_fwd(var {layout} B={B} T={T} H={H} HV={HV} "
+               f"V={V} cs={cs} g={str(gdt).split('.')[-1]})")
+        # K/V 档位契约收紧后，非 (64,64)/(128,128) 的档位（这里是 V=256）
+        # 两侧都必须拒绝，用 domain skip 记录而不是删除用例。
+        if not (K == V and K in (64, 128)):
+            parity_or_domain_skip(
+                tag,
+                lambda: ct.npu_chunk_kda_fwd(q, k, v, g, beta, **kw),
+                lambda: _launcher.npu_chunk_kda_fwd(q, k, v, g, beta, **kw))
+            continue
         # The T=256 / cs=128 / g=float32 variant overflows to inf on
         # Ascend950PR for some initial states -- measured: 89 entries, the same
         # 89 on both host paths, same shape.  It is input-dependent (a fresh
@@ -1186,8 +1196,7 @@ def scenario_chunk_kda_fwd_variants():
         # what this comparison exists to check; `_value_diff` treats equal
         # infinities as equal so the gate does not fail for the wrong reason.
         assert_parity(
-            f"chunk_kda_fwd(var {layout} B={B} T={T} H={H} HV={HV} "
-            f"V={V} cs={cs} g={str(gdt).split('.')[-1]})",
+            tag,
             ct.npu_chunk_kda_fwd(q, k, v, g, beta, **kw),
             _launcher.npu_chunk_kda_fwd(q, k, v, g, beta, **kw))
     print(f"PASS chunk_kda_fwd variants ({len(variants)} cases)")
@@ -1222,18 +1231,25 @@ def scenario_chunk_kda_fwd_three_stage():
     # 非法组合：非默认开关 + 非组合场景（K=256），两侧都必须拒绝。
     cases.append(dict(layout="BNSD", B=1, T=128, H=4, HV=4, K=256,
                       extra=dict(use_exp2=False)))
+    # K/V 档位契约：只支持 K=V=64 与 K=V=128；K=V=64 既能算又要逐位一致，
+    # 混合档（K=64/V=128、K=128/V=64）与其它取值（含 V=256）两侧都必须拒绝。
+    cases.append(dict(layout="BNSD", B=1, T=128, H=4, HV=4, K=64, V=64))
+    for k_dim, v_dim in ((64, 128), (128, 64), (128, 256), (96, 96)):
+        cases.append(dict(layout="BNSD", B=1, T=128, H=4, HV=4, K=k_dim,
+                          V=v_dim))
 
     for case in cases:
         layout = case["layout"]
         B, T, H, HV = case["B"], case["T"], case["H"], case["HV"]
         k_dim = case.get("K", 128)
+        v_dim = case.get("V", 128)
         cu = case.get("cu_seqlens")
         q, k, v, g, beta = _kda_fwd_tensors(
-            layout, torch.bfloat16, B=B, T=T, H=H, HV=HV, K=k_dim, V=128)
+            layout, torch.bfloat16, B=B, T=T, H=H, HV=HV, K=k_dim, V=v_dim)
         kw = dict(layout=layout, chunk_size=64, scale=scale, cu_seqlens=cu)
         kw.update(case.get("extra", {}))
         tag = (f"chunk_kda_fwd(three-stage {layout} T={T} H={H} HV={HV} "
-               f"K={k_dim} varlen={int(bool(cu))} "
+               f"K={k_dim} V={v_dim} varlen={int(bool(cu))} "
                f"{'+'.join(sorted(case.get('extra', {})) or ['default'])})")
         torch.npu.synchronize()
         parity_or_domain_skip(
