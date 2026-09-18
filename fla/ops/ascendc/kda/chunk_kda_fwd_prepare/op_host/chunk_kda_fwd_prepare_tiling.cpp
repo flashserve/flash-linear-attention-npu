@@ -31,6 +31,8 @@ static_assert(PREPARE_OUTPUT_MODE_NONE == CHUNK_KDA_FWD_PREPARE_OUTPUT_NONE);
 static_assert(PREPARE_OUTPUT_MODE_RECOMPUTE ==
               CHUNK_KDA_FWD_PREPARE_OUTPUT_RECOMPUTE);
 static_assert(PREPARE_OUTPUT_MODE_SAVE == CHUNK_KDA_FWD_PREPARE_OUTPUT_SAVE);
+static_assert(PREPARE_OUTPUT_MODE_FORWARD ==
+              CHUNK_KDA_FWD_PREPARE_OUTPUT_FORWARD);
 
 enum class PrepareLayout {
     BNSD,
@@ -476,9 +478,9 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     const auto *outputModePtr =
         attrs->GetAttrPointer<int64_t>(PREPARE_ATTR_OUTPUT_MODE);
     if (outputModePtr == nullptr || *outputModePtr < PREPARE_OUTPUT_MODE_NONE ||
-        *outputModePtr > PREPARE_OUTPUT_MODE_SAVE) {
+        *outputModePtr > PREPARE_OUTPUT_MODE_FORWARD) {
         OP_LOGE(context->GetNodeName(),
-                "output_mode 只支持 0(none)、1(recompute)、2(save)。");
+                "output_mode 只支持 0(none)、1(recompute)、2(save)、3(forward)。");
         return ge::GRAPH_FAILED;
     }
     const uint64_t outputMode = static_cast<uint64_t>(*outputModePtr);

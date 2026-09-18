@@ -189,6 +189,9 @@ int64_t GetOutputMode(const ChunkKdaFwdPrepareParams &params)
     if (outputMask == optiling::PREPARE_REQUIRED_OUTPUT_MASK) {
         return optiling::PREPARE_OUTPUT_MODE_NONE;
     }
+    if (outputMask == optiling::PREPARE_FORWARD_OUTPUT_MASK) {
+        return optiling::PREPARE_OUTPUT_MODE_FORWARD;
+    }
     if (outputMask == optiling::PREPARE_RECOMPUTE_OUTPUT_MASK) {
         return optiling::PREPARE_OUTPUT_MODE_RECOMPUTE;
     }
@@ -201,7 +204,7 @@ int64_t GetOutputMode(const ChunkKdaFwdPrepareParams &params)
 aclnnStatus CheckOutputMode(const ChunkKdaFwdPrepareParams &params)
 {
     CHECK_COND(GetOutputMode(params) >= 0, ACLNN_ERR_PARAM_INVALID,
-               "输出 nullptr 组合只支持 none/recompute/save 三档，当前 outputMask=0x%x。",
+               "输出 nullptr 组合只支持 none/forward/recompute/save 四档，当前 outputMask=0x%x。",
                GetOutputMask(params));
     return ACLNN_SUCCESS;
 }

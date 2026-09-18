@@ -86,15 +86,40 @@ public:
         const uint32_t total = TotalWorkItems(args_);
         const uint32_t begin = WorkBegin(total, core_, args_.tiling.usedCoreNum);
         const uint32_t end = WorkEnd(total, core_, args_.tiling.usedCoreNum);
+        // 主体只分 chunk；余下不足一轮核数的 chunk 才按 4-head 组均摊。
+        const uint32_t cores = args_.tiling.usedCoreNum;
+        const bool balanceTail = kFinalizeA5 && !args_.tiling.isVarLen &&
+            partitions == 1 && total >= cores && total % cores != 0;
+        const uint32_t fullChunksPerCore = total / cores;
+        const uint32_t headGroups = CeilDiv(args_.tiling.valueHeadNum, Shape::kHeadsPerGroup);
+        const uint32_t tailGroups = (total % cores) * headGroups;
+        const uint32_t tailBegin = WorkBegin(tailGroups, core_, cores);
+        const uint32_t tailEnd = WorkEnd(tailGroups, core_, cores);
+        const uint32_t workCount = balanceTail
+            ? fullChunksPerCore + tailEnd - tailBegin : end - begin;
         uint32_t outputSlot = 0;
         bool outputSlotUsed[2] = {false, false};
-        for (uint32_t work = begin; work < end; ++work) {
+        for (uint32_t index = 0; index < workCount; ++index) {
+            const uint32_t work = begin + index;
+            uint32_t chunkId = work / partitions;
+            uint32_t headBegin = (work % partitions) * args_.tiling.headsPerPartition;
+            uint32_t headEnd = headBegin + args_.tiling.headsPerPartition;
+            if (balanceTail) {
+                if (index < fullChunksPerCore) {
+                    chunkId = core_ * fullChunksPerCore + index;
+                    headBegin = 0;
+                    headEnd = args_.tiling.valueHeadNum;
+                } else {
+                    const uint32_t tail = tailBegin + index - fullChunksPerCore;
+                    chunkId = fullChunksPerCore * cores + tail / headGroups;
+                    headBegin = (tail % headGroups) * Shape::kHeadsPerGroup;
+                    headEnd = headBegin + Shape::kHeadsPerGroup;
+                }
+            }
             FinalizeChunk chunk{};
-            if (!ResolveChunk(args_, work / partitions, chunk)) {
+            if (!ResolveChunk(args_, chunkId, chunk)) {
                 continue;
             }
-            const uint32_t headBegin = (work % partitions) * args_.tiling.headsPerPartition;
-            uint32_t headEnd = headBegin + args_.tiling.headsPerPartition;
             if (headEnd > args_.tiling.valueHeadNum) {
                 headEnd = args_.tiling.valueHeadNum;
             }

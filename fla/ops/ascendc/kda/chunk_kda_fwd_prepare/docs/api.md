@@ -112,7 +112,7 @@ aclnnStatus aclnnChunkKdaFwdPrepare(
 | `chunk_size` | int | 固定为 64 |
 | `epsilon` | float | 转为 FP32 后有限且大于 0 |
 | `lower_bound` | float | 转为 FP32 后有限；SafeSigmoid 模式要求 `[-5,0)` |
-| `backward_mode` | string | Python 层输出策略：`"none"`、`"recompute"` 或 `"save"`；默认 `"save"` |
+| `backward_mode` | string | Python 层输出策略：`"none"`、`"forward"`、`"recompute"` 或 `"save"`；默认 `"save"` |
 
 `B/T/HK/HV` 必须为正数且可由 `uint32_t` 表示；GVA 要求 `0 < HK <= HV` 且
 `HV % HK == 0`。tensor descriptor 必须使用标准、
@@ -133,11 +133,14 @@ BF16: Aqk, Akk, w, u, qg, kg, qg_scaled, q_hat, k_hat
 低层 aclnn ABI 不增加 `backward_mode` 属性。算子 IR 的 13 个输出全部是 `REQUIRED`，
 固定 kernel 参数顺序不变；其中 `gk/aqk/w/u/kg/qgScaled` 是后续正向阶段必需输出，L2
 指针必须非空。其余七项可由 L2 用空指针表示不导出，L0 会为 launcher 补充不写入的
-descriptor 占位。稳定 Python 入口按下表分配输出，并在未分配的固定槽位返回 `None`：
+descriptor 占位；空/非空组合必须恰好落在 `none/forward/recompute/save` 四档之一，
+否则 L2 返回 `ACLNN_ERR_PARAM_INVALID`。稳定 Python 入口按下表分配输出，并在未分配的
+固定槽位返回 `None`：
 
 | 模式 | `gk` | `Aqk` | `Akk` | `w` | `u` | `qg` | `kg` | `qg_scaled` | `q_hat` | `k_hat` | `q_rstd` | `k_rstd` | `beta_eff` |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `none` | Y | Y | - | Y | Y | - | Y | Y | - | - | - | - | - |
+| `forward` | Y | Y | Y | Y | Y | - | Y | Y | - | - | - | - | - |
 | `recompute` | Y | Y | Y | Y | Y | - | Y | Y | Y | Y | Y | Y | Y |
 | `save` | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
 

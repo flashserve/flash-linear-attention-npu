@@ -16,6 +16,9 @@ enum ChunkKdaFwdPrepareOutputMode : int64_t {
     PREPARE_OUTPUT_MODE_NONE = 0,
     PREPARE_OUTPUT_MODE_RECOMPUTE = 1,
     PREPARE_OUTPUT_MODE_SAVE = 2,
+    // 只额外搬出 Akk：Aqk/Akk 是公开必选输出，而 qHat/kHat/qRstd/kRstd/betaEff
+    // 只服务反向重计算。融合前向链（含 chunk_kda_fwd 的组合入口）用这一档。
+    PREPARE_OUTPUT_MODE_FORWARD = 3,
 };
 
 // 13 个 IR 输出槽位始终存在。L2 传入 nullptr 时，只关闭对应输出的
@@ -72,6 +75,9 @@ constexpr uint32_t PREPARE_RECOMPUTE_OUTPUT_MASK =
 
 constexpr uint32_t PREPARE_SAVE_OUTPUT_MASK =
     PREPARE_REQUIRED_OUTPUT_MASK | PREPARE_OPTIONAL_OUTPUT_MASK;
+
+constexpr uint32_t PREPARE_FORWARD_OUTPUT_MASK =
+    PREPARE_REQUIRED_OUTPUT_MASK | PREPARE_OUTPUT_MASK_AKK;
 
 static_assert(PREPARE_OUTPUT_COUNT < sizeof(uint32_t) * 8U,
               "outputMask 必须能容纳全部输出位。");

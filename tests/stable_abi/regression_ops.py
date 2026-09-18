@@ -70,6 +70,8 @@ GROUPS: dict[str, tuple[str, ...]] = {
     "kda": (
         "scenario_chunk_kda_fwd",
         "scenario_chunk_kda_fwd_variants",
+        "scenario_chunk_kda_fwd_three_stage",
+        "scenario_chunk_kda_fwd_finalize",
         "scenario_chunk_kda_bwd_intra",
         "scenario_chunk_kda_bwd",
         "scenario_chunk_kda_bwd_recompute",
@@ -1191,6 +1193,113 @@ def scenario_chunk_kda_fwd_variants():
     print(f"PASS chunk_kda_fwd variants ({len(variants)} cases)")
 
 
+def scenario_chunk_kda_fwd_three_stage():
+    """组合入口（aclnnChunkKdaFwdV2）与融合入口的 parity。
+
+    两条分支的判据是「场景 + 工作量」：（chunk, head）工作量 >= 4096 的模型规模
+    场景走组合入口，其余回落到融合实现；非默认 gate/L2norm 开关只有组合入口
+    支持，因此强制走组合入口（非法组合两侧都必须拒绝）。
+    """
+
+    K = 128
+    scale = K ** -0.5
+    cases = []
+
+    # 模型规模：H=HV=32、T=8192 → 32 * 128 = 4096 work item，命中组合入口。
+    for layout, cu in (("BNSD", None), ("BNSD", [0, 4096, 8192])):
+        cases.append(dict(layout=layout, B=1, T=8192, H=32, HV=32,
+                          cu_seqlens=cu))
+    # 非默认开关强制走组合入口（小 shape 也要走 V2）。
+    for extra in (dict(use_qk_l2norm_in_kernel=True),
+                  dict(use_beta_sigmoid_in_kernel=True),
+                  dict(use_beta_sigmoid_in_kernel=True,
+                       allow_neg_eigval=True),
+                  dict(use_exp2=False),
+                  dict(use_qk_l2norm_in_kernel=True,
+                       use_beta_sigmoid_in_kernel=True,
+                       use_exp2=False, epsilon=1e-5)):
+        cases.append(dict(layout="BNSD", B=1, T=128, H=4, HV=4, extra=extra))
+    # 非法组合：非默认开关 + 非组合场景（K=256），两侧都必须拒绝。
+    cases.append(dict(layout="BNSD", B=1, T=128, H=4, HV=4, K=256,
+                      extra=dict(use_exp2=False)))
+
+    for case in cases:
+        layout = case["layout"]
+        B, T, H, HV = case["B"], case["T"], case["H"], case["HV"]
+        k_dim = case.get("K", 128)
+        cu = case.get("cu_seqlens")
+        q, k, v, g, beta = _kda_fwd_tensors(
+            layout, torch.bfloat16, B=B, T=T, H=H, HV=HV, K=k_dim, V=128)
+        kw = dict(layout=layout, chunk_size=64, scale=scale, cu_seqlens=cu)
+        kw.update(case.get("extra", {}))
+        tag = (f"chunk_kda_fwd(three-stage {layout} T={T} H={H} HV={HV} "
+               f"K={k_dim} varlen={int(bool(cu))} "
+               f"{'+'.join(sorted(case.get('extra', {})) or ['default'])})")
+        torch.npu.synchronize()
+        parity_or_domain_skip(
+            tag,
+            lambda: ct.npu_chunk_kda_fwd(q, k, v, g, beta, **kw),
+            lambda: _launcher.npu_chunk_kda_fwd(q, k, v, g, beta, **kw))
+    print(f"PASS chunk_kda_fwd three-stage dispatch ({len(cases)} cases)")
+
+
+def scenario_chunk_kda_fwd_finalize():
+    """npu_chunk_kda_fwd_finalize：4 layout x state_v_first x dense/packed parity。
+
+    finalize 的输入（qg_scaled/aqk/v_new/h）在真实链路里来自 Prepare/FwdH，
+    这里按公开契约直接构造张量：它只验证 host 封装（实参顺序、ND descriptor、
+    output_layout 名表 → code、输出分配），两条后端必须逐位一致。
+    """
+
+    HV, K, chunk = 4, 128, 64
+    cases = []
+    for layout in ("BSND", "BNSD", "TND", "NTD"):
+        for svf in (False, True):
+            cases.append(dict(layout=layout, svf=svf, T=128, cu=None))
+    # 变长：dense 拼写带 cu_seqlens，chunk_indices 由 wrapper 按 canonical 生成。
+    cases.append(dict(layout="BSND", svf=False, T=128, cu=[0, 64, 128]))
+    cases.append(dict(layout="BNSD", svf=True, T=128, cu=[0, 64, 128]))
+    # 尾部不足一个 chunk：T=192、cu=[0,64,192]，共 3 个 chunk。
+    cases.append(dict(layout="BSND", svf=False, T=192, cu=[0, 64, 192]))
+
+    for case in cases:
+        layout, svf, T, cu = (case["layout"], case["svf"], case["T"],
+                              case["cu"])
+        packed = layout in ("TND", "NTD")
+        total_chunks = 0
+        if cu is None:
+            total_chunks = (T + chunk - 1) // chunk
+        else:
+            total_chunks = sum(
+                (end - begin + chunk - 1) // chunk
+                for begin, end in zip(cu, cu[1:]))
+
+        def rnd(*shape, dtype=torch.bfloat16, scale=5e-2):
+            return torch.randn(*shape, dtype=dtype, device="npu") * scale
+
+        if packed:
+            qg_scaled = rnd(HV, T, K)
+            aqk = rnd(HV, T, chunk)
+            v_new = rnd(HV, T, K)
+        else:
+            qg_scaled = rnd(1, HV, T, K)
+            aqk = rnd(1, HV, T, chunk)
+            v_new = rnd(1, HV, T, K)
+        h = rnd(1, HV, total_chunks, K, K)
+        tag = (f"chunk_kda_fwd_finalize({layout} T={T} svf={int(svf)} "
+               f"varlen={int(bool(cu))})")
+        torch.npu.synchronize()
+        parity_or_domain_skip(
+            tag,
+            lambda: ct.npu_chunk_kda_fwd_finalize(
+                qg_scaled, aqk, v_new, h, output_layout=layout,
+                state_v_first=svf, cu_seqlens=cu),
+            lambda: _launcher.npu_chunk_kda_fwd_finalize(
+                qg_scaled, aqk, v_new, h, output_layout=layout,
+                state_v_first=svf, cu_seqlens=cu))
+    print(f"PASS chunk_kda_fwd_finalize parity ({len(cases)} cases)")
+
+
 def scenario_chunk_kda_bwd_intra():
     B, H, T, K, cs = 2, 4, 256, 128, 64
     dt = torch.bfloat16
@@ -1857,6 +1966,8 @@ def _scenarios():
         scenario_conv1d_bwd_bnsd,
         scenario_chunk_kda_fwd,
         scenario_chunk_kda_fwd_variants,
+        scenario_chunk_kda_fwd_three_stage,
+        scenario_chunk_kda_fwd_finalize,
         scenario_chunk_kda_bwd_intra,
         scenario_chunk_kda_bwd,
         scenario_chunk_kda_bwd_recompute,

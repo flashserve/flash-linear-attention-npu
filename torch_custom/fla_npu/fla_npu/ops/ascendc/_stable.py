@@ -67,6 +67,7 @@ _ENUM = {
     "npu_chunk_gated_delta_rule_fwd": {"layout": _LAYOUT_CODES},
     "npu_chunk_kda_bwd_intra": {"layout": {"BSND": 0, "BNSD": 1, "TND": 2}},
     "npu_chunk_kda_fwd": {"layout": _LAYOUT_CODES},
+    "npu_chunk_kda_fwd_finalize": {"output_layout": _LAYOUT_CODES},
     # The recurrent KDA kernel only implements the two spellings the reference
     # accepts, so this op's table is the (BSND, TND) subset.
     "npu_recurrent_kda": {"layout": {"BSND": 0, "TND": 1}},
@@ -1252,7 +1253,10 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
                       chunk_indices=None, safe_gate=False, lower_bound=None,
                       use_gate_in_kernel=False, A_log=None, dt_bias=None,
                       disable_recompute=False,
-                      return_intermediate_states=False, state_v_first=False):
+                      return_intermediate_states=False, state_v_first=False,
+                      epsilon=1e-6, use_qk_l2norm_in_kernel=False,
+                      use_beta_sigmoid_in_kernel=False,
+                      allow_neg_eigval=False, use_exp2=True):
     """KDA chunked forward, returning the saved tensors the backward needs.
 
     ``disable_recompute`` is what makes `w`/`u`/`qg`/`kg`/`v_new` real outputs
@@ -1260,7 +1264,37 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
     sequence-major list the kernel expects.  The trailing value is the caller's
     own ``initial_state``, which the operator updates in place (the reference
     API returns it the same way).
+
+    ``epsilon`` / ``use_qk_l2norm_in_kernel`` / ``use_beta_sigmoid_in_kernel``
+    / ``allow_neg_eigval`` / ``use_exp2`` 是三算子组合入口才有的归一化与 gate
+    语义开关，默认值即历史语义；取非默认值时调用必须落在组合场景
+    （bfloat16 q/k/v、K=V=128、chunk_size=64），否则按参考实现拒绝。
     """
+
+    epsilon = 1e-6 if epsilon is None else float(epsilon)
+    if not epsilon > 0.0:
+        raise RuntimeError(
+            "npu_chunk_kda_fwd: epsilon must be a positive finite number.")
+    import torch
+
+    use_qk_l2norm_in_kernel = bool(use_qk_l2norm_in_kernel)
+    use_beta_sigmoid_in_kernel = bool(use_beta_sigmoid_in_kernel)
+    allow_neg_eigval = bool(allow_neg_eigval)
+    use_exp2 = True if use_exp2 is None else bool(use_exp2)
+    if allow_neg_eigval and not use_beta_sigmoid_in_kernel:
+        raise RuntimeError(
+            "npu_chunk_kda_fwd: allow_neg_eigval=True requires "
+            "use_beta_sigmoid_in_kernel=True.")
+    if (use_qk_l2norm_in_kernel or use_beta_sigmoid_in_kernel
+            or allow_neg_eigval or not use_exp2):
+        key_dim = int(k.shape[-1])
+        value_dim = int(v.shape[-1])
+        if (q.dtype != torch.bfloat16 or key_dim != 128 or value_dim != 128
+                or int(chunk_size) != 64):
+            raise RuntimeError(
+                "npu_chunk_kda_fwd: non-default gate/L2norm switches require "
+                "the three-stage scenario (bfloat16 q/k/v, K=V=128, "
+                "chunk_size=64).")
 
     if cu_seqlens and not chunk_indices:
         chunk_indices = _canonical_chunk_indices(cu_seqlens, chunk_size)
@@ -1272,11 +1306,35 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
         bool(safe_gate),
         -5.0 if lower_bound is None else float(lower_bound),
         bool(use_gate_in_kernel), bool(state_v_first),
+        epsilon, use_qk_l2norm_in_kernel, use_beta_sigmoid_in_kernel,
+        allow_neg_eigval, use_exp2,
         bool(output_final_state), bool(disable_recompute),
         bool(return_intermediate_states),
         _current_stream_ptr(),
     )
     return (*result, initial_state)
+
+
+def npu_chunk_kda_fwd_finalize(qg_scaled, aqk, v_new, h, *,
+                               output_layout="BSND", state_v_first=False,
+                               cu_seqlens=None, chunk_indices=None):
+    """KDA chunked forward 的 finalize 段（唯一的公开输出是 ``attn_out``）。
+
+    ``output_layout`` 只描述输出的拼写：BSND/TND 是 sequence-major，
+    BNSD/NTD 是 head-major；四个输入始终是 head-major（packed 拼写没有 batch
+    轴）。``cu_seqlens`` 传了就按 canonical 顺序生成 ``chunk_indices``。
+    """
+
+    if cu_seqlens and not chunk_indices:
+        chunk_indices = _canonical_chunk_indices(cu_seqlens, 64)
+    return _op("npu_chunk_kda_fwd_finalize")(
+        qg_scaled, aqk, v_new, h,
+        _host_ints(cu_seqlens), _host_ints(chunk_indices),
+        _char_code("npu_chunk_kda_fwd_finalize", "output_layout",
+                   output_layout),
+        bool(state_v_first),
+        _current_stream_ptr(),
+    )
 
 
 def npu_chunk_gated_delta_rule_fwd(q, k, v, g, beta, *, initial_state=None,

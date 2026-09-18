@@ -201,6 +201,8 @@ def main() -> int:
         suite.scenario_conv1d_bwd_bnsd,
         suite.scenario_chunk_kda_fwd,
         suite.scenario_chunk_kda_fwd_variants,
+        suite.scenario_chunk_kda_fwd_three_stage,
+        suite.scenario_chunk_kda_fwd_finalize,
         suite.scenario_chunk_kda_bwd_intra,
         suite.scenario_chunk_kda_bwd,
         suite.scenario_chunk_kda_bwd_recompute,

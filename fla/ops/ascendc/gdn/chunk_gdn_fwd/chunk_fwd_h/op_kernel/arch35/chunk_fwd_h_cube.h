@@ -93,6 +93,16 @@ private:
         ArchTag, bfloat16_t, LayoutLeftS2, bfloat16_t, LayoutRightS2, float, LayoutOutput>;
     using ElementAccumulator = typename TileS2::ElementAccumulator;
 
+    // FP32 state 时，每个 AIV 用两个 64 KiB bank 常驻本轮两个 head 的 state。
+    // 两个 head 的 P/D 按生产消费顺序复用同一个 64 KiB 数据槽，释放另一个槽给 state。
+    __aicore__ inline uint32_t DataSlot(const FwdHHeadBinding &head) const
+    {
+        if constexpr (CompilePolicy::STATE_FP32) {
+            return 0;
+        }
+        return head.localSlot;
+    }
+
     using CopyL1ToL0AS0 = typename TileS0::CopyL1ToL0A;
     using CopyL1ToL0BS0 = typename TileS0::CopyL1ToL0B;
     using CopyL1ToL0AS2 = typename TileS2::CopyL1ToL0A;
@@ -353,8 +363,8 @@ private:
     }
 
     __aicore__ inline void ComputeStage0Head(
-        const FwdHChunkSpan &chunk, const FwdHHeadBinding &head, uint32_t pipelineSlot,
-        uint32_t wSlot, uint32_t hSlot)
+        const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk, const FwdHHeadBinding &head,
+        uint32_t pipelineSlot, uint32_t wSlot, uint32_t hSlot)
     {
         // Stage0 计算：Pacc_c,h = W_c,h @ H_c,h，BF16 x BF16 -> FP32；
         // 随后按 StateT 转为 PType，Fixpipe 直接写入该 head 所属 AIV 的 local slot。
@@ -390,14 +400,28 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0BFreeEvent(pipelineSlot));
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(FixDoneEvent(pipelineSlot));
 
-        if (!chunk.first) {
+        if constexpr (CompilePolicy::STATE_FP32) {
+            if (head.localSlot == 0) {
+                if (!chunk.first) {
+                    // 每个 AIV 的首个 head 复用上一 chunk 最后一个 head 释放的 D 槽。
+                    const uint32_t lastLocalSlot =
+                        FwdHAivHeadCount(unit.headRound.activeHeadCount, head.aiv) - 1;
+                    AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(
+                        FwdHAicPeerFlag(FWD_H_D_FREE_FLAG, lastLocalSlot, head.aiv));
+                }
+            } else {
+                // 同一 chunk 的第二个 head 等首个 head 的 P 被 AIV 消费后再覆盖数据槽。
+                AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(
+                    FwdHAicPeerFlag(FWD_H_P_FREE_FLAG, head.localSlot - 1, head.aiv));
+            }
+        } else if (!chunk.first) {
             // 首 chunk 的 initial_state 还没有前序消费者；后续 chunk 复用的是前一轮的 D slot。
             AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(
-                FwdHAicPeerFlag(FWD_H_D_FREE_FLAG, head.localSlot, head.aiv));
+                FwdHAicPeerFlag(FWD_H_D_FREE_FLAG, DataSlot(head), head.aiv));
         }
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(FixDoneEvent(pipelineSlot));
         AscendC::LocalTensor<PType> pUb = UbBuffer()[
-            FwdHLocalSlotBase(head.localSlot)].template ReinterpretCast<PType>();
+            FwdHLocalSlotBase(DataSlot(head))].template ReinterpretCast<PType>();
         auto ubLayout = tla::MakeLayout<PType, LayoutOutput>(m, FWD_H_V);
         auto tensorUb = tla::MakeTensor(pUb, ubLayout, Catlass::Arch::PositionUB{});
         auto blockUb = tla::GetTile(tensorUb, tla::MakeCoord(0, 0),
@@ -420,13 +444,13 @@ private:
             LoadStage0W(unit, chunk, head, head.roundHead);
             LoadStage0H(unit, chunk, head, head.roundHead);
             if (roundHead > 0) {
-                ComputeStage0Head(chunk, unit.headRound.heads[roundHead - 1],
+                ComputeStage0Head(unit, chunk, unit.headRound.heads[roundHead - 1],
                                   (roundHead - 1) & 1U, roundHead - 1, roundHead - 1);
             }
         }
         if (unit.headRound.activeHeadCount > 0) {
             const uint32_t last = unit.headRound.activeHeadCount - 1;
-            ComputeStage0Head(chunk, unit.headRound.heads[last], last & 1U, last, last);
+            ComputeStage0Head(unit, chunk, unit.headRound.heads[last], last & 1U, last, last);
         }
     }
 
@@ -574,14 +598,28 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0BFreeEvent(pipelineSlot));
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(FixDoneEvent(pipelineSlot));
 
-        if (stage0Ran) {
+        if constexpr (CompilePolicy::STATE_FP32) {
+            if (head.localSlot == 0) {
+                if (stage0Ran) {
+                    // 首个 D 等同一 AIV 的最后一个 P 被消费，保证 P/D 共用槽已空闲。
+                    const uint32_t lastLocalSlot =
+                        FwdHAivHeadCount(unit.headRound.activeHeadCount, head.aiv) - 1;
+                    AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(
+                        FwdHAicPeerFlag(FWD_H_P_FREE_FLAG, lastLocalSlot, head.aiv));
+                }
+            } else {
+                // 第二个 D 等首个 D 被 AIV 消费；首 chunk 无 P 时也必须执行此等待。
+                AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(
+                    FwdHAicPeerFlag(FWD_H_D_FREE_FLAG, head.localSlot - 1, head.aiv));
+            }
+        } else if (stage0Ran) {
             // Stage0 写入 P 后由 Stage1 发布 P_FREE；只有此时 Stage2 才能复用同一 UB slot 写 D。
             AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(
-                FwdHAicPeerFlag(FWD_H_P_FREE_FLAG, head.localSlot, head.aiv));
+                FwdHAicPeerFlag(FWD_H_P_FREE_FLAG, DataSlot(head), head.aiv));
         }
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(FixDoneEvent(pipelineSlot));
         AscendC::LocalTensor<float> dUb =
-            UbBuffer()[FwdHLocalSlotBase(head.localSlot)].template ReinterpretCast<float>();
+            UbBuffer()[FwdHLocalSlotBase(DataSlot(head))].template ReinterpretCast<float>();
         auto ubLayout = tla::MakeLayout<float, LayoutOutput>(FWD_H_K, FWD_H_V);
         auto tensorUb = tla::MakeTensor(dUb, ubLayout, Catlass::Arch::PositionUB{});
         CopyL0CToUbS2<decltype(tensorUb)> copyD;
@@ -648,7 +686,7 @@ private:
             const bool stage0Ran = !(chunk.first && args_.tiling.useInitialState == 0);
             if (stage0Ran) {
                 LoadStage0H(unit, chunk, head, 0);
-                ComputeStage0Head(chunk, head, 0, parity, 0);
+                ComputeStage0Head(unit, chunk, head, 0, parity, 0);
             }
             if (!NeedsStage2(chunk)) {
                 continue;
@@ -704,14 +742,34 @@ private:
 
         const bool terminalStage2 = args_.tiling.storeFinalState != 0;
         const bool terminalStage0 = args_.tiling.useInitialState != 0 || unit.sequence.chunkCount > 1;
-        for (uint32_t roundHead = 0; roundHead < unit.headRound.activeHeadCount; ++roundHead) {
-            const FwdHHeadBinding &head = unit.headRound.heads[roundHead];
-            if (terminalStage2) {
-                AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(
-                    FwdHAicPeerFlag(FWD_H_D_FREE_FLAG, head.localSlot, head.aiv));
-            } else if (terminalStage0) {
-                AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(
-                    FwdHAicPeerFlag(FWD_H_P_FREE_FLAG, head.localSlot, head.aiv));
+        if constexpr (CompilePolicy::STATE_FP32) {
+            // 同一 AIV 的前一个 head 已在槽内复用点消费 free credit；round 尾只收最后一代。
+            for (uint32_t aiv = 0; aiv < FWD_H_AIV_COUNT; ++aiv) {
+                if (unit.headRound.activeHeadCount <= aiv) {
+                    continue;
+                }
+                const uint32_t localHeads =
+                    FwdHAivHeadCount(unit.headRound.activeHeadCount, aiv);
+                const FwdHHeadBinding &head =
+                    unit.headRound.heads[aiv + 2 * (localHeads - 1)];
+                if (terminalStage2) {
+                    AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(
+                        FwdHAicPeerFlag(FWD_H_D_FREE_FLAG, head.localSlot, head.aiv));
+                } else if (terminalStage0) {
+                    AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(
+                        FwdHAicPeerFlag(FWD_H_P_FREE_FLAG, head.localSlot, head.aiv));
+                }
+            }
+        } else {
+            for (uint32_t roundHead = 0; roundHead < unit.headRound.activeHeadCount; ++roundHead) {
+                const FwdHHeadBinding &head = unit.headRound.heads[roundHead];
+                if (terminalStage2) {
+                    AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(
+                        FwdHAicPeerFlag(FWD_H_D_FREE_FLAG, DataSlot(head), head.aiv));
+                } else if (terminalStage0) {
+                    AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(
+                        FwdHAicPeerFlag(FWD_H_P_FREE_FLAG, DataSlot(head), head.aiv));
+                }
             }
         }
         if (hasNextWorkUnit) {

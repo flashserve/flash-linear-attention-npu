@@ -96,17 +96,18 @@ tiling 参数位置不会随策略变化。L2 接口允许未保留的七项传 
 
 ### 输出保留策略
 
-`backward_mode` 只控制反向检查点的公开分配和 GM 写回，支持以下三档：
+`backward_mode` 只控制反向检查点的公开分配和 GM 写回，支持以下四档：
 
 | `backward_mode` | 场景 | 13 个返回槽位中非空的数据 |
 | --- | --- | --- |
 | `"none"` | 完全不需要反向 | `gk/Aqk/w/u/kg/qg_scaled` |
+| `"forward"` | 只要公开必选的 `Akk`，不需要反向重计算中间量 | 上述六项，加 `Akk` |
 | `"recompute"` | 有反向，允许重计算 chunk-local 中间量 | 上述六项，加 `Akk/q_hat/k_hat/q_rstd/k_rstd/beta_eff` |
 | `"save"` | 有反向，不重计算 | 全部 13 项；相对 `recompute` 额外保存 `qg` |
 
-默认值为 `"save"`，保持原来 13 项全部返回的兼容行为。三档都执行相同的前向数学计算、
+默认值为 `"save"`，保持原来 13 项全部返回的兼容行为。各档都执行相同的前向数学计算、
 静态 UB/L1 布局和跨核同步，仅关闭未请求结果的公开 GM 写回；`Akk/qg` 等数据在本算子
-内部仍按 C4/C5/C7 或 BF16 舍入语义使用。三档由 TilingKey 的编译期 `OUTPUT_MODE`
+内部仍按 C4/C5/C7 或 BF16 舍入语义使用。四档由 TilingKey 的编译期 `OUTPUT_MODE`
 选择，Stage 内不读取运行时输出 mask。
 
 完整 forward 的 `output_final_state` 与 `return_intermediate_states` 是和
