@@ -369,6 +369,17 @@ foreach (OP_DEPEND_DIR ${OP_DEPEND_DIR_LIST})
             add_subdirectory(${OP_DEPEND_DIR})
         endif()
     endif ()
+    # 依赖算子必须与主算子一起进入 OP_LIST / OP_DIR_LIST：kernel 二进制和
+    # kernel/config/<soc>/<op>.json 由 add_bin_compile_target 按 OP_DIR_LIST 生成，
+    # dynamic/<op>.py 由 OP_LIST 安装。只 add_subdirectory 会得到 host 侧符号齐全、
+    # 但依赖算子缺动态 kernel JSON 的 scoped 包，运行时报
+    # “JSON configuration file of operator aclnnXxx_1_<DependOp> cannot be found”。
+    if (NOT ${SUB_DIR} IN_LIST OP_LIST)
+        list(APPEND OP_LIST ${SUB_DIR})
+    endif()
+    if (NOT ${OP_DEPEND_DIR} IN_LIST OP_DIR_LIST)
+        list(APPEND OP_DIR_LIST ${OP_DEPEND_DIR})
+    endif()
     if ( "${OP_DEPEND_DIR}" MATCHES ".*moe_inplace_index_add_with_sorted.*")
        list(APPEND OP_DIR_LIST ${OPS_TRANSFORMER_DIR}/moe/3rd/moe_inplace_index_add_with_sorted)
     endif()
