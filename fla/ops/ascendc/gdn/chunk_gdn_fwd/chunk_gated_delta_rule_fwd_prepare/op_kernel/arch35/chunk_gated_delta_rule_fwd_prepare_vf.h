@@ -191,64 +191,176 @@ __aicore__ inline void L2NormK128VF(LocalTensor<T> &xLocal, LocalTensor<T> &yLoc
 }
 
 /**
- * function: 原地 inclusive prefix-sum 再乘 scale。x[t] = scale * sum_{i<=t} x[i]。
+ * function: 原地 Sklansky inclusive prefix-sum，再乘 scale。
+ *           x[t] = scale * sum_{i<=t} x[i]。
  *           use_exp2 时 scale=RCP_LN2，否则 1。
- * input:  x [n] fp32, scale(fp32), n
+ *           加法树深度 log2(n)，对应 CumSumFirstDimSklansky 的 1D 公式。
+ *           s=1/2/4/8：寄存器内 DeInterleave 树，每层若干向量加，无 membar。
+ *           s=16/32：右半段连续，BRC 左端点 + range mask 向量加；MERGING 保住其它 lane。
+ *           同 VEC_SCOPE；仅在 s>=16 的 BRC 读 UB 前 LocalMemBar。
+ *           nAlign padding 为 0；UpdateMask(64) 不安全，末组 end==64 用 ALL xor prefix(start)。
+ * input:  x [n] fp32, scale(fp32), n（n<=64）
  * output: x [n] fp32（原地）
  */
 __aicore__ inline void CumsumScaleVF(LocalTensor<float> &x, float scale, uint32_t n)
 {
+    if (n == 0) {
+        return;
+    }
     __ubuf__ float *addr = (__ubuf__ float *)x.GetPhyAddr();
     const uint16_t n16 = static_cast<uint16_t>(n);
-    const uint16_t n8 = n16 >> 3;
-    const uint16_t nTail = n16 & 7;
+    uint16_t nAlign = 1;
+    while (nAlign < n16) {
+        nAlign <<= 1;
+    }
+    const uint16_t doS1 = static_cast<uint16_t>(nAlign >= 2);
+    const uint16_t doS2 = static_cast<uint16_t>(nAlign >= 4);
+    const uint16_t doS4 = static_cast<uint16_t>(nAlign >= 8);
+    const uint16_t doS8 = static_cast<uint16_t>(nAlign >= 16);
+    const uint16_t nGrp16 = nAlign >> 5;
+    const uint16_t nGrp32 = nAlign >> 6;
+    const uint16_t nGrp16Main = nGrp16 > 0 ? static_cast<uint16_t>(nGrp16 - 1) : 0;
+    const uint16_t n16TailAll = (nGrp16 > 0 && nAlign == 64) ? 1 : 0;
+    const uint16_t n16TailUpd = (nGrp16 > 0 && nAlign != 64) ? 1 : 0;
+    const uint16_t barAfter8 = nGrp16 > 0 ? 1 : 0;
+    const uint16_t barAfter16 = nGrp32 > 0 ? 1 : 0;
     __VEC_SCOPE__
     {
-        MaskReg preg1 = CreateMask<float, MaskPattern::VL1>();
-        RegTensor<float> acc, s, v0, v1, v2, v3, v4, v5, v6, v7;
-        Duplicate(acc, 0.0f, preg1);
-        Duplicate(s, scale, preg1);
-        for (uint16_t b = 0; b < n8; b++) {
-            LoadAlign<float, LoadDist::DIST_BRC_B32>(v0, addr + b * 8);
-            LoadAlign<float, LoadDist::DIST_BRC_B32>(v1, addr + b * 8 + 1);
-            LoadAlign<float, LoadDist::DIST_BRC_B32>(v2, addr + b * 8 + 2);
-            LoadAlign<float, LoadDist::DIST_BRC_B32>(v3, addr + b * 8 + 3);
-            LoadAlign<float, LoadDist::DIST_BRC_B32>(v4, addr + b * 8 + 4);
-            LoadAlign<float, LoadDist::DIST_BRC_B32>(v5, addr + b * 8 + 5);
-            LoadAlign<float, LoadDist::DIST_BRC_B32>(v6, addr + b * 8 + 6);
-            LoadAlign<float, LoadDist::DIST_BRC_B32>(v7, addr + b * 8 + 7);
-            Add(acc, acc, v0, preg1);
-            Mul(v0, acc, s, preg1);
-            Add(acc, acc, v1, preg1);
-            Mul(v1, acc, s, preg1);
-            Add(acc, acc, v2, preg1);
-            Mul(v2, acc, s, preg1);
-            Add(acc, acc, v3, preg1);
-            Mul(v3, acc, s, preg1);
-            Add(acc, acc, v4, preg1);
-            Mul(v4, acc, s, preg1);
-            Add(acc, acc, v5, preg1);
-            Mul(v5, acc, s, preg1);
-            Add(acc, acc, v6, preg1);
-            Mul(v6, acc, s, preg1);
-            Add(acc, acc, v7, preg1);
-            Mul(v7, acc, s, preg1);
-            StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(addr + b * 8, v0, preg1);
-            StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(addr + b * 8 + 1, v1, preg1);
-            StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(addr + b * 8 + 2, v2, preg1);
-            StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(addr + b * 8 + 3, v3, preg1);
-            StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(addr + b * 8 + 4, v4, preg1);
-            StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(addr + b * 8 + 5, v5, preg1);
-            StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(addr + b * 8 + 6, v6, preg1);
-            StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(addr + b * 8 + 7, v7, preg1);
+        MaskReg pregAll = CreateMask<float, MaskPattern::ALL>();
+        MaskReg preg32 = CreateMask<float, MaskPattern::VL32>();
+        RegTensor<float> v, left, even, odd, eLo, eHi, oLo, oHi, unused, zero, dump;
+        RegTensor<float> a0, a1, a2, a3, a4, a5, a6, a7;
+        RegTensor<float> b0, b1, b2, b3, b4, b5, b6, b7;
+        Duplicate(zero, 0.0f, pregAll);
+        LoadAlign(v, addr);
+
+        for (uint16_t t = 0; t < doS1; ++t) {
+            DeInterleave(even, odd, v, zero);
+            Add(odd, odd, even, preg32);
+            Interleave(v, unused, even, odd);
         }
-        for (uint16_t t = 0; t < nTail; t++) {
-            const uint32_t off = static_cast<uint32_t>(n8) * 8 + t;
-            LoadAlign<float, LoadDist::DIST_BRC_B32>(v0, addr + off);
-            Add(acc, acc, v0, preg1);
-            Mul(v0, acc, s, preg1);
-            StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(addr + off, v0, preg1);
+        for (uint16_t t = 0; t < doS2; ++t) {
+            DeInterleave(even, odd, v, zero);
+            DeInterleave(eLo, eHi, even, zero);
+            DeInterleave(oLo, oHi, odd, zero);
+            Add(eHi, eHi, oLo, preg32);
+            Add(oHi, oHi, oLo, preg32);
+            Interleave(even, unused, eLo, eHi);
+            Interleave(odd, unused, oLo, oHi);
+            Interleave(v, unused, even, odd);
         }
+        for (uint16_t t = 0; t < doS4; ++t) {
+            DeInterleave(even, odd, v, zero);
+            DeInterleave(eLo, eHi, even, zero);
+            DeInterleave(oLo, oHi, odd, zero);
+            DeInterleave(a0, a4, eLo, zero);
+            DeInterleave(a2, a6, eHi, zero);
+            DeInterleave(a1, a5, oLo, zero);
+            DeInterleave(a3, a7, oHi, zero);
+            Add(a4, a4, a3, preg32);
+            Add(a5, a5, a3, preg32);
+            Add(a6, a6, a3, preg32);
+            Add(a7, a7, a3, preg32);
+            Interleave(eLo, unused, a0, a4);
+            Interleave(eHi, unused, a2, a6);
+            Interleave(oLo, unused, a1, a5);
+            Interleave(oHi, unused, a3, a7);
+            Interleave(even, unused, eLo, eHi);
+            Interleave(odd, unused, oLo, oHi);
+            Interleave(v, unused, even, odd);
+        }
+        for (uint16_t t = 0; t < doS8; ++t) {
+            DeInterleave(even, odd, v, zero);
+            DeInterleave(eLo, eHi, even, zero);
+            DeInterleave(oLo, oHi, odd, zero);
+            DeInterleave(a0, a4, eLo, zero);
+            DeInterleave(a2, a6, eHi, zero);
+            DeInterleave(a1, a5, oLo, zero);
+            DeInterleave(a3, a7, oHi, zero);
+            DeInterleave(b0, even, a0, zero);
+            DeInterleave(b1, odd, a1, zero);
+            DeInterleave(b2, eLo, a2, zero);
+            DeInterleave(b3, eHi, a3, zero);
+            DeInterleave(b4, oLo, a4, zero);
+            DeInterleave(b5, oHi, a5, zero);
+            DeInterleave(b6, unused, a6, zero);
+            DeInterleave(b7, left, a7, zero);
+            Add(even, even, b7, preg32);
+            Add(odd, odd, b7, preg32);
+            Add(eLo, eLo, b7, preg32);
+            Add(eHi, eHi, b7, preg32);
+            Add(oLo, oLo, b7, preg32);
+            Add(oHi, oHi, b7, preg32);
+            Add(unused, unused, b7, preg32);
+            Add(left, left, b7, preg32);
+            Interleave(a0, dump, b0, even);
+            Interleave(a1, dump, b1, odd);
+            Interleave(a2, dump, b2, eLo);
+            Interleave(a3, dump, b3, eHi);
+            Interleave(a4, dump, b4, oLo);
+            Interleave(a5, dump, b5, oHi);
+            Interleave(a6, dump, b6, unused);
+            Interleave(a7, dump, b7, left);
+            Interleave(eLo, dump, a0, a4);
+            Interleave(eHi, dump, a2, a6);
+            Interleave(oLo, dump, a1, a5);
+            Interleave(oHi, dump, a3, a7);
+            Interleave(even, dump, eLo, eHi);
+            Interleave(odd, dump, oLo, oHi);
+            Interleave(v, dump, even, odd);
+        }
+        for (uint16_t t = 0; t < barAfter8; ++t) {
+            StoreAlign(addr, v, pregAll);
+            LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+        }
+
+        for (uint16_t g = 0; g < nGrp16Main; ++g) {
+            const uint32_t line0 = 15 + static_cast<uint32_t>(g) * 32;
+            LoadAlign<float, LoadDist::DIST_BRC_B32>(left, addr + line0);
+            uint32_t cLo = line0 + 1;
+            uint32_t cHi = line0 + 17;
+            MaskReg pregLo = UpdateMask<float>(cLo);
+            MaskReg pregHi = UpdateMask<float>(cHi);
+            MaskReg pregRange;
+            Xor(pregRange, pregHi, pregLo, pregAll);
+            Add<float, MaskMergeMode::MERGING>(v, v, left, pregRange);
+        }
+        for (uint16_t t = 0; t < n16TailAll; ++t) {
+            const uint32_t line0 = 15 + static_cast<uint32_t>(nGrp16Main) * 32;
+            LoadAlign<float, LoadDist::DIST_BRC_B32>(left, addr + line0);
+            uint32_t cLo = line0 + 1;
+            MaskReg pregLo = UpdateMask<float>(cLo);
+            MaskReg pregRange;
+            Xor(pregRange, pregAll, pregLo, pregAll);
+            Add<float, MaskMergeMode::MERGING>(v, v, left, pregRange);
+        }
+        for (uint16_t t = 0; t < n16TailUpd; ++t) {
+            const uint32_t line0 = 15 + static_cast<uint32_t>(nGrp16Main) * 32;
+            LoadAlign<float, LoadDist::DIST_BRC_B32>(left, addr + line0);
+            uint32_t cLo = line0 + 1;
+            uint32_t cHi = line0 + 17;
+            MaskReg pregLo = UpdateMask<float>(cLo);
+            MaskReg pregHi = UpdateMask<float>(cHi);
+            MaskReg pregRange;
+            Xor(pregRange, pregHi, pregLo, pregAll);
+            Add<float, MaskMergeMode::MERGING>(v, v, left, pregRange);
+        }
+        for (uint16_t t = 0; t < barAfter16; ++t) {
+            StoreAlign(addr, v, pregAll);
+            LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+        }
+
+        for (uint16_t t = 0; t < nGrp32; ++t) {
+            LoadAlign<float, LoadDist::DIST_BRC_B32>(left, addr + 31);
+            MaskReg pregRange;
+            Xor(pregRange, pregAll, preg32, pregAll);
+            Add<float, MaskMergeMode::MERGING>(v, v, left, pregRange);
+        }
+
+        uint32_t count = n;
+        MaskReg pregN = UpdateMask<float>(count);
+        Muls(v, v, scale, pregN);
+        StoreAlign(addr, v, pregN);
     }
 }
 
@@ -335,12 +447,13 @@ __aicore__ inline void BetaSigmoidVF(LocalTensor<T> &betaIn, LocalTensor<float> 
 
 /**
  * function: 构造与 kkt 无关的下三角 gate。
- *           G[i,j] = -beta[i] * exp(expScale * clip(g[i]-g[j], -50, 50)), i>j；其余为 0。
- * input:  g [64] fp32, beta [64] fp32, expScale
+ *           G[i,j] = -beta[i] * exp*(clip(g[i]-g[j], -50, 50)), i>j；其余为 0。
+ *           UseExp2: exp2 via *ln2 then Exp; otherwise natural Exp.
+ * input:  g [64] fp32, beta [64] fp32
  * output: G [64,64] fp32
  */
-__aicore__ inline void GateLowerLVF(LocalTensor<float> &g, LocalTensor<float> &beta, LocalTensor<float> &G,
-                                    float expScale)
+template <bool UseExp2>
+__aicore__ inline void GateLowerLVF(LocalTensor<float> &g, LocalTensor<float> &beta, LocalTensor<float> &G)
 {
     __ubuf__ float *gAddr = (__ubuf__ float *)g.GetPhyAddr();
     __ubuf__ float *betaAddr = (__ubuf__ float *)beta.GetPhyAddr();
@@ -373,8 +486,10 @@ __aicore__ inline void GateLowerLVF(LocalTensor<float> &g, LocalTensor<float> &b
             Max(d1, d1, lo, pregAll);
             Min(d0, d0, hi, pregAll);
             Min(d1, d1, hi, pregAll);
-            Muls(d0, d0, expScale, pregAll);
-            Muls(d1, d1, expScale, pregAll);
+            if constexpr (UseExp2) {
+                Muls(d0, d0, kGdnLn2, pregAll);
+                Muls(d1, d1, kGdnLn2, pregAll);
+            }
             Exp(gate0, d0, pregAll);
             Exp(gate1, d1, pregAll);
             Mul(out0, gate0, b0, pregAll);
@@ -516,13 +631,14 @@ __aicore__ inline void ScaleRowsK256VF(LocalTensor<T> &x, LocalTensor<T> &y, Loc
 }
 
 /**
- * function: kbg 缩放，最后一维 128。y[t,:] = x[t,:] * beta[t] * exp(expScale * g[t])。
- * input:  x [rows,128] T(bf16), beta [rows] fp32, g [rows] fp32, expScale, rows
+ * function: kbg 缩放，最后一维 128。y[t,:] = x[t,:] * beta[t] * exp*(g[t])。
+ *           UseExp2: exp2 via *ln2 then Exp; otherwise natural Exp.
+ * input:  x [rows,128] T(bf16), beta [rows] fp32, g [rows] fp32, rows
  * output: y [rows,128] T
  */
-template <typename T>
-__aicore__ inline void ScaleRowsBetaExpGVF(LocalTensor<T> &x, LocalTensor<T> &y, LocalTensor<float> &beta,
-                                           LocalTensor<float> &g, float expScale, uint32_t rows)
+template <typename T, bool UseExp2>
+__aicore__ inline void ScaleRowsBetaExp2gVF(LocalTensor<T> &x, LocalTensor<T> &y, LocalTensor<float> &beta,
+                                            LocalTensor<float> &g, uint32_t rows)
 {
     constexpr uint32_t kRow = 2 * VL;
     constexpr uint32_t kPairElems = 2 * kRow;
@@ -545,8 +661,10 @@ __aicore__ inline void ScaleRowsBetaExpGVF(LocalTensor<T> &x, LocalTensor<T> &y,
             LoadCastB16<T>(xAddr + p * kPairElems + VL, k01, pregAll);
             LoadCastB16<T>(xAddr + p * kPairElems + kRow, k10, pregAll);
             LoadCastB16<T>(xAddr + p * kPairElems + kRow + VL, k11, pregAll);
-            Muls(g0, g0, expScale, pregAll);
-            Muls(g1, g1, expScale, pregAll);
+            if constexpr (UseExp2) {
+                Muls(g0, g0, kGdnLn2, pregAll);
+                Muls(g1, g1, kGdnLn2, pregAll);
+            }
             Exp(g0, g0, pregAll);
             Exp(g1, g1, pregAll);
             Mul(g0, g0, b0, pregAll);
@@ -565,7 +683,9 @@ __aicore__ inline void ScaleRowsBetaExpGVF(LocalTensor<T> &x, LocalTensor<T> &y,
             LoadAlign<float, LoadDist::DIST_BRC_B32>(b0, bAddr + nPair * 2);
             LoadCastB16<T>(xAddr + nPair * kPairElems, k00, pregAll);
             LoadCastB16<T>(xAddr + nPair * kPairElems + VL, k01, pregAll);
-            Muls(g0, g0, expScale, pregAll);
+            if constexpr (UseExp2) {
+                Muls(g0, g0, kGdnLn2, pregAll);
+            }
             Exp(g0, g0, pregAll);
             Mul(g0, g0, b0, pregAll);
             Mul(y00, k00, g0, pregAll);
