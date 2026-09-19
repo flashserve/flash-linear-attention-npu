@@ -4,15 +4,48 @@
 // `Tensor::scalar_type()`), so including the stable headers from more than one
 // TU fails at link time with "multiple definition of
 // torch::stable::Tensor::scalar_type() const".  All adapters therefore live in
-// this one file, one `stable_<family>.cpp` per group of operators.
-#include "stable_recurrent_gdr.cpp"
+// one translation unit -- but each one keeps its own file, named after the
+// operator it adapts (`stable_<op>.cpp`), so "which file does this operator
+// live in" needs no rule.
+//
+// The helper files come first: they hold the private helpers a few operators
+// share, and in a single translation unit a definition has to precede its use.
+#include "stable_causal_conv1d_common.cpp"
+#include "stable_fwd_h_common.cpp"
+#include "stable_stream_probe.cpp"
+
+#include "stable_causal_conv1d.cpp"
+#include "stable_causal_conv1d_bwd.cpp"
+#include "stable_causal_conv1d_fn.cpp"
+#include "stable_causal_conv1d_update.cpp"
+#include "stable_chunk_bwd_dqkwg.cpp"
+#include "stable_chunk_bwd_dv_local.cpp"
+#include "stable_chunk_fwd_h.cpp"
+#include "stable_chunk_fwd_o.cpp"
+#include "stable_chunk_gated_delta_rule_bwd.cpp"
+#include "stable_chunk_gated_delta_rule_bwd_dhu.cpp"
+#include "stable_chunk_gated_delta_rule_bwd_finalize.cpp"
+#include "stable_chunk_gated_delta_rule_fwd.cpp"
+#include "stable_chunk_gated_delta_rule_fwd_h.cpp"
+#include "stable_chunk_gated_delta_rule_fwd_prepare.cpp"
+#include "stable_chunk_gdn_bwd_intra.cpp"
+#include "stable_chunk_kda_bwd.cpp"
+#include "stable_chunk_kda_bwd_intra.cpp"
+#include "stable_chunk_kda_bwd_recompute.cpp"
+#include "stable_chunk_kda_fwd.cpp"
+#include "stable_chunk_kda_fwd_finalize.cpp"
+#include "stable_chunk_local_cumsum.cpp"
+#include "stable_chunk_scaled_dot_kkt.cpp"
+#include "stable_fast_gelu_custom.cpp"
+#include "stable_fast_gelu_custom_backward.cpp"
+#include "stable_kda_gate_cumsum.cpp"
+#include "stable_prepare_wy_repr_bwd.cpp"
+#include "stable_prepare_wy_repr_bwd_da.cpp"
+#include "stable_prepare_wy_repr_bwd_full.cpp"
+#include "stable_recompute_w_u_fwd.cpp"
+#include "stable_recurrent_gated_delta_rule.cpp"
 #include "stable_recurrent_kda.cpp"
-#include "stable_fast_gelu.cpp"
-#include "stable_kda.cpp"
-#include "stable_chunk.cpp"
-#include "stable_gdn.cpp"
-#include "stable_conv1d.cpp"
-#include "stable_fwd_h.cpp"
+#include "stable_solve_tri.cpp"
 
 // Build stamp: the md5 of the adapter sources this library was compiled from,
 // injected by csrc/build_stable.py.  fla_npu/ops/ascendc/_stable.py
@@ -53,8 +86,9 @@ int64_t fla_npu_stable_last_launch_stream() {
 
 // Exactly one library-definition block and one implementation block per
 // namespace per TU: the macros expand to a fixed static-init symbol name, so a
-// second block for the same namespace would be a redefinition.  The codegen
-// phase therefore collects every adapter's schema/impl into these two lists.
+// second block for the same namespace would be a redefinition.  Both lists are
+// therefore kept here, and in the same order (tools/stable_coverage.py pairs
+// them by position).
 STABLE_TORCH_LIBRARY(fla_npu_stable, m) {
   m.def(kSchemaRecurrentGdr);
   m.def(kSchemaRecurrentKda);
@@ -76,9 +110,9 @@ STABLE_TORCH_LIBRARY(fla_npu_stable, m) {
   m.def(kSchema_causal_conv1d_bwd);
   m.def(kSchema_chunk_fwd_o);
   m.def(kSchema_chunk_gdn_bwd_intra);
-  m.def(kSchema_causal_conv1d);
   m.def(kSchema_causal_conv1d_fn);
   m.def(kSchema_causal_conv1d_update);
+  m.def(kSchema_causal_conv1d);
   m.def(kSchema_chunk_fwd_h);
   m.def(kSchema_chunk_gated_delta_rule_fwd_h);
   m.def(kSchema_chunk_gated_delta_rule_bwd_dhu);

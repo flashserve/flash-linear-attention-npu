@@ -3384,8 +3384,8 @@ def npu_chunk_kda_bwd(
 # V2 的三算子组合（ChunkKdaFwdPrepare + ChunkFwdH + ChunkKdaFwdFinalize）在
 # 大工作量下比融合实现快，但 ChunkFwdH 的耗时对 head 数不敏感：当 (chunk, head)
 # 总工作量偏小时整链会慢于单 kernel 的融合实现。
-# 这里只按工作量门控，并与 Stable-ABI 薄层（csrc/src/stable_kda.cpp 的
-# kChunkKdaFwdV2MinWorkItems）保持同一条判据，两条后端才会逐位一致。
+# 这里只按工作量门控，并与 Stable-ABI 适配层（csrc/src/stable_chunk_kda_fwd.cpp
+# 的 kChunkKdaFwdV2MinWorkItems）保持同一条判据，两条后端才会逐位一致。
 # 门控值取自 A2 实测：head 数 16、T=8192（2048 work item）时组合略慢，
 # head 数 32 及以上组合领先 15% 以上。
 _CHUNK_KDA_FWD_V2_MIN_WORK_ITEMS = 4096
@@ -4271,7 +4271,7 @@ def npu_solve_tri(x, *, cu_seqlens=None, chunk_indices=None, layout="bsnd"):
         # kills the process inside aclnnSolveTri, with and without cu_seqlens.
         # Crashing has no defined semantics to be compatible with, so this one
         # is refused with a message instead -- see
-        # docs/architecture/stable-abi-macro-design.md.
+        # docs/architecture/适配层设计.md.
         #
         # `ntd` crashes the same way (re-measured: five of six shapes segfault,
         # the sixth is rejected 161001 -- see the inventory's known limits), and

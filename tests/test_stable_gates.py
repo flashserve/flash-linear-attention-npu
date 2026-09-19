@@ -43,7 +43,7 @@ def _load_module(name: str, path: Path):
     return module
 
 
-def _launcher_only_tree(tmp: str, *, declare: bool,
+def _launcher_only_tree(tmp: str, *, hand_written_list: bool = False,
                         ctypes_defines: bool = False,
                         wrapper_args: int = 2):
     """A minimal tree holding one operator that has no ctypes wrapper.
@@ -57,10 +57,14 @@ def _launcher_only_tree(tmp: str, *, declare: bool,
     src = Path(tmp) / "src"
     ops.mkdir()
     src.mkdir()
-    declaration = ('_LAUNCHER_ONLY_OPS: tuple[str, ...] = ("npu_new_op",)'
-                   if declare else "_LAUNCHER_ONLY_OPS: tuple[str, ...] = ()")
+    declaration = (
+        '_LAUNCHER_ONLY_OPS: tuple[str, ...] = ("npu_new_op",)\n'
+        if hand_written_list else
+        "_LAUNCHER_ONLY_OPS: tuple[str, ...] = tuple(\n"
+        "    name for name in _ASCENDC_OPS if name not in ASCENDC_CTYPES_OPS\n"
+        ")\n")
     (ops / "__init__.py").write_text(
-        '_ASCENDC_OPS = (\n    "npu_new_op",\n)\n\n' + declaration + "\n",
+        '_ASCENDC_OPS = (\n    "npu_new_op",\n)\n\n' + declaration,
         encoding="utf-8")
     dispatch = ('    return _op("npu_new_op")(a, _current_stream_ptr())\n'
                 if wrapper_args == 2 else '    return _op("npu_new_op")(a)\n')
@@ -76,7 +80,7 @@ def _launcher_only_tree(tmp: str, *, declare: bool,
         "def npu_new_op(a):\n    pass\n" if ctypes_defines
         else "# no ctypes reference for this operator\n",
         encoding="utf-8")
-    (src / "stable_new.cpp").write_text(
+    (src / "stable_new_op.cpp").write_text(
         "constexpr const char* kSchema_npu_new_op =\n"
         '    "npu_new_op(Tensor a, int stream) -> Tensor";\n\n'
         "Tensor run_npu_new_op(Tensor a, int64_t stream) {\n"
@@ -84,6 +88,7 @@ def _launcher_only_tree(tmp: str, *, declare: bool,
         "}\n",
         encoding="utf-8")
     (src / "stable_ops.cpp").write_text(
+        '#include "stable_new_op.cpp"\n\n'
         "STABLE_TORCH_LIBRARY(fla_npu_stable, m) {\n"
         "  m.def(kSchema_npu_new_op);\n"
         "}\n\n"
@@ -183,7 +188,7 @@ class CoverageGateTest(unittest.TestCase):
             for path in SRC_DIR.glob("stable_*.cpp"):
                 (src / path.name).write_text(path.read_text(encoding="utf-8"),
                                              encoding="utf-8")
-            target = src / "stable_gdn.cpp"
+            target = src / "stable_chunk_gated_delta_rule_fwd.cpp"
             text = target.read_text(encoding="utf-8")
             # Swap two layout names in the C++ table only: the Python table no
             # longer agrees, which is exactly the silent-layout-change bug.
@@ -195,6 +200,50 @@ class CoverageGateTest(unittest.TestCase):
             with mock.patch.object(self.tool, "SRC_DIR", src):
                 report = self.tool.evaluate()
             self.assertTrue(any("kGdnFwdLayoutNames order" in item
+                                for item in report["blockers"]),
+                            report["blockers"])
+
+    def test_adapter_source_nobody_includes_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "src"
+            src.mkdir()
+            for path in SRC_DIR.glob("stable_*.cpp"):
+                (src / path.name).write_text(path.read_text(encoding="utf-8"),
+                                             encoding="utf-8")
+            # Adapter sources are #included into stable_ops.cpp, never compiled
+            # on their own: a file nobody includes is dead code and its operator
+            # silently has no adapter, while the rest of this gate stays green.
+            (src / "stable_orphan_op.cpp").write_text("// orphaned adapter\n",
+                                                      encoding="utf-8")
+            with mock.patch.object(self.tool, "SRC_DIR", src):
+                report = self.tool.evaluate()
+            self.assertTrue(any("never compiled" in item
+                                for item in report["blockers"]),
+                            report["blockers"])
+
+    def test_adapter_in_a_shared_file_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "src"
+            src.mkdir()
+            moved = "stable_chunk_fwd_h.cpp"
+            for path in SRC_DIR.glob("stable_*.cpp"):
+                if path.name != moved:
+                    (src / path.name).write_text(
+                        path.read_text(encoding="utf-8"), encoding="utf-8")
+            # A branch that predates the split adds its adapter to the shared
+            # file it already has, so the operator's run_ lands in
+            # stable_<something else>.cpp while still being registered and
+            # included -- every other check in the gate stays green.
+            (src / "stable_chunk.cpp").write_text(
+                (SRC_DIR / moved).read_text(encoding="utf-8"),
+                encoding="utf-8")
+            (src / "stable_ops.cpp").write_text(
+                (SRC_DIR / "stable_ops.cpp").read_text(encoding="utf-8")
+                .replace(f'#include "{moved}"', '#include "stable_chunk.cpp"'),
+                encoding="utf-8")
+            with mock.patch.object(self.tool, "SRC_DIR", src):
+                report = self.tool.evaluate()
+            self.assertTrue(any("one operator per file" in item
                                 for item in report["blockers"]),
                             report["blockers"])
 
@@ -219,7 +268,7 @@ class AbiParityGateTest(unittest.TestCase):
             for path in SRC_DIR.glob("stable_*.cpp"):
                 (src / path.name).write_text(path.read_text(encoding="utf-8"),
                                              encoding="utf-8")
-            target = src / "stable_kda.cpp"
+            target = src / "stable_kda_gate_cumsum.cpp"
             text = target.read_text(encoding="utf-8")
             changed = text.replace(
                 "run_npu_kda_gate_cumsum(Tensor g, std::optional<Tensor> A_log,\n"
@@ -244,7 +293,7 @@ class AbiParityGateTest(unittest.TestCase):
             for path in SRC_DIR.glob("stable_*.cpp"):
                 (src / path.name).write_text(path.read_text(encoding="utf-8"),
                                              encoding="utf-8")
-            target = src / "stable_recurrent_gdr.cpp"
+            target = src / "stable_recurrent_gated_delta_rule.cpp"
             text = target.read_text(encoding="utf-8")
             # The leak that OOMed the conc32 service: reading a required tensor
             # slot as a raw handle consumes nothing (library.h expects the kernel
@@ -278,19 +327,8 @@ class FallbackGateTest(unittest.TestCase):
         self.assertEqual(tool.delegating_ops(sample), ["npu_x"])
 
 
-class CtypesTableGateTest(unittest.TestCase):
-    """The ctypes argument table is what the OPP headers are compared against."""
-
-    def test_every_entry_ends_with_workspace_and_executor(self) -> None:
-        tool = _load_tool("op_abi_validate.py")
-        table = tool.parse_ctypes_table(OPS_DIR / "_aclnn_ctypes.py")
-        self.assertGreaterEqual(len(table), 20)
-        for symbol, kinds in table.items():
-            with self.subTest(symbol=symbol):
-                # The trailing pair is dropped by the parser, so what is left
-                # must not contain a pointer-to-out-parameter.
-                self.assertNotIn("_pointer", kinds)
-                self.assertTrue(kinds, f"{symbol} parsed to nothing")
+class HeaderKindGateTest(unittest.TestCase):
+    """`op_abi_validate` reads the OPP header, the only source of truth left."""
 
     def test_header_kinds_are_recognised(self) -> None:
         tool = _load_tool("op_abi_validate.py")
@@ -321,12 +359,12 @@ class CtypesTableGateTest(unittest.TestCase):
 
 
 class LauncherOnlyCoverageTest(unittest.TestCase):
-    """An operator with no ctypes wrapper has to be a declared state.
+    """An operator with no ctypes fallback has to be a declared state.
 
-    The point is that a new operator can ship without the ctypes adaptation at
-    all: nothing else in the tree is allowed to assume it exists.  These tests
-    build a one-operator tree so the behaviour does not depend on how many real
-    operators happen to be launcher-only today.
+    The point is that a new operator can ship without a ctypes adaptation at
+    all -- that is the expected shape now -- and nothing else in the tree may
+    assume it exists.  These tests build a one-operator tree so the behaviour
+    does not depend on how many real operators happen to be launcher-only today.
     """
 
     def setUp(self) -> None:
@@ -338,60 +376,31 @@ class LauncherOnlyCoverageTest(unittest.TestCase):
                 mock.patch.object(self.tool, "SRC_DIR", src):
             return self.tool.evaluate()
 
-    def test_declared_launcher_only_operator_is_accepted(self) -> None:
+    def test_operator_without_a_reference_needs_no_declaration(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            report = self._evaluate(tmp, declare=True)
+            report = self._evaluate(tmp)
         self.assertEqual(report["blockers"], [])
-        self.assertEqual(report["rows"][0]["reference"], "launcher-only")
+        self.assertEqual(report["rows"][0]["fallback"], "none")
         self.assertEqual(report["launcher_only"], ["npu_new_op"])
 
-    def test_undeclared_operator_without_a_reference_is_reported(self) -> None:
+    def test_operator_ctypes_still_defines_is_not_launcher_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            report = self._evaluate(tmp, declare=False)
-        self.assertTrue(any("_LAUNCHER_ONLY_OPS" in item
-                            for item in report["blockers"]), report["blockers"])
+            report = self._evaluate(tmp, ctypes_defines=True)
+        self.assertEqual(report["blockers"], [])
+        self.assertEqual(report["rows"][0]["fallback"], "ctypes")
+        self.assertEqual(report["launcher_only"], [])
 
-    def test_stale_declaration_is_reported(self) -> None:
+    def test_hand_written_list_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            report = self._evaluate(tmp, declare=True, ctypes_defines=True)
-        self.assertTrue(any("still defines it" in item
+            report = self._evaluate(tmp, hand_written_list=True)
+        self.assertTrue(any("_LAUNCHER_ONLY_OPS" in item
                             for item in report["blockers"]), report["blockers"])
 
     def test_wrapper_argument_count_drift_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            report = self._evaluate(tmp, declare=True, wrapper_args=1)
+            report = self._evaluate(tmp, wrapper_args=1)
         self.assertTrue(any("wrapper passes 1 arguments" in item
                             for item in report["blockers"]), report["blockers"])
-
-
-class LauncherOnlySignatureTest(unittest.TestCase):
-    """op_api_parity must not silently skip an operator ctypes does not define."""
-
-    def setUp(self) -> None:
-        self.tool = _load_tool("op_api_parity.py")
-
-    def _evaluate(self, tmp: str, **kwargs) -> dict:
-        ops, _src = _launcher_only_tree(tmp, **kwargs)
-        with mock.patch.object(self.tool, "OPS_DIR", ops), \
-                mock.patch.object(self.tool, "REFERENCE",
-                                  ops / "_aclnn_ctypes.py"), \
-                mock.patch.object(self.tool, "BACKENDS",
-                                  {"stable": ops / "_stable.py"}):
-            return self.tool.evaluate()
-
-    def test_declared_operator_is_recorded_as_launcher_only(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            report = self._evaluate(tmp, declare=True)
-        self.assertEqual([row["problems"] for row in report["rows"]], [[]])
-        self.assertEqual(report["rows"][0]["reference"], "launcher-only")
-
-    def test_undeclared_operator_is_reported(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            report = self._evaluate(tmp, declare=False)
-        self.assertTrue(any("_LAUNCHER_ONLY_OPS" in problem
-                            for row in report["rows"]
-                            for problem in row["problems"]),
-                        report["rows"])
 
 
 class TranslationUnitTest(unittest.TestCase):

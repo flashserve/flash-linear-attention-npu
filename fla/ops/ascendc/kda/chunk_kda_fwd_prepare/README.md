@@ -37,7 +37,7 @@ outputs = chunk_kda_fwd_prepare(
 )
 ```
 
-该入口通过 ctypes 直调 `aclnnChunkKdaFwdPrepare`，不注册 legacy `torch.ops.npu` 接口。
+该入口经 Stable-ABI 适配层调用 `aclnnChunkKdaFwdPrepare`，不注册 legacy `torch.ops.npu` 接口。
 
 ## 输入输出
 

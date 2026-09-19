@@ -32,7 +32,7 @@ dq, dk, dv, dbeta, dg = chunk_gated_delta_rule_bwd_finalize(
 )
 ```
 
-这是 ctypes 直调 `aclnnChunkGatedDeltaRuleBwdFinalize` 的稳定入口。算子覆盖
+这是经 Stable-ABI 适配层调用 `aclnnChunkGatedDeltaRuleBwdFinalize` 的稳定入口。算子覆盖
 `chunk_bwd_dqkwg` 到 `fused_beta_sigmoid_bwd` 的反向 finalize 计算链路。
 
 ## 支持平台

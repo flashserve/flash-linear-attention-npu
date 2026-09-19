@@ -170,7 +170,7 @@ def main() -> int:
     entries = [
         ("recurrent_gated_delta_rule", build_gdr, call_gdr, (3,)),
         ("recurrent_kda", build_kda, call_kda, (5,)),
-        # conv1d_update 的 out= 默认写回 x（`customer_switch_compat` 也把 x 记为原地参数）。
+        # conv1d_update 的 out= 默认写回 x，所以 x 也按原地参数检查。
         ("causal_conv1d_update", build_conv1d_update, call_conv1d_update,
          (0, 1)),
     ]

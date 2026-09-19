@@ -23,7 +23,7 @@ h, v_new, final_state = chunk_fwd_h(
 )
 ```
 
-这是 ctypes 直调 `aclnnChunkFwdH` 的稳定入口，不注册 legacy `torch.ops.npu` 接口。
+这是经 Stable-ABI 适配层调用 `aclnnChunkFwdH` 的稳定入口，不注册 legacy `torch.ops.npu` 接口。
 
 ## aclnn
 

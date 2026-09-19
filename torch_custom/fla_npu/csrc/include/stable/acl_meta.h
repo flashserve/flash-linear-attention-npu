@@ -3,7 +3,7 @@
 // Everything here talks to CANN through the dlopen'd acl* symbols and to torch
 // exclusively through the aoti_torch_* C shims.  No ATen/c10 headers, no
 // pybind11, so a launcher built on top of it stays valid across torch versions
-// (see docs/architecture/stable-abi-macro-design.md).
+// (see docs/architecture/适配层设计.md).
 #pragma once
 
 #include <torch/csrc/stable/stableivalue_conversions.h>

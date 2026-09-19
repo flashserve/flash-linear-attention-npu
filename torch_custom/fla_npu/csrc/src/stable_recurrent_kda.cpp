@@ -3,9 +3,10 @@
 // Only torch/csrc/stable/* plus the shared acl_meta helper: no ATen/c10, no
 // libtorch C++ ABI.  `layout` is an int code because the stable value
 // conversions have no std::string support (0 = BSND, 1 = TND); Python maps it.
-// Owns: npu_recurrent_kda.  Pre-macro for the same reason as
-// stable_recurrent_gdr.cpp, and it submits the same way: the boxed entry
-// point below consumes each required argument's stack reference.
+// Pre-macro legacy for the same reason as stable_recurrent_gated_delta_rule.cpp
+// (read that header, and do not copy this shape): it submits the same way, and
+// the boxed entry point below consumes each required
+// argument's stack reference.
 
 #include <torch/csrc/stable/library.h>
 #include <torch/csrc/stable/stableivalue_conversions.h>
@@ -198,7 +199,8 @@ void boxed_recurrent_kda(StableIValue* stack, uint64_t num_inputs,
         "the stack declares " + std::to_string(num_inputs) + " and " +
         std::to_string(num_outputs));
   }
-  // Same contract as stable_recurrent_gdr.cpp: the stack hands the kernel
+  // Same contract as stable_recurrent_gated_delta_rule.cpp: the stack hands
+  // the kernel
   // ownership of every argument it reads, so each required slot is unboxed
   // into an owning Tensor and released when this function returns.  The raw
   // to<AtenTensorHandle> read consumed nothing, which retained every fresh

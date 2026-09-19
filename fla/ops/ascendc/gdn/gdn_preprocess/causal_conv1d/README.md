@@ -48,7 +48,7 @@ device Tensor metadata 与对应 `*Cpu` 输入互斥。device metadata 必须与
 
 ## Python API
 
-推荐使用解耦的 ctypes 入口：
+推荐使用解耦的稳定入口（默认走 Stable-ABI 适配层）：
 
 ```python
 from fla_npu.ops.ascendc import causal_conv1d_fn, causal_conv1d_update

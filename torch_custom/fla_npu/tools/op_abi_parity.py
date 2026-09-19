@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Offline ABI check: schema, adapter signature and the ctypes argument list.
+"""Offline ABI check: schema vs adapter signature.
 
-Three things describe the same call, and all three have to agree:
+Two things describe the same call, and both have to agree:
 
 1. the **schema** the dispatcher sees (`kSchema_<op>(...)`),
 2. the **adapter signature** the boxed wrapper unpacks positionally
-   (`run_<op>(...)`),
-3. the **aclnn argument list** the adapter forwards, compared against the
-   ctypes reference by ``tools/op_abi_validate.py``.
+   (`run_<op>(...)`).
+
+The third description -- the aclnn argument list the adapter forwards -- is
+checked against the installed `aclnn_*.h` by ``tools/op_abi_validate.py``.
 
 A mismatch between 1 and 2 is the quiet one: the dispatcher unpacks by position,
 so a schema that lists `chunk_size` before `use_exp2` while the adapter takes

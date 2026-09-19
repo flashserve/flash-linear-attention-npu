@@ -1,226 +1,120 @@
-# fla_npu Python 适配说明
+# fla_npu 适配层
 
-`torch_custom/fla_npu` 是 FLA NPU 的 Python runtime 与可选 legacy PyTorch dispatcher 适配工程。当前默认交付目标是：
-
-```python
-from fla_npu.ops import ascendc as ascendc_ops
-
-out = ascendc_ops.npu_chunk_fwd_o(...)
-```
-
-也可以按公开短名导入：
+`torch_custom/fla_npu` 把 Ascend C 算子变成可调用的 Python 接口。上层只用短名（不带 `npu_` 前缀），
+由 `fla_npu/ops/ascendc/__init__.py` 的 `_strip_npu_prefix()` 统一导出：
 
 ```python
 from fla_npu.ops.ascendc import chunk_fwd_o
+
+out = chunk_fwd_o(...)
 ```
 
-默认路径通过 Python `ctypes` 直调当前 `fla_npu` 包内 OPP 的 `libcust_opapi.so`，不依赖 PyTorch dispatcher 注册，也不会默认编译或加载 `torch_npu` 自定义扩展。旧的 `torch.ops.npu.*` / `torch_npu.ops.*` 兼容路径仍可做，但只作为迁移期可选能力，不推荐新增代码使用，也不会默认使能。
+## 1. 新增算子适配
 
-## 导入契约
+一次适配 = **新建 1 个算子文件 + 1 行 include + 2 行注册 + 1 个 Python wrapper + 1 行 public 名**。
+**不需要先写一份 ctypes 适配**：ctypes 只是回退后端，没有它算子照样交付，这也是新算子的默认
+形态（[接入指南 §8](../../docs/architecture/适配层接入指南.md)）。
 
-`import fla_npu` 会定位 OPP 并加载 `libcust_opapi.so`。**导入 / 构建前请先 source CANN 的 `set_env.sh`**（默认路径为 `/usr/local/Ascend/ascend-toolkit/set_env.sh`；自定义安装路径时替换为实际路径下对应的 `set_env.sh`）；CANN 环境未初始化、OPP 不完整或动态库加载失败时，import 会直接报错：
-
-```sh
-source /usr/local/Ascend/ascend-toolkit/set_env.sh
-```
-
-| 现象 | 原因 / 处理 |
-|---|---|
-| 导入失败，`fla_npu/opp/vendors/fla_npu_transformer` 下找不到 `libcust_opapi.so` | 安装的是 standalone wheel（不内嵌 OPP）：需先用 run 包默认安装流程（`--install` / `--full`）补齐 wheel 内嵌 OPP（见[开发者指南](../../docs/开发者指南.md) 场景 1） |
-| `dlopen` 报错、找不到依赖库 | 未 source CANN `set_env.sh`，或新开 shell 后环境变量丢失，需要重新 source |
-| 安装 run 包后调用接口报 ABI / 行为异常 | 已加载的 `libcust_opapi.so` 不会在同一 Python 进程内热替换，请重启 Python 进程 |
-
-FLA 自定义 op_api 只使用 `libcust_opapi.so`，不要在 custom OPP 的 `op_api/lib` 目录创建会遮蔽 CANN 运行库的 `libopapi.so` 别名。
-
-## 默认交付件
-
-### Python runtime wheel
-
-默认执行：
-
-```bash
-python3 setup.py bdist_wheel
-```
-
-会生成纯 Python wheel，核心内容包括：
-
-- `fla_npu/__init__.py`：定位并加载当前包内嵌 OPP（package-only，不对外部 OPP 回退）。
-- `fla_npu/ops/ascendc/__init__.py`：稳定 Python 调用入口、短名导出和正反向自动绑定。
-- `fla_npu/ops/ascendc/_aclnn_ctypes.py`：具体算子的 Python wrapper，只描述输入输出、标量转换和算子级 ABI 特例。
-- `fla_npu/ops/ascendc/_runtime.py`：公共 ctypes runtime，封装 aclTensor/aclIntArray 描述符、workspace、stream 和异步 launch 生命周期。
-- `fla_npu/opp/vendors/fla_npu_transformer/...`：一键 wheel 打包时内嵌的 OPP 产物。
-
-### Ascend C OPP 产物
-
-一键 wheel 或 run 包安装后，OPP vendor 目录为：
+### 1.1 交付件
 
 ```text
-fla_npu/opp/vendors/fla_npu_transformer
+torch_custom/fla_npu/
+├── csrc/src/stable_<op>.cpp          # 新建：文件名 = 算子名去掉 npu_
+├── csrc/src/stable_ops.cpp           # 改：include 一行 + 注册两行
+└── fla_npu/ops/ascendc/
+    ├── _stable.py                    # 改：加一个真签名 wrapper
+    └── __init__.py                   # 改：public 名加一行
 ```
 
-关键产物包括：
-
-- `op_api/lib/libcust_opapi.so`：自定义 aclnn op_api 动态库。
-- `op_api/include/aclnnop/aclnn_*.h`：Python ctypes ABI 对齐依据。
-- `op_impl/ai_core/tbe/op_host/...`、`op_tiling/...`、`op_proto/...`：host、tiling、proto 动态库。
-- `op_impl/ai_core/tbe/kernel/...`：AI Core kernel `.o` 和 config。
-
-## 推荐调用方式
-
-新增或修改测试、example、上层业务时，默认使用：
+public 名要和 schema 里的算子名一致，只改两个地方：
 
 ```python
-from fla_npu.ops import ascendc as ascendc_ops
+# fla_npu/ops/ascendc/_stable.py
+def npu_<op>(...):                      # 函数名 = schema 里的算子名
+    ...
 
-result = ascendc_ops.npu_recompute_w_u_fwd(...)
+# fla_npu/ops/ascendc/__init__.py
+_ASCENDC_OPS = (
+    ...,
+    "npu_<op>",                         # 加一行，公开名和短名都跟着导出
+)
 ```
 
-或者：
+这样 `from fla_npu.ops.ascendc import <op>` 与 `npu_<op>` 都能用（短名自动去掉 `npu_` 前缀）。
+
+### 1.2 交付件内容规范
+
+| 文件 | 规范 |
+| --- | --- |
+| `stable_<op>.cpp` | **一个算子一个文件，用宏写，不写手写入口**：`kSchema_<op>` 形参 === `run_<op>` 形参 === `FLA_STABLE_EXEC` 实参 === aclnn 头文件顺序（`stream` 固定在最后）；申请输出 + 一条 `FLA_STABLE_EXEC`，算子私有的名表 / helper 也放这里 |
+| `stable_<前缀>_common.cpp` | 只放**被 ≥2 个算子共用**的 helper，文件名带共享前缀（当前是 `stable_causal_conv1d_common.cpp`、`stable_fwd_h_common.cpp`）；在 include 列表里排在用它的算子之前 |
+| `stable_ops.cpp` | 两件事：include 各算子文件（共享文件在前、其余按算子名排序）+ `m.def(kSchema_<op>)`、`m.impl("<op>", &boxed_adapter<run_<op>>)` 两行注册 |
+| `_stable.py` | 真签名 wrapper（不要 `*args` / `**kwargs`），位置参数顺序与 schema 形参一致；字符串用 `_char_code`、host 数组用 `_host_ints`、stream 用 `_current_stream_ptr()` |
+| `__init__.py` | `_ASCENDC_OPS` 加一行 public 名；算子会原地写参数时再登记 `MUTATED_ARGUMENTS`（必要时 `MUTATION_FLAGS`）。没有 ctypes 回退不用声明任何东西 |
+
+参数类型对照、模板、门禁命令、设备回归矩阵和常见坑见
+[适配层接入指南](../../docs/architecture/适配层接入指南.md)；「为什么必须用宏」（boxed kernel 的
+输入所有权契约、手写入口漏引用导致 191 MiB 泄漏的事故）见
+[适配层设计](../../docs/architecture/适配层设计.md) §6。
+
+## 2. 常见问题
+
+**写完适配，运行期报 dispatcher 找不到实现。** 所有适配文件由 `stable_ops.cpp` include 进同一个编译单元，
+没人 include 的文件等于没编译——新文件必须加进 include 列表（`stable_coverage.py` 查这条）。
+
+```c++
+// stable_ops.cpp
+#include "stable_causal_conv1d_common.cpp"   // 共享 helper 在前
+#include "stable_causal_conv1d_fn.cpp"       // 其余按算子名排序
+```
+
+**缓存 stream 后复用。** vLLM 是多线程多 stream，进程级缓存过一个 stream pointer，就会把 kernel 发到
+别的线程的 stream 上（512 那次崩溃就是这个原因）。适配代码不要自己取 stream，也不要把值存下来：
 
 ```python
-from fla_npu.ops.ascendc import recompute_w_u_fwd
+# 对：每次调用现场取，作为最后一个实参
+def npu_<op>(...):
+    return _op("npu_<op>")(..., _current_stream_ptr())
 
-result = recompute_w_u_fwd(...)
+# 错：存成进程级变量再复用
+_STREAM = _current_stream_ptr()
 ```
 
-测试中不要默认调用：
+**取 stream 的 accessor 和下发方式不配对。** 下发走 torch_npu 任务队列（vLLM `EXEC_NPU_CMD` 同路）时
+要用不排空队列的 accessor，顺序由队列保证；内联直投时要用会排空队列的那把，否则 kernel 会插到已入队
+任务的前面。配错在空队列上看不出来，在 vLLM worker 上会变成每次调用约 1 ms。这段逻辑固定在
+`_stable.py::_current_stream_ptr()` 里，算子适配不需要感知，两个逃生阀是
+`FLA_NPU_STABLE_STREAM=accessor` 与 `FLA_NPU_STABLE_LAUNCH=inline`。
+
+**非连续输入被就地 dense 化。** 张量的 sizes / strides / storage offset 原样交给 `aclCreateTensor`
+即可，适配层不判布局能力：能不能正确寻址是算子的责任，自己 staging 会白白付出约 0.1 ms/次的拷贝代价。
 
 ```python
-fla_npu.load_legacy_torch_ops()
-torch.ops.npu.npu_xxx(...)
+# 对：如实交出去，让算子按 strides 寻址
+npu_causal_conv1d_update(..., conv_state, ...)
+
+# 错：在适配层补一份连续拷贝
+npu_causal_conv1d_update(..., conv_state.contiguous(), ...)
 ```
 
-这样可以避免把测试结果绑定到 PyTorch/torch_npu dispatcher ABI。
-
-## 新算子如何接入默认 runtime
-
-新增 Ascend C 算子后，Python 默认路径需要同步做以下适配：
-
-1. 在 `_aclnn_ctypes.py` 增加 `npu_xxx(...)` wrapper。
-2. wrapper 内按 `aclnn_xxx.h` 的函数签名顺序构造参数，常用转换如下：
-   - Tensor 输入/输出：`ctx.tensor(tensor, "name")`
-   - `Optional[list[int]]` / `Sequence[int]`：`ctx.int_array(values)`
-   - aclnn 签名中要求 Tensor 形式的索引：`ctx.int_tensor(values, device)`
-   - 标量：显式使用 `ctypes.c_int64`、`ctypes.c_double`、`ctypes.c_bool` 等。
-3. 在 wrapper 内申请输出 tensor，并把输出传给 `_call_aclnn(...)`。
-4. 如果 aclnn 参数里有 `char *`、字符串、或 ctypes 不能安全自动转换的参数，在 `_GET_WORKSPACE_ARGTYPES` 中补充 `GetWorkspaceSize` 的 `argtypes`。
-5. 在 `fla_npu/ops/ascendc/__init__.py` 的 `_ASCENDC_OPS` 中加入 `npu_xxx`，这样会自动导出 `npu_xxx` 和去掉 `npu_` 前缀后的短名。
-6. 如果存在明确的正反向关系，在 `BACKWARD_OPS` 中补充映射（例如 `causal_conv1d` → `causal_conv1d_bwd`）；需要 autograd 自动绑定时，在 `__init__.py` 中增加对应 `torch.autograd.Function` 包装。
-7. 如果算子会就地修改某个输入 tensor（例如 `causal_conv1d` 会更新 `conv_states`），在 `MUTATED_ARGUMENTS` 中登记对应参数名。ctypes 直接写 tensor storage 时 PyTorch 无法从 Python 调用自动发现副作用，登记后 wrapper 会负责 grad 限制与版本计数（mutation 契约测试参考 `test/test_ascendc_mutation_contract.py`）。
-8. 新增或更新测试，默认调用 `fla_npu.ops.ascendc` 路径。
-
-新增算子通常不需要修改 `_runtime.py`，也不需要感知 `_AclTensor`、`_AclIntArray`、workspace 申请或 stream launch 细节。只有公共 ctypes 调发框架本身需要演进时，才修改 `_runtime.py`。
-
-示例骨架：
-
-```python
-def npu_my_op(x, weight, *, scale=1.0, indices=None):
-    out = _empty_like(x)
-    return _call_aclnn(
-        "aclnnMyOp",
-        lambda ctx: [
-            ctx.tensor(x, "x"),
-            ctx.tensor(weight, "weight"),
-            ctx.int_array(indices),
-            ctypes.c_double(float(scale)),
-            ctx.tensor(out, "out"),
-        ],
-        out,
-    )
-```
-
-## 构建和验证默认 runtime
-
-只构建 Python runtime wheel：
+**换了新产物却没生效。** launcher 由 `torch.ops.load_library()` 在 torch 初始化之后加载，`fork`
+出来的子进程要重新加载；构建戳（`_stable_hash.py` 的 `SOURCE_HASH` 与 `.so` 内嵌哈希）不一致时加载
+直接报错。那是防「跑了旧产物还不自知」，重新编译而不是绕过：
 
 ```bash
-python3 setup.py bdist_wheel
-# WHEEL_PATH 使用构建日志输出的准确文件名（勿用通配符，避免匹配多个产物）
-WHEEL_PATH="dist/<准确wheel文件名>.whl"
-python3 -m pip install --force-reinstall --no-cache-dir --no-deps "$WHEEL_PATH"
+python3 torch_custom/fla_npu/csrc/build_stable.py --out /tmp/libfla_npu_stable.so --no-debug-probe
 ```
 
-这个 standalone wheel 会先安装 Python runtime 和空的 OPP vendor 骨架：
+**装了多个版本 / 多张不同 SoC 的机器。** `flash-linear-attention-npu` 同名包互覆盖，并存要用独立 venv。
 
-```text
-site-packages/fla_npu/opp/vendors/config.ini
-site-packages/fla_npu/opp/vendors/fla_npu_transformer/
-```
+**发布机比目标机新。** 适配层与 OPP 的 host 侧库都在构建机上编，构建机更新时目标机会在 `import fla_npu`
+时报 `GLIBCXX_3.4.x not found`——pip 的 manylinux 标签只承诺 glibc，看不出这条。发布前用
+`tools/stable_abi_audit.py --lib` 查一次水位。
 
-随后安装算子 run 包即可把真实 OPP 产物合并到同一个位置：
+## 3. 测试要求
 
-```bash
-bash build.sh --pkg --soc=ascend910b --vendor_name=fla_npu
-./build_out/fla_npu_linux-*.run --full
-```
+- **host 下发性能**：与 ctypes / vLLM-Ascend custom 路径同一量级，不引入毫秒级开销。
+- **编译期不绑定版本**：产物不绑 torch / torch_npu / Python 版本，任意满足最低要求的版本都能直接用同一个 wheel。
+- **接口兼容性**：`fla_npu.ops.ascendc.xxx` 的公开签名、原地语义与返回值保持兼容。
 
-安装完成后，`site-packages/fla_npu/opp/vendors/fla_npu_transformer` 下会包含 `libcust_opapi.so`、aclnn 头文件、host/tiling/proto 动态库和 kernel 产物，`from fla_npu.ops.ascendc import 算子名` 的运行时布局与一键 wheel 保持一致。standalone wheel 的分发包名与一键 wheel 保持一致，均为 `flash-linear-attention-npu`；Python 导入名仍为 `fla_npu`。
-
-如果使用仓库根目录的一键 wheel，OPP 会内嵌到 `site-packages/fla_npu/opp`：
-
-```bash
-FLA_NPU_SOC=ascend910b python3 -m pip wheel --no-build-isolation --no-deps . -w dist
-# WHEEL_PATH 使用构建日志输出的准确文件名（勿用通配符，避免匹配多个产物）
-WHEEL_PATH="dist/<准确wheel文件名>.whl"
-python3 -m pip install --force-reinstall --no-cache-dir --no-deps "$WHEEL_PATH"
-python3 scripts/check_packaged_wheel_api.py
-```
-
-单算子 run 包覆盖已安装 wheel 内嵌 OPP 或 standalone wheel 已安装 OPP 时：
-
-```bash
-bash build.sh --pkg --soc=ascend910b --vendor_name=fla_npu --ops=chunk_fwd_o
-./build_out/fla_npu_linux-*.run --full
-```
-
-安装器会列出 scoped run 包覆盖后的算子状态。`WARNING` 表示安装后不可用，`NOTICE` 表示需要人工关注，`OK` 表示 ABI 一致并继续可用。
-覆盖完成后只保留 `libcust_opapi.so`，并同步刷新已安装 wheel 的 `RECORD`；重复安装
-同一个 run 包不会重复追加 OPP 路径。
-
-> 安装流程看护（PR #274 新增）：`scripts/check_install_workflows.py` 用于校验 wheel / run 包 / 安装流程是否符合约定。构建与安装完成后执行 `python scripts/check_install_workflows.py`，CI 也会自动运行该检查。
-
-## legacy torch_npu / torch.ops.npu 路径
-
-如果确实需要兼容 `torch_npu.ops.xxx`，可以显式安装 Python wrapper：
-
-```python
-import torch_npu
-from fla_npu.ops import ascendc
-
-ascendc.install_torch_npu_ops_compat()
-torch_npu.ops.npu_xxx(...)
-```
-
-如果确实需要兼容更旧的 `torch.ops.npu.xxx` 调用：
-
-```python
-import fla_npu
-
-fla_npu.load_legacy_torch_ops()
-torch.ops.npu.npu_xxx(...)
-```
-
-则需要显式生成并构建 legacy extension：
-
-```bash
-bash gen.sh npu_custom.yaml
-FLA_NPU_BUILD_LEGACY_EXTENSION=1 python3 setup.py bdist_wheel
-```
-
-legacy 路径会生成或使用：
-
-- `op_plugin/`
-- `torch_npu/csrc/`
-- `custom_aclnn_extension_lib*.so`
-- `npu_custom.yaml`、`test_native_functions.yaml`、`deprecated.yaml`
-
-这些兼容路径不会默认使能。`torch.ops.npu` legacy extension 会重新绑定 PyTorch、Python、C++ ABI 和 torch_npu dispatcher 行为，因此只用于历史接口兼容或专项验证。新增算子默认不要以 legacy extension 作为唯一调用方式。
-
-`torch.ops.npu.*` / `torch_npu.ops.*` 只支持到 v26.6.0，从旧版本迁移到最新版本的完整步骤见[兼容与迁移指南](../../docs/兼容与迁移指南.md)。新代码请勿使用 legacy 路径。
-
-## 测试要求
-
-- 新测试默认使用 `from fla_npu.ops import ascendc as ascendc_ops`。
-- 不要在默认测试里调用 `fla_npu.load_legacy_torch_ops()`。
-- 不要把 `torch.ops.npu.*` 作为默认正确性路径。
-- 如果 legacy 路径确实需要覆盖，应单独写清楚测试目的，并显式打开 `FLA_NPU_BUILD_LEGACY_EXTENSION=1`。
+需要 NPU 的设备回归放在 `tests/stable_abi/`。
