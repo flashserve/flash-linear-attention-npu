@@ -281,6 +281,8 @@ w_chunk       : [curChunkSize, K]
 
 该算子可通过 PyTorch 接口直接调用，底层的两阶段接口（workspace + executor）已被封装，无需手动处理。
 
+调用入口为 `fla_npu.ops.ascendc` 暴露的 public 名：先 `from fla_npu.ops import ascendc`，再调用 `ascendc.recompute_w_u_fwd(...)`。注意 `chunk_size` 是第 5 个位置参数，`g`/`gk`/`cu_seqlens`/`chunk_indices` 均为关键字参数。下文示例可直接照抄执行。
+
 `RecomputeWUFwd` 根据 `k`、`v`、`beta`、`A` 和 `g` 重计算并输出 `w`、`u`：
 
 - `w`: `[B, HV, T, K]`
@@ -311,6 +313,8 @@ w_chunk       : [curChunkSize, K]
 import torch
 import torch_npu
 
+from fla_npu.ops import ascendc
+
 # 设备
 device = "npu:0"
 
@@ -333,13 +337,13 @@ g = torch.randn(B, HV, T, device=device, dtype=torch.float32)
 
 # 定长场景下 cu_seqlens 和 chunk_indices 均为 None。
 # gk 当前未启用，必须为 None。
-w, u = torch.ops.npu.npu_recompute_w_u_fwd(
+w, u = ascendc.recompute_w_u_fwd(
     k,
     v,
     beta,
     A,
-    g,
     chunk_size,
+    g=g,
     gk=None,
     cu_seqlens=None,
     chunk_indices=None
@@ -357,6 +361,8 @@ print(w.shape, u.shape)
 ```python
 import torch
 import torch_npu
+
+from fla_npu.ops import ascendc
 
 device = "npu:0"
 
@@ -417,13 +423,13 @@ A = torch.randn(B, HV, T, chunk_size, device=device, dtype=torch.float16)
 # g shape: [B, HV, T]
 g = torch.randn(B, HV, T, device=device, dtype=torch.float32)
 
-w, u = torch.ops.npu.npu_recompute_w_u_fwd(
+w, u = ascendc.recompute_w_u_fwd(
     k,
     v,
     beta,
     A,
-    g,
     chunk_size,
+    g=g,
     gk=None,
     cu_seqlens=cu_seqlens,
     chunk_indices=chunk_indices
@@ -465,20 +471,31 @@ print(w.shape, u.shape)
 
 ```text
 recompute_w_u_fwd/
+├── CMakeLists.txt
+├── README.md
 ├── examples/
 │   └── test_aclnn_recompute_w_u_fwd.cpp
 ├── op_host/
+│   ├── CMakeLists.txt
 │   ├── op_api/
 │   │   ├── aclnn_recompute_w_u_fwd.cpp
-│   │   └── aclnn_recompute_w_u_fwd.h
+│   │   ├── aclnn_recompute_w_u_fwd.h
+│   │   ├── recompute_w_u_fwd.cpp
+│   │   └── recompute_w_u_fwd.h
 │   ├── op_tiling/
 │   │   ├── recompute_w_u_fwd_tiling.cpp
-│   │   └── recompute_w_u_fwd_tiling.h
-│   ├── recompute_wu_fwd_def.cpp
-│   └── CMakeLists.txt
-└── op_kernel/
-    ├── recompute_w_u_fwd_common.h
-    ├── recompute_w_u_fwd_cube.h
-    ├── recompute_w_u_fwd_vector.h
-    └── recompute_w_u_fwd.cpp
+│   │   ├── recompute_w_u_fwd_tiling.h
+│   │   └── recompute_w_u_fwd_tiling_processor.h
+│   └── recompute_wu_fwd_def.cpp
+├── op_kernel/
+│   ├── arch35/
+│   │   ├── recompute_w_u_fwd_cube_l1resident.h
+│   │   └── recompute_w_u_fwd_vector_regbase.h
+│   ├── recompute_w_u_fwd.cpp
+│   ├── recompute_w_u_fwd_common.h
+│   ├── recompute_w_u_fwd_cube.h
+│   ├── recompute_w_u_fwd_struct.h
+│   └── recompute_w_u_fwd_vector.h
+└── test/
+    └── test.py
 ```
