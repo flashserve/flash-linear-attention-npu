@@ -6,6 +6,7 @@
 #include "../../../op_kernel/internal/operators/chunk_gated_delta_rule_fwd_h/op_host/chunk_gated_delta_rule_fwd_h_tiling_processor.h"
 #include "../../../op_kernel/internal/operators/chunk_fwd_o/op_kernel/chunk_fwd_o_struct.h"
 #include "../../../op_kernel/internal/gated_delta_rule_state_update_output/chunk_gated_delta_rule_state_update_output_struct.h"
+#include "../../../op_kernel/internal/arch35/ho_pipeline_context.h"
 #include "../../../op_kernel/internal/operators/recompute_w_u_fwd/op_host/op_tiling/recompute_w_u_fwd_tiling_processor.h"
 
 #include "securec.h"
@@ -238,6 +239,14 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(gert::TilingConte
     const auto *initialDesc = context->GetOptionalInputDesc(INPUT_INITIAL_STATE);
     const bool useInitialState = initialDesc != nullptr;
     const bool useGk = context->GetOptionalInputDesc(INPUT_GK) != nullptr;
+    // Reserve the private H/O layout for every first-batch-compatible BF16
+    // shape.  The device later decides whether the actual non-empty task set
+    // leaves a consumer suffix and at least two chunks to overlap.
+    const bool hoLayoutEligible = GDN::HoPipelineLayoutEligible(
+        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950,
+        qDesc->GetDataType() == ge::DT_FLOAT16 ? GDN::HO_PIPELINE_DTYPE_FP16 :
+            (qDesc->GetDataType() == ge::DT_BF16 ? GDN::HO_PIPELINE_DTYPE_BF16 : -1),
+        kHeadDim, vHeadDim, chunkSize);
 
     auto cuSeqlensTensor = context->GetOptionalInputTensor(INPUT_CU_SEQLENS);
     auto chunkIndicesTensor = context->GetOptionalInputTensor(INPUT_CHUNK_INDICES);
@@ -331,10 +340,16 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(gert::TilingConte
         tiling.set_numChunksWorkspaceOffset(tiling.get_numChunksWorkspaceOffset() + static_cast<int64_t>(hoShift));
     };
     ShiftHWorkspace(hTiling);
-    const size_t oWorkspaceSize = FillOTilingWorkspace(oTiling, aicCoreNum, hoBase);
     hWorkspaceSize += hoShift;
 
-    size_t workspaceOffset = AlignUp(std::max(hWorkspaceSize, oWorkspaceSize), WORKSPACE_ALIGNMENT);
+    // The serial path intentionally keeps the historical max(H/O) layout.  The
+    // ROOT-HO-v1 route keeps H scratch alive while O runs, so place O after the
+    // complete shifted H region and put the shared h/vNew intermediates after O.
+    const size_t oBase = hoLayoutEligible ? AlignUp(hWorkspaceSize, WORKSPACE_ALIGNMENT) : hoBase;
+    const size_t oWorkspaceSize = FillOTilingWorkspace(oTiling, aicCoreNum, oBase);
+    size_t workspaceOffset = hoLayoutEligible
+                                 ? oWorkspaceSize
+                                 : AlignUp(std::max(hWorkspaceSize, oWorkspaceSize), WORKSPACE_ALIGNMENT);
     GDN::ChunkGatedDeltaRuleStateOutputTrailer trailer{};
     trailer.recompute = recomputeTiling;
     trailer.recomputeWorkspaceOffset = 0;
@@ -347,8 +362,21 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(gert::TilingConte
                                    kHeadDim * vHeadDim * elementSize,
                                WORKSPACE_ALIGNMENT);
     trailer.vNewIntermediateOffset = static_cast<int64_t>(workspaceOffset);
-    workspaceOffset += AlignUp(static_cast<size_t>(batch) * vNumHead * seqlen * vHeadDim * elementSize,
-                               WORKSPACE_ALIGNMENT);
+    const size_t vNewBytes = AlignUp(static_cast<size_t>(batch) * vNumHead * seqlen * vHeadDim * elementSize,
+                                     WORKSPACE_ALIGNMENT);
+    workspaceOffset += vNewBytes;
+    if (hoLayoutEligible) {
+        const uint64_t physicalBatch = isVarlen ? 1 : static_cast<uint64_t>(batch);
+        const uint64_t readyTaskCount = physicalBatch * static_cast<uint64_t>(totalChunks) *
+                                        static_cast<uint64_t>(vNumHead);
+        const size_t readyBytes = AlignUp(static_cast<size_t>(readyTaskCount * 2 * 32),
+                                          WORKSPACE_ALIGNMENT);
+        workspaceOffset += readyBytes;
+        OP_LOGD(context->GetNodeName(),
+                "ROOT-HO-GEN layout: hEnd=%zu, oBase=%zu, oEnd=%zu, hIntermediate=%ld, vNew=%ld, vNewBytes=%zu, readyBytes=%zu.",
+                hWorkspaceSize, oBase, oWorkspaceSize, trailer.hIntermediateOffset,
+                trailer.vNewIntermediateOffset, vNewBytes, readyBytes);
+    }
     workspaceOffset += WORKSPACE_RESERVE;
 
     const size_t hTilingSize = hTiling.GetDataSize();

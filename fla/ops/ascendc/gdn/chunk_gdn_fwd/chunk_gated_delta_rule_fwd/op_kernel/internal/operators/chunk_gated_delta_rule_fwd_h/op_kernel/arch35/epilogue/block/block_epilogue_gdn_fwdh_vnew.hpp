@@ -209,17 +209,25 @@ public:
 
     CATLASS_DEVICE
     void ApplyRowScale(
-        AscendC::LocalTensor<float> matrix,
+        AscendC::LocalTensor<float> dst,
+        AscendC::LocalTensor<float> src,
         AscendC::LocalTensor<float> rowScale,
         uint32_t rowScaleOffset,
         uint32_t rows,
         uint32_t cols)
     {
-        __ubuf__ float *matrixAddr = reinterpret_cast<__ubuf__ float *>(matrix.GetPhyAddr());
+        __ubuf__ float *dstAddr = reinterpret_cast<__ubuf__ float *>(dst.GetPhyAddr());
         __ubuf__ float *rowScaleAddr = reinterpret_cast<__ubuf__ float *>(rowScale.GetPhyAddr());
-        AscendC::VF_CALL<detail::ApplyRowScaleDualIssue>(
-            matrixAddr, rowScaleAddr, rowScaleOffset,
-            static_cast<uint16_t>(rows), static_cast<uint16_t>(cols));
+        if constexpr (KGatedTag::updateEventOnly) {
+            __ubuf__ float *srcAddr = reinterpret_cast<__ubuf__ float *>(src.GetPhyAddr());
+            AscendC::VF_CALL<detail::ApplyRowScaleFromWorkspaceDualIssue>(
+                dstAddr, srcAddr, rowScaleAddr, rowScaleOffset,
+                static_cast<uint16_t>(rows), static_cast<uint16_t>(cols));
+        } else {
+            AscendC::VF_CALL<detail::ApplyRowScaleDualIssue>(
+                dstAddr, rowScaleAddr, rowScaleOffset,
+                static_cast<uint16_t>(rows), static_cast<uint16_t>(cols));
+        }
         AscendC::PipeBarrier<PIPE_V>();
     }
 
@@ -358,9 +366,11 @@ public:
             if constexpr (scalarGated) {
                 AscendC::Sub<float>(wsUbTensor, calcUbTensor, wsUbTensor, mActualThisSubBlock * nvActual);
                 AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Copy(calcUbTensor, wsUbTensor, mActualThisSubBlock * nvActual);
+                if constexpr (!KGatedTag::updateEventOnly) {
+                    AscendC::Copy(calcUbTensor, wsUbTensor, mActualThisSubBlock * nvActual);
+                }
                 AscendC::PipeBarrier<PIPE_V>();
-                ApplyRowScale(calcUbTensor, gUbTensor, rowBegin, mActualThisSubBlock, nvActual);
+                ApplyRowScale(calcUbTensor, wsUbTensor, gUbTensor, rowBegin, mActualThisSubBlock, nvActual);
             } else {
                 ComputeVNew(wsUbTensor, uUbTensor, mActualThisSubBlock * nvActual);
             }
@@ -470,9 +480,11 @@ public:
             if constexpr (scalarGated) {
                 AscendC::Sub<float>(wsUbTensorThisTile, calcUbTensor, wsUbTensorThisTile, rowsThisTile * nvActual);
                 AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Copy(calcUbTensor, wsUbTensorThisTile, rowsThisTile * nvActual);
+                if constexpr (!KGatedTag::updateEventOnly) {
+                    AscendC::Copy(calcUbTensor, wsUbTensorThisTile, rowsThisTile * nvActual);
+                }
                 AscendC::PipeBarrier<PIPE_V>();
-                ApplyRowScale(calcUbTensor, gUbTensor, rowStart, rowsThisTile, nvActual);
+                ApplyRowScale(calcUbTensor, wsUbTensorThisTile, gUbTensor, rowStart, rowsThisTile, nvActual);
             } else {
                 ComputeVNew(wsUbTensorThisTile, uUbTensor, rowsThisTile * nvActual);
             }

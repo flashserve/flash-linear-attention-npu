@@ -16,6 +16,7 @@
 #include "catlass/catlass.hpp"
 #include "catlass/debug.hpp"
 #include "../block/block_scheduler_gdn_fwd_h.hpp"
+#include "../../../../../../arch35/ho_pipeline_context.h"
 #include "catlass/epilogue/block/block_epilogue.hpp"
 #include "../../epilogue/block/block_epilogue_gdn_fwdh_update.hpp"
 #include "../../epilogue/block/block_epilogue_gdn_fwdh_vnew.hpp"
@@ -97,8 +98,9 @@ public:
                            std::is_same_v<TileShapes, GDNFwdHTileShapes128>),
                   "B30 H requires scalar-gated BF16 input and V128 tiles.");
     static_assert(kUpdateRowTile == 16 ||
-                      (kUpdateRowTile == 64 && kB30 && std::is_same_v<STATE_TYPE, bfloat16_t>),
-                  "Wide H update is restricted to B30 BF16 state.");
+                      (kUpdateRowTile == 64 && kB30 &&
+                       (std::is_same_v<STATE_TYPE, float> || std::is_same_v<STATE_TYPE, bfloat16_t>)),
+                  "Wide H update is restricted to B30 float/BF16 state.");
 
     using ArchTag = Arch::Ascend950;
     using CubeScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHCube;
@@ -197,6 +199,11 @@ public:
     static constexpr uint64_t DIRECT_UB_FLAG_STRIDE = 16;
     static constexpr uint32_t DIRECT_UB_STAGES = 2;
     static constexpr uint32_t DIRECT_VEC_NUM = 2;
+    static constexpr uint32_t HO_PIPELINE_READY_SLOT_BYTES = 32;
+    static constexpr uint32_t HO_PIPELINE_READY_TILE_BYTES = 64;
+    static constexpr uint32_t HO_PIPELINE_SYNC_UB_OFFSET = 188 * 1024;
+    static constexpr uint32_t HO_PIPELINE_SYNC_EVENT_ID = 0;
+    static constexpr uint32_t HO_PIPELINE_WORKSPACE_ALIGNMENT = 512;
 
     uint32_t batch;
     uint32_t seqlen;
@@ -217,6 +224,7 @@ public:
     uint32_t numChunksWorkspaceOffset;
     uint32_t kDecayWorkspaceOffset;
     bool useDirectFp32Ub;
+    bool chunkPipelineEnabled{false};
 
     AscendC::GlobalTensor<ElementK> gmK;
     AscendC::GlobalTensor<ElementW> gmW;
@@ -235,6 +243,7 @@ public:
     AscendC::GlobalTensor<int64_t> gmSeqlen;
     AscendC::GlobalTensor<int64_t> gmNumSeq;
     AscendC::GlobalTensor<int64_t> gmNumChunks;
+    AscendC::GlobalTensor<int32_t> gmPipelineReady;
 
     AscendC::LocalTensor<ElementHWork> ubHUpdatePing;
     AscendC::LocalTensor<ElementHWork> ubHUpdatePong;
@@ -248,12 +257,97 @@ public:
     VecScheduler vecBlockScheduler;
 
     Arch::Resource<ArchTag> resource;
+    GDN::HoPipelineContext hoPipelineContext{};
+
+
+    __aicore__ inline uint64_t PipelineVNewBytes() const
+    {
+        const uint64_t physicalBatch = hoPipelineContext.physicalShapeBatch != 0
+                                           ? hoPipelineContext.physicalShapeBatch
+                                           : static_cast<uint64_t>(shapeBatch);
+        const uint64_t bytes = physicalBatch * vNumHead * seqlen * vHeadDim * sizeof(ElementV);
+        return (bytes + HO_PIPELINE_WORKSPACE_ALIGNMENT - 1) / HO_PIPELINE_WORKSPACE_ALIGNMENT *
+               HO_PIPELINE_WORKSPACE_ALIGNMENT;
+    }
+
+    __aicore__ inline uint64_t PipelineReadySlots() const
+    {
+        return hoPipelineContext.readyTaskCount * 2;
+    }
+
+    __aicore__ inline bool CanRunChunkPipeline() const
+    {
+        if constexpr (!kChunkPipeline) {
+            return false;
+        }
+        return hoPipelineContext.enabled && hoPipelineContext.producerGroups > 0 &&
+               hoPipelineContext.consumerGroups > 0 &&
+               hoPipelineContext.producerGroups + hoPipelineContext.consumerGroups ==
+                   AscendC::GetBlockNum();
+    }
+
+    __aicore__ inline AscendC::LocalTensor<int32_t> GetPipelineSyncLocal()
+    {
+        return resource.ubBuf.template GetBufferByByte<int32_t>(HO_PIPELINE_SYNC_UB_OFFSET);
+    }
+
+    // Every AIV subblock clears a disjoint 32-byte ready slot before the
+    // existing H initialization SyncAll.  This keeps initialization ownership
+    // distributed across all physical groups and leaves no stale IB state between
+    // repeated calls.
+    __aicore__ inline void InitPipelineReady()
+    {
+        if (!chunkPipelineEnabled) {
+            return;
+        }
+        auto syncLocal = GetPipelineSyncLocal();
+        AscendC::Duplicate(syncLocal, static_cast<int32_t>(0), HO_PIPELINE_READY_SLOT_BYTES / sizeof(int32_t));
+        const auto vToMte3Event =
+            GetTPipePtr()->AllocEventID<AscendC::HardEvent::V_MTE3>();
+        const auto mte3ToMte2Event =
+            GetTPipePtr()->AllocEventID<AscendC::HardEvent::MTE3_MTE2>();
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3Event);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3Event);
+        const uint32_t logicalAivNum = AscendC::GetBlockNum() * AscendC::GetSubBlockNum();
+        const uint32_t logicalAivIdx = AscendC::GetBlockIdx();
+        for (uint64_t slot = logicalAivIdx; slot < PipelineReadySlots(); slot += logicalAivNum) {
+            AscendC::DataCopy(
+                gmPipelineReady[slot * (HO_PIPELINE_READY_SLOT_BYTES / sizeof(int32_t))],
+                syncLocal, HO_PIPELINE_READY_SLOT_BYTES / sizeof(int32_t));
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2Event);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2Event);
+        GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::V_MTE3>(vToMte3Event);
+        GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2Event);
+    }
+
+    __aicore__ inline void SignalChunkReady(const GDNFwdHOffsets &offsets)
+    {
+        if (!chunkPipelineEnabled) {
+            return;
+        }
+        const uint64_t physicalBatchIdx = isVariedLen ? 0 : offsets.batchIdx;
+        const uint64_t globalChunkIdx = isVariedLen
+                                            ? static_cast<uint64_t>(offsets.chunkOffset) + offsets.chunkIdx
+                                            : offsets.chunkIdx;
+        const uint64_t task =
+            (physicalBatchIdx * hoPipelineContext.chunksPerPhysicalBatch + globalChunkIdx) * vNumHead +
+            offsets.headIdx;
+        const uint64_t tileOffset = task * (HO_PIPELINE_READY_TILE_BYTES / sizeof(int32_t));
+        const uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
+        auto tileBase = gmPipelineReady[tileOffset];
+        AscendC::IBSet<false>(tileBase, GetPipelineSyncLocal(), subBlockIdx, HO_PIPELINE_SYNC_EVENT_ID);
+    }
 
 
     __aicore__ inline GDNFwdHKernel() {}
 
     __aicore__ inline void Init(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR inital_state, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
-        GM_ADDR h, GM_ADDR v_new, GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user) {
+        GM_ADDR h, GM_ADDR v_new, GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user,
+        const GDN::HoPipelineContext &context) {
+
+        hoPipelineContext = context;
 
         __gm__ GdnMegaArch35FwdHTilingData *__restrict gdnFwdHTilingData = reinterpret_cast<__gm__ GdnMegaArch35FwdHTilingData *__restrict>(tiling);
 
@@ -300,6 +394,11 @@ public:
         gmNumSeq.SetGlobalBuffer((__gm__ int64_t *)(user + numSeqWorkspaceOffset));
         gmNumChunks.SetGlobalBuffer((__gm__ int64_t *)(user + numChunksWorkspaceOffset));
 
+        chunkPipelineEnabled = CanRunChunkPipeline();
+        if (chunkPipelineEnabled) {
+            gmPipelineReady.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t *>(v_new + PipelineVNewBytes()));
+        }
+
         ubHUpdatePing = resource.ubBuf.template GetBufferByByte<ElementHWork>(32 * 1024);
         ubHUpdatePong = resource.ubBuf.template GetBufferByByte<ElementHWork>(96 * 1024);
         ubVWorkPing = resource.ubBuf.template GetBufferByByte<ElementVWork>(32 * 1024);
@@ -321,7 +420,9 @@ public:
     __aicore__ inline void InitFromData(
         GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR inital_state,
         GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
-        GM_ADDR final_state, const TilingData& tilingData, GM_ADDR user) {
+        GM_ADDR final_state, const TilingData& tilingData, GM_ADDR user,
+        const GDN::HoPipelineContext &context = {}) {
+        hoPipelineContext = context;
         batch = tilingData.batch;
         seqlen = tilingData.seqlen;
         kNumHead = tilingData.kNumHead;
@@ -363,6 +464,11 @@ public:
         gmSeqlen.SetGlobalBuffer((__gm__ int64_t *)cu_seqlens);
         gmNumSeq.SetGlobalBuffer((__gm__ int64_t *)(user + numSeqWorkspaceOffset));
         gmNumChunks.SetGlobalBuffer((__gm__ int64_t *)(user + numChunksWorkspaceOffset));
+
+        chunkPipelineEnabled = CanRunChunkPipeline();
+        if (chunkPipelineEnabled) {
+            gmPipelineReady.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t *>(v_new + PipelineVNewBytes()));
+        }
 
         ubHUpdatePing = resource.ubBuf.template GetBufferByByte<ElementHWork>(32 * 1024);
         ubHUpdatePong = resource.ubBuf.template GetBufferByByte<ElementHWork>(96 * 1024);
@@ -884,6 +990,9 @@ public:
                 resource.ubBuf.template GetBufferByByte<ElementH>(64 * 1024);
             AscendC::LocalTensor<ElementH> hUbTensorPong =
                 resource.ubBuf.template GetBufferByByte<ElementH>(160 * 1024);
+            // Retire the temporary ready-clear events before publishing the
+            // first fixed H credits.  The fixed IDs remain unchanged.
+            InitPipelineReady();
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
             const bool useBalancedWaves = kChunkPipeline && !isVariedLen;
@@ -1069,6 +1178,10 @@ public:
                                 Arch::CrossCoreWaitFlag(vecBlockScheduler.cube2Done[streamId]);
                             }
                         }
+                        // ROOT-HO-v1 publishes only after V2 has completed and
+                        // before the original vec2Done hand-off.  The IBSet
+                        // itself retires the local PIPE_ALL generation.
+                        SignalChunkReady(vec2Offsets);
                         Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[streamId]);
                     }
                 }

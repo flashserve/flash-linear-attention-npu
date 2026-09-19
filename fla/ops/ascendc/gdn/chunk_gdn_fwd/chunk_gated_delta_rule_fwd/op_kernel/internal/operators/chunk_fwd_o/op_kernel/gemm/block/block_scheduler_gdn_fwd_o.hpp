@@ -11,10 +11,9 @@
 #define CATLASS_GEMM_SCHEDULER_GDN_FWD_O_HPP
 
 #include "../../chunk_fwd_o_struct.h"
+#include "../../../../../arch35/ho_pipeline_context.h"
 
 constexpr uint32_t GDN_FWD_O_PING_PONG_STAGES = 2;
-constexpr uint32_t GDN_FWD_HO_CONSUMERS_PER_HEAD = 2;
-
 namespace Catlass::Gemm::Block {
 
 
@@ -52,12 +51,15 @@ struct BlockSchedulerGdnFwdO {
     uint32_t taskIdx;
     uint32_t cubeCoreIdx;
     uint32_t cubeCoreNum;
+    uint32_t physicalCoreIdx;
+    uint32_t physicalCoreNum;
     uint32_t taskNum;
     uint32_t headGroups;
 
     bool isRunning;
     bool chunkPipeline{false};
     bool taskAffinity{false};
+    GDN::HoPipelineContext hoPipelineContext{};
     bool processNewTask {true};
     bool firstLoop {true};
     bool lastLoop {false};
@@ -94,7 +96,8 @@ struct BlockSchedulerGdnFwdO {
     CATLASS_DEVICE
     void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_offsets, const GDN::GdnMegaArch35FwdOTilingData *tilingData,
               uint32_t coreIdx, uint32_t coreNum, bool enableChunkPipeline = false,
-              bool enableTaskAffinity = false) {
+              bool enableTaskAffinity = false,
+              const GDN::HoPipelineContext &context = {}) {
         shapeBatch = tilingData->shapeBatch;
         seqlen = tilingData->seqlen;
         kNumHead = tilingData->kNumHead;
@@ -116,6 +119,8 @@ struct BlockSchedulerGdnFwdO {
             numChunks = (seqlen + chunkSize - 1) / chunkSize;
         }
 
+        physicalCoreIdx = coreIdx;
+        physicalCoreNum = coreNum;
         cubeCoreIdx = coreIdx;
         cubeCoreNum = coreNum;
         vBlockSize = vHeadDim;
@@ -123,18 +128,27 @@ struct BlockSchedulerGdnFwdO {
         headGroups = vNumHead / kNumHead;
         chunkPipeline = enableChunkPipeline;
         taskAffinity = enableTaskAffinity;
+        hoPipelineContext = context;
         if (chunkPipeline) {
-            const uint32_t consumerCoreBegin = vNumHead;
-            const uint32_t consumerCoreEnd = consumerCoreBegin +
-                                             vNumHead * GDN_FWD_HO_CONSUMERS_PER_HEAD;
-            if (cubeCoreIdx < consumerCoreBegin || cubeCoreIdx >= consumerCoreEnd) {
+            // The fused route reserves the physical suffix after H's active
+            // prefix for O.  The scheduler uses logical r=0..M-1 for task and
+            // scratch indexing while retaining the physical block id only for
+            // the producer/consumer boundary test.
+            const uint32_t producerGroups = hoPipelineContext.producerGroups;
+            const uint32_t consumerGroups = hoPipelineContext.consumerGroups;
+            if (producerGroups == 0 || consumerGroups == 0 ||
+                physicalCoreIdx < producerGroups ||
+                physicalCoreIdx >= producerGroups + consumerGroups) {
+                cubeCoreIdx = 0;
+                cubeCoreNum = consumerGroups;
                 taskIdx = taskNum;
                 isRunning = false;
             } else {
-                const uint32_t consumerIdx = cubeCoreIdx - consumerCoreBegin;
-                pipelineHeadIdx = consumerIdx / GDN_FWD_HO_CONSUMERS_PER_HEAD;
-                pipelineLaneIdx = consumerIdx % GDN_FWD_HO_CONSUMERS_PER_HEAD;
-                taskIdx = pipelineLaneIdx * vNumHead + pipelineHeadIdx;
+                cubeCoreIdx = physicalCoreIdx - producerGroups;
+                cubeCoreNum = consumerGroups;
+                pipelineHeadIdx = cubeCoreIdx;
+                pipelineLaneIdx = 0;
+                taskIdx = cubeCoreIdx * GDN_FWD_O_PING_PONG_STAGES;
                 isRunning = taskIdx < taskNum;
             }
         } else if (taskAffinity) {
@@ -203,13 +217,27 @@ struct BlockSchedulerGdnFwdO {
     void InitTask() {
         uint32_t curTaskIdx;
         if (chunkPipeline) {
-            curTaskIdx = taskIdx;
+            // Keep the original two-slot queue semantics: a logical
+            // consumer group owns the adjacent pair 2*r, 2*r+1, then jumps
+            // by 24 to the next pair for that group.  Advancing by 24 on
+            // every call would silently drop the second slot.
+            if (processNewTask) {
+                headInnerIdx = 0;
+                baseTaskIdx = taskIdx;
+            } else {
+                headInnerIdx = (headInnerIdx + 1) % GDN_FWD_O_PING_PONG_STAGES;
+            }
+            curTaskIdx = baseTaskIdx + headInnerIdx;
             if (unlikely(curTaskIdx >= taskNum)) {
                 isRunning = false;
+                processNewTask = true;
                 currStage = (currStage + 1) % GDN_FWD_O_PING_PONG_STAGES;
                 return;
             }
-            taskIdx += GDN_FWD_HO_CONSUMERS_PER_HEAD * vNumHead;
+            processNewTask = headInnerIdx == GDN_FWD_O_PING_PONG_STAGES - 1;
+            if (processNewTask) {
+                taskIdx = baseTaskIdx + cubeCoreNum * GDN_FWD_O_PING_PONG_STAGES;
+            }
         } else if (taskAffinity) {
             taskIdx = FindNextOwnedDenseTask(taskIdx);
             if (unlikely(taskIdx >= taskNum)) {
@@ -299,9 +327,10 @@ struct BlockSchedulerGdnFwdOCube : public BlockSchedulerGdnFwdO {
 
     CATLASS_DEVICE
     void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_offsets, const GDN::GdnMegaArch35FwdOTilingData *tilingData,
-              bool enableChunkPipeline = false, bool enableTaskAffinity = false) {
+              bool enableChunkPipeline = false, bool enableTaskAffinity = false,
+              const GDN::HoPipelineContext &context = {}) {
         BlockSchedulerGdnFwdO::Init(cu_seqlens, chunk_offsets, tilingData, AscendC::GetBlockIdx(),
-                                    AscendC::GetBlockNum(), enableChunkPipeline, enableTaskAffinity);
+                                    AscendC::GetBlockNum(), enableChunkPipeline, enableTaskAffinity, context);
     }
 
     CATLASS_DEVICE
@@ -354,10 +383,11 @@ struct BlockSchedulerGdnFwdOVec : public BlockSchedulerGdnFwdO {
 
     CATLASS_DEVICE
     void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_offsets, const GDN::GdnMegaArch35FwdOTilingData *tilingData,
-              bool enableChunkPipeline = false, bool enableTaskAffinity = false) {
+              bool enableChunkPipeline = false, bool enableTaskAffinity = false,
+              const GDN::HoPipelineContext &context = {}) {
         BlockSchedulerGdnFwdO::Init(cu_seqlens, chunk_offsets, tilingData,
                                     AscendC::GetBlockIdx() / AscendC::GetSubBlockNum(), AscendC::GetBlockNum(),
-                                    enableChunkPipeline, enableTaskAffinity);
+                                    enableChunkPipeline, enableTaskAffinity, context);
     }
 
     CATLASS_DEVICE
