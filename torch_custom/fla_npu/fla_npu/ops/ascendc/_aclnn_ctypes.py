@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import ctypes
 import sys
+import torch
 
 from ._kda_policy import (
     kda_fwd_optional_output_mask,
@@ -2920,25 +2921,58 @@ def npu_causal_conv1d_bwd(
     activation=0,
     input_layout="BSND",
 ):
+    if not hasattr(x, "shape") or not hasattr(x, "ndim"):
+        raise TypeError(
+            f"x must be a torch.Tensor, got {type(x).__name__}."
+        )
+    if not hasattr(weight, "shape") or not hasattr(weight, "ndim"):
+        raise TypeError(
+            f"weight must be a torch.Tensor, got {type(weight).__name__}."
+        )
+    if weight.ndim != 2:
+        raise ValueError(
+            f"weight must have 2 dimensions, "
+            f"got shape {tuple(weight.shape)}."
+        )
+
     input_layout = str(input_layout)
     width, dim = int(weight.shape[0]), int(weight.shape[1])
-    if input_layout == "BNSD":
-        batch = int(x.shape[0])
-        dx_shape = _shape(x)
-    elif input_layout in {"NTD", "TND"}:
+
+    if input_layout in {"NTD", "TND"}:
         if query_start_loc is None:
-            raise RuntimeError(f"query_start_loc is required for {input_layout} input.")
-        batch = len(query_start_loc) - 1
-        dx_shape = _shape(x)
+            raise ValueError(
+                f"query_start_loc is required for {input_layout} input."
+            )
+        try:
+            batch = len(query_start_loc) - 1
+        except TypeError:
+            raise TypeError(
+                "query_start_loc must be an object with a valid length, "
+                f"got {type(query_start_loc).__name__}."
+            ) from None
+
+        if batch < 0:
+            raise ValueError(
+                "query_start_loc must contain at least one element."
+            )
     else:
+        if x.ndim == 0:
+            raise ValueError(
+                f"x can not be a scalar tensor for "
+                f"{input_layout} input."
+            )
         batch = int(x.shape[0])
-        dx_shape = _shape(x)
-    dx = _empty(dx_shape, x)
+
+    dx = _empty(_shape(x), x)
     dw = _empty((width, dim), weight)
     db = _empty((dim,), weight)
     dh0 = _empty((batch, width, dim), x)
     outputs = (dx, dw, db, dh0)
-    layout_buffer = ctypes.create_string_buffer(input_layout.encode("utf-8"))
+
+    layout_buffer = ctypes.create_string_buffer(
+        input_layout.encode("utf-8")
+    )
+
     return _call_aclnn(
         "aclnnCausalConv1dBwd",
         lambda ctx: [
