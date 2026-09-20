@@ -616,7 +616,7 @@ run_npu_chunk_kda_bwd(
   if (use_gate_in_kernel) {
     out_d_a_log = allocate_sizes({key_heads}, kFloat, q_meta);
     if (dt_bias.has_value()) {
-      out_d_dt_bias = allocate_sizes({key_heads, size_of(q_meta, 3)}, kFloat,
+      out_d_dt_bias = allocate_sizes({key_heads, size_of(q_meta, q_meta.ndim - 1)}, kFloat,
                                      q_meta);
     }
   }
