@@ -88,9 +88,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--scale", type=float, default=None)
     parser.add_argument("--lower-bound", type=float, default=-5.0)
     parser.add_argument("--cu-seqlens", default="")
-    parser.add_argument("--varlen", dest="varlen", action="store_true", default=False)
+    # 与 ci/run_example_st_cases.py 的契约一致：只下发否定形式，
+    # 因此这两个开关的默认值必须是 True。
+    parser.add_argument("--varlen", dest="varlen", action="store_true", default=True)
     parser.add_argument("--no-varlen", dest="varlen", action="store_false")
-    parser.add_argument("--qk-l2norm", dest="qk_l2norm", action="store_true", default=False)
+    parser.add_argument("--qk-l2norm", dest="qk_l2norm", action="store_true", default=True)
     parser.add_argument("--no-qk-l2norm", dest="qk_l2norm", action="store_false")
     parser.add_argument("--gate-source", default="g")
     parser.add_argument("--gate-function", default="safe")
@@ -124,12 +126,20 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def resolve_device(name: str) -> torch.device:
-    if torch_npu is not None and torch.npu.is_available():
-        return torch.device(name if ":" in name else f"{name}:0")
-    if name.startswith("npu"):
-        raise RuntimeError("torch_npu 不可用：ChunkKDA 看护脚本需要 NPU 环境")
-    return torch.device(name)
+def resolve_device(raw: object) -> torch.device:
+    """`--device` 既接受设备号（CI 传 `0`），也接受 `npu:0` / `cpu` 这类写法。"""
+
+    value = str(raw).strip()
+    if value.lstrip("+-").isdigit():
+        # CI 传的是设备下标（run_example_st_cases.py 的 --device）。
+        if torch_npu is not None and torch.npu.is_available():
+            return torch.device(f"npu:{int(value)}")
+        return torch.device("cpu")
+    if value.startswith("npu"):
+        if torch_npu is None or not torch.npu.is_available():
+            raise RuntimeError("torch_npu 不可用：ChunkKDA 看护脚本需要 NPU 环境")
+        return torch.device(value if ":" in value else f"{value}:0")
+    return torch.device(value)
 
 
 def parse_cu_seqlens(raw: str, tokens: int, batch: int) -> Optional[Tuple[int, ...]]:
