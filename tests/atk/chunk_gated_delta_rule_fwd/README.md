@@ -24,6 +24,31 @@
 公开 `solve_tri` 来自 main 已合入的 PR 398；融合 kernel 不引用该公开实现，只有双标杆链路调用它。
 比较阈值为最大相对误差比例 5、平均相对误差比例 1.5、均方根误差比例 1.5。
 
+### 输入准备口径
+
+ATK 输入准备版本为 `chw_a2_a5_sigmoid/v1`，恢复
+`chw_a2_a5@86299afd6c00124f7b2ee8168d2a24e471238718` 的有效输入语义：
+
+- `q/k/v` 转为用例指定的 FP16/BF16，数值不额外缩放。
+- `g = -sigmoid(raw_g.float()) * 0.1`，以 FP32 传入算子。
+- `beta = sigmoid(raw_beta.float())`，再转为与 `q/k/v` 相同的 dtype。
+
+变换仅在 ATK 的 `effective_inputs` 中执行；DUT、六 ACLNN benchmark 和 CPU golden
+均从同一份 raw 输入按相同顺序、dtype 准备数据。算子本身不增加 sigmoid 或限幅。
+保留现有 `o` 输出布局归一化、两套 500 条 JSON、种子和比较阈值。
+
+执行器不把有效输入写回 ATK 的 raw 数据对象，避免共享对象或重放时重复 sigmoid；
+`export_custom_data` 记录输入准备版本及 `saved_input_semantics`。本版本保存的数据仍是
+准备前的 raw 输入，重放时按该版本变换一次。历史无版本记录的已保存数据需先核对其是 raw
+还是有效输入，不得直接假定可重放。此前原值直传模式的结果保留为独立历史证据，不能与
+恢复口径后的结果合并为同一次验收。恢复测试口径不等于算子已通过全量验证。
+
+不依赖 ATK/NPU 的本地输入合同测试（使用 CPU PyTorch，ATK 外壳以 stub 隔离）：
+
+```bash
+python3 -B tests/atk/chunk_gated_delta_rule_fwd/scripts/test_input_contract.py
+```
+
 ## 用例
 
 - `atk_chunk_gated_delta_rule_fwd.json`：既有泛化 500 条冻结矩阵，五种场景各 100 条，

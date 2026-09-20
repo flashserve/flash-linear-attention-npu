@@ -15,6 +15,7 @@ from atk.tasks.api_execute.base_api import BaseApi
 from atk_role_contract import role_for_atk_task
 from gdn_reference import (
     GdnCase,
+    INPUT_PREPARATION_VERSION,
     canonical_chunk_indices,
     deterministic_initial_state,
     effective_inputs,
@@ -227,19 +228,14 @@ class FunctionApi(BaseApi):
     def init_by_input_data(self, input_data: InputDataset):
         values = input_data.kwargs
         case, public_dtype, inputs = build_inputs(values)
-        q, k, v, g, beta = inputs
 
         self._case = case
         self._public_dtype = public_dtype
         self._inputs = inputs
         self._output_names = output_names(case)
 
-        # 保存并复用三路完全一致的有效输入，而不是生成器的 raw g/beta。
-        values["q"] = q
-        values["k"] = k
-        values["v"] = v
-        values["g"] = g
-        values["beta"] = beta
+        # 不回写 ATK 原始输入；共享数据集或保存输入重放时，每路仅变换一次。
+        # 有效输入保存在 self._inputs，NPU 两路从同一 CPU 准备流程搬运。
 
         self._role = role_for_atk_task(
             self.device,
@@ -307,6 +303,8 @@ class FunctionApi(BaseApi):
 
     def export_custom_data(self, *_args, **_kwargs):
         return {
+            "input_preparation_version": INPUT_PREPARATION_VERSION,
+            "saved_input_semantics": "raw_before_input_preparation",
             "output_names": list(self._output_names),
             "role": self._role,
             "target": {

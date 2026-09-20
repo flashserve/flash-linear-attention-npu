@@ -10,6 +10,9 @@ from typing import Iterable, Optional
 import torch
 
 
+INPUT_PREPARATION_VERSION = "chw_a2_a5_sigmoid/v1"
+
+
 @dataclass(frozen=True)
 class GdnCase:
     batch: int
@@ -117,15 +120,16 @@ def effective_inputs(
     raw_beta: torch.Tensor,
     public_dtype: torch.dtype,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """在 CPU 上冻结三条路径完全一致的实际算子输入，不修改输入数值。"""
+    """按历史 ATK 口径从 raw 输入构造三路一致的有效输入，不原地修改数据。"""
 
     q = q.detach().cpu().to(public_dtype).contiguous()
     k = k.detach().cpu().to(public_dtype).contiguous()
     v = v.detach().cpu().to(public_dtype).contiguous()
     raw_g = raw_g.detach().cpu().float().contiguous()
     raw_beta = raw_beta.detach().cpu().float().contiguous()
-    g = raw_g.to(torch.float32).contiguous()
-    beta = raw_beta.to(public_dtype).contiguous()
+    # 恢复 chw_a2_a5@86299afd 的测试输入语义；这不是算子内部的计算步骤。
+    g = (-torch.sigmoid(raw_g) * 0.1).to(torch.float32).contiguous()
+    beta = torch.sigmoid(raw_beta).to(public_dtype).contiguous()
     return q, k, v, g, beta
 
 
