@@ -298,11 +298,6 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.c_void_p,  # kg（输出，可选）
         ctypes.c_void_p,  # v_new（输出，可选）
         ctypes.c_void_p,  # h（输出，可选）
-        ctypes.c_void_p,  # q_hat（输出，可选，L2Norm 保存值）
-        ctypes.c_void_p,  # k_hat（输出，可选，L2Norm 保存值）
-        ctypes.c_void_p,  # q_rstd（输出，可选，L2Norm 保存值）
-        ctypes.c_void_p,  # k_rstd（输出，可选，L2Norm 保存值）
-        ctypes.c_void_p,  # beta_eff（输出，可选，sigmoid 后的 beta）
         ctypes.POINTER(ctypes.c_uint64),  # workspaceSize（输出）
         ctypes.POINTER(ctypes.c_void_p),  # executor（输出）
     ],
@@ -377,6 +372,11 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.c_void_p,  # kg（输出，可选）
         ctypes.c_void_p,  # v_new（输出，可选）
         ctypes.c_void_p,  # h（输出，可选）
+        ctypes.c_void_p,  # q_hat（输出，可选，L2Norm 保存值）
+        ctypes.c_void_p,  # k_hat（输出，可选，L2Norm 保存值）
+        ctypes.c_void_p,  # q_rstd（输出，可选，L2Norm 保存值）
+        ctypes.c_void_p,  # k_rstd（输出，可选，L2Norm 保存值）
+        ctypes.c_void_p,  # beta_eff（输出，可选，sigmoid 后的 beta）
         ctypes.POINTER(ctypes.c_uint64),  # workspaceSize（输出）
         ctypes.POINTER(ctypes.c_void_p),  # executor（输出）
     ],
