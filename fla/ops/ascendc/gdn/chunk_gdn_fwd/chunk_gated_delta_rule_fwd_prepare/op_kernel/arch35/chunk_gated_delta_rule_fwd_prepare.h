@@ -42,11 +42,8 @@ public:
         if (userWs != nullptr) {
             gmWsY.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(userWs + wsBase),
                                   kWsYSlots * kWsYElems);
-            gmWsA.SetGlobalBuffer(reinterpret_cast<__gm__ InDtype *>(userWs + wsBase + kWsYTotalBytes),
-                                  kWsASlots * kWsAElems);
         } else {
             gmWsY.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(uOut));
-            gmWsA.SetGlobalBuffer(reinterpret_cast<__gm__ InDtype *>(aOut));
         }
         gmQ.SetGlobalBuffer(reinterpret_cast<__gm__ InDtype *>(q));
         gmK.SetGlobalBuffer(reinterpret_cast<__gm__ InDtype *>(k));
@@ -573,6 +570,8 @@ public:
     // A = LeafLeft + Y @ LeafRight. tmp = I @ LeafLeft (init) then
     // Y @ LeafRight accumulate. Intra-task second Load uses L0 [32,48)/[48,64)
     // so MTE1 overlaps the first Cube M. Dump stays per-task after both MMADs.
+    // Full chunk + outputA: L0C→gmA (valid M rows) then Nd2Nz back to L1.
+    // Tail or outputA=0: L0C→L1 NZ directly (padding rows stay in L0C).
     __aicore__ inline void Stage5_Compute(int64_t taskIdx)
     {
         const int32_t bt = static_cast<int32_t>(chunkSize);
@@ -585,6 +584,19 @@ public:
                            false, false, false, bank);
         SetFlag<HardEvent::M_FIX>(bank);
         SetFlag<HardEvent::M_MTE1>(bank);
+    }
+
+    __aicore__ inline void DumpAL0cToL1(int64_t taskIdx, uint32_t n)
+    {
+        FixpipeParamsArch3510<CO2Layout::NZ> aFixpipeParams;
+        aFixpipeParams.nSize = n;
+        aFixpipeParams.mSize = n;
+        aFixpipeParams.srcStride = n;
+        aFixpipeParams.dstStride = n * 16;
+        aFixpipeParams.quantPre = QuantMode_t::F322BF16;
+        aFixpipeParams.unitFlag = 0;
+        aFixpipeParams.isChannelSplit = false;
+        Fixpipe<InDtype, float, CFG_NZ_L1>(l1A[taskIdx], l0CTask[taskIdx], aFixpipeParams);
     }
 
     __aicore__ inline void Stage5_Dump(const ChunkRange &chunk, int64_t hv, int64_t taskIdx)
@@ -600,23 +612,13 @@ public:
             WaitFlag<HardEvent::FIX_MTE2>(bank);
             if (m == n) {
                 CopyGmNdToL1Nz<InDtype>(l1A[taskIdx], gmA[offA], n, n);
+                SetFlag<HardEvent::MTE2_MTE1>(taskIdx);
             } else {
-                FixpipeL0cToGmNd<InDtype>(gmWsA[WsAOffset(taskIdx)], l0CTask[taskIdx], n, n, n);
-                SetFlag<HardEvent::FIX_MTE2>(bank);
-                WaitFlag<HardEvent::FIX_MTE2>(bank);
-                CopyGmNdToL1Nz<InDtype>(l1A[taskIdx], gmWsA[WsAOffset(taskIdx)], n, n);
+                DumpAL0cToL1(taskIdx, n);
+                SetFlag<HardEvent::FIX_MTE1>(taskIdx);
             }
-            SetFlag<HardEvent::MTE2_MTE1>(taskIdx);
         } else {
-            FixpipeParamsArch3510<CO2Layout::NZ> aFixpipeParams;
-            aFixpipeParams.nSize = n;
-            aFixpipeParams.mSize = n;
-            aFixpipeParams.srcStride = n;
-            aFixpipeParams.dstStride = n * 16;
-            aFixpipeParams.quantPre = QuantMode_t::F322BF16;
-            aFixpipeParams.unitFlag = 0;
-            aFixpipeParams.isChannelSplit = false;
-            Fixpipe<InDtype, float, CFG_NZ_L1>(l1A[taskIdx], l0CTask[taskIdx], aFixpipeParams);
+            DumpAL0cToL1(taskIdx, n);
             SetFlag<HardEvent::FIX_MTE1>(taskIdx);
         }
         SetFlag<HardEvent::FIX_M>(bank);
@@ -871,14 +873,14 @@ public:
             }
             for (int64_t t = 0; t < cur.nThis; ++t) {
                 WaitAivStage6Done(t);
-                if (outputA != 0) {
+                ChunkRange chunk;
+                int64_t hv;
+                DecodeTask(cur.base, cur.nThis, t, chunk, hv);
+                if (outputA != 0 && chunk.M == chunkSize) {
                     WaitFlag<HardEvent::MTE2_MTE1>(t);
                 } else {
                     WaitFlag<HardEvent::FIX_MTE1>(t);
                 }
-                ChunkRange chunk;
-                int64_t hv;
-                DecodeTask(cur.base, cur.nThis, t, chunk, hv);
                 Stage7_AicOne(chunk, hv, t);
             }
             const int64_t nextPack = pack + numCore;
@@ -926,7 +928,6 @@ private:
     GlobalTensor<float> gmBetaEff;
     // Workspace
     GlobalTensor<float> gmWsY;
-    GlobalTensor<InDtype> gmWsA;
 
     // Local
     // UB

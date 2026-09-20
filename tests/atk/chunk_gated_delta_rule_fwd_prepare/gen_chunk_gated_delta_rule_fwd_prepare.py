@@ -1,6 +1,7 @@
 """chunk_gated_delta_rule_fwd_prepare 的 ATK 泛化用例生成器。
 
-50 个中型 shape × 24 条合法 flag = 1200（bf16）。
+50 个中型 shape × 24 条合法 flag × output_a True/False = 2400（bf16）。
+前 1200 为 output_a=True（原矩阵，case id 不变）；后 1200 为同 shape/flag 的 output_a=False（flag_tag 加 `_a0`）。
 中型按 tiling 的 totalChunks：dense 为 B*HV*ceil(T/64)，
 varlen 为 HV*sum(ceil(s/64))，必须 **>256** 且 ≤384。
 G≠3 时 pack=4：256 tiles = 64 packs = 32 AIC × 2 pack；>256 保证每核至少 2 pack。
@@ -71,7 +72,8 @@ SUPPORTED_FLAGS = _all_legal_flags()
 
 N_SHAPES = 50
 N_FLAGS = len(SUPPORTED_FLAGS)
-N_PROFILES = N_SHAPES * N_FLAGS
+N_BASE_PROFILES = N_SHAPES * N_FLAGS
+N_PROFILES = N_BASE_PROFILES * 2
 
 _BT = 64
 _MEDIUM_CHUNKS_MIN = 256  # exclusive: tiles must be > 256
@@ -231,18 +233,29 @@ def _make_profiles() -> list[dict]:
                 use_beta_sigmoid_in_kernel=sigmoid,
                 allow_neg_eigval=neg,
                 use_exp2=exp2,
+                output_a=True,
                 flag_tag=tag,
             )
             spec["name"] = f"{shape['name']}_{tag}"
             profiles.append(spec)
             case_id += 1
-    return profiles
+    extra = []
+    n_base = len(profiles)
+    for spec in profiles:
+        s = deepcopy(spec)
+        s["output_a"] = False
+        s["case_id"] = spec["case_id"] + n_base
+        s["seed"] = 20260817 + s["case_id"]
+        s["flag_tag"] = f"{spec['flag_tag']}_a0"
+        s["name"] = f"{spec['name']}_a0"
+        extra.append(s)
+    return profiles + extra
 
 
 PROFILES = _make_profiles()
 if len(PROFILES) != N_PROFILES:
     raise RuntimeError(
-        f"need {N_PROFILES} profiles ({N_SHAPES} shapes x {N_FLAGS} flags), "
+        f"need {N_PROFILES} profiles ({N_SHAPES} shapes x {N_FLAGS} flags x 2 output_a), "
         f"got {len(PROFILES)}"
     )
 
@@ -397,6 +410,9 @@ def dump_json_files(out_dir: Path | None = None) -> dict:
         _first("r1_T4160_V128", "nol2_gate1_sig1_neg1_exp0"),
         _first("r1_T4160_V128", "nol2_gate1_sig1_neg0_exp0"),
         _first("r1_T4160_V128", "nol2_gate1_sig0_neg0_exp0"),
+        _first("r1_T4160_V128", "l2_sig1_neg1_a0"),
+        _first("r1_T4192_V128", "l2_sig1_neg1_a0"),
+        _first("varlen_g1_tail", "l2_sig1_neg1_a0"),
     ]
     if len(mss_idx) != len(set(mss_idx)):
         raise RuntimeError(f"duplicate mss indices: {mss_idx}")
@@ -415,13 +431,14 @@ def dump_json_files(out_dir: Path | None = None) -> dict:
         json.dumps(perf, indent=1, ensure_ascii=False) + "\n"
     )
     # 精简精度：每种合法 flag 1 条（落在第一个 shape）+ 其余每个 shape 1 条（默认 flag）。
-    # 不去笛卡尔积。保留原精度 case id，便于对照 1200 矩阵。
+    # 再复制一套 output_a=False（id = 原 id + 1200）。保留原精度 case id。
     slim_idx = list(range(N_FLAGS))
     for shape_i in range(1, N_SHAPES):
         slim_idx.append(shape_i * N_FLAGS)
+    slim_idx.extend(i + N_BASE_PROFILES for i in list(slim_idx))
     if len(slim_idx) != len(set(slim_idx)):
         raise RuntimeError(f"duplicate slim indices: {slim_idx}")
-    expected_slim = N_FLAGS + (N_SHAPES - 1)
+    expected_slim = 2 * (N_FLAGS + (N_SHAPES - 1))
     if len(slim_idx) != expected_slim:
         raise RuntimeError(f"need {expected_slim} slim cases, got {len(slim_idx)}")
     slim = [all_cases[i] for i in slim_idx]

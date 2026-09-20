@@ -85,6 +85,7 @@ def build_inputs(spec: dict[str, Any], device: torch.device, high_precision: boo
         "use_beta_sigmoid_in_kernel": bool(spec.get("use_beta_sigmoid_in_kernel", True)),
         "allow_neg_eigval": bool(spec.get("allow_neg_eigval", False)),
         "use_exp2": bool(spec.get("use_exp2", True)),
+        "output_a": bool(spec.get("output_a", True)),
         "a_log": a_log,
         "dt_bias": dt_bias,
         "cu_seqlens": cu,
@@ -124,7 +125,10 @@ def _forward_ref(inputs: dict[str, Any]):
 
 def run_cpu(spec: dict[str, Any], high_precision: bool = False):
     inputs = build_inputs(spec, torch.device("cpu"), high_precision=high_precision)
-    return _forward_ref(inputs)
+    outputs = _forward_ref(inputs)
+    if not bool(spec.get("output_a", True)):
+        outputs = outputs[:-1] + (None,)
+    return outputs
 
 
 def run_npu(spec: dict[str, Any], input_data: InputDataset):
@@ -148,13 +152,17 @@ def run_npu(spec: dict[str, Any], input_data: InputDataset):
         use_beta_sigmoid_in_kernel=inputs["use_beta_sigmoid_in_kernel"],
         allow_neg_eigval=inputs["allow_neg_eigval"],
         use_exp2=inputs["use_exp2"],
+        output_a=inputs.get("output_a", True),
         a_log=inputs.get("a_log"),
         dt_bias=inputs.get("dt_bias"),
         cu_seqlens=inputs.get("cu_seqlens"),
     )
     torch.npu.synchronize()
     # Host isfinite/compare: avoid queuing extra NPU kernels on the op stream.
-    return tuple(None if t is None else t.detach().cpu() for t in outputs)
+    outputs = tuple(None if t is None else t.detach().cpu() for t in outputs)
+    if not inputs.get("output_a", True):
+        outputs = outputs[:-1] + (None,)
+    return outputs
 
 
 @register("executor_chunk_gated_delta_rule_fwd_prepare")
