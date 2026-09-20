@@ -472,6 +472,12 @@ def run_once(args: argparse.Namespace) -> int:
         return 0
 
     # CPU 参考：同分布 fp32 recurrent + autograd。
+    # 参考实现是逐 token 的小张量循环：多线程 BLAS 在这里只会互相抢核，
+    # 高负载的 CI 机器上差异很大，固定单线程更稳定。
+    try:
+        torch.set_num_threads(1)
+    except Exception:  # pragma: no cover - 已有并行工作时的保护
+        pass
     ref_o, _ref_gate, leaves = recurrent_reference(
         q.cpu(), k.cpu(), v.cpu(), g.cpu(), beta.cpu(), tensors["A_log"].cpu(),
         tensors["dt_bias"].cpu(), scale=scale, lower_bound=args.lower_bound,
