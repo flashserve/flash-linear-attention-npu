@@ -48,6 +48,7 @@ class GdnCase:
     shape_id: int | None = None
     combo_id: int | None = None
     use_exp2: bool = True
+    output_a: bool = True
 
     @property
     def varlen(self) -> bool:
@@ -78,6 +79,7 @@ class GdnCase:
             use_beta_sigmoid_in_kernel=self.use_beta_sigmoid_in_kernel,
             allow_neg_eigval=self.allow_neg_eigval,
             use_exp2=self.use_exp2,
+            output_a=self.output_a,
         )
 
 
@@ -227,7 +229,8 @@ def describe_case(case: GdnCase) -> str:
         f"gate={case.use_gate_in_kernel} "
         f"beta_sigmoid={case.use_beta_sigmoid_in_kernel} "
         f"neg_eig={case.allow_neg_eigval} "
-        f"exp2={case.use_exp2}"
+        f"exp2={case.use_exp2} "
+        f"output_a={case.output_a}"
     )
 
 

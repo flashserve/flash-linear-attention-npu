@@ -320,6 +320,42 @@ def run_exp2_false_case():
     run_gdn_case(case)
 
 
+def run_output_a_false_cases():
+    """output_a=False: A stays in L1. Cover aligned T and a tail chunk."""
+    aligned = GdnCase(
+        case_id=15,
+        batch=1,
+        hk=4,
+        hv=8,
+        seq_len=192,
+        head_k=128,
+        head_v=128,
+        chunk_size=64,
+        use_qk_l2norm_in_kernel=True,
+        use_gate_in_kernel=False,
+        use_beta_sigmoid_in_kernel=True,
+        allow_neg_eigval=True,
+        output_a=False,
+    )
+    tail = GdnCase(
+        case_id=16,
+        batch=1,
+        hk=4,
+        hv=8,
+        seq_len=160,
+        head_k=128,
+        head_v=128,
+        chunk_size=64,
+        use_qk_l2norm_in_kernel=True,
+        use_gate_in_kernel=False,
+        use_beta_sigmoid_in_kernel=True,
+        allow_neg_eigval=True,
+        output_a=False,
+    )
+    run_gdn_case(aligned)
+    run_gdn_case(tail)
+
+
 def run_gate_exp2_false_case():
     """Fused gate + natural exp (both new polarities together)."""
     case = GdnCase(
@@ -362,6 +398,7 @@ def run_gdn_case(case):
         use_beta_sigmoid_in_kernel=case.use_beta_sigmoid_in_kernel,
         allow_neg_eigval=case.allow_neg_eigval,
         use_exp2=case.use_exp2,
+        output_a=case.output_a,
     )
     outs = run_npu_prepare(q, k, v, g, beta, flags=flags, cu_seqlens=cu,
                            a_log=a_log, dt_bias=dt_bias)
@@ -377,7 +414,7 @@ def main():
     parser.add_argument("--case-id", type=int, default=None,
                         help="0=bring-up G=2; 1-6=GdnCase; 7=V=256; 8=G=3; 9=G=4; 10=small varlen; "
                              "11=l2norm False; 12=gate True; 13=exp2 False; 14=gate+exp2 False; "
-                             "omit=1-6 then 0,7-14")
+                             "15-16=output_a False aligned/tail; omit=1-6 then 0,7-16")
     args = parser.parse_args()
     setup_npu()
     try:
@@ -393,6 +430,7 @@ def main():
             run_gate_true_case()
             run_exp2_false_case()
             run_gate_exp2_false_case()
+            run_output_a_false_cases()
         elif args.case_id == 0:
             run_required_case()
         elif args.case_id == 7:
@@ -411,6 +449,8 @@ def main():
             run_exp2_false_case()
         elif args.case_id == 14:
             run_gate_exp2_false_case()
+        elif args.case_id in (15, 16):
+            run_output_a_false_cases()
         else:
             picked = [c for c in gdn_cases() if c.case_id == args.case_id]
             if not picked:

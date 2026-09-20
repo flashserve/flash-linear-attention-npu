@@ -12,7 +12,7 @@
 - `q/k/v` 当前仅 `BFLOAT16`；`g/beta` 为 `FLOAT`（golden / DUT 与单元测试一致）。
 - `use_exp2`、`use_gate_in_kernel` 支持 True/False。`use_gate=True` 时 executor 生成 `a_log` / `dt_bias`（`[HV]` fp32），`g` 为 raw dt logits。
 - `use_qk_l2norm_in_kernel`、`use_beta_sigmoid_in_kernel`、`allow_neg_eigval` 支持 True/False；`allow_neg_eigval=True` 要求 sigmoid。
-- 精度 JSON 为 **50 个中型 shape × 24 组合法 flag = 1200**（bf16）。case id = `shape_idx * 24 + flag_idx`。合法 flag = `l2 × gate × {(sig,neg)=(T,T),(T,F),(F,F)} × exp2`。
+- 精度 JSON 为 **50 个中型 shape × 24 组合法 flag × output_a True/False = 2400**（bf16）。前 1200 为 `output_a=True`，case id = `shape_idx * 24 + flag_idx`；后 1200 为同矩阵的 `output_a=False`（id +1200，`flag_tag` 加 `_a0`）。合法 flag = `l2 × gate × {(sig,neg)=(T,T),(T,F),(F,F)} × exp2`。
 - `use_qk_l2norm_in_kernel=False` 时 kernel 不做 L2norm、不写 hat/rstd；executor 在调用前对 **q 和 k** 做 L2norm。比较时 `_finite_tuple` 丢掉 `None` 的 rstd。
 - 变长要求 `B=1` 且 `cu_seqlens` 与 `chunk_indices` 成对（Python 未传 `chunk_indices` 时自动生成）。JSON 用 `seqlens` 列表表示，executor 转成 `cu_seqlens`。
 - 尾块 `T % 64 != 0`：只在该 chunk 填 0，按有效行写出。
@@ -29,7 +29,7 @@
 
 全部 50 个 shape 的 chunk 数落在 **(256, 384]**（生成器校验 `>256`）。G≠3 时 pack=4：256 tiles = 64 packs = 32 AIC × 2 pack，**大于 256 保证每核至少 2 个 pack**。上沿 384 tiles = 96 packs ≈ 每核 3 pack。
 
-`atk_chunk_gated_delta_rule_fwd_prepare.json` 为 **50 个中型 shape × 24 组合法 flag = 1200**（bf16）。case id = `shape_idx * 24 + flag_idx`，`seed = 20260817 + case_id`。每组 shape 按序覆盖：
+`atk_chunk_gated_delta_rule_fwd_prepare.json` 为 **50 个中型 shape × 24 组合法 flag × output_a = 2400**（bf16）。前 1200 的 case id = `shape_idx * 24 + flag_idx`，`seed = 20260817 + case_id`；id 1200–2399 是同一套 shape/flag 的 `output_a=False`。每组 shape 按序覆盖：
 
 | flag_idx | tag | l2 | gate | sigmoid | neg | exp2 |
 | ---: | --- | --- | --- | --- | --- | --- |
@@ -124,6 +124,7 @@
 | 调用前 L2norm + fused gate | 9–11 | `nol2`×gate 三组 sigmoid/neg |
 | `use_exp2=False` | 12 | 自然 `exp` |
 | fused gate + `use_exp2=False` | 18 | |
+| `output_a=False` | 1200 | A 不写 GM；w/u 仍走 L1 A。id = 对应 True 用例 +1200 |
 | `use_exp2=False` 其余 11 组 | 13–17, 19–23 | 含 nol2 / 无 sigmoid |
 | G=1/2/3/4 整 chunk | 0 / 24 / 48 / 72 | |
 | V=256 | 96, 120 | |
@@ -176,12 +177,13 @@ python3 tests/atk/chunk_gated_delta_rule_fwd_prepare/gen_chunk_gated_delta_rule_
 
 ## 精简用例
 
-`atk_chunk_gated_delta_rule_fwd_prepare_slim.json` 从 1200 条里各抽 1 条，共 **73**：
+`atk_chunk_gated_delta_rule_fwd_prepare_slim.json` 从 2400 条里各抽 1 条，共 **146**：
 
 - 24 组合法 flag：全部落在 `r1_T4160_V128`（精度 id `0–23`）
 - 其余 49 个 shape：只保留默认 `l2_sig1_neg1`（精度 id `24, 48, …, 1176`）
+- 以上 73 条各复制一条 `output_a=False`（id +1200，`flag_tag` 加 `_a0`）
 
-用于冒烟，不是正式验收入口。`run_test_cpu.sh -scope=accuracy` 默认仍读完整 1200 条。跑精简集：
+用于冒烟，不是正式验收入口。`run_test_cpu.sh -scope=accuracy` 默认仍读完整 2400 条。跑精简集：
 
 ```bash
 ATK_GM_INIT_MODE=off \
@@ -192,7 +194,7 @@ bash tests/atk/run_test_cpu.sh -op=chunk_gated_delta_rule_fwd_prepare \
 
 ## 执行方式
 
-本算子有 9 路输出（`l2norm=False` 时 rstd 为 `None`，比较时丢掉）。ATK 默认 GM 初始化会把 HBM 顶满，后续 case 会卡在 `rtStreamSynchronize`。精度请关 GM init；一次跑满 1200 若占卡，按 **12** 条分批（`CASE_END` 不含右端；50 条一批容易卡住）。
+本算子有 9 路输出（`l2norm=False` 时 rstd 为 `None`，`output_a=False` 时 A 为 `None`，比较时丢掉）。ATK 默认 GM 初始化会把 HBM 顶满，后续 case 会卡在 `rtStreamSynchronize`。精度请关 GM init；一次跑满 2400 若占卡，按 **12** 条分批（`CASE_END` 不含右端；50 条一批容易卡住）。
 
 本容器没有 `/dev/davinciN`，ATK 只能看到 device 0；请用 `-npu_device_id=0`，`ATK_OUTPUT_ROOT` 建议用绝对路径。
 
