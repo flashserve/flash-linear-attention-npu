@@ -1663,13 +1663,19 @@ def npu_chunk_gated_delta_rule_bwd(
 
 def _kda_bwd_single_launch(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h,
                            d_o, raw_g, A_log, dt_bias, scale, chunk_size,
-                           safe_gate, lower_bound, use_gate_in_kernel):
-    """One fused call on the tensors it is given, dense or packed."""
+                           safe_gate, lower_bound, use_gate_in_kernel,
+                           cu_seqlens=None, chunk_indices=None):
+    """One fused call on the tensors it is given, dense or packed.
+
+    Packed (rank-3) inputs must carry the varlen metadata: the aclnn entry
+    rejects rank-3 `q` without `cu_seqlens`/`chunk_indices`, and the fused
+    tiling derives the chunk count from them.  Dense inputs pass both as None.
+    """
 
     return _op("npu_chunk_kda_bwd")(
         q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o, raw_g, A_log,
         dt_bias,
-        None, None,  # the fused kernel takes no cu_seqlens/chunk_indices
+        _host_ints(cu_seqlens), _host_ints(chunk_indices),
         float(scale), int(chunk_size), bool(safe_gate),
         bool(use_gate_in_kernel), float(lower_bound),
         True,  # disable_recompute is the only supported spelling
@@ -1781,17 +1787,16 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
     has_varlen_tail = is_varlen and any(
         (end - begin) % chunk_size != 0 for begin, end in zip(cu, cu[1:]))
     is_a2_device = False
-    is_a5_device = False
     if use_dense_varlen_fallback or heads % 2 != 0 or has_varlen_tail:
         device_index = q.device.index
         if device_index is None:
             device_index = torch.npu.current_device()
         device_name = str(torch.npu.get_device_name(device_index))
         is_a2_device = device_name.startswith("Ascend910B")
-        is_a5_device = "950" in device_name
 
-    if (is_a2_device and use_dense_varlen_fallback) or (
-            is_a5_device and has_varlen_tail):
+    # 短尾 packed 序列统一拆成逐序列 dense 调用：fused packed 流水线对其会产生
+    # 陈旧/非有限值，拆开后每条序列走已验证的 dense 路径（A2 上 V=256 同理）。
+    if (is_a2_device and use_dense_varlen_fallback) or has_varlen_tail:
         sequence_results = []
         chunk_begin = 0
         for token_begin, token_end in zip(cu, cu[1:]):
@@ -1900,7 +1905,8 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
 
     result = launch(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
                     raw_g, A_log, dt_bias, scale, chunk_size, safe_gate,
-                    lower_bound, use_gate_in_kernel)
+                    lower_bound, use_gate_in_kernel,
+                    cu_seqlens=cu, chunk_indices=indices)
     restored = []
     for index, value in enumerate(result):
         if value is None:
