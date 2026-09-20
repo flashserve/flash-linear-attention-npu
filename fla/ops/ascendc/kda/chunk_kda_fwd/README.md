@@ -110,6 +110,9 @@ Python 返回顺序为：
 - `chunk_size` 为 64/128。
 - TND/NTD 均支持多 head。
 - 变长调用最多 1024 条逻辑序列，rank-4 变长输入要求 B=1。
+- 空 tensor 不支持：`B` 或序列长度（TND/NTD 为总 token 数）为 0 时，参数校验阶段
+  返回 `ACLNN_ERR_PARAM_INVALID`，报错文本会指明是哪个逻辑维为 0，不会下沉到 tiling
+  后只回传无上下文的 561103。
 
 ## 场景分发
 

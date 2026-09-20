@@ -40,6 +40,10 @@ outputs = chunk_kda_fwd(
 取值（含 `V=256`）都在参数校验阶段返回 `ACLNN_ERR_PARAM_INVALID`，报错文本会打印实际的
 `Kdim/Vdim`；Python 入口在发起调用前给出同一条约束说明。
 
+空 tensor 契约：`B` 或序列长度（TND/NTD 为总 token 数）为 0 时同样在参数校验阶段返回
+`ACLNN_ERR_PARAM_INVALID`，报错文本会指明是 batch 维还是序列维为 0；host 侧不会把空
+tensor 交给 tiling，因此调用方不会只拿到 561103 这类缺少上下文的错误码。
+
 ## aclnn
 
 ### 融合入口 `aclnnChunkKdaFwd`（签名与 ABI 未变）

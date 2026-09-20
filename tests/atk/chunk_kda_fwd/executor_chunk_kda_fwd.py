@@ -867,6 +867,10 @@ def _head_axis(layout: str) -> int:
     return 2 if layout == "BSND" else (1 if layout in {"BNSD", "TND"} else 0)
 
 
+def _seq_axis(layout: str) -> int:
+    return 1 if layout in {"BSND", "NTD"} else (2 if layout == "BNSD" else 0)
+
+
 def _resize_axis(tensor: torch.Tensor, axis: int, size: int) -> torch.Tensor:
     if size <= tensor.shape[axis]:
         return tensor.narrow(axis, 0, size).contiguous()
@@ -992,6 +996,12 @@ def _mutate_raw(inputs: _PreparedInputs, spec: dict, outputs: list):
         values["A_log"] = inputs.A_log[:-1].contiguous()
     elif mutation == "dtbias_shape":
         values["dt_bias"] = inputs.dt_bias[:-1].contiguous()
+    elif mutation in {"t_zero", "b_zero"}:
+        # 空 tensor 负向用例：把序列长度或 batch 维压到 0，其余维保持合法，
+        # 用于确认 host 校验会明确报出是哪个逻辑维为空。
+        axis = _seq_axis(layout) if mutation == "t_zero" else 0
+        for name in ("q", "k", "v", "g", "beta"):
+            values[name] = _resize_axis(values[name], axis, 0)
     elif mutation == "lower_low":
         values["lower_bound"] = -5.1
     elif mutation == "lower_high":
