@@ -67,6 +67,14 @@ struct KdaFwdThreeStageArgs {
     const aclTensor *kgOut = nullptr;
     const aclTensor *vNewOut = nullptr;
     const aclTensor *hOut = nullptr;
+    // 反向 L2 norm 需要的保存值（q/k 归一化结果与 rstd、sigmoid 后的 beta）。
+    // op def 里这些槽仍是 REQUIRED，可选性只在 L2 层用空指针表达：
+    // 调用方传 nullptr 表示本次不导出，内核侧判空跳过写出。
+    const aclTensor *qHatOut = nullptr;
+    const aclTensor *kHatOut = nullptr;
+    const aclTensor *qRstdOut = nullptr;
+    const aclTensor *kRstdOut = nullptr;
+    const aclTensor *betaEffOut = nullptr;
 };
 
 // 由公开输出指针组合推导 ChunkKdaFwdPrepare 的编译期 outputMode。

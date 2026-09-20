@@ -74,6 +74,11 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
     const aclTensor *kgOut,
     const aclTensor *vNewOut,
     const aclTensor *hOut,
+    const aclTensor *qHatOut,
+    const aclTensor *kHatOut,
+    const aclTensor *qRstdOut,
+    const aclTensor *kRstdOut,
+    const aclTensor *betaEffOut,
     uint64_t *workspaceSize,
     aclOpExecutor **executor);
 

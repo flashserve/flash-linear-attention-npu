@@ -85,6 +85,12 @@ struct ChunkKdaFwdParams {
     const aclTensor *kgOut = nullptr;
     const aclTensor *vNewOut = nullptr;
     const aclTensor *hOut = nullptr;
+    // 反向 L2 norm 保存值；nullptr 表示本次不导出（可选性只在 L2 层表达）。
+    const aclTensor *qHatOut = nullptr;
+    const aclTensor *kHatOut = nullptr;
+    const aclTensor *qRstdOut = nullptr;
+    const aclTensor *kRstdOut = nullptr;
+    const aclTensor *betaEffOut = nullptr;
 };
 
 struct KdaShapeInfo {
@@ -634,6 +640,11 @@ l0op::KdaFwdThreeStageArgs MakeThreeStageArgs(const ChunkKdaFwdParams &params,
     args.kgOut = params.kgOut;
     args.vNewOut = params.vNewOut;
     args.hOut = params.hOut;
+    args.qHatOut = params.qHatOut;
+    args.kHatOut = params.kHatOut;
+    args.qRstdOut = params.qRstdOut;
+    args.kRstdOut = params.kRstdOut;
+    args.betaEffOut = params.betaEffOut;
     return args;
 }
 
@@ -944,6 +955,11 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
     const aclTensor *kgOut,
     const aclTensor *vNewOut,
     const aclTensor *hOut,
+    const aclTensor *qHatOut,
+    const aclTensor *kHatOut,
+    const aclTensor *qRstdOut,
+    const aclTensor *kRstdOut,
+    const aclTensor *betaEffOut,
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
@@ -952,7 +968,8 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
         cuSeqlensOptional, chunkIndicesOptional, layout, scale, chunkSize,
         safeGate, lowerBound, useGateInKernel, stateVFirst, epsilon, useQkL2normInKernel,
         useBetaSigmoidInKernel, allowNegEigval, useExp2, attnOut, finalStateOut, gkOut,
-        aqkOut, akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut};
+        aqkOut, akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut,
+        qHatOut, kHatOut, qRstdOut, kRstdOut, betaEffOut};
     L2_DFX_PHASE_1(
         aclnnChunkKdaFwdV2,
         DFX_IN(q, k, v, g, beta, aLogOptional, dtBiasOptional, initialStateOptional,
@@ -960,7 +977,8 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
                safeGate, lowerBound, useGateInKernel, stateVFirst, epsilon,
                useQkL2normInKernel, useBetaSigmoidInKernel, allowNegEigval, useExp2),
         DFX_OUT(attnOut, finalStateOut, gkOut, aqkOut, akkOut, wOut, uOut,
-                qgOut, kgOut, vNewOut, hOut));
+                qgOut, kgOut, vNewOut, hOut, qHatOut, kHatOut, qRstdOut,
+                kRstdOut, betaEffOut));
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);

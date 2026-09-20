@@ -137,7 +137,10 @@ int64_t KdaFwdThreeStageOutputMode(const KdaFwdThreeStageArgs &args)
 {
     const bool wantSavedIntermediates = args.wOut != nullptr || args.uOut != nullptr ||
                                         args.qgOut != nullptr || args.kgOut != nullptr ||
-                                        args.vNewOut != nullptr;
+                                        args.vNewOut != nullptr ||
+                                        args.qHatOut != nullptr || args.kHatOut != nullptr ||
+                                        args.qRstdOut != nullptr || args.kRstdOut != nullptr ||
+                                        args.betaEffOut != nullptr;
     if (wantSavedIntermediates) {
         return optiling::PREPARE_OUTPUT_MODE_SAVE;
     }
@@ -159,7 +162,8 @@ aclnnStatus KdaFwdThreeStage(const KdaFwdThreeStageArgs &args, aclOpExecutor *ex
         args.aLog,      args.dtBias,   args.initialState,
         args.attnOut,   args.finalStateOut, args.gkOut,  args.aqkOut,
         args.akkOut,    args.wOut,     args.uOut,     args.qgOut,
-        args.kgOut,     args.vNewOut,  args.hOut};
+        args.kgOut,     args.vNewOut,  args.hOut,     args.qHatOut,
+        args.kHatOut,   args.qRstdOut, args.kRstdOut, args.betaEffOut};
     for (const aclTensor *tensor : contiguousTensors) {
         NormalizeTensorMeta(tensor);
     }
@@ -213,15 +217,20 @@ aclnnStatus KdaFwdThreeStage(const KdaFwdThreeStageArgs &args, aclOpExecutor *ex
         ReuseOrAlloc(args.kgOut, valueMatrix(args.kDim), DataType::DT_BF16, executor);
     const aclTensor *qgScaledCompute = AllocTensor(executor, valueMatrix(args.kDim), DataType::DT_BF16);
     const aclTensor *qHatCompute =
-        needBackwardAux ? AllocTensor(executor, qkMatrix(), DataType::DT_BF16) : nullptr;
+        needBackwardAux ? ReuseOrAlloc(args.qHatOut, qkMatrix(), DataType::DT_BF16, executor)
+                        : nullptr;
     const aclTensor *kHatCompute =
-        needBackwardAux ? AllocTensor(executor, qkMatrix(), DataType::DT_BF16) : nullptr;
+        needBackwardAux ? ReuseOrAlloc(args.kHatOut, qkMatrix(), DataType::DT_BF16, executor)
+                        : nullptr;
     const aclTensor *qRstdCompute =
-        needBackwardAux ? AllocTensor(executor, qkScalar(), DataType::DT_FLOAT) : nullptr;
+        needBackwardAux ? ReuseOrAlloc(args.qRstdOut, qkScalar(), DataType::DT_FLOAT, executor)
+                        : nullptr;
     const aclTensor *kRstdCompute =
-        needBackwardAux ? AllocTensor(executor, qkScalar(), DataType::DT_FLOAT) : nullptr;
+        needBackwardAux ? ReuseOrAlloc(args.kRstdOut, qkScalar(), DataType::DT_FLOAT, executor)
+                        : nullptr;
     const aclTensor *betaEffCompute =
-        needBackwardAux ? AllocTensor(executor, valueScalar(), DataType::DT_FLOAT) : nullptr;
+        needBackwardAux ? ReuseOrAlloc(args.betaEffOut, valueScalar(), DataType::DT_FLOAT, executor)
+                        : nullptr;
     CHECK_COND(gkCompute != nullptr && aqkCompute != nullptr && wCompute != nullptr &&
                    uCompute != nullptr && kgCompute != nullptr && qgScaledCompute != nullptr &&
                    (!needAkk || akkCompute != nullptr) &&
