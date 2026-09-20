@@ -142,6 +142,36 @@ def resolve_device(raw: object) -> torch.device:
     return torch.device(value)
 
 
+def kda_bwd_optimized_supported(device: torch.device) -> bool:
+    """反向的 optimized（kernel 内 L2Norm 回代）路径目前只在 A5（Ascend950）可用。
+
+    判据与 `fla_npu.ops.ascendc._kda_policy._prepare_kda_bwd_optimized` 一致：
+    传入 `q_rstd/k_rstd` 时若设备名不含 `Ascend950`，该函数会直接抛
+    `ValueError`。这里提前判断，让看护脚本在 A2/A3 上退到 fused 反向。
+    """
+
+    if torch_npu is None or device.type != "npu":
+        return False
+    try:
+        return "Ascend950" in str(torch.npu.get_device_name(device))
+    except Exception:  # pragma: no cover - 老版本 torch_npu 缺该接口
+        return False
+
+
+def l2norm_bwd(dy: torch.Tensor, x: torch.Tensor, rstd: torch.Tensor) -> torch.Tensor:
+    """上游 fla 的 `l2norm_bwd`：`dx = dy*r - (dy·x)*x*r**3`，`r = rstd`。
+
+    fused 反向只给归一化 q/k 的梯度，A2/A3 需要这一步手工回代到原始 q/k，
+    才能与 CPU 参考（对原始 q/k 的梯度）对比。
+    """
+
+    dy = dy.float()
+    x = x.float()
+    r = rstd.float().unsqueeze(-1)
+    proj = (dy * x).sum(dim=-1, keepdim=True)
+    return dy * r - proj * x * r ** 3
+
+
 def parse_cu_seqlens(raw: str, tokens: int, batch: int) -> Optional[Tuple[int, ...]]:
     raw = (raw or "").strip()
     if not raw:
@@ -411,16 +441,27 @@ def run_once(args: argparse.Namespace) -> int:
         use_exp2=True,
         state_v_first=False,
     )
+    # optimized（kernel 内 L2Norm 回代）反向只在 A5 可用；A2/A3 上退到 fused 反向，
+    # 由脚本按上游 `l2norm_bwd` 手工回代到原始 q/k。
+    use_optimized_bwd = bool(args.qk_l2norm) and kda_bwd_optimized_supported(device)
     if args.qk_l2norm:
-        bwd_kwargs.update(q_rstd=saved["q_rstd"], k_rstd=saved["k_rstd"])
         bwd_q, bwd_k = saved["q_hat"], saved["k_hat"]
+        if use_optimized_bwd:
+            bwd_kwargs.update(q_rstd=saved["q_rstd"], k_rstd=saved["k_rstd"])
     else:
         bwd_q, bwd_k = to_head_major(q_op), to_head_major(k_op)
+    if args.qk_l2norm:
+        print(f"[info] backward path: "
+              f"{'optimized (in-kernel L2Norm)' if use_optimized_bwd else 'fused + l2norm_bwd'}; "
+              f"device={device}", flush=True)
     bwd_v = to_head_major(v_op)
     bwd_beta = to_head_major(beta_op, is_beta=True)
     dq, dk, dv, dbeta, dg, _dh0, _da, _dbias = chunk_kda_bwd(
         bwd_q, bwd_k, bwd_v, bwd_beta, gk, aqk, akk, w, qg, kg, v_new, hstate,
         grad_out, scale, **bwd_kwargs)
+    if args.qk_l2norm and not use_optimized_bwd:
+        dq = l2norm_bwd(dq, to_head_major(q_op), saved["q_rstd"])
+        dk = l2norm_bwd(dk, to_head_major(k_op), saved["k_rstd"])
     if torch_npu is not None and device.type == "npu":
         torch.npu.synchronize()
 
@@ -490,6 +531,8 @@ def run_once(args: argparse.Namespace) -> int:
     if failed:
         print(f"chunk_kda accuracy failed: {', '.join(failed)}", file=sys.stderr)
         return 1
+    # ci/run_example_st_cases.py 以这一行（配合退出码 0）判定该用例精度通过。
+    print("accuracy check passed", flush=True)
     return 0
 
 
