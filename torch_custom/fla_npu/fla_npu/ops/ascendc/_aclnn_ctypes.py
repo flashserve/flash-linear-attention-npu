@@ -3691,8 +3691,9 @@ def npu_chunk_kda_fwd(
     saved_outputs = (q_hat_out, k_hat_out, q_rstd_out, k_rstd_out, beta_eff_out)
     if any(value is not None for value in saved_outputs) and not use_v2:
         raise RuntimeError(
-            "npu_chunk_kda_fwd: q_hat/k_hat/q_rstd/k_rstd/beta_eff 只在三算子组合入口"
-            "（bfloat16、K=V=128、chunk_size=64）上支持导出；当前场景请勿传入这些输出。"
+            "npu_chunk_kda_fwd: q_hat/k_hat/q_rstd/k_rstd/beta_eff are only exported by "
+            "the three-stage entry (bfloat16, K=V=128, chunk_size=64); do not pass these "
+            "outputs in the current scenario."
         )
 
     def build_args(ctx):

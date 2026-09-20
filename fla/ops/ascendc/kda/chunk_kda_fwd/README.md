@@ -165,7 +165,7 @@ beta 由调用方预先 sigmoid、门控走 `exp2`）：
 
 ### 编译依赖
 
-组合分支在 `chunk_kda_fwd_three_stage.cpp` 里直接 include 并调用另外三个独立算子的 op_api，
+组合分支在 `chunk_kda_fwd_v2.cpp` 里直接 include 并调用另外三个独立算子的 op_api，
 因此按算子裁剪编译时必须把这四个算子一起编，否则产物缺少子算子的 tiling / kernel 注册，
 `aclnnChunkKdaFwdV2GetWorkspaceSize` 会在 tiling 阶段失败（只编 `chunk_kda_fwd` 时
 `libcust_opapi.so` 甚至会缺 `l0op::ChunkKdaFwdPrepare/ChunkFwdH/ChunkKdaFwdFinalize` 符号）：

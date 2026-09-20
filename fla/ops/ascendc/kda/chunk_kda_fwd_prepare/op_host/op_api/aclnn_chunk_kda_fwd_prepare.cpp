@@ -236,7 +236,8 @@ aclnnStatus CheckFormat(const ChunkKdaFwdPrepareParams &params)
         // 张量本身已由 CheckContiguous 保证连续，不能因为拼写不同就拒绝调用方。
         CHECK_COND(!IsPrivateFormat(storageFormat) && !IsPrivateFormat(viewFormat),
                    ACLNN_ERR_PARAM_INVALID,
-                   "%s 必须使用非私有 storage/view format，当前 storage=%d, view=%d。",
+                   "%s must use a non-private storage/view format "
+                   "(ND/NCHW/NCL/NHWC are all accepted); got storage=%d, view=%d.",
                    names[index], static_cast<int>(storageFormat),
                    static_cast<int>(viewFormat));
     }

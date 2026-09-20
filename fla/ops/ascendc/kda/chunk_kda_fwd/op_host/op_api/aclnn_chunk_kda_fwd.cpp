@@ -7,7 +7,7 @@
 #include "aclnn_chunk_kda_fwd.h"
 #include "chunk_kda_fwd.h"
 #include "aclnn_chunk_kda_fwd_v2.h"
-#include "chunk_kda_fwd_three_stage.h"
+#include "chunk_kda_fwd_v2.h"
 
 #include <algorithm>
 #include <cstring>
@@ -568,7 +568,7 @@ bool AllOutputsContiguous(const ChunkKdaFwdParams &params)
 
 // V2 场景判据：三个独立算子的公共约束（BF16、K=V=128、chunk=64、输出可直接写回、
 // cu_seqlens 严格递增）全部满足时才允许走组合实现。
-bool CanUseThreeStagePath(const ChunkKdaFwdParams &params, const KdaShapeInfo &info)
+bool CanUseKdaFwdV2Path(const ChunkKdaFwdParams &params, const KdaShapeInfo &info)
 {
     if (params.q->GetDataType() != DataType::DT_BF16) {
         return false;
@@ -592,10 +592,10 @@ bool CanUseThreeStagePath(const ChunkKdaFwdParams &params, const KdaShapeInfo &i
     return AllOutputsContiguous(params);
 }
 
-l0op::KdaFwdThreeStageArgs MakeThreeStageArgs(const ChunkKdaFwdParams &params,
+l0op::KdaFwdV2Args MakeKdaFwdV2Args(const ChunkKdaFwdParams &params,
                                               const KdaShapeInfo &info)
 {
-    l0op::KdaFwdThreeStageArgs args;
+    l0op::KdaFwdV2Args args;
     args.q = params.q;
     args.k = params.k;
     args.v = params.v;
@@ -990,12 +990,12 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
 
     // V2 只实现三个独立算子的组合路径；场景不满足时由 Python 入口回落到
     // aclnnChunkKdaFwd，因此这里直接返回参数错误并说明要求。
-    CHECK_COND(CanUseThreeStagePath(params, info), ACLNN_ERR_PARAM_INVALID,
+    CHECK_COND(CanUseKdaFwdV2Path(params, info), ACLNN_ERR_PARAM_INVALID,
                "ChunkKdaFwdV2 只支持三算子组合场景：q/k/v 为 BF16、K=V=128、chunk_size=64、"
                "公开输出连续且 cu_seqlens 严格递增，请改用 aclnnChunkKdaFwd。");
-    const aclnnStatus threeStageStatus =
-        l0op::KdaFwdThreeStage(MakeThreeStageArgs(params, info), executorPtr);
-    CHECK_RET(threeStageStatus == ACLNN_SUCCESS, threeStageStatus);
+    const aclnnStatus kdaFwdV2Status =
+        l0op::KdaFwdV2(MakeKdaFwdV2Args(params, info), executorPtr);
+    CHECK_RET(kdaFwdV2Status == ACLNN_SUCCESS, kdaFwdV2Status);
 
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);

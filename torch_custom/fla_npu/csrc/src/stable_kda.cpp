@@ -344,8 +344,9 @@ run_npu_chunk_kda_fwd(
 
   if (wants_saved) {
     throw std::runtime_error(
-        "npu_chunk_kda_fwd: q_hat/k_hat/q_rstd/k_rstd/beta_eff 只在三算子组合入口"
-        "（bfloat16、K=V=128、chunk_size=64）上产出，当前场景请勿传入这些输出。");
+        "npu_chunk_kda_fwd: q_hat/k_hat/q_rstd/k_rstd/beta_eff are produced only by "
+        "the three-stage entry (bfloat16, K=V=128, chunk_size=64); do not pass these "
+        "outputs in the current scenario.");
   }
 
   FLA_STABLE_EXEC(
