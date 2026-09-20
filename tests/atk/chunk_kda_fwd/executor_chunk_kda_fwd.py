@@ -1086,15 +1086,17 @@ def _run_negative_aclnn(inputs: _PreparedInputs, spec: dict):
             raise RuntimeError(
                 f"negative interception returned {actual_code}, expected {expected_code}: {exc}"
             ) from exc
-        recent_error = _recent_aclnn_error()
+        # `_aclnn_error` 已经把 CANN 报错文案拼进异常，且读取该文案会清空全局缓冲，
+        # 因此以异常文本为主、`aclGetRecentErrMsg` 为辅，二者任一命中即可。
+        observed = "\n".join(part for part in (str(exc), _recent_aclnn_error()) if part)
         expected_message = str(spec["expected_message"])
-        if expected_message not in recent_error:
+        if expected_message not in observed:
             raise RuntimeError(
                 f"negative interception code matched but message did not: expected {expected_message!r}, "
-                f"actual {recent_error!r}"
+                f"actual {observed!r}"
             ) from exc
         raise RuntimeError(
-            f"{spec['expected_code_name']}({expected_code}): {expected_message}; recent_error={recent_error}"
+            f"{spec['expected_code_name']}({expected_code}): {expected_message}; observed={observed}"
         ) from exc
     raise RuntimeError("negative interception unexpectedly returned ACLNN_SUCCESS")
 
