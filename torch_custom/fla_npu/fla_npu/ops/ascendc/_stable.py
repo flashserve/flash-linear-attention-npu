@@ -21,6 +21,10 @@ _LIB_ENV = "FLA_NPU_STABLE_LIB"
 # Lowest torch whose stable runtime symbols the launcher was verified against.
 # Keep in sync with STABLE_ABI_MIN_TORCH in scripts/build_wheel.py.
 _MIN_TORCH = "2.7.1"
+# KDA chunked forward 的 K/V 只交付两档且必须同档：K=V=64 或 K=V=128。
+# 混合档（K=64/V=128 等）与其它取值都不支持，判据与 ctypes 参考
+# （``_aclnn_ctypes._KDA_FWD_SUPPORTED_KV_DIMS``）及 aclnn L2 校验保持一致。
+_KDA_FWD_SUPPORTED_KV_DIMS = frozenset({64, 128})
 _loaded_path: str | None = None
 # ctypes handle of the loaded launcher; see _launcher_lib.
 _lib_handle = None
@@ -1282,6 +1286,15 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
             "npu_chunk_kda_fwd: epsilon must be a positive finite number.")
     import torch
 
+    # K/V 档位：只支持 K=V=64 与 K=V=128，混合档与其它取值都拒绝。单列一条
+    # 判据而不是交给 L2，是为了让两条后端在 Python 侧就给出同一句话。
+    key_dim = int(k.shape[-1])
+    value_dim = int(v.shape[-1])
+    if key_dim != value_dim or key_dim not in _KDA_FWD_SUPPORTED_KV_DIMS:
+        raise RuntimeError(
+            "npu_chunk_kda_fwd: K/V must both be 64 or both be 128 "
+            "(mixed K/V and other dims are not supported), "
+            f"but got K={key_dim}, V={value_dim}.")
     use_qk_l2norm_in_kernel = bool(use_qk_l2norm_in_kernel)
     use_beta_sigmoid_in_kernel = bool(use_beta_sigmoid_in_kernel)
     allow_neg_eigval = bool(allow_neg_eigval)
@@ -1292,8 +1305,6 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
             "use_beta_sigmoid_in_kernel=True.")
     if (use_qk_l2norm_in_kernel or use_beta_sigmoid_in_kernel
             or allow_neg_eigval or not use_exp2):
-        key_dim = int(k.shape[-1])
-        value_dim = int(v.shape[-1])
         if (q.dtype != torch.bfloat16 or key_dim != 128 or value_dim != 128
                 or int(chunk_size) != 64):
             raise RuntimeError(

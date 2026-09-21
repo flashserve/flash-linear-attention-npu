@@ -3432,6 +3432,11 @@ def npu_chunk_kda_bwd(
 # head 数 32 及以上组合领先 15% 以上。
 _CHUNK_KDA_FWD_V2_MIN_WORK_ITEMS = 4096
 
+# KDA chunked forward 的 K/V 只交付两档且必须同档：K=V=64 或 K=V=128；
+# 混合档（K=64/V=128 等）与其它取值都不支持。与 Stable-ABI 薄层
+# （``_stable._KDA_FWD_SUPPORTED_KV_DIMS``）和 aclnn L2 校验保持同一判据。
+_KDA_FWD_SUPPORTED_KV_DIMS = frozenset({64, 128})
+
 
 def _chunk_kda_fwd_use_v2(*, dtype, k_dim, v_dim, chunk_size, cu, work_items,
                           force_v2) -> bool:
@@ -3543,8 +3548,12 @@ def npu_chunk_kda_fwd(
         raise RuntimeError("npu_chunk_kda_fwd: q/k/v must use the same float16 or bfloat16 dtype.")
     if g.dtype not in {torch.float32, torch.bfloat16} or beta.dtype not in {torch.float32, torch.bfloat16}:
         raise RuntimeError("npu_chunk_kda_fwd: g and beta must be float32 or bfloat16.")
-    if k_dim < 16 or k_dim > 256 or k_dim % 16 or v_dim < 16 or v_dim > 256 or v_dim % 16:
-        raise RuntimeError("npu_chunk_kda_fwd: K/V must be multiples of 16 with K,V <= 256.")
+    if k_dim != v_dim or k_dim not in _KDA_FWD_SUPPORTED_KV_DIMS:
+        raise RuntimeError(
+            "npu_chunk_kda_fwd: K/V must both be 64 or both be 128 "
+            "(mixed K/V and other dims are not supported), "
+            f"but got K={k_dim}, V={v_dim}."
+        )
 
     use_gate_in_kernel = _optional_bool(use_gate_in_kernel, False)
     safe_gate = _optional_bool(safe_gate, False)

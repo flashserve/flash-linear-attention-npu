@@ -225,7 +225,7 @@ aclnn L2 只描述张量与算法契约，不接收或解释 autograd 重计算�
 V2 支持范围：`q/k/v` 为 BF16、`K=V=128`、`chunk_size=64`、公开输出连续、`cu_seqlens`
 严格递增；不满足时返回 `ACLNN_ERR_PARAM_INVALID`（提示改用融合入口）。
 场景选择由 Python 入口完成：`fla_npu.ops.ascendc.chunk_kda_fwd` 命中上述场景时优先调用 V2，
-其余场景（FP16、`K/V` 非 128、`chunk_size=128`、含空序列、输出非连续）回落到
+其余场景（FP16、`K=V=64`、`chunk_size=128`、含空序列、输出非连续）回落到
 `aclnnChunkKdaFwd`。两个入口共用同一套参数校验、输出指针语义与返回码契约，公开输出布局一致。
 
 V2 入口的形参尾部另有 5 个可选输出指针 `qHatOut/kHatOut/qRstdOut/kRstdOut/betaEffOut`，
@@ -320,5 +320,6 @@ assert final_state.shape == (B, H, K, V)
 | legacy | 显式加载后的 `torch.ops.npu.npu_chunk_kda_fwd` |
 | 受限直调样例 | `torch.ops.ascend_ops.chunk_kda_fwd_direct` |
 
-直调样例仅覆盖 dense BNSD、K=128、V=128/256，并保留“调用方传入已累计 gk”的低层测试接口；
-公开顶层语义以稳定 Python/aclnn 接口为准。
+直调样例仅覆盖 dense BNSD、K=128、V=128，并保留“调用方传入已累计 gk”的低层测试接口；
+直调路径是低层诊断入口，不套用公开的 `K/V` 档位拦截；公开顶层语义与全部参数约束以
+稳定 Python/aclnn 接口为准。
