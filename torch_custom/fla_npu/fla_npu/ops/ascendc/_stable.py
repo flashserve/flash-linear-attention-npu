@@ -1878,8 +1878,13 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
                                  for tensor in (w, qg, kg, v_new, d_o))
         raw_g = pad_rows_of(raw_g)
         seqlen = padded_seqlen
-        cu = None if cu is None else (0, padded_seqlen)
-        indices = _canonical_chunk_indices(cu, chunk_size)
+        # Only varlen calls carry metadata; a dense call (cu is None) stays
+        # dense after padding.  Deriving chunk indices unconditionally crashed
+        # every dense backward whose T is not a multiple of chunk_size with
+        # "object of type 'NoneType' has no len()".
+        if cu is not None:
+            cu = (0, padded_seqlen)
+            indices = _canonical_chunk_indices(cu, chunk_size)
 
     # A2's fused Intra pipeline processes heads in pairs; a lone final head can
     # keep a stale correction from the previous launch.
