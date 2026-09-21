@@ -82,6 +82,28 @@ Python 返回顺序为：
 公开 `hOut` 非空时，L2 转为 sequence-major 后导出。`hOut` 为空时仍创建 `hCompute`，但不
 作为第 11 个 Python 返回值公开。
 
+### 反向 L2 norm 保存值（可选导出）
+
+`use_qk_l2norm_in_kernel=true` 时算子内部完成 q/k 归一化并算出反向回代所需的保存值。
+这些值不占用公开的 12 个返回槽位，而是由调用方**按需提供输出张量**导出；不提供就是
+`nullptr`，行为与历史版本逐位一致（"可选性只在 L2 层用空指针表达"）：
+
+| 输出 | 形状 | dtype | 何时产出 |
+| --- | --- | --- | --- |
+| `q_hat` / `k_hat` | `[B,HK,T,D]`（packed `[HK,T,D]`） | 与 q/k 同 dtype | 传入对应输出张量 |
+| `q_rstd` / `k_rstd` | `[B,HK,T]`（packed `[HK,T]`） | FP32 | 同上；`use_qk_l2norm_in_kernel=false` 时不产出 |
+| `beta_eff` | `[B,HV,T]`（packed `[HV,T]`） | FP32 | 同上；`use_beta_sigmoid_in_kernel=true` 时为 `sigmoid(beta)`（`allow_neg_eigval=true` 时为 `2*sigmoid(beta)`） |
+
+Python 入口 `fla_npu.ops.ascendc.chunk_kda_fwd` 通过关键字参数
+`q_hat_out/k_hat_out/q_rstd_out/k_rstd_out/beta_eff_out` 接收调用方张量；五个都不传时
+仍返回 12 槽。反向把导出的 `q_rstd/k_rstd` 交给 `chunk_kda_bwd`，即可走 optimized
+（L2Norm 回代）路径，语义与 fla-org 的 `l2norm_fwd` → `save_for_backward` → `l2norm_bwd`
+一致。
+
+配套入口：`fla_npu.ops.ascendc.chunk_kda_fwd_prepare` 暴露三算子组合里的 Prepare 段
+（13 个输出槽同样可选传），调用方可以按 `Prepare -> ChunkFwdH -> ChunkKdaFwdFinalize`
+自行编排并直接取用上述保存值。
+
 ## 属性
 
 | 名称 | 默认值 | 支持范围 |
@@ -142,7 +164,7 @@ beta 由调用方预先 sigmoid、门控走 `exp2`）：
 
 ### 编译依赖
 
-组合分支在 `chunk_kda_fwd_three_stage.cpp` 里直接 include 并调用另外三个独立算子的 op_api，
+组合分支在 `chunk_kda_fwd_v2.cpp` 里直接 include 并调用另外三个独立算子的 op_api，
 因此按算子裁剪编译时必须把这四个算子一起编，否则产物缺少子算子的 tiling / kernel 注册，
 `aclnnChunkKdaFwdV2GetWorkspaceSize` 会在 tiling 阶段失败（只编 `chunk_kda_fwd` 时
 `libcust_opapi.so` 甚至会缺 `l0op::ChunkKdaFwdPrepare/ChunkFwdH/ChunkKdaFwdFinalize` 符号）：

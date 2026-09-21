@@ -335,5 +335,63 @@
       "--cu-seqlens",
       "0,1175,2212,3324,4052,5148,6117,6920,7800,8514,9360,10414,11272,12067,13250,14212,15505,16336,17456,18573,19862,20823,22039,23278,24194,25310,26515,27206,28190,29494,30769,32048,33102,34117,34971,36279,37421,38453,39279,40038,41228,42137,42841,43606,44450,45602,46432,47579,48560,49402,50535,51587,52500,53820,55070,56093,56913,57946,58946,60239,61522,62814,64019,64813,65536"
     ]
+  },
+  {
+    "name": "chunk_kda_fwd_bwd_varlen_b1_t1024_h16_d128_bf16",
+    "description": "ChunkKDA 看护：NTD 打包（cu_seqlens 切分）、L2Norm 打开；正反向精度对 CPU recurrent 参考（o/dq/dk/dv/dbeta/dg）。",
+    "script": "examples/chunk_kda.py",
+    "enabled": true,
+    "B": 1,
+    "T": 1024,
+    "chunk_size": 64,
+    "query_head": 16,
+    "value_head": 16,
+    "Kdim": 128,
+    "Vdim": 128,
+    "dtype": "bf16",
+    "gate_source": "g",
+    "gate_function": "safe",
+    "varlen": true,
+    "initial_state": "none",
+    "output_final_state": false,
+    "qk_l2norm": true,
+    "demo_model": false,
+    "extra_args": [
+      "--seed",
+      "20260630",
+      "--cu-seqlens",
+      "0,512,1024",
+      "--accuracy-check",
+      "--accuracy-tensors",
+      "o,dq,dk,dv,dbeta,dg"
+    ]
+  },
+  {
+    "name": "chunk_kda_fwd_bwd_dense_b1_t2048_h32_d128_bf16",
+    "description": "ChunkKDA 看护：BSND dense、raw gate（kernel 内 safe gate）、L2Norm 打开；正反向精度对 CPU recurrent 参考（o/dq/dk/dv/dbeta/dg）。",
+    "script": "examples/chunk_kda.py",
+    "enabled": true,
+    "B": 1,
+    "T": 2048,
+    "chunk_size": 64,
+    "query_head": 32,
+    "value_head": 32,
+    "Kdim": 128,
+    "Vdim": 128,
+    "dtype": "bf16",
+    "gate_source": "g",
+    "gate_function": "safe",
+    "varlen": false,
+    "initial_state": "none",
+    "output_final_state": false,
+    "qk_l2norm": true,
+    "demo_model": false,
+    "extra_args": [
+      "--seed",
+      "20260630",
+      "--accuracy-check",
+      "--accuracy-tensors",
+      "o,dq,dk,dv,dbeta,dg"
+    ]
   }
 ]

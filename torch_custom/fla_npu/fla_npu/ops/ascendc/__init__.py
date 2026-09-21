@@ -48,6 +48,7 @@ _ASCENDC_OPS = (
     "npu_chunk_gated_delta_rule_fwd_h",
     "npu_chunk_fwd_h",
     "npu_chunk_kda_fwd_finalize",
+    "npu_chunk_kda_fwd_prepare",
     "npu_recompute_w_u_fwd",
     "npu_recurrent_gated_delta_rule",
     "npu_chunk_gated_delta_rule_fwd",
@@ -74,7 +75,8 @@ _LAUNCHER_ONLY_OPS: tuple[str, ...] = ()
 # 不注册 torch.ops.npu，也不挂到 torch_npu.ops 的可选兼容命名空间。
 _TORCH_NPU_COMPAT_OPS = tuple(
     name for name in _ASCENDC_OPS
-    if name not in {"npu_chunk_fwd_h", "npu_chunk_kda_fwd_finalize"}
+    if name not in {"npu_chunk_fwd_h", "npu_chunk_kda_fwd_finalize",
+                    "npu_chunk_kda_fwd_prepare"}
 )
 
 BACKWARD_OPS = {

@@ -7,8 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
-#ifndef OP_API_INC_LEVEL0_CHUNK_KDA_FWD_THREE_STAGE_H
-#define OP_API_INC_LEVEL0_CHUNK_KDA_FWD_THREE_STAGE_H
+#ifndef OP_API_INC_LEVEL0_CHUNK_KDA_FWD_V2_H
+#define OP_API_INC_LEVEL0_CHUNK_KDA_FWD_V2_H
 
 #include <cstdint>
 
@@ -16,9 +16,9 @@
 
 namespace l0op {
 
-// aclnnChunkKdaFwd 的内部组合参数。所有张量 shape/dtype/连续性契约由 L2
+// aclnnChunkKdaFwdV2 的内部组合参数。所有张量 shape/dtype/连续性契约由 L2
 // 入口（aclnn_chunk_kda_fwd.cpp）统一校验，这里只承载编排所需的信息。
-struct KdaFwdThreeStageArgs {
+struct KdaFwdV2Args {
     const aclTensor *q = nullptr;
     const aclTensor *k = nullptr;
     const aclTensor *v = nullptr;
@@ -67,18 +67,26 @@ struct KdaFwdThreeStageArgs {
     const aclTensor *kgOut = nullptr;
     const aclTensor *vNewOut = nullptr;
     const aclTensor *hOut = nullptr;
+    // 反向 L2 norm 需要的保存值（q/k 归一化结果与 rstd、sigmoid 后的 beta）。
+    // op def 里这些槽仍是 REQUIRED，可选性只在 L2 层用空指针表达：
+    // 调用方传 nullptr 表示本次不导出，内核侧判空跳过写出。
+    const aclTensor *qHatOut = nullptr;
+    const aclTensor *kHatOut = nullptr;
+    const aclTensor *qRstdOut = nullptr;
+    const aclTensor *kRstdOut = nullptr;
+    const aclTensor *betaEffOut = nullptr;
 };
 
 // 由公开输出指针组合推导 ChunkKdaFwdPrepare 的编译期 outputMode。
 // Aqk/Akk 是公开必选输出，但 qHat/kHat/qRstd/kRstd/betaEff 只服务反向重计算，
 // 因此 Akk 存在时使用只多搬 Akk 的 forward 档；只有同时需要 w/u/qg/kg/v_new
 // 时才升级到 save 档。
-int64_t KdaFwdThreeStageOutputMode(const KdaFwdThreeStageArgs &args);
+int64_t KdaFwdV2OutputMode(const KdaFwdV2Args &args);
 
 // 依次提交 ChunkKdaFwdPrepare -> ChunkFwdH -> ChunkKdaFwdFinalize，
 // 并在需要时把内部 head-major/chunk-major 结果回写到公开输出。
-aclnnStatus KdaFwdThreeStage(const KdaFwdThreeStageArgs &args, aclOpExecutor *executor);
+aclnnStatus KdaFwdV2(const KdaFwdV2Args &args, aclOpExecutor *executor);
 
 } // namespace l0op
 
-#endif // OP_API_INC_LEVEL0_CHUNK_KDA_FWD_THREE_STAGE_H
+#endif // OP_API_INC_LEVEL0_CHUNK_KDA_FWD_V2_H

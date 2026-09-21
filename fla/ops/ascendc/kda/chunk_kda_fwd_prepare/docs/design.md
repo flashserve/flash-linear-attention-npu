@@ -95,6 +95,15 @@ workspace 并供 C4/C5/C7 使用；V6 仍生成 UB 中的 `qg`，再基于其 BF
 算子 IR 和 kernel ABI 固定保留 13 个 `REQUIRED` 输出槽位。L2 未请求的槽位传
 `nullptr`，L0 用不会被当前编译实例写入的合法 descriptor 占位，防止 launcher 压缩参数。
 
+L2 的输出档位用整档匹配，实际接受四种 mask：`none`（六个必选槽）、`forward`
+（`none` + `Akk`）、`recompute`（`forward` + `q_hat/k_hat/q_rstd/k_rstd/beta_eff`）、
+`save`（全部 13 槽）。Python 入口 `fla_npu.ops.ascendc.chunk_kda_fwd_prepare` 的
+`backward_mode` 与这四档一一对应，默认 `save`；未选中的槽在 L2 层传 `nullptr`。
+反向只需要 L2 norm 回代时用 `recompute` 即可，无需把 `qg` 也拉出来。
+
+格式判据：L2 只拒绝私有（分形）格式，`ND`/`NCHW`/`NCL`/`NHWC` 等非私有拼写均接受，
+张量需连续；此前强制 `FORMAT_ND` 会把 NCHW 拼写的调用方误判为非法参数。
+
 `output_final_state` 与 `return_intermediate_states` 属于完整 forward，分别控制用户可见的
 `final_state/h`，和本节的反向策略正交；Prepare 不接收这两个属性。
 

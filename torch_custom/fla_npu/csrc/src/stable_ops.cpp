@@ -65,6 +65,7 @@ STABLE_TORCH_LIBRARY(fla_npu_stable, m) {
   m.def(kSchema_chunk_kda_bwd_recompute);
   m.def(kSchema_chunk_kda_fwd);
   m.def(kSchema_chunk_kda_fwd_finalize);
+  m.def(kSchema_chunk_kda_fwd_prepare);
   m.def(kSchema_chunk_bwd_dv_local);
   m.def(kSchema_chunk_local_cumsum);
   m.def(kSchema_chunk_scaled_dot_kkt);
@@ -113,6 +114,9 @@ STABLE_TORCH_LIBRARY_IMPL(fla_npu_stable, CompositeExplicitAutograd, m) {
   m.impl("npu_chunk_kda_fwd_finalize",
          &fla_npu_stable::stable::boxed_adapter<
              run_npu_chunk_kda_fwd_finalize>);
+  m.impl("npu_chunk_kda_fwd_prepare",
+         &fla_npu_stable::stable::boxed_adapter<
+             run_npu_chunk_kda_fwd_prepare>);
   m.impl("npu_chunk_bwd_dv_local",
          &fla_npu_stable::stable::boxed_adapter<run_npu_chunk_bwd_dv_local>);
   m.impl("npu_chunk_local_cumsum",

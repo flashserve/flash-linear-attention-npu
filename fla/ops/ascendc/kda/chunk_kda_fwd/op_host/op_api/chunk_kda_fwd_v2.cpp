@@ -7,7 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
-#include "chunk_kda_fwd_three_stage.h"
+#include "chunk_kda_fwd_v2.h"
 
 #include "../../../chunk_kda_fwd_prepare/op_host/chunk_kda_fwd_prepare_output_mask.h"
 #include "../../../chunk_kda_fwd_prepare/op_host/op_api/chunk_kda_fwd_prepare.h"
@@ -31,7 +31,7 @@ namespace l0op {
 
 namespace {
 
-constexpr int64_t KDA_FWD_THREE_STAGE_AQK_COLUMNS = 64;
+constexpr int64_t KDA_FWD_V2_AQK_COLUMNS = 64;
 
 op::Shape MakeShape(std::initializer_list<int64_t> dims)
 {
@@ -73,7 +73,7 @@ const aclTensor *AllocTensor(aclOpExecutor *executor, const op::Shape &shape, Da
 aclnnStatus CopyToOutput(const aclTensor *src, const aclTensor *dst, aclOpExecutor *executor)
 {
     CHECK_COND(l0op::ViewCopy(src, dst, executor) != nullptr, ACLNN_ERR_INNER_NULLPTR,
-               "ChunkKdaFwd 三算子组合 ViewCopy 失败。");
+               "ChunkKdaFwdV2: ViewCopy failed.");
     return ACLNN_SUCCESS;
 }
 
@@ -101,7 +101,7 @@ const aclTensor *MaybeReshapeToHeadMajor4(const aclTensor *tensor, bool packed, 
     const aclTensor *reshaped =
         l0op::Reshape(tensor, MakeShape({1, heads, seqLen, columns}), executor);
     if (reshaped == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "ChunkKdaFwd 三算子组合：%s 重排为 rank-4 BNSD 失败。", name);
+    OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "ChunkKdaFwdV2: failed to reshape %s to rank-4 BNSD.", name);
     }
     return reshaped;
 }
@@ -133,11 +133,14 @@ const aclTensor *TransposeToContiguous(const aclTensor *input, const std::vector
 
 } // namespace
 
-int64_t KdaFwdThreeStageOutputMode(const KdaFwdThreeStageArgs &args)
+int64_t KdaFwdV2OutputMode(const KdaFwdV2Args &args)
 {
     const bool wantSavedIntermediates = args.wOut != nullptr || args.uOut != nullptr ||
                                         args.qgOut != nullptr || args.kgOut != nullptr ||
-                                        args.vNewOut != nullptr;
+                                        args.vNewOut != nullptr ||
+                                        args.qHatOut != nullptr || args.kHatOut != nullptr ||
+                                        args.qRstdOut != nullptr || args.kRstdOut != nullptr ||
+                                        args.betaEffOut != nullptr;
     if (wantSavedIntermediates) {
         return optiling::PREPARE_OUTPUT_MODE_SAVE;
     }
@@ -149,7 +152,7 @@ int64_t KdaFwdThreeStageOutputMode(const KdaFwdThreeStageArgs &args)
     return optiling::PREPARE_OUTPUT_MODE_NONE;
 }
 
-aclnnStatus KdaFwdThreeStage(const KdaFwdThreeStageArgs &args, aclOpExecutor *executor)
+aclnnStatus KdaFwdV2(const KdaFwdV2Args &args, aclOpExecutor *executor)
 {
     // 组合入口的输入/输出张量都可能来自 pyTorch ctypes 描述符，其 storage shape
     // 默认是展平的一维 numel；三个子算子的 tiling 按 storage shape 校验维度，
@@ -159,7 +162,8 @@ aclnnStatus KdaFwdThreeStage(const KdaFwdThreeStageArgs &args, aclOpExecutor *ex
         args.aLog,      args.dtBias,   args.initialState,
         args.attnOut,   args.finalStateOut, args.gkOut,  args.aqkOut,
         args.akkOut,    args.wOut,     args.uOut,     args.qgOut,
-        args.kgOut,     args.vNewOut,  args.hOut};
+        args.kgOut,     args.vNewOut,  args.hOut,     args.qHatOut,
+        args.kHatOut,   args.qRstdOut, args.kRstdOut, args.betaEffOut};
     for (const aclTensor *tensor : contiguousTensors) {
         NormalizeTensorMeta(tensor);
     }
@@ -169,7 +173,7 @@ aclnnStatus KdaFwdThreeStage(const KdaFwdThreeStageArgs &args, aclOpExecutor *ex
     const bool packed = args.packed;
     // Prepare 的 outputMask 必须恰好等于三档之一：none 只写前向链必需量，
     // recompute 追加 qHat/kHat/qRstd/kRstd/betaEff，save 再追加 qg。
-    const int64_t outputMode = KdaFwdThreeStageOutputMode(args);
+    const int64_t outputMode = KdaFwdV2OutputMode(args);
     const bool needAkk = outputMode != optiling::PREPARE_OUTPUT_MODE_NONE;
     const bool needBackwardAux =
         outputMode == optiling::PREPARE_OUTPUT_MODE_RECOMPUTE ||
@@ -196,10 +200,10 @@ aclnnStatus KdaFwdThreeStage(const KdaFwdThreeStageArgs &args, aclOpExecutor *ex
     // ---- Stage 1: ChunkKdaFwdPrepare -------------------------------------
     const aclTensor *gkCompute =
         ReuseOrAlloc(args.gkOut, valueMatrix(args.kDim), DataType::DT_FLOAT, executor);
-    const aclTensor *aqkCompute = ReuseOrAlloc(args.aqkOut, valueMatrix(KDA_FWD_THREE_STAGE_AQK_COLUMNS),
+    const aclTensor *aqkCompute = ReuseOrAlloc(args.aqkOut, valueMatrix(KDA_FWD_V2_AQK_COLUMNS),
                                                DataType::DT_BF16, executor);
     const aclTensor *akkCompute = needAkk
-        ? ReuseOrAlloc(args.akkOut, valueMatrix(KDA_FWD_THREE_STAGE_AQK_COLUMNS), DataType::DT_BF16,
+        ? ReuseOrAlloc(args.akkOut, valueMatrix(KDA_FWD_V2_AQK_COLUMNS), DataType::DT_BF16,
                        executor)
         : nullptr;
     const aclTensor *wCompute =
@@ -213,15 +217,20 @@ aclnnStatus KdaFwdThreeStage(const KdaFwdThreeStageArgs &args, aclOpExecutor *ex
         ReuseOrAlloc(args.kgOut, valueMatrix(args.kDim), DataType::DT_BF16, executor);
     const aclTensor *qgScaledCompute = AllocTensor(executor, valueMatrix(args.kDim), DataType::DT_BF16);
     const aclTensor *qHatCompute =
-        needBackwardAux ? AllocTensor(executor, qkMatrix(), DataType::DT_BF16) : nullptr;
+        needBackwardAux ? ReuseOrAlloc(args.qHatOut, qkMatrix(), DataType::DT_BF16, executor)
+                        : nullptr;
     const aclTensor *kHatCompute =
-        needBackwardAux ? AllocTensor(executor, qkMatrix(), DataType::DT_BF16) : nullptr;
+        needBackwardAux ? ReuseOrAlloc(args.kHatOut, qkMatrix(), DataType::DT_BF16, executor)
+                        : nullptr;
     const aclTensor *qRstdCompute =
-        needBackwardAux ? AllocTensor(executor, qkScalar(), DataType::DT_FLOAT) : nullptr;
+        needBackwardAux ? ReuseOrAlloc(args.qRstdOut, qkScalar(), DataType::DT_FLOAT, executor)
+                        : nullptr;
     const aclTensor *kRstdCompute =
-        needBackwardAux ? AllocTensor(executor, qkScalar(), DataType::DT_FLOAT) : nullptr;
+        needBackwardAux ? ReuseOrAlloc(args.kRstdOut, qkScalar(), DataType::DT_FLOAT, executor)
+                        : nullptr;
     const aclTensor *betaEffCompute =
-        needBackwardAux ? AllocTensor(executor, valueScalar(), DataType::DT_FLOAT) : nullptr;
+        needBackwardAux ? ReuseOrAlloc(args.betaEffOut, valueScalar(), DataType::DT_FLOAT, executor)
+                        : nullptr;
     CHECK_COND(gkCompute != nullptr && aqkCompute != nullptr && wCompute != nullptr &&
                    uCompute != nullptr && kgCompute != nullptr && qgScaledCompute != nullptr &&
                    (!needAkk || akkCompute != nullptr) &&
@@ -230,7 +239,7 @@ aclnnStatus KdaFwdThreeStage(const KdaFwdThreeStageArgs &args, aclOpExecutor *ex
                                          betaEffCompute != nullptr)) &&
                    (!needSavedQ || qgCompute != nullptr),
                ACLNN_ERR_INNER_NULLPTR,
-               "ChunkKdaFwd 三算子组合：Prepare 输出张量分配失败。");
+               "ChunkKdaFwdV2: failed to allocate Prepare output tensors.");
 
     const auto prepareResult = l0op::ChunkKdaFwdPrepare(
         args.q, args.k, args.v, args.g, args.beta, args.aLog, args.dtBias, args.cuSeqlens,
@@ -243,7 +252,7 @@ aclnnStatus KdaFwdThreeStage(const KdaFwdThreeStageArgs &args, aclOpExecutor *ex
     CHECK_COND(prepareResult[0] != nullptr && prepareResult[1] != nullptr &&
                    prepareResult[3] != nullptr && prepareResult[4] != nullptr &&
                    prepareResult[6] != nullptr && prepareResult[7] != nullptr,
-               ACLNN_ERR_INNER_NULLPTR, "ChunkKdaFwd 三算子组合：ChunkKdaFwdPrepare 提交失败。");
+               ACLNN_ERR_INNER_NULLPTR, "ChunkKdaFwdV2: failed to launch ChunkKdaFwdPrepare.");
 
     const aclTensor *wHead = MaybeReshapeToHeadMajor4(wCompute, packed, valueHeads, args.seqLen,
                                                       args.kDim, "w", executor);
@@ -254,7 +263,7 @@ aclnnStatus KdaFwdThreeStage(const KdaFwdThreeStageArgs &args, aclOpExecutor *ex
     const aclTensor *gkHead = MaybeReshapeToHeadMajor4(gkCompute, packed, valueHeads, args.seqLen,
                                                        args.kDim, "gk", executor);
     CHECK_COND(wHead != nullptr && uHead != nullptr && kgHead != nullptr && gkHead != nullptr,
-               ACLNN_ERR_INNER_NULLPTR, "ChunkKdaFwd 三算子组合：head-major 重排失败。");
+               ACLNN_ERR_INNER_NULLPTR, "ChunkKdaFwdV2: failed to reorder to head-major.");
 
     // ---- Stage 2: ChunkFwdH ----------------------------------------------
     // state_v_first 由 ChunkFwdH 原生解释，不做 host 侧转置。
@@ -267,7 +276,7 @@ aclnnStatus KdaFwdThreeStage(const KdaFwdThreeStageArgs &args, aclOpExecutor *ex
                      MakeShape({args.batch, valueHeads, args.seqLen, args.vDim}), DataType::DT_BF16,
                      executor);
     CHECK_COND(hCompute != nullptr && vNewCompute != nullptr, ACLNN_ERR_INNER_NULLPTR,
-               "ChunkKdaFwd 三算子组合：FwdH 输出张量分配失败。");
+               "ChunkKdaFwdV2: failed to allocate FwdH output tensors.");
 
     const auto fwdHResult = l0op::ChunkFwdH(
         kgHead, wHead, uHead, nullptr, gkHead, args.initialState, args.cuSeqlens, args.chunkIndices,
@@ -275,7 +284,7 @@ aclnnStatus KdaFwdThreeStage(const KdaFwdThreeStageArgs &args, aclOpExecutor *ex
         vNewCompute, outputFinalState ? args.finalStateOut : nullptr, executor);
     CHECK_COND(fwdHResult[0] != nullptr && fwdHResult[1] != nullptr &&
                    (!outputFinalState || fwdHResult[2] != nullptr),
-               ACLNN_ERR_INNER_NULLPTR, "ChunkKdaFwd 三算子组合：ChunkFwdH 提交失败。");
+               ACLNN_ERR_INNER_NULLPTR, "ChunkKdaFwdV2: failed to launch ChunkFwdH.");
 
     // ---- Stage 3: ChunkKdaFwdFinalize ------------------------------------
     // Finalize 自己完成 attnOut 的布局落盘，rank-3 输入同样原生支持。
@@ -283,7 +292,7 @@ aclnnStatus KdaFwdThreeStage(const KdaFwdThreeStageArgs &args, aclOpExecutor *ex
         qgScaledCompute, aqkCompute, vNewCompute, hCompute, args.cuSeqlens, args.chunkIndices,
         args.attnLayout, args.stateVFirst, args.attnOut, executor);
     CHECK_COND(finalizeResult != nullptr, ACLNN_ERR_INNER_NULLPTR,
-               "ChunkKdaFwd 三算子组合：ChunkKdaFwdFinalize 提交失败。");
+               "ChunkKdaFwdV2: failed to launch ChunkKdaFwdFinalize.");
 
     // ---- 回写：只处理无法直接复用的公开输出 ------------------------------
     if (args.vNewOut != nullptr && vNewCompute != args.vNewOut) {
@@ -292,7 +301,7 @@ aclnnStatus KdaFwdThreeStage(const KdaFwdThreeStageArgs &args, aclOpExecutor *ex
             vNewDst = l0op::Reshape(
                 vNewDst, MakeShape({1, valueHeads, args.seqLen, args.vDim}), executor);
             CHECK_COND(vNewDst != nullptr, ACLNN_ERR_INNER_NULLPTR,
-                       "ChunkKdaFwd 三算子组合：v_new 重排失败。");
+               "ChunkKdaFwdV2: failed to reorder v_new.");
         }
         CHECK_RET(CopyToOutput(vNewCompute, vNewDst, executor) == ACLNN_SUCCESS,
                   ACLNN_ERR_INNER_NULLPTR);
@@ -301,14 +310,14 @@ aclnnStatus KdaFwdThreeStage(const KdaFwdThreeStageArgs &args, aclOpExecutor *ex
         // 内部 h 为 head-major [B,HV,Nc,K,V]，公开 hOut 为 chunk-major。
         const aclTensor *hSrc = TransposeToContiguous(hCompute, {0, 2, 1, 3, 4}, executor);
         CHECK_COND(hSrc != nullptr, ACLNN_ERR_INNER_NULLPTR,
-                   "ChunkKdaFwd 三算子组合：h 布局转换失败。");
+               "ChunkKdaFwdV2: failed to convert h layout.");
         const aclTensor *hDst = args.hOut;
         if (Rank(hDst) == 4) {
             hDst = l0op::Reshape(
                 hDst, MakeShape({args.batch, args.totalChunks, valueHeads, args.kDim, args.vDim}),
                 executor);
             CHECK_COND(hDst != nullptr, ACLNN_ERR_INNER_NULLPTR,
-                       "ChunkKdaFwd 三算子组合：hOut 重排失败。");
+               "ChunkKdaFwdV2: failed to reorder hOut.");
         }
         CHECK_RET(CopyToOutput(hSrc, hDst, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     }

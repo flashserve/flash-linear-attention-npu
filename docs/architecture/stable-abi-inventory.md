@@ -65,6 +65,7 @@
 | npu_recompute_w_u_fwd | C | 简单-中 | - | - |
 | npu_solve_tri | C | 中（char* layout） | - | 需 char* 参数 kind |
 | npu_chunk_kda_fwd | D | 中-复杂 | - | - |
+| npu_chunk_kda_fwd_prepare | D | 中-复杂 | - | 纯 ctypes 入口；13 个输出槽按 backward_mode 档位可选传 |
 | npu_chunk_kda_bwd | D | 复杂 | - | 多输出 |
 | npu_chunk_kda_bwd_intra | D | 复杂 | - | 多输出 |
 | npu_fast_gelu_custom / _backward | E | 简单 | - | 低频 |

@@ -39,6 +39,14 @@ outputs = chunk_kda_fwd_prepare(
 
 该入口通过 ctypes 直调 `aclnnChunkKdaFwdPrepare`，不注册 legacy `torch.ops.npu` 接口。
 
+`backward_mode` 决定 13 个输出槽中哪些真正分配与写出（`none`/`forward`/`recompute`/`save`，
+与上文“输出保留策略”一一对应；默认 `save` 即“13 项全部返回”的历史行为）。未选中的槽在
+L2 层传 `nullptr`，不参与公开 GM 写回，因此调用方按需取 `q_hat/k_hat/q_rstd/k_rstd/beta_eff`
+即可，不需要关心档位之外的槽位。
+
+格式要求：本算子的 L2 只拒绝私有（分形）格式，`ND`/`NCHW`/`NCL`/`NHWC` 等非私有拼写均可传入；
+张量需连续（`CheckContiguous`）。
+
 ## 输入输出
 
 `q/k/v` 固定为 BF16，K/V 维固定为 128，`chunk_size` 固定为 64。`g/beta` 支持

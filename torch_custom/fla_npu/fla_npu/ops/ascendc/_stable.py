@@ -68,6 +68,7 @@ _ENUM = {
     "npu_chunk_kda_bwd_intra": {"layout": {"BSND": 0, "BNSD": 1, "TND": 2}},
     "npu_chunk_kda_fwd": {"layout": _LAYOUT_CODES},
     "npu_chunk_kda_fwd_finalize": {"output_layout": _LAYOUT_CODES},
+    "npu_chunk_kda_fwd_prepare": {"layout": _LAYOUT_CODES},
     # The recurrent KDA kernel only implements the two spellings the reference
     # accepts, so this op's table is the (BSND, TND) subset.
     "npu_recurrent_kda": {"layout": {"BSND": 0, "TND": 1}},
@@ -1256,7 +1257,11 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
                       return_intermediate_states=False, state_v_first=False,
                       epsilon=1e-6, use_qk_l2norm_in_kernel=False,
                       use_beta_sigmoid_in_kernel=False,
-                      allow_neg_eigval=False, use_exp2=True):
+                      allow_neg_eigval=False, use_exp2=True,
+                      # 反向 L2 norm 保存值出口：传入自己的张量才导出，
+                      # 不传（None）就是空槽，接口不报错、老行为不变。
+                      q_hat_out=None, k_hat_out=None, q_rstd_out=None,
+                      k_rstd_out=None, beta_eff_out=None):
     """KDA chunked forward, returning the saved tensors the backward needs.
 
     ``disable_recompute`` is what makes `w`/`u`/`qg`/`kg`/`v_new` real outputs
@@ -1310,9 +1315,121 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
         allow_neg_eigval, use_exp2,
         bool(output_final_state), bool(disable_recompute),
         bool(return_intermediate_states),
+        q_hat_out, k_hat_out, q_rstd_out, k_rstd_out, beta_eff_out,
         _current_stream_ptr(),
     )
     return (*result, initial_state)
+
+
+def npu_chunk_kda_fwd_prepare(q, k, v, g, beta, scale, chunk_size=64, *,
+                              layout="BSND", cu_seqlens=None, chunk_indices=None,
+                              safe_gate=False, lower_bound=None,
+                              use_gate_in_kernel=False, A_log=None, dt_bias=None,
+                              epsilon=1e-6, use_qk_l2norm_in_kernel=False,
+                              use_beta_sigmoid_in_kernel=False,
+                              allow_neg_eigval=False, use_exp2=True,
+                              backward_mode="save"):
+    """三算子组合里 Prepare 段的公共入口（13 个输出槽全部可选）。
+
+    反向需要的 L2 norm 保存值（q_hat/k_hat/q_rstd/k_rstd/beta_eff）按需在这里
+    导出；不传输出槽时接口只做校验并返回 13 个 None，老路径不受影响。
+    """
+    if cu_seqlens and not chunk_indices:
+        chunk_indices = _canonical_chunk_indices(cu_seqlens, chunk_size)
+    # 与 ctypes 后端同一口径：L2 的档位契约要求 gk/aqk/w/u/kg/qg_scaled 六个槽
+    # 必选，aux 只在 recompute/save 档出现。调用方省略的前置槽在这里补齐，
+    # 这样"不给/只给部分输出槽"都不会报错。
+    import torch
+
+    rank3 = layout in ("TND", "NTD")
+    sequence_major = layout in ("BSND", "TND")
+    if rank3:
+        seq_len, qk_heads, key_dim = q.shape
+        value_heads, value_dim = v.shape[1], v.shape[2]
+        batch = 1
+    elif sequence_major:
+        batch, seq_len, qk_heads, key_dim = q.shape
+        value_heads, value_dim = v.shape[2], v.shape[3]
+    else:
+        batch, qk_heads, seq_len, key_dim = q.shape
+        value_heads, value_dim = v.shape[1], v.shape[3]
+    key_shape = ((value_heads, seq_len, key_dim) if rank3
+                 else (batch, value_heads, seq_len, key_dim))
+    value_shape = ((value_heads, seq_len, value_dim) if rank3
+                   else (batch, value_heads, seq_len, value_dim))
+    matrix_shape = ((value_heads, seq_len, chunk_size) if rank3
+                    else (batch, value_heads, seq_len, chunk_size))
+    qk_head_shape = ((qk_heads, seq_len, key_dim) if rank3
+                     else (batch, qk_heads, seq_len, key_dim))
+    qk_scalar_shape = (qk_heads, seq_len) if rank3 else (batch, qk_heads, seq_len)
+    value_scalar_shape = (value_heads, seq_len) if rank3 \
+        else (batch, value_heads, seq_len)
+
+    def _alloc(shape, dtype):
+        return torch.empty(shape, dtype=dtype, device=q.device)
+
+    # 档位 → 需要产出的槽位（与算子文档的 backward_mode 表一致）；未选中的槽
+    # 直接传 None（空槽），不参与公开 GM 写回。
+    shapes = {
+        "gk": (key_shape, torch.float32),
+        "Aqk": (matrix_shape, q.dtype),
+        "Akk": (matrix_shape, q.dtype),
+        "w": (key_shape, q.dtype),
+        "u": (value_shape, q.dtype),
+        "qg": (key_shape, q.dtype),
+        "kg": (key_shape, q.dtype),
+        "qg_scaled": (key_shape, q.dtype),
+        "q_hat": (qk_head_shape, q.dtype),
+        "k_hat": (qk_head_shape, q.dtype),
+        "q_rstd": (qk_scalar_shape, torch.float32),
+        "k_rstd": (qk_scalar_shape, torch.float32),
+        "beta_eff": (value_scalar_shape, torch.float32),
+    }
+    mode_slots = {
+        "none": ("gk", "Aqk", "w", "u", "kg", "qg_scaled"),
+        "forward": ("gk", "Aqk", "Akk", "w", "u", "kg", "qg_scaled"),
+        "recompute": ("gk", "Aqk", "Akk", "w", "u", "kg", "qg_scaled",
+                      "q_hat", "k_hat", "q_rstd", "k_rstd", "beta_eff"),
+        "save": tuple(shapes),
+    }
+    backward_mode = str(backward_mode).lower()
+    if backward_mode not in mode_slots:
+        raise RuntimeError(
+            "npu_chunk_kda_fwd_prepare: backward_mode must be none/forward/recompute/save.")
+    selected = set(mode_slots[backward_mode])
+    slots = {
+        name: (_alloc(shape, dtype) if name in selected else None)
+        for name, (shape, dtype) in shapes.items()
+    }
+    gk_out = slots["gk"]
+    aqk_out = slots["Aqk"]
+    akk_out = slots["Akk"]
+    w_out = slots["w"]
+    u_out = slots["u"]
+    qg_out = slots["qg"]
+    kg_out = slots["kg"]
+    qg_scaled_out = slots["qg_scaled"]
+    q_hat_out = slots["q_hat"]
+    k_hat_out = slots["k_hat"]
+    q_rstd_out = slots["q_rstd"]
+    k_rstd_out = slots["k_rstd"]
+    beta_eff_out = slots["beta_eff"]
+    return _op("npu_chunk_kda_fwd_prepare")(
+        q, k, v, g, beta, A_log, dt_bias,
+        _host_ints(cu_seqlens), _host_ints(chunk_indices),
+        _char_code("npu_chunk_kda_fwd_prepare", "layout", layout),
+        float(scale), chunk_size,
+        1e-6 if epsilon is None else float(epsilon),
+        bool(use_qk_l2norm_in_kernel), bool(use_gate_in_kernel),
+        bool(use_beta_sigmoid_in_kernel), bool(allow_neg_eigval),
+        bool(safe_gate),
+        -5.0 if lower_bound is None else float(lower_bound),
+        True if use_exp2 is None else bool(use_exp2),
+        gk_out, aqk_out, akk_out, w_out, u_out, qg_out, kg_out,
+        qg_scaled_out, q_hat_out, k_hat_out, q_rstd_out, k_rstd_out,
+        beta_eff_out,
+        _current_stream_ptr(),
+    )
 
 
 def npu_chunk_kda_fwd_finalize(qg_scaled, aqk, v_new, h, *,
@@ -1535,13 +1652,19 @@ def npu_chunk_gated_delta_rule_bwd(
 
 def _kda_bwd_single_launch(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h,
                            d_o, raw_g, A_log, dt_bias, scale, chunk_size,
-                           safe_gate, lower_bound, use_gate_in_kernel):
-    """One fused call on the tensors it is given, dense or packed."""
+                           safe_gate, lower_bound, use_gate_in_kernel,
+                           cu_seqlens=None, chunk_indices=None):
+    """One fused call on the tensors it is given, dense or packed.
+
+    Packed (rank-3) inputs must carry the varlen metadata: the aclnn entry
+    rejects rank-3 `q` without `cu_seqlens`/`chunk_indices`, and the fused
+    tiling derives the chunk count from them.  Dense inputs pass both as None.
+    """
 
     return _op("npu_chunk_kda_bwd")(
         q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o, raw_g, A_log,
         dt_bias,
-        None, None,  # the fused kernel takes no cu_seqlens/chunk_indices
+        _host_ints(cu_seqlens), _host_ints(chunk_indices),
         float(scale), int(chunk_size), bool(safe_gate),
         bool(use_gate_in_kernel), float(lower_bound),
         True,  # disable_recompute is the only supported spelling
@@ -1653,17 +1776,16 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
     has_varlen_tail = is_varlen and any(
         (end - begin) % chunk_size != 0 for begin, end in zip(cu, cu[1:]))
     is_a2_device = False
-    is_a5_device = False
     if use_dense_varlen_fallback or heads % 2 != 0 or has_varlen_tail:
         device_index = q.device.index
         if device_index is None:
             device_index = torch.npu.current_device()
         device_name = str(torch.npu.get_device_name(device_index))
         is_a2_device = device_name.startswith("Ascend910B")
-        is_a5_device = "950" in device_name
 
-    if (is_a2_device and use_dense_varlen_fallback) or (
-            is_a5_device and has_varlen_tail):
+    # 短尾 packed 序列统一拆成逐序列 dense 调用：fused packed 流水线对其会产生
+    # 陈旧/非有限值，拆开后每条序列走已验证的 dense 路径（A2 上 V=256 同理）。
+    if (is_a2_device and use_dense_varlen_fallback) or has_varlen_tail:
         sequence_results = []
         chunk_begin = 0
         for token_begin, token_end in zip(cu, cu[1:]):
@@ -1772,7 +1894,8 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
 
     result = launch(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
                     raw_g, A_log, dt_bias, scale, chunk_size, safe_gate,
-                    lower_bound, use_gate_in_kernel)
+                    lower_bound, use_gate_in_kernel,
+                    cu_seqlens=cu, chunk_indices=indices)
     restored = []
     for index, value in enumerate(result):
         if value is None:

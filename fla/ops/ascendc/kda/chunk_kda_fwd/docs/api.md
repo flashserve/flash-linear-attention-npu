@@ -36,6 +36,16 @@ outputs = chunk_kda_fwd(
 
 可选输出在 Python 层返回 `None`。`Aqk/Akk` 始终存在；其余保留策略见算子 README。
 
+反向 L2 norm 的保存值不占上述 12 个返回槽位，而是由调用方按需传入输出张量导出：
+`q_hat_out/k_hat_out/q_rstd_out/k_rstd_out/beta_eff_out`（都不传即 `nullptr`，行为与历史
+版本逐位一致）。`use_qk_l2norm_in_kernel=false` 时不产出 `q_rstd/k_rstd`；
+`use_beta_sigmoid_in_kernel=false` 时不产出 `beta_eff`。导出的 `q_rstd/k_rstd` 可直接交给
+`chunk_kda_bwd` 走 optimized（L2Norm 回代）路径。
+
+输入维度契约：`K/V` 只支持 `K=V=64` 与 `K=V=128` 两档，混合档（如 `K=64,V=128`）与其它
+取值（含 `V=256`）都在参数校验阶段返回 `ACLNN_ERR_PARAM_INVALID`，报错文本会打印实际的
+`Kdim/Vdim`；Python 入口在发起调用前给出同一条约束说明。
+
 ## aclnn
 
 ### 融合入口 `aclnnChunkKdaFwd`（签名与 ABI 未变）
@@ -112,6 +122,10 @@ V2 支持范围：`q/k/v` 为 BF16、`K=V=128`、`chunk_size=64`、公开输出�
 场景选择由 Python 入口完成：`fla_npu.ops.ascendc.chunk_kda_fwd` 命中上述场景时优先调用 V2，
 其余场景（FP16、`K/V` 非 128、`chunk_size=128`、含空序列、输出非连续）回落到
 `aclnnChunkKdaFwd`。两个入口共用同一套参数校验、输出指针语义与返回码契约，公开输出布局一致。
+
+V2 入口的形参尾部另有 5 个可选输出指针 `qHatOut/kHatOut/qRstdOut/kRstdOut/betaEffOut`，
+用于导出反向 L2 norm 需要的保存值；传 `nullptr` 表示本次不导出（Prepare 档位由非空指针
+组合推导）。同一个输入下，传与不传这些指针的**计算结果逐位一致**，只有是否落盘的区别。
 
 ### 归一化 / gate 开关
 

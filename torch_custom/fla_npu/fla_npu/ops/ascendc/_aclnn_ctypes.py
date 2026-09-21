@@ -301,6 +301,43 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.POINTER(ctypes.c_uint64),  # workspaceSize（输出）
         ctypes.POINTER(ctypes.c_void_p),  # executor（输出）
     ],
+    "aclnnChunkKdaFwdPrepare": [
+        ctypes.c_void_p,  # q
+        ctypes.c_void_p,  # k
+        ctypes.c_void_p,  # v
+        ctypes.c_void_p,  # g
+        ctypes.c_void_p,  # beta
+        ctypes.c_void_p,  # a_log（可选）
+        ctypes.c_void_p,  # dt_bias（可选）
+        ctypes.c_void_p,  # cu_seqlens（可选，int array）
+        ctypes.c_void_p,  # chunk_indices（可选，int array）
+        ctypes.c_char_p,  # layout
+        ctypes.c_double,  # scale
+        ctypes.c_int64,  # chunk_size
+        ctypes.c_double,  # epsilon
+        ctypes.c_bool,  # use_qk_l2norm_in_kernel
+        ctypes.c_bool,  # use_gate_in_kernel
+        ctypes.c_bool,  # use_beta_sigmoid_in_kernel
+        ctypes.c_bool,  # allow_neg_eigval
+        ctypes.c_bool,  # safe_gate
+        ctypes.c_double,  # lower_bound
+        ctypes.c_bool,  # use_exp2
+        ctypes.c_void_p,  # gk（输出，可选）
+        ctypes.c_void_p,  # Aqk（输出，可选）
+        ctypes.c_void_p,  # Akk（输出，可选）
+        ctypes.c_void_p,  # w（输出，可选）
+        ctypes.c_void_p,  # u（输出，可选）
+        ctypes.c_void_p,  # qg（输出，可选）
+        ctypes.c_void_p,  # kg（输出，可选）
+        ctypes.c_void_p,  # qg_scaled（输出，可选，供 finalize 用）
+        ctypes.c_void_p,  # q_hat（输出，可选）
+        ctypes.c_void_p,  # k_hat（输出，可选）
+        ctypes.c_void_p,  # q_rstd（输出，可选）
+        ctypes.c_void_p,  # k_rstd（输出，可选）
+        ctypes.c_void_p,  # beta_eff（输出，可选）
+        ctypes.POINTER(ctypes.c_uint64),  # workspaceSize（输出）
+        ctypes.POINTER(ctypes.c_void_p),  # executor（输出）
+    ],
     "aclnnChunkKdaFwdV2": [
         ctypes.c_void_p,  # q
         ctypes.c_void_p,  # k
@@ -335,6 +372,11 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.c_void_p,  # kg（输出，可选）
         ctypes.c_void_p,  # v_new（输出，可选）
         ctypes.c_void_p,  # h（输出，可选）
+        ctypes.c_void_p,  # q_hat（输出，可选，L2Norm 保存值）
+        ctypes.c_void_p,  # k_hat（输出，可选，L2Norm 保存值）
+        ctypes.c_void_p,  # q_rstd（输出，可选，L2Norm 保存值）
+        ctypes.c_void_p,  # k_rstd（输出，可选，L2Norm 保存值）
+        ctypes.c_void_p,  # beta_eff（输出，可选，sigmoid 后的 beta）
         ctypes.POINTER(ctypes.c_uint64),  # workspaceSize（输出）
         ctypes.POINTER(ctypes.c_void_p),  # executor（输出）
     ],
@@ -3441,6 +3483,13 @@ def npu_chunk_kda_fwd(
     use_beta_sigmoid_in_kernel=False,
     allow_neg_eigval=False,
     use_exp2=True,
+    # 反向 L2 norm 的保存值出口：调用方传入自己的张量即表示"需要导出"，
+    # 不传（None）就是 nullptr，接口不报错、行为与改动前一致。
+    q_hat_out=None,
+    k_hat_out=None,
+    q_rstd_out=None,
+    k_rstd_out=None,
+    beta_eff_out=None,
 ):
     import torch
 
@@ -3628,6 +3677,15 @@ def npu_chunk_kda_fwd(
             "npu_chunk_kda_fwd: non-default gate/L2norm switches require the three-stage "
             "scenario (bfloat16 q/k/v, K=V=128, chunk_size=64, strictly increasing cu_seqlens)."
         )
+    # 保存值出口由 L2 层用空指针表达：只有真正给了张量才算"请求导出"，
+    # 而导出只在组合入口（V2）上支持。
+    saved_outputs = (q_hat_out, k_hat_out, q_rstd_out, k_rstd_out, beta_eff_out)
+    if any(value is not None for value in saved_outputs) and not use_v2:
+        raise RuntimeError(
+            "npu_chunk_kda_fwd: q_hat/k_hat/q_rstd/k_rstd/beta_eff are only exported by "
+            "the three-stage entry (bfloat16, K=V=128, chunk_size=64); do not pass these "
+            "outputs in the current scenario."
+        )
 
     def build_args(ctx):
         common = [
@@ -3670,11 +3728,249 @@ def npu_chunk_kda_fwd(
             ctx.tensor(v_new, "v_new"),
             ctx.tensor(h, "h"),
         ]
+        if use_v2:
+            # 反向 L2 norm 需要的保存值：调用方传了才导出，没传就是 nullptr，
+            # 因此老调用（不传这五个）与改动前逐位一致。
+            common += [
+                ctx.tensor(q_hat_out, "q_hat"),
+                ctx.tensor(k_hat_out, "k_hat"),
+                ctx.tensor(q_rstd_out, "q_rstd"),
+                ctx.tensor(k_rstd_out, "k_rstd"),
+                ctx.tensor(beta_eff_out, "beta_eff"),
+            ]
         return common
 
     _call_aclnn("aclnnChunkKdaFwdV2" if use_v2 else "aclnnChunkKdaFwd", build_args, outputs)
     initial_state_out = initial_state
     return (*outputs, initial_state_out)
+
+
+def npu_chunk_kda_fwd_prepare(
+    q,
+    k,
+    v,
+    g,
+    beta,
+    scale,
+    chunk_size=64,
+    *,
+    layout="BSND",
+    cu_seqlens=None,
+    chunk_indices=None,
+    safe_gate=False,
+    lower_bound=None,
+    use_gate_in_kernel=False,
+    A_log=None,
+    dt_bias=None,
+    epsilon=1e-6,
+    use_qk_l2norm_in_kernel=False,
+    use_beta_sigmoid_in_kernel=False,
+    allow_neg_eigval=False,
+    use_exp2=True,
+    # 与算子文档一致：Prepare 的公开档位选择器（none/forward/recompute/save）。
+    # 默认 save 保持"13 项全部返回"的兼容行为；槽位非空的组合由档位决定，
+    # 未选中的槽传 nullptr，不参与公开 GM 写回。
+    backward_mode="save",
+):
+    """三算子组合里 Prepare 阶段的公共入口（ChunkKdaFwdPrepare）。
+
+    老路径完全不受影响：这个入口是新增的，调用方不传任何输出槽时它只做参数
+    校验并返回 13 个 None。反向需要的 L2 norm 保存值（q_hat/k_hat/q_rstd/
+    k_rstd/beta_eff）就在这里由调用方按需提供输出张量。
+    """
+    import torch
+
+    layout = str(layout)
+    if layout not in {"BSND", "BNSD", "TND", "NTD"}:
+        raise RuntimeError(
+            "npu_chunk_kda_fwd_prepare: layout must be BSND, BNSD, TND or NTD.")
+    chunk_size = int(chunk_size)
+    if chunk_size not in {64, 128}:
+        raise RuntimeError("npu_chunk_kda_fwd_prepare: chunk_size must be 64 or 128.")
+
+    is_rank3 = layout in {"TND", "NTD"}
+    is_sequence_major = layout in {"BSND", "TND"}
+    q_shape, k_shape, v_shape, g_shape, beta_shape = map(
+        _shape, (q, k, v, g, beta))
+    expected_rank = 3 if is_rank3 else 4
+    if any(len(shape) != expected_rank for shape in (q_shape, k_shape, v_shape, g_shape)):
+        raise RuntimeError("npu_chunk_kda_fwd_prepare: q/k/v/g rank does not match layout.")
+    if q_shape != k_shape or len(beta_shape) != expected_rank - 1:
+        raise RuntimeError("npu_chunk_kda_fwd_prepare: q/k shapes must match and beta rank must match layout.")
+
+    if is_rank3:
+        seqlen, h_num, k_dim = q_shape
+        hv_num, v_dim = v_shape[1], v_shape[2]
+        batch = 1
+    else:
+        if is_sequence_major:
+            batch, seqlen, h_num, k_dim = q_shape
+            hv_num, v_dim = v_shape[2], v_shape[3]
+        else:
+            batch, h_num, seqlen, k_dim = q_shape
+            hv_num, v_dim = v_shape[1], v_shape[3]
+    if h_num <= 0 or hv_num < h_num or hv_num % h_num != 0 or h_num > 128 or hv_num > 128:
+        raise RuntimeError(
+            "npu_chunk_kda_fwd_prepare: H/HV must satisfy 0 < H <= HV <= 128 and HV % H == 0.")
+    if q.dtype not in {torch.float16, torch.bfloat16} or k.dtype != q.dtype or v.dtype != q.dtype:
+        raise RuntimeError(
+            "npu_chunk_kda_fwd_prepare: q/k/v must use the same float16 or bfloat16 dtype.")
+    if g.dtype not in {torch.float32, torch.bfloat16} or beta.dtype not in {torch.float32, torch.bfloat16}:
+        raise RuntimeError("npu_chunk_kda_fwd_prepare: g and beta must be float32 or bfloat16.")
+    if k_dim != v_dim or k_dim not in _KDA_FWD_SUPPORTED_KV_DIMS:
+        raise RuntimeError(
+            "npu_chunk_kda_fwd_prepare: K/V must both be 64 or both be 128, "
+            f"but got K={k_dim}, V={v_dim}.")
+    epsilon = _optional_float(epsilon, 1e-6)
+    if not (float(epsilon) > 0.0):
+        raise RuntimeError("npu_chunk_kda_fwd_prepare: epsilon must be a positive finite number.")
+    use_gate_in_kernel = _optional_bool(use_gate_in_kernel, False)
+    safe_gate = _optional_bool(safe_gate, False)
+    use_qk_l2norm_in_kernel = _optional_bool(use_qk_l2norm_in_kernel, False)
+    use_beta_sigmoid_in_kernel = _optional_bool(use_beta_sigmoid_in_kernel, False)
+    allow_neg_eigval = _optional_bool(allow_neg_eigval, False)
+    use_exp2 = _optional_bool(use_exp2, True)
+    if use_gate_in_kernel:
+        if A_log is None or _shape(A_log) != (hv_num,) or A_log.dtype != torch.float32:
+            raise RuntimeError(
+                "npu_chunk_kda_fwd_prepare: A_log must be float32 [HV] when use_gate_in_kernel=True.")
+        if dt_bias is not None and (_shape(dt_bias) != (hv_num * k_dim,) or
+                                    dt_bias.dtype != torch.float32):
+            raise RuntimeError("npu_chunk_kda_fwd_prepare: dt_bias must be float32 [HV*K].")
+    lower_bound = _optional_float(lower_bound, -5.0)
+    if use_gate_in_kernel and safe_gate and not (-5.0 <= lower_bound < 0.0):
+        raise RuntimeError(
+            "npu_chunk_kda_fwd_prepare: lower_bound must be in [-5, 0) for safe gate.")
+    cu = None if cu_seqlens is None else tuple(int(value) for value in cu_seqlens)
+    if cu is not None:
+        if len(cu) < 2 or cu[0] != 0 or cu[-1] != seqlen or any(a > b for a, b in zip(cu, cu[1:])):
+            raise RuntimeError(
+                "npu_chunk_kda_fwd_prepare: cu_seqlens must be nondecreasing, start at 0 and end at T.")
+        if not is_rank3 and batch != 1:
+            raise RuntimeError("npu_chunk_kda_fwd_prepare: rank4 varlen input requires B=1.")
+    canonical_indices = _kda_build_chunk_indices(cu, chunk_size)
+    indices = canonical_indices if chunk_indices is None else tuple(
+        int(value) for value in chunk_indices)
+    if indices is not None and indices != canonical_indices:
+        raise RuntimeError(
+            "npu_chunk_kda_fwd_prepare: chunk_indices must use canonical sequence-major order.")
+    total_chunks = _kda_total_chunks(batch, seqlen, chunk_size, cu, indices)
+
+    k_shape_head = ((hv_num, seqlen, k_dim) if is_rank3
+                    else (batch, hv_num, seqlen, k_dim))
+    qk_shape_head = ((h_num, seqlen, k_dim) if is_rank3
+                     else (batch, h_num, seqlen, k_dim))
+    v_shape_head = ((hv_num, seqlen, v_dim) if is_rank3
+                    else (batch, hv_num, seqlen, v_dim))
+    matrix_shape = ((hv_num, seqlen, chunk_size) if is_rank3
+                    else (batch, hv_num, seqlen, chunk_size))
+    qk_scalar_shape = (h_num, seqlen) if is_rank3 else (batch, h_num, seqlen)
+    value_scalar_shape = (hv_num, seqlen) if is_rank3 else (batch, hv_num, seqlen)
+
+    # L2 层的档位契约（见 aclnnChunkKdaFwdPrepare 的 CheckRequiredNotNull /
+    # GetOutputMode）：gk/aqk/w/u/kg/qg_scaled 六个槽必选，akk 及以上档位才允许
+    # 带 akk，aux（q_hat/k_hat/q_rstd/k_rstd/beta_eff）只允许在 recompute/save 档
+    # 出现。为了满足"不给就不报错"，调用方没提供的**前置槽**由这里补齐；
+    # 调用方想复用显存就把自己的 buffer 通过对应 out 参数传进来。
+    # 期望形状/dtype：
+    expected_outputs = {
+        "gk": (k_shape_head, torch.float32),
+        "Aqk": (matrix_shape, q.dtype),
+        "Akk": (matrix_shape, q.dtype),
+        "w": (k_shape_head, q.dtype),
+        "u": (v_shape_head, q.dtype),
+        "qg": (k_shape_head, q.dtype),
+        "kg": (k_shape_head, q.dtype),
+        "qg_scaled": (k_shape_head, q.dtype),
+        "q_hat": (qk_shape_head, q.dtype),
+        "k_hat": (qk_shape_head, q.dtype),
+        "q_rstd": (qk_scalar_shape, torch.float32),
+        "k_rstd": (qk_scalar_shape, torch.float32),
+        "beta_eff": (value_scalar_shape, torch.float32),
+    }
+    # 档位 → 需要产出的槽位（与算子文档的 backward_mode 表一致）。
+    mode_slots = {
+        "none": ("gk", "Aqk", "w", "u", "kg", "qg_scaled"),
+        "forward": ("gk", "Aqk", "Akk", "w", "u", "kg", "qg_scaled"),
+        "recompute": ("gk", "Aqk", "Akk", "w", "u", "kg", "qg_scaled",
+                      "q_hat", "k_hat", "q_rstd", "k_rstd", "beta_eff"),
+        "save": tuple(expected_outputs),
+    }
+    backward_mode = str(backward_mode).lower()
+    if backward_mode not in mode_slots:
+        raise RuntimeError(
+            "npu_chunk_kda_fwd_prepare: backward_mode must be none/forward/recompute/save.")
+    selected = set(mode_slots[backward_mode])
+
+    produced = {
+        name: (_empty(shape, q, dtype=dtype) if name in selected else None)
+        for name, (shape, dtype) in expected_outputs.items()
+    }
+
+    gk_out = produced["gk"]
+    aqk_out = produced["Aqk"]
+    akk_out = produced["Akk"]
+    w_out = produced["w"]
+    u_out = produced["u"]
+    qg_out = produced["qg"]
+    kg_out = produced["kg"]
+    qg_scaled_out = produced["qg_scaled"]
+    q_hat_out = produced["q_hat"]
+    k_hat_out = produced["k_hat"]
+    q_rstd_out = produced["q_rstd"]
+    k_rstd_out = produced["k_rstd"]
+    beta_eff_out = produced["beta_eff"]
+
+    outputs = (gk_out, aqk_out, akk_out, w_out, u_out, qg_out, kg_out,
+               qg_scaled_out, q_hat_out, k_hat_out, q_rstd_out, k_rstd_out,
+               beta_eff_out)
+    layout_buffer = ctypes.create_string_buffer(layout.encode("utf-8"))
+
+    def build_args(ctx):
+        def slot(tensor, name):
+            # 只覆盖 storage shape（ctypes 描述符默认是展平 numel，prepare 的
+            # tiling 需要逻辑维度）；format 不再强制 ND，交给描述符原样传递。
+            if tensor is None:
+                return ctx.tensor(None, name)
+            return ctx.tensor(tensor, name, storage_shape_override=_shape(tensor))
+
+        return [
+            slot(q, "q"),
+            slot(k, "k"),
+            slot(v, "v"),
+            slot(g, "g"),
+            slot(beta, "beta"),
+            slot(A_log, "A_log"),
+            slot(dt_bias, "dt_bias"),
+            ctx.int_array(cu),
+            ctx.int_array(indices),
+            ctypes.cast(layout_buffer, ctypes.c_char_p),
+            ctypes.c_double(float(scale)),
+            ctypes.c_int64(chunk_size),
+            ctypes.c_double(float(epsilon)),
+            ctypes.c_bool(use_qk_l2norm_in_kernel),
+            ctypes.c_bool(use_gate_in_kernel),
+            ctypes.c_bool(use_beta_sigmoid_in_kernel),
+            ctypes.c_bool(allow_neg_eigval),
+            ctypes.c_bool(safe_gate),
+            ctypes.c_double(lower_bound),
+            ctypes.c_bool(use_exp2),
+            slot(gk_out, "gk"),
+            slot(aqk_out, "Aqk"),
+            slot(akk_out, "Akk"),
+            slot(w_out, "w"),
+            slot(u_out, "u"),
+            slot(qg_out, "qg"),
+            slot(kg_out, "kg"),
+            slot(qg_scaled_out, "qg_scaled"),
+            slot(q_hat_out, "q_hat"),
+            slot(k_hat_out, "k_hat"),
+            slot(q_rstd_out, "q_rstd"),
+            slot(k_rstd_out, "k_rstd"),
+            slot(beta_eff_out, "beta_eff"),
+        ]
+
+    return _call_aclnn("aclnnChunkKdaFwdPrepare", build_args, outputs)
 
 
 def npu_kda_gate_cumsum(

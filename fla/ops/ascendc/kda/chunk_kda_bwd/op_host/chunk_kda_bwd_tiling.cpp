@@ -440,8 +440,16 @@ ge::graphStatus Tiling4KdaGateBwdPost(gert::TilingContext *context)
                         "KdaGateBwdPost requires chunk_size=64"),
                 return ge::GRAPH_FAILED);
 
-    const gert::Shape dgShape = dgShapeStorage->GetOriginShape();
+    const gert::Shape dgStorageShape = dgShapeStorage->GetOriginShape();
     const gert::Shape rawShape = rawShapeStorage->GetOriginShape();
+    // 组合入口（aclnnChunkKdaBwd）把 dg 作为父算子的输出/累积缓冲区传入，部分后端
+    // 会把该 tensor 的 origin shape 记成一维（元素个数）。此时 dg_act 与 raw_g 覆盖
+    // 同一段 canonical BHTK/HTK 存储，直接以 raw_g 的形状作为规范形状。
+    gert::Shape dgShape = dgStorageShape;
+    if (dgStorageShape.GetDimNum() == 1U && rawShape.GetDimNum() > 1U &&
+        dgStorageShape.GetShapeSize() == rawShape.GetShapeSize()) {
+        dgShape = rawShape;
+    }
     const bool isVarLen = dgShape.GetDimNum() == 3U;
     const bool hasCuSeqlens =
         context->GetOptionalInputShape(INPUT_CU_SEQLENS) != nullptr;
