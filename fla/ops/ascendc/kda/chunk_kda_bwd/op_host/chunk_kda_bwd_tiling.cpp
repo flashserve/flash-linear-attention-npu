@@ -5,6 +5,7 @@
 
 #include <register/op_impl_registry.h>
 #include "platform/platform_ascendc.h"
+#include "platform/soc_spec.h"
 
 #include "chunk_kda_bwd_a_tiling_processor.h"
 #include "chunk_kda_bwd_c_tiling_processor.h"
@@ -83,7 +84,7 @@ ge::graphStatus BuildKernelBTiling(
     const auto platform =
         platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     const bool isAscend950 =
-        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
+        platform.GetCurNpuArch() == NpuArch::DAV_3510;
     const auto *qgDesc = context->GetInputDesc(INPUT_QG);
     const auto *gkDesc = context->GetInputDesc(INPUT_GK);
     const auto *qShapeStorage = context->GetRequiredInputShape(INPUT_Q);
@@ -259,7 +260,7 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     const uint32_t blockDim =
         std::max<uint32_t>(static_cast<uint32_t>(platform.GetCoreNumAic()), 1U);
     const bool isAscend950 =
-        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
+        platform.GetCurNpuArch() == NpuArch::DAV_3510;
     const size_t systemWorkspace =
         static_cast<size_t>(platform.GetLibApiWorkSpaceSize());
 
@@ -518,7 +519,7 @@ ge::graphStatus Tiling4KdaGateBwdPost(gert::TilingContext *context)
     // AIV avoids concurrent unaligned stores sharing and overwriting the same
     // 32-byte GM block.  Other architectures retain the parallel head map.
     const bool isAscend950 =
-        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
+        platform.GetCurNpuArch() == NpuArch::DAV_3510;
     const uint32_t usedCoreNum = isAscend950 ? 1U : std::max<uint32_t>(
         std::min<uint32_t>(static_cast<uint32_t>(heads), availableAiv), 1U);
     auto *tiling =
