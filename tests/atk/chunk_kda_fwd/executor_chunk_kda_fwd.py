@@ -935,16 +935,12 @@ def _mutate_raw(inputs: _PreparedInputs, spec: dict, outputs: list):
         values["g"] = _resize_axis(inputs.g, head_axis, hv_num)
         values["beta"] = _resize_axis(inputs.beta, head_axis, hv_num)
     elif mutation.startswith("k_"):
-        # k_mixed 把 K 降到 64 而 V 保持 128：K/V 不同档，公开契约要求两侧都拒绝。
-        k_size = {"k_lt_16": 8, "k_gt_256": 272, "k_unaligned": 24,
-                  "k_mixed": 64}[mutation]
+        k_size = {"k_lt_16": 8, "k_gt_256": 272, "k_unaligned": 24}[mutation]
         values["q"] = _resize_axis(inputs.q, inputs.q.dim() - 1, k_size)
         values["k"] = _resize_axis(inputs.k, inputs.k.dim() - 1, k_size)
         values["g"] = _resize_axis(inputs.g, inputs.g.dim() - 1, k_size)
     elif mutation.startswith("v_"):
-        # v_mixed 对称：V=64 而 K 保持 128。
-        v_size = {"v_lt_16": 8, "v_gt_256": 272, "v_unaligned": 24,
-                  "v_mixed": 64}[mutation]
+        v_size = {"v_lt_16": 8, "v_gt_256": 272, "v_unaligned": 24}[mutation]
         values["v"] = _resize_axis(inputs.v, inputs.v.dim() - 1, v_size)
     elif mutation == "q_fp32":
         values["q"] = inputs.q.float()
