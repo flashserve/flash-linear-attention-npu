@@ -1932,6 +1932,24 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
     return tuple(restored)
 
 
+def npu_merge_fwd_bwd_kernel(
+        h, ag_hm, pre_or_post_num_ranks, rank, *, forward=True,
+        state_v_first=False):
+    """CP merge: h <- He_0, then h <- M_i @ h + He_i.
+
+    Argument order matches FLA: ``h``, ``ag_hm``, ``pre_or_post_num_ranks``,
+    ``rank``. ``h`` is written in place. ``state_v_first=False`` stores each
+    head as [K, V]; ``True`` stores [V, K]. Both are [HV, 128, 128].
+    """
+
+    if not h.is_contiguous():
+        h = h.contiguous()
+    return _op("npu_merge_fwd_bwd_kernel")(
+        h, ag_hm, int(pre_or_post_num_ranks), int(rank), bool(forward),
+        bool(state_v_first), _current_stream_ptr(),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Which wrappers apply the in-place contract themselves
 # ---------------------------------------------------------------------------

@@ -40,6 +40,7 @@
 #include "stable_fast_gelu_custom.cpp"
 #include "stable_fast_gelu_custom_backward.cpp"
 #include "stable_kda_gate_cumsum.cpp"
+#include "stable_merge_fwd_bwd_kernel.cpp"
 #include "stable_prepare_wy_repr_bwd.cpp"
 #include "stable_prepare_wy_repr_bwd_da.cpp"
 #include "stable_prepare_wy_repr_bwd_full.cpp"
@@ -124,6 +125,7 @@ STABLE_TORCH_LIBRARY(fla_npu_stable, m) {
   m.def(kSchema_chunk_gated_delta_rule_bwd_finalize);
   m.def(kSchema_chunk_kda_bwd);
   m.def(kSchema_chunk_gated_delta_rule_bwd);
+  m.def(kSchema_merge_fwd_bwd_kernel);
 #ifndef FLA_STABLE_NO_DEBUG_PROBE
   m.def("_stream_probe(int device_index) -> (int, int)");
 #endif
@@ -211,6 +213,8 @@ STABLE_TORCH_LIBRARY_IMPL(fla_npu_stable, CompositeExplicitAutograd, m) {
       "npu_chunk_gated_delta_rule_bwd",
       &fla_npu_stable::stable::boxed_adapter<
           run_npu_chunk_gated_delta_rule_bwd>);
+  m.impl("npu_merge_fwd_bwd_kernel",
+         &fla_npu_stable::stable::boxed_adapter<run_npu_merge_fwd_bwd_kernel>);
 #ifndef FLA_STABLE_NO_DEBUG_PROBE
   m.impl("_stream_probe", &boxed_stream_probe);
 #endif

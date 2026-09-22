@@ -531,6 +531,16 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.POINTER(ctypes.c_uint64),
         ctypes.POINTER(ctypes.c_void_p),
     ],
+    "aclnnMergeFwdBwdKernel": [
+        ctypes.c_void_p,  # h
+        ctypes.c_void_p,  # agHm
+        ctypes.c_int64,  # preOrPostNumRanks
+        ctypes.c_int64,  # rank
+        ctypes.c_bool,  # forward
+        ctypes.c_bool,  # stateVFirst
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
 }
 
 
@@ -4621,6 +4631,64 @@ def npu_chunk_kda_bwd_recompute(
 
     _call_aclnn("aclnnChunkKdaBwdRecompute", build_args, (w, u, qg, kg, gk))
     return gk, w, u, qg, kg
+
+
+def npu_merge_fwd_bwd_kernel(
+    h,
+    ag_hm,
+    pre_or_post_num_ranks,
+    rank,
+    *,
+    forward=True,
+    state_v_first=False,
+):
+    """CP merge (FLA ``merge_fwd_bwd_kernel``): h ← He_0; then h ← M_i @ h + He_i.
+
+    Argument order matches FLA: ``h``, ``ag_hm``, ``pre_or_post_num_ranks``,
+    ``rank``. ``h`` is written in place. ``state_v_first=False`` stores each
+    head as ``[K, V]``; ``True`` stores ``[V, K]``. Both shapes are
+    ``[HV, 128, 128]``.
+    """
+    import torch
+
+    if h is None:
+        raise RuntimeError("npu_merge_fwd_bwd_kernel: h is required.")
+    if ag_hm.dtype not in (torch.float32, torch.bfloat16):
+        raise RuntimeError("npu_merge_fwd_bwd_kernel: ag_hm must be float32 or bfloat16.")
+    if len(ag_hm.shape) != 4:
+        raise RuntimeError("npu_merge_fwd_bwd_kernel: ag_hm must be [S, HV, K, V+K].")
+    s, hv, k_dim, vk = (int(x) for x in ag_hm.shape)
+    if k_dim != 128 or vk != 256:
+        raise RuntimeError("npu_merge_fwd_bwd_kernel: K must be 128 and last dim must be 256.")
+    if not (0 <= int(rank) < s):
+        raise RuntimeError(f"npu_merge_fwd_bwd_kernel: rank must be in [0, S={s}).")
+    if tuple(int(x) for x in h.shape) != (hv, 128, 128) or h.dtype != ag_hm.dtype:
+        raise RuntimeError(
+            "npu_merge_fwd_bwd_kernel: h must be [HV, 128, 128] matching ag_hm dtype."
+        )
+
+    def nd_tensor(ctx, tensor, name):
+        return ctx.tensor(
+            tensor,
+            name,
+            acl_format_override=ACL_FORMAT_ND,
+            storage_shape_override=_shape(tensor),
+        )
+
+    ag_work = ag_hm.contiguous()
+    h_work = h.contiguous()
+    return _call_aclnn(
+        "aclnnMergeFwdBwdKernel",
+        lambda ctx: [
+            nd_tensor(ctx, h_work, "h"),
+            nd_tensor(ctx, ag_work, "ag_hm"),
+            ctypes.c_int64(int(pre_or_post_num_ranks)),
+            ctypes.c_int64(int(rank)),
+            ctypes.c_bool(bool(forward)),
+            ctypes.c_bool(bool(state_v_first)),
+        ],
+        h_work,
+    )
 
 
 def npu_solve_tri(x, *, cu_seqlens=None, chunk_indices=None, layout="bsnd"):
