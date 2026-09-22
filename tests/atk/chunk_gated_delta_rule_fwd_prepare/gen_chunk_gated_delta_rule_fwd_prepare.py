@@ -1,7 +1,8 @@
 """chunk_gated_delta_rule_fwd_prepare 的 ATK 泛化用例生成器。
 
-50 个中型 shape × 24 条合法 flag × output_a True/False = 2400（bf16）。
+50 个中型 shape × 24 条合法 flag × output_a True/False = 2400（q/k/v bf16，g/beta/a_log/dt_bias fp32）。
 前 1200 为 output_a=True（原矩阵，case id 不变）；后 1200 为同 shape/flag 的 output_a=False（flag_tag 加 `_a0`）。
+id ≥ 2400 追加少量 g/beta/a_log/dt_bias bf16 混合用例（不扩笛卡尔积）。q/k/v 仅 bf16；gate 张量仅 fp32/bf16，不测 fp16。
 中型按 tiling 的 totalChunks：dense 为 B*HV*ceil(T/64)，
 varlen 为 HV*sum(ceil(s/64))，必须 **>256** 且 ≤384。
 G≠3 时 pack=4：256 tiles = 64 packs = 32 AIC × 2 pack；>256 保证每核至少 2 pack。
@@ -73,7 +74,33 @@ SUPPORTED_FLAGS = _all_legal_flags()
 N_SHAPES = 50
 N_FLAGS = len(SUPPORTED_FLAGS)
 N_BASE_PROFILES = N_SHAPES * N_FLAGS
-N_PROFILES = N_BASE_PROFILES * 2
+N_ACCURACY_PROFILES = N_BASE_PROFILES * 2
+SUPPORTED_GATE_DTYPES = ("fp32", "bf16")
+FLAG_BY_TAG = {row[0]: row for row in SUPPORTED_FLAGS}
+
+# OpDef 列：q/k/v=bf16 且 g/beta(/a_log/dt_bias) 同为 fp32 或同为 bf16。
+# 不注册 g 与 beta 拆开、也不注册 a_log 与 g 拆开；fp16 列 tiling 已拒 q，不进 JSON。
+# a_log/dt_bias 仅在 gate=True 时生效；gate=False 时写成 fp32 占位，executor 不生成这两路。
+MIX_DTYPE_SPECS: list[tuple] = [
+    ("r1_T4160_V128", "l2_sig1_neg1", "gbeta_bf16", "bf16", "bf16", "fp32", "fp32", True),
+    ("r1_T4160_V128", "l2_sig1_neg0", "gbeta_bf16", "bf16", "bf16", "fp32", "fp32", True),
+    ("r1_T4160_V128", "l2_sig0_neg0", "gbeta_bf16", "bf16", "bf16", "fp32", "fp32", True),
+    ("r1_T4160_V128", "nol2_sig1_neg1", "gbeta_bf16", "bf16", "bf16", "fp32", "fp32", True),
+    ("r1_T4160_V128", "l2_sig1_neg1_exp0", "gbeta_bf16", "bf16", "bf16", "fp32", "fp32", True),
+    ("r1_T4160_V256", "l2_sig1_neg1", "gbeta_bf16", "bf16", "bf16", "fp32", "fp32", True),
+    ("r1_T4192_V128", "l2_sig1_neg1", "gbeta_bf16", "bf16", "bf16", "fp32", "fp32", True),
+    ("varlen_g1_tail", "l2_sig1_neg1", "gbeta_bf16", "bf16", "bf16", "fp32", "fp32", True),
+    ("r1_T4160_V128", "l2_sig1_neg1", "gbeta_bf16_a0", "bf16", "bf16", "fp32", "fp32", False),
+    ("r1_T4160_V128", "l2_gate1_sig1_neg1", "allgate_bf16", "bf16", "bf16", "bf16", "bf16", True),
+    ("r1_T4160_V128", "l2_gate1_sig1_neg0", "allgate_bf16", "bf16", "bf16", "bf16", "bf16", True),
+    ("r1_T4160_V128", "l2_gate1_sig0_neg0", "allgate_bf16", "bf16", "bf16", "bf16", "bf16", True),
+    ("r1_T4160_V128", "l2_gate1_sig1_neg1_exp0", "allgate_bf16", "bf16", "bf16", "bf16", "bf16", True),
+    ("r1_T4160_V256", "l2_gate1_sig1_neg1", "allgate_bf16", "bf16", "bf16", "bf16", "bf16", True),
+    ("r1_T4192_V128", "l2_gate1_sig1_neg1", "allgate_bf16", "bf16", "bf16", "bf16", "bf16", True),
+    ("varlen_g1_tail", "l2_gate1_sig1_neg1", "allgate_bf16", "bf16", "bf16", "bf16", "bf16", True),
+]
+N_MIX_DTYPE = len(MIX_DTYPE_SPECS)
+N_PROFILES = N_ACCURACY_PROFILES + N_MIX_DTYPE
 
 _BT = 64
 _MEDIUM_CHUNKS_MIN = 256  # exclusive: tiles must be > 256
@@ -249,13 +276,68 @@ def _make_profiles() -> list[dict]:
         s["flag_tag"] = f"{spec['flag_tag']}_a0"
         s["name"] = f"{spec['name']}_a0"
         extra.append(s)
-    return profiles + extra
+    return profiles + extra + _mix_dtype_profiles(start_id=n_base * 2)
+
+
+def _mix_dtype_profiles(start_id: int) -> list[dict]:
+    """Append mixed g/beta/a_log/dt_bias bf16 cases without expanding the cartesian."""
+    shapes = {row["name"]: row for row in _shape_table()}
+    out = []
+    case_id = start_id
+    for shape_name, flag_tag, mix_tag, g_dt, beta_dt, alog_dt, dt_dt, output_a in MIX_DTYPE_SPECS:
+        if shape_name not in shapes:
+            raise RuntimeError(f"mix dtype shape {shape_name!r} not in table")
+        if flag_tag not in FLAG_BY_TAG:
+            raise RuntimeError(f"mix dtype flag {flag_tag!r} not in SUPPORTED_FLAGS")
+        for name, dt in (
+            ("g_dtype", g_dt),
+            ("beta_dtype", beta_dt),
+            ("a_log_dtype", alog_dt),
+            ("dt_bias_dtype", dt_dt),
+        ):
+            if dt not in SUPPORTED_GATE_DTYPES:
+                raise RuntimeError(f"{name}={dt!r} is not in {SUPPORTED_GATE_DTYPES} (fp16 unsupported)")
+        if g_dt != beta_dt:
+            raise RuntimeError(f"g/beta dtype must match (OpDef + kernel GateDtype), got {g_dt}/{beta_dt}")
+        _, l2, gate, sigmoid, neg, exp2 = FLAG_BY_TAG[flag_tag]
+        if gate and (alog_dt != g_dt or dt_dt != g_dt):
+            raise RuntimeError(
+                f"a_log/dt_bias must match g/beta dtype when gate=True, got "
+                f"g={g_dt} a_log={alog_dt} dt_bias={dt_dt}"
+            )
+        spec = dict(shapes[shape_name])
+        spec.update(
+            dtype="bf16",
+            op=OP_NAME,
+            case_id=case_id,
+            seed=20260817 + case_id,
+            route="ascendc",
+            soc="ascend950",
+            use_qk_l2norm_in_kernel=l2,
+            use_gate_in_kernel=gate,
+            use_beta_sigmoid_in_kernel=sigmoid,
+            allow_neg_eigval=neg,
+            use_exp2=exp2,
+            output_a=bool(output_a),
+            g_dtype=g_dt,
+            beta_dtype=beta_dt,
+            a_log_dtype=alog_dt,
+            dt_bias_dtype=dt_dt,
+            flag_tag=f"{flag_tag}_{mix_tag}",
+        )
+        spec["name"] = f"{shape_name}_{spec['flag_tag']}"
+        out.append(spec)
+        case_id += 1
+    if len(out) != N_MIX_DTYPE:
+        raise RuntimeError(f"need {N_MIX_DTYPE} mix-dtype profiles, got {len(out)}")
+    return out
 
 
 PROFILES = _make_profiles()
 if len(PROFILES) != N_PROFILES:
     raise RuntimeError(
-        f"need {N_PROFILES} profiles ({N_SHAPES} shapes x {N_FLAGS} flags x 2 output_a), "
+        f"need {N_PROFILES} profiles "
+        f"({N_SHAPES} shapes x {N_FLAGS} flags x 2 output_a + {N_MIX_DTYPE} mix-dtype), "
         f"got {len(PROFILES)}"
     )
 
@@ -374,7 +456,7 @@ def dump_json_files(out_dir: Path | None = None) -> dict:
         raise RuntimeError(f"no profile matching {substr!r} tag={tag!r}")
 
     # TilingKey 固定为 0。MSS 覆盖 V128/256、尾块、不满 pack、varlen、G=2/3/4、B>1，
-    # 以及全部 24 组合法 flag（新 flag 落在 r1_T4160_V128）。
+    # 全部 24 组合法 flag（新 flag 落在 r1_T4160_V128），以及 g/beta/a_log bf16 混合。
     mss_idx = [
         _first("r1_T4160_V128", "l2_sig1_neg1"),
         _first("r1_T4192_V128", "l2_sig1_neg1"),
@@ -397,6 +479,9 @@ def dump_json_files(out_dir: Path | None = None) -> dict:
         _first("r1_T4160_V128", "nol2_gate1_sig1_neg1"),
         _first("r1_T4160_V128", "l2_sig1_neg1_exp0"),
         _first("r1_T4160_V128", "l2_gate1_sig1_neg1_exp0"),
+        _first("r1_T4160_V128", "l2_sig1_neg1_gbeta_bf16"),
+        _first("r1_T4160_V128", "l2_gate1_sig1_neg1_allgate_bf16"),
+        _first("varlen_g1_tail", "l2_gate1_sig1_neg1_allgate_bf16"),
         _first("varlen_g2_v256", "l2_gate1_sig1_neg1_exp0"),
         _first("r1_T4160_V128", "nol2_gate1_sig1_neg0"),
         _first("r1_T4160_V128", "nol2_gate1_sig0_neg0"),
@@ -436,9 +521,10 @@ def dump_json_files(out_dir: Path | None = None) -> dict:
     for shape_i in range(1, N_SHAPES):
         slim_idx.append(shape_i * N_FLAGS)
     slim_idx.extend(i + N_BASE_PROFILES for i in list(slim_idx))
+    slim_idx.extend(range(N_ACCURACY_PROFILES, N_PROFILES))
     if len(slim_idx) != len(set(slim_idx)):
         raise RuntimeError(f"duplicate slim indices: {slim_idx}")
-    expected_slim = 2 * (N_FLAGS + (N_SHAPES - 1))
+    expected_slim = 2 * (N_FLAGS + (N_SHAPES - 1)) + N_MIX_DTYPE
     if len(slim_idx) != expected_slim:
         raise RuntimeError(f"need {expected_slim} slim cases, got {len(slim_idx)}")
     slim = [all_cases[i] for i in slim_idx]

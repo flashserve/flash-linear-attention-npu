@@ -35,6 +35,18 @@ from layout import seqlens_to_cu
 
 OP_NAME = "chunk_gated_delta_rule_fwd_prepare"
 
+_SUPPORTED_GATE_DTYPES = ("fp32", "bf16")
+
+
+def _gate_io_name(spec: dict[str, Any], key: str, default: str = "fp32") -> str:
+    name = str(spec.get(key, default)).lower()
+    if name not in _SUPPORTED_GATE_DTYPES:
+        raise ValueError(
+            f"{key}={name!r} is not supported; expected {_SUPPORTED_GATE_DTYPES} "
+            "(fp16 is not a legal gate dtype)"
+        )
+    return name
+
 
 def _parse_seqlens(spec: dict[str, Any], batch: int, seq_len: int) -> list[int] | None:
     raw = spec.get("seqlens")
@@ -56,11 +68,18 @@ def _parse_seqlens(spec: dict[str, Any], batch: int, seq_len: int) -> list[int] 
 
 def build_inputs(spec: dict[str, Any], device: torch.device, high_precision: bool = False) -> dict[str, Any]:
     dtype_name = str(spec.get("dtype", "bf16")).lower()
+    if dtype_name != "bf16":
+        raise ValueError(f"q/k/v dtype must be bf16, got {dtype_name!r} (fp16 unsupported)")
     calc_dtype = _calc_dtype(dtype_name, high_precision)
     seed = int(spec.get("seed", 20260817))
     B, HK, HV, T, K, V = (int(spec[x]) for x in ("B", "HK", "HV", "T", "K", "V"))
     chunk_size = int(spec.get("chunk_size", 64))
-    g_dtype = torch.float64 if high_precision else torch.float32
+    g_name = _gate_io_name(spec, "g_dtype")
+    beta_name = _gate_io_name(spec, "beta_dtype")
+    if g_name != beta_name:
+        raise ValueError(f"g/beta dtype must match, got g={g_name} beta={beta_name}")
+    g_calc = _calc_dtype(g_name, high_precision)
+    beta_calc = _calc_dtype(beta_name, high_precision)
     seqlens = _parse_seqlens(spec, B, T)
     cu = None if seqlens is None else seqlens_to_cu(seqlens, device=device, dtype=torch.int64)
     q = _randn((B, HK, T, K), dtype_name, calc_dtype, device, seed + 1)
@@ -71,14 +90,21 @@ def build_inputs(spec: dict[str, Any], device: torch.device, high_precision: boo
     use_gate = bool(spec.get("use_gate_in_kernel", False))
     a_log = dt_bias = None
     if use_gate:
-        a_log = _randn((HV,), "fp32", g_dtype, device, seed + 6, 0.1)
-        dt_bias = _randn((HV,), "fp32", g_dtype, device, seed + 7, 0.1)
+        alog_name = _gate_io_name(spec, "a_log_dtype")
+        dt_name = _gate_io_name(spec, "dt_bias_dtype")
+        if alog_name != g_name or dt_name != g_name:
+            raise ValueError(
+                f"a_log/dt_bias dtype must match g/beta, got "
+                f"g={g_name} a_log={alog_name} dt_bias={dt_name}"
+            )
+        a_log = _randn((HV,), alog_name, _calc_dtype(alog_name, high_precision), device, seed + 6, 0.1)
+        dt_bias = _randn((HV,), dt_name, _calc_dtype(dt_name, high_precision), device, seed + 7, 0.1)
     return {
         "q": q,
         "k": k,
         "v": _randn((B, HV, T, V), dtype_name, calc_dtype, device, seed + 3),
-        "g": _randn((B, HV, T), "fp32", g_dtype, device, seed + 4, 0.2),
-        "beta": _randn((B, HV, T), "fp32", g_dtype, device, seed + 5, 0.5),
+        "g": _randn((B, HV, T), g_name, g_calc, device, seed + 4, 0.2),
+        "beta": _randn((B, HV, T), beta_name, beta_calc, device, seed + 5, 0.5),
         "chunk_size": chunk_size,
         "use_qk_l2norm_in_kernel": bool(spec.get("use_qk_l2norm_in_kernel", True)),
         "use_gate_in_kernel": use_gate,

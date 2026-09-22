@@ -14,7 +14,7 @@ inputs:
     type: tensor
     required: true
     dtypes:
-      values: [bf16, fp16]
+      values: [bf16]
     ranges:
       valid:
         values: [[0, 0]]
@@ -57,7 +57,7 @@ inputs:
       values: [string]
     ranges:
       valid:
-        values: ["bf16", "fp16"]
+        values: ["bf16"]
       invalid:
         values: []
   - name: B
