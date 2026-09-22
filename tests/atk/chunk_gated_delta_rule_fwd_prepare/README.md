@@ -9,10 +9,10 @@
 - 布局 BNSD：`q/k=[B,HK,T,K]`，`v=[B,HV,T,V]`，`g/beta=[B,HV,T]`。
 - `K=128`，`V∈{128,256}`，`chunk_size=64`。
 - `HV % HK == 0` 且 `HV/HK ∈ {1,2,3,4}`。任务按 HV 计数，K 头按 `hk = hv / (HV/HK)` 复用。
-- `q/k/v` 当前仅 `BFLOAT16`；`g/beta` 为 `FLOAT`（golden / DUT 与单元测试一致）。
-- `use_exp2`、`use_gate_in_kernel` 支持 True/False。`use_gate=True` 时 executor 生成 `a_log` / `dt_bias`（`[HV]` fp32），`g` 为 raw dt logits。
+- `q/k/v` 仅 `BFLOAT16`（tiling 拒 fp16，不进 JSON）。`g/beta` 以及 fused gate 的 `a_log`/`dt_bias` 为 `FLOAT` 或 `BFLOAT16`，且必须同列：g 与 beta 同 dtype；`use_gate=True` 时 a_log/dt_bias 也必须与 g 同 dtype。不测 fp16，也不测 g/beta 拆开。
+- `use_exp2`、`use_gate_in_kernel` 支持 True/False。`use_gate=True` 时 executor 生成 `a_log` / `dt_bias`（`[HV]`，dtype 与 g 一致），`g` 为 raw dt logits。
 - `use_qk_l2norm_in_kernel`、`use_beta_sigmoid_in_kernel`、`allow_neg_eigval` 支持 True/False；`allow_neg_eigval=True` 要求 sigmoid。
-- 精度 JSON 为 **50 个中型 shape × 24 组合法 flag × output_a True/False = 2400**（bf16）。前 1200 为 `output_a=True`，case id = `shape_idx * 24 + flag_idx`；后 1200 为同矩阵的 `output_a=False`（id +1200，`flag_tag` 加 `_a0`）。合法 flag = `l2 × gate × {(sig,neg)=(T,T),(T,F),(F,F)} × exp2`。
+- 精度 JSON 为 **50 个中型 shape × 24 组合法 flag × output_a True/False = 2400**（q/k/v bf16，g/beta/a_log/dt_bias fp32）**再加 16 条 gate 张量 bf16 混合用例（id 2400–2415）**，共 **2416**。前 1200 为 `output_a=True`，case id = `shape_idx * 24 + flag_idx`；后 1200 为同矩阵的 `output_a=False`（id +1200，`flag_tag` 加 `_a0`）。合法 flag = `l2 × gate × {(sig,neg)=(T,T),(T,F),(F,F)} × exp2`。
 - `use_qk_l2norm_in_kernel=False` 时 kernel 不做 L2norm、不写 hat/rstd；executor 在调用前对 **q 和 k** 做 L2norm。比较时 `_finite_tuple` 丢掉 `None` 的 rstd。
 - 变长要求 `B=1` 且 `cu_seqlens` 与 `chunk_indices` 成对（Python 未传 `chunk_indices` 时自动生成）。JSON 用 `seqlens` 列表表示，executor 转成 `cu_seqlens`。
 - 尾块 `T % 64 != 0`：只在该 chunk 填 0，按有效行写出。
@@ -29,7 +29,7 @@
 
 全部 50 个 shape 的 chunk 数落在 **(256, 384]**（生成器校验 `>256`）。G≠3 时 pack=4：256 tiles = 64 packs = 32 AIC × 2 pack，**大于 256 保证每核至少 2 个 pack**。上沿 384 tiles = 96 packs ≈ 每核 3 pack。
 
-`atk_chunk_gated_delta_rule_fwd_prepare.json` 为 **50 个中型 shape × 24 组合法 flag × output_a = 2400**（bf16）。前 1200 的 case id = `shape_idx * 24 + flag_idx`，`seed = 20260817 + case_id`；id 1200–2399 是同一套 shape/flag 的 `output_a=False`。每组 shape 按序覆盖：
+`atk_chunk_gated_delta_rule_fwd_prepare.json` 为 **50 个中型 shape × 24 组合法 flag × output_a = 2400**（q/k/v bf16，g/beta 等 fp32）**+ 16 条 bf16 gate 混合 = 2416**。前 1200 的 case id = `shape_idx * 24 + flag_idx`，`seed = 20260817 + case_id`；id 1200–2399 是同一套 shape/flag 的 `output_a=False`。id 2400–2415 不扩笛卡尔积。每组 shape 按序覆盖：
 
 | flag_idx | tag | l2 | gate | sigmoid | neg | exp2 |
 | ---: | --- | --- | --- | --- | --- | --- |
@@ -135,6 +135,10 @@
 | varlen × G=2/3/4 | 960 / 984 / 1008 | |
 | HK/HV 中型上沿 | 864, 888 | HK=16，HV=32 |
 | chunk 上沿 384 | 456, 480, 1128 | 96 packs |
+| g/beta bf16 | 2400–2408 | gate 关；含 V256 / 尾块 / varlen / `output_a=False` |
+| g/beta/a_log/dt_bias 全 bf16 | 2409–2415 | fused gate；含 V256 / 尾块 / varlen / exp0 |
+
+id 0–2399 的 case_spec 不写 `g_dtype`（executor 默认 fp32）。混合用例显式带 `g_dtype`/`beta_dtype`/`a_log_dtype`/`dt_bias_dtype`。
 
 ## 性能用例
 
@@ -151,11 +155,11 @@
 
 ## TilingKey
 
-host tiling 固定 `SetTilingKey(0)`。MSS 用同一 key 覆盖 V128/256、尾块、不满 pack、B>1、varlen、G=2/3/4，以及全部 24 组合法 flag。
+host tiling 固定 `SetTilingKey(0)`。MSS 用同一 key 覆盖 V128/256、尾块、不满 pack、B>1、varlen、G=2/3/4、全部 24 组合法 flag，以及 g/beta/a_log bf16 混合。
 
 | TilingKey | 选择条件 | 普通用例 | 边界用例 | `_mss.json`（精度 case id） | 适用 SoC | 实际选择证据 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 0 | ascend950 MIX 1:2，K=128，V=128/256，BT=64 | 0（`r1_T4160_V128` `l2_sig1_neg1`） | 192 尾块、648 不满 pack、936 varlen、3 `nol2` | 0, 192, 648, 120, 576, 936, 960, 984, 1032, 1, 2, 3, 172, 627, 965, 6, 198, 942, 9, 12, 18, 978, 10, 11, 13–17, 19–23 | A5 | host tiling 固定 `SetTilingKey(0)` |
+| 0 | ascend950 MIX 1:2，K=128，V=128/256，BT=64 | 0（`r1_T4160_V128` `l2_sig1_neg1`） | 192 尾块、648 不满 pack、936 varlen、3 `nol2`、2400 g/beta bf16、2409 allgate bf16 | 0, 192, 648, 120, 576, 936, 960, 984, 1032, 1, 2, 3, 172, 627, 965, 6, 198, 942, 9, 12, 18, 2400, 2409, 2415, 978, 10, 11, 13–17, 19–23, 1200, 1392, 2136 | A5 | host tiling 固定 `SetTilingKey(0)` |
 
 ## SOC 支持
 
@@ -177,24 +181,30 @@ python3 tests/atk/chunk_gated_delta_rule_fwd_prepare/gen_chunk_gated_delta_rule_
 
 ## 精简用例
 
-`atk_chunk_gated_delta_rule_fwd_prepare_slim.json` 从 2400 条里各抽 1 条，共 **146**：
+`atk_chunk_gated_delta_rule_fwd_prepare_slim.json` 从 2400 条里各抽 1 条，再并入全部 16 条 bf16 混合，共 **162**：
 
 - 24 组合法 flag：全部落在 `r1_T4160_V128`（精度 id `0–23`）
 - 其余 49 个 shape：只保留默认 `l2_sig1_neg1`（精度 id `24, 48, …, 1176`）
 - 以上 73 条各复制一条 `output_a=False`（id +1200，`flag_tag` 加 `_a0`）
+- 全部 16 条 g/beta（及 fused gate 时 a_log/dt_bias）bf16 混合（id `2400–2415`）
 
-用于冒烟，不是正式验收入口。`run_test_cpu.sh -scope=accuracy` 默认仍读完整 2400 条。跑精简集：
+用于冒烟，不是正式验收入口。`run_test_cpu.sh -scope=accuracy` 固定读 `./atk_chunk_gated_delta_rule_fwd_prepare.json`（完整 2416 条）。跑精简集请在算子 ATK 目录下把 `-c` 指到 slim JSON（不要改公共 `run_test_cpu.sh`；不传 `--gm_init_flag` 即关 GM init）：
 
 ```bash
-ATK_GM_INIT_MODE=off \
-ATK_ACCURACY_JSON=./atk_chunk_gated_delta_rule_fwd_prepare_slim.json \
-bash tests/atk/run_test_cpu.sh -op=chunk_gated_delta_rule_fwd_prepare \
-  -npu_device_id=0 -scope=accuracy -soc=ascend950
+cd tests/atk/chunk_gated_delta_rule_fwd_prepare
+atk node --name npu_dut --backend npu --devices 0 \
+    --output_path ./atk_output/accuracy \
+  node --name cpu_golden --backend cpu \
+    --output_path ./atk_output/accuracy \
+  task -c ./atk_chunk_gated_delta_rule_fwd_prepare_slim.json \
+    --task accuracy --bm_device cpu \
+    -p ./executor_chunk_gated_delta_rule_fwd_prepare.py \
+    -to 14400
 ```
 
 ## 执行方式
 
-本算子有 9 路输出（`l2norm=False` 时 rstd 为 `None`，`output_a=False` 时 A 为 `None`，比较时丢掉）。ATK 默认 GM 初始化会把 HBM 顶满，后续 case 会卡在 `rtStreamSynchronize`。精度请关 GM init；一次跑满 2400 若占卡，按 **12** 条分批（`CASE_END` 不含右端；50 条一批容易卡住）。
+本算子有 9 路输出（`l2norm=False` 时 rstd 为 `None`，`output_a=False` 时 A 为 `None`，比较时丢掉）。ATK 默认 GM 初始化会把 HBM 顶满，后续 case 会卡在 `rtStreamSynchronize`。精度请关 GM init；一次跑满 2416 若占卡，按 **12** 条分批（`CASE_END` 不含右端；50 条一批容易卡住）。
 
 本容器没有 `/dev/davinciN`，ATK 只能看到 device 0；请用 `-npu_device_id=0`，`ATK_OUTPUT_ROOT` 建议用绝对路径。
 

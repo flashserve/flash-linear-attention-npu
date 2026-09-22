@@ -1,0 +1,46 @@
+[2026-09-22 02:35:48,659] [INFO] [MainProcess] [2429] [base.py:211]  task_output_path: /data/w00933206/ops/flash-linear-attention-npu/atk_output_prepare_stable_scope/b0936_0937/accuracy/atk_output/atk_chunk_gated_delta_rule_fwd_prepare_2026-09-22-10-35-48-554988
+[2026-09-22 02:35:48,660] [INFO] [MainProcess] [2429] [base.py:182]  start atk task: namespace(case='./atk_chunk_gated_delta_rule_fwd_prepare.json', task=['accuracy'], bm_device=<BenchmarkDevice.CPU: 'cpu'>, plugin_path='./executor_chunk_gated_delta_rule_fwd_prepare.py', start=936, end=937, single_process=True, timeout=200, resume_csv=None, fast_case=None, slice_input=None, slice_input_ratio=None, nodes=None, log='info', celery_log='warning', save_data=None, print_data='', acl_json='', white_list=None, black_list=None, random_nums=None, random_align_32b_nums=None, syc_dataset=False, mssanitizer=False, ms_log_path=None, max_task=100, trace=False, db_timeout=None, db_path=None, xrun_whl=None, bind_cpu_type='3', boundary_filter='default', keyword_filter=None, cpp_func_signature_type_path=False, triton_ut_path=None, atb_api_path=None, input_data=None, experimental_config_path=None, bm_output_path=None, bm_output_path_adr='', use_golden_value_as_remote=False, sqlite_web_port='8881', loop_nums=1, disable_id_seed=False, dc_loop_nums=50, performance_data=[], atc_config=None, get_tiling_key_path=None, need_time=True, gm_init_flag=False, fluctuation_check=False, report_flush_case_num=200, replace_inf_with_dtype_bound=False, clean_l2_cache=False, enable_custom_data=False, nodes_list=[{'name': 'npu_dut', 'backend': <NodeType.NPU: 'npu'>, 'devices': [0], 'output_path': '/data/w00933206/ops/flash-linear-attention-npu/atk_output_prepare_stable_scope/b0936_0937/accuracy', 'host': '127.0.0.1', 'port': 9090, 'task': None, 'run_modes': None, 'is_compare': True, 'is_bm': False, 'is_dist': False, 'dist_backend': 'hccl', 'bm_file': None, 'fusion_flag': False}, {'name': 'cpu_golden', 'backend': <NodeType.CPU: 'cpu'>, 'output_path': '/data/w00933206/ops/flash-linear-attention-npu/atk_output_prepare_stable_scope/b0936_0937/accuracy', 'devices': None, 'host': '127.0.0.1', 'port': 9090, 'task': None, 'run_modes': None, 'is_compare': True, 'is_bm': False, 'is_dist': False, 'dist_backend': 'hccl', 'bm_file': None, 'fusion_flag': False}])
+[2026-09-22 02:35:48,699] [INFO] [MainProcess] [2429] [base.py:231]  start single process run
+[2026-09-22 02:35:48,701] [INFO] [MainProcess] [2429] [registry.py:76]  executor_chunk_gated_delta_rule_fwd_prepare is already registered, repeated registration will coverage it, new module path is executor_chunk_gated_delta_rule_fwd_prepare
+[2026-09-22 02:35:48,701] [INFO] [MainProcess] [2429] [registry.py:76]  executor_chunk_gated_delta_rule_fwd_prepare is already registered, repeated registration will coverage it, new module path is executor_chunk_gated_delta_rule_fwd_prepare
+[2026-09-22 02:35:48,789] [INFO] [MainProcess] [2429] [single_process_main.py:233]  report api name: atk_chunk_gated_delta_rule_fwd_prepare
+[2026-09-22 02:35:48,792] [INFO] [MainProcess] [2429] [opp_tasks.py:232]  [case 936] start CREATE DATASET.
+[2026-09-22 02:35:48,800] [INFO] [MainProcess] [2429] [opp_tasks.py:255]  [case 936] SUCCESS CREATE DATASET.
+[2026-09-22 02:35:48,801] [INFO] [MainProcess] [2429] [opp_tasks.py:370]  [case 936] start run NPU OPP TASK.
+[2026-09-22 02:35:50,830] [INFO] [MainProcess] [2429] [opp_executor.py:397]  [case 936][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:50,830] [INFO] [MainProcess] [2429] [opp_executor.py:399]  [case 936][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:50,830] [INFO] [MainProcess] [2429] [opp_executor.py:76]  [case 936][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:51,029] [INFO] [MainProcess] [2429] [patch_getenv.py:15]  get env FLA_NPU_OPP_PATH = /root/miniconda3/envs/py311/lib/python3.11/site-packages/fla_npu/opp
+[2026-09-22 02:35:51,030] [INFO] [MainProcess] [2429] [patch_getenv.py:15]  get env ASCEND_CUSTOM_OPP_PATH = /root/miniconda3/envs/py311/lib/python3.11/site-packages/fla_npu/opp/vendors/fla_npu_transformer:/root/miniconda3/envs/py311/lib/python3.11/site-packages/fla_npu/opp/vendors/fla_npu_transformer:/root/miniconda3/envs/py311/lib/python3.11/site-packages/fla_npu/opp:/root/miniconda3/envs/py311/lib/python3.11/site-packages/fla_npu/opp/vendors/fla_npu_transformer
+[2026-09-22 02:35:51,138] [INFO] [MainProcess] [2429] [opp_executor.py:102]  [case 936][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:51,460] [INFO] [MainProcess] [2429] [opp_tasks.py:397]  [case 936] SUCCESS run NPU OPP TASK.
+[2026-09-22 02:35:51,462] [INFO] [MainProcess] [2429] [opp_tasks.py:370]  [case 936] start run CPU OPP TASK.
+[2026-09-22 02:35:51,463] [INFO] [MainProcess] [2429] [opp_tasks.py:317]  [case 936] Use Single bm standard, inputs will set to upper dtype (Only support fp16/bf16)
+[2026-09-22 02:35:51,463] [INFO] [MainProcess] [2429] [opp_executor.py:397]  [case 936][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:51,463] [INFO] [MainProcess] [2429] [opp_executor.py:399]  [case 936][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:51,463] [INFO] [MainProcess] [2429] [opp_executor.py:76]  [case 936][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:51,859] [INFO] [MainProcess] [2429] [opp_executor.py:102]  [case 936][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:52,286] [INFO] [MainProcess] [2429] [opp_tasks.py:397]  [case 936] SUCCESS run CPU OPP TASK.
+[2026-09-22 02:35:52,288] [INFO] [MainProcess] [2429] [opp_tasks.py:180]  [case 936] start POST PROCESS, task:['accuracy'].
+[2026-09-22 02:35:52,288] [INFO] [MainProcess] [2429] [opp_tasks.py:183]  [case 936] use mixed_tolerance_bm Standard.
+[2026-09-22 02:35:53,343] [INFO] [MainProcess] [2429] [opp_tasks.py:225]  [case 936] SUCCESS POST PROCESS.
+[2026-09-22 02:35:53,352] [INFO] [MainProcess] [2429] [reports.py:156]  
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|     id_936     | npu_npu_dut_input_bytes | cpu_cpu_golden_input_bytes | npu_npu_dut_output_bytes | cpu_cpu_golden_output_bytes | accuracy |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|  npu_npu_dut   |           None          |            None            |           None           |             None            |    -     |
+| cpu_cpu_golden |                         |                            |                          |                             |   True   |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+[2026-09-22 02:35:53,352] [INFO] [MainProcess] [2429] [opp_tasks.py:127]  [case 936] start cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:53,358] [INFO] [MainProcess] [2429] [opp_tasks.py:140]  [case 936] SUCCESS cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:53,361] [INFO] [MainProcess] [2429] [csv_report.py:872]  
++----------------+----------+------------------+------------------+--------------+----------------------+--------+--------------+
+|      名称      | 总用例数 | 执行成功用例个数 | 执行失败用例个数 | 通过用例个数 | 错误信息匹配用例个数 | 通过率 | 精度是否达标 |
++----------------+----------+------------------+------------------+--------------+----------------------+--------+--------------+
+| cpu_cpu_golden |    1     |        1         |        0         |      1       |          0           | 100.0  |     Pass     |
++----------------+----------+------------------+------------------+--------------+----------------------+--------+--------------+
+[2026-09-22 02:35:53,362] [INFO] [MainProcess] [2429] [csv_report.py:741]  Total Task: 1, success 1, failed 0
+[2026-09-22 02:35:53,362] [INFO] [MainProcess] [2429] [csv_report.py:742]  Summary info: acc_pass_result:Pass	is_acc_dc_pass:None	is_e2e_perf_pass:None	is_benchmark_perf_pass:None	is_device_perf_pass:None	is_device_memory_pass:None	is_memory_check_pass:None .
+[2026-09-22 02:35:53,372] [INFO] [MainProcess] [2429] [csv_report.py:911]  save result excel file: /data/w00933206/ops/flash-linear-attention-npu/atk_output_prepare_stable_scope/b0936_0937/accuracy/atk_output/atk_chunk_gated_delta_rule_fwd_prepare_2026-09-22-10-35-48-554988/report/atk_chunk_gated_delta_rule_fwd_prepare_reports_2026-09-22-02-35-48.xlsx
+[2026-09-22 02:35:53,372] [INFO] [MainProcess] [2429] [base.py:246]  atk task success!
+[2026-09-22 02:35:53,379] [INFO] [MainProcess] [2429] [base.py:250]  atk task finish. cost time: 4 s

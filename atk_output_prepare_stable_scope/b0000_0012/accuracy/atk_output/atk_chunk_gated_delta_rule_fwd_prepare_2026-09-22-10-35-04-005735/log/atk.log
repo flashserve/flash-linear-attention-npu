@@ -1,0 +1,354 @@
+[2026-09-22 02:35:04,127] [INFO] [MainProcess] [1201] [base.py:211]  task_output_path: /data/w00933206/ops/flash-linear-attention-npu/atk_output_prepare_stable_scope/b0000_0012/accuracy/atk_output/atk_chunk_gated_delta_rule_fwd_prepare_2026-09-22-10-35-04-005735
+[2026-09-22 02:35:04,127] [INFO] [MainProcess] [1201] [base.py:182]  start atk task: namespace(case='./atk_chunk_gated_delta_rule_fwd_prepare.json', task=['accuracy'], bm_device=<BenchmarkDevice.CPU: 'cpu'>, plugin_path='./executor_chunk_gated_delta_rule_fwd_prepare.py', start=0, end=12, single_process=True, timeout=200, resume_csv=None, fast_case=None, slice_input=None, slice_input_ratio=None, nodes=None, log='info', celery_log='warning', save_data=None, print_data='', acl_json='', white_list=None, black_list=None, random_nums=None, random_align_32b_nums=None, syc_dataset=False, mssanitizer=False, ms_log_path=None, max_task=100, trace=False, db_timeout=None, db_path=None, xrun_whl=None, bind_cpu_type='3', boundary_filter='default', keyword_filter=None, cpp_func_signature_type_path=False, triton_ut_path=None, atb_api_path=None, input_data=None, experimental_config_path=None, bm_output_path=None, bm_output_path_adr='', use_golden_value_as_remote=False, sqlite_web_port='8881', loop_nums=1, disable_id_seed=False, dc_loop_nums=50, performance_data=[], atc_config=None, get_tiling_key_path=None, need_time=True, gm_init_flag=False, fluctuation_check=False, report_flush_case_num=200, replace_inf_with_dtype_bound=False, clean_l2_cache=False, enable_custom_data=False, nodes_list=[{'name': 'npu_dut', 'backend': <NodeType.NPU: 'npu'>, 'devices': [0], 'output_path': '/data/w00933206/ops/flash-linear-attention-npu/atk_output_prepare_stable_scope/b0000_0012/accuracy', 'host': '127.0.0.1', 'port': 9090, 'task': None, 'run_modes': None, 'is_compare': True, 'is_bm': False, 'is_dist': False, 'dist_backend': 'hccl', 'bm_file': None, 'fusion_flag': False}, {'name': 'cpu_golden', 'backend': <NodeType.CPU: 'cpu'>, 'output_path': '/data/w00933206/ops/flash-linear-attention-npu/atk_output_prepare_stable_scope/b0000_0012/accuracy', 'devices': None, 'host': '127.0.0.1', 'port': 9090, 'task': None, 'run_modes': None, 'is_compare': True, 'is_bm': False, 'is_dist': False, 'dist_backend': 'hccl', 'bm_file': None, 'fusion_flag': False}])
+[2026-09-22 02:35:04,175] [INFO] [MainProcess] [1201] [base.py:231]  start single process run
+[2026-09-22 02:35:04,178] [INFO] [MainProcess] [1201] [registry.py:76]  executor_chunk_gated_delta_rule_fwd_prepare is already registered, repeated registration will coverage it, new module path is executor_chunk_gated_delta_rule_fwd_prepare
+[2026-09-22 02:35:04,178] [INFO] [MainProcess] [1201] [registry.py:76]  executor_chunk_gated_delta_rule_fwd_prepare is already registered, repeated registration will coverage it, new module path is executor_chunk_gated_delta_rule_fwd_prepare
+[2026-09-22 02:35:04,258] [INFO] [MainProcess] [1201] [single_process_main.py:233]  report api name: atk_chunk_gated_delta_rule_fwd_prepare
+[2026-09-22 02:35:04,261] [INFO] [MainProcess] [1201] [opp_tasks.py:232]  [case 0] start CREATE DATASET.
+[2026-09-22 02:35:04,268] [INFO] [MainProcess] [1201] [opp_tasks.py:255]  [case 0] SUCCESS CREATE DATASET.
+[2026-09-22 02:35:04,269] [INFO] [MainProcess] [1201] [opp_tasks.py:370]  [case 0] start run NPU OPP TASK.
+[2026-09-22 02:35:06,012] [INFO] [MainProcess] [1201] [opp_executor.py:397]  [case 0][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:06,012] [INFO] [MainProcess] [1201] [opp_executor.py:399]  [case 0][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:06,012] [INFO] [MainProcess] [1201] [opp_executor.py:76]  [case 0][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:06,106] [INFO] [MainProcess] [1201] [patch_getenv.py:15]  get env FLA_NPU_OPP_PATH = /root/miniconda3/envs/py311/lib/python3.11/site-packages/fla_npu/opp
+[2026-09-22 02:35:06,107] [INFO] [MainProcess] [1201] [patch_getenv.py:15]  get env ASCEND_CUSTOM_OPP_PATH = /root/miniconda3/envs/py311/lib/python3.11/site-packages/fla_npu/opp/vendors/fla_npu_transformer:/root/miniconda3/envs/py311/lib/python3.11/site-packages/fla_npu/opp/vendors/fla_npu_transformer:/root/miniconda3/envs/py311/lib/python3.11/site-packages/fla_npu/opp:/root/miniconda3/envs/py311/lib/python3.11/site-packages/fla_npu/opp/vendors/fla_npu_transformer
+[2026-09-22 02:35:06,501] [INFO] [MainProcess] [1201] [opp_executor.py:102]  [case 0][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:06,789] [INFO] [MainProcess] [1201] [opp_tasks.py:397]  [case 0] SUCCESS run NPU OPP TASK.
+[2026-09-22 02:35:06,790] [INFO] [MainProcess] [1201] [opp_tasks.py:370]  [case 0] start run CPU OPP TASK.
+[2026-09-22 02:35:06,791] [INFO] [MainProcess] [1201] [opp_tasks.py:317]  [case 0] Use Single bm standard, inputs will set to upper dtype (Only support fp16/bf16)
+[2026-09-22 02:35:06,791] [INFO] [MainProcess] [1201] [opp_executor.py:397]  [case 0][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:06,792] [INFO] [MainProcess] [1201] [opp_executor.py:399]  [case 0][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:06,792] [INFO] [MainProcess] [1201] [opp_executor.py:76]  [case 0][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:07,428] [INFO] [MainProcess] [1201] [opp_executor.py:102]  [case 0][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:07,700] [INFO] [MainProcess] [1201] [opp_tasks.py:397]  [case 0] SUCCESS run CPU OPP TASK.
+[2026-09-22 02:35:07,701] [INFO] [MainProcess] [1201] [opp_tasks.py:180]  [case 0] start POST PROCESS, task:['accuracy'].
+[2026-09-22 02:35:07,702] [INFO] [MainProcess] [1201] [opp_tasks.py:183]  [case 0] use mixed_tolerance_bm Standard.
+[2026-09-22 02:35:09,150] [INFO] [MainProcess] [1201] [opp_tasks.py:225]  [case 0] SUCCESS POST PROCESS.
+[2026-09-22 02:35:09,160] [INFO] [MainProcess] [1201] [reports.py:156]  
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|      id_0      | npu_npu_dut_input_bytes | cpu_cpu_golden_input_bytes | npu_npu_dut_output_bytes | cpu_cpu_golden_output_bytes | accuracy |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|  npu_npu_dut   |           None          |            None            |           None           |             None            |    -     |
+| cpu_cpu_golden |                         |                            |                          |                             |   True   |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+[2026-09-22 02:35:09,161] [INFO] [MainProcess] [1201] [opp_tasks.py:127]  [case 0] start cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:09,168] [INFO] [MainProcess] [1201] [opp_tasks.py:140]  [case 0] SUCCESS cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:09,168] [INFO] [MainProcess] [1201] [single_process_main.py:233]  report api name: atk_chunk_gated_delta_rule_fwd_prepare
+[2026-09-22 02:35:09,170] [INFO] [MainProcess] [1201] [opp_tasks.py:232]  [case 1] start CREATE DATASET.
+[2026-09-22 02:35:09,171] [INFO] [MainProcess] [1201] [opp_tasks.py:255]  [case 1] SUCCESS CREATE DATASET.
+[2026-09-22 02:35:09,172] [INFO] [MainProcess] [1201] [opp_tasks.py:370]  [case 1] start run NPU OPP TASK.
+[2026-09-22 02:35:09,173] [INFO] [MainProcess] [1201] [opp_executor.py:397]  [case 1][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:09,174] [INFO] [MainProcess] [1201] [opp_executor.py:399]  [case 1][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:09,174] [INFO] [MainProcess] [1201] [opp_executor.py:76]  [case 1][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:09,509] [INFO] [MainProcess] [1201] [opp_executor.py:102]  [case 1][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:09,821] [INFO] [MainProcess] [1201] [opp_tasks.py:397]  [case 1] SUCCESS run NPU OPP TASK.
+[2026-09-22 02:35:09,823] [INFO] [MainProcess] [1201] [opp_tasks.py:370]  [case 1] start run CPU OPP TASK.
+[2026-09-22 02:35:09,824] [INFO] [MainProcess] [1201] [opp_tasks.py:317]  [case 1] Use Single bm standard, inputs will set to upper dtype (Only support fp16/bf16)
+[2026-09-22 02:35:09,824] [INFO] [MainProcess] [1201] [opp_executor.py:397]  [case 1][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:09,824] [INFO] [MainProcess] [1201] [opp_executor.py:399]  [case 1][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:09,824] [INFO] [MainProcess] [1201] [opp_executor.py:76]  [case 1][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:10,425] [INFO] [MainProcess] [1201] [opp_executor.py:102]  [case 1][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:10,770] [INFO] [MainProcess] [1201] [opp_tasks.py:397]  [case 1] SUCCESS run CPU OPP TASK.
+[2026-09-22 02:35:10,771] [INFO] [MainProcess] [1201] [opp_tasks.py:180]  [case 1] start POST PROCESS, task:['accuracy'].
+[2026-09-22 02:35:10,771] [INFO] [MainProcess] [1201] [opp_tasks.py:183]  [case 1] use mixed_tolerance_bm Standard.
+[2026-09-22 02:35:12,235] [INFO] [MainProcess] [1201] [opp_tasks.py:225]  [case 1] SUCCESS POST PROCESS.
+[2026-09-22 02:35:12,238] [INFO] [MainProcess] [1201] [reports.py:156]  
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|      id_1      | npu_npu_dut_input_bytes | cpu_cpu_golden_input_bytes | npu_npu_dut_output_bytes | cpu_cpu_golden_output_bytes | accuracy |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|  npu_npu_dut   |           None          |            None            |           None           |             None            |    -     |
+| cpu_cpu_golden |                         |                            |                          |                             |   True   |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+[2026-09-22 02:35:12,238] [INFO] [MainProcess] [1201] [opp_tasks.py:127]  [case 1] start cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:12,247] [INFO] [MainProcess] [1201] [opp_tasks.py:140]  [case 1] SUCCESS cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:12,247] [INFO] [MainProcess] [1201] [single_process_main.py:233]  report api name: atk_chunk_gated_delta_rule_fwd_prepare
+[2026-09-22 02:35:12,249] [INFO] [MainProcess] [1201] [opp_tasks.py:232]  [case 2] start CREATE DATASET.
+[2026-09-22 02:35:12,250] [INFO] [MainProcess] [1201] [opp_tasks.py:255]  [case 2] SUCCESS CREATE DATASET.
+[2026-09-22 02:35:12,251] [INFO] [MainProcess] [1201] [opp_tasks.py:370]  [case 2] start run NPU OPP TASK.
+[2026-09-22 02:35:12,252] [INFO] [MainProcess] [1201] [opp_executor.py:397]  [case 2][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:12,252] [INFO] [MainProcess] [1201] [opp_executor.py:399]  [case 2][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:12,252] [INFO] [MainProcess] [1201] [opp_executor.py:76]  [case 2][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:12,524] [INFO] [MainProcess] [1201] [opp_executor.py:102]  [case 2][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:12,801] [INFO] [MainProcess] [1201] [opp_tasks.py:397]  [case 2] SUCCESS run NPU OPP TASK.
+[2026-09-22 02:35:12,802] [INFO] [MainProcess] [1201] [opp_tasks.py:370]  [case 2] start run CPU OPP TASK.
+[2026-09-22 02:35:12,803] [INFO] [MainProcess] [1201] [opp_tasks.py:317]  [case 2] Use Single bm standard, inputs will set to upper dtype (Only support fp16/bf16)
+[2026-09-22 02:35:12,803] [INFO] [MainProcess] [1201] [opp_executor.py:397]  [case 2][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:12,803] [INFO] [MainProcess] [1201] [opp_executor.py:399]  [case 2][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:12,803] [INFO] [MainProcess] [1201] [opp_executor.py:76]  [case 2][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:13,399] [INFO] [MainProcess] [1201] [opp_executor.py:102]  [case 2][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:13,688] [INFO] [MainProcess] [1201] [opp_tasks.py:397]  [case 2] SUCCESS run CPU OPP TASK.
+[2026-09-22 02:35:13,689] [INFO] [MainProcess] [1201] [opp_tasks.py:180]  [case 2] start POST PROCESS, task:['accuracy'].
+[2026-09-22 02:35:13,689] [INFO] [MainProcess] [1201] [opp_tasks.py:183]  [case 2] use mixed_tolerance_bm Standard.
+[2026-09-22 02:35:15,097] [INFO] [MainProcess] [1201] [opp_tasks.py:225]  [case 2] SUCCESS POST PROCESS.
+[2026-09-22 02:35:15,099] [INFO] [MainProcess] [1201] [reports.py:156]  
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|      id_2      | npu_npu_dut_input_bytes | cpu_cpu_golden_input_bytes | npu_npu_dut_output_bytes | cpu_cpu_golden_output_bytes | accuracy |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|  npu_npu_dut   |           None          |            None            |           None           |             None            |    -     |
+| cpu_cpu_golden |                         |                            |                          |                             |   True   |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+[2026-09-22 02:35:15,100] [INFO] [MainProcess] [1201] [opp_tasks.py:127]  [case 2] start cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:15,106] [INFO] [MainProcess] [1201] [opp_tasks.py:140]  [case 2] SUCCESS cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:15,107] [INFO] [MainProcess] [1201] [single_process_main.py:233]  report api name: atk_chunk_gated_delta_rule_fwd_prepare
+[2026-09-22 02:35:15,108] [INFO] [MainProcess] [1201] [opp_tasks.py:232]  [case 3] start CREATE DATASET.
+[2026-09-22 02:35:15,109] [INFO] [MainProcess] [1201] [opp_tasks.py:255]  [case 3] SUCCESS CREATE DATASET.
+[2026-09-22 02:35:15,110] [INFO] [MainProcess] [1201] [opp_tasks.py:370]  [case 3] start run NPU OPP TASK.
+[2026-09-22 02:35:15,111] [INFO] [MainProcess] [1201] [opp_executor.py:397]  [case 3][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:15,111] [INFO] [MainProcess] [1201] [opp_executor.py:399]  [case 3][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:15,111] [INFO] [MainProcess] [1201] [opp_executor.py:76]  [case 3][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:15,409] [INFO] [MainProcess] [1201] [opp_executor.py:102]  [case 3][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:15,772] [INFO] [MainProcess] [1201] [opp_tasks.py:397]  [case 3] SUCCESS run NPU OPP TASK.
+[2026-09-22 02:35:15,773] [INFO] [MainProcess] [1201] [opp_tasks.py:370]  [case 3] start run CPU OPP TASK.
+[2026-09-22 02:35:15,774] [INFO] [MainProcess] [1201] [opp_tasks.py:317]  [case 3] Use Single bm standard, inputs will set to upper dtype (Only support fp16/bf16)
+[2026-09-22 02:35:15,774] [INFO] [MainProcess] [1201] [opp_executor.py:397]  [case 3][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:15,774] [INFO] [MainProcess] [1201] [opp_executor.py:399]  [case 3][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:15,774] [INFO] [MainProcess] [1201] [opp_executor.py:76]  [case 3][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:16,307] [INFO] [MainProcess] [1201] [opp_executor.py:102]  [case 3][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:16,628] [INFO] [MainProcess] [1201] [opp_tasks.py:397]  [case 3] SUCCESS run CPU OPP TASK.
+[2026-09-22 02:35:16,629] [INFO] [MainProcess] [1201] [opp_tasks.py:180]  [case 3] start POST PROCESS, task:['accuracy'].
+[2026-09-22 02:35:16,629] [INFO] [MainProcess] [1201] [opp_tasks.py:183]  [case 3] use mixed_tolerance_bm Standard.
+[2026-09-22 02:35:17,146] [INFO] [MainProcess] [1201] [opp_tasks.py:225]  [case 3] SUCCESS POST PROCESS.
+[2026-09-22 02:35:17,149] [INFO] [MainProcess] [1201] [reports.py:156]  
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|      id_3      | npu_npu_dut_input_bytes | cpu_cpu_golden_input_bytes | npu_npu_dut_output_bytes | cpu_cpu_golden_output_bytes | accuracy |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|  npu_npu_dut   |           None          |            None            |           None           |             None            |    -     |
+| cpu_cpu_golden |                         |                            |                          |                             |   True   |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+[2026-09-22 02:35:17,150] [INFO] [MainProcess] [1201] [opp_tasks.py:127]  [case 3] start cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:17,158] [INFO] [MainProcess] [1201] [opp_tasks.py:140]  [case 3] SUCCESS cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:17,158] [INFO] [MainProcess] [1201] [single_process_main.py:233]  report api name: atk_chunk_gated_delta_rule_fwd_prepare
+[2026-09-22 02:35:17,160] [INFO] [MainProcess] [1201] [opp_tasks.py:232]  [case 4] start CREATE DATASET.
+[2026-09-22 02:35:17,161] [INFO] [MainProcess] [1201] [opp_tasks.py:255]  [case 4] SUCCESS CREATE DATASET.
+[2026-09-22 02:35:17,162] [INFO] [MainProcess] [1201] [opp_tasks.py:370]  [case 4] start run NPU OPP TASK.
+[2026-09-22 02:35:17,163] [INFO] [MainProcess] [1201] [opp_executor.py:397]  [case 4][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:17,163] [INFO] [MainProcess] [1201] [opp_executor.py:399]  [case 4][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:17,164] [INFO] [MainProcess] [1201] [opp_executor.py:76]  [case 4][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:17,398] [INFO] [MainProcess] [1201] [opp_executor.py:102]  [case 4][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:17,789] [INFO] [MainProcess] [1201] [opp_tasks.py:397]  [case 4] SUCCESS run NPU OPP TASK.
+[2026-09-22 02:35:17,791] [INFO] [MainProcess] [1201] [opp_tasks.py:370]  [case 4] start run CPU OPP TASK.
+[2026-09-22 02:35:17,792] [INFO] [MainProcess] [1201] [opp_tasks.py:317]  [case 4] Use Single bm standard, inputs will set to upper dtype (Only support fp16/bf16)
+[2026-09-22 02:35:17,792] [INFO] [MainProcess] [1201] [opp_executor.py:397]  [case 4][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:17,792] [INFO] [MainProcess] [1201] [opp_executor.py:399]  [case 4][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:17,792] [INFO] [MainProcess] [1201] [opp_executor.py:76]  [case 4][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:18,231] [INFO] [MainProcess] [1201] [opp_executor.py:102]  [case 4][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:18,612] [INFO] [MainProcess] [1201] [opp_tasks.py:397]  [case 4] SUCCESS run CPU OPP TASK.
+[2026-09-22 02:35:18,614] [INFO] [MainProcess] [1201] [opp_tasks.py:180]  [case 4] start POST PROCESS, task:['accuracy'].
+[2026-09-22 02:35:18,614] [INFO] [MainProcess] [1201] [opp_tasks.py:183]  [case 4] use mixed_tolerance_bm Standard.
+[2026-09-22 02:35:20,109] [INFO] [MainProcess] [1201] [opp_tasks.py:225]  [case 4] SUCCESS POST PROCESS.
+[2026-09-22 02:35:20,112] [INFO] [MainProcess] [1201] [reports.py:156]  
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|      id_4      | npu_npu_dut_input_bytes | cpu_cpu_golden_input_bytes | npu_npu_dut_output_bytes | cpu_cpu_golden_output_bytes | accuracy |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|  npu_npu_dut   |           None          |            None            |           None           |             None            |    -     |
+| cpu_cpu_golden |                         |                            |                          |                             |   True   |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+[2026-09-22 02:35:20,112] [INFO] [MainProcess] [1201] [opp_tasks.py:127]  [case 4] start cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:20,123] [INFO] [MainProcess] [1201] [opp_tasks.py:140]  [case 4] SUCCESS cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:20,124] [INFO] [MainProcess] [1201] [single_process_main.py:233]  report api name: atk_chunk_gated_delta_rule_fwd_prepare
+[2026-09-22 02:35:20,125] [INFO] [MainProcess] [1201] [opp_tasks.py:232]  [case 5] start CREATE DATASET.
+[2026-09-22 02:35:20,127] [INFO] [MainProcess] [1201] [opp_tasks.py:255]  [case 5] SUCCESS CREATE DATASET.
+[2026-09-22 02:35:20,128] [INFO] [MainProcess] [1201] [opp_tasks.py:370]  [case 5] start run NPU OPP TASK.
+[2026-09-22 02:35:20,129] [INFO] [MainProcess] [1201] [opp_executor.py:397]  [case 5][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:20,129] [INFO] [MainProcess] [1201] [opp_executor.py:399]  [case 5][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:20,129] [INFO] [MainProcess] [1201] [opp_executor.py:76]  [case 5][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:20,427] [INFO] [MainProcess] [1201] [opp_executor.py:102]  [case 5][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:20,808] [INFO] [MainProcess] [1201] [opp_tasks.py:397]  [case 5] SUCCESS run NPU OPP TASK.
+[2026-09-22 02:35:20,809] [INFO] [MainProcess] [1201] [opp_tasks.py:370]  [case 5] start run CPU OPP TASK.
+[2026-09-22 02:35:20,810] [INFO] [MainProcess] [1201] [opp_tasks.py:317]  [case 5] Use Single bm standard, inputs will set to upper dtype (Only support fp16/bf16)
+[2026-09-22 02:35:20,810] [INFO] [MainProcess] [1201] [opp_executor.py:397]  [case 5][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:20,810] [INFO] [MainProcess] [1201] [opp_executor.py:399]  [case 5][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:20,810] [INFO] [MainProcess] [1201] [opp_executor.py:76]  [case 5][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:21,391] [INFO] [MainProcess] [1201] [opp_executor.py:102]  [case 5][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:21,769] [INFO] [MainProcess] [1201] [opp_tasks.py:397]  [case 5] SUCCESS run CPU OPP TASK.
+[2026-09-22 02:35:21,771] [INFO] [MainProcess] [1201] [opp_tasks.py:180]  [case 5] start POST PROCESS, task:['accuracy'].
+[2026-09-22 02:35:21,771] [INFO] [MainProcess] [1201] [opp_tasks.py:183]  [case 5] use mixed_tolerance_bm Standard.
+[2026-09-22 02:35:23,225] [INFO] [MainProcess] [1201] [opp_tasks.py:225]  [case 5] SUCCESS POST PROCESS.
+[2026-09-22 02:35:23,227] [INFO] [MainProcess] [1201] [reports.py:156]  
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|      id_5      | npu_npu_dut_input_bytes | cpu_cpu_golden_input_bytes | npu_npu_dut_output_bytes | cpu_cpu_golden_output_bytes | accuracy |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|  npu_npu_dut   |           None          |            None            |           None           |             None            |    -     |
+| cpu_cpu_golden |                         |                            |                          |                             |   True   |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+[2026-09-22 02:35:23,228] [INFO] [MainProcess] [1201] [opp_tasks.py:127]  [case 5] start cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:23,237] [INFO] [MainProcess] [1201] [opp_tasks.py:140]  [case 5] SUCCESS cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:23,237] [INFO] [MainProcess] [1201] [single_process_main.py:233]  report api name: atk_chunk_gated_delta_rule_fwd_prepare
+[2026-09-22 02:35:23,239] [INFO] [MainProcess] [1201] [opp_tasks.py:232]  [case 6] start CREATE DATASET.
+[2026-09-22 02:35:23,241] [INFO] [MainProcess] [1201] [opp_tasks.py:255]  [case 6] SUCCESS CREATE DATASET.
+[2026-09-22 02:35:23,242] [INFO] [MainProcess] [1201] [opp_tasks.py:370]  [case 6] start run NPU OPP TASK.
+[2026-09-22 02:35:23,243] [INFO] [MainProcess] [1201] [opp_executor.py:397]  [case 6][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:23,243] [INFO] [MainProcess] [1201] [opp_executor.py:399]  [case 6][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:23,243] [INFO] [MainProcess] [1201] [opp_executor.py:76]  [case 6][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:23,530] [INFO] [MainProcess] [1201] [opp_executor.py:102]  [case 6][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:23,834] [INFO] [MainProcess] [1201] [opp_tasks.py:397]  [case 6] SUCCESS run NPU OPP TASK.
+[2026-09-22 02:35:23,835] [INFO] [MainProcess] [1201] [opp_tasks.py:370]  [case 6] start run CPU OPP TASK.
+[2026-09-22 02:35:23,836] [INFO] [MainProcess] [1201] [opp_tasks.py:317]  [case 6] Use Single bm standard, inputs will set to upper dtype (Only support fp16/bf16)
+[2026-09-22 02:35:23,836] [INFO] [MainProcess] [1201] [opp_executor.py:397]  [case 6][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:23,836] [INFO] [MainProcess] [1201] [opp_executor.py:399]  [case 6][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:23,836] [INFO] [MainProcess] [1201] [opp_executor.py:76]  [case 6][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:24,480] [INFO] [MainProcess] [1201] [opp_executor.py:102]  [case 6][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:24,768] [INFO] [MainProcess] [1201] [opp_tasks.py:397]  [case 6] SUCCESS run CPU OPP TASK.
+[2026-09-22 02:35:24,769] [INFO] [MainProcess] [1201] [opp_tasks.py:180]  [case 6] start POST PROCESS, task:['accuracy'].
+[2026-09-22 02:35:24,770] [INFO] [MainProcess] [1201] [opp_tasks.py:183]  [case 6] use mixed_tolerance_bm Standard.
+[2026-09-22 02:35:26,219] [INFO] [MainProcess] [1201] [opp_tasks.py:225]  [case 6] SUCCESS POST PROCESS.
+[2026-09-22 02:35:26,221] [INFO] [MainProcess] [1201] [reports.py:156]  
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|      id_6      | npu_npu_dut_input_bytes | cpu_cpu_golden_input_bytes | npu_npu_dut_output_bytes | cpu_cpu_golden_output_bytes | accuracy |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|  npu_npu_dut   |           None          |            None            |           None           |             None            |    -     |
+| cpu_cpu_golden |                         |                            |                          |                             |   True   |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+[2026-09-22 02:35:26,222] [INFO] [MainProcess] [1201] [opp_tasks.py:127]  [case 6] start cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:26,229] [INFO] [MainProcess] [1201] [opp_tasks.py:140]  [case 6] SUCCESS cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:26,229] [INFO] [MainProcess] [1201] [single_process_main.py:233]  report api name: atk_chunk_gated_delta_rule_fwd_prepare
+[2026-09-22 02:35:26,230] [INFO] [MainProcess] [1201] [opp_tasks.py:232]  [case 7] start CREATE DATASET.
+[2026-09-22 02:35:26,232] [INFO] [MainProcess] [1201] [opp_tasks.py:255]  [case 7] SUCCESS CREATE DATASET.
+[2026-09-22 02:35:26,232] [INFO] [MainProcess] [1201] [opp_tasks.py:370]  [case 7] start run NPU OPP TASK.
+[2026-09-22 02:35:26,233] [INFO] [MainProcess] [1201] [opp_executor.py:397]  [case 7][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:26,233] [INFO] [MainProcess] [1201] [opp_executor.py:399]  [case 7][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:26,234] [INFO] [MainProcess] [1201] [opp_executor.py:76]  [case 7][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:26,468] [INFO] [MainProcess] [1201] [opp_executor.py:102]  [case 7][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:26,766] [INFO] [MainProcess] [1201] [opp_tasks.py:397]  [case 7] SUCCESS run NPU OPP TASK.
+[2026-09-22 02:35:26,767] [INFO] [MainProcess] [1201] [opp_tasks.py:370]  [case 7] start run CPU OPP TASK.
+[2026-09-22 02:35:26,768] [INFO] [MainProcess] [1201] [opp_tasks.py:317]  [case 7] Use Single bm standard, inputs will set to upper dtype (Only support fp16/bf16)
+[2026-09-22 02:35:26,768] [INFO] [MainProcess] [1201] [opp_executor.py:397]  [case 7][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:26,768] [INFO] [MainProcess] [1201] [opp_executor.py:399]  [case 7][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:26,768] [INFO] [MainProcess] [1201] [opp_executor.py:76]  [case 7][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:27,299] [INFO] [MainProcess] [1201] [opp_executor.py:102]  [case 7][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:27,572] [INFO] [MainProcess] [1201] [opp_tasks.py:397]  [case 7] SUCCESS run CPU OPP TASK.
+[2026-09-22 02:35:27,573] [INFO] [MainProcess] [1201] [opp_tasks.py:180]  [case 7] start POST PROCESS, task:['accuracy'].
+[2026-09-22 02:35:27,573] [INFO] [MainProcess] [1201] [opp_tasks.py:183]  [case 7] use mixed_tolerance_bm Standard.
+[2026-09-22 02:35:29,058] [INFO] [MainProcess] [1201] [opp_tasks.py:225]  [case 7] SUCCESS POST PROCESS.
+[2026-09-22 02:35:29,060] [INFO] [MainProcess] [1201] [reports.py:156]  
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|      id_7      | npu_npu_dut_input_bytes | cpu_cpu_golden_input_bytes | npu_npu_dut_output_bytes | cpu_cpu_golden_output_bytes | accuracy |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|  npu_npu_dut   |           None          |            None            |           None           |             None            |    -     |
+| cpu_cpu_golden |                         |                            |                          |                             |   True   |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+[2026-09-22 02:35:29,060] [INFO] [MainProcess] [1201] [opp_tasks.py:127]  [case 7] start cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:29,066] [INFO] [MainProcess] [1201] [opp_tasks.py:140]  [case 7] SUCCESS cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:29,067] [INFO] [MainProcess] [1201] [single_process_main.py:233]  report api name: atk_chunk_gated_delta_rule_fwd_prepare
+[2026-09-22 02:35:29,068] [INFO] [MainProcess] [1201] [opp_tasks.py:232]  [case 8] start CREATE DATASET.
+[2026-09-22 02:35:29,069] [INFO] [MainProcess] [1201] [opp_tasks.py:255]  [case 8] SUCCESS CREATE DATASET.
+[2026-09-22 02:35:29,069] [INFO] [MainProcess] [1201] [opp_tasks.py:370]  [case 8] start run NPU OPP TASK.
+[2026-09-22 02:35:29,070] [INFO] [MainProcess] [1201] [opp_executor.py:397]  [case 8][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:29,070] [INFO] [MainProcess] [1201] [opp_executor.py:399]  [case 8][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:29,071] [INFO] [MainProcess] [1201] [opp_executor.py:76]  [case 8][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:29,328] [INFO] [MainProcess] [1201] [opp_executor.py:102]  [case 8][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:29,587] [INFO] [MainProcess] [1201] [opp_tasks.py:397]  [case 8] SUCCESS run NPU OPP TASK.
+[2026-09-22 02:35:29,588] [INFO] [MainProcess] [1201] [opp_tasks.py:370]  [case 8] start run CPU OPP TASK.
+[2026-09-22 02:35:29,589] [INFO] [MainProcess] [1201] [opp_tasks.py:317]  [case 8] Use Single bm standard, inputs will set to upper dtype (Only support fp16/bf16)
+[2026-09-22 02:35:29,589] [INFO] [MainProcess] [1201] [opp_executor.py:397]  [case 8][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:29,589] [INFO] [MainProcess] [1201] [opp_executor.py:399]  [case 8][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:29,589] [INFO] [MainProcess] [1201] [opp_executor.py:76]  [case 8][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:30,105] [INFO] [MainProcess] [1201] [opp_executor.py:102]  [case 8][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:30,363] [INFO] [MainProcess] [1201] [opp_tasks.py:397]  [case 8] SUCCESS run CPU OPP TASK.
+[2026-09-22 02:35:30,364] [INFO] [MainProcess] [1201] [opp_tasks.py:180]  [case 8] start POST PROCESS, task:['accuracy'].
+[2026-09-22 02:35:30,364] [INFO] [MainProcess] [1201] [opp_tasks.py:183]  [case 8] use mixed_tolerance_bm Standard.
+[2026-09-22 02:35:31,740] [INFO] [MainProcess] [1201] [opp_tasks.py:225]  [case 8] SUCCESS POST PROCESS.
+[2026-09-22 02:35:31,742] [INFO] [MainProcess] [1201] [reports.py:156]  
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|      id_8      | npu_npu_dut_input_bytes | cpu_cpu_golden_input_bytes | npu_npu_dut_output_bytes | cpu_cpu_golden_output_bytes | accuracy |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|  npu_npu_dut   |           None          |            None            |           None           |             None            |    -     |
+| cpu_cpu_golden |                         |                            |                          |                             |   True   |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+[2026-09-22 02:35:31,743] [INFO] [MainProcess] [1201] [opp_tasks.py:127]  [case 8] start cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:31,750] [INFO] [MainProcess] [1201] [opp_tasks.py:140]  [case 8] SUCCESS cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:31,750] [INFO] [MainProcess] [1201] [single_process_main.py:233]  report api name: atk_chunk_gated_delta_rule_fwd_prepare
+[2026-09-22 02:35:31,751] [INFO] [MainProcess] [1201] [opp_tasks.py:232]  [case 9] start CREATE DATASET.
+[2026-09-22 02:35:31,753] [INFO] [MainProcess] [1201] [opp_tasks.py:255]  [case 9] SUCCESS CREATE DATASET.
+[2026-09-22 02:35:31,753] [INFO] [MainProcess] [1201] [opp_tasks.py:370]  [case 9] start run NPU OPP TASK.
+[2026-09-22 02:35:31,754] [INFO] [MainProcess] [1201] [opp_executor.py:397]  [case 9][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:31,754] [INFO] [MainProcess] [1201] [opp_executor.py:399]  [case 9][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:31,754] [INFO] [MainProcess] [1201] [opp_executor.py:76]  [case 9][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:31,980] [INFO] [MainProcess] [1201] [opp_executor.py:102]  [case 9][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:32,260] [INFO] [MainProcess] [1201] [opp_tasks.py:397]  [case 9] SUCCESS run NPU OPP TASK.
+[2026-09-22 02:35:32,261] [INFO] [MainProcess] [1201] [opp_tasks.py:370]  [case 9] start run CPU OPP TASK.
+[2026-09-22 02:35:32,262] [INFO] [MainProcess] [1201] [opp_tasks.py:317]  [case 9] Use Single bm standard, inputs will set to upper dtype (Only support fp16/bf16)
+[2026-09-22 02:35:32,263] [INFO] [MainProcess] [1201] [opp_executor.py:397]  [case 9][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:32,263] [INFO] [MainProcess] [1201] [opp_executor.py:399]  [case 9][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:32,263] [INFO] [MainProcess] [1201] [opp_executor.py:76]  [case 9][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:32,762] [INFO] [MainProcess] [1201] [opp_executor.py:102]  [case 9][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:33,037] [INFO] [MainProcess] [1201] [opp_tasks.py:397]  [case 9] SUCCESS run CPU OPP TASK.
+[2026-09-22 02:35:33,038] [INFO] [MainProcess] [1201] [opp_tasks.py:180]  [case 9] start POST PROCESS, task:['accuracy'].
+[2026-09-22 02:35:33,039] [INFO] [MainProcess] [1201] [opp_tasks.py:183]  [case 9] use mixed_tolerance_bm Standard.
+[2026-09-22 02:35:34,403] [INFO] [MainProcess] [1201] [opp_tasks.py:225]  [case 9] SUCCESS POST PROCESS.
+[2026-09-22 02:35:34,406] [INFO] [MainProcess] [1201] [reports.py:156]  
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|      id_9      | npu_npu_dut_input_bytes | cpu_cpu_golden_input_bytes | npu_npu_dut_output_bytes | cpu_cpu_golden_output_bytes | accuracy |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|  npu_npu_dut   |           None          |            None            |           None           |             None            |    -     |
+| cpu_cpu_golden |                         |                            |                          |                             |   True   |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+[2026-09-22 02:35:34,408] [INFO] [MainProcess] [1201] [opp_tasks.py:127]  [case 9] start cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:34,416] [INFO] [MainProcess] [1201] [opp_tasks.py:140]  [case 9] SUCCESS cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:34,417] [INFO] [MainProcess] [1201] [single_process_main.py:233]  report api name: atk_chunk_gated_delta_rule_fwd_prepare
+[2026-09-22 02:35:34,418] [INFO] [MainProcess] [1201] [opp_tasks.py:232]  [case 10] start CREATE DATASET.
+[2026-09-22 02:35:34,420] [INFO] [MainProcess] [1201] [opp_tasks.py:255]  [case 10] SUCCESS CREATE DATASET.
+[2026-09-22 02:35:34,421] [INFO] [MainProcess] [1201] [opp_tasks.py:370]  [case 10] start run NPU OPP TASK.
+[2026-09-22 02:35:34,422] [INFO] [MainProcess] [1201] [opp_executor.py:397]  [case 10][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:34,422] [INFO] [MainProcess] [1201] [opp_executor.py:399]  [case 10][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:34,422] [INFO] [MainProcess] [1201] [opp_executor.py:76]  [case 10][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:34,713] [INFO] [MainProcess] [1201] [opp_executor.py:102]  [case 10][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:35,040] [INFO] [MainProcess] [1201] [opp_tasks.py:397]  [case 10] SUCCESS run NPU OPP TASK.
+[2026-09-22 02:35:35,041] [INFO] [MainProcess] [1201] [opp_tasks.py:370]  [case 10] start run CPU OPP TASK.
+[2026-09-22 02:35:35,042] [INFO] [MainProcess] [1201] [opp_tasks.py:317]  [case 10] Use Single bm standard, inputs will set to upper dtype (Only support fp16/bf16)
+[2026-09-22 02:35:35,042] [INFO] [MainProcess] [1201] [opp_executor.py:397]  [case 10][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:35,042] [INFO] [MainProcess] [1201] [opp_executor.py:399]  [case 10][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:35,042] [INFO] [MainProcess] [1201] [opp_executor.py:76]  [case 10][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:35,563] [INFO] [MainProcess] [1201] [opp_executor.py:102]  [case 10][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:35,930] [INFO] [MainProcess] [1201] [opp_tasks.py:397]  [case 10] SUCCESS run CPU OPP TASK.
+[2026-09-22 02:35:35,931] [INFO] [MainProcess] [1201] [opp_tasks.py:180]  [case 10] start POST PROCESS, task:['accuracy'].
+[2026-09-22 02:35:35,931] [INFO] [MainProcess] [1201] [opp_tasks.py:183]  [case 10] use mixed_tolerance_bm Standard.
+[2026-09-22 02:35:37,352] [INFO] [MainProcess] [1201] [opp_tasks.py:225]  [case 10] SUCCESS POST PROCESS.
+[2026-09-22 02:35:37,355] [INFO] [MainProcess] [1201] [reports.py:156]  
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|     id_10      | npu_npu_dut_input_bytes | cpu_cpu_golden_input_bytes | npu_npu_dut_output_bytes | cpu_cpu_golden_output_bytes | accuracy |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|  npu_npu_dut   |           None          |            None            |           None           |             None            |    -     |
+| cpu_cpu_golden |                         |                            |                          |                             |   True   |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+[2026-09-22 02:35:37,355] [INFO] [MainProcess] [1201] [opp_tasks.py:127]  [case 10] start cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:37,364] [INFO] [MainProcess] [1201] [opp_tasks.py:140]  [case 10] SUCCESS cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:37,364] [INFO] [MainProcess] [1201] [single_process_main.py:233]  report api name: atk_chunk_gated_delta_rule_fwd_prepare
+[2026-09-22 02:35:37,366] [INFO] [MainProcess] [1201] [opp_tasks.py:232]  [case 11] start CREATE DATASET.
+[2026-09-22 02:35:37,367] [INFO] [MainProcess] [1201] [opp_tasks.py:255]  [case 11] SUCCESS CREATE DATASET.
+[2026-09-22 02:35:37,368] [INFO] [MainProcess] [1201] [opp_tasks.py:370]  [case 11] start run NPU OPP TASK.
+[2026-09-22 02:35:37,369] [INFO] [MainProcess] [1201] [opp_executor.py:397]  [case 11][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:37,369] [INFO] [MainProcess] [1201] [opp_executor.py:399]  [case 11][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:37,369] [INFO] [MainProcess] [1201] [opp_executor.py:76]  [case 11][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:37,678] [INFO] [MainProcess] [1201] [opp_executor.py:102]  [case 11][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:37,951] [INFO] [MainProcess] [1201] [opp_tasks.py:397]  [case 11] SUCCESS run NPU OPP TASK.
+[2026-09-22 02:35:37,952] [INFO] [MainProcess] [1201] [opp_tasks.py:370]  [case 11] start run CPU OPP TASK.
+[2026-09-22 02:35:37,953] [INFO] [MainProcess] [1201] [opp_tasks.py:317]  [case 11] Use Single bm standard, inputs will set to upper dtype (Only support fp16/bf16)
+[2026-09-22 02:35:37,953] [INFO] [MainProcess] [1201] [opp_executor.py:397]  [case 11][RUN OPP TASK] START Init by input data.
+[2026-09-22 02:35:37,954] [INFO] [MainProcess] [1201] [opp_executor.py:399]  [case 11][RUN OPP TASK] SUCCESS Init by input data.
+[2026-09-22 02:35:37,954] [INFO] [MainProcess] [1201] [opp_executor.py:76]  [case 11][RUN OPP TASK] Start Execute OPP on ['accuracy']
+[2026-09-22 02:35:38,513] [INFO] [MainProcess] [1201] [opp_executor.py:102]  [case 11][RUN OPP TASK] SUCCESS Execute OPP.
+[2026-09-22 02:35:38,803] [INFO] [MainProcess] [1201] [opp_tasks.py:397]  [case 11] SUCCESS run CPU OPP TASK.
+[2026-09-22 02:35:38,805] [INFO] [MainProcess] [1201] [opp_tasks.py:180]  [case 11] start POST PROCESS, task:['accuracy'].
+[2026-09-22 02:35:38,805] [INFO] [MainProcess] [1201] [opp_tasks.py:183]  [case 11] use mixed_tolerance_bm Standard.
+[2026-09-22 02:35:40,131] [INFO] [MainProcess] [1201] [opp_tasks.py:225]  [case 11] SUCCESS POST PROCESS.
+[2026-09-22 02:35:40,133] [INFO] [MainProcess] [1201] [reports.py:156]  
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|     id_11      | npu_npu_dut_input_bytes | cpu_cpu_golden_input_bytes | npu_npu_dut_output_bytes | cpu_cpu_golden_output_bytes | accuracy |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|  npu_npu_dut   |           None          |            None            |           None           |             None            |    -     |
+| cpu_cpu_golden |                         |                            |                          |                             |   True   |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+[2026-09-22 02:35:40,133] [INFO] [MainProcess] [1201] [opp_tasks.py:127]  [case 11] start cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:40,141] [INFO] [MainProcess] [1201] [opp_tasks.py:140]  [case 11] SUCCESS cleanup case artifacts, reason=celery_clean.
+[2026-09-22 02:35:40,149] [INFO] [MainProcess] [1201] [csv_report.py:872]  
++----------------+----------+------------------+------------------+--------------+----------------------+--------+--------------+
+|      名称      | 总用例数 | 执行成功用例个数 | 执行失败用例个数 | 通过用例个数 | 错误信息匹配用例个数 | 通过率 | 精度是否达标 |
++----------------+----------+------------------+------------------+--------------+----------------------+--------+--------------+
+| cpu_cpu_golden |    12    |        12        |        0         |      12      |          0           | 100.0  |     Pass     |
++----------------+----------+------------------+------------------+--------------+----------------------+--------+--------------+
+[2026-09-22 02:35:40,150] [INFO] [MainProcess] [1201] [csv_report.py:741]  Total Task: 12, success 12, failed 0
+[2026-09-22 02:35:40,150] [INFO] [MainProcess] [1201] [csv_report.py:742]  Summary info: acc_pass_result:Pass	is_acc_dc_pass:None	is_e2e_perf_pass:None	is_benchmark_perf_pass:None	is_device_perf_pass:None	is_device_memory_pass:None	is_memory_check_pass:None .
+[2026-09-22 02:35:40,167] [INFO] [MainProcess] [1201] [csv_report.py:911]  save result excel file: /data/w00933206/ops/flash-linear-attention-npu/atk_output_prepare_stable_scope/b0000_0012/accuracy/atk_output/atk_chunk_gated_delta_rule_fwd_prepare_2026-09-22-10-35-04-005735/report/atk_chunk_gated_delta_rule_fwd_prepare_reports_2026-09-22-02-35-04.xlsx
+[2026-09-22 02:35:40,168] [INFO] [MainProcess] [1201] [base.py:246]  atk task success!
+[2026-09-22 02:35:40,184] [INFO] [MainProcess] [1201] [base.py:250]  atk task finish. cost time: 36 s
