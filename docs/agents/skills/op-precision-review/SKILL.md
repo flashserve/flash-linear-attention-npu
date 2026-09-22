@@ -36,21 +36,21 @@ metadata:
 2. **建映射**：把被检视文件按层归类（`op_host`、`op_kernel`、`op_api`、调用层），
    列出本次改动涉及的函数/分支，作为后续逐条检视的清单。
 3. **逐级检视**：按 lv0 → lv1 → lv2 → lv3 执行，每级读对应 reference：
-   - 类别定义、范围与分级依据：[`references/01-范围与分类.md`](references/01-范围与分类.md)
-   - lv0 / lv1 / lv2 检查清单：[`references/02-lv0-lv2-检视.md`](references/02-lv0-lv2-检视.md)
-   - lv3 五步白盒流程：[`references/03-lv3-白盒流程.md`](references/03-lv3-白盒流程.md)
-4. **写意见**：每条按 [`references/04-输出格式.md`](references/04-输出格式.md) 的格式输出，
+   - 类别定义、范围与分级依据：[`references/01-scope-and-categories.md`](references/01-scope-and-categories.md)
+   - lv0 / lv1 / lv2 检查清单：[`references/02-lv0-lv2-checklist.md`](references/02-lv0-lv2-checklist.md)
+   - lv3 五步白盒流程：[`references/03-lv3-whitebox-flow.md`](references/03-lv3-whitebox-flow.md)
+4. **写意见**：每条按 [`references/04-output-format.md`](references/04-output-format.md) 的格式输出，
    必须带文件、行号、代码片段、触发条件、影响和修改方向。
 5. **自检**：对每条意见自问"这条能被被检视方用文件行号复现吗"；不能复现的降级为"待确认"或不写。
    同一处根因只报一次，合并同类项。
 6. **验收（可选）**：有 issue 标注集时，用 [`scripts/review_score.py`](scripts/review_score.py)
    统计逐级别漏警率与虚警，判定是否达标；分工与验收规则见
-   [`references/05-验收与分工.md`](references/05-验收与分工.md)。
+   [`references/05-acceptance-and-roles.md`](references/05-acceptance-and-roles.md)。
 
 ## 硬性要求
 
 1. **只输出检视意见**，不改代码、不给总结、不写"未发现问题项"。仓库要求格式时沿用根 `AGENTS.md`
-   的代码检视输出规范，并在其中补 `精度级别` 与 `细粒度根因` 两行（见 04-输出格式）。
+   的代码检视输出规范，并在其中补 `精度级别` 与 `细粒度根因` 两行（见 `04-output-format.md`）。
 2. **每条意见必须可核对**：文件名 + 行号 + 代码片段 + 触发条件 + 影响 + 修改方向，缺一不可。
 3. **不得用"看不懂"作为结论**：材料不足时写成"缺少 X（详设/AscendC API 文档/硬件手册），无法判定 Y"，
    并列出需要补充的材料。
@@ -62,5 +62,5 @@ metadata:
 
 ## 责任田扩展
 
-`02-lv0-lv2-检视.md` 与 `03-lv3-白盒流程.md` 是按类别维护的清单，各算子责任田可以在对应类别下追加
-本领域的常见问题点（格式见 05-验收与分工.md），追加内容必须能落到具体代码模式，不写泛化提醒。
+`02-lv0-lv2-checklist.md` 与 `03-lv3-whitebox-flow.md` 是按类别维护的清单，各算子责任田可以在对应类别下追加
+本领域的常见问题点（格式见 05-acceptance-and-roles.md），追加内容必须能落到具体代码模式，不写泛化提醒。

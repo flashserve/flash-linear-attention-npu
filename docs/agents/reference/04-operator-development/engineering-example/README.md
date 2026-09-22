@@ -1,8 +1,8 @@
-# 标准工程示例
+# 标准工程示例（`engineering-example/`）
 
 > 示例角色：`ENGINEERING-EXAMPLE`
 >
-> 示例版本：`V1`（与 [`../工程结构规范.md`](../工程结构规范.md) `V1` 同期）
+> 示例版本：`V1`（与 [`../engineering-structure.md`](../engineering-structure.md) `V1` 同期）
 >
 > 本目录下的文件是**实际样例文件**：每一份文件开头都有该文件自己的「注意事项」注释块，路径按真实仓库
 > 位置镜像组织，可整棵复制后改名使用。
@@ -17,16 +17,16 @@
 
 | 形态 | 目录特征 | 示例 |
 | --- | --- | --- |
-| A 独立实现 | 自己的 `def` + `op_kernel` + L0 + L2 齐全 | [`example_scan/`](example_scan/) |
-| B 自研主体 + L0 组合入口 | 主体独立实现，另有 V2 之类组合入口，在 L0 层拼接其它算子 | [`example_scan_l2_entry/`](example_scan_l2_entry/) |
-| C 只有 L2 | 没有新的 `def`/`op_kernel`，L2 直接调用别的算子的 L0 并拼接公开输出 | 同 [`example_scan_l2_entry/`](example_scan_l2_entry/)（差异见该目录 README） |
+| A 独立实现 | 自己的 `def` + `op_kernel` + L0 + L2 齐全 | [`standalone/`](standalone/) |
+| B 自研主体 + L0 组合入口 | 主体独立实现，另有 V2 之类组合入口，在 L0 层拼接其它算子 | [`l2-composition/`](l2-composition/) |
+| C 只有 L2 | 没有新的 `def`/`op_kernel`，L2 直接调用别的算子的 L0 并拼接公开输出 | 同 [`l2-composition/`](l2-composition/)（差异见该目录 README） |
 
 B 与 C 的 L2 写法相同，区别只在"本算子是否还有自己的 kernel"。形态规则见
-[`../工程结构规范.md`](../工程结构规范.md) §5.4。
+[`../engineering-structure.md`](../engineering-structure.md) §5.4。
 
 ## 2. 形态 A 的完整文件清单
 
-每个文件都能在 [`example_scan/`](example_scan/) 下找到实际样例（含该文件的注意事项）：
+每个文件都能在 [`standalone/`](standalone/) 下找到实际样例（含该文件的注意事项）：
 
 | 文件（相对 `fla/ops/ascendc/<模块>/<算子>/`） | 这个文件必须做什么 | 规范章节 |
 | --- | --- | --- |
@@ -61,13 +61,13 @@ B 与 C 的 L2 写法相同，区别只在"本算子是否还有自己的 kernel
 
 ## 3. 复制步骤
 
-1. 复制 `example_scan/fla/ops/ascendc/demo/example_scan/` 到目标位置，把 `demo` 换成所属模块；
+1. 复制 `standalone/fla/ops/ascendc/demo/example_scan/` 到目标位置，把 `demo` 换成所属模块；
 2. 全局替换三个名字：目录/文件名 `example_scan`、op 类名 `ExampleScan`、Python 名 `npu_example_scan`；
 3. 按文件头的「注意事项」逐条核对，**不要只改名字**：def 的输出集合、`output_mask` 档位、tiling key
    模板参数、kernel args 顺序都随算子改变；
-4. 复制 `example_scan/torch_custom/` 与 `example_scan/tests/` 两棵镜像树到真实路径，按其中的追加说明改
+4. 复制 `standalone/torch_custom/` 与 `standalone/tests/` 两棵镜像树到真实路径，按其中的追加说明改
    已有文件（`stable_ops.cpp`、`_stable.py`、`__init__.py`）；
-5. 用 [`../工程结构规范.md`](../工程结构规范.md) §8 的清单自查，再跑 §6 的三层看护。
+5. 用 [`../engineering-structure.md`](../engineering-structure.md) §8 的清单自查，再跑 §6 的三层看护。
 
 ## 4. 与真实蓝本映射
 

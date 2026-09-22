@@ -1,6 +1,6 @@
 # 示例算子 example_scan（形态 A：独立实现）
 
-> 本目录把 [`../../工程结构规范.md`](../../工程结构规范.md) 落成实际文件。
+> 本目录把 [`../../engineering-structure.md`](../../engineering-structure.md) 落成实际文件。
 > `example_scan` 是**虚构算子**，语义取"chunk 内扫描 + 可选保存中间量"，只展示工程结构；
 > 代码不可编译，也不表示任何真实算子。
 >
@@ -15,11 +15,11 @@
 ## 目录
 
 ```text
-example_scan/
-|-- README.md                            # 本文件
-|-- fla/ops/ascendc/demo/example_scan/   # 算子工程本体（镜像真实路径）
-|-- torch_custom/fla_npu/                # 调用层改动点
-`-- tests/atk/example_scan/              # 单算子看护资产索引
+standalone/                            # 形态 A 的示例根目录（英文小写连字符命名）
+|-- README.md                          # 本文件
+|-- fla/ops/ascendc/demo/example_scan/ # 算子工程本体（镜像真实路径）
+|-- torch_custom/fla_npu/              # 调用层改动点
+`-- tests/atk/example_scan/            # 单算子看护资产索引
 ```
 
 ## 读法

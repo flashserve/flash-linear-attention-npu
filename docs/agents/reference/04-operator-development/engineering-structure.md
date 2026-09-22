@@ -134,7 +134,7 @@ endif()
 2. 平台相关编译选项（如 `ascend950` 的 `COMPUTE_UNIT Ascend950PR_9599`）只加在平台分支里。
 3. 算子间依赖（复用其他算子的 kernel 源）用 `set(<算子>_depends "...;...")` 声明，不要靠 `add_subdirectory` 手拼。
 4. 只有 L2 的组合算子（没有 def）不写 `target_sources(op_host_aclnnExc ...)`，其余结构相同
-   （见 [`标准工程示例/example_scan_l2_entry/`](标准工程示例/example_scan_l2_entry/)）。
+   （见 [`engineering-example/l2-composition/`](engineering-example/l2-composition/)）。
 
 ### 3.2 `def`：输入、输出与属性
 

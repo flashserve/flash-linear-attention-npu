@@ -1,6 +1,6 @@
 # 示例：组合入口 / 只有 L2 接口的算子
 
-> 对应 [`../../工程结构规范.md`](../../工程结构规范.md) §5.2 与 §5.4。
+> 对应 [`../../engineering-structure.md`](../../engineering-structure.md) §5.2 与 §5.4。
 > 真实蓝本：[`fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd/`](../../../../../../fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd)（形态 C）、
 > [`fla/ops/ascendc/kda/chunk_kda_fwd/`](../../../../../../fla/ops/ascendc/kda/chunk_kda_fwd)（形态 B 的 V2 与 L0 组合）。
 
