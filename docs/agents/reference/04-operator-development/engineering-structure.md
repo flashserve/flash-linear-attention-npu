@@ -136,14 +136,14 @@ endif()
    展开 `add_subdirectory`：过滤构建（`FLA_NPU_OPS` / `--ops` 只列主算子）时，依赖算子的 `op_host`
    必须一起进本次构建；打包侧由 `cmake/custom_build.cmake` 按同一份 `${<算子>_depends}` 把依赖算子的
    `op_kernel` 产物安装到 impl 目录。完整的展开循环见
-   [`engineering-example/l2-composition/.../example_scan_fused/op_host/CMakeLists.txt`](engineering-example/l2-composition/fla/ops/ascendc/demo/example_scan_fused/op_host/CMakeLists.txt)。
+   [`engineering-example/aclnn-L2接口组合/.../example_scan_fused/op_host/CMakeLists.txt`](engineering-example/aclnn-L2接口组合/fla/ops/ascendc/demo/example_scan_fused/op_host/CMakeLists.txt)。
 4. 依赖缺失的症状是**运行期**报 `aclnnStatus=561103` 且 `Config_Error(EZ1013): ... the JSON
    configuration file of operator ... cannot be found` / `AclOpKernelInit failed`，编译与安装阶段都成功；
    这是依赖配置缺失，不是算子数值或 kernel 缺陷。**全量构建通过不能证明过滤构建自洽**，改动组合入口后
    必须用一次"只列主算子"的过滤构建 + 一条走组合路径的端到端用例验证。真实案例：`chunk_kda_fwd` 的
    V2 组合入口缺少 `chunk_fwd_h` 的配置（Issue #695，由 #705 系列合入修复）。
 5. 只有 L2 的组合算子（没有 def）不写 `target_sources(op_host_aclnnExc ...)`，其余结构相同
-   （见 [`engineering-example/l2-composition/`](engineering-example/l2-composition/)）。
+   （见 [`engineering-example/aclnn-L2接口组合/`](engineering-example/aclnn-L2接口组合/)）。
 
 ### 3.2 `def`：输入、输出与属性
 
@@ -195,6 +195,9 @@ endif()
    平台判定用 `platform.GetCurNpuArch()`（A5 = `NpuArch::DAV_3510`）。
 6. `<算子>_tiling_processor.h` 的切分/offset/workspace 计算写成可独立调用的函数或类，并**在头文件内实现**：
    host UT 只 include 这个头就能覆盖分支，不需要造完整 `TilingContext`，也不需要额外链接目标。
+7. 空 tensor、非法 `cu_seqlens`/`chunk_indices`、超出位宽的 varlen 元数据都在这里拦截并打印实际值
+   （对应 [#577](https://github.com/flashserve/flash-linear-attention-npu/issues/577)、
+   [#508](https://github.com/flashserve/flash-linear-attention-npu/issues/508)）。
 
 ### 3.4 `op_api`：L0 与 L2 的分工
 
@@ -258,6 +261,10 @@ endif()
 4. 差异只放在被拆分的实现头里；两份内容相同的文件（TilingData 结构、策略头等）保留在根目录一份，
    不要复制到 `arch22/`、`arch35/` 各一份。
 5. 不新增第三个架构目录名；新的平台集合变化先改 `cmake/scripts/get_soc_version.py` 的目录排除表和本节。
+6. 平台实现里最容易出问题的是同步：buffer 复用前缺少反向同步（WAR hazard）、尾块或特定 head 配置下漏事件
+   导致 hang，参考 [PR #700](https://github.com/flashserve/flash-linear-attention-npu/pull/700)、
+   [#325](https://github.com/flashserve/flash-linear-attention-npu/issues/325)、
+   [#462](https://github.com/flashserve/flash-linear-attention-npu/issues/462)。
 
 ### 4.2 TilingKey 与模板参数
 
@@ -308,6 +315,8 @@ endif()
 4. 调用方传了张量时，优先 `ReuseOrAlloc` 直接复用为内部目标；需要改变布局/顺序时由 L2 做一次明确的
    `ViewCopy`（例如公开 `hOut` 由 head-major 转 sequence-major），并把这个拷贝计入性能说明。
 5. **同一输入下，传与不传可选输出必须计算结果逐位一致**，只有是否落公开 GM 的区别；该等价性要有对应用例。
+   新增保存值（`q_hat/k_hat/q_rstd/k_rstd/beta_eff` 一类）就是这样做的：`def` 不动、只在 L2 表达，
+   参考 [#694](https://github.com/flashserve/flash-linear-attention-npu/issues/694)。
 
 ### 5.2 aclnn V1 / V2 迭代规范
 
@@ -412,6 +421,9 @@ endif()
 4. 修改公共组件或 runtime：列出全部受影响算子，逐个跑单算子看护，并补充 affected-ops 的 Example/ST。
 5. 新增或修改组合入口（形态 B/C）或 `<算子>_depends`：补一次"只列主算子"的过滤构建，并用一条走组合
    路径的端到端用例确认包自洽（全量构建不会暴露缺依赖配置的问题）。
+6. 涉及分核、归约顺序或同步的改动：补确定性回归（重复运行 + 逐位比较），参考
+   [#440](https://github.com/flashserve/flash-linear-attention-npu/issues/440)；引用 ATK runner 的结论前先确认
+   scope 判定本身正确，参考 [#365](https://github.com/flashserve/flash-linear-attention-npu/issues/365)。
 
 ## 7. 编码细节规范
 
@@ -457,3 +469,33 @@ endif()
 - [ ] SoC 覆盖（A2/A3/A5）与 varlen/tail/边界用例齐备。
 - [ ] 文档（README/api/design）与代码、报错、返回码一致。
 - [ ] `git status --short`、`git diff --check` 干净，无生成物与敏感信息。
+
+## 9. 历史 issue 索引（写本节规范时依据的坑）
+
+下表是撰写/修订本规范时扫过的仓库 issue，按"规范条目 → issue"组织。新增或迭代算子时，先看与本任务相关的行；
+标 `OPEN` 的行表示问题仍未收敛，按当前规范实现时要额外确认。
+
+| 主题 | 相关条目 | Issue / PR | 状态 | 需要注意什么 |
+| --- | --- | --- | --- | --- |
+| 过滤构建缺依赖闭包 | §3.1、§5.4 | [#695](https://github.com/flashserve/flash-linear-attention-npu/issues/695)、[#618](https://github.com/flashserve/flash-linear-attention-npu/issues/618) | #695 已修复 / #618 未收敛 | 症状是运行期 `561103` + `EZ1013`（缺 JSON 配置），编译与安装都成功；`<算子>_depends` 必须在构建侧展开、打包侧安装，且要用"只列主算子"的过滤构建验证 |
+| 构建参数缺少前置校验 | §3.1、§7.3 | [#482](https://github.com/flashserve/flash-linear-attention-npu/issues/482) | OPEN | `FLA_NPU_OPS` 指定不存在的算子时应尽早报错并列出候选，而不是编译到一半或静默通过 |
+| 内嵌 OPP 初始化顺序 | §5.3、§6 | [#429](https://github.com/flashserve/flash-linear-attention-npu/issues/429) | 已修复 | `CANN` 先于 `fla_npu` 初始化时内嵌 OPP 未注册，同样报 `561103`；这类"看起来像算子错"的问题要先查运行时/安装状态 |
+| 空 tensor 与异常场景拦截、报错文本 | §3.3、§7.3、§7.4 | [#577](https://github.com/flashserve/flash-linear-attention-npu/issues/577)、[#561](https://github.com/flashserve/flash-linear-attention-npu/issues/561)、[#558](https://github.com/flashserve/flash-linear-attention-npu/issues/558)、[#641](https://github.com/flashserve/flash-linear-attention-npu/issues/641) | #577 已修复 / 其余 OPEN | 空 tensor、非法元数据必须在 host 拦截并打印实际值与原因，不能只给错误码；"异常场景未拦截"是同类问题的重复出现 |
+| varlen 元数据的位宽与计数 | §3.3、§7.3 | [#508](https://github.com/flashserve/flash-linear-attention-npu/issues/508) | OPEN | 总 token 数超过 `65536` 时 tiling 失败，属于 count/offset 位宽与上界检查问题；tiling 侧所有乘法都要做溢出检查 |
+| 第三方框架传入的 rank/shape 语义 | §3.2、§7.3 | [#615](https://github.com/flashserve/flash-linear-attention-npu/issues/615) | OPEN | MindSpore 侧 `OriginalShape` 展平会导致 rank 误判；`def`/tiling 的 rank 判据要写清依赖哪一维，不能假设调用方总是传标准 layout |
+| 计算顺序/缩放顺序 | §4.2、§7 | [#563](https://github.com/flashserve/flash-linear-attention-npu/issues/563) | OPEN | 与参考实现不同的"先加后乘"会改变精度；改变计算顺序要同步更新 design 与 golden 语义 |
+| 同步与事件时序（含 UB hazard、hang） | §4.1、§7.5 | [PR #700](https://github.com/flashserve/flash-linear-attention-npu/pull/700)、[#325](https://github.com/flashserve/flash-linear-attention-npu/issues/325)、[#462](https://github.com/flashserve/flash-linear-attention-npu/issues/462) | 均已修复 | 典型形态是尾块/特定 head 配置下的缺反向同步、WAR hazard 或 hang；buffer 复用前必须有反向同步或 free 计数 |
+| 输出 bitwise 确定性 | §4.2、§6 | [#440](https://github.com/flashserve/flash-linear-attention-npu/issues/440) | 已修复 | varlen 路径曾出现逐位不确定；分核/归约顺序变化要跑确定性 scope |
+| 内存检测与内存占用看护 | §6.1 | [#575](https://github.com/flashserve/flash-linear-attention-npu/issues/575)、[#614](https://github.com/flashserve/flash-linear-attention-npu/issues/614) | 已修复 | `_mss.json` 与内存检测必须真正命中 sanitizer 版本包；内存占用类结论按用例逐条记录 |
+| ATK 结果误判 | §6、§6.1 | [#365](https://github.com/flashserve/flash-linear-attention-npu/issues/365)、[#428](https://github.com/flashserve/flash-linear-attention-npu/issues/428) | 已修复 | runner 的 scope 调用与结果判定本身出过错；不要只看 shell 退出码，要看总任务数/失败数/精度结论 |
+| 精度失败与复检口径 | §6.1、检视 skill | [#731](https://github.com/flashserve/flash-linear-attention-npu/issues/731)、[#519](https://github.com/flashserve/flash-linear-attention-npu/issues/519)、[#529](https://github.com/flashserve/flash-linear-attention-npu/issues/529)、[#543](https://github.com/flashserve/flash-linear-attention-npu/issues/543)、[#554](https://github.com/flashserve/flash-linear-attention-npu/issues/554)、[#534](https://github.com/flashserve/flash-linear-attention-npu/issues/534)、[#640](https://github.com/flashserve/flash-linear-attention-npu/issues/640) | 多数 OPEN | 单轮 `FAIL` 不等于算子错；先区分数值误差/无效区/标杆语义，再做 `accuracy_lt` + `ct dual analyze` 复检；禁止用收窄 range、删 case、放宽阈值制造通过 |
+| 可选输出与新增入口的迭代方式 | §3.2、§5.1、§5.2 | [#694](https://github.com/flashserve/flash-linear-attention-npu/issues/694)、[#696](https://github.com/flashserve/flash-linear-attention-npu/pull/696)、[#702](https://github.com/flashserve/flash-linear-attention-npu/pull/702) | 已合入 | 反向保存值（`q_hat/k_hat/q_rstd/k_rstd/beta_eff`）就是这样加的：`def` 不动，只在 L2 用可空描述符表达，V1 签名保持不变 |
+| 非连续输入与全局状态副作用 | §5.3 | [#491](https://github.com/flashserve/flash-linear-attention-npu/issues/491)、[#636](https://github.com/flashserve/flash-linear-attention-npu/issues/636) | OPEN | 非连续 state 会走 stride 路径，注意 host enqueue 与服务性能；import/初始化不得留下影响未调用算子的全局状态 |
+| 公开文档/注释脱敏 | §7.10 | [#714](https://github.com/flashserve/flash-linear-attention-npu/pull/714) | 已修复 | README/注释里不能出现本地路径、临时目录、日志路径等本地调测信息 |
+| 本规范的来源 | 全文 | [#182](https://github.com/flashserve/flash-linear-attention-npu/issues/182)、[#221](https://github.com/flashserve/flash-linear-attention-npu/issues/221)、[#410](https://github.com/flashserve/flash-linear-attention-npu/issues/410)、[#298](https://github.com/flashserve/flash-linear-attention-npu/issues/298) | #182/#221/#410 已闭环 / #298 OPEN | docs/agents 的五个阶段与参考资料分层由这些需求演进而来；工程结构规范是阶段 4 的实现侧补充 |
+
+维护要求：
+
+1. 新增规范条目时，如果它来自某个 issue/PR，在同一行补链接；只写编号，不暴露内部信息。
+2. issue 状态变化（尤其 `OPEN` 行收敛）后更新"状态"列，避免用过期结论指导实现。
+3. 本表只收录能映射到具体规范条目的问题；纯性能优化、一次性环境问题不进表。

@@ -17,16 +17,16 @@
 
 | 形态 | 目录特征 | 示例 |
 | --- | --- | --- |
-| A 独立实现 | 自己的 `def` + `op_kernel` + L0 + L2 齐全 | [`standalone/`](standalone/) |
-| B 自研主体 + L0 组合入口 | 主体独立实现，另有 V2 之类组合入口，在 L0 层拼接其它算子 | [`l2-composition/`](l2-composition/) |
-| C 只有 L2 | 没有新的 `def`/`op_kernel`，L2 直接调用别的算子的 L0 并拼接公开输出 | 同 [`l2-composition/`](l2-composition/)（差异见该目录 README） |
+| A 独立算子接口 | 自己的 `def` + `op_kernel` + L0 + L2 齐全 | [`独立算子接口/`](独立算子接口/) |
+| B 自研主体 + L0 组合入口 | 主体独立实现，另有 V2 之类组合入口，在 L0 层拼接其它算子 | [`aclnn-L2接口组合/`](aclnn-L2接口组合/) |
+| C 只有 aclnn L2 接口 | 没有新的 `def`/`op_kernel`，L2 直接调用别的算子的 L0 并拼接公开输出 | 同 [`aclnn-L2接口组合/`](aclnn-L2接口组合/)（差异见该目录 README） |
 
 B 与 C 的 L2 写法相同，区别只在"本算子是否还有自己的 kernel"。形态规则见
 [`../engineering-structure.md`](../engineering-structure.md) §5.4。
 
 ## 2. 形态 A 的完整文件清单
 
-每个文件都能在 [`standalone/`](standalone/) 下找到实际样例（含该文件的注意事项）：
+每个文件都能在 [`独立算子接口/`](独立算子接口/) 下找到实际样例（含该文件的注意事项）：
 
 | 文件（相对 `fla/ops/ascendc/<模块>/<算子>/`） | 这个文件必须做什么 | 规范章节 |
 | --- | --- | --- |
@@ -49,9 +49,10 @@ B 与 C 的 L2 写法相同，区别只在"本算子是否还有自己的 kernel
 | `op_kernel/<算子>_struct.h` | 设备侧与 host 一致的 TilingData 结构与常量 | §4.3 |
 | `op_kernel/<算子>_tiling_key.h` | **必须**：`ASCENDC_TPL_ARGS_DECL` / `ASCENDC_TPL_SEL` | §4.2 |
 | `op_kernel/<算子>_<stage>.h` | 按 Stage 拆分的实现头 | §4.3 |
-| `op_kernel/arch22|arch35/<算子>_cube.h`、`_vec.h` | 平台专用实现，文件名与根目录同名 | §4.1 |
+| `op_kernel/arch22/`、`op_kernel/arch35/` 下的 `<算子>_cube.h`、`_vec.h` | 平台专用实现，文件名与根目录同名 | §4.1 |
 | `tests/README.md` | 算子自带脚本/数据的索引（ATK 资产放 `tests/atk/<算子>/`） | §6 |
 | `torch_custom/fla_npu/csrc/src/stable_<算子>.cpp` | `kSchema_` + `run_` + 一条 `FLA_STABLE_EXEC`（一算子一文件） | §5.3 |
+| `torch_custom/fla_npu/csrc/src/stable_ops.cpp`（追加） | `#include "stable_<算子>.cpp"` 一行 + `m.def`/`m.impl` 两行注册 | §5.3 |
 | `torch_custom/fla_npu/fla_npu/ops/ascendc/_stable.py`（追加） | 真签名 wrapper：入参名、默认值、返回 tuple | §5.3 |
 | `torch_custom/fla_npu/fla_npu/ops/ascendc/__init__.py`（追加） | `_ASCENDC_OPS` 公开名；原地参数登记 | §5.3 |
 | `tests/atk/<算子>/README.md` + 三份 JSON + yaml + gen + executor | 精度/性能/`_mss` 三类用例来源不同 + TilingKey 覆盖表 + 验收结果 | §6.1 |
@@ -61,11 +62,11 @@ B 与 C 的 L2 写法相同，区别只在"本算子是否还有自己的 kernel
 
 ## 3. 复制步骤
 
-1. 复制 `standalone/fla/ops/ascendc/demo/example_scan/` 到目标位置，把 `demo` 换成所属模块；
+1. 复制 `独立算子接口/fla/ops/ascendc/demo/example_scan/` 到目标位置，把 `demo` 换成所属模块；
 2. 全局替换三个名字：目录/文件名 `example_scan`、op 类名 `ExampleScan`、Python 名 `npu_example_scan`；
 3. 按文件头的「注意事项」逐条核对，**不要只改名字**：def 的输出集合、`output_mask` 档位、tiling key
    模板参数、kernel args 顺序都随算子改变；
-4. 复制 `standalone/torch_custom/` 与 `standalone/tests/` 两棵镜像树到真实路径，按其中的追加说明改
+4. 复制 `独立算子接口/torch_custom/` 与 `独立算子接口/tests/` 两棵镜像树到真实路径，按其中的追加说明改
    已有文件（`stable_ops.cpp`、`_stable.py`、`__init__.py`）；
 5. 用 [`../engineering-structure.md`](../engineering-structure.md) §8 的清单自查，再跑 §6 的三层看护。
 
@@ -76,7 +77,7 @@ B 与 C 的 L2 写法相同，区别只在"本算子是否还有自己的 kernel
 | `op_host/CMakeLists.txt`、`_def.cpp`、`_tiling.h/.cpp` | `fla/ops/ascendc/kda/chunk_kda_fwd_prepare/` |
 | `_output_mask.h`、L0/L2 `op_api/` | 同上（`PREPARE_*_OUTPUT_MASK`、`std::array<const aclTensor *, 13>`） |
 | `_tiling_key.h`、`_<stage>.h`、入口分派 | `fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h/`、`fla/ops/ascendc/kda/chunk_kda_fwd/` |
-| `arch22|arch35` 拆分 | `chunk_fwd_h`（两平台各一份）、`chunk_bwd_dv_local`（根目录默认 + `arch35/` 差异） |
+| `arch22` 与 `arch35` 拆分 | `chunk_fwd_h`（两平台各一份）、`chunk_bwd_dv_local`（根目录默认 + `arch35/` 差异） |
 | 组合入口（形态 B/C） | `fla/ops/ascendc/kda/chunk_kda_fwd/op_host/op_api/chunk_kda_fwd_v2.cpp` |
 | `torch_custom/.../stable_*.cpp` | `torch_custom/fla_npu/csrc/src/stable_kda_gate_cumsum.cpp` |
 | `tests/atk/<算子>/` | `tests/atk/chunk_kda_fwd/`、`tests/atk/README.md` |

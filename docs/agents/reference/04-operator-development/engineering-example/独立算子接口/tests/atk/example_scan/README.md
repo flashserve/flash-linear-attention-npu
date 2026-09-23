@@ -51,6 +51,13 @@ CPU 标杆、输入生成方式和混合容差在校准记录里固化；本文�
 | `gen_example_scan.py` | 生成精度候选用例（不生成 perf/mss） |
 | `executor_example_scan.py` | `build_inputs`、CPU 标杆、`run_cpu`、`run_npu`、`FunctionApi` |
 
+本目录同时给出三份 JSON 的最小示例（每个文件只放 1–2 条用例，真实交付需要按上表补全覆盖）：
+`atk_example_scan.json`（精度，2 条结构分支）、`atk_example_scan_perf.json`（模型 case，1 条）、
+`atk_example_scan_mss.json`（按档位/TilingKey，2 条）。生成后再按分支映射筛选、补充边界与异常用例。
+
+异常/负向用例的表达方式跟随相邻算子（`tests/atk/README.md`「测试动作」与各自 executor 的判定），
+本示例不额外发明字段。
+
 ## TilingKey 覆盖表（示例，需按实际实现填写并给出证据）
 
 | TilingKey 场景 | 选择条件 | 精度普通用例 | 精度边界用例 | `_mss.json` 用例 | 适用 SoC | 实际选择证据 |

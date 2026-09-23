@@ -25,7 +25,15 @@ fla/ops/ascendc/<模块>/<算子>/
     `-- op_api/
         |-- aclnn_<算子>.h        # 公开 L2 接口
         `-- aclnn_<算子>.cpp      # 组合实现（l0op:: 调用其它算子的 L0）
+
+torch_custom/fla_npu/
+|-- csrc/src/stable_<算子>.cpp        # 组合算子同样要 schema + 适配（一算子一文件）
+|-- csrc/src/stable_ops.cpp           # include 一行 + 注册两行
+`-- fla_npu/ops/ascendc/_stable.py     # 真签名 wrapper（形态 B 在这里做 V2/V1 场景选择）
 ```
+
+ATK 侧组合算子不需要自己的 TilingKey 覆盖表（没有自己的 kernel），但仍要有端到端用例：至少一条
+走组合路径、一条走回落路径，并覆盖缺依赖时报错可定位的场景（见 §4）。
 
 算子发现规则（`cmake/func.cmake` 的 `op_add_subdirectory`）：构建系统用
 `GLOB_RECURSE fla/ops/ascendc/CMakeLists.txt` 找算子目录，算子名 = `op_host` 的上一级目录名，
