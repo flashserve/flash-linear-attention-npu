@@ -324,6 +324,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
         workspaceBufferCount * workspaceRegionCount * vectorBytes;
     size_t *workspaceSizes = context->GetWorkspaceSizes(1);
     workspaceSizes[0] = platform.GetLibApiWorkSpaceSize() + userWorkspace;
+    OP_LOGD(context->GetNodeName(),"workspace = [%zu]", workspaceSizes[0]);
 
     // 主张量固定 BF16，g/beta 共用一个 BF16 或 FP32 模板参数；
     // 三个 backward/指数开关独立控制输入搬运和 VF 公式，共 16 个模板。

@@ -229,6 +229,7 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
     }
     // Per-core user WS: gmWsY 4×16 KiB. Must match kWsPerCoreBytes.
     ws[0] = sysWorkspaceSize + static_cast<size_t>(coreNum) * 64 * 1024;
+    OP_LOGD(context->GetNodeName(),"workspace = [%zu]", ws[0]);
     return ge::GRAPH_SUCCESS;
 }
 

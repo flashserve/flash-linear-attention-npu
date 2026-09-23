@@ -203,6 +203,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     context->SetBlockDim(blockDim);
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);
     currentWorkspace[0] = workspaceSize;
+    OP_LOGD(context->GetNodeName(),"workspace = [%zu]", currentWorkspace[0]);
 
     tiling.set_batch(plainTiling.batch);
     tiling.set_seqlen(plainTiling.seqlen);
