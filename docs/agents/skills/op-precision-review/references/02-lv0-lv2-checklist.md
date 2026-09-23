@@ -3,6 +3,10 @@
 按类别组织。每条包含"怎么查"与"常见问题点"；责任田可在同一标题下追加本领域根因（格式见
 [`01-scope-and-categories.md`](01-scope-and-categories.md) §4）。
 
+每个类别下的"相关 issue"与 [`../../../reference/04-operator-development/engineering-structure.md`](../../../reference/04-operator-development/engineering-structure.md) §9
+是同一批仓库 issue：它们给出该类别**真实出现过**的形态，用来校准检视尺度，不作为当前状态的结论；
+标 `OPEN` 的表示问题尚未收敛，检视对应代码时要额外确认。
+
 ---
 
 ## lv0：低级错误类
@@ -25,6 +29,11 @@
 - 跨 chunk 复用计数器未复位，第二个 chunk 起偏移累积。
 - 反向算子把前向的 padding 行计入有效长度，导致有效长度比真实值大。
 
+相关 issue：
+
+- [#508](https://github.com/flashserve/flash-linear-attention-npu/issues/508)（OPEN，A3 varlen 路径总 token 数超过 `65536` 时 tiling 失败：count/offset 位宽与上界检查）。
+- [#544](https://github.com/flashserve/flash-linear-attention-npu/issues/544)（已修复，KDA 变长序列反向精度问题：对齐补齐的尾部行没有写中性值，被当成有效数据参与计算）。
+
 ### lv0 / NaN/Inf/除0
 
 怎么查：
@@ -40,6 +49,11 @@
 - softmax/归一化在 fp16 下计算分母，先在 fp16 内溢出再转 fp32。
 - 除数为累加结果，浮点误差使其恰好为 0。
 
+相关 issue：
+
+- [#232](https://github.com/flashserve/flash-linear-attention-npu/issues/232)（OPEN，GDN bf16 TND 长序列反向出现 NaN，需要按输入分布与门控范围定位）。
+- [#640](https://github.com/flashserve/flash-linear-attention-npu/issues/640)（OPEN，recurrent_gated_delta_rule 在 A3/A5 有用例精度失败，同时 inf/nan 校验不过）。
+
 ### lv0 / 空值/null
 
 怎么查：
@@ -53,6 +67,11 @@
 - 可选输入为空时仍按非空路径计算（例如无初始状态时仍读 `initial_state`）。
 - 空 tensor 被放行到 tiling，最终以硬件错误码返回，缺少上下文。
 - 可选输出为空时仍分配整张中间张量，或反之：内部必需结果因公开输出为空而未计算。
+
+相关 issue：
+
+- [#577](https://github.com/flashserve/flash-linear-attention-npu/issues/577)（已修复，空 tensor 用例只返回错误码、没有错误信息）。
+- [#561](https://github.com/flashserve/flash-linear-attention-npu/issues/561)、[#558](https://github.com/flashserve/flash-linear-attention-npu/issues/558)、[#641](https://github.com/flashserve/flash-linear-attention-npu/issues/641)（OPEN，异常场景未拦截或报错不符合标准提示）。
 
 ### lv0 / 数值溢出/位宽
 
@@ -68,6 +87,10 @@
 - fp16 累加未转 fp32；bf16 直接累加导致尾数丢失。
 - 掩码位数不足，输出槽位超过 32 个时位移溢出。
 - 中间量按输入 dtype 存回，超出该 dtype 表示范围。
+
+相关 issue：
+
+- [#508](https://github.com/flashserve/flash-linear-attention-npu/issues/508)（OPEN，varlen 总量超过 `65536` 触发 tiling 失败，典型位宽问题）。
 
 ---
 
@@ -92,6 +115,11 @@
 - 校验顺序导致报错文本与真实原因不符（先报 dtype 再报 shape，用户看到的是次要原因）。
 - 文档写了"不支持"，代码没有对应拦截；或代码新增拦截，文档未更新。
 
+相关 issue：
+
+- [#577](https://github.com/flashserve/flash-linear-attention-npu/issues/577)、[#561](https://github.com/flashserve/flash-linear-attention-npu/issues/561)、[#558](https://github.com/flashserve/flash-linear-attention-npu/issues/558)、[#641](https://github.com/flashserve/flash-linear-attention-npu/issues/641)（拦截缺失与报错文本不带上下文）。
+- [#615](https://github.com/flashserve/flash-linear-attention-npu/issues/615)（OPEN，第三方框架展平 `OriginalShape` 导致 rank 误判；rank 判据要写清依赖哪一维）。
+
 ### lv1 / 模板/分支缺失
 
 怎么查：
@@ -107,6 +135,12 @@
 - 分支条件写成包含关系（`<=` 与 `<` 混用）导致边界档位被前一个分支吃掉。
 - 平台分支用运行期判断代替编译期选择，导致不是目标架构的实现也被编进来。
 
+相关 issue：
+
+- [#539](https://github.com/flashserve/flash-linear-attention-npu/issues/539)（已修复，GDN A5 拼接路径缺 `use_exp2=false` 分支：模式组合没有模板实例）。
+- [#437](https://github.com/flashserve/flash-linear-attention-npu/issues/437)（已修复，按 A2/A3/A5 做架构隔离实现，避免平台分支互相污染）。
+- [#678](https://github.com/flashserve/flash-linear-attention-npu/issues/678)（OPEN，大融合算子 `<<<>>>` 调用方式的通路整改：调用通路缺失同类）。
+
 ### lv1 / dtype/format
 
 怎么查：
@@ -121,6 +155,11 @@
 - 输出 dtype 跟随了错误的输入（`o` 应跟随 `v` 却跟随 `q`）。
 - dtype 组合与 format 组合构成笛卡尔积时漏掉一档，落到兜底模板。
 - 同一逻辑张量在 host 按一种 dtype 校验、在 kernel 按另一种读取。
+
+相关 issue：该类问题在仓库里多以**精度失败**的形式暴露，而不是显式的 dtype 报错，因此要结合
+[#519](https://github.com/flashserve/flash-linear-attention-npu/issues/519)、[#543](https://github.com/flashserve/flash-linear-attention-npu/issues/543)、
+[#534](https://github.com/flashserve/flash-linear-attention-npu/issues/534)（均为 OPEN 的精度不达标问题）一起看：
+先确认失败是否集中在长序列/特定 layout，再回到 dtype 转换点与 format 假设。
 
 ---
 
@@ -145,6 +184,11 @@
 - workspace 按"每核一份"估算，但实现按"每 chunk 一份"申请。
 - 大 shape 上才超限，小 shape 用例全过（需要按最大支持 shape 推算而不是只跑小用例）。
 
+相关 issue：
+
+- [#614](https://github.com/flashserve/flash-linear-attention-npu/issues/614)（已修复，`recompute_w_u_fwd` 内存占用测试有 4 条用例未达标：容量核算漏项）。
+- [#575](https://github.com/flashserve/flash-linear-attention-npu/issues/575)（已修复，`chunk_kda_fwd` 内存检测失败：越界/hazard 类结论要配合 mssanitizer 原始日志确认）。
+
 ### lv2 / 越界/地址偏移
 
 怎么查：
@@ -162,6 +206,11 @@
 - 对齐 padding 后的 workspace 行数与实际写入行数不一致，导致下一 region 被覆盖。
 - 索引张量（`gather`/scatter 类）未校验取值范围，越界读取导致随机精度错误。
 
+相关 issue：
+
+- [#544](https://github.com/flashserve/flash-linear-attention-npu/issues/544)（已修复，变长反向：对齐补齐的尾部 workspace 未写中性值，导致读取未初始化数据；症状是精度问题而非崩溃）。
+- [#462](https://github.com/flashserve/flash-linear-attention-npu/issues/462)（已修复，特定 GQA head 配置下 kernel hang：分核边界与地址计算的组合问题）。
+
 ### lv2 / bias/辅助输入
 
 怎么查：
@@ -177,6 +226,11 @@
 - mask 的 0/1 语义或上下三角方向与文档/标杆相反，小 shape 下不易暴露。
 - 标量参数（scale、epsilon）只作用于主分支，tail 分支或另一个 dtype 分支漏掉。
 - 辅助输入在 padding 区域包含非中性值，未遮罩直接参与累加。
+
+相关 issue：
+
+- [#232](https://github.com/flashserve/flash-linear-attention-npu/issues/232)（OPEN，长序列反向 NaN 与门控辅助输入（`A_log`/`dt_bias`/gate 范围）相关）。
+- [#539](https://github.com/flashserve/flash-linear-attention-npu/issues/539)（已修复，门控模式（`use_exp2`）在某一平台拼接路径上缺失，属于辅助参数只覆盖部分分支）。
 
 ---
 

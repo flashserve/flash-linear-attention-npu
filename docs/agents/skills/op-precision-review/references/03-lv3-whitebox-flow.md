@@ -117,6 +117,16 @@ lv3 不追求一套通用清单。按算子类别分别维护独立 skill，同�
 | 递推/带状态（chunk 间依赖） | 状态传递缺少顺序保证（下一 chunk 读到未完成状态）；状态 buffer 在同一 core 多轮之间被提前复用；首 chunk 与尾 chunk 的同步路径不对称 |
 | 归约/累加密集 | 多核归约缺少跨核同步或重复累加；累加顺序与标杆不一致导致长序列误差放大；中间量按低精度 dtype 落盘 |
 
+同一批 lv3 根因在仓库里出现过的实例（用于校准检视尺度，状态以仓库为准）：
+
+| lv3 根因 | 相关 issue / PR |
+| --- | --- |
+| 同步/事件时序 | [PR #700](https://github.com/flashserve/flash-linear-attention-npu/pull/700)（Gate 标量暂存区读后写依赖缺失，UB WAR hazard）、[#325](https://github.com/flashserve/flash-linear-attention-npu/issues/325)（边界场景流水同步与尾块精度）、[#462](https://github.com/flashserve/flash-linear-attention-npu/issues/462)（特定 GQA head 配置下 kernel hang） |
+| tiling/分核错误 | [#440](https://github.com/flashserve/flash-linear-attention-npu/issues/440)（varlen 路径输出 bitwise 不确定，分核/归约顺序导致）、[#508](https://github.com/flashserve/flash-linear-attention-npu/issues/508)（varlen 计数/位宽） |
+| 累加顺序/舍入 | [#563](https://github.com/flashserve/flash-linear-attention-npu/issues/563)（A5 Stage5 先加后乘与参考实现不一致）、[#511](https://github.com/flashserve/flash-linear-attention-npu/issues/511)（不同中间精度的验收标准） |
+
+完整的按条目归档见 [`../../../reference/04-operator-development/engineering-structure.md`](../../../reference/04-operator-development/engineering-structure.md) §9。
+
 新类别按同样格式补充到本节，或单独建 skill 并由本文件链接。
 
 ## 3. 输出

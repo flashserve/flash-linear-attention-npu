@@ -15,7 +15,7 @@
 ## 目录
 
 ```text
-独立算子接口/                            # 形态 A 的示例根目录（英文小写连字符命名）
+L2独立算子示例/                            # 形态 A 的示例根目录（英文小写连字符命名）
 |-- README.md                          # 本文件
 |-- fla/ops/ascendc/demo/example_scan/ # 算子工程本体（镜像真实路径）
 |-- torch_custom/fla_npu/              # 调用层改动点

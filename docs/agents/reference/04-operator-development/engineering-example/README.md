@@ -17,16 +17,16 @@
 
 | 形态 | 目录特征 | 示例 |
 | --- | --- | --- |
-| A 独立算子接口 | 自己的 `def` + `op_kernel` + L0 + L2 齐全 | [`独立算子接口/`](独立算子接口/) |
-| B 自研主体 + L0 组合入口 | 主体独立实现，另有 V2 之类组合入口，在 L0 层拼接其它算子 | [`aclnn-L2接口组合/`](aclnn-L2接口组合/) |
-| C 只有 aclnn L2 接口 | 没有新的 `def`/`op_kernel`，L2 直接调用别的算子的 L0 并拼接公开输出 | 同 [`aclnn-L2接口组合/`](aclnn-L2接口组合/)（差异见该目录 README） |
+| A L2独立算子示例 | 自己的 `def` + `op_kernel` + L0 + L2 齐全 | [`L2独立算子示例/`](L2独立算子示例/) |
+| B 自研主体 + L0 组合入口 | 主体独立实现，另有 V2 之类组合入口，在 L0 层拼接其它算子 | [`L2组合算子示例/`](L2组合算子示例/) |
+| C 只有 aclnn L2 接口 | 没有新的 `def`/`op_kernel`，L2 直接调用别的算子的 L0 并拼接公开输出 | 同 [`L2组合算子示例/`](L2组合算子示例/)（差异见该目录 README） |
 
 B 与 C 的 L2 写法相同，区别只在"本算子是否还有自己的 kernel"。形态规则见
 [`../engineering-structure.md`](../engineering-structure.md) §5.4。
 
 ## 2. 形态 A 的完整文件清单
 
-每个文件都能在 [`独立算子接口/`](独立算子接口/) 下找到实际样例（含该文件的注意事项）：
+每个文件都能在 [`L2独立算子示例/`](L2独立算子示例/) 下找到实际样例（含该文件的注意事项）：
 
 | 文件（相对 `fla/ops/ascendc/<模块>/<算子>/`） | 这个文件必须做什么 | 规范章节 |
 | --- | --- | --- |
@@ -62,11 +62,11 @@ B 与 C 的 L2 写法相同，区别只在"本算子是否还有自己的 kernel
 
 ## 3. 复制步骤
 
-1. 复制 `独立算子接口/fla/ops/ascendc/demo/example_scan/` 到目标位置，把 `demo` 换成所属模块；
+1. 复制 `L2独立算子示例/fla/ops/ascendc/demo/example_scan/` 到目标位置，把 `demo` 换成所属模块；
 2. 全局替换三个名字：目录/文件名 `example_scan`、op 类名 `ExampleScan`、Python 名 `npu_example_scan`；
 3. 按文件头的「注意事项」逐条核对，**不要只改名字**：def 的输出集合、`output_mask` 档位、tiling key
    模板参数、kernel args 顺序都随算子改变；
-4. 复制 `独立算子接口/torch_custom/` 与 `独立算子接口/tests/` 两棵镜像树到真实路径，按其中的追加说明改
+4. 复制 `L2独立算子示例/torch_custom/` 与 `L2独立算子示例/tests/` 两棵镜像树到真实路径，按其中的追加说明改
    已有文件（`stable_ops.cpp`、`_stable.py`、`__init__.py`）；
 5. 用 [`../engineering-structure.md`](../engineering-structure.md) §8 的清单自查，再跑 §6 的三层看护。
 

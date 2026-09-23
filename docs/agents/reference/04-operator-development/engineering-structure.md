@@ -136,14 +136,14 @@ endif()
    展开 `add_subdirectory`：过滤构建（`FLA_NPU_OPS` / `--ops` 只列主算子）时，依赖算子的 `op_host`
    必须一起进本次构建；打包侧由 `cmake/custom_build.cmake` 按同一份 `${<算子>_depends}` 把依赖算子的
    `op_kernel` 产物安装到 impl 目录。完整的展开循环见
-   [`engineering-example/aclnn-L2接口组合/.../example_scan_fused/op_host/CMakeLists.txt`](engineering-example/aclnn-L2接口组合/fla/ops/ascendc/demo/example_scan_fused/op_host/CMakeLists.txt)。
+   [`engineering-example/L2组合算子示例/.../example_scan_fused/op_host/CMakeLists.txt`](engineering-example/L2组合算子示例/fla/ops/ascendc/demo/example_scan_fused/op_host/CMakeLists.txt)。
 4. 依赖缺失的症状是**运行期**报 `aclnnStatus=561103` 且 `Config_Error(EZ1013): ... the JSON
    configuration file of operator ... cannot be found` / `AclOpKernelInit failed`，编译与安装阶段都成功；
    这是依赖配置缺失，不是算子数值或 kernel 缺陷。**全量构建通过不能证明过滤构建自洽**，改动组合入口后
    必须用一次"只列主算子"的过滤构建 + 一条走组合路径的端到端用例验证。真实案例：`chunk_kda_fwd` 的
    V2 组合入口缺少 `chunk_fwd_h` 的配置（Issue #695，由 #705 系列合入修复）。
 5. 只有 L2 的组合算子（没有 def）不写 `target_sources(op_host_aclnnExc ...)`，其余结构相同
-   （见 [`engineering-example/aclnn-L2接口组合/`](engineering-example/aclnn-L2接口组合/)）。
+   （见 [`engineering-example/L2组合算子示例/`](engineering-example/L2组合算子示例/)）。
 
 ### 3.2 `def`：输入、输出与属性
 
