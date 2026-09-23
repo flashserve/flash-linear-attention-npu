@@ -44,8 +44,8 @@ B 与 C 的 L2 写法相同，区别只在"本算子是否还有自己的 kernel
 | `op_host/<算子>_tiling.cpp` | 校验 → TilingData → `GET_TPL_TILING_KEY` → `SetTilingKey/SetBlockDim` → workspace | §3.3、§4.2 |
 | `op_host/<算子>_tiling_processor.h` | 任务切分、offset、workspace 区域表；header-only、函数可独立调用 | §3.3、§3.6 |
 | `op_host/<算子>_output_mask.h` | 可选输出档位与掩码常量 + 互斥/全覆盖 `static_assert` | §5.1 |
-| `op_host/arch22/<算子>_tiling_impl.h` | A2/A3 专用 tiling 常量与 tile 选择 | §3.5 |
-| `op_host/arch35/<算子>_tiling_impl.h` | A5 专用 tiling 常量与 tile 选择 | §3.5 |
+| `op_host/op_tiling/arch22/<算子>_tiling_impl.h` | A2/A3 专用 tiling 常量与 tile 选择 | §3.5 |
+| `op_host/op_tiling/arch35/<算子>_tiling_impl.h` | A5 专用 tiling 常量与 tile 选择 | §3.5 |
 | `op_host/op_api/<算子>.h` / `.cpp` | L0 内部 exec：固定输出槽位数组，按档位写内部张量 | §3.4 |
 | `op_host/op_api/aclnn_<算子>.h` / `.cpp` | L2：可空输出描述符、档位推导、非法组合拦截、`GetWorkspaceSize`/`Launch` 成对 | §3.4、§5.1 |
 | `tests/atk/<算子>/` 下的三份 JSON + yaml + gen + executor + README | 单算子看护：精度/性能/确定性/内存 + TilingKey 覆盖表；**在仓库根 `tests/` 下** | §2、§6 |

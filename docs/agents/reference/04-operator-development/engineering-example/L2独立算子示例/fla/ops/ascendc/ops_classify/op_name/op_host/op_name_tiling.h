@@ -7,7 +7,8 @@
  *   2. REGISTER_TILING_DATA_CLASS 的 op 名（PascalCase）必须与 *_def.cpp 的 OP_ADD 一致。
  *   3. 输入/属性索引枚举放在这里，tiling 与用例侧共用，禁止在 .cpp 里写裸下标。
  *   4. 本头文件只放数据结构与枚举，不放校验逻辑；校验放 *_tiling.cpp，计算放 *_tiling_processor.h。
- *   5. 平台相关常量不要写在这里，放 op_host/arch22|arch35/<算子>_tiling_impl.h。
+ *   5. 平台相关常量不要写在这里，放 op_host/op_tiling/arch22/、op_host/op_tiling/arch35/ 下的
+ *      <算子>_tiling_impl.h。
  */
 
 #ifndef OP_NAME_TILING_H

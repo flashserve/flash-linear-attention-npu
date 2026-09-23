@@ -7,7 +7,7 @@
  *      与 arch35 相同的数学与分核顺序不要各写一份。
  *   3. 每个 Stage 的 SetFlag/WaitFlag 必须成对且 pipe 正确；buffer 复用前要有反向同步或
  *      free 计数（禁止无消费地连续 set 同一 EventID）。
- *   4. L1/L0 的申请份数必须与 host 侧 arch22/op_name_tiling_impl.h 的常量一致；
+ *   4. L1/L0 的申请份数必须与 host 侧 op_tiling/arch22/op_name_tiling_impl.h 的常量一致；
  *      改一处必须同步另一处。
  *   5. 这里不做运行期平台判断：本文件只在非 A5 编译时被 include。
  */

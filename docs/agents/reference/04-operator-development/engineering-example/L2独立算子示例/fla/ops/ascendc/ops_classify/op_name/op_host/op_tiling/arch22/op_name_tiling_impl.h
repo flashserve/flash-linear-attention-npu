@@ -1,5 +1,5 @@
 /**
- * 示例文件：fla/ops/ascendc/ops_classify/op_name/op_host/arch22/op_name_tiling_impl.h
+ * 示例文件：fla/ops/ascendc/ops_classify/op_name/op_host/op_tiling/arch22/op_name_tiling_impl.h
  *
  * 注意事项：
  *   1. arch22 与 arch35 都可以有平台专用实现；本目录放 A2/A3（ascend910b / ascend910_93）的常量与

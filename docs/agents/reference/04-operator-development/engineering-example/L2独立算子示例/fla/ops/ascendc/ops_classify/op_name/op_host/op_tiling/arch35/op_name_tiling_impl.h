@@ -1,5 +1,5 @@
 /**
- * 示例文件：fla/ops/ascendc/ops_classify/op_name/op_host/arch35/op_name_tiling_impl.h
+ * 示例文件：fla/ops/ascendc/ops_classify/op_name/op_host/op_tiling/arch35/op_name_tiling_impl.h
  *
  * 注意事项：
  *   1. arch35 = A5（ascend950）。平台差异只体现在常量与 tile 选择，公开原型、TilingKey、输出契约

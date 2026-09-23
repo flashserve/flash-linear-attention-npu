@@ -38,6 +38,6 @@ L2独立算子示例/                            # 形态 A 的示例根目录�
 | 输出全部 `REQUIRED`，可选性只在 L2 | `_def.cpp` 的 3 个输出都是 `REQUIRED`；`aclnn_op_name.h` 用可空 `stateOut/xNormOut` |
 | 档位由非空组合推导并显式校验 | `_output_mask.h` + `aclnn_op_name.cpp` 的 `ResolveOutputMode` |
 | 模板化 TilingKey 必需 | `_tiling_key.h` 的 `ASCENDC_TPL_ARGS_DECL`/`ASCENDC_TPL_SEL` + `_tiling.cpp` 的 `GET_TPL_TILING_KEY` |
-| `arch22` 与 `arch35` 都是平台实现目录 | `op_kernel/arch22/`、`op_kernel/arch35/`；`op_host/arch22/`、`op_host/arch35/` 下的 `*_tiling_impl.h` |
+| `arch22` 与 `arch35` 都是平台实现目录 | `op_kernel/arch22/`、`op_kernel/arch35/`；`op_host/op_tiling/arch22/`、`op_host/op_tiling/arch35/` 下的 `*_tiling_impl.h` |
 | TilingKey 不编码平台 | key 只由 dtype 与模式决定；平台在 kernel 入口按 `__CCE_AICORE__` 选择 |
 | 看护位置 | `tests/atk/op_name/`（单算子）+ 调用层门禁；算子目录里不放测试 |

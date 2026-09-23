@@ -54,15 +54,15 @@ fla/ops/ascendc/<模块>/<算子>/
 |   |-- <算子>_def.cpp                    # OpDef：Input/Output/Attr/AICore config
 |   |-- <算子>_infershape.cpp             # 可选：shape 推导（多数算子由 tiling 侧承担）
 |   |-- <算子>_tiling.cpp / .h            # tiling 入口
-|   |-- <算子>_tiling_processor.h         # tiling 计算主体
+|   |-- <算子>_tiling_processor.h         # tiling 计算主体：header-only，函数可独立调用
 |   |-- <算子>_output_mask.h              # 有多档可选输出时必须：档位/掩码常量
-|   |-- arch22/<算子>_tiling_impl.h       # 平台专用 tiling 实现（A2/A3，按需）
-|   |-- arch35/<算子>_tiling_impl.h       # 平台专用 tiling 实现（A5，按需）
-|   |-- op_api/
-|   |   |-- <算子>.h / .cpp               # L0：内部 exec（opdev / l0op）
-|   |   |-- aclnn_<算子>.h / .cpp         # L2：公开 aclnn 接口（V1）
-|   |   `-- aclnn_<算子>_v2.h             # V2 迭代入口的公开声明（实现见 §5.2）
-|   `-- <算子>_tiling_processor.h          # tiling 计算主体：header-only，函数可独立调用
+|   |-- op_tiling/
+|   |   |-- arch22/<算子>_tiling_impl.h   # 平台专用 tiling 实现（A2/A3，按需）
+|   |   `-- arch35/<算子>_tiling_impl.h   # 平台专用 tiling 实现（A5，按需）
+|   `-- op_api/
+|       |-- <算子>.h / .cpp               # L0：内部 exec（opdev / l0op）
+|       |-- aclnn_<算子>.h / .cpp         # L2：公开 aclnn 接口（V1）
+|       `-- aclnn_<算子>_v2.h             # V2 迭代入口的公开声明（实现见 §5.2）
 |-- op_kernel/
 |   |-- <算子>.cpp                        # 唯一 kernel 入口：模板参数 + 架构选择 + tiling key 分派
 |   |-- <算子>_struct.h                   # TilingData 与常量
@@ -231,7 +231,7 @@ add_ops_compile_options(
 
 ### 3.5 host 侧平台分支
 
-1. 平台专用 tiling 实现放 `op_host/arch22/*.h`（A2/A3）与 `op_host/arch35/*.h`（A5），
+1. 平台专用 tiling 实现放 `op_host/op_tiling/arch22/*.h`（A2/A3）与 `op_host/op_tiling/arch35/*.h`（A5），
    入口按 SoC 选择；`arch22` 与 `arch35` 都允许有专用文件，不要求只有 A5 才分平台。
 2. 同一平台的 tiling 实现不止一份 `.cpp` 时，放 `op_host/op_tiling/arch35/*.cpp`；
    `cmake/obj_func.cmake` 会把该目录收进 tiling 目标。目录名不能自创。

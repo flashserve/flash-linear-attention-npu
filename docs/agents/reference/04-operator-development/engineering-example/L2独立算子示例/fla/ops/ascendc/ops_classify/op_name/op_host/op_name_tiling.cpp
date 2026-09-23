@@ -9,7 +9,8 @@
  *   3. host 侧档位枚举与 kernel 侧 TPL token 是两套名字、同一组数值：用 static_assert 在编译期钉住
  *      （示例见下），不要靠注释对齐。
  *   4. 平台判定用 platform.GetCurNpuArch()（A5 = NpuArch::DAV_3510）；平台 tile 常量从
- *      op_host/arch22|arch35/<算子>_tiling_impl.h 取，kernel 侧同名常量必须与之一致。
+ *      op_host/op_tiling/arch22/、op_host/op_tiling/arch35/ 下的 <算子>_tiling_impl.h 取，
+ *      kernel 侧同名常量必须与之一致。
  *   5. workspace 必须计入 platform.GetLibApiWorkSpaceSize()；总大小按变量算，不写死数字。
  *   6. 本层不判断"输出指针是否为空"：L2 已经把档位算成 output_mode 属性传进来。
  *   7. 校验失败必须 OP_LOGE + return ge::GRAPH_FAILED，不允许带着默认值继续。
@@ -24,8 +25,8 @@
 #include <limits>
 
 #include "../op_kernel/op_name_tiling_key.h"
-#include "arch22/op_name_tiling_impl.h"
-#include "arch35/op_name_tiling_impl.h"
+#include "op_tiling/arch22/op_name_tiling_impl.h"
+#include "op_tiling/arch35/op_name_tiling_impl.h"
 #include "op_name_tiling_processor.h"
 #include "platform/soc_spec.h"
 #include "register/op_impl_registry.h"

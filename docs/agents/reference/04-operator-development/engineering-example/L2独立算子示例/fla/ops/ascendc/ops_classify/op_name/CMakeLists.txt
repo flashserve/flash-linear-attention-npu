@@ -8,7 +8,7 @@
 #      因此这里既没有 tests 子目录，也不需要按 ENABLE_TEST 过滤子目录。
 #   3. 新增算子必须在上一级模块（fla/ops/ascendc/ops_classify/CMakeLists.txt）被
 #      add_subdirectory 到，否则整个算子目录不进构建，且不会报错。
-#   4. 不要在这里加 -D 宏来控制平台分支；平台差异走 op_host/arch22|arch35。
+#   4. 不要在这里加 -D 宏来控制平台分支；平台差异走 op_host/op_tiling/arch22、op_host/op_tiling/arch35。
 # ============================================================================
 
 file(GLOB CURRENT_DIRS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/*)
