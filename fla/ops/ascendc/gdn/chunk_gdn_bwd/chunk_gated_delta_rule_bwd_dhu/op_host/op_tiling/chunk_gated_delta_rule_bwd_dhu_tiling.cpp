@@ -133,6 +133,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
     context->SetBlockDim(processor.GetBlockDim());
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);
     currentWorkspace[0] = processor.GetWorkspaceSize();
+    OP_LOGD(context->GetNodeName(),"workspace = [%zu]", currentWorkspace[0]);
     context->SetScheduleMode(1);
 
     OP_LOGD(context->GetNodeName(), "tilingKey: %u", context->GetTilingKey());
