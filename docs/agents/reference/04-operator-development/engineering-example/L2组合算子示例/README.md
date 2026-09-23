@@ -9,7 +9,7 @@
 | | 形态 B：给已有算子加 V2 入口 | 形态 C：只有 L2 的组合算子 |
 | --- | --- | --- |
 | 触发场景 | 已发布入口（V1）不能改，但需要新开关/新可选输出/新场景 | 整套计算能由其它算子的 L0 拼出来 |
-| 本目录文件 | [`.../example_scan/op_host/op_api/aclnn_example_scan_v2.h`](fla/ops/ascendc/demo/example_scan/op_host/op_api/aclnn_example_scan_v2.h)（声明；实现追加在 V1 的 `aclnn_example_scan.cpp` 尾部） | [`.../example_scan_fused/`](fla/ops/ascendc/demo/example_scan_fused/) 整棵目录 |
+| 本目录文件 | [`.../op_name/op_host/op_api/aclnn_op_name_v2.h`](fla/ops/ascendc/gdn/op_name/op_host/op_api/aclnn_op_name_v2.h)（声明；实现追加在 V1 的 `aclnn_op_name.cpp` 尾部） | [`.../op_name_fused/`](fla/ops/ascendc/gdn/op_name_fused/) 整棵目录 |
 | def | 沿用 V1 的 def，不动 | **没有 def**（没有新 kernel 就没有新原型） |
 | op_kernel | 不动 | **没有 op_kernel** |
 | CMakeLists | 不改（只新增一个头文件） | `op_host/CMakeLists.txt`：`add_op_to_compiled_list()` + `set(<算子>_depends "...")` + `add_modules_sources(...)` |
@@ -83,5 +83,5 @@ ATK 侧组合算子不需要自己的 TilingKey 覆盖表（没有自己的 kern
 4. 把 workspace 总量交给调用方（`uniqueExecutor->GetWorkspaceSize()`）。
 
 细节见本目录两个实际文件里的注意事项：
-[`aclnn_example_scan_fused.h`](fla/ops/ascendc/demo/example_scan_fused/op_host/op_api/aclnn_example_scan_fused.h)、
-[`aclnn_example_scan_fused.cpp`](fla/ops/ascendc/demo/example_scan_fused/op_host/op_api/aclnn_example_scan_fused.cpp)。
+[`aclnn_op_name_fused.h`](fla/ops/ascendc/gdn/op_name_fused/op_host/op_api/aclnn_op_name_fused.h)、
+[`aclnn_op_name_fused.cpp`](fla/ops/ascendc/gdn/op_name_fused/op_host/op_api/aclnn_op_name_fused.cpp)。

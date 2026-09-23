@@ -23,12 +23,12 @@ _ASCENDC_OPS = (
 # ---- _ASCENDC_OPS：public 名加一行 -----------------------------------------
 _ASCENDC_OPS = (
     # ... 既有算子 ...
-    "npu_example_scan",
+    "npu_op_name",
 )
 
 # ---- MUTATED_ARGUMENTS：仅当算子原地写参数时登记（两种拼写都写） --------------
 MUTATED_ARGUMENTS = {
     # ... 既有登记 ...
-    # "example_scan": ("initial_state",),
-    # "npu_example_scan": ("initial_state",),
+    # "op_name": ("initial_state",),
+    # "npu_op_name": ("initial_state",),
 }

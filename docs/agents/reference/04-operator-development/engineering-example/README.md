@@ -10,6 +10,10 @@
 > 它们位于 `docs/` 下，**不参与构建、不参与 wheel 打包**（根 `CMakeLists.txt` 按显式 OP 列表构建，
 > `MANIFEST.in` 只收 `fla/`、`cmake/`、`common/`、`scripts/`、`torch_custom/fla_npu`）。示例代码里的
 > `#include` 路径按"复制到真实位置之后"的形状写，直接在 `docs/` 下编译不成立。
+>
+> **两个占位符**：路径里的 `gdn` 是**算子类别**示例（实际取 `fla/ops/ascendc/<类别>/` 下的真实类别，
+> 例如 `gdn`、`kda`），`op_name` 是**算子名占位符**（实际交付时替换为真实算子名）。替换时目录名、
+> 文件名、op 类名（`OpName`）、Python 名（`npu_op_name`）、宏前缀（`OP_NAME_`）要一起换。
 
 ## 1. 先选形态
 
@@ -62,8 +66,9 @@ B 与 C 的 L2 写法相同，区别只在"本算子是否还有自己的 kernel
 
 ## 3. 复制步骤
 
-1. 复制 `L2独立算子示例/fla/ops/ascendc/demo/example_scan/` 到目标位置，把 `demo` 换成所属模块；
-2. 全局替换三个名字：目录/文件名 `example_scan`、op 类名 `ExampleScan`、Python 名 `npu_example_scan`；
+1. 复制 `L2独立算子示例/fla/ops/ascendc/gdn/op_name/` 到目标位置，把类别目录 `gdn` 换成该算子所属类别
+   （`fla/ops/ascendc/` 下的真实类别名），把 `op_name` 换成真实算子名；
+2. 全局替换四个名字：目录/文件名 `op_name`、op 类名 `OpName`、Python 名 `npu_op_name`、宏前缀 `OP_NAME_`；
 3. 按文件头的「注意事项」逐条核对，**不要只改名字**：def 的输出集合、`output_mask` 档位、tiling key
    模板参数、kernel args 顺序都随算子改变；
 4. 复制 `L2独立算子示例/torch_custom/` 与 `L2独立算子示例/tests/` 两棵镜像树到真实路径，按其中的追加说明改

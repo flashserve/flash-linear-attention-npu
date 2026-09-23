@@ -16,7 +16,7 @@
 """
 
 
-def npu_example_scan(x, g, *, a_log=None, initial_state=None, cu_seqlens=None,
+def npu_op_name(x, g, *, a_log=None, initial_state=None, cu_seqlens=None,
                      chunk_indices=None, layout="BSND", scale=1.0, chunk_size=64,
                      epsilon=1e-6, return_saved=False):
     """Chunk 内扫描 + 可选保存中间量。
@@ -27,19 +27,19 @@ def npu_example_scan(x, g, *, a_log=None, initial_state=None, cu_seqlens=None,
 
     epsilon_value = 1e-6 if epsilon is None else float(epsilon)
     if not epsilon_value > 0.0:
-        raise RuntimeError("npu_example_scan: epsilon must be a positive finite number.")
+        raise RuntimeError("npu_op_name: epsilon must be a positive finite number.")
     scale_value = 1.0 if scale is None else float(scale)
     if not scale_value > 0.0:
-        raise RuntimeError("npu_example_scan: scale must be a positive finite number.")
+        raise RuntimeError("npu_op_name: scale must be a positive finite number.")
 
-    return _op("npu_example_scan")(
+    return _op("npu_op_name")(
         x,
         g,
         a_log,
         initial_state,
         _host_ints(cu_seqlens),
         _host_ints(chunk_indices),
-        _char_code("npu_example_scan", "layout", layout),
+        _char_code("npu_op_name", "layout", layout),
         scale_value,
         int(chunk_size),
         epsilon_value,

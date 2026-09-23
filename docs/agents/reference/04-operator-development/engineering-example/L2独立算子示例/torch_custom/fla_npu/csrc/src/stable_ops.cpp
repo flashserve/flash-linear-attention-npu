@@ -28,17 +28,17 @@
 #include "stable_fwd_h_common.cpp"
 #include "stable_stream_probe.cpp"
 
-#include "stable_example_scan.cpp"
+#include "stable_op_name.cpp"
 // ... 其余算子按算子名排序 ...
 
 // ---- 2) 注册：schema 与实现分别落在两个宏里 ---------------------------------
 STABLE_TORCH_LIBRARY(fla_npu_stable, m) {
   // ... 既有 m.def(...) ...
-  m.def(kSchema_example_scan);
+  m.def(kSchema_op_name);
 }
 
 STABLE_TORCH_LIBRARY_IMPL(fla_npu_stable, CompositeExplicitAutograd, m) {
   // ... 既有 m.impl(...) ...
-  m.impl("npu_example_scan",
-         &fla_npu_stable::stable::boxed_adapter<run_npu_example_scan>);
+  m.impl("npu_op_name",
+         &fla_npu_stable::stable::boxed_adapter<run_npu_op_name>);
 }
