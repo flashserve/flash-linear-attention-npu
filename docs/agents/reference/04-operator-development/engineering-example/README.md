@@ -54,15 +54,16 @@ B 与 C 的 L2 写法相同，区别只在"本算子是否还有自己的 kernel
 | `op_kernel/<算子>_tiling_key.h` | **必须**：`ASCENDC_TPL_ARGS_DECL` / `ASCENDC_TPL_SEL` | §4.2 |
 | `op_kernel/<算子>_<stage>.h` | 按 Stage 拆分的实现头 | §4.3 |
 | `op_kernel/arch22/`、`op_kernel/arch35/` 下的 `<算子>_cube.h`、`_vec.h` | 平台专用实现，文件名与根目录同名 | §4.1 |
-| `tests/README.md` | 根 `tests/` 的索引与测试位置规则（用例只在 `atk/<算子>/`） | §6 |
 | `torch_custom/fla_npu/csrc/src/stable_<算子>.cpp` | `kSchema_` + `run_` + 一条 `FLA_STABLE_EXEC`（一算子一文件） | §5.3 |
 | `torch_custom/fla_npu/csrc/src/stable_ops.cpp`（追加） | `#include "stable_<算子>.cpp"` 一行 + `m.def`/`m.impl` 两行注册 | §5.3 |
 | `torch_custom/fla_npu/fla_npu/ops/ascendc/_stable.py`（追加） | 真签名 wrapper：入参名、默认值、返回 tuple | §5.3 |
 | `torch_custom/fla_npu/fla_npu/ops/ascendc/__init__.py`（追加） | `_ASCENDC_OPS` 公开名；原地参数登记 | §5.3 |
 | `tests/atk/<算子>/README.md` + 三份 JSON + yaml + gen + executor | 精度/性能/`_mss` 三类用例来源不同 + TilingKey 覆盖表 + 验收结果 | §6.1 |
 
-需要注意的三个高频错误：`_tiling_key.h` 不是可选件；`_policy.h`、`_common.h` 这类文件按实际需要建，
-不要为了对齐目录树而空建；`arch22` 与 `arch35` 都可以是平台专用实现目录，不是"只有 A5 才分平台"。
+需要注意的高频错误：`_tiling_key.h` 不是可选件；`_policy.h`、`_common.h` 这类文件按实际需要建，
+不要为了对齐目录树而空建；`arch22` 与 `arch35` 都可以是平台专用实现目录，不是"只有 A5 才分平台"；
+**测试不放算子目录**——用例统一在仓库根 `tests/atk/<算子>/`（表中 `tests/...` 行是仓库根目录下的资产，
+算子目录里没有 `tests/`，也不要自造未在 `tests/atk/README.md` 登记的测试子目录）。
 
 ## 3. 复制步骤
 
