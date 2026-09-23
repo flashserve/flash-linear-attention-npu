@@ -231,12 +231,22 @@ template <class TileCopy, class TensorC>
 using KdaBwdCopyL0CToDst =
     typename KdaBwdCopyL0CToDstSelector<TileCopy, TensorC>::Type;
 
+// Cross-phase private workspace regions are handed to the device entry as
+// offsets inside ChunkKdaBwdTilingData.  The fused MIX entry has to keep its
+// whole tiling payload inside the proven A5 kernel-argument budget, so those
+// fields stay 32-bit and are stored in units of this alignment instead of
+// bytes: every region starts on a 512-byte boundary by construction (see the
+// host tiling), which keeps the payload size unchanged while raising the
+// addressable single-launch workspace from 4 GiB to 2 TiB.
+constexpr uint64_t KDA_BWD_WORKSPACE_ALIGN = 512U;
+
 struct ChunkKdaBwdTilingData {
     GDN::ChunkGatedDeltaRuleBwdDhuTilingData kernelB;
     ChunkKdaBwdCTilingData kernelC;
     // Cross-phase tensors are private workspace regions, not public kernel
     // parameters.  This keeps the single device entry comfortably below the
     // A5 kernel-argument limit and mirrors chunk_kda_fwd's address plan.
+    // Every offset is expressed in KDA_BWD_WORKSPACE_ALIGN units.
     uint32_t dv0Offset;
     uint32_t dqRawOffset;
     uint32_t dAqkOffset;

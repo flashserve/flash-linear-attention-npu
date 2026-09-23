@@ -10,6 +10,14 @@
 
 namespace KDA {
 
+// Private workspace offsets travel in KDA_BWD_WORKSPACE_ALIGN units to keep
+// the fused tiling payload inside the A5 kernel-argument budget; turn them
+// back into byte offsets before touching the user workspace.
+__aicore__ inline uint64_t KdaBwdWorkspaceByteOffset(uint32_t stored)
+{
+    return static_cast<uint64_t>(stored) * KDA_BWD_WORKSPACE_ALIGN;
+}
+
 template <typename DataT, uint32_t V_DIM, typename BetaT,
           bool SAFE_GATE, bool VARLEN_TND>
 __aicore__ inline void RunChunkKdaBwd(
@@ -45,7 +53,8 @@ __aicore__ inline void RunChunkKdaBwd(
         RunChunkKdaBwdA<DataT, V_DIM>(
             aqk, vNew, h, dO, cuSeqlens, chunkIndices,
             dv0, dqRaw, dAqk,
-            userWorkspace + tiling.kernelCWorkspaceOffset -
+            userWorkspace +
+                KdaBwdWorkspaceByteOffset(tiling.kernelCWorkspaceOffset) -
                 static_cast<uint64_t>(tiling.kernelC.usedCoreNum) *
                     KDA_BWD_A_WORKSPACE_CORE_BYTES,
             aTiling, tiling.kernelC);
@@ -56,7 +65,9 @@ __aicore__ inline void RunChunkKdaBwd(
     // chunk recurrence.  Only the outer device entry and workspace base move.
     RunChunkKdaBwdB<DataT, V_DIM>(
         qg, kg, w, dO, dv0, gk, cuSeqlens, chunkIndices,
-        dh, dvScan, userWorkspace + tiling.kernelBWorkspaceOffset,
+        dh, dvScan,
+        userWorkspace +
+            KdaBwdWorkspaceByteOffset(tiling.kernelBWorkspaceOffset),
         tiling.kernelB);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     if (tiling.kernelC.useGateInKernel != 0 &&
@@ -91,7 +102,9 @@ __aicore__ inline void RunChunkKdaBwd(
         q, k, v, vNew, gk, beta, akk, h, dh, dvScan,
         dqRaw, dAqk, cuSeqlens, chunkIndices, rawG, aLog, dtBias,
         dq, dk, dv, db, dg, dAkk, dA, dBias,
-        userWorkspace + tiling.kernelCWorkspaceOffset, &tiling.kernelC,
+        userWorkspace +
+            KdaBwdWorkspaceByteOffset(tiling.kernelCWorkspaceOffset),
+        &tiling.kernelC,
         cActive);
 }
 
@@ -126,12 +139,18 @@ extern "C" __global__ __aicore__ void chunk_kda_bwd(
     GET_TILING_DATA_WITH_STRUCT(
         KDA::ChunkKdaBwdTilingData, tilingData, tiling);
 
-    GM_ADDR dv0 = userWorkspace + tilingData.dv0Offset;
-    GM_ADDR dq_raw = userWorkspace + tilingData.dqRawOffset;
-    GM_ADDR dAqk = userWorkspace + tilingData.dAqkOffset;
-    GM_ADDR dh = userWorkspace + tilingData.dhOffset;
-    GM_ADDR dv_scan = userWorkspace + tilingData.dvScanOffset;
-    GM_ADDR dAkk = userWorkspace + tilingData.dAkkOffset;
+    GM_ADDR dv0 =
+        userWorkspace + KDA::KdaBwdWorkspaceByteOffset(tilingData.dv0Offset);
+    GM_ADDR dq_raw =
+        userWorkspace + KDA::KdaBwdWorkspaceByteOffset(tilingData.dqRawOffset);
+    GM_ADDR dAqk =
+        userWorkspace + KDA::KdaBwdWorkspaceByteOffset(tilingData.dAqkOffset);
+    GM_ADDR dh =
+        userWorkspace + KDA::KdaBwdWorkspaceByteOffset(tilingData.dhOffset);
+    GM_ADDR dv_scan =
+        userWorkspace + KDA::KdaBwdWorkspaceByteOffset(tilingData.dvScanOffset);
+    GM_ADDR dAkk =
+        userWorkspace + KDA::KdaBwdWorkspaceByteOffset(tilingData.dAkkOffset);
 
 #define RUN_KDA_BWD(V_DIM, SAFE, VARLEN)                                      \
     KDA::RunChunkKdaBwd<DTYPE_Q, V_DIM, DTYPE_BETA, SAFE, VARLEN>(            \

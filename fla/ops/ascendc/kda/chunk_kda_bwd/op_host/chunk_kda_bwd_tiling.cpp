@@ -362,32 +362,42 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     uint64_t cursor = 0;
     const auto reserve = [&cursor](uint64_t bytes) {
         const uint64_t offset = cursor;
-        cursor = AlignUp(cursor + bytes, 512);
+        cursor = AlignUp(cursor + bytes, KDA::KDA_BWD_WORKSPACE_ALIGN);
         return offset;
     };
-    tiling->dv0Offset = static_cast<uint32_t>(
-        reserve(tokenCount * vDim * dataBytes));
-    tiling->dqRawOffset = static_cast<uint32_t>(
-        reserve(tokenCount * kDim * sizeof(float)));
-    tiling->dAqkOffset = static_cast<uint32_t>(
+    // Every private workspace region starts on a 512-byte boundary, so the
+    // offsets travel to the device in 512-byte units (see
+    // KDA_BWD_WORKSPACE_ALIGN).  The unit change keeps the fused tiling
+    // payload inside the proven A5 kernel-argument budget while lifting the
+    // single fused launch from the old 4 GiB byte-offset limit to a 2 TiB
+    // budget: a long-context SFT pack with T * H = 2^21 needs about 4.3 GiB
+    // of private workspace, which the previous byte-valued fields rejected.
+    const auto encodeOffset = [](uint64_t bytes) {
+        return static_cast<uint32_t>(bytes / KDA::KDA_BWD_WORKSPACE_ALIGN);
+    };
+    tiling->dv0Offset = encodeOffset(reserve(tokenCount * vDim * dataBytes));
+    tiling->dqRawOffset =
+        encodeOffset(reserve(tokenCount * kDim * sizeof(float)));
+    tiling->dAqkOffset = encodeOffset(
         reserve(static_cast<uint64_t>(akkShape.GetShapeSize()) * sizeof(float)));
-    tiling->dhOffset = static_cast<uint32_t>(reserve(
-        chunkTasks * headNum * kDim * vDim * dataBytes));
-    tiling->dvScanOffset = static_cast<uint32_t>(
-        reserve(tokenCount * vDim * dataBytes));
-    tiling->dAkkOffset = static_cast<uint32_t>(
+    tiling->dhOffset = encodeOffset(
+        reserve(chunkTasks * headNum * kDim * vDim * dataBytes));
+    tiling->dvScanOffset =
+        encodeOffset(reserve(tokenCount * vDim * dataBytes));
+    tiling->dAkkOffset = encodeOffset(
         reserve(static_cast<uint64_t>(akkShape.GetShapeSize()) * sizeof(float)));
-    tiling->kernelBWorkspaceOffset = static_cast<uint32_t>(cursor);
-    cursor = AlignUp(cursor + bUserWorkspace, 512);
+    tiling->kernelBWorkspaceOffset = encodeOffset(cursor);
+    cursor = AlignUp(cursor + bUserWorkspace, KDA::KDA_BWD_WORKSPACE_ALIGN);
     cursor = AlignUp(
         cursor + static_cast<uint64_t>(tiling->kernelC.usedCoreNum) *
                      KDA_A_RAW_WORKSPACE_PER_CORE,
-        512);
-    tiling->kernelCWorkspaceOffset = static_cast<uint32_t>(cursor);
+        KDA::KDA_BWD_WORKSPACE_ALIGN);
+    tiling->kernelCWorkspaceOffset = encodeOffset(cursor);
     cursor += cUserWorkspace;
-    OP_CHECK_IF(cursor > UINT32_MAX,
+    OP_CHECK_IF(cursor / KDA::KDA_BWD_WORKSPACE_ALIGN > UINT32_MAX,
                 OP_LOGE(context->GetNodeName(),
-                        "single-launch private workspace exceeds 4 GiB"),
+                        "single-launch private workspace exceeds the 2 TiB "
+                        "offset budget"),
                 return ge::GRAPH_FAILED);
     const uint64_t totalWorkspace = systemWorkspace + cursor;
 
