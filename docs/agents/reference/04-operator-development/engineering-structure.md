@@ -136,7 +136,7 @@ endif()
    展开 `add_subdirectory`：过滤构建（`FLA_NPU_OPS` / `--ops` 只列主算子）时，依赖算子的 `op_host`
    必须一起进本次构建；打包侧由 `cmake/custom_build.cmake` 按同一份 `${<算子>_depends}` 把依赖算子的
    `op_kernel` 产物安装到 impl 目录。完整的展开循环见
-   [`engineering-example/L2组合算子示例/.../op_name_fused/op_host/CMakeLists.txt`](engineering-example/L2组合算子示例/fla/ops/ascendc/gdn/op_name_fused/op_host/CMakeLists.txt)。
+   [`engineering-example/L2组合算子示例/.../op_name_fused/op_host/CMakeLists.txt`](engineering-example/L2组合算子示例/fla/ops/ascendc/ops_classify/op_name_fused/op_host/CMakeLists.txt)。
 4. 依赖缺失的症状是**运行期**报 `aclnnStatus=561103` 且 `Config_Error(EZ1013): ... the JSON
    configuration file of operator ... cannot be found` / `AclOpKernelInit failed`，编译与安装阶段都成功；
    这是依赖配置缺失，不是算子数值或 kernel 缺陷。**全量构建通过不能证明过滤构建自洽**，改动组合入口后

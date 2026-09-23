@@ -18,7 +18,7 @@
 
 ## 输入限制
 
-与算子 [`README.md`](../../../fla/ops/ascendc/gdn/op_name/README.md) 保持一致：
+与算子 [`README.md`](../../../fla/ops/ascendc/ops_classify/op_name/README.md) 保持一致：
 
 | 项 | 取值 |
 | --- | --- |
