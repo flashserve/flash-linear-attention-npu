@@ -46,8 +46,8 @@ ATK 侧组合算子不需要自己的 TilingKey 覆盖表（没有自己的 kern
 并要求该目录下有 `op_host/CMakeLists.txt` 且内部调用过 `add_op_to_compiled_list()`。因此：
 
 1. 形态 C 的算子**必须**有 `op_host/CMakeLists.txt`，否则整个目录不进构建（也不会报错）；
-2. 打开 `ENABLE_TEST` 时，构建系统要求 `${OP_DIR}/tests/CMakeLists.txt` 存在，否则该算子被跳过；
-   组合算子若不参与单测，仍需在该目录说明这一点，避免 CI 静默跳过；
+2. 测试不放算子目录：组合算子若需要单测，补在仓库根 `tests/ut/<算子>/` 下；构建脚本里的
+   `ENABLE_TEST` 探测逻辑以仓库实际约定为准，不要为了通过探测而在算子目录里加回 `tests/`；
 3. 没有 `def` 时 `ACLNNTYPE aclnn_exclude` 依然要写，表示不为该算子生成 aclnn 原型。
 
 ## 3. 禁止项

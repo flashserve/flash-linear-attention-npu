@@ -34,11 +34,11 @@ B 与 C 的 L2 写法相同，区别只在"本算子是否还有自己的 kernel
 
 | 文件（相对 `fla/ops/ascendc/<模块>/<算子>/`） | 这个文件必须做什么 | 规范章节 |
 | --- | --- | --- |
-| `CMakeLists.txt` | 只做子目录遍历；`ENABLE_TEST/BENCHMARK` 决定是否进 `tests` | §2 |
+| `CMakeLists.txt` | 只做子目录遍历；算子目录下没有 `tests`，不需要按 `ENABLE_TEST` 过滤 | §2 |
 | `README.md` | 能力、输入限制、输出布局的**唯一定义来源** | §7.10 |
 | `docs/api.md` | 全部公开接口、返回码、可选输出语义、布局规则 | §3.4、§5.1 |
 | `docs/design.md` | 方案详设；开头记录规则版本 | §7.10 |
-| `op_host/CMakeLists.txt` | 四段结构：注册来源、`add_modules_sources`、编译选项、`ENABLE_TEST` | §3.1 |
+| `op_host/CMakeLists.txt` | 三段结构：注册来源、`add_modules_sources`、编译选项（测试不放算子目录，因此没有 `add_subdirectory(tests)`） | §3.1 |
 | `op_host/<算子>_def.cpp` | `Input/Output/Attr` + 三 SoC config；**输出全部 `REQUIRED`** | §3.2 |
 | `op_host/<算子>_tiling.h` | TilingData 字段 + `REGISTER_TILING_DATA_CLASS` + 输入/属性索引枚举 | §3.3 |
 | `op_host/<算子>_tiling.cpp` | 校验 → TilingData → `GET_TPL_TILING_KEY` → `SetTilingKey/SetBlockDim` → workspace | §3.3、§4.2 |
@@ -48,13 +48,13 @@ B 与 C 的 L2 写法相同，区别只在"本算子是否还有自己的 kernel
 | `op_host/arch35/<算子>_tiling_impl.h` | A5 专用 tiling 常量与 tile 选择 | §3.5 |
 | `op_host/op_api/<算子>.h` / `.cpp` | L0 内部 exec：固定输出槽位数组，按档位写内部张量 | §3.4 |
 | `op_host/op_api/aclnn_<算子>.h` / `.cpp` | L2：可空输出描述符、档位推导、非法组合拦截、`GetWorkspaceSize`/`Launch` 成对 | §3.4、§5.1 |
-| `op_host/tests/CMakeLists.txt` + `<算子>_tiling_processor_test.cpp` | tiling 分支与档位单测（`ENABLE_TEST` 时编译） | §3.6 |
+| `tests/ut/<算子>/CMakeLists.txt` + `<算子>_tiling_processor_test.cpp` | tiling 分支与档位单测；**在仓库根 `tests/` 下**，不在算子目录里 | §2、§3.6 |
 | `op_kernel/<算子>.cpp` | 唯一入口：模板参数、架构选择、args 组装、分派 | §4.1、§4.3 |
 | `op_kernel/<算子>_struct.h` | 设备侧与 host 一致的 TilingData 结构与常量 | §4.3 |
 | `op_kernel/<算子>_tiling_key.h` | **必须**：`ASCENDC_TPL_ARGS_DECL` / `ASCENDC_TPL_SEL` | §4.2 |
 | `op_kernel/<算子>_<stage>.h` | 按 Stage 拆分的实现头 | §4.3 |
 | `op_kernel/arch22/`、`op_kernel/arch35/` 下的 `<算子>_cube.h`、`_vec.h` | 平台专用实现，文件名与根目录同名 | §4.1 |
-| `tests/README.md` | 算子自带脚本/数据的索引（ATK 资产放 `tests/atk/<算子>/`） | §6 |
+| `tests/README.md` | 根 `tests/` 的索引：`atk/<算子>/` 与 `ut/<算子>/` 的职责划分 | §6 |
 | `torch_custom/fla_npu/csrc/src/stable_<算子>.cpp` | `kSchema_` + `run_` + 一条 `FLA_STABLE_EXEC`（一算子一文件） | §5.3 |
 | `torch_custom/fla_npu/csrc/src/stable_ops.cpp`（追加） | `#include "stable_<算子>.cpp"` 一行 + `m.def`/`m.impl` 两行注册 | §5.3 |
 | `torch_custom/fla_npu/fla_npu/ops/ascendc/_stable.py`（追加） | 真签名 wrapper：入参名、默认值、返回 tuple | §5.3 |

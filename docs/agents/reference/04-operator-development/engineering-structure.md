@@ -44,7 +44,7 @@
 
 ```text
 fla/ops/ascendc/<模块>/<算子>/
-|-- CMakeLists.txt                        # 遍历子目录，按 ENABLE_TEST/BENCHMARK 决定是否进 tests
+|-- CMakeLists.txt                        # 只遍历子目录；算子目录里没有 tests/
 |-- README.md                             # 算子能力、输入限制、输出布局（唯一定义来源）
 |-- docs/
 |   |-- api.md                            # 全部公开接口、返回码、可选输出语义
@@ -62,9 +62,7 @@ fla/ops/ascendc/<模块>/<算子>/
 |   |   |-- <算子>.h / .cpp               # L0：内部 exec（opdev / l0op）
 |   |   |-- aclnn_<算子>.h / .cpp         # L2：公开 aclnn 接口（V1）
 |   |   `-- aclnn_<算子>_v2.h             # V2 迭代入口的公开声明（实现见 §5.2）
-|   `-- tests/                            # host/tiling 单测（ENABLE_TEST 时编译）
-|       |-- CMakeLists.txt
-|       `-- <算子>_tiling_processor_test.cpp
+|   `-- <算子>_tiling_processor.h          # tiling 计算主体：header-only，供根 tests/ut 直接 include
 |-- op_kernel/
 |   |-- <算子>.cpp                        # 唯一 kernel 入口：模板参数 + 架构选择 + tiling key 分派
 |   |-- <算子>_struct.h                   # TilingData 与常量
@@ -73,11 +71,20 @@ fla/ops/ascendc/<模块>/<算子>/
 |   |-- arch22/                           # A2/A3 专用实现（按需），文件名与根目录同名
 |   `-- arch35/                           # A5/ascend950 专用实现，文件名与根目录同名
 |-- examples/                             # 可选：test_aclnn_<算子>_*.cpp 直调示例
-`-- tests/                                # 可选：算子自带脚本/ATK 资产
+`-- （算子目录下没有 tests/）
 ```
 
 上表是**必需集合**：`_tiling_key.h` 属于必需件（见 §4.2），清单里没有再列 `_policy.h`、`_common.h`
 这类"可有可无"的文件——需要公共工具时按实际内容建同名文件，但不要为了对齐目录树而空建。
+
+**测试位置**：所有测试用例集中在仓库根目录 `tests/` 下，算子目录里不建 `tests/`、`op_host/tests/`
+或 `op_kernel/tests/`（历史算子残留的这类目录属于旧写法，新算子不沿用）：
+
+```text
+tests/
+|-- atk/<算子>/       # 单算子看护：精度 / 性能 / 确定性 / mssanitizer（见 tests/atk/README.md）
+`-- ut/<算子>/        # host / tiling 单测：档位推导、分核、workspace、溢出保护（无 NPU 也能跑）
+```
 
 对应的调用层文件（与算子目录一一对应，缺一不可）：
 
@@ -106,11 +113,13 @@ tests/atk/<算子>/
 
 1. 任何形态（含只有 L2 的组合算子）都**必须**有 `op_host/CMakeLists.txt`；漏掉时整个目录不进构建，
    而且不会有任何报错。
-2. 打开 `ENABLE_TEST` 时，构建系统要求 `${OP_DIR}/tests/CMakeLists.txt` 存在，否则**跳过该算子**；
-   不做单测的算子要在 README 里写明，避免 CI 静默跳过。
+2. 测试不放算子目录：所有测试用例集中在仓库根 `tests/` 下（见 §2 的测试位置说明）。历史/当前脚本里
+   可能仍按 `${OP_DIR}/tests/CMakeLists.txt` 探测 UT；遇到这种探测时按仓库实际构建约定接入根 `tests/`
+   的入口，**不要为了通过探测而在算子目录里加回 `tests/`**，探测逻辑与本节冲突时按 §9 记录。
 3. 目录里有 `op_kernel_aicpu/` 而未开 `ENABLE_AICPU` 时，该算子同样被跳过。
 
-固定由四段组成，新增算子按相邻算子抄写，不要自创结构：
+固定由三段组成（测试不在算子目录，因此没有 `add_subdirectory(tests)`），新增算子按相邻算子抄写，
+不要自创结构：
 
 ```cmake
 add_op_to_compiled_list()
@@ -123,9 +132,8 @@ add_ops_compile_options(
     OPTIONS --cce-auto-sync=off
             -Wno-deprecated-declarations
 )
-if(ENABLE_TEST)
-    add_subdirectory(tests)
-endif()
+# 注意：host / tiling 单测在仓库根 tests/ut/<算子>/，ATK 用例在 tests/atk/<算子>/；
+# 算子目录里不放 tests/，因此这里不写 add_subdirectory(tests)。
 ```
 
 规则：
@@ -144,6 +152,8 @@ endif()
    V2 组合入口缺少 `chunk_fwd_h` 的配置（Issue #695，由 #705 系列合入修复）。
 5. 只有 L2 的组合算子（没有 def）不写 `target_sources(op_host_aclnnExc ...)`，其余结构相同
    （见 [`engineering-example/L2组合算子示例/`](engineering-example/L2组合算子示例/)）。
+6. 算子目录里不放任何测试：`tests/`、`op_host/tests/`、`op_kernel/tests/` 都不建；单测在
+   `tests/ut/<算子>/`，ATK 资产在 `tests/atk/<算子>/`（见 §2 与 §3.6）。
 
 ### 3.2 `def`：输入、输出与属性
 
@@ -227,12 +237,16 @@ endif()
    `arch20`、`arch31`、`arch38`（见 `cmake/ut.cmake`、`cmake/scripts/get_soc_version.py`）。
 3. 平台差异不得表现为"复制一整套 host 代码"；公共校验、TilingData 结构与任务描述保持一份。
 
-### 3.6 `op_host/tests`
+### 3.6 单测位置与要求
 
-1. 位置：`op_host/tests/<算子>_*_test.cpp` + `CMakeLists.txt`，仅在 `ENABLE_TEST` 打开时编译。
-2. 用途：验证 tiling 的分支选择、`outputMask` 档位推导、任务切分和边界条件（不替代 ATK 精度验收）。
-3. 覆盖要求：每个可达 TilingKey 至少一条用例，输出掩码/档位组合用 `static_assert` + 单测双重保护
-   （参考 `chunk_kda_fwd_prepare_output_mask.h` 与 `op_host/tests/chunk_kda_fwd_prepare_tiling_processor_test.cpp`）。
+1. 位置：`tests/ut/<算子>/<算子>_tiling_processor_test.cpp` + 同目录 `CMakeLists.txt`（根 `tests/` 下，
+   见 §2 的测试位置说明）；算子目录里不放测试，也不要通过算子目录的 `add_subdirectory(tests)` 触发构建。
+2. 依赖：被测实现（`op_host/<算子>_tiling_processor.h`）保持 header-only，单测直接 include，
+   不链接算子目标、不 include 算子目录里的 `.cpp`，避免重复定义与额外链接目标。
+3. 用途：验证 tiling 的分支选择、`outputMask` 档位推导、任务切分、workspace 计算和溢出保护
+   （不替代 ATK 精度验收）。
+4. 覆盖要求：每个可达 TilingKey 至少一条用例；输出掩码/档位的互斥与全覆盖用 `static_assert` 静态保护，
+   单测再验证"档位 → 掩码"的映射（只靠 `static_assert` 无法发现映射写错）。
 
 ## 4. kernel 层规范
 
@@ -404,7 +418,9 @@ endif()
 | --- | --- | --- |
 | 仓级门禁 | `ci/run_checks.sh`、`tests/test_stable_gates.py`、`torch_custom/fla_npu/tools/*` | 构建、wheel 与 OPP 布局、ABI 与适配层一致性、公开名导出 |
 | 单算子精度/性能看护 | `tests/atk/<算子>/` | 精度、性能、确定性、mssanitizer、TilingKey 覆盖、验收结果 |
-| 算子内 UT/示例 | `op_host/tests/`、`examples/test_aclnn_<算子>_*.cpp` | tiling 分支、`outputMask` 档位、aclnn 直调 |
+| 单算子单测/示例 | `tests/ut/<算子>/`、`examples/test_aclnn_<算子>_*.cpp` | tiling 分支、`outputMask` 档位映射、aclnn 直调 |
+
+三层都在根目录侧：算子目录只提供被测实现与 header-only 头文件。
 
 ### 6.1 `tests/atk/<算子>/` 交付要求
 
@@ -461,7 +477,9 @@ endif()
 新增或迭代算子时逐条确认：
 
 - [ ] 目录树与 §2 一致；没有自创后缀或未登记的子目录。
-- [ ] `op_host/CMakeLists.txt` 四段齐全，`--cce-auto-sync=off` 未被改动。
+- [ ] `op_host/CMakeLists.txt` 三段齐全（无 `add_subdirectory(tests)`），`--cce-auto-sync=off` 未被改动。
+- [ ] 算子目录里没有 `tests/`、`op_host/tests/`、`op_kernel/tests/`；单测在 `tests/ut/<算子>/`、
+      ATK 资产在 `tests/atk/<算子>/`。
 - [ ] `def` 的输出全部 `REQUIRED`；没有新增 `ParamType(OPTIONAL)` 输出。
 - [ ] 可选输出的缺席语义只在 L2 表达，且档位/掩码组合有显式枚举与非法组合拦截。
 - [ ] L1 与 L2 的职责边界清楚：L2 不解释重计算策略，不做 dense 拷贝，报错带实际值。

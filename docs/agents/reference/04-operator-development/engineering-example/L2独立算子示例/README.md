@@ -40,4 +40,4 @@ L2独立算子示例/                            # 形态 A 的示例根目录�
 | 模板化 TilingKey 必需 | `_tiling_key.h` 的 `ASCENDC_TPL_ARGS_DECL`/`ASCENDC_TPL_SEL` + `_tiling.cpp` 的 `GET_TPL_TILING_KEY` |
 | `arch22` 与 `arch35` 都是平台实现目录 | `op_kernel/arch22/`、`op_kernel/arch35/`；`op_host/arch22/`、`op_host/arch35/` 下的 `*_tiling_impl.h` |
 | TilingKey 不编码平台 | key 只由 dtype 与模式决定；平台在 kernel 入口按 `__CCE_AICORE__` 选择 |
-| 三层看护 | `op_host/tests/`、`tests/atk/op_name/`、调用层门禁 |
+| 三层看护 | `tests/ut/op_name/`、`tests/atk/op_name/`、调用层门禁（算子目录里不放测试） |

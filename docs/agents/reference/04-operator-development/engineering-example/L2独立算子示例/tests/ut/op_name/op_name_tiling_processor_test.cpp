@@ -1,16 +1,18 @@
 /**
- * 示例文件：.../op_host/tests/op_name_tiling_processor_test.cpp
+ * 示例文件：tests/ut/op_name/op_name_tiling_processor_test.cpp（仓库根目录的 tests/ 下）
  *
  * 注意事项：
- *   1. 单测直接调用 tiling 计算入口与档位常量，不构造 TilingContext；这样任何平台都能跑。
- *   2. 必须覆盖：每个可达档位的 workspace 计算、分核余数分配、溢出保护、档位与区域数量一致。
- *   3. 输出掩码的互斥与全覆盖由 static_assert 静态保护，单测再测"档位 -> 掩码"的映射，
+ *   1. 测试在根 `tests/` 下，算子目录里不放测试；被测实现只通过算子 `op_host/` 的 header-only
+ *      头文件引入（下面用相对路径，真实仓库里 tests/ut/<op_name>/ 到算子目录的相对深度相同）。
+ *   2. 单测直接调用 tiling 计算入口与档位常量，不构造 TilingContext；这样任何平台都能跑。
+ *   3. 必须覆盖：每个可达档位的 workspace 计算、分核余数分配、溢出保护、档位与区域数量一致。
+ *   4. 输出掩码的互斥与全覆盖由 static_assert 静态保护，单测再测"档位 -> 掩码"的映射，
  *      两者缺一：只靠 static_assert 无法发现档位映射写错。
- *   4. 断言要带上下文（哪个档位、哪些输入），失败时能直接定位。
- *   5. 这里不测精度；精度、性能、内存检查在 tests/atk/<算子>/。
+ *   5. 断言要带上下文（哪个档位、哪些输入），失败时能直接定位。
+ *   6. 这里不测精度；精度、性能、内存检查在 tests/atk/<算子>/。
  */
 
-#include "op_name_tiling_processor.h"
+#include "../../../fla/ops/ascendc/ops_classify/op_name/op_host/op_name_tiling_processor.h"
 
 #include <cstdio>
 #include <cstdint>
