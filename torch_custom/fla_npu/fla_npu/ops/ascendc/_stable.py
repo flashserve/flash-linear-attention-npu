@@ -1535,12 +1535,6 @@ def npu_solve_tri(x, *, cu_seqlens=None, chunk_indices=None, layout="bsnd"):
     """
 
     layout = str(layout)
-    if layout == "tnd":
-        raise RuntimeError(
-            "npu_solve_tri: layout='tnd' is refused because the operator "
-            "crashes the process for that spelling on this OPP (verified on "
-            "both the ctypes and the Stable-ABI path). Use layout='bsnd' or "
-            "'bnsd'.")
     return _op("npu_solve_tri")(
         x.contiguous(), _host_ints(cu_seqlens), _host_ints(chunk_indices),
         _char_code("npu_solve_tri", "layout", layout),
