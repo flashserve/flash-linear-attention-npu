@@ -1720,9 +1720,11 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
     Three shape-specific workarounds sit on top of the single launch, and they
     are the reason this wrapper is longer than the others:
 
-    * a packed sequence whose last chunk is short (or a packed V=256 call on
-      Atlas A2) is split into independent dense calls, because the fused
-      pipeline produces stale or non-finite values for those;
+    * a packed sequence whose last chunk is short on Atlas A2/A5 (or a packed
+      V=256 call on Atlas A2) is split into independent dense calls, because
+      the fused pipeline produces stale or non-finite values for those; Atlas
+      A3 keeps the fused packed launch, where its gradients match the split
+      path bitwise and the split costs about twice the runtime;
     * a single packed sequence with a short tail is instead padded inside its
       last chunk and the token gradients sliced back;
     * on A2 an odd head count gets a duplicated partner head, because the
@@ -1787,16 +1789,22 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
     has_varlen_tail = is_varlen and any(
         (end - begin) % chunk_size != 0 for begin, end in zip(cu, cu[1:]))
     is_a2_device = False
+    is_a3_device = False
     if use_dense_varlen_fallback or heads % 2 != 0 or has_varlen_tail:
         device_index = q.device.index
         if device_index is None:
             device_index = torch.npu.current_device()
         device_name = str(torch.npu.get_device_name(device_index))
         is_a2_device = device_name.startswith("Ascend910B")
+        is_a3_device = "910_93" in device_name
 
-    # 短尾 packed 序列统一拆成逐序列 dense 调用：fused packed 流水线对其会产生
-    # 陈旧/非有限值，拆开后每条序列走已验证的 dense 路径（A2 上 V=256 同理）。
-    if (is_a2_device and use_dense_varlen_fallback) or has_varlen_tail:
+    # 短尾 packed 序列的逐序列拆分按设备区分：A5 原生 packed 短尾会暴露 C-Intra
+    # AIC/AIV 竞态，A2 上 fused packed 流水线对短尾也会留下陈旧/非有限值，两者
+    # 继续拆分（A2 上 V=256 一并拆分）。A3 已实测直连 fused packed 与拆分路径的
+    # 梯度逐位一致，直连可省掉约两倍的逐序列 dense 调用开销。设备名无法识别时
+    # 保持保守策略（继续拆分）。
+    if (is_a2_device and use_dense_varlen_fallback) or (
+            has_varlen_tail and not is_a3_device):
         sequence_results = []
         chunk_begin = 0
         for token_begin, token_end in zip(cu, cu[1:]):
