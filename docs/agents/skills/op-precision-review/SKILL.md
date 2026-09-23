@@ -35,6 +35,11 @@ metadata:
    默认执行 lv0-lv2；被检视算子是复杂算子（多核、多 Stage、跨核握手、融合）时叠加 lv3。
 2. **建映射**：把被检视文件按层归类（`op_host`、`op_kernel`、`op_api`、调用层），
    列出本次改动涉及的函数/分支，作为后续逐条检视的清单。
+   先排除环境与构建类错误：过滤构建缺依赖配置、算子未命中当前 OPP 时会报
+   `aclnnStatus=561103` / `Config_Error(EZ1013): ... the JSON configuration file of operator ...
+   cannot be found` 一类信息，这属于依赖/安装问题（排查顺序见
+   [`../../reference/04-operator-development/engineering-structure.md`](../../reference/04-operator-development/engineering-structure.md) §3.1、§5.4），
+   不要按精度根因统计。
 3. **逐级检视**：按 lv0 → lv1 → lv2 → lv3 执行，每级读对应 reference：
    - 类别定义、范围与分级依据：[`references/01-scope-and-categories.md`](references/01-scope-and-categories.md)
    - lv0 / lv1 / lv2 检查清单：[`references/02-lv0-lv2-checklist.md`](references/02-lv0-lv2-checklist.md)

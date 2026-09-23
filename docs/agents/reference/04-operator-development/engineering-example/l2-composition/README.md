@@ -44,6 +44,23 @@ fla/ops/ascendc/<模块>/<算子>/
 4. 不要在 L2 里解释 autograd 重计算策略——由 Python/legacy 层决定传哪些输出指针；
 5. 不要在缺依赖时静默降级：依赖没编译出来要在 tiling/launch 阶段明确报错，并指向缺失依赖算子。
 
+## 4. 依赖闭包与过滤构建（最容易被漏掉的一条）
+
+组合入口的依赖要在**两个地方**同时生效，缺任一处都会"编译、安装都成功，跑到组合入口才失败"：
+
+| 侧 | 位置 | 作用 |
+| --- | --- | --- |
+| 构建侧 | 本算子 `op_host/CMakeLists.txt` 里按 `<算子>_depends` 展开的 `foreach` + `add_subdirectory` | 过滤构建（`FLA_NPU_OPS` / `--ops` 只列主算子）时，把依赖算子的 `op_host`（def/config/tiling）带进本次构建 |
+| 打包侧 | `cmake/custom_build.cmake` 按同一份 `${<算子>_depends}` 安装依赖算子的 `op_kernel` 产物 | 让依赖算子的 JSON 配置与 kernel 产物一起进包并注册 |
+
+漏掉的症状固定为运行期：`aclnnStatus=561103` 且
+`Config_Error(EZ1013): ... the JSON configuration file of operator aclnn<Op>_0_<Dep> cannot be found`、
+`AclOpKernelInit failed, opType: <Dep>`。这是依赖配置缺失，**不是算子数值或 kernel 问题**，排查时不要先看精度。
+真实案例：`chunk_kda_fwd` 的 V2 组合入口缺少 `chunk_fwd_h` 的配置（Issue #695，由 #705 系列合入修复）。
+
+验证要求：改动组合入口或 `<算子>_depends` 后，做一次"只列主算子"的过滤构建，并跑一条走组合路径的
+端到端用例；全量构建通过**不能**证明过滤构建自洽（该缺陷在全量构建下不出现）。
+
 ## 4. 组合入口的 L2 只做四件事
 
 1. 入参校验（支持范围、dtype/layout、元数据单调性）；

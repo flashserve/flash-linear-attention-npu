@@ -40,3 +40,7 @@ ExampleScanFused(x, g, ...) =
 3. 依赖算子未编译时（只编本算子），组合入口会在 tiling/launch 阶段报错并指向缺失依赖；
    不要把这种情况静默降级成单算子路径。
 4. 三个 SoC 共用同一入口；平台差异在被组合算子的 kernel 里，不在本层。
+5. 依赖算子的配置与 kernel 产物必须随本算子一起构建与打包：过滤构建（只列本算子）时必须按
+   `<算子>_depends` 展开依赖闭包，否则会在调用本入口时报 `aclnnStatus=561103` +
+   `Config_Error(EZ1013): ... the JSON configuration file of operator ... cannot be found`。
+   这是依赖配置缺失，不是数值问题；发布前要用一次"只列本算子"的过滤构建验证包自洽。

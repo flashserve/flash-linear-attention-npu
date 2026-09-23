@@ -132,8 +132,17 @@ endif()
 
 1. 保持 `--cce-auto-sync=off`，不得改为 `on`；同步由代码显式表达。
 2. 平台相关编译选项（如 `ascend950` 的 `COMPUTE_UNIT Ascend950PR_9599`）只加在平台分支里。
-3. 算子间依赖（复用其他算子的 kernel 源）用 `set(<算子>_depends "...;...")` 声明，不要靠 `add_subdirectory` 手拼。
-4. 只有 L2 的组合算子（没有 def）不写 `target_sources(op_host_aclnnExc ...)`，其余结构相同
+3. 算子间依赖（复用其他算子的 kernel 源）用 `set(<算子>_depends "...;...")` 声明，并按依赖闭包
+   展开 `add_subdirectory`：过滤构建（`FLA_NPU_OPS` / `--ops` 只列主算子）时，依赖算子的 `op_host`
+   必须一起进本次构建；打包侧由 `cmake/custom_build.cmake` 按同一份 `${<算子>_depends}` 把依赖算子的
+   `op_kernel` 产物安装到 impl 目录。完整的展开循环见
+   [`engineering-example/l2-composition/.../example_scan_fused/op_host/CMakeLists.txt`](engineering-example/l2-composition/fla/ops/ascendc/demo/example_scan_fused/op_host/CMakeLists.txt)。
+4. 依赖缺失的症状是**运行期**报 `aclnnStatus=561103` 且 `Config_Error(EZ1013): ... the JSON
+   configuration file of operator ... cannot be found` / `AclOpKernelInit failed`，编译与安装阶段都成功；
+   这是依赖配置缺失，不是算子数值或 kernel 缺陷。**全量构建通过不能证明过滤构建自洽**，改动组合入口后
+   必须用一次"只列主算子"的过滤构建 + 一条走组合路径的端到端用例验证。真实案例：`chunk_kda_fwd` 的
+   V2 组合入口缺少 `chunk_fwd_h` 的配置（Issue #695，由 #705 系列合入修复）。
+5. 只有 L2 的组合算子（没有 def）不写 `target_sources(op_host_aclnnExc ...)`，其余结构相同
    （见 [`engineering-example/l2-composition/`](engineering-example/l2-composition/)）。
 
 ### 3.2 `def`：输入、输出与属性
@@ -362,8 +371,10 @@ endif()
 2. B/C 两种形态的 L2 只做四件事：入参校验、layout 与连续化处理、按组合顺序调用 L0、把内部张量
    拼接成公开输出（`ReuseOrAlloc` 复用调用方张量，必要时一次 `ViewCopy`）。
 3. 组合入口必须复用被组合算子的 L0，不得复制其 kernel，也不得在 L2 里重写其数学。
-4. 依赖关系写进 `op_host/CMakeLists.txt`（`set(<算子>_depends "...")`，同时覆盖 L0 头与 kernel 源）；
-   否则只编本算子时组合入口会在 tiling 阶段失败，且报错无法指向缺失依赖。
+4. 依赖关系写进 `op_host/CMakeLists.txt`：`set(<算子>_depends "...")` 覆盖 L0 头与 kernel 源，并按
+   依赖闭包展开构建（构建侧）——`cmake/custom_build.cmake` 会按同一份变量打包依赖产物（打包侧）。
+   只声明不展开时，过滤构建产出的包不自洽：跑到组合入口才以 `561103` + `EZ1013`（缺 JSON 配置）失败，
+   容易被误判为数值问题；详见 §3.1 第 3–4 条与 Issue #695。
 5. 组合入口要显式声明支持范围（哪些 dtype/layout/shape 走组合、其余回落哪个入口），不满足时返回
    `ACLNN_ERR_PARAM_INVALID`；支持范围与回落规则写进 `docs/api.md`。
 6. C 形态仍必须交付：schema 与公开名、Stable-ABI 适配（`csrc/src/stable_<算子>.cpp`）、`docs/api.md`、
@@ -399,6 +410,8 @@ endif()
 2. 修改 TilingKey / 模板 / 分派分支：更新覆盖表 + 补 `_mss.json` 用例 + 给出实际选择证据。
 3. 修改 def / aclnn 签名 / schema / `op_plugin` 适配：按 ABI 敏感路径请求 owner 检视，并重跑适配层门禁。
 4. 修改公共组件或 runtime：列出全部受影响算子，逐个跑单算子看护，并补充 affected-ops 的 Example/ST。
+5. 新增或修改组合入口（形态 B/C）或 `<算子>_depends`：补一次"只列主算子"的过滤构建，并用一条走组合
+   路径的端到端用例确认包自洽（全量构建不会暴露缺依赖配置的问题）。
 
 ## 7. 编码细节规范
 
@@ -435,6 +448,8 @@ endif()
 - [ ] L1 与 L2 的职责边界清楚：L2 不解释重计算策略，不做 dense 拷贝，报错带实际值。
 - [ ] 根目录 kernel 是默认（arch22）实现，`arch35/` 只放差异文件，架构选择用 `__CCE_AICORE__ == 310`。
 - [ ] TilingKey 只标场景族；模板参数用 `ASCENDC_TPL_*` 声明与枚举，内部用 `if constexpr`。
+- [ ] 组合入口的 `<算子>_depends` 已按依赖闭包展开（构建侧 + 打包侧各一份），并用"只列主算子"的
+      过滤构建验证过包自洽（不出现 `561103` / `EZ1013`）。
 - [ ] `kSchema_`/`run_`/`FLA_STABLE_EXEC` 三处参数顺序一致，公开名已加入 `_ASCENDC_OPS`。
 - [ ] 新增关键字参数在末尾且默认值等于历史行为；返回 tuple 只追加。
 - [ ] V1 未被修改；V2 的差异、支持范围与默认值在 `aclnn_*_v2.h` 与 `docs/api.md` 写清。
