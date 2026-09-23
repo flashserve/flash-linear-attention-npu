@@ -49,6 +49,10 @@ _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _BUILD_LOG_NAME = "fla-npu-build.log"
 _BUILD_LOG_TAIL_SECONDS = 0.2
 _FAILURE_LOG_TAIL_LINES = 40
+# make 的 `[ NN%]` 只反映当前 cmake/make 调用：一次一键编包里会先后出现多次
+# 从 0% 重新开始的调用，且较早结束的那次会先到 100%。因此编译阶段内最多推到
+# 90%，剩余的 10% 由 build.sh 的结束标记补齐，避免进度条提前顶到阶段末端。
+_COMPILE_STAGE_INNER_CAP = 0.9
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
@@ -114,6 +118,8 @@ class _BuildProgress:
         self._fraction = 0.0
         self._started = time.monotonic()
         self._frame = 0
+        self._targets = 0
+        self._activity = ""
         self._last_draw = 0.0
         self._line_open = False
         self._announced = -1
@@ -157,9 +163,12 @@ class _BuildProgress:
         bar = "█" * filled + "░" * (self.BAR_WIDTH - filled)
         spinner = _PROGRESS_SPINNER[self._frame % len(_PROGRESS_SPINNER)]
         label = _PROGRESS_STAGES[self._stage][0]
+        detail = ""
+        if self._stage == _stage_index("编译算子") and self._targets:
+            detail = f"  已编译 {self._targets} 个目标"
         self._write(
             f"\r\x1b[2K[fla-npu build] {bar} {ratio * 100:3.0f}%"
-            f"  {label}  {spinner}  {_format_elapsed(now - self._started)}"
+            f"  {label}{detail}  {spinner}  {_format_elapsed(now - self._started)}"
         )
         self._line_open = True
 
@@ -211,9 +220,14 @@ class _BuildProgress:
         text = _ANSI_ESCAPE_RE.sub("", line).strip()
         if not text:
             return
+        if "Built target" in text:
+            self._targets += 1
         match = _MAKE_PROGRESS_RE.search(text)
         if match:
-            self.enter("编译算子", int(match.group(1)) / 100.0)
+            self.enter(
+                "编译算子",
+                min(int(match.group(1)) / 100.0, _COMPILE_STAGE_INNER_CAP),
+            )
             return
         if "[fla-npu build] START" in text:
             self._note_start(text.split("START", 1)[1])
