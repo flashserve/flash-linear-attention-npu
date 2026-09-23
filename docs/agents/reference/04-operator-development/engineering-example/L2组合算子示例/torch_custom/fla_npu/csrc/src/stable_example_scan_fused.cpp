@@ -1,9 +1,17 @@
 /**
  * 示例文件（形态 C）：torch_custom/fla_npu/csrc/src/stable_example_scan_fused.cpp
  *
+ * 交付布局依据 torch_custom/fla_npu/README.md §1.1：组合算子没有 def/kernel，但对外仍然是一个
+ * 算子入口，所以交付件与普通算子完全相同（4 个文件）：
+ *
+ *   csrc/src/stable_example_scan_fused.cpp   # 本文件（新建，文件名 = 算子名去掉 npu_）
+ *   csrc/src/stable_ops.cpp                  # include 一行 + m.def/m.impl 两行
+ *   fla_npu/ops/ascendc/_stable.py            # 真签名 wrapper
+ *   fla_npu/ops/ascendc/__init__.py           # _ASCENDC_OPS 加一行 public 名
+ *
  * 注意事项：
- *   1. 组合算子同样要有自己的 schema 与适配文件：它没有 def/kernel，但对外仍然是一个算子入口，
- *      一算子一文件（文件名 = 算子名去掉 npu_），并在 stable_ops.cpp 加 include 与注册两行。
+ *   1. 一算子一文件、用宏写：`kSchema_example_scan_fused` 形参 === `run_` 形参 ===
+ *      `FLA_STABLE_EXEC` 实参 === aclnn 头文件顺序（`stream` 固定在最后）。
  *   2. 三处参数顺序一致：kSchema_ 声明 = run_ 形参 = FLA_STABLE_EXEC 下发的 aclnn 实参顺序。
  *   3. 可选输出用 std::optional<Tensor>；缺席返回 std::nullopt（走 boxed optional 打包）。
  *   4. 档位与"回落入口"的选择在 Python wrapper 完成，适配层只做拆栈与下发，不判断场景。

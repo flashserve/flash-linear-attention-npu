@@ -26,11 +26,17 @@ fla/ops/ascendc/<模块>/<算子>/
         |-- aclnn_<算子>.h        # 公开 L2 接口
         `-- aclnn_<算子>.cpp      # 组合实现（l0op:: 调用其它算子的 L0）
 
-torch_custom/fla_npu/
-|-- csrc/src/stable_<算子>.cpp        # 组合算子同样要 schema + 适配（一算子一文件）
-|-- csrc/src/stable_ops.cpp           # include 一行 + 注册两行
-`-- fla_npu/ops/ascendc/_stable.py     # 真签名 wrapper（形态 B 在这里做 V2/V1 场景选择）
+torch_custom/fla_npu/                  # 交付件布局与 torch_custom/fla_npu/README.md §1.1 一致
+|-- csrc/src/stable_<算子>.cpp        # 新建：组合算子同样要 schema + 适配（一算子一文件）
+|-- csrc/src/stable_ops.cpp           # 改：include 一行 + m.def/m.impl 两行
+`-- fla_npu/ops/ascendc/
+    |-- _stable.py                    # 改：真签名 wrapper（校验与默认值；场景选择不在这层）
+    `-- __init__.py                   # 改：_ASCENDC_OPS 加一行 public 名
 ```
+
+一个容易写错的点：**V1/V2 的场景选择在 C++ 适配层的 `run_` 里**，不在 Python wrapper 里
+（仓内真实例子：`csrc/src/stable_chunk_kda_fwd.cpp` 内部在 `aclnnChunkKdaFwdV2` 与 `aclnnChunkKdaFwd`
+之间分支）。Python wrapper 只做"schema 表达不了的参数校验 + 默认值补齐 + 透传"。
 
 ATK 侧组合算子不需要自己的 TilingKey 覆盖表（没有自己的 kernel），但仍要有端到端用例：至少一条
 走组合路径、一条走回落路径，并覆盖缺依赖时报错可定位的场景（见 §4）。

@@ -335,8 +335,10 @@ endif()
    `useQkL2normInKernel=false`、`useBetaSigmoidInKernel=false`、`useExp2=true`）。
 7. **不得静默忽略开关**：开关被显式打开但当前场景不在 V2 支持范围内时，Python 入口直接报错并提示场景要求，
    不允许静默降级到 V1 或忽略该开关。
-8. **场景选择在上层**：由 `fla_npu.ops.ascendc.<op>` 决定调用 V1 还是 V2（命中 V2 场景优先 V2，否则回落 V1），
-   调用方只面对一套 Python 签名。
+8. **场景选择在适配层 `run_`**：V1/V2 是同一个 schema 的两条 aclnn 入口，由
+   `torch_custom/fla_npu/csrc/src/stable_<op>.cpp` 的 `run_<op>` 内部按参数/形状分支选择
+   （参考 `stable_chunk_kda_fwd.cpp` 在 `aclnnChunkKdaFwdV2` 与 `aclnnChunkKdaFwd` 之间的分支）；
+   Python wrapper 只做参数校验、默认值补齐与透传，调用方也只面对一套 Python 签名。
 9. **交付同步**：`docs/api.md` 必须同时记录两个入口的签名、关系表、场景差异与返回码；`docs/design.md` 记录
    组合关系；ATK 用例覆盖 V1、V2 与回退路径；`tools/op_abi_validate.py` 能对 OPP 头文件校验所有 `FLA_STABLE_EXEC` 调用点。
 10. **ABI 重检**：只新增 V2 文件、不动 def 和 V1 aclnn 时，不触发额外 ABI 检视；一旦改动 def 或既有 aclnn 的
@@ -359,6 +361,11 @@ endif()
    契约回归由 `tests/stable_abi/` 覆盖。
 9. **一算子一文件**：新建 `csrc/src/stable_<op>.cpp`，在 `stable_ops.cpp` 加 `#include` 一行与注册两行；
    不新增手写入口（两个 recurrent 适配是 pre-macro 历史遗留，不作为模板）。
+   完整交付件只有四个文件，以 [`torch_custom/fla_npu/README.md`](../../../../torch_custom/fla_npu/README.md) §1.1 为准：
+   `csrc/src/stable_<op>.cpp`（新建）、`csrc/src/stable_ops.cpp`（include 一行 + `m.def`/`m.impl` 两行）、
+   `fla_npu/ops/ascendc/_stable.py`（真签名 wrapper，不要 `*args`/`**kwargs`）、
+   `fla_npu/ops/ascendc/__init__.py`（`_ASCENDC_OPS` 加一行 public 名）。不要自造 `*.append.*`
+   之类的中间文件名，直接改仓库中的同名文件。
 10. **不需要 ctypes**：新算子默认没有 ctypes 回退，`_LAUNCHER_ONLY_OPS` 自动推导；不得为了"兼容"回退到 ctypes。
 11. **门禁**：`tools/stable_coverage.py`、`tools/op_abi_parity.py`、`tools/stable_ctypes_fallbacks.py`、
     `tests/test_stable_gates.py` 全部通过后才算接口交付完整。
