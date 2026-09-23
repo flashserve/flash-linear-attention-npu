@@ -1730,8 +1730,12 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
     * on A2 an odd head count gets a duplicated partner head, because the
       Intra pipeline processes heads in pairs.
 
-    All three are the reference's own strategy; the only difference here is
-    that the dense call goes to the launcher instead of to ctypes.
+    The split/padding rules are the launcher's port of the reference strategy:
+    Atlas A5 splits every packed tail, Atlas A2 additionally splits packed
+    tails and V=256 calls and pads odd head counts, and Atlas A3 keeps the
+    fused packed launch, where its gradients already match the split path
+    bitwise.  The only other difference from the reference is that the dense
+    call goes to the launcher instead of to ctypes.
     """
 
     import torch
