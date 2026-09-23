@@ -12,6 +12,9 @@
  *   5. 不做 dense 拷贝之外的布局改写：非连续输入交给 l0op::Contiguous，其余按 view 交给算子。
  *   6. 不在本层判断 disable_recompute 之类策略；只认输出指针。
  *   7. Launch 阶段失败返回 ACLNN_ERR_INNER，并给出算子名。
+ *   8. 原地路径：对 initialStateRef / finalState 分别做非连续处理（executorPtr->CreateView），并校验
+ *      两者 shape/dtype 一致，否则返回 ACLNN_ERR_PARAM_INVALID；inplaceFinalState=false 时不得写回入参
+ *      张量（参考 aclnn_recurrent_kda.cpp 组装 finalStateForKernel 的写法）。
  */
 
 #include "aclnn_op_name.h"

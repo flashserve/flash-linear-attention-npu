@@ -11,6 +11,9 @@
  *   4. GetWorkspaceSize 与 Launch 必须成对出现，且都要有 __attribute__((visibility("default")))。
  *   5. 头文件顶部注释写清：与 V1 的关系（V2 时）、支持范围、每个可空输出的缺席语义。
  *   6. 不在本层解释 autograd 重计算策略；disable_recompute 之类只存在于 Python/legacy 包装层。
+ *   7. 原地形态的形参约定：被写回的 state 用**两个槽位**表达——输入 `initialStateRef` 与输出
+ *      `finalState`；`inplaceFinalState=true` 时调用方把同一张张量传给两个槽位，false 时 finalState 指向
+ *      scratch。头文件注释要写明该开关的默认值与含义（参考 aclnn_recurrent_kda.h 的 inplaceFinalState）。
  */
 
 #ifndef OP_API_INC_ACLNN_OP_NAME_H

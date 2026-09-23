@@ -12,6 +12,10 @@
      反向/异常用例用 `--task run` + case 里的 expected_return_code。
   5. 环境准备、统一脚本、执行阶段见 tests/atk/README.md；本文件只写本算子的输入限制与覆盖结论。
   6. 不提交 atk_output/、result/、xlsx、profiling/sanitizer 日志。
+  7. 原地（in-place）形态：控制写回的开关（如 inplace_final_state / output_mode）必须在用例里显式覆盖
+     两档——写回档校验调用方张量被更新且返回值与被写回的是同一张量；不写回档校验调用方张量逐位不变、
+     结果由返回值承载。`requires_grad=True` 被拒绝、version counter 推进这类契约属于调用层回归，
+     放在 `tests/stable_abi/regression_mutation_contract.py`，不在 ATK 里重复。
 -->
 
 # OpName ATK 工程（示例骨架）
@@ -28,6 +32,7 @@
 | chunk_size | 64 / 128 |
 | 变长 | 需要 `cu_seqlens` + `chunk_indices`，从 0 开始、单调不减、末元素等于总 token 数 |
 | output_mode | `0`（none）/ `1`（save），由用例显式指定 |
+| 原地开关 | 若算子声明写回 state（`inplace_final_state` 之类），用例必须同时覆盖"写回"与"不写回"两档，并在 README 里写出对应 case id |
 
 ## 精度拓扑
 

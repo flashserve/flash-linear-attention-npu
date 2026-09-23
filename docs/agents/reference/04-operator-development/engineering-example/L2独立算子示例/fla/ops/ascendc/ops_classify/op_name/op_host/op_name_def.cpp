@@ -11,6 +11,10 @@
  *   4. 所有输入/输出的 dtype 与 format 列表长度必须一致，且顺序与模板实例顺序对应。
  *   5. 三个 SoC 用同一份 OpAICoreConfig：平台差异放 tiling 与 op_kernel/arch22|arch35，不复制算子定义。
  *   6. output_mode 是 L2 传给 tiling 的内部档位属性，必须在 docs/api.md 注明它不是用户参数。
+ *   7. 原地（in-place）输入输出：算子若会写回调用方传入的 state，必须把该张量**同时声明为 Input 与
+ *      Output**（参考 recurrent_kda_def.cpp 的 Input("initial_state") + Output("initial_state")），
+ *      并用属性声明写回策略（如 inplace_final_state=true 写调用方张量、false 写内部 scratch 并作为返回值）。
+ *      不要用 optional 输出来表达原地语义；改这类属性的默认值等于改公开行为，按 ABI 流程检视。
  */
 
 #include "register/op_def_registry.h"

@@ -374,8 +374,18 @@ add_ops_compile_options(
 6. **跨边界类型**：枚举/layout 走"名表 + int code"（名表顺序与 `_stable._ENUM` 一致）；`int[]` 只走 host int64 CPU 张量；
    返回的 `Tensor?` 槽必须走 boxed optional，不能塞裸 handle。
 7. **stream 每次现取**：`_current_stream_ptr()` 在每次调用时读取，禁止缓存为进程级变量。
-8. **原地参数登记**：会改写输入的算子，在 `MUTATED_ARGUMENTS`（必要时 `MUTATION_FLAGS`）登记；
-   契约回归由 `tests/stable_abi/` 覆盖。
+8. **原地（in-place）参数**：会改写输入的算子按层落地，缺一层都视为契约不完整：
+   - `def`：被写回的张量**同时声明 Input 与 Output**，并用属性控制写回策略（参考 `recurrent_kda_def.cpp`
+     的 `Input("initial_state")` + `Output("initial_state")` + `Attr("inplace_final_state")`）；
+   - aclnn L2：输入 `*Ref` 与输出 `*Out` 两个槽位，调用方把同一张张量传给两处；L2 对两槽 `CreateView`
+     并校验 shape/dtype 一致（参考 `aclnn_recurrent_kda.cpp` 组装 `finalStateForKernel`）；
+   - 适配层：schema 用 `Tensor(a!)` 标注，不在下发前做连续化或拷贝；
+   - Python：在 `MUTATED_ARGUMENTS`（必要时 `MUTATION_FLAGS`）登记，拒绝 `requires_grad=True` 并在成功后
+     推进 version counter，被改写张量按上游语义原对象返回/透传；
+   - 回归与边界：`tests/stable_abi/regression_mutation_contract.py`；ctypes 回退没有 schema，只靠登记兜底；
+     当前无 FakeTensor/functionalization，不能作为 compiler-visible op 入图。
+   每个交付件里对这几种情况怎么写，见 `engineering-example/L2独立算子示例/` 下 `_def.cpp`、`aclnn_*.h/.cpp`、
+   `stable_*.cpp`、`_stable.py`、`__init__.py` 与 `docs/api.md` 的注意事项。
 9. **一算子一文件**：新建 `csrc/src/stable_<op>.cpp`，在 `stable_ops.cpp` 加 `#include` 一行与注册两行；
    不新增手写入口（两个 recurrent 适配是 pre-macro 历史遗留，不作为模板）。
    完整交付件只有四个文件，以 [`torch_custom/fla_npu/README.md`](../../../../torch_custom/fla_npu/README.md) §1.1 为准：

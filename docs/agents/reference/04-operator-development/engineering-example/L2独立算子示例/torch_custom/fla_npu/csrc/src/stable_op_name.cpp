@@ -13,6 +13,10 @@
  *   5. 不缓存 stream：每次调用现取 `_current_stream_ptr()`（Python 侧）并把 stream 作为实参传入。
  *   6. 适配层只做元数据搬运与下发：不判定布局能力、不补 dense 拷贝。
  *   7. 名表（layout 等枚举）命名要带算子前缀，且顺序与 _stable._ENUM 一致。
+ *   8. 原地参数：schema 里用 `Tensor(a!)` 标注会被改写的参数（如
+ *      npu_recurrent_kda(..., Tensor(a!) initial_state, ...)），宏拆栈按普通 Tensor / optional<Tensor>
+ *      处理即可；不要在下发前给入参做连续化或拷贝，否则原地语义会丢（非连续按 stride 交给算子寻址）。
+ *      Python 侧的 `MUTATED_ARGUMENTS` 登记见 `__init__.py` 的注意事项。
  */
 
 // Stable-ABI adapter for npu_op_name.

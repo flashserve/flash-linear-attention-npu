@@ -7,7 +7,10 @@
   1. 形态 B（同一算子加 V2）**不改**这里：算子名没变，公开名与短名都不变。
   2. 形态 C（新的组合算子）加一行 `npu_op_name_fused`；它会同时导出
      `from fla_npu.ops.ascendc import op_name_fused`。
-  3. 会原地写参数时在 `MUTATED_ARGUMENTS` 登记，短名与 `npu_` 前缀名都登记（照仓内既有条目）。
+  3. 会原地写参数时在 `MUTATED_ARGUMENTS` 登记，短名与 `npu_` 前缀名都登记（照仓内既有条目）；
+     "是否写回"取决于参数值时补 `MUTATION_FLAGS`。登记后 wrapper 会拒绝 mutated tensor 的
+     `requires_grad=True` 并在调用成功后推进 version counter，回归见
+     `tests/stable_abi/regression_mutation_contract.py`。
   4. 本示例只展示本次新增的行；实际交付时改仓库中的 `_ASCENDC_OPS`。
 """
 
