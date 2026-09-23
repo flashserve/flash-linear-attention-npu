@@ -4,7 +4,7 @@
 # 注意事项：
 #   1. 本文件只做子目录遍历，不写任何与算子相关的编译逻辑；算子来源在
 #      op_host/CMakeLists.txt 里用 add_modules_sources 声明。
-#   2. 算子目录下不放测试：所有测试用例集中在仓库根 tests/ 下（tests/atk/<算子>/、tests/ut/<算子>/），
+#   2. 算子目录下不放测试：所有测试用例集中在仓库根 tests/ 下（单算子看护为 tests/atk/<算子>/），
 #      因此这里既没有 tests 子目录，也不需要按 ENABLE_TEST 过滤子目录。
 #   3. 新增算子必须在上一级模块（fla/ops/ascendc/ops_classify/CMakeLists.txt）被
 #      add_subdirectory 到，否则整个算子目录不进构建，且不会报错。

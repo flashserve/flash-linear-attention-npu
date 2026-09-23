@@ -14,8 +14,8 @@
 #      属于依赖配置缺失，不要误判为算子数值或 kernel 问题。形态 A（无组合入口）可整段删除。
 #   5. 全量构建通过不等于过滤构建自洽：改动组合入口后要用"只列主算子"的过滤构建 + 一条组合路径
 #      端到端用例验证（全量构建不会暴露该缺陷）。
-#   6. 测试不放算子目录：host / tiling 单测在仓库根 tests/ut/<算子>/（见工程结构规范 §3.6），
-#      ATK 用例在 tests/atk/<算子>/；本文件不需要 add_subdirectory(tests)。
+#   6. 测试不放算子目录：单算子看护在仓库根 tests/atk/<算子>/（见工程结构规范 §3.6）；
+#      本文件不需要 add_subdirectory(tests)。
 # ============================================================================
 
 add_op_to_compiled_list()
@@ -80,5 +80,5 @@ if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
     )
 endif()
 
-# 注意：测试不放算子目录。host / tiling 单测在仓库根 tests/ut/<算子>/，ATK 用例在 tests/atk/<算子>/；
+# 注意：测试不放算子目录。单算子看护在仓库根 tests/atk/<算子>/；
 # 算子目录下不建 tests/，也不要在这里 add_subdirectory(tests)。

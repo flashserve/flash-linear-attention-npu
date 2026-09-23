@@ -3,9 +3,8 @@
  *
  * 注意事项：
  *   1. 本文件只做"任务切分 + offset + workspace 区域"计算，不做张量校验（校验在 *_tiling.cpp）。
- *   2. 实现直接写在本头文件里（header-only）：host UT 只 include 本文件就能调用
- *      OpNameTilingProcessor，不需要造完整 TilingContext，也不需要额外链接目标。
- *      如果单独拆出 .cpp，UT 必须再链接该目标，且容易与算子编译目标重复定义。
+ *   2. 实现直接写在本头文件里（header-only）：类与函数可独立调用，便于静态检查与用例侧直接驱动，
+ *      也不需要额外链接目标。算子目录里不为测试新增 .cpp、桩代码或链接目标。
  *   3. 每个 workspace 区域都要给出 size 与用途，并在注释里写清使用方与生命周期；
  *      复用同一区域时必须写明复用条件。
  *   4. 平台常量（tile、每核 head 数）从 arch22|arch35 的 tiling_impl.h 引入，不在这里写死。

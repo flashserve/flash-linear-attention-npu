@@ -5,7 +5,7 @@
  *   1. TilingData 的字段顺序、类型、数量必须与设备侧读取完全一致；设备侧用
  *      GET_TILING_DATA_WITH_STRUCT 按同一结构体解析，改字段就是改 ABI。
  *   2. REGISTER_TILING_DATA_CLASS 的 op 名（PascalCase）必须与 *_def.cpp 的 OP_ADD 一致。
- *   3. 输入/属性索引枚举放在这里，tiling 与 host UT 共用，禁止在 .cpp 里写裸下标。
+ *   3. 输入/属性索引枚举放在这里，tiling 与用例侧共用，禁止在 .cpp 里写裸下标。
  *   4. 本头文件只放数据结构与枚举，不放校验逻辑；校验放 *_tiling.cpp，计算放 *_tiling_processor.h。
  *   5. 平台相关常量不要写在这里，放 op_host/arch22|arch35/<算子>_tiling_impl.h。
  */
