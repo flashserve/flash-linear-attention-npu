@@ -46,8 +46,32 @@ _PROGRESS_SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 # 行内匹配。
 _MAKE_PROGRESS_RE = re.compile(r"\[\s*(\d{1,3})%\]")
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_BUILD_LOG_NAME = "fla-npu-build.log"
+_BUILD_LOG_TAIL_SECONDS = 0.2
+_FAILURE_LOG_TAIL_LINES = 40
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+
+def _read_new_lines(path: Path, offset: int) -> "tuple[list[str], int]":
+    """读取 ``path`` 自 ``offset`` 起新追加的完整行，返回 (行, 新偏移)。
+
+    最后一行可能还没写完整，此时不消费它，等下一轮再读。
+    """
+
+    if not path.is_file():
+        return [], offset
+    with open(path, "rb") as handle:
+        handle.seek(offset)
+        chunk = handle.read()
+        offset = handle.tell()
+    if not chunk:
+        return [], offset
+    lines = chunk.decode("utf-8", errors="replace").splitlines(keepends=True)
+    if lines and not lines[-1].endswith(("\n", "\r")):
+        offset -= len(lines[-1].encode("utf-8"))
+        lines.pop()
+    return lines, offset
 
 
 def _stage_index(name: str) -> int:
@@ -270,8 +294,18 @@ def _progress_enabled(args: argparse.Namespace) -> bool:
         return False
 
 
-def _run_with_progress(command: list, env: dict, progress: _BuildProgress) -> int:
-    """运行子进程，逐行回显日志并驱动进度条。"""
+def _run_with_progress(
+    command: list,
+    env: dict,
+    progress: _BuildProgress,
+    follow_path: "Path | None" = None,
+) -> int:
+    """运行子进程，逐行回显 stdout 并驱动进度条。
+
+    ``follow_path`` 指向 pip ``--log`` 写入的日志：pip 默认只把构建后端
+    （setup.py / build.sh / make）的输出写进该文件，不打到终端，所以编译
+    阶段的进度信号只能从这里读。
+    """
 
     process = subprocess.Popen(
         command,
@@ -297,6 +331,28 @@ def _run_with_progress(command: list, env: dict, progress: _BuildProgress) -> in
 
     reader = threading.Thread(target=_pump, name="fla-npu-build-log", daemon=True)
     reader.start()
+
+    stop_follow = threading.Event()
+
+    def _follow() -> None:
+        offset = 0
+        while True:
+            new_lines, offset = _read_new_lines(follow_path, offset)
+            for line in new_lines:
+                progress.feed(line)
+            if stop_follow.is_set():
+                new_lines, offset = _read_new_lines(follow_path, offset)
+                for line in new_lines:
+                    progress.feed(line)
+                return
+            time.sleep(_BUILD_LOG_TAIL_SECONDS)
+
+    follower = None
+    if follow_path is not None:
+        follower = threading.Thread(
+            target=_follow, name="fla-npu-pip-log", daemon=True)
+        follower.start()
+
     while True:
         try:
             line = lines.get(timeout=0.2)
@@ -307,7 +363,24 @@ def _run_with_progress(command: list, env: dict, progress: _BuildProgress) -> in
             break
         progress.echo(line)
     reader.join(timeout=1.0)
-    return process.wait()
+    returncode = process.wait()
+    if follower is not None:
+        stop_follow.set()
+        follower.join(timeout=5.0)
+    return returncode
+
+
+def _report_build_log(path: Path, tail_lines: int = _FAILURE_LOG_TAIL_LINES) -> None:
+    """打印 pip 构建日志的尾部：失败时终端上是看不到后端输出的。"""
+
+    if not path.is_file():
+        return
+    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        tail = handle.readlines()[-tail_lines:]
+    if not tail:
+        return
+    print(f"[fla-npu build] last {len(tail)} lines of {path}:", flush=True)
+    print("".join(tail), flush=True)
 
 
 def _resolve_output_dir(value: str) -> Path:
@@ -565,11 +638,14 @@ def main() -> int:
         f"{os.getenv('FLA_NPU_SOC', '<default>')}, wheel 目录 {wheel_dir}）"
     )
     _prepare_abi_free_launcher()
+    build_log = wheel_dir / _BUILD_LOG_NAME
     command = [
         sys.executable,
         "-m",
         "pip",
         "wheel",
+        "--log",
+        str(build_log),
         "--no-build-isolation",
         "--no-deps",
         ".",
@@ -581,9 +657,10 @@ def main() -> int:
     build_args = _assemble_build_args(args)
     if build_args:
         env["FLA_NPU_BUILD_ARGS"] = build_args
-    returncode = _run_with_progress(command, env, progress)
+    returncode = _run_with_progress(command, env, progress, follow_path=build_log)
     progress.close(returncode == 0)
     if returncode != 0:
+        _report_build_log(build_log)
         raise subprocess.CalledProcessError(returncode, command)
 
     # The wheel is tagged for the host platform and the build tag carries the
@@ -596,6 +673,7 @@ def main() -> int:
     _inject_runtime_pins(wheel_path)
 
     print(f"[fla-npu build] Wheel: {wheel_path}", flush=True)
+    print(f"[fla-npu build] Build log: {build_log}", flush=True)
     print(f"[fla-npu build] Install command:", flush=True)
     print(_install_command(wheel_path), flush=True)
     return 0
