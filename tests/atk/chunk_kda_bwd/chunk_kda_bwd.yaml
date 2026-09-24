@@ -1,0 +1,38 @@
+# Only positive cases supported by the optimized Ascend950 interface.
+# Temporary filtered delivery matrix: 100 saved + 100 recompute, not full coverage.
+# Fixed profiles, values, coverage and task subsets live in gen_chunk_kda_bwd.py.
+# Generate with: atk case -f chunk_kda_bwd.yaml -p . -dt 200 -en 0 -s 20260921
+api: pytorch
+api_type: executor_chunk_kda_bwd
+version: v2.1
+name: chunk_kda_bwd
+aclnn_name: ChunkKdaBwdV2
+generate: generator_chunk_kda_bwd
+dtype_numbers: 200
+extra_numbers: 0
+standard:
+  acc: mixed_tolerance_bm
+  perf: not_key
+inputs:
+  - name: low_precision_marker
+    type: tensor
+    required: true
+    dtypes: {values: [bf16]}
+    ranges: {valid: {values: [[0, 0]]}, invalid: {values: []}}
+    shapes: {dim_numbers: {values: [1]}, dim_values: {values: [1]}}
+  - name: fp32_marker
+    type: tensor
+    required: true
+    dtypes: {values: [fp32]}
+    ranges: {valid: {values: [[0, 0]]}, invalid: {values: []}}
+    shapes: {dim_numbers: {values: [1]}, dim_values: {values: [1]}}
+  - name: case_id
+    type: attr
+    required: true
+    dtypes: {values: [int]}
+    ranges: {valid: {values: [0]}, invalid: {values: []}}
+  - name: case_spec
+    type: attr
+    required: true
+    dtypes: {values: [non_param]}
+    ranges: {valid: {values: ['{"op":"chunk_kda_bwd","case_id":0}']}, invalid: {values: []}}

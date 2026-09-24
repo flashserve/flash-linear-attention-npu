@@ -19,8 +19,10 @@ using FinalizeLocalType = bfloat16_t;
 
 constexpr uint32_t KDA_FINALIZE_CHUNK = 64;
 constexpr uint32_t KDA_FINALIZE_DIM = 128;
+// 任务组织：一个 AIC 对应两个 AIV；每窗口两头，每 AIV 一头。
 constexpr uint32_t KDA_FINALIZE_HEADS_PER_WINDOW = 2;
 constexpr uint32_t KDA_FINALIZE_AIV_COUNT = 2;
+// 交接 slot 随任务轮转；不代表所有阶段都有两份独立 UB 工作区。
 constexpr uint32_t KDA_FINALIZE_AIV_SLOTS = 2;
 constexpr uint32_t KDA_FINALIZE_WORKSPACE_SLOTS = 2 * KDA_FINALIZE_HEADS_PER_WINDOW;
 constexpr uint32_t KDA_FINALIZE_SLOT_BYTES = 160 * 1024;
@@ -36,8 +38,8 @@ constexpr uint32_t KDA_FINALIZE_VECTOR_BF16_BYTES = KDA_FINALIZE_VECTOR_ELEMS * 
 constexpr uint32_t KDA_FINALIZE_VECTOR_FP32_BYTES = KDA_FINALIZE_VECTOR_ELEMS * sizeof(float);
 constexpr uint32_t KDA_FINALIZE_STATE_BF16_BYTES = KDA_FINALIZE_STATE_ELEMS * sizeof(bfloat16_t);
 
-// Keep the GM slot layout stable. EXP2_GK and KE are reserved;
-// these operands now stay on chip.
+// GM 槽内偏移保持固定；EXP2_GK 和 KE 仅保留地址，当前数据常驻片上。
+// 三块 FP32 矩阵区在 StateAndBase 中原位转为 dk_base、dq_base、dg_base。
 constexpr uint32_t KDA_FINALIZE_WS_DK_STATE_RAW = 0;
 constexpr uint32_t KDA_FINALIZE_WS_DVB = 32 * 1024;
 constexpr uint32_t KDA_FINALIZE_WS_DKGB_RAW = 64 * 1024;
@@ -52,48 +54,44 @@ constexpr uint32_t KDA_FINALIZE_WS_DQ_BASE = KDA_FINALIZE_WS_DVB;
 constexpr uint32_t KDA_FINALIZE_WS_DG_BASE = KDA_FINALIZE_WS_DKGB_RAW;
 constexpr uint32_t KDA_FINALIZE_WS_DB_BASE = KDA_FINALIZE_WS_DB_V;
 
-// Per-AIV BuildZ fixed UB layout.
+// 每个 AIV 的 BuildZ 固定 UB 区；zV/zW 按交接 slot 选择地址。
 constexpr uint32_t KDA_FINALIZE_UB_ZV = 0;
 constexpr uint32_t KDA_FINALIZE_UB_ZW = 32 * 1024;
 constexpr uint32_t KDA_FINALIZE_UB_ZB = 64 * 1024;
 constexpr uint32_t KDA_FINALIZE_UB_WORK = 81 * 1024;
 constexpr uint32_t KDA_FINALIZE_UB_BYTES = 248 * 1024;
 
-// Stage3/4 AIV work completes before the Tza residual handoff grants
-// the Stage4 Cube destination dAkk_raw at [0,16) KiB.
+// AIV 完成 StateAndBase 和 Tza 残差交接后，才允许 Cube 写入 [0,16) KiB 的 dAkk_raw。
 constexpr uint32_t KDA_FINALIZE_UB_DAKK_RAW = 0;
 constexpr uint32_t KDA_FINALIZE_UB_STAGE4_WORK = 16 * 1024;
 
-// Stage5: raw [0,16), paired dAqk/dAkk [16,48), then three paired vectors.
-// Input/scratch begins at 144 KiB, disjoint from the live egress regions.
+// Stage5：dAkk_raw 占 [0,16) KiB，dAqk/dAkk 高低位占 [16,48) KiB，
+// 三个向量高低位占 [48,144) KiB；驻留输入从 144 KiB 起，与本阶段输出分离。
 constexpr uint32_t KDA_FINALIZE_UB_K_NEG = 48 * 1024;
 constexpr uint32_t KDA_FINALIZE_UB_Q_POS = 80 * 1024;
 constexpr uint32_t KDA_FINALIZE_UB_BK_POS = 112 * 1024;
 constexpr uint32_t KDA_FINALIZE_UB_STAGE5_WORK = 144 * 1024;
 
-// Stage6 writes dq_local_raw into the former zV FP32 ping/pong range. Stage7
-// uses the remaining UB as one phase-wide working set.
+// Stage6 的 [dq_local; left] FP32 结果复用原 zV 交接区；其余 UB 供分带结果处理。
 constexpr uint32_t KDA_FINALIZE_UB_DQ_LOCAL_RAW = 0;
 constexpr uint32_t KDA_FINALIZE_UB_STAGE7_DQ_BASE = 64 * 1024;
-// One head per AIV per window: these inputs survive phase transitions.
-// Q: Stage3/4 -> Stage7 (then overwritten with dq).
-// K and exp2_gk: Stage0 -> Stage9. Beta: Stage2 -> Stage9.
-// Stage11 reuses their dead regions for rawG and gate scratch.
+// 每个窗口中每 AIV 处理一个 head，q/k/beta 跨分带保留。
+// E 在 StateAndBase 中使用；Stage5 将同址内容换成 gk，再生成当前带的平移指数。
+// Stage11 在最后一带结束后复用这些输入区，载入 rawG 与 gate 参数。
 constexpr uint32_t KDA_FINALIZE_UB_Q = 144 * 1024;
 constexpr uint32_t KDA_FINALIZE_UB_K = 160 * 1024;
 constexpr uint32_t KDA_FINALIZE_UB_EXP2_GK = 176 * 1024;
 constexpr uint32_t KDA_FINALIZE_UB_BETA = 208 * 1024;
-// Delta survives Stage9 -> Stage10, including the intervening gate stage.
+// beta 增量在分带 Stage9 中生成，紧接着由 Stage10 消费。
 constexpr uint32_t KDA_FINALIZE_UB_DB_DELTA = 209 * 1024;
 constexpr uint32_t KDA_FINALIZE_UB_STAGE7_Q_RSTD = 212 * 1024;
-// Stage7 -> Stage9 -> Stage11. Reuses Stage5's dead dAqk input region.
+// 完整 chunk 的 gate 扫描缓冲区；Stage11 使用前，该区的分带临时数据已释放。
 constexpr uint32_t KDA_FINALIZE_UB_DG = 216 * 1024;
 
-// Two 128-KiB owner slots occupy [64,320) KiB of L1. This range is disjoint
-// from the only Stage4-live operands, Akk [0,16) and Tza [416,448), so each
-// Stage5 head may publish immediately after its own dAkk becomes ready.
-// Stage5 publishes all five operands directly from UB to L1. No Stage5
-// operand is mirrored through GM; the owner slot stays live through Stage8.
+// 两个 owner 各有 128 KiB L1，合计占 [64,320) KiB。
+// 与 Stage4 仍使用的 Akk [0,16)、Tza [416,448) KiB 分离，
+// 本 head 的 dAkk 就绪后即可发布 Stage5 操作数，不必等另一 head。
+// 五项操作数直接从 UB 写 L1；owner 槽一直保留到 Stage8 读完。
 constexpr uint32_t KDA_FINALIZE_LOCAL_BASE = 64 * 1024;
 constexpr uint32_t KDA_FINALIZE_LOCAL_BYTES = 128 * 1024;
 constexpr uint32_t KDA_FINALIZE_LOCAL_DAQK = 0;
@@ -102,8 +100,7 @@ constexpr uint32_t KDA_FINALIZE_LOCAL_K_NEG = 32 * 1024;
 constexpr uint32_t KDA_FINALIZE_LOCAL_Q_POS = 64 * 1024;
 constexpr uint32_t KDA_FINALIZE_LOCAL_BK_POS = 96 * 1024;
 
-// KernelA-compatible directed 1C2V handshake.  AIV1's hardware flag bank is
-// selected with the fixed +16 sub-block stride.
+// 1C2V 定向通知：AIC 用 aiv * 16 选择目标 AIV 的 flag bank。
 constexpr uint8_t KDA_FINALIZE_CROSS_MODE = 0x4;
 constexpr uint64_t KDA_FINALIZE_SUBBLOCK_FLAG_STRIDE = 16;
 constexpr uint64_t KDA_FINALIZE_ZV_FREE_BASE = 0;
@@ -113,21 +110,19 @@ constexpr uint64_t KDA_FINALIZE_ZW_READY_BASE = 6;
 constexpr uint64_t KDA_FINALIZE_KE_READY_BASE = 8;
 constexpr uint64_t KDA_FINALIZE_ZB_READY_BASE = 10;
 constexpr uint64_t KDA_FINALIZE_ZB_FREE_BASE = 12;
-// KE_READY is consumed at Stage1, then carries Tza-pair ready together with
-// dAkk UB-free. ZW_READY is consumed at Stage2, then carries Tza raw, and
-// finally dAkk raw only after the AIV has consumed the preceding payload.
+// 同一编号按阶段复用：KE_READY 先通知 dW/kE 高低位就绪，
+// 再通知 Tza 高低位就绪并允许覆盖 dAkk 的 UB；ZW_READY 依次承载 zW、Tza、dAkk。
+// 上一载荷已消费后才能发布下一通知，不能把同编号视为同一数据。
 constexpr uint64_t KDA_FINALIZE_DAKK_FREE_BASE = KDA_FINALIZE_KE_READY_BASE;
 constexpr uint64_t KDA_FINALIZE_DAKK_READY_BASE = KDA_FINALIZE_ZW_READY_BASE;
-// Keep the final Stage5 AIV->AIC publication on a dedicated pair.  This
-// avoids aliasing earlier per-head handoffs without requiring a group-wide
-// barrier inside the uneven multi-core work-task loop.
+// AIV→AIC 的 Stage5 操作数发布使用独立编号对；
+// 不引入所有核共同参与的 barrier，避免不同核任务数不等时阻塞。
 constexpr uint64_t KDA_FINALIZE_LOCAL_READY_BASE = 14;
-// AIC->AIV only: LOCAL_READY uses the opposite direction. Keep flag 14
-// unused in this direction because the final AIV-only SyncAll owns it.
+// 此编号仅用于 AIC→AIV；LOCAL_READY 使用反方向。
+// AIC→AIV 的 flag 14 留给最终 AIV-only SyncAll。
 constexpr uint64_t KDA_FINALIZE_TASK_L1_FREE = 15;
-// Stage2 has consumed the zV pair before Stage5/6 starts. Stage5 republishes
-// FREE only after its UB->L1 egress, and Stage6 consumes it before publishing
-// dq_local_raw READY, so the pair remains balanced within each work task.
+// Stage2 已消费 zV 通知后，编号对复用于 Stage6 的 dq_local 交接。
+// 分带结果处理在 UB→L1 完成、目标区可写后发布 FREE，Cube 写回后发布 READY。
 constexpr uint64_t KDA_FINALIZE_DQ_LOCAL_FREE_BASE = KDA_FINALIZE_ZV_FREE_BASE;
 constexpr uint64_t KDA_FINALIZE_DQ_LOCAL_READY_BASE = KDA_FINALIZE_ZV_READY_BASE;
 
@@ -146,14 +141,18 @@ __aicore__ inline int64_t FinalizeMin(int64_t lhs, int64_t rhs)
     return lhs < rhs ? lhs : rhs;
 }
 
+// 将 chunk 任务解析为 token/state 偏移和有效行数；无效元数据不产生计算任务。
 __aicore__ inline void ResolveFinalizeChunk(
     int64_t task, GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
     const ChunkKdaBwdFinalizeTilingData &tiling, FinalizeChunkInfo &info)
 {
+    // 1. 默认无效，先检查任务编号。
     info.valid = false;
     if (task < 0 || task >= tiling.chunkTaskNum) {
         return;
     }
+
+    // 2. 定长：task 拆成 batch 与 batch 内 chunk。
     if (tiling.isVariable == 0) {
         info.b = task / tiling.denseChunkNum;
         info.seq = info.b;
@@ -164,6 +163,8 @@ __aicore__ inline void ResolveFinalizeChunk(
         info.valid = info.b >= 0 && info.b < tiling.B && info.validRows > 0;
         return;
     }
+
+    // 3. 变长：从 chunk_indices 读取序列/chunk，再用 cu_seqlens 限定有效 token。
     if (cuSeqlens == nullptr || chunkIndices == nullptr) {
         return;
     }
@@ -185,6 +186,7 @@ __aicore__ inline void ResolveFinalizeChunk(
     info.valid = seqBegin >= 0 && seqEnd >= seqBegin && seqEnd <= tiling.T && info.validRows > 0;
 }
 
+// Token 按 [B,H,T,D] 或 [H,T,D] 连续存放；返回元素偏移。
 __aicore__ inline int64_t FinalizeTokenOffset(
     const ChunkKdaBwdFinalizeTilingData &tiling, const FinalizeChunkInfo &chunk,
     int64_t head, int64_t width)
@@ -195,7 +197,7 @@ __aicore__ inline int64_t FinalizeTokenOffset(
     return ((chunk.b * tiling.NV + head) * tiling.T + chunk.tokenStart) * width;
 }
 
-// Saved h is chunk-major; dhu's internal dh remains head-major.
+// 前向缓存 h 为 chunk-major；Dhu 输出 dh 为 head-major，二者必须分别寻址。
 __aicore__ inline int64_t FinalizeHOffset(
     const ChunkKdaBwdFinalizeTilingData &tiling, const FinalizeChunkInfo &chunk,
     int64_t head)
@@ -207,6 +209,7 @@ __aicore__ inline int64_t FinalizeHOffset(
         tiling.K * tiling.V;
 }
 
+// dh 按 head-major 寻址；不要与前向 h 的 chunk-major 偏移共用。
 __aicore__ inline int64_t FinalizeDhOffset(
     const ChunkKdaBwdFinalizeTilingData &tiling, const FinalizeChunkInfo &chunk,
     int64_t head)
@@ -218,9 +221,11 @@ __aicore__ inline int64_t FinalizeDhOffset(
         tiling.K * tiling.V;
 }
 
+// 每核四个 160 KiB GM 槽：两代窗口 × 每窗口两头；返回字节偏移。
 __aicore__ inline uint64_t FinalizeWorkspaceSlotBase(
     int64_t coreIdx, uint64_t groupGeneration, uint32_t owner)
 {
+    // 1. 按窗口代次取 ping/pong，再选本窗口的 owner；复用由阶段同步保证。
     const uint64_t window = groupGeneration & 1U;
     const uint64_t slot = window * KDA_FINALIZE_HEADS_PER_WINDOW + owner;
     return (static_cast<uint64_t>(coreIdx) * KDA_FINALIZE_WORKSPACE_SLOTS + slot) *
