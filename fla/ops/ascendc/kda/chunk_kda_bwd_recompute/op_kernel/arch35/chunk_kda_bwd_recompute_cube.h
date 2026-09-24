@@ -93,6 +93,7 @@ public:
         // Catlass CopyL0CToGm writes LOOP3_PARA before every FIX_L0C_TO_DST.
         // Program it once; local CopyL0CToGmNd does not repeat the SPR.
         AscendC::SetFixpipeNz2ndFlag(1, 1, 1);
+        AscendC::SetLoadDataPaddingValue<QkType>(static_cast<QkType>(0));
 
         const uint32_t coreIdx = AscendC::GetBlockIdx();
         const uint32_t coreNum = usedCoreNum_ == 0 ? AscendC::GetBlockNum() : usedCoreNum_;
@@ -120,10 +121,8 @@ public:
                     cuSeqlens_, chunkIndices_, B_, Hv_, T_, chunkSize_,
                     static_cast<uint32_t>(loopIdx), bos, eos, isVariable_);
                 const uint32_t curChunkSize = eos - bos;
-                uint32_t mActual = curChunkSize;
-                if (mActual == 1) {
-                    mActual = 16;
-                }
+                const uint32_t mActual = KdaBwdRecomputeArch35::PadMmadRows(curChunkSize);
+                const uint32_t kActual = mActual;
                 uint64_t hStart = 0;
                 uint64_t hEnd = 0;
                 KdaBwdRecomputeArch35::HeadsOnChunk(
@@ -180,7 +179,7 @@ public:
                     RunMmadFromL1(
                         copyL1ToL0A, copyL1ToL0B, tileMmad,
                         tensorL1A, tensorL1Vb, blockU, l0A, l0B, l0C0,
-                        mActual, static_cast<uint32_t>(V_), curChunkSize, slot,
+                        mActual, static_cast<uint32_t>(V_), kActual, slot,
                         KdaBwdRecomputeArch35::kEventL0C0,
                         true, false, true, false, false);
                     DrainFixpipe(
@@ -216,7 +215,7 @@ public:
                     RunMmadFromL1(
                         copyL1ToL0A, copyL1ToL0B, tileMmad,
                         tensorL1A, tensorL1Kbg, blockW, l0A, l0B, l0C1,
-                        mActual, static_cast<uint32_t>(K_), curChunkSize, slot,
+                        mActual, static_cast<uint32_t>(K_), kActual, slot,
                         KdaBwdRecomputeArch35::kEventL0C1,
                         false, true, false, true, true);
                     }
