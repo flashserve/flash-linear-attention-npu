@@ -50,7 +50,9 @@ public:
             .UnknownShapeFormat(formats);
         this->Output("A").ParamType(REQUIRED).DataType(inputTypes).Format(formats)
             .UnknownShapeFormat(formats);
-        this->Output("h").ParamType(OPTIONAL).DataType(inputTypes).Format(formats)
+        // Always pass a valid fifth pointer. The public H remains optional;
+        // its absent case uses a one-element placeholder and workspace H.
+        this->Output("h").ParamType(REQUIRED).DataType(inputTypes).Format(formats)
             .UnknownShapeFormat(formats);
 
         this->Attr("output_final_state").AttrType(REQUIRED).Bool(false);

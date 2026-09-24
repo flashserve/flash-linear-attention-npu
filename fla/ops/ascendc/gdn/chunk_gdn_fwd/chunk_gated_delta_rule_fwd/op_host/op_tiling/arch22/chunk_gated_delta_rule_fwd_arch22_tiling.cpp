@@ -296,8 +296,8 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
     const bool exportH = outputH != nullptr && *outputH;
     const auto *hDesc = context->GetOutputDesc(4);
     const auto *hShape = context->GetOutputShape(4);
-    OP_CHECK_IF(exportH != (hDesc != nullptr && hShape != nullptr),
-                OP_LOGE(context->GetNodeName(), "output_h must match optional H output presence."),
+    OP_CHECK_IF(hDesc == nullptr || hShape == nullptr,
+                OP_LOGE(context->GetNodeName(), "The low-level H output descriptor is required."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(exportH && (hDesc->GetDataType() != inputDtype ||
                     !IsShape(hShape, {batch, valueHeads,

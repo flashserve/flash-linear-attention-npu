@@ -834,22 +834,34 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
     const aclTensor *kInput = nativeQkv ? DenseQkvView(params.k, executorPtr) : params.k;
     const aclTensor *vInput = nativeQkv ? DenseQkvView(params.v, executorPtr) : params.v;
     GDN_STAGE_CHECK(qInput != nullptr && kInput != nullptr && vInput != nullptr, 169113);
-    // The normal path passes no H output and keeps the original workspace H.
-    // A contiguous public H can replace that workspace as both H's output and
-    // O's input. Noncontiguous views need a dense temporary and a final copy.
-    const aclTensor *hCompute = params.hOutOptional;
-    if (hCompute != nullptr && !IsContiguous(hCompute)) {
-        hCompute = executorPtr->AllocTensor(
-            MakeShape({batch, hv, ExpectedChunks(params, seqlen), kDim, vDim}),
-            params.q->GetDataType(), Format::FORMAT_ND);
-        GDN_STAGE_CHECK(hCompute != nullptr, 169114);
+    // A required low-level H output keeps its launch ABI fixed. A tiny
+    // placeholder preserves the original workspace-backed H data flow when
+    // callers do not request H. When requested, the kernel writes H directly
+    // into a dense view of the caller buffer, also consumed by O.
+    const op::Shape hShape = MakeShape({batch, hv, ExpectedChunks(params, seqlen), kDim, vDim});
+    const bool copyH = params.hOutOptional != nullptr && !IsContiguous(params.hOutOptional);
+    const aclTensor *hCompute = nullptr;
+    if (params.hOutOptional == nullptr) {
+        hCompute = executorPtr->AllocTensor(MakeShape({1}), params.q->GetDataType(), Format::FORMAT_ND);
+    } else if (copyH) {
+        hCompute = executorPtr->AllocTensor(hShape, params.q->GetDataType(), Format::FORMAT_ND);
+    } else {
+        auto *view = executorPtr->CreateView(
+            params.hOutOptional, hShape, params.hOutOptional->GetViewOffset());
+        if (view != nullptr) {
+            view->SetStorageShape(hShape);
+            view->SetOriginalShape(hShape);
+        }
+        hCompute = view;
     }
+    GDN_STAGE_CHECK(hCompute != nullptr, 169114);
     auto phase6Result = l0op::ChunkGatedDeltaRuleFwd(
         qInput, kInput, vInput, betaBht, aStorageBhtc, gRaw, nullptr,
         params.initialStateOptional, params.cuSeqlensOptional, params.chunkIndicesOptional,
         outputFinalState, params.chunkSize, params.scale, params.gCumsumOutOptional != nullptr,
         oCompute, finalState,
-        gCumsumCompute, aCompute, hCompute, usePreparedCumsum ? 1 : 0, nativeQkv ? 1 : 0,
+        gCumsumCompute, aCompute, hCompute, params.hOutOptional != nullptr,
+        usePreparedCumsum ? 1 : 0, nativeQkv ? 1 : 0,
         sequenceMajorOutput ? 1 : 0, executorPtr);
     GDN_STAGE_CHECK(phase6Result[0] != nullptr && phase6Result[2] != nullptr &&
                         phase6Result[3] != nullptr,
@@ -859,7 +871,7 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         TransposeContiguous(oCompute, {0, 2, 1, 3}, executorPtr);
     GDN_STAGE_CHECK(oSequence != nullptr && l0op::ViewCopy(oSequence, params.oOut, executorPtr) != nullptr,
                     169107);
-    if (hCompute != nullptr && hCompute != params.hOutOptional) {
+    if (copyH) {
         CHECK_RET(ViewCopyIfPresent(hCompute, params.hOutOptional, executorPtr) == ACLNN_SUCCESS,
                   ACLNN_ERR_INNER_NULLPTR);
     }
