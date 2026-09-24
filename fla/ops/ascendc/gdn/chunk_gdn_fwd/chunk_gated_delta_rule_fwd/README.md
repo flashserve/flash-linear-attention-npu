@@ -2,10 +2,11 @@
 
 ## 功能
 
-`ChunkGatedDeltaRuleFwd` 实现 Gated Delta Rule 的分块前向计算。仅当 `useExp2=false`、
-`useQkL2norm=false`、`useGateInKernel=false`、不启用 beta sigmoid、`allowNegEigval=false`、不请求分块状态 h、
-`stateVFirst=false` 且 layout 为 `BNSD/NTD` 时使用原 Phase6 kernel，A 可按需输出；任意条件不满足时，
-A5 依次调度 `ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkFwdO`，三个阶段统一使用
+`ChunkGatedDeltaRuleFwd` 实现 Gated Delta Rule 的分块前向计算。在不启用扩展参数且
+`stateVFirst=false` 时，A2/A3 的 `BNSD/BSND/NTD/TND` 布局使用同一条 arch22 Phase6 路径，
+可按需输出 A 和分块状态 h；未请求 h 时继续使用内部 workspace。A5 的原 Phase6 路径支持
+`BNSD/NTD` 且不请求 h；请求 h 或启用扩展参数时，A5 依次调度
+`ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkFwdO`，三个阶段统一使用
 调用方传入的 `useExp2`。
 新路径不支持的参数组合由 `ChunkGatedDeltaRuleFwdPrepare` 报错。当前实现支持定长和变长序列、GVA、可选初始状态
 以及可选最终状态输出。
@@ -55,7 +56,7 @@ A5 依次调度 `ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkFwdO`，
 | `qHatOutOptional`、`kHatOutOptional` | A5 新路径可选 | 与 q/k 相同 | L2Norm 结果 |
 | `qRstdOutOptional`、`kRstdOutOptional` | A5 新路径可选 | 固定 `[B,Hk,T]`；FP32 | L2Norm rstd |
 | `betaEffOutOptional` | A5 新路径可选 | 与 beta 同 shape；FP32 | 非空时启用并输出 beta sigmoid |
-| `hOutOptional` | A5 新路径可选 | `stateVFirst=false` 时末两维为 `[K,V]`，否则为 `[V,K]`；与 q 同 dtype | 分块状态 |
+| `hOutOptional` | A2/A3 Phase6、A5 新路径可选 | `[B,Hv,NT,K,V]`；`stateVFirst=true` 时末两维为 `[V,K]`；与 q 同 dtype | 每块输入状态 |
 
 Python ctypes 入口固定返回
 `(o, final_state, g_cumsum, A, beta_eff, h, q_hat, k_hat, q_rstd, k_rstd)` 十元组。
@@ -68,7 +69,7 @@ q_rstd/k_rstd 为 FP32 `[B,Hk,T]`，不随 layout 改变；关闭时 q_hat/k_hat
 分别控制 final_state、beta_eff 和 h 是否为 None。
 h 的 shape 为 `[B,Hv,NT,K,V]`，`state_v_first=True` 时末两维为 `[V,K]`。
 
-`g/beta` 固定以 BSN 输入，在 ACLNN 内转为 BNS；任一输入为 FP32 时，
+`g/beta` 固定以 BSN 输入。beta 在 ACLNN 内转为 BNS；A2/A3 命中预处理 cumsum 时，g 保持 BSN 供该阶段读取，其余路径转为 BNS。任一输入为 FP32 时，
 另一个先提升为 FP32。两个输入均为主 dtype 时保留该 dtype，后续分支支持范围不变。
 Python 接受 `a_log=None, dt_bias=None` 预留参数；当前仅支持
 `use_gate_in_kernel=False`，非空 a_log/dt_bias 或启用 gate 均报错。
@@ -77,7 +78,7 @@ Python 接受 `a_log=None, dt_bias=None` 预留参数；当前仅支持
 
 | 名称 | 当前支持范围 | 说明 |
 | --- | --- | --- |
-| `layout` | 原 Phase6 路径支持 `BNSD/NTD`；A5 新路径支持 `BNSD/BSND/NTD/TND` | q/k/v 的输入布局；BSND/TND 输入在拼接路径内转为 head-first，o 固定输出 BSND |
+| `layout` | A2/A3 Phase6 支持 `BNSD/BSND/NTD/TND`；A5 原 Phase6 支持 `BNSD/NTD`，新路径支持四种布局 | q/k/v 的输入布局；A2/A3 的 BSND/TND 由融合 kernel 直接读取，A5 新路径在内部转为 head-first；o 固定输出 BSND |
 | `scale` | 通常为 `K**-0.5` | Query 缩放因子 |
 | `chunkSize` | `64`、`128` | 分块大小 |
 | `useExp2` | A5 新路径支持 `true/false` | 只控制门控累计和后续状态、输出阶段使用 `exp2` 或 `exp`，三个小算子均按新路径规格选择优化实现 |
@@ -91,6 +92,7 @@ Python 接受 `a_log=None, dt_bias=None` 预留参数；当前仅支持
 
 - A2（`ascend910b`）、A3（`ascend910_93`）、A5（`ascend950`）。
 - 原 Phase6 路径支持 FP16、BF16，`K=128`、`V=128/256`、`chunkSize=64/128`。
+- A2/A3 可选导出每块输入状态 h；不请求 h 时仍使用内部状态 workspace。
 - A5 新路径支持 `useExp2=true/false`、`useQkL2norm=true/false`、BF16、`K=V=128`、`chunkSize=64`、`Hv/Hk in {1,2,3,4}`。
 - 支持 MHA、GVA、定长和变长序列。
 - A2/A3 使用 `arch22` 私有实现，A5 使用 `arch35` 私有实现；两套架构代码隔离维护。
