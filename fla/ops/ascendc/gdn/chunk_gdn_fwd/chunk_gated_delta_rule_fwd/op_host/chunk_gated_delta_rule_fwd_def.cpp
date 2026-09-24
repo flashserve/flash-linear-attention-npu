@@ -50,6 +50,8 @@ public:
             .UnknownShapeFormat(formats);
         this->Output("A").ParamType(REQUIRED).DataType(inputTypes).Format(formats)
             .UnknownShapeFormat(formats);
+        this->Output("h").ParamType(OPTIONAL).DataType(inputTypes).Format(formats)
+            .UnknownShapeFormat(formats);
 
         this->Attr("output_final_state").AttrType(REQUIRED).Bool(false);
         this->Attr("chunk_size").AttrType(REQUIRED).Int(64);
@@ -61,6 +63,7 @@ public:
         this->Attr("raw_g_layout").AttrType(OPTIONAL).Int(0);
         this->Attr("qkv_layout").AttrType(OPTIONAL).Int(0);
         this->Attr("o_layout").AttrType(OPTIONAL).Int(0);
+        this->Attr("output_h").AttrType(OPTIONAL).Bool(false);
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)

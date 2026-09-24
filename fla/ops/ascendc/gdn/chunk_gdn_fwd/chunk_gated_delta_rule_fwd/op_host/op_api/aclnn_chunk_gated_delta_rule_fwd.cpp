@@ -92,11 +92,11 @@ static bool IsAscend950()
     return IsRegbase(npuArch);
 }
 
-static bool IsDav2201CandidateSoc();
+static bool IsDav2201();
 
 static bool IsNativeQkvLayout(const ChunkGatedDeltaRuleFwdParams &params)
 {
-    return IsDav2201CandidateSoc() && params.layout != nullptr &&
+    return IsDav2201() && params.layout != nullptr &&
            (std::strcmp(params.layout, "BSND") == 0 || std::strcmp(params.layout, "TND") == 0);
 }
 
@@ -127,7 +127,7 @@ static bool UsePreparePath(const ChunkGatedDeltaRuleFwdParams &params)
     return params.useExp2 || params.useQkL2norm ||
            params.aLogOptional != nullptr || params.dtBiasOptional != nullptr ||
            params.betaEffOutOptional != nullptr || params.allowNegEigval ||
-           params.hOutOptional != nullptr || params.stateVFirst ||
+           (params.hOutOptional != nullptr && !IsDav2201()) || params.stateVFirst ||
            (!legacyLayout && !IsNativeQkvLayout(params));
 }
 
@@ -330,21 +330,17 @@ static aclnnStatus CheckOptionalRank(const aclTensor *tensor, size_t rank, const
     return tensor == nullptr ? ACLNN_SUCCESS : CheckRank(tensor, rank, name);
 }
 
-static bool IsDav2201CandidateSoc()
+static bool IsDav2201()
 {
-    const char *socName = aclrtGetSocName();
-    // A2 910B variants are the DAV_2201 deployment targets. Unknown or other
-    // SoC names stay on the historical BHT route until tiling proves the
-    // candidate architecture explicitly.
-    return socName != nullptr &&
-           (std::strncmp(socName, "Ascend910B", std::strlen("Ascend910B")) == 0 ||
-            std::strcmp(socName, "ascend910b") == 0);
+    // A2 and A3 both use the arch22 Phase6 implementation. Keep the host
+    // layout/cumsum decision aligned with the architecture checked by tiling.
+    return GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201;
 }
 
 static bool UsePreparedCumsum(const ChunkGatedDeltaRuleFwdParams &params,
                               const GdnShapeInfo &info)
 {
-    return IsDav2201CandidateSoc() && !UsePreparePath(params) &&
+    return IsDav2201() && !UsePreparePath(params) &&
            info.hv <= CUMSUM_PREPARE_MAX_HEADS &&
            info.kDim == HEAD_DIM_128 &&
            (info.vDim == HEAD_DIM_128 ||
@@ -428,8 +424,6 @@ static aclnnStatus CheckSupportedL2Contract(const ChunkGatedDeltaRuleFwdParams &
                "Q/K L2Norm intermediate outputs are reserved by the stable ABI but are not supported yet.");
     CHECK_COND(params.betaEffOutOptional == nullptr, ACLNN_ERR_PARAM_INVALID,
                "betaEffOutOptional is reserved by the stable ABI but is not supported yet.");
-    CHECK_COND(params.hOutOptional == nullptr, ACLNN_ERR_PARAM_INVALID,
-               "hOutOptional is reserved by the stable ABI but is not supported yet.");
     return ACLNN_SUCCESS;
 }
 
@@ -830,7 +824,7 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
                         gCumsumCompute != nullptr && aCompute != nullptr,
                     169101);
 
-    const bool sequenceMajorOutput = IsDav2201CandidateSoc();
+    const bool sequenceMajorOutput = IsDav2201();
     const aclTensor *oCompute = executorPtr->AllocTensor(
         sequenceMajorOutput ? MakeShape({batch, seqlen, hv, vDim}) : MakeShape({batch, hv, seqlen, vDim}),
         params.q->GetDataType(), Format::FORMAT_ND);
@@ -840,12 +834,22 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
     const aclTensor *kInput = nativeQkv ? DenseQkvView(params.k, executorPtr) : params.k;
     const aclTensor *vInput = nativeQkv ? DenseQkvView(params.v, executorPtr) : params.v;
     GDN_STAGE_CHECK(qInput != nullptr && kInput != nullptr && vInput != nullptr, 169113);
+    // The normal path passes no H output and keeps the original workspace H.
+    // A contiguous public H can replace that workspace as both H's output and
+    // O's input. Noncontiguous views need a dense temporary and a final copy.
+    const aclTensor *hCompute = params.hOutOptional;
+    if (hCompute != nullptr && !IsContiguous(hCompute)) {
+        hCompute = executorPtr->AllocTensor(
+            MakeShape({batch, hv, ExpectedChunks(params, seqlen), kDim, vDim}),
+            params.q->GetDataType(), Format::FORMAT_ND);
+        GDN_STAGE_CHECK(hCompute != nullptr, 169114);
+    }
     auto phase6Result = l0op::ChunkGatedDeltaRuleFwd(
         qInput, kInput, vInput, betaBht, aStorageBhtc, gRaw, nullptr,
         params.initialStateOptional, params.cuSeqlensOptional, params.chunkIndicesOptional,
         outputFinalState, params.chunkSize, params.scale, params.gCumsumOutOptional != nullptr,
         oCompute, finalState,
-        gCumsumCompute, aCompute, usePreparedCumsum ? 1 : 0, nativeQkv ? 1 : 0,
+        gCumsumCompute, aCompute, hCompute, usePreparedCumsum ? 1 : 0, nativeQkv ? 1 : 0,
         sequenceMajorOutput ? 1 : 0, executorPtr);
     GDN_STAGE_CHECK(phase6Result[0] != nullptr && phase6Result[2] != nullptr &&
                         phase6Result[3] != nullptr,
@@ -855,6 +859,10 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         TransposeContiguous(oCompute, {0, 2, 1, 3}, executorPtr);
     GDN_STAGE_CHECK(oSequence != nullptr && l0op::ViewCopy(oSequence, params.oOut, executorPtr) != nullptr,
                     169107);
+    if (hCompute != nullptr && hCompute != params.hOutOptional) {
+        CHECK_RET(ViewCopyIfPresent(hCompute, params.hOutOptional, executorPtr) == ACLNN_SUCCESS,
+                  ACLNN_ERR_INNER_NULLPTR);
+    }
 
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);

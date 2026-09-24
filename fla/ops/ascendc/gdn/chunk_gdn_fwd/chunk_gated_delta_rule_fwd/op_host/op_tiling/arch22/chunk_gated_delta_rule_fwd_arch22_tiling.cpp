@@ -41,6 +41,7 @@ constexpr size_t ATTR_OUTPUT_G_CUMSUM = 3;
 constexpr size_t ATTR_RAW_G_LAYOUT = 4;
 constexpr size_t ATTR_QKV_LAYOUT = 5;
 constexpr size_t ATTR_O_LAYOUT = 6;
+constexpr size_t ATTR_OUTPUT_H = 7;
 
 constexpr int64_t SUPPORTED_K_DIM = 128;
 constexpr int64_t SUPPORTED_V_DIM_128 = 128;
@@ -51,6 +52,8 @@ constexpr uint32_t TILING_KEY_V128 = 1;
 constexpr uint32_t TILING_KEY_V256 = 2;
 constexpr uint32_t TILING_KEY_PREPARED_BTH = 3;
 constexpr uint32_t TILING_KEY_PREPARED_BTH_V256 = 4;
+// Keys 1–4 and their workspace data flow remain the no-H path.
+constexpr uint32_t TILING_KEY_EXPORT_H_OFFSET = 4;
 constexpr uint64_t WORKSPACE_ALIGNMENT = 512;
 constexpr uint64_t TILING_ALIGNMENT = 8;
 constexpr uint64_t FP32_BLOCK_ELEMS = 8;
@@ -277,6 +280,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
         context->GetAttrs()->GetAttrPointer<bool>(ATTR_OUTPUT_FINAL_STATE);
     const int64_t *chunkSize = context->GetAttrs()->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE);
     const bool *outputGCumsum = context->GetAttrs()->GetAttrPointer<bool>(ATTR_OUTPUT_G_CUMSUM);
+    const bool *outputH = context->GetAttrs()->GetAttrPointer<bool>(ATTR_OUTPUT_H);
     uint64_t varlenChunks = 0;
     OP_CHECK_IF(outputFinalState == nullptr || chunkSize == nullptr ||
                     (*chunkSize != CHUNK_64 && *chunkSize != CHUNK_128) ||
@@ -288,6 +292,19 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
                                   !GetChunkCount(chunkShape, &varlenChunks))),
                 OP_LOGE(context->GetNodeName(),
                         "Phase 6 requires chunk_size=64/128 and paired valid varlen metadata."),
+                return ge::GRAPH_FAILED);
+    const bool exportH = outputH != nullptr && *outputH;
+    const auto *hDesc = context->GetOutputDesc(4);
+    const auto *hShape = context->GetOutputShape(4);
+    OP_CHECK_IF(exportH != (hDesc != nullptr && hShape != nullptr),
+                OP_LOGE(context->GetNodeName(), "output_h must match optional H output presence."),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(exportH && (hDesc->GetDataType() != inputDtype ||
+                    !IsShape(hShape, {batch, valueHeads,
+                        static_cast<int64_t>(isVarlen ? varlenChunks :
+                            CeilDiv(static_cast<uint64_t>(tokens), static_cast<uint64_t>(*chunkSize))),
+                        kDim, vDim})),
+                OP_LOGE(context->GetNodeName(), "H must be [B,Hv,NT,K,V] with Q dtype."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(rawGLayout == 1 &&
                     (platform.GetCurNpuArch() != NpuArch::DAV_2201 ||
@@ -504,10 +521,10 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
                 OP_LOGE(context->GetNodeName(), "Serialize Phase 6 ABC trailer failed."),
                 return ge::GRAPH_FAILED);
     rawTiling->SetDataSize(rawTilingSize);
-    context->SetTilingKey(rawGLayout == 1 ?
-                          (vDim == SUPPORTED_V_DIM_256 ? TILING_KEY_PREPARED_BTH_V256 :
-                           TILING_KEY_PREPARED_BTH) :
-                          (vDim == SUPPORTED_V_DIM_256 ? TILING_KEY_V256 : TILING_KEY_V128));
+    const uint32_t baseKey = rawGLayout == 1 ?
+        (vDim == SUPPORTED_V_DIM_256 ? TILING_KEY_PREPARED_BTH_V256 : TILING_KEY_PREPARED_BTH) :
+        (vDim == SUPPORTED_V_DIM_256 ? TILING_KEY_V256 : TILING_KEY_V128);
+    context->SetTilingKey(baseKey + (exportH ? TILING_KEY_EXPORT_H_OFFSET : 0));
     context->SetScheduleMode(1);
     OP_LOGD(context->GetNodeName(),
             "Phase 6 tiling: B=%ld, Hk=%ld, Hv=%ld, T=%ld, K=%ld, V=%ld, blocks=%lu, tasks=%lu, "
