@@ -875,7 +875,7 @@ private:
 
     __aicore__ inline int64_t DhOffset(int64_t b, int64_t hv, int64_t chunkIdx) const
     {
-        return ((b * HV_ + hv) * totalChunkNum_ + chunkIdx) * K_ * V_;
+        return ((b * totalChunkNum_ + chunkIdx) * HV_ + hv) * K_ * V_;
     }
 
     __aicore__ inline int64_t WorkspaceBase(int64_t coreIdx, int64_t workspaceSlot) const

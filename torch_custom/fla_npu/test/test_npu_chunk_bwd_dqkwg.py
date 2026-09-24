@@ -1060,13 +1060,13 @@ if __name__ == "__main__":
     print("w_npu", w_npu.shape, w_npu.dtype)
     g_npu = torch.transpose(g, 1, 2).to(Gtype).npu()
     print("g_npu", g_npu.shape, g_npu.dtype)
-    h_npu = torch.transpose(h, 1, 2).to(dtype).npu()
+    h_npu = h.contiguous().to(dtype).npu()
     print("h_npu", h_npu.shape, h_npu.dtype)
     dv_npu = torch.transpose(dv, 1, 2).to(dtype).npu()
     print("dv_npu", dv_npu.shape, dv_npu.dtype)
     do_npu = torch.transpose(do, 1, 2).to(dtype).npu()
     print("do_npu", do_npu.shape, do_npu.dtype)
-    dh_npu = torch.transpose(dh, 1, 2).to(dtype).npu()
+    dh_npu = dh.contiguous().to(dtype).npu()
     print("dh_npu", dh_npu.shape, dh_npu.dtype)
     # cu_seqlens_npu = cu_seqlens if cu_seqlens is not None else None
     chunk_indices_npu = chunk_indices if cu_seqlens is not None else None

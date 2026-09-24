@@ -688,7 +688,7 @@ def npu_chunk_gated_delta_rule_bwd_dhu(
     N = len(cu_seqlens) - 1 if cu_seqlens is not None else B
     state_v_first = _optional_bool(transpose_state_layout, False)
     state_tail = (V, K) if state_v_first else (K, V)
-    dh = _empty((B, Hv, NT, K, V), q)
+    dh = _empty((B, NT, Hv, K, V), q)
     dh0_shape = (N, Hv, *state_tail)
     dh0 = _empty(dh0_shape, q) if h0 is not None else None
     dv2 = _empty_like(dv)
@@ -1484,7 +1484,7 @@ def npu_chunk_gated_delta_rule_fwd_h(
         raise RuntimeError(
             "npu_chunk_gated_delta_rule_fwd_h: initial_state shape does not match state_v_first."
         )
-    h_out = _empty((B, HV, NT, *state_tail), k)
+    h_out = _empty((B, NT, HV, *state_tail), k)
     v_new_out = _empty_like(u)
     if output_final_state:
         if initial_state is not None:
@@ -1628,7 +1628,7 @@ def npu_chunk_fwd_h(
         if initial_state.dtype not in {torch.bfloat16, torch.float32}:
             raise RuntimeError(f"{op_name}: initial_state must use bfloat16 or float32.")
 
-    h_out = _empty((batch, v_heads, total_chunks, *state_tail), k)
+    h_out = _empty((batch, total_chunks, v_heads, *state_tail), k)
     v_new_out = _empty(_shape(u), u)
     if output_final_state:
         state_template = initial_state if initial_state is not None else k
@@ -1759,8 +1759,9 @@ def npu_chunk_kda_fwd_finalize(
     if indices is not None and indices != canonical_indices:
         raise RuntimeError(f"{op_name}: chunk_indices must be canonical sequence-major pairs.")
     total_chunks = _chunk_fwd_h_total_chunks(seqlen, 64, cu, indices)
-    if _shape(h) != (batch, heads, total_chunks, 128, 128):
-        raise RuntimeError(f"{op_name}: h must be [B, HV, total_chunks, 128, 128].")
+    h_shape = (batch, total_chunks, heads, 128, 128)
+    if _shape(h) != h_shape:
+        raise RuntimeError(f"{op_name}: h must have NT-first shape {h_shape}.")
 
     out_shape = {
         "BSND": (batch, seqlen, heads, 128),
@@ -2926,7 +2927,7 @@ def npu_chunk_gated_delta_rule_fwd(
             else (tokens + chunk_size - 1) // chunk_size
         )
         state_tail = (v_dim, k_dim) if state_v_first else (k_dim, v_dim)
-        h = _empty((batch, v_heads, chunks, *state_tail), q)
+        h = _empty((batch, chunks, v_heads, *state_tail), q)
     layout_buffer = ctypes.create_string_buffer(layout.encode("utf-8"))
     # Hats alias the original inputs when normalization is disabled.
     q_hat = _empty(q_shape, q) if use_qk_l2norm_in_kernel else q

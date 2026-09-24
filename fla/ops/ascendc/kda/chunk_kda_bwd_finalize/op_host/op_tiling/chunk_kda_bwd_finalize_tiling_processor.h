@@ -126,15 +126,15 @@ public:
         }
         const bool validStates = variable
             ? h.GetDim(1) == tiling_.NV && h.GetDim(2) == tiling_.K && h.GetDim(3) == tiling_.V &&
-              dh.GetDim(0) == tiling_.NV && dh.GetDim(1) == tiling_.totalChunkNum &&
+              dh.GetDim(0) == tiling_.totalChunkNum && dh.GetDim(1) == tiling_.NV &&
               dh.GetDim(2) == tiling_.K && dh.GetDim(3) == tiling_.V
             : h.GetDim(0) == tiling_.B && h.GetDim(2) == tiling_.NV &&
               h.GetDim(3) == tiling_.K && h.GetDim(4) == tiling_.V &&
               tiling_.denseChunkNum == (tiling_.T + ctx_.chunkSize - 1) / ctx_.chunkSize &&
-              dh.GetDim(0) == tiling_.B && dh.GetDim(1) == tiling_.NV &&
-              dh.GetDim(2) == tiling_.denseChunkNum && dh.GetDim(3) == tiling_.K && dh.GetDim(4) == tiling_.V;
+              dh.GetDim(0) == tiling_.B && dh.GetDim(1) == tiling_.denseChunkNum &&
+              dh.GetDim(2) == tiling_.NV && dh.GetDim(3) == tiling_.K && dh.GetDim(4) == tiling_.V;
         if (!validStates) {
-            OP_LOGE(ctx_.nodeName, "expected chunk-major h and head-major dh");
+            OP_LOGE(ctx_.nodeName, "expected NT-first h and dh");
             return ge::GRAPH_FAILED;
         }
         tiling_.chunkTaskNum = tiling_.totalChunkNum;

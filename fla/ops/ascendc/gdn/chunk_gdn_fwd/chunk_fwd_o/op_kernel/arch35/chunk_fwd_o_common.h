@@ -255,10 +255,10 @@ __aicore__ inline int64_t ChunkFwdOHOffset(const ChunkFwdOTilingData &tiling, co
                                            int64_t hv)
 {
     if (tiling.isVariedLen != 0) {
-        return (hv * tiling.chunkNum + static_cast<int64_t>(loc.globalChunkIdx)) * tiling.kHeadDim * tiling.vHeadDim;
+        return (static_cast<int64_t>(loc.globalChunkIdx) * tiling.vNumHead + hv) * tiling.kHeadDim * tiling.vHeadDim;
     }
-    return (static_cast<int64_t>(loc.batchIdx) * tiling.vNumHead * tiling.numChunksPerBatch +
-            hv * tiling.numChunksPerBatch + static_cast<int64_t>(loc.localChunkIdx)) *
+    return ((static_cast<int64_t>(loc.batchIdx) * tiling.numChunksPerBatch +
+             static_cast<int64_t>(loc.localChunkIdx)) * tiling.vNumHead + hv) *
            tiling.kHeadDim * tiling.vHeadDim;
 }
 

@@ -145,7 +145,7 @@ class AclnnCtypesAbiTest(unittest.TestCase):
                                 self.assertIsNone(outputs[3])
                             if with_h:
                                 self.assertIs(outputs[5], tensors["h"])
-                                self.assertEqual(outputs[5].shape, (1, 4, 2, 128, 256))
+                                self.assertEqual(outputs[5].shape, (1, 2, 4, 128, 256))
                             else:
                                 self.assertIsNone(tensors["h"])
                                 self.assertIsNone(outputs[5])

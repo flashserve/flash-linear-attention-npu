@@ -75,9 +75,11 @@ def chunk_gated_delta_rule_bwd_dhu_cpu(
     golden_mode: str = "fp32",
     use_exp2: bool = False,
     state_v_first: bool = False,
+    nt_first: bool = False,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
-    """GVA 形状 CPU 标杆。golden_mode: fp64 / npu / fp32。"""
-    del dht
+    """GVA 标杆，nt_first 控制 dh 布局。"""
+    if dht is not None and state_v_first:
+        dht = dht.transpose(-1, -2)
     dtype_ = q.dtype
     if golden_mode == "fp64":
         compute_dtype = torch.float64
@@ -177,22 +179,29 @@ def chunk_gated_delta_rule_bwd_dhu_cpu(
         })
 
     sequence_count = len(cu_seqlens) - 1 if cu_seqlens is not None else B
-    dh = torch.zeros(B, Hv, NT, K, V, device=device, dtype=compute_dtype)
+    if nt_first and cu_seqlens is not None and B != 1:
+        raise ValueError("packed NT-first dh requires B=1")
+    dh_shape = (B, NT, Hv, K, V) if nt_first else (B, Hv, NT, K, V)
+    dh = torch.zeros(dh_shape, device=device, dtype=compute_dtype)
     dh0 = (
         torch.zeros(sequence_count, Hv, K, V, device=device, dtype=compute_dtype)
         if h0 is not None
         else None
     )
     dv2 = dv.clone() if cu_seqlens is not None else torch.zeros(B, Hv, T, V, device=device, dtype=dtype_)
-
     if cu_seqlens is None:
         hq = torch.arange(Hv, device=device, dtype=torch.long) // hv_per_hk
         b_dh = torch.zeros(B, Hv, K, V, device=device, dtype=compute_dtype)
+        if dht is not None:
+            b_dh.copy_(dht)
         for i_t in range(NT - 1, -1, -1):
             info = chunk_info[i_t]
             gs, ge = info["global_start_t"], info["global_end_t"]
             block_size_t = info["block_size_t"]
-            dh[:, :, i_t, :, :] = b_dh
+            if nt_first:
+                dh[:, i_t] = b_dh
+            else:
+                dh[:, :, i_t] = b_dh
 
             last_idx = min((info["block_idx_in_token"] + 1) * BT, info["token_length"]) - 1
             global_last_idx = info["bos"] + last_idx
@@ -240,13 +249,18 @@ def chunk_gated_delta_rule_bwd_dhu_cpu(
         hq = torch.arange(Hv, device=device, dtype=torch.long) // hv_per_hk
         num_tokens = len(cu_seqlens) - 1
         b_dh_buffers = torch.zeros(B, Hv, num_tokens, K, V, device=device, dtype=compute_dtype)
+        if dht is not None:
+            b_dh_buffers.copy_(dht.transpose(0, 1).unsqueeze(0))
         for i_t in range(NT - 1, -1, -1):
             info = chunk_info[i_t]
             i_n = info["i_n"]
             gs, ge = info["global_start_t"], info["global_end_t"]
             block_size_t = info["block_size_t"]
             b_dh = b_dh_buffers[:, :, i_n, :, :]
-            dh[:, :, i_t, :, :] = b_dh
+            if nt_first:
+                dh[:, i_t] = b_dh
+            else:
+                dh[:, :, i_t] = b_dh
 
             last_idx = min((info["block_idx_in_token"] + 1) * BT, info["token_length"]) - 1
             global_last_idx = info["bos"] + last_idx

@@ -48,6 +48,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_bwd_dhu_me
     (void)gK;
     (void)dht;
 
+    TORCH_CHECK(chunk_size > 0 && q.dim() == 4, "Expected positive chunk_size and rank-4 token input");
     int64_t B = q.size(0);
     int64_t Hk = q.size(1);
     int64_t T = q.size(2);
@@ -59,11 +60,13 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_bwd_dhu_me
         chunkNum = static_cast<int64_t>(chunk_indices.value().size()) / 2;
     }
 
-    at::Tensor dh = at::empty({B, Hv, chunkNum, K, V}, q.options());
+    const bool packed = cu_seqlens.has_value();
+    at::Tensor dh = at::empty({B, chunkNum, Hv, K, V}, q.options());
     at::Tensor dv2 = at::empty_like(dv);
     at::Tensor dh0;
     if (h0.has_value()) {
-        dh0 = at::empty({B, Hv, chunkNum, K, V}, q.options());
+        const int64_t sequences = packed ? static_cast<int64_t>(cu_seqlens.value().size()) - 1 : B;
+        dh0 = at::empty({sequences, Hv, K, V}, q.options());
     } else {
         dh0 = at::empty({0}, q.options());
     }

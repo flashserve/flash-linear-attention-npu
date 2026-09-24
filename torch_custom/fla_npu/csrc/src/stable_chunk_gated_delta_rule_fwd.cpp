@@ -129,10 +129,10 @@ run_npu_chunk_gated_delta_rule_fwd(
   }
   std::optional<Tensor> out_h;
   if (return_intermediate_states) {
-    out_h = allocate_sizes({batch, heads,
-                            layout_math::chunks(cu, ci, chunk_size, tokens),
-                            state_tail_k, state_tail_v},
-                           q_meta.scalar_type, q_meta);
+    const std::vector<int64_t> h_shape = {
+        batch, layout_math::chunks(cu, ci, chunk_size, tokens), heads,
+        state_tail_k, state_tail_v};
+    out_h = allocate_sizes(h_shape, q_meta.scalar_type, q_meta);
   }
   // The Q/K normalisation results are part of the public tuple now.  The
   // reference allocates them only when the kernel does the normalisation;

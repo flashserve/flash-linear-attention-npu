@@ -251,8 +251,7 @@ struct BlockSchedulerGdnFwdO {
                                     tokenStart;
         const int64_t ovRowOffset = (static_cast<int64_t>(shapeBatchIdx) * vNumHead + vHeadIdx) * seqlen +
                                     tokenStart;
-        const int64_t hBlockOffset = (static_cast<int64_t>(shapeBatchIdx) * vNumHead * numChunks +
-                                      static_cast<int64_t>(vHeadIdx) * numChunks + chunkIdx) *
+        const int64_t hBlockOffset = ((static_cast<int64_t>(shapeBatchIdx) * numChunks + chunkIdx) * vNumHead + vHeadIdx) *
                                      kHeadDim;
         const int64_t workStageOffset =
             static_cast<int64_t>(cubeCoreIdx) * GDN_FWD_O_PING_PONG_STAGES + currStage;

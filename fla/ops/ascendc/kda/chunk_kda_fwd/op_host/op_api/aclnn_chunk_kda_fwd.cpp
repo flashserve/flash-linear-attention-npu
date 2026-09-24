@@ -745,7 +745,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     const op::Shape kShape4 = MakeShape({info.batch, info.hvNum, info.seqlen, info.kDim});
     const op::Shape vShape4 = MakeShape({info.batch, info.hvNum, info.seqlen, info.vDim});
     const op::Shape hShape5 =
-        MakeShape({info.batch, info.hvNum, info.totalChunks, info.kDim, info.vDim});
+        MakeShape({info.batch, info.totalChunks, info.hvNum, info.kDim, info.vDim});
     const op::Shape hExportShape5 =
         params.stateVFirst
             ? MakeShape({info.batch, info.totalChunks, info.hvNum, info.vDim, info.kDim})
@@ -898,10 +898,8 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
                   ACLNN_ERR_INNER_NULLPTR);
     }
     if (hExport != nullptr) {
-        const std::vector<int64_t> hPerm =
-            params.stateVFirst ? std::vector<int64_t>{0, 2, 1, 4, 3}
-                               : std::vector<int64_t>{0, 2, 1, 3, 4};
-        const aclTensor *hResult = Transpose(result[10], hPerm, executorPtr);
+        const aclTensor *hResult = params.stateVFirst
+            ? TransposeLastTwo(result[10], executorPtr) : result[10];
         CHECK_RET(hResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
         CHECK_RET(l0op::ViewCopy(hResult, hExport, executorPtr) != nullptr,
                   ACLNN_ERR_INNER_NULLPTR);

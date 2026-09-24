@@ -52,7 +52,7 @@ def build_inputs(spec: dict[str, Any], device: torch.device, high_precision: boo
         "k": _randn((B, HK, T, K), dtype_name, calc_dtype, device, seed + 2),
         "v": _randn((B, HV, T, V), dtype_name, calc_dtype, device, seed + 3),
         "g": _gate((B, HV, T), torch.float64 if high_precision else torch.float32, device, seed + 4),
-        "h": _randn((B, HV, _num_chunks(T, chunk_size), K, V), dtype_name, calc_dtype, device, seed + 6),
+        "h": _randn((B, HV, _num_chunks(T, chunk_size), K, V), dtype_name, calc_dtype, device, seed + 6).transpose(1, 2).contiguous(),
         "chunk_size": chunk_size,
         "scale": float(spec.get("scale", 1.0 / math.sqrt(K))),
     }
@@ -77,7 +77,7 @@ def _chunk_fwd_o_ref(inputs):
                 local = torch.matmul(q_chunk, k_chunk.t()) * float(inputs["scale"])
                 gate = torch.exp(g_chunk[:, None] - g_chunk[None, :])
                 mask = torch.tril(torch.ones_like(local))
-                out[b, hv, start:end] = torch.matmul(local * gate * mask, v_chunk) + torch.matmul(q_chunk * float(inputs["scale"]), h[b, hv, chunk_id].to(calc))
+                out[b, hv, start:end] = torch.matmul(local * gate * mask, v_chunk) + torch.matmul(q_chunk * g_chunk.exp()[:, None] * float(inputs["scale"]), h[b, chunk_id, hv].to(calc))
     return out.to(v.dtype)
 
 

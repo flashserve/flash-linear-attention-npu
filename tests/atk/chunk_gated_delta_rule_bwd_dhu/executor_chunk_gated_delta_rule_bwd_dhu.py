@@ -103,6 +103,7 @@ def run_cpu(spec: dict[str, Any], high_precision: bool = False):
         # 公共 CPU 节点始终传入 high_precision=True，使用 fp64 完成标杆计算。
         golden_mode="fp64" if high_precision else "npu",
         state_v_first=bool(spec.get("state_v_first", False)),
+        nt_first=True,
     )
 
 

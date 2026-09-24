@@ -512,12 +512,13 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
     const op::Shape vShape = MakeShape({info.batch, info.hv, info.tokens, info.valueDim});
     const op::Shape gateShape = MakeShape({info.batch, info.hv, info.tokens});
     const op::Shape wShape = MakeShape({info.batch, info.hv, info.tokens, info.keyDim});
-    const op::Shape hShape = MakeShape({info.batch, info.hv, chunks, info.keyDim, info.valueDim});
+    const op::Shape hShape = MakeShape({info.batch, chunks, info.hv, info.keyDim, info.valueDim});
+    const op::Shape hChunkShape = MakeShape({info.batch, chunks, info.hv, info.keyDim, info.valueDim});
 
     const aclTensor *w = executorPtr->AllocTensor(wShape, dtype, Format::FORMAT_ND);
     const aclTensor *u = executorPtr->AllocTensor(vShape, dtype, Format::FORMAT_ND);
     const aclTensor *dvLocal = executorPtr->AllocTensor(vShape, dtype, Format::FORMAT_ND);
-    const aclTensor *h = executorPtr->AllocTensor(hShape, dtype, Format::FORMAT_ND);
+    const aclTensor *h = executorPtr->AllocTensor(hChunkShape, dtype, Format::FORMAT_ND);
     const aclTensor *vNew = executorPtr->AllocTensor(vShape, dtype, Format::FORMAT_ND);
     const aclTensor *dh = executorPtr->AllocTensor(hShape, dtype, Format::FORMAT_ND);
     const aclTensor *dv2 = executorPtr->AllocTensor(vShape, dtype, Format::FORMAT_ND);

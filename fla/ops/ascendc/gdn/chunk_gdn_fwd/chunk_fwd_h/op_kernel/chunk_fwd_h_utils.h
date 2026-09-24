@@ -247,12 +247,12 @@ __aicore__ inline uint64_t FwdHHOffset(const FwdHRuntimeTiling &tiling,
                                        uint32_t globalChunk)
 {
     if (tiling.isVariedLen != 0) {
-        return (static_cast<uint64_t>(hv) * sequence.totalChunks +
-                globalChunk) * FWD_H_K * FWD_H_V;
+        return (static_cast<uint64_t>(globalChunk) * tiling.vNumHead +
+                hv) * FWD_H_K * FWD_H_V;
     }
     const uint32_t chunksPerSequence = FwdHCeilDiv(static_cast<uint32_t>(tiling.seqlen), FWD_H_CHUNK);
-    return ((static_cast<uint64_t>(sequence.physicalBatch) * tiling.vNumHead + hv) *
-                chunksPerSequence + globalChunk - sequence.chunkPrefix) * FWD_H_K * FWD_H_V;
+    return ((static_cast<uint64_t>(sequence.physicalBatch) * chunksPerSequence +
+                globalChunk - sequence.chunkPrefix) * tiling.vNumHead + hv) * FWD_H_K * FWD_H_V;
 }
 
 template <bool STATE_V_FIRST>

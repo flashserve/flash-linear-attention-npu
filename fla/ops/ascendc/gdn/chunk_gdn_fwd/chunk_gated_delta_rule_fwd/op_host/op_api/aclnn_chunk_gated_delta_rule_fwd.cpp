@@ -475,7 +475,7 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
         const int64_t stateDim0 = params.stateVFirst ? info.vDim : info.kDim;
         const int64_t stateDim1 = params.stateVFirst ? info.kDim : info.vDim;
         const bool valid = HasShape(params.hOutOptional,
-                                    {info.batch, info.hv, chunks, stateDim0, stateDim1});
+                                    {info.batch, chunks, info.hv, stateDim0, stateDim1});
         CHECK_COND(valid, ACLNN_ERR_PARAM_INVALID,
                    "hOutOptional shape must match stateVFirst.");
     }
@@ -641,7 +641,7 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         const op::Shape aShape = MakeShape({batch, hv, seqlen, params.chunkSize});
         const int64_t stateDim0 = params.stateVFirst ? vDim : kDim;
         const int64_t stateDim1 = params.stateVFirst ? kDim : vDim;
-        const op::Shape hShape = MakeShape({batch, hv, ExpectedChunks(params, seqlen), stateDim0, stateDim1});
+        const op::Shape hShape = MakeShape({batch, ExpectedChunks(params, seqlen), hv, stateDim0, stateDim1});
         const op::Shape stateShape = MakeShape({seqNum, hv, stateDim0, stateDim1});
         const DataType dtype = params.q->GetDataType();
         const DataType stateDtype = params.initialStateOptional == nullptr

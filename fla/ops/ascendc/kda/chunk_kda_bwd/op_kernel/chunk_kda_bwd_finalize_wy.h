@@ -118,15 +118,6 @@ __aicore__ inline uint64_t WyDhOffset(
     const ChunkKdaBwdCTilingData &tiling, uint32_t batchIdx,
     uint32_t headIdx, uint32_t chunkIdx)
 {
-    if (tiling.dhHeadMajor != 0) {
-        if (tiling.isVarLen != 0) {
-            return (static_cast<uint64_t>(headIdx) * tiling.chunkNum +
-                    chunkIdx) * tiling.keyDim * tiling.valueDim;
-        }
-        return ((static_cast<uint64_t>(batchIdx) * tiling.headNum +
-                 headIdx) * tiling.chunkNumPerBatch + chunkIdx) *
-               tiling.keyDim * tiling.valueDim;
-    }
     if (tiling.isVarLen != 0) {
         return (static_cast<uint64_t>(chunkIdx) * tiling.headNum + headIdx) *
                tiling.keyDim * tiling.valueDim;

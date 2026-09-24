@@ -204,7 +204,7 @@ aclnn L2 只描述张量与算法契约，不接收或解释 autograd 重计算�
   `ViewCopy` 导出，为空时只保留前向内部生命周期。`gkOut` 非空时直接复用为 `gkCompute`，
   避免目标场景额外复制整张 FP32 gate。
 - `finalStateOut != nullptr` 同时表示本次需要计算并写出最终状态。
-- `hCompute` 是 FwdH 到 Finalize 的内部必需 head-major 张量；`hOut` 是独立的公开可选输出。
+- `hCompute` 是 FwdH 到 Finalize 的内部必需 NT-first 张量；`hOut` 是独立的公开可选输出，两者不再需要交换 chunk/head 轴。
   `hOut == nullptr` 不会跳过内部 `hCompute`，只是不向调用方公开该中间状态；非空时由
   L2 转为固定 sequence-major 后导出。
 

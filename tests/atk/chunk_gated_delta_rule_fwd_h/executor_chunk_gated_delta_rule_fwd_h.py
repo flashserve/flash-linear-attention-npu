@@ -60,8 +60,8 @@ def build_inputs(spec: dict[str, Any], device: torch.device, high_precision: boo
     }
 
 
-def _forward_h_ref(inputs):
-    """使用 FP64 输入和累加计算定长 CPU golden。"""
+def _forward_h_ref(inputs, *, nt_first=False):
+    """FP64 标杆，可输出 NT-first 状态。"""
     k, w, u, g = (inputs[name] for name in ("k", "w", "u", "g"))
     B, HK, T, K = k.shape
     HV, V = u.shape[1], u.shape[3]
@@ -75,7 +75,8 @@ def _forward_h_ref(inputs):
     u = u.to(compute)
     g = g.to(compute)
 
-    h = torch.zeros((B, HV, num_chunks, K, V), dtype=k.dtype, device=k.device)
+    h_shape = (B, num_chunks, HV, K, V) if nt_first else (B, HV, num_chunks, K, V)
+    h = torch.zeros(h_shape, dtype=k.dtype, device=k.device)
     v_new = torch.zeros((B, HV, T, V), dtype=u.dtype, device=u.device)
     for b in range(B):
         for hv in range(HV):
@@ -85,7 +86,7 @@ def _forward_h_ref(inputs):
                 w_chunk = w[b, hv, start:end]
                 u_chunk = u[b, hv, start:end]
                 g_chunk = g[b, hv, start:end]
-                state = h[b, hv, chunk_idx]
+                state = h[b, chunk_idx, hv] if nt_first else h[b, hv, chunk_idx]
                 current_v = u_chunk - w_chunk @ state
                 v_new[b, hv, start:end] = current_v.to(u.dtype)
                 if chunk_idx + 1 < num_chunks:
@@ -93,14 +94,17 @@ def _forward_h_ref(inputs):
                     g_last = torch.exp(g_chunk[-1])
                     s_decayed = state * g_last
                     s_update = k_chunk.transpose(-1, -2) @ (current_v * decay)
-                    h[b, hv, chunk_idx + 1] = s_decayed + s_update
+                    if nt_first:
+                        h[b, chunk_idx + 1, hv] = s_decayed + s_update
+                    else:
+                        h[b, hv, chunk_idx + 1] = s_decayed + s_update
     return h, v_new
 
 
 def run_cpu(spec: dict[str, Any]):
     """运行 FP64 CPU golden。"""
     inputs = build_inputs(spec, torch.device("cpu"), high_precision=True)
-    return _forward_h_ref(inputs)
+    return _forward_h_ref(inputs, nt_first=True)
 
 
 def run_npu(spec: dict[str, Any], input_data: InputDataset):

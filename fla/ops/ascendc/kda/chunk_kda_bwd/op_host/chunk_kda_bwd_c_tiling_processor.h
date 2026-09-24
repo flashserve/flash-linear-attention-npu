@@ -51,7 +51,6 @@ struct ChunkKdaBwdCTilingContext {
     bool safeGate;
     bool useGateInKernel;
     float lowerBound;
-    bool dhHeadMajor;
     bool validateIntermediateShapes;
     uint32_t aicCoreNum;
     size_t systemWorkspaceSize;
@@ -83,7 +82,6 @@ public:
                             "cu_seqlens and chunk_indices must be both present or absent"),
                     return ge::GRAPH_FAILED);
         tiling_.isVarLen = hasCu ? 1 : 0;
-        tiling_.dhHeadMajor = ctx_.dhHeadMajor ? 1 : 0;
         tiling_.useGateInKernel = ctx_.useGateInKernel ? 1 : 0;
         tiling_.lowerBound = ctx_.lowerBound;
         tiling_.hasDtBias =
@@ -242,12 +240,10 @@ public:
                                 "h must be [B,chunkNum,H,K,V]"),
                         return ge::GRAPH_FAILED);
             const bool validDh = !ctx_.validateIntermediateShapes ||
-                (dh.GetDimNum() == 5 &&
-                (ctx_.dhHeadMajor ? CheckDenseDhHeadMajor(dh) :
-                                    CheckDenseState(dh)));
+                (dh.GetDimNum() == 5 && CheckDenseState(dh));
             if (!validDh) {
                 OP_LOGE(ctx_.nodeName,
-                        "dh must be [B,chunkNum,H,K,V] or PR291 [B,H,chunkNum,K,V]");
+                        "dh must be [B,chunkNum,H,K,V]");
                 return ge::GRAPH_FAILED;
             }
         } else {
@@ -267,12 +263,10 @@ public:
                                 "varlen h must be [totalChunks,H,K,V]"),
                         return ge::GRAPH_FAILED);
             const bool validDh = !ctx_.validateIntermediateShapes ||
-                (ctx_.dhHeadMajor ?
-                (dh.GetDimNum() == 5 && CheckVarlenDhHeadMajor(dh)) :
-                (dh.GetDimNum() == 4 && CheckVarlenState(dh)));
+                (dh.GetDimNum() == 4 && CheckVarlenState(dh));
             if (!validDh) {
                 OP_LOGE(ctx_.nodeName,
-                        "varlen dh must be [totalChunks,H,K,V] or PR291 [1,H,totalChunks,K,V]");
+                        "varlen dh must be [totalChunks,H,K,V]");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -336,25 +330,6 @@ private:
                shape.GetDim(1) == static_cast<size_t>(tiling_.headNum) &&
                shape.GetDim(2) == 128 &&
                shape.GetDim(3) == static_cast<size_t>(tiling_.valueDim);
-    }
-
-    bool CheckDenseDhHeadMajor(const gert::Shape &shape) const
-    {
-        return shape.GetDim(0) == static_cast<size_t>(tiling_.batch) &&
-               shape.GetDim(1) == static_cast<size_t>(tiling_.headNum) &&
-               shape.GetDim(2) ==
-                   static_cast<size_t>(tiling_.chunkNumPerBatch) &&
-               shape.GetDim(3) == 128 &&
-               shape.GetDim(4) == static_cast<size_t>(tiling_.valueDim);
-    }
-
-    bool CheckVarlenDhHeadMajor(const gert::Shape &shape) const
-    {
-        return shape.GetDim(0) == 1 &&
-               shape.GetDim(1) == static_cast<size_t>(tiling_.headNum) &&
-               shape.GetDim(2) == static_cast<size_t>(tiling_.chunkNum) &&
-               shape.GetDim(3) == 128 &&
-               shape.GetDim(4) == static_cast<size_t>(tiling_.valueDim);
     }
 
     uint64_t Align512(uint64_t value) const

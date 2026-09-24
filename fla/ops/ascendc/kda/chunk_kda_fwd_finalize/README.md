@@ -49,7 +49,7 @@ chunk 数之和。`Aqk` 最后一维始终是 64，包括尾 chunk。
 | `qg_scaled` | `[B,HV,T,128]` | `[HV,T,128]` |
 | `Aqk` | `[B,HV,T,64]` | `[HV,T,64]` |
 | `v_new` | `[B,HV,T,128]` | FwdH 主路径 `[1,HV,T,128]`；独立调用也接受 `[HV,T,128]` |
-| `h` | `[B,HV,C,128,128]` | `[1,HV,C,128,128]` |
+| `h` | `[B,C,HV,128,128]` | `[1,C,HV,128,128]` |
 | `attn_out` | `BSND [B,T,HV,128]` 或 `BNSD [B,HV,T,128]` | `TND [T,HV,128]` 或 `NTD [HV,T,128]` |
 
 三个 token 输入始终为 head-major，与输出 layout 无关。packed 模式下
