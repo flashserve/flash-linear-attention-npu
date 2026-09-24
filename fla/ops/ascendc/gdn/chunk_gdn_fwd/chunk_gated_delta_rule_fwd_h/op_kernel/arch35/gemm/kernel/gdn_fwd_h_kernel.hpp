@@ -854,6 +854,41 @@ public:
                         ((shapeBatchIdx * totalChunks + chunkOffset) * vNumHead + vHeadIdx) *
                         stateBlockSize;
                     uint32_t initialStateBaseOffset = taskIdx * stateBlockSize;
+                    if (isVariedLen &&
+                        vecBlockScheduler.GetVarlenBatchChunks(batchIdx) == 0) {
+                        // 空序列没有 chunk：h/v_new 没有对应槽位，直接把初始状态写回 final_state。
+                        if (storeFinalState &&
+                            std::is_same<ElementFinalState, float>::value) {
+                            for (uint32_t rowOffset = rowBegin; rowOffset < rowEnd;
+                                 rowOffset += rowsPerTile) {
+                                uint32_t rowsThisTile = Min(rowsPerTile, rowEnd - rowOffset);
+                                uint32_t stateTileElems = rowsThisTile * vHeadDim;
+                                uint32_t stateOffset =
+                                    initialStateBaseOffset + rowOffset * vHeadDim;
+                                AscendC::LocalTensor<ElementInitialState> stateUbTensor =
+                                    pingpongFlag ? stateUbTensorPing : stateUbTensorPong;
+                                auto eventId = pingpongFlag ? EVENT_ID1 : EVENT_ID0;
+                                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(eventId);
+                                if (useInitialState) {
+                                    AscendC::DataCopy(
+                                        stateUbTensor, gmInitialState[stateOffset], stateTileElems);
+                                    AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE3>(eventId);
+                                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE3>(eventId);
+                                } else {
+                                    AscendC::Duplicate(
+                                        stateUbTensor, static_cast<ElementInitialState>(0),
+                                        stateTileElems);
+                                    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(eventId);
+                                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(eventId);
+                                }
+                                AscendC::DataCopy(gmFinalState[stateOffset], stateUbTensor,
+                                                  stateTileElems);
+                                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(eventId);
+                                pingpongFlag = 1 - pingpongFlag;
+                            }
+                        }
+                        continue;
+                    }
                     for (uint32_t rowOffset = rowBegin; rowOffset < rowEnd; rowOffset += rowsPerTile) {
                         uint32_t rowsThisTile = Min(rowsPerTile, rowEnd - rowOffset);
                         uint32_t stateTileElems = rowsThisTile * vHeadDim;

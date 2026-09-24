@@ -197,8 +197,11 @@ struct BlockSchedulerGdnFwdH {
                 }
                 prevSeq = currSeq;
             }
-            tokenBatch = actualBatch;
-            batch = actualBatch;
+            // batch/tokenBatch 必须保持"逻辑序列总数"（含零长度序列）：
+            // 任务是按 (序列, value head) 枚举的，零长度序列同样占一个任务槽，
+            // 由 kernel 侧把 initial_state 回写为 final_state。若这里改成
+            // actualBatch（仅非空序列数），尾部序列的任务会整体越界，表现为
+            // 最后一条序列的 h 与 final_state 全部不被写入。
             totalChunks = chunkPrefix;
             totalTokens = prevSeq;
         } else {
@@ -227,25 +230,26 @@ struct BlockSchedulerGdnFwdH {
     }
 
     CATLASS_DEVICE
-    void ResolveVarlenSequence(uint32_t compactBatchIdx, GDNFwdHStream& stream) {
+    // 序列序号与 cu_seqlens 的位置一一对应（空序列也占一个序号），
+    // 与 host 侧 tokenBatch = len(cu_seqlens) - 1 的任务枚举保持一致。
+    void ResolveVarlenSequence(uint32_t seqIdx, GDNFwdHStream& stream) {
         uint32_t actualBatch = 0;
         int64_t chunkPrefix = 0;
         int64_t prevSeq = 0;
         for (uint32_t b = 1; b <= inputTokenBatch; ++b) {
             int64_t currSeq = gmSeqlen.GetValue(b);
             int64_t batchTokens = currSeq - prevSeq;
-            if (batchTokens > 0) {
-                int64_t batchChunks = (batchTokens + chunkSize - 1) / chunkSize;
-                if (actualBatch == compactBatchIdx) {
-                    stream.chunkOffset = static_cast<uint32_t>(chunkPrefix);
-                    stream.batchChunks = static_cast<uint32_t>(batchChunks);
-                    stream.tokenOffset = static_cast<uint32_t>(prevSeq);
-                    stream.batchTokens = static_cast<uint32_t>(batchTokens);
-                    return;
-                }
-                ++actualBatch;
-                chunkPrefix += batchChunks;
+            int64_t batchChunks =
+                batchTokens > 0 ? (batchTokens + chunkSize - 1) / chunkSize : 0;
+            if (actualBatch == seqIdx) {
+                stream.chunkOffset = static_cast<uint32_t>(chunkPrefix);
+                stream.batchChunks = static_cast<uint32_t>(batchChunks);
+                stream.tokenOffset = static_cast<uint32_t>(prevSeq);
+                stream.batchTokens = static_cast<uint32_t>(batchTokens);
+                return;
             }
+            ++actualBatch;
+            chunkPrefix += batchChunks;
             prevSeq = currSeq;
         }
         stream.chunkOffset = 0;
@@ -255,10 +259,17 @@ struct BlockSchedulerGdnFwdH {
     }
 
     CATLASS_DEVICE
-    uint32_t GetVarlenChunkOffset(uint32_t compactBatchIdx) {
+    uint32_t GetVarlenChunkOffset(uint32_t seqIdx) {
         GDNFwdHStream stream;
-        ResolveVarlenSequence(compactBatchIdx, stream);
+        ResolveVarlenSequence(seqIdx, stream);
         return stream.chunkOffset;
+    }
+
+    CATLASS_DEVICE
+    uint32_t GetVarlenBatchChunks(uint32_t seqIdx) {
+        GDNFwdHStream stream;
+        ResolveVarlenSequence(seqIdx, stream);
+        return stream.batchChunks;
     }
 
     CATLASS_DEVICE

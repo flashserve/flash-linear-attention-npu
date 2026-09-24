@@ -36,6 +36,7 @@
 #include "kernel_utils/vector/regbase.hpp"
 #endif
 #endif
+#include "chunk_kda_fwd_regbase_kg.h"
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
 
@@ -106,92 +107,8 @@ constexpr uint16_t KDA_POST_PIPELINE_U_EVENT = KDA_POST_EVENT_FIX;
 constexpr bool KDA_ENABLE_POST_AIC_PIPELINE = true;
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-template <typename InputT>
-__simd_callee__ inline void LoadPostKdaGateRegbasePair(
-    AscendC::MicroAPI::RegTensor<float> &zeroReg,
-    AscendC::MicroAPI::RegTensor<float> &oneReg,
-    __ubuf__ InputT *src,
-    AscendC::MicroAPI::MaskReg &inputMask)
-{
-    using namespace AscendC::MicroAPI;
-    if constexpr (std::is_same<InputT, float>()) {
-        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(zeroReg, oneReg, src);
-    } else {
-        RegTensor<InputT> inputReg;
-        LoadIn<InputT, false>(inputReg, src);
-        CastHalf2Float<InputT>(zeroReg, oneReg, inputReg, inputMask);
-    }
-}
-
-template <typename OutputT>
-__simd_callee__ inline void StorePostKdaGateRegbasePair(
-    __ubuf__ OutputT *dst,
-    AscendC::MicroAPI::RegTensor<float> &zeroReg,
-    AscendC::MicroAPI::RegTensor<float> &oneReg,
-    AscendC::MicroAPI::MaskReg &inputMask,
-    AscendC::MicroAPI::MaskReg &floatMask)
-{
-    using namespace AscendC::MicroAPI;
-    if constexpr (std::is_same<OutputT, half>()) {
-        Mins(zeroReg, zeroReg, KDA_FP16_MAX, floatMask);
-        Mins(oneReg, oneReg, KDA_FP16_MAX, floatMask);
-        Maxs(zeroReg, zeroReg, -KDA_FP16_MAX, floatMask);
-        Maxs(oneReg, oneReg, -KDA_FP16_MAX, floatMask);
-    }
-    RegTensor<OutputT> outputReg;
-    CastFloat2Half<OutputT>(outputReg, zeroReg, oneReg, floatMask);
-    StoreAlign(dst, outputReg, inputMask);
-}
-
-template <typename T, typename GK_T>
-static __simd_vf__ inline void ComputePostKdaKgRegbase(
-    __ubuf__ T *kAndKg, __ubuf__ GK_T *gate, __ubuf__ float *ref,
-    uint16_t rows, uint16_t cols)
-{
-    using namespace AscendC::MicroAPI;
-    constexpr uint16_t ELEMENTS_PER_REG = AscendC::VECTOR_REG_WIDTH / sizeof(T);
-    MaskReg floatMask = CreateMask<float, MaskPattern::ALL>();
-    for (uint16_t row = 0; row < rows; ++row) {
-        uint32_t rowOffset = static_cast<uint32_t>(row) * cols;
-        for (uint16_t col = 0; col < cols; col += ELEMENTS_PER_REG) {
-            uint32_t activeCount = static_cast<uint32_t>(cols - col);
-            MaskReg inputMask = UpdateMask<T>(activeCount);
-            uint32_t offset = rowOffset + col;
-
-            RegTensor<float> gateZeroReg;
-            RegTensor<float> gateOneReg;
-            RegTensor<float> refZeroReg;
-            RegTensor<float> refOneReg;
-            RegTensor<float> expZeroReg;
-            RegTensor<float> expOneReg;
-            RegTensor<float> inputZeroReg;
-            RegTensor<float> inputOneReg;
-            RegTensor<float> outputZeroReg;
-            RegTensor<float> outputOneReg;
-
-            LoadPostKdaGateRegbasePair<GK_T>(
-                gateZeroReg, gateOneReg, gate + offset, inputMask);
-            LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
-                refZeroReg, refOneReg, ref + col);
-            SubFloatTwoReg(expZeroReg, expOneReg, refZeroReg, refOneReg,
-                           gateZeroReg, gateOneReg, floatMask);
-            Muls(expZeroReg, expZeroReg, LN2, floatMask);
-            Muls(expOneReg, expOneReg, LN2, floatMask);
-            MinsFloatTwoReg(expZeroReg, expOneReg, expZeroReg, expOneReg,
-                            KDA_EXP_INPUT_MAX, floatMask);
-            Maxs(expZeroReg, expZeroReg, KDA_EXP_INPUT_MIN, floatMask);
-            Maxs(expOneReg, expOneReg, KDA_EXP_INPUT_MIN, floatMask);
-            ExpFloatTwoReg(expZeroReg, expOneReg, expZeroReg, expOneReg, floatMask);
-
-            LoadPostKdaGateRegbasePair<T>(
-                inputZeroReg, inputOneReg, kAndKg + offset, inputMask);
-            MulFloatTwoReg(outputZeroReg, outputOneReg, inputZeroReg, inputOneReg,
-                           expZeroReg, expOneReg, floatMask);
-            StorePostKdaGateRegbasePair<T>(
-                kAndKg + offset, outputZeroReg, outputOneReg, inputMask, floatMask);
-        }
-    }
-}
+// 计分/状态两侧共用同一份 regbase kg 实现（见 chunk_kda_fwd_regbase_kg.h）。
+using KdaRegbaseKg::ComputePostKdaKgRegbase;
 #endif
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -1749,6 +1666,16 @@ private:
         if (curT == 0 || !UsePostWuCube(curT)) {
             return;
         }
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        // preparedQG_ 与公开的 w 输出同址：AIV 尾块重算 (ComputeTailWuVector) 靠按行倒序
+        // 就地覆盖，保证读到的种子行还没被自己写脏。AIC 这条 cube 通路会把 W 结果直接写回
+        // 同一地址，而 arch35 上 AIC 与 AIV 之间没有跨核握手，尾块会读到被并发覆盖的种子，
+        // 使 w 变成对种子二次施加 A 的结果。非满块本来就由 AIV 独占产出（A2/A3 上 AIC 的
+        // 尾块结果写进 scratch 后即被丢弃），因此这里直接返回。
+        if (curT < BT_) {
+            return;
+        }
+#endif
         ComputePostWuCube(b, hv, chunkIdx, start, curT);
 #if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
         Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(syncDoneFlag_);
