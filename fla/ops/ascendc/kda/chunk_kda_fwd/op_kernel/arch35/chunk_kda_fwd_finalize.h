@@ -1097,9 +1097,6 @@ private:
                                              uint64_t curT)
     {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        if (curT < KDA_CUBE_MIN_REDUCTION) {
-            return;
-        }
         SetLoadDataPaddingValue<T>(static_cast<T>(0));
         if (BT_ == 64 && curT == BT_) {
             ComputeOutputCubeStagedArch35(b, hv, chunkIdx, start, curT);
@@ -1140,10 +1137,6 @@ private:
                 blockMmad(blockQ, blockH, blockO, shapeQH);
                 PipeBarrier<PIPE_ALL>();
             }
-        }
-
-        if (curT < KDA_CUBE_MIN_REDUCTION) {
-            return;
         }
 
         auto layoutAqk = tla::MakeLayout<ElementA, LayoutTagA>(BT_, BT_);
@@ -1202,18 +1195,12 @@ private:
             LocalTensor<float> outLocal = arena[2 * elems];
             LocalTensor<T> outTyped = gateWritebackBuf_.Get<T>();
 
-            if (curT < KDA_CUBE_MIN_REDUCTION) {
-                ComputeTailStateRows(
-                    stateLocal, b, hv, chunkIdx, start, tileRow, tileRows);
-                ComputeTailLocalRows(localLocal, b, hv, start, curT, tileRow, tileRows);
-            } else {
-                CopyVectorIn(stateLocal, o_, KVOffset(b, hv, ti, 0, V_), elems);
-                SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
-                WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
-                CopyVectorIn(localLocal, u_, KVOffset(b, hv, ti, 0, V_), elems);
-                SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
-                WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
-            }
+            CopyVectorIn(stateLocal, o_, KVOffset(b, hv, ti, 0, V_), elems);
+            SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
+            WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
+            CopyVectorIn(localLocal, u_, KVOffset(b, hv, ti, 0, V_), elems);
+            SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
+            WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
             Add(outLocal, stateLocal, localLocal, static_cast<uint32_t>(elems));
             PipeBarrier<PIPE_V>();
             ClampFp32ToOutputType(outLocal, static_cast<uint32_t>(elems));

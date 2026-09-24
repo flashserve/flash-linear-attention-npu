@@ -35,6 +35,7 @@
 #define FLA_NPU_REGBASE_HPP_INCLUDED
 #include "kernel_utils/vector/regbase.hpp"
 #endif
+#include "chunk_kda_fwd_regbase_kg.h"
 #endif
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
@@ -75,6 +76,8 @@ constexpr uint32_t KDA_SOLVE_DIAG_BLOCKS = KDA_SOLVE_BT / KDA_SOLVE_DIAG_BT;
 constexpr uint32_t KDA_SOLVE_DIAG_MCH_ITERS = 3;
 // Keep the local safe-gate exponent span within the BF16 score range while
 // reducing repeated gate-factor work and AIV/AIC handshakes.
+// arch35 的 cube 分形专门按 32 行 score 块特化（见下方 static_assert），
+// 这里保持 32；计分因子的量程问题由 SCORE_T 统一为 bf16 解决。
 constexpr uint32_t KDA_SCORE_REF_BC = 32;
 constexpr uint32_t KDA_SAFE_SCORE_REF_BC = 32;
 constexpr uint32_t KDA_VEC_ARENA_ELEMENTS = 32768;
@@ -840,8 +843,10 @@ class ChunkKdaFwdPrepareKernel {
 public:
     using OUT_T = T;
     using AKK_T = float;
+    // 与 arch22 一致：计分因子在 fp16 下的指数跨度裕度不足，raw gate 场景会
+    // 在大跨度时失去 q*2^(g-ref) 与 k*2^(ref-g) 的对消精度，统一改存 bf16。
     using SCORE_T =
-        std::conditional_t<SAFE_GATE && IsSameType<T, half>::value, bfloat16_t, T>;
+        std::conditional_t<IsSameType<T, half>::value, bfloat16_t, T>;
     template <typename TilingData>
     __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR rawG,
                                 GM_ADDR aLog, GM_ADDR dtBias, GM_ADDR beta, GM_ADDR initialState,
@@ -2951,10 +2956,26 @@ private:
         constexpr uint8_t rowBlk = diagSize * sizeof(float) / 32;
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        ForwardSubDiag16Regbase(
-            (__ubuf__ float *)reinterpret_cast<uint64_t>(diag.GetPhyAddr()),
-            static_cast<uint16_t>(valid));
-#else
+        if constexpr (SAFE_GATE && COMPILE_BT == 64 && COMPILE_K == 128 &&
+                      COMPILE_V == 128) {
+            ForwardSubDiag16Regbase(
+                (__ubuf__ float *)reinterpret_cast<uint64_t>(diag.GetPhyAddr()),
+                static_cast<uint16_t>(valid));
+            SetFlag<HardEvent::V_S>(EXP2_EVENT_ID);
+            WaitFlag<HardEvent::V_S>(EXP2_EVENT_ID);
+            for (uint32_t i = 0; i < diagSize; ++i) {
+                uint32_t diagOffset = i * diagSize + i;
+                if (i < valid) {
+                    diag.SetValue(diagOffset, diag.GetValue(diagOffset) + 1.0f);
+                } else {
+                    diag.SetValue(diagOffset, 1.0f);
+                }
+            }
+            SetFlag<HardEvent::S_V>(EXP2_EVENT_ID);
+            WaitFlag<HardEvent::S_V>(EXP2_EVENT_ID);
+            return;
+        }
+#endif
         for (uint64_t i = 2; i < valid; ++i) {
             uint32_t rowOffset = static_cast<uint32_t>(i * diagSize);
             DataCopy(row, diag[rowOffset], diagSize);
@@ -2982,7 +3003,6 @@ private:
             DataCopy(diag[rowOffset], row, diagSize);
             PipeBarrier<PIPE_V>();
         }
-#endif
 
         SetFlag<HardEvent::V_S>(EXP2_EVENT_ID);
         WaitFlag<HardEvent::V_S>(EXP2_EVENT_ID);
@@ -3007,38 +3027,42 @@ private:
         constexpr uint32_t brcbElements = diagSize * 8;
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        (void)akkMat;
-        (void)arena;
-        (void)scratchBase;
-        uint64_t rowEnd = rowBegin + rowCount;
-        for (uint64_t blockBegin = 0; blockBegin < BT_; blockBegin += diagSize) {
-            if (blockBegin < rowBegin || blockBegin + diagSize > rowEnd) {
-                continue;
-            }
-            uint64_t localBlockRow = blockBegin - rowBegin;
-            uint64_t valid = blockBegin < curT ? curT - blockBegin : 0;
-            if (valid > diagSize) {
-                valid = diagSize;
-            }
-            ForwardSubDiag16StridedRegbase(
-                (__ubuf__ float *)reinterpret_cast<uint64_t>(xMat.GetPhyAddr()),
-                static_cast<uint16_t>(BT_), static_cast<uint16_t>(localBlockRow),
-                static_cast<uint16_t>(blockBegin), static_cast<uint16_t>(valid));
-            SetFlag<HardEvent::V_S>(EXP2_EVENT_ID);
-            WaitFlag<HardEvent::V_S>(EXP2_EVENT_ID);
-            for (uint32_t rowIdx = 0; rowIdx < diagSize; ++rowIdx) {
-                uint32_t diagOffset =
-                    static_cast<uint32_t>((localBlockRow + rowIdx) * BT_ + blockBegin + rowIdx);
-                if (rowIdx < valid) {
-                    xMat.SetValue(diagOffset, xMat.GetValue(diagOffset) + 1.0f);
-                } else {
-                    xMat.SetValue(diagOffset, 1.0f);
+        if constexpr (SAFE_GATE && COMPILE_BT == 64 && COMPILE_K == 128 &&
+                      COMPILE_V == 128) {
+            (void)akkMat;
+            (void)arena;
+            (void)scratchBase;
+            uint64_t rowEnd = rowBegin + rowCount;
+            for (uint64_t blockBegin = 0; blockBegin < BT_; blockBegin += diagSize) {
+                if (blockBegin < rowBegin || blockBegin + diagSize > rowEnd) {
+                    continue;
                 }
+                uint64_t localBlockRow = blockBegin - rowBegin;
+                uint64_t valid = blockBegin < curT ? curT - blockBegin : 0;
+                if (valid > diagSize) {
+                    valid = diagSize;
+                }
+                ForwardSubDiag16StridedRegbase(
+                    (__ubuf__ float *)reinterpret_cast<uint64_t>(xMat.GetPhyAddr()),
+                    static_cast<uint16_t>(BT_), static_cast<uint16_t>(localBlockRow),
+                    static_cast<uint16_t>(blockBegin), static_cast<uint16_t>(valid));
+                SetFlag<HardEvent::V_S>(EXP2_EVENT_ID);
+                WaitFlag<HardEvent::V_S>(EXP2_EVENT_ID);
+                for (uint32_t rowIdx = 0; rowIdx < diagSize; ++rowIdx) {
+                    uint32_t diagOffset =
+                        static_cast<uint32_t>((localBlockRow + rowIdx) * BT_ + blockBegin + rowIdx);
+                    if (rowIdx < valid) {
+                        xMat.SetValue(diagOffset, xMat.GetValue(diagOffset) + 1.0f);
+                    } else {
+                        xMat.SetValue(diagOffset, 1.0f);
+                    }
+                }
+                SetFlag<HardEvent::S_V>(EXP2_EVENT_ID);
+                WaitFlag<HardEvent::S_V>(EXP2_EVENT_ID);
             }
-            SetFlag<HardEvent::S_V>(EXP2_EVENT_ID);
-            WaitFlag<HardEvent::S_V>(EXP2_EVENT_ID);
+            return;
         }
-#else
+#endif
         LocalTensor<float> diag = arena[scratchBase];
         LocalTensor<float> row = diag[diagElements];
         LocalTensor<float> prod = row[diagSize];
@@ -3071,7 +3095,6 @@ private:
             }
             PipeBarrier<PIPE_V>();
         }
-#endif
     }
 
     __aicore__ inline void BuildPrefixMask(LocalTensor<float> dst, uint64_t prefix, uint64_t count)
@@ -3394,14 +3417,18 @@ private:
             WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
         }
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        if (!scoreIncludesBeta) {
-            ApplyKdaRowScaleRegbase(
-                (__ubuf__ float *)reinterpret_cast<uint64_t>(akkMat.GetPhyAddr()),
-                (__ubuf__ float *)reinterpret_cast<uint64_t>(betaLocal.GetPhyAddr()),
-                static_cast<uint16_t>(rowCount), static_cast<uint16_t>(BT_));
-            PipeBarrier<PIPE_V>();
-        }
-#else
+        if constexpr (SAFE_GATE && COMPILE_BT == 64 && COMPILE_K == 128 &&
+                      COMPILE_V == 128) {
+            if (!scoreIncludesBeta) {
+                ApplyKdaRowScaleRegbase(
+                    (__ubuf__ float *)reinterpret_cast<uint64_t>(akkMat.GetPhyAddr()),
+                    (__ubuf__ float *)reinterpret_cast<uint64_t>(betaLocal.GetPhyAddr()),
+                    static_cast<uint16_t>(rowCount), static_cast<uint16_t>(BT_));
+                PipeBarrier<PIPE_V>();
+            }
+        } else
+#endif
+        {
         Brcb(betaBrcb, betaLocal, static_cast<uint8_t>((rowCount + 7) / 8), {1, 8});
         PipeBarrier<PIPE_V>();
         uint8_t rowStride = static_cast<uint8_t>(BT_ * sizeof(float) / 32);
@@ -3410,7 +3437,7 @@ private:
                 {1, 1, 0, rowStride, rowStride, 1});
         }
         PipeBarrier<PIPE_V>();
-#endif
+        }
         if (validRowCount > 0) {
             SelectCausalRows(aqkMat, akkMat, rowBegin, validRowCount);
         }
@@ -4069,11 +4096,17 @@ private:
         }
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        ApplyKdaRowScaleRegbase(
-            (__ubuf__ float *)reinterpret_cast<uint64_t>(matrixLocal.GetPhyAddr()),
-            (__ubuf__ float *)reinterpret_cast<uint64_t>(betaLocal.GetPhyAddr()),
-            static_cast<uint16_t>(rowCount), static_cast<uint16_t>(dim));
-#else
+        if constexpr (SAFE_GATE && COMPILE_BT == 64 && COMPILE_K == 128 &&
+                      COMPILE_V == 128) {
+            ApplyKdaRowScaleRegbase(
+                (__ubuf__ float *)reinterpret_cast<uint64_t>(matrixLocal.GetPhyAddr()),
+                (__ubuf__ float *)reinterpret_cast<uint64_t>(betaLocal.GetPhyAddr()),
+                static_cast<uint16_t>(rowCount), static_cast<uint16_t>(dim));
+        } else
+#endif
+        {
+        Brcb(betaBrcb, betaLocal, static_cast<uint8_t>((rowCount + 7) / 8), {1, 8});
+        PipeBarrier<PIPE_V>();
         uint8_t repeatStride = static_cast<uint8_t>(dim * sizeof(float) / 32);
         for (uint64_t col = 0; col < dim; col += vecElemsPerRepeat) {
             uint64_t mask = dim - col;
@@ -4084,7 +4117,7 @@ private:
                 {1, 1, 0, repeatStride, repeatStride, 1});
         }
         PipeBarrier<PIPE_V>();
-#endif
+        }
 
         if constexpr (IsSameType<T, float>::value) {
             SetFlag<HardEvent::V_MTE3>(vToMte3Event_);
@@ -4203,6 +4236,45 @@ private:
             }
             SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
             WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
+
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            if constexpr (SAFE_GATE && COMPILE_BT == 64 && COMPILE_K == 128 && COMPILE_V == 128) {
+                // 该形态由 prepare 承担 post-Wu 的产出（融合路径），但状态更新消费的
+                // gated K 必须相对 chunk 末行：kg[row] = k[row] * 2^(gk_last - gk[row])。
+                // 计分流水的暂存按计分块参考行组织不能直接复用，这里在收尾阶段按同一
+                // 行覆盖（与本函数已校验的 aqk/akk 导出一致）从 GM 重算后写回。
+                const uint64_t kgHead = hv / (HV_ / H_);
+                LocalTensor<float> kgArena = arena[2 * matrixElems + qgElems];
+                LocalTensor<float> kgGateRows = kgArena;
+                LocalTensor<float> kgRefRow = kgGateRows[qgElems];
+                // typedBase 已按 float 视图偏移，T 与 float 的别名区不能重叠。
+                const uint64_t kgTypedOffset =
+                    (3 * qgElems + K_) * (sizeof(float) / sizeof(T));
+                LocalTensor<T> kgTyped = typedBase[kgTypedOffset];
+                CopyVectorIn(kgGateRows, gk_, KVOffset(b, hv, start + tileRow, 0, K_), qgElems);
+                CopyVectorIn(kgRefRow, gk_, KVOffset(b, hv, start + curT - 1, 0, K_),
+                             static_cast<uint64_t>(K_));
+                CopyRowsIn(kgTyped, k_, QOffset(b, kgHead, start + tileRow, 0), rows, K_,
+                           inputSequenceMajor_ ? H_ * K_ : K_);
+                SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
+                WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
+                // 复用 post-wu 已调优的 regbase 实现（单循环内 load/compute/store），
+                // 取代逐行 Sub + 全局 Exp 链；数值语义（2^(ref-gate)、LN2 缩放、指数夹取、
+                // 输出类型夹取与舍入）与向量展开一致。
+                KdaRegbaseKg::ComputePostKdaKgRegbase<T, float>(
+                    (__ubuf__ T *)reinterpret_cast<uint64_t>(kgTyped.GetPhyAddr()),
+                    (__ubuf__ float *)reinterpret_cast<uint64_t>(kgGateRows.GetPhyAddr()),
+                    (__ubuf__ float *)reinterpret_cast<uint64_t>(kgRefRow.GetPhyAddr()),
+                    static_cast<uint16_t>(rows), static_cast<uint16_t>(K_));
+                PipeBarrier<PIPE_V>();
+                SetFlag<HardEvent::V_MTE3>(vToMte3Event_);
+                WaitFlag<HardEvent::V_MTE3>(vToMte3Event_);
+                CopyVectorOut(finalKg_, KVOffset(b, hv, start + tileRow, 0, K_), kgTyped,
+                              qgElems);
+                SetFlag<HardEvent::MTE3_MTE2>(mte3ToMte2Events_[0]);
+                WaitFlag<HardEvent::MTE3_MTE2>(mte3ToMte2Events_[0]);
+            }
+#endif
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             if constexpr (!(SAFE_GATE && COMPILE_BT == 64 && COMPILE_K == 128 && COMPILE_V == 128)) {
@@ -4386,9 +4458,15 @@ private:
             ? scoreBlockCount
             : (scoreBlockCount + KDA_SCORE_QUEUE_DEPTH - 1) / KDA_SCORE_QUEUE_DEPTH *
                   KDA_SCORE_QUEUE_DEPTH;
+        // direct-score UB 路径的 UB/L1 槽位和 32/64 行模板都按 K=V=128 固定，
+        // 只有 chunk=64 且 K=V=128 的专用模板真正支持它：该模板才会发布
+        // direct-score 的初始 free flag。通用模板必须回落到逐 lane 的 cube
+        // 计分路径，否则 AIC 会等待 AIV 从未发布过的 direct-score flag 而死锁。
         const bool useDirectScoreUb =
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-            KDA_ARCH35_ENABLE_DIRECT_SCORE_UB && pairHeads && curT == 64 && scoreBlockCount == 2;
+            SAFE_GATE && COMPILE_BT == 64 && COMPILE_K == 128 && COMPILE_V == 128 &&
+            KDA_ARCH35_ENABLE_DIRECT_SCORE_UB && pairHeads && curT == 64 &&
+            scoreBlockCount == 2;
 #else
             false;
 #endif
@@ -4639,7 +4717,8 @@ private:
                     : block % KDA_SCORE_QUEUE_DEPTH;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                 bool directScoreDispatched = false;
-                if constexpr (SAFE_GATE) {
+                if constexpr (SAFE_GATE && COMPILE_BT == 64 && COMPILE_K == 128 &&
+                              COMPILE_V == 128) {
                     if (KDA_ARCH35_ENABLE_DIRECT_SCORE_UB && curT == 64 && rowCount == 32) {
                         uint64_t scoreSlotBase = ScoreScratchSlot(queueSlot, 0, true);
                         if (rowBegin == 0) {

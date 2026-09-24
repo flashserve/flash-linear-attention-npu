@@ -110,7 +110,7 @@ Python 入口 `fla_npu.ops.ascendc.chunk_kda_fwd` 通过关键字参数
 | --- | --- | --- |
 | `layout` | `BSND` | `BSND/BNSD/TND/NTD` |
 | `scale` | 必传 | 通常为 `K**-0.5` |
-| `chunk_size` | `64` | `64/128` |
+| `chunk_size` | `64` | `64`（其它取值参数校验阶段拦截） |
 | `output_final_state` | `false` | bool |
 | `safe_gate` | `false` | bool |
 | `lower_bound` | `-5.0` | safe raw gate 时 `[-5,0)` |
@@ -129,7 +129,8 @@ Python 入口 `fla_npu.ops.ascendc.chunk_kda_fwd` 通过关键字参数
 - A2 (`ascend910b`)、A3 (`ascend910_93`)、A5 (`ascend950`)。
 - `K/V` 只支持两档且必须同档：`K=V=64` 或 `K=V=128`。混合档（如 `K=64,V=128`）
   与其它取值（含 `V=256`）都不支持，会在参数校验阶段返回 `ACLNN_ERR_PARAM_INVALID`。
-- `chunk_size` 为 64/128。
+- `chunk_size` 只支持 `64`；其它取值（含 `128`）在参数校验阶段返回
+  `ACLNN_ERR_PARAM_INVALID`（报错文本为 `chunkSize only supports 64.`），不会下沉到 tiling。
 - TND/NTD 均支持多 head。
 - 变长调用最多 1024 条逻辑序列，rank-4 变长输入要求 B=1。
 - 空 tensor 不支持：`B` 或序列长度（TND/NTD 为总 token 数）为 0 时，参数校验阶段
@@ -143,7 +144,7 @@ Python 入口 `fla_npu.ops.ascendc.npu_chunk_kda_fwd` 负责场景选择：
 | 场景 | 走的 aclnn 入口 | L0 实现 |
 | --- | --- | --- |
 | `q/k/v` 为 BF16、`K=V=128`、`chunk_size=64`、`cu_seqlens` 严格递增、输出连续 | `aclnnChunkKdaFwdV2` | `ChunkKdaFwdPrepare -> ChunkFwdH -> ChunkKdaFwdFinalize` 三个独立算子组合 |
-| 其余场景（FP16、`K=V=64`、`chunk_size=128`、含空序列、输出非连续） | `aclnnChunkKdaFwd`（签名与 ABI 未变） | 本算子的私有 L0 融合实现 |
+| 其余场景（FP16、`K=V=64`、含空序列、输出非连续） | `aclnnChunkKdaFwd`（签名与 ABI 未变） | 本算子的私有 L0 融合实现 |
 
 两个入口共用同一套参数校验、输出语义和返回码契约：`state_v_first` 均由算子原生解释，
 公开的 `gk/Aqk/Akk/w/u/qg/kg/v_new` 始终是 head-major，`h` 始终是 sequence-major。

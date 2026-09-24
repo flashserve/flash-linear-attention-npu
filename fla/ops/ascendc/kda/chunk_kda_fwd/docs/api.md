@@ -46,7 +46,7 @@ outputs = chunk_kda_fwd(
 | `g` | 必选 | 去掉 V 维的 Shape（含 K 维）；FP32/BF16 | raw gate，或已激活的自然对数 gate |
 | `beta` | 必选 | 去掉 K 维的 Shape；FP32/BF16 | delta 系数 |
 | `scale` | 必选 | float | attention scale |
-| `chunk_size` | `64` | int | 分块长度；三算子组合场景只支持 64 |
+| `chunk_size` | `64` | int | 分块长度；只支持 `64`，其它取值（含 `128`）参数校验阶段返回 `ACLNN_ERR_PARAM_INVALID` |
 | `layout` | `"BSND"` | str | `BSND`/`BNSD`/`TND`/`NTD`，只解释输入 |
 | `initial_state` | `None` | `[N,H_v,K,V]` 或 `state_v_first=true` 时 `[N,H_v,V,K]`；FP32 | 算子就地更新，第 12 个返回值就是它本身 |
 | `output_final_state` | `False` | bool | 控制第 2 槽 `final_state` 是否返回 |
@@ -229,7 +229,7 @@ aclnn L2 只描述张量与算法契约，不接收或解释 autograd 重计算�
 V2 支持范围：`q/k/v` 为 BF16、`K=V=128`、`chunk_size=64`、公开输出连续、`cu_seqlens`
 严格递增；不满足时返回 `ACLNN_ERR_PARAM_INVALID`（提示改用融合入口）。
 场景选择由 Python 入口完成：`fla_npu.ops.ascendc.chunk_kda_fwd` 命中上述场景时优先调用 V2，
-其余场景（FP16、`K=V=64`、`chunk_size=128`、含空序列、输出非连续）回落到
+其余场景（FP16、`K=V=64`、含空序列、输出非连续）回落到
 `aclnnChunkKdaFwd`。两个入口共用同一套参数校验、输出指针语义与返回码契约，公开输出布局一致。
 
 V2 入口的形参尾部另有 5 个可选输出指针 `qHatOut/kHatOut/qRstdOut/kRstdOut/betaEffOut`，
