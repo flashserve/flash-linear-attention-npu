@@ -29,6 +29,9 @@ Finalize 对 h、dh 分别寻址，Dhu 及其 head-major dh 不变。
 - Finalize 使用每 AIV 248 KiB UB、每 AIC 128 KiB L1；双头窗口内每个 AIV 处理一个头。
 - Q/K/beta 常驻片上，矩阵数据直接组织为 NZ，按分带写回输出。
 - dg 及参数梯度部分和写入 workspace，采用固定顺序归约，不使用原子累加。
+- 融合反向入口在同一块私有 workspace 内依次铺设 dv0/dq_raw/dAqk/dh/dv_scan/dAkk 六个跨阶段缓冲、
+  Kernel B 与 Kernel C 区域；各区域按 512 字节对齐，跨阶段偏移以 512 字节为单位写入 tiling，
+  因此在 tiling payload 大小不变的前提下，单次发射可寻址的私有 workspace 上限由 4 GiB 提升到 2 TiB。
 - q_rstd/k_rstd 成对提供时，在 Finalize 内完成归一化反向，不增加第四个 kernel。
 
 Python 层统一处理参数校验、空序列压缩和规范 chunk 元数据。

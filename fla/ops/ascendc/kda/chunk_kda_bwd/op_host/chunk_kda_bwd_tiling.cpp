@@ -5,6 +5,7 @@
 
 #include <register/op_impl_registry.h>
 #include "platform/platform_ascendc.h"
+#include "platform/soc_spec.h"
 
 #include "chunk_kda_bwd_a_tiling_processor.h"
 #include "chunk_kda_bwd_c_tiling_processor.h"
@@ -80,6 +81,10 @@ ge::graphStatus BuildKernelBTiling(
     GDN::ChunkGatedDeltaRuleBwdDhuTilingData &b,
     uint64_t &userWorkspaceBytes, float scale)
 {
+    const auto platform =
+        platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
+    const bool isAscend950 =
+        platform.GetCurNpuArch() == NpuArch::DAV_3510;
     const auto *qgDesc = context->GetInputDesc(INPUT_QG);
     const auto *gkDesc = context->GetInputDesc(INPUT_GK);
     const auto *qShapeStorage = context->GetRequiredInputShape(INPUT_Q);
@@ -130,6 +135,8 @@ ge::graphStatus BuildKernelBTiling(
     b.scale = scale;
 
     const uint64_t qSize = DtypeSize(qgDesc->GetDataType());
+    // Retain both state-update GEMM terms in FP32 until subtraction on all SoCs.
+    const uint64_t termSize = sizeof(float);
     const uint64_t gateSize = DtypeSize(gkDesc->GetDataType());
     const uint64_t maxDim = static_cast<uint64_t>(std::max(b.K, b.V));
     const uint64_t gateElems = static_cast<uint64_t>(
@@ -141,12 +148,14 @@ ge::graphStatus BuildKernelBTiling(
             2 * align32(gateElems * gateSize) +
             align32(4U * gateElems * sizeof(float));
         uint64_t vectorBytes =
-            4 * align32(row * maxDim * qSize) +
+            2 * align32(row * maxDim * qSize) +
+            2 * align32(row * maxDim * termSize) +
             2 * align32(row * maxDim * sizeof(float)) +
             2 * align32(row * static_cast<uint64_t>(b.V) * sizeof(float));
         if (qgDesc->GetDataType() == ge::DT_BF16) {
             vectorBytes +=
-                2 * align32(row * static_cast<uint64_t>(b.V) * qSize);
+                2 * align32(row * static_cast<uint64_t>(b.V) *
+                            (isAscend950 ? termSize : qSize));
         }
         if (fixedBytes + vectorBytes + 16U * 1024U <= ubSize) {
             break;
@@ -159,9 +168,9 @@ ge::graphStatus BuildKernelBTiling(
     b.stateWorkspaceElems = static_cast<int64_t>(
         align32(static_cast<uint64_t>(b.K) * b.V * sizeof(float)) / qSize);
     b.dvStateWorkspaceElems = b.chunkSize * b.V;
-    b.termQWorkspaceElems = b.K * b.V;
+    b.termQWorkspaceElems = b.K * b.V * termSize / qSize;
     b.dv2WorkspaceElems = 0;
-    b.termWWorkspaceElems = b.K * b.V;
+    b.termWWorkspaceElems = b.K * b.V * termSize / qSize;
 
     int64_t offset = 0;
     b.qgWorkspaceOffset = offset;
@@ -251,7 +260,7 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     const uint32_t blockDim =
         std::max<uint32_t>(static_cast<uint32_t>(platform.GetCoreNumAic()), 1U);
     const bool isAscend950 =
-        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
+        platform.GetCurNpuArch() == NpuArch::DAV_3510;
     const size_t systemWorkspace =
         static_cast<size_t>(platform.GetLibApiWorkSpaceSize());
 
@@ -353,32 +362,42 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     uint64_t cursor = 0;
     const auto reserve = [&cursor](uint64_t bytes) {
         const uint64_t offset = cursor;
-        cursor = AlignUp(cursor + bytes, 512);
+        cursor = AlignUp(cursor + bytes, KDA::KDA_BWD_WORKSPACE_ALIGN);
         return offset;
     };
-    tiling->dv0Offset = static_cast<uint32_t>(
-        reserve(tokenCount * vDim * dataBytes));
-    tiling->dqRawOffset = static_cast<uint32_t>(
-        reserve(tokenCount * kDim * sizeof(float)));
-    tiling->dAqkOffset = static_cast<uint32_t>(
+    // Every private workspace region starts on a 512-byte boundary, so the
+    // offsets travel to the device in 512-byte units (see
+    // KDA_BWD_WORKSPACE_ALIGN).  The unit change keeps the fused tiling
+    // payload inside the proven A5 kernel-argument budget while lifting the
+    // single fused launch from the old 4 GiB byte-offset limit to a 2 TiB
+    // budget: a long-context SFT pack with T * H = 2^21 needs about 4.3 GiB
+    // of private workspace, which the previous byte-valued fields rejected.
+    const auto encodeOffset = [](uint64_t bytes) {
+        return static_cast<uint32_t>(bytes / KDA::KDA_BWD_WORKSPACE_ALIGN);
+    };
+    tiling->dv0Offset = encodeOffset(reserve(tokenCount * vDim * dataBytes));
+    tiling->dqRawOffset =
+        encodeOffset(reserve(tokenCount * kDim * sizeof(float)));
+    tiling->dAqkOffset = encodeOffset(
         reserve(static_cast<uint64_t>(akkShape.GetShapeSize()) * sizeof(float)));
-    tiling->dhOffset = static_cast<uint32_t>(reserve(
-        chunkTasks * headNum * kDim * vDim * dataBytes));
-    tiling->dvScanOffset = static_cast<uint32_t>(
-        reserve(tokenCount * vDim * dataBytes));
-    tiling->dAkkOffset = static_cast<uint32_t>(
+    tiling->dhOffset = encodeOffset(
+        reserve(chunkTasks * headNum * kDim * vDim * dataBytes));
+    tiling->dvScanOffset =
+        encodeOffset(reserve(tokenCount * vDim * dataBytes));
+    tiling->dAkkOffset = encodeOffset(
         reserve(static_cast<uint64_t>(akkShape.GetShapeSize()) * sizeof(float)));
-    tiling->kernelBWorkspaceOffset = static_cast<uint32_t>(cursor);
-    cursor = AlignUp(cursor + bUserWorkspace, 512);
+    tiling->kernelBWorkspaceOffset = encodeOffset(cursor);
+    cursor = AlignUp(cursor + bUserWorkspace, KDA::KDA_BWD_WORKSPACE_ALIGN);
     cursor = AlignUp(
         cursor + static_cast<uint64_t>(tiling->kernelC.usedCoreNum) *
                      KDA_A_RAW_WORKSPACE_PER_CORE,
-        512);
-    tiling->kernelCWorkspaceOffset = static_cast<uint32_t>(cursor);
+        KDA::KDA_BWD_WORKSPACE_ALIGN);
+    tiling->kernelCWorkspaceOffset = encodeOffset(cursor);
     cursor += cUserWorkspace;
-    OP_CHECK_IF(cursor > UINT32_MAX,
+    OP_CHECK_IF(cursor / KDA::KDA_BWD_WORKSPACE_ALIGN > UINT32_MAX,
                 OP_LOGE(context->GetNodeName(),
-                        "single-launch private workspace exceeds 4 GiB"),
+                        "single-launch private workspace exceeds the 2 TiB "
+                        "offset budget"),
                 return ge::GRAPH_FAILED);
     const uint64_t totalWorkspace = systemWorkspace + cursor;
 
@@ -496,11 +515,8 @@ ge::graphStatus Tiling4KdaGateBwdPost(gert::TilingContext *context)
                             "chunk_indices must contain (sequence, local_chunk) pairs"),
                 return ge::GRAPH_FAILED);
         chunkNum = metadataElems / 2;
-        OP_CHECK_IF(chunkNum > KDA::KDA_GATE_POST_MAX_CHUNKS,
-                    OP_LOGE(context->GetNodeName(),
-                            "KdaGateBwdPost supports at most %d packed chunks",
-                            KDA::KDA_GATE_POST_MAX_CHUNKS),
-                    return ge::GRAPH_FAILED);
+        // DecodeTask reads each pair from GM using a fixed-size scratch buffer.
+        // The packed task count is not limited by a tiling/UB metadata table.
     } else {
         chunkNum = batch * chunkNumPerBatch;
     }
@@ -513,7 +529,7 @@ ge::graphStatus Tiling4KdaGateBwdPost(gert::TilingContext *context)
     // AIV avoids concurrent unaligned stores sharing and overwriting the same
     // 32-byte GM block.  Other architectures retain the parallel head map.
     const bool isAscend950 =
-        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
+        platform.GetCurNpuArch() == NpuArch::DAV_3510;
     const uint32_t usedCoreNum = isAscend950 ? 1U : std::max<uint32_t>(
         std::min<uint32_t>(static_cast<uint32_t>(heads), availableAiv), 1U);
     auto *tiling =
