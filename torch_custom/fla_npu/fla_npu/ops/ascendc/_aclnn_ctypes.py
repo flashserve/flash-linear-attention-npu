@@ -4591,22 +4591,6 @@ def npu_chunk_kda_bwd_recompute(
 
 def npu_solve_tri(x, *, cu_seqlens=None, chunk_indices=None, layout="bsnd"):
     layout = str(layout)
-    if layout == "tnd":
-        # Measured on Ascend910B3 with the OPP in this tree: the tnd spelling
-        # kills the process inside aclnnSolveTri, with and without cu_seqlens.
-        # Crashing has no defined semantics to be compatible with, so this one
-        # is refused with a message instead -- see
-        # docs/architecture/适配层设计.md.
-        #
-        # `ntd` crashes the same way (re-measured: five of six shapes segfault,
-        # the sixth is rejected 161001 -- see the inventory's known limits), and
-        # it is deliberately *not* intercepted here: the reference does not
-        # either, and whether to refuse it is the operator owner's call.
-        raise RuntimeError(
-            "npu_solve_tri: layout='tnd' is refused because the operator "
-            "crashes the process for that spelling on this OPP (verified on "
-            "both the ctypes and the Stable-ABI path). Use layout='bsnd' or "
-            "'bnsd'.")
     x_contig = x.contiguous()
     out = _empty_like(x_contig)
     layout_arg = ctypes.c_char_p(str(layout).encode("utf-8"))
