@@ -106,8 +106,7 @@ bool MulOverflow(uint64_t a, uint64_t b, uint64_t *out)
 
 bool IsCatlassScoreArchSupported(NpuArch npuArch)
 {
-    // Keep CATLASS score on SOCs with a matching arch tag and validated cross-core pipeline.
-    return npuArch == NpuArch::DAV_3510;
+    return npuArch == NpuArch::DAV_2201 || npuArch == NpuArch::DAV_3510;
 }
 
 uint64_t ScoreRowBlockSize(uint64_t bt, NpuArch npuArch)
@@ -132,7 +131,8 @@ uint64_t ScoreGroupBatch(uint64_t scoreBlockTaskNum,
                          uint64_t bt,
                          uint64_t t,
                          uint64_t isVarlen,
-                         bool useCatlassScore)
+                         bool useCatlassScore,
+                         NpuArch npuArch)
 {
     if (!useCatlassScore || usedAicNum == 0 || scoreBlockTaskNum == 0) {
         return 1;
@@ -142,6 +142,11 @@ uint64_t ScoreGroupBatch(uint64_t scoreBlockTaskNum,
         return 1;
     }
     const uint64_t waves = CeilDiv(scoreBlockTaskNum, usedAicNum);
+    // Short A2 workloads need an early ready notification so Vector can
+    // overlap the remaining Cube work instead of waiting for the whole group.
+    if (npuArch == NpuArch::DAV_2201 && waves <= 4) {
+        return 1;
+    }
     return std::max<uint64_t>(
         1, std::min<uint64_t>(static_cast<uint64_t>(NsChunkScaledDotKkt::SCORE_WORKSPACE_HEAD_BATCH), waves));
 }
@@ -300,7 +305,8 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
     const bool useCatlassScore =
         catlassScoreArchSupported && pairableAicNum > 0 &&
         bt >= static_cast<uint64_t>(NsChunkScaledDotKkt::CATLASS_SCORE_MIN_BT) && (k % 16) == 0;
-    if (catlassScoreArchSupported && !useCatlassScore) {
+    // A2 keeps the Matmul API for unaligned K; aligned tails/varlen use CATLASS on both architectures.
+    if (npuArch == NpuArch::DAV_3510 && !useCatlassScore) {
         return ge::GRAPH_FAILED;
     }
     const uint64_t aicTaskNum = useCatlassScore ? scoreBlockTaskNum : scoreTaskNum;
@@ -310,7 +316,8 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
         useCatlassScore
             ? pairedAivNum
             : std::max<uint64_t>(1, std::min<uint64_t>(std::max<uint64_t>(scoreTaskNum, pairedAivNum), pairedAivNum));
-    const uint64_t scoreGroupBatch = ScoreGroupBatch(scoreBlockTaskNum, usedAicNum, bt, t, isVarlen, useCatlassScore);
+    const uint64_t scoreGroupBatch =
+        ScoreGroupBatch(scoreBlockTaskNum, usedAicNum, bt, t, isVarlen, useCatlassScore, npuArch);
     uint32_t blockDim = static_cast<uint32_t>(usedAicNum);
     if (platformInfo != nullptr) {
         platform_ascendc::PlatformAscendC platform(platformInfo);
