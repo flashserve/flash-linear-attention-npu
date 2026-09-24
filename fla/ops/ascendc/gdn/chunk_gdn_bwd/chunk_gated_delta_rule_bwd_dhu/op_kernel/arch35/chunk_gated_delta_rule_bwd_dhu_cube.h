@@ -102,6 +102,9 @@ public:
         AscendC::LocalTensor<DT> l1BScratch[L1B_SCRATCH_BUFFER_COUNT] = {
             resource.l1Buf.template GetBufferByByte<DT>(L1B_SCRATCH_OFFSET),
             resource.l1Buf.template GetBufferByByte<DT>(L1B_SCRATCH_OFFSET + L1B_SCRATCH_TILE_BYTES)};
+        // S1：dO 聚合集基址（仅 DO_AGG_ENABLED 时承载数据；否则纯地址包装、无占用）
+        AscendC::LocalTensor<DT> doAggL1 =
+            resource.l1Buf.template GetBufferByByte<DT>(DO_AGG_OFFSET);
         AscendC::LocalTensor<DT> l0A[L0_BUFFER_COUNT] = {
             resource.l0ABuf.template GetBufferByByte<DT>(0),
             resource.l0ABuf.template GetBufferByByte<DT>(L0A_TILE_BYTES)};
@@ -219,14 +222,53 @@ public:
                         tla::MakeShape(static_cast<uint32_t>(chunkInfo.chunkLen), static_cast<uint32_t>(V_DIM)));
                     CopyGmToL1B_TermQ<decltype(blockDO)> copyGmToL1B_DO;
 
-                    const uint32_t doScratchSlot = curL1B_;
-                    curL1B_ ^= 1U;
-                    const int32_t doScratchEvent = L1BScratchEvent(doScratchSlot);
+                    // S1（go/no-go 闸门）：dO 装载 ndNum 头聚合 A/B。dO 逐头独立（:160 寻址 hv 直引、
+                    // 不经 HRatio，GVA 组内无共享、聚合零重复读）；头间 stride 恒 T_*V_ elem（varlen 同式）。
+                    bool waitDoReady = true;
+                    bool releaseDoAfter = true;
+                    int32_t doL1BEvent = 0;
+                    AscendC::LocalTensor<DT> doL1Tensor = l1BScratch[0];
+                    if constexpr (DO_AGG_ENABLED) {
+                        if (headOffset == 0) {
+                            // 单条 ndNum=headCnt 聚合装载本 task 全部头（尾窗口运行时 ndNum=headCnt），
+                            // 位置与现状逐头装载相同（保持在 flag3 等待阴影内、termQ GEMM 之前）
+                            const int64_t dOAggBase =
+                                ((chunkInfo.bIdx * HV_ + hvBase) * T_ + chunkInfo.tokenStart) * V_;
+                            AscendC::GlobalTensor<DT> gmDOAgg;
+                            gmDOAgg.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dO_) + dOAggBase);
+                            auto tensorDOAgg =
+                                tla::MakeTensor(gmDOAgg, layoutDO, Catlass::Arch::PositionGM{});
+                            auto blockDOAgg = tla::GetTile(
+                                tensorDOAgg, tla::MakeCoord(0, 0),
+                                tla::MakeShape(static_cast<uint32_t>(chunkInfo.chunkLen),
+                                               static_cast<uint32_t>(V_DIM)));
+                            auto tensorL1DOAggDst = tla::MakeTensor(doAggL1, L1B_LAYOUT_DO,
+                                                                    Catlass::Arch::PositionL1{});
+                            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO_AGG_FREE);
+                            copyGmToL1B_DO(tensorL1DOAggDst, blockDOAgg, static_cast<uint32_t>(headCnt),
+                                           static_cast<uint32_t>(T_ * V_), DO_AGG_MATRIX_ELEMS);
+                            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(EVENT_DO_AGG_READY);
+                        }
+                        curL1B_ ^= 1U; // 空翻转：保持 dh-state 的 L1B scratch 槽位序列与现状逐拍一致
+                        doL1Tensor = doAggL1[headOffset * DO_AGG_MATRIX_ELEMS];
+                        // 组级信用（R-Akk 同款）：head0 GEMM 首 K 等 ready；组内末头 GEMM 末 K 释放 free
+                        waitDoReady = headOffset == 0;
+                        releaseDoAfter = headOffset + 1 == headCnt;
+                        doL1BEvent = headOffset == 0 ? EVENT_DO_AGG_READY : EVENT_DO_AGG_FREE;
+                    } else {
+                        const uint32_t doScratchSlot = curL1B_;
+                        curL1B_ ^= 1U;
+                        const int32_t doScratchEvent = L1BScratchEvent(doScratchSlot);
+                        doL1Tensor = l1BScratch[doScratchSlot];
+                        doL1BEvent = doScratchEvent;
+                        auto tensorL1DOLoad = tla::MakeTensor(doL1Tensor, L1B_LAYOUT_DO,
+                                                              Catlass::Arch::PositionL1{});
+                        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(doScratchEvent);
+                        copyGmToL1B_DO(tensorL1DOLoad, blockDO);
+                        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(doScratchEvent);
+                    }
                     auto tensorL1DO =
-                        tla::MakeTensor(l1BScratch[doScratchSlot], L1B_LAYOUT_DO, Catlass::Arch::PositionL1{});
-                    AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(doScratchEvent);
-                    copyGmToL1B_DO(tensorL1DO, blockDO);
-                    AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(doScratchEvent);
+                        tla::MakeTensor(doL1Tensor, L1B_LAYOUT_DO, Catlass::Arch::PositionL1{});
 
                     // C2a：loop1 头只 gate dh（GM→L1B，:252 与 dvState GEMM），改等 flag3(dhReady)；
                     // qg 的就绪等待移到 termQ GEMM 前（见下方 flag2 wait）
@@ -346,7 +388,7 @@ public:
                             // 与各 AIV phase2 局部 cvListId（各自从 0 起逐片翻转）逐片配对（沿用 C5-a 模式）
                             uint32_t cvListId[2] = {0U, 0U};
                             uint32_t rowIdx = 0;
-                            const uint32_t tokenHalf = ((headCnt & 1) == 1 && headOffset == headCnt - 1)
+                            const uint32_t tokenHalf = IsDhuSplitHead(headCnt, headOffset)
                                                            ? static_cast<uint32_t>(chunkInfo.chunkLen / 2)
                                                            : 0U;
                             while (rowIdx < static_cast<uint32_t>(chunkInfo.chunkLen)) {
@@ -418,7 +460,7 @@ public:
                     RunResidentMmad<LayoutTagL0A_TermQ, LayoutTagL0B_TermQ>(
                         copyL1ToL0A_TermQ, copyL1ToL0B_TermQ, tileMmadTermQ, copyL0CToGm_TermQ,
                         tensorL1QGT, tensorL1DO, blockTermQ, l0A, l0B, l0C,
-                        false, false, 0, true, true, doScratchEvent,
+                        false, false, 0, waitDoReady, releaseDoAfter, doL1BEvent,
                         static_cast<uint32_t>(K_), static_cast<uint32_t>(V_DIM),
                         static_cast<uint32_t>(chunkInfo.chunkLen));
 
@@ -734,9 +776,17 @@ private:
     static constexpr uint32_t L1A_SCRATCH_OFFSET = W_RESIDENT_OFFSET + W_RESIDENT_TILE_BYTES * W_RESIDENT_BUFFER_COUNT;
     static constexpr uint32_t L1B_SCRATCH_OFFSET =
         L1A_SCRATCH_OFFSET + L1A_SCRATCH_TILE_BYTES * L1A_SCRATCH_BUFFER_COUNT;
-    static constexpr uint32_t L1_TOTAL_BYTES = 512 * 1024;
-    static constexpr uint32_t L1_USED_BYTES =
+    // Dhu AIC-S1（go/no-go 闸门）：dO 装载 ndNum 头聚合 A/B（R-Akk LoadGroupA 同构，
+    // chunk_kda_bwd_recompute_cube.h:263-273 先例）。聚合集 padded 步长 16384 elem（=CHUNK_MAX×V_DIM，
+    // 与现 32KiB L1B 槽的 NZ 格式同构）；仅 bf16-V128 启用（预算与收益口径均为该档，其余路径逐拍保持现状）。
+    static constexpr bool DO_AGG_ENABLED = std::is_same<DT, bfloat16_t>::value && V_DIM == 128;
+    static constexpr uint32_t DO_AGG_MATRIX_ELEMS = CHUNK_MAX * V_DIM;
+    static constexpr uint32_t DO_AGG_TILE_BYTES = DO_AGG_MATRIX_ELEMS * sizeof(DT);
+    static constexpr uint32_t DO_AGG_BYTES = DO_AGG_ENABLED ? DO_AGG_TILE_BYTES * L1A_SCRATCH_BUFFER_COUNT : 0;
+    static constexpr uint32_t DO_AGG_OFFSET =
         L1B_SCRATCH_OFFSET + L1B_SCRATCH_TILE_BYTES * L1B_SCRATCH_BUFFER_COUNT;
+    static constexpr uint32_t L1_TOTAL_BYTES = 512 * 1024;
+    static constexpr uint32_t L1_USED_BYTES = DO_AGG_OFFSET + DO_AGG_BYTES;
     static_assert(L1_USED_BYTES <= L1_TOTAL_BYTES, "chunk_gated_delta_rule_bwd_dhu cube L1 usage exceeds 512KB.");
 
     static constexpr uint32_t L0_BUFFER_COUNT = BUFFER_COUNT_2;
@@ -755,6 +805,11 @@ private:
     static constexpr int32_t EVENT_K_RESIDENT_PONG = 5;
     static constexpr int32_t EVENT_W_RESIDENT_PING = 6;
     static constexpr int32_t EVENT_W_RESIDENT_PONG = 7;
+    // S1：dO 聚合事件对用两空间各自的空闲 ID {0,1}（MTE1_MTE2/MTE2_MTE1 现占 2-7）。
+    // 信用配对（每 chunk）：FREE 预置 1 + 末头 termQ GEMM 末 K set 1 vs 聚合装载 wait 1；
+    // READY 聚合装载 set 1 vs head0 termQ GEMM 首 K wait 1。
+    static constexpr int32_t EVENT_DO_AGG_FREE = 0;
+    static constexpr int32_t EVENT_DO_AGG_READY = 1;
     static constexpr int32_t EVENT_L0A_PING = 0;
     static constexpr int32_t EVENT_L0B_PING = 1;
     static constexpr int32_t EVENT_L0A_PONG = 2;
@@ -813,6 +868,9 @@ private:
 
     __aicore__ inline void InitPipeFlags()
     {
+        if constexpr (DO_AGG_ENABLED) {
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO_AGG_FREE);
+        }
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_L1B_SCRATCH_PING);
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_L1B_SCRATCH_PONG);
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_K_RESIDENT_PING);
@@ -834,6 +892,9 @@ private:
         if (cachedKResidentValid_) {
             AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(KResidentEvent(cachedKResidentSlot_));
             cachedKResidentValid_ = false;
+        }
+        if constexpr (DO_AGG_ENABLED) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO_AGG_FREE);
         }
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_L1B_SCRATCH_PING);
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_L1B_SCRATCH_PONG);

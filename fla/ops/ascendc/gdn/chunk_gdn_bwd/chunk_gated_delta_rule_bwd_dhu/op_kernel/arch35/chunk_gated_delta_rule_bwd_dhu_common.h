@@ -42,16 +42,27 @@ __aicore__ inline bool IsGmDvStatePath(int64_t v, int64_t chunkLen)
     return true; // fp16：dvState 恒走 GM（cube/vector 的 fp16 分支均读 GM）
 }
 
+// Dhu-C5：劈分头判定（单一共享谓词——vector IsSplitHead / cube CvTargetSubBlock / dvState
+// tokenHalf 三处消费必须同式，R-C5-1 配对纪律）。
+// headCnt>1 门控（C5a 形状矩阵回归修复）：headCnt==1（如 H=8、headsPerTask=1）时劈分在
+// 形状矩阵实测中回归（shape_t512_h8 六张 FAIL、t100_h8 trap），根因待 dump 实验定位；
+// 退化回奇偶属主后各调用点与 pre-C5a 逐拍一致（+C2b bisect 已证该路径正确）。
+// headCnt∈{2,4} 本就不劈分；故实际仅 headCnt==3（含 H=96 模型档）启用劈分。
+__aicore__ inline bool IsDhuSplitHead(int64_t headCnt, int64_t headOffset)
+{
+    return headCnt > 1 && (headCnt & 1) == 1 && headOffset == headCnt - 1;
+}
+
 // Dhu-C5a/C5b：CV 片目标子块判定（cube 专用；AIV 侧无需对偶——各 AIV 只等自己的 bank flag）。
 // 两种用法同一公式：C5-a termW 流传 k=K（K 维半界 K/2）；C5-b dvState 流传 k=chunkLen
 //（token 维半界 ⌊chunkLen/2⌋，调用方须在半界处截断 cvRows 使片不跨界）。
-// 劈分头（奇数头档最后头，与 vector.h IsSplitHead 同一判定式；subBlockNum==2 由
-// KERNEL_TYPE_MIX_AIC_1_2 保证）：rowIdx < k/2 → 子块0，否则子块1；非劈分头维持属主 headOffset&1。
+// 劈分头（IsDhuSplitHead；subBlockNum==2 由 KERNEL_TYPE_MIX_AIC_1_2 保证）：rowIdx < k/2 → 子块0，
+// 否则子块1；非劈分头维持属主 headOffset&1。
 // AIC 侧 cvListId 必须按目标子块独立 ping-pong（cvListId[2]），与各 AIV 局部 cvListId
 // （各自从 0 起逐片翻转）逐片配对——目标或计数错位即错子块收片/信用失衡/冻核（R-C5-1）。
 __aicore__ inline uint32_t CvTargetSubBlock(int64_t headCnt, int64_t headOffset, uint32_t rowIdx, int64_t k)
 {
-    if ((headCnt & 1) == 1 && headOffset == headCnt - 1) {
+    if (IsDhuSplitHead(headCnt, headOffset)) {
         return rowIdx < static_cast<uint32_t>(k / 2) ? 0U : 1U;
     }
     return static_cast<uint32_t>(headOffset & 1);

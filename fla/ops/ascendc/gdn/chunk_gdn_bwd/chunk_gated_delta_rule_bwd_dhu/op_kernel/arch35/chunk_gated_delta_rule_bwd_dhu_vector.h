@@ -777,7 +777,8 @@ private:
     // mode-0x2 AND 语义是天然汇合点：每头每 phase 每 AIV 仍各 set/wait 一次 flag2/flag3/flag4，握手零改动。
     __aicore__ inline bool IsSplitHead(int64_t headCnt, int64_t headOffset) const
     {
-        return subBlockNum_ == 2 && (headCnt & 1) == 1 && headOffset == headCnt - 1;
+        // headCnt==1 退化门控见 common.h IsDhuSplitHead 注释（C5a 形状矩阵回归修复）
+        return subBlockNum_ == 2 && IsDhuSplitHead(headCnt, headOffset);
     }
 
     __aicore__ inline bool SkipHead(int64_t headCnt, int64_t headOffset) const
