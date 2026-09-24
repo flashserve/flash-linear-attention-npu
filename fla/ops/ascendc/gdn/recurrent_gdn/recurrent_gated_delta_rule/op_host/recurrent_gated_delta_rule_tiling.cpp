@@ -20,6 +20,8 @@
 #include "log/log.h"
 #include "tiling/platform/platform_ascendc.h"
 
+#include <cmath>
+
 namespace optiling {
 
 REGISTER_OPS_TILING_TEMPLATE(RecurrentGatedDeltaRule, RecurrentGatedDeltaRuleTiling, 0);
@@ -116,7 +118,9 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::DoOpTiling()
 
 ge::graphStatus RecurrentGatedDeltaRuleTiling::DoLibApiTiling()
 {
-    tilingKey_ = 0;
+    const auto stateDtype = context_->GetInputDesc(STATE_INDEX)->GetDataType();
+    const uint64_t stateDtypeKey = stateDtype == ge::DT_FLOAT ? RGDR_TPL_FP32 : RGDR_TPL_BF16;
+    tilingKey_ = GET_TPL_TILING_KEY(stateDtypeKey);
     return ge::GRAPH_SUCCESS;
 };
 
@@ -269,7 +273,11 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::AnalyzeFormat()
 ge::graphStatus RecurrentGatedDeltaRuleTiling::GetScale()
 {
     auto attrs = context_->GetAttrs();
-    float scaleValue = *attrs->GetAttrPointer<float>(0);
+    OP_CHECK_IF(attrs == nullptr, OP_LOGE(context_->GetNodeName(), "attrs is null"), return ge::GRAPH_FAILED);
+    const float *scalePtr = attrs->GetAttrPointer<float>(0);
+    OP_CHECK_IF(scalePtr == nullptr || !std::isfinite(*scalePtr),
+                OP_LOGE(context_->GetNodeName(), "scaleValue must be finite"), return ge::GRAPH_FAILED);
+    float scaleValue = *scalePtr;
     tilingData_.scale = scaleValue;
 
     return ge::GRAPH_SUCCESS;

@@ -794,6 +794,8 @@ def npu_recurrent_gated_delta_rule(
     """
 
     op_name = "npu_recurrent_gated_delta_rule"
+    required_dim = 128
+
     if g is None and gk is None:
         raise RuntimeError(f"{op_name}: either g or gk must be provided.")
 
@@ -931,9 +933,14 @@ def npu_recurrent_gated_delta_rule(
                 f"{op_name}: {name} shape must be {expected_shape}, got {shape}."
             )
 
-    if key_heads > 256 or value_heads > 256 or key_dim > 512 or value_dim > 512:
+    if (
+        key_heads > 256
+        or value_heads > 256
+        or key_dim != required_dim
+        or value_dim != required_dim
+    ):
         raise RuntimeError(
-            f"{op_name}: Nk and Nv must be <= 256 and Dk and Dv must be <= 512, "
+            f"{op_name}: Nk and Nv must be <= 256 and Dk and Dv must be exactly {required_dim}, "
             f"got Nk={key_heads}, Nv={value_heads}, Dk={key_dim}, Dv={value_dim}."
         )
     if value_heads % key_heads != 0:
@@ -941,9 +948,16 @@ def npu_recurrent_gated_delta_rule(
             f"{op_name}: Nv must be an integer multiple of Nk, got Nv={value_heads}, Nk={key_heads}."
         )
 
+    if scale is not None and (
+        not isinstance(scale, numbers.Real) or isinstance(scale, numbers.Integral)
+    ):
+        raise RuntimeError(
+            f"{op_name}: scale must be a floating-point number, got {type(scale)!r}."
+        )
+
     scale = _optional_float(scale, 1.0)
     if not math.isfinite(scale):
-        raise ValueError(f"{op_name}: scale must be finite, got {scale}.")
+        raise RuntimeError(f"{op_name}: scale must be finite, got {scale}.")
 
     def nd_tensor(ctx, tensor, name):
         if tensor is None:
