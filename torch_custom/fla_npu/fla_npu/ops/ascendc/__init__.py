@@ -61,6 +61,7 @@ _ASCENDC_OPS = (
     "npu_chunk_kda_bwd_recompute",
     "npu_kda_gate_cumsum",
     "npu_recurrent_kda",
+    "npu_fused_recurrent_rwkv8",
 )
 
 # Operators the launcher carries that the ctypes reference does not define.
