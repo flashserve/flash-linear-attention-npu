@@ -16,6 +16,11 @@
 
 namespace KdaPrepare::Arch22 {
 
+// softplus 的 log1p 补偿：u=exp(-|x|)，log1p(u)=Ln(1+u)+r/(1+u)，
+// r=u-(fl(1+u)-1)。两个 FP32 临时区固定复用共享 scratch 的前 7 KiB（与 V1Vf
+// 同一约定）：scratch 之后紧邻第二份 private 槽，0x1F00 起是 sequence-major 的
+// beta gather 偏移表，因此临时区不得越过 0x1C00。
+
 template <typename GateT, typename BetaT, typename CompilePolicy>
 class ChunkKdaFwdPrepareVec {
     using Domain = ExpDomainTraits<CompilePolicy::useExp2>;
@@ -836,24 +841,56 @@ private:
             }
             if constexpr (!CompilePolicy::safeGate &&
                           CompilePolicy::gateMode == GateMode::Softplus) {
-                // deltaG=-a*(max(x,0)+log(1+exp(-abs(x))))。
-                // 整块（validRows x 128）一次下发，替代原先每行 8 条指令。
+                // deltaG=-a*(max(x,0)+log(1+exp(-abs(x))))，其中
+                // log1p(u)=Ln(1+u)+r/(1+u)，r=u-(fl(1+u)-1)。直接取 Ln(1+u)
+                // 会把 1+u 的舍入按 1/u 放大（u=exp(-|x|) 越小越明显），双标杆
+                // L1 下会超限，故用补偿项抵消。
+                //
+                // 两个 FP32 临时区只能落在共享 scratch 的前 7 KiB：scratch 之后
+                // 紧邻第二份 private 槽（q/k/gate/kMinus/score），0x1F00 起又是
+                // sequence-major 的 beta gather 偏移表，因此按 7 行一个 tile
+                // 下发，与 V1Vf 使用同一段 scratch 的约定保持一致。
                 const float factor = -gateA;
-                AscendC::Abs(tileBuf, g, count);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Muls(tileBuf, tileBuf, -1.0F, count);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Exp(tileBuf, tileBuf, count);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Adds(tileBuf, tileBuf, 1.0F, count);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Ln(tileBuf, tileBuf, count);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Maxs(g, g, 0.0F, count);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Add(tileBuf, tileBuf, g, count);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Muls(g, tileBuf, factor, count);
+                constexpr uint32_t kLog1pRows = 7;
+                constexpr uint32_t kLog1pElems = kLog1pRows * Shape::kHeadDim;
+                auto gateSum = scratch;
+                auto gateResidual = scratch[kLog1pElems];
+                for (uint32_t rowBegin = 0; rowBegin < validRows;
+                     rowBegin += kLog1pRows) {
+                    const uint32_t rows = validRows - rowBegin < kLog1pRows
+                                              ? validRows - rowBegin
+                                              : kLog1pRows;
+                    const uint32_t elems = rows * Shape::kHeadDim;
+                    const uint32_t offset = rowBegin * Shape::kHeadDim;
+                    AscendC::Abs(tileBuf, g[offset], elems);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Muls(tileBuf, tileBuf, -1.0F, elems);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Exp(tileBuf, tileBuf, elems);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Adds(gateSum, tileBuf, 1.0F, elems);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Adds(gateResidual, gateSum, -1.0F, elems);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    // r = u - (fl(1+u) - 1)：补偿 1+u 的舍入残差。
+                    AscendC::Sub(gateResidual, tileBuf, gateResidual, elems);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Adds(tileBuf, gateSum, 0.0F, elems);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Ln(tileBuf, tileBuf, elems);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    // log1p(u) = Ln(1+u) + r/(1+u)
+                    AscendC::Div(gateResidual, gateResidual, gateSum, elems);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Add(tileBuf, tileBuf, gateResidual, elems);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Maxs(g[offset], g[offset], 0.0F, elems);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Add(tileBuf, tileBuf, g[offset], elems);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Muls(g[offset], tileBuf, factor, elems);
+                    AscendC::PipeBarrier<PIPE_V>();
+                }
             } else {
                 // deltaG=lower_bound/(1+exp(-a*x))。
                 // 整块一次下发，替代原先每行 5 条指令。
