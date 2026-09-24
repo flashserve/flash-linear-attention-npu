@@ -1,0 +1,244 @@
+# lv0 / lv1 / lv2 检视清单
+
+按类别组织。每条包含"怎么查"与"常见问题点"；责任田可在同一标题下追加本领域根因（格式见
+[`01-scope-and-categories.md`](01-scope-and-categories.md) §4）。
+
+每个类别下的"相关 issue"与 [`../../../reference/04-operator-development/engineering-structure.md`](../../../reference/04-operator-development/engineering-structure.md) §9
+是同一批仓库 issue：它们给出该类别**真实出现过**的形态，用来校准检视尺度，不作为当前状态的结论；
+标 `OPEN` 的表示问题尚未收敛，检视对应代码时要额外确认。
+
+---
+
+## lv0：低级错误类
+
+材料：被检视代码本身。手法：把每个标量（下标、计数、长度、除数、偏移、标志位）的定义-使用链画一遍，
+逐个确认取值范围和边界。
+
+### lv0 / 索引/计数
+
+怎么查：
+
+1. 列出所有循环的上下界与步长，确认与 shape/varlen 元数据一致（尤其 tail 与 partial chunk）。
+2. 列出所有 `[i]`、`[i * stride + j]` 形式的索引，确认乘的是"元素数"还是"tile 数"。
+3. 确认计数器（token 计数、chunk 计数、归约计数、slot 计数）在每次循环/每个 chunk 后复位或递增正确。
+
+常见问题点：
+
+- 循环上界用了 `>=`/`>` 或 `+1`/`-1` 差一，恰好命中尾块或最小合法 shape 才暴露。
+- head / chunk / seq 索引映射用错维度顺序（例如把 `[B,H,T,K]` 当 `[B,T,H,K]` 算偏移）。
+- 跨 chunk 复用计数器未复位，第二个 chunk 起偏移累积。
+- 反向算子把前向的 padding 行计入有效长度，导致有效长度比真实值大。
+
+相关 issue：
+
+- [#508](https://github.com/flashserve/flash-linear-attention-npu/issues/508)（OPEN，A3 varlen 路径总 token 数超过 `65536` 时 tiling 失败：count/offset 位宽与上界检查）。
+- [#544](https://github.com/flashserve/flash-linear-attention-npu/issues/544)（已修复，KDA 变长序列反向精度问题：对齐补齐的尾部行没有写中性值，被当成有效数据参与计算）。
+
+### lv0 / NaN/Inf/除0
+
+怎么查：
+
+1. 找所有除法、`rsqrt`、`sqrt`、`log`、`exp`、`reciprocal`、归一化分母。
+2. 逐个确认分母可能为 0/极小值时的处理（epsilon 从哪来、是否可配置、是否在正确 dtype 下加）。
+3. 找可能溢出的指数（`exp`/`exp2` 的指数范围）与可能变成 Inf 的累加。
+
+常见问题点：
+
+- 归一化分母只加 epsilon 的长度维，未覆盖空序列/全零行。
+- `exp2(gk)` 中 `gk` 未做上下界裁剪，门控为极负值时下溢、为正值时溢出。
+- softmax/归一化在 fp16 下计算分母，先在 fp16 内溢出再转 fp32。
+- 除数为累加结果，浮点误差使其恰好为 0。
+
+相关 issue：
+
+- [#232](https://github.com/flashserve/flash-linear-attention-npu/issues/232)（OPEN，GDN bf16 TND 长序列反向出现 NaN，需要按输入分布与门控范围定位）。
+- [#640](https://github.com/flashserve/flash-linear-attention-npu/issues/640)（OPEN，recurrent_gated_delta_rule 在 A3/A5 有用例精度失败，同时 inf/nan 校验不过）。
+
+### lv0 / 空值/null
+
+怎么查：
+
+1. 列出所有可选输入/可选输出，逐个走"为空"路径：为空时是否仍被解引用、是否仍参与计算、是否仍分配。
+2. 列出所有长度为 0 的合法输入（空 batch、空序列、空 chunk），确认 host 拦截或 kernel 正确处理。
+3. 检查 `nullptr` 检查与后续使用之间是否还有可能失效的路径（例如取了指针后再判空）。
+
+常见问题点：
+
+- 可选输入为空时仍按非空路径计算（例如无初始状态时仍读 `initial_state`）。
+- 空 tensor 被放行到 tiling，最终以硬件错误码返回，缺少上下文。
+- 可选输出为空时仍分配整张中间张量，或反之：内部必需结果因公开输出为空而未计算。
+
+相关 issue：
+
+- [#577](https://github.com/flashserve/flash-linear-attention-npu/issues/577)（已修复，空 tensor 用例只返回错误码、没有错误信息）。
+- [#561](https://github.com/flashserve/flash-linear-attention-npu/issues/561)、[#558](https://github.com/flashserve/flash-linear-attention-npu/issues/558)、[#641](https://github.com/flashserve/flash-linear-attention-npu/issues/641)（OPEN，异常场景未拦截或报错不符合标准提示）。
+
+### lv0 / 数值溢出/位宽
+
+怎么查：
+
+1. 列出所有整型量和指针偏移计算，确认在最大 shape 下不溢出（int32 offset 在长序列/大 head 下最容易）。
+2. 列出所有累加，确认累加用的位宽与元素个数（fp16 累加大规模元素会饱和）。
+3. 检查移位、位掩码、`1U << slot` 之类操作是否超出位宽（输出槽位、flag id、掩码位数）。
+
+常见问题点：
+
+- 用 `int32_t` 存 `B*H*T*K` 级元素数。
+- fp16 累加未转 fp32；bf16 直接累加导致尾数丢失。
+- 掩码位数不足，输出槽位超过 32 个时位移溢出。
+- 中间量按输入 dtype 存回，超出该 dtype 表示范围。
+
+相关 issue：
+
+- [#508](https://github.com/flashserve/flash-linear-attention-npu/issues/508)（OPEN，varlen 总量超过 `65536` 触发 tiling 失败，典型位宽问题）。
+
+---
+
+## lv1：功能级错误类
+
+材料：算子接口文档（每个参数的说明、"约束"类条目、支持范围、返回码章节）。手法：**双向核对**——
+从文档逐条找代码拦截，从代码新增/收紧的拦截逐条找文档说明；只有一侧存在即视为问题。
+
+### lv1 / shape/校验缺失
+
+怎么查：
+
+1. 把文档里的每个约束抄成一句话（"K/V 只支持两档且必须同档"、"`cu_seqlens` 必须从 0 开始且单调不减"、
+   "rank-4 变长要求 B=1"），逐条在 host 校验里找对应分支。
+2. 反过来：把 host 里每个 `CHECK_COND`/返回 `ACLNN_ERR_PARAM_INVALID` 的分支，逐条在文档找说明。
+3. 检查校验发生在计算之前，且返回值/报错文本与文档一致。
+
+常见问题点：
+
+- 支持范围外的组合没有拦截，走默认分支静默执行（例如混合档 `K=64,V=128`）。
+- 变长元数据只校验长度，不校验首元素为 0、末元素等于总 token 数、单调不减。
+- 校验顺序导致报错文本与真实原因不符（先报 dtype 再报 shape，用户看到的是次要原因）。
+- 文档写了"不支持"，代码没有对应拦截；或代码新增拦截，文档未更新。
+
+相关 issue：
+
+- [#577](https://github.com/flashserve/flash-linear-attention-npu/issues/577)、[#561](https://github.com/flashserve/flash-linear-attention-npu/issues/561)、[#558](https://github.com/flashserve/flash-linear-attention-npu/issues/558)、[#641](https://github.com/flashserve/flash-linear-attention-npu/issues/641)（拦截缺失与报错文本不带上下文）。
+- [#615](https://github.com/flashserve/flash-linear-attention-npu/issues/615)（OPEN，第三方框架展平 `OriginalShape` 导致 rank 误判；rank 判据要写清依赖哪一维）。
+
+### lv1 / 模板/分支缺失
+
+怎么查：
+
+1. 列全模板实例（`ASCENDC_TPL_*` 声明与 `ASCENDC_TPL_SEL` 枚举）与运行期分支条件，画成表格：
+   每行一个实例/分支，标注选择条件和覆盖的 shape/dtype/属性。
+2. 对照文档支持范围，找出没有实例或没有分支的组合；确认这些组合要么被 host 拦截，要么真的不可达。
+3. 检查分支条件是否互斥且完整（无重叠、无空隙），以及默认分支是否承受了未预期的组合。
+
+常见问题点：
+
+- 新增 dtype 时只加了模板实例，没加 host 侧的 key 选择条件，导致永远走不到新实例。
+- 分支条件写成包含关系（`<=` 与 `<` 混用）导致边界档位被前一个分支吃掉。
+- 平台分支用运行期判断代替编译期选择，导致不是目标架构的实现也被编进来。
+
+相关 issue：
+
+- [#539](https://github.com/flashserve/flash-linear-attention-npu/issues/539)（已修复，GDN A5 拼接路径缺 `use_exp2=false` 分支：模式组合没有模板实例）。
+- [#437](https://github.com/flashserve/flash-linear-attention-npu/issues/437)（已修复，按 A2/A3/A5 做架构隔离实现，避免平台分支互相污染）。
+- [#678](https://github.com/flashserve/flash-linear-attention-npu/issues/678)（OPEN，大融合算子 `<<<>>>` 调用方式的通路整改：调用通路缺失同类）。
+
+### lv1 / dtype/format
+
+怎么查：
+
+1. 对每个输入输出接口逐个核对 dtype/format 列表长度、顺序与模板实例顺序一致。
+2. 顺着数据流找类型转换点，确认转换位置与文档一致（例如"内部 fp32 累加，最后转回输入 dtype"）。
+3. 检查 format：哪些接口按 ND 解释、哪些按 NZ；`AutoContiguous` 与显式 format 声明是否冲突。
+
+常见问题点：
+
+- 中间量 dtype 比文档声明的低（bf16 存中间结果），精度在长序列下劣化。
+- 输出 dtype 跟随了错误的输入（`o` 应跟随 `v` 却跟随 `q`）。
+- dtype 组合与 format 组合构成笛卡尔积时漏掉一档，落到兜底模板。
+- 同一逻辑张量在 host 按一种 dtype 校验、在 kernel 按另一种读取。
+
+相关 issue：该类问题在仓库里多以**精度失败**的形式暴露，而不是显式的 dtype 报错，因此要结合
+[#519](https://github.com/flashserve/flash-linear-attention-npu/issues/519)、[#543](https://github.com/flashserve/flash-linear-attention-npu/issues/543)、
+[#534](https://github.com/flashserve/flash-linear-attention-npu/issues/534)（均为 OPEN 的精度不达标问题）一起看：
+先确认失败是否集中在长序列/特定 layout，再回到 dtype 转换点与 format 假设。
+
+---
+
+## lv2：指令级错误类
+
+材料：AscendC API 文档 + 硬件手册（片上内存规格、对齐要求、指令能力）。
+重点放在两类：**易错 API**、**易越界的片上资源**。每个 API 至少核对：完整声明与重载、模板参数、
+入参类型与单位、输入输出内存位置、dtype/shape/对齐限制、数据通路、异步与同步语义、返回值、芯片/版本限制。
+
+### lv2 / 内存容量/超限
+
+怎么查：
+
+1. 列出该算子在片上各层（UB / L1 / L0A / L0B / L0C / BT / FB）分配的 buffer：大小、份数、对齐后实际占用。
+2. 乘上双缓冲/多缓冲倍数与对齐 padding，与当前 SoC 规格比较，确认不超过。
+3. 检查 tiling 中用于决定驻留粒度的参数是否与 kernel 实际分配一致（tiling 说能放 4 份、kernel 实际申请 5 份）。
+
+常见问题点：
+
+- 只按元素数乘 dtype 大小，忽略对齐与 double buffer，导致 UB/L1 超限。
+- L0C 只算一份，未计入分块叠加；L0A/L0B 的 `baseM/baseN/baseK` 组合超出限制。
+- workspace 按"每核一份"估算，但实现按"每 chunk 一份"申请。
+- 大 shape 上才超限，小 shape 用例全过（需要按最大支持 shape 推算而不是只跑小用例）。
+
+相关 issue：
+
+- [#614](https://github.com/flashserve/flash-linear-attention-npu/issues/614)（已修复，`recompute_w_u_fwd` 内存占用测试有 4 条用例未达标：容量核算漏项）。
+- [#575](https://github.com/flashserve/flash-linear-attention-npu/issues/575)（已修复，`chunk_kda_fwd` 内存检测失败：越界/hazard 类结论要配合 mssanitizer 原始日志确认）。
+
+### lv2 / 越界/地址偏移
+
+怎么查：
+
+1. 逐个搬运 API（`DataCopy`/`DataCopyPad`/`Copy`/`Fixpipe` 等）核对：源/目的地址、长度、stride、
+   tail 处理方式，确认最后一个 tile 不越界、非对齐搬运走的是 Pad 类接口。
+2. 核对 `LocalTensor` 切片：offset 与长度的和是否落在已分配 buffer 内；多个 tensor 别名同一 buffer 时
+   区间是否重叠。
+3. 核对 GM 侧：offset 是否包含 batch/head 维；varlen 下是否按每个序列的实际起点计算。
+
+常见问题点：
+
+- tail tile 仍按完整 tile 长度搬运，超读/超写真实数据边界。
+- `DataCopy` 用在非 32B 对齐长度上，行为与预期不符（应使用 Pad 类接口）。
+- 对齐 padding 后的 workspace 行数与实际写入行数不一致，导致下一 region 被覆盖。
+- 索引张量（`gather`/scatter 类）未校验取值范围，越界读取导致随机精度错误。
+
+相关 issue：
+
+- [#544](https://github.com/flashserve/flash-linear-attention-npu/issues/544)（已修复，变长反向：对齐补齐的尾部 workspace 未写中性值，导致读取未初始化数据；症状是精度问题而非崩溃）。
+- [#462](https://github.com/flashserve/flash-linear-attention-npu/issues/462)（已修复，特定 GQA head 配置下 kernel hang：分核边界与地址计算的组合问题）。
+
+### lv2 / bias/辅助输入
+
+怎么查：
+
+1. 列出所有辅助输入（bias、mask、scale、gate、dt_bias、A_log、beta 等），逐个确认：形状、广播方向、
+   参与的计算位置、是否只作用于部分分支。
+2. 核对辅助输入的 dtype 与主通路 dtype 是否在正确的点转换。
+3. 核对辅助输入在 varlen/tail 下的有效范围（padding 区域是否有中性值或 mask 保护）。
+
+常见问题点：
+
+- 广播方向写反（按 head 加的 bias 加到了 token 维）。
+- mask 的 0/1 语义或上下三角方向与文档/标杆相反，小 shape 下不易暴露。
+- 标量参数（scale、epsilon）只作用于主分支，tail 分支或另一个 dtype 分支漏掉。
+- 辅助输入在 padding 区域包含非中性值，未遮罩直接参与累加。
+
+相关 issue：
+
+- [#232](https://github.com/flashserve/flash-linear-attention-npu/issues/232)（OPEN，长序列反向 NaN 与门控辅助输入（`A_log`/`dt_bias`/gate 范围）相关）。
+- [#539](https://github.com/flashserve/flash-linear-attention-npu/issues/539)（已修复，门控模式（`use_exp2`）在某一平台拼接路径上缺失，属于辅助参数只覆盖部分分支）。
+
+---
+
+## 自检
+
+对每一级检视完成后逐条确认：
+
+1. 每条意见都能落到"文件:行号 + 代码片段"；
+2. 每条意见都写了触发条件（什么输入/配置下发生）和影响（数值错、越界、崩溃、精度劣化）；
+3. 同一根因只报一次，跨文件出现的同一问题在"位置"里列全；
+4. 材料不足的条目明确写成"缺少 X，无法判定 Y"，不写成结论。
