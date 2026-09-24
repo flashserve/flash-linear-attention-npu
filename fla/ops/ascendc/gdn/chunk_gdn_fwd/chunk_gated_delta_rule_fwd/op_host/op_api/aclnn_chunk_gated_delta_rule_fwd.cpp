@@ -858,7 +858,7 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
     // placeholder preserves the original workspace-backed H data flow when
     // callers do not request H. When requested, the kernel writes H directly
     // into a dense view of the caller buffer, also consumed by O.
-    const op::Shape hShape = MakeShape({batch, hv, ExpectedChunks(params, seqlen), kDim, vDim});
+    const op::Shape hShape = MakeShape({batch, ExpectedChunks(params, seqlen), hv, kDim, vDim});
     const bool copyH = params.hOutOptional != nullptr && !IsContiguous(params.hOutOptional);
     const aclTensor *hCompute = nullptr;
     if (params.hOutOptional == nullptr) {

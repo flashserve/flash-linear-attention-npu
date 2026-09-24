@@ -300,11 +300,11 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
                 OP_LOGE(context->GetNodeName(), "The low-level H output descriptor is required."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(exportH && (hDesc->GetDataType() != inputDtype ||
-                    !IsShape(hShape, {batch, valueHeads,
+                    !IsShape(hShape, {batch,
                         static_cast<int64_t>(isVarlen ? varlenChunks :
                             CeilDiv(static_cast<uint64_t>(tokens), static_cast<uint64_t>(*chunkSize))),
-                        kDim, vDim})),
-                OP_LOGE(context->GetNodeName(), "H must be [B,Hv,NT,K,V] with Q dtype."),
+                        valueHeads, kDim, vDim})),
+                OP_LOGE(context->GetNodeName(), "H must be [B,NT,Hv,K,V] with Q dtype."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(rawGLayout == 1 &&
                     (platform.GetCurNpuArch() != NpuArch::DAV_2201 ||
