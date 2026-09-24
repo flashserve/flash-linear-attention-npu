@@ -8,7 +8,7 @@
 - `beta` 的 shape 为 `(T, Nv)`；`stateRef` 为原地输入输出，shape 为 `(BlockNum, Nv, Dv, Dk)`。
 - `query/key/value/beta/out` 为 BF16；`stateRef` 支持 BF16 和 FP32。
 - `actualSeqLengths` 为 `(B+1,)` 的 INT32 张量，首元素是不参与计算的无效前缀长度，所有元素之和等于 `T`。
-- `ssmStateIndices` 为 `(T,)` 的 INT32 张量，取值范围为 `[0, BlockNum)`。
+- `ssmStateIndices` 为 `(T,)` 的 INT32 张量，取值范围为 `[0, BlockNum)`，且所有元素互不重复。
 - `g` 如提供，shape 为 `(T, Nv)`；`gk` 如提供，shape 为 `(T, Nv, Dk)`。两者均为 FP32，且至少提供一个。
 - `numAcceptedTokens` 如提供，shape 为 `(B,)`，每项取值范围为 `[1, actualSeqLengths[i+1]]`。
 - `Nv` 必须是 `Nk` 的整数倍；`Nk <= 256`、`Nv <= 256`、`Dk=128`、`Dv=128`；每条有效序列长度不超过 8。
@@ -39,10 +39,10 @@ YAML 元信息覆盖 `ascend910b`、`ascend910_93` 和 `ascend950`，可配合�
 | 6-21 | RGDR-P007-P022 | 16 | 变长、prefix、零长度逻辑序列、accepted token |
 | 22 | RGDR-P023 | 1 | `Dk=Dv=128` 的对齐维度、UB profile |
 | 23-38 | RGDR-P024-P039 | 16 | `Nk/Nv=1..256`、GVA group size |
-| 39-54 | RGDR-P040-P055 | 16 | state stride/layout、稀疏/逆序/重复 index |
+| 39-54 | RGDR-P040-P055 | 16 | state stride/layout、稀疏/逆序/置换 index |
 | 55-69 | RGDR-P056-P070 | 15 | 平台、调用通路代表 shape、非连续输入、连续调用与回归 |
 | 70-81 | RGDR-P071-P082 | 12 | gate、state dtype/layout 与非连续输入交叉组合 |
-| 82-90 | RGDR-P083-P091 | 9 | 长变长链、accepted token、state index 复用与 scale |
+| 82-90 | RGDR-P083-P091 | 9 | 长变长链、accepted token、state index 置换与 scale |
 | 91-95 | RGDR-P092-P096 | 5 | 补充可整除的 `Nk/Nv` 头映射 |
 | 96-99 | RGDR-P097-P100 | 4 | 连续调用与 gate/beta 数值分布 |
 | 100-115 | RGDR-G001-G016 | 16 | GVA head 映射与 group size |
