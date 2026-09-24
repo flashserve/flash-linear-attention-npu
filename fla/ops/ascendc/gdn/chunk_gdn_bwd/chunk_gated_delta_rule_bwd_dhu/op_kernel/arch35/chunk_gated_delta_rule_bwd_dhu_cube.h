@@ -228,7 +228,9 @@ public:
                     copyGmToL1B_DO(tensorL1DO, blockDO);
                     AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(doScratchEvent);
 
-                    Catlass::Arch::CrossCoreWaitFlag(vecToCubeFlag_);
+                    // C2a：loop1 头只 gate dh（GM→L1B，:252 与 dvState GEMM），改等 flag3(dhReady)；
+                    // qg 的就绪等待移到 termQ GEMM 前（见下方 flag2 wait）
+                    Catlass::Arch::CrossCoreWaitFlag(vecToCubeDhFlag_);
 
                     auto tensorState = tla::MakeTensor(gmState, layoutState, Catlass::Arch::PositionGM{});
                     auto tensorDvState = tla::MakeTensor(gmDvState, layoutDvState, Catlass::Arch::PositionGM{});
@@ -338,17 +340,30 @@ public:
 
                             SwitchL0C();
                             AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(l0CEvent);
-                            uint32_t cvListId = 0;
+                            // C5b：dvState CV 片逐片目标子块由 CvTargetSubBlock（limit=chunkLen，劈分头按
+                            // ⌊chunkLen/2⌋ 半界）判定，cvRows 在半界处截断（片不跨界，如 64 行单片→2×32）；
+                            // 非劈分头=headOffset&1 与现状相同。cvListId 按目标子块独立 ping-pong，
+                            // 与各 AIV phase2 局部 cvListId（各自从 0 起逐片翻转）逐片配对（沿用 C5-a 模式）
+                            uint32_t cvListId[2] = {0U, 0U};
                             uint32_t rowIdx = 0;
-                            const uint64_t subBlockFlagOffset =
-                                (headOffset & 1) == 0 ? 0 : CV_SUBBLOCK_FLAG_STRIDE;
+                            const uint32_t tokenHalf = ((headCnt & 1) == 1 && headOffset == headCnt - 1)
+                                                           ? static_cast<uint32_t>(chunkInfo.chunkLen / 2)
+                                                           : 0U;
                             while (rowIdx < static_cast<uint32_t>(chunkInfo.chunkLen)) {
                                 const uint32_t leftRows = static_cast<uint32_t>(chunkInfo.chunkLen) - rowIdx;
-                                const uint32_t cvRows = leftRows > static_cast<uint32_t>(vecRow_) ?
-                                                            static_cast<uint32_t>(vecRow_) :
-                                                            leftRows;
+                                uint32_t cvRows = leftRows > static_cast<uint32_t>(vecRow_) ?
+                                                      static_cast<uint32_t>(vecRow_) :
+                                                      leftRows;
+                                if (tokenHalf != 0 && rowIdx < tokenHalf && rowIdx + cvRows > tokenHalf) {
+                                    cvRows = tokenHalf - rowIdx;
+                                }
+                                const uint32_t cvTarget =
+                                    CvTargetSubBlock(headCnt, headOffset, rowIdx, chunkInfo.chunkLen);
+                                const uint64_t subBlockFlagOffset =
+                                    cvTarget == 0 ? 0 : CV_SUBBLOCK_FLAG_STRIDE;
                                 auto tensorCv = tla::MakeTensor(
-                                    matrixCvBuf[cvListId], UB_LAYOUT_DVSTATE_CV, Catlass::Arch::PositionUB{});
+                                    matrixCvBuf[cvListId[cvTarget]], UB_LAYOUT_DVSTATE_CV,
+                                    Catlass::Arch::PositionUB{});
                                 auto blockCv = tla::GetTile(
                                     tensorCv, tla::MakeCoord(0, 0),
                                     tla::MakeShape(cvRows, static_cast<uint32_t>(V_DIM)));
@@ -357,13 +372,13 @@ public:
                                     tla::MakeShape(cvRows, static_cast<uint32_t>(V_DIM)));
                                 CopyL0CToUB_DvState<decltype(blockCv)> copyL0CToUB;
                                 AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(
-                                    MATRIX_CV_AIV_TO_AIC_FLAG_BEGIN + subBlockFlagOffset + cvListId);
+                                    MATRIX_CV_AIV_TO_AIC_FLAG_BEGIN + subBlockFlagOffset + cvListId[cvTarget]);
                                 copyL0CToUB(blockCv, blockL0C, cvRows,
-                                              static_cast<uint8_t>(headOffset & 1), 1, 0b11);
+                                              static_cast<uint8_t>(cvTarget), 1, 0b11);
                                 AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
-                                    MATRIX_CV_AIC_TO_AIV_FLAG_BEGIN + subBlockFlagOffset + cvListId);
+                                    MATRIX_CV_AIC_TO_AIV_FLAG_BEGIN + subBlockFlagOffset + cvListId[cvTarget]);
                                 rowIdx += cvRows;
-                                cvListId ^= 1U;
+                                cvListId[cvTarget] ^= 1U;
                             }
                             AscendC::SetFlag<AscendC::HardEvent::FIX_M>(l0CEvent);
                         }
@@ -396,6 +411,10 @@ public:
                     }
                     auto tensorL1QGT =
                         tla::MakeTensor(l1AScratch[qgScratchSlot], L1A_LAYOUT_QGT, Catlass::Arch::PositionL1{});
+                    // C2a：qgReady（flag2）wait 插在 qgScratchSlot 计算之后、首次 L1→L0A 拷 qg（RunResidentMmad
+                    // 内 copyL1ToL0A 读 tensorL1QGT）之前；GVA 组跟随头（produceQG=false）的 qg 由组首头更早
+                    // 写入，AIC 按头序 wait、AIV 按头序 set（PIPE_MTE3），传递覆盖
+                    Catlass::Arch::CrossCoreWaitFlag(vecToCubeFlag_);
                     RunResidentMmad<LayoutTagL0A_TermQ, LayoutTagL0B_TermQ>(
                         copyL1ToL0A_TermQ, copyL1ToL0B_TermQ, tileMmadTermQ, copyL0CToGm_TermQ,
                         tensorL1QGT, tensorL1DO, blockTermQ, l0A, l0B, l0C,
@@ -403,7 +422,13 @@ public:
                         static_cast<uint32_t>(K_), static_cast<uint32_t>(V_DIM),
                         static_cast<uint32_t>(chunkInfo.chunkLen));
 
-                    Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
+                    // C2-b：loop1 末 flag4 set 仅 GM-dvState 路径执行（与 vector phase2 头 wait 共用
+                    // IsGmDvStatePath 逐 chunk 推导）；CV 路径 phase2 不读 loop1 GM 产物，set 省略。
+                    // loop2 的 flag4 set（GM/CV/fp16 三分支）无条件保留——phase3 的 termQ 就绪由
+                    // loop2 的 PIPE_FIX set 传递覆盖（FIX 管保序，CV 分支 set 位于 termW CV 流之前）
+                    if (IsGmDvStatePath<DT>(V_DIM, chunkInfo.chunkLen)) {
+                        Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
+                    }
                 }
                 for (int64_t headOffset = 0; headOffset < headCnt; ++headOffset) {
                     const int64_t hv = hvBase + headOffset;
@@ -553,16 +578,22 @@ public:
                             Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
                             AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(l0CEvent);
                             uint32_t rowIdx = 0;
-                            uint32_t cvListId = 0;
-                            const uint64_t subBlockFlagOffset =
-                                (headOffset & 1) == 0 ? 0 : CV_SUBBLOCK_FLAG_STRIDE;
+                            // C5a：termW CV 片逐片目标子块由 CvTargetSubBlock 判定（劈分头按 K 半段，
+                            // 非劈分头=headOffset&1 与现状相同）；cvListId 按目标子块独立 ping-pong，
+                            // 与各 AIV phase3 局部 cvListId（各自从 0 起逐片翻转）逐片配对（R-C5-1 收敛点）
+                            uint32_t cvListId[2] = {0U, 0U};
                             while (rowIdx < static_cast<uint32_t>(K_)) {
                                 const uint32_t leftRows = static_cast<uint32_t>(K_) - rowIdx;
                                 const uint32_t cvRows = leftRows > static_cast<uint32_t>(vecRow_) ?
                                                             static_cast<uint32_t>(vecRow_) :
                                                             leftRows;
+                                const uint32_t cvTarget =
+                                    CvTargetSubBlock(headCnt, headOffset, rowIdx, K_);
+                                const uint64_t subBlockFlagOffset =
+                                    cvTarget == 0 ? 0 : CV_SUBBLOCK_FLAG_STRIDE;
                                 auto tensorCv = tla::MakeTensor(
-                                    matrixCvBuf[cvListId], UB_LAYOUT_TERMW_CV, Catlass::Arch::PositionUB{});
+                                    matrixCvBuf[cvListId[cvTarget]], UB_LAYOUT_TERMW_CV,
+                                    Catlass::Arch::PositionUB{});
                                 auto blockCv = tla::GetTile(
                                     tensorCv, tla::MakeCoord(0, 0),
                                     tla::MakeShape(cvRows, static_cast<uint32_t>(V_DIM)));
@@ -571,13 +602,13 @@ public:
                                     tla::MakeShape(cvRows, static_cast<uint32_t>(V_DIM)));
                                 CopyL0CToUB_TermW<decltype(blockCv)> copyL0CToUB;
                                 AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(
-                                    MATRIX_CV_AIV_TO_AIC_FLAG_BEGIN + subBlockFlagOffset + cvListId);
+                                    MATRIX_CV_AIV_TO_AIC_FLAG_BEGIN + subBlockFlagOffset + cvListId[cvTarget]);
                                 copyL0CToUB(blockCv, blockL0C, cvRows,
-                                              static_cast<uint8_t>(headOffset & 1), 1, 0b11);
+                                              static_cast<uint8_t>(cvTarget), 1, 0b11);
                                 AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
-                                    MATRIX_CV_AIC_TO_AIV_FLAG_BEGIN + subBlockFlagOffset + cvListId);
+                                    MATRIX_CV_AIC_TO_AIV_FLAG_BEGIN + subBlockFlagOffset + cvListId[cvTarget]);
                                 rowIdx += cvRows;
-                                cvListId ^= 1U;
+                                cvListId[cvTarget] ^= 1U;
                             }
                             AscendC::SetFlag<AscendC::HardEvent::FIX_M>(l0CEvent);
                         }
@@ -915,6 +946,7 @@ private:
     GM_ADDR cuSeqlens_ = nullptr;
     GM_ADDR chunkIndices_ = nullptr;
     Catlass::Arch::CrossCoreFlag vecToCubeFlag_{VEC_TO_CUBE_FLAG_READY};
+    Catlass::Arch::CrossCoreFlag vecToCubeDhFlag_{VEC_TO_CUBE_DH_FLAG_READY};
     Catlass::Arch::CrossCoreFlag cubeToVecFlag_{CUBE_TO_VEC_FLAG_READY};
     const ChunkGatedDeltaRuleBwdDhuTilingData *tiling_ = nullptr;
     int64_t B_ = 0;

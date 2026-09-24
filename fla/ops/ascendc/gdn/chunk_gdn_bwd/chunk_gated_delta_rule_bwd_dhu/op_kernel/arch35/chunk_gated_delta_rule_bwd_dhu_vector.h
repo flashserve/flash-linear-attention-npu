@@ -343,13 +343,17 @@ public:
             }
 
             for (int64_t headOffset = 0; headOffset < headCnt; ++headOffset) {
-                if (headOffset % subBlockNum_ != subBlockIdx_) {
+                // C5a：劈分头两 AIV 各填 K 半段（GM 行段互斥），非劈分头维持奇偶属主
+                if (SkipHead(headCnt, headOffset)) {
                     continue;
                 }
                 const int64_t workspaceBase = WorkspaceBase(coreIdx, windowStartSlot + headOffset);
                 const int64_t stateBase = StateWorkspaceFloatOffset(workspaceBase, 0);
-                for (int64_t rowOffset = 0; rowOffset < K_; rowOffset += vecRow_) {
-                    const int64_t curRows = Min(vecRow_, K_ - rowOffset);
+                int64_t rowBegin = 0;
+                int64_t rowEnd = K_;
+                KRowRange(headCnt, headOffset, rowBegin, rowEnd);
+                for (int64_t rowOffset = rowBegin; rowOffset < rowEnd; rowOffset += vecRow_) {
+                    const int64_t curRows = Min(vecRow_, rowEnd - rowOffset);
                     const uint32_t elems = static_cast<uint32_t>(curRows * V_);
                     const uint32_t stateIdx = curStatePingPong_;
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2Event_[stateIdx]);
@@ -379,7 +383,10 @@ public:
                     const int64_t qBase =
                         ((chunkInfo.bIdx * HK_ + hq) * T_ + chunkInfo.tokenStart) * K_;
                     const int64_t dhBase = DhOffset(chunkInfo.bIdx, hv, chunkInfo.outputChunkIdx);
-                    if (headOffset % subBlockNum_ != subBlockIdx_) {
+                    // C5a：劈分头不跳过（两 AIV 各做 K 半段）；其余非属主头照旧提前 set flag3+flag2 后 continue
+                    if (SkipHead(headCnt, headOffset)) {
+                        // C2a：非属主同时 set flag3 与 flag2，保持两条链各自的 AND 配对计数（每头每链两子块各一次）
+                        Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCubeDhFlag_);
                         Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCubeFlag_);
                         continue;
                     }
@@ -407,21 +414,34 @@ public:
                         }
                         AscendC::PipeBarrier<PIPE_V>();
                     } else {
+                        // C5a：劈分头只装载本 AIV 的 K 半段（gateFactor 按全局行号写入，各 AIV 只填自己半段，
+                        // 衰减用 gateFactor+rowOffset 全局索引不变）；非劈分头 rowBegin=0/gateRows=K_ 与现状
+                        // 逐位相同。USE_GK=0（g，token 维）不涉及：劈分头两 AIV 各自全量装载（重复值相同，
+                        // 保住 lastRow 标量逻辑零改动）。
+                        int64_t gateRowBegin = 0;
+                        int64_t gateRowEnd = K_;
+                        KRowRange(headCnt, headOffset, gateRowBegin, gateRowEnd);
+                        const uint32_t gateRows = static_cast<uint32_t>(gateRowEnd - gateRowBegin);
                         const int64_t lastToken = chunkInfo.tokenStart + chunkInfo.chunkLen - 1;
-                        const int64_t gateBase = ((chunkInfo.bIdx * HV_ + hv) * T_ + lastToken) * K_;
+                        const int64_t gateBase =
+                            ((chunkInfo.bIdx * HV_ + hv) * T_ + lastToken) * K_ + gateRowBegin;
                         const uint32_t gateIdx = CopyInGateRows(
-                            gateGm_, gateInputBuf_[curGateInputPingPong_], gateBase,
-                            static_cast<uint32_t>(K_));
-                        CastGateInputRows(gateFactor, gateInputBuf_[gateIdx], static_cast<uint32_t>(K_), gateIdx);
+                            gateGm_, gateInputBuf_[curGateInputPingPong_], gateBase, gateRows);
+                        CastGateInputRows(gateFactor[gateRowBegin], gateInputBuf_[gateIdx], gateRows, gateIdx);
                         AscendC::PipeBarrier<PIPE_V>();
-                        AscendC::Muls(gateFactor, gateFactor, LN2, static_cast<uint32_t>(K_));
+                        AscendC::Muls(gateFactor[gateRowBegin], gateFactor[gateRowBegin], LN2, gateRows);
                         AscendC::PipeBarrier<PIPE_V>();
-                        AscendC::Exp(gateFactor, gateFactor, static_cast<uint32_t>(K_));
+                        AscendC::Exp(gateFactor[gateRowBegin], gateFactor[gateRowBegin], gateRows);
                         AscendC::PipeBarrier<PIPE_V>();
                     }
 
-                    for (int64_t rowOffset = 0; rowOffset < K_; rowOffset += vecRow_) {
-                        const int64_t curRows = Min(vecRow_, K_ - rowOffset);
+                    // C5a：state/dh K 行循环行界改本 AIV 半段（state GM 读写、dh GM 写行段互斥；
+                    // 非劈分头 [0,K_) 与现状逐位相同）
+                    int64_t rowBegin = 0;
+                    int64_t rowEnd = K_;
+                    KRowRange(headCnt, headOffset, rowBegin, rowEnd);
+                    for (int64_t rowOffset = rowBegin; rowOffset < rowEnd; rowOffset += vecRow_) {
+                        const int64_t curRows = Min(vecRow_, rowEnd - rowOffset);
                         const uint32_t elems = static_cast<uint32_t>(curRows * V_);
                         const uint32_t stateIdx = CopyInStateRows(
                             stateBuf_[curStatePingPong_], stateBase + rowOffset * V_, elems);
@@ -445,6 +465,9 @@ public:
                         AscendC::PipeBarrier<PIPE_V>();
                         CopyOutStateRows(stateIdx, stateFp32, stateBase + rowOffset * V_, elems);
                     }
+                    // C2a：state/dh K 行循环结束即 set flag3（dhReady，PIPE_MTE3 覆盖全部 dh store，附带覆盖
+                    // state 写回，与原 flag2 覆盖机制同构、同样保守）；AIC 由此可先于 qg staging 启动 dvState GEMM
+                    Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCubeDhFlag_);
 
                     constexpr uint32_t c0Elems = 32 / sizeof(DT);
                     AscendC::DataCopyEnhancedParams qgCopyEnhanced;
@@ -456,10 +479,16 @@ public:
                         qgScratchSlot = static_cast<uint32_t>(groupStartHv > hvBase ? groupStartHv - hvBase : 0);
                         produceQG = headOffset == 0 || hq != (hv - 1) / HRatio_;
                     }
+                    // C5b：劈分头两 AIV 各写 token 半段（l1Offset 用全局行号 rowOffset，同一 L1 scratch
+                    // 区段互斥；非劈分头 [0,chunkLen) 与现状相同）；produceQG 逻辑两 AIV 计算一致。
+                    // flag2 set 仍在两 AIV 各自 phase1 末（AND 汇合 = 两半段 staging 都完成）
                     if (produceQG) {
                         AscendC::LocalTensor<DT> qgL1 = qgL1Scratch[qgScratchSlot];
-                        for (int64_t rowOffset = 0; rowOffset < chunkInfo.chunkLen; rowOffset += vecRow_) {
-                            const int64_t curRows = Min(vecRow_, chunkInfo.chunkLen - rowOffset);
+                        int64_t tokenBegin = 0;
+                        int64_t tokenEnd = chunkInfo.chunkLen;
+                        TokenRowRange(headCnt, headOffset, chunkInfo.chunkLen, tokenBegin, tokenEnd);
+                        for (int64_t rowOffset = tokenBegin; rowOffset < tokenEnd; rowOffset += vecRow_) {
+                            const int64_t curRows = Min(vecRow_, tokenEnd - rowOffset);
                             const uint32_t qIdx = CopyInRows(
                                 qGm_, qInputBuf_[curQInputPingPong_], qBase + rowOffset * K_,
                                 static_cast<uint32_t>(curRows * K_));
@@ -509,8 +538,16 @@ public:
                     Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCubeFlag_);
                 }
                 for (int64_t headOffset = 0; headOffset < headCnt; ++headOffset) {
-                    Catlass::Arch::CrossCoreWaitFlag(cubeToVecFlag_);
-                    if (headOffset % subBlockNum_ != subBlockIdx_) {
+                    // C2-b：phase2 头 flag4 wait 仅 GM-dvState 路径执行（与 cube loop1 末条件 set 共用
+                    // IsGmDvStatePath、同一 (DT, V, chunkLen) 推导，逐头计数严格配对）；
+                    // CV 路径输入=dvState CV 片（bank flag 6/7 逐片 gate）+dv 输入 GM（入口即稳定），无需 wait
+                    if (IsGmDvStatePath<DT>(V_, chunkInfo.chunkLen)) {
+                        Catlass::Arch::CrossCoreWaitFlag(cubeToVecFlag_);
+                    }
+                    // C5b：劈分头两 AIV 各做 token 半段（dv 读/dv2 写 GM 行段互斥；dvState 经 CV 片按
+                    // CvTargetSubBlock(rowIdx, chunkLen) 到达各自子块 UB；USE_GK=0 的 dvGateFactor
+                    // 按全局行号索引不变）；非劈分头维持奇偶属主
+                    if (SkipHead(headCnt, headOffset)) {
                         Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCubeFlag_);
                         continue;
                     }
@@ -520,8 +557,13 @@ public:
                     const int64_t workspaceBase = WorkspaceBase(coreIdx, windowStartSlot + headOffset);
                     const int64_t dvStateBase = workspaceBase + dvStateWorkspaceOffset_;
                     uint32_t cvListId = 0;
-                    for (int64_t rowOffset = 0; rowOffset < chunkInfo.chunkLen; rowOffset += vecRow_) {
-                        const int64_t curRows = Min(vecRow_, chunkInfo.chunkLen - rowOffset);
+                    // C5b：token 行界改本 AIV 半段（dv 读/dv2 写/dvState GM 读行段互斥；
+                    // 非劈分头 [0,chunkLen) 与现状逐位相同）
+                    int64_t tokenBegin = 0;
+                    int64_t tokenEnd = chunkInfo.chunkLen;
+                    TokenRowRange(headCnt, headOffset, chunkInfo.chunkLen, tokenBegin, tokenEnd);
+                    for (int64_t rowOffset = tokenBegin; rowOffset < tokenEnd; rowOffset += vecRow_) {
+                        const int64_t curRows = Min(vecRow_, tokenEnd - rowOffset);
                         const int64_t rowElems = rowOffset * V_;
                         const uint32_t elems = static_cast<uint32_t>(curRows * V_);
                         AscendC::LocalTensor<float> outFp32 = outFp32Buf_.template Get<float>();
@@ -578,7 +620,9 @@ public:
                 for (int64_t headOffset = 0; headOffset < headCnt; ++headOffset) {
                     const int64_t workspaceSlot = windowStartSlot + headOffset;
                     Catlass::Arch::CrossCoreWaitFlag(cubeToVecFlag_);
-                    if (headOffset % subBlockNum_ != subBlockIdx_) {
+                    // C5a：劈分头两 AIV 各做 K 半段（termQ/state GM 行段互斥；termW 经 CV 片按
+                    // CvTargetSubBlock 到达各自子块 UB），非劈分头维持奇偶属主
+                    if (SkipHead(headCnt, headOffset)) {
                         continue;
                     }
                     const int64_t workspaceBase = WorkspaceBase(coreIdx, workspaceSlot);
@@ -588,8 +632,11 @@ public:
                     AscendC::LocalTensor<float> outFp32 = outFp32Buf_.template Get<float>();
                     uint32_t cvListId = 0;
 
-                    for (int64_t rowOffset = 0; rowOffset < K_; rowOffset += vecRow_) {
-                        const int64_t curRows = Min(vecRow_, K_ - rowOffset);
+                    int64_t rowBegin = 0;
+                    int64_t rowEnd = K_;
+                    KRowRange(headCnt, headOffset, rowBegin, rowEnd);
+                    for (int64_t rowOffset = rowBegin; rowOffset < rowEnd; rowOffset += vecRow_) {
+                        const int64_t curRows = Min(vecRow_, rowEnd - rowOffset);
                         const uint32_t elems = static_cast<uint32_t>(curRows * V_);
                         const int64_t rowElems = rowOffset * V_;
                         const uint32_t termQIdx = CopyInRows(
@@ -637,7 +684,8 @@ public:
 
             if (hasDh0_) {
                 for (int64_t headOffset = 0; headOffset < headCnt; ++headOffset) {
-                    if (headOffset % subBlockNum_ != subBlockIdx_) {
+                    // C5a：劈分头两 AIV 各写 dh0 的 K 半段（GM 行段互斥；16 行转置 tile 与 64 边界对齐）
+                    if (SkipHead(headCnt, headOffset)) {
                         continue;
                     }
                     const int64_t workspaceSlot = windowStartSlot + headOffset;
@@ -646,8 +694,11 @@ public:
                     const int64_t dh0Base = (seqIdx * HV_ + hv) * K_ * V_;
                     const int64_t stateBase = StateWorkspaceFloatOffset(workspaceBase, 0);
                     if (!stateVFirst_) {
-                        for (int64_t rowOffset = 0; rowOffset < K_; rowOffset += vecRow_) {
-                            const int64_t curRows = Min(vecRow_, K_ - rowOffset);
+                        int64_t rowBegin = 0;
+                        int64_t rowEnd = K_;
+                        KRowRange(headCnt, headOffset, rowBegin, rowEnd);
+                        for (int64_t rowOffset = rowBegin; rowOffset < rowEnd; rowOffset += vecRow_) {
+                            const int64_t curRows = Min(vecRow_, rowEnd - rowOffset);
                             const uint32_t elems = static_cast<uint32_t>(curRows * V_);
                             const uint32_t stateIdx = CopyInStateRows(
                                 stateBuf_[curStatePingPong_], stateBase + rowOffset * V_, elems);
@@ -658,7 +709,10 @@ public:
                             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stateMte3ToMte2Event_[stateIdx]);
                         }
                     } else {
-                        CopyOutDh0VFirst(stateBase, dh0Base);
+                        int64_t rowBegin = 0;
+                        int64_t rowEnd = K_;
+                        KRowRange(headCnt, headOffset, rowBegin, rowEnd);
+                        CopyOutDh0VFirst(stateBase, dh0Base, rowBegin, rowEnd);
                     }
                 }
             }
@@ -714,6 +768,48 @@ private:
             pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(stateVToMte2Event_[eventIdx]);
             pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE3>(stateVToMte3Event_[eventIdx]);
             pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_MTE2>(stateMte3ToMte2Event_[eventIdx]);
+        }
+    }
+
+    // Dhu-C5a：AIV 子块 K 维行段对半劈（2:1 负载均衡）。劈分头 = 奇数头档的最后头，两 AIV 各处理
+    // 其 K 行段的一半（AIV0 [0,K/2)、AIV1 [K/2,K)）；偶数头档/非劈分头退化为现状整段 [0,K)。
+    // K=128 恒成立（tiling 约束），K/2=64 是 vecRow 64/32/16/8 整数倍；subBlockNum_!=2 时整体退化现状。
+    // mode-0x2 AND 语义是天然汇合点：每头每 phase 每 AIV 仍各 set/wait 一次 flag2/flag3/flag4，握手零改动。
+    __aicore__ inline bool IsSplitHead(int64_t headCnt, int64_t headOffset) const
+    {
+        return subBlockNum_ == 2 && (headCnt & 1) == 1 && headOffset == headCnt - 1;
+    }
+
+    __aicore__ inline bool SkipHead(int64_t headCnt, int64_t headOffset) const
+    {
+        if (IsSplitHead(headCnt, headOffset)) {
+            return false; // 劈分头两个 AIV 都参与
+        }
+        return headOffset % subBlockNum_ != subBlockIdx_;
+    }
+
+    __aicore__ inline void KRowRange(int64_t headCnt, int64_t headOffset, int64_t &rowBegin,
+                                     int64_t &rowEnd) const
+    {
+        rowBegin = 0;
+        rowEnd = K_;
+        if (IsSplitHead(headCnt, headOffset)) {
+            const int64_t half = K_ / 2;
+            rowBegin = subBlockIdx_ == 0 ? 0 : half;
+            rowEnd = subBlockIdx_ == 0 ? half : K_;
+        }
+    }
+
+    // C5-b 预留（token 维行段劈分，本步不使用）：劈分头按 token 半段，chunkLen=1 时前半为空仍正确
+    __aicore__ inline void TokenRowRange(int64_t headCnt, int64_t headOffset, int64_t chunkLen,
+                                         int64_t &rowBegin, int64_t &rowEnd) const
+    {
+        rowBegin = 0;
+        rowEnd = chunkLen;
+        if (IsSplitHead(headCnt, headOffset)) {
+            const int64_t half = chunkLen / 2;
+            rowBegin = subBlockIdx_ == 0 ? 0 : half;
+            rowEnd = subBlockIdx_ == 0 ? half : chunkLen;
         }
     }
 
@@ -836,10 +932,11 @@ private:
         }
     }
 
-    __aicore__ inline void CopyOutDh0VFirst(int64_t stateBase, int64_t dh0Base)
+    __aicore__ inline void CopyOutDh0VFirst(int64_t stateBase, int64_t dh0Base, int64_t rowBegin, int64_t rowEnd)
     {
-        for (int64_t rowOffset = 0; rowOffset < K_; rowOffset += vecRow_) {
-            const int64_t curRows = Min(vecRow_, K_ - rowOffset);
+        // C5a：行界为本 AIV 半段（rowEnd-rowOffset 逐片截断；64 半边界是 16 行转置 tile 整数倍）
+        for (int64_t rowOffset = rowBegin; rowOffset < rowEnd; rowOffset += vecRow_) {
+            const int64_t curRows = Min(vecRow_, rowEnd - rowOffset);
             const uint32_t elems = static_cast<uint32_t>(curRows * V_);
             const uint32_t stateIdx = CopyInStateRows(
                 stateBuf_[curStatePingPong_], stateBase + rowOffset * V_, elems);
@@ -922,6 +1019,7 @@ private:
     AscendC::LocalTensor<DT> outputBuf_[BUFFER_COUNT];
     AscendC::LocalTensor<float> stateBuf_[BUFFER_COUNT];
     Catlass::Arch::CrossCoreFlag vecToCubeFlag_{VEC_TO_CUBE_FLAG_READY};
+    Catlass::Arch::CrossCoreFlag vecToCubeDhFlag_{VEC_TO_CUBE_DH_FLAG_READY};
     Catlass::Arch::CrossCoreFlag cubeToVecFlag_{CUBE_TO_VEC_FLAG_READY};
 
     AscendC::TEventID qMte2ToVEvent_[BUFFER_COUNT];

@@ -96,6 +96,9 @@ public:
         this->Attr("logical_v_heads").AttrType(REQUIRED).Int(1);
         this->Attr("logical_k_dim").AttrType(REQUIRED).Int(1);
         this->Attr("logical_v_dim").AttrType(REQUIRED).Int(1);
+        // 内部布局开关：false=公开 head-major h（现状）；true=chunk-major h，
+        // 仅供算子组合内部调用方（KDA bwd V2 recompute 链）消除 host 转置。
+        this->Attr("h_chunk_major").AttrType(REQUIRED).Bool(false);
 
         OpAICoreConfig aicore_config;
         aicore_config.DynamicCompileStaticFlag(true)

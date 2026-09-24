@@ -27,6 +27,7 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
     bool saveNewValue,
     bool useExp2,
     bool stateVFirst,
+    bool hChunkMajor,
     const aclTensor *hOut,
     const aclTensor *vNewOut,
     const aclTensor *finalStateOut,

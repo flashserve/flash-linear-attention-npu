@@ -246,6 +246,19 @@ __aicore__ inline uint64_t FwdHHOffset(const FwdHRuntimeTiling &tiling,
                                        const FwdHSequenceSpan &sequence, uint32_t hv,
                                        uint32_t globalChunk)
 {
+    // 两种布局下同一 (chunk, head) 的 [K,V] tile 均物理连续，仅在 tile 粒度上
+    // 交换 chunk 轴与 head 轴：head-major=[B,HV,C,K,V]，chunk-major=[B,C,HV,K,V]。
+    if (tiling.hChunkMajor) {
+        if (tiling.isVariedLen != 0) {
+            return (static_cast<uint64_t>(globalChunk) * tiling.vNumHead +
+                    hv) * FWD_H_K * FWD_H_V;
+        }
+        const uint32_t chunksPerSequence =
+            FwdHCeilDiv(static_cast<uint32_t>(tiling.seqlen), FWD_H_CHUNK);
+        return ((static_cast<uint64_t>(sequence.physicalBatch) * chunksPerSequence +
+                 globalChunk - sequence.chunkPrefix) * tiling.vNumHead +
+                hv) * FWD_H_K * FWD_H_V;
+    }
     if (tiling.isVariedLen != 0) {
         return (static_cast<uint64_t>(hv) * sequence.totalChunks +
                 globalChunk) * FWD_H_K * FWD_H_V;

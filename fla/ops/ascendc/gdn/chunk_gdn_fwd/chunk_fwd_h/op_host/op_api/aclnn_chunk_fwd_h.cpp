@@ -443,7 +443,7 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
     auto result = l0op::ChunkFwdH(
         params.k, params.w, params.u, params.gOptional, params.gkOptional, params.initialStateOptional,
         params.cuSeqlensOptional, params.chunkIndicesOptional, params.outputFinalState, params.chunkSize,
-        params.saveNewValue, params.useExp2, params.stateVFirst,
+        params.saveNewValue, params.useExp2, params.stateVFirst, false,
         params.hOut, params.vNewOut, params.finalStateOut, executorPtr);
     CHECK_RET(result[0] != nullptr && result[1] != nullptr &&
                   (!outputFinalState || result[2] != nullptr),

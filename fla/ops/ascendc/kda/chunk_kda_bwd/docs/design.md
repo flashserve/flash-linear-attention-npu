@@ -13,7 +13,8 @@ V2 由三个阶段组成，保存中间量模式跳过前向重计算：
 重计算模式先恢复 gk/w/qg/kg/v_new/h 等中间量，再执行同一反向链路。
 保存模式直接读取前向的 chunk-major h；Prepare 与 Finalize 使用对应偏移，
 Finalize 对 h、dh 分别寻址，Dhu 及其 head-major dh 不变。
-重计算模式生成 h 后单独转为 chunk-major；保存模式不增加转换。
+重计算模式由 `ChunkFwdH` 经内部属性 `h_chunk_major=true` 直接写出 chunk-major h，
+与保存模式布局一致，链上不再单独转置。
 入口约束见 [接口说明](api.md)。
 
 ## 数值处理

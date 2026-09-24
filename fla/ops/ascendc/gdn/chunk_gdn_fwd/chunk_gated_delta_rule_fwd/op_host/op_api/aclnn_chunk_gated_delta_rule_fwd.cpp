@@ -717,7 +717,8 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         auto hResult = l0op::ChunkFwdH(
             kCompute, w, u, gCumsumBht, nullptr, params.initialStateOptional,
             params.cuSeqlensOptional, params.chunkIndicesOptional, outputFinalState,
-            params.chunkSize, true, params.useExp2, params.stateVFirst, h, vNew, finalState, executorPtr);
+            params.chunkSize, true, params.useExp2, params.stateVFirst, false, h, vNew, finalState,
+            executorPtr);
         GDN_STAGE_CHECK(hResult[0] != nullptr && hResult[1] != nullptr, 169105);
 
         auto oResult = l0op::ChunkFwdO(

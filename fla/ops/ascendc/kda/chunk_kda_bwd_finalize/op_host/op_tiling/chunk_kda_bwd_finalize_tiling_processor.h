@@ -161,7 +161,10 @@ public:
         tiling_.gatePartialOffset = slotBytes;
         tiling_.dtBiasPartialOffset = slotBytes + gateBytes;
         workspaceSize_ = ctx_.sysWorkspaceSize + slotBytes + gateBytes + dtBytes;
-        tilingKey_ = (variable ? 2U : 1U) + (hasRstd ? 2U : 0U);
+        // FULL_TILE specialization: dense with every chunk full.  varlen
+        // always takes the generic key (sequence lengths are device-side).
+        const bool fullTile = !variable && (tiling_.T % ctx_.chunkSize) == 0;
+        tilingKey_ = (variable ? 2U : 1U) + (hasRstd ? 2U : 0U) + (fullTile ? 4U : 0U);
         return ge::GRAPH_SUCCESS;
     }
 

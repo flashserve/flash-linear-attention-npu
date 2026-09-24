@@ -56,6 +56,7 @@ static constexpr size_t ATTR_LOGICAL_K_HEADS_IDX = 7;
 static constexpr size_t ATTR_LOGICAL_V_HEADS_IDX = 8;
 static constexpr size_t ATTR_LOGICAL_K_DIM_IDX = 9;
 static constexpr size_t ATTR_LOGICAL_V_DIM_IDX = 10;
+static constexpr size_t ATTR_H_CHUNK_MAJOR_IDX = 11;
 
 static constexpr int64_t V_DIM_128 = 128;
 static constexpr int64_t K_DIM_128 = 128;
@@ -77,6 +78,7 @@ static void ChunkFwdHTilingDataPrint(gert::TilingContext *context, ChunkFwdHTili
     OP_LOGD(nodeName, "=== isVariedLen: %ld", tiling.get_isVariedLen());
     OP_LOGD(nodeName, "=== shapeBatch: %ld", tiling.get_shapeBatch());
     OP_LOGD(nodeName, "=== tokenBatch: %ld", tiling.get_tokenBatch());
+    OP_LOGD(nodeName, "=== hChunkMajor: %ld", tiling.get_hChunkMajor());
     OP_LOGD(nodeName, ">>>>>>>>>>>>>>> Print ChunkFwdH tiling data end <<<<<<<<<<<<<<<<");
 }
 
@@ -116,6 +118,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     int64_t logicalVHeads = *(attrPtr->GetAttrPointer<int64_t>(ATTR_LOGICAL_V_HEADS_IDX));
     int64_t logicalKDim = *(attrPtr->GetAttrPointer<int64_t>(ATTR_LOGICAL_K_DIM_IDX));
     int64_t logicalVDim = *(attrPtr->GetAttrPointer<int64_t>(ATTR_LOGICAL_V_DIM_IDX));
+    bool hChunkMajor = *(attrPtr->GetAttrPointer<bool>(ATTR_H_CHUNK_MAJOR_IDX));
 
     ge::DataType resolvedStateDataType = ge::DT_FLOAT;
     if (useInitialState) {
@@ -150,6 +153,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tilingCtx.useInitialState = useInitialState;
     tilingCtx.storeFinalState = storeFinalState;
     tilingCtx.chunkSize = chunkSize;
+    tilingCtx.hChunkMajor = hChunkMajor;
     tilingCtx.aicCoreNum = ascendcPlatform.GetCoreNumAic();
     tilingCtx.libApiWorkSpaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
 
@@ -220,6 +224,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tiling.set_vUpdateWorkspaceOffset(plainTiling.vUpdateWorkspaceOffset);
     tiling.set_kDecayWorkspaceOffset(plainTiling.kDecayWorkspaceOffset);
     tiling.set_hWorkspaceOffset(plainTiling.hWorkspaceOffset);
+    tiling.set_hChunkMajor(plainTiling.hChunkMajor);
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
 

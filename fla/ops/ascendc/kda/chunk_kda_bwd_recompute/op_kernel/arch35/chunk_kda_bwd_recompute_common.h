@@ -71,12 +71,17 @@ __aicore__ inline void HeadsOnChunk(
     hEnd = (rem == 0) ? hv : rem;
 }
 
-// A resident 8KiB, then 32KiB ping-pong regions for kbg/vb.
+// R-Akk 方案A：A 区 8KiB 单缓冲 → 2×32KiB 组 ping-pong。每组装载 ≤kHeadRotate=4 个头的
+// NZ 矩阵（ndNum=G 单条 DataCopy，dstNzMatrixStride=kL1AMatrixElems elem，矩阵在组内连续落位）。
+// 槽位不相交：[0,64K) A0/A1，[64K,128K) kbg×2，[128K,192K) vb×2，合计 192KiB / 512KiB。
 constexpr uint32_t kL1AOffset = 0;
-constexpr uint32_t kL1KbgSlot0Offset = 8 * 1024;
-constexpr uint32_t kL1KbgSlot1Offset = 40 * 1024;
-constexpr uint32_t kL1VbSlot0Offset = 72 * 1024;
-constexpr uint32_t kL1VbSlot1Offset = 104 * 1024;
+constexpr uint32_t kL1AGroupBytes = 32 * 1024;
+constexpr uint32_t kL1AMatrixElems = 64 * 64; // 4096 elem = 8KiB bf16 单头 NZ 落点
+constexpr uint32_t kL1AGroupMatrixElems = kHeadRotate * kL1AMatrixElems; // 16384 elem = 32KiB 组
+constexpr uint32_t kL1KbgSlot0Offset = 64 * 1024;
+constexpr uint32_t kL1KbgSlot1Offset = 96 * 1024;
+constexpr uint32_t kL1VbSlot0Offset = 128 * 1024;
+constexpr uint32_t kL1VbSlot1Offset = 160 * 1024;
 
 // Mix 1 AIC : 2 AIV, mode 4: AIV1 is flagId+16. Untemplated CrossCoreWaitFlag
 // defaults to mode 0 (inter-core) and serializes every AIC onto one flag.
@@ -122,13 +127,43 @@ __aicore__ inline void BypassL2(AscendC::GlobalTensor<T> &tensor)
     tensor.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
 }
 
-constexpr int32_t kEventA = 0;
+// R-Akk：kEventA 单 ID → 组级 ping/pong 双 ID（仿 kEventL0C0/kEventL0C1；MTE1_MTE2 与
+// MTE2_MTE1 两个方向各用 {0,1}，预算充足）。信用配对：free[b] 预置 1 次 + 每组末头 set 1 次
+// vs 每组装载 wait 1 次；ready[b] 每组装载 set 1 次 vs 每组首头 wait 1 次。
+constexpr int32_t kEventA0 = 0;
+constexpr int32_t kEventA1 = 1;
 constexpr int32_t kEventL0A = 0;
 constexpr int32_t kEventL0B = 1;
 constexpr int32_t kEventL0C0 = 0;
 constexpr int32_t kEventL0C1 = 1;
 constexpr int32_t kEventMte1M = 0;
 constexpr uint32_t kL0CTileBytes = 128 * 1024;
+
+__aicore__ inline int32_t AEvent(uint32_t groupBuf)
+{
+    return groupBuf == 0 ? kEventA0 : kEventA1;
+}
+
+// R-Akk：组级「下一组」描述。组不跨 chunk（hBase 循环嵌套在 loopIdx 内）；跨 chunk 时取下一
+// chunk 的首组（hStart 经 HeadsOnChunk 重算），调用方按 nxtLoop 重算 chunk 形状。
+__aicore__ inline bool NextGroup(
+    uint64_t loopIdx, uint64_t hBase, uint64_t hEnd, uint64_t lastLoop,
+    uint64_t taskBegin, uint64_t taskEnd, uint64_t hv, uint64_t firstLoop,
+    uint64_t &nxtLoop, uint64_t &nxtHBase, uint64_t &nxtHEnd)
+{
+    if (hBase + kHeadRotate < hEnd) {
+        nxtLoop = loopIdx;
+        nxtHBase = hBase + kHeadRotate;
+        nxtHEnd = hEnd;
+        return true;
+    }
+    if (loopIdx < lastLoop) {
+        nxtLoop = loopIdx + 1U;
+        HeadsOnChunk(taskBegin, taskEnd, hv, nxtLoop, firstLoop, lastLoop, nxtHBase, nxtHEnd);
+        return true;
+    }
+    return false;
+}
 
 __aicore__ inline uint32_t KbgSlotOffset(uint32_t slot)
 {

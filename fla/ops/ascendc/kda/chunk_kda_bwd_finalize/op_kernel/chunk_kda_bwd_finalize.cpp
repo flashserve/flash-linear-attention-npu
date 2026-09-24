@@ -14,6 +14,7 @@
 
 namespace KDA {
 
+template <bool FULL_TILE>
 __aicore__ inline void ChunkKdaBwdFinalizeImpl(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta, GM_ADDR akk,
     GM_ADDR vNew, GM_ADDR h, GM_ADDR dh, GM_ADDR dvScan,
@@ -24,14 +25,14 @@ __aicore__ inline void ChunkKdaBwdFinalizeImpl(
     const ChunkKdaBwdFinalizeTilingData *tiling)
 {
     if ASCEND_IS_AIC {
-        ChunkKdaBwdFinalizeCubeStage10 cube;
+        ChunkKdaBwdFinalizeCubeStage10<FULL_TILE> cube;
         cube.Init(v, akk, vNew, h, dh, dvScan, cuSeqlens, chunkIndices,
                   workspace, tiling);
         cube.Process();
     }
     if ASCEND_IS_AIV {
         AscendC::TPipe pipe;
-        ChunkKdaBwdFinalizeVectorStage12 vector;
+        ChunkKdaBwdFinalizeVectorStage12<FULL_TILE> vector;
         vector.Init(q, k, v, gk, beta, h, dh, dAqk, dqRaw, qRstd, dq, dv,
                     kRstd, dk, dBeta,
                     rawG, aLog, dtBias, dG,
@@ -61,7 +62,24 @@ extern "C" __global__ __aicore__ void chunk_kda_bwd_finalize(
         TILING_KEY_IS(3) || TILING_KEY_IS(4)) {
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
         GM_ADDR userWorkspace = AscendC::GetUserWorkspace(workspace);
-        KDA::ChunkKdaBwdFinalizeImpl(
+        KDA::ChunkKdaBwdFinalizeImpl<false>(
+            q, k, v, gk, beta, akk, vNew, h, dh, dvScan,
+            dAqk, dqRaw, qRstd, dq, dv, kRstd, dk, dBeta,
+            rawG, aLog, dtBias, dG,
+            cuSeqlens, chunkIndices, userWorkspace, &tilingData);
+        // Only AIVs produce the partials. AIV-only SyncAll uses flag 14,
+        // which no earlier AIC->AIV handoff uses. MIX SyncAll uses 12/13
+        // and would consume the final, unspent ZB_FREE credits instead.
+        AscendC::SyncAll<true>();
+        if ASCEND_IS_AIV {
+            KDA::FinalizeStage12(userWorkspace, dALog, dDtBias, tilingData);
+        }
+    }
+    // Keys 5/7: dense with T % chunkSize == 0, every chunk full.
+    if (TILING_KEY_IS(5) || TILING_KEY_IS(7)) {
+        KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
+        GM_ADDR userWorkspace = AscendC::GetUserWorkspace(workspace);
+        KDA::ChunkKdaBwdFinalizeImpl<true>(
             q, k, v, gk, beta, akk, vNew, h, dh, dvScan,
             dAqk, dqRaw, qRstd, dq, dv, kRstd, dk, dBeta,
             rawG, aLog, dtBias, dG,

@@ -21,6 +21,7 @@
 
 namespace KDA {
 
+template <bool FULL_TILE>
 class ChunkKdaBwdFinalizeCubeStage10 {
 public:
     __aicore__ inline void Init(
@@ -69,7 +70,7 @@ public:
             const int64_t headEnd = FinalizeMin(
                 headBegin + KDA_FINALIZE_HEADS_PER_WINDOW, tiling_->NV);
             FinalizeChunkInfo chunk;
-            ResolveFinalizeChunk(chunkTask, cuSeqlens_, chunkIndices_, *tiling_, chunk);
+            ResolveFinalizeChunk<FULL_TILE>(chunkTask, cuSeqlens_, chunkIndices_, *tiling_, chunk);
             if (!chunk.valid) {
                 continue;
             }
@@ -131,7 +132,7 @@ public:
             // Each row band has its own stable gate anchor. The existing
             // residual GEMMs operate on 32 output rows, with no extra FLOPs
             // for full chunks. Each band reuses the same owner L1 slot.
-            for (uint32_t rowBegin = 0; rowBegin < chunk.validRows;
+            for (uint32_t rowBegin = 0; rowBegin < (FULL_TILE ? KDA_FINALIZE_CHUNK : chunk.validRows);
                  rowBegin += KDA_FINALIZE_INTRA_ROWS) {
                 headGeneration -= static_cast<uint64_t>(headEnd - headBegin);
                 for (int64_t head = headBegin; head < headEnd; ++head, ++headGeneration) {
@@ -219,15 +220,17 @@ private:
         AscendC::LocalTensor<DT> dst, GM_ADDR src,
         uint32_t m, uint32_t k, uint32_t validM = 0, uint32_t validK = 0)
     {
-        validM = validM == 0 ? m : validM;
-        validK = validK == 0 ? k : validK;
-        if (validM != m || validK != k) {
-            AscendC::InitConstValue(dst, AscendC::InitConstValueParams<DT>(
-                1, static_cast<uint16_t>(m * k * sizeof(DT) / 32), 0, static_cast<DT>(0)));
-            // Clearing and ND-to-NZ DMA write overlapping L1 addresses.
-            // Finish the clear before loading valid rows, or its late writes
-            // can zero the last column blocks of a short tile.
-            AscendC::PipeBarrier<PIPE_MTE2>();
+        validM = FULL_TILE ? m : (validM == 0 ? m : validM);
+        validK = FULL_TILE ? k : (validK == 0 ? k : validK);
+        if constexpr (!FULL_TILE) {
+            if (validM != m || validK != k) {
+                AscendC::InitConstValue(dst, AscendC::InitConstValueParams<DT>(
+                    1, static_cast<uint16_t>(m * k * sizeof(DT) / 32), 0, static_cast<DT>(0)));
+                // Clearing and ND-to-NZ DMA write overlapping L1 addresses.
+                // Finish the clear before loading valid rows, or its late writes
+                // can zero the last column blocks of a short tile.
+                AscendC::PipeBarrier<PIPE_MTE2>();
+            }
         }
         AscendC::GlobalTensor<DT> gm;
         gm.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(src));
@@ -245,13 +248,15 @@ private:
         AscendC::LocalTensor<DT> dst, GM_ADDR src,
         uint32_t k, uint32_t n, uint32_t validK = 0, uint32_t validN = 0)
     {
-        validK = validK == 0 ? k : validK;
-        validN = validN == 0 ? n : validN;
-        if (validK != k || validN != n) {
-            AscendC::InitConstValue(dst, AscendC::InitConstValueParams<DT>(
-                1, static_cast<uint16_t>(k * n * sizeof(DT) / 32), 0, static_cast<DT>(0)));
-            // Same L1 write-after-write dependency as LoadGmToL1A.
-            AscendC::PipeBarrier<PIPE_MTE2>();
+        validK = FULL_TILE ? k : (validK == 0 ? k : validK);
+        validN = FULL_TILE ? n : (validN == 0 ? n : validN);
+        if constexpr (!FULL_TILE) {
+            if (validK != k || validN != n) {
+                AscendC::InitConstValue(dst, AscendC::InitConstValueParams<DT>(
+                    1, static_cast<uint16_t>(k * n * sizeof(DT) / 32), 0, static_cast<DT>(0)));
+                // Same L1 write-after-write dependency as LoadGmToL1A.
+                AscendC::PipeBarrier<PIPE_MTE2>();
+            }
         }
         AscendC::GlobalTensor<DT> gm;
         gm.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(src));
@@ -452,27 +457,27 @@ private:
         auto hL1 = resource.l1Buf.template GetBufferByByte<DT>(streamBase + STREAM_H);
         auto vL1 = resource.l1Buf.template GetBufferByByte<DT>(streamBase + STREAM_V);
 
-        const int64_t token = FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_DIM);
-        const int64_t akkToken = FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_CHUNK);
-        const int64_t hState = FinalizeHOffset(*tiling_, chunk, head);
-        const int64_t state = FinalizeDhOffset(*tiling_, chunk, head);
+        const int64_t token = FinalizeTokenOffset<FULL_TILE>(*tiling_, chunk, head, KDA_FINALIZE_DIM);
+        const int64_t akkToken = FinalizeTokenOffset<FULL_TILE>(*tiling_, chunk, head, KDA_FINALIZE_CHUNK);
+        const int64_t hState = FinalizeHOffset<FULL_TILE>(*tiling_, chunk, head);
+        const int64_t state = FinalizeDhOffset<FULL_TILE>(*tiling_, chunk, head);
         LoadGmToL1A<CopyTransB, LayoutRM>(
-            vNewL1, vNew_ + token * sizeof(DT), rows, KDA_FINALIZE_DIM, chunk.validRows);
+            vNewL1, vNew_ + token * sizeof(DT), rows, KDA_FINALIZE_DIM, (FULL_TILE ? KDA_FINALIZE_CHUNK : chunk.validRows));
         LoadGmToL1B<CopyTransB, LayoutCM>(
             dhL1, dh_ + state * sizeof(DT), KDA_FINALIZE_DIM, KDA_FINALIZE_DIM);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(Stage0Ready(stream, 0));
 
         LoadGmToL1A<CopyTransA, LayoutCM>(
-            akkL1, akk_ + akkToken * sizeof(DT), rows, rows, chunk.validRows, chunk.validRows);
+            akkL1, akk_ + akkToken * sizeof(DT), rows, rows, (FULL_TILE ? KDA_FINALIZE_CHUNK : chunk.validRows), (FULL_TILE ? KDA_FINALIZE_CHUNK : chunk.validRows));
         LoadGmToL1A<CopyRegular, LayoutRM>(
-            dvScanL1, dvScan_ + token * sizeof(DT), rows, KDA_FINALIZE_DIM, chunk.validRows);
+            dvScanL1, dvScan_ + token * sizeof(DT), rows, KDA_FINALIZE_DIM, (FULL_TILE ? KDA_FINALIZE_CHUNK : chunk.validRows));
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(Stage0Ready(stream, 1));
 
         LoadGmToL1B<CopyTransB, LayoutCM>(
             hL1, h_ + hState * sizeof(DT), KDA_FINALIZE_DIM, KDA_FINALIZE_DIM);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(Stage0Ready(stream, 2));
         LoadGmToL1B<CopyTransB, LayoutCM>(
-            vL1, v_ + token * sizeof(DT), KDA_FINALIZE_DIM, rows, KDA_FINALIZE_DIM, chunk.validRows);
+            vL1, v_ + token * sizeof(DT), KDA_FINALIZE_DIM, rows, KDA_FINALIZE_DIM, (FULL_TILE ? KDA_FINALIZE_CHUNK : chunk.validRows));
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(Stage0Ready(stream, 3));
     }
 
@@ -488,22 +493,22 @@ private:
         auto dvScanL1 = resource.l1Buf.template GetBufferByByte<DT>(streamBase + STREAM_DVSCAN);
         auto hL1 = resource.l1Buf.template GetBufferByByte<DT>(streamBase + STREAM_H);
         auto vL1 = resource.l1Buf.template GetBufferByByte<DT>(streamBase + STREAM_V);
-        const int64_t token = FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_DIM);
-        const int64_t hState = FinalizeHOffset(*tiling_, chunk, head);
-        const int64_t state = FinalizeDhOffset(*tiling_, chunk, head);
+        const int64_t token = FinalizeTokenOffset<FULL_TILE>(*tiling_, chunk, head, KDA_FINALIZE_DIM);
+        const int64_t hState = FinalizeHOffset<FULL_TILE>(*tiling_, chunk, head);
+        const int64_t state = FinalizeDhOffset<FULL_TILE>(*tiling_, chunk, head);
 
         LoadGmToL1A<CopyTransB, LayoutRM>(
-            vNewL1, vNew_ + token * sizeof(DT), rows, KDA_FINALIZE_DIM, chunk.validRows);
+            vNewL1, vNew_ + token * sizeof(DT), rows, KDA_FINALIZE_DIM, (FULL_TILE ? KDA_FINALIZE_CHUNK : chunk.validRows));
         LoadGmToL1B<CopyTransB, LayoutCM>(
             dhL1, dh_ + state * sizeof(DT), KDA_FINALIZE_DIM, KDA_FINALIZE_DIM);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(Stage0Ready(stream, 0));
         LoadGmToL1A<CopyRegular, LayoutRM>(
-            dvScanL1, dvScan_ + token * sizeof(DT), rows, KDA_FINALIZE_DIM, chunk.validRows);
+            dvScanL1, dvScan_ + token * sizeof(DT), rows, KDA_FINALIZE_DIM, (FULL_TILE ? KDA_FINALIZE_CHUNK : chunk.validRows));
         LoadGmToL1B<CopyTransB, LayoutCM>(
             hL1, h_ + hState * sizeof(DT), KDA_FINALIZE_DIM, KDA_FINALIZE_DIM);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(Stage0Ready(stream, 2));
         LoadGmToL1B<CopyTransB, LayoutCM>(
-            vL1, v_ + token * sizeof(DT), KDA_FINALIZE_DIM, rows, KDA_FINALIZE_DIM, chunk.validRows);
+            vL1, v_ + token * sizeof(DT), KDA_FINALIZE_DIM, rows, KDA_FINALIZE_DIM, (FULL_TILE ? KDA_FINALIZE_CHUNK : chunk.validRows));
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(Stage0Ready(stream, 3));
     }
 
@@ -516,9 +521,9 @@ private:
         auto akkL1 = resource.l1Buf.template GetBufferByByte<DT>(
             L1_AKK + owner * KDA_FINALIZE_MATRIX_BF16_BYTES);
         const int64_t akkToken =
-            FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_CHUNK);
+            FinalizeTokenOffset<FULL_TILE>(*tiling_, chunk, head, KDA_FINALIZE_CHUNK);
         LoadGmToL1A<CopyTransA, LayoutCM>(
-            akkL1, akk_ + akkToken * sizeof(DT), rows, rows, chunk.validRows, chunk.validRows);
+            akkL1, akk_ + akkToken * sizeof(DT), rows, rows, (FULL_TILE ? KDA_FINALIZE_CHUNK : chunk.validRows), (FULL_TILE ? KDA_FINALIZE_CHUNK : chunk.validRows));
         // dvScan was queued by LoadStage0Stream.  This event is emitted only
         // after Akk joins the same MTE2 stream, so MTE1 observes both inputs.
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(Stage0Ready(stream, 1));

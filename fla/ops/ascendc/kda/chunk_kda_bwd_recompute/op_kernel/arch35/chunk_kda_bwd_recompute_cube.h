@@ -85,7 +85,8 @@ public:
         CopyL1ToL0B copyL1ToL0B;
         TileMmad tileMmad;
 
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(KdaBwdRecomputeArch35::kEventA);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(KdaBwdRecomputeArch35::kEventA0);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(KdaBwdRecomputeArch35::kEventA1);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(KdaBwdRecomputeArch35::kEventL0A);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(KdaBwdRecomputeArch35::kEventL0B);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(KdaBwdRecomputeArch35::kEventL0C0);
@@ -109,7 +110,8 @@ public:
         uint64_t taskEnd = 0;
         KdaBwdRecomputeArch35::CoreTaskRange(
             coreIdx, coreNum, totalTasks, taskBegin, taskEnd);
-        bool skipLoadA = false;
+        bool skipLoadGroup = false;
+        uint32_t groupBuf = 0U;
         if (taskBegin < taskEnd) {
             const uint64_t firstLoop = taskBegin / hv;
             const uint64_t lastLoop = (taskEnd - 1U) / hv;
@@ -132,25 +134,59 @@ public:
                     const uint64_t groupEnd =
                         (hBase + KdaBwdRecomputeArch35::kHeadRotate < hEnd) ?
                             (hBase + KdaBwdRecomputeArch35::kHeadRotate) : hEnd;
+                    const uint32_t groupHeads = static_cast<uint32_t>(groupEnd - hBase);
+                    const uint32_t buf = groupBuf;
+                    const int32_t aEvent = KdaBwdRecomputeArch35::AEvent(buf);
+                    auto tensorL1AGroup = tla::MakeTensor(
+                        aL1[buf * KdaBwdRecomputeArch35::kL1AGroupMatrixElems], layoutL1A,
+                        Arch::PositionL1{});
+                    // R-Akk 方案A：A 装载提升到 hBase 组层级——单条 ndNum=G 的 Nd2Nz 替代逐头 8KiB，
+                    // 同字节同 GM 地址同 NZ 落点（dstNzMatrixStride=4096 elem 连续）
+                    if (!skipLoadGroup) {
+                        LoadGroupA(layoutA, tensorL1AGroup, hBase, groupHeads, bos, curChunkSize, aEvent);
+                    }
+                    // 预取下一组（可跨 chunk，形状按 nxtChunk 重算，沿用原 :200-206 模式）：buf^1 的
+                    // free 信用由上一组末头释放（先于本组开始），组首即发，与组内 GEMM 全程交叠
+                    uint64_t nxtLoop = 0;
+                    uint64_t nxtHBase = 0;
+                    uint64_t nxtHEnd = 0;
+                    if (KdaBwdRecomputeArch35::NextGroup(
+                            loopIdx, hBase, hEnd, lastLoop, taskBegin, taskEnd, hv, firstLoop,
+                            nxtLoop, nxtHBase, nxtHEnd)) {
+                        uint32_t nxtBos = bos;
+                        uint32_t nxtEos = eos;
+                        if (nxtLoop != loopIdx) {
+                            KdaBwdRecomputeGetChunkOffset(
+                                cuSeqlens_, chunkIndices_, B_, Hv_, T_, chunkSize_,
+                                static_cast<uint32_t>(nxtLoop), nxtBos, nxtEos, isVariable_);
+                        }
+                        const uint32_t nxtChunk = nxtEos - nxtBos;
+                        const uint32_t nxtHeads = static_cast<uint32_t>(
+                            (nxtHBase + KdaBwdRecomputeArch35::kHeadRotate < nxtHEnd) ?
+                                KdaBwdRecomputeArch35::kHeadRotate : (nxtHEnd - nxtHBase));
+                        auto tensorL1ANxt = tla::MakeTensor(
+                            aL1[(buf ^ 1U) * KdaBwdRecomputeArch35::kL1AGroupMatrixElems],
+                            layoutL1A, Arch::PositionL1{});
+                        LoadGroupA(layoutA, tensorL1ANxt, nxtHBase, nxtHeads, nxtBos, nxtChunk,
+                                   KdaBwdRecomputeArch35::AEvent(buf ^ 1U));
+                        skipLoadGroup = true;
+                    } else {
+                        skipLoadGroup = false;
+                    }
                     for (uint64_t h = hBase; h < groupEnd; ++h) {
                     const uint32_t slot = static_cast<uint32_t>(h & 1U);
 
-                    AscendC::GlobalTensor<QkType> gmA;
                     AscendC::GlobalTensor<QkType> gmU;
                     AscendC::GlobalTensor<QkType> gmW;
-                    gmA.SetGlobalBuffer((__gm__ QkType *)a_ + (h * T_ + bos) * chunkSize_);
                     gmU.SetGlobalBuffer((__gm__ QkType *)u_ + (h * T_ + bos) * V_);
                     gmW.SetGlobalBuffer((__gm__ QkType *)w_ + (h * T_ + bos) * K_);
-                    // A is 8KiB ND→NZ; keep L2 NORMAL. DISABLE made AIC MTE2 the wall
-                    // (~2.5 GB/s). w/u stay streaming writes.
+                    // A 改由 LoadGroupA 组级装载（L2 保持 NORMAL；DISABLE 会让 AIC MTE2 成为墙）。
+                    // w/u stay streaming writes.
                     KdaBwdRecomputeArch35::BypassL2(gmU);
                     KdaBwdRecomputeArch35::BypassL2(gmW);
 
-                    auto tensorAGm = tla::MakeTensor(gmA, layoutA, Arch::PositionGM{});
                     auto tensorUGm = tla::MakeTensor(gmU, layoutU, Arch::PositionGM{});
                     auto tensorWGm = tla::MakeTensor(gmW, layoutW, Arch::PositionGM{});
-                    auto blockA = GetTile(
-                        tensorAGm, tla::MakeCoord(0, 0), tla::MakeShape(curChunkSize, curChunkSize));
                     auto blockU = GetTile(
                         tensorUGm, tla::MakeCoord(0, 0),
                         tla::MakeShape(curChunkSize, static_cast<uint32_t>(V_)));
@@ -158,17 +194,15 @@ public:
                         tensorWGm, tla::MakeCoord(0, 0),
                         tla::MakeShape(curChunkSize, static_cast<uint32_t>(K_)));
 
-                    using CopyGmToL1A = typename TileCopy::template CopyGmToL1A<decltype(blockA)>;
-                    CopyGmToL1A copyGmToL1A;
-
-                    auto tensorL1A = tla::MakeTensor(aL1, layoutL1A, Arch::PositionL1{});
-                    if (!skipLoadA) {
-                        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(KdaBwdRecomputeArch35::kEventA);
-                        copyGmToL1A(tensorL1A, blockA);
-                        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(KdaBwdRecomputeArch35::kEventA);
-                    }
                     KdaBwdRecomputeArch35::AicWaitChunkReady<PIPE_MTE1>(slot);
-                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(KdaBwdRecomputeArch35::kEventA);
+                    // 组级 ready 仅组首头等待；后续头的 MTE1 L0A 拷在管内自然序于首头之后
+                    if (h == hBase) {
+                        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(aEvent);
+                    }
+                    auto tensorL1A = tla::MakeTensor(
+                        aL1[buf * KdaBwdRecomputeArch35::kL1AGroupMatrixElems +
+                            (h - hBase) * KdaBwdRecomputeArch35::kL1AMatrixElems],
+                        layoutL1A, Arch::PositionL1{});
 
                     AscendC::LocalTensor<QkType> vbL1 = resource.l1Buf.template GetBufferByByte<QkType>(
                         KdaBwdRecomputeArch35::VbSlotOffset(slot));
@@ -182,49 +216,24 @@ public:
                         tensorL1A, tensorL1Vb, blockU, l0A, l0B, l0C0,
                         mActual, static_cast<uint32_t>(V_), curChunkSize, slot,
                         KdaBwdRecomputeArch35::kEventL0C0,
-                        true, false, true, false, false);
+                        true, false, (h + 1U == groupEnd), false, false, aEvent);
                     DrainFixpipe(
                         blockU, l0C0, mActual, static_cast<uint32_t>(V_),
                         KdaBwdRecomputeArch35::kEventL0C0);
-                    uint64_t nxtLoop = 0;
-                    uint64_t nxtH = 0;
-                    if (KdaBwdRecomputeArch35::NextChunkHead(
-                            loopIdx, h, hEnd, lastLoop, nxtLoop, nxtH)) {
-                        uint32_t nxtBos = bos;
-                        uint32_t nxtEos = eos;
-                        if (nxtLoop != loopIdx) {
-                            KdaBwdRecomputeGetChunkOffset(
-                                cuSeqlens_, chunkIndices_, B_, Hv_, T_, chunkSize_,
-                                static_cast<uint32_t>(nxtLoop), nxtBos, nxtEos, isVariable_);
-                        }
-                        const uint32_t nxtChunk = nxtEos - nxtBos;
-                        AscendC::GlobalTensor<QkType> gmANxt;
-                        gmANxt.SetGlobalBuffer((__gm__ QkType *)a_ + (nxtH * T_ + nxtBos) * chunkSize_);
-                        auto tensorAGmNxt = tla::MakeTensor(gmANxt, layoutA, Arch::PositionGM{});
-                        auto blockANxt = GetTile(
-                            tensorAGmNxt, tla::MakeCoord(0, 0),
-                            tla::MakeShape(nxtChunk, nxtChunk));
-                        using CopyGmToL1ANxt = typename TileCopy::template CopyGmToL1A<decltype(blockANxt)>;
-                        CopyGmToL1ANxt copyGmToL1ANxt;
-                        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(KdaBwdRecomputeArch35::kEventA);
-                        copyGmToL1ANxt(tensorL1A, blockANxt);
-                        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(KdaBwdRecomputeArch35::kEventA);
-                        skipLoadA = true;
-                    } else {
-                        skipLoadA = false;
-                    }
                     RunMmadFromL1(
                         copyL1ToL0A, copyL1ToL0B, tileMmad,
                         tensorL1A, tensorL1Kbg, blockW, l0A, l0B, l0C1,
                         mActual, static_cast<uint32_t>(K_), curChunkSize, slot,
                         KdaBwdRecomputeArch35::kEventL0C1,
-                        false, true, false, true, true);
+                        false, true, false, true, true, aEvent);
                     }
+                    groupBuf ^= 1U;
                 }
             }
         }
 
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(KdaBwdRecomputeArch35::kEventA);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(KdaBwdRecomputeArch35::kEventA0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(KdaBwdRecomputeArch35::kEventA1);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(KdaBwdRecomputeArch35::kEventL0A);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(KdaBwdRecomputeArch35::kEventL0B);
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(KdaBwdRecomputeArch35::kEventL0C0);
@@ -251,6 +260,30 @@ private:
         AscendC::DataCopy(tensorC.data()[dstOffset], tensorL0C.data()[srcOffset], params);
     }
 
+    // R-Akk 方案A：组聚合装载——单条 DataCopy 以 ndNum=groupHeads 从 hBase 起按头聚合 G 个
+    // curChunkSize×curChunkSize ND 矩阵。参数语义（对照 solve_tri_cube.h:798-799 先例，stride 单位
+    // =element）：srcNdMatrixStride=T_*chunkSize_（头间恒 stride，varlen 同式）；dstNzMatrixStride=
+    // kL1AMatrixElems（4096 elem，矩阵在组内连续落位）；nValue/dValue/srcDValue 由 blockA/layoutA
+    // 自动给出（curChunkSize/curChunkSize/chunkSize_）。A 保持 L2 NORMAL（现状口径）。
+    template <typename LayoutA, typename TensorL1>
+    __aicore__ inline void LoadGroupA(
+        LayoutA const &layoutA, TensorL1 &tensorL1AGroup, uint64_t hBase,
+        uint32_t groupHeads, uint32_t bos, uint32_t curChunkSize, int32_t aEvent)
+    {
+        AscendC::GlobalTensor<QkType> gmA;
+        gmA.SetGlobalBuffer((__gm__ QkType *)a_ + (hBase * T_ + bos) * chunkSize_);
+        auto tensorAGm = tla::MakeTensor(gmA, layoutA, Arch::PositionGM{});
+        auto blockA = GetTile(
+            tensorAGm, tla::MakeCoord(0, 0), tla::MakeShape(curChunkSize, curChunkSize));
+        using CopyGmToL1A = typename TileCopy::template CopyGmToL1A<decltype(blockA)>;
+        CopyGmToL1A copyGmToL1A;
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(aEvent);
+        copyGmToL1A(tensorL1AGroup, blockA, groupHeads,
+                    static_cast<uint32_t>(T_ * chunkSize_),
+                    KdaBwdRecomputeArch35::kL1AMatrixElems);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(aEvent);
+    }
+
     template <typename TensorL1A, typename TensorL1B, typename TensorC>
     __aicore__ inline void RunMmadFromL1(
         CopyL1ToL0A &copyL1ToL0A, CopyL1ToL0B &copyL1ToL0B, TileMmad &tileMmad,
@@ -258,7 +291,7 @@ private:
         AscendC::LocalTensor<QkType> &l0A, AscendC::LocalTensor<QkType> &l0B,
         AscendC::LocalTensor<ElementAcc> &l0C, uint32_t m, uint32_t n, uint32_t k,
         uint16_t slot, int32_t l0cEvent, bool copyL0A, bool releaseL0A, bool releaseL1A,
-        bool releaseL1B, bool doFixpipe)
+        bool releaseL1B, bool doFixpipe, int32_t l1AEvent)
     {
         auto layoutL0A = tla::MakeLayout<QkType, LayoutTagL0A>(m, k);
         auto layoutL0B = tla::MakeLayout<QkType, LayoutTagL0B>(k, n);
@@ -273,7 +306,8 @@ private:
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(KdaBwdRecomputeArch35::kEventL0A);
             copyL1ToL0A(tensorL0A, tileL1A);
             if (releaseL1A) {
-                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(KdaBwdRecomputeArch35::kEventA);
+                // R-Akk：组级释放——仅组末头为 true，释放的是本组 buf 的 free 信用
+                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(l1AEvent);
             }
         }
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(KdaBwdRecomputeArch35::kEventL0B);

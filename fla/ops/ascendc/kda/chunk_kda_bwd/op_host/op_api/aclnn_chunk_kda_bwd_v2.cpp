@@ -11,8 +11,6 @@
 #include "aclnn_kernels/common/op_error_check.h"
 #include "aclnn_kernels/cast.h"
 #include "aclnn_kernels/reshape.h"
-#include "aclnn_kernels/transpose.h"
-#include "aclnn_kernels/contiguous.h"
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
 #include "opdev/tensor_view_utils.h"
@@ -179,7 +177,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         qg = AllocTensor(ex, token, DataType::DT_BF16);
         kg = AllocTensor(ex, token, DataType::DT_BF16);
         vNew = AllocTensor(ex, token, DataType::DT_BF16);
-        h = AllocTensor(ex, state, DataType::DT_BF16);
+        h = AllocTensor(ex, savedHShape, DataType::DT_BF16);
         gk = AllocTensor(ex, token, DataType::DT_FLOAT);
         const auto *u = AllocTensor(ex, token, DataType::DT_BF16);
         CHECK_RET(w && qg && kg && vNew && h && gk && u, ACLNN_ERR_INNER_NULLPTR);
@@ -206,18 +204,11 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         }
         const auto forwardResult = l0op::ChunkFwdH(
             kg4, w4, u4, nullptr, gk4, nullptr, cu, indices,
-            false, 64, true, true, false, h5, vNew4, nullptr, ex);
+            false, 64, true, true, false, true, h5, vNew4, nullptr, ex);
         // finalStateOut is intentionally absent; only h and v_new are required.
         CHECK_RET(forwardResult[0] && forwardResult[1], ACLNN_ERR_INNER_NULLPTR);
-        // Recompute produces head-major h; saved mode already supplies chunk-major h.
-        const std::vector<int64_t> perm = packed ? std::vector<int64_t>{1,0,2,3} :
-            std::vector<int64_t>{0,2,1,3,4};
-        const auto *permArray = ex->AllocIntArray(perm.data(), perm.size());
-        CHECK_RET(permArray, ACLNN_ERR_INNER_NULLPTR);
-        h = l0op::Transpose(h, permArray, ex);
-        CHECK_RET(h, ACLNN_ERR_INNER_NULLPTR);
-        h = l0op::Contiguous(h, ex);
-        CHECK_RET(h, ACLNN_ERR_INNER_NULLPTR);
+        // h_chunk_major=true：FwdH 直接产出 chunk-major h（与 saved 模式供给的布局一致），
+        // Prepare/Finalize 按 chunk-major 契约读取，链上不再需要 host Transpose。
     }
     const auto *dAqk=AllocTensor(ex,matrix,DataType::DT_FLOAT);
     const auto *dv0=AllocTensor(ex,token,DataType::DT_BF16);

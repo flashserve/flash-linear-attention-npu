@@ -280,7 +280,7 @@ aclnnStatus KdaFwdV2(const KdaFwdV2Args &args, aclOpExecutor *executor)
 
     const auto fwdHResult = l0op::ChunkFwdH(
         kgHead, wHead, uHead, nullptr, gkHead, args.initialState, args.cuSeqlens, args.chunkIndices,
-        outputFinalState, chunkSize, true, args.useExp2, args.stateVFirst, hCompute,
+        outputFinalState, chunkSize, true, args.useExp2, args.stateVFirst, false, hCompute,
         vNewCompute, outputFinalState ? args.finalStateOut : nullptr, executor);
     CHECK_COND(fwdHResult[0] != nullptr && fwdHResult[1] != nullptr &&
                    (!outputFinalState || fwdHResult[2] != nullptr),

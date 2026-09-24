@@ -23,9 +23,45 @@
 #include "chunk_gated_delta_rule_bwd_dhu_struct.h"
 #include "kernel_operator.h"
 
+#include <type_traits>
+
 namespace GDN {
 
+// Dhu-C2b：GM-dvState 路径判定（= phase2 需要消费 loop1 的 GM 产物）。
+// vector/cube 两侧必须用本函数对同一 (DT, V, chunkLen) 逐 chunk 推导，保证 cube loop1 末 flag4 set
+// 与 vector phase2 头 flag4 wait 严格配对——两侧条件不一致将信用失衡导致冻核（本项最高危点）。
+// 判定公式与 useGmDvState（cube.h / vector.h 中 V==256 && chunkLen>64）必须保持同一，改动需同步。
+// CV 路径（返回 false）phase2 仅读 dvState CV 片（bank flag 6/7 逐片 gate）与 dv 输入 GM（入口即稳定），
+// 不读任何 loop1 GM 产物，故 loop1 末 flag4 set 与 phase2 头 wait 均可省。
+template <typename DT>
+__aicore__ inline bool IsGmDvStatePath(int64_t v, int64_t chunkLen)
+{
+    if constexpr (std::is_same<DT, bfloat16_t>::value) {
+        return v == 256 && chunkLen > 64;
+    }
+    return true; // fp16：dvState 恒走 GM（cube/vector 的 fp16 分支均读 GM）
+}
+
+// Dhu-C5a/C5b：CV 片目标子块判定（cube 专用；AIV 侧无需对偶——各 AIV 只等自己的 bank flag）。
+// 两种用法同一公式：C5-a termW 流传 k=K（K 维半界 K/2）；C5-b dvState 流传 k=chunkLen
+//（token 维半界 ⌊chunkLen/2⌋，调用方须在半界处截断 cvRows 使片不跨界）。
+// 劈分头（奇数头档最后头，与 vector.h IsSplitHead 同一判定式；subBlockNum==2 由
+// KERNEL_TYPE_MIX_AIC_1_2 保证）：rowIdx < k/2 → 子块0，否则子块1；非劈分头维持属主 headOffset&1。
+// AIC 侧 cvListId 必须按目标子块独立 ping-pong（cvListId[2]），与各 AIV 局部 cvListId
+// （各自从 0 起逐片翻转）逐片配对——目标或计数错位即错子块收片/信用失衡/冻核（R-C5-1）。
+__aicore__ inline uint32_t CvTargetSubBlock(int64_t headCnt, int64_t headOffset, uint32_t rowIdx, int64_t k)
+{
+    if ((headCnt & 1) == 1 && headOffset == headCnt - 1) {
+        return rowIdx < static_cast<uint32_t>(k / 2) ? 0U : 1U;
+    }
+    return static_cast<uint32_t>(headOffset & 1);
+}
+
 constexpr uint64_t VEC_TO_CUBE_FLAG_READY = 2;
+// Dhu-C2a：dh ready / qg ready 拆分。flag3=dhReady（AIV 在 state/dh K 行循环结束即 set），
+// flag2 语义收窄为 qgReady（AIV 在 qg staging 完成后 set）。ID 3 不与 {0,1,6,7} 的 CV 通道及
+// {8,9,10} 的 catlass barrier 撞号；每 chunk set/wait 各 3 对 3（AND 配对），远小于 15 次上限。
+constexpr uint64_t VEC_TO_CUBE_DH_FLAG_READY = 3;
 constexpr uint64_t CUBE_TO_VEC_FLAG_READY = 4;
 constexpr uint32_t CV_BUFFER_COUNT = 2;
 constexpr uint64_t CV_SUBBLOCK_FLAG_STRIDE = 16;
