@@ -470,8 +470,8 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
     // 自建不导出的占位张量，V2 组合入口随之使用 Prepare 的 none 档。
     CHECK_COND(params.aqkOut != nullptr, ACLNN_ERR_PARAM_NULLPTR,
                "aqkOut must not be nullptr.");
-    CHECK_COND(params.chunkSize == 64 || params.chunkSize == 128, ACLNN_ERR_PARAM_INVALID,
-               "chunkSize must be 64 or 128.");
+    CHECK_COND(params.chunkSize == 64, ACLNN_ERR_PARAM_INVALID,
+               "chunkSize only supports 64.");
     CHECK_RET(ParseLayout(params.layout, layout) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(ResolveShapeInfo(params, layout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_COND(info.hNum > 0 && info.hvNum >= info.hNum && info.hvNum % info.hNum == 0,
