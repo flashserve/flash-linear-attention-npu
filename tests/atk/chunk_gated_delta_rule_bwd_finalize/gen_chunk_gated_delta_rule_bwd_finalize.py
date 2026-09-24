@@ -274,6 +274,7 @@ def _case_payload(case_id: int, spec: dict) -> dict:
     chunk_size = int(metadata["chunk_size"])
     chunks = _state_chunk_num(metadata)
     scalar_dtype = str(metadata["scalar_dtype"])
+    state_shape = [batch, chunks, value_heads, dim, dim]
     tensor_specs = (
         ("q", "bf16", [batch, key_heads, total_tokens, dim]),
         ("k", "bf16", [batch, key_heads, total_tokens, dim]),
@@ -284,8 +285,8 @@ def _case_payload(case_id: int, spec: dict) -> dict:
         ("beta", scalar_dtype, [batch, value_heads, total_tokens]),
         ("beta_raw", scalar_dtype, [batch, value_heads, total_tokens]),
         ("du", "bf16", [batch, value_heads, total_tokens, dim]),
-        ("h", "bf16", [batch, value_heads, chunks, dim, dim]),
-        ("dh", "bf16", [batch, value_heads, chunks, dim, dim]),
+        ("h", "bf16", state_shape),
+        ("dh", "bf16", state_shape),
         ("a", "bf16", [batch, value_heads, total_tokens, chunk_size]),
     )
     def input_range(name: str) -> list[float]:

@@ -225,7 +225,7 @@ private:
         if (!storeH_) {
             return StateOffset(b, hv);
         }
-        return ((b * heads_ + hv) * totalChunks_ + chunk) *
+        return ((b * totalChunks_ + chunk) * heads_ + hv) *
                KDA_FWD_H_DIM * KDA_FWD_H_DIM;
     }
 

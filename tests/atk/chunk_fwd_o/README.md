@@ -6,7 +6,7 @@
 
 - `q/k` 必须为 `[B,HK,T,K]`，且二者形状完全一致。
 - `v/o` 必须为 `[B,HV,T,V]`，`g` 必须为 `[B,HV,T]`。
-- `h` 必须为 `[B,HV,num_chunks,K,V]`，其中 `num_chunks` 由 `T/chunk_size` 或变长 `chunk_indices` 推导。
+- `h` 必须为 `[B,num_chunks,HV,K,V]`，其中 `num_chunks` 由 `T/chunk_size` 或变长 `chunk_indices` 推导。
 - `q/k` 与 `v/g/o` 的 `B`、`T` 必须一致；`HV % HK == 0`。
 - `K` 固定为 `128`，`V` 支持 `128/256`，`chunk_size` 仅支持 `64/128`；`scale` 建议按 `1 / sqrt(K)` 设置。
 - `q/k/v/h/o` 支持 `BFLOAT16/FLOAT16`；`g` 支持 `FLOAT/FLOAT16/BFLOAT16`。

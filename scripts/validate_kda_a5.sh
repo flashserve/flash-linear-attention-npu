@@ -168,7 +168,9 @@ import os
 import sys
 
 print(f"python={sys.version}")
-for name in ("torch", "torch-npu", "triton-ascend", "flash-linear-attention-npu"):
+for name in ("torch", "torch-npu", "triton-ascend",
+             "flash-linear-attention-npu-a2", "flash-linear-attention-npu-a3",
+             "flash-linear-attention-npu-a5", "flash-linear-attention-npu"):
     try:
         print(f"{name}={importlib.metadata.version(name)}")
     except importlib.metadata.PackageNotFoundError:
@@ -318,13 +320,13 @@ build_identity="$python_identity|${ASCEND_HOME_PATH:-}|$model_source_root"
 build_key="$(printf '%s' "$build_identity" | cksum | awk '{print $1}')"
 wheel_dir="$cache_root/wheels/${commit}_${soc}_${ops_key}_${build_key}"
 mkdir -p -- "$wheel_dir"
-mapfile -t wheels < <(find "$wheel_dir" -maxdepth 1 -type f -name 'flash_linear_attention_npu-*.whl' -print)
+mapfile -t wheels < <(find "$wheel_dir" -maxdepth 1 -type f -name 'flash_linear_attention_npu*.whl' -print)
 if ((${#wheels[@]} == 0)); then
     (
         cd "$source_dir"
         "$venv_python" -m pip wheel --no-build-isolation --no-deps . -w "$wheel_dir"
     )
-    mapfile -t wheels < <(find "$wheel_dir" -maxdepth 1 -type f -name 'flash_linear_attention_npu-*.whl' -print)
+    mapfile -t wheels < <(find "$wheel_dir" -maxdepth 1 -type f -name 'flash_linear_attention_npu*.whl' -print)
 else
     echo "Reusing cached wheel: ${wheels[0]}"
 fi

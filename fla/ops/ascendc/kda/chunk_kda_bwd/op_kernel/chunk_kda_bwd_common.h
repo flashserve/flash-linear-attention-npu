@@ -54,9 +54,6 @@ struct ChunkKdaBwdCTilingData {
     int16_t workspaceSlotCount;
     int16_t usedCoreNum;
     int8_t isVarLen;
-    // PR291 Kernel B writes dh as [B,H,NT,K,V] for dense and
-    // [1,H,totalChunks,K,V] for varlen. Saved h remains chunk-major.
-    int8_t dhHeadMajor;
     int8_t useGateInKernel;
     int8_t hasDtBias;
     int8_t deferGatePost;

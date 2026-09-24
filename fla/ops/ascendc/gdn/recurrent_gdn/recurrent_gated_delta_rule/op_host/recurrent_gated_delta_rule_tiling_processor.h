@@ -186,6 +186,17 @@ private:
             return ge::GRAPH_FAILED;
         }
 
+        if (cuSeqlensShape.GetDim(RGDR_DIM_0) < 2) {
+            OP_LOGE(ctx_.nodeName, "actual_seq_lengths must contain the prefix and at least one sequence length");
+            return ge::GRAPH_FAILED;
+        }
+        if (ssmStateShape.GetDim(RGDR_DIM_0) != queryShape.GetDim(RGDR_DIM_0)) {
+            OP_LOGE(ctx_.nodeName,
+                    "ssm_state_indices length must equal T, but got %ld and T is %ld",
+                    ssmStateShape.GetDim(RGDR_DIM_0), queryShape.GetDim(RGDR_DIM_0));
+            return ge::GRAPH_FAILED;
+        }
+
         if (!CheckDimEqual(queryShape, RGDR_DIM_0, keyShape, RGDR_DIM_0, "query", "key", "T dimension") ||
             !CheckDimEqual(queryShape, RGDR_DIM_1, keyShape, RGDR_DIM_1, "query", "key", "Nk dimension") ||
             !CheckDimEqual(queryShape, RGDR_DIM_2, keyShape, RGDR_DIM_2, "query", "key", "Dk dimension") ||
@@ -215,6 +226,12 @@ private:
 
     ge::graphStatus CheckShapeValueRangeAndRule(const RecurrentGatedDeltaRuleTilingData &tiling) const
     {
+        OP_CHECK_IF(tiling.t == 0 || tiling.nk == 0 || tiling.nv == 0 || tiling.sBlockNum == 0,
+                    OP_LOGE(ctx_.nodeName,
+                            "T, nk, nv and BlockNum must be positive, but got T=%u, nk=%u, nv=%u, BlockNum=%u",
+                            tiling.t, tiling.nk, tiling.nv, tiling.sBlockNum),
+                    return ge::GRAPH_FAILED);
+
         OP_CHECK_IF(tiling.nk > 256 || tiling.nv > 256 || tiling.dk != RGDR_REQUIRED_DIM || tiling.dv != RGDR_REQUIRED_DIM,
                     OP_LOGE(ctx_.nodeName,
                             "nk and nv should no bigger than 256, dk and dv should be exactly %u, but nk is %u, "

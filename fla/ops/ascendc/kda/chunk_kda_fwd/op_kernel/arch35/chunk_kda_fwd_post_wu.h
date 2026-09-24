@@ -520,7 +520,7 @@ private:
 
     __aicore__ inline uint64_t HOffset(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t d, uint64_t r) const
     {
-        return (((b * HV_ + hv) * NT_ + chunkIdx) * K_ + d) * V_ + r;
+        return (((b * NT_ + chunkIdx) * HV_ + hv) * K_ + d) * V_ + r;
     }
 
     __aicore__ inline uint64_t WScratchOffset(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t t, uint64_t d) const

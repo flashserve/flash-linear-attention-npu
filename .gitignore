@@ -83,3 +83,7 @@ examples/fast_kernel_launch_example/dist
 torch_custom/fla_npu/fla_npu/ops/ascendc/_stable_hash.py
 torch_custom/fla_npu/fla_npu/libfla_npu_stable.so
 torch_custom/fla_npu/*.so
+
+# generated at wheel build time for tiered PyPI wheels (import-time guard)
+torch_custom/fla_npu/fla_npu/_build_meta.py
+torch_custom/fla_npu/fla_npu/_compat.py

@@ -45,7 +45,7 @@ from fla_npu.ops.ascendc import chunk_kda_fwd_prepare
 )
 ```
 
-这是 ctypes 直调 `aclnnChunkKdaFwdPrepare` 的稳定入口，不进入 legacy
+这是经 Stable-ABI 适配层调用 `aclnnChunkKdaFwdPrepare` 的稳定入口，不进入 legacy
 `torch.ops.npu` 注册路径。
 
 ## aclnn

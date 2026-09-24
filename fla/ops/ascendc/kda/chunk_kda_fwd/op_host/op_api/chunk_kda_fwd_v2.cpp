@@ -15,11 +15,9 @@
 #include "../../../../gdn/chunk_gdn_fwd/chunk_fwd_h/op_host/op_api/chunk_fwd_h.h"
 
 #include <initializer_list>
-#include <vector>
 
 #include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/reshape.h"
-#include "aclnn_kernels/transpose.h"
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_log.h"
@@ -106,30 +104,6 @@ const aclTensor *MaybeReshapeToHeadMajor4(const aclTensor *tensor, bool packed, 
     return reshaped;
 }
 
-// 把 head-major 视图整理成连续张量，只使用 Transpose + Contiguous + Reshape。
-const aclTensor *TransposeToContiguous(const aclTensor *input, const std::vector<int64_t> &perm,
-                                       aclOpExecutor *executor)
-{
-    const aclIntArray *permArray = executor->AllocIntArray(perm.data(), perm.size());
-    if (permArray == nullptr) {
-        return nullptr;
-    }
-    const aclTensor *transposed = l0op::Transpose(input, permArray, executor);
-    if (transposed == nullptr) {
-        return nullptr;
-    }
-    const aclTensor *materialized = l0op::Contiguous(transposed, executor);
-    if (materialized == nullptr) {
-        return nullptr;
-    }
-    const aclTensor *reshaped = l0op::Reshape(materialized, transposed->GetViewShape(), executor);
-    if (reshaped == nullptr) {
-        return nullptr;
-    }
-    reshaped->SetStorageShape(reshaped->GetViewShape());
-    reshaped->SetOriginalShape(reshaped->GetViewShape());
-    return reshaped;
-}
 
 } // namespace
 
@@ -269,7 +243,7 @@ aclnnStatus KdaFwdV2(const KdaFwdV2Args &args, aclOpExecutor *executor)
     // state_v_first 由 ChunkFwdH 原生解释，不做 host 侧转置。
     const bool outputFinalState = args.finalStateOut != nullptr;
     const aclTensor *hCompute = AllocTensor(
-        executor, MakeShape({args.batch, valueHeads, args.totalChunks, args.kDim, args.vDim}),
+        executor, MakeShape({args.batch, args.totalChunks, valueHeads, args.kDim, args.vDim}),
         DataType::DT_BF16);
     const aclTensor *vNewCompute =
         ReuseOrAlloc(args.vNewOut,
@@ -307,10 +281,7 @@ aclnnStatus KdaFwdV2(const KdaFwdV2Args &args, aclOpExecutor *executor)
                   ACLNN_ERR_INNER_NULLPTR);
     }
     if (args.hOut != nullptr) {
-        // 内部 h 为 head-major [B,HV,Nc,K,V]，公开 hOut 为 chunk-major。
-        const aclTensor *hSrc = TransposeToContiguous(hCompute, {0, 2, 1, 3, 4}, executor);
-        CHECK_COND(hSrc != nullptr, ACLNN_ERR_INNER_NULLPTR,
-               "ChunkKdaFwdV2: failed to convert h layout.");
+        const aclTensor *hSrc = hCompute;
         const aclTensor *hDst = args.hOut;
         if (Rank(hDst) == 4) {
             hDst = l0op::Reshape(

@@ -415,7 +415,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessAVect
         if ((h & 1) != subBlockIdx) {
             continue;
         }
-        uint64_t hOffset = ((bIdx * HV + h) * numChunks + chunkIdx) * K * V;
+        uint64_t hOffset = ((bIdx * numChunks + chunkIdx) * HV + h) * K * V;
         uint64_t dwOffset = (h * T + bos) * K; // 最终输出 ptrDw 仍全局寻址
         uint64_t dgLastOffset = DqkwgScalarElemOffset(coreIdx, h, HV);
 

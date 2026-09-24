@@ -132,10 +132,10 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
                 return ge::GRAPH_FAILED);
     const int64_t stateDim3 = stateVFirst ? tiling.V : tiling.K;
     const int64_t stateDim4 = stateVFirst ? tiling.K : tiling.V;
-    OP_CHECK_IF(h.GetDim(0) != tiling.B || h.GetDim(1) != tiling.HV ||
+    OP_CHECK_IF(h.GetDim(0) != tiling.B || h.GetDim(2) != tiling.HV ||
                     h.GetDim(3) != stateDim3 || h.GetDim(4) != stateDim4 ||
-                    dh.GetDim(0) != tiling.B || dh.GetDim(1) != tiling.HV ||
-                    dh.GetDim(2) != h.GetDim(2) || dh.GetDim(3) != stateDim3 ||
+                    dh.GetDim(0) != tiling.B || dh.GetDim(2) != tiling.HV ||
+                    dh.GetDim(1) != h.GetDim(1) || dh.GetDim(3) != stateDim3 ||
                     dh.GetDim(4) != stateDim4,
                 OP_LOGE(context->GetNodeName(),
                         "h and dh state dimensions do not match state_v_first=%d, h shape is "
@@ -203,7 +203,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     const auto hShape = context->GetRequiredInputShape(INPUT_H_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context, hShape);
     const int64_t stateChunkNum = tiling->isVariable != 0 ? tiling->totalChunkNum : tiling->chunkNumForT;
-    OP_CHECK_IF(hShape->GetStorageShape().GetDim(2) != stateChunkNum,
+    OP_CHECK_IF(hShape->GetStorageShape().GetDim(1) != stateChunkNum,
                 OP_LOGE(context->GetNodeName(), "h/dh NT does not match the chunk schedule."),
                 return ge::GRAPH_FAILED);
 
@@ -324,6 +324,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
         workspaceBufferCount * workspaceRegionCount * vectorBytes;
     size_t *workspaceSizes = context->GetWorkspaceSizes(1);
     workspaceSizes[0] = platform.GetLibApiWorkSpaceSize() + userWorkspace;
+    OP_LOGD(context->GetNodeName(),"workspace = [%zu]", workspaceSizes[0]);
 
     // 主张量固定 BF16，g/beta 共用一个 BF16 或 FP32 模板参数；
     // 三个 backward/指数开关独立控制输入搬运和 VF 公式，共 16 个模板。

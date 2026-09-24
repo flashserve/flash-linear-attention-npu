@@ -12,8 +12,9 @@ V2 由三个阶段组成，保存中间量模式跳过前向重计算：
 
 重计算模式先恢复 gk/w/qg/kg/v_new/h 等中间量，再执行同一反向链路。
 保存模式直接读取前向的 chunk-major h；Prepare 与 Finalize 使用对应偏移，
-Finalize 对 h、dh 分别寻址，Dhu 及其 head-major dh 不变。
-重计算模式生成 h 后单独转为 chunk-major；保存模式不增加转换。
+Finalize 对 h、dh 分别寻址，Dhu 和内嵌 state_scan 均产生 NT-first dh。
+重计算模式由 ChunkFwdH 直接写出 chunk-major h，不再增加 Transpose/Contiguous；
+保存模式不增加转换。h 与 dh 均按 dense `[B,NT,H,K,V]` 或 packed `[totalNT,H,K,V]` 分配。
 入口约束见 [接口说明](api.md)。
 
 ## 数值处理
@@ -32,7 +33,6 @@ Finalize 对 h、dh 分别寻址，Dhu 及其 head-major dh 不变。
 - q_rstd/k_rstd 成对提供时，在 Finalize 内完成归一化反向，不增加第四个 kernel。
 
 Python 层统一处理参数校验、空序列压缩和规范 chunk 元数据。
-重计算尾块的重复运行稳定性尚未解决，当前仅支持序列长度为 64 的倍数。
 
 Finalize 的输入输出及源码入口见
 [算子说明](../../chunk_kda_bwd_finalize/README.md)。

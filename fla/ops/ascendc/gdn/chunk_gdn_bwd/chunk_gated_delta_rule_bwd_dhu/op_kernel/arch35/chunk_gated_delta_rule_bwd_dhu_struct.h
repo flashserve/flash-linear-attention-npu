@@ -103,6 +103,7 @@ struct ChunkGatedDeltaRuleBwdDhuTilingData {
     int64_t dv2WorkspaceElems;
     int64_t termWWorkspaceElems;
     int64_t vecRow;
+    int64_t stateResident;
     float scale;
 };
 

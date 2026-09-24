@@ -17,7 +17,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHECKER = REPO_ROOT / "scripts" / "check_install_workflows.py"
-DIST_INFO = "flash_linear_attention_npu-1.0.dist-info"
+DIST_INFO = "flash_linear_attention_npu_a2-1.0.dist-info"
 
 OPP_FILES = {
     "fla_npu/opp/vendors/config.ini": b"load_priority=fla_npu_transformer\n",
@@ -31,7 +31,7 @@ def _write_wheel(path, entries):
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr(
             f"{DIST_INFO}/METADATA",
-            "Metadata-Version: 2.1\nName: flash-linear-attention-npu\nVersion: 1.0\n",
+            "Metadata-Version: 2.1\nName: flash-linear-attention-npu-a2\nVersion: 1.0\n",
         )
         for name, payload in entries.items():
             archive.writestr(name, payload)
@@ -40,7 +40,7 @@ def _write_wheel(path, entries):
 
 def _data_layout_entries(entries):
     return {
-        f"flash_linear_attention_npu-1.0.data/purelib/{name}": payload
+        f"flash_linear_attention_npu_a2-1.0.data/purelib/{name}": payload
         for name, payload in entries.items()
     }
 
@@ -60,7 +60,7 @@ class InstalledOppManifestTest(unittest.TestCase):
     def _assert_layout_accepted(self, wheel_entries):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            wheel = root / "flash_linear_attention_npu-1.0-py3-none-any.whl"
+            wheel = root / "flash_linear_attention_npu_a2-1.0-py3-none-any.whl"
             _write_wheel(wheel, wheel_entries)
             site_root = root / "site-packages"
             _write_installed_tree(site_root, OPP_FILES)
@@ -75,7 +75,7 @@ class InstalledOppManifestTest(unittest.TestCase):
     def _failure_for(self, wheel_entries, installed_entries):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            wheel = root / "flash_linear_attention_npu-1.0-py3-none-any.whl"
+            wheel = root / "flash_linear_attention_npu_a2-1.0-py3-none-any.whl"
             _write_wheel(wheel, wheel_entries)
             site_root = root / "site-packages"
             _write_installed_tree(site_root, installed_entries)

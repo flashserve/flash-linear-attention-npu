@@ -2,6 +2,9 @@
 
 ## Python 主入口
 
+`from fla_npu.ops.ascendc import chunk_kda_fwd`（同一实现也以 `npu_chunk_kda_fwd` 暴露，
+Stable-ABI launcher 与 ctypes 两条后端共用这一签名）。
+
 ```python
 from fla_npu.ops.ascendc import chunk_kda_fwd
 
@@ -25,26 +28,132 @@ outputs = chunk_kda_fwd(
     use_beta_sigmoid_in_kernel=False,
     allow_neg_eigval=False,
     use_exp2=True,
+    # 反向 L2 norm 保存值出口：五个都不传就仍是空槽，行为与历史版本逐位一致
+    q_hat_out=None,
+    k_hat_out=None,
+    q_rstd_out=None,
+    k_rstd_out=None,
+    beta_eff_out=None,
 )
 ```
 
-返回：
+### 参数
+
+| 名称 | 默认 | 类型 / Shape | 说明 |
+| --- | --- | --- | --- |
+| `q` / `k` | 必选 | 输入 layout 对应 Shape；FP16/BF16 | query / key；三算子组合场景要求 BF16 |
+| `v` | 必选 | 与 `q` 同 dtype | value |
+| `g` | 必选 | 去掉 V 维的 Shape（含 K 维）；FP32/BF16 | raw gate，或已激活的自然对数 gate |
+| `beta` | 必选 | 去掉 K 维的 Shape；FP32/BF16 | delta 系数 |
+| `scale` | 必选 | float | attention scale |
+| `chunk_size` | `64` | int | 分块长度；三算子组合场景只支持 64 |
+| `layout` | `"BSND"` | str | `BSND`/`BNSD`/`TND`/`NTD`，只解释输入 |
+| `initial_state` | `None` | `[N,H_v,K,V]` 或 `state_v_first=true` 时 `[N,H_v,V,K]`；FP32 | 算子就地更新，第 12 个返回值就是它本身 |
+| `output_final_state` | `False` | bool | 控制第 2 槽 `final_state` 是否返回 |
+| `cu_seqlens` | `None` | `[N+1]`；INT64 | 变长序列边界 |
+| `chunk_indices` | `None` | `[2*N_c]`；INT64 | canonical chunk 顺序；只给 `cu_seqlens` 时按 `chunk_size` 自动生成 |
+| `safe_gate` | `False` | bool | 走 safe gate 形式 |
+| `lower_bound` | `None` | float | safe gate 下界，缺省等价 `-5.0` |
+| `use_gate_in_kernel` | `False` | bool | `true` 时 kernel 内用 `A_log`/`dt_bias` 算 gate |
+| `A_log` | `None` | `[H_v]`；FP32 | `use_gate_in_kernel=true` 时必选 |
+| `dt_bias` | `None` | `[H_v*K]`；FP32 | gate bias |
+| `disable_recompute` | `False` | bool | `true` 时返回反向所需的 `w/u/qg/kg/v_new`（见返回策略） |
+| `return_intermediate_states` | `False` | bool | `true` 时额外返回 `h` |
+| `state_v_first` | `False` | bool | state 末两维顺序 |
+| `epsilon` | `1e-6` | float | 仅 `use_qk_l2norm_in_kernel=true` 时参与 rsqrt |
+| `use_qk_l2norm_in_kernel` | `False` | bool | `true` 时 kernel 内做 q/k 归一化，并产出 `q_hat/k_hat/q_rstd/k_rstd` |
+| `use_beta_sigmoid_in_kernel` | `False` | bool | `true` 时 kernel 内做 `sigmoid(beta)`，并产出 `beta_eff` |
+| `allow_neg_eigval` | `False` | bool | `true` 时必须同时 `use_beta_sigmoid_in_kernel=true` |
+| `use_exp2` | `True` | bool | 门控走 `exp2`；`false` 时走自然指数 |
+| `q_hat_out` / `k_hat_out` | `None` | `[B,HK,T,D]`（packed `[HK,T,D]`）；与 q/k 同 dtype | 传入即导出归一化后的 q/k |
+| `q_rstd_out` / `k_rstd_out` | `None` | `[B,HK,T]`（packed `[HK,T]`）；FP32 | 传入即导出 rstd；`use_qk_l2norm_in_kernel=false` 时不产出 |
+| `beta_eff_out` | `None` | `[B,HV,T]`（packed `[HV,T]`）；FP32 | 传入即导出生效 beta；`use_beta_sigmoid_in_kernel=false` 时不产出 |
+
+`epsilon` / `use_qk_l2norm_in_kernel` / `use_beta_sigmoid_in_kernel` / `allow_neg_eigval` /
+`use_exp2` 取非默认值时，调用必须落在三算子组合场景（BF16 q/k/v、`K=V=128`、
+`chunk_size=64`），否则 Python 入口在发起调用前按 fla-org 参考实现拒绝，不会静默忽略；
+具体字段语义见 [归一化 / gate 开关](#归一化--gate-开关)。
+
+### 返回
+
+12 个槽位顺序固定，槽位数与参数取值无关；不产出的槽位为 `None`：
 
 ```text
 (attn_out, final_state, gk, Aqk, Akk, w, u, qg, kg, v_new, h, initial_state)
 ```
 
-可选输出在 Python 层返回 `None`。`Aqk/Akk` 始终存在；其余保留策略见算子 README。
+| # | 返回 | 何时非 `None` | 布局 |
+| --- | --- | --- | --- |
+| 0 | `attn_out` | 始终 | 固定 sequence-major（rank-4 为 BSND，rank-3 为 TND） |
+| 1 | `final_state` | `output_final_state=true` | `[N,H_v,K,V]`，`state_v_first=true` 时末两维交换 |
+| 2 | `gk` | `use_gate_in_kernel=false` 或 `disable_recompute=true` | head-major |
+| 3 | `Aqk` | 始终 | head-major |
+| 4 | `Akk` | 始终 | head-major |
+| 5–9 | `w` / `u` / `qg` / `kg` / `v_new` | `disable_recompute=true` | head-major |
+| 10 | `h` | `disable_recompute=true` 或 `return_intermediate_states=true` | sequence-major |
+| 11 | `initial_state` | 始终 | Python 层对入参 `initial_state` 的原对象透传（算子就地更新），不是 aclnn 输出 |
 
-反向 L2 norm 的保存值不占上述 12 个返回槽位，而是由调用方按需传入输出张量导出：
-`q_hat_out/k_hat_out/q_rstd_out/k_rstd_out/beta_eff_out`（都不传即 `nullptr`，行为与历史
-版本逐位一致）。`use_qk_l2norm_in_kernel=false` 时不产出 `q_rstd/k_rstd`；
-`use_beta_sigmoid_in_kernel=false` 时不产出 `beta_eff`。导出的 `q_rstd/k_rstd` 可直接交给
-`chunk_kda_bwd` 走 optimized（L2Norm 回代）路径。
+保留策略与 fla-org
+[`chunk_kda_fwd`](https://github.com/fla-org/flash-linear-attention/blob/0f0f0c97af39343855b43bbbaddcedfda5cb9d77/fla/ops/kda/chunk_fwd.py)
+提交 `0f0f0c97af39343855b43bbbaddcedfda5cb9d77` 对齐。各槽位的完整 Shape 见
+[输入与输出布局](#输入与输出布局)。
+
+### 反向 L2 norm 保存值（可选导出）
+
+`use_qk_l2norm_in_kernel=true` 时算子内部完成 q/k 归一化并算出反向回代所需的保存值。
+这些值不占上面 12 个返回槽位，而是由调用方**按需传入输出张量**导出；不传即 `nullptr`，
+行为与历史版本逐位一致：
+
+| 输出 | Shape | dtype | 何时产出 |
+| --- | --- | --- | --- |
+| `q_hat` / `k_hat` | `[B,HK,T,D]`（packed `[HK,T,D]`） | 与 q/k 同 dtype | 传入对应输出张量 |
+| `q_rstd` / `k_rstd` | `[B,HK,T]`（packed `[HK,T]`） | FP32 | 同上；`use_qk_l2norm_in_kernel=false` 时不产出 |
+| `beta_eff` | `[B,HV,T]`（packed `[HV,T]`） | FP32 | 同上；`use_beta_sigmoid_in_kernel=true` 时为 `sigmoid(beta)`（`allow_neg_eigval=true` 时为 `2*sigmoid(beta)`） |
+
+```python
+# 密集 BSND：q/k 为 [B,T,HK,D]，v 为 [B,T,HV,V]
+q_hat = torch.empty((B, HK, T, D), dtype=q.dtype, device=q.device)
+k_hat = torch.empty_like(q_hat)
+q_rstd = torch.empty((B, HK, T), dtype=torch.float32, device=q.device)
+k_rstd = torch.empty_like(q_rstd)
+beta_eff = torch.empty((B, HV, T), dtype=torch.float32, device=q.device)
+
+attn_out, final_state, gk, aqk, akk, w, u, qg, kg, v_new, h, state = chunk_kda_fwd(
+    q, k, v, g, beta, D ** -0.5, 64,
+    layout="BSND",
+    safe_gate=True,
+    lower_bound=-5.0,
+    use_gate_in_kernel=True,
+    A_log=A_log,
+    dt_bias=dt_bias,
+    disable_recompute=True,
+    use_qk_l2norm_in_kernel=True,
+    use_exp2=True,
+    q_hat_out=q_hat,
+    k_hat_out=k_hat,
+    q_rstd_out=q_rstd,
+    k_rstd_out=k_rstd,
+    beta_eff_out=beta_eff,
+)
+# 不传这 5 个输出张量时返回槽位与取值都不变，只是不会写出保存值。
+```
+
+packed（`TND`/`NTD`）下把 `[B,HK,T,D]`/`[B,HK,T]`/`[B,HV,T]` 换成
+`[HK,T,D]`/`[HK,T]`/`[HV,T]` 即可。
+
+导出的 `q_rstd/k_rstd` 可直接交给 `chunk_kda_bwd`，走 optimized（L2Norm 回代）路径，语义与
+fla-org 的 `l2norm_fwd` → `save_for_backward` → `l2norm_bwd` 一致。配套入口
+`fla_npu.ops.ascendc.chunk_kda_fwd_prepare` 暴露三算子组合里的 Prepare 段（13 个输出槽同样
+可选传），调用方可以自行编排 `Prepare -> ChunkFwdH -> ChunkKdaFwdFinalize` 并直接取用这些
+保存值。
 
 输入维度契约：`K/V` 只支持 `K=V=64` 与 `K=V=128` 两档，混合档（如 `K=64,V=128`）与其它
 取值（含 `V=256`）都在参数校验阶段返回 `ACLNN_ERR_PARAM_INVALID`，报错文本会打印实际的
 `Kdim/Vdim`；Python 入口在发起调用前给出同一条约束说明。
+
+空 tensor 契约：`B` 或序列长度（TND/NTD 为总 token 数）为 0 时同样在参数校验阶段返回
+`ACLNN_ERR_PARAM_INVALID`，报错文本会指明是 batch 维还是序列维为 0；host 侧不会把空
+tensor 交给 tiling，因此调用方不会只拿到 561103 这类缺少上下文的错误码。
 
 ## aclnn
 
@@ -99,7 +208,7 @@ aclnn L2 只描述张量与算法契约，不接收或解释 autograd 重计算�
   `ViewCopy` 导出，为空时只保留前向内部生命周期。`gkOut` 非空时直接复用为 `gkCompute`，
   避免目标场景额外复制整张 FP32 gate。
 - `finalStateOut != nullptr` 同时表示本次需要计算并写出最终状态。
-- `hCompute` 是 FwdH 到 Finalize 的内部必需 head-major 张量；`hOut` 是独立的公开可选输出。
+- `hCompute` 是 FwdH 到 Finalize 的内部必需 NT-first 张量；`hOut` 是独立的公开可选输出，两者不再需要交换 chunk/head 轴。
   `hOut == nullptr` 不会跳过内部 `hCompute`，只是不向调用方公开该中间状态；非空时由
   L2 转为固定 sequence-major 后导出。
 

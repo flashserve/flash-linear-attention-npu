@@ -118,11 +118,15 @@ workspace。Fixpipe 将 L0C FP32 结果直接转换为 BF16：BNSD/NTD
 
 ## layout 与元数据
 
-四个输入始终 head-major。`qg_scaled/Aqk` 为 rank-4 时允许
-`BSND/BNSD` 输出，为 rank-3 时允许 `TND/NTD` 输出；packed 模式的
-FwdH 主路径的 `v_new/h` 仍保留 rank-4/rank-5 首维 1，不能按
-`qg_scaled` 的 rank 自动删掉；独立调用也允许 rank-3 `v_new`。
+三个 token 输入始终 head-major，h 为 NT-first dense `[B,C,HV,128,128]`，
+带 cu_seqlens 的 h 为 `[1,C,HV,128,128]`。
+`qg_scaled/Aqk` 为 rank-4 时允许
+`BSND/BNSD` 输出，为 rank-3 时允许 `TND/NTD` 输出；FwdH 主路径的
+`v_new` 仍保留 rank-4 首维 1，独立调用也允许 rank-3 `v_new`。
 输入的物理形状不随 `output_layout` 变化。
+公共 `StateOffset` 使用 `((b*C+c)*HV+head)*128*128`；packed 的 c 为
+sequence-major global chunk。Cube 与 A5 Vector mover 共享此函数。
+KDA V2 直接传入共享 FwdH 的 NT-first h，无额外 chunk/head 转置。
 `state_v_first=true` 时，读取 `h` 时交换末两维语义，避免变更公开
 输入的物理存储。
 

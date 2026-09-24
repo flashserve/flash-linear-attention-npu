@@ -464,7 +464,7 @@ def available() -> bool:
 # The conv1d family used to be re-exported from the ctypes module with only its
 # launch handed to an internal op, which meant every call kept paying for the
 # reference marshalling.  It now has three real adapters (see the hand-written
-# wrappers at the end of this module and csrc/src/stable_conv1d.cpp).
+# wrappers at the end of this module and csrc/src/stable_causal_conv1d*.cpp).
 def _op(name: str):
     """Cached torch.ops handle: the attribute chain is not free per call."""
 
@@ -845,6 +845,10 @@ def npu_chunk_local_cumsum(g, chunk_size, *, cu_seqlens=None,
 def npu_chunk_scaled_dot_kkt(k, g, beta, *, cu_seqlens=None,
                              chunk_indices=None, chunk_size=64):
     """Chunked scaled dot product used to build the WY representation."""
+
+    from ._chunk_scaled_dot_kkt_contract import validate as _validate_chunk_scaled_dot_kkt
+
+    _validate_chunk_scaled_dot_kkt(k, g, beta, cu_seqlens, chunk_indices, chunk_size)
 
     return _op("npu_chunk_scaled_dot_kkt")(
         k, g, beta,
@@ -1531,12 +1535,6 @@ def npu_solve_tri(x, *, cu_seqlens=None, chunk_indices=None, layout="bsnd"):
     """
 
     layout = str(layout)
-    if layout == "tnd":
-        raise RuntimeError(
-            "npu_solve_tri: layout='tnd' is refused because the operator "
-            "crashes the process for that spelling on this OPP (verified on "
-            "both the ctypes and the Stable-ABI path). Use layout='bsnd' or "
-            "'bnsd'.")
     return _op("npu_solve_tri")(
         x.contiguous(), _host_ints(cu_seqlens), _host_ints(chunk_indices),
         _char_code("npu_solve_tri", "layout", layout),
@@ -1556,13 +1554,23 @@ def npu_chunk_gated_delta_rule_fwd_prepare(
     same conversion happens here.
     """
 
-    # Gate-in-kernel is the only spelling left that the reference refuses; with
-    # ``use_qk_l2norm_in_kernel`` off the hats are the caller's own q/k and both
-    # rstd slots stay null, which the adapter below already handles.
+    # fused gate: a_log is required; dt_bias is optional but only with a_log.
+    # The C++ adapter already forwards a_log/dt_bias into aclnn when the flag
+    # is set.  Kernel/tiling reject use_gate without a_log.
     if use_gate_in_kernel:
+        if a_log is None:
+            raise RuntimeError(
+                "npu_chunk_gated_delta_rule_fwd_prepare: a_log is required "
+                "when use_gate_in_kernel=True.")
+    elif a_log is not None or dt_bias is not None:
         raise RuntimeError(
-            "npu_chunk_gated_delta_rule_fwd_prepare: use_gate_in_kernel "
-            "currently only supports False.")
+            "npu_chunk_gated_delta_rule_fwd_prepare: a_log and dt_bias "
+            "require use_gate_in_kernel=True.")
+    # ATK/NPU may pass cu_seqlens as a Tensor; bool(Tensor) is ambiguous.
+    if cu_seqlens is not None and hasattr(cu_seqlens, "detach"):
+        cu_seqlens = [int(x) for x in cu_seqlens.detach().cpu().reshape(-1).tolist()]
+    if chunk_indices is not None and hasattr(chunk_indices, "detach"):
+        chunk_indices = [int(x) for x in chunk_indices.detach().cpu().reshape(-1).tolist()]
     if cu_seqlens and not chunk_indices:
         chunk_indices = _canonical_chunk_indices(cu_seqlens, chunk_size)
     (q_hat, k_hat, q_rstd, k_rstd, beta_out, g_cumsum, w, u, a) = _op(

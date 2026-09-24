@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Offline coverage gate for the Stable-ABI backend (no NPU, no torch).
 
-What this answers is not "did a test pass" but "is every operator the ctypes
-layer publishes carried by the launcher, and is every adapter wired all the way
-through".  Everything is read from files in the tree:
+What this answers is not "did a test pass" but "is every published operator
+carried by the thin layer, and is every adapter wired all the way through".
+Everything is read from files in the tree:
 
 1. **Adapter coverage** -- each ``npu_*`` operator in the published list has a
    wrapper in ``_stable.py`` and an adapter in ``csrc/src`` (schema +
@@ -52,18 +52,41 @@ def public_ops() -> list[str]:
 
 
 def ctypes_ops() -> list[str]:
+    """Operators the ctypes fallback still defines.
+
+    This is the *fallback* surface, not a parity reference: an operator with no
+    entry here can only be reached through the adapter layer.
+    """
+
     text = (OPS_DIR / "_aclnn_ctypes.py").read_text(encoding="utf-8")
     return sorted(set(re.findall(r"^def (npu_[a-z0-9_]+)\(", text, re.M)))
 
 
 def launcher_only_ops() -> list[str]:
-    """Operators declared as having no ctypes reference to compare against."""
+    """Operators only the adapter layer can serve: published minus ctypes.
+
+    A new operator is not expected to bring a ctypes adapter any more, so the
+    fallback backend is *derived* here exactly the way ``__init__.py`` derives
+    it -- ``_ASCENDC_OPS`` minus what ``_aclnn_ctypes`` defines.  Nothing is
+    declared, so nothing can drift or go stale.
+    """
+
+    return sorted(set(public_ops()) - set(ctypes_ops()))
+
+
+_HAND_WRITTEN_LAUNCHER_ONLY = re.compile(
+    r"_LAUNCHER_ONLY_OPS[^=\n]*=\s*\(")
+
+
+def hand_written_launcher_only() -> bool:
+    """True when ``__init__.py`` lists launcher-only operators by hand again.
+
+    The declaration is what new operators would have to remember, so the only
+    way to get the derivation wrong is to bypass it.
+    """
 
     text = (OPS_DIR / "__init__.py").read_text(encoding="utf-8")
-    match = re.search(r"_LAUNCHER_ONLY_OPS[^=]*=\s*\((.*?)\)", text, re.S)
-    if match is None:
-        return []
-    return re.findall(r'"([a-z0-9_]+)"', match.group(1))
+    return _HAND_WRITTEN_LAUNCHER_ONLY.search(text) is not None
 
 
 def wrappers() -> dict[str, int]:
@@ -174,11 +197,14 @@ def _enclosing_run(text: str, position: int) -> str:
 
 _SCHEMA_RE = re.compile(
     r'constexpr const char\* (kSchema\w*)\s*=\s*((?:"[^"]*"\s*)+);', re.S)
-_IMPL_ADAPTER_RE = re.compile(
-    r'm\.impl\(\s*"([a-z0-9_]+)"\s*,\s*&[\w:]*boxed_adapter<\s*'
-    r'(run_[a-z0-9_]+)\s*>')
-_IMPL_BOXED_RE = re.compile(
-    r'm\.impl\(\s*"([a-z0-9_]+)"\s*,\s*&(boxed_[a-z0-9_]+)\)')
+# One regex, not two: both registration shapes have to come out of the file in
+# the order they were written, because ``registrations`` pairs the `m.def` and
+# `m.impl` lists positionally.
+_IMPL_RE = re.compile(
+    r'm\.impl\(\s*"([a-z0-9_]+)"\s*,\s*&[\w:]*'
+    r'(?:boxed_adapter<\s*(run_[a-z0-9_]+)\s*>'
+    r'|(boxed_[a-z0-9_]+)\))',
+    re.S)
 
 
 def schemas() -> dict[str, dict]:
@@ -235,9 +261,8 @@ def registrations() -> list[tuple[str, str]]:
 
     text = (SRC_DIR / "stable_ops.cpp").read_text(encoding="utf-8")
     defs = re.findall(r"m\.def\((kSchema\w*)\)", text)
-    impls = [match.group(1) or match.group(2)
-             for match in list(_IMPL_ADAPTER_RE.finditer(text))
-             + list(_IMPL_BOXED_RE.finditer(text))]
+    impls = [match.group(2) or match.group(3)
+             for match in _IMPL_RE.finditer(text)]
     return list(zip(defs, impls))
 
 
@@ -252,6 +277,21 @@ def adapter_functions() -> dict[str, str]:
                 text, re.M):
             found[match.group(1)] = source.name
     return found
+
+
+def translation_unit() -> tuple[list[str], list[str]]:
+    """(adapter sources included by stable_ops.cpp, ones that are not).
+
+    Every adapter lives in its own `stable_<op>.cpp` and is *included* into
+    `stable_ops.cpp` -- nothing here is compiled on its own.  A source nobody
+    includes is therefore dead: its operator would silently have no adapter
+    while every other check in this file (they scan the directory) stays green.
+    """
+
+    text = (SRC_DIR / "stable_ops.cpp").read_text(encoding="utf-8")
+    included = re.findall(r'#include\s+"(stable_\w+\.cpp)"', text)
+    present = {path.name for path in SRC_DIR.glob("stable_*.cpp")}
+    return included, sorted(present - set(included) - {"stable_ops.cpp"})
 
 
 def adapters() -> dict[str, dict]:
@@ -273,8 +313,7 @@ def adapters() -> dict[str, dict]:
         entry["run"] = functions.get(function)
         # The declared domain of this operator, as far as the tree can tell:
         # enum tables give the string-valued axes, the parameter list gives the
-        # varlen axis and the boolean flags.  coverage_gap_report.py compares
-        # these against the scenario names that actually ran.
+        # varlen axis and the boolean flags.
         axes: dict[str, list] = {}
         params = schema.get("params", [])
         # Only string-valued axes are put in `axes`: the report matches them
@@ -342,9 +381,25 @@ def load_baseline() -> dict:
     return {}
 
 
+def expected_source(op: str) -> str:
+    """The file ``op``'s adapter has to be defined in.
+
+    One operator per file: ``npu_chunk_fwd_h`` is adapted in
+    ``stable_chunk_fwd_h.cpp``.  Debug entries (``_stream_probe``) are not
+    operators and return "".
+
+    This is the invariant a *merge* breaks: a branch that predates the split
+    adds its adapter to the shared file it already has (`stable_chunk.cpp`,
+    `stable_kda.cpp`, ...), so the new operator's `run_` ends up somewhere
+    else while every other check here -- they key off the operator name --
+    stays green.
+    """
+
+    return f"stable_{op[len('npu_'):]}.cpp" if op.startswith("npu_") else ""
+
+
 def evaluate() -> dict:
     published = public_ops()
-    ctypes_names = set(ctypes_ops())
     launcher_only = set(launcher_only_ops())
     wrapper_lines = wrappers()
     dispatches = wrapper_dispatches()
@@ -365,7 +420,7 @@ def evaluate() -> dict:
             "enums": sorted(adapter_info.get(name, {}).get("enums", {})),
             "axes": adapter_info.get(name, {}).get("axes", {}),
             "flags": adapter_info.get(name, {}).get("flags", []),
-            "reference": "launcher-only" if name in launcher_only else "ctypes",
+            "fallback": "none" if name in launcher_only else "ctypes",
         }
         rows.append(row)
         if name not in wrapper_lines:
@@ -373,18 +428,15 @@ def evaluate() -> dict:
         for key in ("schema", "run", "def", "impl"):
             if not row[key]:
                 blockers.append(f"{name}: adapter is missing its {key}")
-        # A new operator with no ctypes wrapper has to say so.  Without a
-        # same-kernel reference its parity scenario must bring its own, and that
-        # is a decision a reader has to be able to find; declaring one that
-        # ctypes still defines is the other half of the same invariant.
-        if name not in ctypes_names and name not in launcher_only:
+        # One operator per file: the run_ function has to live in the file
+        # named after the operator, so that a merge that adds an adapter to a
+        # shared file (the pre-split layout) is reported instead of accepted.
+        wanted = expected_source(name)
+        actual = adapter_info.get(name, {}).get("run")
+        if wanted and actual and actual != wanted:
             blockers.append(
-                f"{name}: published but absent from the ctypes reference "
-                "(add the reference, or declare it in _LAUNCHER_ONLY_OPS)")
-        if name in launcher_only and name in ctypes_names:
-            blockers.append(
-                f"{name}: declared in _LAUNCHER_ONLY_OPS but the ctypes "
-                "reference still defines it")
+                f"{name}: adapter is defined in {actual}, expected {wanted} "
+                "(one operator per file)")
         for dispatch in dispatches.get(name, []):
             if dispatch["op"] == name:
                 blockers.extend(
@@ -404,6 +456,25 @@ def evaluate() -> dict:
 
     for name in sorted(set(adapter_info) - set(published)):
         blockers.append(f"{name}: adapter exists but is not published")
+
+    # Having no ctypes fallback is the default shape for a new operator, so the
+    # fallback set is derived (published minus ctypes) instead of declared --
+    # nothing for an author to remember.  A hand-written tuple would bring the
+    # declaration back and drift from the ctypes inventory.
+    if hand_written_launcher_only():
+        blockers.append(
+            "_LAUNCHER_ONLY_OPS must stay derived from _ASCENDC_OPS and "
+            "ASCENDC_CTYPES_OPS; listing operators by hand reintroduces the "
+            "declaration new operators no longer need")
+
+    # Adapter sources are #included into stable_ops.cpp rather than compiled on
+    # their own, so a file nobody includes is never built: the operator would
+    # fall back (or fail to resolve) while every other check here -- they read
+    # the directory, not the translation unit -- still passed.
+    for orphaned in translation_unit()[1]:
+        blockers.append(
+            f"{orphaned}: adapter source is not #included by stable_ops.cpp, "
+            "so it is never compiled")
 
     # ...and the other direction: a table in Python that no adapter consumes is
     # a stale code order waiting to be used (this is how the recurrent KDA
@@ -429,11 +500,11 @@ def evaluate() -> dict:
 def render(report: dict, strict: bool, baseline: dict) -> tuple[str, bool]:
     known = {} if strict else baseline.get("known_gaps", {})
     lines = ["%-42s %-8s %-8s %-8s %-11s %s" % (
-        "operator", "wrapper", "schema", "run", "registered", "reference")]
+        "operator", "wrapper", "schema", "run", "registered", "fallback")]
     for row in report["rows"]:
         lines.append("%-42s %-8s %-8s %-8s %-11s %s" % (
             row["op"], row["wrapper"], row["schema"], row["run"],
-            row["def"] and row["impl"], row.get("reference", "ctypes")))
+            row["def"] and row["impl"], row.get("fallback", "ctypes")))
     unexplained = [b for b in report["blockers"]
                    if b.split(":", 1)[0] not in known]
     if unexplained:

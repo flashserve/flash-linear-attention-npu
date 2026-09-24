@@ -396,7 +396,7 @@ public:
                         isVariedLen ? vecBlockScheduler.GetVarlenChunkOffset(batchIdx) : 0;
                     uint32_t shapeBatchIdx = isVariedLen ? 0 : batchIdx;
                     uint32_t hBaseOffset =
-                        (shapeBatchIdx * vNumHead * totalChunks + vHeadIdx * totalChunks + chunkOffset) *
+                        ((shapeBatchIdx * totalChunks + chunkOffset) * vNumHead + vHeadIdx) *
                         stateBlockSize;
                     uint32_t initialStateBaseOffset = taskIdx * stateBlockSize;
                     for (uint32_t rowOffset = rowBegin; rowOffset < rowEnd; rowOffset += rowsPerTile) {

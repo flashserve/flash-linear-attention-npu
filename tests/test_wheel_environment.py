@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import importlib
 import os
+import re
 import runpy
 import shutil
 import subprocess
@@ -197,32 +198,442 @@ class WheelEnvironmentTest(unittest.TestCase):
             self.assertFalse(distribution.has_ext_modules())
 
     def test_default_wheel_is_tagged_by_platform_not_by_python(self) -> None:
-        """py3-none-<platform>: one wheel per host, not one per Python minor.
+        """py3-none-manylinux: one wheel per host, not one per Python minor.
 
         ``any`` would let pip install an aarch64 launcher on x86_64, and a
         cp3xx tag would multiply the release matrix for a wheel that carries no
-        CPython extension at all.
+        CPython extension at all.  The platform tag is the PEP 600 watermark
+        every build claims, local builds included.
         """
 
-        import sysconfig
-
         setup_globals, setup_kwargs = _load_setup()
-        command = setup_globals["CMDCLASS"]["bdist_wheel"](
-            setup_kwargs["distclass"]({"name": "flash-linear-attention-npu",
-                                       "version": "0"}))
-        command.finalize_options()
-        python, abi, platform = command.get_tag()
+        with mock.patch.dict(os.environ, {"FLA_NPU_ARCH": "aarch64"}):
+            command = setup_globals["CMDCLASS"]["bdist_wheel"](
+                setup_kwargs["distclass"]({
+                    "name": "flash-linear-attention-npu-a2",
+                    "version": "0"}))
+            command.finalize_options()
+            python, abi, platform = command.get_tag()
         self.assertEqual((python, abi), ("py3", "none"))
         self.assertNotEqual(platform, "any")
-        self.assertEqual(
-            platform,
-            sysconfig.get_platform().replace("-", "_").replace(".", "_"))
+        self.assertEqual(platform, "manylinux_2_34_aarch64")
 
     def test_stable_launcher_can_be_turned_off(self) -> None:
         with mock.patch.dict(os.environ,
                              {"FLA_NPU_BUILD_STABLE_ABI": "0"}):
             setup_globals, _ = _load_setup()
             self.assertFalse(setup_globals["_stable_build_enabled"]())
+
+    @staticmethod
+    def _artifacts_globals() -> dict[str, object]:
+        return runpy.run_path(str(REPO_ROOT / "scripts" / "fla_npu_artifacts.py"))
+
+    @staticmethod
+    def _public_version() -> str:
+        text = (REPO_ROOT / "fla" / "__init__.py").read_text(encoding="utf-8")
+        match = re.search(r'^__version__\s*=\s*[\'"]([^\'"]+)[\'"]', text, re.MULTILINE)
+        assert match is not None, "fla/__init__.py carries no __version__"
+        return match.group(1)
+
+    def test_pypi_wheel_is_named_after_the_tier_and_the_arch(self) -> None:
+        """One project per tier, one platform tag per arch, no build tag.
+
+        pip picks the artifact from the distribution name and the wheel tags, so
+        the name has to say both: the tier (which SoC the payload serves) and the
+        arch (which host libraries it carries).  No flag is set here -- this is
+        what every build, local or published, produces.
+        """
+
+        artifacts = self._artifacts_globals()
+        version = self._public_version()
+        for soc, tier in (("ascend910b", "a2"),
+                          ("ascend910_93", "a3"),
+                          ("ascend950", "a5")):
+            for arch in ("aarch64", "x86_64"):
+                with mock.patch.dict(os.environ, {
+                        "FLA_NPU_DISABLE_LOCAL_VERSION": "TRUE",
+                        "FLA_NPU_SOC": soc,
+                        "FLA_NPU_ARCH": arch}):
+                    self.assertEqual(artifacts["get_tier"](), tier)
+                    self.assertEqual(
+                        artifacts["get_distribution_name"](),
+                        f"flash-linear-attention-npu-{tier}")
+                    self.assertEqual(
+                        artifacts["get_wheel_filename"](REPO_ROOT),
+                        f"flash_linear_attention_npu_{tier}-{version}-py3-none-"
+                        f"manylinux_2_34_{arch}.whl")
+
+    def test_local_build_matches_the_published_name_and_tag(self) -> None:
+        """An un-flagged build produces the published distribution identity.
+
+        FLA_NPU_PYPI used to switch the distribution name, the platform tag and
+        the embedded tier metadata, so a wheel built by a developer was a
+        different project from the one users install: pip kept both, each owning
+        ``fla_npu/``, and uninstalling either left the other behind.  The flag is
+        inert now precisely so that the two cannot drift apart again.
+        """
+
+        artifacts = self._artifacts_globals()
+        version = self._public_version()
+        for soc, tier in (("ascend910b", "a2"),
+                          ("ascend910_93", "a3"),
+                          ("ascend950", "a5")):
+            environment = {
+                "FLA_NPU_DISABLE_LOCAL_VERSION": "TRUE",
+                "FLA_NPU_SOC": soc,
+                "FLA_NPU_ARCH": "aarch64",
+            }
+            with mock.patch.dict(os.environ, environment):
+                os.environ.pop("FLA_NPU_PYPI", None)
+                plain = (artifacts["get_distribution_name"](),
+                         artifacts["get_wheel_filename"](REPO_ROOT))
+            with mock.patch.dict(os.environ, dict(environment, FLA_NPU_PYPI="TRUE")):
+                flagged = (artifacts["get_distribution_name"](),
+                           artifacts["get_wheel_filename"](REPO_ROOT))
+            self.assertEqual(plain, flagged)
+            self.assertEqual(
+                plain,
+                (f"flash-linear-attention-npu-{tier}",
+                 f"flash_linear_attention_npu_{tier}-{version}-py3-none-"
+                 "manylinux_2_34_aarch64.whl"))
+
+    def test_daily_build_is_labelled_with_its_branch_and_the_release_is_not(self) -> None:
+        """A daily build says ``<branch>_dev<commit>``; a release build says nothing.
+
+        The published wheel carries the bare version from ``fla/__init__.py``, so a
+        daily build of the same tree must not: daily wheels are handed out as a file,
+        and two of them must never be indistinguishable from each other or from the
+        release.  The label is also what makes ``pip install .`` replace a released
+        wheel of the same version instead of skipping it as already satisfied.
+        """
+
+        artifacts = self._artifacts_globals()
+        version = self._public_version()
+        daily_base = re.sub(r"\.dev\d+$", "", version)
+        for branch, label in (("main", "main"), ("v26.9.1", "26.9.1")):
+            # A release line names itself in the public part; only the development
+            # line has to name the branch in the local part.
+            expected = f"{label}.dev0a1b2c3" if label != version else "dev0a1b2c3"
+            with mock.patch.dict(os.environ, {
+                    "FLA_NPU_BRANCH_NAME": branch,
+                    "FLA_NPU_COMMIT_ID": "0a1b2c3d"}):
+                os.environ.pop("FLA_NPU_DISABLE_LOCAL_VERSION", None)
+                os.environ.pop("FLA_NPU_LOCAL_VERSION", None)
+                self.assertEqual(artifacts["get_local_version"](REPO_ROOT),
+                                 expected)
+                self.assertEqual(artifacts["get_package_version"](REPO_ROOT),
+                                 f"{daily_base}+{expected}")
+                # The release switch is what keeps the three tiers of one release
+                # on the single version the index expects.
+                with mock.patch.dict(os.environ,
+                                     {"FLA_NPU_DISABLE_LOCAL_VERSION": "TRUE"}):
+                    self.assertEqual(artifacts["get_local_version"](REPO_ROOT), "")
+                    self.assertEqual(artifacts["get_package_version"](REPO_ROOT),
+                                     version)
+
+        # Same rule stated as a property: whatever the branch is called, the local
+        # part never repeats the public version.
+        with mock.patch.dict(os.environ, {
+                "FLA_NPU_BRANCH_NAME": f"v{version}" if version[0].isdigit() else version,
+                "FLA_NPU_COMMIT_ID": "0a1b2c3d"}):
+            os.environ.pop("FLA_NPU_DISABLE_LOCAL_VERSION", None)
+            self.assertEqual(artifacts["get_local_version"](REPO_ROOT),
+                             "dev0a1b2c3")
+
+    def test_daily_build_of_a_development_line_drops_the_dev_number(self) -> None:
+        """``26.10.0.dev0`` builds as ``26.10.0+main_dev<commit>``.
+
+        The development line carries the next release as ``<next>.dev0`` in
+        ``fla/__init__.py``.  A daily build of that line names the release it
+        leads to, so the local part is the only thing that says "not released
+        yet" -- and the gate has to read the same rule, or the wheel the build
+        produces would be rejected by the gate that guards it.
+        """
+
+        artifacts = self._artifacts_globals()
+        self.assertEqual(artifacts["daily_base_version"]("26.10.0.dev0"), "26.10.0")
+        # A released version has nothing to drop, and the rule only eats the
+        # ``.devN`` PEP 440 spells a development release with.
+        self.assertEqual(artifacts["daily_base_version"]("26.9.1"), "26.9.1")
+        self.assertEqual(artifacts["daily_base_version"]("26.10.0.dev"),
+                         "26.10.0.dev")
+
+        gate = runpy.run_path(str(REPO_ROOT / "scripts" / "check_pypi_wheel.py"))
+        self.assertEqual(gate["DAILY_BASE_SUFFIX"].sub("", "26.10.0.dev0"),
+                         "26.10.0")
+        self.assertEqual(gate["DAILY_BASE_SUFFIX"].sub("", "26.9.1"), "26.9.1")
+
+    def test_pypi_file_name_and_wheel_tag_agree(self) -> None:
+        """The upload name and the METADATA tag come from two places.
+
+        ``get_wheel_filename`` predicts the artifact for CI, while bdist_wheel
+        writes the tag from ``get_tag``.  If they disagree, pip installs an
+        aarch64 payload on x86_64 (or PyPI rejects linux_<arch> outright), which
+        is only discovered after upload.
+        """
+
+        artifacts = self._artifacts_globals()
+        for arch in ("aarch64", "x86_64"):
+            with mock.patch.dict(os.environ, {
+                    "FLA_NPU_SOC": "ascend950",
+                    "FLA_NPU_ARCH": arch}):
+                setup_globals, setup_kwargs = _load_setup()
+                command = setup_globals["CMDCLASS"]["bdist_wheel"](
+                    setup_kwargs["distclass"]({
+                        "name": "flash-linear-attention-npu-a5",
+                        "version": "0"}))
+                command.finalize_options()
+                python, abi, platform = command.get_tag()
+                self.assertEqual((python, abi), ("py3", "none"))
+                # PEP 600 tags only: this must not be linux_<arch> (the
+                # sysconfig spelling), which PyPI rejects on upload.
+                self.assertEqual(platform, f"manylinux_2_34_{arch}")
+                self.assertTrue(
+                    artifacts["get_wheel_filename"](REPO_ROOT).endswith(
+                        f"-{platform}.whl"))
+
+    def test_release_gate_and_pypi_helper_claim_the_same_glibc(self) -> None:
+        """The tag the build writes and the watermark the gate asserts are one.
+
+        A mismatch publishes a wheel labelled for an older glibc than its
+        payload can load on, or blocks a release that is actually fine.
+        """
+
+        artifacts = self._artifacts_globals()
+        gate = runpy.run_path(str(REPO_ROOT / "scripts" / "check_pypi_wheel.py"))
+        self.assertEqual(gate["EXPECTED_PLATFORM_PREFIX"],
+                         artifacts["WHEEL_PLATFORM_TAG"])
+        self.assertEqual(
+            gate["DEFAULT_MAX_GLIBC"],
+            artifacts["WHEEL_PLATFORM_TAG"].removeprefix("manylinux_").replace("_", "."))
+
+    def test_tier_metadata_is_generated_for_every_build(self) -> None:
+        """Every wheel records its tier, so a local build behaves like the release.
+
+        scripts/check_pypi_wheel.py reads TIER to catch a wheel published under
+        the wrong project, and the version promise is generated from
+        scripts/npu_compat.py so the guard cannot drift from the README.
+        Generating it only for published wheels left a developer building from
+        source unable to see the import-time advisory at all.
+        """
+
+        package_dir = REPO_ROOT / "torch_custom" / "fla_npu" / "fla_npu"
+        build_meta = package_dir / "_build_meta.py"
+        compat_py = package_dir / "_compat.py"
+        try:
+            with mock.patch.dict(os.environ, {"FLA_NPU_SOC": "ascend950"}):
+                os.environ.pop("FLA_NPU_PYPI", None)
+                setup_globals, _ = _load_setup()
+                setup_globals["_write_runtime_meta"]()
+            self.assertIn("TIER = 'a5'", build_meta.read_text(encoding="utf-8"))
+            compat = compat_py.read_text(encoding="utf-8")
+            self.assertIn("MIN_CANN = '9.0.0'", compat)
+            self.assertIn("MIN_TORCH = '2.7.1'", compat)
+
+            # Rebuilding another tier must overwrite, never inherit, the marker.
+            with mock.patch.dict(os.environ, {"FLA_NPU_SOC": "ascend910b"}):
+                setup_globals["_write_runtime_meta"]()
+            self.assertIn("TIER = 'a2'", build_meta.read_text(encoding="utf-8"))
+            self.assertIn("MIN_CANN = '8.5.2'",
+                          compat_py.read_text(encoding="utf-8"))
+        finally:
+            build_meta.unlink(missing_ok=True)
+            compat_py.unlink(missing_ok=True)
+
+    def _write_release_wheel(self, path: Path, *, tier: str, soc: str,
+                             declared_tier: str | None = None,
+                             prefix: str = "", version: str = "26.9.0") -> None:
+        """A minimal wheel with the file name, metadata and payload the gate reads."""
+
+        info = f"flash_linear_attention_npu_{tier}-{version}.dist-info"
+        vendor = "fla_npu/opp/vendors/fla_npu_transformer"
+        entries = {
+            "fla_npu/libfla_npu_stable.so": b"\x7fELF stable",
+            "fla_npu/ops/ascendc/_stable_hash.py": b"SOURCE_HASH = 'deadbeef'\n",
+            "fla_npu/_build_meta.py": f"TIER = {declared_tier or tier!r}\n".encode(),
+            "fla_npu/_compat.py": b"MIN_CANN = '8.5.2'\nMIN_TORCH = '2.7.1'\n",
+            f"{vendor}/op_api/lib/libcust_opapi.so": b"\x7fELF opapi",
+            f"{vendor}/op_impl/ai_core/tbe/kernel/{soc}/demo/demo.o": b"kernel",
+            f"{vendor}/op_impl/ai_core/tbe/config/{soc}/aic-ops-info.json": b"{}",
+        }
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr(f"{info}/METADATA", (
+                "Metadata-Version: 2.1\n"
+                f"Name: flash-linear-attention-npu-{tier}\n"
+                f"Version: {version}\n"
+                "Requires-Python: >=3.9\n"
+                "Requires-Dist: torch>=2.7.1\n"
+                "Requires-Dist: torch_npu>=2.7.1\n"))
+            for name, payload in entries.items():
+                archive.writestr(f"{prefix}{name}", payload)
+            archive.writestr(f"{info}/RECORD",
+                             f"{info}/METADATA,,\n{info}/RECORD,,\n")
+
+    def test_release_gate_rejects_a_mislabelled_tiered_wheel(self) -> None:
+        """The upload gate has to fail on the wheels a user would trip over.
+
+        Its ELF checks need readelf, so the structural checks are exercised here
+        and the ELF ones run against the real wheel in CI (and locally on Linux).
+        """
+
+        gate = runpy.run_path(str(REPO_ROOT / "scripts" / "check_pypi_wheel.py"))
+
+        def run_gate(wheel: Path):
+            return gate["check_wheel"](
+                wheel,
+                expect_tier="a2",
+                expect_arch="aarch64",
+                expect_version="26.9.0",
+                require_offline_bundle=False,
+                require_launcher=True,
+                max_glibc="2.28",
+                max_glibcxx="3.4.29",
+                allow_missing_readelf=True,
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wheel = Path(temp_dir) / (
+                "flash_linear_attention_npu_a2-26.9.0-py3-none-"
+                "manylinux_2_34_aarch64.whl")
+            self._write_release_wheel(wheel, tier="a2", soc="ascend910b")
+            with mock.patch("shutil.which", return_value=None):
+                notes = run_gate(wheel)
+            self.assertTrue(any("kernel" in note for note in notes), notes)
+
+            # A wheel whose tier marker contradicts its name installs under the
+            # wrong project and serves the wrong SoC.
+            self._write_release_wheel(wheel, tier="a2", soc="ascend910b",
+                                      declared_tier="a5")
+            with mock.patch("shutil.which", return_value=None):
+                with self.assertRaisesRegex(gate["CheckFailure"], "TIER"):
+                    run_gate(wheel)
+
+            # Kernels for another SoC: the file name promises a2, the payload
+            # carries 950 kernels.
+            self._write_release_wheel(wheel, tier="a2", soc="ascend950")
+            with mock.patch("shutil.which", return_value=None):
+                with self.assertRaisesRegex(gate["CheckFailure"], "kernels"):
+                    run_gate(wheel)
+
+    def test_release_gate_tells_a_daily_build_from_a_release(self) -> None:
+        """The gate is strict by default; a daily build has to say it is one.
+
+        A daily wheel is ``<release>+<branch>_dev<commit>``.  If the gate accepted
+        that by default, the same command that guards an upload would also let a
+        daily artifact through, so a local version is rejected unless the caller
+        declares the build as a daily one.
+        """
+
+        gate = runpy.run_path(str(REPO_ROOT / "scripts" / "check_pypi_wheel.py"))
+
+        def run_gate(wheel: Path, *, allow_local_version: bool,
+                     expect_version: str = "26.9.0"):
+            return gate["check_wheel"](
+                wheel,
+                expect_tier="a2",
+                expect_arch="aarch64",
+                expect_version=expect_version,
+                allow_local_version=allow_local_version,
+                require_offline_bundle=False,
+                require_launcher=True,
+                max_glibc="2.34",
+                max_glibcxx="3.4.29",
+                allow_missing_readelf=True,
+            )
+
+        daily_version = "26.9.0+dev989856a"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wheel = Path(temp_dir) / (
+                f"flash_linear_attention_npu_a2-{daily_version}-py3-none-"
+                "manylinux_2_34_aarch64.whl")
+            self._write_release_wheel(wheel, tier="a2", soc="ascend910b",
+                                      version=daily_version)
+            with mock.patch("shutil.which", return_value=None):
+                with self.assertRaisesRegex(gate["CheckFailure"],
+                                            r"allow-local-version"):
+                    run_gate(wheel, allow_local_version=False)
+                run_gate(wheel, allow_local_version=True)
+
+            # The same daily shape built from another tree still fails: the flag
+            # must not double as "any version is fine".
+            self._write_release_wheel(wheel, tier="a2", soc="ascend910b",
+                                      version="26.9.1+dev989856a")
+            with mock.patch("shutil.which", return_value=None):
+                with self.assertRaisesRegex(gate["CheckFailure"], "daily build"):
+                    run_gate(wheel, allow_local_version=True)
+
+            # A daily build of the development line: the wheel drops the
+            # ``.dev0`` that ``__version__`` carries, and the gate reads the same
+            # rule instead of demanding the version it will never see.
+            self._write_release_wheel(wheel, tier="a2", soc="ascend910b",
+                                      version="26.10.0+main.dev0a1b2c3")
+            with mock.patch("shutil.which", return_value=None):
+                run_gate(wheel, allow_local_version=True,
+                         expect_version="26.10.0.dev0")
+                with self.assertRaisesRegex(gate["CheckFailure"], "daily build"):
+                    run_gate(wheel, allow_local_version=True,
+                             expect_version="26.10.1.dev0")
+
+    def test_release_gate_accepts_wheels_staged_under_data_purelib(self) -> None:
+        """The layout setup.py really produces has to pass the gate.
+
+        FlaNpuBdistWheel.finalize_options forces root_is_pure = False while the
+        staged payload stays pure Python plus the launcher, so setuptools writes
+        every member under ``<dist>.data/purelib/``.  Matching only top-level
+        members would fail every real wheel even though pip installs it into
+        site-packages just the same.
+        """
+
+        gate = runpy.run_path(str(REPO_ROOT / "scripts" / "check_pypi_wheel.py"))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wheel = Path(temp_dir) / (
+                "flash_linear_attention_npu_a2-26.9.0-py3-none-"
+                "manylinux_2_34_aarch64.whl")
+            self._write_release_wheel(
+                wheel, tier="a2", soc="ascend910b",
+                prefix="flash_linear_attention_npu_a2-26.9.0.data/purelib/")
+            with mock.patch("shutil.which", return_value=None):
+                notes = gate["check_wheel"](
+                    wheel,
+                    expect_tier="a2",
+                    expect_arch="aarch64",
+                    expect_version="26.9.0",
+                    require_offline_bundle=False,
+                    require_launcher=True,
+                    max_glibc="2.34",
+                    max_glibcxx="3.4.29",
+                    allow_missing_readelf=True,
+                )
+        self.assertTrue(any("kernel" in note for note in notes), notes)
+        self.assertTrue(any("purelib" in note for note in notes), notes)
+
+    def test_pure_ctypes_wheel_is_not_required_to_carry_the_launcher(self) -> None:
+        gate = runpy.run_path(str(REPO_ROOT / "scripts" / "check_pypi_wheel.py"))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wheel = Path(temp_dir) / (
+                "flash_linear_attention_npu_a5-26.9.0-py3-none-"
+                "manylinux_2_34_x86_64.whl")
+            self._write_release_wheel(wheel, tier="a5", soc="ascend950")
+            with zipfile.ZipFile(wheel) as archive:
+                payload = {i.filename: archive.read(i.filename)
+                           for i in archive.infolist()}
+            payload.pop("fla_npu/libfla_npu_stable.so")
+            payload.pop("fla_npu/ops/ascendc/_stable_hash.py")
+            with zipfile.ZipFile(wheel, "w") as archive:
+                for name, blob in payload.items():
+                    archive.writestr(name, blob)
+            with mock.patch("shutil.which", return_value=None):
+                gate["check_wheel"](
+                    wheel,
+                    expect_tier="a5",
+                    expect_arch="x86_64",
+                    expect_version="26.9.0",
+                    require_offline_bundle=False,
+                    require_launcher=False,
+                    max_glibc="2.34",
+                    max_glibcxx="3.4.29",
+                    allow_missing_readelf=True,
+                )
 
     def _write_minimal_wheel(self, path: Path, entries: dict) -> None:
         info = "demo-1.0.dist-info"
@@ -344,7 +755,9 @@ source {set_env!s}
             config = package_dir / "opp" / "vendors" / "config.ini"
             config.write_text("load_priority=fla_npu_transformer\n", encoding="utf-8")
 
-            dist_info = site_root / "flash_linear_attention_npu-1.0.dist-info"
+            # A tiered name is what a real install looks like now: the run
+            # package finalizer has to find it, not only the old base name.
+            dist_info = site_root / "flash_linear_attention_npu_a3-1.0.dist-info"
             dist_info.mkdir(parents=True)
             record = dist_info / "RECORD"
             with record.open("w", encoding="utf-8", newline="") as handle:

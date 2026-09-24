@@ -7,9 +7,14 @@
 // packed (rank-3) spelling and whether the token axis comes before the head
 // axis.
 //
-// The sizes themselves stay in the adapter: these helpers only answer "how
-// many tokens / heads / channels does this tensor have under this layout",
+// The sizes themselves stay in the adapter's own `SIZE_OF`: these helpers only
+// answer "which axis holds the tokens / heads / channels under this layout",
 // which is the part that is easy to get subtly wrong and worth having once.
+// Reading the dimension here instead would cost the message its tensor name --
+// inside a function the only name available is the helper's own parameter (see
+// acl_meta.h on `SIZE_OF`) -- and the head axis is the same number for q and v,
+// so one helper serves both callers and no literal name is right for all of
+// them.
 #pragma once
 
 #include "stable/acl_meta.h"
@@ -33,48 +38,40 @@ inline bool sequence_major(int64_t code) {
   return code == kBsnd || code == kTnd;
 }
 
+// Call sites read the dimension themselves: `SIZE_OF(q_meta, token_axis(code))`
+// reports the line they wrote and their own tensor name.
+//
 // [B, T, H, D] / [T, H, D] versus [B, H, T, D] / [H, T, D].
-inline int64_t tokens(const TensorMeta& q, int64_t code) {
+inline int64_t token_axis(int64_t code) {
   if (packed(code)) {
-    return size_of(q, sequence_major(code) ? 0 : 1);
+    return sequence_major(code) ? 0 : 1;
   }
-  return size_of(q, sequence_major(code) ? 1 : 2);
+  return sequence_major(code) ? 1 : 2;
 }
 
-inline int64_t key_heads(const TensorMeta& q, int64_t code) {
+// The head axis is the same number for q and v.
+inline int64_t head_axis(int64_t code) {
   if (packed(code)) {
-    return size_of(q, sequence_major(code) ? 1 : 0);
+    return sequence_major(code) ? 1 : 0;
   }
-  return size_of(q, sequence_major(code) ? 2 : 1);
+  return sequence_major(code) ? 2 : 1;
 }
 
-inline int64_t value_heads(const TensorMeta& v, int64_t code) {
-  if (packed(code)) {
-    return size_of(v, sequence_major(code) ? 1 : 0);
-  }
-  return size_of(v, sequence_major(code) ? 2 : 1);
-}
-
-inline int64_t batch(const TensorMeta& q, int64_t code) {
-  return packed(code) ? 1 : size_of(q, 0);
-}
-
-inline int64_t key_dim(const TensorMeta& q, int64_t code) {
-  return size_of(q, packed(code) ? 2 : 3);
-}
-
-inline int64_t value_dim(const TensorMeta& v, int64_t code) {
-  return size_of(v, packed(code) ? 2 : 3);
+// D is the last axis in both spellings.
+inline int64_t dim_axis(int64_t code) {
+  return packed(code) ? 2 : 3;
 }
 
 // The composite operators accept the TND/NTD names but still read a rank-4
-// tensor, so for them only the token axis differs.
-inline int64_t tokens4(const TensorMeta& q, int64_t code) {
-  return size_of(q, sequence_major(code) ? 1 : 2);
+// tensor, so for them only the token axis differs.  (Feeding the rank-3 axes
+// here produced o/A/g_cumsum/final_state with the wrong shapes and the
+// Ascend950 tiling rejected the call with 161002.)
+inline int64_t token_axis4(int64_t code) {
+  return sequence_major(code) ? 1 : 2;
 }
 
-inline int64_t value_heads4(const TensorMeta& v, int64_t code) {
-  return size_of(v, sequence_major(code) ? 2 : 1);
+inline int64_t head_axis4(int64_t code) {
+  return sequence_major(code) ? 2 : 1;
 }
 
 // One state per segment: `cu_seqlens` describes them, the batch dimension

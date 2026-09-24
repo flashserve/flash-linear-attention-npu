@@ -80,7 +80,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 
 | 参数名 | 输入/输出 | 描述 | 数据类型 | 数据格式 | 维度（Shape） | 非连续 Tensor |
 |---|---|---|---|---|---|---|
-| `dhOut` | 输出 | 各 chunk 起始时刻的隐藏状态梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B,HV,NT,K,V]` | 支持 |
+| `dhOut` | 输出 | 各 chunk 起始时刻的隐藏状态梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B,NT,HV,K,V]` | 支持 |
 | `dh0Out` | 输出 | 初始隐藏状态 `h0` 的梯度（仅当 `h0Optional` 非空时有意义）| `FLOAT16`、`BFLOAT16` | `ND` | `[N,HV,K,V]` 或 `[N,HV,V,K]` | 支持 |
 | `dv2Out` | 输出 | 融合了隐藏状态贡献后的 Value 梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
 | `workspaceSize` | 输出 | Device 侧所需 workspace 大小 | `uint64_t` | - | 标量 | - |
@@ -97,7 +97,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 - `gOptional` 的形状必须为 `[B, HV, T]`（若提供）。
 - `gkOptional` 的形状必须为 `[B, HV, T, K]`（若提供）。
 - `h0Optional`、`dhtOptional` 和 `dh0Out` 的状态布局由 `stateVFirst` 指定；定长时 `N=B`，变长时 `N=cuSeqlens.size()-1`。
-- `dhOut` 固定使用 `[B,HV,NT,K,V]`；`stateVFirst` 仅控制 `h0Optional`、`dhtOptional` 和 `dh0Out` 的状态布局。
+- `dhOut` 固定使用 `[B,NT,HV,K,V]`；`stateVFirst` 仅控制 `h0Optional`、`dhtOptional` 和 `dh0Out` 的状态布局。
 - `q`、`k`、`w`、`dO`、`dv`、`dhOut`、`dv2Out` 必须使用相同 dtype（`FLOAT16` 或 `BFLOAT16` 之一）；`h0Optional`、`dhtOptional`、`dh0Out`（若提供）也必须与 `q` 同 dtype。
 - `g`/`gk` 的 dtype 可为 `FLOAT` 或与 `q` 相同，即 `q=BFLOAT16` 时 `g`/`gk` ∈ {FLOAT, BF16}，`q=FLOAT16` 时 `g`/`gk` ∈ {FLOAT, FLOAT16}。
 - 当 `h0Optional` 非空时 `dh0Out` 不能为空，当 `h0Optional` 为空时 `dh0Out` 可传空指针。
@@ -182,7 +182,7 @@ if g:
 dv2_chunk = b_dv + dv_chunk                   # 与上游 dv 叠加
 
 # dh 存储（在更新前记录当前 chunk 的 dh）
-dh[:, :, i_t] = b_dh
+dh[:, i_t] = b_dh  # dense NT-first
 
 # 反向递推更新 b_dh（传递给上一 chunk）
 if g:
@@ -237,9 +237,9 @@ def test_chunk_gated_delta_rule_bwd_dhu_fix():
     )
 
     NT = (T + chunk_size - 1) // chunk_size
-    print("dh   shape:", dh.shape)    # [B, HV, NT, K, V]
+    print("dh   shape:", dh.shape)    # [B, NT, HV, K, V]
     print("dv2  shape:", dv2.shape)   # [B, HV, T, V]
-    assert dh.shape  == (B, HV, NT, K, V)
+    assert dh.shape  == (B, NT, HV, K, V)
     assert dv2.shape == (B, HV, T, V)
     print("Fix-length Execution Successful!")
 
@@ -321,9 +321,9 @@ def test_chunk_gated_delta_rule_bwd_dhu_varlen():
         transpose_state_layout=False
     )
 
-    print("dh   shape:", dh.shape)    # [B, HV, NT, K, V]
+    print("dh   shape:", dh.shape)    # [B, NT, HV, K, V]
     print("dv2  shape:", dv2.shape)   # [B, HV, T, V]
-    assert dh.shape  == (B, HV, NT, K, V)
+    assert dh.shape  == (B, NT, HV, K, V)
     assert dv2.shape == (B, HV, T, V)
     print("Variable-length Execution Successful!")
 

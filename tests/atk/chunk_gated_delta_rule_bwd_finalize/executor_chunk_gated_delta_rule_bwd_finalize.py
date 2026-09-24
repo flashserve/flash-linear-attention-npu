@@ -144,6 +144,7 @@ def run_cpu(spec, input_data: InputDataset):
         use_gate_in_kernel=False,
         state_v_first=bool(spec["state_v_first"]),
         use_exp2=True,
+        nt_first=True,
     )
     _validate_outputs(outputs, prepared)
     return outputs

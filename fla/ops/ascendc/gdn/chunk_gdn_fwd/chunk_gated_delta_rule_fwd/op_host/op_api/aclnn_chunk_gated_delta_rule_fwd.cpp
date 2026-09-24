@@ -301,6 +301,24 @@ static aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *execu
     return ACLNN_SUCCESS;
 }
 
+static aclnnStatus CheckRequiredInputs(const ChunkGatedDeltaRuleFwdParams &params)
+{
+    CHECK_COND(params.q != nullptr && params.k != nullptr && params.v != nullptr && params.g != nullptr &&
+                   params.beta != nullptr && params.oOut != nullptr,
+               ACLNN_ERR_PARAM_NULLPTR, "q/k/v/g/beta/oOut must not be nullptr.");
+    return ACLNN_SUCCESS;
+}
+
+static aclnnStatus CheckZeroShape(const ChunkGatedDeltaRuleFwdParams &params, uint64_t *workspaceSize)
+{
+    if (params.q->IsEmpty() || params.k->IsEmpty() || params.v->IsEmpty() || params.g->IsEmpty() ||
+        params.beta->IsEmpty()) {
+        *workspaceSize = 0UL;
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    return ACLNN_SUCCESS;
+}
+
 static aclnnStatus ViewCopyIfPresent(const aclTensor *src, const aclTensor *dst, aclOpExecutor *executor)
 {
     if (dst == nullptr) {
@@ -433,9 +451,6 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
     if (supportedContractStatus != ACLNN_SUCCESS) {
         return supportedContractStatus;
     }
-    CHECK_COND(params.q != nullptr && params.k != nullptr && params.v != nullptr && params.g != nullptr &&
-                   params.beta != nullptr && params.oOut != nullptr,
-               ACLNN_ERR_PARAM_NULLPTR, "q/k/v/g/beta/oOut must not be nullptr.");
     GdnShapeInfo info;
     CHECK_RET(ResolveShapeInfo(params, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     const size_t qkvRank = 4;
@@ -503,7 +518,7 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
         const int64_t stateDim0 = params.stateVFirst ? info.vDim : info.kDim;
         const int64_t stateDim1 = params.stateVFirst ? info.kDim : info.vDim;
         const bool valid = HasShape(params.hOutOptional,
-                                    {info.batch, info.hv, chunks, stateDim0, stateDim1});
+                                    {info.batch, chunks, info.hv, stateDim0, stateDim1});
         CHECK_COND(valid, ACLNN_ERR_PARAM_INVALID,
                    "hOutOptional shape must match stateVFirst.");
     }
@@ -615,9 +630,14 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         gCumsumOutOptional, aOutOptional, hOutOptional};
     CHECK_COND(workspaceSize != nullptr && executor != nullptr, ACLNN_ERR_PARAM_NULLPTR,
                "workspaceSize and executor must not be nullptr.");
+    CHECK_RET(CheckRequiredInputs(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR);
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
+    if (CheckZeroShape(params, workspaceSize) != ACLNN_SUCCESS) {
+        uniqueExecutor.ReleaseTo(executor);
+        return ACLNN_SUCCESS;
+    }
     CHECK_RET(CheckParams(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
 
     CHECK_RET(MakeContiguous(params.q, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
@@ -666,7 +686,7 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         const op::Shape aShape = MakeShape({batch, hv, seqlen, params.chunkSize});
         const int64_t stateDim0 = params.stateVFirst ? vDim : kDim;
         const int64_t stateDim1 = params.stateVFirst ? kDim : vDim;
-        const op::Shape hShape = MakeShape({batch, hv, ExpectedChunks(params, seqlen), stateDim0, stateDim1});
+        const op::Shape hShape = MakeShape({batch, ExpectedChunks(params, seqlen), hv, stateDim0, stateDim1});
         const op::Shape stateShape = MakeShape({seqNum, hv, stateDim0, stateDim1});
         const DataType dtype = params.q->GetDataType();
         const DataType stateDtype = params.initialStateOptional == nullptr

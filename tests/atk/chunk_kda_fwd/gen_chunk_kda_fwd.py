@@ -218,6 +218,10 @@ NEGATIVE_CASES = (
     # 追加在末尾：既有负向用例的 id 与 dtype 奇偶分配保持不变。
     ("k_mixed", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must both be 64 or both be 128"),
     ("v_mixed", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must both be 64 or both be 128"),
+    # 空 tensor：batch 或序列长度为 0 时无法构成可执行规模，host 侧必须给出
+    # 指明逻辑维的拦截文案，而不是下沉到 tiling 后只回传无上下文的 561103。
+    ("t_zero", "ACLNN_ERR_PARAM_INVALID", 161002, "sequence length must be greater than 0"),
+    ("b_zero", "ACLNN_ERR_PARAM_INVALID", 161002, "batch dimension must be greater than 0"),
 )
 
 NEGATIVE_COUNT = len(NEGATIVE_CASES)

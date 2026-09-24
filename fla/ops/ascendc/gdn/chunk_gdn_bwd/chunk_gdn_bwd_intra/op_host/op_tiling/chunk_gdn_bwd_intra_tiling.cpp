@@ -106,7 +106,9 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     context->SetTilingKey(GET_TPL_TILING_KEY(
         strategyKey, gKey, mainKey, gateKey, betaKey));
     context->SetBlockDim(blockDim);
-    context->GetWorkspaceSizes(1)[0] = platform.GetLibApiWorkSpaceSize();
+    size_t *ws = context->GetWorkspaceSizes(1);
+    ws[0] = platform.GetLibApiWorkSpaceSize();
+    OP_LOGD(context->GetNodeName(),"workspace = [%zu]", ws[0]);
     context->SetScheduleMode(1);
     return ge::GRAPH_SUCCESS;
 }

@@ -49,7 +49,7 @@ chunk 数之和。`Aqk` 最后一维始终是 64，包括尾 chunk。
 | `qg_scaled` | `[B,HV,T,128]` | `[HV,T,128]` |
 | `Aqk` | `[B,HV,T,64]` | `[HV,T,64]` |
 | `v_new` | `[B,HV,T,128]` | FwdH 主路径 `[1,HV,T,128]`；独立调用也接受 `[HV,T,128]` |
-| `h` | `[B,HV,C,128,128]` | `[1,HV,C,128,128]` |
+| `h` | `[B,C,HV,128,128]` | `[1,C,HV,128,128]` |
 | `attn_out` | `BSND [B,T,HV,128]` 或 `BNSD [B,HV,T,128]` | `TND [T,HV,128]` 或 `NTD [HV,T,128]` |
 
 三个 token 输入始终为 head-major，与输出 layout 无关。packed 模式下
@@ -70,10 +70,12 @@ chunk 数之和。`Aqk` 最后一维始终是 64，包括尾 chunk。
 ## 调用边界
 
 独立算子支持 A2 (`ascend910b`)、A3 (`ascend910_93`) 和 A5
-(`ascend950`)。`fla_npu.ops.ascendc.chunk_kda_fwd_finalize` 通过
-ctypes 直接调用 `aclnnChunkKdaFwdFinalize`，不注册 legacy
-`torch.ops.npu` 接口。Python 入口的形状、dtype、layout 和变长元数据
-约束与 aclnn 接口一致。
+(`ascend950`)。算子定义和 aclnn 接口属于本目录；公共 Python 入口
+`fla_npu.ops.ascendc.chunk_kda_fwd_finalize` 由 Stable-ABI 适配层提供，
+适配代码在 `torch_custom/fla_npu/csrc/src/stable_chunk_kda_fwd_finalize.cpp`，
+Python wrapper 在 `torch_custom/fla_npu/fla_npu/ops/ascendc/_stable.py`，
+注册统一在 `stable_ops.cpp`。Python 入口的形状、dtype、layout 和变长元数据
+约束与 aclnn 接口一致。ATK 用例另使用算子私有的直调适配。
 
 ## 验证
 

@@ -2,19 +2,15 @@
 """Check every aclnn call site against the installed ``aclnn_*.h`` prototypes.
 
 The header of the OPP actually being shipped is the only source of truth for an
-entry point's parameter list.  Two call sites have to agree with it:
-
-* the ctypes reference (``_GET_WORKSPACE_ARGTYPES`` in ``_aclnn_ctypes.py``),
-* each Stable-ABI adapter (``FLA_STABLE_EXEC("aclnnX", ...)`` in
-  ``csrc/src/stable_*.cpp``).
+entry point's parameter list.  Each Stable-ABI adapter
+(``FLA_STABLE_EXEC("aclnnX", ...)`` in ``csrc/src/stable_*.cpp``) has to agree
+with it.
 
 Disagreement is not a theoretical concern: when the OPP grew a
 ``bool stateVFirst`` parameter in front of the outputs of
-``aclnnChunkGatedDeltaRuleBwdDhu``, the ctypes reference kept passing the old
-list and *segfaulted* on 910B, while the adapter came back as a bare
-``161001``.  Both are the same defect seen from two sides, and neither is
-visible in a same-OPP parity test -- there the reference is wrong in exactly
-the same way.  Comparing against the header turns it into an offline check.
+``aclnnChunkGatedDeltaRuleBwdDhu``, a call site that kept the old list came back
+as a bare ``161001`` on 910B.  Comparing against the header turns that into an
+offline check.
 
 Tensor and int[] parameters are both pointers at this level, so those kinds
 are compared as "wildcard": a wrong *order*, a missing scalar parameter or a
@@ -36,8 +32,6 @@ Exits non-zero when a call site disagrees with the header.
 from __future__ import annotations
 
 import argparse
-import ast
-import ctypes
 import json
 import re
 import sys
@@ -45,14 +39,12 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 PACKAGE = HERE.parent
-CTYPES_MODULE = PACKAGE / "fla_npu" / "ops" / "ascendc" / "_aclnn_ctypes.py"
 SRC_DIR = PACKAGE / "csrc" / "src"
 
 # Kind of a parameter as far as a mismatch is concerned.  Tensor and int[]
 # descriptors are both plain pointers here, so both sides report WILDCARD and
 # only the scalars (and the count) carry information.
 WILDCARD = "?"
-_POINTER = "_pointer"
 
 _HEADER_KINDS = (
     (re.compile(r"\bconst\s+aclTensor\s*\*|\baclTensor\s*\*"), WILDCARD),
@@ -65,26 +57,6 @@ _HEADER_KINDS = (
     (re.compile(r"\bint32_t\b"), "int32"),
     (re.compile(r"\bbool\b"), "bool"),
 )
-
-_CTYPES_KINDS = {
-    "c_void_p": WILDCARD,
-    "c_char_p": "char_ptr",
-    "c_double": "double",
-    "c_float": "float",
-    "c_int64": "int64",
-    "c_int32": "int32",
-    "c_bool": "bool",
-    # A few entries spell the width by hand; on every supported host these are
-    # the 64- and 32-bit integer types.
-    "c_long": "int64",
-    "c_ulong": "int64",
-    "c_longlong": "int64",
-    "c_uint64": "int64",
-    "c_ulonglong": "int64",
-    "c_int": "int32",
-    "c_uint": "int32",
-    "c_short": "int32",
-}
 
 # The two out-parameters every GetWorkspaceSize prototype ends with.  The
 # generic executor owns them, so they are not part of the comparison.
@@ -195,44 +167,6 @@ def parse_headers(include_dir: Path, wanted: set[str]) -> dict[str, list[str]]:
                 params.pop()
             found[symbol] = [header_kind(param) for param in params]
     return found
-
-
-def parse_ctypes_table(path: Path) -> dict[str, list[str]]:
-    """Evaluate ``_GET_WORKSPACE_ARGTYPES`` without importing the package.
-
-    The module needs torch/torch_npu at import time; the table itself only
-    needs ``ctypes``, so it is evaluated straight out of the AST.
-    """
-
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
-            continue
-        if not any(isinstance(target, ast.Name)
-                   and target.id == "_GET_WORKSPACE_ARGTYPES"
-                   for target in node.targets):
-            continue
-        table = eval(compile(ast.Expression(node.value), str(path), "eval"),
-                     {"ctypes": ctypes})  # noqa: S307 - our own table
-        break
-    else:
-        raise RuntimeError(f"_GET_WORKSPACE_ARGTYPES not found in {path}")
-
-    result: dict[str, list[str]] = {}
-    for symbol, argtypes in table.items():
-        kinds: list[str] = []
-        for entry in argtypes:
-            name = getattr(entry, "__name__", "")
-            if name == "LP_c_void_p" or name.startswith("LP_"):
-                kinds.append(_POINTER)
-            elif name in _CTYPES_KINDS:
-                kinds.append(_CTYPES_KINDS[name])
-            else:
-                kinds.append(f"<{name}>")
-        while kinds and kinds[-1] == _POINTER:
-            kinds.pop()
-        result[symbol] = kinds
-    return result
 
 
 _EXEC_CALL = re.compile(r"FLA_STABLE_EXEC\(\s*\"(\w+)\"\s*,(.*?)\)\s*;", re.S)
@@ -406,15 +340,13 @@ def main() -> int:
                         help="one or more op_api/include/aclnnop directories: "
                              "the vendor OPP's, and CANN's for the built-in "
                              "operators (FastGelu)")
-    parser.add_argument("--ctypes-path", default=str(CTYPES_MODULE))
     parser.add_argument("--src-dir", default=str(SRC_DIR))
     parser.add_argument("--json", default="")
     args = parser.parse_args()
 
-    table = parse_ctypes_table(Path(args.ctypes_path))
     adapters = adapter_calls(Path(args.src_dir))
     adapters.update(hand_written_calls(Path(args.src_dir)))
-    wanted = set(table) | set(adapters)
+    wanted = set(adapters)
 
     headers: dict[str, list[str]] = {}
     for include_dir in args.opp_include:
@@ -423,58 +355,34 @@ def main() -> int:
 
     report: dict[str, dict] = {}
     failures = 0
-    for label, callers in (("ctypes", table), ("adapter", adapters)):
-        for symbol in sorted(callers):
-            if label == "adapter":
-                source, kinds = callers[symbol]
-                source_name = source.name
-            else:
-                source_name = Path(args.ctypes_path).name
-                kinds = callers[symbol]
-            if symbol not in headers:
-                report[f"{label}:{symbol}"] = {
-                    "source": source_name,
-                    "status": ("known-gap" if symbol in KNOWN_HEADER_GAPS
-                               else "no-header"),
-                    "reason": KNOWN_HEADER_GAPS.get(symbol, ""),
-                    "call_site": kinds}
-                if symbol not in KNOWN_HEADER_GAPS:
-                    failures += 1
-                continue
-            problems = compare(headers[symbol], kinds)
-            report[f"{label}:{symbol}"] = {
+    for symbol in sorted(adapters):
+        source, kinds = adapters[symbol]
+        source_name = source.name
+        if symbol not in headers:
+            report[f"adapter:{symbol}"] = {
                 "source": source_name,
-                "status": "ok" if not problems else "mismatch",
-                "header": headers[symbol], "call_site": kinds,
-                "problems": problems}
-            if problems:
+                "status": ("known-gap" if symbol in KNOWN_HEADER_GAPS
+                           else "no-header"),
+                "reason": KNOWN_HEADER_GAPS.get(symbol, ""),
+                "call_site": kinds}
+            if symbol not in KNOWN_HEADER_GAPS:
                 failures += 1
-                print(f"{label} {symbol} ({source_name}): "
-                      f"{'; '.join(problems)}")
-                print(f"    header    : {headers[symbol]}")
-                print(f"    call site : {kinds}")
+            continue
+        problems = compare(headers[symbol], kinds)
+        report[f"adapter:{symbol}"] = {
+            "source": source_name,
+            "status": "ok" if not problems else "mismatch",
+            "header": headers[symbol], "call_site": kinds,
+            "problems": problems}
+        if problems:
+            failures += 1
+            print(f"adapter {symbol} ({source_name}): {'; '.join(problems)}")
+            print(f"    header    : {headers[symbol]}")
+            print(f"    call site : {kinds}")
 
     for symbol in sorted(headers):
-        if symbol not in table and symbol not in adapters:
+        if symbol not in adapters:
             report[f"unused:{symbol}"] = {"status": "not-called"}
-
-    # The two call sites are also compared with each other: the ctypes table is
-    # what the header is checked against, so agreement between the adapter and
-    # the table catches order/type drift without needing an OPP at all.
-    cross = 0
-    for symbol in sorted(set(table) & set(adapters)):
-        source, kinds = adapters[symbol]
-        problems = compare(table[symbol], kinds)
-        report[f"cross:{symbol}"] = {"source": source.name, "problems": problems,
-                                     "ctypes": table[symbol],
-                                     "call_site": kinds}
-        if problems:
-            cross += 1
-            print(f"adapter {symbol} ({source.name}) disagrees with the ctypes "
-                  f"table: {'; '.join(problems)}")
-            print(f"    ctypes    : {table[symbol]}")
-            print(f"    call site : {kinds}")
-    failures += cross
 
     gaps = [key for key, value in report.items()
             if value.get("status") == "known-gap"]

@@ -58,6 +58,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_fwd_h_meta
     const c10::optional<at::Tensor> &initial_state, bool output_final_state, int64_t chunk_size,
     at::OptionalIntArrayRef cu_seqlens, at::OptionalIntArrayRef chunk_indices)
 {
+    TORCH_CHECK(chunk_size > 0 && k.dim() == 4, "Expected positive chunk_size and rank-4 token input");
     auto k_sizes = k.sizes();
     auto u_sizes = u.sizes();
     int64_t B = k_sizes[0];
@@ -73,7 +74,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> chunk_gated_delta_rule_fwd_h_meta
         NT = (T + chunk_size - 1) / chunk_size;
     }
 
-    at::Tensor h_out = at::zeros({B, HV, NT, K, V}, k.options());
+    at::Tensor h_out = at::zeros({B, NT, HV, K, V}, k.options());
     at::Tensor v_new_out = at::empty_like(u);
     at::Tensor final_state_out;
     if (output_final_state) {

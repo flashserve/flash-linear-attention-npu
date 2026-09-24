@@ -44,7 +44,7 @@ BSND/TND 输入在 L2 接口中通过 `l0op::Transpose` 转为内部 head-major 
 | `gk/w/qg/kg` | `[B,H_v,T,K]` | `[H_v,T,K]` | 供反向使用，固定 head-major |
 | `u/v_new` | `[B,H_v,T,V]` | `[H_v,T,V]` | 供反向使用，固定 head-major |
 | `Aqk/Akk` | `[B,H_v,T,chunk_size]` | `[H_v,T,chunk_size]` | 供反向使用，固定 head-major |
-| `h` | `[B,H_v,N_c,K,V]` 或 `[B,H_v,N_c,V,K]` | 去掉 B 维 | 供反向使用，固定 head-major |
+| `h` | `[B,N_c,H_v,K,V]` 或 `[B,N_c,H_v,V,K]` | 去掉 B 维 | 供反向使用，按 chunk 排列 |
 
 ## 变长元数据
 

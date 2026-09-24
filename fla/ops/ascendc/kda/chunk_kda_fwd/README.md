@@ -59,7 +59,7 @@ Python 返回顺序为：
 - `final_state` 固定按序列排列，末两维服从 `state_v_first`。
 - `Aqk/Akk` 始终返回，固定为 head-major。
 - `gk/w/u/qg/kg/v_new` 是供反向使用的 head-major 中间量。
-- 公开 `h` 固定为 sequence-major；内部 `hCompute` 保持 head-major 供 Finalize 使用。
+- 公开 `h` 与内部 `hCompute` 均为 NT-first，Finalize 直接消费。
 - 第 12 个返回值是 Python 层对 `initial_state` 的原对象透传，不是 aclnn 输出。
 
 输出保留策略对齐 fla-org
@@ -78,8 +78,8 @@ Python 返回顺序为：
 `output_final_state/disable_recompute/return_intermediate_states`，每个可选输出是否写出仅由对应
 输出指针是否为空决定。`w/u/qg/kg/v_new/h` 的 L0 阶段固定写内部 compute 张量，L2 仅在
 对应指针非空时通过 `ViewCopy` 导出；`gkOut` 非空时直接复用为 `gkCompute`，避免目标场景
-额外复制整张 FP32 gate。内部 `hCompute` 是 FwdH 到 Finalize 的必需 head-major 阶段结果；
-公开 `hOut` 非空时，L2 转为 sequence-major 后导出。`hOut` 为空时仍创建 `hCompute`，但不
+额外复制整张 FP32 gate。内部 `hCompute` 是 FwdH 到 Finalize 的必需 NT-first 阶段结果；
+公开 `hOut` 非空时直接导出，仅在 V-first 时交换末两维。`hOut` 为空时仍创建 `hCompute`，但不
 作为第 11 个 Python 返回值公开。
 
 ### 反向 L2 norm 保存值（可选导出）
@@ -132,6 +132,9 @@ Python 入口 `fla_npu.ops.ascendc.chunk_kda_fwd` 通过关键字参数
 - `chunk_size` 为 64/128。
 - TND/NTD 均支持多 head。
 - 变长调用最多 1024 条逻辑序列，rank-4 变长输入要求 B=1。
+- 空 tensor 不支持：`B` 或序列长度（TND/NTD 为总 token 数）为 0 时，参数校验阶段
+  返回 `ACLNN_ERR_PARAM_INVALID`，报错文本会指明是哪个逻辑维为 0，不会下沉到 tiling
+  后只回传无上下文的 561103。
 
 ## 场景分发
 

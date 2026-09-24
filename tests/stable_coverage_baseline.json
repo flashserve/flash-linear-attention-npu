@@ -2,6 +2,6 @@
   "//": "Gaps that are known and accepted today. tools/stable_coverage.py reports these as KNOWN GAP and stays green; anything else fails. Every entry needs a reason and a removal condition.",
   "known_gaps": {},
   "notes": {
-    "unexercised_why": "Empty: regression_stable_full.py now drives every adapted operator. The two Ascend950-only kernels (fwd_prepare, bwd_finalize) are exercised there when the host reports Ascend950 and otherwise produce an explicit SKIP line naming them."
+    "unexercised_why": "Empty: every adapted operator has a wrapper and a complete adapter (schema + run_ + registration). The device-side regressions live in tests/stable_abi/ and are run per host."
   }
 }

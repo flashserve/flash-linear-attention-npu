@@ -37,7 +37,7 @@ outputs = chunk_kda_fwd_prepare(
 )
 ```
 
-该入口通过 ctypes 直调 `aclnnChunkKdaFwdPrepare`，不注册 legacy `torch.ops.npu` 接口。
+该入口经 Stable-ABI 适配层调用 `aclnnChunkKdaFwdPrepare`，不注册 legacy `torch.ops.npu` 接口。
 
 `backward_mode` 决定 13 个输出槽中哪些真正分配与写出（`none`/`forward`/`recompute`/`save`，
 与上文“输出保留策略”一一对应；默认 `save` 即“13 项全部返回”的历史行为）。未选中的槽在

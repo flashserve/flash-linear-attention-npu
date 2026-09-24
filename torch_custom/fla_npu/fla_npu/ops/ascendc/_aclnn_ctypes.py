@@ -19,8 +19,10 @@ signature here.
 from __future__ import annotations
 
 import ctypes
+import numbers
 import sys
 
+from ._chunk_scaled_dot_kkt_contract import validate as _validate_chunk_scaled_dot_kkt
 from ._kda_policy import (
     kda_fwd_optional_output_mask,
     _select_kda_bwd_optimized,
@@ -686,7 +688,7 @@ def npu_chunk_gated_delta_rule_bwd_dhu(
     N = len(cu_seqlens) - 1 if cu_seqlens is not None else B
     state_v_first = _optional_bool(transpose_state_layout, False)
     state_tail = (V, K) if state_v_first else (K, V)
-    dh = _empty((B, Hv, NT, K, V), q)
+    dh = _empty((B, NT, Hv, K, V), q)
     dh0_shape = (N, Hv, *state_tail)
     dh0 = _empty(dh0_shape, q) if h0 is not None else None
     dv2 = _empty_like(dv)
@@ -966,7 +968,10 @@ def npu_chunk_gated_delta_rule_fwd_prepare(
     output_a = _optional_bool(output_a, True)
 
     if use_gate_in_kernel:
-        raise ValueError("use_gate_in_kernel currently only supports False.")
+        if a_log is None:
+            raise ValueError("a_log is required when use_gate_in_kernel=True.")
+    elif a_log is not None or dt_bias is not None:
+        raise ValueError("a_log and dt_bias require use_gate_in_kernel=True.")
     if allow_neg_eigval and not use_beta_sigmoid_in_kernel:
         raise ValueError("allow_neg_eigval=True requires use_beta_sigmoid_in_kernel=True.")
     if a_log is not None and _shape(a_log) != (HV,):
@@ -1479,7 +1484,7 @@ def npu_chunk_gated_delta_rule_fwd_h(
         raise RuntimeError(
             "npu_chunk_gated_delta_rule_fwd_h: initial_state shape does not match state_v_first."
         )
-    h_out = _empty((B, HV, NT, *state_tail), k)
+    h_out = _empty((B, NT, HV, *state_tail), k)
     v_new_out = _empty_like(u)
     if output_final_state:
         if initial_state is not None:
@@ -1623,7 +1628,7 @@ def npu_chunk_fwd_h(
         if initial_state.dtype not in {torch.bfloat16, torch.float32}:
             raise RuntimeError(f"{op_name}: initial_state must use bfloat16 or float32.")
 
-    h_out = _empty((batch, v_heads, total_chunks, *state_tail), k)
+    h_out = _empty((batch, total_chunks, v_heads, *state_tail), k)
     v_new_out = _empty(_shape(u), u)
     if output_final_state:
         state_template = initial_state if initial_state is not None else k
@@ -1754,8 +1759,9 @@ def npu_chunk_kda_fwd_finalize(
     if indices is not None and indices != canonical_indices:
         raise RuntimeError(f"{op_name}: chunk_indices must be canonical sequence-major pairs.")
     total_chunks = _chunk_fwd_h_total_chunks(seqlen, 64, cu, indices)
-    if _shape(h) != (batch, heads, total_chunks, 128, 128):
-        raise RuntimeError(f"{op_name}: h must be [B, HV, total_chunks, 128, 128].")
+    h_shape = (batch, total_chunks, heads, 128, 128)
+    if _shape(h) != h_shape:
+        raise RuntimeError(f"{op_name}: h must have NT-first shape {h_shape}.")
 
     out_shape = {
         "BSND": (batch, seqlen, heads, 128),
@@ -1861,6 +1867,7 @@ def npu_recurrent_gated_delta_rule(
 
     op_name = "npu_recurrent_gated_delta_rule"
     required_dim = 128
+
     if g is None and gk is None:
         raise RuntimeError(f"{op_name}: either g or gk must be provided.")
 
@@ -2013,9 +2020,16 @@ def npu_recurrent_gated_delta_rule(
             f"{op_name}: Nv must be an integer multiple of Nk, got Nv={value_heads}, Nk={key_heads}."
         )
 
+    if scale is not None and (
+        not isinstance(scale, numbers.Real) or isinstance(scale, numbers.Integral)
+    ):
+        raise RuntimeError(
+            f"{op_name}: scale must be a floating-point number, got {type(scale)!r}."
+        )
+
     scale = _optional_float(scale, 1.0)
     if not math.isfinite(scale):
-        raise ValueError(f"{op_name}: scale must be finite, got {scale}.")
+        raise RuntimeError(f"{op_name}: scale must be finite, got {scale}.")
 
     def nd_tensor(ctx, tensor, name):
         if tensor is None:
@@ -2118,22 +2132,29 @@ def npu_chunk_scaled_dot_kkt(
 ):
     import torch
 
+    B, Hv, T = _validate_chunk_scaled_dot_kkt(k, g, beta, cu_seqlens, chunk_indices, chunk_size)
     k_contig = k.contiguous()
     g_contig = g.contiguous()
     beta_contig = beta.contiguous()
-    B, _, T, _ = _shape(k_contig)
-    _, Hv, _ = _shape(g_contig)
     out = _empty((B, Hv, T, int(chunk_size)), k_contig, dtype=torch.float32)
+
+    def nd_tensor(ctx, tensor, name):
+        return ctx.tensor(
+            tensor, name,
+            acl_format_override=ACL_FORMAT_ND,
+            storage_shape_override=_shape(tensor),
+        )
+
     return _call_aclnn(
         "aclnnChunkScaledDotKkt",
         lambda ctx: [
-            ctx.tensor(k_contig, "k"),
-            ctx.tensor(g_contig, "g"),
-            ctx.tensor(beta_contig, "beta"),
+            nd_tensor(ctx, k_contig, "k"),
+            nd_tensor(ctx, g_contig, "g"),
+            nd_tensor(ctx, beta_contig, "beta"),
             ctx.int_array(cu_seqlens),
             ctx.int_array(chunk_indices),
             ctypes.c_int64(int(chunk_size)),
-            ctx.tensor(out, "out"),
+            nd_tensor(ctx, out, "out"),
         ],
         out,
     )
@@ -2906,7 +2927,7 @@ def npu_chunk_gated_delta_rule_fwd(
             else (tokens + chunk_size - 1) // chunk_size
         )
         state_tail = (v_dim, k_dim) if state_v_first else (k_dim, v_dim)
-        h = _empty((batch, v_heads, chunks, *state_tail), q)
+        h = _empty((batch, chunks, v_heads, *state_tail), q)
     layout_buffer = ctypes.create_string_buffer(layout.encode("utf-8"))
     # Hats alias the original inputs when normalization is disabled.
     q_hat = _empty(q_shape, q) if use_qk_l2norm_in_kernel else q
@@ -3459,8 +3480,8 @@ def npu_chunk_kda_bwd(
 # V2 的三算子组合（ChunkKdaFwdPrepare + ChunkFwdH + ChunkKdaFwdFinalize）在
 # 大工作量下比融合实现快，但 ChunkFwdH 的耗时对 head 数不敏感：当 (chunk, head)
 # 总工作量偏小时整链会慢于单 kernel 的融合实现。
-# 这里只按工作量门控，并与 Stable-ABI 薄层（csrc/src/stable_kda.cpp 的
-# kChunkKdaFwdV2MinWorkItems）保持同一条判据，两条后端才会逐位一致。
+# 这里只按工作量门控，并与 Stable-ABI 适配层（csrc/src/stable_chunk_kda_fwd.cpp
+# 的 kChunkKdaFwdV2MinWorkItems）保持同一条判据，两条后端才会逐位一致。
 # 门控值取自 A2 实测：head 数 16、T=8192（2048 work item）时组合略慢，
 # head 数 32 及以上组合领先 15% 以上。
 _CHUNK_KDA_FWD_V2_MIN_WORK_ITEMS = 4096
@@ -4604,22 +4625,6 @@ def npu_chunk_kda_bwd_recompute(
 
 def npu_solve_tri(x, *, cu_seqlens=None, chunk_indices=None, layout="bsnd"):
     layout = str(layout)
-    if layout == "tnd":
-        # Measured on Ascend910B3 with the OPP in this tree: the tnd spelling
-        # kills the process inside aclnnSolveTri, with and without cu_seqlens.
-        # Crashing has no defined semantics to be compatible with, so this one
-        # is refused with a message instead -- see
-        # docs/architecture/stable-abi-macro-design.md.
-        #
-        # `ntd` crashes the same way (re-measured: five of six shapes segfault,
-        # the sixth is rejected 161001 -- see the inventory's known limits), and
-        # it is deliberately *not* intercepted here: the reference does not
-        # either, and whether to refuse it is the operator owner's call.
-        raise RuntimeError(
-            "npu_solve_tri: layout='tnd' is refused because the operator "
-            "crashes the process for that spelling on this OPP (verified on "
-            "both the ctypes and the Stable-ABI path). Use layout='bsnd' or "
-            "'bnsd'.")
     x_contig = x.contiguous()
     out = _empty_like(x_contig)
     layout_arg = ctypes.c_char_p(str(layout).encode("utf-8"))

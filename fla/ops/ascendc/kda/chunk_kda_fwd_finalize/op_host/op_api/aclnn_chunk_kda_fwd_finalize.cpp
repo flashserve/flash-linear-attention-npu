@@ -197,9 +197,9 @@ aclnnStatus ResolveSequenceShape(const FinalizeParams &params,
         }
     }
     CHECK_COND(HasShape(params.h,
-                        {shape.batch, shape.heads, shape.totalChunks, 128, 128}),
+                        {shape.batch, shape.totalChunks, shape.heads, 128, 128}),
                ACLNN_ERR_PARAM_INVALID,
-               "h 必须为 [B,HV,C,128,128]，当前 B=%ld,HV=%ld,C=%ld。",
+               "h 必须为 [B,C,HV,128,128]，当前 B=%ld,HV=%ld,C=%ld。",
                shape.batch, shape.heads, shape.totalChunks);
     const uint64_t b = static_cast<uint64_t>(shape.batch);
     const uint64_t hv = static_cast<uint64_t>(shape.heads);

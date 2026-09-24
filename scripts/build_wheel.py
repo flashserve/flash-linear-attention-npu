@@ -1,4 +1,10 @@
-"""Build the root wheel and print its exact installation command."""
+"""Build the root wheel and print its exact installation command.
+
+默认给"一键编包"加一条进度条：编包是一串阶段（pip 读元数据 → 环境预检 →
+生成算子 OPP run 包 → 安装 run 包 → 组装 wheel），编译算子阶段占绝大部分
+时间。TTY 下渲染单行进度条，非 TTY 下退化为里程碑行，``--no-progress`` 可
+完全关闭。
+"""
 
 from __future__ import annotations
 
@@ -6,9 +12,13 @@ import argparse
 import base64
 import hashlib
 import os
+import queue
+import re
 import shlex
 import subprocess
 import sys
+import threading
+import time
 import zipfile
 from pathlib import Path
 
@@ -20,7 +30,373 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # torch 2.7.1.post5 + torch_npu 2.7.1.post5, full Ascend950 scenario set).
 STABLE_ABI_MIN_TORCH = "2.7.1"
 
+# 一键编包的阶段划分与权重。权重和实际耗时大致同量级：编译算子占大头。
+_PROGRESS_STAGES: tuple[tuple[str, float], ...] = (
+    ("准备构建", 0.03),
+    ("环境预检", 0.05),
+    ("编译算子", 0.72),
+    ("打包 OPP", 0.08),
+    ("组装 wheel", 0.09),
+    ("收尾", 0.03),
+)
+
+_PROGRESS_SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+# build.sh 的整个主流程 stdout 会被 `} | gawk '{print strftime(...), $0}'` 加上
+# `[YYYY-MM-DD HH:MM:SS] ` 前缀，因此 make 的 `[ NN%]` 行不总在行首，这里按
+# 行内匹配。
+_MAKE_PROGRESS_RE = re.compile(r"\[\s*(\d{1,3})%\]")
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_BUILD_LOG_NAME = "fla-npu-build.log"
+_BUILD_LOG_TAIL_SECONDS = 0.2
+_FAILURE_LOG_TAIL_LINES = 40
+# make 的 `[ NN%]` 只反映当前 cmake/make 调用：一次一键编包里会先后出现多次
+# 从 0% 重新开始的调用，且较早结束的那次会先到 100%。因此编译阶段内最多推到
+# 90%，剩余的 10% 由 build.sh 的结束标记补齐，避免进度条提前顶到阶段末端。
+_COMPILE_STAGE_INNER_CAP = 0.9
+
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+from fla_npu_artifacts import get_wheel_dist_name  # noqa: E402
+
+
+def _read_new_lines(path: Path, offset: int) -> "tuple[list[str], int]":
+    """读取 ``path`` 自 ``offset`` 起新追加的完整行，返回 (行, 新偏移)。
+
+    最后一行可能还没写完整，此时不消费它，等下一轮再读。
+    """
+
+    if not path.is_file():
+        return [], offset
+    with open(path, "rb") as handle:
+        handle.seek(offset)
+        chunk = handle.read()
+        offset = handle.tell()
+    if not chunk:
+        return [], offset
+    lines = chunk.decode("utf-8", errors="replace").splitlines(keepends=True)
+    if lines and not lines[-1].endswith(("\n", "\r")):
+        offset -= len(lines[-1].encode("utf-8"))
+        lines.pop()
+    return lines, offset
+
+
+def _stage_index(name: str) -> int:
+    for index, (label, _) in enumerate(_PROGRESS_STAGES):
+        if label == name:
+            return index
+    raise KeyError(name)
+
+
+def _format_elapsed(seconds: float) -> str:
+    total = int(seconds)
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours:d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
+class _BuildProgress:
+    """一键编包进度条。
+
+    进度按阶段权重推进；编译阶段内优先用 make 输出的 ``[ NN%]`` 换算百分比
+    （make 在同一阶段会为多个 target 反复从 0% 开始，这里只取历史最大值，
+    保证进度单调不回退），没有该信号时用计时器与最近一条构建日志表示仍在
+    活动。
+
+    - TTY：渲染单行进度条；输出子进程原始日志前先清掉该行，日志本身不受
+      影响；
+    - 非 TTY（CI 日志）：只按阶段打印里程碑行，不写 ANSI 控制符；
+    - ``--no-progress`` 或 ``FLA_NPU_BUILD_PROGRESS=0``：完全关闭。
+    """
+
+    BAR_WIDTH = 24
+
+    def __init__(self, enabled: bool, announce: bool, stream=None) -> None:
+        self._bar_enabled = enabled
+        self._announce = announce
+        self._stream = stream if stream is not None else sys.stdout
+        self._stage = 0
+        self._fraction = 0.0
+        self._started = time.monotonic()
+        self._frame = 0
+        self._targets = 0
+        self._activity = ""
+        self._last_draw = 0.0
+        self._line_open = False
+        self._announced = -1
+
+    # ---- 内部渲染 ----------------------------------------------------
+
+    def _overall(self) -> float:
+        done = sum(weight for _, weight in _PROGRESS_STAGES[: self._stage])
+        done += _PROGRESS_STAGES[self._stage][1] * self._fraction
+        return min(done, 1.0)
+
+    def _write(self, text: str) -> None:
+        self._stream.write(text)
+        self._stream.flush()
+
+    def _clear_line(self) -> None:
+        if self._bar_enabled and self._line_open:
+            self._write("\r\x1b[2K")
+            self._line_open = False
+
+    def _announce_stage(self) -> None:
+        if not self._announce or self._announced >= self._stage:
+            return
+        self._announced = self._stage
+        label = _PROGRESS_STAGES[self._stage][0]
+        self._clear_line()
+        self._write(
+            f"[fla-npu build] [{self._stage + 1}/{len(_PROGRESS_STAGES)}] "
+            f"{label}\n"
+        )
+
+    def _draw(self, force: bool = False) -> None:
+        if not self._bar_enabled:
+            return
+        now = time.monotonic()
+        if not force and now - self._last_draw < 0.1:
+            return
+        self._last_draw = now
+        ratio = self._overall()
+        filled = int(round(ratio * self.BAR_WIDTH))
+        bar = "█" * filled + "░" * (self.BAR_WIDTH - filled)
+        spinner = _PROGRESS_SPINNER[self._frame % len(_PROGRESS_SPINNER)]
+        label = _PROGRESS_STAGES[self._stage][0]
+        detail = ""
+        if self._stage == _stage_index("编译算子") and self._targets:
+            detail = f"  已编译 {self._targets} 个目标"
+        self._write(
+            f"\r\x1b[2K[fla-npu build] {bar} {ratio * 100:3.0f}%"
+            f"  {label}{detail}  {spinner}  {_format_elapsed(now - self._started)}"
+        )
+        self._line_open = True
+
+    # ---- 阶段推进 ----------------------------------------------------
+
+    def enter(self, stage: str, fraction: float = 0.0) -> None:
+        """进入阶段；同名或更早的阶段只更新阶段内进度，不回退。"""
+
+        index = _stage_index(stage)
+        if index > self._stage:
+            self._stage = index
+            self._fraction = min(max(fraction, 0.0), 1.0)
+        elif index == self._stage:
+            self.set_fraction(fraction)
+        self._announce_stage()
+        self._draw(force=True)
+
+    def set_fraction(self, fraction: float) -> None:
+        """设置阶段内完成比例，只增不减。"""
+
+        self._fraction = max(self._fraction, min(max(fraction, 0.0), 1.0))
+        self._draw()
+
+    def _note_start(self, command: str) -> None:
+        if "build.sh" in command:
+            self.enter("编译算子")
+        elif "--install-path" in command:
+            self.enter("打包 OPP", 0.2)
+        elif "prepare_offline_bundle" in command or "build_stable" in command:
+            self.enter("组装 wheel", 0.3)
+        elif "bdist_wheel" in command:
+            self.enter("组装 wheel", 0.6)
+        else:
+            self.enter("准备构建")
+
+    def _note_finish(self, command: str) -> None:
+        if "build.sh" in command:
+            self.enter("打包 OPP")
+        elif "--install-path" in command:
+            self.enter("打包 OPP", 0.8)
+        elif "prepare_offline_bundle" in command or "build_stable" in command:
+            self.enter("组装 wheel", 0.6)
+        else:
+            self.enter("收尾")
+
+    def feed(self, line: str) -> None:
+        """根据子进程输出推进进度。"""
+
+        text = _ANSI_ESCAPE_RE.sub("", line).strip()
+        if not text:
+            return
+        if "Built target" in text:
+            self._targets += 1
+        match = _MAKE_PROGRESS_RE.search(text)
+        if match:
+            self.enter(
+                "编译算子",
+                min(int(match.group(1)) / 100.0, _COMPILE_STAGE_INNER_CAP),
+            )
+            return
+        if "[fla-npu build] START" in text:
+            self._note_start(text.split("START", 1)[1])
+            return
+        if "[fla-npu build] DONE" in text or "[fla-npu build] FAILED" in text:
+            self._note_finish(text.split(":", 1)[-1])
+            return
+        if "Embedded OPP staged at" in text:
+            self.enter("组装 wheel", 0.5)
+            return
+        if text.startswith("[fla-npu build] staged "):
+            self.enter("组装 wheel", 0.4)
+            return
+        if text.startswith("[fla-npu build] pinned "):
+            self.enter("收尾")
+            return
+        if "Info: cmake config" in text:
+            self.enter("编译算子")
+            return
+        if "FLA_NPU_SOC=" in text:
+            self.enter("环境预检", 0.8)
+            return
+        if "Building wheel for" in text:
+            self.enter("环境预检")
+            return
+        if "Preparing metadata" in text or "Processing ./" in text:
+            self.enter("准备构建")
+
+    # ---- 对外接口 ----------------------------------------------------
+
+    def message(self, text: str) -> None:
+        """打印一条属于本脚本自己的日志，保持进度条不被打断。"""
+
+        self._clear_line()
+        self._write(text + "\n")
+        self._draw()
+
+    def echo(self, line: str) -> None:
+        """原样输出子进程日志，并据此推进进度。"""
+
+        self._clear_line()
+        self._write(line)
+        self.feed(line)
+        self._draw()
+
+    def tick(self) -> None:
+        """子进程暂时没有输出时刷新一次动画。"""
+
+        self._frame += 1
+        self._draw()
+
+    def close(self, success: bool) -> None:
+        if success:
+            self._stage = len(_PROGRESS_STAGES) - 1
+            self._fraction = 1.0
+        if self._bar_enabled:
+            self._draw(force=True)
+        self._clear_line()
+        if self._bar_enabled or self._announce:
+            state = "完成" if success else "失败"
+            self._write(
+                f"[fla-npu build] 一键编包{state}，用时 "
+                f"{_format_elapsed(time.monotonic() - self._started)}\n"
+            )
+
+
+def _progress_enabled(args: argparse.Namespace) -> bool:
+    if args.no_progress:
+        return False
+    if os.getenv("FLA_NPU_BUILD_PROGRESS", "").upper() in {
+            "0", "FALSE", "NO", "OFF"}:
+        return False
+    if os.getenv("TERM", "") == "dumb":
+        return False
+    try:
+        return bool(sys.stdout.isatty())
+    except (AttributeError, ValueError):
+        return False
+
+
+def _run_with_progress(
+    command: list,
+    env: dict,
+    progress: _BuildProgress,
+    follow_path: "Path | None" = None,
+) -> int:
+    """运行子进程，逐行回显 stdout 并驱动进度条。
+
+    ``follow_path`` 指向 pip ``--log`` 写入的日志：pip 默认只把构建后端
+    （setup.py / build.sh / make）的输出写进该文件，不打到终端，所以编译
+    阶段的进度信号只能从这里读。
+    """
+
+    process = subprocess.Popen(
+        command,
+        cwd=str(REPO_ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    stdout = process.stdout
+    if stdout is None:  # pragma: no cover - Popen 已要求管道
+        raise RuntimeError("failed to capture the build log")
+
+    lines: "queue.Queue[str | None]" = queue.Queue()
+
+    def _pump() -> None:
+        try:
+            for line in stdout:
+                lines.put(line)
+        finally:
+            lines.put(None)
+
+    reader = threading.Thread(target=_pump, name="fla-npu-build-log", daemon=True)
+    reader.start()
+
+    stop_follow = threading.Event()
+
+    def _follow() -> None:
+        offset = 0
+        while True:
+            new_lines, offset = _read_new_lines(follow_path, offset)
+            for line in new_lines:
+                progress.feed(line)
+            if stop_follow.is_set():
+                new_lines, offset = _read_new_lines(follow_path, offset)
+                for line in new_lines:
+                    progress.feed(line)
+                return
+            time.sleep(_BUILD_LOG_TAIL_SECONDS)
+
+    follower = None
+    if follow_path is not None:
+        follower = threading.Thread(
+            target=_follow, name="fla-npu-pip-log", daemon=True)
+        follower.start()
+
+    while True:
+        try:
+            line = lines.get(timeout=0.2)
+        except queue.Empty:
+            progress.tick()
+            continue
+        if line is None:
+            break
+        progress.echo(line)
+    reader.join(timeout=1.0)
+    returncode = process.wait()
+    if follower is not None:
+        stop_follow.set()
+        follower.join(timeout=5.0)
+    return returncode
+
+
+def _report_build_log(path: Path, tail_lines: int = _FAILURE_LOG_TAIL_LINES) -> None:
+    """打印 pip 构建日志的尾部：失败时终端上是看不到后端输出的。"""
+
+    if not path.is_file():
+        return
+    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        tail = handle.readlines()[-tail_lines:]
+    if not tail:
+        return
+    print(f"[fla-npu build] last {len(tail)} lines of {path}:", flush=True)
+    print("".join(tail), flush=True)
 
 
 def _resolve_output_dir(value: str) -> Path:
@@ -56,6 +432,12 @@ def _prepare_abi_free_launcher() -> None:
         return
     builder = (REPO_ROOT / "torch_custom" / "fla_npu" / "csrc"
                / "build_stable.py")
+    if not builder.is_file():
+        # 老分支没有 Stable-ABI 源码（csrc/），此时按纯 ctypes wheel 处理，
+        # 不要因为缺少构建脚本直接失败。
+        print("[fla-npu build] stable-ABI launcher sources not found; "
+              "building a pure-ctypes wheel", flush=True)
+        return
     target = package_dir / "libfla_npu_stable.so"
     subprocess.run([sys.executable, str(builder), "--no-debug-probe",
                     "--out", str(target)], check=True)
@@ -251,16 +633,35 @@ def main() -> int:
             "Also honored via the FLA_NPU_BUILD_ARGS environment variable."
         ),
     )
+    parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help=(
+            "disable the build progress bar and the per-stage milestone "
+            "lines. Also honored via FLA_NPU_BUILD_PROGRESS=0."
+        ),
+    )
     args = parser.parse_args()
 
     wheel_dir = _resolve_output_dir(args.wheel_dir)
     wheel_dir.mkdir(parents=True, exist_ok=True)
+    progress = _BuildProgress(
+        enabled=_progress_enabled(args),
+        announce=not args.no_progress,
+    )
+    progress.message(
+        f"[fla-npu build] 一键编包开始（soc="
+        f"{os.getenv('FLA_NPU_SOC', '<default>')}, wheel 目录 {wheel_dir}）"
+    )
     _prepare_abi_free_launcher()
+    build_log = wheel_dir / _BUILD_LOG_NAME
     command = [
         sys.executable,
         "-m",
         "pip",
         "wheel",
+        "--log",
+        str(build_log),
         "--no-build-isolation",
         "--no-deps",
         ".",
@@ -272,11 +673,17 @@ def main() -> int:
     build_args = _assemble_build_args(args)
     if build_args:
         env["FLA_NPU_BUILD_ARGS"] = build_args
-    subprocess.run(command, cwd=REPO_ROOT, check=True, env=env)
+    returncode = _run_with_progress(command, env, progress, follow_path=build_log)
+    progress.close(returncode == 0)
+    if returncode != 0:
+        _report_build_log(build_log)
+        raise subprocess.CalledProcessError(returncode, command)
 
-    # The wheel is tagged for the host platform and the build tag carries the
-    # SoC, so resolve the actual file instead of predicting the name.
-    wheel_files = sorted(wheel_dir.glob("flash_linear_attention_npu-*.whl"))
+    # The wheel is tagged for the host platform and (outside PyPI mode) the
+    # build tag carries the SoC, so resolve the actual file instead of
+    # predicting the full name -- but the distribution name is decided by the
+    # build mode (tiered PyPI name vs. the base name), so filter on it.
+    wheel_files = sorted(wheel_dir.glob(f"{get_wheel_dist_name()}-*.whl"))
     if not wheel_files:
         raise RuntimeError(f"Expected wheel was not produced under {wheel_dir}")
     wheel_path = wheel_files[-1]
@@ -284,6 +691,7 @@ def main() -> int:
     _inject_runtime_pins(wheel_path)
 
     print(f"[fla-npu build] Wheel: {wheel_path}", flush=True)
+    print(f"[fla-npu build] Build log: {build_log}", flush=True)
     print(f"[fla-npu build] Install command:", flush=True)
     print(_install_command(wheel_path), flush=True)
     return 0

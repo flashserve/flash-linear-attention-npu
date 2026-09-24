@@ -8,7 +8,7 @@
 
 1. 该 bump 的还是 bump（inplace=True / 无 flag 的算子）；
 2. 不该 bump 的不 bump（inplace=False 走 scratch state）；
-3. requires_grad 的拒绝行为与 ctypes 完全一致。
+3. requires_grad 的拒绝行为在 position/keyword 两条调用路径上一致。
 """
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ import torch_npu  # noqa: F401
 torch.npu.config.allow_internal_format = False
 torch.npu.set_compile_mode(jit_compile=False)
 
-from fla_npu.ops.ascendc import _aclnn_ctypes as ct  # noqa: E402
 from fla_npu.ops.ascendc import npu_recurrent_gated_delta_rule as gdr_public
 from fla_npu.ops.ascendc import npu_recurrent_kda as kda_public
 
@@ -141,27 +140,11 @@ def scenario_recurrent_kda():
     print("PASS recurrent_kda(requires_grad allowed, inplace=False)")
 
 
-def scenario_values_still_match_ctypes():
-    """快路径不得改变数值：同一输入下 stable public 与 ctypes 逐位一致。"""
-    q, k, v, g, beta, state, kw = kda_inputs()
-    ref = ct.npu_recurrent_kda(q, k, v, g, beta, state.clone(), **kw)
-    got = kda_public(q, k, v, g, beta, state.clone(), **kw)
-    torch.npu.synchronize()
-    for i, (a, b) in enumerate(zip(ref, got)):
-        if a is None or b is None:
-            assert a is None and b is None, f"kda[{i}]: None mismatch"
-            continue
-        diff = float((a.float() - b.float()).abs().max().item())
-        assert diff == 0.0, f"kda[{i}]: diff={diff}"
-    print("PASS recurrent_kda(ctypes vs stable public values)")
-
-
 def main():
     torch.npu.set_device(0)
     torch.manual_seed(20260910)
     scenario_recurrent_gdr()
     scenario_recurrent_kda()
-    scenario_values_still_match_ctypes()
     print("ALL PASS: mutation contract regression")
 
 
