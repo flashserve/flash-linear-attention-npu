@@ -53,17 +53,29 @@ __aicore__ inline bool IsDhuSplitHead(int64_t headCnt, int64_t headOffset)
     return headCnt > 1 && (headCnt & 1) == 1 && headOffset == headCnt - 1;
 }
 
+// Dhu-C5b 修复：劈分半界按 16 对齐（=min(RoundUp(⌊k/2⌋,16), k)）。L0C Fixpipe 源偏移必须落在
+// fractal（16 行）边界——非 16 对齐起始偏移的 fixpipe 使 FIX 管停滞、数据 flag 永不置、全核互等
+// 死锁（t8191_h96 末 chunk chunkLen=63 半界 31 实锤 507014；t100_h8 chunkLen=36 半界 18 同征）。
+// k≤16 时半界=k（子块1 空段）；k=1 时半界=0（子块0 空段，保持原 ⌊1/2⌋=0 语义）；
+// k=K=128 时半界=64 与原 K/2 相同。
+// CvTargetSubBlock / cube dvState tokenHalf / vector TokenRowRange 三处共用（R-C5-1 单一谓词纪律）。
+__aicore__ inline int64_t DhuSplitHalf(int64_t k)
+{
+    const int64_t half = (k / 2 + 15) / 16 * 16;
+    return half < k ? half : k;
+}
+
 // Dhu-C5a/C5b：CV 片目标子块判定（cube 专用；AIV 侧无需对偶——各 AIV 只等自己的 bank flag）。
-// 两种用法同一公式：C5-a termW 流传 k=K（K 维半界 K/2）；C5-b dvState 流传 k=chunkLen
-//（token 维半界 ⌊chunkLen/2⌋，调用方须在半界处截断 cvRows 使片不跨界）。
-// 劈分头（IsDhuSplitHead；subBlockNum==2 由 KERNEL_TYPE_MIX_AIC_1_2 保证）：rowIdx < k/2 → 子块0，
+// 两种用法同一公式：C5-a termW 流传 k=K（K 维半界 DhuSplitHalf(K)=64）；C5-b dvState 流传
+// k=chunkLen（token 维半界 DhuSplitHalf(chunkLen)，调用方须在半界处截断 cvRows 使片不跨界）。
+// 劈分头（IsDhuSplitHead；subBlockNum==2 由 KERNEL_TYPE_MIX_AIC_1_2 保证）：rowIdx < 半界 → 子块0，
 // 否则子块1；非劈分头维持属主 headOffset&1。
 // AIC 侧 cvListId 必须按目标子块独立 ping-pong（cvListId[2]），与各 AIV 局部 cvListId
 // （各自从 0 起逐片翻转）逐片配对——目标或计数错位即错子块收片/信用失衡/冻核（R-C5-1）。
 __aicore__ inline uint32_t CvTargetSubBlock(int64_t headCnt, int64_t headOffset, uint32_t rowIdx, int64_t k)
 {
     if (IsDhuSplitHead(headCnt, headOffset)) {
-        return rowIdx < static_cast<uint32_t>(k / 2) ? 0U : 1U;
+        return rowIdx < static_cast<uint32_t>(DhuSplitHalf(k)) ? 0U : 1U;
     }
     return static_cast<uint32_t>(headOffset & 1);
 }

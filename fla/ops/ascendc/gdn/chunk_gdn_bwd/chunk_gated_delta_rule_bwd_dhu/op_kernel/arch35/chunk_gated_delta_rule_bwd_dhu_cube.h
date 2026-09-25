@@ -228,34 +228,43 @@ public:
                     bool releaseDoAfter = true;
                     int32_t doL1BEvent = 0;
                     AscendC::LocalTensor<DT> doL1Tensor = l1BScratch[0];
+                    // S1-b：聚合运行时门控 headCnt>1。headCnt==1 时 head0 兼 GEMM 首/末 K，release
+                    // 记到 READY 而 EVENT_DO_AGG_FREE 自 Init 预置后再无人 set——下一 chunk 聚合装载
+                    // wait FREE 死锁（2026-09-25 t512_h8 507014 实锤；单 chunk 同账卡 Drain）。
+                    // ndNum=1 聚合等价于逐头装载，回退 scratch 零收益损失
+                    bool doAggActive = false;
                     if constexpr (DO_AGG_ENABLED) {
-                        if (headOffset == 0) {
-                            // 单条 ndNum=headCnt 聚合装载本 task 全部头（尾窗口运行时 ndNum=headCnt），
-                            // 位置与现状逐头装载相同（保持在 flag3 等待阴影内、termQ GEMM 之前）
-                            const int64_t dOAggBase =
-                                ((chunkInfo.bIdx * HV_ + hvBase) * T_ + chunkInfo.tokenStart) * V_;
-                            AscendC::GlobalTensor<DT> gmDOAgg;
-                            gmDOAgg.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dO_) + dOAggBase);
-                            auto tensorDOAgg =
-                                tla::MakeTensor(gmDOAgg, layoutDO, Catlass::Arch::PositionGM{});
-                            auto blockDOAgg = tla::GetTile(
-                                tensorDOAgg, tla::MakeCoord(0, 0),
-                                tla::MakeShape(static_cast<uint32_t>(chunkInfo.chunkLen),
-                                               static_cast<uint32_t>(V_DIM)));
-                            auto tensorL1DOAggDst = tla::MakeTensor(doAggL1, L1B_LAYOUT_DO,
-                                                                    Catlass::Arch::PositionL1{});
-                            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO_AGG_FREE);
-                            copyGmToL1B_DO(tensorL1DOAggDst, blockDOAgg, static_cast<uint32_t>(headCnt),
-                                           static_cast<uint32_t>(T_ * V_), DO_AGG_MATRIX_ELEMS);
-                            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(EVENT_DO_AGG_READY);
+                        doAggActive = headCnt > 1;
+                        if (doAggActive) {
+                            if (headOffset == 0) {
+                                // 单条 ndNum=headCnt 聚合装载本 task 全部头（尾窗口运行时 ndNum=headCnt），
+                                // 位置与现状逐头装载相同（保持在 flag3 等待阴影内、termQ GEMM 之前）
+                                const int64_t dOAggBase =
+                                    ((chunkInfo.bIdx * HV_ + hvBase) * T_ + chunkInfo.tokenStart) * V_;
+                                AscendC::GlobalTensor<DT> gmDOAgg;
+                                gmDOAgg.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dO_) + dOAggBase);
+                                auto tensorDOAgg =
+                                    tla::MakeTensor(gmDOAgg, layoutDO, Catlass::Arch::PositionGM{});
+                                auto blockDOAgg = tla::GetTile(
+                                    tensorDOAgg, tla::MakeCoord(0, 0),
+                                    tla::MakeShape(static_cast<uint32_t>(chunkInfo.chunkLen),
+                                                   static_cast<uint32_t>(V_DIM)));
+                                auto tensorL1DOAggDst = tla::MakeTensor(doAggL1, L1B_LAYOUT_DO,
+                                                                        Catlass::Arch::PositionL1{});
+                                AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO_AGG_FREE);
+                                copyGmToL1B_DO(tensorL1DOAggDst, blockDOAgg, static_cast<uint32_t>(headCnt),
+                                               static_cast<uint32_t>(T_ * V_), DO_AGG_MATRIX_ELEMS);
+                                AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(EVENT_DO_AGG_READY);
+                            }
+                            curL1B_ ^= 1U; // 空翻转：保持 dh-state 的 L1B scratch 槽位序列与现状逐拍一致
+                            doL1Tensor = doAggL1[headOffset * DO_AGG_MATRIX_ELEMS];
+                            // 组级信用（R-Akk 同款）：head0 GEMM 首 K 等 ready；组内末头 GEMM 末 K 释放 free
+                            waitDoReady = headOffset == 0;
+                            releaseDoAfter = headOffset + 1 == headCnt;
+                            doL1BEvent = headOffset == 0 ? EVENT_DO_AGG_READY : EVENT_DO_AGG_FREE;
                         }
-                        curL1B_ ^= 1U; // 空翻转：保持 dh-state 的 L1B scratch 槽位序列与现状逐拍一致
-                        doL1Tensor = doAggL1[headOffset * DO_AGG_MATRIX_ELEMS];
-                        // 组级信用（R-Akk 同款）：head0 GEMM 首 K 等 ready；组内末头 GEMM 末 K 释放 free
-                        waitDoReady = headOffset == 0;
-                        releaseDoAfter = headOffset + 1 == headCnt;
-                        doL1BEvent = headOffset == 0 ? EVENT_DO_AGG_READY : EVENT_DO_AGG_FREE;
-                    } else {
+                    }
+                    if (!doAggActive) {
                         const uint32_t doScratchSlot = curL1B_;
                         curL1B_ ^= 1U;
                         const int32_t doScratchEvent = L1BScratchEvent(doScratchSlot);
@@ -383,13 +392,13 @@ public:
                             SwitchL0C();
                             AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(l0CEvent);
                             // C5b：dvState CV 片逐片目标子块由 CvTargetSubBlock（limit=chunkLen，劈分头按
-                            // ⌊chunkLen/2⌋ 半界）判定，cvRows 在半界处截断（片不跨界，如 64 行单片→2×32）；
+                            // DhuSplitHalf 16 对齐半界）判定，cvRows 在半界处截断（片不跨界，如 64 行单片→2×32）；
                             // 非劈分头=headOffset&1 与现状相同。cvListId 按目标子块独立 ping-pong，
                             // 与各 AIV phase2 局部 cvListId（各自从 0 起逐片翻转）逐片配对（沿用 C5-a 模式）
                             uint32_t cvListId[2] = {0U, 0U};
                             uint32_t rowIdx = 0;
                             const uint32_t tokenHalf = IsDhuSplitHead(headCnt, headOffset)
-                                                           ? static_cast<uint32_t>(chunkInfo.chunkLen / 2)
+                                                           ? static_cast<uint32_t>(DhuSplitHalf(chunkInfo.chunkLen))
                                                            : 0U;
                             while (rowIdx < static_cast<uint32_t>(chunkInfo.chunkLen)) {
                                 const uint32_t leftRows = static_cast<uint32_t>(chunkInfo.chunkLen) - rowIdx;

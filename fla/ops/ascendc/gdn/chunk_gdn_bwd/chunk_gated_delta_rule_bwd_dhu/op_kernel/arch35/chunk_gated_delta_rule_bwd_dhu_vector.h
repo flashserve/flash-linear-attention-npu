@@ -801,14 +801,15 @@ private:
         }
     }
 
-    // C5-b 预留（token 维行段劈分，本步不使用）：劈分头按 token 半段，chunkLen=1 时前半为空仍正确
+    // C5-b：劈分头按 token 半段（半界取 DhuSplitHalf 16 对齐值，与 AIC 侧 cvRows 截断/CvTargetSubBlock
+    // 同谓词）；chunkLen=1 时半界=0、前半为空仍正确
     __aicore__ inline void TokenRowRange(int64_t headCnt, int64_t headOffset, int64_t chunkLen,
                                          int64_t &rowBegin, int64_t &rowEnd) const
     {
         rowBegin = 0;
         rowEnd = chunkLen;
         if (IsSplitHead(headCnt, headOffset)) {
-            const int64_t half = chunkLen / 2;
+            const int64_t half = DhuSplitHalf(chunkLen);
             rowBegin = subBlockIdx_ == 0 ? 0 : half;
             rowEnd = subBlockIdx_ == 0 ? half : chunkLen;
         }
