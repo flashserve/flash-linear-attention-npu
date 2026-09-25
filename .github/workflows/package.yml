@@ -1,0 +1,285 @@
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Tianjin University, Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
+name: Package Build
+
+run-name: "Package · PR #${{ inputs.pr_number }} · ${{ inputs.socs || 'all-soc' }} / ${{ inputs.arches || 'all-arch' }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull request number to build packages for"
+        required: true
+      socs:
+        description: "Comma-separated SOC list (empty = all: ascend910b,ascend910_93,ascend950)"
+        required: false
+        default: ''
+      arches:
+        description: "Comma-separated arch list (empty = all: arm,x86)"
+        required: false
+        default: ''
+      requested_by:
+        description: "Original Admin requester; set by the PR comment dispatcher"
+        required: false
+        default: ''
+      head_sha:
+        description: "PR head commit SHA (full)"
+        required: true
+      head_ref:
+        description: "PR head branch name (for artifact naming)"
+        required: false
+        default: ''
+      head_repo_full:
+        description: "PR head repository in owner/name form (for checkout)"
+        required: true
+      datetime:
+        description: "Shared timestamp for artifact naming (YYYYMMDD-HHMMSS, UTC+8)"
+        required: true
+
+concurrency:
+  group: pkg-${{ github.repository }}-PR${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: 准备编译矩阵
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      socs: ${{ steps.matrix.outputs.socs }}
+      arches: ${{ steps.matrix.outputs.arches }}
+    steps:
+      - name: 解析 SOC / 架构组合
+        id: matrix
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const SOCS = ['ascend910b', 'ascend910_93', 'ascend950'];
+            const ARCHES = ['arm', 'x86'];
+            const inputs = context.payload.inputs || {};
+
+            let socs = (inputs.socs || '').split(',')
+              .map((item) => item.trim()).filter(Boolean);
+            let arches = (inputs.arches || '').split(',')
+              .map((item) => item.trim()).filter(Boolean);
+            if (socs.some((item) => !SOCS.includes(item))) {
+              core.setFailed(`不支持的 SOC: ${socs.filter((item) => !SOCS.includes(item)).join(', ')}`);
+              return;
+            }
+            if (arches.some((item) => !ARCHES.includes(item))) {
+              core.setFailed(`不支持的架构: ${arches.filter((item) => !ARCHES.includes(item)).join(', ')}`);
+              return;
+            }
+            if (!socs.length) socs = SOCS;
+            if (!arches.length) arches = ARCHES;
+
+            // 产物命名 (与 ci/pkg/make_packages.py 保持一致):
+            // Release-<ref>-<datetime>-PR<pr>-<soc>-<arch>-<commit>
+            const sanitize = (value) =>
+              String(value || '').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown';
+            const ref = sanitize(inputs.head_ref);
+            const commit = String(inputs.head_sha || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 7);
+            const datetime = String(inputs.datetime || '');
+            const pr = String(context.payload.inputs.pr_number || '0');
+
+            const include = [];
+            for (const soc of socs) {
+              for (const arch of arches) {
+                include.push({
+                  soc,
+                  arch,
+                  name: `Release-${ref}-${datetime}-PR${pr}-${soc}-${arch}-${commit}`,
+                });
+              }
+            }
+            core.setOutput('matrix', JSON.stringify({ include }));
+            core.setOutput('socs', socs.join(','));
+            core.setOutput('arches', arches.join(','));
+            core.info(`编译矩阵: ${include.map((item) => `${item.soc}/${item.arch}`).join(', ')}`);
+
+  build:
+    name: 编译 ${{ matrix.soc }} / ${{ matrix.arch }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    # 同一架构的多个 SOC 按顺序执行 (SOC 之间串行)，arm 与 x86 之间并行
+    concurrency:
+      group: pkg-${{ github.repository }}-PR${{ inputs.pr_number }}-${{ matrix.arch }}-${{ inputs.head_sha }}
+      cancel-in-progress: false
+    runs-on: ["self-hosted", "linux", "arm64", "npu", "flash-linear-attention-npu"]
+    permissions:
+      contents: read
+    env:
+      FLA_PKG_PR_ID: ${{ inputs.pr_number }}
+      FLA_PKG_REF_NAME: ${{ inputs.head_ref }}
+      FLA_PKG_COMMIT_ID: ${{ inputs.head_sha }}
+      FLA_PKG_DATETIME: ${{ inputs.datetime }}
+      FLA_PKG_THIRD_PARTY_CACHE: /workspace/flash-linear-attention-npu-ci/cache/third_party
+      FLA_PKG_DOCKER_IMAGE: fla-npu-ci:9.1.0-910b
+    steps:
+      - name: Checkout PR head (${{ inputs.head_repo_full }} @ ${{ inputs.head_sha }})
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.head_repo_full }}
+          ref: ${{ inputs.head_sha }}
+          fetch-depth: 1
+
+      - name: 编译 wheel (${{ matrix.soc }} / ${{ matrix.arch }})
+        id: build
+        run: |
+          python3 ci/pkg/make_packages.py \
+            --soc "${{ matrix.soc }}" \
+            --arch "${{ matrix.arch }}" \
+            --head-sha "${{ inputs.head_sha }}"
+
+      - name: 上传 wheel 产物 (${{ matrix.name }})
+        if: steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            ci/pkg/out/artifacts/${{ matrix.name }}/*.whl
+            ci/pkg/out/manifest.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 上传失败日志 (${{ matrix.name }})
+        if: always() && steps.build.outcome != 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}-logs
+          path: |
+            ci/pkg/out/logs/
+            ci/pkg/out/manifest.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  report:
+    name: 回复 PR 编译结果
+    needs: [prepare, build]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: 汇总编译结果并回复 PR 评论
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const inputs = context.payload.inputs || {};
+            const runId = context.runId;
+            const { owner, repo } = context.repo;
+
+            const jobs = await github.paginate(
+              github.rest.actions.listJobsForWorkflowRun,
+              { owner, repo, run_id: runId, per_page: 100 });
+            const artifacts = await github.paginate(
+              github.rest.actions.listWorkflowRunArtifacts,
+              { owner, repo, run_id: runId, per_page: 100 });
+
+            const artifactUrl = (artifact) =>
+              `${context.serverUrl}/${owner}/${repo}/actions/runs/${runId}/artifacts/${artifact.id}`;
+
+            const buildJobs = jobs.filter((job) => /^编译 /.test(job.name || ''));
+            const rows = [];
+            let okCount = 0;
+            let failCount = 0;
+            let otherCount = 0;
+
+            for (const job of buildJobs) {
+              const match = (job.name || '').match(/^编译 (\S+) \/ (\S+)$/);
+              if (!match) continue;
+              const [, soc, arch] = match;
+
+              const wheelArtifact = artifacts.find((artifact) =>
+                !artifact.name.endsWith('-logs') &&
+                artifact.name.includes(`-${soc}-${arch}-`));
+              const logArtifact = artifacts.find((artifact) =>
+                artifact.name.endsWith('-logs') &&
+                artifact.name.includes(`-${soc}-${arch}-logs`));
+
+              let statusCell;
+              let artifactCell;
+              if (job.conclusion === 'success') {
+                okCount += 1;
+                statusCell = '成功';
+                artifactCell = wheelArtifact
+                  ? `[${wheelArtifact.name}](${artifactUrl(wheelArtifact)})`
+                  : '(产物上传中)';
+              } else if (job.conclusion === 'failure') {
+                failCount += 1;
+                statusCell = '失败';
+                const links = [];
+                if (logArtifact) links.push(`[编译日志](${artifactUrl(logArtifact)})`);
+                links.push(`[Job 日志](${job.html_url})`);
+                artifactCell = links.join(' · ');
+              } else if (job.conclusion === 'cancelled') {
+                otherCount += 1;
+                statusCell = '已取消';
+                artifactCell = `[Job 日志](${job.html_url})`;
+              } else {
+                otherCount += 1;
+                statusCell = job.conclusion || '未知';
+                artifactCell = `[Job 日志](${job.html_url})`;
+              }
+              rows.push(`| ${soc} | ${arch} | ${statusCell} | ${artifactCell} |`);
+            }
+
+            const requestedBy = inputs.requested_by || context.actor;
+            const socs = inputs.socs || 'ascend910b,ascend910_93,ascend950';
+            const arches = inputs.arches || 'arm,x86';
+            const commit = String(inputs.head_sha || '').slice(0, 7);
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${runId}`;
+
+            let body;
+            if (!buildJobs.length) {
+              body = [
+                '## Package 编译结果',
+                '',
+                '编译矩阵未能启动（准备阶段失败或被跳过）。',
+                '',
+                `请求: \`/package soc=${socs} arch=${arches}\` · 触发者: @${requestedBy}`,
+                `commit: \`${commit}\``,
+                '',
+                `完整运行记录: ${runUrl}`,
+              ].join('\n');
+            } else {
+              const summary = `共 ${buildJobs.length} 个组合: ${okCount} 成功 / ${failCount} 失败` +
+                (otherCount ? ` / ${otherCount} 其他` : '');
+              body = [
+                '## Package 编译结果',
+                '',
+                `请求: \`/package soc=${socs} arch=${arches}\` · 触发者: @${requestedBy} · commit: \`${commit}\``,
+                '',
+                '| SOC | 架构 | 状态 | 产物 / 日志 |',
+                '| --- | --- | --- | --- |',
+                ...rows,
+                '',
+                `**${summary}**`,
+                '',
+                `完整运行记录: ${runUrl}`,
+                '',
+                '产物可在上方链接或运行记录页面的 Artifacts 区域下载；失败的组合请查看对应编译日志。',
+              ].join('\n');
+            }
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: Number(inputs.pr_number),
+              body,
+            });

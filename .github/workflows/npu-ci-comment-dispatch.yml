@@ -165,3 +165,116 @@ jobs:
               `已将 PR #${prNumber} 的 NPU CI 分发到 \`${targetRef}\`，` +
               `head=${pr.head.sha}，模式=${ciMode}。`
             );
+
+  dispatch-package:
+    name: 分发 Package 编译
+    if: >-
+      github.event.issue.pull_request &&
+      github.actor != 'github-actions[bot]' &&
+      contains(github.event.comment.body, '/package')
+    runs-on: ubuntu-latest
+    steps:
+      - name: 分发到 package workflow
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const body = (context.payload.comment.body || '').trim();
+            const command = body.match(/^\/package(?:\s+([\s\S]*))?$/);
+            if (!command) {
+              core.notice('评论包含 /package，但命令格式不正确，跳过。');
+              return;
+            }
+
+            const SOCS = ['ascend910b', 'ascend910_93', 'ascend950'];
+            const ARCHES = ['arm', 'x86'];
+            const parts = command[1] ? command[1].trim().split(/\s+/) : [];
+            let socs = [];
+            let arches = [];
+            for (const part of parts) {
+              if (part.startsWith('soc=')) {
+                if (socs.length > 0) {
+                  core.setFailed('soc 参数只能指定一次。');
+                  return;
+                }
+                socs = part.slice('soc='.length)
+                  .split(',').map((item) => item.trim()).filter(Boolean);
+                if (!socs.length || socs.some((item) => !SOCS.includes(item))) {
+                  core.setFailed(`soc 参数不合法，可选值: ${SOCS.join(', ')}`);
+                  return;
+                }
+              } else if (part.startsWith('arch=')) {
+                if (arches.length > 0) {
+                  core.setFailed('arch 参数只能指定一次。');
+                  return;
+                }
+                arches = part.slice('arch='.length)
+                  .split(',').map((item) => item.trim()).filter(Boolean);
+                if (!arches.length || arches.some((item) => !ARCHES.includes(item))) {
+                  core.setFailed(`arch 参数不合法，可选值: ${ARCHES.join(', ')}`);
+                  return;
+                }
+              } else {
+                core.setFailed(`不支持的参数: ${part}。用法: /package soc=ascend910b,ascend910_93 arch=arm,x86`);
+                return;
+              }
+            }
+            if (!socs.length) socs = SOCS;
+            if (!arches.length) arches = ARCHES;
+
+            const actor = context.actor;
+            let actorPermission = 'none';
+            try {
+              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: actor,
+              });
+              actorPermission = data.permission || 'none';
+            } catch (error) {
+              core.warning(`Unable to inspect repository permission for ${actor}: ${error.message}`);
+            }
+            if (actorPermission !== 'admin') {
+              core.setFailed(`${actor} 无权触发 Package 编译：需要仓库 Admin 权限，当前权限为 ${actorPermission}。`);
+              return;
+            }
+
+            const prNumber = context.payload.issue.number;
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+            if (pr.draft) {
+              core.setFailed(`PR #${prNumber} 仍是草稿，请先标记为 ready for review 后再触发 Package 编译。`);
+              return;
+            }
+
+            // 所有组合共享同一时间戳，保证同一触发的产物命名一致 (东八区)
+            const now = new Date(Date.now() + 8 * 3600 * 1000);
+            const pad = (n) => String(n).padStart(2, '0');
+            const datetime = `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}` +
+              `${pad(now.getUTCDate())}-${pad(now.getUTCHours())}` +
+              `${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}`;
+
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'package.yml',
+              ref: context.ref,
+              inputs: {
+                pr_number: String(prNumber),
+                socs: socs.join(','),
+                arches: arches.join(','),
+                requested_by: actor,
+                head_sha: pr.head.sha,
+                head_ref: pr.head.ref || '',
+                head_repo_full: pr.head.repo.full_name,
+                datetime,
+              },
+            });
+
+            core.notice(
+              `已将 PR #${prNumber} 的 Package 编译分发到 package.yml，` +
+              `head=${pr.head.sha}，SOC=[${socs.join(',')}]，架构=[${arches.join(',')}]。`
+            );
