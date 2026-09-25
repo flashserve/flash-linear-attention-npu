@@ -783,6 +783,11 @@ __simd_vf__ inline void StageV6Vf(
 
 } // namespace Detail
 
+// localSlot0/1 的跨核 free 旗（AIV 本地编号 4/5；AIC 侧把 AIV1 的两个
+// 映射为 20/21）。V0/V6 的 wait 已按 FwdP-2 延期到各 stage 首个
+// workspace 写（MTE3）之前；V3 的 wait 留在波次循环里（rawScore 真依赖）。
+constexpr uint16_t kAicToAivSlotReusableFlagId[2] = {4, 5};
+
 template <typename GateT, typename BetaT, typename CompilePolicy>
 class ChunkKdaFwdPrepareVec {
 public:
@@ -932,7 +937,6 @@ public:
             }
         }
         // 消费最后一次 C7 free，保证每次 set 都有对应 wait。
-        constexpr uint16_t kAicToAivSlotReusableFlagId[2] = {4, 5};
         for (uint32_t localSlot = 0; localSlot < 2; ++localSlot) {
             if (usedLocalSlot_[localSlot]) {
                 AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
@@ -946,9 +950,8 @@ private:
         const ChunkRange &chunk, uint32_t headBegin, uint32_t headEnd)
     {
         // 每个 AIV 都在自己的本地 flag 空间使用同一组固定编号：
-        // localSlot0/1 的 ready=0/1，free=4/5。AIV1 不能写 16/17/20/21。
+        // localSlot0/1 的 ready=0/1，free=4/5（文件常量）。AIV1 不能写 16/17/20/21。
         constexpr uint16_t kAivToAicPayloadReadyFlagId[2] = {0, 1};
-        constexpr uint16_t kAicToAivSlotReusableFlagId[2] = {4, 5};
         for (uint32_t groupBegin = headBegin; groupBegin < headEnd;) {
             uint32_t activeHeads = headEnd - groupBegin;
             if (activeHeads > Shape::kHeadsPerGroup) {
@@ -961,9 +964,8 @@ private:
                 }
                 const uint32_t valueHead = groupBegin + localHead;
                 usedLocalSlot_[localSlot] = true;
-                // 初始 free 或上一组 C7 free；V0 首个消费者是 MTE2。
-                AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
-                    kAicToAivSlotReusableFlagId[localSlot]);
+                // FwdP-2：free-wait 延期到 StageV0 首个 workspace 写（MTE3）
+                // 之前，本组的装载+VF 压进上一组 C7 的阴影。
                 StageV0(chunk, valueHead, localHead, localSlot);
                 StageV1(chunk, localHead, localSlot);
                 // V1 的 72 KiB score payload 已经写入 workspace。
@@ -989,9 +991,8 @@ private:
                     continue;
                 }
                 const uint32_t valueHead = groupBegin + localHead;
-                // C4 已一次性读完 B/X0/negX1/Akk，V6 可以原址换义。
-                AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
-                    kAicToAivSlotReusableFlagId[localSlot]);
+                // FwdP-2：free-wait 延期到 StageV6 首个 workspace 写（MTE3）
+                // 之前，本组的装载+VF 压进上一组 C4/C5 的阴影。
                 StageV6(chunk, valueHead, localHead, localSlot);
                 AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
                     kAivToAicPayloadReadyFlagId[localSlot]);
@@ -1149,6 +1150,11 @@ private:
         const AscendC::DataCopyExtParams scalarOutputCopy{
             1, static_cast<uint32_t>(chunk.validRows * sizeof(float)),
             0, 0, 0};
+        // 初始 free 或上一组 C7 free。该旗只保护 workspace（context/payload）
+        // 的复用，本 stage 首个受保护的消费者是 MTE3 写，故 wait 从 stage
+        // 入口延期至此并换 PIPE_MTE3 味（FwdP-2）。
+        AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE3>(
+            kAicToAivSlotReusableFlagId[localSlot]);
         AscendC::Mutex::Lock<PIPE_MTE3>(mutex);
         AscendC::DataCopy(qContext, q,
             chunk.validRows * Shape::kHeadDim);
@@ -1403,6 +1409,11 @@ private:
             args_.workspace + slot + Workspace::kPayload +
             Workspace::kVBeta));
         const uint32_t rhsRows = chunk.validRows > 32 ? 64 : 32;
+        // C4 已一次性读完 B/X0/negX1/Akk。该旗只保护 workspace payload 的
+        // 原址换义，本 stage 首个受保护的消费者是 MTE3 写，故 wait 从
+        // stage 入口延期至此并换 PIPE_MTE3 味（FwdP-2）。
+        AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE3>(
+            kAicToAivSlotReusableFlagId[localSlot]);
         AscendC::Mutex::Lock<PIPE_MTE3>(mutex);
         const uint64_t out = HeadTensorOffset(
             args_.tiling, chunk, valueHead, Shape::kHeadDim);
