@@ -551,6 +551,49 @@ _EXTERNAL_BUILD_DONE = False
 _RUN_PACKAGE = None
 
 
+def _stable_build_enabled() -> bool:
+    """Whether to build the ABI-free Stable-ABI launcher.
+
+    On by default; ``FLA_NPU_BUILD_STABLE_ABI=0`` produces a pure-ctypes wheel
+    (no compiled launcher at all).
+    """
+
+    value = os.getenv("FLA_NPU_BUILD_STABLE_ABI", "TRUE")
+    return value.upper() not in {"0", "FALSE", "NO", "OFF"}
+
+
+def _build_stable_inplace():
+    """Compile libfla_npu_stable.so into the source package before staging.
+
+    The artifact is a plain shared library (no CPython module init), so it ships
+    as package data: no CPython ABI, and the wheel tag keeps the Python/ABI tags
+    free (``py3-none-<platform>``) even though the payload is platform-specific.
+    """
+
+    if not _stable_build_enabled():
+        return
+    out = FLA_NPU_PACKAGE_DIR / "libfla_npu_stable.so"
+    _run(
+        [
+            sys.executable,
+            str(TORCH_EXTENSION_DIR / "csrc" / "build_stable.py"),
+            "--no-debug-probe",
+            "--out",
+            str(out),
+        ],
+        TORCH_EXTENSION_DIR,
+    )
+    if not out.exists():
+        raise RuntimeError(f"libfla_npu_stable.so was not produced under {FLA_NPU_PACKAGE_DIR}")
+
+
+# Nothing in the default build pins the CPython or the libtorch C++ ABI: the
+# launcher ships as an ordinary data file.  Only the legacy torch extension
+# puts a compiled module in the wheel.
+_LEGACY_BUILD_ENABLED = _env_flag("FLA_NPU_BUILD_LEGACY_EXTENSION")
+_STABLE_BUILD_ENABLED = _stable_build_enabled()
+
+
 class FlaNpuBuildPy(_build_py):
     def run(self):
         global _EXTERNAL_BUILD_DONE, _RUN_PACKAGE
@@ -558,6 +601,7 @@ class FlaNpuBuildPy(_build_py):
             _check_build_environment()
             _RUN_PACKAGE = _build_run_package()
             _build_torch_extension_inplace()
+            _build_stable_inplace()
             _EXTERNAL_BUILD_DONE = True
 
         built_package_dir = Path(self.build_lib) / "fla_npu"
@@ -571,14 +615,26 @@ class FlaNpuBuildPy(_build_py):
             src = opp_env_src / name
             if src.exists():
                 shutil.copyfile(str(src), str(Path(self.build_lib) / name))
+        stable_so = FLA_NPU_PACKAGE_DIR / "libfla_npu_stable.so"
+        if _STABLE_BUILD_ENABLED and stable_so.exists():
+            shutil.copy2(
+                str(stable_so),
+                str(Path(self.build_lib) / "fla_npu" / stable_so.name),
+            )
 
 
 class BinaryDistribution(Distribution):
+    """Never pure: the payload is a host-specific launcher plus its OPP.
+
+    It pins a CPython/libtorch C++ ABI only when the legacy torch extension is
+    built, which is what ``has_ext_modules`` answers.
+    """
+
     def is_pure(self):
-        return True
+        return False
 
     def has_ext_modules(self):
-        return False
+        return _LEGACY_BUILD_ENABLED
 
 
 CMDCLASS = {"build_py": FlaNpuBuildPy}
@@ -588,10 +644,24 @@ if _bdist_wheel is not None:
     class FlaNpuBdistWheel(_bdist_wheel):
         def finalize_options(self):
             super().finalize_options()
-            self.root_is_pure = True
+            # Never pure: even without the legacy extension the payload holds a
+            # launcher built for this host plus the OPP it loads.  What the
+            # wheel should *not* claim is a CPython version, which get_tag()
+            # below takes care of.
+            self.root_is_pure = False
             build_tag = get_wheel_build_tag(REPO_ROOT)
             if build_tag:
                 self.build_number = build_tag
+
+        def get_tag(self):
+            python, abi, plat = super().get_tag()
+            if _LEGACY_BUILD_ENABLED:
+                return python, abi, plat
+            # py3-none-<platform>: one wheel per host platform and SoC instead
+            # of one per Python minor.  "any" is wrong twice over here -- pip
+            # would happily install an aarch64 payload on x86_64 and the .so
+            # would fail to load.
+            return "py3", "none", plat
 
         def run(self):
             super().run()
