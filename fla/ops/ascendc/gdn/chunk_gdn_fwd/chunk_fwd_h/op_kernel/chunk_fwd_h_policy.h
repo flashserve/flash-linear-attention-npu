@@ -41,10 +41,12 @@ constexpr uint32_t FWD_H_STATE_FP32_BYTES = FWD_H_K * FWD_H_V * sizeof(float);
 // AIC L1 固定布局。四个 W、四个 H/right、四个 kg 槽都按 roundHead 绑定，round 内不复用。
 constexpr uint32_t FWD_H_L1_W_BASE = 0;
 constexpr uint32_t FWD_H_L1_W_SLOT_BYTES = 16 * 1024;
+constexpr uint32_t FWD_H_L1_W_SLOT_ELEMS = FWD_H_L1_W_SLOT_BYTES / sizeof(bfloat16_t);
 constexpr uint32_t FWD_H_L1_H_RIGHT_BASE = 128 * 1024;
 constexpr uint32_t FWD_H_L1_H_RIGHT_SLOT_BYTES = 32 * 1024;
 constexpr uint32_t FWD_H_L1_KG_BASE = 256 * 1024;
 constexpr uint32_t FWD_H_L1_KG_SLOT_BYTES = 16 * 1024;
+constexpr uint32_t FWD_H_L1_KG_SLOT_ELEMS = FWD_H_L1_KG_SLOT_BYTES / sizeof(bfloat16_t);
 constexpr uint32_t FWD_H_L1_USED_BYTES = 320 * 1024;
 
 // 每个 AIV 的两个 local slot 固定为 64 KiB。P 使用低 32 KiB，Stage1 可在高 32 KiB

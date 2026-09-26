@@ -337,6 +337,39 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(WDoneEvent(wSlot));
     }
 
+    // W 装载头聚合（FwdH-3，R-Akk LoadGroupA 同构）：一条 Nd2Nz 以 ndNum=activeHeadCount
+    // 装载本轮全部头的 W。前置不变量（FwdHBuildHeadRange 保证）：本轮 head 的 hv 恒连续，
+    // GM 头间 stride 恒 seqlen*K 元素（dense/varlen 同式）；L1 槽按 roundHead 连续绑位、
+    // 槽距恒 16KiB。事件/槽位语义与逐头档逐拍一致：每槽各 wait/set 一次同一信用对，
+    // ComputeStage0Head 的逐头消费点不变。仅 HRatio==1（逐头独立 W）且 headCnt>1 时启用；
+    // 其余形状逐拍回退 LoadStage0W。
+    __aicore__ inline void LoadStage0WAgg(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk)
+    {
+        const uint32_t headCount = unit.headRound.activeHeadCount;
+        for (uint32_t slot = 0; slot < headCount; ++slot) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(WReadyEvent(slot));
+        }
+        AscendC::GlobalTensor<bfloat16_t> gmW;
+        gmW.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.w) +
+                            WOffset(unit, chunk, unit.headRound.heads[0]));
+        gmW.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+        if (chunk.validTokens < FWD_H_CHUNK) {
+            ClearL1(L1W(0), FWD_H_L1_W_SLOT_BYTES * headCount);
+        }
+        auto gmWLayout = tla::MakeLayout<bfloat16_t, LayoutW>(chunk.validTokens, FWD_H_K);
+        auto tensorW = tla::MakeTensor(gmW, gmWLayout, Catlass::Arch::PositionGM{});
+        auto blockW = tla::GetTile(tensorW, tla::MakeCoord(0, 0),
+                                   tla::MakeShape(chunk.validTokens, FWD_H_K));
+        auto tensorL1W = tla::MakeTensor(L1W(0), L1_W_LAYOUT, Catlass::Arch::PositionL1{});
+        CopyGmToL1AS0<decltype(blockW)> copyW;
+        copyW(tensorL1W, blockW, headCount,
+              static_cast<uint32_t>(static_cast<uint64_t>(args_.tiling.seqlen) * FWD_H_K),
+              FWD_H_L1_W_SLOT_ELEMS);
+        for (uint32_t slot = 0; slot < headCount; ++slot) {
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(WDoneEvent(slot));
+        }
+    }
+
     __aicore__ inline void LoadStage0H(
         const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk, const FwdHHeadBinding &head,
         uint32_t hSlot)
@@ -439,9 +472,19 @@ private:
         if (chunk.first && args_.tiling.useInitialState == 0) {
             return;
         }
+        // FwdH-3 门控：HRatio==1（逐头独立 W，KDA/等头数 GDN）且 headCnt>1 → 组聚合装载；
+        // headCnt==1 或 GVA（HRatio>1）逐拍回退原路径。
+        const bool wAggActive =
+            args_.tiling.kNumHead == args_.tiling.vNumHead &&
+            unit.headRound.activeHeadCount > 1;
+        if (wAggActive) {
+            LoadStage0WAgg(unit, chunk);
+        }
         for (uint32_t roundHead = 0; roundHead < unit.headRound.activeHeadCount; ++roundHead) {
             const FwdHHeadBinding &head = unit.headRound.heads[roundHead];
-            LoadStage0W(unit, chunk, head, head.roundHead);
+            if (!wAggActive) {
+                LoadStage0W(unit, chunk, head, head.roundHead);
+            }
             LoadStage0H(unit, chunk, head, head.roundHead);
             if (roundHead > 0) {
                 ComputeStage0Head(unit, chunk, unit.headRound.heads[roundHead - 1],
@@ -499,6 +542,72 @@ private:
             copy(tensorL1, blockGm);
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(WDoneEvent(slot));
+    }
+
+    // kg 装载头聚合（FwdH-3）：一条 Nd2Nz 以 ndNum=requiredKhCount 装载本轮全部 kg 槽。
+    // 前置不变量：kg 槽 0..requiredKhCount-1 按首用序绑定，对应 kh 恒连续整数（hv 连续 +
+    // groupSize 均匀的直接推论，含 SCALAR_G 的 GVA 形态），GM 槽间 stride 恒 seqlen*K 元素；
+    // L1 槽连续、槽距恒 16KiB。事件/槽位语义与逐头档逐拍一致（每槽一次信用对，
+    // firstConsumer/lastConsumer 消费/释放点不变）。仅 HRatio==1 且 requiredKhCount>1 时启用；
+    // 其余（含 GVA 的 HRatio>1）逐拍回退 LoadKg，readOnce/L2 策略随之原样。
+    __aicore__ inline void LoadKgAgg(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk)
+    {
+        const uint32_t khCount = unit.headRound.requiredKhCount;
+        for (uint32_t slot = 0; slot < khCount; ++slot) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(WReadyEvent(slot));
+        }
+        if (chunk.validTokens < FWD_H_CHUNK) {
+            ClearL1(L1Kg(0), FWD_H_L1_KG_SLOT_BYTES * khCount);
+        }
+        const FwdHKgBinding binding0 = FwdHBuildKgBinding(unit.headRound, 0);
+        AscendC::GlobalTensor<bfloat16_t> gmKg;
+        const uint64_t offset = FwdHKOffset(args_.tiling, unit.sequence.physicalBatch,
+                                            binding0.kh, chunk.tokenBegin);
+        gmKg.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.k) + offset);
+        bool readOnce = true;
+        if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
+            const uint32_t groupSize = static_cast<uint32_t>(args_.tiling.vNumHead) /
+                                       static_cast<uint32_t>(args_.tiling.kNumHead);
+            const uint32_t unitBegin = unit.headRound.heads[0].hv;
+            const uint32_t unitEnd = unitBegin + unit.headRound.activeHeadCount;
+            for (uint32_t slot = 0; slot < khCount; ++slot) {
+                const FwdHKgBinding binding = FwdHBuildKgBinding(unit.headRound, slot);
+                const uint32_t groupBegin = binding.kh * groupSize;
+                if (unitBegin > groupBegin || unitEnd < groupBegin + groupSize) {
+                    readOnce = false;
+                    break;
+                }
+            }
+        }
+        if (readOnce) {
+            gmKg.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+        }
+        if constexpr (!STATE_V_FIRST) {
+            auto gmLayout = tla::MakeLayout<bfloat16_t, LayoutLeftS2>(FWD_H_K, chunk.validTokens);
+            auto tensorGm = tla::MakeTensor(gmKg, gmLayout, Catlass::Arch::PositionGM{});
+            auto blockGm = tla::GetTile(tensorGm, tla::MakeCoord(0, 0),
+                                        tla::MakeShape(FWD_H_K, chunk.validTokens));
+            auto tensorL1 = tla::MakeTensor(L1Kg(0), L1_LEFT_S2_LAYOUT,
+                                            Catlass::Arch::PositionL1{});
+            CopyGmToL1AS2<decltype(blockGm)> copy;
+            copy(tensorL1, blockGm, khCount,
+                 static_cast<uint32_t>(static_cast<uint64_t>(args_.tiling.seqlen) * FWD_H_K),
+                 FWD_H_L1_KG_SLOT_ELEMS);
+        } else {
+            auto gmLayout = tla::MakeLayout<bfloat16_t, LayoutRightS2>(chunk.validTokens, FWD_H_K);
+            auto tensorGm = tla::MakeTensor(gmKg, gmLayout, Catlass::Arch::PositionGM{});
+            auto blockGm = tla::GetTile(tensorGm, tla::MakeCoord(0, 0),
+                                        tla::MakeShape(chunk.validTokens, FWD_H_K));
+            auto tensorL1 = tla::MakeTensor(L1Kg(0), L1_RIGHT_S2_LAYOUT,
+                                            Catlass::Arch::PositionL1{});
+            CopyGmToL1BS2<decltype(blockGm)> copy;
+            copy(tensorL1, blockGm, khCount,
+                 static_cast<uint32_t>(static_cast<uint64_t>(args_.tiling.seqlen) * FWD_H_K),
+                 FWD_H_L1_KG_SLOT_ELEMS);
+        }
+        for (uint32_t slot = 0; slot < khCount; ++slot) {
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(WDoneEvent(slot));
+        }
     }
 
     __aicore__ inline void LoadRight(
@@ -633,8 +742,16 @@ private:
                                      bool stage0Ran)
     {
         // Stage2：g-only 计算 D_c=k_raw_c^T@V_new_g；gk-only 计算 D_c=kg_c^T@V_new。
-        for (uint32_t kgSlot = 0; kgSlot < unit.headRound.requiredKhCount; ++kgSlot) {
-            LoadKg(unit, chunk, FwdHBuildKgBinding(unit.headRound, kgSlot));
+        // FwdH-3 门控：HRatio==1 且 requiredKhCount>1 → kg 组聚合装载；其余逐拍回退逐头档。
+        const bool kgAggActive =
+            args_.tiling.kNumHead == args_.tiling.vNumHead &&
+            unit.headRound.requiredKhCount > 1;
+        if (kgAggActive) {
+            LoadKgAgg(unit, chunk);
+        } else {
+            for (uint32_t kgSlot = 0; kgSlot < unit.headRound.requiredKhCount; ++kgSlot) {
+                LoadKg(unit, chunk, FwdHBuildKgBinding(unit.headRound, kgSlot));
+            }
         }
         for (uint32_t roundHead = 0; roundHead < unit.headRound.activeHeadCount; ++roundHead) {
             const FwdHHeadBinding &head = unit.headRound.heads[roundHead];
