@@ -123,9 +123,15 @@ ctypes 解耦通路，与 aclnn 直调取数程序共用同一份输入与 CPU �
 | `pos_14_fp16_inputs`（fp16） | 6.506e-04 | 6.721e-04 | PASS |
 | `pos_15_head_contiguous_partition`（96 head 多 task） | 4.321e-03 | 4.356e-03 | PASS |
 
-数值与 aclnn 直调口径逐项一致（同一份源码）。A2 / ascend910b 上同口径复核尚未通过：稳定入口在
-`GetWorkspaceSize` 阶段报 `InitTilingParseCtx failed ... compile info not contain [_pattern]`，而同一安装包用
-aclnn 直调时正常（16/16），需要继续定位 A2 上 ctypes 通路与 aclnn 直调在 OPP/tiling 环境上的差异。
+数值与 aclnn 直调口径逐项一致（同一份源码）。A2 / ascend910b 同口径复核也是 **6/6 PASS**
+（`pos_01` 5.521e-03 / 7.169e-03、`pos_03` 5.068e-03 / 5.442e-03、`pos_04` 6.301e-03 / 6.572e-03、
+`pos_05` 3.724e-03 / 4.519e-03、`pos_14` 7.124e-04 / 7.043e-04、`pos_15` 4.321e-03 / 4.357e-03）。
+
+环境要点（复现该入口时容易踩）：稳定入口要求 custom OPP 指向**本算子 run 包的安装目录**
+（`<install>/vendors/<vendor>`，同时把 `FLA_NPU_ENV` 指向该目录的 `set_env.bash`）。把 OPP
+**复制**到别处再用会在 A2 上解析不到 tiling compile-info（`InitTilingParseCtx failed ...
+compile info not contain [_pattern]`），从而在 `GetWorkspaceSize` 报 `aclnnStatus=161001`；
+指回原安装目录即恢复正常。
 
 - `dhm` 为 FP32，但**链上状态按设计用模型 dtype 传递**（`Pc`/`PBf`/`dHBf` 为 bf16 或 fp16），因此绝对误差随
   序列长度放大（例如 32 chunk 用例 `max_abs` 可达 5.7e28）。判据采用**相对参考幅值**：
