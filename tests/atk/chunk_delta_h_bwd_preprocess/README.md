@@ -43,7 +43,8 @@ python tests/atk/chunk_delta_h_bwd_preprocess/reference.py
 3. 逐用例比较 `dhm`，并单独抽出 `dV_pre`、`T1`、`dV̂'`、`inc`、`dH`、`P_c`、`P` 与参考实现比对，
    用于区分"公式错误"与"ready/free 缺边导致的旧值/新值混用"；
 4. 覆盖 A2/A3/A5 三条平台与 `USE_G`/`USE_GK`/无门控、dense/varlen、尾块、GVA、`K=64/128/256`；
-5. 反向用例只验证拦截：`g`/`gk` 同时非空、`K>256`、`Hv%Hk!=0`、`B>1`、`chunk_size!=64`。
+5. 反向用例只验证拦截：`g`/`gk` 同时非空、`K != 128`（64/256/512）、`V != 128`（96）、`Hv%Hk!=0`、
+   `B>1`（dense/varlen）、`chunk_size!=64`、`g` shape 不匹配、`gk` FP32、`cu_seqlens` 过短、空 tensor。
 
 ### 一键执行（设备侧）
 
