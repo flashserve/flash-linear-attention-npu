@@ -4,7 +4,14 @@
  * 注意事项：
  *   1. 本文件是**必需件**，不是可选件：每个算子的模板参数与实例都写在这里，host 侧用
  *      GET_TPL_TILING_KEY 生成 key，kernel 入口按模板参数实例化；不允许用"单实例 + 运行期分支"代替。
- *   2. TORCH_MODE 之外才 include template_argument.h：该头只在算子编译环境存在。
+ *   2. template_argument.h 与 `ASCENDC_TPL_*` 只在"算子正常编译环境"存在，因此用
+ *      `FLA_TORCH_EXTENSION_INLINE_BUILD` 这一**按场景命名**的编译路径开关来跳过它们：
+ *        该开关表示"算子源码被 torch 扩展以源码形式内联编译"（如 fast kernel launch 例子），
+ *        此时 CANN host 侧 tiling 框架头与 torch_npu 的 ge_error_codes.h 冲突、且入口由外部提供。
+ *      不要用 `TORCH_MODE` 这类泛化负向宏：名字会让人误以为"torch_custom 构建会定义它"
+ *      （实际仓内只有 `examples/fast_kernel_launch_example/CMakeLists.txt` 定义），而且
+ *      `#ifndef` 的默认分支会依赖一个本仓常规构建里根本不出现的符号。
+ *      若将来"跳过框架头"与"入口由外部提供"需要独立控制，再按用途各拆一个宏，不要继续复用泛化名。
  *   3. 模板参数顺序 = ASCENDC_TPL_ARGS_DECL 声明顺序 = GET_TPL_TILING_KEY 实参顺序，
  *      任何一处不一致都会选到错误实例（编译通过、结果错）。
  *   4. 实例枚举用宏逐层展开（参照本文件的 _SEL_* 分层），不要手抄笛卡尔积：漏实例会落到
@@ -21,9 +28,9 @@
 #ifndef OP_NAME_TILING_KEY_H
 #define OP_NAME_TILING_KEY_H
 
-#ifndef TORCH_MODE
+#if !defined(FLA_TORCH_EXTENSION_INLINE_BUILD)
 #include "ascendc/host_api/tiling/template_argument.h"
-#endif
+#endif // FLA_TORCH_EXTENSION_INLINE_BUILD
 
 // 命名空间规则：kernel 侧统一用**算子类别目录名**的 PascalCase（与 archXX 实现、common.h 一致）。
 //   真实例：fla/ops/ascendc/gdn/... → namespace GDN
@@ -48,7 +55,7 @@ namespace OpsClassify {
 #define OP_NAME_TPL_OUTPUT_NONE 0
 #define OP_NAME_TPL_OUTPUT_SAVE 1
 
-#ifndef TORCH_MODE
+#if !defined(FLA_TORCH_EXTENSION_INLINE_BUILD)
 ASCENDC_TPL_ARGS_DECL(OpName,
     ASCENDC_TPL_DTYPE_DECL(D_T_X, OP_NAME_TPL_BF16, OP_NAME_TPL_FP16),
     ASCENDC_TPL_DTYPE_DECL(D_T_G, OP_NAME_TPL_BF16, OP_NAME_TPL_FP32),
@@ -90,7 +97,7 @@ ASCENDC_TPL_SEL(
 #undef OP_NAME_SEL_STATE
 #undef OP_NAME_SEL_MODE
 #undef OP_NAME_SEL_ONE
-#endif // TORCH_MODE
+#endif // FLA_TORCH_EXTENSION_INLINE_BUILD
 
 } // namespace OpsClassify
 

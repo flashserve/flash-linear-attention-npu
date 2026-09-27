@@ -24,6 +24,10 @@
  *      共用一个：真实例 `fla/ops/ascendc/gdn/...` → `namespace GDN`；本示例类别占位符是 `ops_classify`
  *      （实际替换为 gdn / kda 一类类别名）→ `namespace OpsClassify`。不要另起 OpNameNs 这类第二命名空间；
  *      host 侧仍按框架用 `ops`/`optiling`，两边靠 TPL 宏 token 取值与 TilingData 字段对齐。
+ *   9. 入口用 `FLA_TORCH_EXTENSION_INLINE_BUILD` 这一**按场景命名**的编译路径开关保护，而不用
+ *      `TORCH_MODE`：后者名字泛化（会被误读成"torch_custom 构建"）、是负向判断（常规 CANN/OPP
+ *      构建不定义它，默认分支依赖一个仓内正常构建不出现的符号），且一个开关同时承担
+ *      "跳过框架头"与"入口由外部提供"两件事。开关由构建侧显式定义，语义写在定义它的构建脚本里。
  */
 
 #include "kernel_operator.h"
@@ -54,7 +58,7 @@ struct DTypeTraits<OP_NAME_TPL_FP32> { using type = float; };
 
 } // namespace OpsClassify
 
-#ifndef TORCH_MODE
+#if !defined(FLA_TORCH_EXTENSION_INLINE_BUILD)
 template <int D_T_X, int D_T_G, uint32_t NORM_MODE, bool USE_STATE, uint32_t OUTPUT_MODE>
 __global__ __aicore__ void op_name(
     GM_ADDR x, GM_ADDR g, GM_ADDR a_log, GM_ADDR initial_state,
@@ -96,4 +100,4 @@ __global__ __aicore__ void op_name(
         OpsClassify::ProcessOpNameVector(vecCtx);
     }
 }
-#endif
+#endif // FLA_TORCH_EXTENSION_INLINE_BUILD

@@ -321,6 +321,17 @@ add_ops_compile_options(
    "算子私有"命名空间；host 侧仍按框架用 `ops`（`_def.cpp`）、`optiling`（tiling），`l0op` 是 L0
    内部接口命名空间，与类别命名空间不是一回事。两边靠 TPL 宏 token 取值一致与 TilingData 字段
    逐一对应保持对齐（host 侧用 `static_assert` 钉住档位取值）。
+8. **编译路径开关按场景命名，不用泛化负向宏**：只有算子源码被 torch 扩展以源码形式内联编译时
+   （`examples/fast_kernel_launch_example` 这类场景），才需要跳过 CANN host 侧 tiling 框架头与
+   `__global__` 入口，写 `#if !defined(FLA_TORCH_EXTENSION_INLINE_BUILD)` 并在定义开关的构建脚本
+   与使用处各写一次"定义它意味着什么"。不要用 `TORCH_MODE` 这类宏：
+   - 名字泛化，会被误读为"torch_custom / torch_npu 适配构建会定义它"，而仓内只有
+     `examples/fast_kernel_launch_example/CMakeLists.txt` 定义；
+   - `#ifndef` 是负向默认：常规 CANN/OPP 构建不定义它，默认分支的正确性依赖一个仓内正常构建不出现的
+     符号，任意构建系统误定义就会静默丢掉入口与 TPL 声明（未必当场编译报错）；
+   - 一个开关同时承担"跳过框架头（避免 `graph/error_codes.h` 与 torch_npu 的 `ge_error_codes.h` 冲突）"
+     与"入口由外部提供"两件不同的事，任一约束变化都会误伤另一处。
+   存量使用 `TORCH_MODE` 的算子按场景命名统一迁移并同步构建脚本；同一算子不允许两套开关并存。
 
 ### 4.2 TilingKey 与模板参数
 

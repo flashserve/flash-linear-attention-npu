@@ -93,3 +93,6 @@ arch22 无 VF 通路，用同名函数 + 普通向量指令，差异写在平台
   UB/L1/L0 布局常量（与文件头布局表逐行对应）。
 - 事件生命周期固定：`Init<角色>` 里按 slot `AllocEventID` 并 `SetFlag` 开首轮，`Process<角色>` 末尾
   统一闭环后 `ReleaseEventID`；示例的 `CloseAndReleaseEvents()` 就是这一段。
+- 编译路径开关用按场景命名的 `FLA_TORCH_EXTENSION_INLINE_BUILD`（算子源码被 torch 扩展内联编译时
+  由构建侧定义，此时跳过 host tiling 框架头与 `__global__` 入口），不用泛化负向宏 `TORCH_MODE`：
+  后者名字会被误读成"torch_custom 构建"，且 `#ifndef` 让默认分支依赖一个仓内常规构建不出现的符号。
