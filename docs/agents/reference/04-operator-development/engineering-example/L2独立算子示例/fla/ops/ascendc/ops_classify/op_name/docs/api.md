@@ -89,5 +89,20 @@ schema，原地契约只靠 `MUTATED_ARGUMENTS` 兜底；契约回归见 `tests/
 | 返回码 | 触发条件 |
 | --- | --- |
 | `ACLNN_ERR_PARAM_NULLPTR` | `x`、`g`、`yOut` 为空 |
-| `ACLNN_ERR_PARAM_INVALID` | `D != 128`；`chunk_size` 非 64/128；`epsilon <= 0`；`score` 非正；`cu_seqlens` 首元素非 0 / 非单调 / 末元素与总 token 数不符；`chunk_indices` 未与 `cu_seqlens` 同时给出；输出指针组合不是 `none`/`save` |
+| `ACLNN_ERR_PARAM_INVALID` | dtype 不在当前平台支持列表内（见下表）；输出 dtype 与输入跟随关系不符；`D != 128`；`chunk_size` 非 64/128；`epsilon <= 0`；`scale` 非正；`cu_seqlens` 首元素非 0 / 非单调 / 末元素与总 token 数不符；`chunk_indices` 未与 `cu_seqlens` 同时给出；输出指针组合不是 `none`/`save` |
 | `ACLNN_ERR_INNER_NULLPTR` | 内部张量或 workspace 申请失败 |
+
+## dtype 契约（按平台校验）
+
+允许列表随平台变化，L2 用 `GetCurrentPlatformInfo().GetCurNpuArch()` 取当前平台的列表后再逐张量校验；
+报错要说明"哪张张量、允许哪些 dtype、实际是什么"。
+
+| 张量 | A2/A3 | A5 |
+| --- | --- | --- |
+| `x`、`y` | BF16 / FP16 | BF16 / FP16 |
+| `g` | BF16 | BF16 / FP32 |
+| `a_log` | FP32 | FP32 |
+| `initial_state` / `state` | 与 `x` 同 dtype | 与 `x` 同 dtype |
+| `x_norm` | FP32 | FP32 |
+
+`CheckParams` 的校验顺序：① 必选指针非空 → ② attr 合法性 → ③ 可选输出指针组合 → ④ dtype → ⑤ shape。

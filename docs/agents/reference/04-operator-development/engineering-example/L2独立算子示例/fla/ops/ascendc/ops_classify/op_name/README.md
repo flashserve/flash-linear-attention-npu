@@ -60,3 +60,5 @@ state = 每个 chunk 末尾的 scan                   # 可选导出
 3. 变长输入要求 `B=1`，且 `cu_seqlens`/`chunk_indices` 必须成对出现。
 4. `a_log` 为空时 `scale` 直接作为门控系数；非空时先算 `exp(a_log)`。
 5. SoC 支持：A2（`ascend910b`）、A3（`ascend910_93`）、A5（`ascend950`），三个平台共用同一公开原型。
+6. dtype 支持列表按平台校验（示例约定：`g` 在 A5 支持 BF16/FP32，在 A2/A3 只支持 BF16），
+   完整列表与返回码见 [`docs/api.md`](docs/api.md)；不匹配时在参数校验阶段返回 `ACLNN_ERR_PARAM_INVALID`。

@@ -18,6 +18,9 @@
  *      scratch。头文件注释要写明该开关的默认值与含义（参考 aclnn_recurrent_kda.h 的 inplaceFinalState）。
  *   8. 连续性契约：头文件注释与 docs/api.md 要写明每个输入"要求连续"还是"支持 stride"；
  *      state 类输入属于后者（非连续时用 `CreateView`，不要连续化），否则原地写回与 host 侧性能都会出问题。
+ *   9. dtype 契约：每个输入/输出支持的 dtype 列表要写进头文件与 docs/api.md；**允许列表可能随平台不同**
+ *      （L2 用 `GetCurrentPlatformInfo().GetCurNpuArch()` 取当前平台的支持列表再校验），
+ *      dtype 不匹配返回 `ACLNN_ERR_PARAM_INVALID`，报错说明哪张张量、允许哪些 dtype、实际是什么。
  */
 
 #ifndef OP_API_INC_ACLNN_OP_NAME_H

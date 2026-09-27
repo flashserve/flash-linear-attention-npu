@@ -243,6 +243,14 @@ add_ops_compile_options(
 4. 返回码只允许 `ACLNN_ERR_PARAM_INVALID`（用户参数）、`ACLNN_ERR_INNER_NULLPTR`/`ACLNN_ERR_INNER_*`（内部失败）
    两类，并与 `docs/api.md` 的"返回值"章节逐条对齐。
 5. V1 与 V2 共用同一份参数校验与输出指针语义；重复代码只允许出现在参数表本身，语义必须集中在一处。
+6. 参数校验按固定顺序执行，前一步通过后再做下一步，报错才会指向真实原因：
+   ① 必选入参/输出指针非空 → ② attr 属性合法性（取值域与相互约束）→ ③ 可选输出指针组合合法性
+   → ④ dtype 合法性 → ⑤ 输入输出 shape 合法性。
+7. dtype 必须逐张量校验，且**允许列表按平台取**：不同 SoC 的实现支持的数据类型可能不同，
+   用 `GetCurrentPlatformInfo().GetCurNpuArch()` 取当前平台的支持列表（参考
+   `aclnn_chunk_gated_delta_rule_fwd.cpp` 的平台分支、`aclnn_recurrent_kda.cpp` 的
+   `*_TYPE_SUPPORT_LIST` + `OP_CHECK_DTYPE_NOT_SUPPORT`）；输出与输入的 dtype 跟随关系
+   （例如 `y` 跟随 `x`、中间量固定 FP32）也在这一层校验。报错要说明"哪张张量、允许哪些 dtype、实际是什么"。
 
 ### 3.5 host 侧平台分支
 
