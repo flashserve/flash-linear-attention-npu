@@ -513,6 +513,12 @@ add_ops_compile_options(
 
 ### 6.1 `tests/atk/<算子>/` 交付要求
 
+**新增算子的 ATK 用例工程按 ATK 仓的 `skill/atk-quality-guard` 要求组织**（`test_<算子>.yaml` 声明参数空间、
+`<算子>_constraint.py` 只做修正、`execute_<算子>.py` 按 device 分支、用例 JSON 由 `atk case` 生成到 `result/`、
+Phase C 产出 `test_case_design_report.md`）；该 skill 的 NEVER 清单（禁止 `range: [1,N]`、小数写 `1.0e-5`、
+`dtype_numbers` 先占位 `1`、禁止在 constraint 里定义参数范围、禁止修改算子源码）同样适用于本仓。
+本仓原有的 `<算子>.yaml` + `gen_<算子>.py` + `executor_<算子>.py` 命名属历史形态，新增算子不要混用两套命名。
+
 1. 必备文件：`README.md`、`atk_<算子>.json`、`atk_<算子>_perf.json`、`atk_<算子>_mss.json`、`<算子>.yaml`、
    `gen_<算子>.py`、`executor_<算子>.py`，可选 `scripts/`。
 2. 三份 JSON 来源不同、不能互相替代：精度用例来自生成器筛选补充；性能用例来自用户模型 case；

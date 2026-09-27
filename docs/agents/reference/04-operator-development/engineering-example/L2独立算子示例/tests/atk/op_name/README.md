@@ -1,24 +1,32 @@
 <!--
 示例文件：tests/atk/op_name/README.md
 
+规范来源：ATK 仓 skill/atk-quality-guard（SKILL.md、references/op-engineering.md、
+references/atk_user_guide.md、templates/test_case_design_report.md）
+
 注意事项：
-  1. 每个算子一个 ATK 目录，必备：README.md、atk_<算子>.json、atk_<算子>_perf.json、
-     atk_<算子>_mss.json、<算子>.yaml、gen_<算子>.py、executor_<算子>.py；可选 scripts/。
-  2. 三份 JSON 来源不同、不能互相替代：精度用例来自 gen 生成后筛选补充；性能用例来自用户模型 case；
-     _mss.json 按全部可达 TilingKey 人工构造（每个 key 至少一条）。
-  3. 本 README 必须建三类映射：逻辑分支 -> 精度 case id、模型 case -> 性能 case id、
-     TilingKey -> _mss case id，并在"实际选择证据"列写 host tiling UT 或运行时记录。
-  4. 精度只用 ATK 原生判据：`--task accuracy` + yaml 的 mixed_tolerance_bm，不在 executor 里自造阈值；
-     反向/异常用例用 `--task run` + case 里的 expected_return_code。
-  5. 环境准备、统一脚本、执行阶段见 tests/atk/README.md；本文件只写本算子的输入限制与覆盖结论。
-  6. 不提交 atk_output/、result/、xlsx、profiling/sanitizer 日志。
-  7. 原地（in-place）形态：控制写回的开关（如 inplace_final_state / output_mode）必须在用例里显式覆盖
-     两档——写回档校验调用方张量被更新且返回值与被写回的是同一张量；不写回档校验调用方张量逐位不变、
-     结果由返回值承载。`requires_grad=True` 被拒绝、version counter 推进这类契约属于调用层回归，
-     放在 `tests/stable_abi/regression_mutation_contract.py`，不在 ATK 里重复。
+  1. 用例工程按算子建目录，目录/文件名用 snake_case；三个源文件命名固定：
+     test_<op>.yaml（参数空间）、<op>_constraint.py（约束修正）、execute_<op>.py（执行插件）。
+  2. YAML 只声明参数空间，constraint 只做修正；不要把 dtype 列表、shape 取值、attr 候选写进 constraint。
+  3. 用例 JSON 是 `atk case` 的产物，默认落在执行目录下的
+     result/<yaml 名>/json/all_<yaml 名>.json；不要手写 JSON，也不要拿旧 JSON 当本次结果。
+  4. 精度失败不要改判、不要动算子源码：先区分"用例设计问题"与"算子实现问题"（精度问题报算子开发人员）。
+  5. 本 README 只写本算子的输入限制、约束清单、覆盖结论与验收记录；通用要求以 skill 与 ATK 仓文档为准。
+  6. 不提交 atk_output/、result/、xlsx、profiling/sanitizer 日志等测试产物（固化用例 JSON 除外）。
 -->
 
-# OpName ATK 工程（示例骨架）
+# OpName ATK 工程（示例）
+
+## 文件职责
+
+| 文件 | 职责 | 规范要点 |
+| --- | --- | --- |
+| `test_op_name.yaml` | 声明参数空间：dtypes 候选、`shapes.dim_values` 离散取值、`ranges`、`random_types`、attr 候选值、`reduction` | `dim_values` 必须用 `values` 列表（禁止 `range`）；小数写 `1.0e-5`；`dtype_numbers` 先填占位 `1`；`standard.acc: mixed_tolerance_bm_v2`；`shape_distributions: [[0, 1.0]]` |
+| `op_name_constraint.py` | 把随机参数修正到不触发算子硬校验的合法范围（dtype / shape / attr） | 注册名 = YAML `generate`；每条 C++ assert 一条修正；维度索引精确；int32 溢出看护用 `OVERFLOW_GUARD_ENABLED` 保留溢出档位 |
+| `execute_op_name.py` | 执行插件：按 `self.device` 分支，NPU 走真实入口、CPU 走 PyTorch golden | 注册名 = YAML `api_type`；CPU golden 低精度先转 fp32 再 cast 回；只返回 `with_output=True` 时的结果 |
+| `result/test_op_name/json/all_test_op_name.json` | `atk case` 生成的用例（不提交到本示例目录，路径仅作说明） | 生成后先核对日志里的 `save case json file:`，避免误用旧 JSON |
+| `test_case_design_report.md` | Phase C 用例设计覆盖评估报告（8 维度，结论前置） | 基于 skill 模板生成，占位符全部替换；降级模式下填设计值并标注 |
+| `atk_op_name.json` / `_perf.json` / `_mss.json` | 本仓附加要求：把生成并筛选后的用例固化成三份（精度 / 性能 / 内存检测），来源不同、不可互相替代 | 精度来自 `atk case` 产物筛选补充；性能来自用户模型 case；`_mss.json` 按全部可达 TilingKey 人工构造 |
 
 ## 输入限制
 
@@ -27,58 +35,32 @@
 | 项 | 取值 |
 | --- | --- |
 | layout | `BSND` / `BNSD` / `TND` / `NTD`（只解释输入） |
-| dtype | `x` BF16/FP16；`g` BF16/FP32 |
-| D | 只支持 128 |
+| dtype | `x` BF16/FP16；`g` A5 支持 BF16/FP32、A2/A3 只支持 BF16 |
+| D | 只支持 128（约束生成器只改末维，不外推） |
 | chunk_size | 64 / 128 |
-| 变长 | 需要 `cu_seqlens` + `chunk_indices`，从 0 开始、单调不减、末元素等于总 token 数 |
-| output_mode | `0`（none）/ `1`（save），由用例显式指定 |
-| 原地开关 | 若算子声明写回 state（`inplace_final_state` 之类），用例必须同时覆盖"写回"与"不写回"两档，并在 README 里写出对应 case id |
+| 变长 | `cu_seqlens` + `chunk_indices` 必须成对；`cu_seqlens` 从 0 开始、单调不减、末元素等于总 token 数 |
+| 原地开关 | 若算子声明写回 state，用例必须同时覆盖"写回"与"不写回"两档，并在此写出对应 case id |
 
-## 精度拓扑
+## 最小工作顺序（按 skill）
 
-```text
-ATK accuracy task
-|-- CPU FP64 golden（executor 的 run_cpu 路径，输出转 FP32）
-`-- NPU DUT（fla_npu.ops.ascendc.op_name）
-```
+1. 读算子源码/文档，提取 shape、dtype、attr 约束，产出**约束清单表格**（来源标注到 C++ 源码）。
+2. 写 `test_op_name.yaml`，只声明候选空间。
+3. 写 `op_name_constraint.py`，每条约束一条修正。
+4. `python -c "import atk; print(atk.__version__)"` 检测 ATK 可用性；可用则先 dry-run：
+   `timeout 60 atk case -f test_op_name.yaml -p op_name_constraint.py -dt 1 -en 2`，通过后回填 `dtype_numbers` 正式生成。
+5. 生成后检查前几条 JSON，再用 `atk pytorch ... --task accuracy`（或 `atk node -b cpu task`）做冒烟。
+6. Phase C：按模板产出 `test_case_design_report.md`，8 维度逐项填满后再决定是否进入 Phase B。
 
-CPU 标杆、输入生成方式和混合容差在校准记录里固化；本文件只记录用例规模与覆盖。精度标准只使用
-`<算子>.yaml` 里的 `cv_fused_double_benchmark` 配置。
+检查点：约束清单齐全（每条有 constraint 对应）→ YAML 语法/字段合法 → dry-run 通过 → JSON 路径确认 → 精度报告生成 → 覆盖报告 8 维度无占位符。
 
-## 文件职责
+## 与本仓 tests/atk/README.md 现状的差异
 
-| 文件 | 必须写什么 |
+| 本示例（ATK skill 要求） | 仓内既有算子（历史命名） |
 | --- | --- |
-| `atk_op_name.json` | 逻辑分支覆盖用例：每个 layout、每个 dtype 组合、chunk 64/128、fixed/varlen、tail/partial、`output_mode` 两档、负向用例（非法 chunk_size、D≠128、只给一个可选输出） |
-| `atk_op_name_perf.json` | 用户模型 case，保留原始 shape/dtype/属性；只跑 NPU，不做精度对比 |
-| `atk_op_name_mss.json` | 按全部可达 TilingKey 构造；每个 key 至少一条，覆盖 slot 复用与 Save 档搬出路径 |
-| `op_name.yaml` | ATK 生成配置，shape/dtype 必须满足算子 README 与 tiling 校验 |
-| `gen_op_name.py` | 生成精度候选用例（不生成 perf/mss） |
-| `executor_op_name.py` | `build_inputs`、CPU 标杆、`run_cpu`、`run_npu`、`FunctionApi` |
+| `test_<op>.yaml` | `<op>.yaml` |
+| `<op>_constraint.py` | `gen_<op>.py` |
+| `execute_<op>.py` | `executor_<op>.py` |
+| 参数空间写在 YAML（`dim_values`/`ranges`/`random_types`/attr 候选） | 部分算子把参数空间放在 case_spec 里由生成器展开 |
+| 用例 JSON 由 `atk case` 生成到 `result/` | 固化 `atk_<op>.json` 等三份 JSON |
 
-本目录同时给出三份 JSON 的最小示例（每个文件只放 1–2 条用例，真实交付需要按上表补全覆盖）：
-`atk_op_name.json`（精度，2 条结构分支）、`atk_op_name_perf.json`（模型 case，1 条）、
-`atk_op_name_mss.json`（按档位/TilingKey，2 条）。生成后再按分支映射筛选、补充边界与异常用例。
-
-异常/负向用例的表达方式跟随相邻算子（`tests/atk/README.md`「测试动作」与各自 executor 的判定），
-本示例不额外发明字段。
-
-## TilingKey 覆盖表（示例，需按实际实现填写并给出证据）
-
-| TilingKey 场景 | 选择条件 | 精度普通用例 | 精度边界用例 | `_mss.json` 用例 | 适用 SoC | 实际选择证据 |
-| --- | --- | --- | --- | --- | --- | --- |
-| bf16 × fp32 × none | `x=BF16, g=FP32, output_mode=0` | `case_0` | `case_17`（tail） | `case_200` | A2/A3/A5 | host tiling UT + 运行时打印 tilingKey |
-| bf16 × fp32 × save | 同上，`output_mode=1` | `case_3` | `case_19`（varlen） | `case_201` | A2/A3/A5 | 同上 |
-| ... | `fp16 × bf16 × ...` 等其余组合 | ... | ... | ... | ... | ... |
-
-## 验收结果记录（示例，跑完填写）
-
-| 项 | 内容 |
-| --- | --- |
-| 被测版本 | 算子/适配层 commit 与 OPP 安装包版本 |
-| 目标 SoC | A2 / A3 / A5（分别记录） |
-| 精度 | 用例总数、执行成功数、失败数、失败分类（ERROR / 数值 / 无效区 / 标杆语义） |
-| 确定性 | 重复次数与逐位比较结论 |
-| 内存检查 | mssanitizer 工具、是否命中 sanitizer 版本 kernel、结论 |
-| 性能 | 模型 case → 基线/目标/实测/比值/结论（逐 case，不用平均值掩盖） |
-| 回归 | 本次改动涉及的原有场景及其结论 |
+新增算子按本示例（skill）执行；存量算子的命名与用例包结构待仓库统一后再批量迁移，迁移前不要混用两套命名。

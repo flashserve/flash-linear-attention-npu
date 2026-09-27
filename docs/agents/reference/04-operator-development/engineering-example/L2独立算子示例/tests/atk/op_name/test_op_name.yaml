@@ -1,0 +1,175 @@
+# 示例文件：tests/atk/op_name/test_op_name.yaml
+# 规范来源：ATK 仓 skill/atk-quality-guard（SKILL.md、references/atk_user_guide.md、references/experimental_standard.md）
+#
+# 注意事项：
+#   1. YAML 只声明**参数空间**：dtypes 候选、shape 维度值列表、值域范围、attr 候选值、分布配置。
+#      把非法参数修正到合法范围是 `op_name_constraint.py` 的事；**禁止在 constraint 里定义参数范围**
+#      （否则 YAML 形同空壳、泛化性差）。
+#   2. `dim_values` 必须写成 `values` 离散列表（2^n 与 2^n-1 边界对，覆盖 tiling 切分边界），
+#      **禁止 `range: [1, N]`**：ATK 按笛卡尔积展开会爆炸甚至生成卡死。
+#   3. 小数值禁止写 `1e-5`，必须写 `1.0e-5`（YAML 会把 `1e-5` 解析成字符串）。
+#   4. `dtype_numbers` 在步骤 3a 只写占位值 `1`，步骤 4 按约束清单回填（经验量级见 skill，按
+#      dtype 等价类数 × shape × attr 组合调整）。
+#   5. 精度标准固定为 `mixed_tolerance_bm_v2`（每次任务都要读 experimental_standard.md 的最新版本，
+#      不要依赖记忆或历史数值）。
+#   6. schema 是 `extra='forbid'`：只写本文件出现过的字段；乱写字段会直接 ValidationError。
+#   7. `boundary` 只用于 tensor 类型；attr/scalar 不要写 `boundary`。
+#   8. `dim_numbers` 按算子**实际处理的维度 index** 取值（本算子按 ND 处理 rank-4 输入），
+#      不按"声明支持的最大维度"取值。
+name: op_name
+api: pytorch
+api_type: op_name_execute        # 必须与 execute_op_name.py 的 @register 名称一致
+aclnn_name: OpName               # 跑 atk aclnn / pyaclnn 时必须填写（不写 acl 前缀时 ATK 自动补 aclnn）
+aclnn_api_type: aclnn_function   # 默认实现够用时无需自定义
+version: v2.1
+generate: op_name_constraint     # 必须与 op_name_constraint.py 的 @GENERATOR_REGISTRY.register 名称一致
+dtype_numbers: 1                 # 步骤 3a 占位符；步骤 4 回填
+extra_numbers: 0
+standard:
+  acc: mixed_tolerance_bm_v2
+  perf: not_key
+shape_distributions:
+  - [0, 1.0]                     # 默认必须写 [0, 1.0]，其它配置极易导致生成死循环
+inputs:
+  - name: x
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [[-5, 5]]
+    random_types:
+      - {name: nd, mean: [-5, 5], std: [0.1, 2]}
+    custom_dist_ratio:
+      - [0.5, 0.0]
+      - [0.5, 0.0]
+    shapes:
+      dim_numbers:
+        values: [4]
+      dim_values:
+        values: [1, 2, 3, 4, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256, 511, 512, 1023, 1024]
+      max_length: 4096
+    boundary:
+      has_empty: true
+      has_infnan: true
+      has_lower_border: true
+      has_upper_border: false
+  - name: g
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp32]
+    ranges:
+      valid:
+        values: [[-5, 5]]
+    random_types:
+      - {name: nd, mean: [-5, 5], std: [0.1, 2]}
+    custom_dist_ratio:
+      - [0.5, 0.0]
+      - [0.5, 0.0]
+    shapes:
+      dim_numbers:
+        values: [3]
+      dim_values:
+        values: [1, 2, 3, 4, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256]
+      max_length: 4096
+    boundary:
+      has_empty: true
+      has_infnan: true
+      has_lower_border: true
+      has_upper_border: false
+  - name: a_log
+    type: tensor
+    required: false
+    dtypes:
+      values: [fp32]
+    ranges:
+      valid:
+        values: [[-5, 5]]
+    shapes:
+      dim_numbers:
+        values: [1]
+      dim_values:
+        values: [1, 2, 4, 8, 16, 32, 64, 128]
+  - name: initial_state
+    type: tensor
+    required: false
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [[-5, 5]]
+    shapes:
+      dim_numbers:
+        values: [3]
+      dim_values:
+        values: [1, 2, 4, 8, 16, 32, 64, 128]
+  - name: cu_seqlens
+    type: tensor
+    required: false
+    dtypes:
+      values: [int32]
+    shapes:
+      dim_numbers:
+        values: [1]
+      dim_values:
+        values: [2, 3, 5, 9, 17, 33]
+  - name: chunk_indices
+    type: tensor
+    required: false
+    dtypes:
+      values: [int32]
+    shapes:
+      dim_numbers:
+        values: [2]
+      dim_values:
+        values: [1, 2, 4, 8, 16, 32, 64]
+  - name: layout
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: [BSND, BNSD, TND, NTD]
+  - name: chunk_size
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [64, 128]
+  - name: scale
+    type: attr
+    required: true
+    dtypes:
+      values: [float]
+    ranges:
+      valid:
+        values: [0.5, 1.0, 2.0]
+  - name: epsilon
+    type: attr
+    required: true
+    dtypes:
+      values: [float]
+    ranges:
+      valid:
+        values: [1.0e-06, 1.0e-05, 1.0e-04]
+  - name: return_saved
+    type: attr
+    required: true
+    dtypes:
+      values: [attr_bool]
+    ranges:
+      valid:
+        values: [true, false]
+# 用例裁剪（可选，默认除 coverage_guided 外均启用）；
+# coverage_guided 需要 NPU 覆盖率反馈，只有在 Phase B 才可能开启。
+reduction:
+  dtype_class: true
+  attr_pairwise: true
+  shape_class: true
+  static_dedup: true
+  coverage_guided: false

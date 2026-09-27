@@ -48,7 +48,7 @@ B 与 C 的 L2 写法相同，区别只在"本算子是否还有自己的 kernel
 | `op_host/op_tiling/arch35/<算子>_tiling_impl.h` | A5 专用 tiling 常量与 tile 选择 | §3.5 |
 | `op_host/op_api/<算子>.h` / `.cpp` | L0 内部 exec：固定输出槽位数组，按档位写内部张量 | §3.4 |
 | `op_host/op_api/aclnn_<算子>.h` / `.cpp` | L2：可空输出描述符、档位推导、非法组合拦截、`GetWorkspaceSize`/`Launch` 成对 | §3.4、§5.1 |
-| `tests/atk/<算子>/` 下的三份 JSON + yaml + gen + executor + README | 单算子看护：精度/性能/确定性/内存 + TilingKey 覆盖表；**在仓库根 `tests/` 下** | §2、§6 |
+| `tests/atk/<算子>/` 下的 `test_<算子>.yaml`、`<算子>_constraint.py`、`execute_<算子>.py`、Phase C 报告 + 固化用例 JSON | 单算子看护：参数空间（YAML）、约束修正（constraint）、执行插件（execute）、用例 JSON 与覆盖评估；**在仓库根 `tests/` 下** | §2、§6 |
 | `op_kernel/<算子>.cpp` | 薄入口：dtype traits、tiling 注册/解析、workspace 区域命名（带生命周期注释）、AIC/AIV 分派 | §4.1、§4.3、§4.4 |
 | `op_kernel/<算子>_struct.h` | 根目录兼容头：按架构 include `archXX/<算子>_struct.h`，避免两份结构定义漂移 | §4.1、§4.4 |
 | `op_kernel/<算子>_common.h` | 平台无关公共头：尺寸/workspace 常量、核间同步协议、`ChunkInfo` 与 offset 换算函数 | §4.3、§4.4 |
