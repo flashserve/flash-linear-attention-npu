@@ -450,8 +450,13 @@ add_ops_compile_options(
    - aclnn L2：输入 `*Ref` 与输出 `*Out` 两个槽位，调用方把同一张张量传给两处；L2 对两槽 `CreateView`
      并校验 shape/dtype 一致（参考 `aclnn_recurrent_kda.cpp` 组装 `finalStateForKernel`）；
    - 适配层：schema 用 `Tensor(a!)` 标注，不在下发前做连续化或拷贝；
-   - Python：在 `MUTATED_ARGUMENTS`（必要时 `MUTATION_FLAGS`）登记，拒绝 `requires_grad=True` 并在成功后
-     推进 version counter，被改写张量按上游语义原对象返回/透传；
+   - Python：三张表分工明确，`MUTATED_ARGUMENTS` 回答"这个算子可能写回哪些参数"（与参数值无关）；
+     "本次是否真的写回"由**单个参数**决定时登记 `MUTATION_FLAGS[name] = (开关参数名, 默认值)`
+     （默认值必须与签名一致，包装时会校验，写错首次调用即报错）；判据需要**多个参数**组合时才用
+     `MUTATION_PREDICATES`；无条件写回只登记 `MUTATED_ARGUMENTS`，不要硬塞开关。
+     wrapper 判定为"不写回"时跳过 `requires_grad` 拒绝与 version 推进，判定为"写回"时拒绝
+     `requires_grad=True` 并在成功后 `increment_version()`；被改写张量按上游语义原对象返回/透传。
+     若契约已由 `_stable.py` 的 `_fla_npu_inplace_contract` 热路径 wrapper 自带，则不要再走中央包装（避免重复 bump）；
    - 回归与边界：`tests/stable_abi/regression_mutation_contract.py`；ctypes 回退没有 schema，只靠登记兜底；
      当前无 FakeTensor/functionalization，不能作为 compiler-visible op 入图。
    每个交付件里对这几种情况怎么写，见 `engineering-example/L2独立算子示例/` 下 `_def.cpp`、`aclnn_*.h/.cpp`、
