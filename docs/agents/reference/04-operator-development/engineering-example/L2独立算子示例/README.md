@@ -51,6 +51,26 @@ L2独立算子示例/                            # 形态 A 的示例根目录�
 
 ## kernel 结构怎么读（与 `chunk_gated_delta_rule_bwd_finalize` 对齐）
 
+### 占位符与符号替换规则
+
+示例路径里的占位符是"可替换标签"，不是真实名字；复制到新算子时必须按表替换。
+
+| 位置 | 示例值 | 替换规则 | 真实例 |
+| --- | --- | --- | --- |
+| 类别目录 | `fla/ops/ascendc/ops_classify/` | 换成真实类别目录名（snake_case） | `gdn`、`kda` |
+| 算子目录 / 文件名 | `op_name` | 换成真实算子名（snake_case） | `chunk_fwd_h` |
+| 命名空间 | `OpsClassify` | 类别目录名的 PascalCase，**kernel 侧**（archXX 实现、common.h、tiling_key、入口）共用一个 | `gdn` → `GDN` |
+| 符号前缀 | `OP_NAME_`、`OpName` | 换成算子名的大写/驼峰形式 | `CHUNK_FWD_H_`、`ChunkFwdH` |
+| 头文件保护宏 | `OP_NAME_VEC_ARCH35_H` | 同样带算子名与 arch，避免跨算子撞名 | `CHUNK_FWD_H_VEC_ARCH35_H` |
+| TPL 档位 token | `OP_NAME_TPL_BF16` | 是宏，host / kernel / tiling_key 都直接写宏名，不加命名空间限定 | `TPL_BF16` |
+
+注意别把 kernel 的类别命名空间与 host 框架命名空间混为一谈：`ops`（`_def.cpp` 的注册命名空间）、
+`optiling`（tiling）、`l0op`（L0 内部接口）是框架/层次的保留命名空间；类别的 PascalCase 命名空间
+只用于 kernel 侧的结构体、文件作用域函数与 `ASCENDC_TPL_*` 声明块。host 侧不重复声明类别命名空间，
+两边靠"TPL 宏 token 取值一致 + TilingData 字段逐一对应"对齐：host 用 `BEGIN_TILING_DATA_DEF`
+声明并按 op 名注册（`REGISTER_TILING_DATA_CLASS(OpName, OpNameTilingData)`），kernel 用
+`GET_TILING_DATA_WITH_STRUCT` 按结构体解析同一块内存，字段顺序/类型/数量任一不同就是 ABI 不一致。
+
 只给"薄入口 + 一个类"不足以复制样板算子的可读性。示例的
 `op_kernel/arch22|arch35/op_name_vec.h`、`op_name_cube.h` 都按固定四层写，复制到新算子时保持顺序。
 两条硬约束：**函数不放进类/结构体**（结构体只放数据，行为全部是文件作用域 `inline` 函数）；

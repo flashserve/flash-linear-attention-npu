@@ -25,7 +25,16 @@
 #include "ascendc/host_api/tiling/template_argument.h"
 #endif
 
-namespace OpNameNs {
+// 命名空间规则：kernel 侧统一用**算子类别目录名**的 PascalCase（与 archXX 实现、common.h 一致）。
+//   真实例：fla/ops/ascendc/gdn/... → namespace GDN
+//   本示例：类别占位符是 ops_classify（实际替换为 gdn / kda 一类类别名）→ namespace OpsClassify
+// host 侧按框架保留命名空间（`ops` 给 *_def.cpp、`optiling` 给 tiling），不重复声明类别命名空间：
+// host tiling 通过 `#include "../op_kernel/<算子>_tiling_key.h"` 复用同一份模板参数，靠这里的
+// **宏 token 取值**与 TilingData 字段两边对齐（host 用 static_assert 钉住取值）。
+// 不要在 kernel 侧另起第二个"算子私有"命名空间（如 OpNameNs）。
+// 注意：下面的档位 token 是宏，host 与 kernel 都直接写宏名（`OP_NAME_TPL_BF16`），
+// 不写命名空间限定；命名空间用于结构体、文件作用域函数与 `ASCENDC_TPL_*` 声明块。
+namespace OpsClassify {
 
 // dtype 档位 token（主机侧 DtypeToTemplateToken 必须返回同一组取值）。
 #define OP_NAME_TPL_BF16 10
@@ -83,6 +92,6 @@ ASCENDC_TPL_SEL(
 #undef OP_NAME_SEL_ONE
 #endif // TORCH_MODE
 
-} // namespace OpNameNs
+} // namespace OpsClassify
 
 #endif // OP_NAME_TILING_KEY_H

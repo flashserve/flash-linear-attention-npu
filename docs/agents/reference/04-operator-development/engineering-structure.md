@@ -316,6 +316,11 @@ add_ops_compile_options(
    导致 hang，参考 [PR #700](https://github.com/flashserve/flash-linear-attention-npu/pull/700)、
    [#325](https://github.com/flashserve/flash-linear-attention-npu/issues/325)、
    [#462](https://github.com/flashserve/flash-linear-attention-npu/issues/462)。
+7. **kernel 侧**命名空间取类别目录名的 PascalCase（`fla/ops/ascendc/gdn/...` → `namespace GDN`），
+   `op_kernel` 的入口、`common.h`、`archXX/*`、`<算子>_tiling_key.h` 共用一个，不要另起第二个
+   "算子私有"命名空间；host 侧仍按框架用 `ops`（`_def.cpp`）、`optiling`（tiling），`l0op` 是 L0
+   内部接口命名空间，与类别命名空间不是一回事。两边靠 TPL 宏 token 取值一致与 TilingData 字段
+   逐一对应保持对齐（host 侧用 `static_assert` 钉住档位取值）。
 
 ### 4.2 TilingKey 与模板参数
 

@@ -22,8 +22,9 @@
 #include "op_name_output_mask.h"
 
 namespace optiling {
-namespace op_name_detail {
 
+// 头文件内的小工具用 `inline` 保证 ODR；仓内既有 *_tiling_processor.h 也不再套第二层命名空间，
+// 需要文件内可见的辅助函数直接放 `optiling` 里（样板 `chunk_bwd_dv_local_tiling_processor.h` 同款）。
 inline bool MulChecked(uint64_t lhs, uint64_t rhs, uint64_t &out)
 {
     if (lhs != 0 && rhs > std::numeric_limits<uint64_t>::max() / lhs) {
@@ -32,8 +33,6 @@ inline bool MulChecked(uint64_t lhs, uint64_t rhs, uint64_t &out)
     out = lhs * rhs;
     return true;
 }
-
-} // namespace op_name_detail
 
 struct OpNameScheduleContext {
     uint64_t batch = 0;
@@ -62,7 +61,6 @@ public:
 
     bool Process(OpNameSchedule &schedule) const
     {
-        using op_name_detail::MulChecked;
         if (context_.headNum == 0 || context_.chunksPerSequence == 0 || context_.coreNum == 0) {
             return false;
         }

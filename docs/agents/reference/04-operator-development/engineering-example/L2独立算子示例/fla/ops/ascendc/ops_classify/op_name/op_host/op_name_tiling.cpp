@@ -52,9 +52,11 @@ constexpr uint32_t OP_NAME_MIX_BATCH_MODE = 1;
 
 // host 档位枚举（op_name_output_mask.h）与 kernel 侧 TPL token（op_name_tiling_key.h）
 // 必须是同一组数值，否则 L2 算出的档位与 kernel 实例不匹配。
-static_assert(OP_NAME_OUTPUT_MODE_NONE == OpNameNs::OP_NAME_TPL_OUTPUT_NONE,
+// 注意：TPL token 在 op_name_tiling_key.h 里是宏（样板算子同款 TPL_BF16 = 10），
+// 因此这里直接写宏名，不要加命名空间限定（`OpsClassify::OP_NAME_TPL_BF16` 会被预处理成非法表达式）。
+static_assert(OP_NAME_OUTPUT_MODE_NONE == OP_NAME_TPL_OUTPUT_NONE,
               "host 与 kernel 的 none 档位取值必须一致。");
-static_assert(OP_NAME_OUTPUT_MODE_SAVE == OpNameNs::OP_NAME_TPL_OUTPUT_SAVE,
+static_assert(OP_NAME_OUTPUT_MODE_SAVE == OP_NAME_TPL_OUTPUT_SAVE,
               "host 与 kernel 的 save 档位取值必须一致。");
 
 struct OpNameShapeInfo {
@@ -150,13 +152,13 @@ bool DtypeToTemplateToken(ge::DataType dtype, uint64_t &token)
 {
     switch (dtype) {
         case ge::DT_BF16:
-            token = OpNameNs::OP_NAME_TPL_BF16;
+            token = OP_NAME_TPL_BF16;
             return true;
         case ge::DT_FLOAT16:
-            token = OpNameNs::OP_NAME_TPL_FP16;
+            token = OP_NAME_TPL_FP16;
             return true;
         case ge::DT_FLOAT:
-            token = OpNameNs::OP_NAME_TPL_FP32;
+            token = OP_NAME_TPL_FP32;
             return true;
         default:
             return false;
@@ -232,7 +234,7 @@ ge::graphStatus Tiling4OpName(gert::TilingContext *context)
 
     // 模板参数顺序必须与 op_kernel/op_name_tiling_key.h 的 ASCENDC_TPL_ARGS_DECL 一致。
     const uint64_t tilingKey = GET_TPL_TILING_KEY(
-        xToken, gToken, OpNameNs::OP_NAME_TPL_NORM_L2,
+        xToken, gToken, OP_NAME_TPL_NORM_L2,
         static_cast<uint64_t>(stateDesc != nullptr), static_cast<uint64_t>(outputMode));
 
     OpNameTilingData tiling;

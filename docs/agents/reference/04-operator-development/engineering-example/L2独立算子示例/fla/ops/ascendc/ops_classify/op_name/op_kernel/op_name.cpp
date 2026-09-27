@@ -20,6 +20,10 @@
  *      入口只构造结构体并调用两个函数，不出现 Stage 细节。
  *   7. arch35 的向量计算必须是 VF 融合函数（`__simd_vf__ inline` + MicroAPI），arch22 用
  *      同名函数 + 普通向量指令；两平台函数名、事件数组名与 Stage 划分保持一致，便于逐行对照。
+ *   8. kernel 侧命名空间取**算子类别目录名**的 PascalCase，archXX 实现、common.h、tiling_key 与入口
+ *      共用一个：真实例 `fla/ops/ascendc/gdn/...` → `namespace GDN`；本示例类别占位符是 `ops_classify`
+ *      （实际替换为 gdn / kda 一类类别名）→ `namespace OpsClassify`。不要另起 OpNameNs 这类第二命名空间；
+ *      host 侧仍按框架用 `ops`/`optiling`，两边靠 TPL 宏 token 取值与 TilingData 字段对齐。
  */
 
 #include "kernel_operator.h"
