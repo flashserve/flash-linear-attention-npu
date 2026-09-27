@@ -14,6 +14,8 @@
  *   7. 原地形态的形参约定：被写回的 state 用**两个槽位**表达——输入 `initialStateRef` 与输出
  *      `finalState`；`inplaceFinalState=true` 时调用方把同一张张量传给两个槽位，false 时 finalState 指向
  *      scratch。头文件注释要写明该开关的默认值与含义（参考 aclnn_recurrent_kda.h 的 inplaceFinalState）。
+ *   8. 连续性契约：头文件注释与 docs/api.md 要写明每个输入"要求连续"还是"支持 stride"；
+ *      state 类输入属于后者（非连续时用 `CreateView`，不要连续化），否则原地写回与 host 侧性能都会出问题。
  */
 
 #ifndef OP_API_INC_ACLNN_OP_NAME_H

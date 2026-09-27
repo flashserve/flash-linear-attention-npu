@@ -227,7 +227,15 @@ add_ops_compile_options(
 
 1. L2 不接收、也不解释 autograd 重计算策略；`output_final_state`/`disable_recompute`/`return_intermediate_states`
    这类保留策略只存在于 Python 与 legacy 包装层。
-2. L2 只做张量与算法契约校验；布局能力判定、dense 拷贝不做（非连续输入如实按 view 交给算子）。
+2. L2 只做张量与算法契约校验；连续性按**逐输入契约**处理，不做整批一刀切：
+   - 算子内部按紧凑 stride 寻址的输入 → 只对该输入做一次 `l0op::Contiguous`，并在 `docs/api.md`
+     的连续性契约里写明“要求连续”（参考 `aclnn_chunk_kda_fwd_prepare.cpp` 的 `MakeInputsContiguous`）；
+   - 支持 stride 寻址的输入（recurrent 家族的 `state`/`conv_state` 是典型）→ 用 `CreateView` 按 view 传递，
+     **不做连续化**：连续化会破坏原地写回语义（写回的是拷贝），并带来 host enqueue 与服务性能回退
+     （[#491](https://github.com/flashserve/flash-linear-attention-npu/issues/491)）；
+   - 布局物化、`reshape`/`transpose`、打包 TND 视图 → 只在确实需要时做一次明确的 `Contiguous`/`ViewCopy`，
+     并记录这次拷贝的代价；
+   - 以上判定只发生在 L2：适配层（Stable-ABI）不做 dense 拷贝，按 view 原样交出（§5.2、§5.3）。
 3. L2 的报错必须写明触发条件与实际值（例如 `outputMask=0x%x`、实际 `Kdim/Vdim`），不能只写"参数错误"。
 4. 返回码只允许 `ACLNN_ERR_PARAM_INVALID`（用户参数）、`ACLNN_ERR_INNER_NULLPTR`/`ACLNN_ERR_INNER_*`（内部失败）
    两类，并与 `docs/api.md` 的"返回值"章节逐条对齐。
@@ -444,7 +452,8 @@ add_ops_compile_options(
 
 1. **C 形态不新增 `def`**：没有新 kernel 就没有新 op 原型；L2 通过 `#include` 依赖算子的
    `op_host/op_api/<依赖算子>.h`，直接调用其 L0 实现。
-2. B/C 两种形态的 L2 只做四件事：入参校验、layout 与连续化处理、按组合顺序调用 L0、把内部张量
+2. B/C 两种形态的 L2 只做四件事：入参校验、layout 与连续性处理（连续化只对声明“要求连续”的输入做；
+   支持 stride 的 state 类输入保持 view）、按组合顺序调用 L0、把内部张量
    拼接成公开输出（`ReuseOrAlloc` 复用调用方张量，必要时一次 `ViewCopy`）。
 3. 组合入口必须复用被组合算子的 L0，不得复制其 kernel，也不得在 L2 里重写其数学。
 4. 依赖关系写进 `op_host/CMakeLists.txt`：`set(<算子>_depends "...")` 覆盖 L0 头与 kernel 源，并按
@@ -563,7 +572,7 @@ add_ops_compile_options(
 | ATK 结果误判 | §6、§6.1 | [#365](https://github.com/flashserve/flash-linear-attention-npu/issues/365)、[#428](https://github.com/flashserve/flash-linear-attention-npu/issues/428) | 已修复 | runner 的 scope 调用与结果判定本身出过错；不要只看 shell 退出码，要看总任务数/失败数/精度结论 |
 | 精度失败与复检口径 | §6.1、检视 skill | [#731](https://github.com/flashserve/flash-linear-attention-npu/issues/731)、[#519](https://github.com/flashserve/flash-linear-attention-npu/issues/519)、[#529](https://github.com/flashserve/flash-linear-attention-npu/issues/529)、[#543](https://github.com/flashserve/flash-linear-attention-npu/issues/543)、[#554](https://github.com/flashserve/flash-linear-attention-npu/issues/554)、[#534](https://github.com/flashserve/flash-linear-attention-npu/issues/534)、[#640](https://github.com/flashserve/flash-linear-attention-npu/issues/640) | 多数 OPEN | 单轮 `FAIL` 不等于算子错；先区分数值误差/无效区/标杆语义，再做 `accuracy_lt` + `ct dual analyze` 复检；禁止用收窄 range、删 case、放宽阈值制造通过 |
 | 可选输出与新增入口的迭代方式 | §3.2、§5.1、§5.2 | [#694](https://github.com/flashserve/flash-linear-attention-npu/issues/694)、[#696](https://github.com/flashserve/flash-linear-attention-npu/pull/696)、[#702](https://github.com/flashserve/flash-linear-attention-npu/pull/702) | 已合入 | 反向保存值（`q_hat/k_hat/q_rstd/k_rstd/beta_eff`）就是这样加的：`def` 不动，只在 L2 用可空描述符表达，V1 签名保持不变 |
-| 非连续输入与全局状态副作用 | §5.3 | [#491](https://github.com/flashserve/flash-linear-attention-npu/issues/491)、[#636](https://github.com/flashserve/flash-linear-attention-npu/issues/636) | OPEN | 非连续 state 会走 stride 路径，注意 host enqueue 与服务性能；import/初始化不得留下影响未调用算子的全局状态 |
+| 非连续输入与全局状态副作用 | §3.4、§5.3 | [#491](https://github.com/flashserve/flash-linear-attention-npu/issues/491)、[#636](https://github.com/flashserve/flash-linear-attention-npu/issues/636) | OPEN | 非连续 state 会走 stride 路径，注意 host enqueue 与服务性能；不要对 state 一刀切连续化（既破坏原地写回语义，又触发性能回退）；import/初始化不得留下影响未调用算子的全局状态 |
 | 公开文档/注释脱敏 | §7.10 | [#714](https://github.com/flashserve/flash-linear-attention-npu/pull/714) | 已修复 | README/注释里不能出现本地路径、临时目录、日志路径等本地调测信息 |
 | 本规范的来源 | 全文 | [#182](https://github.com/flashserve/flash-linear-attention-npu/issues/182)、[#221](https://github.com/flashserve/flash-linear-attention-npu/issues/221)、[#410](https://github.com/flashserve/flash-linear-attention-npu/issues/410)、[#298](https://github.com/flashserve/flash-linear-attention-npu/issues/298) | #182/#221/#410 已闭环 / #298 OPEN | docs/agents 的五个阶段与参考资料分层由这些需求演进而来；工程结构规范是阶段 4 的实现侧补充 |
 

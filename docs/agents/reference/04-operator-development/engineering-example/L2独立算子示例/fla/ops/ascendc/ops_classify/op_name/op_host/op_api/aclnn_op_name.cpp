@@ -2,17 +2,26 @@
  * 示例文件：fla/ops/ascendc/ops_classify/op_name/op_host/op_api/aclnn_op_name.cpp
  *
  * 注意事项：
- *   1. L2 只做：非空校验 -> 参数/档位校验 -> 输入连续化 -> 调 L0 -> 返回 workspaceSize。
+ *   1. L2 只做：非空校验 -> 参数/档位校验 -> 按契约处理连续性 -> 调 L0 -> 返回 workspaceSize。
  *      计算、分核、同步都不在这里。
  *   2. 档位由"哪些输出指针非空"推导（ResolveOutputMode），非法组合返回
  *      ACLNN_ERR_PARAM_INVALID 并打印实际组合，不能静默取默认档位。
  *   3. 报错文本要带实际值（布局、chunkSize、输出组合），这是用户唯一能看到的上下文。
  *   4. 每次调用都新建 UniqueExecutor 并把所有权交给调用方：GetWorkspaceSize 只登记任务，
  *      Launch 阶段才真正下发；不要在这里同步执行。
- *   5. 不做 dense 拷贝之外的布局改写：非连续输入交给 l0op::Contiguous，其余按 view 交给算子。
+ *   5. 连续性按"逐输入契约"处理，不做整批一刀切（这是 L2 最容易写错的地方）：
+ *      - 算子内部按紧凑行主序/固定 stride 寻址的输入（本示例 x/g/a_log）→ 对该输入做一次
+ *        `l0op::Contiguous`，并在 docs/api.md 的连续性契约里写明"要求连续"；
+ *      - 支持 stride 寻址的输入（recurrent 家族的 state/conv_state 是典型）→ 保持原样或用
+ *        `CreateView` 交给算子按 stride 寻址，**不要连续化**：连续化会破坏原地写回语义（写回的是拷贝
+ *        而不是调用方张量），并带来 host enqueue 与服务性能回退（Issue #491）；
+ *      - 布局改写（layout 物化、reshape/transpose、打包 TND 视图）只在确实需要时做一次明确的
+ *        `Contiguous` 或 `ViewCopy`，并把这次拷贝的代价写进 docs/api.md；其余情况一律按 view 传递；
+ *      - 上述判定只发生在 L2：适配层（Stable-ABI）不做 dense 拷贝，按 view 原样交出（§5.3）。
  *   6. 不在本层判断 disable_recompute 之类策略；只认输出指针。
  *   7. Launch 阶段失败返回 ACLNN_ERR_INNER，并给出算子名。
- *   8. 原地路径：对 initialStateRef / finalState 分别做非连续处理（executorPtr->CreateView），并校验
+ *   8. 原地路径：对 initialStateRef / finalState 分别做非连续处理（executorPtr->CreateView，注意是
+ *      CreateView 而不是 Contiguous），并校验
  *      两者 shape/dtype 一致，否则返回 ACLNN_ERR_PARAM_INVALID；inplaceFinalState=false 时不得写回入参
  *      张量（参考 aclnn_recurrent_kda.cpp 组装 finalStateForKernel 的写法）。
  */
@@ -92,16 +101,33 @@ aclnnStatus CheckParams(const OpNameParams &params)
     return ACLNN_SUCCESS;
 }
 
+// 只对"接口契约声明要求连续"的输入做一次显式连续化；哪些输入要求连续见 docs/api.md 的连续性契约，
+// 不要在实现里凭感觉扩大范围（整批连续化会同时破坏 state 的原地语义和 host 侧性能）。
 aclnnStatus MakeInputsContiguous(OpNameParams &params, aclOpExecutor *executor)
 {
-    const aclTensor **inputs[] = {&params.x, &params.g, &params.aLogOptional,
-                                  &params.initialStateOptional};
+    const aclTensor **inputs[] = {&params.x, &params.g, &params.aLogOptional};
     for (const aclTensor **input : inputs) {
         if (*input == nullptr || IsContiguous(*input)) {
             continue;
         }
         *input = l0op::Contiguous(*input, executor);
         CHECK_RET(*input != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
+    return ACLNN_SUCCESS;
+}
+
+// state 类输入保持调用方 stride：非连续时用 CreateView 交给算子按 stride 寻址，
+// 不调用 l0op::Contiguous（与 aclnn_recurrent_kda.cpp 的 CreateViewIfNonContiguous 一致）。
+aclnnStatus MakeStateViews(OpNameParams &params, aclOpExecutor *executor)
+{
+    const aclTensor **states[] = {&params.initialStateOptional, &params.stateOut};
+    for (const aclTensor **state : states) {
+        if (*state == nullptr || IsContiguous(*state)) {
+            continue;
+        }
+        *state = executor->CreateView(*state, (*state)->GetViewShape(), (*state)->GetStorageShape(),
+                                      (*state)->GetViewStrides(), (*state)->GetViewOffset());
+        CHECK_RET(*state != nullptr, ACLNN_ERR_INNER_NULLPTR);
     }
     return ACLNN_SUCCESS;
 }

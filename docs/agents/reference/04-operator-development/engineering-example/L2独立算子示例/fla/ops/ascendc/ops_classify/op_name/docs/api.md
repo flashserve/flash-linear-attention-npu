@@ -58,6 +58,18 @@ aclnnStatus aclnnOpName(void *workspace, uint64_t workspaceSize,
 2. `state` 固定 `[B,H,chunk_count,D]`，与 `layout` 无关。
 3. `x_norm` 固定与 `x` 相同的逻辑布局，内部按 head-major 计算，L2 导出时按输入布局写出。
 
+### 连续性契约
+
+每个输入的连续性要求是公开契约的一部分，必须逐项写清（L2 只按本表处理，不做整批连续化）：
+
+| 输入 | 连续性要求 | L2 的处理方式 |
+| --- | --- | --- |
+| `x`、`g`、`a_log` | **要求连续** | 非连续时对**该输入**做一次 `l0op::Contiguous`（算子内部按紧凑行主序寻址） |
+| `initial_state` / `state` | 支持非连续（按 stride 寻址） | 用 `CreateView` 传递，**不做连续化**：保持调用方 stride 与原地写回语义 |
+
+布局改写（layout 物化、`reshape`/`transpose`、打包 TND 视图）只在确实需要时做一次明确的 `Contiguous`
+或 `ViewCopy`，并在这里注明这次拷贝的代价；其余情况按 view 传递。适配层（Stable-ABI）不做任何 dense 拷贝。
+
 ## 原地（in-place）语义
 
 本算子若支持把 state 写回调用方张量，语义按层落地；缺任一层都会让契约不完整：
