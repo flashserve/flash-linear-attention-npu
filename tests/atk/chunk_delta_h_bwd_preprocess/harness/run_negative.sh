@@ -5,7 +5,7 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SPEC="$HERE/../../../op_cases/chunk_delta_h_bwd_preprocess.json"
+SPEC="$HERE/../cases.json"
 WORK="${1:-$HERE/negative_cases}"
 mkdir -p "$WORK"
 

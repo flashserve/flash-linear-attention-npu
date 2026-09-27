@@ -24,8 +24,8 @@
  * 同步：与 AIV 按同一 chunk 顺序严格交替，flag 见 chunk_delta_h_bwd_preprocess_policy.h。
  */
 
-#ifndef CHUNK_DELTA_H_BWD_PREPROCESS_CUBE_H
-#define CHUNK_DELTA_H_BWD_PREPROCESS_CUBE_H
+#ifndef CHUNK_DELTA_H_BWD_PREPROCESS_ARCH22_CUBE_H
+#define CHUNK_DELTA_H_BWD_PREPROCESS_ARCH22_CUBE_H
 
 // 说明：不要引用仓内 common/kernel_utils/block/block_mmad_pingpong_tla.hpp —— 它经由
 // kernel_utils/tile/copy_l0c_to_ub.hpp 无条件包含 ascend950 专用头，A2 构建会把 950 实现拉进来
@@ -63,8 +63,8 @@ using _128 = tla::Int<128>;
 #endif
 
 #include "kernel_operator.h"
-#include "chunk_delta_h_bwd_preprocess_base.h"
-#include "chunk_delta_h_bwd_preprocess_policy.h"
+#include "../chunk_delta_h_bwd_preprocess_common.h"
+#include "../chunk_delta_h_bwd_preprocess_policy.h"
 
 using namespace AscendC;
 
@@ -82,7 +82,7 @@ constexpr uint32_t CDHP_AIC_EV_M_MTE1 = 5;     // MMAD 已读完 L0A/L0B
 constexpr uint32_t CDHP_AIC_EV_MTE1_MTE2 = 6;  // MTE1（L1→L0）已读完 L1
 
 template <typename DT>
-class ChunkDeltaHBwdPreCube : public ChunkDeltaHBwdPreBase<DT, DT> {
+class ChunkDeltaHBwdPreprocessCube : public ChunkDeltaHBwdPreprocessBase<DT, DT> {
 public:
     __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR w, GM_ADDR d_o, GM_ADDR dv, GM_ADDR cu_seqlens,
                                 GM_ADDR dhm, GM_ADDR userWs, const ChunkDeltaHBwdPreprocessTilingData &tiling)
@@ -146,7 +146,7 @@ public:
         const auto layoutKzK = tla::MakeLayoutFromTag(tagKzK);
 
         const uint32_t chunkNum = this->ChunkNum(this->Bos(), this->Eos());
-        const ChunkDeltaHBwdPreTaskRange range = this->ResolveTaskRange();
+        const ChunkDeltaHBwdPreprocessTaskRange range = this->ResolveTaskRange();
         for (uint32_t i = 0; i < range.taskCount; ++i) {
             (void)range.taskBegin;
             for (uint32_t c = 0; c < chunkNum; ++c) {
@@ -226,4 +226,4 @@ private:
 
 } // namespace CP
 
-#endif // CHUNK_DELTA_H_BWD_PREPROCESS_CUBE_H
+#endif // CHUNK_DELTA_H_BWD_PREPROCESS_ARCH22_CUBE_H

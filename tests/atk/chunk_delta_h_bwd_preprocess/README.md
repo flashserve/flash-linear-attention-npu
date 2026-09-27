@@ -5,7 +5,7 @@
 | 文件 | 说明 |
 | --- | --- |
 | `reference.py` | CPU 全精度参考：`preprocess_reference` 给出 `dhm = [E_r \| P_r]`；`dh_scan_direct` 用非零 `dht` 反扫得到真实 `dh0`；`check_affine` 校验 `dh0 == P_r @ dht + E_r` |
-| `../../op_cases/chunk_delta_h_bwd_preprocess.json` | 用例设计唯一来源（正向 + 反向拦截） |
+| `cases.json` | 用例设计唯一来源（正向 + 反向拦截） |
 | `harness/make_case.py` | 由用例参数生成 NPU 侧输入（落盘原始字节）与 CPU 标杆 `expected_dhm.bin`，并写出 `run_case` 命令行 |
 | `harness/test_aclnn_chunk_delta_h_bwd_preprocess.cpp` | aclnn 直调取数：输入/输出全走文件，输出额外落 `workspace.bin`（用户区起点 16 MiB，可按 tiling 公式定位每个平面） |
 | `harness/compare.py` | 按 `E_r`/`P_r` 分平面给出 `max_abs`/`max_rel`/`rel_norm`，并给出 PASS/FAIL |
@@ -17,7 +17,7 @@
 ## 本地自检（无需 NPU）
 
 ```bash
-python tests/operators/chunk_delta_h_bwd_preprocess/reference.py
+python tests/atk/chunk_delta_h_bwd_preprocess/reference.py
 ```
 
 该自检对无门控 / `USE_G` / `USE_GK` 三种模式分别构造随机输入，用**非零** `dht` 验证仿射恒等式。
@@ -40,7 +40,7 @@ bash build.sh --pkg --soc=<soc> --vendor_name=fla_npu --ops=chunk_delta_h_bwd_pr
 bash build_out/fla-npu-fla_npu_linux-*.run --install-path=<install_path>
 
 # 2) 编取数程序并逐用例执行
-cd tests/operators/chunk_delta_h_bwd_preprocess/harness
+cd tests/atk/chunk_delta_h_bwd_preprocess/harness
 g++ -std=c++17 -O2 test_aclnn_chunk_delta_h_bwd_preprocess.cpp -o run_case \
   -I<install_path>/vendors/fla_npu_transformer/op_api/include -I$ASCEND_HOME_PATH/include \
   -L<install_path>/vendors/fla_npu_transformer/op_api/lib -lcust_opapi \
@@ -85,7 +85,7 @@ task / 单 chunk 场景约 2e-3，长链与多 task 场景最多 1.5e-2。重复
 ### 反向拦截（已执行）
 
 ```bash
-bash tests/operators/chunk_delta_h_bwd_preprocess/harness/run_negative.sh <work_dir>
+bash tests/atk/chunk_delta_h_bwd_preprocess/harness/run_negative.sh <work_dir>
 ```
 
 `op_cases` 的 10 条反向用例在 **A2 与 A5 上均 10/10 PASS**（实际返回码与 `expected_return_code` 一致，

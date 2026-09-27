@@ -36,7 +36,7 @@
 namespace CP {
 
 // Stage ID：顺序即依赖顺序
-enum ChunkDeltaHBwdPreStage : uint32_t {
+enum ChunkDeltaHBwdPreprocessStage : uint32_t {
     STAGE_V0_GATE_PREP = 0,   // Vector：门控/衰减/操作数准备（Q̄s、K̄、decayK）
     STAGE_C1_FIRST_MMAD = 1,  // Cube：路 A dV_pre、路 B T1
     STAGE_V2_DV_HAT = 2,      // Vector：dV̂' = -(dV_pre + dv_local)
@@ -47,7 +47,7 @@ enum ChunkDeltaHBwdPreStage : uint32_t {
 };
 
 // 同一个 Stage 内的两路输出：ready/free 必须各自独立，禁止合并成一条边
-enum ChunkDeltaHBwdPrePath : uint32_t {
+enum ChunkDeltaHBwdPreprocessPath : uint32_t {
     PATH_A = 0,  // E 分支
     PATH_B = 1,  // P 分支
     PATH_NUM = 2,
@@ -88,7 +88,7 @@ constexpr uint32_t CDHP_FLAG_C5_DONE = 5;  // AIC → AIV：P 新值就绪（下
 #define CDHP_AIC_WAIT(flag) AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(flag)
 
 // 工作区平面在 user workspace 内的角色；具体偏移由 host tiling 给出
-enum ChunkDeltaHBwdPreWs : uint32_t {
+enum ChunkDeltaHBwdPreprocessWs : uint32_t {
     WS_META = 0,   // segment / chunk 元数据
     WS_SLOT = 1,   // V0 的 chunk slot（Q̄s / K̄ / decayK），slotNum 份
     WS_T1 = 2,     // T1 平面 [K, K] FP32
@@ -99,7 +99,7 @@ enum ChunkDeltaHBwdPreWs : uint32_t {
 };
 
 // 反向链：chunk 按 i_t = NT-1 → 0 执行；dH 与 P 都是跨 chunk 状态
-struct ChunkDeltaHBwdPreChainState {
+struct ChunkDeltaHBwdPreprocessChainState {
     uint32_t chunkIdx;      // 当前 chunk 序号（从大到小）
     uint32_t slotIdx;       // chunkIdx % slotNum
     uint32_t dhtPingPong;   // 0 / 1

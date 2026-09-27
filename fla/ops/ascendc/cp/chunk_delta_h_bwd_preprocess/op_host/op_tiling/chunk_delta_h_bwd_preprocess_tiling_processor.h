@@ -97,9 +97,10 @@ public:
         return blockDim_;
     }
 
-    uint32_t GetTilingKey() const
+    // gate 模式（模板参数之一，见 op_kernel/<op>_struct.h 的 ASCENDC_TPL_ARGS_DECL）
+    uint32_t GetGateMode() const
     {
-        return tilingKey_;
+        return gateMode_;
     }
 
     template <typename T>
@@ -202,7 +203,7 @@ public:
                                 "gk dtype must be the same as q/k dtype; got q/k=%d, gk=%d.",
                                 static_cast<int32_t>(ctx_.qDtype), static_cast<int32_t>(ctx_.gkDtype)),
                         return ge::GRAPH_FAILED);
-            tilingKey_ = CP::CHUNK_DELTA_H_BWD_PREPROCESS_TILING_KEY_GK;
+            gateMode_ = CHUNK_DELTA_H_BWD_PREPROCESS_GATE_MODE_PER_K;
             tiling_.useGateGk = 1;
             tiling_.useGateG = 0;
             return ge::GRAPH_SUCCESS;
@@ -217,13 +218,12 @@ public:
             OP_CHECK_IF(ctx_.gDtype != ctx_.qDtype && ctx_.gDtype != ge::DT_FLOAT,
                         OP_LOGE(ctx_.nodeName, "g dtype must be FP32 or the same as q/k dtype."),
                         return ge::GRAPH_FAILED);
-            tilingKey_ = (ctx_.gDtype == ge::DT_FLOAT) ? CP::CHUNK_DELTA_H_BWD_PREPROCESS_TILING_KEY_G_FP32
-                                                       : CP::CHUNK_DELTA_H_BWD_PREPROCESS_TILING_KEY_G;
+            gateMode_ = CHUNK_DELTA_H_BWD_PREPROCESS_GATE_MODE_SCALAR;
             tiling_.useGateG = 1;
             tiling_.useGateGk = 0;
             return ge::GRAPH_SUCCESS;
         }
-        tilingKey_ = CP::CHUNK_DELTA_H_BWD_PREPROCESS_TILING_KEY_NONE;
+        gateMode_ = CHUNK_DELTA_H_BWD_PREPROCESS_GATE_MODE_NONE;
         tiling_.useGateG = 0;
         tiling_.useGateGk = 0;
         return ge::GRAPH_SUCCESS;
@@ -406,7 +406,7 @@ private:
     uint64_t blockDim_ = 0;
     uint64_t groupHeads_ = 0;
     uint64_t workspaceSize_ = 0;
-    uint32_t tilingKey_ = CP::CHUNK_DELTA_H_BWD_PREPROCESS_TILING_KEY_NONE;
+    uint32_t gateMode_ = CHUNK_DELTA_H_BWD_PREPROCESS_GATE_MODE_NONE;
 };
 
 } // namespace optiling

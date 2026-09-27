@@ -8,7 +8,7 @@
  */
 
 /*!
- * \file chunk_delta_h_bwd_preprocess_vec.h
+ * \file chunk_delta_h_bwd_preprocess_vector.h
  * \brief Vector 侧 Stage：V0（门控与衰减准备 / 零填充）、V2（dV̂'）、V4（状态更新 + 对角注入）。
  *
  * V0 每个 chunk 产出 slot：Q̄s、K̄、W（零填充）、do（零填充）、decayK。
@@ -21,12 +21,12 @@
  * 同 chunk 内 AIV/AIC 严格交替握手，flag id 见 chunk_delta_h_bwd_preprocess_policy.h。
  */
 
-#ifndef CHUNK_DELTA_H_BWD_PREPROCESS_VEC_H
-#define CHUNK_DELTA_H_BWD_PREPROCESS_VEC_H
+#ifndef CHUNK_DELTA_H_BWD_PREPROCESS_ARCH35_VECTOR_H
+#define CHUNK_DELTA_H_BWD_PREPROCESS_ARCH35_VECTOR_H
 
 #include "kernel_operator.h"
-#include "chunk_delta_h_bwd_preprocess_base.h"
-#include "chunk_delta_h_bwd_preprocess_policy.h"
+#include "../chunk_delta_h_bwd_preprocess_common.h"
+#include "../chunk_delta_h_bwd_preprocess_policy.h"
 
 using namespace AscendC;
 
@@ -53,11 +53,11 @@ constexpr uint32_t CDHP_EV_MTE3_S = 1;
 
 // 编译期判断两个类型是否相同（避免依赖 <type_traits> 在 kernel 侧的可用性）
 template <typename A, typename B>
-struct ChunkDeltaHBwdPreSameType {
+struct ChunkDeltaHBwdPreprocessSameType {
     static constexpr bool value = false;
 };
 template <typename A>
-struct ChunkDeltaHBwdPreSameType<A, A> {
+struct ChunkDeltaHBwdPreprocessSameType<A, A> {
     static constexpr bool value = true;
 };
 
@@ -67,7 +67,7 @@ __aicore__ inline uint32_t MinV(uint32_t a, uint32_t b)
 }
 
 template <typename DT, typename GT>
-class ChunkDeltaHBwdPreVec : public ChunkDeltaHBwdPreBase<DT, GT> {
+class ChunkDeltaHBwdPreprocessVector : public ChunkDeltaHBwdPreprocessBase<DT, GT> {
 public:
     __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR w, GM_ADDR d_o, GM_ADDR dv, GM_ADDR g, GM_ADDR gk,
                                 GM_ADDR cu_seqlens, GM_ADDR dhm, GM_ADDR userWs,
@@ -103,7 +103,7 @@ public:
     __aicore__ inline void Process()
     {
         const uint32_t chunkNum = this->ChunkNum(this->Bos(), this->Eos());
-        const ChunkDeltaHBwdPreTaskRange range = this->ResolveTaskRange();
+        const ChunkDeltaHBwdPreprocessTaskRange range = this->ResolveTaskRange();
         for (uint32_t i = 0; i < range.taskCount; ++i) {
             const uint32_t hv = range.taskBegin + i;
             InitState(chunkNum);
@@ -281,7 +281,7 @@ private:
         LocalTensor<float> decayF = decayF32_.Get<float>();
         if (useG != 0) {
             GuardScratchRewrite();
-            if constexpr (ChunkDeltaHBwdPreSameType<GT, float>::value) {
+            if constexpr (ChunkDeltaHBwdPreprocessSameType<GT, float>::value) {
                 // GDN 允许 g 直接是 FP32：此时直接搬进 FP32 缓冲，不能再做 Cast（同为 FP32 的 Cast 不是
                 // 有效的向量转换指令，会得到错误数值）。
                 AscendC::GlobalTensor<float> gSrcF;
@@ -558,4 +558,4 @@ private:
 
 } // namespace CP
 
-#endif // CHUNK_DELTA_H_BWD_PREPROCESS_VEC_H
+#endif // CHUNK_DELTA_H_BWD_PREPROCESS_ARCH35_VECTOR_H

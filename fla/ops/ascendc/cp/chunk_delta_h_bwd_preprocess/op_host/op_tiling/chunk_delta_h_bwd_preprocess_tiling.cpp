@@ -99,7 +99,20 @@ ASCENDC_EXTERN_C ge::graphStatus Tiling4ChunkDeltaHBwdPreprocess(gert::TilingCon
                 OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "tiling process failed"),
                 return ge::GRAPH_FAILED);
 
-    context->SetTilingKey(processor.GetTilingKey());
+    // tilingKey = 模板参数组合（dtype + gate 模式），kernel 侧由模板实例直接消化，不再用 TILING_KEY_IS 分支
+    const int dTQ = (qInputDesc->GetDataType() == ge::DT_BF16) ? CHUNK_DELTA_H_BWD_PREPROCESS_TPL_BF16
+                                                              : CHUNK_DELTA_H_BWD_PREPROCESS_TPL_FP16;
+    int dTG = dTQ;
+    if (processor.GetGateMode() == CHUNK_DELTA_H_BWD_PREPROCESS_GATE_MODE_SCALAR &&
+        gInputDesc != nullptr && gInputDesc->GetDataType() == ge::DT_FLOAT) {
+        dTG = CHUNK_DELTA_H_BWD_PREPROCESS_TPL_FP32;
+    }
+    const uint64_t tilingKey =
+        GET_TPL_TILING_KEY(static_cast<uint64_t>(dTQ), static_cast<uint64_t>(dTG),
+                           static_cast<uint64_t>(processor.GetGateMode()));
+    context->SetTilingKey(tilingKey);
+    OP_LOGD(context->GetNodeName(), "tilingKey is %lu (dTQ=%d, dTG=%d, gateMode=%u).", tilingKey, dTQ, dTG,
+            processor.GetGateMode());
     context->SetBlockDim(processor.GetBlockDim());
     size_t *workspace = context->GetWorkspaceSizes(1);
     workspace[0] = processor.GetWorkspaceSize();

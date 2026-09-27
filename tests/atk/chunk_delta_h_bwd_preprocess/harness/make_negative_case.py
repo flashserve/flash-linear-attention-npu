@@ -3,7 +3,7 @@
 反向用例只验证「算子是否按设计拦截 + 返回码是否符合预期」，因此不需要 CPU 标杆：这里按用例给的
 （可能是非法的）shape/dtype 直接写原始字节，交给 run_case 调用 aclnn。
 
-用例 id 与期望返回码来自 tests/op_cases/chunk_delta_h_bwd_preprocess.json 的 negative_cases；
+用例 id 与期望返回码来自 tests/atk/chunk_delta_h_bwd_preprocess/cases.json 的 negative_cases；
 每条用例的"非法参数"由 note/trigger 给出（例如 K=512、Hk=3/Hv=4、B=2、chunk_size=128、
 g 为 [B,Hk,T]、gk 为 FP32、cu_seqlens 只有 1 项、T=0），下表把它们按 id 显式固化：
 
@@ -31,7 +31,7 @@ import sys
 import torch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SPEC = os.path.abspath(os.path.join(HERE, "..", "..", "..", "op_cases", "chunk_delta_h_bwd_preprocess.json"))
+SPEC = os.path.abspath(os.path.join(HERE, "cases.json"))
 MODEL_DTYPES = {"bf16": torch.bfloat16, "fp16": torch.float16}
 
 # 合法基线（其余非法用例在此基础上改一个参数）

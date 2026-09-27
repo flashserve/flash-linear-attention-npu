@@ -8,7 +8,7 @@
  */
 
 /*!
- * \file chunk_delta_h_bwd_preprocess_base.h
+ * \file chunk_delta_h_bwd_preprocess_common.h
  * \brief
  * 与计算引擎无关的公共部分：tiling 解码、GVA 映射、本核任务范围、workspace 寻址。
  *
@@ -32,14 +32,14 @@ namespace CP {
 //   - splitMode == BY_HEAD：仅按 head 连续分核，本核遍历该 head 的全部列 tile；
 //   - splitMode == BY_TILE：Hv 不足时把 (hv, 列 tile) 展平后按 balanced half-open range 分配。
 // 任何情况下都禁止按 chunk 分核：dH 与 P 都是跨 chunk 状态。
-struct ChunkDeltaHBwdPreTaskRange {
+struct ChunkDeltaHBwdPreprocessTaskRange {
     uint32_t taskBegin;
     uint32_t taskCount;
     bool tileSplit;  // true：task = (hv, tile) 展平后的序号；false：task = hv
 };
 
 template <typename DT, typename GT>
-class ChunkDeltaHBwdPreBase {
+class ChunkDeltaHBwdPreprocessBase {
 public:
     __aicore__ inline void InitTilingData(const ChunkDeltaHBwdPreprocessTilingData &tiling)
     {
@@ -50,9 +50,9 @@ public:
     }
 
     // 计算本核的任务范围（host 只下发 splitMode / groupHeads / tileNum，kernel 用同一公式重算）
-    __aicore__ inline ChunkDeltaHBwdPreTaskRange ResolveTaskRange() const
+    __aicore__ inline ChunkDeltaHBwdPreprocessTaskRange ResolveTaskRange() const
     {
-        ChunkDeltaHBwdPreTaskRange range{0, 0, false};
+        ChunkDeltaHBwdPreprocessTaskRange range{0, 0, false};
         if (tiling_.splitMode == CP::CHUNK_DELTA_H_BWD_PREPROCESS_SPLIT_BY_HEAD) {
             const uint32_t groupHeads = static_cast<uint32_t>(tiling_.groupHeads);
             range.taskBegin = blockIdx_ * groupHeads;
