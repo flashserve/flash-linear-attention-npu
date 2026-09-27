@@ -7,7 +7,7 @@
 
 | 算子 | 作用 | 状态 |
 | --- | --- | --- |
-| [`chunk_delta_h_bwd_preprocess`](chunk_delta_h_bwd_preprocess/README.md) | 反向状态预处理：把本 rank 边界序列的反向状态递推压缩成仿射摘要 `(E_r, P_r)` | 初版：host + kernel 六 Stage 已实现，aclnn 手写，A2/A5 编译与精度均已打通；Python 入口与列 tile 展平分核待后续 |
+| [`chunk_delta_h_bwd_preprocess`](chunk_delta_h_bwd_preprocess/README.md) | 反向状态预处理：把本 rank 边界序列的反向状态递推压缩成仿射摘要 `(E_r, P_r)` | 初版：host + kernel 六 Stage 已实现，aclnn 手写，`fla_npu.ops.ascendc` 稳定入口已接入，A2/A5 编译与精度均已打通；列 tile 展平分核待后续 |
 
 ## CP 数据流中的位置
 
@@ -24,9 +24,9 @@
 ```
 
 只实现 `chunk_delta_h_bwd_preprocess` 不足以完成 CP：正向还需要各 rank 的正向状态摘要与 prefix merge，
-反向还需要本 rank 的正式 backward 消费非零 `dht`。详见
-[`docs/agents/chunk-delta-h-cp-backward-preprocess.md`](../../../../docs/agents/chunk-delta-h-cp-backward-preprocess.md)
-与 [`docs/agents/chunk-delta-h-cp-backward-preprocess-stages.md`](../../../../docs/agents/chunk-delta-h-cp-backward-preprocess-stages.md)。
+反向还需要本 rank 的正式 backward 消费非零 `dht`。本算子的接口、取值与限制见
+[`chunk_delta_h_bwd_preprocess/README.md`](chunk_delta_h_bwd_preprocess/README.md)，六 Stage 划分、
+分核规则、workspace 布局与同步合同见 [`chunk_delta_h_bwd_preprocess/docs/design.md`](chunk_delta_h_bwd_preprocess/docs/design.md)。
 
 ## 与 Triton 参考实现的关系
 
