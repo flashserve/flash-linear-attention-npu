@@ -91,6 +91,7 @@
 相关 issue：
 
 - [#508](https://github.com/flashserve/flash-linear-attention-npu/issues/508)（OPEN，varlen 总量超过 `65536` 触发 tiling 失败，典型位宽问题）。
+- [PR #699 评论](https://github.com/flashserve/flash-linear-attention-npu/pull/699#issuecomment-5791409395)（OPEN，单次发射私有 workspace 偏移字段为 `uint32`，总量硬上限 4 GiB；`T×H ≥ 2²¹` 必然失败）。排查这类问题时同时看：tiling 里是否写死了任务数/规模上限、offset 是否用 int64 累加、超限报错是否给出"需要/上限/构成"。
 
 ---
 
@@ -188,6 +189,7 @@
 
 - [#614](https://github.com/flashserve/flash-linear-attention-npu/issues/614)（已修复，`recompute_w_u_fwd` 内存占用测试有 4 条用例未达标：容量核算漏项）。
 - [#575](https://github.com/flashserve/flash-linear-attention-npu/issues/575)（已修复，`chunk_kda_fwd` 内存检测失败：越界/hazard 类结论要配合 mssanitizer 原始日志确认）。
+- [PR #699 评论](https://github.com/flashserve/flash-linear-attention-npu/pull/699#issuecomment-5791409395)（OPEN，单次发射的私有 workspace 总量受 `uint32` 偏移上限约束：4 GiB；按每 (token·head) 摊销估算边界，超限时 tiling 直接拒绝，调用方只会看到 `561103`）。
 
 ### lv2 / 越界/地址偏移
 

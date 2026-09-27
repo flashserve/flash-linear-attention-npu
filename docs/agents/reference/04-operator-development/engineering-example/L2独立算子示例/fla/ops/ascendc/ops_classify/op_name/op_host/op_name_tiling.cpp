@@ -16,6 +16,17 @@
  *   7. 校验失败必须 OP_LOGE + return ge::GRAPH_FAILED，不允许带着默认值继续。
  *   8. SaveToBuffer 与 SetDataSize 必须成对；漏 SetDataSize 会让设备侧读到 0 字节 tiling。
  *   9. IMPL_OP_OPTILING 的 op 名要与 *_def.cpp 的 OP_ADD 一致，TilingParse 必须注册。
+ *   10. **不要写死任务数/规模上限**：任务数由运行时 metadata 推导（例如 packed chunk 数从
+ *      cu_seqlens/chunk_indices 与 chunkSize 算出来），kernel 需要 metadata 时按任务从 GM 读，
+ *      不要依赖一张固定长度的 tiling/UB 元数据表。写死上限的典型后果是"长上下文直接 561103"，
+ *      而根因只是那张表不够长（Issue #508：packed chunk 上限 1024，T>65536 即失败，已由 PR #699 移除）。
+ *      确实存在物理上限时，必须在 README「已知限制」写明边界值，并在超限时给出带实际值与上限的报错。
+ *   11. **workspace 偏移的位宽与总量都要显式检查**：各 region 的 offset 用 int64 累加，写回 tiling 前
+ *      检查目标字段的位宽与 launcher 的规模上限：当前单次发射私有 workspace 的偏移字段是 uint32，
+ *      总量硬上限 4 GiB（`cursor > UINT32_MAX` 即拒绝）。示例：chunk_kda_bwd 每 (token·head) 摊 2 KB，
+ *      于是 T×H ≥ 2²¹（≈2.1M）必然失败，而调用方只看到 `561103`（PR #699 评论里给出的完整推导与边界表）。
+ *      超限时报"需要多少、上限多少、由哪些缓冲构成"，并把实测边界写进算子文档与用例
+ *      （边界内/边界外各一条，避免"移除了一层上限又撞到更深一层上限"）。
  */
 
 #include "op_name_tiling.h"

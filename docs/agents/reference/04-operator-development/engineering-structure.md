@@ -214,6 +214,17 @@ add_ops_compile_options(
 7. 空 tensor、非法 `cu_seqlens`/`chunk_indices`、超出位宽的 varlen 元数据都在这里拦截并打印实际值
    （对应 [#577](https://github.com/flashserve/flash-linear-attention-npu/issues/577)、
    [#508](https://github.com/flashserve/flash-linear-attention-npu/issues/508)）。
+8. **不要写死任务数/规模上限**：任务数由运行时 metadata 推导，kernel 需要 metadata 时按任务从 GM 读，
+   不要依赖固定长度的 tiling/UB 元数据表。写死上限会让长上下文直接以 `561103` 失败，而根因只是那张表
+   不够长（[#508](https://github.com/flashserve/flash-linear-attention-npu/issues/508)：packed chunk 上限
+   1024，`T>65536` 即失败，由 [PR #699](https://github.com/flashserve/flash-linear-attention-npu/pull/699) 移除）。
+   确实存在物理上限时，在 README「已知限制」写明边界值，并在超限时报出实际值与上限。
+9. **workspace 偏移的位宽与总量都要显式检查**：各 region 的 offset 用 int64 累加，写回 tiling 前检查
+   目标字段位宽与 launcher 规模上限——当前单次发射私有 workspace 的偏移字段是 `uint32`，总量硬上限 4 GiB
+   （`cursor > UINT32_MAX` 即拒绝）。例：`chunk_kda_bwd` 每 (token·head) 摊 2 KB，`T×H ≥ 2²¹` 必然失败，
+   而调用方只看到 `561103`（推导与边界表见
+   [PR #699 评论](https://github.com/flashserve/flash-linear-attention-npu/pull/699#issuecomment-5791409395)）。
+   超限报文要写清"需要多少、上限多少、由哪些缓冲构成"，并把实测边界写进算子文档与用例（边界内/外各一条）。
 
 ### 3.4 `op_api`：L0 与 L2 的分工
 
@@ -578,7 +589,8 @@ add_ops_compile_options(
 | 构建参数缺少前置校验 | §3.1、§7.3 | [#482](https://github.com/flashserve/flash-linear-attention-npu/issues/482) | OPEN | `FLA_NPU_OPS` 指定不存在的算子时应尽早报错并列出候选，而不是编译到一半或静默通过 |
 | 内嵌 OPP 初始化顺序 | §5.3、§6 | [#429](https://github.com/flashserve/flash-linear-attention-npu/issues/429) | 已修复 | `CANN` 先于 `fla_npu` 初始化时内嵌 OPP 未注册，同样报 `561103`；这类"看起来像算子错"的问题要先查运行时/安装状态 |
 | 空 tensor 与异常场景拦截、报错文本 | §3.3、§7.3、§7.4 | [#577](https://github.com/flashserve/flash-linear-attention-npu/issues/577)、[#561](https://github.com/flashserve/flash-linear-attention-npu/issues/561)、[#558](https://github.com/flashserve/flash-linear-attention-npu/issues/558)、[#641](https://github.com/flashserve/flash-linear-attention-npu/issues/641) | #577 已修复 / 其余 OPEN | 空 tensor、非法元数据必须在 host 拦截并打印实际值与原因，不能只给错误码；"异常场景未拦截"是同类问题的重复出现 |
-| varlen 元数据的位宽与计数 | §3.3、§7.3 | [#508](https://github.com/flashserve/flash-linear-attention-npu/issues/508) | OPEN | 总 token 数超过 `65536` 时 tiling 失败，属于 count/offset 位宽与上界检查问题；tiling 侧所有乘法都要做溢出检查 |
+| 写死任务数上限 | §3.3、§7.3 | [#508](https://github.com/flashserve/flash-linear-attention-npu/issues/508)、[PR #699](https://github.com/flashserve/flash-linear-attention-npu/pull/699) | OPEN（#699 修复中） | 根因是 host tiling 写死 packed chunk 上限 1024，`T>65536` 即 `561103`；任务数必须由运行时 metadata 推导，kernel 按任务从 GM 读 metadata，确有物理上限时在 README 写明边界并报实际值 |
+| 单次发射 workspace 规模上限 | §3.3 | [PR #699 评论](https://github.com/flashserve/flash-linear-attention-npu/pull/699#issuecomment-5791409395) | OPEN | 私有 workspace 偏移字段是 `uint32`，总量硬上限 4 GiB；`chunk_kda_bwd` 每 (token·head) 摊 2 KB，`T×H ≥ 2²¹` 必然失败且只报 `561103`。offset 用 int64 累加并显式检查上限，报错给出"需要/上限/构成"，边界写进文档与用例 |
 | 第三方框架传入的 rank/shape 语义 | §3.2、§7.3 | [#615](https://github.com/flashserve/flash-linear-attention-npu/issues/615) | OPEN | MindSpore 侧 `OriginalShape` 展平会导致 rank 误判；`def`/tiling 的 rank 判据要写清依赖哪一维，不能假设调用方总是传标准 layout |
 | 计算顺序/缩放顺序 | §4.2、§7 | [#563](https://github.com/flashserve/flash-linear-attention-npu/issues/563) | OPEN | 与参考实现不同的"先加后乘"会改变精度；改变计算顺序要同步更新 design 与 golden 语义 |
 | 同步与事件时序（含 UB hazard、hang） | §4.1、§7.5 | [PR #700](https://github.com/flashserve/flash-linear-attention-npu/pull/700)、[#325](https://github.com/flashserve/flash-linear-attention-npu/issues/325)、[#462](https://github.com/flashserve/flash-linear-attention-npu/issues/462) | 均已修复 | 典型形态是尾块/特定 head 配置下的缺反向同步、WAR hazard 或 hang；buffer 复用前必须有反向同步或 free 计数 |
