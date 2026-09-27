@@ -1,30 +1,78 @@
-name: 需求
-description: 提出新功能、新算子、能力增强或行为改进需求
+name: 需求建议
+description: 提出新功能、新算子、功能泛化、性能优化或行为改进需求
 title: "[Feature]: "
 labels:
   - enhancement
 body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢提出需求。请只填写可公开信息，不要粘贴账号、主机名、内网地址、绝对路径、临时目录、日志路径、token、内部问题单编号或其他敏感信息。
+
+        需求需要同时写清“要做什么”和“怎样算做完”：`期望实现的功能` 描述范围、入口与约束，`验收要求` 给出可核对的精度、性能、内存占用、确定性与兼容性口径。性能类需求请写明基线来源、目标比值、采集工具与指标、采集次数，避免用单次采集或单轮精度结果判定达标；内存占用类需求请写明对应 tiling 申请的 workspace 口径与上限。
   - type: textarea
     id: background
     attributes:
       label: 背景
-      description: 请说明业务、模型、算子或使用场景背景。
+      description: 请说明业务、模型、算子或使用场景背景；如与已有实现或配对需求相关，请给出公开的 issue/PR 编号。
+      placeholder: |
+        例如：
+        A5 上 KDA 前向目前只有 V1 融合实现（`aclnnChunkKdaFwd`），V2 三算子组合入口为 `aclnnChunkKdaFwdV2`。V1 在目标模型场景下性能不满足要求，本 issue 承载该场景的需求及其验收要求；配对的反向需求见 #xxx。
     validations:
       required: true
   - type: textarea
     id: problem
     attributes:
       label: 问题
-      description: 请说明当前能力缺口、痛点或限制。
+      description: 请说明当前能力缺口、痛点或限制；性能类需求请给出当前实测数据与目标的差距，并说明本需求对实现的要求。
+      placeholder: |
+        例如：
+        该场景三个阶段设备耗时分别为 ... us、... us、... us，合计 ... us，与 ... us 的目标仍有差距，主要来自 ...
+
+        本需求对实现的要求：主路径数据类型为 ...，状态与累加按 ...；精度按 ... 判定；性能在 ... 平台达到 ... 基线的 ... 倍（基线取自 ... 同场景实现）；结果需要是确定性计算。这些要求此前没有统一记录，容易出现用单次采集或单轮精度结果判定达标的情况。
     validations:
       required: true
   - type: textarea
     id: expected
     attributes:
       label: 期望实现的功能
-      description: 请描述希望新增或调整的功能、接口、行为或覆盖范围。
+      description: 请描述希望新增或调整的功能、入口、行为、覆盖范围，以及必须保持不变或必须保留的接口、语义与平台路径。
+      placeholder: |
+        例如：
+        新增 ... 组合入口承载本场景需求：保持公开接口、数学语义和既有场景输出正确性，保留 ... 原有路径。
+
+        - 具体模型场景：B=...、HK=HV=...、T=...、K=V=...、chunk_size=...，布局 ...，开关 ...，输出与状态保留要求 ...
+        - 精度目标：...
+        - 性能目标：...
+        - 确定性要求：...
+        - 内存占用目标：tiling 申请的 workspace 大小不高于 ...（写明统计口径：单算子或整链合计、峰值或单次申请）
     validations:
       required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收要求
+      description: 请给出可核对的验收口径，至少覆盖精度、性能、内存占用、确定性与兼容性；不要只写“性能提升”“精度正常”这类无法判定的表述。
+      value: |
+        - 精度：按 ...（如 ATK 双标杆 DUT + golden + benchmark，仓上 YAML 配置的 ATK 原生标准 L2 阈值）判定通过；不得通过收窄输入范围、放宽阈值、跳过用例或屏蔽比较区域达成。
+        - 性能：... 平台的设备耗时（如 `msopprof` 的 Task Duration）不高于 ... 基线的 ... 倍；基线来源为 ...；结果须注明采集次数，不把单次接近目标等同于稳定达标。
+        - 内存占用：... 的 workspace 申请量（对应 tiling 申请的 workspace 大小）不高于 ...；须注明统计口径（单算子或整链合计、峰值或单次申请）、基线来源与采集方式，不以 host 侧内存或 Python 侧缓存作为口径。
+        - 确定性：相同输入重复执行输出一致，不引入随机化或随调度变化的归约顺序。
+        - 兼容性与回归：公开接口与 ABI 不变；A2/A3/A5 编译、基础功能与主通路精度回归通过；受影响算子的 example/ST 与共享路径回归通过。
+    validations:
+      required: true
+  - type: textarea
+    id: scenarios
+    attributes:
+      label: 场景与测试矩阵（可选）
+      description: 如需按模型场景验收，请用表格列出主流场景，并标注单卡与多卡 TP 切分视角、定长/变长以及中间量保存或重计算模式。
+      placeholder: |
+        | 模型场景 | B | HK / HV | T | K / V | chunk_size | 布局 | 说明 |
+        | --- | --- | --- | --- | --- | --- | --- | --- |
+        | ...（定长） | 1 | 96 / 96 | 8192 | 128 / 128 | 64 | BNSD | 本需求主场景 |
+        | ...（8 卡 TP，每卡 12 head） | 1 | 12 / 12 | 8192 | 128 / 128 | 64 | BNSD | TP 切分后单卡视角 |
+    validations:
+      required: false
   - type: textarea
     id: proposal
     attributes:
@@ -36,6 +84,13 @@ body:
     id: tests
     attributes:
       label: 相关闭环测试建议（可选）
-      description: 如有推荐的精度、性能、边界、端到端或回归测试场景，请在这里说明。
+      description: 如有推荐的精度、性能、边界、端到端或回归测试场景，请在这里说明。精度须走正式精度任务并核对用例总数与通过数，性能须以 profiling 指标为准，不要用 wall time 下结论。
+    validations:
+      required: false
+  - type: textarea
+    id: closure
+    attributes:
+      label: 关联实现 PR / 闭环记录（可选）
+      description: 需求实现后请回填实现 PR 编号与合入状态；如需分批实现或已部分合入，请在这里补充说明，便于后续跟踪闭环。
     validations:
       required: false
