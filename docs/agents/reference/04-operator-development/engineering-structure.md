@@ -395,8 +395,6 @@ add_ops_compile_options(
 当已发布入口需要新增能力（新开关、新可选输出、新场景）时，按以下规则迭代：
 
 1. **V1 冻结**：已发布入口的函数名、形参数量与顺序、形参类型、公开输出布局不得修改。
-   **返回码不在冻结范围内**：允许新增或细化错误码（例如新增一类参数校验），但必须同步 `docs/api.md`
-   的返回值章节，写清新增拦截的触发条件与实际报错内容。
 2. **V2 新开**：新能力写成 `aclnn<Op>V2GetWorkspaceSize` / `aclnn<Op>V2`，其余层（L0、kernel、def）不动。
    声明固定放 `op_host/op_api/aclnn_<op>_v2.h`；实现可放在已有的 `aclnn_<op>.cpp` 尾部（V1 的公开头
    此时完全不改，参考 `chunk_kda_fwd`：`aclnn_chunk_kda_fwd_v2.h` + 实现在 `aclnn_chunk_kda_fwd.cpp`），
