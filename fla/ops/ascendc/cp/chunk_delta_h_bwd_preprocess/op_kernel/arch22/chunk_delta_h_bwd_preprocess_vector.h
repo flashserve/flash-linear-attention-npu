@@ -259,6 +259,8 @@ private:
     }
 
     // V0：门控/衰减准备 + slot 落盘（Q̄s / K̄ / W / do / decayK）
+    // 契约：入口只消费本 chunk 的 q/k/w/do 原始输入与 g/gk；出口保证 slot 内四个平面的
+    //       无效行（[rows, chunkSize)）为 0，且 decayK[K] 已按 chunk 末行门控算好。
     __aicore__ inline void StageV0(uint32_t hv, uint32_t chunkIdx)
     {
         const uint32_t rows = this->ChunkRows(chunkIdx);
@@ -375,6 +377,7 @@ private:
     }
 
     // V2：dV̂' = -(dV_pre + dv_local)（无效行写零）
+    // 契约：入口消费 C1 的 dV_pre 与本 chunk 的 dv_local；出口的 dV̂' 落模型 dtype，供 C3 当右操作数。
     __aicore__ inline void StageV2(uint32_t hv, uint32_t chunkIdx)
     {
         const uint32_t rows = this->ChunkRows(chunkIdx);
@@ -404,7 +407,9 @@ private:
         }
     }
 
-    // 初始状态：dH = 0、P = I 落到对应 parity 的 FP32 平面
+    // InitState：dH = 0、P = I 落到对应 parity 的 FP32 平面
+    // 契约：每个 task（hv）进入 chunk 逆序循环前调用一次；同时把 dH 的模型 dtype 操作数平面清零，
+    //       保证首个 chunk 的 C1 读到的是显式零而不是未初始化的 workspace。
     __aicore__ inline void InitState(uint32_t chunkNum)
     {
         // 跨 task 复用 UB 的 WAR：上一个 task 的最后一次搬出（MTE3，可能是 WriteOutput 的输出写回）
@@ -443,6 +448,8 @@ private:
     }
 
     // V4：路 A（dH 更新 + dHBf）+ 路 B（P_c + 上一轮 P 的 dtype 拷贝）
+    // 契约：入口消费 C3 的 qterm/wterm、C1 的 T1 与 V0 的 decayK；出口 dH_new（FP32 落盘 + 模型 dtype
+    //       操作数）、P_c（模型 dtype）与本轮 P 的模型 dtype 拷贝，供 C5 使用、并供下一轮 C1/V4 复用。
     __aicore__ inline void StageV4(uint32_t chunkIdx)
     {
         const uint32_t kDim = static_cast<uint32_t>(this->tiling_.K);

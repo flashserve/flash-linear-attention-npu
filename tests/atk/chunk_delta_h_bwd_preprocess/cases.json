@@ -3,7 +3,7 @@
   "op_type": "ChunkDeltaHBwdPreprocess",
   "impl_type": "ascendc",
   "primary_entry": "fla_npu.ops.ascendc.chunk_delta_h_bwd_preprocess",
-  "reference": "tests/operators/chunk_delta_h_bwd_preprocess/reference.py",
+  "reference": "tests/atk/chunk_delta_h_bwd_preprocess/reference.py",
   "field_doc": {
     "dtype": "q/k/w/do/dv 的 dtype：bf16 或 fp16",
     "gate": "none | g（标量 gate，g dtype 见 g_dtype）| gk（逐 K gate）",

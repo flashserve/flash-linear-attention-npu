@@ -9,26 +9,40 @@
 
 /*!
  * \file chunk_delta_h_bwd_preprocess_vector.h
- * \brief Vector 侧 Stage：V0（门控与衰减准备 / 零填充）、V2（dV̂'）、V4（状态更新 + 对角注入）。
+ * \brief arch35（Ascend950 / dav-3510）Vector 侧实现。
  *
- * V0 每个 chunk 产出 slot：Q̄s、K̄、W（零填充）、do（零填充）、decayK。
- *   [M, BT) 的无效 token 行必须在 Q̄s / K̄ / W / do 上写零：Cube 侧矩阵乘按完整 chunkSize 规约，
- *   这也复现了上游 tl.load(boundary_check) 的零填充语义。
- * V2  dV̂' = -(dV_pre + dv_local)，落模型 dtype 供 C3 当右操作数（无效行写零）。
- * V4  路 A：dH_new = decayK ⊙ dH_old + (qterm + wterm)，并落模型 dtype 拷贝供下一轮 C1；
- *     路 B：P_c = diag(decayK) - T1（模型 dtype），并把上一轮 P（FP32）转模型 dtype 供 C5。
+ * 与 arch22 的差别：把三段热点（V0 门控、V2 dV̂'、V4 状态更新 / P_c 对角注入）下沉到 RegBase
+ * `__simd_vf__`（VECTOR_REG_WIDTH = 256B = 64 lane / fp32 寄存器）一趟算完，消除 arch22 版本里
+ * "逐行 Muls + 逐行 ExpScalar(V→S 同步) + 逐元素 SetValue/GetValue"的标量往返；Cube 侧与
+ * arch22 保持一致（见 arch35/chunk_delta_h_bwd_preprocess_cube.h）。
  *
- * 同 chunk 内 AIV/AIC 严格交替握手，flag id 见 chunk_delta_h_bwd_preprocess_policy.h。
+ * VF 与 Stage 的对应关系：
+ *   CDHP_V0GateScaleVF     V0：Q̄s / K̄ 门控行缩放（qFactor = exp(g·ln2)·scale，dvFactor = exp((g_last-g)·ln2)）
+ *   CDHP_V0LastDecayVF     V0：decayK[:] = exp(g_last·ln2) 按 K 广播
+ *   CDHP_V2DvHatVF         V2：dV̂' = -(dV_pre + dv_local)
+ *   CDHP_V4StateUpdateVF   V4 路 A：dH_new = decayK ⊙ dH_old + (qterm + wterm)
+ *   CDHP_V4PcDiagVF        V4 路 B：P_c = diag(decayK) - T1（对角用寄存器 mask 注入）
+ *   CDHP_InitIdentityVF    InitState：P 初值 = I（对角用寄存器 mask 注入）
+ *
+ * 所有 VF 只在 FP32 UB 平面上工作（dtype 转换仍走既有的 Cast + DataCopyPad 通路），
+ * 因此内部统一用默认 LoadDist / StoreDist，不涉及 b16 的 unpack / pack 布局。
+ *
+ * 六 Stage 的物理切分与 flag 协议见 chunk_delta_h_bwd_preprocess_policy.h；
+ * 同 chunk 内 AIV/AIC 严格交替握手。
  */
 
 #ifndef CHUNK_DELTA_H_BWD_PREPROCESS_ARCH35_VECTOR_H
 #define CHUNK_DELTA_H_BWD_PREPROCESS_ARCH35_VECTOR_H
 
+#include <type_traits>
+
 #include "kernel_operator.h"
+#include "kernel_utils/vector/regbase.hpp"
 #include "../chunk_delta_h_bwd_preprocess_common.h"
 #include "../chunk_delta_h_bwd_preprocess_policy.h"
 
 using namespace AscendC;
+using namespace AscendC::MicroAPI;
 
 namespace CP {
 
@@ -36,6 +50,8 @@ constexpr float CDHP_LN2 = 0.6931471805599453f;
 // 向量侧行分块：16 行 × 256 列 = 4096 元素（FP32 16 KiB）；K/V <= 256 时 UB 占用固定
 constexpr uint32_t CDHP_VEC_TILE = 16;
 constexpr uint32_t CDHP_SCRATCH_ELEMS = CDHP_VEC_TILE * 256;
+// dav-3510：一个 fp32 向量寄存器 = 256B = 64 lane
+constexpr uint16_t CDHP_VF_LANES = static_cast<uint16_t>(AscendC::VECTOR_REG_WIDTH / sizeof(float));
 constexpr uint32_t CDHP_EV_V_S = 0;
 constexpr uint32_t CDHP_EV_S_V = 1;
 constexpr uint32_t CDHP_EV_MTE2_V = 2;
@@ -64,6 +80,192 @@ struct ChunkDeltaHBwdPreprocessSameType<A, A> {
 __aicore__ inline uint32_t MinV(uint32_t a, uint32_t b)
 {
     return (a < b) ? a : b;
+}
+
+// ===========================================================================
+// RegBase VF 段（dav-3510）
+//
+// 约定：
+//   * 行列 tile 的行距（K/V）是 CDHP_VF_LANES 的整数倍，列循环天然落在寄存器对齐边界上；
+//     尾块用 UpdateMask 收窄写回范围，未被 mask 覆盖的 lane 保持原值，因此调用方仍需在
+//     调用前把无效行清零（与 arch22 的零填充语义一致）。
+//   * VF 是 V pipe 上的指令流，与本文件里其它 AscendC::Cast/Muls/Exp 等向量 API 同 pipe 顺序执行，
+//     不需要额外的跨 pipe 事件。
+// ===========================================================================
+
+// V0 门控：Q̄s[r,:] *= exp(g[r]·ln2)·scale；K̄[r,:] *= exp((g_last - g[r])·ln2)
+// gateTile 指向本 chunk 的第 r0 行（g 的行指针），gateLast 指向本 chunk 最后一行 g[rows-1]。
+__simd_vf__ inline void CDHP_V0GateScaleVF(__ubuf__ float *qTile, __ubuf__ float *kTile,
+                                           __ubuf__ float *gateTile, __ubuf__ float *gateLast,
+                                           uint16_t validRows, uint16_t kDim, float scale)
+{
+    MaskReg maskAll = CreateMask<float, MaskPattern::ALL>();
+    const uint16_t colLoop = static_cast<uint16_t>((kDim + CDHP_VF_LANES - 1) / CDHP_VF_LANES);
+
+    RegTensor<float> lastReg;
+    LoadIn<float, true>(lastReg, gateLast);
+    for (uint16_t r = 0; r < validRows; ++r) {
+        RegTensor<float> gRowReg;
+        RegTensor<float> qFacReg;
+        RegTensor<float> dvFacReg;
+        LoadIn<float, true>(gRowReg, gateTile + r);
+        // 与 arch22 的逐行 ExpScalar 同序：exp(g·ln2) 先乘 scale，再乘到整行
+        Muls(qFacReg, gRowReg, CDHP_LN2, maskAll);
+        Exp(qFacReg, qFacReg, maskAll);
+        Muls(qFacReg, qFacReg, scale, maskAll);
+        Sub(dvFacReg, lastReg, gRowReg, maskAll);
+        Muls(dvFacReg, dvFacReg, CDHP_LN2, maskAll);
+        Exp(dvFacReg, dvFacReg, maskAll);
+        for (uint16_t c = 0; c < colLoop; ++c) {
+            const uint32_t colOff = static_cast<uint32_t>(c) * CDHP_VF_LANES;
+            const uint32_t off = static_cast<uint32_t>(r) * kDim + colOff;
+            uint32_t left = kDim - colOff;
+            uint32_t lanes = (left > CDHP_VF_LANES) ? CDHP_VF_LANES : left;
+            MaskReg maskCol = UpdateMask<float>(lanes);
+            RegTensor<float> srcReg;
+            RegTensor<float> dstReg;
+            LoadAlign(srcReg, qTile + off);
+            Mul(dstReg, srcReg, qFacReg, maskCol);
+            StoreAlign(qTile + off, dstReg, maskCol);
+            LoadAlign(srcReg, kTile + off);
+            Mul(dstReg, srcReg, dvFacReg, maskCol);
+            StoreAlign(kTile + off, dstReg, maskCol);
+        }
+    }
+}
+
+// V0 衰减：decayK[:] = exp(g_last·ln2)
+__simd_vf__ inline void CDHP_V0LastDecayVF(__ubuf__ float *decayOut, __ubuf__ float *gateLast, uint16_t kDim)
+{
+    MaskReg maskAll = CreateMask<float, MaskPattern::ALL>();
+    RegTensor<float> lastReg;
+    LoadIn<float, true>(lastReg, gateLast);
+    Muls(lastReg, lastReg, CDHP_LN2, maskAll);
+    Exp(lastReg, lastReg, maskAll);
+    const uint16_t colLoop = static_cast<uint16_t>((kDim + CDHP_VF_LANES - 1) / CDHP_VF_LANES);
+    for (uint16_t c = 0; c < colLoop; ++c) {
+        const uint32_t colOff = static_cast<uint32_t>(c) * CDHP_VF_LANES;
+        uint32_t left = kDim - colOff;
+        uint32_t lanes = (left > CDHP_VF_LANES) ? CDHP_VF_LANES : left;
+        MaskReg maskCol = UpdateMask<float>(lanes);
+        StoreAlign(decayOut + colOff, lastReg, maskCol);
+    }
+}
+
+// V2：dV̂' = -(dV_pre + dv_local)，一趟完成加与取负（out 允许与 pre 指向同一块 UB）
+__simd_vf__ inline void CDHP_V2DvHatVF(__ubuf__ float *out, __ubuf__ float *pre, __ubuf__ float *dvLocal,
+                                       uint16_t elems)
+{
+    const uint16_t loopCnt = static_cast<uint16_t>((elems + CDHP_VF_LANES - 1) / CDHP_VF_LANES);
+    for (uint16_t c = 0; c < loopCnt; ++c) {
+        const uint32_t off = static_cast<uint32_t>(c) * CDHP_VF_LANES;
+        uint32_t left = elems - off;
+        uint32_t lanes = (left > CDHP_VF_LANES) ? CDHP_VF_LANES : left;
+        MaskReg mask = UpdateMask<float>(lanes);
+        RegTensor<float> preReg;
+        RegTensor<float> dvReg;
+        RegTensor<float> sumReg;
+        LoadAlign(preReg, pre + off);
+        LoadAlign(dvReg, dvLocal + off);
+        Add(sumReg, preReg, dvReg, mask);
+        Muls(sumReg, sumReg, -1.0f, mask);
+        StoreAlign(out + off, sumReg, mask);
+    }
+}
+
+// V4 路 A：dH_new = decayK ⊙ dH_old + (qterm + wterm)
+// decay 由行号索引（rowBase + r 是 dH 的 K 维行号）
+__simd_vf__ inline void CDHP_V4StateUpdateVF(__ubuf__ float *state, __ubuf__ float *termQ, __ubuf__ float *termW,
+                                             __ubuf__ float *decay, uint16_t rowBase, uint16_t rowCount,
+                                             uint16_t colCount)
+{
+    const uint16_t colLoop = static_cast<uint16_t>((colCount + CDHP_VF_LANES - 1) / CDHP_VF_LANES);
+    for (uint16_t r = 0; r < rowCount; ++r) {
+        RegTensor<float> facReg;
+        LoadIn<float, true>(facReg, decay + rowBase + r);
+        for (uint16_t c = 0; c < colLoop; ++c) {
+            const uint32_t colOff = static_cast<uint32_t>(c) * CDHP_VF_LANES;
+            const uint32_t off = static_cast<uint32_t>(r) * colCount + colOff;
+            uint32_t left = colCount - colOff;
+            uint32_t lanes = (left > CDHP_VF_LANES) ? CDHP_VF_LANES : left;
+            MaskReg mask = UpdateMask<float>(lanes);
+            RegTensor<float> stateReg;
+            RegTensor<float> qReg;
+            RegTensor<float> wReg;
+            RegTensor<float> addReg;
+            LoadAlign(stateReg, state + off);
+            LoadAlign(qReg, termQ + off);
+            LoadAlign(wReg, termW + off);
+            Add(addReg, qReg, wReg, mask);
+            Mul(stateReg, stateReg, facReg, mask);
+            Add(stateReg, stateReg, addReg, mask);
+            StoreAlign(state + off, stateReg, mask);
+        }
+    }
+}
+
+// V4 路 B：P_c[r,c] = -T1[r,c]（c == rowBase + r 时再叠上 decayK[rowBase + r]）
+// 对角注入不再用标量 SetValue/GetValue：列号由 Arange 生成，与行号 Compares 出对角 mask，
+// 先把 decay 落到只有对角 lane 有效的寄存器再整体相加（未命中的 lane 恒为 0，与合并模式无关）。
+__simd_vf__ inline void CDHP_V4PcDiagVF(__ubuf__ float *out, __ubuf__ float *t1, __ubuf__ float *decay,
+                                        uint16_t rowBase, uint16_t rowCount, uint16_t colCount)
+{
+    MaskReg maskAll = CreateMask<float, MaskPattern::ALL>();
+    const uint16_t colLoop = static_cast<uint16_t>((colCount + CDHP_VF_LANES - 1) / CDHP_VF_LANES);
+    for (uint16_t r = 0; r < rowCount; ++r) {
+        const int32_t rowIdx = static_cast<int32_t>(rowBase + r);
+        RegTensor<float> facReg;
+        LoadIn<float, true>(facReg, decay + rowBase + r);
+        for (uint16_t c = 0; c < colLoop; ++c) {
+            const uint32_t colOff = static_cast<uint32_t>(c) * CDHP_VF_LANES;
+            const uint32_t off = static_cast<uint32_t>(r) * colCount + colOff;
+            uint32_t left = colCount - colOff;
+            uint32_t lanes = (left > CDHP_VF_LANES) ? CDHP_VF_LANES : left;
+            MaskReg mask = UpdateMask<float>(lanes);
+            MaskReg diagMask;
+            RegTensor<int32_t> colIdxReg;
+            RegTensor<float> t1Reg;
+            RegTensor<float> negReg;
+            RegTensor<float> diagReg;
+            Arange<int32_t>(colIdxReg, static_cast<int32_t>(colOff));
+            Compares<int32_t, CMPMODE::EQ>(diagMask, colIdxReg, rowIdx, mask);
+            Duplicate(diagReg, 0.0f, maskAll);
+            Add(diagReg, facReg, diagReg, diagMask);
+            LoadAlign(t1Reg, t1 + off);
+            Muls(negReg, t1Reg, -1.0f, mask);
+            Add(negReg, negReg, diagReg, mask);
+            StoreAlign(out + off, negReg, mask);
+        }
+    }
+}
+
+// InitState：P 初值 = I（[rowBase, rowBase+rowCount) 行 × colCount 列的对角块）
+__simd_vf__ inline void CDHP_InitIdentityVF(__ubuf__ float *dst, uint16_t rowBase, uint16_t rowCount,
+                                            uint16_t colCount)
+{
+    MaskReg maskAll = CreateMask<float, MaskPattern::ALL>();
+    RegTensor<float> oneReg;
+    Duplicate(oneReg, 1.0f, maskAll);
+    const uint16_t colLoop = static_cast<uint16_t>((colCount + CDHP_VF_LANES - 1) / CDHP_VF_LANES);
+    for (uint16_t r = 0; r < rowCount; ++r) {
+        const int32_t rowIdx = static_cast<int32_t>(rowBase + r);
+        for (uint16_t c = 0; c < colLoop; ++c) {
+            const uint32_t colOff = static_cast<uint32_t>(c) * CDHP_VF_LANES;
+            const uint32_t off = static_cast<uint32_t>(r) * colCount + colOff;
+            uint32_t left = colCount - colOff;
+            uint32_t lanes = (left > CDHP_VF_LANES) ? CDHP_VF_LANES : left;
+            MaskReg mask = UpdateMask<float>(lanes);
+            MaskReg diagMask;
+            RegTensor<int32_t> colIdxReg;
+            RegTensor<float> zeroReg;
+            RegTensor<float> diagReg;
+            Arange<int32_t>(colIdxReg, static_cast<int32_t>(colOff));
+            Compares<int32_t, CMPMODE::EQ>(diagMask, colIdxReg, rowIdx, mask);
+            Duplicate(zeroReg, 0.0f, maskAll);
+            Add(diagReg, oneReg, zeroReg, diagMask);
+            StoreAlign(dst + off, diagReg, mask);
+        }
+    }
 }
 
 template <typename DT, typename GT>
@@ -97,7 +299,6 @@ public:
         pipe_->InitBuffer(s0DT_, CDHP_SCRATCH_ELEMS * sizeof(DT));
         pipe_->InitBuffer(gF32_, 256 * sizeof(float));
         pipe_->InitBuffer(decayF32_, 256 * sizeof(float));
-        pipe_->InitBuffer(scalarF32_, 8 * sizeof(float));
     }
 
     __aicore__ inline void Process()
@@ -124,10 +325,15 @@ public:
     }
 
 private:
+    template <typename T>
+    __aicore__ inline static __ubuf__ T *UbPtr(const LocalTensor<T> &tensor)
+    {
+        return (__ubuf__ T *)tensor.GetPhyAddr();
+    }
+
     // 复用 s0DT_ 暂存区（以及门控用的 gF）前的保护：该缓冲可能刚被上一轮的
     //   - V（Cast 写 s0DT_ / Cast 写 gF）
     //   - MTE3（StoreTileModel 从 s0DT_ 搬出）
-    //   - S（标量读 gF/decayF）
     // 使用过。关闭自动同步后必须显式等待，否则新的一轮 MTE2 载入会在上一轮还没读完时覆盖内容，
     // 表现为上一轮写出的平面出现整块错值（实测：InitState 落盘的 dHBf 被 gk 载入竞争覆盖，
     // 导致首个 chunk 的 dV_pre 用到被污染的 dH 操作数，误差随 chunk 数放大）。
@@ -139,18 +345,6 @@ private:
         WaitFlag<HardEvent::V_MTE2>(CDHP_EV_V_MTE2);
         SetFlag<HardEvent::MTE3_MTE2>(CDHP_EV_MTE3_MTE2);
         WaitFlag<HardEvent::MTE3_MTE2>(CDHP_EV_MTE3_MTE2);
-    }
-
-    __aicore__ inline float ExpScalar(float x)
-    {
-        LocalTensor<float> scalar = scalarF32_.Get<float>();
-        Duplicate(scalar, x, 1);
-        PipeBarrier<PIPE_V>();
-        Exp(scalar, scalar, 1);
-        PipeBarrier<PIPE_V>();
-        SetFlag<HardEvent::V_S>(CDHP_EV_V_S);
-        WaitFlag<HardEvent::V_S>(CDHP_EV_V_S);
-        return scalar.GetValue(0);
     }
 
     // GM [rows, cols]（行距 rowStride）→ FP32 UB
@@ -259,6 +453,8 @@ private:
     }
 
     // V0：门控/衰减准备 + slot 落盘（Q̄s / K̄ / W / do / decayK）
+    // 契约：入口只消费本 chunk 的 q/k/w/do 原始输入与 g/gk；出口保证 slot 内四个平面的
+    //       无效行（[rows, chunkSize)）为 0，且 decayK[K] 已按 chunk 末行门控算好。
     __aicore__ inline void StageV0(uint32_t hv, uint32_t chunkIdx)
     {
         const uint32_t rows = this->ChunkRows(chunkIdx);
@@ -279,6 +475,7 @@ private:
 
         LocalTensor<float> gF = gF32_.Get<float>();
         LocalTensor<float> decayF = decayF32_.Get<float>();
+        __ubuf__ float *gateFirst = nullptr;
         if (useG != 0) {
             GuardScratchRewrite();
             if constexpr (ChunkDeltaHBwdPreprocessSameType<GT, float>::value) {
@@ -303,11 +500,9 @@ private:
             SetFlag<HardEvent::MTE2_V>(CDHP_EV_MTE2_V);
             WaitFlag<HardEvent::MTE2_V>(CDHP_EV_MTE2_V);
             PipeBarrier<PIPE_V>();
-            SetFlag<HardEvent::V_S>(CDHP_EV_V_S);
-            WaitFlag<HardEvent::V_S>(CDHP_EV_V_S);
-            const float eLast = ExpScalar(gF.GetValue(rows - 1) * CDHP_LN2);
-            Duplicate(decayF, eLast, kDim);
-            PipeBarrier<PIPE_V>();
+            // 门控行因子与衰减都下沉到 VF：g[rows-1] 的广播值只算一次
+            gateFirst = UbPtr(gF);
+            CDHP_V0LastDecayVF(UbPtr(decayF), gateFirst + (rows - 1), static_cast<uint16_t>(kDim));
         } else if (useGk != 0) {
             GuardScratchRewrite();
             AscendC::GlobalTensor<DT> gkSrc;
@@ -324,8 +519,6 @@ private:
             PipeBarrier<PIPE_V>();
             AscendC::Exp(decayF, decayF, kDim);
             PipeBarrier<PIPE_V>();
-            SetFlag<HardEvent::V_S>(CDHP_EV_V_S);
-            WaitFlag<HardEvent::V_S>(CDHP_EV_V_S);
         } else {
             Duplicate(decayF, 1.0f, kDim);
             PipeBarrier<PIPE_V>();
@@ -353,14 +546,8 @@ private:
                 LoadTileF32(doF, doAddr_ + static_cast<uint64_t>(hv * this->tiling_.T + t0 + r0) * vDim * sizeof(DT),
                             validRows, vDim, vDim);
                 if (useG != 0) {
-                    const float gLast = gF.GetValue(rows - 1);
-                    for (uint32_t r = 0; r < validRows; ++r) {
-                        const float ev = ExpScalar(gF.GetValue(r0 + r) * CDHP_LN2);
-                        AscendC::Muls(qF[r * kDim], qF[r * kDim], ev * scale_, kDim);
-                        const float dv = ExpScalar((gLast - gF.GetValue(r0 + r)) * CDHP_LN2);
-                        AscendC::Muls(kF[r * kDim], kF[r * kDim], dv, kDim);
-                    }
-                    PipeBarrier<PIPE_V>();
+                    CDHP_V0GateScaleVF(UbPtr(qF), UbPtr(kF), gateFirst + r0, gateFirst + (rows - 1),
+                                       static_cast<uint16_t>(validRows), static_cast<uint16_t>(kDim), scale_);
                 } else {
                     AscendC::Muls(qF, qF, scale_, validRows * kDim);
                     PipeBarrier<PIPE_V>();
@@ -394,10 +581,8 @@ private:
                 // 走统一的 LoadTileF32（内部含 MTE2→V 与暂存区复用同步）
                 LoadTileF32(dvF, dvAddr_ + static_cast<uint64_t>(hv * this->tiling_.T + t0 + r0) * vDim * sizeof(DT),
                             validRows, vDim, vDim);
-                AscendC::Add(preF, preF, dvF, validRows * vDim);
-                PipeBarrier<PIPE_V>();
-                AscendC::Muls(preF, preF, -1.0f, validRows * vDim);
-                PipeBarrier<PIPE_V>();
+                // 加与取负融合在 VF 里一趟完成
+                CDHP_V2DvHatVF(UbPtr(preF), UbPtr(preF), UbPtr(dvF), static_cast<uint16_t>(validRows * vDim));
             }
             StoreTileModel(preF, this->DvHatAt() + static_cast<uint64_t>(r0) * vDim * sizeof(DT), tileRows, vDim,
                            vDim);
@@ -408,8 +593,8 @@ private:
     __aicore__ inline void InitState(uint32_t chunkNum)
     {
         // 跨 task 复用 UB 的 WAR：上一个 task 的最后一次搬出（MTE3，可能是 WriteOutput 的输出写回）
-        // 可能仍在读 s0F32_/s1F32_。`PipeBarrier<PIPE_MTE3>` 只约束 MTE3 自己，拦不住随后的 V/S，
-        // 若不等这一步，本轮 Duplicate/SetValue 会把「还在搬出中的那块 UB」改写，
+        // 可能仍在读 s0F32_/s1F32_。`PipeBarrier<PIPE_MTE3>` 只约束 MTE3 自己，拦不住随后的 V，
+        // 若不等这一步，本轮 Duplicate 会把「还在搬出中的那块 UB」改写，
         // 输出的最后一个 tile 会写成当前 UB 里的内容（实测表现为中间 task 的 P 面尾部变成单位阵）。
         SetFlag<HardEvent::MTE3_V>(CDHP_EV_MTE3_V);
         WaitFlag<HardEvent::MTE3_V>(CDHP_EV_MTE3_V);
@@ -425,15 +610,9 @@ private:
             Duplicate(dhF, 0.0f, tileRows * vDim);
             Duplicate(pF, 0.0f, tileRows * kDim);
             PipeBarrier<PIPE_V>();
-            // V 先写（Duplicate 清零）→ S 再写（对角注入）：关闭自动同步后必须先等 V 落盘，
-            // 否则标量写的 1.0 会被随后的向量清零覆盖（表现为 P 初值全零）。
-            SetFlag<HardEvent::V_S>(CDHP_EV_V_S);
-            WaitFlag<HardEvent::V_S>(CDHP_EV_V_S);
-            for (uint32_t r = 0; r < tileRows; ++r) {
-                pF.SetValue(r * kDim + (r0 + r), 1.0f);
-            }
-            SetFlag<HardEvent::S_V>(CDHP_EV_S_V);
-            WaitFlag<HardEvent::S_V>(CDHP_EV_S_V);
+            // P 的单位阵在 VF 内用对角 mask 注入，不再走 V→S→V 的标量 SetValue 往返
+            CDHP_InitIdentityVF(UbPtr(pF), static_cast<uint16_t>(r0), static_cast<uint16_t>(tileRows),
+                                static_cast<uint16_t>(kDim));
             StorePlaneF32(dhF, this->DhAt(parity), r0, tileRows, vDim);
             StorePlaneF32(pF, this->PAt(parity), r0, tileRows, kDim);
             // C1 真正消费的是模型 dtype 的 dH 操作数平面（首轮必须为零，否则读到未初始化的 workspace）
@@ -452,8 +631,8 @@ private:
         LocalTensor<float> decayF = decayF32_.Get<float>();
         SetFlag<HardEvent::MTE2_V>(CDHP_EV_MTE2_V);
         WaitFlag<HardEvent::MTE2_V>(CDHP_EV_MTE2_V);
-        SetFlag<HardEvent::V_S>(CDHP_EV_V_S);
-        WaitFlag<HardEvent::V_S>(CDHP_EV_V_S);
+        // decayK 由 V0 的 V 段写出，进入本 Stage 的 V 段之前先做一次 V 内排空
+        PipeBarrier<PIPE_V>();
 
         for (uint32_t r0 = 0; r0 < kDim; r0 += CDHP_VEC_TILE) {
             const uint32_t tileRows = MinV(CDHP_VEC_TILE, kDim - r0);
@@ -463,14 +642,9 @@ private:
             LoadPlaneF32(dhF, this->DhAt(dhPrev), r0, tileRows, vDim);
             LoadPlaneF32(qF, this->QtermAt(), r0, tileRows, vDim);
             LoadPlaneF32(wF, this->WtermAt(), r0, tileRows, vDim);
-            AscendC::Add(qF, qF, wF, tileRows * vDim);
-            PipeBarrier<PIPE_V>();
-            for (uint32_t r = 0; r < tileRows; ++r) {
-                AscendC::Muls(dhF[r * vDim], dhF[r * vDim], decayF.GetValue(r0 + r), vDim);
-            }
-            PipeBarrier<PIPE_V>();
-            AscendC::Add(dhF, dhF, qF, tileRows * vDim);
-            PipeBarrier<PIPE_V>();
+            // dH_new = decayK ⊙ dH_old + (qterm + wterm)：一份寄存器流一趟算完
+            CDHP_V4StateUpdateVF(UbPtr(dhF), UbPtr(qF), UbPtr(wF), UbPtr(decayF), static_cast<uint16_t>(r0),
+                                 static_cast<uint16_t>(tileRows), static_cast<uint16_t>(vDim));
             StorePlaneF32(dhF, this->DhAt(dhParity), r0, tileRows, vDim);
             StoreTileModel(dhF, this->DhBfAt() + static_cast<uint64_t>(r0) * vDim * sizeof(DT), tileRows, vDim,
                            vDim);
@@ -479,20 +653,12 @@ private:
         for (uint32_t r0 = 0; r0 < kDim; r0 += CDHP_VEC_TILE) {
             const uint32_t tileRows = MinV(CDHP_VEC_TILE, kDim - r0);
             LocalTensor<float> t1F = s0F32_.Get<float>();
+            LocalTensor<float> pcF = s1F32_.Get<float>();
             LoadPlaneF32(t1F, this->T1At(), r0, tileRows, kDim);
-            AscendC::Muls(t1F, t1F, -1.0f, tileRows * kDim);
-            PipeBarrier<PIPE_V>();
-            // 对角注入必须用标量读写：UB 上的向量指令要求 32B 对齐，而 [i,i] 的偏移不满足该规律
-            // （此前用 Adds(..., 1) 会触发 "The address for VEC to access UB is not aligned"）。
-            SetFlag<HardEvent::V_S>(CDHP_EV_V_S);
-            WaitFlag<HardEvent::V_S>(CDHP_EV_V_S);
-            for (uint32_t r = 0; r < tileRows; ++r) {
-                const uint32_t idx = r * kDim + (r0 + r);
-                t1F.SetValue(idx, t1F.GetValue(idx) + decayF.GetValue(r0 + r));
-            }
-            SetFlag<HardEvent::S_V>(CDHP_EV_S_V);
-            WaitFlag<HardEvent::S_V>(CDHP_EV_S_V);
-            StoreTileModel(t1F, this->PcAt() + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows, kDim, kDim);
+            // P_c = diag(decayK) - T1：取负与对角注入都在 VF 内完成
+            CDHP_V4PcDiagVF(UbPtr(pcF), UbPtr(t1F), UbPtr(decayF), static_cast<uint16_t>(r0),
+                            static_cast<uint16_t>(tileRows), static_cast<uint16_t>(kDim));
+            StoreTileModel(pcF, this->PcAt() + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows, kDim, kDim);
         }
 
         for (uint32_t r0 = 0; r0 < kDim; r0 += CDHP_VEC_TILE) {
@@ -544,7 +710,6 @@ private:
     AscendC::TBuf<AscendC::TPosition::VECCALC> s0DT_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> gF32_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> decayF32_;
-    AscendC::TBuf<AscendC::TPosition::VECCALC> scalarF32_;
     AscendC::GlobalTensor<float> dhmGm_;
     GM_ADDR qAddr_ = nullptr;
     GM_ADDR kAddr_ = nullptr;

@@ -83,10 +83,10 @@ aclnn 与 `<<<>>>` 直调见 [`docs/api.md`](docs/api.md)。
 | 部分 | 状态 |
 | --- | --- |
 | `op_host`（def / tiling / op_api） | 已实现：shape 校验、gate 互斥拦截、分核规则、workspace 规划、tilingKey 分发 |
-| `op_kernel` | 已实现：六个 Stage 的真实计算体（Catlass `BlockMmadTla` 五路矩阵乘 + Vector 手写事件对），A2/A5 精度均已打通 |
+| `op_kernel` | 已实现：六个 Stage 的真实计算体（Catlass `BlockMmadTla` 五路矩阵乘 + Vector 手写事件对），A2/A5 精度均已打通；Vector 侧按平台拆分 `op_kernel/arch22`（A2/A3）与 `op_kernel/arch35`（A5，热点段用 RegBase `__simd_vf__` 融合） |
 | 构建接入 | 已完成：`op_host/CMakeLists.txt` 走 `op_host_aclnnExc` + `ACLNNTYPE aclnn_exclude`（**aclnn 手写，不走自动生成**），A2/A5 均已编出 OPP 运行包 |
-| Python `fla_npu.ops.ascendc` 入口 | 待接入（当前分支缺少 `ops/ascendc/_runtime.py` 适配层，接入步骤见 `docs/design.md`） |
-| 测试 | `tests/op_cases/chunk_delta_h_bwd_preprocess.json`（16 正向 + 10 反向）已作为唯一用例来源；`tests/operators/chunk_delta_h_bwd_preprocess/` 提供 CPU 标杆、aclnn 取数程序、逐平面核对与精度矩阵执行脚本 |
+| Python `fla_npu.ops.ascendc` 入口 | 已接入：ctypes 直调手写 aclnn（不依赖 `torch_npu` dispatcher），A2/A5 双平台设备侧均验证通过 |
+| 测试 | `tests/atk/chunk_delta_h_bwd_preprocess/`（16 正向 + 10 反向）为唯一用例来源：`cases.json` 是用例设计，`reference.py` 是 CPU 标杆，`harness/` 提供 aclnn 取数程序、逐平面核对与精度矩阵/反向拦截执行脚本 |
 
 ### 已验证（本版）
 
@@ -97,7 +97,8 @@ aclnn 与 `<<<>>>` 直调见 [`docs/api.md`](docs/api.md)。
 | OPP 安装内容 | 运行包安装后含 `op_api/include/aclnnop/aclnn_chunk_delta_h_bwd_preprocess.h`、`op_api/lib/libcust_opapi.so`、`op_impl/ai_core/tbe/kernel/ascend950/chunk_delta_h_bwd_preprocess`（kernel bin + config + tiling py） |
 | aclnn 手写路径 | 构建产物含 `build/autogen/exc/aclnnExc_chunk_delta_h_bwd_preprocess.cpp/.h` 与 `aic-ascend950-ops-info.ini`，确认走的是 aclnn 排除自动生成的 exc 通路 |
 | 参考实现数学口径 | 纯 Python 数值校验：三种 gate 模式下 `dh0 == P_r @ dht + E_r` 的最大绝对误差 ~1e-16 |
-| 设备侧精度（A5 / ascend950） | 按 `tests/op_cases/chunk_delta_h_bwd_preprocess.json` 的 16 条正向用例在设备上执行：**16/16 PASS**。`E` 面 `rel_norm ≤ 1.2e-2`、`P` 面 `rel_norm ≤ 1.1e-2`（单 task 场景 ~2e-3；`pos_13` 32 个 chunk 的长链 1.2e-2 为最大）；无 NaN/Inf |
+| 设备侧精度（A5 / ascend950） | 按 `tests/atk/chunk_delta_h_bwd_preprocess/cases.json` 的 16 条正向用例在设备上执行：**16/16 PASS**。`E` 面 `rel_norm ≤ 1.3e-2`、`P` 面 `rel_norm ≤ 1.1e-2`（单 task / 单 chunk 场景约 2e-3；最大为 `pos_16`（K=V=256）1.24e-2，32 个 chunk 的长链 `pos_13` 为 1.15e-2）；无 NaN/Inf |
+| arch35 Vector 融合（A5） | V0 门控行缩放、V2 `dV̂'`、V4 状态更新与 `P_c` 对角注入下沉到 RegBase `__simd_vf__`（256B / 64 lane per fp32 寄存器）一趟融合，去掉逐行 `ExpScalar` 的 V→S 同步与逐元素 `SetValue`/`GetValue`；改造后 A5 重跑 16 正向 + 10 反向全部通过，数值与改造前逐项一致 |
 | 设备侧精度（A2 / ascend910b） | 同一 16 条用例在同一实现上执行：**16/16 PASS**，误差量级与 A5 一致（`E ≤ 1.5e-2`、`P ≤ 1.1e-2`） |
 | 数值稳定性 | 关键用例（`pos_15` 96 head 多 task、`pos_13` 32 chunk 长链、`gate_gk`）重复执行结果逐位一致；此前出现过的"随负载时好时坏"已定位到跨核 wait 的 pipe 语义并修复 |
 | 设备侧反向拦截 | 按 `op_cases` 的 10 条反向用例在 A2/A5 上执行：**10/10 PASS**，实际返回码与 `expected_return_code` 一致（`ACLNN_ERR_PARAM_INVALID`=161001），覆盖 `g`/`gk` 互斥、`K>256`、`Hv%Hk!=0`、dense/varlen `B>1`、`chunk_size!=64`、`g` shape 不匹配、`gk` FP32、`cu_seqlens` 过短、空 tensor |
@@ -105,22 +106,20 @@ aclnn 与 `<<<>>>` 直调见 [`docs/api.md`](docs/api.md)。
 
 ### 尚未完成（下一步）
 
-1. **Python 入口**：在具备 `ops/ascendc/_runtime.py`、`_aclnn_ctypes.py` 适配层的分支上接入 ctypes/aclnn 主入口
-   （默认路径不依赖 `torch_npu` dispatcher）。
-2. **列 tile 展平分核（`BY_TILE`）**：本版 host 固定"仅按 head 连续分核"，`Hv` 不足核数时也不会按列 tile 展平
+1. **列 tile 展平分核（`BY_TILE`）**：本版 host 固定"仅按 head 连续分核"，`Hv` 不足核数时也不会按列 tile 展平
    （`pos_16_tile_split_partition` 当前实际按 `BY_HEAD` 执行，结果仍与标杆一致，但并行度未展开）。
-3. **1AIC:2AIV 与流水重叠**：本版 `KERNEL_TYPE_MIX_AIC_1_1`（1:1 配对）且同 chunk 内 AIV/AIC 严格交替，
+2. **1AIC:2AIV 与流水重叠**：本版 `KERNEL_TYPE_MIX_AIC_1_1`（1:1 配对）且同 chunk 内 AIV/AIC 严格交替，
    没有跨 chunk 的 ping-pong 重叠；1:2 需要两个 AIV 分工并各自协调 flag。
-4. **sanitizer**：按仓库规范补做 `mssanitizer`（`racecheck`/`memcheck`/`initcheck`/`synccheck`），并确认运行命中的是
+3. **sanitizer**：按仓库规范补做 `mssanitizer`（`racecheck`/`memcheck`/`initcheck`/`synccheck`），并确认运行命中的是
    sanitizer 版本对象。
-5. **官方 ATK / CI 接入**：把本目录的精度矩阵与反向拦截用例并入 `tests/atk`、`ci/` 的既有流程。
-6. **精度判据口径**：本版 `E_r/P_r` 的目标是"跨 rank 仿射摘要"，链上用模型 dtype 传递状态（`Pc`/`PBf`/`dHBf` 都是
+4. **官方 ATK / CI 接入**：用例与取数脚本已归档到 `tests/atk/chunk_delta_h_bwd_preprocess/`，尚未并入 `ci/` 的既有流程。
+5. **精度判据口径**：本版 `E_r/P_r` 的目标是"跨 rank 仿射摘要"，链上用模型 dtype 传递状态（`Pc`/`PBf`/`dHBf` 都是
    bf16/fp16），因此判据采用"相对参考幅值"（详见测试 README），不是逐元素绝对阈值。
 
 ### 精度取数链路（已验证）
 
 ```bash
-INSTALL=<install root> CASE_DIR=<case dir> bash tests/operators/chunk_delta_h_bwd_preprocess/harness/run_accuracy.sh \
+INSTALL=<install root> CASE_DIR=<case dir> bash tests/atk/chunk_delta_h_bwd_preprocess/harness/run_accuracy.sh \
   --dtype bf16 --gate gk --Hk 4 --Hv 4 --T 256 --K 128 --V 128
 ```
 

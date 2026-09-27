@@ -137,22 +137,26 @@ storage-free：V2 → C1DvPrePayloadFree ; V4 → C3PayloadFree ; C5 → V4PcPay
 - layout：`[B,H,T,D]`（BSND）。TND/NTD 需由调用方或 L2 侧 layout sweep 后进入本算子。
 - `state_v_first` 与本算子无关：本算子只读 token-major 的 `q/k/w/do/dv`，只写固定 `[Hv, K, V+K]` 的 `dhm`。
 - 不支持 `USE_BG`（DPLR）与 `AFFINE_CHAIN_PRECISION`；`g`/`gk` 互斥由 host 拦截。
+- Vector 侧实现按平台拆分：`op_kernel/arch22/`（A2/A3）用 AscendC 向量 API + 手写事件对；
+  `op_kernel/arch35/`（A5，dav-3510）把 V0 门控行缩放、V2 `dV̂'`、V4 状态更新与 `P_c` 对角注入
+  下沉到 RegBase `__simd_vf__`（一个 fp32 寄存器 256B / 64 lane）一趟融合，去掉逐行 `ExpScalar`
+  的 V→S 同步与逐元素 `SetValue`/`GetValue` 的标量往返；Cube 侧两平台共用同一份实现。
 
 ## 9. 接入步骤
 
 1. **kernel 落地（已完成）**：`op_kernel` 六个 Stage 的真实实现已落地（Catlass `BlockMmadTla` +
-   Vector 侧手写事件对），`PROPOSED` 标记已随实现删除。
+   Vector 侧手写事件对），`PROPOSED` 标记已随实现删除；Vector 侧按平台拆成 `arch22`（A2/A3）与
+   `arch35`（A5，RegBase `__simd_vf__` 融合）两份实现，Cube 侧共用。
 2. **构建接入（已完成）**：`chunk_delta_h_bwd_preprocess/CMakeLists.txt`（glob 风格）与
    `op_host/CMakeLists.txt`（`add_op_to_compiled_list()` + `target_sources(op_host_aclnnExc ...)` +
    `add_modules_sources(OPTYPE chunk_delta_h_bwd_preprocess ACLNNTYPE aclnn_exclude)` +
    `add_ops_compile_options(OP_NAME ChunkDeltaHBwdPreprocess OPTIONS --cce-auto-sync=off
    -Wno-deprecated-declarations)`）已提交；aclnn 走手写 exc 通路，不走自动生成。
-3. **Python 入口（待完成）**：在 `torch_custom/fla_npu/npu_custom.yaml` 注册
-   `npu_chunk_delta_h_bwd_preprocess`，并在 `fla_npu/ops/ascendc` 下提供主入口。当前分支缺少
-   `ops/ascendc/_runtime.py`、`_aclnn_ctypes.py` 适配层，需要在具备该适配层的分支上接入
-   （默认调用路径必须走 ctypes/aclnn，不依赖 `torch_npu` dispatcher）。
-4. **测试（设备侧精度矩阵已完成，见 README）**：按 `tests/op_cases/chunk_delta_h_bwd_preprocess.json`
-   生成用例，用 `tests/operators/chunk_delta_h_bwd_preprocess/reference.py` 作为 CPU 标杆，覆盖
+3. **Python 入口（已完成）**：`fla_npu.ops.ascendc.chunk_delta_h_bwd_preprocess` 已接入，走 ctypes
+   直调手写 aclnn（默认调用路径不依赖 `torch_npu` dispatcher 与 `torch.ops.npu` 注册），A2/A5 双平台
+   设备侧验证通过。
+4. **测试（设备侧精度矩阵已完成，见 README）**：以 `tests/atk/chunk_delta_h_bwd_preprocess/cases.json`
+   为唯一用例来源，用 `tests/atk/chunk_delta_h_bwd_preprocess/reference.py` 作为 CPU 标杆，覆盖
    A2/A5 两平台与 `USE_G`/`USE_GK`/无门控、dense/varlen、尾块、GVA、`K=64/128/256`。
 5. **精度与内存（部分完成）**：设备侧精度矩阵已通过；sanitizer（UB/L1 复用、跨核 slot、ping-pong）
    尚未执行，需要按仓库规范补做并确认运行命中的是 sanitizer 版本对象。
@@ -173,7 +177,7 @@ storage-free：V2 → C1DvPrePayloadFree ; V4 → C3PayloadFree ; C5 → V4PcPay
 ### 10.1 已执行情况
 
 - 第 1 项：纯 Python 自检已通过（三种 gate 模式，仿射恒等式最大绝对误差 ~1e-16）。
-- 第 2、3 项：按 `tests/operators/chunk_delta_h_bwd_preprocess/harness/` 的逐平面核对与 `op_cases` 矩阵执行，
+- 第 2、3 项：按 `tests/atk/chunk_delta_h_bwd_preprocess/harness/` 的逐平面核对与用例矩阵执行，
   A2/A5 均 16/16 PASS，含 32 chunk 长链（`pos_13`）与尾块（`pos_06`/`pos_09`）。
 - 第 4 项：`C1`/`C3` 的两路输出、`V4` 的两路输出在实现上分别发布/释放（各自独立 flag 边界），
   逐平面核对未发现两路混用；受控实验（`harness/ctrl_case.py`）用于定位过 A 路。

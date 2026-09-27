@@ -31,7 +31,8 @@ import sys
 import torch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SPEC = os.path.abspath(os.path.join(HERE, "cases.json"))
+# 用例设计来源在算子用例目录（harness 的上一级）
+SPEC = os.path.abspath(os.path.join(HERE, "..", "cases.json"))
 MODEL_DTYPES = {"bf16": torch.bfloat16, "fp16": torch.float16}
 
 # 合法基线（其余非法用例在此基础上改一个参数）
