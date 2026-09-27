@@ -84,6 +84,16 @@ arch22 无 VF 通路，用同名函数 + 普通向量指令，差异写在平台
 | ③ 数据结构体 | 只放数据：GM 张量、UB/L1/L0 张量、事件 id、只读状态与游标；模板别名（dtype/档位）也在这里 | `struct OpNameVectorContext` / `OpNameCubeContext` |
 | ④ 行为层（结构体外） | `InitOpNameVector`（接线 + buffer 划分 + 事件预置）→ `ProcessOpNameVector`（任务主循环 + 调 Stage + 收尾）→ `StageN...`（输入/输出/复用/同步四行注释）→ `CloseAndReleaseEvents` | 结构体之后，全部文件作用域 `inline` |
 
+Cube 侧（AIC）与 vec 同骨架，但计算原语不同，读的时候对照这几点：
+
+| 关注点 | 写法 | 示例位置 |
+| --- | --- | --- |
+| 类型与 layout 层 | `OpNameCubePrimitives<DT>`：`TileCopy*`/`TileMmad`/`ElementAccumulator`/`CopyL1ToL0A·B`/`CopyL0CToDst` + `tla::MakeLayout` 常量 + 空间 `static_assert` | `archXX/op_name_cube.h` 顶部 |
+| 计算层（Cube 的"融合"） | `CubeChunkStateGemm(...)`：一次调用完成"K 分块 L1→L0 + `TileMmad` 累加（unit flag 表达首块覆盖/末块收尾）+ L0C 搬出"，含 L0/L0C ping-pong 取反与 L1 槽的等待/用后释放；与 vec 的 `__simd_vf__` 融合函数对位（样板对应 `chunk_gated_delta_rule_bwd_dhu_cube.h` 的 `RunResidentMmad`） | 同上 |
+| L1 常驻槽 / L0 ping-pong | L1 按 slot 切片（只由 AIC 写，没有 UB→L1 通路）；L0A/L0B/L0C 各 ping/pong，使用一次取反一次 | `InitOpNameCube` 的槽切片段 |
+| 事件 id 与物理槽对应 | 不用 `AllocEventID`（样板同款固定表）：`MTE1_MTE2` = L1 槽号、`M_MTE1` = `2*l0`/`2*l0+1`（A/B 分开）、`FIX_M` = L0 槽号；`Process` 开头发布"初始可写"，收尾等回闭环 | `ProcessOpNameCube` 与 `CloseAndReleaseEvents` |
+| 谁提供 L1/L0 buffer | `Catlass::Arch::Resource<ArchTag>` 自带，所以 AIC 不需要入口传 `TPipe`（入口只有 AIV 建 `TPipe`） | 数据结构体成员与 `op_name.cpp` |
+
 配套的现状说明：
 
 - `op_kernel/op_name.cpp` 保持薄入口：只做 dtype traits、tiling 解析、workspace 区域命名（同一行写生命周期）、

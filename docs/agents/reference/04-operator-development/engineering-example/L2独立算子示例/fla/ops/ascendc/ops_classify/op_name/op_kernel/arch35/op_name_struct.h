@@ -30,6 +30,7 @@ constexpr int64_t AIV_COUNT_2 = 2;
 constexpr int64_t TILE_T_ARCH35 = 64;
 constexpr int64_t UB_SLOT_COUNT_2 = 2;
 constexpr int64_t L1_SLOT_COUNT_2 = 2;
+constexpr int64_t L0_BUFFER_COUNT_2 = 2;   // L0A/L0B/L0C 各自 ping/pong，使用一次取反一次
 
 // ── UB 布局常量（字节）：与 arch35/op_name_vec.h 的文件头布局表逐行对应 ──
 // 函数不再放进类里，所以布局常量就落在本文件（平台唯一事实来源）；vec 只引用不重算。

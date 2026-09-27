@@ -377,9 +377,9 @@ add_ops_compile_options(
 | 层 | 放什么 | 位置与要求 |
 | --- | --- | --- |
 | ① 文件头注释块 | Stage 表、UB（或 L1+L0）布局表、同步协议表 | 文件最上方三张表：Stage 表写清"谁生产、谁消费、怎么同步"，布局表逐行给出偏移/大小/内容/生命周期，同步协议表列出 flag 名、方向与背压来源 |
-| ② Stage 计算函数 | `StageNVf(...)` 一类的函数，只碰 UB | 放在数据结构体之前，**按 Stage 号顺序排列**；不搬 GM、不发同步事件；尾块只传 `validLen`。arch35 必须是 VF 融合函数（`__simd_vf__ inline` + `AscendC::MicroAPI` 的 `RegTensor`/`MaskReg`/`LoadAlign`/`StoreAlign`），入参用 `__ubuf__` 裸指针；arch22 无 VF，用同名函数 + 普通向量指令（入参 `LocalTensor`）实现同一 Stage |
+| ② 计算层 | AIV：`StageNVf(...)`，只碰 UB；AIC：`CubeChunkStateGemm(...)`，一次调用完成"K 分块 L1→L0 + `TileMmad` 累加（unit flag 表达首/末块）+ L0C 搬出" | 放在数据结构体之前，**按 Stage 号顺序排列**；不搬 GM、不发同步事件；尾块只传 `validLen`。arch35 的 AIV 必须是 VF 融合函数（`__simd_vf__ inline` + `AscendC::MicroAPI` 的 `RegTensor`/`MaskReg`/`LoadAlign`/`StoreAlign`），入参用 `__ubuf__` 裸指针；arch22 无 VF，用同名函数 + 普通向量指令（入参 `LocalTensor`）实现同一 Stage。AIC 侧用 `<算子>CubePrimitives<DT>` 承载随 dtype 变化的 `TileCopy*`/`TileMmad`/`ElementAccumulator`/`CopyL1ToL0*`/`CopyL0CToDst` 与 `tla::MakeLayout` 常量，并用 `static_assert` 钉住 L1/L0 空间上限；K 分块累加照 `chunk_gated_delta_rule_bwd_dhu_cube.h` 的 `RunResidentMmad` 组织（L0/L0C ping-pong 取反、L1 槽 wait/用后释放都在这一层） |
 | ③ 数据结构体 | `<算子>VectorContext` / `<算子>CubeContext` | **只放数据，不放函数**：GM 张量、UB/L1/L0 张量、事件 id、只读状态与游标；模板别名（dtype/档位）也在这里暴露给文件作用域函数用 |
-| ④ 行为层（仍写在结构体外） | `Init...` → `Process...` → `StageN...` → `CloseAndReleaseEvents` | 全部是文件作用域 `inline` 函数，第一参数是 ③ 的数据；`Init` 只做 GM 接线、只读状态派生（核号/子核号都要 clamp）、buffer 划分与事件预置；`Process` 只做任务主循环 + 按序调用 Stage 函数 + 收尾；阶段函数头固定写"输入 / 输出 / 复用 / 同步"四行。UB/L1/L0 偏移常量放 `archXX/<算子>_struct.h`，与文件头布局表逐行对应 |
+| ④ 行为层（仍写在结构体外） | `Init...` → `Process...` → `StageN...` → `CloseAndReleaseEvents` | 全部是文件作用域 `inline` 函数，第一参数是 ③ 的数据；`Init` 只做 GM 接线、只读状态派生（核号/子核号都要 clamp）、buffer 划分；`Process` 只做事件预置 + 任务主循环 + 按序调用 Stage 函数 + 收尾；阶段函数头固定写"输入 / 输出 / 复用 / 同步"四行。UB/L1/L0 偏移常量放 `archXX/<算子>_struct.h`，与文件头布局表逐行对应；AIC 的 L1/L0 buffer 由 `Catlass::Arch::Resource<ArchTag>` 自带（入口不必传 `TPipe`），事件 id 与物理槽一一对应（`MTE1_MTE2`=L1 槽号、`M_MTE1`=`2*slot`/`2*slot+1`、`FIX_M`=L0 槽号） |
 
 事件生命周期的固定写法：`Init` 里按 slot `AllocEventID` 并 `SetFlag` 开首轮（首轮没有上一轮消费者，
 不预置会让第一次 `WaitFlag` 等一个不会到来的事件），`Process` 末尾统一 `WaitFlag` 闭环 + `ReleaseEventID`；

@@ -83,16 +83,17 @@ __global__ __aicore__ void op_name(
     GM_ADDR normWorkspace = userWorkspace;                             // S0 norm -> S2 写回
     GM_ADDR stateWorkspace = userWorkspace + workspaceRegionBytes;     // S0/S2 state -> save 档公开导出
 
-    // 两个角色各拿一个 TPipe 指针：buffer 划分留在各自的 Init 函数里，入口不替它们管 L1/L0/UB。
-    AscendC::TPipe pipe;
     if ASCEND_IS_AIC {
-        // AIC：数据放 Context，行为是文件作用域函数；入口不做任何矩阵/搬运细节。
+        // AIC：数据放 Context，行为是文件作用域函数；Catlass Resource 自带 L1/L0 buffer，
+        // 因此入口不传 TPipe（与样板 finalize 的 cube.Init(...) 一致）。
         OpsClassify::OpNameCubeContext<XType, NORM_MODE, OUTPUT_MODE> cubeCtx;
         OpsClassify::InitOpNameCube(cubeCtx, x, g, normWorkspace, stateWorkspace,
-                                    cu_seqlens, chunk_indices, &tilingData, &pipe);
+                                    cu_seqlens, chunk_indices, &tilingData);
         OpsClassify::ProcessOpNameCube(cubeCtx);
     } else {
         using GType = typename OpsClassify::DTypeTraits<D_T_G>::type;
+        // AIV：UB 由 TPipe 管，buffer 划分留在 InitOpNameVector 里，入口不替它管 UB。
+        AscendC::TPipe pipe;
         OpsClassify::OpNameVectorContext<XType, GType, NORM_MODE, USE_STATE, OUTPUT_MODE> vecCtx;
         OpsClassify::InitOpNameVector(vecCtx, x, g, a_log, initial_state, cu_seqlens,
                                       chunk_indices, y, state, x_norm,
