@@ -14,11 +14,12 @@
  *   4. 编译期开关（NORM_MODE/USE_STATE/OUTPUT_MODE）作为模板参数传给 Cube/Vector 类，
  *      与参考算子把 USE_QK_L2NORM/USE_BETA_SIGMOID/USE_EXP2 传给 Vector 的写法一致；
  *      类里不要再用运行期 if 判断这些档位。
- *   5. buffer 偏移与同步协议分别属于 archXX/getter 与 Cube/Vector 内部，入口不聚合它们。
- *   6. 想看清 kernel 内部结构时，按 archXX/<算子>_vec.h 的固定四层读：
- *      ① 文件头三张表（Stage / UB 布局 / 同步协议）→ ② StageNVf 计算函数 → ③ 角色类
- *      （Init 接线 + Process 编排）→ ④ private（阶段函数 → 布局常量 → buffer/事件成员）。
- *      cube 版本同骨架，只是把 UB 换成 L1+L0、把 VF 换成 MTE1/Cube/Fixpipe。
+ *   5. buffer 偏移与同步协议分别属于 archXX/struct.h 与 archXX/<算子>_{vec,cube}.h，入口不聚合它们。
+ *   6. **函数不放进类里**：数据放 `archXX/<算子>_{vec,cube}.h` 的 Context 结构体，行为写成
+ *      文件作用域 inline 函数（`InitOpNameVector`/`ProcessOpNameVector`/`StageN...`）；
+ *      入口只构造结构体并调用两个函数，不出现 Stage 细节。
+ *   7. arch35 的向量计算必须是 VF 融合函数（`__simd_vf__ inline` + MicroAPI），arch22 用
+ *      同名函数 + 普通向量指令；两平台函数名、事件数组名与 Stage 划分保持一致，便于逐行对照。
  */
 
 #include "kernel_operator.h"
@@ -74,20 +75,21 @@ __global__ __aicore__ void op_name(
     GM_ADDR normWorkspace = userWorkspace;                             // S0 norm -> S2 写回
     GM_ADDR stateWorkspace = userWorkspace + workspaceRegionBytes;     // S0/S2 state -> save 档公开导出
 
-    // 两个角色各拿一个 TPipe 指针：buffer 划分留在各自类里，入口不替它们管 L1/L0/UB。
+    // 两个角色各拿一个 TPipe 指针：buffer 划分留在各自的 Init 函数里，入口不替它们管 L1/L0/UB。
     AscendC::TPipe pipe;
     if ASCEND_IS_AIC {
-        // AIC 只做矩阵与 L1/L0 搬运；所有中间量都从 GM 或上方 workspace 读取。
-        OpsClassify::OpNameCube<XType, NORM_MODE, OUTPUT_MODE> cube;
-        cube.Init(x, g, normWorkspace, stateWorkspace,
-                  cu_seqlens, chunk_indices, &tilingData, &pipe);
-        cube.Process();
+        // AIC：数据放 Context，行为是文件作用域函数；入口不做任何矩阵/搬运细节。
+        OpsClassify::OpNameCubeContext<XType, NORM_MODE, OUTPUT_MODE> cubeCtx;
+        OpsClassify::InitOpNameCube(cubeCtx, x, g, normWorkspace, stateWorkspace,
+                                    cu_seqlens, chunk_indices, &tilingData, &pipe);
+        OpsClassify::ProcessOpNameCube(cubeCtx);
     } else {
         using GType = typename OpsClassify::DTypeTraits<D_T_G>::type;
-        OpsClassify::OpNameVector<XType, GType, NORM_MODE, USE_STATE, OUTPUT_MODE> vec;
-        vec.Init(x, g, a_log, initial_state, cu_seqlens, chunk_indices,
-                 y, state, x_norm, normWorkspace, stateWorkspace, &tilingData, &pipe);
-        vec.Process();
+        OpsClassify::OpNameVectorContext<XType, GType, NORM_MODE, USE_STATE, OUTPUT_MODE> vecCtx;
+        OpsClassify::InitOpNameVector(vecCtx, x, g, a_log, initial_state, cu_seqlens,
+                                      chunk_indices, y, state, x_norm,
+                                      normWorkspace, stateWorkspace, &tilingData, &pipe);
+        OpsClassify::ProcessOpNameVector(vecCtx);
     }
 }
 #endif

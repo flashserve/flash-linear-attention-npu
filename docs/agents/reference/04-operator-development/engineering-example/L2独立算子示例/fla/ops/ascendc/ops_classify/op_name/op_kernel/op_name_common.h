@@ -4,15 +4,18 @@
  * 结构参考：finalize/op_kernel/arch35/chunk_gated_delta_rule_bwd_finalize_common.h
  *
  * 注意事项（可读性结构）：
- *   1. 常量集中在这里并语义化命名：尺寸常量带数值后缀（`CHUNK_SIZE_64`、`DIM_128`），
- *      workspace 尺寸用"由什么组成"表达（`WORKSPACE_CHUNK_COUNT = 每核 chunk 上限 × 窗口数`）；
- *      实现里不要再出现裸数字。
+ *   1. 平台无关常量集中在这里并语义化命名：workspace 尺寸用"由什么组成"表达
+ *      （`WORKSPACE_CHUNK_COUNT = 每核 chunk 上限 × 窗口数`），实现里不要再出现裸数字；
+ *      平台相关常量（尺寸、tile、UB/L1/L0 布局）放 `archXX/<算子>_struct.h`，两份同名只差数值。
  *   2. 跨核/跨 pipe 的同步协议写在文件顶部：flag 数量、方向、复用规则与背压来源一次说清；
  *      各 Stage 只引用这里的具名常量，不写魔法 flagId。
  *   3. 把"任务 -> 逻辑位置"的换算封成一个函数（`GetChunkInfo`）：定长/变长分支只在这里出现，
  *      各 Stage 只消费 `ChunkInfo`，不要各自再算一遍 offset。
- *   4. 本文件平台无关（arch22 与 arch35 共用），因此只放常量与纯函数：不申请 buffer、不写同步、不碰计算；
- *      平台差异分别落在 `archXX/<算子>_struct.h`（资源常量）与 `archXX/<算子>_{cube,vec}.h`（实现）。
+ *   4. 本文件平台无关（arch22 与 arch35 共用），因此只放常量与纯函数：不申请 buffer、不写同步、不碰计算。
+ *      平台差异分别落在 `archXX/<算子>_struct.h`（尺寸/资源/布局常量）与
+ *      `archXX/<算子>_{cube,vec}.h`（数据结构体 + 文件作用域 inline 函数）。
+ *   5. 本文件里的函数也遵守"函数不写进类/结构体"：`GetChunkInfo`、`GetWorkspaceChunkOffset`、
+ *      `Min` 都是文件作用域 inline 函数，只依赖入参与 `ChunkInfo`/TilingData 结构体。
  */
 
 #ifndef OP_NAME_COMMON_H

@@ -71,8 +71,8 @@ fla/ops/ascendc/<模块>/<算子>/
 |   |-- <算子>_tiling_key.h               # 必须：ASCENDC_TPL_ARGS_DECL / ASCENDC_TPL_SEL
 |   |-- arch22/                           # A2/A3（按需）
 |   |   |-- <算子>_struct.h               # 平台 TilingData 与资源常量（tile/slot/UB 偏移）
-|   |   |-- <算子>_cube.h                 # AIC：Init(...) + Process() + ProcessStageN...
-|   |   `-- <算子>_vec.h                  # AIV：Init(...) + Process() + 阶段函数
+|   |   |-- <算子>_cube.h                 # AIC：数据 Context + 文件作用域 Init/Process/Stage 函数
+|   |   `-- <算子>_vec.h                  # AIV：数据 Context + 文件作用域 Init/Process/Stage 函数
 |   `-- arch35/                           # A5：同名三件，骨架与 arch22 一致
 |-- examples/                             # 可选：test_aclnn_<算子>_*.cpp 直调示例
 `-- （算子目录下没有 tests/）
@@ -361,9 +361,9 @@ add_ops_compile_options(
 | 层 | 放什么 | 位置与要求 |
 | --- | --- | --- |
 | ① 文件头注释块 | Stage 表、UB（或 L1+L0）布局表、同步协议表 | 文件最上方三张表：Stage 表写清"谁生产、谁消费、怎么同步"，布局表逐行给出偏移/大小/内容/生命周期，同步协议表列出 flag 名、方向与背压来源 |
-| ② Stage 计算函数 | `StageNVf(...)` 一类的函数，只碰 UB | 放在类之前，**按 Stage 号顺序排列**；入参用 `__ubuf__` 裸指针 + 有效长度，不搬 GM、不发同步事件；尾块只传 `validLen` |
-| ③ 角色类 | `public Init(...)` → `public Process()` | `Init` 只做三件事：GM 接线、只读状态派生（核号/子核号都要 clamp）、buffer 划分与事件预置；`Process` 只做任务主循环 + 按序调用阶段函数 + 收尾 |
-| ④ private 区 | 阶段函数 → 常量 → 成员 | 阶段函数头固定写"输入 / 输出 / 复用 / 同步"四行；常量块与文件头布局表逐行对应；成员按 GM / UB / 事件 / 只读状态分组，新增成员进对应分组 |
+| ② Stage 计算函数 | `StageNVf(...)` 一类的函数，只碰 UB | 放在数据结构体之前，**按 Stage 号顺序排列**；不搬 GM、不发同步事件；尾块只传 `validLen`。arch35 必须是 VF 融合函数（`__simd_vf__ inline` + `AscendC::MicroAPI` 的 `RegTensor`/`MaskReg`/`LoadAlign`/`StoreAlign`），入参用 `__ubuf__` 裸指针；arch22 无 VF，用同名函数 + 普通向量指令（入参 `LocalTensor`）实现同一 Stage |
+| ③ 数据结构体 | `<算子>VectorContext` / `<算子>CubeContext` | **只放数据，不放函数**：GM 张量、UB/L1/L0 张量、事件 id、只读状态与游标；模板别名（dtype/档位）也在这里暴露给文件作用域函数用 |
+| ④ 行为层（仍写在结构体外） | `Init...` → `Process...` → `StageN...` → `CloseAndReleaseEvents` | 全部是文件作用域 `inline` 函数，第一参数是 ③ 的数据；`Init` 只做 GM 接线、只读状态派生（核号/子核号都要 clamp）、buffer 划分与事件预置；`Process` 只做任务主循环 + 按序调用 Stage 函数 + 收尾；阶段函数头固定写"输入 / 输出 / 复用 / 同步"四行。UB/L1/L0 偏移常量放 `archXX/<算子>_struct.h`，与文件头布局表逐行对应 |
 
 事件生命周期的固定写法：`Init` 里按 slot `AllocEventID` 并 `SetFlag` 开首轮（首轮没有上一轮消费者，
 不预置会让第一次 `WaitFlag` 等一个不会到来的事件），`Process` 末尾统一 `WaitFlag` 闭环 + `ReleaseEventID`；
@@ -373,13 +373,20 @@ add_ops_compile_options(
    不出现 Stage 计算、任务循环与同步（样板入口约 80 行）。
 2. **workspace 按语义命名**：区域名体现用途，并在同一行注释生命周期与复用关系
    （样板 `// S0 kbg -> S12 doG`）；禁止 `ws0/ws1/offset+32768` 这类无名偏移。
-3. **一个角色一个文件一个类**：`archXX/<算子>_cube.h`（AIC）与 `archXX/<算子>_vec.h`（AIV）；
-   接口固定为 `Init(...)` + `Process()`，`Init` 只保存地址/指针并派生 coreIdx、任务数等只读状态。
+3. **一个角色一个文件，数据与行为分开**：`archXX/<算子>_cube.h`（AIC）与 `archXX/<算子>_vec.h`（AIV）；
+   文件里只有"数据结构体 + 文件作用域函数"，**函数不写进类/结构体**。固定函数为
+   `Init<角色>(ctx, ...)` + `Process<角色>(ctx)`，`Init` 只保存地址/指针、划分 buffer、
+   派生 coreIdx/任务数等只读状态；结构体只放数据。
 4. **Stage 分两层拆**：计算层是文件作用域的 `StageNVf(...)`（样板 `Stage15AccumulateVF`、`Stage15NormVF`），
-   编排层是类里的阶段方法（样板 `ProcessStage0Chunk`、`WriteBackStage2Chunk`）。两层都要带 Stage 号；
-   `Process()` 只保留"取任务 → 取 `ChunkInfo` → 按序调用阶段方法"的骨架，不写具体指令。
-5. **资源划分集中**：L1/L0/UB 的偏移与份数只在 `Process()` 开头（或 `Init` 的 buffer 申请处）出现一次，
-   Stage 内只引用已取好的 `LocalTensor`；份数与 `archXX/<算子>_struct.h`、host 侧 arch tiling 常量三方一致。
+   编排层是同为文件作用域的 `StageN...`/`WriteBackStageN...`（样板 `ProcessStage0Chunk`、
+   `WriteBackStage2Chunk`）。两层都写在结构体外，都要带 Stage 号；
+   `Process<角色>(ctx)` 只保留"取任务 → 取 `ChunkInfo` → 按序调用阶段函数"的骨架，不写具体指令。
+   arch35 的计算层必须是 **VF 融合函数**：`__simd_vf__ inline` + `AscendC::MicroAPI`，
+   一条 VF 内完成"读入 → 计算 → 写回"，中间量留在 `RegTensor` 不回 UB；arch22 无 VF 通路，
+   用同名函数 + 普通向量指令实现同一 Stage，差异写进 `archXX/<算子>_vec.h` 的平台差异表。
+5. **资源划分集中**：L1/L0/UB 的偏移与份数以具名常量放在 `archXX/<算子>_struct.h`，
+   只在 `Init<角色>(ctx, ...)` 的 buffer 申请处使用一次，Stage 内只引用结构体里已取好的 `LocalTensor`；
+   份数与 host 侧 arch tiling 常量三方一致。
 6. **常量集中且语义化**：尺寸常量带数值后缀（`CHUNK_SIZE_64`、`DIM_128`），容量用组成关系表达
    （`WORKSPACE_BUFFER_COUNT_8 = 4 × 2`）；平台资源常量放 `archXX/<算子>_struct.h`，实现里不写裸数字。
 7. **任务换算封函数**：`GetChunkInfo(taskIdx, cu_seqlens, chunk_indices, tiling, info)` 里只处理定长/变长两支，

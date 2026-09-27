@@ -54,7 +54,7 @@ B 与 C 的 L2 写法相同，区别只在"本算子是否还有自己的 kernel
 | `op_kernel/<算子>_common.h` | 平台无关公共头：尺寸/workspace 常量、核间同步协议、`ChunkInfo` 与 offset 换算函数 | §4.3、§4.4 |
 | `op_kernel/<算子>_tiling_key.h` | **必须**：`ASCENDC_TPL_ARGS_DECL` / `ASCENDC_TPL_SEL` | §4.2 |
 | `op_kernel/arch22|arch35/<算子>_struct.h` | 平台 TilingData 与资源常量（本平台唯一事实来源：tile、slot 数、UB 偏移与总大小） | §4.1、§4.4 |
-| `op_kernel/arch22|arch35/<算子>_cube.h`、`_vec.h` | 平台实现：一个角色一个类，`Init(...)` + `Process()` + 每 Stage 一个函数 | §4.1、§4.3、§4.4 |
+| `op_kernel/arch22|arch35/<算子>_cube.h`、`_vec.h` | 平台实现：一个角色一个文件；数据结构体只放数据，`Init<角色>(ctx, ...)` + `Process<角色>(ctx)` + 每 Stage 一个文件作用域函数（函数不写进结构体） | §4.1、§4.3、§4.4 |
 | `torch_custom/fla_npu/csrc/src/stable_<算子>.cpp` | `kSchema_` + `run_` + 一条 `FLA_STABLE_EXEC`（一算子一文件） | §5.3 |
 | `torch_custom/fla_npu/csrc/src/stable_ops.cpp`（追加） | `#include "stable_<算子>.cpp"` 一行 + `m.def`/`m.impl` 两行注册 | §5.3 |
 | `torch_custom/fla_npu/fla_npu/ops/ascendc/_stable.py`（追加） | 真签名 wrapper：入参名、默认值、返回 tuple | §5.3 |

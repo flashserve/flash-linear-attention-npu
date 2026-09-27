@@ -52,20 +52,24 @@ L2独立算子示例/                            # 形态 A 的示例根目录�
 ## kernel 结构怎么读（与 `chunk_gated_delta_rule_bwd_finalize` 对齐）
 
 只给"薄入口 + 一个类"不足以复制样板算子的可读性。示例的
-`op_kernel/arch22|arch35/op_name_vec.h`、`op_name_cube.h` 都按固定四层写，复制到新算子时保持顺序：
+`op_kernel/arch22|arch35/op_name_vec.h`、`op_name_cube.h` 都按固定四层写，复制到新算子时保持顺序。
+两条硬约束：**函数不放进类/结构体**（结构体只放数据，行为全部是文件作用域 `inline` 函数）；
+**arch35 的向量计算必须是 VF 融合函数**（`__simd_vf__ inline` + `AscendC::MicroAPI`，
+arch22 无 VF 通路，用同名函数 + 普通向量指令，差异写在平台差异表里）。
 
 | 层 | 看什么 | 示例位置 |
 | --- | --- | --- |
 | ① 文件头三张表 | Stage 表（谁生产/谁消费/怎么同步）、UB 或 L1+L0 布局表（偏移/大小/内容/生命周期）、同步协议表（flag 名/方向/背压） | `archXX/op_name_vec.h` 顶部注释块 |
-| ② Stage 计算函数 | `StageNVf(...)`：只碰 UB，入参 `__ubuf__` 裸指针 + `validLen`，按 Stage 号顺序排列 | 文件中部、类之前 |
-| ③ 角色类 | `public Init`（接线 + buffer 划分 + 事件预置）→ `public Process`（任务主循环 + 阶段编排 + 收尾） | `class OpNameVector` / `class OpNameCube` |
-| ④ private 区 | 阶段函数（输入/输出/复用/同步四行注释）→ 常量（与布局表逐行对应）→ 成员（GM/UB/事件/只读状态分组） | 类尾部 |
+| ② Stage 计算函数 | `StageNVf(...)`：arch35 是 `__simd_vf__ inline` + MicroAPI 的 VF 融合（`RegTensor`/`MaskReg`）；arch22 同名函数用普通向量指令。按 Stage 号顺序排列，只碰 UB | 结构体之前 |
+| ③ 数据结构体 | 只放数据：GM 张量、UB/L1/L0 张量、事件 id、只读状态与游标；模板别名（dtype/档位）也在这里 | `struct OpNameVectorContext` / `OpNameCubeContext` |
+| ④ 行为层（结构体外） | `InitOpNameVector`（接线 + buffer 划分 + 事件预置）→ `ProcessOpNameVector`（任务主循环 + 调 Stage + 收尾）→ `StageN...`（输入/输出/复用/同步四行注释）→ `CloseAndReleaseEvents` | 结构体之后，全部文件作用域 `inline` |
 
 配套的现状说明：
 
 - `op_kernel/op_name.cpp` 保持薄入口：只做 dtype traits、tiling 解析、workspace 区域命名（同一行写生命周期）、
-  AIC/AIV 分派；Stage 计算全部在 arch 目录的类里。
+  AIC/AIV 分派；入口只构造 `Context` 结构体并调用 `Init<角色>`/`Process<角色>`，不出现 Stage 细节。
 - `op_kernel/op_name_common.h` 放平台无关资产：具名同步 flag、`ChunkInfo` 与 `GetChunkInfo`、
-  `GetWorkspaceChunkOffset`、`Min`；`archXX/op_name_struct.h` 放 TilingData 与平台资源常量。
-- 事件生命周期固定：`Init` 里按 slot `AllocEventID` 并 `SetFlag` 开首轮，`Process` 末尾统一闭环后
-  `ReleaseEventID`；示例的 `CloseAndReleaseEvents()` 就是这一段。
+  `GetWorkspaceChunkOffset`、`Min`；`archXX/op_name_struct.h` 放 TilingData、平台资源常量与
+  UB/L1/L0 布局常量（与文件头布局表逐行对应）。
+- 事件生命周期固定：`Init<角色>` 里按 slot `AllocEventID` 并 `SetFlag` 开首轮，`Process<角色>` 末尾
+  统一闭环后 `ReleaseEventID`；示例的 `CloseAndReleaseEvents()` 就是这一段。

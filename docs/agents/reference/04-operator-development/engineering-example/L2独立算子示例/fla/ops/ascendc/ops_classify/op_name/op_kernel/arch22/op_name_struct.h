@@ -33,9 +33,31 @@ constexpr int64_t TILE_T_ARCH22 = 32;
 constexpr int64_t UB_SLOT_COUNT_2 = 2;
 constexpr int64_t L1_SLOT_COUNT_2 = 2;
 
-// UB 总量：只在这里给上限，逐段偏移在 arch22/op_name_vec.h 的常量块里（与文件头布局表对应）；
-// tile 比 arch35 小，导出暂存也随之下移。改动任一段偏移后必须回头核对本值。
-constexpr int64_t UB_TOTAL_BYTES = 84 * 1024;    // = XNORM_OFFSET 80 KiB + 256 B 导出暂存
+// ── UB 布局常量（字节）：与 arch22/op_name_vec.h 的文件头布局表逐行对应 ──
+// 函数不放进类里，布局常量落在本文件（平台唯一事实来源）；名字与 arch35 完全同名，
+// 只差 tile 数值，便于两平台逐行对照。尺寸按 BF16/FP16（2 字节）与 FP32（4 字节）给出。
+constexpr int64_t VEC_TILE_ELEMS = TILE_T_ARCH22 * DIM_128;
+constexpr int64_t VEC_X_BYTES = VEC_TILE_ELEMS * 2;
+constexpr int64_t VEC_G_BYTES = CHUNK_SIZE_64 * 2;
+constexpr int64_t VEC_F32_BYTES = CHUNK_SIZE_64 * 4;
+constexpr int64_t UB_X_OFFSET = 0;                    // x slot0 / slot1
+constexpr int64_t UB_G_OFFSET = 16 * 1024;            // g slot0 / slot1
+constexpr int64_t UB_NORM_OFFSET = 24 * 1024;         // norm slot0 / slot1（S2 复用为 scan）
+constexpr int64_t UB_SCAN_OFFSET = 28 * 1024;         // scan slot0 / slot1
+constexpr int64_t UB_Y_OFFSET = 32 * 1024;            // y 输出 slot0 / slot1
+constexpr int64_t UB_STATE_OFFSET = 48 * 1024;        // state 导出 slot0 / slot1（仅 save 档）
+constexpr int64_t UB_XNORM_OFFSET = 80 * 1024;        // x_norm 导出暂存（仅 save 档）
+constexpr int64_t UB_TOTAL_BYTES = UB_XNORM_OFFSET + VEC_F32_BYTES;
+
+// ── L1 / L0 布局常量：与 arch22/op_name_cube.h 的文件头布局表逐行对应，数值与 arch35 一致 ──
+constexpr int64_t L1_TILE_ELEMS = CHUNK_SIZE_64 * DIM_128;
+constexpr int64_t L1_TILE_BYTES = L1_TILE_ELEMS * 2;
+constexpr int64_t L1_NORM_OFFSET = 0;
+constexpr int64_t L1_STATE_OFFSET = 64 * 1024;
+constexpr int64_t L1_TOTAL_BYTES = L1_STATE_OFFSET + 2 * L1_TILE_BYTES;
+constexpr int64_t L0A_BYTES = 32 * 1024;
+constexpr int64_t L0B_BYTES = 32 * 1024;
+constexpr int64_t L0C_BYTES = 128 * 1024;
 
 struct OpNameTilingData {
     // 逻辑 shape 与 chunk 配置。tiling 侧固定校验 D=128、chunkSize∈{64,128}。
