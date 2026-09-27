@@ -7,7 +7,7 @@
 >
 > 示例语义（便于理解字段命名）：
 >
-> - 输入：`x[B,H,T,D]`（BF16/FP16）、`g[B,H,T]`（FP32/BF16 门控）、`a_log`（可选）、
+> - 输入：`x[B,T,H,D]`（BSND，BF16/FP16；varlen 为 `x[T,H,D]`）、`g` 与 `x` 少一维（FP32/BF16 门控）、`a_log`（可选）、
 >   `initial_state`（可选）、`cu_seqlens`/`chunk_indices`（可选，变长）；
 > - 输出：`y`（必选）、`state`（chunk 末状态，可选导出）、`x_norm`（反向需要的归一化中间量，可选导出）；
 > - 档位：`none`（只要 `y`）/ `save`（额外导出 `state`、`x_norm`）；
@@ -20,7 +20,12 @@ L2独立算子示例/                            # 形态 A 的示例根目录�
 |-- README.md                          # 本文件
 |-- fla/ops/ascendc/ops_classify/op_name/ # 算子工程本体（镜像真实路径）
 |-- torch_custom/fla_npu/              # 调用层改动点
-`-- tests/atk/op_name/            # 单算子看护资产索引
+`-- tests/atk/op_name/                 # 单算子看护资产（落在仓库根 tests/ 下）
+    |-- README.md                      # 输入限制、约束清单、三类映射、验收记录
+    |-- atk_op_name.json / _perf.json / _mss.json
+    |-- op_name.yaml                   # 参数空间：真实 inputs / attr
+    |-- gen_op_name.py                 # 参数修正（只改 dtype/shape/attr 到合法范围）
+    `-- executor_op_name.py            # 执行插件：真实 inputs/attr → 真实 outputs
 ```
 
 ## 读法
@@ -42,3 +47,4 @@ L2独立算子示例/                            # 形态 A 的示例根目录�
 | `arch22` 与 `arch35` 都是平台实现目录 | `op_kernel/arch22/`、`op_kernel/arch35/`；`op_host/op_tiling/arch22/`、`op_host/op_tiling/arch35/` 下的 `*_tiling_impl.h` |
 | TilingKey 不编码平台 | key 只由 dtype 与模式决定；平台在 kernel 入口按 `__CCE_AICORE__` 选择 |
 | 看护位置 | `tests/atk/op_name/`（单算子）+ 调用层门禁；算子目录里不放测试 |
+| ATK 用例用真实 inputs/attr/outputs | `op_name.yaml` 声明 `x/g/a_log/initial_state/cu_seqlens/chunk_indices/layout/chunk_size/scale/epsilon/return_saved`；固化 JSON 不含 `low_precision_marker`/`fp32_marker`/`case_spec` 等占位参数 |

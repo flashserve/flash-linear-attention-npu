@@ -1,6 +1,7 @@
 # ATK 用例设计覆盖评估报告
 
-> 示例填充：数值来自本示例的 YAML/constraint 设计值（未执行 `atk case`，因此标注「降级（设计值）」）。
+> 示例填充：数值来自本示例的 `op_name.yaml` / `gen_op_name.py` 设计值（未执行 `atk case`，
+> 因此标注「降级（设计值）」）。
 > 真实任务按 ATK 仓 skill/atk-quality-guard 的 `templates/test_case_design_report.md` 生成，
 > 8 个维度逐项填充、`<placeholder>` 全部替换，每章「结论前置」。
 
@@ -12,11 +13,11 @@
 | 算子源码根目录 | `fla/ops/ascendc/ops_classify/op_name/` |
 | aclnn 入口文件 | `op_host/op_api/aclnn_op_name.h` |
 | 测试工程目录 | `tests/atk/op_name/` |
-| 用例 JSON 路径 | `result/test_op_name/json/all_test_op_name.json`（由 `atk case` 生成） |
+| 用例 JSON 路径 | `result/op_name/json/all_op_name.json`（由 `atk case` 生成） |
 | 总用例数 | N/A（降级：未执行 `atk case`） |
 | 生成时间 | N/A（示例文档） |
 | ATK 可用性 | 不可用（降级，设计值） |
-| 精度标准版本 | `mixed_tolerance_bm_v2` |
+| 精度标准版本 | `mixed_tolerance_bm` |
 
 ---
 
@@ -31,7 +32,7 @@
 
 ### 2.2 约束覆盖清单
 
-| # | 约束名 | 约束来源（源码文件:行号） | 约束表达式 | 约束类型 | constraint.py 修正逻辑 | 是否覆盖 |
+| # | 约束名 | 约束来源（源码文件:行号） | 约束表达式 | 约束类型 | `gen_op_name.py` 修正逻辑 | 是否覆盖 |
 |---|---|---|---|---|---|---|
 | 1 | 末维固定 128 | `op_host/op_name_tiling.cpp`（D 校验分支） | `x.shape[-1] == 128` | shape | 只改 `x.shape[-1]` 与 `initial_state.shape[-1]` | ✅ |
 | 2 | g 与 x 轴对齐 | `op_host/op_name_tiling.cpp` | `g.shape == x.shape[:-1]` | shape | `g.shape = x.shape[:-1]` | ✅ |
@@ -58,7 +59,7 @@
 | `x.dim_0`（B） | `[1, 2, 3, 4]` | 降级（设计值） | ✅ | |
 | `x.dim_2`（T） | `[..., 63, 64, 127, 128, 255, 256, 511, 512, 1023, 1024]` | 降级（设计值） | ✅ | 覆盖 chunk 切分边界 |
 | `x.dim_3`（D） | 固定 `128` | 降级（设计值） | 不适用 | 算子硬约束 |
-| `g.dim_2`（T） | 同 `x.dim_2` | 降级（设计值） | ✅ | 由 constraint 与 `x` 对齐 |
+| `g.dim_2`（T） | 同 `x.dim_2` | 降级（设计值） | ✅ | 由 gen 与 `x` 对齐 |
 
 ### 3.3 边界场景覆盖
 
@@ -97,7 +98,7 @@
 | `bf16` | N/A | N/A | 降级（设计值） | ✅ |
 | `fp16` | N/A | N/A | 降级（设计值） | ✅ |
 | `fp32` | N/A | N/A | 降级（设计值） | ✅ |
-| `int32` | N/A | N/A | 降级（设计值） | ✅ |
+| `int64` | N/A | N/A | 降级（设计值） | ✅ |
 | `attr_bool` | N/A | N/A | 降级（设计值） | ✅ |
 
 ---
@@ -143,7 +144,7 @@
 | 是否命中 int32 操作数 | ❌ 未命中 |
 | `OVERFLOW_GUARD_ENABLED` 取值 | `False` |
 | 触发依据（C++ 源码位置） | N/A |
-| constraint 是否对超大 shape 跳过 2^31 修正 | 不适用 |
+| `gen_op_name.py` 是否对超大 shape 跳过 2^31 修正 | 不适用 |
 
 ---
 
@@ -186,5 +187,5 @@
 
 | # | 遗漏点 | 影响 | 改进建议 |
 |---|---|---|---|
-| 1 | 降级模式下无用例 JSON | 无法统计实际用例分布与规模 | 在 ATK 环境执行 `atk case -f test_op_name.yaml -p op_name_constraint.py` 后回填本报告 |
+| 1 | 降级模式下无用例 JSON | 无法统计实际用例分布与规模 | 在 ATK 环境执行 `atk case -f op_name.yaml -p gen_op_name.py` 后回填本报告 |
 | 2 | `upper_border` 不进冒烟采样 | 上边界回归被推迟到全量 | 全量执行阶段必须覆盖 `upper_border` 用例 |

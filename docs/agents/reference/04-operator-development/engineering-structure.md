@@ -513,11 +513,19 @@ add_ops_compile_options(
 
 ### 6.1 `tests/atk/<算子>/` 交付要求
 
-**新增算子的 ATK 用例工程按 ATK 仓的 `skill/atk-quality-guard` 要求组织**（`test_<算子>.yaml` 声明参数空间、
-`<算子>_constraint.py` 只做修正、`execute_<算子>.py` 按 device 分支、用例 JSON 由 `atk case` 生成到 `result/`、
-Phase C 产出 `test_case_design_report.md`）；该 skill 的 NEVER 清单（禁止 `range: [1,N]`、小数写 `1.0e-5`、
-`dtype_numbers` 先占位 `1`、禁止在 constraint 里定义参数范围、禁止修改算子源码）同样适用于本仓。
-本仓原有的 `<算子>.yaml` + `gen_<算子>.py` + `executor_<算子>.py` 命名属历史形态，新增算子不要混用两套命名。
+**新增算子的 ATK 用例工程按本仓命名组织**：`<算子>.yaml` 声明参数空间、`gen_<算子>.py` 只做参数修正、
+`executor_<算子>.py` 按 device 分支返回真实输出；`atk case` 生成的用例落到
+`result/<算子>/json/all_<算子>.json`，再固化成 `atk_<算子>.json` / `atk_<算子>_perf.json` /
+`atk_<算子>_mss.json` 三份，并按模板产出 `test_case_design_report.md`。
+ATK 仓的 `skill/atk-quality-guard` 只作为**内容**指导（YAML 只声明参数空间、gen 只做修正、
+每条 C++ assert 一条修正、`dim_values` 用离散列表、禁止 `range: [1,N]`、小数写 `1.0e-5`、
+`dtype_numbers` 先占位 `1`、禁止在 gen 里定义参数范围、禁止修改算子源码），不改变本仓命名。
+
+用例的 inputs/attr/outputs 必须是算子真实签名：禁止用 `low_precision_marker`、`fp32_marker`、
+`case_spec` 之类的占位参数承载参数空间、shape/dtype 档位或用例元数据，否则固化 JSON 与算子签名脱钩，
+检视时无法核对真实 dtype × shape × Attr 组合。`outputs` 字段只用于 ATK 内置 function/graph 插件指向
+入参槽位，自定义 executor 直接返回真实输出时保持 `null`。存量算子的占位写法按各自 README 登记迁移计划，
+迁移前不要与新写法混用。
 
 1. 必备文件：`README.md`、`atk_<算子>.json`、`atk_<算子>_perf.json`、`atk_<算子>_mss.json`、`<算子>.yaml`、
    `gen_<算子>.py`、`executor_<算子>.py`，可选 `scripts/`。
@@ -527,7 +535,8 @@ Phase C 产出 `test_case_design_report.md`）；该 skill 的 NEVER 清单（�
    可达 TilingKey → `_mss.json` case id，并给出实际选择证据。
 4. 验收结果写入算子 ATK README：标杆与版本、目标 SoC、用例总数/失败数、覆盖结论、回归结论；
    存在性能目标时逐模型 case 列表比较（不能用平均值掩盖未达标 case）。
-5. 用例的 shape、dtype、layout 必须同时满足算子 README、tiling 校验和 executor 输入构造。
+5. 用例的参数名必须与算子签名一致；shape、dtype、layout 必须同时满足算子 README、tiling 校验和
+   executor 输入构造。
 6. 不得提交 `atk_output/`、`result/`、xlsx、profiling/sanitizer 日志、`__pycache__` 等产物。
 
 ### 6.2 新增或修改算子时的看护动作
