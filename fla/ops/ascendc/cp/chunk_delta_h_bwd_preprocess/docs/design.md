@@ -205,10 +205,10 @@ storage-free：V2 → C1DvPrePayloadFree ; V4 → C3PayloadFree ; C5 → V4PcPay
 ### 10.1 已执行情况
 
 - 第 1 项：纯 Python 自检已通过（三种 gate 模式，仿射恒等式最大绝对误差 ~1e-16）。
-- 第 2、3 项：按 `tests/atk/chunk_delta_h_bwd_preprocess/harness/` 的逐平面核对与用例矩阵执行，
+- 第 2、3 项：按 `tests/atk/chunk_delta_h_bwd_preprocess/`（ATK 精度矩阵 + `scripts/` 逐平面核对）执行，
   A2/A5 均 12/12 PASS（全部 `K = V = 128`），含 32 chunk 长链（`pos_13`）与尾块（`pos_06`）。
 - 第 4 项：`C1`/`C3` 的两路输出、`V4` 的两路输出在实现上分别发布/释放（各自独立 flag 边界），
-  逐平面核对未发现两路混用；受控实验（`harness/ctrl_case.py`）用于定位过 A 路。
+  逐平面核对未发现两路混用；受控实验（`scripts/ctrl_case.py`）用于定位过 A 路。
 - 第 5 项：本版只实现"仅按 head 连续分核"（`BY_HEAD`），`(hv, 列 tile)` 展平（`BY_TILE`）尚未实现；
   原 `pos_16_tile_split_partition`（K=V=256）已随 `K = V = 128` 的收敛移出正向矩阵，改为不支持拦截用例。
 - 第 6 项：跨 rank 一致性验证需要上层 CP 切分链路，本版未覆盖。

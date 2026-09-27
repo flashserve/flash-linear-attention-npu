@@ -87,7 +87,7 @@ aclnn 与 `<<<>>>` 直调见 [`docs/api.md`](docs/api.md)。
 | `op_kernel` | 已实现：六个 Stage 的真实计算体（Catlass `BlockMmadTla` 五路矩阵乘 + Vector 手写事件对），A2/A5 精度均已打通；Vector 侧按平台拆分 `op_kernel/arch22`（A2/A3）与 `op_kernel/arch35`（A5，热点段用 RegBase `__simd_vf__` 融合） |
 | 构建接入 | 已完成：`op_host/CMakeLists.txt` 走 `op_host_aclnnExc` + `ACLNNTYPE aclnn_exclude`（**aclnn 手写，不走自动生成**），A2/A5 均已编出 OPP 运行包 |
 | Python `fla_npu.ops.ascendc` 入口 | 已接入：ctypes 直调手写 aclnn（不依赖 `torch_npu` dispatcher），A2/A5 双平台设备侧均验证通过 |
-| 测试 | `tests/atk/chunk_delta_h_bwd_preprocess/`（12 正向 + 13 反向）为唯一用例来源：`cases.json` 是用例设计，`reference.py` 是 CPU 标杆，`harness/` 提供 aclnn 取数程序、逐平面核对与精度矩阵/反向拦截执行脚本 |
+| 测试 | `tests/atk/chunk_delta_h_bwd_preprocess/` 按 `tests/atk` 规范组织：`cases.json` 是用例设计（12 正向 + 13 反向），`atk_*.json` + `gen_*.py` + `executor_*.py` + `<op>.yaml` 是 ATK 精度/性能/内存矩阵，`scripts/` 放 CPU 标杆、aclnn 直调取数、逐平面核对与反向拦截脚本 |
 
 ### 已验证（本版）
 
@@ -123,7 +123,7 @@ aclnn 与 `<<<>>>` 直调见 [`docs/api.md`](docs/api.md)。
 ### 精度取数链路（已验证）
 
 ```bash
-INSTALL=<install root> CASE_DIR=<case dir> bash tests/atk/chunk_delta_h_bwd_preprocess/harness/run_accuracy.sh \
+INSTALL=<install root> CASE_DIR=<case dir> bash tests/atk/chunk_delta_h_bwd_preprocess/scripts/run_accuracy.sh \
   --dtype bf16 --gate gk --Hk 4 --Hv 4 --T 256 --K 128 --V 128
 ```
 

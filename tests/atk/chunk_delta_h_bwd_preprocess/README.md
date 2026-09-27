@@ -1,52 +1,82 @@
 # chunk_delta_h_bwd_preprocess 测试
 
-## 内容
+## 目录结构（`tests/atk` 规范）
 
-| 文件 | 说明 |
+| 文件 / 目录 | 说明 |
 | --- | --- |
-| `reference.py` | CPU 全精度参考：`preprocess_reference` 给出 `dhm = [E_r \| P_r]`；`dh_scan_direct` 用非零 `dht` 反扫得到真实 `dh0`；`check_affine` 校验 `dh0 == P_r @ dht + E_r` |
-| `cases.json` | 用例设计唯一来源（正向 + 反向拦截） |
-| `harness/make_case.py` | 由用例参数生成 NPU 侧输入（落盘原始字节）与 CPU 标杆 `expected_dhm.bin`，并写出 `run_case` 命令行 |
-| `harness/test_aclnn_chunk_delta_h_bwd_preprocess.cpp` | aclnn 直调取数：输入/输出全走文件，输出额外落 `workspace.bin`（用户区起点 16 MiB，可按 tiling 公式定位每个平面） |
-| `harness/compare.py` | 按 `E_r`/`P_r` 分平面给出 `max_abs`/`max_rel`/`rel_norm`，并给出 PASS/FAIL |
-| `harness/inspect_workspace.py` | 逐平面核对 workspace（NT=1）：slot（Q̄s/K̄/W/do/decayK）、T1、dVpre、dVhat、qterm、wterm、Pc、PBf、P 两个 parity |
-| `harness/run_accuracy.sh` | 上述取数 → 比对的一键入口 |
-| `harness/ctrl_case.py` | 受控实验：把某个 case 的 `W` 改成"仅第 0 行全 1"，据此可只手推出 `T1`/`P` 的期望结构，用于定位"左操作数转置语义/某个平面写错"这类问题 |
-| `harness/make_negative_case.py` + `harness/run_negative.sh` | 反向用例：按 `cases.json` 的 `negative_cases` 生成"非法但类型正确"的输入，调用 aclnn 并核对返回码 |
+| `cases.json` | **用例设计唯一来源**：12 条正向（全部 `K = V = 128`、`chunk_size = 64`）+ 13 条反向拦截 |
+| `chunk_delta_h_bwd_preprocess.yaml` | ATK 用例 schema（`atk case -f` 用；标准 `mixed_tolerance_bm`） |
+| `gen_chunk_delta_h_bwd_preprocess.py` | 由 `cases.json` 展开出精度 / 性能 / 内存三份 ATK 用例矩阵；同时注册 `-scope=gen_cases` 用的 generator |
+| `executor_chunk_delta_h_bwd_preprocess.py` | ATK executor：按 `case_spec` 确定性构造输入，NPU 走 `fla_npu.ops.ascendc`，CPU 走 `scripts/reference.py` 标杆 |
+| `atk_chunk_delta_h_bwd_preprocess.json` | 精度矩阵（12 条，`standard.acc` 用 ATK 原生 `output_dtype_overrides` 按模型 dtype 判 `dhm`） |
+| `atk_chunk_delta_h_bwd_preprocess_perf.json` | 性能精简矩阵（3 条：dense / varlen / 32 chunk 长链） |
+| `atk_chunk_delta_h_bwd_preprocess_mss.json` | 内存检测与确定性矩阵（5 条，覆盖 4 个 tilingKey + varlen） |
+| `scripts/reference.py` | CPU 全精度参考：`preprocess_reference` 给出 `dhm = [E_r \| P_r]`；`dh_scan_direct` 用非零 `dht` 反扫得到真实 `dh0`；`check_affine` 校验 `dh0 == P_r @ dht + E_r` |
+| `scripts/make_case.py` | 由用例参数生成 NPU 侧输入（落盘原始字节）与 CPU 标杆 `expected_dhm.bin`，并写出 `run_case` 命令行 |
+| `scripts/test_aclnn_chunk_delta_h_bwd_preprocess.cpp` | aclnn 直调取数：输入/输出全走文件，输出额外落 `workspace.bin`（用户区起点 16 MiB，可按 tiling 公式定位每个平面） |
+| `scripts/compare.py` | 按 `E_r`/`P_r` 分平面给出 `max_abs`/`max_rel`/`rel_norm`，并给出 PASS/FAIL |
+| `scripts/inspect_workspace.py` | 逐平面核对 workspace（NT=1）：slot（Q̄s/K̄/W/do/decayK）、T1、dVpre、dVhat、qterm、wterm、Pc、PBf、P 两个 parity |
+| `scripts/run_accuracy.sh` | 上述"aclnn 直调取数 → 逐平面比对"的一键入口（用于定位与给出 `rel_norm` 口径） |
+| `scripts/ctrl_case.py` | 受控实验：把某个 case 的 `W` 改成"仅第 0 行全 1"，据此可只手推出 `T1`/`P` 的期望结构，用于定位"左操作数转置语义/某个平面写错"这类问题 |
+| `scripts/make_negative_case.py` + `scripts/run_negative.sh` | 反向拦截用例：按 `cases.json` 的 `negative_cases` 生成"非法但类型正确"的输入，调用 aclnn 并核对返回码 |
 
-## 与 ATK 标准流程的关系
+## ATK 一键执行（规范入口）
 
-本目录当前是**直调 aclnn 的取数 + 比对工程**（`harness/`），没有走 `tests/atk/run_test_cpu.sh` 的
-`<op>.yaml` + `gen_<op>.py` + `executor_<op>.py` + `atk_<op>.json` 流程，原因有两条：
+```bash
+FLA_NPU_ENV=<custom opp>/bin/set_env.bash \
+ATK_OUTPUT_ROOT=<output root> \
+bash tests/atk/run_test_cpu.sh \
+  -op=chunk_delta_h_bwd_preprocess -npu_device_id=0 -soc=ascend950 -scope=accuracy
+```
 
-1. 本算子的判据是"相对参考幅值"的链式判据（`rel_norm = max_abs / max|参考|`，阈值 2%）。`dhm` 的 `P` 链按
-   设计用模型 dtype（bf16/fp16）传递，绝对误差随 chunk 数放大（32 chunk 用例 `max_abs` 可达 5.7e28），
-   ATK 现成的逐元素 mixed tolerance 标准与该结论口径不一致；
-2. 定位阶段需要逐平面读取 workspace（`harness/inspect_workspace.py`）与受控实验（`harness/ctrl_case.py`），
-   这类检查不是 ATK 用例 schema 能表达的。
+`-scope` 可取 `all` / `accuracy` / `performance` / `determinism` / `mssanitizer` / `gen_cases`。
+本算子目录的 `atk_*.json` 与生成器都取自 `cases.json`，改用例只需改 `cases.json` 后重跑
+`python tests/atk/chunk_delta_h_bwd_preprocess/gen_chunk_delta_h_bwd_preprocess.py --summary`。
 
-并入 `tests/atk/run_test_cpu.sh` 标准流程（含选定 ATK 原生精度标准）列在后续计划中。
+### ATK 精度结果（已执行）
+
+| 平台 | 命令 | 结果 |
+| --- | --- | --- |
+| A5 / `ascend950` | `bash tests/atk/run_test_cpu.sh -op=chunk_delta_h_bwd_preprocess -npu_device_id=0 -soc=ascend950 -scope=accuracy`（stable 后端） | **12/12 通过**，`acc_pass_result: Pass` |
+| A2 / `ascend910b` | 同上 `-soc=ascend910b`（ctypes 后端；该机 ATK 26.4.30 低于 runner 要求的 26.8.8，用本机已有 ATK 26.9.8 运行） | **12/12 通过**，`acc_pass_result: Pass` |
+| A5 / `ascend950` | `... -scope=performance`（3 条：dense / varlen / 32 chunk） | **3/3 执行成功**，device 中位耗时 270.7 / 274.1 / 1066.7 µs（见下） |
+
+判据是 ATK 原生 `mixed_tolerance_bm`；`dhm` 虽是 FP32，但链上状态按设计用模型 dtype 传递，
+所以用例的 `standard.acc` 用 ATK 原生的 `output_dtype_overrides` 声明按 `bf16`/`fp16` 判，
+不在 executor 里自定义指标。
+
+### ATK 性能结果（已执行，A5 / ascend950）
+
+| 用例 | shape | device 中位耗时 |
+| --- | --- | --- |
+| `pos_01_none_gate_dense` | `B=1, Hk=Hv=4, T=512, K=V=128`（8 chunk） | 270.7 µs |
+| `pos_05_gk_varlen_first_segment` | 同 shape，本 launch 只算 `[0,300)`（5 chunk） | 274.1 µs |
+| `pos_13_long_nt_chain_accumulation` | 同 shape，`T=2048`（32 chunk） | 1066.7 µs |
+
+数值是 ATK `performance_device` 的 device 中位耗时（同 shape 下单 chunk 约 33 µs，随 chunk 数近似线性）。
+`-scope=determinism` / `-scope=mssanitizer` 使用同一份 `atk_<op>_mss.json`（5 条，覆盖 4 个 tilingKey），
+本版未执行。
 
 ## 本地自检（无需 NPU）
 
 ```bash
-python tests/atk/chunk_delta_h_bwd_preprocess/reference.py
+python tests/atk/chunk_delta_h_bwd_preprocess/scripts/reference.py
 ```
 
 该自检对无门控 / `USE_G` / `USE_GK` 三种模式分别构造随机输入，用**非零** `dht` 验证仿射恒等式。
 只测 `dht = 0` 无法验证 `P_r`，因此自检固定使用非零 `dht`。
 
-## 设备侧验证（已执行，见下）
+## 定位口径：直调 aclnn 的逐平面取数（`scripts/`）
 
-1. 按 `op_cases/chunk_delta_h_bwd_preprocess.json` 生成用例；
+1. 按 `cases.json` 生成用例；
 2. NPU 侧调用 `fla_npu.ops.ascendc.chunk_delta_h_bwd_preprocess`，CPU 侧调用 `reference.py` 的同名口径；
 3. 逐用例比较 `dhm`，并单独抽出 `dV_pre`、`T1`、`dV̂'`、`inc`、`dH`、`P_c`、`P` 与参考实现比对，
    用于区分"公式错误"与"ready/free 缺边导致的旧值/新值混用"；
-4. 覆盖 A2/A3/A5 三条平台与 `USE_G`/`USE_GK`/无门控、dense/varlen、尾块、GVA、`K=64/128/256`；
+4. 覆盖 A2/A5 两平台与 `USE_G`/`USE_GK`/无门控、dense/varlen、尾块、GVA；本版只支持 `K = V = 128`；
 5. 反向用例只验证拦截：`g`/`gk` 同时非空、`K != 128`（64/256/512）、`V != 128`（96）、`Hv%Hk!=0`、
    `B>1`（dense/varlen）、`chunk_size!=64`、`g` shape 不匹配、`gk` FP32、`cu_seqlens` 过短、空 tensor。
 
-### 一键执行（设备侧）
+### 一键执行（直调 aclnn，设备侧）
 
 ```bash
 # 1) 编包并安装（A5 例：--soc=ascend950；A2 例：--soc=ascend910b）
@@ -54,7 +84,7 @@ bash build.sh --pkg --soc=<soc> --vendor_name=fla_npu --ops=chunk_delta_h_bwd_pr
 bash build_out/fla-npu-fla_npu_linux-*.run --install-path=<install_path>
 
 # 2) 编取数程序并逐用例执行
-cd tests/atk/chunk_delta_h_bwd_preprocess/harness
+cd tests/atk/chunk_delta_h_bwd_preprocess/scripts
 g++ -std=c++17 -O2 test_aclnn_chunk_delta_h_bwd_preprocess.cpp -o run_case \
   -I<install_path>/vendors/fla_npu_transformer/op_api/include -I$ASCEND_HOME_PATH/include \
   -L<install_path>/vendors/fla_npu_transformer/op_api/lib -lcust_opapi \
@@ -67,7 +97,7 @@ python3 make_case.py --dir ./case_pos_13 --dtype bf16 --gate gk --Hk 4 --Hv 4 --
 python3 compare.py --dir ./case_pos_13
 ```
 
-### 已验证结果
+### 直调口径的已验证结果
 
 `cases.json` 的 12 条正向用例（全部 `K = V = 128`、`chunk_size = 64`，本版唯一支持的场景）在
 **A5（ascend950）与 A2（ascend910b）上均为 12/12 PASS**，`0` 编译错误。
@@ -101,7 +131,7 @@ task / 单 chunk 场景约 2e-3，长链与多 task 场景最多 1.2e-2。重复
 ### 反向拦截（已执行）
 
 ```bash
-bash tests/atk/chunk_delta_h_bwd_preprocess/harness/run_negative.sh <work_dir>
+bash tests/atk/chunk_delta_h_bwd_preprocess/scripts/run_negative.sh <work_dir>
 ```
 
 `cases.json` 的 13 条反向用例在 **A2 与 A5 上均 13/13 PASS**（实际返回码与 `expected_return_code` 一致，
@@ -128,8 +158,7 @@ bash tests/atk/chunk_delta_h_bwd_preprocess/harness/run_negative.sh <work_dir>
 
 ## 稳定入口（`fla_npu.ops.ascendc`）验证
 
-`from fla_npu.ops.ascendc import chunk_delta_h_bwd_preprocess`（等价 `npu_chunk_delta_h_bwd_preprocess`）走
-ctypes 解耦通路，与 aclnn 直调取数程序共用同一份输入与 CPU 标杆。已执行用例与结论（A5 / ascend950）：
+`from fla_npu.ops.ascendc import chunk_delta_h_bwd_preprocess`（等价 `npu_chunk_delta_h_bwd_preprocess`）默认走 Stable-ABI 适配层（`csrc/src/stable_chunk_delta_h_bwd_preprocess.cpp` + `torch.ops.fla_npu_stable`），`libfla_npu_stable.so` 不可用时回退 ctypes 参考实现；两条通路与 aclnn 直调取数程序共用同一份输入与 CPU 标杆。已执行用例与结论（A5 / ascend950）：
 
 | 用例 | E rel_norm | P rel_norm | 结论 |
 | --- | --- | --- | --- |

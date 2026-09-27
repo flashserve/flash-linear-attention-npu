@@ -824,6 +824,22 @@ def npu_chunk_bwd_dv_local(q, k, d_o, g, scale, chunk_size, *, g_gamma=None,
     )
 
 
+def npu_chunk_delta_h_bwd_preprocess(q, k, w, d_o, dv, scale, chunk_size, *,
+                                     g=None, gk=None, cu_seqlens=None):
+    """CP backward state preprocess: ``dhm = [E_r | P_r]`` (FP32 ``[Hv, K, V+K]``).
+
+    The launcher only allocates the output: ``q``/``k`` are ``[B, Hk, T, K]``,
+    ``w`` is ``[B, Hv, T, K]``, ``d_o``/``dv`` are ``[B, Hv, T, V]``, and ``g``
+    (``[B, Hv, T]``) / ``gk`` (``[B, Hv, T, K]``) are the two mutually exclusive
+    gate forms; ``cu_seqlens`` carries the single packed segment.
+    """
+
+    return _op("npu_chunk_delta_h_bwd_preprocess")(
+        q, k, w, d_o, dv, g, gk, _host_ints(cu_seqlens),
+        float(scale), int(chunk_size), _current_stream_ptr(),
+    )
+
+
 def npu_chunk_local_cumsum(g, chunk_size, *, cu_seqlens=None,
                            chunk_indices_out=None, reverse=False, scale=1.0,
                            head_first=True, output_dtype="float32"):
