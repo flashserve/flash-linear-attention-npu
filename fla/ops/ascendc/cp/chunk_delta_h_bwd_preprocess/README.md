@@ -112,7 +112,9 @@ aclnn 与 `<<<>>>` 直调见 [`docs/api.md`](docs/api.md)。
    没有跨 chunk 的 ping-pong 重叠；1:2 需要两个 AIV 分工并各自协调 flag。
 3. **sanitizer**：按仓库规范补做 `mssanitizer`（`racecheck`/`memcheck`/`initcheck`/`synccheck`），并确认运行命中的是
    sanitizer 版本对象。
-4. **官方 ATK / CI 接入**：用例与取数脚本已归档到 `tests/atk/chunk_delta_h_bwd_preprocess/`，尚未并入 `ci/` 的既有流程。
+4. **官方 ATK / CI 接入**：用例与取数脚本已归档到 `tests/atk/chunk_delta_h_bwd_preprocess/`，但当前是直调 aclnn 的
+   取数工程，尚未并入 `tests/atk/run_test_cpu.sh` 的 `<op>.yaml` + `gen_<op>.py` + `executor_<op>.py` 标准流程
+   （需同时选定与该链式判据口径一致的 ATK 原生精度标准），也尚未并入 `ci/` 的既有流程。
 5. **精度判据口径**：本版 `E_r/P_r` 的目标是"跨 rank 仿射摘要"，链上用模型 dtype 传递状态（`Pc`/`PBf`/`dHBf` 都是
    bf16/fp16），因此判据采用"相对参考幅值"（详见测试 README），不是逐元素绝对阈值。
 

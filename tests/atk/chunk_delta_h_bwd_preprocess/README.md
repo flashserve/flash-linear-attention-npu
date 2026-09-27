@@ -14,6 +14,19 @@
 | `harness/ctrl_case.py` | 受控实验：把某个 case 的 `W` 改成"仅第 0 行全 1"，据此可只手推出 `T1`/`P` 的期望结构，用于定位"左操作数转置语义/某个平面写错"这类问题 |
 | `harness/make_negative_case.py` + `harness/run_negative.sh` | 反向用例：按 `cases.json` 的 `negative_cases` 生成"非法但类型正确"的输入，调用 aclnn 并核对返回码 |
 
+## 与 ATK 标准流程的关系
+
+本目录当前是**直调 aclnn 的取数 + 比对工程**（`harness/`），没有走 `tests/atk/run_test_cpu.sh` 的
+`<op>.yaml` + `gen_<op>.py` + `executor_<op>.py` + `atk_<op>.json` 流程，原因有两条：
+
+1. 本算子的判据是"相对参考幅值"的链式判据（`rel_norm = max_abs / max|参考|`，阈值 2%）。`dhm` 的 `P` 链按
+   设计用模型 dtype（bf16/fp16）传递，绝对误差随 chunk 数放大（32 chunk 用例 `max_abs` 可达 5.7e28），
+   ATK 现成的逐元素 mixed tolerance 标准与该结论口径不一致；
+2. 定位阶段需要逐平面读取 workspace（`harness/inspect_workspace.py`）与受控实验（`harness/ctrl_case.py`），
+   这类检查不是 ATK 用例 schema 能表达的。
+
+并入 `tests/atk/run_test_cpu.sh` 标准流程（含选定 ATK 原生精度标准）列在后续计划中。
+
 ## 本地自检（无需 NPU）
 
 ```bash
