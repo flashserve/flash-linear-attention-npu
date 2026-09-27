@@ -81,7 +81,7 @@ class OpNameGenerator(CaseGenerator):
             rank = LAYOUT_RANK.get(layout, 4)
             if len(x_shape) > rank:                 # 只保留前 rank-1 维 + 末维 D
                 x_shape = x_shape[: rank - 1] + [x_shape[-1]]
-            while len(x_shape) < rank:              # 例如 varlen 需要去掉 batch 维
+            while len(x_shape) < rank:              # 缺维度时补 1（补齐 batch 维）
                 x_shape.insert(0, 1)
             by_name["x"].shape = x_shape
             if "g" in by_name:
