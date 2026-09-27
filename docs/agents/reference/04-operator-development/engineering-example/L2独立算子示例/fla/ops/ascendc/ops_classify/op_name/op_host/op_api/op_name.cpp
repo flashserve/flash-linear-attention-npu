@@ -4,8 +4,17 @@
  * 注意事项：
  *   1. 本层只做四件事：把 aclIntArray 转成张量、把缺席的 REQUIRED 输出换成零元素 descriptor、
  *      调 ADD_TO_LAUNCHER_LIST_AICORE 下发、按 def 的顺序返回结果数组。
- *   2. **不要把 nullptr 直接交给 launcher**：def 的输出是 REQUIRED，部分 CANN 版本会压缩空参数，
- *      使后续 kernel 形参错位；缺席时用 executor->AllocTensor(MakeShape({0}), dtype, ND) 占位。
+ *   2. **不要把 nullptr 直接交给 launcher**：def 的输出是 REQUIRED，缺席时统一用
+ *      `executor->AllocTensor(MakeShape({0}), dtype, ND)` 占位。原因是 launcher（CANN `opbase` 仓的
+ *      `composite_op/aclnn_engine/kernel_arg.cpp::CalcAclTensorNum`）对 null 入参的处理按 CANN 版本不同：
+ *      - CANN 8.5.0 / 9.0.0 / 9.1.0（opbase 同名分支）：null 入参一律**跳过不计数**，
+ *        后续 kernel 形参因此被压缩、整体错位；
+ *      - CANN 9.2.0 起（opbase `9.2.0` 与 `master`，提交 `6357cda`，2026-08-27，
+ *        PR !782 "AscendC算子调用Memset算子占位的入参不跳过"，关联 opbase Issue #338）：
+ *        AscendC 算子对 null 的 **aclTensor** 入参**占位计数**（与 json `argIdx_` 编址对齐），
+ *        TBE 算子仍跳过；null 的 **aclTensorList** 入参无论哪种算子都仍跳过。
+ *      仓内要兼容 8.5/9.0/9.1，所以占位写法与版本无关地保留；这样 9.2 及以上行为一致，
+ *      也不会因为"某天不再压缩"而依赖 CANN 行为。
  *   3. 零元素 descriptor 只占位、不承载数据；是否真正搬出由编译期 outputMode 决定，两者必须一致。
  *   4. OP_INPUT/OP_OUTPUT/OP_ATTR 的顺序必须与 def 的声明顺序、kernel 形参顺序完全一致；
  *      任何一处顺序错位都会静默产生错误结果。

@@ -6,7 +6,8 @@
  *   2. 返回值用固定长度的 std::array<const aclTensor *, N>：N 必须等于 def 的输出个数，
  *      顺序也必须一致（L2 按槽位取结果）。不要用 vector、不要按档位改变返回长度。
  *   3. 可选输出在这里也以"槽位"存在：L2 传 nullptr 时由 L0 换成一个零元素 descriptor，
- *      保证 launcher 形参不发生压缩错位（见 op_name.cpp 的注意事项）。
+ *      保证 launcher 形参不发生压缩错位（CANN 8.5/9.0/9.1 的 launcher 会跳过 null 入参；
+ *      9.2.0 起 AscendC 算子才占位计数。版本细节与出处见 op_name.cpp 注意事项第 2 条）。
  *   4. outputMode 由 L2 传入，是编译期档位的选择依据；L0 不自己判断"调用方要不要"。
  *   5. 依赖的其它算子 L0（组合形态）通过 include 其 op_host/op_api/<依赖算子>.h 直接调用。
  */

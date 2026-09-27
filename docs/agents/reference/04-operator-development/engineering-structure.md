@@ -395,6 +395,10 @@ add_ops_compile_options(
      只是不公开；
    - **纯增量导出**（例如反向需要的 `qHat/kHat/qRstd/kRstd/betaEff`）：缺席时按当前档位要求分配内部张量或直接跳过，
      不影响计算结果。
+   L0 侧拿到 `nullptr` 时一律换成零元素 descriptor 占位（`executor->AllocTensor(MakeShape({0}), dtype, ND)`）：
+   CANN 8.5.0 / 9.0.0 / 9.1.0 的 launcher（`opbase` 的 `kernel_arg.cpp::CalcAclTensorNum`）会跳过 null 入参、
+   压缩 kernel 形参；CANN 9.2.0 起（`opbase` 提交 `6357cda`，PR !782，关联 opbase Issue #338）AscendC 算子
+   才对 null 的 aclTensor 占位计数（TBE 算子与 aclTensorList 仍跳过）。占位写法与版本无关地保留。
 4. 调用方传了张量时，优先 `ReuseOrAlloc` 直接复用为内部目标；需要改变布局/顺序时由 L2 做一次明确的
    `ViewCopy`（例如公开 `hOut` 由 head-major 转 sequence-major），并把这个拷贝计入性能说明。
 5. **同一输入下，传与不传可选输出必须计算结果逐位一致**，只有是否落公开 GM 的区别；该等价性要有对应用例。
