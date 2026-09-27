@@ -1,55 +1,22 @@
 /**
  * 示例文件：fla/ops/ascendc/ops_classify/op_name/op_kernel/op_name_struct.h
  *
+ * 结构参考：finalize/op_kernel/chunk_gated_delta_rule_bwd_finalize_struct.h（根目录兼容头）
+ *
  * 注意事项：
- *   1. 本文件只放设备侧需要的 TilingData 结构、args 结构与常量；模板参数与实例枚举在
- *      <算子>_tiling_key.h（历史算子把两者合并在 _struct.h，新算子不再这么做）。
- *   2. TilingData 的字段顺序/类型/数量必须与 op_host/<算子>_tiling.h 的 BEGIN_TILING_DATA_DEF
- *      完全一致：设备侧用 GET_TILING_DATA_WITH_STRUCT 按同一布局解析，改字段就是改 ABI。
- *   3. 常量集中在这里（tile 上限、对齐、slot 数），不要在实现头里散布魔法数字；
- *      平台相关常量按 arch 目录分开，不要在这里用 #if 分叉。
- *   4. args 结构只承载地址与标量，不放计算中间状态。
- *   5. `nodiscard`/对齐等编译期属性要与 host 侧认知一致，否则设备侧读取会静默错位。
+ *   1. 根目录的 `_struct.h` 只做兼容转发：按编译架构 include 对应 archXX 的实际结构定义，
+ *      避免"根目录一份、arch 目录又一份"导致字段漂移。
+ *   2. 真正的内容（TilingData、模板参数、平台常量）放 `archXX/<算子>_struct.h`。
+ *   3. 需要包含根头文件的代码（例如 host 侧或 UT）不用关心架构分支。
  */
 
-#ifndef OP_NAME_STRUCT_H
-#define OP_NAME_STRUCT_H
+#ifndef OP_NAME_STRUCT_COMPAT_H
+#define OP_NAME_STRUCT_COMPAT_H
 
-#include <cstdint>
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#include "arch35/op_name_struct.h"
+#else
+#include "arch22/op_name_struct.h"
+#endif
 
-// 必须与 op_host/op_name_tiling.h 的 TilingData 字段一一对应（顺序、类型、数量）。
-struct OpNameTilingData {
-    uint32_t batch;
-    uint32_t seqLen;
-    uint32_t headNum;
-    uint32_t dim;
-    uint32_t chunkSize;
-    uint32_t chunksPerSequence;
-    uint32_t usedCoreNum;
-    uint32_t headsPerCore;
-    uint32_t outputMode;
-    float scale;
-    float epsilon;
-    bool isVarLen;
-    bool hasInitialState;
-};
-
-struct OpNameArgs {
-    GM_ADDR x = nullptr;
-    GM_ADDR g = nullptr;
-    GM_ADDR aLog = nullptr;
-    GM_ADDR initialState = nullptr;
-    GM_ADDR cuSeqlens = nullptr;
-    GM_ADDR chunkIndices = nullptr;
-    GM_ADDR y = nullptr;
-    GM_ADDR state = nullptr;
-    GM_ADDR xNorm = nullptr;
-    GM_ADDR userWorkspace = nullptr;
-    OpNameTilingData tiling{};
-};
-
-// 设备侧常量：与 host 侧 tiling 的假设保持一致。
-constexpr uint32_t OP_NAME_DIM = 128;
-constexpr uint32_t OP_NAME_DEFAULT_CHUNK = 64;
-
-#endif // OP_NAME_STRUCT_H
+#endif // OP_NAME_STRUCT_COMPAT_H

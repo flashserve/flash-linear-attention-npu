@@ -13,6 +13,9 @@
  *      不进模板参数，否则实例数爆炸。
  *   6. 这里不写平台：A2/A3/A5 用同一份实例集合，平台在 kernel 入口按 __CCE_AICORE__ 选择实现。
  *   7. TilingData 结构属于 op_kernel/<算子>_struct.h，不要与本文件混放。
+ *   8. 归属：本示例按本仓新规范把 TPL 单独放 `_tiling_key.h`；结构样板
+ *      `chunk_gated_delta_rule_bwd_finalize` 把它放在 `archXX/<算子>_struct.h`。两者等价，
+ *      但同一算子只能有一份：`archXX/<算子>_struct.h` 通过 `../op_name_tiling_key.h` 引用本文件。
  */
 
 #ifndef OP_NAME_TILING_KEY_H

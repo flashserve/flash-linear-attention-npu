@@ -28,8 +28,9 @@ L2独立算子示例/                            # 形态 A 的示例根目录�
 1. 每个文件开头都有 `注意事项` 注释块：该文件**必须**满足的要求与常见错误；
 2. 文件内代码是骨架，标 `// ...` 处按本算子补齐；
 3. 建议顺序：`_def.cpp` → `_tiling.h` → `_output_mask.h` → `_tiling_processor.h` → `_tiling.cpp`
-   → `_tiling_key.h` → `op_kernel/<算子>.cpp` → `arch22|arch35` → `op_api`（L0 → L2）
-   → `torch_custom` → `tests/atk`。
+   → `op_kernel/_tiling_key.h` → `op_kernel/arch22|arch35/{_struct.h, _cube.h, _vec.h}`
+   → `op_kernel/<算子>.cpp`（薄入口）→ `op_api`（L0 → L2）→ `torch_custom` → `tests/atk`；
+   kernel 结构以 `chunk_gated_delta_rule_bwd_finalize` 为样板（见规范 §4.4）。
 
 ## 这个示例刻意覆盖的规范点
 

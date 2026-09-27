@@ -20,6 +20,7 @@
 > | [`chunk_kda_fwd`](../../../../fla/ops/ascendc/kda/chunk_kda_fwd/) | aclnn V1→V2 迭代；私有 L0 融合 + 组合入口；四段 launch；模板与 tiling key 双 key |
 > | [`chunk_fwd_h`](../../../../fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h/) | arch22/arch35 同名实现；`ASCENDC_TPL_ARGS_DECL`/`ASCENDC_TPL_SEL` 模板展开 |
 > | [`chunk_bwd_dv_local`](../../../../fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dv_local/) | 最小完整形态：host + kernel + aclnn + example + tests |
+> | [`chunk_gated_delta_rule_bwd_finalize`](../../../../fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_finalize/) | **kernel 可读性结构样板**（见 §4.4）：薄入口 + `archXX/{struct,common,cube,vector}`、Stage 拆函数、注释解释"为什么" |
 >
 > 本文与 [`开发者指南.md`](../../../开发者指南.md)（场景 3）互补：开发者指南给"新增算子要碰哪些文件"，
 > 本文给"每个文件必须长成什么样、哪些做法会被检视拦下"。
@@ -64,12 +65,15 @@ fla/ops/ascendc/<模块>/<算子>/
 |       |-- aclnn_<算子>.h / .cpp         # L2：公开 aclnn 接口（V1）
 |       `-- aclnn_<算子>_v2.h             # V2 迭代入口的公开声明（实现见 §5.2）
 |-- op_kernel/
-|   |-- <算子>.cpp                        # 唯一 kernel 入口：模板参数 + 架构选择 + tiling key 分派
-|   |-- <算子>_struct.h                   # TilingData 与常量
+|   |-- <算子>.cpp                        # 薄入口：traits + tiling 注册/解析 + workspace 命名 + AIC/AIV 分派
+|   |-- <算子>_struct.h                   # 根目录兼容头：按架构 include archXX 的结构定义
+|   |-- <算子>_common.h                   # 平台无关：常量、同步协议、ChunkInfo 与 offset 换算
 |   |-- <算子>_tiling_key.h               # 必须：ASCENDC_TPL_ARGS_DECL / ASCENDC_TPL_SEL
-|   |-- <算子>_<stage>.h                  # 按 Stage 拆分的实现头
-|   |-- arch22/                           # A2/A3 专用实现（按需），文件名与根目录同名
-|   `-- arch35/                           # A5/ascend950 专用实现，文件名与根目录同名
+|   |-- arch22/                           # A2/A3（按需）
+|   |   |-- <算子>_struct.h               # 平台 TilingData 与资源常量（tile/slot/UB 偏移）
+|   |   |-- <算子>_cube.h                 # AIC：Init(...) + Process() + ProcessStageN...
+|   |   `-- <算子>_vec.h                  # AIV：Init(...) + Process() + 阶段函数
+|   `-- arch35/                           # A5：同名三件，骨架与 arch22 一致
 |-- examples/                             # 可选：test_aclnn_<算子>_*.cpp 直调示例
 `-- （算子目录下没有 tests/）
 ```
@@ -312,8 +316,37 @@ add_ops_compile_options(
 1. 一个算子只有一个 kernel 入口 `<算子>.cpp`，即使内部包含多个阶段（Prepare/Post-WU/FwdH/Finalize）。
 2. 需要"分阶段多次 launch"时，用私有属性（例如 `stage`）在同一入口内分派，不新增 L0 原型、不新增公开接口
    （参考 `chunk_kda_fwd` 的 `KDA_STAGE_*`）。
-3. 入口只做地址解析与分派，具体 Stage 实现放在 `<算子>_<stage>.h`。
+3. 入口只做地址解析与分派；具体 Stage 实现放在 `archXX/<算子>_{cube,vec}.h` 的类方法里（见 §4.4）。
 4. 每个 Stage 的写回、workspace slot 释放、同步与 §3.3 的 tiling 描述一致。
+
+### 4.4 kernel 可读性结构（样板：`chunk_gated_delta_rule_bwd_finalize`）
+
+新增代码按下列结构组织；样板算子见
+[`chunk_gated_delta_rule_bwd_finalize/op_kernel/`](../../../../fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_finalize/op_kernel/)，
+示例落点见 [`engineering-example/L2独立算子示例/`](engineering-example/L2独立算子示例/)。
+
+1. **入口只接线**：`<算子>.cpp` 只做 dtype traits、tiling 注册与解析、workspace 区域命名、AIC/AIV 分派；
+   不出现 Stage 计算、任务循环与同步（样板入口约 80 行）。
+2. **workspace 按语义命名**：区域名体现用途，并在同一行注释生命周期与复用关系
+   （样板 `// S0 kbg -> S12 doG`）；禁止 `ws0/ws1/offset+32768` 这类无名偏移。
+3. **一个角色一个文件一个类**：`archXX/<算子>_cube.h`（AIC）与 `archXX/<算子>_vec.h`（AIV）；
+   接口固定为 `Init(...)` + `Process()`，`Init` 只保存地址/指针并派生 coreIdx、任务数等只读状态。
+4. **Stage 拆函数**：每个 Stage 一个方法，名字带 Stage 号与作用域（样板 `ProcessStage1Head`）；
+   `Process()` 只保留"取任务 → 取 `ChunkInfo` → 按序调用 Stage"的骨架。
+5. **资源划分集中**：L1/L0/UB 的偏移与份数只在 `Process()` 开头（或 `Init` 的 buffer 申请处）出现一次，
+   Stage 内只引用已取好的 `LocalTensor`；份数与 `archXX/<算子>_struct.h`、host 侧 arch tiling 常量三方一致。
+6. **常量集中且语义化**：尺寸常量带数值后缀（`CHUNK_SIZE_64`、`DIM_128`），容量用组成关系表达
+   （`WORKSPACE_BUFFER_COUNT_8 = 4 × 2`）；平台资源常量放 `archXX/<算子>_struct.h`，实现里不写裸数字。
+7. **任务换算封函数**：`GetChunkInfo(taskIdx, cu_seqlens, chunk_indices, tiling, info)` 里只处理定长/变长两支，
+   其余 Stage 只消费 `ChunkInfo`；workspace 偏移同理封成 `GetWorkspaceChunkOffset(...)`。
+8. **注释解释"为什么"**：跨 Stage 依赖、workspace 复用与生命周期、事件/flag 复用与背压来源、物理布局重解释、
+   容量取整理由；不写"这里搬入 x"这类复述代码的注释。
+9. **同步协议集中声明**：核间/跨 pipe 的方向、flag 数量、复用与背压规则写在 `common.h` 顶部一次说明，
+   实现只用具名常量；生产/消费两侧成对出现。
+10. **平台差异不改骨架**：两份实现类名、接口与 Stage 函数同名，差异只体现在资源常量、搬运粒度与流水，
+    并且能一句话说清；说不清差异的代码应上移到平台无关的 `common.h` 或根目录共用头。
+11. **可读性也是检视项**：超长函数、深层嵌套、无名偏移、魔法数字、复述型注释、Cube 类里写 Vector 逻辑、
+    同一份结构定义出现两处，都按可读性问题提出，不与功能缺陷混为一谈。
 
 ## 5. 调用层与接口迭代
 
@@ -484,6 +517,8 @@ add_ops_compile_options(
 9. **格式**：按仓根 `.clang-format` 格式化 C/C++；Python 侧跟随同目录风格。
 10. **文档同步**：能力与输入限制写算子 `README.md`；接口与返回码写 `docs/api.md`；方案与规则版本写
     `docs/design.md`。三份文档与代码同时更新，不允许只改代码。
+11. **可读性**：kernel 结构、命名、常量与注释按 §4.4 执行；评审时把可读性问题单独提出，
+    不要用"风格问题"一笔带过，也不要与功能缺陷混在一条意见里。
 
 ## 8. 交付前校验清单
 
