@@ -89,14 +89,14 @@ ASCENDC_TPL_SEL(
 constexpr uint64_t CHUNK_DELTA_H_BWD_PREPROCESS_SPLIT_BY_HEAD = 0;  // 默认：仅按 head 连续分核
 constexpr uint64_t CHUNK_DELTA_H_BWD_PREPROCESS_SPLIT_BY_TILE = 1;  // Hv < 核数：按 (hv, 列 tile) 展平
 
-constexpr uint32_t CHUNK_DELTA_H_BWD_PREPROCESS_MAX_K = 256;
 constexpr uint32_t CHUNK_DELTA_H_BWD_PREPROCESS_K_GROUP_ROWS = 64;
 constexpr uint32_t CHUNK_DELTA_H_BWD_PREPROCESS_CHUNK_SIZE = 64;
-// 状态行/列维的对齐粒度（元素数）：K/V 必须按此对齐。
-// 依据：Vector 侧按行做的向量/寄存器读写要求行首 32B 对齐（8 个 FP32），Cube 侧的 L0C/Fixpipe
-// 与列 tile 还要按 16 个元素（64B）成组；实测 K 或 V 不是 16 的倍数时（例如 72、76）会读到
-// UB/L1 未对齐区或未初始化区，表现为设备报错或结果错误，因此 host 直接拦截。
-constexpr uint32_t CHUNK_DELTA_H_BWD_PREPROCESS_STATE_ALIGN = 16;
+// 本版只支持的状态行/列维：K = V = 128。
+// 依据：状态行按 64 行分组、列按 16 个元素（64B）成组，Vector 侧逐行向量/寄存器读写也要求行首
+// 对齐；实测 K/V 取其他值（如 64、96、72、256）会出现设备报错或结果错误，因此 host 直接拦截，
+// 只放开目标场景 K = V = 128、chunk_size = 64。放宽该约束需要同步改 tiling、workspace 账本与用例。
+constexpr uint32_t CHUNK_DELTA_H_BWD_PREPROCESS_K_DIM = 128;
+constexpr uint32_t CHUNK_DELTA_H_BWD_PREPROCESS_V_DIM = 128;
 
 struct ChunkDeltaHBwdPreprocessTilingData {
     // shape

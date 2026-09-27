@@ -127,7 +127,8 @@ BS = 32 if K <= 64 else 64
 | `dh` | `2*K*V*4` | `dH` ping-pong（跨 chunk 状态，FP32） |
 | `p` | `2*K*K*4` | `P` ping-pong（跨 chunk 状态，FP32） |
 
-`K = 256` 时 `T1`/`P_c` 各 256 KiB、`P` 两个面共 512 KiB、`dH` 两个面共 512 KiB，因此这些平面必须驻留
+以 `K = 128`（本版唯一支持取值）的账本为例；若将来放宽到 `K = 256`，`T1`/`P_c` 会各占 256 KiB、
+`P` 两个面共 512 KiB、`dH` 两个面共 512 KiB，这些平面就必须驻留
 workspace，由 Cube 侧按块 MTE2，不能假设能整体进 L1。`W`/`do`/`dv_local` 直接从 GM 取，不进入 slot。
 
 ## 6. 同步合同
@@ -156,8 +157,9 @@ storage-free：V2 → C1DvPrePayloadFree ; V4 → C3PayloadFree ; C5 → V4PcPay
 ## 8. 平台与限制
 
 - 平台：`ascend910b`（A2）、`ascend910_93`（A3）、`ascend950`（A5）。
-- 目标场景 `K = V = 128`、`chunk_size = 64`；`K`/`V` 必须按 16 个元素（64B）对齐并由 host 拦截，
-  因为状态矩阵按行做向量/寄存器读写、Cube 列 tile 也按 16 元素成组，不对齐会读到未对齐/未初始化区。
+- 本版**只支持 `K = V = 128`、`chunk_size = 64`**（host 拦截其它取值）：状态行按 64 行分组、
+  Cube 列 tile 按 16 个元素（64B）成组、Vector 逐行的寄存器读写也依赖该行宽，改尺寸需要同步改
+  tiling、workspace 账本与 tile 布局；`K=64/96/256`、`V=96` 等取值均已实测会出现设备报错或结果错误。
 - shape/取值范围的唯一维护处是 [README](../README.md) 的「支持的场景」「不支持（本版显式拦截）」「已知限制」三节，
   本文只讨论设计取舍，不重复列举取值。
 - layout：`[B,H,T,D]`（BSND）。TND/NTD 需由调用方或 L2 侧 layout sweep 后进入本算子。
@@ -183,7 +185,7 @@ storage-free：V2 → C1DvPrePayloadFree ; V4 → C3PayloadFree ; C5 → V4PcPay
    设备侧验证通过。
 4. **测试（设备侧精度矩阵已完成，见 README）**：以 `tests/atk/chunk_delta_h_bwd_preprocess/cases.json`
    为唯一用例来源，用 `tests/atk/chunk_delta_h_bwd_preprocess/reference.py` 作为 CPU 标杆，覆盖
-   A2/A5 两平台与 `USE_G`/`USE_GK`/无门控、dense/varlen、尾块、GVA、`K=64/128/256`。
+   A2/A5 两平台与 `USE_G`/`USE_GK`/无门控、dense/varlen、尾块、GVA（`K = V = 128`，本版唯一支持取值）。
 5. **精度与内存（部分完成）**：设备侧精度矩阵已通过；sanitizer（UB/L1 复用、跨核 slot、ping-pong）
    尚未执行，需要按仓库规范补做并确认运行命中的是 sanitizer 版本对象。
 
@@ -204,10 +206,10 @@ storage-free：V2 → C1DvPrePayloadFree ; V4 → C3PayloadFree ; C5 → V4PcPay
 
 - 第 1 项：纯 Python 自检已通过（三种 gate 模式，仿射恒等式最大绝对误差 ~1e-16）。
 - 第 2、3 项：按 `tests/atk/chunk_delta_h_bwd_preprocess/harness/` 的逐平面核对与用例矩阵执行，
-  A2/A5 均 16/16 PASS，含 32 chunk 长链（`pos_13`）与尾块（`pos_06`/`pos_09`）。
+  A2/A5 均 12/12 PASS（全部 `K = V = 128`），含 32 chunk 长链（`pos_13`）与尾块（`pos_06`）。
 - 第 4 项：`C1`/`C3` 的两路输出、`V4` 的两路输出在实现上分别发布/释放（各自独立 flag 边界），
   逐平面核对未发现两路混用；受控实验（`harness/ctrl_case.py`）用于定位过 A 路。
-- 第 5 项：本版只实现"仅按 head 连续分核"（`BY_HEAD`），`(hv, 列 tile)` 展平（`BY_TILE`）尚未实现，
-  `pos_16_tile_split_partition` 实际按 `BY_HEAD` 执行。
+- 第 5 项：本版只实现"仅按 head 连续分核"（`BY_HEAD`），`(hv, 列 tile)` 展平（`BY_TILE`）尚未实现；
+  原 `pos_16_tile_split_partition`（K=V=256）已随 `K = V = 128` 的收敛移出正向矩阵，改为不支持拦截用例。
 - 第 6 项：跨 rank 一致性验证需要上层 CP 切分链路，本版未覆盖。
 - 另需补做 sanitizer（`racecheck`/`memcheck`/`initcheck`/`synccheck`）与官方 ATK/CI 接入。

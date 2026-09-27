@@ -167,19 +167,16 @@ public:
                             "Hv=%lu.",
                             Hk_, Hv_),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(K_ > CP::CHUNK_DELTA_H_BWD_PREPROCESS_MAX_K,
-                    OP_LOGE(ctx_.nodeName, "K must be <= %u, but got %lu.",
-                            CP::CHUNK_DELTA_H_BWD_PREPROCESS_MAX_K, K_),
-                    return ge::GRAPH_FAILED);
-        // 状态矩阵按行做向量/寄存器读写，行首需要按 STATE_ALIGN 个元素（64B）对齐：
-        // 不对齐时 Vector 侧会落到未对齐的 UB 地址、Cube 侧列 tile 也会跨块，实测报设备错误或算错。
-        OP_CHECK_IF((K_ % CP::CHUNK_DELTA_H_BWD_PREPROCESS_STATE_ALIGN) != 0 ||
-                        (V_ % CP::CHUNK_DELTA_H_BWD_PREPROCESS_STATE_ALIGN) != 0,
+        // 本版只支持 K = V = 128：状态行按 64 行分组、列按 16 个元素（64B）成组，Vector 侧逐行的
+        // 向量/寄存器读写也依赖该行宽；K/V 取其他值（64/96/72/256 均已实测）会读到未对齐或未初始化
+        // 区域，表现为设备报错或结果错误，所以这里只放开目标场景，其余取值直接拦截。
+        OP_CHECK_IF(K_ != CP::CHUNK_DELTA_H_BWD_PREPROCESS_K_DIM ||
+                        V_ != CP::CHUNK_DELTA_H_BWD_PREPROCESS_V_DIM,
                     OP_LOGE(ctx_.nodeName,
-                            "K and V must be multiples of %u (state rows are read/written in aligned vector "
-                            "tiles, and the Cube column tile needs %u-element (64B) groups); got K=%lu V=%lu.",
-                            CP::CHUNK_DELTA_H_BWD_PREPROCESS_STATE_ALIGN,
-                            CP::CHUNK_DELTA_H_BWD_PREPROCESS_STATE_ALIGN, K_, V_),
+                            "this version only supports K=%u, V=%u, chunk_size=%u; got K=%lu V=%lu. "
+                            "Other state dims need the tiling/workspace/tile layout to be generalized.",
+                            CP::CHUNK_DELTA_H_BWD_PREPROCESS_K_DIM, CP::CHUNK_DELTA_H_BWD_PREPROCESS_V_DIM,
+                            CP::CHUNK_DELTA_H_BWD_PREPROCESS_CHUNK_SIZE, K_, V_),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(static_cast<uint64_t>(ctx_.chunkSize) != CP::CHUNK_DELTA_H_BWD_PREPROCESS_CHUNK_SIZE,
                     OP_LOGE(ctx_.nodeName, "chunk_size must be %u, but got %d.",

@@ -151,70 +151,6 @@
       "scale": 0.08838834764831845
     },
     {
-      "id": "pos_07_k64_block32",
-      "note": "K=64：列 tile 宽度退化为 32，K 只有 1 个 64 行组",
-      "platform": [
-        "ascend910b",
-        "ascend910_93",
-        "ascend950"
-      ],
-      "dtype": "bf16",
-      "gate": "gk",
-      "shape": {
-        "B": 1,
-        "Hk": 4,
-        "Hv": 4,
-        "T": 256,
-        "K": 64,
-        "V": 64
-      },
-      "chunk_size": 64,
-      "scale": 0.125
-    },
-    {
-      "id": "pos_08_k256_four_groups",
-      "note": "K=256：K 方向 4 个 64 行组；T1/P_c 各 256 KiB，必须走 workspace",
-      "platform": [
-        "ascend910b",
-        "ascend910_93",
-        "ascend950"
-      ],
-      "dtype": "bf16",
-      "gate": "gk",
-      "shape": {
-        "B": 1,
-        "Hk": 2,
-        "Hv": 2,
-        "T": 256,
-        "K": 256,
-        "V": 256
-      },
-      "chunk_size": 64,
-      "scale": 0.0625
-    },
-    {
-      "id": "pos_09_v_tail_tile",
-      "note": "V=96：V 方向 tile = 64 + 32，尾 tile 只靠 mask 生效",
-      "platform": [
-        "ascend910b",
-        "ascend910_93",
-        "ascend950"
-      ],
-      "dtype": "bf16",
-      "gate": "g",
-      "g_dtype": "model",
-      "shape": {
-        "B": 1,
-        "Hk": 4,
-        "Hv": 4,
-        "T": 256,
-        "K": 128,
-        "V": 96
-      },
-      "chunk_size": 64,
-      "scale": 0.08838834764831845
-    },
-    {
       "id": "pos_10_gva_hv_gt_hk",
       "note": "GVA：Hv=8 为 Hk=4 的两倍，hk = hv // 2，不要求物理 repeat q/k",
       "platform": [
@@ -341,27 +277,6 @@
       },
       "chunk_size": 64,
       "scale": 0.08838834764831845
-    },
-    {
-      "id": "pos_16_tile_split_partition",
-      "note": "K=V=256、T=1024（16 个 chunk）× 2 head：用例按 (hv, 列 tile) 展平分核设计；当前实现只支持仅按 head 连续分核（BY_TILE 未实现），执行时按 BY_HEAD 跑，该用例用于验证 K/V=256 多 chunk 长链的数值正确性",
-      "platform": [
-        "ascend910b",
-        "ascend910_93",
-        "ascend950"
-      ],
-      "dtype": "bf16",
-      "gate": "gk",
-      "shape": {
-        "B": 1,
-        "Hk": 2,
-        "Hv": 2,
-        "T": 1024,
-        "K": 256,
-        "V": 256
-      },
-      "chunk_size": 64,
-      "scale": 0.0625
     }
   ],
   "negative_cases": [
@@ -373,9 +288,9 @@
     },
     {
       "id": "neg_02_k_too_large",
-      "note": "K=512 超过 4 个 64 行组的上限",
+      "note": "K=512：本版只支持 K = V = 128",
       "expected_return_code": "ACLNN_ERR_PARAM_INVALID",
-      "trigger": "host tiling：K > 256"
+      "trigger": "host tiling：K != 128"
     },
     {
       "id": "neg_03_hv_not_multiple_of_hk",
@@ -426,16 +341,22 @@
       "trigger": "host tiling：B/T/Hk/Hv/K/V 存在 0"
     },
     {
-      "id": "neg_11_k_not_aligned",
-      "note": "K=72 不是 16 的倍数：状态行按键控向量 tile 读写、Cube 列 tile 按 16 元素（64B）成组，必须拦截",
+      "id": "neg_11_k64_not_128",
+      "note": "本版只支持 K = V = 128：状态行按 64 行分组、列按 16 个元素（64B）成组，Vector 逐行的向量/寄存器读写也依赖该行宽；其它取值实测会设备报错或算错，必须拦截",
       "expected_return_code": "ACLNN_ERR_PARAM_INVALID",
-      "trigger": "host tiling：K % 16 != 0"
+      "trigger": "host tiling：K != 128（K=64，曾是历史用例，现按不支持拦截）"
     },
     {
-      "id": "neg_12_v_not_aligned",
-      "note": "V=72 不是 16 的倍数：状态列按 16 元素（64B）成组，必须拦截",
+      "id": "neg_12_v96_not_128",
+      "note": "本版只支持 K = V = 128：状态行按 64 行分组、列按 16 个元素（64B）成组，Vector 逐行的向量/寄存器读写也依赖该行宽；其它取值实测会设备报错或算错，必须拦截",
       "expected_return_code": "ACLNN_ERR_PARAM_INVALID",
-      "trigger": "host tiling：V % 16 != 0"
+      "trigger": "host tiling：V != 128（V=96，曾是历史用例，现按不支持拦截）"
+    },
+    {
+      "id": "neg_13_k256_not_128",
+      "note": "本版只支持 K = V = 128：状态行按 64 行分组、列按 16 个元素（64B）成组，Vector 逐行的向量/寄存器读写也依赖该行宽；其它取值实测会设备报错或算错，必须拦截",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID",
+      "trigger": "host tiling：K != 128（K=256，曾是历史用例，现按不支持拦截）"
     }
   ]
 }

@@ -68,7 +68,8 @@ python3 compare.py --dir ./case_pos_13
 
 ### 已验证结果
 
-`cases.json` 的 16 条正向用例在 **A5（ascend950）与 A2（ascend910b）上均为 16/16 PASS**，`0` 编译错误。
+`cases.json` 的 12 条正向用例（全部 `K = V = 128`、`chunk_size = 64`，本版唯一支持的场景）在
+**A5（ascend950）与 A2（ascend910b）上均为 12/12 PASS**，`0` 编译错误。
 下表数值来自**最终源码状态**下的完整重跑（两个平台的算子源码与本仓库工作区逐文件 md5 一致；
 `build/autogen/inner/` 为空，确认 aclnn 走的是手写 exc 通路）。
 arch35（A5）Vector 侧改为 RegBase `__simd_vf__` 融合后重跑，数值与改造前逐项一致（见下表）。
@@ -81,19 +82,19 @@ arch35（A5）Vector 侧改为 RegBase `__simd_vf__` 融合后重跑，数值与
 | `pos_04_gk_bf16_dense` | 6.28e-3 / 5.50e-3 | 6.30e-3 / 6.57e-3 |
 | `pos_05_gk_varlen_first_segment` | 3.79e-3 / 4.52e-3 | 3.72e-3 / 4.52e-3 |
 | `pos_06_tail_chunk`（T=200，尾块 8） | 4.01e-3 / 4.33e-3 | 4.01e-3 / 4.27e-3 |
-| `pos_07_k64_block32` | 5.67e-3 / 4.62e-3 | 5.67e-3 / 4.63e-3 |
-| `pos_08_k256_four_groups` | 4.06e-3 / 3.87e-3 | 4.07e-3 / 3.86e-3 |
-| `pos_09_v_tail_tile`（V=96） | 4.26e-3 / 4.57e-3 | 4.61e-3 / 4.57e-3 |
 | `pos_10_gva_hv_gt_hk`（Hk=4,Hv=8） | 4.52e-3 / 3.59e-3 | 4.52e-3 / 3.59e-3 |
 | `pos_11_single_chunk`（T=64） | 2.08e-3 / 4.29e-3 | 2.08e-3 / 4.29e-3 |
 | `pos_12_two_chunk_chain_direction` | 2.77e-3 / 2.98e-3 | 2.77e-3 / 2.99e-3 |
 | `pos_13_long_nt_chain_accumulation`（32 chunk） | 1.15e-2 / 9.30e-3 | 9.50e-3 / 6.94e-3 |
 | `pos_14_fp16_inputs` | 6.51e-4 / 6.72e-4 | 7.12e-4 / 7.04e-4 |
 | `pos_15_head_contiguous_partition`（96 head / 多 task） | 4.32e-3 / 4.36e-3 | 4.32e-3 / 4.36e-3 |
-| `pos_16_tile_split_partition`（K=V=256，T=1024） | 1.24e-2 / 1.06e-2 | 1.45e-2 / 1.12e-2 |
+
+`pos_07_k64_block32`（K=64）、`pos_08_k256_four_groups`（K=V=256）、`pos_09_v_tail_tile`（V=96）、
+`pos_16_tile_split_partition`（K=V=256）四条历史用例已从正向矩阵移出：本版只支持 `K = V = 128`，
+这些取值现在按不支持拦截，见下方反向用例 `neg_11`/`neg_12`/`neg_13`。
 
 `rel_norm = max_abs / max|参考|`。上表的量级与"链上状态用模型 dtype（bf16/fp16）传递"这一设计一致：单
-task / 单 chunk 场景约 2e-3，长链与多 task 场景最多 1.5e-2。重复执行（`pos_15`/`pos_13`/`gate_gk` 各 3~30 次）
+task / 单 chunk 场景约 2e-3，长链与多 task 场景最多 1.2e-2。重复执行（`pos_15`/`pos_13`/`gate_gk` 各 3~30 次）
 结果逐位一致。
 
 ### 反向拦截（已执行）
@@ -102,13 +103,13 @@ task / 单 chunk 场景约 2e-3，长链与多 task 场景最多 1.5e-2。重复
 bash tests/atk/chunk_delta_h_bwd_preprocess/harness/run_negative.sh <work_dir>
 ```
 
-`cases.json` 的 12 条反向用例在 **A2 与 A5 上均 12/12 PASS**（实际返回码与 `expected_return_code` 一致，
+`cases.json` 的 13 条反向用例在 **A2 与 A5 上均 13/13 PASS**（实际返回码与 `expected_return_code` 一致，
 均为 `ACLNN_ERR_PARAM_INVALID` = 161001）：
 
 | 用例 | 触发约束 |
 | --- | --- |
 | `neg_01_g_and_gk_both` | `g` 与 `gk` 同时非空（互斥） |
-| `neg_02_k_too_large` | `K = 512 > 256` |
+| `neg_02_k_too_large` | `K = 512`（本版只支持 `K = V = 128`） |
 | `neg_03_hv_not_multiple_of_hk` | `Hk=3, Hv=4`（`Hv % Hk != 0`） |
 | `neg_04_dense_b_greater_than_one` | dense 路径 `B = 2` |
 | `neg_05_varlen_b_greater_than_one` | varlen 且 `B = 2` |
@@ -117,8 +118,9 @@ bash tests/atk/chunk_delta_h_bwd_preprocess/harness/run_negative.sh <work_dir>
 | `neg_08_gk_dtype_fp32` | `gk` 为 FP32 |
 | `neg_09_cu_seqlens_too_short` | `cu_seqlens` 只有 1 项 |
 | `neg_10_empty_tensor` | `T = 0` |
-| `neg_11_k_not_aligned` | `K = 72`（不是 16 的倍数） |
-| `neg_12_v_not_aligned` | `V = 72`（不是 16 的倍数） |
+| `neg_11_k64_not_128` | `K = 64`（不是 128） |
+| `neg_12_v96_not_128` | `V = 96`（不是 128） |
+| `neg_13_k256_not_128` | `K = 256`（不是 128） |
 
 反向用例只校验拦截与返回码，不做精度比较；脚本会 `grep` `run_case` 打印的 `GetWorkspaceSize failed <code>`
 并比对期望值，全部通过才输出 `ALL_PASS`。
