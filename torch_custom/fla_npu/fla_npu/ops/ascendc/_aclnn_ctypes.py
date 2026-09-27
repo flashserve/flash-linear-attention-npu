@@ -4709,6 +4709,53 @@ def npu_solve_tri(x, *, cu_seqlens=None, chunk_indices=None, layout="bsnd"):
     )
 
 
+def npu_chunk_delta_h_bwd_preprocess(
+    q,
+    k,
+    w,
+    d_o,
+    dv,
+    scale,
+    chunk_size,
+    *,
+    g=None,
+    gk=None,
+    cu_seqlens=None,
+):
+    """State preprocess of the CP backward: dhm = [E_r | P_r].
+
+    ``q``/``k`` are ``[B, Hk, T, K]``, ``w`` is ``[B, Hv, T, K]``, ``d_o``/``dv`` are
+    ``[B, Hv, T, V]``; ``g`` ``[B, Hv, T]`` and ``gk`` ``[B, Hv, T, K]`` are the two
+    mutually exclusive gate forms; ``cu_seqlens`` carries the ``[bos, eos)`` of the single
+    packed segment.  The result is FP32 ``[Hv, K, V + K]``: the first ``V`` columns are the
+    local constant term ``E_r``, the last ``K`` columns are the reverse linear map ``P_r``.
+    """
+
+    import torch
+
+    hv = d_o.shape[1]
+    v_dim = d_o.shape[3]
+    k_dim = q.shape[3]
+    out = torch.empty((hv, k_dim, v_dim + k_dim), dtype=torch.float32, device=q.device)
+    return _call_aclnn(
+        "aclnnChunkDeltaHBwdPreprocess",
+        lambda ctx: [
+            ctx.tensor(q, "q"),
+            ctx.tensor(k, "k"),
+            ctx.tensor(w, "w"),
+            ctx.tensor(d_o, "d_o"),
+            ctx.tensor(dv, "dv"),
+            ctx.tensor(g, "g"),
+            ctx.tensor(gk, "gk"),
+            ctx.int_array(cu_seqlens),
+            ctypes.c_double(float(scale)),
+            ctypes.c_int64(int(chunk_size)),
+            ctx.tensor(out, "out"),
+        ],
+        out,
+    )
+
+
 ASCENDC_CTYPES_OPS = {
     name: value
     for name, value in globals().items()

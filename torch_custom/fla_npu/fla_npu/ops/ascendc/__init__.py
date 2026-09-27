@@ -41,6 +41,7 @@ _ASCENDC_OPS = (
     "npu_chunk_gated_delta_rule_fwd_prepare",
     "npu_chunk_gated_delta_rule_bwd_finalize",
     "npu_chunk_bwd_dv_local",
+    "npu_chunk_delta_h_bwd_preprocess",
     "npu_chunk_gdn_bwd_intra",
     "npu_prepare_wy_repr_bwd_da",
     "npu_chunk_bwd_dqkwg",
@@ -78,7 +79,7 @@ _LAUNCHER_ONLY_OPS: tuple[str, ...] = tuple(
 _TORCH_NPU_COMPAT_OPS = tuple(
     name for name in _ASCENDC_OPS
     if name not in {"npu_chunk_fwd_h", "npu_chunk_kda_fwd_finalize",
-                    "npu_chunk_kda_fwd_prepare"}
+                    "npu_chunk_kda_fwd_prepare", "npu_chunk_delta_h_bwd_preprocess"}
 )
 
 BACKWARD_OPS = {
