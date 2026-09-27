@@ -2,7 +2,8 @@
  * 示例文件（形态 B）：fla/ops/ascendc/ops_classify/op_name/op_host/op_api/aclnn_op_name_v2.h
  *
  * 注意事项：
- *   1. V1（aclnn_op_name.h）一旦发布就不能改：函数名、形参顺序、类型、返回码全部冻结。
+ *   1. V1（aclnn_op_name.h）一旦发布就不能改：函数名、形参数量与顺序、类型冻结（返回码不冻结，
+ *      新增/细化错误码只需同步 docs/api.md）。
  *      需要新开关/新可选输出时新开 V2，声明写在本文件。
  *   2. 实现可以追加到 V1 的 aclnn_op_name.cpp 尾部（此时 V1 的公开头完全不动），
  *      也可以单独建 aclnn_op_name_v2.cpp；两种都合法，参考 chunk_kda_fwd 用的是前者。
