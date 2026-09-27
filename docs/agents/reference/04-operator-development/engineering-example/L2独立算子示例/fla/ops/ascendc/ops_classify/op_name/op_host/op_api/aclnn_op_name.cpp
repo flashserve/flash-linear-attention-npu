@@ -18,7 +18,15 @@
  *      - 布局改写（layout 物化、reshape/transpose、打包 TND 视图）只在确实需要时做一次明确的
  *        `Contiguous` 或 `ViewCopy`，并把这次拷贝的代价写进 docs/api.md；其余情况一律按 view 传递；
  *      - 上述判定只发生在 L2：适配层（Stable-ABI）不做 dense 拷贝，按 view 原样交出（§5.3）。
- *   6. 不在本层判断 disable_recompute 之类策略；只认输出指针。
+ *   6. 可选输出这一层要"校验组合"，不要"解释策略"：
+ *      - 上层（Python/legacy 包装层）负责把上层语义翻译成"入参属性 + 哪些可选输出非空"，策略本身不进 L2；
+ *      - L2 **必须**校验"入参属性取值 + 可空输出指针（含是否与入参同一 view）"的组合是否合法：
+ *        组合必须落在文档化档位内，非法组合返回 `ACLNN_ERR_PARAM_INVALID` 并打印实际组合
+ *        （例如 `outputMask=0x%x`、哪些指针为空、相关属性取值）；
+ *      - 典型例子：非空输出指针组合映射到 `none/forward/save` 档位（参考
+ *        `aclnn_chunk_kda_fwd_prepare.cpp` 的 `GetOutputMask`/`GetOutputMode`/`CheckOutputMode`）；
+ *        以及 `inplace_state` 这类属性为 true 时，输出指针必须与状态输入是同一 view
+ *        （参考 `aclnn_recurrent_kda.cpp` 对 `inplaceFinalState`/`outputFinalState` 与 `finalState` 的校验）。
  *   7. Launch 阶段失败返回 ACLNN_ERR_INNER，并给出算子名。
  *   8. 原地路径：对 initialStateRef / finalState 分别做非连续处理（executorPtr->CreateView，注意是
  *      CreateView 而不是 Contiguous），并校验

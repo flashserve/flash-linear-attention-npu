@@ -225,8 +225,11 @@ add_ops_compile_options(
 
 规则：
 
-1. L2 不接收、也不解释 autograd 重计算策略；`output_final_state`/`disable_recompute`/`return_intermediate_states`
-   这类保留策略只存在于 Python 与 legacy 包装层。
+1. L2 不解释上层的保留/重算策略本身：由 Python 与 legacy 包装层把策略翻译成"入参属性 + 哪些可选输出非空"，
+   策略名与语义不进入 L2。但**组合合法性必须由 L2 校验**：入参属性取值与可空输出指针（含"输出指针是否与
+   状态输入同一 view"）的组合必须落在文档化档位内，非法组合返回 `ACLNN_ERR_PARAM_INVALID` 并打印实际组合
+   （参考 `aclnn_chunk_kda_fwd_prepare.cpp` 的 `GetOutputMask`/`GetOutputMode`/`CheckOutputMode`，
+   以及 `aclnn_recurrent_kda.cpp` 对 `inplaceFinalState`/`outputFinalState` 与 `finalState` 的关系校验）。
 2. L2 只做张量与算法契约校验；连续性按**逐输入契约**处理，不做整批一刀切：
    - 算子内部按紧凑 stride 寻址的输入 → 只对该输入做一次 `l0op::Contiguous`，并在 `docs/api.md`
      的连续性契约里写明“要求连续”（参考 `aclnn_chunk_kda_fwd_prepare.cpp` 的 `MakeInputsContiguous`）；
@@ -365,6 +368,9 @@ add_ops_compile_options(
    `ACLNN_ERR_PARAM_INVALID`，不靠"形参能不能传空"来区分。
 2. L2 由"哪些输出指针非空"推导执行档位/掩码，并把结果传给 L0 与 tiling；档位组合必须显式枚举，
    非法组合返回 `ACLNN_ERR_PARAM_INVALID`（参考 `GetOutputMask` 与 `PREPARE_*_OUTPUT_MASK`）。
+   同时校验**入参属性与该组合的一致性**：属性取某值时允许哪些指针非空、哪些指针必须与入参同一 view，
+   都要逐条列出（例如 `inplaceFinalState=true` 时 `finalState` 必须与状态输入同一 view，否则报错或按文档
+   做一次 `ViewCopy`）；报错文本要带实际组合（mask、哪些指针为空、属性取值），便于定位是哪一项不匹配。
 3. 输出缺席时分两种处理，必须在设计文档中写明是哪种：
    - **内部必需但对外可选**（例如 Finalize 要用的 `hCompute`）：L2/kernel 仍按必需张量分配或使用 workspace 承接，
      只是不公开；
@@ -408,8 +414,8 @@ add_ops_compile_options(
    `_ASCENDC_OPS` 一并导出。不新增其他主入口，`torch.ops.npu` 只是可选的 legacy 兼容路径。
 2. **只追加关键字参数**：新增参数一律加在参数表末尾并带默认值；默认值等于本算子的历史行为，已有调用结果不变。
 3. **返回 tuple 稳定**：返回值的个数、顺序、语义固定；新增输出只追加在末尾，未请求时返回 `None`（schema 的 `Tensor?`）。
-4. **保留策略留在这层**：`output_final_state`/`disable_recompute`/`return_intermediate_states` 等由 Python 与 legacy
-   包装层解释成"传哪些输出指针"，不下沉到 L2。
+4. **可选输出的策略留在这层**：Python 与 legacy 包装层决定"要不要中间量、要不要最终状态"，并把它翻译成
+   "设置哪些入参属性、给哪些可选输出指针"；策略本身不下沉到 L2，L2 只按 §3.4 校验"属性 + 指针组合"是否合法。
 5. **三处参数顺序一致**：`kSchema_<op>` 形参 = `run_<op>` 形参 = `FLA_STABLE_EXEC` 下发的 aclnn 实参顺序；
    由 `tools/op_abi_parity.py` 与 `tools/op_abi_validate.py` 离线门禁检查。
 6. **跨边界类型**：枚举/layout 走"名表 + int code"（名表顺序与 `_stable._ENUM` 一致）；`int[]` 只走 host int64 CPU 张量；
@@ -539,7 +545,8 @@ add_ops_compile_options(
       没有引入未登记的测试子目录。
 - [ ] `def` 的输出全部 `REQUIRED`；没有新增 `ParamType(OPTIONAL)` 输出。
 - [ ] 可选输出的缺席语义只在 L2 表达，且档位/掩码组合有显式枚举与非法组合拦截。
-- [ ] L1 与 L2 的职责边界清楚：L2 不解释重计算策略，不做 dense 拷贝，报错带实际值。
+- [ ] L1 与 L2 的职责边界清楚：L2 不解释上层保留策略，但校验"入参属性 + 可选输出指针"组合是否合法；
+      连续性按逐输入契约处理（该连续的才 Contiguous，state 类保持 view）；报错带实际值。
 - [ ] 根目录 kernel 是默认（arch22）实现，`arch35/` 只放差异文件，架构选择用 `__CCE_AICORE__ == 310`。
 - [ ] TilingKey 只标场景族；模板参数用 `ASCENDC_TPL_*` 声明与枚举，内部用 `if constexpr`。
 - [ ] 组合入口的 `<算子>_depends` 已按依赖闭包展开（构建侧 + 打包侧各一份），并用"只列主算子"的
