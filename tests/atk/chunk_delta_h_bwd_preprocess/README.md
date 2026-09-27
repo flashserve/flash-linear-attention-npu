@@ -109,6 +109,24 @@ bash tests/atk/chunk_delta_h_bwd_preprocess/harness/run_negative.sh <work_dir>
 
 ## 精度判据
 
+## 稳定入口（`fla_npu.ops.ascendc`）验证
+
+`from fla_npu.ops.ascendc import chunk_delta_h_bwd_preprocess`（等价 `npu_chunk_delta_h_bwd_preprocess`）走
+ctypes 解耦通路，与 aclnn 直调取数程序共用同一份输入与 CPU 标杆。已执行用例与结论（A5 / ascend950）：
+
+| 用例 | E rel_norm | P rel_norm | 结论 |
+| --- | --- | --- | --- |
+| `pos_01_none_gate_dense`（无门控） | 5.562e-03 | 7.098e-03 | PASS |
+| `pos_03_g_fp32_dense`（`g` 为 FP32） | 5.076e-03 | 5.466e-03 | PASS |
+| `pos_04_gk_bf16_dense`（逐 K gate） | 6.280e-03 | 5.498e-03 | PASS |
+| `pos_05_gk_varlen_first_segment`（gk + varlen） | 3.787e-03 | 4.515e-03 | PASS |
+| `pos_14_fp16_inputs`（fp16） | 6.506e-04 | 6.721e-04 | PASS |
+| `pos_15_head_contiguous_partition`（96 head 多 task） | 4.321e-03 | 4.356e-03 | PASS |
+
+数值与 aclnn 直调口径逐项一致（同一份源码）。A2 / ascend910b 上同口径复核尚未通过：稳定入口在
+`GetWorkspaceSize` 阶段报 `InitTilingParseCtx failed ... compile info not contain [_pattern]`，而同一安装包用
+aclnn 直调时正常（16/16），需要继续定位 A2 上 ctypes 通路与 aclnn 直调在 OPP/tiling 环境上的差异。
+
 - `dhm` 为 FP32，但**链上状态按设计用模型 dtype 传递**（`Pc`/`PBf`/`dHBf` 为 bf16 或 fp16），因此绝对误差随
   序列长度放大（例如 32 chunk 用例 `max_abs` 可达 5.7e28）。判据采用**相对参考幅值**：
   `rel_norm = max_abs / max|参考|`，阈值 2%。
