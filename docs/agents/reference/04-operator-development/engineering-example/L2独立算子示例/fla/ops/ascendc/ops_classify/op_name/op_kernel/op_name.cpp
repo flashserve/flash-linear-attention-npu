@@ -15,6 +15,10 @@
  *      与参考算子把 USE_QK_L2NORM/USE_BETA_SIGMOID/USE_EXP2 传给 Vector 的写法一致；
  *      类里不要再用运行期 if 判断这些档位。
  *   5. buffer 偏移与同步协议分别属于 archXX/getter 与 Cube/Vector 内部，入口不聚合它们。
+ *   6. 想看清 kernel 内部结构时，按 archXX/<算子>_vec.h 的固定四层读：
+ *      ① 文件头三张表（Stage / UB 布局 / 同步协议）→ ② StageNVf 计算函数 → ③ 角色类
+ *      （Init 接线 + Process 编排）→ ④ private（阶段函数 → 布局常量 → buffer/事件成员）。
+ *      cube 版本同骨架，只是把 UB 换成 L1+L0、把 VF 换成 MTE1/Cube/Fixpipe。
  */
 
 #include "kernel_operator.h"
@@ -37,11 +41,11 @@ template <int D_T>
 struct DTypeTraits;
 
 template <>
-struct DTypeTraits<TPL_BF16> { using type = bfloat16_t; };
+struct DTypeTraits<OP_NAME_TPL_BF16> { using type = bfloat16_t; };
 template <>
-struct DTypeTraits<TPL_FP16> { using type = half; };
+struct DTypeTraits<OP_NAME_TPL_FP16> { using type = half; };
 template <>
-struct DTypeTraits<TPL_FP32> { using type = float; };
+struct DTypeTraits<OP_NAME_TPL_FP32> { using type = float; };
 
 } // namespace OpsClassify
 
@@ -70,15 +74,16 @@ __global__ __aicore__ void op_name(
     GM_ADDR normWorkspace = userWorkspace;                             // S0 norm -> S2 写回
     GM_ADDR stateWorkspace = userWorkspace + workspaceRegionBytes;     // S0/S2 state -> save 档公开导出
 
+    // 两个角色各拿一个 TPipe 指针：buffer 划分留在各自类里，入口不替它们管 L1/L0/UB。
+    AscendC::TPipe pipe;
     if ASCEND_IS_AIC {
         // AIC 只做矩阵与 L1/L0 搬运；所有中间量都从 GM 或上方 workspace 读取。
         OpsClassify::OpNameCube<XType, NORM_MODE, OUTPUT_MODE> cube;
         cube.Init(x, g, normWorkspace, stateWorkspace,
-                  cu_seqlens, chunk_indices, &tilingData);
+                  cu_seqlens, chunk_indices, &tilingData, &pipe);
         cube.Process();
     } else {
         using GType = typename OpsClassify::DTypeTraits<D_T_G>::type;
-        AscendC::TPipe pipe;
         OpsClassify::OpNameVector<XType, GType, NORM_MODE, USE_STATE, OUTPUT_MODE> vec;
         vec.Init(x, g, a_log, initial_state, cu_seqlens, chunk_indices,
                  y, state, x_norm, normWorkspace, stateWorkspace, &tilingData, &pipe);

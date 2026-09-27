@@ -26,24 +26,27 @@ constexpr int64_t DIM_128 = 128;
 constexpr int64_t UB_ALIGN_BYTES = 32;
 
 // 平台资源：A5 的 UB/L1 更大，tile 可以翻倍；份数仍为 2 份 ping/pong。
+constexpr int64_t AIV_COUNT_2 = 2;
 constexpr int64_t TILE_T_ARCH35 = 64;
 constexpr int64_t UB_SLOT_COUNT_2 = 2;
 constexpr int64_t L1_SLOT_COUNT_2 = 2;
 
-// UB 布局：与 arch22 同样的组成关系，只是 tile 翻倍。
-constexpr int64_t X_OFFSET = 0;
-constexpr int64_t X_BYTES = TILE_T_ARCH35 * DIM_128 * 2;
-constexpr int64_t NORM_OFFSET = UB_SLOT_COUNT_2 * X_BYTES;
-constexpr int64_t UB_TOTAL_BYTES = NORM_OFFSET + TILE_T_ARCH35 * static_cast<int64_t>(sizeof(float));
+// UB 总量：只在这里给上限，逐段偏移在 arch35/op_name_vec.h 的常量块里（与文件头布局表对应）。
+// 改动任一段偏移后，必须回头核对本值是否仍覆盖最后一段的尾部。
+constexpr int64_t UB_TOTAL_BYTES = 132 * 1024;   // = XNORM_OFFSET 128 KiB + 256 B 导出暂存
 
 struct OpNameTilingData {
     // 字段顺序与 arch22 版本完全一致，仅注释里标注的平台常量不同。
+    // 逻辑 shape 与 chunk 配置：tiling 侧固定校验 D=128、chunkSize∈{64,128}。
     uint32_t batch;
     uint32_t seqLen;
     uint32_t headNum;
     uint32_t dim;
     uint32_t chunkSize;
     uint32_t chunksPerSequence;
+    // 任务数与分核：taskNum = chunksPerSequence × batch（varlen 时取 chunk_indices 行数），
+    // 两个角色都用它做 `for (taskIdx = coreIdx; taskIdx < taskNum; taskIdx += coreNum)`。
+    uint32_t taskNum;
     uint32_t usedCoreNum;
     uint32_t headsPerCore;
     uint32_t outputMode;

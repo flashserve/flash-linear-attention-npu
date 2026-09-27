@@ -28,15 +28,14 @@ constexpr int64_t DIM_128 = 128;
 constexpr int64_t UB_ALIGN_BYTES = 32;
 
 // 平台资源：A2/A3 的 UB 较小，tile 取保守值；份数与 op_host/op_tiling/arch22 的常量一致。
+constexpr int64_t AIV_COUNT_2 = 2;
 constexpr int64_t TILE_T_ARCH22 = 32;
 constexpr int64_t UB_SLOT_COUNT_2 = 2;
 constexpr int64_t L1_SLOT_COUNT_2 = 2;
 
-// UB 布局：偏移与总大小按组成关系推导，不写推导结果；cube/vec 只引用这些常量。
-constexpr int64_t X_OFFSET = 0;
-constexpr int64_t X_BYTES = TILE_T_ARCH22 * DIM_128 * 2;  // BF16/FP16 均为 2 字节
-constexpr int64_t NORM_OFFSET = UB_SLOT_COUNT_2 * X_BYTES;
-constexpr int64_t UB_TOTAL_BYTES = NORM_OFFSET + TILE_T_ARCH22 * static_cast<int64_t>(sizeof(float));
+// UB 总量：只在这里给上限，逐段偏移在 arch22/op_name_vec.h 的常量块里（与文件头布局表对应）；
+// tile 比 arch35 小，导出暂存也随之下移。改动任一段偏移后必须回头核对本值。
+constexpr int64_t UB_TOTAL_BYTES = 84 * 1024;    // = XNORM_OFFSET 80 KiB + 256 B 导出暂存
 
 struct OpNameTilingData {
     // 逻辑 shape 与 chunk 配置。tiling 侧固定校验 D=128、chunkSize∈{64,128}。
@@ -46,6 +45,9 @@ struct OpNameTilingData {
     uint32_t dim;
     uint32_t chunkSize;
     uint32_t chunksPerSequence;
+    // 任务数与分核：taskNum = chunksPerSequence × batch（varlen 时取 chunk_indices 行数）；
+    // AIC 与 AIV 用同一个 taskNum 与同一套 stride，保证两角色看到同样的任务集合。
+    uint32_t taskNum;
     // 分核：任务按 head 分核，每核 chunk 顺序执行（同一序列不被拆到多个核）。
     uint32_t usedCoreNum;
     uint32_t headsPerCore;

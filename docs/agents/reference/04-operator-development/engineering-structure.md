@@ -355,14 +355,29 @@ add_ops_compile_options(
 [`chunk_gated_delta_rule_bwd_finalize/op_kernel/`](../../../../fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_finalize/op_kernel/)，
 示例落点见 [`engineering-example/L2独立算子示例/`](engineering-example/L2独立算子示例/)。
 
+**文件内四层骨架**（`archXX/<算子>_vec.h`、`archXX/<算子>_cube.h` 都按这个顺序摆，不要打散；
+读者是靠顺序定位的，缺一层就会退化成"从上翻到下找同步"）：
+
+| 层 | 放什么 | 位置与要求 |
+| --- | --- | --- |
+| ① 文件头注释块 | Stage 表、UB（或 L1+L0）布局表、同步协议表 | 文件最上方三张表：Stage 表写清"谁生产、谁消费、怎么同步"，布局表逐行给出偏移/大小/内容/生命周期，同步协议表列出 flag 名、方向与背压来源 |
+| ② Stage 计算函数 | `StageNVf(...)` 一类的函数，只碰 UB | 放在类之前，**按 Stage 号顺序排列**；入参用 `__ubuf__` 裸指针 + 有效长度，不搬 GM、不发同步事件；尾块只传 `validLen` |
+| ③ 角色类 | `public Init(...)` → `public Process()` | `Init` 只做三件事：GM 接线、只读状态派生（核号/子核号都要 clamp）、buffer 划分与事件预置；`Process` 只做任务主循环 + 按序调用阶段函数 + 收尾 |
+| ④ private 区 | 阶段函数 → 常量 → 成员 | 阶段函数头固定写"输入 / 输出 / 复用 / 同步"四行；常量块与文件头布局表逐行对应；成员按 GM / UB / 事件 / 只读状态分组，新增成员进对应分组 |
+
+事件生命周期的固定写法：`Init` 里按 slot `AllocEventID` 并 `SetFlag` 开首轮（首轮没有上一轮消费者，
+不预置会让第一次 `WaitFlag` 等一个不会到来的事件），`Process` 末尾统一 `WaitFlag` 闭环 + `ReleaseEventID`；
+不允许把 alloc/release 散落在阶段函数里，也不允许只 alloc 不 release。
+
 1. **入口只接线**：`<算子>.cpp` 只做 dtype traits、tiling 注册与解析、workspace 区域命名、AIC/AIV 分派；
    不出现 Stage 计算、任务循环与同步（样板入口约 80 行）。
 2. **workspace 按语义命名**：区域名体现用途，并在同一行注释生命周期与复用关系
    （样板 `// S0 kbg -> S12 doG`）；禁止 `ws0/ws1/offset+32768` 这类无名偏移。
 3. **一个角色一个文件一个类**：`archXX/<算子>_cube.h`（AIC）与 `archXX/<算子>_vec.h`（AIV）；
    接口固定为 `Init(...)` + `Process()`，`Init` 只保存地址/指针并派生 coreIdx、任务数等只读状态。
-4. **Stage 拆函数**：每个 Stage 一个方法，名字带 Stage 号与作用域（样板 `ProcessStage1Head`）；
-   `Process()` 只保留"取任务 → 取 `ChunkInfo` → 按序调用 Stage"的骨架。
+4. **Stage 分两层拆**：计算层是文件作用域的 `StageNVf(...)`（样板 `Stage15AccumulateVF`、`Stage15NormVF`），
+   编排层是类里的阶段方法（样板 `ProcessStage0Chunk`、`WriteBackStage2Chunk`）。两层都要带 Stage 号；
+   `Process()` 只保留"取任务 → 取 `ChunkInfo` → 按序调用阶段方法"的骨架，不写具体指令。
 5. **资源划分集中**：L1/L0/UB 的偏移与份数只在 `Process()` 开头（或 `Init` 的 buffer 申请处）出现一次，
    Stage 内只引用已取好的 `LocalTensor`；份数与 `archXX/<算子>_struct.h`、host 侧 arch tiling 常量三方一致。
 6. **常量集中且语义化**：尺寸常量带数值后缀（`CHUNK_SIZE_64`、`DIM_128`），容量用组成关系表达

@@ -48,3 +48,24 @@ L2独立算子示例/                            # 形态 A 的示例根目录�
 | TilingKey 不编码平台 | key 只由 dtype 与模式决定；平台在 kernel 入口按 `__CCE_AICORE__` 选择 |
 | 看护位置 | `tests/atk/op_name/`（单算子）+ 调用层门禁；算子目录里不放测试 |
 | ATK 用例用真实 inputs/attr/outputs | `op_name.yaml` 声明 `x/g/a_log/initial_state/cu_seqlens/chunk_indices/layout/chunk_size/scale/epsilon/return_saved`；固化 JSON 不含 `low_precision_marker`/`fp32_marker`/`case_spec` 等占位参数 |
+
+## kernel 结构怎么读（与 `chunk_gated_delta_rule_bwd_finalize` 对齐）
+
+只给"薄入口 + 一个类"不足以复制样板算子的可读性。示例的
+`op_kernel/arch22|arch35/op_name_vec.h`、`op_name_cube.h` 都按固定四层写，复制到新算子时保持顺序：
+
+| 层 | 看什么 | 示例位置 |
+| --- | --- | --- |
+| ① 文件头三张表 | Stage 表（谁生产/谁消费/怎么同步）、UB 或 L1+L0 布局表（偏移/大小/内容/生命周期）、同步协议表（flag 名/方向/背压） | `archXX/op_name_vec.h` 顶部注释块 |
+| ② Stage 计算函数 | `StageNVf(...)`：只碰 UB，入参 `__ubuf__` 裸指针 + `validLen`，按 Stage 号顺序排列 | 文件中部、类之前 |
+| ③ 角色类 | `public Init`（接线 + buffer 划分 + 事件预置）→ `public Process`（任务主循环 + 阶段编排 + 收尾） | `class OpNameVector` / `class OpNameCube` |
+| ④ private 区 | 阶段函数（输入/输出/复用/同步四行注释）→ 常量（与布局表逐行对应）→ 成员（GM/UB/事件/只读状态分组） | 类尾部 |
+
+配套的现状说明：
+
+- `op_kernel/op_name.cpp` 保持薄入口：只做 dtype traits、tiling 解析、workspace 区域命名（同一行写生命周期）、
+  AIC/AIV 分派；Stage 计算全部在 arch 目录的类里。
+- `op_kernel/op_name_common.h` 放平台无关资产：具名同步 flag、`ChunkInfo` 与 `GetChunkInfo`、
+  `GetWorkspaceChunkOffset`、`Min`；`archXX/op_name_struct.h` 放 TilingData 与平台资源常量。
+- 事件生命周期固定：`Init` 里按 slot `AllocEventID` 并 `SetFlag` 开首轮，`Process` 末尾统一闭环后
+  `ReleaseEventID`；示例的 `CloseAndReleaseEvents()` 就是这一段。

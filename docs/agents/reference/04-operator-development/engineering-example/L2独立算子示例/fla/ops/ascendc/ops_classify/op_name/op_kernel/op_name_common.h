@@ -20,6 +20,10 @@
 
 #include "kernel_operator.h"
 
+// 核间同步用 Catlass 的封装（与样板算子一致）：它把 mode/pipe 语义固定下来，
+// 避免各算子自己拼 CrossCore flag 的模板参数。
+#include "catlass/arch/cross_core_sync.hpp"
+
 #include "op_name_struct.h"
 
 namespace OpsClassify {
@@ -65,7 +69,9 @@ __aicore__ inline void GetChunkInfo(
     const OpNameTilingData &tiling, ChunkInfo &info)
 {
     info.valid = false;
-    if (chunkTaskIdx < 0 || chunkTaskIdx >= tiling.chunksPerSequence) {
+    // 任务上界只有 taskNum 一个来源：定长模式 = batch × chunksPerSequence，
+    // 变长模式 = chunk_indices 行数（packed 序列的 chunk 总数），不能用 chunksPerSequence 兜底。
+    if (chunkTaskIdx < 0 || chunkTaskIdx >= static_cast<int64_t>(tiling.taskNum)) {
         return;
     }
     if (tiling.isVarLen) {
