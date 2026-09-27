@@ -171,6 +171,16 @@ public:
                     OP_LOGE(ctx_.nodeName, "K must be <= %u, but got %lu.",
                             CP::CHUNK_DELTA_H_BWD_PREPROCESS_MAX_K, K_),
                     return ge::GRAPH_FAILED);
+        // 状态矩阵按行做向量/寄存器读写，行首需要按 STATE_ALIGN 个元素（64B）对齐：
+        // 不对齐时 Vector 侧会落到未对齐的 UB 地址、Cube 侧列 tile 也会跨块，实测报设备错误或算错。
+        OP_CHECK_IF((K_ % CP::CHUNK_DELTA_H_BWD_PREPROCESS_STATE_ALIGN) != 0 ||
+                        (V_ % CP::CHUNK_DELTA_H_BWD_PREPROCESS_STATE_ALIGN) != 0,
+                    OP_LOGE(ctx_.nodeName,
+                            "K and V must be multiples of %u (state rows are read/written in aligned vector "
+                            "tiles, and the Cube column tile needs %u-element (64B) groups); got K=%lu V=%lu.",
+                            CP::CHUNK_DELTA_H_BWD_PREPROCESS_STATE_ALIGN,
+                            CP::CHUNK_DELTA_H_BWD_PREPROCESS_STATE_ALIGN, K_, V_),
+                    return ge::GRAPH_FAILED);
         OP_CHECK_IF(static_cast<uint64_t>(ctx_.chunkSize) != CP::CHUNK_DELTA_H_BWD_PREPROCESS_CHUNK_SIZE,
                     OP_LOGE(ctx_.nodeName, "chunk_size must be %u, but got %d.",
                             CP::CHUNK_DELTA_H_BWD_PREPROCESS_CHUNK_SIZE, ctx_.chunkSize),

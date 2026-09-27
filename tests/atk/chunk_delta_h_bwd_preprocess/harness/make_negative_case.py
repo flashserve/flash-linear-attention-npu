@@ -17,6 +17,8 @@ g 为 [B,Hk,T]、gk 为 FP32、cu_seqlens 只有 1 项、T=0），下表把它�
     neg_08_gk_dtype_fp32              gk 为 FP32
     neg_09_cu_seqlens_too_short       cu_seqlens 只有 1 项
     neg_10_empty_tensor               T=0
+    neg_11_k_not_aligned              K=72（不是 16 的倍数）
+    neg_12_v_not_aligned              V=72（不是 16 的倍数）
 
 用法：python3 make_negative_case.py --dir <case_dir> <case_id>
 """
@@ -59,6 +61,9 @@ ILLEGAL = {
     "neg_08_gk_dtype_fp32": {"gate": "gk", "gk_dtype": "fp32"},
     "neg_09_cu_seqlens_too_short": {"cu_seqlens": [0]},
     "neg_10_empty_tensor": {"T": 0},
+    # 状态行/列必须按 16 个元素对齐（Vector 行首 32B + Cube 列 tile 16 元素成组）
+    "neg_11_k_not_aligned": {"K": 72},
+    "neg_12_v_not_aligned": {"V": 72},
 }
 
 

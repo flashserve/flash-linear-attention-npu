@@ -45,8 +45,8 @@ dhm[hv, :, V:V+K] = P_r    # 末端 dH 到起始 dH 的反向线性映射（FP32
 | --- | --- |
 | gate 模式 | `USE_G`（GDN 标量 gate）、`USE_GK`（KDA/GDN2 逐 K gate）、无门控 |
 | 序列 | dense（`B=1`，整段 `[0,T)`）；varlen（一次处理 `cu_seqlens[0:2]` 给出的一个 segment） |
-| 状态行维 | `K <= 256`，K 方向按 64 行分组，最多 4 组 |
-| 状态列维 | `V` 任意，列方向 tile 宽度 `BLOCK_SIZE = 32 if K <= 64 else 64` |
+| 状态行维 | 主场景 `K = 128`；`K <= 256` 且必须是 **16 的倍数**（K 方向按 64 行分组，最多 4 组） |
+| 状态列维 | 主场景 `V = 128`；必须是 **16 的倍数**（列方向 tile 宽度 `BLOCK_SIZE = 32 if K <= 64 else 64`，尾 tile 落在对齐块内） |
 | head | `Hk == Hv` 或 `Hv % Hk == 0`（GVA，`hk = hv // (Hv/Hk)`） |
 | layout | `[B, H, T, D]`（BSND）；TND/NTD 需由调用方或 L2 侧做 layout sweep |
 | dtype | `q/k/w/d_o/dv` 为 BF16 或 FP16；`dhm` 与内部链固定 FP32 |
@@ -59,6 +59,7 @@ dhm[hv, :, V:V+K] = P_r    # 末端 dH 到起始 dH 的反向线性映射（FP32
 | `AFFINE_CHAIN_PRECISION`（`tf32x3` / `ieee` 等链精度开关） | 不支持；`P` 链固定 FP32 |
 | `g` 与 `gk` 同时非空 | host 直接拦截（上游没有 assert，本仓不沿用这个缺口） |
 | `K > 256` | host 拦截 |
+| `K` 或 `V` 不是 16 的倍数（例如 72、76） | host 拦截：状态行按键控向量 tile 读写、Cube 列 tile 按 16 元素（64B）成组；不对齐会落到未对齐/未初始化区，表现为设备报错或结果错误 |
 | `Hv % Hk != 0` | host 拦截 |
 | `B > 1` 且未传 `cu_seqlens` | host 拦截：一次 launch 只处理一个 segment |
 | 非 64 的 `chunk_size` | 与本版 tiling 不匹配，host 拦截 |
@@ -86,7 +87,7 @@ aclnn 与 `<<<>>>` 直调见 [`docs/api.md`](docs/api.md)。
 | `op_kernel` | 已实现：六个 Stage 的真实计算体（Catlass `BlockMmadTla` 五路矩阵乘 + Vector 手写事件对），A2/A5 精度均已打通；Vector 侧按平台拆分 `op_kernel/arch22`（A2/A3）与 `op_kernel/arch35`（A5，热点段用 RegBase `__simd_vf__` 融合） |
 | 构建接入 | 已完成：`op_host/CMakeLists.txt` 走 `op_host_aclnnExc` + `ACLNNTYPE aclnn_exclude`（**aclnn 手写，不走自动生成**），A2/A5 均已编出 OPP 运行包 |
 | Python `fla_npu.ops.ascendc` 入口 | 已接入：ctypes 直调手写 aclnn（不依赖 `torch_npu` dispatcher），A2/A5 双平台设备侧均验证通过 |
-| 测试 | `tests/atk/chunk_delta_h_bwd_preprocess/`（16 正向 + 10 反向）为唯一用例来源：`cases.json` 是用例设计，`reference.py` 是 CPU 标杆，`harness/` 提供 aclnn 取数程序、逐平面核对与精度矩阵/反向拦截执行脚本 |
+| 测试 | `tests/atk/chunk_delta_h_bwd_preprocess/`（16 正向 + 12 反向）为唯一用例来源：`cases.json` 是用例设计，`reference.py` 是 CPU 标杆，`harness/` 提供 aclnn 取数程序、逐平面核对与精度矩阵/反向拦截执行脚本 |
 
 ### 已验证（本版）
 
@@ -98,10 +99,10 @@ aclnn 与 `<<<>>>` 直调见 [`docs/api.md`](docs/api.md)。
 | aclnn 手写路径 | 构建产物含 `build/autogen/exc/aclnnExc_chunk_delta_h_bwd_preprocess.cpp/.h` 与 `aic-ascend950-ops-info.ini`，确认走的是 aclnn 排除自动生成的 exc 通路 |
 | 参考实现数学口径 | 纯 Python 数值校验：三种 gate 模式下 `dh0 == P_r @ dht + E_r` 的最大绝对误差 ~1e-16 |
 | 设备侧精度（A5 / ascend950） | 按 `tests/atk/chunk_delta_h_bwd_preprocess/cases.json` 的 16 条正向用例在设备上执行：**16/16 PASS**。`E` 面 `rel_norm ≤ 1.3e-2`、`P` 面 `rel_norm ≤ 1.1e-2`（单 task / 单 chunk 场景约 2e-3；最大为 `pos_16`（K=V=256）1.24e-2，32 个 chunk 的长链 `pos_13` 为 1.15e-2）；无 NaN/Inf |
-| arch35 Vector 融合（A5） | V0 门控行缩放、V2 `dV̂'`、V4 状态更新与 `P_c` 对角注入下沉到 RegBase `__simd_vf__`（256B / 64 lane per fp32 寄存器）一趟融合，去掉逐行 `ExpScalar` 的 V→S 同步与逐元素 `SetValue`/`GetValue`；改造后 A5 重跑 16 正向 + 10 反向全部通过，数值与改造前逐项一致 |
+| arch35 Vector 融合（A5） | V0 门控行缩放、V2 `dV̂'`、V4 状态更新与 `P_c` 对角注入下沉到 RegBase `__simd_vf__`（256B / 64 lane per fp32 寄存器）一趟融合，去掉逐行 `ExpScalar` 的 V→S 同步与逐元素 `SetValue`/`GetValue`；改造后 A5 重跑 16 正向 + 12 反向全部通过，数值与改造前逐项一致 |
 | 设备侧精度（A2 / ascend910b） | 同一 16 条用例在同一实现上执行：**16/16 PASS**，误差量级与 A5 一致（`E ≤ 1.5e-2`、`P ≤ 1.1e-2`） |
 | 数值稳定性 | 关键用例（`pos_15` 96 head 多 task、`pos_13` 32 chunk 长链、`gate_gk`）重复执行结果逐位一致；此前出现过的"随负载时好时坏"已定位到跨核 wait 的 pipe 语义并修复 |
-| 设备侧反向拦截 | 按 `op_cases` 的 10 条反向用例在 A2/A5 上执行：**10/10 PASS**，实际返回码与 `expected_return_code` 一致（`ACLNN_ERR_PARAM_INVALID`=161001），覆盖 `g`/`gk` 互斥、`K>256`、`Hv%Hk!=0`、dense/varlen `B>1`、`chunk_size!=64`、`g` shape 不匹配、`gk` FP32、`cu_seqlens` 过短、空 tensor |
+| 设备侧反向拦截 | 按 `cases.json` 的 12 条反向用例在 A2/A5 上执行：**12/12 PASS**，实际返回码与 `expected_return_code` 一致（`ACLNN_ERR_PARAM_INVALID`=161001），覆盖 `g`/`gk` 互斥、`K>256`、`K`/`V` 未按 16 对齐、`Hv%Hk!=0`、dense/varlen `B>1`、`chunk_size!=64`、`g` shape 不匹配、`gk` FP32、`cu_seqlens` 过短、空 tensor |
 | A3 / ascend910_93 | `def.cpp` 已声明该平台配置，但**本版未在 A3 设备上执行验证**（无可用设备）；编译与精度结论只覆盖 A2/A5 |
 
 ### 尚未完成（下一步）
@@ -191,6 +192,9 @@ INSTALL=<install root> CASE_DIR=<case dir> bash tests/atk/chunk_delta_h_bwd_prep
 ## 已知限制
 
 - 一次 launch 只处理一个 segment；多 segment 需要 host 多次 launch，或在后续版本增加 segment 维 grid。
+- 目标场景是 `K = V = 128`、`chunk_size = 64`（序列维 dense/varlen、`Hv % Hk == 0` 的 GVA、三种 gate 模式、
+  尾 chunk、多 task 都属于该场景的泛化，已覆盖）。本版另验证通过的 `K`/`V` 取值见
+  [测试 README](../../../../tests/atk/chunk_delta_h_bwd_preprocess/README.md) 的用例矩阵，均为 16 的倍数。
 - `state_v_first` 与本算子无关：本算子只读 token-major 的 `q/k/w/do/dv`，只写固定 `[Hv, K, V+K]` 的 `dhm`。
 - `dv` 必须是 `dv_local`。若调用方传入已经加入 `K̄ @ dH` 的 `dv`，状态贡献会被累计两次。
 - 本版未覆盖 DPLR（`USE_BG`）与链精度开关，二者需要独立设计与用例。

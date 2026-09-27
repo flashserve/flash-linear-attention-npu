@@ -424,6 +424,18 @@
       "note": "T=0：空 tensor 必须给出明确错误",
       "expected_return_code": "ACLNN_ERR_PARAM_INVALID",
       "trigger": "host tiling：B/T/Hk/Hv/K/V 存在 0"
+    },
+    {
+      "id": "neg_11_k_not_aligned",
+      "note": "K=72 不是 16 的倍数：状态行按键控向量 tile 读写、Cube 列 tile 按 16 元素（64B）成组，必须拦截",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID",
+      "trigger": "host tiling：K % 16 != 0"
+    },
+    {
+      "id": "neg_12_v_not_aligned",
+      "note": "V=72 不是 16 的倍数：状态列按 16 元素（64B）成组，必须拦截",
+      "expected_return_code": "ACLNN_ERR_PARAM_INVALID",
+      "trigger": "host tiling：V % 16 != 0"
     }
   ]
 }

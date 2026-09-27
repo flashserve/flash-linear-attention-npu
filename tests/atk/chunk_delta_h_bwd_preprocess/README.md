@@ -102,7 +102,7 @@ task / 单 chunk 场景约 2e-3，长链与多 task 场景最多 1.5e-2。重复
 bash tests/atk/chunk_delta_h_bwd_preprocess/harness/run_negative.sh <work_dir>
 ```
 
-`cases.json` 的 10 条反向用例在 **A2 与 A5 上均 10/10 PASS**（实际返回码与 `expected_return_code` 一致，
+`cases.json` 的 12 条反向用例在 **A2 与 A5 上均 12/12 PASS**（实际返回码与 `expected_return_code` 一致，
 均为 `ACLNN_ERR_PARAM_INVALID` = 161001）：
 
 | 用例 | 触发约束 |
@@ -117,6 +117,8 @@ bash tests/atk/chunk_delta_h_bwd_preprocess/harness/run_negative.sh <work_dir>
 | `neg_08_gk_dtype_fp32` | `gk` 为 FP32 |
 | `neg_09_cu_seqlens_too_short` | `cu_seqlens` 只有 1 项 |
 | `neg_10_empty_tensor` | `T = 0` |
+| `neg_11_k_not_aligned` | `K = 72`（不是 16 的倍数） |
+| `neg_12_v_not_aligned` | `V = 72`（不是 16 的倍数） |
 
 反向用例只校验拦截与返回码，不做精度比较；脚本会 `grep` `run_case` 打印的 `GetWorkspaceSize failed <code>`
 并比对期望值，全部通过才输出 `ALL_PASS`。

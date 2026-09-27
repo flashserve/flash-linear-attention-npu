@@ -156,6 +156,8 @@ storage-free：V2 → C1DvPrePayloadFree ; V4 → C3PayloadFree ; C5 → V4PcPay
 ## 8. 平台与限制
 
 - 平台：`ascend910b`（A2）、`ascend910_93`（A3）、`ascend950`（A5）。
+- 目标场景 `K = V = 128`、`chunk_size = 64`；`K`/`V` 必须按 16 个元素（64B）对齐并由 host 拦截，
+  因为状态矩阵按行做向量/寄存器读写、Cube 列 tile 也按 16 元素成组，不对齐会读到未对齐/未初始化区。
 - shape/取值范围的唯一维护处是 [README](../README.md) 的「支持的场景」「不支持（本版显式拦截）」「已知限制」三节，
   本文只讨论设计取舍，不重复列举取值。
 - layout：`[B,H,T,D]`（BSND）。TND/NTD 需由调用方或 L2 侧 layout sweep 后进入本算子。

@@ -106,7 +106,7 @@ extern "C" __global__ __aicore__ void chunk_delta_h_bwd_preprocess(
 | 返回码 | 触发条件 |
 | --- | --- |
 | `ACLNN_ERR_PARAM_NULLPTR` | `q`/`k`/`w`/`d_o`/`dv`/`dhm` 为空 |
-| `ACLNN_ERR_PARAM_INVALID` | tiling 校验失败：`k` 与 `q` shape 不一致；`w` 不是 `[B,Hv,T,K]`；`dv` 与 `d_o` shape 不一致；`Hv % Hk != 0`；`K > 256`；`chunk_size != 64`；`g`/`gk` 同时非空；`g`/`gk` shape 与 dtype 不匹配；`cu_seqlens` 少于 2 项；`B > 1`（无论 dense 还是 varlen） |
+| `ACLNN_ERR_PARAM_INVALID` | tiling 校验失败：`k` 与 `q` shape 不一致；`w` 不是 `[B,Hv,T,K]`；`dv` 与 `d_o` shape 不一致；`Hv % Hk != 0`；`K > 256`；`K` 或 `V` 不是 16 的倍数（状态行按键控向量 tile 读写、Cube 列 tile 按 16 元素成组）；`chunk_size != 64`；`g`/`gk` 同时非空；`g`/`gk` shape 与 dtype 不匹配；`cu_seqlens` 少于 2 项；`B > 1`（无论 dense 还是 varlen） |
 
 报错文本会给出实际 shape、`Hk`/`Hv` 与触发的约束，便于定位；`g`/`gk` 同时非空的报错会明确指出二者互斥。
 
