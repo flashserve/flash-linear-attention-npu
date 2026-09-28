@@ -769,50 +769,44 @@ private:
         SetFlag<HardEvent::MTE2_V>(CDHP_EV_MTE2_V);
         WaitFlag<HardEvent::MTE2_V>(CDHP_EV_MTE2_V);
         PipeBarrier<PIPE_V>();
+        // v12：E 链与 P 链**按 tile 合并成一趟**，并把三条链上平面（AB / Z / ZP）一次性排进 MTE2：
+        //   * 改造前：先把 AB/Z 两个平面按 32 行 tile 成对下发、等到齐后做 dH 的 VF；P 链的 ZP 是
+        //     另一个循环，它的搬运完全排在 dH 的 VF 之后 ⇒ P 链的 ZP 载入与 dH 的 VF 串行、无法重叠；
+        //   * 改造后：每个 tile 先下发 3 笔（AB/Z/ZP）再统一等，两个 VF 共用同一份已到齐的操作数，
+        //     MTE2 队列深度从 2 提到 3，且 P 链不再等前一个循环收尾。
+        // 第三个 fp32 缓冲复用 V0 的 do 平面（s3F32_）：StageState 与 StageV0 在同一轮里**串行**，
+        // 且 StageV0 排在 StageState 之后，因此这块 UB 在 StageState 期间是空闲的，不需要新增 UB。
+        // 三条链的常驻状态（dH / P fp32）都在 UB 里，模型 dtype 操作数在 StageStateStore / 本 Stage
+        // 统一落盘；首 chunk 的 P_prev = I 由 CDHP_InitIdentityVF 内联生成。
+        LocalTensor<float> dhState = dhStateF32_.Get<float>();
+        LocalTensor<float> pState = pStateF32_.Get<float>();
         for (uint32_t r0 = 0; r0 < kDim; r0 += CDHP_VEC_TILE) {
             const uint32_t tileRows = MinV(CDHP_VEC_TILE, kDim - r0);
             LocalTensor<float> abF = s0F32_.Get<float>();
             LocalTensor<float> zF = s1F32_.Get<float>();
-            // 两个平面背靠背排进 MTE2 队列，再统一等，避免"每笔搬运都卡住标量线程"
+            LocalTensor<float> zpF = s3F32_.Get<float>();
             IssueLoadPlaneF32(abF, this->AbAt(window), r0, tileRows, vDim, CDHP_EV_LOAD1);
             IssueLoadPlaneF32(zF, this->ZAt(window), r0, tileRows, vDim, CDHP_EV_LOAD2);
+            IssueLoadPlaneF32(zpF, this->ZpAt(window), r0, tileRows, kDim, CDHP_EV_LOAD3);
             WaitPlaneLoad(CDHP_EV_LOAD1);
             WaitPlaneLoad(CDHP_EV_LOAD2);
+            WaitPlaneLoad(CDHP_EV_LOAD3);
             // dH_new = decayK ⊙ dH_old + AB + Z：一份寄存器流一趟算完。
-            // v5（参考 ChunkFwdH 的 rolling state）：dH_old 直接取 UB 常驻状态并就地更新，
-            // 不再每 chunk 经 GM workspace 读写 FP32 状态；模型 dtype 操作数在下一个 chunk 的
-            // StageStateStore 里由这份常驻状态统一落盘。
-            LocalTensor<float> dhState = dhStateF32_.Get<float>();
             CDHP_V4StateUpdateVF(UbPtr(dhState) + static_cast<uint64_t>(r0) * vDim, UbPtr(abF), UbPtr(zF),
                                  UbPtr(decayF), static_cast<uint16_t>(r0), static_cast<uint16_t>(tileRows),
                                  static_cast<uint16_t>(vDim));
-        }
-
-        for (uint32_t r0 = 0; r0 < kDim; r0 += CDHP_VEC_TILE) {
-            const uint32_t tileRows = MinV(CDHP_VEC_TILE, kDim - r0);
-            LocalTensor<float> zpF = s1F32_.Get<float>();
-            // v11（参考 ChunkFwdH 的 rolling state）：P 的 fp32 状态与 dH 一样常驻 UB，
-            // 不再经 GM 平面（PAt）做"本核 MTE3 写 → 本核下一轮 MTE2 读"的往返。
-            // 动机有两条：
-            //   1) 正确性：A5 上该往返的 MTE3→MTE2 自排空不可靠，实测 2 个 chunk 的用例会
-            //      把 P_prev 平面读成"只写了一部分的单位阵"（tp0 rows 32..36 全 0、单位值落到 +32 列），
-            //      而紧接同一块 UB 的模型 dtype 落盘（PBf）却是对的 ⇒ 是落盘/回读时序问题，
-            //      不是 VF 计算问题（细节见 design.md）。
-            //   2) 性能：省掉每 chunk 64 KiB 的 P 回读 + 64 KiB 的状态落盘。
-            // 首 chunk 的 P_prev = I 仍内联生成，之后每 chunk 就地累加。
-            LocalTensor<float> pState = pStateF32_.Get<float>();
+            // P_new = decayK ⊙ P_old + ZP；首 chunk 的 P_old = I 内联生成
             if (isFirstChunk) {
                 CDHP_InitIdentityVF(UbPtr(pState) + static_cast<uint64_t>(r0) * kDim,
                                     static_cast<uint16_t>(r0), static_cast<uint16_t>(tileRows),
                                     static_cast<uint16_t>(kDim));
             }
-            IssueLoadPlaneF32(zpF, this->ZpAt(window), r0, tileRows, kDim, CDHP_EV_LOAD1);
-            WaitPlaneLoad(CDHP_EV_LOAD1);
             CDHP_V3AccumVF(UbPtr(pState) + static_cast<uint64_t>(r0) * kDim, UbPtr(zpF), UbPtr(decayF),
-                           static_cast<uint16_t>(r0),
-                           static_cast<uint16_t>(tileRows), static_cast<uint16_t>(kDim));
+                           static_cast<uint16_t>(r0), static_cast<uint16_t>(tileRows),
+                           static_cast<uint16_t>(kDim));
             StoreTileModel(pState[r0 * kDim],
-                           this->PBfAt(window) + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows, kDim, kDim);
+                           this->PBfAt(window) + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows, kDim,
+                           kDim);
         }
     }
 
