@@ -24,8 +24,8 @@
  * 同步：与 AIV 按同一 chunk 顺序严格交替，flag 见 chunk_delta_h_bwd_preprocess_policy.h。
  */
 
-#ifndef CHUNK_DELTA_H_BWD_PREPROCESS_ARCH22_CUBE_H
-#define CHUNK_DELTA_H_BWD_PREPROCESS_ARCH22_CUBE_H
+#ifndef CHUNK_DELTA_H_BWD_PREPROCESS_ARCH35_CUBE_H
+#define CHUNK_DELTA_H_BWD_PREPROCESS_ARCH35_CUBE_H
 
 // 说明：不要引用仓内 common/kernel_utils/block/block_mmad_pingpong_tla.hpp —— 它经由
 // kernel_utils/tile/copy_l0c_to_ub.hpp 无条件包含 ascend950 专用头，A2 构建会把 950 实现拉进来
@@ -80,6 +80,10 @@ constexpr uint32_t CDHP_CUBE_TILE_N = 128;
 constexpr uint32_t CDHP_AIC_EV_FIX_M = 4;      // Fixpipe（L0C→GM）已读完 L0C
 constexpr uint32_t CDHP_AIC_EV_M_MTE1 = 5;     // MMAD 已读完 L0A/L0B
 constexpr uint32_t CDHP_AIC_EV_MTE1_MTE2 = 6;  // MTE1（L1→L0）已读完 L1
+// v4：T1 直接以模型 dtype 落地（fixpipe 完成 FP32 累加→模型 dtype 的转换），随后仍由本核在
+// 下一 chunk 步用 MTE2 把它读回来当 Z/ZP 的矩阵操作数。这是**本核** FIX→MTE2 的 RAW 依赖，
+// 用核内事件表达（每个 window 一个 id，set/wait 严格交替），不再占用核间 flag。
+constexpr uint32_t CDHP_AIC_EV_FIX_MTE2 = 0;
 
 template <typename DT>
 class ChunkDeltaHBwdPreprocessCube : public ChunkDeltaHBwdPreprocessBase<DT, DT> {
@@ -99,6 +103,9 @@ public:
 #else
         using ArchTag = Catlass::Arch::AtlasA2;
 #endif
+        // arch22（A2/A3）：保持 unit flag = true（L0C 单 stage，M/FIX 由 MMAD 指令的 unit flag
+        // 承担）。A5 上 true/false 运行时间等价（见 design.md §11.1.1），A2 上 false 会与本算子的
+        // per-call 排空互相干扰导致结果错误，因此 arch22 固定 true。
         using DispatchPolicy = Catlass::Gemm::MmadPingpong<ArchTag, true>;
         using L1TileShape = tla::Shape<_128, _128, _128>;
         using L0TileShape = tla::Shape<_128, _128, _128>;
@@ -110,18 +117,26 @@ public:
                                                                       LayoutRow>;
         using TileCopyColRow = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, DT, LayoutCol, DT, LayoutRow, float,
                                                                       LayoutRow>;
+        // C 目标类型取模型 dtype：让 fixpipe 直接把 L0C 的 FP32 结果转成 bf16 落盘，
+        // 省掉 Vector 侧"读 FP32 T1 → 转模型 dtype"这一级
+        using TileCopyColRowBf16 = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, DT, LayoutCol, DT, LayoutRow, DT,
+                                                                          LayoutRow>;
         using BlockRowRow =
             Catlass::Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, DT, DT, float, void,
                                                TileCopyRowRow>;
         using BlockColRow =
             Catlass::Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, DT, DT, float, void,
                                                TileCopyColRow>;
+        using BlockColRowBf16 =
+            Catlass::Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, DT, DT, DT, void,
+                                               TileCopyColRowBf16>;
 
         Catlass::Arch::Resource<ArchTag> resource;
 
         const uint32_t kDim = static_cast<uint32_t>(this->tiling_.K);
         const uint32_t vDim = static_cast<uint32_t>(this->tiling_.V);
         const uint32_t mDim = static_cast<uint32_t>(this->tiling_.chunkSize);
+        const uint32_t twoM = 2U * mDim;
         const auto tagQ = LayoutRow::MakeLayout<DT>(mDim, kDim);
         const auto tagK = LayoutRow::MakeLayout<DT>(mDim, kDim);
         const auto tagQT = LayoutCol::MakeLayout<DT>(kDim, mDim);
@@ -130,6 +145,9 @@ public:
         const auto tagDhBf = LayoutRow::MakeLayout<DT>(kDim, vDim);
         const auto tagDvHat = LayoutRow::MakeLayout<DT>(mDim, vDim);
         const auto tagKK = LayoutRow::MakeLayout<DT>(kDim, kDim);
+        // v3 合并 GEMM：A = [Q̄s|W]ᵀ（K x 2M，列主序 = 存储 [Q̄s;W] 的 2M x K 行主序）
+        const auto tagCol2M = LayoutCol::MakeLayout<DT>(kDim, 2U * mDim);
+        const auto tagDo2M = LayoutRow::MakeLayout<DT>(2U * mDim, vDim);
         const auto tagMzV = LayoutRow::MakeLayout<float>(mDim, vDim);
         const auto tagKzV = LayoutRow::MakeLayout<float>(kDim, vDim);
         const auto tagKzK = LayoutRow::MakeLayout<float>(kDim, kDim);
@@ -141,53 +159,100 @@ public:
         const auto layoutDhBf = tla::MakeLayoutFromTag(tagDhBf);
         const auto layoutDvHat = tla::MakeLayoutFromTag(tagDvHat);
         const auto layoutKK = tla::MakeLayoutFromTag(tagKK);
+        const auto layoutCol2M = tla::MakeLayoutFromTag(tagCol2M);
+        const auto layoutDo2M = tla::MakeLayoutFromTag(tagDo2M);
         const auto layoutMzV = tla::MakeLayoutFromTag(tagMzV);
         const auto layoutKzV = tla::MakeLayoutFromTag(tagKzV);
         const auto layoutKzK = tla::MakeLayoutFromTag(tagKzK);
 
         const uint32_t chunkNum = this->ChunkNum(this->Bos(), this->Eos());
         const ChunkDeltaHBwdPreprocessTaskRange range = this->ResolveTaskRange();
-        for (uint32_t i = 0; i < range.taskCount; ++i) {
-            (void)range.taskBegin;
+        // 1 AIC : 2 AIV：本 block 的两个 AIV 各承包一个 head 的整条逆序链、并行推进，因此 AIC 必须按
+        // chunk 步把本轮两个 head 的 GEMM 交错服务（外层 chunk、内层 head）。每轮的槽数是 aivPerBlock
+        // 的倍数（kernel 侧已把 head 数补齐），所以两个 AIV 的轮次完全对齐 —— A2/A3 的 0x2 集合同步
+        // 要求两个 AIV 同时 set/wait 同一个 id，这一步是必须的；A5 的 0x4 按 subblock 选配对 AIV。
+        const uint32_t slotCount = this->AivSlotCount(range);
+        const uint32_t aivs = this->AivPerBlock();
+        const uint32_t rounds = slotCount / aivs;
+        for (uint32_t r = 0; r < rounds; ++r) {
+            const uint32_t hBegin = r * aivs;
+            const uint32_t hEnd = hBegin + aivs;
+            // v5（参考 ChunkFwdH 的跨 chunk lookahead）：链外工作（T1/AB）**提前一个 chunk** 计算。
+            // 这样下一 chunk 的 T1 dtype 转换落在当前 chunk 的 Z/ZP MMA 窗口内，AIC 不再在
+            // T1BF_READY 上空等（改造前该等待占 AIC 时间的 88%）。
+            if (chunkNum > 0) {
+                const uint32_t headWin = (chunkNum - 1U) & 1u;
+                for (uint32_t h = hBegin; h < hEnd; ++h) {
+                    const uint32_t sub = h - hBegin;
+                    const uint32_t slot = this->SlotOfWindowAiv(sub, headWin);
+                    CDHP_AIC_WAIT(sub, CdhpFlag(CDHP_FLAG_V0_READY, headWin));
+                    // T1 = Wᵀ@(-K̄) → **模型 dtype** 平面：fixpipe 直接完成 FP32→模型 dtype 的转换，
+                    // 省掉 Vector 侧"读 FP32 T1 再转模型 dtype"的一整段搬运与一个 Stage
+                    RunGemm<BlockColRowBf16, DT>(resource, layoutWT, layoutK, layoutKK,
+                                                this->SlotAt(slot, this->SlotQBytes()),
+                                                this->SlotAt(slot, this->SlotQBytes() + this->SlotWBytes()),
+                                                this->T1BfAtAiv(sub, headWin), kDim, kDim, mDim);
+                    // AB = Q̄sᵀ@do + Wᵀ@(-dv)（一次合并 GEMM：A=[Q̄s|W]ᵀ [K,2M]，B=[do;-dv] [2M,V]）
+                    RunGemm<BlockColRow, float>(resource, layoutCol2M, layoutDo2M, layoutKzV,
+                                                this->SlotAt(slot, 0),
+                                                this->SlotAt(slot, this->SlotQBytes() + this->SlotWBytes() +
+                                                                   this->SlotKBytes()),
+                                                this->AbAtAiv(sub, headWin), kDim, vDim, twoM);
+                }
+            }
+            if (chunkNum > 0) {
+                // 本 window 全部 head 的 T1 都已 fixpipe 落盘：放行下一轮 MTE2 读回（每 window 一次）
+                SetFlag<HardEvent::FIX_MTE2>(CDHP_AIC_EV_FIX_MTE2 + ((chunkNum - 1U) & 1u));
+            }
             for (uint32_t c = 0; c < chunkNum; ++c) {
-                const uint32_t chunkIdx = chunkNum - 1 - c;
-                const uint32_t slot = this->BlockIdx();
-                const uint32_t parity = chunkIdx % 2;
-                GM_ADDR slotQ = this->SlotAt(slot, 0);
-                GM_ADDR slotK = this->SlotAt(slot, this->SlotQBytes());
-                GM_ADDR slotW = this->SlotAt(slot, this->SlotQBytes() + this->SlotKBytes());
-                GM_ADDR slotDo = this->SlotAt(slot, this->SlotQBytes() + this->SlotKBytes() + this->SlotWBytes());
-
-                CDHP_AIC_WAIT(CDHP_FLAG_V0_DONE);
-                // C1-① dV_pre = K̄ @ dH_bf
-                RunGemm<BlockRowRow>(resource, layoutK, layoutDhBf, layoutMzV, slotK, this->DhBfAt(),
-                                     this->DvPreAt(), mDim, vDim, kDim);
-                // C1-② T1 = W^T @ K̄
-                RunGemm<BlockColRow>(resource, layoutWT, layoutK, layoutKzK, slotW, slotK, this->T1At(), kDim, kDim,
-                                     mDim);
-                CDHP_AIC_SET(CDHP_FLAG_C1_DONE);
-
-                CDHP_AIC_WAIT(CDHP_FLAG_V2_DONE);
-                // C3-③ qterm = Q̄s^T @ do
-                RunGemm<BlockColRow>(resource, layoutQT, layoutDo, layoutKzV, slotQ, slotDo, this->QtermAt(), kDim,
-                                     vDim, mDim);
-                // C3-④ wterm = W^T @ dV̂'
-                RunGemm<BlockColRow>(resource, layoutWT, layoutDvHat, layoutKzV, slotW, this->DvHatAt(),
-                                     this->WtermAt(), kDim, vDim, mDim);
-                CDHP_AIC_SET(CDHP_FLAG_C3_DONE);
-
-                CDHP_AIC_WAIT(CDHP_FLAG_V4_DONE);
-                // C5 P_new = P_c @ P_bf（链式累加在 FP32 平面）
-                RunGemm<BlockRowRow>(resource, layoutKK, layoutKK, layoutKzK, this->PcAt(), this->PBfAt(),
-                                     this->PAt(parity), kDim, kDim, kDim);
-                CDHP_AIC_SET(CDHP_FLAG_C5_DONE);
+                const uint32_t chunkIdx = chunkNum - 1U - c;
+                // v2.1：window = chunkIdx & 1；同一 chunk 的操作数/中间量都落在自己的 window 上，
+                // AIC 因此可以与 AIV 提前准备的下一 window 并行，不再严格交替。
+                const uint32_t win = chunkIdx & 1u;
+                // 本 window 的 T1（模型 dtype）是上一轮 lookahead（或循环前）由本核 fixpipe 写的，
+                // MTE2 读回前先等本核 FIX 完成。放在 head 循环外：每 window 恰好一次 set / 一次 wait，
+                // 满足核内单比特事件的"不许连续 set 同一 id"约束（1:2 下两个 head 共用同一 id）。
+                WaitFlag<HardEvent::FIX_MTE2>(CDHP_AIC_EV_FIX_MTE2 + win);
+                for (uint32_t h = hBegin; h < hEnd; ++h) {
+                    const uint32_t sub = h - hBegin;
+                    // 链外：把下一个 chunk 的 T1/AB 补上（尾块没有下一个 chunk）
+                    if (c + 1U < chunkNum) {
+                        const uint32_t nextWin = (chunkIdx - 1U) & 1u;
+                        const uint32_t nextSlot = this->SlotOfWindowAiv(sub, nextWin);
+                        CDHP_AIC_WAIT(sub, CdhpFlag(CDHP_FLAG_V0_READY, nextWin));
+                        RunGemm<BlockColRowBf16, DT>(resource, layoutWT, layoutK, layoutKK,
+                                                    this->SlotAt(nextSlot, this->SlotQBytes()),
+                                                    this->SlotAt(nextSlot, this->SlotQBytes() + this->SlotWBytes()),
+                                                    this->T1BfAtAiv(sub, nextWin), kDim, kDim, mDim);
+                        RunGemm<BlockColRow, float>(resource, layoutCol2M, layoutDo2M, layoutKzV,
+                                                    this->SlotAt(nextSlot, 0),
+                                                    this->SlotAt(nextSlot, this->SlotQBytes() + this->SlotWBytes() +
+                                                                              this->SlotKBytes()),
+                                                    this->AbAtAiv(sub, nextWin), kDim, vDim, twoM);
+                    }
+                    // 链上：Z = (-T1)@dH_bf(prev)、ZP = (-T1)@P_bf(prev)
+                    CDHP_AIC_WAIT(sub, CdhpFlag(CDHP_FLAG_STATE_READY, win ^ 1u));
+                    RunGemm<BlockRowRow, float>(resource, layoutKK, layoutDhBf, layoutKzV,
+                                                this->T1BfAtAiv(sub, win), this->DhBfAtAiv(sub, win ^ 1u),
+                                                this->ZAtAiv(sub, win), kDim, vDim, kDim);
+                    RunGemm<BlockRowRow, float>(resource, layoutKK, layoutKK, layoutKzK,
+                                                this->T1BfAtAiv(sub, win), this->PBfAtAiv(sub, win ^ 1u),
+                                                this->ZpAtAiv(sub, win), kDim, kDim, kDim);
+                    CDHP_AIC_SET(sub, CdhpFlag(CDHP_FLAG_Z_READY, win));
+                }
+                if (c + 1U < chunkNum) {
+                    // 本轮两个 head 的 T1 都已落盘：放行下一轮 MTE2 读回同一 window
+                    SetFlag<HardEvent::FIX_MTE2>(CDHP_AIC_EV_FIX_MTE2 + ((chunkIdx - 1U) & 1u));
+                }
             }
         }
     }
 
 private:
     // 与仓内 chunk_bwd_dv_local_cube.h 一致：BlockMmad 在每次调用时构造（复用同一 resource）
-    template <typename Block, typename Resource, typename LayoutA, typename LayoutB, typename LayoutC>
+    // CElem：输出平面的元素类型（float = FP32 中间平面，DT = 直接落模型 dtype）
+    template <typename Block, typename CElem, typename Resource, typename LayoutA, typename LayoutB,
+              typename LayoutC>
     __aicore__ inline void RunGemm(Resource &resource, LayoutA layoutA, LayoutB layoutB, LayoutC layoutC, GM_ADDR a,
                                    GM_ADDR b, GM_ADDR c, uint32_t m, uint32_t n, uint32_t k)
     {
@@ -203,10 +268,10 @@ private:
         Block block(resource);
         AscendC::GlobalTensor<DT> gA;
         AscendC::GlobalTensor<DT> gB;
-        AscendC::GlobalTensor<float> gC;
+        AscendC::GlobalTensor<CElem> gC;
         gA.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(a));
         gB.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(b));
-        gC.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(c));
+        gC.SetGlobalBuffer(reinterpret_cast<__gm__ CElem *>(c));
         for (uint32_t m0 = 0; m0 < m; m0 += CDHP_CUBE_TILE_M) {
             const uint32_t mTile = (m - m0 < CDHP_CUBE_TILE_M) ? (m - m0) : CDHP_CUBE_TILE_M;
             for (uint32_t n0 = 0; n0 < n; n0 += CDHP_CUBE_TILE_N) {
@@ -226,4 +291,4 @@ private:
 
 } // namespace CP
 
-#endif // CHUNK_DELTA_H_BWD_PREPROCESS_ARCH22_CUBE_H
+#endif // CHUNK_DELTA_H_BWD_PREPROCESS_ARCH35_CUBE_H

@@ -94,10 +94,17 @@ public:
         pipe_->InitBuffer(s1F32_, CDHP_SCRATCH_ELEMS * sizeof(float));
         pipe_->InitBuffer(s2F32_, CDHP_SCRATCH_ELEMS * sizeof(float));
         pipe_->InitBuffer(s3F32_, CDHP_SCRATCH_ELEMS * sizeof(float));
+        pipe_->InitBuffer(s4F32_, CDHP_SCRATCH_ELEMS * sizeof(float));
         pipe_->InitBuffer(s0DT_, CDHP_SCRATCH_ELEMS * sizeof(DT));
         pipe_->InitBuffer(gF32_, 256 * sizeof(float));
         pipe_->InitBuffer(decayF32_, 256 * sizeof(float));
         pipe_->InitBuffer(scalarF32_, 8 * sizeof(float));
+        // 门控行因子（qFac = exp2(g)·scale，kFac = -exp2(g_last-g)），每 chunk 算一次
+        pipe_->InitBuffer(qFacF32_, 256 * sizeof(float));
+        pipe_->InitBuffer(kFacF32_, 256 * sizeof(float));
+        // v5（参考 ChunkFwdH 的 rolling state）：dH 的状态常驻 UB（K=V=128 → 64 KiB），
+        // 每 chunk 只把模型 dtype 操作数写回 GM，不再每 chunk 经 GM workspace 读写 FP32 状态。
+        pipe_->InitBuffer(dhStateF32_, 128u * 128u * sizeof(float));
     }
 
     __aicore__ inline void Process()
@@ -107,17 +114,31 @@ public:
         for (uint32_t i = 0; i < range.taskCount; ++i) {
             const uint32_t hv = range.taskBegin + i;
             InitState(chunkNum);
+            // v3 流水：AIV 只做链外准备（slot）与链上的向量累加，Cube 承担全部 MMAD
+            if (chunkNum > 0) {
+                const uint32_t firstIdx = chunkNum - 1;
+                StageV0(hv, firstIdx, firstIdx & 1u);
+                CDHP_AIV_SET(CdhpFlag(CDHP_FLAG_V0_READY, firstIdx & 1u));
+            }
+            if (chunkNum > 1) {
+                const uint32_t secondIdx = chunkNum - 2;
+                StageV0(hv, secondIdx, secondIdx & 1u);
+                CDHP_AIV_SET(CdhpFlag(CDHP_FLAG_V0_READY, secondIdx & 1u));
+            }
             for (uint32_t c = 0; c < chunkNum; ++c) {
                 const uint32_t chunkIdx = chunkNum - 1 - c;
-                StageV0(hv, chunkIdx);
-                CDHP_AIV_SET(CDHP_FLAG_V0_DONE);
-                CDHP_AIV_WAIT(CDHP_FLAG_C1_DONE);
-                StageV2(hv, chunkIdx);
-                CDHP_AIV_SET(CDHP_FLAG_V2_DONE);
-                CDHP_AIV_WAIT(CDHP_FLAG_C3_DONE);
-                StageV4(chunkIdx);
-                CDHP_AIV_SET(CDHP_FLAG_V4_DONE);
-                CDHP_AIV_WAIT(CDHP_FLAG_C5_DONE);
+                const uint32_t win = chunkIdx & 1u;
+                // 链上准备：把"本 chunk 之前的"状态（首 chunk 即初值 0 / I）写成 Cube 需要的
+                // 模型 dtype 操作数，并放行 Cube 的 Z/ZP
+                StageStateStore(win, c == 0);
+                // 链上：等 Cube 的 Z/ZP，做 dH/P 的向量累加
+                CDHP_AIV_WAIT(CdhpFlag(CDHP_FLAG_Z_READY, win));
+                StageState(chunkIdx, win);
+                if (c + 2 < chunkNum) {
+                    const uint32_t nextIdx = chunkIdx - 2;
+                    StageV0(hv, nextIdx, nextIdx & 1u);
+                    CDHP_AIV_SET(CdhpFlag(CDHP_FLAG_V0_READY, nextIdx & 1u));
+                }
             }
             WriteOutput(hv);
         }
@@ -173,7 +194,6 @@ private:
         SetFlag<HardEvent::MTE2_V>(CDHP_EV_MTE2_V);
         WaitFlag<HardEvent::MTE2_V>(CDHP_EV_MTE2_V);
         AscendC::Cast(dst, tmp, AscendC::RoundMode::CAST_NONE, rows * cols);
-        PipeBarrier<PIPE_V>();
     }
 
     // FP32 UB → GM [rows, cols]（模型 dtype，行距 rowStride）
@@ -187,7 +207,6 @@ private:
         SetFlag<HardEvent::MTE3_V>(CDHP_EV_MTE3_V);
         WaitFlag<HardEvent::MTE3_V>(CDHP_EV_MTE3_V);
         AscendC::Cast(tmp, src, AscendC::RoundMode::CAST_RINT, rows * cols);
-        PipeBarrier<PIPE_V>();
         SetFlag<HardEvent::V_MTE3>(CDHP_EV_V_MTE3);
         WaitFlag<HardEvent::V_MTE3>(CDHP_EV_V_MTE3);
         AscendC::DataCopyExtParams params{static_cast<uint16_t>(rows), static_cast<uint32_t>(cols * sizeof(DT)), 0,
@@ -204,7 +223,6 @@ private:
         SetFlag<HardEvent::MTE3_V>(CDHP_EV_MTE3_V);
         WaitFlag<HardEvent::MTE3_V>(CDHP_EV_MTE3_V);
         AscendC::Cast(tmp, src, AscendC::RoundMode::CAST_RINT, count);
-        PipeBarrier<PIPE_V>();
         SetFlag<HardEvent::V_MTE3>(CDHP_EV_V_MTE3);
         WaitFlag<HardEvent::V_MTE3>(CDHP_EV_V_MTE3);
         // 统一用 DataCopyPad（与 slot 落盘同一条通路；DataCopy 在 UB→GM 上实测会写错内容）
@@ -261,7 +279,7 @@ private:
     // V0：门控/衰减准备 + slot 落盘（Q̄s / K̄ / W / do / decayK）
     // 契约：入口只消费本 chunk 的 q/k/w/do 原始输入与 g/gk；出口保证 slot 内四个平面的
     //       无效行（[rows, chunkSize)）为 0，且 decayK[K] 已按 chunk 末行门控算好。
-    __aicore__ inline void StageV0(uint32_t hv, uint32_t chunkIdx)
+    __aicore__ inline void StageV0(uint32_t hv, uint32_t chunkIdx, uint32_t window)
     {
         const uint32_t rows = this->ChunkRows(chunkIdx);
         const uint32_t t0 = this->ChunkStart(chunkIdx);
@@ -269,18 +287,25 @@ private:
         const uint32_t vDim = static_cast<uint32_t>(this->tiling_.V);
         const uint32_t mDim = static_cast<uint32_t>(this->tiling_.chunkSize);
         const uint32_t hk = this->HkOfHv(hv);
-        // slot 按工作组区分（同一 chunk 下不同 head 各用各的 slot）
-        const uint32_t slot = this->BlockIdx();
+        // slot 按 (工作组, window) 区分：v3 起每个工作组有 CDHP_WINDOW_COUNT 份 slot，
+        // window = chunkIdx & 1，必须与 Cube 侧寻址一致（否则读到未初始化 slot）
+        const uint32_t slot = static_cast<uint32_t>(this->BlockIdx()) * CDHP_WINDOW_COUNT + (window & 1u);
         const uint32_t useG = static_cast<uint32_t>(this->tiling_.useGateG);
         const uint32_t useGk = static_cast<uint32_t>(this->tiling_.useGateGk);
+        // v3 布局：Q̄s | W | -K̄ | do | -dv | decay（Q̄s/W 相邻、do/-dv 相邻，便于 Cube 合并 GEMM）
         GM_ADDR slotQ = this->SlotAt(slot, 0);
-        GM_ADDR slotK = this->SlotAt(slot, this->SlotQBytes());
-        GM_ADDR slotW = this->SlotAt(slot, this->SlotQBytes() + this->SlotKBytes());
-        GM_ADDR slotDo = this->SlotAt(slot, this->SlotQBytes() + this->SlotKBytes() + this->SlotWBytes());
+        GM_ADDR slotW = this->SlotAt(slot, this->SlotQBytes());
+        GM_ADDR slotK = this->SlotAt(slot, this->SlotQBytes() + this->SlotWBytes());
+        GM_ADDR slotDo = this->SlotAt(slot, this->SlotQBytes() + this->SlotWBytes() + this->SlotKBytes());
+        GM_ADDR slotNegDv = this->SlotAt(slot, this->SlotQBytes() + this->SlotWBytes() + this->SlotKBytes() +
+                                                   this->SlotDoBytes());
         GM_ADDR slotDecay = this->SlotAt(slot, this->SlotDecayOffset());
 
         LocalTensor<float> gF = gF32_.Get<float>();
         LocalTensor<float> decayF = decayF32_.Get<float>();
+        // 门控行因子（仅 gate=g 路径使用）：函数级声明，tile 循环里按行取用
+        LocalTensor<float> qFac = qFacF32_.Get<float>();
+        LocalTensor<float> kFac = kFacF32_.Get<float>();
         if (useG != 0) {
             GuardScratchRewrite();
             if constexpr (ChunkDeltaHBwdPreprocessSameType<GT, float>::value) {
@@ -309,6 +334,21 @@ private:
             WaitFlag<HardEvent::V_S>(CDHP_EV_V_S);
             const float eLast = ExpScalar(gF.GetValue(rows - 1) * CDHP_LN2);
             Duplicate(decayF, eLast, kDim);
+            PipeBarrier<PIPE_V>();
+            // 行因子一次性算好：qFac_r = exp2(g_r)·scale，kFac_r = -exp2(g_last-g_r)。
+            // 原来在 tile 循环里每行调 2 次 ExpScalar（每 chunk/head 128 次 V↔S 往返），
+            // 是 A2 scalar pipe 的最大来源；这里改成 6 条向量指令 + 1 次 V→S。
+            const float gLastVal = gF.GetValue(rows - 1);
+            AscendC::Muls(qFac, gF, CDHP_LN2, rows);
+            AscendC::Adds(kFac, gF, -gLastVal, rows);
+            PipeBarrier<PIPE_V>();
+            AscendC::Exp(qFac, qFac, rows);
+            AscendC::Muls(kFac, kFac, -CDHP_LN2, rows);
+            PipeBarrier<PIPE_V>();
+            AscendC::Muls(qFac, qFac, scale_, rows);
+            AscendC::Exp(kFac, kFac, rows);
+            PipeBarrier<PIPE_V>();
+            AscendC::Muls(kFac, kFac, -1.0f, rows);
             PipeBarrier<PIPE_V>();
         } else if (useGk != 0) {
             GuardScratchRewrite();
@@ -340,10 +380,12 @@ private:
             LocalTensor<float> kF = s1F32_.Get<float>();
             LocalTensor<float> wF = s2F32_.Get<float>();
             LocalTensor<float> doF = s3F32_.Get<float>();
+            LocalTensor<float> dvF = s4F32_.Get<float>();
             Duplicate(qF, 0.0f, tileRows * kDim);
             Duplicate(kF, 0.0f, tileRows * kDim);
             Duplicate(wF, 0.0f, tileRows * kDim);
             Duplicate(doF, 0.0f, tileRows * vDim);
+            Duplicate(dvF, 0.0f, tileRows * vDim);
             PipeBarrier<PIPE_V>();
             if (validRows > 0) {
                 LoadTileF32(qF, qAddr_ + static_cast<uint64_t>(hk * this->tiling_.T + t0 + r0) * kDim * sizeof(DT),
@@ -354,67 +396,46 @@ private:
                             validRows, kDim, kDim);
                 LoadTileF32(doF, doAddr_ + static_cast<uint64_t>(hv * this->tiling_.T + t0 + r0) * vDim * sizeof(DT),
                             validRows, vDim, vDim);
+                LoadTileF32(dvF, dvAddr_ + static_cast<uint64_t>(hv * this->tiling_.T + t0 + r0) * vDim * sizeof(DT),
+                            validRows, vDim, vDim);
                 if (useG != 0) {
-                    const float gLast = gF.GetValue(rows - 1);
+                    // 因子已按 chunk 一次性算好，这里只做一次 V→S 同步，逐行取标量因子
+                    SetFlag<HardEvent::V_S>(CDHP_EV_V_S);
+                    WaitFlag<HardEvent::V_S>(CDHP_EV_V_S);
                     for (uint32_t r = 0; r < validRows; ++r) {
-                        const float ev = ExpScalar(gF.GetValue(r0 + r) * CDHP_LN2);
-                        AscendC::Muls(qF[r * kDim], qF[r * kDim], ev * scale_, kDim);
-                        const float dv = ExpScalar((gLast - gF.GetValue(r0 + r)) * CDHP_LN2);
-                        AscendC::Muls(kF[r * kDim], kF[r * kDim], dv, kDim);
+                        AscendC::Muls(qF[r * kDim], qF[r * kDim], qFac.GetValue(r0 + r), kDim);
+                        // v3：K̄ 落负号（Cube 侧 T1 = Wᵀ@(-K̄) 即为 -T1）；kFac 已含负号与衰减
+                        AscendC::Muls(kF[r * kDim], kF[r * kDim], kFac.GetValue(r0 + r), kDim);
                     }
                     PipeBarrier<PIPE_V>();
                 } else {
                     AscendC::Muls(qF, qF, scale_, validRows * kDim);
                     PipeBarrier<PIPE_V>();
+                    // 无门控 / gk：K̄ = k 或 kg（衰减已在 gk 里），这里只落负号
+                    AscendC::Muls(kF, kF, -1.0f, validRows * kDim);
+                    PipeBarrier<PIPE_V>();
                 }
+                // v3：dv 落盘取负，使 AB = Q̄sᵀ@do + Wᵀ@(-dv) 全部正累加
+                AscendC::Muls(dvF, dvF, -1.0f, validRows * vDim);
             }
             StoreTileModel(qF, slotQ + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows, kDim, kDim);
             StoreTileModel(kF, slotK + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows, kDim, kDim);
             StoreTileModel(wF, slotW + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows, kDim, kDim);
             StoreTileModel(doF, slotDo + static_cast<uint64_t>(r0) * vDim * sizeof(DT), tileRows, vDim, vDim);
+            StoreTileModel(dvF, slotNegDv + static_cast<uint64_t>(r0) * vDim * sizeof(DT), tileRows, vDim, vDim);
         }
         StoreScalarF32(decayF, slotDecay, kDim);
     }
 
-    // V2：dV̂' = -(dV_pre + dv_local)（无效行写零）
-    // 契约：入口消费 C1 的 dV_pre 与本 chunk 的 dv_local；出口的 dV̂' 落模型 dtype，供 C3 当右操作数。
-    __aicore__ inline void StageV2(uint32_t hv, uint32_t chunkIdx)
-    {
-        const uint32_t rows = this->ChunkRows(chunkIdx);
-        const uint32_t t0 = this->ChunkStart(chunkIdx);
-        const uint32_t vDim = static_cast<uint32_t>(this->tiling_.V);
-        const uint32_t mDim = static_cast<uint32_t>(this->tiling_.chunkSize);
-        for (uint32_t r0 = 0; r0 < mDim; r0 += CDHP_VEC_TILE) {
-            const uint32_t tileRows = MinV(CDHP_VEC_TILE, mDim - r0);
-            const uint32_t validRows = (r0 < rows) ? MinV(tileRows, rows - r0) : 0;
-            LocalTensor<float> preF = s0F32_.Get<float>();
-            LocalTensor<float> dvF = s1F32_.Get<float>();
-            Duplicate(preF, 0.0f, tileRows * vDim);
-            Duplicate(dvF, 0.0f, tileRows * vDim);
-            PipeBarrier<PIPE_V>();
-            if (validRows > 0) {
-                LoadPlaneF32(preF, this->DvPreAt(), r0, validRows, vDim);
-                // 走统一的 LoadTileF32（内部含 MTE2→V 与暂存区复用同步）
-                LoadTileF32(dvF, dvAddr_ + static_cast<uint64_t>(hv * this->tiling_.T + t0 + r0) * vDim * sizeof(DT),
-                            validRows, vDim, vDim);
-                AscendC::Add(preF, preF, dvF, validRows * vDim);
-                PipeBarrier<PIPE_V>();
-                AscendC::Muls(preF, preF, -1.0f, validRows * vDim);
-                PipeBarrier<PIPE_V>();
-            }
-            StoreTileModel(preF, this->DvHatAt() + static_cast<uint64_t>(r0) * vDim * sizeof(DT), tileRows, vDim,
-                           vDim);
-        }
-    }
-
-    // InitState：dH = 0、P = I 落到对应 parity 的 FP32 平面
-    // 契约：每个 task（hv）进入 chunk 逆序循环前调用一次；同时把 dH 的模型 dtype 操作数平面清零，
-    //       保证首个 chunk 的 C1 读到的是显式零而不是未初始化的 workspace。
+    // InitState：只把常驻 UB 的 dH 状态清零（初值 0）。
+    // 契约：每个 task（hv）进入 chunk 逆序循环前调用一次；首个 chunk 的模型 dtype 操作数
+    //       （dH = 0、P = I）由 StageStateStore 在放行 Cube 之前写盘。
     __aicore__ inline void InitState(uint32_t chunkNum)
     {
+        (void)chunkNum;
         // 跨 task 复用 UB 的 WAR：上一个 task 的最后一次搬出（MTE3，可能是 WriteOutput 的输出写回）
-        // 可能仍在读 s0F32_/s1F32_。`PipeBarrier<PIPE_MTE3>` 只约束 MTE3 自己，拦不住随后的 V/S，
-        // 若不等这一步，本轮 Duplicate/SetValue 会把「还在搬出中的那块 UB」改写，
+        // 可能仍在读 dhStateF32_/s1F32_。`PipeBarrier<PIPE_MTE3>` 只约束 MTE3 自己，拦不住随后的 V/S，
+        // 若不等这一步，本轮 Duplicate 会把「还在搬出中的那块 UB」改写，
         // 输出的最后一个 tile 会写成当前 UB 里的内容（实测表现为中间 task 的 P 面尾部变成单位阵）。
         SetFlag<HardEvent::MTE3_V>(CDHP_EV_MTE3_V);
         WaitFlag<HardEvent::MTE3_V>(CDHP_EV_MTE3_V);
@@ -422,92 +443,105 @@ private:
         WaitFlag<HardEvent::MTE3_S>(CDHP_EV_MTE3_S);
         const uint32_t kDim = static_cast<uint32_t>(this->tiling_.K);
         const uint32_t vDim = static_cast<uint32_t>(this->tiling_.V);
-        const uint32_t parity = chunkNum % 2;
-        LocalTensor<float> dhF = s0F32_.Get<float>();
-        LocalTensor<float> pF = s1F32_.Get<float>();
+        LocalTensor<float> dhState = dhStateF32_.Get<float>();
+        Duplicate(dhState, 0.0f, kDim * vDim);
+        PipeBarrier<PIPE_V>();
+    }
+
+    // v5 链上准备（参考 ChunkFwdH 的 rolling state）：
+    // 把"本 chunk 之前的"状态写成 Cube 需要的模型 dtype 操作数，再放行 Cube 的 Z/ZP。
+    //   dH：直接由 UB 常驻状态转模型 dtype 落盘（首 chunk 即全零初值）
+    //   P ：首 chunk 用内联单位阵（同时落 FP32 平面供本 chunk 的向量 P 链当 P_prev）；
+    //       之后从 GM 读上一轮 P 再转模型 dtype（P 仍走 GM scratch）
+    __aicore__ inline void StageStateStore(uint32_t window, bool isFirstChunk)
+    {
+        const uint32_t kDim = static_cast<uint32_t>(this->tiling_.K);
+        const uint32_t vDim = static_cast<uint32_t>(this->tiling_.V);
+        const uint32_t prevWin = (window + 1u) & 1u;
+        LocalTensor<float> dhState = dhStateF32_.Get<float>();
         for (uint32_t r0 = 0; r0 < kDim; r0 += CDHP_VEC_TILE) {
             const uint32_t tileRows = MinV(CDHP_VEC_TILE, kDim - r0);
-            Duplicate(dhF, 0.0f, tileRows * vDim);
-            Duplicate(pF, 0.0f, tileRows * kDim);
-            PipeBarrier<PIPE_V>();
-            // V 先写（Duplicate 清零）→ S 再写（对角注入）：关闭自动同步后必须先等 V 落盘，
-            // 否则标量写的 1.0 会被随后的向量清零覆盖（表现为 P 初值全零）。
-            SetFlag<HardEvent::V_S>(CDHP_EV_V_S);
-            WaitFlag<HardEvent::V_S>(CDHP_EV_V_S);
-            for (uint32_t r = 0; r < tileRows; ++r) {
-                pF.SetValue(r * kDim + (r0 + r), 1.0f);
+            // dH 操作数
+            StoreTileModel(dhState[static_cast<uint32_t>(r0) * vDim],
+                           this->DhBfAt(prevWin) + static_cast<uint64_t>(r0) * vDim * sizeof(DT), tileRows, vDim,
+                           vDim);
+            // P 操作数
+            LocalTensor<float> pF = s1F32_.Get<float>();
+            if (isFirstChunk) {
+                Duplicate(pF, 0.0f, tileRows * kDim);
+                PipeBarrier<PIPE_V>();
+                // V 先写（Duplicate 清零）→ S 再写（对角注入）：关闭自动同步后必须先等 V 落盘，
+                // 否则标量写的 1.0 会被随后的向量清零覆盖（表现为 P 初值全零）。
+                SetFlag<HardEvent::V_S>(CDHP_EV_V_S);
+                WaitFlag<HardEvent::V_S>(CDHP_EV_V_S);
+                for (uint32_t r = 0; r < tileRows; ++r) {
+                    pF.SetValue(r * kDim + (r0 + r), 1.0f);
+                }
+                SetFlag<HardEvent::S_V>(CDHP_EV_S_V);
+                WaitFlag<HardEvent::S_V>(CDHP_EV_S_V);
+                // FP32 平面：本 chunk 的向量 P 链（P_new = decay ⊙ P_prev + ZP）读它当 P_prev
+                StorePlaneF32(pF, this->PAt(prevWin), r0, tileRows, kDim);
+            } else {
+                LoadPlaneF32(pF, this->PAt(prevWin), r0, tileRows, kDim);
             }
-            SetFlag<HardEvent::S_V>(CDHP_EV_S_V);
-            WaitFlag<HardEvent::S_V>(CDHP_EV_S_V);
-            StorePlaneF32(dhF, this->DhAt(parity), r0, tileRows, vDim);
-            StorePlaneF32(pF, this->PAt(parity), r0, tileRows, kDim);
-            // C1 真正消费的是模型 dtype 的 dH 操作数平面（首轮必须为零，否则读到未初始化的 workspace）
-            StoreTileModel(dhF, this->DhBfAt() + static_cast<uint64_t>(r0) * vDim * sizeof(DT),
-                           tileRows, vDim, vDim);
+            StoreTileModel(pF, this->PBfAt(prevWin) + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows, kDim,
+                           kDim);
         }
+        // 操作数已落盘：通知 Cube 可以开始本 chunk 的 Z/ZP
+        CDHP_AIV_SET(CdhpFlag(CDHP_FLAG_STATE_READY, prevWin));
     }
 
     // V4：路 A（dH 更新 + dHBf）+ 路 B（P_c + 上一轮 P 的 dtype 拷贝）
     // 契约：入口消费 C3 的 qterm/wterm、C1 的 T1 与 V0 的 decayK；出口 dH_new（FP32 落盘 + 模型 dtype
     //       操作数）、P_c（模型 dtype）与本轮 P 的模型 dtype 拷贝，供 C5 使用、并供下一轮 C1/V4 复用。
-    __aicore__ inline void StageV4(uint32_t chunkIdx)
+    // v3 状态链（向量侧）：dH_new = decay⊙dH_prev + AB + Z；P_new = decay⊙P_prev + ZP
+    __aicore__ inline void StageState(uint32_t chunkIdx, uint32_t window)
     {
         const uint32_t kDim = static_cast<uint32_t>(this->tiling_.K);
         const uint32_t vDim = static_cast<uint32_t>(this->tiling_.V);
-        const uint32_t dhParity = chunkIdx % 2;
-        const uint32_t dhPrev = (chunkIdx + 1) % 2;
+        const uint32_t prevWin = (window + 1u) & 1u;
         LocalTensor<float> decayF = decayF32_.Get<float>();
+        // V0 领先，UB 里的 decayF32_ 存活期不覆盖本 Stage → 从本 window 的 slot 重新载入 decayK
+        LoadPlaneF32(decayF, this->SlotAtWindow(window, this->SlotDecayOffset()), 0, 1, kDim);
         SetFlag<HardEvent::MTE2_V>(CDHP_EV_MTE2_V);
         WaitFlag<HardEvent::MTE2_V>(CDHP_EV_MTE2_V);
         SetFlag<HardEvent::V_S>(CDHP_EV_V_S);
         WaitFlag<HardEvent::V_S>(CDHP_EV_V_S);
 
+        LocalTensor<float> dhState = dhStateF32_.Get<float>();
         for (uint32_t r0 = 0; r0 < kDim; r0 += CDHP_VEC_TILE) {
             const uint32_t tileRows = MinV(CDHP_VEC_TILE, kDim - r0);
-            LocalTensor<float> dhF = s0F32_.Get<float>();
-            LocalTensor<float> qF = s1F32_.Get<float>();
-            LocalTensor<float> wF = s2F32_.Get<float>();
-            LoadPlaneF32(dhF, this->DhAt(dhPrev), r0, tileRows, vDim);
-            LoadPlaneF32(qF, this->QtermAt(), r0, tileRows, vDim);
-            LoadPlaneF32(wF, this->WtermAt(), r0, tileRows, vDim);
-            AscendC::Add(qF, qF, wF, tileRows * vDim);
+            LocalTensor<float> abF = s0F32_.Get<float>();
+            LocalTensor<float> zF = s1F32_.Get<float>();
+            LoadPlaneF32(abF, this->AbAt(window), r0, tileRows, vDim);
+            LoadPlaneF32(zF, this->ZAt(window), r0, tileRows, vDim);
+            AscendC::Add(abF, abF, zF, tileRows * vDim);
             PipeBarrier<PIPE_V>();
+            // v5（参考 ChunkFwdH 的 rolling state）：dH_old 直接取 UB 常驻状态并就地更新，
+            // 不再每 chunk 经 GM workspace 读写 FP32 状态。
             for (uint32_t r = 0; r < tileRows; ++r) {
-                AscendC::Muls(dhF[r * vDim], dhF[r * vDim], decayF.GetValue(r0 + r), vDim);
+                AscendC::Muls(dhState[(r0 + r) * vDim], dhState[(r0 + r) * vDim], decayF.GetValue(r0 + r), vDim);
             }
             PipeBarrier<PIPE_V>();
-            AscendC::Add(dhF, dhF, qF, tileRows * vDim);
+            AscendC::Add(dhState[r0 * vDim], dhState[r0 * vDim], abF, tileRows * vDim);
             PipeBarrier<PIPE_V>();
-            StorePlaneF32(dhF, this->DhAt(dhParity), r0, tileRows, vDim);
-            StoreTileModel(dhF, this->DhBfAt() + static_cast<uint64_t>(r0) * vDim * sizeof(DT), tileRows, vDim,
-                           vDim);
-        }
-
-        for (uint32_t r0 = 0; r0 < kDim; r0 += CDHP_VEC_TILE) {
-            const uint32_t tileRows = MinV(CDHP_VEC_TILE, kDim - r0);
-            LocalTensor<float> t1F = s0F32_.Get<float>();
-            LoadPlaneF32(t1F, this->T1At(), r0, tileRows, kDim);
-            AscendC::Muls(t1F, t1F, -1.0f, tileRows * kDim);
-            PipeBarrier<PIPE_V>();
-            // 对角注入必须用标量读写：UB 上的向量指令要求 32B 对齐，而 [i,i] 的偏移不满足该规律
-            // （此前用 Adds(..., 1) 会触发 "The address for VEC to access UB is not aligned"）。
-            SetFlag<HardEvent::V_S>(CDHP_EV_V_S);
-            WaitFlag<HardEvent::V_S>(CDHP_EV_V_S);
-            for (uint32_t r = 0; r < tileRows; ++r) {
-                const uint32_t idx = r * kDim + (r0 + r);
-                t1F.SetValue(idx, t1F.GetValue(idx) + decayF.GetValue(r0 + r));
-            }
-            SetFlag<HardEvent::S_V>(CDHP_EV_S_V);
-            WaitFlag<HardEvent::S_V>(CDHP_EV_S_V);
-            StoreTileModel(t1F, this->PcAt() + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows, kDim, kDim);
         }
 
         for (uint32_t r0 = 0; r0 < kDim; r0 += CDHP_VEC_TILE) {
             const uint32_t tileRows = MinV(CDHP_VEC_TILE, kDim - r0);
             LocalTensor<float> pF = s0F32_.Get<float>();
-            // 读上一轮 C5 产出的 P（parity = (chunkIdx + 1) % 2），不是本轮写入的那个面
-            LoadPlaneF32(pF, this->PAt(dhPrev), r0, tileRows, kDim);
-            StoreTileModel(pF, this->PBfAt() + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows, kDim, kDim);
+            LocalTensor<float> zpF = s1F32_.Get<float>();
+            LoadPlaneF32(pF, this->PAt(prevWin), r0, tileRows, kDim);
+            LoadPlaneF32(zpF, this->ZpAt(window), r0, tileRows, kDim);
+            for (uint32_t r = 0; r < tileRows; ++r) {
+                AscendC::Muls(pF[r * kDim], pF[r * kDim], decayF.GetValue(r0 + r), kDim);
+            }
+            PipeBarrier<PIPE_V>();
+            AscendC::Add(pF, pF, zpF, tileRows * kDim);
+            PipeBarrier<PIPE_V>();
+            StorePlaneF32(pF, this->PAt(window), r0, tileRows, kDim);
+            StoreTileModel(pF, this->PBfAt(window) + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows, kDim,
+                           kDim);
         }
     }
 
@@ -517,13 +551,14 @@ private:
         const uint32_t kDim = static_cast<uint32_t>(this->tiling_.K);
         const uint32_t vDim = static_cast<uint32_t>(this->tiling_.V);
         const uint32_t rowStride = vDim + kDim;
+        // E 面：dH 的末值就在 UB 常驻状态（dhStateF32_）里，不必再经 GM workspace 往返。
+        // 源由 V（状态累加）写，搬出前建立 V→MTE3 顺序。
+        LocalTensor<float> dhState = dhStateF32_.Get<float>();
+        SetFlag<HardEvent::V_MTE3>(CDHP_EV_V_MTE3);
+        WaitFlag<HardEvent::V_MTE3>(CDHP_EV_V_MTE3);
         for (uint32_t r0 = 0; r0 < kDim; r0 += CDHP_VEC_TILE) {
             const uint32_t tileRows = MinV(CDHP_VEC_TILE, kDim - r0);
-            LocalTensor<float> f = s0F32_.Get<float>();
-            LoadPlaneF32(f, this->DhAt(0), r0, tileRows, vDim);
-            // 源 UB 刚由 MTE2 写入：搬出前必须等 MTE2 完成
-            SetFlag<HardEvent::MTE2_MTE3>(CDHP_EV_MTE2_MTE3);
-            WaitFlag<HardEvent::MTE2_MTE3>(CDHP_EV_MTE2_MTE3);
+            LocalTensor<float> f = dhState[static_cast<uint32_t>(r0) * vDim];
             AscendC::DataCopyExtParams dhParams{static_cast<uint16_t>(tileRows),
                                                 static_cast<uint32_t>(vDim * sizeof(float)), 0,
                                                 static_cast<uint32_t>((rowStride - vDim) * sizeof(float)), 0};
@@ -548,10 +583,14 @@ private:
     AscendC::TBuf<AscendC::TPosition::VECCALC> s1F32_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> s2F32_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> s3F32_;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> s4F32_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> s0DT_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> gF32_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> decayF32_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> scalarF32_;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> qFacF32_;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> kFacF32_;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> dhStateF32_;
     AscendC::GlobalTensor<float> dhmGm_;
     GM_ADDR qAddr_ = nullptr;
     GM_ADDR kAddr_ = nullptr;

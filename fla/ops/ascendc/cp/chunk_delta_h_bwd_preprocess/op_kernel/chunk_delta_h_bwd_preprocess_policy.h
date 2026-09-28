@@ -67,25 +67,87 @@ constexpr uint32_t CDHP_FLAG_C3_DONE = 3;  // AIC → AIV：qterm 与 wterm 就�
 constexpr uint32_t CDHP_FLAG_V4_DONE = 4;  // AIV → AIC：dH 新值、P_c、P_bf16 就绪
 constexpr uint32_t CDHP_FLAG_C5_DONE = 5;  // AIC → AIV：P 新值就绪（下一轮 V4 需要）
 
+// v2.1：双 window 流水。每个 chunk 取 w = chunkIdx & 1，六个 ready 各自按 window 分 id，
+// 于是 AIV 可以把 V0 提前两个 chunk（slot(w) 在 C1 消费完即释放），AIC 不再在 chunk 之间空等。
+// 参考 chunk_gated_delta_rule_bwd_finalize 的「每方向一条 ready 链 + 双 window×4 head」做法。
+constexpr uint32_t CDHP_WINDOW_COUNT = 2;
+
+__aicore__ inline constexpr uint32_t CdhpFlag(uint32_t base, uint32_t window)
+{
+    return base * CDHP_WINDOW_COUNT + window;
+}
+
+// v4 的 3 条 ready 协议（每条按 window 分 2 个 id，共 6 个）：
+//   V0_READY    AIV→AIC：本 window 的 slot（Q̄s/W/-K̄/do/-dv/decay）就绪
+//   Z_READY     AIC→AIV：Z/ZP 就绪（链上的 MMAD 结果）
+//   STATE_READY AIV→AIC：dH_bf / P_bf 就绪（下一 chunk 的 MMAD 操作数）
+// v4 起 T1 的模型 dtype 平面由**本核 fixpipe 直接写**（见 arch35/arch22 的 cube），
+// 不再是"AIC 写 FP32 → AIV 转 dtype → AIV 通知 AIC"的三步握手：
+//   * 跨核上不再需要 T1_READY / T1BF_READY 两条 flag，AIV 的 StageT1Convert 整段消失；
+//   * "写落盘"先于"MTE2 读回"变成 AIC 核内的 FIX→MTE2 依赖，用本核事件表达
+//     （CDHP_AIC_EV_FIX_MTE2，见 cube）。核间少一次往返，少 96 KiB/chunk 的 UB↔GM 搬运。
+constexpr uint32_t CDHP_FLAG_V0_READY = 0;
+constexpr uint32_t CDHP_FLAG_Z_READY = 1;
+constexpr uint32_t CDHP_FLAG_STATE_READY = 2;
+
+// A5（dav-3510）的 1 AIC : 2 AIV 核型下，AIC 用 16 的 id 步长选择配对的 AIV（mode = 0x4 按 subblock
+// 选配对 AIV）；AIV 侧只用自己的本地 id（就是上面的 CdhpFlag 结果，最大 9，落在 A5 允许的 0..10 内）。
+// A2/A3 的 mode = 0x2 是 AIC:2*AIV 集合同步，两个 AIV 共用同一 id，因此不需要步长。
+constexpr uint32_t CDHP_FLAG_SUBBLOCK_STRIDE = 16;
+// mode 必须和核型配对：
+//   arch35（A5）→ 1 AIC : 2 AIV，用 0x4（按 subblock 选配对 AIV，配 CdhpPeerFlag 的 16 步长）；
+//   arch22（A2/A3）→ 1 AIC : 1 AIV，用 0x2（AIC 与本 block 的 AIV 集合同步）。
+// kernel 是按 SoC 分别编译的，op_host 的 aivPerBlock 也按同一个 SoC 判定，两侧天然一致。
+// 用错 mode 会在 launch 后直接报 synchronize failed（实测 507015），是运行期错误而不是精度问题。
+// 当前统一 1 AIC : 1 AIV ⇒ 0x2（AIC 与本 block 的 AIV 集合同步）。
+// 打开 op_host 的 aivPerBlock=2（A5 的 1:2）时必须同时把这里切到 0x4，否则直接 507015；
+// 反过来 1:2 目前还会打破 **尾块（chunkSize 内不足一个满 chunk，例如 T=200）** 的 P 面精度，
+// 定位清楚前不要启用，两处一起保持 1:1。
+// 统一 1 AIC : 1 AIV ⇒ 0x2。打开 1:2（aivPerBlock=2 + MIX_AIC_1_2）时必须一起切到 0x4；
+// 另外实测：P 常驻 UB（§15）之后 AIV 侧工作量已经不大，1:2 反而让 AIC 变成瓶颈（kda 档明显变慢），
+// 因此 1:2 在 A5 上暂不启用。
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#define CDHP_CROSS_CORE_MODE 0x4
+#else
+#define CDHP_CROSS_CORE_MODE 0x2
+#endif
+
+__aicore__ inline constexpr uint32_t CdhpPeerFlag(uint32_t aiv, uint32_t localId)
+{
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    return localId + aiv * CDHP_FLAG_SUBBLOCK_STRIDE;
+#else
+    (void)aiv;
+    return localId;
+#endif
+}
+
 // set 之前先让本 pipe 排空（PipeBarrier 是"等待本 pipe 先前指令完成"的屏障）。
 // 实测：不做排空时，cube 侧 C5 的 Fixpipe 落盘还没走完就把 flag 置起来，消费者在
 // 非最后一个 task 上会读到"最后 16 行全 0"的半成品平面（E 不受影响、P 整链被污染）。
 #define CDHP_AIV_SET(flag)                                  \
     do {                                                    \
         AscendC::PipeBarrier<PIPE_MTE3>();                   \
-        AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(flag);     \
+        AscendC::CrossCoreSetFlag<CDHP_CROSS_CORE_MODE, PIPE_MTE3>(flag); \
     } while (0)
 // 注意：`CrossCoreWaitFlag(flag)` 的默认模板参数是 `pipe = PIPE_S`，在 A5（dav_3510）上
 // WaitEventImpl 会按 pipe 只阻塞对应 pipe。若用默认值，等待只落在标量 pipe 上，
 // 随后的 MTE2（GM→UB/L1）载入不会被拦在 flag 之后，会读到 cube 还没写完的中间平面
 // （表现为 P/T1 相关的整块旧值，且随负载时好时坏）。这里显式绑定消费者 pipe = MTE2。
-#define CDHP_AIV_WAIT(flag) AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(flag)
-#define CDHP_AIC_SET(flag)                                 \
-    do {                                                   \
-        AscendC::PipeBarrier<PIPE_FIX>();                   \
-        AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(flag);     \
+#define CDHP_AIV_WAIT(flag) AscendC::CrossCoreWaitFlag<CDHP_CROSS_CORE_MODE, PIPE_MTE2>(flag)
+// AIC 侧：aiv 是配对 AIV 在该 block 内的序号（0/1）。A5 下同一 block 的两个 AIV 各有自己的一条
+// ready 链，AIC 必须按 aiv 分别 wait/set；A2/A3 下 aiv 被忽略（集合同步覆盖两个 AIV）。
+// 必须先排空 FIX pipe 再置 flag：本算子的 fixpipe 是落 GM（Z/ZP/T1 平面），置 flag 时若写还没
+// 落盘，消费者会读到上一次留在该平面里的半成品（实测症状：E 面（先写的 Z）正常、P 面（后写的 ZP）
+// 整链被污染，且哪个 head 出错随负载变化）。fwd_h / chunk_gdn_bwd_intra 的 fixpipe 是写 UB，
+// UB 写在核内立即可见，那边才不需要这个排空，不能照抄。
+#define CDHP_AIC_SET(aiv, flag)                                                          \
+    do {                                                                                 \
+        AscendC::PipeBarrier<PIPE_FIX>();                                                \
+        AscendC::CrossCoreSetFlag<CDHP_CROSS_CORE_MODE, PIPE_FIX>(CdhpPeerFlag(aiv, flag)); \
     } while (0)
-#define CDHP_AIC_WAIT(flag) AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(flag)
+#define CDHP_AIC_WAIT(aiv, flag) \
+    AscendC::CrossCoreWaitFlag<CDHP_CROSS_CORE_MODE, PIPE_MTE2>(CdhpPeerFlag(aiv, flag))
 
 // 工作区平面在 user workspace 内的角色；具体偏移由 host tiling 给出
 enum ChunkDeltaHBwdPreprocessWs : uint32_t {

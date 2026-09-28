@@ -51,6 +51,9 @@ static constexpr size_t CDHP_DIM_3 = 3;
 static constexpr uint64_t CDHP_WS_ALIGN = 512;
 // V0 chunk slot 的流水深度；仅影响 workspace 大小与 ping-pong 度，不影响语义
 static constexpr uint64_t CDHP_SLOT_NUM = 2;
+// v2.1 双 window 流水：与 kernel 侧 chunk_delta_h_bwd_preprocess_policy.h 的 CDHP_WINDOW_COUNT 一致
+//（op_host 不包含 kernel 头文件，因此这里单独声明）。
+static constexpr uint64_t CDHP_TILING_WINDOW_COUNT = 2;
 static constexpr uint64_t CDHP_META_WS_BYTES = 512;
 static constexpr uint64_t CDHP_HALF_DTYPE_SIZE = 2;
 static constexpr uint64_t CDHP_FP32_DTYPE_SIZE = 4;
@@ -76,6 +79,9 @@ struct ChunkDeltaHBwdPreprocessTilingContext {
     double scaleAttr;
     int32_t chunkSize;
     uint32_t totalCoreNum;
+    // 一个 AI Core block 内配对几个 AIV：A5（arch35）走 MIX_AIC_1_2 ⇒ 2，A2/A3（arch22）⇒ 1。
+    // 每个 AIV 独立承包一个 head 的整条逆序链，因此 workspace 平面要按 blockDim * aivPerBlock 切片。
+    uint32_t aivPerBlock;
     size_t sysWorkspaceSize;
 };
 
@@ -282,11 +288,22 @@ public:
         OP_CHECK_IF(totalCore == 0, OP_LOGE(ctx_.nodeName, "platform reported 0 AIC cores."), return ge::GRAPH_FAILED);
 
         // 本版 kernel 在核内按"整头"处理（不做列 tile 拆分），因此统一走仅按 head 连续分核：
-        // 同一 head 的全部 chunk 留在同一工作组，禁止按 chunk 分核。
+        // 同一 head 的全部 chunk 留在同一 AIV，禁止按 chunk 分核。
         // (hv, 列 tile) 展平分核留待 kernel 支持列 tile 后放开。
+        //
+        // A5（1 AIC : 2 AIV）下一个 block 的两个 AIV 各自承包一个 head，因此 blockDim 按
+        // ceil(Hv/2) 规划：Hv=32 时用 16 个 block × 2 AIV 覆盖 32 个 head，而不像 1:1 那样
+        // 只能开 28 个 block、每核串两个 head。A2/A3 仍是 1:1，保持原规则。
+        // 1:2 核型：每个 block 的 2 个 AIV 各承包一个 head，因此按 ceil(Hv/2) 开 block，
+        // groupHeads = ceil(Hv/blockDim)（Hv=32/核数 20 → 16 个 block × 2 head；Hv=64 → 20 个
+        // block × 4 head = 2 轮，每轮两个 AIV 各有各的 head）。
+        // kernel 侧把每 block 的 head 数补齐到 2 的倍数，只有当一个 block 的 head 数是奇数时才会
+        // 出现"重复算最后一个 head"的填充槽（幂等，仅浪费一点算力）。
         splitMode_ = CP::CHUNK_DELTA_H_BWD_PREPROCESS_SPLIT_BY_HEAD;
-        blockDim_ = std::min(Hv_, totalCore);
+        const uint64_t aivPerBlock = std::max<uint64_t>(1, static_cast<uint64_t>(ctx_.aivPerBlock));
+        blockDim_ = std::min(CeilDiv(Hv_, aivPerBlock), totalCore);
         groupHeads_ = CeilDiv(Hv_, blockDim_);
+        tiling_.aivPerBlock = aivPerBlock;
 
         tiling_.usedCoreNum = blockDim_;
         tiling_.blockDim = blockDim_;
@@ -301,10 +318,11 @@ public:
     ge::graphStatus PlanWorkspace()
     {
         // V0 的 chunk slot：Q̄s[M,K] + K̄[M,K] + W[M,K] + do[M,V]（模型 dtype，零填充）+ decayK[K]（FP32）。
-        // 每个工作组一个 slot：同一 chunk 下不同 head 的操作数不能共用同一块 GM，否则会互相覆盖；
-        // 同 chunk 内 AIV/AIC 严格交替，一个 slot 足够（下一轮 V0 必然在上一轮 C5 之后）。
+        // 每个工作组 CDHP_WINDOW_COUNT 份 slot（v2.1 双 window 流水）：同一 chunk 下不同 head 的操作数
+        // 不能共用同一块 GM；同一工作组的两份 slot 按 window = chunkIdx & 1 使用，AIV 才能领先 AIC
+        // 一个 chunk 准备操作数而不覆盖 C1 正在读的那份。
         const uint64_t slotModelBytes =
-            chunkSize_ * (3 * K_ + V_) * CDHP_MODEL_DTYPE_SIZE + K_ * CDHP_FP32_DTYPE_SIZE;
+            chunkSize_ * (3 * K_ + 2 * V_) * CDHP_MODEL_DTYPE_SIZE + K_ * CDHP_FP32_DTYPE_SIZE;
         const uint64_t slotBytes = AlignUp(slotModelBytes, CDHP_WS_ALIGN);
         // 以下平面都是"每个工作组各一份"：同一 chunk 下不同 head 的中间量不能共用同一块 GM。
         // 每个平面按 blockDim_ 复制 blockDim_ 份，kernel 用 BlockIdx() 选自己的那一份。
@@ -312,27 +330,35 @@ public:
         // 约定：单份大小必须是 512 B 的整数倍，这样 AlignUp(wg * n * 单份) / (wg * n) == 单份，
         // kernel 侧 planeBytes / sliceCount 才能精确还原单份大小（否则切片错位会写到相邻平面）。
         // K, V >= 64 时 K*V*4、K*K*4 等均为 512 B 的整数倍，见 Init() 的平台/形状校验。
-        const uint64_t wg = blockDim_;
+        // wg：workspace 里"每份平面"的份数 = blockDim * aivPerBlock（A5 下每个 block 的两个 AIV
+        // 各有自己的一份中间量/slot，不能共用）。
+        const uint64_t wg = blockDim_ * std::max<uint64_t>(1, tiling_.aivPerBlock);
         // dH：跨 chunk 状态，ping-pong 双缓冲，FP32；dHBf：供下一轮 C1 当矩阵操作数的模型 dtype 拷贝
+        // 平面份数：dh/p 每个工作组 2 份（parity，与 window 对齐）；其余中间量 v2.1 起也按 window 分 2 份。
+        const uint64_t win = CDHP_TILING_WINDOW_COUNT;
         const uint64_t dhWsBytes = AlignUp(wg * 2 * K_ * V_ * CDHP_FP32_DTYPE_SIZE, CDHP_WS_ALIGN);
-        const uint64_t dhBfWsBytes = AlignUp(wg * K_ * V_ * CDHP_MODEL_DTYPE_SIZE, CDHP_WS_ALIGN);
-        // E 分支中间量
-        const uint64_t dvPreWsBytes = AlignUp(wg * chunkSize_ * V_ * CDHP_FP32_DTYPE_SIZE, CDHP_WS_ALIGN);
-        const uint64_t dvHatWsBytes = AlignUp(wg * chunkSize_ * V_ * CDHP_MODEL_DTYPE_SIZE, CDHP_WS_ALIGN);
-        const uint64_t qtermWsBytes = AlignUp(wg * K_ * V_ * CDHP_FP32_DTYPE_SIZE, CDHP_WS_ALIGN);
-        const uint64_t wtermWsBytes = AlignUp(wg * K_ * V_ * CDHP_FP32_DTYPE_SIZE, CDHP_WS_ALIGN);
-        // P 分支：[K,K] 平面按模型 dtype 作为矩阵操作数；FP32 只用于链式累加与最终输出
-        const uint64_t t1WsBytes = AlignUp(wg * K_ * K_ * CDHP_FP32_DTYPE_SIZE, CDHP_WS_ALIGN);
-        const uint64_t pcWsBytes = AlignUp(wg * K_ * K_ * CDHP_MODEL_DTYPE_SIZE, CDHP_WS_ALIGN);
+        const uint64_t dhBfWsBytes = AlignUp(wg * win * K_ * V_ * CDHP_MODEL_DTYPE_SIZE, CDHP_WS_ALIGN);
+        // v3 平面（详见 op_kernel/<op>_common.h 的 Slot*/At 注释）：
+        //   dvPreWs → AB [K,V] FP32      （链外：Q̄sᵀ@do + Wᵀ@(-dv)）
+        //   dvHatWs → Z  [K,V] FP32      （链上：(-T1)@dH_prev）
+        //   qtermWs → ZP [K,K] FP32      （P 链上：(-T1)@P_prev）
+        //   wtermWs → T1 的模型 dtype 副本 [K,K]（Cube 当矩阵操作数）
+        //   t1Ws    → T1 的 FP32 平面 [K,K]
+        const uint64_t dvPreWsBytes = AlignUp(wg * win * K_ * V_ * CDHP_FP32_DTYPE_SIZE, CDHP_WS_ALIGN);
+        const uint64_t dvHatWsBytes = AlignUp(wg * win * K_ * V_ * CDHP_FP32_DTYPE_SIZE, CDHP_WS_ALIGN);
+        const uint64_t qtermWsBytes = AlignUp(wg * win * K_ * K_ * CDHP_FP32_DTYPE_SIZE, CDHP_WS_ALIGN);
+        const uint64_t wtermWsBytes = AlignUp(wg * win * K_ * K_ * CDHP_MODEL_DTYPE_SIZE, CDHP_WS_ALIGN);
+        const uint64_t t1WsBytes = AlignUp(wg * win * K_ * K_ * CDHP_FP32_DTYPE_SIZE, CDHP_WS_ALIGN);
+        const uint64_t pcWsBytes = 0;  // v3 起不再需要独立的 P_c 平面
         const uint64_t pWsBytes = AlignUp(wg * 2 * K_ * K_ * CDHP_FP32_DTYPE_SIZE, CDHP_WS_ALIGN);
-        const uint64_t pBfWsBytes = AlignUp(wg * K_ * K_ * CDHP_MODEL_DTYPE_SIZE, CDHP_WS_ALIGN);
+        const uint64_t pBfWsBytes = AlignUp(wg * win * K_ * K_ * CDHP_MODEL_DTYPE_SIZE, CDHP_WS_ALIGN);
         const uint64_t metaWsBytes = CDHP_META_WS_BYTES;
 
         uint64_t offset = 0;
         tiling_.metaWsOffset = offset;
         offset += metaWsBytes;
         tiling_.slotWsOffset = offset;
-        offset += blockDim_ * slotBytes;
+        offset += wg * win * slotBytes;
         tiling_.dhWsOffset = offset;
         offset += dhWsBytes;
         tiling_.dhBfWsOffset = offset;
@@ -354,7 +380,7 @@ public:
         tiling_.pBfWsOffset = offset;
         offset += pBfWsBytes;
 
-        tiling_.slotNum = 1;  // 每个工作组 1 个 slot
+        tiling_.slotNum = CDHP_TILING_WINDOW_COUNT;  // 每个工作组 2 个 slot（v2.1 双 window）
         tiling_.slotBytes = slotBytes;
         tiling_.dhWsBytes = dhWsBytes;
         tiling_.dhBfWsBytes = dhBfWsBytes;

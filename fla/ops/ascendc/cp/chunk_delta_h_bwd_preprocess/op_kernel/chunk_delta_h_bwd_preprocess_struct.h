@@ -127,6 +127,7 @@ struct ChunkDeltaHBwdPreprocessTilingData {
     uint64_t blockDim;
     uint64_t splitMode;
     uint64_t groupHeads;  // splitMode == BY_HEAD 时每核连续 head 数
+    uint64_t aivPerBlock;  // 1：A2/A3（MIX_AIC_1_1）；2：A5（MIX_AIC_1_2，一个 block 的两个 AIV 各承包一个 head）
     // 用户 workspace 规划（相对 user workspace 起始的字节偏移）
     uint64_t slotNum;
     uint64_t slotBytes;
