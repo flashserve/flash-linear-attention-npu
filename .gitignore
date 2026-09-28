@@ -55,6 +55,7 @@ torch_custom/fla_npu/torch_npu/
 /tests/atk/**/runs/
 /tests/atk/**/*.xlsx
 /tests/atk/**/*.log
+/tests/atk/**/mindstudio_sanitizer_log/
 
 #gdn cache
 # third_party：CMake FetchContent / ExternalProject 等在线拉取的依赖目录，不纳入仓库（含 catlass）
