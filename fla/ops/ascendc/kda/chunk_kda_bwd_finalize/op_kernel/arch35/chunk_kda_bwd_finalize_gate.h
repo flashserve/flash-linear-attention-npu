@@ -11,12 +11,13 @@
 namespace KDA {
 using namespace AscendC::MicroAPI;
 
-template <typename LogT>
+template <typename LogT, bool FULL_TILE>
 __simd_vf__ inline void FinalizeStage11VF(
     __ubuf__ float *dg, __ubuf__ float *raw, __ubuf__ float *bias,
     __ubuf__ LogT *aLog, __ubuf__ float *da, __ubuf__ float *db,
     uint16_t rows, float lowerBound)
 {
+    const uint16_t nRows = FULL_TILE ? static_cast<uint16_t>(KDA_FINALIZE_CHUNK) : rows;
     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
     MaskReg mask = CreateMask<float, MaskPattern::ALL>();
     RegTensor<float> e;
@@ -38,8 +39,8 @@ __simd_vf__ inline void FinalizeStage11VF(
     Duplicate(db1, 0.0f, mask);
     LoadAlign<float, LoadDist::DIST_DINTLV_B32>(bias0, bias1, bias);
     // Reverse scan and both parameter partials remain in registers.
-    for (uint16_t reverse = 0; reverse < rows; ++reverse) {
-        const uint32_t offset = (rows - 1U - reverse) * KDA_FINALIZE_DIM;
+    for (uint16_t reverse = 0; reverse < nRows; ++reverse) {
+        const uint32_t offset = (nRows - 1U - reverse) * KDA_FINALIZE_DIM;
         RegTensor<float> g0, g1, x0, x1, s0, s1, tmp0, tmp1;
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(g0, g1, dg + offset);
         Add(sum0, sum0, g0, mask);
