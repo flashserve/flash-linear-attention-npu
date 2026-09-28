@@ -83,6 +83,9 @@ constexpr uint32_t CDHP_EV_MTE3_MTE2 = 6;
 constexpr uint32_t CDHP_EV_S_MTE2 = 0;
 // 复用 UB 前等 MTE3 读完的 MTE3→S 事件（与上面的 id 数值可以相同：不同 HardEvent 对是不同硬件事件）
 constexpr uint32_t CDHP_EV_MTE3_S = 1;
+// v13：W / do 的"同 dtype 纯拷贝"专用暂存槽（只走 MTE2/MTE3，不碰 V pipe），单槽自平衡
+constexpr uint32_t CDHP_EV_COPY_MTE3_MTE2 = 7;  // 本槽上一笔搬出已完成 → 允许下一次搬入覆盖
+constexpr uint32_t CDHP_EV_COPY_MTE2_MTE3 = 0;  // 本槽搬入已完成 → 允许搬出读取
 
 // 编译期判断两个类型是否相同（避免依赖 <type_traits> 在 kernel 侧的可用性）
 template <typename A, typename B>
@@ -346,6 +349,8 @@ public:
         // v10：搬入/搬出各用一块双槽 model dtype 暂存区（per-slot credit，见 LoadTileF32/StoreTileModel）
         pipe_->InitBuffer(s0DT_, CDHP_UB_SLOT_NUM * CDHP_SCRATCH_ELEMS * sizeof(DT));
         pipe_->InitBuffer(s1DT_, CDHP_UB_SLOT_NUM * CDHP_SCRATCH_ELEMS * sizeof(DT));
+    // v13：W / do 的同 dtype 纯拷贝专用单槽暂存（8 KiB）
+    pipe_->InitBuffer(s2DT_, CDHP_SCRATCH_ELEMS * sizeof(DT));
         // 门控单独一块 model dtype 暂存（g 的一行 / gk 的一行），不再借用搬运暂存槽
         pipe_->InitBuffer(gDT_, 256 * sizeof(DT));
         pipe_->InitBuffer(gF32_, 256 * sizeof(float));
@@ -359,12 +364,41 @@ public:
             SetFlag<HardEvent::V_MTE2>(s);    // 搬入槽 credit 预置
             SetFlag<HardEvent::MTE3_V>(s);    // 搬出槽 credit 预置
         }
+    // v13：纯拷贝槽的初始 credit（MTE3→MTE2 方向）
+    SetFlag<HardEvent::MTE3_MTE2>(CDHP_EV_COPY_MTE3_MTE2);
     }
 
     __aicore__ inline uint32_t NextUbSlot()
     {
         ubSlot_ ^= 1u;
         return ubSlot_;
+    }
+
+    // v13：W / do 这两个平面在 Vector 侧**完全没有实数运算**（既不门控也不取负），只需要把原始输入
+    // 按模型 dtype 搬到 slot 的同一 dtype 平面上。原来走"载入 → Cast 到 FP32 → Cast 回模型 dtype → 落盘"，
+    // 每 tile 多出 4 次 Cast（两个平面 × 载入/落出）。这里用一块专用暂存槽做同 dtype 中转：
+    // 只保留 MTE2→MTE3 的顺序（一对 per-slot credit），完全不进 V pipe。
+    // 契约：只对**满 tile** 调用——尾块的无效行必须落 0，仍走原来的 FP32 通路（先 Duplicate 清零）。
+    __aicore__ inline void CopyTileModel(GM_ADDR src, GM_ADDR dst, uint32_t rows, uint32_t cols,
+                                         uint32_t rowStrideIn, uint32_t rowStrideOut)
+    {
+        AscendC::GlobalTensor<DT> gSrc;
+        AscendC::GlobalTensor<DT> gDst;
+        gSrc.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(src));
+        gDst.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dst));
+        LocalTensor<DT> tmp = s2DT_.Get<DT>();
+        // 本槽上一笔搬出已完成（首轮由 InitBuffer 预置）
+        WaitFlag<HardEvent::MTE3_MTE2>(CDHP_EV_COPY_MTE3_MTE2);
+        AscendC::DataCopyExtParams inParams{static_cast<uint16_t>(rows), static_cast<uint32_t>(cols * sizeof(DT)),
+                                            static_cast<uint32_t>((rowStrideIn - cols) * sizeof(DT)), 0, 0};
+        AscendC::DataCopyPadExtParams<DT> padParams{false, 0, 0, 0};
+        AscendC::DataCopyPad(tmp, gSrc, inParams, padParams);
+        SetFlag<HardEvent::MTE2_MTE3>(CDHP_EV_COPY_MTE2_MTE3);
+        WaitFlag<HardEvent::MTE2_MTE3>(CDHP_EV_COPY_MTE2_MTE3);
+        AscendC::DataCopyExtParams outParams{static_cast<uint16_t>(rows), static_cast<uint32_t>(cols * sizeof(DT)), 0,
+                                             static_cast<uint32_t>((rowStrideOut - cols) * sizeof(DT)), 0};
+        AscendC::DataCopyPad(gDst, tmp, outParams);
+        SetFlag<HardEvent::MTE3_MTE2>(CDHP_EV_COPY_MTE3_MTE2);
     }
 
     __aicore__ inline void Process()
@@ -668,20 +702,34 @@ private:
             LocalTensor<float> wF = s2F32_.Get<float>();
             LocalTensor<float> doF = s3F32_.Get<float>();
             LocalTensor<float> dvF = s4F32_.Get<float>();
+            // v13：满 tile 时 W / do 走同 dtype 纯拷贝（不做 FP32 往返）；尾块仍走 FP32 通路以便把无效行清 0
+            const bool wdNeedF32 = (validRows < tileRows);
             Duplicate(qF, 0.0f, tileRows * kDim);
             Duplicate(kF, 0.0f, tileRows * kDim);
-            Duplicate(wF, 0.0f, tileRows * kDim);
-            Duplicate(doF, 0.0f, tileRows * vDim);
+            if (wdNeedF32) {
+                Duplicate(wF, 0.0f, tileRows * kDim);
+                Duplicate(doF, 0.0f, tileRows * vDim);
+            }
             Duplicate(dvF, 0.0f, tileRows * vDim);
             if (validRows > 0) {
                 LoadTileF32(qF, qAddr_ + static_cast<uint64_t>(hk * this->tiling_.T + t0 + r0) * kDim * sizeof(DT),
                             validRows, kDim, kDim);
                 LoadTileF32(kF, kAddr_ + static_cast<uint64_t>(hk * this->tiling_.T + t0 + r0) * kDim * sizeof(DT),
                             validRows, kDim, kDim);
-                LoadTileF32(wF, wAddr_ + static_cast<uint64_t>(hv * this->tiling_.T + t0 + r0) * kDim * sizeof(DT),
-                            validRows, kDim, kDim);
-                LoadTileF32(doF, doAddr_ + static_cast<uint64_t>(hv * this->tiling_.T + t0 + r0) * vDim * sizeof(DT),
-                            validRows, vDim, vDim);
+                if (wdNeedF32) {
+                    LoadTileF32(wF,
+                                wAddr_ + static_cast<uint64_t>(hv * this->tiling_.T + t0 + r0) * kDim * sizeof(DT),
+                                validRows, kDim, kDim);
+                    LoadTileF32(
+                        doF, doAddr_ + static_cast<uint64_t>(hv * this->tiling_.T + t0 + r0) * vDim * sizeof(DT),
+                        validRows, vDim, vDim);
+                } else {
+                    CopyTileModel(wAddr_ + static_cast<uint64_t>(hv * this->tiling_.T + t0 + r0) * kDim * sizeof(DT),
+                                  slotW + static_cast<uint64_t>(r0) * kDim * sizeof(DT), validRows, kDim, kDim, kDim);
+                    CopyTileModel(
+                        doAddr_ + static_cast<uint64_t>(hv * this->tiling_.T + t0 + r0) * vDim * sizeof(DT),
+                        slotDo + static_cast<uint64_t>(r0) * vDim * sizeof(DT), validRows, vDim, vDim, vDim);
+                }
                 LoadTileF32(dvF, dvAddr_ + static_cast<uint64_t>(hv * this->tiling_.T + t0 + r0) * vDim * sizeof(DT),
                             validRows, vDim, vDim);
                 if (useG != 0) {
@@ -696,8 +744,10 @@ private:
             AscendC::Muls(dvF, dvF, -1.0f, tileRows * vDim);
             StoreTileModel(qF, slotQ + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows, kDim, kDim);
             StoreTileModel(kF, slotK + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows, kDim, kDim);
-            StoreTileModel(wF, slotW + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows, kDim, kDim);
-            StoreTileModel(doF, slotDo + static_cast<uint64_t>(r0) * vDim * sizeof(DT), tileRows, vDim, vDim);
+            if (wdNeedF32) {
+                StoreTileModel(wF, slotW + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows, kDim, kDim);
+                StoreTileModel(doF, slotDo + static_cast<uint64_t>(r0) * vDim * sizeof(DT), tileRows, vDim, vDim);
+            }
             StoreTileModel(dvF, slotNegDv + static_cast<uint64_t>(r0) * vDim * sizeof(DT), tileRows, vDim, vDim);
         }
         StoreScalarF32(decayF, slotDecay, kDim);
@@ -848,6 +898,7 @@ private:
     AscendC::TBuf<AscendC::TPosition::VECCALC> s4F32_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> s0DT_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> s1DT_;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> s2DT_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> gDT_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> gF32_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> decayF32_;
