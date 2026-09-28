@@ -10,6 +10,7 @@
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #define CATLASS_ARCH 3510
 
+#include "../../../../../qkv_input_layout.h"
 #include "catlass/arch/arch.hpp"
 #include "catlass/arch/cross_core_sync.hpp"
 #include "catlass/arch/resource.hpp"
@@ -74,6 +75,7 @@ using _65536 = tla::Int<65536>;
 #endif
 
 #include "kernel_operator.h"
+#include "../../../../../chunk_gated_delta_rule_ho_pipeline.h"
 #include "../../chunk_fwd_o_struct.h"
 using namespace Catlass;
 using namespace tla;
@@ -178,6 +180,14 @@ public:
     using L1TileShape = typename BlockMmadQK::L1TileShape;
 
     uint32_t shapeBatch;
+    bool inputSequenceMajor{false};
+    bool outputSequenceMajor{false};
+    __aicore__ inline void ConfigureOutputLayout(bool sequenceMajor) { outputSequenceMajor = sequenceMajor; }
+    __aicore__ inline void ConfigureInputLayout(bool sequenceMajor) { inputSequenceMajor = sequenceMajor; }
+    __aicore__ inline uint64_t RawQkOffset(uint64_t offset) const
+    {
+        return inputSequenceMajor ? GDN::QkvSequenceMajorOffset(offset, seqlen, kNumHead, kHeadDim) : offset;
+    }
     uint32_t seqlen;
     uint32_t kNumHead;
     uint32_t vNumHead;
@@ -210,6 +220,11 @@ public:
     bool chunkPipelineEnabled{false};
     bool taskAffinityEnabled{false};
 
+    // Ho idle pipeline: default {} keeps it off until the mega entry configures it.
+    GdnHoPipeline::HoPipelineConfig idleCfg{};
+    bool idlePipelineEnabled{false};
+    AscendC::GlobalTensor<int32_t> gmHoReady;
+
     CubeScheduler cubeBlockScheduler;
     VecScheduler vecBlockScheduler;
 
@@ -241,6 +256,12 @@ public:
 
     __aicore__ inline void WaitChunkReady(const GDNFwdOOffsets &offsets)
     {
+        if (idlePipelineEnabled) {
+            GdnHoPipeline::HoNotifyPipeline notifyPipeline(idleCfg, gmHoReady);
+            notifyPipeline.Wait(offsets.compactSequence, offsets.headIdx, offsets.localChunk,
+                                GetPipelineSyncLocal());
+            return;
+        }
         if (!chunkPipelineEnabled) {
             return;
         }
@@ -300,6 +321,26 @@ public:
         }
     }
 
+    __aicore__ inline void ConfigureIdlePipeline(const GdnHoPipeline::HoPipelineConfig &config,
+                                                 GM_ADDR readyAddr) {
+        // Entry calls this after Init and before Process. Default {} keeps the
+        // idle pipeline off; an enabled config is honored only when valid.
+        if (!config.enabled || !GdnHoPipeline::HoPipelineValid(config)) {
+            return;
+        }
+        idleCfg = config;
+        gmHoReady.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t *>(readyAddr));
+        idlePipelineEnabled = true;
+        chunkPipelineEnabled = false;
+        taskAffinityEnabled = false;
+        if ASCEND_IS_AIC {
+            cubeBlockScheduler.ConfigureIdlePipeline(idleCfg.producerCount);
+        }
+        if ASCEND_IS_AIV {
+            vecBlockScheduler.ConfigureIdlePipeline(idleCfg.producerCount);
+        }
+    }
+
     __aicore__ inline void Process() {
         if ASCEND_IS_AIC {
             uint32_t coreIdx = AscendC::GetBlockIdx();
@@ -311,8 +352,9 @@ public:
             BlockMmadAttenVNEW128 blockMmadAttenVNEW128(resource);
             BlockMmadAttenVNEW256 blockMmadAttenVNEW256(resource);
 
-            auto qLayout = tla::MakeLayout<ElementQ, LayoutQ>(shapeBatch * kNumHead * seqlen, kHeadDim);
-            auto kLayout = tla::MakeLayout<ElementK, LayoutK>(kHeadDim, shapeBatch * kNumHead * seqlen);
+            const int64_t qkStride = static_cast<int64_t>(kHeadDim) * (inputSequenceMajor ? kNumHead : 1);
+            auto qLayout = tla::MakeLayoutFromTag(LayoutQ(shapeBatch * kNumHead * seqlen, kHeadDim, qkStride));
+            auto kLayout = tla::MakeLayoutFromTag(LayoutK(kHeadDim, shapeBatch * kNumHead * seqlen, qkStride));
             auto hLayout = tla::MakeLayout<ElementH, LayoutH>(shapeBatch * vNumHead * seqlen * kHeadDim, vHeadDim);
             auto ointerLayout = tla::MakeLayout<ElementOinter, LayoutOinter>(
                 coreNum * chunkSize * GDN_FWD_O_PING_PONG_STAGES, cubeBlockScheduler.vBlockSize);
@@ -332,8 +374,8 @@ public:
                     int64_t cube1OffsetAttn = cube1Offsets.attnWorkOffset;
                     auto attenLayout = tla::MakeLayout<ElementAtten, LayoutAtten>(
                         coreNum * chunkSize * GDN_FWD_O_PING_PONG_STAGES, cube1Offsets.blockTokens);
-                    auto tensorQ = tla::MakeTensor(gmQ[cube1OffsetQ], qLayout, Catlass::Arch::PositionGM{});
-                    auto tensorK = tla::MakeTensor(gmK[cube1OffsetK], kLayout, Catlass::Arch::PositionGM{});
+                    auto tensorQ = tla::MakeTensor(gmQ[RawQkOffset(cube1OffsetQ)], qLayout, Catlass::Arch::PositionGM{});
+                    auto tensorK = tla::MakeTensor(gmK[RawQkOffset(cube1OffsetK)], kLayout, Catlass::Arch::PositionGM{});
                     auto tensorAttn = tla::MakeTensor(gmAttnWorkspace[cube1OffsetAttn], attenLayout, Catlass::Arch::PositionGM{});
                     GemmCoord cube1Shape{cube1Offsets.blockTokens, cube1Offsets.blockTokens, kHeadDim};
                     auto tensorBlockQ = GetTile(tensorQ, tla::MakeCoord(0, 0), tla::MakeShape(cube1Shape.m(), cube1Shape.k()));
@@ -356,7 +398,7 @@ public:
                     int64_t cube2OffsetQ = cube2Offsets.qkOffset;
                     int64_t cube2OffsetH = cube2Offsets.hOffset;
                     int64_t cube2OffsetHWork = cube2Offsets.hvWorkOffset;
-                    auto tensorQ = tla::MakeTensor(gmQ[cube2OffsetQ], qLayout, Catlass::Arch::PositionGM{});
+                    auto tensorQ = tla::MakeTensor(gmQ[RawQkOffset(cube2OffsetQ)], qLayout, Catlass::Arch::PositionGM{});
                     auto tensorH = tla::MakeTensor(gmH[cube2OffsetH], hLayout, Catlass::Arch::PositionGM{});
                     auto tensorHWork = tla::MakeTensor(gmHWorkspace[cube2OffsetHWork], ointerLayout, Catlass::Arch::PositionGM{});
                     GemmCoord cube2Shape{cube2Offsets.blockTokens, cube2Offsets.vBlockDim, kHeadDim};
@@ -457,7 +499,11 @@ public:
                     uint32_t streamId = vecBlockScheduler.GetPrevStageId();
                     Arch::CrossCoreWaitFlag(vecBlockScheduler.cube3Done[streamId]);
                     GDNFwdOOffsets& vec2Offsets = vecBlockScheduler.GetVec2Offsets();
-                    int64_t vec2OffsetO = vec2Offsets.ovOffset;
+                    const uint64_t vec2OffsetO = outputSequenceMajor ?
+                        GDN::QkvSequenceMajorOffset(vec2Offsets.ovOffset, seqlen, vNumHead, vHeadDim) :
+                        static_cast<uint64_t>(vec2Offsets.ovOffset);
+                    const uint64_t outputStride = outputSequenceMajor ?
+                        static_cast<uint64_t>(vNumHead) * vHeadDim : vHeadDim;
                     int64_t vec2OffsetG = vec2Offsets.gOffset;
                     int64_t vec2OffsetVWork = vec2Offsets.hvWorkOffset;
                     int64_t vec2OffsetHWork = vec2Offsets.hvWorkOffset;
@@ -465,7 +511,7 @@ public:
                     epilogueGDNFwdOOutput(
                         gmO[vec2OffsetO],
                         gmG[vec2OffsetG], gmVWorkspace[vec2OffsetVWork], gmHWorkspace[vec2OffsetHWork],
-                        scale, vec2Offsets.blockTokens, kHeadDim, vec2Offsets.vBlockDim, vHeadDim, pingpongFlag, vec2Offsets.batchIdx, vec2Offsets.headIdx, vec2Offsets.chunkIdx
+                        scale, vec2Offsets.blockTokens, kHeadDim, vec2Offsets.vBlockDim, outputStride, pingpongFlag, vec2Offsets.batchIdx, vec2Offsets.headIdx, vec2Offsets.chunkIdx
                     );
                     // Close the shared completion generation before workspace reuse.
                     Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();

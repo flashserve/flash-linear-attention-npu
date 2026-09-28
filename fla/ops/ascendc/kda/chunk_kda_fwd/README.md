@@ -59,7 +59,7 @@ Python 返回顺序为：
 - `final_state` 固定按序列排列，末两维服从 `state_v_first`。
 - `Aqk/Akk` 始终返回，固定为 head-major。
 - `gk/w/u/qg/kg/v_new` 是供反向使用的 head-major 中间量。
-- 公开 `h` 固定为 sequence-major；内部 `hCompute` 保持 head-major 供 Finalize 使用。
+- 公开 `h` 与内部 `hCompute` 均为 NT-first，Finalize 直接消费。
 - 第 12 个返回值是 Python 层对 `initial_state` 的原对象透传，不是 aclnn 输出。
 
 输出保留策略对齐 fla-org
@@ -78,9 +78,31 @@ Python 返回顺序为：
 `output_final_state/disable_recompute/return_intermediate_states`，每个可选输出是否写出仅由对应
 输出指针是否为空决定。`w/u/qg/kg/v_new/h` 的 L0 阶段固定写内部 compute 张量，L2 仅在
 对应指针非空时通过 `ViewCopy` 导出；`gkOut` 非空时直接复用为 `gkCompute`，避免目标场景
-额外复制整张 FP32 gate。内部 `hCompute` 是 FwdH 到 Finalize 的必需 head-major 阶段结果；
-公开 `hOut` 非空时，L2 转为 sequence-major 后导出。`hOut` 为空时仍创建 `hCompute`，但不
+额外复制整张 FP32 gate。内部 `hCompute` 是 FwdH 到 Finalize 的必需 NT-first 阶段结果；
+公开 `hOut` 非空时直接导出，仅在 V-first 时交换末两维。`hOut` 为空时仍创建 `hCompute`，但不
 作为第 11 个 Python 返回值公开。
+
+### 反向 L2 norm 保存值（可选导出）
+
+`use_qk_l2norm_in_kernel=true` 时算子内部完成 q/k 归一化并算出反向回代所需的保存值。
+这些值不占用公开的 12 个返回槽位，而是由调用方**按需提供输出张量**导出；不提供就是
+`nullptr`，行为与历史版本逐位一致（"可选性只在 L2 层用空指针表达"）：
+
+| 输出 | 形状 | dtype | 何时产出 |
+| --- | --- | --- | --- |
+| `q_hat` / `k_hat` | `[B,HK,T,D]`（packed `[HK,T,D]`） | 与 q/k 同 dtype | 传入对应输出张量 |
+| `q_rstd` / `k_rstd` | `[B,HK,T]`（packed `[HK,T]`） | FP32 | 同上；`use_qk_l2norm_in_kernel=false` 时不产出 |
+| `beta_eff` | `[B,HV,T]`（packed `[HV,T]`） | FP32 | 同上；`use_beta_sigmoid_in_kernel=true` 时为 `sigmoid(beta)`（`allow_neg_eigval=true` 时为 `2*sigmoid(beta)`） |
+
+Python 入口 `fla_npu.ops.ascendc.chunk_kda_fwd` 通过关键字参数
+`q_hat_out/k_hat_out/q_rstd_out/k_rstd_out/beta_eff_out` 接收调用方张量；五个都不传时
+仍返回 12 槽。反向把导出的 `q_rstd/k_rstd` 交给 `chunk_kda_bwd`，即可走 optimized
+（L2Norm 回代）路径，语义与 fla-org 的 `l2norm_fwd` → `save_for_backward` → `l2norm_bwd`
+一致。
+
+配套入口：`fla_npu.ops.ascendc.chunk_kda_fwd_prepare` 暴露三算子组合里的 Prepare 段
+（13 个输出槽同样可选传），调用方可以按 `Prepare -> ChunkFwdH -> ChunkKdaFwdFinalize`
+自行编排并直接取用上述保存值。
 
 ## 属性
 
@@ -88,7 +110,7 @@ Python 返回顺序为：
 | --- | --- | --- |
 | `layout` | `BSND` | `BSND/BNSD/TND/NTD` |
 | `scale` | 必传 | 通常为 `K**-0.5` |
-| `chunk_size` | `64` | `64/128` |
+| `chunk_size` | `64` | `64`（其它取值参数校验阶段拦截） |
 | `output_final_state` | `false` | bool |
 | `safe_gate` | `false` | bool |
 | `lower_bound` | `-5.0` | safe raw gate 时 `[-5,0)` |
@@ -96,14 +118,70 @@ Python 返回顺序为：
 | `disable_recompute` | `false` | bool |
 | `return_intermediate_states` | `false` | bool |
 | `state_v_first` | `false` | bool |
+| `epsilon` | `1e-6` | `use_qk_l2norm_in_kernel=true` 时的 rsqrt 下限 |
+| `use_qk_l2norm_in_kernel` | `false` | true 时由算子内部归一化 q/k |
+| `use_beta_sigmoid_in_kernel` | `false` | true 时由算子内部对 beta 取 sigmoid |
+| `allow_neg_eigval` | `false` | true 时必须同时 `use_beta_sigmoid_in_kernel=true` |
+| `use_exp2` | `true` | true 走 `exp2` 门控，false 走自然指数 |
 
 ## 支持范围
 
 - A2 (`ascend910b`)、A3 (`ascend910_93`)、A5 (`ascend950`)。
-- `K/V` 为 `[16,256]` 内 16 的倍数；交付重点覆盖 K=128、V=128/256。
-- `chunk_size` 为 64/128。
+- `K/V` 只支持两档且必须同档：`K=V=64` 或 `K=V=128`。混合档（如 `K=64,V=128`）
+  与其它取值（含 `V=256`）都不支持，会在参数校验阶段返回 `ACLNN_ERR_PARAM_INVALID`。
+- `chunk_size` 只支持 `64`；其它取值（含 `128`）在参数校验阶段返回
+  `ACLNN_ERR_PARAM_INVALID`（报错文本为 `chunkSize only supports 64.`），不会下沉到 tiling。
 - TND/NTD 均支持多 head。
 - 变长调用最多 1024 条逻辑序列，rank-4 变长输入要求 B=1。
+- 空 tensor 不支持：`B` 或序列长度（TND/NTD 为总 token 数）为 0 时，参数校验阶段
+  返回 `ACLNN_ERR_PARAM_INVALID`，报错文本会指明是哪个逻辑维为 0，不会下沉到 tiling
+  后只回传无上下文的 561103。
+
+## 场景分发
+
+Python 入口 `fla_npu.ops.ascendc.npu_chunk_kda_fwd` 负责场景选择：
+
+| 场景 | 走的 aclnn 入口 | L0 实现 |
+| --- | --- | --- |
+| `q/k/v` 为 BF16、`K=V=128`、`chunk_size=64`、`cu_seqlens` 严格递增、输出连续 | `aclnnChunkKdaFwdV2` | `ChunkKdaFwdPrepare -> ChunkFwdH -> ChunkKdaFwdFinalize` 三个独立算子组合 |
+| 其余场景（FP16、`K=V=64`、含空序列、输出非连续） | `aclnnChunkKdaFwd`（签名与 ABI 未变） | 本算子的私有 L0 融合实现 |
+
+两个入口共用同一套参数校验、输出语义和返回码契约：`state_v_first` 均由算子原生解释，
+公开的 `gk/Aqk/Akk/w/u/qg/kg/v_new` 始终是 head-major，`h` 始终是 sequence-major。
+
+组合分支与融合分支共用同一组归一化/gate 开关，默认值即历史语义（q/k 由调用方预先归一化、
+beta 由调用方预先 sigmoid、门控走 `exp2`）：
+
+| 参数 | 默认值 |
+| --- | --- |
+| `epsilon` | `1e-6` |
+| `useQkL2normInKernel` | `false` |
+| `useBetaSigmoidInKernel` | `false` |
+| `allowNegEigval` | `false` |
+| `useExp2` | `true` |
+
+私有 L0 融合实现只覆盖这组默认值，开关取非默认值时调用必须落在三算子组合的场景范围内，
+否则返回 `ACLNN_ERR_PARAM_INVALID`。`ChunkKdaFwdPrepare` 的编译期输出档位由公开输出指针
+组合推导（`none`/`forward`/`save`）：`Aqk/Akk` 是公开必选输出，`forward` 档只额外搬出 `Akk`，
+不再像 `recompute` 档那样多搬 `qHat/kHat/qRstd/kRstd/betaEff`。
+
+分发规则见 [API 文档](docs/api.md#l0-实现按场景分发)。
+
+### 编译依赖
+
+组合分支在 `chunk_kda_fwd_v2.cpp` 里直接 include 并调用另外三个独立算子的 op_api，
+因此按算子裁剪编译时必须把这四个算子一起编，否则产物缺少子算子的 tiling / kernel 注册，
+`aclnnChunkKdaFwdV2GetWorkspaceSize` 会在 tiling 阶段失败（只编 `chunk_kda_fwd` 时
+`libcust_opapi.so` 甚至会缺 `l0op::ChunkKdaFwdPrepare/ChunkFwdH/ChunkKdaFwdFinalize` 符号）：
+
+```sh
+FLA_NPU_SOC=ascend910b \
+FLA_NPU_OPS=chunk_kda_fwd,chunk_kda_fwd_prepare,chunk_kda_fwd_finalize,chunk_fwd_h \
+python scripts/build_wheel.py
+```
+
+融合分支（`aclnnChunkKdaFwd`）只依赖 `chunk_kda_fwd` 自身及其 kernel 源码依赖，
+只编 `chunk_kda_fwd` 时可用；但它不会带上组合分支需要的三个独立算子。
 
 ## 验证
 

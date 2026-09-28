@@ -141,11 +141,11 @@ def run_case(case: BwdDhuCase, device: int, out_root: str, seed: int = 0) -> tup
 
     dh_fp64, _, dv2_fp64 = chunk_gated_delta_rule_bwd_dhu_cpu(
         q, k, w, do, dv, cu_seqlens, chunk_indices, g=g, scale=scale,
-        chunk_size=case.chunk_size, golden_mode="fp64",
+        chunk_size=case.chunk_size, golden_mode="fp64", nt_first=True,
     )
     dh_npu_bench, _, dv2_npu_bench = chunk_gated_delta_rule_bwd_dhu_cpu(
         q, k, w, do, dv, cu_seqlens, chunk_indices, g=g, scale=scale,
-        chunk_size=case.chunk_size, golden_mode="npu",
+        chunk_size=case.chunk_size, golden_mode="npu", nt_first=True,
     )
 
     dh_npu, _, dv2_npu = ascendc_ops.npu_chunk_gated_delta_rule_bwd_dhu(

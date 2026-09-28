@@ -47,7 +47,7 @@ inputs:
       values: [non_param]
     ranges:
       valid:
-        values: ["{\"name\":\"bf16_bsnd\",\"dtype\":\"bf16\",\"B\":1,\"H\":1,\"T\":64,\"chunk_size\":64,\"layout\":\"bsnd\",\"op\":\"solve_tri\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}"]
+        values: ["{\"name\":\"bf16_bsnd_fixed_align\",\"dtype\":\"bf16\",\"B\":1,\"H\":1,\"T\":32,\"chunk_size\":16,\"layout\":\"bsnd\",\"op\":\"solve_tri\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend950\"}"]
       invalid:
         values: []
   - name: dtype
@@ -67,7 +67,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1, 2, 4, 8, 16]
+        values: [1, 2, 4]
       invalid:
         values: []
   - name: H
@@ -77,7 +77,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1, 2, 4, 8, 16, 32]
+        values: [1, 2, 4]
       invalid:
         values: []
   - name: T
@@ -87,7 +87,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [64, 128, 256, 512, 1024, 2048, 4096]
+        values: [16, 32, 64, 128, 256, 321]
       invalid:
         values: []
   - name: chunk_size
@@ -97,7 +97,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [64, 128]
+        values: [16, 32, 64, 128]
       invalid:
         values: []
   - name: layout
@@ -107,7 +107,7 @@ inputs:
       values: [string]
     ranges:
       valid:
-        values: ["bsnd", "tnd"]
+        values: ["bsnd", "bnsd", "tnd", "ntd"]
       invalid:
         values: []
   - name: num_seqs
@@ -117,7 +117,27 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1, 2, 4, 8]
+        values: [1, 2, 3]
+      invalid:
+        values: []
+  - name: aligned
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [0, 1]
+      invalid:
+        values: []
+  - name: seqlens
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: ["", "[32,33]"]
       invalid:
         values: []
   - name: case_id
@@ -147,7 +167,7 @@ inputs:
       values: [string]
     ranges:
       valid:
-        values: ["ascend910b"]
+        values: ["ascend950"]
       invalid:
         values: []
   - name: route

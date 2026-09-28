@@ -163,10 +163,12 @@ if __name__ == "__main__":
     v_npu = v.to(dtype).npu()
     # w_npu = w.to(dtype).npu()
     g_npu = g.to(Gtype).npu()
-    h_npu = h.to(dtype).npu()
+    h_nt = h.transpose(1, 2)
+    h_npu = h_nt.contiguous().to(dtype).npu()
     dv_npu = dv.to(dtype).npu()
     do_npu = do.to(dtype).npu()
-    dh_npu = dh.to(dtype).npu()
+    dh_nt = dh.transpose(1, 2)
+    dh_npu = dh_nt.contiguous().to(dtype).npu()
     print(f"input size(GB): q {tensor_size_gb(q_npu)}, k {tensor_size_gb(k_npu)}, v {tensor_size_gb(v_npu)}, g {tensor_size_gb(g_npu)}, h {tensor_size_gb(h_npu)}, dv {tensor_size_gb(dv_npu)}, do {tensor_size_gb(do_npu)}, dh {tensor_size_gb(dh_npu)}")
     # cu_seqlens_npu = cu_seqlens if cu_seqlens is not None else None
     chunk_indices_npu = chunk_indices if cu_seqlens is not None else None

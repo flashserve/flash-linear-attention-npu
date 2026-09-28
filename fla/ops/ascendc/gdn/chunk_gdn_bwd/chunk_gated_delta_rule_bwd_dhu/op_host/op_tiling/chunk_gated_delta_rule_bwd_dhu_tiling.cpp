@@ -118,6 +118,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
         useExp2Ptr != nullptr ? *useExp2Ptr : false,
         stateVFirstPtr != nullptr ? *stateVFirstPtr : false,
         h0InputShape != nullptr,
+        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510,
         true,
         scalePtr != nullptr ? static_cast<double>(*scalePtr) : 1.0,
         chunkSizePtr != nullptr ? *chunkSizePtr : 64,
@@ -133,6 +134,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
     context->SetBlockDim(processor.GetBlockDim());
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);
     currentWorkspace[0] = processor.GetWorkspaceSize();
+    OP_LOGD(context->GetNodeName(),"workspace = [%zu]", currentWorkspace[0]);
     context->SetScheduleMode(1);
 
     OP_LOGD(context->GetNodeName(), "tilingKey: %u", context->GetTilingKey());

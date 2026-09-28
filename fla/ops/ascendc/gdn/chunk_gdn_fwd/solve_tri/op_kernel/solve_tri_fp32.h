@@ -56,11 +56,26 @@ protected:
         numChunks_ = tilingData->numChunks;
         lastChunkValidSize_ = tilingData->lastChunkValidSize;
         layoutMode_ = tilingData->layoutMode;
-        rowStride_ = (layoutMode_ == 0) ? FP32_MATRIX_SIZE : numHeads_ * FP32_MATRIX_SIZE;
+        // 行间步长: BNSD(0)/NTD(3) chunk 内行连续 = 矩阵宽度; BSND(1)/TND(2) = H*矩阵宽度
+        rowStride_ = (layoutMode_ == 0 || layoutMode_ == 3)
+                         ? FP32_MATRIX_SIZE
+                         : numHeads_ * FP32_MATRIX_SIZE;
     }
 
     __aicore__ inline int64_t GetTileGMOffset(int64_t tileIdx)
     {
+        if (layoutMode_ == 3) {
+            // NTD 变长格式: [H, total_T, BT]，head 在最外维，chunk 内行连续
+            // 遍历顺序与 TND 一致: chunk_global → H (H 变化最快)
+            int64_t chunkGlobalIdx = tileIdx / numHeads_;
+            int64_t headIdx = tileIdx % numHeads_;
+            int64_t seqIdx = chunkIndicesGM_.GetValue(chunkGlobalIdx * 2);
+            int64_t chunkInSeq = chunkIndicesGM_.GetValue(chunkGlobalIdx * 2 + 1);
+            int64_t bos = cuSeqlensGM_.GetValue(seqIdx);
+            return headIdx * seqLen_ * FP32_MATRIX_SIZE +
+                   (bos + chunkInSeq * FP32_MATRIX_SIZE) * FP32_MATRIX_SIZE;
+        }
+
         if (layoutMode_ == 2) {
             int64_t chunkGlobalIdx = tileIdx / numHeads_;
             int64_t headIdx = tileIdx % numHeads_;
@@ -90,7 +105,7 @@ protected:
 
     __aicore__ inline int64_t GetTileValidSize(int64_t tileIdx)
     {
-        if (layoutMode_ == 2) {
+        if (layoutMode_ == 2 || layoutMode_ == 3) {
             int64_t chunkGlobalIdx = tileIdx / numHeads_;
             int64_t seqIdx = chunkIndicesGM_.GetValue(chunkGlobalIdx * 2);
             int64_t chunkInSeq = chunkIndicesGM_.GetValue(chunkGlobalIdx * 2 + 1);
@@ -238,7 +253,7 @@ public:
         workspaceGM_.SetGlobalBuffer(reinterpret_cast<__gm__ float*>(workspace));
         coreWorkspaceGM_ =
             workspaceGM_[aicIdx_ * FP32_WORKSPACE_SLOTS * FP32_SLOT_ELEMS];
-        if (layoutMode_ == 2) {
+        if (layoutMode_ == 2 || layoutMode_ == 3) {
             cuSeqlensGM_.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t*>(cuSeqlens));
             chunkIndicesGM_.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t*>(chunkIndices));
         }
@@ -555,7 +570,7 @@ public:
         coreWorkspaceGM_ =
             workspaceGM_[aicIdx_ * FP32_WORKSPACE_SLOTS * FP32_SLOT_ELEMS];
 
-        if (layoutMode_ == 2) {
+        if (layoutMode_ == 2 || layoutMode_ == 3) {
             cuSeqlensGM_.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t*>(cuSeqlens));
             chunkIndicesGM_.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t*>(chunkIndices));
         }

@@ -343,7 +343,7 @@ public:
                     const int64_t kBase = ((chunkInfo.bIdx * HK_ + hq) * T_ + chunkInfo.tokenStart) * K_;
                     const int64_t dOBase = ((chunkInfo.bIdx * HV_ + hv) * T_ + chunkInfo.tokenStart) * V_;
                     const int64_t dhBase =
-                        ((chunkInfo.bIdx * HV_ + hv) * totalChunkNum_ + chunkInfo.outputChunkIdx) * K_ * V_;
+                        ((chunkInfo.bIdx * totalChunkNum_ + chunkInfo.outputChunkIdx) * HV_ + hv) * K_ * V_;
                     const int64_t slotBase = WorkspaceBase(blockIdx, workspaceSlot);
 
                     LayoutTagK tagK = LayoutTagK::MakeLayout<DT>(chunkSize_, K_);
@@ -1524,7 +1524,7 @@ private:
 
     __aicore__ inline int64_t DhOffset(int64_t b, int64_t hv, int64_t chunkIdx) const
     {
-        return ((b * HV_ + hv) * totalChunkNum_ + chunkIdx) * K_ * V_;
+        return ((b * totalChunkNum_ + chunkIdx) * HV_ + hv) * K_ * V_;
     }
 
     __aicore__ inline int64_t WorkspaceBase(int64_t coreIdx, int64_t workspaceSlot) const

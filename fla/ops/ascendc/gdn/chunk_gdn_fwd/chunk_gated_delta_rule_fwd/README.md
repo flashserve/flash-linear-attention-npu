@@ -53,15 +53,21 @@ A5 依次调度 `ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkFwdO`，
 | `gCumsumOutOptional` | 可选 | 与 g 同 shape；FP32 | chunk 内门控累加结果；为空时使用内部临时张量 |
 | `aOutOptional` | 可选 | `[B,Hv,T,chunkSize]`；与 q 同 dtype | 系数矩阵；为空时使用内部临时张量 |
 | `qHatOutOptional`、`kHatOutOptional` | A5 新路径可选 | 与 q/k 相同 | L2Norm 结果 |
-| `qRstdOutOptional`、`kRstdOutOptional` | A5 新路径可选 | q/k layout 去掉最后一维；FP32 | L2Norm rstd |
+| `qRstdOutOptional`、`kRstdOutOptional` | A5 新路径可选 | 固定 `[B,Hk,T]`；FP32 | L2Norm rstd |
 | `betaEffOutOptional` | A5 新路径可选 | 与 beta 同 shape；FP32 | 非空时启用并输出 beta sigmoid |
 | `hOutOptional` | A5 新路径可选 | `stateVFirst=false` 时末两维为 `[K,V]`，否则为 `[V,K]`；与 q 同 dtype | 分块状态 |
 
-Python ctypes 入口固定返回 `(o, final_state, g_cumsum, A, beta_eff, h)` 六元组。
+Python 稳定入口固定返回
+`(o, final_state, g_cumsum, A, beta_eff, h, q_hat, k_hat, q_rstd, k_rstd)` 十元组。
+启用 `use_qk_l2norm_in_kernel` 时，q_hat/k_hat 为归一化结果，shape/layout/dtype 与输入一致，
+q_rstd/k_rstd 为 FP32 `[B,Hk,T]`，不随 layout 改变；关闭时 q_hat/k_hat 分别为原始 q/k
+对象的别名（不分配、不复制），q_rstd/k_rstd 为 None。新增四项不受 disable_recompute 控制。
+旧六项解包调用需要迁移。rstd 的头数为 Hk，不扩展到 Hv；变长模式使用物理 batch/token 维度。
 `disable_recompute=True` 时导出 g_cumsum/A，否则这两项为 None。
 `output_final_state`、`use_beta_sigmoid_in_kernel` 和 `return_intermediate_states`
 分别控制 final_state、beta_eff 和 h 是否为 None。
-h 的 shape 为 `[B,Hv,NT,K,V]`，`state_v_first=True` 时末两维为 `[V,K]`。
+h 的 shape 为 dense `[B,NT,Hv,K,V]`，带 cu_seqlens 的 packed 为 `[1,total_NT,Hv,K,V]`；
+`state_v_first=True` 时末两维为 `[V,K]`。A5 prepare 路径导出遵循此契约，旧融合路径仍不导出 h。
 
 `g/beta` 固定以 BSN 输入，在 ACLNN 内转为 BNS；任一输入为 FP32 时，
 另一个先提升为 FP32。两个输入均为主 dtype 时保留该 dtype，后续分支支持范围不变。
@@ -100,4 +106,48 @@ ACLNN ABI 合同可通过以下命令检查：
 
 ```bash
 python3 tests/atk/chunk_gated_delta_rule_fwd/aclnn_abi_contract.py
+```
+
+## 归一化结果导出与反向复用
+
+归一化沿用 prepare 的公式：`rstd = rsqrt(sum(x**2, dim=-1) + 1e-6)`，
+`hat = cast(x * rstd, input_dtype)`。关闭归一化时 hats 与原始输入共享对象及存储，修改任一对象会影响另一个。
+反向传入返回的 hats/rstd 和与前向一致的归一化开关，返回的 dq/dk 对应归一化前的原始输入。
+
+ACLNN 参数数量和顺序不变；关闭归一化时四个可选输出 descriptor 仍为空。
+开启时从 prepare 的内部结果导出 hats，rstd 直接按 `[B,Hk,T]` ViewCopy，不再随 sequence-major 布局转置。
+BSND/TND 的旧 `[B,T,Hk]` rstd 输出 descriptor 不再接受。
+内部 prepare → H → O DAG、workspace、UB/L1 布局及同步均不变；公开输出由调用方持有。
+
+### 直接串联示例
+
+以下代码使用调用方准备的 BSND Q/K/V、BSN g/beta 及上游梯度 d_o，K=V=128、chunk_size=64。
+`use_qk_l2norm` 可取 True 或 False；关闭时返回的 q_hat/k_hat 就是原始输入。
+
+```python
+from fla_npu.ops.ascendc import (
+    npu_chunk_gated_delta_rule_fwd,
+    npu_chunk_gated_delta_rule_bwd,
+)
+
+use_qk_l2norm = True
+scale = q.shape[-1] ** -0.5
+(o, final_state, g_cumsum, A, beta_eff, h,
+ q_hat, k_hat, q_rstd, k_rstd) = npu_chunk_gated_delta_rule_fwd(
+    q, k, v, g, beta,
+    layout="BSND", scale=scale, chunk_size=64, use_exp2=True,
+    use_qk_l2norm_in_kernel=use_qk_l2norm,
+    disable_recompute=True, output_final_state=True,
+)
+torch.npu.synchronize()
+print("FWD_DONE", flush=True)
+
+(dq, dk, dv, d_beta, d_g, dh0, d_a_log, d_dt_bias) = npu_chunk_gated_delta_rule_bwd(
+    q_hat, k_hat, v, g_cumsum, beta, A, d_o, scale,
+    layout="BSND", chunk_size=64, use_exp2=True,
+    use_qk_l2norm_in_kernel=use_qk_l2norm,
+    q_rstd=q_rstd, k_rstd=k_rstd,
+)
+torch.npu.synchronize()
+print("BWD_DONE", flush=True)
 ```

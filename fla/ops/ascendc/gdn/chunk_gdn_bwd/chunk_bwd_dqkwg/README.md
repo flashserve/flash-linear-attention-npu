@@ -76,9 +76,9 @@ aclnnStatus aclnnChunkBwdDqkwg(
 | `k`                    | 输入      | 必选                         | Key 输入张量            | 参与反向计算；接口执行前会先转为连续内存                                 | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, HK, T, K]`            | 支持          |
 | `v`                    | 输入      | 必选                         | Value 输入张量          | 参与反向计算；接口执行前会先转为连续内存                                 | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, HV, T, V]`            | 支持          |
 | `g`                    | 输入      | 必选                         | Gate 输入张量           | 要求沿序列维 `T` 为非正且单调递减（`g[..., t] <= g[..., t-1]`）；接口执行前会先转为连续内存 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND`     | `[B, HV, T]`               | 支持          |
-| `h`                    | 输入      | 必选                         | 前向保存的隐藏状态张量  | 用于反向传播；接口执行前会先转为连续内存                                 | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, HV, numChunks, K, V]` | 支持          |
+| `h`                    | 输入      | 必选                         | 前向保存的隐藏状态张量  | 用于反向传播；接口执行前会先转为连续内存                                 | `FLOAT16`、`BFLOAT16`          | `ND`     | dense `[B, numChunks, HV, K, V]`; packed `[1, numChunks, HV, K, V]` | 支持          |
 | `dox`                  | 输入      | 必选                         | 前向输出 `o` 的梯度张量 | 即输出梯度；接口执行前会先转为连续内存                                   | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, HV, T, V]`            | 支持          |
-| `dh`                   | 输入      | 必选                         | 隐藏状态梯度张量        | 与 `h` 对应；接口执行前会先转为连续内存                                  | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, HV, numChunks, K, V]` | 支持          |
+| `dh`                   | 输入      | 必选                         | 隐藏状态梯度张量        | 与 `h` 对应；接口执行前会先转为连续内存                                  | `FLOAT16`、`BFLOAT16`          | `ND`     | dense `[B, numChunks, HV, K, V]`; packed `[1, numChunks, HV, K, V]` | 支持          |
 | `dv`                   | 输入      | 必选                         | Value 分支梯度张量      | 参与 delta rule 反向计算（非输出）；接口执行前会先转为连续内存            | `FLOAT16`、`BFLOAT16`          | `ND`     | `[B, HV, T, V]`            | 支持          |
 | `cuSeqlensOptional`    | 输入      | 可选                         | 变长序列的累计长度信息  | 变长模式输入，形状为 `[N+1]`                                             | `INT64`                        | `ND`     | 1 维                      | -             |
 | `chunkIndicesOptional` | 输入      | 可选                         | 分块索引信息            | 逻辑上表示为 `[num_chunks, 2]`，实际需按一维数组 `[num_chunks * 2]` 传入（flatten） | `INT64`                        | `ND`     | 1 维                      | -             |
@@ -110,7 +110,7 @@ aclnnStatus aclnnChunkBwdDqkwg(
 - `q`、`k` 的形状必须为 `[B, HK, T, K]`。  
 - `v`、`dox`、`dv` 的形状必须为 `[B, HV, T, V]`。  
 - `g` 的形状必须为 `[B, HV, T]`。  
-- `h`、`dh` 的形状必须为 `[B, HV, numChunks, K, V]`。  
+- `h`、`dh` 的形状必须为 dense `[B, numChunks, HV, K, V]`; packed `[1, numChunks, HV, K, V]`。
 - 当前实现要求 `K = 128`。  
 - 当前实现要求 `V = 128` 或 `256`。  
 - `HV`必须为`HK`的整数倍。
@@ -141,7 +141,7 @@ aclnnStatus aclnnChunkBwdDqkwg(
 - `q, k`: `[B, HK, T, K]`
 - `v, dox, dv`: `[B, HV, T, V]`
 - `g`: `[B, HV, T]`
-- `h, dh`: `[B, HV, numChunks, K, V]`
+- `h, dh`: dense `[B, numChunks, HV, K, V]`; packed `[1, numChunks, HV, K, V]`
 
 额外限制：
 
@@ -235,8 +235,8 @@ dv = torch.randn(B, HV, T, V, device=device, dtype=torch.float16)
 
 # num_chunks = T // chunk_size（简单场景）
 num_chunks = T // chunk_size
-h = torch.randn(B, HV, num_chunks, K, V, device=device, dtype=torch.float16)
-dh = torch.randn(B, HV, num_chunks, K, V, device=device, dtype=torch.float16)
+h = torch.randn(B, num_chunks, HV, K, V, device=device, dtype=torch.float16)
+dh = torch.randn(B, num_chunks, HV, K, V, device=device, dtype=torch.float16)
 
 # 调用算子
 dq, dk, dw, dg = torch.ops.npu.npu_chunk_bwd_dqkwg(
@@ -289,8 +289,8 @@ g = -torch.cumsum(base, dim=-1)
 dox = torch.randn(B, HV, total_len, V, device=device, dtype=torch.float16)
 dv = torch.randn(B, HV, total_len, V, device=device, dtype=torch.float16)
 
-h = torch.randn(B, HV, num_chunks, K, V, device=device, dtype=torch.float16)
-dh = torch.randn(B, HV, num_chunks, K, V, device=device, dtype=torch.float16)
+h = torch.randn(B, num_chunks, HV, K, V, device=device, dtype=torch.float16)
+dh = torch.randn(B, num_chunks, HV, K, V, device=device, dtype=torch.float16)
 
 dq, dk, dw, dg = torch.ops.npu.npu_chunk_bwd_dqkwg(
     q, k, v, g, h, dox, dh, dv,
@@ -312,7 +312,7 @@ print(dq.shape, dk.shape, dw.shape, dg.shape)
   - `q/k`: `[B, HK, T, K]`
   - `v/dox/dv`: `[B, HV, T, V]`
   - `g`: `[B, HV, T]` `g需要为负数且单调递减`
-  - `h/dh`: `[B, HV, num_chunks, K, V]`
+  - `h/dh`: `[B, num_chunks, HV, K, V]`
 - `chunk_size` 当前仅支持 `64` 或 `128`
 - `scale` 通常为 `1 / sqrt(K)`
 - `w`、`g_gamma` 当前版本需传 `None`

@@ -1,0 +1,7 @@
+{
+  "//": "Gaps that are known and accepted today. tools/stable_coverage.py reports these as KNOWN GAP and stays green; anything else fails. Every entry needs a reason and a removal condition.",
+  "known_gaps": {},
+  "notes": {
+    "unexercised_why": "Empty: every adapted operator has a wrapper and a complete adapter (schema + run_ + registration). The device-side regressions live in tests/stable_abi/ and are run per host."
+  }
+}

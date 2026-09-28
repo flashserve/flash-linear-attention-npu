@@ -1,0 +1,167 @@
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Tianjin University, Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# the CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
+name: NPU CI 评论分发
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: write
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  dispatch:
+    name: 选择目标分支 NPU CI
+    if: >-
+      github.event.issue.pull_request &&
+      github.actor != 'github-actions[bot]' &&
+      contains(github.event.comment.body, '/run-npu-ci')
+    runs-on: ubuntu-latest
+    steps:
+      - name: 分发到 PR 目标分支
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const body = (context.payload.comment.body || '').trim();
+            const command = body.match(/^\/run-npu-ci(?:\s+([\s\S]*))?$/);
+            if (!command) {
+              core.notice('评论包含 /run-npu-ci，但命令格式不正确，跳过。');
+              return;
+            }
+
+            const parts = command[1] ? command[1].trim().split(/\s+/) : [];
+            let ciMode = 'quick';
+            let modeProvided = false;
+            let ops = '';
+            let opsProvided = false;
+            let requestedRef = '';
+            for (const part of parts) {
+              if (part === 'quick' || part === 'full') {
+                if (modeProvided) {
+                  core.setFailed('CI 模式只能指定一次。');
+                  return;
+                }
+                ciMode = part;
+                modeProvided = true;
+              } else if (part.startsWith('ops=')) {
+                if (opsProvided) {
+                  core.setFailed('ops 参数只能指定一次。');
+                  return;
+                }
+                ops = part.slice('ops='.length);
+                opsProvided = true;
+              } else if (part.startsWith('ci_ref=') || part.startsWith('branch=')) {
+                if (requestedRef) {
+                  core.setFailed('CI 定义分支只能指定一次。');
+                  return;
+                }
+                requestedRef = part.slice(part.indexOf('=') + 1);
+              } else {
+                core.setFailed(`不支持的 NPU CI 参数：${part}`);
+                return;
+              }
+            }
+
+            const opsItems = ops.split(',').map((item) => item.trim());
+            if ((opsProvided && !ops.trim()) ||
+                (ops.trim() && opsItems.some((item) =>
+                  !item || !/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(item)))) {
+              core.setFailed('ops 参数必须是以逗号分隔的合法非空算子名。');
+              return;
+            }
+
+            const actor = context.actor;
+            let actorPermission = 'none';
+            try {
+              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: actor,
+              });
+              actorPermission = data.permission || 'none';
+            } catch (error) {
+              core.warning(`Unable to inspect repository permission for ${actor}: ${error.message}`);
+            }
+            if (actorPermission !== 'admin') {
+              core.setFailed(`${actor} 无权触发 NPU CI：需要仓库 Admin 权限，当前权限为 ${actorPermission}。`);
+              return;
+            }
+
+            const prNumber = context.payload.issue.number;
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+            if (pr.draft) {
+              core.setFailed(`PR #${prNumber} 仍是草稿，请先标记为 ready for review 后再运行 NPU CI。`);
+              return;
+            }
+
+            const targetRef = requestedRef || pr.base.ref;
+            try {
+              await github.rest.repos.getBranch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                branch: targetRef,
+              });
+            } catch (error) {
+              core.setFailed(`找不到 CI 定义分支 \`${targetRef}\`：${error.message}`);
+              return;
+            }
+
+            let workflowFile;
+            try {
+              ({ data: workflowFile } = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: '.github/workflows/ci.yml',
+                ref: targetRef,
+              }));
+            } catch (error) {
+              core.setFailed(`分支 \`${targetRef}\` 不包含 .github/workflows/ci.yml：${error.message}`);
+              return;
+            }
+            if (Array.isArray(workflowFile) ||
+                workflowFile.type !== 'file' ||
+                !workflowFile.content) {
+              core.setFailed(`分支 \`${targetRef}\` 的 .github/workflows/ci.yml 不是可读取的文件。`);
+              return;
+            }
+            const workflowText = Buffer
+              .from(workflowFile.content, workflowFile.encoding || 'base64')
+              .toString('utf8');
+            if (!/^\s*workflow_dispatch\s*:/m.test(workflowText)) {
+              core.setFailed(`分支 \`${targetRef}\` 的 ci.yml 没有声明 workflow_dispatch。`);
+              return;
+            }
+
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'ci.yml',
+              ref: targetRef,
+              inputs: {
+                pr_number: String(prNumber),
+                ci_mode: ciMode,
+                ops,
+                requested_by: actor,
+              },
+            });
+
+            core.notice(
+              `已将 PR #${prNumber} 的 NPU CI 分发到 \`${targetRef}\`，` +
+              `head=${pr.head.sha}，模式=${ciMode}。`
+            );

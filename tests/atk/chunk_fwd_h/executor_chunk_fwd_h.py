@@ -254,7 +254,7 @@ def _reference(
     h_chunk_count = total_chunks if inputs.seqlens is not None else dense_chunks
 
     h_logical = torch.empty(
-        (batch, v_heads, h_chunk_count, K_DIM, V_DIM),
+        (batch, h_chunk_count, v_heads, K_DIM, V_DIM),
         dtype=torch.bfloat16,
         device=k.device,
     )
@@ -300,7 +300,7 @@ def _reference(
                     else sequence_chunk
                 )
                 h_current = state.to(torch.bfloat16)
-                h_logical[physical_batch, value_head, chunk_slot] = h_current
+                h_logical[physical_batch, chunk_slot, value_head] = h_current
 
                 w_chunk = w[physical_batch, value_head, token_begin:token_end]
                 p_acc = w_chunk.float() @ h_current.float()

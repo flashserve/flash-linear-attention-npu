@@ -62,7 +62,7 @@
     "required": true,
     "dtype": "non_param",
     "shape": null,
-    "range_values": "{\"name\":\"r1_T4160_V128_l2_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":4160,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"l2_sig1_neg1\"}",
+    "range_values": "{\"name\":\"r1_T4160_V128_l2_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":4160,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"output_a\":true,\"flag_tag\":\"l2_sig1_neg1\"}",
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -202,9 +202,9 @@
   ]
  },
  {
-  "id": 6,
-  "default_seed": 20260823,
-  "name": "chunk_gated_delta_rule_fwd_prepare_0006_r2_T2112_V128_l2_sig1_neg1",
+  "id": 24,
+  "default_seed": 20260841,
+  "name": "chunk_gated_delta_rule_fwd_prepare_0024_r2_T2112_V128_l2_sig1_neg1",
   "aclnn_name": null,
   "triton_name": null,
   "kernel_name": null,
@@ -264,7 +264,7 @@
     "required": true,
     "dtype": "non_param",
     "shape": null,
-    "range_values": "{\"name\":\"r2_T2112_V128_l2_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":8,\"T\":2112,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":6,\"seed\":20260823,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"l2_sig1_neg1\"}",
+    "range_values": "{\"name\":\"r2_T2112_V128_l2_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":8,\"T\":2112,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":24,\"seed\":20260841,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"output_a\":true,\"flag_tag\":\"l2_sig1_neg1\"}",
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -363,7 +363,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 6,
+    "range_values": 24,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -374,7 +374,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 20260823,
+    "range_values": 20260841,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -404,9 +404,9 @@
   ]
  },
  {
-  "id": 12,
-  "default_seed": 20260829,
-  "name": "chunk_gated_delta_rule_fwd_prepare_0012_r3_T1408_V128_l2_sig1_neg1",
+  "id": 48,
+  "default_seed": 20260865,
+  "name": "chunk_gated_delta_rule_fwd_prepare_0048_r3_T1408_V128_l2_sig1_neg1",
   "aclnn_name": null,
   "triton_name": null,
   "kernel_name": null,
@@ -466,7 +466,7 @@
     "required": true,
     "dtype": "non_param",
     "shape": null,
-    "range_values": "{\"name\":\"r3_T1408_V128_l2_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":12,\"T\":1408,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":12,\"seed\":20260829,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"l2_sig1_neg1\"}",
+    "range_values": "{\"name\":\"r3_T1408_V128_l2_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":12,\"T\":1408,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":48,\"seed\":20260865,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"output_a\":true,\"flag_tag\":\"l2_sig1_neg1\"}",
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -565,7 +565,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 12,
+    "range_values": 48,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -576,7 +576,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 20260829,
+    "range_values": 20260865,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -606,9 +606,9 @@
   ]
  },
  {
-  "id": 18,
-  "default_seed": 20260835,
-  "name": "chunk_gated_delta_rule_fwd_prepare_0018_r4_T1088_V128_l2_sig1_neg1",
+  "id": 72,
+  "default_seed": 20260889,
+  "name": "chunk_gated_delta_rule_fwd_prepare_0072_r4_T1088_V128_l2_sig1_neg1",
   "aclnn_name": null,
   "triton_name": null,
   "kernel_name": null,
@@ -668,7 +668,7 @@
     "required": true,
     "dtype": "non_param",
     "shape": null,
-    "range_values": "{\"name\":\"r4_T1088_V128_l2_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":16,\"T\":1088,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":18,\"seed\":20260835,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"l2_sig1_neg1\"}",
+    "range_values": "{\"name\":\"r4_T1088_V128_l2_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":16,\"T\":1088,\"K\":128,\"V\":128,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":72,\"seed\":20260889,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"output_a\":true,\"flag_tag\":\"l2_sig1_neg1\"}",
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -767,7 +767,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 18,
+    "range_values": 72,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -778,7 +778,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 20260835,
+    "range_values": 20260889,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -808,9 +808,9 @@
   ]
  },
  {
-  "id": 24,
-  "default_seed": 20260841,
-  "name": "chunk_gated_delta_rule_fwd_prepare_0024_r1_T4160_V256_l2_sig1_neg1",
+  "id": 96,
+  "default_seed": 20260913,
+  "name": "chunk_gated_delta_rule_fwd_prepare_0096_r1_T4160_V256_l2_sig1_neg1",
   "aclnn_name": null,
   "triton_name": null,
   "kernel_name": null,
@@ -870,7 +870,7 @@
     "required": true,
     "dtype": "non_param",
     "shape": null,
-    "range_values": "{\"name\":\"r1_T4160_V256_l2_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":4160,\"K\":128,\"V\":256,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":24,\"seed\":20260841,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"l2_sig1_neg1\"}",
+    "range_values": "{\"name\":\"r1_T4160_V256_l2_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":4160,\"K\":128,\"V\":256,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":96,\"seed\":20260913,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"output_a\":true,\"flag_tag\":\"l2_sig1_neg1\"}",
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -969,7 +969,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 24,
+    "range_values": 96,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -980,7 +980,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 20260841,
+    "range_values": 20260913,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -1010,9 +1010,9 @@
   ]
  },
  {
-  "id": 30,
-  "default_seed": 20260847,
-  "name": "chunk_gated_delta_rule_fwd_prepare_0030_r2_T2112_V256_l2_sig1_neg1",
+  "id": 120,
+  "default_seed": 20260937,
+  "name": "chunk_gated_delta_rule_fwd_prepare_0120_r2_T2112_V256_l2_sig1_neg1",
   "aclnn_name": null,
   "triton_name": null,
   "kernel_name": null,
@@ -1072,7 +1072,7 @@
     "required": true,
     "dtype": "non_param",
     "shape": null,
-    "range_values": "{\"name\":\"r2_T2112_V256_l2_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":8,\"T\":2112,\"K\":128,\"V\":256,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":30,\"seed\":20260847,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"flag_tag\":\"l2_sig1_neg1\"}",
+    "range_values": "{\"name\":\"r2_T2112_V256_l2_sig1_neg1\",\"B\":1,\"HK\":4,\"HV\":8,\"T\":2112,\"K\":128,\"V\":256,\"chunk_size\":64,\"dtype\":\"bf16\",\"op\":\"chunk_gated_delta_rule_fwd_prepare\",\"case_id\":120,\"seed\":20260937,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"use_qk_l2norm_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_beta_sigmoid_in_kernel\":true,\"allow_neg_eigval\":true,\"use_exp2\":true,\"output_a\":true,\"flag_tag\":\"l2_sig1_neg1\"}",
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -1171,7 +1171,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 30,
+    "range_values": 120,
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -1182,7 +1182,7 @@
     "required": true,
     "dtype": "int",
     "shape": null,
-    "range_values": 20260847,
+    "range_values": 20260937,
     "backward": false,
     "align_32B": null,
     "outlier_values": null

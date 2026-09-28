@@ -28,6 +28,7 @@ using GDN::RecomputeWUFwdTilingData;
 
 namespace optiling {
 
+static constexpr int64_t RECOMPUTE_W_U_FWD_K_DIM_128 = 128;
 static constexpr int64_t RECOMPUTE_W_U_FWD_V_DIM_128 = 128;
 static constexpr int64_t RECOMPUTE_W_U_FWD_V_DIM_256 = 256;
 
@@ -315,6 +316,8 @@ public:
                     return ge::GRAPH_FAILED);
         T = static_cast<int64_t>(vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2));
         K = static_cast<int64_t>(kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_3));
+        OP_CHECK_IF(K != RECOMPUTE_W_U_FWD_K_DIM_128,
+                    OP_LOGE(ctx_.nodeName, "K must be 128, but got %ld.", K), return ge::GRAPH_FAILED);
         V = static_cast<int64_t>(vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_3));
         tiling_.B = B;
         tiling_.Hk = Hk;

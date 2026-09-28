@@ -54,7 +54,7 @@
 
 ## 函数原型
 
-每个算子分为[两段式接口](../../../docs/zh/context/两段式接口.md)，必须先调用 `aclnnCausalConv1dBwdGetWorkspaceSize` 接口获取计算所需 workspace 大小以及包含算子计算流程的执行器，再调用 `aclnnCausalConv1dBwd` 接口执行计算。
+每个算子分为两段式接口，必须先调用 `aclnnCausalConv1dBwdGetWorkspaceSize` 接口获取计算所需 workspace 大小以及包含算子计算流程的执行器，再调用 `aclnnCausalConv1dBwd` 接口执行计算。
 
 ```cpp
 aclnnStatus aclnnCausalConv1dBwdGetWorkspaceSize(
@@ -128,10 +128,6 @@ aclnnStatus aclnnCausalConv1dBwd(
 
   且 `queryStartLoc[i+1] >= queryStartLoc[i]`。
 
-- 返回值：
-
-  `aclnnStatus`：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn返回码.md)。
-
 ## aclnnCausalConv1dBwd
 
 - 参数说明：
@@ -142,10 +138,6 @@ aclnnStatus aclnnCausalConv1dBwd(
   | workspaceSize | 输入 | workspace 大小，由第一段接口 `aclnnCausalConv1dBwdGetWorkspaceSize` 获取。 |
   | executor | 输入 | op 执行器，由第一段接口 `aclnnCausalConv1dBwdGetWorkspaceSize` 获取。 |
   | stream | 输入 | acl stream 流。 |
-
-- 返回值：
-
-  `aclnnStatus`：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn返回码.md)。
 
 ## 约束说明
 
@@ -174,8 +166,6 @@ aclnnStatus aclnnCausalConv1dBwd(
   - `queryStartLocOptional` 必须是 `int64_t` 数组，长度为 `B+1`，首元素为 0，末元素为 `totalTokens`，且单调非递减。
 
 ## 调用示例
-
-示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/编译与运行样例.md)。
 
 ```cpp
 #include <iostream>

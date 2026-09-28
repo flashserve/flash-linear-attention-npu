@@ -159,7 +159,7 @@ def _build_positive_profiles() -> list[dict]:
     add("state_indices_permuted_per_sequence", seq_lengths=[2, 2], state_indices=[1, 0, 3, 2], HK=1, HV=2)
     add("accepted_sparse_state_index", seq_lengths=[3], accepted_tokens=[2], block_num=6, state_indices=[1, 3, 5])
     add("disjoint_sequence_state_blocks", seq_lengths=[2, 2], block_num=6, state_indices=[0, 1, 4, 5], HK=1, HV=2)
-    add("repeated_state_index", seq_lengths=[3], block_num=1, state_indices=[0, 0, 0])
+    add("state_index_rotation", seq_lengths=[3], block_num=3, state_indices=[1, 2, 0])
     add("zero_length_without_state_read", seq_lengths=[2, 0, 1], HK=1, HV=2)
     add("functional_contiguous_state", HK=2, HV=4, design_routes="D+F")
     add("functional_padded_state", HK=2, HV=4, state_layout="head_block_padded", design_routes="D+F")
@@ -196,14 +196,15 @@ def _build_positive_profiles() -> list[dict]:
     add("head_padding_noncontiguous_qkv", HK=2, HV=4, state_layout="head_padded", input_layout="noncontiguous_qkv_beta_g")
     add("accepted_noncontiguous_gk_metadata", seq_lengths=[3], accepted_tokens=[2], HK=2, HV=6, gate_mode="gk", input_layout="noncontiguous_gk_metadata")
 
-    # P083-P091: longer metadata chains, index reuse and scale values.
+    # P083-P091: longer metadata chains, index permutations and scale values.
     add("sixteen_single_token_sequences", seq_lengths=[1] * 16, HK=2, HV=4, gate_mode="g")
     add("alternating_zero_length_sequences", seq_lengths=[1, 0] * 8, HK=2, HV=4, gate_mode="gk")
     add("long_prefix_max_mtp", prefix_tokens=8, seq_lengths=[8], HK=2, HV=4)
     add("eight_max_mtp_sequences", seq_lengths=[8] * 8, HK=1, HV=2, state_dtype="bf16")
     add("increasing_lengths_and_accepted", seq_lengths=list(range(1, 9)), accepted_tokens=list(range(1, 9)), HK=2, HV=4)
     add("disjoint_state_across_batches", seq_lengths=[1] * 8, block_num=8, state_indices=[7, 0, 6, 1, 5, 2, 4, 3], HK=2, HV=4, gate_mode="g")
-    add("prefix_accepted_sparse_indices", prefix_tokens=4, seq_lengths=[2, 3], accepted_tokens=[1, 3], block_num=10, state_indices=[8, 7, 6, 5, 0, 2, 4, 6, 8], HK=2, HV=4)
+    add("prefix_accepted_sparse_indices", prefix_tokens=4, seq_lengths=[2, 3], accepted_tokens=[1, 3], block_num=10,
+        state_indices=[8, 7, 6, 5, 0, 2, 4, 1, 3], HK=2, HV=4)
     add("unit_scale", seq_lengths=[4], HK=2, HV=4, scale=1.0, gate_mode="g")
     add("small_scale", seq_lengths=[4], HK=2, HV=4, scale=0.03125, gate_mode="gk")
 
@@ -311,7 +312,7 @@ def _build_gva_profiles() -> list[dict]:
     add("gva_state_head_block_padding", HK=32, HV=96, state_layout="head_block_padded", design_routes="P+A+D+F")
     add("gva_sparse_state_indices", block_num=4, state_indices=[1, 3], HK=2, HV=8)
     add("gva_reversed_state_indices", state_indices=[1, 0], HK=2, HV=6)
-    add("gva_repeated_state_index", block_num=1, state_indices=[0, 0], HK=2, HV=8)
+    add("gva_state_index_rotation", block_num=2, state_indices=[1, 0], HK=2, HV=8)
     add("gva_accepted_permuted_index", seq_lengths=[3], accepted_tokens=[2], state_indices=[2, 0, 1], HK=2, HV=6)
     add("gva_three_route_shape", HK=2, HV=8, design_routes="P+A+D")
     add("gva_mutable_functional_shape", HK=2, HV=6, state_layout="head_padded", design_routes="D+F")
@@ -348,7 +349,8 @@ def _build_gva_profiles() -> list[dict]:
     add("gva_long_prefix_max_mtp", prefix_tokens=8, seq_lengths=[8], HK=4, HV=12)
     add("gva_increasing_lengths_accepted", seq_lengths=list(range(1, 9)), accepted_tokens=list(range(1, 9)), HK=4, HV=12)
     add("gva_eight_max_mtp_accepted", seq_lengths=[8] * 8, accepted_tokens=list(range(1, 9)), HK=2, HV=8, state_dtype="bf16")
-    add("gva_repeated_state_per_batch", seq_lengths=[2] * 4, block_num=4, state_indices=[0, 0, 1, 1, 2, 2, 3, 3], HK=4, HV=12)
+    add("gva_interleaved_state_indices", seq_lengths=[2] * 4, block_num=8,
+        state_indices=[0, 2, 4, 6, 1, 3, 5, 7], HK=4, HV=12)
     add("gva_sparse_state_chain", seq_lengths=[4, 3, 2, 1], block_num=12, state_indices=[9, 0, 8, 1, 7, 2, 6, 3, 5, 4], HK=4, HV=12)
     add("gva_prefix_accepted_complex_chain", prefix_tokens=4, seq_lengths=[4, 3, 2, 1], accepted_tokens=[2, 3, 1, 1], HK=24, HV=96)
 
@@ -439,6 +441,8 @@ def _validate_specs(specs: list[dict]) -> None:
             raise ValueError(f"{spec['design_id']}: state_indices length must equal T")
         if any(value < 0 or value >= int(spec["block_num"]) for value in state_indices):
             raise ValueError(f"{spec['design_id']}: state index out of range")
+        if len(set(state_indices)) != len(state_indices):
+            raise ValueError(f"{spec['design_id']}: state indices must be unique")
         accepted = spec.get("accepted_tokens")
         if accepted is not None:
             accepted = [int(value) for value in accepted]

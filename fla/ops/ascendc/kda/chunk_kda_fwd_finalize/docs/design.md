@@ -32,13 +32,22 @@ sequence-major 顺序映射，不按 tensor 的 T 维简单除以 64。
 任务少于可用核时增加完整 value head 的分区。输出写回地址按
 `(batch,chunk,head)` 分区，不与其他 AIC 重叠。
 
+A5 dense 的主体按完整 chunk 均分；最后不足一轮核数的 chunk，再按
+4 个完整 head 的组均摊。AIC/AIV 使用相同映射和组内消费顺序。例如
+128 个 chunk、96 个 head、28 核时，先每核分 4 个完整 chunk，余下
+16 个 chunk 的 384 个 head 组按每核 13/14 组分配，避免原来每核
+4/5 个 chunk 的负载差。每个 `(chunk,head)` 只由一个核组处理，
+不增加计算、workspace 或同步 flag。变长路径保持原有任务划分。
+
 Host 根据平台和每核工作量选择 `USE_AIV_INPUT_MOVER` 编译期模板参数：
 
-- `false`：A2/A3 始终使用，A5 在 head 被拆分或每核不足 8 个 chunk
-  时使用。模板组合指定为 AIC-only，四个输入由 AIC MTE2 直接从 GM
+- `false`：A2/A3 始终使用，A5 在 Host 已划分 head 分区，或每核完整
+  chunk 数不足阈值时使用（dense 为 4、变长为 8）。模板组合指定为
+  AIC-only，四个输入由 AIC MTE2 直接从 GM
   搬到 L1。
-- `true`：仅 A5 使用，要求每个 work item 包含完整 value head，且每核
-  至少 8 个 chunk。模板组合指定为 MIX AIC 1:2，两个 AIV 负责 GM 到
+- `true`：仅 A5 使用，要求 Host 未划分 head 分区，且每核至少有
+  4 个 dense chunk 或 8 个变长 chunk。dense 尾部负载均衡由 Kernel
+  进一步划分完整 head 组。模板组合指定为 MIX AIC 1:2，两个 AIV 负责 GM 到
   UB 再到 L1 的格式转换，AIC 只消费已经就绪的 L1 操作数。
 
 TilingKey 由 `GET_TPL_TILING_KEY(USE_AIV_INPUT_MOVER)` 生成；Kernel 全局
@@ -109,11 +118,15 @@ workspace。Fixpipe 将 L0C FP32 结果直接转换为 BF16：BNSD/NTD
 
 ## layout 与元数据
 
-四个输入始终 head-major。`qg_scaled/Aqk` 为 rank-4 时允许
-`BSND/BNSD` 输出，为 rank-3 时允许 `TND/NTD` 输出；packed 模式的
-FwdH 主路径的 `v_new/h` 仍保留 rank-4/rank-5 首维 1，不能按
-`qg_scaled` 的 rank 自动删掉；独立调用也允许 rank-3 `v_new`。
+三个 token 输入始终 head-major，h 为 NT-first dense `[B,C,HV,128,128]`，
+带 cu_seqlens 的 h 为 `[1,C,HV,128,128]`。
+`qg_scaled/Aqk` 为 rank-4 时允许
+`BSND/BNSD` 输出，为 rank-3 时允许 `TND/NTD` 输出；FwdH 主路径的
+`v_new` 仍保留 rank-4 首维 1，独立调用也允许 rank-3 `v_new`。
 输入的物理形状不随 `output_layout` 变化。
+公共 `StateOffset` 使用 `((b*C+c)*HV+head)*128*128`；packed 的 c 为
+sequence-major global chunk。Cube 与 A5 Vector mover 共享此函数。
+KDA V2 直接传入共享 FwdH 的 NT-first h，无额外 chunk/head 转置。
 `state_v_first=true` 时，读取 `h` 时交换末两维语义，避免变更公开
 输入的物理存储。
 
@@ -128,5 +141,6 @@ token/head 轴，`TND/NTD` 交换 rank-3 的 token/head 轴。
 独立算子不接收 HK；GVA 复用发生在 Prepare，Finalize 只能验证
 已展开为 HV 的数据。`h/final_state` 的公开保留策略属于 FwdH 或
 完整 forward，Finalize 必须实际收到内部 `h`，即使调用者不请求
-公开 intermediate states。本 PR 不修改共享 Python 注册代码，
-因此算子私有 ATK 直调不等价于稳定 `fla_npu` 主入口验证。
+公开 intermediate states。稳定 `fla_npu.ops.ascendc` 入口通过 ctypes
+直接调用 aclnn，不注册 legacy `torch.ops.npu` 接口。算子私有 ATK
+直调只验证设备实现，不能替代稳定 Python 入口验证。

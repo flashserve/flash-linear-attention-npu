@@ -867,6 +867,10 @@ def _head_axis(layout: str) -> int:
     return 2 if layout == "BSND" else (1 if layout in {"BNSD", "TND"} else 0)
 
 
+def _seq_axis(layout: str) -> int:
+    return 1 if layout in {"BSND", "NTD"} else (2 if layout == "BNSD" else 0)
+
+
 def _resize_axis(tensor: torch.Tensor, axis: int, size: int) -> torch.Tensor:
     if size <= tensor.shape[axis]:
         return tensor.narrow(axis, 0, size).contiguous()
@@ -935,12 +939,16 @@ def _mutate_raw(inputs: _PreparedInputs, spec: dict, outputs: list):
         values["g"] = _resize_axis(inputs.g, head_axis, hv_num)
         values["beta"] = _resize_axis(inputs.beta, head_axis, hv_num)
     elif mutation.startswith("k_"):
-        k_size = {"k_lt_16": 8, "k_gt_256": 272, "k_unaligned": 24}[mutation]
+        # k_mixed 把 K 降到 64 而 V 保持 128：K/V 不同档，公开契约要求两侧都拒绝。
+        k_size = {"k_lt_16": 8, "k_gt_256": 272, "k_unaligned": 24,
+                  "k_mixed": 64}[mutation]
         values["q"] = _resize_axis(inputs.q, inputs.q.dim() - 1, k_size)
         values["k"] = _resize_axis(inputs.k, inputs.k.dim() - 1, k_size)
         values["g"] = _resize_axis(inputs.g, inputs.g.dim() - 1, k_size)
     elif mutation.startswith("v_"):
-        v_size = {"v_lt_16": 8, "v_gt_256": 272, "v_unaligned": 24}[mutation]
+        # v_mixed 对称：V=64 而 K 保持 128。
+        v_size = {"v_lt_16": 8, "v_gt_256": 272, "v_unaligned": 24,
+                  "v_mixed": 64}[mutation]
         values["v"] = _resize_axis(inputs.v, inputs.v.dim() - 1, v_size)
     elif mutation == "q_fp32":
         values["q"] = inputs.q.float()
@@ -988,6 +996,12 @@ def _mutate_raw(inputs: _PreparedInputs, spec: dict, outputs: list):
         values["A_log"] = inputs.A_log[:-1].contiguous()
     elif mutation == "dtbias_shape":
         values["dt_bias"] = inputs.dt_bias[:-1].contiguous()
+    elif mutation in {"t_zero", "b_zero"}:
+        # 空 tensor 负向用例：把序列长度或 batch 维压到 0，其余维保持合法，
+        # 用于确认 host 校验会明确报出是哪个逻辑维为空。
+        axis = _seq_axis(layout) if mutation == "t_zero" else 0
+        for name in ("q", "k", "v", "g", "beta"):
+            values[name] = _resize_axis(values[name], axis, 0)
     elif mutation == "lower_low":
         values["lower_bound"] = -5.1
     elif mutation == "lower_high":
@@ -1072,15 +1086,17 @@ def _run_negative_aclnn(inputs: _PreparedInputs, spec: dict):
             raise RuntimeError(
                 f"negative interception returned {actual_code}, expected {expected_code}: {exc}"
             ) from exc
-        recent_error = _recent_aclnn_error()
+        # `_aclnn_error` 已经把 CANN 报错文案拼进异常，且读取该文案会清空全局缓冲，
+        # 因此以异常文本为主、`aclGetRecentErrMsg` 为辅，二者任一命中即可。
+        observed = "\n".join(part for part in (str(exc), _recent_aclnn_error()) if part)
         expected_message = str(spec["expected_message"])
-        if expected_message not in recent_error:
+        if expected_message not in observed:
             raise RuntimeError(
                 f"negative interception code matched but message did not: expected {expected_message!r}, "
-                f"actual {recent_error!r}"
+                f"actual {observed!r}"
             ) from exc
         raise RuntimeError(
-            f"{spec['expected_code_name']}({expected_code}): {expected_message}; recent_error={recent_error}"
+            f"{spec['expected_code_name']}({expected_code}): {expected_message}; observed={observed}"
         ) from exc
     raise RuntimeError("negative interception unexpectedly returned ACLNN_SUCCESS")
 

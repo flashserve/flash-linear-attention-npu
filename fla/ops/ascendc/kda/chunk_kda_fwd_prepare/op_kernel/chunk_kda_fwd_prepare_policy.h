@@ -28,6 +28,9 @@
 #define CHUNK_KDA_FWD_PREPARE_OUTPUT_NONE 0
 #define CHUNK_KDA_FWD_PREPARE_OUTPUT_RECOMPUTE 1
 #define CHUNK_KDA_FWD_PREPARE_OUTPUT_SAVE 2
+// 只额外搬出 Akk：Aqk/Akk 是公开必选输出，而 qHat/kHat/qRstd/kRstd/betaEff
+// 只有反向重计算路径才需要。
+#define CHUNK_KDA_FWD_PREPARE_OUTPUT_FORWARD 3
 
 namespace KdaPrepare {
 
@@ -51,6 +54,8 @@ enum class GateMode : uint8_t {
 enum class OutputMode : uint8_t {
     // 只搬出 fwd_h/finalize 必需输出。
     None = CHUNK_KDA_FWD_PREPARE_OUTPUT_NONE,
+    // 额外搬出 Akk（公开必选），但不搬出反向重计算中间量。
+    Forward = CHUNK_KDA_FWD_PREPARE_OUTPUT_FORWARD,
     // 额外搬出反向重计算需要的 Akk、归一化结果和 beta_eff。
     Recompute = CHUNK_KDA_FWD_PREPARE_OUTPUT_RECOMPUTE,
     // 再额外搬出 qg，保留全部反向中间量。
@@ -101,6 +106,14 @@ struct PrepareCompilePolicy {
     static constexpr bool useExp2 = USE_EXP2;
     static constexpr bool safeGate = SAFE_GATE;
     static constexpr OutputMode outputMode = OUTPUT_MODE;
+    // None/Forward/Recompute/Save 四档的搬出集合：
+    //   outputAkk          : Akk（None 之外都写）
+    //   outputRecomputeAux : qHat/kHat/qRstd/kRstd/betaEff
+    //   outputQg           : qg
+    static constexpr bool outputAkk = OUTPUT_MODE != OutputMode::None;
+    static constexpr bool outputRecomputeAux =
+        OUTPUT_MODE == OutputMode::Recompute || OUTPUT_MODE == OutputMode::Save;
+    static constexpr bool outputQg = OUTPUT_MODE == OutputMode::Save;
 };
 
 namespace Shape {

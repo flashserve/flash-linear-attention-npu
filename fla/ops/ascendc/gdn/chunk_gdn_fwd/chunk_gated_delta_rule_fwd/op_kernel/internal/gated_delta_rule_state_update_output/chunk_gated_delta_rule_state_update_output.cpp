@@ -3,6 +3,7 @@
  * CANN Open Software License Agreement Version 2.0.
  */
 #include "../operators/chunk_gated_delta_rule_fwd_h/op_kernel/chunk_gated_delta_rule_fwd_h_struct.h"
+#include "../arch35/ho_pipeline_context.h"
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #include "../operators/chunk_gated_delta_rule_fwd_h/op_kernel/arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
 #else
@@ -41,11 +42,13 @@ template <typename InputT, typename GT, typename StateT, typename TileShapes, bo
 __aicore__ inline void RunFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk,
                                GM_ADDR initialState, GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
                                GM_ADDR h, GM_ADDR vNew, GM_ADDR finalState, GM_ADDR tiling,
-                               GM_ADDR userWorkspace)
+                               GM_ADDR userWorkspace,
+                               const GDN::HoPipelineContext &hoPipelineContext)
 {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     constexpr bool kB30 = Arch35GdnSyncTraits<Variant>::kB30;
-    constexpr uint32_t rowTile = kB30 && std::is_same_v<StateT, bfloat16_t> ? 64 : 16;
+    constexpr uint32_t rowTile =
+        kB30 && (std::is_same_v<StateT, float> || std::is_same_v<StateT, bfloat16_t>) ? 64 : 16;
     using Kernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
         InputT, GT, StateT, float, TileShapes, kGated, true, false, true, kB30, rowTile>;
 #else
@@ -53,8 +56,13 @@ __aicore__ inline void RunFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_AD
         InputT, GT, StateT, float, TileShapes, kGated, true, false, false>;
 #endif
     Kernel kernel;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    kernel.Init(k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
+                tiling, userWorkspace, hoPipelineContext);
+#else
     kernel.Init(k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
                 tiling, userWorkspace);
+#endif
     kernel.Process();
 }
 
@@ -62,7 +70,8 @@ template <typename InputT, typename TileShapes, Arch35GdnSyncVariant Variant, ty
 __aicore__ inline void DispatchFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk,
                                     GM_ADDR initialState, GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
                                     GM_ADDR h, GM_ADDR vNew, GM_ADDR finalState, GM_ADDR tiling,
-                                    GM_ADDR userWorkspace)
+                                    GM_ADDR userWorkspace,
+                                    const GDN::HoPipelineContext &hoPipelineContext)
 {
     const __gm__ GdnMegaArch35FwdHTilingData *hTiling =
         reinterpret_cast<const __gm__ GdnMegaArch35FwdHTilingData *>(tiling);
@@ -76,26 +85,26 @@ __aicore__ inline void DispatchFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, 
                       "B30 requires a supported generated initial-state dtype.");
         RunFwdH<InputT, float, StateT, TileShapes, false, Variant>(
             k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
-            tiling, userWorkspace);
+            tiling, userWorkspace, hoPipelineContext);
     } else {
         if (hTiling->stateDataType == 2) {
             if (hTiling->useGk) {
                 RunFwdH<InputT, float, float, TileShapes, true>(
                     k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
-                    tiling, userWorkspace);
+                    tiling, userWorkspace, hoPipelineContext);
             } else {
                 RunFwdH<InputT, float, float, TileShapes, false>(
                     k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
-                    tiling, userWorkspace);
+                    tiling, userWorkspace, hoPipelineContext);
             }
         } else if (hTiling->useGk) {
             RunFwdH<InputT, float, InputT, TileShapes, true>(
                 k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
-                tiling, userWorkspace);
+                tiling, userWorkspace, hoPipelineContext);
         } else {
             RunFwdH<InputT, float, InputT, TileShapes, false>(
                 k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
-                tiling, userWorkspace);
+                tiling, userWorkspace, hoPipelineContext);
         }
     }
 }
@@ -142,13 +151,15 @@ __aicore__ inline void CopyRecomputeTiling(const __gm__ GdnMegaArch35RecomputeWU
 template <typename InputT, typename GT, Arch35GdnSyncVariant Variant>
 __aicore__ inline void RunFwdO(GM_ADDR q, GM_ADDR k, GM_ADDR vNew, GM_ADDR h, GM_ADDR g,
                                GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR o,
-                               GM_ADDR userWorkspace, const GdnMegaArch35FwdOTilingData *tiling)
+                               GM_ADDR userWorkspace, const GdnMegaArch35FwdOTilingData *tiling,
+                               const GDN::HoPipelineContext &hoPipelineContext = {})
 {
     using Sync = Arch35GdnSyncTraits<Variant>;
     using Kernel = Catlass::Gemm::Kernel::GDNFwdOKernel<
         InputT, GT, float, true, Sync::kAggregateQkMask, Sync::kAggregateOutput>;
     Kernel kernel;
-    kernel.Init(q, k, vNew, h, g, cuSeqlens, chunkIndices, o, tiling, userWorkspace);
+    kernel.Init(q, k, vNew, h, g, cuSeqlens, chunkIndices, o, tiling, userWorkspace,
+                hoPipelineContext);
     kernel.Process();
 }
 
@@ -195,9 +206,11 @@ __aicore__ inline void DispatchRecompute(
 template <typename InputT, Arch35GdnSyncVariant Variant>
 __aicore__ inline void DispatchFwdO(GM_ADDR q, GM_ADDR k, GM_ADDR vNew, GM_ADDR h, GM_ADDR g,
                                     GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR o,
-                                    GM_ADDR userWorkspace, const GdnMegaArch35FwdOTilingData *tiling)
+                                    GM_ADDR userWorkspace, const GdnMegaArch35FwdOTilingData *tiling,
+                                    const GDN::HoPipelineContext &hoPipelineContext = {})
 {
-    RunFwdO<InputT, float, Variant>(q, k, vNew, h, g, cuSeqlens, chunkIndices, o, userWorkspace, tiling);
+    RunFwdO<InputT, float, Variant>(q, k, vNew, h, g, cuSeqlens, chunkIndices, o,
+                                    userWorkspace, tiling, hoPipelineContext);
 }
 
 } // namespace

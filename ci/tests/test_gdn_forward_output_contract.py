@@ -1,4 +1,4 @@
-"""Exercise six-output GDN consumers without requiring an NPU runtime."""
+"""Exercise ten-output GDN consumers without requiring an NPU runtime."""
 from __future__ import annotations
 
 import ast
@@ -22,7 +22,7 @@ def load_functions(path, names, namespace):
 
 class GdnForwardConsumerTest(unittest.TestCase):
     def test_example_preserves_its_four_output_contract(self):
-        outputs = tuple(object() for _ in range(6))
+        outputs = tuple(object() for _ in range(10))
         op = Mock(return_value=outputs)
         ns = load_functions("examples/flash_gated_delta_rule.py", {"flash_chunk_gated_delta_rule_fwd"},
                             {"ascendc_chunk_gated_delta_rule_fwd": op, "_chunk_list": lambda *args: None})
@@ -35,7 +35,9 @@ class GdnForwardConsumerTest(unittest.TestCase):
 
     def test_atk_dut_and_benchmark_keep_matching_output_order(self):
         outputs = tuple(object() for _ in range(4))
-        op = Mock(return_value=(*outputs, None, None))
+        # beta_eff, h, q_hat, k_hat, q_rstd, k_rstd are not compared by this ATK executor.
+        auxiliary_outputs = tuple(object() for _ in range(6))
+        op = Mock(return_value=(*outputs, *auxiliary_outputs))
         package = types.ModuleType("fla_npu")
         ops = types.ModuleType("fla_npu.ops")
         ops.ascendc = types.SimpleNamespace(chunk_gated_delta_rule_fwd=op)

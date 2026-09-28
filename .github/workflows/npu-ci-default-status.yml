@@ -12,6 +12,7 @@ jobs:
       issues: write
       pull-requests: read
       statuses: write
+      contents: read
     steps:
       - name: 写入未执行状态并提示触发人
         uses: actions/github-script@v8
@@ -24,7 +25,9 @@ jobs:
               return;
             }
 
-            const checkContexts = [
+            const defaultBranch = context.payload.repository.default_branch;
+            const baseRef = pr.base.ref;
+            const defaultContexts = [
               'NPU CI / A2+A5 / 01 环境、wheel 与运行时契约',
               'NPU CI / A2+A5 / 02 全量 OPP 构建',
               'NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局',
@@ -33,6 +36,51 @@ jobs:
               'NPU CI / A2+A5 / 06 chunk_fwd_o 局部覆盖安装',
               'NPU CI / A2+A5 / 07 报告与 commit 校验',
             ];
+            // pull_request_target 只执行默认分支上的 workflow，任何 base 分支的 PR
+            // 都由本 workflow 写入“未执行”占位状态。为了让每个分支的 PR 显示各自的
+            // 流程，非默认分支的门禁 context 从该分支自己的 npu-ci-default-status.yml
+            // 中提取（与该分支 ci.yml 会更新的状态一一对应），避免老分支 PR 一直
+            // 停留在新版门禁的 pending（Waiting for status to be reported）。
+            let checkContexts = null;
+            if (baseRef === defaultBranch) {
+              checkContexts = defaultContexts;
+            } else {
+              try {
+                const { data: branchStatusWorkflow } = await github.rest.repos.getContent({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  path: '.github/workflows/npu-ci-default-status.yml',
+                  ref: baseRef,
+                });
+                if (!Array.isArray(branchStatusWorkflow) &&
+                    branchStatusWorkflow.type === 'file' &&
+                    branchStatusWorkflow.content) {
+                  const branchStatusText = Buffer
+                    .from(branchStatusWorkflow.content, branchStatusWorkflow.encoding || 'base64')
+                    .toString('utf8');
+                  const extracted = [];
+                  const seen = new Set();
+                  for (const match of branchStatusText.matchAll(/'NPU CI \/ [^']+'/g)) {
+                    const statusContext = match[0].slice(1, -1);
+                    if (!seen.has(statusContext)) {
+                      seen.add(statusContext);
+                      extracted.push(statusContext);
+                    }
+                  }
+                  if (extracted.length > 0) {
+                    checkContexts = extracted;
+                    core.notice(`base 分支 \`${baseRef}\` 的 NPU CI 门禁：${extracted.join('、')}`);
+                  }
+                }
+              } catch (error) {
+                core.warning(`无法读取 \`${baseRef}\` 分支的 npu-ci-default-status.yml：${error.message}`);
+              }
+            }
+            if (!checkContexts) {
+              core.notice(`无法确定 base 分支 \`${baseRef}\` 的 NPU CI 门禁，跳过写入默认状态。`);
+              return;
+            }
+
             const marker = `<!-- npu-ci:pr=${pr.number}:sha=${pr.head.sha} -->`;
             const isCommitUpdate = context.payload.action === 'synchronize';
             const pendingDescription = isCommitUpdate
@@ -48,6 +96,43 @@ jobs:
               ref: pr.head.sha,
               per_page: 100,
             });
+            const latestByContext = new Map();
+            for (const status of [...statuses].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))) {
+              if (!latestByContext.has(status.context)) {
+                latestByContext.set(status.context, status);
+              }
+            }
+
+            // 清理不属于 base 分支门禁的历史 pending 占位状态（例如旧版逻辑给老分支
+            // PR 写入的新版 7 项 pending，老分支 CI 永远不会更新它们）。只覆盖
+            // target_url 指向 PR 页面的占位状态，不触碰 target_url 指向 actions run
+            // 的真实执行状态。
+            const staleContexts = [...latestByContext.entries()]
+              .filter(([statusContext, status]) =>
+                statusContext.startsWith('NPU CI / ') &&
+                !checkContexts.includes(statusContext) &&
+                status.state === 'pending' &&
+                !/\/actions\/runs\/\d+/.test(status.target_url || ''))
+              .map(([statusContext]) => statusContext);
+            if (staleContexts.length > 0) {
+              core.notice(`清理不属于 base 分支 \`${baseRef}\` 门禁的历史 pending 状态：${staleContexts.join('、')}`);
+            }
+            const staleResults = await Promise.allSettled(staleContexts.map((statusContext) =>
+              github.rest.repos.createCommitStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                sha: pr.head.sha,
+                state: 'success',
+                context: statusContext,
+                description: `不适用：base 分支 \`${baseRef}\` 的 NPU CI 不含此检查，已自动失效`,
+                target_url: pr.html_url,
+              })
+            ));
+            const staleFailures = staleResults.filter((result) => result.status === 'rejected');
+            if (staleFailures.length > 0) {
+              core.warning(`有 ${staleFailures.length} 个历史 NPU CI 占位状态清理失败。`);
+            }
+
             const executionStatus = statuses.find((status) =>
               checkContexts.includes(status.context) &&
               /\/actions\/runs\/\d+/.test(status.target_url || '')
@@ -55,12 +140,6 @@ jobs:
             if (executionStatus) {
               core.notice(`当前 head commit 已经有 NPU CI 执行状态：${executionStatus.state}。`);
               return;
-            }
-            const latestByContext = new Map();
-            for (const status of [...statuses].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))) {
-              if (!latestByContext.has(status.context)) {
-                latestByContext.set(status.context, status);
-              }
             }
             const missingContexts = checkContexts.filter((statusContext) => !latestByContext.has(statusContext));
             const pendingResults = await Promise.allSettled(missingContexts.map((statusContext) =>
@@ -79,14 +158,20 @@ jobs:
               core.warning(`有 ${pendingFailures.length} 个 NPU CI 默认状态写入失败。`);
             }
 
+            const isDefaultProfile = checkContexts.length === defaultContexts.length &&
+              checkContexts.every((statusContext, index) => statusContext === defaultContexts[index]);
+            const requirementLine = isDefaultProfile
+              ? '- 合入要求：当前 commit 必须通过 7 个 `NPU CI / A2+A5 / 01..07` 分项状态'
+              : `- 合入要求：当前 commit 必须通过 ${checkContexts.length} 个状态：${checkContexts.map((statusContext) => `\`${statusContext}\``).join('、')}`;
             const body = [
               marker,
               title,
               '',
               '- 当前状态：未执行',
               isCommitUpdate ? '- 原因：PR head commit 已变化，旧 commit 的 NPU CI 结果不再生效' : '',
-              '- 合入要求：当前 commit 必须通过 7 个 `NPU CI / A2+A5 / 01..07` 分项状态',
-              '- 执行方式：按顺序执行；前置失败时后续项跳过',
+              baseRef === defaultBranch ? '' : `- CI 定义分支：\`${baseRef}\`（评论触发的 NPU CI 在该分支的定义上执行）`,
+              requirementLine,
+              isDefaultProfile ? '- 执行方式：按顺序执行；前置失败时后续项跳过' : '',
               '- 触发命令：仓库 Admin 权限账号在本 PR 评论 `/run-npu-ci quick` 或 `/run-npu-ci full`',
               '- 可请求触发的 CI 账号：仓库 Admin 权限账号',
               '- Example ST：必跑',

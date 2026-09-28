@@ -321,7 +321,7 @@ def chunk_gated_delta_rule_bwd_dhu_torch(
             'global_end_t': global_end_t,
         })
 
-    dh = torch.zeros(B, Hv, NT, K, V, device=device, dtype=torch.float32)
+    dh = torch.zeros(B, NT, Hv, K, V, device=device, dtype=torch.float32)
     # dv2 与 dv/do 对齐为 [B,Hv,T,V]；变长时仅改写 [0, seq_total)，其余保留 dv（padding）
     if cu_seqlens is not None:
         dv2 = dv.clone()
@@ -338,7 +338,7 @@ def chunk_gated_delta_rule_bwd_dhu_torch(
             global_end_t = info["global_end_t"]
             block_size_t = info["block_size_t"]
 
-            dh[:, :, i_t, :, :] = b_dh
+            dh[:, i_t, :, :, :] = b_dh
 
             last_idx = min((info["block_idx_in_token"] + 1) * BT, info["token_length"]) - 1
             global_last_idx = info["bos"] + last_idx
@@ -392,7 +392,7 @@ def chunk_gated_delta_rule_bwd_dhu_torch(
                     i_n = info['i_n']
                     b_dh = b_dh_buffers[i_n]
 
-                    dh[b, i_h, i_t] = b_dh
+                    dh[b, i_t, i_h] = b_dh
 
                     global_start_t = info['global_start_t']
                     global_end_t = info['global_end_t']

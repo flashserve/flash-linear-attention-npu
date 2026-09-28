@@ -112,6 +112,7 @@ struct BlockSchedulerGdnFwdH {
     uint32_t cubeCoreNum;
     uint32_t vBlockCount;
     uint32_t taskNum;
+    uint32_t streamsPerWave{1};
     uint32_t headGroups;
     uint32_t totalChunks;
     uint32_t totalTokens;
@@ -222,12 +223,26 @@ struct BlockSchedulerGdnFwdH {
     }
 
     CATLASS_DEVICE
+    void ConfigureTaskStreams(bool enableTwoStreams) {
+        streamsPerWave = enableTwoStreams && vHeadDim == 128 && taskNum > cubeCoreNum
+            ? PING_PONG_STAGES : 1;
+        InitTaskWave(0);
+    }
+
+    CATLASS_DEVICE
+    uint32_t GetWaveTaskIndex(uint32_t waveIdx, uint32_t streamId) const {
+        return waveIdx * cubeCoreNum * streamsPerWave + streamId * cubeCoreNum + cubeCoreIdx;
+    }
+
+    CATLASS_DEVICE
     void InitTaskWave(uint32_t waveIdx) {
-        uint32_t firstTaskIdx = waveIdx * cubeCoreNum + cubeCoreIdx;
+        uint32_t firstTaskIdx = GetWaveTaskIndex(waveIdx, 0);
         taskStride = taskNum;
         for (uint32_t streamId = 0; streamId < PING_PONG_STAGES; ++streamId) {
             auto& stream = runningQ.streams[streamId];
-            stream.nextTaskIdx = streamId == 0 ? firstTaskIdx : taskNum;
+            // A stream keeps its physical bank and logical task for the whole wave.
+            stream.nextTaskIdx = streamId < streamsPerWave
+                ? GetWaveTaskIndex(waveIdx, streamId) : taskNum;
             stream.chunkIdx = 0;
             stream.batchChunks = 0;
             stream.active = false;
@@ -237,7 +252,7 @@ struct BlockSchedulerGdnFwdH {
 
     CATLASS_DEVICE
     uint32_t GetTaskWaveCount() const {
-        return CeilDiv(taskNum, cubeCoreNum);
+        return CeilDiv(taskNum, cubeCoreNum * streamsPerWave);
     }
 
     CATLASS_DEVICE
@@ -325,8 +340,8 @@ struct BlockSchedulerGdnFwdH {
         uint32_t vBlockDim = Min(vBlockSize, vHeadDim - vBlockOffset);
         offset.initialStateOffset = (stream.batchIdx * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim + vBlockOffset;
         offset.finalStateOffset = (stream.batchIdx * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim + vBlockOffset;
-        offset.hSrcOffset = (stream.shapeBatchIdx * vNumHead * totalChunks + stream.vHeadIdx * totalChunks + stream.chunkOffset + stream.chunkIdx) * kHeadDim * vHeadDim + vBlockOffset;
-        offset.hDstOffset = offset.hSrcOffset + kHeadDim * vHeadDim;
+        offset.hSrcOffset = ((stream.shapeBatchIdx * totalChunks + stream.chunkOffset + stream.chunkIdx) * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim + vBlockOffset;
+        offset.hDstOffset = offset.hSrcOffset + vNumHead * kHeadDim * vHeadDim;
         if (storeFinalState && offset.isFinalState) {
             offset.hDstOffset = offset.hSrcOffset;
         }

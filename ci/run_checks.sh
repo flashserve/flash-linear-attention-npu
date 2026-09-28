@@ -307,9 +307,9 @@ patterns = (
     "fla_npu.egg-info",
     "fla_npu.egg-link",
     "fla_npu-*.dist-info",
-    "flash_linear_attention_npu.egg-info",
-    "flash_linear_attention_npu.egg-link",
-    "flash_linear_attention_npu-*.dist-info",
+    "flash_linear_attention_npu*.egg-info",
+    "flash_linear_attention_npu*.egg-link",
+    "flash_linear_attention_npu*.dist-info",
     "__editable__*fla_npu*.*",
     "__editable__*flash_linear_attention_npu*.*",
     "__editable__*flash_linear_attention_npu*",
@@ -340,7 +340,7 @@ build_and_check_wheel_api() {
     rm -rf dist
     python3 -m pip wheel --no-build-isolation --no-deps . -w dist
     shopt -s nullglob
-    local wheels=(dist/flash_linear_attention_npu-*.whl)
+    local wheels=(dist/flash_linear_attention_npu*.whl)
     shopt -u nullglob
     if (( ${#wheels[@]} != 1 )); then
         echo "[CI][ERROR] Expected exactly one flash_linear_attention_npu wheel, found ${#wheels[@]}." >&2
@@ -368,7 +368,7 @@ check_standalone_torch_custom_wheel_layout() {
     (cd torch_custom/fla_npu && python3 setup.py bdist_wheel --dist-dir "$dist_dir")
 
     shopt -s nullglob
-    local wheels=("$dist_dir"/flash_linear_attention_npu-*.whl)
+    local wheels=("$dist_dir"/flash_linear_attention_npu*.whl)
     shopt -u nullglob
     if (( ${#wheels[@]} != 1 )); then
         echo "[CI][ERROR] Expected exactly one flash-linear-attention-npu standalone wheel, found ${#wheels[@]}." >&2
@@ -502,7 +502,7 @@ print("[CI] Scoped wheel OPP install check passed.")
 PY
 
     shopt -s nullglob
-    local wheels=(dist/flash_linear_attention_npu-*.whl)
+    local wheels=(dist/flash_linear_attention_npu*.whl)
     shopt -u nullglob
     if (( ${#wheels[@]} != 1 )); then
         echo "[CI][ERROR] Expected exactly one wheel for install workflow checks, found ${#wheels[@]}." >&2

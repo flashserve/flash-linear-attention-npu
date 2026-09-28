@@ -30,7 +30,7 @@ public:
     {
         args_ = args;
         workgroup_ = WorkgroupId();
-        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+        if constexpr (CompilePolicy::outputAkk) {
             akkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.akk));
         }
         const uint64_t outputElements =
@@ -43,113 +43,183 @@ public:
 
     __aicore__ inline void Process()
     {
-        if (args_.tiling.usedCoreNum == 0) {
+        if (args_.tiling.usedCoreNum == 0 ||
+            workgroup_ >= args_.tiling.usedCoreNum) {
             return;
         }
 
+        const uint32_t coreCount = args_.tiling.usedCoreNum;
+        const uint32_t chunkWork = static_cast<uint32_t>(
+            static_cast<uint64_t>(args_.tiling.batch) *
+            args_.tiling.totalChunks);
+        const uint32_t headsPerQk =
+            args_.tiling.valueHeadNum / args_.tiling.qkHeadNum;
+        const bool fourHeadGroupPreservesGva =
+            headsPerQk != 0 && Shape::kHeadsPerGroup % headsPerQk == 0;
+        const bool balanceDenseTail =
+            !args_.tiling.isVarLen && HeadPartitionCount(args_.tiling) == 1 &&
+            fourHeadGroupPreservesGva && chunkWork >= coreCount &&
+            chunkWork % coreCount != 0;
+        if (!balanceDenseTail) {
+            const uint32_t total = TotalWorkItems(args_.tiling);
+            const uint32_t workBegin = WorkBegin(
+                total, workgroup_, coreCount);
+            const uint32_t workEnd = WorkEnd(
+                total, workgroup_, coreCount);
+            for (uint32_t work = workBegin; work < workEnd; ++work) {
+                uint32_t globalChunk = 0;
+                uint32_t headPartition = 0;
+                DecodeWorkItem(
+                    args_.tiling, work, globalChunk, headPartition);
+                ChunkRange chunk{};
+                if (!ResolveChunk(args_, globalChunk, chunk)) {
+                    continue;
+                }
+                uint32_t headBegin = 0;
+                uint32_t headEnd = 0;
+                HeadRange(
+                    args_.tiling, headPartition, headBegin, headEnd);
+                ProcessChunkHeadRange(chunk, headBegin, headEnd);
+            }
+            return;
+        }
+
+        // 主体 chunk 仍然只按 chunk 分核，每核处理相同数量的完整 head。
+        const uint32_t chunksPerCore = chunkWork / coreCount;
+        const uint32_t bodyChunkCount = chunksPerCore * coreCount;
+        const uint32_t bodyBegin = workgroup_ * chunksPerCore;
+        const uint32_t bodyEnd = bodyBegin + chunksPerCore;
+        for (uint32_t globalChunk = bodyBegin;
+             globalChunk < bodyEnd; ++globalChunk) {
+            ChunkRange chunk{};
+            if (!ResolveChunk(args_, globalChunk, chunk)) {
+                continue;
+            }
+            ProcessChunkHeadRange(
+                chunk, 0, args_.tiling.valueHeadNum);
+        }
+
+        // 不足一轮的尾部 chunk 再按 4-head group 展开，均摊到全部核。
+        const uint32_t headGroupCount = CeilDiv(
+            args_.tiling.valueHeadNum, Shape::kHeadsPerGroup);
+        const uint32_t tailChunkCount = chunkWork - bodyChunkCount;
+        const uint64_t tailTaskCount =
+            static_cast<uint64_t>(tailChunkCount) * headGroupCount;
+        uint64_t tailTask = tailTaskCount * workgroup_ / coreCount;
+        const uint64_t tailTaskEnd =
+            tailTaskCount * (workgroup_ + 1) / coreCount;
+        while (tailTask < tailTaskEnd) {
+            const uint32_t tailChunk = static_cast<uint32_t>(
+                tailTask / headGroupCount);
+            const uint32_t firstHeadGroup = static_cast<uint32_t>(
+                tailTask % headGroupCount);
+            uint64_t segmentEnd =
+                static_cast<uint64_t>(tailChunk + 1) * headGroupCount;
+            if (segmentEnd > tailTaskEnd) {
+                segmentEnd = tailTaskEnd;
+            }
+            const uint32_t segmentGroups = static_cast<uint32_t>(
+                segmentEnd - tailTask);
+            const uint32_t headBegin =
+                firstHeadGroup * Shape::kHeadsPerGroup;
+            uint32_t headEnd =
+                (firstHeadGroup + segmentGroups) * Shape::kHeadsPerGroup;
+            if (headEnd > args_.tiling.valueHeadNum) {
+                headEnd = args_.tiling.valueHeadNum;
+            }
+            ChunkRange chunk{};
+            if (ResolveChunk(args_, bodyChunkCount + tailChunk, chunk)) {
+                ProcessChunkHeadRange(chunk, headBegin, headEnd);
+            }
+            tailTask = segmentEnd;
+        }
+    }
+
+private:
+    __aicore__ inline void ProcessChunkHeadRange(
+        const ChunkRange &chunk, uint32_t headBegin, uint32_t headEnd)
+    {
         // AIC 视角下四个 local head 的固定核间编号。AIV1 的两个本地
         // ready 0/1、free 4/5 在 AIC 侧映射为 16/17、20/21。
         constexpr uint16_t kAivToAicPayloadReadyFlagId[4] = {
             0, 1, 16, 17};
         constexpr uint16_t kAicToAivSlotReusableFlagId[4] = {
             4, 5, 20, 21};
-        // free[localHead] 初始只发布一次。以后每一组的 V0 会消费上一组
-        // C7 发布的 free，不能在组首重复 set 同一个计数器。
-        bool freeInitialized[Shape::kHeadsPerGroup] = {false, false, false, false};
-        if (workgroup_ >= args_.tiling.usedCoreNum) {
-            return;
-        }
-        const uint32_t total = TotalWorkItems(args_.tiling);
-        const uint32_t workBegin = WorkBegin(
-            total, workgroup_, args_.tiling.usedCoreNum);
-        const uint32_t workEnd = WorkEnd(
-            total, workgroup_, args_.tiling.usedCoreNum);
-        for (uint32_t work = workBegin; work < workEnd; ++work) {
-            uint32_t globalChunk = 0;
-            uint32_t headPartition = 0;
-            DecodeWorkItem(args_.tiling, work, globalChunk, headPartition);
-            ChunkRange chunk{};
-            if (!ResolveChunk(args_, globalChunk, chunk)) {
-                continue;
+        for (uint32_t groupBegin = headBegin; groupBegin < headEnd;) {
+            uint32_t activeHeads = headEnd - groupBegin;
+            if (activeHeads > Shape::kHeadsPerGroup) {
+                activeHeads = Shape::kHeadsPerGroup;
+            }
+            // free[localHead] 初始只发布一次。以后每一组的 V0 会消费
+            // 上一组 C7 发布的 free，不能在组首重复 set 同一个计数器。
+            for (uint32_t localHead = 0;
+                 localHead < Shape::kHeadsPerGroup; ++localHead) {
+                if (localHead >= activeHeads ||
+                    freeInitialized_[localHead]) {
+                    continue;
+                }
+                AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
+                    kAicToAivSlotReusableFlagId[localHead]);
+                freeInitialized_[localHead] = true;
             }
 
-            uint32_t headBegin = 0;
-            uint32_t headEnd = 0;
-            HeadRange(args_.tiling, headPartition, headBegin, headEnd);
-            for (uint32_t groupBegin = headBegin; groupBegin < headEnd;) {
-                uint32_t activeHeads = headEnd - groupBegin;
-                if (activeHeads > Shape::kHeadsPerGroup) {
-                    activeHeads = Shape::kHeadsPerGroup;
+            // C2：逐 HEAD 等 V1 的 72 KiB 分数操作数。一次装入 L1 后，
+            // 尾块只提交有效 sub-chunk 的 32x128 @ 128xN MMAD。
+            for (uint32_t localHead = 0;
+                 localHead < Shape::kHeadsPerGroup; ++localHead) {
+                if (localHead >= activeHeads) {
+                    continue;
                 }
-                for (uint32_t localHead = 0;
-                     localHead < Shape::kHeadsPerGroup; ++localHead) {
-                    if (localHead >= activeHeads || freeInitialized[localHead]) {
-                        continue;
-                    }
-                    AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
-                        kAicToAivSlotReusableFlagId[localHead]);
-                    freeInitialized[localHead] = true;
-                }
-
-                // C2：逐 HEAD 等 V1 的 72 KiB 分数操作数。一次装入 L1 后，
-                // 尾块只提交有效 sub-chunk 的 32x128 @ 128xN MMAD。
-                for (uint32_t localHead = 0;
-                     localHead < Shape::kHeadsPerGroup; ++localHead) {
-                    if (localHead >= activeHeads) {
-                        continue;
-                    }
-                    AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
-                        kAivToAicPayloadReadyFlagId[localHead]);
-                    StageC2(chunk, localHead);
-                    AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
-                        kAicToAivSlotReusableFlagId[localHead]);
-                }
-
-                // 先为所有有效 HEAD 提交 C4，再统一提交 C5。若逐 HEAD 交替
-                // 提交 C4/C5，C5 的 MTE1 会等待同 HEAD 的 C4 Fixpipe 写完 T，
-                // 并阻塞后续 HEAD 的独立 C4；两轮提交允许下一 HEAD 的
-                // MTE1/MMAD 与上一 HEAD 的 Fixpipe 排空重叠。
-                // C4 一次性读完 B/X0/negX1/Akk 后立即归还 workspace payload，
-                // 后续 C4/C5 只访问每 HEAD 独立的 L1 常驻数据。
-                for (uint32_t localHead = 0;
-                     localHead < Shape::kHeadsPerGroup; ++localHead) {
-                    if (localHead >= activeHeads) {
-                        continue;
-                    }
-                    AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
-                        kAivToAicPayloadReadyFlagId[localHead]);
-                    const uint32_t valueHead = groupBegin + localHead;
-                    StageC4(chunk, valueHead, localHead,
-                            kAicToAivSlotReusableFlagId[localHead]);
-                }
-                for (uint32_t localHead = 0;
-                     localHead < Shape::kHeadsPerGroup; ++localHead) {
-                    if (localHead >= activeHeads) {
-                        continue;
-                    }
-                    const uint32_t valueHead = groupBegin + localHead;
-                    StageC5(chunk, valueHead, localHead);
-                }
-
-                // C7：V6 已将两个 RHS 平面写入 workspace。Akk 继续使用
-                // C4/C5 的 L1 常驻副本，分别计算 W 和 U，最后归还槽位。
-                for (uint32_t localHead = 0;
-                     localHead < Shape::kHeadsPerGroup; ++localHead) {
-                    if (localHead >= activeHeads) {
-                        continue;
-                    }
-                    const uint32_t valueHead = groupBegin + localHead;
-                    AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
-                        kAivToAicPayloadReadyFlagId[localHead]);
-                    StageC7(chunk, valueHead, localHead,
-                            kAicToAivSlotReusableFlagId[localHead]);
-                }
-                groupBegin += activeHeads;
+                AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
+                    kAivToAicPayloadReadyFlagId[localHead]);
+                StageC2(chunk, localHead);
+                AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
+                    kAicToAivSlotReusableFlagId[localHead]);
             }
+
+            // 先为所有有效 HEAD 提交 C4，再统一提交 C5。若逐 HEAD 交替
+            // 提交 C4/C5，C5 的 MTE1 会等待同 HEAD 的 C4 Fixpipe 写完 T，
+            // 并阻塞后续 HEAD 的独立 C4；两轮提交允许下一 HEAD 的
+            // MTE1/MMAD 与上一 HEAD 的 Fixpipe 排空重叠。
+            // C4 一次性读完 B/X0/negX1/Akk 后立即归还 workspace payload，
+            // 后续 C4/C5 只访问每 HEAD 独立的 L1 常驻数据。
+            for (uint32_t localHead = 0;
+                 localHead < Shape::kHeadsPerGroup; ++localHead) {
+                if (localHead >= activeHeads) {
+                    continue;
+                }
+                AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
+                    kAivToAicPayloadReadyFlagId[localHead]);
+                const uint32_t valueHead = groupBegin + localHead;
+                StageC4(chunk, valueHead, localHead,
+                        kAicToAivSlotReusableFlagId[localHead]);
+            }
+            for (uint32_t localHead = 0;
+                 localHead < Shape::kHeadsPerGroup; ++localHead) {
+                if (localHead >= activeHeads) {
+                    continue;
+                }
+                const uint32_t valueHead = groupBegin + localHead;
+                StageC5(chunk, valueHead, localHead);
+            }
+
+            // C7：V6 已将两个 RHS 平面写入 workspace。Akk 继续使用
+            // C4/C5 的 L1 常驻副本，分别计算 W 和 U，最后归还槽位。
+            for (uint32_t localHead = 0;
+                 localHead < Shape::kHeadsPerGroup; ++localHead) {
+                if (localHead >= activeHeads) {
+                    continue;
+                }
+                const uint32_t valueHead = groupBegin + localHead;
+                AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
+                    kAivToAicPayloadReadyFlagId[localHead]);
+                StageC7(chunk, valueHead, localHead,
+                        kAicToAivSlotReusableFlagId[localHead]);
+            }
+            groupBegin += activeHeads;
         }
     }
 
-private:
     __aicore__ inline void StageC2(const ChunkRange &chunk,
                                    uint32_t localHead)
     {
@@ -510,7 +580,7 @@ private:
             akkQ10L1, l0C, l1Fix);
         AscendC::Mutex::Unlock<PIPE_FIX>(l1Mutex);
 
-        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+        if constexpr (CompilePolicy::outputAkk) {
             const uint32_t bottomRows = chunk.validRows - 32;
             auto gmFix = AscendC::FixpipeParamsV220(
                 32, bottomRows, 32, Shape::kChunkRows, false);
@@ -667,6 +737,8 @@ private:
 
     PrepareKernelArgs args_{};
     uint32_t workgroup_ = 0;
+    bool freeInitialized_[Shape::kHeadsPerGroup] = {
+        false, false, false, false};
     Catlass::Arch::Resource<Catlass::Arch::Ascend950> resource_{};
     AscendC::GlobalTensor<bfloat16_t> akkGm_{};
     AscendC::GlobalTensor<bfloat16_t> wGm_{};

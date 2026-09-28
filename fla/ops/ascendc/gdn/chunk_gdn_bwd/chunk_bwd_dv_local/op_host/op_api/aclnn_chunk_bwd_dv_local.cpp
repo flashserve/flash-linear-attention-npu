@@ -66,6 +66,56 @@ static aclnnStatus CheckFormat(ChunkBwdDvLocalParams params)
 
 static aclnnStatus CheckShape(ChunkBwdDvLocalParams params)
 {
+    CHECK_COND(params.chunkSize > 0, ACLNN_ERR_PARAM_INVALID,
+               "chunk_size must be positive.");
+    CHECK_COND(params.chunkSize == 64 || params.chunkSize == 128,
+               ACLNN_ERR_PARAM_INVALID, "chunk_size must be 64 or 128.");
+    CHECK_COND(params.q->GetViewShape().GetDimNum() == 4,
+               ACLNN_ERR_PARAM_INVALID, "q must be a rank-4 tensor [B, H, T, K].");
+    if (params.chunkIndicesOptional != nullptr) {
+        CHECK_COND(params.cuSeqlensOptional != nullptr, ACLNN_ERR_PARAM_INVALID,
+                   "chunk_indices requires cu_seqlens in variable-length mode.");
+    }
+    if (params.cuSeqlensOptional == nullptr) {
+        return ACLNN_SUCCESS;
+    }
+    const aclIntArray &cuSeqlens = *params.cuSeqlensOptional;
+    CHECK_COND(cuSeqlens.Size() >= 2, ACLNN_ERR_PARAM_INVALID,
+               "cu_seqlens must contain at least [0, total_tokens].");
+    const int64_t totalTokens = params.q->GetViewShape().GetDim(2);
+    CHECK_COND(cuSeqlens[0] == 0, ACLNN_ERR_PARAM_INVALID,
+               "cu_seqlens[0] must be 0.");
+    CHECK_COND(cuSeqlens[cuSeqlens.Size() - 1] == totalTokens,
+               ACLNN_ERR_PARAM_INVALID,
+               "cu_seqlens[-1] must equal q's sequence length.");
+    int64_t totalChunks = 0;
+    for (size_t seq = 0; seq + 1 < cuSeqlens.Size(); ++seq) {
+        CHECK_COND(cuSeqlens[seq] >= 0 && cuSeqlens[seq + 1] >= cuSeqlens[seq],
+                   ACLNN_ERR_PARAM_INVALID,
+                   "cu_seqlens must be nondecreasing and non-negative.");
+        const int64_t length = cuSeqlens[seq + 1] - cuSeqlens[seq];
+        totalChunks += (length + params.chunkSize - 1) / params.chunkSize;
+    }
+    CHECK_COND(totalChunks > 0, ACLNN_ERR_PARAM_INVALID,
+               "variable-length input must contain at least one chunk.");
+    CHECK_COND(params.chunkIndicesOptional != nullptr, ACLNN_ERR_PARAM_INVALID,
+               "variable-length mode requires chunk_indices.");
+    const aclIntArray &chunkIndices = *params.chunkIndicesOptional;
+    CHECK_COND(chunkIndices.Size() == static_cast<size_t>(totalChunks) * 2,
+               ACLNN_ERR_PARAM_INVALID,
+               "chunk_indices must contain exactly one (sequence, chunk) pair per chunk.");
+    size_t offset = 0;
+    for (size_t seq = 0; seq + 1 < cuSeqlens.Size(); ++seq) {
+        const int64_t length = cuSeqlens[seq + 1] - cuSeqlens[seq];
+        const int64_t chunks = (length + params.chunkSize - 1) / params.chunkSize;
+        for (int64_t chunk = 0; chunk < chunks; ++chunk) {
+            CHECK_COND(chunkIndices[offset] == static_cast<int64_t>(seq) &&
+                           chunkIndices[offset + 1] == chunk,
+                       ACLNN_ERR_PARAM_INVALID,
+                       "chunk_indices must use canonical sequence-major chunk order.");
+            offset += 2;
+        }
+    }
     return ACLNN_SUCCESS;
 }
 

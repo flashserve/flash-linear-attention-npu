@@ -37,7 +37,15 @@ outputs = chunk_kda_fwd_prepare(
 )
 ```
 
-该入口通过 ctypes 直调 `aclnnChunkKdaFwdPrepare`，不注册 legacy `torch.ops.npu` 接口。
+该入口经 Stable-ABI 适配层调用 `aclnnChunkKdaFwdPrepare`，不注册 legacy `torch.ops.npu` 接口。
+
+`backward_mode` 决定 13 个输出槽中哪些真正分配与写出（`none`/`forward`/`recompute`/`save`，
+与上文“输出保留策略”一一对应；默认 `save` 即“13 项全部返回”的历史行为）。未选中的槽在
+L2 层传 `nullptr`，不参与公开 GM 写回，因此调用方按需取 `q_hat/k_hat/q_rstd/k_rstd/beta_eff`
+即可，不需要关心档位之外的槽位。
+
+格式要求：本算子的 L2 只拒绝私有（分形）格式，`ND`/`NCHW`/`NCL`/`NHWC` 等非私有拼写均可传入；
+张量需连续（`CheckContiguous`）。
 
 ## 输入输出
 
@@ -96,17 +104,18 @@ tiling 参数位置不会随策略变化。L2 接口允许未保留的七项传 
 
 ### 输出保留策略
 
-`backward_mode` 只控制反向检查点的公开分配和 GM 写回，支持以下三档：
+`backward_mode` 只控制反向检查点的公开分配和 GM 写回，支持以下四档：
 
 | `backward_mode` | 场景 | 13 个返回槽位中非空的数据 |
 | --- | --- | --- |
 | `"none"` | 完全不需要反向 | `gk/Aqk/w/u/kg/qg_scaled` |
+| `"forward"` | 只要公开必选的 `Akk`，不需要反向重计算中间量 | 上述六项，加 `Akk` |
 | `"recompute"` | 有反向，允许重计算 chunk-local 中间量 | 上述六项，加 `Akk/q_hat/k_hat/q_rstd/k_rstd/beta_eff` |
 | `"save"` | 有反向，不重计算 | 全部 13 项；相对 `recompute` 额外保存 `qg` |
 
-默认值为 `"save"`，保持原来 13 项全部返回的兼容行为。三档都执行相同的前向数学计算、
+默认值为 `"save"`，保持原来 13 项全部返回的兼容行为。各档都执行相同的前向数学计算、
 静态 UB/L1 布局和跨核同步，仅关闭未请求结果的公开 GM 写回；`Akk/qg` 等数据在本算子
-内部仍按 C4/C5/C7 或 BF16 舍入语义使用。三档由 TilingKey 的编译期 `OUTPUT_MODE`
+内部仍按 C4/C5/C7 或 BF16 舍入语义使用。四档由 TilingKey 的编译期 `OUTPUT_MODE`
 选择，Stage 内不读取运行时输出 mask。
 
 完整 forward 的 `output_final_state` 与 `return_intermediate_states` 是和

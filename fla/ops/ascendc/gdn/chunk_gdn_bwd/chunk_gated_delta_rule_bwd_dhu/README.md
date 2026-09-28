@@ -60,8 +60,8 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 | `w` | 输入 | 必选 | Weight（衰减权重）输入张量 | 参与隐藏状态更新 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, K]` | 支持 |
 | `dO` | 输入 | 必选 | 前向输出 `o` 的梯度张量 | 即上游输出梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
 | `dv` | 输入 | 必选 | Value 的上游梯度张量 | 将与来自 `dh` 的贡献叠加后输出为 `dv2` | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
-| `gOptional` | 输入 | 可选 | Gate 张量 | 对隐藏状态递推施加指数门控 `exp(g)` | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, T]` | 支持 |
-| `gkOptional` | 输入 | 可选 | Key-wise Gate 张量 | 对每个 Key 维度施加额外门控 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, K]` | 支持 |
+| `gOptional` | 输入 | 可选 | Gate 张量 | 对隐藏状态递推施加指数门控 `exp(g)`，与输入`gkOptional`二选一 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, T]` | 支持 |
+| `gkOptional` | 输入 | 可选 | Key-wise Gate 张量 | 对每个 Key 维度施加额外门控，与输入`gOptional`二选一 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, T, K]` | 支持 |
 | `h0Optional` | 输入 | 可选 | 初始隐藏状态张量 | `stateVFirst=false` 时为 `[N,HV,K,V]`，否则为 `[N,HV,V,K]` | `FLOAT16`、`BFLOAT16` | `ND` | 4 维 | 支持 |
 | `dhtOptional` | 输入 | 可选 | 末尾隐藏状态的梯度张量 | `stateVFirst=false` 时为 `[N,HV,K,V]`，否则为 `[N,HV,V,K]` | `FLOAT16`、`BFLOAT16` | `ND` | 4 维 | 支持 |
 | `cuSeqlensOptional` | 输入 | 可选 | 变长序列的累计长度信息 | 变长模式输入，形状为 `[N+1]` | `INT64` | `ND` | 1 维 | - |
@@ -80,7 +80,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 
 | 参数名 | 输入/输出 | 描述 | 数据类型 | 数据格式 | 维度（Shape） | 非连续 Tensor |
 |---|---|---|---|---|---|---|
-| `dhOut` | 输出 | 各 chunk 起始时刻的隐藏状态梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B,HV,NT,K,V]` | 支持 |
+| `dhOut` | 输出 | 各 chunk 起始时刻的隐藏状态梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B,NT,HV,K,V]` | 支持 |
 | `dh0Out` | 输出 | 初始隐藏状态 `h0` 的梯度（仅当 `h0Optional` 非空时有意义）| `FLOAT16`、`BFLOAT16` | `ND` | `[N,HV,K,V]` 或 `[N,HV,V,K]` | 支持 |
 | `dv2Out` | 输出 | 融合了隐藏状态贡献后的 Value 梯度 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
 | `workspaceSize` | 输出 | Device 侧所需 workspace 大小 | `uint64_t` | - | 标量 | - |
@@ -97,13 +97,24 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 - `gOptional` 的形状必须为 `[B, HV, T]`（若提供）。
 - `gkOptional` 的形状必须为 `[B, HV, T, K]`（若提供）。
 - `h0Optional`、`dhtOptional` 和 `dh0Out` 的状态布局由 `stateVFirst` 指定；定长时 `N=B`，变长时 `N=cuSeqlens.size()-1`。
-- `dhOut` 固定使用 `[B,HV,NT,K,V]`；`stateVFirst` 仅控制 `h0Optional`、`dhtOptional` 和 `dh0Out` 的状态布局。
+- `dhOut` 固定使用 `[B,NT,HV,K,V]`；`stateVFirst` 仅控制 `h0Optional`、`dhtOptional` 和 `dh0Out` 的状态布局。
+- `q`、`k`、`w`、`dO`、`dv`、`dhOut`、`dv2Out` 必须使用相同 dtype（`FLOAT16` 或 `BFLOAT16` 之一）；`h0Optional`、`dhtOptional`、`dh0Out`（若提供）也必须与 `q` 同 dtype。
+- `g`/`gk` 的 dtype 可为 `FLOAT` 或与 `q` 相同，即 `q=BFLOAT16` 时 `g`/`gk` ∈ {FLOAT, BF16}，`q=FLOAT16` 时 `g`/`gk` ∈ {FLOAT, FLOAT16}。
+- 当 `h0Optional` 非空时 `dh0Out` 不能为空，当 `h0Optional` 为空时 `dh0Out` 可传空指针。
 - **GVA 约束**：`HV % HK == 0`；读 `q`/`k` 时使用 `hq = hv / (HV / HK)`，读/写 `w`/`dO`/`dv`/`g`/`dh`/`dv2` 使用 value head 索引 `hv`。
 - 当前实现仅支持 `K = 128`；其他 `K` 尺寸会在 tiling 阶段被拒绝。
 - 当前实现仅支持 `V = 128` 或 `V = 256`；其他 `V` 尺寸会在 tiling 阶段被拒绝（Cube tile 原生按 `V` 上限 256 设计，**无**按 V 维切换的 TilingKey）。
 - **TilingKey**：`g` 与 `q` 同 dtype 时为 Key=1，`g` 为 FP32 时为 Key=2（与 V 维无关）。
 - `chunkSize` 当前仅支持 `64` 或 `128`。
 - 当启用变长模式时，`cuSeqlensOptional` 和 `chunkIndicesOptional` 须同时提供，且仅支持 `B = 1`。
+
+### 3.5 返回值
+
+第一段接口完成入参校验，出现以下场景时报错
+| 返回码 | 错误码 | 描述 |
+|---|---|---|
+| ACLNN_ERR_PARAM_NULLPTR | 161001 | 不为空的参数是空指针 |
+| ACLNN_ERR_PARAM_INVALID | 161002 | 参数的数据类型、shape不满足约束 |
 
 ---
 
@@ -115,6 +126,9 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
   - 必须同时提供或同时省略
   - 同时出现时启用变长模式（varlen）
   - 变长模式仅支持 `B = 1`
+
+- `gOptional` 与 `gkOptional`：
+  - 二者必须二选一（提供且只提供一个）
 
 - `gOptional`：
   - 数据类型可以为 `FLOAT16`、`BFLOAT16` 或 `FLOAT`
@@ -168,7 +182,7 @@ if g:
 dv2_chunk = b_dv + dv_chunk                   # 与上游 dv 叠加
 
 # dh 存储（在更新前记录当前 chunk 的 dh）
-dh[:, :, i_t] = b_dh
+dh[:, i_t] = b_dh  # dense NT-first
 
 # 反向递推更新 b_dh（传递给上一 chunk）
 if g:
@@ -223,9 +237,9 @@ def test_chunk_gated_delta_rule_bwd_dhu_fix():
     )
 
     NT = (T + chunk_size - 1) // chunk_size
-    print("dh   shape:", dh.shape)    # [B, HV, NT, K, V]
+    print("dh   shape:", dh.shape)    # [B, NT, HV, K, V]
     print("dv2  shape:", dv2.shape)   # [B, HV, T, V]
-    assert dh.shape  == (B, HV, NT, K, V)
+    assert dh.shape  == (B, NT, HV, K, V)
     assert dv2.shape == (B, HV, T, V)
     print("Fix-length Execution Successful!")
 
@@ -307,9 +321,9 @@ def test_chunk_gated_delta_rule_bwd_dhu_varlen():
         transpose_state_layout=False
     )
 
-    print("dh   shape:", dh.shape)    # [B, HV, NT, K, V]
+    print("dh   shape:", dh.shape)    # [B, NT, HV, K, V]
     print("dv2  shape:", dv2.shape)   # [B, HV, T, V]
-    assert dh.shape  == (B, HV, NT, K, V)
+    assert dh.shape  == (B, NT, HV, K, V)
     assert dv2.shape == (B, HV, T, V)
     print("Variable-length Execution Successful!")
 

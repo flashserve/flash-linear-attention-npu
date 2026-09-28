@@ -514,7 +514,7 @@ private:
         // dstStride=64 个 datablock 跨过完整 64 行 M 轴。
         AscendC::Fixpipe<bfloat16_t, float, kFixpipeNz>(
             akkL1[L1::kAkkQ10Elements], l0C, l1Fix);
-        if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+        if constexpr (CompilePolicy::outputAkk) {
             AscendC::GlobalTensor<bfloat16_t> akkOutput;
             akkOutput.SetGlobalBuffer(
                 reinterpret_cast<__gm__ bfloat16_t *>(args_.akk) +

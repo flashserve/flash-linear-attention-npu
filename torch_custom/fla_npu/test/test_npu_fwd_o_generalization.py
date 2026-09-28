@@ -86,7 +86,7 @@ def _reference(
                 v_chunk = v[batch_index, head, chunk_begin:chunk_end].to(compute_dtype)
                 g_chunk = g[batch_index, head, chunk_begin:chunk_end].to(compute_dtype)
                 state_index = state_offset + chunk if case.cu_seqlens is not None else chunk
-                state = h[batch_index, head, state_index].to(compute_dtype)
+                state = h[batch_index, state_index, head].to(compute_dtype)
 
                 attention = q_chunk @ k_chunk.transpose(0, 1)
                 attention *= torch.exp(g_chunk[:, None] - g_chunk[None, :])
@@ -114,7 +114,7 @@ def _run_case(case: FwdOCase) -> None:
     q = torch.randn(case.batch, case.k_heads, case.tokens, case.k_dim, dtype=dtype) * 0.1
     k = torch.randn_like(q) * 0.1
     v = torch.randn(case.batch, case.v_heads, case.tokens, case.v_dim, dtype=dtype) * 0.1
-    h = torch.randn(case.batch, case.v_heads, chunk_count, case.k_dim, case.v_dim, dtype=dtype) * 0.1
+    h = torch.randn(case.batch, chunk_count, case.v_heads, case.k_dim, case.v_dim, dtype=dtype) * 0.1
     # g=0 隔离 QK/AttnV 和 QH 两条 workspace 流水，避免设备 Exp 近似影响 CPU 双标杆。
     g = torch.zeros(case.batch, case.v_heads, case.tokens, dtype=torch.float32)
 

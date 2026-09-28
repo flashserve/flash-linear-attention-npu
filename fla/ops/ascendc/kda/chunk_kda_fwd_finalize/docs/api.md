@@ -1,5 +1,26 @@
 # ChunkKdaFwdFinalize API
 
+## Python
+
+```python
+from fla_npu.ops.ascendc import chunk_kda_fwd_finalize
+
+attn_out = chunk_kda_fwd_finalize(
+    qg_scaled,
+    aqk,
+    v_new,
+    h,
+    output_layout="BSND",
+    state_v_first=False,
+    cu_seqlens=None,
+    chunk_indices=None,
+)
+```
+
+这是 ctypes 直调 `aclnnChunkKdaFwdFinalize` 的稳定入口，不注册
+legacy `torch.ops.npu` 接口。输入、输出和变长元数据的形状与约束
+见下文及[算子 README](../README.md#输入输出)。
+
 ## aclnn
 
 ```cpp
@@ -39,16 +60,11 @@ ND 格式；输入允许 L2 连续化，kernel 直接写的输出必须连续。
 sequence-major `(sequence_id,local_chunk_id)` 列表。
 
 唯一输出 `attnOut` 是 BF16。`BSND/TND` 按 token 优先写出，
-`BNSD/NTD` 按 value head 优先写出；所有输入仍然按 value head
-优先排列。数值精度边界见[设计文档](design.md#数学与精度)。
-
-## Python 调用状态
-
-本目录只实现 operator-private aclnn 和 kernel。当前未修改公共
-`fla_npu.ops.ascendc` 注册文件，因此尚不能承诺
-`from fla_npu.ops.ascendc import chunk_kda_fwd_finalize` 可用。
-ATK 使用目录内直调适配验证 aclnn，稳定 Python 主入口及其包装层
-调用测试需在单独的公共接口变更中补齐。
+`BNSD/NTD` 按 value head 优先写出；三个 token 输入仍然按 value head
+优先排列；h 为 NT-first，未传 cu_seqlens 时为 `[B,C,HV,128,128]`，
+传入 cu_seqlens 时为 `[1,C,HV,128,128]`，与 token 输入的 rank 分开判断。
+旧 head-first h 调用者需要交换 chunk/head 轴并连续化，不能只 reshape。
+数值精度边界见[设计文档](design.md#数学与精度)。
 
 ## 返回码
 

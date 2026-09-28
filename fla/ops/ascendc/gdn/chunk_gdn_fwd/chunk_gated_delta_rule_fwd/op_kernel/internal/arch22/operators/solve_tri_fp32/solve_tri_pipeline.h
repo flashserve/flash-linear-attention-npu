@@ -15,6 +15,9 @@ using namespace Catlass;
 struct FullProblem {
     int64_t batch, tokens, heads, bt, headFirst, sequences;
     int64_t tasks32, tasks64, tasks128;
+    // 仅 RunOwnedBatch 使用：物理组内的完整 parent 子区间，GM 全局形状不变。
+    int64_t localParentBegin = 0;
+    int64_t localParentCount = -1;
 };
 struct WorkItem {
     int64_t b, h, t, base, length;
@@ -31,8 +34,59 @@ __aicore__ inline int64_t CoreGroup()
     return core;
 }
 
+// Parent 策略：本核组按连续块持有的 parent（最终层任务）数，可为 0。
+__aicore__ inline int64_t ParentOwnedCount(FullProblem p)
+{
+    if (p.localParentCount >= 0) {
+        return p.localParentCount;
+    }
+    int64_t n = p.bt == 64 ? p.tasks64 : p.tasks128;
+    int64_t per = (n + GetBlockNum() - 1) / GetBlockNum();
+    int64_t rest = n - CoreGroup() * per;
+    return per < rest ? per : (rest > 0 ? rest : 0);
+}
+
+// Parent 策略下本核组在 span 层的本地任务数；非 Parent 保持原 q/rem 路径。
+template <bool Parent>
+__aicore__ inline int64_t SpanTaskEnd(FullProblem p, int span, int64_t tasks, int64_t workers, int64_t core)
+{
+    if constexpr (Parent) {
+        return ParentOwnedCount(p) * (p.bt / span);
+    } else {
+        return tasks / workers + (core < tasks % workers ? 1 : 0);
+    }
+}
+
+// 默认 false 走原 grid-stride 定位；Parent=true 时本地任务按同 parent 连续块映射，
+// 与 KKT DecodeTask 的 chunk-fast/head/batch 顺序一致。
+template <bool Parent = false>
 __aicore__ inline WorkItem locate(int64_t task, int span, FullProblem p, GlobalTensor<int64_t> cu)
 {
+    if constexpr (Parent) {
+        int64_t n = p.bt == 64 ? p.tasks64 : p.tasks128;
+        int64_t subs = p.bt / span;
+        if (n <= 0 || task < 0 || task >= ParentOwnedCount(p) * subs) {
+            return {0, 0, 0, 0, 0};
+        }
+        int64_t per = (n + GetBlockNum() - 1) / GetBlockNum();
+        int64_t parent = CoreGroup() * per + p.localParentBegin + task / subs;
+        int64_t subtile = task % subs;
+        int64_t nt = n / (p.batch * p.heads);
+        int64_t chunk = parent % nt;
+        int64_t head = (parent / nt) % p.heads;
+        if (p.sequences == 0) {
+            return {parent / (p.heads * nt), head, chunk * p.bt + subtile * span, 0, p.tokens};
+        }
+        for (int64_t seq = 0; seq < p.sequences; ++seq) {
+            int64_t base = cu.GetValue(seq), length = cu.GetValue(seq + 1) - base;
+            int64_t count = (length + p.bt - 1) / p.bt;
+            if (chunk < count) {
+                return {0, head, chunk * p.bt + subtile * span, base, length};
+            }
+            chunk -= count;
+        }
+        return {0, 0, 0, 0, 0};
+    }
     task = CoreGroup() + task * GetBlockNum();
     if (p.sequences == 0) {
         int64_t bh = task % (p.batch * p.heads);
@@ -98,7 +152,7 @@ __aicore__ inline void full_gemm(MM &mm, GlobalTensor<float> a, GlobalTensor<flo
     mm(ta, tb, tc, GemmCoord{uint32_t(m), uint32_t(n), uint32_t(k)});
 }
 
-template <int S, class Out, int Group = 16>
+template <int S, class Out, int Group = 16, bool Parent = false>
 __aicore__ inline void pipeline_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR output, GM_ADDR workspace, GM_ADDR cuAddr,
                                       FullProblem info, int64_t tasks)
 {
@@ -112,15 +166,20 @@ __aicore__ inline void pipeline_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR outpu
     if ASCEND_IS_AIV {
         core /= GetSubBlockNum();
     }
-    int64_t workers = GetBlockNum(), q = tasks / workers, rem = tasks % workers;
-    int64_t begin = 0, end = q + (core < rem ? 1 : 0);
+    int64_t workers = GetBlockNum();
+    int64_t begin = 0, end = SpanTaskEnd<Parent>(info, S * 2, tasks, workers, core);
     GlobalTensor<float> x, d, ws, batchWs;
     GlobalTensor<Out> y;
     GlobalTensor<int64_t> cu;
     x.SetGlobalBuffer((__gm__ float *)input);
     d.SetGlobalBuffer((__gm__ float *)prev);
-    ws.SetGlobalBuffer((__gm__ float *)workspace + core * TEMP * E);
-    batchWs.SetGlobalBuffer((__gm__ float *)workspace + workers * TEMP * E);
+    // 同组的所有层复用同一个 arena；slot 是组内下标，组间区间恒不相交。
+    const int64_t arenaElements = info.bt == 128
+        ? GDN::FP32_SOLVE_ARENA128_ELEMENTS : GDN::FP32_SOLVE_ARENA64_ELEMENTS;
+    ws.SetGlobalBuffer((__gm__ float *)workspace + core * arenaElements);
+    batchWs.SetGlobalBuffer((__gm__ float *)workspace + core * arenaElements +
+                           GDN::FP32_SOLVE_TEMP_ELEMENTS);
+    static_assert(TEMP * E <= GDN::FP32_SOLVE_TEMP_ELEMENTS);
     y.SetGlobalBuffer((__gm__ Out *)output);
     cu.SetGlobalBuffer((__gm__ int64_t *)cuAddr);
     if ASCEND_IS_AIC {
@@ -141,7 +200,7 @@ __aicore__ inline void pipeline_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR outpu
                 WorkItem jobs[Group];
                 int rows0[Group], rows1[Group];
                 for (int j = 0; j < count; ++j) {
-                    auto w = locate(task + j, S * 2, info, cu);
+                    auto w = locate<Parent>(task + j, S * 2, info, cu);
                     jobs[j] = w;
                     int n0 = w.length - w.t < S ? w.length - w.t : S;
                     int n1 = w.length - w.t - S < S ? w.length - w.t - S : S;
@@ -159,7 +218,7 @@ __aicore__ inline void pipeline_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR outpu
                     auto w = jobs[j];
                     int n0 = rows0[j], n1 = rows1[j];
                     if (n1 > 0) {
-                        int64_t slot = core * BATCH * 2 + (index + j) % (BATCH * 2);
+                        int64_t slot = (index + j) % (BATCH * 2);
                         auto d0 = d[pos(info, w, w.t, S)];
                         full_gemm(mm, ws[j * E], d0, batchWs[slot * E], n1, n0, n0, W, stride(info, S), W);
                     }
@@ -171,10 +230,10 @@ __aicore__ inline void pipeline_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR outpu
             }
         } else {
             for (int64_t task = begin; task < end; ++task) {
-                int64_t index = task - begin, slot = core * BATCH * 2 + index % (BATCH * 2);
+                int64_t index = task - begin, slot = index % (BATCH * 2);
                 if (index % BATCH == 0 && index >= 2 * BATCH)
                     CrossCoreWaitFlag(2 + (index / BATCH) % 2);
-                auto w = locate(task, S * 2, info, cu);
+                auto w = locate<Parent>(task, S * 2, info, cu);
                 int n0 = w.length - w.t < S ? w.length - w.t : S, n1 = w.length - w.t - S < S ? w.length - w.t - S : S;
                 if (n1 > 0) {
                     auto d0 = d[pos(info, w, w.t, S)], d1 = d[pos(info, w, w.t + S, S)];
@@ -205,10 +264,10 @@ __aicore__ inline void pipeline_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR outpu
             o = ob.Get<Out>();
         int sub = GetSubBlockIdx();
         for (int64_t task = begin; task < end; ++task) {
-            int64_t index = task - begin, slot = core * BATCH * 2 + index % (BATCH * 2);
+            int64_t index = task - begin, slot = index % (BATCH * 2);
             if (index % BATCH == 0)
                 CrossCoreWaitFlag(4 + (index / BATCH) % 2);
-            auto w = locate(task, S * 2, info, cu);
+            auto w = locate<Parent>(task, S * 2, info, cu);
             int n0 = w.length - w.t < S ? w.length - w.t : S, n1 = w.length - w.t - S < S ? w.length - w.t - S : S;
             int rows = sub == 0 ? n0 : n1;
             Duplicate(f, 0.0f, S * 2 * S);
@@ -252,7 +311,7 @@ __aicore__ inline void pipeline_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR outpu
     }
 }
 
-template <int S, class Out, int Group = 8>
+template <int S, class Out, int Group = 8, bool Parent = false>
 __aicore__ inline void stage64_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR output, GM_ADDR workspace, GM_ADDR cuAddr,
                                      FullProblem info, int64_t tasks)
 {
@@ -266,15 +325,20 @@ __aicore__ inline void stage64_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR output
     if ASCEND_IS_AIV {
         core /= GetSubBlockNum();
     }
-    int64_t workers = GetBlockNum(), q = tasks / workers, rem = tasks % workers;
-    int64_t begin = 0, end = q + (core < rem ? 1 : 0);
+    int64_t workers = GetBlockNum();
+    int64_t begin = 0, end = SpanTaskEnd<Parent>(info, S * 2, tasks, workers, core);
     GlobalTensor<float> x, d, ws, batchWs;
     GlobalTensor<Out> y;
     GlobalTensor<int64_t> cu;
     x.SetGlobalBuffer((__gm__ float *)input);
     d.SetGlobalBuffer((__gm__ float *)prev);
-    ws.SetGlobalBuffer((__gm__ float *)workspace + core * TEMP * E);
-    batchWs.SetGlobalBuffer((__gm__ float *)workspace + workers * TEMP * E);
+    // 同组的所有层复用同一个 arena；slot 是组内下标，组间区间恒不相交。
+    const int64_t arenaElements = info.bt == 128
+        ? GDN::FP32_SOLVE_ARENA128_ELEMENTS : GDN::FP32_SOLVE_ARENA64_ELEMENTS;
+    ws.SetGlobalBuffer((__gm__ float *)workspace + core * arenaElements);
+    batchWs.SetGlobalBuffer((__gm__ float *)workspace + core * arenaElements +
+                           GDN::FP32_SOLVE_TEMP_ELEMENTS);
+    static_assert(TEMP * E <= GDN::FP32_SOLVE_TEMP_ELEMENTS);
     y.SetGlobalBuffer((__gm__ Out *)output);
     cu.SetGlobalBuffer((__gm__ int64_t *)cuAddr);
     if ASCEND_IS_AIC {
@@ -295,7 +359,7 @@ __aicore__ inline void stage64_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR output
                 WorkItem jobs[Group];
                 int rows0[Group], rows1[Group];
                 for (int j = 0; j < count; ++j) {
-                    auto w = locate(task + j, S * 2, info, cu);
+                    auto w = locate<Parent>(task + j, S * 2, info, cu);
                     jobs[j] = w;
                     int n0 = w.length - w.t < S ? w.length - w.t : S;
                     int n1 = w.length - w.t - S < S ? w.length - w.t - S : S;
@@ -313,7 +377,7 @@ __aicore__ inline void stage64_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR output
                     auto w = jobs[j];
                     int n0 = rows0[j], n1 = rows1[j];
                     if (n1 > 0) {
-                        int64_t slot = core * BATCH * 2 + (index + j) % (BATCH * 2);
+                        int64_t slot = (index + j) % (BATCH * 2);
                         auto d0 = d[pos(info, w, w.t, S)];
                         full_gemm(mm, ws[j * E], d0, batchWs[slot * E], n1, n0, n0, W, stride(info, S), W);
                     }
@@ -325,10 +389,10 @@ __aicore__ inline void stage64_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR output
             }
         } else {
             for (int64_t task = begin; task < end; ++task) {
-                int64_t index = task - begin, slot = core * BATCH * 2 + index % (BATCH * 2);
+                int64_t index = task - begin, slot = index % (BATCH * 2);
                 if (index % BATCH == 0 && index >= 2 * BATCH)
                     CrossCoreWaitFlag(2 + (index / BATCH) % 2);
-                auto w = locate(task, S * 2, info, cu);
+                auto w = locate<Parent>(task, S * 2, info, cu);
                 int n0 = w.length - w.t < S ? w.length - w.t : S, n1 = w.length - w.t - S < S ? w.length - w.t - S : S;
                 if (n1 > 0) {
                     auto d0 = d[pos(info, w, w.t, S)], d1 = d[pos(info, w, w.t + S, S)];
@@ -359,10 +423,10 @@ __aicore__ inline void stage64_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR output
             o = ob.Get<Out>();
         int sub = GetSubBlockIdx();
         for (int64_t task = begin; task < end; ++task) {
-            int64_t index = task - begin, slot = core * BATCH * 2 + index % (BATCH * 2);
+            int64_t index = task - begin, slot = index % (BATCH * 2);
             if (index % BATCH == 0)
                 CrossCoreWaitFlag(4 + (index / BATCH) % 2);
-            auto w = locate(task, S * 2, info, cu);
+            auto w = locate<Parent>(task, S * 2, info, cu);
             int n0 = w.length - w.t < S ? w.length - w.t : S, n1 = w.length - w.t - S < S ? w.length - w.t - S : S;
             int rows = sub == 0 ? n0 : n1;
             Duplicate(f, 0.0f, S * 2 * S);
@@ -407,7 +471,7 @@ __aicore__ inline void stage64_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR output
 }
 
 
-template <int L>
+template <int L, bool Parent = false>
 class LeafProducer {
     static constexpr int E = L * 256;
     TBuf<TPosition::VECCALC> ab, pb, rb, cb;
@@ -444,7 +508,7 @@ public:
         SetFlag<HardEvent::V_MTE2>(0);
         WaitFlag<HardEvent::V_MTE2>(0);
         for (int leaf = 0; leaf < count; ++leaf) {
-            auto w = locate(begin + leaf, 32, info, cu);
+            auto w = locate<Parent>(begin + leaf, 32, info, cu);
             jobs[leaf] = w;
             int64_t t = w.t + sub * 16;
             int n = w.length - t < 16 ? int(w.length - t) : 16;
@@ -506,7 +570,7 @@ public:
     }
 };
 
-template <int L, bool Ahead>
+template <int L, bool Ahead, bool Parent = false>
 __aicore__ inline void leaf_merge_pipeline(GM_ADDR input, GM_ADDR prev, GM_ADDR output, GM_ADDR workspace,
                                            GM_ADDR cuAddr, FullProblem info, int64_t tasks)
 {
@@ -521,15 +585,20 @@ __aicore__ inline void leaf_merge_pipeline(GM_ADDR input, GM_ADDR prev, GM_ADDR 
     if ASCEND_IS_AIV {
         core /= GetSubBlockNum();
     }
-    int64_t workers = GetBlockNum(), q = tasks / workers, rem = tasks % workers;
-    int64_t begin = 0, end = q + (core < rem ? 1 : 0);
+    int64_t workers = GetBlockNum();
+    int64_t begin = 0, end = SpanTaskEnd<Parent>(info, S * 2, tasks, workers, core);
     GlobalTensor<float> x, d, ws, batchWs;
     GlobalTensor<Out> y;
     GlobalTensor<int64_t> cu;
     x.SetGlobalBuffer((__gm__ float *)input);
     d.SetGlobalBuffer((__gm__ float *)prev);
-    ws.SetGlobalBuffer((__gm__ float *)workspace + core * TEMP * E);
-    batchWs.SetGlobalBuffer((__gm__ float *)workspace + workers * TEMP * E);
+    // 同组的所有层复用同一个 arena；slot 是组内下标，组间区间恒不相交。
+    const int64_t arenaElements = info.bt == 128
+        ? GDN::FP32_SOLVE_ARENA128_ELEMENTS : GDN::FP32_SOLVE_ARENA64_ELEMENTS;
+    ws.SetGlobalBuffer((__gm__ float *)workspace + core * arenaElements);
+    batchWs.SetGlobalBuffer((__gm__ float *)workspace + core * arenaElements +
+                           GDN::FP32_SOLVE_TEMP_ELEMENTS);
+    static_assert(TEMP * E <= GDN::FP32_SOLVE_TEMP_ELEMENTS);
     y.SetGlobalBuffer((__gm__ Out *)output);
     cu.SetGlobalBuffer((__gm__ int64_t *)cuAddr);
     if ASCEND_IS_AIC {
@@ -552,7 +621,7 @@ __aicore__ inline void leaf_merge_pipeline(GM_ADDR input, GM_ADDR prev, GM_ADDR 
                 WorkItem jobs[Group];
                 int rows0[Group], rows1[Group];
                 for (int j = 0; j < count; ++j) {
-                    auto w = locate(task + j, S * 2, info, cu);
+                    auto w = locate<Parent>(task + j, S * 2, info, cu);
                     jobs[j] = w;
                     int n0 = w.length - w.t < S ? w.length - w.t : S;
                     int n1 = w.length - w.t - S < S ? w.length - w.t - S : S;
@@ -570,7 +639,7 @@ __aicore__ inline void leaf_merge_pipeline(GM_ADDR input, GM_ADDR prev, GM_ADDR 
                     auto w = jobs[j];
                     int n0 = rows0[j], n1 = rows1[j];
                     if (n1 > 0) {
-                        int64_t slot = core * BATCH * 2 + (index + j) % (BATCH * 2);
+                        int64_t slot = (index + j) % (BATCH * 2);
                         auto d0 = d[pos(info, w, w.t, S)];
                         full_gemm(mm, ws[j * E], d0, batchWs[slot * E], n1, n0, n0, W, stride(info, S), W);
                     }
@@ -582,10 +651,10 @@ __aicore__ inline void leaf_merge_pipeline(GM_ADDR input, GM_ADDR prev, GM_ADDR 
             }
         } else {
             for (int64_t task = begin; task < end; ++task) {
-                int64_t index = task - begin, slot = core * BATCH * 2 + index % (BATCH * 2);
+                int64_t index = task - begin, slot = index % (BATCH * 2);
                 if (index % BATCH == 0 && index >= 2 * BATCH)
                     CrossCoreWaitFlag(2 + (index / BATCH) % 2);
-                auto w = locate(task, S * 2, info, cu);
+                auto w = locate<Parent>(task, S * 2, info, cu);
                 int n0 = w.length - w.t < S ? w.length - w.t : S, n1 = w.length - w.t - S < S ? w.length - w.t - S : S;
                 if (n1 > 0) {
                     auto d0 = d[pos(info, w, w.t, S)], d1 = d[pos(info, w, w.t + S, S)];
@@ -615,7 +684,7 @@ __aicore__ inline void leaf_merge_pipeline(GM_ADDR input, GM_ADDR prev, GM_ADDR 
         else
             o = ob.Get<Out>();
         int sub = GetSubBlockIdx();
-        LeafProducer<L> leaf;
+        LeafProducer<L, Parent> leaf;
         leaf.Init(pipe, input, prev, cuAddr, info, sub);
         if constexpr (Ahead) {
             if (begin < end)
@@ -630,10 +699,10 @@ __aicore__ inline void leaf_merge_pipeline(GM_ADDR input, GM_ADDR prev, GM_ADDR 
                     leaf.Produce(chunk + L, end, version + 1);
             }
             for (int64_t task = chunk; task < end && task < chunk + L; ++task) {
-                int64_t index = task - begin, slot = core * BATCH * 2 + index % (BATCH * 2);
+                int64_t index = task - begin, slot = index % (BATCH * 2);
                 if (index % BATCH == 0)
                     CrossCoreWaitFlag(4 + (index / BATCH) % 2);
-                auto w = locate(task, S * 2, info, cu);
+                auto w = locate<Parent>(task, S * 2, info, cu);
                 int n0 = w.length - w.t < S ? w.length - w.t : S, n1 = w.length - w.t - S < S ? w.length - w.t - S : S;
                 int rows = sub == 0 ? n0 : n1;
                 Duplicate(f, 0.0f, S * 2 * S);
@@ -681,7 +750,7 @@ __aicore__ inline void leaf_merge_pipeline(GM_ADDR input, GM_ADDR prev, GM_ADDR 
 
 // mixed 边界覆盖所有物理组，包括零任务组。各阶段先完成 ready/free
 // 和 CATLASS 析构 drain，再复用 UB/L1/scratch/flag。
-template <class In, class Out>
+template <class In, class Out, bool Parent = false>
 __aicore__ inline void Run(GM_ADDR raw, GM_ADDR x, GM_ADDR d16, GM_ADDR d32, GM_ADDR d64, GM_ADDR y, GM_ADDR ws,
                            GM_ADDR cu, FullProblem p)
 {
@@ -693,18 +762,45 @@ __aicore__ inline void Run(GM_ADDR raw, GM_ADDR x, GM_ADDR d16, GM_ADDR d32, GM_
         }
         SyncAll<false>();
     }
-    leaf_merge_pipeline<32, true>(x, d16, d32, ws, cu, p, p.tasks32);
-    SyncAll<false>();
-    if (p.bt == 128) {
-        stage64_merge<32, float>(x, d32, d64, ws, cu, p, p.tasks64);
-        SyncAll<false>();
-        pipeline_merge<64, Out>(x, d64, y, ws, cu, p, p.tasks128);
+    leaf_merge_pipeline<32, true, Parent>(x, d16, d32, ws, cu, p, p.tasks32);
+    // Parent 消融：同 parent（BT chunk/head）的 32 叶子与 64 消费者同在本核组，
+    // 两阶段 scratch 布局相同（TEMP16/E1024/BATCH16，按物理核分配，组间不相交）；
+    // leaf 返回前已完成各批 ready/free drain 与本核排空，无跨组 GM 依赖，
+    // 故此边界仅需本核全管道屏障；非 Parent 保留原全核会合。
+    if constexpr (Parent) {
+        PipeBarrier<PIPE_ALL>();
     } else {
-        stage64_merge<32, Out>(x, d32, y, ws, cu, p, p.tasks64);
+        SyncAll<false>();
+    }
+    if (p.bt == 128) {
+        stage64_merge<32, float, 8, Parent>(x, d32, d64, ws, cu, p, p.tasks64);
+        SyncAll<false>();
+        pipeline_merge<64, Out, 16, Parent>(x, d64, y, ws, cu, p, p.tasks128);
+    } else {
+        stage64_merge<32, Out, 8, Parent>(x, d32, y, ws, cu, p, p.tasks64);
     }
 
     // 最终 A 由 AIV/MTE3 写回，不使用旧 AIC/FIX 发布协议。
     SyncAll<false>();
+}
+
+// 调用方已经通过配对AIV→AIC→AIV发布本批x。所有子层属于同一物理组，
+// 固定arena消除了跨层scratch别名；每层原ready/free及析构保持不变。
+template <class Out>
+__aicore__ inline void RunOwnedBatch(GM_ADDR x, GM_ADDR d16, GM_ADDR d32, GM_ADDR d64,
+                                    GM_ADDR y, GM_ADDR ws, GM_ADDR cu, FullProblem p)
+{
+    leaf_merge_pipeline<32, true, true>(x, d16, d32, ws, cu, p, p.tasks32);
+    PipeBarrier<PIPE_ALL>();
+    if (p.bt == 128) {
+        stage64_merge<32, float, 8, true>(x, d32, d64, ws, cu, p, p.tasks64);
+        PipeBarrier<PIPE_ALL>();
+        pipeline_merge<64, Out, 16, true>(x, d64, y, ws, cu, p, p.tasks128);
+    } else {
+        stage64_merge<32, Out, 8, true>(x, d32, y, ws, cu, p, p.tasks64);
+    }
+    // AIC已等完两个AIV的末批free，后续WU可读完整A；保留本核全管道排空。
+    PipeBarrier<PIPE_ALL>();
 }
 
 } // namespace GdnFp32Solve

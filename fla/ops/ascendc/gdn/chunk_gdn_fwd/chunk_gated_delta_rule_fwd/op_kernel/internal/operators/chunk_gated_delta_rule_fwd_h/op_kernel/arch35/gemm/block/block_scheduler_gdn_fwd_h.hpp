@@ -62,6 +62,7 @@ struct GDNFwdHOffsets {
     uint32_t batchIdx;
     uint32_t headIdx;
     uint32_t chunkIdx;
+    uint32_t chunkOffset;
 
 };
 
@@ -317,8 +318,8 @@ struct BlockSchedulerGdnFwdH {
         uint32_t vBlockDim = vBlockSize;
         offset.initialStateOffset = (stream.batchIdx * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim + vBlockOffset;
         offset.finalStateOffset = (stream.batchIdx * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim + vBlockOffset;
-        offset.hSrcOffset = (stream.shapeBatchIdx * vNumHead * totalChunks + stream.vHeadIdx * totalChunks + stream.chunkOffset + stream.chunkIdx) * kHeadDim * vHeadDim + vBlockOffset;
-        offset.hDstOffset = offset.hSrcOffset + kHeadDim * vHeadDim;
+        offset.hSrcOffset = ((stream.shapeBatchIdx * totalChunks + stream.chunkOffset + stream.chunkIdx) * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim + vBlockOffset;
+        offset.hDstOffset = offset.hSrcOffset + vNumHead * kHeadDim * vHeadDim;
         if (storeFinalState && offset.isFinalState) {
             offset.hDstOffset = offset.hSrcOffset;
         }
@@ -337,6 +338,7 @@ struct BlockSchedulerGdnFwdH {
         offset.batchIdx = stream.batchIdx;
         offset.headIdx = stream.vHeadIdx;
         offset.chunkIdx = stream.chunkIdx;
+        offset.chunkOffset = stream.chunkOffset;
     }
 
     CATLASS_DEVICE

@@ -33,6 +33,16 @@ constexpr int64_t FAST_HEAD_FIRST_RANGE_GROUPS = 1;
 constexpr int64_t FP32_REPEAT_ELEMS = 64;
 constexpr int64_t VECTOR_MAX_REPEAT_TIMES = 255;
 constexpr int64_t VECTOR_MAX_CALC_ELEMS = FP32_REPEAT_ELEMS * VECTOR_MAX_REPEAT_TIMES;
+constexpr int64_t CHUNK_128_SIZE = 128;
+constexpr int64_t CHUNK_128_SEGMENT_COUNT = 4;
+constexpr int64_t CHUNK_128_SEGMENT_SIZE = CHUNK_128_SIZE / CHUNK_128_SEGMENT_COUNT;
+constexpr int64_t CHUNK_128_STRIDE_BLOCKS = CHUNK_128_SIZE / FLOAT_ALIGN_ELEMS;
+constexpr int64_t CHUNK_128_MAX_CARRY_COUNT = 64;
+constexpr int64_t CHUNK_128_SECOND_OFFSET_BYTES = 256;
+constexpr int64_t CHUNK_128_THIRD_OFFSET_BYTES = 512;
+constexpr int64_t CHUNK_128_CARRY_OFFSET_BYTES = 768;
+constexpr int64_t CHUNK_128_BRCB_OFFSET_BYTES = 1280;
+constexpr CumSumConfig CUMSUM_NO_LAST_ROW_CONFIG = {true, false, false};
 constexpr int64_t DTYPE_FP32 = 0;
 constexpr int64_t DTYPE_FP16 = 1;
 constexpr int64_t DTYPE_BF16 = 2;
@@ -97,7 +107,7 @@ __aicore__ inline int64_t GetCumSumWorkspaceBytes(int64_t inner)
                         UB_ALIGN_BYTES);
 }
 
-template <typename GType, typename OType>
+template <typename GType, typename OType, int64_t SEGMENTED_CHUNK_SIZE = 0>
 class ChunkLocalCumsumKernel {
 public:
     __aicore__ inline ChunkLocalCumsumKernel() = default;
@@ -119,6 +129,7 @@ public:
         fastChunkGroupSize_ = headFirstPipeline_
                                   ? GetFastHeadFirstChunkGroupSize(tiling_->chunkSize, tiling_->h, fastBufferLimit)
                                   : 1;
+        rebalanceChunkTasks_ = tiling_->rebalanceChunkTasks != 0;
         int64_t fastBufferNum = headFirstPipeline_ ? FAST_HEAD_FIRST_CUMSUM_BUFFER_NUM : FAST_CHUNK_SCAN_BUFFER_NUM;
         int64_t maxFastHLen = fastBufferLimit /
                               (fastBufferNum * fastChunkGroupSize_ * tiling_->chunkSize *
@@ -386,8 +397,20 @@ private:
     {
         LocalTensor<float> inLocal = headFirstChunkQueue_.DeQue<float>();
         LocalTensor<float> outLocal = headFirstOutQueue_.AllocTensor<float>();
+        int64_t groupChunks = groupLen / tiling_->chunkSize;
+        if constexpr (SEGMENTED_CHUNK_SIZE == CHUNK_128_SIZE) {
+            int64_t carryCount = hLen * groupChunks;
+            bool useChunk128Split = groupLenAlign == groupLen && groupLen % CHUNK_128_SIZE == 0 &&
+                                    carryCount > 0 && carryCount <= CHUNK_128_MAX_CARRY_COUNT &&
+                                    (carryCount & (FLOAT_ALIGN_ELEMS - 1)) == 0;
+            if (useChunk128Split) {
+                ComputeChunk128SegmentedAndScale(outLocal, inLocal, carryCount, hLen * groupLenAlign);
+                headFirstOutQueue_.EnQue(outLocal);
+                headFirstChunkQueue_.FreeTensor(inLocal);
+                return;
+            }
+        }
         if (groupLen > tiling_->chunkSize && groupLenAlign == groupLen) {
-            int64_t groupChunks = groupLen / tiling_->chunkSize;
             ComputeCumSumAndScale(outLocal, inLocal, hLen * groupChunks, tiling_->chunkSize, hLen * groupLenAlign);
         } else {
             ComputeCumSumAndScale(outLocal, inLocal, hLen, groupLenAlign, hLen * groupLenAlign);
@@ -547,6 +570,70 @@ private:
         ApplyScaleInplace(dstLocal, elementCount);
     }
 
+    __aicore__ inline void ComputeChunk128SegmentedAndScale(LocalTensor<float> dstLocal,
+                                                            LocalTensor<float> srcLocal, int64_t carryCount,
+                                                            int64_t elementCount)
+    {
+        CumSumInfo cumSumInfo{static_cast<uint32_t>(carryCount * CHUNK_128_SEGMENT_COUNT),
+                              static_cast<uint32_t>(CHUNK_128_SEGMENT_SIZE)};
+        LocalTensor<float> lastRowLocal = cumsumLastRowBuf_.Get<float>();
+        LocalTensor<uint8_t> workspaceLocal = cumsumWorkspaceBuf_.Get<uint8_t>();
+        CumSum<float, CUMSUM_NO_LAST_ROW_CONFIG>(dstLocal, lastRowLocal, srcLocal, workspaceLocal, cumSumInfo);
+        PipeBarrier<PIPE_V>();
+
+        LocalTensor<int32_t> carryOffsets = workspaceLocal.ReinterpretCast<int32_t>();
+        LocalTensor<int32_t> secondOffsets =
+            workspaceLocal[CHUNK_128_SECOND_OFFSET_BYTES].ReinterpretCast<int32_t>();
+        LocalTensor<int32_t> thirdOffsets =
+            workspaceLocal[CHUNK_128_THIRD_OFFSET_BYTES].ReinterpretCast<int32_t>();
+        LocalTensor<float> carryLocal = workspaceLocal[CHUNK_128_CARRY_OFFSET_BYTES].ReinterpretCast<float>();
+        LocalTensor<float> carryBrcb = workspaceLocal[CHUNK_128_BRCB_OFFSET_BYTES].ReinterpretCast<float>();
+        CreateVecIndex(carryOffsets, 0, static_cast<uint32_t>(carryCount));
+        PipeBarrier<PIPE_V>();
+        Muls(carryOffsets, carryOffsets,
+             static_cast<int32_t>(CHUNK_128_SIZE * static_cast<int64_t>(sizeof(float))),
+             static_cast<uint32_t>(carryCount));
+        PipeBarrier<PIPE_V>();
+        LocalTensor<uint32_t> gatherOffsets = carryOffsets.ReinterpretCast<uint32_t>();
+        LocalTensor<uint32_t> secondGatherOffsets = secondOffsets.ReinterpretCast<uint32_t>();
+        LocalTensor<uint32_t> thirdGatherOffsets = thirdOffsets.ReinterpretCast<uint32_t>();
+        BinaryRepeatParams repeatParams{1, 1, 0,
+                                        static_cast<uint8_t>(CHUNK_128_STRIDE_BLOCKS),
+                                        static_cast<uint8_t>(CHUNK_128_STRIDE_BLOCKS), 1};
+
+        // First merge (0 -> 1, 2 -> 3), then add the completed segment-1 carry to segments 2 and 3.
+        Adds(secondOffsets, carryOffsets,
+             static_cast<int32_t>((3 * CHUNK_128_SEGMENT_SIZE - 1) * static_cast<int64_t>(sizeof(float))),
+             static_cast<uint32_t>(carryCount));
+        Adds(thirdOffsets, carryOffsets,
+             static_cast<int32_t>((2 * CHUNK_128_SEGMENT_SIZE - 1) * static_cast<int64_t>(sizeof(float))),
+             static_cast<uint32_t>(carryCount));
+        Adds(carryOffsets, carryOffsets,
+             static_cast<int32_t>((CHUNK_128_SEGMENT_SIZE - 1) * static_cast<int64_t>(sizeof(float))),
+             static_cast<uint32_t>(carryCount));
+        PipeBarrier<PIPE_V>();
+        Gather(carryLocal, dstLocal, gatherOffsets, 0, static_cast<uint32_t>(carryCount));
+        Gather(carryLocal[carryCount], dstLocal, secondGatherOffsets, 0, static_cast<uint32_t>(carryCount));
+        PipeBarrier<PIPE_V>();
+        Brcb(carryBrcb, carryLocal, static_cast<uint8_t>(2 * carryCount / FLOAT_ALIGN_ELEMS), {1, 8});
+        PipeBarrier<PIPE_V>();
+        Add(dstLocal[CHUNK_128_SEGMENT_SIZE], dstLocal[CHUNK_128_SEGMENT_SIZE], carryBrcb,
+            static_cast<uint64_t>(CHUNK_128_SEGMENT_SIZE), static_cast<uint8_t>(carryCount), repeatParams);
+        Add(dstLocal[3 * CHUNK_128_SEGMENT_SIZE], dstLocal[3 * CHUNK_128_SEGMENT_SIZE],
+            carryBrcb[carryCount * FLOAT_ALIGN_ELEMS], static_cast<uint64_t>(CHUNK_128_SEGMENT_SIZE),
+            static_cast<uint8_t>(carryCount), repeatParams);
+        PipeBarrier<PIPE_V>();
+
+        Gather(carryLocal, dstLocal, thirdGatherOffsets, 0, static_cast<uint32_t>(carryCount));
+        PipeBarrier<PIPE_V>();
+        Brcb(carryBrcb, carryLocal, static_cast<uint8_t>(carryCount / FLOAT_ALIGN_ELEMS), {1, 8});
+        PipeBarrier<PIPE_V>();
+        Add(dstLocal[2 * CHUNK_128_SEGMENT_SIZE], dstLocal[2 * CHUNK_128_SEGMENT_SIZE], carryBrcb,
+            static_cast<uint64_t>(2 * CHUNK_128_SEGMENT_SIZE), static_cast<uint8_t>(carryCount), repeatParams);
+        PipeBarrier<PIPE_V>();
+        ApplyScaleInplace(dstLocal, elementCount);
+    }
+
     __aicore__ inline void ComputeForwardScanStep(LocalTensor<float> dstLocal, LocalTensor<float> srcLocal,
                                                   int64_t chunkLen, int64_t hLenAlign, int64_t step)
     {
@@ -698,6 +785,30 @@ private:
         int64_t chunkNum = CeilDivInt64(tiling_->t, tiling_->chunkSize);
         int64_t hTileSize = chunkFastPath_ ? fastHTileSize_ : H_TILE_SIZE;
         int64_t hTileNum = CeilDivInt64(tiling_->h, hTileSize);
+        if (rebalanceChunkTasks_) {
+            int64_t totalChunks = tiling_->b * hTileNum * chunkNum;
+            // Distribute the remainder across the first cores so no core is left empty
+            // while other cores receive an avoidable extra chunk.
+            int64_t baseChunksPerCore = totalChunks / blockNum;
+            int64_t remainderChunks = totalChunks % blockNum;
+            int64_t unit = blockIdx * baseChunksPerCore + MinInt64(blockIdx, remainderChunks);
+            int64_t unitEnd = unit + baseChunksPerCore + (blockIdx < remainderChunks ? 1 : 0);
+            while (unit < unitEnd) {
+                int64_t tileLinear = unit / chunkNum;
+                int64_t chunkIdx = unit % chunkNum;
+                int64_t hTileIdx = tileLinear % hTileNum;
+                int64_t bIdx = tileLinear / hTileNum;
+                int64_t tileUnitEnd = MinInt64(unitEnd, (tileLinear + 1) * chunkNum);
+                int64_t hStart = hTileIdx * hTileSize;
+                int64_t hLen = MinInt64(hTileSize, tiling_->h - hStart);
+                int64_t chunkStart = chunkIdx * tiling_->chunkSize;
+                int64_t chunkEnd = MinInt64((tileUnitEnd - tileLinear * chunkNum) * tiling_->chunkSize,
+                                            tiling_->t);
+                ProcessChunkRange(GetDenseBaseOffset(bIdx), chunkStart, chunkEnd, hStart, hLen);
+                unit = tileUnitEnd;
+            }
+            return;
+        }
         int64_t rangeLen = fastChunkGroupSize_ * FAST_HEAD_FIRST_RANGE_GROUPS * tiling_->chunkSize;
         int64_t rangeNum = headFirstPipeline_ ? CeilDivInt64(tiling_->t, rangeLen) : chunkNum;
         int64_t taskNum = tiling_->b * rangeNum * hTileNum;
@@ -781,6 +892,7 @@ private:
     const ChunkLocalCumsumTilingData *tiling_ = nullptr;
     int64_t fastHTileSize_ = H_TILE_SIZE;
     int64_t fastChunkGroupSize_ = 1;
+    bool rebalanceChunkTasks_ = false;
     bool chunkFastPath_ = false;
     bool cumsumFastPath_ = false;
     bool enableCumSumFastPath_ = false;
@@ -795,43 +907,51 @@ extern "C" __global__ __aicore__ void chunk_local_cumsum(GM_ADDR g, GM_ADDR cuSe
                                                           GM_ADDR out, GM_ADDR workspace, GM_ADDR tiling)
 {
     REGISTER_TILING_DEFAULT(ChunkLocalCumsumTilingData);
-    GET_TILING_DATA_WITH_STRUCT(ChunkLocalCumsumTilingData, tilingData, tiling);
-    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
-    if (tilingData.inputDtype == DTYPE_FP16 && tilingData.outputDtype == DTYPE_FP16) {
-        ChunkLocalCumsumKernel<half, half> op;
+    if (TILING_KEY_IS(1)) {
+        KERNEL_TASK_TYPE(1, KERNEL_TYPE_AIV_ONLY);
+        GET_TILING_DATA_WITH_STRUCT(ChunkLocalCumsumTilingData, tilingData, tiling);
+        ChunkLocalCumsumKernel<float, float, CHUNK_128_SIZE> op;
         op.Init(g, cuSeqlens, chunkIndices, out, &tilingData);
         op.Process();
-    } else if (tilingData.inputDtype == DTYPE_FP16 && tilingData.outputDtype == DTYPE_BF16) {
-        ChunkLocalCumsumKernel<half, bfloat16_t> op;
-        op.Init(g, cuSeqlens, chunkIndices, out, &tilingData);
-        op.Process();
-    } else if (tilingData.inputDtype == DTYPE_FP16) {
-        ChunkLocalCumsumKernel<half, float> op;
-        op.Init(g, cuSeqlens, chunkIndices, out, &tilingData);
-        op.Process();
-    } else if (tilingData.inputDtype == DTYPE_BF16 && tilingData.outputDtype == DTYPE_FP16) {
-        ChunkLocalCumsumKernel<bfloat16_t, half> op;
-        op.Init(g, cuSeqlens, chunkIndices, out, &tilingData);
-        op.Process();
-    } else if (tilingData.inputDtype == DTYPE_BF16 && tilingData.outputDtype == DTYPE_BF16) {
-        ChunkLocalCumsumKernel<bfloat16_t, bfloat16_t> op;
-        op.Init(g, cuSeqlens, chunkIndices, out, &tilingData);
-        op.Process();
-    } else if (tilingData.inputDtype == DTYPE_BF16) {
-        ChunkLocalCumsumKernel<bfloat16_t, float> op;
-        op.Init(g, cuSeqlens, chunkIndices, out, &tilingData);
-        op.Process();
-    } else if (tilingData.outputDtype == DTYPE_FP16) {
-        ChunkLocalCumsumKernel<float, half> op;
-        op.Init(g, cuSeqlens, chunkIndices, out, &tilingData);
-        op.Process();
-    } else if (tilingData.outputDtype == DTYPE_BF16) {
-        ChunkLocalCumsumKernel<float, bfloat16_t> op;
-        op.Init(g, cuSeqlens, chunkIndices, out, &tilingData);
-        op.Process();
-    } else {
-        ChunkLocalCumsumKernel<float, float> op;
-        op.Init(g, cuSeqlens, chunkIndices, out, &tilingData);
-        op.Process();
+    } else if (TILING_KEY_IS(0)) {
+        KERNEL_TASK_TYPE(0, KERNEL_TYPE_AIV_ONLY);
+        GET_TILING_DATA_WITH_STRUCT(ChunkLocalCumsumTilingData, tilingData, tiling);
+        if (tilingData.inputDtype == DTYPE_FP16 && tilingData.outputDtype == DTYPE_FP16) {
+            ChunkLocalCumsumKernel<half, half> op;
+            op.Init(g, cuSeqlens, chunkIndices, out, &tilingData);
+            op.Process();
+        } else if (tilingData.inputDtype == DTYPE_FP16 && tilingData.outputDtype == DTYPE_BF16) {
+            ChunkLocalCumsumKernel<half, bfloat16_t> op;
+            op.Init(g, cuSeqlens, chunkIndices, out, &tilingData);
+            op.Process();
+        } else if (tilingData.inputDtype == DTYPE_FP16) {
+            ChunkLocalCumsumKernel<half, float> op;
+            op.Init(g, cuSeqlens, chunkIndices, out, &tilingData);
+            op.Process();
+        } else if (tilingData.inputDtype == DTYPE_BF16 && tilingData.outputDtype == DTYPE_FP16) {
+            ChunkLocalCumsumKernel<bfloat16_t, half> op;
+            op.Init(g, cuSeqlens, chunkIndices, out, &tilingData);
+            op.Process();
+        } else if (tilingData.inputDtype == DTYPE_BF16 && tilingData.outputDtype == DTYPE_BF16) {
+            ChunkLocalCumsumKernel<bfloat16_t, bfloat16_t> op;
+            op.Init(g, cuSeqlens, chunkIndices, out, &tilingData);
+            op.Process();
+        } else if (tilingData.inputDtype == DTYPE_BF16) {
+            ChunkLocalCumsumKernel<bfloat16_t, float> op;
+            op.Init(g, cuSeqlens, chunkIndices, out, &tilingData);
+            op.Process();
+        } else if (tilingData.outputDtype == DTYPE_FP16) {
+            ChunkLocalCumsumKernel<float, half> op;
+            op.Init(g, cuSeqlens, chunkIndices, out, &tilingData);
+            op.Process();
+        } else if (tilingData.outputDtype == DTYPE_BF16) {
+            ChunkLocalCumsumKernel<float, bfloat16_t> op;
+            op.Init(g, cuSeqlens, chunkIndices, out, &tilingData);
+            op.Process();
+        } else {
+            ChunkLocalCumsumKernel<float, float> op;
+            op.Init(g, cuSeqlens, chunkIndices, out, &tilingData);
+            op.Process();
+        }
     }
 }

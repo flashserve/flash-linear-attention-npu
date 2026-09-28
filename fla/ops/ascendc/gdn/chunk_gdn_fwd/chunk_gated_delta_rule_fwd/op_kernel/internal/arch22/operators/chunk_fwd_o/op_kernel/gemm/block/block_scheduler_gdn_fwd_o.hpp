@@ -33,6 +33,9 @@ struct GDNFwdOOffsets {
     uint32_t batchIdx;
     uint32_t headIdx;
     uint32_t chunkIdx;
+    // ho idle pipeline notify key, only written on the new path
+    uint32_t compactSequence;
+    uint32_t localChunk;
 
 };
 
@@ -58,6 +61,8 @@ struct BlockSchedulerGdnFwdO {
     bool isRunning;
     bool chunkPipeline{false};
     bool taskAffinity{false};
+    bool idlePipeline{false};
+    uint32_t idleLogicalCount{0};
     bool processNewTask {true};
     bool firstLoop {true};
     bool lastLoop {false};
@@ -148,6 +153,27 @@ struct BlockSchedulerGdnFwdO {
     }
 
     CATLASS_DEVICE
+    void ConfigureIdlePipeline(uint32_t producerCount) {
+        // New mechanism on: old chunkPipeline and taskAffinity are both off.
+        chunkPipeline = false;
+        taskAffinity = false;
+        idlePipeline = true;
+        idleLogicalCount = producerCount < cubeCoreNum ? cubeCoreNum - producerCount : 0;
+        processNewTask = true;
+        headInnerIdx = 0;
+        if (cubeCoreIdx < producerCount || idleLogicalCount == 0) {
+            taskIdx = taskNum;
+            isRunning = false;
+            return;
+        }
+        // Consumers borrow the normal double-task round robin over the logical
+        // suffix [P, C). cubeCoreIdx/cubeCoreNum stay physical so workspace
+        // slots keep the full-C reservation.
+        taskIdx = (cubeCoreIdx - producerCount) * GDN_FWD_O_PING_PONG_STAGES;
+        isRunning = taskIdx < taskNum;
+    }
+
+    CATLASS_DEVICE
     uint32_t GetCompactSequenceIdx(uint32_t rawSequenceIdx) const {
         uint32_t compactSequenceIdx = 0;
         for (uint32_t sequence = 0; sequence < rawSequenceIdx; ++sequence) {
@@ -226,8 +252,7 @@ struct BlockSchedulerGdnFwdO {
                                     tokenStart;
         const int64_t ovRowOffset = (static_cast<int64_t>(shapeBatchIdx) * vNumHead + vHeadIdx) * seqlen +
                                     tokenStart;
-        const int64_t hBlockOffset = (static_cast<int64_t>(shapeBatchIdx) * vNumHead * numChunks +
-                                      static_cast<int64_t>(vHeadIdx) * numChunks + chunkIdx) *
+        const int64_t hBlockOffset = ((static_cast<int64_t>(shapeBatchIdx) * numChunks + chunkIdx) * vNumHead + vHeadIdx) *
                                      kHeadDim;
         const int64_t workStageOffset =
             static_cast<int64_t>(cubeCoreIdx) * GDN_FWD_O_PING_PONG_STAGES + currStage;
@@ -244,11 +269,18 @@ struct BlockSchedulerGdnFwdO {
         offsets[currStage].batchIdx = shapeBatchIdx;
         offsets[currStage].headIdx = vHeadIdx;
         offsets[currStage].chunkIdx = chunkIdx;
+        if (idlePipeline) {
+            // Varlen: shapeBatchIdx is always 0 and chunkIdx is global, so the
+            // notify key needs the compact sequence and the local chunk.
+            offsets[currStage].compactSequence =
+                isVariedLen ? GetCompactSequenceIdx(tokenBatchIdx) : shapeBatchIdx;
+            offsets[currStage].localChunk = isVariedLen ? batchChunkIdx : chunkIdx;
+        }
 
         if (!chunkPipeline && !taskAffinity) {
             processNewTask = headInnerIdx == GDN_FWD_O_PING_PONG_STAGES - 1;
             if (processNewTask) {
-                taskIdx += GDN_FWD_O_PING_PONG_STAGES * cubeCoreNum;
+                taskIdx += GDN_FWD_O_PING_PONG_STAGES * (idlePipeline ? idleLogicalCount : cubeCoreNum);
             }
         }
 

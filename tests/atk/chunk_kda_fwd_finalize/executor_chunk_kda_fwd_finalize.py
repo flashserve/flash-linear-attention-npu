@@ -85,10 +85,8 @@ def _prepare(values: dict[str, Any]) -> Inputs:
     value_shapes = [(batch, heads, tokens, 128)]
     if qg.ndim == 3:
         value_shapes.append((heads, tokens, 128))
-    if (tuple(v_new.shape) not in value_shapes
-            or h.shape[:2] != (batch, heads)
-            or h.shape[-2:] != (128, 128)):
-        raise ValueError("v_new or h shape does not match stage inputs")
+    if tuple(v_new.shape) not in value_shapes:
+        raise ValueError("v_new shape does not match stage inputs")
     cu = _int_array(values.get("cu_seqlens"))
     indices = _int_array(values.get("chunk_indices"))
     if cu is not None:
@@ -108,7 +106,8 @@ def _prepare(values: dict[str, Any]) -> Inputs:
         if indices != canonical:
             raise ValueError("chunk_indices must be canonical sequence-major pairs")
     expected_chunks = len(_chunk_map(batch, tokens, cu)[0])
-    if h.shape != (batch, heads, expected_chunks, 128, 128):
+    h_shape = (batch, expected_chunks, heads, 128, 128)
+    if h.shape != h_shape:
         raise ValueError("h chunk dimension does not match cu_seqlens")
     return Inputs(qg, aqk, v_new, h, cu, indices, layout,
                   _as_bool(values["state_v_first"]), batch, heads, tokens)
@@ -138,23 +137,25 @@ def _output_shape(inputs: Inputs) -> tuple[int, ...]:
     return (inputs.tokens, inputs.heads, 128)
 
 
-def run_cpu(inputs: Inputs) -> torch.Tensor:
+def run_cpu(inputs: Inputs, high_precision: bool = True) -> torch.Tensor:
     # CPU 参考独立消费已经 BF16 舍入的四个阶段输入。
-    qg = _head_major(inputs.qg_scaled.to(torch.bfloat16)).float()
-    aqk = _head_major(inputs.aqk.to(torch.bfloat16)).float()
-    v_new = _head_major(inputs.v_new.to(torch.bfloat16)).float()
-    h = inputs.h.to(torch.bfloat16).float()
-    result = torch.zeros((inputs.batch, inputs.heads, inputs.tokens, 128), dtype=torch.float32)
+    dtype = torch.float64 if high_precision else torch.float32
+    qg = _head_major(inputs.qg_scaled.to(torch.bfloat16)).to(dtype)
+    aqk = _head_major(inputs.aqk.to(torch.bfloat16)).to(dtype)
+    v_new = _head_major(inputs.v_new.to(torch.bfloat16)).to(dtype)
+    h = inputs.h.to(torch.bfloat16).to(dtype)
+    result = torch.zeros((inputs.batch, inputs.heads, inputs.tokens, 128), dtype=dtype)
     for batch_id, chunks in enumerate(_chunk_map(inputs.batch, inputs.tokens, inputs.cu_seqlens)):
         for begin, end, chunk_id in chunks:
             rows = end - begin
-            state = h[batch_id, :, chunk_id]
+            state = h[batch_id, chunk_id]
             if inputs.state_v_first:
                 state = state.transpose(-1, -2)
             qh = torch.matmul(qg[batch_id, :, begin:end], state)
             av = torch.matmul(aqk[batch_id, :, begin:end, :rows],
                               v_new[batch_id, :, begin:end])
-            result[batch_id, :, begin:end] = (qh + av).to(torch.bfloat16).float()
+            value = qh + av
+            result[batch_id, :, begin:end] = value if high_precision else value.to(torch.bfloat16).float()
     return _output_layout(result, inputs.output_layout)
 
 
@@ -201,6 +202,10 @@ class FunctionApi(BaseApi):
     def __init__(self, task_result: TaskResult):
         super().__init__(task_result)
         self.inputs: Optional[Inputs] = None
+        self.low_precision_benchmark = (
+            self.device == "cpu" and task_result.name == "cpu_benchmark"
+            and not task_result.is_benchmark_task
+        )
 
     def init_by_input_data(self, input_data: InputDataset):
         self.inputs = _prepare(input_data.kwargs)
@@ -211,14 +216,14 @@ class FunctionApi(BaseApi):
         if self.inputs is None:
             raise RuntimeError("ATK inputs were not initialized")
         if self.device == "cpu":
-            output = run_cpu(self.inputs)
+            output = run_cpu(self.inputs, high_precision=not self.low_precision_benchmark)
         elif self.device in ("npu", "pyaclnn"):
             output = run_npu(self.inputs)
         else:
             raise RuntimeError("unsupported ATK backend %r" % self.device)
+        expected_dtype = (torch.float32 if self.low_precision_benchmark else torch.float64)
         if (tuple(output.shape) != _output_shape(self.inputs)
-                or output.dtype != (torch.float32 if self.device == "cpu"
-                                    else torch.bfloat16)):
+                or output.dtype != (expected_dtype if self.device == "cpu" else torch.bfloat16)):
             raise RuntimeError("unexpected attn_out dtype or shape")
         if not with_output:
             return None
@@ -226,6 +231,9 @@ class FunctionApi(BaseApi):
             torch.npu.synchronize()
         if not torch.isfinite(output.float()).all().item():
             raise RuntimeError("attn_out contains NaN or Inf")
+        # FP64 累加，仅将比较结果转为 FP32。
+        if self.device == "cpu":
+            output = output.float()
         return (output,)
 
     def export_custom_data(self, input_data: InputDataset):
@@ -234,4 +242,6 @@ class FunctionApi(BaseApi):
             raise RuntimeError("ATK inputs were not initialized")
         return {"output_layout": self.inputs.output_layout,
                 "state_v_first": self.inputs.state_v_first,
-                "chunks": int(self.inputs.h.shape[2])}
+                "reference": "cpu_fp32_bf16" if self.low_precision_benchmark else (
+                    "cpu_fp64" if self.device == "cpu" else "aclnn_dut"),
+                "chunks": int(self.inputs.h.shape[1])}

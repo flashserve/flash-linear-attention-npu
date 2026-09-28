@@ -79,7 +79,7 @@ o_t = S @ q_t
 - `op_host/recurrent_kda_tiling.cpp`：读取 Q/K/V 与输入/输出 state stride、shape、属性和可选输入存在性，
   填充 `RecurrentKdaTilingData`，计算 block dim 与 UB 切分。
 - `op_kernel/recurrent_kda.cpp`：单个 AIV kernel 完成 q/k normalize、raw gate 转换、state decay、delta 更新、输出和最终状态写回。
-- `torch_custom/fla_npu/fla_npu/ops/ascendc/_aclnn_ctypes.py`：提供解耦 Python ctypes 入口，不注册 `torch.ops.npu`。
+- `torch_custom/fla_npu/csrc/src/stable_recurrent_kda.cpp` + `fla_npu/ops/ascendc/_stable.py`：提供解耦的 Python 入口（Stable-ABI 适配层），不注册 legacy `torch.ops.npu`；`_aclnn_ctypes.py` 保留为参考实现与回退。
 - legacy `torch.ops.npu.npu_recurrent_kda` 不属于当前支持范围，不作为公共接口维护。
 
 ## 6. Tiling 设计

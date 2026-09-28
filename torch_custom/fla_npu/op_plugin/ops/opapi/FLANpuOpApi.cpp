@@ -270,7 +270,7 @@ bool ResolveChunkLocalCumsumOutputDtype(
 
     // dh keeps the per-chunk state; dh0 follows the public recurrent-state layout.
     at::Tensor dv2 = at::empty_like(dv);
-    at::Tensor dh = at::empty({B, Hv, chunk_num, K, V}, q.options());
+    at::Tensor dh = at::empty({B, chunk_num, Hv, K, V}, q.options());
     at::Tensor dh0;
     if (h0.has_value()) {
         dh0 = stateVFirst ? at::empty({seq_num, Hv, V, K}, q.options())
@@ -467,7 +467,7 @@ at::Tensor npu_chunk_fwd_o(
                                           : std::vector<int64_t>{K, V};
 
     // 创建输出 tensor
-    at::Tensor h_out = at::empty({B, HV, NT, state_tail[0], state_tail[1]}, k.options());
+    at::Tensor h_out = at::empty({B, NT, HV, state_tail[0], state_tail[1]}, k.options());
     at::Tensor v_new_out = at::empty_like(u);
     at::Tensor final_state_out;
     if (output_final_state_) {

@@ -307,7 +307,7 @@ if __name__ == "__main__":
     v = input_tensor.v.npu()
     print("step 3: v ok", v.shape, v.dtype, v.device)
 
-    h = input_tensor.h.npu()
+    h = input_tensor.h.transpose(1, 2).contiguous().npu()
     print("step 4: h ok", h.shape, h.dtype, h.device)
 
     g = input_tensor.g.npu()

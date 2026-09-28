@@ -62,7 +62,7 @@
     每次 NPU CI 容器启动时都会执行 `ci/cleanup_ci_logs.sh`，删除超过 7 天的 CI/Ascend/NPU 日志。这个策略只管理 CI 容器和仓库工作目录里的日志，不等同于 GitHub Actions 网页日志保留时间。
 
 13. **A5 源码通过 GitHub API 归档下载。**
-    A5 runner 不依赖 `github.com` 的 Git smart-HTTP：workflow 会从 `api.github.com` / `codeload.github.com` 下载精确 test-merge commit 和可信 CI commit，并校验 test-merge 的父提交必须对应 prepare 固定的 base/head。归档解包前会拒绝绝对路径、路径穿越、重复成员、链接和特殊文件。A5 网络策略至少需要允许这两个 HTTPS 域名。prepare 会读取目标分支当前 tip 并固定为不可变 SHA；评论触发时，可信 CI 脚本使用该 base SHA，手动 dispatch 仅允许仓库 Admin 触发并固定为 `github.workflow_sha`，因此维护分支继续使用自身规则，CI 自身改动也能在合入前验证。
+    A5 runner 不依赖 `github.com` 的 Git smart-HTTP：workflow 会从 `api.github.com` / `codeload.github.com` 下载精确 test-merge commit 和可信 CI commit，并校验 test-merge 的父提交必须对应 prepare 固定的 base/head。归档解包前会拒绝绝对路径、路径穿越、重复成员、链接和特殊文件。A5 网络策略至少需要允许这两个 HTTPS 域名。prepare 会读取目标分支当前 tip 并固定为不可变 SHA；评论触发由默认分支分发到选定的目标分支，可信 CI 脚本统一使用该分支的 `github.workflow_sha`，因此维护分支继续使用自身规则，CI 自身改动也能在合入前验证。
 
     归档解包与用例文件读取的安全边界测试仅依赖 Python 和仓库 requirements，可在 Linux 环境执行：
 
@@ -88,21 +88,24 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A["仓库 Admin 在 PR 评论 /run-npu-ci"] --> B["准备 NPU CI：解析 PR 和 head commit"]
+    A["仓库 Admin 在 PR 评论 /run-npu-ci"] --> B["默认分支评论分发 workflow"]
     B --> C{"触发人是否具备仓库 Admin 权限"}
     C -- "否" --> D["直接失败：无权触发"]
-    C -- "是" --> E{"当前 commit 是否已通过 NPU CI"}
-    E -- "是" --> F["更新机器人评论：已通过，不重复运行"]
-    E -- "否" --> G{"当前 commit 是否已有 NPU CI pending/running"}
-    G -- "是" --> H["更新机器人评论：已在运行，不重复启动"]
-    G -- "否" --> I["写入 7 个分项 pending 状态"]
-    I --> J["A2 runner / ascend910b"]
-    I --> K["A5 runner / ascend950：API 下载并校验源码归档"]
-    J --> L["A2 顺序执行 01-06；失败后跳过后续"]
-    K --> M["A5 顺序执行 01-06；失败后跳过后续"]
-    L --> N["上传带本次 run 身份的分项和精度结果"]
-    M --> N
-    N --> O["GitHub-hosted finalize 校验并发布 7 个最终状态"]
+    C -- "是" --> E["选择 ci_ref；未指定时使用 PR base.ref"]
+    E --> F["workflow_dispatch 到目标分支 ci.yml"]
+    F --> G["准备 NPU CI：解析 PR 和 head commit"]
+    G --> H{"当前 commit 是否已通过 NPU CI"}
+    H -- "是" --> I["更新机器人评论：已通过，不重复运行"]
+    H -- "否" --> J{"当前 commit 是否已有 NPU CI pending/running"}
+    J -- "是" --> K["更新机器人评论：已在运行，不重复启动"]
+    J -- "否" --> L["写入 7 个分项 pending 状态"]
+    L --> M["A2 runner / ascend910b"]
+    L --> N["A5 runner / ascend950：API 下载并校验源码归档"]
+    M --> O["A2 顺序执行 01-06；失败后跳过后续"]
+    N --> P["A5 顺序执行 01-06；失败后跳过后续"]
+    O --> Q["上传带本次 run 身份的分项和精度结果"]
+    P --> Q
+    Q --> R["GitHub-hosted finalize 校验并发布 7 个最终状态"]
 ```
 
 同一 PR + 同一 commit 重复触发流程：
@@ -577,12 +580,13 @@ bash scripts/github/apply_branch_protection.sh main
 
 1. 打开仓库 `Actions`
 2. 选择左侧 `NPU CI`
-3. 点击右侧 `Run workflow`
-4. 填写：
+3. 在 `Run workflow` 的 `Branch` 下拉框选择 CI 定义分支
+4. 点击右侧 `Run workflow`
+5. 填写：
    - `pr_number`: PR 编号，例如 `23`
    - `ci_mode`: `quick` 或 `full`
    - `ops`: 可选，逗号分隔的算子列表，仅用于编译定向诊断；填写后只执行第 01、02 项并发布 `NPU CI / A2+A5 / 定向诊断`，不会执行 GDR 精度，也不会写入或覆盖 01-07 正式门禁状态
-5. 点击绿色 `Run workflow`
+6. 点击绿色 `Run workflow`
 
 方式二：在 PR 评论区发送命令。
 
@@ -591,11 +595,12 @@ bash scripts/github/apply_branch_protection.sh main
 /run-npu-ci quick
 /run-npu-ci full
 /run-npu-ci quick ops=causal_conv1d,chunk_bwd_dv_local
+/run-npu-ci quick ci_ref=release-v2
 ```
 
 带 `ops=` 的命令只顺序执行第 01 项环境契约和第 02 项指定算子 OPP 构建，并发布 `NPU CI / A2+A5 / 定向诊断`；它不执行 GDR 精度或后续安装分项，也不会写入或覆盖 01-07 正式门禁状态。用于合入门禁的运行必须省略 `ops`。
 
-只有仓库 Admin 权限账号可以触发。workflow 会在触发时调用 GitHub API 检查评论人或手动触发人的仓库权限；权限不是 `admin` 时会直接失败。
+评论触发由默认分支上的 `NPU CI 评论分发` workflow 处理：没有指定 `ci_ref` 时自动使用 PR 的目标分支 `pr.base.ref`，指定后使用该分支的 `.github/workflows/ci.yml`。目标分支必须存在对应的 `workflow_dispatch`。只有仓库 Admin 权限账号可以触发；分发 workflow 和实际 NPU CI 都会调用 GitHub API 校验请求人权限。手动运行时，`Branch` 下拉框就是实际使用的 CI 定义分支。
 
 PR 新建或 push 新 commit 后，当前 head commit 会先出现默认状态：
 
@@ -724,8 +729,10 @@ Custom OPP op_api lib: /usr/local/Ascend/.../opp/vendors/fla_npu_transformer/op_
 - 评论是否发在 PR 页面，不是普通 Issue 页面
 - 命令是否以 `/run-npu-ci` 开头
 - 发送评论的人是否具备仓库 Admin 权限
-- workflow 是否启用
-- Actions 页面是否出现新的 `NPU CI` run
+- `NPU CI 评论分发` workflow 是否启用
+- PR 目标分支或 `ci_ref` 指定分支是否存在 `.github/workflows/ci.yml`
+- 目标分支的 `ci.yml` 是否声明 `workflow_dispatch`
+- Actions 页面是否先出现 `NPU CI 评论分发`，随后出现新的 `NPU CI` run
 
 ### PR 创建后没有 7 个 NPU CI 分项的未执行状态
 

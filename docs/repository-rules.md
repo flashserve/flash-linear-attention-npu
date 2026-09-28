@@ -62,6 +62,14 @@ PR 合入前，当前 head commit 的 7 个 NPU 状态和自动执行的 `CI 契
 /run-npu-ci quick ops=causal_conv1d,chunk_bwd_dv_local
 ```
 
+`NPU CI` 的实际 workflow 文件位于每个目标分支的 `.github/workflows/ci.yml`。评论事件不能直接按分支读取 workflow，因此默认分支上的 `NPU CI 评论分发` workflow 会先校验评论人的 Admin 权限，再通过 `workflow_dispatch.ref` 启动 PR 目标分支（`pr.base.ref`）上的 `ci.yml`。需要临时使用其他 CI 定义分支时，可由 Admin 在命令中追加 `ci_ref=<branch>`，例如：
+
+```text
+/run-npu-ci quick ci_ref=release-v2
+```
+
+`ci_ref` 分支必须存在 `.github/workflows/ci.yml`，且该文件必须声明 `workflow_dispatch`；每个维护分支需要保持相同的 `pr_number`、`ci_mode`、`ops` 和 `requested_by` input 契约。Actions 页面手动运行时，直接在 `Run workflow` 的 `Branch` 下拉框选择 CI 定义分支，GitHub 会使用所选分支版本的 `ci.yml`。
+
 带 `ops=` 的触发是编译定向诊断：只顺序执行第 01 项环境契约和第 02 项指定算子 OPP 构建，不执行 GDR 精度或后续安装分项；它只发布 `NPU CI / A2+A5 / 定向诊断`，不会写入或覆盖 01-07 正式门禁状态。用于合入门禁的运行必须省略 `ops`。
 
 如果当前 commit 的 7 个 aggregate context 已由同一次 A2+A5 run 通过，重复触发会被跳过，不会再次占用 NPU。同一 PR 的触发通过 workflow concurrency 串行化；同一 commit 已有 A2+A5 NPU CI 处于排队或运行中时，重复评论只会更新机器人评论为“已在运行”，不会启动新的 runner job。runner 宿主机还会用 `/tmp/fla-npu-ci-npu-<id>.lock` 对物理 NPU 加锁，避免多个任务抢同一张卡。

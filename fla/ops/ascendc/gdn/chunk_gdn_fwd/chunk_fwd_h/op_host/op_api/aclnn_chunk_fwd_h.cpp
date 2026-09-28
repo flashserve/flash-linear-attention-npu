@@ -222,10 +222,10 @@ static aclnnStatus CheckShape(ChunkFwdHParams params)
                                : static_cast<int64_t>(params.cuSeqlensOptional->Size()) - 1;
     const int64_t totalChunks = CountChunks(params.cuSeqlensOptional, kShape.GetDim(2), params.chunkSize);
     auto hShape = params.hOut->GetViewShape();
-    CHECK_COND(hShape.GetDimNum() == 5 && hShape.GetDim(0) == batch && hShape.GetDim(1) == hv &&
-                   hShape.GetDim(2) == totalChunks,
+    CHECK_COND(hShape.GetDimNum() == 5 && hShape.GetDim(0) == batch && hShape.GetDim(1) == totalChunks &&
+                   hShape.GetDim(2) == hv,
                ACLNN_ERR_PARAM_INVALID,
-               "hOut must be [B, HV, num_chunks, K, V] (or [B, HV, num_chunks, V, K]), "
+               "hOut must be [B, num_chunks, HV, K, V] (or [B, num_chunks, HV, V, K]), "
                "where num_chunks=%ld.", totalChunks);
     const int64_t hK = params.stateVFirst ? hShape.GetDim(4) : hShape.GetDim(3);
     const int64_t hV = params.stateVFirst ? hShape.GetDim(3) : hShape.GetDim(4);

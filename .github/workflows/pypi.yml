@@ -1,0 +1,229 @@
+name: Publish to PyPI (per-tier a2/a3/a5)
+
+# Manual dispatch only: publishing is a release decision, so a tag push must not
+# upload anything by itself.
+#
+# Cut a release by dispatching this workflow on the *release branch* (for example
+# v26.9.1) with pypi_repo=pypi and dry_run=false. That branch carries the released
+# version in fla/__init__.py -- the same convention the v26.6.0 line used -- while
+# main keeps its <next>.dev0 version. The release gate accepts only the exact
+# released version by default, so a daily wheel cannot reach the real index even
+# by mistake.
+#
+# Daily builds use the same workflow: dispatch with dry_run=true to build and
+# verify without uploading, and download the wheels from the run's artifacts.
+# release_build is what separates the two identities: on (default) the wheel
+# carries the bare version from fla/__init__.py, off it carries
+# "+<branch>_dev<commit>", so a daily wheel can never be mistaken for a release.
+on:
+  workflow_dispatch:
+    inputs:
+      pypi_repo:
+        description: "Target index: testpypi or pypi"
+        type: choice
+        options:
+          - testpypi
+          - pypi
+        default: testpypi
+      dry_run:
+        description: "Only build and verify the wheels, skip upload"
+        type: boolean
+        default: true
+      soc:
+        description: "SoC to build (all = 910b + 910_93 + 950)"
+        type: choice
+        options:
+          - all
+          - ascend910b
+          - ascend910_93
+          - ascend950
+        default: all
+      arch:
+        description: "Arch to build (all = every arch that has a runner)"
+        type: choice
+        options:
+          - all
+          - aarch64
+          - x86_64
+        default: all
+      release_build:
+        description: "Official release version (off = daily build, labelled +<branch>_dev<commit>)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write  # required for trusted publishing (OIDC) to PyPI
+
+jobs:
+  # The (SoC, arch) rows are filtered here rather than by a job-level ``if``:
+  # GitHub does not expose the ``matrix`` context to ``jobs.<id>.if``, and a
+  # workflow that reads it there is rejected as an invalid workflow file -- the
+  # run fails before a single job starts.  Selecting the rows first also keeps a
+  # skipped dispatch from touching a self-hosted runner at all.
+  select:
+    name: 选择构建矩阵
+    runs-on: ubuntu-latest
+    outputs:
+      build_matrix: ${{ steps.rows.outputs.build_matrix }}
+      publish_matrix: ${{ steps.rows.outputs.publish_matrix }}
+    steps:
+      - name: 按 soc / arch 过滤 (SoC, arch) 行
+        id: rows
+        env:
+          # One row is one published wheel and one runner: the wheel embeds host
+          # libraries compiled on that runner (the OPP host libraries and the
+          # Stable-ABI launcher), and FLA_NPU_ARCH only labels the artifact.  A
+          # new arch therefore means a new row here once its runner is registered.
+          ROWS: |
+            [
+              {
+                "soc": "ascend910b",
+                "tier": "a2",
+                "arch": "aarch64",
+                "runner_labels": "[\"self-hosted\",\"linux\",\"arm64\",\"npu\",\"flash-linear-attention-npu\"]",
+                "image": "fla-npu-ci:9.1.0-910b"
+              },
+              {
+                "soc": "ascend910_93",
+                "tier": "a3",
+                "arch": "aarch64",
+                "runner_labels": "[\"self-hosted\",\"linux\",\"arm64\",\"npu\",\"flash-linear-attention-npu\"]",
+                "image": "fla-npu-ci:9.1.0-910b"
+              },
+              {
+                "soc": "ascend950",
+                "tier": "a5",
+                "arch": "x86_64",
+                "runner_labels": "[\"self-hosted\",\"linux\",\"x64\",\"npu\",\"ascend950\",\"flash-linear-attention-npu-a5\"]",
+                "image": "fla-npu-ci:9.1.0-950"
+              }
+            ]
+          REQUESTED_SOC: ${{ inputs.soc }}
+          REQUESTED_ARCH: ${{ inputs.arch }}
+        run: |
+          set -euo pipefail
+          rows=$(printf '%s' "$ROWS" | jq -c --arg soc "$REQUESTED_SOC" --arg arch "$REQUESTED_ARCH" \
+            'map(select(($soc == "all" or .soc == $soc) and ($arch == "all" or .arch == $arch)))')
+          if [ "$(printf '%s' "$rows" | jq 'length')" -eq 0 ]; then
+            echo "::error::没有匹配的 (SoC, arch) 行：soc=$REQUESTED_SOC arch=$REQUESTED_ARCH"
+            exit 1
+          fi
+          # Only what was built may be published, and each tier has its own
+          # environment because PyPI wants one trusted publisher per project.
+          publish=$(printf '%s' "$rows" | jq -c \
+            'map(.tier) | map({tier: ., env_pypi: ("pypi-" + .), env_testpypi: ("testpypi-" + .)})')
+          echo "build_matrix=$(printf '%s' "$rows" | jq -c '{include: .}')" >> "$GITHUB_OUTPUT"
+          echo "publish_matrix=$(printf '%s' "$publish" | jq -c '{include: .}')" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: "build ${{ matrix.soc }} / ${{ matrix.arch }}"
+    needs: select
+    runs-on: ${{ fromJSON(matrix.runner_labels) }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select.outputs.build_matrix) }}
+    env:
+      # The release switch: on, the wheel carries the released version alone;
+      # off, it is a daily build labelled with its branch and commit.
+      FLA_NPU_DISABLE_LOCAL_VERSION: ${{ inputs.release_build && 'TRUE' || 'FALSE' }}
+      FLA_NPU_BUILD_OFFLINE_BUNDLE: "TRUE"
+      FLA_NPU_SOC: ${{ matrix.soc }}
+      FLA_NPU_ARCH: ${{ matrix.arch }}
+      # The checkout is a detached HEAD and the build runs inside an image that
+      # need not have the branch checked out, so name the build's source here:
+      # a daily wheel is labelled "+<branch>_dev<commit>" and has to say which
+      # branch it came from.
+      FLA_NPU_BRANCH_NAME: ${{ github.ref_name }}
+      FLA_NPU_COMMIT_ID: ${{ github.sha }}
+      CI_IMAGE: ${{ matrix.image }}
+      # Same warm cache the NPU CI uses, so the embedded offline bundle is built
+      # from a seeded third_party tree instead of a network fetch.
+      CI_CACHE_ROOT: ${{ vars.FLA_NPU_CI_CACHE_ROOT || '/workspace/flash-linear-attention-npu-ci/cache' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build and verify wheel in the CI image
+        env:
+          FLA_NPU_EXPECT_TIER: ${{ matrix.tier }}
+          # Default is the release gate: the version has to be the released one.
+          # A daily build says so explicitly, which is also how the build carries
+          # "+<branch>_dev<commit>" without failing its own gate.
+          VERSION_MODE_GUARD: ${{ inputs.release_build == false && '--allow-local-version' || '' }}
+        run: |
+          set -euo pipefail
+          third_party_cache="${CI_CACHE_ROOT}/third_party"
+          mkdir -p "$third_party_cache"
+          docker run --rm --network host \
+            -v "$PWD:/workspace/repo" \
+            -v "$third_party_cache:/workspace/repo/third_party" \
+            -w /workspace/repo \
+            -e FLA_NPU_DISABLE_LOCAL_VERSION -e FLA_NPU_BUILD_OFFLINE_BUNDLE \
+            -e FLA_NPU_SOC -e FLA_NPU_ARCH -e FLA_NPU_EXPECT_TIER -e VERSION_MODE_GUARD \
+            -e FLA_NPU_BRANCH_NAME -e FLA_NPU_COMMIT_ID \
+            "$CI_IMAGE" bash -lc '
+              set -euo pipefail
+              source /usr/local/Ascend/ascend-toolkit/set_env.sh
+              # The launcher links against the host torch at build time, so the
+              # image must expose an importable torch before the wheel is built.
+              python -c "import torch; print(\"[pypi] torch\", torch.__version__)"
+              python -m pip install -q -r requirements.txt
+              bash ci/prepare_ci_cache.sh
+              python scripts/build_wheel.py
+              python scripts/check_pypi_wheel.py dist/*.whl \
+                --expect-tier "$FLA_NPU_EXPECT_TIER" \
+                --expect-arch "$FLA_NPU_ARCH" \
+                --require-offline-bundle $VERSION_MODE_GUARD
+            '
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.soc }}-${{ matrix.arch }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  publish:
+    name: "Publish ${{ matrix.tier }} to ${{ inputs.pypi_repo }}"
+    needs: [select, build]
+    # Both the tier list and the environment names come from the rows the build
+    # actually ran, so a dispatch that built only a2 cannot publish a3 or a5.
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select.outputs.publish_matrix) }}
+    # PyPI requires one trusted publisher configuration per project name; the
+    # (owner + repository + workflow file + environment) tuple must be unique.
+    # Each tier therefore uses its own environment:
+    #   pypi.org      -> pypi-a2 / pypi-a3 / pypi-a5
+    #   test.pypi.org -> testpypi-a2 / testpypi-a3 / testpypi-a5
+    environment: ${{ inputs.pypi_repo == 'pypi' && matrix.env_pypi || matrix.env_testpypi }}
+    steps:
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Filter tier wheels and twine check
+        run: |
+          set -euo pipefail
+          python -m pip install -q twine
+          mkdir -p "dist-${{ matrix.tier }}"
+          shopt -s nullglob
+          files=(dist/*_${{ matrix.tier }}-*.whl)
+          if (( ${#files[@]} == 0 )); then
+            echo "no wheels found for tier ${{ matrix.tier }}"; exit 1
+          fi
+          mv "${files[@]}" "dist-${{ matrix.tier }}/"
+          python -m twine check "dist-${{ matrix.tier }}"/*.whl
+          ls -l "dist-${{ matrix.tier }}"
+
+      - name: Publish ${{ matrix.tier }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist-${{ matrix.tier }}
+          repository-url: ${{ inputs.pypi_repo == 'pypi' && 'https://upload.pypi.org/legacy/' || 'https://test.pypi.org/legacy/' }}

@@ -10,9 +10,9 @@
 
 name: NPU CI
 
+run-name: 'NPU CI · PR #${{ inputs.pr_number }}'
+
 on:
-  issue_comment:
-    types: [created]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -26,22 +26,19 @@ on:
         description: "Optional comma-separated operator list for compile diagnostics only"
         required: false
         default: ''
+      requested_by:
+        description: "Original Admin requester; set by the PR comment dispatcher"
+        required: false
+        default: ''
 
 concurrency:
-  group: npu-ci-${{ github.repository }}-${{ (github.event_name == 'workflow_dispatch' && inputs.pr_number) || (contains(github.event.comment.body, '/run-npu-ci') && github.event.issue.number) || github.run_id }}
-  cancel-in-progress: false
+  group: npu-ci-${{ github.repository }}-${{ inputs.pr_number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   prepare:
     name: 准备 NPU CI
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (
-        github.event_name == 'issue_comment' &&
-        github.event.issue.pull_request &&
-        github.actor != 'github-actions[bot]' &&
-        contains(github.event.comment.body, '/run-npu-ci')
-      )
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -60,30 +57,39 @@ jobs:
       ci_mode: ${{ steps.prepare.outputs.ci_mode }}
       ops: ${{ steps.prepare.outputs.ops }}
       comment_id: ${{ steps.prepare.outputs.comment_id }}
+      workflow_ref: ${{ steps.prepare.outputs.workflow_ref }}
+      requested_by: ${{ steps.prepare.outputs.requested_by }}
     steps:
       - name: 解析 PR 和 CI 参数
         id: prepare
         uses: actions/github-script@v8
         env:
           NPU_CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          NPU_CI_WORKFLOW_REF: ${{ github.ref_name }}
           NPU_CI_RUN_ATTEMPT: ${{ github.run_attempt }}
         with:
           github-token: ${{ github.token }}
           script: |
             const actor = context.actor;
+            const workflowInputs = context.payload.inputs || {};
+            const requestedBy = workflowInputs.requested_by || actor;
+            const workflowRef = process.env.NPU_CI_WORKFLOW_REF || '';
             let actorPermission = 'none';
             try {
+              const permissionSubject = actor === 'github-actions[bot]' ? requestedBy : actor;
               const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                username: actor,
+                username: permissionSubject,
               });
               actorPermission = data.permission || 'none';
             } catch (error) {
-              core.warning(`Unable to inspect repository permission for ${actor}: ${error.message}`);
+              const permissionSubject = actor === 'github-actions[bot]' ? requestedBy : actor;
+              core.warning(`Unable to inspect repository permission for ${permissionSubject}: ${error.message}`);
             }
             if (actorPermission !== 'admin') {
-              core.setFailed(`${actor} 无权触发 NPU CI：需要仓库 Admin 权限，当前权限为 ${actorPermission}。`);
+              const permissionSubject = actor === 'github-actions[bot]' ? requestedBy : actor;
+              core.setFailed(`${permissionSubject} 无权触发 NPU CI：需要仓库 Admin 权限，当前权限为 ${actorPermission}。`);
               return;
             }
 
@@ -100,7 +106,6 @@ jobs:
             let prNumber;
             let ciMode = 'quick';
             let ops = '';
-            let opsArgumentProvided = false;
             let commentId = '';
             const upsertComment = async (pr, body) => {
               if (!prNumber || !pr) {
@@ -173,29 +178,9 @@ jobs:
               }
             };
 
-            if (context.eventName === 'workflow_dispatch') {
-              const workflowInputs = context.payload.inputs || {};
-              prNumber = Number(workflowInputs.pr_number);
-              ciMode = workflowInputs.ci_mode || 'quick';
-              ops = workflowInputs.ops || '';
-            } else {
-              prNumber = context.payload.issue.number;
-              const body = (context.payload.comment.body || '').trim();
-              if (!body.startsWith('/run-npu-ci')) {
-                core.notice('评论包含 /run-npu-ci，但去掉首尾空白后不是以触发命令开头，跳过。');
-                core.setOutput('should_run', 'false');
-                return;
-              }
-              const parts = body.split(/\s+/).slice(1);
-              for (const part of parts) {
-                if (part === 'quick' || part === 'full') {
-                  ciMode = part;
-                } else if (part.startsWith('ops=')) {
-                  ops = part.slice('ops='.length);
-                  opsArgumentProvided = true;
-                }
-              }
-            }
+            prNumber = Number(workflowInputs.pr_number);
+            ciMode = workflowInputs.ci_mode || 'quick';
+            ops = workflowInputs.ops || '';
 
             if (!Number.isInteger(prNumber) || prNumber <= 0) {
               core.setFailed(`无效的 PR 编号：${prNumber}`);
@@ -221,7 +206,7 @@ jobs:
             });
             const baseSha = baseBranch.commit.sha;
             const workflowSha = process.env.NPU_CI_WORKFLOW_SHA || '';
-            const trustedCiSha = context.eventName === 'workflow_dispatch' ? workflowSha : baseSha;
+            const trustedCiSha = workflowSha;
             if (!/^[0-9a-f]{40}$/.test(baseSha) || !/^[0-9a-f]{40}$/.test(trustedCiSha)) {
               core.setFailed('无法确定本次 NPU CI 的 base 或可信 CI commit。');
               return;
@@ -230,9 +215,8 @@ jobs:
             core.setOutput('trusted_ci_sha', trustedCiSha);
 
             const opsItems = ops.split(',').map((item) => item.trim());
-            if ((opsArgumentProvided && !ops.trim()) ||
-                (ops.trim() && opsItems.some((item) =>
-                  !item || !/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(item)))) {
+            if (ops.trim() && opsItems.some((item) =>
+                  !item || !/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(item))) {
               core.setFailed('ops 参数必须是以逗号分隔的合法非空算子名。');
               return;
             }
@@ -287,7 +271,8 @@ jobs:
                   `本次 NPU CI 请求已经在 \`${pr.head.sha}\` 上通过，不会重复运行。`,
                   '',
                   `- 请求模式：\`${ciMode}\``,
-                  `- 触发人：@${actor}`,
+                  `- 触发人：@${requestedBy}`,
+                  `- CI 定义分支：\`${workflowRef}\``,
                   '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
                   requestScope === 'all'
                     ? '- 分项结果：7/7 通过'
@@ -302,6 +287,8 @@ jobs:
               core.setOutput('ci_mode', ciMode);
               core.setOutput('ops', ops);
               core.setOutput('comment_id', commentId);
+              core.setOutput('workflow_ref', workflowRef);
+              core.setOutput('requested_by', requestedBy);
               return;
             }
             if (latestExecutionMatchesRequest && await isActivePendingStatus(latestExecutionCi)) {
@@ -312,7 +299,8 @@ jobs:
                   `NPU CI 已在验证 \`${pr.head.sha}\`，本次评论不会重复启动新任务。`,
                   '',
                   `- 请求模式：\`${ciMode}\``,
-                  `- 触发人：@${actor}`,
+                  `- 触发人：@${requestedBy}`,
+                  `- CI 定义分支：\`${workflowRef}\``,
                   '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
                   '- 当前状态：排队或运行中',
                   '- 执行方式：按顺序执行；前置失败时后续项跳过',
@@ -327,6 +315,8 @@ jobs:
               core.setOutput('ci_mode', ciMode);
               core.setOutput('ops', ops);
               core.setOutput('comment_id', commentId);
+              core.setOutput('workflow_ref', workflowRef);
+              core.setOutput('requested_by', requestedBy);
               return;
             }
 
@@ -352,7 +342,8 @@ jobs:
                 `NPU CI 已开始验证 \`${pr.head.sha}\`。`,
                 '',
                 `- 模式：\`${ciMode}\``,
-                `- 触发人：@${actor}`,
+                `- 触发人：@${requestedBy}`,
+                `- CI 定义分支：\`${workflowRef}\``,
                 '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
                 requestScope === 'all'
                   ? '- 分项：7 项按顺序执行'
@@ -371,6 +362,8 @@ jobs:
             core.setOutput('ci_mode', ciMode);
             core.setOutput('ops', ops);
             core.setOutput('comment_id', commentId);
+            core.setOutput('workflow_ref', workflowRef);
+            core.setOutput('requested_by', requestedBy);
 
   ascend-npu:
     name: NPU CI 分项执行 (${{ matrix.name }})
@@ -442,6 +435,7 @@ jobs:
           export NPU_CI_ARCHIVE_DIR="$archive_dir"
 
           python3 - <<'PY'
+          import hashlib
           import json
           import os
           import shutil
@@ -474,6 +468,8 @@ jobs:
                   return json.load(response)
 
           merge_sha = ""
+          stale_base_sha = ""
+          stale_merge_sha = ""
           base_sha = expected_base_sha
           last_error = "GitHub has not produced a current test merge commit"
           for attempt in range(12):
@@ -494,6 +490,12 @@ jobs:
                   parents = [parent["sha"] for parent in merge_commit.get("parents", [])]
                   if parents == [base_sha, head_sha]:
                       break
+                  if len(parents) == 2 and parents[1] == head_sha:
+                      # GitHub keeps serving the test merge computed before the base
+                      # branch advanced.  Keep that merge (the PR head side is already
+                      # resolved in it) so the base delta can be replayed later.
+                      stale_merge_sha = merge_sha
+                      stale_base_sha = parents[0]
                   last_error = (
                       "test merge parents do not match the current base and head: "
                       f"merge={merge_sha}, parents={parents}"
@@ -501,7 +503,9 @@ jobs:
               if attempt < 11:
                   time.sleep(5)
           else:
-              raise RuntimeError(last_error)
+              if not stale_merge_sha:
+                  raise RuntimeError(last_error)
+              merge_sha = stale_merge_sha
 
           def download_archive(sha, destination):
               request = urllib.request.Request(
@@ -582,6 +586,47 @@ jobs:
                   for target, mode in reversed(directory_modes):
                       os.chmod(target, mode)
 
+          def tree_digests(root):
+              digests = {}
+              for path in sorted(root.rglob("*")):
+                  if path.is_file():
+                      relative = path.relative_to(root).as_posix()
+                      digests[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+              return digests
+
+          def replay_base_delta(repo_dir, source_tree, target_tree):
+              """Apply the base branch delta between two commits onto a merged tree.
+
+              ``repo_dir`` holds the PR head merged with ``source_tree``'s commit.
+              Replaying ``source_tree -> target_tree`` turns it into the tree for
+              the base commit the run recorded.  Paths that the PR and the base
+              changed differently cannot be replayed without a rebase, so they are
+              returned instead of being guessed.
+              """
+
+              source_digests = tree_digests(source_tree)
+              target_digests = tree_digests(target_tree)
+              repo_digests = tree_digests(repo_dir)
+              conflicts = []
+              for relative in sorted(set(source_digests) | set(target_digests)):
+                  before = source_digests.get(relative)
+                  after = target_digests.get(relative)
+                  if before == after:
+                      continue
+                  current = repo_digests.get(relative)
+                  if current == after:
+                      continue
+                  if current != before:
+                      conflicts.append(relative)
+                      continue
+                  destination = repo_dir / relative
+                  if after is None:
+                      destination.unlink()
+                      continue
+                  destination.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copy2(target_tree / relative, destination)
+              return conflicts
+
           def copy_case_file(repo_directory, destination):
               nofollow = getattr(os, "O_NOFOLLOW", 0)
               directory = getattr(os, "O_DIRECTORY", 0)
@@ -637,6 +682,33 @@ jobs:
           download_archive(trusted_sha, archive_dir / "trusted.tar.gz")
           extract_archive(archive_dir / "merge.tar.gz", Path("repo"))
           extract_archive(archive_dir / "trusted.tar.gz", Path("trusted-ci"))
+
+          if stale_merge_sha and merge_sha == stale_merge_sha:
+              relation = get_json(f"compare/{stale_base_sha}...{base_sha}")
+              if relation.get("status") not in {"ahead", "behind"}:
+                  raise RuntimeError(last_error)
+              source_tree = archive_dir / "stale-base-tree"
+              target_tree = archive_dir / "current-base-tree"
+              source_tree.mkdir()
+              target_tree.mkdir()
+              download_archive(stale_base_sha, archive_dir / "stale-base.tar.gz")
+              download_archive(base_sha, archive_dir / "current-base.tar.gz")
+              extract_archive(archive_dir / "stale-base.tar.gz", source_tree)
+              extract_archive(archive_dir / "current-base.tar.gz", target_tree)
+              conflicts = replay_base_delta(Path("repo"), source_tree, target_tree)
+              if conflicts:
+                  shown = ", ".join(conflicts[:5])
+                  if len(conflicts) > 5:
+                      shown = f"{shown} 等 {len(conflicts)} 个路径"
+                  raise RuntimeError(
+                      "PR 与最新 base 修改了同一批文件，无法在缓存的 test merge 上重放 base 改动："
+                      f"{shown}。请先将 PR 与 main 同步后重新触发 NPU CI。"
+                  )
+              print(
+                  "[A5][WARN] GitHub 缓存的 test merge 基于过期 base "
+                  f"{stale_base_sha[:8]}，已按当前 base {base_sha[:8]} 重放 base 侧改动。"
+              )
+
           copy_case_file(
               Path("repo"), archive_dir / "example_st_cases.json"
           )
@@ -889,9 +961,9 @@ jobs:
       - name: 使用可信 CI 脚本
         if: matrix.platform == 'a2'
         run: |
-          # issue_comment 使用 prepare 固定的 PR base commit；workflow_dispatch 仅允许仓库
-          # Admin 触发，并使用定义当前 job 的 workflow commit。两种路径都通过不可变 SHA
-          # 选择可信 CI，同时允许 CI 自身修改在合入前验证。
+          # 评论触发由默认分支的分发 workflow 校验 Admin 权限后，以 workflow_dispatch
+          # 选择 PR 的目标分支；手动触发则使用 Actions 页面选择的分支。两种路径都通过
+          # 当前 workflow commit 的不可变 SHA 选择可信 CI，同时允许 CI 自身修改在合入前验证。
           # 但 Example/ST 用例配置属于被验证内容：新 PR 中新增或修改的 enabled 用例
           # 必须跟随当前目标分支和 PR head 的现场合并结果一起进入容器，并被 /run-npu-ci quick 实际执行验证。
           case_archive="$(mktemp -d "${RUNNER_TEMP}/example-st-cases.XXXXXX")"

@@ -19,6 +19,13 @@
 
 namespace GDN {
 
+// 栈上传递的私有小批任务描述，不改变RecomputeWUFwdTilingData的GM布局。
+struct RecomputeTaskRange {
+    uint64_t begin;
+    uint64_t end;
+    uint64_t capacity;
+};
+
 struct GdnMegaArch22RecomputeWUTilingData {
     int64_t B;
     int64_t Hk;

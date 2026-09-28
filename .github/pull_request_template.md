@@ -18,8 +18,8 @@
 >
 > 触发方式：
 >
-> - GitHub `Actions` 页面选择 `NPU CI`，点击 `Run workflow`，填写本 PR 编号。
-> - 在 PR 评论区发送 `/run-npu-ci quick` 或 `/run-npu-ci full`。
+> - GitHub `Actions` 页面选择 `NPU CI`，在 `Branch` 下拉框选择 CI 定义分支，点击 `Run workflow`，填写本 PR 编号。
+> - 在 PR 评论区发送 `/run-npu-ci quick` 或 `/run-npu-ci full`；默认使用 PR 目标分支的 `ci.yml`，必要时可追加 `ci_ref=<branch>`。
 > - 同一 PR 的同一 commit 如果已有 NPU CI 在排队或运行，重复评论只会更新机器人评论，不会再次占用 NPU。
 > - NPU CI 会执行 `ci/example_st_cases.json` 中启用的 Example/ST 用例；当前 `case1_current_default` 保持原始 shape。新增 GVA、`Vdim=256` 等场景时，请在用例文件中显式填写 `B`、`T`、`chunk_size`、`query_head`、`value_head`、`Kdim`、`Vdim` 等 shape 字段，以及 `gate_source`、`gate_function`、`initial_state`、`output_final_state`、`qk_l2norm` 等行为字段。
 > - Example ST 必须使用与平台匹配的已验证 PyTorch/`torch_npu` 组合；A2 与 A5 不得混用 wheel、Python ABI 或 CANN 镜像，也不要拉取 `op-plugin` 重新编译。

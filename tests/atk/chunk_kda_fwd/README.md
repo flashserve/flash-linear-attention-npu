@@ -11,8 +11,11 @@
 - `TND/NTD` 使用打包 token；`cu_seqlens` 从 `0` 开始、以总 token 数结束且单调不减。
 - head 映射满足 `0 < H_k <= H_v <= 128` 且 `H_v % H_k == 0`。
 - `q/k/v` 支持 `BFLOAT16/FLOAT16`；`g` 支持 `FLOAT/BFLOAT16`；`beta` 支持 `FLOAT/BFLOAT16`。
-- `K/V` 为 `[16,256]` 内 `16` 的倍数，交付矩阵重点覆盖 `K=128`、`V=128/256`。
-- `chunk_size` 支持 `64/128`；rank-4 变长输入要求 `B=1`，逻辑序列数最多 `1024`。
+- `K/V` 只支持两档且必须同档：`K=V=64` 或 `K=V=128`；混合档（如 `K=64,V=128`）与其它
+  取值（含 `V=256`）返回 `ACLNN_ERR_PARAM_INVALID`，负向用例覆盖同类拦截。
+- `chunk_size` 只支持 `64`，其它取值（含 `128`）在参数校验阶段返回
+  `ACLNN_ERR_PARAM_INVALID`，负向用例覆盖该类拦截；rank-4 变长输入要求 `B=1`，
+  逻辑序列数最多 `1024`。
 - `use_gate_in_kernel=true` 时必须提供 `A_log`；`safe_gate=true` 时 `lower_bound` 取 `[-5,0)`。
 - `initial_state` 如提供，末两维由 `state_v_first` 解释为 `[K,V]` 或 `[V,K]`。
 

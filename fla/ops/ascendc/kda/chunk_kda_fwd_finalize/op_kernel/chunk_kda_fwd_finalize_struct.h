@@ -149,10 +149,10 @@ __aicore__ inline uint64_t InputOffset(const FinalizeArgs &args, const FinalizeC
 __aicore__ inline uint64_t StateOffset(const FinalizeArgs &args, const FinalizeChunk &chunk,
                                        uint32_t valueHead)
 {
-    return ((static_cast<uint64_t>(chunk.batch) * args.tiling.valueHeadNum + valueHead) *
-            args.tiling.totalChunks +
-            (args.tiling.isVarLen ? chunk.globalChunk : chunk.globalChunk % args.tiling.totalChunks)) *
-           Shape::kHeadDim * Shape::kHeadDim;
+    const uint64_t stateChunk = args.tiling.isVarLen
+        ? chunk.globalChunk : chunk.globalChunk % args.tiling.totalChunks;
+    return ((static_cast<uint64_t>(chunk.batch) * args.tiling.totalChunks + stateChunk) *
+            args.tiling.valueHeadNum + valueHead) * Shape::kHeadDim * Shape::kHeadDim;
 }
 
 __aicore__ inline uint64_t OutputOffset(const FinalizeArgs &args, const FinalizeChunk &chunk,

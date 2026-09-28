@@ -83,10 +83,10 @@
 
 本仓在 CANN 算子上层还维护了 `torch_custom/fla_npu` 的 Python runtime 适配，新增算子除上述最小交付件外，还必须满足：
 
-- **提供稳定 Python 入口**：新增算子必须在 `fla_npu.ops.ascendc` 下提供可调用的 Python 接口（经 `_aclnn_ctypes.py` wrapper + `_ASCENDC_OPS` 注册），不得仅以 legacy `torch.ops.npu.*` / `torch_npu.ops.*` 路径交付。
+- **提供稳定 Python 入口**：新增算子必须在 `fla_npu.ops.ascendc` 下提供可调用的 Python 接口；默认后端是 Stable-ABI 适配层，适配写在 `csrc/src/stable_<op>.cpp`（一个算子一个文件，一条宏）并由 `_stable.py` 暴露 wrapper，不得仅以 legacy `torch.ops.npu.*` / `torch_npu.ops.*` 路径交付。
 - **交付内容**：至少包含
-  - `torch_custom/fla_npu/fla_npu/ops/ascendc/_aclnn_ctypes.py` 中的 `npu_<op>(...)` wrapper；
-  - `torch_custom/fla_npu/fla_npu/ops/ascendc/__init__.py` 的 `_ASCENDC_OPS` 注册（需要时同步 `BACKWARD_OPS` 正反向映射与 `MUTATED_ARGUMENTS` mutation 契约）；
+  - `torch_custom/fla_npu/csrc/src/stable_<op>.cpp`（文件名 = 算子名去掉 `npu_`）中的 `kSchema_<op>` + `run_<op>`，并在 `torch_custom/fla_npu/csrc/src/stable_ops.cpp` 里 `#include "stable_<op>.cpp"` 一行、注册 `m.def` / `m.impl` 两行；
+  - `torch_custom/fla_npu/fla_npu/ops/ascendc/_stable.py` 中的真签名 `npu_<op>(...)` wrapper，并在 `__init__.py` 的 `_ASCENDC_OPS` 加一行同名 public 名（需要时同步 `BACKWARD_OPS` 正反向映射与 `MUTATED_ARGUMENTS` mutation 契约）。仓库里的 ctypes 后端（`_aclnn_ctypes.py`）是可选的回退路径，新算子**不再要求**补 ctypes 适配，没有回退也不需要声明（`_LAUNCHER_ONLY_OPS` 由已发布列表与 ctypes 实现自动推导）；
   - `torch_custom/fla_npu/test/test_npu_<op>.py` 单算子测试并接入 `test.sh`。
 - **默认调用路径**：新增算子与测试默认使用 `fla_npu.ops.ascendc`，新代码不要默认依赖 legacy 路径（legacy 路径仅用于兼容性验证，且需要 `FLA_NPU_BUILD_LEGACY_EXTENSION=1` 额外构建）。
 - 具体接入步骤见[开发者指南](docs/开发者指南.md)的场景 3 与 `torch_custom/fla_npu/README.md`。

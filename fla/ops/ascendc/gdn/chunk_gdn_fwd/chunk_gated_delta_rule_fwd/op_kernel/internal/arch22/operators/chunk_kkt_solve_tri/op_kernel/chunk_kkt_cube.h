@@ -9,6 +9,7 @@
 #endif
 #endif
 
+#include "../../../qkv_input_layout.h"
 #include "kernel_operator.h"
 #include "kernel_tiling/kernel_tiling.h"
 #include "lib/matmul_intf.h"
@@ -65,6 +66,9 @@ class ChunkKktCube {
 #endif
 
 public:
+    bool inputSequenceMajor{false};
+    __aicore__ inline void ConfigureInputLayout(bool sequenceMajor) { inputSequenceMajor = sequenceMajor; }
+
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     // The Phase6 AIC half performs the matmul directly.  Do not use the
     // matmul::Matmul alias here: in a MIX build it can resolve to MatmulClient,
@@ -218,6 +222,9 @@ private:
         }
         inputOffset = ((b * static_cast<int64_t>(tiling->Hk) + h) * static_cast<int64_t>(tiling->T) + rowStart) *
                       static_cast<int64_t>(tiling->K);
+        if (inputSequenceMajor) {
+            inputOffset = GDN::QkvSequenceMajorOffset(inputOffset, tiling->T, tiling->Hk, tiling->K);
+        }
     }
 
     template <typename TilingData, typename L1Tensor, typename L0Tensor, typename L0CTensor>
@@ -245,11 +252,12 @@ private:
         scoreGm.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(score) + scoreOffset,
                                 scoreElements > scoreOffset ? scoreElements - scoreOffset : 0);
 
-        LayoutK tagK = LayoutK::MakeLayout<T>(valid, tiling->K);
-        LayoutKt tagKt = LayoutKt::MakeLayout<T>(tiling->K, valid);
+        const int64_t rowStride = tiling->K * (inputSequenceMajor ? tiling->Hk : 1);
+        auto layoutK = tla::MakeLayoutFromTag(LayoutK(valid, tiling->K, rowStride));
+        auto layoutKt = tla::MakeLayoutFromTag(LayoutKt(tiling->K, valid, rowStride));
         LayoutScore tagScore = LayoutScore::MakeLayout<float>(tiling->BT, tiling->BT);
-        auto tensorK = tla::MakeTensor(kGm, tla::MakeLayoutFromTag(tagK), Catlass::Arch::PositionGM{});
-        auto tensorKt = tla::MakeTensor(kGm, tla::MakeLayoutFromTag(tagKt), Catlass::Arch::PositionGM{});
+        auto tensorK = tla::MakeTensor(kGm, layoutK, Catlass::Arch::PositionGM{});
+        auto tensorKt = tla::MakeTensor(kGm, layoutKt, Catlass::Arch::PositionGM{});
         auto tensorScore = tla::MakeTensor(scoreGm, tla::MakeLayoutFromTag(tagScore), Catlass::Arch::PositionGM{});
         auto blockK = tla::GetTile(tensorK, tla::MakeCoord(0, 0), tla::MakeShape(valid, tiling->K));
         auto blockKt = tla::GetTile(tensorKt, tla::MakeCoord(0, 0), tla::MakeShape(tiling->K, valid));

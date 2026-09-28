@@ -6,14 +6,14 @@ Used flags (``ChunkGatedDeltaRuleFunction.forward`` through ``fwd_intra``)::
 
     B, HK, HV, T, K, V, seqlens, chunk_size,
     use_qk_l2norm_in_kernel, use_gate_in_kernel,
-    use_beta_sigmoid_in_kernel, allow_neg_eigval
+    use_beta_sigmoid_in_kernel, allow_neg_eigval,
+    use_exp2           # True: cumsum * RCP_LN2 then exp2; False: natural exp
 
 Ignored (after ``fwd_intra``, or NPU-only)::
 
     scale              # only consumed by later ``fwd_o``
     output_final_state # ``fwd_h``
     state_v_first      # ``fwd_h``
-    use_exp2           # NPU switch; Triton path is always exp2 after RCP_LN2
     chunk_indices      # FLA builds these from cu_seqlens
 """
 
@@ -47,6 +47,7 @@ class GdnCase:
     seqlens: tuple[int, ...] | None = None
     shape_id: int | None = None
     combo_id: int | None = None
+    use_exp2: bool = True
 
     @property
     def varlen(self) -> bool:
@@ -76,6 +77,7 @@ class GdnCase:
             use_gate_in_kernel=self.use_gate_in_kernel,
             use_beta_sigmoid_in_kernel=self.use_beta_sigmoid_in_kernel,
             allow_neg_eigval=self.allow_neg_eigval,
+            use_exp2=self.use_exp2,
         )
 
 
@@ -224,7 +226,8 @@ def describe_case(case: GdnCase) -> str:
         f"l2norm={case.use_qk_l2norm_in_kernel} "
         f"gate={case.use_gate_in_kernel} "
         f"beta_sigmoid={case.use_beta_sigmoid_in_kernel} "
-        f"neg_eig={case.allow_neg_eigval}"
+        f"neg_eig={case.allow_neg_eigval} "
+        f"exp2={case.use_exp2}"
     )
 
 

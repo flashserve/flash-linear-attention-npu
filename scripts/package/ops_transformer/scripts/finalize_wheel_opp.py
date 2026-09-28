@@ -23,7 +23,11 @@ import tempfile
 from pathlib import Path
 
 
-DIST_INFO_GLOB = "flash_linear_attention_npu-*.dist-info"
+# The wheel is published per product tier (flash-linear-attention-npu-a2/a3/a5)
+# and a local build carries the same name, so match the family rather than the
+# old base name: a run package installed over a tiered wheel used to find no
+# dist-info at all and refuse to refresh RECORD.
+DIST_INFO_GLOB = "flash_linear_attention_npu*.dist-info"
 DEFAULT_VENDOR_DIR = "fla_npu_transformer"
 
 

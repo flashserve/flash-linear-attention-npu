@@ -54,6 +54,13 @@ public:
         this->Attr("output_final_state").AttrType(REQUIRED).Bool(false);
         this->Attr("chunk_size").AttrType(REQUIRED).Int(64);
         this->Attr("scale").AttrType(REQUIRED).Float(1.0);
+        this->Attr("output_g_cumsum").AttrType(OPTIONAL).Bool(true);
+        // Internal layout contract for raw_g: 0 keeps the historical BHT
+        // low-level input, while 1 is the explicit BTH candidate route.
+        // Optional preserves existing low-level callers and defaults to BHT.
+        this->Attr("raw_g_layout").AttrType(OPTIONAL).Int(0);
+        this->Attr("qkv_layout").AttrType(OPTIONAL).Int(0);
+        this->Attr("o_layout").AttrType(OPTIONAL).Int(0);
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)
