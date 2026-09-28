@@ -4,14 +4,10 @@ version: v2.1
 name: fused_recurrent_rwkv8
 aclnn_name:
 generate: generator_fused_recurrent_rwkv8
-dtype_numbers: 1
+dtype_numbers: 200
 extra_numbers: 0
 standard:
-  acc:
-    cv_fused_double_benchmark:
-      max_re_ratio: 5
-      avg_re_ratio: 1.5
-      root_mean_squared_ratio: 1.5
+  acc: mixed_tolerance_bm
   perf: not_key
 inputs:
   - name: low_precision_marker
@@ -51,7 +47,7 @@ inputs:
       values: [non_param]
     ranges:
       valid:
-        values: ["{\"name\":\"fp32_main\",\"dtype\":\"fp32\",\"B\":2,\"H\":4,\"T\":64,\"K\":64,\"V\":64,\"scale\":1.0,\"chunk_len\":16,\"initial_state\":false,\"output_chunk_state\":false,\"output_sa\":false,\"seed\":42,\"op\":\"fused_recurrent_rwkv8\",\"case_id\":0,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}"]
+        values: ["{\"name\":\"t_7_2_0000\",\"dtype\":\"fp32\",\"B\":1,\"H\":4,\"T\":4096,\"K\":64,\"V\":64,\"scale\":1.0,\"chunk_len\":16,\"initial_state\":false,\"output_chunk_state\":false,\"output_sa\":false,\"seed\":20260918,\"op\":\"fused_recurrent_rwkv8\",\"case_id\":0,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}"]
       invalid:
         values: []
   - name: dtype
@@ -71,7 +67,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1, 2]
+        values: [1, 2, 4, 16, 64, 128]
       invalid:
         values: []
   - name: H
@@ -81,7 +77,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [2, 4]
+        values: [1, 2, 4, 8, 32]
       invalid:
         values: []
   - name: T
@@ -91,7 +87,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [16, 64]
+        values: [1, 4, 8, 15, 16, 17, 33, 64, 128, 256, 1024, 2048, 4096]
       invalid:
         values: []
   - name: K
@@ -101,7 +97,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [64]
+        values: [8, 32, 64, 96, 120, 128]
       invalid:
         values: []
   - name: V
@@ -111,7 +107,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [32, 64]
+        values: [8, 32, 64, 96, 120, 128]
       invalid:
         values: []
   - name: scale

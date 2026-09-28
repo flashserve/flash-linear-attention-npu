@@ -35,6 +35,31 @@ YAML 元信息覆盖 `ascend910b`，可配合统一脚本的 `-soc=ascend910b` �
 - FP16 用例（K≠V + chunk_len=8 + s/sa 全开 + 非零初态）：`fp16_chunk8`，seed 51
 - BF16 用例（scale=0.125 + 非零初态）：`bf16_init_scale`，seed 43
 
+## 用例矩阵
+
+| 文件 | 用例数 | 覆盖 |
+|---|---:|---|
+| `atk_fused_recurrent_rwkv8.json` | 200 | 按 TilingData 字段组合系统性构造：3 档 dtype、(K,V) 四组合 + 非 64 倍数、(B,T) 边界与多核排队、flags 8 组合、chunk_len {8,16}、scale {1.0,0.125} |
+| `atk_fused_recurrent_rwkv8_perf.json` | 38 | 转测文档模板 7.1~7.6 全部代表 shape（典型场景 6 + dtype×(K,V) 9 + flags 8 + chunk_len 4 对 + scale 3 对 + 多核扩展 3） |
+| `atk_fused_recurrent_rwkv8_mss.json` | 26 | 各 TilingKey/边角分支的代表用例，用于内存检测复跑 |
+
+精度标准为 `mixed_tolerance_bm`（与 `../README.md` 统一，也与其他算子一致）。
+CPU 节点以 FP64 递推生成唯一 golden，落盘前经 `_finite_tuple(golden=True)` 降为 FP32；
+NPU 节点保持算子原始 dtype。ATK 按 (NPU dtype, golden FP32) 配对选阈值：
+
+| 输出 | NPU | golden | 判定 |
+|---|---|---|---|
+| `o`（fp16/bf16 用例） | fp16/bf16 | fp32 | `supports_mixed_tolerance_dtype_pair` → 按 fp16/bf16 阈值 |
+| `o`（fp32 用例） | fp32 | fp32 | dtype 相同 → fp32 阈值 |
+| `s` / `sa` | fp32 | fp32 | fp32 阈值 |
+| `s`（`T < chunk_len`） | numel=0 | numel=0 | 空张量直接 Pass |
+
+阈值为「元素点通过率 ≥ 0.99 且绝对误差同时满足 `max_abs_error_limit` 或 32 倍 ULP」。
+
+三个 JSON 的 `standard` 字段逐条一致，均为
+`{"acc": "mixed_tolerance_bm", "mem": 1.1, "perf": "not_key"}`；`fused_recurrent_rwkv8.yaml`
+的 `standard` 为 `{acc: mixed_tolerance_bm, perf: not_key}`。
+
 ## 执行方式
 
 ```bash
@@ -48,3 +73,12 @@ bash tests/atk/run_test_cpu.sh -op=fused_recurrent_rwkv8 -scope=gen_cases
 
 `gen_cases` 默认传入 `-dt 100 -en 0`。所有新增工程的 marker dtype 都保留两路生成入口，
 生成器会把不支持 FP16 的算子改回合法 BF16 用例。
+
+## 实测记录
+
+| 日期 | 精度（200 条） | 确定性（200 条 × 20 轮） | 内存（200 条 memcheck） | 性能（38 条） |
+|---|---|---|---|---|
+| 2026-09-18 | 200/200 Pass（`mixed_tolerance_bm`，ATK 26.9.8，32m04s） | 200/200 Pass（2791 s，ATK 26.7.8） | 200/200 Pass，零非法访存（771 s，ATK 26.7.8） | 38/38 出数，137.9 µs ~ 21.93 ms |
+
+环境：Ascend 910B4 / CANN 8.5.0 / ATK 26.9.8 / torch 2.10.0+cpu + torch_npu 2.10.0。
+完整结论见 `docs/commit/【转测】fused_recurrent_rwkv8.md`。
