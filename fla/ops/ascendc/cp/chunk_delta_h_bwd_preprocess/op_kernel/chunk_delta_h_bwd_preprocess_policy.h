@@ -72,40 +72,46 @@ constexpr uint32_t CDHP_FLAG_C5_DONE = 5;  // AIC → AIV：P 新值就绪（下
 // 参考 chunk_gated_delta_rule_bwd_finalize 的「每方向一条 ready 链 + 双 window×4 head」做法。
 constexpr uint32_t CDHP_WINDOW_COUNT = 2;
 
+// 5 条 ready 协议（每条按 window 分 2 个 id）：
+//   V0_READY    AIV→AIC：本 window 的 slot（Q̄s/W/-K̄/do/-dv/decay）就绪
+//   T1_READY    AIC→AIV：T1(FP32) 就绪，请转成模型 dtype        （仅 arch22 使用）
+//   T1BF_READY  AIV→AIC：T1 的模型 dtype 平面就绪（Z/ZP 的操作数）（仅 arch22 使用）
+//   Z_READY     AIC→AIV：Z/ZP 就绪（链上的 MMAD 结果）
+//   STATE_READY AIV→AIC：dH_bf / P_bf 就绪（下一 chunk 的 MMAD 操作数）
+// arch35（A5）上 T1 的模型 dtype 平面改由**本核 fixpipe 直接写**（见 arch35 的 cube），
+// 因此不再需要 T1_READY / T1BF_READY 这两条跨核 flag，AIV 的 StageT1Convert 整段消失：
+//   * 少一次跨核往返，少 96 KiB/chunk 的 UB↔GM 搬运；
+//   * "写落盘"先于"MTE2 读回"变成 AIC 核内的 FIX→MTE2 依赖（CDHP_AIC_EV_FIX_MTE2）。
+// arch22（A2/A3）上核内 FIX→MTE2 自排空会导致 kernel 挂死（实测 AICore 100% 不复位），
+// 因此该平台保持原来的三步握手。
+constexpr uint32_t CDHP_FLAG_V0_READY = 0;
+constexpr uint32_t CDHP_FLAG_T1_READY = 1;
+constexpr uint32_t CDHP_FLAG_T1BF_READY = 2;
+constexpr uint32_t CDHP_FLAG_Z_READY = 3;
+constexpr uint32_t CDHP_FLAG_STATE_READY = 4;
+
+// arch35（A5，mode 0x4"按 subblock 选配对 AIV"）：AIC 侧用 16 步长区分两个 AIV，AIV 侧用本地 id，
+// 并且 id 按 window 分（base*2+win，最大 9）。
+// arch22（A2/A3）当前仍是 1 AIC : 1 AIV，id 也按 window 分（base*2+win，最大 9）。
+// A2 的 1:2 需要"每个 AIV 一段独立 id + 不按 window 分"（910B 只有 8 个 flag，见 design.md §17），
+// 该方案与 op_host 的 aivPerBlock、kernel 的 KERNEL_TASK_TYPE 必须三处一起切，切之前不要单独改这里。
 __aicore__ inline constexpr uint32_t CdhpFlag(uint32_t base, uint32_t window)
 {
     return base * CDHP_WINDOW_COUNT + window;
 }
 
-// v4 的 3 条 ready 协议（每条按 window 分 2 个 id，共 6 个）：
-//   V0_READY    AIV→AIC：本 window 的 slot（Q̄s/W/-K̄/do/-dv/decay）就绪
-//   Z_READY     AIC→AIV：Z/ZP 就绪（链上的 MMAD 结果）
-//   STATE_READY AIV→AIC：dH_bf / P_bf 就绪（下一 chunk 的 MMAD 操作数）
-// v4 起 T1 的模型 dtype 平面由**本核 fixpipe 直接写**（见 arch35/arch22 的 cube），
-// 不再是"AIC 写 FP32 → AIV 转 dtype → AIV 通知 AIC"的三步握手：
-//   * 跨核上不再需要 T1_READY / T1BF_READY 两条 flag，AIV 的 StageT1Convert 整段消失；
-//   * "写落盘"先于"MTE2 读回"变成 AIC 核内的 FIX→MTE2 依赖，用本核事件表达
-//     （CDHP_AIC_EV_FIX_MTE2，见 cube）。核间少一次往返，少 96 KiB/chunk 的 UB↔GM 搬运。
-constexpr uint32_t CDHP_FLAG_V0_READY = 0;
-constexpr uint32_t CDHP_FLAG_Z_READY = 1;
-constexpr uint32_t CDHP_FLAG_STATE_READY = 2;
-
 // A5（dav-3510）的 1 AIC : 2 AIV 核型下，AIC 用 16 的 id 步长选择配对的 AIV（mode = 0x4 按 subblock
 // 选配对 AIV）；AIV 侧只用自己的本地 id（就是上面的 CdhpFlag 结果，最大 9，落在 A5 允许的 0..10 内）。
-// A2/A3 的 mode = 0x2 是 AIC:2*AIV 集合同步，两个 AIV 共用同一 id，因此不需要步长。
+// A2/A3 的 mode = 0x2 是 AIC:2*AIV 集合同步；1:1 下 aiv 只可能是 0，公式退化成原来的形式。
 constexpr uint32_t CDHP_FLAG_SUBBLOCK_STRIDE = 16;
 // mode 必须和核型配对：
 //   arch35（A5）→ 1 AIC : 2 AIV，用 0x4（按 subblock 选配对 AIV，配 CdhpPeerFlag 的 16 步长）；
 //   arch22（A2/A3）→ 1 AIC : 1 AIV，用 0x2（AIC 与本 block 的 AIV 集合同步）。
 // kernel 是按 SoC 分别编译的，op_host 的 aivPerBlock 也按同一个 SoC 判定，两侧天然一致。
 // 用错 mode 会在 launch 后直接报 synchronize failed（实测 507015），是运行期错误而不是精度问题。
-// 当前统一 1 AIC : 1 AIV ⇒ 0x2（AIC 与本 block 的 AIV 集合同步）。
-// 打开 op_host 的 aivPerBlock=2（A5 的 1:2）时必须同时把这里切到 0x4，否则直接 507015；
-// 反过来 1:2 目前还会打破 **尾块（chunkSize 内不足一个满 chunk，例如 T=200）** 的 P 面精度，
-// 定位清楚前不要启用，两处一起保持 1:1。
-// 统一 1 AIC : 1 AIV ⇒ 0x2。打开 1:2（aivPerBlock=2 + MIX_AIC_1_2）时必须一起切到 0x4；
-// 另外实测：P 常驻 UB（§15）之后 AIV 侧工作量已经不大，1:2 反而让 AIC 变成瓶颈（kda 档明显变慢），
-// 因此 1:2 在 A5 上暂不启用。
+// 注意历史：A2 两次接 1:2 都在 smoke 用例上挂死（详见 design.md §17）：一次是两侧共用同一 id
+// （集合同步语义下一 set 放行两个 AIV，计数纪律被破坏），一次是 per-AIV 段 + 不按 window 分——
+// 后者在 gva 档通过、kda（Hv=64 两轮）挂住，原因待查，且这两次把 A2 的 device 打到 100% 需要重启。
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #define CDHP_CROSS_CORE_MODE 0x4
 #else

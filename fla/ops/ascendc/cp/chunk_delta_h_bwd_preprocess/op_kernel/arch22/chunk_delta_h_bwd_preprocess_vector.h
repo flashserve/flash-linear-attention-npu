@@ -128,6 +128,11 @@ public:
             for (uint32_t c = 0; c < chunkNum; ++c) {
                 const uint32_t chunkIdx = chunkNum - 1 - c;
                 const uint32_t win = chunkIdx & 1u;
+                // 链外：Cube 算完本 chunk 的 T1 后转成模型 dtype
+                // （arch22 上不做"AIC 直接落模型 dtype + 核内 FIX→MTE2"：该自排空实测会让 A2 挂死）
+                CDHP_AIV_WAIT(CdhpFlag(CDHP_FLAG_T1_READY, win));
+                StageT1Convert(win);
+                CDHP_AIV_SET(CdhpFlag(CDHP_FLAG_T1BF_READY, win));
                 // 链上准备：把"本 chunk 之前的"状态（首 chunk 即初值 0 / I）写成 Cube 需要的
                 // 模型 dtype 操作数，并放行 Cube 的 Z/ZP
                 StageStateStore(win, c == 0);
@@ -425,6 +430,19 @@ private:
             StoreTileModel(dvF, slotNegDv + static_cast<uint64_t>(r0) * vDim * sizeof(DT), tileRows, vDim, vDim);
         }
         StoreScalarF32(decayF, slotDecay, kDim);
+    }
+
+    // v3 链外：把 Cube 算出的 T1(FP32 [K,K]) 转成模型 dtype，供 Cube 的 Z/ZP 当矩阵操作数
+    __aicore__ inline void StageT1Convert(uint32_t window)
+    {
+        const uint32_t kDim = static_cast<uint32_t>(this->tiling_.K);
+        for (uint32_t r0 = 0; r0 < kDim; r0 += CDHP_VEC_TILE) {
+            const uint32_t tileRows = MinV(CDHP_VEC_TILE, kDim - r0);
+            LocalTensor<float> t1F = s0F32_.Get<float>();
+            LoadPlaneF32(t1F, this->T1At(window), r0, tileRows, kDim);
+            StoreTileModel(t1F, this->T1BfAt(window) + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows, kDim,
+                           kDim);
+        }
     }
 
     // InitState：只把常驻 UB 的 dH 状态清零（初值 0）。

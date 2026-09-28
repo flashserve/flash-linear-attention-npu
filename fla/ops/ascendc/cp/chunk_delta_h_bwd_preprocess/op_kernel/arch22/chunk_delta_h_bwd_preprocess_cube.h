@@ -80,10 +80,6 @@ constexpr uint32_t CDHP_CUBE_TILE_N = 128;
 constexpr uint32_t CDHP_AIC_EV_FIX_M = 4;      // Fixpipe（L0C→GM）已读完 L0C
 constexpr uint32_t CDHP_AIC_EV_M_MTE1 = 5;     // MMAD 已读完 L0A/L0B
 constexpr uint32_t CDHP_AIC_EV_MTE1_MTE2 = 6;  // MTE1（L1→L0）已读完 L1
-// v4：T1 直接以模型 dtype 落地（fixpipe 完成 FP32 累加→模型 dtype 的转换），随后仍由本核在
-// 下一 chunk 步用 MTE2 把它读回来当 Z/ZP 的矩阵操作数。这是**本核** FIX→MTE2 的 RAW 依赖，
-// 用核内事件表达（每个 window 一个 id，set/wait 严格交替），不再占用核间 flag。
-constexpr uint32_t CDHP_AIC_EV_FIX_MTE2 = 0;
 
 template <typename DT>
 class ChunkDeltaHBwdPreprocessCube : public ChunkDeltaHBwdPreprocessBase<DT, DT> {
@@ -186,12 +182,12 @@ public:
                     const uint32_t sub = h - hBegin;
                     const uint32_t slot = this->SlotOfWindowAiv(sub, headWin);
                     CDHP_AIC_WAIT(sub, CdhpFlag(CDHP_FLAG_V0_READY, headWin));
-                    // T1 = Wᵀ@(-K̄) → **模型 dtype** 平面：fixpipe 直接完成 FP32→模型 dtype 的转换，
-                    // 省掉 Vector 侧"读 FP32 T1 再转模型 dtype"的一整段搬运与一个 Stage
-                    RunGemm<BlockColRowBf16, DT>(resource, layoutWT, layoutK, layoutKK,
+                    // T1 = Wᵀ@(-K̄) → FP32 平面（Vector 转成模型 dtype）
+                    RunGemm<BlockColRow, float>(resource, layoutWT, layoutK, layoutKzK,
                                                 this->SlotAt(slot, this->SlotQBytes()),
                                                 this->SlotAt(slot, this->SlotQBytes() + this->SlotWBytes()),
-                                                this->T1BfAtAiv(sub, headWin), kDim, kDim, mDim);
+                                                this->T1AtAiv(sub, headWin), kDim, kDim, mDim);
+                    CDHP_AIC_SET(sub, CdhpFlag(CDHP_FLAG_T1_READY, headWin));
                     // AB = Q̄sᵀ@do + Wᵀ@(-dv)（一次合并 GEMM：A=[Q̄s|W]ᵀ [K,2M]，B=[do;-dv] [2M,V]）
                     RunGemm<BlockColRow, float>(resource, layoutCol2M, layoutDo2M, layoutKzV,
                                                 this->SlotAt(slot, 0),
@@ -200,19 +196,11 @@ public:
                                                 this->AbAtAiv(sub, headWin), kDim, vDim, twoM);
                 }
             }
-            if (chunkNum > 0) {
-                // 本 window 全部 head 的 T1 都已 fixpipe 落盘：放行下一轮 MTE2 读回（每 window 一次）
-                SetFlag<HardEvent::FIX_MTE2>(CDHP_AIC_EV_FIX_MTE2 + ((chunkNum - 1U) & 1u));
-            }
             for (uint32_t c = 0; c < chunkNum; ++c) {
                 const uint32_t chunkIdx = chunkNum - 1U - c;
                 // v2.1：window = chunkIdx & 1；同一 chunk 的操作数/中间量都落在自己的 window 上，
                 // AIC 因此可以与 AIV 提前准备的下一 window 并行，不再严格交替。
                 const uint32_t win = chunkIdx & 1u;
-                // 本 window 的 T1（模型 dtype）是上一轮 lookahead（或循环前）由本核 fixpipe 写的，
-                // MTE2 读回前先等本核 FIX 完成。放在 head 循环外：每 window 恰好一次 set / 一次 wait，
-                // 满足核内单比特事件的"不许连续 set 同一 id"约束（1:2 下两个 head 共用同一 id）。
-                WaitFlag<HardEvent::FIX_MTE2>(CDHP_AIC_EV_FIX_MTE2 + win);
                 for (uint32_t h = hBegin; h < hEnd; ++h) {
                     const uint32_t sub = h - hBegin;
                     // 链外：把下一个 chunk 的 T1/AB 补上（尾块没有下一个 chunk）
@@ -220,10 +208,11 @@ public:
                         const uint32_t nextWin = (chunkIdx - 1U) & 1u;
                         const uint32_t nextSlot = this->SlotOfWindowAiv(sub, nextWin);
                         CDHP_AIC_WAIT(sub, CdhpFlag(CDHP_FLAG_V0_READY, nextWin));
-                        RunGemm<BlockColRowBf16, DT>(resource, layoutWT, layoutK, layoutKK,
+                        RunGemm<BlockColRow, float>(resource, layoutWT, layoutK, layoutKzK,
                                                     this->SlotAt(nextSlot, this->SlotQBytes()),
                                                     this->SlotAt(nextSlot, this->SlotQBytes() + this->SlotWBytes()),
-                                                    this->T1BfAtAiv(sub, nextWin), kDim, kDim, mDim);
+                                                    this->T1AtAiv(sub, nextWin), kDim, kDim, mDim);
+                        CDHP_AIC_SET(sub, CdhpFlag(CDHP_FLAG_T1_READY, nextWin));
                         RunGemm<BlockColRow, float>(resource, layoutCol2M, layoutDo2M, layoutKzV,
                                                     this->SlotAt(nextSlot, 0),
                                                     this->SlotAt(nextSlot, this->SlotQBytes() + this->SlotWBytes() +
@@ -231,6 +220,7 @@ public:
                                                     this->AbAtAiv(sub, nextWin), kDim, vDim, twoM);
                     }
                     // 链上：Z = (-T1)@dH_bf(prev)、ZP = (-T1)@P_bf(prev)
+                    CDHP_AIC_WAIT(sub, CdhpFlag(CDHP_FLAG_T1BF_READY, win));
                     CDHP_AIC_WAIT(sub, CdhpFlag(CDHP_FLAG_STATE_READY, win ^ 1u));
                     RunGemm<BlockRowRow, float>(resource, layoutKK, layoutDhBf, layoutKzV,
                                                 this->T1BfAtAiv(sub, win), this->DhBfAtAiv(sub, win ^ 1u),
@@ -239,10 +229,6 @@ public:
                                                 this->T1BfAtAiv(sub, win), this->PBfAtAiv(sub, win ^ 1u),
                                                 this->ZpAtAiv(sub, win), kDim, kDim, kDim);
                     CDHP_AIC_SET(sub, CdhpFlag(CDHP_FLAG_Z_READY, win));
-                }
-                if (c + 1U < chunkNum) {
-                    // 本轮两个 head 的 T1 都已落盘：放行下一轮 MTE2 读回同一 window
-                    SetFlag<HardEvent::FIX_MTE2>(CDHP_AIC_EV_FIX_MTE2 + ((chunkIdx - 1U) & 1u));
                 }
             }
         }

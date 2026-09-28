@@ -65,12 +65,9 @@ ASCENDC_EXTERN_C ge::graphStatus Tiling4ChunkDeltaHBwdPreprocess(gert::TilingCon
     // 1 AIC : 2 AIV（A5 专用）：一个 block 的两个 AIV 各承包一个 head 的整条逆序链，AIV 侧墙时间
     // 近似减半（实测 gva_cp2 34.6 → 17.5 ms）。A5 用 0x4 peer 寻址。
     //
-    // A2/A3 暂不启用：910B 的 0x2 是"AIC:2*AIV 集合同步"，我方协议（按 chunk 递进的 5 条 ready 链）
-    // 接上去后实测**死锁**（smoke 用例 10 分钟不返回）。要启用必须先按 fwd_h 的写法把两侧做成
-    // "每个 id 由 AIC + 两个 AIV 三方 rendezvous"并补齐 dummy 同步，属于独立改造，先把 A2 保持 1:1。
-    // 统一 1 AIC : 1 AIV。打开 1:2（A5 用 aivPerBlock=2 + mode 0x4 + MIX_AIC_1_2）前，
-    // 必须先修掉尾块（T %% chunkSize != 0）用例的 P 面精度问题。
-    // 统一 1 AIC : 1 AIV（1:2 在 P 常驻 UB 之后反而让 AIC 成为瓶颈，见 policy.h 注释）。
+    // A2/A3 暂不启用：910B 的 0x2 是"AIC:2*AIV 集合同步"，我方协议按 1:1 的 id 接 1:2 会挂死，
+    // 换 per-AIV id 段后 gva 档可过、kda（Hv=64，两轮）仍挂住，且挂死会把 device 打到 100% 需重启；
+    // 待查清后再按 policy.h 注释里的三处一起切（详见 design.md §17）。
     const uint32_t aivPerBlock =
         (ascendcPlatform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950) ? 2U : 1U;
 
