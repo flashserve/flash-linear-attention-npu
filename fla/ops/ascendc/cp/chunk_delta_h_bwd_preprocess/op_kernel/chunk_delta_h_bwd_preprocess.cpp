@@ -30,8 +30,8 @@ __global__ __aicore__ void chunk_delta_h_bwd_preprocess(
     REGISTER_TILING_DEFAULT(CP::ChunkDeltaHBwdPreprocessTilingData);
     GET_TILING_DATA_WITH_STRUCT(CP::ChunkDeltaHBwdPreprocessTilingData, tilingData, tiling);
     // A5（arch35）：1 AIC : 2 AIV，两个 AIV 各承包一个 head 的整条逆序链（参考 ChunkFwdH）。
-    // A2/A3（arch22）：仍 1:1 —— 910B 的 0x2 是集合同步语义，两次接 1:2 都在 smoke 用例上挂死，
-    // 且挂死后 device 会停在 100% 需要重启（详见 design.md §17 与 policy.h 注释）。
+    // A2/A3（arch22）：仍 1:1 —— 910B 的 0x2 是集合同步语义，三次接 1:2 都在 smoke 用例上挂死
+    // （详见 design.md §17/§21 与 policy.h 注释）。
     // 三处必须一起切：这里的 KERNEL_TASK_TYPE、op_host 的 aivPerBlock、policy.h 的 flag 寻址口径。
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);

@@ -93,7 +93,7 @@ constexpr uint32_t CDHP_FLAG_STATE_READY = 4;
 // arch35（A5，mode 0x4"按 subblock 选配对 AIV"）：AIC 侧用 16 步长区分两个 AIV，AIV 侧用本地 id，
 // 并且 id 按 window 分（base*2+win，最大 9）。
 // arch22（A2/A3）当前仍是 1 AIC : 1 AIV，id 也按 window 分（base*2+win，最大 9）。
-// A2 的 1:2 需要"每个 AIV 一段独立 id + 不按 window 分"（910B 只有 8 个 flag，见 design.md §17），
+// A2 的 1:2 需要"每个 AIV 一段独立 id + 不按 window 分"，三次尝试都挂死（见 design.md §17/§21），
 // 该方案与 op_host 的 aivPerBlock、kernel 的 KERNEL_TASK_TYPE 必须三处一起切，切之前不要单独改这里。
 __aicore__ inline constexpr uint32_t CdhpFlag(uint32_t base, uint32_t window)
 {
@@ -109,9 +109,9 @@ constexpr uint32_t CDHP_FLAG_SUBBLOCK_STRIDE = 16;
 //   arch22（A2/A3）→ 1 AIC : 1 AIV，用 0x2（AIC 与本 block 的 AIV 集合同步）。
 // kernel 是按 SoC 分别编译的，op_host 的 aivPerBlock 也按同一个 SoC 判定，两侧天然一致。
 // 用错 mode 会在 launch 后直接报 synchronize failed（实测 507015），是运行期错误而不是精度问题。
-// 注意历史：A2 两次接 1:2 都在 smoke 用例上挂死（详见 design.md §17）：一次是两侧共用同一 id
-// （集合同步语义下一 set 放行两个 AIV，计数纪律被破坏），一次是 per-AIV 段 + 不按 window 分——
-// 后者在 gva 档通过、kda（Hv=64 两轮）挂住，原因待查，且这两次把 A2 的 device 打到 100% 需要重启。
+// 注意历史：A2 三次接 1:2 都在 smoke 用例上挂死（详见 design.md §17、§21）：①两侧共用同一 id
+// （集合同步语义下一 set 放行两个 AIV，计数纪律被破坏）；②per-AIV 段 + 不按 window 分，gva 通过、
+// kda（Hv=64 两轮）挂住；③在 P 常驻 UB 之后重试，反而在第一个 gva 档就挂住。
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #define CDHP_CROSS_CORE_MODE 0x4
 #else
