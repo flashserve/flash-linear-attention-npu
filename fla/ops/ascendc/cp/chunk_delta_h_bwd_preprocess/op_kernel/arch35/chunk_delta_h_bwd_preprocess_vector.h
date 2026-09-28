@@ -634,13 +634,14 @@ private:
         const uint32_t slot = this->SliceOfWindow(window);
         const uint32_t useG = static_cast<uint32_t>(this->tiling_.useGateG);
         const uint32_t useGk = static_cast<uint32_t>(this->tiling_.useGateGk);
-        // 布局：Q̄s | W | -K̄ | do | -dv | decay（Q̄s/W 相邻、do/-dv 相邻，便于合并 GEMM）
-        GM_ADDR slotQ = this->SlotAt(slot, 0);
-        GM_ADDR slotW = this->SlotAt(slot, this->SlotQBytes());
+        // v13 布局：Q̄s 与 W 落在 A 操作数 aOper 的前 2M 行（列主序 [K,2M+K] 的前置段），
+        // do 与 -dv 落在 B 操作数 bOper 的前 2M 行（行主序 [2M+K,V]），dH_bf 由 StageStateStore 写进
+        // bOper 的第三段；-K̄ 与 decay 仍留在 slot 里（只被 T1 的两个操作数与 Z/ZP 之外的路径用到）。
+        GM_ADDR slotQ = this->AOperAt(window);
+        GM_ADDR slotW = slotQ + static_cast<uint64_t>(mDim) * kDim * sizeof(DT);
         GM_ADDR slotK = this->SlotAt(slot, this->SlotQBytes() + this->SlotWBytes());
-        GM_ADDR slotDo = this->SlotAt(slot, this->SlotQBytes() + this->SlotWBytes() + this->SlotKBytes());
-        GM_ADDR slotNegDv = this->SlotAt(slot, this->SlotQBytes() + this->SlotWBytes() + this->SlotKBytes() +
-                                                   this->SlotDoBytes());
+        GM_ADDR slotDo = this->BOperAt(window);
+        GM_ADDR slotNegDv = slotDo + static_cast<uint64_t>(mDim) * vDim * sizeof(DT);
         GM_ADDR slotDecay = this->SlotAt(slot, this->SlotDecayOffset());
 
         LocalTensor<float> gF = gF32_.Get<float>();
@@ -782,13 +783,15 @@ private:
         const uint32_t kDim = static_cast<uint32_t>(this->tiling_.K);
         const uint32_t vDim = static_cast<uint32_t>(this->tiling_.V);
         const uint32_t prevWin = (window + 1u) & 1u;
+        const uint32_t mDim = static_cast<uint32_t>(this->tiling_.chunkSize);
         LocalTensor<float> dhState = dhStateF32_.Get<float>();
         for (uint32_t r0 = 0; r0 < kDim; r0 += CDHP_VEC_TILE) {
             const uint32_t tileRows = MinV(CDHP_VEC_TILE, kDim - r0);
-            // dH 操作数
+            // v13：dH 操作数写进 B 操作数 bOper 的第三段（与 do/-dv 同 window、同平面），
+            // 这样 Cube 可以把 [do; -dv; dH_bf] 当成**一份**行主序 B 操作数读。
             StoreTileModel(dhState[r0 * vDim],
-                           this->DhBfAt(prevWin) + static_cast<uint64_t>(r0) * vDim * sizeof(DT), tileRows, vDim,
-                           vDim);
+                           this->BOperAt(window) + static_cast<uint64_t>(2U * mDim + r0) * vDim * sizeof(DT),
+                           tileRows, vDim, vDim);
             if (isFirstChunk) {
                 // 初值 P = I：本 chunk 的 Cube 要读的 P 操作数就是这个单位阵。
                 // 注意这里只写 PBf（模型 dtype）；fp32 的 P_prev 由 StageState 首 chunk 内联生成，
@@ -832,19 +835,16 @@ private:
         LocalTensor<float> pState = pStateF32_.Get<float>();
         for (uint32_t r0 = 0; r0 < kDim; r0 += CDHP_VEC_TILE) {
             const uint32_t tileRows = MinV(CDHP_VEC_TILE, kDim - r0);
-            LocalTensor<float> abF = s0F32_.Get<float>();
-            LocalTensor<float> zF = s1F32_.Get<float>();
+            // v13：Cube 已经把 AB + Z 一次算成一份 [K,V] FP32（inc），这里只读一份而不是两份
+            LocalTensor<float> incF = s0F32_.Get<float>();
             LocalTensor<float> zpF = s3F32_.Get<float>();
-            IssueLoadPlaneF32(abF, this->AbAt(window), r0, tileRows, vDim, CDHP_EV_LOAD1);
-            IssueLoadPlaneF32(zF, this->ZAt(window), r0, tileRows, vDim, CDHP_EV_LOAD2);
+            IssueLoadPlaneF32(incF, this->AbAt(window), r0, tileRows, vDim, CDHP_EV_LOAD1);
             IssueLoadPlaneF32(zpF, this->ZpAt(window), r0, tileRows, kDim, CDHP_EV_LOAD3);
             WaitPlaneLoad(CDHP_EV_LOAD1);
-            WaitPlaneLoad(CDHP_EV_LOAD2);
             WaitPlaneLoad(CDHP_EV_LOAD3);
-            // dH_new = decayK ⊙ dH_old + AB + Z：一份寄存器流一趟算完。
-            CDHP_V4StateUpdateVF(UbPtr(dhState) + static_cast<uint64_t>(r0) * vDim, UbPtr(abF), UbPtr(zF),
-                                 UbPtr(decayF), static_cast<uint16_t>(r0), static_cast<uint16_t>(tileRows),
-                                 static_cast<uint16_t>(vDim));
+            // dH_new = decayK ⊙ dH_old + (AB + Z)：单项累加，直接复用 P 链的 V3Accum
+            CDHP_V3AccumVF(UbPtr(dhState) + static_cast<uint64_t>(r0) * vDim, UbPtr(incF), UbPtr(decayF),
+                           static_cast<uint16_t>(r0), static_cast<uint16_t>(tileRows), static_cast<uint16_t>(vDim));
             // P_new = decayK ⊙ P_old + ZP；首 chunk 的 P_old = I 内联生成
             if (isFirstChunk) {
                 CDHP_InitIdentityVF(UbPtr(pState) + static_cast<uint64_t>(r0) * kDim,

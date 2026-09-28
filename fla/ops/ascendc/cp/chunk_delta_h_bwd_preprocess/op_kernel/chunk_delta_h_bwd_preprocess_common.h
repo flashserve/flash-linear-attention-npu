@@ -329,6 +329,29 @@ public:
         return WgWindowPlaneAtAiv(tiling_.wtermWsOffset, tiling_.wtermWsBytes, sub, window);
     }
 
+    // ---- v13：AB 与 Z 合并成一次 GEMM 的两份拼接操作数（arch35 使用）----
+    // aOper：[Q̄s(M,K) | W(M,K) | (-T1)ᵀ(K,K)]，Cube 的 A 操作数（按列主序 [K, 2M+K] 读）
+    // bOper：[do(M,V) | -dv(M,V) | dH_bf(K,V)]，Cube 的 B 操作数（按行主序 [2M+K, V] 读）
+    __aicore__ inline GM_ADDR AOperAtAiv(uint32_t sub, uint32_t window = 0) const
+    {
+        return WgWindowPlaneAtAiv(tiling_.aOperWsOffset, tiling_.aOperWsBytes, sub, window);
+    }
+
+    __aicore__ inline GM_ADDR BOperAtAiv(uint32_t sub, uint32_t window = 0) const
+    {
+        return WgWindowPlaneAtAiv(tiling_.bOperWsOffset, tiling_.bOperWsBytes, sub, window);
+    }
+
+    __aicore__ inline GM_ADDR AOperAt(uint32_t window = 0) const
+    {
+        return WgWindowPlaneAt(tiling_.aOperWsOffset, tiling_.aOperWsBytes, window);
+    }
+
+    __aicore__ inline GM_ADDR BOperAt(uint32_t window = 0) const
+    {
+        return WgWindowPlaneAt(tiling_.bOperWsOffset, tiling_.bOperWsBytes, window);
+    }
+
     __aicore__ inline GM_ADDR PBfAtAiv(uint32_t sub, uint32_t window = 0) const
     {
         return WgWindowPlaneAtAiv(tiling_.pBfWsOffset, tiling_.pBfWsBytes, sub, window);

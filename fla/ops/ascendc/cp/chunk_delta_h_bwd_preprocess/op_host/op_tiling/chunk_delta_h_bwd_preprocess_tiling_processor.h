@@ -349,6 +349,14 @@ public:
         const uint64_t qtermWsBytes = AlignUp(wg * win * K_ * K_ * CDHP_FP32_DTYPE_SIZE, CDHP_WS_ALIGN);
         const uint64_t wtermWsBytes = AlignUp(wg * win * K_ * K_ * CDHP_MODEL_DTYPE_SIZE, CDHP_WS_ALIGN);
         const uint64_t t1WsBytes = AlignUp(wg * win * K_ * K_ * CDHP_FP32_DTYPE_SIZE, CDHP_WS_ALIGN);
+        // v13：AB 与 Z 合并成一次 GEMM 的两份拼接操作数（arch35 用；arch22 不使用，但一起分配，
+        // 保证 tiling 只有一套布局）：
+        //   aOper = [Q̄s(M,K) | W(M,K) | (-T1)ᵀ(K,K)]，模型 dtype；Cube 的 A 操作数（列主序 [K, 2M+K]）
+        //   bOper = [do(M,V) | -dv(M,V) | dH_bf(K,V)]，模型 dtype；Cube 的 B 操作数（行主序 [2M+K, V]）
+        const uint64_t aOperWsBytes = AlignUp(
+            wg * win * (2 * chunkSize_ * K_ + K_ * K_) * CDHP_MODEL_DTYPE_SIZE, CDHP_WS_ALIGN);
+        const uint64_t bOperWsBytes = AlignUp(
+            wg * win * (2 * chunkSize_ * V_ + K_ * V_) * CDHP_MODEL_DTYPE_SIZE, CDHP_WS_ALIGN);
         const uint64_t pcWsBytes = 0;  // v3 起不再需要独立的 P_c 平面
         const uint64_t pWsBytes = AlignUp(wg * 2 * K_ * K_ * CDHP_FP32_DTYPE_SIZE, CDHP_WS_ALIGN);
         const uint64_t pBfWsBytes = AlignUp(wg * win * K_ * K_ * CDHP_MODEL_DTYPE_SIZE, CDHP_WS_ALIGN);
@@ -373,6 +381,10 @@ public:
         offset += wtermWsBytes;
         tiling_.t1WsOffset = offset;
         offset += t1WsBytes;
+        tiling_.aOperWsOffset = offset;
+        offset += aOperWsBytes;
+        tiling_.bOperWsOffset = offset;
+        offset += bOperWsBytes;
         tiling_.pcWsOffset = offset;
         offset += pcWsBytes;
         tiling_.pWsOffset = offset;
@@ -389,6 +401,8 @@ public:
         tiling_.qtermWsBytes = qtermWsBytes;
         tiling_.wtermWsBytes = wtermWsBytes;
         tiling_.t1WsBytes = t1WsBytes;
+        tiling_.aOperWsBytes = aOperWsBytes;
+        tiling_.bOperWsBytes = bOperWsBytes;
         tiling_.pcWsBytes = pcWsBytes;
         tiling_.pWsBytes = pWsBytes;
         tiling_.pBfWsBytes = pBfWsBytes;

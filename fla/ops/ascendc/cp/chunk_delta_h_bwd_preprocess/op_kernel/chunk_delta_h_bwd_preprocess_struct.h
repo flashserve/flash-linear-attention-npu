@@ -139,6 +139,13 @@ struct ChunkDeltaHBwdPreprocessTilingData {
     uint64_t qtermWsOffset;
     uint64_t wtermWsOffset;
     uint64_t t1WsOffset;
+    // v13：AB 与 Z 合并成一次 GEMM 用的两份拼接操作数（arch35 专用；arch22 仍用 slot + 旧平面）
+    //   aOperWs → [Q̄s(M,K) | W(M,K) | (-T1)ᵀ(K,K)]，模型 dtype，Cube 的 A 操作数（列主序）
+    //   bOperWs → [do(M,V) | -dv(M,V) | dH_bf(K,V)]，模型 dtype，Cube 的 B 操作数（行主序）
+    uint64_t aOperWsOffset;
+    uint64_t aOperWsBytes;
+    uint64_t bOperWsOffset;
+    uint64_t bOperWsBytes;
     uint64_t pcWsOffset;
     uint64_t pWsOffset;
     uint64_t pBfWsOffset;

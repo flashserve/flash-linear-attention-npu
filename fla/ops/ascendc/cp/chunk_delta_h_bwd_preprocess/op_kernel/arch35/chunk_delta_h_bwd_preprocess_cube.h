@@ -148,6 +148,12 @@ public:
         // v3 合并 GEMM：A = [Q̄s|W]ᵀ（K x 2M，列主序 = 存储 [Q̄s;W] 的 2M x K 行主序）
         const auto tagCol2M = LayoutCol::MakeLayout<DT>(kDim, 2U * mDim);
         const auto tagDo2M = LayoutRow::MakeLayout<DT>(2U * mDim, vDim);
+        // v13：AB 与 Z 合并 GEMM 的两份拼接操作数
+        //   A 操作数 aOper = [Q̄s(M,K) | W(M,K) | (-T1)ᵀ(K,K)] → 列主序 [K, 2M+K]
+        //   B 操作数 bOper = [do(M,V) | -dv(M,V) | dH_bf(K,V)] → 行主序 [2M+K, V]
+        const auto tagCol2MK = LayoutCol::MakeLayout<DT>(kDim, 2U * mDim + kDim);
+        const auto tagRow2MkV = LayoutRow::MakeLayout<DT>(2U * mDim + kDim, vDim);
+        const auto tagColKK = LayoutCol::MakeLayout<DT>(kDim, kDim);
         const auto tagMzV = LayoutRow::MakeLayout<float>(mDim, vDim);
         const auto tagKzV = LayoutRow::MakeLayout<float>(kDim, vDim);
         const auto tagKzK = LayoutRow::MakeLayout<float>(kDim, kDim);
@@ -161,6 +167,9 @@ public:
         const auto layoutKK = tla::MakeLayoutFromTag(tagKK);
         const auto layoutCol2M = tla::MakeLayoutFromTag(tagCol2M);
         const auto layoutDo2M = tla::MakeLayoutFromTag(tagDo2M);
+        const auto layoutCol2MK = tla::MakeLayoutFromTag(tagCol2MK);
+        const auto layoutRow2MkV = tla::MakeLayoutFromTag(tagRow2MkV);
+        const auto layoutColKK = tla::MakeLayoutFromTag(tagColKK);
         const auto layoutMzV = tla::MakeLayoutFromTag(tagMzV);
         const auto layoutKzV = tla::MakeLayoutFromTag(tagKzV);
         const auto layoutKzK = tla::MakeLayoutFromTag(tagKzK);
@@ -187,18 +196,19 @@ public:
                     const uint32_t sub = h - hBegin;
                     const uint32_t slot = this->SlotOfWindowAiv(sub, headWin);
                     CDHP_AIC_WAIT(sub, CdhpFlag(CDHP_FLAG_V0_READY, headWin));
-                    // T1 = Wᵀ@(-K̄) → **模型 dtype** 平面：fixpipe 直接完成 FP32→模型 dtype 的转换，
-                    // 省掉 Vector 侧"读 FP32 T1 再转模型 dtype"的一整段搬运与一个 Stage
+                    // v13：T1 的模型 dtype 平面直接落在 A 操作数 aOper 的第三段，且写成 (-T1)ᵀ：
+                    //   T1 = Wᵀ@(-K̄) ⇒ (-T1)ᵀ = (-K̄)ᵀ@W，所以 A/B 操作数对调即可让结果**转置存放**，
+                    //   正好等于合并 GEMM 里 k 段（行）与列主序 A 所需的排布。
+                    // fixpipe 直接完成 FP32→模型 dtype 的转换，Vector 侧不再读写 T1。
+                    constexpr uint64_t kModelSize = sizeof(DT);
+                    const uint64_t aOperW = static_cast<uint64_t>(mDim) * kDim * kModelSize;
+                    const uint64_t aOperTt = static_cast<uint64_t>(2U) * aOperW;
+                    GM_ADDR aOp = this->AOperAtAiv(sub, headWin);
+                    GM_ADDR wAddr = aOp + aOperW;
+                    GM_ADDR ttAddr = aOp + aOperTt;
                     RunGemm<BlockColRowBf16, DT>(resource, layoutWT, layoutK, layoutKK,
-                                                this->SlotAt(slot, this->SlotQBytes()),
-                                                this->SlotAt(slot, this->SlotQBytes() + this->SlotWBytes()),
-                                                this->T1BfAtAiv(sub, headWin), kDim, kDim, mDim);
-                    // AB = Q̄sᵀ@do + Wᵀ@(-dv)（一次合并 GEMM：A=[Q̄s|W]ᵀ [K,2M]，B=[do;-dv] [2M,V]）
-                    RunGemm<BlockColRow, float>(resource, layoutCol2M, layoutDo2M, layoutKzV,
-                                                this->SlotAt(slot, 0),
-                                                this->SlotAt(slot, this->SlotQBytes() + this->SlotWBytes() +
-                                                                   this->SlotKBytes()),
-                                                this->AbAtAiv(sub, headWin), kDim, vDim, twoM);
+                                                this->SlotAt(slot, this->SlotQBytes() + this->SlotWBytes()), wAddr,
+                                                ttAddr, kDim, kDim, mDim);
                 }
             }
             if (chunkNum > 0) {
@@ -221,24 +231,26 @@ public:
                         const uint32_t nextWin = (chunkIdx - 1U) & 1u;
                         const uint32_t nextSlot = this->SlotOfWindowAiv(sub, nextWin);
                         CDHP_AIC_WAIT(sub, CdhpFlag(CDHP_FLAG_V0_READY, nextWin));
-                        RunGemm<BlockColRowBf16, DT>(resource, layoutWT, layoutK, layoutKK,
-                                                    this->SlotAt(nextSlot, this->SlotQBytes()),
-                                                    this->SlotAt(nextSlot, this->SlotQBytes() + this->SlotWBytes()),
-                                                    this->T1BfAtAiv(sub, nextWin), kDim, kDim, mDim);
-                        RunGemm<BlockColRow, float>(resource, layoutCol2M, layoutDo2M, layoutKzV,
-                                                    this->SlotAt(nextSlot, 0),
-                                                    this->SlotAt(nextSlot, this->SlotQBytes() + this->SlotWBytes() +
-                                                                              this->SlotKBytes()),
-                                                    this->AbAtAiv(sub, nextWin), kDim, vDim, twoM);
+                        const uint64_t aOperW = static_cast<uint64_t>(mDim) * kDim * sizeof(DT);
+                        GM_ADDR aOpNext = this->AOperAtAiv(sub, nextWin);
+                        RunGemm<BlockColRowBf16, DT>(
+                            resource, layoutWT, layoutK, layoutKK,
+                            this->SlotAt(nextSlot, this->SlotQBytes() + this->SlotWBytes()), aOpNext + aOperW,
+                            aOpNext + 2U * aOperW, kDim, kDim, mDim);
                     }
-                    // 链上：Z = (-T1)@dH_bf(prev)、ZP = (-T1)@P_bf(prev)
+                    // 链上：v13 起 "AB + Z" 一次算完，ZP 单独一次
                     CDHP_AIC_WAIT(sub, CdhpFlag(CDHP_FLAG_STATE_READY, win ^ 1u));
-                    RunGemm<BlockRowRow, float>(resource, layoutKK, layoutDhBf, layoutKzV,
-                                                this->T1BfAtAiv(sub, win), this->DhBfAtAiv(sub, win ^ 1u),
-                                                this->ZAtAiv(sub, win), kDim, vDim, kDim);
-                    RunGemm<BlockRowRow, float>(resource, layoutKK, layoutKK, layoutKzK,
-                                                this->T1BfAtAiv(sub, win), this->PBfAtAiv(sub, win ^ 1u),
-                                                this->ZpAtAiv(sub, win), kDim, kDim, kDim);
+                    //   A = [Q̄s|W|(-T1)ᵀ]（列主序 [K, 2M+K]）、B = [do; -dv; dH_bf]（行主序 [2M+K, V]）
+                    //   ⇒ 一次 MMAD 得到 AB + Z；B 的第三段 dH_bf 由 AIV 在同一个 window 的 bOper 里写，
+                    //   靠上面的 STATE_READY 保证可见性。
+                    RunGemm<BlockColRow, float>(resource, layoutCol2MK, layoutRow2MkV, layoutKzV,
+                                                this->AOperAtAiv(sub, win), this->BOperAtAiv(sub, win),
+                                                this->AbAtAiv(sub, win), kDim, vDim, twoM + kDim);
+                    // ZP = (-T1)@P_bf：(T1 已是 (-T1)ᵀ 存放，列主序读回来就是 (-T1))
+                    RunGemm<BlockColRow, float>(resource, layoutColKK, layoutKK, layoutKzK,
+                                                this->AOperAtAiv(sub, win) + 2U * mDim * kDim * sizeof(DT),
+                                                this->PBfAtAiv(sub, win ^ 1u), this->ZpAtAiv(sub, win), kDim, kDim,
+                                                kDim);
                     CDHP_AIC_SET(sub, CdhpFlag(CDHP_FLAG_Z_READY, win));
                 }
                 if (c + 1U < chunkNum) {
