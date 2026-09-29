@@ -39,6 +39,18 @@ bash tests/atk/run_test_cpu.sh \
 `run_test_cpu.sh -scope=accuracy`。`fla_npu.ops.ascendc` 在本机稳定入口不可用时会自动回退 ctypes 参考通路，
 两条通路共用同一份手写 aclnn，稳定入口本身另有验证（见下文"稳定入口"一节）。
 
+`-scope=accuracy` 会走 `--bm_device cpu`，CPU 标杆的比较任务经 ATK 的 broker 队列派发；该 broker 默认占用
+本机 `127.0.0.1:9090`。若 9090 已被其它服务占用（本机即是），runner 会在 compare 阶段报
+`Unrecoverable error: JSONDecodeError('Expecting value: line 1 column 1 (char 0)')` 并卡住；runner 没有暴露端口参数。
+此时用同一份用例显式指定空闲端口即可，实测 12/12 通过：
+
+```bash
+atk node --name npu_dut --backend npu --devices <device_id> -p <free_port> --output_path <out> \
+  node --name cpu_golden --backend cpu -p <free_port> --output_path <out> \
+  task -c ./atk_chunk_delta_h_bwd_preprocess.json --task accuracy --bm_device cpu \
+  -p ./executor_chunk_delta_h_bwd_preprocess.py -s 0 -e 12 -to 2000
+```
+
 判据是 ATK 原生 `mixed_tolerance_bm`；`dhm` 虽是 FP32，但链上状态按设计用模型 dtype 传递，
 所以用例的 `standard.acc` 用 ATK 原生的 `output_dtype_overrides` 声明按 `bf16`/`fp16` 判，
 不在 executor 里自定义指标。
