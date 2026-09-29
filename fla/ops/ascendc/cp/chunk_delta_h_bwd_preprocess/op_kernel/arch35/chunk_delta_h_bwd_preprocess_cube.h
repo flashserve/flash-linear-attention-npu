@@ -184,6 +184,13 @@ public:
         const uint32_t activeHeads = this->AivSlotCount(range);
         const uint32_t aivs = this->AivPerBlock();
         const uint32_t rounds = (activeHeads + aivs - 1U) / aivs;
+        // v19：head 内并行（两个 AIV 合干同一条链）时，一轮只服务**一个** head，两个 AIV 各做一半；
+        // 操作数/中间量落在**共享** slice 上（sub 只用于选 flag 与配对 AIV），因此：
+        //   * GEMM 只做一次（用 sub=0 的共享地址）；
+        //   * 需要"两个 AIV 都写完"的 barrier（V0_READY / STATE_READY）由 AIC 连续 wait 两个 sub；
+        //   * Z_READY 由 AIC 给两个 sub 各 set 一次。
+        const bool half = this->HalfSplit();
+        const uint32_t subCount = half ? 1U : aivs;
         for (uint32_t r = 0; r < rounds; ++r) {
             const uint32_t hBegin = r * aivs;
             const uint32_t hEnd = (hBegin + aivs < activeHeads) ? (hBegin + aivs) : activeHeads;
@@ -192,10 +199,16 @@ public:
             // T1BF_READY 上空等（改造前该等待占 AIC 时间的 88%）。
             if (chunkNum > 0) {
                 const uint32_t headWin = (chunkNum - 1U) & 1u;
-                for (uint32_t h = hBegin; h < hEnd; ++h) {
-                    const uint32_t sub = h - hBegin;
+                for (uint32_t s = 0; s < subCount; ++s) {
+                    const uint32_t sub = half ? 0U : s;
                     const uint32_t slot = this->SlotOfWindowAiv(sub, headWin);
-                    CDHP_AIC_WAIT(sub, CdhpFlag(CDHP_FLAG_V0_READY, headWin));
+                    if (half) {
+                        for (uint32_t k = 0; k < aivs; ++k) {
+                            CDHP_AIC_WAIT(k, CdhpFlag(CDHP_FLAG_V0_READY, headWin));
+                        }
+                    } else {
+                        CDHP_AIC_WAIT(sub, CdhpFlag(CDHP_FLAG_V0_READY, headWin));
+                    }
                     // v13：T1 的模型 dtype 平面直接落在 A 操作数 aOper 的第三段，且写成 (-T1)ᵀ：
                     //   T1 = Wᵀ@(-K̄) ⇒ (-T1)ᵀ = (-K̄)ᵀ@W，所以 A/B 操作数对调即可让结果**转置存放**，
                     //   正好等于合并 GEMM 里 k 段（行）与列主序 A 所需的排布。
@@ -224,13 +237,19 @@ public:
                 // MTE2 读回前先等本核 FIX 完成。放在 head 循环外：每 window 恰好一次 set / 一次 wait，
                 // 满足核内单比特事件的"不许连续 set 同一 id"约束（1:2 下两个 head 共用同一 id）。
                 WaitFlag<HardEvent::FIX_MTE2>(CDHP_AIC_EV_FIX_MTE2 + win);
-                for (uint32_t h = hBegin; h < hEnd; ++h) {
-                    const uint32_t sub = h - hBegin;
+                for (uint32_t s = 0; s < subCount; ++s) {
+                    const uint32_t sub = half ? 0U : s;
                     // 链外：把下一个 chunk 的 T1/AB 补上（尾块没有下一个 chunk）
                     if (c + 1U < chunkNum) {
                         const uint32_t nextWin = (chunkIdx - 1U) & 1u;
                         const uint32_t nextSlot = this->SlotOfWindowAiv(sub, nextWin);
-                        CDHP_AIC_WAIT(sub, CdhpFlag(CDHP_FLAG_V0_READY, nextWin));
+                        if (half) {
+                            for (uint32_t k = 0; k < aivs; ++k) {
+                                CDHP_AIC_WAIT(k, CdhpFlag(CDHP_FLAG_V0_READY, nextWin));
+                            }
+                        } else {
+                            CDHP_AIC_WAIT(sub, CdhpFlag(CDHP_FLAG_V0_READY, nextWin));
+                        }
                         const uint64_t aOperW = static_cast<uint64_t>(mDim) * kDim * sizeof(DT);
                         GM_ADDR aOpNext = this->AOperAtAiv(sub, nextWin);
                         RunGemm<BlockColRowBf16, DT>(
@@ -239,7 +258,14 @@ public:
                             aOpNext + 2U * aOperW, kDim, kDim, mDim);
                     }
                     // 链上：v13 起 "AB + Z" 一次算完，ZP 单独一次
-                    CDHP_AIC_WAIT(sub, CdhpFlag(CDHP_FLAG_STATE_READY, win ^ 1u));
+                    if (half) {
+                        // 两个 AIV 各写一半的 dH_bf / P_bf ⇒ 必须都写完才能发链上的 GEMM
+                        for (uint32_t k = 0; k < aivs; ++k) {
+                            CDHP_AIC_WAIT(k, CdhpFlag(CDHP_FLAG_STATE_READY, win ^ 1u));
+                        }
+                    } else {
+                        CDHP_AIC_WAIT(sub, CdhpFlag(CDHP_FLAG_STATE_READY, win ^ 1u));
+                    }
                     //   A = [Q̄s|W|(-T1)ᵀ]（列主序 [K, 2M+K]）、B = [do; -dv; dH_bf]（行主序 [2M+K, V]）
                     //   ⇒ 一次 MMAD 得到 AB + Z；B 的第三段 dH_bf 由 AIV 在同一个 window 的 bOper 里写，
                     //   靠上面的 STATE_READY 保证可见性。
@@ -251,7 +277,20 @@ public:
                                                 this->AOperAtAiv(sub, win) + 2U * mDim * kDim * sizeof(DT),
                                                 this->PBfAtAiv(sub, win ^ 1u), this->ZpAtAiv(sub, win), kDim, kDim,
                                                 kDim);
-                    CDHP_AIC_SET(sub, CdhpFlag(CDHP_FLAG_Z_READY, win));
+                    if (half) {
+#if CDHP_CROSS_CORE_MODE == 0x4
+                        // A5（0x4）：按 subblock 点对点 ⇒ 两个 AIV 各置一次
+                        for (uint32_t k = 0; k < aivs; ++k) {
+                            CDHP_AIC_SET(k, CdhpFlag(CDHP_FLAG_Z_READY, win));
+                        }
+#else
+                        // A2/A3（0x2）：集合同步，一次 set 同时放行两个 AIV（多置会让未被消费的 set 累积，
+                        // 超过 catlass 的 MAX_REVERSE_DEPTH=15 就会冻结，见 design.md §27）
+                        CDHP_AIC_SET(0, CdhpFlag(CDHP_FLAG_Z_READY, win));
+#endif
+                    } else {
+                        CDHP_AIC_SET(sub, CdhpFlag(CDHP_FLAG_Z_READY, win));
+                    }
                 }
                 if (c + 1U < chunkNum) {
                     // 本轮两个 head 的 T1 都已落盘：放行下一轮 MTE2 读回同一 window
