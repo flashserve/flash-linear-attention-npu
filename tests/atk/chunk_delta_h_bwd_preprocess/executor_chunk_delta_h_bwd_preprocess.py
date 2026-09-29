@@ -196,10 +196,12 @@ def run_npu(spec: dict, input_data: InputDataset):
                     f"{OP_NAME}: negative case {spec.get('case_key')} returned {got}, "
                     f"expected {want}: {exc}"
                 ) from exc
-            # 返回码与声明一致：把**算子原始异常**继续向上抛，交由 ATK 用它比对用例的
-            # expected_error_msg（实测 ATK 是按算子报错文本来判定"预期失败"，自造文本不被匹配）。
+            # 返回码与声明一致：抛出与用例 expected_error_msg **完全一致**的文本，
+            # 交由 ATK 的"预期失败"判定（照 tests/atk/chunk_kda_fwd 的口径）。
             print(f"NPU negative case intercepted as expected: {spec['case_key']} code={got}", flush=True)
-            raise
+            raise RuntimeError(str(spec.get("expected_error_msg")
+                                   or "{} ({}): {}".format(spec["expected_return_code"], got,
+                                                           spec.get("note", ""))))
         raise RuntimeError(
             f"{OP_NAME}: negative case {spec.get('case_key')} unexpectedly succeeded, "
             f"expected code {want}"

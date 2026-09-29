@@ -56,7 +56,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":0,\"case_key\":\"pos_01_none_gate_dense\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":\"\",\"g_dtype\":\"model\",\"g_head\":\"Hv\",\"gate\":\"none\",\"gk_dtype\":\"model\",\"note\":\"无门控（qg/kg 未门控）dense 基线\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260927,\"soc\":\"ascend950\",\"tags\":\"determinism,mss\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":0,\"case_key\":\"pos_01_none_gate_dense\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_error_msg\":\"\",\"expected_return_code\":\"\",\"g_dtype\":\"model\",\"g_head\":\"Hv\",\"gate\":\"none\",\"gk_dtype\":\"model\",\"note\":\"无门控（qg/kg 未门控）dense 基线\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260927,\"soc\":\"ascend950\",\"tags\":\"determinism,mss\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -142,6 +142,15 @@
       },
       {
         "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
+      },
+      {
+        "name": "expected_error_msg",
         "type": "attr",
         "required": true,
         "dtype": "string",
@@ -299,7 +308,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":1,\"case_key\":\"pos_02_g_bf16_dense\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":\"\",\"g_dtype\":\"model\",\"g_head\":\"Hv\",\"gate\":\"g\",\"gk_dtype\":\"model\",\"note\":\"GDN 标量 gate，g 与 q 同 dtype（tilingKey=2）\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260928,\"soc\":\"ascend950\",\"tags\":\"determinism,mss\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":1,\"case_key\":\"pos_02_g_bf16_dense\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_error_msg\":\"\",\"expected_return_code\":\"\",\"g_dtype\":\"model\",\"g_head\":\"Hv\",\"gate\":\"g\",\"gk_dtype\":\"model\",\"note\":\"GDN 标量 gate，g 与 q 同 dtype（tilingKey=2）\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260928,\"soc\":\"ascend950\",\"tags\":\"determinism,mss\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -385,6 +394,15 @@
       },
       {
         "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
+      },
+      {
+        "name": "expected_error_msg",
         "type": "attr",
         "required": true,
         "dtype": "string",
@@ -542,7 +560,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":2,\"case_key\":\"pos_03_g_fp32_dense\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":\"\",\"g_dtype\":\"fp32\",\"g_head\":\"Hv\",\"gate\":\"g\",\"gk_dtype\":\"model\",\"note\":\"GDN 标量 gate，g 为 FP32（tilingKey=3）；g 为 FP32 时不能走 Cast<float,float>（见算子 README 踩坑记录）\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260929,\"soc\":\"ascend950\",\"tags\":\"determinism,mss\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":2,\"case_key\":\"pos_03_g_fp32_dense\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_error_msg\":\"\",\"expected_return_code\":\"\",\"g_dtype\":\"fp32\",\"g_head\":\"Hv\",\"gate\":\"g\",\"gk_dtype\":\"model\",\"note\":\"GDN 标量 gate，g 为 FP32（tilingKey=3）；g 为 FP32 时不能走 Cast<float,float>（见算子 README 踩坑记录）\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260929,\"soc\":\"ascend950\",\"tags\":\"determinism,mss\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -628,6 +646,15 @@
       },
       {
         "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
+      },
+      {
+        "name": "expected_error_msg",
         "type": "attr",
         "required": true,
         "dtype": "string",
@@ -785,7 +812,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":3,\"case_key\":\"pos_04_gk_bf16_dense\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":\"\",\"g_dtype\":\"model\",\"g_head\":\"Hv\",\"gate\":\"gk\",\"gk_dtype\":\"model\",\"note\":\"KDA/GDN2 逐 K gate（tilingKey=4）\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260930,\"soc\":\"ascend950\",\"tags\":\"determinism,mss\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":3,\"case_key\":\"pos_04_gk_bf16_dense\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_error_msg\":\"\",\"expected_return_code\":\"\",\"g_dtype\":\"model\",\"g_head\":\"Hv\",\"gate\":\"gk\",\"gk_dtype\":\"model\",\"note\":\"KDA/GDN2 逐 K gate（tilingKey=4）\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260930,\"soc\":\"ascend950\",\"tags\":\"determinism,mss\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -871,6 +898,15 @@
       },
       {
         "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
+      },
+      {
+        "name": "expected_error_msg",
         "type": "attr",
         "required": true,
         "dtype": "string",
@@ -1028,7 +1064,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":4,\"case_key\":\"pos_05_gk_varlen_first_segment\",\"chunk_size\":64,\"cu_seqlens\":[0,300,512],\"dtype\":\"bf16\",\"expected_return_code\":\"\",\"g_dtype\":\"model\",\"g_head\":\"Hv\",\"gate\":\"gk\",\"gk_dtype\":\"model\",\"note\":\"varlen：packed 输入，本 launch 只处理 cu_seqlens[0:2] = [0,300)\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260931,\"soc\":\"ascend950\",\"tags\":\"determinism,mss\",\"varlen\":true}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":4,\"case_key\":\"pos_05_gk_varlen_first_segment\",\"chunk_size\":64,\"cu_seqlens\":[0,300,512],\"dtype\":\"bf16\",\"expected_error_msg\":\"\",\"expected_return_code\":\"\",\"g_dtype\":\"model\",\"g_head\":\"Hv\",\"gate\":\"gk\",\"gk_dtype\":\"model\",\"note\":\"varlen：packed 输入，本 launch 只处理 cu_seqlens[0:2] = [0,300)\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260931,\"soc\":\"ascend950\",\"tags\":\"determinism,mss\",\"varlen\":true}",
         "backward": false
       },
       {
@@ -1114,6 +1150,15 @@
       },
       {
         "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
+      },
+      {
+        "name": "expected_error_msg",
         "type": "attr",
         "required": true,
         "dtype": "string",
