@@ -182,11 +182,12 @@ public:
                     const uint32_t sub = h - hBegin;
                     const uint32_t slot = this->SlotOfWindowAiv(sub, headWin);
                     CDHP_AIC_WAIT(sub, CdhpFlag(CDHP_FLAG_V0_READY, headWin));
-                    // T1 = Wᵀ@(-K̄) → FP32 平面（Vector 转成模型 dtype）
-                    RunGemm<BlockColRow, float>(resource, layoutWT, layoutK, layoutKzK,
-                                                this->SlotAt(slot, this->SlotQBytes()),
-                                                this->SlotAt(slot, this->SlotQBytes() + this->SlotWBytes()),
-                                                this->T1AtAiv(sub, headWin), kDim, kDim, mDim);
+                    // T1 = Wᵀ@(-K̄)；v26：直接由 fixpipe 转成模型 dtype 落盘（FP32→BF16 在 fixpipe 内完成），
+                    // AIV 因此只需做一次"换一块平面"的同 dtype 拷贝，省掉每 chunk 64 KiB 的 FP32 读回。
+                    RunGemm<BlockColRowBf16, DT>(resource, layoutWT, layoutK, layoutKK,
+                                                 this->SlotAt(slot, this->SlotQBytes()),
+                                                 this->SlotAt(slot, this->SlotQBytes() + this->SlotWBytes()),
+                                                 this->T1AtAiv(sub, headWin), kDim, kDim, mDim);
                     CDHP_AIC_SET(sub, CdhpFlag(CDHP_FLAG_T1_READY, headWin));
                     // AB = Q̄sᵀ@do + Wᵀ@(-dv)（一次合并 GEMM：A=[Q̄s|W]ᵀ [K,2M]，B=[do;-dv] [2M,V]）
                     RunGemm<BlockColRow, float>(resource, layoutCol2M, layoutDo2M, layoutKzV,
@@ -208,10 +209,10 @@ public:
                         const uint32_t nextWin = (chunkIdx - 1U) & 1u;
                         const uint32_t nextSlot = this->SlotOfWindowAiv(sub, nextWin);
                         CDHP_AIC_WAIT(sub, CdhpFlag(CDHP_FLAG_V0_READY, nextWin));
-                        RunGemm<BlockColRow, float>(resource, layoutWT, layoutK, layoutKzK,
-                                                    this->SlotAt(nextSlot, this->SlotQBytes()),
-                                                    this->SlotAt(nextSlot, this->SlotQBytes() + this->SlotWBytes()),
-                                                    this->T1AtAiv(sub, nextWin), kDim, kDim, mDim);
+                        RunGemm<BlockColRowBf16, DT>(resource, layoutWT, layoutK, layoutKK,
+                                                     this->SlotAt(nextSlot, this->SlotQBytes()),
+                                                     this->SlotAt(nextSlot, this->SlotQBytes() + this->SlotWBytes()),
+                                                     this->T1AtAiv(sub, nextWin), kDim, kDim, mDim);
                         CDHP_AIC_SET(sub, CdhpFlag(CDHP_FLAG_T1_READY, nextWin));
                         RunGemm<BlockColRow, float>(resource, layoutCol2M, layoutDo2M, layoutKzV,
                                                     this->SlotAt(nextSlot, 0),

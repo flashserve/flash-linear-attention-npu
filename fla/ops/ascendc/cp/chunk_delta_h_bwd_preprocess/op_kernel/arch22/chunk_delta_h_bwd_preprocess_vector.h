@@ -508,10 +508,12 @@ private:
         const uint32_t kDim = static_cast<uint32_t>(this->tiling_.K);
         for (uint32_t r0 = 0; r0 < kDim; r0 += CDHP_VEC_TILE) {
             const uint32_t tileRows = MinV(CDHP_VEC_TILE, kDim - r0);
-            LocalTensor<float> t1F = s0F32_.Get<float>();
-            LoadPlaneF32(t1F, this->T1At(window), r0, tileRows, kDim);
-            StoreTileModel(t1F, this->T1BfAt(window) + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows, kDim,
-                           kDim);
+            // v26：T1 已经是模型 dtype（Cube 的 fixpipe 直接落盘），这里只把它搬到**另一块平面**——
+            // cube 必须读一块自己没写过的平面，才能避开 arch22 上"核内 FIX→MTE2 自排空挂死"；
+            // 同 dtype 搬运走 CopyTileModel（不进 V pipe，也不再有 Cast）。
+            CopyTileModel(this->T1At(window) + static_cast<uint64_t>(r0) * kDim * sizeof(DT),
+                          this->T1BfAt(window) + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows, kDim,
+                          kDim, kDim);
         }
     }
 
