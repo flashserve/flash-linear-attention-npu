@@ -1,0 +1,632 @@
+name: 需求汇总
+
+# 维护一个置顶的需求汇总 issue，作为本仓近期的规划与进展同步入口。
+#
+# - 需求类（REQUIREMENT_LABELS，默认 enhancement）不做版本排期，统一在本 issue 里按状态跟踪进展。
+# - 需求按算子维度分组：自动从 `op:` 标签分组，缺少 `op:` 标签时按标题/正文里的算子名自动补齐。
+# - 版本标签（与版本分支同名，例如 v26.9.1）只用于标记 bug 的目标修复版本，
+#   因此版本分组只统计 VERSIONED_LABELS（默认 bug）。
+# - 未排期：open、带 VERSIONED_LABELS、没有版本标签的 issue 会被打上 `needs-version`，汇总到“未排期 bug”。
+# - 汇总 issue 由 `requirements-index` 标签标识，找不到时自动创建并置顶。
+#
+# 版本标签口径、手工排期命令（`/version`）与创建版本分支时的自动同步规则见 `version-tags.yml`。
+
+on:
+  issues:
+    types:
+      - opened
+      - edited
+      - deleted
+      - transferred
+      - closed
+      - reopened
+      - assigned
+      - unassigned
+      - labeled
+      - unlabeled
+      - milestoned
+      - demilestoned
+  schedule:
+    # 每天 09:20 (UTC+8) 兜底刷新一次
+    - cron: '20 1 * * *'
+  workflow_dispatch:
+
+# 批量打标签会触发大量 issues 事件；同一时间只保留最新一次刷新
+concurrency:
+  group: requirements-index
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  # 版本名规则：版本标签名与版本分支名同名
+  VERSION_NAME_PATTERN: '^v[0-9]{2,4}\.[0-9]{1,2}\.[0-9]{1,2}$'
+  # 需求清单范围：需求不做版本排期，只按状态汇总
+  REQUIREMENT_LABELS: 'enhancement'
+  # 需要版本标签的 issue 类型：版本标签只标记 bug 的目标修复版本
+  VERSIONED_LABELS: 'bug'
+  # 带这些标签的 issue 不参与版本排期
+  EXCLUDED_LABELS: 'question,invalid,duplicate,wontfix'
+  # 未排期标记标签
+  PENDING_LABEL: 'needs-version'
+  # 置顶汇总 issue 的标识标签与标题
+  INDEX_LABEL: 'requirements-index'
+  INDEX_TITLE: '需求汇总：近期规划与进展同步'
+  # 算子标签前缀：需求按 `op:<算子名>` 分组
+  OP_LABEL_PREFIX: 'op:'
+  # 算子名清单文件：由前面步骤从 aclnn 头文件与 OpDef 类名生成
+  OP_NAMES_FILE: ${{ runner.temp }}/op-names.txt
+  # 标题/正文只提到算子家族时的兜底分组
+  FAMILY_LABELS: 'kda,gdn'
+  # 未识别到算子时的分组名
+  UNCLASSIFIED_LABEL: '未分类'
+  # 是否在汇总里展示需求与 bug 的关联 PR（每个 open issue 一次 timeline 请求，仓库体量变大时可关闭）
+  INCLUDE_LINKED_PRS: 'true'
+  # 已完成明细最多展开多少条
+  CLOSED_ITEMS_LIMIT: '20'
+
+jobs:
+  refresh-index:
+    name: 刷新需求汇总
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库以获取算子清单
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 生成算子名清单
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            find fla -name 'aclnn_*.h' 2>/dev/null | sed 's|.*/aclnn_||; s|\.h$||; s|_v2$||' || true
+            grep -rhoE 'class [A-Za-z0-9_]+ *: *public OpDef' fla 2>/dev/null | sed 's/class //; s/ *: *public OpDef//' || true
+          } | sed '/^$/d' | sort -u > "$RUNNER_TEMP/op-names.txt"
+          echo "算子名清单：$(wc -l < "$RUNNER_TEMP/op-names.txt") 条"
+          head -5 "$RUNNER_TEMP/op-names.txt"
+
+      - name: 生成并置顶需求汇总
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const splitList = (value) =>
+              (value || '').split(',').map((item) => item.trim()).filter(Boolean);
+            const labelNamesOf = (issue) =>
+              issue.labels.map((label) => (typeof label === 'string' ? label : label.name));
+            const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+            const { owner, repo } = context.repo;
+            const repoRef = { owner, repo };
+            const serverUrl = (process.env.GITHUB_SERVER_URL || 'https://github.com').replace(/\/$/, '');
+            const versionPattern = new RegExp(process.env.VERSION_NAME_PATTERN);
+            const requirementLabels = splitList(process.env.REQUIREMENT_LABELS);
+            const versionedLabels = splitList(process.env.VERSIONED_LABELS);
+            const excludedLabels = new Set(splitList(process.env.EXCLUDED_LABELS));
+            const pendingLabel = process.env.PENDING_LABEL;
+            const indexLabel = process.env.INDEX_LABEL;
+            const indexTitle = process.env.INDEX_TITLE;
+            const opPrefix = process.env.OP_LABEL_PREFIX || 'op:';
+            const familyLabels = splitList(process.env.FAMILY_LABELS);
+            const unclassified = process.env.UNCLASSIFIED_LABEL || '未分类';
+            const includeLinkedPrs = (process.env.INCLUDE_LINKED_PRS || 'true') !== 'false';
+            const closedItemsLimit = Number(process.env.CLOSED_ITEMS_LIMIT || 20);
+            const AUTO_BEGIN = '<!-- requirements-index:auto -->';
+            const AUTO_END = '<!-- requirements-index:auto:end -->';
+            const STAMP_PATTERN = /最后更新：\d{4}-\d{2}-\d{2} \d{2}:\d{2}/;
+            const requirementLabelKeys = new Set(requirementLabels);
+
+            const versionRank = (name) => {
+              const [major, minor, patch] = name.replace(/^v/, '').split('.').map((part) => Number(part) || 0);
+              return major * 10000 + minor * 100 + patch;
+            };
+            const formatDate = (value) =>
+              typeof value === 'string' && value.length >= 10 ? value.slice(5, 10) : '';
+            const hasAny = (names, keys) => names.some((name) => keys.has(name));
+            const versionsOf = (names) =>
+              names.filter((name) => versionPattern.test(name)).sort((left, right) => versionRank(right) - versionRank(left));
+
+            async function ensureLabel(name, color, description) {
+              if (!name) return;
+              try {
+                await github.rest.issues.getLabel({ ...repoRef, name });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                await github.rest.issues.createLabel({ ...repoRef, name, color, description });
+                core.notice(`已创建标签 ${name}。`);
+              }
+            }
+
+            const palette = ['0e8a16', '1d76db', '5319e7', 'b60205', 'd93f0b', 'fbca04', '006b75', '0052cc'];
+            const colorFor = (name) => {
+              let hash = 0;
+              for (const char of name) hash = (hash * 31 + char.codePointAt(0)) % 100000;
+              return palette[hash % palette.length];
+            };
+
+            // 算子名归一化：CamelCase 与 snake_case 都映射到同一 key，展示名统一用 snake_case
+            const toSnake = (name) =>
+              name.includes('_')
+                ? name.toLowerCase()
+                : name
+                    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+                    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
+                    .toLowerCase();
+            const segmentsOf = (name) => toSnake(name).split('_').filter(Boolean);
+            const keyOf = (name) => segmentsOf(name).join('');
+            const opNamesFile = process.env.OP_NAMES_FILE;
+            const rawOpNames = fs.existsSync(opNamesFile)
+              ? fs.readFileSync(opNamesFile, 'utf8').split('\n').map((line) => line.trim()).filter(Boolean)
+              : [];
+            const opByKey = new Map();
+            for (const name of rawOpNames) {
+              const key = keyOf(name);
+              const display = toSnake(name);
+              const existing = opByKey.get(key);
+              if (!existing || display.length < existing.length) opByKey.set(key, display);
+            }
+            const opPatterns = [...opByKey.entries()].map(([key, display]) => ({
+              key,
+              display,
+              pattern: new RegExp(
+                `(?<![a-z0-9_])${segmentsOf(display).map(escapeRegExp).join('[_-\\s]?')}(?![a-z0-9_])`,
+                'i',
+              ),
+            }));
+            const familyPatterns = familyLabels.map((name) => ({
+              display: toSnake(name),
+              pattern: new RegExp(`(?<![a-z0-9_])${escapeRegExp(toSnake(name))}(?![a-z0-9_])`, 'i'),
+            }));
+            // 标题/正文里命中多个算子时取最长的（最具体）一个
+            const matchOperator = (text) => {
+              const hits = opPatterns.filter((item) => item.pattern.test(text));
+              const best = hits.filter((hit) => !hits.some((other) => other.key !== hit.key && other.key.includes(hit.key)));
+              if (best.length) {
+                best.sort((left, right) => right.key.length - left.key.length || left.display.localeCompare(right.display));
+                return best[0].display;
+              }
+              const family = familyPatterns.find((item) => item.pattern.test(text));
+              return family ? family.display : '';
+            };
+
+            // 版本标签对应的版本分支可能还没拉出来，找不到分支时汇总里只展示标签
+            const branchExists = new Map();
+            async function hasBranch(name) {
+              if (!branchExists.has(name)) {
+                try {
+                  await github.rest.repos.getBranch({ ...repoRef, branch: name });
+                  branchExists.set(name, true);
+                } catch {
+                  branchExists.set(name, false);
+                }
+              }
+              return branchExists.get(name);
+            }
+
+            // 关联 PR 用于在汇总里直接体现实现进展
+            async function linkedPullRequests(number) {
+              if (!includeLinkedPrs) return [];
+              try {
+                const events = await github.paginate(github.rest.issues.listEventsForTimeline, {
+                  ...repoRef,
+                  issue_number: number,
+                  per_page: 100,
+                });
+                const pullRequests = new Map();
+                for (const event of events) {
+                  const source = event.source && event.source.issue;
+                  if (event.event !== 'cross-referenced' || !source || !source.pull_request) continue;
+                  pullRequests.set(source.number, source);
+                }
+                return [...pullRequests.values()];
+              } catch (error) {
+                core.warning(`读取 #${number} 的关联 PR 失败：${error.message}`);
+                return [];
+              }
+            }
+
+            const listIssues = async (params) =>
+              (
+                await github.paginate(github.rest.issues.listForRepo, {
+                  ...repoRef,
+                  per_page: 100,
+                  ...params,
+                })
+              ).filter((issue) => !issue.pull_request);
+
+            await ensureLabel(indexLabel, '0e8a16', '需求汇总置顶 issue 标识，请勿手工删除');
+            await ensureLabel(pendingLabel, 'fbca04', '尚未排入任何版本分支的 bug，需要确定修复版本');
+
+            const requirementIssues = await listIssues({
+              state: 'all',
+              labels: requirementLabels.join(','),
+              sort: 'updated',
+              direction: 'desc',
+            });
+            const versionedIssues = versionedLabels.every((name) => requirementLabelKeys.has(name))
+              ? requirementIssues.filter((issue) => hasAny(labelNamesOf(issue), new Set(versionedLabels)))
+              : await listIssues({
+                  state: 'all',
+                  labels: versionedLabels.join(','),
+                  sort: 'updated',
+                  direction: 'desc',
+                });
+            const openIssues = await listIssues({ state: 'open' });
+
+            // 算子标签：人工已打 `op:` 标签的优先，其余按标题/正文匹配算子名自动补一个
+            const opAssigned = new Map();
+            const seenIssueNumbers = new Set();
+            for (const issue of [...requirementIssues, ...versionedIssues]) {
+              if (seenIssueNumbers.has(issue.number)) continue;
+              seenIssueNumbers.add(issue.number);
+              const names = labelNamesOf(issue);
+              if (names.some((name) => name.startsWith(opPrefix))) continue;
+              const matched = matchOperator(`${issue.title || ''}\n${issue.body || ''}`);
+              if (matched) opAssigned.set(issue.number, matched);
+            }
+            const opLabels = [...new Set(opAssigned.values())];
+            for (const name of opLabels) {
+              await ensureLabel(`${opPrefix}${name}`, colorFor(name), `算子 ${name} 的需求与缺陷`);
+            }
+            let opLabelAdded = 0;
+            const opEntries = [...opAssigned.entries()];
+            for (let index = 0; index < opEntries.length; index += 8) {
+              const batch = opEntries.slice(index, index + 8);
+              const results = await Promise.all(
+                batch.map(([issue_number, name]) =>
+                  github.rest.issues
+                    .addLabels({ ...repoRef, issue_number, labels: [`${opPrefix}${name}`] })
+                    .then(() => true)
+                    .catch((error) => {
+                      core.warning(`#${issue_number} 添加算子标签失败：${error.message}`);
+                      return false;
+                    }),
+                ),
+              );
+              opLabelAdded += results.filter(Boolean).length;
+            }
+            const opsOf = (issue) => {
+              const existing = labelNamesOf(issue)
+                .filter((name) => name.startsWith(opPrefix))
+                .map((name) => name.slice(opPrefix.length))
+                .sort();
+              if (existing.length) return existing;
+              const assigned = opAssigned.get(issue.number);
+              return assigned ? [assigned] : [];
+            };
+
+            // 未排期标记只服务需要版本标签的类型：open + 没有版本标签 + 不在排除列表
+            const shouldCarryPending = (names) =>
+              hasAny(names, new Set(versionedLabels)) &&
+              versionsOf(names).length === 0 &&
+              !names.some((name) => excludedLabels.has(name));
+            const needsPendingLabel = [];
+            const resolvedPending = [];
+            for (const issue of openIssues) {
+              const names = labelNamesOf(issue);
+              if (names.includes(indexLabel)) continue;
+              const hasPendingLabel = names.includes(pendingLabel);
+              const wanted = shouldCarryPending(names);
+              if (wanted && !hasPendingLabel) needsPendingLabel.push(issue.number);
+              if (!wanted && hasPendingLabel) resolvedPending.push(issue.number);
+            }
+
+            let pendingAdded = 0;
+            let pendingRemoved = 0;
+            for (let index = 0; index < needsPendingLabel.length; index += 8) {
+              const batch = needsPendingLabel.slice(index, index + 8);
+              const results = await Promise.all(
+                batch.map((issue_number) =>
+                  github.rest.issues
+                    .addLabels({ ...repoRef, issue_number, labels: [pendingLabel] })
+                    .then(() => true)
+                    .catch((error) => {
+                      core.warning(`#${issue_number} 添加 ${pendingLabel} 失败：${error.message}`);
+                      return false;
+                    }),
+                ),
+              );
+              pendingAdded += results.filter(Boolean).length;
+            }
+            for (const issue_number of resolvedPending) {
+              await github.rest.issues
+                .removeLabel({ ...repoRef, issue_number, name: pendingLabel })
+                .then(() => {
+                  pendingRemoved += 1;
+                })
+                .catch((error) => core.warning(`#${issue_number} 移除 ${pendingLabel} 失败：${error.message}`));
+            }
+
+            // 需求：不做版本排期，按算子维度分组
+            const openRequirements = requirementIssues.filter((issue) => issue.state === 'open');
+            const closedRequirements = requirementIssues
+              .filter((issue) => issue.state === 'closed')
+              .sort((left, right) => String(right.closed_at).localeCompare(String(left.closed_at)));
+
+            // bug：按版本标签分组，一个 bug 带多个版本标签时挂在最新版本下并标注顺延
+            const groups = new Map();
+            const untaggedVersioned = [];
+            for (const issue of versionedIssues) {
+              const versions = versionsOf(labelNamesOf(issue));
+              if (versions.length === 0) {
+                if (issue.state === 'open') untaggedVersioned.push(issue);
+                continue;
+              }
+              const [primary, ...carried] = versions;
+              if (!groups.has(primary)) groups.set(primary, []);
+              groups.get(primary).push({ issue, carried });
+            }
+            const orderedVersions = [...groups.keys()].sort((left, right) => versionRank(right) - versionRank(left));
+
+            const decorate = async (entries) =>
+              Promise.all(
+                entries.map(async (entry) => ({
+                  ...entry,
+                  pullRequests: entry.issue.state === 'open' ? await linkedPullRequests(entry.issue.number) : [],
+                })),
+              );
+
+            const [requirementOpenEntries, requirementDoneEntries, versionGroups, pendingEntries] = await Promise.all([
+              decorate(openRequirements.map((issue) => ({ issue }))),
+              decorate(closedRequirements.map((issue) => ({ issue }))),
+              Promise.all(
+                orderedVersions.map(async (version) => ({
+                  version,
+                  entries: await decorate(groups.get(version)),
+                })),
+              ),
+              decorate(untaggedVersioned.map((issue) => ({ issue }))),
+            ]);
+            for (const version of orderedVersions) await hasBranch(version);
+
+            // 按算子分组：条数多的在前，未分类放最后
+            const groupByOperator = (entries) => {
+              const map = new Map();
+              for (const entry of entries) {
+                const ops = opsOf(entry.issue);
+                const key = ops[0] || unclassified;
+                if (!map.has(key)) map.set(key, []);
+                map.get(key).push({ ...entry, extraOps: ops.slice(1) });
+              }
+              return [...map.entries()].sort((left, right) => {
+                if (left[0] === unclassified) return 1;
+                if (right[0] === unclassified) return -1;
+                return right[1].length - left[1].length || left[0].localeCompare(right[0]);
+              });
+            };
+
+            const renderIssue = ({ issue, carried, pullRequests, extraOps }) => {
+              const done = issue.state === 'closed';
+              const details = [];
+              const assignees = (issue.assignees || []).map((user) => `@${user.login}`);
+              if (assignees.length) details.push(assignees.join(' '));
+              if (pullRequests && pullRequests.length) {
+                details.push(
+                  pullRequests
+                    .slice(0, 3)
+                    .map((pullRequest) => {
+                      const state = pullRequest.state === 'closed'
+                        ? pullRequest.pull_request && pullRequest.pull_request.merged_at
+                          ? '已合入'
+                          : '已关闭'
+                        : '进行中';
+                      return `PR #${pullRequest.number}（${state}）`;
+                    })
+                    .join(' '),
+                );
+              }
+              if (extraOps && extraOps.length) {
+                details.push(`＋${extraOps.map((name) => `\`${opPrefix}${name}\``).join(' ')}`);
+              }
+              if (carried && carried.length) {
+                details.push(`顺延 ${carried.map((name) => `\`${name}\``).join('、')}`);
+              }
+              details.push(done ? `完成于 ${formatDate(issue.closed_at)}` : `更新于 ${formatDate(issue.updated_at)}`);
+              return `- [${done ? 'x' : ' '}] [#${issue.number}](${issue.html_url}) ${issue.title} — ${details.join(' — ')}`;
+            };
+
+            const issueSearch = (query) =>
+              `${serverUrl}/${owner}/${repo}/issues?q=${encodeURIComponent(query)}`;
+
+            const renderOperatorGroups = (entries) => {
+              const lines = [];
+              for (const [operator, items] of groupByOperator(entries)) {
+                const title = operator === unclassified ? unclassified : `\`${operator}\``;
+                lines.push(`#### ${title}（${items.length}）`, '');
+                for (const entry of items) lines.push(renderIssue(entry));
+                lines.push('');
+              }
+              return lines;
+            };
+
+            const renderVersionGroup = ({ version, entries }) => {
+              const open = entries.filter((entry) => entry.issue.state === 'open');
+              const closed = entries
+                .filter((entry) => entry.issue.state === 'closed')
+                .sort((left, right) => String(right.issue.closed_at).localeCompare(String(left.issue.closed_at)));
+              const lines = [
+                `#### ${version} · 未解决 ${open.length} / 共 ${entries.length}`,
+                '',
+                `- 版本分支：${branchExists.get(version) === true ? `[${version}](${serverUrl}/${owner}/${repo}/tree/${version})` : '暂未创建'}` +
+                  ` ｜ 列表：[${version} bug](${issueSearch(`is:issue label:"${version}"`)})`,
+                '',
+              ];
+              for (const entry of open) lines.push(renderIssue(entry));
+              if (!open.length) lines.push('- 无未解决 bug。');
+              if (closed.length) {
+                lines.push('');
+                lines.push(`<details><summary>该版本已关闭 ${closed.length} 个 bug</summary>`);
+                lines.push('');
+                for (const entry of closed.slice(0, closedItemsLimit)) lines.push(renderIssue(entry));
+                if (closed.length > closedItemsLimit) {
+                  lines.push('');
+                  lines.push(`其余 ${closed.length - closedItemsLimit} 项见上方列表链接。`);
+                }
+                lines.push('');
+                lines.push('</details>');
+              }
+              lines.push('');
+              return lines.join('\n');
+            };
+
+            const openOperatorGroups = groupByOperator(requirementOpenEntries);
+            const unclassifiedCount = requirementOpenEntries.filter((entry) => opsOf(entry.issue).length === 0).length;
+            const openVersionedCount = versionedIssues.filter((issue) => issue.state === 'open').length;
+            const closedVersionedCount = versionedIssues.length - openVersionedCount;
+
+            // UTC+8 时间戳便于中文团队直接阅读
+            const stamp = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 16).replace('T', ' ');
+            const autoLines = [
+              AUTO_BEGIN,
+              '## 需求汇总与进展同步',
+              '',
+              `> 本节由 \`.github/workflows/requirements-index.yml\` 自动生成，最后更新：${stamp}（UTC+8）。请勿手工编辑本节内容，需要补充说明请写在本节之外。`,
+              `> ${requirementLabels.map((name) => `\`${name}\``).join('、')} 需求不做版本排期，按算子分组跟踪进展；版本标签（与版本分支同名）只用于标记 ${versionedLabels.map((name) => `\`${name}\``).join('、')} 的目标修复版本，创建版本分支时会自动为未解决的 ${versionedLabels.join('/')} 补打该版本标签。`,
+              '',
+              `- 需求总数：${requirementIssues.length}（未完成 ${openRequirements.length}，已完成 ${closedRequirements.length}）`,
+              `- 需求算子分组：${openOperatorGroups.filter(([name]) => name !== unclassified).length} 个，未分类 ${unclassifiedCount} 条` +
+                (unclassifiedCount ? ` ｜ [查看未分类](${issueSearch(`is:issue is:open label:"${requirementLabels.join(',')}"`)})` : ''),
+              `- ${versionedLabels.join('/')} 总数：${versionedIssues.length}（未解决 ${openVersionedCount}，已关闭 ${closedVersionedCount}）`,
+              `- 未排期 ${versionedLabels.join('/')}（没有版本标签）：${pendingEntries.length} 个` +
+                (pendingEntries.length ? ` ｜ [查看](${issueSearch(`is:issue is:open label:"${pendingLabel}"`)})` : ''),
+              '',
+              `### 未完成需求（${openRequirements.length}）`,
+              '',
+            ];
+            if (openRequirements.length === 0) {
+              autoLines.push('- 无未完成需求。', '');
+            } else {
+              autoLines.push(...renderOperatorGroups(requirementOpenEntries));
+            }
+            autoLines.push(`### 已完成需求（${closedRequirements.length}）`, '');
+            if (closedRequirements.length === 0) {
+              autoLines.push('- 暂无已完成需求。', '');
+            } else {
+              autoLines.push('<details><summary>展开已完成需求（按算子分组）</summary>', '');
+              autoLines.push(...renderOperatorGroups(requirementDoneEntries.slice(0, closedItemsLimit)));
+              if (closedRequirements.length > closedItemsLimit) {
+                autoLines.push(
+                  `其余 ${closedRequirements.length - closedItemsLimit} 项见 [全部需求](${issueSearch(`is:issue label:"${requirementLabels.join(',')}"`)})。`,
+                  '',
+                );
+              }
+              autoLines.push('</details>', '');
+            }
+            autoLines.push('### 各版本 bug 进展', '');
+            if (versionGroups.length === 0) {
+              autoLines.push('- 暂无带版本标签的 bug。', '');
+            } else {
+              for (const group of versionGroups) autoLines.push(renderVersionGroup(group));
+            }
+            autoLines.push('### 未排期 bug（没有版本标签）', '');
+            if (pendingEntries.length === 0) {
+              autoLines.push('- 无未排期 bug，所有 bug 都已确定目标修复版本。');
+            } else {
+              autoLines.push(`- 列表：${issueSearch(`is:issue is:open label:"${pendingLabel}"`)}`, '');
+              for (const entry of pendingEntries) autoLines.push(renderIssue(entry));
+            }
+            autoLines.push('', AUTO_END);
+            const autoBlock = autoLines.join('\n');
+
+            // 手工区：自动区之外的内容保持原样
+            const manualSection = [
+              '## 规划说明（手工维护区）',
+              '',
+              '> 本区内容不会被自动刷新覆盖，可写版本规划口径、排期规则、各版本特性范围等说明。',
+              '',
+              '- 版本分支命名：`v<年份>.<月份>.<当月序号>`，例如 `v26.9.0` 是 2026 年 9 月的第一个分支，`v26.9.1` 是当月第二个分支。',
+              `- 需求分组：需求按 \`${opPrefix}<算子名>\` 标签分组，例如 \`${opPrefix}chunk_fwd_h\`；缺少算子标签时按标题与正文里的算子名自动补齐，也可以人工加/换标签纠正。`,
+              `- 未分类：标题和正文都没有可识别算子名时归入「${unclassified}」，需要人工补 \`${opPrefix}\` 标签。`,
+              '- 版本标签：与版本分支同名，只表示“该 bug 的目标修复版本”；一个 bug 可以带多个版本标签，表示在旧版本未修复并顺延到后续版本。',
+              '- 需求排期：需求类 issue 不打版本标签、不按版本排期，统一在本 issue 的“未完成需求 / 已完成需求”里按算子跟踪进展。',
+              '- 进展口径：需求是否完成以 issue 状态为准，实现进展以 issue 关联 PR 为准；精度、性能、内存等验收口径以 issue 正文的“验收要求”为准。',
+              '- 版本差异：相邻版本分支的差异按大颗粒度特性划分，例如 `v26.9.1` 相对 `v26.9.0` 的差异是 KDA V2 极致性能。',
+              '',
+            ].join('\n');
+
+            const mergeBody = (current, block) => {
+              const text = current || '';
+              const begin = text.indexOf(AUTO_BEGIN);
+              const end = text.indexOf(AUTO_END);
+              if (begin !== -1 && end !== -1 && end > begin) {
+                return `${text.slice(0, begin)}${block}${text.slice(end + AUTO_END.length)}`;
+              }
+              const prefix = text.trim() ? `${text.trimEnd()}\n\n` : '';
+              return `${prefix}${block}\n`;
+            };
+
+            // 定位置顶汇总 issue，不存在则创建
+            const existing = (
+              await github.paginate(github.rest.issues.listForRepo, {
+                ...repoRef,
+                state: 'all',
+                labels: indexLabel,
+                per_page: 50,
+              })
+            ).filter((issue) => !issue.pull_request);
+            let indexIssue = existing[0];
+            if (!indexIssue) {
+              const created = await github.rest.issues.create({
+                ...repoRef,
+                title: indexTitle,
+                labels: [indexLabel],
+                body: `${manualSection}\n\n${autoBlock}\n`,
+              });
+              indexIssue = created.data;
+              core.notice(`已创建需求汇总 issue #${indexIssue.number}。`);
+            } else {
+              const nextBody = mergeBody(indexIssue.body, autoBlock);
+              const comparable = (text) => (text || '').replace(STAMP_PATTERN, '最后更新：<stamp>');
+              if (comparable(nextBody) !== comparable(indexIssue.body)) {
+                await github.rest.issues.update({ ...repoRef, issue_number: indexIssue.number, body: nextBody });
+                core.notice(`已更新需求汇总 issue #${indexIssue.number}。`);
+              } else {
+                core.notice(`需求汇总 issue #${indexIssue.number} 无需更新。`);
+              }
+            }
+
+            // 汇总 issue 必须保持 open 且置顶
+            if (indexIssue.state === 'closed') {
+              await github.rest.issues.update({ ...repoRef, issue_number: indexIssue.number, state: 'open' });
+            }
+            try {
+              const pinned = await github.graphql(
+                `query ($owner: String!, $repo: String!) {
+                   repository(owner: $owner, name: $repo) {
+                     pinnedIssues(first: 10) { nodes { issue { number } } }
+                   }
+                 }`,
+                { owner, repo },
+              );
+              const pinnedNumbers = pinned.repository.pinnedIssues.nodes.map((node) => node.issue.number);
+              if (!pinnedNumbers.includes(indexIssue.number)) {
+                const { data: fresh } = await github.rest.issues.get({ ...repoRef, issue_number: indexIssue.number });
+                await github.graphql(
+                  `mutation ($issueId: ID!) {
+                     pinIssue(input: { issueId: $issueId }) { issue { number } }
+                   }`,
+                  { issueId: fresh.node_id },
+                );
+                core.notice(`已置顶需求汇总 issue #${indexIssue.number}。`);
+              }
+            } catch (error) {
+              core.warning(`置顶需求汇总 issue 失败（仓库置顶 issue 数量上限为 3）：${error.message}`);
+            }
+
+            await core.summary
+              .addHeading('需求汇总', 2)
+              .addRaw(
+                [
+                  `- 汇总 issue：#${indexIssue.number}`,
+                  `- 需求：未完成 ${openRequirements.length}，已完成 ${closedRequirements.length}，算子分组 ${openOperatorGroups.length} 个（未分类 ${unclassifiedCount}）`,
+                  `- 新打算子标签：${opLabelAdded} 个`,
+                  `- ${versionedLabels.join('/')}：未解决 ${openVersionedCount}，已关闭 ${closedVersionedCount}，版本分组 ${orderedVersions.length} 个`,
+                  `- 未排期 ${versionedLabels.join('/')}：${pendingEntries.length} 个`,
+                  `- 新打 ${pendingLabel}：${pendingAdded} 个，移除 ${pendingLabel}：${pendingRemoved} 个`,
+                  '',
+                ].join('\n'),
+              )
+              .write();
