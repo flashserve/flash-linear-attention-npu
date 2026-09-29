@@ -3,17 +3,24 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import os
 import shlex
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
+# Lowest torch whose stable headers/symbols the launcher was verified against.
+# Built against 2.9 headers, loaded and run under 2.7.1 (241: py3.10 +
+# torch 2.7.1.post5 + torch_npu 2.7.1.post5, full Ascend950 scenario set).
+STABLE_ABI_MIN_TORCH = "2.7.1"
+
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-from fla_npu_artifacts import get_wheel_filename  # noqa: E402
 
 
 def _resolve_output_dir(value: str) -> Path:
@@ -29,6 +36,85 @@ def _install_command(wheel_path: Path) -> str:
         "--force-reinstall --no-cache-dir --no-deps "
         f"{shlex.quote(str(wheel_path))}"
     )
+
+
+def _prepare_abi_free_launcher() -> None:
+    """Stage the ABI-free launcher the wheel will carry.
+
+    ``pip wheel`` builds in a temporary copy of the project, so preparing the
+    package directory here (before the wheel is built) is what actually decides
+    what ships: pure Python plus ``libfla_npu_stable.so``, with no CPython ABI
+    and no libtorch C++ ABI.  A pure-ctypes wheel is
+    ``FLA_NPU_BUILD_STABLE_ABI=0``.
+    """
+
+    package_dir = REPO_ROOT / "torch_custom" / "fla_npu" / "fla_npu"
+    if not package_dir.is_dir():
+        return
+    if os.getenv("FLA_NPU_BUILD_STABLE_ABI", "TRUE").upper() in {
+            "0", "FALSE", "NO", "OFF"}:
+        return
+    builder = (REPO_ROOT / "torch_custom" / "fla_npu" / "csrc"
+               / "build_stable.py")
+    target = package_dir / "libfla_npu_stable.so"
+    subprocess.run([sys.executable, str(builder), "--no-debug-probe",
+                    "--out", str(target)], check=True)
+    print(f"[fla-npu build] staged {target.name} ({target.stat().st_size} bytes)",
+          flush=True)
+
+
+def _inject_runtime_pins(wheel_path: Path) -> None:
+    """Add Requires-Dist pins to a wheel that carries a compiled launcher.
+
+    pyproject.toml owns ``[project]`` metadata, so ``install_requires`` in
+    setup.py is ignored; the pins have to be injected into the produced wheel.
+
+    The Stable-ABI wheel (``libfla_npu_stable.so``) only needs the
+    ``aoti_torch_*`` runtime symbols, which exist from 2.7.1 on, so it declares a
+    *lower bound*: one wheel then serves every torch/torch_npu above it.
+    """
+
+    with zipfile.ZipFile(wheel_path) as archive:
+        infos = archive.infolist()
+        blobs = {info.filename: archive.read(info.filename) for info in infos}
+
+    has_stable = any(name.endswith("libfla_npu_stable.so") for name in blobs)
+    if has_stable:
+        pins = [f"torch>={STABLE_ABI_MIN_TORCH}",
+                f"torch_npu>={STABLE_ABI_MIN_TORCH}"]
+    else:
+        return  # pure-ctypes wheel: nothing to declare
+    if not pins:
+        return
+    meta_name = next(name for name in blobs
+                     if name.endswith(".dist-info/METADATA"))
+    meta = blobs[meta_name].decode("utf-8")
+    if any(f"Requires-Dist: {pin}" in meta for pin in pins):
+        return
+    lines = meta.splitlines()
+    insert_at = len(lines)
+    for index, line in enumerate(lines):
+        if line.startswith("Requires-Dist:"):
+            insert_at = index + 1
+    lines[insert_at:insert_at] = [f"Requires-Dist: {pin}" for pin in pins]
+    blobs[meta_name] = ("\n".join(lines) + "\n").encode("utf-8")
+
+    record_name = next(name for name in blobs if name.endswith(".dist-info/RECORD"))
+    digest = base64.urlsafe_b64encode(
+        hashlib.sha256(blobs[meta_name]).digest()).rstrip(b"=").decode()
+    size = len(blobs[meta_name])
+    record = [
+        f"{meta_name},sha256={digest},{size}"
+        if line.startswith(meta_name + ",") else line
+        for line in blobs[record_name].decode("utf-8").splitlines()
+    ]
+    blobs[record_name] = ("\n".join(record) + "\n").encode("utf-8")
+
+    with zipfile.ZipFile(wheel_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        for info in infos:
+            archive.writestr(info, blobs[info.filename])
+    print(f"[fla-npu build] pinned {', '.join(pins)} into the wheel metadata",
+          flush=True)
 
 
 def _collect_build_args(args: argparse.Namespace) -> str:
@@ -169,8 +255,7 @@ def main() -> int:
 
     wheel_dir = _resolve_output_dir(args.wheel_dir)
     wheel_dir.mkdir(parents=True, exist_ok=True)
-    wheel_path = wheel_dir / get_wheel_filename(REPO_ROOT)
-
+    _prepare_abi_free_launcher()
     command = [
         sys.executable,
         "-m",
@@ -189,8 +274,14 @@ def main() -> int:
         env["FLA_NPU_BUILD_ARGS"] = build_args
     subprocess.run(command, cwd=REPO_ROOT, check=True, env=env)
 
-    if not wheel_path.is_file():
-        raise RuntimeError(f"Expected wheel was not produced: {wheel_path}")
+    # The wheel is tagged for the host platform and the build tag carries the
+    # SoC, so resolve the actual file instead of predicting the name.
+    wheel_files = sorted(wheel_dir.glob("flash_linear_attention_npu-*.whl"))
+    if not wheel_files:
+        raise RuntimeError(f"Expected wheel was not produced under {wheel_dir}")
+    wheel_path = wheel_files[-1]
+
+    _inject_runtime_pins(wheel_path)
 
     print(f"[fla-npu build] Wheel: {wheel_path}", flush=True)
     print(f"[fla-npu build] Install command:", flush=True)

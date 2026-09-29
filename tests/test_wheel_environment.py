@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest import mock
 
 import setuptools
+import zipfile
 
 
 try:
@@ -176,6 +177,101 @@ class WheelEnvironmentTest(unittest.TestCase):
         setup_source = (REPO_ROOT / "setup.py").read_text(encoding="utf-8")
         self.assertIn("FLA_NPU_OPS", setup_source)
         self.assertIn("--ops=", setup_source)
+
+    def test_default_build_is_the_abi_free_one(self) -> None:
+        """The default artifact must not pin the CPython/libtorch C++ ABI.
+
+        The stable launcher is plain package data and the legacy extension is
+        off, so no CPython ABI is involved -- but the payload is still built for
+        one host platform, which is what the wheel has to say about itself.
+        """
+
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("FLA_NPU_BUILD_STABLE_ABI", None)
+            setup_globals, setup_kwargs = _load_setup()
+            # The predicate reads os.environ, so it has to be called while the
+            # environment under test is still in place.
+            self.assertTrue(setup_globals["_stable_build_enabled"]())
+            distribution = setup_kwargs["distclass"]()
+            self.assertFalse(distribution.is_pure())
+            self.assertFalse(distribution.has_ext_modules())
+
+    def test_default_wheel_is_tagged_by_platform_not_by_python(self) -> None:
+        """py3-none-<platform>: one wheel per host, not one per Python minor.
+
+        ``any`` would let pip install an aarch64 launcher on x86_64, and a
+        cp3xx tag would multiply the release matrix for a wheel that carries no
+        CPython extension at all.
+        """
+
+        import sysconfig
+
+        setup_globals, setup_kwargs = _load_setup()
+        command = setup_globals["CMDCLASS"]["bdist_wheel"](
+            setup_kwargs["distclass"]({"name": "flash-linear-attention-npu",
+                                       "version": "0"}))
+        command.finalize_options()
+        python, abi, platform = command.get_tag()
+        self.assertEqual((python, abi), ("py3", "none"))
+        self.assertNotEqual(platform, "any")
+        self.assertEqual(
+            platform,
+            sysconfig.get_platform().replace("-", "_").replace(".", "_"))
+
+    def test_stable_launcher_can_be_turned_off(self) -> None:
+        with mock.patch.dict(os.environ,
+                             {"FLA_NPU_BUILD_STABLE_ABI": "0"}):
+            setup_globals, _ = _load_setup()
+            self.assertFalse(setup_globals["_stable_build_enabled"]())
+
+    def _write_minimal_wheel(self, path: Path, entries: dict) -> None:
+        info = "demo-1.0.dist-info"
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr(f"{info}/METADATA", (
+                "Metadata-Version: 2.1\nName: demo\nVersion: 1.0\n"
+                "Requires-Dist: numpy\n"))
+            for name, payload in entries.items():
+                archive.writestr(name, payload)
+            archive.writestr(f"{info}/RECORD",
+                             f"{info}/METADATA,,\n{info}/RECORD,,\n")
+
+    @staticmethod
+    def _wheel_metadata(wheel: Path) -> str:
+        with zipfile.ZipFile(wheel) as archive:
+            name = next(entry for entry in archive.namelist()
+                        if entry.endswith("METADATA"))
+            return archive.read(name).decode("utf-8")
+
+    def test_abi_free_wheel_declares_a_torch_lower_bound(self) -> None:
+        """One wheel for every torch above the floor, not an exact pin.
+
+        The Stable-ABI launcher resolves its aoti_torch_* symbols at load, so
+        what it needs is a minimum version rather than the exact build it was
+        compiled against.
+        """
+
+        build_wheel = runpy.run_path(str(REPO_ROOT / "scripts" / "build_wheel.py"))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wheel = Path(temp_dir) / "demo-1.0-py3-none-any.whl"
+            self._write_minimal_wheel(
+                wheel, {"fla_npu/libfla_npu_stable.so": b"\x7fELF"})
+            build_wheel["_inject_runtime_pins"](wheel)
+            text = self._wheel_metadata(wheel)
+        self.assertIn("Requires-Dist: torch>=2.7.1", text)
+        self.assertIn("Requires-Dist: torch_npu>=2.7.1", text)
+        self.assertNotIn("Requires-Dist: torch==", text)
+
+    def test_pure_ctypes_wheel_declares_nothing(self) -> None:
+        """No compiled launcher means no torch constraint to add."""
+
+        build_wheel = runpy.run_path(str(REPO_ROOT / "scripts" / "build_wheel.py"))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wheel = Path(temp_dir) / "demo-1.0-py3-none-any.whl"
+            self._write_minimal_wheel(wheel, {"fla_npu/__init__.py": b""})
+            before = self._wheel_metadata(wheel)
+            build_wheel["_inject_runtime_pins"](wheel)
+            after = self._wheel_metadata(wheel)
+        self.assertEqual(before, after)
 
     def test_generated_set_env_is_idempotent(self) -> None:
         rewrite_set_env = self.setup_globals["_rewrite_set_env"]

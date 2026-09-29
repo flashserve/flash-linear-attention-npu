@@ -6,3 +6,8 @@ Dockerfile text eol=lf
 ci/Dockerfile text eol=lf
 .gitattributes text eol=lf
 .github/CODEOWNERS text eol=lf
+
+# The vendored torch headers have to stay byte-identical to upstream so
+# MANIFEST.sha256 keeps meaning something, and a Windows checkout with
+# core.autocrlf=true would otherwise rewrite their line endings.
+torch_custom/fla_npu/csrc/include/torch_stable_abi/** -text
