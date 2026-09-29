@@ -608,6 +608,24 @@ private:
         WaitFlag<HardEvent::MTE2_V>(evId);
     }
 
+    // v19：带列偏移与行距的 FP32 平面搬运（head 内并行时只取"自己那一半"的列）。
+    // 未拆分时 c0 == 0、rowStride == cols，与 IssueLoadPlaneF32 等价。
+    __aicore__ inline void IssueLoadPlaneTile(const LocalTensor<float> &dst, GM_ADDR src, uint32_t r0, uint32_t c0,
+                                              uint32_t rows, uint32_t cols, uint32_t rowStride, uint32_t evId)
+    {
+        AscendC::GlobalTensor<float> gSrc;
+        gSrc.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(src));
+        SetFlag<HardEvent::V_MTE2>(CDHP_EV_V_MTE2);
+        WaitFlag<HardEvent::V_MTE2>(CDHP_EV_V_MTE2);
+        SetFlag<HardEvent::MTE3_MTE2>(CDHP_EV_MTE3_MTE2);
+        WaitFlag<HardEvent::MTE3_MTE2>(CDHP_EV_MTE3_MTE2);
+        AscendC::DataCopyExtParams params{static_cast<uint16_t>(rows), static_cast<uint32_t>(cols * sizeof(float)),
+                                          static_cast<uint32_t>((rowStride - cols) * sizeof(float)), 0, 0};
+        AscendC::DataCopyPad(dst, gSrc[static_cast<uint64_t>(r0) * rowStride + c0], params,
+                             AscendC::DataCopyPadExtParams<float>{false, 0, 0, 0});
+        SetFlag<HardEvent::MTE2_V>(evId);
+    }
+
     // 只下发搬出（不 PipeBarrier 等搬出完成）；搬出完成由 SetFlag<MTE3_V>(evId) 通知，
     // 下一次复用这块 UB 前再用 WaitPlaneStore(evId) 等它。
     __aicore__ inline void IssueStorePlaneF32(const LocalTensor<float> &src, GM_ADDR dst, uint32_t r0, uint32_t rows,
@@ -858,19 +876,24 @@ private:
             const uint32_t tileRows = MinV(CDHP_VEC_TILE, kDim - r0);
             // v13：dH 操作数写进 B 操作数 bOper 的第三段（与 do/-dv 同 window、同平面），
             // 这样 Cube 可以把 [do; -dv; dH_bf] 当成**一份**行主序 B 操作数读。
-            StoreTileModel(dhState[r0 * vDim],
-                           this->BOperAt(window) + static_cast<uint64_t>(2U * mDim + r0) * vDim * sizeof(DT),
-                           tileRows, vDim, vDim);
+            // v19：head 内并行时只写自己那一半的 V 列（状态是 [K, ECols]，平面行距仍是 V）。
+            StoreTileModel(dhState[r0 * ECols()],
+                           this->BOperAt(window) + static_cast<uint64_t>(2U * mDim + r0) * vDim * sizeof(DT) +
+                               static_cast<uint64_t>(EC0()) * sizeof(DT),
+                           tileRows, ECols(), vDim);
             if (isFirstChunk) {
                 // 初值 P = I：本 chunk 的 Cube 要读的 P 操作数就是这个单位阵。
                 // 注意这里只写 PBf（模型 dtype）；fp32 的 P_prev 由 StageState 首 chunk 内联生成，
                 // 因此 PAt 的 fp32 平面只在 StageState 里写、且只被"下一轮 StageState"读一次 ⇒
                 // 每个 tile 恰好一 set 一 wait，可以安全地用单比特 event 做 credit。
+                // v19：head 内并行时只写 P 的 [PR0, PR0+PRows) 行（对角仍按绝对行号注入）。
                 LocalTensor<float> pF = s1F32_.Get<float>();
-                CDHP_InitIdentityVF(UbPtr(pF), static_cast<uint16_t>(r0), static_cast<uint16_t>(tileRows),
-                                    static_cast<uint16_t>(kDim));
-                StoreTileModel(pF, this->PBfAt(prevWin) + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows,
-                               kDim, kDim);
+                if (r0 >= PR0() && r0 < PR0() + PRows()) {
+                    CDHP_InitIdentityVF(UbPtr(pF), static_cast<uint16_t>(r0), static_cast<uint16_t>(tileRows),
+                                        static_cast<uint16_t>(kDim));
+                    StoreTileModel(pF, this->PBfAt(prevWin) + static_cast<uint64_t>(r0) * kDim * sizeof(DT),
+                                   tileRows, kDim, kDim);
+                }
             }
         }
         // 操作数已落盘：通知 Cube 可以开始本 chunk 的 Z/ZP
@@ -907,25 +930,34 @@ private:
             // v13：Cube 已经把 AB + Z 一次算成一份 [K,V] FP32（inc），这里只读一份而不是两份
             LocalTensor<float> incF = s0F32_.Get<float>();
             LocalTensor<float> zpF = s3F32_.Get<float>();
-            IssueLoadPlaneF32(incF, this->AbAt(window), r0, tileRows, vDim, CDHP_EV_LOAD1);
+            // v19：E 链只读自己那一半 V 列（平面行距仍是 V，UB 内是紧凑 tile）。
+            IssueLoadPlaneTile(incF, this->AbAt(window), r0, EC0(), tileRows, ECols(), vDim, CDHP_EV_LOAD1);
+            // 注意：ZP 的搬运必须和 inc **成对提前下发**（分属两个循环会让 MTE2 队列重新变浅，
+            // 实测掉 ~5%）。未拆分时每个 tile 都要用；拆分时只有属于本半区的 tile 才用它，多取的那两笔
+            // 只是白读一次（后续可以在 halfSplit 打开时再优化成按需下发）。
             IssueLoadPlaneF32(zpF, this->ZpAt(window), r0, tileRows, kDim, CDHP_EV_LOAD3);
             WaitPlaneLoad(CDHP_EV_LOAD1);
             WaitPlaneLoad(CDHP_EV_LOAD3);
             // dH_new = decayK ⊙ dH_old + (AB + Z)：单项累加，直接复用 P 链的 V3Accum
-            CDHP_V3AccumVF(UbPtr(dhState) + static_cast<uint64_t>(r0) * vDim, UbPtr(incF), UbPtr(decayF),
-                           static_cast<uint16_t>(r0), static_cast<uint16_t>(tileRows), static_cast<uint16_t>(vDim));
-            // P_new = decayK ⊙ P_old + ZP；首 chunk 的 P_old = I 内联生成
-            if (isFirstChunk) {
-                CDHP_InitIdentityVF(UbPtr(pState) + static_cast<uint64_t>(r0) * kDim,
-                                    static_cast<uint16_t>(r0), static_cast<uint16_t>(tileRows),
-                                    static_cast<uint16_t>(kDim));
-            }
-            CDHP_V3AccumVF(UbPtr(pState) + static_cast<uint64_t>(r0) * kDim, UbPtr(zpF), UbPtr(decayF),
+            CDHP_V3AccumVF(UbPtr(dhState) + static_cast<uint64_t>(r0) * ECols(), UbPtr(incF), UbPtr(decayF),
                            static_cast<uint16_t>(r0), static_cast<uint16_t>(tileRows),
-                           static_cast<uint16_t>(kDim));
-            StoreTileModel(pState[r0 * kDim],
-                           this->PBfAt(window) + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows, kDim,
-                           kDim);
+                           static_cast<uint16_t>(ECols()));
+            // P 链只处理本 AIV 负责的 K 行（[PR0, PR0+PRows)），未拆分时就是整段。
+            if (r0 >= PR0() && r0 < PR0() + PRows()) {
+                const uint32_t pLocal = r0 - PR0();
+                // P_new = decayK ⊙ P_old + ZP；首 chunk 的 P_old = I 内联生成
+                if (isFirstChunk) {
+                    CDHP_InitIdentityVF(UbPtr(pState) + static_cast<uint64_t>(pLocal) * kDim,
+                                        static_cast<uint16_t>(r0), static_cast<uint16_t>(tileRows),
+                                        static_cast<uint16_t>(kDim));
+                }
+                CDHP_V3AccumVF(UbPtr(pState) + static_cast<uint64_t>(pLocal) * kDim, UbPtr(zpF), UbPtr(decayF),
+                               static_cast<uint16_t>(r0), static_cast<uint16_t>(tileRows),
+                               static_cast<uint16_t>(kDim));
+                StoreTileModel(pState[pLocal * kDim],
+                               this->PBfAt(window) + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows, kDim,
+                               kDim);
+            }
         }
     }
 
@@ -943,18 +975,22 @@ private:
         WaitFlag<HardEvent::V_MTE3>(CDHP_EV_V_MTE3);
         for (uint32_t r0 = 0; r0 < kDim; r0 += CDHP_VEC_TILE) {
             const uint32_t tileRows = MinV(CDHP_VEC_TILE, kDim - r0);
-            LocalTensor<float> f = dhState[static_cast<uint32_t>(r0) * vDim];
+            // v19：E 面只写自己那一半 V 列（状态是 [K, ECols]）
+            LocalTensor<float> f = dhState[static_cast<uint32_t>(r0) * ECols()];
             AscendC::DataCopyExtParams dhParams{static_cast<uint16_t>(tileRows),
-                                                static_cast<uint32_t>(vDim * sizeof(float)), 0,
-                                                static_cast<uint32_t>((rowStride - vDim) * sizeof(float)), 0};
-            AscendC::DataCopyPad(dhmGm_[static_cast<uint64_t>(hv * kDim + r0) * rowStride], f, dhParams);
+                                                static_cast<uint32_t>(ECols() * sizeof(float)), 0,
+                                                static_cast<uint32_t>((rowStride - ECols()) * sizeof(float)), 0};
+            AscendC::DataCopyPad(dhmGm_[static_cast<uint64_t>(hv * kDim + r0) * rowStride + EC0()], f, dhParams);
             PipeBarrier<PIPE_MTE3>();
-            LocalTensor<float> fp = pState[static_cast<uint32_t>(r0) * kDim];
-            AscendC::DataCopyExtParams pParams{static_cast<uint16_t>(tileRows),
-                                               static_cast<uint32_t>(kDim * sizeof(float)), 0,
-                                               static_cast<uint32_t>((rowStride - kDim) * sizeof(float)), 0};
-            AscendC::DataCopyPad(dhmGm_[static_cast<uint64_t>(hv * kDim + r0) * rowStride + vDim], fp, pParams);
-            PipeBarrier<PIPE_MTE3>();
+            // P 面只写本 AIV 负责的 K 行（未拆分时就是整段）
+            if (r0 >= PR0() && r0 < PR0() + PRows()) {
+                LocalTensor<float> fp = pState[static_cast<uint32_t>(r0 - PR0()) * kDim];
+                AscendC::DataCopyExtParams pParams{static_cast<uint16_t>(tileRows),
+                                                   static_cast<uint32_t>(kDim * sizeof(float)), 0,
+                                                   static_cast<uint32_t>((rowStride - kDim) * sizeof(float)), 0};
+                AscendC::DataCopyPad(dhmGm_[static_cast<uint64_t>(hv * kDim + r0) * rowStride + vDim], fp, pParams);
+                PipeBarrier<PIPE_MTE3>();
+            }
         }
     }
 
