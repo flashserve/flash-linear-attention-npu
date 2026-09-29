@@ -112,8 +112,8 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 第一段接口完成入参校验，出现以下场景时报错
 | 返回码 | 错误码 | 描述 |
 |---|---|---|
-| ACLNN_ERR_PARAM_NULLPTR | 161001 | 不为空的参数是空指针 |
-| ACLNN_ERR_PARAM_INVALID | 161002 | 参数的数据类型、shape不满足约束 |
+| ACLNN_ERR_PARAM_NULLPTR | 161001 | 不为空的参数是空指针（含 `gOptional` 与 `gkOptional` 均未提供） |
+| ACLNN_ERR_PARAM_INVALID | 161002 | 参数的数据类型、shape 不满足约束，或 `gOptional` 与 `gkOptional` 同时提供 |
 
 ---
 
@@ -128,6 +128,8 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 
 - `gOptional` 与 `gkOptional`：
   - 二者必须二选一（提供且只提供一个）
+  - 同时提供时返回 `ACLNN_ERR_PARAM_INVALID`（161002）
+  - 均未提供时返回 `ACLNN_ERR_PARAM_NULLPTR`（161001）
 
 - `gOptional`：
   - 数据类型可以为 `FLOAT16`、`BFLOAT16` 或 `FLOAT`

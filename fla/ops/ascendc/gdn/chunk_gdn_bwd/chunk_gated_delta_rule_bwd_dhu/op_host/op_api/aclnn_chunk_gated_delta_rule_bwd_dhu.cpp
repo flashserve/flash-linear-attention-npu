@@ -71,8 +71,11 @@ static aclnnStatus CheckNotNull(ChunkGatedDeltaRuleBwdDhuParams params)
     CHECK_COND(params.w != nullptr, ACLNN_ERR_PARAM_NULLPTR, "w must not be nullptr.");
     CHECK_COND(params.dO != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dO must not be nullptr.");
     CHECK_COND(params.dv != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dv must not be nullptr.");
-    CHECK_COND((params.gOptional != nullptr) != (params.gkOptional != nullptr), ACLNN_ERR_PARAM_NULLPTR,
-               "Exactly one of g and gk must be provided.");
+    // g/gk 互斥拆为两条：同时提供属参数组合非法（161002），均未提供属必选参数缺省（161001）
+    CHECK_COND(params.gOptional == nullptr || params.gkOptional == nullptr, ACLNN_ERR_PARAM_INVALID,
+               "g and gk cannot be provided at the same time; exactly one of them is required.");
+    CHECK_COND(params.gOptional != nullptr || params.gkOptional != nullptr, ACLNN_ERR_PARAM_NULLPTR,
+               "One of g and gk must be provided.");
     CHECK_COND(params.gkOptional == nullptr || params.useExp2, ACLNN_ERR_PARAM_INVALID,
                "use_exp2 must be true when gk is provided.");
     CHECK_COND(params.dhOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dhOut must not be nullptr.");
