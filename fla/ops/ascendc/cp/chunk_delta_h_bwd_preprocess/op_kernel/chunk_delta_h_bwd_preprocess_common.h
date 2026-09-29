@@ -301,6 +301,14 @@ public:
     // A2/A3 的 aivPerBlock_ == 1，sub 只能是 0，公式退化成原来的形式。
     __aicore__ inline uint32_t SliceIdxOfAiv(uint32_t sub) const
     {
+        // v19：head 内并行（两个 AIV 合干同一条链）时，操作数/中间量平面按 **block** 共享一份，
+        // AIC 侧必须取这同一份（sub 只用来选 flag 的 peer AIV）；若仍按 blockIdx*aivPerBlock + sub
+        // 取，AIC 会落到"另一份"上：slot 读到别的 window、window 平面直接越过平面边界，
+        // 实测表现为 synchronize failed 507015（部分档位）或中间量整片错值。
+        if (halfSplit_ != 0) {
+            (void)sub;
+            return blockIdx_;
+        }
         return blockIdx_ * aivPerBlock_ + sub;
     }
 

@@ -1584,3 +1584,70 @@ vs A5 的 9.327e-06，1 ulp 量级）。
 
 > 公开描述里只写"测试项 + 结果"（构建通过、精度通过、逐档 device 耗时与比值），不含机器名、路径、
 > 账号或环境信息。
+
+## 29. head 内并行（v19）首次跑通：数据对了，但**更慢** —— 结论与下一步
+
+§24/§27 把 head 内并行（两个 AIV 合干同一条链）定为 A2 突破 5.5× 的主路线。本轮把它在 A5 上
+真正跑通了，但实测**全线变慢**，因此该路线不成立，需要换方向。
+
+### 29.1 先修掉 507015：AIC 侧取错了"份"
+
+`SliceIdxOfAiv(sub)` 原来无条件按 `blockIdx * aivPerBlock + sub` 取份。head 内并行下两个 AIV
+合干同一条链、操作数/中间量平面**按 block 共享**（`sliceIdx_ = blockIdx_`），AIC 却仍按
+`2 * blockIdx` 取：slot 落到别的 window，window 平面（份数 = 2 * blockDim）直接越过平面边界 →
+部分档位 `synchronize failed 507015`，部分档位中间量整片错值（`dhm_last = 0`）。
+修法是让 `SliceIdxOfAiv` 在 head 内并行时退化成 `blockIdx_`（`sub` 只用于选 flag 的 peer）。
+
+修后 A5 上（`FLA_NPU_CP_HALF_SPLIT=1`）：三个短链（`sh_single_chunk` / `sh_two_chunk` / `sh_tail`）
+与 smoke（`gva_cp64` / `kda_cp64`）全部 PASS，数值与非拆分路径一致
+（`E_rel_norm` 1.74e-03 ~ 1.87e-03）。
+
+### 29.2 但性能全面退步（A5，device `Task Duration`，逐档实测）
+
+| 用例 | T_rank | 非拆分（交付态） | head 内并行 | 变化 |
+| --- | --- | --- | --- | --- |
+| gva_cp2 | 65536 | 12.2 ms | 18.2 ms | 1.49× 更慢 |
+| gva_cp8 | 16384 | 3.1 | 4.6 | 1.48× 更慢 |
+| gva_cp64 | 2048 | 0.4 | 0.6 | 1.50× 更慢 |
+| h8_cp2 | 65536 | 12.0 | 18.0 | 1.50× 更慢 |
+| kda_cp2 | 65536 | 25.5 | 27.1 | 1.06× 更慢 |
+| long_cp2 | 131072 | 24.5 | 36.3 | 1.48× 更慢 |
+
+### 29.3 剖面证据：AIV 不是瓶颈，"每 chunk 的同步 + 依赖延迟"才是
+
+`msopprof --aic-metrics=PipeUtilization`（`Hk=Hv=8`、T=16384、block 0）：
+
+| 指标 | 非拆分 | head 内并行 |
+| --- | --- | --- |
+| aic_time | 3028.9 µs | 4533.1 µs |
+| aic_cube / aic_mte2 / aic_scalar | 556 / 1006 / 823 µs | 556 / 884 / 844 µs |
+| aiv_time | 3030.0 µs | 4536.8 µs |
+| aiv_vec / aiv_mte2 / aiv_mte3 | 1034 / 872 / 477 µs | 1158 / 1096 / 590 µs |
+
+三点结论：
+
+1. **AIC 的绝对工作量几乎没变**（cube 556 µs 逐一相同），只是 `aic_time` 变长 ⇒ AIC 在**空等**：
+   并行化的是 AIV，而每 chunk 的临界路径仍要串过 AIC 的 GEMM 与两次跨核往返。
+2. **AIV 侧并没有减半**：`aiv_vec` 反而从 1034 涨到 1158，`aiv_mte2` 872 → 1096。
+   原因是拆分后两个 AIV 仍各自读**整块** ZP（[32,128] 全宽，无法半宽）、各自搬整条 g 并算整条
+   decay；而同一 block 里原本是"两个 AIV 各干一个 head、互不重复"，拆分后变成"两个 AIV 合干
+   一个 head、各自多读一份共享数据"，总流量上升。
+3. 两个 AIV 一起干一条链 ⇒ 每个 barrier 变成 AIC 连续 wait 两次（A5 的 0x4 是点对点）、
+   Z_READY 要 set 两次；每 chunk 多出的跨核往返直接加在临界路径上。
+
+⇒ **head 内并行把"并行度"换成了"每 chunk 的同步次数 + 重复流量"，方向上和本算子的真实瓶颈相反。**
+本算子从 §22 起就一直是"每 chunk 同步次数受限"，不是算力或带宽受限（cube 占用 12~18%、
+vec 占用 26~34%，两边都远未打满）。
+
+### 29.4 下一步方向（按预期收益排序）
+
+1. **把 ZP 并进已有的合并 GEMM**：`Z = (-T1)@dH_bf`（[K,V]）与 `ZP = (-T1)@P_bf`（[K,K]）共用同一个
+   A 操作数 `(-T1)ᵀ`，把 B 操作数扩成 `[do; -dv; dH_bf | P_bf]`（[2M+K, V+K]），一次 MMAD 同时产出
+   `[inc | ZP]`。每 chunk 的 MMAD 从 3 次降到 2 次，同时省掉一次 `(-T1)` 的 L1 装载与一次
+   fixpipe 落盘，AIC 的 scalar/MTE2 占用（合计 ~60%）一起下降。
+2. **跨 block 切链，而不是 block 内切链**：A5 的 `h8` 只有 4 个 block 在跑（Hv=8、每 block 2 个 head），
+   16 个 AIC 空闲。把"head 的半个链"做成**独立任务**分给不同 block（E 链按 V 列切、P 链按 K 行切），
+   各 block 之间没有任何同步，代价只是 T1（V 无关的小 GEMM）与 V0 的 K 向操作数被重复准备。
+   这与 §29.2 的失败不同点在于：**不增加每 chunk 的跨核往返**。
+3. 若仍要 1:2：让第二个 AIV 独立承担 **P 链**（E/P 是两条独立状态链），而不是和第一个 AIV 平分同一条链。
+   P 链与 E 链只在"共享 T1 操作数"上耦合，不需要逐 chunk 锁步。
