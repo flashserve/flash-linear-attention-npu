@@ -97,6 +97,9 @@ def _metadata(spec: dict, index: int, tags: str) -> dict:
         "varlen": bool(spec.get("cu_seqlens")),
         "cu_seqlens": [int(x) for x in spec.get("cu_seqlens", [])],
         "note": str(spec.get("note", "")),
+        # 反向（拦截）用例必须把期望返回码带进 case_spec：executor 据此走"预期失败"分支
+        # （跳过 CPU 标杆、只在 NPU 侧校验 aclnn 返回码）。
+        "expected_return_code": spec.get("expected_return_code"),
         "case_id": index,
         "seed": SEED_BASE + index,
     }

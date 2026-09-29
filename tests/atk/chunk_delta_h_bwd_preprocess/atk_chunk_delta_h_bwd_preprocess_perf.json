@@ -56,7 +56,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":0,\"case_key\":\"pos_01_none_gate_dense\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"g_dtype\":\"model\",\"gate\":\"none\",\"note\":\"无门控（qg/kg 未门控）dense 基线\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260927,\"soc\":\"ascend950\",\"tags\":\"performance\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":0,\"case_key\":\"pos_01_none_gate_dense\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":null,\"g_dtype\":\"model\",\"gate\":\"none\",\"note\":\"无门控（qg/kg 未门控）dense 基线\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260927,\"soc\":\"ascend950\",\"tags\":\"performance\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -272,7 +272,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":1,\"case_key\":\"pos_05_gk_varlen_first_segment\",\"chunk_size\":64,\"cu_seqlens\":[0,300,512],\"dtype\":\"bf16\",\"g_dtype\":\"model\",\"gate\":\"gk\",\"note\":\"varlen：packed 输入，本 launch 只处理 cu_seqlens[0:2] = [0,300)\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260928,\"soc\":\"ascend950\",\"tags\":\"performance\",\"varlen\":true}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":1,\"case_key\":\"pos_05_gk_varlen_first_segment\",\"chunk_size\":64,\"cu_seqlens\":[0,300,512],\"dtype\":\"bf16\",\"expected_return_code\":null,\"g_dtype\":\"model\",\"gate\":\"gk\",\"note\":\"varlen：packed 输入，本 launch 只处理 cu_seqlens[0:2] = [0,300)\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260928,\"soc\":\"ascend950\",\"tags\":\"performance\",\"varlen\":true}",
         "backward": false
       },
       {
@@ -488,7 +488,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":2048,\"V\":128,\"case_id\":2,\"case_key\":\"pos_13_long_nt_chain_accumulation\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"g_dtype\":\"model\",\"gate\":\"gk\",\"note\":\"NT=32：链式 P_r 的误差累积用例，单独看相对误差\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260929,\"soc\":\"ascend950\",\"tags\":\"performance\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":2048,\"V\":128,\"case_id\":2,\"case_key\":\"pos_13_long_nt_chain_accumulation\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":null,\"g_dtype\":\"model\",\"gate\":\"gk\",\"note\":\"NT=32：链式 P_r 的误差累积用例，单独看相对误差\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260929,\"soc\":\"ascend950\",\"tags\":\"performance\",\"varlen\":false}",
         "backward": false
       },
       {

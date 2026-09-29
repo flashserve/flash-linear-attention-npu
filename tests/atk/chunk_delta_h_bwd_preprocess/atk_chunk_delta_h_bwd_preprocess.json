@@ -56,7 +56,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":0,\"case_key\":\"pos_01_none_gate_dense\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"g_dtype\":\"model\",\"gate\":\"none\",\"note\":\"无门控（qg/kg 未门控）dense 基线\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260927,\"soc\":\"ascend950\",\"tags\":\"accuracy\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":0,\"case_key\":\"pos_01_none_gate_dense\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":null,\"g_dtype\":\"model\",\"gate\":\"none\",\"note\":\"无门控（qg/kg 未门控）dense 基线\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260927,\"soc\":\"ascend950\",\"tags\":\"accuracy\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -272,7 +272,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":1,\"case_key\":\"pos_02_g_bf16_dense\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"g_dtype\":\"model\",\"gate\":\"g\",\"note\":\"GDN 标量 gate，g 与 q 同 dtype（tilingKey=2）\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260928,\"soc\":\"ascend950\",\"tags\":\"accuracy\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":1,\"case_key\":\"pos_02_g_bf16_dense\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":null,\"g_dtype\":\"model\",\"gate\":\"g\",\"note\":\"GDN 标量 gate，g 与 q 同 dtype（tilingKey=2）\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260928,\"soc\":\"ascend950\",\"tags\":\"accuracy\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -488,7 +488,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":2,\"case_key\":\"pos_03_g_fp32_dense\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"g_dtype\":\"fp32\",\"gate\":\"g\",\"note\":\"GDN 标量 gate，g 为 FP32（tilingKey=3）；g 为 FP32 时不能走 Cast<float,float>（见算子 README 踩坑记录）\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260929,\"soc\":\"ascend950\",\"tags\":\"accuracy\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":2,\"case_key\":\"pos_03_g_fp32_dense\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":null,\"g_dtype\":\"fp32\",\"gate\":\"g\",\"note\":\"GDN 标量 gate，g 为 FP32（tilingKey=3）；g 为 FP32 时不能走 Cast<float,float>（见算子 README 踩坑记录）\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260929,\"soc\":\"ascend950\",\"tags\":\"accuracy\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -704,7 +704,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":3,\"case_key\":\"pos_04_gk_bf16_dense\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"g_dtype\":\"model\",\"gate\":\"gk\",\"note\":\"KDA/GDN2 逐 K gate（tilingKey=4）\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260930,\"soc\":\"ascend950\",\"tags\":\"accuracy\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":3,\"case_key\":\"pos_04_gk_bf16_dense\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":null,\"g_dtype\":\"model\",\"gate\":\"gk\",\"note\":\"KDA/GDN2 逐 K gate（tilingKey=4）\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260930,\"soc\":\"ascend950\",\"tags\":\"accuracy\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -920,7 +920,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":4,\"case_key\":\"pos_05_gk_varlen_first_segment\",\"chunk_size\":64,\"cu_seqlens\":[0,300,512],\"dtype\":\"bf16\",\"g_dtype\":\"model\",\"gate\":\"gk\",\"note\":\"varlen：packed 输入，本 launch 只处理 cu_seqlens[0:2] = [0,300)\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260931,\"soc\":\"ascend950\",\"tags\":\"accuracy\",\"varlen\":true}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":4,\"case_key\":\"pos_05_gk_varlen_first_segment\",\"chunk_size\":64,\"cu_seqlens\":[0,300,512],\"dtype\":\"bf16\",\"expected_return_code\":null,\"g_dtype\":\"model\",\"gate\":\"gk\",\"note\":\"varlen：packed 输入，本 launch 只处理 cu_seqlens[0:2] = [0,300)\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260931,\"soc\":\"ascend950\",\"tags\":\"accuracy\",\"varlen\":true}",
         "backward": false
       },
       {
@@ -1136,7 +1136,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":200,\"V\":128,\"case_id\":5,\"case_key\":\"pos_06_tail_chunk\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"g_dtype\":\"model\",\"gate\":\"gk\",\"note\":\"尾块：T=200 时最后一个 chunk 只有 8 行有效；[M,BT) 必须写零\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260932,\"soc\":\"ascend950\",\"tags\":\"accuracy\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":200,\"V\":128,\"case_id\":5,\"case_key\":\"pos_06_tail_chunk\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":null,\"g_dtype\":\"model\",\"gate\":\"gk\",\"note\":\"尾块：T=200 时最后一个 chunk 只有 8 行有效；[M,BT) 必须写零\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260932,\"soc\":\"ascend950\",\"tags\":\"accuracy\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -1352,7 +1352,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":8,\"K\":128,\"T\":256,\"V\":128,\"case_id\":6,\"case_key\":\"pos_10_gva_hv_gt_hk\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"g_dtype\":\"model\",\"gate\":\"gk\",\"note\":\"GVA：Hv=8 为 Hk=4 的两倍，hk = hv // 2，不要求物理 repeat q/k\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260933,\"soc\":\"ascend950\",\"tags\":\"accuracy\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":8,\"K\":128,\"T\":256,\"V\":128,\"case_id\":6,\"case_key\":\"pos_10_gva_hv_gt_hk\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":null,\"g_dtype\":\"model\",\"gate\":\"gk\",\"note\":\"GVA：Hv=8 为 Hk=4 的两倍，hk = hv // 2，不要求物理 repeat q/k\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260933,\"soc\":\"ascend950\",\"tags\":\"accuracy\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -1568,7 +1568,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":64,\"V\":128,\"case_id\":7,\"case_key\":\"pos_11_single_chunk\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"g_dtype\":\"fp32\",\"gate\":\"g\",\"note\":\"NT=1：只验证单 chunk 边界（链方向不被覆盖）\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260934,\"soc\":\"ascend950\",\"tags\":\"accuracy\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":64,\"V\":128,\"case_id\":7,\"case_key\":\"pos_11_single_chunk\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":null,\"g_dtype\":\"fp32\",\"gate\":\"g\",\"note\":\"NT=1：只验证单 chunk 边界（链方向不被覆盖）\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260934,\"soc\":\"ascend950\",\"tags\":\"accuracy\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -1784,7 +1784,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":128,\"V\":128,\"case_id\":8,\"case_key\":\"pos_12_two_chunk_chain_direction\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"g_dtype\":\"model\",\"gate\":\"gk\",\"note\":\"NT=2：验证 P_new = P_c @ P_old 与 dH ← decayK ⊙ dH + inc 的 chunk 顺序\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260935,\"soc\":\"ascend950\",\"tags\":\"accuracy\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":128,\"V\":128,\"case_id\":8,\"case_key\":\"pos_12_two_chunk_chain_direction\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":null,\"g_dtype\":\"model\",\"gate\":\"gk\",\"note\":\"NT=2：验证 P_new = P_c @ P_old 与 dH ← decayK ⊙ dH + inc 的 chunk 顺序\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260935,\"soc\":\"ascend950\",\"tags\":\"accuracy\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -2000,7 +2000,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":2048,\"V\":128,\"case_id\":9,\"case_key\":\"pos_13_long_nt_chain_accumulation\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"g_dtype\":\"model\",\"gate\":\"gk\",\"note\":\"NT=32：链式 P_r 的误差累积用例，单独看相对误差\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260936,\"soc\":\"ascend950\",\"tags\":\"accuracy\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":2048,\"V\":128,\"case_id\":9,\"case_key\":\"pos_13_long_nt_chain_accumulation\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":null,\"g_dtype\":\"model\",\"gate\":\"gk\",\"note\":\"NT=32：链式 P_r 的误差累积用例，单独看相对误差\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260936,\"soc\":\"ascend950\",\"tags\":\"accuracy\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -2216,7 +2216,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":256,\"V\":128,\"case_id\":10,\"case_key\":\"pos_14_fp16_inputs\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"fp16\",\"g_dtype\":\"model\",\"gate\":\"g\",\"note\":\"FP16 输入路径：dhm 与链仍为 FP32\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260937,\"soc\":\"ascend950\",\"tags\":\"accuracy\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":256,\"V\":128,\"case_id\":10,\"case_key\":\"pos_14_fp16_inputs\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"fp16\",\"expected_return_code\":null,\"g_dtype\":\"model\",\"gate\":\"g\",\"note\":\"FP16 输入路径：dhm 与链仍为 FP32\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260937,\"soc\":\"ascend950\",\"tags\":\"accuracy\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -2432,7 +2432,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":96,\"Hv\":96,\"K\":128,\"T\":256,\"V\":128,\"case_id\":11,\"case_key\":\"pos_15_head_contiguous_partition\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"g_dtype\":\"model\",\"gate\":\"gk\",\"note\":\"Hk=Hv=96 > 核数：每个工作组连续处理多个 head（groupHeads>1），覆盖跨 task 复用 workspace/UB 的同步路径\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260938,\"soc\":\"ascend950\",\"tags\":\"accuracy\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":96,\"Hv\":96,\"K\":128,\"T\":256,\"V\":128,\"case_id\":11,\"case_key\":\"pos_15_head_contiguous_partition\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":null,\"g_dtype\":\"model\",\"gate\":\"gk\",\"note\":\"Hk=Hv=96 > 核数：每个工作组连续处理多个 head（groupHeads>1），覆盖跨 task 复用 workspace/UB 的同步路径\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260938,\"soc\":\"ascend950\",\"tags\":\"accuracy\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -2648,7 +2648,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":256,\"V\":128,\"case_id\":12,\"case_key\":\"neg_01_g_and_gk_both\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"g_dtype\":\"model\",\"gate\":\"both\",\"note\":\"g 与 gk 同时非空：必须拦截（GVA 路径下二者互斥）\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260939,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":256,\"V\":128,\"case_id\":12,\"case_key\":\"neg_01_g_and_gk_both\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":\"ACLNN_ERR_PARAM_INVALID\",\"g_dtype\":\"model\",\"gate\":\"both\",\"note\":\"g 与 gk 同时非空：必须拦截（GVA 路径下二者互斥）\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260939,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -2865,7 +2865,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":512,\"T\":256,\"V\":128,\"case_id\":13,\"case_key\":\"neg_02_k_too_large\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"g_dtype\":\"model\",\"gate\":\"none\",\"note\":\"K=512：本版只支持 K = V = 128\",\"route\":\"ascendc\",\"scale\":0.04419417382415922,\"seed\":20260940,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":512,\"T\":256,\"V\":128,\"case_id\":13,\"case_key\":\"neg_02_k_too_large\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":\"ACLNN_ERR_PARAM_INVALID\",\"g_dtype\":\"model\",\"gate\":\"none\",\"note\":\"K=512：本版只支持 K = V = 128\",\"route\":\"ascendc\",\"scale\":0.04419417382415922,\"seed\":20260940,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -3082,7 +3082,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":3,\"Hv\":4,\"K\":128,\"T\":256,\"V\":128,\"case_id\":14,\"case_key\":\"neg_03_hv_not_multiple_of_hk\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"g_dtype\":\"model\",\"gate\":\"none\",\"note\":\"Hk=3 Hv=4：GVA 映射不成立\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260941,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":3,\"Hv\":4,\"K\":128,\"T\":256,\"V\":128,\"case_id\":14,\"case_key\":\"neg_03_hv_not_multiple_of_hk\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":\"ACLNN_ERR_PARAM_INVALID\",\"g_dtype\":\"model\",\"gate\":\"none\",\"note\":\"Hk=3 Hv=4：GVA 映射不成立\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260941,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -3299,7 +3299,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":2,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":256,\"V\":128,\"case_id\":15,\"case_key\":\"neg_04_dense_b_greater_than_one\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"g_dtype\":\"model\",\"gate\":\"none\",\"note\":\"未传 cu_seqlens 且 B=2：一次 launch 只处理一个 segment\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260942,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":false}",
+        "range_values": "{\"B\":2,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":256,\"V\":128,\"case_id\":15,\"case_key\":\"neg_04_dense_b_greater_than_one\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":\"ACLNN_ERR_PARAM_INVALID\",\"g_dtype\":\"model\",\"gate\":\"none\",\"note\":\"未传 cu_seqlens 且 B=2：一次 launch 只处理一个 segment\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260942,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -3516,7 +3516,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":2,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":256,\"V\":128,\"case_id\":16,\"case_key\":\"neg_05_varlen_b_greater_than_one\",\"chunk_size\":64,\"cu_seqlens\":[0,128,256],\"dtype\":\"bf16\",\"g_dtype\":\"model\",\"gate\":\"none\",\"note\":\"传 cu_seqlens 且 B=2：packed 输入必须 B==1\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260943,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":true}",
+        "range_values": "{\"B\":2,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":256,\"V\":128,\"case_id\":16,\"case_key\":\"neg_05_varlen_b_greater_than_one\",\"chunk_size\":64,\"cu_seqlens\":[0,128,256],\"dtype\":\"bf16\",\"expected_return_code\":\"ACLNN_ERR_PARAM_INVALID\",\"g_dtype\":\"model\",\"gate\":\"none\",\"note\":\"传 cu_seqlens 且 B=2：packed 输入必须 B==1\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260943,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":true}",
         "backward": false
       },
       {
@@ -3733,7 +3733,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":256,\"V\":128,\"case_id\":17,\"case_key\":\"neg_06_chunk_size_not_64\",\"chunk_size\":128,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"g_dtype\":\"model\",\"gate\":\"none\",\"note\":\"chunk_size=128 与本版 tiling 不匹配\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260944,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":256,\"V\":128,\"case_id\":17,\"case_key\":\"neg_06_chunk_size_not_64\",\"chunk_size\":128,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":\"ACLNN_ERR_PARAM_INVALID\",\"g_dtype\":\"model\",\"gate\":\"none\",\"note\":\"chunk_size=128 与本版 tiling 不匹配\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260944,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -3950,7 +3950,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":2,\"Hv\":4,\"K\":128,\"T\":256,\"V\":128,\"case_id\":18,\"case_key\":\"neg_07_g_shape_mismatch\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"g_dtype\":\"model\",\"gate\":\"g\",\"note\":\"g 为 [B,Hk,T] 而非 [B,Hv,T]\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260945,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":2,\"Hv\":4,\"K\":128,\"T\":256,\"V\":128,\"case_id\":18,\"case_key\":\"neg_07_g_shape_mismatch\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":\"ACLNN_ERR_PARAM_INVALID\",\"g_dtype\":\"model\",\"gate\":\"g\",\"note\":\"g 为 [B,Hk,T] 而非 [B,Hv,T]\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260945,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -4167,7 +4167,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":256,\"V\":128,\"case_id\":19,\"case_key\":\"neg_08_gk_dtype_fp32\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"g_dtype\":\"fp32\",\"gate\":\"gk\",\"note\":\"gk 为 FP32：逐 K gate 必须与 q/k 同 dtype\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260946,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":256,\"V\":128,\"case_id\":19,\"case_key\":\"neg_08_gk_dtype_fp32\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":\"ACLNN_ERR_PARAM_INVALID\",\"g_dtype\":\"fp32\",\"gate\":\"gk\",\"note\":\"gk 为 FP32：逐 K gate 必须与 q/k 同 dtype\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260946,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -4384,7 +4384,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":256,\"V\":128,\"case_id\":20,\"case_key\":\"neg_09_cu_seqlens_too_short\",\"chunk_size\":64,\"cu_seqlens\":[0],\"dtype\":\"bf16\",\"g_dtype\":\"model\",\"gate\":\"none\",\"note\":\"cu_seqlens 只有 1 个元素，无法给出 [bos, eos)\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260947,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":true}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":256,\"V\":128,\"case_id\":20,\"case_key\":\"neg_09_cu_seqlens_too_short\",\"chunk_size\":64,\"cu_seqlens\":[0],\"dtype\":\"bf16\",\"expected_return_code\":\"ACLNN_ERR_PARAM_INVALID\",\"g_dtype\":\"model\",\"gate\":\"none\",\"note\":\"cu_seqlens 只有 1 个元素，无法给出 [bos, eos)\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260947,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":true}",
         "backward": false
       },
       {
@@ -4601,7 +4601,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":0,\"V\":128,\"case_id\":21,\"case_key\":\"neg_10_empty_tensor\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"g_dtype\":\"model\",\"gate\":\"none\",\"note\":\"T=0：空 tensor 必须给出明确错误\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260948,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":0,\"V\":128,\"case_id\":21,\"case_key\":\"neg_10_empty_tensor\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":\"ACLNN_ERR_PARAM_INVALID\",\"g_dtype\":\"model\",\"gate\":\"none\",\"note\":\"T=0：空 tensor 必须给出明确错误\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260948,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -4818,7 +4818,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":64,\"T\":256,\"V\":64,\"case_id\":22,\"case_key\":\"neg_11_k64_not_128\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"g_dtype\":\"model\",\"gate\":\"none\",\"note\":\"本版只支持 K = V = 128：状态行按 64 行分组、列按 16 个元素（64B）成组，Vector 逐行的向量/寄存器读写也依赖该行宽；其它取值实测会设备报错或算错，必须拦截\",\"route\":\"ascendc\",\"scale\":0.125,\"seed\":20260949,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":64,\"T\":256,\"V\":64,\"case_id\":22,\"case_key\":\"neg_11_k64_not_128\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":\"ACLNN_ERR_PARAM_INVALID\",\"g_dtype\":\"model\",\"gate\":\"none\",\"note\":\"本版只支持 K = V = 128：状态行按 64 行分组、列按 16 个元素（64B）成组，Vector 逐行的向量/寄存器读写也依赖该行宽；其它取值实测会设备报错或算错，必须拦截\",\"route\":\"ascendc\",\"scale\":0.125,\"seed\":20260949,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -5035,7 +5035,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":256,\"V\":96,\"case_id\":23,\"case_key\":\"neg_12_v96_not_128\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"g_dtype\":\"model\",\"gate\":\"none\",\"note\":\"本版只支持 K = V = 128：状态行按 64 行分组、列按 16 个元素（64B）成组，Vector 逐行的向量/寄存器读写也依赖该行宽；其它取值实测会设备报错或算错，必须拦截\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260950,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":256,\"V\":96,\"case_id\":23,\"case_key\":\"neg_12_v96_not_128\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":\"ACLNN_ERR_PARAM_INVALID\",\"g_dtype\":\"model\",\"gate\":\"none\",\"note\":\"本版只支持 K = V = 128：状态行按 64 行分组、列按 16 个元素（64B）成组，Vector 逐行的向量/寄存器读写也依赖该行宽；其它取值实测会设备报错或算错，必须拦截\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260950,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":false}",
         "backward": false
       },
       {
@@ -5252,7 +5252,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":256,\"T\":256,\"V\":128,\"case_id\":24,\"case_key\":\"neg_13_k256_not_128\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"g_dtype\":\"model\",\"gate\":\"none\",\"note\":\"本版只支持 K = V = 128：状态行按 64 行分组、列按 16 个元素（64B）成组，Vector 逐行的向量/寄存器读写也依赖该行宽；其它取值实测会设备报错或算错，必须拦截\",\"route\":\"ascendc\",\"scale\":0.0625,\"seed\":20260951,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":false}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":256,\"T\":256,\"V\":128,\"case_id\":24,\"case_key\":\"neg_13_k256_not_128\",\"chunk_size\":64,\"cu_seqlens\":[],\"dtype\":\"bf16\",\"expected_return_code\":\"ACLNN_ERR_PARAM_INVALID\",\"g_dtype\":\"model\",\"gate\":\"none\",\"note\":\"本版只支持 K = V = 128：状态行按 64 行分组、列按 16 个元素（64B）成组，Vector 逐行的向量/寄存器读写也依赖该行宽；其它取值实测会设备报错或算错，必须拦截\",\"route\":\"ascendc\",\"scale\":0.0625,\"seed\":20260951,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":false}",
         "backward": false
       },
       {
