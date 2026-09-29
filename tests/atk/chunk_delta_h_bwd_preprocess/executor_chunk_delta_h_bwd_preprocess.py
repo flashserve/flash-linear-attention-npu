@@ -26,6 +26,7 @@ from _ascendc_common_executor import (
     _case_spec,
     _finite_tuple,
     _gate,
+    _int_tensor,
     _kda_gate,
     _marker_device,
     _orig_dtype,
@@ -143,6 +144,9 @@ def _placeholder_output(spec: dict):
 
 def _call_op(tensors: dict, spec: dict, *, npu: bool):
     segment = _segment(spec)
+    if segment is not None:
+        # ATK 的后处理对"非张量属性"不稳；cu_seqlens 统一以张量下发（反向用例给的长度 1 也照发）。
+        segment = _int_tensor(segment, tensors["q"].device)
     scale = float(spec.get("scale", 1.0))
     chunk_size = int(spec.get("chunk_size", CHUNK_SIZE))
     if npu:
