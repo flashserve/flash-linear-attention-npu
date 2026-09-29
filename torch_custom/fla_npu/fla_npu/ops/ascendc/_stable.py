@@ -1318,22 +1318,61 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
 
     if cu_seqlens and not chunk_indices:
         chunk_indices = _canonical_chunk_indices(cu_seqlens, chunk_size)
-    result = _op("npu_chunk_kda_fwd")(
-        q, k, v, g, beta, A_log, dt_bias, initial_state,
-        _host_ints(cu_seqlens), _host_ints(chunk_indices),
-        _char_code("npu_chunk_kda_fwd", "layout", layout),
-        float(scale), chunk_size,
-        bool(safe_gate),
-        -5.0 if lower_bound is None else float(lower_bound),
-        bool(use_gate_in_kernel), bool(state_v_first),
-        epsilon, use_qk_l2norm_in_kernel, use_beta_sigmoid_in_kernel,
-        allow_neg_eigval, use_exp2,
-        bool(output_final_state), bool(disable_recompute),
-        bool(return_intermediate_states),
-        q_hat_out, k_hat_out, q_rstd_out, k_rstd_out, beta_eff_out,
-        _current_stream_ptr(),
-    )
-    return (*result, initial_state)
+    switches_requested = (
+        use_qk_l2norm_in_kernel or use_beta_sigmoid_in_kernel
+        or allow_neg_eigval or not use_exp2)
+    wants_saved = any(
+        value is not None
+        for value in (q_hat_out, k_hat_out, q_rstd_out, k_rstd_out, beta_eff_out))
+    try:
+        result = _op("npu_chunk_kda_fwd")(
+            q, k, v, g, beta, A_log, dt_bias, initial_state,
+            _host_ints(cu_seqlens), _host_ints(chunk_indices),
+            _char_code("npu_chunk_kda_fwd", "layout", layout),
+            float(scale), chunk_size,
+            bool(safe_gate),
+            -5.0 if lower_bound is None else float(lower_bound),
+            bool(use_gate_in_kernel), bool(state_v_first),
+            epsilon, use_qk_l2norm_in_kernel, use_beta_sigmoid_in_kernel,
+            allow_neg_eigval, use_exp2,
+            bool(output_final_state), bool(disable_recompute),
+            bool(return_intermediate_states),
+            q_hat_out, k_hat_out, q_rstd_out, k_rstd_out, beta_eff_out,
+            _current_stream_ptr(),
+        )
+        return (*result, initial_state)
+    except RuntimeError as exc:
+        # stable launcher 的 V2 组合在 host 侧 GetWorkspaceSize 失败（典型
+        # aclnnStatus=561103：运行环境只注册了融合算子，缺三个子算子）时，
+        # 回落 ctypes 融合入口。该阶段尚未发射 kernel，重走无副作用。
+        # 非默认 gate/L2norm 开关与保存值导出是 V2 专属语义，不回退。
+        if (switches_requested or wants_saved
+                or "aclnnChunkKdaFwdV2GetWorkspaceSize" not in str(exc)):
+            raise
+        from ._aclnn_ctypes import npu_chunk_kda_fwd as _ctypes_fwd
+        from ._aclnn_ctypes import _warn_kda_fwd_v2_fallback
+        _warn_kda_fwd_v2_fallback(exc)
+        def _contig(t):
+            return t.contiguous() if isinstance(t, torch.Tensor) else t
+        return _ctypes_fwd(
+            _contig(q), _contig(k), _contig(v), _contig(g), _contig(beta),
+            float(scale), int(chunk_size),
+            layout=layout,
+            initial_state=_contig(initial_state),
+            output_final_state=output_final_state,
+            cu_seqlens=cu_seqlens,
+            chunk_indices=chunk_indices,
+            safe_gate=safe_gate,
+            lower_bound=lower_bound,
+            use_gate_in_kernel=use_gate_in_kernel,
+            A_log=_contig(A_log),
+            dt_bias=_contig(dt_bias),
+            disable_recompute=disable_recompute,
+            return_intermediate_states=return_intermediate_states,
+            state_v_first=state_v_first,
+            epsilon=epsilon,
+            _force_v1=True,
+        )
 
 
 def npu_chunk_kda_fwd_prepare(q, k, v, g, beta, scale, chunk_size=64, *,
