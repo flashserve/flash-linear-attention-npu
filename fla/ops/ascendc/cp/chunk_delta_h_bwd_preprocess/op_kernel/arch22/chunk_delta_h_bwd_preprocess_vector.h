@@ -475,11 +475,15 @@ private:
                         validRows, kDim, kDim);
             LoadTileF32(wF, wAddr_ + static_cast<uint64_t>(hv * this->tiling_.T + t0 + r0) * kDim * sizeof(DT),
                         validRows, kDim, kDim);
-            // v14：do / dv 只需同 dtype 搬运（取负已挪到 W 上）
-            CopyTileModel(doAddr_ + static_cast<uint64_t>(hv * this->tiling_.T + t0 + r0) * vDim * sizeof(DT),
-                          slotDo + static_cast<uint64_t>(r0) * vDim * sizeof(DT), validRows, vDim, vDim, vDim);
-            CopyTileModel(dvAddr_ + static_cast<uint64_t>(hv * this->tiling_.T + t0 + r0) * vDim * sizeof(DT),
-                          slotNegDv + static_cast<uint64_t>(r0) * vDim * sizeof(DT), validRows, vDim, vDim, vDim);
+            // v14：do / dv 只需同 dtype 搬运（取负已挪到 W 上）。
+            // v28：整 chunk 时 Cube 的 AB GEMM 直接以输入张量当 B 操作数，这里就不必再拷；只有尾块需要
+            // （无效行的零填充必须落在 slot 上，否则 Cube 会读到 chunk 之外的行）。
+            if (rows < mDim) {
+                CopyTileModel(doAddr_ + static_cast<uint64_t>(hv * this->tiling_.T + t0 + r0) * vDim * sizeof(DT),
+                              slotDo + static_cast<uint64_t>(r0) * vDim * sizeof(DT), validRows, vDim, vDim, vDim);
+                CopyTileModel(dvAddr_ + static_cast<uint64_t>(hv * this->tiling_.T + t0 + r0) * vDim * sizeof(DT),
+                              slotNegDv + static_cast<uint64_t>(r0) * vDim * sizeof(DT), validRows, vDim, vDim, vDim);
+            }
             if (useG != 0) {
                 // v22：因子已按 chunk 一次性算好（kFac 不含负号），这里改成 Brcb + 带广播的 Mul：
                 // 原来逐行 `Muls + GetValue` 每 chunk 要 128 次（q/k 各 64 行），现在每 tile 2 次。

@@ -90,6 +90,8 @@ public:
         this->InitTilingData(tiling);
         this->SetUserWorkspace(userWs);
         this->ResolveSegment(cu_seqlens);
+        doAddr_ = d_o;
+        dvAddr_ = dv;
     }
 
     __aicore__ inline void Process()
@@ -189,12 +191,9 @@ public:
                                                  this->SlotAt(slot, this->SlotQBytes() + this->SlotWBytes()),
                                                  this->T1AtAiv(sub, headWin), kDim, kDim, mDim);
                     CDHP_AIC_SET(sub, CdhpFlag(CDHP_FLAG_T1_READY, headWin));
-                    // AB = Q̄sᵀ@do + Wᵀ@(-dv)（一次合并 GEMM：A=[Q̄s|W]ᵀ [K,2M]，B=[do;-dv] [2M,V]）
-                    RunGemm<BlockColRow, float>(resource, layoutCol2M, layoutDo2M, layoutKzV,
-                                                this->SlotAt(slot, 0),
-                                                this->SlotAt(slot, this->SlotQBytes() + this->SlotWBytes() +
-                                                                   this->SlotKBytes()),
-                                                this->AbAtAiv(sub, headWin), kDim, vDim, twoM);
+                    StageAb<BlockColRow>(resource, sub, headWin, this->ChunkStart(chunkNum - 1U),
+                                         this->ChunkRows(chunkNum - 1U), this->AivHeadAt(range, r * aivs + sub), kDim,
+                                         vDim, mDim, twoM);
                 }
             }
             for (uint32_t c = 0; c < chunkNum; ++c) {
@@ -214,11 +213,9 @@ public:
                                                      this->SlotAt(nextSlot, this->SlotQBytes() + this->SlotWBytes()),
                                                      this->T1AtAiv(sub, nextWin), kDim, kDim, mDim);
                         CDHP_AIC_SET(sub, CdhpFlag(CDHP_FLAG_T1_READY, nextWin));
-                        RunGemm<BlockColRow, float>(resource, layoutCol2M, layoutDo2M, layoutKzV,
-                                                    this->SlotAt(nextSlot, 0),
-                                                    this->SlotAt(nextSlot, this->SlotQBytes() + this->SlotWBytes() +
-                                                                              this->SlotKBytes()),
-                                                    this->AbAtAiv(sub, nextWin), kDim, vDim, twoM);
+                        StageAb<BlockColRow>(resource, sub, nextWin, this->ChunkStart(chunkIdx - 1U),
+                                             this->ChunkRows(chunkIdx - 1U),
+                                             this->AivHeadAt(range, r * aivs + sub), kDim, vDim, mDim, twoM);
                     }
                     // 链上：Z = (-T1)@dH_bf(prev)、ZP = (-T1)@P_bf(prev)
                     CDHP_AIC_WAIT(sub, CdhpFlag(CDHP_FLAG_T1BF_READY, win));
@@ -240,6 +237,44 @@ public:
     }
 
 private:
+    // v28：AB = Q̄sᵀ@do + (-W)ᵀ@dv
+    //   * 整 chunk：B 操作数**直接用输入张量** do / dv（两次 GEMM，第二次用 fixpipe 原子加进同一平面）。
+    //     取负在 AIV 侧已经做在 W 上，(-W)ᵀ@dv = Wᵀ@(-dv) 成立，因此 AIV 不必再把 do/-dv 拷进 slot
+    //     （每 chunk 省 32 KiB 搬入 + 32 KiB 搬出 + 2 次纯拷贝的各 3 道自排空）。
+    //   * 尾块（rows < chunk_size）：不能用输入当 B（会读到 chunk 之外的行），仍走 slot 里零填充过的
+    //     [do;-dv] 合并 GEMM。
+    template <typename BlockColRowT, typename Resource>
+    __aicore__ inline void StageAb(Resource &resource, uint32_t sub, uint32_t win, uint32_t t0, uint32_t rows,
+                                   uint32_t hv, uint32_t kDim, uint32_t vDim, uint32_t mDim, uint32_t twoM)
+    {
+        using LayoutRow = Catlass::layout::RowMajor;
+        using LayoutCol = Catlass::layout::ColumnMajor;
+        const uint32_t slot = this->SlotOfWindowAiv(sub, win);
+        GM_ADDR abPlane = this->AbAtAiv(sub, win);
+        if (rows == mDim) {
+            const auto layoutQT = tla::MakeLayoutFromTag(LayoutCol::MakeLayout<DT>(kDim, mDim));
+            const auto layoutWT = tla::MakeLayoutFromTag(LayoutCol::MakeLayout<DT>(kDim, mDim));
+            const auto layoutDo = tla::MakeLayoutFromTag(LayoutRow::MakeLayout<DT>(mDim, vDim));
+            const auto layoutKzV = tla::MakeLayoutFromTag(LayoutRow::MakeLayout<float>(kDim, vDim));
+            const uint64_t off = static_cast<uint64_t>(hv * this->tiling_.T + t0) * vDim * sizeof(DT);
+            RunGemm<BlockColRowT, float>(resource, layoutQT, layoutDo, layoutKzV, this->SlotAt(slot, 0), doAddr_ + off,
+                                         abPlane, kDim, vDim, mDim);
+            AscendC::SetAtomicAdd<float>();
+            RunGemm<BlockColRowT, float>(resource, layoutWT, layoutDo, layoutKzV,
+                                         this->SlotAt(slot, this->SlotQBytes()), dvAddr_ + off, abPlane, kDim, vDim,
+                                         mDim);
+            AscendC::SetAtomicNone();
+        } else {
+            const auto layoutCol2M = tla::MakeLayoutFromTag(LayoutCol::MakeLayout<DT>(kDim, twoM));
+            const auto layoutDo2M = tla::MakeLayoutFromTag(LayoutRow::MakeLayout<DT>(twoM, vDim));
+            const auto layoutKzV = tla::MakeLayoutFromTag(LayoutRow::MakeLayout<float>(kDim, vDim));
+            RunGemm<BlockColRowT, float>(
+                resource, layoutCol2M, layoutDo2M, layoutKzV, this->SlotAt(slot, 0),
+                this->SlotAt(slot, this->SlotQBytes() + this->SlotWBytes() + this->SlotKBytes()), abPlane, kDim, vDim,
+                twoM);
+        }
+    }
+
     // 与仓内 chunk_bwd_dv_local_cube.h 一致：BlockMmad 在每次调用时构造（复用同一 resource）
     // CElem：输出平面的元素类型（float = FP32 中间平面，DT = 直接落模型 dtype）
     template <typename Block, typename CElem, typename Resource, typename LayoutA, typename LayoutB,
@@ -278,6 +313,10 @@ private:
             }
         }
     }
+
+    // v28：整 chunk 时 AB 的 B 操作数直接指向输入张量（见 StageAb）
+    GM_ADDR doAddr_ = nullptr;
+    GM_ADDR dvAddr_ = nullptr;
 };
 
 } // namespace CP
