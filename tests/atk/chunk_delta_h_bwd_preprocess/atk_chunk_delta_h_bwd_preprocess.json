@@ -7,7 +7,6 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
       "acc": {
@@ -20,6 +19,7 @@
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": null,
     "outputs": null,
     "inputs": [
       {
@@ -223,7 +223,6 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
       "acc": {
@@ -236,6 +235,7 @@
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": null,
     "outputs": null,
     "inputs": [
       {
@@ -439,7 +439,6 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
       "acc": {
@@ -452,6 +451,7 @@
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": null,
     "outputs": null,
     "inputs": [
       {
@@ -655,7 +655,6 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
       "acc": {
@@ -668,6 +667,7 @@
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": null,
     "outputs": null,
     "inputs": [
       {
@@ -871,7 +871,6 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
       "acc": {
@@ -884,6 +883,7 @@
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": null,
     "outputs": null,
     "inputs": [
       {
@@ -1087,7 +1087,6 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
       "acc": {
@@ -1100,6 +1099,7 @@
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": null,
     "outputs": null,
     "inputs": [
       {
@@ -1303,7 +1303,6 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
       "acc": {
@@ -1316,6 +1315,7 @@
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": null,
     "outputs": null,
     "inputs": [
       {
@@ -1519,7 +1519,6 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
       "acc": {
@@ -1532,6 +1531,7 @@
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": null,
     "outputs": null,
     "inputs": [
       {
@@ -1735,7 +1735,6 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
       "acc": {
@@ -1748,6 +1747,7 @@
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": null,
     "outputs": null,
     "inputs": [
       {
@@ -1951,7 +1951,6 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
       "acc": {
@@ -1964,6 +1963,7 @@
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": null,
     "outputs": null,
     "inputs": [
       {
@@ -2167,7 +2167,6 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
       "acc": {
@@ -2180,6 +2179,7 @@
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": null,
     "outputs": null,
     "inputs": [
       {
@@ -2383,7 +2383,6 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
       "acc": {
@@ -2396,6 +2395,7 @@
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": null,
     "outputs": null,
     "inputs": [
       {
@@ -2599,13 +2599,19 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "not_key",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": "ACLNN_ERR_PARAM_INVALID (161001): g 与 gk 同时非空：必须拦截（GVA 路径下二者互斥）",
     "outputs": null,
     "inputs": [
       {
@@ -2810,13 +2816,19 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "not_key",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": "ACLNN_ERR_PARAM_INVALID (161001): K=512：本版只支持 K = V = 128",
     "outputs": null,
     "inputs": [
       {
@@ -3021,13 +3033,19 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "not_key",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": "ACLNN_ERR_PARAM_INVALID (161001): Hk=3 Hv=4：GVA 映射不成立",
     "outputs": null,
     "inputs": [
       {
@@ -3232,13 +3250,19 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "not_key",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": "ACLNN_ERR_PARAM_INVALID (161001): 未传 cu_seqlens 且 B=2：一次 launch 只处理一个 segment",
     "outputs": null,
     "inputs": [
       {
@@ -3443,13 +3467,19 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "not_key",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": "ACLNN_ERR_PARAM_INVALID (161001): 传 cu_seqlens 且 B=2：packed 输入必须 B==1",
     "outputs": null,
     "inputs": [
       {
@@ -3654,13 +3684,19 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "not_key",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": "ACLNN_ERR_PARAM_INVALID (161001): chunk_size=128 与本版 tiling 不匹配",
     "outputs": null,
     "inputs": [
       {
@@ -3865,13 +3901,19 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "not_key",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": "ACLNN_ERR_PARAM_INVALID (161001): g 为 [B,Hk,T] 而非 [B,Hv,T]",
     "outputs": null,
     "inputs": [
       {
@@ -4076,13 +4118,19 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "not_key",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": "ACLNN_ERR_PARAM_INVALID (161001): gk 为 FP32：逐 K gate 必须与 q/k 同 dtype",
     "outputs": null,
     "inputs": [
       {
@@ -4287,13 +4335,19 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "not_key",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": "ACLNN_ERR_PARAM_INVALID (161001): cu_seqlens 只有 1 个元素，无法给出 [bos, eos)",
     "outputs": null,
     "inputs": [
       {
@@ -4498,13 +4552,19 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "not_key",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": "ACLNN_ERR_PARAM_INVALID (161001): T=0：空 tensor 必须给出明确错误",
     "outputs": null,
     "inputs": [
       {
@@ -4709,13 +4769,19 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "not_key",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": "ACLNN_ERR_PARAM_INVALID (161001): 本版只支持 K = V = 128：状态行按 64 行分组、列按 16 个元素（64B）成组，Vector 逐行的向量/寄存器读写也依赖该行宽；其它取值实测会设备报错或算错，必须拦截",
     "outputs": null,
     "inputs": [
       {
@@ -4920,13 +4986,19 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "not_key",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": "ACLNN_ERR_PARAM_INVALID (161001): 本版只支持 K = V = 128：状态行按 64 行分组、列按 16 个元素（64B）成组，Vector 逐行的向量/寄存器读写也依赖该行宽；其它取值实测会设备报错或算错，必须拦截",
     "outputs": null,
     "inputs": [
       {
@@ -5131,13 +5203,19 @@
     "version": "v2.1",
     "api": "pytorch",
     "api_type": "executor_chunk_delta_h_bwd_preprocess",
-    "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "not_key",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
+    "expected_error_msg": "ACLNN_ERR_PARAM_INVALID (161001): 本版只支持 K = V = 128：状态行按 64 行分组、列按 16 个元素（64B）成组，Vector 逐行的向量/寄存器读写也依赖该行宽；其它取值实测会设备报错或算错，必须拦截",
     "outputs": null,
     "inputs": [
       {

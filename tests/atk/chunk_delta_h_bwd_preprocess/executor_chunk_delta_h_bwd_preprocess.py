@@ -180,8 +180,10 @@ def run_npu(spec: dict, input_data: InputDataset):
                     f"{OP_NAME}: negative case {spec.get('case_key')} returned {got}, "
                     f"expected {want}: {exc}"
                 ) from exc
+            # 命中预期拦截：抛出与用例 expected_error_msg 完全一致的文本，交由 ATK 判定"预期失败"。
             print(f"NPU negative case intercepted as expected: {spec['case_key']} code={got}", flush=True)
-            return _placeholder_output(spec)
+            raise RuntimeError(
+                "{} ({}): {}".format(spec["expected_return_code"], got, spec.get("note", "")))
         raise RuntimeError(
             f"{OP_NAME}: negative case {spec.get('case_key')} unexpectedly succeeded, "
             f"expected code {want}"

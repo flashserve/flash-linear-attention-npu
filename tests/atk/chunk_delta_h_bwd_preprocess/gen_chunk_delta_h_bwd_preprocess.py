@@ -33,6 +33,12 @@ CASES_JSON = '{"cases":[{"chunk_size":64,"dtype":"bf16","gate":"none","id":"pos_
 SEED_BASE = 20260927
 CHUNK_SIZE = 64
 
+# ACLNN 返回码名 → 数字码：反向用例的 expected_error_msg 与 executor 的判定共用同一份口径。
+_ACLNN_CODES = {
+    "ACLNN_ERR_PARAM_INVALID": 161001,
+    "ACLNN_ERR_PARAM_NULLPTR": 161002,
+}
+
 # 输入由 executor 按 case_spec 里的 seed 确定性地构造（ATK 只传 marker + 用例元数据）。
 # 值域与 tests/operators 下的 harness 一致：q/k/w/do/dv 是 randn*0.05，gate 是沿 token 的 -cumsum(rand*0.05)，
 # 后者保证 2^{g_last-g} ≤ 1（gate 非单调会让长链溢出，实测 fp16 会出 NaN）。
@@ -137,11 +143,16 @@ def _case_payload(case_id: int, spec: dict, tags: str) -> dict:
         "version": "v2.1",
         "api": "pytorch",
         "api_type": f"executor_{OP_NAME}",
-        "expected_error_msg": None,
         "backward": False,
-        # 反向（拦截）用例不做数值比对：标准里标 not_key，由 executor 校验 aclnn 返回码。
-        "standard": (_standard(metadata["dtype"]) if not spec.get("expected_return_code")
-                     else {"acc": "not_key", "perf": "not_key", "mem": 1.1}),
+        "standard": _standard(metadata["dtype"]),
+        # 反向（拦截）用例：标准与正向一致，靠 ATK 的 expected_error_msg 语义判定——
+        # executor 命中预期拦截时抛出同一文本（见 executor 的 _ACLNN_CODES）。
+        "expected_error_msg": (
+            "{} ({}): {}".format(spec["expected_return_code"],
+                                 _ACLNN_CODES.get(spec["expected_return_code"], "?"),
+                                 spec.get("note", ""))
+            if spec.get("expected_return_code") else None
+        ),
         "outputs": None,
         "inputs": inputs,
         "save_name": OP_NAME,
