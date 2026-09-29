@@ -103,7 +103,7 @@ def _metadata(spec: dict, index: int, tags: str) -> dict:
         "note": str(spec.get("note", "")),
         # 反向（拦截）用例必须把期望返回码带进 case_spec：executor 据此走"预期失败"分支
         # （跳过 CPU 标杆、只在 NPU 侧校验 aclnn 返回码）。
-        "expected_return_code": spec.get("expected_return_code"),
+        "expected_return_code": str(spec.get("expected_return_code") or ""),
         "case_id": index,
         "seed": SEED_BASE + index,
     }
@@ -130,6 +130,9 @@ def _case_payload(case_id: int, spec: dict, tags: str) -> dict:
         ("dtype", "string"),
         ("gate", "string"),
         ("g_dtype", "string"),
+        ("g_head", "string"),
+        ("gk_dtype", "string"),
+        ("expected_return_code", "string"),
         ("chunk_size", "int"),
         ("scale", "float"),
         ("B", "int"),

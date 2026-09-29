@@ -148,6 +148,13 @@ def _call_op(tensors: dict, spec: dict, *, npu: bool):
     if npu:
         from fla_npu.ops import ascendc
 
+        try:  # TEMP-PROBE(<-- 定位 neg_07/neg_08 后删除)
+            with open("/tmp/atk_probe.log", "a") as _fh:
+                _fh.write(spec.get("case_key", "?") + " " + str(
+                    {k: (None if v is None else (tuple(v.shape), str(v.dtype)))
+                     for k, v in tensors.items() if k in ("g", "gk")}) + "\n")
+        except OSError:
+            pass
         outputs = ascendc.chunk_delta_h_bwd_preprocess(
             q=tensors["q"], k=tensors["k"], w=tensors["w"], d_o=tensors["d_o"],
             dv=tensors["dv"], g=tensors.get("g"), gk=tensors.get("gk"),
