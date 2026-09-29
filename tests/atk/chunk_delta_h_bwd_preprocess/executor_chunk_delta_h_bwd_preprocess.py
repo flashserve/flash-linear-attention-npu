@@ -113,6 +113,10 @@ _ACLNN_CODES = {
 def _negative_expected_code(spec: dict):
     raw = spec.get("expected_return_code")
     if raw is None:
+        # case_spec 里没带期望码时，用 case_key 兜底识别反向用例（本算子的反向用例统一以 neg_ 命名，
+        # 期望码统一是 ACLNN_ERR_PARAM_INVALID = 161001）；避免依赖 ATK 传递哪些字段。
+        if "neg_" in str(spec.get("case_key", "")):
+            return _ACLNN_CODES["ACLNN_ERR_PARAM_INVALID"]
         return None
     text = str(raw)
     if text.isdigit():
@@ -155,8 +159,8 @@ def _call_op(tensors: dict, spec: dict, *, npu: bool):
 
 
 def run_cpu(spec: dict, input_data: InputDataset):
-    if spec.get("expected_return_code"):
-        # 反向用例没有真实输出；精度比对已按标准里的 not_key 跳过。
+    if _negative_expected_code(spec) is not None:
+        # 反向用例没有真实输出，也不该跑 CPU 标杆（非法 shape 会让参考实现直接抛错）。
         return _placeholder_output(spec)
     tensors = build_inputs(spec, torch.device("cpu"))
     outputs = _call_op(tensors, spec, npu=False)
