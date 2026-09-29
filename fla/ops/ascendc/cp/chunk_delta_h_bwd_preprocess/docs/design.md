@@ -1774,3 +1774,41 @@ CANN `kernel_operator_vec_brcb_intf.h` / `kernel_struct_binary.h` 的头文件�
 
 精度：模型用例集（含 `h8_cp16` / `h8_cp64`，即打开新映射的档）7 条全 PASS，
 `h8_cp64` 的 `E_max_abs` 9.327e-06 与改前逐位一致；smoke（gva/kda cp64）不变。
+
+## 32. v24：arch22 用 fixpipe 原子加把 Z 直接并进 AB 平面（A2 再 1.04×）
+
+§30.2 的 A2 剖面里，AIV 每 chunk 要把 `AB`（[K,V] fp32）与 `Z`（[K,V] fp32）两块都搬进 UB 再相加——
+128 KiB 的搬入、一次 4096 元素的 `Add`，以及两个平面各自的搬运/等待。
+
+改法（只动 arch22）：cube 侧 `Z = T1m@dH_bf` 的结果**不写独立平面**，而是在 `SetAtomicAdd<float>()` /
+`SetAtomicNone()` 之间用 fixpipe 直接原子累加进 `AB` 平面（AB 由提前一轮的链外 GEMM 写满，AIV 侧不再
+搬 Z、不再 `Add`）。数值上两侧都是 fp32 的同一对数据相加，实测逐位一致。
+
+实测（A2/Ascend910B3，device `Task Duration`）：
+
+| 用例 | v22 之后 | v24 之后 | H20 | 比值 |
+| --- | --- | --- | --- | --- |
+| gva_cp2 | 36.4 ms | **34.9 ms** | 10.35 | 3.37× |
+| gva_cp8 | 9.1 | **8.8** | 2.59 | 3.41× |
+| gva_cp64 | 1.1 | **1.1** | 0.42 | 2.66× |
+| h8_cp2 | 18.4 | **17.0** | 5.13 | 3.32× |
+| kda_cp2 | 73.2 | **69.9** | 14.32 | 4.88× |
+| long_cp2 | 73.3 | **70.2** | 20.66 | 3.40× |
+
+精度：smoke / 三个短链 / 扫描全部 PASS，数值与改前逐位一致。相对优化起点（57.3 / 14.4 / 1.8 /
+28.3 / 114.3 / 114.3 ms）累计 **1.5~1.7×**。
+
+### 32.1 A2 剩下的空间与卡点（供后续判断）
+
+按当前剖面，A2 的 AIV 仍是瓶颈，剩余大部头是"整管自屏障"式的搬运：
+
+1. `LoadTileF32` / `StoreTileModel` / `CopyTileModel` / `LoadPlaneF32` 每个调用都做
+   `SetFlag;WaitFlag` 立即配对（V_MTE2、MTE3_MTE2/MTE2_MTE3、MTE2_V），每 chunk 约 30~40 次排空。
+   要消掉需要**多槽 per-slot credit 暂存区**，但 A2 的 UB 只有 192 KiB，当前已用 ~189 KiB
+   （两块 64 KiB 状态 + 三块 16 KiB FP32 tile + 8 KiB 暂存 + 小缓冲），没有余量；
+   要么先砍掉一个 FP32 tile（V0 分两趟），要么让状态变小。
+2. `do` / `-dv` 现在是 AIV"纯拷贝"进 slot：可以让 cube 的 AB 拆成两次 GEMM（`A=Q̄s,B=do` 与
+   `A=-W,B=dv`，用同一套原子加），B 操作数直接指向输入张量，AIV 就不再需要这两次拷贝。
+   注意尾块（`rows < chunk_size`）不能直接用输入当 B（会读到 chunk 之外的行），需要保留 slot 通路。
+3. T1 还是要 AIV 转模型 dtype（arch22 不能用"AIC 落盘 + 核内 FIX→MTE2"，实测会挂死），
+   这一级每 chunk 是 64 KiB 读 + 32 KiB 写。

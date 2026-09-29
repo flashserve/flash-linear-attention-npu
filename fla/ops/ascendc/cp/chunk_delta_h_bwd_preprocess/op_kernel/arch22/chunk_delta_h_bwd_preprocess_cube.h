@@ -222,9 +222,13 @@ public:
                     // 链上：Z = (-T1)@dH_bf(prev)、ZP = (-T1)@P_bf(prev)
                     CDHP_AIC_WAIT(sub, CdhpFlag(CDHP_FLAG_T1BF_READY, win));
                     CDHP_AIC_WAIT(sub, CdhpFlag(CDHP_FLAG_STATE_READY, win ^ 1u));
+                    // v24：Z = (-T1)@dH_bf(prev) 直接**原子累加**进 AB 平面（AB 由提前一轮的链外 GEMM 写满）。
+                    // 这样 AIV 少搬一整块 [K,V] fp32 平面、少一次 Add（原来每 chunk AB/Z 各 64 KiB）。
+                    AscendC::SetAtomicAdd<float>();
                     RunGemm<BlockRowRow, float>(resource, layoutKK, layoutDhBf, layoutKzV,
                                                 this->T1BfAtAiv(sub, win), this->DhBfAtAiv(sub, win ^ 1u),
-                                                this->ZAtAiv(sub, win), kDim, vDim, kDim);
+                                                this->AbAtAiv(sub, win), kDim, vDim, kDim);
+                    AscendC::SetAtomicNone();
                     RunGemm<BlockRowRow, float>(resource, layoutKK, layoutKK, layoutKzK,
                                                 this->T1BfAtAiv(sub, win), this->PBfAtAiv(sub, win ^ 1u),
                                                 this->ZpAtAiv(sub, win), kDim, kDim, kDim);

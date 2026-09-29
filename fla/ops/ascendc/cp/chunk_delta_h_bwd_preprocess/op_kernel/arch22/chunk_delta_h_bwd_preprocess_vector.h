@@ -613,11 +613,8 @@ private:
         for (uint32_t r0 = 0; r0 < kDim; r0 += CDHP_VEC_TILE) {
             const uint32_t tileRows = MinV(CDHP_VEC_TILE, kDim - r0);
             LocalTensor<float> abF = s0F32_.Get<float>();
-            LocalTensor<float> zF = s1F32_.Get<float>();
+            // v24：Z 已由 Cube 用 fixpipe 原子加进 AB 平面，这里只搬一块（原来 AB/Z 各 64 KiB + 一次 Add）
             LoadPlaneF32(abF, this->AbAt(window), r0, tileRows, vDim);
-            LoadPlaneF32(zF, this->ZAt(window), r0, tileRows, vDim);
-            AscendC::Add(abF, abF, zF, tileRows * vDim);
-            PipeBarrier<PIPE_V>();
             // v5（参考 ChunkFwdH 的 rolling state）：dH_old 直接取 UB 常驻状态并就地更新，
             // 不再每 chunk 经 GM workspace 读写 FP32 状态。
             // v22：行衰减改成 Brcb + 带广播的 Mul（原来逐行 Muls，每 chunk 128 次）
