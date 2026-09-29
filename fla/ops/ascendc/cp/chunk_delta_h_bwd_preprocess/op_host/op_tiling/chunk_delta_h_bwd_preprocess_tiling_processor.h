@@ -20,7 +20,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include "exe_graph/runtime/storage_shape.h"
 #include <register/op_impl_registry.h>
 #include "err/ops_err.h"
@@ -302,7 +301,14 @@ public:
         // 出现"重复算最后一个 head"的填充槽（幂等，仅浪费一点算力）。
         splitMode_ = CP::CHUNK_DELTA_H_BWD_PREPROCESS_SPLIT_BY_HEAD;
         const uint64_t aivPerBlock = std::max<uint64_t>(1, static_cast<uint64_t>(ctx_.aivPerBlock));
-        blockDim_ = std::min(CeilDiv(Hv_, aivPerBlock), totalCore);
+        // v23（按 head 数与核数的关系选映射）：
+        //   * head 数**不超过** AIC 核数（h8 这类小 head 场景）：每个 head 独占一个 block，blockDim = Hv，
+        //     一个 block 的两个 AIV 合干这一条链的两半（halfSplit）。这样不会退化成"4 个 block 各串 2 个
+        //     head、20 个 AIC 里 16 个空闲"（h8 实测 12.0 ms / 2.36× 就是这个退化造成的）。
+        //   * head 数超过核数（gva 32 / kda 64 / long 32）：保持 1:2 的"每 block 两个 AIV 各一个 head"，
+        //     blockDim = ceil(Hv/aivPerBlock)，否则链会被拉到更多轮、每轮的手握次数不变而总轮数变多。
+        const bool halfSplit = (aivPerBlock == 2) && (Hv_ <= totalCore);
+        blockDim_ = halfSplit ? std::min(Hv_, totalCore) : std::min(CeilDiv(Hv_, aivPerBlock), totalCore);
         groupHeads_ = CeilDiv(Hv_, blockDim_);
         tiling_.aivPerBlock = aivPerBlock;
 
@@ -310,13 +316,10 @@ public:
         tiling_.blockDim = blockDim_;
         tiling_.splitMode = splitMode_;
         tiling_.groupHeads = groupHeads_;
-        // v19：head 内并行开关（两个 AIV 合干同一条链）。
-        // 打开条件（另行评估后放开）：aivPerBlock == 2 且 Hv <= blockDim（即每个 block 只负责 1 个 head、
-        // 两个 AIV 正好摊在同一个 head 的两半上）；打开时 workspace 的"份"数要从 blockDim*aivPerBlock 降回
-        // blockDim（同一个 head 的两半共享同一份平面），kernel 侧另有一套对应实现（见 struct.h 的注释）。
-        // 目前固定为 0：数据通路与集体式 flag 尚未落地，先保持"一个 AIV 一条链"。
-        // 开发期用环境变量强制打开做验证（验证完成后换成正式判据：aivPerBlock == 2 且 Hv <= blockDim）。
-        tiling_.halfSplit = ((aivPerBlock == 2) && (std::getenv("FLA_NPU_CP_HALF_SPLIT") != nullptr)) ? 1 : 0;
+        // v19/v23：head 内并行（两个 AIV 合干同一条链）。打开条件见上面的 halfSplit；
+        // 打开时 workspace 的"份"数按 block 算（同一个 head 的两半共享同一份平面），kernel 侧另有一套
+        // 对应实现（见 struct.h / common.h 的注释）。
+        tiling_.halfSplit = halfSplit ? 1 : 0;
         // v20：把 ZP 并进"AB + Z"的同一次 GEMM，只在 arch35（A5）打开——两份拼接操作数的布局与
         // 消费它的 cube 都在 arch35 侧，arch22（A2/A3）仍是六 Stage 的独立 ZP 平面。
         // 实测（design.md §29）：head 内并行不划算，但"每 chunk 链上的 MMAD 次数"是本算子的真实瓶颈，

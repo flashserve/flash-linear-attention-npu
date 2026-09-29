@@ -105,6 +105,8 @@ public:
         // 门控行因子（qFac = exp2(g)·scale，kFac = -exp2(g_last-g)），每 chunk 算一次
         pipe_->InitBuffer(qFacF32_, 256 * sizeof(float));
         pipe_->InitBuffer(kFacF32_, 256 * sizeof(float));
+        // v22：逐行因子的 Brcb 展开块（每行一个 32B block = 8 个 float），见 ScaleRowsByFactor
+        pipe_->InitBuffer(facBlkF32_, 256 * sizeof(float));
         // v5（参考 ChunkFwdH 的 rolling state）：dH 的状态常驻 UB（K=V=128 → 64 KiB），
         // 每 chunk 只把模型 dtype 操作数写回 GM，不再每 chunk 经 GM workspace 读写 FP32 状态。
         pipe_->InitBuffer(dhStateF32_, 128u * 128u * sizeof(float));
@@ -182,6 +184,34 @@ private:
         SetFlag<HardEvent::V_S>(CDHP_EV_V_S);
         WaitFlag<HardEvent::V_S>(CDHP_EV_V_S);
         return scalar.GetValue(0);
+    }
+
+    // v22：逐行因子（decay / 门控行因子）的"块广播"写法。
+    //
+    // 改造前：对 tile 的每一行调一次 `Muls(row, row, factor.GetValue(row), cols)`——每 chunk 在
+    // V0 门控（q/k 两遍）+ E 链 + P 链上共 ~380 次 "标量取因子 + 一次向量指令"，是 A2 上 scalar
+    // 与 vec 两个 pipe 的最大单一来源（见 design.md §30.2 的剖面）。
+    //
+    // 改造后：先用 `Brcb` 把 rows 个因子各展开成一个 32B block（8 个 float），再用一次带
+    // repeat 参数的 `Mul` 覆盖整块 tile：repeat 内 src1 广播同一个 block（src1BlkStride = 0），
+    // 每 repeat 前进一个 block（src1RepStride = 1），src0/dst 每 repeat 前进一整行
+    // （RepStride = rowStride / 8，单位是 32B block）。
+    // 语义与参数取值照仓内已发行的 chunk_bwd_dqkwg（同 arch22、同 A2 硬件）的同名写法：
+    //   Brcb(dstBlk, src, CEIL_DIV(rows, 8), {1, 8});
+    //   Mul(tile, tile, dstBlk, 64, rows, {1, 1, 0, K/8, K/8, 1});
+    // 一列 64 个 float 一次（K=V=128 时每次 tile 调 2 次）。
+    __aicore__ inline void ScaleRowsByFactor(const LocalTensor<float> &tile, const LocalTensor<float> &factor,
+                                             uint32_t rowStart, uint32_t rows, uint32_t rowStride)
+    {
+        LocalTensor<float> blk = facBlkF32_.Get<float>();
+        AscendC::Brcb(blk, factor[rowStart], static_cast<uint8_t>((rows + 7U) / 8U),
+                      AscendC::BrcbRepeatParams(1, 8));
+        PipeBarrier<PIPE_V>();
+        const uint8_t repStride = static_cast<uint8_t>(rowStride / 8U);
+        const AscendC::BinaryRepeatParams params{1, 1, 0, repStride, repStride, 1};
+        for (uint32_t c = 0; c < rowStride; c += 64U) {
+            AscendC::Mul(tile[c], tile[c], blk, 64, static_cast<uint8_t>(rows), params);
+        }
     }
 
     // GM [rows, cols]（行距 rowStride）→ FP32 UB
@@ -432,13 +462,11 @@ private:
             CopyTileModel(dvAddr_ + static_cast<uint64_t>(hv * this->tiling_.T + t0 + r0) * vDim * sizeof(DT),
                           slotNegDv + static_cast<uint64_t>(r0) * vDim * sizeof(DT), validRows, vDim, vDim, vDim);
             if (useG != 0) {
-                // 因子已按 chunk 一次性算好（kFac 现在不含负号），这里只做一次 V→S 同步，逐行取标量因子
-                SetFlag<HardEvent::V_S>(CDHP_EV_V_S);
-                WaitFlag<HardEvent::V_S>(CDHP_EV_V_S);
-                for (uint32_t r = 0; r < validRows; ++r) {
-                    AscendC::Muls(qF[r * kDim], qF[r * kDim], qFac.GetValue(r0 + r), kDim);
-                    AscendC::Muls(kF[r * kDim], kF[r * kDim], kFac.GetValue(r0 + r), kDim);
-                }
+                // v22：因子已按 chunk 一次性算好（kFac 不含负号），这里改成 Brcb + 带广播的 Mul：
+                // 原来逐行 `Muls + GetValue` 每 chunk 要 128 次（q/k 各 64 行），现在每 tile 2 次。
+                ScaleRowsByFactor(qF, qFac, r0, validRows, kDim);
+                PipeBarrier<PIPE_V>();
+                ScaleRowsByFactor(kF, kFac, r0, validRows, kDim);
                 PipeBarrier<PIPE_V>();
             } else {
                 AscendC::Muls(qF, qF, scale_, validRows * kDim);
@@ -592,9 +620,8 @@ private:
             PipeBarrier<PIPE_V>();
             // v5（参考 ChunkFwdH 的 rolling state）：dH_old 直接取 UB 常驻状态并就地更新，
             // 不再每 chunk 经 GM workspace 读写 FP32 状态。
-            for (uint32_t r = 0; r < tileRows; ++r) {
-                AscendC::Muls(dhState[(r0 + r) * vDim], dhState[(r0 + r) * vDim], decayF.GetValue(r0 + r), vDim);
-            }
+            // v22：行衰减改成 Brcb + 带广播的 Mul（原来逐行 Muls，每 chunk 128 次）
+            ScaleRowsByFactor(dhState[r0 * vDim], decayF, r0, tileRows, vDim);
             PipeBarrier<PIPE_V>();
             AscendC::Add(dhState[r0 * vDim], dhState[r0 * vDim], abF, tileRows * vDim);
             PipeBarrier<PIPE_V>();
@@ -607,9 +634,7 @@ private:
             // v15：P 的状态常驻 UB，就地累加 P_new = decay ⊙ P_old + ZP（首 chunk 的 P_old = I
             // 已由 StageStateStore 写进常驻状态），不再经 PAt 平面往返
             LocalTensor<float> pState = pStateF32_.Get<float>();
-            for (uint32_t r = 0; r < tileRows; ++r) {
-                AscendC::Muls(pState[(r0 + r) * kDim], pState[(r0 + r) * kDim], decayF.GetValue(r0 + r), kDim);
-            }
+            ScaleRowsByFactor(pState[r0 * kDim], decayF, r0, tileRows, kDim);
             PipeBarrier<PIPE_V>();
             AscendC::Add(pState[r0 * kDim], pState[r0 * kDim], zpF, tileRows * kDim);
             PipeBarrier<PIPE_V>();
@@ -659,6 +684,7 @@ private:
     AscendC::TBuf<AscendC::TPosition::VECCALC> scalarF32_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> qFacF32_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> kFacF32_;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> facBlkF32_;  // v22：逐行因子的 Brcb 展开块
     AscendC::TBuf<AscendC::TPosition::VECCALC> dhStateF32_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> pStateF32_;
     AscendC::GlobalTensor<float> dhmGm_;

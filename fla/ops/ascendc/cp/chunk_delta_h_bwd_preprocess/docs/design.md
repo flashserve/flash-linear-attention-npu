@@ -1720,3 +1720,57 @@ A5 上 AIC 不是瓶颈，砍 AIC 的 MMAD 次数在 gva/h8 这种"AIV 已接近
 ⇒ A2 的下一刀仍然砍"整管自屏障"：`s0DT_` 单暂存区 + `SetFlag;WaitFlag` 立即配对，让每次搬入/搬出
 都排空三条 pipe。方向是把模型 dtype 暂存区做成多槽 per-slot credit（arch35 已是 2 槽），
 并把 §19 的 `AB+Z` 合并 GEMM 移植到 arch22（少 64 KiB/chunk 的 AIV 搬运、AIC 少一次 MMAD）。
+
+## 31. v22（A2：行因子改成块广播）与 v23（A5：head 数 ≤ 核数时一个 head 独占一个 block）
+
+### 31.1 v22：arch22 的逐行因子改成 `Brcb` + 带广播的 `Mul`
+
+§30.2 的剖面里，A2 的 AIV 每 chunk 还有 ~380 次"标量取因子（`GetValue`）+ 一次 `Muls`"：
+V0 门控（q/k 各 64 行）+ E 链（dH 128 行）+ P 链（P 128 行）都是逐行循环。
+
+改成：`Brcb` 把 rows 个因子各展开成一个 32B block（8 个 float），再用一次带 repeat 参数的 `Mul`
+覆盖整块 tile——repeat 内 src1 广播同一个 block（`src1BlkStride = 0`），每 repeat 前进一个 block
+（`src1RepStride = 1`），src0/dst 每 repeat 前进一整行（`RepStride = rowStride/8`，单位 32B block）。
+语义与参数取值照仓内**已发行**的 `chunk_bwd_dqkwg`（同 arch22、同 A2 硬件）的同名写法，并按
+CANN `kernel_operator_vec_brcb_intf.h` / `kernel_struct_binary.h` 的头文件注释核对：
+`Brcb(dst, src, ceil(rows/8), {1, 8})`、`Mul(tile, tile, blk, 64, rows, {1, 1, 0, K/8, K/8, 1})`。
+
+实测（A2/Ascend910B3，device `Task Duration`）：
+
+| 用例 | §30.2 之后 | v22 之后 | 相对改前累计 |
+| --- | --- | --- | --- |
+| gva_cp2 | 39.7 ms | **36.4 ms** | 57.3 → 36.4（1.57×） |
+| gva_cp8 | 9.9 | **9.1** | 14.4 → 9.1 |
+| gva_cp64 | 1.2 | **1.1** | 1.8 → 1.1 |
+| h8_cp2 | 19.3 | **18.4** | 28.3 → 18.4 |
+| kda_cp2 | 78.5 | **73.2** | 114.3 → 73.2 |
+| long_cp2 | 78.3 | **73.3** | 114.3 → 73.3 |
+
+精度：smoke / 三个短链 / 扫描全部 PASS，数值与改前逐位一致。
+
+### 31.2 v23：head 数不超过核数时，让每个 head 独占一个 block
+
+§30 之后 A5 剩下两个偏高档，原因是映射本身：
+
+* `h8`（Hv=8）原来按 `blockDim = ceil(Hv/aivPerBlock) = 4` 开，一个 block 的 2 个 AIV 各串一个
+  head ⇒ 只用了 4 个 AIC（20 个里 16 个空闲）；
+* `kda`（Hv=64 > 核数 20）只能用"每 block 4 个 head、每 AIV 串 2 条链"，这是核数决定的，绕不开。
+
+把判据改成按 head 数与核数的关系选映射：
+
+* `Hv <= 核数`：`blockDim = Hv`，**每个 head 独占一个 block**，block 内两个 AIV 合干这一条链的两半
+  （`halfSplit = 1`，即 §29 里那套"两个 AIV 合干同一条链"的数据通路）；
+* `Hv > 核数`：保持原来的 `ceil(Hv/aivPerBlock)` + 每 AIV 一条链。
+
+实测（A5，device `Task Duration`）：
+
+| 用例 | Hv | v20 之后 | v23 之后 | 比值 |
+| --- | --- | --- | --- | --- |
+| gva_cp2 | 32（> 20） | 12.2 ms | 12.2 ms | 1.18× 不变 |
+| gva_cp8 | 32 | 3.1 | 3.1 | 1.19× 不变 |
+| gva_cp64 | 32 | 0.4 | 0.4 | 0.96× 不变 |
+| **h8_cp2** | **8（≤ 20）** | 12.0 | **8.8** | 2.33× → **1.72×** |
+| kda_cp2 | 64（> 20） | 24.2 | 24.2 | 1.69× 不变 |
+
+精度：模型用例集（含 `h8_cp16` / `h8_cp64`，即打开新映射的档）7 条全 PASS，
+`h8_cp64` 的 `E_max_abs` 9.327e-06 与改前逐位一致；smoke（gva/kda cp64）不变。
