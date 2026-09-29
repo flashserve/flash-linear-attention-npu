@@ -215,6 +215,29 @@ private:
     }
 
     // GM [rows, cols]（行距 rowStride）→ FP32 UB
+    // v25：GM 侧行距与列数相同（行首尾相接）时退化成**单块**搬运。A2 剖面显示每 chunk 有 ~480 笔
+    // "每行 256B"的小包（mte3 stall 占 AIV 时间 29%、mte2 stall 占 14%），单块化后 DMA 引擎的
+    // 逐包开销直接消失。UB 侧永远是紧凑排布，所以只有 GM 侧的行距要判断。
+    __aicore__ inline AscendC::DataCopyExtParams MakeInParams(uint32_t rows, uint32_t cols, uint32_t rowStride,
+                                                              uint32_t elemBytes)
+    {
+        if (rowStride == cols) {
+            return AscendC::DataCopyExtParams{1, rows * cols * elemBytes, 0, 0, 0};
+        }
+        return AscendC::DataCopyExtParams{static_cast<uint16_t>(rows), cols * elemBytes,
+                                          (rowStride - cols) * elemBytes, 0, 0};
+    }
+
+    __aicore__ inline AscendC::DataCopyExtParams MakeOutParams(uint32_t rows, uint32_t cols, uint32_t rowStride,
+                                                               uint32_t elemBytes)
+    {
+        if (rowStride == cols) {
+            return AscendC::DataCopyExtParams{1, rows * cols * elemBytes, 0, 0, 0};
+        }
+        return AscendC::DataCopyExtParams{static_cast<uint16_t>(rows), cols * elemBytes, 0,
+                                          (rowStride - cols) * elemBytes, 0};
+    }
+
     __aicore__ inline void LoadTileF32(const LocalTensor<float> &dst, GM_ADDR src, uint32_t rows, uint32_t cols,
                                        uint32_t rowStride)
     {
@@ -227,8 +250,7 @@ private:
         // 自屏障：先等本核先前 MTE3 搬出排空，再复用暂存区
         SetFlag<HardEvent::MTE3_MTE2>(CDHP_EV_MTE3_MTE2);
         WaitFlag<HardEvent::MTE3_MTE2>(CDHP_EV_MTE3_MTE2);
-        AscendC::DataCopyExtParams params{static_cast<uint16_t>(rows), static_cast<uint32_t>(cols * sizeof(DT)),
-                                          static_cast<uint32_t>((rowStride - cols) * sizeof(DT)), 0, 0};
+        AscendC::DataCopyExtParams params = MakeInParams(rows, cols, rowStride, sizeof(DT));
         AscendC::DataCopyPadExtParams<DT> padParams{false, 0, 0, 0};
         AscendC::DataCopyPad(tmp, gSrc, params, padParams);
         SetFlag<HardEvent::MTE2_V>(CDHP_EV_MTE2_V);
@@ -249,8 +271,7 @@ private:
         AscendC::Cast(tmp, src, AscendC::RoundMode::CAST_RINT, rows * cols);
         SetFlag<HardEvent::V_MTE3>(CDHP_EV_V_MTE3);
         WaitFlag<HardEvent::V_MTE3>(CDHP_EV_V_MTE3);
-        AscendC::DataCopyExtParams params{static_cast<uint16_t>(rows), static_cast<uint32_t>(cols * sizeof(DT)), 0,
-                                          static_cast<uint32_t>((rowStride - cols) * sizeof(DT)), 0};
+        AscendC::DataCopyExtParams params = MakeOutParams(rows, cols, rowStride, sizeof(DT));
         AscendC::DataCopyPad(gDst, tmp, params);
         PipeBarrier<PIPE_MTE3>();
     }
@@ -288,14 +309,12 @@ private:
         WaitFlag<HardEvent::V_MTE2>(CDHP_EV_V_MTE2);
         SetFlag<HardEvent::MTE3_MTE2>(CDHP_EV_MTE3_MTE2);
         WaitFlag<HardEvent::MTE3_MTE2>(CDHP_EV_MTE3_MTE2);
-        AscendC::DataCopyExtParams inParams{static_cast<uint16_t>(rows), static_cast<uint32_t>(cols * sizeof(DT)),
-                                            static_cast<uint32_t>((rowStrideIn - cols) * sizeof(DT)), 0, 0};
+        AscendC::DataCopyExtParams inParams = MakeInParams(rows, cols, rowStrideIn, sizeof(DT));
         AscendC::DataCopyPadExtParams<DT> padParams{false, 0, 0, 0};
         AscendC::DataCopyPad(tmp, gSrc, inParams, padParams);
         SetFlag<HardEvent::MTE2_MTE3>(CDHP_EV_MTE2_MTE3);
         WaitFlag<HardEvent::MTE2_MTE3>(CDHP_EV_MTE2_MTE3);
-        AscendC::DataCopyExtParams outParams{static_cast<uint16_t>(rows), static_cast<uint32_t>(cols * sizeof(DT)), 0,
-                                             static_cast<uint32_t>((rowStrideOut - cols) * sizeof(DT)), 0};
+        AscendC::DataCopyExtParams outParams = MakeOutParams(rows, cols, rowStrideOut, sizeof(DT));
         AscendC::DataCopyPad(gDst, tmp, outParams);
         PipeBarrier<PIPE_MTE3>();
     }
@@ -310,8 +329,8 @@ private:
         WaitFlag<HardEvent::V_MTE2>(CDHP_EV_V_MTE2);
         SetFlag<HardEvent::MTE3_MTE2>(CDHP_EV_MTE3_MTE2);
         WaitFlag<HardEvent::MTE3_MTE2>(CDHP_EV_MTE3_MTE2);
-        AscendC::DataCopyExtParams params{static_cast<uint16_t>(rows), static_cast<uint32_t>(cols * sizeof(float)), 0,
-                                          0, 0};
+        // v25：FP32 平面的行在 GM 侧连续（行距 == 列数），整体一笔搬完
+        AscendC::DataCopyExtParams params{1, static_cast<uint32_t>(rows * cols * sizeof(float)), 0, 0, 0};
         AscendC::DataCopyPad(dst, gSrc[static_cast<uint64_t>(r0) * cols], params,
                              AscendC::DataCopyPadExtParams<float>{false, 0, 0, 0});
         SetFlag<HardEvent::MTE2_V>(CDHP_EV_MTE2_V);
