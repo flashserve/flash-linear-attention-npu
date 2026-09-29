@@ -172,8 +172,8 @@ def build_mss_specs() -> list[dict]:
     return _select(MSS_KEYS)
 
 
-def _payloads(specs: list[dict], tags: str) -> list[dict]:
-    return [_case_payload(index, spec, tags) for index, spec in enumerate(specs)]
+def _payloads(specs: list[dict], tags: str, start: int = 0) -> list[dict]:
+    return [_case_payload(start + index, spec, tags) for index, spec in enumerate(specs)]
 
 
 if GENERATOR_REGISTRY is not None:  # pragma: no cover - 需要安装 ATK
@@ -213,7 +213,7 @@ def main() -> None:
     perf = build_perf_specs()
     mss = build_mss_specs()
     _write(args.output_dir / f"atk_{OP_NAME}.json",
-           _payloads(accuracy, "accuracy") + _payloads(negative, "negative"))
+           _payloads(accuracy, "accuracy") + _payloads(negative, "negative", len(accuracy)))
     _write(args.output_dir / f"atk_{OP_NAME}_perf.json", _payloads(perf, "performance"))
     _write(args.output_dir / f"atk_{OP_NAME}_mss.json", _payloads(mss, "determinism,mss"))
     if args.summary:
