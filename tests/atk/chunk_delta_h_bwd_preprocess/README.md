@@ -55,15 +55,25 @@ atk node --name npu_dut --backend npu --devices <device_id> -p <free_port> --out
 所以用例的 `standard.acc` 用 ATK 原生的 `output_dtype_overrides` 声明按 `bf16`/`fp16` 判，
 不在 executor 里自定义指标。
 
-### ATK 性能结果（已执行，A5 / ascend950）
+### ATK 性能结果（已执行，A5 / A2）
 
-| 用例 | shape | device 中位耗时 |
-| --- | --- | --- |
-| `pos_01_none_gate_dense` | `B=1, Hk=Hv=4, T=512, K=V=128`（8 chunk） | 270.7 µs |
-| `pos_05_gk_varlen_first_segment` | 同 shape，本 launch 只算 `[0,300)`（5 chunk） | 274.1 µs |
-| `pos_13_long_nt_chain_accumulation` | 同 shape，`T=2048`（32 chunk） | 1066.7 µs |
+```bash
+atk node --name npu_dut --backend npu --devices <device_id> --output_path <out> \
+  task -c ./atk_chunk_delta_h_bwd_preprocess_perf.json --task performance_device \
+  -p ./executor_chunk_delta_h_bwd_preprocess.py --save_data profile -sp -to 2000
+```
 
-数值是 ATK `performance_device` 的 device 中位耗时（同 shape 下单 chunk 约 33 µs，随 chunk 数近似线性）。
+| 用例 | shape | A5 device 耗时 | A2 device 耗时 |
+| --- | --- | --- | --- |
+| `pos_01_none_gate_dense` | `B=1, Hk=Hv=4, T=512, K=V=128`（8 chunk） | 77.0 µs（σ 0.37） | 132.9 µs（σ 0.45） |
+| `pos_05_gk_varlen_first_segment` | 同 shape，本 launch 只算 `[0,300)`（5 chunk） | 55.5 µs（σ 0.31） | 92.8 µs（σ 0.34） |
+| `pos_13_long_nt_chain_accumulation` | 同 shape，`T=2048`（32 chunk） | 282.8 µs（σ 0.38） | 482.4 µs（σ 1.62） |
+
+两次都是 `Total Task: 3, success 3, failed 0`。数值口径是 ATK `performance_device` 的 device 耗时
+（xlsx `npu_*_Device性能（us）`），不是 Python wall time。当前实现约 9~10 µs/chunk（8 chunk 77 µs、
+32 chunk 283 µs，随 chunk 数近似线性），A2/A5 ≈ 1.7×。
+（此前记录过的 270.7 / 274.1 / 1066.7 µs 是更早的实现版本，且当时 `cu_seqlens` 没送到 executor、
+varlen 那一条实际按 dense 跑的，已作废。）
 `-scope=determinism` / `-scope=mssanitizer` 使用同一份 `atk_<op>_mss.json`（5 条，覆盖 4 个 tilingKey），
 本版未执行。
 

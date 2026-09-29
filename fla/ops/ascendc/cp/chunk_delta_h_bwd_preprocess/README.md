@@ -102,6 +102,7 @@ aclnn 与 `<<<>>>` 直调见 [`docs/api.md`](docs/api.md)。
 | arch35 Vector 融合（A5） | V0 门控行缩放、V2 `dV̂'`、V4 状态更新与 `P_c` 对角注入下沉到 RegBase `__simd_vf__`（256B / 64 lane per fp32 寄存器）一趟融合，去掉逐行 `ExpScalar` 的 V→S 同步与逐元素 `SetValue`/`GetValue`；改造后 A5 重跑 12 正向 + 13 反向全部通过，数值与改造前逐项一致 |
 | 设备侧精度（A2 / ascend910b） | 同一 12 条用例在同一实现上执行：**12/12 PASS**，误差量级与 A5 一致（`E ≤ 9.6e-3`、`P ≤ 7.2e-3`） |
 | 数值稳定性 | 关键用例（`pos_15` 96 head 多 task、`pos_13` 32 chunk 长链、`gate_gk`）重复执行结果逐位一致；此前出现过的"随负载时好时坏"已定位到跨核 wait 的 pipe 语义并修复 |
+| 设备侧性能 | ATK 性能矩阵（3 条）在最终代码上实测 device 耗时：A5 **77.0 / 55.5 / 282.8 µs**、A2 **132.9 / 92.8 / 482.4 µs**（dense 8 chunk / varlen `[0,300)` 5 chunk / 32 chunk 长链，口径与命令见测试 README）。模型场景（gva/h8/kda/long × CP 档）逐档 device 耗时与 H20 对照见 [`docs/design.md`](docs/design.md)：§11.7（A5 优化起点）、§28（A5/A2 逐档 + H20）、§31.2（A5 v23：主场景 0.96~1.19× H20）、§35（A2 v28：累计 1.85×，`gva_cp64` 2.32× H20） |
 | 设备侧反向拦截 | 按 `gen_chunk_delta_h_bwd_preprocess.py` 内联用例表的 13 条反向用例执行 `atk node --backend npu --devices <id> task -c ./atk_chunk_delta_h_bwd_preprocess.json --task run`：**13/13 PASS**，NPU 侧实际返回码与 `expected_return_code` 一致（`ACLNN_ERR_PARAM_INVALID`=161001），覆盖 `g`/`gk` 互斥、`K != 128`（64/256/512）、`V != 128`（96）、`Hv%Hk!=0`、dense/varlen `B>1`、`chunk_size!=64`、`g` shape 不匹配、`gk` FP32、`cu_seqlens` 过短、空 tensor |
 | A3 / ascend910_93 | `def.cpp` 已声明该平台配置，但**本版未在 A3 设备上执行验证**（无可用设备）；编译与精度结论只覆盖 A2/A5 |
 
@@ -114,9 +115,10 @@ aclnn 与 `<<<>>>` 直调见 [`docs/api.md`](docs/api.md)。
    没有跨 chunk 的 ping-pong 重叠；1:2 需要两个 AIV 分工并各自协调 flag。
 3. **sanitizer**：按仓库规范补做 `mssanitizer`（`racecheck`/`memcheck`/`initcheck`/`synccheck`），并确认运行命中的是
    sanitizer 版本对象。
-4. **官方 ATK / CI 接入**：用例与取数脚本已归档到 `tests/atk/chunk_delta_h_bwd_preprocess/`，但当前是直调 aclnn 的
-   取数工程，尚未并入 `tests/atk/run_test_cpu.sh` 的 `<op>.yaml` + `gen_<op>.py` + `executor_<op>.py` 标准流程
-   （需同时选定与该链式判据口径一致的 ATK 原生精度标准），也尚未并入 `ci/` 的既有流程。
+4. **官方 ATK 接入（已完成，CI 接入待办）**：`tests/atk/chunk_delta_h_bwd_preprocess/` 已是标准形态
+   （`<op>.yaml` + `gen_<op>.py` 内联用例表 + `executor_<op>.py` + 三份 `atk_*.json`，精度用 ATK 原生
+   `mixed_tolerance_bm` + `output_dtype_overrides`），A2/A5 的正向 12 条与反向 13 条均已复核通过；
+   尚未并入 `ci/` 的既有流程。
 5. **精度判据口径**：本版 `E_r/P_r` 的目标是"跨 rank 仿射摘要"，链上用模型 dtype 传递状态（`Pc`/`PBf`/`dHBf` 都是
    bf16/fp16），因此判据采用"相对参考幅值"（详见测试 README），不是逐元素绝对阈值。
 
