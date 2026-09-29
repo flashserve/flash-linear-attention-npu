@@ -141,10 +141,21 @@ private:
     {
         // AIC 视角下四个 local head 的固定核间编号。AIV1 的两个本地
         // ready 0/1、free 4/5 在 AIC 侧映射为 16/17、20/21。
+        // 死锁修复（FwdP-2 拆分）：原 free 计数器被 V0/V3/V6 三个 wait
+        // 共享，FwdP-2 把 V0/V6 的 wait 换成 PIPE_MTE3 味后，同一计数器
+        // 出现 MTE3 与 PIPE_V 两条 pipe 的阻塞 wait，消费顺序失去 mutex
+        // 链约束，V3 的 wait 可抢走 V0/V6 的信用 → 跨核停等。拆成三条
+        // 单消费者 pipe 的通道：scoreReady 只服务 V3（PIPE_V），
+        // payloadRepurpose 只服务 V6（PIPE_MTE3），free 只服务
+        // V0/清账（PIPE_MTE3）。
         constexpr uint16_t kAivToAicPayloadReadyFlagId[4] = {
             0, 1, 16, 17};
         constexpr uint16_t kAicToAivSlotReusableFlagId[4] = {
             4, 5, 20, 21};
+        constexpr uint16_t kAicToAivScoreReadyFlagId[4] = {
+            2, 3, 18, 19};
+        constexpr uint16_t kAicToAivPayloadRepurposeFlagId[4] = {
+            6, 7, 22, 23};
         for (uint32_t groupBegin = headBegin; groupBegin < headEnd;) {
             uint32_t activeHeads = headEnd - groupBegin;
             if (activeHeads > Shape::kHeadsPerGroup) {
@@ -173,8 +184,10 @@ private:
                 AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
                     kAivToAicPayloadReadyFlagId[localHead]);
                 StageC2(chunk, localHead);
+                // C2 写完 raw Aqk/Akk 且不再读 V1 payload：走 V3 专用
+                // 的 scoreReady 通道（AIV 侧 PIPE_V 单消费者）。
                 AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
-                    kAicToAivSlotReusableFlagId[localHead]);
+                    kAicToAivScoreReadyFlagId[localHead]);
             }
 
             // 先为所有有效 HEAD 提交 C4，再统一提交 C5。若逐 HEAD 交替
@@ -191,8 +204,10 @@ private:
                 AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
                     kAivToAicPayloadReadyFlagId[localHead]);
                 const uint32_t valueHead = groupBegin + localHead;
+                // C4 读完 payload 后归还的是 V6 原址换义专用通道
+                // （AIV 侧 PIPE_MTE3 单消费者）。
                 StageC4(chunk, valueHead, localHead,
-                        kAicToAivSlotReusableFlagId[localHead]);
+                        kAicToAivPayloadRepurposeFlagId[localHead]);
             }
             for (uint32_t localHead = 0;
                  localHead < Shape::kHeadsPerGroup; ++localHead) {
