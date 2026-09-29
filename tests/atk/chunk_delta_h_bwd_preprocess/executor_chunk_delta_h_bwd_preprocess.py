@@ -1,6 +1,6 @@
 """ChunkDeltaHBwdPreprocess ATK executor and CPU reference entry.
 
-输入按 ``case_spec`` 里的 shape/seed 确定性构造（与 ``scripts/make_case.py`` 同一套分布：
+输入按 ``case_spec`` 里的 shape/seed 确定性构造（与算子在 tests/operators 下的 harness 同一套分布：
 ``randn*0.05`` 的 q/k/w/do/dv，以及沿 token 维 ``-cumsum(rand*0.05)`` 的 gate），
 CPU 标杆复用 ``scripts/reference.py`` 的 ``preprocess_reference``；判据是 yaml/用例里声明的
 ATK 原生 ``mixed_tolerance_bm``（按模型 dtype 判 ``dhm``）。

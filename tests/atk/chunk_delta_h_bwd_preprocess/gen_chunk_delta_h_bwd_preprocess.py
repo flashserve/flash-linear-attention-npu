@@ -34,7 +34,7 @@ SEED_BASE = 20260927
 CHUNK_SIZE = 64
 
 # 输入由 executor 按 case_spec 里的 seed 确定性地构造（ATK 只传 marker + 用例元数据）。
-# 值域与 scripts/make_case.py 一致：q/k/w/do/dv 是 randn*0.05，gate 是沿 token 的 -cumsum(rand*0.05)，
+# 值域与 tests/operators 下的 harness 一致：q/k/w/do/dv 是 randn*0.05，gate 是沿 token 的 -cumsum(rand*0.05)，
 # 后者保证 2^{g_last-g} ≤ 1（gate 非单调会让长链溢出，实测 fp16 会出 NaN）。
 MARKER_RANGE = [0, 0]
 PERF_KEYS = ("pos_01_none_gate_dense", "pos_05_gk_varlen_first_segment",
