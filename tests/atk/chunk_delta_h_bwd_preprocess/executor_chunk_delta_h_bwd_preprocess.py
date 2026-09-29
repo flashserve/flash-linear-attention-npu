@@ -82,11 +82,14 @@ def build_inputs(spec: dict, device: torch.device) -> dict:
     # gate="both" 用于反向用例：同时给出 g 与 gk，校验算子必须按互斥拦截（返回 161001）。
     if gate in ("g", "both"):
         gate_dtype = (torch.float32 if spec.get("g_dtype") == "fp32" else model_dtype)
-        inputs["g"] = _gate((batch, value_heads, total_tokens), gate_dtype, device,
-                            seed + 6)
+        # 反向用例 neg_07：g 按 [B,Hk,T] 构造（正常 GVA 路径要求 [B,Hv,T]），必须被拦截。
+        gate_heads = key_heads if str(spec.get("g_head", "Hv")) == "Hk" else value_heads
+        inputs["g"] = _gate((batch, gate_heads, total_tokens), gate_dtype, device, seed + 6)
     if gate in ("gk", "both"):
+        # 反向用例 neg_08：gk 按 FP32 构造（要求与 q/k 同 dtype），必须被拦截。
+        gk_dtype = (torch.float32 if str(spec.get("gk_dtype", "model")) == "fp32" else model_dtype)
         inputs["gk"] = _kda_gate((batch, value_heads, total_tokens, k_dim), model,
-                                 model_dtype, device, seed + 7)
+                                 gk_dtype, device, seed + 7)
     return inputs
 
 
