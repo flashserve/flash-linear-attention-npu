@@ -1511,3 +1511,28 @@ A2 后续只走两类**不会挂死**的方向：
 
 至此，两轮"降低每 chunk 指令数/同步数"的尝试都以失败告终（§23 死锁、§25 数值错），
 说明当前实现的剩余优化点必须**换一类机制**（改并行度结构，即 §24）才可能继续下降。
+
+## 27. 静态分析：A2 的 1:2 必须"两个 AIV 合干同一条链"（取代原计划的二分定位）
+
+原本打算二分定位"是哪个近期改动把 A2 的 1:2 弄挂了"。重读同步语义后结论是：**不需要二分，
+也不是那三个改动的问题**，而是协议与 A2 的同步语义天然冲突：
+
+1. A2 的 `mode 0x2` 是"AIC : 2*AIV 集合同步"，**没有 subblock 选择语义** ⇒ AIC 的一次 set 会同时落到
+   **两个** AIV 的同一 id 上；而 AIV→AIC 方向是点对点（这也是 fwd_h 能按 `vec1Done[0]/[1]` 分别寻址
+   AIC 侧寄存器的原因）。
+2. 由此得到三条推论：
+   * **共享 id + 每个 AIV 一条独立链**（§17 尝试 1）：AIC 服务 head A 时 set 的 `T1_READY` 会
+     **同时放行**正在等 head B 的另一个 AIV ⇒ 事件与链错配（实测死锁）。
+   * **per-AIV id 段 + 独立链**（§17 尝试 2、§21 尝试 3）：AIC 给 AIV1 的 set 会**顺带**落在 AIV0 的
+     同一 id 寄存器上，而 AIV0 永远不 wait 它 ⇒ 该寄存器上"未被消费的 set"持续累积。catlass 明确写了
+     *"a cross core flag can be continuously set up to 15 times without waiting, leading to a system
+     freeze"*（`MAX_REVERSE_DEPTH = 15`，见 `third_party/catlass/include/catlass/arch/cross_core_sync.hpp:22`）
+     ⇒ 长序列必然冻结。这类"跑一阵子才挂"的症状与之完全吻合。
+   * 只有**两个 AIV 在同一个逻辑点 wait 同一个 id**（集合语义的正确用法，也是 fwd_h 的做法）时，
+     broadcast 才自洽：AIC 一次 set 给两个 AIV 各自 +1，两个 AIV 各 wait 一次 ⇒ 账本平衡；
+     AIV→AIC 方向则由两个 AIV 各 set 一次、AIC 连续 wait 两次构成 rendezvous。
+3. **结论**：A2 的 1:2 只能配"两个 AIV 合干同一条链"，也就是 §24 的 (head, half) 拆分——恰好也是
+   A2 达标的组合（1:2 ≈1.8× × 拆链 ≈1.3× ≈ 2.6×，落在 0.4× H20 附近）。
+   **放弃二分定位**，直接按 §24 实施拆分，并且**在 A5 上先把集体式的拆分验证通过**
+   （A5 用的是按 subblock 选择的 `0x4`，点对点语义，独立链/集体链都能跑，是安全的验证平台），
+   再把它搬到 A2 并打开 1:2。
