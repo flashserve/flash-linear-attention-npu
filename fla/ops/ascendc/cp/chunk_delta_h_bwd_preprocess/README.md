@@ -87,7 +87,7 @@ aclnn 与 `<<<>>>` 直调见 [`docs/api.md`](docs/api.md)。
 | `op_kernel` | 已实现：六个 Stage 的真实计算体（Catlass `BlockMmadTla` 五路矩阵乘 + Vector 手写事件对），A2/A5 精度均已打通；Vector 侧按平台拆分 `op_kernel/arch22`（A2/A3）与 `op_kernel/arch35`（A5，热点段用 RegBase `__simd_vf__` 融合） |
 | 构建接入 | 已完成：`op_host/CMakeLists.txt` 走 `op_host_aclnnExc` + `ACLNNTYPE aclnn_exclude`（**aclnn 手写，不走自动生成**），A2/A5 均已编出 OPP 运行包 |
 | Python `fla_npu.ops.ascendc` 入口 | 已接入：ctypes 直调手写 aclnn（不依赖 `torch_npu` dispatcher），A2/A5 双平台设备侧均验证通过 |
-| 测试 | `tests/atk/chunk_delta_h_bwd_preprocess/` 按 `tests/atk` 规范组织：`cases.json` 是用例设计（12 正向 + 13 反向），`atk_*.json` + `gen_*.py` + `executor_*.py` + `<op>.yaml` 是 ATK 精度/性能/内存矩阵，`scripts/` 放 CPU 标杆、aclnn 直调取数、逐平面核对与反向拦截脚本 |
+| 测试 | `tests/atk/chunk_delta_h_bwd_preprocess/` 按 `tests/atk` 规范组织：用例设计（12 正向 + 13 反向拦截）内联在 `gen_chunk_delta_h_bwd_preprocess.py`，展开出 `atk_chunk_delta_h_bwd_preprocess.json`（精度矩阵，含 13 条反向）/ `_perf` / `_mss` 三份矩阵，配 `<op>.yaml` 与 `executor_<op>.py`；`scripts/` 只保留 CPU 标杆 `reference.py`，反向拦截走 ATK `--task run` 复核返回码 |
 
 ### 已验证（本版）
 
@@ -98,11 +98,11 @@ aclnn 与 `<<<>>>` 直调见 [`docs/api.md`](docs/api.md)。
 | OPP 安装内容 | 运行包安装后含 `op_api/include/aclnnop/aclnn_chunk_delta_h_bwd_preprocess.h`、`op_api/lib/libcust_opapi.so`、`op_impl/ai_core/tbe/kernel/ascend950/chunk_delta_h_bwd_preprocess`（kernel bin + config + tiling py） |
 | aclnn 手写路径 | 构建产物含 `build/autogen/exc/aclnnExc_chunk_delta_h_bwd_preprocess.cpp/.h` 与 `aic-ascend950-ops-info.ini`，确认走的是 aclnn 排除自动生成的 exc 通路 |
 | 参考实现数学口径 | 纯 Python 数值校验：三种 gate 模式下 `dh0 == P_r @ dht + E_r` 的最大绝对误差 ~1e-16 |
-| 设备侧精度（A5 / ascend950） | 按 `tests/atk/chunk_delta_h_bwd_preprocess/cases.json` 的 12 条正向用例在设备上执行：**12/12 PASS**。`E` 面 `rel_norm ≤ 1.2e-2`、`P` 面 `rel_norm ≤ 9.4e-3`（单 task / 单 chunk 场景约 2e-3；最大为 32 个 chunk 的长链 `pos_13`）；无 NaN/Inf |
+| 设备侧精度（A5 / ascend950） | 按 `gen_chunk_delta_h_bwd_preprocess.py` 内联用例表展开的 12 条正向用例（`atk_chunk_delta_h_bwd_preprocess.json`）在设备上执行：**12/12 PASS**。`E` 面 `rel_norm ≤ 1.2e-2`、`P` 面 `rel_norm ≤ 9.4e-3`（单 task / 单 chunk 场景约 2e-3；最大为 32 个 chunk 的长链 `pos_13`）；无 NaN/Inf |
 | arch35 Vector 融合（A5） | V0 门控行缩放、V2 `dV̂'`、V4 状态更新与 `P_c` 对角注入下沉到 RegBase `__simd_vf__`（256B / 64 lane per fp32 寄存器）一趟融合，去掉逐行 `ExpScalar` 的 V→S 同步与逐元素 `SetValue`/`GetValue`；改造后 A5 重跑 12 正向 + 13 反向全部通过，数值与改造前逐项一致 |
 | 设备侧精度（A2 / ascend910b） | 同一 12 条用例在同一实现上执行：**12/12 PASS**，误差量级与 A5 一致（`E ≤ 9.6e-3`、`P ≤ 7.2e-3`） |
 | 数值稳定性 | 关键用例（`pos_15` 96 head 多 task、`pos_13` 32 chunk 长链、`gate_gk`）重复执行结果逐位一致；此前出现过的"随负载时好时坏"已定位到跨核 wait 的 pipe 语义并修复 |
-| 设备侧反向拦截 | 按 `cases.json` 的 13 条反向用例在 A2/A5 上执行：**13/13 PASS**，实际返回码与 `expected_return_code` 一致（`ACLNN_ERR_PARAM_INVALID`=161001），覆盖 `g`/`gk` 互斥、`K != 128`（64/256/512）、`V != 128`（96）、`Hv%Hk!=0`、dense/varlen `B>1`、`chunk_size!=64`、`g` shape 不匹配、`gk` FP32、`cu_seqlens` 过短、空 tensor |
+| 设备侧反向拦截 | 按 `gen_chunk_delta_h_bwd_preprocess.py` 内联用例表的 13 条反向用例执行 `atk node --backend npu --devices <id> task -c ./atk_chunk_delta_h_bwd_preprocess.json --task run`：**13/13 PASS**，NPU 侧实际返回码与 `expected_return_code` 一致（`ACLNN_ERR_PARAM_INVALID`=161001），覆盖 `g`/`gk` 互斥、`K != 128`（64/256/512）、`V != 128`（96）、`Hv%Hk!=0`、dense/varlen `B>1`、`chunk_size!=64`、`g` shape 不匹配、`gk` FP32、`cu_seqlens` 过短、空 tensor |
 | A3 / ascend910_93 | `def.cpp` 已声明该平台配置，但**本版未在 A3 设备上执行验证**（无可用设备）；编译与精度结论只覆盖 A2/A5 |
 
 ### 尚未完成（下一步）
@@ -123,14 +123,20 @@ aclnn 与 `<<<>>>` 直调见 [`docs/api.md`](docs/api.md)。
 ### 精度取数链路（已验证）
 
 ```bash
-INSTALL=<install root> CASE_DIR=<case dir> bash tests/atk/chunk_delta_h_bwd_preprocess/scripts/run_accuracy.sh \
-  --dtype bf16 --gate gk --Hk 4 --Hv 4 --T 256 --K 128 --V 128
+FLA_NPU_ENV=<custom opp>/bin/set_env.bash ATK_OUTPUT_ROOT=<output root> \
+  bash tests/atk/run_test_cpu.sh \
+    -op=chunk_delta_h_bwd_preprocess -npu_device_id=<id> -soc=ascend950 -scope=accuracy
 ```
 
-- 输入/期望值由 `make_case.py` 生成（固定种子，落盘后两侧共用同一份 bytes），`run_case` 用 aclnn 直调取数，
-  `compare.py` 分别给出 `E_r` / `P_r` 平面的 max_abs / max_rel。
-- **对照实验**：把 kernel 编成空实现（`-DCDHP_DEBUG_EMPTY`，仅用于定位，不作为交付）后，同一用例立即返回、
-  `dhm` 全 0、比对流程正常结束 ⇒ aclnn 启动、workspace、D2H 均可用，挂死只可能来自 kernel 内部。
+- 输入由 `gen_chunk_delta_h_bwd_preprocess.py` 内联用例表按固定种子确定性构造：NPU 侧走
+  `fla_npu.ops.ascendc` 主入口，CPU 侧走 `scripts/reference.py` 的 `preprocess_reference`，
+  两侧共用同一份输入与同一份 `E_r` / `P_r` 判据，避免"标杆换了口径"。
+- 逐平面核对由 `scripts/reference.py` 的本地自检给出：`E_r` / `P_r` 分平面打印，`dh_scan_direct`
+  用**非零** `dht` 反扫，`check_affine` 校验 `dh0 == P_r @ dht + E_r`。
+- ATK 的 `BaseBackend.before_call` 会丢掉 `dtype=non_param` 的输入（`case_spec` 正是这一类），
+  executor 实际读到的是同一份元数据的**标量副本**；`cu_seqlens` 是 list，按逗号分隔的 string 下发。
+- **对照实验**：把 kernel 编成空实现后（仅用于定位，不作为交付），同一用例立即返回、`dhm` 全 0、
+  比对流程正常结束 ⇒ aclnn 启动、workspace、D2H 均可用，挂死只可能来自 kernel 内部。
 
 ### 编译期踩坑记录（A2/A5 都要用）
 

@@ -46,11 +46,19 @@ _REFERENCE_SPEC.loader.exec_module(_REFERENCE)
 
 
 def _segment(spec: dict):
-    cu = [int(x) for x in spec.get("cu_seqlens", [])]
-    if not cu:
+    # cu_seqlens 只能从标量通道取：ATK 的 BaseBackend.before_call 会丢弃 dtype=non_param 的输入
+    # （case_spec 就是 non_param），所以这里兼容"逗号分隔的 string"与原生 list 两种形态。
+    raw = spec.get("cu_seqlens")
+    if raw is None:
+        values = []
+    elif isinstance(raw, str):
+        values = [int(token) for token in raw.replace(" ", "").split(",") if token]
+    else:
+        values = [int(x) for x in raw]
+    if not values:
         return None
     # 非空就原样交给算子：反向用例 neg_09 故意只给 1 个元素，必须让 host 拦到"至少 2 个元素"。
-    return cu[:2] if len(cu) >= 2 else cu
+    return values[:2] if len(values) >= 2 else values
 
 
 def build_inputs(spec: dict, device: torch.device) -> dict:
@@ -117,18 +125,19 @@ _ACLNN_CODES = {
 
 def _negative_expected_code(spec: dict):
     raw = spec.get("expected_return_code")
-    if raw is None:
-        # case_spec 里没带期望码时，用 case_key 兜底识别反向用例（本算子的反向用例统一以 neg_ 命名，
-        # 期望码统一是 ACLNN_ERR_PARAM_INVALID = 161001）；避免依赖 ATK 传递哪些字段。
-        if "neg_" in str(spec.get("case_key", "")):
-            return _ACLNN_CODES["ACLNN_ERR_PARAM_INVALID"]
-        return None
-    text = str(raw)
-    if text.isdigit():
-        return int(text)
-    if text not in _ACLNN_CODES:
-        raise RuntimeError(f"{OP_NAME}: unknown expected_return_code {text!r}")
-    return _ACLNN_CODES[text]
+    # 正向用例的 expected_return_code 是空串，表示"不期望拦截"，必须先于其它判断返回 None。
+    text = "" if raw is None else str(raw).strip()
+    if text:
+        if text.isdigit():
+            return int(text)
+        if text not in _ACLNN_CODES:
+            raise RuntimeError(f"{OP_NAME}: unknown expected_return_code {text!r}")
+        return _ACLNN_CODES[text]
+    # 期望码缺失时用 case_key 兜底识别反向用例（本算子的反向用例统一以 neg_ 命名，
+    # 期望码统一是 ACLNN_ERR_PARAM_INVALID = 161001）；避免依赖 ATK 传递哪些字段。
+    if "neg_" in str(spec.get("case_key", "")):
+        return _ACLNN_CODES["ACLNN_ERR_PARAM_INVALID"]
+    return None
 
 
 def _placeholder_output(spec: dict):

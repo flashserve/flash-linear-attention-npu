@@ -247,6 +247,15 @@
         "shape": null,
         "range_values": 20260927,
         "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
       }
     ],
     "save_name": "chunk_delta_h_bwd_preprocess"
@@ -498,6 +507,15 @@
         "dtype": "int",
         "shape": null,
         "range_values": 20260928,
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
         "backward": false
       }
     ],
@@ -751,6 +769,15 @@
         "shape": null,
         "range_values": 20260929,
         "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
       }
     ],
     "save_name": "chunk_delta_h_bwd_preprocess"
@@ -1002,6 +1029,15 @@
         "dtype": "int",
         "shape": null,
         "range_values": 20260930,
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
         "backward": false
       }
     ],
@@ -1255,6 +1291,15 @@
         "shape": null,
         "range_values": 20260931,
         "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "0,300,512",
+        "backward": false
       }
     ],
     "save_name": "chunk_delta_h_bwd_preprocess"
@@ -1506,6 +1551,15 @@
         "dtype": "int",
         "shape": null,
         "range_values": 20260932,
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
         "backward": false
       }
     ],
@@ -1759,6 +1813,15 @@
         "shape": null,
         "range_values": 20260933,
         "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
       }
     ],
     "save_name": "chunk_delta_h_bwd_preprocess"
@@ -2010,6 +2073,15 @@
         "dtype": "int",
         "shape": null,
         "range_values": 20260934,
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
         "backward": false
       }
     ],
@@ -2263,6 +2335,15 @@
         "shape": null,
         "range_values": 20260935,
         "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
       }
     ],
     "save_name": "chunk_delta_h_bwd_preprocess"
@@ -2514,6 +2595,15 @@
         "dtype": "int",
         "shape": null,
         "range_values": 20260936,
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
         "backward": false
       }
     ],
@@ -2767,6 +2857,15 @@
         "shape": null,
         "range_values": 20260937,
         "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
       }
     ],
     "save_name": "chunk_delta_h_bwd_preprocess"
@@ -3019,6 +3118,15 @@
         "shape": null,
         "range_values": 20260938,
         "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
       }
     ],
     "save_name": "chunk_delta_h_bwd_preprocess"
@@ -3270,6 +3378,15 @@
         "dtype": "int",
         "shape": null,
         "range_values": 20260939,
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
         "backward": false
       }
     ],
@@ -3524,6 +3641,15 @@
         "shape": null,
         "range_values": 20260940,
         "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
       }
     ],
     "save_name": "chunk_delta_h_bwd_preprocess",
@@ -3776,6 +3902,15 @@
         "dtype": "int",
         "shape": null,
         "range_values": 20260941,
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
         "backward": false
       }
     ],
@@ -4030,6 +4165,15 @@
         "shape": null,
         "range_values": 20260942,
         "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
       }
     ],
     "save_name": "chunk_delta_h_bwd_preprocess",
@@ -4282,6 +4426,15 @@
         "dtype": "int",
         "shape": null,
         "range_values": 20260943,
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "0,128,256",
         "backward": false
       }
     ],
@@ -4536,6 +4689,15 @@
         "shape": null,
         "range_values": 20260944,
         "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
       }
     ],
     "save_name": "chunk_delta_h_bwd_preprocess",
@@ -4788,6 +4950,15 @@
         "dtype": "int",
         "shape": null,
         "range_values": 20260945,
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
         "backward": false
       }
     ],
@@ -5042,6 +5213,15 @@
         "shape": null,
         "range_values": 20260946,
         "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
       }
     ],
     "save_name": "chunk_delta_h_bwd_preprocess",
@@ -5067,7 +5247,7 @@
       "perf": "not_key",
       "mem": 1.1
     },
-    "expected_error_msg": "ACLNN_ERR_PARAM_INVALID (161001): cu_seqlens 只有 1 个元素，无法给出 [bos, eos)",
+    "expected_error_msg": "ACLNN_ERR_PARAM_INVALID (161001): cu_seqlens 只有 1 个元素，无法给出 【bos, eos)",
     "outputs": null,
     "inputs": [
       {
@@ -5104,7 +5284,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":256,\"V\":128,\"case_id\":20,\"case_key\":\"neg_09_cu_seqlens_too_short\",\"chunk_size\":64,\"cu_seqlens\":[0],\"dtype\":\"bf16\",\"expected_error_msg\":\"ACLNN_ERR_PARAM_INVALID (161001): cu_seqlens 只有 1 个元素，无法给出 [bos, eos)\",\"expected_return_code\":\"ACLNN_ERR_PARAM_INVALID\",\"g_dtype\":\"model\",\"g_head\":\"Hv\",\"gate\":\"none\",\"gk_dtype\":\"model\",\"note\":\"cu_seqlens 只有 1 个元素，无法给出 [bos, eos)\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260947,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":true}",
+        "range_values": "{\"B\":1,\"Hk\":4,\"Hv\":4,\"K\":128,\"T\":256,\"V\":128,\"case_id\":20,\"case_key\":\"neg_09_cu_seqlens_too_short\",\"chunk_size\":64,\"cu_seqlens\":[0],\"dtype\":\"bf16\",\"expected_error_msg\":\"ACLNN_ERR_PARAM_INVALID (161001): cu_seqlens 只有 1 个元素，无法给出 【bos, eos)\",\"expected_return_code\":\"ACLNN_ERR_PARAM_INVALID\",\"g_dtype\":\"model\",\"g_head\":\"Hv\",\"gate\":\"none\",\"gk_dtype\":\"model\",\"note\":\"cu_seqlens 只有 1 个元素，无法给出 [bos, eos)\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20260947,\"soc\":\"ascend950\",\"tags\":\"negative\",\"varlen\":true}",
         "backward": false
       },
       {
@@ -5203,7 +5383,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "ACLNN_ERR_PARAM_INVALID (161001): cu_seqlens 只有 1 个元素，无法给出 [bos, eos)",
+        "range_values": "ACLNN_ERR_PARAM_INVALID (161001): cu_seqlens 只有 1 个元素，无法给出 【bos, eos)",
         "backward": false
       },
       {
@@ -5294,6 +5474,15 @@
         "dtype": "int",
         "shape": null,
         "range_values": 20260947,
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "0",
         "backward": false
       }
     ],
@@ -5548,6 +5737,15 @@
         "shape": null,
         "range_values": 20260948,
         "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
       }
     ],
     "save_name": "chunk_delta_h_bwd_preprocess",
@@ -5800,6 +5998,15 @@
         "dtype": "int",
         "shape": null,
         "range_values": 20260949,
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
         "backward": false
       }
     ],
@@ -6054,6 +6261,15 @@
         "shape": null,
         "range_values": 20260950,
         "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
       }
     ],
     "save_name": "chunk_delta_h_bwd_preprocess",
@@ -6306,6 +6522,15 @@
         "dtype": "int",
         "shape": null,
         "range_values": 20260951,
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
         "backward": false
       }
     ],

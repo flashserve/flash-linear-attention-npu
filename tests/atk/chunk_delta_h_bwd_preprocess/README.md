@@ -12,7 +12,7 @@
 | `atk_chunk_delta_h_bwd_preprocess_perf.json` | 性能精简矩阵（3 条：dense / varlen / 32 chunk 长链） |
 | `atk_chunk_delta_h_bwd_preprocess_mss.json` | 内存检测与确定性矩阵（5 条，覆盖 4 个 tilingKey + varlen） |
 | `scripts/reference.py` | CPU 全精度参考：`preprocess_reference` 给出 `dhm = [E_r \| P_r]`；`dh_scan_direct` 用非零 `dht` 反扫得到真实 `dh0`；`check_affine` 校验 `dh0 == P_r @ dht + E_r` |
-| `atk_chunk_delta_h_bwd_preprocess.json` 的 13 条反向用例 | 由 `gen_<op>.py` 生成、带 `expected_return_code`，走 `atk ... --task run` 核对返回码 |
+| `atk_chunk_delta_h_bwd_preprocess.json` 的 13 条反向用例 | 由 `gen_<op>.py` 生成、带 `expected_return_code`，走 `atk ... --task run` 核对返回码（A5/A2 均 13/13） |
 
 ## ATK 一键执行（规范入口）
 
@@ -31,9 +31,13 @@ bash tests/atk/run_test_cpu.sh \
 
 | 平台 | 命令 | 结果 |
 | --- | --- | --- |
-| A5 / `ascend950` | `bash tests/atk/run_test_cpu.sh -op=chunk_delta_h_bwd_preprocess -npu_device_id=0 -soc=ascend950 -scope=accuracy`（stable 后端） | **12/12 通过**，`acc_pass_result: Pass` |
-| A2 / `ascend910b` | 同上 `-soc=ascend910b`（ctypes 后端；该机 ATK 26.4.30 低于 runner 要求的 26.8.8，用本机已有 ATK 26.9.8 运行） | **12/12 通过**，`acc_pass_result: Pass` |
+| A5 / `ascend950` | `atk node --backend npu --devices <id> -o <out> node --backend cpu task -c ./atk_chunk_delta_h_bwd_preprocess.json --task accuracy -p ./executor_chunk_delta_h_bwd_preprocess.py -s 0 -e 12 -to 2000` | **12/12 通过**，`Total Task: 12, success 12, failed 0`，`acc_pass_result: Pass` |
+| A2 / `ascend910b` | 同上（该机自带 ATK 版本低于 runner 要求，改用本机已有 ATK 26.9.8 运行） | **12/12 通过**，`Total Task: 12, success 12, failed 0`，`acc_pass_result: Pass` |
 | A5 / `ascend950` | `... -scope=performance`（3 条：dense / varlen / 32 chunk） | **3/3 执行成功**，device 中位耗时 270.7 / 274.1 / 1066.7 µs（见下） |
+
+上面两条精度行是把同一份 `atk_<op>.json` 用 `atk node ... --task accuracy` 直接执行的结果；同一份用例也可以走
+`run_test_cpu.sh -scope=accuracy`。`fla_npu.ops.ascendc` 在本机稳定入口不可用时会自动回退 ctypes 参考通路，
+两条通路共用同一份手写 aclnn，稳定入口本身另有验证（见下文"稳定入口"一节）。
 
 判据是 ATK 原生 `mixed_tolerance_bm`；`dhm` 虽是 FP32，但链上状态按设计用模型 dtype 传递，
 所以用例的 `standard.acc` 用 ATK 原生的 `output_dtype_overrides` 声明按 `bf16`/`fp16` 判，
@@ -50,6 +54,34 @@ bash tests/atk/run_test_cpu.sh \
 数值是 ATK `performance_device` 的 device 中位耗时（同 shape 下单 chunk 约 33 µs，随 chunk 数近似线性）。
 `-scope=determinism` / `-scope=mssanitizer` 使用同一份 `atk_<op>_mss.json`（5 条，覆盖 4 个 tilingKey），
 本版未执行。
+
+### ATK 反向拦截结果（已执行，`--task run`）
+
+命令（NPU 单节点，不带 CPU 标杆节点）：
+
+```bash
+atk node --backend npu --devices <device_id> task \
+  -c ./atk_chunk_delta_h_bwd_preprocess.json --task run \
+  -p ./executor_chunk_delta_h_bwd_preprocess.py -s 12 -e 25
+```
+
+| 平台 | 结果 |
+| --- | --- |
+| A5 / `ascend950` | `Total Task: 13, success 13, failed 0`，13 条命中的 `aclnnStatus` 均为 161001 |
+| A2 / `ascend910b` | `Total Task: 13, success 13, failed 0`，同上 |
+
+判据：executor 先从算子异常文本里取 `aclnnStatus=<code>` 与用例声明的 `expected_return_code` 比对，
+一致后才抛出与用例 `expected_error_msg` 完全一致的文本，交由 ATK 的"预期失败"判定（与
+`tests/atk/chunk_kda_fwd` 同一口径）。返回码不符或算子没有拦截时，用例记为失败。
+
+接入时踩到的两个 ATK 行为（记下来避免误判）：
+
+- `BaseBackend.before_call` 会**丢掉所有 `dtype=non_param` 的输入**，`case_spec` 正是这一类；executor
+  实际读到的是同一份元数据的**标量副本**。因此 `cu_seqlens` 按逗号分隔的 string 下发——用 `case_spec`
+  或张量通道传都到不了 executor，会让 varlen 用例静默退化成 dense（dense 与 dense 互相比较仍会"通过"）。
+- `compare_error_msg` 在字符串包含匹配未命中后会把 `expected_error_msg` 当**正则**编译；编译失败时会
+  `raise` 一个非异常对象，报 `TypeError: exceptions must derive from BaseException`，掩盖真实比对结论。
+  生成器因此保证下发的 `expected_error_msg` 本身是合法正则。
 
 ## 本地自检（无需 NPU）
 

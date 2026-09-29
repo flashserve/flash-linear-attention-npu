@@ -183,9 +183,11 @@ storage-free：V2 → C1DvPrePayloadFree ; V4 → C3PayloadFree ; C5 → V4PcPay
 3. **Python 入口（已完成）**：`fla_npu.ops.ascendc.chunk_delta_h_bwd_preprocess` 已接入，走 ctypes
    直调手写 aclnn（默认调用路径不依赖 `torch_npu` dispatcher 与 `torch.ops.npu` 注册），A2/A5 双平台
    设备侧验证通过。
-4. **测试（设备侧精度矩阵已完成，见 README）**：以 `tests/atk/chunk_delta_h_bwd_preprocess/cases.json`
-   为唯一用例来源，用 `tests/atk/chunk_delta_h_bwd_preprocess/reference.py` 作为 CPU 标杆，覆盖
-   A2/A5 两平台与 `USE_G`/`USE_GK`/无门控、dense/varlen、尾块、GVA（`K = V = 128`，本版唯一支持取值）。
+4. **测试（设备侧精度矩阵已完成，见 README）**：以
+   `tests/atk/chunk_delta_h_bwd_preprocess/gen_chunk_delta_h_bwd_preprocess.py` 的内联用例表
+   （12 正向 + 13 反向拦截）为唯一用例来源，展开成 `atk_<op>*.json`；CPU 标杆用
+   `tests/atk/chunk_delta_h_bwd_preprocess/scripts/reference.py`，覆盖 A2/A5 两平台与
+   `USE_G`/`USE_GK`/无门控、dense/varlen、尾块、GVA（`K = V = 128`，本版唯一支持取值）。
 5. **精度与内存（部分完成）**：设备侧精度矩阵已通过；sanitizer（UB/L1 复用、跨核 slot、ping-pong）
    尚未执行，需要按仓库规范补做并确认运行命中的是 sanitizer 版本对象。
 
@@ -205,10 +207,10 @@ storage-free：V2 → C1DvPrePayloadFree ; V4 → C3PayloadFree ; C5 → V4PcPay
 ### 10.1 已执行情况
 
 - 第 1 项：纯 Python 自检已通过（三种 gate 模式，仿射恒等式最大绝对误差 ~1e-16）。
-- 第 2、3 项：按 `tests/atk/chunk_delta_h_bwd_preprocess/`（ATK 精度矩阵 + `scripts/` 逐平面核对）执行，
+- 第 2、3 项：按 `tests/atk/chunk_delta_h_bwd_preprocess/`（ATK 精度矩阵 + `scripts/reference.py` 逐平面核对）执行，
   A2/A5 均 12/12 PASS（全部 `K = V = 128`），含 32 chunk 长链（`pos_13`）与尾块（`pos_06`）。
 - 第 4 项：`C1`/`C3` 的两路输出、`V4` 的两路输出在实现上分别发布/释放（各自独立 flag 边界），
-  逐平面核对未发现两路混用；受控实验（`scripts/ctrl_case.py`）用于定位过 A 路。
+  逐平面核对未发现两路混用；受控实验（只改并发/同步配置、不改计算）用于定位过 A 路。
 - 第 5 项：本版只实现"仅按 head 连续分核"（`BY_HEAD`），`(hv, 列 tile)` 展平（`BY_TILE`）尚未实现；
   原 `pos_16_tile_split_partition`（K=V=256）已随 `K = V = 128` 的收敛移出正向矩阵，改为不支持拦截用例。
 - 第 6 项：跨 rank 一致性验证需要上层 CP 切分链路，本版未覆盖。
