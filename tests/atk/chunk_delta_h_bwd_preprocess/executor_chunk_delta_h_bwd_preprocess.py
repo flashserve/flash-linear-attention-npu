@@ -47,9 +47,10 @@ _REFERENCE_SPEC.loader.exec_module(_REFERENCE)
 
 def _segment(spec: dict):
     cu = [int(x) for x in spec.get("cu_seqlens", [])]
-    if len(cu) >= 2:
-        return cu[:2]
-    return None
+    if not cu:
+        return None
+    # 非空就原样交给算子：反向用例 neg_09 故意只给 1 个元素，必须让 host 拦到"至少 2 个元素"。
+    return cu[:2] if len(cu) >= 2 else cu
 
 
 def build_inputs(spec: dict, device: torch.device) -> dict:
