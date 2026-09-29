@@ -309,6 +309,12 @@ public:
         tiling_.blockDim = blockDim_;
         tiling_.splitMode = splitMode_;
         tiling_.groupHeads = groupHeads_;
+        // v19：head 内并行开关（两个 AIV 合干同一条链）。
+        // 打开条件（另行评估后放开）：aivPerBlock == 2 且 Hv <= blockDim（即每个 block 只负责 1 个 head、
+        // 两个 AIV 正好摊在同一个 head 的两半上）；打开时 workspace 的"份"数要从 blockDim*aivPerBlock 降回
+        // blockDim（同一个 head 的两半共享同一份平面），kernel 侧另有一套对应实现（见 struct.h 的注释）。
+        // 目前固定为 0：数据通路与集体式 flag 尚未落地，先保持"一个 AIV 一条链"。
+        tiling_.halfSplit = 0;
         tiling_.tileV = tileV;
         tiling_.tileK = tileK;
         tiling_.tileNum = tileNum;

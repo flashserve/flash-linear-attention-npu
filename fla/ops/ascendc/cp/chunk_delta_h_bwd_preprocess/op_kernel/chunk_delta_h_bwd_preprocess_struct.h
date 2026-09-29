@@ -88,6 +88,13 @@ ASCENDC_TPL_SEL(
 // 分核模式
 constexpr uint64_t CHUNK_DELTA_H_BWD_PREPROCESS_SPLIT_BY_HEAD = 0;  // 默认：仅按 head 连续分核
 constexpr uint64_t CHUNK_DELTA_H_BWD_PREPROCESS_SPLIT_BY_TILE = 1;  // Hv < 核数：按 (hv, 列 tile) 展平
+// v19：head 内并行（两个 AIV 合干同一条链）。aivPerBlock == 2 时可选：
+//   两个 AIV 各承包**同一个 head**的一半——E 链（dH，[K,V]）按 V 列切半、P 链（P，[K,K]）按 K 行切半，
+//   V0 的操作数按行切半；操作数/中间量平面按 block 共享（slice 不再按 sub 分），
+//   跨核 flag 用集合语义（同一 id 两侧共享 + 需要时 AIC 连续 wait 两次）。
+//   动机见 design.md §24/§27：A2（910B，mode 0x2）的集合同步语义只允许"两 AIV 合干同一条链"，
+//   而 A2 又只有靠 1:2 才能把 32 条链摊到 40 个 AIV 上。
+constexpr uint64_t CHUNK_DELTA_H_BWD_PREPROCESS_SPLIT_BY_HEAD_HALF = 2;
 
 constexpr uint32_t CHUNK_DELTA_H_BWD_PREPROCESS_K_GROUP_ROWS = 64;
 constexpr uint32_t CHUNK_DELTA_H_BWD_PREPROCESS_CHUNK_SIZE = 64;
@@ -127,6 +134,7 @@ struct ChunkDeltaHBwdPreprocessTilingData {
     uint64_t blockDim;
     uint64_t splitMode;
     uint64_t groupHeads;  // splitMode == BY_HEAD 时每核连续 head 数
+    uint64_t halfSplit;   // 1：启用 head 内并行（两个 AIV 合干同一条链）；0：一个 AIV 一条链
     uint64_t aivPerBlock;  // 1：A2/A3（MIX_AIC_1_1）；2：A5（MIX_AIC_1_2，一个 block 的两个 AIV 各承包一个 head）
     // 用户 workspace 规划（相对 user workspace 起始的字节偏移）
     uint64_t slotNum;

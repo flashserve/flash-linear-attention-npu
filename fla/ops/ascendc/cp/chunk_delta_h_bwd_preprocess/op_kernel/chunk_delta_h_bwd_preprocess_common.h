@@ -52,8 +52,11 @@ public:
         // 1:2 核型下 AIV 侧 GetBlockIdx() 返回的是 AIV 的展平序号（0..2*blockDim-1），
         // 除以 subBlockNum 才是所属 block；AIC 侧直接就是 block 序号。
         blockIdx_ = static_cast<uint32_t>(GetBlockIdx()) / static_cast<uint32_t>(AscendC::GetSubBlockNum());
-        sliceIdx_ = blockIdx_ * aivPerBlock_ + subBlockIdx_;
-        sliceNum_ = coreNum_ * aivPerBlock_;
+        // v19：head 内并行时两个 AIV 合干同一条链（各切一半），操作数/中间量平面**按 block 共享**
+        // （每个 AIV 只写自己那一半的行/列），因此 slice 不再按 sub 分。
+        halfSplit_ = (tiling.halfSplit != 0) ? 1U : 0U;
+        sliceIdx_ = (halfSplit_ != 0) ? blockIdx_ : (blockIdx_ * aivPerBlock_ + subBlockIdx_);
+        sliceNum_ = (halfSplit_ != 0) ? coreNum_ : (coreNum_ * aivPerBlock_);
         hvPerHk_ = static_cast<uint32_t>(tiling.Hv / tiling.Hk);
     }
 
@@ -71,6 +74,10 @@ public:
     // 要启用得先把 PBf→Cube 这条跨核链也做成 fwd_h 那种双向 credit。
     __aicore__ inline uint32_t AivRounds(const ChunkDeltaHBwdPreprocessTaskRange &range) const
     {
+        if (halfSplit_ != 0) {
+            // v19：一轮 = 一个 head（两个 AIV 各做它的一半），故轮数就是本 block 的 head 数
+            return range.taskCount;
+        }
         return (range.taskCount + aivPerBlock_ - 1) / aivPerBlock_;
     }
 
@@ -81,9 +88,27 @@ public:
 
     __aicore__ inline uint32_t AivHeadAt(const ChunkDeltaHBwdPreprocessTaskRange &range, uint32_t i) const
     {
+        if (halfSplit_ != 0) {
+            // v19：两个 AIV 处理**同一个** head（半个链），不再按 subBlockIdx 偏移
+            const uint32_t hv = range.taskBegin + i;
+            const uint32_t headNum = static_cast<uint32_t>(tiling_.Hv);
+            return (hv < headNum) ? hv : (headNum - 1);
+        }
         const uint32_t hv = range.taskBegin + subBlockIdx_ + i * aivPerBlock_;
         const uint32_t headNum = static_cast<uint32_t>(tiling_.Hv);
         return (hv < headNum) ? hv : (headNum - 1);  // 填充槽：重复最后一个 head
+    }
+
+    // v19：本 AIV 在 head 内并行里的"半"序号（0/1）：
+    //   0 → dH 的前一半 V 列 + P 的前一半 K 行 + V0 的前一半行；1 → 另一半
+    __aicore__ inline uint32_t HalfOf() const
+    {
+        return subBlockIdx_;
+    }
+
+    __aicore__ inline bool HalfSplit() const
+    {
+        return halfSplit_ != 0;
     }
 
     // Cube 侧用：本 block 参与服务的"槽"数（已按 aivPerBlock 补齐）
@@ -473,6 +498,7 @@ protected:
     uint32_t coreNum_ = 1;
     uint32_t aivPerBlock_ = 1;   // 1：A2/A3（1:1）；2：A5（1:2）
     uint32_t subBlockIdx_ = 0;   // 本 AIV 在 block 内的序号（A2/A3 恒为 0）
+    uint32_t halfSplit_ = 0;     // v19：head 内并行（两个 AIV 合干同一条链）开关
     uint32_t sliceIdx_ = 0;      // workspace 平面/slot 的"份"序号 = blockIdx * aivPerBlock + subBlockIdx
     uint32_t sliceNum_ = 1;      // "份"总数 = blockDim * aivPerBlock
     uint32_t hvPerHk_ = 1;
