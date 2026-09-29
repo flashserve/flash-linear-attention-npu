@@ -86,6 +86,10 @@ def _metadata(spec: dict, index: int, tags: str) -> dict:
         "dtype": str(spec["dtype"]),
         "gate": str(spec.get("gate", "none")),
         "g_dtype": "fp32" if spec.get("g_dtype") == "fp32" else "model",
+        # 反向用例 neg_07/neg_08 需要这两个 hint 才能构造出"非法但类型正确"的输入：
+        # g_head=Hk → g 用 [B,Hk,T]；gk_dtype=fp32 → gk 用 FP32。
+        "g_head": str(spec.get("g_head", "Hv")),
+        "gk_dtype": str(spec.get("gk_dtype", "model")),
         "chunk_size": int(spec.get("chunk_size", CHUNK_SIZE)),
         "scale": float(spec["scale"]),
         "B": int(shape["B"]),
