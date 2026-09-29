@@ -4,15 +4,15 @@
 
 | 文件 / 目录 | 说明 |
 | --- | --- |
-| `cases.json` | **用例设计唯一来源**：12 条正向（全部 `K = V = 128`、`chunk_size = 64`）+ 13 条反向拦截 |
+| `gen_chunk_delta_h_bwd_preprocess.py` 内联用例表 | 用例设计来源：12 条正向（K = V = 128、chunk_size = 64）+ 13 条反向拦截，由生成器展开成三份 `atk_*.json` |
 | `chunk_delta_h_bwd_preprocess.yaml` | ATK 用例 schema（`atk case -f` 用；标准 `mixed_tolerance_bm`） |
-| `gen_chunk_delta_h_bwd_preprocess.py` | 由 `cases.json` 展开出精度 / 性能 / 内存三份 ATK 用例矩阵；同时注册 `-scope=gen_cases` 用的 generator |
+| `gen_chunk_delta_h_bwd_preprocess.py` | 由 `gen_<op>.py` 内联用例表 展开出精度 / 性能 / 内存三份 ATK 用例矩阵；同时注册 `-scope=gen_cases` 用的 generator |
 | `executor_chunk_delta_h_bwd_preprocess.py` | ATK executor：按 `case_spec` 确定性构造输入，NPU 走 `fla_npu.ops.ascendc`，CPU 走 `scripts/reference.py` 标杆 |
 | `atk_chunk_delta_h_bwd_preprocess.json` | 精度矩阵（12 条，`standard.acc` 用 ATK 原生 `output_dtype_overrides` 按模型 dtype 判 `dhm`） |
 | `atk_chunk_delta_h_bwd_preprocess_perf.json` | 性能精简矩阵（3 条：dense / varlen / 32 chunk 长链） |
 | `atk_chunk_delta_h_bwd_preprocess_mss.json` | 内存检测与确定性矩阵（5 条，覆盖 4 个 tilingKey + varlen） |
 | `scripts/reference.py` | CPU 全精度参考：`preprocess_reference` 给出 `dhm = [E_r \| P_r]`；`dh_scan_direct` 用非零 `dht` 反扫得到真实 `dh0`；`check_affine` 校验 `dh0 == P_r @ dht + E_r` |
-| `scripts/make_negative_case.py` + `scripts/run_negative.sh` | 反向拦截用例：按 `cases.json` 的 `negative_cases` 生成"非法但类型正确"的输入，调用 aclnn 并核对返回码 |
+| `atk_chunk_delta_h_bwd_preprocess.json` 的 13 条反向用例 | 由 `gen_<op>.py` 生成、带 `expected_return_code`，走 `atk ... --task run` 核对返回码 |
 
 ## ATK 一键执行（规范入口）
 
@@ -24,7 +24,7 @@ bash tests/atk/run_test_cpu.sh \
 ```
 
 `-scope` 可取 `all` / `accuracy` / `performance` / `determinism` / `mssanitizer` / `gen_cases`。
-本算子目录的 `atk_*.json` 与生成器都取自 `cases.json`，改用例只需改 `cases.json` 后重跑
+本算子目录的 `atk_*.json` 与生成器都取自 `gen_<op>.py` 内联用例表，改用例只需改 `gen_<op>.py` 内联用例表 后重跑
 `python tests/atk/chunk_delta_h_bwd_preprocess/gen_chunk_delta_h_bwd_preprocess.py --summary`。
 
 ### ATK 精度结果（已执行）
