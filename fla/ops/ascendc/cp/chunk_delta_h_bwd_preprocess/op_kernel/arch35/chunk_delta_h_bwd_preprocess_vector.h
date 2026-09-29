@@ -697,8 +697,10 @@ private:
         GM_ADDR slotQ = this->AOperAt(window);
         GM_ADDR slotW = slotQ + static_cast<uint64_t>(mDim) * kDim * sizeof(DT);
         GM_ADDR slotK = this->SlotAt(slot, this->SlotQBytes() + this->SlotWBytes());
+        // v20：B 操作数的行距（合并 ZP 后是 V+K：do / -dv 的行尾多了 K 列 P 段之前的补零区）
+        const uint32_t bStride = this->AbRowStride();
         GM_ADDR slotDo = this->BOperAt(window);
-        GM_ADDR slotNegDv = slotDo + static_cast<uint64_t>(mDim) * vDim * sizeof(DT);
+        GM_ADDR slotNegDv = slotDo + static_cast<uint64_t>(mDim) * bStride * sizeof(DT);
         GM_ADDR slotDecay = this->SlotAt(slot, this->SlotDecayOffset());
 
         LocalTensor<float> gF = gF32_.Get<float>();
@@ -781,7 +783,7 @@ private:
                                   slotW + static_cast<uint64_t>(r0) * kDim * sizeof(DT), validRows, kDim, kDim, kDim);
                     CopyTileModel(
                         doAddr_ + static_cast<uint64_t>(hv * this->tiling_.T + t0 + r0) * vDim * sizeof(DT),
-                        slotDo + static_cast<uint64_t>(r0) * vDim * sizeof(DT), validRows, vDim, vDim, vDim);
+                        slotDo + static_cast<uint64_t>(r0) * bStride * sizeof(DT), validRows, vDim, vDim, bStride);
                 }
                 LoadTileF32(dvF, dvAddr_ + static_cast<uint64_t>(hv * this->tiling_.T + t0 + r0) * vDim * sizeof(DT),
                             validRows, vDim, vDim);
@@ -799,9 +801,11 @@ private:
             StoreTileModel(kF, slotK + static_cast<uint64_t>(r0) * kDim * sizeof(DT), validRows, kDim, kDim);
             if (wdNeedF32) {
                 StoreTileModel(wF, slotW + static_cast<uint64_t>(r0) * kDim * sizeof(DT), validRows, kDim, kDim);
-                StoreTileModel(doF, slotDo + static_cast<uint64_t>(r0) * vDim * sizeof(DT), validRows, vDim, vDim);
+                StoreTileModel(doF, slotDo + static_cast<uint64_t>(r0) * bStride * sizeof(DT), validRows, vDim,
+                               bStride);
             }
-            StoreTileModel(dvF, slotNegDv + static_cast<uint64_t>(r0) * vDim * sizeof(DT), validRows, vDim, vDim);
+            StoreTileModel(dvF, slotNegDv + static_cast<uint64_t>(r0) * bStride * sizeof(DT), validRows, vDim,
+                           bStride);
         }
         StoreScalarF32(decayF, slotDecay, kDim);
     }
@@ -845,8 +849,27 @@ private:
             GM_ADDR kOp = this->SlotAt(this->SliceOfWindow(window), this->SlotQBytes() + this->SlotWBytes());
             ZeroPlaneRows(aOp, V0R0(), V0Rows(), kDim, zeroF);          // Q̄s
             ZeroPlaneRows(aOp + aRows, V0R0(), V0Rows(), kDim, zeroF);  // W
-            ZeroPlaneRows(bOp, V0R0(), V0Rows(), vDim, zeroF);          // do
-            ZeroPlaneRows(bOp + bRows, V0R0(), V0Rows(), vDim, zeroF);  // -dv
+            if (this->MergeZp()) {
+                // v20：B 的行距变成 V+K ⇒ do / -dv 两段除自身 V 列外，右侧还有 K 列补零区
+                // （这段必须为 0，否则 do/-dv 会污染 ZP 的输出列）。逐 32 行 tile 写两次。
+                const uint32_t bStride = this->AbRowStride();
+                for (uint32_t r0 = V0R0(); r0 < V0R0() + V0Rows(); r0 += CDHP_VEC_TILE) {
+                    const uint32_t tileRows = MinV(CDHP_VEC_TILE, mDim - r0);
+                    // do 段：[r0, r0+tileRows) x [0, V) 与右侧补零区 [V, V+K)
+                    StoreTileModel(zeroF, bOp + static_cast<uint64_t>(r0) * bStride * sizeof(DT), tileRows, vDim,
+                                   bStride);
+                    StoreTileModel(zeroF, bOp + (static_cast<uint64_t>(r0) * bStride + vDim) * sizeof(DT), tileRows,
+                                   kDim, bStride);
+                    // -dv 段：同上，行号整体偏移 mDim
+                    StoreTileModel(zeroF, bOp + static_cast<uint64_t>(mDim + r0) * bStride * sizeof(DT), tileRows,
+                                   vDim, bStride);
+                    StoreTileModel(zeroF, bOp + (static_cast<uint64_t>(mDim + r0) * bStride + vDim) * sizeof(DT),
+                                   tileRows, kDim, bStride);
+                }
+            } else {
+                ZeroPlaneRows(bOp, V0R0(), V0Rows(), vDim, zeroF);          // do
+                ZeroPlaneRows(bOp + bRows, V0R0(), V0Rows(), vDim, zeroF);  // -dv
+            }
             ZeroPlaneRows(kOp, V0R0(), V0Rows(), kDim, zeroF);          // -K̄
         }
     }
@@ -872,15 +895,16 @@ private:
         const uint32_t prevWin = (window + 1u) & 1u;
         const uint32_t mDim = static_cast<uint32_t>(this->tiling_.chunkSize);
         LocalTensor<float> dhState = dhStateF32_.Get<float>();
+        const uint32_t bStride = this->AbRowStride();
         for (uint32_t r0 = 0; r0 < kDim; r0 += CDHP_VEC_TILE) {
             const uint32_t tileRows = MinV(CDHP_VEC_TILE, kDim - r0);
             // v13：dH 操作数写进 B 操作数 bOper 的第三段（与 do/-dv 同 window、同平面），
             // 这样 Cube 可以把 [do; -dv; dH_bf] 当成**一份**行主序 B 操作数读。
             // v19：head 内并行时只写自己那一半的 V 列（状态是 [K, ECols]，平面行距仍是 V）。
             StoreTileModel(dhState[r0 * ECols()],
-                           this->BOperAt(window) + static_cast<uint64_t>(2U * mDim + r0) * vDim * sizeof(DT) +
+                           this->BOperAt(window) + static_cast<uint64_t>(2U * mDim + r0) * bStride * sizeof(DT) +
                                static_cast<uint64_t>(EC0()) * sizeof(DT),
-                           tileRows, ECols(), vDim);
+                           tileRows, ECols(), bStride);
             if (isFirstChunk) {
                 // 初值 P = I：本 chunk 的 Cube 要读的 P 操作数就是这个单位阵。
                 // 注意这里只写 PBf（模型 dtype）；fp32 的 P_prev 由 StageState 首 chunk 内联生成，
@@ -891,8 +915,12 @@ private:
                 if (r0 >= PR0() && r0 < PR0() + PRows()) {
                     CDHP_InitIdentityVF(UbPtr(pF), static_cast<uint16_t>(r0), static_cast<uint16_t>(tileRows),
                                         static_cast<uint16_t>(kDim));
-                    StoreTileModel(pF, this->PBfAt(prevWin) + static_cast<uint64_t>(r0) * kDim * sizeof(DT),
-                                   tileRows, kDim, kDim);
+                    // v20：合并后 Cube 读的是**本 window** 的 P 段（与 dH_bf 同一"进入本 chunk 的状态"约定）；
+                    // 未合并时 Cube 用独立的 ZP GEMM 读另一个 window 的 PBf 平面。
+                    const uint32_t pWin = this->MergeZp() ? window : prevWin;
+                    const uint32_t pStride = this->PBfRowStride();
+                    StoreTileModel(pF, this->PBfAt(pWin) + static_cast<uint64_t>(r0) * pStride * sizeof(DT),
+                                   tileRows, kDim, pStride);
                 }
             }
         }
@@ -930,12 +958,15 @@ private:
             // v13：Cube 已经把 AB + Z 一次算成一份 [K,V] FP32（inc），这里只读一份而不是两份
             LocalTensor<float> incF = s0F32_.Get<float>();
             LocalTensor<float> zpF = s3F32_.Get<float>();
-            // v19：E 链只读自己那一半 V 列（平面行距仍是 V，UB 内是紧凑 tile）。
-            IssueLoadPlaneTile(incF, this->AbAt(window), r0, EC0(), tileRows, ECols(), vDim, CDHP_EV_LOAD1);
+            // v19：E 链只读自己那一半 V 列（UB 内是紧凑 tile）；v20：合并 ZP 后平面行距是 V+K。
+            IssueLoadPlaneTile(incF, this->AbAt(window), r0, EC0(), tileRows, ECols(), this->AbRowStride(),
+                               CDHP_EV_LOAD1);
             // 注意：ZP 的搬运必须和 inc **成对提前下发**（分属两个循环会让 MTE2 队列重新变浅，
             // 实测掉 ~5%）。未拆分时每个 tile 都要用；拆分时只有属于本半区的 tile 才用它，多取的那两笔
             // 只是白读一次（后续可以在 halfSplit 打开时再优化成按需下发）。
-            IssueLoadPlaneF32(zpF, this->ZpAt(window), r0, tileRows, kDim, CDHP_EV_LOAD3);
+            // v20：ZP 与 inc 共平面（列 V 起、行距 V+K）；未合并时仍是独立的 [K,K] 平面（列 0、行距 K）。
+            IssueLoadPlaneTile(zpF, this->ZpAt(window), r0, this->ZpCol0(), tileRows, kDim, this->ZpRowStride(),
+                               CDHP_EV_LOAD3);
             WaitPlaneLoad(CDHP_EV_LOAD1);
             WaitPlaneLoad(CDHP_EV_LOAD3);
             // dH_new = decayK ⊙ dH_old + (AB + Z)：单项累加，直接复用 P 链的 V3Accum
@@ -954,9 +985,12 @@ private:
                 CDHP_V3AccumVF(UbPtr(pState) + static_cast<uint64_t>(pLocal) * kDim, UbPtr(zpF), UbPtr(decayF),
                                static_cast<uint16_t>(r0), static_cast<uint16_t>(tileRows),
                                static_cast<uint16_t>(kDim));
+                // v20：合并后把"更新后的 P"写进**另一个** window 的 P 段（它就是下一个 chunk 的进入状态）。
+                const uint32_t pWin = this->MergeZp() ? (window ^ 1u) : window;
+                const uint32_t pStride = this->PBfRowStride();
                 StoreTileModel(pState[pLocal * kDim],
-                               this->PBfAt(window) + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows, kDim,
-                               kDim);
+                               this->PBfAt(pWin) + static_cast<uint64_t>(r0) * pStride * sizeof(DT), tileRows,
+                               kDim, pStride);
             }
         }
     }

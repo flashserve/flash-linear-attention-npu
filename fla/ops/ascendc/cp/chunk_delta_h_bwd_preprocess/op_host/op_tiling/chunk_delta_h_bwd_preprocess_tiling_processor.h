@@ -317,6 +317,11 @@ public:
         // 目前固定为 0：数据通路与集体式 flag 尚未落地，先保持"一个 AIV 一条链"。
         // 开发期用环境变量强制打开做验证（验证完成后换成正式判据：aivPerBlock == 2 且 Hv <= blockDim）。
         tiling_.halfSplit = ((aivPerBlock == 2) && (std::getenv("FLA_NPU_CP_HALF_SPLIT") != nullptr)) ? 1 : 0;
+        // v20：把 ZP 并进"AB + Z"的同一次 GEMM，只在 arch35（A5）打开——两份拼接操作数的布局与
+        // 消费它的 cube 都在 arch35 侧，arch22（A2/A3）仍是六 Stage 的独立 ZP 平面。
+        // 实测（design.md §29）：head 内并行不划算，但"每 chunk 链上的 MMAD 次数"是本算子的真实瓶颈，
+        // 因此这条合并单独打开。
+        tiling_.mergeZp = (aivPerBlock == 2) ? 1 : 0;
         tiling_.tileV = tileV;
         tiling_.tileK = tileK;
         tiling_.tileNum = tileNum;
@@ -341,33 +346,41 @@ public:
         // wg：workspace 里"每份平面"的份数 = blockDim * aivPerBlock（A5 下每个 block 的两个 AIV
         // 各有自己的一份中间量/slot，不能共用）。
         const uint64_t wg = blockDim_ * std::max<uint64_t>(1, tiling_.aivPerBlock);
+        // v20：mergeZp 打开时 bOper 的列数从 V 扩到 V+K（追加 P_bf 段），AB/Z 的输出平面从 [K,V]
+        // 扩到 [K, V+K]（inc | ZP），同时独立的 ZP 平面与 P_bf 平面不再分配。
+        const uint64_t mz = (tiling_.mergeZp != 0) ? 1U : 0U;
         // dH：跨 chunk 状态，ping-pong 双缓冲，FP32；dHBf：供下一轮 C1 当矩阵操作数的模型 dtype 拷贝
         // 平面份数：dh/p 每个工作组 2 份（parity，与 window 对齐）；其余中间量 v2.1 起也按 window 分 2 份。
         const uint64_t win = CDHP_TILING_WINDOW_COUNT;
         const uint64_t dhWsBytes = AlignUp(wg * 2 * K_ * V_ * CDHP_FP32_DTYPE_SIZE, CDHP_WS_ALIGN);
         const uint64_t dhBfWsBytes = AlignUp(wg * win * K_ * V_ * CDHP_MODEL_DTYPE_SIZE, CDHP_WS_ALIGN);
         // v3 平面（详见 op_kernel/<op>_common.h 的 Slot*/At 注释）：
-        //   dvPreWs → AB [K,V] FP32      （链外：Q̄sᵀ@do + Wᵀ@(-dv)）
+        //   dvPreWs → AB [K,V] FP32      （链外：Q̄sᵀ@do + Wᵀ@(-dv)；mergeZp 打开时是 [K, V+K] 的
+        //                                 inc | ZP 平面）
         //   dvHatWs → Z  [K,V] FP32      （链上：(-T1)@dH_prev）
-        //   qtermWs → ZP [K,K] FP32      （P 链上：(-T1)@P_prev）
+        //   qtermWs → ZP [K,K] FP32      （P 链上：(-T1)@P_prev；mergeZp 打开时不分配，ZP 落在 dvPreWs 右侧）
         //   wtermWs → T1 的模型 dtype 副本 [K,K]（Cube 当矩阵操作数）
         //   t1Ws    → T1 的 FP32 平面 [K,K]
-        const uint64_t dvPreWsBytes = AlignUp(wg * win * K_ * V_ * CDHP_FP32_DTYPE_SIZE, CDHP_WS_ALIGN);
+        const uint64_t dvPreWsBytes =
+            AlignUp(wg * win * K_ * (V_ + mz * K_) * CDHP_FP32_DTYPE_SIZE, CDHP_WS_ALIGN);
         const uint64_t dvHatWsBytes = AlignUp(wg * win * K_ * V_ * CDHP_FP32_DTYPE_SIZE, CDHP_WS_ALIGN);
-        const uint64_t qtermWsBytes = AlignUp(wg * win * K_ * K_ * CDHP_FP32_DTYPE_SIZE, CDHP_WS_ALIGN);
+        const uint64_t qtermWsBytes =
+            mz ? 0 : AlignUp(wg * win * K_ * K_ * CDHP_FP32_DTYPE_SIZE, CDHP_WS_ALIGN);
         const uint64_t wtermWsBytes = AlignUp(wg * win * K_ * K_ * CDHP_MODEL_DTYPE_SIZE, CDHP_WS_ALIGN);
         const uint64_t t1WsBytes = AlignUp(wg * win * K_ * K_ * CDHP_FP32_DTYPE_SIZE, CDHP_WS_ALIGN);
         // v13：AB 与 Z 合并成一次 GEMM 的两份拼接操作数（arch35 用；arch22 不使用，但一起分配，
         // 保证 tiling 只有一套布局）：
         //   aOper = [Q̄s(M,K) | W(M,K) | (-T1)ᵀ(K,K)]，模型 dtype；Cube 的 A 操作数（列主序 [K, 2M+K]）
         //   bOper = [do(M,V) | -dv(M,V) | dH_bf(K,V)]，模型 dtype；Cube 的 B 操作数（行主序 [2M+K, V]）
+        //   mergeZp 打开时 bOper = [do | -dv | dH_bf | P_bf]，行主序 [2M+K, V+K]，行 0..2M 的右侧 K 列补零
         const uint64_t aOperWsBytes = AlignUp(
             wg * win * (2 * chunkSize_ * K_ + K_ * K_) * CDHP_MODEL_DTYPE_SIZE, CDHP_WS_ALIGN);
         const uint64_t bOperWsBytes = AlignUp(
-            wg * win * (2 * chunkSize_ * V_ + K_ * V_) * CDHP_MODEL_DTYPE_SIZE, CDHP_WS_ALIGN);
+            wg * win * (2 * chunkSize_ + mz * K_) * (V_ + mz * K_) * CDHP_MODEL_DTYPE_SIZE, CDHP_WS_ALIGN);
         const uint64_t pcWsBytes = 0;  // v3 起不再需要独立的 P_c 平面
         const uint64_t pWsBytes = AlignUp(wg * 2 * K_ * K_ * CDHP_FP32_DTYPE_SIZE, CDHP_WS_ALIGN);
-        const uint64_t pBfWsBytes = AlignUp(wg * win * K_ * K_ * CDHP_MODEL_DTYPE_SIZE, CDHP_WS_ALIGN);
+        const uint64_t pBfWsBytes =
+            mz ? 0 : AlignUp(wg * win * K_ * K_ * CDHP_MODEL_DTYPE_SIZE, CDHP_WS_ALIGN);
         const uint64_t metaWsBytes = CDHP_META_WS_BYTES;
 
         uint64_t offset = 0;

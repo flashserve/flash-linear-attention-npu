@@ -153,6 +153,9 @@ public:
         //   B 操作数 bOper = [do(M,V) | -dv(M,V) | dH_bf(K,V)] → 行主序 [2M+K, V]
         const auto tagCol2MK = LayoutCol::MakeLayout<DT>(kDim, 2U * mDim + kDim);
         const auto tagRow2MkV = LayoutRow::MakeLayout<DT>(2U * mDim + kDim, vDim);
+        // v20：合并 ZP 后 B 操作数变成 [2M+K, V+K]（第四段是 P_bf），C 平面变成 [K, V+K]（inc | ZP）
+        const auto tagRow2MkVK = LayoutRow::MakeLayout<DT>(2U * mDim + kDim, vDim + kDim);
+        const auto tagKzVK = LayoutRow::MakeLayout<float>(kDim, vDim + kDim);
         const auto tagColKK = LayoutCol::MakeLayout<DT>(kDim, kDim);
         const auto tagMzV = LayoutRow::MakeLayout<float>(mDim, vDim);
         const auto tagKzV = LayoutRow::MakeLayout<float>(kDim, vDim);
@@ -169,6 +172,8 @@ public:
         const auto layoutDo2M = tla::MakeLayoutFromTag(tagDo2M);
         const auto layoutCol2MK = tla::MakeLayoutFromTag(tagCol2MK);
         const auto layoutRow2MkV = tla::MakeLayoutFromTag(tagRow2MkV);
+        const auto layoutRow2MkVK = tla::MakeLayoutFromTag(tagRow2MkVK);
+        const auto layoutKzVK = tla::MakeLayoutFromTag(tagKzVK);
         const auto layoutColKK = tla::MakeLayoutFromTag(tagColKK);
         const auto layoutMzV = tla::MakeLayoutFromTag(tagMzV);
         const auto layoutKzV = tla::MakeLayoutFromTag(tagKzV);
@@ -257,7 +262,7 @@ public:
                             this->SlotAt(nextSlot, this->SlotQBytes() + this->SlotWBytes()), aOpNext + aOperW,
                             aOpNext + 2U * aOperW, kDim, kDim, mDim);
                     }
-                    // 链上：v13 起 "AB + Z" 一次算完，ZP 单独一次
+                    // 链上：v13 起 "AB + Z" 一次算完，ZP 单独一次；v20 起 ZP 也并进同一次 MMAD
                     if (half) {
                         // 两个 AIV 各写一半的 dH_bf / P_bf ⇒ 必须都写完才能发链上的 GEMM
                         for (uint32_t k = 0; k < aivs; ++k) {
@@ -266,17 +271,27 @@ public:
                     } else {
                         CDHP_AIC_WAIT(sub, CdhpFlag(CDHP_FLAG_STATE_READY, win ^ 1u));
                     }
-                    //   A = [Q̄s|W|(-T1)ᵀ]（列主序 [K, 2M+K]）、B = [do; -dv; dH_bf]（行主序 [2M+K, V]）
-                    //   ⇒ 一次 MMAD 得到 AB + Z；B 的第三段 dH_bf 由 AIV 在同一个 window 的 bOper 里写，
-                    //   靠上面的 STATE_READY 保证可见性。
-                    RunGemm<BlockColRow, float>(resource, layoutCol2MK, layoutRow2MkV, layoutKzV,
-                                                this->AOperAtAiv(sub, win), this->BOperAtAiv(sub, win),
-                                                this->AbAtAiv(sub, win), kDim, vDim, twoM + kDim);
-                    // ZP = (-T1)@P_bf：(T1 已是 (-T1)ᵀ 存放，列主序读回来就是 (-T1))
-                    RunGemm<BlockColRow, float>(resource, layoutColKK, layoutKK, layoutKzK,
-                                                this->AOperAtAiv(sub, win) + 2U * mDim * kDim * sizeof(DT),
-                                                this->PBfAtAiv(sub, win ^ 1u), this->ZpAtAiv(sub, win), kDim, kDim,
-                                                kDim);
+                    if (this->MergeZp()) {
+                        // v20：B = [do; -dv; dH_bf | P_bf]（行主序 [2M+K, V+K]，行 0..2M 的右侧 K 列全 0）
+                        //   ⇒ 一次 MMAD 同时产出 inc（AB + Z）与 ZP = (-T1)@P_bf，C = [K, V+K]。
+                        //   dH_bf 与 P_bf 都由 AIV 在**同一个 window** 的 bOper 里写（P_bf 写在第四段），
+                        //   靠上面的 STATE_READY（P 链的可见性已包含在内）保证可见。
+                        RunGemm<BlockColRow, float>(resource, layoutCol2MK, layoutRow2MkVK, layoutKzVK,
+                                                    this->AOperAtAiv(sub, win), this->BOperAtAiv(sub, win),
+                                                    this->AbAtAiv(sub, win), kDim, vDim + kDim, twoM + kDim);
+                    } else {
+                        //   A = [Q̄s|W|(-T1)ᵀ]（列主序 [K, 2M+K]）、B = [do; -dv; dH_bf]（行主序 [2M+K, V]）
+                        //   ⇒ 一次 MMAD 得到 AB + Z；B 的第三段 dH_bf 由 AIV 在同一个 window 的 bOper 里写，
+                        //   靠上面的 STATE_READY 保证可见性。
+                        RunGemm<BlockColRow, float>(resource, layoutCol2MK, layoutRow2MkV, layoutKzV,
+                                                    this->AOperAtAiv(sub, win), this->BOperAtAiv(sub, win),
+                                                    this->AbAtAiv(sub, win), kDim, vDim, twoM + kDim);
+                        // ZP = (-T1)@P_bf：(T1 已是 (-T1)ᵀ 存放，列主序读回来就是 (-T1))
+                        RunGemm<BlockColRow, float>(resource, layoutColKK, layoutKK, layoutKzK,
+                                                    this->AOperAtAiv(sub, win) + 2U * mDim * kDim * sizeof(DT),
+                                                    this->PBfAtAiv(sub, win ^ 1u), this->ZpAtAiv(sub, win), kDim,
+                                                    kDim, kDim);
+                    }
                     if (half) {
 #if CDHP_CROSS_CORE_MODE == 0x4
                         // A5（0x4）：按 subblock 点对点 ⇒ 两个 AIV 各置一次

@@ -135,6 +135,10 @@ struct ChunkDeltaHBwdPreprocessTilingData {
     uint64_t splitMode;
     uint64_t groupHeads;  // splitMode == BY_HEAD 时每核连续 head 数
     uint64_t halfSplit;   // 1：启用 head 内并行（两个 AIV 合干同一条链）；0：一个 AIV 一条链
+    // v20：把 ZP = (-T1)@P_bf 并进"AB + Z"的同一次 GEMM（仅 A5/arch35；host 按 SoC 下发）。
+    // 打开时 B 操作数变成 [do; -dv; dH_bf | P_bf]（行主序 [2M+K, V+K]），C 平面变成 [K, V+K]（inc | ZP），
+    // 于是每 chunk 链上的 AIC MMAD 从 2 次（ABZ + ZP）降到 1 次。
+    uint64_t mergeZp;
     uint64_t aivPerBlock;  // 1：A2/A3（MIX_AIC_1_1）；2：A5（MIX_AIC_1_2，一个 block 的两个 AIV 各承包一个 head）
     // 用户 workspace 规划（相对 user workspace 起始的字节偏移）
     uint64_t slotNum;

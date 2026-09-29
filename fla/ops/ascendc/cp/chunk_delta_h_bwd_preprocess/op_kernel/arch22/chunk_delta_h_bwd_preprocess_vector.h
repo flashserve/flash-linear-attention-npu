@@ -33,9 +33,14 @@ using namespace AscendC;
 namespace CP {
 
 constexpr float CDHP_LN2 = 0.6931471805599453f;
-// 向量侧行分块：16 行 × 256 列 = 4096 元素（FP32 16 KiB）；K/V <= 256 时 UB 占用固定
-constexpr uint32_t CDHP_VEC_TILE = 16;
-constexpr uint32_t CDHP_SCRATCH_ELEMS = CDHP_VEC_TILE * 256;
+// 向量侧行分块：v21 起 32 行 × 128 列 = 4096 元素（FP32 16 KiB）。
+// 行数由 16 提到 32 的理由：K=V=128、chunk_size=64 下，一个 chunk（64 行）与一条 dH/P 状态
+// （128 行）的 tile 数各减半 ⇒ 每 chunk 的向量 API 调用次数与配套 SetFlag/WaitFlag 次数减半。
+// A2 的 AIV 一直是"调用次数受限"（见 design.md §24：scalar 33%、mte2/mte3 只有 ~25 GB/s，
+// 即每笔搬运/每条指令都在同步等待），因此这是 A2 侧最直接的杠杆。
+// 元素总数保持 4096 不变（UB 占用不变）：本算子只支持 K=V=128，单 tile 最大就是 32×128。
+constexpr uint32_t CDHP_VEC_TILE = 32;
+constexpr uint32_t CDHP_SCRATCH_ELEMS = CDHP_VEC_TILE * 128;
 constexpr uint32_t CDHP_EV_V_S = 0;
 constexpr uint32_t CDHP_EV_S_V = 1;
 constexpr uint32_t CDHP_EV_MTE2_V = 2;

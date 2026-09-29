@@ -400,7 +400,46 @@ public:
         return WgWindowPlaneAt(tiling_.dhBfWsOffset, tiling_.dhBfWsBytes, window);
     }
 
-    // AB = Q̄sᵀ@do + Wᵀ@(-dv)  [K,V]（Cube 写、Vector 读；不依赖状态，属链外工作）
+    // v20：把 ZP = (-T1)@P_bf 并进"AB + Z"的同一次 GEMM（仅 A5/arch35，见 struct.h 的 mergeZp）。
+    // 打开后：
+    //   B 操作数 bOper = [do(M,V) | -dv(M,V) | dH_bf(K,V) | P_bf(K,K)]，行主序 [2M+K, V+K]；
+    //   其中行 0..2M 的 [V, V+K) 列必须为 0（do/-dv 不参与 ZP 列）；
+    //   C 平面 = [K, V+K]（列 0..V 是 inc = AB + Z，列 V..V+K 是 ZP）；
+    //   P_bf 由 AIV 写在 bOper 的第四段，不再单独分配 pBf 平面；
+    //   独立的 ZP 平面（qtermWs）随之不再分配。
+    __aicore__ inline bool MergeZp() const
+    {
+        return tiling_.mergeZp != 0;
+    }
+
+    // inc 所在平面的行距：合并后是 V+K（与 ZP 同一块平面），否则仍是 V
+    __aicore__ inline uint32_t AbRowStride() const
+    {
+        return MergeZp() ? (static_cast<uint32_t>(tiling_.V) + static_cast<uint32_t>(tiling_.K))
+                         : static_cast<uint32_t>(tiling_.V);
+    }
+
+    // ZP 在平面内的列偏移与行距（合并后在 inc 右侧；否则是独立的 [K,K] 平面）
+    __aicore__ inline uint32_t ZpCol0() const
+    {
+        return MergeZp() ? static_cast<uint32_t>(tiling_.V) : 0U;
+    }
+
+    __aicore__ inline uint32_t ZpRowStride() const
+    {
+        return MergeZp() ? (static_cast<uint32_t>(tiling_.V) + static_cast<uint32_t>(tiling_.K))
+                         : static_cast<uint32_t>(tiling_.K);
+    }
+
+    // P_bf（模型 dtype 的 [K,K] 矩阵操作数）的行距
+    __aicore__ inline uint32_t PBfRowStride() const
+    {
+        return MergeZp() ? (static_cast<uint32_t>(tiling_.V) + static_cast<uint32_t>(tiling_.K))
+                         : static_cast<uint32_t>(tiling_.K);
+    }
+
+    // AB + Z 的输出平面（Cube 写、Vector 读；不依赖状态，属链外工作）：
+    //   非合并：[K,V]；合并（v20）：[K, V+K]，列 0..V 是 inc、列 V..V+K 是 ZP。
     __aicore__ inline GM_ADDR AbAt(uint32_t window = 0) const
     {
         return WgWindowPlaneAt(tiling_.dvPreWsOffset, tiling_.dvPreWsBytes, window);
@@ -413,8 +452,12 @@ public:
     }
 
     // ZP = (-T1)@P_prev  [K,K]（Cube 写、Vector 读；P 链上）
+    // v20 合并后 ZP 与 inc 共平面，基址与 AbAt 相同，列偏移/行距见 ZpCol0()/ZpRowStride()。
     __aicore__ inline GM_ADDR ZpAt(uint32_t window = 0) const
     {
+        if (MergeZp()) {
+            return AbAt(window);
+        }
         return WgWindowPlaneAt(tiling_.qtermWsOffset, tiling_.qtermWsBytes, window);
     }
 
@@ -437,6 +480,13 @@ public:
 
     __aicore__ inline GM_ADDR PBfAt(uint32_t window = 0) const
     {
+        if (MergeZp()) {
+            // B 操作数第四段：行 2M..2M+K、列 V..V+K（行距 V+K）
+            const uint64_t rows = static_cast<uint64_t>(tiling_.chunkSize);
+            const uint64_t vDim = static_cast<uint64_t>(tiling_.V);
+            return BOperAt(window) +
+                   (2U * rows * (vDim + static_cast<uint64_t>(tiling_.K)) + vDim) * sizeof(uint16_t);
+        }
         return WgWindowPlaneAt(tiling_.pBfWsOffset, tiling_.pBfWsBytes, window);
     }
 
