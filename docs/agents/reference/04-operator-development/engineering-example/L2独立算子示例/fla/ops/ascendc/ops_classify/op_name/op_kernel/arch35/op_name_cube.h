@@ -364,6 +364,8 @@ __aicore__ inline void ProcessOpNameCube(Ctx &ctx)
     ChunkInfo chunk;
     for (int64_t taskIdx = ctx.coreIdx; taskIdx < ctx.tiling->taskNum; taskIdx += ctx.coreNum) {
         GetChunkInfo(taskIdx, ctx.cuSeqlens, ctx.chunkIndices, *ctx.tiling, chunk);
+        // host 侧已保证 taskIdx 范围与 metadata 合法性；这里是防御性跳过（不可达），
+        // 不是拦截：不返回错误码、不打错误日志。
         if (!chunk.valid) {
             continue;
         }

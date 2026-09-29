@@ -150,9 +150,9 @@ __aicore__ inline void InitOpNameVector(
         ctx.initialStateGm.SetGlobalBuffer(
             reinterpret_cast<__gm__ typename Ctx::DTypeX *>(initialState));
     }
-    if (aLog != nullptr) {
-        ctx.aLogGm.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(aLog));
-    }
+    // 可选入参的"缺席"由 host 归一（L2 对缺席的可选张量传零元素 descriptor 占位，见规范 §5.1 第 3 条），
+    // 因此 kernel 不做 nullptr 判断：本函数只接线，指针合法性由 host 侧保证。
+    ctx.aLogGm.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(aLog));
     ctx.xNormGm.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(xNorm));
 
     // ② 只读状态：核号 / 子核号 clamp，行为与 arch35 一致
@@ -307,6 +307,8 @@ __aicore__ inline void ProcessOpNameVector(Ctx &ctx)
     ChunkInfo chunk;
     for (int64_t taskIdx = ctx.coreIdx; taskIdx < ctx.tiling->taskNum; taskIdx += ctx.coreNum) {
         GetChunkInfo(taskIdx, ctx.cuSeqlens, ctx.chunkIndices, *ctx.tiling, chunk);
+        // host 侧已保证 taskIdx 范围与 metadata 合法性；这里是防御性跳过（不可达），
+        // 不是拦截：不返回错误码、不打错误日志。
         if (!chunk.valid) {
             continue;
         }

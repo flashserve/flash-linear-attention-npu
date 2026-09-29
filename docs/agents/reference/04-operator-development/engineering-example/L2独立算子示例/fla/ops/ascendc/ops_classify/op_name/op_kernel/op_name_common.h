@@ -67,6 +67,12 @@ struct ChunkInfo {
 
 // 把"任务序号 -> ChunkInfo"的换算封在这里：定长/变长两支只在本函数内出现，
 // 各 Stage 只消费 ChunkInfo，不再自己解析 cu_seqlens/chunk_indices。
+//
+// **本函数不是拦截**：cu_seqlens/chunk_indices 的首元素、单调性、末元素与总 token 数、
+// taskIdx 上界等都由 host 侧（L2 CheckParams + tiling 校验）保证；kernel 只按契约解码。
+// `info.valid` 的 false 分支是"host 保证不可达"的防御性跳过（越界就不参与计算，不写回），
+// 不向上返回错误码、也不打错误日志；如果这个分支真的被走到，说明 host 侧校验有缺口，
+// 应回到 host 侧补校验，而不是在 kernel 里加拦截。
 __aicore__ inline void GetChunkInfo(
     int64_t chunkTaskIdx, GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
     const OpNameTilingData &tiling, ChunkInfo &info)
@@ -78,9 +84,8 @@ __aicore__ inline void GetChunkInfo(
         return;
     }
     if (tiling.isVarLen) {
-        if (cuSeqlens == nullptr || chunkIndices == nullptr) {
-            return;
-        }
+        // varlen 与"元数据必须成对出现"都由 host 侧保证（L2 校验 + tiling 里 isVarLen），
+        // 这里不重复判断指针是否为空——kernel 不做拦截。
         // 变长任务读取一组 [序列编号, 序列内 chunk 编号]，再换算成 packed token offset。
         AscendC::GlobalTensor<int64_t> cu;
         AscendC::GlobalTensor<int64_t> chunks;

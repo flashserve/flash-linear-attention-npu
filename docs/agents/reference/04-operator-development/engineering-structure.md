@@ -262,6 +262,11 @@ add_ops_compile_options(
    `aclnn_chunk_gated_delta_rule_fwd.cpp` 的平台分支、`aclnn_recurrent_kda.cpp` 的
    `*_TYPE_SUPPORT_LIST` + `OP_CHECK_DTYPE_NOT_SUPPORT`）；输出与输入的 dtype 跟随关系
    （例如 `y` 跟随 `x`、中间量固定 FP32）也在这一层校验。报错要说明"哪张张量、允许哪些 dtype、实际是什么"。
+8. **拦截的落点只有 host 侧**：所有参数/契约/规模拦截都由 L2 `CheckParams`（含档位组合）与
+   tiling 校验（含 shape/dtype/平台差异与规模上限）完成，二者合计覆盖算子 README「已知限制」的每一条；
+   host 侧校验通过后，kernel 只消费"已判定合法"的输入与 tiling 数据，**不再重复校验、不返回错误码、
+   不做运行期报错**（参考 §4.1 第 9 条的 kernel 侧禁令与特殊情况登记要求）。跨层核对方式：
+   从文档逐条找 host 拦截、从 host 新增拦截逐条找文档说明（§3 末节的双向核对）。
 
 ### 3.5 host 侧平台分支
 
@@ -332,6 +337,18 @@ add_ops_compile_options(
    - 一个开关同时承担"跳过框架头（避免 `graph/error_codes.h` 与 torch_npu 的 `ge_error_codes.h` 冲突）"
      与"入口由外部提供"两件不同的事，任一约束变化都会误伤另一处。
    存量使用 `TORCH_MODE` 的算子按场景命名统一迁移并同步构建脚本；同一算子不允许两套开关并存。
+9. **kernel 侧不做拦截**：参数、契约、规模、平台差异的拦截必须全部在 host 侧完成（L2 `CheckParams`
+   + tiling 校验，见 §3.4 第 8 条）。kernel 侧不允许出现"校验入参 → 返回错误码/`return` 提前退出"
+   这类拦截逻辑，也不允许用 `OP_LOGE` 打错误日志当作拦截：
+   - kernel 拿到的是 host 已判定合法的输入与 tiling，运行期再判断一次属于重复工作，还会把"本该在
+     enqueue 阶段暴露的参数错误"推迟到设备侧，用户只能看到 561103 一类笼统失败；
+   - kernel 没有把错误码回传给调用方的手段，写 `return` 只会让部分核静默退出，结果是"部分输出未写回"
+     这种更难定位的脏数据；
+   - 对 host 已保证不可达的情况（例如 `taskIdx` 越界、`chunkLen<=0`）只允许**防御性跳过当前任务**，
+     并且必须注释成"host 保证不可达 / 防御分支"，不得写成"拦截"；可恢复的契约外输入应当回到 host 侧补校验。
+   - **特殊情况**：只有"host 侧拿不到该信息，或代价不可接受"（例如依赖设备侧运行期才产生的值）时才允许
+     在 kernel 内判断，且必须先落在 `docs/design.md`：判断对象、为什么 host 侧无法完成、越界时的行为
+     （跳过 / 裁剪 / 打 warning），并在 `docs/api.md` 说明对用户可见的影响；没有登记的特殊情况一律按缺陷处理。
 
 ### 4.2 TilingKey 与模板参数
 

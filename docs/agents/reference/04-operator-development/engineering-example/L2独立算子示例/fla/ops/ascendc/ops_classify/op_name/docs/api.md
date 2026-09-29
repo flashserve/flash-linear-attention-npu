@@ -92,6 +92,10 @@ schema，原地契约只靠 `MUTATED_ARGUMENTS` 兜底；契约回归见 `tests/
 | `ACLNN_ERR_PARAM_INVALID` | dtype 不在当前平台支持列表内（见下表）；输出 dtype 与输入跟随关系不符；`D != 128`；`chunk_size` 非 64/128；`epsilon <= 0`；`scale` 非正；`cu_seqlens` 首元素非 0 / 非单调 / 末元素与总 token 数不符；`chunk_indices` 未与 `cu_seqlens` 同时给出；输出指针组合不是 `none`/`save` |
 | `ACLNN_ERR_INNER_NULLPTR` | 内部张量或 workspace 申请失败 |
 
+校验归属：上表所有拦截都在 **host 侧**完成——参数与档位组合在 L2 `CheckParams`，平台差异、shape/dtype
+二次确认与规模上限在 tiling 校验；kernel 只消费已判定合法的输入与 tiling 数据，不再重复校验、
+不返回错误码、不用日志当拦截（kernel 侧出现校验分支属分层缺陷，见规范 §4.1 第 9 条）。
+
 ## dtype 契约（按平台校验）
 
 允许列表随平台变化，L2 用 `GetCurrentPlatformInfo().GetCurNpuArch()` 取当前平台的列表后再逐张量校验；

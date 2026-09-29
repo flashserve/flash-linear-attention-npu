@@ -39,6 +39,10 @@
  *      CreateView 而不是 Contiguous），并校验
  *      两者 shape/dtype 一致，否则返回 ACLNN_ERR_PARAM_INVALID；inplaceFinalState=false 时不得写回入参
  *      张量（参考 aclnn_recurrent_kda.cpp 组装 finalStateForKernel 的写法）。
+ *   11. **拦截的落点在这里（L2）与 tiling 校验，不在 kernel**：L2 的 CheckParams 覆盖指针/属性组合/
+ *      dtype/shape，tiling 覆盖平台差异与规模上限，二者合计覆盖算子 README 的每一条「已知限制」。
+ *      host 校验通过后 kernel 只消费合法输入，不再重复校验、不返回错误码；kernel 侧出现校验分支
+ *      属于分层缺陷（详见规范 §4.1 第 9 条）。
  */
 
 #include "aclnn_op_name.h"
