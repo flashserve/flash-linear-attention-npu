@@ -374,6 +374,45 @@ public:
         return ubSlot_;
     }
 
+    // v19：本 AIV 负责的区间。head 内并行（两个 AIV 合干同一条链）时是"一半"，否则是全部——
+    // 所有 stage 都按这几个区间寻址，因此未拆分时行为与改前逐位一致。
+    //   E 链（dH，[K,V]）：全部 K 行 × [EC0, EC0+ECols) 列
+    //   P 链（P，[K,K]） ：[PR0, PR0+PRows) 行 × 全部 K 列
+    //   V0（chunk 行）   ：[V0R0, V0R0+V0Rows) 行
+    __aicore__ inline uint32_t EC0() const
+    {
+        const uint32_t vDim = static_cast<uint32_t>(this->tiling_.V);
+        return this->HalfSplit() ? (this->HalfOf() * (vDim / 2U)) : 0U;
+    }
+
+    __aicore__ inline uint32_t ECols() const
+    {
+        const uint32_t vDim = static_cast<uint32_t>(this->tiling_.V);
+        return this->HalfSplit() ? (vDim / 2U) : vDim;
+    }
+
+    __aicore__ inline uint32_t PR0() const
+    {
+        const uint32_t kDim = static_cast<uint32_t>(this->tiling_.K);
+        return this->HalfSplit() ? (this->HalfOf() * (kDim / 2U)) : 0U;
+    }
+
+    __aicore__ inline uint32_t PRows() const
+    {
+        const uint32_t kDim = static_cast<uint32_t>(this->tiling_.K);
+        return this->HalfSplit() ? (kDim / 2U) : kDim;
+    }
+
+    __aicore__ inline uint32_t V0R0() const
+    {
+        return this->HalfSplit() ? (this->HalfOf() * CDHP_VEC_TILE) : 0U;
+    }
+
+    __aicore__ inline uint32_t V0Rows() const
+    {
+        return this->HalfSplit() ? CDHP_VEC_TILE : static_cast<uint32_t>(this->tiling_.chunkSize);
+    }
+
     // v13：W / do 这两个平面在 Vector 侧**完全没有实数运算**（既不门控也不取负），只需要把原始输入
     // 按模型 dtype 搬到 slot 的同一 dtype 平面上。原来走"载入 → Cast 到 FP32 → Cast 回模型 dtype → 落盘"，
     // 每 tile 多出 4 次 Cast（两个平面 × 载入/落出）。这里用一块专用暂存槽做同 dtype 中转：
@@ -695,7 +734,7 @@ private:
             PipeBarrier<PIPE_V>();
         }
 
-        for (uint32_t r0 = 0; r0 < mDim; r0 += CDHP_VEC_TILE) {
+        for (uint32_t r0 = V0R0(); r0 < V0R0() + V0Rows(); r0 += CDHP_VEC_TILE) {
             const uint32_t tileRows = MinV(CDHP_VEC_TILE, mDim - r0);
             const uint32_t validRows = (r0 < rows) ? MinV(tileRows, rows - r0) : 0;
             LocalTensor<float> qF = s0F32_.Get<float>();
@@ -776,19 +815,31 @@ private:
         Duplicate(zeroF, 0.0f, CDHP_SCRATCH_ELEMS);
         PipeBarrier<PIPE_V>();
         const uint32_t mDim = static_cast<uint32_t>(this->tiling_.chunkSize);
+        // v19：只清 StageV0 会写的那几段（Q̄s / W / do / -dv / -K̄ 的 [V0R0, V0R0+V0Rows) 行）；
+        // TT 段（Cube 的 T1 GEMM 整块重写）与 dH_bf 段（AIV 的 state 落盘整块重写）不需要预置。
+        // 未拆分时 V0R0/V0Rows 就是整块，与 v18 的清零范围一致。
+        const uint64_t aRows = static_cast<uint64_t>(mDim) * kDim * sizeof(DT);
+        const uint64_t bRows = static_cast<uint64_t>(mDim) * vDim * sizeof(DT);
         for (uint32_t window = 0; window < CP::CDHP_WINDOW_COUNT; ++window) {
-            ZeroPlane(this->AOperAt(window), 2U * mDim + kDim, kDim, zeroF);
-            ZeroPlane(this->BOperAt(window), 2U * mDim + kDim, vDim, zeroF);
-            ZeroPlane(this->SlotAt(this->SliceOfWindow(window), this->SlotQBytes() + this->SlotWBytes()), mDim, kDim,
-                      zeroF);
+            // 注意：GM_ADDR 本身是 `__gm__ uint8_t *`，不能写成 `const GM_ADDR`（见 §20 的踩坑记录）
+            GM_ADDR aOp = this->AOperAt(window);
+            GM_ADDR bOp = this->BOperAt(window);
+            GM_ADDR kOp = this->SlotAt(this->SliceOfWindow(window), this->SlotQBytes() + this->SlotWBytes());
+            ZeroPlaneRows(aOp, V0R0(), V0Rows(), kDim, zeroF);          // Q̄s
+            ZeroPlaneRows(aOp + aRows, V0R0(), V0Rows(), kDim, zeroF);  // W
+            ZeroPlaneRows(bOp, V0R0(), V0Rows(), vDim, zeroF);          // do
+            ZeroPlaneRows(bOp + bRows, V0R0(), V0Rows(), vDim, zeroF);  // -dv
+            ZeroPlaneRows(kOp, V0R0(), V0Rows(), kDim, zeroF);          // -K̄
         }
     }
 
-    // v18：把一块 [rows, cols] 的模型 dtype 平面整体写 0（逐 tile 落盘；每个 head 只调用一轮）
-    __aicore__ inline void ZeroPlane(GM_ADDR plane, uint32_t rows, uint32_t cols, const LocalTensor<float> &zeroF)
+    // v18/v19：把一块 [rowStart, rowStart+rowCount) × [0, cols) 的模型 dtype 平面写 0
+    // （逐 32 行 tile 落盘；每个 head 只调用一轮）
+    __aicore__ inline void ZeroPlaneRows(GM_ADDR plane, uint32_t rowStart, uint32_t rowCount, uint32_t cols,
+                                         const LocalTensor<float> &zeroF)
     {
-        for (uint32_t r0 = 0; r0 < rows; r0 += CDHP_VEC_TILE) {
-            const uint32_t tileRows = MinV(CDHP_VEC_TILE, rows - r0);
+        for (uint32_t r0 = rowStart; r0 < rowStart + rowCount; r0 += CDHP_VEC_TILE) {
+            const uint32_t tileRows = MinV(CDHP_VEC_TILE, rowStart + rowCount - r0);
             StoreTileModel(zeroF, plane + static_cast<uint64_t>(r0) * cols * sizeof(DT), tileRows, cols, cols);
         }
     }
