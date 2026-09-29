@@ -139,7 +139,9 @@ def _case_payload(case_id: int, spec: dict, tags: str) -> dict:
         "api_type": f"executor_{OP_NAME}",
         "expected_error_msg": None,
         "backward": False,
-        "standard": _standard(metadata["dtype"]),
+        # 反向（拦截）用例不做数值比对：标准里标 not_key，由 executor 校验 aclnn 返回码。
+        "standard": (_standard(metadata["dtype"]) if not spec.get("expected_return_code")
+                     else {"acc": "not_key", "perf": "not_key", "mem": 1.1}),
         "outputs": None,
         "inputs": inputs,
         "save_name": OP_NAME,

@@ -2602,13 +2602,7 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": {
-        "mixed_tolerance_bm": {
-          "output_dtype_overrides": {
-            "0": "bf16"
-          }
-        }
-      },
+      "acc": "not_key",
       "perf": "not_key",
       "mem": 1.1
     },
@@ -2819,13 +2813,7 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": {
-        "mixed_tolerance_bm": {
-          "output_dtype_overrides": {
-            "0": "bf16"
-          }
-        }
-      },
+      "acc": "not_key",
       "perf": "not_key",
       "mem": 1.1
     },
@@ -3036,13 +3024,7 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": {
-        "mixed_tolerance_bm": {
-          "output_dtype_overrides": {
-            "0": "bf16"
-          }
-        }
-      },
+      "acc": "not_key",
       "perf": "not_key",
       "mem": 1.1
     },
@@ -3253,13 +3235,7 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": {
-        "mixed_tolerance_bm": {
-          "output_dtype_overrides": {
-            "0": "bf16"
-          }
-        }
-      },
+      "acc": "not_key",
       "perf": "not_key",
       "mem": 1.1
     },
@@ -3470,13 +3446,7 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": {
-        "mixed_tolerance_bm": {
-          "output_dtype_overrides": {
-            "0": "bf16"
-          }
-        }
-      },
+      "acc": "not_key",
       "perf": "not_key",
       "mem": 1.1
     },
@@ -3687,13 +3657,7 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": {
-        "mixed_tolerance_bm": {
-          "output_dtype_overrides": {
-            "0": "bf16"
-          }
-        }
-      },
+      "acc": "not_key",
       "perf": "not_key",
       "mem": 1.1
     },
@@ -3904,13 +3868,7 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": {
-        "mixed_tolerance_bm": {
-          "output_dtype_overrides": {
-            "0": "bf16"
-          }
-        }
-      },
+      "acc": "not_key",
       "perf": "not_key",
       "mem": 1.1
     },
@@ -4121,13 +4079,7 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": {
-        "mixed_tolerance_bm": {
-          "output_dtype_overrides": {
-            "0": "bf16"
-          }
-        }
-      },
+      "acc": "not_key",
       "perf": "not_key",
       "mem": 1.1
     },
@@ -4338,13 +4290,7 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": {
-        "mixed_tolerance_bm": {
-          "output_dtype_overrides": {
-            "0": "bf16"
-          }
-        }
-      },
+      "acc": "not_key",
       "perf": "not_key",
       "mem": 1.1
     },
@@ -4555,13 +4501,7 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": {
-        "mixed_tolerance_bm": {
-          "output_dtype_overrides": {
-            "0": "bf16"
-          }
-        }
-      },
+      "acc": "not_key",
       "perf": "not_key",
       "mem": 1.1
     },
@@ -4772,13 +4712,7 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": {
-        "mixed_tolerance_bm": {
-          "output_dtype_overrides": {
-            "0": "bf16"
-          }
-        }
-      },
+      "acc": "not_key",
       "perf": "not_key",
       "mem": 1.1
     },
@@ -4989,13 +4923,7 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": {
-        "mixed_tolerance_bm": {
-          "output_dtype_overrides": {
-            "0": "bf16"
-          }
-        }
-      },
+      "acc": "not_key",
       "perf": "not_key",
       "mem": 1.1
     },
@@ -5206,13 +5134,7 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": {
-        "mixed_tolerance_bm": {
-          "output_dtype_overrides": {
-            "0": "bf16"
-          }
-        }
-      },
+      "acc": "not_key",
       "perf": "not_key",
       "mem": 1.1
     },

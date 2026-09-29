@@ -9,6 +9,7 @@ ATK 原生 ``mixed_tolerance_bm``（按模型 dtype 判 ``dhm``）。
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -103,6 +104,34 @@ def _validate_outputs(outputs, spec: dict, tensors: dict) -> None:
         raise RuntimeError(f"{OP_NAME}: dhm dtype {dhm.dtype} != torch.float32")
 
 
+_ACLNN_CODES = {
+    "ACLNN_ERR_PARAM_INVALID": 161001,
+    "ACLNN_ERR_PARAM_NULLPTR": 161002,
+}
+
+
+def _negative_expected_code(spec: dict):
+    raw = spec.get("expected_return_code")
+    if raw is None:
+        return None
+    text = str(raw)
+    if text.isdigit():
+        return int(text)
+    if text not in _ACLNN_CODES:
+        raise RuntimeError(f"{OP_NAME}: unknown expected_return_code {text!r}")
+    return _ACLNN_CODES[text]
+
+
+def _placeholder_output(spec: dict):
+    """反向用例没有真实输出：按用例参数的形状给一个占位 dhm（标准里已标 not_key，不做比对）。"""
+
+    shape = spec["shape"]
+    value_heads = int(shape["Hv"])
+    k_dim = int(shape["K"])
+    v_dim = int(shape["V"])
+    return (torch.zeros((value_heads, k_dim, v_dim + k_dim), dtype=torch.float32),)
+
+
 def _call_op(tensors: dict, spec: dict, *, npu: bool):
     segment = _segment(spec)
     scale = float(spec.get("scale", 1.0))
@@ -126,6 +155,9 @@ def _call_op(tensors: dict, spec: dict, *, npu: bool):
 
 
 def run_cpu(spec: dict, input_data: InputDataset):
+    if spec.get("expected_return_code"):
+        # 反向用例没有真实输出；精度比对已按标准里的 not_key 跳过。
+        return _placeholder_output(spec)
     tensors = build_inputs(spec, torch.device("cpu"))
     outputs = _call_op(tensors, spec, npu=False)
     _validate_outputs(outputs, spec, tensors)
@@ -133,7 +165,27 @@ def run_cpu(spec: dict, input_data: InputDataset):
 
 
 def run_npu(spec: dict, input_data: InputDataset):
+    want = _negative_expected_code(spec)
     tensors = build_inputs(spec, _marker_device(input_data))
+    if want is not None:
+        # 反向（拦截）用例：算子必须报错，且返回码与用例声明一致。返回码取自异常文本里的
+        # ``aclnnStatus=<code>``（与 tests/atk/chunk_kda_fwd 的负向处理同一套口径）。
+        try:
+            _call_op(tensors, spec, npu=True)
+        except Exception as exc:  # aclnn 抛 RuntimeError，取其中的 aclnnStatus
+            match = re.search(r"aclnnStatus=(\d+)", str(exc))
+            got = int(match.group(1)) if match else None
+            if got != want:
+                raise RuntimeError(
+                    f"{OP_NAME}: negative case {spec.get('case_key')} returned {got}, "
+                    f"expected {want}: {exc}"
+                ) from exc
+            print(f"NPU negative case intercepted as expected: {spec['case_key']} code={got}", flush=True)
+            return _placeholder_output(spec)
+        raise RuntimeError(
+            f"{OP_NAME}: negative case {spec.get('case_key')} unexpectedly succeeded, "
+            f"expected code {want}"
+        )
     outputs = _call_op(tensors, spec, npu=True)
     print(f"NPU operator completed: {spec['case_key']}", flush=True)
     _validate_outputs(outputs, spec, tensors)
