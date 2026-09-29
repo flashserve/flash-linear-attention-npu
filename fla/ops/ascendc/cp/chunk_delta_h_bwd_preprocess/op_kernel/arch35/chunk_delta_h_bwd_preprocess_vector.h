@@ -705,13 +705,8 @@ private:
             LocalTensor<float> dvF = s4F32_.Get<float>();
             // v13：满 tile 时 W / do 走同 dtype 纯拷贝（不做 FP32 往返）；尾块仍走 FP32 通路以便把无效行清 0
             const bool wdNeedF32 = (validRows < tileRows);
-            Duplicate(qF, 0.0f, tileRows * kDim);
-            Duplicate(kF, 0.0f, tileRows * kDim);
-            if (wdNeedF32) {
-                Duplicate(wF, 0.0f, tileRows * kDim);
-                Duplicate(doF, 0.0f, tileRows * vDim);
-            }
-            Duplicate(dvF, 0.0f, tileRows * vDim);
+            // v18：不再逐 tile Duplicate 清零——无效行由 InitState 在每个 head 开始时预置的整片 0 保持
+            // （一个 head 里第一个被处理的就是可能不满 chunk 的尾块，后续满 chunk 会整片重写）
             if (validRows > 0) {
                 LoadTileF32(qF, qAddr_ + static_cast<uint64_t>(hk * this->tiling_.T + t0 + r0) * kDim * sizeof(DT),
                             validRows, kDim, kDim);
@@ -741,15 +736,15 @@ private:
                 }
             }
             // v3：K̄ 落盘取负（Cube 侧 T1 = Wᵀ@(-K̄) 即为 -T1），dv 落盘取负（AB 直接正累加）
-            AscendC::Muls(kF, kF, -1.0f, tileRows * kDim);
-            AscendC::Muls(dvF, dvF, -1.0f, tileRows * vDim);
-            StoreTileModel(qF, slotQ + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows, kDim, kDim);
-            StoreTileModel(kF, slotK + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows, kDim, kDim);
+            AscendC::Muls(kF, kF, -1.0f, validRows * kDim);
+            AscendC::Muls(dvF, dvF, -1.0f, validRows * vDim);
+            StoreTileModel(qF, slotQ + static_cast<uint64_t>(r0) * kDim * sizeof(DT), validRows, kDim, kDim);
+            StoreTileModel(kF, slotK + static_cast<uint64_t>(r0) * kDim * sizeof(DT), validRows, kDim, kDim);
             if (wdNeedF32) {
-                StoreTileModel(wF, slotW + static_cast<uint64_t>(r0) * kDim * sizeof(DT), tileRows, kDim, kDim);
-                StoreTileModel(doF, slotDo + static_cast<uint64_t>(r0) * vDim * sizeof(DT), tileRows, vDim, vDim);
+                StoreTileModel(wF, slotW + static_cast<uint64_t>(r0) * kDim * sizeof(DT), validRows, kDim, kDim);
+                StoreTileModel(doF, slotDo + static_cast<uint64_t>(r0) * vDim * sizeof(DT), validRows, vDim, vDim);
             }
-            StoreTileModel(dvF, slotNegDv + static_cast<uint64_t>(r0) * vDim * sizeof(DT), tileRows, vDim, vDim);
+            StoreTileModel(dvF, slotNegDv + static_cast<uint64_t>(r0) * vDim * sizeof(DT), validRows, vDim, vDim);
         }
         StoreScalarF32(decayF, slotDecay, kDim);
     }
@@ -773,6 +768,29 @@ private:
         LocalTensor<float> dhState = dhStateF32_.Get<float>();
         Duplicate(dhState, 0.0f, kDim * vDim);
         PipeBarrier<PIPE_V>();
+        // v18（照 arch22 的 v14 平移过来）：两份操作数平面（aOper / bOper）与 slot 里的 -K̄ 在**每个 head
+        // 开始时**整体清 0（一个 head 只做一轮，代价可忽略）。之后 StageV0 只写有效行：一个 head 里第一个
+        // 被处理的 chunk 是索引最大的那个（也就是唯一可能不满一个 chunk 的尾块），它读到的无效行正是这里
+        // 预置的 0；后续满 chunk 会把整片重写 ⇒ 尾块不必再为补零保留 FP32 通路，也不必逐 tile Duplicate。
+        LocalTensor<float> zeroF = s4F32_.Get<float>();
+        Duplicate(zeroF, 0.0f, CDHP_SCRATCH_ELEMS);
+        PipeBarrier<PIPE_V>();
+        const uint32_t mDim = static_cast<uint32_t>(this->tiling_.chunkSize);
+        for (uint32_t window = 0; window < CP::CDHP_WINDOW_COUNT; ++window) {
+            ZeroPlane(this->AOperAt(window), 2U * mDim + kDim, kDim, zeroF);
+            ZeroPlane(this->BOperAt(window), 2U * mDim + kDim, vDim, zeroF);
+            ZeroPlane(this->SlotAt(this->SliceOfWindow(window), this->SlotQBytes() + this->SlotWBytes()), mDim, kDim,
+                      zeroF);
+        }
+    }
+
+    // v18：把一块 [rows, cols] 的模型 dtype 平面整体写 0（逐 tile 落盘；每个 head 只调用一轮）
+    __aicore__ inline void ZeroPlane(GM_ADDR plane, uint32_t rows, uint32_t cols, const LocalTensor<float> &zeroF)
+    {
+        for (uint32_t r0 = 0; r0 < rows; r0 += CDHP_VEC_TILE) {
+            const uint32_t tileRows = MinV(CDHP_VEC_TILE, rows - r0);
+            StoreTileModel(zeroF, plane + static_cast<uint64_t>(r0) * cols * sizeof(DT), tileRows, cols, cols);
+        }
     }
 
     // v5 链上准备：把"本 chunk 之前的"状态写成 Cube 需要的模型 dtype 操作数，并放行 Cube 的 Z/ZP。
