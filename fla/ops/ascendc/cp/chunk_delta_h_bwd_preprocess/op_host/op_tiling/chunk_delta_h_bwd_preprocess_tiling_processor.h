@@ -103,7 +103,7 @@ public:
         return blockDim_;
     }
 
-    // gate 模式（模板参数之一，见 op_kernel/<op>_struct.h 的 ASCENDC_TPL_ARGS_DECL）
+    // gate 模式（模板参数之一，见 op_kernel/<op>_tiling_key.h 的 ASCENDC_TPL_ARGS_DECL）
     uint32_t GetGateMode() const
     {
         return gateMode_;
