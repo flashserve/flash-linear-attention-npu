@@ -11,7 +11,7 @@
  * \file chunk_delta_h_bwd_preprocess_tiling_processor.h
  * \brief
  * Tiling processor for chunk_delta_h_bwd_preprocess, decoupled from gert::TilingContext so that the same
- * validation / core partition / workspace rules can be reused by aclnn and by the <<<>>> direct launch path.
+ * validation / core partition / workspace rules can be reused by the aclnn entry.
  */
 
 #ifndef CHUNK_DELTA_H_BWD_PREPROCESS_TILING_PROCESSOR_H

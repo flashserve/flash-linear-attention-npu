@@ -78,30 +78,21 @@ dhm = chunk_delta_h_bwd_preprocess(
 )
 ```
 
-## 4. `<<<>>>` 直调
+## 4. tilingKey
 
-设备函数签名（`kernel_operator.h` 侧）：
+tilingKey 由模板参数组合得到（host 侧 `GET_TPL_TILING_KEY(D_T_Q, D_T_G, GATE_MODE)`，声明见
+[`op_kernel/chunk_delta_h_bwd_preprocess_tiling_key.h`](../op_kernel/chunk_delta_h_bwd_preprocess_tiling_key.h)）；
+kernel 侧不使用 `TILING_KEY_IS` 分支，由 key 直接选中模板实例。
 
-```cpp
-extern "C" __global__ __aicore__ void chunk_delta_h_bwd_preprocess(
-    GM_ADDR q, GM_ADDR k, GM_ADDR w, GM_ADDR d_o, GM_ADDR dv, GM_ADDR g, GM_ADDR gk, GM_ADDR cu_seqlens,
-    GM_ADDR dhm, GM_ADDR workspace, GM_ADDR tiling);
-```
-
-直调需要调用方自行准备：`tiling`（`ChunkDeltaHBwdPreprocessTilingData`）、workspace（≥ tiling 中
-`totalWsBytes` + 系统 workspace）、以及 blockDim（= tiling 中 `blockDim`）。blockDim 必须与 tiling 一致，
-否则分核范围计算会越界。
-
-## 5. tilingKey
-
-| tilingKey | gate 模式 | `GT` 模板参数 |
+| 模板参数 | 取值 | 含义 |
 | --- | --- | --- |
-| 1 | 无门控（`g`、`gk` 均未传） | `DTYPE_Q` |
-| 2 | `USE_G`，`g` 与 `q` 同 dtype | `DTYPE_G` |
-| 3 | `USE_G`，`g` 为 FP32 | `float` |
-| 4 | `USE_GK` | `DTYPE_GK` |
+| `D_T_Q` | `10` / `20` | `q`/`k`/`w`/`d_o`/`dv` 的 dtype：BF16 / FP16 |
+| `D_T_G` | `10` / `20` / `30` | 标量 gate `g` 的 dtype：BF16 / FP16 / FP32；无门控与 `gk` 路径取与 `D_T_Q` 相同 |
+| `GATE_MODE` | `0` / `1` / `2` | 无门控 / 标量门控 `g` / 逐 K 门控 `gk` |
 
-## 6. 返回码与拦截
+`ASCENDC_TPL_SEL` 共放开 8 种合法组合（BF16/FP16 × {无门控、标量 g(BF16)、标量 g(FP32)、gk}）。
+
+## 5. 返回码与拦截
 
 | 返回码 | 触发条件 |
 | --- | --- |
@@ -110,7 +101,7 @@ extern "C" __global__ __aicore__ void chunk_delta_h_bwd_preprocess(
 
 报错文本会给出实际 shape、`Hk`/`Hv` 与触发的约束，便于定位；`g`/`gk` 同时非空的报错会明确指出二者互斥。
 
-## 7. 典型 shape
+## 6. 典型 shape
 
 shape 与取值范围的唯一维护处是 [README](../README.md) 的「支持的场景」「不支持（本版显式拦截）」「已知限制」三节；
 下表只是典型调用档位示例。

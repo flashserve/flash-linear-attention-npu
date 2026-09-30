@@ -118,7 +118,7 @@ python tests/atk/chunk_delta_h_bwd_preprocess/scripts/reference.py
 
 ## 稳定入口（`fla_npu.ops.ascendc`）验证
 
-`from fla_npu.ops.ascendc import chunk_delta_h_bwd_preprocess`（等价 `npu_chunk_delta_h_bwd_preprocess`）默认走 Stable-ABI 适配层（`csrc/src/stable_chunk_delta_h_bwd_preprocess.cpp` + `torch.ops.fla_npu_stable`），`libfla_npu_stable.so` 不可用时回退 ctypes 参考实现；两条通路与 aclnn 直调取数程序共用同一份输入与 CPU 标杆。已执行用例与结论（A5 / ascend950）：
+`from fla_npu.ops.ascendc import chunk_delta_h_bwd_preprocess`（等价 `npu_chunk_delta_h_bwd_preprocess`）默认走 Stable-ABI 适配层（`csrc/src/stable_chunk_delta_h_bwd_preprocess.cpp` + `torch.ops.fla_npu_stable`），`libfla_npu_stable.so` 不可用时回退 ctypes 参考实现；两条通路与上文 ATK 用例共用同一份输入与 CPU 标杆。已执行用例与结论（A5 / ascend950）：
 
 | 用例 | E rel_norm | P rel_norm | 结论 |
 | --- | --- | --- | --- |

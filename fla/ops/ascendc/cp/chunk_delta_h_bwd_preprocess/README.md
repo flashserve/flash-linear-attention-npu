@@ -77,7 +77,7 @@ dhm = chunk_delta_h_bwd_preprocess(
 )
 ```
 
-aclnn 与 `<<<>>>` 直调见 [`docs/api.md`](docs/api.md)。
+aclnn 接口见 [`docs/api.md`](docs/api.md)。
 
 ## 当前实现状态
 
