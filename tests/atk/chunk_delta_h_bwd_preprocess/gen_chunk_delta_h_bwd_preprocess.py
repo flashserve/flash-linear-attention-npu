@@ -47,7 +47,7 @@ _ACLNN_CODES = {
 MARKER_RANGE = [0, 0]
 PERF_KEYS = ("pos_01_none_gate_dense", "pos_05_gk_varlen_first_segment",
              "pos_13_long_nt_chain_accumulation", "pos_15_head_contiguous_partition")
-# 内存/确定性用例要覆盖本版全部 4 个 tilingKey：无门控 / g(model) / g(fp32) / gk。
+# 内存/确定性用例要覆盖本版全部 4 种模板参数组合：无门控 / g(model) / g(fp32) / gk。
 MSS_KEYS = ("pos_01_none_gate_dense", "pos_02_g_bf16_dense", "pos_03_g_fp32_dense",
             "pos_04_gk_bf16_dense", "pos_05_gk_varlen_first_segment")
 

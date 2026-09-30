@@ -24,7 +24,7 @@
 
 namespace CP {
 
-// 模板参数（kernel 侧不用 TILING_KEY_IS 分支，由 tilingKey 直接选择模板实例）：
+// 模板参数（kernel 侧不用 TILING_KEY_IS 分支，由 TPL tilingKey 直接选中模板实例）：
 //   D_T_Q     : q/k/w/d_o/dv 的 dtype（BF16 / FP16）
 //   D_T_G     : 标量 gate `g` 的 dtype（BF16 / FP16 / FP32）；无门控时取与 D_T_Q 相同，避免多余实例
 //   GATE_MODE : 0 无门控 / 1 标量 gate `g` / 2 逐 K gate `gk`

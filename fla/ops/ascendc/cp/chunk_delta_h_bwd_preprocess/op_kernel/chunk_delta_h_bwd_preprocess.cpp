@@ -9,7 +9,7 @@
 
 /*!
  * \file chunk_delta_h_bwd_preprocess.cpp
- * \brief Device entry：模板参数直接给出 dtype / gate 模式，由 tilingKey 选择实例（不使用 TILING_KEY_IS）。
+ * \brief Device entry：模板参数直接给出 dtype / gate 模式，由 TPL tilingKey 选中模板实例（不使用 TILING_KEY_IS）。
  */
 
 #include "chunk_delta_h_bwd_preprocess_kernel.h"

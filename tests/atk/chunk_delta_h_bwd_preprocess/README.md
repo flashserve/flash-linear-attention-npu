@@ -10,7 +10,7 @@
 | `executor_chunk_delta_h_bwd_preprocess.py` | ATK executor：按 `case_spec` 确定性构造输入，NPU 走 `fla_npu.ops.ascendc`，CPU 走 `scripts/reference.py` 标杆 |
 | `atk_chunk_delta_h_bwd_preprocess.json` | 精度矩阵（12 条，`standard.acc` 用 ATK 原生 `output_dtype_overrides` 按模型 dtype 判 `dhm`） |
 | `atk_chunk_delta_h_bwd_preprocess_perf.json` | 性能精简矩阵（4 条：dense / varlen / 32 chunk 长链 / Hv=96 多 head 分核） |
-| `atk_chunk_delta_h_bwd_preprocess_mss.json` | 内存检测与确定性矩阵（5 条，覆盖 4 个 tilingKey + varlen） |
+| `atk_chunk_delta_h_bwd_preprocess_mss.json` | 内存检测与确定性矩阵（5 条，覆盖 4 种模板参数组合 + varlen） |
 | `scripts/reference.py` | CPU 全精度参考：`preprocess_reference` 给出 `dhm = [E_r \| P_r]`；`dh_scan_direct` 用非零 `dht` 反扫得到真实 `dh0`；`check_affine` 校验 `dh0 == P_r @ dht + E_r` |
 | `atk_chunk_delta_h_bwd_preprocess.json` 的 13 条反向用例 | 由 `gen_<op>.py` 生成、带 `expected_return_code`，走 `atk ... --task run` 核对返回码（A5/A2 均 13/13） |
 
@@ -76,7 +76,7 @@ atk node --name npu_dut --backend npu --devices <device_id> --output_path <out> 
 时逐 head 同步开销"的直接体现，也是 A2 侧后续要压的点（见 `docs/design.md` §31.2 的 `kda`（Hv=64）档）。
 （此前记录过的 270.7 / 274.1 / 1066.7 µs 是更早的实现版本，且当时 `cu_seqlens` 没送到 executor、
 varlen 那一条实际按 dense 跑的，已作废。）
-`-scope=determinism` / `-scope=mssanitizer` 使用同一份 `atk_<op>_mss.json`（5 条，覆盖 4 个 tilingKey），
+`-scope=determinism` / `-scope=mssanitizer` 使用同一份 `atk_<op>_mss.json`（5 条，覆盖 4 种模板参数组合），
 本版未执行。
 
 ### ATK 反向拦截结果（已执行，`--task run`）

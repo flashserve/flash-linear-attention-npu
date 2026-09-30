@@ -78,7 +78,7 @@ dhm = chunk_delta_h_bwd_preprocess(
 )
 ```
 
-## 4. tilingKey
+## 4. 模板参数与 tilingKey
 
 tilingKey 由模板参数组合得到（host 侧 `GET_TPL_TILING_KEY(D_T_Q, D_T_G, GATE_MODE)`，声明见
 [`op_kernel/chunk_delta_h_bwd_preprocess_tiling_key.h`](../op_kernel/chunk_delta_h_bwd_preprocess_tiling_key.h)）；

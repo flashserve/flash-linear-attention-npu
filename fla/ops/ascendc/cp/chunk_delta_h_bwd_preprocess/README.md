@@ -83,7 +83,7 @@ aclnn 接口见 [`docs/api.md`](docs/api.md)。
 
 | 部分 | 状态 |
 | --- | --- |
-| `op_host`（def / tiling / op_api） | 已实现：shape 校验、gate 互斥拦截、分核规则、workspace 规划、tilingKey 分发 |
+| `op_host`（def / tiling / op_api） | 已实现：shape 校验、gate 互斥拦截、分核规则、workspace 规划；按 dtype/gate 组合生成模板参数 `tilingKey`（`GET_TPL_TILING_KEY`，声明见 `op_kernel/<op>_tiling_key.h`），kernel 侧由该 key 选中模板实例，不走 `TILING_KEY_IS` 分支 |
 | `op_kernel` | 已实现：六个 Stage 的真实计算体（Catlass `BlockMmadTla` 五路矩阵乘 + Vector 手写事件对），A2/A5 精度均已打通；Vector 侧按平台拆分 `op_kernel/arch22`（A2/A3）与 `op_kernel/arch35`（A5，热点段用 RegBase `__simd_vf__` 融合） |
 | 构建接入 | 已完成：`op_host/CMakeLists.txt` 走 `op_host_aclnnExc` + `ACLNNTYPE aclnn_exclude`（**aclnn 手写，不走自动生成**），A2/A5 均已编出 OPP 运行包 |
 | Python `fla_npu.ops.ascendc` 入口 | 已接入：ctypes 直调手写 aclnn（不依赖 `torch_npu` dispatcher），A2/A5 双平台设备侧均验证通过 |

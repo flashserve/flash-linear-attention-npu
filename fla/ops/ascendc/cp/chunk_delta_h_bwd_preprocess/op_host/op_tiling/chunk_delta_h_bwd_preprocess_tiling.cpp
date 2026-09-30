@@ -107,7 +107,7 @@ ASCENDC_EXTERN_C ge::graphStatus Tiling4ChunkDeltaHBwdPreprocess(gert::TilingCon
                 OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "tiling process failed"),
                 return ge::GRAPH_FAILED);
 
-    // tilingKey = 模板参数组合（dtype + gate 模式），kernel 侧由模板实例直接消化，不再用 TILING_KEY_IS 分支
+    // TPL tilingKey = 模板参数组合（dtype + gate 模式）：kernel 侧由该 key 选中模板实例，不走 TILING_KEY_IS 分支
     const int dTQ = (qInputDesc->GetDataType() == ge::DT_BF16) ? CHUNK_DELTA_H_BWD_PREPROCESS_TPL_BF16
                                                               : CHUNK_DELTA_H_BWD_PREPROCESS_TPL_FP16;
     int dTG = dTQ;
