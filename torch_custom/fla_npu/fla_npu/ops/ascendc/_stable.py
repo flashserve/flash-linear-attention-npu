@@ -1981,3 +1981,45 @@ for _contract_op in (
         "npu_recurrent_kda"):
     globals()[_contract_op]._fla_npu_inplace_contract = True
 del _contract_op
+
+# [stable-abi adapter] npu_pre_process_fwd_kernel_merged
+def npu_pre_process_fwd_kernel_merged(k, w, u, g=None, *, gk=None, bg=None,
+                                      v=None, cu_seqlens=None,
+                                      chunk_size=None):
+    """CP 前处理：把 token 窗口压成仿射链 (h | m)。
+
+    与 aclnn 头文件逐参对齐（stream 固定在最后）：
+    k/w/u 必给；g 与 gk 二选一；cu_seqlens 必给（varlen 打包窗口，
+    也允许子区间 0 <= cu[0] < cu[-1] <= T）。返回 hm[Nseq, HV, K, V+K] FP32。
+
+    bg 与 v 是 DPLR 专用参数，本版本不支持 DPLR：必须传 None，
+    传非空直接抛 NotImplementedError（与 ctypes 入口、host 校验判据一致）。
+    """
+
+    if cu_seqlens is None:
+        raise ValueError(
+            "pre_process_fwd_kernel_merged requires cu_seqlens (varlen only): "
+            "pass a host int list such as [bos, eos] or [0, s1, s2, ..., T]."
+        )
+    if (g is None) == (gk is None):
+        raise ValueError("exactly one of g / gk must be provided.")
+    if bg is not None:
+        # TilingKey 3（USE_BG）不支持：传进来会静默按 GDN/KDA 语义算，宁可明确拒绝。
+        raise NotImplementedError(
+            "bg is not supported: DPLR is not implemented in this release (GDN/KDA only)."
+        )
+    if v is not None:
+        raise NotImplementedError(
+            "v is not supported: it is DPLR-only; GDN/KDA takes the values from u."
+        )
+    if chunk_size not in (None, 64):
+        raise ValueError(
+            f"pre_process_fwd_kernel_merged only supports chunk_size=64, got {chunk_size}."
+        )
+
+    return _op("npu_pre_process_fwd_kernel_merged")(
+        k, w, u, g, gk, bg, v,
+        _host_ints(cu_seqlens),
+        64 if chunk_size is None else int(chunk_size),
+        _current_stream_ptr(),
+    )

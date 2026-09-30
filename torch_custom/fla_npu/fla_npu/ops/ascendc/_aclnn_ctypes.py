@@ -516,6 +516,22 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.POINTER(ctypes.c_uint64),
         ctypes.POINTER(ctypes.c_void_p),
     ],
+    # pre_process_fwd_kernel_merged（CP 前处理）：k/w/u + 可选 g/gk/bg/v
+    # + host cu_seqlens（aclIntArray）+ chunkSize + hm（输出），与 aclnn 头文件逐参对应。
+    "aclnnPreProcessFwdKernelMerged": [
+        ctypes.c_void_p,  # k
+        ctypes.c_void_p,  # w
+        ctypes.c_void_p,  # u
+        ctypes.c_void_p,  # gOptional
+        ctypes.c_void_p,  # gkOptional
+        ctypes.c_void_p,  # bgOptional
+        ctypes.c_void_p,  # vOptional
+        ctypes.c_void_p,  # cuSeqlensOptional (aclIntArray, host 数组)
+        ctypes.c_int64,   # chunkSize
+        ctypes.c_void_p,  # hmOut
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
     "aclnnChunkFwdH": [
         *([ctypes.c_void_p] * 6),
         ctypes.c_bool,
@@ -1457,6 +1473,91 @@ def npu_chunk_fwd_o(
             ctx.tensor(out, "out"),
         ],
         out,
+    )
+
+
+def npu_pre_process_fwd_kernel_merged(
+    k,
+    w,
+    u,
+    g=None,
+    *,
+    gk=None,
+    bg=None,
+    v=None,
+    cu_seqlens=None,
+    chunk_size=64,
+):
+    """CP 前处理：把一个 token 窗口压成仿射链 ``(h | m)``。
+
+    与竞品 ``pre_process_fwd_kernel_merged`` 的调用形态一致：**整根张量 + 子区间**
+    ``cu_seqlens=[bos, eos]``（``bos > 0``、``eos < T`` 都合法），此时 ``Nseq = 1``；
+    也支持一次给多段（``Nseq = len(cu_seqlens) - 1``，每段一条链）。
+
+    返回 ``hm[Nseq, HV, K, V+K]``，FP32：左 ``[0, V)`` 是 ``h``（K×V），右 ``[V, V+K)`` 是
+    ``m``（K×K）。``k`` 在 ``HK`` 维、其余在 ``HV`` 维（GVA：``HV % HK == 0``）。
+
+    约定（详见算子目录 ``docs/api.md``）：
+      * ``B ≡ 1``（varlen 打包），``k/w/u`` 形状首维必须是 1；
+      * ``g`` 与 ``gk`` 二选一；
+      * ``cu_seqlens`` 必给，严格递增，``0 <= cu[0] < cu[-1] <= T``；
+      * ``bg`` / ``v`` 是 DPLR 专用参数，**本版本不支持 DPLR**：必须传 ``None``。
+        传非空时这里与 host 校验（aclnn / tiling）都会直接报错，不会静默按 GDN/KDA 计算。
+    """
+    cu = _as_int_list(cu_seqlens)
+    if cu is None or len(cu) < 2:
+        raise ValueError(
+            "pre_process_fwd_kernel_merged requires cu_seqlens (varlen only): "
+            "pass a host int list such as [bos, eos] or [0, s1, s2, ..., T]."
+        )
+    if (g is None) == (gk is None):
+        raise ValueError("exactly one of g / gk must be provided.")
+    # DPLR 不支持：bg / v 是它的专用输入，留参数只为保持调用签名与 ABI 槽位一致。
+    if bg is not None:
+        raise NotImplementedError(
+            "bg is not supported: DPLR is not implemented in this release (GDN/KDA only)."
+        )
+    if v is not None:
+        raise NotImplementedError(
+            "v is not supported: it is DPLR-only; GDN/KDA takes the values from u."
+        )
+    chunk_size = _optional_int(chunk_size, 64)
+
+    batch, head_key, seqlen, key_dim = _shape(k)
+    if batch != 1:
+        raise ValueError(
+            f"pre_process_fwd_kernel_merged requires B = 1 (varlen packed), got B = {batch}. "
+            "Pack a dense batch into the token axis first."
+        )
+    head_value, value_dim = _shape(u)[1], _shape(u)[-1]
+    # KDA 的 gk 是按 value head 给的 [B,T,HV,K]（竞品 chunk_kda 文档：GVA 时 gate 形如 [B,T,HV,K]），
+    # k 仍按 HK 头、由 hv // (HK -> HV 的分组) 映射：HK < HV（GVA）合法，不再要求 HK == HV。
+    if cu[0] < 0 or cu[-1] > seqlen or any(b <= a for a, b in zip(cu, cu[1:])):
+        raise ValueError(
+            f"cu_seqlens must be strictly increasing with 0 <= cu[0] < cu[-1] <= T = {seqlen}, "
+            f"got {cu}. (sub-interval windows are allowed: cu[0] > 0 or cu[-1] < T)"
+        )
+    nseq = len(cu) - 1
+
+    import torch
+
+    # hm 由 Python 侧预分配（与竞品的 hm buffer 用法一致：h 与 m 都写满）
+    hm = _zeros((nseq, head_value, key_dim, value_dim + key_dim), k, dtype=torch.float32)
+    return _call_aclnn(
+        "aclnnPreProcessFwdKernelMerged",
+        lambda ctx: [
+            ctx.tensor(k, "k"),
+            ctx.tensor(w, "w"),
+            ctx.tensor(u, "u"),
+            ctx.tensor(g, "g"),
+            ctx.tensor(gk, "gk"),
+            ctx.tensor(bg, "bg"),
+            ctx.tensor(v, "v"),
+            ctx.int_array(cu),
+            ctypes.c_int64(chunk_size),
+            ctx.tensor(hm, "hm"),
+        ],
+        hm,
     )
 
 
