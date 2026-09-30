@@ -172,6 +172,30 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
     return ACLNN_SUCCESS;
 }
 
+aclnnStatus CheckRequiredInputs(const Params &params)
+{
+    const std::array<const aclTensor *, 12> required = {
+        params.q, params.k, params.v, params.g, params.beta, params.a,
+        params.dO, params.dqOut, params.dkOut, params.dvOut,
+        params.dBetaOut, params.dGOut};
+    for (const aclTensor *tensor : required) {
+        CHECK_COND(tensor != nullptr, ACLNN_ERR_PARAM_NULLPTR,
+                   "required tensor must not be nullptr.");
+    }
+    return ACLNN_SUCCESS;
+}
+
+aclnnStatus CheckZeroShape(const Params &params, uint64_t *workspaceSize)
+{
+    if (params.q->IsEmpty() || params.k->IsEmpty() || params.v->IsEmpty() ||
+        params.g->IsEmpty() || params.beta->IsEmpty() || params.a->IsEmpty() ||
+        params.dO->IsEmpty()) {
+        *workspaceSize = 0UL;
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    return ACLNN_SUCCESS;
+}
+
 aclnnStatus ViewCopy(const aclTensor *src, const aclTensor *dst, aclOpExecutor *executor)
 {
     CHECK_COND(src != nullptr && dst != nullptr, ACLNN_ERR_INNER_NULLPTR,
@@ -318,14 +342,6 @@ aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
 {
     CHECK_COND(IsAscend950(), ACLNN_ERR_PARAM_INVALID,
                "ChunkGatedDeltaRuleBwd is supported on Ascend950 only.");
-    const std::array<const aclTensor *, 12> required = {
-        params.q, params.k, params.v, params.g, params.beta, params.a,
-        params.dO, params.dqOut, params.dkOut, params.dvOut,
-        params.dBetaOut, params.dGOut};
-    for (const aclTensor *tensor : required) {
-        CHECK_COND(tensor != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-                   "required tensor must not be nullptr.");
-    }
     CHECK_COND(!params.useGateInKernel, ACLNN_ERR_PARAM_INVALID,
                "use_gate_in_kernel=true is not supported.");
     CHECK_COND(params.dALogOut == nullptr && params.dDtBiasOut == nullptr,
@@ -448,12 +464,18 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
                   useQkL2normInKernel, useBetaSigmoidInKernel, stateVFirst,
                   dqOut, dkOut, dvOut, dBetaOut, dGOut, dh0OutOptional,
                   dALogOutOptional, dDtBiasOutOptional};
-    ShapeInfo info;
-    CHECK_RET(CheckParams(params, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckRequiredInputs(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR);
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     aclOpExecutor *executorPtr = uniqueExecutor.get();
+    if (CheckZeroShape(params, workspaceSize) != ACLNN_SUCCESS) {
+        uniqueExecutor.ReleaseTo(executor);
+        return ACLNN_SUCCESS;
+    }
+
+    ShapeInfo info;
+    CHECK_RET(CheckParams(params, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
 
     CHECK_RET(MakeContiguous(params.q, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(MakeContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
