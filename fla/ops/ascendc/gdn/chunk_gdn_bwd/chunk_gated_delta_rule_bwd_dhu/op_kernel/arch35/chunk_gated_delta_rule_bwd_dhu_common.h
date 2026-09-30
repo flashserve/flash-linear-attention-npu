@@ -25,12 +25,50 @@
 
 namespace GDN {
 
+// Dhu-C5：劈分头判定（单一共享谓词——vector IsSplitHead / cube CvTargetSubBlock / dvState
+// tokenHalf 三处消费必须同式，R-C5-1 配对纪律）。
+// headCnt>1 门控（C5a 形状矩阵回归修复）：headCnt==1（如 H=8、headsPerTask=1）时劈分在
+// 形状矩阵实测中回归（shape_t512_h8 六张 FAIL、t100_h8 trap），根因待 dump 实验定位；
+// 退化回奇偶属主后各调用点与 pre-C5a 逐拍一致（+C2b bisect 已证该路径正确）。
+// headCnt∈{2,4} 本就不劈分；故实际仅 headCnt==3（含 H=96 模型档）启用劈分。
+__aicore__ inline bool IsDhuSplitHead(int64_t headCnt, int64_t headOffset)
+{
+    return headCnt > 1 && (headCnt & 1) == 1 && headOffset == headCnt - 1;
+}
+
+// Dhu-C5b 修复：劈分半界按 16 对齐（=min(RoundUp(⌊k/2⌋,16), k)）。L0C Fixpipe 源偏移必须落在
+// fractal（16 行）边界——非 16 对齐起始偏移的 fixpipe 使 FIX 管停滞、数据 flag 永不置、全核互等
+// 死锁（t8191_h96 末 chunk chunkLen=63 半界 31 实锤 507014；t100_h8 chunkLen=36 半界 18 同征）。
+// k≤16 时半界=k（子块1 空段）；k=1 时半界=0（子块0 空段，保持原 ⌊1/2⌋=0 语义）；
+// k=K=128 时半界=64 与原 K/2 相同。
+// CvTargetSubBlock / cube dvState tokenHalf / vector TokenRowRange 三处共用（R-C5-1 单一谓词纪律）。
+__aicore__ inline int64_t DhuSplitHalf(int64_t k)
+{
+    const int64_t half = (k / 2 + 15) / 16 * 16;
+    return half < k ? half : k;
+}
+
+// Dhu-C5a/C5b：CV 片目标子块判定（cube 专用；AIV 侧无需对偶——各 AIV 只等自己的 bank flag）。
+// 两种用法同一公式：C5-a termW 流传 k=K（K 维半界 DhuSplitHalf(K)=64）；C5-b dvState 流传
+// k=chunkLen（token 维半界 DhuSplitHalf(chunkLen)，调用方须在半界处截断 cvRows 使片不跨界）。
+// 劈分头（IsDhuSplitHead；subBlockNum==2 由 KERNEL_TYPE_MIX_AIC_1_2 保证）：rowIdx < 半界 → 子块0，
+// 否则子块1；非劈分头维持属主 headOffset&1。
+// AIC 侧 cvListId 必须按目标子块独立 ping-pong（cvListId[2]），与各 AIV 局部 cvListId
+// （各自从 0 起逐片翻转）逐片配对——目标或计数错位即错子块收片/信用失衡/冻核（R-C5-1）。
+__aicore__ inline uint32_t CvTargetSubBlock(int64_t headCnt, int64_t headOffset, uint32_t rowIdx, int64_t k)
+{
+    if (IsDhuSplitHead(headCnt, headOffset)) {
+        return rowIdx < static_cast<uint32_t>(DhuSplitHalf(k)) ? 0U : 1U;
+    }
+    return static_cast<uint32_t>(headOffset & 1);
+}
+
 constexpr uint64_t VEC_TO_CUBE_FLAG_READY = 2;
+// Dhu-C2a：dh ready / qg ready 拆分。flag3=dhReady（AIV 在 state/dh K 行循环结束即 set），
+// flag2 语义收窄为 qgReady（AIV 在 qg staging 完成后 set）。ID 3 不与 {0,1,6,7} 的 CV 通道及
+// {8,9,10} 的 catlass barrier 撞号；每 chunk set/wait 各 3 对 3（AND 配对），远小于 15 次上限。
+constexpr uint64_t VEC_TO_CUBE_DH_FLAG_READY = 3;
 constexpr uint64_t CUBE_TO_VEC_FLAG_READY = 4;
-// C3 拆分标志：dh（GEMM0 唯一跨核输入）就绪专用 mode-2 flag。
-// flagId 命名空间：mode 0/1/2 与 mode 4 共享 0-15，当前占用
-// mode-2 {2,4}、mode-4 AIV0 视角 {0,1,6,7}（16/31 为 AIV1 映射区），取未占用的 3。
-constexpr uint64_t DH_READY_FLAG = 3;
 constexpr uint32_t CV_BUFFER_COUNT = 2;
 constexpr uint64_t CV_SUBBLOCK_FLAG_STRIDE = 16;
 constexpr uint64_t MATRIX_CV_AIV_TO_AIC_FLAG_BEGIN = 0;
