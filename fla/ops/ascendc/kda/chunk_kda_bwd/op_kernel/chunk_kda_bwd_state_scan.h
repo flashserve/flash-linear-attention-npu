@@ -1082,6 +1082,10 @@ public:
                     const uint32_t stateIdx = curStatePingPong_;
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2Event_[stateIdx]);
                     AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stateMte3ToMte2Event_[stateIdx]);
+                    // Initialization writes from V instead of loading through MTE2.
+                    // Forward the buffer-reuse dependency before overwriting UB.
+                    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(stateMte2ToVEvent_[stateIdx]);
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(stateMte2ToVEvent_[stateIdx]);
                     AscendC::LocalTensor<float> stateFp32 = stateBuf_[stateIdx];
                     AscendC::Duplicate(stateFp32, 0.0f, elems);
                     AscendC::PipeBarrier<PIPE_V>();
