@@ -87,7 +87,7 @@ aclnn 接口见 [`docs/api.md`](docs/api.md)。
 | `op_kernel` | 已实现：六个 Stage 的真实计算体（Catlass `BlockMmadTla` 五路矩阵乘 + Vector 手写事件对），A2/A5 精度均已打通；Vector 侧按平台拆分 `op_kernel/arch22`（A2/A3）与 `op_kernel/arch35`（A5，热点段用 RegBase `__simd_vf__` 融合） |
 | 构建接入 | 已完成：`op_host/CMakeLists.txt` 走 `op_host_aclnnExc` + `ACLNNTYPE aclnn_exclude`（**aclnn 手写，不走自动生成**），A2/A5 均已编出 OPP 运行包 |
 | Python `fla_npu.ops.ascendc` 入口 | 已接入：ctypes 直调手写 aclnn（不依赖 `torch_npu` dispatcher），A2/A5 双平台设备侧均验证通过 |
-| 测试 | `tests/atk/chunk_delta_h_bwd_preprocess/` 按 `tests/atk` 规范组织：用例设计（12 正向 + 13 反向拦截）内联在 `gen_chunk_delta_h_bwd_preprocess.py`，展开出 `atk_chunk_delta_h_bwd_preprocess.json`（精度矩阵，含 13 条反向）/ `_perf` / `_mss` 三份矩阵，配 `<op>.yaml` 与 `executor_<op>.py`；`scripts/` 只保留 CPU 标杆 `reference.py`，反向拦截走 ATK `--task run` 复核返回码 |
+| 测试 | `tests/atk/chunk_delta_h_bwd_preprocess/` 按 `tests/atk` 规范组织：用例设计（12 正向 + 13 反向拦截）内联在 `gen_chunk_delta_h_bwd_preprocess.py`，展开出 `atk_chunk_delta_h_bwd_preprocess.json`（精度矩阵，含 13 条反向）/ `_perf` / `_mss` 三份矩阵，配 `<op>.yaml` 与 `executor_<op>.py`；反向拦截走 ATK `--task run` 复核返回码。`scripts/` 放 CPU 标杆 `reference.py` 与 GPU（H20）基线脚本 `bench_cp_chunk_delta_h{,_v052}.py`（后者产出"×H20"对比的分母） |
 
 ### 已验证（本版）
 

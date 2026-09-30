@@ -12,6 +12,8 @@
 | `atk_chunk_delta_h_bwd_preprocess_perf.json` | 性能精简矩阵（4 条：dense / varlen / 32 chunk 长链 / Hv=96 多 head 分核） |
 | `atk_chunk_delta_h_bwd_preprocess_mss.json` | 内存检测与确定性矩阵（5 条，覆盖 4 种模板参数组合 + varlen） |
 | `scripts/reference.py` | CPU 全精度参考：`preprocess_reference` 给出 `dhm = [E_r \| P_r]`；`dh_scan_direct` 用非零 `dht` 反扫得到真实 `dh0`；`check_affine` 校验 `dh0 == P_r @ dht + E_r` |
+| `scripts/bench_cp_chunk_delta_h_v052.py` | GPU（H20）基线：fla-core 0.5.2 的 CP 三个 kernel device 耗时（60 个测量点），口径见下文「GPU（H20）基线脚本」 |
+| `scripts/bench_cp_chunk_delta_h.py` | GPU（H20）基线：main/更新版本（含 zigzag 布局，120 个测量点） |
 | `atk_chunk_delta_h_bwd_preprocess.json` 的 13 条反向用例 | 由 `gen_<op>.py` 生成、带 `expected_return_code`，走 `atk ... --task run` 核对返回码（A5/A2 均 13/13） |
 
 ## ATK 一键执行（规范入口）
@@ -106,6 +108,48 @@ atk node --backend npu --devices <device_id> task \
 - `compare_error_msg` 在字符串包含匹配未命中后会把 `expected_error_msg` 当**正则**编译；编译失败时会
   `raise` 一个非异常对象，报 `TypeError: exceptions must derive from BaseException`，掩盖真实比对结论。
   生成器因此保证下发的 `expected_error_msg` 本身是合法正则。
+
+## GPU（H20）基线脚本
+
+算子「×H20」对比的分母来自上游 [`fla/ops/cp/chunk_delta_h.py`](https://github.com/fla-org/flash-linear-attention/blob/main/fla/ops/cp/chunk_delta_h.py)
+里的三个 kernel，脚本放在本目录 `scripts/` 下（**需要 NVIDIA GPU** + `torch`/`triton` + 对应版本的
+`flash-linear-attention`）：
+
+| 脚本 | 适用版本 | 场景矩阵 |
+| --- | --- | --- |
+| `scripts/bench_cp_chunk_delta_h_v052.py` | fla-core **0.5.2**（按该版本的真实签名逐字对齐） | cp ∈ {2,4,8,16,64} × contiguous × 4 个模型档 × 3 kernel = **60 个测量点** |
+| `scripts/bench_cp_chunk_delta_h.py` | main / 更新版本（含 `AFFINE_CHAIN_PRECISION`、zigzag CP 布局） | 再加 zigzag = **120 个测量点** |
+
+被测的三个 kernel：`pre_process_fwd_kernel_merged`（每 rank 本地前向摘要）、
+`pre_process_bwd_kernel_merged`（本算子对应的反向摘要）、`merge_fwd_bwd_kernel`（rank 间仿射链合并）。
+
+```bash
+cd tests/atk/chunk_delta_h_bwd_preprocess
+# 先空跑看场景矩阵（不需要 GPU）
+python scripts/bench_cp_chunk_delta_h_v052.py --dry-run
+# fla-core 0.5.2 全量：60 个测量点，每点 warmup 5 次 + 计时 20 次
+python scripts/bench_cp_chunk_delta_h_v052.py --cp-sizes 2 4 8 16 64 --iters 20 --warmup 5 --save-dir ./out
+# main / 更新版本：120 个测量点
+python scripts/bench_cp_chunk_delta_h.py --cp-sizes 2 4 8 16 64 --iters 20 --warmup 5 --save-dir ./out
+```
+
+口径（脚本 docstring 是同一份）：
+
+- **device 侧耗时**用 `torch.cuda.Event` 打在 kernel launch 前后（同一 stream），warmup 后循环
+  `--iters` 次（默认 20），输出 mean / median / min / max，结果落 `--save-dir` 下的 CSV + JSON。
+- 默认只占 1 张卡，仿真每个 rank 的本地负载（cp ∈ {2,4,8,16,64} 都能测）；`--dist` 才走上游真实的
+  分布式路径（需要 `cp_size` 张卡，含 all-gather + merge）。
+- `pre_process_*` 报的是**每 rank**本地耗时（rank 间并行 ⇒ 端到端里这一步 ≈ 该值）；
+  `merge_fwd_bwd_kernel` 取**最坏 rank**（fwd 链与 bwd 链各合并 `cp-1` 个），一次计时含两次 launch。
+- 脚本按"已安装版本的真实签名"过滤实参，启动时打印签名并提示"本版本不支持的参数已自动忽略"，
+  版本差异不会退化成看不懂的 `KeyError`（0.5.2 上被过滤的如 `AFFINE_CHAIN_PRECISION`）。
+
+A5/A2 的「×H20」比值用的 H20 分母就是这两个脚本产出的；逐档对照见算子
+[`docs/design.md`](../../../fla/ops/ascendc/cp/chunk_delta_h_bwd_preprocess/docs/design.md)
+§11.7 / §28 / §31.2 / §35。
+
+> 这两个脚本是 GPU 侧基线工具：**本仓 NPU 侧 CI 不执行**，ATK 的 `-scope=*` 流程也不会调用它们，
+> 放在 `scripts/` 只为让「×H20」的口径可复现。
 
 ## 本地自检（无需 NPU）
 
