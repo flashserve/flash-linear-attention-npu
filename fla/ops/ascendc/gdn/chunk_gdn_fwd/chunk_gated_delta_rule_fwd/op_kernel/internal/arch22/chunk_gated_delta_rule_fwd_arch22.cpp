@@ -468,11 +468,13 @@ __aicore__ inline void RunFrontBatch(
 }
 #endif
 
-template <typename InputT, typename TileShapes, bool kPreparedCumsum = false>
+template <typename InputT, typename TileShapes, bool kPreparedCumsum = false,
+          bool kExportH = false>
 __aicore__ inline void RunPhase6(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR rawG, GM_ADDR gk,
     GM_ADDR initialState, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR o,
-    GM_ADDR finalState, GM_ADDR gCumsumBth, GM_ADDR A, GM_ADDR workspace, GM_ADDR tiling)
+    GM_ADDR finalState, GM_ADDR gCumsumBth, GM_ADDR A, GM_ADDR hOutput,
+    GM_ADDR workspace, GM_ADDR tiling)
 {
     GM_ADDR userWorkspace = AscendC::GetUserWorkspace(workspace);
     const __gm__ ChunkRecomputeWUFwdHOTrailer *phase5 = GetPhase5Trailer(tiling);
@@ -520,6 +522,11 @@ __aicore__ inline void RunPhase6(
     GM_ADDR w = userWorkspace + phase5->wIntermediateOffset;
     GM_ADDR u = userWorkspace + phase5->uIntermediateOffset;
     GM_ADDR h = userWorkspace + phase5->hIntermediateOffset;
+    if constexpr (kExportH) {
+        // H already exists in GM for O; publish the same bytes directly as
+        // the optional per-chunk prefix state without a second copy.
+        h = hOutput;
+    }
     GM_ADDR vNew = userWorkspace + phase5->vNewIntermediateOffset;
     GdnMegaArch22RecomputeWUTilingData recomputeTiling{};
     CopyRecomputeTiling(&phase5->recompute, recomputeTiling);
@@ -673,7 +680,7 @@ __aicore__ inline void RunPhase6(
 extern "C" __global__ __aicore__ void chunk_gated_delta_rule_fwd(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR a_storage, GM_ADDR raw_g,
     GM_ADDR gk, GM_ADDR initial_state, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
-    GM_ADDR o, GM_ADDR final_state, GM_ADDR g_cumsum_bth, GM_ADDR A,
+    GM_ADDR o, GM_ADDR final_state, GM_ADDR g_cumsum_bth, GM_ADDR A, GM_ADDR h_output,
     GM_ADDR workspace, GM_ADDR tiling)
 {
     (void)a_storage;
@@ -682,21 +689,41 @@ extern "C" __global__ __aicore__ void chunk_gated_delta_rule_fwd(
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
         GDN::RunPhase6<DTYPE_Q, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
             q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
-            o, final_state, g_cumsum_bth, A, workspace, tiling);
+            o, final_state, g_cumsum_bth, A, h_output, workspace, tiling);
     } else if (TILING_KEY_IS(2)) {
         KERNEL_TASK_TYPE(2, KERNEL_TYPE_MIX_AIC_1_2);
         GDN::RunPhase6<DTYPE_Q, Catlass::Gemm::Kernel::GDNFwdHTileShapes256>(
             q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
-            o, final_state, g_cumsum_bth, A, workspace, tiling);
+            o, final_state, g_cumsum_bth, A, h_output, workspace, tiling);
     } else if (TILING_KEY_IS(3)) {
         KERNEL_TASK_TYPE(3, KERNEL_TYPE_MIX_AIC_1_2);
         GDN::RunPhase6<DTYPE_Q, Catlass::Gemm::Kernel::GDNFwdHTileShapes128, true>(
             q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
-            o, final_state, g_cumsum_bth, A, workspace, tiling);
+            o, final_state, g_cumsum_bth, A, h_output, workspace, tiling);
     } else if (TILING_KEY_IS(4)) {
         KERNEL_TASK_TYPE(4, KERNEL_TYPE_MIX_AIC_1_2);
         GDN::RunPhase6<DTYPE_Q, Catlass::Gemm::Kernel::GDNFwdHTileShapes256, true>(
             q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
-            o, final_state, g_cumsum_bth, A, workspace, tiling);
+            o, final_state, g_cumsum_bth, A, h_output, workspace, tiling);
+    } else if (TILING_KEY_IS(5)) {
+        KERNEL_TASK_TYPE(5, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::RunPhase6<DTYPE_Q, Catlass::Gemm::Kernel::GDNFwdHTileShapes128, false, true>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, h_output, workspace, tiling);
+    } else if (TILING_KEY_IS(6)) {
+        KERNEL_TASK_TYPE(6, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::RunPhase6<DTYPE_Q, Catlass::Gemm::Kernel::GDNFwdHTileShapes256, false, true>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, h_output, workspace, tiling);
+    } else if (TILING_KEY_IS(7)) {
+        KERNEL_TASK_TYPE(7, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::RunPhase6<DTYPE_Q, Catlass::Gemm::Kernel::GDNFwdHTileShapes128, true, true>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, h_output, workspace, tiling);
+    } else if (TILING_KEY_IS(8)) {
+        KERNEL_TASK_TYPE(8, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::RunPhase6<DTYPE_Q, Catlass::Gemm::Kernel::GDNFwdHTileShapes256, true, true>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, h_output, workspace, tiling);
     }
 }
