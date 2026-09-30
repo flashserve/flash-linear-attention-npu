@@ -43,9 +43,10 @@ _ACLNN_CODES = {
 # 输入由 executor 按 case_spec 里的 seed 确定性地构造（ATK 只传 marker + 用例元数据）。
 # 值域与 tests/operators 下的 harness 一致：q/k/w/do/dv 是 randn*0.05，gate 是沿 token 的 -cumsum(rand*0.05)，
 # 后者保证 2^{g_last-g} ≤ 1（gate 非单调会让长链溢出，实测 fp16 会出 NaN）。
+# 性能矩阵：dense 基线 / varlen / 32 chunk 长链 / Hv=96（超过核数，每核串多个 head 的映射）。
 MARKER_RANGE = [0, 0]
 PERF_KEYS = ("pos_01_none_gate_dense", "pos_05_gk_varlen_first_segment",
-             "pos_13_long_nt_chain_accumulation")
+             "pos_13_long_nt_chain_accumulation", "pos_15_head_contiguous_partition")
 # 内存/确定性用例要覆盖本版全部 4 个 tilingKey：无门控 / g(model) / g(fp32) / gk。
 MSS_KEYS = ("pos_01_none_gate_dense", "pos_02_g_bf16_dense", "pos_03_g_fp32_dense",
             "pos_04_gk_bf16_dense", "pos_05_gk_varlen_first_segment")

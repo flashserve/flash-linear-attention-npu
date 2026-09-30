@@ -9,7 +9,7 @@
 | `gen_chunk_delta_h_bwd_preprocess.py` | 由 `gen_<op>.py` 内联用例表 展开出精度 / 性能 / 内存三份 ATK 用例矩阵；同时注册 `-scope=gen_cases` 用的 generator |
 | `executor_chunk_delta_h_bwd_preprocess.py` | ATK executor：按 `case_spec` 确定性构造输入，NPU 走 `fla_npu.ops.ascendc`，CPU 走 `scripts/reference.py` 标杆 |
 | `atk_chunk_delta_h_bwd_preprocess.json` | 精度矩阵（12 条，`standard.acc` 用 ATK 原生 `output_dtype_overrides` 按模型 dtype 判 `dhm`） |
-| `atk_chunk_delta_h_bwd_preprocess_perf.json` | 性能精简矩阵（3 条：dense / varlen / 32 chunk 长链） |
+| `atk_chunk_delta_h_bwd_preprocess_perf.json` | 性能精简矩阵（4 条：dense / varlen / 32 chunk 长链 / Hv=96 多 head 分核） |
 | `atk_chunk_delta_h_bwd_preprocess_mss.json` | 内存检测与确定性矩阵（5 条，覆盖 4 个 tilingKey + varlen） |
 | `scripts/reference.py` | CPU 全精度参考：`preprocess_reference` 给出 `dhm = [E_r \| P_r]`；`dh_scan_direct` 用非零 `dht` 反扫得到真实 `dh0`；`check_affine` 校验 `dh0 == P_r @ dht + E_r` |
 | `atk_chunk_delta_h_bwd_preprocess.json` 的 13 条反向用例 | 由 `gen_<op>.py` 生成、带 `expected_return_code`，走 `atk ... --task run` 核对返回码（A5/A2 均 13/13） |
@@ -63,15 +63,17 @@ atk node --name npu_dut --backend npu --devices <device_id> --output_path <out> 
   -p ./executor_chunk_delta_h_bwd_preprocess.py --save_data profile -sp -to 2000
 ```
 
-| 用例 | shape | A5 device 耗时 | A2 device 耗时 |
-| --- | --- | --- | --- |
-| `pos_01_none_gate_dense` | `B=1, Hk=Hv=4, T=512, K=V=128`（8 chunk） | 77.0 µs（σ 0.37） | 132.9 µs（σ 0.45） |
-| `pos_05_gk_varlen_first_segment` | 同 shape，本 launch 只算 `[0,300)`（5 chunk） | 55.5 µs（σ 0.31） | 92.8 µs（σ 0.34） |
-| `pos_13_long_nt_chain_accumulation` | 同 shape，`T=2048`（32 chunk） | 282.8 µs（σ 0.38） | 482.4 µs（σ 1.62） |
+| 用例 | shape | A5 device 耗时 | A2 device 耗时 | A2/A5 |
+| --- | --- | --- | --- | --- |
+| `pos_01_none_gate_dense` | `B=1, Hk=Hv=4, T=512, K=V=128`（8 chunk） | 77.1 µs（σ 0.35） | 132.5 µs（σ 0.50） | 1.72× |
+| `pos_05_gk_varlen_first_segment` | 同 shape，本 launch 只算 `[0,300)`（5 chunk） | 55.4 µs（σ 0.37） | 92.8 µs（σ 0.37） | 1.67× |
+| `pos_13_long_nt_chain_accumulation` | 同 shape，`T=2048`（32 chunk） | 283.2 µs（σ 0.39） | 481.0 µs（σ 1.50） | 1.70× |
+| `pos_15_head_contiguous_partition` | `B=1, Hk=Hv=96, T=256, K=V=128`（4 chunk，Hv > 核数 ⇒ 每核串多个 head） | 135.1 µs（σ 0.53） | 360.8 µs（σ 1.00） | **2.67×** |
 
-两次都是 `Total Task: 3, success 3, failed 0`。数值口径是 ATK `performance_device` 的 device 耗时
-（xlsx `npu_*_Device性能（us）`），不是 Python wall time。当前实现约 9~10 µs/chunk（8 chunk 77 µs、
-32 chunk 283 µs，随 chunk 数近似线性），A2/A5 ≈ 1.7×。
+两次都是 `Total Task: 4, success 4, failed 0`。数值口径是 ATK `performance_device` 的 device 耗时
+（xlsx `npu_*_Device性能（us）`），不是 Python wall time。dense/32-chunk 两档单 chunk ≈ 9~10 µs
+（随 chunk 数近似线性），A2/A5 ≈ 1.7×；**`Hv=96` 档 A2/A5 拉到 2.67×**，是 arch22 上"每核串多个 head
+时逐 head 同步开销"的直接体现，也是 A2 侧后续要压的点（见 `docs/design.md` §31.2 的 `kda`（Hv=64）档）。
 （此前记录过的 270.7 / 274.1 / 1066.7 µs 是更早的实现版本，且当时 `cu_seqlens` 没送到 executor、
 varlen 那一条实际按 dense 跑的，已作废。）
 `-scope=determinism` / `-scope=mssanitizer` 使用同一份 `atk_<op>_mss.json`（5 条，覆盖 4 个 tilingKey），
