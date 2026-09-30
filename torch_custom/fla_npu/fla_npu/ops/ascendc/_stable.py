@@ -846,10 +846,6 @@ def npu_chunk_scaled_dot_kkt(k, g, beta, *, cu_seqlens=None,
                              chunk_indices=None, chunk_size=64):
     """Chunked scaled dot product used to build the WY representation."""
 
-    from ._chunk_scaled_dot_kkt_contract import validate as _validate_chunk_scaled_dot_kkt
-
-    _validate_chunk_scaled_dot_kkt(k, g, beta, cu_seqlens, chunk_indices, chunk_size)
-
     return _op("npu_chunk_scaled_dot_kkt")(
         k, g, beta,
         _host_ints(cu_seqlens), _host_ints(chunk_indices),
