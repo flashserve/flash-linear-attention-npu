@@ -65,6 +65,7 @@ public:
         stateStride0_ = tilingData->stateStride0;
         stateStride1_ = tilingData->stateStride1;
         stateStride2_ = tilingData->stateStride2;
+        stateIndicesStride_ = tilingData->stateIndicesStride;
         hasAcceptedTokens_ = (tilingData->hasAcceptedTokens == 1);
         hasGama_ = (tilingData->hasGama == 1);
         hasGamaK_ = (tilingData->hasGamaK == 1);
@@ -173,6 +174,14 @@ public:
             }
             int32_t seq0 = seq1;
             seq1 += seqLen;
+            // With a [B, W] state table the rows are addressed by request
+            // index; seq0/seq1 remain token offsets for the packed q/k/v data
+            // only. 0 keeps the legacy per-token [T] contract unchanged.
+            const int32_t stateBase = stateIndicesStride_ > 0 ? static_cast<int32_t>(batch_i * stateIndicesStride_) : seq0;
+            const int32_t stateWidth = stateIndicesStride_ > 0 ? static_cast<int32_t>(stateIndicesStride_) : seqLen;
+            if (seqLen > stateWidth) {
+                return;
+            }
             uint32_t copyFlag = 0;
             uint64_t stateOffset;
             for (uint64_t head_i = 0; head_i < NV_; head_i++) {
@@ -181,18 +190,18 @@ public:
                 }
                 copyFlag++;
                 if (copyFlag == 1) {
-                    int32_t stateTokenIdx = seq0;
+                    int32_t stateTokenIdx = stateBase;
                     if (hasAcceptedTokens_) {
                         int32_t acceptedTokenNum = numAcceptedTokensGm_.GetValue(batch_i);
-                        if (acceptedTokenNum <= 0 || acceptedTokenNum > seqLen) {
+                        if (acceptedTokenNum <= 0 || acceptedTokenNum > stateWidth) {
                             return;
                         }
-                        stateTokenIdx = seq0 + acceptedTokenNum - 1;
+                        stateTokenIdx = stateBase + acceptedTokenNum - 1;
                     }
                     stateOffset = ssmStateIndicesGm_.GetValue(stateTokenIdx);
                     CopyInGamaBeta(seq0, seq1);
                 }
-                ProcessHead(seq0, seq1, head_i, stateOffset);
+                ProcessHead(seq0, seq1, head_i, stateOffset, stateBase);
             }
             if (hasGama_ && copyFlag != 0) {
                 gamaInQueue_.FreeTensor(gamaInUb);
@@ -479,7 +488,8 @@ private:
         }
     }
 
-    __aicore__ inline void ProcessHead(int32_t seq0, int32_t seq1, uint64_t head_i, uint64_t stateOffset)
+    __aicore__ inline void ProcessHead(int32_t seq0, int32_t seq1, uint64_t head_i, uint64_t stateOffset,
+                                       int32_t stateBase)
     {
         uint64_t vOffset = (seq0 * NV_ + head_i) * realV_;
         uint64_t qkOffset = (seq0 * NK_ + head_i / (NV_ / NK_)) * realK_;
@@ -513,7 +523,7 @@ private:
                 uint64_t curVOffset = (seq_i - seq0) * alignV_ + v_i;
                 uint64_t attnOffset = (seq_i * NV_ + head_i) * realV_ + v_i;
                 uint64_t curStateOutOffset =
-                    stateStride0_ * ssmStateIndicesGm_.GetValue(seq_i) +
+                    stateStride0_ * ssmStateIndicesGm_.GetValue(stateBase + seq_i - seq0) +
                     stateStride1_ * head_i + stateStride2_ * v_i;
                 gama_ = hasGama_ ? gamaInUb.GetValue(gbOffset) : 1;
                 beta_ = betaInUb.GetValue(gbOffset);
@@ -620,6 +630,7 @@ private:
     uint32_t stateStride0_;
     uint32_t stateStride1_;
     uint32_t stateStride2_;
+    uint32_t stateIndicesStride_;
 };
 } // namespace RecurrentGatedDeltaRule
 #endif
