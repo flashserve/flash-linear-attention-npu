@@ -43,7 +43,7 @@ from fla_npu_artifacts import (  # noqa: E402
     get_package_version,
     get_tier,
     get_wheel_build_tag,
-    get_wheel_platform_tag,
+    get_wheel_tag,
 )
 
 
@@ -754,17 +754,7 @@ if _bdist_wheel is not None:
                 self.build_number = build_tag
 
         def get_tag(self):
-            python, abi, plat = super().get_tag()
-            if _LEGACY_BUILD_ENABLED:
-                # The legacy extension really is a CPython extension module.
-                return python, abi, plat
-            # py3-none-manylinux_<glibc>_<arch>: the payload is a host launcher
-            # plus the OPP, not a CPython extension, so the wheel is not
-            # Python-versioned; "any" would let pip install an aarch64 payload
-            # on x86_64 where the .so cannot load.  Local and published builds
-            # return the same tag -- scripts/fla_npu_artifacts.py owns the glibc
-            # watermark and scripts/check_pypi_wheel.py asserts it per .so.
-            return "py3", "none", get_wheel_platform_tag()
+            return get_wheel_tag(super().get_tag())
 
         def run(self):
             _write_runtime_meta()
