@@ -180,9 +180,13 @@ inline OutTensorArg nd_out_tensor(const TensorMeta& meta) {
   return OutTensorArg(meta, kAclFormatNd);
 }
 // The same ND spelling with the reference's `storage_shape_override=` logical
-// storage shape.  `aclnnChunkKdaFwdFinalize` is the one operator that reads it
-// on an *output*: given a flat rank-1 storage shape it fails its own tiling and
-// reports ACLNN_ERR_INNER_NULLPTR (561103) instead of writing anything.
+// storage shape.  It is required whenever the operator itself reads an output
+// back before the caller does, because a flat rank-1 storage shape changes what
+// it sees: `aclnnChunkKdaFwdFinalize` fails its own tiling and reports
+// ACLNN_ERR_INNER_NULLPTR (561103) instead of writing anything, and the KDA
+// backward entry points hand the rank-1 storage to `KdaGateBwdPostVarlen`,
+// which classifies the call as dense and rejects a packed one with 161002
+// (ACLNN_ERR_PARAM_INVALID).
 inline OutTensorArg nd_logical_out_tensor(const TensorMeta& meta) {
   return OutTensorArg(meta, kAclFormatNd, /*logical_storage=*/true);
 }
