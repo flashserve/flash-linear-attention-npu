@@ -279,18 +279,43 @@ def get_package_version(repo_root: Path) -> str:
     return f"{daily_base_version(public_version)}+{local_version}"
 
 
+def get_wheel_tag(native_tag: tuple[str, str, str] | None = None) -> tuple[str, str, str]:
+    """Share wheel tags between filename prediction and the build command.
+
+    Legacy extensions use the backend's interpreter/ABI/platform tags. Query
+    bdist_wheel itself when predicting, rather than reconstructing CPython ABI
+    tags (which also vary for debug and free-threaded interpreters).
+    """
+    if not env_flag("FLA_NPU_BUILD_LEGACY_EXTENSION"):
+        return "py3", "none", get_wheel_platform_tag()
+    if native_tag is not None:
+        return native_tag
+
+    from setuptools import Distribution
+    try:
+        from wheel.bdist_wheel import bdist_wheel
+    except ImportError:
+        from setuptools.command.bdist_wheel import bdist_wheel
+
+    class LegacyDistribution(Distribution):
+        def has_ext_modules(self):
+            return True
+
+    command = bdist_wheel(LegacyDistribution())
+    command.ensure_finalized()
+    return command.get_tag()
+
+
 def get_wheel_filename(repo_root: Path) -> str:
     public_version = read_public_version(repo_root)
     package_version = get_package_version(repo_root)
     build_tag = get_wheel_build_tag()
-    platform_tag = get_wheel_platform_tag()
+    python_tag, abi_tag, platform_tag = get_wheel_tag()
     dist_name = get_wheel_dist_name()
-    # The wheel is not pure Python (it carries a host launcher and the OPP) but
-    # it is not CPython-versioned either, so only the platform tag is filled in.
     if build_tag:
         return (f"{dist_name}-{package_version}-{build_tag}-"
-                f"py3-none-{platform_tag}.whl")
-    return f"{dist_name}-{package_version}-py3-none-{platform_tag}.whl"
+                f"{python_tag}-{abi_tag}-{platform_tag}.whl")
+    return f"{dist_name}-{package_version}-{python_tag}-{abi_tag}-{platform_tag}.whl"
 
 
 def get_platform_name() -> str:

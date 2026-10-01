@@ -56,7 +56,7 @@ _COMPILE_STAGE_INNER_CAP = 0.9
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-from fla_npu_artifacts import get_wheel_dist_name  # noqa: E402
+from fla_npu_artifacts import get_wheel_filename  # noqa: E402
 
 
 def _read_new_lines(path: Path, offset: int) -> "tuple[list[str], int]":
@@ -645,6 +645,7 @@ def main() -> int:
 
     wheel_dir = _resolve_output_dir(args.wheel_dir)
     wheel_dir.mkdir(parents=True, exist_ok=True)
+    wheel_path = wheel_dir / get_wheel_filename(REPO_ROOT)
     progress = _BuildProgress(
         enabled=_progress_enabled(args),
         announce=not args.no_progress,
@@ -679,14 +680,8 @@ def main() -> int:
         _report_build_log(build_log)
         raise subprocess.CalledProcessError(returncode, command)
 
-    # The wheel is tagged for the host platform and (outside PyPI mode) the
-    # build tag carries the SoC, so resolve the actual file instead of
-    # predicting the full name -- but the distribution name is decided by the
-    # build mode (tiered PyPI name vs. the base name), so filter on it.
-    wheel_files = sorted(wheel_dir.glob(f"{get_wheel_dist_name()}-*.whl"))
-    if not wheel_files:
-        raise RuntimeError(f"Expected wheel was not produced under {wheel_dir}")
-    wheel_path = wheel_files[-1]
+    if not wheel_path.is_file():
+        raise RuntimeError(f"Expected wheel was not produced: {wheel_path}")
 
     _inject_runtime_pins(wheel_path)
 
