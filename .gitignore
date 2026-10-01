@@ -55,6 +55,9 @@ torch_custom/fla_npu/torch_npu/
 /tests/atk/**/runs/
 /tests/atk/**/*.xlsx
 /tests/atk/**/*.log
+# chunk_kda_fwd 比赛交付：终版 perf/accuracy 证据（report xlsx + atk.log）入仓
+!/tests/atk/chunk_kda_fwd/perf/**
+!/tests/atk/chunk_kda_fwd/accuracy/**
 
 #gdn cache
 # third_party：CMake FetchContent / ExternalProject 等在线拉取的依赖目录，不纳入仓库（含 catlass）

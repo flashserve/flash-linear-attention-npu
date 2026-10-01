@@ -22,6 +22,14 @@ Gate/Prepare、Post-WU、FwdH、Finalize 四个阶段依次提交，使阶段间
 A2/A3 和单 chunk 场景仍使用单次物理 L0。阶段选择仅使用私有 `stage` 属性，不增加公开属性、
 接口字段或独立算子原型。
 
+varlen 输入在满足 dense 等价条件时不拆阶段、直接复用 dense 对齐快路径：单序列
+`cu_seqlens=[0, seqlen]` 全覆盖、B=1、`seqlen` 整除 `chunk_size`，且未导出反向中间量
+（`w/u/qg/kg/v_new/h` 均为空）。此时 token 排布与 dense 完全一致，dense FwdH 调度按
+`(b, hv)` 任务跨 chunk 累计状态与 packed 寻址等价；tiling 数据中的 `isVarLen` 保持不变，
+Gate cumsum、Aqk/Akk 等前段仍按 `cu_seqlens` 寻址。该判定在 tiling（arch35 选项路由）与
+aclnn（`splitStages`）两侧同口径实现，其余 varlen 场景（多序列、部分覆盖、导出模式）维持
+四段 launch 通用后端。
+
 ## 阶段职责
 
 ### KdaGateCumsum
