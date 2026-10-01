@@ -10,9 +10,11 @@ add_ops_compile_options(
 )
 
 if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
+    # A5 msSanitizer DBI can fault on compiler-generated jump tables.
+    # Keep branch targets explicit without changing the kernel pipeline.
     add_ops_compile_options(
         OP_NAME ChunkKdaBwdFinalize
         COMPUTE_UNIT Ascend950PR_9599
-        OPTIONS -mllvm -cce-aicore-dcci-before-kernel-end=false
+        OPTIONS -fno-jump-tables -mllvm -cce-aicore-dcci-before-kernel-end=false
     )
 endif()
