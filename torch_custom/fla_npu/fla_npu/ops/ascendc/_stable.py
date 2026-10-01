@@ -1903,7 +1903,8 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
         raw_g = pad_rows_of(raw_g)
         seqlen = padded_seqlen
         cu = None if cu is None else (0, padded_seqlen)
-        indices = _canonical_chunk_indices(cu, chunk_size)
+        # Dense calls have no sequence metadata, including after tail padding.
+        indices = None if cu is None else _canonical_chunk_indices(cu, chunk_size)
 
     # A2's fused Intra pipeline processes heads in pairs; a lone final head can
     # keep a stale correction from the previous launch.

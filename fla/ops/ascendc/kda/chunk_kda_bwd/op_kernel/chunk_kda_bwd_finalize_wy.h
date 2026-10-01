@@ -1144,6 +1144,11 @@ public:
                 WyTileGemmDirectEvent::kL0B);
             AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(
                 WyTileGemmDirectEvent::kL0C);
+            // Complete the consumer wait before FIX re-seeds the next phase.
+            AscendC::SetFlag<AscendC::HardEvent::M_FIX>(
+                WyTileGemmDirectEvent::kL0C);
+            AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(
+                WyTileGemmDirectEvent::kL0C);
         }
     }
 
@@ -2253,6 +2258,8 @@ private:
     {
         auto out = outputQueue_.AllocTensor<float>();
         AscendC::Adds(out, src, 0.0f, count);
+        // The caller may reuse src as soon as Store returns.
+        AscendC::PipeBarrier<PIPE_V>();
         outputQueue_.EnQue(out);
         auto ready = outputQueue_.DeQue<float>();
         AscendC::DataCopyPad(
@@ -2810,7 +2817,7 @@ private:
                 if (logicalRow == 0) {
                     AscendC::Duplicate(out[r * 64], 0.0f, 64);
                 } else if (logicalRow < 64) {
-                    uint64_t upperMask[1] = {0xffffffffffffffffULL};
+                    uint64_t upperMask[2] = {0xffffffffffffffffULL, 0};
                     upperMask[0] <<= logicalRow;
                     AscendC::Duplicate(
                         out[r * 64], 0.0f, upperMask, 1, 1, 8);
@@ -2831,7 +2838,7 @@ private:
                 if (logicalRow == 0) {
                     AscendC::Duplicate(out[r * 64], 0.0f, 64);
                 } else if (logicalRow < 64) {
-                    uint64_t upperMask[1] = {0xffffffffffffffffULL};
+                    uint64_t upperMask[2] = {0xffffffffffffffffULL, 0};
                     upperMask[0] <<= logicalRow;
                     AscendC::Duplicate(
                         out[r * 64], 0.0f, upperMask, 1, 1, 8);
@@ -2983,7 +2990,7 @@ private:
                 if (logicalRow == 0) {
                     AscendC::Duplicate(value[r * 64], 0.0f, 64);
                 } else {
-                    uint64_t upperMask[1] = {0xffffffffffffffffULL};
+                    uint64_t upperMask[2] = {0xffffffffffffffffULL, 0};
                     upperMask[0] <<= logicalRow;
                     AscendC::Duplicate(
                         value[r * 64], 0.0f, upperMask, 1, 1, 8);

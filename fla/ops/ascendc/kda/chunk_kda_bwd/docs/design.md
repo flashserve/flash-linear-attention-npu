@@ -34,5 +34,24 @@ Finalize 对 h、dh 分别寻址，Dhu 和内嵌 state_scan 均产生 NT-first d
 
 Python 层统一处理参数校验、空序列压缩和规范 chunk 元数据。
 
+### 通用 state_scan 初始化同步
+
+通用融合路径的 state UB 使用 ping/pong 缓冲。正常加载通过
+`MTE3_MTE2 → MTE2 DataCopy → MTE2_V` 保护复用；零初始化不执行
+MTE2 DataCopy，因此等待缓冲可复用后仍需显式 Set/Wait `MTE2_V`，
+将此前 MTE3 读取完成的依赖传给 Vector，再执行 Duplicate。
+复用既有的逐缓冲事件，不新增事件资源或更改内存布局。
+
+### WY/Intra 的掩码与源缓冲生命周期
+
+WY 的逐行 Duplicate 使用两个 uint64_t 的位掩码数组，FP32 的高位掩码
+显式置零，避免 API 读取数组外的元素。WY/Intra 的 FP32 Store 先用 Adds
+将源 Plane 复制到输出队列；Adds 后执行 PIPE_V 屏障，再允许调用方覆写源
+Plane。输出队列的事件继续负责队列缓冲与 MTE3 之间的同步。
+
+WY 的 EndFusedMmadPhase 消费最后一个 FIX_M 信号后，通过 M_FIX 的
+Set/Wait 将消费完成传回 FIX，再允许 BeginFusedMmadPhase 重发 FIX_M。
+这使阶段重置的发送端等待接收端消费完成，避免 FIX 流水连续发送同一事件。
+
 Finalize 的输入输出及源码入口见
 [算子说明](../../chunk_kda_bwd_finalize/README.md)。
