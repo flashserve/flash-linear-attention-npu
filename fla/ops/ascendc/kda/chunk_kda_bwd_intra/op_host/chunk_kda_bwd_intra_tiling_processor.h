@@ -64,6 +64,7 @@ struct ChunkKdaBwdIntraTilingContext {
     int64_t chunkMetadataElements;
     uint32_t aicCoreNum;
     size_t systemWorkspaceSize;
+    bool isA5;
 };
 
 class ChunkKdaBwdIntraTilingProcessor {
@@ -292,7 +293,10 @@ private:
     {
         const uint64_t bt = static_cast<uint64_t>(tiling_.chunkSize);
         const uint64_t k = static_cast<uint64_t>(tiling_.headDim);
-        const uint64_t bc = 16;
+        const bool useA5DenseK128Row32 =
+            ctx_.isA5 && ctx_.layoutMode == KDA_BWD_LAYOUT_DENSE_BNSD &&
+            tiling_.headDim == 128 && tiling_.chunkSize == 64;
+        const uint64_t bc = useA5DenseK128Row32 ? 32 : 16;
 
         tiling_.aLowerOffset = 0;
         tiling_.bLowerOffset = static_cast<int64_t>(

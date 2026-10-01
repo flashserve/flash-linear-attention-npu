@@ -13,6 +13,18 @@ constexpr uint32_t kVecToCubeReadyFlag = 2;
 constexpr uint32_t kCubeToVecReadyFlag = 4;
 constexpr float kLn2 = 0.69314718055994530942f;
 
+template <uint32_t K_DIM, bool VARLEN_TND>
+struct ProcessRowBlock {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    // A5 has enough UB/L1/L0 capacity to process two legacy 16-row tiles at
+    // once.  Keep varlen and non-K128 specializations on the proven 16-row
+    // path so this experiment only changes the dense K128 hot path.
+    static constexpr uint32_t value = !VARLEN_TND && K_DIM == 128 ? 32 : kRowBlock;
+#else
+    static constexpr uint32_t value = kRowBlock;
+#endif
+};
+
 __aicore__ inline uint32_t WorkspaceSlot(uint64_t windowIdx, uint32_t headInWindow)
 {
     return static_cast<uint32_t>(((windowIdx & 1U) << 1U) + headInWindow);
