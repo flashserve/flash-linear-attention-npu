@@ -1329,6 +1329,11 @@ def npu_chunk_bwd_dqkwg(
 ):
     import torch
 
+
+
+
+
+
     # 参数校验: None/标量/维度错误/dtype 错误在 Python 侧崩溃或只会触发 CANN
     # 的通用报错 (Cannot find binary), 这里提前拦截并给出明确提示。
     op_name = "npu_chunk_bwd_dqkwg"
