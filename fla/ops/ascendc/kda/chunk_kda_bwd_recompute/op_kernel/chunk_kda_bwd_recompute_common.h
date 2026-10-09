@@ -17,11 +17,12 @@ constexpr uint32_t KDA_BWD_RECOMPUTE_BT = 64;
 constexpr uint32_t KDA_BWD_RECOMPUTE_K = 128;
 constexpr uint32_t KDA_BWD_RECOMPUTE_V = 128;
 
+// Device bitcast: no union, no memcpy (kernel has neither).
 __aicore__ inline float KdaBwdRecomputeBitsToFloat(uint32_t bits)
 {
     float value = 0.0f;
-    auto *dst = reinterpret_cast<uint8_t *>(&value);
-    const auto *src = reinterpret_cast<const uint8_t *>(&bits);
+    const uint8_t *src = reinterpret_cast<const uint8_t *>(&bits);
+    uint8_t *dst = reinterpret_cast<uint8_t *>(&value);
     dst[0] = src[0];
     dst[1] = src[1];
     dst[2] = src[2];
