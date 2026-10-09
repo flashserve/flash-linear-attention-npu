@@ -62,6 +62,7 @@ struct GDNFwdHOffsets {
     uint32_t batchIdx;
     uint32_t headIdx;
     uint32_t chunkIdx;
+    uint64_t globalChunkIdx;
 
 };
 
@@ -360,6 +361,8 @@ struct BlockSchedulerGdnFwdH {
         offset.batchIdx = stream.batchIdx;
         offset.headIdx = stream.vHeadIdx;
         offset.chunkIdx = stream.chunkIdx;
+        offset.globalChunkIdx = static_cast<uint64_t>(stream.shapeBatchIdx) * totalChunks +
+                                stream.chunkOffset + stream.chunkIdx;
     }
 
     CATLASS_DEVICE

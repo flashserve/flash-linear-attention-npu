@@ -135,6 +135,15 @@ public:
     uint32_t batch;
     bool inputSequenceMajor{false};
     __aicore__ inline void ConfigureInputLayout(bool sequenceMajor) { inputSequenceMajor = sequenceMajor; }
+    GM_ADDR gLastExpAddr{nullptr};
+    GM_ADDR gDecayAddr{nullptr};
+    __aicore__ inline void ConfigureGDecay(GM_ADDR addr) { gDecayAddr = addr; }
+    uint64_t gLastExpStride{0};
+    __aicore__ inline void ConfigureGLastExp(GM_ADDR addr)
+    {
+        gLastExpAddr = addr;
+        gLastExpStride = (static_cast<uint64_t>(vNumHead) + 7) & ~7ULL;
+    }
     __aicore__ inline uint64_t RawQkOffset(uint64_t offset) const
     {
         return inputSequenceMajor ? GDN::QkvSequenceMajorOffset(offset, seqlen, kNumHead, kHeadDim) : offset;
@@ -750,7 +759,9 @@ public:
             InitIdlePipelineSlots();
             for (uint32_t waveIdx = 0; waveIdx < taskWaveCount; ++waveIdx) {
                 EpilogueGDNFwdHVnew epilogueGDNFwdHVnew(resource);
+                epilogueGDNFwdHVnew.ConfigureGDecay(gDecayAddr);
                 EpilogueGDNFwdHUpdate epilogueGDNFwdHUpdate(resource);
+                epilogueGDNFwdHUpdate.ConfigureGLastExp(gLastExpAddr);
                 for (uint32_t initStreamId = 0; initStreamId < vecBlockScheduler.streamsPerWave; ++initStreamId) {
                     uint32_t taskIdx = vecBlockScheduler.GetWaveTaskIndex(waveIdx, initStreamId);
                     uint32_t pingpongFlag = 1;
@@ -871,7 +882,7 @@ public:
                             vec1Offsets.blockTokens, kHeadDim, vec1Offsets.vBlockDim, vHeadDim,
                             vecBlockScheduler.cube1Done[streamId], vecBlockScheduler.vec1Done[streamId],
                             vec1Offsets.isInitialState, vec1Offsets.isFinalState, storeFinalState,
-                            waitWsFromMte3, (streamId == 0), tailVectorPath
+                            waitWsFromMte3, (streamId == 0), tailVectorPath, vec1Offsets.gOffset
                         );
                         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
                         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
@@ -910,7 +921,8 @@ public:
                                 gmInitialState[vec2Offsets.initialStateOffset],
                                 vec2Offsets.blockTokens, kHeadDim, vec2Offsets.vBlockDim, vHeadDim, vecBlockScheduler.cube2Done[streamId],
                                 vec2Offsets.isInitialState, vec2Offsets.isFinalState, storeFinalState,
-                                useInitialState, (streamId == 0), tailVectorPath
+                                useInitialState, (streamId == 0), tailVectorPath,
+                                vec2Offsets.globalChunkIdx * gLastExpStride + vec2Offsets.headIdx
                             );
                             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
                             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);

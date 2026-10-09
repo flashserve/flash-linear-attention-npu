@@ -28,6 +28,8 @@ struct PrepareArgs {
     GM_ADDR rawG;          // [B, T, Hv], FP32
     GM_ADDR gCumsumBht;    // [B, Hv, T], FP32 workspace
     GM_ADDR gCumsumBth;    // [B, T, Hv], FP32 optional public output
+    GM_ADDR gLastExp;      // [B*NT, alignUp(Hv,8)], FP32 private H input
+    GM_ADDR gDecay;        // [B, Hv, T], FP32 private H V1 weights
     GM_ADDR cuSeqlens;     // varlen only, [sequence_count + 1], int64
     GM_ADDR chunkIndices;  // varlen only, [num_chunks, 2], int64
     uint64_t batch;
@@ -54,7 +56,8 @@ __aicore__ inline uint64_t AlignHeadU64(uint64_t value)
 __aicore__ inline bool IsSupported(const PrepareArgs &args)
 {
     constexpr uint64_t kMaxStrideHeadCount = 0xffffffffULL / sizeof(float) + 1;
-    return args.rawG != nullptr && args.gCumsumBht != nullptr && args.batch > 0 &&
+    return args.rawG != nullptr && args.gCumsumBht != nullptr && args.gLastExp != nullptr &&
+           args.gDecay != nullptr && args.batch > 0 &&
            args.heads > 0 && args.tokens > 0 &&
            args.heads <= kMaxStrideHeadCount &&
            (args.chunkSize == kChunk64 || args.chunkSize == kChunk128) &&
@@ -72,6 +75,10 @@ public:
                                args_.batch * args_.tokens * args_.heads);
         gCumsumBhtGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.gCumsumBht),
                                       args_.batch * args_.heads * args_.tokens);
+        gLastExpGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.gLastExp),
+                                   args_.taskNum * AlignHeadU64(args_.heads));
+        gDecayGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.gDecay),
+                                 args_.batch * args_.heads * args_.tokens);
         hasPublicOutput_ = args_.outputG != 0 && args_.gCumsumBth != nullptr;
         if (hasPublicOutput_) {
             gCumsumBthGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.gCumsumBth),
@@ -231,13 +238,13 @@ private:
                 WaitForReuse();
             }
             const uint64_t headCount = MinU64(tileWidth, args_.heads - headStart);
-            ProcessHeadTile(batch, rowStart, valid, headStart, headCount, localStride);
+            ProcessHeadTile(task, batch, rowStart, valid, headStart, headCount, localStride);
             hasPreviousTile = true;
         }
         return true;
     }
 
-    __aicore__ inline void ProcessHeadTile(uint64_t batch, uint64_t rowStart,
+    __aicore__ inline void ProcessHeadTile(uint64_t task, uint64_t batch, uint64_t rowStart,
                                            uint64_t valid, uint64_t headStart,
                                            uint64_t headCount, uint64_t localStride)
     {
@@ -299,21 +306,57 @@ private:
             PipeBarrier<PIPE_V>();
         }
         PipeBarrier<PIPE_V>();
-        SetFlag<HardEvent::V_MTE2>(vToMte2_);
+
+        // The raw input tile has no remaining readers. Reuse it for H V1
+        // weights while acc still holds the exact final prefix. Length one
+        // keeps H's explicit unit weight, including non-finite raw g.
+        Duplicate(input, valid == 1 ? 1.0f : 0.0f, tileElements);
+        PipeBarrier<PIPE_V>();
+        if (valid > 1) {
+            for (uint64_t row = 0; row < valid; ++row) {
+                Sub(input[row * localStride], acc, prefixBth[row * localStride],
+                    static_cast<uint32_t>(headCount));
+            }
+            // All Sub readers must finish before Exp overwrites acc below.
+            PipeBarrier<PIPE_V>();
+            Exp(input, input, static_cast<uint32_t>(valid * localStride));
+            PipeBarrier<PIPE_V>();
+        }
 
         const uint32_t elementCount = static_cast<uint32_t>(args_.chunkSize * localStride);
         Gather(prefixBht, prefixBth, offsetBuf_.Get<uint32_t>(), 0, elementCount);
         PipeBarrier<PIPE_V>();
+        // acc contains the exact final prefix for each head.  Batch the same
+        // vector Exp used by H V2 before storing one scalar per chunk/head.
+        Exp(acc, acc, static_cast<uint32_t>(headCount));
+        PipeBarrier<PIPE_V>();
         SetFlag<HardEvent::V_MTE3>(vToMte3_);
         WaitFlag<HardEvent::V_MTE3>(vToMte3_);
 
-        const DataCopyExtParams headParams{
-            1, static_cast<uint32_t>(valid * sizeof(float)), 0, 0, 0};
-        for (uint64_t localHead = 0; localHead < headCount; ++localHead) {
-            const uint64_t head = headStart + localHead;
-            const uint64_t bhtOffset = (batch * args_.heads + head) * args_.tokens + rowStart;
-            DataCopyPad(gCumsumBhtGm_[bhtOffset],
-                        prefixBht[localHead * args_.chunkSize], headParams);
+        // For a dense full chunk the head rows are contiguous in UB and have
+        // a regular stride in GM.  Emit one 2-D transfer instead of one MTE3
+        // command per value head.  The tail/varlen case keeps the scalar-row
+        // fallback because a short source row is not necessarily 32B aligned.
+        if (valid == args_.chunkSize && (headCount % kFp32BlockElements) == 0) {
+            const DataCopyExtParams headParams{
+                static_cast<uint16_t>(headCount),
+                static_cast<uint32_t>(valid * sizeof(float)),
+                0,
+                static_cast<uint32_t>((args_.tokens - valid) * sizeof(float)),
+                0};
+            const uint64_t bhtOffset =
+                (batch * args_.heads + headStart) * args_.tokens + rowStart;
+            DataCopyPad(gCumsumBhtGm_[bhtOffset], prefixBht, headParams);
+        } else {
+            const DataCopyExtParams headParams{
+                1, static_cast<uint32_t>(valid * sizeof(float)), 0, 0, 0};
+            for (uint64_t localHead = 0; localHead < headCount; ++localHead) {
+                const uint64_t head = headStart + localHead;
+                const uint64_t bhtOffset =
+                    (batch * args_.heads + head) * args_.tokens + rowStart;
+                DataCopyPad(gCumsumBhtGm_[bhtOffset],
+                            prefixBht[localHead * args_.chunkSize], headParams);
+            }
         }
         if (hasPublicOutput_) {
             if (fullAlignedTile) {
@@ -331,6 +374,37 @@ private:
                     static_cast<uint32_t>((args_.heads - headCount) * sizeof(float)), 0};
                 DataCopyPad(gCumsumBthGm_[(batch * args_.tokens + rowStart) * args_.heads + headStart],
                             prefixBth, publicParams);
+            }
+        }
+        const DataCopyExtParams lastParams{
+            1, static_cast<uint32_t>(headCount * sizeof(float)), 0, 0, 0};
+        const uint64_t lastOffset = task * AlignHeadU64(args_.heads) + headStart;
+        DataCopyPad(gLastExpGm_[lastOffset], acc, lastParams);
+
+        // prefixBht is still an MTE3 source. Drain its readers before using
+        // the same slot as the destination of the decay Gather.
+        SetFlag<HardEvent::MTE3_V>(mte3ToV_);
+        WaitFlag<HardEvent::MTE3_V>(mte3ToV_);
+        Gather(prefixBht, input, offsetBuf_.Get<uint32_t>(), 0, elementCount);
+        PipeBarrier<PIPE_V>();
+        // Release raw-input storage only after its last decay reader.
+        SetFlag<HardEvent::V_MTE2>(vToMte2_);
+        SetFlag<HardEvent::V_MTE3>(vToMte3_);
+        WaitFlag<HardEvent::V_MTE3>(vToMte3_);
+        if (valid == args_.chunkSize && (headCount % kFp32BlockElements) == 0) {
+            const DataCopyExtParams decayParams{
+                static_cast<uint16_t>(headCount), static_cast<uint32_t>(valid * sizeof(float)),
+                0, static_cast<uint32_t>((args_.tokens - valid) * sizeof(float)), 0};
+            const uint64_t bhtOffset =
+                (batch * args_.heads + headStart) * args_.tokens + rowStart;
+            DataCopyPad(gDecayGm_[bhtOffset], prefixBht, decayParams);
+        } else {
+            const DataCopyExtParams decayParams{
+                1, static_cast<uint32_t>(valid * sizeof(float)), 0, 0, 0};
+            for (uint64_t localHead = 0; localHead < headCount; ++localHead) {
+                const uint64_t bhtOffset =
+                    (batch * args_.heads + headStart + localHead) * args_.tokens + rowStart;
+                DataCopyPad(gDecayGm_[bhtOffset], prefixBht[localHead * args_.chunkSize], decayParams);
             }
         }
         SetFlag<HardEvent::MTE3_V>(mte3ToV_);
@@ -357,6 +431,8 @@ private:
     GlobalTensor<float> rawGm_;
     GlobalTensor<float> gCumsumBhtGm_;
     GlobalTensor<float> gCumsumBthGm_;
+    GlobalTensor<float> gLastExpGm_;
+    GlobalTensor<float> gDecayGm_;
     GlobalTensor<int64_t> cuSeqlensGm_;
     GlobalTensor<int64_t> chunkIndicesGm_;
     TEventID mte2ToV_;
