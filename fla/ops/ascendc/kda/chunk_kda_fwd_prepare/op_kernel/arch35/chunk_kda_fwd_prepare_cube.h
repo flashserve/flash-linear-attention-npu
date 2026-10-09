@@ -139,15 +139,13 @@ private:
     __aicore__ inline void ProcessChunkHeadRange(
         const ChunkRange &chunk, uint32_t headBegin, uint32_t headEnd)
     {
-        // AIC 视角下四个 local head 的固定核间编号。AIV1 的两个本地
-        // ready 0/1、free 4/5 在 AIC 侧映射为 16/17、20/21。
-        // 死锁修复（FwdP-2 拆分）：原 free 计数器被 V0/V3/V6 三个 wait
-        // 共享，FwdP-2 把 V0/V6 的 wait 换成 PIPE_MTE3 味后，同一计数器
-        // 出现 MTE3 与 PIPE_V 两条 pipe 的阻塞 wait，消费顺序失去 mutex
-        // 链约束，V3 的 wait 可抢走 V0/V6 的信用 → 跨核停等。拆成三条
-        // 单消费者 pipe 的通道：scoreReady 只服务 V3（PIPE_V），
-        // payloadRepurpose 只服务 V6（PIPE_MTE3），free 只服务
-        // V0/清账（PIPE_MTE3）。
+        // AIC 视角下四个 local head 的固定核间编号。AIV1 的本地编号 N
+        // 在 AIC 侧映射为 16+N（ready 0/1→16/17，下同）。
+        // AIC→AIV 方向有三条通道，每条只服务一个消费者 stage
+        // （同一旗号的 wait 只在一条 pipe 上，保证信用 FIFO）：
+        //   free 4/5            C7 之后槽位可复用 → V0
+        //   scoreReady 2/3      C2 写完 raw Aqk/Akk → V3
+        //   payloadRepurpose 6/7 C4 读完 payload → V6
         constexpr uint16_t kAivToAicPayloadReadyFlagId[4] = {
             0, 1, 16, 17};
         constexpr uint16_t kAicToAivSlotReusableFlagId[4] = {
@@ -184,8 +182,7 @@ private:
                 AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
                     kAivToAicPayloadReadyFlagId[localHead]);
                 StageC2(chunk, localHead);
-                // C2 写完 raw Aqk/Akk 且不再读 V1 payload：走 V3 专用
-                // 的 scoreReady 通道（AIV 侧 PIPE_V 单消费者）。
+                // C2 完成：raw Aqk/Akk 已写回、V1 payload 不再被读 → 通知 V3。
                 AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
                     kAicToAivScoreReadyFlagId[localHead]);
             }
@@ -204,8 +201,7 @@ private:
                 AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
                     kAivToAicPayloadReadyFlagId[localHead]);
                 const uint32_t valueHead = groupBegin + localHead;
-                // C4 读完 payload 后归还的是 V6 原址换义专用通道
-                // （AIV 侧 PIPE_MTE3 单消费者）。
+                // C4 读完 payload 后归还 V6 通道（payload 可原址换义）。
                 StageC4(chunk, valueHead, localHead,
                         kAicToAivPayloadRepurposeFlagId[localHead]);
             }
