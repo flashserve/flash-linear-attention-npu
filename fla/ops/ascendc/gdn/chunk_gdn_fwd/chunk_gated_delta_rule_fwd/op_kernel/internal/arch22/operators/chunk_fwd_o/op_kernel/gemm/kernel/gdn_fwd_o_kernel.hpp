@@ -496,13 +496,11 @@ public:
                         gmG[vec1OffsetG], gmAttnWorkspace[vec1OffsetAttn], gmMask,
                         chunkSize, vec1Offsets.blockTokens, kHeadDim, vHeadDim, pingpongFlag, vec1Offsets.batchIdx, vec1Offsets.headIdx, vec1Offsets.chunkIdx
                     );
-                    // A2 mega mode-2 completion includes both AIV subblocks,
-                    // including the zero-row participant of a varlen tail.
-#if !defined(GDN_CHUNK_RECOMPUTE_WU_FWD_HO_IMPL_ONLY) || !defined(__CCE_AICORE__) || __CCE_AICORE__ != 220
+                    // Dense mode uses the paired AIV mode-2 flags, as in the
+                    // standalone O kernel. Keep the explicit join for varlen tails.
                     if (isVariedLen != 0) {
                         Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
                     }
-#endif
                     Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec1Done[streamId]);
                 }
 
