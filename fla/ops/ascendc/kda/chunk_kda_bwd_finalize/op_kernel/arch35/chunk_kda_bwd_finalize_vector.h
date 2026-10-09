@@ -21,6 +21,7 @@ constexpr CastTrait KDA_FINALIZE_FP32_TO_BF16_RNE_ONE = {
     RegLayout::ONE, SatMode::NO_SAT, MaskMergeMode::ZEROING,
     AscendC::RoundMode::CAST_RINT};
 
+// 将两组交错 FP32 lane 按 RNE 舍入打包为完整 BF16 行。
 __simd_callee__ inline void FinalizeCastBf16(
     RegTensor<bfloat16_t> &dst, RegTensor<float> &even,
     RegTensor<float> &odd, MaskReg &mask)
@@ -29,8 +30,8 @@ __simd_callee__ inline void FinalizeCastBf16(
     Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(dst, even, mask);
 }
 
-// Cast ZERO places one BF16 value in each 32-bit lane. Pack the 64
-// values in registers, then scatter them into a 64-row NZ plane.
+// ZERO 布局的 Cast 在每个 32bit lane 放一个 BF16 值；
+// 先在寄存器内打包 64 个值，再散写到 64 行 NZ 平面。
 __simd_callee__ inline void FinalizeStoreNz64(
     __ubuf__ bfloat16_t *dst, RegTensor<bfloat16_t> &packed,
     RegTensor<uint16_t> &nzIndex)
@@ -42,6 +43,7 @@ __simd_callee__ inline void FinalizeStoreNz64(
     Scatter(dst, values, nzIndex, mask);
 }
 
+// 将有效行之后的 NZ padding 清零，供固定物理尺寸的 Cube tile 安全读取。
 __simd_callee__ inline void FinalizeZeroNzTail(
     __ubuf__ bfloat16_t *dst, uint16_t validRows, uint16_t cols)
 {
@@ -60,6 +62,7 @@ __simd_callee__ inline void FinalizeZeroNzTail(
     }
 }
 
+// Stage5 尾块：同时清零五项 NZ 操作数的高低位无效行。
 __simd_vf__ inline void FinalizeStage5TailVF(
     __ubuf__ FinalizeLocalType *daq, __ubuf__ FinalizeLocalType *dak,
     __ubuf__ FinalizeLocalType *kn, __ubuf__ FinalizeLocalType *qp,
@@ -90,6 +93,7 @@ __simd_vf__ inline void FinalizeStage5TailVF(
     }
 }
 
+// 128 列向量拆成 BF16 高位与舍入残差，分别写两个 NZ 平面。
 __simd_callee__ inline void FinalizeStoreLocalPair(
     __ubuf__ FinalizeLocalType *dst, RegTensor<float> &even,
     RegTensor<float> &odd, MaskReg &mask, RegTensor<uint16_t> &nzIndex)
@@ -107,6 +111,7 @@ __simd_callee__ inline void FinalizeStoreLocalPair(
     Scatter(dst + KDA_FINALIZE_VECTOR_ELEMS, packed, nzIndex, all);
 }
 
+// 64 列矩阵行拆成 BF16 高位与舍入残差，分别写两个 NZ 平面。
 __simd_callee__ inline void FinalizeStoreLocalRow(
     __ubuf__ bfloat16_t *dst, RegTensor<float> &value, MaskReg &mask,
     RegTensor<uint16_t> &nzIndex)
@@ -121,7 +126,8 @@ __simd_callee__ inline void FinalizeStoreLocalRow(
     FinalizeStoreNz64(dst + KDA_FINALIZE_MATRIX_ELEMS, packed, nzIndex);
 }
 
-// Stage0 emits paired NZ kE for contiguous UB-to-L1 copies.
+// Stage0 / Vector：计算 E=exp2(gk)、kE 高低位、g_last 和 r_h。
+// kE 直接生成为 NZ 平面，供 MTE3 连续写入 L1；E 保留 FP32。
 __simd_vf__ inline void FinalizeStage0VF(
     __ubuf__ bfloat16_t *kENd, __ubuf__ bfloat16_t *lowNd,
     __ubuf__ float *exp2Gk, __ubuf__ float *gkLast, __ubuf__ float *rH,
@@ -129,6 +135,7 @@ __simd_vf__ inline void FinalizeStage0VF(
     __ubuf__ bfloat16_t *h, __ubuf__ bfloat16_t *dh,
     uint16_t validRows)
 {
+    // 1. 准备 FP32/BF16 mask 与 NZ 列地址；逐有效行计算 E 和 kE 高低位。
     MaskReg fpMask = CreateMask<float, MaskPattern::ALL>();
     MaskReg bfMask = CreateMask<half, MaskPattern::ALL>();
     RegTensor<float> g0;
@@ -169,6 +176,7 @@ __simd_vf__ inline void FinalizeStage0VF(
         Scatter(lowNd + row * 16, out, nzIndex, bfMask);
     }
 
+    // 2. 无效行的 kE 高低位都置零，保持 Cube 的固定 64 行物理输入。
     if (validRows < KDA_FINALIZE_CHUNK) {
         Duplicate(out, static_cast<bfloat16_t>(0), bfMask);
         for (uint16_t row = validRows; row < KDA_FINALIZE_CHUNK; ++row) {
@@ -177,12 +185,12 @@ __simd_vf__ inline void FinalizeStage0VF(
         }
     }
 
-    // gk_last is a full K row.
+    // 3. 提取最后一个有效 token 的完整 K 维 gate，不能用物理第 63 行替代尾行。
     const uint32_t lastOffset = static_cast<uint32_t>(validRows - 1) * KDA_FINALIZE_DIM;
     LoadAlign<float, LoadDist::DIST_DINTLV_B32>(g0, g1, gk + lastOffset);
     StoreAlign<float, StoreDist::DIST_INTLV_B32>(gkLast, g0, g1, fpMask);
 
-    // r_h[k] = sum_v h[k,v] * dh[k,v].
+    // 4. 沿 V 维归约 r_h[k] = sum_v(h[k,v] * dh[k,v])，保留 FP32。
     for (uint16_t row = 0; row < KDA_FINALIZE_DIM; ++row) {
         const uint32_t rowOffset = static_cast<uint32_t>(row) * KDA_FINALIZE_DIM;
         RegTensor<bfloat16_t> hb;
@@ -205,14 +213,15 @@ __simd_vf__ inline void FinalizeStage0VF(
     }
 }
 
-// Stage2 BuildZ.  zV/zW are direct FP32 FixPipe results in row-major UB.
-// Paired Zb is produced in NZ order before the contiguous L1 publication.
+// Stage2 / Vector：Zb = tril(zV - zW, -1) * beta[None, :]。
+// zV/zW 来自 Fixpipe 的 FP32 UB 交接；Zb 高低位直接按 NZ 布局生成。
 template <typename BetaT>
 __simd_vf__ inline void FinalizeStage2VF(
     __ubuf__ bfloat16_t *zbNd,
     __ubuf__ float *zV, __ubuf__ float *zW,
     __ubuf__ BetaT *beta, uint16_t validRows)
 {
+    // 1. 将整行 beta 读成 FP32，无效列置零；beta 沿矩阵列广播。
     MaskReg fpMask = CreateMask<float, MaskPattern::ALL>();
     MaskReg bfMask = CreateMask<half, MaskPattern::ALL>();
     RegTensor<bfloat16_t> betaBf;
@@ -235,6 +244,8 @@ __simd_vf__ inline void FinalizeStage2VF(
     ShiftRights(block, column, int16_t(4), indexMask);
     Muls(block, block, uint16_t(1008), indexMask);
     Add(nzIndex, column, block, indexMask);
+
+    // 2. 逐行计算 (zV-zW)*beta，仅保留严格下三角，再生成高低位 NZ。
     for (uint16_t row = 0; row < validRows; ++row) {
         const uint32_t rowOffset = static_cast<uint32_t>(row) * KDA_FINALIZE_CHUNK;
         RegTensor<float> zv;
@@ -256,14 +267,16 @@ __simd_vf__ inline void FinalizeStage2VF(
         Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, high, fpMask);
         FinalizeStoreNz64(zbNd + 4096 + row * 16, packed, nzIndex);
     }
+
+    // 3. 清零高低位尾行，保持后续 64×64 GEMM 的 padding 为零。
     if (validRows < KDA_FINALIZE_CHUNK) {
         FinalizeZeroNzTail(zbNd, validRows, KDA_FINALIZE_CHUNK);
         FinalizeZeroNzTail(zbNd + 4096, validRows, KDA_FINALIZE_CHUNK);
     }
 }
 
-// Stage3 StatePre.  One VF invocation consumes one complete head/chunk.  The
-// two 64-lane FP32 register halves cover K/V=128 without a second pass.
+// Stage3 / Vector：整 chunk 计算 dk_state、dv、dq_base、db_v 与 gate_state。
+// 两组 FP32 寄存器覆盖 128 个特征；消费后原位复用 DVb 区保存 dq_base。
 template <typename BetaT>
 __simd_vf__ inline void FinalizeStage3VF(
     __ubuf__ float *dkState, __ubuf__ float *dvb,
@@ -273,6 +286,7 @@ __simd_vf__ inline void FinalizeStage3VF(
     __ubuf__ BetaT *beta, __ubuf__ float *gkLast, __ubuf__ float *rH,
     float scale, uint16_t validRows)
 {
+    // 1. 载入 g_last，初始化逐特征 gate 累加器。
     MaskReg fpMask = CreateMask<float, MaskPattern::ALL>();
     MaskReg bfMask = CreateMask<half, MaskPattern::ALL>();
     RegTensor<float> last0;
@@ -285,6 +299,8 @@ __simd_vf__ inline void FinalizeStage3VF(
 
     for (uint16_t row = 0; row < validRows; ++row) {
         const uint32_t rowOffset = static_cast<uint32_t>(row) * KDA_FINALIZE_DIM;
+
+        // 2. dk_state = dk_state_raw * exp2(g_last-gk)，原位写回。
         RegTensor<float> g0;
         RegTensor<float> g1;
         RegTensor<float> decay0;
@@ -305,6 +321,7 @@ __simd_vf__ inline void FinalizeStage3VF(
         StoreAlign<float, StoreDist::DIST_INTLV_B32>(
             dkState + rowOffset, state0, state1, fpMask);
 
+        // 3. 累加 k*dk_state，形成 gate_state 的 token 贡献。
         RegTensor<bfloat16_t> kb;
         RegTensor<float> k0;
         RegTensor<float> k1;
@@ -315,6 +332,7 @@ __simd_vf__ inline void FinalizeStage3VF(
         Add(gate0, gate0, k0, fpMask);
         Add(gate1, gate1, k1, fpMask);
 
+        // 4. dv = beta*DVb，转换为 BF16；原始 FP32 DVb 仍用于 db_v。
         RegTensor<float> dvb0;
         RegTensor<float> dvb1;
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(dvb0, dvb1, dvb + rowOffset);
@@ -334,6 +352,7 @@ __simd_vf__ inline void FinalizeStage3VF(
         FinalizeCastBf16(dvBf, dv0, dv1, fpMask);
         StoreAlign(dv + rowOffset, dvBf, bfMask);
 
+        // 5. db_v = sum_V(v*DVb)，每个 token 归约为一个 FP32 标量。
         RegTensor<bfloat16_t> vb;
         RegTensor<float> v0;
         RegTensor<float> v1;
@@ -347,6 +366,7 @@ __simd_vf__ inline void FinalizeStage3VF(
         ReduceSum(sum, product, fpMask);
         DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dbV + row, sum, fpMask);
 
+        // 6. dq_base = dq_raw*E*scale，复用已消费完的 DVb 区。
         RegTensor<float> dq0;
         RegTensor<float> dq1;
         RegTensor<float> exp0;
@@ -361,6 +381,7 @@ __simd_vf__ inline void FinalizeStage3VF(
             dvb + rowOffset, dq0, dq1, fpMask);
     }
 
+    // 7. gate_state 再加 r_h*exp2(g_last)，交给 Stage4 的末行修正。
     RegTensor<float> lastExp0;
     RegTensor<float> lastExp1;
     RegTensor<float> rh0;
@@ -376,9 +397,8 @@ __simd_vf__ inline void FinalizeStage3VF(
     StoreAlign<float, StoreDist::DIST_INTLV_B32>(gateState, gate0, gate1, fpMask);
 }
 
-// Stage4 BaseFinalize.  The three 64x128 FP32 regions are updated in place:
-// dkState -> dkBase, dKgbRaw -> dgBase, and dbV -> dbBase.  dqBase and exp2Gk
-// remain live in their fixed workspace regions for later stages.
+// Stage4 / Vector：原位完成 dk_base、db_base、dg_base。
+// dkState→dk_base，dKgbRaw→dg_base，dbV→db_base；dq_base 与 E 继续存活。
 template <typename BetaT>
 __simd_vf__ inline void FinalizeStage4VF(
     __ubuf__ float *dkState, __ubuf__ float *dqBase,
@@ -388,6 +408,7 @@ __simd_vf__ inline void FinalizeStage4VF(
     __ubuf__ float *gateState, __ubuf__ float *dbV,
     uint16_t validRows)
 {
+    // 1. 载入 gate_state；逐行读取状态结果、dq_base、dKgb_raw 与 E。
     MaskReg fpMask = CreateMask<float, MaskPattern::ALL>();
     MaskReg bfMask = CreateMask<half, MaskPattern::ALL>();
     RegTensor<float> gate0;
@@ -422,6 +443,7 @@ __simd_vf__ inline void FinalizeStage4VF(
             Cast<float, bfloat16_t, ctHalf2Fp32Zero>(betaFp, betaBf, bfMask);
         }
 
+        // 2. dk_base = dk_state-beta*E*dKgb_raw，原位覆盖 dkState。
         RegTensor<float> dkTerm0;
         RegTensor<float> dkTerm1;
         RegTensor<float> dkgExp0;
@@ -446,6 +468,7 @@ __simd_vf__ inline void FinalizeStage4VF(
         CastHalf2Float<bfloat16_t>(q0, q1, qBf, bfMask);
         CastHalf2Float<bfloat16_t>(k0, k1, kBf, bfMask);
 
+        // 3. dg_base 先取 q*dq_base-k*dk_state，再计算共用项 k*E*dKgb_raw。
         RegTensor<float> dg0;
         RegTensor<float> dg1;
         RegTensor<float> stateK0;
@@ -458,11 +481,12 @@ __simd_vf__ inline void FinalizeStage4VF(
         Mul(stateK1, k1, state1, fpMask);
         Sub(dg0, dg0, stateK0, fpMask);
         Sub(dg1, dg1, stateK1, fpMask);
-        // Vector gradients must not consume Cube's rounded BF16 kE.
-        // Reuse exp*dKgb from dkBase instead of recomputing or storing kE.
+        // 向量梯度使用 FP32 的 E*dKgb*k，不读取 Cube 使用的 BF16 kE。
+        // 复用刚计算的 E*dKgb，保持现有乘法顺序。
         Mul(dkgKe0, dkgExp0, k0, fpMask);
         Mul(dkgKe1, dkgExp1, k1, fpMask);
 
+        // 4. db_base = db_v-sum_K(k*E*dKgb_raw)，原位覆盖 dbV。
         RegTensor<float> reduceInput;
         RegTensor<float> reduceSum;
         RegTensor<float> dbBase;
@@ -472,6 +496,7 @@ __simd_vf__ inline void FinalizeStage4VF(
         Sub(dbBase, dbBase, reduceSum, fpMask);
         DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dbV + row, dbBase, fpMask);
 
+        // 5. dg_base 再减 beta*k*E*dKgb_raw，仅有效末行加 gate_state。
         Mul(dkgKe0, dkgKe0, betaFp, fpMask);
         Mul(dkgKe1, dkgKe1, betaFp, fpMask);
         Sub(dg0, dg0, dkgKe0, fpMask);
@@ -485,10 +510,10 @@ __simd_vf__ inline void FinalizeStage4VF(
     }
 }
 
-// Stage5 rebases one output band. The BF16 high/residual operands are
-// produced directly in NZ order for contiguous UB-to-L1 copies.
+// Stage5 / Vector：按 32 行输出带选择 gate 中心，生成后续 Cube 所需的高低位 NZ 操作数。
 #include "chunk_kda_bwd_finalize_intra.h"
 
+// Stage5 数学变换：本函数的 exp2Gk 入参起初是 gk，当前带被原位改写为平移指数。
 template <typename BetaT>
 __simd_vf__ inline void FinalizeStage5VF(
     __ubuf__ FinalizeLocalType *dAkkNd, __ubuf__ FinalizeLocalType *kNegNd,
@@ -498,6 +523,7 @@ __simd_vf__ inline void FinalizeStage5VF(
     __ubuf__ BetaT *beta, __ubuf__ float *center, uint16_t validRows,
     uint16_t rowBegin, uint16_t rowEnd)
 {
+    // 1. 读取带中心与 NZ 地址映射；后续平移在两侧 GEMM 操作数中抵消。
     MaskReg fpMask = CreateMask<float, MaskPattern::ALL>();
     MaskReg bfMask = CreateMask<half, MaskPattern::ALL>();
     RegTensor<float> zero;
@@ -509,8 +535,8 @@ __simd_vf__ inline void FinalizeStage5VF(
     Duplicate(zeroBf, static_cast<bfloat16_t>(0), bfMask);
     RegTensor<float> center0, center1;
     LoadAlign<float, LoadDist::DIST_DINTLV_B32>(center0, center1, center);
-    // NZ [column/16, row, column%16], in BF16 element offsets. Produce the
-    // physical L1 layout here so MTE3 can copy each complete pair of planes.
+    // NZ 地址为 [column/16, row, column%16]，偏移单位是 BF16 元素；
+    // VF 直接组织 L1 物理布局，MTE3 只需连续复制高低位平面。
     RegTensor<uint16_t> column, block, nzIndex;
     Arange(reinterpret_cast<RegTensor<int16_t> &>(column), int16_t(0));
     ShiftRights(block, column, int16_t(4), bfMask);
@@ -519,6 +545,8 @@ __simd_vf__ inline void FinalizeStage5VF(
     for (uint16_t row = 0; row < validRows; ++row) {
         const uint32_t matrixOffset =
             static_cast<uint32_t>(row) * KDA_FINALIZE_CHUNK;
+
+        // 2. 第一带生成 dAkk：严格下三角取负并乘 2^16，再拆高低位。
         if (rowBegin == 0) {
             RegTensor<float> raw0;
             LoadAlign(raw0, dAkkRaw + matrixOffset);
@@ -543,8 +571,8 @@ __simd_vf__ inline void FinalizeStage5VF(
         RegTensor<bfloat16_t> packed;
         LoadIn<bfloat16_t, false>(kBf, k + vectorOffset);
         CastHalf2Float<bfloat16_t>(k0, k1, kBf, bfMask);
-        // Noncausal rows are exactly zero. Publish zero planes directly,
-        // rather than loading/scaling/splitting operands which cannot contribute.
+        // 当前带不可能消费的因果范围外行直接写零，避免无效指数计算及高低位转换。
+        // 3. kNeg = k*exp2(center-gk)，只计算当前带可能消费的前缀行。
         if (row < rowEnd) {
             Sub(kNeg0, center0, e0, fpMask);
             Sub(kNeg1, center1, e1, fpMask);
@@ -559,6 +587,9 @@ __simd_vf__ inline void FinalizeStage5VF(
             Scatter(kNegNd + row * 16, zeroBf, nzIndex, bfMask);
             Scatter(kNegNd + KDA_FINALIZE_VECTOR_ELEMS + row * 16, zeroBf, nzIndex, bfMask);
         }
+
+        // 4. qPos=q*exp2(gk-center)，bkPos=beta*k*exp2(gk-center)。
+        // 当前带保存平移指数供 Stage7/9 还原；其余不参与的行写零。
         if (row >= rowBegin) {
             Sub(e0, e0, center0, fpMask);
             Sub(e1, e1, center1, fpMask);
@@ -598,11 +629,12 @@ __simd_vf__ inline void FinalizeStage5VF(
     }
 }
 
-// Retain the FP32 dAqk input as BF16 high/residual planes.
+// Stage5：单独保留 dAqk 对角项，将严格下三角乘 2^16 后拆成 BF16 高低位。
 __simd_vf__ inline void FinalizeStage5DaqkVF(
     __ubuf__ FinalizeLocalType *dAqkOut, __ubuf__ float *dAqk,
     __ubuf__ float *diagonal, uint16_t validRows)
 {
+    // 1. 准备 FP32 掩码与 NZ 索引，独立保留原始对角项。
     MaskReg fpMask = CreateMask<float, MaskPattern::ALL>();
     MaskReg one = CreateMask<float, MaskPattern::VL1>();
     RegTensor<float> zero;
@@ -617,6 +649,8 @@ __simd_vf__ inline void FinalizeStage5DaqkVF(
         const uint32_t offset = static_cast<uint32_t>(row) * KDA_FINALIZE_CHUNK;
         RegTensor<float> value;
         RegTensor<float> diag;
+
+        // 2. 对角项原样保存；严格下三角放大 2^16 后拆高低位，交给分带 GEMM。
         DataCopy<float, LoadDist::DIST_BRC_B32>(diag, dAqk + offset + row);
         DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(diagonal + row, diag, one);
         LoadAlign(value, dAqk + offset);
@@ -628,8 +662,8 @@ __simd_vf__ inline void FinalizeStage5DaqkVF(
     }
 }
 
-// Stage7 consumes the FP32 Cube result, writes the final BF16 dq, and updates
-// dg_base in FP32 for the later K and gate stages.
+// Stage7 / Vector：合并 dq_base 与 Cube 局部结果，累加 FP32 dg，
+// 另加对角项，可选执行 Q 归一化反向，最后生成 BF16 dq。
 __simd_vf__ inline void FinalizeStage7VF(
     __ubuf__ bfloat16_t *dqOut, __ubuf__ float *dgBase,
     __ubuf__ float *dqLocalRaw, __ubuf__ float *dqBase,
@@ -651,8 +685,8 @@ __simd_vf__ inline void FinalizeStage7VF(
         RegTensor<float> dq1;
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
             raw0, raw1, dqLocalRaw + offset);
-        // Restore the band factor in registers, before the original gradient
-        // arithmetic. Keep the two scaling operations and their rounding order.
+
+        // 1. 先乘当前带的平移指数，再乘 2^-16 还原局部梯度；保持两次缩放的舍入顺序。
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(exp0, exp1, exp2Gk + offset);
         Mul(raw0, raw0, exp0, fpMask);
         Mul(raw1, raw1, exp1, fpMask);
@@ -669,6 +703,7 @@ __simd_vf__ inline void FinalizeStage7VF(
         LoadIn<bfloat16_t, false>(qBf, q + offset);
         CastHalf2Float<bfloat16_t>(q0, q1, qBf, bfMask);
 
+        // 2. dg 累加 q*dq_local；此时尚未加入无 gate 导数的对角项。
         RegTensor<float> dg0;
         RegTensor<float> dg1;
         RegTensor<float> product0;
@@ -682,9 +717,8 @@ __simd_vf__ inline void FinalizeStage7VF(
         StoreAlign<float, StoreDist::DIST_INTLV_B32>(
             dgBase + offset, dg0, dg1, fpMask);
 
-        // exp2(g_i-g_i) is exactly one and its gate derivative is zero.
-        // Keep this diagonal outside the scaled GEMMs, avoiding subtraction
-        // of two rounded, dominant diagonal terms in the small gate gradient.
+        // 3. 对角指数 exp2(g_i-g_i)=1，gate 导数为零；仅补入 dq。
+        // 对角项不进缩放 GEMM，避免较大舍入项相减污染较小的 gate 梯度。
         RegTensor<bfloat16_t> kb;
         RegTensor<float> k0, k1, diag;
         LoadIn<bfloat16_t, false>(kb, k + offset);
@@ -695,6 +729,7 @@ __simd_vf__ inline void FinalizeStage7VF(
         Add(dq0, dq0, k0, fpMask);
         Add(dq1, dq1, k1, fpMask);
 
+        // 4. 可选 Q 归一化反向：rstd*(dq-q*sum(dq*q))。
         if (hasQkL2Norm != 0U) {
             RegTensor<float> dot;
             RegTensor<float> rstd;
@@ -715,12 +750,14 @@ __simd_vf__ inline void FinalizeStage7VF(
             Mul(dq1, dq1, rstd, fpMask);
         }
 
+        // 5. 按原舍入方式生成 BF16 dq，q 输入仍保留供后续 K 路径使用。
         RegTensor<bfloat16_t> packed;
         FinalizeCastBf16(packed, dq0, dq1, fpMask);
         StoreAlign(dqOut + offset, packed, bfMask);
     }
 }
 
+// Stage9 / Vector：还原 left/right，生成 dk 局部增量、db 增量，并更新 dg。
 template <typename BetaT>
 __simd_vf__ inline void FinalizeStage9VF(
     __ubuf__ float *left, __ubuf__ float *right, __ubuf__ float *dbDelta,
@@ -728,6 +765,7 @@ __simd_vf__ inline void FinalizeStage9VF(
     __ubuf__ bfloat16_t *k, __ubuf__ BetaT *beta, uint16_t rows,
     __ubuf__ float *diagonal, __ubuf__ bfloat16_t *q)
 {
+    // 1. 保证前序 VF 写入可见；逐行恢复平移指数和 2^-16 缩放。
     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
     MaskReg mask = CreateMask<float, MaskPattern::ALL>();
     MaskReg bfMask = CreateMask<half, MaskPattern::ALL>();
@@ -755,12 +793,16 @@ __simd_vf__ inline void FinalizeStage9VF(
             DataCopy<bfloat16_t, LoadDist::DIST_BRC_B16>(bb, beta + row);
             Cast<float, bfloat16_t, ctHalf2Fp32Zero>(b, bb, mask);
         }
+
+        // 2. db_delta = sum_K(left*k)，在 left 乘 beta 前归约。
         RegTensor<float> p0, p1, sum;
         Mul(p0, l0, k0, mask);
         Mul(p1, l1, k1, mask);
         Add(p0, p0, p1, mask);
         ReduceSum(sum, p0, mask);
         DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dbDelta + row, sum, one);
+
+        // 3. dg 累加 k*(beta*left-right)，保留到完整 chunk 的 gate 扫描。
         Mul(l0, l0, b, mask);
         Mul(l1, l1, b, mask);
         Sub(p0, l0, r0, mask);
@@ -771,6 +813,8 @@ __simd_vf__ inline void FinalizeStage9VF(
         Add(g0, g0, p0, mask);
         Add(g1, g1, p1, mask);
         StoreAlign<float, StoreDist::DIST_INTLV_B32>(dg + offset, g0, g1, mask);
+
+        // 4. dk_delta = beta*left+right，再补 dAqk 对角项*q；原位存回 left。
         Add(l0, l0, r0, mask);
         Add(l1, l1, r1, mask);
         RegTensor<bfloat16_t> qb;
@@ -786,6 +830,7 @@ __simd_vf__ inline void FinalizeStage9VF(
     }
 }
 
+// Stage10 / Vector：合并 dk/db 的 base 与增量，执行可选 K 归一化反向。
 template <typename BetaT>
 __simd_vf__ inline void FinalizeStage10VF(
     __ubuf__ bfloat16_t *out, __ubuf__ BetaT *dbOut,
@@ -794,6 +839,7 @@ __simd_vf__ inline void FinalizeStage10VF(
     __ubuf__ bfloat16_t *k, __ubuf__ float *rstd,
     uint32_t hasNorm, uint16_t rows)
 {
+    // 1. 读取 Stage9 的增量与 base，逐行合并 dk。
     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
     MaskReg mask = CreateMask<float, MaskPattern::ALL>();
     MaskReg bfMask = CreateMask<half, MaskPattern::ALL>();
@@ -805,6 +851,8 @@ __simd_vf__ inline void FinalizeStage10VF(
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(b0, b1, base + offset);
         Add(d0, d0, b0, mask);
         Add(d1, d1, b1, mask);
+
+        // 2. 可选 K 归一化反向：rstd*(dk-k*sum(dk*k))。
         if (hasNorm != 0U) {
             RegTensor<bfloat16_t> kb;
             RegTensor<float> k0, k1, p0, p1, dot, rs;
@@ -825,10 +873,14 @@ __simd_vf__ inline void FinalizeStage10VF(
             Mul(d0, d0, rs, mask);
             Mul(d1, d1, rs, mask);
         }
+
+        // 3. 生成 BF16 dk 输出。
         RegTensor<bfloat16_t> packed;
         FinalizeCastBf16(packed, d0, d1, mask);
         StoreAlign(out + offset, packed, bfMask);
     }
+
+    // 4. 合并 db_base+db_delta，仅存有效行，并保持 beta 的接口类型。
     uint32_t count = rows;
     MaskReg rowMask = UpdateMask<float>(count);
     RegTensor<float> db, deltaB;
@@ -844,10 +896,11 @@ __simd_vf__ inline void FinalizeStage10VF(
     }
 }
 
-// The dW residual has 128 columns. Produce one NZ row per iteration.
+// dW 残差转换：每行 128 列，low = BF16(raw - FP32(BF16(raw)))，直接写 NZ。
 __simd_vf__ inline void FinalizeDwResidualVF(
     __ubuf__ bfloat16_t *dst, __ubuf__ float *src)
 {
+    // 1. 准备 NZ 地址，FP32 原值按 RNE 转成与 Fixpipe 高位一致的 BF16。
     MaskReg fpMask = CreateMask<float, MaskPattern::ALL>();
     MaskReg bfMask = CreateMask<half, MaskPattern::ALL>();
     RegTensor<uint16_t> column, block, nzIndex;
@@ -855,6 +908,8 @@ __simd_vf__ inline void FinalizeDwResidualVF(
     ShiftRights(block, column, int16_t(4), bfMask);
     Muls(block, block, uint16_t(1008), bfMask);
     Add(nzIndex, column, block, bfMask);
+
+    // 2. 逐行减去高位的 FP32 值，将差值转 BF16 写入低位平面。
     for (uint16_t row = 0; row < KDA_FINALIZE_CHUNK; ++row) {
         RegTensor<float> value0, value1, high0, high1;
         RegTensor<bfloat16_t> packed;
@@ -868,6 +923,7 @@ __simd_vf__ inline void FinalizeDwResidualVF(
     }
 }
 
+// Tza 残差转换：每行 64 列，从 FP32 原值减去 BF16 高位，生成低位 NZ。
 __simd_vf__ inline void FinalizeResidualVF(
     __ubuf__ bfloat16_t *dst, __ubuf__ float *src, uint16_t blocks)
 {
@@ -892,6 +948,7 @@ __simd_vf__ inline void FinalizeResidualVF(
 
 class ChunkKdaBwdFinalizeVectorStage12 {
 public:
+    // 绑定 AIV 输入输出、缓存策略、UB 及本地事件；不在此提交阶段计算。
     __aicore__ inline void Init(
         GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta,
         GM_ADDR h, GM_ADDR dh,
@@ -901,6 +958,7 @@ public:
         GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR workspace,
         const ChunkKdaBwdFinalizeTilingData *tiling, AscendC::TPipe *pipe)
     {
+        // 1. 绑定张量及可选 Q/K 归一化数据。
         q_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(q));
         rawG_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(rawG));
         aLog_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_A_LOG *>(aLog));
@@ -925,21 +983,22 @@ public:
         }
         dv_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(dv));
         workspace_.SetGlobalBuffer(reinterpret_cast<__gm__ uint8_t *>(workspace));
-        // These final outputs are streaming writes. Preserve L2 capacity for
-        // the input tiles and the workspace reused by later phases.
+        // 最终输出只流式写出，关闭 L2 缓存，为输入与循环 workspace 留出容量。
         dq_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         dk_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         dv_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         dG_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         dBeta_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
-        // Each tile of these inputs is read once by this kernel.
+        // 这些输入每 tile 只读一次，采用流式读取。
         rawG_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         dAqk_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         dqRaw_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
-        // q/k/beta are loaded once and retained in UB through all bands.
+        // q/k/beta 只载入一次，保留在 UB 跨所有分带使用。
         q_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         k_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         beta_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+
+        // 2. 记录任务元数据与 1C2V 映射，申请 248 KiB UB。
         cuSeqlens_ = cuSeqlens;
         chunkIndices_ = chunkIndices;
         tiling_ = tiling;
@@ -951,11 +1010,13 @@ public:
         subBlockIdx_ = AscendC::GetSubBlockIdx();
         pipe_->InitBuffer(ubBuf_, KDA_FINALIZE_UB_BYTES);
         ub_ = ubBuf_.Get<uint8_t>();
+
+        // 3. 为轮转交接分配事件，预置首轮 FREE；共享工作区另用阶段事件保护。
         for (uint32_t slot = 0; slot < KDA_FINALIZE_AIV_SLOTS; ++slot) {
             mte2ToV_[slot] = pipe_->AllocEventID<AscendC::HardEvent::MTE2_V>();
             vToMte3_[slot] = pipe_->AllocEventID<AscendC::HardEvent::V_MTE3>();
             mte3ToMte2_[slot] = pipe_->AllocEventID<AscendC::HardEvent::MTE3_MTE2>();
-            // The first Stage0 has no preceding zB MTE3 reader.
+            // 首个 Stage0 没有前序 Zb 搬出读者，预置可写通知。
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
             zBPublishCount_[slot] = 0;
         }
@@ -972,8 +1033,10 @@ public:
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage7Mte3ToMte2_);
     }
 
+    // Vector 调度：先完成基础结果，再按带处理局部梯度，最后执行整 chunk gate 扫描。
     __aicore__ inline void Process()
     {
+        // 1. 将物理 AIV 编号归一化为逻辑 AIC 编号，按相同 workTask 划分任务。
         const int64_t logicalCore = AscendC::GetBlockIdx() / subBlockNum_;
         const int64_t coreNum = AscendC::GetBlockNum();
         uint64_t generation = 0;
@@ -991,23 +1054,18 @@ public:
                 continue;
             }
 
-            // Even an idle AIV must consume this task's credit. Otherwise a
-            // one-head window can run ahead and overwrite the preceding
-            // task's qPos/bkPos in L1 while Stage8 still reads them.
+            // 2. 即使本 AIV 没有有效 head，也要消费当前任务的 L1 可写通知。
+            // 否则单头尾窗可能提前覆盖上一任务 Stage8 仍读取的 qPos/bkPos。
             AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE3>(
                 KDA_FINALIZE_TASK_L1_FREE);
 
-            // Stage3 StatePre uses one phase-wide UB working set.  The next
-            // work task starts from slot0, while the previous task finishes
-            // on slot1, so a per-slot credit alone cannot protect the shared
-            // range.  Drain the preceding task's final MTE3 before any Stage0
-            // MTE2 reinterprets UB, then seed the same event for the first
-            // StatePre head in this task.
+            // StateAndBase 使用跨 slot 的共享 UB；本次 Stage0 覆写前必须等前序写回结束。
+            // 消费后重新发布阶段通知，供本次 StateAndBase 使用。
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
 
-            // Stage0 AIV is independent of Stage0 AIC.  Each AIV owns alternate
-            // heads and alternates its two physical UB slots.
+            // 3. Stage0：AIV 独立于 AIC 计算 E/kE/r_h。
+            // generation 的低位选择 AIV，次低位选择交接 slot；双头窗口每 AIV 一头。
             for (int64_t head = headBegin; head < headEnd; ++head, ++generation) {
                 const uint32_t owner = static_cast<uint32_t>(head - headBegin);
                 const uint32_t aiv = static_cast<uint32_t>(generation & 1U);
@@ -1017,15 +1075,14 @@ public:
                 const uint32_t slot = static_cast<uint32_t>((generation >> 1U) & 1U);
                 RunStage0(chunk, head, owner, slot, logicalCore, groupGeneration);
             }
-            // Stage0 uses one shared UB working set for all local heads.  Its
-            // final workspace egress must finish before Stage2 reinterprets
-            // the same physical UB range.
+            // Stage0 的共享 UB 写回完成后，才能让 Cube 在重叠区写 dW/zV/zW。
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage0Mte3ToMte2_);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage0Mte3ToMte2_);
 
             generation -= static_cast<uint64_t>(headEnd - headBegin);
             for (int64_t head = headBegin; head < headEnd; ++head, ++generation) {
-                if ((generation & 1U) != subBlockIdx_) continue;
+                if ((generation & 1U) != subBlockIdx_)
+                    continue;
                 const uint32_t slot = static_cast<uint32_t>((generation >> 1U) & 1U);
                 AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE3>(
                     KDA_FINALIZE_ZV_FREE_BASE + slot);
@@ -1037,8 +1094,11 @@ public:
 
             generation -= static_cast<uint64_t>(headEnd - headBegin);
             for (int64_t head = headBegin; head < headEnd; ++head, ++generation) {
-                if ((generation & 1U) != subBlockIdx_) continue;
+                if ((generation & 1U) != subBlockIdx_)
+                    continue;
                 const uint32_t slot = static_cast<uint32_t>((generation >> 1U) & 1U);
+
+                // 4. dW 残差交接：读取 Cube 原值、生成低位并通知 Stage1 可消费。
                 RunDwResidual(static_cast<uint32_t>(head - headBegin), slot);
             }
 
@@ -1050,18 +1110,18 @@ public:
                     continue;
                 }
                 const uint32_t slot = static_cast<uint32_t>((generation >> 1U) & 1U);
+
+                // 5. Stage2：等 zV/zW，生成 Zb 高低位并交给 Cube Stage3。
                 RunStage2(chunk, head, owner, slot);
             }
 
-            // StatePre reinterprets nearly the whole UB and therefore
-            // overlaps both BuildZ ping/pong egress slots.  Drain both Zb
-            // UB->L1 readers before changing the phase-wide UB semantics.
+            // 6. StateAndBase 将复用 BuildZ 的 UB；先等两份 Zb 的 UB→L1 读取结束。
             for (uint32_t slot = 0; slot < KDA_FINALIZE_AIV_SLOTS; ++slot) {
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
             }
             generation -= static_cast<uint64_t>(headEnd - headBegin);
-            // StatePre is independent of the Stage3 Cube MMAD.  Each AIV
-            // starts it after completing its own BuildZ heads.
+            // Stage3/4 向量路径：本 AIV 完成 BuildZ 后即可处理状态与 base，
+            // 与 Cube 的 Tza/dAkk 矩阵乘按各自依赖推进。
             uint32_t stage3ActiveMask = 0;
             for (int64_t head = headBegin; head < headEnd; ++head, ++generation) {
                 const uint32_t owner = static_cast<uint32_t>(head - headBegin);
@@ -1073,8 +1133,7 @@ public:
                 stage3ActiveMask |= 1U << slot;
                 RunStateAndBase(chunk, head, owner, slot, logicalCore, groupGeneration);
             }
-            // Tail head windows may leave one or both local slots unused.
-            // Restore those consumed credits explicitly for the next task.
+            // 尾窗口可能有未使用的 slot；显式补回已消费的 FREE，保持下一任务事件配对。
             for (uint32_t slot = 0; slot < KDA_FINALIZE_AIV_SLOTS; ++slot) {
                 if ((stage3ActiveMask & (1U << slot)) == 0U) {
                     AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
@@ -1083,20 +1142,25 @@ public:
 
             generation -= static_cast<uint64_t>(headEnd - headBegin);
             for (int64_t head = headBegin; head < headEnd; ++head, ++generation) {
-                if ((generation & 1U) != subBlockIdx_) continue;
+                if ((generation & 1U) != subBlockIdx_)
+                    continue;
                 const uint32_t slot = static_cast<uint32_t>((generation >> 1U) & 1U);
+
+                // 7. Tza 残差交接：补齐低位，通知 Cube Stage4 可生成 dAkk。
                 RunTzaResidual(static_cast<uint32_t>(head - headBegin), slot);
             }
-            // Drain StateAndBase egress before Stage5 reuses [16,144) KiB.
-            // Retained q/k/exp/beta above that range remain live.
+            // Stage5 复用 [16,144) KiB 前排空 StateAndBase 写回；
+            // 高地址的 q/k/E/beta 仍保留给后续计算。
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
 
+            // 8. 按 32 行推进 Stage5→Stage7/9/10；各带处理完再复用同一操作数工作区。
             for (uint32_t rowBegin = 0; rowBegin < chunk.validRows;
                  rowBegin += KDA_FINALIZE_INTRA_ROWS) {
                 generation -= static_cast<uint64_t>(headEnd - headBegin);
                 for (int64_t head = headBegin; head < headEnd; ++head, ++generation) {
-                    if ((generation & 1U) != subBlockIdx_) continue;
+                    if ((generation & 1U) != subBlockIdx_)
+                        continue;
                     const uint32_t slot = static_cast<uint32_t>((generation >> 1U) & 1U);
                     const uint32_t owner = static_cast<uint32_t>(head - headBegin);
                     RunStage5(chunk, head, owner, slot, logicalCore, groupGeneration, rowBegin);
@@ -1105,10 +1169,13 @@ public:
             }
             generation -= static_cast<uint64_t>(headEnd - headBegin);
             for (int64_t head = headBegin; head < headEnd; ++head, ++generation) {
-                if ((generation & 1U) != subBlockIdx_) continue;
+                if ((generation & 1U) != subBlockIdx_)
+                    continue;
                 const uint32_t owner = static_cast<uint32_t>(head - headBegin);
                 const uint32_t slot = static_cast<uint32_t>((generation >> 1U) & 1U);
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
+
+                // 9. 所有带的 dg 完成后执行 Stage11，输出 d_g 和参数梯度部分和。
                 RunStage11(chunk, chunkTask, head,
                     FinalizeWorkspaceSlotBase(logicalCore, groupGeneration, owner));
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
@@ -1116,6 +1183,8 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage7Mte3ToMte2_);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage7Mte3ToMte2_);
         }
+
+        // 10. 排空末次本地事件；跨核参数归约在 kernel 入口的 SyncAll 之后执行。
         for (uint32_t slot = 0; slot < KDA_FINALIZE_AIV_SLOTS; ++slot) {
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
         }
@@ -1126,11 +1195,13 @@ public:
     }
 
 private:
+    // Stage11：收齐本 chunk 的 dg，完成 gate 反向与参数部分和。
     __aicore__ inline void RunStage11(
         const FinalizeChunkInfo &chunk, int64_t chunkTask, int64_t head, uint64_t ws)
     {
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage7Mte3ToMte2_);
-        // Assemble both completed bands for the unchanged full-chunk scan.
+
+        // 1. 所有有效分带都已更新 workspace 的 dg；此处收齐完整 chunk，执行逆序扫描。
         auto dg = UbBytes(KDA_FINALIZE_UB_DG).ReinterpretCast<float>();
         auto raw = UbBytes(176 * 1024).ReinterpretCast<float>();
         auto bias = UbBytes(160 * 1024).ReinterpretCast<float>();
@@ -1147,6 +1218,8 @@ private:
             AscendC::DataCopyPadExtParams<DTYPE_A_LOG>{false, 0, 0, static_cast<DTYPE_A_LOG>(0)});
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[0]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[0]);
+
+        // 2. VF 逆序扫描 dg，计算 raw gate 梯度及 a_log/dt_bias 的部分和。
         FinalizeStage11VF<DTYPE_A_LOG>(
             reinterpret_cast<__ubuf__ float *>(dg.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(raw.GetPhyAddr()),
@@ -1156,75 +1229,94 @@ private:
             reinterpret_cast<__ubuf__ float *>(db.GetPhyAddr()), chunk.validRows, tiling_->lowerBound);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
+
+        // 3. d_g 写最终输出；部分和按 [head,chunk] 独立写入，不使用原子累加。
         const int64_t partial = head * tiling_->totalChunkNum + chunkTask;
         AscendC::DataCopy(dG_[token], dg, elems);
         AscendC::DataCopyPad(workspace_[tiling_->gatePartialOffset].ReinterpretCast<float>()[partial * 8], da,
             AscendC::DataCopyExtParams{1, sizeof(float), 0, 0, 0});
         AscendC::DataCopy(workspace_[tiling_->dtBiasPartialOffset].ReinterpretCast<float>()[partial * 128], db, 128);
+
+        // 4. 写回后归还共享 UB，供后续任务复用。
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage7Mte3ToMte2_);
     }
 
+    // 按字节偏移取得 UB 视图；实际占用范围由调用阶段的生命周期约束。
     __aicore__ inline AscendC::LocalTensor<uint8_t> UbBytes(uint32_t offset)
     {
         return ub_[offset];
     }
 
+    // 按字节偏移取得 L1 的 BF16 视图；只有取得对应 FREE 后才允许写入。
     __aicore__ inline AscendC::LocalTensor<bfloat16_t> L1Bf16(uint32_t offset)
     {
         AscendC::LocalTensor<uint8_t> l1(AscendC::TPosition::A1, 0, 512 * 1024);
         return l1[offset].ReinterpretCast<bfloat16_t>();
     }
 
+    // Stage3→4 交接：Tza 高位由 Cube 写 L1，AIV 从 FP32 原值补出低位。
     __aicore__ inline void RunTzaResidual(uint32_t owner, uint32_t slot)
     {
-        // StatePre egress and the following BaseFinalize loads share this UB.
+        // 1. 等共享 UB 的 StateAndBase 写回完成，再允许 Cube 写入 Tza 原值。
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
         AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE3>(KDA_FINALIZE_ZV_FREE_BASE + slot);
         AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(KDA_FINALIZE_ZW_READY_BASE + slot);
         auto raw = UbBytes(0).ReinterpretCast<float>();
         auto low = UbBytes(16 * 1024).ReinterpretCast<bfloat16_t>();
+
+        // 2. 原值到达后计算 BF16 舍入残差，输出 NZ 低位。
         FinalizeResidualVF(reinterpret_cast<__ubuf__ bfloat16_t *>(low.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(raw.GetPhyAddr()), 64);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
+
+        // 3. 将低位送入本 owner 的 Tza L1 槽；搬出完成后允许覆盖 UB。
         AscendC::DataCopy(L1Bf16(416 * 1024 + (owner * 2 + 1) * KDA_FINALIZE_MATRIX_BF16_BYTES),
             low, KDA_FINALIZE_MATRIX_ELEMS);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
+
+        // 4. 同一通知同时表示 Tza 高低位可读、dAkk 目标 UB 可写。
         AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE3>(KDA_FINALIZE_KE_READY_BASE + slot);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
     }
 
+    // Stage0→1 交接：补齐 dW 低位，再发布 dW/kE 联合 READY。
     __aicore__ inline void RunDwResidual(uint32_t owner, uint32_t slot)
     {
-        // Hold the next phase's MTE2 credit until the overlapping raw UB is consumed.
+        // 1. 占用共享 UB，等 Cube 的 FP32 dW 到达，期间禁止下一阶段搬入覆盖。
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage0Mte3ToMte2_);
         AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(KDA_FINALIZE_ZB_READY_BASE + slot);
         auto raw = UbBytes(64 * 1024).ReinterpretCast<float>();
         auto low = UbBytes(96 * 1024).ReinterpretCast<bfloat16_t>();
+
+        // 2. 用 Cube 传来的 FP32 dW 计算低位，保持与 L1 高位相同的舍入规则。
         FinalizeDwResidualVF(reinterpret_cast<__ubuf__ bfloat16_t *>(low.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(raw.GetPhyAddr()));
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
+
+        // 3. 低位写入 owner 的 L1 槽，等 MTE3 读完共享 UB。
         AscendC::DataCopy(L1Bf16(64 * 1024 + owner * KDA_FINALIZE_VECTOR_BF16_BYTES), low, 8192);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
+
+        // 4. 发布高低位 READY，并归还共享 UB 的本地 FREE。
         AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE3>(KDA_FINALIZE_KE_READY_BASE + slot);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage0Mte3ToMte2_);
     }
 
+    // Stage0 / Vector：载入状态与 gate，生成片上 E/kE 和状态归约。
     __aicore__ inline void RunStage0(
         const FinalizeChunkInfo &chunk, int64_t head, uint32_t owner,
         uint32_t slot, int64_t coreIdx, uint64_t groupGeneration)
     {
-        // Stage0 reinterprets the same physical UB range used by the previous
-        // work task's zB source.  Do not let MTE2 overwrite it until MTE3 has
-        // finished the UB->L1 handoff.
+        // 1. 等前序 Zb 的 UB→L1 读取结束，再复用相同地址搬入本 head 的输入。
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
-        // All heads on this AIV share the Stage0 UB layout.  Do not let this
-        // head's MTE2/V overwrite the preceding head while its MTE3
-        // workspace stores are still reading that layout.
+        // 共享 UB 还受阶段级通知保护；上一任务的 workspace 写回结束后才能覆写。
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage0Mte3ToMte2_);
+
+        // 2. 绑定共享 UB；分别按 h 的 chunk-major 与 dh 的 head-major 载入。
         auto kUb = UbBytes(KDA_FINALIZE_UB_K).ReinterpretCast<bfloat16_t>();
         auto gkUb = UbBytes(48 * 1024).ReinterpretCast<float>();
         auto hUb = UbBytes(80 * 1024).ReinterpretCast<bfloat16_t>();
@@ -1244,6 +1336,8 @@ private:
         AscendC::DataCopy(dhUb, dh_[state], KDA_FINALIZE_STATE_ELEMS);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
+
+        // 3. VF 生成 E、kE 高低位、g_last、r_h；仅后两项写入 workspace。
         FinalizeStage0VF(
             reinterpret_cast<__ubuf__ bfloat16_t *>(kENd.GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(lowNd.GetPhyAddr()),
@@ -1265,18 +1359,18 @@ private:
         AscendC::DataCopy(wsRh, rH, KDA_FINALIZE_DIM);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage0Mte3ToMte2_);
 
-        // Direct UB->L1 egress for Stage1.  The fixed destination is the
-        // corresponding owner in the two-head kE resident window.
+        // 4. 将 kE 高低位直接写入本 owner 的 L1 槽，供 Cube Stage1 消费。
         auto kEL1 = L1Bf16(96 * 1024 + owner * KDA_FINALIZE_VECTOR_BF16_BYTES);
         AscendC::DataCopy(kEL1, kENd, 8192);
         AscendC::DataCopy(L1Bf16(128 * 1024 + owner * KDA_FINALIZE_VECTOR_BF16_BYTES), lowNd, 8192);
-        // Only after all Stage0 uses of these physical ranges are drained may
-        // AIC overwrite them with zV/zW.
+        // 当前 UB→L1 搬出结束后，Process 才发布 FREE，允许 Cube 覆写重叠区。
     }
 
+    // Stage2 / Vector：消费 FP32 zV/zW，在 UB 构造 Zb 并直接送 L1。
     __aicore__ inline void RunStage2(
         const FinalizeChunkInfo &chunk, int64_t head, uint32_t owner, uint32_t slot)
     {
+        // 1. 等共享区可用与 Cube 的 zV/zW READY，再绑定源、目标地址。
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage0Mte3ToMte2_);
         AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(
             KDA_FINALIZE_ZV_READY_BASE + slot);
@@ -1289,10 +1383,9 @@ private:
         auto betaUb = UbBytes(KDA_FINALIZE_UB_BETA).ReinterpretCast<DTYPE_BETA>();
         auto zBNd = UbBytes(KDA_FINALIZE_UB_WORK).ReinterpretCast<bfloat16_t>();
         const int64_t betaOffset = FinalizeTokenOffset(*tiling_, chunk, head, 1);
-        // beta is a scalar per token.  The last chunk is not necessarily
-        // 32-byte aligned. DMA pads only to a block boundary; Stage2 masks
-        // inactive beta lanes. Padding all the way to 64 can exceed the
-        // instruction's per-side padding limit on a short tail.
+
+        // 2. beta 每 token 一个标量，仅载入有效行；短尾按 DMA 块对齐，VF 屏蔽无效 lane。
+        // 不额外补满 64 行，以免超过单侧 padding 限制。
         AscendC::DataCopyExtParams betaCopy{
             1, static_cast<uint32_t>(chunk.validRows * sizeof(DTYPE_BETA)), 0, 0, 0};
         AscendC::DataCopyPadExtParams<DTYPE_BETA> betaPad{
@@ -1302,6 +1395,8 @@ private:
         AscendC::DataCopyPad(betaUb, beta_[betaOffset], betaCopy, betaPad);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
+
+        // 3. 计算严格下三角 Zb，并生成高低位 NZ 平面。
         FinalizeStage2VF(
             reinterpret_cast<__ubuf__ bfloat16_t *>(zBNd.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(zV.GetPhyAddr()),
@@ -1310,6 +1405,8 @@ private:
             static_cast<uint16_t>(chunk.validRows));
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
+
+        // 4. 除首次发布外，先消费旧 Zb 的 FREE；再写 L1 并通知 Cube Stage3。
         auto zBL1 = L1Bf16(160 * 1024 + owner * 2 * KDA_FINALIZE_MATRIX_BF16_BYTES);
         if (zBPublishCount_[slot] != 0U) {
             AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE3>(
@@ -1319,20 +1416,23 @@ private:
         AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE3>(
             KDA_FINALIZE_ZB_READY_BASE + slot);
         ++zBPublishCount_[slot];
+
+        // 5. 等 UB→L1 的读取结束，归还本地共享区供 StateAndBase 使用。
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage0Mte3ToMte2_);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
     }
 
+    // Stage3/4 / Vector：整 chunk 原位计算状态/base；两阶段间不把临时结果往返 GM。
     __aicore__ inline void RunStateAndBase(
         const FinalizeChunkInfo &chunk, int64_t head, uint32_t owner,
         uint32_t slot, int64_t coreIdx, uint64_t groupGeneration)
     {
-        // The shared StatePre UB has two future writers: MTE2 and VF.  This
-        // phase-level credit prevents the next head's MTE2 from overtaking
-        // the preceding head's MTE3->V ownership barrier.
+        // 1. 取得共享 UB 所有权；阶段通知同时保护后续 MTE2 与 VF 两类写者。
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
+
+        // 2. 绑定 UB，载入 dk_state_raw、DVb、dq_raw、gk/v 和状态归约。
         auto dkState = UbBytes(0).ReinterpretCast<float>();
         auto dvb = UbBytes(32 * 1024).ReinterpretCast<float>();
         auto dqRaw = UbBytes(64 * 1024).ReinterpretCast<float>();
@@ -1365,6 +1465,8 @@ private:
         AscendC::DataCopy(rH, wsRh, KDA_FINALIZE_DIM);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
+
+        // 3. StatePre 生成 dk_state、dv、dq_base、db_v、gate_state。
         FinalizeStage3VF(
             reinterpret_cast<__ubuf__ float *>(dkState.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(dvb.GetPhyAddr()),
@@ -1380,9 +1482,9 @@ private:
             reinterpret_cast<__ubuf__ float *>(gkLast.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(rH.GetPhyAddr()),
             tiling_->scale, static_cast<uint16_t>(chunk.validRows));
-        // Stage4 consumes the FP32 Stage3 results directly from UB.
-        // gk and v are dead after StatePre; reuse them for dKgb_raw and q.
-        // V->MTE2 protects the last reads of those inputs before DMA writes.
+
+        // 4. Stage4 直接消费 UB 中的 FP32 状态结果；gk/v 已读完，改作 dKgb_raw/q。
+        // V→MTE2 保护旧输入的最后一次读取，之后才提交覆盖搬运。
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_);
         auto dKgbRaw = gk;
@@ -1392,6 +1494,8 @@ private:
         AscendC::DataCopy(q, q_[token], vectorElems);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
+
+        // 5. BaseFinalize 合并 dKgb；三块 FP32 结果写回循环 workspace，dv 写最终输出。
         FinalizeStage4VF(
             reinterpret_cast<__ubuf__ float *>(dkState.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(dvb.GetPhyAddr()),
@@ -1414,34 +1518,33 @@ private:
             1, static_cast<uint32_t>(chunk.validRows * sizeof(float)), 0, 0, 0};
         AscendC::DataCopyPad(wsDbV, dbV, dbCopy);
         AscendC::DataCopy(dv_[token], dv, vectorElems);
-        // StatePre has one shared 213-KiB UB working set, not per-slot
-        // ping/pong storage.  Drain every egress before the next head lets VF
-        // overwrite it; this is the same MTE3->V ownership rule used by the
-        // mature fwd_h implementation.
+
+        // 6. 此阶段使用一套共享工作区；写回完全结束后才允许下一使用者覆写，
+        // 不能把 slot 事件误认为两套独立的 StateAndBase 缓冲区。
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
     }
 
+    // Stage5 / Vector：当前带准备五项 L1 操作数，跨带保留 q/k/beta 与 dA 对角项。
     __aicore__ inline void RunStage5(
         const FinalizeChunkInfo &chunk, int64_t head, uint32_t owner,
         uint32_t slot, int64_t coreIdx, uint64_t groupGeneration, uint32_t rowBegin)
     {
+        // 1. 首带等待 dAkk_raw；其余带复用已有 dA 高低位，不重复等待该 READY。
         if (rowBegin == 0) {
             AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(
                 KDA_FINALIZE_DAKK_READY_BASE + slot);
         }
-        // Protect this ping/pong egress from its previous MTE3 reader while
-        // allowing the other slot's MTE3 to overlap the current VF.
+        // 先等当前 slot 的旧 MTE3 读者完成，确保本次搬入不会覆盖尚在搬出的数据。
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
-        // Retained q/k/exp/beta stay disjoint from Stage5 outputs.
-        // Keep the phase credit protecting reuse in the next head window.
+        // q/k/E/beta 与本阶段输出分离；阶段通知保护下次窗口的共享区复用。
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stage5VToMte2_);
 
         auto dAkkRaw = UbBytes(KDA_FINALIZE_UB_DAKK_RAW).ReinterpretCast<float>();
-        // Two-head windows give each AIV one head. The MTE3 handoff drains
-        // before this phase is reused, so one FP32 egress region suffices.
+        // 双头窗口每 AIV 一头；共享区在前序 MTE3 读完后复用，
+        // 下面是同一工作区的不同视图，不是两套独立物理缓冲。
         auto dAqkBf16 = UbBytes(16 * 1024).ReinterpretCast<FinalizeLocalType>();
         auto dAkkNd = UbBytes(32 * 1024).ReinterpretCast<FinalizeLocalType>();
         auto kNegNd = UbBytes(48 * 1024).ReinterpretCast<FinalizeLocalType>();
@@ -1463,13 +1566,16 @@ private:
         const int64_t token = FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_DIM);
         const uint32_t vectorElems = chunk.validRows * KDA_FINALIZE_DIM;
         const uint64_t ws = FinalizeWorkspaceSlotBase(coreIdx, groupGeneration, owner);
-        // State/Base have consumed the unshifted exp2(g). Reload the original
-        // log gates: rebasing an already-underflowed exp2 value cannot recover it.
+
+        // 2. 重新载入原始 gk；已下溢的 exp2(gk) 无法通过平移恢复。
+        // exp2Gk 变量此时表示原始 gk，VF 才将当前带改写为 exp2(gk-center)。
         AscendC::DataCopy(exp2Gk, gk_[token], vectorElems);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         auto center = UbBytes(48 * 1024).ReinterpretCast<float>();
         const uint32_t rowEnd = FinalizeMin(rowBegin + KDA_FINALIZE_INTRA_ROWS, chunk.validRows);
+
+        // 3. 取当前带首末 gate 的均值作为中心，生成因果范围内的平移操作数。
         FinalizeIntraCenterVF(
             reinterpret_cast<__ubuf__ float *>(exp2Gk.GetPhyAddr()) + rowBegin * 128,
             reinterpret_cast<__ubuf__ float *>(center.GetPhyAddr()),
@@ -1486,12 +1592,14 @@ private:
             reinterpret_cast<__ubuf__ DTYPE_BETA *>(beta.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(center.GetPhyAddr()),
             static_cast<uint16_t>(chunk.validRows), rowBegin, rowEnd);
+
+        // 4. 首带提取 dAqk 对角并生成严格下三角高低位；短尾清零所有操作数 padding。
         if (rowBegin == 0) {
-        FinalizeStage5DaqkVF(
-            reinterpret_cast<__ubuf__ FinalizeLocalType *>(dAqkBf16.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(dAqkFp32.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(UbBytes(210 * 1024).GetPhyAddr()),
-            static_cast<uint16_t>(chunk.validRows));
+            FinalizeStage5DaqkVF(
+                reinterpret_cast<__ubuf__ FinalizeLocalType *>(dAqkBf16.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(dAqkFp32.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(UbBytes(210 * 1024).GetPhyAddr()),
+                static_cast<uint16_t>(chunk.validRows));
         }
         if (chunk.validRows < KDA_FINALIZE_CHUNK) {
             FinalizeStage5TailVF(
@@ -1505,15 +1613,16 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
 
+        // 5. 首带发布 dAqk/dAkk，每带更新 kNeg/qPos/bkPos；五项全部直接写 L1。
         auto local = L1Bf16(
             KDA_FINALIZE_LOCAL_BASE + owner * KDA_FINALIZE_LOCAL_BYTES).ReinterpretCast<FinalizeLocalType>();
         if (rowBegin == 0) {
-        AscendC::DataCopy(
-            local[KDA_FINALIZE_LOCAL_DAQK / sizeof(FinalizeLocalType)], dAqkBf16,
-            2 * KDA_FINALIZE_MATRIX_ELEMS);
-        AscendC::DataCopy(
-            local[KDA_FINALIZE_LOCAL_DAKK / sizeof(FinalizeLocalType)], dAkkNd,
-            2 * KDA_FINALIZE_MATRIX_ELEMS);
+            AscendC::DataCopy(
+                local[KDA_FINALIZE_LOCAL_DAQK / sizeof(FinalizeLocalType)], dAqkBf16,
+                2 * KDA_FINALIZE_MATRIX_ELEMS);
+            AscendC::DataCopy(
+                local[KDA_FINALIZE_LOCAL_DAKK / sizeof(FinalizeLocalType)], dAkkNd,
+                2 * KDA_FINALIZE_MATRIX_ELEMS);
         }
         AscendC::DataCopy(local[KDA_FINALIZE_LOCAL_K_NEG / sizeof(FinalizeLocalType)],
                           kNegNd, 2 * KDA_FINALIZE_VECTOR_ELEMS);
@@ -1523,17 +1632,20 @@ private:
                           bkPosNd, 2 * KDA_FINALIZE_VECTOR_ELEMS);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
+
+        // 6. 搬出完成后发布 LOCAL_READY，允许 Cube 开始本带 Stage6/8。
         AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE3>(
             KDA_FINALIZE_LOCAL_READY_BASE + slot);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
     }
 
-    // Complete each band while its Cube results are resident. Only the
-    // accumulated gate gradient crosses GM for the full-chunk reverse scan.
+    // Stage7/9/10 / Vector：趁 Cube 结果仍在 UB 中完成当前带 dq/dk/db。
+    // 更新后的 dg 写回 workspace，供 Stage11 收齐完整 chunk 后扫描。
     __aicore__ inline void RunIntraBandResults(
         const FinalizeChunkInfo &chunk, int64_t head, uint32_t owner, uint32_t slot,
         int64_t coreIdx, uint64_t groupGeneration, uint32_t rowBegin)
     {
+        // 1. 等本带操作数搬出结束，绑定结果区并载入对应 base 与可选 rstd。
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
         const uint32_t rows = FinalizeMin(KDA_FINALIZE_INTRA_ROWS, chunk.validRows - rowBegin);
         const uint32_t elems = rows * KDA_FINALIZE_DIM;
@@ -1543,8 +1655,8 @@ private:
         auto result = UbBytes(slot * 32 * 1024).ReinterpretCast<float>();
         auto left = result[KDA_FINALIZE_INTRA_ROWS * KDA_FINALIZE_DIM];
         auto right = UbBytes(64 * 1024 + slot * 32 * 1024).ReinterpretCast<float>();
-        // For either result slot, [112,144) and [216,248) KiB are free once
-        // Stage5's L1 publication has drained. Retain q/k for the next band.
+        // Stage5 搬出结束后，[112,144) 与 [216,248) KiB 可复用。
+        // q/k 保留给下一带，输出使用独立临时区，不原位覆盖 q/k。
         auto dg = UbBytes(112 * 1024).ReinterpretCast<float>();
         auto dqBase = UbBytes(128 * 1024).ReinterpretCast<float>();
         auto dkBase = UbBytes(216 * 1024).ReinterpretCast<float>();
@@ -1573,6 +1685,8 @@ private:
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
+
+        // 2. 发布 Stage6 目标 UB 的 FREE，收到 [dq_local; left] 后执行 Stage7。
         AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE3>(
             KDA_FINALIZE_DQ_LOCAL_FREE_BASE + slot);
         AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(
@@ -1587,6 +1701,8 @@ private:
             reinterpret_cast<__ubuf__ float *>(qRstd.GetPhyAddr()), tiling_->hasQkL2Norm, rows,
             reinterpret_cast<__ubuf__ float *>(diagonal.GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()));
+
+        // 3. 允许 Cube 写 right；收到 Stage8 READY 后执行 Stage9 更新 dk/db 增量与 dg。
         AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(KDA_FINALIZE_KE_READY_BASE + slot);
         AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(KDA_FINALIZE_ZW_READY_BASE + slot);
         FinalizeStage9VF(
@@ -1599,6 +1715,8 @@ private:
             reinterpret_cast<__ubuf__ DTYPE_BETA *>(beta.GetPhyAddr()), rows,
             reinterpret_cast<__ubuf__ float *>(diagonal.GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(q.GetPhyAddr()));
+
+        // 4. Stage10 合并 dk/db base，执行可选 K 归一化反向。
         FinalizeStage10VF(
             reinterpret_cast<__ubuf__ bfloat16_t *>(dkOut.GetPhyAddr()),
             reinterpret_cast<__ubuf__ DTYPE_BETA *>(dbOut.GetPhyAddr()),
@@ -1610,12 +1728,15 @@ private:
             reinterpret_cast<__ubuf__ float *>(kRstd.GetPhyAddr()), tiling_->hasQkL2Norm, rows);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
+
+        // 5. 写最终 dq/dk/db，将本带 dg 写回 workspace 供完整 chunk 扫描。
         AscendC::DataCopy(dq_[token], dqOut, elems);
         AscendC::DataCopy(dk_[token], dkOut, elems);
         AscendC::DataCopyPad(dBeta_[token / KDA_FINALIZE_DIM], dbOut,
             AscendC::DataCopyExtParams{1, static_cast<uint32_t>(rows * sizeof(DTYPE_BETA)), 0, 0, 0});
         AscendC::DataCopy(workspace_[ws + KDA_FINALIZE_WS_DG_BASE].ReinterpretCast<float>()[offset], dg, elems);
-        // The next Stage5 uses these UB ranges. Preserve all output reads.
+
+        // 6. 排空所有输出的 MTE3 读取，再允许下一带 Stage5 覆写共享 UB。
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
