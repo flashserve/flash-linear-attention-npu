@@ -824,7 +824,7 @@ def npu_chunk_bwd_dv_local(q, k, d_o, g, scale, chunk_size, *, g_gamma=None,
     )
 
 
-def npu_chunk_delta_h_bwd_preprocess(q, k, w, d_o, dv, scale, chunk_size, *,
+def npu_pre_process_bwd_kernel_merged(q, k, w, d_o, dv, scale, chunk_size, *,
                                      g=None, gk=None, cu_seqlens=None):
     """CP backward state preprocess: ``dhm = [E_r | P_r]`` (FP32 ``[Hv, K, V+K]``).
 
@@ -834,7 +834,7 @@ def npu_chunk_delta_h_bwd_preprocess(q, k, w, d_o, dv, scale, chunk_size, *,
     gate forms; ``cu_seqlens`` carries the single packed segment.
     """
 
-    return _op("npu_chunk_delta_h_bwd_preprocess")(
+    return _op("npu_pre_process_bwd_kernel_merged")(
         q, k, w, d_o, dv, g, gk, _host_ints(cu_seqlens),
         float(scale), int(chunk_size), _current_stream_ptr(),
     )
