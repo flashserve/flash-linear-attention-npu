@@ -85,8 +85,12 @@ constexpr uint32_t KDA_FINALIZE_UB_EXP2_GK = 176 * 1024;
 constexpr uint32_t KDA_FINALIZE_UB_BETA = 208 * 1024;
 // Delta survives Stage9 -> Stage10, including the intervening gate stage.
 constexpr uint32_t KDA_FINALIZE_UB_DB_DELTA = 209 * 1024;
-constexpr uint32_t KDA_FINALIZE_UB_STAGE7_Q_RSTD = 212 * 1024;
-// Stage7 -> Stage9 -> Stage11. Reuses Stage5's dead dAqk input region.
+// Per-band scalar working set: dbBase 211K, dbDelta 212K, qRstd 213K,
+// kRstd 214K, dbOut 215K (see RunIntraBandResults).
+constexpr uint32_t KDA_FINALIZE_UB_STAGE7_Q_RSTD = 213 * 1024;
+// Resident dg full frame: band0 Stage7 -> band1 Stage9 -> Stage11. Reuses
+// Stage5's dead dAqk input region; dAqkFp32 is band0-only and its V reads
+// drain through the Stage5 MTE3 publication before band0's dg MTE2 load.
 constexpr uint32_t KDA_FINALIZE_UB_DG = 216 * 1024;
 
 // Two 128-KiB owner slots occupy [64,320) KiB of L1. This range is disjoint
@@ -195,7 +199,7 @@ __aicore__ inline int64_t FinalizeTokenOffset(
     return ((chunk.b * tiling.NV + head) * tiling.T + chunk.tokenStart) * width;
 }
 
-// Saved h is chunk-major; dhu's internal dh remains head-major.
+// Saved h and dhu-produced dh are both NT-first (chunk-major).
 __aicore__ inline int64_t FinalizeHOffset(
     const ChunkKdaBwdFinalizeTilingData &tiling, const FinalizeChunkInfo &chunk,
     int64_t head)
@@ -246,8 +250,9 @@ static_assert(KDA_FINALIZE_UB_DB_DELTA + KDA_FINALIZE_AIV_SLOTS * 256 <=
               "Beta deltas overlap Q normalization scratch.");
 static_assert(KDA_FINALIZE_UB_DG + KDA_FINALIZE_VECTOR_FP32_BYTES <= KDA_FINALIZE_UB_BYTES,
               "Retained dg exceeds A5 UB.");
-static_assert(KDA_FINALIZE_UB_STAGE7_Q_RSTD + 256 <= KDA_FINALIZE_UB_BYTES,
-              "Stage7 working set exceeds A5 UB.");
+// qRstd 213K / kRstd 214K / dbOut 215K each hold up to 64 scalars.
+static_assert(KDA_FINALIZE_UB_STAGE7_Q_RSTD + 3 * 1024 <= KDA_FINALIZE_UB_DG,
+              "Band scalar working set overlaps retained dg.");
 static_assert(KDA_FINALIZE_HEADS_PER_WINDOW * KDA_FINALIZE_LOCAL_BYTES <= 256 * 1024,
               "Stage5 paired LocalOperand window exceeds 256 KiB.");
 static_assert(KDA_FINALIZE_LOCAL_BASE +

@@ -640,7 +640,6 @@ __simd_vf__ inline void FinalizeStage7VF(
     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
     MaskReg fpMask = CreateMask<float, MaskPattern::ALL>();
     MaskReg bfMask = CreateMask<half, MaskPattern::ALL>();
-    MaskReg scalarMask = CreateMask<float, MaskPattern::VL1>();
     for (uint16_t row = 0; row < validRows; ++row) {
         const uint32_t offset = static_cast<uint32_t>(row) * KDA_FINALIZE_DIM;
         RegTensor<float> raw0;
@@ -703,12 +702,12 @@ __simd_vf__ inline void FinalizeStage7VF(
             Add(product0, product0, product1, fpMask);
             ReduceSum(dot, product0, fpMask);
             DataCopy<float, LoadDist::DIST_BRC_B32>(rstd, qRstd + row);
-            DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
-                qRstd + row, dot, scalarMask);
-            LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
-            DataCopy<float, LoadDist::DIST_BRC_B32>(dot, qRstd + row);
-            Mul(product0, q0, dot, fpMask);
-            Mul(product1, q1, dot, fpMask);
+            // ReduceSum only guarantees lane 0; broadcast it in-register
+            // instead of a UB scratch round trip.
+            RegTensor<float> dotBrc;
+            Duplicate(dotBrc, dot, fpMask);
+            Mul(product0, q0, dotBrc, fpMask);
+            Mul(product1, q1, dotBrc, fpMask);
             Sub(dq0, dq0, product0, fpMask);
             Sub(dq1, dq1, product1, fpMask);
             Mul(dq0, dq0, rstd, fpMask);
@@ -797,7 +796,6 @@ __simd_vf__ inline void FinalizeStage10VF(
     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
     MaskReg mask = CreateMask<float, MaskPattern::ALL>();
     MaskReg bfMask = CreateMask<half, MaskPattern::ALL>();
-    MaskReg one = CreateMask<float, MaskPattern::VL1>();
     for (uint16_t row = 0; row < rows; ++row) {
         uint32_t offset = row * KDA_FINALIZE_DIM;
         RegTensor<float> d0, d1, b0, b1;
@@ -815,11 +813,12 @@ __simd_vf__ inline void FinalizeStage10VF(
             Add(p0, p0, p1, mask);
             ReduceSum(dot, p0, mask);
             DataCopy<float, LoadDist::DIST_BRC_B32>(rs, rstd + row);
-            DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(rstd + row, dot, one);
-            LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
-            DataCopy<float, LoadDist::DIST_BRC_B32>(dot, rstd + row);
-            Mul(p0, k0, dot, mask);
-            Mul(p1, k1, dot, mask);
+            // ReduceSum only guarantees lane 0; broadcast it in-register
+            // instead of a UB scratch round trip.
+            RegTensor<float> dotBrc;
+            Duplicate(dotBrc, dot, mask);
+            Mul(p0, k0, dotBrc, mask);
+            Mul(p1, k1, dotBrc, mask);
             Sub(d0, d0, p0, mask);
             Sub(d1, d1, p1, mask);
             Mul(d0, d0, rs, mask);
@@ -1106,11 +1105,9 @@ public:
             generation -= static_cast<uint64_t>(headEnd - headBegin);
             for (int64_t head = headBegin; head < headEnd; ++head, ++generation) {
                 if ((generation & 1U) != subBlockIdx_) continue;
-                const uint32_t owner = static_cast<uint32_t>(head - headBegin);
                 const uint32_t slot = static_cast<uint32_t>((generation >> 1U) & 1U);
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
-                RunStage11(chunk, chunkTask, head,
-                    FinalizeWorkspaceSlotBase(logicalCore, groupGeneration, owner));
+                RunStage11(chunk, chunkTask, head);
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
             }
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage7Mte3ToMte2_);
@@ -1127,10 +1124,11 @@ public:
 
 private:
     __aicore__ inline void RunStage11(
-        const FinalizeChunkInfo &chunk, int64_t chunkTask, int64_t head, uint64_t ws)
+        const FinalizeChunkInfo &chunk, int64_t chunkTask, int64_t head)
     {
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage7Mte3ToMte2_);
-        // Assemble both completed bands for the unchanged full-chunk scan.
+        // Both bands leave the complete dg frame resident at 216 KiB; scan it
+        // in place for the unchanged full-chunk reverse scan.
         auto dg = UbBytes(KDA_FINALIZE_UB_DG).ReinterpretCast<float>();
         auto raw = UbBytes(176 * 1024).ReinterpretCast<float>();
         auto bias = UbBytes(160 * 1024).ReinterpretCast<float>();
@@ -1139,7 +1137,6 @@ private:
         auto db = UbBytes(163 * 1024).ReinterpretCast<float>();
         const int64_t token = FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_DIM);
         const uint32_t elems = chunk.validRows * KDA_FINALIZE_DIM;
-        AscendC::DataCopy(dg, workspace_[ws + KDA_FINALIZE_WS_DG_BASE].ReinterpretCast<float>(), elems);
         AscendC::DataCopy(raw, rawG_[token], elems);
         AscendC::DataCopy(bias, dtBias_[head * KDA_FINALIZE_DIM], KDA_FINALIZE_DIM);
         AscendC::DataCopyPad(log, aLog_[head],
@@ -1160,7 +1157,8 @@ private:
         AscendC::DataCopy(dG_[token], dg, elems);
         AscendC::DataCopyPad(workspace_[tiling_->gatePartialOffset].ReinterpretCast<float>()[partial * 8], da,
             AscendC::DataCopyExtParams{1, sizeof(float), 0, 0, 0});
-        AscendC::DataCopy(workspace_[tiling_->dtBiasPartialOffset].ReinterpretCast<float>()[partial * 128], db, 128);
+        AscendC::DataCopy(
+            workspace_[tiling_->dtBiasPartialOffset].ReinterpretCast<float>()[partial * 128], db, 128);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage7Mte3ToMte2_);
     }
 
@@ -1528,8 +1526,8 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
     }
 
-    // Complete each band while its Cube results are resident. Only the
-    // accumulated gate gradient crosses GM for the full-chunk reverse scan.
+    // Complete each band while its Cube results are resident. dg stays on
+    // chip from band0's load through the Stage11 full-chunk reverse scan.
     __aicore__ inline void RunIntraBandResults(
         const FinalizeChunkInfo &chunk, int64_t head, uint32_t owner, uint32_t slot,
         int64_t coreIdx, uint64_t groupGeneration, uint32_t rowBegin)
@@ -1543,13 +1541,19 @@ private:
         auto result = UbBytes(slot * 32 * 1024).ReinterpretCast<float>();
         auto left = result[KDA_FINALIZE_INTRA_ROWS * KDA_FINALIZE_DIM];
         auto right = UbBytes(64 * 1024 + slot * 32 * 1024).ReinterpretCast<float>();
-        // For either result slot, [112,144) and [216,248) KiB are free once
-        // Stage5's L1 publication has drained. Retain q/k for the next band.
-        auto dg = UbBytes(112 * 1024).ReinterpretCast<float>();
+        // dg is loaded as one full frame at 216 KiB by band0 and stays
+        // resident through Stage11; band1 must not reload it. 216 KiB reuse
+        // contract: Stage5's dAqkFp32 is band0-only, and its V reads drain
+        // through the Stage5 MTE3 publication before this MTE2 load.
+        auto dg = UbBytes(KDA_FINALIZE_UB_DG).ReinterpretCast<float>();
         auto dqBase = UbBytes(128 * 1024).ReinterpretCast<float>();
-        auto dkBase = UbBytes(216 * 1024).ReinterpretCast<float>();
-        auto dkOut = UbBytes(232 * 1024).ReinterpretCast<bfloat16_t>();
-        auto dqOut = UbBytes(240 * 1024).ReinterpretCast<bfloat16_t>();
+        auto dkBase = UbBytes(112 * 1024).ReinterpretCast<float>();
+        // dqOut reuses this slot's result area and dkOut the right area; both
+        // cube handoffs are dead once Stage7/Stage9 have read them. The
+        // DQ_LOCAL_FREE / KE_READY / mte3ToMte2_ credits drain the dq/dk
+        // egress reads before the next band's cube writes these ranges.
+        auto dqOut = UbBytes(slot * 32 * 1024).ReinterpretCast<bfloat16_t>();
+        auto dkOut = UbBytes(64 * 1024 + slot * 32 * 1024).ReinterpretCast<bfloat16_t>();
         auto e = UbBytes(KDA_FINALIZE_UB_EXP2_GK).ReinterpretCast<float>()[offset];
         auto q = UbBytes(KDA_FINALIZE_UB_Q).ReinterpretCast<bfloat16_t>()[offset];
         auto k = UbBytes(KDA_FINALIZE_UB_K).ReinterpretCast<bfloat16_t>()[offset];
@@ -1560,7 +1564,10 @@ private:
         auto qRstd = UbBytes(213 * 1024).ReinterpretCast<float>();
         auto kRstd = UbBytes(214 * 1024).ReinterpretCast<float>();
         auto dbOut = UbBytes(215 * 1024).ReinterpretCast<DTYPE_BETA>();
-        AscendC::DataCopy(dg, workspace_[ws + KDA_FINALIZE_WS_DG_BASE].ReinterpretCast<float>()[offset], elems);
+        if (rowBegin == 0) {
+            AscendC::DataCopy(dg, workspace_[ws + KDA_FINALIZE_WS_DG_BASE].ReinterpretCast<float>(),
+                static_cast<uint32_t>(chunk.validRows) * KDA_FINALIZE_DIM);
+        }
         AscendC::DataCopy(dqBase, workspace_[ws + KDA_FINALIZE_WS_DQ_BASE].ReinterpretCast<float>()[offset], elems);
         AscendC::DataCopy(dkBase, workspace_[ws + KDA_FINALIZE_WS_DK_BASE].ReinterpretCast<float>()[offset], elems);
         const AscendC::DataCopyExtParams scalarCopy{1, static_cast<uint32_t>(rows * sizeof(float)), 0, 0, 0};
@@ -1572,14 +1579,16 @@ private:
             AscendC::DataCopyPad(kRstd, kRstd_[token / KDA_FINALIZE_DIM], scalarCopy, scalarPad);
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
+        // Issue the cube handshake before draining MTE2 so the load latency
+        // overlaps the wait for the cube result.
         AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE3>(
             KDA_FINALIZE_DQ_LOCAL_FREE_BASE + slot);
         AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(
             KDA_FINALIZE_DQ_LOCAL_READY_BASE + slot);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         FinalizeStage7VF(
             reinterpret_cast<__ubuf__ bfloat16_t *>(dqOut.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(dg.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(dg[offset].GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(result.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(dqBase.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(e.GetPhyAddr()),
@@ -1593,7 +1602,7 @@ private:
             reinterpret_cast<__ubuf__ float *>(left.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(right.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(dbDelta.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(dg.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(dg[offset].GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(e.GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()),
             reinterpret_cast<__ubuf__ DTYPE_BETA *>(beta.GetPhyAddr()), rows,
@@ -1614,7 +1623,6 @@ private:
         AscendC::DataCopy(dk_[token], dkOut, elems);
         AscendC::DataCopyPad(dBeta_[token / KDA_FINALIZE_DIM], dbOut,
             AscendC::DataCopyExtParams{1, static_cast<uint32_t>(rows * sizeof(DTYPE_BETA)), 0, 0, 0});
-        AscendC::DataCopy(workspace_[ws + KDA_FINALIZE_WS_DG_BASE].ReinterpretCast<float>()[offset], dg, elems);
         // The next Stage5 uses these UB ranges. Preserve all output reads.
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
