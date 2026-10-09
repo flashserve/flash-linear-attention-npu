@@ -32,6 +32,8 @@ constexpr size_t INPUT_CHUNK_INDICES = 9;
 constexpr size_t ATTR_OUTPUT_FINAL_STATE = 0;
 constexpr size_t ATTR_CHUNK_SIZE = 1;
 constexpr size_t ATTR_SCALE = 2;
+constexpr size_t ATTR_RAW_G_LAYOUT = 4;
+constexpr size_t ATTR_QKV_LAYOUT = 5;
 
 constexpr int64_t DIM_BATCH = 0;
 constexpr int64_t DIM_HEAD = 1;
@@ -48,6 +50,8 @@ constexpr size_t TILING_ALIGNMENT = 8;
 constexpr size_t WORKSPACE_ALIGNMENT = 512;
 constexpr size_t WORKSPACE_RESERVE = 16 * 1024 * 1024;
 constexpr int64_t PING_PONG_STAGES = 2;
+// HO 分离布局的 O 基址最终写入 int64 tiling 字段，需按 int64 上界核查。
+constexpr size_t MAX_INT64_AS_SIZE_T = 0x7fffffffffffffffULL;
 
 size_t AlignUp(size_t value, size_t alignment)
 {
@@ -124,7 +128,8 @@ size_t FillOTilingWorkspace(GDN::GdnMegaArch22FwdOTilingData &tiling, uint32_t a
 
 } // namespace
 
-ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingContext *context)
+ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingContext *context,
+                                                               bool separateHoWorkspace)
 {
     OP_LOGD(context->GetNodeName(), "Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput start.");
     const auto *qShapePtr = context->GetOptionalInputShape(INPUT_Q);
@@ -147,9 +152,28 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
                 OP_LOGE(context->GetNodeName(), "cu_seqlens and chunk_indices must be rank 1."),
                 return ge::GRAPH_FAILED);
 
-    const gert::Shape qShape = qShapePtr->GetStorageShape();
-    const gert::Shape kShape = kShapePtr->GetStorageShape();
-    const gert::Shape vShape = vShapePtr->GetStorageShape();
+    const auto *attrs = context->GetAttrs();
+    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    const int64_t *qkvLayoutAttr = attrs->GetAttrPointer<int64_t>(ATTR_QKV_LAYOUT);
+    const int64_t qkvLayout = qkvLayoutAttr == nullptr ? 0 : *qkvLayoutAttr;
+    OP_CHECK_IF(qkvLayout != 0 && qkvLayout != 1,
+                OP_LOGE(context->GetNodeName(), "qkv_layout must be 0 or 1."), return ge::GRAPH_FAILED);
+    auto LogicalQkvShape = [qkvLayout](const gert::StorageShape *input) {
+        gert::StorageShape logical = *input;
+        if (qkvLayout == 1) {
+            auto &shape = logical.MutableStorageShape();
+            const int64_t tokens = shape.GetDim(1);
+            shape.SetDim(1, shape.GetDim(2));
+            shape.SetDim(2, tokens);
+        }
+        return logical;
+    };
+    const auto logicalQ = LogicalQkvShape(qShapePtr);
+    const auto logicalK = LogicalQkvShape(kShapePtr);
+    const auto logicalV = LogicalQkvShape(vShapePtr);
+    const gert::Shape qShape = logicalQ.GetStorageShape();
+    const gert::Shape kShape = logicalK.GetStorageShape();
+    const gert::Shape vShape = logicalV.GetStorageShape();
     const gert::Shape betaShape = betaShapePtr->GetStorageShape();
     const gert::Shape aShape = aShapePtr->GetStorageShape();
     const gert::Shape gShape = gShapePtr->GetStorageShape();
@@ -159,6 +183,11 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     const int64_t kHeadDim = qShape.GetDim(DIM_CHANNEL);
     const int64_t vNumHead = vShape.GetDim(DIM_HEAD);
     const int64_t vHeadDim = vShape.GetDim(DIM_CHANNEL);
+    const int64_t *rawGLayoutAttr = attrs->GetAttrPointer<int64_t>(ATTR_RAW_G_LAYOUT);
+    const int64_t rawGLayout = rawGLayoutAttr == nullptr ? 0 : *rawGLayoutAttr;
+    OP_CHECK_IF(rawGLayout != 0 && rawGLayout != 1,
+                OP_LOGE(context->GetNodeName(), "raw_g_layout must be 0 (BHT) or 1 (BTH)."),
+                return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(batch <= 0 || kNumHead <= 0 || vNumHead <= 0 || seqlen <= 0,
                 OP_LOGE(context->GetNodeName(), "B/H/T dimensions must be positive."),
@@ -174,9 +203,13 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
                     aShape.GetDim(DIM_CHANNEL) <= 0,
                 OP_LOGE(context->GetNodeName(), "v/beta/A must match q/k in B/T and value heads."),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(gShape.GetDim(0) != batch || gShape.GetDim(1) != vNumHead ||
-                    gShape.GetDim(2) != seqlen,
-                OP_LOGE(context->GetNodeName(), "g must have shape [B,HV,T]."),
+    OP_CHECK_IF((rawGLayout == 0 &&
+                 (gShape.GetDim(0) != batch || gShape.GetDim(1) != vNumHead || gShape.GetDim(2) != seqlen)) ||
+                    (rawGLayout == 1 &&
+                     (gShape.GetDim(0) != batch || gShape.GetDim(1) != seqlen ||
+                      gShape.GetDim(2) != vNumHead)),
+                OP_LOGE(context->GetNodeName(),
+                        "g layout contract is 0:[B,HV,T] or 1:[B,T,HV]."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(vNumHead % kNumHead != 0,
                 OP_LOGE(context->GetNodeName(), "vNumHead must be divisible by kNumHead."),
@@ -186,8 +219,6 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
                 OP_LOGE(context->GetNodeName(), "Phase 5 fused path supports K=128 and V=128/256."),
                 return ge::GRAPH_FAILED);
 
-    const auto *attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
     const bool outputFinalState = *(attrs->GetAttrPointer<bool>(ATTR_OUTPUT_FINAL_STATE));
     const int64_t chunkSize = *(attrs->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE));
     const double scale = *(attrs->GetAttrPointer<double>(ATTR_SCALE));
@@ -247,10 +278,10 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     const int64_t *chunkIndicesData =
         chunkIndicesTensor == nullptr ? nullptr : chunkIndicesTensor->GetData<int64_t>();
     GDN::GdnMegaArch22RecomputeWUTilingData recomputeTiling{};
-    RecomputeWUFwdTilingContext recomputeContext{
+    GdnArch22RecomputeWUFwdTilingContext recomputeContext{
         context->GetNodeName(),
-        context->GetRequiredInputShape(INPUT_K),
-        context->GetRequiredInputShape(INPUT_V),
+        &logicalK,
+        &logicalV,
         context->GetRequiredInputShape(INPUT_BETA),
         context->GetRequiredInputShape(INPUT_A),
         context->GetRequiredInputShape(INPUT_G),
@@ -264,9 +295,10 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
         0,
         sysWorkspaceSize,
     };
+    recomputeContext.gIsBth = rawGLayout == 1;
     platform_ascendc::PlatformAscendC ascendcPlatform(context->GetPlatformInfo());
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, recomputeContext.ubSize);
-    RecomputeWUFwdTilingProcessor recomputeProcessor(recomputeContext, recomputeTiling);
+    GdnArch22RecomputeWUFwdTilingProcessor recomputeProcessor(recomputeContext, recomputeTiling);
     OP_CHECK_IF(recomputeProcessor.Process() != ge::GRAPH_SUCCESS,
                 OP_LOGE(context->GetNodeName(), "RecomputeWUFwd tiling failed."),
                 return ge::GRAPH_FAILED);
@@ -331,8 +363,31 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
         tiling.set_numChunksWorkspaceOffset(tiling.get_numChunksWorkspaceOffset() + static_cast<int64_t>(hoShift));
     };
     ShiftHWorkspace(hTiling);
-    const size_t oWorkspaceSize = FillOTilingWorkspace(oTiling, aicCoreNum, hoBase);
     hWorkspaceSize += hoShift;
+    // separateHoWorkspace=true：O 临时区改从 H 临时区结束上界（512B 对齐）之后
+    // 开始，H/O 暂存不再串行重叠，持久 h/vNew 仍按下方 max 从两区结束上界之后
+    // 分配；false 完整保留原布局（O 从 hoBase 开始）。FillOTilingWorkspace 的
+    // 逐字段赋值与按完整实际 C 的容量保持不变。
+    size_t oBase = hoBase;
+    if (separateHoWorkspace) {
+        // 先以 base=0 干跑一次 FillOTilingWorkspace 得到 O 区完整跨度（含尾部
+        // RESERVE）。独立 base、跨度以及两者之和都在 int64 可表示范围内，才用
+        // 真实 base 重写全部 O 偏移（干跑写入的临时值随后被完整覆盖）；任一不
+        // 可表示即失败，不产出回绕的 int64 O 字段或回绕的上界。false 路径不
+        // 进入此分支，布局与原版完全一致。
+        const size_t oSpanWithReserve = FillOTilingWorkspace(oTiling, aicCoreNum, 0);
+        OP_CHECK_IF(oSpanWithReserve > MAX_INT64_AS_SIZE_T,
+                    OP_LOGE(context->GetNodeName(), "Separate HO O span exceeds int64 range."),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(hWorkspaceSize > MAX_INT64_AS_SIZE_T - WORKSPACE_ALIGNMENT,
+                    OP_LOGE(context->GetNodeName(), "Separate HO O-base offset exceeds int64 range."),
+                    return ge::GRAPH_FAILED);
+        oBase = AlignUp(hWorkspaceSize, WORKSPACE_ALIGNMENT);
+        OP_CHECK_IF(oBase > MAX_INT64_AS_SIZE_T - oSpanWithReserve,
+                    OP_LOGE(context->GetNodeName(), "Separate HO O region exceeds int64 range."),
+                    return ge::GRAPH_FAILED);
+    }
+    const size_t oWorkspaceSize = FillOTilingWorkspace(oTiling, aicCoreNum, oBase);
 
     size_t workspaceOffset = AlignUp(std::max(hWorkspaceSize, oWorkspaceSize), WORKSPACE_ALIGNMENT);
     GDN::ChunkRecomputeWUFwdHOTrailer trailer{};

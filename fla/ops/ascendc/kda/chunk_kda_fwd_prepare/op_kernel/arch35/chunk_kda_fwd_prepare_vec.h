@@ -271,6 +271,10 @@ __simd_vf__ inline void StageV0Vf(
                 RegTensor<float> positiveHigh;
                 RegTensor<float> softplusLow;
                 RegTensor<float> softplusHigh;
+                RegTensor<float> sumLow;
+                RegTensor<float> sumHigh;
+                RegTensor<float> residualLow;
+                RegTensor<float> residualHigh;
                 Maxs(positiveLow, gateLow, 0.0F, mask);
                 Maxs(positiveHigh, gateHigh, 0.0F, mask);
                 Abs(softplusLow, gateLow, mask);
@@ -279,10 +283,23 @@ __simd_vf__ inline void StageV0Vf(
                 Muls(softplusHigh, softplusHigh, -1.0F, mask);
                 Exp(softplusLow, softplusLow, mask);
                 Exp(softplusHigh, softplusHigh, mask);
-                Adds(softplusLow, softplusLow, 1.0F, mask);
-                Adds(softplusHigh, softplusHigh, 1.0F, mask);
+                // log1p(u) = Ln(1+u) + r/(1+u)，r = u - (fl(1+u)-1)：
+                // 直接取 Ln(1+u) 会把 1+u 的舍入按 1/u 放大，小 u（门控
+                // 接近 0）时相对误差可达 1e-4~1e-2，双标杆 L1 下会超限。
+                Adds(sumLow, softplusLow, 1.0F, mask);
+                Adds(sumHigh, softplusHigh, 1.0F, mask);
+                Adds(residualLow, sumLow, -1.0F, mask);
+                Adds(residualHigh, sumHigh, -1.0F, mask);
+                Sub(residualLow, softplusLow, residualLow, mask);
+                Sub(residualHigh, softplusHigh, residualHigh, mask);
+                Adds(softplusLow, sumLow, 0.0F, mask);
+                Adds(softplusHigh, sumHigh, 0.0F, mask);
                 Ln(softplusLow, softplusLow, mask);
                 Ln(softplusHigh, softplusHigh, mask);
+                Div(residualLow, residualLow, sumLow, mask);
+                Div(residualHigh, residualHigh, sumHigh, mask);
+                Add(softplusLow, softplusLow, residualLow, mask);
+                Add(softplusHigh, softplusHigh, residualHigh, mask);
                 Add(gateLow, positiveLow, softplusLow, mask);
                 Add(gateHigh, positiveHigh, softplusHigh, mask);
                 Mul(gateLow, gateLow, a, mask);

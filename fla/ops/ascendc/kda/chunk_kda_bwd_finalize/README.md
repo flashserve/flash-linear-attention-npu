@@ -25,7 +25,7 @@ beta、Gate 与参数梯度。可融合 Q/K L2 归一化反向，仅支持 Ascen
 
 输入须连续，K=V=128、chunk_size=64、Hq=Hv。支持定长及变长序列，
 Token 为 [B,H,T,D] 或 [H,T,D]；h 为 [B,Nc,H,K,V] 或 [Nc,H,K,V]，
-dh 保持 [B,H,Nc,K,V] 或 [H,Nc,K,V]。
+dh 与 h 一致，使用 dense [B,Nc,H,K,V] 或 packed [Nc,H,K,V]。
 
 ## 输出与属性
 

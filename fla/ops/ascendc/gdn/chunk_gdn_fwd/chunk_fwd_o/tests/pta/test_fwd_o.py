@@ -91,7 +91,7 @@ def forward_o_trans_cpu(
                     k_sel[:actual_len, :] = k[n, h // head_ratio, bos + i * BT : bos + i * BT + actual_len, :]
                     v_sel[:actual_len, :] = v[n, h, bos + i * BT : bos + i * BT + actual_len, :]
                     g_sel[:actual_len] = g[n, h, bos + i * BT : bos + i * BT + actual_len]
-                    hidden_state_sel = hidden_state[n, h, boh+i]
+                    hidden_state_sel = hidden_state[n, boh+i, h]
                     attn = q_sel @ k_sel.transpose(-1, -2) 
                     L_mask = (g_sel.unsqueeze(-1) - g_sel.unsqueeze(-2)).exp() 
                     attn = attn*L_mask    
@@ -105,7 +105,7 @@ def forward_o_trans_cpu(
                     k_sel[:actual_len, :] = k[0, h // head_ratio, bos + i * BT : bos + i * BT + actual_len, :]
                     v_sel[:actual_len, :] = v[0, h, bos + i * BT : bos + i * BT + actual_len, :]
                     g_sel[:actual_len] = g[0, h, bos + i * BT : bos + i * BT + actual_len]
-                    hidden_state_sel = hidden_state[0, h, boh+i]
+                    hidden_state_sel = hidden_state[0, boh+i, h]
                     attn = q_sel @ k_sel.transpose(-1, -2) 
                     L_mask = (g_sel.unsqueeze(-1) - g_sel.unsqueeze(-2)).exp() 
                     attn = attn*L_mask           
@@ -217,7 +217,7 @@ def gen_input_data(o_input):
     q = torch.randn([o_input.shape_batch, o_input.k_num_head, o_input.seqlen, o_input.k_head_dim], dtype=o_input.dtype)
     k = torch.randn([o_input.shape_batch, o_input.k_num_head, o_input.seqlen, o_input.k_head_dim], dtype=o_input.dtype)
     v = torch.randn([o_input.shape_batch, o_input.v_num_head, o_input.seqlen, o_input.v_head_dim], dtype=o_input.dtype)
-    h = torch.randn([o_input.shape_batch, o_input.v_num_head, num_chunks, o_input.k_head_dim, o_input.v_head_dim], dtype=o_input.dtype)
+    h = torch.randn([o_input.shape_batch, num_chunks, o_input.v_num_head, o_input.k_head_dim, o_input.v_head_dim], dtype=o_input.dtype)
     g = torch.randn([o_input.shape_batch, o_input.v_num_head, o_input.seqlen], dtype=torch.float)
     # g = gen_decay_data(o_input, cu_seqlens, chunk_offsets)
     return GDNFwdOInputTensor(q, k, v, h, g, cu_seqlens, chunk_offsets)
@@ -227,7 +227,7 @@ def parse_actual_input(o_input):
     q = actual_data['q'].to(o_input.dtype).transpose(1, 2).contiguous()
     k = actual_data['k'].to(o_input.dtype).transpose(1, 2).contiguous()
     v = actual_data['v'].to(o_input.dtype).transpose(1, 2).contiguous()
-    h = actual_data['h'].to(o_input.dtype).transpose(1, 2).contiguous()
+    h = actual_data['h'].to(o_input.dtype)
     g = actual_data['g'].to(o_input.g_dtype).transpose(1, 2).contiguous()
     cu_seqlens, chunk_offsets = get_cu_offsets(o_input, actual_data.get('cu_seqlens'))
     return GDNFwdOInputTensor(q, k, v, h, g, cu_seqlens, chunk_offsets)

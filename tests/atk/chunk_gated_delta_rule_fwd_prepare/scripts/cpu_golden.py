@@ -99,17 +99,28 @@ def cpu_gdn_gate_chunk_cumsum(
     return cpu_chunk_local_cumsum(gate, chunk_size=chunk_size, scale=scale)
 
 
+def _cumsum_scale(use_exp2: bool) -> float:
+    return RCP_LN2 if use_exp2 else 1.0
+
+
+def _gate_exp(x: torch.Tensor, use_exp2: bool) -> torch.Tensor:
+    return torch.exp2(x) if use_exp2 else torch.exp(x)
+
+
 def cpu_chunk_kkt_solve(
     k: torch.Tensor,
     g: torch.Tensor,
     beta: torch.Tensor,
     chunk_size: int,
+    use_exp2: bool = True,
 ) -> torch.Tensor:
-    """Triton KKT + ``solve_tril`` golden: ``A = (I + L)^{-1}``.
+    """KKT + ``solve_tril`` golden: ``A = (I + L)^{-1}``.
 
-    ``g`` is already the log2-space chunk cumsum (``* RCP_LN2``)::
+    When ``use_exp2`` (FLA default), ``g`` is log2-space chunk cumsum
+    (``* RCP_LN2``) and the triangle uses ``exp2``. Otherwise ``g`` is natural
+    log-space and the triangle uses ``exp``::
 
-        L[i, j] = beta[i] * <k[i], k[j]> * exp2(g[i] - g[j])   if i > j
+        L[i, j] = beta[i] * <k[i], k[j]> * exp*(g[i] - g[j])   if i > j
         L[i, j] = 0                                              if i <= j
 
     Returns ``A`` of shape ``[B, T, HV, BT]`` (fp32).
@@ -131,8 +142,8 @@ def cpu_chunk_kkt_solve(
     kkt = torch.matmul(k_c, k_c.transpose(-1, -2))
     tril = torch.tril(torch.ones(bt, bt, device=k.device, dtype=torch.bool), diagonal=-1)
     gdiff = g_c.unsqueeze(-1) - g_c.unsqueeze(-2)
-    # Mask before exp2 so the upper triangle never overflows to inf.
-    gate = torch.exp2(gdiff.masked_fill(~tril, 0.0))
+    # Mask before exp so the upper triangle never overflows to inf.
+    gate = _gate_exp(gdiff.masked_fill(~tril, 0.0), use_exp2)
     l_mat = kkt * gate * beta_c.unsqueeze(-1) * tril.to(kkt.dtype)
 
     eye = torch.eye(bt, device=k.device, dtype=torch.float32)
@@ -147,11 +158,12 @@ def cpu_recompute_w_u(
     beta: torch.Tensor,
     a: torch.Tensor,
     g: torch.Tensor,
+    use_exp2: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Triton ``recompute_w_u_fwd`` golden.
 
         u = A @ (v * beta)
-        w = A @ (k * beta * exp2(g))
+        w = A @ (k * beta * exp*(g))
     """
     b, t, _h, k_dim = k.shape
     hv, v_dim = v.shape[2], v.shape[3]
@@ -168,7 +180,7 @@ def cpu_recompute_w_u(
 
     a_c = a_f.reshape(b, nt, bt, hv, bt).permute(0, 3, 1, 2, 4)
     v_c = (v_f * beta_f.unsqueeze(-1)).reshape(b, nt, bt, hv, v_dim).permute(0, 3, 1, 2, 4)
-    k_c = k_f * beta_f.unsqueeze(-1) * torch.exp2(g_f).unsqueeze(-1)
+    k_c = k_f * beta_f.unsqueeze(-1) * _gate_exp(g_f, use_exp2).unsqueeze(-1)
     k_c = k_c.reshape(b, nt, bt, hv, k_dim).permute(0, 3, 1, 2, 4)
 
     u = torch.matmul(a_c, v_c).permute(0, 2, 3, 1, 4).reshape(b, t_pad, hv, v_dim)[:, :t]
@@ -182,13 +194,14 @@ def cpu_chunk_gated_delta_rule_fwd_intra(
     g: torch.Tensor,
     beta: torch.Tensor,
     chunk_size: int = 64,
+    use_exp2: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Triton ``chunk_gated_delta_rule_fwd_intra`` golden. Returns ``(w, u, A)``.
 
-    ``g`` must already be the chunk-local cumsum in log2 space.
+    ``g`` must already be the chunk-local cumsum (log2 if ``use_exp2``).
     """
-    a = cpu_chunk_kkt_solve(k, g, beta, chunk_size)
-    w, u = cpu_recompute_w_u(k, v, beta, a, g)
+    a = cpu_chunk_kkt_solve(k, g, beta, chunk_size, use_exp2=use_exp2)
+    w, u = cpu_recompute_w_u(k, v, beta, a, g, use_exp2=use_exp2)
     return w, u, a
 
 
@@ -254,36 +267,40 @@ def cpu_chunk_gated_delta_rule_fwd_wy(
     a_log: torch.Tensor | None = None,
     dt_bias: torch.Tensor | None = None,
     cu_seqlens: torch.Tensor | None = None,
+    use_exp2: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Cumsum(g) + intra. ``k`` must already be L2-normalized if that path is on.
 
     Prefer ``cpu_gdn_fwd_l2norm_to_recompute`` for the full operator span.
     """
+    scale = _cumsum_scale(use_exp2)
     if use_gate_in_kernel:
         if a_log is None:
             raise ValueError("a_log is required when use_gate_in_kernel=True")
 
         def _gate_cumsum(g_s, **_kw):
             return cpu_gdn_gate_chunk_cumsum(
-                g_s, a_log, chunk_size=chunk_size, scale=RCP_LN2, dt_bias=dt_bias,
+                g_s, a_log, chunk_size=chunk_size, scale=scale, dt_bias=dt_bias,
             )
     else:
         def _gate_cumsum(g_s, **_kw):
-            return cpu_chunk_local_cumsum(g_s, chunk_size=chunk_size, scale=RCP_LN2)
+            return cpu_chunk_local_cumsum(g_s, chunk_size=chunk_size, scale=scale)
 
     if cu_seqlens is not None:
         g_cs = _apply_per_sequence(_gate_cumsum, (g,), cu_seqlens)
 
         def _intra(k_s, v_s, g_s, beta_s, **_kw):
             return cpu_chunk_gated_delta_rule_fwd_intra(
-                k_s, v_s, g_s, beta_s, chunk_size=chunk_size,
+                k_s, v_s, g_s, beta_s, chunk_size=chunk_size, use_exp2=use_exp2,
             )
 
         w, u, a = _apply_per_sequence(_intra, (k, v, g_cs, beta), cu_seqlens)
         return g_cs, w, u, a
 
     g_cs = _gate_cumsum(g)
-    w, u, a = cpu_chunk_gated_delta_rule_fwd_intra(k, v, g_cs, beta, chunk_size=chunk_size)
+    w, u, a = cpu_chunk_gated_delta_rule_fwd_intra(
+        k, v, g_cs, beta, chunk_size=chunk_size, use_exp2=use_exp2,
+    )
     return g_cs, w, u, a
 
 
@@ -303,6 +320,7 @@ def cpu_gdn_fwd_l2norm_to_recompute(
     cu_seqlens: torch.Tensor | None = None,
     layout: str = "bsnd",
     eps: float = L2NORM_EPS,
+    use_exp2: bool = True,
 ) -> GdnL2normToRecomputeRef:
     """CPU golden from L2norm through RecomputeWU (not including fwd_h / fwd_o).
 
@@ -349,6 +367,7 @@ def cpu_gdn_fwd_l2norm_to_recompute(
         a_log=a_log,
         dt_bias=dt_bias,
         cu_seqlens=cu_seqlens,
+        use_exp2=use_exp2,
     )
     return GdnL2normToRecomputeRef(
         q=from_fla(q, layout),

@@ -83,8 +83,9 @@ kernel 内直接按 BSND/TND 写出 `attn_out`。供反向使用的中间量保�
 ## 状态布局
 
 内部递推统一使用 `[...,K,V]`。`state_v_first=true` 时，L2 在进入 FwdH 前转置 initial state。
-内部 `hCompute` 始终保持 head-major 供 Finalize 消费；公开 `hOut` 在 L2 导出边界转为
-sequence-major，并按 `state_v_first` 决定末两维顺序。`final_state` 按序列排列，与 FLA 顶层
+V2 组合的内部 `hCompute` 由共享 FwdH 原生写为 NT-first，Finalize 直接消费；
+公开 `hOut` 同样为 NT-first，无需 chunk/head 转置。旧融合路径的 prepare/post_wu/FwdH/Finalize
+也原生使用 NT-first，导出仅在 `state_v_first` 时转换末两维。`final_state` 按序列排列，与 FLA 顶层
 输出一致。
 
 ## 重计算策略
@@ -105,8 +106,8 @@ Python/legacy 包装层对齐 fla-org `chunk_kda_fwd` 提交
 - `final_state` 只在 `output_final_state=true` 时创建公开输出。
 
 内部 `hCompute` 与公开 `hOut` 是两个生命周期：`hCompute` 是 FwdH 到 Finalize 的必需
-head-major 阶段结果；`hOut` 为空时，单 launch 路径由 kernel workspace 承接，四段路径由 executor
-内部张量承接。`hOut` 非空时，L2 提供 head-major 临时输出并在导出边界转为 sequence-major。
+NT-first 阶段结果；`hOut` 为空时，单 launch 路径由 kernel workspace 承接，四段路径由 executor
+内部张量承接。`hOut` 非空时，L2 直接导出 NT-first 张量，仅在 V-first 时交换末两维。
 该规则对齐非 CP 的低层 12 返回值接口；
 第 12 项 `initial_state` 由 Python 层原对象透传。
 

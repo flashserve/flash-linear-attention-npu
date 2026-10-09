@@ -343,7 +343,7 @@ public:
                     const int64_t kBase = ((chunkInfo.bIdx * HK_ + hq) * T_ + chunkInfo.tokenStart) * K_;
                     const int64_t dOBase = ((chunkInfo.bIdx * HV_ + hv) * T_ + chunkInfo.tokenStart) * V_;
                     const int64_t dhBase =
-                        ((chunkInfo.bIdx * HV_ + hv) * totalChunkNum_ + chunkInfo.outputChunkIdx) * K_ * V_;
+                        ((chunkInfo.bIdx * totalChunkNum_ + chunkInfo.outputChunkIdx) * HV_ + hv) * K_ * V_;
                     const int64_t slotBase = WorkspaceBase(blockIdx, workspaceSlot);
 
                     LayoutTagK tagK = LayoutTagK::MakeLayout<DT>(chunkSize_, K_);
@@ -1083,6 +1083,10 @@ public:
                     const uint32_t stateIdx = curStatePingPong_;
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2Event_[stateIdx]);
                     AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stateMte3ToMte2Event_[stateIdx]);
+                    // Initialization writes from V instead of loading through MTE2.
+                    // Forward the buffer-reuse dependency before overwriting UB.
+                    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(stateMte2ToVEvent_[stateIdx]);
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(stateMte2ToVEvent_[stateIdx]);
                     AscendC::LocalTensor<float> stateFp32 = stateBuf_[stateIdx];
                     AscendC::Duplicate(stateFp32, 0.0f, elems);
                     AscendC::PipeBarrier<PIPE_V>();
@@ -1533,7 +1537,7 @@ private:
 
     __aicore__ inline int64_t DhOffset(int64_t b, int64_t hv, int64_t chunkIdx) const
     {
-        return ((b * HV_ + hv) * totalChunkNum_ + chunkIdx) * K_ * V_;
+        return ((b * totalChunkNum_ + chunkIdx) * HV_ + hv) * K_ * V_;
     }
 
     __aicore__ inline int64_t WorkspaceBase(int64_t coreIdx, int64_t workspaceSlot) const

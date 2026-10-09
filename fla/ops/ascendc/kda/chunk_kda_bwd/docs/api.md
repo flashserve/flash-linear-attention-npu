@@ -47,12 +47,13 @@ BF16 张量；Finalize 已融合归一化反向，调用方不应重复计算。
 | Gate | safe_gate、use_gate_in_kernel、use_exp2 均为 True；-5≤lower_bound<0 |
 
 前向公开接口的 h 可直接传入，无需转置。旧调用方需删除 h 的 head-major 转换；
-H=Nc 时仅检查 shape 无法发现旧布局，调用方仍须同步更新。内部 dh 保持 head-major。
+H=Nc 时仅检查 shape 无法发现旧布局，调用方仍须同步更新。内部 dh 同样为 NT-first。
 元数据使用 Host INT64、按序列排列的规范 chunk 顺序；Python 层压缩空序列并
 重排序列编号，直接调用 V2 时须自行提供该形式，不接受设备端元数据或 T=0。
 
 重计算时设置 `disable_recompute=False`，将 gk/w/qg/kg/v_new/h 设为 None，
-仍须提供 Aqk/Akk。当前要求 H≤256 且为 8 的倍数，每条序列长度为 64 的倍数。
+仍须提供 Aqk/Akk。当前要求 H≤256 且为 8 的倍数。
+内部 FwdH 直接产生 NT-first 的 h，无需转置。
 
 ## 实现位置
 

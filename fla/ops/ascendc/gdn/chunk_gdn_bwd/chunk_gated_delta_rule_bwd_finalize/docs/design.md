@@ -47,7 +47,7 @@ GPU 对齐 golden 的目标语义；UB/L1 地址表、workspace 映射、Stage �
 SoC               Ascend 950 only
 q/k layout        [B, HK, T, K]
 value/gate layout [B, HV, T]
-state layout      [B, HV, NT, K, V]，state_v_first=true 时为 [B, HV, NT, V, K]
+state layout      [B, NT, HV, K, V]，state_v_first=true 时为 [B, NT, HV, V, K]
 K                 128
 V                 128
 chunk_size        64
@@ -94,7 +94,7 @@ hk  当前 hv 映射的 q/k head，hk = hv / G
 | `v, v_new, do, du, dv` | `[B,HV,T,V]` | value 侧输入和输出 |
 | `g, beta, dbeta, dg` | `[B,HV,T]` | `g/beta` 为变换后值且 dtype 必须相同 |
 | `beta_raw` | `[B,HV,T]` | beta sigmoid 变换前值，仅融合 sigmoid backward 时使用 |
-| `h, dh` | `[B,HV,NT,K,V]` 或 `[B,HV,NT,V,K]` | 每 chunk state，末两维由 `state_v_first` 控制 |
+| `h, dh` | `[B,NT,HV,K,V]` 或 `[B,NT,HV,V,K]` | 每 chunk state，末两维由 `state_v_first` 控制 |
 | `A` | `[B,HV,T,BT]` | 每 token 行存一个 chunk 内矩阵行 |
 | `q_rstd, k_rstd` | `[B,HK,T]` | L2Norm forward 保存值，fp32，仅融合 norm backward 时使用 |
 
@@ -124,8 +124,8 @@ Python：           fla_npu.ops.ascendc.chunk_gated_delta_rule_bwd_finalize
 | `du` | `[B,HV,T,V]` | 同 `q` | 原始 value 梯度 |
 | `g` | `[B,HV,T]` | bf16/fp32 | 变换后的 chunk gate |
 | `beta` | `[B,HV,T]` | 同 `g` | sigmoid 后 beta |
-| `h` | `[B,HV,NT,K,V]` | 同 `q` | forward chunk state |
-| `dh` | `[B,HV,NT,K,V]` | 同 `q` | `bwd_dhu` 输出 |
+| `h` | `[B,NT,HV,K,V]` | 同 `q` | forward chunk state |
+| `dh` | `[B,NT,HV,K,V]` | 同 `q` | `bwd_dhu` 输出 |
 | `A` | `[B,HV,T,BT]` | 同 `q` | WY inverse/中间矩阵 |
 | `q_rstd` | `[B,HK,T]` | fp32 | 可选；Q L2Norm 保存值 |
 | `k_rstd` | `[B,HK,T]` | fp32 | 可选；K L2Norm 保存值 |

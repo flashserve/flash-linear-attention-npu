@@ -10,14 +10,14 @@ output_layout, state_v_first
 冻结 JSON 是 ATK 原生直接输入；没有 marker tensor、序列化的
 `case_spec` 或隐藏测试开关。`qg_scaled/Aqk` 使用 Prepare 的
 head-major BF16 形状，packed 时 rank-3；`v_new/h` 使用 FwdH 的
-rank-4/rank-5 BF16 形状，packed 时首维仍为 1。`Aqk`
+rank-4/rank-5 BF16 形状，h 为 NT-first `[B,C,HV,128,128]`，packed 时首维仍为 1。`Aqk`
 已经乘过 scale，CPU 和 NPU 都不再重复缩放。
 
 ## 资产
 
 | 文件 | 用例 | 覆盖 |
 | --- | ---: | --- |
-| `atk_chunk_kda_fwd_finalize.json` | 200 | 25 个边界/shape/变长结构 × 4 个输出 layout × 2 种 state 轴顺序，覆盖两个 tiling 模板实例 |
+| `atk_chunk_kda_fwd_finalize.json` | 200 | 保留 main 的 25 个边界/shape/变长结构 × 4 个输出 layout × 2 种 state 轴顺序，仅更新 h shape |
 | `atk_chunk_kda_fwd_finalize_perf.json` | 10 | 模型大 shape、dense/varlen，供单算 profiling |
 | `atk_chunk_kda_fwd_finalize_mss.json` | 12 | 4 个输出 layout × 2 种 state 轴顺序的尾块输入，以及 AIV 搬运模板的 dense/packed、KV/VK 确定性输入 |
 
@@ -42,14 +42,16 @@ case 88-91 是 dense 的 17 行尾块；case 192-199 在同一变长输入中
 包含 1/33/64 行序列并覆盖四种 layout。两组均使用非 4 倍数 HV，
 因此会进入第二个 head group 并验证不足 4 个 head 的尾组。上述
 模板组合同时通过 `ASCENDC_TPL_KERNEL_TYPE_SEL` 声明核类型，不在
-Kernel 内按数值 TilingKey 分支。当前提交的 runtime profile 中，性能
+Kernel 内按数值 TilingKey 分支。NT-first 修改前的历史 runtime profile 中，性能
 case 2 命中 `_0`/cube 实例，耗时 908.545 us；性能 case 3 命中
 `_1_mix_aic`/mix 实例，耗时 1794.889 us，AIC/AIV block 为
 28/56。性能结论以性能 JSON 对应的大 shape profiling 为准。
 
-CPU 节点把四个直接输入恢复为 BF16，使用 FP32 两项矩阵乘并在求和
-后按 BF16 输出舍入；返回 FP32 承载 BF16 结果供 ATK 原生
-`mixed_tolerance_bm` 比较。NPU 节点用本 executor 的窄 aclnn
+CPU golden 把四个直接输入恢复为 BF16 后，使用 FP64 两项矩阵乘与求和，
+不提前舍入为 BF16；executor 最后将 FP64 结果转为 FP32 比较载荷，
+匹配 ATK 原生 `mixed_tolerance_bm` 支持的 BF16 DUT / FP32 golden 类型对。
+`run_cpu` 自身仍返回 FP64，供独立高精度检查。
+NPU 节点用本 executor 的窄 aclnn
 直调适配器验证设备实现。公开
 `fla_npu.ops.ascendc.chunk_kda_fwd_finalize` 稳定入口由共享 Python
 wrapper 提供，其接口验证不属于本 ATK 目录。
@@ -85,7 +87,7 @@ atk node --backend npu --devices 0 -o ./atk_output/accuracy \
   node --backend cpu task \
   -c ./atk_chunk_kda_fwd_finalize.json \
   --task accuracy -p ./executor_chunk_kda_fwd_finalize.py \
-  -s 0 -e 200 -sp -to 60
+  -sp -to 60
 ```
 
 单条超过 60 秒判定超时。只有最终报告确认总任务 200、执行失败
@@ -108,8 +110,8 @@ msopprof \
 
 确定性使用 `_mss.json` 的十二条输入，覆盖八种输出布局/状态组合和
 AIV 搬运模板的 dense/packed、KV/VK 四条分支，逐位比较实际
-可见结果；不能把准备好 `_mss.json` 说成内存检查已通过。当前内存
-检查暂停，恢复后须先构建 sanitizer 对象，并确认运行时真正加载。
+可见结果；内存检查须先构建 sanitizer 对象，并确认运行时真正加载，
+仅有 `IsFinite` 等辅助 kernel 的 sanitizer 记录不能视为 Finalize 通过。
 
 ```bash
 atk node --backend npu --devices 0 task \

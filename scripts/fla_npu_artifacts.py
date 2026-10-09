@@ -98,6 +98,67 @@ def get_arch() -> str:
     return _compact_tag(arch) or "unknown"
 
 
+# PEP 600 watermark every published wheel claims.  It is the highest GLIBC_x.y
+# any shared object in the payload needs, measured on the release build image;
+# scripts/check_pypi_wheel.py fails the release if a wheel asks for more.
+WHEEL_PLATFORM_TAG = "manylinux_2_34"
+
+
+def get_wheel_platform_tag() -> str:
+    """PEP 600 wheel platform tag for the current arch.
+
+    Every wheel says ``manylinux_<glibc>_<arch>``; the plain ``linux_<arch>``
+    tag bdist_wheel derives from sysconfig is rejected by PyPI and says nothing
+    about the host a payload can load on.  A local build uses the same tag as a
+    release, so the artifact under test is the artifact that ships.
+
+    The glibc watermark is the measured one, not a wish.  The pinned build image
+    (``ci/Dockerfile`` -> ``cann:9.1.0-*-ubuntu22.04``, glibc 2.35) stamps the
+    launcher's ``dlopen``/``dlsym``/``dlerror`` at GLIBC_2.34, and the OPP host
+    libraries land on 2.34 as well, so a ``manylinux_2_28`` label would promise
+    hosts the payload cannot load on.  Lower it only together with a build image
+    whose glibc is that old (and a re-measured gate run).
+    """
+    return f"{WHEEL_PLATFORM_TAG}_{get_arch()}"
+
+
+def get_tier(soc: str | None = None) -> str:
+    """Map FLA_NPU_SOC to the published product tier (a2/a3/a5)."""
+    soc_tag = _compact_tag(soc or get_soc())
+    if soc_tag in {"910b", "ascend910b"}:
+        return "a2"
+    if soc_tag in {"a3", "91093", "ascend91093"}:
+        return "a3"
+    if soc_tag in {"950", "ascend950"}:
+        return "a5"
+    raise ValueError(
+        f"FLA_NPU_SOC={soc or get_soc()!r} has no published product tier; "
+        "expected ascend910b / ascend910_93 / ascend950"
+    )
+
+
+def get_distribution_name() -> str:
+    """Distribution (PyPI project) name for the current build.
+
+    A wheel carries a prebuilt OPP for exactly one SoC, and pip cannot pick a
+    chip-specific payload out of one project name, so each product tier is its
+    own project (flash-linear-attention-npu-a2/a3/a5, derived from FLA_NPU_SOC).
+    Local, GitHub Release and PyPI artifacts all carry that name.
+
+    One name everywhere is the point: a locally built wheel and the published
+    one are the same distribution, so ``pip install`` upgrades one with the
+    other.  Two names for one payload would let both stay installed, each
+    owning ``fla_npu/``, and uninstalling either would leave the other behind.
+    ``FLA_NPU_SOC`` must therefore map to a published tier -- an unknown SoC
+    fails the build instead of silently producing an unnameable artifact.
+    """
+    return f"{PACKAGE_NAME}-{get_tier()}"
+
+
+def get_wheel_dist_name() -> str:
+    return get_distribution_name().replace("-", "_")
+
+
 def get_vendor_name() -> str:
     return DEFAULT_VENDOR_NAME
 
@@ -126,51 +187,86 @@ def get_commit_id(repo_root: Path) -> str:
     return _normalize_local_version(commit)
 
 
-def get_product_tag() -> str:
-    soc_tag = _compact_tag(get_soc())
-    if soc_tag in {"910b", "ascend910b"}:
-        return "910b"
-    if soc_tag in {"a3", "91093", "ascend91093"}:
-        return "910_93"
-    if soc_tag in {"950", "ascend950"}:
-        return "950"
-    return soc_tag or "unknown"
+def get_wheel_build_tag() -> str:
+    """Optional filename build tag; empty for every ordinary build.
 
-
-def get_wheel_build_tag(repo_root: Path, public_version: str | None = None) -> str:
+    The tier is in the distribution name and the arch in the platform tag, so
+    there is nothing left for a build tag to say: a local build now produces the
+    same file name a release does.  ``FLA_NPU_WHEEL_BUILD_TAG`` stays as the
+    explicit escape hatch for a deliberately labelled artifact (publishing
+    rejects it -- see scripts/check_pypi_wheel.py).
+    """
     explicit = os.getenv("FLA_NPU_WHEEL_BUILD_TAG", "").strip()
-    if explicit:
-        build_tag = _wheel_tag_part(explicit)
-        if build_tag and not build_tag[0].isdigit():
-            return f"1{build_tag}"
-        return build_tag
-    if env_flag("FLA_NPU_DISABLE_LOCAL_VERSION"):
+    if not explicit:
         return ""
-
-    public_version = public_version or read_public_version(repo_root)
-    product_tag = get_product_tag()
-    arch_tag = get_arch()
-    if not product_tag or not arch_tag:
-        return ""
-
-    build_tag = ".".join([product_tag, arch_tag])
+    build_tag = _wheel_tag_part(explicit)
     if build_tag and not build_tag[0].isdigit():
-        build_tag = f"1{build_tag}"
+        return f"1{build_tag}"
     return build_tag
 
 
+def get_daily_version_label(repo_root: Path) -> str:
+    """Branch-derived prefix of a daily build's local version.
+
+    A daily wheel is "this branch as of this commit", so the label names the
+    branch: ``main`` on the development line, the released version on a release
+    line (``v26.9.1`` -> ``26.9.1``), which is the one that could otherwise be
+    confused with the release built from the same tree.
+    """
+
+    branch = get_branch_name(repo_root)
+    label = re.sub(r"^v(?=\d)", "", branch)
+    return _normalize_local_version(label) or "unknown"
+
+
+# A development line writes ``<next>.dev0`` in fla/__init__.py, and a daily build
+# of that line names the release it leads to: the local part is the only thing
+# that says "not released yet", so ``26.10.0+main_dev0a1b2c3`` rather than
+# ``26.10.0.dev0+main_dev0a1b2c3``.
+_DEV_NUMBER_SUFFIX = re.compile(r"\.dev\d+$")
+
+
+def daily_base_version(public_version: str) -> str:
+    """Public version a daily build of *public_version* is labelled with."""
+
+    return _DEV_NUMBER_SUFFIX.sub("", public_version)
+
+
 def get_local_version(repo_root: Path, public_version: str | None = None) -> str:
+    """Local version that marks a build as a daily (non-release) build.
+
+    ``FLA_NPU_DISABLE_LOCAL_VERSION=TRUE`` is the release switch: the wheel then
+    carries the bare released version from ``fla/__init__.py`` and nothing else,
+    which is what ``check_pypi_wheel.py`` demands of an upload to the real index
+    (its default is the exact released version).  Every other build is labelled with where it came
+    from -- ``main_dev0a1b2c3`` on the development line, a bare ``dev0a1b2c3`` on
+    a release line -- so a daily wheel is never mistaken for the release of the
+    same version, and it still sorts above that release (a local version outranks
+    the same version without one).
+
+    A release line already names itself in the public part, so repeating it in
+    the local part would only add noise: ``26.9.1+dev0a1b2c3``, not
+    ``26.9.1+26.9.1.dev0a1b2c3``.
+    The public part of a daily build is ``daily_base_version``, so the
+    development line reads ``26.10.0+main_dev0a1b2c3`` too.
+    """
+
     explicit = os.getenv("FLA_NPU_LOCAL_VERSION", "").strip()
     if explicit:
         return _normalize_local_version(explicit)
     if env_flag("FLA_NPU_DISABLE_LOCAL_VERSION"):
         return ""
 
-    if get_branch_name(repo_root) != "main":
-        return ""
-
+    version = public_version or read_public_version(repo_root)
+    label = get_daily_version_label(repo_root)
+    if label == version:
+        label = ""
     commit_id = get_commit_id(repo_root)
-    return f"main.{commit_id}" if commit_id else "main"
+    if not commit_id:
+        return label or "dev"
+    # PEP 440 local versions are dot-separated alphanumerics: ``main_dev0a1b2c3``
+    # is normalised to ``main.dev0a1b2c3``, and pip compares the normalised form.
+    return f"{label}.dev{commit_id}" if label else f"dev{commit_id}"
 
 
 def get_package_version(repo_root: Path) -> str:
@@ -178,20 +274,23 @@ def get_package_version(repo_root: Path) -> str:
     local_version = get_local_version(repo_root, public_version)
     if not local_version:
         return public_version
-    return f"{public_version}+{local_version}"
+    # A daily build of a development line names the release it leads to, not the
+    # ``<next>.dev0`` the tree carries while that release is still unwritten.
+    return f"{daily_base_version(public_version)}+{local_version}"
 
 
 def get_wheel_filename(repo_root: Path) -> str:
     public_version = read_public_version(repo_root)
     package_version = get_package_version(repo_root)
-    build_tag = get_wheel_build_tag(repo_root, public_version)
+    build_tag = get_wheel_build_tag()
+    platform_tag = get_wheel_platform_tag()
+    dist_name = get_wheel_dist_name()
     # The wheel is not pure Python (it carries a host launcher and the OPP) but
     # it is not CPython-versioned either, so only the platform tag is filled in.
-    platform_tag = get_platform_name()
     if build_tag:
-        return (f"{WHEEL_DIST_NAME}-{package_version}-{build_tag}-"
+        return (f"{dist_name}-{package_version}-{build_tag}-"
                 f"py3-none-{platform_tag}.whl")
-    return f"{WHEEL_DIST_NAME}-{package_version}-py3-none-{platform_tag}.whl"
+    return f"{dist_name}-{package_version}-py3-none-{platform_tag}.whl"
 
 
 def get_platform_name() -> str:
@@ -199,7 +298,9 @@ def get_platform_name() -> str:
     if override:
         return override
     if sys.platform.startswith("linux"):
-        return f"linux_{platform.uname().machine}"
+        # Normalize through get_arch(): platform.machine() reports arm64/AMD64
+        # on some hosts, which would not match the wheel tags pip looks for.
+        return f"linux_{get_arch()}"
     raise RuntimeError(f"Unsupported platform for run package build: {sys.platform}")
 
 
@@ -221,6 +322,9 @@ def main() -> int:
             "package-version",
             "commit-id",
             "wheel-build-tag",
+            "tier",
+            "distribution-name",
+            "wheel-dist-name",
             "wheel-filename",
             "run-filename",
         ],
@@ -238,7 +342,13 @@ def main() -> int:
     elif args.field == "commit-id":
         value = get_commit_id(repo_root)
     elif args.field == "wheel-build-tag":
-        value = get_wheel_build_tag(repo_root)
+        value = get_wheel_build_tag()
+    elif args.field == "tier":
+        value = get_tier()
+    elif args.field == "distribution-name":
+        value = get_distribution_name()
+    elif args.field == "wheel-dist-name":
+        value = get_wheel_dist_name()
     elif args.field == "wheel-filename":
         value = get_wheel_filename(repo_root)
     else:

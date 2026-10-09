@@ -58,7 +58,8 @@ static constexpr size_t CHUNK_FWD_O_DIM_BATCH = 0;
 static constexpr size_t CHUNK_FWD_O_DIM_HEAD_NUM = 1;
 static constexpr size_t CHUNK_FWD_O_DIM_SEQLEN = 2;
 static constexpr size_t CHUNK_FWD_O_DIM_HEAD_DIM = 3;
-static constexpr size_t CHUNK_FWD_O_H_DIM_CHUNKS = 2;
+static constexpr size_t CHUNK_FWD_O_H_DIM_CHUNKS = 1;
+static constexpr size_t CHUNK_FWD_O_H_DIM_HEAD_NUM = 2;
 static constexpr size_t CHUNK_FWD_O_H_DIM_K = 3;
 static constexpr size_t CHUNK_FWD_O_H_DIM_V = 4;
 
@@ -200,7 +201,7 @@ public:
         const int64_t hK = hShape.GetDim(ctx_.stateVFirst ? CHUNK_FWD_O_H_DIM_V : CHUNK_FWD_O_H_DIM_K);
         const int64_t hV = hShape.GetDim(ctx_.stateVFirst ? CHUNK_FWD_O_H_DIM_K : CHUNK_FWD_O_H_DIM_V);
         OP_CHECK_IF(hShape.GetDim(CHUNK_FWD_O_DIM_BATCH) != vShape.GetDim(CHUNK_FWD_O_DIM_BATCH) ||
-                        hShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) != vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) ||
+                        hShape.GetDim(CHUNK_FWD_O_H_DIM_HEAD_NUM) != vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) ||
                         hK != qShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM) ||
                         hV != vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM),
                     OP_LOGE(ctx_.nodeName, "Check h shape failed for state_v_first=%d.", ctx_.stateVFirst),

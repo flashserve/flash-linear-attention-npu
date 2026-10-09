@@ -41,9 +41,7 @@ using fla_npu_stable::stable::size_of;
 constexpr const char* kChunkKdaFwdFinalizeLayoutNames[] = {"BSND", "BNSD",
                                                            "TND", "NTD"};
 
-// 只有 attn_out 是输出：它是 sequence-major（BSND/TND）或 head-major
-// （BNSD/NTD）的 rank-4，packed 拼写是 rank-3。qg_scaled/aqk/v_new/h 始终是
-// head-major，packed 时没有 batch 轴——与 ctypes 参考完全一致。
+// 输出布局由参数指定；h 为 [B,NT,HV,K,V]。
 constexpr const char* kSchema_chunk_kda_fwd_finalize =
     "npu_chunk_kda_fwd_finalize(Tensor qg_scaled, Tensor aqk, Tensor v_new, "
     "Tensor h, Tensor? cu_seqlens, Tensor? chunk_indices, int output_layout, "

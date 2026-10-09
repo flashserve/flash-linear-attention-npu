@@ -21,8 +21,14 @@ constexpr MatmulConfig CHUNK_SCALED_DOT_KKT_MM_CFG = GetNormalConfig(true);
 using CType = matmul::MatmulType<TPosition::GM, CubeFormat::ND, float>;
 using BiasType = matmul::MatmulType<TPosition::GM, CubeFormat::ND, float>;
 
-template <typename KType, typename OutputType = float>
+// OutputType is the CAST_RINT rounding type of the epilogue. StoreFp32SolveInput
+// additionally publishes the rounded values as an FP32 GM solve input and only
+// changes the GM storage type; it must not remove the low-precision rounding.
+template <typename KType, typename OutputType = float, bool StoreFp32SolveInput = false>
 class ChunkScaledDotKkt {
+    static_assert(!StoreFp32SolveInput || !std::is_same_v<OutputType, float>,
+                  "StoreFp32SolveInput keeps OutputType as the rounding type and needs a low-precision tile");
+
 public:
     using AType = matmul::MatmulType<TPosition::GM, CubeFormat::ND, KType>;
     using BType = matmul::MatmulType<TPosition::GM, CubeFormat::ND, KType, true, LayoutMode::NONE, false>;
@@ -80,6 +86,15 @@ public:
     {
         InitCommon(k, rawG, beta, cuSeqlens, chunkIndices, a, scoreWorkspace, gCumsum, true, b, hk, hv,
                    hvPerHk, t, kDim, bt, nt, taskNum, usedAicNum, usedAivNum, btAlign, isVarlen, pipe);
+    }
+
+    // Only valid with StoreFp32SolveInput and after Init/InitFusedCumsum: binds
+    // the independent FP32 solve-input output. The low-precision aGm output of
+    // Init is then no longer written by the epilogue.
+    __aicore__ inline void InitSolveFp32Input(GM_ADDR solveFp32Input)
+    {
+        solveInputGm.SetGlobalBuffer((__gm__ float *)solveFp32Input,
+                                     B_ * taskHeads_ * T_ * BT_);
     }
 
 private:
@@ -318,7 +333,18 @@ private:
                                        LocalTensor<float> outTileLocal,
                                        int64_t valid)
     {
-        if constexpr (!std::is_same_v<OutputType, float>) {
+        if constexpr (StoreFp32SolveInput) {
+            LocalTensor<OutputType> typedOut = typedOutTileBuf_.Get<OutputType>();
+            Cast(typedOut, outTileLocal, RoundMode::CAST_RINT,
+                 static_cast<uint32_t>(valid * btAlign_));
+            PipeBarrier<PIPE_V>();
+            // The first cast has finished reading outTileLocal, so the second
+            // cast may overwrite the same FP32 slots from typedOut.
+            Cast(outTileLocal, typedOut, RoundMode::CAST_NONE,
+                 static_cast<uint32_t>(valid * btAlign_));
+            PipeBarrier<PIPE_V>();
+            CopyFp32OutTile(outBaseOffset, outRowStride, outTileLocal, valid);
+        } else if constexpr (!std::is_same_v<OutputType, float>) {
             LocalTensor<OutputType> typedOut = typedOutTileBuf_.Get<OutputType>();
             Cast(typedOut, outTileLocal, RoundMode::CAST_RINT,
                  static_cast<uint32_t>(valid * btAlign_));
@@ -365,10 +391,17 @@ public:
     __aicore__ inline void ProcessEpilogueForSolve(int64_t tilesPerAic)
     {
         const int64_t subBlockNum = static_cast<int64_t>(GetSubBlockNum());
-        const int64_t subBlockIdx = static_cast<int64_t>(GetSubBlockIdx());
         const int64_t aicIdx = static_cast<int64_t>(GetBlockIdx()) / subBlockNum;
         const int64_t begin = aicIdx * tilesPerAic;
         const int64_t end = MinI64(begin + tilesPerAic, taskNum_);
+        ProcessEpilogueRange(begin, end);
+    }
+
+    // begin/end是全局parent区间；仅缩小任务范围，沿用同一后处理及舍入实现。
+    __aicore__ inline void ProcessEpilogueRange(int64_t begin, int64_t end)
+    {
+        const int64_t subBlockNum = static_cast<int64_t>(GetSubBlockNum());
+        const int64_t subBlockIdx = static_cast<int64_t>(GetSubBlockIdx());
         for (int64_t task = begin + subBlockIdx; task < end; task += subBlockNum) {
             ComputeEpilogueTask(task);
         }
@@ -402,6 +435,23 @@ private:
         outParams.dstStride = static_cast<uint32_t>((outRowStride - BT_) * static_cast<int64_t>(sizeof(OutputType)));
         outParams.rsv = 0;
         DataCopyPad(aGm[outBaseOffset], outTileLocal, outParams);
+        WaitMte3ToV();
+    }
+
+    __aicore__ inline void CopyFp32OutTile(int64_t outBaseOffset,
+                                           int64_t outRowStride,
+                                           LocalTensor<float> outTileLocal,
+                                           int64_t valid)
+    {
+        WaitVToMte3();
+        DataCopyExtParams outParams;
+        outParams.blockCount = static_cast<uint16_t>(valid);
+        outParams.blockLen = static_cast<uint32_t>(BT_ * static_cast<int64_t>(sizeof(float)));
+        outParams.srcStride = static_cast<uint32_t>((btAlign_ - BT_) * static_cast<int64_t>(sizeof(float)) /
+                                                    UB_ALIGN_BYTES);
+        outParams.dstStride = static_cast<uint32_t>((outRowStride - BT_) * static_cast<int64_t>(sizeof(float)));
+        outParams.rsv = 0;
+        DataCopyPad(solveInputGm[outBaseOffset], outTileLocal, outParams);
         WaitMte3ToV();
     }
 
@@ -518,19 +568,25 @@ private:
         }
         PipeBarrier<PIPE_V>();
 
-        for (int64_t lane = 0; lane < rows; ++lane) {
-            LocalTensor<float> gateRow = gateLocal[lane * btAlign_];
-            Maxs(gateRow, gateRow, -50.0f, static_cast<int32_t>(cols));
+        for (int64_t colOffset = 0; colOffset < cols; colOffset += FP32_REPEAT_ELEMS) {
+            const uint64_t mask = static_cast<uint64_t>(
+                MinI64(static_cast<int64_t>(FP32_REPEAT_ELEMS), cols - colOffset));
+            Maxs(gateLocal[colOffset], gateLocal[colOffset], -50.0f, mask,
+                 static_cast<uint8_t>(rows), {1, 1, rowRepeatStride, rowRepeatStride});
         }
         PipeBarrier<PIPE_V>();
-        for (int64_t lane = 0; lane < rows; ++lane) {
-            LocalTensor<float> gateRow = gateLocal[lane * btAlign_];
-            Mins(gateRow, gateRow, 50.0f, static_cast<int32_t>(cols));
+        for (int64_t colOffset = 0; colOffset < cols; colOffset += FP32_REPEAT_ELEMS) {
+            const uint64_t mask = static_cast<uint64_t>(
+                MinI64(static_cast<int64_t>(FP32_REPEAT_ELEMS), cols - colOffset));
+            Mins(gateLocal[colOffset], gateLocal[colOffset], 50.0f, mask,
+                 static_cast<uint8_t>(rows), {1, 1, rowRepeatStride, rowRepeatStride});
         }
         PipeBarrier<PIPE_V>();
-        for (int64_t lane = 0; lane < rows; ++lane) {
-            LocalTensor<float> gateRow = gateLocal[lane * btAlign_];
-            Exp(gateRow, gateRow, static_cast<int32_t>(cols));
+        for (int64_t colOffset = 0; colOffset < cols; colOffset += FP32_REPEAT_ELEMS) {
+            const uint64_t mask = static_cast<uint64_t>(
+                MinI64(static_cast<int64_t>(FP32_REPEAT_ELEMS), cols - colOffset));
+            Exp(gateLocal[colOffset], gateLocal[colOffset], mask,
+                 static_cast<uint8_t>(rows), {1, 1, rowRepeatStride, rowRepeatStride});
         }
         PipeBarrier<PIPE_V>();
 
@@ -575,6 +631,7 @@ private:
     GlobalTensor<float> gGm;
     GlobalTensor<float> betaGm;
     GlobalTensor<OutputType> aGm;
+    GlobalTensor<float> solveInputGm;
     GlobalTensor<float> scoreGm;
     GlobalTensor<float> gCumsumGm;
     GlobalTensor<int64_t> cuSeqlensGm;

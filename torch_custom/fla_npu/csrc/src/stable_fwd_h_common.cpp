@@ -104,13 +104,13 @@ inline FwdHOutputs allocate_fwd_h(const TensorMeta& k_meta,
                                   bool state_v_first,
                                   const std::optional<Tensor>& initial_state) {
   FwdHOutputs out;
-  out.h = allocate_sizes(
-      {SIZE_OF(k_meta, 0), SIZE_OF(u_meta, 1),
-       count_chunks(cu_seqlens, chunk_indices, chunk_size,
-                    SIZE_OF(k_meta, 2)),
+  const int64_t chunks = count_chunks(cu_seqlens, chunk_indices, chunk_size,
+                                     SIZE_OF(k_meta, 2));
+  const std::vector<int64_t> h_shape =
+      {SIZE_OF(k_meta, 0), chunks, SIZE_OF(u_meta, 1),
        state_v_first ? SIZE_OF(u_meta, 3) : SIZE_OF(k_meta, 3),
-       state_v_first ? SIZE_OF(k_meta, 3) : SIZE_OF(u_meta, 3)},
-      k_meta.scalar_type, k_meta);
+       state_v_first ? SIZE_OF(k_meta, 3) : SIZE_OF(u_meta, 3)};
+  out.h = allocate_sizes(h_shape, k_meta.scalar_type, k_meta);
   out.v_new = allocate_like(u_meta);
   if (output_final_state) {
     out.final_state =

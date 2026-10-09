@@ -325,10 +325,10 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     }
     const auto &h = context->GetInputShape(FINALIZE_INPUT_H)->GetStorageShape();
     const int64_t hBatch = static_cast<int64_t>(info.batch);
-    if (!HasShape(h, {hBatch, static_cast<int64_t>(info.heads),
-                      static_cast<int64_t>(totalChunks), 128, 128})) {
+    if (!HasShape(h, {hBatch, static_cast<int64_t>(totalChunks),
+                      static_cast<int64_t>(info.heads), 128, 128})) {
         OP_LOGE(context->GetNodeName(),
-                "h 必须为 [B,HV,C,128,128]，其中 C=%lu。",
+                "h 必须为 [B,C,HV,128,128]，其中 C=%lu。",
                 static_cast<unsigned long>(totalChunks));
         return ge::GRAPH_FAILED;
     }

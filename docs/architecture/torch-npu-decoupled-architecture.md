@@ -474,6 +474,63 @@ runtime 会缓存两个局部 CDLL 句柄和已解析符号，并使用 `RTLD_NO
 - 不得按 torch patch 版本散落条件分支；能力差异应集中在 runtime provider 或 adapter。
 - 修改 device guard、stream、异步保活、format、mutation 或 autograd 行为时，必须同步本文和对应测试。
 
+### 6.5 发布 wheel 的水位约束（glibc / libstdc++）
+
+PyPI 上的 `manylinux_<glibc>_<arch>` 标签是对外承诺"目标机 glibc ≥ 该版本就能加载"，
+所以两条水位轴在发版时从"看看而已"变成硬约束：标签写高了会挡住本来能装的机器，写低了
+等于发一个装上去加载失败的包。
+
+**实测（26.9.0，构建镜像 cann:9.1.0-*-ubuntu22.04，glibc 2.35）**，逐文件取包内最大值：
+
+| 产物 | GLIBC 上限 | 来源 |
+| --- | --- | --- |
+| `libfla_npu_stable.so`（适配层） | **2.34** | `dlopen` / `dlsym` / `dlerror`（glibc 2.34 起并入 libc）+ `__libc_single_threaded`（2.32） |
+| OPP `liboptiling.so`、`libcust_opmaster_rt2.0.so`、`libcust_opsproto_rt2.0.so` | **2.34** | 同一容器编译 |
+| OPP `libcust_opapi.so`、`libes_transformer_cust.so` | 2.32 | 同一容器编译 |
+
+结论：整包 glibc 下限是 **2.34**，所以平台标签是 `manylinux_2_34_<arch>`（单一常量
+`scripts/fla_npu_artifacts.WHEEL_PLATFORM_TAG`，本仓 CI 镜像就是 22.04 基线）。要真的降到
+`manylinux_2_28`（CentOS 7 / glibc 2.28 的存量机器）需要同时改两处，都属于独立于发布流程的
+构建改造：适配层用 `.symver` 把 `dlopen` / `dlsym` / `dlerror` 钉回 `GLIBC_2.2.5`（x86_64）/
+`GLIBC_2.17`（aarch64）并去掉 `__libc_single_threaded` 引用；OPP 在 glibc ≤ 2.28 的镜像里
+编译（CANN 9.1 目前只在 22.04 基线上验证过）。
+
+libstdc++ 那条轴同样按"整包取最大值"看：当前产物需要 `GLIBCXX_3.4.29`，也就是目标机的
+libstdc++ 要来自 GCC 11 及以上的发行版（Ubuntu 22.04+）。这条线比 glibc 更容易漏：客户机上
+`libstdc++` 由发行版或 conda 提供，同一台机器换个 python 入口结论就可能不同。
+
+**客户侧复现（2026-09，A3 / openEuler 22.03，GCC 10.3，libstdc++ 上限 3.4.28）**：`import fla_npu`
+在加载 `opp/.../op_api/lib/libcust_opapi.so` 时硬报 `version 'GLIBCXX_3.4.29' not found`，算子
+跑不起来；把 `LD_LIBRARY_PATH` 指到带新 libstdc++ 的 conda 目录（或 `LD_PRELOAD` 那份
+`libstdc++.so.6`）可以临时绕过。这台机器 glibc 那条轴是够的（2.34），卡住的只有 libstdc++。
+
+候选修法三条，都还没采纳（本仓当前不改构建）：
+
+1. **维持现状 + 写实支持矩阵**：把 openEuler 22.03 从支持列表里去掉，或只给
+   `LD_LIBRARY_PATH` 绕法；
+2. **host 侧 `-static-libstdc++`**：实测能把 GLIBCXX 需求降到 0（导出符号 408→408、aclnn
+   入口 61→61 不变），代价是进程里多一份静态 libstdc++（跨库异常 / `type_info` 匹配、单库
+   体积 +1.3 MB、许可证叙述都要评估），属于独立的构建改造；
+3. **换更低水位的构建基座（GCC ≤ 10）**：不引入第二份运行时，只是把水位从 3.4.29 挪到
+   3.4.28，需要先确认 CANN devel 镜像与编译器在支持范围内，验证面最大。
+发布门禁：`scripts/check_pypi_wheel.py` 上传前逐个 `.so` 断言 glibc 与 GLIBCXX 都不超过标签
+水位，超出即失败；`tools/stable_abi_audit.py --lib` 是同一套判据的构建期版本。
+### 6.6 发布产物的命名与身份
+
+发布产物把档位写进发行名、把架构写进平台标签，一条链收敛到同一个名字：
+
+```
+flash_linear_attention_npu-<ver>-<buildtag>-py3-none-any.whl
+  → flash_linear_attention_npu-<ver>-<buildtag>-py3-none-<platform>.whl
+  → flash_linear_attention_npu_<tier>-<ver>-py3-none-manylinux_2_34_<arch>.whl
+```
+
+档位来自 `FLA_NPU_SOC`（`a2` / `a3` / `a5`），架构来自平台标签，文件名里的 build tag 不再使用
+（要临时打标可用 `FLA_NPU_WHEEL_BUILD_TAG`，但发布门禁会拒绝带 build tag 的产物）。
+**本地自编产物与 PyPI 包同名同平台标签**，所以本地包和发布包互为升级路径，不会出现"同一份
+payload 两个发行名、各自拥有一份 `fla_npu/`、卸载一个留下另一个"的局面；同一档位的多个版本
+仍然互相覆盖，并存要独立 venv。名字预测脚本见
+`python scripts/fla_npu_artifacts.py wheel-filename`。
 ## 7. 常见问题
 
 ### 是否完全不依赖 torch？

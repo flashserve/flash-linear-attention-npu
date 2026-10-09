@@ -97,7 +97,7 @@ q/k      [B, HK, T, K]
 w/do/dv  [B, HV, T, K or V]
 g        [B, HV, T]
 gK       [B, HV, T, K]
-dh       [B, HV, NT, K, V]
+dh       [B, NT, HV, K, V]
 ```
 
 注意：上游 `gk` 带 K 维，是 key-wise gate；本仓如果传 `[B,HV,T]` 的逐 token gate，应走 `g`，不能作为 `gK` 的上游对齐语义。

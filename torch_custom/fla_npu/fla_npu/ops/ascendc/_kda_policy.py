@@ -113,9 +113,6 @@ def _prepare_kda_bwd_optimized(args):
     if not args["disable_recompute"] and (h > 256 or h % 8):
         raise ValueError("optimized recompute currently requires H<=256 and H divisible by 8")
     cu, indices, nc = _canonical_kda_bwd_metadata(args["cu_seqlens"], args["chunk_indices"], t)
-    lengths = (t,) if cu is None else tuple(b-a for a,b in zip(cu,cu[1:]))
-    if not args["disable_recompute"] and any(n % 64 for n in lengths):
-        raise ValueError("recompute tails are disabled pending upstream repeatability repair; use saved caches")
     token = shape
     scalar = shape[:-1]
     state = (nc,h,128,128) if packed else (b,nc,h,128,128)

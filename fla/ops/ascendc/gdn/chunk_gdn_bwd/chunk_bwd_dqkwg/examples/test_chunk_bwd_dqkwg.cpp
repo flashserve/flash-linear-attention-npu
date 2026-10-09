@@ -377,7 +377,7 @@ int main(int argc, char* argv[])
 
     aclTensor* h = nullptr;
     void* hDeviceAddr = nullptr;
-    std::vector<int64_t> hShape = {B, HV, num_chunks, K, V};
+    std::vector<int64_t> hShape = {B, num_chunks, HV, K, V};
     std::vector<int16_t> hHostData(B * HV * num_chunks * K * V, HALF_TWO);
     ReadFile(DATAPATH + "h.bin",hShape,hHostData);
     ret = CreateAclTensor(hHostData, hShape, &hDeviceAddr, datatype, &h);
@@ -401,7 +401,7 @@ int main(int argc, char* argv[])
 
     aclTensor* dh = nullptr;
     void* dhDeviceAddr = nullptr;
-    std::vector<int64_t> dhShape = {B, HV, num_chunks, K, V};
+    std::vector<int64_t> dhShape = {B, num_chunks, HV, K, V};
     std::vector<int16_t> dhHostData(B * HV * num_chunks * K * V, HALF_ONE);
     // std::cout << "B * H * num_chunks * K * V: "<< B * H * num_chunks * K * V << "\n";
     ReadFile(DATAPATH + "dh.bin",dhShape,dhHostData);

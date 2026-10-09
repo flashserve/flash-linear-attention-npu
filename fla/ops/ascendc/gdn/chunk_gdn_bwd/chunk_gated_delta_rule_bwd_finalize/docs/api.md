@@ -75,7 +75,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalize(
 | `q`, `k` | BF16 | `[B,HK,T,128]` |
 | `v`, `v_new`, `do`, `du` | BF16 | `[B,HV,T,128]` |
 | `g`, `beta` | BF16/FP32 | `[B,HV,T]`；两者 dtype 必须相同 |
-| `h`, `dh` | BF16 | `[B,HV,NT,K,V]`；`state_v_first=true` 时为 `[B,HV,NT,V,K]` |
+| `h`, `dh` | BF16 | `[B,NT,HV,K,V]`；`state_v_first=true` 时为 `[B,NT,HV,V,K]` |
 | `a` | BF16 | `[B,HV,T,64]` |
 | `q_rstd`, `k_rstd` | FP32 | 可空；`[B,HK,T]` |
 | `beta_raw` | 与 `beta` 相同 | 可空；`[B,HV,T]` |

@@ -319,7 +319,7 @@ DirectOutputs MakeOutputs(
         at::empty({batch, hv, seqlen, kdim}, q.options()),
         at::empty({batch, hv, seqlen, kdim}, q.options()),
         at::empty({batch, hv, seqlen, vdim}, q.options()),
-        at::empty({batch, hv, totalChunks, kdim, vdim}, q.options()),
+        at::empty({batch, totalChunks, hv, kdim, vdim}, q.options()),
     };
 }
 

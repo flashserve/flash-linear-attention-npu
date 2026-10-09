@@ -9,6 +9,7 @@
 
 #define CATLASS_ARCH 2201
 
+#include "../../../../../qkv_input_layout.h"
 #include "catlass/arch/arch.hpp"
 #include "catlass/arch/cross_core_sync.hpp"
 #include "catlass/arch/resource.hpp"
@@ -21,6 +22,7 @@
 #include "kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"
 #include "catlass/gemm/block/block_swizzle.hpp"
 #include "../block/block_scheduler_gdn_fwd_h.hpp"
+#include "../../../../../chunk_gated_delta_rule_ho_pipeline.h"
 #include "catlass/gemm/dispatch_policy.hpp"
 #include "catlass/gemm/gemm_type.hpp"
 #include "catlass/layout/layout.hpp"
@@ -131,6 +133,12 @@ public:
 
 
     uint32_t batch;
+    bool inputSequenceMajor{false};
+    __aicore__ inline void ConfigureInputLayout(bool sequenceMajor) { inputSequenceMajor = sequenceMajor; }
+    __aicore__ inline uint64_t RawQkOffset(uint64_t offset) const
+    {
+        return inputSequenceMajor ? GDN::QkvSequenceMajorOffset(offset, seqlen, kNumHead, kHeadDim) : offset;
+    }
     uint32_t seqlen;
     uint32_t kNumHead;
     uint32_t vNumHead;
@@ -170,6 +178,9 @@ public:
     AscendC::GlobalTensor<int32_t> gmPipelineSync;
 
     bool chunkPipelineEnabled{false};
+
+    GdnHoPipeline::HoPipelineConfig idleCfg{};
+    AscendC::GlobalTensor<int32_t> gmHoReady;
 
     CubeScheduler cubeBlockScheduler;
     VecScheduler vecBlockScheduler;
@@ -230,6 +241,28 @@ public:
         AscendC::IBSet<false>(gmPipelineSync, GetPipelineSyncLocal(), GetPipelineAivIdx(), eventId);
     }
 
+    // 新通知协议（仅 AIV）：清零本 AIV 在全部 bank 的自身 32B 槽；跨核“先清
+    // 零、后收发”顺序由随后的原 wave 初始化 SyncAll（含空闲后缀核）建立。
+    __aicore__ inline void InitIdlePipelineSlots()
+    {
+        if (!idleCfg.enabled) {
+            return;
+        }
+        GdnHoPipeline::HoNotifyPipeline(idleCfg, gmHoReady).InitOwnSlots(GetPipelineSyncLocal());
+    }
+
+    // 新通知协议（仅 AIV）：V2 共同出口按 (seq, head, vBlock, localChunk) 发
+    // 布一次；末块跳过更新的分支同样经过此处发布。
+    __aicore__ inline void PublishIdleChunk(uint32_t compactSequence, uint32_t head, uint32_t vBlock,
+                                            uint32_t localChunk)
+    {
+        if (!idleCfg.enabled) {
+            return;
+        }
+        GdnHoPipeline::HoNotifyPipeline(idleCfg, gmHoReady).Publish(
+            compactSequence, head, vBlock, localChunk, GetPipelineSyncLocal());
+    }
+
 
     __aicore__ inline GDNFwdHKernel() {}
 
@@ -282,11 +315,26 @@ public:
 
         if ASCEND_IS_AIC {
             cubeBlockScheduler.Init(cu_seqlens, chunk_indices, tiling, user);
+            cubeBlockScheduler.ConfigureTaskStreams(!kGated && !chunkPipelineEnabled);
         }
 
         if ASCEND_IS_AIV {
             vecBlockScheduler.Init(cu_seqlens, chunk_indices, tiling, user);
+            vecBlockScheduler.ConfigureTaskStreams(!kGated && !chunkPipelineEnabled);
         }
+    }
+
+    // 生命周期：统一 mega 入口在 Init 后、Process 前调用；默认关闭保持原行
+    // 为。enabled 时旧 ring 握手退出并绑定 host 独立预留的 GM ready；配置合
+    // 法性与全核一致性由入口保证，本核不做局部资格判断。
+    __aicore__ inline void ConfigureIdlePipeline(const GdnHoPipeline::HoPipelineConfig &cfg, GM_ADDR readyAddr)
+    {
+        if (!cfg.enabled) {
+            return;
+        }
+        idleCfg = cfg;
+        chunkPipelineEnabled = false;
+        gmHoReady.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t *>(readyAddr));
     }
 
     template <typename TilingData>
@@ -332,9 +380,11 @@ public:
 
         if ASCEND_IS_AIC {
             cubeBlockScheduler.InitFromData(cu_seqlens, chunk_indices, tilingData, user);
+            cubeBlockScheduler.ConfigureTaskStreams(!kGated && !chunkPipelineEnabled);
         }
         if ASCEND_IS_AIV {
             vecBlockScheduler.InitFromData(cu_seqlens, chunk_indices, tilingData, user);
+            vecBlockScheduler.ConfigureTaskStreams(!kGated && !chunkPipelineEnabled);
         }
     }
 
@@ -465,7 +515,7 @@ public:
                 } else {
                     weight = LoadScalarAsFloat(
                         gmK,
-                        offsets.wkOffset + tokenRow * kHeadDim + kRow);
+                        RawQkOffset(offsets.wkOffset + static_cast<uint64_t>(tokenRow) * kHeadDim + kRow));
                 }
                 AscendC::Muls(floatUb, floatUb, weight, offsets.vBlockDim);
                 AscendC::PipeBarrier<PIPE_V>();
@@ -557,7 +607,10 @@ public:
             auto hLayout = tla::MakeLayout<ElementH, LayoutH>(shapeBatch * vNumHead * cubeBlockScheduler.totalChunks * kHeadDim, vHeadDim);
             auto vLayout = tla::MakeLayout<ElementVWork, LayoutV>(coreNum * chunkSize * PING_PONG_STAGES, cubeBlockScheduler.vBlockSize);
 
-            auto kLayout = tla::MakeLayout<ElementK, LayoutK>(kHeadDim, shapeBatch * kNumHead * cubeBlockScheduler.totalTokens);
+            const int64_t kStride = static_cast<int64_t>(kHeadDim) *
+                (inputSequenceMajor && !kGated ? kNumHead : 1);
+            auto kLayout = tla::MakeLayoutFromTag(
+                LayoutK(kHeadDim, shapeBatch * kNumHead * cubeBlockScheduler.totalTokens, kStride));
             auto vworkLayout = tla::MakeLayout<ElementV, LayoutV>(coreNum * chunkSize * PING_PONG_STAGES, cubeBlockScheduler.vBlockSize);
             auto hworkLayout = tla::MakeLayout<ElementHWork, LayoutH>(coreNum * kHeadDim * PING_PONG_STAGES, cubeBlockScheduler.vBlockSize);
             uint32_t taskWaveCount = cubeBlockScheduler.GetTaskWaveCount();
@@ -635,7 +688,7 @@ public:
                             int64_t cube2OffsetH = cube2Offsets.hWorkOffset;
                             auto tensorK = kGated
                                 ? tla::MakeTensor(gmKDecayWorkspace[cube2OffsetKwork], kLayout, Catlass::Arch::PositionGM{})
-                                : tla::MakeTensor(gmK[cube2OffsetKwork], kLayout, Catlass::Arch::PositionGM{});
+                                : tla::MakeTensor(gmK[RawQkOffset(cube2OffsetKwork)], kLayout, Catlass::Arch::PositionGM{});
                             auto tensorVwork = tla::MakeTensor(gmVUpdateWorkspace[cube2OffsetVwork], vworkLayout, Catlass::Arch::PositionGM{});
                             auto tensorHwork = tla::MakeTensor(gmHWorkspace[cube2OffsetH], hworkLayout, Catlass::Arch::PositionGM{});
                             GemmCoord cube2Shape{kHeadDim, cube2Offsets.vBlockDim, cube2Offsets.blockTokens};
@@ -671,8 +724,6 @@ public:
         if ASCEND_IS_AIV {
             uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
             uint32_t subBlockNum = AscendC::GetSubBlockNum();
-            uint32_t coreIdx = AscendC::GetBlockIdx() / subBlockNum;
-            uint32_t coreNum = AscendC::GetBlockNum();
             uint32_t logicalHeadTasks =
                 (isVariedLen ? vecBlockScheduler.tokenBatch : shapeBatch) * vNumHead;
             uint32_t taskCount = logicalHeadTasks * vecBlockScheduler.vBlockCount;
@@ -696,81 +747,85 @@ public:
                 resource.ubBuf.template GetBufferByByte<ElementH>(160 * 1024);
             uint32_t taskWaveCount = vecBlockScheduler.GetTaskWaveCount();
             InitPipelineSync();
+            InitIdlePipelineSlots();
             for (uint32_t waveIdx = 0; waveIdx < taskWaveCount; ++waveIdx) {
                 EpilogueGDNFwdHVnew epilogueGDNFwdHVnew(resource);
                 EpilogueGDNFwdHUpdate epilogueGDNFwdHUpdate(resource);
-                uint32_t taskIdx = waveIdx * coreNum + coreIdx;
-                uint32_t pingpongFlag = 1;
-                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
-                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
-                if (taskIdx < taskCount) {
-                    uint32_t vBlockIdx = taskIdx / logicalHeadTasks;
-                    uint32_t logicalTask = taskIdx % logicalHeadTasks;
-                    uint32_t batchIdx = logicalTask / vNumHead;
-                    uint32_t vHeadIdx = logicalTask % vNumHead;
-                    uint32_t vBlockOffset = vBlockIdx * vecBlockScheduler.vBlockSize;
-                    uint32_t vBlockDim = Min(
-                        vecBlockScheduler.vBlockSize, vHeadDim - vBlockOffset);
-                    uint32_t chunkOffset =
-                        isVariedLen ? vecBlockScheduler.GetVarlenChunkOffset(batchIdx) : 0;
-                    uint32_t shapeBatchIdx = isVariedLen ? 0 : batchIdx;
-                    uint32_t hBaseOffset =
-                        (shapeBatchIdx * vNumHead * totalChunks + vHeadIdx * totalChunks + chunkOffset) *
-                        stateBlockSize + vBlockOffset;
-                    uint32_t initialStateBaseOffset =
-                        (batchIdx * vNumHead + vHeadIdx) * stateBlockSize + vBlockOffset;
-                    // A split V block is strided by the original vHeadDim in
-                    // GM. Process one state row at a time so both 128-wide
-                    // blocks retain the original row layout.
-                    uint32_t stateRowsPerStep =
-                        vBlockDim == vHeadDim ? rowsPerTile : 1;
-                    for (uint32_t rowOffset = rowBegin; rowOffset < rowEnd;
-                         rowOffset += stateRowsPerStep) {
-                        uint32_t rowsThisTile = Min(stateRowsPerStep, rowEnd - rowOffset);
-                        uint32_t stateTileElems = rowsThisTile * vBlockDim;
-                        uint32_t hOffset = hBaseOffset + rowOffset * vHeadDim;
-                        AscendC::LocalTensor<ElementInitialState> stateUbTensor =
-                            pingpongFlag ? stateUbTensorPing : stateUbTensorPong;
-                        AscendC::LocalTensor<ElementH> hUbTensor =
-                            pingpongFlag ? hUbTensorPing : hUbTensorPong;
-                        auto eventId = pingpongFlag ? EVENT_ID1 : EVENT_ID0;
-                        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(eventId);
-                        if (useInitialState) {
-                            uint32_t initialStateOffset =
-                                initialStateBaseOffset + rowOffset * vHeadDim;
-                            if constexpr (!std::is_same<ElementInitialState, ElementH>::value) {
-                                AscendC::DataCopy(
-                                    stateUbTensor, gmInitialState[initialStateOffset], stateTileElems);
+                for (uint32_t initStreamId = 0; initStreamId < vecBlockScheduler.streamsPerWave; ++initStreamId) {
+                    uint32_t taskIdx = vecBlockScheduler.GetWaveTaskIndex(waveIdx, initStreamId);
+                    uint32_t pingpongFlag = 1;
+                    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
+                    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
+                    if (taskIdx < taskCount) {
+                        uint32_t vBlockIdx = taskIdx / logicalHeadTasks;
+                        uint32_t logicalTask = taskIdx % logicalHeadTasks;
+                        uint32_t batchIdx = logicalTask / vNumHead;
+                        uint32_t vHeadIdx = logicalTask % vNumHead;
+                        uint32_t vBlockOffset = vBlockIdx * vecBlockScheduler.vBlockSize;
+                        uint32_t vBlockDim = Min(
+                            vecBlockScheduler.vBlockSize, vHeadDim - vBlockOffset);
+                        uint32_t chunkOffset =
+                            isVariedLen ? vecBlockScheduler.GetVarlenChunkOffset(batchIdx) : 0;
+                        uint32_t shapeBatchIdx = isVariedLen ? 0 : batchIdx;
+                        uint32_t hBaseOffset =
+                            ((shapeBatchIdx * totalChunks + chunkOffset) * vNumHead + vHeadIdx) *
+                            stateBlockSize + vBlockOffset;
+                        uint32_t initialStateBaseOffset =
+                            (batchIdx * vNumHead + vHeadIdx) * stateBlockSize + vBlockOffset;
+                        // A split V block is strided by the original vHeadDim in
+                        // GM. Process one state row at a time so both 128-wide
+                        // blocks retain the original row layout.
+                        uint32_t stateRowsPerStep =
+                            vBlockDim == vHeadDim ? rowsPerTile : 1;
+                        for (uint32_t rowOffset = rowBegin; rowOffset < rowEnd;
+                             rowOffset += stateRowsPerStep) {
+                            uint32_t rowsThisTile = Min(stateRowsPerStep, rowEnd - rowOffset);
+                            uint32_t stateTileElems = rowsThisTile * vBlockDim;
+                            uint32_t hOffset = hBaseOffset + rowOffset * vHeadDim;
+                            AscendC::LocalTensor<ElementInitialState> stateUbTensor =
+                                pingpongFlag ? stateUbTensorPing : stateUbTensorPong;
+                            AscendC::LocalTensor<ElementH> hUbTensor =
+                                pingpongFlag ? hUbTensorPing : hUbTensorPong;
+                            auto eventId = pingpongFlag ? EVENT_ID1 : EVENT_ID0;
+                            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(eventId);
+                            if (useInitialState) {
+                                uint32_t initialStateOffset =
+                                    initialStateBaseOffset + rowOffset * vHeadDim;
+                                if constexpr (!std::is_same<ElementInitialState, ElementH>::value) {
+                                    AscendC::DataCopy(
+                                        stateUbTensor, gmInitialState[initialStateOffset], stateTileElems);
+                                    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(eventId);
+                                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(eventId);
+                                    AscendC::Cast(
+                                        hUbTensor, stateUbTensor, AscendC::RoundMode::CAST_RINT,
+                                        stateTileElems);
+                                    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(eventId);
+                                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(eventId);
+                                    AscendC::DataCopy(gmH[hOffset], hUbTensor, stateTileElems);
+                                } else {
+                                    AscendC::DataCopy(
+                                        stateUbTensor, gmInitialState[initialStateOffset], stateTileElems);
+                                    AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE3>(eventId);
+                                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE3>(eventId);
+                                    AscendC::DataCopy(gmH[hOffset], stateUbTensor, stateTileElems);
+                                }
+                            } else {
+                                // 将旧搬出完成的MTE2等待传递给复用UB的Vector写入。
                                 AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(eventId);
                                 AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(eventId);
-                                AscendC::Cast(
-                                    hUbTensor, stateUbTensor, AscendC::RoundMode::CAST_RINT,
-                                    stateTileElems);
+                                AscendC::Duplicate(hUbTensor, static_cast<ElementH>(0), stateTileElems);
                                 AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(eventId);
                                 AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(eventId);
                                 AscendC::DataCopy(gmH[hOffset], hUbTensor, stateTileElems);
-                            } else {
-                                AscendC::DataCopy(
-                                    stateUbTensor, gmInitialState[initialStateOffset], stateTileElems);
-                                AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE3>(eventId);
-                                AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE3>(eventId);
-                                AscendC::DataCopy(gmH[hOffset], stateUbTensor, stateTileElems);
                             }
-                        } else {
-                            // 将旧搬出完成的MTE2等待传递给复用UB的Vector写入。
-                            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(eventId);
-                            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(eventId);
-                            AscendC::Duplicate(hUbTensor, static_cast<ElementH>(0), stateTileElems);
-                            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(eventId);
-                            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(eventId);
-                            AscendC::DataCopy(gmH[hOffset], hUbTensor, stateTileElems);
+                            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(eventId);
+                            pingpongFlag = 1 - pingpongFlag;
                         }
-                        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(eventId);
-                        pingpongFlag = 1 - pingpongFlag;
                     }
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
+
                 }
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
 
                 AscendC::SyncAll<false>();
                 vecBlockScheduler.InitTaskWave(waveIdx);
@@ -862,6 +917,7 @@ public:
                         } else {
                             Arch::CrossCoreWaitFlag(vecBlockScheduler.cube2Done[streamId]);
                         }
+                        PublishIdleChunk(stream.batchIdx, stream.vHeadIdx, stream.vBlockIdx, stream.chunkIdx);
                         Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[streamId]);
                     }
                     }
@@ -879,8 +935,10 @@ public:
         if constexpr (kChunkPipeline) {
             // The dense fused path publishes individual chunks through IBSet/IBWait.
             // Varlen currently uses producer affinity without that handshake, so close
-            // H globally before the following O stage consumes h/vNew.
-            if (isVariedLen) {
+            // H globally before the following O stage consumes h/vNew. The idle
+            // pipeline path skips this barrier and leaves the final producer/consumer
+            // rendezvous to the future mega entry.
+            if (isVariedLen && !idleCfg.enabled) {
                 AscendC::SyncAll<false>();
             }
         }

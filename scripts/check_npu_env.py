@@ -17,12 +17,19 @@ from packaging.version import InvalidVersion, Version
 
 
 MIN_PYTHON = (3, 9)
-MIN_TORCH = "2.6.0"
-MIN_TRITON_ASCEND = "3.2.0"
-MIN_TRITON_ASCEND_A5 = "3.2.1"
-# CANN 9.x (9.0.0+) requires triton-ascend >= 3.2.1: 3.2.0 fails to JIT-compile
-# triton/backends/ascend/npu_utils.cpp on CANN 9.1.0 (RT_LIMIT_TYPE_SIMT_WARP_STACK_SIZE).
-MIN_TRITON_ASCEND_CANN9 = "3.2.1"
+# Runtime/version tables are shared with the PyPI import guard via
+# scripts/npu_compat.py (single source of truth).
+from npu_compat import (  # noqa: E402
+    MIN_CANN_BY_TIER,
+    MIN_TORCH,
+    MIN_TRITON_ASCEND,
+    MIN_TRITON_ASCEND_A5,
+    MIN_TRITON_ASCEND_CANN9,
+    MIN_TORCH_NPU_FUTURE_FIX_FAMILY,
+    TORCH_NPU_GDN_FIX_MINIMUMS,
+    VALIDATED_COMBOS,
+)
+from fla_npu_artifacts import get_tier  # noqa: E402
 
 # Toolchain and build dependencies checked in addition to the torch-related
 # checks. Values mirror CMakeLists.txt (cmake_minimum_required),
@@ -30,15 +37,6 @@ MIN_TRITON_ASCEND_CANN9 = "3.2.1"
 MIN_CMAKE = "3.16"
 MIN_GCC = "7.3"
 MIN_SETUPTOOLS = "70.1"
-TORCH_NPU_GDN_FIX_MINIMUMS = {
-    "2.7.1": "2.7.1.post5",
-    "2.8.0": "2.8.0.post5",
-    "2.9.0": "2.9.0.post3",
-    "2.10.0": "2.10.0.post2",
-    "2.11.0": "2.11.0rc3",
-    "2.12.0": "2.12.0rc1",
-}
-MIN_TORCH_NPU_FUTURE_FIX_FAMILY = "2.13.0"
 TORCH_NPU_GDN_FIX_RELEASE_URL = (
     "https://gitcode.com/Ascend/pytorch/releases?"
     "presetConfig={%22tags%22:229,%22release%22:122}"
@@ -404,6 +402,51 @@ def _detect_cann_version() -> str:
     return "<unknown>"
 
 
+def _report_validated_combo(cann: str, torch_version: str) -> None:
+    """Report (informationally) whether this env is on the release-validated matrix.
+
+    Unlike the minimum-version checks this never fails: an environment above
+    the documented minimums is usable even when it is not part of the release
+    test matrix. The output is a QA/support hint only; the README matrix is the
+    canonical record.
+    """
+    cann_key = ".".join(str(part) for part in (_version_key(cann) or ()))
+    torch_key = ".".join(str(part) for part in (_version_key(torch_version) or ()))
+    if (cann_key, torch_key) in VALIDATED_COMBOS:
+        print(
+            f"[INFO] environment (CANN {cann}, torch {torch_version}) is on the "
+            "release-validated matrix"
+        )
+    else:
+        print(
+            f"[INFO] environment (CANN {cann}, torch {torch_version}) is not on "
+            "the release-validated matrix; minimum-version requirements still apply"
+        )
+
+
+def _report_cann_requirement(cann: str) -> None:
+    """Report the CANN floor of the target tier (informational).
+
+    950 (a5) needs a newer CANN baseline than 910B/910_93, so the same CANN
+    version can satisfy one tier and not another. The check stays informational:
+    a build on an older CANN fails loudly later, and a false failure here would
+    block environments that work.
+    """
+    try:
+        tier = get_tier()
+    except Exception:
+        return
+    minimum = MIN_CANN_BY_TIER.get(tier)
+    if not minimum:
+        return
+    detected = _version_key(cann)
+    below = bool(detected) and detected < _version_key(minimum)
+    print(
+        f"[INFO] CANN minimum for tier {tier} is {minimum}"
+        + (f"; detected CANN {cann} is below it" if below else "")
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -445,6 +488,7 @@ def main() -> int:
         _ok(f"ASCEND_HOME_PATH={ascend_home or '<unset>'}")
         _ok(f"ASCEND_OPP_PATH={ascend_opp or '<unset>'}")
         _ok(f"CANN version: {_detect_cann_version()}")
+        _report_cann_requirement(_detect_cann_version())
     else:
         _fail(failures, "ASCEND_HOME_PATH or ASCEND_OPP_PATH must be set")
 
@@ -469,6 +513,8 @@ def main() -> int:
         torch_version = getattr(torch, "__version__", "<unknown>")
         _ok(f"torch version: {torch_version}")
         _check_min_version(failures, "torch", torch_version, MIN_TORCH)
+        if ascend_home or ascend_opp:
+            _report_validated_combo(_detect_cann_version(), torch_version)
         if hasattr(torch, "npu"):
             try:
                 npu_available = bool(torch.npu.is_available())

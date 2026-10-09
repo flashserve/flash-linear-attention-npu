@@ -38,24 +38,28 @@ TRITON_CORE_SOURCE = REPO_ROOT / "fla" / "ops" / "triton" / "triton_core"
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 from check_build_ops import validate_ops_filter as _validate_ops_filter  # noqa: E402
-from fla_npu_artifacts import get_package_version, get_wheel_build_tag  # noqa: E402
+import npu_compat  # noqa: E402
+from fla_npu_artifacts import (  # noqa: E402
+    get_distribution_name,
+    get_package_version,
+    get_tier,
+    get_wheel_build_tag,
+    get_wheel_platform_tag,
+)
 
 
 DEFAULT_SOC = "ascend910b"
 DEFAULT_VENDOR_NAME = "fla_npu"
 MIN_PYTHON = (3, 9)
-MIN_TORCH = "2.6.0"
-MIN_TRITON_ASCEND = "3.2.0"
-MIN_TRITON_ASCEND_A5 = "3.2.1"
-TORCH_NPU_GDN_FIX_MINIMUMS = {
-    "2.7.1": "2.7.1.post5",
-    "2.8.0": "2.8.0.post5",
-    "2.9.0": "2.9.0.post3",
-    "2.10.0": "2.10.0.post2",
-    "2.11.0": "2.11.0rc3",
-    "2.12.0": "2.12.0rc1",
-}
-MIN_TORCH_NPU_FUTURE_FIX_FAMILY = "2.13.0"
+# Version promises are shared with scripts/check_npu_env.py and the wheel's
+# import-time guard (torch_custom/fla_npu/fla_npu/_guard.py): scripts/npu_compat.py
+# is the single source of truth, so a tiered wheel and the build-time check
+# cannot drift apart.
+MIN_TORCH = npu_compat.MIN_TORCH
+MIN_TRITON_ASCEND = npu_compat.MIN_TRITON_ASCEND
+MIN_TRITON_ASCEND_A5 = npu_compat.MIN_TRITON_ASCEND_A5
+TORCH_NPU_GDN_FIX_MINIMUMS = npu_compat.TORCH_NPU_GDN_FIX_MINIMUMS
+MIN_TORCH_NPU_FUTURE_FIX_FAMILY = npu_compat.MIN_TORCH_NPU_FUTURE_FIX_FAMILY
 TORCH_NPU_GDN_FIX_RELEASE_URL = (
     "https://gitcode.com/Ascend/pytorch/releases?"
     "presetConfig={%22tags%22:229,%22release%22:122}"
@@ -524,8 +528,40 @@ def _stage_run_package(run_file, opp_root):
     print(f"[fla-npu build] Embedded OPP staged at {vendor_dir}")
 
 
+def _write_runtime_meta() -> None:
+    """Embed wheel-tier and version-table metadata for the import-time guard.
+
+    Every build carries two generated files: ``_build_meta.py`` (which tier this
+    wheel is) and ``_compat.py`` (the version promise, mirrored from
+    scripts/npu_compat.py).  A local build behaves exactly like the published
+    wheel, so the import-time advisory is exercised before release instead of
+    appearing for the first time in a user's environment.
+    """
+    tier = get_tier()
+    build_meta = FLA_NPU_PACKAGE_DIR / "_build_meta.py"
+    compat_py = FLA_NPU_PACKAGE_DIR / "_compat.py"
+    build_meta.write_text(
+        '"""Generated at wheel build time. Do not edit."""\n'
+        f"TIER = {tier!r}\n",
+        encoding="utf-8",
+    )
+    compat_py.write_text(
+        "".join(
+            [
+                '"""Generated at wheel build time from scripts/npu_compat.py."""\n',
+                f"MIN_CANN = {npu_compat.MIN_CANN_BY_TIER[tier]!r}\n",
+                f"MIN_TORCH = {npu_compat.MIN_TORCH!r}\n",
+                "TORCH_NPU_GDN_FIX_MINIMUMS = "
+                f"{npu_compat.TORCH_NPU_GDN_FIX_MINIMUMS!r}\n",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    print(f"[fla-npu build] runtime meta written: tier={tier}, {compat_py.name}")
+
+
 def _cleanup_build_residuals():
-    """Remove setuptools egg-info artifacts from the repo root.
+    """Remove build-time artifacts from the source tree.
 
     Building a wheel from the source root leaves ``*.egg-info`` directories
     behind. When the repo root is on ``sys.path`` (e.g. the CANN set_env.sh
@@ -533,9 +569,20 @@ def _cleanup_build_residuals():
     directory), those stale metadata dirs shadow the real installed
     distribution: ``pip show`` reports the source root as Location and
     ``pip install --force-reinstall`` fails to uninstall the previous build.
+
+    The generated runtime metadata and the Stable-ABI launcher are removed for
+    the same reason: a stale ``_build_meta.py``/``libfla_npu_stable.so`` from an
+    earlier build must never be picked up by the next one.
     """
     for egg_info in glob.glob(str(REPO_ROOT / "*.egg-info")):
         shutil.rmtree(egg_info, ignore_errors=True)
+    for generated in (
+        FLA_NPU_PACKAGE_DIR / "_build_meta.py",
+        FLA_NPU_PACKAGE_DIR / "_compat.py",
+        FLA_NPU_PACKAGE_DIR / "libfla_npu_stable.so",
+        FLA_NPU_PACKAGE_DIR / "ops" / "ascendc" / "_stable_hash.py",
+    ):
+        generated.unlink(missing_ok=True)
 
 
 def _build_torch_extension_inplace():
@@ -717,21 +764,25 @@ if _bdist_wheel is not None:
             # wheel should *not* claim is a CPython version, which get_tag()
             # below takes care of.
             self.root_is_pure = False
-            build_tag = get_wheel_build_tag(REPO_ROOT)
+            build_tag = get_wheel_build_tag()
             if build_tag:
                 self.build_number = build_tag
 
         def get_tag(self):
             python, abi, plat = super().get_tag()
             if _LEGACY_BUILD_ENABLED:
+                # The legacy extension really is a CPython extension module.
                 return python, abi, plat
-            # py3-none-<platform>: one wheel per host platform and SoC instead
-            # of one per Python minor.  "any" is wrong twice over here -- pip
-            # would happily install an aarch64 payload on x86_64 and the .so
-            # would fail to load.
-            return "py3", "none", plat
+            # py3-none-manylinux_<glibc>_<arch>: the payload is a host launcher
+            # plus the OPP, not a CPython extension, so the wheel is not
+            # Python-versioned; "any" would let pip install an aarch64 payload
+            # on x86_64 where the .so cannot load.  Local and published builds
+            # return the same tag -- scripts/fla_npu_artifacts.py owns the glibc
+            # watermark and scripts/check_pypi_wheel.py asserts it per .so.
+            return "py3", "none", get_wheel_platform_tag()
 
         def run(self):
+            _write_runtime_meta()
             super().run()
             _cleanup_build_residuals()
 
@@ -739,11 +790,24 @@ if _bdist_wheel is not None:
 
 
 setup(
-    name="flash-linear-attention-npu",
+    name=get_distribution_name(),
     version=get_package_version(REPO_ROOT),
     description="High-performance linear attention operators for Ascend NPU",
     long_description=(REPO_ROOT / "README.md").read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",
+    classifiers=[
+        "Development Status :: 4 - Beta",
+        "Intended Audience :: Developers",
+        "Operating System :: POSIX :: Linux",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    ],
+    project_urls={
+        "Homepage": "https://github.com/flashserve/flash-linear-attention-npu",
+        "Source Code": "https://github.com/flashserve/flash-linear-attention-npu",
+        "Bug Tracker": "https://github.com/flashserve/flash-linear-attention-npu/issues",
+    },
     packages=_packages(),
     package_dir=_package_dir(),
     package_data={"fla_npu": ["opp/**/*", "offline/third_party/**/*"]},

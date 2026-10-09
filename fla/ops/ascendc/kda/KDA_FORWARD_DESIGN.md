@@ -41,7 +41,7 @@ gk = chunk_local_cumsum(gate) / ln(2)
 - `layout` 和实际输入 shape 共同决定 kernel 内读取方式；TND 在 L2 物化为连续 head-major 视图。
 - `attn_out` 固定 BSND/TND。
 - `final_state` 固定按序列排列。
-- `Aqk/Akk/gk/w/u/qg/kg/v_new` 固定 head-major，供反向继续计算；公开 `h` 在导出边界转为 sequence-major。
+- `Aqk/Akk/gk/w/u/qg/kg/v_new` 固定 head-major，供反向继续计算；内部与公开 `h` 均为 NT-first，无 head/chunk 导出转置。
 - `state_v_first` 控制 initial/final state 与 h 的末两维。
 
 ## FLA 输出策略

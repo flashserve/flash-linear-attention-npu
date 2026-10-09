@@ -24,10 +24,14 @@ const std::array<const aclTensor *, 4> ChunkGatedDeltaRuleFwd(
     bool outputFinalState,
     int64_t chunkSize,
     double scale,
+    bool outputGCumsum,
     const aclTensor *oOut,
     const aclTensor *finalStateOut,
     const aclTensor *gCumsumBthOut,
     const aclTensor *aOut,
+    int64_t rawGLayout,
+    int64_t qkvLayout,
+    int64_t oLayout,
     aclOpExecutor *executor);
 
 } // namespace l0op

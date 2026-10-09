@@ -92,7 +92,7 @@ static aclnnStatus CheckShape(ChunkFwdOParams params)
     CHECK_COND(vShape.GetDimNum() == CHUNK_FWD_O_QKV_DIM_NUM, ACLNN_ERR_PARAM_INVALID,
                "v should be 4D [B, HV, T, V].");
     CHECK_COND(hShape.GetDimNum() == CHUNK_FWD_O_H_DIM_NUM, ACLNN_ERR_PARAM_INVALID,
-               "h should be 5D [B, HV, numChunks, K, V].");
+               "h should be 5D [B, numChunks, HV, K, V].");
     CHECK_COND(gShape.GetDimNum() == CHUNK_FWD_O_G_DIM_NUM, ACLNN_ERR_PARAM_INVALID,
                "g should be 3D [B, HV, T].");
 
@@ -121,7 +121,7 @@ static aclnnStatus CheckShape(ChunkFwdOParams params)
     // 见 README §3.2 与 tiling ShapeCheck 一致）；numChunks 维不校验（varlen 下由 chunkOffsets 决定）
     const int64_t hK = hShape.GetDim(params.stateVFirst ? 4 : 3);
     const int64_t hV = hShape.GetDim(params.stateVFirst ? 3 : 4);
-    CHECK_COND(hShape.GetDim(0) == vShape.GetDim(0) && hShape.GetDim(1) == vShape.GetDim(1) &&
+    CHECK_COND(hShape.GetDim(0) == vShape.GetDim(0) && hShape.GetDim(2) == vShape.GetDim(1) &&
                    hK == qShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM) && hV == vDim,
                ACLNN_ERR_PARAM_INVALID, "Check h shape failed for state_v_first=%d.", params.stateVFirst);
 

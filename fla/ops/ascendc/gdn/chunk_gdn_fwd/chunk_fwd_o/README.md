@@ -93,7 +93,7 @@ aclnnStatus aclnnChunkFwdO(
 | `q` | 输入 | 必选 | Query 输入张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HK, T, K]` | 支持 |
 | `k` | 输入 | 必选 | Key 输入张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HK, T, K]` | 支持 |
 | `v` | 输入 | 必选 | Value 输入张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, T, V]` | 支持 |
-| `h` | 输入 | 必选 | 前向保存的隐藏状态张量 | `FLOAT16`、`BFLOAT16` | `ND` | `[B, HV, numChunks, K, V]` | 支持 |
+| `h` | 输入 | 必选 | 前向保存的隐藏状态张量 | `FLOAT16`、`BFLOAT16` | `ND` | dense `[B, numChunks, HV, K, V]`；varlen `[1, totalChunks, HV, K, V]` | 支持 |
 | `g` | 输入 | 必选 | Gate 输入张量 | `FLOAT16`、`BFLOAT16`、`FLOAT` | `ND` | `[B, HV, T]` | 支持 |
 | `cuSeqlensOptional` | 输入 | 可选 | 变长序列的累计长度信息 | `INT64` | `ND` | 1 维 | - |
 | `chunkOffsetsOptional` | 输入 | 可选 | 分块索引信息，按 `[tokenBatchIdx, batchChunkIdx]` 成对扁平化 | `INT64` | `ND` | 1 维，长度需能被 2 整除 | - |
@@ -122,7 +122,7 @@ aclnnStatus aclnnChunkFwdO(
 - `v` 的形状必须为 `[B, HV, T, V]`；`oOut` 形状由下表决定。
 - `q` 和 `v` 的 `B`、`T` 必须一致，head 数允许不同。
 - `g` 的形状必须为 `[B, HV, T]`，head 维与 `v` 对齐。
-- `h` 的形状必须为 `[B, HV, numChunks, K, V]`，head 维与 `v` 对齐，`K` 维与 `q/k` 对齐，`V` 维与 `v` 对齐。
+- `h` 的形状为 dense `[B, numChunks, HV, K, V]`；传入 cu_seqlens 时为 `[totalChunks, HV, K, V]`。head 维与 `v` 对齐，`K` 维与 `q/k` 对齐，`V` 维与 `v` 对齐。
 - `q`、`k`、`v`、`h`、`oOut` 必须使用相同 dtype（`FLOAT16` 或 `BFLOAT16` 之一）。
 - `g` 的 dtype 可为 `FLOAT`或与 `q` 相同，即 `q=BFLOAT16` 时 `g ∈ {FLOAT, BFLOAT16}`，`q=FLOAT16` 时 `g ∈ {FLOAT, FLOAT16}`。
 - GVA 约束：`HV % HK == 0`，映射关系为 `hk = hv / (HV / HK)`。
@@ -152,7 +152,7 @@ aclnnStatus aclnnChunkFwdO(
 - `v`: `[B, HV, T, V]`
 - `oOut`: 按 `outputLayout` 为 `[B, HV, T, V]`、`[B, T, HV, V]`、`[T, HV, V]` 或 `[HV, T, V]`
 - `g`: `[B, HV, T]`
-- `h`: `[B, HV, numChunks, K, V]`
+- `h`: dense `[B, numChunks, HV, K, V]`；varlen `[1, totalChunks, HV, K, V]`。
 - `HV % HK == 0`
 
 额外限制：
@@ -216,7 +216,7 @@ def test_chunk_fwd_o_fixed_len():
     q = torch.randn(B, HK, T, K, device=device, dtype=dtype)
     k = torch.randn(B, HK, T, K, device=device, dtype=dtype)
     v = torch.randn(B, HV, T, V, device=device, dtype=dtype)
-    h = torch.randn(B, HV, num_chunks, K, V, device=device, dtype=dtype)
+    h = torch.randn(B, num_chunks, HV, K, V, device=device, dtype=dtype)
     g = torch.randn(B, HV, T, device=device, dtype=dtype)
 
     # 调用算子（定长：cu_seqlens / chunk_indices 传 None）
@@ -278,7 +278,7 @@ def test_chunk_fwd_o_varlen():
     q = torch.randn(B, HK, T, K, device=device, dtype=dtype)
     k = torch.randn(B, HK, T, K, device=device, dtype=dtype)
     v = torch.randn(B, HV, T, V, device=device, dtype=dtype)
-    h = torch.randn(B, HV, num_chunks, K, V, device=device, dtype=dtype)
+    h = torch.randn(B, num_chunks, HV, K, V, device=device, dtype=dtype)
     g = torch.randn(B, HV, T, device=device, dtype=dtype)
 
     # 调用算子

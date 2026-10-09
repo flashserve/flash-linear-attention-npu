@@ -91,6 +91,7 @@ public:
         uint64_t K = 128;
         uint64_t V = 128;
         uint64_t chunkSize = 64;
+        const GDN::RecomputeTaskRange *taskRange = nullptr;
 
         // Methods
         CATLASS_DEVICE
@@ -102,11 +103,12 @@ public:
         Params(GM_ADDR ptrA_, LayoutA layoutA_, GM_ADDR ptrVb_, LayoutVb layoutVb_, GM_ADDR ptrU_,
                LayoutU layoutU_, GM_ADDR ptrKbgExp_, LayoutKbgExp layoutKbgExp_, GM_ADDR ptrW_, LayoutW layoutW_,
                GM_ADDR ptrCuSeqLens_, GM_ADDR ptrChunkIndices_, uint64_t chunkNum_, uint64_t B_,
-               uint64_t Hk_, uint64_t Hv_, uint64_t hvPerHk_, uint64_t T_, uint64_t K_, uint64_t V_, uint64_t BT_)
+               uint64_t Hk_, uint64_t Hv_, uint64_t hvPerHk_, uint64_t T_, uint64_t K_, uint64_t V_, uint64_t BT_,
+               const GDN::RecomputeTaskRange *range_ = nullptr)
             : ptrA(ptrA_), layoutA(layoutA_), ptrVb(ptrVb_), layoutVb(layoutVb_), ptrU(ptrU_),
               layoutU(layoutU_), ptrKbgExp(ptrKbgExp_), layoutKbgExp(layoutKbgExp_), ptrW(ptrW_), layoutW(layoutW_),
               ptrCuSeqLens(ptrCuSeqLens_), ptrChunkIndices(ptrChunkIndices_),
-              chunkNum(chunkNum_), B(B_), Hk(Hk_), Hv(Hv_), hvPerHk(hvPerHk_), T(T_), K(K_), V(V_), chunkSize(BT_)
+              chunkNum(chunkNum_), B(B_), Hk(Hk_), Hv(Hv_), hvPerHk(hvPerHk_), T(T_), K(K_), V(V_), chunkSize(BT_), taskRange(range_)
         {
         }
     };
@@ -145,6 +147,11 @@ public:
                 loopEnd = (loopBegin + tasksPerCore) < coreLoops ? loopBegin + tasksPerCore : coreLoops;
                 loopStep = 1;
             }
+            if (params.taskRange != nullptr) {
+                loopBegin = static_cast<uint32_t>(params.taskRange->begin);
+                loopEnd = static_cast<uint32_t>(params.taskRange->end);
+                loopStep = 1;
+            }
             for (uint32_t loopIdx = loopBegin; loopIdx < loopEnd; loopIdx += loopStep) {
                 uint32_t chunkIdx = 0;
                 uint32_t hBegin = 0;
@@ -169,7 +176,10 @@ public:
                     for (uint32_t nOffset = 0; nOffset < params.V; nOffset += tileN) {
                         uint32_t curN = (nOffset + tileN > params.V) ? (params.V - nOffset) : tileN;
                         GemmCoord actualBlockShape{curChunkSize, curN, curChunkSize};
-                        gmVb.SetGlobalBuffer((__gm__ ElementVb *)params.ptrVb + (h * params.T + bos) * params.V + nOffset);
+                        const uint64_t vbOffset = params.taskRange == nullptr ?
+                            (h * params.T + bos) * params.V :
+                            (loopIdx - params.taskRange->begin) * params.chunkSize * params.V;
+                        gmVb.SetGlobalBuffer((__gm__ ElementVb *)params.ptrVb + vbOffset + nOffset);
                         gmU.SetGlobalBuffer((__gm__ ElementU *)params.ptrU + (h * params.T + bos) * params.V + nOffset);
 
                         auto tensorVb = tla::MakeTensor(gmVb, params.layoutVb, Arch::PositionGM{});
@@ -187,7 +197,13 @@ public:
                 }
             }
         }
-        AscendC::SyncAll<false>();
+        if (params.taskRange == nullptr) {
+            AscendC::SyncAll<false>();
+        } else {
+            // GM两段分开只解决地址复用。UNIT_FLAG的MMAD析构不等待FIX_M，
+            // 新W对象复用L0C/状态前仍须排空本核U，不能只依赖C++作用域。
+            AscendC::PipeBarrier<PIPE_ALL>();
+        }
         { //处理第二部分 AT@K -> DKB
             BlockMmadW BlockMmadW(resource);
             AscendC::GlobalTensor<ElementA> gmA;
@@ -201,6 +217,11 @@ public:
                     (coreLoops + AscendC::GetBlockNum() - 1) / AscendC::GetBlockNum();
                 loopBegin = coreIdx * tasksPerCore;
                 loopEnd = (loopBegin + tasksPerCore) < coreLoops ? loopBegin + tasksPerCore : coreLoops;
+                loopStep = 1;
+            }
+            if (params.taskRange != nullptr) {
+                loopBegin = static_cast<uint32_t>(params.taskRange->begin);
+                loopEnd = static_cast<uint32_t>(params.taskRange->end);
                 loopStep = 1;
             }
             for (uint32_t loopIdx = loopBegin; loopIdx < loopEnd; loopIdx += loopStep) {
@@ -218,8 +239,10 @@ public:
                 for (uint32_t h = hBegin; h < hEnd; ++h) {
                     // Represent the full gm
                     gmA.SetGlobalBuffer((__gm__ ElementA *)params.ptrA + (h * params.T + bos) * params.chunkSize);
-                    gmKbgExp.SetGlobalBuffer((__gm__ ElementKbgExp *)params.ptrKbgExp +
-                                             (h * params.T + bos) * params.K);
+                    const uint64_t kbgOffset = params.taskRange == nullptr ?
+                        (h * params.T + bos) * params.K :
+                        (loopIdx - params.taskRange->begin) * params.chunkSize * params.K;
+                    gmKbgExp.SetGlobalBuffer((__gm__ ElementKbgExp *)params.ptrKbgExp + kbgOffset);
                     gmW.SetGlobalBuffer((__gm__ ElementW *)params.ptrW + (h * params.T + bos) * params.K);
 
                     // Represent the full tensors
@@ -257,7 +280,7 @@ public:
                                                         GM_ADDR chunk_indices_, GM_ADDR w_, GM_ADDR u_,
                                                         GM_ADDR workspace_);
 
-    __aicore__ inline void Process();
+    __aicore__ inline void Process(const GDN::RecomputeTaskRange *taskRange = nullptr);
 
     __aicore__ inline void Init(const GdnMegaArch22RecomputeWUTilingData &tiling);
 
@@ -314,7 +337,7 @@ __aicore__ void inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0Til
 template <typename kType, typename betaType, typename L1TileShape, typename L0TileShape,
           bool kFlattenHeadTasks, bool kAbcTaskOrder>
 __aicore__ void inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0TileShape,
-                                             kFlattenHeadTasks, kAbcTaskOrder>::Process()
+                                             kFlattenHeadTasks, kAbcTaskOrder>::Process(const GDN::RecomputeTaskRange *taskRange)
 {
     //输入
     using LayoutTagA = layout::RowMajor;
@@ -366,12 +389,13 @@ __aicore__ void inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0Til
     MatmulKernel kernel;
 
     GM_ADDR vb = workspace;
-    GM_ADDR kbgExp = workspace;
+    GM_ADDR kbgExp = taskRange == nullptr ? workspace :
+        workspace + taskRange->capacity * chunkSize * V * sizeof(kType);
     typename MatmulKernel::Params param{
         A, layoutA, vb, layoutVb, u,        layoutU,  
         kbgExp, layoutKbgExp, w,        layoutW,
         cu_seqlens, chunk_indices, chunkNum, B,
-        Hk, Hv, hvPerHk, T, K, V, chunkSize};
+        Hk, Hv, hvPerHk, T, K, V, chunkSize, taskRange};
     kernel(param);
 }
 

@@ -1412,6 +1412,8 @@ private:
             count);
 #else
         AscendC::Adds(output, src, 0.0f, count);
+        // Retire the source read before the caller reuses its UB plane.
+        AscendC::PipeBarrier<PIPE_V>();
 #endif
         outputQueue_.EnQue(output);
         auto ready = outputQueue_.DeQue<float>();

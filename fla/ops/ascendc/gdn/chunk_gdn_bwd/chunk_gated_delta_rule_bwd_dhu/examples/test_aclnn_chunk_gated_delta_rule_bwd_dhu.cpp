@@ -172,8 +172,8 @@ int main() {
   uint64_t chunkIndicesSize = NT*2;
 
   std::vector<int64_t> dv2Shape = {B, H, T, V};
-  std::vector<int64_t> dhShape = {B, H, chunk_num, K, V};
-  std::vector<int64_t> dh0Shape = {B, H, chunk_num, K, V};
+  std::vector<int64_t> dhShape = {B, chunk_num, H, K, V};
+  std::vector<int64_t> dh0Shape = {chunk_num, H, K, V};
 
   void* qDeviceAddr = nullptr;
   void* kDeviceAddr = nullptr;

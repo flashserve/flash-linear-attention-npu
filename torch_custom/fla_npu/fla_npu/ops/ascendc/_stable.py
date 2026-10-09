@@ -824,6 +824,22 @@ def npu_chunk_bwd_dv_local(q, k, d_o, g, scale, chunk_size, *, g_gamma=None,
     )
 
 
+def npu_chunk_delta_h_bwd_preprocess(q, k, w, d_o, dv, scale, chunk_size, *,
+                                     g=None, gk=None, cu_seqlens=None):
+    """CP backward state preprocess: ``dhm = [E_r | P_r]`` (FP32 ``[Hv, K, V+K]``).
+
+    The launcher only allocates the output: ``q``/``k`` are ``[B, Hk, T, K]``,
+    ``w`` is ``[B, Hv, T, K]``, ``d_o``/``dv`` are ``[B, Hv, T, V]``, and ``g``
+    (``[B, Hv, T]``) / ``gk`` (``[B, Hv, T, K]``) are the two mutually exclusive
+    gate forms; ``cu_seqlens`` carries the single packed segment.
+    """
+
+    return _op("npu_chunk_delta_h_bwd_preprocess")(
+        q, k, w, d_o, dv, g, gk, _host_ints(cu_seqlens),
+        float(scale), int(chunk_size), _current_stream_ptr(),
+    )
+
+
 def npu_chunk_local_cumsum(g, chunk_size, *, cu_seqlens=None,
                            chunk_indices_out=None, reverse=False, scale=1.0,
                            head_first=True, output_dtype="float32"):
@@ -845,6 +861,10 @@ def npu_chunk_local_cumsum(g, chunk_size, *, cu_seqlens=None,
 def npu_chunk_scaled_dot_kkt(k, g, beta, *, cu_seqlens=None,
                              chunk_indices=None, chunk_size=64):
     """Chunked scaled dot product used to build the WY representation."""
+
+    from ._chunk_scaled_dot_kkt_contract import validate as _validate_chunk_scaled_dot_kkt
+
+    _validate_chunk_scaled_dot_kkt(k, g, beta, cu_seqlens, chunk_indices, chunk_size)
 
     return _op("npu_chunk_scaled_dot_kkt")(
         k, g, beta,
@@ -1531,12 +1551,6 @@ def npu_solve_tri(x, *, cu_seqlens=None, chunk_indices=None, layout="bsnd"):
     """
 
     layout = str(layout)
-    if layout == "tnd":
-        raise RuntimeError(
-            "npu_solve_tri: layout='tnd' is refused because the operator "
-            "crashes the process for that spelling on this OPP (verified on "
-            "both the ctypes and the Stable-ABI path). Use layout='bsnd' or "
-            "'bnsd'.")
     return _op("npu_solve_tri")(
         x.contiguous(), _host_ints(cu_seqlens), _host_ints(chunk_indices),
         _char_code("npu_solve_tri", "layout", layout),
@@ -1556,13 +1570,23 @@ def npu_chunk_gated_delta_rule_fwd_prepare(
     same conversion happens here.
     """
 
-    # Gate-in-kernel is the only spelling left that the reference refuses; with
-    # ``use_qk_l2norm_in_kernel`` off the hats are the caller's own q/k and both
-    # rstd slots stay null, which the adapter below already handles.
+    # fused gate: a_log is required; dt_bias is optional but only with a_log.
+    # The C++ adapter already forwards a_log/dt_bias into aclnn when the flag
+    # is set.  Kernel/tiling reject use_gate without a_log.
     if use_gate_in_kernel:
+        if a_log is None:
+            raise RuntimeError(
+                "npu_chunk_gated_delta_rule_fwd_prepare: a_log is required "
+                "when use_gate_in_kernel=True.")
+    elif a_log is not None or dt_bias is not None:
         raise RuntimeError(
-            "npu_chunk_gated_delta_rule_fwd_prepare: use_gate_in_kernel "
-            "currently only supports False.")
+            "npu_chunk_gated_delta_rule_fwd_prepare: a_log and dt_bias "
+            "require use_gate_in_kernel=True.")
+    # ATK/NPU may pass cu_seqlens as a Tensor; bool(Tensor) is ambiguous.
+    if cu_seqlens is not None and hasattr(cu_seqlens, "detach"):
+        cu_seqlens = [int(x) for x in cu_seqlens.detach().cpu().reshape(-1).tolist()]
+    if chunk_indices is not None and hasattr(chunk_indices, "detach"):
+        chunk_indices = [int(x) for x in chunk_indices.detach().cpu().reshape(-1).tolist()]
     if cu_seqlens and not chunk_indices:
         chunk_indices = _canonical_chunk_indices(cu_seqlens, chunk_size)
     (q_hat, k_hat, q_rstd, k_rstd, beta_out, g_cumsum, w, u, a) = _op(
@@ -1890,13 +1914,9 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
                                  for tensor in (w, qg, kg, v_new, d_o))
         raw_g = pad_rows_of(raw_g)
         seqlen = padded_seqlen
-        # Only varlen calls carry metadata; a dense call (cu is None) stays
-        # dense after padding.  Deriving chunk indices unconditionally crashed
-        # every dense backward whose T is not a multiple of chunk_size with
-        # "object of type 'NoneType' has no len()".
-        if cu is not None:
-            cu = (0, padded_seqlen)
-            indices = _canonical_chunk_indices(cu, chunk_size)
+        cu = None if cu is None else (0, padded_seqlen)
+        # Dense calls have no sequence metadata, including after tail padding.
+        indices = None if cu is None else _canonical_chunk_indices(cu, chunk_size)
 
     # A2's fused Intra pipeline processes heads in pairs; a lone final head can
     # keep a stale correction from the previous launch.
@@ -1941,6 +1961,42 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
     return tuple(restored)
 
 
+def npu_merge_fwd_bwd_kernel(
+        h, ag_hm, pre_or_post_num_ranks, rank, *, forward=True,
+        state_v_first=False):
+    """CP merge: h <- He_0, then h <- M_i @ h + He_i.
+
+    Argument order matches FLA: ``h``, ``ag_hm``, ``pre_or_post_num_ranks``,
+    ``rank``. ``h`` is written in place. ``state_v_first=False`` stores each
+    head as [K, V]; ``True`` stores [V, K]. Both are [HV, 128, 128].
+    """
+
+    if not h.is_contiguous():
+        raise RuntimeError(
+            "npu_merge_fwd_bwd_kernel: h is written in place and must be contiguous."
+        )
+    loaded_torch_npu = sys.modules.get("torch_npu")
+    if loaded_torch_npu is not None:
+        # NCHW=0, ND=2, NCDHW=30, NCL=47. Same public set as the ctypes path.
+        public_formats = {0, 2, 30, 47}
+        for name, tensor in (("h", h), ("ag_hm", ag_hm)):
+            try:
+                actual_format = int(loaded_torch_npu.get_npu_format(tensor))
+            except Exception as exc:
+                raise RuntimeError(
+                    f"npu_merge_fwd_bwd_kernel: cannot determine the real NPU format of {name}."
+                ) from exc
+            if actual_format not in public_formats:
+                raise RuntimeError(
+                    f"npu_merge_fwd_bwd_kernel: {name} must use a non-private format, "
+                    f"got {actual_format}."
+                )
+    return _op("npu_merge_fwd_bwd_kernel")(
+        h, ag_hm, int(pre_or_post_num_ranks), int(rank), bool(forward),
+        bool(state_v_first), _current_stream_ptr(),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Which wrappers apply the in-place contract themselves
 # ---------------------------------------------------------------------------
@@ -1956,3 +2012,45 @@ for _contract_op in (
         "npu_recurrent_kda"):
     globals()[_contract_op]._fla_npu_inplace_contract = True
 del _contract_op
+
+# [stable-abi adapter] npu_pre_process_fwd_kernel_merged
+def npu_pre_process_fwd_kernel_merged(k, w, u, g=None, *, gk=None, bg=None,
+                                      v=None, cu_seqlens=None,
+                                      chunk_size=None):
+    """CP 前处理：把 token 窗口压成仿射链 (h | m)。
+
+    与 aclnn 头文件逐参对齐（stream 固定在最后）：
+    k/w/u 必给；g 与 gk 二选一；cu_seqlens 必给（varlen 打包窗口，
+    也允许子区间 0 <= cu[0] < cu[-1] <= T）。返回 hm[Nseq, HV, K, V+K] FP32。
+
+    bg 与 v 是 DPLR 专用参数，本版本不支持 DPLR：必须传 None，
+    传非空直接抛 NotImplementedError（与 ctypes 入口、host 校验判据一致）。
+    """
+
+    if cu_seqlens is None:
+        raise ValueError(
+            "pre_process_fwd_kernel_merged requires cu_seqlens (varlen only): "
+            "pass a host int list such as [bos, eos] or [0, s1, s2, ..., T]."
+        )
+    if (g is None) == (gk is None):
+        raise ValueError("exactly one of g / gk must be provided.")
+    if bg is not None:
+        # TilingKey 3（USE_BG）不支持：传进来会静默按 GDN/KDA 语义算，宁可明确拒绝。
+        raise NotImplementedError(
+            "bg is not supported: DPLR is not implemented in this release (GDN/KDA only)."
+        )
+    if v is not None:
+        raise NotImplementedError(
+            "v is not supported: it is DPLR-only; GDN/KDA takes the values from u."
+        )
+    if chunk_size not in (None, 64):
+        raise ValueError(
+            f"pre_process_fwd_kernel_merged only supports chunk_size=64, got {chunk_size}."
+        )
+
+    return _op("npu_pre_process_fwd_kernel_merged")(
+        k, w, u, g, gk, bg, v,
+        _host_ints(cu_seqlens),
+        64 if chunk_size is None else int(chunk_size),
+        _current_stream_ptr(),
+    )

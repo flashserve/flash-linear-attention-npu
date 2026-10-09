@@ -112,6 +112,7 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
     context->SetBlockDim(aicCoreNum);
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);
     currentWorkspace[0] = processor.GetWorkspaceSize();
+    OP_LOGD(context->GetNodeName(),"workspace = [%zu]", currentWorkspace[0]);
 
     ChunkFwdOTilingDataPrint(context, *tiling);
     OP_LOGD(context->GetNodeName(), "Tiling4ChunkFwdO end.");

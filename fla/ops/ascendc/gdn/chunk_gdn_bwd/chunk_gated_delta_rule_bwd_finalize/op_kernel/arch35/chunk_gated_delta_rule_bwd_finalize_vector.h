@@ -1935,7 +1935,7 @@ public:
                     hv = hvBase + headOffset;
                     gOffset = (chunk.bIdx * tiling_->HV + hv) * tiling_->T + chunk.tokenStart;
                     stateOffset =
-                        ((chunk.bIdx * tiling_->HV + hv) * stateChunkNum_ + chunk.stateChunkIdx) *
+                        ((chunk.bIdx * stateChunkNum_ + chunk.stateChunkIdx) * tiling_->HV + hv) *
                         STATE_ELEMS;
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_[streamSlot_]);
                     AscendC::DataCopy(hState_[streamSlot_], hGm_[stateOffset], STATE_ELEMS);

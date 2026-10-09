@@ -113,18 +113,18 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     }
     {
         // 检查输入维度是否符合预期
-        // q, k: [B, HK, T, K]; v, dox, dv: [B, HV, T, V]; g: [B, HV, T]; h, dh: [B, HV, numChunks, K, V]
+        // q, k: [B, HK, T, K]; v, dox, dv: [B, HV, T, V]; g: [B, HV, T]; h, dh: [B, numChunks, HV, K, V]
         if (qStorageShape.GetDim(0) != B || qStorageShape.GetDim(1) != HK || qStorageShape.GetDim(2) != T || qStorageShape.GetDim(3) != K ||
             kStorageShape.GetDim(0) != B || kStorageShape.GetDim(1) != HK || kStorageShape.GetDim(2) != T || kStorageShape.GetDim(3) != K ||
             vStorageShape.GetDim(0) != B || vStorageShape.GetDim(1) != HV || vStorageShape.GetDim(2) != T || vStorageShape.GetDim(3) != V ||
             gStorageShape.GetDim(0) != B || gStorageShape.GetDim(1) != HV || gStorageShape.GetDim(2) != T ||
-            hStorageShape.GetDim(0) != B || hStorageShape.GetDim(1) != HV || hStorageShape.GetDim(2) != numChunks || hStorageShape.GetDim(3) != K || hStorageShape.GetDim(4) != V ||
+            hStorageShape.GetDim(0) != B || hStorageShape.GetDim(1) != numChunks || hStorageShape.GetDim(2) != HV || hStorageShape.GetDim(3) != K || hStorageShape.GetDim(4) != V ||
             doxStorageShape.GetDim(0) != B || doxStorageShape.GetDim(1) != HV || doxStorageShape.GetDim(2) != T || doxStorageShape.GetDim(3) != V ||
-            dhStorageShape.GetDim(0) != B || dhStorageShape.GetDim(1) != HV || dhStorageShape.GetDim(2) != numChunks || dhStorageShape.GetDim(3) != K || dhStorageShape.GetDim(4) != V ||
+            dhStorageShape.GetDim(0) != B || dhStorageShape.GetDim(1) != numChunks || dhStorageShape.GetDim(2) != HV || dhStorageShape.GetDim(3) != K || dhStorageShape.GetDim(4) != V ||
             dvStorageShape.GetDim(0) != B || dvStorageShape.GetDim(1) != HV || dvStorageShape.GetDim(2) != T || dvStorageShape.GetDim(3) != V) {
             OP_LOGE(context->GetNodeName(),
                 "Input tensor shapes do not match expected dimensions. Expected: q,k [B,HK,T,K], "
-                "v,dox,dv [B,HV,T,V], g [B,HV,T], h,dh [B,HV,NC,K,V].");
+                "v,dox,dv [B,HV,T,V], g [B,HV,T], h,dh [B,NC,HV,K,V].");
             return ge::GRAPH_FAILED;
         }
         if (K != 128) {

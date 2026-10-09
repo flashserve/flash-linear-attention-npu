@@ -477,7 +477,7 @@ private:
         const int64_t tokenBase =
             ((chunk.bIdx * tiling_->HV + hv) * tiling_->T + chunk.tokenStart) * tiling_->V;
         const int64_t stateBase =
-            ((chunk.bIdx * tiling_->HV + hv) * stateChunkNum_ + chunk.stateChunkIdx) *
+            ((chunk.bIdx * stateChunkNum_ + chunk.stateChunkIdx) * tiling_->HV + hv) *
             tiling_->K * tiling_->V;
 
         AscendC::GlobalTensor<DT> gmDu;
@@ -1406,7 +1406,7 @@ private:
             ((chunk.bIdx * tiling_->HK + hk) * tiling_->T + chunk.tokenStart) * K_SIZE_128;
         const int64_t workspaceBase = WorkspaceHeadOffset(headOffset);
         const int64_t stateBase =
-            ((chunk.bIdx * tiling_->HV + hv) * stateChunkNum_ + chunk.stateChunkIdx) *
+            ((chunk.bIdx * stateChunkNum_ + chunk.stateChunkIdx) * tiling_->HV + hv) *
             K_SIZE_128 * V_SIZE_128;
 
         AscendC::GlobalTensor<DT> gmQ;
