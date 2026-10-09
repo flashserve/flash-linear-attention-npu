@@ -549,7 +549,7 @@ private:
                 uint64_t curVOffset = (seq_i - seq0) * alignV_ + v_i;
                 uint64_t attnOffset = (seq_i * NV_ + head_i) * realV_ + v_i;
                 uint64_t curStateOutOffset =
-                    stateStride0_ * ssmStateIndicesGm_.GetValue(seq_i) +
+                    static_cast<uint64_t>(stateStride0_) * ssmStateIndicesGm_.GetValue(seq_i) +
                     stateStride1_ * head_i + stateStride2_ * v_i;
                 gama_ = hasGama_ ? gamaInUb.GetValue(gbOffset) : 1;
                 beta_ = betaInUb.GetValue(gbOffset);
