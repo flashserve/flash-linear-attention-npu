@@ -30,7 +30,7 @@ using fla_npu_stable::stable::int_array;
 using fla_npu_stable::stable::int_values;
 using fla_npu_stable::stable::meta_of;
 using fla_npu_stable::stable::nd_optional_tensor;
-using fla_npu_stable::stable::nd_out_tensor;
+using fla_npu_stable::stable::nd_logical_out_tensor;
 using fla_npu_stable::stable::nd_tensor;
 using fla_npu_stable::stable::optional_tensor;
 using fla_npu_stable::stable::out_tensor;
@@ -98,14 +98,16 @@ run_kda_bwd_v2(
       scalar(safe_gate), scalar(use_gate_in_kernel), scalar(lower_bound),
       scalar(disable_recompute), scalar(use_exp2), scalar(state_v_first),
       nd_optional_tensor(q_rstd), nd_optional_tensor(k_rstd),
-      nd_out_tensor(meta_of(out_dq)), nd_out_tensor(meta_of(out_dk)),
-      nd_out_tensor(meta_of(out_dv)), nd_out_tensor(meta_of(out_db)),
-      nd_out_tensor(meta_of(out_dg)),
-      /*dh0=*/nd_out_tensor(TensorMeta()),
-      nd_out_tensor(out_d_a_log.has_value() ? meta_of(*out_d_a_log)
-                                            : TensorMeta()),
-      nd_out_tensor(out_d_dt_bias.has_value() ? meta_of(*out_d_dt_bias)
-                                              : TensorMeta()));
+      nd_logical_out_tensor(meta_of(out_dq)),
+      nd_logical_out_tensor(meta_of(out_dk)),
+      nd_logical_out_tensor(meta_of(out_dv)),
+      nd_logical_out_tensor(meta_of(out_db)),
+      nd_logical_out_tensor(meta_of(out_dg)),
+      /*dh0=*/nd_logical_out_tensor(TensorMeta()),
+      nd_logical_out_tensor(out_d_a_log.has_value() ? meta_of(*out_d_a_log)
+                                                    : TensorMeta()),
+      nd_logical_out_tensor(out_d_dt_bias.has_value() ? meta_of(*out_d_dt_bias)
+                                                      : TensorMeta()));
   return std::make_tuple(out_dq, out_dk, out_dv, out_db, out_dg,
                          std::nullopt, out_d_a_log, out_d_dt_bias);
 }
@@ -180,14 +182,16 @@ run_npu_chunk_kda_bwd(
       int_array(chunk_indices), scalar(scale), scalar(chunk_size),
       scalar(safe_gate), scalar(use_gate_in_kernel), scalar(lower_bound),
       scalar(disable_recompute), scalar(use_exp2), scalar(state_v_first),
-      nd_out_tensor(meta_of(out_dq)), nd_out_tensor(meta_of(out_dk)),
-      nd_out_tensor(meta_of(out_dv)), nd_out_tensor(meta_of(out_db)),
-      nd_out_tensor(meta_of(out_dg)),
-      /*dh0=*/nd_out_tensor(TensorMeta()),
-      nd_out_tensor(out_d_a_log.has_value() ? meta_of(*out_d_a_log)
-                                            : TensorMeta()),
-      nd_out_tensor(out_d_dt_bias.has_value() ? meta_of(*out_d_dt_bias)
-                                              : TensorMeta()));
+      nd_logical_out_tensor(meta_of(out_dq)),
+      nd_logical_out_tensor(meta_of(out_dk)),
+      nd_logical_out_tensor(meta_of(out_dv)),
+      nd_logical_out_tensor(meta_of(out_db)),
+      nd_logical_out_tensor(meta_of(out_dg)),
+      /*dh0=*/nd_logical_out_tensor(TensorMeta()),
+      nd_logical_out_tensor(out_d_a_log.has_value() ? meta_of(*out_d_a_log)
+                                                    : TensorMeta()),
+      nd_logical_out_tensor(out_d_dt_bias.has_value() ? meta_of(*out_d_dt_bias)
+                                                      : TensorMeta()));
   return std::make_tuple(out_dq, out_dk, out_dv, out_db, out_dg,
                          std::nullopt, out_d_a_log, out_d_dt_bias);
 }
