@@ -496,11 +496,13 @@ public:
                         gmG[vec1OffsetG], gmAttnWorkspace[vec1OffsetAttn], gmMask,
                         chunkSize, vec1Offsets.blockTokens, kHeadDim, vHeadDim, pingpongFlag, vec1Offsets.batchIdx, vec1Offsets.headIdx, vec1Offsets.chunkIdx
                     );
-                    // Dense mode uses the paired AIV mode-2 flags, as in the
-                    // standalone O kernel. Keep the explicit join for varlen tails.
+                    // A2 mega mode-2 completion includes both AIV subblocks,
+                    // including the zero-row participant of a varlen tail.
+#if !defined(GDN_CHUNK_RECOMPUTE_WU_FWD_HO_IMPL_ONLY) || !defined(__CCE_AICORE__) || __CCE_AICORE__ != 220
                     if (isVariedLen != 0) {
                         Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
                     }
+#endif
                     Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec1Done[streamId]);
                 }
 
@@ -524,11 +526,13 @@ public:
                         gmG[vec2OffsetG], gmVWorkspace[vec2OffsetVWork], gmHWorkspace[vec2OffsetHWork],
                         scale, vec2Offsets.blockTokens, kHeadDim, vec2Offsets.vBlockDim, outputStride, pingpongFlag, vec2Offsets.batchIdx, vec2Offsets.headIdx, vec2Offsets.chunkIdx
                     );
-                    // Dense mode publishes one mode-2 flag from each AIV
-                    // subblock. Varlen keeps the conservative MTE3 join.
+                    // Keep each subblock's MTE3 completion and Cube wait;
+                    // they also close varlen H/V workspace reuse on A2 mega.
+#if !defined(GDN_CHUNK_RECOMPUTE_WU_FWD_HO_IMPL_ONLY) || !defined(__CCE_AICORE__) || __CCE_AICORE__ != 220
                     if (isVariedLen != 0) {
                         Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
                     }
+#endif
                     Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[streamId]);
                 }
                 needRun = true;
