@@ -2939,54 +2939,31 @@ def npu_chunk_gated_delta_rule_fwd(
     q_shape = _shape(q)
     k_shape = _shape(k)
     v_shape = _shape(v)
-    g_shape = _shape(g)
-    beta_shape = _shape(beta)
     layout = str(layout)
+    # Only validate information required to construct output descriptors here.
+    # Tensor semantics and metadata contents are checked by the ACLNN host.
     if layout not in ("BNSD", "BSND", "NTD", "TND"):
-        raise RuntimeError(
-            "npu_chunk_gated_delta_rule_fwd: layout must be one of BNSD, BSND, NTD or TND."
-        )
-    if len(q_shape) != 4 or len(k_shape) != 4 or len(v_shape) != 4:
-        raise RuntimeError("npu_chunk_gated_delta_rule_fwd: q, k and v must be rank-4 tensors.")
-    if q_shape[3] != 128 or k_shape[3] != 128:
-        raise RuntimeError("npu_chunk_gated_delta_rule_fwd: the composite implementation requires K=128.")
-    if v_shape[3] not in (128, 256):
-        raise RuntimeError("npu_chunk_gated_delta_rule_fwd: Phase 6 requires V=128 or V=256.")
-    if q_shape != k_shape:
-        raise RuntimeError("npu_chunk_gated_delta_rule_fwd: q and k must have identical shapes.")
+        raise RuntimeError("npu_chunk_gated_delta_rule_fwd: cannot infer outputs for an unknown layout.")
+    if len(q_shape) != 4 or len(v_shape) != 4:
+        raise RuntimeError("npu_chunk_gated_delta_rule_fwd: q and v must be rank 4 to infer outputs.")
     if layout in ("BSND", "TND"):
         batch, tokens, k_heads, k_dim = q_shape
-        _, v_tokens, v_heads, v_dim = v_shape
+        _, _, v_heads, v_dim = v_shape
     else:
         batch, k_heads, tokens, k_dim = q_shape
-        _, v_heads, v_tokens, v_dim = v_shape
-    if v_tokens != tokens or v_shape[0] != batch:
-        raise RuntimeError("npu_chunk_gated_delta_rule_fwd: v must match q/k in B and T.")
-    if v_heads % k_heads != 0:
-        raise RuntimeError(
-            "npu_chunk_gated_delta_rule_fwd: Phase 6 GVA requires value heads divisible by key heads."
-        )
-    if beta_shape != (batch, tokens, v_heads) or g_shape != beta_shape:
-        raise RuntimeError("npu_chunk_gated_delta_rule_fwd: beta and g must have shape [B,T,Hv].")
-    if chunk_size not in (64, 128):
-        raise RuntimeError("npu_chunk_gated_delta_rule_fwd: chunk_size must be 64 or 128.")
-    if (cu_seqlens is None) != (chunk_indices is None):
-        raise RuntimeError("npu_chunk_gated_delta_rule_fwd: cu_seqlens and chunk_indices must be provided together.")
-    if cu_seqlens is not None:
-        cu_seqlens = tuple(int(value) for value in cu_seqlens)
-        chunk_indices = tuple(int(value) for value in chunk_indices)
-        if batch != 1:
-            raise RuntimeError("npu_chunk_gated_delta_rule_fwd: varlen BNSD input requires physical B=1.")
-        if len(cu_seqlens) < 2 or cu_seqlens[0] != 0 or cu_seqlens[-1] != tokens:
-            raise RuntimeError("npu_chunk_gated_delta_rule_fwd: cu_seqlens must start at 0 and end at T.")
-        if any(left > right for left, right in zip(cu_seqlens, cu_seqlens[1:])):
-            raise RuntimeError("npu_chunk_gated_delta_rule_fwd: cu_seqlens must be nondecreasing.")
-        expected_indices = []
-        for seq, (begin, end) in enumerate(zip(cu_seqlens, cu_seqlens[1:])):
-            for local_chunk in range((end - begin + chunk_size - 1) // chunk_size):
-                expected_indices.extend((seq, local_chunk))
-        if tuple(expected_indices) != chunk_indices:
-            raise RuntimeError("npu_chunk_gated_delta_rule_fwd: chunk_indices must use canonical sequence-major order.")
+        _, v_heads, _, v_dim = v_shape
+    # The int64 ABI cannot preserve fractional values or string input types.
+    # Reject those before conversion; supported integer values are checked by host.
+    if isinstance(chunk_size, str) or int(chunk_size) != chunk_size:
+        raise ValueError("chunk_size must be an integer value before int64 conversion.")
+    chunk_size = int(chunk_size)
+    if chunk_size <= 0 or chunk_size > (1 << 63) - 1:
+        raise ValueError("chunk_size must be a positive int64 for output allocation and chunk arithmetic.")
+    if scale is None and k_dim <= 0:
+        raise ValueError("K must be positive to compute the default scale.")
+    # Convert independently so a missing metadata partner reaches host validation.
+    cu_seqlens = None if cu_seqlens is None else tuple(int(value) for value in cu_seqlens)
+    chunk_indices = None if chunk_indices is None else tuple(int(value) for value in chunk_indices)
 
     output_final_state = _optional_bool(output_final_state, False)
     use_exp2 = _optional_bool(use_exp2, False)
@@ -3001,7 +2978,7 @@ def npu_chunk_gated_delta_rule_fwd(
         raise ValueError("use_gate_in_kernel=True is not supported.")
     if a_log is not None or dt_bias is not None:
         raise ValueError("a_log and dt_bias must be None while gate-in-kernel is unsupported.")
-    scale = _optional_float(scale, float(k_dim) ** -0.5)
+    scale = float(k_dim) ** -0.5 if scale is None else float(scale)
     o = _empty((batch, tokens, v_heads, v_dim), v)
     g_cumsum = (
         _empty((batch, tokens, v_heads), g, dtype=torch.float32)
@@ -3021,6 +2998,8 @@ def npu_chunk_gated_delta_rule_fwd(
     final_state = None
     if output_final_state:
         seq_num = len(cu_seqlens) - 1 if cu_seqlens is not None else batch
+        if seq_num < 0:
+            raise ValueError("cu_seqlens must have a nonnegative sequence count to allocate final_state.")
         if initial_state is None:
             state_dtype = torch.float32
         else:
@@ -3030,11 +3009,8 @@ def npu_chunk_gated_delta_rule_fwd(
     h = None
     if return_intermediate_states:
         chunks = (
-            sum(
-                (right - left + chunk_size - 1) // chunk_size
-                for left, right in zip(cu_seqlens, cu_seqlens[1:])
-            )
-            if cu_seqlens is not None
+            len(chunk_indices) // 2
+            if cu_seqlens is not None and chunk_indices is not None
             else (tokens + chunk_size - 1) // chunk_size
         )
         state_tail = (v_dim, k_dim) if state_v_first else (k_dim, v_dim)
