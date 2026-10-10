@@ -20,7 +20,7 @@
 #include "stable_causal_conv1d_update.cpp"
 #include "stable_chunk_bwd_dqkwg.cpp"
 #include "stable_chunk_bwd_dv_local.cpp"
-#include "stable_chunk_delta_h_bwd_preprocess.cpp"
+#include "stable_pre_process_bwd_kernel_merged.cpp"
 #include "stable_chunk_fwd_h.cpp"
 #include "stable_chunk_fwd_o.cpp"
 #include "stable_chunk_gated_delta_rule_bwd.cpp"
@@ -129,7 +129,7 @@ STABLE_TORCH_LIBRARY(fla_npu_stable, m) {
   m.def(kSchema_chunk_gated_delta_rule_bwd);
   m.def(kSchema_merge_fwd_bwd_kernel);
   m.def(kSchema_pre_process_fwd_kernel_merged);
-  m.def(kSchema_chunk_delta_h_bwd_preprocess);
+  m.def(kSchema_pre_process_bwd_kernel_merged);
 #ifndef FLA_STABLE_NO_DEBUG_PROBE
   m.def("_stream_probe(int device_index) -> (int, int)");
 #endif
@@ -222,9 +222,9 @@ STABLE_TORCH_LIBRARY_IMPL(fla_npu_stable, CompositeExplicitAutograd, m) {
   m.impl("npu_pre_process_fwd_kernel_merged",
          &fla_npu_stable::stable::boxed_adapter<run_npu_pre_process_fwd_kernel_merged>);
   m.impl(
-      "npu_chunk_delta_h_bwd_preprocess",
+      "npu_pre_process_bwd_kernel_merged",
       &fla_npu_stable::stable::boxed_adapter<
-          run_npu_chunk_delta_h_bwd_preprocess>);
+          run_npu_pre_process_bwd_kernel_merged>);
 #ifndef FLA_STABLE_NO_DEBUG_PROBE
   m.impl("_stream_probe", &boxed_stream_probe);
 #endif

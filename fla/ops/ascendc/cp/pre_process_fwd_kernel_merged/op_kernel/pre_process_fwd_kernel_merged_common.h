@@ -362,7 +362,7 @@ constexpr int32_t TILED_L1_B_F32_OFF = 192 * 1024;
 //   ④ T2[K,K] = FP32(Kw @ m)            —— **fp32×fp32**（950 的 cube 原生支持 fp32 MMA；
 //                                          见 third_party/catlass/examples/43_ascend950_basic_matmul）
 // AIV 侧算法不变：`m` 的 fp32 状态本来就每 chunk 落 `mF32_`（本开关下 M_UB 分支也要落）。
-// **默认关闭**：交付口径与 CP 组兄弟算子 `chunk_delta_h_bwd_preprocess` 对齐 ——
+// **默认关闭**：交付口径与 CP 组兄弟算子 `pre_process_bwd_kernel_merged` 对齐 ——
 // `m` 链的 `Kw = LᵀW` 与兄弟的链式量同级，都按**模型 dtype** 入 Cube（bf16 操作数 + fp32 累加），
 // 验收也按模型 dtype 判（见 `tests/atk/pre_process_fwd_kernel_merged/README.md`「精度口径」）。
 // 打开它是 "IEEE FP32 m 链" 的替代实现（`ATK cv_fused_double_benchmark` 也能 111/111 过），
@@ -372,7 +372,7 @@ constexpr int32_t TILED_L1_B_F32_OFF = 192 * 1024;
 #define PPFM_M_CHAIN_FP32 0
 #endif
 // —— A2（arch22 / 910B·910_93）：m 链**保持 bf16**。这与 950 的默认一致，也正是本次的交付口径
-//    ——对齐 CP 组兄弟算子 `chunk_delta_h_bwd_preprocess`：链上中间量按模型 dtype 入 Cube，
+//    ——对齐 CP 组兄弟算子 `pre_process_bwd_kernel_merged`：链上中间量按模型 dtype 入 Cube，
 //    验收同样按模型 dtype 判（见 `tests/atk/pre_process_fwd_kernel_merged/README.md` 的「精度口径」）。
 //    2026-10-08 在 234 上量过 A2 的实际水平（T=256、HK=2、HV=8，对比仓内 reference 契约）：
 //      m 半边 absmax 3.4e-05 / absmean 1.9e-06（h 半边 9.5e-07）

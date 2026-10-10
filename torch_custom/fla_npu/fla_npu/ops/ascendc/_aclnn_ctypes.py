@@ -4847,7 +4847,7 @@ def npu_solve_tri(x, *, cu_seqlens=None, chunk_indices=None, layout="bsnd"):
     )
 
 
-def npu_chunk_delta_h_bwd_preprocess(
+def npu_pre_process_bwd_kernel_merged(
     q,
     k,
     w,
@@ -4876,7 +4876,7 @@ def npu_chunk_delta_h_bwd_preprocess(
     k_dim = q.shape[3]
     out = torch.empty((hv, k_dim, v_dim + k_dim), dtype=torch.float32, device=q.device)
     return _call_aclnn(
-        "aclnnChunkDeltaHBwdPreprocess",
+        "aclnnPreProcessBwdKernelMerged",
         lambda ctx: [
             ctx.tensor(q, "q"),
             ctx.tensor(k, "k"),
