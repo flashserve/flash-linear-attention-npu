@@ -98,6 +98,15 @@ public:
     CATLASS_DEVICE
     ~BlockEpilogue() {}
 
+    CATLASS_DEVICE
+    void ConfigureGDecay(GM_ADDR addr)
+    {
+        hasGDecay_ = addr != nullptr;
+        if (hasGDecay_) {
+            gDecay_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(addr));
+        }
+    }
+
     template <typename Element>
     CATLASS_DEVICE
     void CopyGmToUb(
@@ -150,7 +159,8 @@ public:
         AscendC::LocalTensor<GElementInput> gInputUbTensor,
         AscendC::GlobalTensor<GElementInput> gInputThisSubBlock,
         uint32_t mActual,
-        uint32_t pingpongFlag)
+        uint32_t pingpongFlag,
+        uint64_t gDecayOffset)
     {
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
         if constexpr (!scalarGated) {
@@ -161,6 +171,15 @@ public:
         if (mActual == 1) {
             AscendC::Duplicate<float>(gUbTensor, 1.0f, 1);
             AscendC::PipeBarrier<PIPE_V>();
+            return;
+        }
+        if (hasGDecay_) {
+            const AscendC::DataCopyExtParams params{
+                1, static_cast<uint32_t>(mActual * sizeof(float)), 0, 0, 0};
+            const AscendC::DataCopyPadExtParams<float> pad{false, 0, 0, 0.0f};
+            AscendC::DataCopyPad(gUbTensor, gDecay_[gDecayOffset], params, pad);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID3 + pingpongFlag);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID3 + pingpongFlag);
             return;
         }
         if constexpr(std::is_same<GElementInput, float>::value) {
@@ -219,7 +238,8 @@ public:
         bool storeFinalState,
         bool waitWsFromMte3,
         bool isPing,
-        bool cube1AlreadyWaited
+        bool cube1AlreadyWaited,
+        uint64_t gDecayOffset = 0
     )
     {
         static constexpr uint32_t ROW_TILE = 16;
@@ -284,7 +304,8 @@ public:
             AscendC::PipeBarrier<PIPE_V>();
 
             if constexpr (scalarGated) {
-                PrepareG(gUbTensor, gLastUbTensor, gInputUbTensor, gInputThisSubBlock, mActual, pingpongFlag);
+                PrepareG(gUbTensor, gLastUbTensor, gInputUbTensor, gInputThisSubBlock,
+                         mActual, pingpongFlag, gDecayOffset);
             } else {
                 AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
             }
@@ -359,7 +380,8 @@ public:
         }
 
         if constexpr (scalarGated) {
-            PrepareG(gUbTensor, gLastUbTensor, gInputUbTensor, gInputThisSubBlock, mActual, pingpongFlag);
+            PrepareG(gUbTensor, gLastUbTensor, gInputUbTensor, gInputThisSubBlock,
+                     mActual, pingpongFlag, gDecayOffset);
         } else {
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
         }
@@ -460,6 +482,8 @@ public:
     }
 
 private:
+    AscendC::GlobalTensor<float> gDecay_;
+    bool hasGDecay_ = false;
     uint32_t pongBaseEvent = 4;
 
     AscendC::LocalTensor<float> calcUbTensor;

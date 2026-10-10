@@ -474,8 +474,8 @@ __aicore__ inline void stage64_merge(GM_ADDR input, GM_ADDR prev, GM_ADDR output
 template <int L, bool Parent = false>
 class LeafProducer {
     static constexpr int E = L * 256;
-    TBuf<TPosition::VECCALC> ab, pb, rb, cb;
-    LocalTensor<float> a, prod, row, coeff;
+    TBuf<TPosition::VECCALC> ab, pb, rb;
+    LocalTensor<float> a, prod, row;
     GlobalTensor<float> in, out;
     GlobalTensor<int64_t> cu;
     FullProblem info;
@@ -489,11 +489,9 @@ public:
         pipe.InitBuffer(ab, E * 4);
         pipe.InitBuffer(pb, E * 4);
         pipe.InitBuffer(rb, L * 16 * 4);
-        pipe.InitBuffer(cb, L * 128 * 4);
         a = ab.Get<float>();
         prod = pb.Get<float>();
         row = rb.Get<float>();
-        coeff = cb.Get<float>();
         in.SetGlobalBuffer((__gm__ float *)input);
         out.SetGlobalBuffer((__gm__ float *)output);
         cu.SetGlobalBuffer((__gm__ int64_t *)cuAddr);
@@ -528,12 +526,12 @@ public:
         for (int i = 2; i < 16; ++i) {
             DataCopy(row, a[i * 16], {(uint16_t)L, 2, 30, 0});
             PipeBarrier<PIPE_V>();
-            Brcb(coeff, row, L * 2, {1, 8});
+            // 每个系数广播到对应16元素行；两次写入交错的32B块。
+            // prod先存系数，乘法原位覆盖后继续使用原来的加法树。
+            Brcb(prod, row, L * 2, {2, 16});
+            Brcb(prod[8], row, L * 2, {2, 16});
             PipeBarrier<PIPE_V>();
-            for (int r = 0; r < L * 16; r += 240) {
-                uint8_t n = L * 16 - r < 240 ? L * 16 - r : 240;
-                Mul(prod[r * 16], a[r * 16], coeff[r * 8], 16, n, {1, 1, 0, 2, 2, 1});
-            }
+            Mul(prod, a, prod, E);
             PipeBarrier<PIPE_V>();
             Add(prod, prod, prod[128], 64, L, {1, 1, 1, 32, 32, 32});
             Add(prod[64], prod[64], prod[192], 64, L, {1, 1, 1, 32, 32, 32});

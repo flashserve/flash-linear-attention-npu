@@ -305,7 +305,15 @@ public:
         gmMask.SetGlobalBuffer((__gm__ ElementMask *)(user + maskWorkspaceOffset));
 
         chunkPipelineEnabled = CanRunChunkPipeline();
+#if defined(GDN_CHUNK_RECOMPUTE_WU_FWD_HO_IMPL_ONLY) && defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+        // The A2 mega entry executes a full H->O barrier on this fallback path.
+        // Spread independent O tasks over all physical Cube core groups.
+        taskAffinityEnabled = false;
+#else
+        // The standalone H/O composite has no equivalent dense-path barrier;
+        // retain head ownership so O only consumes H published by this group.
         taskAffinityEnabled = kChunkPipeline && !chunkPipelineEnabled && (isVariedLen == 0);
+#endif
         if (chunkPipelineEnabled) {
             gmPipelineSync.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t *>(v + PipelineVNewBytes()));
         }
@@ -488,8 +496,11 @@ public:
                         gmG[vec1OffsetG], gmAttnWorkspace[vec1OffsetAttn], gmMask,
                         chunkSize, vec1Offsets.blockTokens, kHeadDim, vHeadDim, pingpongFlag, vec1Offsets.batchIdx, vec1Offsets.headIdx, vec1Offsets.chunkIdx
                     );
-                    // Publish this task only after both AIV subblocks finish.
-                    Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+                    // Dense mode uses the paired AIV mode-2 flags, as in the
+                    // standalone O kernel. Keep the explicit join for varlen tails.
+                    if (isVariedLen != 0) {
+                        Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+                    }
                     Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec1Done[streamId]);
                 }
 
@@ -513,8 +524,13 @@ public:
                         gmG[vec2OffsetG], gmVWorkspace[vec2OffsetVWork], gmHWorkspace[vec2OffsetHWork],
                         scale, vec2Offsets.blockTokens, kHeadDim, vec2Offsets.vBlockDim, outputStride, pingpongFlag, vec2Offsets.batchIdx, vec2Offsets.headIdx, vec2Offsets.chunkIdx
                     );
-                    // Close the shared completion generation before workspace reuse.
-                    Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+                    // Keep each subblock's MTE3 completion and Cube wait;
+                    // they also close varlen H/V workspace reuse on A2 mega.
+#if !defined(GDN_CHUNK_RECOMPUTE_WU_FWD_HO_IMPL_ONLY) || !defined(__CCE_AICORE__) || __CCE_AICORE__ != 220
+                    if (isVariedLen != 0) {
+                        Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+                    }
+#endif
                     Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[streamId]);
                 }
                 needRun = true;

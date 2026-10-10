@@ -14,7 +14,7 @@ using namespace AscendC;
 constexpr int32_t BUFFER_NUM = 1;
 constexpr int32_t FP32_BLOCK_ELEMS = 8;
 constexpr int32_t FP32_REPEAT_ELEMS = 64;
-constexpr int32_t BRCB_ROWS = 8;
+constexpr int32_t BRCB_ROWS = 32;
 constexpr int32_t UB_ALIGN_BYTES = 32;
 constexpr MatmulConfig CHUNK_SCALED_DOT_KKT_MM_CFG = GetNormalConfig(true);
 
@@ -24,7 +24,8 @@ using BiasType = matmul::MatmulType<TPosition::GM, CubeFormat::ND, float>;
 // OutputType is the CAST_RINT rounding type of the epilogue. StoreFp32SolveInput
 // additionally publishes the rounded values as an FP32 GM solve input and only
 // changes the GM storage type; it must not remove the low-precision rounding.
-template <typename KType, typename OutputType = float, bool StoreFp32SolveInput = false>
+template <typename KType, typename OutputType = float, bool StoreFp32SolveInput = false,
+          bool SharedKkt = false>
 class ChunkScaledDotKkt {
     static_assert(!StoreFp32SolveInput || !std::is_same_v<OutputType, float>,
                   "StoreFp32SolveInput keeps OutputType as the rounding type and needs a low-precision tile");
@@ -151,7 +152,8 @@ private:
         gGm.SetGlobalBuffer((__gm__ float *)g, B_ * Hv_ * T_);
         betaGm.SetGlobalBuffer((__gm__ float *)beta, B_ * Hv_ * T_);
         aGm.SetGlobalBuffer((__gm__ OutputType *)a, B_ * taskHeads_ * T_ * BT_);
-        scoreGm.SetGlobalBuffer((__gm__ float *)scoreWorkspace, taskNum_ * BT_ * BT_);
+        const int64_t scoreTasks = SharedKkt ? taskNum_ / hvPerHk_ : taskNum_;
+        scoreGm.SetGlobalBuffer((__gm__ float *)scoreWorkspace, scoreTasks * BT_ * BT_);
         if (fusedCumsum_) {
             gCumsumGm.SetGlobalBuffer((__gm__ float *)gCumsum, B_ * Hv_ * T_);
         }
@@ -266,7 +268,13 @@ private:
         LocalTensor<float> gLocal = gQueue_.template DeQue<float>();
         LocalTensor<float> betaLocal = betaQueue_.template DeQue<float>();
 
-        const int64_t scoreBaseOffset = task * BT_ * BT_;
+        int64_t scoreTask = task;
+        if constexpr (SharedKkt) {
+            // DecodeTask replaces varlen chunk with its sequence-local index;
+            // derive the packed Hk slot from the original task instead.
+            scoreTask -= (b * (taskHeads_ - Hk_) + h - h / hvPerHk_) * NT_;
+        }
+        const int64_t scoreBaseOffset = scoreTask * BT_ * BT_;
         const int64_t outBaseOffset = ((b * taskHeads_ + h) * T_ + rowStart) * BT_;
         const int64_t outRowStride = BT_;
         LocalTensor<float> scoreTileLocal = scoreTileBuf_.Get<float>();
@@ -278,6 +286,9 @@ private:
         for (int64_t rowBase = 0; rowBase < valid; rowBase += BRCB_ROWS) {
             const int64_t rows = MinI64(static_cast<int64_t>(BRCB_ROWS), valid - rowBase);
             const int64_t cols = rowBase + rows;
+            Duplicate(outTileLocal[rowBase * btAlign_], 0.0f,
+                      static_cast<int32_t>(rows * btAlign_));
+            PipeBarrier<PIPE_V>();
             ComputeGateBlock(rowBase, rows, cols, gLocal, betaLocal, gateLocal, rowBrcbLocal);
             if (!scoreReady) {
                 WaitMte2ToV();
@@ -286,6 +297,11 @@ private:
             for (int64_t lane = 0; lane < rows; ++lane) {
                 const int64_t row = rowBase + lane;
                 ComputeEpilogueRow(scoreTileLocal, outTileLocal, row, gateLocal[lane * btAlign_]);
+            }
+            // Each row writes a disjoint output slice. Drain once before the
+            // next block reuses gateLocal or CopyOutTile reads the output.
+            if (cols > 1) {
+                PipeBarrier<PIPE_V>();
             }
         }
         CopyOutTile(outBaseOffset, outRowStride, outTileLocal, valid);
@@ -559,7 +575,8 @@ private:
         }
         PipeBarrier<PIPE_V>();
 
-        Brcb(rowBrcbLocal, gLocal[rowBase], 1, {1, FP32_BLOCK_ELEMS});
+        Brcb(rowBrcbLocal, gLocal[rowBase], static_cast<uint8_t>(CeilDiv(rows, 8)),
+             {1, FP32_BLOCK_ELEMS});
         PipeBarrier<PIPE_V>();
         for (int64_t colOffset = 0; colOffset < cols; colOffset += FP32_REPEAT_ELEMS) {
             const int64_t cur = MinI64(static_cast<int64_t>(FP32_REPEAT_ELEMS), cols - colOffset);
@@ -590,7 +607,8 @@ private:
         }
         PipeBarrier<PIPE_V>();
 
-        Brcb(rowBrcbLocal, betaLocal[rowBase], 1, {1, FP32_BLOCK_ELEMS});
+        Brcb(rowBrcbLocal, betaLocal[rowBase], static_cast<uint8_t>(CeilDiv(rows, 8)),
+             {1, FP32_BLOCK_ELEMS});
         PipeBarrier<PIPE_V>();
         for (int64_t colOffset = 0; colOffset < cols; colOffset += FP32_REPEAT_ELEMS) {
             const int64_t cur = MinI64(static_cast<int64_t>(FP32_REPEAT_ELEMS), cols - colOffset);
@@ -607,13 +625,9 @@ private:
     {
         LocalTensor<float> scoreRowLocal = scoreTileLocal[row * btAlign_];
         LocalTensor<float> outRowLocal = outTileLocal[row * btAlign_];
-        Duplicate(outRowLocal, 0.0f, static_cast<int32_t>(BT_));
-        PipeBarrier<PIPE_V>();
-
         if (row > 0) {
             const int32_t prefix = static_cast<int32_t>(row);
             Mul(outRowLocal, scoreRowLocal, gateRowLocal, prefix);
-            PipeBarrier<PIPE_V>();
         }
     }
 
