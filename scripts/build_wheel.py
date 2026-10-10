@@ -9,6 +9,7 @@ import os
 import shlex
 import subprocess
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -258,34 +259,38 @@ def main() -> int:
     wheel_dir = _resolve_output_dir(args.wheel_dir)
     wheel_dir.mkdir(parents=True, exist_ok=True)
     _prepare_abi_free_launcher()
-    command = [
-        sys.executable,
-        "-m",
-        "pip",
-        "wheel",
-        "--no-build-isolation",
-        "--no-deps",
-        ".",
-        "-w",
-        str(wheel_dir),
-    ]
+    # 只检查本次构建的产物，避免选中输出目录中残留的旧 wheel。
+    # 临时目录与输出目录位于同一文件系统，确保完整 wheel 可以原子替换目标文件。
+    with tempfile.TemporaryDirectory(prefix=".fla-wheel-", dir=wheel_dir) as tmp:
+        staging_dir = Path(tmp)
+        command = [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            "--no-build-isolation",
+            "--no-deps",
+            ".",
+            "-w",
+            str(staging_dir),
+        ]
 
-    env = os.environ.copy()
-    build_args = _assemble_build_args(args)
-    if build_args:
-        env["FLA_NPU_BUILD_ARGS"] = build_args
-    subprocess.run(command, cwd=REPO_ROOT, check=True, env=env)
+        env = os.environ.copy()
+        build_args = _assemble_build_args(args)
+        if build_args:
+            env["FLA_NPU_BUILD_ARGS"] = build_args
+        subprocess.run(command, cwd=REPO_ROOT, check=True, env=env)
 
-    # The wheel is tagged for the host platform and (outside PyPI mode) the
-    # build tag carries the SoC, so resolve the actual file instead of
-    # predicting the full name -- but the distribution name is decided by the
-    # build mode (tiered PyPI name vs. the base name), so filter on it.
-    wheel_files = sorted(wheel_dir.glob(f"{get_wheel_dist_name()}-*.whl"))
-    if not wheel_files:
-        raise RuntimeError(f"Expected wheel was not produced under {wheel_dir}")
-    wheel_path = wheel_files[-1]
-
-    _inject_runtime_pins(wheel_path)
+        wheel_files = list(staging_dir.glob(f"{get_wheel_dist_name()}-*.whl"))
+        if len(wheel_files) != 1:
+            raise RuntimeError(
+                f"Expected exactly one wheel from this build, found {len(wheel_files)}: "
+                f"{[path.name for path in wheel_files]}"
+            )
+        staged_wheel = wheel_files[0]
+        _inject_runtime_pins(staged_wheel)
+        wheel_path = wheel_dir / staged_wheel.name
+        staged_wheel.replace(wheel_path)
 
     print(f"[fla-npu build] Wheel: {wheel_path}", flush=True)
     print(f"[fla-npu build] Install command:", flush=True)
