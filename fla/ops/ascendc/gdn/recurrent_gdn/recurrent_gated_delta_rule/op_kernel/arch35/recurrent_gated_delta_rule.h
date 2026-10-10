@@ -332,8 +332,13 @@ public:
             // only. 0 keeps the legacy per-token [T] contract unchanged.
             const int32_t stateBase = stateIndicesStride_ > 0 ? static_cast<int32_t>(batch_i * stateIndicesStride_) : seq0;
             const int32_t stateWidth = stateIndicesStride_ > 0 ? static_cast<int32_t>(stateIndicesStride_) : seqLen;
+            // seqLen > W violates the [B, W] contract (host-side tiling cannot
+            // check per-sequence lengths since cuSeqlens values live in device
+            // memory).  Skip this request only: returning here would also drop
+            // every remaining request handled by this core and leave their
+            // outputs silently uninitialized.
             if (seqLen > stateWidth) {
-                return;
+                continue;
             }
             uint32_t copyFlag = 0;
             uint64_t stateOffset;
@@ -346,8 +351,11 @@ public:
                     int32_t stateTokenIdx = stateBase;
                     if (hasAcceptedTokens_) {
                         int32_t acceptedTokenNum = numAcceptedTokensGm_.GetValue(batch_i);
+                        // Same skip-one-request policy as the seqLen > W
+                        // guard: silently aborting the whole core would leave
+                        // the remaining requests uninitialized.
                         if (acceptedTokenNum <= 0 || acceptedTokenNum > stateWidth) {
-                            return;
+                            break;
                         }
                         stateTokenIdx = stateBase + acceptedTokenNum - 1;
                     }
