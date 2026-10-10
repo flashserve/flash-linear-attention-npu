@@ -21,7 +21,16 @@ __aicore__ inline uint32_t FwdHAlignCube(uint32_t value)
     return (value + 15U) & ~15U;
 }
 
-__aicore__ inline FwdHSequenceSpan FwdHResolveSequence(const FwdHKernelArgs &args, uint32_t sequence)
+// varlen 前缀游标：sequence 随 work unit 循环严格递增，各序列的 chunk 数只算一次，
+// 换序列时增量推进——替代按 sequence 从 0 重扫 cu_seqlens 的 O(N) 读。
+struct FwdHSequenceCursor {
+    uint32_t prefix = 0;
+    uint32_t totalChunks = 0;
+    uint32_t nextSequence = 0;
+};
+
+__aicore__ inline FwdHSequenceSpan FwdHResolveSequence(const FwdHKernelArgs &args, uint32_t sequence,
+                                                       FwdHSequenceCursor &cursor)
 {
     FwdHSequenceSpan span{};
     span.sequence = sequence;
@@ -37,25 +46,31 @@ __aicore__ inline FwdHSequenceSpan FwdHResolveSequence(const FwdHKernelArgs &arg
 
     AscendC::GlobalTensor<int64_t> cu;
     cu.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(args.cuSeqlens));
+    if (cursor.nextSequence == 0) {
+        uint32_t totalChunks = 0;
+        for (uint32_t seq = 0; seq < static_cast<uint32_t>(args.tiling.tokenBatch); ++seq) {
+            const int64_t seqBegin = cu.GetValue(seq);
+            const int64_t seqEnd = cu.GetValue(seq + 1);
+            totalChunks += FwdHCeilDiv(static_cast<uint32_t>(seqEnd - seqBegin), FWD_H_CHUNK);
+        }
+        cursor.totalChunks = totalChunks;
+        cursor.nextSequence = 1;
+    }
+    while (cursor.nextSequence <= sequence) {
+        const uint32_t seq = cursor.nextSequence;
+        const int64_t seqBegin = cu.GetValue(seq - 1U);
+        const int64_t seqEnd = cu.GetValue(seq);
+        cursor.prefix += FwdHCeilDiv(static_cast<uint32_t>(seqEnd - seqBegin), FWD_H_CHUNK);
+        cursor.nextSequence = seq + 1U;
+    }
     const int64_t begin = cu.GetValue(sequence);
     const int64_t end = cu.GetValue(sequence + 1);
     span.physicalBatch = 0;
     span.tokenBegin = static_cast<uint32_t>(begin);
     span.length = static_cast<uint32_t>(end - begin);
     span.chunkCount = FwdHCeilDiv(span.length, FWD_H_CHUNK);
-    uint32_t prefix = 0;
-    uint32_t totalChunks = 0;
-    for (uint32_t seq = 0; seq < static_cast<uint32_t>(args.tiling.tokenBatch); ++seq) {
-        const int64_t seqBegin = cu.GetValue(seq);
-        const int64_t seqEnd = cu.GetValue(seq + 1);
-        const uint32_t chunks = FwdHCeilDiv(static_cast<uint32_t>(seqEnd - seqBegin), FWD_H_CHUNK);
-        if (seq < sequence) {
-            prefix += chunks;
-        }
-        totalChunks += chunks;
-    }
-    span.chunkPrefix = prefix;
-    span.totalChunks = totalChunks;
+    span.chunkPrefix = cursor.prefix;
+    span.totalChunks = cursor.totalChunks;
     return span;
 }
 
@@ -181,12 +196,14 @@ __aicore__ inline FwdHChunkSpan FwdHBuildChunk(const FwdHSequenceSpan &sequence,
 }
 
 template <FwdHGateMode GATE_MODE>
-__aicore__ inline FwdHWorkUnit FwdHResolveWorkUnit(const FwdHKernelArgs &args, uint32_t workUnitId)
+__aicore__ inline FwdHWorkUnit FwdHResolveWorkUnit(const FwdHKernelArgs &args, uint32_t workUnitId,
+                                                   FwdHSequenceCursor &cursor)
 {
     const uint32_t rounds = FwdHHeadRoundsPerSequence<GATE_MODE>(args.tiling);
     const uint32_t sequence = workUnitId / rounds;
     const uint32_t round = workUnitId % rounds;
-    return {FwdHResolveSequence(args, sequence), FwdHBuildHeadRound<GATE_MODE>(args.tiling, round)};
+    return {FwdHResolveSequence(args, sequence, cursor),
+            FwdHBuildHeadRound<GATE_MODE>(args.tiling, round)};
 }
 
 template <FwdHGateMode GATE_MODE>
