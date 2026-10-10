@@ -575,6 +575,13 @@ private:
             AscendC::DataCopy(qgGm_[out], qg,
                               chunk.validRows * Shape::kHeadDim);
         }
+#if KDA_PREPARE_DIAG_MARKER
+        // 铁证探针（仅诊断构建）：给公开输出 kg 的第 0 个元素 +1.0
+        if (chunk.validRows > 0) {
+            kg.SetValue(0, static_cast<bfloat16_t>(
+                               static_cast<float>(kg.GetValue(0)) + 1.0f));
+        }
+#endif
         AscendC::DataCopy(kgGm_[out], kg, chunk.validRows * Shape::kHeadDim);
         const uint32_t rhsRows = chunk.validRows > 32 ? 64 : 32;
         AscendC::GlobalTensor<bfloat16_t> kBetaRelay;
