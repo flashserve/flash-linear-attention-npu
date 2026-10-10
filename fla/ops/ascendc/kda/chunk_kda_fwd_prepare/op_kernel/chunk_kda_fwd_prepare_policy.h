@@ -39,11 +39,12 @@
 // GM 数据"不足以稳定保证写侧已经对读侧可见（同 CP/PPFM 的既定结论），这里提供
 // 一个可回退的加固开关：
 //   0 = 与改动前逐字节一致（基线）；
-//   1 = 只在 V6 → C7 这条交接上补"写侧 clean + 读侧失效 + DSB"（默认）；
-//   2 = 再把 C2/C4 读入 AIV payload 的位置按同样方式加固。
+//   1 = 只在 V6 → C7 这条交接上补"写侧 clean + 读侧失效 + DSB"；
+//   2 = 再把 C2/C4 读入 AIV payload 的位置按同样方式加固（默认，现场验证档位 1 无效、
+//       档位 2 消除漂移；见 PR 描述）。
 // 只影响同步强度，不改变任何计算、地址、输出档位或 tiling 数据。
 #ifndef CHUNK_KDA_FWD_PREPARE_RELAY_SYNC
-#define CHUNK_KDA_FWD_PREPARE_RELAY_SYNC 1
+#define CHUNK_KDA_FWD_PREPARE_RELAY_SYNC 2
 #endif
 
 namespace KdaPrepare {
