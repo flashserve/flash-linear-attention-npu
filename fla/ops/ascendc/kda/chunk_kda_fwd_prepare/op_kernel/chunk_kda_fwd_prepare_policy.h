@@ -150,8 +150,24 @@ constexpr uint32_t kArch35SlotStride = kSlotStride;
 constexpr uint32_t kArch22CubeRelay = 0x1A400;
 constexpr uint32_t kArch22RawScoreBytes = 0x5000;
 constexpr uint32_t kArch22TRelay = kArch22CubeRelay;
-constexpr uint32_t kArch22SlotStride =
-    kArch22CubeRelay + kArch22RawScoreBytes;
+
+// Arch22：V6→C7 的 RHS（K_beta_g/V_beta）改用独立区，不再与 V1 payload 换义地址。
+//
+// 旧布局把 RHS 放在 payload 的 kKBetaG/kVBeta（相对 payload 为 0x7800/0xB800，
+// 即 [30 KiB, 62 KiB)），而 V1 payload 的 Kplus 覆盖 [16 KiB, 32 KiB)、Kminus 覆盖
+// [32 KiB, 72 KiB)——两者落在同一段字节上。C7 正在把 RHS 搬进 L1 时，只要该 slot
+// 的 V1 先写进来（跨核计数错位或任何一次提前放行），读到的就是"半新半旧"的
+// Q/K payload：Kminus = k_hat * E(Gref-G) 大多极小、少量很大，表现为单个
+// (value head, chunk) 的 U 整块异常而同一 Stage 的 W 正常；写侧/读侧 clean 都
+// 修不了它，因为根因是地址复用而不是可见性。
+//
+// 现在 RHS 独占 slot 尾部 32 KiB，除本代 V6 外没有任何 stage 写它。
+constexpr uint32_t kArch22RhsBase = kArch22CubeRelay + kArch22RawScoreBytes;
+constexpr uint32_t kArch22RhsMatrixBytes = 0x4000; // [64,128] * BF16
+constexpr uint32_t kArch22RhsKBetaG = kArch22RhsBase;
+constexpr uint32_t kArch22RhsVBeta = kArch22RhsBase + kArch22RhsMatrixBytes;
+constexpr uint32_t kArch22RhsBytes = 2 * kArch22RhsMatrixBytes;
+constexpr uint32_t kArch22SlotStride = kArch22RhsBase + kArch22RhsBytes;
 
 // payload 在不同 Stage 原址换义，不在 UB/L1 内搬位。
 constexpr uint32_t kX0 = 0x0000;

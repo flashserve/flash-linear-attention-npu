@@ -568,11 +568,9 @@ private:
             AscendC::GlobalTensor<bfloat16_t> kBetaRelay;
             AscendC::GlobalTensor<bfloat16_t> vBetaRelay;
             kBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
-                args_.workspace + slot + Workspace::kPayload +
-                Workspace::kKBetaG));
+                args_.workspace + slot + Workspace::kArch22RhsKBetaG));
             vBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
-                args_.workspace + slot + Workspace::kPayload +
-                Workspace::kVBeta));
+                args_.workspace + slot + Workspace::kArch22RhsVBeta));
             AscendC::DataCopy(kBetaL1, kBetaRelay, rhsCopy);
             AscendC::DataCopy(vBetaL1, vBetaRelay, rhsCopy);
         }
