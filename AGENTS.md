@@ -1,27 +1,32 @@
 # AGENTS.md
 
-本文件是 `flash-linear-attention-npu` 的仓库级 Agent 规则。根文件只保留开发流程来源和任务路由；具体方法、阶段输出和完成条件按任务读取 `docs/agents/` 中对应文件。若子目录存在更近的 `AGENTS.md`，以更近文件为准。
+本文件是 `flash-linear-attention-npu` 的仓库级 Agent 规则。
 
-## 本仓开发流程来源
+## Ascend C 算子开发
 
-- 在本仓执行开发任务时，只使用本文件和 `docs/agents/` 中定义的开发流程。
-- 仓内代码和其他技术文档按本文件与 `docs/agents/` 规定的阶段作为接口证据、工程资料或实现参考。
-- 如其他流程说明与本文件或 `docs/agents/` 冲突，以本文件和 `docs/agents/` 为准。
+- 本仓 `fla/ops/ascendc/**` 下的算子统一属于线性 Attention 算子域。接口、CPU 标杆、方案、
+  kernel、host tiling 和性能优化直接使用
+  [`CANNBot linear_attention 工作流`](docs/算子自动开发工作流.md)。
+- 固定设置 `algorithm_family=linear_attention`、`workflow_id=catlass-linear-attention-v1`，直接作为
+  family 分类结论。
+- CANNBot 04 使用直调 host 和 kernel 完成逐 Stage、整 kernel 定向验证。
+- CANNBot 05 继续使用直调工程完成全量精度、功能和性能验收；验收通过后 CANNBot workflow
+  进入 `complete`。
+- CANNBot workflow 完成后，按本仓规则接入 op_api/aclnn、Stable-ABI、Python 导出和 ATK 包装；
+  适配层冒烟和单 case ATK 通过后，执行本仓 ATK full 验收。
+- CANNBot 02 生成的 CPU 标杆直接作为 `tests/atk/<op>/reference.py` 交付。CANNBot 直调测试和
+  本仓 ATK executor 导入同一文件，数学公式集中在该文件维护。
+- CANNBot 可用且版本匹配是 Ascend C 算子研发的入口条件；缺少条件时记录并报告阻塞项。
 
 ## 任务路由
 
-| 任务类型 | 执行流程或必读内容 |
+| 任务类型 | 必读内容 |
 | --- | --- |
-| 新增算子或新公开接口 | 按顺序执行 `docs/agents/01-接口确认.md` → `02-标杆生成.md` → `03-方案设计.md` → `04-算子开发.md` → `05-算子测试.md` |
-| 修改既有算子的接口或功能 | 先读取当前接口、CPU 标杆、设计、实现和测试，再按 `docs/agents/01-接口确认.md` 的“既有算子修改路由”确定起始阶段 |
-| 修改既有算子的内部实现或优化性能 | 读取当前算子的设计、实现和测试，按 `docs/agents/03-方案设计.md` → `04-算子开发.md` → `05-算子测试.md` 执行 |
-| 修改或新增算子测试，包括 ATK 用例 | `docs/agents/05-算子测试.md`、`tests/atk/README.md` 和当前算子的 ATK README；涉及 CPU 标杆对齐、输入值域、精度规则或精度失败时，同时按下一行进入精度路由 |
-| 对齐 CPU 标杆、校准精度值域或定位精度问题 | 先读取 `docs/agents/reference/精度对比与定位.md` 选择场景，再按该文件指向的执行方法操作 |
-| 修改公共组件、公共 ABI、代码生成模板或 Python runtime | `docs/architecture/torch-npu-decoupled-architecture.md`，并识别全部受影响算子 |
-| 修改 wheel、OPP、构建或安装流程 | `docs/开发者指南.md` 和相关构建脚本 |
-| 修改 PR、分支、CODEOWNERS 或 CI 规则 | `docs/repository-rules.md`、`.github/pull_request_template.md` 和现有 workflow |
-| 修改 Triton 算子 | 当前 Triton 实现、导出入口、对应测试和 README，并采用 Triton 对应的实现约束 |
+| Ascend C 接口、标杆、方案、kernel、host tiling 或性能 | [`docs/算子自动开发工作流.md`](docs/算子自动开发工作流.md) |
+| op_api/aclnn、Stable-ABI、Python wrapper 或公共 runtime | [`docs/architecture/适配层接入指南.md`](docs/architecture/适配层接入指南.md)、[`docs/architecture/torch-npu-decoupled-architecture.md`](docs/architecture/torch-npu-decoupled-architecture.md) |
+| ATK 资产、用例、executor 或验收 | [`tests/atk/README.md`](tests/atk/README.md) 和当前算子的 ATK README |
+| wheel、OPP、构建或安装 | [`docs/开发者指南.md`](docs/开发者指南.md) 和相关构建脚本 |
+| PR、分支、CODEOWNERS 或 CI | [`docs/repository-rules.md`](docs/repository-rules.md)、PR 模板和现有 workflow |
+| Triton 算子 | 当前 Triton 实现、导出入口、对应测试和 README |
 
-前一阶段的结论发生变化时，从最早受影响的阶段重新执行后续阶段。
-
-目录索引、阶段输入输出和按任务阅读顺序见 `docs/agents/README.md`。
+前一阶段的接口、标杆或设计发生变化时，从最早受影响的 CANNBot 阶段重新执行后续流程。
