@@ -117,6 +117,10 @@ private:
     static constexpr uint32_t LOCAL1_BASE = LOCAL_SLOT_BYTES;
     static constexpr uint32_t STATE0_BASE = 64 * 1024;
     static constexpr uint32_t STATE1_BASE = 96 * 1024;
+    // STATE_FP32 常驻布局：两个 local slot 的 FP32 rolling state 各 64KB，占
+    // [64K,192K)；该模板下 stateBf16_ 是死代码，不再初始化（BF16 路径布局不变）。
+    static constexpr uint32_t FP32_STATE0_BASE = 64 * 1024;
+    static constexpr uint32_t FP32_STATE1_BASE = 128 * 1024;
     static constexpr uint32_t RAW_BASE = 0;
     static constexpr uint32_t CAST_BASE = 4 * 1024;
     static constexpr uint32_t CALC_BASE = 8 * 1024;
@@ -153,8 +157,13 @@ private:
             alpha_[slot] = ub[base + ALPHA_BASE].template ReinterpretCast<float>();
             share_[slot] = ub[base + SHARE_BASE].template ReinterpretCast<uint8_t>();
         }
-        stateBf16_[0] = ub[STATE0_BASE].template ReinterpretCast<bfloat16_t>();
-        stateBf16_[1] = ub[STATE1_BASE].template ReinterpretCast<bfloat16_t>();
+        if constexpr (CompilePolicy::STATE_FP32) {
+            stateFp32_[0] = ub[FP32_STATE0_BASE].template ReinterpretCast<float>();
+            stateFp32_[1] = ub[FP32_STATE1_BASE].template ReinterpretCast<float>();
+        } else {
+            stateBf16_[0] = ub[STATE0_BASE].template ReinterpretCast<bfloat16_t>();
+            stateBf16_[1] = ub[STATE1_BASE].template ReinterpretCast<bfloat16_t>();
+        }
     }
 
     __aicore__ inline uint64_t UOffset(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk,
@@ -262,10 +271,13 @@ private:
                 const FwdHChunkSpan first = FwdHBuildChunk(unit.sequence, 0);
                 for (uint32_t row = 0; row < FWD_H_K; row += TILE_ROWS) {
                     AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
-                    AscendC::DataCopy(calc_[slot], initial[stateBase + row * FWD_H_V], TILE_ELEMENTS);
+                    // FP32 state 常驻：initial_state 直接读入常驻区，S3 全程不再经 GM。
+                    AscendC::DataCopy(stateFp32_[slot][row * FWD_H_V],
+                                      initial[stateBase + row * FWD_H_V], TILE_ELEMENTS);
                     AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
                     AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
-                    AscendC::Cast(io_[slot], calc_[slot], AscendC::RoundMode::CAST_RINT, TILE_ELEMENTS);
+                    AscendC::Cast(io_[slot], stateFp32_[slot][row * FWD_H_V],
+                                  AscendC::RoundMode::CAST_RINT, TILE_ELEMENTS);
                     AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
                     AscendC::DataCopy(h[HOffset(unit, first, head) + row * FWD_H_V],
@@ -416,8 +428,10 @@ private:
             PrepareScalarGate(slot, chunk.validTokens);
         }
         if (chunk.first && args_.tiling.useInitialState == 0) {
-            AscendC::Duplicate(stateBf16_[slot], static_cast<bfloat16_t>(0), FWD_H_K * FWD_H_V);
-            AscendC::PipeBarrier<PIPE_V>();
+            if constexpr (!CompilePolicy::STATE_FP32) {
+                AscendC::Duplicate(stateBf16_[slot], static_cast<bfloat16_t>(0), FWD_H_K * FWD_H_V);
+                AscendC::PipeBarrier<PIPE_V>();
+            }
         }
         ComputeStage1Tile<HAS_P, WRITE_RIGHT, false>(unit, chunk, head, 0);
         for (uint32_t row = TILE_ROWS; row < chunk.validTokens; row += TILE_ROWS) {
@@ -425,13 +439,33 @@ private:
             ComputeStage1Tile<HAS_P, WRITE_RIGHT, true>(unit, chunk, head, row);
         }
         if (chunk.first && (!CompilePolicy::STATE_FP32 || args_.tiling.useInitialState == 0)) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
             AscendC::GlobalTensor<bfloat16_t> h;
             h.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.h));
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
-            AscendC::DataCopy(h[HOffset(unit, chunk, head)], stateBf16_[slot], FWD_H_K * FWD_H_V);
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+            if constexpr (!CompilePolicy::STATE_FP32) {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
+                AscendC::DataCopy(h[HOffset(unit, chunk, head)], stateBf16_[slot], FWD_H_K * FWD_H_V);
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+            } else {
+                // STATE_FP32：stateBf16_ 区已被常驻 state 占用，H0=0 的 h 输出改以
+                // raw_（P tile 缓冲，S1 结束后空闲且无在途 MTE3 读者）作零值中转：
+                // V 写 raw_ → V_MTE3 桥 → MTE3 写 h。禁止经 io_/calc_——末 tile 的
+                // v_new MTE3 仍在途，同核 WaitFlag 只装载对应 pipe、不阻塞 scalar，
+                // V 写 io_ 会与其竞态（冒烟实证：chunk 0 末 tile 的 v_new 整块清零）。
+                for (uint32_t row = 0; row < FWD_H_K; row += TILE_ROWS) {
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+                    AscendC::LocalTensor<bfloat16_t> zeroTile =
+                        raw_[slot].template ReinterpretCast<bfloat16_t>();
+                    AscendC::Duplicate(zeroTile, static_cast<bfloat16_t>(0), TILE_ELEMENTS);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
+                    AscendC::DataCopy(h[HOffset(unit, chunk, head) + row * FWD_H_V],
+                                      zeroTile, TILE_ELEMENTS);
+                    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+                }
+            }
         }
     }
 
@@ -512,22 +546,7 @@ private:
         AscendC::GlobalTensor<float> d;
         d.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.workspace + dByteOffset));
         AscendC::DataCopy(raw_[slot].template ReinterpretCast<float>(), d, TILE_ELEMENTS);
-        if constexpr (CompilePolicy::STATE_FP32) {
-            AscendC::GlobalTensor<float> state;
-            uint64_t offset = 0;
-            if (chunk.first && args_.tiling.useInitialState != 0) {
-                state.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.initialState));
-                offset = FwdHStateOffset<STATE_V_FIRST>(
-                    args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
-            } else {
-                state.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.workspace));
-                offset = args_.tiling.kDecayWorkspaceOffset / sizeof(float) +
-                    FwdHCoreSlotOffset(coreIdx_, head.roundHead, FWD_H_K * FWD_H_V);
-            }
-            if (!(chunk.first && args_.tiling.useInitialState == 0)) {
-                AscendC::DataCopy(calc_[slot], state[offset], TILE_ELEMENTS);
-            }
-        }
+        // STATE_FP32 的 rolling state 常驻 UB，不再从 GM（initial/kDecayWorkspace）读取。
         if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::KEY_GK) {
             AscendC::GlobalTensor<GateT> gk;
             gk.SetGlobalBuffer(reinterpret_cast<__gm__ GateT *>(args_.gk));
@@ -552,22 +571,7 @@ private:
         d.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.workspace + dByteOffset));
         AscendC::DataCopy(raw_[slot].template ReinterpretCast<float>(),
                           d[row * FWD_H_V], TILE_ELEMENTS);
-        if constexpr (CompilePolicy::STATE_FP32) {
-            AscendC::GlobalTensor<float> state;
-            if (chunk.first) {
-                state.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.initialState));
-            } else {
-                state.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.workspace));
-            }
-            if (!(chunk.first && args_.tiling.useInitialState == 0)) {
-                const uint64_t base = chunk.first
-                    ? FwdHStateOffset<STATE_V_FIRST>(
-                          args_.tiling, unit.sequence.sequence, head.hv, 0, 0)
-                    : args_.tiling.kDecayWorkspaceOffset / sizeof(float) +
-                        FwdHCoreSlotOffset(coreIdx_, head.roundHead, FWD_H_K * FWD_H_V);
-                AscendC::DataCopy(calc_[slot], state[base + row * FWD_H_V], TILE_ELEMENTS);
-            }
-        }
+        // STATE_FP32 的 rolling state 常驻 UB，不再从 GM（kDecayWorkspace）读取。
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
     }
 
@@ -584,6 +588,10 @@ private:
         if constexpr (CompilePolicy::STATE_FP32) {
             if (chunk.first && args_.tiling.useInitialState == 0) {
                 AscendC::Duplicate(calc_[slot], 0.0f, TILE_ELEMENTS);
+            } else {
+                // rolling state 常驻 UB：V pipe 内同序拷贝（RAW 于上一 tile 写回，
+                // 由同 pipe FIFO 保序），不再经 GM kDecayWorkspace。
+                AscendC::Adds(calc_[slot], stateFp32_[slot][row * FWD_H_V], 0.0f, TILE_ELEMENTS);
             }
         }
         if constexpr (!CompilePolicy::STATE_FP32) {
@@ -611,15 +619,16 @@ private:
                      raw_[slot].template ReinterpretCast<float>(), TILE_ELEMENTS);
         AscendC::PipeBarrier<PIPE_V>();
         if constexpr (CompilePolicy::STATE_FP32) {
-            AscendC::GlobalTensor<float> state;
-            state.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.workspace));
-            const uint64_t stateOffset = args_.tiling.kDecayWorkspaceOffset / sizeof(float) +
-                FwdHCoreSlotOffset(coreIdx_, head.roundHead, FWD_H_K * FWD_H_V) + row * FWD_H_V;
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
-            AscendC::DataCopy(state[stateOffset], calc_[slot], TILE_ELEMENTS);
+            // 结果写回常驻区（V pipe 写）；final_state 输出改走小缓冲 tile 循环，
+            // 不再占用 MTE3 窗口（S3 尾部只剩 H 的写出）。末 tile 写回后 V pipe FIFO
+            // 保证后续（同 head 下一 chunk S3、跨 head 的 S-1 种子）读到最终值，
+            // 不再需要 MTE3_GM→MTE2 的跨 pipe 往返同步。
+            AscendC::Adds(stateFp32_[slot][row * FWD_H_V], calc_[slot], 0.0f, TILE_ELEMENTS);
             if constexpr (!WRITE_H) {
                 if (args_.tiling.storeFinalState != 0) {
+                    // calc_ 由 V pipe 写、final_state 由 MTE3 读，须经 V_MTE3 桥。
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
                     AscendC::GlobalTensor<float> finalState;
                     finalState.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.finalState));
                     const uint64_t finalOffset = FwdHStateOffset<STATE_V_FIRST>(
@@ -797,6 +806,7 @@ private:
     AscendC::LocalTensor<float> alpha_[FWD_H_AIV_HEAD_SLOTS]{};
     AscendC::LocalTensor<uint8_t> share_[FWD_H_AIV_HEAD_SLOTS]{};
     AscendC::LocalTensor<bfloat16_t> stateBf16_[FWD_H_AIV_HEAD_SLOTS]{};
+    AscendC::LocalTensor<float> stateFp32_[FWD_H_AIV_HEAD_SLOTS]{};
 };
 
 } // namespace GDN
