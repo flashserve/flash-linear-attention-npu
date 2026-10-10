@@ -49,6 +49,7 @@ public:
         const uint32_t headsPerSequence = static_cast<uint32_t>(args_.tiling.vNumHead);
         uint32_t cachedSequence = FwdHSequenceCount(args_.tiling);
         FwdHSequenceSpan sequenceSpan{};
+        FwdHSequenceCursor sequenceCursor{};
         for (uint32_t cursor = range.begin; cursor < range.end;) {
             const uint32_t sequence = cursor / headsPerSequence;
             const uint32_t hvBegin = cursor - sequence * headsPerSequence;
@@ -61,7 +62,7 @@ public:
                 unitHeads = FWD_H_AIC_HEAD_SLOTS;
             }
             if (sequence != cachedSequence) {
-                sequenceSpan = FwdHResolveSequence(args_, sequence);
+                sequenceSpan = FwdHResolveSequence(args_, sequence, sequenceCursor);
                 cachedSequence = sequence;
             }
             const FwdHWorkUnit unit{
