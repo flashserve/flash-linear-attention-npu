@@ -16,6 +16,9 @@ namespace GDN {
 
 constexpr float FWD_H_ARCH22_LN2 = 0.69314718055994530942f;
 
+// [R6 证伪 2026-10-10] A2 向量 API 间无硬件 RAW 追踪（A5 RegBase 才有），
+// S1/S3 计算路径 9 处中间屏障为必要保护——剪除后 quick 20/25 FAIL
+// （v_new/final_state 双杆，每 tile 竞态窗口）。勿再按 A5 特性平移剪除。
 template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST>
 class ChunkFwdHVecArch22 {
 public:
@@ -75,6 +78,7 @@ public:
         const uint32_t headsPerSequence = static_cast<uint32_t>(args_.tiling.vNumHead);
         uint32_t cachedSequence = FwdHSequenceCount(args_.tiling);
         FwdHSequenceSpan sequenceSpan{};
+        FwdHSequenceCursor sequenceCursor{};
         for (uint32_t cursor = range.begin; cursor < range.end;) {
             const uint32_t sequence = cursor / headsPerSequence;
             const uint32_t hvBegin = cursor - sequence * headsPerSequence;
@@ -87,7 +91,7 @@ public:
                 unitHeads = FWD_H_AIC_HEAD_SLOTS;
             }
             if (sequence != cachedSequence) {
-                sequenceSpan = FwdHResolveSequence(args_, sequence);
+                sequenceSpan = FwdHResolveSequence(args_, sequence, sequenceCursor);
                 cachedSequence = sequence;
             }
             const FwdHWorkUnit unit{
@@ -396,6 +400,7 @@ private:
         }
         AscendC::Cast(calc_[slot], io_[slot][buf], AscendC::RoundMode::CAST_NONE, elements);
         AscendC::PipeBarrier<PIPE_V>();
+
         if constexpr (HAS_P) {
             if constexpr (std::is_same<PType, float>::value) {
                 AscendC::LocalTensor<float> rawF =
@@ -408,10 +413,12 @@ private:
                 AscendC::Cast(cast_[slot], rawB[buf * (RAW_BUF_BYTES / sizeof(bfloat16_t))],
                               AscendC::RoundMode::CAST_NONE, elements);
                 AscendC::PipeBarrier<PIPE_V>();
+
                 AscendC::Sub(calc_[slot], calc_[slot], cast_[slot], elements);
             }
         }
         AscendC::PipeBarrier<PIPE_V>();
+
         AscendC::Cast(io_[slot][buf], calc_[slot], AscendC::RoundMode::CAST_RINT, elements);
         if constexpr (WRITE_RIGHT) {
             if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
@@ -425,10 +432,12 @@ private:
                     raw_[slot].template ReinterpretCast<float>()[buf * (RAW_BUF_BYTES / sizeof(float))],
                     gateFp32_[slot][row], dstShape, srcShape, share_[slot]);
                 AscendC::PipeBarrier<PIPE_V>();
+
                 AscendC::Mul(calc_[slot], calc_[slot],
                              raw_[slot].template ReinterpretCast<float>()[buf * (RAW_BUF_BYTES / sizeof(float))],
                              elements);
                 AscendC::PipeBarrier<PIPE_V>();
+
                 AscendC::Cast(right_[slot][buf], calc_[slot], AscendC::RoundMode::CAST_RINT,
                               elements);
             }
@@ -641,6 +650,7 @@ private:
                           AscendC::RoundMode::CAST_NONE, TILE_ELEMENTS);
         }
         AscendC::PipeBarrier<PIPE_V>();
+
         if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
             AscendC::Muls(calc_[slot], calc_[slot], alphaValue, TILE_ELEMENTS);
         } else if constexpr (STATE_V_FIRST) {
@@ -654,15 +664,18 @@ private:
             AscendC::Broadcast<float, 2, 1>(cast_[slot], gateFp32_[slot][row],
                                             dstShape, srcShape, share_[slot]);
             AscendC::PipeBarrier<PIPE_V>();
+
             AscendC::Mul(calc_[slot], calc_[slot], cast_[slot], TILE_ELEMENTS);
         }
         AscendC::PipeBarrier<PIPE_V>();
+
         {
             AscendC::LocalTensor<float> rawF = raw_[slot].template ReinterpretCast<float>();
             AscendC::Add(calc_[slot], calc_[slot],
                          rawF[buf * (RAW_BUF_BYTES / sizeof(float))], TILE_ELEMENTS);
         }
         AscendC::PipeBarrier<PIPE_V>();
+
         if constexpr (CompilePolicy::STATE_FP32) {
             // 结果写回常驻区（V pipe 写）；final_state 输出改走小缓冲 tile 循环，
             // 不再占用 MTE3 窗口（S3 尾部只剩 H 的写出）。末 tile 写回后 V pipe FIFO
