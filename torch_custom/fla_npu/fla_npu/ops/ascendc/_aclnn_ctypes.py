@@ -2077,7 +2077,11 @@ def npu_recurrent_gated_delta_rule(
             storage_shape_override=storage_shape,
         )
 
-    out = _empty(_shape(value), value)
+    # Zeroed rather than the usual _empty: the kernel skips (without writing)
+    # any request that violates the [B, W] contract (seqLen > W or a rejected
+    # num_accepted_tokens), so with raw empty memory those tokens would carry
+    # garbage.  Zeros keep every token's output defined for both backends.
+    out = _zeros(_shape(value), value)
     return _call_aclnn(
         "aclnnRecurrentGatedDeltaRule",
         lambda ctx: [
