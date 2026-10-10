@@ -1941,7 +1941,8 @@ def npu_recurrent_gated_delta_rule(
         "beta": 2,
         "state": 4,
         "actual_seq_lengths": 1,
-        "ssm_state_indices": 1,
+        # ssm_state_indices takes either rank 1 (legacy per-token) or rank 2
+        # (request-row table, validated below); checked after the table build.
         "g": 2,
         "gk": 3,
         "num_accepted_tokens": 1,
@@ -1996,13 +1997,37 @@ def npu_recurrent_gated_delta_rule(
         raise RuntimeError(
             f"{op_name}: actual_seq_lengths must contain the prefix entry and at least one sequence length."
         )
-    if shapes["ssm_state_indices"] != (total_tokens,):
-        raise RuntimeError(
-            f"{op_name}: ssm_state_indices shape must be ({total_tokens},), "
-            f"got {shapes['ssm_state_indices']}."
-        )
 
     batch_size = actual_seq_lengths_shape[0] - 1
+    indices_shape = shapes["ssm_state_indices"]
+    if len(indices_shape) == 1:
+        # Legacy per-token contract: one index per packed token.
+        if indices_shape != (total_tokens,):
+            raise RuntimeError(
+                f"{op_name}: ssm_state_indices shape must be ({total_tokens},) or "
+                f"({batch_size}, W), got {indices_shape}."
+            )
+    elif len(indices_shape) == 2:
+        # Request-row state table: row i owns block indices
+        # table[i][0..seqLen_i-1] for sequence i, so the row count must match
+        # the batch and the row width must stay within the operator's MTP
+        # limit (RGDR_MAX_MTP = 8 in the kernel tiling).
+        if indices_shape[0] != batch_size:
+            raise RuntimeError(
+                f"{op_name}: ssm_state_indices table rows must equal the number of "
+                f"sequences ({batch_size}), got {indices_shape}."
+            )
+        if not (0 < indices_shape[1] <= 8):
+            raise RuntimeError(
+                f"{op_name}: ssm_state_indices table width must be in [1, 8], "
+                f"got {indices_shape}."
+            )
+    else:
+        raise RuntimeError(
+            f"{op_name}: ssm_state_indices shape must be ({total_tokens},) or "
+            f"({batch_size}, W), got {indices_shape}."
+        )
+
     optional_shapes = {
         "g": (total_tokens, value_heads),
         "gk": (total_tokens, value_heads, key_dim),

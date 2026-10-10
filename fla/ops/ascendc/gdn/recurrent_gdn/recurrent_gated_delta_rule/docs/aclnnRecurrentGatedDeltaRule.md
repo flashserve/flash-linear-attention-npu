@@ -154,11 +154,11 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
     <tr>
       <td>ssmStateIndices</td>
       <td>输入</td>
-      <td>输入序列到状态矩阵的映射索引。</td>
-      <td><ul><li>不支持空Tensor。</li><li>state[ssmStateIndices[i]]表示第i个token的状态矩阵。</li><li>取值范围为[0, BlockNum)，且所有元素互不重复。</li></td>
+      <td>输入序列到状态矩阵的映射索引。支持两种契约：(T,) 时 state[ssmStateIndices[i]]表示第i个token的状态矩阵；(B, W) 时第batch行为该序列的状态块表，state[table[batch][j]]表示该序列第j个token（j ∈ [0, Li)）对应的状态矩阵。</td>
+      <td><ul><li>不支持空Tensor。</li><li>取值范围为[0, BlockNum)，且同序列内元素互不重复。</li><li>(B, W) 契约下要求 0 &lt; W ≤ 8（RGDR MAX_MTP）且 Li ≤ W。</li></td>
       <td>INT32</td>
       <td>ND</td>
-      <td>(T,)</td>
+      <td>(T,) 或 (B, W)</td>
       <td>√</td>
     </tr>
     <tr>
