@@ -584,6 +584,17 @@ private:
             args_.workspace + slot + Workspace::kArch22RhsVBeta));
         AscendC::DataCopy(kBetaRelay, kBetaG, rhsRows * Shape::kHeadDim);
         AscendC::DataCopy(vBetaRelay, vBeta, rhsRows * Shape::kValueDim);
+#if CHUNK_KDA_FWD_PREPARE_RELAY_SYNC >= 1
+        // 写侧加固（保守）：这两份 relay 马上会被 AIC 的 C7 跨核读回。只靠
+        // ready 跨核 flag 时，MTE3 写缓冲/L2 里的数据可能还没对读侧可见，读侧
+        // 就会拿到 relay 的旧内容（现场表现为单个 work item 的 U 整块错、同一
+        // Stage 的 W 正常）。先把两份 relay clean 出去再放行下一步。
+        AscendC::DataCacheCleanAndInvalid<bfloat16_t, AscendC::CacheLine::ENTIRE_DATA_CACHE,
+                                          AscendC::DcciDst::CACHELINE_OUT>(kBetaRelay);
+        AscendC::DataCacheCleanAndInvalid<bfloat16_t, AscendC::CacheLine::ENTIRE_DATA_CACHE,
+                                          AscendC::DcciDst::CACHELINE_OUT>(vBetaRelay);
+        AscendC::DataSyncBarrier<AscendC::MemDsbT::DDR>();
+#endif
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(ioFree_[pair]);
         // qgScaled 与共享 G 复用地址；必须等 MTE3 读完，才能把共享区
         // 通过 V_MTE2 许可交给下一个 pair 的 MTE2。
