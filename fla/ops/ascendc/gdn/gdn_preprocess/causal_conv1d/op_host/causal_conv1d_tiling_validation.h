@@ -330,7 +330,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         OP_CHECK_IF(stateLen < (width - 1), OP_LOGE(context, "convStates.shape[1] must be >= width-1"),
                     return ge::GRAPH_FAILED);
 
-        const auto inputStride = context->GetInputStride(CONV_STATES_INDEX);
+        const auto inputStride = context->GetOptionalInputStride(CONV_STATES_INDEX);
         if (inputStride != nullptr && inputStride->GetDimNum() == 3) {
             const int64_t stride0 = inputStride->GetStride(0);
             const int64_t stride1 = inputStride->GetStride(1);
