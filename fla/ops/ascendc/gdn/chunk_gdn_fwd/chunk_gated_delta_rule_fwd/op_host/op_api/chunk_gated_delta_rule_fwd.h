@@ -29,6 +29,8 @@ const std::array<const aclTensor *, 4> ChunkGatedDeltaRuleFwd(
     const aclTensor *finalStateOut,
     const aclTensor *gCumsumBthOut,
     const aclTensor *aOut,
+    const aclTensor *hOutOptional,
+    bool outputH,
     int64_t rawGLayout,
     int64_t qkvLayout,
     int64_t oLayout,

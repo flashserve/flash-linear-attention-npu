@@ -50,6 +50,10 @@ public:
             .UnknownShapeFormat(formats);
         this->Output("A").ParamType(REQUIRED).DataType(inputTypes).Format(formats)
             .UnknownShapeFormat(formats);
+        // Always pass a valid fifth pointer. The public H remains optional;
+        // its absent case uses a one-element placeholder and workspace H.
+        this->Output("h").ParamType(REQUIRED).DataType(inputTypes).Format(formats)
+            .UnknownShapeFormat(formats);
 
         this->Attr("output_final_state").AttrType(REQUIRED).Bool(false);
         this->Attr("chunk_size").AttrType(REQUIRED).Int(64);
@@ -61,6 +65,7 @@ public:
         this->Attr("raw_g_layout").AttrType(OPTIONAL).Int(0);
         this->Attr("qkv_layout").AttrType(OPTIONAL).Int(0);
         this->Attr("o_layout").AttrType(OPTIONAL).Int(0);
+        this->Attr("output_h").AttrType(OPTIONAL).Bool(false);
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)
