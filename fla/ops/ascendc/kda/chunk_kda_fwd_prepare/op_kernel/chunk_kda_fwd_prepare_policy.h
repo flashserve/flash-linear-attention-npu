@@ -84,7 +84,7 @@
 //   - 开：kg 的指纹（sum/abs_sum/sq_sum）会明显变化，[2] 里打印的 warm fp 一眼可见。
 // 只用于构建链自证，任何正式改动都不要打开。
 #ifndef KDA_PREPARE_DIAG_MARKER
-#define KDA_PREPARE_DIAG_MARKER 0
+#define KDA_PREPARE_DIAG_MARKER 1
 #endif
 
 namespace KdaPrepare {
