@@ -276,24 +276,28 @@ private:
     }
 
     __aicore__ inline void LoadStage0Head(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk,
-                                          const FwdHHeadBinding &head)
+                                          const FwdHHeadBinding &head, bool wPreloaded)
     {
         // Stage0 搬运：W_c,h[M,K] 与 H_c,h[K,V] 分别进入四个 roundHead L1 resident 槽。
+        // wPreloaded：W 已由上一 chunk 的 S2 尾部 PrefetchNextW 装入（WDone 已 set），
+        // 此处只装 H——W 的 wait/copy/set 全部跳过，flag 记账保持 1:1。
         const uint32_t slot = head.roundHead;
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(WReadyEvent(slot));
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(HRightReadyEvent(slot));
-        AscendC::GlobalTensor<bfloat16_t> gmW;
-        gmW.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.w) + WOffset(unit, chunk, head));
-        if (chunk.validTokens < FWD_H_CHUNK) {
-            ClearL1(l1W_[slot], FWD_H_L1_W_SLOT_BYTES);
+        if (!wPreloaded) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(WReadyEvent(slot));
+            AscendC::GlobalTensor<bfloat16_t> gmW;
+            gmW.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.w) + WOffset(unit, chunk, head));
+            if (chunk.validTokens < FWD_H_CHUNK) {
+                ClearL1(l1W_[slot], FWD_H_L1_W_SLOT_BYTES);
+            }
+            auto gmWLayout = tla::MakeLayout<bfloat16_t, LayoutW>(chunk.validTokens, FWD_H_K);
+            auto tensorW = tla::MakeTensor(gmW, gmWLayout, Catlass::Arch::PositionGM{});
+            auto blockW = tla::GetTile(tensorW, tla::MakeCoord(0, 0),
+                                       tla::MakeShape(chunk.validTokens, FWD_H_K));
+            auto tensorL1W = tla::MakeTensor(l1W_[slot], L1_W_LAYOUT, Catlass::Arch::PositionL1{});
+            CopyGmToL1AS0<decltype(blockW)> copyW;
+            copyW(tensorL1W, blockW);
         }
-        auto gmWLayout = tla::MakeLayout<bfloat16_t, LayoutW>(chunk.validTokens, FWD_H_K);
-        auto tensorW = tla::MakeTensor(gmW, gmWLayout, Catlass::Arch::PositionGM{});
-        auto blockW = tla::GetTile(tensorW, tla::MakeCoord(0, 0),
-                                   tla::MakeShape(chunk.validTokens, FWD_H_K));
-        auto tensorL1W = tla::MakeTensor(l1W_[slot], L1_W_LAYOUT, Catlass::Arch::PositionL1{});
-        CopyGmToL1AS0<decltype(blockW)> copyW;
-        copyW(tensorL1W, blockW);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(HRightReadyEvent(slot));
 
         AscendC::GlobalTensor<bfloat16_t> gmH;
         if (chunk.first && args_.tiling.useInitialState != 0 && !CompilePolicy::STATE_FP32) {
@@ -309,7 +313,9 @@ private:
         auto tensorL1H = tla::MakeTensor(l1HRight_[slot], L1_H_LAYOUT, Catlass::Arch::PositionL1{});
         CopyGmToL1BS0<decltype(blockH)> copyH;
         copyH(tensorL1H, blockH);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(WDoneEvent(slot));
+        if (!wPreloaded) {
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(WDoneEvent(slot));
+        }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(HRightDoneEvent(slot));
     }
 
@@ -388,7 +394,8 @@ private:
                 unit.headRound.activeHeadCount - firstHead > 1U ? 2U : 1U;
             for (uint32_t pairHead = 0; pairHead < pairHeads; ++pairHead) {
                 const uint32_t headId = firstHead + pairHead;
-                LoadStage0Head(unit, chunk, unit.headRound.heads[headId]);
+                LoadStage0Head(unit, chunk, unit.headRound.heads[headId],
+                               wPreloadChunk_ == chunk.chunk);
                 if (pairHead > 0) {
                     const uint32_t previous = headId - 1U;
                     ComputeStage0Head(chunk, unit.headRound.heads[previous], previous & 1U);
@@ -579,6 +586,43 @@ private:
             AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(
                 FwdHAicPeerFlag(FWD_H_D_READY_FLAG, pairSlot, 0));
         }
+        PrefetchNextW(unit, chunk);
+    }
+
+    __aicore__ inline void PrefetchNextW(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk)
+    {
+        // W(c+1) 预取：在 S2 全部 right 装载发出之后发射（MTE2 FIFO 不越队，
+        // 不延迟关键路径上的 right），与 S2 计算及 S3 窗口重叠。槽位沿用
+        // WReady/WDone 事件对，消费侧 ComputeStage0Head 的等待语义零改动，
+        // 每 chunk 每 slot 的 wait/set 记账保持 1:1。此时各 WReady credit 均已
+        // 可用（kg 槽在 ComputeStage2Head 的 L1→L0A 后 set，非 kg 槽在 S0 计
+        // 算后 set），WaitFlag 不会阻塞 scalar。跨 work unit 边界不预取
+        // （ROUND_DONE/ACK 收口语义不变）。
+        const uint32_t nextChunk = chunk.chunk + 1U;
+        if (nextChunk >= unit.sequence.chunkCount) {
+            return;
+        }
+        const FwdHChunkSpan next = FwdHBuildChunk(unit.sequence, nextChunk);
+        for (uint32_t headId = 0; headId < unit.headRound.activeHeadCount; ++headId) {
+            const FwdHHeadBinding &head = unit.headRound.heads[headId];
+            const uint32_t slot = head.roundHead;
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(WReadyEvent(slot));
+            AscendC::GlobalTensor<bfloat16_t> gmW;
+            gmW.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.w) +
+                WOffset(unit, next, head));
+            if (next.validTokens < FWD_H_CHUNK) {
+                ClearL1(l1W_[slot], FWD_H_L1_W_SLOT_BYTES);
+            }
+            auto gmWLayout = tla::MakeLayout<bfloat16_t, LayoutW>(next.validTokens, FWD_H_K);
+            auto tensorW = tla::MakeTensor(gmW, gmWLayout, Catlass::Arch::PositionGM{});
+            auto blockW = tla::GetTile(tensorW, tla::MakeCoord(0, 0),
+                                       tla::MakeShape(next.validTokens, FWD_H_K));
+            auto tensorL1W = tla::MakeTensor(l1W_[slot], L1_W_LAYOUT, Catlass::Arch::PositionL1{});
+            CopyGmToL1AS0<decltype(blockW)> copyW;
+            copyW(tensorL1W, blockW);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(WDoneEvent(slot));
+        }
+        wPreloadChunk_ = nextChunk;
     }
 
     __aicore__ inline void ProcessWorkUnit(const FwdHWorkUnit &unit, bool hasNextWorkUnit)
@@ -586,6 +630,8 @@ private:
         if (!hasCubeWork_) {
             return;
         }
+        // chunk 编号每 work unit 从 0 重启，预取标记须同步复位。
+        wPreloadChunk_ = NO_W_PRELOAD;
         for (uint32_t chunkId = 0; chunkId < unit.sequence.chunkCount; ++chunkId) {
             const FwdHChunkSpan chunk = FwdHBuildChunk(unit.sequence, chunkId);
             RunStage0(unit, chunk);
@@ -620,6 +666,8 @@ private:
     uint32_t coreIdx_ = 0;
     uint32_t coreNum_ = 1;
     bool hasCubeWork_ = false;
+    static constexpr uint32_t NO_W_PRELOAD = 0xFFFFFFFFU;
+    uint32_t wPreloadChunk_ = NO_W_PRELOAD;
     AscendC::TBuf<AscendC::TPosition::A1> l1Buf_{};
     AscendC::TBuf<AscendC::TPosition::A2> l0ABuf_{};
     AscendC::TBuf<AscendC::TPosition::B2> l0BBuf_{};
