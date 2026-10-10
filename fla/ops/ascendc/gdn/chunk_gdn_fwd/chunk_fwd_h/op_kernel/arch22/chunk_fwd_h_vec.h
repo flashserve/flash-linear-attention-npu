@@ -32,28 +32,30 @@ public:
     __aicore__ inline void InitEvents()
     {
         for (uint32_t slot = 0; slot < FWD_H_AIV_HEAD_SLOTS; ++slot) {
-            ioFreeEvent_[slot] = GetTPipePtr()->AllocEventID<AscendC::HardEvent::MTE3_MTE2>();
-            ioReadyEvent_[slot] = GetTPipePtr()->AllocEventID<AscendC::HardEvent::MTE2_V>();
-            ioDoneEvent_[slot] = GetTPipePtr()->AllocEventID<AscendC::HardEvent::V_MTE3>();
+            for (uint32_t buf = 0; buf < TILE_BUFS; ++buf) {
+                ioFreeEvent_[slot][buf] = GetTPipePtr()->AllocEventID<AscendC::HardEvent::MTE3_MTE2>();
+                ioReadyEvent_[slot][buf] = GetTPipePtr()->AllocEventID<AscendC::HardEvent::MTE2_V>();
+                ioDoneEvent_[slot][buf] = GetTPipePtr()->AllocEventID<AscendC::HardEvent::V_MTE3>();
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot, buf));
+            }
             scalarReadEvent_[slot] = GetTPipePtr()->AllocEventID<AscendC::HardEvent::V_S>();
             scalarWriteEvent_[slot] = GetTPipePtr()->AllocEventID<AscendC::HardEvent::S_V>();
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
         }
     }
 
-    __aicore__ inline AscendC::TEventID IoFreeEvent(uint32_t slot) const
+    __aicore__ inline AscendC::TEventID IoFreeEvent(uint32_t slot, uint32_t buf) const
     {
-        return ioFreeEvent_[slot];
+        return ioFreeEvent_[slot][buf];
     }
 
-    __aicore__ inline AscendC::TEventID IoReadyEvent(uint32_t slot) const
+    __aicore__ inline AscendC::TEventID IoReadyEvent(uint32_t slot, uint32_t buf) const
     {
-        return ioReadyEvent_[slot];
+        return ioReadyEvent_[slot][buf];
     }
 
-    __aicore__ inline AscendC::TEventID IoDoneEvent(uint32_t slot) const
+    __aicore__ inline AscendC::TEventID IoDoneEvent(uint32_t slot, uint32_t buf) const
     {
-        return ioDoneEvent_[slot];
+        return ioDoneEvent_[slot][buf];
     }
 
     __aicore__ inline AscendC::TEventID ScalarReadEvent(uint32_t slot) const
@@ -97,12 +99,16 @@ public:
             }
         }
         for (uint32_t slot = 0; slot < FWD_H_AIV_HEAD_SLOTS; ++slot) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+            for (uint32_t buf = 0; buf < TILE_BUFS; ++buf) {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot, buf));
+            }
         }
         for (uint32_t slot = 0; slot < FWD_H_AIV_HEAD_SLOTS; ++slot) {
-            GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
-            GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
-            GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
+            for (uint32_t buf = 0; buf < TILE_BUFS; ++buf) {
+                GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot, buf));
+                GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot, buf));
+                GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot, buf));
+            }
             GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::V_S>(ScalarReadEvent(slot));
             GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::S_V>(ScalarWriteEvent(slot));
         }
@@ -121,15 +127,28 @@ private:
     // [64K,192K)；该模板下 stateBf16_ 是死代码，不再初始化（BF16 路径布局不变）。
     static constexpr uint32_t FP32_STATE0_BASE = 64 * 1024;
     static constexpr uint32_t FP32_STATE1_BASE = 128 * 1024;
+    // tile 双缓冲布局（每 slot 32K 内）：raw_[0,8K) 双份（FP32 P tile 4K/份）、
+    // cast [8K,12K)、calc [12K,16K)、io [16K,20K) 双份（2K/份）、right [20K,24K)
+    // 双份（2K/份）、gate/alpha/share [24K,28K)。MTE2(t+1) 只需等 MTE3(t-1)
+    // 排空（同 buf 上一次消费者），与 V(t)/MTE3(t) 并行——解除 tile 链全串行。
     static constexpr uint32_t RAW_BASE = 0;
-    static constexpr uint32_t CAST_BASE = 4 * 1024;
-    static constexpr uint32_t CALC_BASE = 8 * 1024;
-    static constexpr uint32_t IO_BASE = 12 * 1024;
-    static constexpr uint32_t RIGHT_BASE = 14 * 1024;
-    static constexpr uint32_t GATE_RAW_BASE = 16 * 1024;
-    static constexpr uint32_t GATE_FP32_BASE = 17 * 1024;
-    static constexpr uint32_t ALPHA_BASE = 18 * 1024;
-    static constexpr uint32_t SHARE_BASE = 19 * 1024;
+    static constexpr uint32_t RAW_BUF_BYTES = 4 * 1024;
+    static constexpr uint32_t CAST_BASE = 8 * 1024;
+    static constexpr uint32_t CALC_BASE = 12 * 1024;
+    static constexpr uint32_t IO_BASE = 16 * 1024;
+    static constexpr uint32_t IO_BUF_ELEMS = TILE_ELEMENTS;
+    static constexpr uint32_t RIGHT_BASE = 20 * 1024;
+    static constexpr uint32_t RIGHT_BUF_ELEMS = TILE_ELEMENTS;
+    static constexpr uint32_t GATE_RAW_BASE = 24 * 1024;
+    static constexpr uint32_t GATE_FP32_BASE = 25 * 1024;
+    static constexpr uint32_t ALPHA_BASE = 26 * 1024;
+    static constexpr uint32_t SHARE_BASE = 27 * 1024;
+    static constexpr uint32_t TILE_BUFS = 2;
+
+    __aicore__ inline uint32_t TileBuf(uint32_t row) const
+    {
+        return (row / TILE_ROWS) & 1U;
+    }
 
     __aicore__ inline uint32_t LocalBase(uint32_t slot) const
     {
@@ -150,8 +169,12 @@ private:
             raw_[slot] = ub[base + RAW_BASE].template ReinterpretCast<uint8_t>();
             cast_[slot] = ub[base + CAST_BASE].template ReinterpretCast<float>();
             calc_[slot] = ub[base + CALC_BASE].template ReinterpretCast<float>();
-            io_[slot] = ub[base + IO_BASE].template ReinterpretCast<bfloat16_t>();
-            right_[slot] = ub[base + RIGHT_BASE].template ReinterpretCast<bfloat16_t>();
+            for (uint32_t buf = 0; buf < TILE_BUFS; ++buf) {
+                io_[slot][buf] = ub[base + IO_BASE + buf * IO_BUF_ELEMS * sizeof(bfloat16_t)]
+                                     .template ReinterpretCast<bfloat16_t>();
+                right_[slot][buf] = ub[base + RIGHT_BASE + buf * RIGHT_BUF_ELEMS * sizeof(bfloat16_t)]
+                                        .template ReinterpretCast<bfloat16_t>();
+            }
             gateRaw_[slot] = ub[base + GATE_RAW_BASE].template ReinterpretCast<GateT>();
             gateFp32_[slot] = ub[base + GATE_FP32_BASE].template ReinterpretCast<float>();
             alpha_[slot] = ub[base + ALPHA_BASE].template ReinterpretCast<float>();
@@ -270,19 +293,19 @@ private:
                     args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
                 const FwdHChunkSpan first = FwdHBuildChunk(unit.sequence, 0);
                 for (uint32_t row = 0; row < FWD_H_K; row += TILE_ROWS) {
-                    AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot, 0));
                     // FP32 state 常驻：initial_state 直接读入常驻区，S3 全程不再经 GM。
                     AscendC::DataCopy(stateFp32_[slot][row * FWD_H_V],
                                       initial[stateBase + row * FWD_H_V], TILE_ELEMENTS);
-                    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
-                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
-                    AscendC::Cast(io_[slot], stateFp32_[slot][row * FWD_H_V],
+                    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot, 0));
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot, 0));
+                    AscendC::Cast(io_[slot][0], stateFp32_[slot][row * FWD_H_V],
                                   AscendC::RoundMode::CAST_RINT, TILE_ELEMENTS);
-                    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
-                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot, 0));
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot, 0));
                     AscendC::DataCopy(h[HOffset(unit, first, head) + row * FWD_H_V],
-                                      io_[slot], TILE_ELEMENTS);
-                    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+                                      io_[slot][0], TILE_ELEMENTS);
+                    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot, 0));
                 }
             }
             AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(
@@ -296,18 +319,19 @@ private:
                                               const FwdHHeadBinding &head)
     {
         const uint32_t slot = head.localSlot;
-        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot, 0));
         AscendC::GlobalTensor<bfloat16_t> u;
         u.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.u));
         const uint32_t firstRows = TileRows(chunk.validTokens);
-        AscendC::DataCopy(io_[slot], u[UOffset(unit, chunk, head, 0)], firstRows * FWD_H_V);
+        AscendC::DataCopy(io_[slot][0], u[UOffset(unit, chunk, head, 0)], firstRows * FWD_H_V);
         if constexpr (HAS_P) {
             const uint64_t pByteOffset = ScratchByteOffset(args_.tiling.vWorkspaceOffset,
                                                            head.roundHead,
                                                            FWD_H_TOKEN_MATRIX_FP32_BYTES);
             AscendC::GlobalTensor<PType> p;
             p.SetGlobalBuffer(reinterpret_cast<__gm__ PType *>(args_.workspace + pByteOffset));
-            AscendC::LocalTensor<PType> rawP = raw_[slot].template ReinterpretCast<PType>();
+            AscendC::LocalTensor<PType> rawP =
+                raw_[slot].template ReinterpretCast<PType>();
             AscendC::DataCopy(rawP, p, firstRows * FWD_H_V);
         }
         if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
@@ -327,7 +351,7 @@ private:
                 args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
             AscendC::DataCopy(stateBf16_[slot], initial[offset], FWD_H_K * FWD_H_V);
         }
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot, 0));
     }
 
     template <bool HAS_P>
@@ -338,20 +362,23 @@ private:
     {
         const uint32_t slot = head.localSlot;
         const uint32_t rows = TileRows(chunk.validTokens - row);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+        const uint32_t buf = TileBuf(row);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot, buf));
         AscendC::GlobalTensor<bfloat16_t> u;
         u.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.u));
-        AscendC::DataCopy(io_[slot], u[UOffset(unit, chunk, head, row)], rows * FWD_H_V);
+        AscendC::DataCopy(io_[slot][buf], u[UOffset(unit, chunk, head, row)], rows * FWD_H_V);
         if constexpr (HAS_P) {
             const uint64_t pByteOffset = ScratchByteOffset(args_.tiling.vWorkspaceOffset,
                                                            head.roundHead,
                                                            FWD_H_TOKEN_MATRIX_FP32_BYTES);
             AscendC::GlobalTensor<PType> p;
             p.SetGlobalBuffer(reinterpret_cast<__gm__ PType *>(args_.workspace + pByteOffset));
-            AscendC::LocalTensor<PType> rawP = raw_[slot].template ReinterpretCast<PType>();
-            AscendC::DataCopy(rawP, p[row * FWD_H_V], rows * FWD_H_V);
+            AscendC::LocalTensor<PType> rawP =
+                raw_[slot].template ReinterpretCast<PType>();
+            AscendC::DataCopy(rawP[buf * (RAW_BUF_BYTES / sizeof(PType))],
+                              p[row * FWD_H_V], rows * FWD_H_V);
         }
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot, buf));
     }
 
     template <bool HAS_P, bool WRITE_RIGHT, bool WAIT_READY>
@@ -363,43 +390,55 @@ private:
         const uint32_t slot = head.localSlot;
         const uint32_t rows = TileRows(chunk.validTokens - row);
         const uint32_t elements = rows * FWD_H_V;
+        const uint32_t buf = TileBuf(row);
         if constexpr (WAIT_READY) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot, buf));
         }
-        AscendC::Cast(calc_[slot], io_[slot], AscendC::RoundMode::CAST_NONE, elements);
+        AscendC::Cast(calc_[slot], io_[slot][buf], AscendC::RoundMode::CAST_NONE, elements);
         AscendC::PipeBarrier<PIPE_V>();
         if constexpr (HAS_P) {
             if constexpr (std::is_same<PType, float>::value) {
-                AscendC::Sub(calc_[slot], calc_[slot], raw_[slot].template ReinterpretCast<float>(), elements);
+                AscendC::LocalTensor<float> rawF =
+                    raw_[slot].template ReinterpretCast<float>();
+                AscendC::Sub(calc_[slot], calc_[slot], rawF[buf * (RAW_BUF_BYTES / sizeof(float))],
+                             elements);
             } else {
-                AscendC::Cast(cast_[slot], raw_[slot].template ReinterpretCast<bfloat16_t>(),
+                AscendC::LocalTensor<bfloat16_t> rawB =
+                    raw_[slot].template ReinterpretCast<bfloat16_t>();
+                AscendC::Cast(cast_[slot], rawB[buf * (RAW_BUF_BYTES / sizeof(bfloat16_t))],
                               AscendC::RoundMode::CAST_NONE, elements);
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Sub(calc_[slot], calc_[slot], cast_[slot], elements);
             }
         }
         AscendC::PipeBarrier<PIPE_V>();
-        AscendC::Cast(io_[slot], calc_[slot], AscendC::RoundMode::CAST_RINT, elements);
+        AscendC::Cast(io_[slot][buf], calc_[slot], AscendC::RoundMode::CAST_RINT, elements);
         if constexpr (WRITE_RIGHT) {
             if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
                 uint32_t dstShape[2] = {rows, FWD_H_V};
                 uint32_t srcShape[2] = {rows, 1};
+                // Broadcast 的 gate 广播临时必须随 tile buf 走（P 已被上方 Sub 消费，
+                // 同 buf 复用安全）：双缓冲下 tile t 的 MTE2 与 compute(t-1) 并行，
+                // 固定写 buf0 会覆盖 tile t 的在途 P 数据（R3 冒烟 v_new/final_state
+                // 双杆爆错根因）。
                 AscendC::Broadcast<float, 2, 1>(
-                    raw_[slot].template ReinterpretCast<float>(), gateFp32_[slot][row],
-                    dstShape, srcShape, share_[slot]);
+                    raw_[slot].template ReinterpretCast<float>()[buf * (RAW_BUF_BYTES / sizeof(float))],
+                    gateFp32_[slot][row], dstShape, srcShape, share_[slot]);
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Mul(calc_[slot], calc_[slot],
-                             raw_[slot].template ReinterpretCast<float>(), elements);
+                             raw_[slot].template ReinterpretCast<float>()[buf * (RAW_BUF_BYTES / sizeof(float))],
+                             elements);
                 AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Cast(right_[slot], calc_[slot], AscendC::RoundMode::CAST_RINT, elements);
+                AscendC::Cast(right_[slot][buf], calc_[slot], AscendC::RoundMode::CAST_RINT,
+                              elements);
             }
         }
 
         AscendC::GlobalTensor<bfloat16_t> vNew;
         vNew.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.vNew));
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
-        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
-        AscendC::DataCopy(vNew[UOffset(unit, chunk, head, row)], io_[slot], elements);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot, buf));
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot, buf));
+        AscendC::DataCopy(vNew[UOffset(unit, chunk, head, row)], io_[slot][buf], elements);
         if constexpr (WRITE_RIGHT) {
             const uint64_t rightOffset = args_.tiling.vUpdateWorkspaceOffset / sizeof(bfloat16_t) +
                 FwdHCoreSlotOffset(coreIdx_, head.roundHead, FWD_H_CHUNK * FWD_H_V) +
@@ -407,12 +446,12 @@ private:
             AscendC::GlobalTensor<bfloat16_t> rightGm;
             rightGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.workspace));
             if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
-                AscendC::DataCopy(rightGm[rightOffset], right_[slot], elements);
+                AscendC::DataCopy(rightGm[rightOffset], right_[slot][buf], elements);
             } else {
-                AscendC::DataCopy(rightGm[rightOffset], io_[slot], elements);
+                AscendC::DataCopy(rightGm[rightOffset], io_[slot][buf], elements);
             }
         }
-        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot, buf));
     }
 
     template <bool HAS_P, bool WRITE_RIGHT>
@@ -423,7 +462,7 @@ private:
         // Stage1：V_new=cast_BF16(fp32(U)-fp32(P))；g-only 同时生成
         // V_new_g=cast_BF16(E(g_last-g_i)*V_new_fp32)，gk-only 的 right 即 V_new。
         const uint32_t slot = head.localSlot;
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot, 0));
         if constexpr (WRITE_RIGHT && CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
             PrepareScalarGate(slot, chunk.validTokens);
         }
@@ -442,11 +481,11 @@ private:
             AscendC::GlobalTensor<bfloat16_t> h;
             h.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.h));
             if constexpr (!CompilePolicy::STATE_FP32) {
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
-                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot, 0));
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot, 0));
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot, 0));
                 AscendC::DataCopy(h[HOffset(unit, chunk, head)], stateBf16_[slot], FWD_H_K * FWD_H_V);
-                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot, 0));
             } else {
                 // STATE_FP32：stateBf16_ 区已被常驻 state 占用，H0=0 的 h 输出改以
                 // raw_（P tile 缓冲，S1 结束后空闲且无在途 MTE3 读者）作零值中转：
@@ -454,16 +493,16 @@ private:
                 // v_new MTE3 仍在途，同核 WaitFlag 只装载对应 pipe、不阻塞 scalar，
                 // V 写 io_ 会与其竞态（冒烟实证：chunk 0 末 tile 的 v_new 整块清零）。
                 for (uint32_t row = 0; row < FWD_H_K; row += TILE_ROWS) {
-                    AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot, 0));
                     AscendC::LocalTensor<bfloat16_t> zeroTile =
                         raw_[slot].template ReinterpretCast<bfloat16_t>();
                     AscendC::Duplicate(zeroTile, static_cast<bfloat16_t>(0), TILE_ELEMENTS);
                     AscendC::PipeBarrier<PIPE_V>();
-                    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
-                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot, 0));
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot, 0));
                     AscendC::DataCopy(h[HOffset(unit, chunk, head) + row * FWD_H_V],
                                       zeroTile, TILE_ELEMENTS);
-                    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+                    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot, 0));
                 }
             }
         }
@@ -539,7 +578,7 @@ private:
                                               const FwdHHeadBinding &head)
     {
         const uint32_t slot = head.localSlot;
-        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot, 0));
         const uint64_t dByteOffset = ScratchByteOffset(args_.tiling.hWorkspaceOffset,
                                                        head.roundHead,
                                                        FWD_H_STATE_FP32_BYTES);
@@ -554,7 +593,7 @@ private:
                 static_cast<uint64_t>(chunk.validTokens - 1) * FWD_H_K;
             AscendC::DataCopy(gateRaw_[slot], gk[offset], FWD_H_K);
         }
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot, 0));
     }
 
     __aicore__ inline void LoadStage3Tile(const FwdHWorkUnit &unit,
@@ -563,16 +602,18 @@ private:
                                           uint32_t row)
     {
         const uint32_t slot = head.localSlot;
-        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+        const uint32_t buf = TileBuf(row);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot, buf));
         const uint64_t dByteOffset = ScratchByteOffset(args_.tiling.hWorkspaceOffset,
                                                        head.roundHead,
                                                        FWD_H_STATE_FP32_BYTES);
         AscendC::GlobalTensor<float> d;
         d.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.workspace + dByteOffset));
-        AscendC::DataCopy(raw_[slot].template ReinterpretCast<float>(),
+        AscendC::LocalTensor<float> rawF = raw_[slot].template ReinterpretCast<float>();
+        AscendC::DataCopy(rawF[buf * (RAW_BUF_BYTES / sizeof(float))],
                           d[row * FWD_H_V], TILE_ELEMENTS);
         // STATE_FP32 的 rolling state 常驻 UB，不再从 GM（kDecayWorkspace）读取。
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot, buf));
     }
 
     template <bool WRITE_H, bool WAIT_READY>
@@ -582,8 +623,9 @@ private:
                                              uint32_t row, float alphaValue)
     {
         const uint32_t slot = head.localSlot;
+        const uint32_t buf = TileBuf(row);
         if constexpr (WAIT_READY) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot, buf));
         }
         if constexpr (CompilePolicy::STATE_FP32) {
             if (chunk.first && args_.tiling.useInitialState == 0) {
@@ -615,8 +657,11 @@ private:
             AscendC::Mul(calc_[slot], calc_[slot], cast_[slot], TILE_ELEMENTS);
         }
         AscendC::PipeBarrier<PIPE_V>();
-        AscendC::Add(calc_[slot], calc_[slot],
-                     raw_[slot].template ReinterpretCast<float>(), TILE_ELEMENTS);
+        {
+            AscendC::LocalTensor<float> rawF = raw_[slot].template ReinterpretCast<float>();
+            AscendC::Add(calc_[slot], calc_[slot],
+                         rawF[buf * (RAW_BUF_BYTES / sizeof(float))], TILE_ELEMENTS);
+        }
         AscendC::PipeBarrier<PIPE_V>();
         if constexpr (CompilePolicy::STATE_FP32) {
             // 结果写回常驻区（V pipe 写）；final_state 输出改走小缓冲 tile 循环，
@@ -626,14 +671,23 @@ private:
             AscendC::Adds(stateFp32_[slot][row * FWD_H_V], calc_[slot], 0.0f, TILE_ELEMENTS);
             if constexpr (!WRITE_H) {
                 if (args_.tiling.storeFinalState != 0) {
-                    // calc_ 由 V pipe 写、final_state 由 MTE3 读，须经 V_MTE3 桥。
-                    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
-                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
+                    // calc_ 不得直接作 MTE3 源：双缓冲后 Load(t+1) 只等 t-1 的 MTE3
+                    // 排空，V 写 calc_(t+1) 与 MTE3 读 calc_(t) 失去排序（末 chunk
+                    // final_state 竞态根因）。经 raw_ buf（4KB；其中 D 已被本 tile
+                    // 的 Add 消费完毕）中转：V 拷入 → 桥接 → MTE3 读出；raw_[buf] 的
+                    // 下一写者 Load(t+2) 由 free(buf) 门控在本拷贝排空之后。
+                    AscendC::LocalTensor<float> rawF = raw_[slot].template ReinterpretCast<float>();
+                    AscendC::Adds(rawF[buf * (RAW_BUF_BYTES / sizeof(float))],
+                                  calc_[slot], 0.0f, TILE_ELEMENTS);
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot, buf));
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot, buf));
                     AscendC::GlobalTensor<float> finalState;
                     finalState.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.finalState));
                     const uint64_t finalOffset = FwdHStateOffset<STATE_V_FIRST>(
                         args_.tiling, unit.sequence.sequence, head.hv, 0, 0) + row * FWD_H_V;
-                    AscendC::DataCopy(finalState[finalOffset], calc_[slot], TILE_ELEMENTS);
+                    AscendC::DataCopy(finalState[finalOffset],
+                                      rawF[buf * (RAW_BUF_BYTES / sizeof(float))],
+                                      TILE_ELEMENTS);
                 }
             }
         } else {
@@ -643,20 +697,20 @@ private:
             if constexpr (!WRITE_H) {
                 // Terminal BF16 state has no per-tile MTE3 copy. Bridge V to MTE3 before
                 // releasing the slot so the next MTE2 cannot overwrite raw_ early.
-                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot, buf));
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot, buf));
             }
         }
         if constexpr (WRITE_H) {
-            AscendC::Cast(io_[slot], calc_[slot], AscendC::RoundMode::CAST_RINT, TILE_ELEMENTS);
+            AscendC::Cast(io_[slot][buf], calc_[slot], AscendC::RoundMode::CAST_RINT, TILE_ELEMENTS);
             AscendC::GlobalTensor<bfloat16_t> h;
             h.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.h));
             const FwdHChunkSpan next = FwdHBuildChunk(unit.sequence, chunk.chunk + 1);
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
-            AscendC::DataCopy(h[HOffset(unit, next, head) + row * FWD_H_V], io_[slot], TILE_ELEMENTS);
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot, buf));
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot, buf));
+            AscendC::DataCopy(h[HOffset(unit, next, head) + row * FWD_H_V], io_[slot][buf], TILE_ELEMENTS);
         }
-        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot, buf));
     }
 
     template <bool WRITE_H>
@@ -667,7 +721,7 @@ private:
         // Stage3：g-only 为 R_next=E(g_last)R+D；gk-only 为
         // R_next[k,v]=E(gk_last[k])R[k,v]+D[k,v]，所有算术均为 FP32。
         const uint32_t slot = head.localSlot;
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot, 0));
         if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::KEY_GK) {
             PrepareKeyGate(slot);
         }
@@ -685,17 +739,17 @@ private:
         }
         if constexpr (!WRITE_H) {
             if (args_.tiling.storeFinalState != 0) {
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot, 0));
                 const uint64_t finalOffset = FwdHStateOffset<STATE_V_FIRST>(
                     args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
                 if constexpr (!CompilePolicy::STATE_FP32) {
                     AscendC::GlobalTensor<bfloat16_t> finalState;
                     finalState.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.finalState));
-                    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
-                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot, 0));
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot, 0));
                     AscendC::DataCopy(finalState[finalOffset], stateBf16_[slot], FWD_H_K * FWD_H_V);
                 }
-                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot, 0));
             }
         }
     }
@@ -777,8 +831,10 @@ private:
         // 跨 head_round 前必须把本轮所有 VEC->MTE3 写回收口。AIC 收到 ROUND_DONE 后
         // 才能开始下一轮 kg/H/W 的 MTE2，避免上一轮 MTE3 与下一轮预取跨 round 交叠。
         for (uint32_t slot = 0; slot < localHeads; ++slot) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+            for (uint32_t buf = 0; buf < TILE_BUFS; ++buf) {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot, buf));
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot, buf));
+            }
         }
         if (hasCubeWork && hasNextWorkUnit) {
             AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(FwdHAivLocalFlag(FWD_H_ROUND_DONE_FLAG, 0));
@@ -790,17 +846,17 @@ private:
     uint32_t coreIdx_ = 0;
     uint32_t coreNum_ = 1;
     uint32_t aiv_ = 0;
-    AscendC::TEventID ioFreeEvent_[FWD_H_AIV_HEAD_SLOTS]{};
-    AscendC::TEventID ioReadyEvent_[FWD_H_AIV_HEAD_SLOTS]{};
-    AscendC::TEventID ioDoneEvent_[FWD_H_AIV_HEAD_SLOTS]{};
+    AscendC::TEventID ioFreeEvent_[FWD_H_AIV_HEAD_SLOTS][TILE_BUFS]{};
+    AscendC::TEventID ioReadyEvent_[FWD_H_AIV_HEAD_SLOTS][TILE_BUFS]{};
+    AscendC::TEventID ioDoneEvent_[FWD_H_AIV_HEAD_SLOTS][TILE_BUFS]{};
     AscendC::TEventID scalarReadEvent_[FWD_H_AIV_HEAD_SLOTS]{};
     AscendC::TEventID scalarWriteEvent_[FWD_H_AIV_HEAD_SLOTS]{};
     AscendC::TBuf<AscendC::TPosition::VECCALC> ubBuf_{};
     AscendC::LocalTensor<uint8_t> raw_[FWD_H_AIV_HEAD_SLOTS]{};
     AscendC::LocalTensor<float> cast_[FWD_H_AIV_HEAD_SLOTS]{};
     AscendC::LocalTensor<float> calc_[FWD_H_AIV_HEAD_SLOTS]{};
-    AscendC::LocalTensor<bfloat16_t> io_[FWD_H_AIV_HEAD_SLOTS]{};
-    AscendC::LocalTensor<bfloat16_t> right_[FWD_H_AIV_HEAD_SLOTS]{};
+    AscendC::LocalTensor<bfloat16_t> io_[FWD_H_AIV_HEAD_SLOTS][TILE_BUFS]{};
+    AscendC::LocalTensor<bfloat16_t> right_[FWD_H_AIV_HEAD_SLOTS][TILE_BUFS]{};
     AscendC::LocalTensor<GateT> gateRaw_[FWD_H_AIV_HEAD_SLOTS]{};
     AscendC::LocalTensor<float> gateFp32_[FWD_H_AIV_HEAD_SLOTS]{};
     AscendC::LocalTensor<float> alpha_[FWD_H_AIV_HEAD_SLOTS]{};
