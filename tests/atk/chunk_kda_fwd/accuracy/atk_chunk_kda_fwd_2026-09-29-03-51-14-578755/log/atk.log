@@ -1,0 +1,106 @@
+[2026-09-28 19:51:14,686] [INFO] [MainProcess] [439330] [base.py:239]  task_output_path: ./atk_output/accuracy/atk_output/atk_chunk_kda_fwd_2026-09-29-03-51-14-578755
+[2026-09-28 19:51:14,686] [INFO] [MainProcess] [439330] [celery_config.py:117]  clear celery filesystem storage before start. broker=atk_output/accuracy/atk_output/atk_chunk_kda_fwd_2026-09-29-03-51-14-578755/db/celery/broker, processed=atk_output/accuracy/atk_output/atk_chunk_kda_fwd_2026-09-29-03-51-14-578755/db/celery/processed, results=atk_output/accuracy/atk_output/atk_chunk_kda_fwd_2026-09-29-03-51-14-578755/db/celery/results
+[2026-09-28 19:51:14,716] [INFO] [MainProcess] [439330] [registry.py:76]  executor_chunk_kda_fwd is already registered, repeated registration will coverage it, new module path is executor_chunk_kda_fwd
+[2026-09-28 19:51:14,717] [INFO] [MainProcess] [439330] [registry.py:76]  executor_chunk_kda_fwd is already registered, repeated registration will coverage it, new module path is executor_chunk_kda_fwd
+[2026-09-28 19:51:14,720] [INFO] [MainProcess] [439330] [resource_utils.py:113]  bind_cpu_type auto resolved to 2 (reason=container_detected)
+[2026-09-28 19:51:14,752] [INFO] [127.0.0.1:9090@create_dataset] [439479] [patch_getenv.py:15]  get env ATK_CPU_INFO = {"cpu_ids_without_devices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111], "device_cpu_ids": {"0": [113, 112]}}
+[2026-09-28 19:51:14,789] [INFO] [ForkPoolWorker-1] [439481] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 19:51:14,799] [INFO] [ForkPoolWorker-2] [439483] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 19:51:14,808] [INFO] [ForkPoolWorker-3] [439485] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 19:51:14,814] [INFO] [ForkPoolWorker-4] [439487] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 19:51:14,880] [INFO] [127.0.0.1:9090@device_run_0] [439495] [patch_getenv.py:15]  get env ATK_CPU_INFO = {"cpu_ids_without_devices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111], "device_cpu_ids": {"0": [113, 112]}}
+[2026-09-28 19:51:14,995] [INFO] [127.0.0.1:9090@cpu_run] [439499] [patch_getenv.py:15]  get env ATK_CPU_INFO = {"cpu_ids_without_devices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111], "device_cpu_ids": {"0": [113, 112]}}
+[2026-09-28 19:51:15,032] [INFO] [ForkPoolWorker-1] [439501] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 19:51:15,045] [INFO] [ForkPoolWorker-2] [439503] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 19:51:15,057] [INFO] [ForkPoolWorker-3] [439505] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 19:51:15,065] [INFO] [ForkPoolWorker-4] [439507] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 19:51:15,122] [INFO] [127.0.0.1:9090@compare] [439515] [patch_getenv.py:15]  get env ATK_CPU_INFO = {"cpu_ids_without_devices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111], "device_cpu_ids": {"0": [113, 112]}}
+[2026-09-28 19:51:15,153] [INFO] [ForkPoolWorker-1] [439517] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 19:51:15,166] [INFO] [ForkPoolWorker-2] [439519] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 19:51:15,176] [INFO] [ForkPoolWorker-3] [439521] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 19:51:15,185] [INFO] [ForkPoolWorker-4] [439523] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 19:51:15,220] [INFO] [MainProcess] [439330] [patch_getenv.py:15]  get env ATK_CPU_INFO = {"cpu_ids_without_devices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111], "device_cpu_ids": {"0": [113, 112]}}
+[2026-09-28 19:51:15,258] [INFO] [MainProcess] [439330] [main.py:504]  create_tasks start!!!, case_config_name:chunk_kda_fwd, all_cases_num: 1
+[2026-09-28 19:51:15,273] [WARNING] [MainProcess] [439330] [warnings.py:109]  /workspace/venv/lib64/python3.11/site-packages/pydantic/main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `enum` - serialized value may not be as expected [field_name='cover_task', input_value=0, input_type=int])
+  return self.__pydantic_serializer__.to_python(
+
+[2026-09-28 19:51:15,276] [INFO] [MainProcess] [439330] [main.py:541]  create_tasks over!!!, case_config_name:chunk_kda_fwd, all_cases_num: 1
+[2026-09-28 19:51:15,815] [INFO] [ForkPoolWorker-1] [439481] [opp_tasks.py:369]  [case 289] start CREATE DATASET.
+[2026-09-28 19:51:15,896] [INFO] [127.0.0.1:9090@device_run_0] [439495] [opp_tasks.py:507]  [case 289] start run NPU OPP TASK.
+[2026-09-28 19:51:16,069] [INFO] [ForkPoolWorker-1] [439501] [opp_tasks.py:507]  [case 289] start run CPU OPP TASK.
+[2026-09-28 19:51:17,874] [INFO] [127.0.0.1:9090@device_run_0] [439495] [npu_backend.py:215]  [case 289] begin init gm data
+[2026-09-28 19:51:17,875] [INFO] [127.0.0.1:9090@device_run_0] [439495] [npu_backend.py:223]    Total: 123.02 GB
+[2026-09-28 19:51:17,875] [INFO] [127.0.0.1:9090@device_run_0] [439495] [npu_backend.py:224]    Used:  0.56 GB
+[2026-09-28 19:51:17,875] [INFO] [127.0.0.1:9090@device_run_0] [439495] [npu_backend.py:225]    Free:  122.46 GB
+[2026-09-28 19:51:17,875] [INFO] [127.0.0.1:9090@device_run_0] [439495] [npu_backend.py:237]    Reserve: 30.57 GB (gm_init_flag=0 MB)
+[2026-09-28 19:51:37,148] [ERROR] [127.0.0.1:9090@device_run_0] [439495] [npu_backend.py:246]  [case 289] failed init_gm_data: NPU out of memory. Tried to allocate 122.28 GiB (NPU 0; 123.02 GiB total capacity; 1024 bytes already allocated; 1024 bytes current active; 122.46 GiB free; 2.00 MiB reserved in total by PyTorch).If reserved memory is >> allocated memory try setting max_split_size_mb to avoid fragmentation.
+[2026-09-28 19:51:37,151] [ERROR] [127.0.0.1:9090@device_run_0] [439495] [opp_tasks.py:526]  Traceback (most recent call last):
+  File "/workspace/venv/lib64/python3.11/site-packages/atk/tasks/opp_tasks.py", line 514, in run_opp_task
+    run_opp_case(dataset_executor, task_result)
+  File "/workspace/venv/lib64/python3.11/site-packages/atk/tasks/opp_tasks.py", line 461, in run_opp_case
+    opp_executor.before_run(data)
+  File "/workspace/venv/lib64/python3.11/site-packages/atk/tasks/executors/opp_executor.py", line 480, in before_run
+    self.backend.init_gm_data()  # GM数据初始化
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/venv/lib64/python3.11/site-packages/atk/tasks/backends/npu_backend.py", line 238, in init_gm_data
+    x = torch.empty(reserve_size, device=f"npu:{self.task_result.device_id}")
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch.OutOfMemoryError: NPU out of memory. Tried to allocate 122.28 GiB (NPU 0; 123.02 GiB total capacity; 1024 bytes already allocated; 1024 bytes current active; 122.46 GiB free; 2.00 MiB reserved in total by PyTorch).If reserved memory is >> allocated memory try setting max_split_size_mb to avoid fragmentation.
+
+[2026-09-28 19:51:37,151] [ERROR] [127.0.0.1:9090@device_run_0] [439495] [opp_tasks.py:527]  case 289 run opp failed: NPU out of memory. Tried to allocate 122.28 GiB (NPU 0; 123.02 GiB total capacity; 1024 bytes already allocated; 1024 bytes current active; 122.46 GiB free; 2.00 MiB reserved in total by PyTorch).If reserved memory is >> allocated memory try setting max_split_size_mb to avoid fragmentation.
+[2026-09-28 19:51:37,158] [ERROR] [127.0.0.1:9090@device_run_0] [439495] [celery_base_task.py:105]  chunk_kda_fwd_289 on atk.tasks.celery_tasks.celery_run_opp_task 127.0.0.1:9090@device_run_0 task failed.
+run opp task failed!
+Traceback (most recent call last):
+  File "/workspace/venv/lib64/python3.11/site-packages/celery/app/trace.py", line 585, in trace_task
+    R = retval = fun(*args, **kwargs)
+                 ^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/venv/lib64/python3.11/site-packages/celery/app/trace.py", line 858, in __protected_call__
+    return self.run(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/venv/lib64/python3.11/site-packages/atk/tasks/celery_tasks.py", line 115, in celery_run_opp_task
+    return run_opp_task(task_result_json)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/venv/lib64/python3.11/site-packages/atk/tasks/opp_tasks.py", line 529, in run_opp_task
+    raise RuntimeError("run opp task failed!") from None
+RuntimeError: run opp task failed!
+
+[2026-09-28 19:51:37,163] [WARNING] [127.0.0.1:9090@device_run_0] [439495] [task_runtime_registry.py:496]  [case 289] NPU OOM detected, start cancel 1 local CPU sibling task(s).
+[2026-09-28 19:51:37,167] [WARNING] [127.0.0.1:9090@device_run_0] [439495] [task_runtime_registry.py:456]  [case 289] sent SIGTERM to local CPU sibling task, task_id=b9a07d5c-175a-4e5a-bd90-8419081f85d1 pid=439501.
+[2026-09-28 19:51:37,301] [INFO] [ResultProcess-5] [439533] [reports.py:156]  
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|     id_289     | npu_npu_dut_input_bytes | cpu_cpu_golden_input_bytes | npu_npu_dut_output_bytes | cpu_cpu_golden_output_bytes | accuracy |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|  npu_npu_dut   |           None          |            None            |           None           |             None            |    -     |
+| cpu_cpu_golden |                         |                            |                          |                             |          |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+[2026-09-28 19:51:37,310] [INFO] [ResultProcess-5] [439533] [csv_report.py:905]  
++----------------+----------+------------------+------------------+--------------+----------------------+--------+--------------+
+|      名称      | 总用例数 | 执行成功用例个数 | 执行失败用例个数 | 通过用例个数 | 错误信息匹配用例个数 | 通过率 | 精度是否达标 |
++----------------+----------+------------------+------------------+--------------+----------------------+--------+--------------+
+| cpu_cpu_golden |    1     |        0         |        1         |      0       |          -           |  0.0   |    Failed    |
++----------------+----------+------------------+------------------+--------------+----------------------+--------+--------------+
+[2026-09-28 19:51:37,311] [INFO] [ResultProcess-5] [439533] [csv_report.py:743]  Total Task: 1, success 0, failed 1
+[2026-09-28 19:51:37,311] [INFO] [ResultProcess-5] [439533] [csv_report.py:744]  Summary info: acc_pass_result:Failed	is_acc_dc_pass:None	is_e2e_perf_pass:None	is_benchmark_perf_pass:None	is_device_perf_pass:None	is_device_memory_pass:None	is_memory_check_pass:None .
+[2026-09-28 19:51:37,322] [INFO] [ResultProcess-5] [439533] [csv_report.py:946]  save result excel file: ./atk_output/accuracy/atk_output/atk_chunk_kda_fwd_2026-09-29-03-51-14-578755/report/atk_chunk_kda_fwd_reports_2026-09-28-19-51-15.xlsx
+[2026-09-28 19:51:37,323] [INFO] [ResultProcess-5] [439533] [patch_getenv.py:15]  get env ASCEND_CUSTOM_OPP_PATH = /workspace/venv/lib/python3.11/site-packages/fla_npu/opp/vendors/fla_npu_transformer:/workspace/venv/lib/python3.11/site-packages/fla_npu/opp/vendors/fla_npu_transformer/op_api/lib:/workspace/venv/lib64/python3.11/site-packages/fla_npu/opp:/workspace/venv/lib64/python3.11/site-packages/fla_npu/opp/vendors/fla_npu_transformer
+[2026-09-28 19:51:37,341] [INFO] [MainProcess] [439330] [base.py:299]  atk task success!
+[2026-09-28 19:51:37,810] [WARNING] [127.0.0.1:9090@create_dataset] [439479] [control.py:590]  Got shutdown from remote
+[2026-09-28 19:51:38,168] [WARNING] [127.0.0.1:9090@device_run_0] [439495] [task_runtime_registry.py:456]  [case 289] sent SIGKILL to local CPU sibling task, task_id=b9a07d5c-175a-4e5a-bd90-8419081f85d1 pid=439501.
+[2026-09-28 19:51:38,168] [ERROR] [127.0.0.1:9090@device_run_0] [439495] [trace.py:309]  Task atk.tasks.celery_tasks.celery_run_opp_task[813bae31-e3b6-4bb2-8a27-f51f53452580] raised unexpected: RuntimeError('run opp task failed!')
+Traceback (most recent call last):
+  File "/workspace/venv/lib64/python3.11/site-packages/celery/app/trace.py", line 585, in trace_task
+    R = retval = fun(*args, **kwargs)
+                 ^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/venv/lib64/python3.11/site-packages/celery/app/trace.py", line 858, in __protected_call__
+    return self.run(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/venv/lib64/python3.11/site-packages/atk/tasks/celery_tasks.py", line 115, in celery_run_opp_task
+    return run_opp_task(task_result_json)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/venv/lib64/python3.11/site-packages/atk/tasks/opp_tasks.py", line 529, in run_opp_task
+    raise RuntimeError("run opp task failed!") from None
+RuntimeError: run opp task failed!
+[2026-09-28 19:51:39,283] [INFO] [ForkPoolWorker-5] [439767] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 19:51:47,345] [WARNING] [MainProcess] [439330] [worker_manager.py:105]  Worker 127.0.0.1:9090@cpu_run did not exit in 10s, sending SIGKILL
+[2026-09-28 19:51:47,363] [INFO] [MainProcess] [439330] [base.py:303]  atk task finish. cost time: 32 s

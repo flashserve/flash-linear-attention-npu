@@ -3597,6 +3597,25 @@ def npu_chunk_kda_bwd(
 # head 数 32 及以上组合领先 15% 以上。
 _CHUNK_KDA_FWD_V2_MIN_WORK_ITEMS = 4096
 
+_KDA_FWD_V2_FALLBACK_WARNED = False
+
+
+def _warn_kda_fwd_v2_fallback(exc):
+    """V2 组合 host tiling 失败回退融合入口时提示一次（多为环境缺子算子）。"""
+    global _KDA_FWD_V2_FALLBACK_WARNED
+    if _KDA_FWD_V2_FALLBACK_WARNED:
+        return
+    _KDA_FWD_V2_FALLBACK_WARNED = True
+    import warnings
+
+    warnings.warn(
+        "fla_npu: aclnnChunkKdaFwdV2 组合入口 host tiling 失败"
+        f"（{str(exc).splitlines()[0][:160]}），本次调用已回退融合入口"
+        " aclnnChunkKdaFwd。常见原因：运行环境未完整编译/加载 "
+        "ChunkKdaFwdPrepare、ChunkFwdH、ChunkKdaFwdFinalize 三个子算子"
+        "（aclnnStatus=561103，四个算子必须一起编译），或 ASCEND_CUSTOM_OPP_PATH"
+        " 未在 CANN 初始化前设置。")
+
 # KDA chunked forward 的 K/V 只交付两档且必须同档：K=V=64 或 K=V=128；
 # 混合档（K=64/V=128 等）与其它取值都不支持。与 Stable-ABI 薄层
 # （``_stable._KDA_FWD_SUPPORTED_KV_DIMS``）和 aclnn L2 校验保持同一判据。
@@ -3660,6 +3679,9 @@ def npu_chunk_kda_fwd(
     q_rstd_out=None,
     k_rstd_out=None,
     beta_eff_out=None,
+    # 私有开关：强制融合入口（V1）。供 stable 层在 V2 组合 host tiling 失败时
+    # 回退复用；公开调用方不应使用（默认开关语义下两条入口等价，仅少走组合）。
+    _force_v1=False,
 ):
     import torch
 
@@ -3842,7 +3864,7 @@ def npu_chunk_kda_fwd(
         chunk_size=chunk_size,
         cu=cu,
         work_items=hv_num * total_chunks,
-        force_v2=force_v2,
+        force_v2=force_v2 and not _force_v1,
     )
     if not use_v2 and (
         use_qk_l2norm_in_kernel or use_beta_sigmoid_in_kernel or allow_neg_eigval or not use_exp2
@@ -3861,7 +3883,7 @@ def npu_chunk_kda_fwd(
             "outputs in the current scenario."
         )
 
-    def build_args(ctx):
+    def build_args(ctx, use_v2=use_v2):
         common = [
             ctx.tensor(q, "q"),
             ctx.tensor(k, "k"),
@@ -3914,7 +3936,27 @@ def npu_chunk_kda_fwd(
             ]
         return common
 
-    _call_aclnn("aclnnChunkKdaFwdV2" if use_v2 else "aclnnChunkKdaFwd", build_args, outputs)
+    if not use_v2:
+        _call_aclnn("aclnnChunkKdaFwd", build_args, outputs)
+    else:
+        try:
+            _call_aclnn("aclnnChunkKdaFwdV2", build_args, outputs)
+        except RuntimeError as exc:
+            # V2 三算子组合仅在 host 侧 GetWorkspaceSize 失败时回退融合入口：
+            # 该阶段尚未发射任何 kernel，重走 V1 无副作用。典型诱因是运行环境
+            # 只注册了融合算子（缺 ChunkKdaFwdPrepare/ChunkFwdH/ChunkKdaFwdFinalize
+            # 的注册，aclnnStatus=561103），README“编译依赖”一节有完整说明。
+            # 非默认 gate/L2norm 开关与保存值导出是 V2 专属语义，回退会静默丢
+            # 输出，因此这三种情况不回退、原样抛出。
+            wants_saved = any(value is not None for value in saved_outputs)
+            if (
+                force_v2
+                or wants_saved
+                or "aclnnChunkKdaFwdV2GetWorkspaceSize failed" not in str(exc)
+            ):
+                raise
+            _warn_kda_fwd_v2_fallback(exc)
+            _call_aclnn("aclnnChunkKdaFwd", lambda ctx: build_args(ctx, False), outputs)
     initial_state_out = initial_state
     return (*outputs, initial_state_out)
 

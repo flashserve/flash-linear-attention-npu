@@ -759,8 +759,24 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     const op::Shape stateShape4 =
         MakeShape({info.seqNum, info.hvNum, info.kDim, info.vDim});
     const op::Shape placeholderShape = MakeShape({1});
+    // planv901：varlen 单序列（cu=[0,seqlen]，CheckCuSeqlens 已验证首=0/末=seqlen/
+    // 非降序）且整块对齐、B=1、无导出（w/u/qg/kg/vnew/h 输出均空）时，token 布局
+    // 与 dense 完全等价，可走 KDA_STAGE_FULL 单 launch 快路径
+    // （splitStages=false），与 tiling 层 varlenDenseEquivalent 判定严格同口径。
+    // 多序列 varlen 仍拆 stage。
+    bool varlenDenseEquivalent = false;
+    if (params.cuSeqlensOptional != nullptr && info.seqNum == 1 &&
+        info.batch == 1 && info.seqlen % params.chunkSize == 0 &&
+        params.wOut == nullptr && params.uOut == nullptr &&
+        params.qgOut == nullptr && params.kgOut == nullptr &&
+        params.vNewOut == nullptr && params.hOut == nullptr) {
+        const aclIntArray *cu = params.cuSeqlensOptional;
+        varlenDenseEquivalent =
+            cu->Size() == 2 && (*cu)[0] == 0 && (*cu)[1] == info.seqlen;
+    }
     const bool useDenseA5FastPath =
-        params.cuSeqlensOptional == nullptr && params.q->GetDataType() == DataType::DT_BF16 &&
+        (params.cuSeqlensOptional == nullptr || varlenDenseEquivalent) &&
+        params.q->GetDataType() == DataType::DT_BF16 &&
         params.chunkSize == 64 && info.kDim == 128 && info.vDim == 128 &&
         info.seqlen % params.chunkSize == 0;
     const bool splitStages =
