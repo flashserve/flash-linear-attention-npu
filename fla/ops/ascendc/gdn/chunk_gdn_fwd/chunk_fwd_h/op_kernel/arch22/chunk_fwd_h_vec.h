@@ -575,7 +575,7 @@ private:
     __aicore__ inline void ComputeStage3Tile(const FwdHWorkUnit &unit,
                                              const FwdHChunkSpan &chunk,
                                              const FwdHHeadBinding &head,
-                                             uint32_t row)
+                                             uint32_t row, float alphaValue)
     {
         const uint32_t slot = head.localSlot;
         if constexpr (WAIT_READY) {
@@ -592,8 +592,7 @@ private:
         }
         AscendC::PipeBarrier<PIPE_V>();
         if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
-            const float factor = ReadScalar(alpha_[slot], 0, slot);
-            AscendC::Muls(calc_[slot], calc_[slot], factor, TILE_ELEMENTS);
+            AscendC::Muls(calc_[slot], calc_[slot], alphaValue, TILE_ELEMENTS);
         } else if constexpr (STATE_V_FIRST) {
             for (uint32_t localRow = 0; localRow < TILE_ROWS; ++localRow) {
                 AscendC::Mul(calc_[slot][localRow * FWD_H_V],
@@ -663,10 +662,17 @@ private:
         if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::KEY_GK) {
             PrepareKeyGate(slot);
         }
-        ComputeStage3Tile<WRITE_H, false>(unit, chunk, head, 0);
+        // alpha 是 chunk·head 常量（Stage1 的 PrepareScalarGate 写入）：整个 head 的
+        // 16 个 tile 只需一次 V_S/S_V 同步读取，避免逐 tile ReadScalar 阻塞 scalar
+        // 线程并拖慢 MTE3 的 H 写出发射。
+        float alphaValue = 0.0f;
+        if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
+            alphaValue = ReadScalar(alpha_[slot], 0, slot);
+        }
+        ComputeStage3Tile<WRITE_H, false>(unit, chunk, head, 0, alphaValue);
         for (uint32_t row = TILE_ROWS; row < FWD_H_K; row += TILE_ROWS) {
             LoadStage3Tile(unit, chunk, head, row);
-            ComputeStage3Tile<WRITE_H, true>(unit, chunk, head, row);
+            ComputeStage3Tile<WRITE_H, true>(unit, chunk, head, row, alphaValue);
         }
         if constexpr (!WRITE_H) {
             if (args_.tiling.storeFinalState != 0) {
