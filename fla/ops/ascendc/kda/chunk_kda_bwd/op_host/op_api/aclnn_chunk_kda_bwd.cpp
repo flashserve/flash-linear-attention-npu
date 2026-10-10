@@ -2,6 +2,8 @@
 
 #include "chunk_kda_bwd.h"
 
+#include <initializer_list>
+
 #include "aclnn/aclnn_base.h"
 #include "aclnn_kernels/common/op_error_check.h"
 #include "opdev/make_op_executor.h"
@@ -11,6 +13,16 @@
 using namespace op;
 
 namespace {
+
+void NormalizeOriginalShapes(
+    std::initializer_list<const aclTensor *> tensors)
+{
+    for (const aclTensor *tensor : tensors) {
+        if (tensor != nullptr) {
+            tensor->SetOriginalShape(tensor->GetViewShape());
+        }
+    }
+}
 
 const aclTensor *ConvertIntArrayToTensor(
     const aclIntArray *array, aclOpExecutor *executor)
@@ -148,6 +160,12 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         dAOutOptional != nullptr ? dAOutOptional : dgOut;
     const aclTensor *dBiasForKernel =
         dBiasOutOptional != nullptr ? dBiasOutOptional : dgOut;
+    // 一维存储描述可能使 OriginalShape 展平；下发前按逻辑视图统一形状，不改变数据布局。
+    NormalizeOriginalShapes({
+        q, k, v, beta, gk, aqk, akk, wOptional, qgOptional, kgOptional,
+        vNewOptional, hOptional, dO, rawGOptional, aLogOptional,
+        dtBiasOptional, cuTensor, chunkTensor, dqOut, dkOut, dvOut, dbOut,
+        dgOut, dAForKernel, dBiasForKernel});
     const auto result = l0op::ChunkKdaBwd(
         q, k, v, beta, gk, aqk, akk, wOptional, qgOptional, kgOptional,
         vNewOptional, hOptional, dO,
