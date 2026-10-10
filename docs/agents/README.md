@@ -85,12 +85,20 @@ GPU 和 Triton Ascend 路径都使用相同输入与 CPU 标杆比较。用户�
   ATK 的环境准备和正式精度执行；ATK README 不反向依赖精度规则。
 - [`reference/03-solution-design/`](reference/03-solution-design/) 保存方案设计案例；新算子在阶段 3 读取完整案例，既有算子优先读取自己的设计文档。
 - [`reference/04-operator-development/`](reference/04-operator-development/) 保存阶段 4 的实现参考；根据 chunk 依赖类型选择并读取其中一份开发参考。
+- [`reference/04-operator-development/engineering-structure.md`](reference/04-operator-development/engineering-structure.md) 维护算子的工程结构规范：目录职责、`def`/`aclnn`/调用层契约、`arch22`/`arch35` 与模板参数、测试看护和编码细节；同目录的 [`engineering-example/`](reference/04-operator-development/engineering-example/) 给出逐文件对照与骨架。阶段 4 编码前读取，检视时作为判定依据。
 - 参考资料按所属阶段分目录维护，阶段入口仍是 `01`–`05` 五个主文件。
+
+## 检视 Skill
+
+- [`skills/op-precision-review/`](skills/op-precision-review/) 是算子精度静态检视 skill：对算子代码或 PR diff 按 lv0–lv3 分级和 13 类细粒度根因检视，输出可核对到文件行号的检视意见；有 issue 标注集时用其中的 `scripts/review_score.py` 统计逐级别漏警率与虚警并判定是否达标。
+- skill 随仓库维护；在本机使用时把该目录复制或链接到 `$CODEX_HOME/skills`（未设置 `CODEX_HOME` 时为 `~/.codex/skills`）。
 
 ## 既有任务按需读取
 
 | 任务 | 必读文件 |
 | --- | --- |
+| 新增算子、调整工程结构（目录、`def`、`aclnn`、调用层、模板） | [`reference/04-operator-development/engineering-structure.md`](reference/04-operator-development/engineering-structure.md) 与同目录 [`engineering-example/`](reference/04-operator-development/engineering-example/)；涉及接口迭代时同时读取当前算子的 `docs/api.md` |
+| 对算子做精度静态检视或 PR 精度检视 | [`skills/op-precision-review/SKILL.md`](skills/op-precision-review/SKILL.md)，按其分级路由读取 references；复杂算子的 lv3 检视按该 skill 的流程生成分核/内存/流水报告后再下结论 |
 | 修改既有算子的接口或功能 | 包括修改属性、支持范围和异常行为。先读取当前 `docs/api.md`、CPU 标杆、`docs/design.md`、算子 ATK README、实现和测试；开发期 `docs/validation.md` 存在时同时读取。核对设计文档的规则版本，再按 `01-接口确认.md` 的既有算子修改流程选择后续阶段 |
 | 修改既有算子的内部实现（对外行为不变） | 包括性能优化，以及数据依赖、stage、workspace、同步、tiling、op_host、kernel、op_api 或 Python 适配调整。读取当前算子的 README、`docs/api.md`、`docs/design.md`、算子 ATK README、实现和测试，以及 `03-方案设计.md`、`04-算子开发.md`、`05-算子测试.md`；开发期 `docs/validation.md` 存在时同时读取，设计版本较旧时按 `03` 的当前规则更新受影响内容 |
 | 修改或新增算子测试 | 包括 ATK、精度、性能和回归用例。读取 `05-算子测试.md`、[`../../tests/atk/README.md`](../../tests/atk/README.md) 和当前算子的 ATK README；涉及 CPU 标杆对齐、输入值域、精度规则或精度失败时，同时按下一行进入精度路由 |
@@ -104,4 +112,5 @@ GPU 和 Triton Ascend 路径都使用相同输入与 CPU 标杆比较。用户�
   采集命令写在 `reference/精度对比与定位.md`。
 - Python runtime、wheel、动态库、device、stream、autograd 和图编译架构只写在 `docs/architecture/`。
 - 算子接口和支持范围归档在 `docs/api.md`；方案详设归档在 `docs/design.md` 并记录规则版本；开发期间以 `docs/validation.md` 维护验证计划、实现追溯、实验过程和实测结果。最终交付前把仍有效的测试与性能结论收敛到算子 ATK README，删除 `docs/validation.md`；失败实验和临时追溯不作为最终交付件。
+- 工程结构规则只写在 `reference/04-operator-development/engineering-structure.md`；精度静态检视的分级、类别、流程与验收规则只写在 `skills/op-precision-review/`。
 - 新增知识归入它实际约束的阶段，并明确适用边界。
