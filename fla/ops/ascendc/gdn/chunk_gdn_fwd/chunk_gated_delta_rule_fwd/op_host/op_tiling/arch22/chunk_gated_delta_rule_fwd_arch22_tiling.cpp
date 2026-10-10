@@ -15,6 +15,9 @@
 #include "tiling/platform/platform_ascendc.h"
 #include "tiling_base/tiling_templates_registry.h"
 #include <algorithm>
+#include <cmath>
+#include <limits>
+#include "op_common/log/log.h"
 #include <register/op_impl_registry.h>
 
 namespace optiling {
@@ -139,7 +142,8 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
                     betaShape->GetStorageShape().GetDimNum() != 3 ||
                     aShape->GetStorageShape().GetDimNum() != 4 ||
                     gShape->GetStorageShape().GetDimNum() != 3,
-                OP_LOGE(context->GetNodeName(), "Phase 6 requires rank-4 q/k/v/A and rank-3 beta/raw_g."),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("ChunkGatedDeltaRuleFwd", "q/k/v/A/beta/raw_g",
+                        "Phase 6 requires rank-4 q/k/v/A and rank-3 beta/raw_g."),
                 return ge::GRAPH_FAILED);
     const auto *qDesc = context->GetInputDesc(INPUT_Q);
     const auto *kDesc = context->GetInputDesc(INPUT_K);
@@ -173,17 +177,20 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
                     batch <= 0 || heads <= 0 || tokens <= 0 || kDim != SUPPORTED_K_DIM ||
                     (vDim != SUPPORTED_V_DIM_128 && vDim != SUPPORTED_V_DIM_256) ||
                     valueHeads <= 0 || (valueHeads % heads) != 0,
-                OP_LOGE(context->GetNodeName(),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("ChunkGatedDeltaRuleFwd", "q/v",
                         "Phase 6 requires positive B/Hk/T, Hk divides Hv, K=128, and V=128/256; dense T may be arbitrary."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(!IsShape(kShape, {batch, heads, tokens, kDim}),
-                OP_LOGE(context->GetNodeName(), "Phase 6 requires k to match q in [B,H,T,K]."),
+                OP_LOGE_FOR_INVALID_SHAPE("ChunkGatedDeltaRuleFwd", "k",
+                        Ops::Base::ToString(kShape->GetStorageShape()), Ops::Base::ToString(qStorage)),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(!IsShape(vShape, {batch, valueHeads, tokens, vDim}),
-                OP_LOGE(context->GetNodeName(), "Phase 6 requires v=[B,Hv,T,V] with Hv divisible by Hk."),
+                OP_LOGE_FOR_INVALID_SHAPE("ChunkGatedDeltaRuleFwd", "v",
+                        Ops::Base::ToString(vShape->GetStorageShape()), "[B,Hv,T,V], Hv divisible by Hk"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(!IsShape(betaShape, {batch, valueHeads, tokens}),
-                OP_LOGE(context->GetNodeName(), "Phase 6 requires beta=[B,Hv,T]."),
+                OP_LOGE_FOR_INVALID_SHAPE("ChunkGatedDeltaRuleFwd", "beta",
+                        Ops::Base::ToString(betaShape->GetStorageShape()), "[B,Hv,T]"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(!IsShape(gShape, {batch, valueHeads, tokens}),
                 OP_LOGE(context->GetNodeName(), "Phase 6 requires raw_g=[B,Hv,T]."),
@@ -193,8 +200,13 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
                     aDesc->GetDataType() != inputDtype ||
                     betaDesc->GetDataType() != ge::DT_FLOAT ||
                     gDesc->GetDataType() != ge::DT_FLOAT,
-                OP_LOGE(context->GetNodeName(),
-                        "Phase 6 requires matching FP16/BF16 inputs/A and FP32 beta/g."),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON("ChunkGatedDeltaRuleFwd", "q/k/v/A/beta/g",
+                        Ops::Base::ToString(qDesc->GetDataType()) + "/" +
+                        Ops::Base::ToString(kDesc->GetDataType()) + "/" +
+                        Ops::Base::ToString(vDesc->GetDataType()) + "/" +
+                        Ops::Base::ToString(aDesc->GetDataType()) + "/" +
+                        Ops::Base::ToString(betaDesc->GetDataType()) + "/" +
+                        Ops::Base::ToString(gDesc->GetDataType()), "Phase 6 requires matching FP16/BF16 inputs/A and FP32 beta/g."),
                 return ge::GRAPH_FAILED);
 
     const bool *outputFinalState =
@@ -209,11 +221,12 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
                                   cuShape->GetStorageShape().GetDimNum() != 1 ||
                                   cuShape->GetStorageShape().GetDim(0) < 2 ||
                                   !GetChunkCount(chunkShape, &varlenChunks))),
-                OP_LOGE(context->GetNodeName(),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("ChunkGatedDeltaRuleFwd", "chunk_size/cu_seqlens/chunk_indices",
                         "Phase 6 requires chunk_size=64/128 and paired valid varlen metadata."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(!IsShape(aShape, {batch, valueHeads, tokens, *chunkSize}),
-                OP_LOGE(context->GetNodeName(), "Phase 6 requires a_storage=[B,Hv,T,chunk_size]."),
+                OP_LOGE_FOR_INVALID_SHAPE("ChunkGatedDeltaRuleFwd", "a_storage",
+                        Ops::Base::ToString(aShape->GetStorageShape()), "[B,Hv,T,chunk_size]"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(context) != ge::GRAPH_SUCCESS,
                 OP_LOGE(context->GetNodeName(), "Reuse of the accepted Phase 5 suffix tiling failed."),

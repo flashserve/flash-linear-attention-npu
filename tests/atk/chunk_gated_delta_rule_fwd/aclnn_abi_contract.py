@@ -153,7 +153,7 @@ def main() -> None:
         "BNSD legacy layout": r'std::strcmp\(params\.layout,\s*"BNSD"\)\s*==\s*0',
         "NTD legacy layout": r'std::strcmp\(params\.layout,\s*"NTD"\)\s*==\s*0',
         "prepare path A5 guard": r"if\s*\(UsePreparePath\(params\)\)\s*\{\s*"
-        r"CHECK_COND\(IsAscend950\(\),\s*ACLNN_ERR_PARAM_INVALID",
+        r"if\s*\(\s*!IsAscend950\(\)\s*\).*?return\s+ACLNN_ERR_PARAM_INVALID",
         "direct BSND output": r"ChunkFwdO\(.*?params\.useExp2,\s*params\.stateVFirst,\s*"
         r'"BSND",\s*params\.oOut,\s*executorPtr\)',
         "gCumsum scratch": r"gCumsumCompute\s*=\s*executorPtr->AllocTensor",
@@ -187,8 +187,10 @@ def main() -> None:
         prepare_kernel,
     ) is None:
         raise SystemExit("prepare kernel 缺少 useExp2 对应的累计缩放选择")
-    if len(re.findall(r"useExp2\s*!=\s*0\s*\?\s*kGdnLn2\s*:\s*1\.0f", prepare_kernel)) != 2:
-        raise SystemExit("prepare kernel 缺少非 exp2 模式的局部指数换底选择")
+    for function in ("GateLowerLVF", "ScaleRowsBetaExp2gVF"):
+        if not re.search(rf"if\s*\(useExp2\s*!=\s*0\).*?{function}<[^;]*true>.*?"
+                         rf"else.*?{function}<[^;]*false>", prepare_kernel, re.DOTALL):
+            raise SystemExit(f"prepare kernel 缺少 {function} 的 exp/exp2 模板分派")
     if implementation.count("params.useExp2") < 4:
         raise SystemExit("大融合新路径未完整透传 useExp2")
 

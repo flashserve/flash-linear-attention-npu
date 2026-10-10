@@ -5,6 +5,7 @@
 #include "aclnn_chunk_gated_delta_rule_fwd.h"
 
 #include "chunk_gated_delta_rule_fwd.h"
+#include "chunk_gated_delta_rule_fwd_error.h"
 #include "../../../chunk_fwd_h/op_host/op_api/chunk_fwd_h.h"
 #include "../../../chunk_fwd_o/op_host/op_api/chunk_fwd_o.h"
 #include "../../../chunk_gated_delta_rule_fwd_prepare/op_host/op_api/chunk_gated_delta_rule_fwd_prepare.h"
@@ -23,6 +24,10 @@
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
 #include "opdev/tensor_view_utils.h"
+#include "opdev/shape_utils.h"
+#include <cmath>
+#include <limits>
+#include <utility>
 #include <cstring>
 #include <initializer_list>
 
@@ -170,20 +175,6 @@ static size_t Rank(const aclTensor *tensor)
     return tensor->GetViewShape().GetDimNum();
 }
 
-static bool HasShape(const aclTensor *tensor, std::initializer_list<int64_t> dims)
-{
-    if (tensor == nullptr || Rank(tensor) != dims.size()) {
-        return false;
-    }
-    size_t index = 0;
-    for (int64_t dim : dims) {
-        if (Dim(tensor, index++) != dim) {
-            return false;
-        }
-    }
-    return true;
-}
-
 static bool ShapeEqual(const op::Shape &lhs, const op::Shape &rhs)
 {
     if (lhs.GetDimNum() != rhs.GetDimNum()) {
@@ -207,29 +198,31 @@ static int64_t SeqNum(const ChunkGatedDeltaRuleFwdParams &params, int64_t batch)
 static int64_t ExpectedChunks(const ChunkGatedDeltaRuleFwdParams &params, int64_t seqlen)
 {
     if (params.cuSeqlensOptional == nullptr) {
-        return (seqlen + params.chunkSize - 1) / params.chunkSize;
+        return seqlen / params.chunkSize + (seqlen % params.chunkSize != 0);
     }
 
     int64_t total = 0;
     const aclIntArray &cu = *params.cuSeqlensOptional;
     for (size_t idx = 0; idx + 1 < cu.Size(); ++idx) {
         const int64_t length = cu[idx + 1] - cu[idx];
-        total += (length + params.chunkSize - 1) / params.chunkSize;
+        total += length / params.chunkSize + (length % params.chunkSize != 0);
     }
     return total;
 }
 
-static aclnnStatus CheckStateShape(const aclTensor *state, const char *name, int64_t seqNum, int64_t hv,
-                                   int64_t kDim, int64_t vDim)
+static aclnnStatus CheckShape(const aclTensor *tensor, const char *name, const op::Shape &expected)
 {
-    if (state == nullptr) {
-        return ACLNN_SUCCESS;
+    if (tensor != nullptr && !ShapeEqual(tensor->GetViewShape(), expected)) {
+        gdn_error::Shape(name, op::ToString(tensor->GetViewShape()).GetString(), op::ToString(expected).GetString());
+        return ACLNN_ERR_PARAM_INVALID;
     }
-    const auto shape = state->GetViewShape();
-    CHECK_COND(shape.GetDimNum() == 4 && shape.GetDim(0) == seqNum && shape.GetDim(1) == hv &&
-                   shape.GetDim(2) == kDim && shape.GetDim(3) == vDim,
-               ACLNN_ERR_PARAM_INVALID, "%s must have shape [seqNum,Hv,K,V].", name);
     return ACLNN_SUCCESS;
+}
+
+static aclnnStatus CheckStateShape(const aclTensor *state, const char *name, int64_t seqNum, int64_t hv,
+                                   int64_t stateDim0, int64_t stateDim1)
+{
+    return CheckShape(state, name, MakeShape({seqNum, hv, stateDim0, stateDim1}));
 }
 
 static aclnnStatus CheckMetadata(const ChunkGatedDeltaRuleFwdParams &params, int64_t seqlen)
@@ -237,29 +230,50 @@ static aclnnStatus CheckMetadata(const ChunkGatedDeltaRuleFwdParams &params, int
     if (params.cuSeqlensOptional == nullptr) {
         return ACLNN_SUCCESS;
     }
-
     const aclIntArray &cu = *params.cuSeqlensOptional;
-    CHECK_COND(cu.Size() >= 2, ACLNN_ERR_PARAM_INVALID,
-               "cuSeqlens must contain at least [0,totalTokens].");
-    CHECK_COND(cu[0] == 0 && cu[cu.Size() - 1] == seqlen, ACLNN_ERR_PARAM_INVALID,
-               "cuSeqlens must start at 0 and end at T.");
-    for (size_t idx = 0; idx + 1 < cu.Size(); ++idx) {
-        CHECK_COND(cu[idx] <= cu[idx + 1], ACLNN_ERR_PARAM_INVALID,
-                   "cuSeqlens must be nondecreasing.");
+    if (cu.Size() < 2) {
+        gdn_error::ListSize("cuSeqlensOptional", cu.Size(), ">= 2");
+        return ACLNN_ERR_PARAM_INVALID;
     }
-
+    if (cu[0] != 0 || cu[cu.Size() - 1] != seqlen) {
+        gdn_error::Argument("cuSeqlensOptional", "must start at 0 and end at T=" + std::to_string(seqlen) +
+                            "; got first=" + std::to_string(cu[0]) + ", last=" + std::to_string(cu[cu.Size() - 1]));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    int64_t expectedChunks = 0;
+    for (size_t idx = 0; idx + 1 < cu.Size(); ++idx) {
+        if (cu[idx] < 0 || cu[idx + 1] > seqlen || cu[idx] > cu[idx + 1]) {
+            gdn_error::Argument("cuSeqlensOptional", "must be nondecreasing within [0,T]; pair " +
+                                std::to_string(idx) + " is [" + std::to_string(cu[idx]) + "," +
+                                std::to_string(cu[idx + 1]) + "]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        const int64_t length = cu[idx + 1] - cu[idx];
+        const int64_t chunks = length / params.chunkSize + (length % params.chunkSize != 0);
+        if (expectedChunks > std::numeric_limits<int64_t>::max() - chunks) {
+            gdn_error::Argument("cuSeqlensOptional", "total chunk count exceeds int64 range");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        expectedChunks += chunks;
+    }
     const aclIntArray &indices = *params.chunkIndicesOptional;
-    const int64_t expectedChunks = ExpectedChunks(params, seqlen);
-    CHECK_COND(indices.Size() % 2 == 0 && static_cast<int64_t>(indices.Size() / 2) == expectedChunks,
-               ACLNN_ERR_PARAM_INVALID,
-               "chunkIndices must contain one (seqId,localChunkId) pair per chunk.");
+    if (indices.Size() % 2 != 0 || indices.Size() / 2 != static_cast<uint64_t>(expectedChunks)) {
+        gdn_error::ListSize("chunkIndicesOptional", indices.Size(),
+                            "2 * chunk count (" + std::to_string(expectedChunks) + ")");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     size_t index = 0;
     for (size_t seq = 0; seq + 1 < cu.Size(); ++seq) {
-        const int64_t seqChunks = (cu[seq + 1] - cu[seq] + params.chunkSize - 1) / params.chunkSize;
+        const int64_t length = cu[seq + 1] - cu[seq];
+        const int64_t seqChunks = length / params.chunkSize + (length % params.chunkSize != 0);
         for (int64_t localChunk = 0; localChunk < seqChunks; ++localChunk) {
-            CHECK_COND(indices[index] == static_cast<int64_t>(seq) && indices[index + 1] == localChunk,
-                       ACLNN_ERR_PARAM_INVALID,
-                       "chunkIndices must use canonical sequence-major order.");
+            if (indices[index] != static_cast<int64_t>(seq) || indices[index + 1] != localChunk) {
+                gdn_error::Argument("chunkIndicesOptional", "canonical pair " + std::to_string(index / 2) +
+                                    " must be [" + std::to_string(seq) + "," + std::to_string(localChunk) +
+                                    "]; got [" + std::to_string(indices[index]) + "," +
+                                    std::to_string(indices[index + 1]) + "]");
+                return ACLNN_ERR_PARAM_INVALID;
+            }
             index += 2;
         }
     }
@@ -278,9 +292,14 @@ static aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 
 static aclnnStatus CheckRequiredInputs(const ChunkGatedDeltaRuleFwdParams &params)
 {
-    CHECK_COND(params.q != nullptr && params.k != nullptr && params.v != nullptr && params.g != nullptr &&
-                   params.beta != nullptr && params.oOut != nullptr,
-               ACLNN_ERR_PARAM_NULLPTR, "q/k/v/g/beta/oOut must not be nullptr.");
+    const aclTensor *tensors[] = {params.q, params.k, params.v, params.g, params.beta, params.oOut};
+    const char *names[] = {"q", "k", "v", "g", "beta", "oOut"};
+    for (size_t index = 0; index < sizeof(tensors) / sizeof(tensors[0]); ++index) {
+        if (tensors[index] == nullptr) {
+            gdn_error::Required(names[index]);
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -312,19 +331,43 @@ static aclnnStatus ViewCopyIfPresent(const aclTensor *src, const aclTensor *dst,
 
 static aclnnStatus CheckRank(const aclTensor *tensor, size_t rank, const char *name)
 {
-    CHECK_COND(tensor != nullptr, ACLNN_ERR_PARAM_NULLPTR, "%s must not be nullptr.", name);
-    CHECK_COND(tensor->GetViewShape().GetDimNum() == rank, ACLNN_ERR_PARAM_INVALID,
-               "%s must be rank %zu.", name, rank);
+    if (tensor == nullptr) {
+        gdn_error::Required(name);
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (Rank(tensor) != rank) {
+        gdn_error::Rank(name, Rank(tensor), rank);
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
-static aclnnStatus CheckOptionalRank(const aclTensor *tensor, size_t rank, const char *name)
+static aclnnStatus CheckDtype(const aclTensor *tensor, const char *name,
+                               std::initializer_list<DataType> allowed, bool output = false)
 {
-    return tensor == nullptr ? ACLNN_SUCCESS : CheckRank(tensor, rank, name);
+    if (tensor == nullptr) {
+        return ACLNN_SUCCESS;
+    }
+    std::string expected;
+    for (const auto dtype : allowed) {
+        if (tensor->GetDataType() == dtype) {
+            return ACLNN_SUCCESS;
+        }
+        if (!expected.empty()) {
+            expected += " or ";
+        }
+        expected += op::ToString(dtype).GetString();
+    }
+    gdn_error::Dtype(name, op::ToString(tensor->GetDataType()).GetString(), expected, output);
+    return ACLNN_ERR_PARAM_INVALID;
 }
 
 static aclnnStatus ResolveShapeInfo(const ChunkGatedDeltaRuleFwdParams &params, GdnShapeInfo &info)
 {
+    if (params.layout == nullptr) {
+        gdn_error::Required("layout");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     if (std::strcmp(params.layout, "BNSD") == 0) {
         info.layout = GdnLayout::BNSD;
     } else if (std::strcmp(params.layout, "BSND") == 0) {
@@ -334,214 +377,171 @@ static aclnnStatus ResolveShapeInfo(const ChunkGatedDeltaRuleFwdParams &params, 
     } else if (std::strcmp(params.layout, "TND") == 0) {
         info.layout = GdnLayout::TND;
     } else {
-        CHECK_COND(false, ACLNN_ERR_PARAM_INVALID,
-                   "layout must be uppercase and one of BNSD, BSND, NTD or TND.");
+        gdn_error::Attr("layout", params.layout, "BNSD, BSND, NTD or TND (uppercase)");
+        return ACLNN_ERR_PARAM_INVALID;
     }
+    for (const auto &entry : {std::make_pair(params.q, "q"), std::make_pair(params.k, "k"),
+                              std::make_pair(params.v, "v"), std::make_pair(params.oOut, "oOut")}) {
+        CHECK_RET(CheckRank(entry.first, 4, entry.second) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    }
+    CHECK_RET(CheckRank(params.g, 3, "g") == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckRank(params.beta, 3, "beta") == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckShape(params.k, "k", params.q->GetViewShape()) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     info.isSequenceMajor = info.layout == GdnLayout::BSND || info.layout == GdnLayout::TND;
-    CHECK_COND(Rank(params.q) == 4 && Rank(params.k) == 4 && Rank(params.v) == 4 &&
-                   Rank(params.oOut) == 4 && Rank(params.g) == 3 && Rank(params.beta) == 3,
-               ACLNN_ERR_PARAM_INVALID,
-               "q/k/v/o must be rank 4 and g/beta must be rank 3.");
-    CHECK_COND(ShapeEqual(params.q->GetViewShape(), params.k->GetViewShape()),
-               ACLNN_ERR_PARAM_INVALID, "q and k must have identical shapes.");
-
-    if (!info.isSequenceMajor) {
-        info.batch = Dim(params.q, 0);
-        info.hq = Dim(params.q, 1);
-        info.seqlen = Dim(params.q, 2);
-        info.kDim = Dim(params.q, 3);
-        info.hv = Dim(params.v, 1);
-        info.vDim = Dim(params.v, 3);
-        CHECK_COND(HasShape(params.v, {info.batch, info.hv, info.seqlen, info.vDim}),
-                   ACLNN_ERR_PARAM_INVALID, "BNSD/NTD expects v as [B,Hv,T,V].");
-    } else {
-        info.batch = Dim(params.q, 0);
-        info.seqlen = Dim(params.q, 1);
-        info.hq = Dim(params.q, 2);
-        info.kDim = Dim(params.q, 3);
-        info.hv = Dim(params.v, 2);
-        info.vDim = Dim(params.v, 3);
-        CHECK_COND(HasShape(params.v, {info.batch, info.seqlen, info.hv, info.vDim}),
-                   ACLNN_ERR_PARAM_INVALID, "BSND/TND expects v as [B,T,Hv,V].");
-    }
-    CHECK_COND(HasShape(params.oOut, {info.batch, info.seqlen, info.hv, info.vDim}),
-               ACLNN_ERR_PARAM_INVALID, "oOut must use BSND shape [B,T,Hv,V].");
-    CHECK_COND(HasShape(params.g, {info.batch, info.seqlen, info.hv}) &&
-                   HasShape(params.beta, {info.batch, info.seqlen, info.hv}),
-               ACLNN_ERR_PARAM_INVALID, "g and beta must have shape [B,T,Hv].");
-    return ACLNN_SUCCESS;
+    info.batch = Dim(params.q, 0);
+    info.hq = Dim(params.q, info.isSequenceMajor ? 2 : 1);
+    info.seqlen = Dim(params.q, info.isSequenceMajor ? 1 : 2);
+    info.kDim = Dim(params.q, 3);
+    info.hv = Dim(params.v, info.isSequenceMajor ? 2 : 1);
+    info.vDim = Dim(params.v, 3);
+    const auto vShape = info.isSequenceMajor
+                            ? MakeShape({info.batch, info.seqlen, info.hv, info.vDim})
+                            : MakeShape({info.batch, info.hv, info.seqlen, info.vDim});
+    CHECK_RET(CheckShape(params.v, "v", vShape) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckShape(params.oOut, "oOut", MakeShape({info.batch, info.seqlen, info.hv, info.vDim})) ==
+                  ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    const auto scalarShape = MakeShape({info.batch, info.seqlen, info.hv});
+    CHECK_RET(CheckShape(params.g, "g", scalarShape) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    return CheckShape(params.beta, "beta", scalarShape);
 }
 
 static aclnnStatus CheckSupportedL2Contract(const ChunkGatedDeltaRuleFwdParams &params)
 {
-    CHECK_COND(params.layout != nullptr, ACLNN_ERR_PARAM_NULLPTR, "layout must not be nullptr.");
     if (UsePreparePath(params)) {
-        CHECK_COND(IsAscend950(), ACLNN_ERR_PARAM_INVALID,
-                   "The prepare path is supported on Ascend950 only.");
-        CHECK_COND(std::strcmp(params.layout, "BNSD") == 0 || std::strcmp(params.layout, "BSND") == 0 ||
-                       std::strcmp(params.layout, "NTD") == 0 || std::strcmp(params.layout, "TND") == 0,
-                   ACLNN_ERR_PARAM_INVALID,
-                   "The Ascend950 prepare path supports BNSD, BSND, NTD and TND.");
-        CHECK_COND(params.useQkL2norm ||
-                       (params.qHatOutOptional == nullptr && params.kHatOutOptional == nullptr &&
-                        params.qRstdOutOptional == nullptr && params.kRstdOutOptional == nullptr),
-                   ACLNN_ERR_PARAM_INVALID,
-                   "Q/K L2Norm outputs must be omitted when useQkL2norm is false.");
+        if (!IsAscend950()) {
+            gdn_error::Argument("feature combination", "the prepare path is supported on Ascend950 only");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (!params.useQkL2norm && (params.qHatOutOptional != nullptr || params.kHatOutOptional != nullptr ||
+                                  params.qRstdOutOptional != nullptr || params.kRstdOutOptional != nullptr)) {
+            gdn_error::Argument("Q/K L2Norm outputs", "must be omitted when useQkL2norm is false");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
         return ACLNN_SUCCESS;
     }
-    CHECK_COND(std::strcmp(params.layout, "BNSD") == 0 || std::strcmp(params.layout, "NTD") == 0,
-               ACLNN_ERR_PARAM_INVALID, "The Phase 6 implementation supports BNSD and NTD only.");
-    CHECK_COND(params.qHatOutOptional == nullptr && params.kHatOutOptional == nullptr &&
-                   params.qRstdOutOptional == nullptr && params.kRstdOutOptional == nullptr,
-               ACLNN_ERR_PARAM_INVALID,
-               "Q/K L2Norm intermediate outputs are reserved by the stable ABI but are not supported yet.");
-    CHECK_COND(params.betaEffOutOptional == nullptr, ACLNN_ERR_PARAM_INVALID,
-               "betaEffOutOptional is reserved by the stable ABI but is not supported yet.");
-    CHECK_COND(params.hOutOptional == nullptr, ACLNN_ERR_PARAM_INVALID,
-               "hOutOptional is reserved by the stable ABI but is not supported yet.");
+    if (std::strcmp(params.layout, "BNSD") != 0 && std::strcmp(params.layout, "NTD") != 0) {
+        gdn_error::Attr("layout", params.layout, "BNSD or NTD on the Phase 6 path");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    for (const auto &entry : {std::make_pair(params.qHatOutOptional, "qHatOutOptional"),
+                              std::make_pair(params.kHatOutOptional, "kHatOutOptional"),
+                              std::make_pair(params.qRstdOutOptional, "qRstdOutOptional"),
+                              std::make_pair(params.kRstdOutOptional, "kRstdOutOptional"),
+                              std::make_pair(params.betaEffOutOptional, "betaEffOutOptional"),
+                              std::make_pair(params.hOutOptional, "hOutOptional")}) {
+        if (entry.first != nullptr) {
+            gdn_error::Argument(entry.second, "reserved output is unsupported on this path; must be omitted");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+    }
     return ACLNN_SUCCESS;
 }
 
 static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
 {
-    const aclnnStatus supportedContractStatus = CheckSupportedL2Contract(params);
-    if (supportedContractStatus != ACLNN_SUCCESS) {
-        return supportedContractStatus;
-    }
     GdnShapeInfo info;
-    CHECK_RET(ResolveShapeInfo(params, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    const size_t qkvRank = 4;
-    const size_t scalarRank = 3;
-    CHECK_RET(CheckOptionalRank(params.gCumsumOutOptional, scalarRank, "gCumsumOutOptional") == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckOptionalRank(params.aOutOptional, qkvRank, "aOutOptional") == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckOptionalRank(params.qHatOutOptional, qkvRank, "qHatOutOptional") == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckOptionalRank(params.kHatOutOptional, qkvRank, "kHatOutOptional") == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckOptionalRank(params.qRstdOutOptional, scalarRank, "qRstdOutOptional") == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckOptionalRank(params.kRstdOutOptional, scalarRank, "kRstdOutOptional") == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckOptionalRank(params.betaEffOutOptional, scalarRank, "betaEffOutOptional") == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckOptionalRank(params.hOutOptional, 5, "hOutOptional") == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
-
-    const int64_t chunks = ExpectedChunks(params, info.seqlen);
-    CHECK_COND(info.batch > 0 && info.hq > 0 && info.hv > 0 && info.seqlen > 0,
-               ACLNN_ERR_PARAM_INVALID, "B/H/T dimensions must be positive.");
-    CHECK_COND(info.hv % info.hq == 0, ACLNN_ERR_PARAM_INVALID,
-               "Phase 6 GVA requires Hv divisible by Hk.");
-    CHECK_COND(info.kDim == HEAD_DIM_128 &&
-                   (info.vDim == HEAD_DIM_128 ||
-                    info.vDim == CHUNK_GATED_DELTA_RULE_FWD_V256),
-               ACLNN_ERR_PARAM_INVALID,
-               "The Phase 6 composite GDN core supports K=128 and V=128/256.");
-    if (params.gCumsumOutOptional != nullptr) {
-        CHECK_COND(ShapeEqual(params.gCumsumOutOptional->GetViewShape(), params.g->GetViewShape()),
-                   ACLNN_ERR_PARAM_INVALID, "gCumsumOutOptional shape must match g.");
+    const auto shapeStatus = ResolveShapeInfo(params, info);
+    if (shapeStatus != ACLNN_SUCCESS) {
+        return shapeStatus;
     }
-    if (params.aOutOptional != nullptr) {
-        const bool valid = HasShape(params.aOutOptional,
-                                    {info.batch, info.hv, info.seqlen, params.chunkSize});
-        CHECK_COND(valid, ACLNN_ERR_PARAM_INVALID,
-                   "aOutOptional must use head-major [B,Hv,T,chunkSize].");
+    if (info.batch <= 0 || info.hq <= 0 || info.hv <= 0 || info.seqlen <= 0) {
+        gdn_error::Argument("q/v", "B/H/T dimensions must be positive; q=" +
+                            std::string(op::ToString(params.q->GetViewShape()).GetString()) + ", v=" +
+                            op::ToString(params.v->GetViewShape()).GetString());
+        return ACLNN_ERR_PARAM_INVALID;
     }
-    if (params.qHatOutOptional != nullptr) {
-        CHECK_COND(ShapeEqual(params.qHatOutOptional->GetViewShape(), params.q->GetViewShape()),
-                   ACLNN_ERR_PARAM_INVALID,
-                   "qHatOutOptional shape must match q.");
+    if (info.hv % info.hq != 0) {
+        gdn_error::Argument("v", "Hv=" + std::to_string(info.hv) + " must be divisible by Hk=" +
+                            std::to_string(info.hq));
+        return ACLNN_ERR_PARAM_INVALID;
     }
-    if (params.kHatOutOptional != nullptr) {
-        CHECK_COND(ShapeEqual(params.kHatOutOptional->GetViewShape(), params.k->GetViewShape()),
-                   ACLNN_ERR_PARAM_INVALID,
-                   "kHatOutOptional shape must match k.");
+    if (info.kDim != HEAD_DIM_128 ||
+        (info.vDim != HEAD_DIM_128 && info.vDim != CHUNK_GATED_DELTA_RULE_FWD_V256)) {
+        gdn_error::Argument("q/v", "requires K=128 and V=128/256; got K=" + std::to_string(info.kDim) +
+                            ", V=" + std::to_string(info.vDim));
+        return ACLNN_ERR_PARAM_INVALID;
     }
-    if (params.qRstdOutOptional != nullptr) {
-        const bool valid = HasShape(params.qRstdOutOptional, {info.batch, info.hq, info.seqlen});
-        CHECK_COND(valid, ACLNN_ERR_PARAM_INVALID, "qRstdOutOptional must have shape [B,Hk,T].");
+    // Validate divisors and metadata before any chunk arithmetic or index access.
+    if (params.chunkSize != CHUNK_GATED_DELTA_RULE_FWD_CHUNK_64 &&
+        params.chunkSize != CHUNK_GATED_DELTA_RULE_FWD_CHUNK_128) {
+        gdn_error::Attr("chunkSize", std::to_string(params.chunkSize), "64 or 128");
+        return ACLNN_ERR_PARAM_INVALID;
     }
-    if (params.kRstdOutOptional != nullptr) {
-        const bool valid = HasShape(params.kRstdOutOptional, {info.batch, info.hq, info.seqlen});
-        CHECK_COND(valid, ACLNN_ERR_PARAM_INVALID, "kRstdOutOptional must have shape [B,Hk,T].");
+    if (!std::isfinite(params.scale) || std::abs(params.scale) > std::numeric_limits<float>::max()) {
+        gdn_error::Attr("scale", std::to_string(params.scale), "finite and within the finite FP32 range");
+        return ACLNN_ERR_PARAM_INVALID;
     }
-    if (params.betaEffOutOptional != nullptr) {
-        CHECK_COND(ShapeEqual(params.betaEffOutOptional->GetViewShape(), params.beta->GetViewShape()),
-                   ACLNN_ERR_PARAM_INVALID, "betaEffOutOptional shape must match beta.");
+    if ((params.cuSeqlensOptional == nullptr) != (params.chunkIndicesOptional == nullptr)) {
+        gdn_error::Argument("cuSeqlensOptional/chunkIndicesOptional", "must be both present or both absent");
+        return ACLNN_ERR_PARAM_INVALID;
     }
-    if (params.hOutOptional != nullptr) {
-        const int64_t stateDim0 = params.stateVFirst ? info.vDim : info.kDim;
-        const int64_t stateDim1 = params.stateVFirst ? info.kDim : info.vDim;
-        const bool valid = HasShape(params.hOutOptional,
-                                    {info.batch, chunks, info.hv, stateDim0, stateDim1});
-        CHECK_COND(valid, ACLNN_ERR_PARAM_INVALID,
-                   "hOutOptional shape must match stateVFirst.");
+    if (params.cuSeqlensOptional != nullptr && info.batch != 1) {
+        gdn_error::Argument("q/v", "varlen requires physical B=1; got B=" + std::to_string(info.batch));
+        return ACLNN_ERR_PARAM_INVALID;
     }
-    CHECK_COND(params.chunkSize == CHUNK_GATED_DELTA_RULE_FWD_CHUNK_64 ||
-                   params.chunkSize == CHUNK_GATED_DELTA_RULE_FWD_CHUNK_128,
-               ACLNN_ERR_PARAM_INVALID, "chunkSize must be 64 or 128.");
-    CHECK_COND((params.cuSeqlensOptional == nullptr) == (params.chunkIndicesOptional == nullptr),
-               ACLNN_ERR_PARAM_INVALID, "cuSeqlens and chunkIndices must be both present or both absent.");
-    CHECK_COND(params.cuSeqlensOptional == nullptr || info.batch == 1, ACLNN_ERR_PARAM_INVALID,
-               "varlen rank-4 input requires physical B=1.");
     CHECK_RET(CheckMetadata(params, info.seqlen) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-
+    const int64_t chunks = ExpectedChunks(params, info.seqlen);
     const int64_t seqNum = SeqNum(params, info.batch);
     const int64_t stateDim0 = params.stateVFirst ? info.vDim : info.kDim;
     const int64_t stateDim1 = params.stateVFirst ? info.kDim : info.vDim;
-    CHECK_RET(CheckStateShape(params.initialStateOptional, "initialState", seqNum, info.hv, stateDim0, stateDim1) ==
-                  ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
-    if (params.finalStateOutOptional != nullptr) {
-        CHECK_RET(CheckStateShape(params.finalStateOutOptional, "finalStateOut", seqNum, info.hv,
-                                  stateDim0, stateDim1) ==
-                      ACLNN_SUCCESS,
-                  ACLNN_ERR_PARAM_INVALID);
-    }
-
+    CHECK_RET(CheckStateShape(params.initialStateOptional, "initialStateOptional", seqNum, info.hv,
+                              stateDim0, stateDim1) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckStateShape(params.finalStateOutOptional, "finalStateOutOptional", seqNum, info.hv,
+                              stateDim0, stateDim1) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckShape(params.gCumsumOutOptional, "gCumsumOutOptional", params.g->GetViewShape()) ==
+                  ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckShape(params.aOutOptional, "aOutOptional",
+                         MakeShape({info.batch, info.hv, info.seqlen, params.chunkSize})) ==
+                  ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckShape(params.qHatOutOptional, "qHatOutOptional", params.q->GetViewShape()) ==
+                  ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckShape(params.kHatOutOptional, "kHatOutOptional", params.k->GetViewShape()) ==
+                  ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    const auto rstdShape = MakeShape({info.batch, info.hq, info.seqlen});
+    CHECK_RET(CheckShape(params.qRstdOutOptional, "qRstdOutOptional", rstdShape) ==
+                  ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckShape(params.kRstdOutOptional, "kRstdOutOptional", rstdShape) ==
+                  ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckShape(params.betaEffOutOptional, "betaEffOutOptional", params.beta->GetViewShape()) ==
+                  ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckShape(params.hOutOptional, "hOutOptional",
+                         MakeShape({info.batch, chunks, info.hv, stateDim0, stateDim1})) ==
+                  ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     const DataType dtype = params.q->GetDataType();
-    CHECK_COND(dtype == DataType::DT_FLOAT16 || dtype == DataType::DT_BF16,
-               ACLNN_ERR_PARAM_INVALID, "q/k/v must be float16 or bfloat16.");
-    CHECK_COND(params.k->GetDataType() == dtype && params.v->GetDataType() == dtype &&
-                   params.oOut->GetDataType() == dtype &&
-                   (params.aOutOptional == nullptr || params.aOutOptional->GetDataType() == dtype),
-               ACLNN_ERR_PARAM_INVALID, "q/k/v/oOut/aOutOptional must have the same dtype.");
-    CHECK_COND((params.beta->GetDataType() == DataType::DT_FLOAT || params.beta->GetDataType() == dtype) &&
-                   (params.g->GetDataType() == DataType::DT_FLOAT || params.g->GetDataType() == dtype),
-               ACLNN_ERR_PARAM_INVALID, "g and beta must be float32 or match q/k/v.");
-    CHECK_COND(params.gCumsumOutOptional == nullptr || params.gCumsumOutOptional->GetDataType() == DataType::DT_FLOAT,
-               ACLNN_ERR_PARAM_INVALID, "gCumsumOutOptional must be float32.");
-    CHECK_COND((params.qHatOutOptional == nullptr || params.qHatOutOptional->GetDataType() == dtype) &&
-                   (params.kHatOutOptional == nullptr || params.kHatOutOptional->GetDataType() == dtype) &&
-                   (params.hOutOptional == nullptr || params.hOutOptional->GetDataType() == dtype),
-               ACLNN_ERR_PARAM_INVALID, "qHatOutOptional/kHatOutOptional/hOutOptional must match q dtype.");
-    CHECK_COND((params.qRstdOutOptional == nullptr ||
-                    params.qRstdOutOptional->GetDataType() == DataType::DT_FLOAT) &&
-                   (params.kRstdOutOptional == nullptr ||
-                    params.kRstdOutOptional->GetDataType() == DataType::DT_FLOAT) &&
-                   (params.betaEffOutOptional == nullptr ||
-                    params.betaEffOutOptional->GetDataType() == DataType::DT_FLOAT),
-               ACLNN_ERR_PARAM_INVALID, "qRstdOutOptional/kRstdOutOptional/betaEffOutOptional must be float32.");
-    if (UsePreparePath(params)) {
-        CHECK_COND(dtype == DataType::DT_BF16 && info.vDim == HEAD_DIM_128 &&
-                       params.chunkSize == CHUNK_GATED_DELTA_RULE_FWD_CHUNK_64 && info.hv / info.hq <= 4,
-                   ACLNN_ERR_PARAM_INVALID,
-                   "Ascend950 prepare path requires BF16, K=V=128, chunkSize=64 and Hv/Hk in {1,2,3,4}.");
+    CHECK_RET(CheckDtype(params.q, "q", {DataType::DT_FLOAT16, DataType::DT_BF16}) ==
+                  ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    for (const auto &entry : {std::make_pair(params.k, "k"), std::make_pair(params.v, "v")}) {
+        CHECK_RET(CheckDtype(entry.first, entry.second, {dtype}) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     }
-    if (params.initialStateOptional != nullptr) {
-        const DataType stateDtype = params.initialStateOptional->GetDataType();
-        CHECK_COND(stateDtype == DataType::DT_FLOAT || stateDtype == dtype, ACLNN_ERR_PARAM_INVALID,
-                   "initialState dtype must be float32 or match q/k/v.");
+    for (const auto &entry : {std::make_pair(params.g, "g"), std::make_pair(params.beta, "beta"),
+                              std::make_pair(params.initialStateOptional, "initialStateOptional")}) {
+        CHECK_RET(CheckDtype(entry.first, entry.second, {DataType::DT_FLOAT, dtype}) ==
+                      ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     }
-    if (params.finalStateOutOptional != nullptr) {
-        const DataType expectedStateDtype = params.initialStateOptional == nullptr
-                                                ? DataType::DT_FLOAT
-                                                : params.initialStateOptional->GetDataType();
-        CHECK_COND(params.finalStateOutOptional->GetDataType() == expectedStateDtype,
-                   ACLNN_ERR_PARAM_INVALID,
-                   "finalStateOut dtype must match initialState, or be float32 when initialState is absent.");
+    for (const auto &entry : {std::make_pair(params.oOut, "oOut"),
+                              std::make_pair(params.aOutOptional, "aOutOptional"),
+                              std::make_pair(params.qHatOutOptional, "qHatOutOptional"),
+                              std::make_pair(params.kHatOutOptional, "kHatOutOptional"),
+                              std::make_pair(params.hOutOptional, "hOutOptional")}) {
+        CHECK_RET(CheckDtype(entry.first, entry.second, {dtype}, true) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    }
+    for (const auto &entry : {std::make_pair(params.gCumsumOutOptional, "gCumsumOutOptional"),
+                              std::make_pair(params.qRstdOutOptional, "qRstdOutOptional"),
+                              std::make_pair(params.kRstdOutOptional, "kRstdOutOptional"),
+                              std::make_pair(params.betaEffOutOptional, "betaEffOutOptional")}) {
+        CHECK_RET(CheckDtype(entry.first, entry.second, {DataType::DT_FLOAT}, true) ==
+                      ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    }
+    const auto stateDtype = params.initialStateOptional == nullptr
+                                ? DataType::DT_FLOAT : params.initialStateOptional->GetDataType();
+    CHECK_RET(CheckDtype(params.finalStateOutOptional, "finalStateOutOptional", {stateDtype}, true) ==
+                  ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckSupportedL2Contract(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (UsePreparePath(params) &&
+        (dtype != DataType::DT_BF16 || info.vDim != HEAD_DIM_128 ||
+         params.chunkSize != CHUNK_GATED_DELTA_RULE_FWD_CHUNK_64 || info.hv / info.hq > 4)) {
+        gdn_error::Argument("prepare path", "requires BF16, K=V=128, chunkSize=64 and Hv/Hk in {1,2,3,4}");
+        return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
 }
@@ -585,8 +585,10 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         useQkL2norm, allowNegEigval, stateVFirst, oOut, finalStateOutOptional, qHatOutOptional,
         kHatOutOptional, qRstdOutOptional, kRstdOutOptional, betaEffOutOptional,
         gCumsumOutOptional, aOutOptional, hOutOptional};
-    CHECK_COND(workspaceSize != nullptr && executor != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-               "workspaceSize and executor must not be nullptr.");
+    if (workspaceSize == nullptr || executor == nullptr) {
+        gdn_error::Required(workspaceSize == nullptr ? "workspaceSize" : "executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     CHECK_RET(CheckRequiredInputs(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR);
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
@@ -595,7 +597,10 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         uniqueExecutor.ReleaseTo(executor);
         return ACLNN_SUCCESS;
     }
-    CHECK_RET(CheckParams(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    const auto paramsStatus = CheckParams(params);
+    if (paramsStatus != ACLNN_SUCCESS) {
+        return paramsStatus;
+    }
 
     CHECK_RET(MakeContiguous(params.q, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(MakeContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
