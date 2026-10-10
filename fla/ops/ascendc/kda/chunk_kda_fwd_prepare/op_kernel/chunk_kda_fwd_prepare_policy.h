@@ -55,6 +55,29 @@
 #define KDA_PREPARE_RELAY_ORDER_SWAP 0
 #endif
 
+// 诊断开关：在若干候选位置插一个粗粒度 PipeBarrier<PIPE_ALL>()，用"最大串行"来定位窗口。
+//   0 = 关（默认，与改动前逐字节一致）
+//   1 = AIV V6：两份 relay 的 DataCopy 之后（ready 发布之前）——把写侧彻底串行
+//   2 = AIC C7：relay 搬入 L1 之前（已经等过 ready）——把读侧彻底串行
+//   3 = AIC C7：relay 搬入 L1 之后、W/U 之前
+//   4 = AIV V6：v 输入载入并等完 MTE2→V 之后、V6Vf 之前——AIV 内部 UB 侧串行
+//   5 = AIC C4：读 V3 产物 payload 之前
+//   9 = 上面 1~5 全部插入（最大串行）
+// 注意：仓库内已有记录，PIPE_ALL 不保证 Cube 侧 MTE1/M/FIX 的次序，所以"档位 9 仍然漂"
+// 不能直接推出"与流水时序无关"；但"某个档位不漂了"是有效的定位信息。
+// 只加屏障，不改地址、flag 计数、算术，默认关闭时不产生任何代码。
+#ifndef KDA_PREPARE_DIAG_PIPE_ALL
+#define KDA_PREPARE_DIAG_PIPE_ALL 0
+#endif
+
+#define KDA_PREPARE_DIAG_BARRIER(point)                                            \
+    do {                                                                           \
+        if constexpr ((KDA_PREPARE_DIAG_PIPE_ALL == (point)) ||                    \
+                      (KDA_PREPARE_DIAG_PIPE_ALL == 9)) {                          \
+            AscendC::PipeBarrier<PIPE_ALL>();                                      \
+        }                                                                          \
+    } while (0)
+
 namespace KdaPrepare {
 
 enum class QkNormMode : uint8_t {

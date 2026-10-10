@@ -361,6 +361,7 @@ private:
                                           AscendC::DcciDst::CACHELINE_OUT>(payload);
         AscendC::DataSyncBarrier<AscendC::MemDsbT::DDR>();
 #endif
+        KDA_PREPARE_DIAG_BARRIER(5);  // 诊断：C4 读 payload 前串行
         AscendC::DataCopy(bL1, payload[Workspace::kB / sizeof(float)], copy);
         AscendC::DataCopy(x0L1, payload[Workspace::kX0 / sizeof(float)], copy);
         AscendC::DataCopy(negX1L1, payload[Workspace::kNegX1 / sizeof(float)], copy);
@@ -593,8 +594,10 @@ private:
                                               AscendC::DcciDst::CACHELINE_OUT>(vBetaRelay);
             AscendC::DataSyncBarrier<AscendC::MemDsbT::DDR>();
 #endif
+            KDA_PREPARE_DIAG_BARRIER(2);  // 诊断：C7 读 relay 前串行
             AscendC::DataCopy(kBetaL1, kBetaRelay, rhsCopy);
             AscendC::DataCopy(vBetaL1, vBetaRelay, rhsCopy);
+            KDA_PREPARE_DIAG_BARRIER(3);  // 诊断：relay 搬入 L1 之后串行
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(mte2ToMte1_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(mte2ToMte1_);
