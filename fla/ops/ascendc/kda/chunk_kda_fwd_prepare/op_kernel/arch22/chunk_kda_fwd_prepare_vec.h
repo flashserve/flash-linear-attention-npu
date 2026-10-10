@@ -582,8 +582,14 @@ private:
             args_.workspace + slot + Workspace::kArch22RhsKBetaG));
         vBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + slot + Workspace::kArch22RhsVBeta));
+#if KDA_PREPARE_RELAY_ORDER_SWAP
+        // 诊断：先 V_beta、后 K_beta_g（默认路径是反过来的）
+        AscendC::DataCopy(vBetaRelay, vBeta, rhsRows * Shape::kValueDim);
+        AscendC::DataCopy(kBetaRelay, kBetaG, rhsRows * Shape::kHeadDim);
+#else
         AscendC::DataCopy(kBetaRelay, kBetaG, rhsRows * Shape::kHeadDim);
         AscendC::DataCopy(vBetaRelay, vBeta, rhsRows * Shape::kValueDim);
+#endif
 #if CHUNK_KDA_FWD_PREPARE_RELAY_SYNC >= 1
         // 写侧加固（保守）：这两份 relay 马上会被 AIC 的 C7 跨核读回。只靠
         // ready 跨核 flag 时，MTE3 写缓冲/L2 里的数据可能还没对读侧可见，读侧

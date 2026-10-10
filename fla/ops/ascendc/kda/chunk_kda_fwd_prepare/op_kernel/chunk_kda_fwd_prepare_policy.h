@@ -46,6 +46,15 @@
 #define CHUNK_KDA_FWD_PREPARE_RELAY_SYNC 2
 #endif
 
+// 诊断开关：把 V6 里两份 relay 的搬运顺序对调（V_beta 先搬、K_beta_g 后搬）。
+// 用途是判定"偶发坏数据"到底是不是"后发的那笔搬运在 ready 之前还没落地"：
+//   - 若对调后漂移从 u 翻到 w ⇒ 与搬运发起顺序/完成序有关（GM 侧）；
+//   - 若仍然只漂 u ⇒ 与搬运顺序无关，问题在 V_beta 的上游（V6 的 v 载入 / UB 槽）。
+// 只改两条 DataCopy 的先后，不改地址、不改 flag 计数、不改任何算术。默认 0。
+#ifndef KDA_PREPARE_RELAY_ORDER_SWAP
+#define KDA_PREPARE_RELAY_ORDER_SWAP 0
+#endif
+
 namespace KdaPrepare {
 
 enum class QkNormMode : uint8_t {
