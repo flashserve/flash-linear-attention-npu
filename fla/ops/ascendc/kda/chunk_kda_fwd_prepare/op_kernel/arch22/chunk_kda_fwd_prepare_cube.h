@@ -191,6 +191,12 @@ private:
         copy.dstNzMatrixStride = 0;
         copy.nValue = Shape::kChunkRows;
         copy.dstNzC0Stride = Shape::kChunkRows;
+#if CHUNK_KDA_FWD_PREPARE_RELAY_SYNC >= 2
+        // C2 读入的 V1 payload 同样来自 AIV，按同一方式加固。
+        AscendC::DataCacheCleanAndInvalid<bfloat16_t, AscendC::CacheLine::ENTIRE_DATA_CACHE,
+                                          AscendC::DcciDst::CACHELINE_OUT>(payload);
+        AscendC::DataSyncBarrier<AscendC::MemDsbT::DDR>();
+#endif
         AscendC::DataCopy(scoreL1[ScorePayload::kQPlus / sizeof(bfloat16_t)],
                           payload[ScorePayload::kQPlus / sizeof(bfloat16_t)], copy);
         AscendC::DataCopy(scoreL1[ScorePayload::kKPlus / sizeof(bfloat16_t)],
@@ -349,6 +355,13 @@ private:
         copy.dstNzNStride = 1;
         copy.dstNzC0Stride = 32;
         copy.dstNzMatrixStride = 0;
+#if CHUNK_KDA_FWD_PREPARE_RELAY_SYNC >= 2
+        // C4 读入的 V3 产物（B/X0/negX1）同样来自 AIV，按同一方式加固。
+        AscendC::DataCacheCleanAndInvalid<float, AscendC::CacheLine::ENTIRE_DATA_CACHE,
+                                          AscendC::DcciDst::CACHELINE_OUT>(payload);
+        AscendC::DataSyncBarrier<AscendC::MemDsbT::DDR>();
+#endif
+        KDA_PREPARE_DIAG_BARRIER(5);  // 诊断：C4 读 payload 前串行
         AscendC::DataCopy(bL1, payload[Workspace::kB / sizeof(float)], copy);
         AscendC::DataCopy(x0L1, payload[Workspace::kX0 / sizeof(float)], copy);
         AscendC::DataCopy(negX1L1, payload[Workspace::kNegX1 / sizeof(float)], copy);
@@ -568,13 +581,23 @@ private:
             AscendC::GlobalTensor<bfloat16_t> kBetaRelay;
             AscendC::GlobalTensor<bfloat16_t> vBetaRelay;
             kBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
-                args_.workspace + slot + Workspace::kPayload +
-                Workspace::kKBetaG));
+                args_.workspace + slot + Workspace::kArch22RhsKBetaG));
             vBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
-                args_.workspace + slot + Workspace::kPayload +
-                Workspace::kVBeta));
+                args_.workspace + slot + Workspace::kArch22RhsVBeta));
+#if CHUNK_KDA_FWD_PREPARE_RELAY_SYNC >= 1
+            // 读侧加固（保守）：读 AIV 刚写过的 relay 之前先让本核缓存行失效，
+            // 否则 MTE2 可能命中旧行，把上一代（或空）的 K_beta_g/V_beta 读成
+            // 本代的 RHS（现场表现为同一 Stage 里 W 正常、U 整块错）。
+            AscendC::DataCacheCleanAndInvalid<bfloat16_t, AscendC::CacheLine::ENTIRE_DATA_CACHE,
+                                              AscendC::DcciDst::CACHELINE_OUT>(kBetaRelay);
+            AscendC::DataCacheCleanAndInvalid<bfloat16_t, AscendC::CacheLine::ENTIRE_DATA_CACHE,
+                                              AscendC::DcciDst::CACHELINE_OUT>(vBetaRelay);
+            AscendC::DataSyncBarrier<AscendC::MemDsbT::DDR>();
+#endif
+            KDA_PREPARE_DIAG_BARRIER(2);  // 诊断：C7 读 relay 前串行
             AscendC::DataCopy(kBetaL1, kBetaRelay, rhsCopy);
             AscendC::DataCopy(vBetaL1, vBetaRelay, rhsCopy);
+            KDA_PREPARE_DIAG_BARRIER(3);  // 诊断：relay 搬入 L1 之后串行
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(mte2ToMte1_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(mte2ToMte1_);

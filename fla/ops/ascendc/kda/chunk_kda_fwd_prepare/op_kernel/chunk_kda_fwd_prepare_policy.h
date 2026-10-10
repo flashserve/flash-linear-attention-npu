@@ -32,6 +32,61 @@
 // 只有反向重计算路径才需要。
 #define CHUNK_KDA_FWD_PREPARE_OUTPUT_FORWARD 3
 
+// AIV → AIC 跨核 GM 交接的保守同步档位（Arch22 现场 A/B 用）。
+//
+// V6 把 K_beta_g/V_beta 写进 workspace relay，随后由 AIC 的 C7 读回并计算
+// W/U；C2/C4 则把 AIV 写好的 Q/K payload 与 V3 产物读进 L1。这些交接当前只依赖
+// ready/free 跨核 flag。A2/A3 上"只靠跨核 flag 传递 GM 数据"不足以稳定保证写侧
+// 已经对读侧可见（同 CP/PPFM 的既定结论），这里提供一个可回退的加固开关：
+//   0 = 与改动前逐字节一致（基线）；
+//   1 = 只在 V6 → C7 这条交接上补"写侧 clean + 读侧失效 + DSB"；
+//   2 = 再把 C2/C4 读入 AIV payload 的位置按同样方式加固（默认）。
+// 只影响同步强度，不改变任何计算、地址、输出档位或 tiling 数据。
+#ifndef CHUNK_KDA_FWD_PREPARE_RELAY_SYNC
+#define CHUNK_KDA_FWD_PREPARE_RELAY_SYNC 2
+#endif
+
+// 诊断开关：把 V6 里两份 relay 的搬运顺序对调（V_beta 先搬、K_beta_g 后搬）。
+// 用途是判定"偶发坏数据"到底是不是"后发的那笔搬运在 ready 之前还没落地"：
+//   - 若对调后漂移从 u 翻到 w ⇒ 与搬运发起顺序/完成序有关（GM 侧）；
+//   - 若仍然只漂 u ⇒ 与搬运顺序无关，问题在 V_beta 的上游（V6 的 v 载入 / UB 槽）。
+// 只改两条 DataCopy 的先后，不改地址、不改 flag 计数、不改任何算术。默认 0。
+#ifndef KDA_PREPARE_RELAY_ORDER_SWAP
+#define KDA_PREPARE_RELAY_ORDER_SWAP 0
+#endif
+
+// 诊断开关：在若干候选位置插一个粗粒度 PipeBarrier<PIPE_ALL>()，用"最大串行"来定位窗口。
+//   0 = 关（默认，与改动前逐字节一致）
+//   1 = AIV V6：两份 relay 的 DataCopy 之后（ready 发布之前）——把写侧彻底串行
+//   2 = AIC C7：relay 搬入 L1 之前（已经等过 ready）——把读侧彻底串行
+//   3 = AIC C7：relay 搬入 L1 之后、W/U 之前
+//   4 = AIV V6：v 输入载入并等完 MTE2→V 之后、V6Vf 之前——AIV 内部 UB 侧串行
+//   5 = AIC C4：读 V3 产物 payload 之前
+//   9 = 上面 1~5 全部插入（最大串行）
+// 注意：仓库内已有记录，PIPE_ALL 不保证 Cube 侧 MTE1/M/FIX 的次序，所以"档位 9 仍然漂"
+// 不能直接推出"与流水时序无关"；但"某个档位不漂了"是有效的定位信息。
+// 只加屏障，不改地址、flag 计数、算术，默认关闭时不产生任何代码。
+#ifndef KDA_PREPARE_DIAG_PIPE_ALL
+#define KDA_PREPARE_DIAG_PIPE_ALL 0
+#endif
+
+#define KDA_PREPARE_DIAG_BARRIER(point)                                            \
+    do {                                                                           \
+        if constexpr ((KDA_PREPARE_DIAG_PIPE_ALL == (point)) ||                    \
+                      (KDA_PREPARE_DIAG_PIPE_ALL == 9)) {                          \
+            AscendC::PipeBarrier<PIPE_ALL>();                                      \
+        }                                                                          \
+    } while (0)
+
+// 铁证探针：开启后，V6 会把公开输出 kg 的第 0 个元素加一个固定偏移（+1.0）。
+// 用途：证明"源码 → 构建 → 安装 → 运行时"这条链真的把这份源码编进去了。
+//   - 关（默认 0）：与改动前一致；
+//   - 开：kg 的指纹（sum/abs_sum/sq_sum）会明显变化，[2] 里打印的 warm fp 一眼可见。
+// 只用于构建链自证，任何正式改动都不要打开。
+#ifndef KDA_PREPARE_DIAG_MARKER
+#define KDA_PREPARE_DIAG_MARKER 1
+#endif
+
 namespace KdaPrepare {
 
 enum class QkNormMode : uint8_t {
@@ -150,8 +205,24 @@ constexpr uint32_t kArch35SlotStride = kSlotStride;
 constexpr uint32_t kArch22CubeRelay = 0x1A400;
 constexpr uint32_t kArch22RawScoreBytes = 0x5000;
 constexpr uint32_t kArch22TRelay = kArch22CubeRelay;
-constexpr uint32_t kArch22SlotStride =
-    kArch22CubeRelay + kArch22RawScoreBytes;
+
+// Arch22：V6→C7 的 RHS（K_beta_g/V_beta）改用独立区，不再与 V1 payload 换义地址。
+//
+// 旧布局把 RHS 放在 payload 的 kKBetaG/kVBeta（相对 payload 为 0x7800/0xB800，
+// 即 [30 KiB, 62 KiB)），而 V1 payload 的 Kplus 覆盖 [16 KiB, 32 KiB)、Kminus 覆盖
+// [32 KiB, 72 KiB)——两者落在同一段字节上。C7 正在把 RHS 搬进 L1 时，只要该 slot
+// 的 V1 先写进来（跨核计数错位或任何一次提前放行），读到的就是"半新半旧"的
+// Q/K payload：Kminus = k_hat * E(Gref-G) 大多极小、少量很大，表现为单个
+// (value head, chunk) 的 U 整块异常而同一 Stage 的 W 正常；写侧/读侧 clean 都
+// 修不了它，因为根因是地址复用而不是可见性。
+//
+// 现在 RHS 独占 slot 尾部 32 KiB，除本代 V6 外没有任何 stage 写它。
+constexpr uint32_t kArch22RhsBase = kArch22CubeRelay + kArch22RawScoreBytes;
+constexpr uint32_t kArch22RhsMatrixBytes = 0x4000; // [64,128] * BF16
+constexpr uint32_t kArch22RhsKBetaG = kArch22RhsBase;
+constexpr uint32_t kArch22RhsVBeta = kArch22RhsBase + kArch22RhsMatrixBytes;
+constexpr uint32_t kArch22RhsBytes = 2 * kArch22RhsMatrixBytes;
+constexpr uint32_t kArch22SlotStride = kArch22RhsBase + kArch22RhsBytes;
 
 // payload 在不同 Stage 原址换义，不在 UB/L1 内搬位。
 constexpr uint32_t kX0 = 0x0000;

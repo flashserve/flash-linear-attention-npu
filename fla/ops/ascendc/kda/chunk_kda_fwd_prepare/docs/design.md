@@ -167,7 +167,9 @@ Q/K head，也只允许 GVA 组首 owner 写 `q_hat/k_hat/q_rstd/k_rstd`，避�
 - L1 为 512 KiB，四个 head lane 保存 C2 payload，其余区域保存 X0、negX1、T 和 Akk。
 - Arch35 每个 workspace slot 为 `0x1A400` Byte，保存 Qhat、Khat、betaEff
   和 72 KiB payload。
-- Arch22 每个 slot 追加 20 KiB AIC 独占 relay，总计 `0x1F400` Byte；C2
+- Arch22 每个 slot 追加 20 KiB AIC 独占 relay，并再追加 32 KiB RHS 独立区
+  （V6→C7 的 K_beta_g/V_beta，不再与 V1 payload 换义地址），总计 `0x27400`
+  Byte；C2
   写四段 raw score，V3 消费后 C4 在同址前 4 KiB 写 `T`。host 根据目标
   平台选择 slot 大小，A5 不预留 Arch22 的追加区。
 
