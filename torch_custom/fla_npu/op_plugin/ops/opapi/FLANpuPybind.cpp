@@ -25,9 +25,6 @@ namespace py = pybind11;
 
 namespace op_api {
 
-at::Tensor npu_fast_gelu_custom(const at::Tensor &self);
-at::Tensor npu_fast_gelu_custom_backward(const at::Tensor &grad, const at::Tensor &self);
-
 std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> npu_prepare_wy_repr_bwd_full(
     const at::Tensor &k,
     const at::Tensor &v,
@@ -493,8 +490,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 {
     m.doc() = "Direct FLA NPU Ascend C bindings that bypass torch.ops dispatcher.";
 
-    m.def("npu_fast_gelu_custom", &op_api::npu_fast_gelu_custom, py::arg("self"));
-    m.def("npu_fast_gelu_custom_backward", &op_api::npu_fast_gelu_custom_backward, py::arg("grad"), py::arg("self"));
     m.def(
         "npu_causal_conv1d",
         &py_npu_causal_conv1d,
