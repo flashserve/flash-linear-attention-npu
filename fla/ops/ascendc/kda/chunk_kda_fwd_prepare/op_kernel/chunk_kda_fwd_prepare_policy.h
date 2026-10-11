@@ -272,11 +272,10 @@ constexpr uint32_t kAkkQ10Elements = 32 * 16;
 // 才读，暴露窗口更长）。
 //
 // 现在每个 head 各占一条 RHS lane，C2/C4 的 score/B 完全不碰它；pair 之间用的也是
-// 不同 lane，所以同一次 C7 内不存在 lane 换义。跨 chunk 的写后读由两道独立的保护
-// 共同保证（见 chunk_kda_fwd_prepare_cube.h 的 StageC7）：
-//   1) 显式 MTE1_MTE2 event：搬入前 WaitFlag，W/U 的 MTE1 取数全部下发之后再 SetFlag；
-//   2) 归还时机：C7 归还 workspace 已挪到 W/U 都算完之后、并在 PIPE_FIX 上发布，
-//      后一个 chunk 的 C7 必须等前一个 C7 最后一次 Fixpipe 完成才能开始。
+// 不同 lane，所以同一次 C7 内不存在 lane 换义。跨 chunk / 跨 pair 的写后读由显式的
+// MTE1_MTE2 event 保证（见 chunk_kda_fwd_prepare_cube.h 的 StageC7）：搬入前
+// WaitFlag，W/U 的 MTE1 取数全部下发之后再 SetFlag。C7 归还 workspace 的时机保持
+// "RHS 一离开 workspace 就归还"，好让下一个 chunk 的 V0/V1 与本次 W/U 重叠。
 constexpr uint32_t kRhsLaneBytes = 0x8000; // K_beta_g 0x4000 + V_beta 0x4000
 constexpr uint32_t kRhsLane[Shape::kHeadsPerGroup] = {
     0x5C000, 0x64000, 0x6C000, 0x74000};
