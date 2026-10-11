@@ -57,8 +57,11 @@ public:
         fixToMte1_[1] = pipe_->AllocEventID<AscendC::HardEvent::FIX_MTE1>(); // ID 1
         fixToMte1_[2] = pipe_->AllocEventID<AscendC::HardEvent::FIX_MTE1>(); // ID 2
         fixToMte1_[3] = pipe_->AllocEventID<AscendC::HardEvent::FIX_MTE1>(); // ID 3
+        // RHS 专用 L1 lane 的写后读事件（MTE1 → MTE2），独立 ID 池，ID 0。
+        rhsLaneFree_ = pipe_->AllocEventID<AscendC::HardEvent::MTE1_MTE2>(); // ID 0
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(fixToM_);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(rhsLaneFree_);
     }
 
     __aicore__ inline void Process()
@@ -76,6 +79,7 @@ public:
         if (workgroup_ >= coreCount_ || workBegin >= workEnd) {
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
             AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(fixToM_);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(rhsLaneFree_);
             ReleaseEvents();
             return;
         }
@@ -156,6 +160,7 @@ public:
         }
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(fixToM_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(rhsLaneFree_);
         ReleaseEvents();
     }
 
@@ -554,7 +559,12 @@ private:
         const uint32_t m = hasBottom ? 64 : 32;
         auto l1Bytes = l1Buf_.Get<uint8_t>();
 
-        // 先把同一 pair 两个有效 head 的 K_beta_g/V_beta 全部搬入独立 L1 lane。
+        // 先把同一 pair 两个有效 head 的 K_beta_g/V_beta 全部搬入各自的专用 L1 lane
+        // （kRhsLane[localHead]，每个 head 一条，C2/C4 不碰）。跨 chunk 的写后读由本函数
+        // 末尾的归还时机保证：后一个 chunk 的 C7 要等本次最后一次 Fixpipe 完成才开始。
+        // 这里再用 MTE1_MTE2 显式兜一层：上一次 C7 对这些 lane 的 MTE1 读必须已经结束。
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(rhsLaneFree_);
+
         AscendC::Nd2NzParams rhsCopy{};
         rhsCopy.ndNum = 1;
         rhsCopy.nValue = m;
@@ -573,10 +583,12 @@ private:
             const uint64_t slot = WorkspaceSlotBase(
                 workgroup_, localHead, Workspace::kArch22WorkgroupStride,
                 Workspace::kArch22SlotStride);
+            // RHS 只落在 C7 独占的 lane 上，不再与 C2 的 score 共址。
             auto kBetaL1 =
-                l1Bytes[L1::kHeadLane[localHead]].template ReinterpretCast<bfloat16_t>();
+                l1Bytes[L1::kRhsLane[localHead] + L1::kRhsKBetaG]
+                    .template ReinterpretCast<bfloat16_t>();
             auto vBetaL1 =
-                l1Bytes[L1::kHeadLane[localHead] + Shape::kBf16MatrixBytes]
+                l1Bytes[L1::kRhsLane[localHead] + L1::kRhsVBeta]
                     .template ReinterpretCast<bfloat16_t>();
             AscendC::GlobalTensor<bfloat16_t> kBetaRelay;
             AscendC::GlobalTensor<bfloat16_t> vBetaRelay;
@@ -602,10 +614,6 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(mte2ToMte1_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(mte2ToMte1_);
 
-        // RHS 已全部离开 workspace；一次 collective free 同时归还 pair 的两个 slot。
-        AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(
-            freeFlagId);
-
         // 再逐 head 消费 L1 常驻的 Akk 与两个 RHS，分别计算 W、U。
         for (uint32_t headInPair = 0; headInPair < 2; ++headInPair) {
             const uint32_t localHead = pair * 2 + headInPair;
@@ -622,9 +630,10 @@ private:
                 l1Bytes[L1::kAkk + localHead * L1::kAkkStride]
                     .template ReinterpretCast<bfloat16_t>();
             auto kBetaL1 =
-                l1Bytes[L1::kHeadLane[localHead]].template ReinterpretCast<bfloat16_t>();
+                l1Bytes[L1::kRhsLane[localHead] + L1::kRhsKBetaG]
+                    .template ReinterpretCast<bfloat16_t>();
             auto vBetaL1 =
-                l1Bytes[L1::kHeadLane[localHead] + Shape::kBf16MatrixBytes]
+                l1Bytes[L1::kRhsLane[localHead] + L1::kRhsVBeta]
                     .template ReinterpretCast<bfloat16_t>();
             const uint64_t outputOffset = HeadTensorOffset(
                 args_.tiling, chunk, valueHead, Shape::kHeadDim);
@@ -724,6 +733,13 @@ private:
                 uGm_[outputOffset], l0C, uFix);
             AscendC::SetFlag<AscendC::HardEvent::FIX_M>(fixToM_);
         }
+
+        // RHS 的 MTE1 读已经全部下发，允许下一次 C7 覆盖这些 lane。
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(rhsLaneFree_);
+        // W/U 已经用完全部操作数（含本 chunk 的 Akk/RHS 与 L0），才把 pair 的两个
+        // slot 归还给 AIV。旧写法在刚搬完 RHS、W/U 还没算的时候就归还，等于允许下一个
+        // chunk 的 V1/C2 与本次 C7 的 RHS 消费并发——这正是上面那条 lane 被覆盖的窗口。
+        AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(freeFlagId);
     }
 
     __aicore__ inline void ReleaseEvents()
@@ -733,6 +749,7 @@ private:
         pipe_->ReleaseEventID<AscendC::HardEvent::M_MTE1>(mToMte1_);
         pipe_->ReleaseEventID<AscendC::HardEvent::M_FIX>(mToFix_);
         pipe_->ReleaseEventID<AscendC::HardEvent::FIX_M>(fixToM_);
+        pipe_->ReleaseEventID<AscendC::HardEvent::MTE1_MTE2>(rhsLaneFree_);
         for (uint32_t head = 0; head < Shape::kHeadsPerGroup; ++head) {
             pipe_->ReleaseEventID<AscendC::HardEvent::FIX_MTE2>(fixToMte2_[head]);
             pipe_->ReleaseEventID<AscendC::HardEvent::MTE2_MTE1>(tReady_[head]);
@@ -756,6 +773,7 @@ private:
     AscendC::TEventID fixToMte2_[Shape::kHeadsPerGroup]{};
     AscendC::TEventID tReady_[Shape::kHeadsPerGroup]{};
     AscendC::TEventID fixToMte1_[Shape::kHeadsPerGroup]{};
+    AscendC::TEventID rhsLaneFree_{};
     AscendC::GlobalTensor<bfloat16_t> wGm_{};
     AscendC::GlobalTensor<bfloat16_t> uGm_{};
 };

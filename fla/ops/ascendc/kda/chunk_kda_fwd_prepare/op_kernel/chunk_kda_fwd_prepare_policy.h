@@ -85,7 +85,7 @@
 //   - 开：gk 的指纹（sum/abs_sum/sq_sum）会明显变化，[2] 里打印的 warm fp 一眼可见。
 // 只用于构建链自证，任何正式改动都不要打开。
 #ifndef KDA_PREPARE_DIAG_MARKER
-#define KDA_PREPARE_DIAG_MARKER 1
+#define KDA_PREPARE_DIAG_MARKER 0
 #endif
 
 namespace KdaPrepare {
@@ -261,7 +261,29 @@ constexpr uint32_t kQuadrantStride = 0x1000;
 constexpr uint32_t kAkkStride = 0x2000;
 // BF16 NZ 为 [N1,M1,M0,N0]；q10=(row 32,col 0) 的元素偏移。
 constexpr uint32_t kAkkQ10Elements = 32 * 16;
-constexpr uint32_t kPeak = 0x5C000;
+
+// C7 的 RHS（K_beta_g / V_beta）专用 L1 lane。
+//
+// 旧布局把这两份 RHS 直接放在 kHeadLane 上，而 C2 的 score 用的是同一条 lane
+// 的同两个偏移（kQPlus=0x0000 ↔ K_beta_g、kKPlus=0x4000 ↔ V_beta）。C7 刚把 RHS
+// 搬进 lane 就归还了 workspace，于是下一个 chunk 的 C2 一旦拿到 ready，就会用
+// MTE2 往同一条 lane 写 score，覆盖 C7 还没有用 MTE1 读完的 RHS——现场表现为同一
+// 个 Stage 里 U 整块错、W 逐位正常（K_beta_g 先读，V_beta 要隔一整个 Mmad+Fixpipe
+// 才读，暴露窗口更长）。
+//
+// 现在每个 head 各占一条 RHS lane，C2/C4 的 score/B 完全不碰它；pair 之间用的也是
+// 不同 lane，所以同一次 C7 内不存在 lane 换义。跨 chunk 的写后读由两道独立的保护
+// 共同保证（见 chunk_kda_fwd_prepare_cube.h 的 StageC7）：
+//   1) 显式 MTE1_MTE2 event：搬入前 WaitFlag，W/U 的 MTE1 取数全部下发之后再 SetFlag；
+//   2) 归还时机：C7 归还 workspace 已挪到 W/U 都算完之后、并在 PIPE_FIX 上发布，
+//      后一个 chunk 的 C7 必须等前一个 C7 最后一次 Fixpipe 完成才能开始。
+constexpr uint32_t kRhsLaneBytes = 0x8000; // K_beta_g 0x4000 + V_beta 0x4000
+constexpr uint32_t kRhsLane[Shape::kHeadsPerGroup] = {
+    0x5C000, 0x64000, 0x6C000, 0x74000};
+constexpr uint32_t kRhsKBetaG = 0x0000;
+constexpr uint32_t kRhsVBeta = 0x4000;
+
+constexpr uint32_t kPeak = 0x7C000;
 } // namespace L1
 
 namespace Arch35Ub {
