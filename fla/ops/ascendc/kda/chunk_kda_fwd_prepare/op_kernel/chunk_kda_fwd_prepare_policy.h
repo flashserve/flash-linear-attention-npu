@@ -78,10 +78,11 @@
         }                                                                          \
     } while (0)
 
-// 铁证探针：开启后，V6 会把公开输出 kg 的第 0 个元素加一个固定偏移（+1.0）。
+// 铁证探针：开启后会把公开输出 gk 的第 0 个元素加一个固定偏移（+1.0，FP32，
+// 不需要 bf16 标量转换，CANN 9.0.0 的 bisheng 也可编译）。
 // 用途：证明"源码 → 构建 → 安装 → 运行时"这条链真的把这份源码编进去了。
 //   - 关（默认 0）：与改动前一致；
-//   - 开：kg 的指纹（sum/abs_sum/sq_sum）会明显变化，[2] 里打印的 warm fp 一眼可见。
+//   - 开：gk 的指纹（sum/abs_sum/sq_sum）会明显变化，[2] 里打印的 warm fp 一眼可见。
 // 只用于构建链自证，任何正式改动都不要打开。
 #ifndef KDA_PREPARE_DIAG_MARKER
 #define KDA_PREPARE_DIAG_MARKER 1

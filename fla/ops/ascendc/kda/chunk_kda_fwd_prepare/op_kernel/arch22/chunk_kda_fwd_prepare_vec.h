@@ -371,6 +371,13 @@ private:
                                     chunk.validRows * sizeof(float)),
                              0, 0, 0});
         }
+#if KDA_PREPARE_DIAG_MARKER
+        // 铁证探针（仅诊断构建，默认关闭）：给公开输出 gk 的第 0 个元素 +1.0。
+        // gk 是 FP32，标量读改写不涉及 bf16 转换，CANN 9.0.0 的 bisheng 也能编过。
+        if (chunk.validRows > 0) {
+            g.SetValue(0, g.GetValue(0) + 1.0f);
+        }
+#endif
         AscendC::DataCopy(gkGm_[headOutputOffset], g,
                           chunk.validRows * Shape::kHeadDim);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_[pair]);
@@ -575,13 +582,6 @@ private:
             AscendC::DataCopy(qgGm_[out], qg,
                               chunk.validRows * Shape::kHeadDim);
         }
-#if KDA_PREPARE_DIAG_MARKER
-        // 铁证探针（仅诊断构建）：给公开输出 kg 的第 0 个元素 +1.0
-        if (chunk.validRows > 0) {
-            kg.SetValue(0, static_cast<bfloat16_t>(
-                               static_cast<float>(kg.GetValue(0)) + 1.0f));
-        }
-#endif
         AscendC::DataCopy(kgGm_[out], kg, chunk.validRows * Shape::kHeadDim);
         const uint32_t rhsRows = chunk.validRows > 32 ? 64 : 32;
         AscendC::GlobalTensor<bfloat16_t> kBetaRelay;
