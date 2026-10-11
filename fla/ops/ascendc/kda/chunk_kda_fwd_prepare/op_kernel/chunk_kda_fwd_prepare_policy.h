@@ -32,19 +32,16 @@
 // 只有反向重计算路径才需要。
 #define CHUNK_KDA_FWD_PREPARE_OUTPUT_FORWARD 3
 
-// AIV → AIC 跨核 GM 交接的保守同步档位（Arch22 现场 A/B 用）。
+// AIV → AIC 跨核 GM 交接的读写侧加固（无条件生效）。
 //
-// V6 把 K_beta_g/V_beta 写进 workspace relay，随后由 AIC 的 C7 读回并计算
-// W/U；C2/C4 则把 AIV 写好的 Q/K payload 与 V3 产物读进 L1。这些交接当前只依赖
-// ready/free 跨核 flag。A2/A3 上"只靠跨核 flag 传递 GM 数据"不足以稳定保证写侧
-// 已经对读侧可见（同 CP/PPFM 的既定结论），这里提供一个可回退的加固开关：
-//   0 = 与改动前逐字节一致（基线）；
-//   1 = 只在 V6 → C7 这条交接上补"写侧 clean + 读侧失效 + DSB"；
-//   2 = 再把 C2/C4 读入 AIV payload 的位置按同样方式加固（默认）。
-// 只影响同步强度，不改变任何计算、地址、输出档位或 tiling 数据。
-#ifndef CHUNK_KDA_FWD_PREPARE_RELAY_SYNC
-#define CHUNK_KDA_FWD_PREPARE_RELAY_SYNC 2
-#endif
+// V6 把 K_beta_g/V_beta 写进 workspace relay，随后由 AIC 的 C7 读回并计算 W/U；
+// C2/C4 则把 AIV 写好的 Q/K payload 与 V3 产物读进 L1。这些交接只依赖 ready/free
+// 跨核 flag，而 A2/A3 上仅靠 flag 不足以稳定保证写侧对读侧可见。因此在写侧把两份
+// relay clean 出去，并在四个读侧位置先让本核 cache 行失效，再配 DSB。
+//
+// 这层是跨核交接的防御性加固，不是本次竞态的直接修复（直接修复是 C7 的 RHS 专用
+// L1 lane + MTE1_MTE2 事件，见 arch22/chunk_kda_fwd_prepare_cube.h）。去掉它会改变
+// 跨核交接的可见性保证，属于行为变更，需要独立验证后再动。
 
 namespace KdaPrepare {
 
