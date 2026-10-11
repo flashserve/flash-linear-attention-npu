@@ -46,48 +46,6 @@
 #define CHUNK_KDA_FWD_PREPARE_RELAY_SYNC 2
 #endif
 
-// 诊断开关：把 V6 里两份 relay 的搬运顺序对调（V_beta 先搬、K_beta_g 后搬）。
-// 用途是判定"偶发坏数据"到底是不是"后发的那笔搬运在 ready 之前还没落地"：
-//   - 若对调后漂移从 u 翻到 w ⇒ 与搬运发起顺序/完成序有关（GM 侧）；
-//   - 若仍然只漂 u ⇒ 与搬运顺序无关，问题在 V_beta 的上游（V6 的 v 载入 / UB 槽）。
-// 只改两条 DataCopy 的先后，不改地址、不改 flag 计数、不改任何算术。默认 0。
-#ifndef KDA_PREPARE_RELAY_ORDER_SWAP
-#define KDA_PREPARE_RELAY_ORDER_SWAP 0
-#endif
-
-// 诊断开关：在若干候选位置插一个粗粒度 PipeBarrier<PIPE_ALL>()，用"最大串行"来定位窗口。
-//   0 = 关（默认，与改动前逐字节一致）
-//   1 = AIV V6：两份 relay 的 DataCopy 之后（ready 发布之前）——把写侧彻底串行
-//   2 = AIC C7：relay 搬入 L1 之前（已经等过 ready）——把读侧彻底串行
-//   3 = AIC C7：relay 搬入 L1 之后、W/U 之前
-//   4 = AIV V6：v 输入载入并等完 MTE2→V 之后、V6Vf 之前——AIV 内部 UB 侧串行
-//   5 = AIC C4：读 V3 产物 payload 之前
-//   9 = 上面 1~5 全部插入（最大串行）
-// 注意：仓库内已有记录，PIPE_ALL 不保证 Cube 侧 MTE1/M/FIX 的次序，所以"档位 9 仍然漂"
-// 不能直接推出"与流水时序无关"；但"某个档位不漂了"是有效的定位信息。
-// 只加屏障，不改地址、flag 计数、算术，默认关闭时不产生任何代码。
-#ifndef KDA_PREPARE_DIAG_PIPE_ALL
-#define KDA_PREPARE_DIAG_PIPE_ALL 0
-#endif
-
-#define KDA_PREPARE_DIAG_BARRIER(point)                                            \
-    do {                                                                           \
-        if constexpr ((KDA_PREPARE_DIAG_PIPE_ALL == (point)) ||                    \
-                      (KDA_PREPARE_DIAG_PIPE_ALL == 9)) {                          \
-            AscendC::PipeBarrier<PIPE_ALL>();                                      \
-        }                                                                          \
-    } while (0)
-
-// 铁证探针：开启后会把公开输出 gk 的第 0 个元素加一个固定偏移（+1.0，FP32，
-// 不需要 bf16 标量转换，CANN 9.0.0 的 bisheng 也可编译）。
-// 用途：证明"源码 → 构建 → 安装 → 运行时"这条链真的把这份源码编进去了。
-//   - 关（默认 0）：与改动前一致；
-//   - 开：gk 的指纹（sum/abs_sum/sq_sum）会明显变化，[2] 里打印的 warm fp 一眼可见。
-// 只用于构建链自证，任何正式改动都不要打开。
-#ifndef KDA_PREPARE_DIAG_MARKER
-#define KDA_PREPARE_DIAG_MARKER 0
-#endif
-
 namespace KdaPrepare {
 
 enum class QkNormMode : uint8_t {

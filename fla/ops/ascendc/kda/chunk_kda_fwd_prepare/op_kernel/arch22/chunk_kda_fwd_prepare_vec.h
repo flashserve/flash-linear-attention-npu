@@ -371,13 +371,6 @@ private:
                                     chunk.validRows * sizeof(float)),
                              0, 0, 0});
         }
-#if KDA_PREPARE_DIAG_MARKER
-        // 铁证探针（仅诊断构建，默认关闭）：给公开输出 gk 的第 0 个元素 +1.0。
-        // gk 是 FP32，标量读改写不涉及 bf16 转换，CANN 9.0.0 的 bisheng 也能编过。
-        if (chunk.validRows > 0) {
-            g.SetValue(0, g.GetValue(0) + 1.0f);
-        }
-#endif
         AscendC::DataCopy(gkGm_[headOutputOffset], g,
                           chunk.validRows * Shape::kHeadDim);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_[pair]);
@@ -564,7 +557,6 @@ private:
             AscendC::DataCopyPadExtParams<bfloat16_t>{false, 0, 0, 0});
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(inputReady_[pair]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(inputReady_[pair]);
-        KDA_PREPARE_DIAG_BARRIER(4);  // 诊断：V6 计算前把 AIV 流水串行（UB 侧）
         // 本 Stage 一次生成 qg、qgScaled、kg、两次舍入的 K_beta_g 和
         // V_beta；两条编译路径先在对应域截断，再统一调用自然底 Exp。
         V6Vf(qg, qgScaled, kg, vBeta, kBetaG, g, betaEff, scratch,
@@ -590,15 +582,8 @@ private:
             args_.workspace + slot + Workspace::kArch22RhsKBetaG));
         vBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + slot + Workspace::kArch22RhsVBeta));
-#if KDA_PREPARE_RELAY_ORDER_SWAP
-        // 诊断：先 V_beta、后 K_beta_g（默认路径是反过来的）
-        AscendC::DataCopy(vBetaRelay, vBeta, rhsRows * Shape::kValueDim);
-        AscendC::DataCopy(kBetaRelay, kBetaG, rhsRows * Shape::kHeadDim);
-#else
         AscendC::DataCopy(kBetaRelay, kBetaG, rhsRows * Shape::kHeadDim);
         AscendC::DataCopy(vBetaRelay, vBeta, rhsRows * Shape::kValueDim);
-#endif
-        KDA_PREPARE_DIAG_BARRIER(1);  // 诊断：relay 写完之后（ready 之前）串行
 #if CHUNK_KDA_FWD_PREPARE_RELAY_SYNC >= 1
         // 写侧加固（保守）：这两份 relay 马上会被 AIC 的 C7 跨核读回。只靠
         // ready 跨核 flag 时，MTE3 写缓冲/L2 里的数据可能还没对读侧可见，读侧
