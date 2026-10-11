@@ -32,6 +32,17 @@
 // 只有反向重计算路径才需要。
 #define CHUNK_KDA_FWD_PREPARE_OUTPUT_FORWARD 3
 
+// AIV → AIC 跨核 GM 交接的读写侧加固（无条件生效）。
+//
+// V6 把 K_beta_g/V_beta 写进 workspace relay，随后由 AIC 的 C7 读回并计算 W/U；
+// C2/C4 则把 AIV 写好的 Q/K payload 与 V3 产物读进 L1。这些交接只依赖 ready/free
+// 跨核 flag，而 A2/A3 上仅靠 flag 不足以稳定保证写侧对读侧可见。因此在写侧把两份
+// relay clean 出去，并在四个读侧位置先让本核 cache 行失效，再配 DSB。
+//
+// 这层是跨核交接的防御性加固，不是本次竞态的直接修复（直接修复是 C7 的 RHS 专用
+// L1 lane + MTE1_MTE2 事件，见 arch22/chunk_kda_fwd_prepare_cube.h）。去掉它会改变
+// 跨核交接的可见性保证，属于行为变更，需要独立验证后再动。
+
 namespace KdaPrepare {
 
 enum class QkNormMode : uint8_t {
@@ -150,8 +161,24 @@ constexpr uint32_t kArch35SlotStride = kSlotStride;
 constexpr uint32_t kArch22CubeRelay = 0x1A400;
 constexpr uint32_t kArch22RawScoreBytes = 0x5000;
 constexpr uint32_t kArch22TRelay = kArch22CubeRelay;
-constexpr uint32_t kArch22SlotStride =
-    kArch22CubeRelay + kArch22RawScoreBytes;
+
+// Arch22：V6→C7 的 RHS（K_beta_g/V_beta）改用独立区，不再与 V1 payload 换义地址。
+//
+// 旧布局把 RHS 放在 payload 的 kKBetaG/kVBeta（相对 payload 为 0x7800/0xB800，
+// 即 [30 KiB, 62 KiB)），而 V1 payload 的 Kplus 覆盖 [16 KiB, 32 KiB)、Kminus 覆盖
+// [32 KiB, 72 KiB)——两者落在同一段字节上。C7 正在把 RHS 搬进 L1 时，只要该 slot
+// 的 V1 先写进来（跨核计数错位或任何一次提前放行），读到的就是"半新半旧"的
+// Q/K payload：Kminus = k_hat * E(Gref-G) 大多极小、少量很大，表现为单个
+// (value head, chunk) 的 U 整块异常而同一 Stage 的 W 正常；写侧/读侧 clean 都
+// 修不了它，因为根因是地址复用而不是可见性。
+//
+// 现在 RHS 独占 slot 尾部 32 KiB，除本代 V6 外没有任何 stage 写它。
+constexpr uint32_t kArch22RhsBase = kArch22CubeRelay + kArch22RawScoreBytes;
+constexpr uint32_t kArch22RhsMatrixBytes = 0x4000; // [64,128] * BF16
+constexpr uint32_t kArch22RhsKBetaG = kArch22RhsBase;
+constexpr uint32_t kArch22RhsVBeta = kArch22RhsBase + kArch22RhsMatrixBytes;
+constexpr uint32_t kArch22RhsBytes = 2 * kArch22RhsMatrixBytes;
+constexpr uint32_t kArch22SlotStride = kArch22RhsBase + kArch22RhsBytes;
 
 // payload 在不同 Stage 原址换义，不在 UB/L1 内搬位。
 constexpr uint32_t kX0 = 0x0000;
@@ -189,7 +216,28 @@ constexpr uint32_t kQuadrantStride = 0x1000;
 constexpr uint32_t kAkkStride = 0x2000;
 // BF16 NZ 为 [N1,M1,M0,N0]；q10=(row 32,col 0) 的元素偏移。
 constexpr uint32_t kAkkQ10Elements = 32 * 16;
-constexpr uint32_t kPeak = 0x5C000;
+
+// C7 的 RHS（K_beta_g / V_beta）专用 L1 lane。
+//
+// 旧布局把这两份 RHS 直接放在 kHeadLane 上，而 C2 的 score 用的是同一条 lane
+// 的同两个偏移（kQPlus=0x0000 ↔ K_beta_g、kKPlus=0x4000 ↔ V_beta）。C7 刚把 RHS
+// 搬进 lane 就归还了 workspace，于是下一个 chunk 的 C2 一旦拿到 ready，就会用
+// MTE2 往同一条 lane 写 score，覆盖 C7 还没有用 MTE1 读完的 RHS——现场表现为同一
+// 个 Stage 里 U 整块错、W 逐位正常（K_beta_g 先读，V_beta 要隔一整个 Mmad+Fixpipe
+// 才读，暴露窗口更长）。
+//
+// 现在每个 head 各占一条 RHS lane，C2/C4 的 score/B 完全不碰它；pair 之间用的也是
+// 不同 lane，所以同一次 C7 内不存在 lane 换义。跨 chunk / 跨 pair 的写后读由显式的
+// MTE1_MTE2 event 保证（见 chunk_kda_fwd_prepare_cube.h 的 StageC7）：搬入前
+// WaitFlag，W/U 的 MTE1 取数全部下发之后再 SetFlag。C7 归还 workspace 的时机保持
+// "RHS 一离开 workspace 就归还"，好让下一个 chunk 的 V0/V1 与本次 W/U 重叠。
+constexpr uint32_t kRhsLaneBytes = 0x8000; // K_beta_g 0x4000 + V_beta 0x4000
+constexpr uint32_t kRhsLane[Shape::kHeadsPerGroup] = {
+    0x5C000, 0x64000, 0x6C000, 0x74000};
+constexpr uint32_t kRhsKBetaG = 0x0000;
+constexpr uint32_t kRhsVBeta = 0x4000;
+
+constexpr uint32_t kPeak = 0x7C000;
 } // namespace L1
 
 namespace Arch35Ub {
