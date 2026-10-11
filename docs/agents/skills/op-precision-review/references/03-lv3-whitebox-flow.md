@@ -57,6 +57,7 @@ op_host 中的 tiling 逻辑
 | 核心映射 | 每个 core 分到的任务、余数分配规则、是否均衡 |
 | 依赖关系 | 任务之间是否存在顺序依赖（同序列前后 chunk、head 间归约） |
 | 数据切分 | 每个任务读写的数据区间（含 varlen/tail 的实际有效长度） |
+| 并发窗口 | 同一 core 上相邻 work item 的粒度差（小尾块、partial chunk）与"后继更快到达消费点"对复用区间的影响 |
 | 并行度证据 | `blockDim`、active core 数、每核任务数与总任务数的关系 |
 
 #### 报告 2：内存分配报告
@@ -67,7 +68,7 @@ op_host 中的 tiling 逻辑
 | 容量结论 | 各层占用与规格的余量；是否存在超限或到达临界 |
 | 队列与 slot | 队列深度、slot 数、每个 slot 的状态机（free/writing/ready/reading） |
 | GM/workspace | 每个 region 的 offset、size、使用方、生命周期、是否与其他 region 重叠 |
-| 别名 | 多个 `LocalTensor`/GM 区间重叠或别名的情况与保护方式 |
+| 别名 | 多个 `LocalTensor`/GM 区间重叠或别名：每个区间的全部写者与读者，以及跨 Stage 的 WAR 保护方式 |
 
 #### 报告 3：算子流水报告
 
@@ -90,11 +91,16 @@ op_host 中的 tiling 逻辑
    - 同一 buffer 在同一 core 的连续任务之间是否可能被覆盖（未等待消费完成即复用）。
    - 不同 core 是否写同一 GM/workspace 区间，或写入区间是否可能重叠。
    - tail/varlen 下实际数据量小于 tiling 假设时，是否出现越界或写到其它任务的数据。
+   - 同一段 GM/L1 区间被多个 Stage 原址换义时，是否列出全部写者与读者；相邻 work item 的有效行数
+     差很大时（小尾块、partial chunk），后继的**前置** Stage 会更快到达消费点，是否可能抢在前驱
+     **消费** Stage 结束前覆盖该区间。
 2. **算子各流水线之间同步是否合理**
    - 每个跨 pipe/跨核的生产-消费对是否有成对同步，且同步原语与触发 pipe 匹配。
    - 同步范围是否最小必要（用大范围 `SyncAll` 顶替细粒度握手是设计问题）。
    - 复用 buffer/slot 前是否有反向同步或 credit；计数器深度是否与流水距离匹配。
    - 分支内外的同步是否对称（某分支跳过 set/wait 会导致计数器错位或超时）。
+   - 跨 Stage 复用同一 L1 区间时，先读者的 MTE1 与后写者的 MTE2 之间是否有 `MTE1_MTE2` 事件保护
+     （不能依赖程序序）；跨核 GM 交接除 ready/free 外，读侧可见性是否按设计显式处理。
 3. **算子累加序是否合理**
    - 部分和顺序、归约树与详设/标杆是否一致；不一致是否会放大误差。
    - 中间累加的 dtype 与位宽是否足以承载累加规模（fp16 累加、bf16 累加、int 溢出）。
@@ -116,12 +122,13 @@ lv3 不追求一套通用清单。按算子类别分别维护独立 skill，同�
 | Vector 为主 | MTE2→VEC、VEC→MTE3 事件方向写反；同一 UB 二次读写只用 `PipeBarrier` 而实际跨 pipe；多缓冲 slot 与 event id 生命周期不闭环 |
 | 递推/带状态（chunk 间依赖） | 状态传递缺少顺序保证（下一 chunk 读到未完成状态）；状态 buffer 在同一 core 多轮之间被提前复用；首 chunk 与尾 chunk 的同步路径不对称 |
 | 归约/累加密集 | 多核归约缺少跨核同步或重复累加；累加顺序与标杆不一致导致长序列误差放大；中间量按低精度 dtype 落盘 |
+| 多 Stage 复用同一 GM/L1 区间 | 同一区间被多个 Stage 原址换义而未列出全部写者/读者；跨 Stage 的 L1 MTE1 读与 MTE2 写只靠程序序、缺 `MTE1_MTE2`；后继 work item（小尾块）更快到达消费点，抢在前驱消费 Stage 结束前覆盖该区间；跨核 GM 交接只靠 ready/free 而未处理读侧可见性 |
 
 同一批 lv3 根因在仓库里出现过的实例（用于校准检视尺度，状态以仓库为准）：
 
 | lv3 根因 | 相关 issue / PR |
 | --- | --- |
-| 同步/事件时序 | [PR #700](https://github.com/flashserve/flash-linear-attention-npu/pull/700)（Gate 标量暂存区读后写依赖缺失，UB WAR hazard）、[#325](https://github.com/flashserve/flash-linear-attention-npu/issues/325)（边界场景流水同步与尾块精度）、[#462](https://github.com/flashserve/flash-linear-attention-npu/issues/462)（特定 GQA head 配置下 kernel hang） |
+| 同步/事件时序 | [PR #700](https://github.com/flashserve/flash-linear-attention-npu/pull/700)（Gate 标量暂存区读后写依赖缺失，UB WAR hazard）、[#325](https://github.com/flashserve/flash-linear-attention-npu/issues/325)（边界场景流水同步与尾块精度）、[#462](https://github.com/flashserve/flash-linear-attention-npu/issues/462)（特定 GQA head 配置下 kernel hang）、[#870](https://github.com/flashserve/flash-linear-attention-npu/issues/870)（OPEN，同一 slot 的 L1 lane 被下一个 chunk 覆盖：多 Stage 地址复用导致偶发 fwd/recompute 不一致） |
 | tiling/分核错误 | [#440](https://github.com/flashserve/flash-linear-attention-npu/issues/440)（varlen 路径输出 bitwise 不确定，分核/归约顺序导致）、[#508](https://github.com/flashserve/flash-linear-attention-npu/issues/508)（varlen 计数/位宽） |
 | 累加顺序/舍入 | [#563](https://github.com/flashserve/flash-linear-attention-npu/issues/563)（A5 Stage5 先加后乘与参考实现不一致）、[#511](https://github.com/flashserve/flash-linear-attention-npu/issues/511)（不同中间精度的验收标准） |
 

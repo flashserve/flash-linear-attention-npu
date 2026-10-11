@@ -209,6 +209,9 @@
 2. 核对 `LocalTensor` 切片：offset 与长度的和是否落在已分配 buffer 内；多个 tensor 别名同一 buffer 时
    区间是否重叠。
 3. 核对 GM 侧：offset 是否包含 batch/head 维；varlen 下是否按每个序列的实际起点计算。
+4. 对每个 GM/workspace/L1 区间列出**全部写者与读者**；同一区间被多个 Stage 原址换义时，逐个确认
+   "后写者"是否会覆盖"先读者"尚未完成的读，以及是否用了对应 pipe 的事件保护（L1 上跨 Stage 的
+   MTE1 读与 MTE2 写需要 `MTE1_MTE2`，不能只靠程序序）。
 
 常见问题点：
 
@@ -216,11 +219,14 @@
 - `DataCopy` 用在非 32B 对齐长度上，行为与预期不符（应使用 Pad 类接口）。
 - 对齐 padding 后的 workspace 行数与实际写入行数不一致，导致下一 region 被覆盖。
 - 索引张量（`gather`/scatter 类）未校验取值范围，越界读取导致随机精度错误。
+- 同一段 workspace/L1 区间被多个 Stage 原址换义，且只按程序序认为安全：下一个 work item 的前置
+  Stage 用 MTE2 写回该区间，覆盖上一个 work item 消费 Stage 尚未完成的 MTE1 读。
 
 相关 issue：
 
 - [#544](https://github.com/flashserve/flash-linear-attention-npu/issues/544)（已修复，变长反向：对齐补齐的尾部 workspace 未写中性值，导致读取未初始化数据；症状是精度问题而非崩溃）。
 - [#462](https://github.com/flashserve/flash-linear-attention-npu/issues/462)（已修复，特定 GQA head 配置下 kernel hang：分核边界与地址计算的组合问题）。
+- [#870](https://github.com/flashserve/flash-linear-attention-npu/issues/870)（OPEN，Arch22 `chunk_kda_fwd_prepare` 并发下偶发 fwd/recompute 不一致：C7 的两份 RHS 在 GM 与 L1 两处被别的 Stage 换义复用）。
 
 ### lv2 / bias/辅助输入
 

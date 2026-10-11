@@ -16,7 +16,7 @@
 
 | 细粒度根因 | 定义 | 典型触发 | 需要的材料 |
 | --- | --- | --- | --- |
-| 同步/事件时序 | 生产者与消费者之间的等待/通知缺失、错配或范围错误 | 缺反向同步、触发流水线设置错误、event 复用未闭环、`PipeBarrier` 跨 pipe 顶替硬事件 | 详设 + 流水/资源报告 |
+| 同步/事件时序 | 生产者与消费者之间的等待/通知缺失、错配或范围错误 | 缺反向同步、触发流水线设置错误、event 复用未闭环、`PipeBarrier` 跨 pipe 顶替硬事件、同一区间被多个 Stage 换义时跨 Stage 的 MTE1 读与 MTE2 写缺硬事件 | 详设 + 流水/资源报告 |
 | 越界/地址偏移 | 读取或写入超出 tensor/UB/L1/workspace 的有效区间 | offset 计算漏乘 stride、tail 未裁剪、workspace 区间重叠 | AscendC API 文档 + 片上资源规格 |
 | dtype/format | dtype 或 format 不匹配导致精度/寻址错误 | 中间量按 fp16 累加、bf16 与 fp32 混用、ND/NZ 混用、type 转换点写错 | 接口文档 dtype/format 约束 |
 | tiling/分核错误 | 任务切分与数据切分不一致，或多核产出重叠/漏算 | 每核 chunk 数计算错误、余数分配不当、tail 未单独处理 | 详设 + 分核报告 |
