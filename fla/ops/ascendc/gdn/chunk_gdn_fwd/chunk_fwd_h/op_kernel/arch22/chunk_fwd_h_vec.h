@@ -148,6 +148,11 @@ private:
     static constexpr uint32_t ALPHA_BASE = 26 * 1024;
     static constexpr uint32_t SHARE_BASE = 27 * 1024;
     static constexpr uint32_t TILE_BUFS = 2;
+    // N3：g(scalar)+FP32 的 S3 融合开关——三步（state 拷贝→Muls(α)→Add(D)）压成
+    // 两步（calc=D→Axpy(state,α)，dst=src·scalar+dst）。仅此组合可融合：KEY_GK 的
+    // gate 是逐 k 向量、BF16 路径 state 须 Cast 加载，均不适用。
+    static constexpr bool G_FP32_AXPY =
+        CompilePolicy::STATE_FP32 && (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G);
 
     __aicore__ inline uint32_t TileBuf(uint32_t row) const
     {
@@ -636,7 +641,21 @@ private:
         if constexpr (WAIT_READY) {
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot, buf));
         }
-        if constexpr (CompilePolicy::STATE_FP32) {
+        if constexpr (G_FP32_AXPY) {
+            // N3 融合路径：calc 先装 D（raw_ 已由 Load/Prefetch 经 IoReadyEvent 就绪），
+            // Axpy 原地并入 state·α，替代旧三步两屏障（省一次向量算子+一次屏障）。
+            AscendC::LocalTensor<float> rawF = raw_[slot].template ReinterpretCast<float>();
+            AscendC::Adds(calc_[slot], rawF[buf * (RAW_BUF_BYTES / sizeof(float))],
+                          0.0f, TILE_ELEMENTS);
+            AscendC::PipeBarrier<PIPE_V>();
+            if (!(chunk.first && args_.tiling.useInitialState == 0)) {
+                // rolling state 跨 tile RAW 同旧路径由 V pipe FIFO 保序；首 chunk 无
+                // 初态时 state 分量为 0，Axpy 跳过（calc=D 即终值）。
+                AscendC::Axpy(calc_[slot], stateFp32_[slot][row * FWD_H_V],
+                              alphaValue, TILE_ELEMENTS);
+            }
+        }
+        if constexpr (!G_FP32_AXPY && CompilePolicy::STATE_FP32) {
             if (chunk.first && args_.tiling.useInitialState == 0) {
                 AscendC::Duplicate(calc_[slot], 0.0f, TILE_ELEMENTS);
             } else {
@@ -651,30 +670,32 @@ private:
         }
         AscendC::PipeBarrier<PIPE_V>();
 
-        if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
-            AscendC::Muls(calc_[slot], calc_[slot], alphaValue, TILE_ELEMENTS);
-        } else if constexpr (STATE_V_FIRST) {
-            for (uint32_t localRow = 0; localRow < TILE_ROWS; ++localRow) {
-                AscendC::Mul(calc_[slot][localRow * FWD_H_V],
-                             calc_[slot][localRow * FWD_H_V], gateFp32_[slot], FWD_H_V);
+        if constexpr (!G_FP32_AXPY) {
+            if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
+                AscendC::Muls(calc_[slot], calc_[slot], alphaValue, TILE_ELEMENTS);
+            } else if constexpr (STATE_V_FIRST) {
+                for (uint32_t localRow = 0; localRow < TILE_ROWS; ++localRow) {
+                    AscendC::Mul(calc_[slot][localRow * FWD_H_V],
+                                 calc_[slot][localRow * FWD_H_V], gateFp32_[slot], FWD_H_V);
+                }
+            } else {
+                uint32_t dstShape[2] = {TILE_ROWS, FWD_H_V};
+                uint32_t srcShape[2] = {TILE_ROWS, 1};
+                AscendC::Broadcast<float, 2, 1>(cast_[slot], gateFp32_[slot][row],
+                                                dstShape, srcShape, share_[slot]);
+                AscendC::PipeBarrier<PIPE_V>();
+
+                AscendC::Mul(calc_[slot], calc_[slot], cast_[slot], TILE_ELEMENTS);
             }
-        } else {
-            uint32_t dstShape[2] = {TILE_ROWS, FWD_H_V};
-            uint32_t srcShape[2] = {TILE_ROWS, 1};
-            AscendC::Broadcast<float, 2, 1>(cast_[slot], gateFp32_[slot][row],
-                                            dstShape, srcShape, share_[slot]);
             AscendC::PipeBarrier<PIPE_V>();
 
-            AscendC::Mul(calc_[slot], calc_[slot], cast_[slot], TILE_ELEMENTS);
+            {
+                AscendC::LocalTensor<float> rawF = raw_[slot].template ReinterpretCast<float>();
+                AscendC::Add(calc_[slot], calc_[slot],
+                             rawF[buf * (RAW_BUF_BYTES / sizeof(float))], TILE_ELEMENTS);
+            }
+            AscendC::PipeBarrier<PIPE_V>();
         }
-        AscendC::PipeBarrier<PIPE_V>();
-
-        {
-            AscendC::LocalTensor<float> rawF = raw_[slot].template ReinterpretCast<float>();
-            AscendC::Add(calc_[slot], calc_[slot],
-                         rawF[buf * (RAW_BUF_BYTES / sizeof(float))], TILE_ELEMENTS);
-        }
-        AscendC::PipeBarrier<PIPE_V>();
 
         if constexpr (CompilePolicy::STATE_FP32) {
             // 结果写回常驻区（V pipe 写）；final_state 输出改走小缓冲 tile 循环，
