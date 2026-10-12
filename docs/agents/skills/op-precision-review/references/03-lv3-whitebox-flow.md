@@ -107,6 +107,46 @@ op_host 中的 tiling 逻辑
    - 累加与归约的边界（chunk 内、chunk 间、多核间归约）是否与算法的数学定义一致。
    - 是否引入可避免的额外舍入（提前转 dtype、重复归一化、先 scale 后累加）。
 
+### 可选第 6 步：用 mssanitizer racecheck 坐实（race/WAR/RAW 类建议必做）
+
+检视结论只到"存在风险"是不够的。对同步/事件时序、多 Stage 换义这一类根因，可以用
+[mssanitizer](https://gitcode.com/Ascend/mssanitizer) 的 `racecheck` 把结论坐实，并按同一个脚本
+把它作为该算子的常驻回归看护（建议 nightly 或专项，不放进每次 PR 门禁）。
+
+```bash
+# ① 编译期使能（必须重编算子）：注意不是 --op_debug_config
+bash build.sh --pkg --soc=<soc> --ops=<op_name> --vendor_name=fla_npu \
+  --ops-compile-options -sanitizer
+# ② 运行（只检测目标算子，可用 --kernel-name 模糊匹配）
+mssanitizer --tool=racecheck --kernel-name=<OpKernelName> \
+  --full-backtrace=yes --log-file=race.log <application>
+# ③ 判定
+#   - 必须出现 "Start racecheck sanitizer on kernel …"，否则 sanitizer 未命中，结论无效
+#   - 且不得出现 "ERROR: Potential … hazard"
+```
+
+实操要点（均为实际踩过的坑）：
+
+1. `--op_debug_config …` **不能**用来使能 sanitizer：该路径会把 `sanitizer` 关键字丢掉（只剩
+   `dump_cce`）。正确做法是编译选项 `-sanitizer`（等价于 `--cce-enable-sanitizer`；msOpGen 算子工程
+   的标准写法是 `add_ops_compile_options(ALL OPTIONS -sanitizer)`）。
+2. 判定前先自证命中：`nm <op>.o | grep sanitizer` 有符号，且日志出现
+   `Start racecheck sanitizer on kernel`；只出现 `No active sanitizer tool on kernel` 说明运行的
+   不是 sanitizer 版本对象，结论无效。
+3. 确认加载的是本次构建的产物：自定义包运行时可能被"包内嵌的 OPP"顶掉，需要同时用
+   `nm -D <op_api_lib> | grep <OpSymbol>` 与 kernel 对象确认。
+4. 带旧 `build/` 的源码树里 `build.sh --pkg` 可能因陈旧 `kernel_meta` 与并行编译变体冲突而失败，
+   建议干净树重建。
+5. 成本：编译约 20 分钟 + 单 case 单次调用约 7–19 分钟、日志 10 GB 以上 ⇒ 适合 nightly；仓内
+   `tests/atk/run_test_cpu.sh -scope=mssanitizer` 需要 ATK ≥ 26.8.8，版本不足时用独立脚本。
+6. `memcheck` / `initcheck` / `synccheck` / `racecheck` 是同一入口的不同 `--tool`，按根因类型选择；
+   一般情况下先跑 `memcheck` 再跑 `racecheck`。
+
+实例：#870 / #869（Arch22 `chunk_kda_fwd_prepare` 同一段 L1 被多个 Stage 换义）—— 修复前
+`racecheck` 报 384 条 `Potential WAR hazard detected at L1`（读侧 `PIPE_MTE1` 落在
+`op_kernel/arch22/chunk_kda_fwd_prepare_cube.h` 的 C7 读 RHS，写侧 `PIPE_MTE2` 为 C2 的 score
+Nd2Nz 搬运），修复后 0 条。
+
 ## 2. 按算子类别建立独立 skill
 
 lv3 不追求一套通用清单。按算子类别分别维护独立 skill，同一类别内共享根因经验；公共流程仍是本文五步。
