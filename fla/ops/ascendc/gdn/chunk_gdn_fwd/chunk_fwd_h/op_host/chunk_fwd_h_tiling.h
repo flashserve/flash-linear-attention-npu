@@ -38,6 +38,8 @@ TILING_DATA_FIELD_DEF(int64_t, vWorkspaceOffset);
 TILING_DATA_FIELD_DEF(int64_t, vUpdateWorkspaceOffset);
 TILING_DATA_FIELD_DEF(int64_t, kDecayWorkspaceOffset);
 TILING_DATA_FIELD_DEF(int64_t, hWorkspaceOffset);
+TILING_DATA_FIELD_DEF(int64_t, coreBoundCount);
+TILING_DATA_FIELD_DEF_ARR(int64_t, 64, coreTaskBounds);
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(ChunkFwdH, ChunkFwdHTilingData)

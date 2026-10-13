@@ -20,6 +20,9 @@
 
 #include <cstdint>
 
+// P1 varlen 均衡分区：per-core 任务边界表容量（A2/A3 20 核、A5 更少，64 为硬上限）
+constexpr int64_t CHUNK_FWD_H_MAX_CORE_BOUNDS = 64;
+
 struct ChunkFwdHPlainTilingData {
     int64_t batch;
     int64_t seqlen;
@@ -37,6 +40,11 @@ struct ChunkFwdHPlainTilingData {
     int64_t vUpdateWorkspaceOffset;
     int64_t kDecayWorkspaceOffset;
     int64_t hWorkspaceOffset;
+    // P1：coreBoundCount=0 表示无表（dense/退化场景走 kernel 均分原路径）；
+    // 否则 coreTaskBounds[i] 为核 i 的 head 任务区间右端（begin=上一核 end，核 0 begin=0），
+    // 份数恒等于 blockDim。
+    int64_t coreBoundCount;
+    int64_t coreTaskBounds[CHUNK_FWD_H_MAX_CORE_BOUNDS];
 };
 
 #endif // CHUNK_FWD_H_STRUCT_H

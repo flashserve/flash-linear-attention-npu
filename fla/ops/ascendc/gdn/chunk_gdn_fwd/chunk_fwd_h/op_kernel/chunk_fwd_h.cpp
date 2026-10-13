@@ -116,6 +116,8 @@ __global__ __aicore__ void chunk_fwd_h(
     args.tiling.vUpdateWorkspaceOffset = static_cast<uint64_t>(tilingData->vUpdateWorkspaceOffset);
     args.tiling.kDecayWorkspaceOffset = static_cast<uint64_t>(tilingData->kDecayWorkspaceOffset);
     args.tiling.hWorkspaceOffset = static_cast<uint64_t>(tilingData->hWorkspaceOffset);
+    args.tiling.coreBoundCount = static_cast<uint32_t>(tilingData->coreBoundCount);
+    args.tiling.coreBoundsGm = tilingData->coreTaskBounds;
     using Traits = GDN::FwdHKernelTraits<
         D_T_G, V_DIM, USE_GK, USE_EXP2, STATE_FP32, STATE_V_FIRST>;
     GDN::RunFwdHTyped<typename Traits::GateT, typename Traits::CompilePolicy,
