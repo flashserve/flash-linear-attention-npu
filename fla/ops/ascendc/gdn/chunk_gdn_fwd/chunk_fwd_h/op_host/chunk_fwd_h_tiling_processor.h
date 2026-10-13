@@ -22,6 +22,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include "../op_kernel/chunk_fwd_h_struct.h"
 
@@ -50,6 +51,10 @@ struct ChunkFwdHTilingContext {
     // attrs
     bool storeFinalState;
     int64_t chunkSize;
+    // P1: per-sequence chunk counts read from cu_seqlens on host (aclnn/l0op layer);
+    // nullptr / zero count means dense path — kernel keeps uniform head partition.
+    const int64_t *seqChunkCounts;
+    int64_t seqCount;
     // platform
     uint32_t aicCoreNum;
     size_t libApiWorkSpaceSize;
@@ -93,6 +98,8 @@ public:
         constexpr int64_t kHeadDim = CHUNK_FWD_H_K_DIM;
         constexpr int64_t vHeadDim = CHUNK_FWD_H_V_DIM;
 
+        FillBalancedCoreBounds(tiling, blockDim, totalHeadTasks);
+
         size_t workspaceOffset = ctx_.libApiWorkSpaceSize;
         workspaceOffset += CHUNK_FWD_H_WORKSPACE_RSV_BYTE;
 
@@ -130,6 +137,98 @@ public:
     }
 
 private:
+    // P1 varlen balanced partition: cut the seq-major head-task sequence into
+    // blockDim contiguous spans of near-equal total chunk weight (capacity
+    // binary search + greedy fill). blockDim itself is unchanged, so workspace
+    // size and core launch count are untouched — only per-core [begin, end)
+    // move. Falls back to the uniform partition (coreBoundCount=0) when the
+    // sequence weights are unavailable or degenerate (dense / fewer tasks
+    // than cores / greedy produced fewer spans than cores).
+    void FillBalancedCoreBounds(::ChunkFwdHPlainTilingData &tiling,
+                                uint32_t blockDim, uint64_t totalHeadTasks) const
+    {
+        tiling.coreBoundCount = 0;
+        for (int64_t &bound : tiling.coreTaskBounds) {
+            bound = 0;
+        }
+        if (ctx_.seqChunkCounts == nullptr || ctx_.seqCount <= 0 ||
+            blockDim == 0 || totalHeadTasks < blockDim) {
+            return;
+        }
+        std::vector<int64_t> weights;
+        weights.reserve(totalHeadTasks);
+        for (int64_t seq = 0; seq < ctx_.seqCount; ++seq) {
+            const int64_t chunks = ctx_.seqChunkCounts[seq];
+            if (chunks <= 0) {
+                return; // malformed host table — fall back to uniform partition
+            }
+            for (int64_t head = 0; head < ctx_.vNumHead; ++head) {
+                weights.push_back(chunks);
+            }
+        }
+        if (static_cast<uint64_t>(weights.size()) != totalHeadTasks) {
+            return;
+        }
+        int64_t maxWeight = 0;
+        int64_t totalWeight = 0;
+        for (const int64_t w : weights) {
+            maxWeight = w > maxWeight ? w : maxWeight;
+            totalWeight += w;
+        }
+        // Binary search the minimal capacity whose greedy span count <= blockDim.
+        int64_t lo = maxWeight;
+        int64_t hi = totalWeight;
+        while (lo < hi) {
+            const int64_t mid = lo + (hi - lo) / 2;
+            if (GreedySpanCount(weights, mid) <= blockDim) {
+                hi = mid;
+            } else {
+                lo = mid + 1;
+            }
+        }
+        // Greedy cut at the minimal capacity; force exactly blockDim spans by
+        // opening a new span whenever the remaining tasks equal the remaining
+        // spans to place (keeps every span non-empty).
+        const int64_t capacity = lo;
+        std::vector<int64_t> bounds(static_cast<size_t>(blockDim), 0);
+        int64_t spanCount = 1;
+        int64_t sum = 0;
+        for (uint64_t task = 0; task < totalHeadTasks; ++task) {
+            const uint64_t remainingTasks = totalHeadTasks - task;
+            const int64_t remainingSpans = static_cast<int64_t>(blockDim) - spanCount;
+            const bool mustSplit = sum + weights[task] > capacity ||
+                remainingTasks <= static_cast<uint64_t>(remainingSpans);
+            if (mustSplit && spanCount < static_cast<int64_t>(blockDim)) {
+                bounds[static_cast<size_t>(spanCount - 1)] = static_cast<int64_t>(task);
+                spanCount += 1;
+                sum = 0;
+            }
+            sum += weights[task];
+        }
+        bounds[static_cast<size_t>(spanCount - 1)] = static_cast<int64_t>(totalHeadTasks);
+        if (spanCount != static_cast<int64_t>(blockDim)) {
+            return; // degenerate — uniform partition is equivalent here
+        }
+        for (uint32_t core = 0; core < blockDim; ++core) {
+            tiling.coreTaskBounds[core] = bounds[core];
+        }
+        tiling.coreBoundCount = static_cast<int64_t>(blockDim);
+    }
+
+    static int64_t GreedySpanCount(const std::vector<int64_t> &weights, int64_t capacity)
+    {
+        int64_t spanCount = 1;
+        int64_t sum = 0;
+        for (const int64_t w : weights) {
+            if (sum + w > capacity) {
+                spanCount += 1;
+                sum = 0;
+            }
+            sum += w;
+        }
+        return spanCount;
+    }
+
     // Mirrors the original "(x + GM_ALIGN) / GM_ALIGN * GM_ALIGN" alignment.
     static size_t AlignUp(size_t x)
     {

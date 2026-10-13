@@ -32,6 +32,8 @@ constexpr uint32_t FWD_H_AIC_HEAD_SLOTS = 4;
 constexpr uint32_t FWD_H_AIV_COUNT = 2;
 constexpr uint32_t FWD_H_AIV_HEAD_SLOTS = 2;
 constexpr uint32_t FWD_H_FLAG_SUBBLOCK_STRIDE = 16;
+// P1 varlen 均衡分区：per-core 任务边界表容量（与 host 侧 tiling 数组字段同宽）
+constexpr uint32_t FWD_H_MAX_CORE_BOUNDS = 64;
 
 constexpr uint32_t FWD_H_TOKEN_MATRIX_BF16_BYTES = FWD_H_CHUNK * FWD_H_V * sizeof(bfloat16_t);
 constexpr uint32_t FWD_H_TOKEN_MATRIX_FP32_BYTES = FWD_H_CHUNK * FWD_H_V * sizeof(float);
@@ -154,6 +156,11 @@ struct FwdHRuntimeTiling {
     bool useInitialState = false;
     bool storeFinalState = false;
     bool isVariedLen = false;
+    // P1：host 注入的均衡分区表（varlen）。coreBoundCount=0 表示无表，走均分。
+    // 表本体留在 GM tiling data 内（不拷入 kernel 栈——260B 结构体膨胀曾致
+    // AIV 指令缓冲等待 +48us 的代码足迹税），此处仅持 GM 指针，每核读 2 个字。
+    uint32_t coreBoundCount = 0;
+    const __gm__ int64_t *coreBoundsGm = nullptr;
 };
 
 struct FwdHKernelArgs {

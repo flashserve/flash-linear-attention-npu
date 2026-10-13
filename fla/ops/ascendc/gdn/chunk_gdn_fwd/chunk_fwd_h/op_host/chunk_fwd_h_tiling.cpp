@@ -56,6 +56,7 @@ static constexpr size_t ATTR_LOGICAL_K_HEADS_IDX = 7;
 static constexpr size_t ATTR_LOGICAL_V_HEADS_IDX = 8;
 static constexpr size_t ATTR_LOGICAL_K_DIM_IDX = 9;
 static constexpr size_t ATTR_LOGICAL_V_DIM_IDX = 10;
+static constexpr size_t ATTR_SEQ_CHUNK_COUNTS_IDX = 11;
 
 static constexpr int64_t V_DIM_128 = 128;
 static constexpr int64_t K_DIM_128 = 128;
@@ -153,6 +154,16 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tilingCtx.aicCoreNum = ascendcPlatform.GetCoreNumAic();
     tilingCtx.libApiWorkSpaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
 
+    // P1: per-sequence chunk counts (ListInt attr #11, built by l0op from the
+    // host-readable cu_seqlens). Empty/absent list keeps the uniform partition.
+    tilingCtx.seqChunkCounts = nullptr;
+    tilingCtx.seqCount = 0;
+    const auto *seqChunkList = attrPtr->GetListInt(ATTR_SEQ_CHUNK_COUNTS_IDX);
+    if (seqChunkList != nullptr && seqChunkList->GetSize() > 0) {
+        tilingCtx.seqChunkCounts = seqChunkList->GetData();
+        tilingCtx.seqCount = static_cast<int64_t>(seqChunkList->GetSize());
+    }
+
     if (tilingCtx.aicCoreNum == 0) {
         OP_LOGE(context->GetNodeName(), "Platform reports zero AIC cores; cannot build ChunkFwdH tiling.");
         return ge::GRAPH_FAILED;
@@ -221,6 +232,8 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tiling.set_vUpdateWorkspaceOffset(plainTiling.vUpdateWorkspaceOffset);
     tiling.set_kDecayWorkspaceOffset(plainTiling.kDecayWorkspaceOffset);
     tiling.set_hWorkspaceOffset(plainTiling.hWorkspaceOffset);
+    tiling.set_coreBoundCount(plainTiling.coreBoundCount);
+    tiling.set_coreTaskBounds(plainTiling.coreTaskBounds);
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
 
