@@ -485,15 +485,33 @@ public:
             pipe_->AllocEventID<AscendC::HardEvent::MTE2_V>();
         scalarVToS_ = pipe_->AllocEventID<AscendC::HardEvent::V_S>();
         scalarSToV_ = pipe_->AllocEventID<AscendC::HardEvent::S_V>();
+        foldFree_ = pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>();
+    }
+
+    __aicore__ inline void InitParallel(GM_ADDR workspace)
+    {
+#if !KDA_GATE_POST_ARCH35
+        if constexpr (SAFE_GATE && AscendC::IsSameType<RawGateT, float>::value && !VARLEN_TND) {
+            parallel_ = tiling_.reserved1 == 1 && tiling_.batch == 1 &&
+                tiling_.headNum == 32 && tiling_.isVarLen == 0;
+        }
+#endif
+        if (parallel_) {
+            partialsGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace));
+        }
     }
 
     __aicore__ inline void Process()
     {
         const uint32_t core = AscendC::GetBlockIdx();
+        if (parallel_) {
+            ProcessParallel(core);
+        } else {
         for (uint32_t head = core;
              head < static_cast<uint32_t>(tiling_.headNum);
              head += static_cast<uint32_t>(tiling_.usedCoreNum)) {
             ProcessHead(head);
+        }
         }
         pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE3>(vToMte3_);
         pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_V>(mte3ToV_);
@@ -502,6 +520,7 @@ public:
         pipe_->ReleaseEventID<AscendC::HardEvent::MTE2_V>(rawMte2ToV_);
         pipe_->ReleaseEventID<AscendC::HardEvent::V_S>(scalarVToS_);
         pipe_->ReleaseEventID<AscendC::HardEvent::S_V>(scalarSToV_);
+        pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(foldFree_);
     }
 
 private:
@@ -564,6 +583,95 @@ private:
         }
         return ((static_cast<uint64_t>(batch) * tiling_.headNum + head) *
                     tiling_.seqlen + token) * kKeyDim;
+    }
+
+    __aicore__ inline void ProcessSegment(uint32_t head, uint32_t segment)
+    {
+        auto dbAcc = reduce_.Get<float>();
+        auto dAAcc = dbAcc[kKeyDim];
+        auto scalar = reduce_.Get<float>()[136];
+        auto bias = reduce_.Get<float>()[144];
+        AscendC::Duplicate(dbAcc, 0.0f, kKeyDim);
+        AscendC::Duplicate(dAAcc, 0.0f, 8);
+        AscendC::DataCopyPad(
+            scalar, aLogGm_[head],
+            {1, static_cast<uint32_t>(sizeof(float)), 0, 0, 0},
+            {false, 0, 0, 0});
+        if (tiling_.hasDtBias != 0) {
+            AscendC::DataCopy(
+                bias, dtBiasGm_[static_cast<uint64_t>(head) * kKeyDim],
+                kKeyDim);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(initMte2ToV_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(initMte2ToV_);
+        AscendC::Exp(scalar, scalar, 1);
+        AscendC::PipeBarrier<PIPE_V>();
+        const float expA = ReadScalar(scalar);
+
+        const uint32_t chunks = static_cast<uint32_t>(tiling_.chunkNum);
+        const uint32_t begin = chunks * segment / 3;
+        const uint32_t end = chunks * (segment + 1) / 3;
+        for (uint32_t taskIdx = begin; taskIdx < end; ++taskIdx) {
+            const GatePostChunkTask task = DecodeTask(taskIdx);
+            ProcessChunk(task, head, expA, dbAcc, dAAcc, bias);
+            const uint64_t record = (static_cast<uint64_t>(head) * chunks + taskIdx) * 136;
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_);
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_);
+            AscendC::DataCopy(partialsGm_[record], reduce_.Get<float>()[280], 8);
+            AscendC::DataCopy(partialsGm_[record + 8], scanPong_.Get<float>(), 128);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_);
+        }
+    }
+
+    __aicore__ inline void FoldHead(uint32_t head)
+    {
+        auto dbAcc = reduce_.Get<float>();
+        auto dAAcc = dbAcc[128];
+        auto input = scanPing_.Get<float>();
+        auto next = scanPong_.Get<float>();
+        AscendC::Duplicate(dbAcc, 0.0f, 128);
+        AscendC::Duplicate(dAAcc, 0.0f, 8);
+        AscendC::PipeBarrier<PIPE_V>();
+        const uint32_t chunks = static_cast<uint32_t>(tiling_.chunkNum);
+        for (uint32_t begin = 0; begin < chunks; begin += 32) {
+            const uint32_t count = chunks - begin < 32 ? chunks - begin : 32;
+            const uint64_t record = (static_cast<uint64_t>(head) * chunks + begin) * 136;
+            AscendC::DataCopy(input, partialsGm_[record], count * 136);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(initMte2ToV_);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(initMte2ToV_);
+            for (uint32_t i = 0; i < count; ++i) {
+                AscendC::Add(dAAcc, dAAcc, input[i * 136], 1);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::Add(next, dbAcc, input[i * 136 + 8], 128);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::Adds(dbAcc, next, 0.0f, 128);
+                AscendC::PipeBarrier<PIPE_V>();
+            }
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(foldFree_);
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(foldFree_);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_);
+        AscendC::DataCopyPad(dAGm_[head], dAAcc,
+            {1, static_cast<uint32_t>(sizeof(float)), 0, 0, 0});
+        if (tiling_.hasDtBias != 0) {
+            AscendC::DataCopy(dBiasGm_[static_cast<uint64_t>(head) * 128], dbAcc, 128);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_);
+    }
+
+    __aicore__ inline void ProcessParallel(uint32_t core)
+    {
+        const uint32_t heads = static_cast<uint32_t>(tiling_.headNum);
+        for (uint32_t work = core; work < heads * 3;
+             work += static_cast<uint32_t>(tiling_.usedCoreNum)) {
+            ProcessSegment(work / 3, work % 3);
+        }
+        AscendC::PipeBarrier<PIPE_ALL>();
+        AscendC::SyncAll<true>();
+        if (core < heads) { FoldHead(core); }
     }
 
     __aicore__ inline void ProcessHead(uint32_t head)
@@ -769,12 +877,17 @@ private:
         auto raw = raw_.Get<float>();
         auto output = result_.Get<float>();
 
+#if KDA_GATE_POST_ARCH35
+
         for (uint32_t row = 0; row < rows; ++row) {
             const uint32_t rowOffset = row * kKeyDim;
             AscendC::DataCopy(
                 upstream[rowOffset], dgActGm_[offset + rowOffset],
                 kKeyDim);
         }
+#else
+        AscendC::DataCopy(upstream, dgActGm_[offset], count);
+#endif
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(rawMte2ToV_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(rawMte2ToV_);
         if (rows < kChunkRows) {
@@ -813,11 +926,16 @@ private:
         }
 
         if (tiling_.hasDtBias != 0) {
+#if KDA_GATE_POST_ARCH35
             for (uint32_t row = 0; row < rows; ++row) {
                 AscendC::Add(
                     raw[row * kKeyDim], raw[row * kKeyDim],
                     bias, kKeyDim);
             }
+#else
+            AscendC::Add(raw, raw, bias, 64, rows, {1, 1, 1, 16, 16, 0});
+            AscendC::Add(raw[64], raw[64], bias[64], 64, rows, {1, 1, 1, 16, 16, 0});
+#endif
             AscendC::PipeBarrier<PIPE_V>();
         }
 
@@ -1059,8 +1177,18 @@ private:
         AscendC::Adds(dst, dst, 1.0f, count);
         AscendC::Duplicate(one, 1.0f, kKeyDim);
         AscendC::PipeBarrier<PIPE_V>();
+#if !KDA_GATE_POST_ARCH35
+        if (parallel_ && SAFE_GATE && !VARLEN_TND && count != 0 &&
+            count <= kChunkRows * kKeyDim && count % kKeyDim == 0) {
+            const uint8_t rows = static_cast<uint8_t>(count / kKeyDim);
+            AscendC::Div(dst, one, dst, uint64_t{64}, rows, {1, 1, 1, 16, 0, 16});
+            AscendC::Div(dst[64], one, dst[64], uint64_t{64}, rows, {1, 1, 1, 16, 0, 16});
+        } else
+#endif
+        {
         for (uint32_t offset = 0; offset < count; offset += kKeyDim) {
             AscendC::Div(dst[offset], one, dst[offset], kKeyDim);
+        }
         }
         AscendC::PipeBarrier<PIPE_V>();
     }
@@ -1104,11 +1232,16 @@ private:
     {
         auto partial = reduce_.Get<float>()[280];
         auto rowSum = reduce_.Get<float>()[280 + kChunkRows * 8];
+#if KDA_GATE_POST_ARCH35
         for (uint32_t row = 0; row < rows; ++row) {
             AscendC::WholeReduceSum(
                 partial[row * 8], values[row * kKeyDim],
                 64, 2, 1, 1, 8);
         }
+#else
+        AscendC::WholeReduceSum(partial, values, 64, rows, 8, 1, 16);
+        AscendC::WholeReduceSum(partial[1], values[64], 64, rows, 8, 1, 16);
+#endif
         AscendC::PipeBarrier<PIPE_V>();
         AscendC::WholeReduceSum(
             rowSum, partial, 2, rows, 1, 1, 1);
@@ -1131,11 +1264,15 @@ private:
         // as a single transfer, while the same row-sized form is already
         // proven by the dbias writeback below.
         const uint32_t rows = count / kKeyDim;
+#if KDA_GATE_POST_ARCH35
         for (uint32_t row = 0; row < rows; ++row) {
             AscendC::DataCopy(
                 dgGm_[offset + static_cast<uint64_t>(row) * kKeyDim],
                 value[row * kKeyDim], kKeyDim);
         }
+#else
+        AscendC::DataCopy(dgGm_[offset], value, count);
+#endif
         // The next chunk reuses ``value`` as BF16 MTE2 staging.  MTE3_V only
         // orders Vector, not this producer/consumer pair, so wait on the
         // actual MTE3-to-MTE2 dependency before that plane is overwritten.
@@ -1144,6 +1281,10 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_);
     }
+
+    bool parallel_ = false;
+    AscendC::TEventID foldFree_{};
+    AscendC::GlobalTensor<float> partialsGm_;
 
     KdaGateBwdPostScalarTilingData tiling_{};
     AscendC::TPipe *pipe_ = nullptr;
