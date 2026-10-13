@@ -269,7 +269,12 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
 
     const uint64_t postWuScratchOffset = AlignWorkspace(cursor);
     if (!arch35Options.fusePostWu && !arch35Options.fusePostWuIntoFwdH) {
-        cursor = postWuScratchOffset + tokenHeads * shape.kDim * sizeof(float);
+        // kernel 侧 WScratchOffset 按 (b, hv, flatChunk, BT_, K_) 索引，元素数上界是
+        // B*HV*totalChunks*chunkSize*K：varLen 每个序列的尾块都会补足到 chunkSize，
+        // 因此不能按 tokenHeads*K 分配，否则尾块场景会越界写到后面的 workspace。
+        const uint64_t postWuScratchElements =
+            hChunkCount * shape.vHeads * chunkSize * shape.kDim;
+        cursor = postWuScratchOffset + postWuScratchElements * sizeof(float);
     }
 
     const uint64_t fwdHWorkspaceBaseOffset = AlignWorkspace(cursor);
