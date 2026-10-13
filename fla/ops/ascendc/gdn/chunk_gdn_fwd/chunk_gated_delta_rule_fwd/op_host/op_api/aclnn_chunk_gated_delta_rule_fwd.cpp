@@ -616,7 +616,10 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
     const bool outputFinalState = params.finalStateOutOptional != nullptr;
     const aclTensor *betaUsed = params.beta;
     const aclTensor *gUsed = params.g;
-    if(params.beta->GetDataType() == DataType::DT_FLOAT || params.g->GetDataType() == DataType::DT_FLOAT) {
+    // The legacy Phase6 kernels consume FP32 gate/beta. Keep A5's native
+    // low-precision prepare contract while normalizing the legacy inputs.
+    if(!IsAscend950() || params.beta->GetDataType() == DataType::DT_FLOAT ||
+       params.g->GetDataType() == DataType::DT_FLOAT) {
         betaUsed = params.beta->GetDataType() == DataType::DT_FLOAT
                                         ? params.beta
                                         : l0op::Cast(params.beta, DataType::DT_FLOAT, executorPtr);
