@@ -234,6 +234,18 @@ __aicore__ inline FwdHCoreHeadRange FwdHResolveCoreHeadRange(const FwdHRuntimeTi
     if (coreNum == 0 || coreIdx >= coreNum || totalHeads == 0) {
         return {};
     }
+    // P1 host-injected balanced partition (varlen): spans cover [0, totalHeads)
+    // with span count == blockDim == coreNum. Every core (AIC and both AIV
+    // subblocks) reads the same GM table, so partitions agree by construction.
+    // Table/core mismatch or empty table keeps the original uniform split.
+    if (tiling.coreBoundCount == coreNum) {
+        const uint32_t begin = coreIdx == 0 ? 0
+            : static_cast<uint32_t>(tiling.coreBoundsGm[coreIdx - 1U]);
+        const uint32_t end = static_cast<uint32_t>(tiling.coreBoundsGm[coreIdx]);
+        if (begin <= end && end <= totalHeads) {
+            return {begin, end};
+        }
+    }
     const uint32_t headsPerCore = FwdHCeilDiv(totalHeads, coreNum);
     const uint32_t begin = coreIdx * headsPerCore;
     uint32_t end = begin + headsPerCore;
