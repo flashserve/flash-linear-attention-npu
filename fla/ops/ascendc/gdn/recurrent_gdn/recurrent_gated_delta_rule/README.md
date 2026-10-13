@@ -85,10 +85,10 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
 | `beta` | 输入 | 必选 | 公式中的 $\beta$；不支持空 Tensor | - | `BFLOAT16` | `ND` | `(T, Nv)` | 支持 |
 | `stateRef` | 输入&输出 | 必选 | 状态矩阵 $S$，算子执行后原地更新；不支持空 Tensor | - | `BFLOAT16`、`FLOAT32` | `ND` | `(BlockNum, Nv, Dv, Dk)` | CANN 版本大于等于 9.1.0 后支持，其余版本不支持 |
 | `actualSeqLengths` | 输入 | 必选 | 序列长度；不支持空 Tensor，首元素代表无效前缀长度，其余 $B$ 个元素代表各 batch 的有效序列长度 | 首元素不小于 0，其余元素取值范围 `[0, 8]`，全部 $B+1$ 个元素之和等于 $T$ | `INT32` | `ND` | `(B+1,)` | 支持 |
-| `ssmStateIndices` | 输入 | 必选 | 输入序列到状态矩阵的映射索引，两种契约：`(T,)` 时 `state[ssmStateIndices[i]]` 表示第 $i$ 个 token 对应的状态块；`(B, W)` 时第 $batch$ 行为该序列的状态块表，`state[table[batch][j]]`（$j \in [0, L_i)$）表示该序列第 $j$ 个 token 对应的状态块；不支持空 Tensor | 取值范围 `[0, BlockNum)`，且同序列内元素互不重复；`(B, W)` 时要求 $0 < W \le 8$ 且 $L_i \le W$ | `INT32` | `ND` | `(T,)` 或 `(B, W)` | 支持 |
+| `ssmStateIndices` | 输入 | 必选 | 输入序列到状态矩阵的映射索引，两种契约：`(T,)` 时 `state[ssmStateIndices[i]]` 表示第 $i$ 个 token 对应的状态块；`(B, W)` 时第 $batch$ 行为该序列的状态块表，`state[table[batch][j]]`（$j \in [0, L_i)$）表示该序列第 $j$ 个 token 对应的状态块；不支持空 Tensor | 取值范围 `[0, BlockNum)`，且同序列内元素互不重复；`(B, W)` 时要求 $0 < W \le 8$ 且 $L_i \le W$；运行时若该行违约，`out` 写 0、`stateRef` 不更新，其他请求继续执行 | `INT32` | `ND` | `(T,)` 或 `(B, W)` | 支持 |
 | `g` | 输入 | 可选 | 标量衰减系数 $\alpha_t = e^g$ | 传 `nullptr` 时等价于全 0（$\alpha_t = 1$，即无标量衰减） | `FLOAT32` | `ND` | `(T, Nv)` | 支持 |
 | `gk` | 输入 | 可选 | 逐维衰减系数 $\alpha_{kt} = e^{gk}$ | 传 `nullptr` 时等价于全 0（$\alpha_{kt} = \mathbf{1}$，即无逐维衰减） | `FLOAT32` | `ND` | `(T, Nv, Dk)` | 支持 |
-| `numAcceptedTokens` | 输入 | 可选 | 每个序列接受的 token 数量 | 传 `nullptr` 时每个序列默认取 1；提供时每项取值范围为 `[1, Li]` | `INT32` | `ND` | `(B,)` | 支持 |
+| `numAcceptedTokens` | 输入 | 可选 | 每个序列接受的 token 数量 | 传 `nullptr` 时每个序列默认取 1；提供时每项必须为正且不超过状态行宽（`(B, W)` 为 `W`，legacy `(T,)` 为 `Li`） | `INT32` | `ND` | `(B,)` | 支持 |
 
 ### 3.2 属性参数（Attributes）
 
@@ -114,7 +114,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
 - `actualSeqLengths` 为长度 $B+1$ 的一维 INT32 张量，首元素代表无效前缀长度（不参与计算），第 1 至第 $B$ 个元素代表各 batch 的有效序列长度，全部元素之和等于 $T$。
 - `ssmStateIndices` 为 INT32 张量，支持两种契约：
   - `(T,)`：第 $i$ 个 token 使用 `state[ssmStateIndices[i]]`（legacy 逐 token 寻址），取值范围 `[0, BlockNum)`，且所有元素互不重复。
-  - `(B, W)`：按请求寻址的状态块表，第 $batch$ 行存储该序列的状态块索引，`state[table[batch][j]]` 为该序列第 $j$ 个 token（$j \in [0, L_i)$）对应的状态块。约束：$W = $ 表宽（即各行长度），$0 < W \le 8$（RGDR `MAX_MTP`）且每个序列长度满足 $L_i \le W$；行数必须等于 $B$。
+  - `(B, W)`：按请求寻址的状态块表，第 $batch$ 行存储该序列的状态块索引，`state[table[batch][j]]` 为该序列第 $j$ 个 token（$j \in [0, L_i)$）对应的状态块。约束：$W = $ 表宽（即各行长度），$0 < W \le 8$（RGDR `MAX_MTP`）且每个序列长度满足 $L_i \le W$；行数必须等于 $B$。运行时若某行违约，该请求的 `out` 写 0、`stateRef` 不更新，其他请求继续执行。
 - `query/key/value/beta/out` 仅支持 `BFLOAT16`。
 - `query/key/value/beta/out` 仅支持 `BFLOAT16`。
 - $N_k$、$N_v$ 不超过 256，$D_k$、$D_v$ 仅支持 128，且 $N_v$ 必须是 $N_k$ 的整数倍。
@@ -139,7 +139,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
 - `beta`: `(T, Nv)`
 - `stateRef`: `(BlockNum, Nv, Dv, Dk)`
 - `actualSeqLengths`: `(B+1,)`，首元素为无效序列长度（不参与计算），其余 `B` 个元素为各 batch 的有效序列长度，其之和等于 `T`
-- `ssmStateIndices`: `(T,)`（逐 token，取值范围 `[0, BlockNum)` 且所有元素互不重复）或 `(B, W)`（按请求的状态块表，$0 < W \le 8$ 且 $L_i \le W$）
+- `ssmStateIndices`: `(T,)`（逐 token，取值范围 `[0, BlockNum)` 且所有元素互不重复）或 `(B, W)`（按请求的状态块表，$0 < W \le 8$ 且 $L_i \le W$；违约行输出置 0 且不更新状态）
 - `Dk`、`Dv` 仅支持 128；`Nk`、`Nv` 不超过 256，且 `Nv` 必须是 `Nk` 的整数倍
 
 ---
@@ -235,7 +235,7 @@ def test_recurrent_gated_delta_rule_varlen():
     ssm_state_indices  = torch.arange(T, dtype=torch.int32).to(device)
 
     # 各序列实际接受的 token 数不同（投机推理验证结果）
-    # 需满足 num_accepted_tokens[i] <= actual_seq_lengths[i + 1] <= 8
+    # 需满足 num_accepted_tokens[i] <= 状态行宽 W <= 8（legacy `(T,)` 时 W 等于该序列长度）
     num_accepted_tokens = torch.tensor([2, 1, 2, 1], dtype=torch.int32).to(device)
 
     out = recurrent_gated_delta_rule(

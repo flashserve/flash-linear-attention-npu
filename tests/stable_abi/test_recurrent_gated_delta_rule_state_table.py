@@ -68,6 +68,38 @@ def _run_case(lengths, accepted, width, state_dtype, table_mode):
     torch.testing.assert_close(state_npu.cpu(), expected_state, rtol=0, atol=0)
 
 
+def test_state_table_contract_violation_zeroes_only_invalid_request():
+    """A short state row must not leave garbage or drop a following request."""
+    lengths = [4, 2]
+    table = torch.tensor([[1, 2], [3, 4]], dtype=torch.int32)
+    state = torch.arange(6, dtype=torch.float32)
+    state = state[:, None, None, None].expand(-1, 4, 128, 128).contiguous()
+    total = sum(lengths)
+    query = torch.zeros(total, 1, 128, dtype=torch.bfloat16)
+    value = torch.zeros(total, 4, 128, dtype=torch.bfloat16)
+    beta = torch.zeros(total, 4, dtype=torch.bfloat16)
+    g = torch.zeros(total, 4, dtype=torch.float32)
+
+    expected_output = torch.zeros_like(value)
+    expected_state = state.clone()
+    source = state[table[1, 0]]
+    # query is zero, so both rows have a zero attention output.  The
+    # writeback assertion below is the ownership check for the valid row.
+    expected_state[table[1]] = source
+
+    state_npu = state.npu()
+    output = npu_recurrent_gated_delta_rule(
+        query.npu(), key=torch.zeros_like(query).npu(), value=value.npu(),
+        state=state_npu, beta=beta.npu(), scale=1.0,
+        actual_seq_lengths=torch.tensor([0] + lengths, dtype=torch.int32).npu(),
+        ssm_state_indices=table.npu(),
+        num_accepted_tokens=torch.tensor([1, 1], dtype=torch.int32).npu(),
+        g=g.npu(),
+    )
+    torch.testing.assert_close(output.cpu(), expected_output, rtol=0, atol=0)
+    torch.testing.assert_close(state_npu.cpu(), expected_state, rtol=0, atol=0)
+
+
 CASES = [
     ([4, 4], [1, 1], 4),      # equal-length control
     ([2, 4], [1, 1], 4),      # the deterministic cross-request counterexample

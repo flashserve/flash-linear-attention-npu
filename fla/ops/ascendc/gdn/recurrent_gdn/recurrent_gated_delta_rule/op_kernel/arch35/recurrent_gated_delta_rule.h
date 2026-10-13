@@ -319,25 +319,28 @@ public:
             if (seqLen <= 0) {
                 continue;
             }
-            if (seqLen > static_cast<int32_t>(MAX_MTP)) {
-                return;
-            }
             if (seq1 < 0 || seq1 > static_cast<int32_t>(T_) || (seq1 + seqLen) > static_cast<int32_t>(T_)) {
                 return;
             }
             int32_t seq0 = seq1;
             seq1 += seqLen;
+            if (seqLen > static_cast<int32_t>(MAX_MTP)) {
+                ZeroAttentionOutput(seq0, seq1);
+                continue;
+            }
             // With a [B, W] state table the rows are addressed by request
             // index; seq0/seq1 remain token offsets for the packed q/k/v data
             // only. 0 keeps the legacy per-token [T] contract unchanged.
             const int32_t stateBase = stateIndicesStride_ > 0 ? static_cast<int32_t>(batch_i * stateIndicesStride_) : seq0;
             const int32_t stateWidth = stateIndicesStride_ > 0 ? static_cast<int32_t>(stateIndicesStride_) : seqLen;
-            // seqLen > W violates the [B, W] contract (host-side tiling cannot
-            // check per-sequence lengths since cuSeqlens values live in device
-            // memory).  Skip this request only: returning here would also drop
-            // every remaining request handled by this core and leave their
-            // outputs silently uninitialized.
-            if (seqLen > stateWidth) {
+            // For a [B, W] table, W is a lower bound for every request length
+            // and for its previous accepted count. The values are device-side,
+            // so tiling cannot reject a malformed row. Define a safe runtime
+            // fallback: zero only that request and preserve all later requests.
+            const int32_t acceptedTokenNum =
+                hasAcceptedTokens_ ? numAcceptedTokensGm_.GetValue(batch_i) : 1;
+            if (seqLen > stateWidth || acceptedTokenNum <= 0 || acceptedTokenNum > stateWidth) {
+                ZeroAttentionOutput(seq0, seq1);
                 continue;
             }
             uint32_t copyFlag = 0;
@@ -368,6 +371,31 @@ public:
     }
 
 private:
+    __aicore__ inline void ZeroAttentionOutput(int32_t seq0, int32_t seq1)
+    {
+        // The [B, W] table is a caller contract. If a malformed row is seen at
+        // runtime, write deterministic zeros for this request instead of leaving
+        // its output uninitialized; keep the normal per-head ownership so later
+        // requests assigned to this core still run.
+        for (uint64_t head_i = 0; head_i < NV_; head_i++) {
+            if (!IsCurrentBlock(seq1 - seq0)) {
+                continue;
+            }
+            for (uint64_t v_i = 0; v_i < realV_; v_i += vStep_) {
+                uint32_t curSingleV = v_i + vStep_ > realV_ ? realV_ - v_i : vStep_;
+                LocalTensor<outType> zero = attnOutQueue_.AllocTensor<outType>();
+                Duplicate<outType>(zero, 0, curSingleV);
+                AscendC::PipeBarrier<PIPE_V>();
+                DataCopyParams outParams{1, static_cast<uint16_t>(curSingleV * sizeof(outType)), 0, 0};
+                for (uint64_t seq_i = seq0; seq_i < seq1; seq_i++) {
+                    uint64_t attnOffset = (seq_i * NV_ + head_i) * realV_ + v_i;
+                    DataCopyPad(attnOutGm_[attnOffset], zero, outParams);
+                }
+                attnOutQueue_.FreeTensor(zero);
+            }
+        }
+    }
+
     __aicore__ inline void CopyInQKV(uint64_t vOffset, uint64_t qkOffset, int32_t seqLen)
     {
         LocalTensor<inType> qLocal = qInQueue_.AllocTensor<inType>();
