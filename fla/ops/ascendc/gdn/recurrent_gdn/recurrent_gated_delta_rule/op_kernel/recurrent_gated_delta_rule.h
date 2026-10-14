@@ -160,20 +160,20 @@ public:
     __aicore__ inline void Process()
     {
         ComputeAvgload();
-        int32_t seq1 = cuSeqlensGm_.GetValue(0);
+        int64_t seqCursor = static_cast<int64_t>(cuSeqlensGm_.GetValue(0));
         for (uint64_t batch_i = 0; batch_i < B_; batch_i++) {
             int32_t seqLen = cuSeqlensGm_.GetValue(batch_i+1);
             if (seqLen <= 0) {
                 continue;
             }
-            if (seqLen > static_cast<int32_t>(MAX_MTP)) {
-                return;
+            const int64_t seq0Offset = seqCursor;
+            seqCursor += static_cast<int64_t>(seqLen);
+            if (seqLen > static_cast<int32_t>(MAX_MTP) || seq0Offset < 0 ||
+                seq0Offset > static_cast<int64_t>(T_) || seqCursor > static_cast<int64_t>(T_)) {
+                continue;
             }
-            if (seq1 < 0 || seq1 > static_cast<int32_t>(T_) || (seq1 + seqLen) > static_cast<int32_t>(T_)) {
-                return;
-            }
-            int32_t seq0 = seq1;
-            seq1 += seqLen;
+            int32_t seq0 = static_cast<int32_t>(seq0Offset);
+            int32_t seq1 = static_cast<int32_t>(seqCursor);
             // With a [B, W] state table the rows are addressed by request
             // index; seq0/seq1 remain token offsets for the packed q/k/v data
             // only. 0 keeps the legacy per-token [T] contract unchanged.
