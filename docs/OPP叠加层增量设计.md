@@ -397,6 +397,78 @@ python -m fla_npu.install_opp --remove-overlay
 
 ① 补"launcher vs ctypes 两后端一致性"测试（**当前缺失**，是后续一切自动化的验收基础）→ ② 生成器脚手架，先只覆盖 1–2 个算子并以"与原手写物 diff"验收 → ③ 契约代号 + 能力自检替代纯哈希 → ④ 叠加层 launcher 的选择顺序与 `--status` 审计（把"哪份 launcher 生效"纳入可观测面）。
 
+### 7.7 跨边界契约校验 + glue ABI 升级（**方案 F 的落地设计，待实现**）
+
+#### 7.7.1 机制事实：适配器调用 aclnn 时**没有编译期原型**（重要更正）
+
+`csrc/include/stable/exec.h`：
+
+- `:13-14` 注释原文：*"The GetWorkspaceSize pointer has an operator-specific signature, so it is **reinterpret_cast to the type derived from the tuple's holder types**"*；
+- `:274-276`：`using GetWorkspaceFn = int (*)(ArgCType<...>..., ...); auto fn = reinterpret_cast<GetWorkspaceFn>(address);`
+- `:461-462`：`void* get_workspace = runtime.symbol(base + "GetWorkspaceSize"); auto launch = reinterpret_cast<LaunchFn>(runtime.symbol(base));`
+
+即：**按符号名 `dlsym` → 按"适配器自己的参数 tuple"推导出函数指针类型 → `reinterpret_cast` → 调用**。适配器**不 include 任何 `aclnn_<op>.h`**，因此"签名是否一致"**在编译期完全无法校验**；不一致即**未定义行为**（崩溃 / 静默错值 / 偶尔被 aclnn 自身参数校验拦下报 `161002`）。此前文档中"按编译期老原型调用"的表述据此更正。
+
+另一条边界由 `boxed.h:5-11` 说明：glue 侧按**固定类型集合**把参数装箱成栈、`run_npu_x` 是类型化函数——这正是 `_check_build_stamp` 用源码哈希要防的"栈错位 / 错 stream"。
+
+#### 7.7.2 两个契约轴（必须分开治理）
+
+| 轴 | 边界 | 现有防护 | 覆盖情况 |
+|---|---|---|---|
+| **轴① glue ↔ launcher** | boxed 参数栈（类型序列、stream 索引） | `_check_build_stamp`（`SOURCE_HASH` 相等） | ✅ 有，但**过严**：叠加层无法携带自己的 launcher 而不让校验退化为自证 |
+| **轴② launcher ↔ aclnn** | `FLA_STABLE_EXEC` 的 tuple → `reinterpret_cast` 的签名 | **无** | ❌ **空缺**（改动前就缺；本 PR 把"只换 OPP"变成日常路径，**触发概率上升** ⇒ 必须补） |
+
+补充事实：**stamp 的注释本身就承认这类失败难排查**（*"a dispatcher error deep inside a call or -- when only a stack index moved -- as a wrong stream, which is much harder to read"*），说明作者清楚该风险轴，只是从未覆盖轴②。
+
+#### 7.7.3 检测设计（两侧的可比物）
+
+| 侧 | 提供什么 | 怎么来 |
+|---|---|---|
+| launcher | `fla_npu_stable_glue_abi()`（轴①代际）与 **`fla_npu_stable_aclnn_signature(name)`**（轴②：它将会用什么签名调用该符号） | `exec.h` 已从 tuple 推导出 `GetWorkspaceFn`，**顺手把 `ArgCType<...>` 名字序列 stringify** 即可——**天然与 cast 一致**，且不需要解析 C 头 |
+| launcher（构建期） | `{算子 ↔ aclnn 接口头摘要}` | `build_stable.py` 记录 `op_api/include/aclnnop/aclnn_<op>.h` 的规范化摘要 |
+| 生效 OPP | 同一份头的摘要 | Python 读**生效 vendor**（overlay→base 顺序）下的 `op_api/include/aclnnop/aclnn_<op>.h`；op→头的映射取自伞头 `aclnn_ops_transformer_fla_npu.h` 的 include 表 |
+
+**检测点**：Python 侧（`_stable.load()` 之后、算子首次取用时，逐算子懒校验）。
+
+#### 7.7.4 触发强度：三档（默认不静默、不硬崩）
+
+| 档 | 行为 | 适用 |
+|---|---|---|
+| **默认** | 该算子**拒绝走 launcher → 回落 ctypes**（ctypes 按 Python 描述符构造，不依赖那个 cast，是安全路径），并**一次性告警**（算子名 + 两侧摘要 + 重编命令）；同时写入 `BACKENDS`/`FALLBACKS` 记账（`reason="aclnn interface mismatch"`），`FLA_NPU_STABLE_TRACE=1` / `--status` 可见 | 日常开发、用户现场 |
+| **严格** | `FLA_NPU_STABLE_STRICT=1` → **直接抛错**并给出重编命令 | CI、发布门禁 |
+| **兜底** | 任何档位**都不许静默**：即使回退也必须留痕 | 全部 |
+
+理由：与仓库既有哲学一致（launcher 不可用→整体回退 ctypes + 告警），而本 mismatch 是**算子级**的，回退粒度也应为算子级；但发布场景要能一键变硬错误。
+
+#### 7.7.5 `_check_build_stamp` 升级形态（轴①）
+
+- `SOURCE_HASH` **保留**，降级为"开发期同源自检 / 信息级日志"；
+- **可用性判定**改为：`glue_abi` 一致 **且** 轴②逐算子校验通过；
+- `SOURCE_HASH` 不等**不再整库禁用**——否则叠加层永远无法携带自己的 launcher（§7.5 方案 E 无从落地）；
+- 升级带来的风险（同一 ABI 下语义漂移）由三条兜底：① **CI 门禁**：改 `csrc/**` 必跑 §9.1 V23 两后端一致性测试 ② 轴②逐算子校验 ③ `FLA_NPU_STABLE_STRICT=1`。
+
+#### 7.7.6 规则文档大纲（给 agent 执行的"更新 launcher"规程）
+
+第②步（§7.6.1b）的 diff 验收已把"必须人工确认的东西"具体化成**每算子一张小表**：
+
+| 规则 | 取值来源 | 例 |
+|---|---|---|
+| **context 首参取谁** | 现有适配器 + `exec.h` 的 workspace_meta 约定 | fwd_o：`meta_of(v)`；cumsum：`tensor(g_meta)` |
+| **哪些参数 optional** | **aclnn 原型 + `def.cpp` 的 `ParamType`**（不是 ctypes wrapper） | fwd_o：`optional_tensor(g)` |
+| **枚举/字符串编码** | 算子自带表 + `_stable.py::_ENUM`（**顺序必须一致**） | fwd_o：`CStrArg(layout)`；cumsum：`cstr(kChunkLocalCumsumOutputDtypeNames, output_dtype)` |
+| **输出分配规则** | `_aclnn_ctypes.py` 同名 wrapper 的 `out_shape` | fwd_o：4 种 layout 分支 |
+
+**流程**：改算子 → 查 §12.6.3 表判断是否命中"必须改适配器" → 跑 `tools/gen_stable_adapter.py` 出草案 → 按上表补齐 → `build_stable.py --out <包内路径>` 重编（同时刷新 `_stable_hash.py`）→ 跑 V23 一致性测试 → 若跨边界契约变化则升 `glue_abi`。
+
+#### 7.7.7 落地切片（4 步，每步可独立验证）
+
+1. **launcher 导出**：`fla_npu_stable_glue_abi()`、`fla_npu_stable_aclnn_signature(name)`；`build_stable.py` 记录 `{op ↔ aclnn 头摘要}`；
+2. **Python 校验框架**（`_stable.py`）：读两侧、按三档处理，接入 `BACKENDS/FALLBACKS` 与 `--status`；用"**故意造签名不一致的 OPP**"验证"能拦住而不是崩"；
+3. **stamp 判定升级**：`glue_abi` 优先 + `SOURCE_HASH` 降级为自检；
+4. **规则文档**（`docs/architecture/适配器更新规则.md`）+ CI 门禁建议。
+
+> 定位说明：轴②是**上游遗留的洞**，**非本 PR 引入**；本 PR 的作用是**放大了触发概率**（叠加层让"只换 OPP"成为日常路径），因此在本 PR 内补齐是合理的。
+
 ## 8. 影响面
 
 ### 8.1 兼容性
