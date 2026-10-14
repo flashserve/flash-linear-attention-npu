@@ -325,6 +325,52 @@ python -m fla_npu.install_opp --remove-overlay
 
 **何时需要**：改动命中 §12.6.3 表里"必须改适配器"的行（aclnn 接口/输出/可选性变化）。
 
+### 7.6 方案 F —— 适配器半自动生成 + stamp 纳入叠加机制（**评估结论，未实现**）
+
+> 背景：见 §7.5 方案 E 的动机。这里给出**可行性评估**与建议路线，不是已定方案。
+
+#### 7.6.1 适配器结构拆解（以 `csrc/src/stable_chunk_fwd_o.cpp`，103 行为例）
+
+| 组成 | 行数（约） | 可否自动生成 |
+|---|---|---|
+| 文件头注释 + `#include`/`using` 样板 | 12–45（34 行） | ✅ 纯样板 |
+| layout 名表 `kChunkFwdOOutputLayoutNames` | 51–52 | ⚠️ 可从 `chunk_fwd_o_struct.h` 的枚举生成，但**必须与 `_stable.py::_ENUM` 顺序一致**（跨语言耦合） |
+| `kSchema_*` 字符串 | 58–62 | ✅ 可从 `npu_custom.yaml` 的 `func:` 行**归一化**得到（注意适配器用的是"位置参数 + `int output_layout` + `int stream`"的内部形式，需一层翻译规则） |
+| `run_*` 函数签名 | 64–70 | ✅ 由 schema 逐项映射（`Tensor?`→`std::optional<Tensor>`、`float`→`double`、`int`→`int64_t`） |
+| 输出分配（layout → shape） | 71–92（22 行） | ⚠️ 语义部分：需按 layout 分支算 shape；**可从 `_aclnn_ctypes.py` 同名 wrapper 的 `out_shape` 逻辑抽取**（那边已用 Python 写过同一套规则） |
+| `FLA_STABLE_EXEC(...)` 参数编组 | 94–99 | ✅ **最强的一点**：实测其参数序列与 `_aclnn_ctypes.py::npu_chunk_fwd_o` 的 aclnn 参数列表**逐项一致**（`q,k,v,h,g,cu_seqlens,chunk_indices,scale,chunk_size,use_exp2,transpose_state_layout,layout,out`），而"谁走 `tensor()`/谁走 `int_array()`/谁走 `scalar()`"可由 `def.cpp` 的 `ParamType`+`DataType` 推出 |
+| 注册（`#include` + `m.def(kSchema_*)`） | 在 `stable_ops.cpp` | ✅ 一行/算子 |
+
+**规模**：40 个 `stable_*.cpp`、合计 4,098 行（最小 34 / 中位 83 / 最大 266）。⇒ 机械部分约占**一半**，与"新增算子只需写适配器"的成本直接相关。
+
+#### 7.6.2 生成器的四个输入与验收
+
+| 输入 | 提供什么 |
+|---|---|
+| `torch_custom/fla_npu/npu_custom.yaml` | torch 侧 schema（名字/参数/默认值/返回元组） |
+| `fla/ops/**/<op>/op_host/<op>_def.cpp` | **可选性（REQUIRED/OPTIONAL）、dtype、format、value-depend、输出个数** |
+| `op_api/include/aclnnop/aclnn_<op>.h` | 对外两段式原型（形参类型与顺序） |
+| `_aclnn_ctypes.py::npu_<op>` | **参数序 + 输出 shape 规则的参考实现**（第四来源，用于交叉校验） |
+
+**验收三步**：① 生成物与**现有手写适配器 diff**（差异必须能被解释）→ ② 编译通过 → ③ **"两后端同输入结果一致"冒烟**。
+⚠️ 第 ③ 步目前**仓库里没有**（没找到 launcher vs ctypes 的逐算子对照测试），而它是所有自动化的验收基础 → **建议优先补**。
+
+#### 7.6.3 stamp 纳入叠加机制：三个选项
+
+现状：`_stable.check_build_stamp(path)` 用包内 `_stable_hash.SOURCE_HASH` 与库自报的 `fla_npu_stable_source_hash()` 比对；模块缺失→跳过；库报 `unknown`→接受；不等→**整库判不可用**（全部回退 ctypes）。注意它**接收路径参数**，因此天然能校验"任意 launcher"（含 `FLA_NPU_STABLE_LIB` 指向的叠加层 launcher）。
+
+| 选项 | 做法 | 优点 | 缺点 |
+|---|---|---|---|
+| **a) 叠加层自带 (launcher.so, hash)** | 每个叠加层携带自己的哈希文件，loader 按 overlay→base 选择并校验"该叠加层自己的 hash" | 改动最小、与现有机制同构 | 校验**退化为自证**（叠加层可带任意 hash），只剩"打包完整性"意义 |
+| **b) 契约代号 + 能力自检（推荐）** | 把"源码哈希"升级为**双方共同声明的 glue 契约代号**（如 `FLA_STABLE_GLUE_ABI=g2`：Python glue 一个常量 ⟷ launcher 一个导出函数），叠加层必须声明兼容代号；保留 `_capability()` 那套"**问库要答案**"的运行时自检 | 支持叠加层而又不放弃一致性；`_capability()` 机制**已存在**且注释明确写了"问库，这样 glue 与 launcher 不会各说各话" | 同一代号下的**语义漂移**检测变弱 → 必须靠"两后端一致性测试"兜底（见 7.6.2 第③步） |
+| **c) 多哈希白名单** | 包内记录 `{base_hash, overlay_hash…}` | 改动小、语义直白 | 每加一个叠加层都要改**包内文件**，与"不改包"目标冲突 |
+
+**推荐 b**，并把"输出分配/参数序"的语义差异交给"两后端一致性冒烟"来兜。**风险**：哈希相等原本是"编译期同源"的强保证，降级为代号 + 自检后，需要新增 CI 门禁（改 `csrc/**` 必跑一致性测试）才能维持等效强度。
+
+#### 7.6.4 若立项，建议的落地顺序
+
+① 补"launcher vs ctypes 两后端一致性"测试（**当前缺失**，是后续一切自动化的验收基础）→ ② 生成器脚手架，先只覆盖 1–2 个算子并以"与原手写物 diff"验收 → ③ 契约代号 + 能力自检替代纯哈希 → ④ 叠加层 launcher 的选择顺序与 `--status` 审计（把"哪份 launcher 生效"纳入可观测面）。
+
 ## 8. 影响面
 
 ### 8.1 兼容性
