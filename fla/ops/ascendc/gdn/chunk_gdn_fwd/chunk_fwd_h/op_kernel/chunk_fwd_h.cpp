@@ -117,6 +117,9 @@ __global__ __aicore__ void chunk_fwd_h(
     args.tiling.kDecayWorkspaceOffset = static_cast<uint64_t>(tilingData->kDecayWorkspaceOffset);
     args.tiling.hWorkspaceOffset = static_cast<uint64_t>(tilingData->hWorkspaceOffset);
     args.tiling.coreBoundCount = static_cast<uint32_t>(tilingData->coreBoundCount);
+    if (args.tiling.coreBoundCount > GDN::FWD_H_MAX_CORE_BOUNDS) {
+        args.tiling.coreBoundCount = 0; // malformed table — uniform partition fallback
+    }
     args.tiling.coreBoundsGm = tilingData->coreTaskBounds;
     using Traits = GDN::FwdHKernelTraits<
         D_T_G, V_DIM, USE_GK, USE_EXP2, STATE_FP32, STATE_V_FIRST>;
