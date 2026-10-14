@@ -2,9 +2,9 @@
 
 - **作者**：zzy1205
 - **评审人**：待定（改动落在 `torch_custom` 的加载/安装脚本；不涉及算子 `def`/`aclnn`/`torch` 接口入参，按仓库 CODEOWNERS 不属 ABI 敏感改动）
-- **状态**：已实现并通过 A5 行为验证；开发分支 `feat/opp-delta-overlay`
+- **状态**：已实现并通过 **A5 + A2 双平台**行为验证（A5：Ascend950PR / CANN 9.2.0-beta.2；A2：**910B3 真机 / aarch64** / CANN 9.2.0）；开发分支 `feat/opp-delta-overlay`
 - **日期**：2026-10-14
-- **验证平台**：CANN `9.2.0-beta.2` / **Ascend950PR（A5）**（唯一具备运行验证条件的平台；A2/A3 仅交叉编译）
+- **验证平台**：A5 = CANN `9.2.0-beta.2` / Ascend950PR；A2 = CANN `9.2.0` / Ascend910B3（aarch64，8 卡）；A3（`ascend910_93`）仅交叉编译
 
 ---
 
@@ -79,7 +79,7 @@
 | F4 | 一键回滚 | `install_opp.py --remove-overlay` |
 | F5 | 状态可查 | `install_opp.py --status`（各 vendor、文件数、算子名、`load_priority`） |
 | F6 | 解释器启动阶段即就绪（规避 issue #429） | `fla_npu_opp_env.py`（`.pth`）按 `overlay → base` 预置环境 |
-| F7 | 支持多个叠加层（有序） | `FLA_NPU_OVERLAY_VENDOR`（`os.pathsep` 分隔，靠前者优先） |
+| F7 | 支持多个叠加层（有序） | 加载端**自动发现**包内 `fla_npu_overlay_*` 目录，按 `config.ini` 的 `load_priority` 排优先级；`FLA_NPU_OVERLAY_VENDOR`（`os.pathsep` 分隔）可显式覆盖，靠前者优先 |
 
 ### 4.2 非功能性（均为本机实测）
 
@@ -136,7 +136,8 @@ site-packages/fla_npu/opp/vendors/
 | `FLA_NPU_OP_API_LIB` | str | **被 Stable-ABI launcher 消费**：必须指向**完整**算子集（base） |
 | `FLA_NPU_OP_API_LIBS` | str（pathsep 列表） | 新增：完整有序库列表，供诊断 |
 | `FLA_NPU_STABLE_ABI` | str | `ctypes` 强制参考路径；**装叠加层且用户未显式指定时自动置位** |
-| `FLA_NPU_OVERLAY_VENDOR` | str（pathsep 列表） | 叠加层目录名，默认 `fla_npu_overlay_transformer` |
+| `FLA_NPU_OVERLAY_VENDOR` | str（pathsep 列表） | 叠加层目录名；**可选**——未设置时从 `config.ini` 的 `load_priority` 与包内 `fla_npu_overlay_*` 目录自动发现 |
+| 叠加层命名约定 | 前缀 `fla_npu_overlay_` | 带此前缀的包内 vendor 目录被视作叠加层：在 `config.ini` 中**一律排在 base 之前**，且被加载端自动发现（避免"装了但不生效"） |
 | `opp/vendors/config.ini` | 文本 | `load_priority=<overlay>,<base>`（按优先级写，不再按名字排序） |
 | `aic-<soc>-ops-info.json` / `binary_info_config.json` | JSON | **按算子集聚合**；叠加层只列自己带的算子（CANN 侧按多份索引并集查找，已实测） |
 
@@ -337,6 +338,11 @@ python -m fla_npu.install_opp --remove-overlay
 | V10 | 成本 | 整包 vs 单算子 | **884 s（186 次 opc）→ 32–34 s（4 次 opc）**，约 **26×** |
 | V11 | 交叉编译（A2/A3） | `--soc=ascend910b` / `ascend910_93` | 各 **9 次 opc / 0 error**，包内为 `config/ascend910b…`、`kernel/ascend910_93…`（**仅编译**） |
 | V12 | CANN 多 vendor 语义 | 两个 vendor 同时登记 | **并集**（叠加层在前时 base 的算子仍可用）→ 方案 A 成立 |
+| V13 | **直接调用的阳性对照**（补齐 T1） | 用官方用例的真实形状直调 `chunk_fwd_o`（官方入口与 ctypes 参考各一次），叠加层为 host `scale ×2` | 两条路径一致：基线 `digest=9949293fa0ec sum=-3.10511` → 叠加 **`44c2ea1a8321 sum=-6.21021`（×2）** → 卸载**逐值回退**。（此前 161002 的根因是读错 `FwdOCase` 字段顺序：`v_dim=128, chunk_size=64`，与算子无关） |
+| V14 | **A2（910B3）真机运行验证** | 在 A2 上**原生构建**（aarch64，CXX 434–443 / opc 18–20 / 0 error，约 3 分钟）后组装独立运行副本；不触碰他人环境 | 基线 `cumsum digest=47054e5fca75 sum=+8320`（**与 A5 完全一致**）；装 host×2 叠加层 → **16640（×2）**；装 kernel×3 叠加层 → **24960（×3）**；对照算子 `fwd_h digest=de2f256064a0` **全程不变**；回滚后回到基线；base 目录指纹 `b14b8a5dcc300704` **不变** |
+| V15 | **多叠加层：并存 / 优先级 / 独立卸载** | 同时装 3 个叠加层（其中两个都改 `cumsum`，分别为 ×2 / ×3） | 三个叠加层并存；默认按 `config.ini` 顺序（`a`×2 生效 → 16640）；`FLA_NPU_OVERLAY_VENDOR` 反转顺序后 ×3 生效（24960）；单独卸掉 `a` 后 `cumsum` 回落 base 而**另一个叠加层（fwd_o）仍生效**；全卸回基线 |
+| V16 | **多叠加层缺陷修复**（T3 发现） | ① 自定义名叠加层在未设环境变量时**不生效**；② `config.ini` 把 base 排在叠加层之前 | 修复：加载端从 `config.ini` + `fla_npu_overlay_*` 目录**自动发现**叠加层（环境变量仍可覆盖）；安装端把叠加层（含自定义名）**一律排在 base 之前**；`--status` 标注 `[overlay]`/`[overlay?]` 并给出提示。复验：不设环境变量时两个叠加层**都生效**、`config.ini=overlay_a,overlay_b,base` |
+| V17 | **"产物变了 ≠ 行为变了"**（A2 踩坑记录） | 只改 kernel 中 4 处 `tiling_->scale` 的其中 1 处（`Muls`，第 712 行）后重建 | kernel `.o` **md5 全部改变**，但**运行结果与 base 完全相同**（该分支对本次输入不执行）→ 改全 4 处后才观测到 ×3。**结论：增量改动的生效必须用行为验证确认，不能只看产物是否变化** |
 
 **开发过程中发现并修复的问题**：Stable-ABI launcher 从 `FLA_NPU_OP_API_LIB` 指向的**单个**库解析全部 aclnn 符号；把它指向只含单算子的叠加层会让其余算子运行期报错（实测 3 个用例由通过转失败）。修复 = 该变量恒指完整库 + 叠加层在位时切 ctypes 后端（§6.2 不变量 1、2）。
 
@@ -344,10 +350,13 @@ python -m fla_npu.install_opp --remove-overlay
 
 | # | 项 | 说明 |
 |---|---|---|
-| T1 | 直接调 `chunk_fwd_o` 的**阳性对照**未做成 | 构造的入参未通过该算子校验（`aclnnStatus=161002`；同形状经官方 `ascendc_ops` 入口可通，说明漏了入口侧某参数）→ 已改用**官方双标杆用例**作阳性对照（V2/V9） |
-| T2 | A2/A3 **运行**验证 + Example ST | 开发机为 A5，无对应硬件 → 依赖 NPU CI |
-| T3 | 多叠加层并存（`FLA_NPU_OVERLAY_VENDOR` 多值） | 设计已支持，未做行为验证 |
-| T4 | 仓库若干算子用例在当前版本的**既有**失败（spec/形状约束） | 与本改动无关，不属本设计范围 |
+| T1 | ~~直接调 `chunk_fwd_o` 的阳性对照~~ | ✅ **已完成**（V13）：根因是读错官方用例的 `FwdOCase` 字段顺序（`v_dim=128, chunk_size=64`），与算子无关 |
+| T2 | ~~A2 运行验证~~ | ✅ **已完成**（V14/V15）：在 A2（910B3 真机、aarch64）上原生构建并验证 host/kernel 两层生效、对照算子不变、双叠加层优先级、回滚 |
+| T3 | ~~多叠加层行为验证~~ | ✅ **已完成**（V15/V16）：并发现并修复两个缺陷（自动发现、`config.ini` 顺序） |
+| T4 | A3（`ascend910_93`）**运行**验证 | 暂无可用的 A3 机器；A3 仅有交叉编译产物（V11） |
+| T5 | Example ST / NPU CI 7 分项 | 需在具备 CI 环境的仓库分支上触发 |
+| T6 | A2 上复合算子的对照 | A2 的 base 为 5 算子精简集（`ChunkLocalCumsum/ChunkFwdO/ChunkFwdH/ChunkGatedDeltaRuleFwd(+H)`），复合算子 `ChunkGatedDeltaRuleFwd` 在该精简集上报 `161002`；在 A5 的 35 算子 base 上正常（V7 已覆盖）。疑似其内部路径还依赖未编入的配套算子（如 `ChunkScaledDotKkt`/`RecomputeWUFwd`），未进一步定位 |
+| T7 | 仓库若干算子用例在当前版本的**既有**失败（spec/形状约束） | 与本改动无关，不属本设计范围 |
 
 ## 10. 风险与未决问题
 
@@ -362,6 +371,8 @@ python -m fla_npu.install_opp --remove-overlay
 | R7 | 磁盘占用 | 每叠加层约 25 MB（单算子） | 迭代结束即 `--remove-overlay` |
 | R8 | 生效需**重启进程** | 无法热更 | 既有约束（`RTLD_NODELETE` + 符号缓存）；已在验收中体现 |
 | R9 | **kernel 目标不依赖 kernel 源文件**：热树下改 kernel 入口，`ops_transformer_kernel` **0 次 opc**（实测 2 s 完成） | 决定"对象级增量"目前对 kernel 改动无效；若误以为"去掉 clean 就能增量编 kernel"，会拿到**陈旧 kernel** | 走对象复用路线前先修 CMake 依赖接线（或每次重跑 `generate_compile_cmd`/configure）；在此之前 kernel 改动走叠加层（`--ops` 强制重编） |
+| R10 | **"产物变了 ≠ 行为变了"**：A2 实测只改 kernel 中 4 处 `tiling_->scale` 的 1 处，`.o` md5 全部改变但运行结果与 base 相同（该分支对本次输入不执行） | 若用"产物 md5 变化"代替行为验证，会误判增量已生效 | 生效判断一律用**行为验证**（本设计 §9 全部采用输出 digest/sum 对照）；构建产物变化只作为辅助证据 |
+| R11 | **自定义名叠加层曾静默不生效**（T3 发现，已修复）：加载端只认默认名或环境变量，安装端把 base 排在自定义名叠加层之前 | 用户执行 `--overlay --overlay-name X` 后看不到任何效果 | 已修：加载端从 `config.ini` + `fla_npu_overlay_*` 目录自动发现；安装端叠加层一律前置；`--status` 标注 active/inactive 并给出提示（V16 复验） |
 
 ## 11. 里程碑
 
@@ -504,8 +515,12 @@ $PY -m fla_npu.install_opp --remove-overlay
 |---|---|
 | 整包（A5，35 算子） | 105,811,197 B；884 s；CXX 641 / opc 187 |
 | 单算子叠加包（A5） | 1,391,858 B；30–63 s；CXX 405 / opc 4；339–346 文件 |
-| A2/A3 交叉编译 | 2,391,440 B / 2,391,458 B；各 9 次 opc；0 error |
-| host+kernel 双侧改动 | 输出 `sum=2304 → 13824`（×6） |
+| A2/A3 交叉编译（A5 上产出） | 2,391,440 B / 2,391,458 B；各 9 次 opc；0 error（**仅编译**） |
+| A2 **原生**构建（910B3，aarch64） | base（5 算子）8,529,133 B / CXX 443 / opc 20 / 0 error / 约 3 分钟；单算子叠加包 2,362,127 B（host）与 2,386,999 B（kernel）/ opc 9 |
+| cumsum 基线 digest | A5 与 A2 **完全一致**：`47054e5fca75 sum=+8320` |
+| host+kernel 双侧改动（A5） | 输出 `sum=2304 → 13824`（×6） |
+| 单算子叠加层（A5 直调 `chunk_fwd_o`） | 基线 `sum=-3.10511` → ×2 `-6.21021` → 回退 |
+| A2 叠加层效果 | host×2 → `sum=8320→16640`；kernel×3 → `24960`；对照算子 `de2f256064a0` 不变 |
 | 其余算子回归 | 10 用例 9 项 rc 一致；指纹 `6cf13b57…` / `07854d2f…` 不变 |
-| 安装写盘边界 | base 指纹 `32b990df3d3a8ab7` 不变；仅 `config.ini` 一行被写 |
+| 安装写盘边界 | base 指纹 `32b990df3d3a8ab7`（A5）/ `b14b8a5dcc300704`（A2）不变；仅 `config.ini` 一行被写 |
 | 对象复用（方案 D，参考） | 热树改 host `.cpp` → 3 s；改 kernel → 0 次 opc（R9） |

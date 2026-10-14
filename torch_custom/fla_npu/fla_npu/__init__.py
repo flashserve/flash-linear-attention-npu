@@ -13,6 +13,9 @@ _DEFAULT_VENDOR_DIR = "fla_npu_transformer"
 # package and take priority over it. FLA_NPU_OVERLAY_VENDOR accepts an
 # os.pathsep-separated list; the first entry wins.
 _DEFAULT_OVERLAY_VENDOR_DIR = "fla_npu_overlay_transformer"
+# Any package-local vendor directory with this prefix is an overlay: it outranks
+# the base vendor and is auto-discovered when FLA_NPU_OVERLAY_VENDOR is unset.
+_OVERLAY_VENDOR_PREFIX = "fla_npu_overlay_"
 _OVERLAY_VENDOR_ENV = "FLA_NPU_OVERLAY_VENDOR"
 _ASCENDC_OPAPI_LIBRARIES: Optional[list[ctypes.CDLL]] = None
 _LEGACY_TORCH_OPS_LOADED = False
@@ -27,11 +30,51 @@ def _prepend_env_path(name: str, value: pathlib.Path) -> None:
 
 
 def overlay_vendor_names() -> list[str]:
-    """Names of the overlay vendors, highest priority first."""
+    """Names of the overlay vendors, highest priority first.
 
-    raw = os.environ.get(_OVERLAY_VENDOR_ENV, _DEFAULT_OVERLAY_VENDOR_DIR)
-    names = [name.strip() for name in raw.split(os.pathsep)]
-    return [name for name in names if name]
+    ``FLA_NPU_OVERLAY_VENDOR`` (``os.pathsep``-separated) wins when it is set.
+    Otherwise the overlays recorded in ``opp/vendors/config.ini`` are used, so
+    that ``install_opp --overlay --overlay-name <name>`` takes effect without
+    any extra environment variable.
+    """
+
+    raw = os.environ.get(_OVERLAY_VENDOR_ENV)
+    if raw is not None:
+        names = [name.strip() for name in raw.split(os.pathsep)]
+        return [name for name in names if name]
+    return _discover_overlay_vendor_names()
+
+
+def _discover_overlay_vendor_names() -> list[str]:
+    """Overlay vendors present in the package, in ``config.ini`` priority order."""
+
+    vendors_root = _PACKAGE_DIR.resolve() / "opp" / "vendors"
+    names: list[str] = []
+
+    def _add(candidate: str) -> None:
+        name = candidate.strip()
+        if not name or name == _DEFAULT_VENDOR_DIR or name in names:
+            return
+        if not name.startswith(_OVERLAY_VENDOR_PREFIX):
+            return
+        if _package_local_vendor_dir(name) is not None:
+            names.append(name)
+
+    try:
+        for line in (vendors_root / "config.ini").read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("load_priority="):
+                for entry in line.split("=", 1)[1].split(","):
+                    _add(entry)
+                break
+    except OSError:
+        pass
+    try:
+        for child in sorted(vendors_root.iterdir()):
+            if child.is_dir():
+                _add(child.name)
+    except OSError:
+        pass
+    return names
 
 
 def _package_local_vendor_dir(name: str) -> Optional[pathlib.Path]:

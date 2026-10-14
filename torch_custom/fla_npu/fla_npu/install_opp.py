@@ -10,15 +10,49 @@ from pathlib import Path
 PACKAGE_DIR = Path(__file__).resolve().parent
 PACKAGE_OPP_ROOT = PACKAGE_DIR / "opp"
 DEFAULT_OVERLAY_NAME = "fla_npu_overlay_transformer"
+# Any vendor directory with this prefix is an overlay: it outranks the base
+# vendor in ``config.ini`` and is auto-discovered by the loader.
+OVERLAY_VENDOR_PREFIX = "fla_npu_overlay_"
 OVERLAY_VENDOR_ENV = "FLA_NPU_OVERLAY_VENDOR"
 BASE_VENDOR_NAME = "fla_npu_transformer"
 
 
 def overlay_vendor_names() -> list[str]:
-    """Overlay vendor names, highest priority first (env override supported)."""
+    """Overlay vendor names, highest priority first (env override supported).
 
-    raw = os.environ.get(OVERLAY_VENDOR_ENV, DEFAULT_OVERLAY_NAME)
-    return [name.strip() for name in raw.split(os.pathsep) if name.strip()]
+    ``FLA_NPU_OVERLAY_VENDOR`` wins when set; otherwise the overlays recorded in
+    ``config.ini`` (plus any ``fla_npu_overlay_*`` directory) are used, matching
+    what the loader auto-discovers at import time.
+    """
+
+    raw = os.environ.get(OVERLAY_VENDOR_ENV)
+    if raw is not None:
+        return [name.strip() for name in raw.split(os.pathsep) if name.strip()]
+    vendors_root = _vendors_root()
+    names: list[str] = []
+
+    def _add(candidate: str) -> None:
+        name = candidate.strip()
+        if not name or name == BASE_VENDOR_NAME or name in names:
+            return
+        if name.startswith(OVERLAY_VENDOR_PREFIX) and (vendors_root / name).is_dir():
+            names.append(name)
+
+    try:
+        for line in (vendors_root / "config.ini").read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("load_priority="):
+                for entry in line.split("=", 1)[1].split(","):
+                    _add(entry)
+                break
+    except OSError:
+        pass
+    try:
+        for child in sorted(vendors_root.iterdir()):
+            if child.is_dir():
+                _add(child.name)
+    except OSError:
+        pass
+    return names
 
 
 def _vendors_root() -> Path:
@@ -62,7 +96,13 @@ def _write_set_env(vendor_dir: Path) -> None:
 
 
 def _ordered_vendor_names(vendors_root: Path) -> list[str]:
-    """Priority order: overlay vendors first, then the base vendor."""
+    """Priority order: overlay vendors first, then the base vendor, then the rest.
+
+    Overlay *directories* must outrank the base vendor even when they were
+    installed under a name that is not (yet) in ``FLA_NPU_OVERLAY_VENDOR``;
+    otherwise ``config.ini`` would pin the base vendor first and the freshly
+    installed overlay would silently lose priority.
+    """
 
     ordered: list[str] = []
     for name in [*overlay_vendor_names(), BASE_VENDOR_NAME]:
@@ -70,9 +110,14 @@ def _ordered_vendor_names(vendors_root: Path) -> list[str]:
             continue
         if (vendors_root / name).is_dir():
             ordered.append(name)
-    # Keep any other vendor directories (do not silently drop them).
+    # Keep any other vendor directories (do not silently drop them), but put
+    # overlay-looking ones ahead of the base vendor.
     for child in sorted(vendors_root.iterdir()):
-        if child.is_dir() and child.name not in ordered:
+        if not child.is_dir() or child.name in ordered:
+            continue
+        if child.name.startswith(OVERLAY_VENDOR_PREFIX) and BASE_VENDOR_NAME in ordered:
+            ordered.insert(ordered.index(BASE_VENDOR_NAME), child.name)
+        else:
             ordered.append(child.name)
     return ordered
 
@@ -247,12 +292,31 @@ def print_status() -> None:
     if not vendors_root.is_dir():
         print("  <no vendors installed>")
         return
+    active = set(overlay_vendor_names())
+    env_set = OVERLAY_VENDOR_ENV in os.environ
     for child in sorted(vendors_root.iterdir()):
         if not child.is_dir():
             continue
-        kind = "base" if child.name == BASE_VENDOR_NAME else "overlay"
+        if child.name == BASE_VENDOR_NAME:
+            kind = "base"
+        elif child.name in active:
+            kind = "overlay"
+        else:
+            kind = "overlay?"  # installed but not part of the active load order
         files = sum(1 for path in child.rglob("*") if path.is_file())
-        print(f"  [{kind:7s}] {child.name}: {files} files, ops={_vendor_ops(child)}")
+        print(f"  [{kind:8s}] {child.name}: {files} files, ops={_vendor_ops(child)}")
+    if not env_set:
+        installed = sorted(
+            child.name
+            for child in vendors_root.iterdir()
+            if child.is_dir() and child.name.startswith(OVERLAY_VENDOR_PREFIX)
+        )
+        if len(installed) > 1:
+            print(
+                "  hint: multiple overlays installed; the load order is taken from "
+                f"config.ini. Cite them explicitly with "
+                f'{OVERLAY_VENDOR_ENV}="{os.pathsep.join(installed)}" to pin the priority.'
+            )
 
 
 def main() -> int:
