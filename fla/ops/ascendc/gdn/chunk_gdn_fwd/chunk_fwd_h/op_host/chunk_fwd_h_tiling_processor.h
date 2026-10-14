@@ -34,6 +34,9 @@ static constexpr int64_t CHUNK_FWD_H_ROUND_HEAD_SLOTS = 4;
 static constexpr int64_t CHUNK_FWD_H_CHUNK_SIZE = 64;
 static constexpr int64_t CHUNK_FWD_H_K_DIM = 128;
 static constexpr int64_t CHUNK_FWD_H_V_DIM = 128;
+// P1 均衡分区的序列数上限：超此值回退均分（大 N 下各核窗口覆盖上百序列，
+// 长度按大数定律自然平均化，均衡收益趋零；同时封顶 attr 序列化与 host tiling 延迟）
+static constexpr int64_t CHUNK_FWD_H_MAX_SEQ_COUNTS = 65536;
 
 // Plain, framework-agnostic inputs needed to compute the tiling.
 struct ChunkFwdHTilingContext {
@@ -152,7 +155,9 @@ private:
             bound = 0;
         }
         if (ctx_.seqChunkCounts == nullptr || ctx_.seqCount <= 0 ||
-            blockDim == 0 || totalHeadTasks < blockDim) {
+            ctx_.seqCount > CHUNK_FWD_H_MAX_SEQ_COUNTS ||
+            blockDim == 0 || totalHeadTasks < blockDim ||
+            static_cast<int64_t>(blockDim) > CHUNK_FWD_H_MAX_CORE_BOUNDS) {
             return;
         }
         std::vector<int64_t> weights;

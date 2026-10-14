@@ -32,8 +32,9 @@ constexpr uint32_t FWD_H_AIC_HEAD_SLOTS = 4;
 constexpr uint32_t FWD_H_AIV_COUNT = 2;
 constexpr uint32_t FWD_H_AIV_HEAD_SLOTS = 2;
 constexpr uint32_t FWD_H_FLAG_SUBBLOCK_STRIDE = 16;
-// P1 varlen 均衡分区：per-core 任务边界表容量（与 host 侧 tiling 数组字段同宽）
-constexpr uint32_t FWD_H_MAX_CORE_BOUNDS = 64;
+// P1 varlen 均衡分区：per-core 任务边界表容量（与 host 侧 tiling 数组字段同宽；
+// 超容量回退均分，见 chunk_fwd_h_struct.h）
+constexpr uint32_t FWD_H_MAX_CORE_BOUNDS = 32;
 
 constexpr uint32_t FWD_H_TOKEN_MATRIX_BF16_BYTES = FWD_H_CHUNK * FWD_H_V * sizeof(bfloat16_t);
 constexpr uint32_t FWD_H_TOKEN_MATRIX_FP32_BYTES = FWD_H_CHUNK * FWD_H_V * sizeof(float);
