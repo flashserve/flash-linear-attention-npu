@@ -240,6 +240,17 @@ python -m fla_npu.install_opp --remove-overlay
 
 **两点否定性结论（均有实测）**：① **不存在库内符号插替** —— 装了 overlay 后，`aclnnChunkFwdO`、`aclnnChunkFwdOGetWorkspaceSize` 以及 overlay 导出的 mangled `l0op::ChunkFwdO` 在**全局作用域（`RTLD_DEFAULT`）都取不到**（两库均以 `RTLD_LOCAL` 加载），所以 base 库内部调用不会被 overlay"顶替"；② 复合算子跟随叠加层的现象同样由**分层**解释（其 host 入口在 base 库内链接，但 tiling/kernel 来自 overlay），而不是"运行期重新解析符号"。（§9.1 V20/V21）
 
+**L1 的直接判定（端到端 A/B，§9.1 V22）**：要区分"L1 来自哪一份"，观测量必须落在 **L1**（tiling 类改动落在 L2–L4，永远 overlay 优先，区分不了）。用"host 入口 `scale×2`"作为 L1 观测量得到：
+
+| 场景 | 入口 | L1 来源 | `sum` |
+|---|---|---|---|
+| ctypes（对照） | `_aclnn_ctypes` | overlay | **-6.21021**（×2） |
+| **新 launcher**（读有序 `FLA_NPU_OP_API_LIBS`）+ overlay | `_stable` | **overlay** | **-6.21021**（×2） |
+| **旧 launcher** + overlay | `_stable` | **base** | **-3.10511**（×1，overlay 的 L1 改动被绕过） |
+| 新 launcher + 无 overlay | `_stable` | base | -3.10511 |
+
+⇒ **评审指出的问题在 L1 层面被直接复现**（旧 launcher）；**修复后端到端成立**（新 launcher 与 ctypes 结果一致）。
+
 **依赖关系事实图谱（决定"要不要编依赖闭包"）**
 
 | 关系 | 证据 | 后果 |
@@ -369,6 +380,7 @@ python -m fla_npu.install_opp --remove-overlay
 | V19 | **后端策略矩阵**（A5 实机） | 叠加层在位/不在位 × 环境变量设置 × launcher 新旧 | ①叠加层+未设+旧 launcher → 自动置 `ctypes`（`stable_selected=False`）；②叠加层+**显式 stable**+旧 launcher → 尊重用户但**打印告警**（提示 overlay 会被绕过）；③叠加层+未设+**新 launcher** → 不再降级、launcher 可用（`stable_selected=True`）；④无叠加层 → 无任何告警 |
 | V20 | **排除"库内符号插替"** | 装 overlay 后探测全局作用域：`ctypes.CDLL(None)` 取 `aclnnChunkFwdO`、`aclnnChunkFwdOGetWorkspaceSize` 与 overlay 导出的 mangled `_ZN4l0op9ChunkFwdOEPK9aclTensor…`（两个库各自句柄里都能取到） | **全部"全局取不到"** ⇒ 两库都以 `RTLD_LOCAL` 加载、base 库内部调用不会被 overlay 顶替；插替路径**不成立**（此前那次异常另有解释） |
 | V21 | **确认"分层归属"** | ①`nm -D` 看 tiling 符号在哪：`libcust_opapi.so` **0 个** Tiling 符号、`libcust_opmaster_rt2.0.so` **183 个**；②运行时 `/proc/self/maps` 看实际加载 | 进程加载的是 **overlay 的 `op_tiling/liboptiling.so`（→ overlay opmaster）** ⇒ 我改的 tiling 落在"CANN 按 vendor 顺序选取"的那一层，与后端无关 ⇒ 解释了"入口 base + 结果 overlay"的混合观测（旧 launcher 只让 **L1 入口**落回 base） |
+| V22 | **launcher 端到端 A/B**（补齐 §9.2 原 T2 的 launcher 链路） | 用同一份源码重建 launcher 并**同步包内期望哈希**（`build_stable.py --out` 同时写 `_stable_hash.py`，实测新对 `3085f161…`↔`3085f161…`，故 stamp 校验通过）；overlay 用**只在 L1 可观测**的改动（host 入口 `params.scale ×2`，编进 `libcust_opapi.so`） | ctypes **-6.21021**（×2）｜**新 launcher -6.21021（×2）**✅｜**旧 launcher -3.10511（×1）**（L1 落回 base，评审问题直接复现）｜新 launcher+无 overlay -3.10511。⇒ 修复端到端成立，且"L1 由后端决定、L2–L4 由 CANN vendor 顺序决定"的分层模型被直接证实 |
 
 **开发过程中发现并修复的问题**：Stable-ABI launcher 从 `FLA_NPU_OP_API_LIB` 指向的**单个**库解析全部 aclnn 符号；把它指向只含单算子的叠加层会让其余算子运行期报错（实测 3 个用例由通过转失败）。修复 = 该变量恒指完整库 + 叠加层在位时切 ctypes 后端（§6.2 不变量 1、2）。
 
