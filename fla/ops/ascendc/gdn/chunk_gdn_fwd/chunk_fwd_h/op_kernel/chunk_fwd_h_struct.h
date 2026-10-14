@@ -20,8 +20,10 @@
 
 #include <cstdint>
 
-// P1 varlen 均衡分区：per-core 任务边界表容量（A2/A3 20 核、A5 更少，64 为硬上限）
-constexpr int64_t CHUNK_FWD_H_MAX_CORE_BOUNDS = 64;
+// P1 varlen 均衡分区：per-core 任务边界表容量。取 32 = 覆盖全部已知平台的最小值
+// （A2/A3 实测 ≤24，A5 PCIE 28，A5 Server 32 恰触顶）。blockDim 超容量或 950 门控
+// 关闭时回退均分原路径（coreBoundCount=0），无正确性影响。
+constexpr int64_t CHUNK_FWD_H_MAX_CORE_BOUNDS = 32;
 
 struct ChunkFwdHPlainTilingData {
     int64_t batch;

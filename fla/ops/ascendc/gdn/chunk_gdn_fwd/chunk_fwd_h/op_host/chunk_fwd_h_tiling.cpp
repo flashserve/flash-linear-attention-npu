@@ -156,12 +156,19 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
 
     // P1: per-sequence chunk counts (ListInt attr #11, built by l0op from the
     // host-readable cu_seqlens). Empty/absent list keeps the uniform partition.
+    // 950 门控：均衡分区仅在非 ASCEND950 上启用（运行时判定，先例同
+    // chunk_delta_h_bwd_preprocess_tiling.cpp）——A5 未经验证，varlen 保持
+    // 均分原路径；专项验证后删除本判定的 != 分支即放开。
     tilingCtx.seqChunkCounts = nullptr;
     tilingCtx.seqCount = 0;
-    const auto *seqChunkList = attrPtr->GetListInt(ATTR_SEQ_CHUNK_COUNTS_IDX);
-    if (seqChunkList != nullptr && seqChunkList->GetSize() > 0) {
-        tilingCtx.seqChunkCounts = seqChunkList->GetData();
-        tilingCtx.seqCount = static_cast<int64_t>(seqChunkList->GetSize());
+    const bool socSupportsBalanced =
+        ascendcPlatform.GetSocVersion() != platform_ascendc::SocVersion::ASCEND950;
+    if (socSupportsBalanced) {
+        const auto *seqChunkList = attrPtr->GetListInt(ATTR_SEQ_CHUNK_COUNTS_IDX);
+        if (seqChunkList != nullptr && seqChunkList->GetSize() > 0) {
+            tilingCtx.seqChunkCounts = seqChunkList->GetData();
+            tilingCtx.seqCount = static_cast<int64_t>(seqChunkList->GetSize());
+        }
     }
 
     if (tilingCtx.aicCoreNum == 0) {

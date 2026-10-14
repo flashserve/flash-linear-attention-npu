@@ -39,7 +39,8 @@ TILING_DATA_FIELD_DEF(int64_t, vUpdateWorkspaceOffset);
 TILING_DATA_FIELD_DEF(int64_t, kDecayWorkspaceOffset);
 TILING_DATA_FIELD_DEF(int64_t, hWorkspaceOffset);
 TILING_DATA_FIELD_DEF(int64_t, coreBoundCount);
-TILING_DATA_FIELD_DEF_ARR(int64_t, 64, coreTaskBounds);
+// 容量与 CHUNK_FWD_H_MAX_CORE_BOUNDS 同步（宏体需整型字面量位置，保持互指注释）
+TILING_DATA_FIELD_DEF_ARR(int64_t, 32, coreTaskBounds);
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(ChunkFwdH, ChunkFwdHTilingData)
