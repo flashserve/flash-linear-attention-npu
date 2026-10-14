@@ -343,6 +343,32 @@ python -m fla_npu.install_opp --remove-overlay
 
 **规模**：40 个 `stable_*.cpp`、合计 4,098 行（最小 34 / 中位 83 / 最大 266）。⇒ 机械部分约占**一半**，与"新增算子只需写适配器"的成本直接相关。
 
+#### 7.6.1b 脚手架与实测 diff 验收（**本轮已跑，结论修正了 7.6.1 的乐观估计**）
+
+脚手架：`torch_custom/fla_npu/tools/gen_stable_adapter.py`（评估用，非生产）。它的真相来源全部取自仓库现有文件——`_aclnn_ctypes.py::npu_<op>`（aclnn 名 + 编组序列）、`npu_custom.yaml`（schema）、现有适配器（样板目录 + 验收基线），不硬编码算子知识。
+
+实测（A5，对 `npu_chunk_local_cumsum` 与 `npu_chunk_fwd_o`）：
+
+| 分段 | cumsum 生成/手写 | fwd_o 生成/手写 | 归一化后一致 |
+|---|---|---|---|
+| S2 includes/using 样板 | 12 / 21 | 12 / 31 | 56–67% |
+| S4 schema 字符串 | 2 / 4 | 2 / 5 | 0%（形式差异：手写用"位置参数 + `int output_layout` + `int stream`"，需要归一化规则） |
+| S5 `run_` 签名 | 1 / 6 | 1 / 8 | 0%（同上，是 S4 的函数） |
+| S6 `FLA_STABLE_EXEC` 编组 | 4 / 9 | 4 / 9 | 46% |
+| S7 输出分配 | 未生成 | 未生成 | 人工 |
+| 生成物总行数 | 42 | 42 | 手写 63 / 103 |
+
+**S6 逐项对照暴露了三类"每算子规则"**（这正是"缺的语义"的具体形态）：
+
+| 规则 | 证据（手写 vs 朴素映射） |
+|---|---|
+| ① **首参是"上下文"而非第一个 aclnn 参数** | fwd_o 手写以 `meta_of(v)` 开头（v 又作为 `tensor(v_meta)` 出现在参数位）；cumsum 以 `tensor(g_meta)` 开头 |
+| ② **可选性来自原型/def.cpp，不来自 ctypes wrapper** | fwd_o 的 `g` 手写是 `optional_tensor(g)`，而 wrapper 里只是 `ctx.tensor(g,"g")` |
+| ③ **字符串/枚举参数的实际编码是算子特有的** | cumsum 手写用 `cstr(kChunkLocalCumsumOutputDtypeNames, output_dtype)`（**dtype 枚举表**），fwd_o 才是 `CStrArg(layout)` |
+
+⇒ **修正结论**：`FLA_STABLE_EXEC` 的参数序列与 ctypes wrapper "大体同序"，但**不能逐项直接照搬**；可生成的是**骨架 + 样板 + schema/签名（经归一化规则）+ 编组草案**，而"context 首参、可选性映射、枚举/字符串编码"需要**每算子一条规则**（可由 aclnn 原型 + `def.cpp` + 现有适配器归纳成规则表，再逐步收敛）。
+即：**自动化目标应定为"生成草案 + diff 验收 + 人工确认"，而不是"生成即可用"** —— 这也正是 7.6.2 三步验收里 diff 那一步的价值所在。
+
 #### 7.6.2 生成器的四个输入与验收
 
 | 输入 | 提供什么 |
