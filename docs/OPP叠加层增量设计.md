@@ -8,6 +8,36 @@
 
 ---
 
+## 0. 测试平台信息（用户提供，原文照录）
+
+**A5（验证服务器）**
+
+```text
+1、验证服务器在"root@192.168.13.247"，工作路径是"/data/z00879345/"
+2、Ascend 950的toolkit和CANN 9.2.0 包已经安装在"/data/z00879345/Ascend/cann_9.2.0-beta.2_950"，初始化环境命令是"source /data/z00879345/Ascend/cann_9.2.0-beta.2_950/ascend-toolkit/set_env.sh"
+3、通过conda管理Python环境，使用conda activate zzy激活环境
+```
+
+**A2（远端 A2 服务器）**
+
+```text
+1、远端A2服务器在"root@192.168.9.221"，工作路径是"/data/zzy/"
+2、通过conda管理Python环境，使用conda activate zzy311激活环境
+3、A2服务器9.2.0的toolkit和cann包已经安装在路径"/data/zzy/Ascend/910b"，需要执行"source /data/zzy/Ascend/910b/ascend-toolkit/set_env.sh"。
+9.1.0的安装在"/data/wys/Ascend/cann_9.1.0_910b_0605/"，需要执行"source /data/wys/Ascend/cann_9.1.0_910b_0605/ascend-toolkit/set_env.sh"。
+```
+
+**实测补充（复现时需要注意的差异，非用户原文）**
+
+| 平台 | 实测情况 |
+|---|---|
+| A5 | 运行验证使用的解释器为 `/root/miniconda3/envs/liz/bin/python`（torch `2.12.0+cpu` / torch_npu `2.12.0.post1`）；运行测试时设 `ASCEND_RT_VISIBLE_DEVICES=7`；CANN 路径与初始化命令同用户原文 |
+| A2 | 实测可用环境为 `conda activate zzy311new`（Python 3.11.16 / torch `2.7.1+cpu` / torch_npu `2.7.1.post5`，`torch.npu.device_count()=8`）；**`zzy311` 在本机导入 torch_npu 会报错**（`Failed to load the backend extension: torch_npu`），故运行验证改用 `zzy311new`；CANN 实测版本 `9.2.0`（9.1.0 同时存在，本次未使用） |
+| A2 磁盘 | `/data` 余量约 30 GB：构建与 run 包解包需把 `TMPDIR` 指到有空间的分区，否则 makeself 解包会失败 |
+| A2 使用礼貌 | 采用 `git clone --shared` 建立独立工作树与独立运行副本，未改动他人仓库与已装环境（原仓库 `git status` 为 0 处改动） |
+
+---
+
 ## 1. 背景与问题
 
 ### 1.1 现状
