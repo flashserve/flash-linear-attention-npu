@@ -22,7 +22,7 @@
 
 ```text
 1、远端A2服务器在"root@192.168.9.221"，工作路径是"/data/zzy/"
-2、通过conda管理Python环境，使用conda activate zzy311激活环境
+2、通过conda管理Python环境，使用conda activate zzy311new激活环境
 3、A2服务器9.2.0的toolkit和cann包已经安装在路径"/data/zzy/Ascend/910b"，需要执行"source /data/zzy/Ascend/910b/ascend-toolkit/set_env.sh"。
 9.1.0的安装在"/data/wys/Ascend/cann_9.1.0_910b_0605/"，需要执行"source /data/wys/Ascend/cann_9.1.0_910b_0605/ascend-toolkit/set_env.sh"。
 ```
@@ -446,7 +446,9 @@ python -m fla_npu.install_opp --remove-overlay
 | 轴 | 边界 | 现有防护 | 覆盖情况 |
 |---|---|---|---|
 | **轴① glue ↔ launcher** | boxed 参数栈（类型序列、stream 索引） | `_check_build_stamp`（`SOURCE_HASH` 相等） | ✅ 有，但**过严**：叠加层无法携带自己的 launcher 而不让校验退化为自证 |
-| **轴② launcher ↔ aclnn** | `FLA_STABLE_EXEC` 的 tuple → `reinterpret_cast` 的签名 | **无** | ❌ **空缺**（改动前就缺；本 PR 把"只换 OPP"变成日常路径，**触发概率上升** ⇒ 必须补） |
+| **轴② launcher ↔ aclnn** | `FLA_STABLE_EXEC` 的 tuple → `reinterpret_cast` 的签名 | **静态工具已存在**：`torch_custom/fla_npu/tools/op_abi_validate.py`（408 行：解析并比对 `FLA_STABLE_EXEC` 调用点 vs 已安装 OPP 的 `aclnn_*.h`，不一致**非零退出**；旁有 `op_abi_parity.py`，被 `tests/test_stable_gates.py` 引用） | ⚠️ **并非空缺（此前表述有误，已更正）**：① 未接入任何 workflow/CI，需人工调用；② 指针类参数统一按 **wildcard** 比较（`aclTensor*`/`aclIntArray*`/`aclScalar*` 都视作指针）→ **同 arity 下的类型替换检测不到**；③ **运行期无校验** |
+
+> **更正说明**：本节早先写作"轴②**完全空缺**"，事实是"**静态工具已存在但未接线、且运行期缺校验**"。`op_abi_validate.py` 的 docstring 记下了它要防的真实事故——`aclnnChunkGatedDeltaRuleBwdDhu` 在输出前新增 `bool stateVFirst` 后，未同步的调用点在 910B 上表现为**裸 `161001`**。**因此方案应改为"扩展并接入既有工具"（生成规范化签名 manifest，供构建/安装/运行期共用），而不是另建一套只有头摘要的协议。**
 
 补充事实：**stamp 的注释本身就承认这类失败难排查**（*"a dispatcher error deep inside a call or -- when only a stack index moved -- as a wrong stream, which is much harder to read"*），说明作者清楚该风险轴，只是从未覆盖轴②。
 
@@ -464,9 +466,12 @@ python -m fla_npu.install_opp --remove-overlay
 
 | 档 | 行为 | 适用 |
 |---|---|---|
-| **默认** | 该算子**拒绝走 launcher → 回落 ctypes**（ctypes 按 Python 描述符构造，不依赖那个 cast，是安全路径），并**一次性告警**（算子名 + 两侧摘要 + 重编命令）；同时写入 `BACKENDS`/`FALLBACKS` 记账（`reason="aclnn interface mismatch"`），`FLA_NPU_STABLE_TRACE=1` / `--status` 可见 | 日常开发、用户现场 |
+| **默认** | 该算子**拒绝走 launcher**，并**一次性告警**（算子名 + 两侧摘要 + 重编命令）；同时写入 `BACKENDS`/`FALLBACKS` 记账（`reason="aclnn interface mismatch"`），`FLA_NPU_STABLE_TRACE=1` / `--status` 可见 | 日常开发、用户现场 |
 | **严格** | `FLA_NPU_STABLE_STRICT=1` → **直接抛错**并给出重编命令 | CI、发布门禁 |
-| **兜底** | 任何档位**都不许静默**：即使回退也必须留痕 | 全部 |
+| **兜底** | 任何档位**都不许静默**：即使降级也必须留痕 | 全部 |
+
+> ⚠️ **更正（复核发现，2026-10-14）**：早先本节把 **ctypes 回退称为"安全路径"，这是错的**——ctypes 侧同样是**手写**的参数顺序与类型（`_aclnn_ctypes.py` 每个 wrapper 都是一份手写列表；本设计 §12.6.3 也明确"aclnn 签名变化必须同步改 ctypes wrapper"）。签名不一致时，ctypes 调用**同样**向同一个符号传错参数，只是"更可能被 aclnn 自身的参数校验拦下"（如 `161002`），**并非有保证的安全**。
+> **因此默认档应改为"硬错误"**（或至少要求显式 opt-in 才允许降级，如 `FLA_NPU_STABLE_ALLOW_FALLBACK=1`），且**只有在能证明"Python 描述符与当前生效 OPP 匹配"时才允许降级**——降级前先过轴②校验（复用 `op_abi_validate.py` 的规范化签名 manifest，见 §7.7.2）。
 
 理由：与仓库既有哲学一致（launcher 不可用→整体回退 ctypes + 告警），而本 mismatch 是**算子级**的，回退粒度也应为算子级；但发布场景要能一键变硬错误。
 
@@ -498,6 +503,28 @@ python -m fla_npu.install_opp --remove-overlay
 4. **规则文档**（`docs/architecture/适配器更新规则.md`）+ CI 门禁建议。
 
 > 定位说明：轴②是**上游遗留的洞**，**非本 PR 引入**；本 PR 的作用是**放大了触发概率**（叠加层让"只换 OPP"成为日常路径），因此在本 PR 内补齐是合理的。
+
+### 7.8 复核发现（P0/P1）与修复状态
+
+> 来源：外部复核（另一 agent）针对 `poc-patch/` 与本设计的 7 条发现。**全部经逐行代码核对确认**。
+
+| # | 级别 | 发现 | 代码核对结果 | 状态 |
+|---|---|---|---|---|
+| 1 | **P0** | `install_overlay` 未限制 `overlay_name` 为单层目录名，`vendors_root / name` 后直接 `rmtree` ⇒ **绝对路径 / `..` / 非 overlay vendor 都能逃逸**，`./fla_npu_transformer`、尾随斜杠等还能**绕过 base 名称保护** | ✅ 成立（`Path("a") / "/abs" == /abs`；`== BASE_VENDOR_NAME` 只挡精确匹配） | ✅ **已修**：新增 `_validate_overlay_name()`（必须单层组件、非 `.`/`..`、带 overlay 前缀、拒绝 base），`install_overlay` 与 `remove_overlay` **都**走它 |
+| 2 | P1 | 自动发现改动后 `overlay_vendor_names()` 可能为空列表，而调用方仍取 `[0]` ⇒ **干净环境装/卸直接 `IndexError`**；后续复验几乎都显式传 `--overlay-name`，因此没覆盖该回归 | ✅ 成立（`install_overlay` / `remove_overlay` 两处） | ✅ **已修**：`_default_overlay_name()`（空则回退 `DEFAULT_OVERLAY_NAME`） |
+| 3 | P1 | `.pth` 钩子（`fla_npu_opp_env.py`）只认环境变量/默认名、**不读 `config.ini`**，与主模块发现算法不一致 ⇒ **自定义名叠加层在解释器启动阶段不可见**（F6 未满足）；且 18 个验证脚本中 **16 个设了 `FLA_NPU_DISABLE_PTH=1`** ⇒ V16 只验证了 import 阶段发现 | ✅ 成立 | ✅ **已修**：`_overlay_names()` 与主模块同源（env → `config.ini` → 扫描前缀目录）；⚠️ **测试缺口仍在**：需补"不开 `FLA_NPU_DISABLE_PTH`、自定义名、在 `import torch_npu` 之前生效"的用例 |
+| 4 | P1 | V14/V15/V22 等脚本**不是自动验收**：只用 `set -u`，探针捕获异常后打印 `FAIL` 并被外层 `grep` 匹配，**无 digest/sum 断言、无失败退出码** ⇒ 全场景失败也可能 `exit 0` | ✅ 成立（22 个脚本 **0 个**用 `set -euo`） | ⏳ **待修**：统一断言框架（`assert_digest/expect_sum` + `set -euo pipefail`），失败即非零退出 |
+| 5 | P1 | V23（`test_stable_parity.py`）**假通过**：`ERROR` 与"同后端 `SKIP`"都 `continue`，launcher 完全不可用时全部走 ctypes 仍打印 `parity OK` 且返回 0；文档声称会报告 `NO_RECIPE` 但脚本不枚举未登记算子 | ✅ 成立 | ✅ **已修**：`dump` 记录 `published_ops`；`compare` 统计 PASS/FAIL/ERROR/SKIP/**NO_RECIPE** 并打印汇总；`FLA_NPU_PARITY_STRICT=1` 时 ERROR/SKIP **判失败并返回 1** |
+| 6 | P1 | §7.7 把 **ctypes 回退称为"安全路径"**不成立——ctypes 同样是手写参数序/类型，签名不一致时同样传错参数 | ✅ 成立 | ✅ **已更正** §7.7.4：默认档改为**硬错误**（或显式 opt-in 才降级），且降级前须先过轴②校验 |
+| 7 | P1 | §7.7 称"轴②**完全空缺**"不准确——仓库**已有** `tools/op_abi_validate.py`（解析 `aclnn_*.h` 并与适配器调用点比对，非零退出；旁有 `op_abi_parity.py`，被 `tests/test_stable_gates.py` 引用） | ✅ 成立（工具 408 行，docstring 记录了 `stateVFirst` 事故） | ✅ **已更正** §7.7.2：改为"静态工具已存在但**未接线**、指针参数统一 wildcard、**运行期无校验**"；方案相应改为**扩展并接入既有工具**（生成规范化签名 manifest 供构建/安装/运行期复用） |
+
+**由此产生的待办（优先级序）**
+
+1. 把 P0/P1-2/P1-3/P1-5 的修复**跑一遍验证**（干净环境装/卸、自定义名 + `.pth`、`FLA_NPU_PARITY_STRICT=1` 下故意让 launcher 不可用应返回 1）；
+2. 把上述修复**推入 PR 分支**（`install_opp.py`、`fla_npu_opp_env.py`、`test/test_stable_parity.py`）；
+3. 检查 `op_abi_parity.py` 与 V23 的功能重叠，避免重复造轮子；
+4. 把 `op_abi_validate.py` 接入 workflow/CI（含 wildcard 收紧）；
+5. 将脚本改造成机器可判定验收（P1-4），并把 V16 的结论**重新界定**为"import 阶段发现"。
 
 ## 8. 影响面
 

@@ -209,6 +209,48 @@ def _resolve_overlay_source(source: Path) -> Path:
     )
 
 
+def _validate_overlay_name(overlay_name: str) -> str:
+    """Reject names that could escape ``opp/vendors`` or hit a non-overlay tree.
+
+    ``Path("a") / "/abs"`` yields ``/abs``, and ``Path("a") / "../b"`` escapes the
+    parent, so an unvalidated name would let ``rmtree`` delete an arbitrary
+    absolute path.  A trailing separator or ``./`` would also slip past a plain
+    ``== BASE_VENDOR_NAME`` comparison while still resolving to the base vendor.
+    Only a single, plain component carrying the overlay prefix is accepted.
+    """
+
+    name = (overlay_name or "").strip()
+    if not name:
+        raise RuntimeError("Overlay name must not be empty.")
+    if name != Path(name).name or name in {".", ".."}:
+        raise RuntimeError(
+            f"Refusing overlay name {overlay_name!r}: it must be a single path component "
+            "(no directory separator, no '.'/'..', not an absolute path)."
+        )
+    if name == BASE_VENDOR_NAME:
+        raise RuntimeError(
+            f"Refusing to install an overlay over the base vendor {BASE_VENDOR_NAME}: "
+            "pass --overlay-name to keep both trees side by side."
+        )
+    if not name.startswith(OVERLAY_VENDOR_PREFIX):
+        raise RuntimeError(
+            f"Refusing overlay name {name!r}: overlay vendors must start with "
+            f"{OVERLAY_VENDOR_PREFIX!r} so that the loader discovers them."
+        )
+    return name
+
+
+def _default_overlay_name() -> str:
+    """The name to use when the caller did not pass one.
+
+    ``overlay_vendor_names()`` is empty when nothing is installed and no env var
+    is set (auto-discovery), so it must not be indexed blindly.
+    """
+
+    names = overlay_vendor_names()
+    return names[0] if names else DEFAULT_OVERLAY_NAME
+
+
 def install_overlay(source: Path, overlay_name: str | None = None, force: bool = False) -> Path:
     """Install an overlay vendor next to the base vendor, inside the package.
 
@@ -219,12 +261,7 @@ def install_overlay(source: Path, overlay_name: str | None = None, force: bool =
 
     vendors_root = _vendors_root()
     vendors_root.mkdir(parents=True, exist_ok=True)
-    overlay_name = overlay_name or overlay_vendor_names()[0]
-    if overlay_name == BASE_VENDOR_NAME:
-        raise RuntimeError(
-            f"Refusing to install an overlay over the base vendor {BASE_VENDOR_NAME}: "
-            "pass --overlay-name to keep both trees side by side."
-        )
+    overlay_name = _validate_overlay_name(overlay_name or _default_overlay_name())
     if overlay_name in overlay_vendor_names():
         # Force this overlay to be searched first, ahead of other overlays.
         os.environ[OVERLAY_VENDOR_ENV] = os.pathsep.join(
@@ -269,9 +306,7 @@ def remove_overlay(overlay_name: str | None = None) -> bool:
     """Remove an overlay vendor and refresh ``config.ini``. Base vendor untouched."""
 
     vendors_root = _vendors_root()
-    overlay_name = overlay_name or overlay_vendor_names()[0]
-    if overlay_name == BASE_VENDOR_NAME:
-        raise RuntimeError(f"Refusing to remove the base vendor {BASE_VENDOR_NAME}.")
+    overlay_name = _validate_overlay_name(overlay_name or _default_overlay_name())
     vendor_dir = vendors_root / overlay_name
     if not vendor_dir.is_dir():
         print(f"No overlay vendor to remove: {vendor_dir}")

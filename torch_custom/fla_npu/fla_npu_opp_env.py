@@ -16,6 +16,8 @@ _PACKAGE_DIR = Path(__file__).resolve().parent
 _VENDORS_DIR = _PACKAGE_DIR / "fla_npu" / "opp" / "vendors"
 _BASE_VENDOR = "fla_npu_transformer"
 _DEFAULT_DELTA_VENDOR = "fla_npu_overlay_transformer"
+_OVERLAY_VENDOR_ENV = "FLA_NPU_OVERLAY_VENDOR"
+_OVERLAY_VENDOR_PREFIX = "fla_npu_overlay_"
 
 
 def _env_flag(name: str) -> bool:
@@ -29,14 +31,52 @@ def _prepend(name: str, value) -> None:
         os.environ[name] = os.pathsep.join([value, *parts])
 
 
+def _overlay_names() -> list[str]:
+    """Overlay vendor names, highest priority first.
+
+    **Must stay in sync with ``fla_npu.overlay_vendor_names()``.**  This hook runs
+    during site initialisation, i.e. *before* any user code and before CANN
+    initialises; if it only honoured the env var or the default name, a
+    custom-named overlay would be missing from ``ASCEND_CUSTOM_OPP_PATH`` exactly
+    when CANN discovers its kernels/tiling, and importing ``fla_npu`` later
+    (which does derive the full order) would be too late.
+    """
+
+    raw = os.environ.get(_OVERLAY_VENDOR_ENV)
+    if raw is not None:
+        return [name.strip() for name in raw.split(os.pathsep) if name.strip()]
+
+    names: list[str] = []
+
+    def _add(candidate: str) -> None:
+        name = candidate.strip()
+        if (not name or name == _BASE_VENDOR or name in names
+                or not name.startswith(_OVERLAY_VENDOR_PREFIX)):
+            return
+        if (_VENDORS_DIR / name).is_dir():
+            names.append(name)
+
+    try:
+        for line in (_VENDORS_DIR / "config.ini").read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("load_priority="):
+                for entry in line.split("=", 1)[1].split(","):
+                    _add(entry)
+                break
+    except OSError:
+        pass
+    try:
+        for child in sorted(_VENDORS_DIR.iterdir()):
+            if child.is_dir():
+                _add(child.name)
+    except OSError:
+        pass
+    return names
+
+
 def _vendor_dirs() -> list[Path]:
     """Overlay vendors first (highest priority), base vendor last."""
 
-    names = [
-        name.strip()
-        for name in os.getenv("FLA_NPU_OVERLAY_VENDOR", _DEFAULT_DELTA_VENDOR).split(os.pathsep)
-        if name.strip()
-    ]
+    names = _overlay_names() or [_DEFAULT_DELTA_VENDOR]
     dirs: list[Path] = []
     for name in [*names, _BASE_VENDOR]:
         vendor_dir = _VENDORS_DIR / name

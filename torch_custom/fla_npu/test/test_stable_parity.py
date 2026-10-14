@@ -147,6 +147,9 @@ def dump(path: str) -> int:
         "backend_env": __import__("os").environ.get("FLA_NPU_STABLE_ABI"),
         "stable_backend_selected": _ascendc_mod._stable_backend_selected(),
         "launcher_usable": bool(_stable.available()),
+        # 全部已发布算子：compare 用它报告 NO_RECIPE（未登记配方的算子），
+        # 否则"覆盖率"无从判断，测试会因为"只跑了有配方的几个"而假通过。
+        "published_ops": [name for name in getattr(_ascendc_mod, "_ASCENDC_OPS", ())],
         "operators": {},
     }
     for name, recipe in RECIPES.items():
@@ -182,16 +185,21 @@ def compare(left_path: str, right_path: str) -> int:
     print(f"right: {right_path}  FLA_NPU_STABLE_ABI={right['backend_env']}  "
           f"launcher_usable={right['launcher_usable']}")
     names = sorted(set(left["operators"]) | set(right["operators"]))
-    failed: list[str] = []
+    strict = (__import__("os").environ.get("FLA_NPU_PARITY_STRICT") or "").upper() in {"1", "TRUE", "YES", "ON"}
+    failed: list[str] = []      # 数值不一致
+    errored: list[str] = []     # 配方失败（环境/形状）
+    vacuous: list[str] = []     # 两轮同一后端 ⇒ 不构成对照
     for name in names:
         a = left["operators"].get(name, {})
         b = right["operators"].get(name, {})
         if a.get("status") != "ok" or b.get("status") != "ok":
+            errored.append(name)
             print(f"  {name:38s} ERROR   left={a.get('status')} right={b.get('status')}"
                   f"  {a.get('error') or b.get('error') or ''}")
             continue
         # 只有"两轮由不同后端服务"时，比较才有意义
         if a["entry"] == b["entry"]:
+            vacuous.append(name)
             print(f"  {name:38s} SKIP    两轮同一后端({a['entry']})——不构成对照"
                   f"（launcher 未承载或不可用）")
             continue
@@ -204,10 +212,27 @@ def compare(left_path: str, right_path: str) -> int:
             failed.append(name)
         print(f"  {name:38s} {'PASS' if same else 'FAIL'}    "
               f"{a['entry']} vs {b['entry']}{detail}")
+
+    published = sorted(set(left.get("published_ops") or []) | set(right.get("published_ops") or []))
+    no_recipe = [name for name in published if name not in left["operators"] and name not in right["operators"]]
+    if no_recipe:
+        print(f"  {'（未登记配方）':36s} NO_RECIPE  {len(no_recipe)}/{len(published)}: "
+              f"{', '.join(no_recipe[:6])}{' …' if len(no_recipe) > 6 else ''}")
+
+    print(f"  汇总: PASS={len(names) - len(failed) - len(errored) - len(vacuous)} "
+          f"FAIL={len(failed)} ERROR={len(errored)} SKIP={len(vacuous)} "
+          f"NO_RECIPE={len(no_recipe)}  严格模式={'开' if strict else '关'}")
     if failed:
         print(f"parity FAILED for: {', '.join(failed)}")
         return 1
-    print("parity OK（覆盖到的算子逐值一致；SKIP 项需在 launcher 侧补齐承载后才能对照）")
+    if strict and (errored or vacuous):
+        # 严格模式：任何"没测到"的算子都算失败——launcher 不可用/未承载会让所有用例
+        # 走同一后端，此时"parity OK"是假通过，必须由调用方（CI）看见非零退出码。
+        print("parity FAILED (strict)：存在 ERROR 或 SKIP —— 说明没有真正对照到 launcher 路径"
+              f"（launcher_usable={right.get('launcher_usable')}）")
+        return 1
+    print("parity OK（覆盖到的算子逐值一致；SKIP/NO_RECIPE 需在 launcher 侧补齐承载或补配方）"
+          + ("；严格模式已开启" if strict else ""))
     return 0
 
 
