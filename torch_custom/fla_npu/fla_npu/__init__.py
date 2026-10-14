@@ -17,6 +17,7 @@ _DEFAULT_OVERLAY_VENDOR_DIR = "fla_npu_overlay_transformer"
 # the base vendor and is auto-discovered when FLA_NPU_OVERLAY_VENDOR is unset.
 _OVERLAY_VENDOR_PREFIX = "fla_npu_overlay_"
 _OVERLAY_VENDOR_ENV = "FLA_NPU_OVERLAY_VENDOR"
+_STABLE_ABI_ENV = "FLA_NPU_STABLE_ABI"
 _ASCENDC_OPAPI_LIBRARIES: Optional[list[ctypes.CDLL]] = None
 _LEGACY_TORCH_OPS_LOADED = False
 _LEGACY_TORCH_OPS_LIBRARY: Optional[pathlib.Path] = None
@@ -43,6 +44,57 @@ def overlay_vendor_names() -> list[str]:
         names = [name.strip() for name in raw.split(os.pathsep)]
         return [name for name in names if name]
     return _discover_overlay_vendor_names()
+
+
+def _launcher_supports_overlay_order() -> bool:
+    """True when the bundled launcher honours the ordered ``FLA_NPU_OP_API_LIBS`` list.
+
+    Older launchers resolve every aclnn symbol from the single library named by
+    ``FLA_NPU_OP_API_LIB`` (``Runtime::symbol()`` only dlsym()s one custom
+    handle), so with an overlay installed they would silently run the *base*
+    implementation.  Detecting the capability lets us pick a correct backend
+    instead of leaving the outcome to an unrelated environment variable.
+    """
+
+    try:
+        return b"FLA_NPU_OP_API_LIBS" in (_PACKAGE_DIR / "libfla_npu_stable.so").read_bytes()
+    except OSError:
+        return False
+
+
+def _apply_overlay_backend_policy(vendor_dirs: list[pathlib.Path]) -> None:
+    """Keep "an overlay is installed" and "which implementation runs" consistent.
+
+    * no overlay                     → nothing to do (default backend rules apply)
+    * overlay + capable launcher     → launcher searches overlay first, so the
+                                       launcher may stay the default backend
+    * overlay + legacy launcher      → force the ctypes reference path (which
+                                       resolves symbols per library); if the user
+                                       explicitly asked for the launcher, warn
+                                       loudly instead of failing silently
+    """
+
+    if len(vendor_dirs) < 2:
+        return
+    requested = (os.environ.get(_STABLE_ABI_ENV) or "").strip()
+    if _launcher_supports_overlay_order():
+        return
+    if not requested:
+        os.environ[_STABLE_ABI_ENV] = "ctypes"
+        return
+    if requested == "ctypes":
+        return
+    warnings.warn(
+        "fla_npu: an overlay vendor is installed, but FLA_NPU_STABLE_ABI="
+        f"{requested!r} selects a Stable-ABI launcher that resolves every aclnn "
+        "symbol from the single library in FLA_NPU_OP_API_LIB. The overlaid "
+        "operators would silently run the base implementation instead of the "
+        "overlay one. Rebuild the launcher (python csrc/build_stable.py) to get "
+        "ordered FLA_NPU_OP_API_LIBS lookup, or unset FLA_NPU_STABLE_ABI to use "
+        "the ctypes reference path.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
 
 
 def _discover_overlay_vendor_names() -> list[str]:
@@ -199,12 +251,11 @@ def _prepare_embedded_opp() -> list[pathlib.Path]:
     )
     os.environ["FLA_NPU_OP_API_LIB"] = str(_resolve_packaged_opapi(base_vendor))
     os.environ["FLA_NPU_OP_API_LIBS"] = os.pathsep.join(str(path) for path in op_api_libs)
-    # The launcher binds one symbol per operator to one library, so overlay code
-    # cannot shadow host-side implementations through it.  With an overlay
-    # installed, take the ctypes path instead: it searches [overlay, base, CANN]
-    # per symbol, which is what makes the overlay effective.
-    if len(vendor_dirs) > 1 and not (os.environ.get("FLA_NPU_STABLE_ABI") or "").strip():
-        os.environ["FLA_NPU_STABLE_ABI"] = "ctypes"
+    # The launcher's symbol lookup decides whether an overlay can be honoured:
+    # legacy launchers resolve every symbol from the single FLA_NPU_OP_API_LIB
+    # handle, plural-capable launchers search the ordered FLA_NPU_OP_API_LIBS
+    # list (overlay first).  Keep the backend choice consistent with that.
+    _apply_overlay_backend_policy(vendor_dirs)
     os.environ.setdefault("FLA_NPU_OPP_PATH", str(vendor_dirs[0].parent.parent))
 
     return vendor_dirs

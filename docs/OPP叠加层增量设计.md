@@ -343,6 +343,8 @@ python -m fla_npu.install_opp --remove-overlay
 | V15 | **多叠加层：并存 / 优先级 / 独立卸载** | 同时装 3 个叠加层（其中两个都改 `cumsum`，分别为 ×2 / ×3） | 三个叠加层并存；默认按 `config.ini` 顺序（`a`×2 生效 → 16640）；`FLA_NPU_OVERLAY_VENDOR` 反转顺序后 ×3 生效（24960）；单独卸掉 `a` 后 `cumsum` 回落 base 而**另一个叠加层（fwd_o）仍生效**；全卸回基线 |
 | V16 | **多叠加层缺陷修复**（T3 发现） | ① 自定义名叠加层在未设环境变量时**不生效**；② `config.ini` 把 base 排在叠加层之前 | 修复：加载端从 `config.ini` + `fla_npu_overlay_*` 目录**自动发现**叠加层（环境变量仍可覆盖）；安装端把叠加层（含自定义名）**一律排在 base 之前**；`--status` 标注 `[overlay]`/`[overlay?]` 并给出提示。复验：不设环境变量时两个叠加层**都生效**、`config.ini=overlay_a,overlay_b,base` |
 | V17 | **"产物变了 ≠ 行为变了"**（A2 踩坑记录） | 只改 kernel 中 4 处 `tiling_->scale` 的其中 1 处（`Muls`，第 712 行）后重建 | kernel `.o` **md5 全部改变**，但**运行结果与 base 完全相同**（该分支对本次输入不执行）→ 改全 4 处后才观测到 ×3。**结论：增量改动的生效必须用行为验证确认，不能只看产物是否变化** |
+| V18 | **launcher 与 overlay 的一致性**（上游评审意见） | 评审指出：生效与否只取决于调用方有没有设 `FLA_NPU_STABLE_ABI`，与"是否装了 overlay"不等价；旧 launcher 的 `Runtime::symbol()` 只查 `FLA_NPU_OP_API_LIB` 那**一个**句柄 | 已实现评审建议的**方案 (1)**：`csrc/src/runtime.cpp` 的 `init()` 读取 `FLA_NPU_OP_API_LIBS`（有序，overlay 在前）并 `dlopen` 多个句柄，`symbol()` 按序遍历后再落 CANN；只读单数变量的旧行为保持兼容。编译产出：`libfla_npu_stable.so` 911,456 B → **937,704 B**（含 `FLA_NPU_OP_API_LIBS`）。同时实现**方案 (2) 的兜底**：`_launcher_supports_overlay_order()` 探测 launcher 能力 → 叠加层在位且**未显式指定**时自动切 ctypes；**显式指定 stable 且 launcher 不支持多库**时给出明确告警 |
+| V19 | **后端策略矩阵**（A5 实机） | 叠加层在位/不在位 × 环境变量设置 × launcher 新旧 | ①叠加层+未设+旧 launcher → 自动置 `ctypes`（`stable_selected=False`）；②叠加层+**显式 stable**+旧 launcher → 尊重用户但**打印告警**（提示 overlay 会被绕过）；③叠加层+未设+**新 launcher** → 不再降级、launcher 可用（`stable_selected=True`）；④无叠加层 → 无任何告警 |
 
 **开发过程中发现并修复的问题**：Stable-ABI launcher 从 `FLA_NPU_OP_API_LIB` 指向的**单个**库解析全部 aclnn 符号；把它指向只含单算子的叠加层会让其余算子运行期报错（实测 3 个用例由通过转失败）。修复 = 该变量恒指完整库 + 叠加层在位时切 ctypes 后端（§6.2 不变量 1、2）。
 
