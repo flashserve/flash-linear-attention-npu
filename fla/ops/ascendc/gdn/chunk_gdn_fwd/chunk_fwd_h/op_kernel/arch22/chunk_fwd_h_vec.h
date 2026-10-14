@@ -390,7 +390,10 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot, buf));
     }
 
-    template <bool HAS_P, bool WRITE_RIGHT, bool WAIT_READY>
+    // WAIT_READY 模板维已收掉：tile 0 的 IoReady wait 与 gate 预处理（读 MTE2 装载
+    // 的 gateRaw_，须在 wait 之后）一并内联进 Compute，实例 8→4——热段取指足迹减半；
+    // wait 总数与 set/wait 配对不变，仅挪位，不触 §6.5-2 的屏障语义。
+    template <bool HAS_P, bool WRITE_RIGHT>
     __aicore__ inline void ComputeStage1Tile(const FwdHWorkUnit &unit,
                                              const FwdHChunkSpan &chunk,
                                              const FwdHHeadBinding &head,
@@ -400,8 +403,11 @@ private:
         const uint32_t rows = TileRows(chunk.validTokens - row);
         const uint32_t elements = rows * FWD_H_V;
         const uint32_t buf = TileBuf(row);
-        if constexpr (WAIT_READY) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot, buf));
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot, buf));
+        if (row == 0) {
+            if constexpr (WRITE_RIGHT && CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
+                PrepareScalarGate(slot, chunk.validTokens);
+            }
         }
         AscendC::Cast(calc_[slot], io_[slot][buf], AscendC::RoundMode::CAST_NONE, elements);
         AscendC::PipeBarrier<PIPE_V>();
@@ -476,20 +482,18 @@ private:
         // Stage1：V_new=cast_BF16(fp32(U)-fp32(P))；g-only 同时生成
         // V_new_g=cast_BF16(E(g_last-g_i)*V_new_fp32)，gk-only 的 right 即 V_new。
         const uint32_t slot = head.localSlot;
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot, 0));
-        if constexpr (WRITE_RIGHT && CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
-            PrepareScalarGate(slot, chunk.validTokens);
-        }
+        // stateBf16_ 零化（V 写、不依赖 MTE2 装载、与 io_/gateRaw_ 区域不相交）在
+        // tile 0 进 Compute 前发射；gate 预处理已内联 ComputeStage1Tile 的 wait 之后。
         if (chunk.first && args_.tiling.useInitialState == 0) {
             if constexpr (!CompilePolicy::STATE_FP32) {
                 AscendC::Duplicate(stateBf16_[slot], static_cast<bfloat16_t>(0), FWD_H_K * FWD_H_V);
                 AscendC::PipeBarrier<PIPE_V>();
             }
         }
-        ComputeStage1Tile<HAS_P, WRITE_RIGHT, false>(unit, chunk, head, 0);
+        ComputeStage1Tile<HAS_P, WRITE_RIGHT>(unit, chunk, head, 0);
         for (uint32_t row = TILE_ROWS; row < chunk.validTokens; row += TILE_ROWS) {
             LoadStage1Tile<HAS_P>(unit, chunk, head, row);
-            ComputeStage1Tile<HAS_P, WRITE_RIGHT, true>(unit, chunk, head, row);
+            ComputeStage1Tile<HAS_P, WRITE_RIGHT>(unit, chunk, head, row);
         }
         if (chunk.first && (!CompilePolicy::STATE_FP32 || args_.tiling.useInitialState == 0)) {
             AscendC::GlobalTensor<bfloat16_t> h;
@@ -630,7 +634,9 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot, buf));
     }
 
-    template <bool WRITE_H, bool WAIT_READY>
+    // 同 S1：WAIT_READY 维收掉（4→2 实例），tile 0 的 IoReady wait 与 KEY_GK 的
+    // gate 预处理（读 MTE2 装载的 gk 尾行）内联进 Compute。
+    template <bool WRITE_H>
     __aicore__ inline void ComputeStage3Tile(const FwdHWorkUnit &unit,
                                              const FwdHChunkSpan &chunk,
                                              const FwdHHeadBinding &head,
@@ -638,8 +644,11 @@ private:
     {
         const uint32_t slot = head.localSlot;
         const uint32_t buf = TileBuf(row);
-        if constexpr (WAIT_READY) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot, buf));
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot, buf));
+        if (row == 0) {
+            if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::KEY_GK) {
+                PrepareKeyGate(slot);
+            }
         }
         if constexpr (G_FP32_AXPY) {
             // N3 融合路径：calc 先装 D（raw_ 已由 Load/Prefetch 经 IoReadyEvent 就绪），
@@ -755,21 +764,18 @@ private:
         // Stage3：g-only 为 R_next=E(g_last)R+D；gk-only 为
         // R_next[k,v]=E(gk_last[k])R[k,v]+D[k,v]，所有算术均为 FP32。
         const uint32_t slot = head.localSlot;
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot, 0));
-        if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::KEY_GK) {
-            PrepareKeyGate(slot);
-        }
-        // alpha 是 chunk·head 常量（Stage1 的 PrepareScalarGate 写入）：整个 head 的
-        // 16 个 tile 只需一次 V_S/S_V 同步读取，避免逐 tile ReadScalar 阻塞 scalar
-        // 线程并拖慢 MTE3 的 H 写出发射。
+        // tile 0 的 IoReady wait 已内联 ComputeStage3Tile（其后的 KEY_GK gate 预处理
+        // 读 MTE2 装载的 gk 尾行，依赖该 wait）——此处不再预 wait（消费型事件，
+        // 双 wait 死锁）。alpha 是 chunk·head 常量（Stage1 的 PrepareScalarGate 经
+        // V pipe 写入，V_S/S_V 自同步）：整个 head 的 16 个 tile 只需一次标量读。
         float alphaValue = 0.0f;
         if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
             alphaValue = ReadScalar(alpha_[slot], 0, slot);
         }
-        ComputeStage3Tile<WRITE_H, false>(unit, chunk, head, 0, alphaValue);
+        ComputeStage3Tile<WRITE_H>(unit, chunk, head, 0, alphaValue);
         for (uint32_t row = TILE_ROWS; row < FWD_H_K; row += TILE_ROWS) {
             LoadStage3Tile(unit, chunk, head, row);
-            ComputeStage3Tile<WRITE_H, true>(unit, chunk, head, row, alphaValue);
+            ComputeStage3Tile<WRITE_H>(unit, chunk, head, row, alphaValue);
         }
         if constexpr (!WRITE_H) {
             if (args_.tiling.storeFinalState != 0) {
