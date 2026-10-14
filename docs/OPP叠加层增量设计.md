@@ -228,7 +228,17 @@ python -m fla_npu.install_opp --remove-overlay
 | 装叠加层（子算子 host `scale ×2`） | 官方用例 `test_npu_fwd_o_generalization.py`：**基线 3 PASS → rc=1**，双标杆 `max 0.0537→0.1074`、`mean_re_ratio≈310`（**正好 2 倍**） | **`sum=-0.479137`（正好 ×2）** |
 | 卸叠加层 | — | **逐值回退** `-0.239569` |
 
-**解读**：叠加层同时替换该算子的 host 与 kernel（库列表 + OPP 树顺序都指向它），二者天然自洽；复合算子在运行期解析到叠加层的实现 ⇒ **不存在"改一个算子导致依赖它的算子跑不起来"**（两态下复合算子均正常运行）。
+**解读（机制已由实验定死，勿按"符号插替"理解）**：叠加层替换的产物分布在**不同的层**，而各层的选取规则不同：
+
+| 层（对应 §1.2） | 产物 | 谁决定选哪一份 | 装了叠加层后 |
+|---|---|---|---|
+| **L1 host aclnn 入口** | `libcust_opapi.so` | **后端**：ctypes 按符号遍历库列表；launcher 按 `FLA_NPU_OP_API_LIBS`/`FLA_NPU_OP_API_LIB` | 新 launcher：overlay；**旧 launcher：base** |
+| **L2 算子注册** | `aic-<soc>-ops-info.json` | CANN 按 `ASCEND_CUSTOM_OPP_PATH` 顺序 | **overlay**（与后端无关） |
+| **L3/L4 tiling 与 kernel** | `op_tiling/**`（实测 tiling 符号在 `libcust_opmaster_rt2.0.so` 里，`libcust_opapi.so` 里 0 个）、`kernel/<soc>/<op>/*.o` | CANN 按 vendor 顺序 | **overlay**（与后端无关） |
+
+因此：**"入口层"与"tiling/kernel 层"可以来自不同的 vendor** —— 这正是此前一次实验里"入口显示 launcher（`_stable`）却得到 overlay 结果"的原因：那次改的是 **tiling**（`op_host/chunk_fwd_o_tiling_processor.h`），落在 overlay 永远优先的那一层，而旧 launcher 只让 **L1 入口**落回 base，于是出现了**混合状态**。
+
+**两点否定性结论（均有实测）**：① **不存在库内符号插替** —— 装了 overlay 后，`aclnnChunkFwdO`、`aclnnChunkFwdOGetWorkspaceSize` 以及 overlay 导出的 mangled `l0op::ChunkFwdO` 在**全局作用域（`RTLD_DEFAULT`）都取不到**（两库均以 `RTLD_LOCAL` 加载），所以 base 库内部调用不会被 overlay"顶替"；② 复合算子跟随叠加层的现象同样由**分层**解释（其 host 入口在 base 库内链接，但 tiling/kernel 来自 overlay），而不是"运行期重新解析符号"。（§9.1 V20/V21）
 
 **依赖关系事实图谱（决定"要不要编依赖闭包"）**
 
@@ -292,6 +302,18 @@ python -m fla_npu.install_opp --remove-overlay
 
 **何时采用**：目标从"安全地做单算子迭代"转向"把每次迭代压到秒级"时。最小可行路线：① 去掉 `clean`（保留 configure 缓存）② 修 kernel 目标依赖（或每次重跑 `generate_compile_cmd`）③ 保留聚合重链与索引重建 ④ 与叠加层**并存**：对象复用管"编译"，叠加层管"安装/回滚"。
 
+### 7.5 方案 E —— 把 launcher 适配器也纳入叠加层（未实现，备选）
+
+**动机**：本设计的叠加层只覆盖 vendor 树（`op_api/lib`、`op_tiling`、`kernel`、清单）。而 **launcher 适配器**（`libfla_npu_stable.so`，源码 `torch_custom/fla_npu/csrc/src/stable_<op>.cpp`）是**包内另一个 `.so`**，不在叠加层覆盖范围内。当改动涉及 **aclnn 接口**（新增/删除参数、改输出、改 dtype 约束）时，适配器必须一起改，此时当前通路无法"只编该算子 + 叠加"。
+
+**做法（两种）**：
+1. **轻量**：用 `FLA_NPU_STABLE_LIB=<新编的 launcher>` 把 launcher 指到临时产物（`_stable._lib_path()` 优先读该变量），配合 `python csrc/build_stable.py --out <包内路径>` 直接落位；
+2. **正式**：包内允许存在多个 `libfla_npu_stable*.so`，叠加层目录里携带自己那份适配器库，加载端按 `overlay → base` 选择，并把"哪份 launcher 生效"纳入 `--status` 审计。
+
+**必须先解决的问题**：**build stamp 校验**（`_stable.py` 的 `_check_build_stamp`）。库把适配器源码哈希编进自身（`fla_npu_stable_source_hash()`），与包内期望值比对；不一致则**整库判不可用 → 所有算子回退 ctypes**（实测：`library 3085f161…` ≠ `package e00df9f5…`）。注释给出两个例外：**不带 stamp 的旧库报 `unknown` 会被接受**；**源码树未生成 stamp 模块则跳过检查**。因此方案 E 需要"库与期望哈希一起更新"的机制（例如把 stamp 也做成叠加层的一部分）。
+
+**何时需要**：改动命中 §12.6.3 表里"必须改适配器"的行（aclnn 接口/输出/可选性变化）。
+
 ## 8. 影响面
 
 ### 8.1 兼容性
@@ -345,6 +367,8 @@ python -m fla_npu.install_opp --remove-overlay
 | V17 | **"产物变了 ≠ 行为变了"**（A2 踩坑记录） | 只改 kernel 中 4 处 `tiling_->scale` 的其中 1 处（`Muls`，第 712 行）后重建 | kernel `.o` **md5 全部改变**，但**运行结果与 base 完全相同**（该分支对本次输入不执行）→ 改全 4 处后才观测到 ×3。**结论：增量改动的生效必须用行为验证确认，不能只看产物是否变化** |
 | V18 | **launcher 与 overlay 的一致性**（上游评审意见） | 评审指出：生效与否只取决于调用方有没有设 `FLA_NPU_STABLE_ABI`，与"是否装了 overlay"不等价；旧 launcher 的 `Runtime::symbol()` 只查 `FLA_NPU_OP_API_LIB` 那**一个**句柄 | 已实现评审建议的**方案 (1)**：`csrc/src/runtime.cpp` 的 `init()` 读取 `FLA_NPU_OP_API_LIBS`（有序，overlay 在前）并 `dlopen` 多个句柄，`symbol()` 按序遍历后再落 CANN；只读单数变量的旧行为保持兼容。编译产出：`libfla_npu_stable.so` 911,456 B → **937,704 B**（含 `FLA_NPU_OP_API_LIBS`）。同时实现**方案 (2) 的兜底**：`_launcher_supports_overlay_order()` 探测 launcher 能力 → 叠加层在位且**未显式指定**时自动切 ctypes；**显式指定 stable 且 launcher 不支持多库**时给出明确告警 |
 | V19 | **后端策略矩阵**（A5 实机） | 叠加层在位/不在位 × 环境变量设置 × launcher 新旧 | ①叠加层+未设+旧 launcher → 自动置 `ctypes`（`stable_selected=False`）；②叠加层+**显式 stable**+旧 launcher → 尊重用户但**打印告警**（提示 overlay 会被绕过）；③叠加层+未设+**新 launcher** → 不再降级、launcher 可用（`stable_selected=True`）；④无叠加层 → 无任何告警 |
+| V20 | **排除"库内符号插替"** | 装 overlay 后探测全局作用域：`ctypes.CDLL(None)` 取 `aclnnChunkFwdO`、`aclnnChunkFwdOGetWorkspaceSize` 与 overlay 导出的 mangled `_ZN4l0op9ChunkFwdOEPK9aclTensor…`（两个库各自句柄里都能取到） | **全部"全局取不到"** ⇒ 两库都以 `RTLD_LOCAL` 加载、base 库内部调用不会被 overlay 顶替；插替路径**不成立**（此前那次异常另有解释） |
+| V21 | **确认"分层归属"** | ①`nm -D` 看 tiling 符号在哪：`libcust_opapi.so` **0 个** Tiling 符号、`libcust_opmaster_rt2.0.so` **183 个**；②运行时 `/proc/self/maps` 看实际加载 | 进程加载的是 **overlay 的 `op_tiling/liboptiling.so`（→ overlay opmaster）** ⇒ 我改的 tiling 落在"CANN 按 vendor 顺序选取"的那一层，与后端无关 ⇒ 解释了"入口 base + 结果 overlay"的混合观测（旧 launcher 只让 **L1 入口**落回 base） |
 
 **开发过程中发现并修复的问题**：Stable-ABI launcher 从 `FLA_NPU_OP_API_LIB` 指向的**单个**库解析全部 aclnn 符号；把它指向只含单算子的叠加层会让其余算子运行期报错（实测 3 个用例由通过转失败）。修复 = 该变量恒指完整库 + 叠加层在位时切 ctypes 后端（§6.2 不变量 1、2）。
 
@@ -375,6 +399,7 @@ python -m fla_npu.install_opp --remove-overlay
 | R9 | **kernel 目标不依赖 kernel 源文件**：热树下改 kernel 入口，`ops_transformer_kernel` **0 次 opc**（实测 2 s 完成） | 决定"对象级增量"目前对 kernel 改动无效；若误以为"去掉 clean 就能增量编 kernel"，会拿到**陈旧 kernel** | 走对象复用路线前先修 CMake 依赖接线（或每次重跑 `generate_compile_cmd`/configure）；在此之前 kernel 改动走叠加层（`--ops` 强制重编） |
 | R10 | **"产物变了 ≠ 行为变了"**：A2 实测只改 kernel 中 4 处 `tiling_->scale` 的 1 处，`.o` md5 全部改变但运行结果与 base 相同（该分支对本次输入不执行） | 若用"产物 md5 变化"代替行为验证，会误判增量已生效 | 生效判断一律用**行为验证**（本设计 §9 全部采用输出 digest/sum 对照）；构建产物变化只作为辅助证据 |
 | R11 | **自定义名叠加层曾静默不生效**（T3 发现，已修复）：加载端只认默认名或环境变量，安装端把 base 排在自定义名叠加层之前 | 用户执行 `--overlay --overlay-name X` 后看不到任何效果 | 已修：加载端从 `config.ini` + `fla_npu_overlay_*` 目录自动发现；安装端叠加层一律前置；`--status` 标注 active/inactive 并给出提示（V16 复验） |
+| R12 | **"混合来源"状态**（V21 定死）：旧 launcher 下 **L1 入口来自 base、L2–L4（tiling/kernel）来自 overlay**；已排除库内插替（V20） | 若改动**同时**涉及 host 入口与 tiling/kernel 的**契约**（如 tiling 结构体布局、参数语义），混合来源可能产生**不自洽**的组合（例如 base 的入口 + overlay 的 tiling），比"整体生效"或"整体不生效"都更难排查 | ①新 launcher 读有序 `FLA_NPU_OP_API_LIBS` → 三层来源一致；②旧 launcher 由策略兜住：未设环境变量→自动 ctypes（三层都走 overlay 优先），显式设非 `ctypes`→**明确告警**；③文档明确"契约类改动建议同时改 L1 与 L3/L4"（见 §6.6 规则表） |
 
 ## 11. 里程碑
 
@@ -479,6 +504,13 @@ ctypes：dlsym aclnnChunkFwdO → overlay 有 / base 有，地址不同（0x72cf
 | **Stable-ABI launcher** | 不依赖 CPython/libtorch ABI 的启动库 `libfla_npu_stable.so`，从单个库解析全部符号（R1） |
 | **aclnn 两段式** | `aclnnXxxGetWorkspaceSize`（第一段）+ `aclnnXxx`（第二段） |
 | **SONAME** | 库的二进制身份名；与 `dlsym` 的符号名是两套机制（§12.2） |
+| **ctypes 后端 / stable(launcher) 后端** | 调 aclnn 的两种方式：前者纯 Python 手工编组（参考/回退/对照），后者用预编译 C++ 适配器（默认，性能好、不绑 ABI）。详见 §12.6.1 |
+| **适配器（adapter）** | `csrc/src/stable_<op>.cpp` 里把 torch 参数编组成 aclnn 调用的一段 C++；编进包内 `libfla_npu_stable.so`，**不属于叠加层覆盖范围**（§7.5） |
+| **launcher "携带"某算子** | 该算子在 `csrc/src/stable_ops.cpp` 里注册了适配器 → 走 launcher；不携带则自动回退 ctypes（§12.6.1） |
+| **`_LAUNCHER_ONLY_OPS`** | 只由 launcher 承载、ctypes 无参考实现的算子集合；**派生自两个清单的差集**，当前为空（§12.6.5） |
+| **build stamp** | launcher 内部记录的**适配器源码哈希**（`fla_npu_stable_source_hash()`）；与包内期望值不一致 → 整库判不可用、全部回退 ctypes（§12.6.4） |
+| **`FLA_NPU_OP_API_LIBS`** | 环境变量：有序的 host 库路径列表（overlay 在前）；新 launcher 据此按序遍历多个句柄（§12.6.1） |
+| **分层来源（L1 vs L2–L4）** | L1 host 入口由**后端**决定；L2–L4（清单/tiling/kernel）由 **CANN 按 vendor 顺序**决定 —— 两者可以来自不同 vendor，形成"混合状态"（§6.6 / R12） |
 | **局部覆盖安装 / scoped overlay** | 上游 CI 分项 06 的既有做法：单算子 run 包 `--full` 覆盖整份 OPP（会 WARNING 其余算子丢失） |
 
 ### 12.4 涉及文件与关键位置
@@ -511,7 +543,72 @@ $PY -m fla_npu.install_opp --status
 $PY -m fla_npu.install_opp --remove-overlay
 ```
 
-### 12.6 关键实测数字速查
+### 12.6 后端与适配器（stable / ctypes 的分工、代价与迭代通路）
+
+#### 12.6.1 两个后端是什么
+
+先垫一句：**aclnn 是两段式 C 接口**（`aclnnXxxGetWorkspaceSize`：校验 + 算 workspace + 组 executor；`aclnnXxx`：下发），都在 `libcust_opapi.so` 里。两个后端就是"**用什么方式调这两个函数**"：
+
+| 名词 | 是什么 / 在哪 | 干什么 / 特点 |
+|---|---|---|
+| **ctypes 后端** | 纯 Python：`ops/ascendc/_aclnn_ctypes.py` + `_runtime.py` | 用 `ctypes.CDLL` 打开 `.so` 并按符号取函数指针，在 Python 里**手工构造每个参数**（张量描述符/workspace/stream）。每次调用都要重建描述符 → host 开销大；但不依赖任何二进制 ABI、入参接受面更宽松。定位是**参考实现 / 回退 / 对照** |
+| **stable / launcher** | 包内二进制 `fla_npu/libfla_npu_stable.so`；源码 `torch_custom/fla_npu/csrc/src/*.cpp`；编译 `csrc/build_stable.py` | 把"参数封装 + 调 aclnn"用 C++ 预编译，经 `torch.ops.fla_npu_stable.*` 暴露，Python 侧只薄转发。**默认后端**（`FLA_NPU_STABLE_ABI` 不设或非 `ctypes`）。设计目标是**不直接用 CPython 的 C-API**（换 Python 版本不必重编），并用 `csrc/include/torch_stable_abi` 对接 torch；构建时仍链接 `libtorch_cpu/c10/torch` |
+| **launcher "携带"某算子** | `csrc/src/stable_ops.cpp` 里 `m.def(kSchema_…)` 逐条注册（+ `csrc/src/stable_<op>.cpp` 一份手写适配器） | 携带 = 有手写适配器 → 走 launcher（快）；**不携带 = 自动回退 ctypes**（结果相同，只是慢） |
+| **`FLA_NPU_OP_API_LIBS`** | 环境变量（`os.pathsep` 分隔的 `.so` 路径列表，前者优先） | 由 `import fla_npu` 写入 `[overlay, base]`；**新** launcher 在 `init()` 里逐个 `dlopen` 并按序遍历 `dlsym`（旧 launcher 不认识它 → 需要能力探测 + 降级/告警，见 V18/V19） |
+
+#### 12.6.2 stable 的收益与代价
+
+| | 内容 |
+|---|---|
+| 收益 | ① host 开销低（省掉每次调用重建描述符，文档称 ctypes 的 host 开销是其"数倍"）；② **不绑定 CPython / libtorch 的 C++ ABI** → 一个 wheel 可跨 Python/torch 版本 |
+| 代价 | ① 覆盖面靠**手写**适配器（当前 36 个算子 36 份）；② **build stamp 强耦合**——库与包的适配器源码不同源即**整库判不可用**（实测踩到：`library 3085f161…` ≠ `package e00df9f5…`）；③ 依赖 torch 的少量稳定符号（`aoti_torch_*`），版本不符即不可用；④ 参数语义要在 C++ 里再复述一遍（可选张量 / `int[]?` / 输出顺序 / in-place 契约），易与 ctypes 侧不一致；⑤ 出错堆栈落在 `.so` 里，调试比纯 Python 难；⑥ 引出"符号来源"问题（已修，见 §7.5 / R12） |
+
+#### 12.6.3 适配器 vs kernel / host：改什么要连带改什么
+
+| 层 | 产物 | 在叠加层覆盖范围内吗 |
+|---|---|---|
+| **适配器**（host 参数编组） | `libfla_npu_stable.so`（**包内**） | ❌（见 §7.5 方案 E） |
+| **host aclnn 实现 / tiling** | `libcust_opapi.so`、`op_tiling/**`（vendor 树） | ✅ |
+| **device kernel** | `kernel/<soc>/<op>/*.o`（vendor 树） | ✅ |
+| 算子定义 / 清单 / 索引 | `ops-info.json`、`binary_info_config.json`（vendor 树） | ✅ |
+
+| 算子侧改动 | 要改适配器吗 | 还要动什么 |
+|---|---|---|
+| 只改 **kernel**（数值/性能，接口不变） | ❌ | 重编算子包（`--ops`）即可；launcher 不用动 |
+| 只改 **host 实现 / tiling**（aclnn 接口不变） | ❌ | 同上 |
+| **aclnn 接口签名**变化（增删/改序/改类型/改 attr） | ✅ | schema（`npu_custom.yaml`）+ ctypes wrapper + 测试 |
+| 输出个数/顺序/可选性变化、dtype/layout 约束变化 | ✅ | 同上 |
+| 新增 / 重命名算子 | ✅ | 三处清单（`_ASCENDC_OPS`、`ASCENDC_CTYPES_OPS`、`csrc/src/stable_ops.cpp`）+ 新 `stable_<op>.cpp` |
+| 改 `csrc/**`（即使只是注释/格式） | ✅ **必须重编 launcher** | 否则 stamp 变化 → 整库判不可用 |
+
+（关键：适配器是按**符号名** `dlsym` 调 aclnn 的，所以**只要 aclnn 接口不变，改 kernel/host 都不需要碰适配器** —— 这正是单算子增量最常走的路径。）
+
+#### 12.6.4 适配器迭代通路（现状）
+
+| 通道 | 用法 | 注意 |
+|---|---|---|
+| 指向临时产物 | `FLA_NPU_STABLE_LIB=<新编的 .so>`（`_stable._lib_path()` 优先读该变量） | 会撞 build stamp 校验 |
+| 直接落位 | `python csrc/build_stable.py --out <包内路径>` | 官方错误提示给出的做法 |
+| 两个例外 | 不带 stamp 的旧库报 `unknown` **会被接受**；源码树未生成 stamp 模块则**跳过检查** | 决定"能否只换适配器" |
+
+#### 12.6.5 `_LAUNCHER_ONLY_OPS` 的设计取向与风险
+
+定义处自带注释：**派生、不手写**（`= _ASCENDC_OPS - ASCENDC_CTYPES_OPS`），取向是"**新算子不再要求提供 ctypes 适配器**"——用"少维护一份实现"换"对 launcher 的强依赖"。**实测当前集合为空**（`_ASCENDC_OPS` 35 个、ctypes 侧 35 个 `npu_*` 函数），所以"没有兜底"目前只是**预期演化方向**。代价：一旦某算子成为 launcher-only 而 launcher 不可用（stamp 不符 / 缺符号 / wheel 以 `FLA_NPU_BUILD_STABLE_ABI=0` 编出），调用直接抛 `AttributeError`。**建议（未实施）**：CI 增加"launcher 必须可用"的断言，并让 stamp 校验失败更可见。
+
+#### 12.6.6 生成适配器"缺的语义"在哪一层（以 `chunk_fwd_o` 为例）
+
+| 需要的语义 | 在哪一层 | 实测 |
+|---|---|---|
+| 对外签名（两段式入口、形参顺序/类型） | `op_host/op_api/aclnn_chunk_fwd_o.h` | **只有原型**，没有可选性/dtype |
+| **必选/可选、dtype、format、value-depend、输出** | **`op_host/chunk_fwd_o_def.cpp`** | `Input("q").ParamType(REQUIRED).DataType({DT_BF16, DT_FLOAT16,…})`；**`Input("cu_seqlens").ParamType(OPTIONAL).ValueDepend(OPTIONAL)`**；`Output("o")` |
+| 属性与默认值 | 同上 `def.cpp` | `Attr("scale").AttrType(REQUIRED).Float(1.0)` |
+| torch 侧 schema | `torch_custom/fla_npu/npu_custom.yaml` 的 `func:` 行 | `npu_chunk_fwd_o(Tensor q, …, Tensor? g=None, …, int? chunk_size=None, …, str output_layout="BNSD") -> Tensor` |
+| 约束/校验 | `op_host/chunk_fwd_o_tiling*.cpp/.h` | chunk_size、layout 枚举等 |
+| **编组细节**（谁 `tensor()` / 谁 `int_array()` / 标量类型） | `csrc/src/stable_chunk_fwd_o.cpp` | `:94 FLA_STABLE_EXEC("aclnnChunkFwdO", …, tensor(meta_of(q)), …, int_array(chunk_indices), scalar(scale), scalar(chunk_size), …)` |
+
+**结论**：`def.cpp`（可选性/dtype/输出）+ `npu_custom.yaml`（torch schema）+ `aclnn_<op>.h`（对外原型）**三处交叉即可生成适配器骨架**；仍需人工确认的是"值依赖参数如何编组、`Format` 与实际内存排布的对应、attr 与 tiling 校验的耦合"——这三类目前以手写 ctypes wrapper（`_aclnn_ctypes.py` 同名函数，等价于一份人写的参考实现）与 tiling 代码为准，可作为**第四来源**交叉校验。
+
+### 12.7 关键实测数字速查
 
 | 项 | 数值 |
 |---|---|
