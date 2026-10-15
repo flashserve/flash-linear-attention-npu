@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import os
 import pathlib
+import re
 import warnings
 from typing import Optional
 
@@ -18,6 +19,9 @@ _DEFAULT_OVERLAY_VENDOR_DIR = "fla_npu_overlay_transformer"
 _OVERLAY_VENDOR_PREFIX = "fla_npu_overlay_"
 _OVERLAY_VENDOR_ENV = "FLA_NPU_OVERLAY_VENDOR"
 _STABLE_ABI_ENV = "FLA_NPU_STABLE_ABI"
+_OVERLAY_VENDOR_NAME_RE = re.compile(
+    rf"{re.escape(_OVERLAY_VENDOR_PREFIX)}[A-Za-z0-9][A-Za-z0-9_.-]*\Z"
+)
 _ASCENDC_OPAPI_LIBRARIES: Optional[list[ctypes.CDLL]] = None
 _LEGACY_TORCH_OPS_LOADED = False
 _LEGACY_TORCH_OPS_LIBRARY: Optional[pathlib.Path] = None
@@ -41,8 +45,22 @@ def overlay_vendor_names() -> list[str]:
 
     raw = os.environ.get(_OVERLAY_VENDOR_ENV)
     if raw is not None:
-        names = [name.strip() for name in raw.split(os.pathsep)]
-        return [name for name in names if name]
+        names: list[str] = []
+        for candidate in raw.split(os.pathsep):
+            name = candidate.strip()
+            if not name:
+                continue
+            if not _OVERLAY_VENDOR_NAME_RE.fullmatch(name):
+                warnings.warn(
+                    f"fla_npu: ignoring invalid {_OVERLAY_VENDOR_ENV} entry {name!r}; "
+                    f"overlay names must match {_OVERLAY_VENDOR_PREFIX}<name>.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                continue
+            if name not in names:
+                names.append(name)
+        return names
     return _discover_overlay_vendor_names()
 
 
@@ -107,7 +125,7 @@ def _discover_overlay_vendor_names() -> list[str]:
         name = candidate.strip()
         if not name or name == _DEFAULT_VENDOR_DIR or name in names:
             return
-        if not name.startswith(_OVERLAY_VENDOR_PREFIX):
+        if not _OVERLAY_VENDOR_NAME_RE.fullmatch(name):
             return
         if _package_local_vendor_dir(name) is not None:
             names.append(name)
@@ -133,12 +151,15 @@ def _package_local_vendor_dir(name: str) -> Optional[pathlib.Path]:
     """Return ``<pkg>/opp/vendors/<name>`` when it exists inside the package."""
 
     package_dir = _PACKAGE_DIR.resolve()
-    vendor_dir = package_dir / "opp" / "vendors" / name
+    vendors_root = package_dir / "opp" / "vendors"
+    if name != _DEFAULT_VENDOR_DIR and not _OVERLAY_VENDOR_NAME_RE.fullmatch(name):
+        return None
+    vendor_dir = vendors_root / name
     if not vendor_dir.is_dir():
         return None
     resolved_vendor_dir = vendor_dir.resolve()
     try:
-        resolved_vendor_dir.relative_to(package_dir)
+        resolved_vendor_dir.relative_to(vendors_root)
     except ValueError:
         return None
     return resolved_vendor_dir

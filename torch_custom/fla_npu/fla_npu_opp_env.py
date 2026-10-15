@@ -10,6 +10,8 @@ fla_npu 后设置环境变量来不及”的问题。设置 FLA_NPU_DISABLE_PTH=
 """
 
 import os
+import re
+import warnings
 from pathlib import Path
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
@@ -18,6 +20,9 @@ _BASE_VENDOR = "fla_npu_transformer"
 _DEFAULT_DELTA_VENDOR = "fla_npu_overlay_transformer"
 _OVERLAY_VENDOR_ENV = "FLA_NPU_OVERLAY_VENDOR"
 _OVERLAY_VENDOR_PREFIX = "fla_npu_overlay_"
+_OVERLAY_VENDOR_NAME_RE = re.compile(
+    rf"{re.escape(_OVERLAY_VENDOR_PREFIX)}[A-Za-z0-9][A-Za-z0-9_.-]*\Z"
+)
 
 
 def _env_flag(name: str) -> bool:
@@ -44,14 +49,29 @@ def _overlay_names() -> list[str]:
 
     raw = os.environ.get(_OVERLAY_VENDOR_ENV)
     if raw is not None:
-        return [name.strip() for name in raw.split(os.pathsep) if name.strip()]
+        names: list[str] = []
+        for candidate in raw.split(os.pathsep):
+            name = candidate.strip()
+            if not name:
+                continue
+            if not _OVERLAY_VENDOR_NAME_RE.fullmatch(name):
+                warnings.warn(
+                    f"fla_npu: ignoring invalid {_OVERLAY_VENDOR_ENV} entry {name!r}; "
+                    f"overlay names must match {_OVERLAY_VENDOR_PREFIX}<name>.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                continue
+            if name not in names:
+                names.append(name)
+        return names
 
     names: list[str] = []
 
     def _add(candidate: str) -> None:
         name = candidate.strip()
         if (not name or name == _BASE_VENDOR or name in names
-                or not name.startswith(_OVERLAY_VENDOR_PREFIX)):
+                or not _OVERLAY_VENDOR_NAME_RE.fullmatch(name)):
             return
         if (_VENDORS_DIR / name).is_dir():
             names.append(name)
@@ -78,10 +98,18 @@ def _vendor_dirs() -> list[Path]:
 
     names = _overlay_names() or [_DEFAULT_DELTA_VENDOR]
     dirs: list[Path] = []
+    vendors_root = _VENDORS_DIR.resolve()
     for name in [*names, _BASE_VENDOR]:
         vendor_dir = _VENDORS_DIR / name
-        if vendor_dir.is_dir() and vendor_dir not in dirs:
-            dirs.append(vendor_dir)
+        if not vendor_dir.is_dir():
+            continue
+        resolved = vendor_dir.resolve()
+        try:
+            resolved.relative_to(vendors_root)
+        except ValueError:
+            continue
+        if resolved not in dirs:
+            dirs.append(resolved)
     return dirs
 
 

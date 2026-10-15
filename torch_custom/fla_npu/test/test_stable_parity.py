@@ -20,10 +20,16 @@
     FLA_NPU_STABLE_ABI=stable python test_stable_parity.py dump /tmp/parity-stable.json
     python test_stable_parity.py compare /tmp/parity-ctypes.json /tmp/parity-stable.json
 
+可用 ``FLA_NPU_PARITY_OPS=npu_op_a,npu_op_b`` 显式限定两轮配方；未知名称会
+直接报错，compare 也会拒绝两份报告选择不同的配方集合。
+
 判据：
 * 每个算子记录 **实际服务它的后端**（``entry`` 字段）——若 launcher 那一轮某算子仍由 ctypes 服务，
   说明该算子不被 launcher 携带（或 launcher 不可用），比较对它**无意义**，必须以 ``SKIP`` 呈现而不是 PASS；
 * 覆盖到的算子要求输出**逐值一致**（sha256 相同）。
+
+比较默认是严格模式：任何 ``ERROR``、``SKIP`` 或预期后端未命中都会返回 1。
+仅生成探索性报告时可设置 ``FLA_NPU_PARITY_ALLOW_INCOMPLETE=1``。
 
 配方（``RECIPES``）是"算子 → 确定性输入 + 调用"的登记表；新增算子只需加一条，未登记的在报告里列为 ``NO_RECIPE``。
 """
@@ -37,10 +43,24 @@ import math
 import sys
 from typing import Callable
 
-import torch
 
-from fla_npu.ops import ascendc as ascendc_ops
-from fla_npu.ops import ascendc as _ascendc_mod
+torch = None
+ascendc_ops = None
+_ascendc_mod = None
+
+
+def _load_runtime() -> None:
+    """Import NPU dependencies only for ``dump``; ``compare`` is JSON-only."""
+
+    global torch, ascendc_ops, _ascendc_mod
+    if torch is not None:
+        return
+    import torch as torch_module
+    from fla_npu.ops import ascendc as ascendc_module
+
+    torch = torch_module
+    ascendc_ops = ascendc_module
+    _ascendc_mod = ascendc_module
 
 
 def _digest(tensor: torch.Tensor) -> dict:
@@ -122,6 +142,17 @@ RECIPES: dict[str, Callable[[], object]] = {
 }
 
 
+def _selected_recipes() -> dict[str, Callable[[], object]]:
+    raw = (__import__("os").environ.get("FLA_NPU_PARITY_OPS") or "").strip()
+    if not raw:
+        return RECIPES
+    names = list(dict.fromkeys(name.strip() for name in raw.split(",") if name.strip()))
+    unknown = sorted(set(names) - set(RECIPES))
+    if unknown:
+        raise ValueError(f"Unknown FLA_NPU_PARITY_OPS recipes: {', '.join(unknown)}")
+    return {name: RECIPES[name] for name in names}
+
+
 def _served_by(op_name: str) -> tuple[str, int]:
     """回读仓库自己的后端记账（``BACKENDS`` / ``FALLBACKS``）。
 
@@ -141,7 +172,14 @@ def dump(path: str) -> int:
         print(f"torch_npu is required: {exc}")
         return 2
 
+    _load_runtime()
     from fla_npu.ops.ascendc import _stable
+
+    try:
+        recipes = _selected_recipes()
+    except ValueError as exc:
+        print(exc)
+        return 2
 
     report = {
         "backend_env": __import__("os").environ.get("FLA_NPU_STABLE_ABI"),
@@ -150,9 +188,10 @@ def dump(path: str) -> int:
         # 全部已发布算子：compare 用它报告 NO_RECIPE（未登记配方的算子），
         # 否则"覆盖率"无从判断，测试会因为"只跑了有配方的几个"而假通过。
         "published_ops": [name for name in getattr(_ascendc_mod, "_ASCENDC_OPS", ())],
+        "requested_ops": sorted(recipes),
         "operators": {},
     }
-    for name, recipe in RECIPES.items():
+    for name, recipe in recipes.items():
         record: dict = {"entry": _served_by(name)[0]}
         try:
             outputs = recipe()
@@ -184,11 +223,25 @@ def compare(left_path: str, right_path: str) -> int:
           f"launcher_usable={left['launcher_usable']}")
     print(f"right: {right_path}  FLA_NPU_STABLE_ABI={right['backend_env']}  "
           f"launcher_usable={right['launcher_usable']}")
+    if sorted(left.get("requested_ops") or left["operators"]) != sorted(
+            right.get("requested_ops") or right["operators"]):
+        print("parity FAILED: the two reports selected different recipe sets")
+        return 1
     names = sorted(set(left["operators"]) | set(right["operators"]))
-    strict = (__import__("os").environ.get("FLA_NPU_PARITY_STRICT") or "").upper() in {"1", "TRUE", "YES", "ON"}
+    environ = __import__("os").environ
+    allow_incomplete = (environ.get("FLA_NPU_PARITY_ALLOW_INCOMPLETE") or "").upper() in {
+        "1", "TRUE", "YES", "ON"
+    }
+    legacy_strict = environ.get("FLA_NPU_PARITY_STRICT")
+    strict = not allow_incomplete
+    if legacy_strict is not None:
+        strict = legacy_strict.upper() in {"1", "TRUE", "YES", "ON"}
     failed: list[str] = []      # 数值不一致
     errored: list[str] = []     # 配方失败（环境/形状）
     vacuous: list[str] = []     # 两轮同一后端 ⇒ 不构成对照
+    wrong_backend: list[str] = []
+    expected_left = "ctypes" if left.get("backend_env") == "ctypes" else "stable"
+    expected_right = "ctypes" if right.get("backend_env") == "ctypes" else "stable"
     for name in names:
         a = left["operators"].get(name, {})
         b = right["operators"].get(name, {})
@@ -197,13 +250,24 @@ def compare(left_path: str, right_path: str) -> int:
             print(f"  {name:38s} ERROR   left={a.get('status')} right={b.get('status')}"
                   f"  {a.get('error') or b.get('error') or ''}")
             continue
-        # 只有"两轮由不同后端服务"时，比较才有意义
+        if a.get("entry") != expected_left or b.get("entry") != expected_right:
+            wrong_backend.append(name)
+            print(f"  {name:38s} BACKEND left={a.get('entry')} (expected {expected_left}) "
+                  f"right={b.get('entry')} (expected {expected_right})")
+            continue
+        # 只有"两轮由不同后端服务"时，比较才有意义。
         if a["entry"] == b["entry"]:
             vacuous.append(name)
             print(f"  {name:38s} SKIP    两轮同一后端({a['entry']})——不构成对照"
                   f"（launcher 未承载或不可用）")
             continue
-        same = [x["sha256"] for x in a["outputs"]] == [x["sha256"] for x in b["outputs"]]
+        left_outputs = [
+            (x.get("shape"), x.get("dtype"), x.get("sha256")) for x in a.get("outputs", [])
+        ]
+        right_outputs = [
+            (x.get("shape"), x.get("dtype"), x.get("sha256")) for x in b.get("outputs", [])
+        ]
+        same = bool(left_outputs) and left_outputs == right_outputs
         detail = ""
         if not same:
             pairs = zip(a["outputs"], b["outputs"])
@@ -219,16 +283,18 @@ def compare(left_path: str, right_path: str) -> int:
         print(f"  {'（未登记配方）':36s} NO_RECIPE  {len(no_recipe)}/{len(published)}: "
               f"{', '.join(no_recipe[:6])}{' …' if len(no_recipe) > 6 else ''}")
 
-    print(f"  汇总: PASS={len(names) - len(failed) - len(errored) - len(vacuous)} "
+    print(f"  汇总: PASS={len(names) - len(failed) - len(errored) - len(vacuous) - len(wrong_backend)} "
           f"FAIL={len(failed)} ERROR={len(errored)} SKIP={len(vacuous)} "
-          f"NO_RECIPE={len(no_recipe)}  严格模式={'开' if strict else '关'}")
+          f"BACKEND={len(wrong_backend)} NO_RECIPE={len(no_recipe)}  "
+          f"严格模式={'开' if strict else '关'}")
     if failed:
         print(f"parity FAILED for: {', '.join(failed)}")
         return 1
-    if strict and (errored or vacuous):
+    if strict and (errored or vacuous or wrong_backend):
         # 严格模式：任何"没测到"的算子都算失败——launcher 不可用/未承载会让所有用例
         # 走同一后端，此时"parity OK"是假通过，必须由调用方（CI）看见非零退出码。
-        print("parity FAILED (strict)：存在 ERROR 或 SKIP —— 说明没有真正对照到 launcher 路径"
+        print("parity FAILED (strict)：存在 ERROR、SKIP 或 BACKEND 错配 —— "
+              "说明没有真正对照到指定后端"
               f"（launcher_usable={right.get('launcher_usable')}）")
         return 1
     print("parity OK（覆盖到的算子逐值一致；SKIP/NO_RECIPE 需在 launcher 侧补齐承载或补配方）"

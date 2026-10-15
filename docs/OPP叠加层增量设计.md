@@ -59,7 +59,7 @@
 
 | 链 | 谁在查 | 要回答的问题 | 查什么（按顺序） |
 |---|---|---|---|
-| **L1 host 符号** | Python 进程 | `aclnnXxx` 这个函数在哪？ | 库列表**逐个 `dlsym`**：`<overlay>/op_api/lib/libcust_opapi.so` → `<base>/…` → CANN `libopapi.so`，先命中先用。**例外**：Stable-ABI launcher 只用 `FLA_NPU_OP_API_LIB` 指向的那**一个**库 |
+| **L1 host 符号** | Python 进程 | `aclnnXxx` 这个函数在哪？ | ctypes 与当前 Stable-ABI launcher 都按库列表**逐个 `dlsym`**：`<overlay>/op_api/lib/libcust_opapi.so` → `<base>/…` → CANN `libopapi.so`，先命中先用；旧 launcher 只认单数 `FLA_NPU_OP_API_LIB`，由能力探测降级处理 |
 | **L2 算子注册** | CANN 运行时 | 这个算子存不存在、什么规格？ | 逐个 OPP 树条目查 `op_impl/ai_core/tbe/config/<soc>/aic-<soc>-ops-info.json` |
 | **L3 kernel 选择** | CANN 运行时 | 该算子该跑哪个二进制？ | 同树 `op_impl/ai_core/tbe/kernel/config/<soc>/binary_info_config.json`（顶层键就是算子名） |
 | **L4 实体** | CANN 运行时 | 二进制/切分/原型在哪？ | `.../kernel/<soc>/<op>/*.o`、`.../op_tiling/liboptiling.so`、`op_proto/**` |
@@ -153,7 +153,7 @@ site-packages/fla_npu/opp/vendors/
 | 环境预置 | 同上 `_prepare_embedded_opp()` | 反序 prepend `ASCEND_CUSTOM_OPP_PATH`；设置库相关变量 | 由"单目录"改为"按 overlay→base 的列表" |
 | 库装载 | 同上 `load_ascendc_opapi_libraries()` | 返回 `[overlay, base, CANN]` | 由"1 个 custom"改为"N 个 custom" |
 | 符号解析 | `fla_npu/ops/ascendc/_runtime.py` `symbol()` | 按符号遍历库列表 | **未改动**（设计前提） |
-| 稳定启动器 | `libfla_npu_stable.so` + `ops/ascendc/_stable.py` | 从 `FLA_NPU_OP_API_LIB` 指向的**单个**库解析全部符号 | 未改库；改为"指向完整库 + 有叠加层时切 ctypes" |
+| 稳定启动器 | `libfla_npu_stable.so` + `ops/ascendc/_stable.py` | 按 `FLA_NPU_OP_API_LIBS` 遍历 overlay→base，再落 CANN；单数变量保留作旧版兼容 | launcher 改为多句柄逐符号解析；旧 launcher + overlay 时自动切 ctypes 或显式告警 |
 | 安装器 | `fla_npu/install_opp.py` | 装/卸/查叠加层；维护 `config.ini` | 新增 `--overlay` / `--remove-overlay` / `--status` |
 | 启动钩子 | `fla_npu_opp_env.py`（`.pth`） | 启动阶段预置环境 | 支持 overlay→base 顺序 |
 
@@ -163,9 +163,9 @@ site-packages/fla_npu/opp/vendors/
 |---|---|---|
 | `vendor_dirs` | 有序 `list[Path]` | `[overlay…, base]`；靠前者优先；全部经 `relative_to(package_dir)` 校验 |
 | `_ASCENDC_OPAPI_LIBRARIES` | 有序 `list[CDLL]` | `[overlay_lib, base_lib, libopapi.so]`；`symbol()` 的查找域 |
-| `FLA_NPU_OP_API_LIB` | str | **被 Stable-ABI launcher 消费**：必须指向**完整**算子集（base） |
-| `FLA_NPU_OP_API_LIBS` | str（pathsep 列表） | 新增：完整有序库列表，供诊断 |
-| `FLA_NPU_STABLE_ABI` | str | `ctypes` 强制参考路径；**装叠加层且用户未显式指定时自动置位** |
+| `FLA_NPU_OP_API_LIB` | str | 旧 launcher 的兼容输入，必须指向**完整**算子集（base） |
+| `FLA_NPU_OP_API_LIBS` | str（pathsep 列表） | 当前 launcher 消费的完整有序库列表（overlay→base） |
+| `FLA_NPU_STABLE_ABI` | str | `ctypes` 强制参考路径；仅在 overlay + 旧 launcher 且用户未显式指定时自动置位 |
 | `FLA_NPU_OVERLAY_VENDOR` | str（pathsep 列表） | 叠加层目录名；**可选**——未设置时从 `config.ini` 的 `load_priority` 与包内 `fla_npu_overlay_*` 目录自动发现 |
 | 叠加层命名约定 | 前缀 `fla_npu_overlay_` | 带此前缀的包内 vendor 目录被视作叠加层：在 `config.ini` 中**一律排在 base 之前**，且被加载端自动发现（避免"装了但不生效"） |
 | `opp/vendors/config.ini` | 文本 | `load_priority=<overlay>,<base>`（按优先级写，不再按名字排序） |
@@ -173,8 +173,8 @@ site-packages/fla_npu/opp/vendors/
 
 **四条不变量（评审重点）**
 
-1. **`FLA_NPU_OP_API_LIB` 恒指"完整库"（base）**：launcher 从这一个库解析全部 aclnn 符号；指成单算子叠加层会让其余算子运行期报 `stable launcher: symbol not found: aclnnXxxGetWorkspaceSize`（开发中实际踩到并修复，见 §9.1）。
-2. **装叠加层时后端自动切 ctypes**（可被 `FLA_NPU_STABLE_ABI` 覆盖）：launcher 是"一个算子绑一个库"，无法被叠加层覆盖；ctypes 路径才按符号遍历 `[overlay, base, CANN]`。
+1. **`FLA_NPU_OP_API_LIB` 恒指"完整库"（base）**：它是旧 launcher 的安全兼容输入；当前 launcher 优先消费复数变量。把单数变量指成单算子叠加层会让旧 launcher 的其余算子报 `symbol not found`。
+2. **当前 launcher 与 ctypes 都按 `[overlay, base, CANN]` 逐符号查找**；只有能力探测确认是旧 launcher 时才自动切 ctypes（显式要求 stable 则告警）。
 3. **叠加层只在包内**，不放宽 `relative_to(package_dir)` 校验（未装叠加层时行为与改动前一致）。
 4. **不触碰 run 包安装器、不重写 pip `RECORD`**；回滚统一走 `--remove-overlay`。
 
@@ -209,12 +209,12 @@ import fla_npu
         │     ├─ _resolve_vendor_dirs()              → [overlay, base]（只含存在且包内的）
         │     ├─ 反序 prepend ASCEND_CUSTOM_OPP_PATH  → overlay, base, …
         │     ├─ FLA_NPU_OP_API_LIB = 完整库(base)
-        │     └─ 有 overlay 且未显式指定 → FLA_NPU_STABLE_ABI=ctypes
+        │     └─ 有 overlay + 旧 launcher 且未显式指定 → FLA_NPU_STABLE_ABI=ctypes
         └─ 装载：先 libopapi.so（CANN 独立初始化），再 overlay_lib、base_lib
               → 返回 [overlay_lib, base_lib, libopapi.so]
 ```
 
-**流程 2：一次算子调用的解析**：见 §1.2 四条链 —— L1 走 ctypes 的逐符号查找（`_runtime.symbol()`）或 launcher 的单库查找；L2–L4 由 CANN 按 `ASCEND_CUSTOM_OPP_PATH` 顺序逐项查。
+**流程 2：一次算子调用的解析**：见 §1.2 四条链 —— L1 走 ctypes 的逐符号查找（`_runtime.symbol()`）或当前 launcher 的多句柄逐符号查找；L2–L4 由 CANN 按 `ASCEND_CUSTOM_OPP_PATH` 顺序逐项查。
 
 **流程 3：安装 / 回滚**
 
@@ -446,9 +446,9 @@ python -m fla_npu.install_opp --remove-overlay
 | 轴 | 边界 | 现有防护 | 覆盖情况 |
 |---|---|---|---|
 | **轴① glue ↔ launcher** | boxed 参数栈（类型序列、stream 索引） | `_check_build_stamp`（`SOURCE_HASH` 相等） | ✅ 有，但**过严**：叠加层无法携带自己的 launcher 而不让校验退化为自证 |
-| **轴② launcher ↔ aclnn** | `FLA_STABLE_EXEC` 的 tuple → `reinterpret_cast` 的签名 | **静态工具已存在**：`torch_custom/fla_npu/tools/op_abi_validate.py`（408 行：解析并比对 `FLA_STABLE_EXEC` 调用点 vs 已安装 OPP 的 `aclnn_*.h`，不一致**非零退出**；旁有 `op_abi_parity.py`，被 `tests/test_stable_gates.py` 引用） | ⚠️ **并非空缺（此前表述有误，已更正）**：① 未接入任何 workflow/CI，需人工调用；② 指针类参数统一按 **wildcard** 比较（`aclTensor*`/`aclIntArray*`/`aclScalar*` 都视作指针）→ **同 arity 下的类型替换检测不到**；③ **运行期无校验** |
+| **轴② launcher ↔ aclnn** | `FLA_STABLE_EXEC` 的 tuple → `reinterpret_cast` 的签名 | `op_abi_validate.py` 解析并比对调用点与实际打包的 `aclnn_*.h`；已接入 NPU CI 全量 OPP 阶段，且区分 tensor/int-array/acl-scalar 指针类型 | ✅ 构建期有硬门禁；⚠️ 运行期仍无 manifest 校验 |
 
-> **更正说明**：本节早先写作"轴②**完全空缺**"，事实是"**静态工具已存在但未接线、且运行期缺校验**"。`op_abi_validate.py` 的 docstring 记下了它要防的真实事故——`aclnnChunkGatedDeltaRuleBwdDhu` 在输出前新增 `bool stateVFirst` 后，未同步的调用点在 910B 上表现为**裸 `161001`**。**因此方案应改为"扩展并接入既有工具"（生成规范化签名 manifest，供构建/安装/运行期共用），而不是另建一套只有头摘要的协议。**
+> **更正说明**：本节早先写作"轴②完全空缺"。实际已有静态工具；本轮已扩展并接入 CI。`op_abi_validate.py` 的 docstring 记录了 `stateVFirst` 漂移导致 910B 裸 `161001` 的事故。后续工作应在同一解析结果上生成规范化 manifest 供安装/运行期复用，而不是另建一套只有头摘要的协议。
 
 补充事实：**stamp 的注释本身就承认这类失败难排查**（*"a dispatcher error deep inside a call or -- when only a stack index moved -- as a wrong stream, which is much harder to read"*），说明作者清楚该风险轴，只是从未覆盖轴②。
 
@@ -480,7 +480,7 @@ python -m fla_npu.install_opp --remove-overlay
 - `SOURCE_HASH` **保留**，降级为"开发期同源自检 / 信息级日志"；
 - **可用性判定**改为：`glue_abi` 一致 **且** 轴②逐算子校验通过；
 - `SOURCE_HASH` 不等**不再整库禁用**——否则叠加层永远无法携带自己的 launcher（§7.5 方案 E 无从落地）；
-- 升级带来的风险（同一 ABI 下语义漂移）由三条兜底：① **CI 门禁**：改 `csrc/**` 必跑 §9.1 V23 两后端一致性测试 ② 轴②逐算子校验 ③ `FLA_NPU_STABLE_STRICT=1`。
+- 升级带来的风险（同一 ABI 下语义漂移）由三条兜底：① **CI 门禁**：全量 OPP 构建必跑 `op_abi_validate.py`，有配方的受影响算子再跑严格 V23 ② 轴②逐算子运行期校验 ③ `FLA_NPU_STABLE_STRICT=1`。
 
 #### 7.7.6 规则文档大纲（给 agent 执行的"更新 launcher"规程）
 
@@ -502,7 +502,7 @@ python -m fla_npu.install_opp --remove-overlay
 3. **stamp 判定升级**：`glue_abi` 优先 + `SOURCE_HASH` 降级为自检；
 4. **规则文档**（`docs/architecture/适配器更新规则.md`）+ CI 门禁建议。
 
-> 定位说明：轴②是**上游遗留的洞**，**非本 PR 引入**；本 PR 的作用是**放大了触发概率**（叠加层让"只换 OPP"成为日常路径），因此在本 PR 内补齐是合理的。
+> 定位说明：轴②的**运行期校验**是上游遗留缺口，非本 PR 引入；本 PR 放大了触发概率。构建期已通过扩展并接入 `op_abi_validate.py` 补齐，规范化 manifest 与运行期校验仍是后续切片。
 
 ### 7.8 复核发现（P0/P1）与修复状态
 
@@ -510,21 +510,20 @@ python -m fla_npu.install_opp --remove-overlay
 
 | # | 级别 | 发现 | 代码核对结果 | 状态 |
 |---|---|---|---|---|
-| 1 | **P0** | `install_overlay` 未限制 `overlay_name` 为单层目录名，`vendors_root / name` 后直接 `rmtree` ⇒ **绝对路径 / `..` / 非 overlay vendor 都能逃逸**，`./fla_npu_transformer`、尾随斜杠等还能**绕过 base 名称保护** | ✅ 成立（`Path("a") / "/abs" == /abs`；`== BASE_VENDOR_NAME` 只挡精确匹配） | ✅ **已修**：新增 `_validate_overlay_name()`（必须单层组件、非 `.`/`..`、带 overlay 前缀、拒绝 base），`install_overlay` 与 `remove_overlay` **都**走它 |
-| 2 | P1 | 自动发现改动后 `overlay_vendor_names()` 可能为空列表，而调用方仍取 `[0]` ⇒ **干净环境装/卸直接 `IndexError`**；后续复验几乎都显式传 `--overlay-name`，因此没覆盖该回归 | ✅ 成立（`install_overlay` / `remove_overlay` 两处） | ✅ **已修**：`_default_overlay_name()`（空则回退 `DEFAULT_OVERLAY_NAME`） |
-| 3 | P1 | `.pth` 钩子（`fla_npu_opp_env.py`）只认环境变量/默认名、**不读 `config.ini`**，与主模块发现算法不一致 ⇒ **自定义名叠加层在解释器启动阶段不可见**（F6 未满足）；且 18 个验证脚本中 **16 个设了 `FLA_NPU_DISABLE_PTH=1`** ⇒ V16 只验证了 import 阶段发现 | ✅ 成立 | ✅ **已修**：`_overlay_names()` 与主模块同源（env → `config.ini` → 扫描前缀目录）；⚠️ **测试缺口仍在**：需补"不开 `FLA_NPU_DISABLE_PTH`、自定义名、在 `import torch_npu` 之前生效"的用例 |
-| 4 | P1 | V14/V15/V22 等脚本**不是自动验收**：只用 `set -u`，探针捕获异常后打印 `FAIL` 并被外层 `grep` 匹配，**无 digest/sum 断言、无失败退出码** ⇒ 全场景失败也可能 `exit 0` | ✅ 成立（22 个脚本 **0 个**用 `set -euo`） | ⏳ **待修**：统一断言框架（`assert_digest/expect_sum` + `set -euo pipefail`），失败即非零退出 |
-| 5 | P1 | V23（`test_stable_parity.py`）**假通过**：`ERROR` 与"同后端 `SKIP`"都 `continue`，launcher 完全不可用时全部走 ctypes 仍打印 `parity OK` 且返回 0；文档声称会报告 `NO_RECIPE` 但脚本不枚举未登记算子 | ✅ 成立 | ✅ **已修**：`dump` 记录 `published_ops`；`compare` 统计 PASS/FAIL/ERROR/SKIP/**NO_RECIPE** 并打印汇总；`FLA_NPU_PARITY_STRICT=1` 时 ERROR/SKIP **判失败并返回 1** |
+| 1 | **P0** | `install_overlay` 未限制 `overlay_name` 为单层目录名，`vendors_root / name` 后直接 `rmtree` ⇒ **绝对路径 / `..` / 非 overlay vendor 都能逃逸**，`./fla_npu_transformer`、尾随斜杠等还能**绕过 base 名称保护** | ✅ 成立 | ✅ **已修并复测**：名称必须匹配 `fla_npu_overlay_[A-Za-z0-9][A-Za-z0-9_.-]*`；CLI、env、`config.ini` 与目录扫描同一规则；A2/A5 恶意名称均拒绝且 base 指纹不变 |
+| 2 | P1 | 自动发现改动后 `overlay_vendor_names()` 可能为空列表，而调用方仍取 `[0]` ⇒ **干净环境装/卸直接 `IndexError`** | ✅ 成立 | ✅ **已修并复测**：无参数安装/卸载始终使用文档声明的 `DEFAULT_OVERLAY_NAME`，不随已有自定义 overlay 漂移 |
+| 3 | P1 | `.pth` 钩子只认环境变量/默认名、不读 `config.ini`，与主模块发现算法不一致 | ✅ 成立 | ✅ **已修并复测**：env → `config.ini` → 前缀目录扫描；A2/A5 均在 `import torch_npu` 前确认自定义 overlay 位于路径首位并实际得到 ×2 结果 |
+| 4 | P1 | V14/V15/V22 等脚本**不是自动验收**，全场景失败也可能 `exit 0` | ✅ 成立 | ✅ **已修**：新增共用断言探针与 `set -euo pipefail` 生命周期脚本，数值、后端、路径、对照 digest、base 指纹任一不符即失败；A2/A5 均以退出码 0 通过 |
+| 5 | P1 | V23（`test_stable_parity.py`）**假通过**：`ERROR` 与"同后端 `SKIP`"都 `continue`，launcher 完全不可用时全部走 ctypes 仍打印 `parity OK` 且返回 0；文档声称会报告 `NO_RECIPE` 但脚本不枚举未登记算子 | ✅ 成立 | ✅ **已修**：默认严格；统计 PASS/FAIL/ERROR/SKIP/BACKEND/**NO_RECIPE**，并比较输出数、shape、dtype 与 sha256；仅探索性报告可显式设 `FLA_NPU_PARITY_ALLOW_INCOMPLETE=1` |
 | 6 | P1 | §7.7 把 **ctypes 回退称为"安全路径"**不成立——ctypes 同样是手写参数序/类型，签名不一致时同样传错参数 | ✅ 成立 | ✅ **已更正** §7.7.4：默认档改为**硬错误**（或显式 opt-in 才降级），且降级前须先过轴②校验 |
-| 7 | P1 | §7.7 称"轴②**完全空缺**"不准确——仓库**已有** `tools/op_abi_validate.py`（解析 `aclnn_*.h` 并与适配器调用点比对，非零退出；旁有 `op_abi_parity.py`，被 `tests/test_stable_gates.py` 引用） | ✅ 成立（工具 408 行，docstring 记录了 `stateVFirst` 事故） | ✅ **已更正** §7.7.2：改为"静态工具已存在但**未接线**、指针参数统一 wildcard、**运行期无校验**"；方案相应改为**扩展并接入既有工具**（生成规范化签名 manifest 供构建/安装/运行期复用） |
+| 7 | P1 | §7.7 称"轴②**完全空缺**"不准确——仓库已有 `tools/op_abi_validate.py` | ✅ 成立 | ✅ **已修**：CI 全量 OPP 构建后读取实际打包头；tensor/int-array/acl-scalar 不再共用 wildcard；A5 28 调用点、A2 当前四个可运行配方对应调用点均 0 mismatch |
 
 **由此产生的待办（优先级序）**
 
-1. 把 P0/P1-2/P1-3/P1-5 的修复**跑一遍验证**（干净环境装/卸、自定义名 + `.pth`、`FLA_NPU_PARITY_STRICT=1` 下故意让 launcher 不可用应返回 1）；
-2. 把上述修复**推入 PR 分支**（`install_opp.py`、`fla_npu_opp_env.py`、`test/test_stable_parity.py`）；
-3. 检查 `op_abi_parity.py` 与 V23 的功能重叠，避免重复造轮子；
-4. 把 `op_abi_validate.py` 接入 workflow/CI（含 wildcard 收紧）；
-5. 将脚本改造成机器可判定验收（P1-4），并把 V16 的结论**重新界定**为"import 阶段发现"。
+1. 将本轮修复提交并同步 PR 分支；
+2. 扩大 V23 配方覆盖，当前 A5 为 5/35、A2 本轮为 4/36；
+3. 继续 §7.7 的规范化 manifest 与运行期校验切片；
+4. A2 的 `ChunkGatedDeltaRuleFwd` 配方根因已定位：`use_exp2=True` 在 A2 分支会选择 prepare path，而该路径被代码明确限制为 Ascend950-only，故返回 `161002`。同输入改为 `False` 后两后端均 PASS；是否实现 A2 `use_exp2` 需按产品支持范围决策。
 
 ## 8. 影响面
 
@@ -535,7 +534,7 @@ python -m fla_npu.install_opp --remove-overlay
 | 默认行为（未装叠加层） | 只返回 base vendor → 加载/安装行为与改动前一致（§9.1 V4 覆盖） |
 | 算子接口 / ABI | 不涉及 `def`、`aclnn` 入参、`torch` 入参的增删改 |
 | run 包安装器与 CI 分项 06 | 未触碰；`check_scoped_wheel_opp_install()` 断言的告警/状态表不受影响（它仍走 `--full` 覆盖路径）；两者互补 |
-| Stable-ABI launcher | `FLA_NPU_OP_API_LIB` 语义被显式固定为"完整库"；装叠加层时后端自动切 ctypes（可用 `FLA_NPU_STABLE_ABI` 覆盖）。代价：叠加层在位期间失去 launcher 的调用开销优势 |
+| Stable-ABI launcher | 当前版本读取 `FLA_NPU_OP_API_LIBS` 并按 overlay→base 逐符号解析；旧版只读单数变量，能力探测后自动切 ctypes 或告警 |
 | launcher 独占算子 | `_LAUNCHER_ONLY_OPS`（无 ctypes 参考实现）无法被叠加层覆盖 |
 | pip 账本 | 刻意不重写 `RECORD`；`pip install --force-reinstall` 会用 wheel 内容覆盖回 base → 用 `--status` 审计、重装后重跑 `--overlay` |
 
@@ -582,9 +581,14 @@ python -m fla_npu.install_opp --remove-overlay
 | V20 | **排除"库内符号插替"** | 装 overlay 后探测全局作用域：`ctypes.CDLL(None)` 取 `aclnnChunkFwdO`、`aclnnChunkFwdOGetWorkspaceSize` 与 overlay 导出的 mangled `_ZN4l0op9ChunkFwdOEPK9aclTensor…`（两个库各自句柄里都能取到） | **全部"全局取不到"** ⇒ 两库都以 `RTLD_LOCAL` 加载、base 库内部调用不会被 overlay 顶替；插替路径**不成立**（此前那次异常另有解释） |
 | V21 | **确认"分层归属"** | ①`nm -D` 看 tiling 符号在哪：`libcust_opapi.so` **0 个** Tiling 符号、`libcust_opmaster_rt2.0.so` **183 个**；②运行时 `/proc/self/maps` 看实际加载 | 进程加载的是 **overlay 的 `op_tiling/liboptiling.so`（→ overlay opmaster）** ⇒ 我改的 tiling 落在"CANN 按 vendor 顺序选取"的那一层，与后端无关 ⇒ 解释了"入口 base + 结果 overlay"的混合观测（旧 launcher 只让 **L1 入口**落回 base） |
 | V22 | **launcher 端到端 A/B**（补齐 §9.2 原 T2 的 launcher 链路） | 用同一份源码重建 launcher 并**同步包内期望哈希**（`build_stable.py --out` 同时写 `_stable_hash.py`，实测新对 `3085f161…`↔`3085f161…`，故 stamp 校验通过）；overlay 用**只在 L1 可观测**的改动（host 入口 `params.scale ×2`，编进 `libcust_opapi.so`） | ctypes **-6.21021**（×2）｜**新 launcher -6.21021（×2）**✅｜**旧 launcher -3.10511（×1）**（L1 落回 base，评审问题直接复现）｜新 launcher+无 overlay -3.10511。⇒ 修复端到端成立，且"L1 由后端决定、L2–L4 由 CANN vendor 顺序决定"的分层模型被直接证实 |
-| V23 | **两后端一致性测试**（新增，方案 F 路线第①步） | 新增 `torch_custom/fla_npu/test/test_stable_parity.py`：同一批确定性输入分别跑 ctypes 与 launcher 两轮，**逐算子比较输出 sha256**；后端归属取自仓库自身的 `BACKENDS` 记账（并用 `FLA_NPU_STABLE_TRACE=1` 交叉验证） | 覆盖 5 个算子（`chunk_local_cumsum`、`chunk_fwd_o`、`chunk_gated_delta_rule_fwd_h`、`chunk_gated_delta_rule_fwd`、`fast_gelu_custom`）：两轮分别由 `ctypes`/`stable` 服务、**输出逐值一致（全部 PASS）**。⇒ 方案 F §7.6.2 之前缺失的第③步验收**已可用** |
+| V23 | **两后端一致性测试**（新增，方案 F 路线第①步） | `test_stable_parity.py`：同一批确定性输入分别跑 ctypes 与 launcher 两轮，逐算子比较输出数量、shape、dtype 与 sha256，并核验实际后端；默认严格，ERROR/SKIP/BACKEND 错配均失败；`FLA_NPU_PARITY_OPS` 可显式限定受影响配方，两份报告必须选择同一集合 | 当前登记 5 个算子；它只为已选择且实际跑通的配方提供运行一致性证据，不能单独代表全部适配器；全量签名由 `op_abi_validate.py` 门禁覆盖 |
+| V24 | **复核修复后的 A2+A5 双平台验收** | 共用断言脚本验证非法名称、默认装卸、自定义 `.pth`、双 overlay 优先级、stable 多库、对照算子、回滚和 base 指纹；另跑严格 parity 与 ABI 头门禁 | A5：`8320→16640/24960→8320`、parity **5/5 PASS**、ABI **28/28**。A2：同样数值序列；原五配方为 **4 PASS + 1 ERROR，rc=1**。根因实验确认错误配方的 `use_exp2=True` 触发 Ascend950-only prepare path；改为 `False` 后 ctypes/stable 均 PASS（同 digest `f7fe8ecfcdd4`）。两平台 base 指纹不变；同后端负向 parity 均返回 1 |
+| V25 | **上游合入提交精确复测**（纠正基线） | 从 GitHub codeload 获取 `flashserve@7e39f9668eed285fc91cde0502f46cd48686a681` 的精确提交归档，在 A2/CANN 9.2.0 上原生重建 `chunk_gated_delta_rule_fwd` 及依赖，再执行 `use_exp2` × ctypes/stable 四格 | 构建 rc=0、错误行 0；`False` 两后端均 PASS（digest `f7fe8ecfcdd4`），`True` 两后端均在 `GetWorkspaceSize` 返回 `161002`。该提交只修改 KDA backward recompute 的 arch35 kernel，没有改变 GDN forward 的 Ascend950-only prepare 合约。此前把 fork 分支 head `320164c` 称为“最新源码”不准确，已在归档中更正 |
+| V26 | **`7e39f966` 修改前编译验证** | 取直接父提交 `8c5dd635`，在 A5/CANN 9.2.0-beta.2_950 上单独构建 `chunk_kda_bwd_recompute`，并确认日志实际包含旧版 arch35 regbase 头 | 构建和打包 rc=0，`error:`/`fatal error` 均为 0；生成 4 个 Ascend950 kernel `.o`，run 包纯归档校验 rc=0。说明旧代码能编译；`7e39f966` 修复的是 short-chunk exp2 的运行时数值正确性，而非编译失败 |
+| V27 | **原 A2 GDN short-chunk + exp2** | 用 `320164c` A2 原构建，将配方改为 `tokens=16 < chunk_size=64`，执行 ctypes/stable × `use_exp2` 四格 | `False` 两后端 PASS 且 digest 同为 `7a5d29b528e5`；`True` 两后端均在 `GetWorkspaceSize` 返回 `161002`。说明 A2 短块本身正常，失败是 exp2 触发 Ascend950-only prepare 合约，未进入 device kernel；与 A5 KDA arch35 short-chunk 数值问题不同 |
+| V28 | **`7e39f966` 精确提交的 A2 原行为** | 用 GitHub 精确提交归档分别构建 A2 GDN forward、运行 short-chunk 四格，并尝试把该提交实际修改的 KDA recompute 构建为 ascend910b | GDN 构建 rc=0、4 个 A2 kernel；`False` 两后端 PASS、`True` 两后端 `161002`。KDA recompute 仅注册 ascend950，A2 构建在 `generate_ops_info_ascend910b` 因无 A2 ops-info rc=2，0 kernel、0 run 包。因此该 PR 不提供 A2 KDA 修复路径 |
 
-**开发过程中发现并修复的问题**：Stable-ABI launcher 从 `FLA_NPU_OP_API_LIB` 指向的**单个**库解析全部 aclnn 符号；把它指向只含单算子的叠加层会让其余算子运行期报错（实测 3 个用例由通过转失败）。修复 = 该变量恒指完整库 + 叠加层在位时切 ctypes 后端（§6.2 不变量 1、2）。
+**开发过程中发现并修复的问题**：旧 Stable-ABI launcher 从单数变量指向的一个库解析全部符号；把它指向单算子 overlay 会让其余算子报错。最终修复 = 单数变量恒指 base 作兼容兜底 + 当前 launcher 消费复数变量并按 overlay→base 遍历 + 旧 launcher 能力降级策略。
 
 ### 9.2 未完成 / 交由 CI
 
@@ -595,16 +599,16 @@ python -m fla_npu.install_opp --remove-overlay
 | T3 | ~~多叠加层行为验证~~ | ✅ **已完成**（V15/V16）：并发现并修复两个缺陷（自动发现、`config.ini` 顺序） |
 | T4 | A3（`ascend910_93`）**运行**验证 | 暂无可用的 A3 机器；A3 仅有交叉编译产物（V11） |
 | T5 | Example ST / NPU CI 7 分项 | 需在具备 CI 环境的仓库分支上触发 |
-| T6 | A2 上复合算子的对照 | A2 的 base 为 5 算子精简集（`ChunkLocalCumsum/ChunkFwdO/ChunkFwdH/ChunkGatedDeltaRuleFwd(+H)`），复合算子 `ChunkGatedDeltaRuleFwd` 在该精简集上报 `161002`；在 A5 的 35 算子 base 上正常（V7 已覆盖）。疑似其内部路径还依赖未编入的配套算子（如 `ChunkScaledDotKkt`/`RecomputeWUFwd`），未进一步定位 |
+| T6 | A2 上复合算子的对照 | ✅ 根因已定位：parity 配方传 `use_exp2=True`；A2 的 `UsePreparePath()` 因该开关返回 true，随后 `CheckSupportedL2Contract()` 明确以 “prepare path is supported on Ascend950 only” 返回 `161002`。改为 `False` 后两后端均 PASS。剩余决策是产品是否要求 A2 支持 `use_exp2` |
 | T7 | 仓库若干算子用例在当前版本的**既有**失败（spec/形状约束） | 与本改动无关，不属本设计范围 |
 
 ## 10. 风险与未决问题
 
 | # | 风险 / 未决 | 影响 | 缓解 |
 |---|---|---|---|
-| R1 | **launcher 只从单个库解析符号**（`FLA_NPU_OP_API_LIB`） | 指错库会让其余算子运行期报 `symbol not found`（已实际踩到） | 该变量恒指完整库；装叠加层自动切 ctypes（§6.2 不变量 1、2） |
+| R1 | **旧 launcher 只从单个库解析符号** | 指错库会让其余算子运行期报 `symbol not found`（已实际踩到） | 单数变量恒指 base；当前 launcher 使用复数变量；旧 launcher + overlay 自动切 ctypes 或告警 |
 | R2 | **launcher 独占算子**无法被叠加层覆盖 | 这类算子的 host 改动仍需整包 | 文档标注；如需覆盖需补 ctypes 参考实现或改 launcher |
-| R3 | 叠加层在位期间失去 launcher 性能优势 | 调用开销上升 | 仅叠加在位时生效；`--remove-overlay` 即恢复 |
+| R3 | 旧 launcher + 叠加层时失去 launcher 性能优势 | 调用开销上升 | 当前 launcher 不降级；旧版仅 overlay 在位时切 ctypes，升级或卸载后恢复 |
 | R4 | `pip install --force-reinstall` / 升级 wheel 会覆盖回 base，叠加层可能被"静默回退" | 账本与内容再次脱节 | `--status` 审计；重装后重跑 `--overlay`（或改造成独立子 wheel） |
 | R5 | CANN"多 vendor 并集"行为仅在 `9.2.0-beta.2` 实测 | 换版本可能变为"覆盖" | 换 CANN 版本时重跑 V12；若变覆盖则退回方案 B |
 | R6 | 叠加层对 pip 不可见（本设计的选择） | 无法用 pip 卸载/审计 | 提供 `--remove-overlay`；后续可评估"独立小 wheel" |
@@ -715,7 +719,7 @@ ctypes：dlsym aclnnChunkFwdO → overlay 有 / base 有，地址不同（0x72cf
 | **按符号查找** | `_runtime.symbol()`：遍历库列表逐个 `dlsym`，先命中先用，miss 落下一个库 |
 | **聚合产物** | 一个算子集一份：`libcust_opapi.so`、`aic-<soc>-ops-info.json`、`binary_info_config.json` |
 | **四条链（L1–L4）** | host 符号 / 算子注册 / kernel 选择 / 实体查找（§1.2） |
-| **Stable-ABI launcher** | 不依赖 CPython/libtorch ABI 的启动库 `libfla_npu_stable.so`，从单个库解析全部符号（R1） |
+| **Stable-ABI launcher** | 不依赖 CPython/libtorch ABI 的启动库 `libfla_npu_stable.so`；当前版本按 `FLA_NPU_OP_API_LIBS` 遍历多库，旧版只认单数变量（R1） |
 | **aclnn 两段式** | `aclnnXxxGetWorkspaceSize`（第一段）+ `aclnnXxx`（第二段） |
 | **SONAME** | 库的二进制身份名；与 `dlsym` 的符号名是两套机制（§12.2） |
 | **ctypes 后端 / stable(launcher) 后端** | 调 aclnn 的两种方式：前者纯 Python 手工编组（参考/回退/对照），后者用预编译 C++ 适配器（默认，性能好、不绑 ABI）。详见 §12.6.1 |
@@ -736,7 +740,7 @@ ctypes：dlsym aclnnChunkFwdO → overlay 有 / base 有，地址不同（0x72cf
 | `torch_custom/fla_npu/fla_npu_opp_env.py` | `.pth` 启动阶段按 `overlay → base` 预置环境（issue #429） |
 | `fla_npu/ops/ascendc/_runtime.py` | `symbol()` 按符号遍历库列表（**未改动**，本设计前提） |
 | `fla_npu/ops/ascendc/__init__.py` | 后端选择：`_get_stable_op()` / `_stable_backend_selected()` / `_LAUNCHER_ONLY_OPS` |
-| `libfla_npu_stable.so` | 从 `FLA_NPU_OP_API_LIB` 单个库解析全部 aclnn 符号（R1 来源） |
+| `libfla_npu_stable.so` | 当前版本从 `FLA_NPU_OP_API_LIBS` 按序逐符号解析；单数变量用于旧版兼容 |
 | `scripts/package/ops_transformer/scripts/install.sh` | run 包安装器（"Operator support status…" 告警来源；**未改动**） |
 | `ci/run_checks.sh` | 分项 06 `check_scoped_wheel_opp_install()`（**未改动**，与本设计互补） |
 

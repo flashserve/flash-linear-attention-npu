@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
+import warnings
 from pathlib import Path
 
 
@@ -15,6 +17,14 @@ DEFAULT_OVERLAY_NAME = "fla_npu_overlay_transformer"
 OVERLAY_VENDOR_PREFIX = "fla_npu_overlay_"
 OVERLAY_VENDOR_ENV = "FLA_NPU_OVERLAY_VENDOR"
 BASE_VENDOR_NAME = "fla_npu_transformer"
+_VENDOR_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
+_OVERLAY_VENDOR_NAME_RE = re.compile(
+    rf"{re.escape(OVERLAY_VENDOR_PREFIX)}[A-Za-z0-9][A-Za-z0-9_.-]*\Z"
+)
+
+
+def _is_overlay_name(name: str) -> bool:
+    return bool(_OVERLAY_VENDOR_NAME_RE.fullmatch(name))
 
 
 def overlay_vendor_names() -> list[str]:
@@ -27,7 +37,22 @@ def overlay_vendor_names() -> list[str]:
 
     raw = os.environ.get(OVERLAY_VENDOR_ENV)
     if raw is not None:
-        return [name.strip() for name in raw.split(os.pathsep) if name.strip()]
+        names: list[str] = []
+        for candidate in raw.split(os.pathsep):
+            name = candidate.strip()
+            if not name:
+                continue
+            if not _is_overlay_name(name):
+                warnings.warn(
+                    f"Ignoring invalid {OVERLAY_VENDOR_ENV} entry {name!r}; overlay "
+                    f"names must match {OVERLAY_VENDOR_PREFIX}<name>.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                continue
+            if name not in names:
+                names.append(name)
+        return names
     vendors_root = _vendors_root()
     names: list[str] = []
 
@@ -35,7 +60,7 @@ def overlay_vendor_names() -> list[str]:
         name = candidate.strip()
         if not name or name == BASE_VENDOR_NAME or name in names:
             return
-        if name.startswith(OVERLAY_VENDOR_PREFIX) and (vendors_root / name).is_dir():
+        if _is_overlay_name(name) and (vendors_root / name).is_dir():
             names.append(name)
 
     try:
@@ -115,7 +140,15 @@ def _ordered_vendor_names(vendors_root: Path) -> list[str]:
     for child in sorted(vendors_root.iterdir()):
         if not child.is_dir() or child.name in ordered:
             continue
-        if child.name.startswith(OVERLAY_VENDOR_PREFIX) and BASE_VENDOR_NAME in ordered:
+        if not _VENDOR_NAME_RE.fullmatch(child.name):
+            warnings.warn(
+                f"Ignoring vendor directory with unsafe name {child.name!r}; it cannot "
+                "be represented safely in config.ini load_priority.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            continue
+        if _is_overlay_name(child.name) and BASE_VENDOR_NAME in ordered:
             ordered.insert(ordered.index(BASE_VENDOR_NAME), child.name)
         else:
             ordered.append(child.name)
@@ -220,35 +253,19 @@ def _validate_overlay_name(overlay_name: str) -> str:
     """
 
     name = (overlay_name or "").strip()
-    if not name:
-        raise RuntimeError("Overlay name must not be empty.")
-    if name != Path(name).name or name in {".", ".."}:
+    if not _is_overlay_name(name):
         raise RuntimeError(
-            f"Refusing overlay name {overlay_name!r}: it must be a single path component "
-            "(no directory separator, no '.'/'..', not an absolute path)."
-        )
-    if name == BASE_VENDOR_NAME:
-        raise RuntimeError(
-            f"Refusing to install an overlay over the base vendor {BASE_VENDOR_NAME}: "
-            "pass --overlay-name to keep both trees side by side."
-        )
-    if not name.startswith(OVERLAY_VENDOR_PREFIX):
-        raise RuntimeError(
-            f"Refusing overlay name {name!r}: overlay vendors must start with "
-            f"{OVERLAY_VENDOR_PREFIX!r} so that the loader discovers them."
+            f"Refusing overlay name {overlay_name!r}: it must match "
+            f"{OVERLAY_VENDOR_PREFIX}<name> using only ASCII letters, digits, '.', '_' "
+            "or '-'. Directory separators, absolute paths and config delimiters are not allowed."
         )
     return name
 
 
 def _default_overlay_name() -> str:
-    """The name to use when the caller did not pass one.
+    """Return the documented default, independent of installed overlay order."""
 
-    ``overlay_vendor_names()`` is empty when nothing is installed and no env var
-    is set (auto-discovery), so it must not be indexed blindly.
-    """
-
-    names = overlay_vendor_names()
-    return names[0] if names else DEFAULT_OVERLAY_NAME
+    return DEFAULT_OVERLAY_NAME
 
 
 def install_overlay(source: Path, overlay_name: str | None = None, force: bool = False) -> Path:
@@ -344,7 +361,7 @@ def print_status() -> None:
         installed = sorted(
             child.name
             for child in vendors_root.iterdir()
-            if child.is_dir() and child.name.startswith(OVERLAY_VENDOR_PREFIX)
+            if child.is_dir() and _is_overlay_name(child.name)
         )
         if len(installed) > 1:
             print(
