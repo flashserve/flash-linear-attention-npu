@@ -344,7 +344,7 @@ private:
             AscendC::DataCopy(rawP, p, firstRows * FWD_H_V);
         }
         if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
-            if (args_.tiling.storeFinalState != 0 || !chunk.last) {
+            if (CompilePolicy::STORE_FINAL || !chunk.last) {
                 AscendC::GlobalTensor<GateT> gate;
                 gate.SetGlobalBuffer(reinterpret_cast<__gm__ GateT *>(args_.g));
                 AscendC::DataCopyPadExtParams<GateT> pad{false, 0, 0, 0};
@@ -531,7 +531,7 @@ private:
         // Stage1：V_new=cast_BF16(fp32(U)-fp32(P))；g-only 同时生成
         // V_new_g=cast_BF16(E(g_last-g_i)*V_new_fp32)，gk-only 的右矩阵就是 V_new。
         const bool hasP = !(chunk.first && args_.tiling.useInitialState == 0);
-        const bool writeRight = args_.tiling.storeFinalState != 0 || !chunk.last;
+        const bool writeRight = CompilePolicy::STORE_FINAL || !chunk.last;
         const uint32_t pairCount = FwdHMode2PairCount(unit.headRound.activeHeadCount);
         for (uint32_t pairSlot = 0; pairSlot < pairCount; ++pairSlot) {
             if (hasP && pairSlot > 0) {
@@ -713,7 +713,7 @@ private:
             // 不再需要 MTE3_GM→MTE2 的跨 pipe 往返同步。
             AscendC::Adds(stateFp32_[slot][row * FWD_H_V], calc_[slot], 0.0f, TILE_ELEMENTS);
             if constexpr (!WRITE_H) {
-                if (args_.tiling.storeFinalState != 0) {
+                if constexpr (CompilePolicy::STORE_FINAL) {
                     // calc_ 不得直接作 MTE3 源：双缓冲后 Load(t+1) 只等 t-1 的 MTE3
                     // 排空，V 写 calc_(t+1) 与 MTE3 读 calc_(t) 失去排序（末 chunk
                     // final_state 竞态根因）。经 raw_ buf（4KB；其中 D 已被本 tile
@@ -778,7 +778,7 @@ private:
             ComputeStage3Tile<WRITE_H>(unit, chunk, head, row, alphaValue);
         }
         if constexpr (!WRITE_H) {
-            if (args_.tiling.storeFinalState != 0) {
+            if constexpr (CompilePolicy::STORE_FINAL) {
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot, 0));
                 const uint64_t finalOffset = FwdHStateOffset<STATE_V_FIRST>(
                     args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
@@ -836,7 +836,7 @@ private:
 
     __aicore__ inline void ProcessWorkUnit(const FwdHWorkUnit &unit, bool hasNextWorkUnit)
     {
-        const bool hasCubeWork = args_.tiling.useInitialState || args_.tiling.storeFinalState ||
+        const bool hasCubeWork = args_.tiling.useInitialState || CompilePolicy::STORE_FINAL ||
             args_.tiling.seqlen > static_cast<int64_t>(FWD_H_CHUNK);
         const uint32_t localHeads = FwdHAivHeadCount(unit.headRound.activeHeadCount, aiv_);
         const uint32_t pairCount = FwdHMode2PairCount(unit.headRound.activeHeadCount);
@@ -858,11 +858,11 @@ private:
                 }
             }
             RunStage1(unit, chunk);
-            if (args_.tiling.storeFinalState != 0 || !chunk.last) {
+            if (CompilePolicy::STORE_FINAL || !chunk.last) {
                 RunStage3(unit, chunk);
             }
         }
-        if (args_.tiling.storeFinalState != 0) {
+        if constexpr (CompilePolicy::STORE_FINAL) {
             for (uint32_t pairSlot = 0; pairSlot < pairCount; ++pairSlot) {
                 AscendC::CrossCoreWaitFlag<0x2, PIPE_V>(
                     FwdHAivLocalFlag(FWD_H_RIGHT_FREE_FLAG, pairSlot));
