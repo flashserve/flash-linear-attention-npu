@@ -64,7 +64,9 @@
 | **L3 kernel 选择** | CANN 运行时 | 该算子该跑哪个二进制？ | 同树 `op_impl/ai_core/tbe/kernel/config/<soc>/binary_info_config.json`（顶层键就是算子名） |
 | **L4 实体** | CANN 运行时 | 二进制/切分/原型在哪？ | `.../kernel/<soc>/<op>/*.o`、`.../op_tiling/liboptiling.so`、`op_proto/**` |
 
-树的顺序由 `ASCEND_CUSTOM_OPP_PATH` 决定（`overlay → base → built-in`），FLA 在 `import` / `.pth` 阶段把它 prepend 进去。
+**自定义算子树的顺序由 `ASCEND_CUSTOM_OPP_PATH` 决定**：FLA 在 `import` / `.pth` 阶段把包内 vendor 按 `overlay → base` 的顺序 prepend 进去，CANN 就按这个顺序逐树查 L2–L4。
+
+⚠️ 该变量里**只有自定义 vendor 目录**：查找链的完整顺序是 ① `ASCEND_CUSTOM_OPP_PATH` 列出的 vendor → ② `$ASCEND_OPP_PATH/vendors/<名字>`（按 `config.ini` 的 `load_priority`）→ ③ 内置 `opp/built-in`。①② 是同一类东西（vendor 目录，只是登记方式不同），③ 才是另一类；**built-in 不在 `ASCEND_CUSTOM_OPP_PATH` 里**，而是 CANN 侧的最后一环兜底 —— 且 FLA 的算子只存在于包内 vendor，不存在于 built-in（L1 的库列表同理，最后一环是 CANN 的 `libopapi.so`）。
 
 **关键性质：查找是"逐算子 / 逐符号"，而索引与库是"按算子集聚合"。**
 
@@ -305,6 +307,88 @@ python -m fla_npu.install_opp --remove-overlay
 | 想让**依赖方内嵌的那份拷贝**也跟着变 | ✅ 需要（`--ops=<op>,<dependent>`） |
 | 仅本算子内部的 kernel 常量/结构头 | ❌ 不需要（实测偏移移动也不影响依赖方） |
 
+### 6.7 `ASCEND_CUSTOM_OPP_PATH` 的条目语义，与两处**待评审**的改进
+
+> 本节为 2026-10-15 在 A5 上的实测结论与改造建议，**尚未实现，待评审**。原始脚本与日志见 `artifacts/sim-20261015/`。
+
+#### 6.7.1 三种"路径列表"变量的条目语义各不相同
+
+| 变量 | 一个条目代表什么 | 可查证的消费者 |
+|---|---|---|
+| `ASCEND_CUSTOM_OPP_PATH` | **vendor 目录**（取其 `<条目>/op_api/lib/libcust_opapi.so`） | `cmake/scripts/examples/get_opapi_abs_path.py:44-51`；transformer 侧 `aclnn_common.h:333,356` |
+| `LD_LIBRARY_PATH` | **直接放 `libcust_opapi.so` 的目录**（`<条目>/libcust_opapi.so`） | `aclnn_common.h:357` |
+| `ASCEND_OPP_PATH` | **OPP root**（读 `<root>/vendors/config.ini` 的 `load_priority`） | `get_opapi_abs_path.py:57-73` |
+
+⇒「**OPP root + `vendors/config.ini` 优先级**」是 `ASCEND_OPP_PATH` 的语义，**不是** `ASCEND_CUSTOM_OPP_PATH` 的。
+这解释了两处历史写法的差异：CANN 原版把 `op_api/lib` 放进 `LD_LIBRARY_PATH`（`refs/cmake/scripts/custom/install.sh:301`），
+而 FLA 把它并进了 `ASCEND_CUSTOM_OPP_PATH`（`cmake/scripts/custom/install.sh:694`）。
+
+#### 6.7.2 问题①：`<pkg>/opp` 是一条**惰性条目**（实测）
+
+`_prepare_embedded_opp()` 除 prepend 每个 vendor 目录外，还 prepend 了 `vendor_dir.parent.parent`（即 `<pkg>/opp`）。
+判决性实测（观测量用 `ChunkLocalCumsum` 的 **kernel ×3** overlay；基线 `sum=8320`、生效 `24960`、找不到算子 `161001`）：
+
+| 变体 | 进程启动前手工设的 `ASCEND_CUSTOM_OPP_PATH` | `__init__` 是否补 `<pkg>/opp` | 结果 |
+|---|---|---|---|
+| R0 | （不设）+ 不装 overlay | — | `8320`（基线正确） |
+| R1 | `[overlay, base]` | ✅ 原样 | `24960`（overlay 生效） |
+| **R2** | `[overlay, base]` | ❌ 注掉 | **`24960`** ⇒ 加不加没区别（**不必要**） |
+| **R3** | **只有 `<pkg>/opp`** | ❌ 不写任何 vendor | **`161001`** ⇒ 单靠它找不到算子（**不充分**） |
+
+**结论**：该条目既不必要也不充分，对运行期没有任何作用。
+
+**建议（待评审）**：删除 `<pkg>/opp` 的登记，并统一三处写法与断言 ——
+`fla_npu/__init__.py`（`_prepare_embedded_opp`）、`install_opp.py`（生成的 `set_env.bash`）、`setup.py`、
+`scripts/package/ops_transformer/scripts/finalize_wheel_opp.py`，以及 `tests/test_wheel_environment.py` 中把最终值
+断言为 `"{vendor_dir.parent.parent}:{vendor_dir}"` 的两处。
+**保守替代**：保留但加注释注明"已在 CANN `9.2.0-beta.2` 实测惰性"，以防其他 CANN 版本语义不同（未验证）。
+
+#### 6.7.3 问题②：已存在的条目**不会被重排**，用户 shell 顺序可翻转优先级（实测）
+
+`_prepend_env_path()`（`fla_npu/__init__.py`）与 `.pth` 的 `_prepend()`（`fla_npu_opp_env.py`）语义都是"**没有才加**"：
+
+```python
+if value_str not in parts:            # 已存在就跳过 ⇒ 位置永远不动
+    os.environ[name] = os.pathsep.join([value_str, *parts])
+```
+
+于是**谁先把条目放进变量，谁就一直在前面**。实测（`import fla_npu` 后看实际顺序）：
+
+| 场景 | 预设的 `ASCEND_CUSTOM_OPP_PATH` | import 后的实际顺序 | 判定 |
+|---|---|---|---|
+| 干净环境 | — | `[overlay, <pkg>/opp, base]` | ✅ |
+| **用户先 source overlay、后 source base** | `[base, overlay]` | `[<pkg>/opp, base, overlay]` | ❌ **base 在前** |
+| 用户先 source base、后 source overlay | `[overlay, base]` | `[<pkg>/opp, overlay, base]` | ✅ |
+| 只 source base（老文档写法） | `[base]` | `[overlay, <pkg>/opp, base]` | ✅ |
+
+失败场景的后果是**混合来源**：L1（库列表由代码构建）仍用 overlay，而 L2–L4（按 vendor 顺序）用 base —— 正是 R12 那个不自洽组合，
+而且**全程没有任何提示**。表现上就是"改已有算子看着像没生效"（base 的旧实现被选中），新增算子（overlay 独有）仍能找到，即"半生效"。
+
+叠加风险：base 的 `bin/set_env.bash` 由 run 包安装器写出，是**无条件 prepend 且不去重**的形式，且其中写的是**构建期路径**
+（实测为 `/data/z00879345/fla-poc-layout/full/inst/vendors/fla_npu_transformer`）。用户只要**重复 source 一次**，
+就会把 base（甚至一个陈旧路径）顶到最前。而本设计新增的 `set_env.bash` 用的是带去重的 `_fla_npu_prepend_path`
+（由 `tests/test_wheel_environment.py::test_generated_set_env_is_idempotent` 兜底）—— **两份脚本的幂等性不一致**。
+
+#### 6.7.4 建议方案：把"没有才加"改成**归一化重排**（待评审）
+
+**做法**：`.pth` 与 `import fla_npu` 两处在写入前，先**移除包内自己注册过的条目**，再按期望顺序（`overlay… → base`）整体 prepend 到最前；
+用户自己的外部条目保持相对顺序、留在后面。
+
+```python
+def _normalize_env_path(name, ordered_values):        # 拟替换 _prepend_env_path / _prepend
+    want = [str(v) for v in ordered_values]
+    rest = [p for p in os.environ.get(name, "").split(os.pathsep) if p and p not in want]
+    os.environ[name] = os.pathsep.join([*want, *rest])
+```
+
+**为什么"给老脚本也加去重"不够**：去重只能防止**新的**翻转，修不了**已经**翻转的状态，甚至会把错误顺序锁死
+（"已存在就跳过" ⇒ 后面再 source overlay 也顶不上去）。只有归一化重排才能保证"包内优先级由代码决定"。
+
+**影响面**：只改环境变量的**顺序**，不改内容集合；`FLA_NPU_OP_API_LIB` / `FLA_NPU_OP_API_LIBS` 由代码构建，本来就免疫。
+**验收**：§6.7.3 的四个场景下 overlay 均须在前，且 L1 与 L2–L4 来源一致（用 kernel ×3 overlay 观测 `sum=24960`）。
+**配套**：发现"现有顺序与期望顺序不一致"时打印**一次**告警；`.pth` 与 `__init__` 两处的写入集合需保持同源
+（现在两处的"第二个路径"就不一致：前者写 `vendor/op_api/lib`，后者写 `<pkg>/opp`）。
+
 ## 7. 备选方案与取舍
 
 ### 7.1 方案 A（选定）—— 包内叠加层 vendor + 按符号多库查找
@@ -325,6 +409,31 @@ python -m fla_npu.install_opp --remove-overlay
 - **C2 外部 vendor + `ASCEND_CUSTOM_OPP_PATH`**（不动包内）：**kernel 层会生效**（host 只负责 launch，device 二进制按 OPP 树索引），但**host 层改动不会生效**——`fla_npu` 只从包内加载 host 库（§6.3）。要把 host 改动带进来必须重新链接调用方，而调用方就是 `fla_npu` 自身，等于回到包内方案。
 
 **何时重考虑**：C1 在"一次改很多算子"时更简单；C2 可作"只改 kernel"的临时手段（仍需重启进程）。
+#### 7.3.1 追问：「只改安装逻辑」——把改动装到指定位置 + 指定优先级——够不够？
+
+> 来源：评审追问。**结论：只覆盖 L2–L4，覆盖不了 L1** —— 本设计之所以要动加载侧，就是为了把 L1 也纳入增量。
+
+| 链 | 只靠"安装位置 + 优先级"能否生效 | 机制 |
+|---|---|---|
+| **L1 host 符号** | ❌ **不能** | 见下面三条硬约束 |
+| **L2 算子注册** | ✅ 能 | CANN 按 `ASCEND_CUSTOM_OPP_PATH`（及 `config.ini` 的 `load_priority`）逐树查 `aic-<soc>-ops-info.json`，与调用方代码无关 |
+| **L3 kernel 选择** | ✅ 能 | 同上，查 `binary_info_config.json` |
+| **L4 实体** | ✅ 能 | 同上，查 `kernel/<soc>/<op>/*.o`、`op_tiling`、`op_proto` |
+
+**L1 不能的三条硬约束**（都是代码里的既定行为，不是配置问题）：
+
+1. **host 库只从包内绝对路径打开**：`_resolve_packaged_opapi()` 对 `…/op_api/lib/libcust_opapi.so` 做 `relative_to(package_dir)` 校验，错误信息原文即 *"External CANN vendor directories are not used as a fallback"*。⇒ 装在包外的 host 库**根本不会被 `CDLL` 打开**，环境变量对它无能为力（这正是 §6.3 的硬约束）。
+2. **"要不要多加载一份 host 库"是加载侧的一个返回值**：`load_ascendc_opapi_libraries()` 返回 `[overlay, base, CANN]`。不改它，叠加层的 `libcust_opapi.so` 不在符号查找域里 —— 即使文件已经躺在包内。
+3. **Stable-ABI launcher 按符号名从"一个"句柄解析**：`Runtime::symbol()` 原先只查 `FLA_NPU_OP_API_LIB` 指向的那**一个**库。要让它认叠加层只有三条路：改 C++ 读有序复数变量（本设计选择）／把单数变量指向单算子叠加层（**其余算子直接 `symbol not found`**，实测踩到，见 §9.1 V18）／降级 ctypes（丢 launcher 性能）。
+
+**"指定优先级"这一步本身也省不掉**：安装进程退出后 `ASCEND_CUSTOM_OPP_PATH` 不再保留，它必须在**每个新进程启动时**重建。能省的只是"发现逻辑"（改成读安装器写死的清单），省不掉"运行期登记"这个动作（本设计由 `.pth` + `import` 承担，见 §4.1 F6）。
+
+**这条路线（= 只做 C2 + 一个安装器）的实际定位**：等价于"**只能改 kernel/tiling 的廉价通路**"——今天就能走，甚至不需要本设计。代价是：
+
+- 凡命中 **aclnn 入口 / 参数校验 / host 逻辑** 的改动，一律退回整份 OPP 重出（884 s / 101 MB）；
+- 安装、回滚、优先级审计这套仍要自己写 —— 那正是本设计的 `--overlay` / `--remove-overlay` / `--status`。
+
+> 与 §12.6.3 的分工一致：**只改 kernel 不需要碰适配器**，所以"只改安装"在这类改动上确实够用；本设计要解决的是把 **host 层也纳入增量**。若团队只想覆盖 kernel，选 C2 是合理的更小改动 —— 但它不是本设计目标的等价替代。
 
 ### 7.4 方案 D —— 对象级增量（复用 `build/**/*.o`）＋ 重链聚合产物
 
@@ -618,6 +727,8 @@ python -m fla_npu.install_opp --remove-overlay
 | R10 | **"产物变了 ≠ 行为变了"**：A2 实测只改 kernel 中 4 处 `tiling_->scale` 的 1 处，`.o` md5 全部改变但运行结果与 base 相同（该分支对本次输入不执行） | 若用"产物 md5 变化"代替行为验证，会误判增量已生效 | 生效判断一律用**行为验证**（本设计 §9 全部采用输出 digest/sum 对照）；构建产物变化只作为辅助证据 |
 | R11 | **自定义名叠加层曾静默不生效**（T3 发现，已修复）：加载端只认默认名或环境变量，安装端把 base 排在自定义名叠加层之前 | 用户执行 `--overlay --overlay-name X` 后看不到任何效果 | 已修：加载端从 `config.ini` + `fla_npu_overlay_*` 目录自动发现；安装端叠加层一律前置；`--status` 标注 active/inactive 并给出提示（V16 复验） |
 | R12 | **"混合来源"状态**（V21 定死）：旧 launcher 下 **L1 入口来自 base、L2–L4（tiling/kernel）来自 overlay**；已排除库内插替（V20） | 若改动**同时**涉及 host 入口与 tiling/kernel 的**契约**（如 tiling 结构体布局、参数语义），混合来源可能产生**不自洽**的组合（例如 base 的入口 + overlay 的 tiling），比"整体生效"或"整体不生效"都更难排查 | ①新 launcher 读有序 `FLA_NPU_OP_API_LIBS` → 三层来源一致；②旧 launcher 由策略兜住：未设环境变量→自动 ctypes（三层都走 overlay 优先），显式设非 `ctypes`→**明确告警**；③文档明确"契约类改动建议同时改 L1 与 L3/L4"（见 §6.6 规则表） |
+| R13 | **用户 shell 的 `source` 顺序可翻转 overlay 优先级**：`_prepend` 是"没有才加"、已存在条目不重排（实测：预设 `[base, overlay]` ⇒ 最终 `[<pkg>/opp, base, overlay]`）；base 的 `set_env.bash` 还是**无条件 prepend 且指向构建期路径**，重复 source 一次即翻转 | **静默**产生**混合来源**：L1 用 overlay、L2–L4 用 base（R12 的组合）；改已有算子"看着像没生效"，新增算子仍能找到（半生效） | 建议改为**归一化重排**（§6.7.4，**待评审**）；过渡期在文档写明"先 source base、后 source overlay"，并让老式 `set_env.bash` 幂等 |
+| R14 | **`<pkg>/opp` 是惰性条目**（`_prepare_embedded_opp` prepend 的 `vendor_dir.parent.parent`）：实测去掉它仍 `24960`（不必要）、只留它 `161001`（不充分） | 无功能影响，但使"三处写法不一致"长期存在，误导后续排查 | 建议删除并统一断言（§6.7.2，**待评审**）；保守做法是保留 + 注释注明实测结论 |
 
 ## 11. 里程碑
 
