@@ -83,17 +83,42 @@ def _package_dir():
 
 
 def _setup_pure_python():
+    stable_abi_data = _build_stable_abi_library()
     setup(
         name=PACKAGE_NAME,
         version=_package_version(),
         description="FLA NPU Python runtime",
         packages=_packages(),
         package_dir=_package_dir(),
-        package_data={"fla_npu": OPP_PACKAGE_DATA},
+        package_data={"fla_npu": OPP_PACKAGE_DATA + stable_abi_data},
         include_package_data=True,
         zip_safe=False,
         cmdclass={"build_py": CleanBuildPy},
     )
+
+
+def _build_stable_abi_library() -> list[str]:
+    """Bundle ``libfla_npu_stable.so`` (the default launcher).
+
+    This is the ABI-free launcher: a plain shared object with no CPython and no
+    libtorch C++ dependency, so a wheel that ships only this (and pure Python)
+    stays usable across Python and torch versions.  Build-time only needs torch
+    headers; nothing is linked against libtorch.  It is built unless
+    ``FLA_NPU_BUILD_STABLE_ABI=0`` asks for a pure-Python (ctypes-only) wheel.
+    """
+
+    if os.getenv("FLA_NPU_BUILD_STABLE_ABI", "TRUE").upper() in {
+            "0", "FALSE", "NO", "OFF"}:
+        return []
+    import subprocess
+
+    builder = SETUP_DIR / "csrc" / "build_stable.py"
+    out = SETUP_DIR / "fla_npu" / "libfla_npu_stable.so"
+    subprocess.run(
+        [sys.executable, str(builder), "--no-debug-probe", "--out", str(out)],
+        check=True,
+    )
+    return ["libfla_npu_stable.so"]
 
 
 def _setup_legacy_extension():
