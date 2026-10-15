@@ -33,7 +33,7 @@ public:
         args_ = args;
         coreIdx_ = AscendC::GetBlockIdx();
         coreNum_ = AscendC::GetBlockNum();
-        hasCubeWork_ = args_.tiling.useInitialState || args_.tiling.storeFinalState ||
+        hasCubeWork_ = args_.tiling.useInitialState || CompilePolicy::STORE_FINAL ||
             args_.tiling.seqlen > static_cast<int64_t>(FWD_H_CHUNK);
         if (!hasCubeWork_) {
             return;
@@ -636,11 +636,11 @@ private:
         for (uint32_t chunkId = 0; chunkId < unit.sequence.chunkCount; ++chunkId) {
             const FwdHChunkSpan chunk = FwdHBuildChunk(unit.sequence, chunkId);
             RunStage0(unit, chunk);
-            if (args_.tiling.storeFinalState != 0 || !chunk.last) {
+            if (CompilePolicy::STORE_FINAL || !chunk.last) {
                 RunStage2(unit, chunk);
             }
         }
-        const bool terminalStage2 = args_.tiling.storeFinalState != 0 ||
+        const bool terminalStage2 = CompilePolicy::STORE_FINAL ||
             unit.sequence.chunkCount > 1;
         const bool terminalStage0 = args_.tiling.useInitialState != 0 || unit.sequence.chunkCount > 1;
         const uint32_t pairCount = FwdHMode2PairCount(unit.headRound.activeHeadCount);
