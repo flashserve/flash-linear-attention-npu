@@ -214,7 +214,8 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
         static_cast<uint64_t>(useGk ? 1 : 0),
         static_cast<uint64_t>(useExp2 ? 1 : 0),
         static_cast<uint64_t>(stateDtypeToken == CHUNK_FWD_H_TPL_FP32 ? 1 : 0),
-        static_cast<uint64_t>(stateVFirst ? 1 : 0));
+        static_cast<uint64_t>(stateVFirst ? 1 : 0),
+        static_cast<uint64_t>(storeFinalState ? 1 : 0));
     context->SetTilingKey(tilingKey);
     OP_LOGD(context->GetNodeName(), "tilingKey: %lu", static_cast<unsigned long>(tilingKey));
 

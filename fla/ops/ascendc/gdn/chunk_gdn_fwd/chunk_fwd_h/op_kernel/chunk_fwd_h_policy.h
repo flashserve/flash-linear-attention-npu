@@ -18,11 +18,15 @@ enum class FwdHGateMode : uint8_t {
     KEY_GK = 1,
 };
 
-template <FwdHGateMode GATE_MODE_, bool USE_EXP2_, bool STATE_FP32_>
+template <FwdHGateMode GATE_MODE_, bool USE_EXP2_, bool STATE_FP32_, bool STORE_FINAL_>
 struct FwdHCompilePolicy {
     static constexpr FwdHGateMode GATE_MODE = GATE_MODE_;
     static constexpr bool USE_EXP2 = USE_EXP2_;
     static constexpr bool STATE_FP32 = STATE_FP32_;
+    // O4：storeFinalState 提为编译期维（host tiling key 与运行时 attr 同源，值恒等）。
+    // =true 时 S1 的 WRITE_RIGHT 恒真——WRITE_RIGHT=false 实例族整体消失、
+    // storeFinalState 运行时读全部常量折叠（A2 模板收敛同路线，热段 span 缩小）。
+    static constexpr bool STORE_FINAL = STORE_FINAL_;
 };
 
 constexpr uint32_t FWD_H_CHUNK = 64;
