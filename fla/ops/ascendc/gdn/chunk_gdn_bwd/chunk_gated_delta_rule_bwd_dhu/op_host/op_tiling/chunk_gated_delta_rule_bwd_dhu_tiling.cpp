@@ -115,6 +115,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
         hasGk,
         useExp2Ptr != nullptr ? *useExp2Ptr : false,
         h0InputShape != nullptr,
+        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510,
         true,
         scalePtr != nullptr ? static_cast<double>(*scalePtr) : 1.0,
         chunkSizePtr != nullptr ? *chunkSizePtr : 64,

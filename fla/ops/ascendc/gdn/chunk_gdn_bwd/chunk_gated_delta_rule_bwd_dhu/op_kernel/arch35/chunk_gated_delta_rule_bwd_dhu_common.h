@@ -27,6 +27,10 @@ namespace GDN {
 
 constexpr uint64_t VEC_TO_CUBE_FLAG_READY = 2;
 constexpr uint64_t CUBE_TO_VEC_FLAG_READY = 4;
+// C3 拆分标志：dh（GEMM0 唯一跨核输入）就绪专用 mode-2 flag。
+// flagId 命名空间：mode 0/1/2 与 mode 4 共享 0-15，当前占用
+// mode-2 {2,4}、mode-4 AIV0 视角 {0,1,6,7}（16/31 为 AIV1 映射区），取未占用的 3。
+constexpr uint64_t DH_READY_FLAG = 3;
 constexpr uint32_t CV_BUFFER_COUNT = 2;
 constexpr uint64_t CV_SUBBLOCK_FLAG_STRIDE = 16;
 constexpr uint64_t MATRIX_CV_AIV_TO_AIC_FLAG_BEGIN = 0;
