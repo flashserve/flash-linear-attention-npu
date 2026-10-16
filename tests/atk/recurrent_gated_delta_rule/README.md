@@ -8,9 +8,9 @@
 - `beta` 的 shape 为 `(T, Nv)`；`stateRef` 为原地输入输出，shape 为 `(BlockNum, Nv, Dv, Dk)`。
 - `query/key/value/beta/out` 为 BF16；`stateRef` 支持 BF16 和 FP32。
 - `actualSeqLengths` 为 `(B+1,)` 的 INT32 张量，首元素是不参与计算的无效前缀长度，所有元素之和等于 `T`。
-- `ssmStateIndices` 为 `(T,)` 的 INT32 张量，取值范围为 `[0, BlockNum)`，且所有元素互不重复。
+- `ssmStateIndices` 为 INT32 张量：legacy `(T,)` 按 packed token 寻址；状态表 `(B, W)` 按请求行寻址，要求 `0 < W <= 8`、每个 `L_i <= W` 且行数为 `B`。运行时若某行违约，该请求 `out` 写 0、`stateRef` 不更新，其他请求继续执行。
 - `g` 如提供，shape 为 `(T, Nv)`；`gk` 如提供，shape 为 `(T, Nv, Dk)`。两者均为 FP32，且至少提供一个。
-- `numAcceptedTokens` 如提供，shape 为 `(B,)`，每项取值范围为 `[1, actualSeqLengths[i+1]]`。
+- `numAcceptedTokens` 如提供，shape 为 `(B,)`，每项必须为正且不超过状态行宽（状态表 `(B, W)` 为 `W`，legacy `(T,)` 为 `actualSeqLengths[i+1]`）。
 - `Nv` 必须是 `Nk` 的整数倍；`Nk <= 256`、`Nv <= 256`、`Dk=128`、`Dv=128`；每条有效序列长度不超过 8。
 - 泛化矩阵覆盖连续 state、transpose 非连续 state、head padding、block padding、复合 padding 和 storage offset；同时覆盖 Q/K/V/gate/metadata 的合法非连续视图。
 
