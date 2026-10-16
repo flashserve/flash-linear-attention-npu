@@ -9,6 +9,7 @@
 #include <functional>
 #include <mutex>
 #include <string>
+#include <vector>
 #include <unordered_map>
 
 namespace fla_npu_stable {
@@ -46,7 +47,8 @@ class Runtime {
   Runtime() = default;
   void* open_custom_library(const std::string& path);
 
-  void* custom_handle_ = nullptr;
+  // Ordered highest-priority-first handles: overlay vendors first, base last.
+  std::vector<void*> custom_handles_;
   void* cann_handle_ = nullptr;
   bool initialized_ = false;
   // `symbol()` is called from the queue's consumer thread as well as from the

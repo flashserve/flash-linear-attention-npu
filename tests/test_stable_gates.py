@@ -332,8 +332,9 @@ class HeaderKindGateTest(unittest.TestCase):
 
     def test_header_kinds_are_recognised(self) -> None:
         tool = _load_tool("op_abi_validate.py")
-        self.assertEqual(tool.header_kind("const aclTensor *q"), tool.WILDCARD)
-        self.assertEqual(tool.header_kind("const aclIntArray *cu"), tool.WILDCARD)
+        self.assertEqual(tool.header_kind("const aclTensor *q"), tool.TENSOR)
+        self.assertEqual(tool.header_kind("const aclIntArray *cu"), tool.INT_ARRAY)
+        self.assertEqual(tool.header_kind("const aclScalar *scale"), tool.ACL_SCALAR)
         self.assertEqual(tool.header_kind("int64_t chunkSize"), "int64")
         self.assertEqual(tool.header_kind("bool useExp2"), "bool")
         self.assertEqual(tool.header_kind("double scale"), "double")
@@ -356,6 +357,12 @@ class HeaderKindGateTest(unittest.TestCase):
         # String literals are left alone: a layout name can hold anything.
         self.assertEqual(tool.split_params('cstr("a//b"), scalar(c)'),
                          ['cstr("a//b")', 'scalar(c)'])
+
+    def test_descriptor_kind_replacement_is_reported(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        self.assertEqual(tool.compare([tool.TENSOR], [tool.INT_ARRAY]), [
+            "param 0: header tensor != call site int_array"
+        ])
 
 
 class LauncherOnlyCoverageTest(unittest.TestCase):

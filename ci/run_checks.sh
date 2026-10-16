@@ -574,9 +574,35 @@ PY
 
 check_environment_contracts() {
     python3 tests/test_wheel_environment.py -b
+    python3 tests/test_opp_overlay.py -b
+    python3 tests/test_stable_gates.py -b
     python3 torch_custom/fla_npu/test/test_aclnn_ctypes_abi.py -b
     python3 torch_custom/fla_npu/test/test_runtime_device_guard.py -b
     python3 torch_custom/fla_npu/test/test_ascendc_mutation_contract.py -b
+}
+
+check_stable_aclnn_abi() {
+    if [[ -n "$ci_ops" ]]; then
+        echo "[CI] Skipping the all-adapter aclnn ABI gate for scoped OPP build: ${ci_ops}"
+        return
+    fi
+
+    local opp_include
+    opp_include="$(find build build_out -type d \
+        -path '*/vendors/fla_npu_transformer/op_api/include/aclnnop' \
+        -print 2>/dev/null | sort | head -n 1)"
+    if [[ -z "$opp_include" ]]; then
+        echo "[CI][ERROR] Built OPP aclnn headers were not found for the Stable-ABI gate." >&2
+        return 1
+    fi
+
+    local include_args=(--opp-include "$opp_include")
+    local cann_include
+    while IFS= read -r cann_include; do
+        include_args+=("$cann_include")
+    done < <(find "${ASCEND_HOME_PATH:-/nonexistent}" -maxdepth 3 -type d \
+        -path '*/include/aclnnop' -print 2>/dev/null | sort)
+    python3 torch_custom/fla_npu/tools/op_abi_validate.py "${include_args[@]}"
 }
 
 ops_arg=()
@@ -589,6 +615,7 @@ build_opp_run_package() {
     case "$ci_mode" in
         quick|full)
             bash build.sh --pkg --soc="$ci_soc" --vendor_name=fla_npu "${ops_arg[@]}" -j"$ci_jobs"
+            check_stable_aclnn_abi
             ;;
         *)
             echo "[CI][ERROR] Unsupported CI_MODE: $ci_mode" >&2
