@@ -1,3 +1,4 @@
+#include "kda_bwd_static_io.h"
 #ifndef CHUNK_KDA_BWD_FINALIZE_WY_H
 #define CHUNK_KDA_BWD_FINALIZE_WY_H
 
@@ -574,7 +575,8 @@ public:
         tiling_ = tiling;
     }
 
-    __aicore__ inline void Process()
+    __aicore__ inline void Process(
+        uint64_t roundBegin = 0, uint64_t roundCount = UINT64_MAX)
     {
         AscendC::SetHF32Mode(false);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -642,7 +644,7 @@ public:
             ElementSquareRightTransposeMmad,
             Fp32SquareLeftTransposeMmad,
             Fp32SquareLeftTransposeBlockMmad,
-            RowMajor, ColumnMajor>(resource);
+            RowMajor, ColumnMajor>(resource, roundBegin, roundCount);
     }
 
     template <typename Fp32C64Mmad, typename Bf16C64Mmad,
@@ -654,9 +656,9 @@ public:
               typename RowMajor, typename ColumnMajor>
     __aicore__ inline void ProcessFused(
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        Catlass::Arch::Resource<Catlass::Arch::Ascend950> &resource)
+        Catlass::Arch::Resource<Catlass::Arch::Ascend950> &resource, uint64_t roundBegin, uint64_t roundCount)
 #else
-        Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &resource)
+        Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &resource, uint64_t roundBegin, uint64_t roundCount)
 #endif
     {
         if ASCEND_IS_AIC {
@@ -703,8 +705,8 @@ public:
         // protects the following Intra phase, which reuses the same local
         // storage and event ids with a different layout.
         BeginSharedLeftMmadPhase();
-        for (uint64_t taskGroupIdx = coreIdx;
-             taskGroupIdx < taskGroupCount;
+        for (uint64_t taskGroupIdx = coreIdx + roundBegin * coreNum;
+             taskGroupIdx < taskGroupCount && localGeneration < roundCount;
              taskGroupIdx += coreNum, ++localGeneration) {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             const uint32_t s0Ready = kS0Ready;
@@ -1672,10 +1674,18 @@ public:
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         pipe_->InitBuffer(inputQueue_, 1, kIoBytes);
 #else
-        pipe_->InitBuffer(inputQueue_, 2, kIoBytes);
+        inputQueue_.Init(pipe_);
 #endif
         pipe_->InitBuffer(outputQueue_, 2, kIoBytes);
         pipe_->InitBuffer(arena_, kArenaBytes);
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+        pipe_->InitBuffer(gradientInput_, kGradientInputBytes);
+        gradientReady_ = static_cast<event_t>(
+            pipe_->AllocEventID<AscendC::HardEvent::MTE2_V>());
+        gradientFree_ = static_cast<event_t>(
+            pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>());
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(gradientFree_);
+#endif
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         pipe_->InitBuffer(matrixInputPing_, kIoBytes);
         pipe_->InitBuffer(matrixInputPong_, kIoBytes);
@@ -1693,9 +1703,15 @@ public:
 #endif
     }
 
-    __aicore__ inline void Process()
+    __aicore__ inline void Process(
+        uint64_t roundBegin = 0, uint64_t roundCount = UINT64_MAX)
     {
-        ProcessFused();
+        ProcessFused(roundBegin, roundCount);
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(gradientFree_);
+        pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(gradientFree_);
+        pipe_->ReleaseEventID<AscendC::HardEvent::MTE2_V>(gradientReady_);
+#endif
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(
             stageVToMte2Event_);
@@ -1774,7 +1790,7 @@ private:
 #endif
     }
 
-    __aicore__ inline void ProcessFused()
+    __aicore__ inline void ProcessFused(uint64_t roundBegin, uint64_t roundCount)
     {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         constexpr uint32_t kS0Ready = 0;
@@ -1810,8 +1826,8 @@ private:
             static_cast<uint64_t>(tiling_.chunkNum) * headWindowCount;
 
         uint32_t localGeneration = 0;
-        for (uint64_t taskGroupIdx = coreIdx;
-             taskGroupIdx < taskGroupCount;
+        for (uint64_t taskGroupIdx = coreIdx + roundBegin * coreNum;
+             taskGroupIdx < taskGroupCount && localGeneration < roundCount;
              taskGroupIdx += coreNum, ++localGeneration) {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             const uint32_t s0Ready = kS0Ready;
@@ -1905,6 +1921,9 @@ private:
                 WaitCubeStage(s0Ready);
             }
 #endif
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+            WaitCubeStage(s0Ready);
+#endif
             for (uint32_t lane = rowLaneBegin; lane < rowLaneEnd; ++lane) {
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
@@ -1921,7 +1940,7 @@ private:
                                   rowSubBlockIdx, rowSubBlockNum);
                 }
 #else
-                BuildKE<false>(task, headBase + lane, validLen, slot,
+                BuildKE<true>(task, headBase + lane, validLen, slot,
                                rowSubBlockIdx, rowSubBlockNum);
 #endif
             }
@@ -1937,13 +1956,6 @@ private:
 
             // S0: consume dq_raw and finish dq_base.
 #if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
-            WaitCubeStage(s0Ready);
-            for (uint32_t lane = 0; lane < headCount; ++lane) {
-                const uint64_t slot = WyWorkspaceSlotBase(
-                    tiling_, coreIdx, localGeneration, lane);
-                FinishBaseStage(task, headBase + lane, validLen, slot,
-                                subBlockIdx, subBlockNum, lane, 0, false);
-            }
             SignalCubeStage(s0Consumed);
 #endif
             // S1: consume dk_raw and finish dk_state.
@@ -2087,20 +2099,26 @@ private:
         sizeof(float);
 #else
     static constexpr uint32_t kRows = 16;
-    static constexpr uint32_t kUbBudgetBytes = 96 * 1024;
+    static constexpr uint32_t kUbBudgetBytes = 160 * 1024;
 #endif
     static constexpr uint32_t kPlaneElements = kRows * kWyKeyDim;
     static constexpr uint32_t kIoBytes = kPlaneElements * sizeof(float);
+
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     // FinishGradients has the largest live set and uses Plane(0)..Plane(7).
     // Reserving 24 planes exceeded the conservative per-AIV UB budget of the
     // 1AIC:2AIV MIX kernel without providing any reusable live storage.
     static constexpr uint32_t kArenaBytes = 8 * kPlaneElements * sizeof(float);
+#else
+    static constexpr uint32_t kArenaBytes = 10 * kPlaneElements * sizeof(float);
+    static constexpr uint32_t kGradientInputBytes = 6 * kIoBytes;
+#endif
     static constexpr float kLn2 = 0.69314718055994530942f;
     static_assert(
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                       5 * kIoBytes + kArenaBytes
 #else
-                      4 * kIoBytes + kArenaBytes
+                      4 * kIoBytes + kArenaBytes + kGradientInputBytes
 #endif
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                       + kDkStateBytes
@@ -2224,12 +2242,12 @@ private:
         AscendC::LocalTensor<float> dst, AscendC::GlobalTensor<float> src,
         uint32_t count)
     {
-        auto in = inputQueue_.AllocTensor<float>();
+        auto in = inputQueue_.template AllocTensor<float>();
         AscendC::DataCopyPad(
             in, src, {1, static_cast<uint32_t>(count * sizeof(float)), 0, 0, 0},
             {false, 0, 0, 0});
         inputQueue_.EnQue(in);
-        auto ready = inputQueue_.DeQue<float>();
+        auto ready = inputQueue_.template DeQue<float>();
         AscendC::Adds(dst, ready, 0.0f, count);
         AscendC::PipeBarrier<PIPE_V>();
         inputQueue_.FreeTensor(ready);
@@ -2240,13 +2258,13 @@ private:
         AscendC::LocalTensor<float> dst, AscendC::GlobalTensor<SrcT> src,
         uint32_t count)
     {
-        auto in = inputQueue_.AllocTensor<SrcT>();
+        auto in = inputQueue_.template AllocTensor<SrcT>();
         AscendC::DataCopyPad(
             in, src,
             {1, static_cast<uint32_t>(count * sizeof(SrcT)), 0, 0, 0},
             {false, 0, 0, 0});
         inputQueue_.EnQue(in);
-        auto ready = inputQueue_.DeQue<SrcT>();
+        auto ready = inputQueue_.template DeQue<SrcT>();
         AscendC::Cast(dst, ready, AscendC::RoundMode::CAST_NONE, count);
         AscendC::PipeBarrier<PIPE_V>();
         inputQueue_.FreeTensor(ready);
@@ -2272,7 +2290,7 @@ private:
         AscendC::GlobalTensor<float> src, uint32_t rows,
         uint32_t cols, uint32_t physicalCols)
     {
-        auto in = inputQueue_.AllocTensor<float>();
+        auto in = inputQueue_.template AllocTensor<float>();
         AscendC::DataCopyExtParams params{
             static_cast<uint16_t>(rows),
             static_cast<uint32_t>(cols * sizeof(float)),
@@ -2280,7 +2298,7 @@ private:
             0, 0};
         AscendC::DataCopyPad(in, src, params, {false, 0, 0, 0});
         inputQueue_.EnQue(in);
-        auto ready = inputQueue_.DeQue<float>();
+        auto ready = inputQueue_.template DeQue<float>();
         AscendC::Adds(dst, ready, 0.0f, rows * cols);
         AscendC::PipeBarrier<PIPE_V>();
         inputQueue_.FreeTensor(ready);
@@ -2291,7 +2309,7 @@ private:
         AscendC::GlobalTensor<DataT> src, uint32_t rows,
         uint32_t cols, uint32_t physicalCols)
     {
-        auto in = inputQueue_.AllocTensor<DataT>();
+        auto in = inputQueue_.template AllocTensor<DataT>();
         AscendC::DataCopyExtParams params{
             static_cast<uint16_t>(rows),
             static_cast<uint32_t>(cols * sizeof(DataT)),
@@ -2299,7 +2317,7 @@ private:
             0, 0};
         AscendC::DataCopyPad(in, src, params, {false, 0, 0, 0});
         inputQueue_.EnQue(in);
-        auto ready = inputQueue_.DeQue<DataT>();
+        auto ready = inputQueue_.template DeQue<DataT>();
         AscendC::Cast(
             dst, ready, AscendC::RoundMode::CAST_NONE, rows * cols);
         AscendC::PipeBarrier<PIPE_V>();
@@ -2382,14 +2400,10 @@ private:
         AscendC::LocalTensor<float> dst, AscendC::LocalTensor<float> src,
         uint32_t rows)
     {
-        // dst contains at most kRows scalar outputs.  Its remaining plane is
-        // dead during the reduction and provides aligned 8-float partial
-        // slots for every row, avoiding a dedicated 512-byte TBuf.
-        auto partial = dst[kRows];
-        for (uint32_t row = 0; row < rows; ++row) {
-            AscendC::WholeReduceSum(
-                partial[row * 8], src[row * 128], 64, 2, 1, 1, 8);
-        }
+
+        auto partial = dst[64];
+        AscendC::WholeReduceSum(partial, src, 64, rows, 8, 1, 16);
+        AscendC::WholeReduceSum(partial[1], src[64], 64, rows, 8, 1, 16);
         AscendC::PipeBarrier<PIPE_V>();
         AscendC::WholeReduceSum(dst, partial, 2, rows, 1, 1, 1);
         AscendC::PipeBarrier<PIPE_V>();
@@ -2402,6 +2416,49 @@ private:
         begin = validLen * subBlockIdx / subBlockNum;
         end = validLen * (subBlockIdx + 1U) / subBlockNum;
     }
+
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+    __aicore__ inline void ReadWyInputs(
+        uint64_t token, uint32_t count, bool stateBase)
+    {
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(gradientFree_);
+        auto fp = gradientInput_.Get<float>();
+        auto bf = gradientInput_.Get<DataT>()[4*kIoBytes/sizeof(DataT)];
+        ReadGradientInput(fp, gkGm_[token], count);
+        ReadGradientInput(fp[kPlaneElements],
+                          stateBase ? dkGm_[token] : dqRawGm_[token], count);
+        ReadGradientInput(bf, kGm_[token], count);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(gradientReady_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(gradientReady_);
+        AscendC::Adds(Plane(1), fp, 0.0f, count);
+        AscendC::Adds(stateBase ? Plane(0) : Plane(8),
+                      fp[kPlaneElements], 0.0f, count);
+        AscendC::Cast(stateBase ? Plane(8) : Plane(0), bf,
+                      AscendC::RoundMode::CAST_NONE, count);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(gradientFree_);
+        AscendC::PipeBarrier<PIPE_V>();
+    }
+
+    __aicore__ inline void ReadStateGatePair(
+        uint64_t h, uint64_t dh, uint32_t rows, uint32_t physicalCols)
+    {
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(gradientFree_);
+        auto bf = gradientInput_.Get<DataT>();
+        const AscendC::DataCopyExtParams params{
+            static_cast<uint16_t>(rows), 128*sizeof(DataT),
+            static_cast<uint32_t>((physicalCols-128)*sizeof(DataT)), 0, 0};
+        AscendC::DataCopyPad(bf, hGm_[h], params, {false, 0, 0, 0});
+        AscendC::DataCopyPad(bf[2*kPlaneElements], dhGm_[dh],
+                            params, {false, 0, 0, 0});
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(gradientReady_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(gradientReady_);
+        AscendC::Cast(Plane(2), bf, AscendC::RoundMode::CAST_NONE, rows*128);
+        AscendC::Cast(Plane(4), bf[2*kPlaneElements],
+                      AscendC::RoundMode::CAST_NONE, rows*128);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(gradientFree_);
+        AscendC::PipeBarrier<PIPE_V>();
+    }
+#endif
 
     template <bool FINISH_DQ>
     __aicore__ inline void BuildKE(
@@ -2425,8 +2482,12 @@ private:
                 k, kGm_[tokenBase + row * 128], rows, 128, 128,
                 e, gkGm_[tokenBase + row * 128], rows, 128, 128);
 #else
+            if constexpr (FINISH_DQ) {
+                ReadWyInputs(tokenBase+row*128, rows*128, false);
+            } else {
             Load(k, kGm_[tokenBase + row * 128], rows * 128);
             Load(e, gkGm_[tokenBase + row * 128], rows * 128);
+            }
 #endif
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             if constexpr (FINISH_DQ) {
@@ -2452,9 +2513,14 @@ private:
             AscendC::PipeBarrier<PIPE_V>();
             Store(wsBf16_[ws + row * 128], out, rows * 128);
             if constexpr (FINISH_DQ) {
+
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                 // e still contains exp2(gk).  Finish dq before this tile is
                 // reused, eliminating one gk GM load and one Exp2 pass.
                 Load(k, dqRawGm_[tokenBase + row * 128], rows * 128);
+#else
+                k = Plane(8);
+#endif
                 AscendC::Mul(out, k, e, rows * 128);
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Muls(out, out, tiling_.scale, rows * 128);
@@ -2546,15 +2612,12 @@ private:
                              rows, 128, 128);
                 }
 #else
-                Load(x, dkGm_[tokenBase + row * 128], rows * 128);
+                ReadWyInputs(tokenBase+row*128, rows*128, true);
 #endif
                 for (uint32_t r = 0; r < rows; ++r) {
                     AscendC::Adds(z[r * 128], gkLast, 0.0f, 128);
                 }
                 AscendC::PipeBarrier<PIPE_V>();
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
-                Load(y, gkGm_[tokenBase + row * 128], rows * 128);
-#endif
                 AscendC::Sub(z, z, y, rows * 128);
                 AscendC::PipeBarrier<PIPE_V>();
                 Exp2(z, z, rows * 128);
@@ -2568,19 +2631,38 @@ private:
                 }
 #endif
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+
                 // GPU keeps dk_state live and immediately accumulates
                 // sum_t(k * dk_state).  Do the same here instead of reading
                 // final dk back from GM in S5 and reconstructing dk_state.
                 Load(x, kGm_[tokenBase + row * 128], rows * 128);
+#else
+                x = Plane(8);
+#endif
                 AscendC::Mul(y, x, z, rows * 128);
                 AscendC::PipeBarrier<PIPE_V>();
                 for (uint32_t stride = 1; stride < rows; stride <<= 1U) {
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+                    const uint32_t pairs = (rows + stride - 1U) / (2U * stride);
+                    if (pairs == 1) {
+                        AscendC::Add(y, y, y[stride * 128], 128);
+                    } else {
+                        const uint8_t repStride = static_cast<uint8_t>(stride * 32U);
+                        for (uint32_t col = 0; col < 128; col += 64) {
+                            AscendC::Add(y[col], y[col], y[stride * 128 + col],
+                                64, static_cast<uint8_t>(pairs),
+                                {1,1,1,repStride,repStride,repStride});
+                        }
+                    }
+#else
                     for (uint32_t r = 0; r + stride < rows;
                          r += stride << 1U) {
                         AscendC::Add(
                             y[r * 128], y[r * 128],
                             y[(r + stride) * 128], 128);
                     }
+#endif
                     AscendC::PipeBarrier<PIPE_V>();
                 }
                 AscendC::Add(statePartial, statePartial, y, 128);
@@ -2645,6 +2727,44 @@ private:
         }
     }
 
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+    template <typename T>
+    __aicore__ inline void ReadGradientInput(
+        AscendC::LocalTensor<T> dst, AscendC::GlobalTensor<T> src,
+        uint32_t count)
+    {
+        AscendC::DataCopyPad(dst, src,
+            {1, static_cast<uint32_t>(count*sizeof(T)), 0, 0, 0},
+            {false, 0, 0, 0});
+    }
+
+    __aicore__ inline void ReadGradientBatch(
+        uint64_t token, uint64_t dkg, uint64_t ke, uint32_t count)
+    {
+        static_assert(sizeof(DataT) == 2);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(gradientFree_);
+        auto rawFloat = gradientInput_.Get<float>();
+        auto rawData = gradientInput_.Get<DataT>()[4*kIoBytes/sizeof(DataT)];
+        ReadGradientInput(rawFloat, wsFp32_[dkg], count);
+        ReadGradientInput(rawFloat[kPlaneElements], gkGm_[token], count);
+        ReadGradientInput(rawFloat[2*kPlaneElements], dkGm_[token], count);
+        ReadGradientInput(rawFloat[3*kPlaneElements], dqGm_[token], count);
+        ReadGradientInput(rawData, wsBf16_[ke], count);
+        ReadGradientInput(rawData[kPlaneElements], qGm_[token], count);
+        ReadGradientInput(rawData[2*kPlaneElements], kGm_[token], count);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(gradientReady_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(gradientReady_);
+        AscendC::Adds(Plane(0), rawFloat, 0.0f, count);
+        AscendC::Cast(Plane(1), rawData, AscendC::RoundMode::CAST_NONE, count);
+        AscendC::Adds(Plane(2), rawFloat[kPlaneElements], 0.0f, count);
+        AscendC::Adds(Plane(4), rawFloat[2*kPlaneElements], 0.0f, count);
+        AscendC::Adds(Plane(8), rawFloat[3*kPlaneElements], 0.0f, count);
+        AscendC::Cast(Plane(9), rawData[kPlaneElements],
+                      AscendC::RoundMode::CAST_NONE, count);
+        AscendC::PipeBarrier<PIPE_V>();
+    }
+#endif
+
     __aicore__ inline void FinishGradientRows(
         const WyChunkTask &task, uint32_t head, uint32_t validLen, uint64_t slot,
         uint32_t begin, uint32_t end, uint32_t stateLane)
@@ -2687,8 +2807,8 @@ private:
                 dkg, wsFp32_[dKgb + row * 128], rows, 128, 128,
                 ke, wsBf16_[kE + row * 128], rows, 128, 128);
 #else
-            Load(dkg, wsFp32_[dKgb + row * 128], rows * 128);
-            Load(ke, wsBf16_[kE + row * 128], rows * 128);
+            ReadGradientBatch(tokenBase+row*128, dKgb+row*128,
+                              kE+row*128, rows*128);
 #endif
 
             // dKgb_raw has the opposite sign of mathematical dKgb, so fold
@@ -2710,8 +2830,16 @@ private:
             AscendC::PipeBarrier<PIPE_V>();
 #endif
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+
             // dk_base = dk_state - dKgb_raw * beta * exp2(gk).
             Load(e, gkGm_[tokenBase + row * 128], rows * 128);
+#else
+            AscendC::Cast(ke,
+                gradientInput_.Get<DataT>()[4*kIoBytes/sizeof(DataT)+2*kPlaneElements],
+                AscendC::RoundMode::CAST_NONE, rows*128);
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(gradientFree_);
+#endif
             Exp2(e, e, rows * 128);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             if constexpr (V_DIM != 128) {
@@ -2746,21 +2874,13 @@ private:
             AscendC::Mul(qk, dkg, e, rows * 128);
             AscendC::PipeBarrier<PIPE_V>();
             MulRowsByScalar(qk, qk, brcb, rows, 128);
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
-            Load(acc, dkGm_[tokenBase + row * 128], rows * 128);
-#endif
             AscendC::Sub(e, acc, qk, rows * 128);
             AscendC::PipeBarrier<PIPE_V>();
             Store(dkGm_[tokenBase + row * 128], e, rows * 128);
 
-            // gate_qk + gate_w algebraically; dKgb_raw carries the opposite
-            // sign, so subtract its contribution.  Keep dk_state resident in acc while e is
-            // used for the final-dk writeback; no subtractive reconstruction.
-            Load(qk, qGm_[tokenBase + row * 128], rows * 128);
-            Load(e, dqGm_[tokenBase + row * 128], rows * 128);
-            AscendC::Mul(qk, qk, e, rows * 128);
-            Load(e, kGm_[tokenBase + row * 128], rows * 128);
-            AscendC::Mul(acc, e, acc, rows * 128);
+            qk = Plane(9);
+            AscendC::Mul(qk, qk, Plane(8), rows * 128);
+            AscendC::Mul(acc, ke, acc, rows * 128);
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::Sub(qk, qk, acc, rows * 128);
             AscendC::PipeBarrier<PIPE_V>();
@@ -2865,7 +2985,12 @@ private:
             (slot + kWyStatePartialOffset) / sizeof(float);
         auto state = Plane(0);
         auto partial = Plane(1);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         auto gateAnchor = Plane(7);
+#else
+        auto gateAnchor = Plane(0)[256];
+        constexpr uint32_t stateRows = 32;
+#endif
         Load(state, wsFp32_[stateBase], 128);
         for (uint32_t part = 1; part < subBlockNum; ++part) {
             Load(partial, wsFp32_[stateBase + part * 128U], 128);
@@ -2878,32 +3003,36 @@ private:
         Load(gateAnchor, gkGm_[tokenBase + last * 128], 128);
         Exp2(gateAnchor, gateAnchor, 128);
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+
         for (uint32_t col = 0; col < 128; col += kRows) {
+#else
+        for (uint32_t col = 0; col < 128; col += stateRows) {
+#endif
             auto x = Plane(2);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             auto y = Plane(3);
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
-            auto product = Plane(4);
-#endif
             auto reduced = Plane(5);
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
-            auto tileReduced = Plane(6);
+            constexpr uint32_t rows = kRows;
+#else
+            auto y = Plane(4);
+            auto product = Plane(6);
+            auto reduced = Plane(1)[256];
+            auto tileReduced = Plane(1)[512];
+            constexpr uint32_t rows = stateRows;
 #endif
-            AscendC::Duplicate(reduced, 0.0f, kRows);
+            AscendC::Duplicate(reduced, 0.0f, rows);
             AscendC::PipeBarrier<PIPE_V>();
             for (uint32_t v0 = 0; v0 < V_DIM; v0 += 128) {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                 LoadRowsPair(
                     x, hGm_[hBase + col * V_DIM + v0],
-                    kRows, 128, V_DIM,
+                    rows, 128, V_DIM,
                     y, dhGm_[dhBase + col * V_DIM + v0],
-                    kRows, 128, V_DIM);
+                    rows, 128, V_DIM);
 #else
-                LoadRows(
-                    x, hGm_[hBase + col * V_DIM + v0],
-                    kRows, 128, V_DIM);
-                LoadRows(
-                    y, dhGm_[dhBase + col * V_DIM + v0],
-                    kRows, 128, V_DIM);
+                ReadStateGatePair(hBase+col*V_DIM+v0,
+                                  dhBase+col*V_DIM+v0, rows, V_DIM);
 #endif
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                 KdaBwdCRowDotAccA5(
@@ -2912,16 +3041,16 @@ private:
                     (__ubuf__ float *)y.GetPhyAddr(),
                     static_cast<uint16_t>(kRows), 128);
 #else
-                AscendC::Mul(product, x, y, kRows * 128);
+                AscendC::Mul(product, x, y, rows * 128);
                 AscendC::PipeBarrier<PIPE_V>();
-                RowReduce128(tileReduced, product, kRows);
-                AscendC::Add(reduced, reduced, tileReduced, kRows);
+                RowReduce128(tileReduced, product, rows);
+                AscendC::Add(reduced, reduced, tileReduced, rows);
                 AscendC::PipeBarrier<PIPE_V>();
 #endif
             }
-            AscendC::Mul(reduced, reduced, gateAnchor[col], kRows);
+            AscendC::Mul(reduced, reduced, gateAnchor[col], rows);
             AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Add(state[col], state[col], reduced, kRows);
+            AscendC::Add(state[col], state[col], reduced, rows);
             AscendC::PipeBarrier<PIPE_V>();
         }
         Store(wsFp32_[stateBase], state, 128);
@@ -3062,9 +3191,18 @@ private:
     AscendC::GlobalTensor<float> dAkkGm_;
     AscendC::GlobalTensor<float> wsFp32_;
     AscendC::GlobalTensor<DataT> wsBf16_;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     AscendC::TQue<AscendC::TPosition::VECIN, 1> inputQueue_;
+#else
+    KdaBwdStaticIo<kIoBytes, true> inputQueue_;
+#endif
     AscendC::TQue<AscendC::TPosition::VECOUT, 1> outputQueue_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> arena_;
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+    AscendC::TBuf<AscendC::TPosition::VECCALC> gradientInput_;
+    event_t gradientReady_{};
+    event_t gradientFree_{};
+#endif
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     AscendC::TBuf<AscendC::TPosition::VECCALC> matrixInputPing_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> matrixInputPong_;
