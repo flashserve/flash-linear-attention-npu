@@ -39,6 +39,20 @@ __aicore__ inline uint32_t WyCubeToVectorFlag(uint32_t headInWindow)
     return 4U + headInWindow;
 }
 
+// Single-source predicate for the A5 dense 16-row Intra post path
+// (ProcessA5DenseRow16Pipeline in chunk_kda_bwd_finalize_intra.h).  That
+// path rebuilds dq_base from the raw Phase-A dq tile and never reads the
+// WY dq_base store, so WY skips the store and rebuilds dq_base inside
+// FinishGradientRows instead.  WY and Intra must decide from this one
+// definition: a drift between them feeds the generic Intra path a stale
+// dq mailbox.
+__aicore__ inline bool CanUseA5DenseRow16Intra(
+    const ChunkKdaBwdCTilingData &tiling)
+{
+    return tiling.isVarLen == 0 && tiling.useGateInKernel != 0 &&
+           tiling.seqlen % static_cast<int32_t>(kWyChunkSize) == 0;
+}
+
 struct WyChunkTask {
     uint32_t sequence;
     uint32_t batchIdx;
@@ -1485,12 +1499,13 @@ static __simd_vf__ inline void KdaBwdCMulRowDotSubA5(
     }
 }
 
+template <bool DQ_FROM_RAW>
 static __simd_vf__ inline void KdaBwdCFinishDkDgA5(
     __ubuf__ float *dkDst, __ubuf__ float *dgDst,
     __ubuf__ float *dkg, __ubuf__ float *expG,
     __ubuf__ float *beta, __ubuf__ float *dkState,
-    __ubuf__ float *q, __ubuf__ float *dq,
-    __ubuf__ float *k, __ubuf__ float *gateW,
+    __ubuf__ float *q, __ubuf__ float *dq, __ubuf__ float *dqExp,
+    __ubuf__ float *k, __ubuf__ float *gateW, float scale,
     uint16_t rows, uint16_t cols)
 {
     using namespace AscendC::MicroAPI;
@@ -1516,6 +1531,20 @@ static __simd_vf__ inline void KdaBwdCFinishDkDgA5(
             DataCopy(stateReg, dkState + offset);
             DataCopy(qReg, q + offset);
             DataCopy(dqReg, dq + offset);
+            if constexpr (DQ_FROM_RAW) {
+                // dq holds the raw Phase-A tile.  Rebuild the dq_base value
+                // that BuildKE would have stored: same operand order and
+                // rounding as KdaBwdCBuildKEDqA5, with dqExp carrying the
+                // BuildKE exponent flavor exp(gk * ln2).  The trailing
+                // Adds(+0.0f) reproduces the -0.0f -> +0.0f laundering that
+                // the skipped GM store/load round trip applied through the
+                // Store/Load helpers' Adds(..., 0.0f) copies.
+                RegTensor<float> dqExpReg;
+                DataCopy(dqExpReg, dqExp + offset);
+                Mul(dqReg, dqReg, dqExpReg, fullMask);
+                Muls(dqReg, dqReg, scale, fullMask);
+                Adds(dqReg, dqReg, 0.0f, fullMask);
+            }
             DataCopy(kReg, k + offset);
             DataCopy(gateWReg, gateW + offset);
 
@@ -1631,6 +1660,58 @@ static __simd_vf__ inline void KdaBwdCBuildKEDqA5(
         Mul(outReg, dqReg, expReg, fullMask);
         Muls(outReg, outReg, scale, fullMask);
         StoreAlign(dqDst + offset, outReg, fullMask);
+    }
+}
+
+// kE-only companion of KdaBwdCBuildKEDqA5 for shapes where the dense row16
+// Intra post rebuilds dq_base from the raw Phase-A tile
+// (CanUseA5DenseRow16Intra): the dq_raw load, the dq_base computation and
+// the dq GM store are all skipped.  The kE instruction sequence is identical
+// to the fused variant, so kE stays bit-exact.
+static __simd_vf__ inline void KdaBwdCBuildKeOnlyA5(
+    __ubuf__ float *keDst, __ubuf__ float *k, __ubuf__ float *gk,
+    float ln2, uint16_t elements)
+{
+    using namespace AscendC::MicroAPI;
+    constexpr uint32_t kRegElements =
+        AscendC::VECTOR_REG_WIDTH / sizeof(float);
+    MaskReg fullMask = CreateMask<float, MaskPattern::ALL>();
+    const uint16_t loops = static_cast<uint16_t>(elements / kRegElements);
+    for (uint16_t loop = 0; loop < loops; ++loop) {
+        const uint32_t offset = loop * kRegElements;
+        RegTensor<float> kReg;
+        RegTensor<float> gkReg;
+        RegTensor<float> expReg;
+        RegTensor<float> outReg;
+        LoadAlign(kReg, k + offset);
+        LoadAlign(gkReg, gk + offset);
+        Muls(expReg, gkReg, ln2, fullMask);
+        Exp(expReg, expReg, fullMask);
+        Mul(outReg, kReg, expReg, fullMask);
+        StoreAlign(keDst + offset, outReg, fullMask);
+    }
+}
+
+// Exponent tile exp(gk * ln2) for the FinishGradientRows dq_base rebuild.
+// Same Muls/Exp sequence on the same laundered gk tile as
+// KdaBwdCBuildKEDqA5, so the rebuilt dq_base matches the skipped GM store
+// bit for bit.
+static __simd_vf__ inline void KdaBwdCDqBaseExpA5(
+    __ubuf__ float *dst, __ubuf__ float *gk, float ln2, uint16_t elements)
+{
+    using namespace AscendC::MicroAPI;
+    constexpr uint32_t kRegElements =
+        AscendC::VECTOR_REG_WIDTH / sizeof(float);
+    MaskReg fullMask = CreateMask<float, MaskPattern::ALL>();
+    const uint16_t loops = static_cast<uint16_t>(elements / kRegElements);
+    for (uint16_t loop = 0; loop < loops; ++loop) {
+        const uint32_t offset = loop * kRegElements;
+        RegTensor<float> gkReg;
+        RegTensor<float> expReg;
+        LoadAlign(gkReg, gk + offset);
+        Muls(expReg, gkReg, ln2, fullMask);
+        Exp(expReg, expReg, fullMask);
+        StoreAlign(dst + offset, expReg, fullMask);
     }
 }
 #endif
@@ -1921,9 +2002,11 @@ private:
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                 if (tiling_.isVarLen == 0) {
                     // The generic 16-row Intra post path consumes dq_base
-                    // from GM.  The retired dense row32 post used to form it
-                    // locally, so dense WY skipped the write.  Complete dq
-                    // here before Intra reads it.
+                    // from GM.  Under CanUseA5DenseRow16Intra the dense
+                    // row16 post rebuilds dq_base from the raw Phase-A tile
+                    // instead, and BuildKE skips the dq store entirely;
+                    // every other shape still completes dq here before
+                    // Intra reads it.
                     BuildKE<true>(task, headBase + lane, validLen, slot,
                                   rowSubBlockIdx, rowSubBlockNum);
                 } else {
@@ -2440,8 +2523,22 @@ private:
 #endif
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             if constexpr (FINISH_DQ) {
-                auto dqRaw = Plane(2);
                 auto keOut = Plane(3);
+                if (V_DIM == 128 && CanUseA5DenseRow16Intra(tiling_)) {
+                    // The dense row16 Intra post rebuilds dq_base from the
+                    // raw Phase-A tile and never reads this store, and
+                    // FinishGradientRows rebuilds its own copy from dqRaw.
+                    // Skip the dq_raw load, the dq_base computation and the
+                    // 32 KiB GM store per head-chunk.
+                    KdaBwdCBuildKeOnlyA5(
+                        reinterpret_cast<__ubuf__ float *>(keOut.GetPhyAddr()),
+                        reinterpret_cast<__ubuf__ float *>(k.GetPhyAddr()),
+                        reinterpret_cast<__ubuf__ float *>(e.GetPhyAddr()),
+                        kLn2, static_cast<uint16_t>(rows * 128));
+                    Store(wsBf16_[ws + row * 128], keOut, rows * 128);
+                    continue;
+                }
+                auto dqRaw = Plane(2);
                 auto dqOut = Plane(4);
                 Load(dqRaw, dqRawGm_[tokenBase + row * 128], rows * 128);
                 KdaBwdCBuildKEDqA5(
@@ -2722,6 +2819,24 @@ private:
 
             // dk_base = dk_state - dKgb_raw * beta * exp2(gk).
             Load(e, gkGm_[tokenBase + row * 128], rows * 128);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+            // When the dense row16 Intra post owns dq_base, WY skips the dq
+            // store (BuildKE) and this stage reads the raw Phase-A tile
+            // instead.  Rebuild dq_base in registers with the BuildKE
+            // exponent flavor, computed from the raw gk tile before the Exp2
+            // below overwrites it.  Plane(4) is free exactly when the
+            // predicate can hold: V_DIM == 128 keeps dk_state in
+            // dkStateBuffer_ instead of Plane(4).
+            const bool rebuildDqBase =
+                V_DIM == 128 && CanUseA5DenseRow16Intra(tiling_);
+            if (rebuildDqBase) {
+                KdaBwdCDqBaseExpA5(
+                    (__ubuf__ float *)Plane(4).GetPhyAddr(),
+                    (__ubuf__ float *)e.GetPhyAddr(), kLn2,
+                    static_cast<uint16_t>(rows * 128));
+                AscendC::PipeBarrier<PIPE_V>();
+            }
+#endif
             Exp2(e, e, rows * 128);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             if constexpr (V_DIM != 128) {
@@ -2730,22 +2845,47 @@ private:
             // Keep the complete dk/dg elementwise chain in registers.  The
             // two outputs share beta and dk_state, while tmp already holds
             // dKgb_raw*kE from the db reduction above.
-            LoadRowsPair(
-                qk, qGm_[tokenBase + row * 128], rows, 128, 128,
-                brcb, dqGm_[tokenBase + row * 128], rows, 128, 128);
+            if (rebuildDqBase) {
+                LoadRowsPair(
+                    qk, qGm_[tokenBase + row * 128], rows, 128, 128,
+                    brcb, dqRawGm_[tokenBase + row * 128], rows, 128, 128);
+            } else {
+                LoadRowsPair(
+                    qk, qGm_[tokenBase + row * 128], rows, 128, 128,
+                    brcb, dqGm_[tokenBase + row * 128], rows, 128, 128);
+            }
             Load(ke, kGm_[tokenBase + row * 128], rows * 128);
-            KdaBwdCFinishDkDgA5(
-                (__ubuf__ float *)e.GetPhyAddr(),
-                (__ubuf__ float *)qk.GetPhyAddr(),
-                (__ubuf__ float *)dkg.GetPhyAddr(),
-                (__ubuf__ float *)e.GetPhyAddr(),
-                (__ubuf__ float *)betaRows[row - begin].GetPhyAddr(),
-                (__ubuf__ float *)acc.GetPhyAddr(),
-                (__ubuf__ float *)qk.GetPhyAddr(),
-                (__ubuf__ float *)brcb.GetPhyAddr(),
-                (__ubuf__ float *)ke.GetPhyAddr(),
-                (__ubuf__ float *)tmp.GetPhyAddr(),
-                static_cast<uint16_t>(rows), 128);
+            if (rebuildDqBase) {
+                KdaBwdCFinishDkDgA5<true>(
+                    (__ubuf__ float *)e.GetPhyAddr(),
+                    (__ubuf__ float *)qk.GetPhyAddr(),
+                    (__ubuf__ float *)dkg.GetPhyAddr(),
+                    (__ubuf__ float *)e.GetPhyAddr(),
+                    (__ubuf__ float *)betaRows[row - begin].GetPhyAddr(),
+                    (__ubuf__ float *)acc.GetPhyAddr(),
+                    (__ubuf__ float *)qk.GetPhyAddr(),
+                    (__ubuf__ float *)brcb.GetPhyAddr(),
+                    (__ubuf__ float *)Plane(4).GetPhyAddr(),
+                    (__ubuf__ float *)ke.GetPhyAddr(),
+                    (__ubuf__ float *)tmp.GetPhyAddr(),
+                    tiling_.scale,
+                    static_cast<uint16_t>(rows), 128);
+            } else {
+                KdaBwdCFinishDkDgA5<false>(
+                    (__ubuf__ float *)e.GetPhyAddr(),
+                    (__ubuf__ float *)qk.GetPhyAddr(),
+                    (__ubuf__ float *)dkg.GetPhyAddr(),
+                    (__ubuf__ float *)e.GetPhyAddr(),
+                    (__ubuf__ float *)betaRows[row - begin].GetPhyAddr(),
+                    (__ubuf__ float *)acc.GetPhyAddr(),
+                    (__ubuf__ float *)qk.GetPhyAddr(),
+                    (__ubuf__ float *)brcb.GetPhyAddr(),
+                    (__ubuf__ float *)brcb.GetPhyAddr(),
+                    (__ubuf__ float *)ke.GetPhyAddr(),
+                    (__ubuf__ float *)tmp.GetPhyAddr(),
+                    tiling_.scale,
+                    static_cast<uint16_t>(rows), 128);
+            }
             AscendC::PipeBarrier<PIPE_V>();
             Store(dkGm_[tokenBase + row * 128], e, rows * 128);
             Store(dgGm_[tokenBase + row * 128], qk, rows * 128);

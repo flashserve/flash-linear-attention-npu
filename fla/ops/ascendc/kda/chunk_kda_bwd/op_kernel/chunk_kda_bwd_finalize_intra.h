@@ -746,9 +746,7 @@ public:
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         if constexpr (!PUBLIC_VARLEN && K_DIM == 128 &&
                       kProcessRowBlock == kRowBlock) {
-            if (tiling_.isVarLen == 0 &&
-                tiling_.useGateInKernel != 0 &&
-                tiling_.seqlen % CHUNK_SIZE == 0) {
+            if (CanUseA5DenseRow16Intra(tiling_)) {
                 ProcessA5DenseRow16Pipeline(
                     coreIdx, coreNum, headNum, headWindowCount,
                     taskGroupCount);
@@ -835,9 +833,7 @@ public:
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                     if constexpr (!PUBLIC_VARLEN && K_DIM == 128 &&
                                   kProcessRowBlock == kRowBlock) {
-                        if (tiling_.isVarLen == 0 &&
-                            tiling_.useGateInKernel != 0 &&
-                            tiling_.seqlen % CHUNK_SIZE == 0) {
+                        if (CanUseA5DenseRow16Intra(tiling_)) {
                             // Both AIVs consume every ready generation, but
                             // each completes one head so their Vector-Post
                             // work can overlap across the two-head window.
