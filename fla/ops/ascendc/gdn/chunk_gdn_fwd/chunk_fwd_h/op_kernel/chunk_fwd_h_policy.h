@@ -18,7 +18,8 @@ enum class FwdHGateMode : uint8_t {
     KEY_GK = 1,
 };
 
-template <FwdHGateMode GATE_MODE_, bool USE_EXP2_, bool STATE_FP32_, bool STORE_FINAL_>
+template <FwdHGateMode GATE_MODE_, bool USE_EXP2_, bool STATE_FP32_, bool STORE_FINAL_,
+          bool DENSE_T16_ = false>
 struct FwdHCompilePolicy {
     static constexpr FwdHGateMode GATE_MODE = GATE_MODE_;
     static constexpr bool USE_EXP2 = USE_EXP2_;
@@ -27,6 +28,10 @@ struct FwdHCompilePolicy {
     // =true 时 S1 的 WRITE_RIGHT 恒真——WRITE_RIGHT=false 实例族整体消失、
     // storeFinalState 运行时读全部常量折叠（A2 模板收敛同路线，热段 span 缩小）。
     static constexpr bool STORE_FINAL = STORE_FINAL_;
+    // T16：dense 专用 TILE_ROWS=16 布局（host tiling key 依 isVariedLen==0 且
+    // 每 unit ≤2 head 才选 1；AIV 单 slot 大缓冲，per-tile 开销减半）。仅 arch22；
+    // 变长/多 head-per-unit 路径恒 0，行为与既有二进制一致。
+    static constexpr bool DENSE_T16 = DENSE_T16_;
 };
 
 constexpr uint32_t FWD_H_CHUNK = 64;

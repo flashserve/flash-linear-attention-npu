@@ -34,13 +34,13 @@ struct FwdHGateDTypeTraits<CHUNK_FWD_H_TPL_FP32> {
 };
 
 template <int D_T_G, int V_DIM, bool USE_GK, bool USE_EXP2, bool STATE_FP32,
-          bool STATE_V_FIRST, bool STORE_FINAL>
+          bool STATE_V_FIRST, bool STORE_FINAL, bool DENSE_T16>
 struct FwdHKernelTraits {
     static_assert(V_DIM == static_cast<int>(FWD_H_V), "ChunkFwdH only supports V=128.");
     using GateT = typename FwdHGateDTypeTraits<D_T_G>::type;
     using CompilePolicy = FwdHCompilePolicy<
         USE_GK ? FwdHGateMode::KEY_GK : FwdHGateMode::SCALAR_G, USE_EXP2, STATE_FP32,
-        STORE_FINAL>;
+        STORE_FINAL, DENSE_T16>;
     static constexpr bool STATE_V_FIRST_VALUE = STATE_V_FIRST;
 };
 
@@ -79,7 +79,7 @@ __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
 
 #ifndef TORCH_MODE
 template <int D_T_G, int V_DIM, bool USE_GK, bool USE_EXP2, bool STATE_FP32,
-          bool STATE_V_FIRST, bool STORE_FINAL>
+          bool STATE_V_FIRST, bool STORE_FINAL, bool DENSE_T16>
 __global__ __aicore__ void chunk_fwd_h(
     GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR initial_state,
     GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
@@ -123,7 +123,7 @@ __global__ __aicore__ void chunk_fwd_h(
     }
     args.tiling.coreBoundsGm = tilingData->coreTaskBounds;
     using Traits = GDN::FwdHKernelTraits<
-        D_T_G, V_DIM, USE_GK, USE_EXP2, STATE_FP32, STATE_V_FIRST, STORE_FINAL>;
+        D_T_G, V_DIM, USE_GK, USE_EXP2, STATE_FP32, STATE_V_FIRST, STORE_FINAL, DENSE_T16>;
     GDN::RunFwdHTyped<typename Traits::GateT, typename Traits::CompilePolicy,
                       Traits::STATE_V_FIRST_VALUE>(args);
 }

@@ -120,7 +120,10 @@ public:
 
 private:
     using PType = std::conditional_t<CompilePolicy::STATE_FP32, float, bfloat16_t>;
-    static constexpr uint32_t TILE_ROWS = 8;
+    // T16：dense 专用 TILE_ROWS=16（host tiling key 保证 dense+unitHeads≤2 才选）。
+    // 单 slot 大缓冲布局：per-tile 标量/旗标/MOVEMASK 开销减半（trace 实测该类
+    // 占 AIV busy ~52%）。TILE_ROWS 随 DENSE_T16 编译期定，非运行时开关。
+    static constexpr uint32_t TILE_ROWS = CompilePolicy::DENSE_T16 ? 16 : 8;
     static constexpr uint32_t TILE_ELEMENTS = TILE_ROWS * FWD_H_V;
     static constexpr uint32_t LOCAL_SLOT_BYTES = 32 * 1024;
     static constexpr uint32_t LOCAL0_BASE = 0;
@@ -147,6 +150,34 @@ private:
     static constexpr uint32_t GATE_FP32_BASE = 25 * 1024;
     static constexpr uint32_t ALPHA_BASE = 26 * 1024;
     static constexpr uint32_t SHARE_BASE = 27 * 1024;
+    // T16 布局（CompilePolicy::DENSE_T16）：host 保证每 AIV 单 head 链（slot1 与
+    // FP32 state1 静态闲置），单 slot 内放 tile 翻倍的大缓冲——raw 双份 8K/份、
+    // io/right 双份 4K/份、calc 双份 8K/份（跨 tile RAW 由 V pipe FIFO 保序的
+    // 论证在 T8 布局靠双 buf 完全规避；T16 tile 内单 buf 时 S1 的 Sub/P 广播读
+    // 与 calc 写同 buf 依赖向量指令源/目的交错，A2 无硬件 RAW 追踪（vec.h 头部
+    // R6 警示），双份 calc 维持"计算(t) 写 calc[buf] 与 计算(t+1) 写 calc[buf^1]
+    // 交错安全"。cast 8K、gate 4K（T16 的 validTokens=64 fp32 gate 需 256B，
+    // KEY_GK 128 元素 512B，均宽裕）、share 2K（Broadcast 临时空间随 dst 行数
+    // 放大保守加倍）。单 slot 合计 56K ≤64K；[64K,128K) 为本 head 的 FP32 state。
+    static constexpr uint32_t T16_RAW_BASE = 0;
+    static constexpr uint32_t T16_RAW_BUF_BYTES = 8 * 1024;
+    static constexpr uint32_t T16_IO_BASE = 16 * 1024;
+    static constexpr uint32_t T16_IO_BUF_BYTES = 4 * 1024;
+    static constexpr uint32_t T16_RIGHT_BASE = 24 * 1024;
+    static constexpr uint32_t T16_RIGHT_BUF_BYTES = 4 * 1024;
+    static constexpr uint32_t T16_CAST_BASE = 32 * 1024;
+    static constexpr uint32_t T16_CALC_BASE = 40 * 1024;
+    static constexpr uint32_t T16_CALC_BYTES = 8 * 1024;
+    // T16 尾部区 [56K,64K)：gateRaw/gateFp32/alpha 各 1K（+对齐余量）、share 4K。
+    // 布局警戒（第四轮精度实证）：calc 双份 [40K,56K) 与 gate 区不可重叠——
+    // 首版 gateRaw 放 48K 被 calc[buf1] 覆写，gate 错→alpha 错→final_state
+    // 全域错而 h/v_new 不受影响（single_chunk 症状完全吻合）。share 4K：
+    // Broadcast tmp 按 dst 元素数增长（T8@1024 元素 1K 已验证），T16@2048
+    // 元素给 2 倍余量。单 slot 合计 60K ≤64K；[64K,128K) 为本 head 的 FP32 state。
+    static constexpr uint32_t T16_GATE_RAW_BASE = 56 * 1024;
+    static constexpr uint32_t T16_GATE_FP32_BASE = 57 * 1024;
+    static constexpr uint32_t T16_ALPHA_BASE = 58 * 1024;
+    static constexpr uint32_t T16_SHARE_BASE = 59 * 1024;
     static constexpr uint32_t TILE_BUFS = 2;
     // N3：g(scalar)+FP32 的 S3 融合开关——三步（state 拷贝→Muls(α)→Add(D)）压成
     // 两步（calc=D→Axpy(state,α)，dst=src·scalar+dst）。仅此组合可融合：KEY_GK 的
@@ -158,6 +189,29 @@ private:
     {
         return (row / TILE_ROWS) & 1U;
     }
+
+    // calc 的 tile 寻址：T16 布局双份（跨 tile RAW 保护）；T8 布局单份——所有
+    // tile 恒用 [0]，[1] 不初始化不寻址（冒烟实证：T8 若按 buf 交替会读写未
+    // 初始化的 calc_[slot][1]，v_new/final_state 双杆爆 300+ 误差）。
+    __aicore__ inline AscendC::LocalTensor<float> CalcBuf(uint32_t slot,
+                                                          uint32_t buf) const
+    {
+        if constexpr (CompilePolicy::DENSE_T16) {
+            return calc_[slot][buf];
+        } else {
+            return calc_[slot][0];
+        }
+    }
+
+    // raw_ 双份的 per-buf 元素步进：T16 布局 8K/份、T8 布局 4K/份（精度实证：
+    // T16 若沿用 4K 步进，final_state 中转写越界覆盖邻区，dense 全爆——
+    // fn_dense_t64_single_chunk 仅 final_state 错的最小复现面）。
+    static constexpr uint32_t RAW_BUF_ELEMS =
+        (CompilePolicy::DENSE_T16 ? T16_RAW_BUF_BYTES : RAW_BUF_BYTES) / sizeof(float);
+    static constexpr uint32_t T16_RAW_ELEMS_P =
+        (CompilePolicy::DENSE_T16 ? T16_RAW_BUF_BYTES : RAW_BUF_BYTES) / sizeof(PType);
+    static constexpr uint32_t T16_RAW_ELEMS_B =
+        (CompilePolicy::DENSE_T16 ? T16_RAW_BUF_BYTES : RAW_BUF_BYTES) / sizeof(bfloat16_t);
 
     __aicore__ inline uint32_t LocalBase(uint32_t slot) const
     {
@@ -173,21 +227,53 @@ private:
     {
         GetTPipePtr()->InitBuffer(ubBuf_, 192 * 1024);
         AscendC::LocalTensor<uint8_t> ub = ubBuf_.Get<uint8_t>();
-        for (uint32_t slot = 0; slot < FWD_H_AIV_HEAD_SLOTS; ++slot) {
-            const uint32_t base = LocalBase(slot);
-            raw_[slot] = ub[base + RAW_BASE].template ReinterpretCast<uint8_t>();
-            cast_[slot] = ub[base + CAST_BASE].template ReinterpretCast<float>();
-            calc_[slot] = ub[base + CALC_BASE].template ReinterpretCast<float>();
-            for (uint32_t buf = 0; buf < TILE_BUFS; ++buf) {
-                io_[slot][buf] = ub[base + IO_BASE + buf * IO_BUF_ELEMS * sizeof(bfloat16_t)]
-                                     .template ReinterpretCast<bfloat16_t>();
-                right_[slot][buf] = ub[base + RIGHT_BASE + buf * RIGHT_BUF_ELEMS * sizeof(bfloat16_t)]
-                                        .template ReinterpretCast<bfloat16_t>();
+        if constexpr (CompilePolicy::DENSE_T16) {
+            // T16 单 slot 大缓冲：host 保证 unitHeads≤2（每 AIV 单 head 链），
+            // 本 AIV 绑定的 head 恒落 localSlot 0（roundHead≤1 时 aiv=roundHead、
+            // localSlot=0），slot1 区并给 calc 双份（跨 tile RAW 保护，见布局注释）。
+            static_assert(T16_RAW_BASE == 0 && T16_IO_BASE == 16 * 1024 &&
+                              T16_RIGHT_BASE == 24 * 1024 && T16_CAST_BASE == 32 * 1024 &&
+                              T16_CALC_BASE == 40 * 1024 && T16_CALC_BYTES == 8 * 1024 &&
+                              T16_GATE_RAW_BASE == 56 * 1024,
+                          "T16 layout must stay within the 64K single-slot window");
+            for (uint32_t slot = 0; slot < FWD_H_AIV_HEAD_SLOTS; ++slot) {
+                const uint32_t base = LocalBase(slot);
+                raw_[slot] = ub[base + T16_RAW_BASE].template ReinterpretCast<uint8_t>();
+                cast_[slot] = ub[base + T16_CAST_BASE].template ReinterpretCast<float>();
+                for (uint32_t buf = 0; buf < TILE_BUFS; ++buf) {
+                    io_[slot][buf] =
+                        ub[base + T16_IO_BASE + buf * T16_IO_BUF_BYTES]
+                            .template ReinterpretCast<bfloat16_t>();
+                    right_[slot][buf] =
+                        ub[base + T16_RIGHT_BASE + buf * T16_RIGHT_BUF_BYTES]
+                            .template ReinterpretCast<bfloat16_t>();
+                    calc_[slot][buf] =
+                        ub[base + T16_CALC_BASE + buf * T16_CALC_BYTES]
+                            .template ReinterpretCast<float>();
+                }
+                gateRaw_[slot] = ub[base + T16_GATE_RAW_BASE].template ReinterpretCast<GateT>();
+                gateFp32_[slot] = ub[base + T16_GATE_FP32_BASE].template ReinterpretCast<float>();
+                alpha_[slot] = ub[base + T16_ALPHA_BASE].template ReinterpretCast<float>();
+                share_[slot] = ub[base + T16_SHARE_BASE].template ReinterpretCast<uint8_t>();
             }
-            gateRaw_[slot] = ub[base + GATE_RAW_BASE].template ReinterpretCast<GateT>();
-            gateFp32_[slot] = ub[base + GATE_FP32_BASE].template ReinterpretCast<float>();
-            alpha_[slot] = ub[base + ALPHA_BASE].template ReinterpretCast<float>();
-            share_[slot] = ub[base + SHARE_BASE].template ReinterpretCast<uint8_t>();
+        } else {
+            for (uint32_t slot = 0; slot < FWD_H_AIV_HEAD_SLOTS; ++slot) {
+                const uint32_t base = LocalBase(slot);
+                raw_[slot] = ub[base + RAW_BASE].template ReinterpretCast<uint8_t>();
+                cast_[slot] = ub[base + CAST_BASE].template ReinterpretCast<float>();
+                calc_[slot][0] = ub[base + CALC_BASE].template ReinterpretCast<float>();
+                for (uint32_t buf = 0; buf < TILE_BUFS; ++buf) {
+                    io_[slot][buf] = ub[base + IO_BASE + buf * IO_BUF_ELEMS * sizeof(bfloat16_t)]
+                                         .template ReinterpretCast<bfloat16_t>();
+                    right_[slot][buf] =
+                        ub[base + RIGHT_BASE + buf * RIGHT_BUF_ELEMS * sizeof(bfloat16_t)]
+                            .template ReinterpretCast<bfloat16_t>();
+                }
+                gateRaw_[slot] = ub[base + GATE_RAW_BASE].template ReinterpretCast<GateT>();
+                gateFp32_[slot] = ub[base + GATE_FP32_BASE].template ReinterpretCast<float>();
+                alpha_[slot] = ub[base + ALPHA_BASE].template ReinterpretCast<float>();
+                share_[slot] = ub[base + SHARE_BASE].template ReinterpretCast<uint8_t>();
+            }
         }
         if constexpr (CompilePolicy::STATE_FP32) {
             stateFp32_[0] = ub[FP32_STATE0_BASE].template ReinterpretCast<float>();
@@ -384,7 +470,7 @@ private:
             p.SetGlobalBuffer(reinterpret_cast<__gm__ PType *>(args_.workspace + pByteOffset));
             AscendC::LocalTensor<PType> rawP =
                 raw_[slot].template ReinterpretCast<PType>();
-            AscendC::DataCopy(rawP[buf * (RAW_BUF_BYTES / sizeof(PType))],
+            AscendC::DataCopy(rawP[buf * (T16_RAW_ELEMS_P)],
                               p[row * FWD_H_V], rows * FWD_H_V);
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot, buf));
@@ -409,28 +495,29 @@ private:
                 PrepareScalarGate(slot, chunk.validTokens);
             }
         }
-        AscendC::Cast(calc_[slot], io_[slot][buf], AscendC::RoundMode::CAST_NONE, elements);
+        AscendC::Cast(CalcBuf(slot, buf), io_[slot][buf], AscendC::RoundMode::CAST_NONE, elements);
         AscendC::PipeBarrier<PIPE_V>();
 
         if constexpr (HAS_P) {
             if constexpr (std::is_same<PType, float>::value) {
                 AscendC::LocalTensor<float> rawF =
                     raw_[slot].template ReinterpretCast<float>();
-                AscendC::Sub(calc_[slot], calc_[slot], rawF[buf * (RAW_BUF_BYTES / sizeof(float))],
+                AscendC::Sub(CalcBuf(slot, buf), CalcBuf(slot, buf),
+                             rawF[buf * RAW_BUF_ELEMS],
                              elements);
             } else {
                 AscendC::LocalTensor<bfloat16_t> rawB =
                     raw_[slot].template ReinterpretCast<bfloat16_t>();
-                AscendC::Cast(cast_[slot], rawB[buf * (RAW_BUF_BYTES / sizeof(bfloat16_t))],
+                AscendC::Cast(cast_[slot], rawB[buf * (T16_RAW_ELEMS_B)],
                               AscendC::RoundMode::CAST_NONE, elements);
                 AscendC::PipeBarrier<PIPE_V>();
 
-                AscendC::Sub(calc_[slot], calc_[slot], cast_[slot], elements);
+                AscendC::Sub(CalcBuf(slot, buf), CalcBuf(slot, buf), cast_[slot], elements);
             }
         }
         AscendC::PipeBarrier<PIPE_V>();
 
-        AscendC::Cast(io_[slot][buf], calc_[slot], AscendC::RoundMode::CAST_RINT, elements);
+        AscendC::Cast(io_[slot][buf], CalcBuf(slot, buf), AscendC::RoundMode::CAST_RINT, elements);
         if constexpr (WRITE_RIGHT) {
             if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
                 uint32_t dstShape[2] = {rows, FWD_H_V};
@@ -440,17 +527,17 @@ private:
                 // 固定写 buf0 会覆盖 tile t 的在途 P 数据（R3 冒烟 v_new/final_state
                 // 双杆爆错根因）。
                 AscendC::Broadcast<float, 2, 1>(
-                    raw_[slot].template ReinterpretCast<float>()[buf * (RAW_BUF_BYTES / sizeof(float))],
+                    raw_[slot].template ReinterpretCast<float>()[buf * RAW_BUF_ELEMS],
                     gateFp32_[slot][row], dstShape, srcShape, share_[slot]);
                 AscendC::PipeBarrier<PIPE_V>();
 
-                AscendC::Mul(calc_[slot], calc_[slot],
-                             raw_[slot].template ReinterpretCast<float>()[buf * (RAW_BUF_BYTES / sizeof(float))],
+                AscendC::Mul(CalcBuf(slot, buf), CalcBuf(slot, buf),
+                             raw_[slot].template ReinterpretCast<float>()[buf * RAW_BUF_ELEMS],
                              elements);
                 AscendC::PipeBarrier<PIPE_V>();
 
-                AscendC::Cast(right_[slot][buf], calc_[slot], AscendC::RoundMode::CAST_RINT,
-                              elements);
+                AscendC::Cast(right_[slot][buf], CalcBuf(slot, buf),
+                              AscendC::RoundMode::CAST_RINT, elements);
             }
         }
 
@@ -628,7 +715,7 @@ private:
         AscendC::GlobalTensor<float> d;
         d.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.workspace + dByteOffset));
         AscendC::LocalTensor<float> rawF = raw_[slot].template ReinterpretCast<float>();
-        AscendC::DataCopy(rawF[buf * (RAW_BUF_BYTES / sizeof(float))],
+        AscendC::DataCopy(rawF[buf * RAW_BUF_ELEMS],
                           d[row * FWD_H_V], TILE_ELEMENTS);
         // STATE_FP32 的 rolling state 常驻 UB，不再从 GM（kDecayWorkspace）读取。
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot, buf));
@@ -654,38 +741,39 @@ private:
             // N3 融合路径：calc 先装 D（raw_ 已由 Load/Prefetch 经 IoReadyEvent 就绪），
             // Axpy 原地并入 state·α，替代旧三步两屏障（省一次向量算子+一次屏障）。
             AscendC::LocalTensor<float> rawF = raw_[slot].template ReinterpretCast<float>();
-            AscendC::Adds(calc_[slot], rawF[buf * (RAW_BUF_BYTES / sizeof(float))],
+            AscendC::Adds(CalcBuf(slot, buf), rawF[buf * RAW_BUF_ELEMS],
                           0.0f, TILE_ELEMENTS);
             AscendC::PipeBarrier<PIPE_V>();
             if (!(chunk.first && args_.tiling.useInitialState == 0)) {
                 // rolling state 跨 tile RAW 同旧路径由 V pipe FIFO 保序；首 chunk 无
                 // 初态时 state 分量为 0，Axpy 跳过（calc=D 即终值）。
-                AscendC::Axpy(calc_[slot], stateFp32_[slot][row * FWD_H_V],
+                AscendC::Axpy(CalcBuf(slot, buf), stateFp32_[slot][row * FWD_H_V],
                               alphaValue, TILE_ELEMENTS);
             }
         }
         if constexpr (!G_FP32_AXPY && CompilePolicy::STATE_FP32) {
             if (chunk.first && args_.tiling.useInitialState == 0) {
-                AscendC::Duplicate(calc_[slot], 0.0f, TILE_ELEMENTS);
+                AscendC::Duplicate(CalcBuf(slot, buf), 0.0f, TILE_ELEMENTS);
             } else {
                 // rolling state 常驻 UB：V pipe 内同序拷贝（RAW 于上一 tile 写回，
                 // 由同 pipe FIFO 保序），不再经 GM kDecayWorkspace。
-                AscendC::Adds(calc_[slot], stateFp32_[slot][row * FWD_H_V], 0.0f, TILE_ELEMENTS);
+                AscendC::Adds(CalcBuf(slot, buf), stateFp32_[slot][row * FWD_H_V], 0.0f,
+                              TILE_ELEMENTS);
             }
         }
         if constexpr (!CompilePolicy::STATE_FP32) {
-            AscendC::Cast(calc_[slot], stateBf16_[slot][row * FWD_H_V],
+            AscendC::Cast(CalcBuf(slot, buf), stateBf16_[slot][row * FWD_H_V],
                           AscendC::RoundMode::CAST_NONE, TILE_ELEMENTS);
         }
         AscendC::PipeBarrier<PIPE_V>();
 
         if constexpr (!G_FP32_AXPY) {
             if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
-                AscendC::Muls(calc_[slot], calc_[slot], alphaValue, TILE_ELEMENTS);
+                AscendC::Muls(CalcBuf(slot, buf), CalcBuf(slot, buf), alphaValue, TILE_ELEMENTS);
             } else if constexpr (STATE_V_FIRST) {
                 for (uint32_t localRow = 0; localRow < TILE_ROWS; ++localRow) {
-                    AscendC::Mul(calc_[slot][localRow * FWD_H_V],
-                                 calc_[slot][localRow * FWD_H_V], gateFp32_[slot], FWD_H_V);
+                    AscendC::Mul(CalcBuf(slot, buf)[localRow * FWD_H_V],
+                                 CalcBuf(slot, buf)[localRow * FWD_H_V], gateFp32_[slot], FWD_H_V);
                 }
             } else {
                 uint32_t dstShape[2] = {TILE_ROWS, FWD_H_V};
@@ -694,14 +782,14 @@ private:
                                                 dstShape, srcShape, share_[slot]);
                 AscendC::PipeBarrier<PIPE_V>();
 
-                AscendC::Mul(calc_[slot], calc_[slot], cast_[slot], TILE_ELEMENTS);
+                AscendC::Mul(CalcBuf(slot, buf), CalcBuf(slot, buf), cast_[slot], TILE_ELEMENTS);
             }
             AscendC::PipeBarrier<PIPE_V>();
 
             {
                 AscendC::LocalTensor<float> rawF = raw_[slot].template ReinterpretCast<float>();
-                AscendC::Add(calc_[slot], calc_[slot],
-                             rawF[buf * (RAW_BUF_BYTES / sizeof(float))], TILE_ELEMENTS);
+                AscendC::Add(CalcBuf(slot, buf), CalcBuf(slot, buf),
+                             rawF[buf * RAW_BUF_ELEMS], TILE_ELEMENTS);
             }
             AscendC::PipeBarrier<PIPE_V>();
         }
@@ -711,7 +799,8 @@ private:
             // 不再占用 MTE3 窗口（S3 尾部只剩 H 的写出）。末 tile 写回后 V pipe FIFO
             // 保证后续（同 head 下一 chunk S3、跨 head 的 S-1 种子）读到最终值，
             // 不再需要 MTE3_GM→MTE2 的跨 pipe 往返同步。
-            AscendC::Adds(stateFp32_[slot][row * FWD_H_V], calc_[slot], 0.0f, TILE_ELEMENTS);
+            AscendC::Adds(stateFp32_[slot][row * FWD_H_V], CalcBuf(slot, buf), 0.0f,
+                          TILE_ELEMENTS);
             if constexpr (!WRITE_H) {
                 if constexpr (CompilePolicy::STORE_FINAL) {
                     // calc_ 不得直接作 MTE3 源：双缓冲后 Load(t+1) 只等 t-1 的 MTE3
@@ -720,8 +809,8 @@ private:
                     // 的 Add 消费完毕）中转：V 拷入 → 桥接 → MTE3 读出；raw_[buf] 的
                     // 下一写者 Load(t+2) 由 free(buf) 门控在本拷贝排空之后。
                     AscendC::LocalTensor<float> rawF = raw_[slot].template ReinterpretCast<float>();
-                    AscendC::Adds(rawF[buf * (RAW_BUF_BYTES / sizeof(float))],
-                                  calc_[slot], 0.0f, TILE_ELEMENTS);
+                    AscendC::Adds(rawF[buf * RAW_BUF_ELEMS],
+                                  CalcBuf(slot, buf), 0.0f, TILE_ELEMENTS);
                     AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot, buf));
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot, buf));
                     AscendC::GlobalTensor<float> finalState;
@@ -729,12 +818,12 @@ private:
                     const uint64_t finalOffset = FwdHStateOffset<STATE_V_FIRST>(
                         args_.tiling, unit.sequence.sequence, head.hv, 0, 0) + row * FWD_H_V;
                     AscendC::DataCopy(finalState[finalOffset],
-                                      rawF[buf * (RAW_BUF_BYTES / sizeof(float))],
+                                      rawF[buf * RAW_BUF_ELEMS],
                                       TILE_ELEMENTS);
                 }
             }
         } else {
-            AscendC::Cast(stateBf16_[slot][row * FWD_H_V], calc_[slot],
+            AscendC::Cast(stateBf16_[slot][row * FWD_H_V], CalcBuf(slot, buf),
                           AscendC::RoundMode::CAST_RINT, TILE_ELEMENTS);
             AscendC::PipeBarrier<PIPE_V>();
             if constexpr (!WRITE_H) {
@@ -745,7 +834,8 @@ private:
             }
         }
         if constexpr (WRITE_H) {
-            AscendC::Cast(io_[slot][buf], calc_[slot], AscendC::RoundMode::CAST_RINT, TILE_ELEMENTS);
+            AscendC::Cast(io_[slot][buf], CalcBuf(slot, buf), AscendC::RoundMode::CAST_RINT,
+                          TILE_ELEMENTS);
             AscendC::GlobalTensor<bfloat16_t> h;
             h.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.h));
             const FwdHChunkSpan next = FwdHBuildChunk(unit.sequence, chunk.chunk + 1);
@@ -894,7 +984,10 @@ private:
     AscendC::TBuf<AscendC::TPosition::VECCALC> ubBuf_{};
     AscendC::LocalTensor<uint8_t> raw_[FWD_H_AIV_HEAD_SLOTS]{};
     AscendC::LocalTensor<float> cast_[FWD_H_AIV_HEAD_SLOTS]{};
-    AscendC::LocalTensor<float> calc_[FWD_H_AIV_HEAD_SLOTS]{};
+    // calc 双份：T16 布局下 tile 内单 buf 无法靠 buf 交替规避跨 tile RAW
+    //（A2 向量指令无硬件 RAW 追踪，vec.h 头部 R6 警示）；T8 布局恒用 [0]
+    //（第二份不初始化，行为与单份等价——InitBuffers 的 else 分支只填 [0]）。
+    AscendC::LocalTensor<float> calc_[FWD_H_AIV_HEAD_SLOTS][TILE_BUFS]{};
     AscendC::LocalTensor<bfloat16_t> io_[FWD_H_AIV_HEAD_SLOTS][TILE_BUFS]{};
     AscendC::LocalTensor<bfloat16_t> right_[FWD_H_AIV_HEAD_SLOTS][TILE_BUFS]{};
     AscendC::LocalTensor<GateT> gateRaw_[FWD_H_AIV_HEAD_SLOTS]{};

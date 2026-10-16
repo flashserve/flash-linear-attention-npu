@@ -207,6 +207,17 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     ChunkFwdHTilingProcessor processor(tilingCtx);
     processor.Process(plainTiling, blockDim, workspaceSize);
 
+    // T16：dense 专用 TILE_ROWS=16 布局选择（arch22 A2/A3 限定）。仅同时满足
+    // ①非 varlen（无尾块、unit 恒切满头）②AIV 每 unit 单 head 链（unitHeads≤2，
+    // 即 slot1/FP32 state1 静态闲置，单 slot 大缓冲 UB 预算成立）时选 1；
+    // 其余形态（变长/4-head unit）恒走原 TILE_ROWS=8 双 slot 路径，行为不变。
+    // unitHeads 由每核 head 数对 FWD_H_AIC_HEAD_SLOTS=4 的切分决定：unit 头数
+    // ≤2 即 headsPerCore ≤2（均分口径 ceil(total/cores)≤2）。
+    // soc 门控沿用 P1 先例（!=ASCEND950）：A5/950 不开，arch35 路径零改动。
+    const bool denseT16Eligible = !plainTiling.isVariedLen &&
+        plainTiling.vNumHead <= 2 * static_cast<int64_t>(blockDim) && plainTiling.seqlen > 0 &&
+        ascendcPlatform.GetSocVersion() != platform_ascendc::SocVersion::ASCEND950;
+
     using namespace GDN;
     const uint64_t tilingKey = GET_TPL_TILING_KEY(
         gateDtypeToken,
@@ -215,7 +226,8 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
         static_cast<uint64_t>(useExp2 ? 1 : 0),
         static_cast<uint64_t>(stateDtypeToken == CHUNK_FWD_H_TPL_FP32 ? 1 : 0),
         static_cast<uint64_t>(stateVFirst ? 1 : 0),
-        static_cast<uint64_t>(storeFinalState ? 1 : 0));
+        static_cast<uint64_t>(storeFinalState ? 1 : 0),
+        static_cast<uint64_t>(denseT16Eligible ? 1 : 0));
     context->SetTilingKey(tilingKey);
     OP_LOGD(context->GetNodeName(), "tilingKey: %lu", static_cast<unsigned long>(tilingKey));
 
