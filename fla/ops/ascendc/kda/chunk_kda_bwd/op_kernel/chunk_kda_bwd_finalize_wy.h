@@ -1563,6 +1563,9 @@ static __simd_vf__ inline void KdaBwdCFinishDAA5(
     }
 }
 
+// dL[i,j] scales each causal column by beta[j].  Load the beta vector once
+// and keep it in a register for the whole tile; broadcasting beta[i] across
+// a row changes the WY derivative whenever beta is non-uniform.
 static __simd_vf__ inline void KdaBwdCBuildZbA5(
     __ubuf__ float *dst, __ubuf__ float *zv, __ubuf__ float *zw,
     __ubuf__ float *beta, uint16_t rows, uint16_t rowStart, uint16_t cols)
@@ -1576,16 +1579,23 @@ static __simd_vf__ inline void KdaBwdCBuildZbA5(
     RegTensor<float> zero;
     MaskReg fullMask = CreateMask<float, MaskPattern::ALL>();
     Duplicate(zero, 0.0f, fullMask);
+    LoadAlign(betaReg, beta);
     for (uint32_t row = 0; row < rows; ++row) {
         const uint32_t validCols = rowStart + row;
-        uint32_t activeCount = validCols;
-        MaskReg lowerMask = UpdateMask<float>(activeCount);
-        LoadAlign(zvReg, zv + row * cols);
-        LoadAlign(zwReg, zw + row * cols);
-        DataCopy<float, LoadDist::DIST_BRC_B32>(betaReg, beta + row);
-        Sub(value, zvReg, zwReg, fullMask);
-        Mul(value, value, betaReg, fullMask);
-        Select(result, value, zero, lowerMask);
+        if (validCols == 0) {
+            // UpdateMask(0) is not a portable empty-mask construction on
+            // RegBase.  The first Zb row is strictly above the diagonal, so
+            // materialize +0.0f explicitly as in KdaBwdCFinishDAA5.
+            result = zero;
+        } else {
+            LoadAlign(zvReg, zv + row * cols);
+            LoadAlign(zwReg, zw + row * cols);
+            Sub(value, zvReg, zwReg, fullMask);
+            Mul(value, value, betaReg, fullMask);
+            uint32_t activeCount = validCols;
+            MaskReg lowerMask = UpdateMask<float>(activeCount);
+            Select(result, value, zero, lowerMask);
+        }
         StoreAlign(dst + row * cols, result, fullMask);
     }
 }
@@ -2789,42 +2799,36 @@ private:
         const uint64_t zB = (slot + kWyZbOffset) / sizeof(DataT);
         auto beta = Plane(0);
         LoadBeta(beta, scalarBase, validLen);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        // A 16 KiB A5 plane holds the whole [<=64, 64] FP32 WY tile at once
+        // (64*64*4B = kIoBytes), so the two 32-row passes collapse into a
+        // single load -> regbase vf -> store pass.  This removes the per-row
+        // scalar mask construction and the 1-repeat masked Duplicate calls.
+        const uint32_t rows = end - begin;
+        if (rows == 0) {
+            return;
+        }
+        auto zv = Plane(1);
+        auto zw = Plane(2);
+        auto out = Plane(3);
+        LoadRowsPair(
+            zv, wsBf16_[zV + begin * 64], rows, 64, 64,
+            zw, wsBf16_[zW + begin * 64], rows, 64, 64);
+        KdaBwdCBuildZbA5(
+            reinterpret_cast<__ubuf__ float *>(out.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(zv.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(zw.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(beta.GetPhyAddr()),
+            static_cast<uint16_t>(rows), static_cast<uint16_t>(begin), 64);
+        Store(wsBf16_[zB + begin * 64], out, rows * 64);
+#else
         for (uint32_t row = begin; row < end; row += kRows) {
             const uint32_t rows = row + kRows <= end ? kRows : end - row;
             auto zv = Plane(1);
             auto zw = Plane(2);
             auto out = Plane(3);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-            LoadRowsPair(
-                zv, wsBf16_[zV + row * 64], rows, 64, 64,
-                zw, wsBf16_[zW + row * 64], rows, 64, 64);
-#else
             Load(zv, wsBf16_[zV + row * 64], rows * 64);
             Load(zw, wsBf16_[zW + row * 64], rows * 64);
-#endif
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-            // dL[i,j] scales each causal column by beta[j].  Reuse the
-            // loaded beta vector for every row; broadcasting beta[i] across
-            // a row changes the WY derivative whenever beta is non-uniform.
-            AscendC::Sub(out, zv, zw, rows * 64);
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Mul(
-                out, out, beta, 64, static_cast<uint8_t>(rows),
-                {1, 1, 1, 8, 8, 0});
-            AscendC::PipeBarrier<PIPE_V>();
-            for (uint32_t r = 0; r < rows; ++r) {
-                const uint32_t logicalRow = row + r;
-                if (logicalRow == 0) {
-                    AscendC::Duplicate(out[r * 64], 0.0f, 64);
-                } else if (logicalRow < 64) {
-                    uint64_t upperMask[2] = {0xffffffffffffffffULL, 0};
-                    upperMask[0] <<= logicalRow;
-                    AscendC::Duplicate(
-                        out[r * 64], 0.0f, upperMask, 1, 1, 8);
-                }
-            }
-            AscendC::PipeBarrier<PIPE_V>();
-#else
             // zW was formed from dW_raw; subtracting it is equivalent to
             // adding the original zW formed from -dW_raw.
             AscendC::Sub(out, zv, zw, rows * 64);
@@ -2848,9 +2852,9 @@ private:
             // the Duplicate -> Adds dependency explicitly, as in mature
             // vector post-processing paths.
             AscendC::PipeBarrier<PIPE_V>();
-#endif
             Store(wsBf16_[zB + row * 64], out, rows * 64);
         }
+#endif
     }
 
     __aicore__ inline void PrepareStateGate(
