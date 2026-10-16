@@ -36,6 +36,8 @@ Finalize 对 h、dh 分别寻址，Dhu 和内嵌 state_scan 均产生 NT-first d
 - Prepare 使用 128 KiB UB。
 - Finalize 使用每 AIV 248 KiB UB、每 AIC 128 KiB L1；双头窗口内每个 AIV 处理一个头。
 - Q/K/beta 常驻片上，矩阵数据直接组织为 NZ，按分带写回输出。
+- A5 Finalize 的 Stage2、Stage5 dAqk、Stage10、dW residual 和 residual 五组 VF
+  在循环内按操作交错展开相邻两行或两块，循环外保留独立单尾；逐行/逐块算术、掩码及写回顺序不变。
 - dg 及参数梯度部分和写入 workspace，采用固定顺序归约，不使用原子累加。
 - 融合反向入口在同一块私有 workspace 内依次铺设 dv0/dq_raw/dAqk/dh/dv_scan/dAkk 六个跨阶段缓冲、
   Kernel B 与 Kernel C 区域；各区域按 512 字节对齐，跨阶段偏移以 512 字节为单位写入 tiling，
