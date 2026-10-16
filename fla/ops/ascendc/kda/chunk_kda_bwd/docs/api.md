@@ -38,7 +38,8 @@ BF16 张量；Finalize 已融合归一化反向，调用方不应重复计算。
 | h 布局 | 与前向一致：[B,Nc,H,K,V] 或 [Nc,H,K,V]，连续存储 |
 | q/k/v/dO、Aqk/Akk、Token/状态缓存 | BF16；gk 为 FP32 |
 | beta / db | BF16 或 FP32，输入输出类型一致 |
-| raw_g / A_log | BF16 或 FP32，执行器按需转为 FP32 |
+| raw_g | BF16 或 FP32，Recompute/Finalize 内部转为 FP32 计算，不生成全量 FP32 副本 |
+| A_log | BF16 或 FP32，执行器按需转为 FP32 |
 | dt_bias | 可选 FP32，共 H×128 个元素 |
 | q_rstd / k_rstd | 成对提供，FP32，形状为 Token 形状去掉最后一维 |
 | dq/dk/dv | BF16 |

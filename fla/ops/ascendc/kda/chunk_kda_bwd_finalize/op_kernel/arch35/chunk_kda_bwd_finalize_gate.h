@@ -11,9 +11,9 @@
 namespace KDA {
 using namespace AscendC::MicroAPI;
 
-template <typename LogT>
+template <typename LogT, typename RawT>
 __simd_vf__ inline void FinalizeStage11VF(
-    __ubuf__ float *dg, __ubuf__ float *raw, __ubuf__ float *bias,
+    __ubuf__ float *dg, __ubuf__ RawT *raw, __ubuf__ float *bias,
     __ubuf__ LogT *aLog, __ubuf__ float *da, __ubuf__ float *db,
     uint16_t rows, float lowerBound)
 {
@@ -44,7 +44,14 @@ __simd_vf__ inline void FinalizeStage11VF(
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(g0, g1, dg + offset);
         Add(sum0, sum0, g0, mask);
         Add(sum1, sum1, g1, mask);
-        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(x0, x1, raw + offset);
+        if constexpr (AscendC::IsSameType<RawT, float>::value) {
+            LoadAlign<float, LoadDist::DIST_DINTLV_B32>(x0, x1, raw + offset);
+        } else {
+            RegTensor<bfloat16_t> packed;
+            LoadIn<bfloat16_t, false>(packed, raw + offset);
+            MaskReg bfMask = CreateMask<bfloat16_t, MaskPattern::ALL>();
+            CastHalf2Float<bfloat16_t>(x0, x1, packed, bfMask);
+        }
         Add(x0, x0, bias0, mask);
         Add(x1, x1, bias1, mask);
         Mul(s0, x0, e, mask);

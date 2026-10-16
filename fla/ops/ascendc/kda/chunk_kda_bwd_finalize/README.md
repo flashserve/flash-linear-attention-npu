@@ -16,7 +16,8 @@ beta、Gate 与参数梯度。可融合 Q/K L2 归一化反向，仅支持 Ascen
 | akk | BF16 | 块内中间量 |
 | h、dh | BF16 | 前向状态与状态梯度 |
 | dv_scan | BF16 | Dhu 输出 |
-| gk、raw_g | FP32 | 累积 Gate 与原始 Gate |
+| gk | FP32 | 累积 Gate |
+| raw_g | BF16 / FP32 | 原始 Gate，加载后在寄存器中转 FP32 计算 |
 | d_aqk、dq_raw | FP32 | Prepare 输出 |
 | beta、a_log | BF16 / FP32 | 衰减与 Gate 参数 |
 | dt_bias | FP32 | Gate 偏置 |

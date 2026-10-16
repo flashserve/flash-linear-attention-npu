@@ -968,7 +968,7 @@ public:
         const ChunkKdaBwdFinalizeTilingData *tiling, AscendC::TPipe *pipe)
     {
         q_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(q));
-        rawG_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(rawG));
+        rawG_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_RAW_G *>(rawG));
         aLog_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_A_LOG *>(aLog));
         dtBias_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dtBias));
         dG_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dG));
@@ -1170,7 +1170,7 @@ private:
         // Both bands leave the complete dg frame resident at 216 KiB; scan it
         // in place for the unchanged full-chunk reverse scan.
         auto dg = UbBytes(KDA_FINALIZE_UB_DG).ReinterpretCast<float>();
-        auto raw = UbBytes(176 * 1024).ReinterpretCast<float>();
+        auto raw = UbBytes(176 * 1024).ReinterpretCast<DTYPE_RAW_G>();
         auto bias = UbBytes(160 * 1024).ReinterpretCast<float>();
         auto log = UbBytes(161 * 1024).ReinterpretCast<DTYPE_A_LOG>();
         auto da = UbBytes(162 * 1024).ReinterpretCast<float>();
@@ -1184,9 +1184,9 @@ private:
             AscendC::DataCopyPadExtParams<DTYPE_A_LOG>{false, 0, 0, static_cast<DTYPE_A_LOG>(0)});
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[0]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[0]);
-        FinalizeStage11VF<DTYPE_A_LOG>(
+        FinalizeStage11VF<DTYPE_A_LOG, DTYPE_RAW_G>(
             reinterpret_cast<__ubuf__ float *>(dg.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(raw.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ DTYPE_RAW_G *>(raw.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(bias.GetPhyAddr()),
             reinterpret_cast<__ubuf__ DTYPE_A_LOG *>(log.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(da.GetPhyAddr()),
@@ -1658,7 +1658,8 @@ private:
 
 
     AscendC::GlobalTensor<float> kRstd_;
-    AscendC::GlobalTensor<float> rawG_, dtBias_, dG_;
+    AscendC::GlobalTensor<DTYPE_RAW_G> rawG_;
+    AscendC::GlobalTensor<float> dtBias_, dG_;
     AscendC::GlobalTensor<DTYPE_A_LOG> aLog_;
     AscendC::GlobalTensor<bfloat16_t> dk_;
     AscendC::GlobalTensor<DTYPE_BETA> dBeta_;

@@ -169,7 +169,6 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
     }
     CHECK_RET(dA && dBias, ACLNN_ERR_INNER_NULLPTR);
     if (!disableRecompute) {
-        rawG = ToFloat32(rawG,ex);
         aLog = ToFloat32(aLog,ex);
         CHECK_RET(rawG && aLog, ACLNN_ERR_INNER_NULLPTR);
         w = AllocTensor(ex, token, DataType::DT_BF16);
@@ -231,10 +230,9 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         qg4, kg4, w4, dO4, dv04, nullptr, gk4, nullptr, nullptr,
         cu, indices, scale, 64, true, false, dh5, nullptr, dvScan4, ex);
     CHECK_RET(dhuResult[0] && dhuResult[2], ACLNN_ERR_INNER_NULLPTR);
-    // Saved mode needs these conversions only in finalize. Keep them at that
+    // Saved mode needs the A_log conversion only in finalize. Keep it at that
     // consumer, after the custom-op platform tiling has been initialized.
     // CANN 9.1 Cast otherwise reports coreNum=0 on a cold BF16-gate call.
-    rawG = ToFloat32(rawG,ex);
     aLog = ToFloat32(aLog,ex);
     CHECK_RET(rawG && aLog, ACLNN_ERR_INNER_NULLPTR);
     const auto finalizeResult = l0op::ChunkKdaBwdFinalize(

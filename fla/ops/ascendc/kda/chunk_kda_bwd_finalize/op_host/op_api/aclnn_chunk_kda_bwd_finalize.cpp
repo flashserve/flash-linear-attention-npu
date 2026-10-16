@@ -60,12 +60,15 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
               ACLNN_ERR_PARAM_INVALID);
     for (const auto &item : {
              std::pair<const aclTensor *, const char *>(gk, "gk"),
-             {rawG, "raw_g"}, {dtBias, "dt_bias"}, {dAqk, "d_aqk"},
+             {dtBias, "dt_bias"}, {dAqk, "d_aqk"},
              {dqRaw, "dq_raw"}, {dGOut, "d_g"}, {dALogOut, "d_a_log"},
              {dDtBiasOut, "d_dt_bias"}}) {
         CHECK_RET(CheckRequired(item.first, DataType::DT_FLOAT, item.second) == ACLNN_SUCCESS,
                   ACLNN_ERR_PARAM_INVALID);
     }
+    CHECK_COND(rawG != nullptr && IsContiguous(rawG) &&
+                   (rawG->GetDataType() == DataType::DT_FLOAT || rawG->GetDataType() == DataType::DT_BF16),
+               ACLNN_ERR_PARAM_INVALID, "raw_g must be contiguous BF16 or FP32");
     CHECK_COND(aLog != nullptr && IsContiguous(aLog), ACLNN_ERR_PARAM_INVALID,
                "a_log must be a contiguous tensor");
     CHECK_COND(aLog->GetDataType() == DataType::DT_FLOAT ||
