@@ -47,6 +47,25 @@ __aicore__ inline bool CanUseA5SharedGateAnchor(
            tiling.lowerBound <= 0.0f;
 }
 
+// Pair-packed B lane: widen the B-pack granularity from one 16-row block
+// (anchor at rowStart+8) to one 32-row pair (anchor at pairBase+16), so each
+// chunk packs B twice instead of four times.  A 32-row span keeps every
+// materialized exp2 factor within +/-16 log2 steps of the anchor
+// (|lowerBound| <= 120*ln2/16 = 5.196 covers the API floor -5.0), so the
+// unclamped FinishScale primitives stay exact.  The lb domain is disjoint
+// from the shared lane above, and the T>=1024 mirror keeps every short
+// sequence on the legacy path.
+__aicore__ inline bool CanUseA5PairPackedB(
+    const ChunkKdaBwdCTilingData &tiling)
+{
+    return tiling.useGateInKernel != 0 && tiling.isVarLen == 0 &&
+           tiling.keyDim == 128 && tiling.chunkSize == kChunkSize &&
+           tiling.seqlen % kChunkSize == 0 &&
+           tiling.seqlen >= static_cast<int32_t>(kA5SharedGateMinSeqlen) &&
+           tiling.lowerBound >= -5.0f &&
+           tiling.lowerBound < kA5SharedGateMinLowerBound;
+}
+
 template <uint32_t K_DIM, bool VARLEN_TND>
 struct ProcessRowBlock {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -386,12 +405,27 @@ public:
                     uint64_t bSlotBase = slotBase;
                     bool useSharedB = false;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-                    useSharedB = CanUseA5SharedGateAnchor(tiling_) &&
+                    const bool usePairPackedB =
+                        !CanUseA5SharedGateAnchor(tiling_) &&
+                        CanUseA5PairPackedB(tiling_);
+                    useSharedB = (CanUseA5SharedGateAnchor(tiling_) ||
+                                  usePairPackedB) &&
                                  validC == kChunkSize &&
                                  processRowBlock == kRowBlock;
                     if (useSharedB) {
+                        // Shared lane: one chunk-wide B frame lives in the
+                        // group-first window's slot.  Pair lane: pair P's B
+                        // frame is packed by the pair's first Prepare window;
+                        // pair 1 uses the odd-parity slot so the dense16
+                        // pipeline's chunk-boundary drain closes its lifetime
+                        // exactly like the shared chunk-wide frame (Pre(w2)
+                        // precedes Post(w1), so a same-parity refill would
+                        // race block1's in-flight read of pair01's frame).
                         const uint64_t groupFirstWindow =
-                            window - rowStart / processRowBlock;
+                            usePairPackedB ?
+                                window - (rowStart % 32U) / processRowBlock +
+                                    rowStart / 32U :
+                                window - rowStart / processRowBlock;
                         const uint32_t bSlot =
                             CIntraWorkspaceSlot(groupFirstWindow, lane);
                         bSlotBase =
@@ -746,9 +780,7 @@ public:
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         if constexpr (!PUBLIC_VARLEN && K_DIM == 128 &&
                       kProcessRowBlock == kRowBlock) {
-            if (tiling_.isVarLen == 0 &&
-                tiling_.useGateInKernel != 0 &&
-                tiling_.seqlen % CHUNK_SIZE == 0) {
+            if (CanUseA5DenseRow16Intra(tiling_)) {
                 ProcessA5DenseRow16Pipeline(
                     coreIdx, coreNum, headNum, headWindowCount,
                     taskGroupCount);
@@ -835,9 +867,7 @@ public:
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                     if constexpr (!PUBLIC_VARLEN && K_DIM == 128 &&
                                   kProcessRowBlock == kRowBlock) {
-                        if (tiling_.isVarLen == 0 &&
-                            tiling_.useGateInKernel != 0 &&
-                            tiling_.seqlen % CHUNK_SIZE == 0) {
+                        if (CanUseA5DenseRow16Intra(tiling_)) {
                             // Both AIVs consume every ready generation, but
                             // each completes one head so their Vector-Post
                             // work can overlap across the two-head window.
@@ -1709,6 +1739,25 @@ private:
                 }
                 return;
             }
+            if (CanUseA5PairPackedB(tiling_) &&
+                validRows == kProcessRowBlock &&
+                task.end - task.begin == CHUNK_SIZE) {
+                PackUpperA5Shared(
+                    task, head, rowStart, validRows, future,
+                    subBlock, slotBase);
+                if (rowStart % (2 * kProcessRowBlock) == 0) {
+                    // Pair 0's B frame shares this window's own slot; pair 1's
+                    // frame goes to the odd-parity slot so its write cannot
+                    // overlap block1's in-flight read of pair 0's frame
+                    // (Pre(w2) precedes Post(w1) in the dense16 pipeline).
+                    const uint64_t bSlotBase =
+                        rowStart == 0 ?
+                            slotBase : SlotBase(slot + kHeadsPerWindow);
+                    PackDenseA5BPair(
+                        task, head, rowStart, subBlock, bSlotBase);
+                }
+                return;
+            }
         }
 #endif
         PackUpperA(task, head, rowStart, validRows, future, subBlock, slotBase);
@@ -2384,6 +2433,147 @@ private:
             }
         }
     }
+
+    // Pair-packed B for the 32-row pair lane (CanUseA5PairPackedB).  One call
+    // packs the B operand consumed by both 16-row blocks of pair
+    // [pairBase, pairBase+32): BLower holds source rows [0, pairBase+32) at
+    // source-row indexing (k * exp2(anchor - gk_s), no beta), BUpper holds
+    // source rows [pairBase, 64) in the shared lane's interleaved layout
+    // (q at 2s, k*beta at 2s+1), all against the single pair-midpoint anchor
+    // gk[pairBase+16].  The VF primitives are the unclamped non-shared forms
+    // used by PackDenseA5B<false>; only the anchor row and the loop bounds
+    // differ.
+    __aicore__ inline void PackDenseA5BPair(
+        const CIntraTask &task, uint32_t head, uint32_t pairBase,
+        uint32_t subBlock, uint64_t slotBase)
+    {
+        static_assert(kProcessRowBlock == kRowBlock,
+                      "A5 fused B-pack requires stable row16 tiles.");
+        auto qData = Plane(0);
+        auto kData = Plane(2);
+        auto gate = Plane(4);
+        auto lowerData = Plane(6);
+        auto pairAnchor = Plane(8);
+        auto beta = Plane(9);
+        constexpr uint32_t rows = kProcessRowBlock;
+        constexpr uint32_t cols = K_DIM / 2;
+        const uint32_t col = subBlock * cols;
+        const uint32_t pairEnd = pairBase + 2 * kProcessRowBlock;
+        Load(
+            pairAnchor,
+            gkGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head,
+                task.begin + pairBase + kProcessRowBlock, col)],
+            cols);
+
+        for (uint32_t sourceRow = 0; sourceRow < CHUNK_SIZE;
+             sourceRow += kProcessRowBlock) {
+            const bool needLower = sourceRow < pairEnd;
+            const bool needUpper = sourceRow >= pairBase;
+            const uint32_t token = task.begin + sourceRow;
+
+            if (needLower && needUpper) {
+                // The pair's second block supplies both contractions.  Keep
+                // one raw k copy for the lower scale before the upper pair
+                // updates kData in place.
+                LoadMatrixRowsPair(
+                    qData,
+                    qGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, token, col)],
+                    rows, cols, TensorRowElements(),
+                    kData,
+                    kGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, token, col)],
+                    rows, cols, TensorRowElements());
+                LoadRows(
+                    gate,
+                    gkGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, token, col)],
+                    rows, cols, TensorRowElements());
+                LoadScalarRows(
+                    beta,
+                    betaGm_[CIntraScalarOffset(
+                        tiling_, task.batchIdx, head, token)],
+                    rows);
+                KdaRegbaseGateScaleLowerPair(
+                    (__ubuf__ float *)qData.GetPhyAddr(),
+                    (__ubuf__ float *)kData.GetPhyAddr(),
+                    (__ubuf__ float *)lowerData.GetPhyAddr(),
+                    (__ubuf__ float *)gate.GetPhyAddr(),
+                    (__ubuf__ float *)pairAnchor.GetPhyAddr(),
+                    (__ubuf__ float *)pairAnchor.GetPhyAddr(),
+                    (__ubuf__ float *)beta.GetPhyAddr(), rows, cols);
+            } else if (needLower) {
+                LoadMatrixRowsPair(
+                    lowerData,
+                    kGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, token, col)],
+                    rows, cols, TensorRowElements(),
+                    gate,
+                    gkGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, token, col)],
+                    rows, cols, TensorRowElements());
+                KdaRegbaseGateScale<true, false>(
+                    (__ubuf__ float *)lowerData.GetPhyAddr(),
+                    (__ubuf__ float *)gate.GetPhyAddr(),
+                    (__ubuf__ float *)pairAnchor.GetPhyAddr(),
+                    (__ubuf__ float *)0, rows, cols);
+            } else {
+                LoadMatrixRowsPair(
+                    qData,
+                    qGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, token, col)],
+                    rows, cols, TensorRowElements(),
+                    kData,
+                    kGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, token, col)],
+                    rows, cols, TensorRowElements());
+                LoadRows(
+                    gate,
+                    gkGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, token, col)],
+                    rows, cols, TensorRowElements());
+                LoadScalarRows(
+                    beta,
+                    betaGm_[CIntraScalarOffset(
+                        tiling_, task.batchIdx, head, token)],
+                    rows);
+                KdaRegbaseGateScalePair(
+                    (__ubuf__ float *)qData.GetPhyAddr(),
+                    (__ubuf__ float *)kData.GetPhyAddr(),
+                    (__ubuf__ float *)gate.GetPhyAddr(),
+                    (__ubuf__ float *)pairAnchor.GetPhyAddr(),
+                    (__ubuf__ float *)beta.GetPhyAddr(), rows, cols);
+            }
+
+            if (needLower) {
+                const uint64_t lowerOffset =
+                    slotBase / sizeof(float) +
+                    tiling_.intraBLowerOffset / sizeof(float) +
+                    static_cast<uint64_t>(sourceRow) * K_DIM + col;
+                StoreRows(
+                    workspaceGm_[lowerOffset], lowerData,
+                    rows, cols, K_DIM);
+            }
+            if (needUpper) {
+                const uint32_t upperRow = 2 * sourceRow;
+                const uint64_t qOffset =
+                    slotBase / sizeof(float) +
+                    tiling_.intraBUpperOffset / sizeof(float) +
+                    static_cast<uint64_t>(upperRow) * K_DIM + col;
+                const uint64_t kOffset =
+                    slotBase / sizeof(float) +
+                    tiling_.intraBUpperOffset / sizeof(float) +
+                    static_cast<uint64_t>(upperRow + 1) * K_DIM + col;
+                StoreRows(
+                    workspaceGm_[qOffset], qData,
+                    rows, cols, 2 * K_DIM);
+                StoreRows(
+                    workspaceGm_[kOffset], kData,
+                    rows, cols, 2 * K_DIM);
+            }
+        }
+    }
 #endif
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -2782,9 +2972,21 @@ private:
             (__ubuf__ float *)dbAcc.GetPhyAddr(), 0.0f, ownedRows);
 
         const bool useSharedB = CanUseA5SharedGateAnchor(tiling_);
-        const uint32_t localAnchor =
+        const bool usePairPackedB =
+            !useSharedB && CanUseA5PairPackedB(tiling_);
+        uint32_t localAnchor =
             rowStart + 8 < task.end - task.begin ?
                 rowStart + 8 : task.end - task.begin - 1;
+        if (usePairPackedB) {
+            // Pair lane packs B against the pair-midpoint anchor gk[32P+16];
+            // finish must rescale against the same anchor.  The unclamped
+            // FinishScale form stays in use (the pair span keeps every split
+            // exponent within +/-16 log2 steps).
+            const uint32_t pairAnchor = (rowStart / 32U) * 32U + 16U;
+            localAnchor =
+                pairAnchor < task.end - task.begin ?
+                    pairAnchor : task.end - task.begin - 1;
+        }
         const uint32_t lowerAnchorRow =
             task.begin + (useSharedB ? CHUNK_SIZE - 8 : localAnchor);
         const uint32_t upperAnchorRow =
