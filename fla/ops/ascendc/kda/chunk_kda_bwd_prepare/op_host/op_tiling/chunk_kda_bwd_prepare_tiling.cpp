@@ -3,6 +3,7 @@
  * Licensed under the BSD 3-Clause License.
  */
 #include "chunk_kda_bwd_prepare_tiling.h"
+#include "../../../chunk_kda_bwd/op_host/chunk_kda_bwd_a_tiling_processor.h"
 
 #include <cmath>
 #include <register/op_impl_registry.h>
@@ -49,6 +50,32 @@ ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
         static_cast<uint32_t>(platform.GetCoreNumAic()),
         static_cast<size_t>(platform.GetLibApiWorkSpaceSize()),
     };
+    const bool arch22 = platform.GetSocVersion() != platform_ascendc::SocVersion::ASCEND950;
+    if (arch22) {
+        if (ctx.stateVFirst) return ge::GRAPH_FAILED;
+        KDA::ChunkKdaBwdATilingData a{};
+        ChunkKdaBwdATilingContext ac{ctx.nodeName, ctx.aqkShape, ctx.vNewShape,
+            ctx.hShape, ctx.dOShape, ctx.cuSeqlensShape, ctx.chunkIndicesShape,
+            ctx.aqkDataType, ctx.vNewDataType, ctx.hDataType, ctx.dODataType,
+            ctx.chunkSize, ctx.aicCoreNum, ctx.sysWorkspaceSize};
+        ChunkKdaBwdATilingProcessor ap(ac, a);
+        OP_CHECK_IF(ap.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
+        *tiling = {};
+        tiling->B = a.isVarLen ? 1 : ctx.dOShape->GetOriginShape().GetDim(0);
+        tiling->NV = a.headNum;
+        tiling->T = a.seqlen;
+        tiling->K = tiling->V = 128;
+        tiling->denseChunkNum = a.chunkNumPerBatch;
+        tiling->totalChunkNum = a.chunkNum;
+        tiling->isVariable = a.isVarLen;
+        tiling->chunkSize = 64;
+        tiling->scale = static_cast<float>(ctx.scale);
+        context->SetTilingKey(101);
+        context->SetBlockDim(ap.GetBlockDim());
+        context->GetWorkspaceSizes(1)[0] = ap.GetWorkspaceSize();
+        context->SetScheduleMode(1);
+        return ge::GRAPH_SUCCESS;
+    }
     ChunkKdaBwdPrepareTilingProcessor processor(ctx, *tiling);
     OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
     context->SetTilingKey(processor.GetTilingKey());

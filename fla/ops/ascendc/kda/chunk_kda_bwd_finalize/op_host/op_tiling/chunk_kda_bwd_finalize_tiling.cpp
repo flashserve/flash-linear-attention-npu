@@ -3,6 +3,7 @@
 #include <cmath>
 #include <register/op_impl_registry.h>
 #include "platform/platform_ascendc.h"
+#include "chunk_kda_bwd_finalize_arch22.h"
 
 namespace optiling {
 
@@ -35,9 +36,9 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
     if (aicCoreNum == 0) {
         // The A5 aclnn direct-launch context may omit platform info.  This
         // checkpoint is A5-only and must still expose all 28 physical AICs.
-        aicCoreNum = 28;
+        aicCoreNum = platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950 ? 28U : 1U;
         OP_LOGW(context->GetNodeName(),
-                "platform info did not report AIC count; use A5 fallback core count 28");
+                "platform info did not report AIC count; fallback to %u", aicCoreNum);
     }
     ChunkKdaBwdFinalizeTilingContext ctx{
         context->GetNodeName(),
@@ -57,6 +58,9 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
         *scale, *lowerBound, *chunkSize, *safeGate, *useGate, *useExp2, *stateVFirst,
         aicCoreNum,
         static_cast<size_t>(platform.GetLibApiWorkSpaceSize())};
+    if (platform.GetSocVersion() != platform_ascendc::SocVersion::ASCEND950) {
+        return TilingFinalizeArch22(context, ctx);
+    }
     ChunkKdaBwdFinalizeTilingProcessor processor(ctx, *tiling);
     OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
     context->SetTilingKey(processor.GetTilingKey());

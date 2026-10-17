@@ -1,6 +1,9 @@
 #include "aclnn_chunk_kda_bwd.h"
 
 #include "chunk_kda_bwd.h"
+#ifdef KDA_BWD_STAGES_ARCH22
+#include "chunk_kda_bwd_stages.h"
+#endif
 
 #include <initializer_list>
 
@@ -166,6 +169,15 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         vNewOptional, hOptional, dO, rawGOptional, aLogOptional,
         dtBiasOptional, cuTensor, chunkTensor, dqOut, dkOut, dvOut, dbOut,
         dgOut, dAForKernel, dBiasForKernel});
+#ifdef KDA_BWD_STAGES_ARCH22
+    CHECK_COND(AppendKdaBwdStages(
+        q, k, v, beta, gk, aqk, akk, wOptional, qgOptional, kgOptional,
+        vNewOptional, hOptional, dO, rawGOptional, aLogOptional, dtBiasOptional,
+        cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, safeGate,
+        useGateInKernel, lowerBound, dqOut, dkOut, dvOut, dbOut, dgOut,
+        dAForKernel, dBiasForKernel, executorPtr),
+        ACLNN_ERR_INNER_NULLPTR, "KDA backward L0 composition failed.");
+#else
     const auto result = l0op::ChunkKdaBwd(
         q, k, v, beta, gk, aqk, akk, wOptional, qgOptional, kgOptional,
         vNewOptional, hOptional, dO,
@@ -183,6 +195,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     CHECK_RET(dtBiasOptional == nullptr || result[6] != nullptr,
               ACLNN_ERR_INNER_NULLPTR);
 
+#endif
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);
     return ACLNN_SUCCESS;

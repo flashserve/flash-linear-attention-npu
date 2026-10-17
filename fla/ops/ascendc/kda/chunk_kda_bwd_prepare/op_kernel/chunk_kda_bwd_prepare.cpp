@@ -5,8 +5,8 @@
 #include "kernel_operator.h"
 
 #if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
-#error "chunk_kda_bwd_prepare is an Ascend 950 / arch35-only kernel"
-#endif
+#include "arch22/chunk_kda_bwd_prepare.h"
+#else
 
 #include "chunk_kda_bwd_prepare_struct.h"
 #include "arch35/chunk_kda_bwd_prepare_cube.h"
@@ -60,3 +60,5 @@ extern "C" __global__ __aicore__ void chunk_kda_bwd_prepare(
             dAqk, dv, dqRaw, &tilingData);
     }
 }
+
+#endif

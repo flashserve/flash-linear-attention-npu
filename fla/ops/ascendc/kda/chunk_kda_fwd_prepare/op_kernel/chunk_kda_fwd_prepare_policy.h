@@ -172,13 +172,15 @@ constexpr uint32_t kArch22TRelay = kArch22CubeRelay;
 // (value head, chunk) 的 U 整块异常而同一 Stage 的 W 正常；写侧/读侧 clean 都
 // 修不了它，因为根因是地址复用而不是可见性。
 //
-// 现在 RHS 独占 slot 尾部 32 KiB，除本代 V6 外没有任何 stage 写它。
+// 现在 RHS 独占 slot 中的 64 KiB，除本代 V6 外没有任何 stage 写它。
 constexpr uint32_t kArch22RhsBase = kArch22CubeRelay + kArch22RawScoreBytes;
-constexpr uint32_t kArch22RhsMatrixBytes = 0x4000; // [64,128] * BF16
+constexpr uint32_t kArch22RhsMatrixBytes = 0x8000; // [64,128] * FP32
 constexpr uint32_t kArch22RhsKBetaG = kArch22RhsBase;
 constexpr uint32_t kArch22RhsVBeta = kArch22RhsBase + kArch22RhsMatrixBytes;
 constexpr uint32_t kArch22RhsBytes = 2 * kArch22RhsMatrixBytes;
-constexpr uint32_t kArch22SlotStride = kArch22RhsBase + kArch22RhsBytes;
+// 逆矩阵在 C7 消费之前不舍入；公开 Akk 仍为 BF16。
+constexpr uint32_t kArch22AkkFp32 = kArch22RhsBase + kArch22RhsBytes;
+constexpr uint32_t kArch22SlotStride = kArch22AkkFp32 + 0x4000;
 
 // payload 在不同 Stage 原址换义，不在 UB/L1 内搬位。
 constexpr uint32_t kX0 = 0x0000;
@@ -239,6 +241,17 @@ constexpr uint32_t kRhsVBeta = 0x4000;
 
 constexpr uint32_t kPeak = 0x7C000;
 } // namespace L1
+
+namespace Arch22L1 {
+// C2 结束后，各 head lane 中 [16,32) KiB 已不再使用；C4 的 B 只占前 4 KiB。
+// FP32 Akk 保留到本 head 的 C7 结束，下一 work 的 C2 才能覆盖。
+constexpr uint32_t kAkkInHeadLane = 0x4000;
+// 一次 C7 只消费一个 pair。两个 FP32 RHS lane 共用原来的 128 KiB 区域，
+// pair 之间由 rhsLaneFree_ 的 MTE1_MTE2 事件保护，C2/C4 不访问此区域。
+constexpr uint32_t kRhsLane[2] = {0x5C000, 0x6C000};
+constexpr uint32_t kRhsVBeta = 0x8000;
+static_assert(kRhsLane[1] + 0x10000 <= L1::kCapacity);
+} // namespace Arch22L1
 
 namespace Arch35Ub {
 constexpr uint32_t kCapacity = 0x3E000; // 248 KiB
