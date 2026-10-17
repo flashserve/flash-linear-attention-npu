@@ -45,12 +45,28 @@ def _write_set_env(vendor_dir: Path) -> None:
     )
 
 
+def _read_load_priority(config_file: Path) -> list[str]:
+    if not config_file.is_file():
+        return []
+    entries: list[str] = []
+    for line in config_file.read_text(encoding="utf-8").splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key.strip() == "load_priority":
+            entries = [item.strip() for item in value.split(",")]
+    return entries
+
+
 def _write_vendors_config(vendors_root: Path, vendor_dirs: list[Path]) -> None:
     vendor_names = sorted(path.name for path in vendor_dirs)
     if not vendor_names:
         raise RuntimeError(f"No vendor directories found under {vendors_root}")
-    (vendors_root / "config.ini").write_text(
-        f"load_priority={','.join(vendor_names)}\n",
+    config_file = vendors_root / "config.ini"
+    merged = list(vendor_names)
+    for name in _read_load_priority(config_file):
+        if name and name not in merged:
+            merged.append(name)
+    config_file.write_text(
+        f"load_priority={','.join(merged)}\n",
         encoding="utf-8",
     )
 
