@@ -156,6 +156,12 @@ RUN if [[ "${PREWARM_THIRD_PARTY}" == "true" ]]; then \
         /opt/fla-ci/third_party/pkg/makeself-release-2.5.0-patch1.tar.gz; \
       download "https://gitcode.com/cann-src-third-party/json/releases/download/v3.11.3/include.zip" \
         /opt/fla-ci/third_party/pkg/include.zip; \
+      # The offline bundle staged into release wheels lists this archive in its
+      # manifest and hard-fails without it, but gtest.cmake only fetches it when
+      # gtest is missing -- and the base image already has gtest.  Seed it here so
+      # a wheel built from this image can carry a complete bundle.
+      download "https://gitcode.com/cann-src-third-party/googletest/releases/download/v1.14.0/googletest-1.14.0.tar.gz" \
+        /opt/fla-ci/third_party/pkg/googletest-1.14.0.tar.gz; \
       clone_at "https://gitcode.com/cann/opbase.git" \
         c8d83f3e57a63a7375e89a2d6937452c0ae2e522 \
         /opt/fla-ci/third_party/opbase; \
