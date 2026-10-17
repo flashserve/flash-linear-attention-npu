@@ -1,0 +1,71 @@
+{
+  "results": {
+    "M1": true,
+    "M2": true,
+    "M3": true,
+    "M4": true,
+    "M5": true,
+    "M6": true,
+    "M7": true,
+    "M8": true
+  },
+  "details": {
+    "M1": {
+      "passed": true,
+      "max_abs": 6464.0,
+      "has_nan": false,
+      "has_inf": false
+    },
+    "M2": {
+      "passed": true,
+      "avg_us": 848.8531333333332,
+      "std_us": 4.175699220755984,
+      "min_us": 840.321,
+      "max_us": 854.112,
+      "ref_us": 1323.7
+    },
+    "M3": {
+      "passed": true,
+      "orig_us": 1331.0,
+      "cur_us": 860.4975000000001,
+      "speedup": 1.5467796245776424,
+      "imp_pct": 35.34954921111946
+    },
+    "M4": {
+      "passed": true,
+      "prefill_ms": {
+        "64": 7.730006,
+        "256": 0.468483,
+        "1024": 0.510456,
+        "2048": 0.583316
+      },
+      "decode_ms": 0.19586090000000003,
+      "params_M": 1.052936,
+      "hbm_MB": 530.37939453125,
+      "ok": true
+    },
+    "M5": {
+      "passed": true,
+      "ok": true,
+      "tested_cases": 11
+    },
+    "M6": {
+      "passed": true,
+      "peak_MB": 4279.26318359375,
+      "input_MB": 40.125,
+      "delta_MB": 4239.13818359375
+    },
+    "M7": {
+      "passed": true,
+      "ok": true
+    },
+    "M8": {
+      "passed": true,
+      "match": true,
+      "diff": 0.0
+    }
+  },
+  "errors": [],
+  "device": "Ascend950PR_9579",
+  "version": "2.0"
+}

@@ -211,11 +211,33 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
         platform.GetCurNpuArch() == NpuArch::DAV_3510;
     const bool useChunk64K128V128Template =
         chunkSize == 64 && shape.kDim == 128 && shape.vDim == 128;
+    // planv901：varlen 单序列（cu=[0,seqlen]，ResolveSequenceInfo 已验证首尾）且整块
+    // 对齐时，token 布局与 dense 完全等价——dense FwdH 调度按 (b,hv) 任务 ×
+    // seqlen/chunk 循环、状态跨 chunk 累载，B=1 单序列下与 cu=[0,T] 的 packed 寻址
+    // 一致，可安全启用 dense 融合快路径（useDenseFwdH/fusePostWuIntoFwdH）。
+    // 多序列 varlen 状态需按序列重置，仍按通用后端处理。tiling.isVarLen 保持不变，
+    // front-end（门控 cumsum/aqk/akk）继续按 cu 寻址。
+    // 导出模式（storeW/U/QG/Kg/VNew/H，ATK 251/259/267 packed_single_export）
+    // 的中间量由通用后端产出，dense FwdH 不覆盖这些输出，须排除（精度回归修正）。
+    // 六个导出全部排除，与 aclnn 层 varlenDenseEquivalent 判定严格同口径，
+    // 避免一边 dense、另一边 stage 分拆的错配。
+    // 另要求 cu 末元素 == seqlen（全覆盖）：本仓 ResolveSequenceInfo 只拒绝越上界，
+    // 部分 coverage 的 varlen 不能按 dense 处理，否则会多算 cu 末尾之后的 token。
+    // B=1：dense 等价仅在 packed 单序列（batch 维为 1）下成立。
+    bool varlenDenseEquivalent = false;
+    if (isVarLen && seqNum == 1 && shape.batch == 1 &&
+        shape.seqlen % chunkSize == 0 &&
+        !storeW && !storeU && !storeQG && !storeKg && !storeVNew && !storeH) {
+        const auto cuTensor = context->GetOptionalInputTensor(INPUT_CU_SEQLENS_IDX);
+        const int64_t *cu = cuTensor != nullptr ? cuTensor->GetData<int64_t>() : nullptr;
+        varlenDenseEquivalent = cu != nullptr && cu[0] == 0 && cu[1] == shape.seqlen;
+    }
     const auto arch35Options = arch35::ConfigureChunkKdaFwdArch35(
         isAscend950, qDesc->GetDataType() == ge::DT_BF16,
         gDesc->GetDataType() == ge::DT_FLOAT, hasALog, useGateInKernel,
-        safeGate, isVarLen, shape.seqlen, shape.vHeads, chunkSize,
-        shape.kDim, shape.vDim, storeQG, storeVNew, storeH);
+        safeGate, isVarLen && !varlenDenseEquivalent, shape.seqlen,
+        shape.vHeads, chunkSize, shape.kDim, shape.vDim, storeQG, storeVNew,
+        storeH);
 
     const uint64_t dataBytes =
         qDesc->GetDataType() == ge::DT_FLOAT ? sizeof(float) : sizeof(uint16_t);
