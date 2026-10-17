@@ -114,7 +114,7 @@ def create_incremental_tensor(shape, dtype=torch.float16, start=1, step=1):
 def create_tensor(shape, dtype=torch.float16):
     # return create_incremental_tensor(shape,dtype)
     # return torch.ones(shape, dtype=dtype)
-    return torch.rand(shape, dtype=dtype)
+    return torch.rand(shape, dtype=dtype) * 2 - 1
 
 
 def test_prepare_wy_repr_bwd_da_variable(
