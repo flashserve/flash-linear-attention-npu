@@ -187,7 +187,7 @@ Flag 的 mode 放在 `kCrossCoreModeAiv`。A5 是 `0x4`，AIV1 的 id 为 base+1
 | VC | 4 | AIV `PIPE_MTE3` → AIC `PIPE_MTE2` | 未置位 | `H` 和当前 `M` 已在 scratch |
 | CV0 | 2 | AIC `PIPE_FIX` → AIV `PIPE_V` | 未置位 | 上 64 行 C 可见 |
 | CV1 | 3 | AIC `PIPE_FIX` → AIV `PIPE_V` | 未置位 | 下 64 行 C 可见 |
-| CUbFree | 5 | 仅 A5。AIV `PIPE_V` → AIC `PIPE_FIX` | prologue 置一次 | `fp32Buf` 已腾出，Cube 可以 Fixpipe |
+| CUbFree | 5 | 仅 A5。AIV `PIPE_MTE3` → AIC `PIPE_FIX` | 本 AIV 的 prologue 装完后置一次，此后每处理完一个 head 再置一次 | `fp32Buf` 已腾出，Cube 可以 Fixpipe |
 
 A3 不使用 `CUbFree`。mode `0x2` 要求两个 AIV 对同一 id 都 set、都 wait。非 owner 不搬数，但每个 head 都要走同一面 flag，否则 AIC 的 wait 不返回。owner 的 VC set 排在自己的 MTE3 之后，AIC 要等两个 set 都完成，因此不会在 `H`/`M` 写完前开读。
 
@@ -197,6 +197,7 @@ A3 不使用 `CUbFree`。mode `0x2` 要求两个 AIV 对同一 id 都 set、都 
 S0:
   owner: 写 H、写 M_1
   双方 Set VC
+  A5 owner: 名下 head 都装完后 Set CUbFree。同一 AIV 的 head 共用一块 fp32Buf，不能在装完前放开 Fixpipe
 
 每个 step = 1 .. N-1:
   AIC Wait VC

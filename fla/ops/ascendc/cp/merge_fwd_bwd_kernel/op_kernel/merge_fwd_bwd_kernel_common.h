@@ -110,7 +110,9 @@ __aicore__ inline void VecSetVc(uint32_t subIdx)
 
 __aicore__ inline void VecSetCUbFree(uint32_t subIdx)
 {
-    AscendC::CrossCoreSetFlag<kCrossCoreModeAiv, PIPE_V>(MixFlag(kCUbFreeFlag, subIdx));
+    // Signal after the MTE3 that drained fp32Buf, not on PIPE_V. A V-pipe set
+    // can arrive while that copy is still reading the buffer.
+    AscendC::CrossCoreSetFlag<kCrossCoreModeAiv, PIPE_MTE3>(MixFlag(kCUbFreeFlag, subIdx));
 }
 
 } // namespace MergeFwBwd
