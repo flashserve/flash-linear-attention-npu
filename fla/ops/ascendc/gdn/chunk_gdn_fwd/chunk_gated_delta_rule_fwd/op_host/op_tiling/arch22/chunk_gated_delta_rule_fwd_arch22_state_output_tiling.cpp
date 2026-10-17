@@ -13,6 +13,9 @@
 #include "securec.h"
 #include "tiling_base/tiling_templates_registry.h"
 #include <algorithm>
+#include <cmath>
+#include <limits>
+#include "op_common/log/log.h"
 #include <register/op_impl_registry.h>
 
 namespace optiling {
@@ -142,14 +145,16 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     const auto *chunkShapePtr = context->GetOptionalInputShape(INPUT_CHUNK_INDICES);
     OP_CHECK_IF(!IsRank(qShapePtr, 4) || !IsRank(kShapePtr, 4) || !IsRank(vShapePtr, 4) ||
                     !IsRank(betaShapePtr, 3) || !IsRank(aShapePtr, 4) || !IsRank(gShapePtr, 3),
-                OP_LOGE(context->GetNodeName(), "q/k/v/A must be rank 4 and beta/g rank 3."),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("ChunkGatedDeltaRuleFwd", "q/k/v/A/beta/g",
+                        "q/k/v/A must be rank 4 and beta/g rank 3."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF((cuShapePtr == nullptr) != (chunkShapePtr == nullptr),
-                OP_LOGE(context->GetNodeName(),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("ChunkGatedDeltaRuleFwd", "cu_seqlens/chunk_indices",
                         "cu_seqlens and chunk_indices must be both present or both absent."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(cuShapePtr != nullptr && (!IsRank(cuShapePtr, 1) || !IsRank(chunkShapePtr, 1)),
-                OP_LOGE(context->GetNodeName(), "cu_seqlens and chunk_indices must be rank 1."),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("ChunkGatedDeltaRuleFwd", "cu_seqlens/chunk_indices",
+                        "cu_seqlens and chunk_indices must be rank 1."),
                 return ge::GRAPH_FAILED);
 
     const auto *attrs = context->GetAttrs();
@@ -157,7 +162,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     const int64_t *qkvLayoutAttr = attrs->GetAttrPointer<int64_t>(ATTR_QKV_LAYOUT);
     const int64_t qkvLayout = qkvLayoutAttr == nullptr ? 0 : *qkvLayoutAttr;
     OP_CHECK_IF(qkvLayout != 0 && qkvLayout != 1,
-                OP_LOGE(context->GetNodeName(), "qkv_layout must be 0 or 1."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITH_INVALID_ATTR("ChunkGatedDeltaRuleFwd", "qkv_layout", std::to_string(qkvLayout), "0 or 1"), return ge::GRAPH_FAILED);
     auto LogicalQkvShape = [qkvLayout](const gert::StorageShape *input) {
         gert::StorageShape logical = *input;
         if (qkvLayout == 1) {
@@ -186,22 +191,25 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     const int64_t *rawGLayoutAttr = attrs->GetAttrPointer<int64_t>(ATTR_RAW_G_LAYOUT);
     const int64_t rawGLayout = rawGLayoutAttr == nullptr ? 0 : *rawGLayoutAttr;
     OP_CHECK_IF(rawGLayout != 0 && rawGLayout != 1,
-                OP_LOGE(context->GetNodeName(), "raw_g_layout must be 0 (BHT) or 1 (BTH)."),
+                OP_LOGE_WITH_INVALID_ATTR("ChunkGatedDeltaRuleFwd", "raw_g_layout", std::to_string(rawGLayout), "0 (BHT) or 1 (BTH)"),
                 return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(batch <= 0 || kNumHead <= 0 || vNumHead <= 0 || seqlen <= 0,
-                OP_LOGE(context->GetNodeName(), "B/H/T dimensions must be positive."),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("ChunkGatedDeltaRuleFwd", "q/v",
+                        "B/H/T dimensions must be positive."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(kShape.GetDim(DIM_BATCH) != batch || kShape.GetDim(DIM_HEAD) != kNumHead ||
                     kShape.GetDim(DIM_TOKEN) != seqlen || kShape.GetDim(DIM_CHANNEL) != kHeadDim,
-                OP_LOGE(context->GetNodeName(), "q and k must have the same shape."),
+                OP_LOGE_FOR_INVALID_SHAPE("ChunkGatedDeltaRuleFwd", "k",
+                        Ops::Base::ToString(kShape), Ops::Base::ToString(qShape)),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(vShape.GetDim(DIM_BATCH) != batch || vShape.GetDim(DIM_TOKEN) != seqlen ||
                     betaShape.GetDim(0) != batch || betaShape.GetDim(1) != vNumHead ||
                     betaShape.GetDim(2) != seqlen || aShape.GetDim(DIM_BATCH) != batch ||
                     aShape.GetDim(DIM_HEAD) != vNumHead || aShape.GetDim(DIM_TOKEN) != seqlen ||
                     aShape.GetDim(DIM_CHANNEL) <= 0,
-                OP_LOGE(context->GetNodeName(), "v/beta/A must match q/k in B/T and value heads."),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("ChunkGatedDeltaRuleFwd", "v/beta/A",
+                        "v/beta/A must match q/k in B/T and value heads."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF((rawGLayout == 0 &&
                  (gShape.GetDim(0) != batch || gShape.GetDim(1) != vNumHead || gShape.GetDim(2) != seqlen)) ||
@@ -212,34 +220,43 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
                         "g layout contract is 0:[B,HV,T] or 1:[B,T,HV]."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(vNumHead % kNumHead != 0,
-                OP_LOGE(context->GetNodeName(), "vNumHead must be divisible by kNumHead."),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("ChunkGatedDeltaRuleFwd", "v",
+                        "vNumHead must be divisible by kNumHead."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(kHeadDim != SUPPORTED_K ||
                     (vHeadDim != SUPPORTED_V128 && vHeadDim != SUPPORTED_V256),
-                OP_LOGE(context->GetNodeName(), "Phase 5 fused path supports K=128 and V=128/256."),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("ChunkGatedDeltaRuleFwd", "q/v",
+                        "Phase 5 fused path supports K=128 and V=128/256."),
                 return ge::GRAPH_FAILED);
 
     const bool outputFinalState = *(attrs->GetAttrPointer<bool>(ATTR_OUTPUT_FINAL_STATE));
     const int64_t chunkSize = *(attrs->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE));
     const double scale = *(attrs->GetAttrPointer<double>(ATTR_SCALE));
+    OP_CHECK_IF(!std::isfinite(scale) || std::abs(scale) > std::numeric_limits<float>::max(),
+                OP_LOGE_WITH_INVALID_ATTR("ChunkGatedDeltaRuleFwd", "scale", std::to_string(scale),
+                                          "finite and within the finite FP32 range"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(chunkSize != CHUNK_64 && chunkSize != CHUNK_128,
-                OP_LOGE(context->GetNodeName(), "chunk_size must be 64 or 128."),
+                OP_LOGE_WITH_INVALID_ATTR("ChunkGatedDeltaRuleFwd", "chunk_size", std::to_string(chunkSize), "64 or 128"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(aShape.GetDim(DIM_CHANNEL) != chunkSize,
-                OP_LOGE(context->GetNodeName(), "A last dimension must equal chunk_size."),
+                OP_LOGE_FOR_INVALID_SHAPE("ChunkGatedDeltaRuleFwd", "A",
+                        Ops::Base::ToString(aShape), "[B,Hv,T," + std::to_string(chunkSize) + "]"),
                 return ge::GRAPH_FAILED);
 
     const bool isVarlen = cuShapePtr != nullptr;
     const int64_t tokenBatch = isVarlen ? cuShapePtr->GetStorageShape().GetDim(0) - 1 : 1;
     OP_CHECK_IF(tokenBatch <= 0 || (isVarlen && batch != 1),
-                OP_LOGE(context->GetNodeName(), "Varlen input requires physical B=1 and at least one sequence."),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("ChunkGatedDeltaRuleFwd", "q/cu_seqlens",
+                        "Varlen input requires physical B=1 and at least one sequence."),
                 return ge::GRAPH_FAILED);
     const int64_t totalChunks = isVarlen
                                     ? chunkShapePtr->GetStorageShape().GetDim(0) / 2
-                                    : (seqlen + chunkSize - 1) / chunkSize;
+                                    : seqlen / chunkSize + (seqlen % chunkSize != 0);
     OP_CHECK_IF(totalChunks <= 0 ||
                     (isVarlen && chunkShapePtr->GetStorageShape().GetDim(0) % 2 != 0),
-                OP_LOGE(context->GetNodeName(), "chunk_indices must contain (seq,chunk) pairs."),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("ChunkGatedDeltaRuleFwd", "chunk_indices",
+                        "chunk_indices must contain (seq,chunk) pairs."),
                 return ge::GRAPH_FAILED);
 
     const auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
@@ -258,15 +275,28 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     OP_CHECK_NULL_WITH_CONTEXT(context, aDesc);
     OP_CHECK_NULL_WITH_CONTEXT(context, gDesc);
     OP_CHECK_IF(qDesc->GetDataType() != ge::DT_FLOAT16 && qDesc->GetDataType() != ge::DT_BF16,
-                OP_LOGE(context->GetNodeName(), "q/k/v must be float16 or bfloat16."),
+                OP_LOGE_WITH_INVALID_INPUT_DTYPE("ChunkGatedDeltaRuleFwd", "q",
+                        Ops::Base::ToString(qDesc->GetDataType()), "float16 or bfloat16"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(kDesc->GetDataType() != qDesc->GetDataType() ||
                     vDesc->GetDataType() != qDesc->GetDataType() ||
                     aDesc->GetDataType() != qDesc->GetDataType(),
-                OP_LOGE(context->GetNodeName(), "q/k/v/A must use the same dtype."),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON("ChunkGatedDeltaRuleFwd", "q/k/v/A/beta/g",
+                        Ops::Base::ToString(qDesc->GetDataType()) + "/" +
+                        Ops::Base::ToString(kDesc->GetDataType()) + "/" +
+                        Ops::Base::ToString(vDesc->GetDataType()) + "/" +
+                        Ops::Base::ToString(aDesc->GetDataType()) + "/" +
+                        Ops::Base::ToString(betaDesc->GetDataType()) + "/" +
+                        Ops::Base::ToString(gDesc->GetDataType()), "q/k/v/A must use the same dtype."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(betaDesc->GetDataType() != ge::DT_FLOAT || gDesc->GetDataType() != ge::DT_FLOAT,
-                OP_LOGE(context->GetNodeName(), "Phase 5 fused path requires float32 beta and g."),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON("ChunkGatedDeltaRuleFwd", "q/k/v/A/beta/g",
+                        Ops::Base::ToString(qDesc->GetDataType()) + "/" +
+                        Ops::Base::ToString(kDesc->GetDataType()) + "/" +
+                        Ops::Base::ToString(vDesc->GetDataType()) + "/" +
+                        Ops::Base::ToString(aDesc->GetDataType()) + "/" +
+                        Ops::Base::ToString(betaDesc->GetDataType()) + "/" +
+                        Ops::Base::ToString(gDesc->GetDataType()), "Phase 5 fused path requires float32 beta and g."),
                 return ge::GRAPH_FAILED);
     const auto *initialDesc = context->GetOptionalInputDesc(INPUT_INITIAL_STATE);
     const bool useInitialState = initialDesc != nullptr;

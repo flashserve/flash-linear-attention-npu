@@ -49,6 +49,17 @@ A5 模型 shape 分别来源于 `推理model.csv` 和 `训练model.csv`，原文
 
 ## 执行
 
+参数校验负向回归直接调用 ACLNN GetWorkspaceSize，不经过 wrapper 的输出推导，
+检查返回码、预定义 EZ 错误码及失败参数名；非法调用不启动 kernel：
+
+```bash
+python3 tests/atk/chunk_gated_delta_rule_fwd/scripts/check_invalid_params.py --device 0
+```
+
+覆盖必选空指针、rank、输入/输出 shape/dtype、stateVFirst、layout、非法 chunkSize、
+NaN/Inf/FP32 溢出 scale、metadata 配对/长度/顺序及状态输出。执行前需安装当前构建的
+wheel，避免 Python wrapper 和 OPP 版本混用。
+
 先执行不依赖 NPU/ATK 的 ACLNN ABI 合同，确认公开参数顺序、ctypes 类型和默认路径映射：
 
 ```bash

@@ -204,6 +204,54 @@ class AclnnCtypesAbiTest(unittest.TestCase):
                                 for name in ("q_hat", "k_hat", "q_rstd", "k_rstd"):
                                     self.assertIsNone(captured["tensors"][name])
 
+    def test_gdn_semantic_errors_reach_host(self):
+        fake_torch = types.ModuleType("torch")
+        fake_torch.float32 = object()
+        q = FakeTensor((1, 2, 65, 128))
+        v = FakeTensor((1, 4, 65, 128))
+        g = FakeTensor((1, 65, 4))
+        cases = (
+            {"k": FakeTensor((2,))},
+            {"v": FakeTensor((1, 3, 64, 96))},
+            {"g": FakeTensor((1,))},
+            {"chunk_size": 65},
+            {"scale": float("nan")},
+            {"cu_seqlens": (0, 65)},
+            {"chunk_indices": (0, 0)},
+            {"cu_seqlens": (0, 64, 1, 65), "chunk_indices": (2, 8)},
+        )
+        def fake_empty(shape, like, **kwargs):
+            self.assertTrue(all(dim >= 0 for dim in shape))
+            return FakeTensor(shape, kwargs.get("dtype", like.dtype))
+
+        def reject_at_host(name, build_args, outputs):
+            self.assertEqual(name, "aclnnChunkGatedDeltaRuleFwd")
+            self.assertEqual(len(build_args(FakeCallContext())), 27)
+            raise RuntimeError("host rejected invalid parameter")
+
+        with mock.patch.dict(sys.modules, {"torch": fake_torch}), \
+                mock.patch.object(ACLNN_CTYPES, "_empty", side_effect=fake_empty), \
+                mock.patch.object(ACLNN_CTYPES, "_call_aclnn", side_effect=reject_at_host) as launch:
+            for changes in cases:
+                inputs = dict(q=q, k=q, v=v, g=g, beta=g)
+                inputs.update(changes)
+                with self.subTest(changes=changes), self.assertRaisesRegex(RuntimeError, "host rejected"):
+                    ACLNN_CTYPES.npu_chunk_gated_delta_rule_fwd(**inputs)
+            self.assertEqual(launch.call_count, len(cases))
+
+    def test_gdn_output_allocation_guards(self):
+        fake_torch = types.ModuleType("torch")
+        q = FakeTensor((1, 2, 65, 128))
+        g = FakeTensor((1, 65, 2))
+        with mock.patch.dict(sys.modules, {"torch": fake_torch}), \
+                mock.patch.object(ACLNN_CTYPES, "_call_aclnn") as launch:
+            for options in ({"chunk_size": 0}, {"chunk_size": -1},
+                            {"chunk_size": 1 << 63}, {"chunk_size": 64.5},
+                            {"chunk_size": "64"}, {"layout": "invalid"}):
+                with self.subTest(options=options), self.assertRaises((ValueError, RuntimeError)):
+                    ACLNN_CTYPES.npu_chunk_gated_delta_rule_fwd(q, q, q, g, g, **options)
+            launch.assert_not_called()
+
     def test_gdn_reserved_gate_arguments_rejected_before_launch(self):
         fake_torch = types.ModuleType("torch")
         q = FakeTensor((1, 2, 65, 128))
