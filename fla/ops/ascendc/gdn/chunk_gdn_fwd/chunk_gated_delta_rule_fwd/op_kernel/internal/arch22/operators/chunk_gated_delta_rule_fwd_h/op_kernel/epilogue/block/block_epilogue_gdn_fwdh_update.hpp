@@ -97,6 +97,14 @@ public:
     CATLASS_DEVICE
     ~BlockEpilogue() {}
 
+    __aicore__ inline void ConfigureGLastExp(GM_ADDR addr)
+    {
+        if (addr != nullptr) {
+            gLastExpGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(addr));
+            hasGLastExp_ = true;
+        }
+    }
+
     template <typename Element>
     CATLASS_DEVICE
     void CopyGmToUb(
@@ -161,7 +169,8 @@ public:
         bool storeFinalState,
         bool useInitialState,
         bool isPing,
-        bool cube2AlreadyWaited
+        bool cube2AlreadyWaited,
+        uint64_t gLastExpIndex
     )
     {
         static constexpr uint32_t ROW_TILE = 16;
@@ -201,34 +210,40 @@ public:
 
         float muls = 1.0f;
         if constexpr (scalarGated) {
-            GElementInput gLastVal = gInputThisSubBlock.GetValue(chunkSize-1);
-            float gLastFloat = 0.0f;
-            if constexpr(std::is_same<GElementInput, float>::value) {
-                gLastFloat = gLastVal;
-            } else if constexpr(std::is_same<GElementInput, half>::value) {
-                gLastFloat = (float)gLastVal;
-            } else if constexpr(std::is_same<GElementInput, bfloat16_t>::value) {
-                gLastFloat = AscendC::ToFloat(gLastVal);
-            }
-            glastUbTensor.SetValue(0, gLastFloat);
+            if (hasGLastExp_) {
+                muls = gLastExpGm_.GetValue(gLastExpIndex);
+            } else {
+                GElementInput gLastVal = gInputThisSubBlock.GetValue(chunkSize-1);
+                float gLastFloat = 0.0f;
+                if constexpr(std::is_same<GElementInput, float>::value) {
+                    gLastFloat = gLastVal;
+                } else if constexpr(std::is_same<GElementInput, half>::value) {
+                    gLastFloat = (float)gLastVal;
+                } else if constexpr(std::is_same<GElementInput, bfloat16_t>::value) {
+                    gLastFloat = AscendC::ToFloat(gLastVal);
+                }
+                glastUbTensor.SetValue(0, gLastFloat);
 
-            AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
-            AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
-            if constexpr (useExp2) {
-                AscendC::Muls(glastUbTensor, glastUbTensor, LN2, 1);
-                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+                AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+                if constexpr (useExp2) {
+                    AscendC::Muls(glastUbTensor, glastUbTensor, LN2, 1);
+                    AscendC::PipeBarrier<PIPE_V>();
+                }
+                AscendC::Exp(glastUbTensor, glastUbTensor, 1);
+                AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
+                AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
+                muls = glastUbTensor.GetValue(0);
             }
-            AscendC::Exp(glastUbTensor, glastUbTensor, 1);
-            AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
-            AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
-            muls = glastUbTensor.GetValue(0);
         }
         if constexpr (kGated) {
             AscendC::SetFlag<AscendC::HardEvent::S_MTE2>(EVENT_ID2 + pingpongFlag);
         }
         if constexpr (scalarGated) {
-            AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
-            AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+            if (!hasGLastExp_) {
+                AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+                AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+            }
         }
 
         if (nActual <= 128 && nActual == outputStride) {
@@ -544,6 +559,8 @@ public:
     }
 
 private:
+    bool hasGLastExp_ = false;
+    AscendC::GlobalTensor<float> gLastExpGm_;
     uint32_t pongBaseEvent = 4;
 
     AscendC::LocalTensor<float> calcUbTensor;

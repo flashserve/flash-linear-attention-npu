@@ -342,7 +342,7 @@ __aicore__ inline void ResolveHoIdlePipeline(
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
 // 每次调用只处理同一物理组的一批parent。保留原KKT后处理和低精度舍入点。
-template <typename InputT, bool kPreparedCumsum>
+template <typename InputT, bool kPreparedCumsum, bool kSharedKkt = false>
 __aicore__ inline void RunKktEpilogueBatch(
     GM_ADDR k, GM_ADDR beta, GM_ADDR rawG, GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
     GM_ADDR gCumsumBht, GM_ADDR userWorkspace,
@@ -350,7 +350,7 @@ __aicore__ inline void RunKktEpilogueBatch(
     const Arch22ChunkGatedDeltaRuleFwdAbcTiling &abc, int64_t begin, int64_t end)
 {
     AscendC::TPipe pipe;
-    NsChunkScaledDotKkt::ChunkScaledDotKkt<InputT, InputT, true> kkt;
+    NsChunkScaledDotKkt::ChunkScaledDotKkt<InputT, InputT, true, kSharedKkt> kkt;
     GM_ADDR aWorkspace = userWorkspace + phase6->aWorkspaceOffset;
     GM_ADDR scoreWorkspace = userWorkspace + phase6->scoreWorkspaceOffset;
     if constexpr (kPreparedCumsum) {
@@ -372,7 +372,7 @@ __aicore__ inline void RunKktEpilogueBatch(
     pipe.Reset();
 }
 
-template <typename InputT, bool kPreparedCumsum>
+template <typename InputT, bool kPreparedCumsum, bool kSharedKkt = false>
 __aicore__ inline void RunFrontBatch(
     GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR rawG, GM_ADDR cuSeqlens,
     GM_ADDR chunkIndices, GM_ADDR gCumsumBht, GM_ADDR A, GM_ADDR w, GM_ADDR u,
@@ -416,7 +416,7 @@ __aicore__ inline void RunFrontBatch(
         if (ownerBegin < ownerEnd) {
             const uint64_t firstEnd = ownerBegin + capacity < ownerEnd
                 ? ownerBegin + capacity : ownerEnd;
-            RunKktEpilogueBatch<InputT, kPreparedCumsum>(
+            RunKktEpilogueBatch<InputT, kPreparedCumsum, kSharedKkt>(
                 k, beta, rawG, cuSeqlens, chunkIndices, gCumsumBht,
                 userWorkspace, phase6, abc, ownerBegin, firstEnd);
         }
@@ -455,7 +455,7 @@ __aicore__ inline void RunFrontBatch(
         if ASCEND_IS_AIV {
             if (end < ownerEnd) {
                 const uint64_t nextEnd = end + capacity < ownerEnd ? end + capacity : ownerEnd;
-                RunKktEpilogueBatch<InputT, kPreparedCumsum>(
+                RunKktEpilogueBatch<InputT, kPreparedCumsum, kSharedKkt>(
                     k, beta, rawG, cuSeqlens, chunkIndices, gCumsumBht,
                     userWorkspace, phase6, abc, end, nextEnd);
             }
@@ -479,11 +479,22 @@ __aicore__ inline void RunPhase6(
     const __gm__ Arch22ChunkGatedDeltaRuleFwdTrailer *phase6 = GetPhase6Trailer(tiling);
     Arch22ChunkGatedDeltaRuleFwdAbcTiling abc{};
     CopyAbcTiling(&phase6->abc, abc);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+    const bool useSharedKkt = kPreparedCumsum && abc.hvPerHk > 1;
+#else
+    constexpr bool useSharedKkt = false;
+#endif
 
     GM_ADDR scoreWorkspace = userWorkspace + phase6->scoreWorkspaceOffset;
     GM_ADDR aWorkspace = userWorkspace + phase6->aWorkspaceOffset;
     GM_ADDR solveWorkspaceBase = userWorkspace + phase6->solveWorkspaceOffset;
     GM_ADDR gCumsumBht = userWorkspace + phase6->gCumsumBhtOffset;
+    GM_ADDR gLastExp = nullptr;
+    GM_ADDR gDecay = nullptr;
+    if constexpr (kPreparedCumsum) {
+        gLastExp = userWorkspace + phase6->gLastExpOffset;
+        gDecay = userWorkspace + phase6->gDecayOffset;
+    }
     uint64_t coreGroup = static_cast<uint64_t>(AscendC::GetBlockIdx());
     if ASCEND_IS_AIV {
         coreGroup /= static_cast<uint64_t>(AscendC::GetSubBlockNum());
@@ -494,7 +505,17 @@ __aicore__ inline void RunPhase6(
     if ASCEND_IS_AIC {
         NsChunkKktCube::ChunkKktCube<InputT> kktCube;
         kktCube.ConfigureInputLayout(abc.qkvLayout == 1);
-        kktCube.Process(k, cuSeqlens, chunkIndices, scoreWorkspace, &abc);
+        if (useSharedKkt) {
+            Arch22ChunkGatedDeltaRuleFwdAbcTiling cubeAbc = abc;
+            cubeAbc.taskNum /= abc.hvPerHk;
+            cubeAbc.totalTiles = static_cast<int64_t>(cubeAbc.taskNum);
+            const uint64_t blocks = static_cast<uint64_t>(AscendC::GetBlockNum());
+            cubeAbc.tilesPerCore = static_cast<int64_t>(
+                cubeAbc.taskNum / blocks + (cubeAbc.taskNum % blocks != 0));
+            kktCube.Process(k, cuSeqlens, chunkIndices, scoreWorkspace, &cubeAbc);
+        } else {
+            kktCube.Process(k, cuSeqlens, chunkIndices, scoreWorkspace, &abc);
+        }
         AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SCORE_READY_FLAG);
     }
     if ASCEND_IS_AIV {
@@ -505,6 +526,7 @@ __aicore__ inline void RunPhase6(
             GdnCumsumPrepare::PrepareArgs prepareArgs{
                 rawG, gCumsumBht,
                 phase6->outputGCumsum != 0 ? gCumsumBth : nullptr,
+                gLastExp, gDecay,
                 cuSeqlens, chunkIndices, abc.B, abc.Hv, abc.T, abc.BT, abc.NT,
                 abc.B * abc.NT, abc.isVarlen, phase6->outputGCumsum};
             GdnCumsumPrepare::Kernel prepare;
@@ -513,7 +535,7 @@ __aicore__ inline void RunPhase6(
         }
     }
     // Every AIC/AIV participant reaches the hand-off.  This publishes all
-    // BHT prefixes before KKT, Solve, or recompute can consume them.
+    // BHT prefixes and any shared raw KKT tiles before consumers can read them.
     if constexpr (kPreparedCumsum) {
         AscendC::SyncAll<false>();
     }
@@ -524,9 +546,15 @@ __aicore__ inline void RunPhase6(
     GdnMegaArch22RecomputeWUTilingData recomputeTiling{};
     CopyRecomputeTiling(&phase5->recompute, recomputeTiling);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
-    RunFrontBatch<InputT, kPreparedCumsum>(
-        k, v, beta, rawG, cuSeqlens, chunkIndices, gCumsumBht, A, w, u,
-        userWorkspace, phase6, abc, recomputeTiling);
+    if (useSharedKkt) {
+        RunFrontBatch<InputT, kPreparedCumsum, true>(
+            k, v, beta, rawG, cuSeqlens, chunkIndices, gCumsumBht, A, w, u,
+            userWorkspace, phase6, abc, recomputeTiling);
+    } else {
+        RunFrontBatch<InputT, kPreparedCumsum>(
+            k, v, beta, rawG, cuSeqlens, chunkIndices, gCumsumBht, A, w, u,
+            userWorkspace, phase6, abc, recomputeTiling);
+    }
 #else
     constexpr bool kStoreFp32SolveInput = false;
     if ASCEND_IS_AIV {
@@ -627,7 +655,7 @@ __aicore__ inline void RunPhase6(
     // 全部实际核仍调用 H，保留原 entry 及唯一 wave 的 SyncAll。
     DispatchFwdH<InputT, TileShapes>(k, w, u, gCumsumBht, gk, initialState, cuSeqlens,
                              chunkIndices, h, vNew, finalState, tiling, userWorkspace,
-                             hoIdleConfigPtr, hoIdleReadyAddr, abc.qkvLayout == 1);
+                             hoIdleConfigPtr, hoIdleReadyAddr, abc.qkvLayout == 1, gLastExp, gDecay);
 
     if (!hoIdleEnabled) {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310

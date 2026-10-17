@@ -434,6 +434,33 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
     workspaceOffset += aicCoreNum * abc.solveWorkspacePerCoreBytes;
     trailer.gCumsumBhtOffset = workspaceOffset;
     workspaceOffset += AlignUp(abc.B * abc.Hv * abc.T * sizeof(float), WORKSPACE_ALIGNMENT);
+    if (rawGLayout == 1) {
+        uint64_t headStride = 0;
+        uint64_t taskCount = 0;
+        uint64_t elementCount = 0;
+        uint64_t bytes = 0;
+        uint64_t alignedBytes = 0;
+        uint64_t nextOffset = 0;
+        OP_CHECK_IF(AlignUpChecked(static_cast<uint64_t>(abc.Hv), 8, &headStride) ||
+                        MulOverflow(static_cast<uint64_t>(abc.B), static_cast<uint64_t>(abc.NT), &taskCount) ||
+                        MulOverflow(taskCount, headStride, &elementCount) ||
+                        MulOverflow(elementCount, sizeof(float), &bytes) ||
+                        AlignUpChecked(bytes, WORKSPACE_ALIGNMENT, &alignedBytes) ||
+                        AddOverflow(workspaceOffset, alignedBytes, &nextOffset),
+                    OP_LOGE(context->GetNodeName(), "Stage P g_last exp workspace overflows uint64."),
+                    return ge::GRAPH_FAILED);
+        trailer.gLastExpOffset = workspaceOffset;
+        workspaceOffset = nextOffset;
+        OP_CHECK_IF(MulOverflow(static_cast<uint64_t>(abc.B), static_cast<uint64_t>(abc.Hv), &elementCount) ||
+                        MulOverflow(elementCount, static_cast<uint64_t>(abc.T), &elementCount) ||
+                        MulOverflow(elementCount, sizeof(float), &bytes) ||
+                        AlignUpChecked(bytes, WORKSPACE_ALIGNMENT, &alignedBytes) ||
+                        AddOverflow(workspaceOffset, alignedBytes, &nextOffset),
+                    OP_LOGE(context->GetNodeName(), "Stage P g decay workspace overflows uint64."),
+                    return ge::GRAPH_FAILED);
+        trailer.gDecayOffset = workspaceOffset;
+        workspaceOffset = nextOffset;
+    }
     trailer.outputGCumsum = (outputGCumsum == nullptr || *outputGCumsum) ? 1 : 0;
     if (useFp32Solve) {
         // 独立保存 FP32 数据版本；只复用已 drain 的跨层 scratch。
