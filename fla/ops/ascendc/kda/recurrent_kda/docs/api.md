@@ -55,6 +55,10 @@ Shape 符号统一引用 [KDA 模型符号表](../../README.md#model-shape-symbo
 | `lower_bound` | float? | `-5.0` | `[-5,0)` when `safe_gate=True` | safe gate 下界 |
 | `state_v_first` | bool | `false` | `{false, true}` | true 为 `[state_capacity,H_v,V,K]`，false 为 `[state_capacity,H_v,K,V]` |
 
+A2/A3 开启 use_qk_l2norm_in_kernel 时，Q/K 按最后一维计算
+x / sqrt(sum(x*x) + 1e-6)，中间计算为 FP32；Q 在归一化后再乘 scale。
+零向量归一化结果为零。A5 在本轮保持原来的归一化实现。
+
 ## 3. aclnn API
 
 ### 3.1 接口签名
@@ -98,7 +102,7 @@ shape、storage、stride 和 offset，kernel 按 tiling
 另外传入独立的 `finalState` 输出，仅为该输出保留一次必要的 `ViewCopy`。`cuSeqlensOptional` 为空时，BSND
 按 batch 行划分序列，TND 视为一条序列；提供时仅在 host 检查 rank/dtype，具体 offset 值由 device kernel 读取，
 因而可在 ACLGraph capture/replay 中变化。首项必须为 0，offset 必须单调不减，末项不得超过输入 token capacity，
-且每个相邻 offset 的差值不超过 8。
+A2/A3 按固定时间窗口处理每段序列，不再限制每段长度为 8；A5 每段仍不超过 8。
 输入、输出、workspace 和 executor 必须保持有效，直到 stream 完成。
 
 ### 3.2 调用示例
@@ -200,7 +204,7 @@ recurrent_kda<<<blockDim, nullptr, stream>>>(
 - 末项小于 capacity 时，kernel 仅处理有效前缀并逐行跳过零长度序列；padding tail 输出不作保证。
 - state 支持 V-first 与 K-first，支持 FP32/BF16，以及原位/非原位 final state。
 - 非连续 state 仅允许 slot/head 外层维存在间隔，最后两维必须为行主序稠密矩阵，且外层地址区间不得重叠。
-- 接口面向 decode / MTP 短序列；dense 单序列长度与 varlen 每段有效序列长度均必须 `<=8`。
+- A2/A3 支持超过 8 token 的 dense/varlen 序列，内部以最多 8 token 的窗口顺序递推；A5 的每段序列长度仍必须 <=8。Token 容量和元数据宽度须能由现有 uint32 tiling 字段表示，地址计算使用 64 位并保留容量校验。
 - 仅支持 `layout="BSND"` 和 `layout="TND"`。
 - `use_gate_in_kernel=false` 时 `A_log/dt_bias/safe_gate` 必须为空或 false。
 

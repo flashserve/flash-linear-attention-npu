@@ -81,8 +81,8 @@ o_t = S @ (q_t * scale)
 - `g/beta` Python 入口支持 `FP32/BF16/FP16`，aclnn 预处理后以 `FP32` 输入 kernel。
 - `A_log/dt_bias` 支持 `FP32`。
 - `cu_seqlens` 为必传、与 q 同设备的 INT32/INT64 Tensor；offset 必须单调不减，末项不得超过输入
-  token capacity，各相邻差值必须不超过 8。接口面向 decode / MTP 短序列，dense 单序列与 varlen
-  每段序列长度均必须小于等于 8。末项小于 capacity 时，仅有效 token 对应的输出和 state
+  token capacity。A2/A3 支持超过 8 token 的 dense 单序列与 varlen 分段，内部按 8-token 窗口递推；
+  A5 每段序列长度仍必须小于等于 8。末项小于 capacity 时，仅有效 token 对应的输出和 state
   更新有定义，padding tail 输出不作保证。
 - 仅支持 `layout="BSND"` 和 `layout="TND"`。
 - 支持 V-first `[state_capacity,HV,V,K]` 和 K-first `[state_capacity,HV,K,V]`，state dtype 为
