@@ -1,0 +1,443 @@
+api: pytorch
+api_type: executor_chunk_bwd_dqkwg
+version: v2.1
+name: aclnn.chunk.bwd.dqkwg
+aclnn_name: ChunkBwdDqkwg
+generate: gen_chunk_bwd_dqkwg
+dtype_numbers: 100
+extra_numbers: 0
+standard:
+  acc: cv_fused_double_benchmark
+
+# SOC 适用范围
+soc:
+  - ascend910b
+  - ascend910_93
+  - ascend950
+
+# 算子功能配置，与算子实现一致
+config:
+  USE_G: true
+  USE_DW: true
+  USE_G_GAMMA: false
+
+inputs:
+  # q: [B, HK, T, K] - Query 张量
+  - name: q
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16]
+      soc_conditions:
+        - { soc: [ascend910b, ascend910_93, ascend950], dtypes: [bf16, fp16] }
+    ranges:
+      valid:
+        values: [ [-5, 5] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 4 ]
+      dim_values:
+        # [B, HK, T, K]
+        values: [ [1, 128], [1, 64], [1, 32768], [128] ]
+      constraints:
+        # K 必须固定为 128
+        - { dim: 3, multiple_of: 128, values: [128] }
+        # 变长模式下 B 必须为 1
+        - { condition: "varlen == true", dim: 0, values: [1] }
+
+  # k: [B, HK, T, K] - Key 张量
+  - name: k
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [ [-5, 5] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 4 ]
+      dim_values:
+        values: [ [1, 128], [1, 64], [1, 32768], [128] ]
+      constraints:
+        - { dim: 3, multiple_of: 128, values: [128] }
+        # dtype 必须与 q 一致
+        - { relation: "dtype == q.dtype" }
+        # shape 必须与 q 一致
+        - { relation: "shape == q.shape" }
+
+  # v: [B, HV, T, V] - Value 张量
+  - name: v
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [ [-5, 5] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 4 ]
+      dim_values:
+        # [B, HV, T, V]
+        values: [ [1, 128], [1, 64], [1, 32768], [128, 256] ]
+      constraints:
+        # V 只能取 128 或 256
+        - { dim: 3, values: [128, 256] }
+        # HV 必须为 HK 的整数倍
+        - { relation: "shape[1] % k.shape[1] == 0" }
+        # HV >= HK
+        - { relation: "shape[1] >= k.shape[1]" }
+
+  # g: [B, HV, T] - Gate 张量
+  - name: g
+    type: tensor
+    required: true
+    dtypes:
+      # is_mix=True 时 g 可为 fp32; is_mix=False 时 g 与 qkv 一致
+      values: [fp32, bf16, fp16]
+    ranges:
+      valid:
+        # g 必须为负数且沿 T 单调递减
+        values: [ [-5, 0] ]
+      invalid:
+        values: [ [0, 5] ]
+    shapes:
+      dim_numbers:
+        values: [ 3 ]
+      dim_values:
+        # [B, HV, T]
+        values: [ [1, 128], [1, 64], [1, 32768] ]
+      constraints:
+        - { relation: "shape[0] == v.shape[0]" }
+        - { relation: "shape[1] == v.shape[1]" }
+        - { relation: "shape[2] == v.shape[2]" }
+
+  # h: [B, HV, num_chunks, K, V] - 隐藏状态张量
+  - name: h
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [ [-5, 5] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 5 ]
+      dim_values:
+        # [B, HV, num_chunks, K, V]
+        values: [ [1, 128], [1, 64], [1, 1024], [128], [128, 256] ]
+      constraints:
+        - { relation: "shape[0] == v.shape[0]" }
+        - { relation: "shape[1] == v.shape[1]" }
+        - { relation: "shape[4] == v.shape[3]" }
+        - { relation: "shape[3] == q.shape[3]" }
+        # num_chunks 由 T 和 chunk_size 决定
+        - { relation: "shape[2] == ceil(v.shape[2] / chunk_size)" }
+
+  # do: [B, HV, T, V] - 输出梯度张量
+  - name: do
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [ [-5, 5] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 4 ]
+      dim_values:
+        values: [ [1, 128], [1, 64], [1, 32768], [128, 256] ]
+      constraints:
+        - { relation: "shape == v.shape" }
+
+  # dh: [B, HV, num_chunks, K, V] - 隐藏状态梯度张量
+  - name: dh
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [ [-5, 5] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 5 ]
+      dim_values:
+        values: [ [1, 128], [1, 64], [1, 1024], [128], [128, 256] ]
+      constraints:
+        - { relation: "shape == h.shape" }
+
+  # dv: [B, HV, T, V] - Value 分支梯度张量
+  - name: dv
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [ [-5, 5] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 4 ]
+      dim_values:
+        values: [ [1, 128], [1, 64], [1, 32768], [128, 256] ]
+      constraints:
+        - { relation: "shape == v.shape" }
+
+  # cu_seqlens: [N+1] - 变长序列累计长度 (可选)
+  - name: cu_seqlens
+    type: tensor
+    required: false
+    dtypes:
+      values: [int64]
+    ranges:
+      valid:
+        # 元素单调递增, 首元素为 0, 末元素为 T
+        values: [ [0, 32768] ]
+      invalid:
+        # 非单调递增或首元素非 0
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 1 ]
+      dim_values:
+        values: [ [2, 1024] ]
+      constraints:
+        # 变长模式下 B 必须为 1
+        - { condition: "present", relation: "q.shape[0] == 1" }
+        # 末元素必须等于 T
+        - { relation: "values[-1] == q.shape[2]" }
+
+  # chunk_indices: [num_chunks * 2] - 分块索引 (可选, 变长模式)
+  - name: chunk_indices
+    type: tensor
+    required: false
+    dtypes:
+      values: [int64]
+    ranges:
+      valid:
+        values: [ [0, 32768] ]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [ 1 ]
+      dim_values:
+        values: [ [2, 8192] ]
+      constraints:
+        # 必须与 cu_seqlens 同时出现或同时缺失
+        - { relation: "present == cu_seqlens.present" }
+
+  # w: 预留权重输入 (当前未启用, 必须传空)
+  - name: w
+    type: tensor
+    required: false
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: []
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: []
+      dim_values:
+        values: []
+      constraints:
+        # 当前实现必须传空
+        - { relation: "must_be_null" }
+
+  # g_gamma: 预留门控参数 (当前未启用, 必须传空)
+  - name: g_gamma
+    type: tensor
+    required: false
+    dtypes:
+      values: [fp32]
+    ranges:
+      valid:
+        values: []
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: []
+      dim_values:
+        values: []
+      constraints:
+        - { relation: "must_be_null" }
+
+  # scale: 缩放系数
+  - name: scale
+    type: attr
+    required: true
+    dtypes:
+      values: [float]
+    ranges:
+      valid:
+        # 建议 1/sqrt(K), K=128 时约 0.088
+        values: [0.0221, 0.03125, 0.0442, 0.0625, 0.088, 0.125]
+      invalid:
+        # 0 或负数非法
+        values: [0, -1]
+
+  # chunk_size: 分块大小
+  - name: chunk_size
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        # 当前仅支持 64 或 128
+        values: [64, 128]
+      invalid:
+        # 其他值非法
+        values: [32, 256, 0]
+
+  # is_mix: g 是否使用混合精度
+  - name: is_mix
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [true, false]
+      invalid:
+        values: []
+
+  # is_fix: 是否定长模式
+  - name: is_fix
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [true, false]
+      invalid:
+        values: []
+
+  # use_exp2: 是否使用 exp2 近似
+  - name: use_exp2
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        # 当前实现要求必须为 false
+        values: [false]
+      invalid:
+        values: [true]
+
+  # transpose_state_layout: 是否转置内部状态布局
+  - name: transpose_state_layout
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        # 当前实现要求必须为 false
+        values: [false]
+      invalid:
+        values: [true]
+
+  # qkv_type: q/k/v 数据类型字符串
+  - name: qkv_type
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: ["bf16", "fp16"]
+      invalid:
+        values: ["fp32", "int32"]
+
+# 非法组合规则
+invalid_combinations:
+  # K 非 128
+  - { condition: "q.shape[3] != 128", expected_error: "K must be 128" }
+  # V 非 128/256
+  - { condition: "v.shape[3] not in [128, 256]", expected_error: "V must be 128 or 256" }
+  # HV 不是 HK 整数倍
+  - { condition: "v.shape[1] % q.shape[1] != 0", expected_error: "HV must be divisible by HK" }
+  # HV < HK
+  - { condition: "v.shape[1] < q.shape[1]", expected_error: "HV must be >= HK" }
+  # 变长模式 B != 1
+  - { condition: "cu_seqlens.present and q.shape[0] != 1", expected_error: "varlen only support B = 1" }
+  # chunk_size 非 64/128
+  - { condition: "chunk_size not in [64, 128]", expected_error: "chunk_size must be 64 or 128" }
+  # use_exp2 为 true
+  - { condition: "use_exp2 == true", expected_error: "use_exp2 must be false" }
+  # transpose_state_layout 为 true
+  - { condition: "transpose_state_layout == true", expected_error: "transpose_state_layout must be false" }
+  # w 非空
+  - { condition: "w.present", expected_error: "w must be null" }
+  # g_gamma 非空
+  - { condition: "g_gamma.present", expected_error: "g_gamma must be null" }
+  # g 为正数
+  - { condition: "g.min > 0", expected_error: "g must be non-positive and monotonically decreasing" }
+
+# 边界场景
+boundary_scenarios:
+  # 最小 T (单 chunk)
+  - { name: "min_T_single_chunk", T: 1, chunk_size: 64 }
+  # T 恰好整除 chunk_size
+  - { name: "T_divisible", T: 1024, chunk_size: 64 }
+  # T 非整除 (尾块)
+  - { name: "T_not_divisible", T: 195, chunk_size: 64 }
+  # chunk_size=128 边界
+  - { name: "chunk_size_128", T: 2048, chunk_size: 128 }
+  # V=256 边界
+  - { name: "V_256", V: 256 }
+  # n_ratio=2 (GVA 拆分)
+  - { name: "n_ratio_2", HV: 16, HK: 8 }
+  # 变长多序列
+  - { name: "varlen_multi_seq", cu_seqlens: [0, 70, 200, 260] }
+  # 变长非整除尾块
+  - { name: "varlen_tail", cu_seqlens: [0, 64, 130, 195] }
+
+# NaN 脏数据注入区域
+nan_injection:
+  # g 输入注入 NaN
+  - { target: "g", expected: "fail", reason: "NaN in gate propagates to valid output" }
+  # do 输入注入 NaN
+  - { target: "do", expected: "fail", reason: "NaN in gradient propagates to valid output" }
+  # h 输入注入 NaN
+  - { target: "h", expected: "fail", reason: "NaN in hidden state propagates to valid output" }
+  # 变长 padding 区注入 NaN (有效区不应被污染)
+  - { target: "padding_region", expected: "pass", reason: "NaN in padding should not affect valid output" }
+
+# 确定性配置
+determinism:
+  loop_nums: 5
+  comparison: numeric
+  reset_state: true
+
+# 性能配置
+performance:
+  warmup: 20
+  collect: 100
+  statistic: 80
+  baseline_source: "to_be_confirmed"
