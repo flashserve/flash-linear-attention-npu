@@ -259,6 +259,13 @@ docker build --platform=linux/amd64 \
   -f ci/Dockerfile.ascend950 .
 ```
 
+`ci/Dockerfile`（A2）是一条双架构配方：在 arm64 机器上构建出 arm64 镜像，在 x86_64 出包机上
+构建出 amd64 镜像，两条命令都不加 `--platform`。镜像里钉着 CANN / torch / torch_npu / gcc，
+构建时断言 gcc 主版本必须是 11——出包产物的 `GLIBCXX <= 3.4.29` 水位就是这套工具链的属性，
+宿主机升级 gcc（13 → `GLIBCXX_3.4.32`）不再影响产物。x86 侧默认从 `download-r2.pytorch.org`
+取官方 `torch==<版本>+cpu` 轮子（PyPI 上 x86 的 torch 轮子带 CUDA 依赖，而 x86 的 torch_npu
+只接受 `torch==<版本>+cpu`），并做 sha256 校验；arm64 侧直接装 `torch==<版本>`。
+
 如果通过 tar 包分发，加载后必须检查准确 tag 和架构：
 
 ```sh
@@ -272,6 +279,35 @@ A5 job 固定设置 `CI_REQUIRE_PRELOADED_IMAGE=true`。若 `fla-npu-ci:9.1.0-95
 A5 Dockerfile 对 PyTorch 和 `torch_npu` wheel 做 SHA256 校验。默认 Python 包源可通过 `PYPI_INDEX_URL` build arg 覆盖，但不能跳过 wheel 版本和校验和约束。
 
 A5 matrix 固定设置 `CI_TMPDIR=/tmp/fla-npu-ci`。A5 Triton/BiShengIR 编译器要求临时目录位于容器 `/tmp` 下；不要修改这个容器路径。`ci/run_ci_container.sh` 会默认把 runner 工作区内的 `.ci-tmp/container-tmp` bind mount 到该路径，使临时数据与 runner 工作区使用同一数据盘；job 结束后会校验真实路径并清理这个目录。手工运行时可用 `CI_HOST_TMPDIR` 覆盖宿主机临时目录，但 `CI_TMPDIR` 仍须是绝对容器路径。
+
+### 出包机（每日包 / Release）的镜像要求
+
+出包流程（`ci/pkg/make_packages.py`）与 CI 共用同一套镜像，宿主机只负责同步代码、启动容器：
+
+| 出包机 | 需要预先构建的镜像 | 覆盖的组合 |
+| --- | --- | --- |
+| arm64 出包机（如 192.168.9.234） | `fla-npu-ci:9.1.0-910b` | 三个 SOC 的 arm 包 |
+| x86_64 出包机（如 192.168.13.247） | `fla-npu-ci:9.1.0-910b`、`fla-npu-ci:9.1.0-950` | 三个 SOC 的 x86 包（950 走 950 镜像） |
+
+镜像缺失时出包脚本在启动编译前就失败（exit 3）并打印该执行哪条 `docker build`，不会回落到
+宿主机的 conda / CANN 环境——宿主机 pip 一次或升级 gcc / CANN 都会改变产物水位。构建与自检：
+
+```sh
+# 在出包机上按本机架构构建，不加 --platform
+docker build --network host -t fla-npu-ci:9.1.0-910b -f ci/Dockerfile .
+
+# x86 出包机还需要 950 镜像
+docker build --network host -t fla-npu-ci:9.1.0-950 -f ci/Dockerfile.ascend950 .
+
+# 自检：架构 / gcc 档 / torch 档 / 基座标记 / readelf
+docker run --rm --network host fla-npu-ci:9.1.0-910b bash -lc \
+  'uname -m; gcc -dumpversion; echo "$FLA_NPU_CI_BASELINE"; which readelf; \
+   python3 -c "import torch, torch_npu; print(torch.__version__, torch_npu.__version__)"'
+```
+
+期望输出：`aarch64` 或 `x86_64`、`11`、`cann=9.1.0-910b;...`、`/usr/bin/readelf`、
+`2.7.1 2.7.1.post5`（x86 侧 torch 为 `2.7.1+cpu`）。构建日志里会记下镜像 ID 与
+`FLA_NPU_CI_BASELINE`，事后能回溯产物是哪套基座编的。
 
 ## 第 5 步：验证容器能看到 NPU
 
