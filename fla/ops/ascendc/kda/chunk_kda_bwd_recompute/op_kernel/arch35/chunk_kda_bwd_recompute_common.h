@@ -12,6 +12,9 @@ namespace KdaBwdRecomputeArch35 {
 constexpr uint32_t kBt = 64;
 constexpr uint32_t kK = 128;
 constexpr uint32_t kV = 128;
+// Leftover VF software-pipeline extra stores can reach ~row 16. Keep the
+// pre-VF q/k copy past that range (buffer is 64 rows).
+constexpr uint32_t kLeftoverSaveRow = 48;
 // Mix-core software pipeline: 2 AIV × 2-deep UB = 4 heads in flight.
 constexpr uint32_t kHeadRotate = 4;
 
@@ -138,6 +141,33 @@ __aicore__ inline uint32_t KbgSlotOffset(uint32_t slot)
 __aicore__ inline uint32_t VbSlotOffset(uint32_t slot)
 {
     return slot == 0 ? kL1VbSlot0Offset : kL1VbSlot1Offset;
+}
+
+// Cube MMAD / Nd2Nz / LoadData round M,K up to 16. Leftover T%64!=0 must
+// pad with zeros so the extra fractal is not stale data from the previous
+// full chunk (KDA leftover A is L×64 in GM; extra K would otherwise leak).
+__aicore__ inline uint32_t PadMmadRows(uint32_t rows)
+{
+    constexpr uint32_t kAlign = 16;
+    if (rows == 0U) {
+        return 0U;
+    }
+    uint32_t padded = (rows + kAlign - 1U) & ~(kAlign - 1U);
+    if (padded > kBt) {
+        padded = kBt;
+    }
+    return padded;
+}
+
+template <typename T>
+__aicore__ inline void ZeroPadUbTail(
+    AscendC::LocalTensor<T> ub, uint32_t validRows, uint32_t padRows, uint32_t cols)
+{
+    if (padRows <= validRows) {
+        return;
+    }
+    AscendC::Duplicate(
+        ub[validRows * cols], static_cast<T>(0), (padRows - validRows) * cols);
 }
 
 // Row-major UB → zN L1 (same fractal scatter as bwd_dhu qg, matches Catlass RowMajor→zN).
