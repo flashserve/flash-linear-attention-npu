@@ -117,7 +117,7 @@ static __simd_vf__ inline void KdaBwdCSafeGateBackwardA5(
             RegTensor<float> raw;
             RegTensor<float> denominator;
             RegTensor<float> sigmoid;
-            RegTensor<float> oneMinus;
+            RegTensor<float> sigmaSq;
             RegTensor<float> upstreamReg;
             RegTensor<float> gradient;
             RegTensor<float> dAReg;
@@ -129,9 +129,8 @@ static __simd_vf__ inline void KdaBwdCSafeGateBackwardA5(
             Exp(denominator, denominator, mask);
             Adds(denominator, denominator, 1.0f, mask);
             Div(sigmoid, one, denominator, mask);
-            Muls(oneMinus, sigmoid, -1.0f, mask);
-            Adds(oneMinus, oneMinus, 1.0f, mask);
-            Mul(gradient, oneMinus, sigmoid, mask);
+            Mul(sigmaSq, sigmoid, sigmoid, mask);
+            Sub(gradient, sigmoid, sigmaSq, mask);
             DataCopy(upstreamReg, upstream + offset);
             if constexpr (SCAN_UPSTREAM) {
                 Add(upstreamAcc, upstreamAcc, upstreamReg, mask);
