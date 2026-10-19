@@ -274,7 +274,8 @@ file(GLOB_RECURSE OP_HOST_CMAKE_FILES
 | 3 | `cmake/scripts/prepare.sh`（`set_env()`） | 为 `ENABLE_EXPERIMENTAL` 补默认值 `OFF` | **可读性修正，不是 bug 修复**：空串在 CMake 里等价 OFF，行为正确，但日志与 `CMakeCache` 里看不出「实验模式关闭」。注：本文件另有 25 个变量同样无默认值，本 PR 只动本方案的关键开关 |
 | 4 | `scripts/ci/parse_changed_ops.py` | 路径解析改为**树根感知 + 算子目录标记定位**：识别 `fla/ops/ascendc/` 与 `experimental/fla/ops/ascendc/` 两种根；用 `op_host / op_kernel / tests / …` 标记定位算子目录边界，末尾回退到真实存在的目录；域清单改为 `cp / gdn / kda`，非算子目录（`common / 3rd / tools / tests / internal_ops`）忽略；`_get_default_name()` 改为返回空串 | 原实现假设 `<域>/<算子>/…`（2 层）或 `experimental/<域>/<算子>/…`（3 层）；本仓是 5/6 层且**算子层级不固定**（`kda/chunk_kda_fwd` 2 层、`gdn/chunk_gdn_fwd/chunk_fwd_o` 3 层、`kda/chunk_kda_bwd/internal_ops/kda_gate_bwd_post` 4 层），按固定下标取会把 `fla` 当域、`ops` 当算子 |
 | 5 | `build.sh`（`parse_changed_files()`） | 删除「无匹配算子时兜底成 `fused_infer_attention_score`」 | 该算子在**本仓不存在**（0 个文件），兜底会把编译指向空目录。改为保持为空，交由 `--PR_PKG` 分支的 `-z` 检查走「本次无可编算子」 |
-| 6 | `experimental/README.md` | 新增：目录约定 + 使用方式 | 让「实验目录怎么放、怎么编」在仓库里可见 |
+| 6 | `build.sh`（`CUSTOM_OPTION` 组装） | `-DENABLE_EXPERIMENTAL` 从「只在 TRUE 时追加」改为**每次都显式下发** | 实测缺陷（A5 验证）：CMake 会把上次的 `TRUE` 留在 `CMakeCache` 里。原逻辑在本次不带 `--experimental` 时**完全不下发**该开关，缓存于是保持 `TRUE`，导致「编过一次实验包后再跑普通 `--pkg` 会继续编实验树」。改为恒下发后实测缓存能从 `TRUE` 切回 `FALSE` |
+| 7 | `experimental/README.md` | 新增：目录约定 + 使用方式 | 让「实验目录怎么放、怎么编」在仓库里可见 |
 
 ### 9.2 有意不修改的
 
@@ -298,13 +299,28 @@ bash build.sh --pkg --experimental --soc=ascend910b --ops=<实验算子名>
 bash build.sh --pkg --experimental --soc=ascend910b
 ```
 
-**验证要点**（本 PR 未在真机跑，需 CI/本地补）：
+**已在 A5 验证服务器实测**（`ascend950` / CANN 9.2.0 / cmake 3.28.3，基线 `main@67dc99d7` + 本 PR 补丁）：
 
-1. **空集合法**：在没有 `experimental/` 目录（或目录为空）时，`-DENABLE_EXPERIMENTAL=TRUE` 配置**不得报错**（递归 glob 匹配空集是合法行为）。
-2. **反向隔离**：在 `experimental/` 下放一个**故意写错**的 `CMakeLists.txt`，用 `-DENABLE_EXPERIMENTAL=FALSE` 构建应仍成功 —— 证明它未被 include。
-3. **同名算子**：两棵树放同名算子，验证不出现 target 重名。
-4. **依赖补挂**：实验算子声明一个实验树内依赖，确认被 `:362` 追加进 `ASCEND_OP_NAME` 并被 `add_subdirectory`；再声明一个只在稳定树有的依赖，确认被静默跳过（预期行为，但要知道）。
-5. **发现结果可见**：临时加 `message(STATUS "OP_DIR_LIST=${OP_DIR_LIST}")` 确认实验算子确实进了清单，而不是「构建成功但一个没编」。
+| # | 验证项 | 结果 |
+| --- | --- | --- |
+| 1 | `bash -n build.sh` / `prepare.sh`、`py_compile` | ✅ 通过 |
+| 2 | **未打补丁**代码 + `--experimental` | ✅ 复现原缺陷：`add_subdirectory given source "experimental/attention" which is not an existing directory` |
+| 3 | 打补丁 + 真实实验算子（3 层深 `kda/.../internal_ops/kda_gate_bwd_post`） | ✅ configure 成功，`OP_DIR_LIST` **只含该实验算子**（隔离生效） |
+| 4 | 反向隔离：实验树根放非法 `CMakeLists.txt` + 关闭开关 | ✅ configure 成功（证明未 include） |
+| 5 | 同上 + 打开开关 | ✅ 报错 `experimental/CMakeLists.txt:1 Parse error`（证明确实 include） |
+| 6 | `--PR_PKG --experimental` 指向 3 层深实验算子 | ✅ 解析出 `kda_gate_bwd_post` |
+| 7 | `--PR_PKG` 空清单 | ✅ `exit 200`「No custom packages to build」，**不再出现** `fused_infer_attention_score` |
+| 8 | `--PR_PKG` 只改稳定树路径（实验模式） | ✅ 正确忽略 |
+| 9 | **有 tiling 源、无依赖**的实验算子全量编包（`kda_gate_cumsum`） | ✅ `rc=0`，产出 `build_out/fla_npu_linux-x86_64.run` |
+| 10 | **有依赖**的实验算子编包 | ❌ 失败，根因是 §12 的 G2：依赖被静默丢弃 → 没有任何算子产生 tiling OBJECT 库 → `cust_opmaster` 链接报 `cannot find -lophost_transformer_tiling_obj` |
+| 11 | `ENABLE_EXPERIMENTAL` 缓存残留（修 #6 前后对比） | ✅ 修后：缓存 `TRUE` 时跑普通 `--pkg` 会显式下发 `FALSE` 并切回 |
+
+**⚠️ 修正一条此前的错误预期**：`experimental/` 为空（0 个算子）时，`--experimental` **不能**成功配置。
+递归 glob 匹配空集本身不报错（这点成立），但 0 个算子会导致 opbuild 不产出 `aic-*-ops-info.ini`，
+随后 `generate_transformer_adapt_py` 抛 `OpFileNotExistsError`，configure 以 `Error: ops prepare build failed` 结束。
+**结论：实验树至少要有一个可编算子；空树不是受支持的状态。** 若需要「开关开着但暂时没实验算子」，应把开关关掉。
+
+**仍需有权限环境补的验证**：CI 实验 job 下的完整链路、两棵树同名算子互不冲突、common 隔离（若采纳 §3.4 的方案）。
 
 ## 11. 未完成 / 后续项
 
@@ -313,6 +329,8 @@ bash build.sh --pkg --experimental --soc=ascend910b
 | **CI 实验 job** | 当前 `.github/workflows/ci.yml` 没有任何 job 传 `--experimental`，这条链**从未被验证**。需新增独立 job（独立产物，不与稳定包合并） |
 | **`parse_changed_ops.py` 无 CI 执行路径** | 仅在 `--PR_PKG` + experimental 时调用（`build.sh:1022`）。新增实验 job 时必须先验证它 |
 | **common 镜像校验门禁** | 建议加离线断言：若存在 `experimental/<...>/common`，断言它是稳定树同名目录的超集 |
+| **【G2】依赖回退（建议优先）** | A5 实测表明「依赖只在稳定树有」会直接让打包链接失败（§12）。建议改 `func.cmake:165` 的 EXISTS 判据为「先试实验树、不存在则回退稳定树」，并**必须打印一条 message**（否则只是把静默跳过换成另一种静默）。约 5 行 |
+| **common 隔离（G1）** | `cmake/config.cmake:41` 把 kernel 公共头写死在稳定树 `fla/ops/ascendc/common/`，实验算子改公共头会污染稳定包。两种修法见审计报告 §3.4（切换 / 叠加，推荐叠加） |
 | **Python / wheel 侧** | `torch_custom/fla_npu/` 完全不感知 `--experimental`。实验算子要能被 Python 调到，需要 Stable-ABI 三件套（`csrc/src/stable_<op>.cpp` + `_stable.py` wrapper + `_ASCENDC_OPS` 一行）+ 实验 OPP 装载隔离决策 |
 | **`--static`** | 与实验算子未做适配 |
 
@@ -322,11 +340,14 @@ bash build.sh --pkg --experimental --soc=ascend910b
 | --- | --- | --- |
 | 实验树根层放 `CMakeLists.txt` | 多出一个名叫 `experimental` 的「算子」 | §5.2 约定禁止 |
 | 实验树 common 不是超集 | 编译期缺头，且不报「路径不存在」 | §8.4 |
-| 依赖只在稳定树有 | 静默丢依赖，构建成功 | §8.3 |
-| `--ops` 写了实验树里没有的名字 | 静默产出空集，构建「成功」但没编东西 | §6 闸 4；用 §10.5 的 `message` 自查 |
+| **【G2】依赖只在稳定树有** | **不只是丢依赖：实测会直接让打包链接失败。** A5 实测：实验算子 `kda_gate_bwd_post` 声明依赖 `kda/chunk_kda_bwd`（后者带 `chunk_kda_bwd_tiling.cpp`）。实验模式下依赖被静默丢弃 → 该 tiling 源编译 0 次 → 没有任何算子创建 `ophost_transformer_tiling_obj` → `cust_opmaster` 链接报 `cannot find -lophost_transformer_tiling_obj`。稳定模式下同一算子因为补挂了依赖而打包成功 | ① 把依赖一起复制进实验树；或 ② 修 `func.cmake:165` 增加「实验树不存在则回退稳定树」并打 message（见 §11 后续项） |
+| `--ops` 写了实验树里没有的名字 | 静默产出空集，构建「成功」但没编东西 | §6 闸 4；用 §10 的 `message` 自查 |
+| 实验树为空 | configure 在 prepare 阶段失败（0 算子 → 无 `ops-info.ini` → adapt py 报错），**不是** glob 的问题 | 实验树至少放 1 个可编算子；不要开着开关跑空树 |
 | `--pkg-type=rpm/deb` 搭配 `--experimental` | 外层守卫禁止；但 `--pkg-type=all` **会绕过**该检查（守卫条件是 `!= run && != all`） | 使用者自行避免 |
 | 实验包与稳定包共用根级 `common/` | 改 common 会同时影响两者 | 改后两种包都要验 |
 | 依赖算子的版本门控 | **本仓没有**参考仓的 `DEPENDENCY` 阶段门控，被依赖算子会照常走完整检查 | 不要按参考仓的预期排障 |
+| `ENABLE_EXPERIMENTAL` 缓存残留 | 修之前：编过一次实验包后，普通 `--pkg` 会继续编实验树 | 已由 §9.1 第 6 项修复（恒下发该开关），实测缓存能切回 FALSE |
+| 内存不足的机器上全量构建 | A5 机器 1.5 GB 内存 / 256 核，默认并行度会 OOM（实测出现 `Error 137` 与一次机器重启） | 用 `-j2`～`-j4`；`prepare.sh` 内部并行度是 `nproc*2` 且无覆盖开关 |
 
 ## 附录 A · 审计中发现但未纳入本 PR 的遗留问题
 

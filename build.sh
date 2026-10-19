@@ -1439,9 +1439,11 @@ if [ -n "${VERSION}" ];then
     CUSTOM_OPTION="${CUSTOM_OPTION} -DVERSION=${VERSION}"
 fi
 
-if [[ "$ENABLE_EXPERIMENTAL" == "TRUE" ]]; then
-    CUSTOM_OPTION="${CUSTOM_OPTION} -DENABLE_EXPERIMENTAL=TRUE"
-fi
+# 始终显式下发该开关（而不是只在 TRUE 时追加）。
+# 原因：CMake 会把上一次的 -DENABLE_EXPERIMENTAL=TRUE 留在 CMakeCache 里；
+# 若本次不带 --experimental 就完全不下发，缓存会保持 TRUE，
+# 于是「编过一次实验包后再跑普通 --pkg」会继续编实验树，与用户预期相反。
+CUSTOM_OPTION="${CUSTOM_OPTION} -DENABLE_EXPERIMENTAL=${ENABLE_EXPERIMENTAL}"
 
 if [ -n "${ascend_compute_unit}" ];then
     CUSTOM_OPTION="${CUSTOM_OPTION} -DASCEND_COMPUTE_UNIT=${ascend_compute_unit}"
