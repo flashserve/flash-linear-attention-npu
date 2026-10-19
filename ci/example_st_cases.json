@@ -403,5 +403,15 @@
       "--seed",
       "42"
     ]
+  },
+  {
+    "name": "chunk_kda_fwd_empty_seq_guard",
+    "description": "ChunkKDA 零长度序列看护：首段/段间/尾段三种零长度序列位置，含空序列与去掉空序列两种 cu_seqlens 的 o/u/v_new 必须逐字节一致且全部有限。",
+    "script": "examples/chunk_kda_empty_seq.py",
+    "enabled": true,
+    "extra_args": [
+      "--seed",
+      "42"
+    ]
   }
 ]
