@@ -23,16 +23,6 @@ HEADS = 96
 CHUNK_SIZE = 64
 
 
-def build_chunk_indices(cu_seqlens, chunk_size):
-    """按 fla 约定生成 chunk_indices: (NT, 2)，每行 [seq_idx, chunk_idx_in_seq]。"""
-    cu = torch.as_tensor(cu_seqlens, dtype=torch.long)
-    lens = cu[1:] - cu[:-1]
-    per_seq = (lens + chunk_size - 1) // chunk_size
-    flat = torch.cat([torch.arange(n, dtype=torch.long) for n in per_seq.tolist()])
-    seq_idx = flat.eq(0).cumsum(0) - 1
-    return torch.stack([seq_idx, flat], dim=1)
-
-
 def resolve_device(raw):
     text = str(raw)
     if text.isdigit():
@@ -54,9 +44,6 @@ def main(argv=None):
     boundaries = list(TAIL_BOUNDARIES)
     tokens = boundaries[-1]
     shape = (tokens, HEADS, 128)
-    chunk_indices = tuple(
-        tuple(row) for row in build_chunk_indices(boundaries, CHUNK_SIZE).tolist()
-    )
 
     gen = torch.Generator(device="cpu").manual_seed(args.seed)
     q, k = [
@@ -79,7 +66,7 @@ def main(argv=None):
         q, k, v, g, beta,
         scale=128 ** -0.5, chunk_size=CHUNK_SIZE, layout="TND",
         initial_state=None, output_final_state=False,
-        cu_seqlens=boundaries, chunk_indices=chunk_indices,
+        cu_seqlens=boundaries,
         safe_gate=True, lower_bound=-5.0, use_gate_in_kernel=True,
         A_log=a_log, dt_bias=dt_bias, disable_recompute=True,
         return_intermediate_states=False, state_v_first=False,
