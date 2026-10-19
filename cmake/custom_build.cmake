@@ -289,14 +289,11 @@ foreach (OP_DIR ${OP_DIR_LIST})
     endif()
 endforeach ()
 
-if(ENABLE_EXPERIMENTAL)
-    # genop新增experimental算子分类
-    # add_subdirectory(${op_class})
-    add_subdirectory(experimental/attention)
-else()
-    # genop新增非experimental算子分类
-    # add_subdirectory(${op_class})
-endif()
+# 说明：本仓没有 attention / mhc / mamba 这类「模块聚合器」分类——
+# 稳定树（fla/ops/ascendc/**）与实验树（experimental/fla/ops/ascendc/**）下的算子
+# 都由 op_add_subdirectory() 的 glob 一并发现，并经上面的 foreach 逐算子挂载。
+# 因此这里不需要按 ENABLE_EXPERIMENTAL 分支，也不应有 add_subdirectory(experimental/attention)。
+# 设计见 docs/architecture/experimental 构建适配设计.md。
 
 # 编译AICPU算子
 if("${ASCEND_OP_NAME}" STREQUAL "attention_worker_scheduler" OR "${ASCEND_OP_NAME}" STREQUAL "ffn_worker_scheduler")

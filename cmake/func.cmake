@@ -69,12 +69,12 @@ function(op_add_subdirectory OP_LIST OP_DIR_LIST)
 
     if(ENABLE_EXPERIMENTAL)
         message(STATUS "Build experimental module")
-        file(GLOB OP_HOST_CMAKE_FILES
-        "${CMAKE_CURRENT_SOURCE_DIR}/experimental/ffn/**/op_host/CMakeLists.txt"
-        "${CMAKE_CURRENT_SOURCE_DIR}/experimental/chunk_gated_delta_rule/**/op_host/CMakeLists.txt"
-        "${CMAKE_CURRENT_SOURCE_DIR}/experimental/gmm/**/op_host/CMakeLists.txt"
-        "${CMAKE_CURRENT_SOURCE_DIR}/experimental/moe/**/op_host/CMakeLists.txt"
-        "${CMAKE_CURRENT_SOURCE_DIR}/experimental/posembedding/**/op_host/CMakeLists.txt"
+        # 实验树是稳定树的同构镜像（见 docs/architecture/experimental 构建适配设计.md §4.1）。
+        # 这里只做一条递归匹配：根目录下任意深度的 CMakeLists.txt 都算候选，
+        # 具体哪个目录算算子，由下面 foreach 里的 op_host 判定与 tests 过滤决定。
+        # 收益：新增实验算子、甚至新增实验域，都不需要修改本文件。
+        file(GLOB_RECURSE OP_HOST_CMAKE_FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/experimental/CMakeLists.txt"
         )
     else()
         file(GLOB_RECURSE OP_HOST_CMAKE_FILES

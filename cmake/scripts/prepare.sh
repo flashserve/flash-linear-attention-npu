@@ -146,6 +146,10 @@ function set_env() {
     CONVERT_ASCEND_COMPUTE_UNIT="$(convert_string ${ASCEND_COMPUTE_UNIT})"
 
     CONVERT_ASCEND_OP_NAME="$(convert_string ${ASCEND_OP_NAME})"
+
+    # ENABLE_EXPERIMENTAL 是整个链路里唯一没有默认值的开关（config.cmake 会无条件透传它）。
+    # 这里兜一次默认值，避免二次 configure 取到空串、导致两次选出的算子集不一致。
+    ENABLE_EXPERIMENTAL="${ENABLE_EXPERIMENTAL:-OFF}"
 }
 
 function build() {
