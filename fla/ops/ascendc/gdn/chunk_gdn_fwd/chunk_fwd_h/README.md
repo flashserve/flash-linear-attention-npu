@@ -85,7 +85,7 @@ host 会在需要时连续化，`h/v_new/final_state` 输出必须是连续 ND�
 
 ## 变长序列
 
-变长模式使用 BNSD 容器且要求 `B=1`。`cu_seqlens` 必须从 0 开始、以 `T` 结束并严格递增。`chunk_indices` 若提供，必须严格等于由 `cu_seqlens` 和 `chunk_size=64` 推导出的 sequence-major `(seq_id, chunk_id)` 序列。
+变长模式使用 BNSD 容器且要求 `B=1`。`cu_seqlens` 必须从 0 开始、以 `T` 结束且非递减，相邻两项相等表示零长度序列。`chunk_indices` 若提供，必须严格等于由 `cu_seqlens` 和 `chunk_size=64` 推导出的 sequence-major `(seq_id, chunk_id)` 序列。
 
 ## 内核分工
 
