@@ -229,8 +229,10 @@ experimental/ + ../fla/ops/ascendc/gdn/...  →  fla/ops/ascendc/gdn/...
 
 | 行 | 判据 | 含义 |
 | --- | --- | --- |
-| `func.cmake:165-167` | `${CMAKE_CURRENT_SOURCE_DIR}/${depend_info_update}/op_host/CMakeLists.txt` 不存在 | **唯一的存在性判据**（注意本仓只看 `op_host/`，没有参考仓那条 `src/<dep>/CMakeLists.txt`）。不打印任何 message，构建照样成功，只是少挂一个算子 |
-| `func.cmake:170-174` | 仅 `NOT BUILD_OPEN_PROJECT`：`${TOP_DIR}/asl/ops/cann/ops/built-in/tbe/impl/ascendc/<dep>` 存在 | 非 open 路径下走 built-in 实现，跳过本仓源码。**与 experimental 无关** |
+| `func.cmake`（依赖解析后） | `${CMAKE_CURRENT_SOURCE_DIR}/<解析结果>/op_host/CMakeLists.txt` **或** `src/<解析结果>/CMakeLists.txt` 都不存在 | 唯一的 skip 判据（与参考仓一致，两个条件任一成立即算命中）。原来 skip 时不打印任何 message |
+| `func.cmake`（非 open 分支） | 仅 `NOT BUILD_OPEN_PROJECT`：`${TOP_DIR}/asl/ops/cann/ops/built-in/tbe/impl/ascendc/<dep>` 存在 | 非 open 路径下走 built-in 实现，跳过本仓源码。**与 experimental 无关** |
+
+**注意**：本 PR 之后，实验模式下的「解析不到」不再是全静默 —— 若实验树里没有该依赖、但稳定树里有，`fla_resolve_depend_path()` 会**回退到稳定树并打一条 message**（每个依赖只报一次）。两个都不存在时才仍然静默 `continue()`。
 
 ### 8.4 common 在实验模式下的行为与风险
 
@@ -276,6 +278,7 @@ file(GLOB_RECURSE OP_HOST_CMAKE_FILES
 | 5 | `build.sh`（`parse_changed_files()`） | 删除「无匹配算子时兜底成 `fused_infer_attention_score`」 | 该算子在**本仓不存在**（0 个文件），兜底会把编译指向空目录。改为保持为空，交由 `--PR_PKG` 分支的 `-z` 检查走「本次无可编算子」 |
 | 6 | `build.sh`（`CUSTOM_OPTION` 组装） | `-DENABLE_EXPERIMENTAL` 从「只在 TRUE 时追加」改为**每次都显式下发** | 实测缺陷（A5 验证）：CMake 会把上次的 `TRUE` 留在 `CMakeCache` 里。原逻辑在本次不带 `--experimental` 时**完全不下发**该开关，缓存于是保持 `TRUE`，导致「编过一次实验包后再跑普通 `--pkg` 会继续编实验树」。改为恒下发后实测缓存能从 `TRUE` 切回 `FALSE` |
 | 7 | `experimental/README.md` | 新增：目录约定 + 使用方式 | 让「实验目录怎么放、怎么编」在仓库里可见 |
+| 8 | `cmake/func.cmake`（新增 `fla_resolve_depend_path()`，替换两处内联前缀） | **【G2】实验模式下依赖回退**：优先 `experimental/<dep>`；实验树里没有该算子则回退 `<dep>`（稳定树），并打一条 message（每个依赖只报一次）。两处调用点必须用同一套解析：`op_add_depend_directory()`（依赖目录补挂）与 `add_bin_compile_target()`（kernel 源 copy） | 修复前：依赖没跟着搬进实验树就被**静默丢弃**，后果不是「少编一个算子」，而是没有任何算子提供 tiling OBJECT 库 → `cust_opmaster` 链接报 `cannot find -lophost_transformer_tiling_obj`（见 §10 第 10 项实测）。两处不同步会退化成「op_host 从稳定树挂上、kernel 源从实验树拷空」 |
 
 ### 9.2 有意不修改的
 
@@ -315,6 +318,8 @@ bash build.sh --pkg --experimental --soc=ascend910b
 | 10 | **有依赖但未带依赖**的实验算子编包 | ❌ 失败，根因是 §12 的 G2：依赖被静默丢弃 → 没有任何算子产生 tiling OBJECT 库 → `cust_opmaster` 链接报 `cannot find -lophost_transformer_tiling_obj` |
 | 11 | **有依赖且带齐依赖闭包**的实验算子编包（第二台机器） | ✅ **闭环通过**：`rc=0`；`*_tiling.cpp` 编译 **20 次**（对照：未带依赖时为 0 次）；生成 3 个 `aic-*-ops-info.ini`；产出 `build_out/fla_npu_linux-x86_64.run`；包内 `vendors/fla_npu_transformer/` 下含该算子的 `dynamic/<op>.py`、`op_proto/inc/<op>_proto.h`、`kernel/**/<op>.json`、`ascendc/<op>/`、`libcust_opmaster_rt2.0.so`、`libcust_opapi.so`，从 `experimental/` 路径编译出 **43 个 `.o`** |
 | 12 | `ENABLE_EXPERIMENTAL` 缓存残留（修 §9.1#6 前后对比） | ✅ 修后：缓存 `TRUE` 时跑普通 `--pkg` 会显式下发 `FALSE` 并切回 |
+| 13 | **【G2 修复后】**实验树里**只放算子、不放任何依赖**（`kda_gate_bwd_post`），`--experimental --ops=kda_gate_bwd_post` 全量打包 | ✅ `rc=0`；回退告警出现 **1 次**且精确指向 `fla/ops/ascendc/kda/chunk_kda_bwd`；`chunk_kda_bwd_tiling.cpp` 编译 **4 次**（修复前 0 次）；缺 `tiling_obj` 库 **0 处**（修复前 1 处、直接失败）；生成 3 个 `ops-info.ini`；产出 `build_out/fla_npu_linux-x86_64.run` |
+| 14 | 同上场景下的 **OFF 模式回归** | ✅ configure 成功，回退告警 **0 次**（OFF 模式解析逻辑与修改前完全一致） |
 
 **⚠️ 修正一条此前的错误预期**：`experimental/` 为空（0 个算子）时，`--experimental` **不能**成功配置。
 递归 glob 匹配空集本身不报错（这点成立），但 0 个算子会导致 opbuild 不产出 `aic-*-ops-info.ini`，
@@ -335,7 +340,7 @@ bash build.sh --pkg --experimental --soc=ascend910b
 | **CI 实验 job** | 当前 `.github/workflows/ci.yml` 没有任何 job 传 `--experimental`，这条链**从未被验证**。需新增独立 job（独立产物，不与稳定包合并） |
 | **`parse_changed_ops.py` 无 CI 执行路径** | 仅在 `--PR_PKG` + experimental 时调用（`build.sh:1022`）。新增实验 job 时必须先验证它 |
 | **common 镜像校验门禁** | 建议加离线断言：若存在 `experimental/<...>/common`，断言它是稳定树同名目录的超集 |
-| **【G2】依赖回退（建议优先）** | A5 实测表明「依赖只在稳定树有」会直接让打包链接失败（§12）。建议改 `func.cmake:165` 的 EXISTS 判据为「先试实验树、不存在则回退稳定树」，并**必须打印一条 message**（否则只是把静默跳过换成另一种静默）。约 5 行 |
+| **【G2】依赖回退（已实现，见 §9.1#8）** | 实验模式下依赖优先取实验树，实验树没有则回退稳定树并打一条 message。A5 实测：实验树只放算子、不放依赖也能 `rc=0` 打包成功（§10 第 13 项）。**语义变化**：实验算子现在可以「借用」稳定树里的依赖实现，只是会在 configure 日志里留下明确告警 |
 | **common 隔离（G1）** | `cmake/config.cmake:41` 把 kernel 公共头写死在稳定树 `fla/ops/ascendc/common/`，实验算子改公共头会污染稳定包。两种修法见审计报告 §3.4（切换 / 叠加，推荐叠加） |
 | **Python / wheel 侧** | `torch_custom/fla_npu/` 完全不感知 `--experimental`。实验算子要能被 Python 调到，需要 Stable-ABI 三件套（`csrc/src/stable_<op>.cpp` + `_stable.py` wrapper + `_ASCENDC_OPS` 一行）+ 实验 OPP 装载隔离决策 |
 | **`--static`** | 与实验算子未做适配 |
@@ -346,7 +351,7 @@ bash build.sh --pkg --experimental --soc=ascend910b
 | --- | --- | --- |
 | 实验树根层放 `CMakeLists.txt` | 多出一个名叫 `experimental` 的「算子」 | §5.2 约定禁止 |
 | 实验树 common 不是超集 | 编译期缺头，且不报「路径不存在」 | §8.4 |
-| **【G2】依赖只在稳定树有** | **不只是丢依赖：实测会直接让打包链接失败。** A5 实测：实验算子 `kda_gate_bwd_post` 声明依赖 `kda/chunk_kda_bwd`（后者带 `chunk_kda_bwd_tiling.cpp`）。实验模式下依赖被静默丢弃 → 该 tiling 源编译 0 次 → 没有任何算子创建 `ophost_transformer_tiling_obj` → `cust_opmaster` 链接报 `cannot find -lophost_transformer_tiling_obj`。稳定模式下同一算子因为补挂了依赖而打包成功 | ① **把依赖闭包一起复制进实验树（已实测闭环通过，见 §10 第 11 项）**；或 ② 修 `func.cmake:165` 增加「实验树不存在则回退稳定树」并打 message（见 §11 后续项） |
+| **【G2】依赖只在稳定树有** | 修复前：依赖被静默丢弃 → 该 tiling 源编译 0 次 → 没有任何算子创建 `ophost_transformer_tiling_obj` → `cust_opmaster` 链接报 `cannot find -lophost_transformer_tiling_obj`（实测同一算子稳定模式因补挂依赖而成功） | **已由 §9.1#8 修复**：`fla_resolve_depend_path()` 在实验树缺依赖时回退稳定树并打 message。实测实验树只放算子也能打包成功（§10 第 13 项）。仍建议尽量把依赖搬进实验树，避免实验包隐式依赖稳定树实现 |
 | 往实验树复制算子时用 `cp -r` | 若目标父目录已存在（例如先拷了子算子），会把父目录嵌套进自己内部，产生同名算子重复，autogen 目标互相覆盖，`ops-info.ini` 生成失败，configure 报 `ops prepare build failed` | `mkdir -p <dst> && cp -a <src>/. <dst>/`；只拷最上层算子 |
 | `--ops` 写了实验树里没有的名字 | 静默产出空集，构建「成功」但没编东西 | §6 闸 4；用 §10 的 `message` 自查 |
 | 实验树为空 | configure 在 prepare 阶段失败（0 算子 → 无 `ops-info.ini` → adapt py 报错），**不是** glob 的问题 | 实验树至少放 1 个可编算子；不要开着开关跑空树 |

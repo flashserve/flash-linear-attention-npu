@@ -151,18 +151,50 @@ macro(add_op_to_compiled_list)
 endmacro()
 
 
+# 解析 <op>_depends 里的一个取值到「实际可用」的相对路径（相对仓库根）。
+#   OFF 模式 -> <dep>
+#   ON  模式 -> 优先 experimental/<dep>；实验树里没有该算子则回退 <dep>（显式告警，只报一次）
+#
+# 为什么需要回退：实验树要求自带依赖，否则依赖会被静默丢弃；后果不是「少编一个算子」，
+# 而是没有任何算子提供 tiling OBJECT 库，最终 cust_opmaster 链接报
+# cannot find -lophost_transformer_tiling_obj。
+#
+# 依赖目录补挂（op_add_depend_directory）与 kernel 源 copy（add_bin_compile_target）必须用
+# 同一套解析，否则会出现「op_host 从稳定树挂上、kernel 源却从实验树拷空」的不一致。
+function(fla_resolve_depend_path depend_info out_var)
+    if (ENABLE_EXPERIMENTAL)
+        set(_resolve_cand "experimental/${depend_info}")
+        set(_resolve_exp_hit FALSE)
+        set(_resolve_stable_hit FALSE)
+        if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/experimental/${depend_info}/op_host/CMakeLists.txt")
+            set(_resolve_exp_hit TRUE)
+        endif()
+        if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${depend_info}/op_host/CMakeLists.txt")
+            set(_resolve_stable_hit TRUE)
+        endif()
+        if (NOT _resolve_exp_hit AND _resolve_stable_hit)
+            string(REPLACE "/" "_" _resolve_key "${depend_info}")
+            if (NOT DEFINED _FLA_DEP_FALLBACK_${_resolve_key})
+                set(_FLA_DEP_FALLBACK_${_resolve_key} TRUE CACHE INTERNAL "" FORCE)
+                message(STATUS "[experimental] 依赖不在实验树，回退稳定树: ${depend_info}")
+            endif()
+            set(_resolve_cand "${depend_info}")
+        endif()
+    else()
+        set(_resolve_cand "${depend_info}")
+    endif()
+    set(${out_var} "${_resolve_cand}" PARENT_SCOPE)
+endfunction()
+
+
 function(op_add_depend_directory)
     cmake_parse_arguments(DEP "" "OP_DIR_LIST" "OP_LIST" ${ARGN})
     set(_OP_DEPEND_DIR_LIST)
     foreach(op_name ${DEP_OP_LIST})
         if (DEFINED ${op_name}_depends)
             foreach(depend_info ${${op_name}_depends})
-                if (ENABLE_EXPERIMENTAL)
- 	                set(depend_info_update "experimental/${depend_info}")
- 	            else()
- 	                set(depend_info_update ${depend_info})
- 	            endif()
- 	            if (NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${depend_info_update}/op_host/CMakeLists.txt AND NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/${depend_info_update}/CMakeLists.txt)
+                fla_resolve_depend_path(${depend_info} depend_info_update)
+                if (NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${depend_info_update}/op_host/CMakeLists.txt AND NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/${depend_info_update}/CMakeLists.txt)
                     continue()
                 endif ()
 
@@ -537,11 +569,7 @@ function(add_bin_compile_target)
 
             if (DEFINED ${op_file}_depends)
                 foreach(depend_info ${${op_file}_depends})
-                    if (ENABLE_EXPERIMENTAL)
- 	                    set(depend_info_update "experimental/${depend_info}")
- 	                else()
- 	                    set(depend_info_update ${depend_info})
- 	                endif()
+                    fla_resolve_depend_path(${depend_info} depend_info_update)
                     get_filename_component(_depend_op_name "${depend_info}" NAME)
                     set(_depend_op_target ${_depend_op_name}_${BINARY_COMPUTE_UNIT}_src_copy)
                     add_ops_src_copy(
