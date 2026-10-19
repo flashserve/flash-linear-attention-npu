@@ -299,7 +299,7 @@ bash build.sh --pkg --experimental --soc=ascend910b --ops=<实验算子名>
 bash build.sh --pkg --experimental --soc=ascend910b
 ```
 
-**已在 A5 验证服务器实测**（`ascend950` / CANN 9.2.0 / cmake 3.28.3，基线 `main@67dc99d7` + 本 PR 补丁）：
+**已在两台 A5 验证服务器实测**（`ascend950` / CANN 9.2.0 / cmake 3.28.3，基线 `main@67dc99d7` + 本 PR 补丁）：
 
 | # | 验证项 | 结果 |
 | --- | --- | --- |
@@ -308,19 +308,25 @@ bash build.sh --pkg --experimental --soc=ascend910b
 | 3 | 打补丁 + 真实实验算子（3 层深 `kda/.../internal_ops/kda_gate_bwd_post`） | ✅ configure 成功，`OP_DIR_LIST` **只含该实验算子**（隔离生效） |
 | 4 | 反向隔离：实验树根放非法 `CMakeLists.txt` + 关闭开关 | ✅ configure 成功（证明未 include） |
 | 5 | 同上 + 打开开关 | ✅ 报错 `experimental/CMakeLists.txt:1 Parse error`（证明确实 include） |
-| 6 | `--PR_PKG --experimental` 指向 3 层深实验算子 | ✅ 解析出 `kda_gate_bwd_post` |
+| 6 | `--PR_PKG --experimental` 指向 3 层深实验算子 | ✅ 解析出 `kda_gate_bwd_post`（`rc=0`） |
 | 7 | `--PR_PKG` 空清单 | ✅ `exit 200`「No custom packages to build」，**不再出现** `fused_infer_attention_score` |
-| 8 | `--PR_PKG` 只改稳定树路径（实验模式） | ✅ 正确忽略 |
+| 8 | `--PR_PKG` 只改稳定树路径（实验模式） | ✅ 正确忽略（`exit 200`） |
 | 9 | **有 tiling 源、无依赖**的实验算子全量编包（`kda_gate_cumsum`） | ✅ `rc=0`，产出 `build_out/fla_npu_linux-x86_64.run` |
-| 10 | **有依赖**的实验算子编包 | ❌ 失败，根因是 §12 的 G2：依赖被静默丢弃 → 没有任何算子产生 tiling OBJECT 库 → `cust_opmaster` 链接报 `cannot find -lophost_transformer_tiling_obj` |
-| 11 | `ENABLE_EXPERIMENTAL` 缓存残留（修 #6 前后对比） | ✅ 修后：缓存 `TRUE` 时跑普通 `--pkg` 会显式下发 `FALSE` 并切回 |
+| 10 | **有依赖但未带依赖**的实验算子编包 | ❌ 失败，根因是 §12 的 G2：依赖被静默丢弃 → 没有任何算子产生 tiling OBJECT 库 → `cust_opmaster` 链接报 `cannot find -lophost_transformer_tiling_obj` |
+| 11 | **有依赖且带齐依赖闭包**的实验算子编包（第二台机器） | ✅ **闭环通过**：`rc=0`；`*_tiling.cpp` 编译 **20 次**（对照：未带依赖时为 0 次）；生成 3 个 `aic-*-ops-info.ini`；产出 `build_out/fla_npu_linux-x86_64.run`；包内 `vendors/fla_npu_transformer/` 下含该算子的 `dynamic/<op>.py`、`op_proto/inc/<op>_proto.h`、`kernel/**/<op>.json`、`ascendc/<op>/`、`libcust_opmaster_rt2.0.so`、`libcust_opapi.so`，从 `experimental/` 路径编译出 **43 个 `.o`** |
+| 12 | `ENABLE_EXPERIMENTAL` 缓存残留（修 §9.1#6 前后对比） | ✅ 修后：缓存 `TRUE` 时跑普通 `--pkg` 会显式下发 `FALSE` 并切回 |
 
 **⚠️ 修正一条此前的错误预期**：`experimental/` 为空（0 个算子）时，`--experimental` **不能**成功配置。
 递归 glob 匹配空集本身不报错（这点成立），但 0 个算子会导致 opbuild 不产出 `aic-*-ops-info.ini`，
 随后 `generate_transformer_adapt_py` 抛 `OpFileNotExistsError`，configure 以 `Error: ops prepare build failed` 结束。
 **结论：实验树至少要有一个可编算子；空树不是受支持的状态。** 若需要「开关开着但暂时没实验算子」，应把开关关掉。
 
-**仍需有权限环境补的验证**：CI 实验 job 下的完整链路、两棵树同名算子互不冲突、common 隔离（若采纳 §3.4 的方案）。
+**⚠️ 往实验树复制算子的操作注意**（实测踩过）：不要先拷子算子再拷父算子 ——
+`cp -r <父> <已存在的目标父目录>` 会把父目录**嵌套进自己内部**（出现 `chunk_kda_bwd/chunk_kda_bwd/...`），
+产生同名算子重复，进而使 `opbuild` 的 autogen 目标互相覆盖、`ops-info.ini` 生成不出来。
+正确做法：`mkdir -p <dst> && cp -a <src>/. <dst>/`，且只拷**最上层**算子（`internal_ops/*` 会随之带进来）。
+
+**仍需有权限环境补的验证**：CI 实验 job 下的完整链路、两棵树同名算子互不冲突、common 隔离（若采纳审计报告 §3.4 的方案）。
 
 ## 11. 未完成 / 后续项
 
@@ -340,7 +346,8 @@ bash build.sh --pkg --experimental --soc=ascend910b
 | --- | --- | --- |
 | 实验树根层放 `CMakeLists.txt` | 多出一个名叫 `experimental` 的「算子」 | §5.2 约定禁止 |
 | 实验树 common 不是超集 | 编译期缺头，且不报「路径不存在」 | §8.4 |
-| **【G2】依赖只在稳定树有** | **不只是丢依赖：实测会直接让打包链接失败。** A5 实测：实验算子 `kda_gate_bwd_post` 声明依赖 `kda/chunk_kda_bwd`（后者带 `chunk_kda_bwd_tiling.cpp`）。实验模式下依赖被静默丢弃 → 该 tiling 源编译 0 次 → 没有任何算子创建 `ophost_transformer_tiling_obj` → `cust_opmaster` 链接报 `cannot find -lophost_transformer_tiling_obj`。稳定模式下同一算子因为补挂了依赖而打包成功 | ① 把依赖一起复制进实验树；或 ② 修 `func.cmake:165` 增加「实验树不存在则回退稳定树」并打 message（见 §11 后续项） |
+| **【G2】依赖只在稳定树有** | **不只是丢依赖：实测会直接让打包链接失败。** A5 实测：实验算子 `kda_gate_bwd_post` 声明依赖 `kda/chunk_kda_bwd`（后者带 `chunk_kda_bwd_tiling.cpp`）。实验模式下依赖被静默丢弃 → 该 tiling 源编译 0 次 → 没有任何算子创建 `ophost_transformer_tiling_obj` → `cust_opmaster` 链接报 `cannot find -lophost_transformer_tiling_obj`。稳定模式下同一算子因为补挂了依赖而打包成功 | ① **把依赖闭包一起复制进实验树（已实测闭环通过，见 §10 第 11 项）**；或 ② 修 `func.cmake:165` 增加「实验树不存在则回退稳定树」并打 message（见 §11 后续项） |
+| 往实验树复制算子时用 `cp -r` | 若目标父目录已存在（例如先拷了子算子），会把父目录嵌套进自己内部，产生同名算子重复，autogen 目标互相覆盖，`ops-info.ini` 生成失败，configure 报 `ops prepare build failed` | `mkdir -p <dst> && cp -a <src>/. <dst>/`；只拷最上层算子 |
 | `--ops` 写了实验树里没有的名字 | 静默产出空集，构建「成功」但没编东西 | §6 闸 4；用 §10 的 `message` 自查 |
 | 实验树为空 | configure 在 prepare 阶段失败（0 算子 → 无 `ops-info.ini` → adapt py 报错），**不是** glob 的问题 | 实验树至少放 1 个可编算子；不要开着开关跑空树 |
 | `--pkg-type=rpm/deb` 搭配 `--experimental` | 外层守卫禁止；但 `--pkg-type=all` **会绕过**该检查（守卫条件是 `!= run && != all`） | 使用者自行避免 |
@@ -361,3 +368,4 @@ bash build.sh --pkg --experimental --soc=ascend910b
 | `scripts/ci/parse_changed_ops.py` 的 `BlackList` | 全是参考仓的 moe/mc2 算子名 | 本仓永不命中 |
 | `CONTRIBUTING.md` | 举例里写 `experimental/attention` | 文档残留，易误导 |
 | `cmake/scripts/prepare.sh` | 25 个变量无默认值 | 空串多数等价 0/空，行为上通常无害；本 PR 只兜了 `ENABLE_EXPERIMENTAL` |
+| `--soc` 与 kernel 落地目录 | 实测 `--soc=ascend950`（`ASCEND_COMPUTE_UNIT=ascend950`，日志 453 处提到 ascend950），但 kernel 暂存到 `build/binary/ascend910b/`，`build/binary/ascend950/` 为空 | **与本方案无关**，稳定/实验两种模式都如此；但影响「950 包是否含 950 kernel」，建议单独排查 `BINARY_COMPUTE_UNIT` 的取值来源 |
