@@ -152,6 +152,13 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tilingCtx.storeFinalState = storeFinalState;
     tilingCtx.chunkSize = chunkSize;
     tilingCtx.aicCoreNum = ascendcPlatform.GetCoreNumAic();
+    // gated 复用路径 dtype（gated tiling 约定：1=bf16, 2=fp32）
+    tilingCtx.gatedGateDtype = gateDtypeToken == CHUNK_FWD_H_TPL_FP32 ? 2 : 1;
+    tilingCtx.gatedStateDtype = stateDtypeToken == CHUNK_FWD_H_TPL_FP32 ? 2 : 1;
+    // gated 复用 eligible（与 kernel 谓词 FwdHGatedReusable 同条件镜像）
+    tilingCtx.gatedEligible = useG && useExp2 && !stateVFirst && storeFinalState &&
+        stateDtypeToken == CHUNK_FWD_H_TPL_FP32 &&
+        gateDtypeToken == CHUNK_FWD_H_TPL_FP32;
     tilingCtx.libApiWorkSpaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
 
     // P1: per-sequence chunk counts (ListInt attr #11, built by l0op from the
@@ -254,6 +261,11 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tiling.set_hWorkspaceOffset(plainTiling.hWorkspaceOffset);
     tiling.set_coreBoundCount(plainTiling.coreBoundCount);
     tiling.set_coreTaskBounds(plainTiling.coreTaskBounds);
+    tiling.set_gatedGateDataType(plainTiling.gatedGateDataType);
+    tiling.set_gatedStateDataType(plainTiling.gatedStateDataType);
+    tiling.set_gatedTilingOffset(plainTiling.gatedTilingOffset);
+    tiling.set_gatedNumSeqOffset(plainTiling.gatedNumSeqOffset);
+    tiling.set_gatedNumChunksOffset(plainTiling.gatedNumChunksOffset);
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
 
