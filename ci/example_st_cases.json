@@ -393,5 +393,15 @@
       "--accuracy-tensors",
       "o,dq,dk,dv,dbeta,dg"
     ]
+  },
+  {
+    "name": "chunk_kda_fwd_varlen_tail_workspace_t949_h96",
+    "description": "ChunkKDA 尾块 workspace 看护：TND 打包、4 条序列都带尾块（padding 203 行）、HV=96，post-Wu 暂存区必须按 chunk 分块口径分配，输出 o/u/v_new/h 必须全部有限。",
+    "script": "examples/chunk_kda_tail_scratch.py",
+    "enabled": true,
+    "extra_args": [
+      "--seed",
+      "42"
+    ]
   }
 ]
