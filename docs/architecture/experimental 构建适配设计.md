@@ -331,7 +331,7 @@ bash build.sh --pkg --experimental --soc=ascend910b
 产生同名算子重复，进而使 `opbuild` 的 autogen 目标互相覆盖、`ops-info.ini` 生成不出来。
 正确做法：`mkdir -p <dst> && cp -a <src>/. <dst>/`，且只拷**最上层**算子（`internal_ops/*` 会随之带进来）。
 
-**仍需有权限环境补的验证**：CI 实验 job 下的完整链路、两棵树同名算子互不冲突、common 隔离（若采纳审计报告 §3.4 的方案）。
+**仍需有权限环境补的验证**：CI 实验 job 下的完整链路、两棵树同名算子互不冲突、common 隔离（G1，方案见 [experimental 适配现状与遗留问题.md](experimental%20适配现状与遗留问题.md) §4.1）。
 
 ## 11. 未完成 / 后续项
 
@@ -341,7 +341,7 @@ bash build.sh --pkg --experimental --soc=ascend910b
 | **`parse_changed_ops.py` 无 CI 执行路径** | 仅在 `--PR_PKG` + experimental 时调用（`build.sh:1022`）。新增实验 job 时必须先验证它 |
 | **common 镜像校验门禁** | 建议加离线断言：若存在 `experimental/<...>/common`，断言它是稳定树同名目录的超集 |
 | **【G2】依赖回退（已实现，见 §9.1#8）** | 实验模式下依赖优先取实验树，实验树没有则回退稳定树并打一条 message。A5 实测：实验树只放算子、不放依赖也能 `rc=0` 打包成功（§10 第 13 项）。**语义变化**：实验算子现在可以「借用」稳定树里的依赖实现，只是会在 configure 日志里留下明确告警 |
-| **common 隔离（G1）** | `cmake/config.cmake:41` 把 kernel 公共头写死在稳定树 `fla/ops/ascendc/common/`，实验算子改公共头会污染稳定包。两种修法见审计报告 §3.4（切换 / 叠加，推荐叠加） |
+| **common 隔离（G1）** | `cmake/config.cmake:41` 把 kernel 公共头写死在稳定树 `fla/ops/ascendc/common/`，实验算子改公共头会污染稳定包（26 个算子 / 68 处引用受影响）。**推荐「切换 + 超集门禁」**：把参考仓的「静默缺头」变成 configure 期 `FATAL_ERROR`。完整分析与代码片段见 [experimental 适配现状与遗留问题.md](experimental%20适配现状与遗留问题.md) §4.1 |
 | **Python / wheel 侧** | `torch_custom/fla_npu/` 完全不感知 `--experimental`。实验算子要能被 Python 调到，需要 Stable-ABI 三件套（`csrc/src/stable_<op>.cpp` + `_stable.py` wrapper + `_ASCENDC_OPS` 一行）+ 实验 OPP 装载隔离决策 |
 | **`--static`** | 与实验算子未做适配 |
 
