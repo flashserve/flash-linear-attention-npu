@@ -61,6 +61,14 @@ struct ChunkFwdHTilingContext {
     // platform
     uint32_t aicCoreNum;
     size_t libApiWorkSpaceSize;
+    // gated 复用路径：gate/state dtype token（gated tiling 字段值：1=bf16, 2=fp32）
+    int64_t gatedGateDtype = 1;
+    int64_t gatedStateDtype = 2;
+    // gated 复用 eligible（与 kernel 侧 FwdHGatedReusable 同条件）：
+    // g 模式 + fp32 gate + fp32 state + storeFinal + useExp2 + vfirst=0。
+    // eligible 时 blockDim 恒 aicCoreNum（gated 调度器要求全核参与 mode2
+    // 配对——收缩 launch 会导致 flag 配对残缺损）。
+    bool gatedEligible = false;
 };
 
 class ChunkFwdHTilingProcessor {
@@ -94,8 +102,9 @@ public:
         const uint64_t physicalAicCores = static_cast<uint64_t>(ctx_.aicCoreNum);
         const uint64_t headsPerCore =
             (totalHeadTasks + physicalAicCores - 1) / physicalAicCores;
-        blockDim = static_cast<uint32_t>(
-            (totalHeadTasks + headsPerCore - 1) / headsPerCore);
+        blockDim = ctx_.gatedEligible
+            ? static_cast<uint32_t>(physicalAicCores)
+            : static_cast<uint32_t>((totalHeadTasks + headsPerCore - 1) / headsPerCore);
         const int64_t activeAicCoreNum = static_cast<int64_t>(blockDim);
         constexpr int64_t chunkSize = CHUNK_FWD_H_CHUNK_SIZE;
         constexpr int64_t kHeadDim = CHUNK_FWD_H_K_DIM;
@@ -122,8 +131,25 @@ public:
         workspaceOffset += AlignUp(static_cast<size_t>(activeAicCoreNum * CHUNK_FWD_H_ROUND_HEAD_SLOTS *
                                                         kHeadDim * vHeadDim * sizeof(float)));
 
+        // ===== gated 复用路径 workspace 追加段 =====
+        // gated tiling struct 镜像（kernel 现场构造后由 gated kernel 消费；
+        // 尺寸按 ChunkGatedDeltaRuleFwdHTilingData 上界 256B）+ numSeq/numChunks
+        // 前缀表（int64 × (tokenBatch+1)）——gated scheduler varlen 建表用。
+        tiling.gatedTilingOffset = static_cast<int64_t>(workspaceOffset);
+        // per-core slot：每核独立 256B（AIC/AIV 同核同 slot 幂等写同值，写读
+        // 同核同地址天然有序——消除跨核可见性竞态：AIV 不再读 AIC 现写的
+        // 共享镜像，而是构造并读自己的副本）
+        workspaceOffset += AlignUp(static_cast<size_t>(blockDim) * 256);
+        tiling.gatedNumSeqOffset = static_cast<int64_t>(workspaceOffset);
+        workspaceOffset += AlignUp(static_cast<size_t>((tokenBatch + 2) * sizeof(int64_t)));
+        tiling.gatedNumChunksOffset = static_cast<int64_t>(workspaceOffset);
+        workspaceOffset += AlignUp(static_cast<size_t>((tokenBatch + 2) * sizeof(int64_t)));
+
         workspaceOffset += CHUNK_FWD_H_WORKSPACE_RSV_BYTE;
         workspaceSize = workspaceOffset;
+
+        tiling.gatedGateDataType = ctx_.gatedGateDtype;
+        tiling.gatedStateDataType = ctx_.gatedStateDtype;
 
         tiling.batch = batch;
         tiling.seqlen = ctx_.seqlen;

@@ -13,6 +13,11 @@
 #else
 #include "arch22/chunk_fwd_h_cube.h"
 #include "arch22/chunk_fwd_h_vec.h"
+// gated 复用路径（仅 A2/arch22）：chunk_gated_delta_rule_fwd_h 的 preload
+// kernel 整体复用——kernel 入口按模板条件分支，eligible 时现场构造 gated
+// tiling 镜像到 workspace 后原样调用（gated 代码零改动）。
+#include "gated_reuse/chunk_gated_delta_rule_fwd_h_struct.h"
+#include "gated_reuse/gemm/kernel/gdn_fwd_h_kernel_preload.hpp"
 #endif
 
 #include "kernel_operator.h"
@@ -42,11 +47,98 @@ struct FwdHKernelTraits {
         USE_GK ? FwdHGateMode::KEY_GK : FwdHGateMode::SCALAR_G, USE_EXP2, STATE_FP32,
         STORE_FINAL, DENSE_T16>;
     static constexpr bool STATE_V_FIRST_VALUE = STATE_V_FIRST;
+    // gated 复用路径的编译期 eligible 判定：g 模式（非 gk）+ FP32 state +
+    // STORE_FINAL + V=128。vfirst=1 时 gated 输出为 [V,K] 物理布局（与
+    // chunk_fwd_h 的 state_v_first=True 语义一致）；vfirst=0 时 gated 输出
+    // [K,V]——两侧语义同构，gated kernel 原生产出即所需布局，无需转置。
+    static constexpr bool GATED_REUSABLE =
+        !USE_GK && STATE_FP32 && STORE_FINAL && V_DIM == 128 &&
+        !STATE_V_FIRST && D_T_G == CHUNK_FWD_H_TPL_FP32;
 };
+
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+// gated 复用谓词：g 模式 + FP32 state + STORE_FINAL + gate fp32 + vfirst=0。
+// （bf16 gate 首版不接入——gated 的 bf16 gate 路径未在本战役验证过；
+//   vfirst=1 回落原路径——gated 输出 [V,K] 与现实现语义一致但 l0op 侧
+//   还需转置配合，首版不碰。）
+template <typename GateT, typename CompilePolicy>
+__aicore__ inline constexpr bool FwdHGatedReusable()
+{
+    // USE_EXP2 必须 true：gated preload kernel 固定按 log2 域 gate 计算
+    // （上游 Python 层 RCP_LN2 缩放后传入）；exp 域 gate 用例回落原路径。
+    return CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G &&
+           CompilePolicy::STATE_FP32 && CompilePolicy::STORE_FINAL &&
+           CompilePolicy::USE_EXP2 && std::is_same_v<GateT, float>;
+}
+
+// gated 复用分支：从 ChunkFwdHTilingData + 模板参构造 gated tiling 镜像
+// （写入 workspace 的 gatedTilingOffset 段），随后原样调用 gated preload
+// kernel。镜像由每个 AIC 核独立构造（同值幂等写，skeleton varlen 建表先例
+// 同款）；AIV 侧不构造——gated kernel 的 Init 在 AIC/AIV 分别读同一 GM 镜像。
+// 输入侧 g 已是 log2 域（调用方 Python 层 RCP_LN2 缩放，与 gated 上游一致）。
+// 注意：gated preload 的 state 固定走 FP32 链（H 链 GM BF16），final_state
+// FP32 直写——与 chunk_fwd_h 的 STATE_FP32 模板语义等价。
+template <typename GateT>
+__aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
+{
+    using DataT = bfloat16_t;
+    using GatedKernel = Catlass::Gemm::Kernel::GDNFwdHKernelPreload<DataT, GateT, float, float>;
+    __gm__ uint8_t *user = args.workspace;
+    // per-core slot：核 idx = AIC BlockIdx 或 AIV BlockIdx/SubBlockNum（同物理
+    // 核同值），每核写自己的 slot 后读自己的——零跨核可见性依赖
+    const uint32_t coreSlot = ASCEND_IS_AIC ? AscendC::GetBlockIdx()
+        : AscendC::GetBlockIdx() / AscendC::GetSubBlockNum();
+    __gm__ ChunkGatedDeltaRuleFwdHTilingData *gtiling = reinterpret_cast<
+        __gm__ ChunkGatedDeltaRuleFwdHTilingData *>(
+            user + args.tiling.gatedTilingOffset +
+            static_cast<uint64_t>(coreSlot) * 256);
+    {
+        gtiling->batch = args.tiling.batch;
+        gtiling->seqlen = args.tiling.seqlen;
+        gtiling->kNumHead = args.tiling.kNumHead;
+        gtiling->vNumHead = args.tiling.vNumHead;
+        gtiling->kHeadDim = args.tiling.kHeadDim;
+        gtiling->vHeadDim = args.tiling.vHeadDim;
+        gtiling->chunkSize = args.tiling.chunkSize;
+        gtiling->useInitialState = args.tiling.useInitialState;
+        gtiling->storeFinalState = args.tiling.storeFinalState;
+        gtiling->dataType = 1; // bf16 输入
+        gtiling->gDataType = 2; // fp32 gate（GATED_REUSABLE 限定）
+        gtiling->stateDataType = 2; // fp32 state
+        gtiling->isVariedLen = args.tiling.isVariedLen;
+        gtiling->shapeBatch = args.tiling.shapeBatch;
+        gtiling->tokenBatch = args.tiling.tokenBatch;
+        gtiling->useG = true;
+        gtiling->useGk = false;
+        gtiling->vWorkspaceOffset = args.tiling.vWorkspaceOffset;
+        gtiling->vUpdateWorkspaceOffset = args.tiling.vUpdateWorkspaceOffset;
+        gtiling->kDecayWorkspaceOffset = 0;
+        gtiling->hWorkspaceOffset = args.tiling.hWorkspaceOffset;
+        gtiling->numSeqWorkspaceOffset = args.tiling.gatedNumSeqOffset;
+        gtiling->numChunksWorkspaceOffset = args.tiling.gatedNumChunksOffset;
+    }
+    GatedKernel gatedKernel;
+    gatedKernel.Init(args.k, args.w, args.u, args.g, args.initialState,
+                     args.cuSeqlens, args.chunkIndices, args.h, args.vNew,
+                     args.finalState,
+                     reinterpret_cast<GM_ADDR>(gtiling),
+                     user);
+    gatedKernel.Process();
+}
+#endif
 
 template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST>
 __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
 {
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+    // gated 复用分流（编译期折叠）：eligible 形态整体走 gated preload
+    // kernel——其双流骨架/调度器/epilogue 为生产验证形态。非 eligible
+    // （gk/非 FP32 state/非 storeFinal/gate bf16/vfirst=1）回落原路径。
+    if constexpr (FwdHGatedReusable<GateT, CompilePolicy>()) {
+        RunFwdHGatedReuse<GateT>(args);
+        return;
+    }
+#endif
     if ASCEND_IS_AIC {
         const bool hasCubeWork = args.tiling.useInitialState || CompilePolicy::STORE_FINAL ||
             args.tiling.seqlen > static_cast<uint32_t>(FWD_H_CHUNK);
@@ -122,6 +214,11 @@ __global__ __aicore__ void chunk_fwd_h(
         args.tiling.coreBoundCount = 0; // malformed table — uniform partition fallback
     }
     args.tiling.coreBoundsGm = tilingData->coreTaskBounds;
+    args.tiling.gatedTilingOffset = static_cast<uint64_t>(tilingData->gatedTilingOffset);
+    args.tiling.gatedNumSeqOffset = static_cast<uint64_t>(tilingData->gatedNumSeqOffset);
+    args.tiling.gatedNumChunksOffset = static_cast<uint64_t>(tilingData->gatedNumChunksOffset);
+    args.tiling.gatedGateDataType = static_cast<uint32_t>(tilingData->gatedGateDataType);
+    args.tiling.gatedStateDataType = static_cast<uint32_t>(tilingData->gatedStateDataType);
     using Traits = GDN::FwdHKernelTraits<
         D_T_G, V_DIM, USE_GK, USE_EXP2, STATE_FP32, STATE_V_FIRST, STORE_FINAL, DENSE_T16>;
     GDN::RunFwdHTyped<typename Traits::GateT, typename Traits::CompilePolicy,
