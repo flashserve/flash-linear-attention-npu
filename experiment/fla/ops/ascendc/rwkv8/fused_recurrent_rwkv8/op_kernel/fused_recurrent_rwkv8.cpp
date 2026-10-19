@@ -82,8 +82,9 @@ public:
         outSa_ = tiling->outputSa;
         chunkLen_ = tiling->chunkLen;   // s 快照间隔（host attr 下发，kernel 不存常量）
 
-        // 防御：tiling 字段合理性校验。tiling 的 GM 读若被扰动（脏数据/竞争），
-        // 异常字段会把循环边界/地址计算带飞——此时本核静默退出，宁可不写也不越界
+        // 防御：tiling 字段合理性校验。Host 的 AnalyzeShapes 已按同一组边界拒绝非法输入，
+        // 此处只兜底 tiling GM 读被扰动（脏数据/竞争）的情况——异常字段会把循环边界/
+        // 地址计算带飞，此时本核静默退出，宁可不写也不越界
         sane_ = (T_ > 0 && T_ <= (1u << 20) && K_ > 0 && K_ <= 128 && V_ > 0 && V_ <= 128 &&
                  (K_ % 8 == 0) && (V_ % 8 == 0) && (uint64_t)K_ * V_ <= 16384) ? 1 : 0;
         if (!sane_) {

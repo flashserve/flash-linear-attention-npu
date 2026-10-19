@@ -34,6 +34,8 @@ const size_t IO_RANK = 4;
 const uint32_t MAX_HEAD_DIM = 128;    // K 侧上界：UB 预算（state K×V fp32 + K 侧向量）决定
 const uint32_t MAX_V_DIM = 128;       // V 侧上界：V 不切分，K×V state 须整体放入单核 UB
 const uint32_t DEFAULT_CHUNK_LEN = 16;   // 对齐官方 wkv7_cuda.cu backward 的 chunk 重建粒度
+const uint32_t MAX_SEQ_LEN = 1u << 20;   // 与 op_kernel Init 中 sane_ 的 T_ 上限保持一致
+const uint64_t MAX_BLOCK_DIM = 65535UL;  // blockDim 为逻辑核数量，CANN 约定取值 [1, 65535]
 
 void FusedRecurrentRwkv8Tiling::InitCompileInfo()
 {
@@ -108,7 +110,8 @@ ge::graphStatus FusedRecurrentRwkv8Tiling::GetWorkspaceSize()
 
 ge::graphStatus FusedRecurrentRwkv8Tiling::PostTiling()
 {
-    context_->SetBlockDim(tilingData_.B * tilingData_.H);   // 一核一个 (b,h) 账本
+    // 一核一个 (b,h) 账本；B*H 的合法范围（含溢出检查）已在 AnalyzeShapes 中校验
+    context_->SetBlockDim(static_cast<uint32_t>(static_cast<uint64_t>(tilingData_.B) * tilingData_.H));
     auto tilingDataSize = sizeof(FusedRecurrentRwkv8TilingData);
     errno_t ret = memcpy_s(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity(),
                            reinterpret_cast<void *>(&tilingData_), tilingDataSize);
@@ -211,6 +214,21 @@ ge::graphStatus FusedRecurrentRwkv8Tiling::AnalyzeShapes()
     int64_t dimV = vShape.GetDim(3);
     OP_CHECK_IF(dimB < 1 || dimT < 1 || dimH < 1,
                 OP_LOGE(context_->GetNodeName(), "B/H/T should be positive"),
+                return ge::GRAPH_FAILED);
+    // kernel 对超长序列会在 Init 中静默退出（不写任何输出），Host 必须同界拦截
+    OP_CHECK_IF(dimT > static_cast<int64_t>(MAX_SEQ_LEN),
+                OP_LOGE(context_->GetNodeName(), "T should be <= %u, got %ld", MAX_SEQ_LEN, dimT),
+                return ge::GRAPH_FAILED);
+    // 一个逻辑核负责一个 (b,h) 账本：blockDim = B*H 必须落在 CANN 允许的 [1, 65535]。
+    // 先逐维比较再相乘，避免 int64 乘积在 uint64 中回绕后把错误 blockDim 放过去
+    OP_CHECK_IF(dimB > static_cast<int64_t>(MAX_BLOCK_DIM) || dimH > static_cast<int64_t>(MAX_BLOCK_DIM),
+                OP_LOGE(context_->GetNodeName(), "B/H should be <= %lu (blockDim limit), got B=%ld H=%ld",
+                        MAX_BLOCK_DIM, dimB, dimH),
+                return ge::GRAPH_FAILED);
+    const uint64_t blockDim = static_cast<uint64_t>(dimB) * static_cast<uint64_t>(dimH);
+    OP_CHECK_IF(blockDim > MAX_BLOCK_DIM,
+                OP_LOGE(context_->GetNodeName(), "B*H should be <= %lu (blockDim limit), got %ld x %ld = %lu",
+                        MAX_BLOCK_DIM, dimB, dimH, blockDim),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(dimK <= 0 || dimK % 8 != 0 || dimK > MAX_HEAD_DIM,
                 OP_LOGE(context_->GetNodeName(), "K should be a positive multiple of 8 and <= %u, got %ld",
