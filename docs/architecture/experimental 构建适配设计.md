@@ -106,14 +106,16 @@ else()
 endif()
 ```
 
-出现两处，处理对象不同、互不重叠：
+出现两处，处理对象不同（一个是构建图，一个是 kernel 源码），互不重叠：
 
 | 位置 | 处理对象 | 产物 |
 | --- | --- | --- |
 | `cmake/func.cmake:160` | 被依赖**算子**的目录 | `OP_DEPEND_DIR_LIST` → 补挂构建图 + 隐式扩编译范围 |
-| `cmake/func.cmake:540` | 被依赖**算子**的 kernel 源 copy（**排除 common**） | `add_ops_src_copy` target |
+| `cmake/func.cmake:540` | 被依赖**算子**的 kernel 源 copy（**含 common**） | `add_ops_src_copy` target |
 
-> `func.cmake:540` 附近有 `if("<dep 名>" STREQUAL "common") continue()`，所以 common 不走这条；common 由 `custom_build.cmake:1152-1159` 单独处理（切换 `COMMON_SRC_DIR`）。
+> ⚠️ 与参考仓的一处关键差异：**本仓没有 `continue()` 排除 common，也没有 `custom_build.cmake` 里的 `COMMON_SRC_DIR` 切换逻辑**。
+> 本仓对 common 的处理在 `add_ops_src_copy()` 内部（`func.cmake:438`）：只给 **target 名**加父目录前缀（`<父目录>_<target>`）以避免多域 common 重名；
+> **源目录仍由 `func.cmake:551` 的 `${CMAKE_SOURCE_DIR}/${depend_info_update}` 决定**，因此同样受 experimental 前缀影响。
 
 ### 6.2 两条容易踩的路径语义
 
@@ -135,13 +137,21 @@ endif()
 
 **构建照样成功**，只是少挂一个算子。所以实验树的依赖必须自带齐。
 
-### 6.3 common 的静默缩水风险
+### 6.3 common 在实验模式下的行为与风险
 
-框架在实验模式下只把 `experimental/<...>/common` 复制进 `src/common`。如果实验树的 common 是**分叉副本**（而不是稳定树的超集），稳定树独有的头文件就不会进 `src/common`，坑在于**目录存在、复制成功、只在编译期报缺头**。
+本仓没有「把所有 common 合并复制到同一个 `src/common`」的独立阶段，而是由 `add_bin_compile_target` 里对 `<op>_depends` 的循环（`func.cmake:538-560`）逐个 `add_ops_src_copy`：
 
-> 参考仓 `cann/ops-transformer` 就有这个问题：`attention/common` 稳定 126 / 实验 97（共享仅 47）、`gmm/common` 稳定 79 / 实验 1（共享 0），三者**都不是镜像**。
+| 项 | 值 | 位置 |
+| --- | --- | --- |
+| 源目录 | `${CMAKE_SOURCE_DIR}/${depend_info_update}` → 实验模式下即 `experimental/<...>/common` | `func.cmake:551` |
+| 目标目录 | `${SRC_OUT_DIR}/${_depend_op_name}` → 多域 common 都落到同一个 `common` 目录（并集） | `func.cmake:553` |
+| target 名 | `${_depend_op_name}_<soc>_src_copy`，common 会被改名为 `<父目录>_...` → `attention_common_...` / `mc2_common_...`，避免多域重名 | `func.cmake:438` |
+
+**因此：实验模式下只有实验树那份 common 会被复制进 staging 目录。** 若实验树的 common 是**分叉副本**而不是稳定树的超集，稳定树独有的头文件不会进来 → 编译期缺头；坑在于**目录存在、复制成功、不报「路径不存在」**。
+
+> 参考仓 `cann/ops-transformer` 的同类问题可作佐证：`attention/common` 稳定 126 / 实验 97（**共享仅 47**）、`mc2/common` 242 / 7（共享 1）、`gmm/common` 79 / 1（共享 0）—— 三者**都不是镜像**。
 >
-> 本仓当前 `experimental/<...>/common` 尚未出现；一旦引入，必须保证是稳定树的超集。
+> 本仓当前 `experimental/<...>/common` 尚未引入；一旦引入，必须保证是稳定树的**超集**（建议加离线门禁断言，见 §9）。
 
 ## 7. 本次修改清单
 
