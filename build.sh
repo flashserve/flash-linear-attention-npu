@@ -1020,9 +1020,11 @@ parse_changed_files() {
     echo $dotted_line
     cat $PR_CHANGED_FILES
     ops_names=$(python3 scripts/ci/parse_changed_ops.py $PR_CHANGED_FILES "$ENABLE_EXPERIMENTAL")
+    # 变更文件没有映射到任何算子时保持为空，交由调用方按「本次无可编算子」处理
+    # （见 --PR_PKG 分支的 -z 检查）。这里不能兜底成某个具体算子名：
+    # 参考仓兜底的 fused_infer_attention_score 在本仓不存在，会把编译指向一个空目录。
     if [[ -z $ops_names ]]; then
-            ops_names='fused_infer_attention_score'
-        echo "NO ops changed found,set op $ops_names as default."
+        echo "Info: no operator matched the changed files (experimental tree)."
     fi
 }
 set_example_opt() {

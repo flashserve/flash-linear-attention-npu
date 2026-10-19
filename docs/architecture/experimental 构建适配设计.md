@@ -1,8 +1,8 @@
 # experimental 目录算子构建适配设计
 
-> 状态：**构建侧改造已实现**（本 PR）；CI 侧与 Python 侧见 §9「未完成 / 后续项」。
-> 适用于 `fla/ops/ascendc/` 之外的「实验算子」——即尚未稳定、随时可能增删的算子。
+> 基线：`zzy1205/flash-linear-attention-npu` 的 `main`（本文所有行号均以本仓为准，不是参考仓的行号）。
 > 参考实现：`cann/ops-transformer` 的 `--experimental` 机制（`master@56f47a36`）。
+> **本仓与参考仓在构建框架上有实质差异，照参考仓理解本仓会得出错误结论**，见 §6.2。
 
 ## 1. 一句话结论
 
@@ -14,11 +14,11 @@
 
 | | overlay（单算子叠加层） | experimental（本方案） |
 | --- | --- | --- |
-| 生效时机 | **运行期**：往已装 OPP 的 `vendors/` 里塞一份新库，靠 `load_priority` 抢先 | **编译期**：决定这次构建装哪些算子 |
+| 生效时机 | **运行期**：往已装 OPP 的 `vendors/` 里塞一份新库，靠优先级抢先 | **编译期**：决定这次构建装哪些算子 |
 | 改动对象 | 已装 CANN / wheel 内嵌 OPP | 构建产物 |
-| 解决什么 | 只想替换**某个算子**的实现，不动其余 | 新算子还在验证期，不想进稳定包 |
+| 解决什么 | 只替换**某个算子**的实现，不动其余 | 新算子还在验证期，不想进稳定包 |
 
-两者正交，可以并存；本方案不依赖 overlay，也不改变 overlay 的任何行为。
+两者正交、可并存；本方案不依赖 overlay，也不改变 overlay 的任何行为。
 
 ## 3. 术语
 
@@ -28,14 +28,51 @@
 | **实验树** | `experimental/fla/ops/ascendc/<域>/<算子>/`，`ENABLE_EXPERIMENTAL=ON` 时参与构建 |
 | **域** | 算子的一级分类：本仓为 `cp` / `gdn` / `kda`（另有 `common`，只放公共头，不是算子） |
 | **前缀规则** | `<op>_depends` 里的路径在实验模式下由框架统一加 `experimental/` 前缀 |
+| **算子目录定位** | 框架用目录名（`NAME`）推导算子名；CI 用 `op_host` 等子目录标记定位算子目录 |
 
-## 4. 目录约定（本方案的核心决策）
+## 4. 代码结构：谁 include 谁、谁调谁
 
-### 4.1 实验树整体镜像稳定树的仓库相对路径
+改构建逻辑前必须先看清这个骨架，否则容易改错地方（尤其是「非 open 路径」）。
 
 ```
-fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/          ← 稳定树
-experimental/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/   ← 实验树（同构镜像）
+CMakeLists.txt
+│
+├─ :65    include(cmake/func.cmake)              ← 无条件、最靠前
+│            定义 22 个 function/macro，是纯函数库（无顶层副作用）：
+│            op_add_subdirectory:66   op_add_depend_directory:154
+│            add_op_to_compiled_list:145（macro）  add_ops_src_copy:367
+│            add_ops_info_target:237  add_compile_cmd_target:188
+│            add_bin_compile_target:474  …
+│
+├─ :68    if (BUILD_OPEN_PROJECT)                ← ① 不支持的 SOC：编空包后早退
+│  :83        return()
+│
+├─ :136   if (BUILD_OPEN_PROJECT)
+│  :153       include(cmake/custom_build.cmake)   ← 只在 open 分支引入
+│                流程编排：发现 → 挂载 → 依赖 → aclnn → adapt py → kernel → install
+│                它【不】include func.cmake，直接调用 func 里定义的函数
+│  :178       return()                            ← 默认路径到此结束
+│
+└─ :180   else()                                  ← 非 open / RTY 路径
+   :181-185   include(dependencies / variables / opbuild / rty_obj_func / intf_pub_linux)
+   :186   endif()
+   :289   add_subdirectory(common)                ← 仅非 open 路径可达
+   :303   op_add_subdirectory(OP_LIST OP_DIR_LIST) ← 仅非 open 路径可达
+```
+
+**三条要点：**
+
+1. **依赖是单向的**：`custom_build.cmake` → `func.cmake`。`custom_build.cmake` 里唯一的 `include()` 是 `include(CPack)`，**没有** `include(func.cmake)`。
+2. **`:178 return()` 之后的一切在默认构建里都不执行**。看到 `:303` 的 `op_add_subdirectory` 不要以为它是主路径 —— 主路径的调用点是 `custom_build.cmake:251`。
+3. **改 `func.cmake` 会同时影响两条路径**（它 :65 就被引入），改 `custom_build.cmake` 只影响 open 路径。本方案改的 `func.cmake:70-84` 在 `op_add_subdirectory()` 内，两条路径都调用它，所以实验/稳定分支的语义必须两边都成立。
+
+## 5. 目录约定（本方案的核心决策）
+
+### 5.1 实验树整体镜像稳定树的仓库相对路径
+
+```
+fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/                 ← 稳定树
+experimental/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/    ← 实验树（同构镜像）
 ├── CMakeLists.txt
 ├── op_host/
 │   ├── CMakeLists.txt
@@ -43,29 +80,27 @@ experimental/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/   ← 实验树（�
 └── op_kernel/
 ```
 
-**为什么必须镜像，而不是 `experimental/<域>/<算子>/`**：
-
-`func.cmake` 的前缀规则只做一件事——把 `<op>_depends` 的值前面拼 `experimental/`。本仓的 `depends` 写的是**仓根相对路径**（例如 `fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h`），所以：
+**为什么必须镜像**：`func.cmake` 的前缀规则只做一件事——在 `<op>_depends` 的值前面拼 `experimental/`。本仓 `depends` 写的是**仓根相对路径**（例如 `fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h`），所以：
 
 ```
 experimental/ + fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h
   = experimental/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h
 ```
 
-只有让实验树保持同一段相对路径，这个拼接结果才存在。若改成 `experimental/<域>/<算子>/`，就必须把全仓 `depends` 改写成域相对形式——那是更大的改动面。
+只有让实验树保持同一段相对路径，这个拼接结果才存在。若改成 `experimental/<域>/<算子>/`，全仓 `depends` 都得改写成域相对形式——那是更大的改动面。
 
-> **代价**：目录层级多一层 `fla/ops/ascendc/`，可读性差一些。换来的是**算子源码与 CMakeLists 零改动**（`depends` 不用动、`add_subdirectory` 不用动）。
+> **代价**：多一层 `fla/ops/ascendc/`，可读性差一些。换来的是**算子源码与 CMakeLists 零改动**。
 
-### 4.2 硬性约束
+### 5.2 硬性约束
 
 | 约束 | 原因 |
 | --- | --- |
-| **实验树内不要放 `experimental/CMakeLists.txt`（根层）** | 发现逻辑用 `GLOB_RECURSE .../experimental/CMakeLists.txt`，递归匹配任意深度的同名文件；根层那一份会被当成一个名叫 `experimental` 的「算子」 |
-| **`experimental/<...>/common` 必须是稳定树的超集** | 框架只在实验模式下复制实验树那份 common 到 `src/common`，稳定树独有的头不会进来 → **静默缺头**（详见 §6.3） |
-| **同一个算子的实验版与稳定版必须同名同结构** | 发现逻辑用目录名（`NAME`）推导算子名，两棵树的同名算子在各自模式内独立，不会冲突；但混放会 |
-| 实验算子不能依赖「稳定树独有」的算子 | 依赖前缀会把它指到实验树，实验树里没有 → 被静默跳过（§6.2） |
+| **实验树根层不要放 `experimental/CMakeLists.txt`** | 发现逻辑是 `GLOB_RECURSE …/experimental/CMakeLists.txt`（见 §8.5），会递归匹配任意深度的同名文件；根层那份会被当成一个名叫 `experimental` 的「算子」 |
+| **`experimental/<...>/common` 必须是稳定树的超集** | 实验模式下只复制实验树那份 common，稳定树独有的头不会进来 → **静默缺头**（§8.4） |
+| **实验算子只能依赖实验树内已有的算子** | 前缀会把依赖指到实验树；没有就被静默跳过（§8.3） |
+| 同名算子可同时存在于两棵树 | 发现逻辑用目录名推算子名，两棵树在各自模式内独立，不会冲突；但不能混放到同一棵树 |
 
-## 5. 隔离是怎么保证的（四道闸）
+## 6. 隔离是怎么保证的
 
 ```
                        ENABLE_EXPERIMENTAL
@@ -78,25 +113,67 @@ experimental/ + fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h
                         │              │
    闸3 依赖  depends 加 "experimental/"     depends 原样
                         │              │
-   闸4 过滤  --ops=<op> 在已选集合里再做减法（不能把另一棵树拉进来）
+   闸4 过滤  --ops=<op> 在已选集合里做减法
 ```
 
-**闸 1（`cmake/func.cmake` 的 `if/else`）是唯一的根本保证**：同一个 `if` 的两个分支，不是两条独立语句，所以两棵树不可能同时被 glob 到。
+**闸 1（`cmake/func.cmake` 的 `if/else`）是唯一的根本保证**：同一个 `if` 的两个分支，不是两条独立语句，两棵树不可能同时被 glob 到。
 
-闸 2 本身不判断模式——它只是遍历绝对路径，树的信息已经编码在 `OP_DIR` 里（`…/experimental/...` 或 `…/fla/ops/ascendc/...`）。
+闸 2 不判断模式——它只遍历绝对路径，树的信息已编码在 `OP_DIR` 里。
 
-### 5.1 四处已知边界（不是漏，是共享件）
+闸 4 的语义要注意：`--ops=` 是在**已发现集合**里做减法，不能把另一棵树的算子拉进来。因此 `--experimental --ops=<名字>` 要求该名字**在实验树里存在**，否则选不出任何算子（静默产出空集）。
+
+### 6.1 四处共享件边界（不是漏，是共享）
 
 | 边界 | 说明 | 影响 |
 | --- | --- | --- |
-| 根级 `common/` 恒编 | `custom_build.cmake` 里 `add_subdirectory(common)` 无条件执行；`experimental/` 下**没有** common 目录 | 实验包与稳定包共用同一份根级 common，改动会同时影响两者 |
-| 依赖可回退到顶层 | 写 `../xxx` 会归一化回顶层（见 §6.2） | 是**合法手法**，但要显式知道自己在借顶层的东西 |
-| `examples/` 按 `ASCEND_OP_NAME` 恒加 | 与模式无关 | `--ops` 命中 examples 目录就会加进来 |
-| `--run_example` 的目录排除 | 非实验模式排除 `*/experimental/*`（`build.sh:621-623`） | 防止拿稳定包去跑实验 example |
+| 根级 `common/` 恒编 | `custom_build.cmake:247` `add_subdirectory(common)` 无条件执行；`experimental/` 下**没有** common 目录 | 实验包与稳定包共用同一份根级 common，改动会同时影响两者 |
+| 依赖可回退到顶层 | 写 `../xxx` 会归一化回顶层（§8.3） | 是**合法手法**，但要显式知道自己在借顶层的东西 |
+| `examples/` 参与挂载 | `custom_build.cmake:301/310/313` 按 `ASCEND_OP_NAME` 把 `examples/…` 追加进 `OP_DIR_LIST` | 与模式无关；`--ops` 命中 examples 目录就会加进来 |
+| `moe/3rd/*` 三个特例 | `custom_build.cmake:370/373/376` 写死**顶层**路径 | 参考仓遗留，本仓 `depends` 不含 `moe` 值，**永不触发** |
 
-## 6. 前缀规则（`func.cmake`）
+### 6.2 ⚠️ 本仓 vs 参考仓：机制差异清单
 
-### 6.1 规则本体
+这一节最重要——参考仓的文档/注释大量提到下面这些机制，**本仓一个都没有**。照参考仓理解本仓会写错设计。
+
+| 机制 | 参考仓 | 本仓 | 依据 |
+| --- | --- | --- | --- |
+| 模块聚合器分类（`add_subdirectory(attention)` / `mhc` / `mamba`） | 有，`custom_build.cmake` 里按 `ENABLE_EXPERIMENTAL` 分两支 | **没有**，所有算子统一由 glob 发现后逐算子挂载 | 本 PR 删掉了那块 `add_subdirectory(experimental/attention)` |
+| `COMMON_SRC_DIR` / `ALL_COMMON_SRC_DIRS`（把 common 合并复制到 `src/common`） | 有（参考仓 `custom_build.cmake` 约 1152-1234 行） | **没有**（本仓全仓 0 处） | common 只在 `add_ops_src_copy` 里改 target 名，见 §8.4 |
+| `func.cmake` 里对 `common` 的 `continue()` 排除 | 有 | **没有** | common 走同一条 `add_ops_src_copy` |
+| `_OP_HOST_COMPILE_PHASE` = `DEPENDENCY` 阶段（依赖编译时跳过 CANN 版本检查） | 有 | **没有**（全仓 0 处） | 本仓不存在 `require_cann_version` |
+| `--run_example` 非实验模式排除 `*/experimental/*` | 有 | **没有** | 本仓 `build.sh` 无此逻辑 |
+| 算子层级 | 固定 `<域>/<算子>` 2 层 | **不固定** 2～4 层 | 见 §8.1 / §9 |
+
+## 7. 发现与挂载：`OP_DIR_LIST` 的来源与消费
+
+`OP_DIR_LIST` 是「本次要编的算子目录」清单，全流程围绕它转。
+
+### 7.1 四个注入点（`cmake/custom_build.cmake`，按执行顺序）
+
+| 序 | 行 | 注入什么 |
+| --- | --- | --- |
+| 1 | `:249-251` | `set(OP_DIR_LIST)` 清空后立刻 `op_add_subdirectory(OP_LIST OP_DIR_LIST)` —— **主来源**。产出在 `func.cmake` 内：`:134` 逐个 `list(APPEND _OP_DIR_LIST ${OP_DIR})`、`:138` 去重、`:140` 排序、`:142` `PARENT_SCOPE` 回传 |
+| 2 | `:301` / `:310` / `:313` | `examples/<op>`、`examples/<op>`、`examples/mc2/<op>` —— 按 `ASCEND_OP_NAME` 命中才加 |
+| 3 | `:318` | `list(APPEND OP_DIR_LIST ${COMPILED_OP_DIRS})` —— 走**模块聚合器路由**的算子在各自 `op_host/CMakeLists.txt` 里调 `add_op_to_compiled_list()` 登记（本仓无聚合器，实际为空） |
+| 4 | `:370` / `:373` / `:376` | `moe/3rd/*` 三个写死顶层的特例（参考仓遗留，本仓不触发） |
+
+> ⚠️ 时序陷阱：第 3 项在 `:278` 的挂载循环**之后**才 APPEND。**「进了 `OP_DIR_LIST`」不等于「被 `:278` 挂载过」**。
+
+### 7.2 消费者（按行序）
+
+| 行 | 用途 |
+| --- | --- |
+| `:260` | `OP_UT_LIST IN_LIST OP_DIR_LIST` —— `ENABLE_TEST` 时判断某 UT 目录是否属于本次构建 |
+| `:278` | **逐算子挂载**：`add_subdirectory(${OP_DIR}/op_host)`，若不存在 `op_host` 则 `add_subdirectory(${OP_DIR})` |
+| `:325` | `ENABLE_TEST` 时扫 `<op>/tests/CMakeLists.txt` |
+| `:351` | 作为入参传给 `op_add_depend_directory(OP_LIST … OP_DIR_LIST OP_DEPEND_DIR_LIST)`（这里的 `OP_DIR_LIST` 是**形参名**，实际传入的是输出变量 `OP_DEPEND_DIR_LIST`） |
+| `:558` | 收集各算子 `op_graph/*_proto.h`，更新 proto |
+| `:966` | install 各算子 `op_kernel/` 下的文件 |
+| `:1028` | `add_bin_compile_target(COMPUTE_UNIT … OP_INFO ${OP_DIR_LIST})` —— **kernel 二进制编译目标** |
+
+## 8. 前缀规则（`func.cmake`）
+
+### 8.1 规则本体与两处实现
 
 ```cmake
 if (ENABLE_EXPERIMENTAL)
@@ -108,16 +185,35 @@ endif()
 
 出现两处，处理对象不同（一个是构建图，一个是 kernel 源码），互不重叠：
 
-| 位置 | 处理对象 | 产物 |
-| --- | --- | --- |
-| `cmake/func.cmake:160` | 被依赖**算子**的目录 | `OP_DEPEND_DIR_LIST` → 补挂构建图 + 隐式扩编译范围 |
-| `cmake/func.cmake:540` | 被依赖**算子**的 kernel 源 copy（**含 common**） | `add_ops_src_copy` target |
+| 位置 | 所在函数 | 处理对象 | 产物 |
+| --- | --- | --- | --- |
+| `func.cmake:160` | `op_add_depend_directory()`（`:154`） | 被依赖**算子**的目录 | `OP_DEPEND_DIR_LIST` → 补挂构建图 + 隐式扩编译范围 |
+| `func.cmake:540` | `add_bin_compile_target()` 里的 depends 循环（`:538-560`） | 被依赖**算子**的 kernel 源 copy（**含 common**） | `add_ops_src_copy` target |
 
-> ⚠️ 与参考仓的一处关键差异：**本仓没有 `continue()` 排除 common，也没有 `custom_build.cmake` 里的 `COMMON_SRC_DIR` 切换逻辑**。
-> 本仓对 common 的处理在 `add_ops_src_copy()` 内部（`func.cmake:438`）：只给 **target 名**加父目录前缀（`<父目录>_<target>`）以避免多域 common 重名；
+> ⚠️ 与参考仓的关键差异：**本仓没有 `continue()` 排除 common，也没有 `COMMON_SRC_DIR` 切换逻辑**。
+> 本仓对 common 的处理在 `add_ops_src_copy()` 内部（`func.cmake:438`）：只给 **target 名**加父目录前缀（`<父目录>_<target>`）避免多域重名；
 > **源目录仍由 `func.cmake:551` 的 `${CMAKE_SOURCE_DIR}/${depend_info_update}` 决定**，因此同样受 experimental 前缀影响。
 
-### 6.2 两条容易踩的路径语义
+### 8.2 依赖被消费时会发生三件事（`custom_build.cmake:348-378`）
+
+```cmake
+:349  op_add_depend_directory(OP_LIST ${OP_LIST}  OP_DIR_LIST OP_DEPEND_DIR_LIST)
+:354  foreach (OP_DEPEND_DIR ${OP_DEPEND_DIR_LIST})
+:356      if (ASCEND_OP_NAME 是 all/ALL 且 路径匹配 .*attention.*)  continue()      ← ①
+:362      list(APPEND ASCEND_OP_NAME ${SUB_DIR})                                  ← ②
+:363-367  if (EXISTS <dep>/op_host) add_subdirectory(<dep>/op_host) else add_subdirectory(<dep>)
+:369-378  moe_inplace_index_add* / moe_masked_scatter → 追加 moe/3rd/*（参考仓遗留）  ← ③
+```
+
+| # | 行为 | 影响 |
+| --- | --- | --- |
+| ① | `ASCEND_OP_NAME=all` 时跳过路径含 `attention` 的依赖 | 参考仓特例；本仓域是 `cp/gdn/kda`，实际不命中 |
+| ② | **把依赖算子名隐式追加进 `ASCEND_OP_NAME`** | 依赖即使不在 `--ops=` 里也会被编译。所以「`--ops` 指定了什么」≠「实际编了什么」 |
+| ③ | `moe/3rd/*` 写死顶层 | 本仓不触发 |
+
+> 本仓**没有**参考仓的 `_OP_HOST_COMPILE_PHASE = "DEPENDENCY"` 与 `require_cann_version()` 门控（全仓 0 处），所以不存在「依赖阶段跳过版本检查」这件事。
+
+### 8.3 两条路径语义
 
 **① `../` 会归一化回顶层**
 
@@ -125,88 +221,122 @@ endif()
 experimental/ + ../fla/ops/ascendc/gdn/...  →  fla/ops/ascendc/gdn/...
 ```
 
-这是 CMake 的路径语义，不是特例。想「在实验模式下故意复用稳定树的某个依赖」，就写 `../` 前缀。
+这是 CMake 的路径语义。想「实验模式下故意复用稳定树的某个依赖」，就写 `../` 前缀。
 
 **② 解析不到是静默跳过**
 
-```cmake
-if (NOT EXISTS <结果>/op_host/CMakeLists.txt AND NOT EXISTS src/<结果>/CMakeLists.txt)
-    continue()          # 不打印任何 message
-endif()
-```
+`op_add_depend_directory()` 里有**两个 `continue()`，语义不同**：
 
-**构建照样成功**，只是少挂一个算子。所以实验树的依赖必须自带齐。
+| 行 | 判据 | 含义 |
+| --- | --- | --- |
+| `func.cmake:165-167` | `${CMAKE_CURRENT_SOURCE_DIR}/${depend_info_update}/op_host/CMakeLists.txt` 不存在 | **唯一的存在性判据**（注意本仓只看 `op_host/`，没有参考仓那条 `src/<dep>/CMakeLists.txt`）。不打印任何 message，构建照样成功，只是少挂一个算子 |
+| `func.cmake:170-174` | 仅 `NOT BUILD_OPEN_PROJECT`：`${TOP_DIR}/asl/ops/cann/ops/built-in/tbe/impl/ascendc/<dep>` 存在 | 非 open 路径下走 built-in 实现，跳过本仓源码。**与 experimental 无关** |
 
-### 6.3 common 在实验模式下的行为与风险
+### 8.4 common 在实验模式下的行为与风险
 
-本仓没有「把所有 common 合并复制到同一个 `src/common`」的独立阶段，而是由 `add_bin_compile_target` 里对 `<op>_depends` 的循环（`func.cmake:538-560`）逐个 `add_ops_src_copy`：
+本仓没有「合并复制到 `src/common`」的阶段，而是由 `add_bin_compile_target` 里对 `<op>_depends` 的循环逐个 `add_ops_src_copy`：
 
 | 项 | 值 | 位置 |
 | --- | --- | --- |
 | 源目录 | `${CMAKE_SOURCE_DIR}/${depend_info_update}` → 实验模式下即 `experimental/<...>/common` | `func.cmake:551` |
 | 目标目录 | `${SRC_OUT_DIR}/${_depend_op_name}` → 多域 common 都落到同一个 `common` 目录（并集） | `func.cmake:553` |
-| target 名 | `${_depend_op_name}_<soc>_src_copy`，common 会被改名为 `<父目录>_...` → `attention_common_...` / `mc2_common_...`，避免多域重名 | `func.cmake:438` |
+| target 名 | `${_depend_op_name}_<soc>_src_copy`；common 会被改名为 `<父目录>_...`（`attention_common_...` / `mc2_common_...`）避免多域重名 | `func.cmake:438` |
 
-**因此：实验模式下只有实验树那份 common 会被复制进 staging 目录。** 若实验树的 common 是**分叉副本**而不是稳定树的超集，稳定树独有的头文件不会进来 → 编译期缺头；坑在于**目录存在、复制成功、不报「路径不存在」**。
+**所以实验模式下只有实验树那份 common 会被复制。** 若实验树 common 是**分叉副本**而非稳定树的超集，稳定树独有的头不会进来 → 编译期缺头；坑在于**目录存在、复制成功、不报「路径不存在」**。
 
-> 参考仓 `cann/ops-transformer` 的同类问题可作佐证：`attention/common` 稳定 126 / 实验 97（**共享仅 47**）、`mc2/common` 242 / 7（共享 1）、`gmm/common` 79 / 1（共享 0）—— 三者**都不是镜像**。
+> 参考仓的同类问题可作佐证：`attention/common` 稳定 126 / 实验 97（**共享仅 47**）、`mc2/common` 242 / 7（共享 1）、`gmm/common` 79 / 1（共享 0）—— 三者都**不是镜像**。
 >
-> 本仓当前 `experimental/<...>/common` 尚未引入；一旦引入，必须保证是稳定树的**超集**（建议加离线门禁断言，见 §9）。
+> 本仓当前尚未引入 `experimental/<...>/common`；一旦引入，必须保证是稳定树的**超集**（建议加离线门禁，见 §11）。
 
-## 7. 本次修改清单
+### 8.5 一处必须知道的设计假设：`GLOB_RECURSE` 的 pattern 语义
+
+实验分支只写了一条 pattern：
+
+```cmake
+file(GLOB_RECURSE OP_HOST_CMAKE_FILES
+     "${CMAKE_CURRENT_SOURCE_DIR}/experimental/CMakeLists.txt")
+```
+
+它依赖 CMake 的行为：**`GLOB_RECURSE` 会把 pattern 拆成「目录 + 文件名」，从目录递归匹配同名文件**，因此传一个字面文件名等价于「递归找所有同名文件」。
+
+证据：稳定分支长期使用同样写法 —— `${CMAKE_CURRENT_SOURCE_DIR}/fla/ops/ascendc/CMakeLists.txt` 这个**文件并不存在**（实际有 72 个 CMakeLists 分散在 `fla/ops/ascendc/**`），而构建正常发现 36 个算子。若 `GLOB_RECURSE` 不支持该语义，稳定构建根本编不出算子。
+
+> 若将来升级/替换 CMake 版本后有异常，第一件事就是把这条改成显式的 `experimental/**/CMakeLists.txt` 并回归验证。
+
+## 9. 本次修改清单
+
+### 9.1 改了什么
 
 | # | 文件 | 改动 | 理由 |
 | --- | --- | --- | --- |
-| 1 | `cmake/func.cmake:70-84` | 实验分支从「按域列白名单」改为与 `else` 分支对称的一条 `GLOB_RECURSE …/experimental/CMakeLists.txt` | 原白名单是参考仓的域（`ffn/gmm/moe/posembedding/...`），本仓一个都不存在；且其中一行把**算子名当域**用。改成递归匹配后，**新增实验算子 / 新增实验域都不需要再改 cmake** |
-| 2 | `cmake/custom_build.cmake:292-299` | 删除 `add_subdirectory(experimental/attention)` 整块 | 本仓没有 attention/mhc/mamba 这类模块聚合器分类，该目录不存在，`add_subdirectory()` 指向不存在目录是 **CMake fatal error** |
-| 3 | `cmake/scripts/prepare.sh` | 为 `ENABLE_EXPERIMENTAL` 补默认值 `OFF` | 它是全链**唯一没有默认值**的变量；二次 configure 若取到空串，两次配置的算子集就可能不一致 |
-| 4 | `scripts/ci/parse_changed_ops.py` | 路径解析改为**树根感知 + 算子目录标记定位**：识别 `fla/ops/ascendc/` 与 `experimental/fla/ops/ascendc/` 两种根；用 `op_host / op_kernel / tests / …` 标记定位算子目录边界；域清单改为 `cp / gdn / kda`，非算子目录（`common / 3rd / tools / tests / internal_ops`）直接忽略 | 原实现假设路径是 `<域>/<算子>/…`（2 层）或 `experimental/<域>/<算子>/…`（3 层）；本仓是 5/6 层且**算子层级不固定**（`kda/chunk_kda_fwd` 2 层、`gdn/chunk_gdn_fwd/chunk_fwd_o` 3 层、`kda/chunk_kda_bwd/internal_ops/kda_gate_bwd_post` 4 层），按固定下标取会把 `fla` 当域、`ops` 当算子 |
-| 5 | `experimental/README.md` | 新增：目录约定 + 使用方式 | 让「实验目录怎么放、怎么编」在仓库里可见 |
+| 1 | `cmake/func.cmake:70-84` | 实验分支从「按域列白名单」改为与 `else` 分支对称的 `GLOB_RECURSE …/experimental/CMakeLists.txt` | 原白名单是参考仓的域（`ffn/gmm/moe/posembedding/…`），本仓一个都不存在；其中一行还把**算子名**当域用。改后新增实验算子 / 新增实验域都不必再改本文件 |
+| 2 | `cmake/custom_build.cmake:292-299` | 删除 `add_subdirectory(experimental/attention)` 整块，换成说明注释 | 本仓无模块聚合器分类，该目录不存在，`add_subdirectory()` 指向不存在目录是 **CMake fatal error** |
+| 3 | `cmake/scripts/prepare.sh`（`set_env()`） | 为 `ENABLE_EXPERIMENTAL` 补默认值 `OFF` | **可读性修正，不是 bug 修复**：空串在 CMake 里等价 OFF，行为正确，但日志与 `CMakeCache` 里看不出「实验模式关闭」。注：本文件另有 25 个变量同样无默认值，本 PR 只动本方案的关键开关 |
+| 4 | `scripts/ci/parse_changed_ops.py` | 路径解析改为**树根感知 + 算子目录标记定位**：识别 `fla/ops/ascendc/` 与 `experimental/fla/ops/ascendc/` 两种根；用 `op_host / op_kernel / tests / …` 标记定位算子目录边界，末尾回退到真实存在的目录；域清单改为 `cp / gdn / kda`，非算子目录（`common / 3rd / tools / tests / internal_ops`）忽略；`_get_default_name()` 改为返回空串 | 原实现假设 `<域>/<算子>/…`（2 层）或 `experimental/<域>/<算子>/…`（3 层）；本仓是 5/6 层且**算子层级不固定**（`kda/chunk_kda_fwd` 2 层、`gdn/chunk_gdn_fwd/chunk_fwd_o` 3 层、`kda/chunk_kda_bwd/internal_ops/kda_gate_bwd_post` 4 层），按固定下标取会把 `fla` 当域、`ops` 当算子 |
+| 5 | `build.sh`（`parse_changed_files()`） | 删除「无匹配算子时兜底成 `fused_infer_attention_score`」 | 该算子在**本仓不存在**（0 个文件），兜底会把编译指向空目录。改为保持为空，交由 `--PR_PKG` 分支的 `-z` 检查走「本次无可编算子」 |
+| 6 | `experimental/README.md` | 新增：目录约定 + 使用方式 | 让「实验目录怎么放、怎么编」在仓库里可见 |
 
-### 7.1 未修改的（有意）
+### 9.2 有意不修改的
 
 | 项 | 原因 |
 | --- | --- |
-| 3 个 `op_host/CMakeLists.txt` 里已有的 `experimental/${dep}` 手写前缀 | 在 §4.1 的镜像约定下，它与框架的前缀**结果一致**，不冲突；保留可读性（显式优于隐式）。若将来改成域相对 depends，需一并删除 |
-| `cmake/scripts/util/ascendc_impl_build.py` | 该脚本用**相对探测**解析 kernel 源（`get_kernel_source` / `_get_kernel_source`），不硬编码树根；只要实验树内部结构同构即无需改动 |
-| `build.sh` | `--experimental` 解析、`-DENABLE_EXPERIMENTAL=TRUE` 透传、`--pkg-type` 互斥检查均已存在，无需改 |
+| 3 个 `op_host/CMakeLists.txt` 里已有的 `experimental/${dep}` 手写前缀（`gdn/chunk_gated_delta_rule_bwd`、`gdn/chunk_gated_delta_rule_fwd`、`kda/chunk_kda_fwd`） | 在 §5.1 的镜像约定下与框架前缀**结果一致**，不冲突；保留可读性。若将来改成域相对 depends，需一并删除 |
+| `cmake/scripts/util/ascendc_impl_build.py` | 用相对探测解析 kernel 源（`get_kernel_source` / `_get_kernel_source`），不硬编码树根；实验树内部结构同构即无需改 |
+| `cmake/config.cmake`、根 `CMakeLists.txt` | 透传与 include 均已就绪 |
+| `build.sh` 的 `--experimental` 解析与透传 | `:49` 默认 FALSE、`:1162-1163` 置 TRUE、`:1203` `--PR_PKG` 分派、`:1440-1441` 转 `-DENABLE_EXPERIMENTAL=TRUE`，全部就绪 |
 
-## 8. 使用与验证
+## 10. 使用与验证
 
 ```bash
-# 稳定包（默认）
+# 稳定包（默认，行为与改造前完全一致）
 bash build.sh --pkg --soc=ascend910b --ops=chunk_fwd_o
 
-# 实验包：从 experimental/ 树里选算子
+# 实验包：从 experimental/ 树里选算子（--ops 的名字必须在实验树里存在）
 bash build.sh --pkg --experimental --soc=ascend910b --ops=<实验算子名>
 
-# 实验包：全量实验算子
+# 实验包：全部实验算子
 bash build.sh --pkg --experimental --soc=ascend910b
 ```
 
 **验证要点**（本 PR 未在真机跑，需 CI/本地补）：
 
-1. 只配不编：`cmake -DENABLE_EXPERIMENTAL=TRUE …` 必须在**没有** `experimental/` 目录时也**不报错**（递归 glob 匹配空集是合法行为）。
-2. 反向：`-DENABLE_EXPERIMENTAL=FALSE` 时 `experimental/` 完全不参与（可在 `experimental/` 下放一个故意写错的 `CMakeLists.txt`，若构建仍成功即证明未被 include）。
-3. 两棵树同名算子：验证不会 target 重名。
-4. 依赖：实验算子声明一个实验树内依赖，确认被正确补挂；再声明一个只在稳定树有的依赖，确认被静默跳过（预期行为，但要知道）。
+1. **空集合法**：在没有 `experimental/` 目录（或目录为空）时，`-DENABLE_EXPERIMENTAL=TRUE` 配置**不得报错**（递归 glob 匹配空集是合法行为）。
+2. **反向隔离**：在 `experimental/` 下放一个**故意写错**的 `CMakeLists.txt`，用 `-DENABLE_EXPERIMENTAL=FALSE` 构建应仍成功 —— 证明它未被 include。
+3. **同名算子**：两棵树放同名算子，验证不出现 target 重名。
+4. **依赖补挂**：实验算子声明一个实验树内依赖，确认被 `:362` 追加进 `ASCEND_OP_NAME` 并被 `add_subdirectory`；再声明一个只在稳定树有的依赖，确认被静默跳过（预期行为，但要知道）。
+5. **发现结果可见**：临时加 `message(STATUS "OP_DIR_LIST=${OP_DIR_LIST}")` 确认实验算子确实进了清单，而不是「构建成功但一个没编」。
 
-## 9. 未完成 / 后续项
+## 11. 未完成 / 后续项
 
 | 项 | 说明 |
 | --- | --- |
-| **CI 实验 job** | 当前 CI（`.github/workflows/ci.yml`）没有任何 job 传 `--experimental`，等于这条链**从未被验证**。需新增一个独立 job（独立产物，不与稳定包合并） |
-| **`parse_changed_ops.py` 未在 CI 验证** | 该脚本仅在 `--PR_PKG` + experimental 时被调用（`build.sh:1022`）；当前无实验 job，所以改动后也无实际执行路径。新增实验 job 时必须先验证它 |
-| **common 镜像校验** | 建议加一个离线门禁：若存在 `experimental/<...>/common`，断言它是稳定树同名目录的超集 |
-| **Python / wheel 侧** | `torch_custom/fla_npu/` 完全不感知 `--experimental`。实验算子要能被 Python 调到，需要：Stable-ABI 三件套（`csrc/src/stable_<op>.cpp` + `_stable.py` wrapper + `_ASCENDC_OPS` 一行）+ OPP 装载隔离决策（实验 OPP 不能顶掉稳定 OPP） |
-| **静态库** | `--static` 与实验算子未做适配，暂不支持 |
+| **CI 实验 job** | 当前 `.github/workflows/ci.yml` 没有任何 job 传 `--experimental`，这条链**从未被验证**。需新增独立 job（独立产物，不与稳定包合并） |
+| **`parse_changed_ops.py` 无 CI 执行路径** | 仅在 `--PR_PKG` + experimental 时调用（`build.sh:1022`）。新增实验 job 时必须先验证它 |
+| **common 镜像校验门禁** | 建议加离线断言：若存在 `experimental/<...>/common`，断言它是稳定树同名目录的超集 |
+| **Python / wheel 侧** | `torch_custom/fla_npu/` 完全不感知 `--experimental`。实验算子要能被 Python 调到，需要 Stable-ABI 三件套（`csrc/src/stable_<op>.cpp` + `_stable.py` wrapper + `_ASCENDC_OPS` 一行）+ 实验 OPP 装载隔离决策 |
+| **`--static`** | 与实验算子未做适配 |
 
-## 10. 风险与坑
+## 12. 风险与坑
 
 | 坑 | 后果 | 规避 |
 | --- | --- | --- |
-| 实验树根层放 `CMakeLists.txt` | 会多出一个名叫 `experimental` 的「算子」 | 约定禁止（§4.2） |
-| 实验树 common 不是超集 | 编译期缺头，且不报「路径不存在」 | §6.3 |
-| 依赖只在稳定树有 | 静默丢依赖，构建成功 | §6.2 |
-| `--pkg-type=rpm/deb` 搭配 `--experimental` | 外层守卫已禁止；但注意 `--pkg-type=all` **会绕过**该检查（守卫条件是 `!= run && != all`） | 使用时自行避免 |
+| 实验树根层放 `CMakeLists.txt` | 多出一个名叫 `experimental` 的「算子」 | §5.2 约定禁止 |
+| 实验树 common 不是超集 | 编译期缺头，且不报「路径不存在」 | §8.4 |
+| 依赖只在稳定树有 | 静默丢依赖，构建成功 | §8.3 |
+| `--ops` 写了实验树里没有的名字 | 静默产出空集，构建「成功」但没编东西 | §6 闸 4；用 §10.5 的 `message` 自查 |
+| `--pkg-type=rpm/deb` 搭配 `--experimental` | 外层守卫禁止；但 `--pkg-type=all` **会绕过**该检查（守卫条件是 `!= run && != all`） | 使用者自行避免 |
 | 实验包与稳定包共用根级 `common/` | 改 common 会同时影响两者 | 改后两种包都要验 |
+| 依赖算子的版本门控 | **本仓没有**参考仓的 `DEPENDENCY` 阶段门控，被依赖算子会照常走完整检查 | 不要按参考仓的预期排障 |
+
+## 附录 A · 审计中发现但未纳入本 PR 的遗留问题
+
+以下都是**参考仓代码带过来、与本方案无关**的残留，本次只记录不改（改动会触及稳定包行为，需要单独评估）：
+
+| 位置 | 现象 | 影响 |
+| --- | --- | --- |
+| `build.sh:1450` | `if [[ $ascend_op_name != *fused_infer_attention_score* ]] && [[ != *incre_flash_attention* ]]` 时加 `-DENABLE_TILING_SINK=OFF` | 这两个算子本仓不存在，条件恒真 → **所有构建都带 `-DENABLE_TILING_SINK=OFF`**。若本仓要用 tiling sink，这里是哑点 |
+| `custom_build.cmake:369-378` | 三个 `moe/3rd/*` 写死顶层路径 | 本仓 `depends` 不含 `moe` 值 → 死代码 |
+| `custom_build.cmake:356-360` | `ASCEND_OP_NAME=all` 时跳过 `.*attention.*` 依赖 | 本仓无 attention 域 → 死代码 |
+| `scripts/ci/parse_changed_ops.py` 的 `BlackList` | 全是参考仓的 moe/mc2 算子名 | 本仓永不命中 |
+| `CONTRIBUTING.md` | 举例里写 `experimental/attention` | 文档残留，易误导 |
+| `cmake/scripts/prepare.sh` | 25 个变量无默认值 | 空串多数等价 0/空，行为上通常无害；本 PR 只兜了 `ENABLE_EXPERIMENTAL` |
