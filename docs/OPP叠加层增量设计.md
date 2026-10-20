@@ -21,7 +21,7 @@ site-packages/fla_npu/opp/vendors/fla_npu_transformer/
 
 1. 改动算子优先使用增量实现；
 2. 增量未提供的算子自动回落到完整 base；
-3. host、tiling 与 kernel 选择同一来源顺序；
+3. L1 host aclnn 入口与 L2-L4 的注册、tiling、kernel 遵循一致的 `overlay -> base` 来源优先级；
 4. 安装和卸载不修改 base vendor；
 5. 进程能明确知道实际加载了哪些来源。
 
