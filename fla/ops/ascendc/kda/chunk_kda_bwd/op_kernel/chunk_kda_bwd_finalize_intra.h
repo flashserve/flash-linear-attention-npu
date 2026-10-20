@@ -713,7 +713,7 @@ public:
         dAqkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dAqk_));
         dAkkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dAkk_));
         dqBaseRawGm_.SetGlobalBuffer(
-            reinterpret_cast<__gm__ float *>(dqBaseRaw_));
+            reinterpret_cast<__gm__ KdaBwdDqRawStoreT *>(dqBaseRaw_));
         dqGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dq_));
         dkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dk_));
         dbGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(db_));
@@ -2772,7 +2772,7 @@ private:
                 tiling_, task.batchIdx, head, anchorRow, 0)],
             1, cols, TensorRowElements());
         CopyInMatrixRowsDirect(
-            dqBaseRaw,
+            reduceTmp_.Get<KdaBwdDqRawStoreT>(),
             dqBaseRawGm_[CIntraTensorOffset(
                 tiling_, task.batchIdx, head, tokenBegin, 0)],
             ownedRows, cols, TensorRowElements());
@@ -2842,7 +2842,7 @@ private:
             (__ubuf__ float *)anchor.GetPhyAddr(),
             (__ubuf__ float *)beta.GetPhyAddr(),
             (__ubuf__ float *)dbAcc.GetPhyAddr(),
-            (__ubuf__ float *)dqBaseRaw.GetPhyAddr(),
+            (__ubuf__ KdaBwdDqRawStoreT *)dqBaseRaw.GetPhyAddr(),
             (__ubuf__ float *)anchorExp.GetPhyAddr(),
             (__ubuf__ float *)gate.GetPhyAddr(), tiling_.scale,
             ownedRows, cols);
@@ -3023,7 +3023,7 @@ private:
                 tiling_, task.batchIdx, head, upperAnchorRow, 0)],
             1, cols, TensorRowElements());
         CopyInMatrixRowsDirect(
-            dqBaseRaw,
+            dqBaseRaw.template ReinterpretCast<KdaBwdDqRawStoreT>(),
             dqBaseRawGm_[CIntraTensorOffset(
                 tiling_, task.batchIdx, head, tokenBegin, 0)],
             ownedRows, cols, TensorRowElements());
@@ -3075,7 +3075,7 @@ private:
                 (__ubuf__ float *)upperAnchor.GetPhyAddr(),
                 (__ubuf__ float *)beta.GetPhyAddr(),
                 (__ubuf__ float *)dbAcc.GetPhyAddr(),
-                (__ubuf__ float *)dqBaseRaw.GetPhyAddr(),
+                (__ubuf__ KdaBwdDqRawStoreT *)dqBaseRaw.GetPhyAddr(),
                 (__ubuf__ float *)anchorExp.GetPhyAddr(),
                 (__ubuf__ float *)dqFinal.GetPhyAddr(), tiling_.scale,
                 ownedRows, cols);
@@ -3090,7 +3090,7 @@ private:
                 (__ubuf__ float *)lowerAnchor.GetPhyAddr(),
                 (__ubuf__ float *)beta.GetPhyAddr(),
                 (__ubuf__ float *)dbAcc.GetPhyAddr(),
-                (__ubuf__ float *)dqBaseRaw.GetPhyAddr(),
+                (__ubuf__ KdaBwdDqRawStoreT *)dqBaseRaw.GetPhyAddr(),
                 (__ubuf__ float *)anchorExp.GetPhyAddr(),
                 (__ubuf__ float *)dqFinal.GetPhyAddr(), tiling_.scale,
                 ownedRows, cols);
@@ -3300,7 +3300,9 @@ private:
                 (__ubuf__ float *)anchor.GetPhyAddr(),
                 (__ubuf__ float *)beta.GetPhyAddr(),
                 (__ubuf__ float *)dbAcc.GetPhyAddr(),
-                (__ubuf__ float *)rawDq.GetPhyAddr(),
+                // FUSE_DQ_BASE=false: the dq-base operand is dead here; the
+                // cast only matches the BF16 storage signature (H5-C1).
+                (__ubuf__ KdaBwdDqRawStoreT *)rawDq.GetPhyAddr(),
                 (__ubuf__ float *)anchor.GetPhyAddr(),
                 (__ubuf__ float *)rawDq.GetPhyAddr(), 0.0f,
                 ownedRows, cols);
@@ -3475,7 +3477,7 @@ private:
     AscendC::GlobalTensor<BetaT> betaGm_;
     AscendC::GlobalTensor<float> dAqkGm_;
     AscendC::GlobalTensor<float> dAkkGm_;
-    AscendC::GlobalTensor<float> dqBaseRawGm_;
+    AscendC::GlobalTensor<KdaBwdDqRawStoreT> dqBaseRawGm_;
     AscendC::GlobalTensor<float> dqGm_;
     AscendC::GlobalTensor<float> dkGm_;
     AscendC::GlobalTensor<float> dbGm_;

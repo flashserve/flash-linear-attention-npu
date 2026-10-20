@@ -228,6 +228,15 @@ template <class TileCopy, class TensorC>
 using KdaBwdCopyL0CToDst =
     typename KdaBwdCopyL0CToDstSelector<TileCopy, TensorC>::Type;
 
+// dq_raw storage dtype in the cross-phase workspace: BF16 on A5 (halves the
+// largest PhaseA->PhaseC round trip), FP32 elsewhere.  Consumers convert to
+// FP32 at load; the FP32 GEMM accumulation is unchanged either way.
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+using KdaBwdDqRawStoreT = bfloat16_t;
+#else
+using KdaBwdDqRawStoreT = float;
+#endif
+
 // Cross-phase private workspace regions are handed to the device entry as
 // offsets inside ChunkKdaBwdTilingData.  The fused MIX entry has to keep its
 // whole tiling payload inside the proven A5 kernel-argument budget, so those

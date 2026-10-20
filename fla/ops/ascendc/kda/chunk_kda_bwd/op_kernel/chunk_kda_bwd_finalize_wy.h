@@ -1743,7 +1743,8 @@ public:
         betaGm_.SetGlobalBuffer(reinterpret_cast<__gm__ BetaT *>(beta_));
         hGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DataT *>(h_));
         dhGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DataT *>(dh_));
-        dqRawGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dqRaw_));
+        dqRawGm_.SetGlobalBuffer(
+            reinterpret_cast<__gm__ KdaBwdDqRawStoreT *>(dqRaw_));
         dqGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dq_));
         dkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dk_));
         dvGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DataT *>(dv_));
@@ -3197,7 +3198,7 @@ private:
     AscendC::GlobalTensor<BetaT> betaGm_;
     AscendC::GlobalTensor<DataT> hGm_;
     AscendC::GlobalTensor<DataT> dhGm_;
-    AscendC::GlobalTensor<float> dqRawGm_;
+    AscendC::GlobalTensor<KdaBwdDqRawStoreT> dqRawGm_;
     AscendC::GlobalTensor<float> dqGm_;
     AscendC::GlobalTensor<float> dkGm_;
     AscendC::GlobalTensor<DataT> dvGm_;
