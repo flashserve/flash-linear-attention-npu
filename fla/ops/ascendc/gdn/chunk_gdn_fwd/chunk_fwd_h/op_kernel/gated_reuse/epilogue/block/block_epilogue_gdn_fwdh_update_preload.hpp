@@ -33,6 +33,7 @@ class BlockEpilogue <
     HUpdateInputType_,
     FinalStateType_
 > {
+    static constexpr float LN2 = 0.6931471805599453f;
 public:
     // Type aliases
     using DispatchPolicy = EpilogueAtlasGDNFwdHUpdatePreload;
@@ -149,6 +150,9 @@ public:
 
         AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
         AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+        // 复用谓词限定 use_exp2=true：g_last 为 log2 域，×LN2 换算到 ln 域（2^x = e^(LN2·x)）
+        AscendC::Muls(glastUbTensor, glastUbTensor, LN2, 1);
+        AscendC::PipeBarrier<PIPE_V>();
         AscendC::Exp(glastUbTensor, glastUbTensor, 1);
         AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
         AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
