@@ -534,7 +534,7 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 | base OPP 内容 | 完整聚合 host/索引/tiling/kernel | overlay 安装器不修改 base；完整 wheel/run 包仍走原 base 产物 | **不变** |
 | overlay vendor | 不存在 | 新增 `fla_npu_overlay_*` 同级目录，只含增量算子 | **新增功能** |
 | torch/aclnn/schema | 既有公开接口 | 本 PR 不修改算子 `def`、aclnn 参数或 torch schema | **不变** |
-| 原算子 kernel 源码 | `7e39f966` 内容 | GDN/KDA 4 个历史分叉文件已对齐该基线；`fla/ops/ascendc` 相对基线净差异为 0 | **不变** |
+| 原算子 kernel 源码 | PR 分支原有内容 | 本 PR 净 diff 不包含 `fla/ops/ascendc`；验证期间为对照 `7e39f966` 引入的 4 个 GDN/KDA 文件已移出本 PR | **不变** |
 
 ### 12.3 安装、卸载与写盘边界
 
@@ -592,7 +592,7 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 
 ### 12.7 源码、CI 与验证结论
 
-- 相对基线 `7e39f966`，`fla/ops/ascendc` 算子源码净差异为 0；本 PR 不借 overlay 设计修改已有 kernel 实现。
+- 本 PR 净 diff 不包含 `fla/ops/ascendc`；验证期间为对照 `7e39f966` 临时同步的 4 个 GDN/KDA 文件已移除，不借 overlay 设计修改已有 kernel 实现。
 - ABI gate 位于 `build.sh`，CI 复用同一入口，不在 `ci/run_checks.sh` 外层重复执行。
 - 相关本地/A5 回归为 72 PASS、1 个既有 build-stamp 前置条件 SKIP；实际 base3/delta1 public 头检查 3 个 call site、0 mismatch；注入类型漂移按预期失败；契约完整的 A5 3+1 为 4/4 PASS。
 - `ci/tests/test_run_checks_stage_pipeline.sh` 的 mock 安装路径失败可在未修改的 `f17dbc1` 同样复现，判定为既有测试夹具问题，不是本轮 ABI/兼容性改动引入。

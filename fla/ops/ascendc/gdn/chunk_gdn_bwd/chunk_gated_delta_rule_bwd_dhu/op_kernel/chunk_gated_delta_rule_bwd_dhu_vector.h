@@ -40,16 +40,6 @@ public:
         dvGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dv));
         cuSeqlens_ = cuSeqlens;
         chunkIndices_ = chunkIndices;
-        // q/g/dv 均为一次性流式读，禁 L2 防止写分配驱逐 dh/dv2 及 qg/termQ/termW
-        // 等 ping-pong workspace 行（cube 侧 gmK/gmDO/gmWT 同理；dh/dv2 输出与
-        // 全部 workspace 段保持默认 NORMAL——它们是对端即读的生产者-消费者数据）。
-        // 变长模式下跨 task 的 L2 复用有收益（frag64 实测反噬），
-        // 仅固定长度（cuSeqlens == nullptr）启用。须在 cuSeqlens_ 赋值后判断。
-        if (cuSeqlens_ == nullptr) {
-            qGm_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
-            gateGm_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
-            dvGm_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
-        }
         dhGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dh));
         if (tilingData->hasDh0 != 0 && dh0 != nullptr) {
             dh0Gm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dh0));
@@ -176,8 +166,7 @@ public:
             }
 
             SeqInfo seqInfo;
-            // 变长前缀增量缓存（taskIdx 递增 → seqIdx 单调不减）
-            GetSeqInfoCached(cuSeqlens_, *tiling_, seqIdx, seqInfoCache_, seqInfo);
+            GetSeqInfo(cuSeqlens_, *tiling_, seqIdx, seqInfo);
             if (!seqInfo.valid) {
                 continue;
             }
@@ -216,13 +205,6 @@ public:
                     const int64_t dhBase = DhOffset(chunkInfo.bIdx, hv, chunkInfo.outputChunkIdx);
                     if (headOffset % subBlockNum_ != subBlockIdx_) {
                         Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCubeFlag_);
-                        // 配平：非归属 subblock 同点空转 set dhReady（cube 侧
-                        // 两个 mode-2 wait 各需两个 AIV 的计数）。
-                        // chunk 链浅时禁用拆分同步（见 SYNC_SPLIT_MIN_CHUNKS）
-                        if (seqInfo.chunkCnt >= SYNC_SPLIT_MIN_CHUNKS) {
-                            Catlass::Arch::CrossCoreFlag dhReadyFlag{DH_READY_FLAG};
-                            Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(dhReadyFlag);
-                        }
                         continue;
                     }
                     AscendC::LocalTensor<float> gateFactor =
@@ -305,17 +287,6 @@ public:
                                          elems);
                     }
 
-                    // dh 已全部写 GM（上面 state 行循环的 CopyOutFp32Rows 完成），
-                    // GEMM0 唯一跨核输入就绪——先于 qg 生成发射 dhReady，让 cube 的
-                    // GEMM0 与本 AIV 的 qg 生成重叠。PIPE_MTE3 与 dh 的 MTE3 写同
-                    // pipe 保序。
-                    // chunk 链浅时禁用拆分（每 head 多一次跨核往返不划算），
-                    // cube 侧 GEMM0 前退回原 vecToCube 单次 wait。
-                    if (seqInfo.chunkCnt >= SYNC_SPLIT_MIN_CHUNKS) {
-                        Catlass::Arch::CrossCoreFlag dhReadyFlag{DH_READY_FLAG};
-                        Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(dhReadyFlag);
-                    }
-
                     for (int64_t rowOffset = 0; rowOffset < chunkInfo.chunkLen; rowOffset += vecRow_) {
                         const int64_t curRows = Min(vecRow_, chunkInfo.chunkLen - rowOffset);
                         const int64_t token = chunkInfo.tokenStart + rowOffset;
@@ -353,11 +324,9 @@ public:
                             dvGateFactorAllFp32_.template Get<float>()[headOffset * gateElems_];
                         AscendC::Brcb(gBrcb, gateRaw[lastRowBase], 1, {1, 8});
                         AscendC::PipeBarrier<PIPE_V>();
-                        AscendC::Muls(dvGateFactor, gateRaw, -1.0f,
-                                      static_cast<uint32_t>(chunkInfo.chunkLen));
+                        AscendC::Muls(dvGateFactor, gateRaw, -1.0f, static_cast<uint32_t>(chunkInfo.chunkLen));
                         AscendC::PipeBarrier<PIPE_V>();
-                        for (int64_t offset = 0; offset < chunkInfo.chunkLen;
-                             offset += VECTOR_REPEAT_FLOAT_ELEMS) {
+                        for (int64_t offset = 0; offset < chunkInfo.chunkLen; offset += VECTOR_REPEAT_FLOAT_ELEMS) {
                             const uint64_t cur = static_cast<uint64_t>(
                                 chunkInfo.chunkLen - offset > VECTOR_REPEAT_FLOAT_ELEMS ?
                                     VECTOR_REPEAT_FLOAT_ELEMS :
@@ -371,8 +340,7 @@ public:
                                           static_cast<uint32_t>(chunkInfo.chunkLen));
                             AscendC::PipeBarrier<PIPE_V>();
                         }
-                        AscendC::Exp(dvGateFactor, dvGateFactor,
-                                     static_cast<uint32_t>(chunkInfo.chunkLen));
+                        AscendC::Exp(dvGateFactor, dvGateFactor, static_cast<uint32_t>(chunkInfo.chunkLen));
                         AscendC::PipeBarrier<PIPE_V>();
                     }
                     Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCubeFlag_);
@@ -783,7 +751,6 @@ private:
     GM_ADDR cuSeqlens_ = nullptr;
     GM_ADDR chunkIndices_ = nullptr;
     GM_ADDR dh0Addr_ = nullptr;
-    SeqInfoCache seqInfoCache_;
     const ChunkGatedDeltaRuleBwdDhuTilingData *tiling_ = nullptr;
     int64_t B_ = 0;
     int64_t HK_ = 0;

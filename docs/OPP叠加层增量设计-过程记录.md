@@ -512,7 +512,7 @@ def _normalize_env_path(name, ordered_values):        # 实际实现的核心语
 
 #### 7.6.1b 脚手架与实测 diff 验收（**本轮已跑，结论修正了 7.6.1 的乐观估计**）
 
-脚手架：`torch_custom/fla_npu/tools/gen_stable_adapter.py`（评估用，非生产）。它的真相来源全部取自仓库现有文件——`_aclnn_ctypes.py::npu_<op>`（aclnn 名 + 编组序列）、`npu_custom.yaml`（schema）、现有适配器（样板目录 + 验收基线），不硬编码算子知识。
+实验阶段曾使用 `gen_stable_adapter.py` 评估半自动生成路线。它的真相来源全部取自仓库现有文件——`_aclnn_ctypes.py::npu_<op>`（aclnn 名 + 编组序列）、`npu_custom.yaml`（schema）、现有适配器（样板目录 + 验收基线），不硬编码算子知识。该脚手架未被构建或 CI 使用，最终未纳入本 PR 交付。
 
 实测（A5，对 `npu_chunk_local_cumsum` 与 `npu_chunk_fwd_o`）：
 
@@ -630,7 +630,7 @@ def _normalize_env_path(name, ordered_values):        # 实际实现的核心语
 | **枚举/字符串编码** | 算子自带表 + `_stable.py::_ENUM`（**顺序必须一致**） | fwd_o：`CStrArg(layout)`；cumsum：`cstr(kChunkLocalCumsumOutputDtypeNames, output_dtype)` |
 | **输出分配规则** | `_aclnn_ctypes.py` 同名 wrapper 的 `out_shape` | fwd_o：4 种 layout 分支 |
 
-**流程**：改算子 → 查 §12.6.3 表判断是否命中"必须改适配器" → 跑 `tools/gen_stable_adapter.py` 出草案 → 按上表补齐 → `build_stable.py --out <包内路径>` 重编（同时刷新 `_stable_hash.py`）→ 跑 V23 一致性测试 → 若跨边界契约变化则升 `glue_abi`。
+**实验流程**：改算子 → 查 §12.6.3 表判断是否命中"必须改适配器" → 用评估脚手架生成草案 → 按上表补齐 → `build_stable.py --out <包内路径>` 重编（同时刷新 `_stable_hash.py`）→ 跑 V23 一致性测试 → 若跨边界契约变化则升 `glue_abi`。最终方案不交付生成脚手架，当前正式门禁以现有 adapter、schema 和 public aclnn 头的比对为准。
 
 #### 7.7.7 落地切片（4 步，每步可独立验证）
 
