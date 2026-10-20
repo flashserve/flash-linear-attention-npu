@@ -5,11 +5,6 @@
 #include "chunk_kda_bwd_finalize_gate.h"
 #include "chunk_kda_bwd_finalize_intra.h"
 
-// FC-S1: compile-time switch for the PhaseC batch=2 lockstep orchestration.
-#ifndef KDA_FC_BATCH_LOCKSTEP
-#define KDA_FC_BATCH_LOCKSTEP 1
-#endif
-
 namespace KDA {
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310 && KDA_FC_BATCH_LOCKSTEP
@@ -130,7 +125,7 @@ __aicore__ inline void RunChunkKdaBwdC(
                 ChunkKdaBwdCIntraVectorProcess<
                     128, 64, SAFE_GATE, false, VARLEN_TND,
                     DataT, BetaT, DTYPE_RAW_G> process(
-                        q, k, gk, beta, dAqk, dAkk,
+                        q, k, gk, beta, dAqk, dAkk, dh,
                         dqRaw, dq, dk, db, dg, dq, dk, db, dg,
                         cuSeqlens, chunkIndices, rawG, aLog, dtBias,
                         dA, dBias, workspace);
@@ -188,7 +183,7 @@ __aicore__ inline void RunChunkKdaBwdC(
             ChunkKdaBwdCIntraVectorProcess<
                 128, 64, SAFE_GATE, false, VARLEN_TND,
                 DataT, BetaT, DTYPE_RAW_G> process(
-                    q, k, gk, beta, dAqk, dAkk,
+                    q, k, gk, beta, dAqk, dAkk, dh,
                     dqRaw, dq, dk, db, dg, dq, dk, db, dg,
                     cuSeqlens, chunkIndices, rawG, aLog, dtBias,
                     dA, dBias, workspace);

@@ -246,6 +246,11 @@ using KdaBwdDqRawStoreT = float;
 // addressable single-launch workspace from 4 GiB to 2 TiB.
 constexpr uint64_t KDA_BWD_WORKSPACE_ALIGN = 512U;
 
+// FC-S1: compile-time switch for the PhaseC batch=2 lockstep orchestration.
+#ifndef KDA_FC_BATCH_LOCKSTEP
+#define KDA_FC_BATCH_LOCKSTEP 1
+#endif
+
 struct ChunkKdaBwdTilingData {
     GDN::ChunkGatedDeltaRuleBwdDhuTilingData kernelB;
     ChunkKdaBwdCTilingData kernelC;

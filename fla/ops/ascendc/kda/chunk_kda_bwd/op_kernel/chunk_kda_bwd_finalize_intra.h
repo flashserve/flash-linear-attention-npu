@@ -688,11 +688,12 @@ class ChunkKdaBwdCIntraVectorProcess {
 public:
     __aicore__ ChunkKdaBwdCIntraVectorProcess(
         GM_ADDR q, GM_ADDR k, GM_ADDR gk, GM_ADDR beta, GM_ADDR dAqk, GM_ADDR dAkk,
-        GM_ADDR dqBaseRaw, GM_ADDR dq, GM_ADDR dk, GM_ADDR db, GM_ADDR dg,
+        GM_ADDR dh, GM_ADDR dqBaseRaw, GM_ADDR dq, GM_ADDR dk, GM_ADDR db, GM_ADDR dg,
         GM_ADDR dqOut, GM_ADDR dkOut, GM_ADDR dbOut, GM_ADDR dgOut, GM_ADDR cuSeqlens,
         GM_ADDR chunkMetadata, GM_ADDR rawG, GM_ADDR aLog, GM_ADDR dtBias,
         GM_ADDR dA, GM_ADDR dBias, GM_ADDR workspace)
         : q_(q), k_(k), gk_(gk), beta_(beta), dAqk_(dAqk), dAkk_(dAkk),
+          dh_(dh),
           dqBaseRaw_(dqBaseRaw), dq_(dq), dk_(dk), db_(db), dg_(dg),
           dqOut_(dqOut), dkOut_(dkOut), dbOut_(dbOut), dgOut_(dgOut),
           cuSeqlens_(cuSeqlens),
@@ -717,6 +718,7 @@ public:
         dAkkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dAkk_));
         dqBaseRawGm_.SetGlobalBuffer(
             reinterpret_cast<__gm__ KdaBwdDqRawStoreT *>(dqBaseRaw_));
+        dhFp32Gm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dh_));
         dqGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dq_));
         dkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dk_));
         dbGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(db_));
@@ -880,7 +882,7 @@ public:
                             if (headInWindow == AscendC::GetSubBlockIdx()) {
                                 FinishHeadA5Dense16(
                                     task, headBase + headInWindow,
-                                    rowStart, validRows, slot, 0);
+                                    rowStart, validRows, slot, 0, windowIdx);
                             }
                             continue;
                         }
@@ -950,7 +952,7 @@ private:
                     CIntraWorkspaceSlot(windowIdx, headInWindow);
                 FinishHeadA5Dense16(
                     task, headBase + headInWindow, rowStart,
-                    kProcessRowBlock, slot, 0);
+                    kProcessRowBlock, slot, 0, windowIdx);
             }
         }
         // A parity slot contains both heads.  Do not let either AIV refill
@@ -2939,7 +2941,7 @@ private:
 
     __aicore__ inline void FinishHeadA5Dense16(
         const CIntraTask &task, uint32_t head, uint32_t rowStart, uint32_t validRows,
-        uint32_t slot, uint32_t ownedBegin)
+        uint32_t slot, uint32_t ownedBegin, uint32_t windowIdx)
     {
         static_assert(K_DIM == 128,
                       "The A5 16-row Vector-Post path is specialized for K=128.");
@@ -2955,6 +2957,14 @@ private:
             ownedBegin + 16 <= validRows ? 16 : validRows - ownedBegin;
         const uint32_t tokenBegin = task.begin + rowStart + ownedBegin;
         const uint64_t slotBase = SlotBase(slot);
+        const bool useFcCarrier = CanUseFcCarrierHandover(tiling_);
+        // WY generation slot for this batch-local chunk: the batch=2 ring is
+        // ((gen&1)*2)+lane with gen = windowIdx>>2, and the lane of a dense
+        // 2-head window is head & 1.  Only valid when useFcCarrier is set
+        // (the batch lockstep keeps the slot content alive into Intra).
+        const uint64_t wySlotBase = WyWorkspaceSlotBase(
+            tiling_, AscendC::GetBlockIdx() / AscendC::GetSubBlockNum(),
+            windowIdx >> 2, head & 1U);
 
         // One 16 x 128 FP32 matrix occupies two consecutive 4 KiB planes.
         // Keep only the values that remain live across the scale and output
@@ -3110,14 +3120,26 @@ private:
         // directly with the Intra correction, so only the mature dk/dg matrix
         // input ping/pong remains here.  Issue both MTE2 reads before storing
         // dq_final to overlap input traffic with the independent MTE3 write.
-        const uint32_t dkSlot = CopyInMatrixRows(
-            dkGm_[CIntraTensorOffset(
-                tiling_, task.batchIdx, head, tokenBegin, 0)],
-            ownedRows, cols, TensorRowElements());
-        const uint32_t dgSlot = CopyInMatrixRows(
-            dgGm_[CIntraTensorOffset(
-                tiling_, task.batchIdx, head, tokenBegin, 0)],
-            ownedRows, cols, TensorRowElements());
+        const uint32_t dkSlot = useFcCarrier
+            ? CopyInMatrixRows(
+                  workspaceGm_[(wySlotBase + tiling_.dKgbOffset) /
+                                   sizeof(float) +
+                               static_cast<uint64_t>(rowStart + ownedBegin) * cols],
+                  ownedRows, cols, TensorRowElements())
+            : CopyInMatrixRows(
+                  dkGm_[CIntraTensorOffset(
+                      tiling_, task.batchIdx, head, tokenBegin, 0)],
+                  ownedRows, cols, TensorRowElements());
+        const uint32_t dgSlot = useFcCarrier
+            ? CopyInMatrixRows(
+                  dhFp32Gm_[WyDhOffset(tiling_, task.batchIdx, head,
+                                       task.chunkIdx) / 2U +
+                              static_cast<uint64_t>(rowStart + ownedBegin) * cols],
+                  ownedRows, cols, TensorRowElements())
+            : CopyInMatrixRows(
+                  dgGm_[CIntraTensorOffset(
+                      tiling_, task.batchIdx, head, tokenBegin, 0)],
+                  ownedRows, cols, TensorRowElements());
         StoreRows(dqOutGm_[CIntraTensorOffset(
                       tiling_, task.batchIdx, head, tokenBegin, 0)],
                   dqFinal, ownedRows, cols, TensorRowElements());
@@ -3200,7 +3222,7 @@ private:
                       kProcessRowBlock == 32) {
             FinishHeadA5Dense16(
                 task, head, rowStart, validRows, slot,
-                AscendC::GetSubBlockIdx() * 16U);
+                AscendC::GetSubBlockIdx() * 16U, 0);
             return;
         }
 #endif
@@ -3435,6 +3457,7 @@ private:
     GM_ADDR beta_;
     GM_ADDR dAqk_;
     GM_ADDR dAkk_;
+    GM_ADDR dh_;
     GM_ADDR dqBaseRaw_;
     GM_ADDR dq_;
     GM_ADDR dk_;
@@ -3485,6 +3508,7 @@ private:
     AscendC::GlobalTensor<BetaT> betaGm_;
     AscendC::GlobalTensor<float> dAqkGm_;
     AscendC::GlobalTensor<float> dAkkGm_;
+    AscendC::GlobalTensor<float> dhFp32Gm_;
     AscendC::GlobalTensor<KdaBwdDqRawStoreT> dqBaseRawGm_;
     AscendC::GlobalTensor<float> dqGm_;
     AscendC::GlobalTensor<float> dkGm_;

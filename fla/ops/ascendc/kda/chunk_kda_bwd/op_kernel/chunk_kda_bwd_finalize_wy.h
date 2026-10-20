@@ -53,6 +53,19 @@ __aicore__ inline bool CanUseA5DenseRow16Intra(
            tiling.seqlen % static_cast<int32_t>(kWyChunkSize) == 0;
 }
 
+// Single-source predicate for the FC-S2 carrier handover: WY writes dk/dg
+// base values into batch-surviving slots (dk -> dKgb region, dg -> dh region)
+// and Intra reads them there instead of round-tripping the output GM.  Valid
+// only where the batch=2 lockstep runs (dense16 fused form) and only for
+// V=128 (the V=256 dk chain differs and has no slot-resident intermediate).
+// WY and Intra must decide from this one definition.
+__aicore__ inline bool CanUseFcCarrierHandover(
+    const ChunkKdaBwdCTilingData &tiling)
+{
+    return KDA_FC_BATCH_LOCKSTEP && CanUseA5DenseRow16Intra(tiling) &&
+           tiling.valueDim == 128;
+}
+
 struct WyChunkTask {
     uint32_t sequence;
     uint32_t batchIdx;
@@ -1746,6 +1759,7 @@ public:
         betaGm_.SetGlobalBuffer(reinterpret_cast<__gm__ BetaT *>(beta_));
         hGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DataT *>(h_));
         dhGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DataT *>(dh_));
+        dhFp32Gm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dh_));
         dqRawGm_.SetGlobalBuffer(
             reinterpret_cast<__gm__ KdaBwdDqRawStoreT *>(dqRaw_));
         dqGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dq_));
@@ -2766,6 +2780,9 @@ private:
             tiling_, task.batchIdx, head, task.begin, 1);
         const uint64_t kE = (slot + tiling_.kEOffset) / sizeof(DataT);
         const uint64_t dKgb = (slot + tiling_.dKgbOffset) / sizeof(float);
+        const bool useFcCarrier = CanUseFcCarrierHandover(tiling_);
+        const uint64_t dhBase =
+            WyDhOffset(tiling_, task.batchIdx, head, task.chunkIdx) / 2U;
         const uint32_t ownedRows = end - begin;
         if (ownedRows == 0) {
             return;
@@ -2892,8 +2909,18 @@ private:
                     static_cast<uint16_t>(rows), 128);
             }
             AscendC::PipeBarrier<PIPE_V>();
-            Store(dkGm_[tokenBase + row * 128], e, rows * 128);
-            Store(dgGm_[tokenBase + row * 128], qk, rows * 128);
+            if (useFcCarrier) {
+                // FC-S2: hand dk/dg base over to Intra through the
+                // batch-surviving dKgb slot / dh region instead of the
+                // output GM.  dKgb was consumed by the S5 read above, so the
+                // in-place write is safe; dh's readers all precede this S5
+                // store (s1Ready credit + PrepareStateGate order).
+                Store(wsFp32_[dKgb + row * 128], e, rows * 128);
+                Store(dhFp32Gm_[dhBase + row * 128], qk, rows * 128);
+            } else {
+                Store(dkGm_[tokenBase + row * 128], e, rows * 128);
+                Store(dgGm_[tokenBase + row * 128], qk, rows * 128);
+            }
 #else
             BroadcastRows(brcb, betaRows[row - begin], rows);
             // qk is dead until the gate expression below.  Use it here so
@@ -3085,19 +3112,33 @@ private:
         const uint64_t stateBase =
             (slot + kWyStatePartialOffset) / sizeof(float);
         const uint32_t last = validLen - 1U;
+        const bool useFcCarrier = CanUseFcCarrierHandover(tiling_);
+        const uint64_t dhLast =
+            WyDhOffset(tiling_, task.batchIdx, head, task.chunkIdx) / 2U +
+            static_cast<uint64_t>(last) * 128;
         auto state = Plane(0);
         auto gradient = Plane(1);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        LoadRowsPair(
-            state, wsFp32_[stateBase], 1, 128, 128,
-            gradient, dgGm_[tokenBase + last * 128], 1, 128, 128);
+        if (useFcCarrier) {
+            LoadRowsPair(
+                state, wsFp32_[stateBase], 1, 128, 128,
+                gradient, dhFp32Gm_[dhLast], 1, 128, 128);
+        } else {
+            LoadRowsPair(
+                state, wsFp32_[stateBase], 1, 128, 128,
+                gradient, dgGm_[tokenBase + last * 128], 1, 128, 128);
+        }
 #else
         Load(state, wsFp32_[stateBase], 128);
         Load(gradient, dgGm_[tokenBase + last * 128], 128);
 #endif
         AscendC::Add(gradient, gradient, state, 128);
         AscendC::PipeBarrier<PIPE_V>();
-        Store(dgGm_[tokenBase + last * 128], gradient, 128);
+        if (useFcCarrier) {
+            Store(dhFp32Gm_[dhLast], gradient, 128);
+        } else {
+            Store(dgGm_[tokenBase + last * 128], gradient, 128);
+        }
     }
 
     __aicore__ inline void BuildZbStage(
@@ -3202,6 +3243,7 @@ private:
     AscendC::GlobalTensor<BetaT> betaGm_;
     AscendC::GlobalTensor<DataT> hGm_;
     AscendC::GlobalTensor<DataT> dhGm_;
+    AscendC::GlobalTensor<float> dhFp32Gm_;
     AscendC::GlobalTensor<KdaBwdDqRawStoreT> dqRawGm_;
     AscendC::GlobalTensor<float> dqGm_;
     AscendC::GlobalTensor<float> dkGm_;
