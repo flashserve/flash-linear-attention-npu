@@ -15,13 +15,13 @@
 site-packages/fla_npu/opp/vendors/fla_npu_transformer/
 ```
 
-一份 vendor 同时包含 host 入口库、算子清单、kernel 索引、tiling/proto 和 device kernel。现有全量包适合作为发布基线，但不适合单算子迭代：用只含一个算子的包覆盖完整 vendor 后，未包含的算子会同时失去 host 符号、注册信息和 kernel 实体。
+一份 vendor 同时包含 host 入口库、算子清单、kernel 索引、tiling/proto 和 device kernel。现有全量包适合作为发布基线，但不适合单算子迭代：用只含一个算子的包覆盖完整 vendor 后，未包含的算子会同时失去 host 符号、算子清单条目和 kernel 实体。
 
 问题不在于构建命令能否过滤算子，而在于**过滤后的聚合产物如何与完整基线共存**。设计必须同时满足：
 
 1. 改动算子优先使用增量实现；
 2. 增量未提供的算子自动回落到完整 base；
-3. L1 host aclnn 入口与 L2-L4 的注册、tiling、kernel 遵循一致的 `overlay -> base` 来源优先级；
+3. L1 host aclnn 入口与 CANN 侧 L2 自定义算子发现/登记、L3-L4 tiling/kernel 查找遵循一致的 `overlay -> base` 来源优先级；
 4. 安装和卸载不修改 base vendor；
 5. 进程能明确知道实际加载了哪些来源。
 
@@ -33,10 +33,12 @@ site-packages/fla_npu/opp/vendors/fla_npu_transformer/
 
 | 层 | 查找对象 | 产物 | 选择方 |
 |---|---|---|---|
-| L1 | host aclnn 符号 | `op_api/lib/libcust_opapi.so` | ctypes 或 Stable-ABI launcher |
-| L2 | 算子注册 | `aic-<soc>-ops-info.json` | CANN |
+| L1 | host aclnn 符号 | `op_api/lib/libcust_opapi.so` | ctypes 或 Stable-ABI launcher（wheel 内的高性能 C++ aclnn 调用库 `libfla_npu_stable.so`） |
+| L2 | 自定义算子发现与登记 | `aic-<soc>-ops-info.json` | CANN |
 | L3 | kernel 变体 | `binary_info_config.json` | CANN |
 | L4 | tiling/proto/kernel 实体 | `op_tiling/**`、`op_proto/**`、`kernel/<soc>/<op>/*.o` | CANN |
+
+这里的“发现与登记”不是 Python/torch 接口注册。CANN 初始化自定义 OPP 时，会按 vendor 优先级读取 `aic-<soc>-ops-info.json`，确认某个自定义算子存在并把它的实现元数据纳入运行时查找；后续调用才能继续进入该算子的 tiling 与 kernel 变体选择。
 
 这里有两个关键事实：
 
@@ -55,7 +57,7 @@ site-packages/fla_npu/opp/vendors/fla_npu_transformer/
 本设计选择第二个方向。原因是它直接利用现有运行时能力：
 
 - `dlsym` 可以按句柄顺序逐符号查找；
-- CANN 可以按 vendor 顺序逐算子查找注册、tiling 和 kernel；
+- CANN 可以按 vendor 顺序逐算子查找算子清单、tiling 和 kernel；
 - 单算子增量只覆盖自己携带的项，其他项自然回落 base；
 - base 保持只读，安装、审计和回滚边界清晰。
 
@@ -70,10 +72,16 @@ site-packages/fla_npu/opp/vendors/fla_npu_transformer/
 - 支持只构建一个或少量算子，并安装为包内 overlay vendor。
 - overlay 中存在的算子覆盖 base，不存在的算子自动回落 base。
 - ctypes 与当前 Stable-ABI launcher 使用相同的 host 库顺序。
-- CANN 的注册、tiling 和 kernel 顺序与 host 库顺序一致。
+- CANN 侧用于确认“自定义算子存在”的算子清单，以及后续 tiling、kernel 的查找顺序，与 L1 host aclnn 库保持同一 `overlay -> base` 优先级。
 - 支持多个 overlay，顺序明确、可审计、可单独卸载。
 - base vendor 在 overlay 安装和卸载过程中保持不变。
-- 对旧 launcher、显式空 selector、已有错误路径顺序给出确定行为。
+- 为旧版 launcher、overlay 启用规则和已有错误路径定义可验证的兼容行为。
+
+| 兼容场景 | 业务含义与代码出处 | 确定行为 |
+|---|---|---|
+| 旧版 Stable-ABI launcher | wheel 内的高性能 C++ aclnn 调用库 `libfla_npu_stable.so`；旧版 `Runtime::symbol()` 只查 `FLA_NPU_OP_API_LIB` 指向的一个 custom 库 | overlay 启用且未显式设置 `FLA_NPU_STABLE_ABI` 时自动改走 ctypes；显式设置为 `stable` 等非 `ctypes` 值时保留 launcher 并明确告警 |
+| `FLA_NPU_OVERLAY_VENDOR` | `fla_npu/__init__.py` 与 `.pth` 启动钩子读取的环境变量，用于选择启用哪些 overlay 及其优先级 | 未设置时按 `config.ini`/目录自动发现；显式名称列表按给定顺序；显式空值时禁用全部 overlay，只使用 base |
+| 已有错误 OPP 路径 | shell 可能已把 base 放在 overlay 前面，或遗留 `<pkg>/opp`、`vendor/op_api/lib` 条目 | 自动清理当前包的旧条目并归一化为 `overlay -> base -> external`；实际发生修正时告警一次 |
 
 ### 3.2 非目标
 
@@ -90,14 +98,16 @@ site-packages/fla_npu/opp/vendors/fla_npu_transformer/
 ```text
 site-packages/fla_npu/opp/vendors/
 ├── config.ini
-├── fla_npu_overlay_transformer/       # 增量，只含本次构建的算子
+├── fla_npu_overlay_transformer/       # 本 PR 新增的默认 overlay vendor
 │   ├── op_api/lib/libcust_opapi.so
 │   ├── op_impl/.../config/<soc>/aic-<soc>-ops-info.json
 │   ├── op_impl/.../kernel/<soc>/<op>/*.o
 │   ├── op_impl/.../op_tiling/
 │   └── op_proto/
-└── fla_npu_transformer/               # 完整 base，不被 overlay 安装器修改
+└── fla_npu_transformer/               # PR 前已有的完整 base，名称保持不变
 ```
+
+`fla_npu_transformer` 不是本 PR 新起的名称：既有构建流程使用逻辑 vendor 名 `fla_npu`，打包时追加固定 `_transformer` 后缀形成这个物理目录。本设计不重命名 base，只新增带 `overlay` 标识的 `fla_npu_overlay_transformer`。
 
 `config.ini` 的优先级示例：
 
@@ -111,7 +121,7 @@ load_priority=fla_npu_overlay_transformer,fla_npu_transformer
 |---|---|---|
 | ctypes host 符号 | `overlay_lib... -> base_lib -> libopapi.so` | 继续下一个句柄 |
 | Stable-ABI host 符号 | `FLA_NPU_OP_API_LIBS` 中的 `overlay_lib... -> base_lib -> libopapi.so` | 继续下一个句柄 |
-| CANN 注册/tiling/kernel | `ASCEND_CUSTOM_OPP_PATH` 中的 `overlay_vendor... -> base_vendor`，最后由 CANN built-in 兜底 | 继续下一个 vendor |
+| CANN 自定义算子清单/tiling/kernel | `ASCEND_CUSTOM_OPP_PATH` 中的 `overlay_vendor... -> base_vendor`，最后由 CANN built-in 兜底 | 继续下一个 vendor |
 
 同名算子由最高优先级 overlay 覆盖；overlay 未携带的算子在 base 命中。多个 overlay 时，靠前者优先。
 
@@ -136,7 +146,7 @@ load_priority=fla_npu_overlay_transformer,fla_npu_transformer
 | 显式名称列表 | 仅使用列表中存在且合法的 overlay，保持用户给定顺序 |
 | 显式空字符串、纯空白或纯分隔符 | 禁用所有 overlay，只使用 base |
 
-`.pth` 启动钩子、`import fla_npu` 和安装工具必须遵守同一套 selector 语义。
+`.pth` 启动钩子、`import fla_npu` 和安装工具必须遵守同一套 `FLA_NPU_OVERLAY_VENDOR` 选择规则。
 
 ### 4.3 `ASCEND_CUSTOM_OPP_PATH` 语义与归一化
 
@@ -178,13 +188,13 @@ overlay 与 base 都必须位于当前 wheel 的 `opp/vendors/` 下。运行时�
 ```text
 Python site 初始化
   -> fla_npu_opp_env.py
-       -> 解析 overlay selector
+       -> 解析 FLA_NPU_OVERLAY_VENDOR
        -> 得到 [overlay..., base]
        -> 归一化 ASCEND_CUSTOM_OPP_PATH
        -> 设置 FLA_NPU_OPP_PATH
 ```
 
-提前设置路径是必要条件：CANN 初始化后再修改 `ASCEND_CUSTOM_OPP_PATH`，已经建立的 kernel/tiling 注册不会自动刷新。
+提前设置路径是必要条件：CANN 初始化后再修改 `ASCEND_CUSTOM_OPP_PATH`，已经载入的自定义算子清单和 tiling/kernel 索引不会自动刷新。
 
 ### 5.2 `import fla_npu`
 
@@ -202,7 +212,24 @@ import fla_npu
 
 ctypes 侧按缓存列表逐符号查找。当前 launcher 读取复数变量 `FLA_NPU_OP_API_LIBS`，逐个 `dlopen` 并按相同顺序 `dlsym`；custom 全部 miss 后才落 CANN。
 
-### 5.3 旧 launcher 兼容
+### 5.3 overlay 状态与 L1 后端组合
+
+overlay 是否启用与 L1 使用哪个调用后端是两个独立维度：
+
+- overlay 状态决定可查找的来源集合；
+- ctypes 或 Stable-ABI launcher 决定由 Python 还是 C++ 执行 L1 host 符号查找。
+
+| L1 调用后端 | 未启用 overlay | 启用 overlay |
+|---|---|---|
+| ctypes | Python `_runtime.symbol()`：`base -> CANN` | Python `_runtime.symbol()`：`overlay... -> base -> CANN` |
+| 当前 Stable-ABI launcher（默认） | C++ `Runtime::symbol()`：`base -> CANN` | C++ `Runtime::symbol()`：`overlay... -> base -> CANN` |
+| 旧版 launcher | 单 base 库可正常使用 | 未显式设置 `FLA_NPU_STABLE_ABI` 时自动切换 ctypes；显式设置为 `stable` 等非 `ctypes` 值时告警，L1 只能从 base 开始查找 |
+
+“启用 overlay”不等同于“目录已经安装”。例如 overlay 目录存在但 `FLA_NPU_OVERLAY_VENDOR=""` 时，overlay 被显式禁用，应走“未启用 overlay”列。
+
+CANN 的 L2-L4 不区分 ctypes/stable：未启用 overlay 时按 `base -> built-in` 查找；启用 overlay 时按 `overlay... -> base -> built-in` 查找。当前两种 L1 后端都使用同一列的来源顺序，从而避免 host 入口与 tiling/kernel 来自不同 vendor。
+
+### 5.4 旧 launcher 兼容
 
 旧 launcher 只识别 `FLA_NPU_OP_API_LIB`，无法按 overlay 到 base 逐项回落。兼容策略为：
 
@@ -288,7 +315,7 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 3. **L1 与 L2-L4 的 overlay/base 顺序一致。**
 4. **当前 launcher 与 ctypes 都逐符号回落；旧 launcher 不允许静默混用来源。**
 5. **`ASCEND_CUSTOM_OPP_PATH` 只含 vendor 目录，包内条目由代码整体归一化。**
-6. **未设置 selector 与显式空 selector 是不同状态。**
+6. **未设置 `FLA_NPU_OVERLAY_VENDOR` 表示自动发现，显式空值表示禁用 overlay。**
 7. **安装和卸载后需要新进程，不能承诺热更新。**
 
 ## 9. 兼容性与回滚
@@ -296,9 +323,9 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 | 场景 | 行为 |
 |---|---|
 | 未安装 overlay | 只使用 base，与原行为一致 |
-| 安装 overlay、未设置 selector | 按 `config.ini` 与目录自动发现 |
-| 显式空 selector | 只使用 base |
-| 多个 overlay | 按 selector 或 `config.ini` 顺序逐项覆盖、逐项回落 |
+| 安装 overlay、未设置 `FLA_NPU_OVERLAY_VENDOR` | 按 `config.ini` 与目录自动发现 |
+| `FLA_NPU_OVERLAY_VENDOR` 显式为空 | 禁用全部 overlay，只使用 base |
+| 多个 overlay | 环境变量已设置时按其中的名称顺序；未设置时按 `config.ini` 顺序逐项覆盖、逐项回落 |
 | 旧 launcher | 自动走 ctypes，或在用户显式选择时告警 |
 | `pip install --force-reinstall` / wheel 升级 | wheel 可能恢复 base 内容；通过 `--status` 审计并重新安装 overlay |
 | 回滚单个 overlay | `--remove-overlay --overlay-name <name>`，然后重启进程 |
@@ -317,7 +344,7 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 | 多 overlay | 可并存、可排序、可独立卸载；同名算子由最高优先级来源承载 |
 | 两种后端 | ctypes 与当前 launcher 均按 overlay 到 base 逐符号解析；端到端输出一致 |
 | 路径归一化 | 干净、已有反序路径和旧 root/lib 条目都收敛为 `overlay...:base:external` |
-| 显式空 selector | `.pth` 与 runtime 均只选择 base；不会出现 base host 搭配 overlay kernel |
+| `FLA_NPU_OVERLAY_VENDOR` 显式为空 | `.pth` 与 runtime 均只选择 base；不会出现 base host 搭配 overlay kernel |
 | 生成脚本 | source overlay/base 的先后顺序不影响最终优先级 |
 | 安全边界 | 非法 overlay 名称、路径逃逸和 base 删除均被拒绝 |
 | 构建范围 | 单算子包只包含目标算子；A5/A2 已完成原生构建与运行，A3 已完成交叉编译 |
@@ -347,13 +374,13 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 | 文件 | 职责 |
 |---|---|
 | `torch_custom/fla_npu/fla_npu/__init__.py` | overlay 解析、包内边界、路径归一化、host 库列表、旧 launcher 策略 |
-| `torch_custom/fla_npu/fla_npu_opp_env.py` | `.pth` 启动阶段的 selector 与路径预置 |
+| `torch_custom/fla_npu/fla_npu_opp_env.py` | `.pth` 启动阶段解析 `FLA_NPU_OVERLAY_VENDOR` 并预置路径 |
 | `torch_custom/fla_npu/fla_npu/install_opp.py` | overlay 安装、卸载、状态与 `config.ini` 维护 |
 | `torch_custom/fla_npu/csrc/src/runtime.cpp` | 当前 launcher 的多句柄加载与逐符号回落 |
 | `torch_custom/fla_npu/csrc/include/stable/runtime.h` | launcher 多句柄状态 |
 | `setup.py` | wheel 内 base OPP 的环境脚本生成 |
 | `scripts/package/ops_transformer/scripts/finalize_wheel_opp.py` | run 包写入 wheel 后刷新环境脚本与 `RECORD` |
-| `tests/test_opp_overlay.py` | selector、自动发现、顺序和安装安全回归 |
+| `tests/test_opp_overlay.py` | overlay 环境变量、自动发现、顺序和安装安全回归 |
 | `tests/test_wheel_environment.py` | wheel 环境、生成脚本和运行时加载契约回归 |
 | `ci/run_checks.sh` | ABI、环境与构建验收接入 |
 
