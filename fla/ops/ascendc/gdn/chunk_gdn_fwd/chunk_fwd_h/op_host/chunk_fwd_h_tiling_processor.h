@@ -136,10 +136,7 @@ public:
         // 尺寸按 ChunkGatedDeltaRuleFwdHTilingData 上界 256B）+ numSeq/numChunks
         // 前缀表（int64 × (tokenBatch+1)）——gated scheduler varlen 建表用。
         tiling.gatedTilingOffset = static_cast<int64_t>(workspaceOffset);
-        // per-core slot：每核独立 256B（AIC/AIV 同核同 slot 幂等写同值，写读
-        // 同核同地址天然有序——消除跨核可见性竞态：AIV 不再读 AIC 现写的
-        // 共享镜像，而是构造并读自己的副本）
-        workspaceOffset += AlignUp(static_cast<size_t>(blockDim) * 256);
+        workspaceOffset += 256;
         tiling.gatedNumSeqOffset = static_cast<int64_t>(workspaceOffset);
         workspaceOffset += AlignUp(static_cast<size_t>((tokenBatch + 2) * sizeof(int64_t)));
         tiling.gatedNumChunksOffset = static_cast<int64_t>(workspaceOffset);
