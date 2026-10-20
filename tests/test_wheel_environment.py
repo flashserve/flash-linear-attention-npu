@@ -200,6 +200,8 @@ class WheelEnvironmentTest(unittest.TestCase):
         self.assertIn("function check_stable_aclnn_abi", build_source)
         self.assertIn('include_args+=(--ops "${OPS_FILTER_VALUE}")', build_source)
         self.assertIn("check_stable_aclnn_abi", build_source)
+        self.assertIn("FLA_NPU_BUILD_STABLE_ABI", build_source)
+        self.assertIn("0|FALSE|NO|OFF", build_source)
         self.assertNotIn("ENFORCE_OVERLAY_ABI", build_source)
         self.assertNotIn("--enforce-overlay-abi", build_source)
         self.assertNotIn("check_stable_aclnn_abi", ci_source)

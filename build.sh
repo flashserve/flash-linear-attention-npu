@@ -685,6 +685,11 @@ function check_stable_aclnn_abi(){
     if [[ "${ENABLE_BUILD_PKG}" != "TRUE" || "${ENABLE_BUILT_CUSTOM}" != "TRUE" ]]; then
         return 0
     fi
+    local stable_abi_enabled="${FLA_NPU_BUILD_STABLE_ABI:-TRUE}"
+    stable_abi_enabled="${stable_abi_enabled^^}"
+    if [[ "${stable_abi_enabled}" =~ ^(0|FALSE|NO|OFF)$ ]]; then
+        return 0
+    fi
 
     local opp_include
     opp_include=$(find "${BUILD_DIR}" "${BUILD_OUT_DIR}" -type d \
