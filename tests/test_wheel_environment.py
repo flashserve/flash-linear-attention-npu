@@ -49,6 +49,7 @@ RUNTIME_SOURCE = (
     / "fla_npu"
     / "__init__.py"
 )
+OP_ABI_SOURCE = RUNTIME_SOURCE.with_name("_op_abi.py")
 
 
 def _load_setup() -> tuple[dict[str, object], dict[str, object]]:
@@ -112,11 +113,25 @@ def _create_minimal_vendor(vendor_dir: Path, *, include_alias: bool = False) -> 
         (vendor_dir / "op_api" / "lib" / "libopapi.so").write_bytes(b"unsafe")
 
 
+def _write_aclnn_header(vendor_dir: Path, scalar_type: str) -> None:
+    header = vendor_dir / "op_api" / "include" / "aclnnop" / "aclnn_demo.h"
+    header.parent.mkdir(parents=True, exist_ok=True)
+    header.write_text(
+        "aclnnStatus aclnnDemoGetWorkspaceSize(\n"
+        "    const aclTensor *x,\n"
+        f"    {scalar_type} mode,\n"
+        "    uint64_t *workspaceSize,\n"
+        "    aclOpExecutor **executor);\n",
+        encoding="utf-8",
+    )
+
+
 def _create_runtime_package(site_root: Path) -> tuple[Path, Path, Path]:
     package_dir = site_root / "fla_npu"
     package_dir.mkdir(parents=True)
     runtime_path = package_dir / "__init__.py"
     shutil.copy2(RUNTIME_SOURCE, runtime_path)
+    shutil.copy2(OP_ABI_SOURCE, package_dir / "_op_abi.py")
     vendor_dir = package_dir / "opp" / "vendors" / "fla_npu_transformer"
     packaged_opapi = vendor_dir / "op_api" / "lib" / "libcust_opapi.so"
     packaged_opapi.parent.mkdir(parents=True)
@@ -178,6 +193,16 @@ class WheelEnvironmentTest(unittest.TestCase):
         setup_source = (REPO_ROOT / "setup.py").read_text(encoding="utf-8")
         self.assertIn("FLA_NPU_OPS", setup_source)
         self.assertIn("--ops=", setup_source)
+
+    def test_scoped_package_build_runs_stable_aclnn_abi_gate(self) -> None:
+        build_source = (REPO_ROOT / "build.sh").read_text(encoding="utf-8")
+        ci_source = (REPO_ROOT / "ci" / "run_checks.sh").read_text(encoding="utf-8")
+        self.assertIn("function check_stable_aclnn_abi", build_source)
+        self.assertIn('include_args+=(--ops "${OPS_FILTER_VALUE}")', build_source)
+        self.assertIn("check_stable_aclnn_abi", build_source)
+        self.assertNotIn("ENFORCE_OVERLAY_ABI", build_source)
+        self.assertNotIn("--enforce-overlay-abi", build_source)
+        self.assertNotIn("check_stable_aclnn_abi", ci_source)
 
     def test_default_build_is_the_abi_free_one(self) -> None:
         """The default artifact must not pin the CPython/libtorch C++ ABI.
@@ -1021,6 +1046,46 @@ source {set_env!s}
             self.assertFalse(
                 (vendor_dir / "op_api" / "lib" / "libopapi.so").exists()
             )
+
+    def test_import_rejects_overlay_aclnn_abi_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_path, base, _ = _create_runtime_package(
+                Path(temp_dir) / "site-packages"
+            )
+            overlay = base.parent / "fla_npu_overlay_transformer"
+            _create_minimal_vendor(overlay)
+            _write_aclnn_header(base, "int64_t")
+            _write_aclnn_header(overlay, "bool")
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "ASCEND_HOME_PATH": "/fake/cann",
+                    "FLA_NPU_STABLE_ABI": "stable",
+                },
+                clear=True,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "overlay aclnn ABI differs"):
+                    runpy.run_path(str(runtime_path))
+
+    def test_forced_legacy_launcher_warns_after_abi_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_path, base, _ = _create_runtime_package(
+                Path(temp_dir) / "site-packages"
+            )
+            overlay = base.parent / "fla_npu_overlay_transformer"
+            _create_minimal_vendor(overlay)
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "ASCEND_HOME_PATH": "/fake/cann",
+                    "FLA_NPU_STABLE_ABI": "stable",
+                },
+                clear=True,
+            ):
+                with mock.patch("ctypes.CDLL", return_value=mock.sentinel.library):
+                    with self.assertWarnsRegex(RuntimeWarning, "mix the base host entry"):
+                        runpy.run_path(str(runtime_path))
 
     def test_import_reports_missing_cann_opapi(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -364,6 +364,55 @@ class HeaderKindGateTest(unittest.TestCase):
             "param 0: header tensor != call site int_array"
         ])
 
+    def test_scoped_filter_checks_only_selected_adapter_sources(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        adapters = {
+            "aclnnChunkFwdO": (Path("stable_chunk_fwd_o.cpp"), [tool.TENSOR]),
+            "aclnnSolveTri": (Path("stable_solve_tri.cpp"), [tool.TENSOR]),
+        }
+        self.assertEqual(
+            set(tool.filter_adapters(adapters, "chunk_fwd_o")),
+            {"aclnnChunkFwdO"},
+        )
+        self.assertEqual(
+            set(tool.filter_adapters(adapters, "npu_solve_tri")),
+            {"aclnnSolveTri"},
+        )
+        self.assertEqual(tool.filter_adapters(adapters, ""), adapters)
+
+    def test_scoped_cli_fails_on_selected_header_drift(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "src"
+            include_dir = root / "include"
+            source_dir.mkdir()
+            include_dir.mkdir()
+            (source_dir / "stable_demo.cpp").write_text(
+                "void run_demo(Tensor x, int64_t mode) {\n"
+                '  FLA_STABLE_EXEC("aclnnDemo", meta, stream, '
+                "tensor(x), scalar(mode));\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            (include_dir / "aclnn_demo.h").write_text(
+                "aclnnStatus aclnnDemoGetWorkspaceSize(\n"
+                "    const aclTensor *x, bool mode, uint64_t *workspaceSize,\n"
+                "    aclOpExecutor **executor);\n",
+                encoding="utf-8",
+            )
+            argv = [
+                "op_abi_validate.py",
+                "--src-dir",
+                str(source_dir),
+                "--opp-include",
+                str(include_dir),
+                "--ops",
+                "demo",
+            ]
+            with mock.patch.object(sys, "argv", argv):
+                self.assertEqual(tool.main(), 1)
+
 
 class LauncherOnlyCoverageTest(unittest.TestCase):
     """An operator with no ctypes fallback has to be a declared state.

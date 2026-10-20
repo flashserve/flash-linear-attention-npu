@@ -1,12 +1,26 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
 import shutil
 import warnings
 from pathlib import Path
+
+
+try:
+    from ._op_abi import compare_overlay_to_base
+except ImportError:  # run_path/direct-script tests have no package context
+    _abi_spec = importlib.util.spec_from_file_location(
+        "fla_npu_standalone_op_abi", Path(__file__).with_name("_op_abi.py")
+    )
+    if _abi_spec is None or _abi_spec.loader is None:
+        raise
+    _abi_module = importlib.util.module_from_spec(_abi_spec)
+    _abi_spec.loader.exec_module(_abi_module)
+    compare_overlay_to_base = _abi_module.compare_overlay_to_base
 
 
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -307,13 +321,37 @@ def _validate_overlay_name(overlay_name: str) -> str:
     return name
 
 
+def _validate_overlay_abi(vendor_src: Path) -> None:
+    """Reject an overlay whose public aclnn contract needs different wrappers."""
+
+    base_vendor = _vendors_root() / BASE_VENDOR_NAME
+    if not base_vendor.is_dir():
+        raise RuntimeError(
+            f"Cannot validate overlay aclnn ABI because the base vendor is missing: {base_vendor}"
+        )
+    problems = compare_overlay_to_base(vendor_src, base_vendor)
+    if not problems:
+        return
+    detail = "\n  - ".join(problems)
+    raise RuntimeError(
+        "Refusing to install an overlay whose public aclnn ABI differs from the "
+        "base wheel. The wheel's launcher and ctypes wrappers were compiled for "
+        "the base contract; rebuild and install a complete matching wheel instead."
+        f"\n  - {detail}"
+    )
+
+
 def _default_overlay_name() -> str:
     """Return the documented default, independent of installed overlay order."""
 
     return DEFAULT_OVERLAY_NAME
 
 
-def install_overlay(source: Path, overlay_name: str | None = None, force: bool = False) -> Path:
+def install_overlay(
+    source: Path,
+    overlay_name: str | None = None,
+    force: bool = False,
+) -> Path:
     """Install an overlay vendor next to the base vendor, inside the package.
 
     The base vendor is left untouched. No ``RECORD`` rewrite happens: pip keeps
@@ -331,6 +369,7 @@ def install_overlay(source: Path, overlay_name: str | None = None, force: bool =
         )
 
     vendor_src = _resolve_overlay_source(source)
+    _validate_overlay_abi(vendor_src)
     vendor_dst = vendors_root / overlay_name
     if vendor_dst.exists():
         if not force:

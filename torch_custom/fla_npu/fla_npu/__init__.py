@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import importlib.util
 import os
 import pathlib
 import re
@@ -117,8 +118,9 @@ def _apply_overlay_backend_policy(vendor_dirs: list[pathlib.Path]) -> None:
                                        launcher may stay the default backend
     * overlay + legacy launcher      → force the ctypes reference path (which
                                        resolves symbols per library); if the user
-                                       explicitly asked for the launcher, warn
-                                       loudly instead of failing silently
+                                       explicitly asked for the launcher, fail
+                                       instead of mixing base host code with an
+                                       overlay tiling/kernel implementation
     """
 
     if len(vendor_dirs) < 2:
@@ -131,17 +133,57 @@ def _apply_overlay_backend_policy(vendor_dirs: list[pathlib.Path]) -> None:
         return
     if requested == "ctypes":
         return
-    warnings.warn(
+    message = (
         "fla_npu: an overlay vendor is installed, but FLA_NPU_STABLE_ABI="
         f"{requested!r} selects a Stable-ABI launcher that resolves every aclnn "
         "symbol from the single library in FLA_NPU_OP_API_LIB. The overlaid "
-        "operators would silently run the base implementation instead of the "
-        "overlay one. Rebuild the launcher (python csrc/build_stable.py) to get "
-        "ordered FLA_NPU_OP_API_LIBS lookup, or unset FLA_NPU_STABLE_ABI to use "
-        "the ctypes reference path.",
-        RuntimeWarning,
-        stacklevel=2,
+        "operators would mix the base host entry with overlay tiling/kernel "
+        "artifacts. Install a wheel with ordered FLA_NPU_OP_API_LIBS launcher "
+        "support, or set FLA_NPU_STABLE_ABI=ctypes explicitly."
     )
+    warnings.warn(message, RuntimeWarning, stacklevel=2)
+
+
+def _validate_overlay_abi(vendor_dirs: list[pathlib.Path]) -> None:
+    """Fail before loading code when an overlay changes the wheel's aclnn ABI."""
+
+    try:
+        from ._op_abi import compare_overlay_to_base
+    except ImportError:  # run_path/direct-script diagnostics lack package context
+        abi_path = _PACKAGE_DIR / "_op_abi.py"
+        abi_spec = importlib.util.spec_from_file_location(
+            "fla_npu_standalone_op_abi", abi_path
+        )
+        if abi_spec is None or abi_spec.loader is None:
+            raise
+        abi_module = importlib.util.module_from_spec(abi_spec)
+        abi_spec.loader.exec_module(abi_module)
+        compare_overlay_to_base = abi_module.compare_overlay_to_base
+
+    base_vendor = next(
+        (path for path in vendor_dirs if path.name == _DEFAULT_VENDOR_DIR), None
+    )
+    if base_vendor is None:
+        raise RuntimeError(
+            "fla_npu: no base vendor is available to validate overlay aclnn ABI. "
+            "Reinstall the complete wheel before using an overlay."
+        )
+    failures: list[str] = []
+    for vendor_dir in vendor_dirs:
+        if vendor_dir == base_vendor:
+            continue
+        failures.extend(
+            f"{vendor_dir.name}: {problem}"
+            for problem in compare_overlay_to_base(vendor_dir, base_vendor)
+        )
+    if failures:
+        detail = "\n  - ".join(failures)
+        raise RuntimeError(
+            "fla_npu: overlay aclnn ABI differs from the installed wheel. The "
+            "wheel launcher and ctypes wrappers cannot safely call this overlay; "
+            "rebuild and install a complete matching wheel."
+            f"\n  - {detail}"
+        )
 
 
 def _discover_overlay_vendor_names() -> list[str]:
@@ -275,6 +317,7 @@ def _prepare_embedded_opp() -> list[pathlib.Path]:
         )
 
     vendor_dirs = _resolve_vendor_dirs()
+    _validate_overlay_abi(vendor_dirs)
     op_api_libs: list[pathlib.Path] = []
     for vendor_dir in vendor_dirs:
         op_api_libs.append(_resolve_packaged_opapi(vendor_dir))

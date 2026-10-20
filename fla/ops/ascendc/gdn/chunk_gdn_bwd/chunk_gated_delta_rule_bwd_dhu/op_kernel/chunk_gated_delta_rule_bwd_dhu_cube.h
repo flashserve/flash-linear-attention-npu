@@ -123,7 +123,8 @@ public:
             }
 
             SeqInfo seqInfo;
-            GetSeqInfo(cuSeqlens_, *tiling_, seqIdx, seqInfo);
+            // 变长前缀增量缓存（taskIdx 递增 → seqIdx 单调不减）
+            GetSeqInfoCached(cuSeqlens_, *tiling_, seqIdx, seqInfoCache_, seqInfo);
             if (!seqInfo.valid) {
                 continue;
             }
@@ -134,6 +135,10 @@ public:
                 if (!chunkInfo.valid) {
                     continue;
                 }
+
+                // chunk 链深度判据（stage1/stage2 两个 headOffset 循环共用）。
+                // 深链启用拆分同步与 early-notify。
+                const bool syncSplit = seqInfo.chunkCnt >= SYNC_SPLIT_MIN_CHUNKS;
 
                 cachedKResidentValid_ = false;
                 nextKResidentSlot_ = 0;
@@ -171,11 +176,21 @@ public:
                     AscendC::GlobalTensor<DT> gmDO;
                     AscendC::GlobalTensor<DT> gmTermQ;
                     gmK.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(k_) + kBase);
+                    // K 为一次性流式读（组内复用走 L1 kResident，与 L2 无关），
+                    // 禁 L2 防止无收益的写分配驱逐 dh/dv2 生产者-消费者行（intra/fwd_o 先例）。
+                    // 变长模式下不同 task 交叉读相邻序列段，L2 跨 task 复用有收益，仅固定长度启用。
+                    if (cuSeqlens_ == nullptr) {
+                        gmK.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+                    }
                     gmState.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dh_) + dhBase);
                     gmDvState.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(workspace_) + slotBase +
                                               dvStateWorkspaceOffset_);
                     gmQGT.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(workspace_) + slotBase + qgWorkspaceOffset_);
                     gmDO.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dO_) + dOBase);
+                    // dO 同为一次性流式读，禁 L2（见 gmK 注释；变长不启用）
+                    if (cuSeqlens_ == nullptr) {
+                        gmDO.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+                    }
                     gmTermQ.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(workspace_) + slotBase +
                                             termQWorkspaceOffset_);
 
@@ -220,7 +235,19 @@ public:
                     copyGmToL1B_DO(tensorL1DO, blockDO);
                     AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(doScratchEvent);
 
-                    Catlass::Arch::CrossCoreWaitFlag(vecToCubeFlag_);
+                    // GEMM0 只消费 dh（vector stage0 中段已写完），此处只等
+                    // dhReady 即可装载并启动 GEMM0；原 vecToCube wait（覆盖 qg 全部
+                    // 产物）移至 GEMM1 前的 qg 消费点，让 GEMM0 与 vector 的 qg 生成
+                    // 重叠。CrossCoreWaitFlag 收非 const 左值引用，须先落局部变量。
+                    // 浅链时禁用拆分，退回原语义（GEMM0 前一次
+                    // vecToCube wait 覆盖全部产物），与 vector 侧"不发 dhReady"配对。
+                    // （syncSplit 定义已提升至 chunk 循环层，stage1/stage2 共用。）
+                    if (syncSplit) {
+                        Catlass::Arch::CrossCoreFlag dhReadyFlag{DH_READY_FLAG};
+                        Catlass::Arch::CrossCoreWaitFlag(dhReadyFlag);
+                    } else {
+                        Catlass::Arch::CrossCoreWaitFlag(vecToCubeFlag_);
+                    }
 
                     auto tensorState = tla::MakeTensor(gmState, layoutState, Catlass::Arch::PositionGM{});
                     auto tensorDvState = tla::MakeTensor(gmDvState, layoutDvState, Catlass::Arch::PositionGM{});
@@ -244,12 +271,20 @@ public:
                     AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(stateScratchEvent);
                     copyGmToL1B_State(tensorL1State, blockState);
                     AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(stateScratchEvent);
+                    // stage1 early-notify：cubeToVec set 移入 GEMM0 epilogue（dvState
+                    // 写 GM 完成后即发射），Vector stage2 在 GEMM1 执行期间即被放行
+                    // 读 dvState/dv、算 dv2，与 GEMM1 整段重叠。termQ 对 stage3 的
+                    // 可见性不受影响：GEMM1 的 FIX copy 先于 GEMM2 epilogue 的 set
+                    // （同 pipe 按序）。set 次数仍为每 head 恰一次，FIFO 配对不变。
+                    // 浅链禁用 early-notify，set 恢复到 GEMM1 后的原位置。
+                    earlyNotifyStage_ = syncSplit;
                     RunResidentMmad<LayoutTagL0A_DvState, LayoutTagL0B_DvState>(
                         copyL1ToL0A_DvState, copyL1ToL0B_DvState, tileMmadDvState, copyL0CToGm_DvState,
                         tensorL1K, tensorL1State, blockDvState, l0A, l0B, l0C,
                         needLoadKResident, releaseKAfterUse, kResidentEvent, true, true, stateScratchEvent,
                         static_cast<uint32_t>(chunkInfo.chunkLen), static_cast<uint32_t>(V_DIM),
                         static_cast<uint32_t>(K_));
+                    earlyNotifyStage_ = false;
                     if (releaseKAfterUse) {
                         cachedKResidentValid_ = false;
                     }
@@ -268,6 +303,13 @@ public:
                     CopyL1ToL0B_TermQ copyL1ToL0B_TermQ;
                     TileMmadTermQ tileMmadTermQ;
 
+                    // GEMM1 消费 qg（vector stage0 尾部经 workspace 写出），此处等
+                    // 原 vecToCube（覆盖 qg 全部 stage0 产物）。
+                    // 浅链（syncSplit=false）时已在 GEMM0 前等过，此处跳过。
+                    if (syncSplit) {
+                        Catlass::Arch::CrossCoreWaitFlag(vecToCubeFlag_);
+                    }
+
                     const uint32_t qgScratchSlot = curL1A_;
                     curL1A_ ^= 1U;
                     const int32_t qgScratchEvent = L1AScratchEvent(qgScratchSlot);
@@ -282,8 +324,12 @@ public:
                         true, true, qgScratchEvent, true, true, doScratchEvent,
                         static_cast<uint32_t>(K_), static_cast<uint32_t>(V_DIM),
                         static_cast<uint32_t>(chunkInfo.chunkLen));
-
-                    Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
+                    // 浅链（early-notify 关闭）时恢复之前的标量 set
+                    // 位置——GEMM1 完成后放行 Vector stage2。深链时 set 已在 GEMM0
+                    // epilogue 发射（earlyNotifyStage_），此处不再发。
+                    if (!syncSplit) {
+                        Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
+                    }
                 }
                 for (int64_t headOffset = 0; headOffset < headCnt; ++headOffset) {
                     const int64_t hv = hvBase + headOffset;
@@ -305,6 +351,10 @@ public:
                     AscendC::GlobalTensor<DT> gmDv2;
                     AscendC::GlobalTensor<DT> gmTermW;
                     gmWT.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(w_) + wBase);
+                    // W 亦为一次性流式读（stage2 GEMM2 单次消费），禁 L2
+                    if (cuSeqlens_ == nullptr) {
+                        gmWT.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+                    }
                     gmDv2.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dv2_) + dv2Base);
                     gmTermW.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(workspace_) + slotBase +
                                             termWWorkspaceOffset_);
@@ -346,14 +396,21 @@ public:
                     copyGmToL1B_Dv2(tensorL1Dv2, blockDv2);
                     AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(dv2ScratchEvent);
 
+                    // stage2 early-notify：set 移入 GEMM2 epilogue（termW 写 GM 完成
+                    // 后即发射），Vector stage3 在 GEMM2 指令流尾部即被放行读
+                    // termQ/termW 更新 state，免标量线程返回路径延迟。
+                    // 浅链禁用，set 恢复到 GEMM2 后的原位置。
+                    earlyNotifyStage_ = syncSplit;
                     RunResidentMmad<LayoutTagL0A_TermW, LayoutTagL0B_TermW>(
                         copyL1ToL0A_TermW, copyL1ToL0B_TermW, tileMmadTermW, copyL0CToGm_TermW,
                         tensorL1WT, tensorL1Dv2, blockTermW, l0A, l0B, l0C,
                         true, true, wEvent, true, true, dv2ScratchEvent,
                         static_cast<uint32_t>(K_), static_cast<uint32_t>(V_DIM),
                         static_cast<uint32_t>(chunkInfo.chunkLen));
-
-                    Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
+                    earlyNotifyStage_ = false;
+                    if (!syncSplit) {
+                        Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
+                    }
                 }
             }
         }
@@ -664,6 +721,14 @@ private:
         SwitchL0C();
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(l0CEvent);
         copyL0CToGm(tensorBlockC, tensorL0C, 0b11);
+        // early-notify：set 排在 copyL0CToGm 之后（同 PIPE_FIX 按序执行 →
+        // GM 写完成先于 flag 可见）。A2 GM 路径无 per-tile mode-4 保护，
+        // coarse set 即 dvState/termW 的可见性保证——放在 copy 之前会让 AIV
+        // 读到未写入的数据。相比原"调用返回后再 set"，此处已进 FIX 指令流，
+        // 免标量线程返回路径延迟。
+        if (earlyNotifyStage_) {
+            Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
+        }
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(l0CEvent);
     }
 
@@ -675,8 +740,12 @@ private:
     GM_ADDR workspace_ = nullptr;
     GM_ADDR cuSeqlens_ = nullptr;
     GM_ADDR chunkIndices_ = nullptr;
+    SeqInfoCache seqInfoCache_;
     Catlass::Arch::CrossCoreFlag vecToCubeFlag_{VEC_TO_CUBE_FLAG_READY};
     Catlass::Arch::CrossCoreFlag cubeToVecFlag_{CUBE_TO_VEC_FLAG_READY};
+    // RunResidentMmad epilogue 是否发射 cubeToVec early-notify（AIC 标量单线程，
+    // 调用前设置、epilogue 内消费，无原子性顾虑）
+    bool earlyNotifyStage_ = false;
     const ChunkGatedDeltaRuleBwdDhuTilingData *tiling_ = nullptr;
     int64_t B_ = 0;
     int64_t HK_ = 0;

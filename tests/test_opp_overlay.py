@@ -25,6 +25,19 @@ def _minimal_vendor(path: Path) -> None:
     library.write_bytes(b"test")
 
 
+def _write_aclnn_header(vendor: Path, scalar_type: str) -> None:
+    header = vendor / "op_api" / "include" / "aclnnop" / "aclnn_demo.h"
+    header.parent.mkdir(parents=True, exist_ok=True)
+    header.write_text(
+        "aclnnStatus aclnnDemoGetWorkspaceSize(\n"
+        "    const aclTensor *x,\n"
+        f"    {scalar_type} mode,\n"
+        "    uint64_t *workspaceSize,\n"
+        "    aclOpExecutor **executor);\n",
+        encoding="utf-8",
+    )
+
+
 class OverlayInstallerTest(unittest.TestCase):
     def setUp(self) -> None:
         self.module = runpy.run_path(str(INSTALL_OPP))
@@ -90,6 +103,27 @@ class OverlayInstallerTest(unittest.TestCase):
                 order = self.module["_write_vendors_config"](vendors)
             self.assertEqual(order, ["fla_npu_transformer"])
             self.assertNotIn(",name", (vendors / "config.ini").read_text(encoding="utf-8"))
+
+    def test_matching_public_aclnn_abi_can_be_installed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict(
+            os.environ, {}, clear=True
+        ):
+            _, base, source = self._tree(Path(temp_dir))
+            _write_aclnn_header(base, "int64_t")
+            _write_aclnn_header(source, "int64_t")
+            installed = self.module["install_overlay"](source)
+            self.assertTrue(installed.is_dir())
+
+    def test_public_aclnn_abi_drift_is_rejected_before_install(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict(
+            os.environ, {}, clear=True
+        ):
+            vendors, base, source = self._tree(Path(temp_dir))
+            _write_aclnn_header(base, "int64_t")
+            _write_aclnn_header(source, "bool")
+            with self.assertRaisesRegex(RuntimeError, "public aclnn ABI differs"):
+                self.module["install_overlay"](source)
+            self.assertFalse((vendors / "fla_npu_overlay_transformer").exists())
 
 
 class EarlyOppEnvironmentTest(unittest.TestCase):

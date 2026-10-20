@@ -354,6 +354,25 @@ def compare(expected: list[str], actual: list[str]) -> list[str]:
     return problems
 
 
+def filter_adapters(
+    adapters: dict[str, tuple[Path, list[str]]], raw_ops: str
+) -> dict[str, tuple[Path, list[str]]]:
+    """Limit a scoped build gate to adapters owned by ``--ops`` sources."""
+
+    selected = {
+        name.removeprefix("npu_")
+        for entry in raw_ops.split(",")
+        if (name := entry.strip())
+    }
+    if not selected:
+        return adapters
+    return {
+        symbol: value
+        for symbol, value in adapters.items()
+        if value[0].stem.removeprefix("stable_") in selected
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--opp-include", required=True, nargs="+",
@@ -361,11 +380,18 @@ def main() -> int:
                              "the vendor OPP's, and CANN's for the built-in "
                              "operators (FastGelu)")
     parser.add_argument("--src-dir", default=str(SRC_DIR))
+    parser.add_argument(
+        "--ops",
+        default="",
+        help="comma-separated scoped build operator names; only their stable "
+        "adapter call sites are checked",
+    )
     parser.add_argument("--json", default="")
     args = parser.parse_args()
 
     adapters = adapter_calls(Path(args.src_dir))
     adapters.update(hand_written_calls(Path(args.src_dir)))
+    adapters = filter_adapters(adapters, args.ops)
     wanted = set(adapters)
 
     headers: dict[str, list[str]] = {}

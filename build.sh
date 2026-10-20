@@ -681,8 +681,38 @@ function gen_bisheng(){
     popd
 }
 
+function check_stable_aclnn_abi(){
+    if [[ "${ENABLE_BUILD_PKG}" != "TRUE" || "${ENABLE_BUILT_CUSTOM}" != "TRUE" ]]; then
+        return 0
+    fi
+
+    local opp_include
+    opp_include=$(find "${BUILD_DIR}" "${BUILD_OUT_DIR}" -type d \
+        -path '*/vendors/fla_npu_transformer/op_api/include/aclnnop' \
+        -print 2>/dev/null | sort | head -n 1)
+    if [[ -z "${opp_include}" ]]; then
+        log "[ERROR] Built OPP aclnn headers were not found for the Stable-ABI gate."
+        return 1
+    fi
+
+    local include_args=(--opp-include "${opp_include}")
+    local cann_include
+    while IFS= read -r cann_include; do
+        include_args+=("${cann_include}")
+    done < <(find "${ASCEND_HOME_PATH:-/nonexistent}" -maxdepth 3 -type d \
+        -path '*/include/aclnnop' -print 2>/dev/null | sort)
+    if [[ -n "${OPS_FILTER_VALUE}" ]]; then
+        include_args+=(--ops "${OPS_FILTER_VALUE}")
+    fi
+
+    log "[INFO] Checking built OPP aclnn headers against Stable-ABI adapters."
+    python3 "${CURRENT_DIR}/torch_custom/fla_npu/tools/op_abi_validate.py" \
+        "${include_args[@]}"
+}
+
 function build_package(){
     build package
+    check_stable_aclnn_abi
 }
 
 function build_host(){
