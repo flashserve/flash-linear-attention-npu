@@ -50,6 +50,19 @@ from ._runtime import (
 # strings or otherwise ambiguous scalar conversion are listed here to prevent
 # ctypes from narrowing or mis-converting arguments.
 _GET_WORKSPACE_ARGTYPES = {
+    "aclnnChunkGatedDeltaRuleFwd32": [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_double,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_void_p),
+    ],
     "aclnnCausalConv1d": [
         ctypes.c_void_p,  # x
         ctypes.c_void_p,  # weight
@@ -4605,6 +4618,66 @@ def npu_solve_tri(x, *, cu_seqlens=None, chunk_indices=None, layout="bsnd"):
             ctx.tensor(out, "out"),
         ],
         out,
+    )
+
+
+def npu_chunk_gated_delta_rule_fwd_32(
+    q,
+    k,
+    v,
+    g,
+    beta,
+    *,
+    initial_state=None,
+    scale=None,
+):
+    """Fused GDN infer forward. q/k/v are BNSD, g/beta are [B, Hv, T]."""
+
+    import math
+
+    if q.shape != k.shape or q.ndim != 4 or v.ndim != 4:
+        raise RuntimeError("q, k and v must be rank-4, and q must match k.")
+    b, hk, tokens, key = _shape(q)
+    _, hv, tokens_v, value = _shape(v)
+    if tokens != tokens_v or hv != hk or key != 128 or value != 128 or tokens % 32 != 0:
+        raise RuntimeError(
+            "chunk_gated_delta_rule_fwd_32 requires Hv==Hk, K=V=128 and T a multiple of 32."
+        )
+    if _shape(g) != (b, hv, tokens) or _shape(beta) != (b, hv, tokens):
+        raise RuntimeError("g and beta must be [B, Hv, T].")
+    if scale is None:
+        scale = 1.0 / math.sqrt(key)
+    q = q.contiguous()
+    k = k.contiguous()
+    v = v.contiguous()
+    g = g.contiguous()
+    beta = beta.contiguous()
+    if initial_state is not None:
+        initial_state = initial_state.contiguous()
+    out = _zeros((b, hv, tokens, value), q)
+    final_state = _zeros((b, hv, key, value), q)
+
+    def nd(ctx, tensor, name):
+        if tensor is None:
+            return ctx.tensor(None, name)
+        return ctx.tensor(
+            tensor, name, acl_format_override=ACL_FORMAT_ND, storage_shape_override=_shape(tensor)
+        )
+
+    return _call_aclnn(
+        "aclnnChunkGatedDeltaRuleFwd32",
+        lambda ctx: [
+            nd(ctx, q, "q"),
+            nd(ctx, k, "k"),
+            nd(ctx, v, "v"),
+            nd(ctx, g, "g"),
+            nd(ctx, beta, "beta"),
+            nd(ctx, initial_state, "initial_state"),
+            ctypes.c_double(float(scale)),
+            nd(ctx, out, "o"),
+            nd(ctx, final_state, "final_state"),
+        ],
+        (out, final_state),
     )
 
 
