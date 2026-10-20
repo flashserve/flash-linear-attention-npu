@@ -75,7 +75,18 @@ public:
         ubP_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(UB_P);
         ubOacc_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(UB_OACC);
         ubD_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(UB_D);
-        ubKt_ = buf.template GetBuffer<BufferType::ASCEND_UB, bfloat16_t>(224 * 1024);
+        // The other half of a 64-token step shares this AIV's ping-pong db, so its
+        // cumsum lives past ubR_ (224 KiB, 16 KiB) and stays inside the 248 KiB UB.
+        ubGd_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(240 * 1024);
+        ubGpd_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(240 * 1024 + 512);
+        ubEgd_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(240 * 1024 + 1024);
+        // 16x16 identity for the register solve. ubEgd_ occupies 512 bytes from +1024.
+        ubEye_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(242 * 1024);
+        // Five 64-lane gather indices. Identity above is 32x32, so the indices sit after it.
+        ubSh_ = buf.template GetBuffer<BufferType::ASCEND_UB, uint32_t>(242 * 1024 + 4096);
+        futBe_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(kUbFutBe);
+        futGp_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(kUbFutGp);
+        futEg_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(kUbFutEg);
 
         l1K_ = buf.template GetBuffer<BufferType::ASCEND_CB, bfloat16_t>(L1_K);
         l1Q_ = buf.template GetBuffer<BufferType::ASCEND_CB, bfloat16_t>(L1_Q);
@@ -111,12 +122,21 @@ public:
             ubAbfDb_[db] = buf.template GetBuffer<BufferType::ASCEND_UB, bfloat16_t>(kUbAbf + static_cast<uint32_t>(db) * 2 * 1024);
             ubUDb_[db] = buf.template GetBuffer<BufferType::ASCEND_UB, float>(kUbU + static_cast<uint32_t>(db) * 16 * 1024);
             ubPDb_[db] = buf.template GetBuffer<BufferType::ASCEND_UB, float>(kUbP + static_cast<uint32_t>(db) * 16 * 1024);
+            // u, P and o are fixpiped bf16. Same byte address as the float slot.
+            ubUb_[db] = buf.template GetBuffer<BufferType::ASCEND_UB, bfloat16_t>(kUbU + static_cast<uint32_t>(db) * 16 * 1024);
+            ubPb_[db] = buf.template GetBuffer<BufferType::ASCEND_UB, bfloat16_t>(kUbP + static_cast<uint32_t>(db) * 16 * 1024);
         }
         ubX00_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(kUbX00);
         ubX11_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(kUbX11);
         ubAfp_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(kUbAfp);
         ubR_ = buf.template GetBuffer<BufferType::ASCEND_UB, bfloat16_t>(kUbR);
         ubD_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(kUbD);
+        ubDb_ = buf.template GetBuffer<BufferType::ASCEND_UB, bfloat16_t>(kUbD);
+        // Second half's delta. Aliases ubU (dead from the end of Stage5 until Stage4
+        // of the next step). Stage6 of the high half writes it; Apply reads it
+        // before that Stage4. bf16, so the 64 rows occupy the first 16KB.
+        ubD1_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(kUbU);
+        ubD1b_ = buf.template GetBuffer<BufferType::ASCEND_UB, bfloat16_t>(kUbU);
         for (uint32_t t = 0; t < static_cast<uint32_t>(kTasksPerRound); ++t) {
             l1KDb_[t] = buf.template GetBuffer<BufferType::ASCEND_CB, bfloat16_t>(t * kL1TaskStride);
             l1QDb_[t] = buf.template GetBuffer<BufferType::ASCEND_CB, bfloat16_t>(t * kL1TaskStride + 8 * 1024);
@@ -206,7 +226,8 @@ private:
     // One chunk on this AIV. db 0 is ping, db 1 is pong.
     // q/k land, L2, then L1; the MTE3 flag lets Cube start Stage2 while the
     // rest of this function does sigmoid, cumsum and the row scales.
-    __aicore__ inline void Stage1(int32_t db, uint32_t task, uint32_t chunk)
+    __aicore__ inline void Stage1(int32_t db, uint32_t task, uint32_t chunk, int32_t prefetchDb = 0,
+                                 uint32_t prefetchChunk = 0xFFFFFFFFu)
     {
         const int64_t token = TokenBase() + static_cast<int64_t>(chunk) * kBt;
         const int32_t nRow = kBt * kDim;
@@ -214,64 +235,192 @@ private:
         const uint16_t evV = static_cast<uint16_t>(2 + db);
         const uint16_t evG = static_cast<uint16_t>(4 + db);
         const uint16_t evBeta = static_cast<uint16_t>(6 + db);
-        DataCopy(ubQDb_[db], qGm_[token * kDim], nRow);
-        DataCopy(ubKDb_[db], kGm_[token * kDim], nRow);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(evQk);
-        DataCopy(ubVDb_[db], vGm_[token * kDim], nRow);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(evV);
+        const bool l2Done = l2Ready_[db] != 0;
+        const bool onL1 = qkOnL1_[db] != 0;
+        const bool qkReady = !l2Done && qkReady_[db] != 0;
+        const bool vReady = vReady_[db] != 0;
+        qkReady_[db] = 0;
+        vReady_[db] = 0;
+        l2Ready_[db] = 0;
+        qkOnL1_[db] = 0;
+        // Previous step's MTE3 is done with these ND slots: q/k, v/o, q_exp/k_beta_g.
+        // A hit from PrefetchQKV already consumed MTE3_MTE2(evV) and left MTE2_V pending.
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(evQk);
+        if (!vReady) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(evV);
+        }
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(static_cast<uint16_t>(4 + db));
+        if (!l2Done && !qkReady) {
+            DataCopy(ubQDb_[db], qGm_[token * kDim], nRow);
+            DataCopy(ubKDb_[db], kGm_[token * kDim], nRow);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(evQk);
+        }
+        if (!vReady) {
+            DataCopy(ubVDb_[db], vGm_[token * kDim], nRow);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(evV);
+        }
+        if (!l2Done) {
+            DataCopy(ubGDb_[db], gGm_[token], kBt);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(evG);
+            DataCopy(ubBetaDb_[db], betaGm_[token], kBt);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(evBeta);
+        }
+        // Future q/k goes out after this chunk's loads, so L2 below overlaps it
+        // instead of waiting behind it.
+        if (prefetchChunk < seqLen_ / kBt) {
+            PrefetchQK(prefetchDb, prefetchChunk);
+        }
+
+        LocalTensor<bfloat16_t> vNz = ubDb_[static_cast<uint32_t>(kDim / 2) * kDim];
+        if (l2Done) {
+            // EarlyL2 already wrote q_exp, k_beta_g and the gate vectors.
+            CopyF32VF(ubBeDb_[db], futBe_, static_cast<uint32_t>(kBt));
+            CopyF32VF(ubGpDb_[db], futGp_, static_cast<uint32_t>(kBt));
+            CopyF32VF(ubEgDb_[db], futEg_, static_cast<uint32_t>(kBt * 2));
+        } else {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(evBeta);
+            BetaSigmoidVF(ubBetaDb_[db], ubBeDb_[db]);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(evG);
+            CumsumExp2VF<true>(ubGDb_[db], ubGpDb_[db], ubEgDb_[db], ubSh_);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(evQk);
+            // q/k NZ fill this chunk's P slot (16KB, P is not written until next step's
+            // StageP). v NZ sits in the unused upper half of D.
+            LocalTensor<bfloat16_t> qNz = ubPb_[db];
+            LocalTensor<bfloat16_t> kNz = ubPb_[db][static_cast<uint32_t>(kBt * kDim)];
+            L2InplaceQKVF(ubQDb_[db], ubKDb_[db], ubKbgDb_[db], ubQexpDb_[db], ubBeDb_[db], ubEgDb_[db], qNz, kNz);
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(evQk);
+        }
+        // ScaleRows is queued on V before the q/k copy wait, so the copy overlaps it.
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(evV);
+        ScaleRowsVF<true>(ubVDb_[db], ubVDb_[db], ubBeDb_[db],
+                          reinterpret_cast<__ubuf__ bfloat16_t *>(vNz.GetPhyAddr()));
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(evV);
+        if (!onL1) {
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(evQk);
+            CopyNzToL1(l1KDb_[task], ubPb_[db][static_cast<uint32_t>(kBt * kDim)], kBt, kDim);
+            CopyNzToL1(l1QDb_[task], ubPb_[db], kBt, kDim);
+            AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(static_cast<uint16_t>(task));
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(evQk);
+        // k_beta_g must land before the next Stage5 of this db rewrites ubKbg.
+        // The scaled-v copy is queued behind that flag and overlaps the other db's Vnew.
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(evV);
+        CopyNzToL1(l1KbgDb_[task], ubKbgDb_[db], kBt, kDim);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(evV);
+        CopyNzToL1(l1VbDb_[task], vNz, kBt, kDim);
+    }
+
+    // Normalize the prefetched chunk while the cube is still in Stage6. q/k NZ
+    // land in the other db's P slot, which StageP will not write until the next
+    // step, and only after PublishEarlyQk's copy has finished.
+    __aicore__ inline void EarlyL2(int32_t db, int32_t nzDb, uint32_t chunk)
+    {
+        const int64_t token = TokenBase() + static_cast<int64_t>(chunk) * kBt;
+        const uint16_t evQk = static_cast<uint16_t>(db);
+        const uint16_t evG = static_cast<uint16_t>(4 + db);
+        const uint16_t evBeta = static_cast<uint16_t>(6 + db);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(static_cast<uint16_t>(4 + db));
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(static_cast<uint16_t>(4 + db));
         DataCopy(ubGDb_[db], gGm_[token], kBt);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(evG);
         DataCopy(ubBetaDb_[db], betaGm_[token], kBt);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(evBeta);
-
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(evQk);
-        L2InplaceQKVF(ubQDb_[db], ubKDb_[db]);
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(static_cast<uint16_t>(db));
-        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(static_cast<uint16_t>(db));
-        UploadNdToL1(l1KDb_[task], ubKDb_[db], kBt, kDim);
-        UploadNdToL1(l1QDb_[task], ubQDb_[db], kBt, kDim);
-        AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(static_cast<uint16_t>(task));
-
+        qkReady_[db] = 0;
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(evBeta);
-        BetaSigmoidVF(ubBetaDb_[db], ubBeDb_[db]);
+        BetaSigmoidVF(ubBetaDb_[db], futBe_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(evG);
-        CumsumExp2VF(ubGDb_[db], ubGpDb_[db], ubEgDb_[db]);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(evV);
-        ScaleRowsVF(ubVDb_[db], ubVDb_[db], ubBeDb_[db]);
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(static_cast<uint16_t>(db + 2));
-        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(static_cast<uint16_t>(db + 2));
-        UploadNdToL1(l1VbDb_[task], ubVDb_[db], kBt, kDim);
-        ScaleRowsBetaExpVF(ubKDb_[db], ubKbgDb_[db], ubBeDb_[db], ubEgDb_[db]);
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(static_cast<uint16_t>(db + 2));
-        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(static_cast<uint16_t>(db + 2));
-        UploadNdToL1(l1KbgDb_[task], ubKbgDb_[db], kBt, kDim);
-        ScaleRowsVF(ubQDb_[db], ubQexpDb_[db], ubEgDb_[db]);
+        CumsumExp2VF<true>(ubGDb_[db], futGp_, futEg_, ubSh_);
+        LocalTensor<bfloat16_t> qNz = ubPb_[nzDb];
+        LocalTensor<bfloat16_t> kNz = ubPb_[nzDb][static_cast<uint32_t>(kBt * kDim)];
+        L2InplaceQKVF(ubQDb_[db], ubKDb_[db], ubKbgDb_[db], ubQexpDb_[db], futBe_, futEg_, qNz, kNz);
+        l2Ready_[db] = 1;
     }
 
-    // R is the running state. Chunk 0 starts from initial_state, or zero.
-    __aicore__ inline void InitR()
+    __aicore__ inline void PublishEarlyQk(int32_t nzDb, uint32_t task)
     {
+        CopyNzToL1(l1KDb_[task], ubPb_[nzDb][static_cast<uint32_t>(kBt * kDim)], kBt, kDim);
+        CopyNzToL1(l1QDb_[task], ubPb_[nzDb], kBt, kDim);
+        AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(static_cast<uint16_t>(task));
+    }
+
+    // q and k of the chunk this db serves next iteration. ubQ/ubK were consumed by
+    // the previous step's L2, so the copy is issued with no scalar wait and runs
+    // under this step's L2.
+    __aicore__ inline void PrefetchQK(int32_t db, uint32_t chunk)
+    {
+        const int64_t token = TokenBase() + static_cast<int64_t>(chunk) * kBt;
+        const int32_t nRow = kBt * kDim;
+        const uint16_t evQk = static_cast<uint16_t>(db);
+        DataCopy(ubQDb_[db], qGm_[token * kDim], nRow);
+        DataCopy(ubKDb_[db], kGm_[token * kDim], nRow);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(evQk);
+        qkReady_[db] = 1;
+    }
+
+    // v lands after Apply releases ubV[db]. Stage1 waits for it only after L2, so
+    // this copy overlaps the next step's normalize.
+    __aicore__ inline void PrefetchV(int32_t db, uint32_t chunk)
+    {
+        const int64_t token = TokenBase() + static_cast<int64_t>(chunk) * kBt;
+        const int32_t nRow = kBt * kDim;
+        const uint16_t evV = static_cast<uint16_t>(2 + db);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(evV);
+        DataCopy(ubVDb_[db], vGm_[token * kDim], nRow);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(evV);
+        vReady_[db] = 1;
+    }
+
+    // This AIV's 64 K rows. Chunk 0 starts from initial_state, or zero.
+    // The half stays in ubR_ for the whole head and is updated in place.
+    __aicore__ inline void InitH()
+    {
+        constexpr uint32_t nElem = static_cast<uint32_t>(kDim / 2) * kDim;
         if (hasInitial_ != 0) {
             const int64_t elem = static_cast<int64_t>(
-                (static_cast<uint64_t>(batchIdx_) * valueHeadNum_ + headIdx_) * kDim * kDim);
-            DataCopy(ubR_, initGm_[elem], kDim * kDim);
+                (static_cast<uint64_t>(batchIdx_) * valueHeadNum_ + headIdx_) * kDim * kDim +
+                static_cast<uint64_t>(subBlockIdx_) * nElem);
+            DataCopy(ubR_, initGm_[elem], nElem);
             AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE3>(0);
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE3>(0);
         } else {
-            Duplicate(ubR_, static_cast<bfloat16_t>(0), kDim * kDim);
+            Duplicate(ubR_, static_cast<bfloat16_t>(0), nElem);
             AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(0);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(0);
         }
     }
 
-    // Four [32,128] NZ panels. Same view CubeP and q_exp@H use.
-    __aicore__ inline void UploadH(uint32_t task)
+    // g' of the half this AIV does not own. Both halves of a 64-token step use the
+    // same ping-pong db, so the other cumsum lives in ubGd_/ubGpd_.
+    __aicore__ inline void LoadDecay(uint32_t chunk)
     {
-        for (int tile = 0; tile < 4; ++tile) {
-            auto dst = l1HDb_[task][static_cast<uint32_t>(tile * kBt * kDim)];
-            auto src = ubR_[static_cast<uint32_t>(tile * kBt * kDim)];
-            UploadNdToL1(dst, src, kBt, kDim);
+        const int64_t token = TokenBase() + static_cast<int64_t>(chunk) * kBt;
+        DataCopy(ubGd_, gGm_[token], kBt);
+        // Event 0/1 stay with the q/k prefetch. Event 4 is free once Stage1 has
+        // consumed g's MTE2_V.
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(4);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(4);
+        SumLastVF(ubGd_, ubGpd_);
+    }
+
+    // This AIV's 64 ND rows land in the one [128,128] NZ at l1H.
+    // Panel height is 128, so StageP and Stage6 load H once with K=128.
+    __aicore__ inline void UploadH()
+    {
+        const uint32_t row0 = subBlockIdx_ * (kDim / 2);
+        for (int tile = 0; tile < 2; ++tile) {
+            CopyNdRowsToFullNz(l1HDb_[0], ubR_[static_cast<uint32_t>(tile * kBt * kDim)],
+                               row0 + static_cast<uint32_t>(tile) * kBt, kBt, kDim, kDim);
         }
+    }
+
+    // Tiles already stored as tight NZ by Apply. Two copies, no vector pack.
+    __aicore__ inline void UploadHnz(LocalTensor<bfloat16_t> nz0, LocalTensor<bfloat16_t> nz1)
+    {
+        const uint32_t tileBase = subBlockIdx_ * 2;
+        CopyNzToL1(l1HDb_[0][tileBase * kBt * kDim], nz0, kBt, kDim);
+        CopyNzToL1(l1HDb_[0][(tileBase + 1) * kBt * kDim], nz1, kBt, kDim);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(7);
     }
 
     // Inverse of UploadNdToL1. Runs on AIC: L1->UB is a cube copy, and the
@@ -303,11 +452,11 @@ private:
     // Tril, 16x16 leaf inverse, A onto L1, then this chunk's Cube can start.
     __aicore__ inline void Stage3(int32_t db, uint32_t task)
     {
-        GateAttnVF(ubGpDb_[db], ubBeDb_[db], ubKktDb_[db], ubQkDb_[db], ubLDb_[db], ubAttnDb_[db]);
-        InvertAVF(ubLDb_[db], ubX00_, ubX11_, ubPDb_[db], ubAfp_, ubAbfDb_[db]);
+        GateAttnVF(ubEgDb_[db], ubBeDb_[db], ubKktDb_[db], ubQkDb_[db], ubLDb_[db], ubAttnDb_[db]);
+        InvertAVF(ubLDb_[db], ubX00_, ubX11_, ubPDb_[db], ubAfp_, ubAbfDb_[db], ubEye_);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(static_cast<uint16_t>(db));
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(static_cast<uint16_t>(db));
-        UploadNdToL1(l1ADb_[task], ubAbfDb_[db], kBt, kBt);
+        CopyNdToL1(l1ADb_[task], ubAbfDb_[db], kBt, kBt);
         AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(static_cast<uint16_t>(task + 4));
     }
 
@@ -335,11 +484,11 @@ private:
         SyncAll();
         TransposeKVf(ubK_, ubQ_);
         SyncAll();
-        UploadNdToL1(l1Vnew_, ubQexp_, kBt, kDim);
-        UploadNdToL1(l1VnewG_, ubKbg_, kBt, kDim);
+        UploadNdToL1(l1Vnew_, ubQexp_, ubK_, kBt, kDim);
+        UploadNdToL1(l1VnewG_, ubKbg_, ubQ_, kBt, kDim);
         for (int tile = 0; tile < 4; ++tile) {
             const uint32_t elems = static_cast<uint32_t>(tile * kBt * kBt);
-            UploadNdToL1(l1A_[elems], ubQ_[elems], kBt, kBt);
+            UploadNdToL1(l1A_[elems], ubQ_[elems], ubK_, kBt, kBt);
         }
     }
 
@@ -356,7 +505,7 @@ private:
         const uint64_t token =
             (static_cast<uint64_t>(batchIdx_) * valueHeadNum_ + headIdx_) * seqLen_ + static_cast<uint64_t>(chunk) * kBt;
         CopyOut(oGm_, ubQ_, token * kDim, kBt * kDim);
-        ApplyStateVF(ubR_, ubD_, ubEg_.GetValue(0));
+        ApplyStateVF<false>(ubR_, ubDb_, ubDb_, ubEg_.GetValue(0), 0.f, static_cast<uint16_t>(kBt * 2));
         // Vector store of R must land before MTE3 reads it. Without this, the
         // GM final_state is the pre-update buffer (often zeros on the last chunk).
         SyncAll();
@@ -408,185 +557,336 @@ private:
         MmadL0ToL0C(l0ADb_[bank], l0BDb_[bank], l0CDb_[bank], kBt, kDim, kBt, true, bank);
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(bank);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(bank);
+        // w uses the other L0 bank so its load overlaps u's mad.
+        const uint8_t wBank = static_cast<uint8_t>(bank ^ 1U);
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(wBank);
+        LoadL1NzToL0AB(l1ADb_[task], l1KbgDb_[task], l0ADb_[wBank], l0BDb_[wBank], kBt, kDim, kBt, true, 0, wBank);
+        MmadL0ToL0C(l0ADb_[wBank], l0BDb_[wBank], l0CDb_[wBank], kBt, kDim, kBt, true, wBank);
+        AscendC::SetFlag<AscendC::HardEvent::M_FIX>(wBank);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(wBank);
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(bank);
-        FixpipeFp32Ub(ubUDb_[db], l0CDb_[bank], kBt, kDim, bank);
+        FixpipeBf16Ub(ubUb_[db], l0CDb_[bank], kBt, kDim, bank);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(bank);
-
-        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(bank);
-        LoadL1NzToL0AB(l1ADb_[task], l1KbgDb_[task], l0ADb_[bank], l0BDb_[bank], kBt, kDim, kBt, true, 0, bank);
-        MmadL0ToL0C(l0ADb_[bank], l0BDb_[bank], l0CDb_[bank], kBt, kDim, kBt, true, bank);
-        AscendC::SetFlag<AscendC::HardEvent::M_FIX>(bank);
-        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(bank);
-        AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(bank);
-        FixpipeBf16L1(l1WDb_[task], l0CDb_[bank], kBt, kDim);
-        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(bank);
+        AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(wBank);
+        FixpipeBf16L1(l1WDb_[task], l0CDb_[wBank], kBt, kDim);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(wBank);
         AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(bank);
         AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(CubeWaitFlag(task + 4));
     }
 
-    // P = w @ H. H is this chunk's entry state, already on L1.
-    // waitEntry is only chunk 0; later chunks already waited on the producer's kFlagNext.
-    __aicore__ inline void StageP(uint32_t task, bool waitEntry)
+    // Issue w@H. The two halves use different L0 banks, so the second load
+    // overlaps the first mad. StagePStore fixpipes after both are in flight.
+    __aicore__ inline void StagePCompute(uint32_t task)
+    {
+        const uint8_t bank = static_cast<uint8_t>(task & 1U);
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE1>(bank);
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(bank);
+        LoadL1NzToL0AB(l1WDb_[task], l1HDb_[0], l0ADb_[bank], l0BDb_[bank], kBt, kDim, kDim, true, 0, bank);
+        MmadL0ToL0C(l0ADb_[bank], l0BDb_[bank], l0CDb_[bank], kBt, kDim, kDim, true, bank);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(bank);
+        AscendC::SetFlag<AscendC::HardEvent::M_FIX>(bank);
+    }
+
+    __aicore__ inline void StagePStore(uint32_t task)
     {
         const uint8_t bank = static_cast<uint8_t>(task & 1U);
         const int32_t db = PingPongDb(task);
-        if (waitEntry) {
-            AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE1>(AicSeen(kFlagH, task));
-        }
-        // Stage4 posts M_MTE1 before the w fixpipe. Stall MTE1 on that store.
-        AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE1>(bank);
-        for (int tile = 0; tile < 4; ++tile) {
-            auto hTile = l1HDb_[task][static_cast<uint32_t>(tile * kBt * kDim)];
-            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(bank);
-            LoadL1NzToL0AB(l1WDb_[task], hTile, l0ADb_[bank], l0BDb_[bank], kBt, kDim, kBt, true,
-                           static_cast<uint16_t>(tile * 2), bank);
-            MmadL0ToL0C(l0ADb_[bank], l0BDb_[bank], l0CDb_[bank], kBt, kDim, kBt, tile == 0, bank);
-            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(bank);
-        }
-        AscendC::SetFlag<AscendC::HardEvent::M_FIX>(bank);
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(bank);
-        FixpipeFp32Ub(ubPDb_[db], l0CDb_[bank], kBt, kDim, bank);
+        FixpipeBf16Ub(ubPb_[db], l0CDb_[bank], kBt, kDim, bank);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(bank);
         AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(AicSeen(kFlagP, task));
     }
 
     // D = k_hat^T @ v_new_g, then o_acc = q_exp @ H + attn @ v_new.
-    __aicore__ inline void Stage6(uint32_t task)
+    // dBuf is ubD_ for the low half and ubD1_ for the high half, so the second
+    // Stage6 does not wait for the first delta to be consumed.
+    __aicore__ inline void Stage6(uint32_t task, LocalTensor<bfloat16_t> dBuf)
     {
         const uint8_t bank = static_cast<uint8_t>(task & 1U);
         const int32_t db = PingPongDb(task);
         AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE1>(AicSeen(kFlagV, task));
 
         // k^T @ v_new_g, 32 rows at a time. A full 128-row Fixpipe misses on AIV1.
-        // D always uses L0 bank 0. Bank 1's transposed load does not match bank 0.
+        // Transposed K stays on L0 bank 0. v_new_g is loaded once. Two L0C slices
+        // let part N+1's mad run while part N's fixpipe is still draining, and the
+        // next K slice is issued before that fixpipe's wait.
         constexpr uint8_t dBank = 0;
+        LocalTensor<float> slice0 = l0CDb_[dBank];
+        LocalTensor<float> slice1 = l0CDb_[dBank][static_cast<uint32_t>(kBt * kDim)];
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(dBank);
+        LoadL1NzToL0AB(l1KDb_[task], l1KbgDb_[task], l0ADb_[dBank], l0BDb_[dBank], kBt, kDim, kBt, true, 0, dBank,
+                       true, false);
         for (int part = 0; part < 4; ++part) {
-            auto kPart = l1KDb_[task][static_cast<uint32_t>(part * 2 * kBt * 16)];
-            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(dBank);
-            LoadL1NzToL0AB(kPart, l1KbgDb_[task], l0ADb_[dBank], l0BDb_[dBank], kBt, kDim, kBt, true, 0, dBank,
-                           true);
-            MmadL0ToL0C(l0ADb_[dBank], l0BDb_[dBank], l0CDb_[dBank], kBt, kDim, kBt, true, dBank);
-            AscendC::SetFlag<AscendC::HardEvent::M_FIX>(dBank);
+            const uint8_t ev = static_cast<uint8_t>(part & 1);
+            LocalTensor<float> l0c = (ev == 0) ? slice0 : slice1;
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(dBank);
+            MmadL0ToL0C(l0ADb_[dBank], l0BDb_[dBank], l0c, kBt, kDim, kBt, true, ev);
+            AscendC::SetFlag<AscendC::HardEvent::M_FIX>(ev);
             AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(dBank);
-            AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(dBank);
-            FixpipeFp32Ub(ubD_[static_cast<uint32_t>(part * kBt * kDim)], l0CDb_[dBank], kBt, kDim, bank);
-            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(dBank);
+            if (part + 1 < 4) {
+                AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(dBank);
+                auto kPart = l1KDb_[task][static_cast<uint32_t>((part + 1) * 2 * kBt * 16)];
+                LoadL1NzToL0A(kPart, l0ADb_[dBank], kBt, kBt, true);
+                AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(dBank);
+            }
+            AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(ev);
+            const uint8_t dstSub = static_cast<uint8_t>(part >= 2);
+            const uint32_t localRow = static_cast<uint32_t>(part & 1) * kBt;
+            FixpipeBf16Ub(dBuf[localRow * kDim], l0c, kBt, kDim, dstSub);
+            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(ev);
         }
 
-        for (int tile = 0; tile < 4; ++tile) {
-            auto hTile = l1HDb_[task][static_cast<uint32_t>(tile * kBt * kDim)];
-            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(bank);
-            LoadL1NzToL0AB(l1QDb_[task], hTile, l0ADb_[bank], l0BDb_[bank], kBt, kDim, kBt, true,
-                           static_cast<uint16_t>(tile * 2), bank);
-            MmadL0ToL0C(l0ADb_[bank], l0BDb_[bank], l0CDb_[bank], kBt, kDim, kBt, tile == 0, bank);
-            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(bank);
-        }
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(bank);
+        LoadL1NzToL0AB(l1QDb_[task], l1HDb_[0], l0ADb_[bank], l0BDb_[bank], kBt, kDim, kDim, true, 0, bank);
+        MmadL0ToL0C(l0ADb_[bank], l0BDb_[bank], l0CDb_[bank], kBt, kDim, kDim, true, bank);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(bank);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(bank);
         LoadL1NzToL0AB(l1ADb_[task], l1VbDb_[task], l0ADb_[bank], l0BDb_[bank], kBt, kDim, kBt, true, 0, bank);
         MmadL0ToL0C(l0ADb_[bank], l0BDb_[bank], l0CDb_[bank], kBt, kDim, kBt, false, bank);
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(bank);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(bank);
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(bank);
-        FixpipeFp32Ub(ubPDb_[db], l0CDb_[bank], kBt, kDim, bank);
+        FixpipeBf16Ub(ubPb_[db], l0CDb_[bank], kBt, kDim, bank);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(bank);
-        AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(AicSeen(kFlagO, task));
+        AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(kFlagO);
+        AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(static_cast<uint16_t>(kFlagO + kAiv1FlagOff));
     }
 
-    // v_new, v_new_g, attn and q_exp onto L1, then this chunk's Stage 6 can start.
+    // v_new, v_new_g and q_exp are already tight NZ. attn stays ND (32 columns,
+    // two bursts). ScaleO reuses ubV after the v_new copy.
     __aicore__ inline void Stage5(int32_t db, uint32_t task)
     {
-        const float gLast = ubGpDb_[db].GetValue(kBt - 1);
-        VnewVF(ubUDb_[db], ubPDb_[db], ubGpDb_[db], ubVDb_[db], ubKbgDb_[db], gLast);
+        const uint16_t evV = static_cast<uint16_t>(2 + db);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(evV);
+        VnewVF(ubUb_[db], ubPb_[db], ubEgDb_[db], ubVDb_[db], ubKbgDb_[db], ubBetaDb_[db]);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(static_cast<uint16_t>(db));
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(static_cast<uint16_t>(db));
-        UploadNdToL1(l1VbDb_[task], ubVDb_[db], kBt, kDim);
-        UploadNdToL1(l1KbgDb_[task], ubKbgDb_[db], kBt, kDim);
-        UploadNdToL1(l1ADb_[task], ubAttnDb_[db], kBt, kBt);
-        UploadNdToL1(l1QDb_[task], ubQexpDb_[db], kBt, kDim);
+        CopyNzToL1(l1VbDb_[task], ubVDb_[db], kBt, kDim);
+        CopyNzToL1(l1KbgDb_[task], ubKbgDb_[db], kBt, kDim);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(static_cast<uint16_t>(db));
+        CopyNdToL1(l1ADb_[task], ubAttnDb_[db], kBt, kBt);
+        CopyNzToL1(l1QDb_[task], ubQexpDb_[db], kBt, kDim);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(static_cast<uint16_t>(4 + db));
         AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagV);
     }
 
-    __aicore__ inline void Stage7(int32_t db, uint32_t task, uint32_t chunk, bool hasNext, bool last)
+    // AIV0 owns even chunks, AIV1 owns odd chunks. Each AIV ping-pongs its own
+    // two chunks, so the L1 slot is owner + slot*2: tasks 0,2 then 1,3.
+    __aicore__ inline uint32_t TaskOf(uint32_t chunk) const
     {
-        ubEgDb_[db].SetValue(0, ubGpDb_[db].GetValue(kBt - 1) * kLn2);
-        AscendC::SetFlag<AscendC::HardEvent::S_V>(0);
-        AscendC::WaitFlag<AscendC::HardEvent::S_V>(0);
-        Exp(ubEgDb_[db], ubEgDb_[db], 8);
+        const uint32_t owner = chunk & 1U;
+        const uint32_t slot = (chunk >> 1) & 1U;
+        return owner + slot * 2U;
+    }
+
+    // exp(g'[idx]). Own half keeps the full prefix in gp[31]. The other half
+    // stores sum(g)/ln2 at gp[0]. CrossCoreWait on PIPE_V does not order GetValue.
+    __aicore__ inline float DecayOf(LocalTensor<float> gp, int32_t idx)
+    {
         AscendC::SetFlag<AscendC::HardEvent::V_S>(0);
         AscendC::WaitFlag<AscendC::HardEvent::V_S>(0);
-        ApplyStateVF(ubR_, ubD_, ubEgDb_[db].GetValue(0));
-        ScaleOVf(ubPDb_[db], ubVDb_[db], scale_);
+        ubEgd_.SetValue(0, gp.GetValue(idx) * kLn2);
+        AscendC::SetFlag<AscendC::HardEvent::S_V>(0);
+        AscendC::WaitFlag<AscendC::HardEvent::S_V>(0);
+        Exp(ubEgd_, ubEgd_, 8);
+        AscendC::SetFlag<AscendC::HardEvent::V_S>(0);
+        AscendC::WaitFlag<AscendC::HardEvent::V_S>(0);
+        return ubEgd_.GetValue(0);
+    }
+
+    // writeO stores this half's o. last stores this AIV's half of final_state.
+    // State itself is updated once per 64-token step, before these stores.
+    __aicore__ inline void ApplyHalf(int32_t db, uint32_t chunk, bool last, bool writeO)
+    {
+        if (writeO) {
+            // v_new's UB->L1 copy still reads ubV.
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(static_cast<uint16_t>(db));
+            ScaleOVf(ubPb_[db], ubVDb_[db], scale_);
+        }
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(static_cast<uint16_t>(db));
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(static_cast<uint16_t>(db));
-        const int64_t token = TokenBase() + static_cast<int64_t>(chunk) * kBt;
-        DataCopy(oGm_[token * kDim], ubVDb_[db], kBt * kDim);
-        if (hasNext) {
-            UploadH(static_cast<uint32_t>((task + 1) % kTasksPerRound));
-            AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagNext);
+        if (writeO) {
+            const int64_t token = TokenBase() + static_cast<int64_t>(chunk) * kBt;
+            DataCopy(oGm_[token * kDim], ubVDb_[db], kBt * kDim);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(static_cast<uint16_t>(2 + db));
         }
         if (last) {
+            constexpr uint32_t nElem = static_cast<uint32_t>(kDim / 2) * kDim;
             const int64_t stateElem = static_cast<int64_t>(
-                (static_cast<uint64_t>(batchIdx_) * valueHeadNum_ + headIdx_) * kDim * kDim);
-            DataCopy(stateGm_[stateElem], ubR_, kDim * kDim);
+                (static_cast<uint64_t>(batchIdx_) * valueHeadNum_ + headIdx_) * kDim * kDim +
+                static_cast<uint64_t>(subBlockIdx_) * nElem);
+            DataCopy(stateGm_[stateElem], ubR_, nElem);
         }
     }
 
+    __aicore__ inline void Stage7(int32_t db, uint32_t chunk, bool last, bool writeO)
+    {
+        ApplyHalf(db, chunk, last, writeO);
+    }
+
+
+    // Diagonal of the 32x32 identity. Filled once; Solve32 reloads it per group.
+    __aicore__ inline void InitEye()
+    {
+        Duplicate(ubEye_, 0.f, kBt * kBt);
+        AscendC::SetFlag<AscendC::HardEvent::V_S>(0);
+        AscendC::WaitFlag<AscendC::HardEvent::V_S>(0);
+        for (int i = 0; i < kBt; ++i) {
+            ubEye_.SetValue(i * kBt + i, 1.f);
+        }
+        for (int s = 0; s < 5; ++s) {
+            const uint32_t dist = 1U << s;
+            for (int i = 0; i < 64; ++i) {
+                const uint32_t src = (static_cast<uint32_t>(i) >= dist && i < kBt) ? static_cast<uint32_t>(i) - dist : 0U;
+                ubSh_.SetValue(s * 64 + i, src);
+            }
+        }
+        AscendC::SetFlag<AscendC::HardEvent::S_V>(0);
+        AscendC::WaitFlag<AscendC::HardEvent::S_V>(0);
+    }
 
     __aicore__ inline void ProcessAiv()
     {
         if (!isActive_) {
             return;
         }
+        InitEye();
+        // First prepare has no previous MTE3 reader of these ND slots.
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(0);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(1);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(2);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(3);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(4);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(5);
         const uint32_t sub = subBlockIdx_;
         const uint32_t chunkNum = seqLen_ / kBt;
         const uint32_t totalHeads = batchSize_ * valueHeadNum_;
-        const uint32_t nRound = (chunkNum + static_cast<uint32_t>(kTasksPerRound) - 1) / static_cast<uint32_t>(kTasksPerRound);
         for (uint32_t headLinear = headBegin_; headLinear < totalHeads; headLinear += aicNum_) {
             batchIdx_ = valueHeadNum_ == 0 ? 0 : headLinear / valueHeadNum_;
             headIdx_ = valueHeadNum_ == 0 ? 0 : headLinear - batchIdx_ * valueHeadNum_;
-            InitR();
-            for (uint32_t round = 0; round < nRound; ++round) {
-                // Prologue is this AIV's first chunk. Its Stage1/Stage3 do not read H.
-                // The second chunk's Stage1/Stage3 run after that tail, overlapping the
-                // other AIV's StageP/Stage6.
-                const uint32_t task0 = sub;
-                const uint32_t chunk0 = round * static_cast<uint32_t>(kTasksPerRound) + task0;
-                if (chunk0 < chunkNum) {
-                    Stage1(0, task0, chunk0);
-                    AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(static_cast<uint16_t>(task0));
-                    Stage3(0, task0);
+            qkReady_[0] = 0;
+            qkReady_[1] = 0;
+            vReady_[0] = 0;
+            vReady_[1] = 0;
+            l2Ready_[0] = 0;
+            l2Ready_[1] = 0;
+            qkOnL1_[0] = 0;
+            qkOnL1_[1] = 0;
+            InitH();
+            // One KDA step is 64 tokens. AIV0 takes the low 32, AIV1 the high 32.
+            // Both halves read the same entry H. State is H = g1*(g0*H+D0)+D1.
+            // Stage5 is issued as soon as P lands so Stage6 is not stuck behind the
+            // next step's prepare. That prepare overlaps Stage6. D1 sits in ubD1_
+            // (the ubU window) so the high Stage6 does not wait for Apply(D0).
+            if (sub == 0 && chunkNum > 0) {
+                Stage1(0, TaskOf(0), 0);
+                AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(static_cast<uint16_t>(TaskOf(0)));
+                Stage3(0, TaskOf(0));
+            }
+            if (sub == 1 && chunkNum > 1) {
+                Stage1(0, TaskOf(1), 1);
+                AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(static_cast<uint16_t>(TaskOf(1)));
+                Stage3(0, TaskOf(1));
+            }
+            for (uint32_t c0 = 0; c0 < chunkNum; c0 += 2) {
+                const uint32_t c1 = c0 + 1;
+                const bool has1 = c1 < chunkNum;
+                const int32_t db = static_cast<int32_t>((c0 >> 1) & 1U);
+                const int32_t dbN = 1 - db;
+                const bool own0 = sub == 0;
+                const uint32_t n0 = c0 + 2;
+                const uint32_t n1 = c0 + 3;
+                const bool hasN0 = n0 < chunkNum;
+                const bool hasN1 = n1 < chunkNum;
+                const bool hasNext = hasN0 || hasN1;
+                if (c0 != 0) {
+                    // Previous step's Apply set event 6 after writing ubR_.
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(6);
                 }
-                for (int db = 0; db < 2; ++db) {
-                    const uint32_t task = sub + static_cast<uint32_t>(db) * 2;
-                    const uint32_t chunk = round * static_cast<uint32_t>(kTasksPerRound) + task;
-                    if (chunk >= chunkNum) {
-                        continue;
-                    }
-                    if (db != 0) {
-                        AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(static_cast<uint16_t>(task));
-                        Stage3(db, task);
-                    }
-                    AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(static_cast<uint16_t>(task + 4));
-                    if (chunk == 0) {
-                        UploadH(task);
-                        AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagH);
-                    }
+                // Previous step published q/k from this step's P slot. StageP
+                // fixpipes that slot, so the copy has to finish before H is visible.
+                const int32_t held = db ^ 1;
+                if (qkOnL1_[held] != 0) {
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(static_cast<uint16_t>(6 + held));
+                }
+                UploadH();
+                AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagH);
+                // Next chunk's q/k hit L1 while StageP is in flight, so Stage2
+                // overlaps the rest of this step and Stage6 covers Stage5+Stage3.
+                const uint32_t fut = own0 ? (c0 + 4) : (c1 + 4);
+                if (own0 && hasN0) {
+                    Stage1(dbN, TaskOf(n0), n0, db, fut);
+                }
+                if (!own0 && hasN1) {
+                    Stage1(dbN, TaskOf(n1), n1, db, fut);
+                }
+                if (own0) {
+                    AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(static_cast<uint16_t>(TaskOf(c0) + 4));
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(kFlagP);
-                    Stage5(db, task);
-                    if (chunk > 0) {
-                        AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(kFlagGo);
+                    Stage5(db, TaskOf(c0));
+                } else if (has1) {
+                    AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(static_cast<uint16_t>(TaskOf(c1) + 4));
+                    AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(kFlagP);
+                    Stage5(db, TaskOf(c1));
+                }
+                if (own0) {
+                    if (has1) {
+                        LoadDecay(c1);
                     }
+                } else {
+                    LoadDecay(c0);
+                }
+                if (own0 && hasN0) {
+                    AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(static_cast<uint16_t>(TaskOf(n0)));
+                    Stage3(dbN, TaskOf(n0));
+                }
+                if (!own0 && hasN1) {
+                    AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(static_cast<uint16_t>(TaskOf(n1)));
+                    Stage3(dbN, TaskOf(n1));
+                }
+                int32_t earlyDb = -1;
+                int32_t earlyNz = 0;
+                uint32_t earlyTask = 0;
+                if (fut < chunkNum && qkReady_[db] != 0) {
+                    EarlyL2(db, dbN, fut);
+                    earlyDb = db;
+                    earlyNz = dbN;
+                    earlyTask = TaskOf(fut);
+                }
+                AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(kFlagO);
+                if (earlyDb >= 0) {
+                    // Vector pipe: L2, then the O flag, then this set. Scalar waits
+                    // here so the L1 copy neither races L2 nor the cube's Stage6.
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(7);
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(7);
+                    PublishEarlyQk(earlyNz, earlyTask);
+                    AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(static_cast<uint16_t>(6 + earlyDb));
+                    qkOnL1_[earlyDb] = 1;
+                }
+                const float decay0 = own0 ? DecayOf(ubGpDb_[db], kBt - 1) : DecayOf(ubGpd_, 0);
+                float decay1 = 0.f;
+                if (has1) {
                     AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(kFlagO);
-                    const bool hasNext = chunk + 1 < chunkNum;
-                    const bool last = chunk + 1 == chunkNum;
-                    Stage7(db, task, chunk, hasNext, last);
-                    if (db == 0) {
-                        const uint32_t taskN = sub + 2;
-                        const uint32_t chunkN = round * static_cast<uint32_t>(kTasksPerRound) + taskN;
-                        if (chunkN < chunkNum) {
-                            Stage1(1, taskN, chunkN);
-                        }
-                    }
+                    decay1 = own0 ? DecayOf(ubGpd_, 0) : DecayOf(ubGpDb_[db], kBt - 1);
+                }
+                if (has1) {
+                    ApplyStateVF<true>(ubR_, ubDb_, ubD1b_, decay0, decay1, static_cast<uint16_t>(kDim / 2));
+                } else {
+                    ApplyStateVF<false>(ubR_, ubDb_, ubDb_, decay0, decay0, static_cast<uint16_t>(kDim / 2));
+                }
+                // D1 is consumed once the VF is queued. Stage4 overlaps the saxpy.
+                if (hasNext) {
+                    AscendC::CrossCoreSetFlag<0x4, PIPE_V>(kFlagGo);
+                }
+                if (c0 + 2 < chunkNum) {
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(6);
+                }
+                ApplyHalf(db, c0, !has1, own0);
+                if (has1) {
+                    ApplyHalf(db, c1, !hasN0, !own0);
+                }
+                if (fut < chunkNum) {
+                    PrefetchV(db, fut);
                 }
             }
             if (headLinear + aicNum_ < totalHeads) {
@@ -596,6 +896,12 @@ private:
                 PipeBarrier<PIPE_ALL>();
             }
         }
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(1);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(2);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(3);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(4);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(5);
     }
 
     __aicore__ inline void ProcessAic()
@@ -609,49 +915,59 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(1);
         const uint32_t chunkNum = seqLen_ / kBt;
         const uint32_t totalHeads = batchSize_ * valueHeadNum_;
-        const uint32_t nRound = (chunkNum + static_cast<uint32_t>(kTasksPerRound) - 1) / static_cast<uint32_t>(kTasksPerRound);
         for (uint32_t headLinear = headBegin_; headLinear < totalHeads; headLinear += aicNum_) {
-            for (uint32_t round = 0; round < nRound; ++round) {
-                const uint32_t base = round * static_cast<uint32_t>(kTasksPerRound);
-                // Prologue covers each AIV's first chunk. The other chunk's Stage2
-                // fills the next Stage5 bubble; its Stage4 follows that Stage6,
-                // after the AIV has run Stage3.
-                for (uint32_t t = 0; t < 2; ++t) {
-                    if (base + t >= chunkNum) {
-                        break;
-                    }
-                    Stage2(t);
+            // Prologue prepares both halves of the first 64-token step. Later steps
+            // are issued from the tail: Stage2 under Stage6, Stage4 after the
+            // inverse of that half is on L1.
+            if (chunkNum > 0) {
+                Stage2(TaskOf(0));
+                Stage4(TaskOf(0));
+            }
+            if (chunkNum > 1) {
+                Stage2(TaskOf(1));
+                Stage4(TaskOf(1));
+            }
+            for (uint32_t c0 = 0; c0 < chunkNum; c0 += 2) {
+                const uint32_t c1 = c0 + 1;
+                const bool has1 = c1 < chunkNum;
+                const uint32_t n0 = c0 + 2;
+                const uint32_t n1 = c0 + 3;
+                const bool hasN0 = n0 < chunkNum;
+                const bool hasN1 = n1 < chunkNum;
+                AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE1>(AicSeen(kFlagH, 0));
+                AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE1>(AicSeen(kFlagH, 1));
+                // Both halves read this step's entry H. H is not uploaded again
+                // until both deltas have been applied.
+                StagePCompute(TaskOf(c0));
+                if (has1) {
+                    StagePCompute(TaskOf(c1));
                 }
-                for (uint32_t t = 0; t < 2; ++t) {
-                    if (base + t >= chunkNum) {
-                        break;
-                    }
-                    Stage4(t);
+                StagePStore(TaskOf(c0));
+                if (has1) {
+                    StagePStore(TaskOf(c1));
                 }
-                for (uint32_t t = 0; t < static_cast<uint32_t>(kTasksPerRound); ++t) {
-                    if (base + t >= chunkNum) {
-                        break;
-                    }
-                    const bool first = round == 0 && t == 0;
-                    if (!first) {
-                        const uint32_t srcTask = (t + static_cast<uint32_t>(kTasksPerRound) - 1) %
-                                                  static_cast<uint32_t>(kTasksPerRound);
-                        AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE1>(AicSeen(kFlagNext, srcTask));
-                    }
-                    StageP(t, first);
-                    if (!first) {
-                        PushH(t);
-                        AscendC::CrossCoreSetFlag<0x4, PIPE_MTE1>(AicSeen(kFlagGo, t));
-                    }
-                    const bool prefetch = t == 1 || t == 2;
-                    const uint32_t ahead = t + 1;
-                    if (prefetch && base + ahead < chunkNum) {
-                        Stage2(ahead);
-                    }
-                    Stage6(t);
-                    if (prefetch && base + ahead < chunkNum) {
-                        Stage4(ahead);
-                    }
+                // Stage2 before Stage6: kkt is ready while Stage6 runs, so the
+                // vector inverse stays under the long cube chain.
+                if (hasN0) {
+                    Stage2(TaskOf(n0));
+                }
+                if (hasN1) {
+                    Stage2(TaskOf(n1));
+                }
+                Stage6(TaskOf(c0), ubDb_);
+                if (has1) {
+                    Stage6(TaskOf(c1), ubD1b_);
+                }
+                if (hasN0 || hasN1) {
+                    // u's fixpipe reuses the UB that still holds D1 until Apply sets Go.
+                    AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE1>(AicSeen(kFlagGo, 0));
+                    AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE1>(AicSeen(kFlagGo, 1));
+                }
+                if (hasN0) {
+                    Stage4(TaskOf(n0));
+                }
+                if (hasN1) {
+                    Stage4(TaskOf(n1));
                 }
             }
             if (headLinear + aicNum_ < totalHeads) {
@@ -681,6 +997,8 @@ private:
 
     LocalTensor<bfloat16_t> ubR_, ubQ_, ubK_, ubV_, ubKbg_, ubQexp_, ubBeta_, ubAbf_, ubAttn_, ubKt_;
     LocalTensor<float> ubG_, ubBe_, ubGp_, ubEg_, ubKkt_, ubQk_, ubL_, ubX00_, ubX11_, ubAfp_, ubU_, ubP_, ubOacc_, ubD_;
+    LocalTensor<float> ubD1_, ubGd_, ubGpd_, ubEgd_, ubEye_;
+    LocalTensor<uint32_t> ubSh_;
     LocalTensor<bfloat16_t> l1K_, l1Q_, l1Vb_, l1Kbg_, l1Qexp_, l1A_, l1H_, l1W_, l1Vnew_, l1VnewG_, l1Attn_, l1Kt_;
     LocalTensor<bfloat16_t> l0A_, l0B_;
     LocalTensor<float> l0C_;
@@ -689,6 +1007,7 @@ private:
     LocalTensor<bfloat16_t> ubAttnDb_[2], ubAbfDb_[2];
     LocalTensor<float> ubGDb_[2], ubBeDb_[2], ubGpDb_[2], ubEgDb_[2], ubKktDb_[2], ubQkDb_[2];
     LocalTensor<float> ubLDb_[2], ubUDb_[2], ubPDb_[2];
+    LocalTensor<bfloat16_t> ubUb_[2], ubPb_[2], ubDb_, ubD1b_;
     LocalTensor<bfloat16_t> l1KDb_[4], l1QDb_[4], l1VbDb_[4], l1KbgDb_[4], l1ADb_[4], l1HDb_[4], l1WDb_[4];
     LocalTensor<bfloat16_t> l0ADb_[2], l0BDb_[2];
     LocalTensor<float> l0CDb_[2];
@@ -704,6 +1023,11 @@ private:
     uint32_t hasInitial_ = 0;
     float scale_ = 0.f;
     bool isActive_ = false;
+    uint8_t qkReady_[2] = {0, 0};
+    uint8_t vReady_[2] = {0, 0};
+    uint8_t l2Ready_[2] = {0, 0};
+    uint8_t qkOnL1_[2] = {0, 0};
+    LocalTensor<float> futBe_, futGp_, futEg_;
     OnChipBuffer buf;
 };
 

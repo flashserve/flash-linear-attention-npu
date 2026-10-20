@@ -142,8 +142,17 @@ constexpr uint32_t kUbAfp = 120 * 1024;
 constexpr uint32_t kUbAbf = 124 * 1024;
 constexpr uint32_t kUbU = 128 * 1024;
 constexpr uint32_t kUbP = 160 * 1024;
-constexpr uint32_t kUbD = 0;
-constexpr uint32_t kUbR = 216 * 1024;
+// Half of H (64x128 fp32 delta, 64x128 bf16 state). Each AIV keeps its K rows
+// for the whole head, same idea as kda_32_32 slot 23. The low UB is the
+// ping-pong prepare area, so these sit above ubP.
+constexpr uint32_t kUbD = 192 * 1024;
+constexpr uint32_t kUbR = 224 * 1024;
+// Side copies of the chunk whose L2 runs under the current step's Stage6.
+// ubSh_ ends at 253184; UB is 248KB. be 32, gp 32, eg+rcp 64 floats.
+constexpr uint32_t kUbFut = 253184;
+constexpr uint32_t kUbFutBe = kUbFut;
+constexpr uint32_t kUbFutGp = kUbFut + 128;
+constexpr uint32_t kUbFutEg = kUbFut + 256;
 constexpr uint32_t kL0AbBank = 32 * 1024;
 constexpr uint32_t kL0CBank = 64 * 1024;
 constexpr int kTasksPerRound = 4;
