@@ -20,7 +20,7 @@ GDN recurrent 的函数接口。
 
 - 不提供内部 state 矩阵任意转置或步长采样的低性能 gather/scatter 路径。
 - 不支持把 `KdaGateCumsum` 的输出流水作为公开前置步骤。
-- 不在本 PR 扩展长序列 chunk recurrent；每条 recurrent 序列长度当前限制为 `<=8`。
+- A2/A3 通过第 17 节的时间窗口支持长序列；保持逐 token recurrent 公式和 AIV-only 路径。A5 仍限制每段长度 <=8。
 
 ## 3. 能力边界
 
@@ -42,7 +42,10 @@ GDN recurrent 的函数接口。
 
 ## 4. 数学与接口语义
 
-若 `use_qk_l2norm_in_kernel=True`，先对每个 token 的 `q/k` 在最后一维做 L2 normalize。随后 `q` 乘以 `scale`。
+若 use_qk_l2norm_in_kernel=True，A2/A3 对每个 token/head 的 q/k 在最后一维
+按 FP32 计算 x / sqrt(sum(x*x) + 1e-6)，随后仅 q 乘以 scale。
+A5 保持现有无 epsilon 的实现。
+关闭该属性时不执行归一化。
 
 `use_gate_in_kernel=false` 时，`g` 已经是 step log gate。`use_gate_in_kernel=true` 时，kernel 内转换 raw gate：
 
@@ -89,7 +92,7 @@ o_t = S @ q_t
 Tiling 按逻辑序列和 value head 拆分任务。提供 `cu_seqlens` 时，`seq_num=len(cu_seqlens)-1`，使用与
 fla-org 一致的累计边界语义，第 `i` 条序列范围为 `[cu_seqlens[i], cu_seqlens[i+1])`；未提供时，
 BSND 按 batch 行划分序列，TND 视为一条序列。接口面向 decode / MTP 短序列：每个相邻 offset
-的差值（varlen 每段长度）与 dense 单序列长度均限制为 `<=8`。提供 `cu_seqlens` 时，末项表示有效 token 数，可小于图捕获的
+的差值表示 varlen 每段长度；A2/A3 不再限制为 8，A5 每段与 dense 单序列仍须 <=8。提供 cu_seqlens 时，末项表示有效 token 数，可小于图捕获的
 token capacity。
 
 ### 6.2 Tiling Data
@@ -97,7 +100,8 @@ token capacity。
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
 | `vectorCoreNum` | `uint32_t` | 使用的 AIV core 数 |
-| `ubCalSize` / `ubRestBytes` | `uint32_t` | UB 计算区大小与余量 |
+| `ubCalSize` | `uint32_t` | 平台 UB 预算上限 |
+| `ubRestBytes` | `uint32_t` | A2/A3 命名 scratch 实际字节数；A5 保持原剩余预算语义 |
 | `t` / `seqLen` | `uint32_t` | token 总数与输入物理序列轴长度 |
 | `nk` / `dk` | `uint32_t` | query/key head 数与 K 维 |
 | `nv` / `dv` | `uint32_t` | value head 数与 V 维 |
@@ -136,7 +140,7 @@ tiling data 驱动，避免把 runtime shape 组合扩张到 tiling key。
 | GM | 输入/输出 tensor | kernel 全程 | q/k/v/g/beta/state/out 与 device metadata |
 | GM | workspace | kernel 调用期间 | 无算法专用 GM 中转；按标准运行时预留 16 MiB system workspace |
 | UB | state 工作区 | 单任务内复用 | 保存 `[V,K]` 局部状态片段 |
-| UB | q/k/v/g/beta 临时区 | 单 token 内复用 | normalize、gate、beta 与输出计算 |
+| UB | q/k/v/g/beta 临时区 | 单 head 内复用 | normalize、gate、beta 与输出计算 |
 
 ### 7.3 流水与同步
 
@@ -183,7 +187,7 @@ Q/K/V 公开输入为 BF16，gate/beta 保持 FP32/BF16/FP16 输入 dtype，并�
   覆盖 `[0,1,4,4,5]` 非等长序列、二维 slot 索引、容量化 state pool、非连续槽更新和未命中槽保持不变。
 - 空序列覆盖 `[0,1,1,4,4,8]`，确认重复 offset 对应的空序列不读取索引或 state。
 - Kimi H96/D128 smoke：`H=H_v=96,K=V=128,safe_gate=True`，运行时生成非等距 `cu_seqlens`，
-  覆盖 `cu_seqlens` 长度和值泛化；每段 recurrent 长度仍遵循当前 `<=8` 限制。
+  覆盖 cu_seqlens 长度和值泛化。
 - Kimi 完整长上下文 stress target：`T_total=12288,H=H_v=96,K=V=128,safe_gate=True` 作为本地 stress case，
   因当前单 kernel 计算量较大，不纳入默认通过矩阵。
 - 非连续 state 覆盖 V-first/K-first、FP32/BF16、原位/非原位、slot pool guard 与未命中槽。
@@ -204,7 +208,7 @@ A2/A5 精度验证过程中修复以下问题：
   batch 维可按 `T * tokenStride` 扁平化。已验证的 feature-gap、zero-stride、batch-gap view
   自动回退连续化；token/head 置换或正 stride 重叠 descriptor 明确拒绝。
 - 当前 `K/V` 仅支持 `K=128,V=128` 或 `K=128,V=256`。
-- 当前每段 recurrent 序列长度限制为 `<=8`。
+- A2/A3 内部时间窗口容量为 8，支持多窗口序列；A5 每段仍限制为 <=8。
 - state 最后两维必须为行主序稠密矩阵；slot/head 维可有间隔但不得重叠。
 - 显式 slot 模式要求所有活跃序列的写槽互不冲突，且 slot 值位于 state pool 容量范围内。
 - 后续若扩展长序列或更多 dtype，需要同步更新 op_host 校验、tiling、kernel、本地测试 case 和 API 文档。

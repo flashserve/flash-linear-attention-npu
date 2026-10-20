@@ -115,18 +115,19 @@ def recurrent_kda_reference(
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     del output_final_state, inplace_final_state
 
-    q_flat = _flatten_bsnd(q, layout).float()
-    k_flat = _flatten_bsnd(k, layout).float()
-    v_flat = _flatten_bsnd(v, layout).float()
-    g_flat = _flatten_bsnd(g, layout).float()
-    beta_flat = _flatten_bsnd(beta, layout).float()
+    work_dtype = torch.float64 if q.dtype == torch.float64 else torch.float32
+    q_flat = _flatten_bsnd(q, layout).to(work_dtype)
+    k_flat = _flatten_bsnd(k, layout).to(work_dtype)
+    v_flat = _flatten_bsnd(v, layout).to(work_dtype)
+    g_flat = _flatten_bsnd(g, layout).to(work_dtype)
+    beta_flat = _flatten_bsnd(beta, layout).to(work_dtype)
     total_tokens, h, dk = q_flat.shape
     _, hv, dv = v_flat.shape
     scale = (dk ** -0.5) if scale is None else scale
 
     if use_qk_l2norm_in_kernel:
-        q_flat = F.normalize(q_flat, p=2, dim=-1)
-        k_flat = F.normalize(k_flat, p=2, dim=-1)
+        q_flat = q_flat / torch.sqrt((q_flat * q_flat).sum(dim=-1, keepdim=True) + 1e-6)
+        k_flat = k_flat / torch.sqrt((k_flat * k_flat).sum(dim=-1, keepdim=True) + 1e-6)
     q_flat = q_flat * scale
 
     if use_gate_in_kernel:
@@ -134,15 +135,15 @@ def recurrent_kda_reference(
             raise ValueError("A_log is required when use_gate_in_kernel=True")
         gate = g_flat
         if dt_bias is not None:
-            gate = gate + dt_bias.float().reshape(hv, dk).unsqueeze(0)
-        exp_a = torch.exp(A_log.float()).reshape(1, hv, 1)
+            gate = gate + dt_bias.to(work_dtype).reshape(hv, dk).unsqueeze(0)
+        exp_a = torch.exp(A_log.to(work_dtype)).reshape(1, hv, 1)
         if safe_gate:
             gate = lower_bound * torch.sigmoid(exp_a * gate)
         else:
             gate = -exp_a * F.softplus(gate)
     else:
         gate = g_flat
-    gate_decay = torch.exp(gate.float())
+    gate_decay = torch.exp(gate.to(work_dtype))
 
     beta_eff = beta_flat
     if use_beta_sigmoid_in_kernel:
@@ -157,14 +158,14 @@ def recurrent_kda_reference(
         else:
             cu_seqlens = [0, total_tokens]
     ranges = _seq_ranges(total_tokens, cu_seqlens)
-    state_dtype = initial_state.dtype if initial_state is not None else torch.float32
+    state_dtype = initial_state.dtype if initial_state is not None else work_dtype
     if initial_state is None:
-        state = torch.zeros((len(ranges), hv, dv, dk), dtype=torch.float32, device=q.device)
+        state = torch.zeros((len(ranges), hv, dv, dk), dtype=work_dtype, device=q.device)
     else:
-        state = initial_state.float().clone()
+        state = initial_state.to(work_dtype).clone()
         if not state_v_first:
             state = state.transpose(-1, -2).contiguous()
-    out_flat = torch.zeros_like(v_flat, dtype=torch.float32)
+    out_flat = torch.zeros_like(v_flat, dtype=work_dtype)
 
     for seq_idx, (start, end) in enumerate(ranges):
         if start == end:
