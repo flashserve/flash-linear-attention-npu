@@ -317,7 +317,8 @@ public:
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(0);
     }
 
-    __aicore__ inline void Process()
+    __aicore__ inline void Process(
+        uint64_t roundBegin = 0, uint64_t roundCount = UINT64_MAX)
     {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         using ArchTag = Catlass::Arch::Ascend950;
@@ -360,8 +361,10 @@ public:
         LowerTailMmad lowerTail(resource);
         UpperTailMmad upperTail(resource);
         uint64_t window = 0;
-        for (uint64_t group = core; group < groups;
-             group += tiling_.usedCoreNum) {
+        uint64_t batchRound = 0;
+        for (uint64_t group = core + roundBegin * tiling_.usedCoreNum;
+             group < groups && batchRound < roundCount;
+             group += tiling_.usedCoreNum, ++batchRound) {
             const uint32_t taskIdx =
                 static_cast<uint32_t>(group / headWindows);
             const uint32_t headBase =
@@ -768,7 +771,8 @@ public:
         }
     }
 
-    __aicore__ inline void Process()
+    __aicore__ inline void Process(
+        uint64_t roundBegin = 0, uint64_t roundCount = UINT64_MAX)
     {
         const uint32_t coreIdx = AscendC::GetBlockIdx() / AscendC::GetSubBlockNum();
         const uint32_t coreNum = static_cast<uint32_t>(tiling_.usedCoreNum);
@@ -783,7 +787,7 @@ public:
             if (CanUseA5DenseRow16Intra(tiling_)) {
                 ProcessA5DenseRow16Pipeline(
                     coreIdx, coreNum, headNum, headWindowCount,
-                    taskGroupCount);
+                    taskGroupCount, roundBegin, roundCount);
                 // Drain the final Cube-ready wait and all dependent output
                 // stores before this fast path returns into phase SyncAll.
                 if (!CanUseA5SharedGateAnchor(tiling_)) {
@@ -808,9 +812,11 @@ public:
         }
 #endif
         uint64_t windowIdx = 0;
+        uint64_t batchRound = 0;
 
-        for (uint64_t taskGroupIdx = coreIdx; taskGroupIdx < taskGroupCount;
-             taskGroupIdx += coreNum) {
+        for (uint64_t taskGroupIdx = coreIdx + roundBegin * coreNum;
+             taskGroupIdx < taskGroupCount && batchRound < roundCount;
+             taskGroupIdx += coreNum, ++batchRound) {
             // Decode directly from the logical group exactly as the paired
             // AIC path does.  This is required when varlen tiling selects a
             // usedCoreNum that is not a multiple of headWindowCount.
@@ -954,14 +960,16 @@ private:
 
     __aicore__ inline void ProcessA5DenseRow16Pipeline(
         uint32_t coreIdx, uint32_t coreNum, uint32_t headNum,
-        uint32_t headWindowCount, uint64_t taskGroupCount)
+        uint32_t headWindowCount, uint64_t taskGroupCount,
+        uint64_t roundBegin = 0, uint64_t roundCount = UINT64_MAX)
     {
         static_assert(kProcessRowBlock == kRowBlock,
                       "The A5 row16 pipeline requires row16 tiles.");
         uint64_t windowIdx = 0;
-        for (uint64_t taskGroupIdx = coreIdx;
-             taskGroupIdx < taskGroupCount;
-             taskGroupIdx += coreNum, windowIdx += 4U) {
+        uint64_t batchRound = 0;
+        for (uint64_t taskGroupIdx = coreIdx + roundBegin * coreNum;
+             taskGroupIdx < taskGroupCount && batchRound < roundCount;
+             taskGroupIdx += coreNum, windowIdx += 4U, ++batchRound) {
             const uint32_t taskIdx =
                 static_cast<uint32_t>(taskGroupIdx / headWindowCount);
             const uint32_t headWindowIdx =

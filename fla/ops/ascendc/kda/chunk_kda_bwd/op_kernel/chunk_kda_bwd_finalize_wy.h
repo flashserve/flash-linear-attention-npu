@@ -588,7 +588,8 @@ public:
         tiling_ = tiling;
     }
 
-    __aicore__ inline void Process()
+    __aicore__ inline void Process(
+        uint64_t roundBegin = 0, uint64_t roundCount = UINT64_MAX)
     {
         AscendC::SetHF32Mode(false);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -656,7 +657,7 @@ public:
             ElementSquareRightTransposeMmad,
             Fp32SquareLeftTransposeMmad,
             Fp32SquareLeftTransposeBlockMmad,
-            RowMajor, ColumnMajor>(resource);
+            RowMajor, ColumnMajor>(resource, roundBegin, roundCount);
     }
 
     template <typename Fp32C64Mmad, typename Bf16C64Mmad,
@@ -668,9 +669,11 @@ public:
               typename RowMajor, typename ColumnMajor>
     __aicore__ inline void ProcessFused(
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        Catlass::Arch::Resource<Catlass::Arch::Ascend950> &resource)
+        Catlass::Arch::Resource<Catlass::Arch::Ascend950> &resource,
+        uint64_t roundBegin, uint64_t roundCount)
 #else
-        Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &resource)
+        Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &resource,
+        uint64_t roundBegin, uint64_t roundCount)
 #endif
     {
         if ASCEND_IS_AIC {
@@ -717,8 +720,8 @@ public:
         // protects the following Intra phase, which reuses the same local
         // storage and event ids with a different layout.
         BeginSharedLeftMmadPhase();
-        for (uint64_t taskGroupIdx = coreIdx;
-             taskGroupIdx < taskGroupCount;
+        for (uint64_t taskGroupIdx = coreIdx + roundBegin * coreNum;
+             taskGroupIdx < taskGroupCount && localGeneration < roundCount;
              taskGroupIdx += coreNum, ++localGeneration) {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             const uint32_t s0Ready = kS0Ready;
@@ -1785,9 +1788,10 @@ public:
 #endif
     }
 
-    __aicore__ inline void Process()
+    __aicore__ inline void Process(
+        uint64_t roundBegin = 0, uint64_t roundCount = UINT64_MAX)
     {
-        ProcessFused();
+        ProcessFused(roundBegin, roundCount);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(
             stageVToMte2Event_);
@@ -1866,7 +1870,7 @@ private:
 #endif
     }
 
-    __aicore__ inline void ProcessFused()
+    __aicore__ inline void ProcessFused(uint64_t roundBegin, uint64_t roundCount)
     {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         constexpr uint32_t kS0Ready = 0;
@@ -1902,8 +1906,8 @@ private:
             static_cast<uint64_t>(tiling_.chunkNum) * headWindowCount;
 
         uint32_t localGeneration = 0;
-        for (uint64_t taskGroupIdx = coreIdx;
-             taskGroupIdx < taskGroupCount;
+        for (uint64_t taskGroupIdx = coreIdx + roundBegin * coreNum;
+             taskGroupIdx < taskGroupCount && localGeneration < roundCount;
              taskGroupIdx += coreNum, ++localGeneration) {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             const uint32_t s0Ready = kS0Ready;
