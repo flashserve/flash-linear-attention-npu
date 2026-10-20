@@ -28,10 +28,10 @@ o_t   = state @ (q_t * scale)                # 读出（scale 作用在 q 上）
 
 | 名称 | 必选性 | Shape/Dtype | 说明 |
 | --- | --- | --- | --- |
-| `q` | 必选 | `(B,H,T,N)`，FP32 | Query（读出向量） |
+| `q` | 必选 | `(B,H,T,N)`，FP16/BF16/FP32 | Query（读出向量） |
 | `w` | 必选 | 同 q | log 域衰减参数，`decay = exp(-exp(w))` |
 | `k` | 必选 | 同 q | Key（写入向量） |
-| `v` | 必选 | 同 q | Value |
+| `v` | 必选 | `(B,H,T,V)`，同 q dtype | Value |
 | `z` | 必选 | 同 q | 移除读出向量（`= -kk`，kk 为 L2 归一化） |
 | `b` | 必选 | 同 q | 移除强度向量（`= kk * a_inctx`） |
 | `initial_state` | 可选 | `(B,H,K,V)`，FP32 | 接口朝向（= 内核账本 `S^T`，与 s 快照一致），缺省为零态 |
@@ -42,9 +42,9 @@ o_t   = state @ (q_t * scale)                # 读出（scale 作用在 q 上）
 (o, s, sa)
 ```
 
-- `o`：`(B,H,T,N)`，FP32。
-- `s`：`(B,H,T//chunk_len,N,N)`，FP32；chunk state 快照，官方 CUDA 转置布局，`outputChunkState=true` 时必填。
-- `sa`：`(B,H,T,N)`，FP32；每 token 移除读出（更新前的 `state@z`），`outputSa=true` 时必填。
+- `o`：`(B,H,T,V)`，dtype 跟随输入 q（FP16/BF16/FP32）。
+- `s`：`(B,H,T//chunk_len,K,V)`，FP32；chunk state 快照，官方 CUDA 转置布局，`outputChunkState=true` 时必填。
+- `sa`：`(B,H,T,V)`，FP32；每 token 移除读出（更新前的 `state@z`），`outputSa=true` 时必填。
 
 ## 属性
 
@@ -62,19 +62,25 @@ o_t   = state @ (q_t * scale)                # 读出（scale 作用在 q 上）
 ## 支持范围
 
 - A2 (`ascend910b`)。
-- FP32 only（输入与 state 均 FP32；bf16 路径待补）。
-- `K <= 128`、`V <= 128`（均不切分，`K×V` 的 state 须整体放入单核 UB）；
-  `B/T/H` 无对齐约束（含 `T=1` decode）。
+- `q/w/k/v/z/b` 支持 FP16/BF16/FP32（六者 dtype 必须一致）；递推与 state 全程 FP32，
+  `o` 跟随输入 dtype，`initial_state`/`s`/`sa` 恒 FP32。
+- `K <= 128`、`V <= 128`（均须为 8 的倍数且不切分，`K×V` 的 state 须整体放入单核 UB）。
+- `B/H <= 65535` 且 `B*H <= 65535`（一个逻辑核负责一个 (b,h) 账本，blockDim 受 CANN
+  约定的逻辑核数上限约束）；`T > 2^20`（1048576）由 tiling 拦截并返回 `GRAPH_FAILED`，
+  该值仅为拦截上界（取自 kernel `sane_` 的 `T_` 上限）；实测最大 `T = 4096`，
+  更大范围受时间限制未做测试。
+- `B/T/H` 无对齐约束（含 `T=1` decode）。
 - 仅前向；反向归 chunk 算子另行立项。
 
 ## 验证
 
-用例规格是 `tests/cases.py`（正例 8 条 + 负例 3 条，由旧中央 manifest 迁移而来）；
+用例规格是 `tests/cases.py`（正例 10 条 + 负例 3 条，由旧中央 manifest 迁移而来）；
 CPU golden 为 `tests/pta/golden.py`（纯 PyTorch，不依赖 torch_npu/Triton，
 golden 已与官方 GPU CUDA fixture 同机对拍：o/state rel-RMSE ~1e-7）。
-PTA 精度脚本为 `tests/pta/test_accuracy.py`（NPU 对拍 CPU golden，11/11 PASS）；
+PTA 精度脚本为 `tests/pta/test_accuracy.py`（NPU 对拍 CPU golden，13/13 PASS，当前用例均为 FP32）；
 ATK 单算子工程位于仓根 `tests/atk/fused_recurrent_rwkv8/`（accuracy/performance/
-determinism/mssanitizer/gen_cases 全动作走 `tests/atk/run_test_cpu.sh`）。
+determinism/mssanitizer/gen_cases 全动作走 `tests/atk/run_test_cpu.sh`），
+200 条系统性用例覆盖 FP32/FP16/BF16，accuracy 200/200 PASS。
 
 交付形态为 OPP（aclnn）算子。e2e 验证见 `examples/test_aclnn_fused_recurrent_rwkv8.cpp`
 （自包含：内置输入 + C++ CPU golden + rel-RMSE ≤ 0.002 对拍，4 组 case）：

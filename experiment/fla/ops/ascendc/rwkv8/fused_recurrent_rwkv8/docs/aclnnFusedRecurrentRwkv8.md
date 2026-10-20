@@ -87,13 +87,13 @@ aclnnStatus aclnnFusedRecurrentRwkv8(
   | executor | 输出 | op 执行器 | - | - | - | - |
 
 - 约束说明
-  - q/w/k/z/b 支持 float16/bfloat16/float32，dtype 必须一致，ND 格式，shape 必须全等 (B,H,T,K)；v/out/saOut 的末维 V 独立（(B,H,T,V)，K≠V 合法，K=V 为特例），dtype 同样必须与 q 一致。
+  - q/w/k/z/b 支持 float16/bfloat16/float32，dtype 必须一致，ND 格式，shape 必须全等 (B,H,T,K)；v/out 的末维 V 独立（(B,H,T,V)，K≠V 合法，K=V 为特例），dtype 必须与 q 一致（saOut 除外，恒为 float32，见下）。
   - initialState/sOut/saOut 恒为 float32（递推累加全程 fp32，state 不降精度）。
   - sOut：每满 chunkLen 个 token 拍一次快照（chunkLen 默认 16，对齐官方 CUDA backward 的 chunk 重建粒度）；T 非 chunkLen 倍数时 floor(T/chunkLen) 个快照，尾部不满的一段无快照；T<chunkLen 时为零尺寸。
   - sOut/saOut 默认关闭：关闭时传 nullptr 即可，kernel 跳过写出（推理零带宽开销）。
   - K 需为 8 的倍数且 ≤ 128（K 维不切分，K×V 的 state 须整体放入单核 UB）。
   - V 需为 8 的倍数且 ≤ 128（V 维不切分，与 K 同上由 UB 预算决定）。
-  - B、T、H 为任意正整数（T 无需对齐）。
+  - B、H 需满足 B <= 65535、H <= 65535 且 B*H <= 65535（一个逻辑核负责一个 (b,h) 账本，blockDim 受 CANN 约定的逻辑核数上限约束）；T > 2^20（1048576）由 tiling 拦截并返回 GRAPH_FAILED，该值仅为拦截上界（与 kernel `sane_` 的 `T_` 上限一致）；实测最大 T = 4096，更大范围受时间限制未做测试。B/H/T 均为正整数且无需对齐。
   - 当前仅前向；反向由 chunk 算子另行承担（s/sa 输出即为其预埋）。
 
 ## aclnnFusedRecurrentRwkv8
