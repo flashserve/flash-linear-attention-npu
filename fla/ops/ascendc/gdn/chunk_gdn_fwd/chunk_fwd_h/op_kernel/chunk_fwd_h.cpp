@@ -84,14 +84,9 @@ __aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
     using DataT = bfloat16_t;
     using GatedKernel = Catlass::Gemm::Kernel::GDNFwdHKernelPreload<DataT, GateT, float, float>;
     __gm__ uint8_t *user = args.workspace;
-    // per-core slot：核 idx = AIC BlockIdx 或 AIV BlockIdx/SubBlockNum（同物理
-    // 核同值），每核写自己的 slot 后读自己的——零跨核可见性依赖
-    const uint32_t coreSlot = ASCEND_IS_AIC ? AscendC::GetBlockIdx()
-        : AscendC::GetBlockIdx() / AscendC::GetSubBlockNum();
+    // [对照实验 gr2：临时回退共享镜像（昨晚构建成功形态）——判环境 vs 代码]
     __gm__ ChunkGatedDeltaRuleFwdHTilingData *gtiling = reinterpret_cast<
-        __gm__ ChunkGatedDeltaRuleFwdHTilingData *>(
-            user + args.tiling.gatedTilingOffset +
-            static_cast<uint64_t>(coreSlot) * 256);
+        __gm__ ChunkGatedDeltaRuleFwdHTilingData *>(user + args.tiling.gatedTilingOffset);
     {
         gtiling->batch = args.tiling.batch;
         gtiling->seqlen = args.tiling.seqlen;
