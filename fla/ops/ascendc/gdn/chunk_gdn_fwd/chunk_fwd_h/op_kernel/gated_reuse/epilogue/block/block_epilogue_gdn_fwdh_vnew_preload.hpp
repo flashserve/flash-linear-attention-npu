@@ -35,6 +35,7 @@ class BlockEpilogue <
     WSInputType_,
     FinalStateType_
 > {
+    static constexpr float LN2 = 0.6931471805599453f;
 public:
     // Type aliases
     using DispatchPolicy = EpilogueAtlasGDNFwdHVnewPreload;
@@ -201,6 +202,9 @@ public:
         AscendC::PipeBarrier<PIPE_V>();
 
         AscendC::Sub<float>(gUbTensor, gLastUbTensor, gUbTensor, mActual);
+        AscendC::PipeBarrier<PIPE_V>();
+        // 复用谓词限定 use_exp2=true：g 为 log2 域，×LN2 换算到 ln 域（2^x = e^(LN2·x)）
+        AscendC::Muls(gUbTensor, gUbTensor, LN2, mActual);
         AscendC::PipeBarrier<PIPE_V>();
 
         AscendC::Exp(gUbTensor, gUbTensor, mActual);
