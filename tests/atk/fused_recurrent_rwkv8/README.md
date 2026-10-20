@@ -39,7 +39,7 @@ YAML 元信息覆盖 `ascend910b`，可配合统一脚本的 `-soc=ascend910b` �
 
 | 文件 | 用例数 | 覆盖 |
 |---|---:|---|
-| `atk_fused_recurrent_rwkv8.json` | 200 | 按 TilingData 字段组合系统性构造：3 档 dtype、(K,V) 四组合 + 非 64 倍数、(B,T) 边界与多核排队、flags 8 组合、chunk_len {8,16}、scale {1.0,0.125} |
+| `atk_fused_recurrent_rwkv8.json` | 209 | 200 条按 TilingData 字段组合系统性构造：3 档 dtype、(K,V) 四组合 + 非 64 倍数、(B,T) 边界与多核排队、flags 8 组合、chunk_len {8,16}、scale {1.0,0.125}；另 9 条 blockDim 上限用例（3 个 shape：B*H = 65535 的 fp32 T=1、fp16 T=4 与 65528 的 bf16 H=8 T=8，每个 shape 3 个固定 seed） |
 | `atk_fused_recurrent_rwkv8_perf.json` | 38 | 转测文档模板 7.1~7.6 全部代表 shape（典型场景 6 + dtype×(K,V) 9 + flags 8 + chunk_len 4 对 + scale 3 对 + 多核扩展 3） |
 | `atk_fused_recurrent_rwkv8_mss.json` | 26 | 各 TilingKey/边角分支的代表用例，用于内存检测复跑 |
 
@@ -76,9 +76,10 @@ bash tests/atk/run_test_cpu.sh -op=fused_recurrent_rwkv8 -scope=gen_cases
 
 ## 实测记录
 
-| 日期 | 精度（200 条） | 确定性（200 条 × 20 轮） | 内存（200 条 memcheck） | 性能（38 条） |
+| 日期 | 精度 | 确定性 | 内存 | 性能 |
 |---|---|---|---|---|
-| 2026-09-18 | 200/200 Pass（`mixed_tolerance_bm`，ATK 26.9.8，32m04s） | 200/200 Pass（2791 s，ATK 26.7.8） | 200/200 Pass，零非法访存（771 s，ATK 26.7.8） | 38/38 出数，137.9 µs ~ 21.93 ms |
+| 2026-09-18 | 200/200 Pass（`mixed_tolerance_bm`，ATK 26.9.8，32m04s） | 200 条 × 20 轮 Pass（2791 s，ATK 26.7.8） | 200 条 memcheck Pass，零非法访存（771 s，ATK 26.7.8） | 38/38 出数，137.9 µs ~ 21.93 ms |
+| 2026-10-20 | 追加 9 条 blockDim 上限用例单独复跑：9/9 Pass（3 个 shape × 3 seeds；B*H = 65535 的 fp32 T=1 / fp16 T=4，B*H = 65528 的 bf16 H=8 T=8，ATK 26.9.8） | - | - | - |
 
 环境：Ascend 910B4 / CANN 8.5.0 / ATK 26.9.8 / torch 2.10.0+cpu + torch_npu 2.10.0。
 完整结论见 `docs/commit/【转测】fused_recurrent_rwkv8.md`。

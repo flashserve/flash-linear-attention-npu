@@ -80,7 +80,8 @@ golden 已与官方 GPU CUDA fixture 同机对拍：o/state rel-RMSE ~1e-7）。
 PTA 精度脚本为 `tests/pta/test_accuracy.py`（NPU 对拍 CPU golden，13/13 PASS，当前用例均为 FP32）；
 ATK 单算子工程位于仓根 `tests/atk/fused_recurrent_rwkv8/`（accuracy/performance/
 determinism/mssanitizer/gen_cases 全动作走 `tests/atk/run_test_cpu.sh`），
-200 条系统性用例覆盖 FP32/FP16/BF16，accuracy 200/200 PASS。
+209 条用例覆盖 FP32/FP16/BF16：200 条系统性用例 accuracy 200/200 PASS，
+另 9 条 blockDim 上限回归（3 个 shape × 3 seeds，B*H 最高 65535）单独复跑 9/9 PASS。
 
 交付形态为 OPP（aclnn）算子。e2e 验证见 `examples/test_aclnn_fused_recurrent_rwkv8.cpp`
 （自包含：内置输入 + C++ CPU golden + rel-RMSE ≤ 0.002 对拍，4 组 case）：

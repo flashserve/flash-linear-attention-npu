@@ -1,6 +1,6 @@
 """fused_recurrent_rwkv8 的 ATK 泛化用例生成器。
 
-用例集为 200 条定长清单，由 `_cases()` 确定性构造，分三个来源：
+用例集为 209 条定长清单，由 `_cases()` 确定性构造，分四个来源：
 
 1. **模板对齐代表用例**（38 条）：与转测文档 7.1~7.6 各表逐行对应，用于跨轮对比。
    覆盖 B1H4T4096 三 dtype × 四组 (K,V)、B64/B128 多核、512-block、chunk_len 对照、
@@ -10,6 +10,10 @@
 3. **系统性网格**（140 条）：dtype × (K,V) × 8 flags × chunk_len {8,16} × scale {1.0,0.125}
    × (B,T) 组合的确定性轮转，保证 TilingData 特征空间（本算子 tilingKey 恒 0，
    差异全走 TilingData 标志位与形状字段）全覆盖。
+4. **blockDim 上限用例**（9 条）：B*H 逼近 CANN 逻辑核数上限 65535，3 个 shape
+   （恰好 65535 blocks 的 decode T=1 / 递推 T=4，以及 65528 blocks 的多核长 T）
+   × 3 个固定 seed，满足"每个精度用例至少 3 个固定种子"的验收要求。
+   追加在 200 条基础用例之后，不改变已有 case 的 index 与 seed。
 
 seed 逐 case 唯一（SEED_BASE + index），满足"每个精度用例固定种子"的要求。
 """
@@ -31,7 +35,8 @@ except ModuleNotFoundError as exc:
     CaseConfig = None
 
 OP_NAME = "fused_recurrent_rwkv8"
-N_CASES = 200
+N_CASES = 200          # 基础用例集（模板对齐 + 边界语义 + 系统性网格 + 补足）
+N_BLOCKDIM_CASES = 9   # 追加的 blockDim 上限用例（3 shape × 3 seeds）
 SEED_BASE = 20260918
 
 DTYPES = ("fp32", "fp16", "bf16")
@@ -39,13 +44,17 @@ KVS = ((64, 64), (64, 128), (128, 64), (128, 128))
 FLAGS = tuple((bool(f & 1), bool(f & 2), bool(f & 4)) for f in range(8))  # init / s / sa
 
 
-def _c(dtype, B, H, T, K, V, scale=1.0, chunk_len=16, init=False, s=False, sa=False, tag=""):
-    return {
+def _c(dtype, B, H, T, K, V, scale=1.0, chunk_len=16, init=False, s=False, sa=False,
+       tag="", seed=None):
+    case = {
         "dtype": dtype, "B": B, "H": H, "T": T, "K": K, "V": V,
         "scale": scale, "chunk_len": chunk_len,
         "initial_state": init, "output_chunk_state": s, "output_sa": sa,
         "tag": tag,
     }
+    if seed is not None:
+        case["seed"] = seed
+    return case
 
 
 def _template_cases():
@@ -122,6 +131,30 @@ def _boundary_cases():
     ]
 
 
+def _blockdim_cases():
+    """blockDim 上限回归：B*H 逼近 CANN 逻辑核数上限 65535。
+
+    K=V=8 是最小合法形状，把 state 与用例张量控制在 MB 级，避免大 B 用例被内存卡住；
+    blockDim 只由 B*H 决定，与 K/V 无关。按 tests/atk/README 的验收要求，每个精度
+    用例至少 3 个固定种子，故每个 shape 生成 3 条不同 seed 的用例，共 9 条，
+    追加在 200 条基础用例之后。
+    """
+    shapes = (
+        # 恰好 65535 blocks：decode（T=1）单步
+        ("fp32", 65535, 1, 1, 8, 8, "b_blockdim_max_t1"),
+        # 恰好 65535 blocks：T=4 递推，验证多步下每核账本独立
+        ("fp16", 65535, 1, 4, 8, 8, "b_blockdim_max_t4"),
+        # 65528 blocks：多核（H=8）+ 较长 T，接近上限但留 7 个 block 余量
+        ("bf16", 8191, 8, 8, 8, 8, "b_blockdim_near_t8"),
+    )
+    out = []
+    for i, (dt, B, H, T, K, V, tag) in enumerate(shapes):
+        for s in range(3):
+            out.append(_c(dt, B, H, T, K, V, tag=tag,
+                          seed=SEED_BASE + N_CASES + i * 3 + s))
+    return out
+
+
 BT_POOL = (
     (1, 2, 4), (1, 2, 64), (1, 2, 1024), (1, 4, 4096),
     (4, 2, 64), (4, 4, 1024), (4, 4, 2048), (4, 2, 4096),
@@ -190,7 +223,7 @@ _CACHE = None
 
 
 def _cases():
-    """200 条定长用例清单（确定性）。"""
+    """209 条定长用例清单（确定性）：200 条基础集 + 9 条 blockDim 上限用例。"""
     global _CACHE
     if _CACHE is not None:
         return _CACHE
@@ -212,6 +245,11 @@ def _cases():
         cases.append(c)
     if len(cases) != N_CASES:
         raise AssertionError(f"用例数 {len(cases)} != {N_CASES}")
+    # blockDim 上限用例追加在末尾，保证前 200 条 case 的 index/seed 与历史基线一致
+    cases.extend(_blockdim_cases())
+    if len(cases) != N_CASES + N_BLOCKDIM_CASES:
+        raise AssertionError(
+            f"用例数 {len(cases)} != {N_CASES + N_BLOCKDIM_CASES}")
     _CACHE = cases
     return cases
 
@@ -224,6 +262,7 @@ def _spec(index):
     """按 index 取用例并派生 ATK case 字段。"""
     case = deepcopy(_cases()[index])
     tag = case.pop("tag", "case")
+    seed = case.pop("seed", SEED_BASE + index)
     spec = {
         "name": f"{tag}_{index:04d}",
         "dtype": case["dtype"],
@@ -233,7 +272,7 @@ def _spec(index):
         "initial_state": case["initial_state"],
         "output_chunk_state": case["output_chunk_state"],
         "output_sa": case["output_sa"],
-        "seed": SEED_BASE + index,
+        "seed": seed,
     }
     spec.update({"op": OP_NAME, "case_id": index, "route": "ascendc", "soc": "ascend910b"})
     return spec
