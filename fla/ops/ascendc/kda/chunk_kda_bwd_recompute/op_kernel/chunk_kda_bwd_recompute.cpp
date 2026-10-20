@@ -84,6 +84,8 @@ __aicore__ inline void CopyTilingFromGm(
     dst.hasDtBias = src->hasDtBias;
     dst.lowerBoundBits = src->lowerBoundBits;
     dst.vecRow = src->vecRow;
+    dst.usedAic = src->usedAic;
+    dst.reserved = src->reserved;
 }
 
 template <int D_T_G, int D_T_BETA, int K_DIM>
