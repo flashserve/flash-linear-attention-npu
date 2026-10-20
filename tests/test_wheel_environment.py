@@ -698,10 +698,41 @@ set -euo pipefail
 unset ASCEND_CUSTOM_OPP_PATH LD_LIBRARY_PATH FLA_NPU_OPP_PATH FLA_NPU_OP_API_LIB
 source {set_env!s}
 source {set_env!s}
-[[ "${{ASCEND_CUSTOM_OPP_PATH}}" == "{vendor_dir.parent.parent}:{vendor_dir}" ]]
+[[ "${{ASCEND_CUSTOM_OPP_PATH}}" == "{vendor_dir}" ]]
 [[ -z "${{LD_LIBRARY_PATH-}}" ]]
 [[ "${{FLA_NPU_OPP_PATH}}" == "{vendor_dir.parent.parent}" ]]
 [[ "${{FLA_NPU_OP_API_LIB}}" == "{vendor_dir}/op_api/lib/libcust_opapi.so" ]]
+"""
+            subprocess.run(["bash", "-c", script], check=True)
+
+    def test_generated_set_env_normalizes_overlay_order(self) -> None:
+        rewrite_set_env = self.setup_globals["_rewrite_set_env"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            vendors = Path(temp_dir) / "opp" / "vendors"
+            base = vendors / "fla_npu_transformer"
+            overlay = vendors / "fla_npu_overlay_transformer"
+            base.mkdir(parents=True)
+            overlay.mkdir()
+            (vendors / "config.ini").write_text(
+                "load_priority=fla_npu_overlay_transformer,fla_npu_transformer\n",
+                encoding="utf-8",
+            )
+            rewrite_set_env(base)
+            rewrite_set_env(overlay)
+            base_env = base / "bin" / "set_env.bash"
+            overlay_env = overlay / "bin" / "set_env.bash"
+            external = Path(temp_dir) / "external-vendor"
+            script = f"""
+set -euo pipefail
+ASCEND_CUSTOM_OPP_PATH="{base}:{external}:{overlay}:{vendors.parent}:{overlay}/op_api/lib"
+source {overlay_env!s}
+source {base_env!s}
+[[ "${{ASCEND_CUSTOM_OPP_PATH}}" == "{overlay}:{base}:{external}" ]]
+ASCEND_CUSTOM_OPP_PATH="{overlay}:{base}:{external}"
+source {base_env!s}
+source {overlay_env!s}
+[[ "${{ASCEND_CUSTOM_OPP_PATH}}" == "{overlay}:{base}:{external}" ]]
 """
             subprocess.run(["bash", "-c", script], check=True)
 
@@ -807,7 +838,7 @@ set -euo pipefail
 unset ASCEND_CUSTOM_OPP_PATH LD_LIBRARY_PATH FLA_NPU_OPP_PATH FLA_NPU_OP_API_LIB
 source {set_env!s}
 source {set_env!s}
-[[ "${{ASCEND_CUSTOM_OPP_PATH}}" == "{vendor_dir.parent.parent}:{vendor_dir}" ]]
+[[ "${{ASCEND_CUSTOM_OPP_PATH}}" == "{vendor_dir}" ]]
 [[ -z "${{LD_LIBRARY_PATH-}}" ]]
 [[ "${{FLA_NPU_OPP_PATH}}" == "{vendor_dir.parent.parent}" ]]
 [[ "${{FLA_NPU_OP_API_LIB}}" == "{vendor_dir}/op_api/lib/libcust_opapi.so" ]]
@@ -973,7 +1004,6 @@ source {set_env!s}
                         os.environ["ASCEND_CUSTOM_OPP_PATH"],
                         os.pathsep.join(
                             [
-                                str(vendor_dir.parent.parent),
                                 str(vendor_dir),
                                 str(external_vendor),
                             ]

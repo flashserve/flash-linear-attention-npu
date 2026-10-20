@@ -17,7 +17,6 @@ from pathlib import Path
 _PACKAGE_DIR = Path(__file__).resolve().parent
 _VENDORS_DIR = _PACKAGE_DIR / "fla_npu" / "opp" / "vendors"
 _BASE_VENDOR = "fla_npu_transformer"
-_DEFAULT_DELTA_VENDOR = "fla_npu_overlay_transformer"
 _OVERLAY_VENDOR_ENV = "FLA_NPU_OVERLAY_VENDOR"
 _OVERLAY_VENDOR_PREFIX = "fla_npu_overlay_"
 _OVERLAY_VENDOR_NAME_RE = re.compile(
@@ -29,11 +28,33 @@ def _env_flag(name: str) -> bool:
     return os.getenv(name, "").upper() in {"1", "TRUE", "YES", "ON"}
 
 
-def _prepend(name: str, value) -> None:
-    parts = [part for part in os.environ.get(name, "").split(os.pathsep) if part]
-    value = str(value)
-    if value not in parts:
-        os.environ[name] = os.pathsep.join([value, *parts])
+def _is_package_opp_path(value: str) -> bool:
+    try:
+        Path(value).resolve().relative_to(_VENDORS_DIR.parent.resolve())
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return True
+
+
+def _normalize_custom_opp_path(vendor_dirs: list[Path]) -> None:
+    """Put package vendors first and discard obsolete package-local entries."""
+
+    current = [
+        part
+        for part in os.environ.get("ASCEND_CUSTOM_OPP_PATH", "").split(os.pathsep)
+        if part
+    ]
+    package_entries = [part for part in current if _is_package_opp_path(part)]
+    external_entries = [part for part in current if not _is_package_opp_path(part)]
+    normalized = [str(path) for path in vendor_dirs] + external_entries
+    if package_entries and current != normalized:
+        warnings.warn(
+            "fla_npu: normalized package-local ASCEND_CUSTOM_OPP_PATH entries "
+            "to overlay-first vendor order and removed legacy OPP-root/op_api-lib entries.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    os.environ["ASCEND_CUSTOM_OPP_PATH"] = os.pathsep.join(normalized)
 
 
 def _overlay_names() -> list[str]:
@@ -96,7 +117,7 @@ def _overlay_names() -> list[str]:
 def _vendor_dirs() -> list[Path]:
     """Overlay vendors first (highest priority), base vendor last."""
 
-    names = _overlay_names() or [_DEFAULT_DELTA_VENDOR]
+    names = _overlay_names()
     dirs: list[Path] = []
     vendors_root = _VENDORS_DIR.resolve()
     for name in [*names, _BASE_VENDOR]:
@@ -120,10 +141,7 @@ def _setup() -> None:
     # 只处理 wheel 内嵌 OPP；skeleton（未 overlay）时静默跳过。
     if not vendor_dirs:
         return
-    # 反向 prepend，最终顺序为：overlay、overlay/op_api/lib、base、base/op_api/lib…
-    for vendor_dir in reversed(vendor_dirs):
-        _prepend("ASCEND_CUSTOM_OPP_PATH", vendor_dir / "op_api" / "lib")
-        _prepend("ASCEND_CUSTOM_OPP_PATH", vendor_dir)
+    _normalize_custom_opp_path(vendor_dirs)
     os.environ.setdefault("FLA_NPU_OPP_PATH", str(_VENDORS_DIR.parent))
 
 

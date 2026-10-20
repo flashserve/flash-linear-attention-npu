@@ -111,12 +111,77 @@ class EarlyOppEnvironmentTest(unittest.TestCase):
                 runpy.run_path(str(module_path))
                 paths = os.environ["ASCEND_CUSTOM_OPP_PATH"].split(os.pathsep)
             self.assertEqual(
-                paths[:4],
+                paths,
                 [
                     str(overlay.resolve()),
-                    str(overlay.resolve() / "op_api" / "lib"),
                     str(base.resolve()),
-                    str(base.resolve() / "op_api" / "lib"),
+                ],
+            )
+
+    def test_explicit_empty_overlay_uses_only_base(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            site_root = Path(temp_dir)
+            module_path = site_root / "fla_npu_opp_env.py"
+            shutil.copy2(OPP_ENV, module_path)
+            vendors = site_root / "fla_npu" / "opp" / "vendors"
+            overlay = vendors / "fla_npu_overlay_transformer"
+            base = vendors / "fla_npu_transformer"
+            overlay.mkdir(parents=True)
+            base.mkdir()
+            environment = {
+                "FLA_NPU_OVERLAY_VENDOR": "",
+                "ASCEND_CUSTOM_OPP_PATH": os.pathsep.join(
+                    [str(overlay.resolve()), str(base.resolve())]
+                ),
+            }
+            with mock.patch.dict(os.environ, environment, clear=True):
+                with self.assertWarnsRegex(RuntimeWarning, "normalized package-local"):
+                    runpy.run_path(str(module_path))
+                paths = os.environ["ASCEND_CUSTOM_OPP_PATH"].split(os.pathsep)
+            self.assertEqual(paths, [str(base.resolve())])
+
+    def test_existing_package_paths_are_reordered_and_external_order_is_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            site_root = Path(temp_dir)
+            module_path = site_root / "fla_npu_opp_env.py"
+            shutil.copy2(OPP_ENV, module_path)
+            opp_root = site_root / "fla_npu" / "opp"
+            vendors = opp_root / "vendors"
+            overlay = vendors / "fla_npu_overlay_custom"
+            base = vendors / "fla_npu_transformer"
+            external_a = site_root / "external-a"
+            external_b = site_root / "external-b"
+            overlay.mkdir(parents=True)
+            base.mkdir()
+            external_a.mkdir()
+            external_b.mkdir()
+            (vendors / "config.ini").write_text(
+                "load_priority=fla_npu_overlay_custom,fla_npu_transformer\n",
+                encoding="utf-8",
+            )
+            existing = os.pathsep.join(
+                [
+                    str(base.resolve()),
+                    str(external_a.resolve()),
+                    str(overlay.resolve()),
+                    str(opp_root.resolve()),
+                    str(overlay.resolve() / "op_api" / "lib"),
+                    str(external_b.resolve()),
+                ]
+            )
+            with mock.patch.dict(
+                os.environ, {"ASCEND_CUSTOM_OPP_PATH": existing}, clear=True
+            ):
+                with self.assertWarnsRegex(RuntimeWarning, "normalized package-local"):
+                    runpy.run_path(str(module_path))
+                paths = os.environ["ASCEND_CUSTOM_OPP_PATH"].split(os.pathsep)
+            self.assertEqual(
+                paths,
+                [
+                    str(overlay.resolve()),
+                    str(base.resolve()),
+                    str(external_a.resolve()),
+                    str(external_b.resolve()),
                 ],
             )
 

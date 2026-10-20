@@ -34,6 +34,35 @@ def _prepend_env_path(name: str, value: pathlib.Path) -> None:
         os.environ[name] = os.pathsep.join([value_str, *parts])
 
 
+def _is_package_opp_path(value: str) -> bool:
+    try:
+        pathlib.Path(value).resolve().relative_to((_PACKAGE_DIR / "opp").resolve())
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return True
+
+
+def _normalize_custom_opp_path(vendor_dirs: list[pathlib.Path]) -> None:
+    """Put package vendors first and discard obsolete package-local entries."""
+
+    current = [
+        part
+        for part in os.environ.get("ASCEND_CUSTOM_OPP_PATH", "").split(os.pathsep)
+        if part
+    ]
+    package_entries = [part for part in current if _is_package_opp_path(part)]
+    external_entries = [part for part in current if not _is_package_opp_path(part)]
+    normalized = [str(path) for path in vendor_dirs] + external_entries
+    if package_entries and current != normalized:
+        warnings.warn(
+            "fla_npu: normalized package-local ASCEND_CUSTOM_OPP_PATH entries "
+            "to overlay-first vendor order and removed legacy OPP-root/op_api-lib entries.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    os.environ["ASCEND_CUSTOM_OPP_PATH"] = os.pathsep.join(normalized)
+
+
 def overlay_vendor_names() -> list[str]:
     """Names of the overlay vendors, highest priority first.
 
@@ -250,16 +279,13 @@ def _prepare_embedded_opp() -> list[pathlib.Path]:
     for vendor_dir in vendor_dirs:
         op_api_libs.append(_resolve_packaged_opapi(vendor_dir))
 
-    # Prepend in reverse so the final ASCEND_CUSTOM_OPP_PATH lists the overlay
-    # (overlay) vendors before the base vendor: kernel/tiling discovery follows
-    # this order.
-    for vendor_dir in reversed(vendor_dirs):
+    for vendor_dir in vendor_dirs:
         _drop_stale_libopapi_alias(vendor_dir)
-        # CANN still needs the package OPP for host/tiling/kernel discovery. Do not
-        # add op_api/lib to LD_LIBRARY_PATH: FLA opens this exact package-local file
-        # by absolute path, while other RTLD_LOCAL consumers keep their own search.
-        _prepend_env_path("ASCEND_CUSTOM_OPP_PATH", vendor_dir)
-        _prepend_env_path("ASCEND_CUSTOM_OPP_PATH", vendor_dir.parent.parent)
+
+    # ASCEND_CUSTOM_OPP_PATH entries are vendor directories. Rebuild all entries
+    # owned by this package so shell source order cannot put the base before an
+    # overlay; keep unrelated external entries behind the package vendors.
+    _normalize_custom_opp_path(vendor_dirs)
 
     # The first vendor is the highest-priority implementation; keep the legacy
     # single-library variable pointing at it and expose the full order too.
@@ -302,7 +328,7 @@ def _warn_if_embedded_opp_not_preconfigured() -> None:
     warnings.warn(
         "[fla-npu] ASCEND_CUSTOM_OPP_PATH does not contain the custom OPP implements "
         "before import fla_npu, If you need to use fla_npu operators,  run:\n\n"
-        f"  export ASCEND_CUSTOM_OPP_PATH=\"{vendor_dir}:{vendor_dir / 'op_api' / 'lib'}:${{ASCEND_CUSTOM_OPP_PATH:-}}\"",
+        f"  export ASCEND_CUSTOM_OPP_PATH=\"{vendor_dir}:${{ASCEND_CUSTOM_OPP_PATH:-}}\"",
         RuntimeWarning,
         stacklevel=2,
     )

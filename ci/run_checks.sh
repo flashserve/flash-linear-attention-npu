@@ -566,8 +566,8 @@ PY
         echo "[CI][ERROR] Installed fla_npu OPP is incomplete." >&2
         return 1
     fi
-    export ASCEND_CUSTOM_OPP_PATH="${vendor_dir}:${vendor_dir}/op_api/lib${ASCEND_CUSTOM_OPP_PATH:+:${ASCEND_CUSTOM_OPP_PATH}}"
-    export FLA_NPU_OPP_PATH="$vendor_dir"
+    export ASCEND_CUSTOM_OPP_PATH="${vendor_dir}${ASCEND_CUSTOM_OPP_PATH:+:${ASCEND_CUSTOM_OPP_PATH}}"
+    export FLA_NPU_OPP_PATH="${package_dir}/opp"
     export FLA_NPU_OP_API_LIB="${vendor_dir}/op_api/lib/libcust_opapi.so"
     export LD_LIBRARY_PATH="${vendor_dir}/op_api/lib:${LD_LIBRARY_PATH:-}"
 }

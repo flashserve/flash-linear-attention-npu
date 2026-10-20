@@ -307,9 +307,9 @@ python -m fla_npu.install_opp --remove-overlay
 | 想让**依赖方内嵌的那份拷贝**也跟着变 | ✅ 需要（`--ops=<op>,<dependent>`） |
 | 仅本算子内部的 kernel 常量/结构头 | ❌ 不需要（实测偏移移动也不影响依赖方） |
 
-### 6.7 `ASCEND_CUSTOM_OPP_PATH` 的条目语义，与两处**待评审**的改进
+### 6.7 `ASCEND_CUSTOM_OPP_PATH` 的条目语义，与两处**已完成**的修复
 
-> 本节为 2026-10-15 在 A5 上的实测结论与改造建议，**尚未实现，待评审**。原始脚本与日志见 `artifacts/sim-20261015/`。
+> 本节问题来自 2026-10-15 的 A5 实测；2026-10-20 已按本节方案实现，并用 3 个 base 算子 + 1 个 overlay 算子在 A5 复验。原始脚本与日志见 `artifacts/sim-20261015/`。
 
 #### 6.7.1 三种"路径列表"变量的条目语义各不相同
 
@@ -323,7 +323,7 @@ python -m fla_npu.install_opp --remove-overlay
 这解释了两处历史写法的差异：CANN 原版把 `op_api/lib` 放进 `LD_LIBRARY_PATH`（`refs/cmake/scripts/custom/install.sh:301`），
 而 FLA 把它并进了 `ASCEND_CUSTOM_OPP_PATH`（`cmake/scripts/custom/install.sh:694`）。
 
-#### 6.7.2 问题①：`<pkg>/opp` 是一条**惰性条目**（实测）
+#### 6.7.2 问题①（已修复）：`<pkg>/opp` 是一条**惰性条目**（实测）
 
 `_prepare_embedded_opp()` 除 prepend 每个 vendor 目录外，还 prepend 了 `vendor_dir.parent.parent`（即 `<pkg>/opp`）。
 判决性实测（观测量用 `ChunkLocalCumsum` 的 **kernel ×3** overlay；基线 `sum=8320`、生效 `24960`、找不到算子 `161001`）：
@@ -337,13 +337,13 @@ python -m fla_npu.install_opp --remove-overlay
 
 **结论**：该条目既不必要也不充分，对运行期没有任何作用。
 
-**建议（待评审）**：删除 `<pkg>/opp` 的登记，并统一三处写法与断言 ——
+**实现**：删除 `<pkg>/opp` 的登记，并统一三处写法与断言 ——
 `fla_npu/__init__.py`（`_prepare_embedded_opp`）、`install_opp.py`（生成的 `set_env.bash`）、`setup.py`、
 `scripts/package/ops_transformer/scripts/finalize_wheel_opp.py`，以及 `tests/test_wheel_environment.py` 中把最终值
-断言为 `"{vendor_dir.parent.parent}:{vendor_dir}"` 的两处。
-**保守替代**：保留但加注释注明"已在 CANN `9.2.0-beta.2` 实测惰性"，以防其他 CANN 版本语义不同（未验证）。
+断言为 `"{vendor_dir}"` 的两处。`.pth` 也同步删除 `vendor/op_api/lib`，因此启动钩子、import 与生成的
+`set_env.bash` 现在都只向 `ASCEND_CUSTOM_OPP_PATH` 写 vendor 目录；`FLA_NPU_OPP_PATH` 仍保留 OPP root 作诊断。
 
-#### 6.7.3 问题②：已存在的条目**不会被重排**，用户 shell 顺序可翻转优先级（实测）
+#### 6.7.3 问题②（已修复）：已存在的条目**不会被重排**，用户 shell 顺序可翻转优先级（实测）
 
 `_prepend_env_path()`（`fla_npu/__init__.py`）与 `.pth` 的 `_prepend()`（`fla_npu_opp_env.py`）语义都是"**没有才加**"：
 
@@ -369,25 +369,36 @@ if value_str not in parts:            # 已存在就跳过 ⇒ 位置永远不�
 就会把 base（甚至一个陈旧路径）顶到最前。而本设计新增的 `set_env.bash` 用的是带去重的 `_fla_npu_prepend_path`
 （由 `tests/test_wheel_environment.py::test_generated_set_env_is_idempotent` 兜底）—— **两份脚本的幂等性不一致**。
 
-#### 6.7.4 建议方案：把"没有才加"改成**归一化重排**（待评审）
+#### 6.7.4 实施方案：把"没有才加"改成**归一化重排**
 
 **做法**：`.pth` 与 `import fla_npu` 两处在写入前，先**移除包内自己注册过的条目**，再按期望顺序（`overlay… → base`）整体 prepend 到最前；
 用户自己的外部条目保持相对顺序、留在后面。
 
 ```python
-def _normalize_env_path(name, ordered_values):        # 拟替换 _prepend_env_path / _prepend
+def _normalize_env_path(name, ordered_values):        # 实际实现的核心语义
     want = [str(v) for v in ordered_values]
-    rest = [p for p in os.environ.get(name, "").split(os.pathsep) if p and p not in want]
+    rest = [p for p in os.environ.get(name, "").split(os.pathsep)
+            if p and not is_current_package_opp_path(p)]
     os.environ[name] = os.pathsep.join([*want, *rest])
 ```
 
 **为什么"给老脚本也加去重"不够**：去重只能防止**新的**翻转，修不了**已经**翻转的状态，甚至会把错误顺序锁死
 （"已存在就跳过" ⇒ 后面再 source overlay 也顶不上去）。只有归一化重排才能保证"包内优先级由代码决定"。
 
-**影响面**：只改环境变量的**顺序**，不改内容集合；`FLA_NPU_OP_API_LIB` / `FLA_NPU_OP_API_LIBS` 由代码构建，本来就免疫。
-**验收**：§6.7.3 的四个场景下 overlay 均须在前，且 L1 与 L2–L4 来源一致（用 kernel ×3 overlay 观测 `sum=24960`）。
-**配套**：发现"现有顺序与期望顺序不一致"时打印**一次**告警；`.pth` 与 `__init__` 两处的写入集合需保持同源
-（现在两处的"第二个路径"就不一致：前者写 `vendor/op_api/lib`，后者写 `<pkg>/opp`）。
+**影响面**：包内条目收敛为 vendor 集合，并固定 `overlay… → base`；`<pkg>/opp` 与 `vendor/op_api/lib` 被移除；
+用户外部条目的内容和相对顺序保持不变、整体放在包内 vendor 之后。`FLA_NPU_OP_API_LIB` /
+`FLA_NPU_OP_API_LIBS` 仍由代码独立构建。
+
+**告警**：只有检测到已有包内条目且实际发生重排/清理时才打印一次 `RuntimeWarning`；干净环境首次登记不告警。
+生成的 `set_env.bash` 在 source 时读取 `config.ini`，所以 `source overlay → base` 与 `source base → overlay`
+都得到相同的 `overlay → base → external`。
+
+**选择器一致性**：显式设置 `FLA_NPU_OVERLAY_VENDOR=""`（含纯空白/分隔符）表示禁用所有 overlay；删除 `.pth`
+中的默认 overlay 二次回退后，启动钩子、运行时与安装工具三侧语义一致。未设置该变量时仍按 `config.ini` 和目录自动发现。
+
+**A5 验收**：遗留路径 `[base, <pkg>/opp, overlay, overlay/op_api/lib]` 被归一化为 `[overlay, base]`，
+`chunk_local_cumsum`、`chunk_scaled_dot_kkt`、`solve_tri` 与 overlay 独有的 `recompute_w_u_fwd` 均 PASS；
+显式空变量时路径为 `[base]`，前三个 base 算子 PASS，overlay 独有符号按设计不可见。详见 §9.1 V29。
 
 ## 7. 备选方案与取舍
 
@@ -659,7 +670,7 @@ def _normalize_env_path(name, ordered_values):        # 拟替换 _prepend_env_p
 |---|---|
 | 运行期 | `python -m fla_npu.install_opp --remove-overlay`（只删叠加层目录 + 刷新 `config.ini`，base 不动） |
 | 进程内 | 叠加层不影响已运行进程；重启即回到叠加前状态 |
-| 代码期 | 直接回退本分支：3 个 Python 文件，无数据面改动、无 ABI 变化 |
+| 代码期 | 直接回退本次环境路径归一化提交；无数据面改动、无 ABI 变化 |
 | 兜底 | `config.ini` 被手工改坏时用 `--status` 看出，重跑 `--overlay`/`--remove-overlay` 会重写该文件 |
 
 ## 9. 测试与验收
@@ -696,6 +707,7 @@ def _normalize_env_path(name, ordered_values):        # 拟替换 _prepend_env_p
 | V26 | **`7e39f966` 修改前编译验证** | 取直接父提交 `8c5dd635`，在 A5/CANN 9.2.0-beta.2_950 上单独构建 `chunk_kda_bwd_recompute`，并确认日志实际包含旧版 arch35 regbase 头 | 构建和打包 rc=0，`error:`/`fatal error` 均为 0；生成 4 个 Ascend950 kernel `.o`，run 包纯归档校验 rc=0。说明旧代码能编译；`7e39f966` 修复的是 short-chunk exp2 的运行时数值正确性，而非编译失败 |
 | V27 | **原 A2 GDN short-chunk + exp2** | 用 `320164c` A2 原构建，将配方改为 `tokens=16 < chunk_size=64`，执行 ctypes/stable × `use_exp2` 四格 | `False` 两后端 PASS 且 digest 同为 `7a5d29b528e5`；`True` 两后端均在 `GetWorkspaceSize` 返回 `161002`。说明 A2 短块本身正常，失败是 exp2 触发 Ascend950-only prepare 合约，未进入 device kernel；与 A5 KDA arch35 short-chunk 数值问题不同 |
 | V28 | **`7e39f966` 精确提交的 A2 原行为** | 用 GitHub 精确提交归档分别构建 A2 GDN forward、运行 short-chunk 四格，并尝试把该提交实际修改的 KDA recompute 构建为 ascend910b | GDN 构建 rc=0、4 个 A2 kernel；`False` 两后端 PASS、`True` 两后端 `161002`。KDA recompute 仅注册 ascend950，A2 构建在 `generate_ops_info_ascend910b` 因无 A2 ops-info rc=2，0 kernel、0 run 包。因此该 PR 不提供 A2 KDA 修复路径 |
+| V29 | **路径语义与优先级归一化（A5，3 base + 1 overlay）** | base=`chunk_local_cumsum,chunk_scaled_dot_kkt,solve_tri`，overlay=`recompute_w_u_fwd`；复用同一组已编译产物，分别验证干净环境、`base + <pkg>/opp + overlay + overlay/op_api/lib` 遗留环境、显式空 overlay；另对两个生成的 `set_env.bash` 做双向 source | 纯回归 **41/41 PASS**；干净环境与遗留反序环境均归一化为 `overlay:base`，4/4 算子 PASS，digest 分别为 `04caa3941706 / 4fe7b59af6de / b7291ea62497 / de2f256064a0`；显式空变量归一化为仅 base，3/3 base PASS、overlay 符号不可见；两种 source 顺序都稳定为 `overlay:base:external` |
 
 **开发过程中发现并修复的问题**：旧 Stable-ABI launcher 从单数变量指向的一个库解析全部符号；把它指向单算子 overlay 会让其余算子报错。最终修复 = 单数变量恒指 base 作兼容兜底 + 当前 launcher 消费复数变量并按 overlay→base 遍历 + 旧 launcher 能力降级策略。
 
