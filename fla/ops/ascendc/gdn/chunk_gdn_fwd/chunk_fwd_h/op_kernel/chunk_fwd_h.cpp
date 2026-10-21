@@ -72,8 +72,7 @@ __aicore__ inline constexpr bool FwdHGatedReusable()
     // 侧 gatedEligible（tiling.cpp）及 Traits::GATED_REUSABLE 三处同条件。
     return CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G &&
            CompilePolicy::STATE_FP32 && CompilePolicy::STORE_FINAL &&
-           CompilePolicy::USE_EXP2 && !STATE_V_FIRST &&
-           std::is_same_v<GateT, float>;
+           CompilePolicy::USE_EXP2 && std::is_same_v<GateT, float>;
 }
 
 // gated 复用分支：从 ChunkFwdHTilingData + 模板参构造 gated tiling 镜像
