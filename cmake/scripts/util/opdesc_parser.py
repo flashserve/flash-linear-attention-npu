@@ -46,7 +46,15 @@ SOC_TO_SHORT_SOC_MAP = {
     "ascend310b1": "ascend310b",
     "bs9sx1aa": "bs9sx1a",
     "ascend610lite": "ascend610lite",
-    "ascend950pr_9599": "ascend950"
+    "ascend950pr_9599": "ascend950",
+    "ascend960dt_969b5": "ascend960dt",
+    "ascend960dt_969b6": "ascend960dt",
+    "ascend960dt_968b7": "ascend960dt",
+    "ascend960dt_966b7": "ascend960dt",
+    "ascend960dt_966b8": "ascend960dt",
+    "ascend960dt_966b8z": "ascend960dt",
+    "ascend960dt_961by": "ascend960dt",
+    "ascend960dt_961bz": "ascend960dt"
 }
 CONFLICT_KEYWORDS = {
     "and", "as", "assert", "break", "class", "continue", "def", "del", "elif", "else",
