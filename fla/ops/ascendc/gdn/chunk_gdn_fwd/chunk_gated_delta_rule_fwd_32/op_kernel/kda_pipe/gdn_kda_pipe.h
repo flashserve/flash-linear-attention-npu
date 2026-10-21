@@ -185,8 +185,9 @@ __aicore__ inline void ScaleHalfVF(LocalTensor<bfloat16_t> src, LocalTensor<bflo
     }
 }
 
-// state[row0:row0+32] = decay * state + d. Both are ND bf16.
-__aicore__ inline void Saxpy32VF(LocalTensor<bfloat16_t> state, LocalTensor<bfloat16_t> d, float decay, uint32_t row0)
+// state = decay * state + d over one AIV's 64x128 tile. Both buffers are the
+// NZ panel image (8 contiguous [64, 16] panels), so this is a flat saxpy.
+__aicore__ inline void SaxpyStateVF(LocalTensor<bfloat16_t> state, LocalTensor<bfloat16_t> d, float decay)
 {
     __ubuf__ bfloat16_t *sAddr = (__ubuf__ bfloat16_t *)state.GetPhyAddr();
     __ubuf__ bfloat16_t *dAddr = (__ubuf__ bfloat16_t *)d.GetPhyAddr();
@@ -195,19 +196,54 @@ __aicore__ inline void Saxpy32VF(LocalTensor<bfloat16_t> state, LocalTensor<bflo
         MaskReg preg = CreateMask<float, MaskPattern::ALL>();
         RegTensor<float> dec;
         Duplicate(dec, decay, preg);
-        for (uint16_t r = 0; r < 32; ++r) {
-            const uint32_t row = row0 + r;
+        for (uint16_t i = 0; i < 64; ++i) {
+            const uint32_t off = static_cast<uint32_t>(i) * 128;
             RegTensor<float> s0, s1, d0, d1;
-            GdnFwd32::LoadCastBf16(sAddr + row * kDim, s0, preg);
-            GdnFwd32::LoadCastBf16(sAddr + row * kDim + 64, s1, preg);
-            GdnFwd32::LoadCastBf16(dAddr + static_cast<uint32_t>(r) * kDim, d0, preg);
-            GdnFwd32::LoadCastBf16(dAddr + static_cast<uint32_t>(r) * kDim + 64, d1, preg);
+            GdnFwd32::LoadCastBf16(sAddr + off, s0, preg);
+            GdnFwd32::LoadCastBf16(sAddr + off + 64, s1, preg);
+            GdnFwd32::LoadCastBf16(dAddr + off, d0, preg);
+            GdnFwd32::LoadCastBf16(dAddr + off + 64, d1, preg);
             Mul(s0, s0, dec, preg);
             Mul(s1, s1, dec, preg);
             Add(s0, s0, d0, preg);
             Add(s1, s1, d1, preg);
-            GdnFwd32::StoreCastBf16(sAddr + row * kDim, s0, preg);
-            GdnFwd32::StoreCastBf16(sAddr + row * kDim + 64, s1, preg);
+            GdnFwd32::StoreCastBf16(sAddr + off, s0, preg);
+            GdnFwd32::StoreCastBf16(sAddr + off + 64, s1, preg);
+        }
+    }
+}
+
+// [64, 128] ND <-> 8 contiguous [64, 16] panels. Used at the head and the tail
+// only; the per-chunk state stays in panels.
+__aicore__ inline void NdToPanels(LocalTensor<bfloat16_t> nz, LocalTensor<bfloat16_t> nd)
+{
+    __ubuf__ bfloat16_t *nAddr = (__ubuf__ bfloat16_t *)nd.GetPhyAddr();
+    __ubuf__ bfloat16_t *zAddr = (__ubuf__ bfloat16_t *)nz.GetPhyAddr();
+    __VEC_SCOPE__
+    {
+        uint32_t n128 = 128;
+        MaskReg m128 = UpdateMask<bfloat16_t>(n128);
+        for (uint16_t r = 0; r < 64; ++r) {
+            RegTensor<bfloat16_t> row;
+            LoadAlign(row, nAddr + static_cast<uint32_t>(r) * kDim);
+            StoreAlign<bfloat16_t, DataCopyMode::DATA_BLOCK_COPY>(zAddr + static_cast<uint32_t>(r) * 16, row, 64,
+                                                                  m128);
+        }
+    }
+}
+
+__aicore__ inline void PanelsToNd(LocalTensor<bfloat16_t> nd, LocalTensor<bfloat16_t> nz)
+{
+    __ubuf__ bfloat16_t *nAddr = (__ubuf__ bfloat16_t *)nd.GetPhyAddr();
+    __ubuf__ bfloat16_t *zAddr = (__ubuf__ bfloat16_t *)nz.GetPhyAddr();
+    __VEC_SCOPE__
+    {
+        uint32_t n128 = 128;
+        MaskReg m128 = UpdateMask<bfloat16_t>(n128);
+        for (uint16_t r = 0; r < 64; ++r) {
+            RegTensor<bfloat16_t> row;
+            LoadAlign<bfloat16_t, DataCopyMode::DATA_BLOCK_COPY>(row, zAddr + static_cast<uint32_t>(r) * 16, 64, m128);
+            StoreAlign(nAddr + static_cast<uint32_t>(r) * kDim, row, m128);
         }
     }
 }
@@ -340,9 +376,10 @@ private:
             const int64_t elem = static_cast<int64_t>(
                 (static_cast<uint64_t>(batchIdx_) * valueHeadNum_ + headIdx_) * kDim * kDim +
                 static_cast<uint64_t>(sub_) * nElem);
-            DataCopy(ubState_, initGm_[elem], nElem);
+            DataCopy(ubD_, initGm_[elem], nElem);
             SetFlag<HardEvent::MTE2_V>(0);
             WaitFlag<HardEvent::MTE2_V>(0);
+            NdToPanels(ubState_, ubD_);
         } else {
             Duplicate(ubState_, static_cast<bfloat16_t>(0), nElem);
         }
@@ -434,8 +471,8 @@ private:
         nzArmed_ = 1;
     }
 
-    // Prologue only. K's L2 and the K copy complete before q's L2, and K@K
-    // runs under that second L2. vb/kbg/qexp still go out after both flags.
+    // K's L2 and the K copy complete before q's L2, and K@K runs under that
+    // second L2. vb/kbg/qexp still go out after both flags.
     __aicore__ inline void PublishStaged(uint32_t chunk)
     {
         const uint32_t slot = chunk & 1U;
@@ -488,8 +525,15 @@ private:
     __aicore__ inline void UploadH()
     {
         WaitFlag<HardEvent::V_MTE3>(1);
-        // One 64-row ND panel copy: 8 bursts instead of two 32-row passes.
-        GdnFwd32::CopyNdRowsToFullNz(l1H_, ubState_, sub_ * 64, 64, kDim, kDim);
+        // State is already 8 contiguous [64, 16] panels. Each panel is one
+        // 2KB copy into its slot of the 128-row L1 image.
+        constexpr uint32_t kRows = 64;
+        constexpr uint32_t kFull = 128;
+        constexpr uint16_t kBurst = static_cast<uint16_t>(kRows * 16 * sizeof(bfloat16_t) / 32);
+        for (uint32_t fc = 0; fc < kDim / 16; ++fc) {
+            DataCopy(l1H_[fc * kFull * 16 + sub_ * kRows * 16], ubState_[fc * kRows * 16],
+                     DataCopyParams(1, kBurst, 0, 0));
+        }
         CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagH);
     }
 
@@ -526,10 +570,8 @@ private:
     {
         // Slice 0 and slice 1 use different flags. A second set of the same id
         // would be dropped if the first slice's flag is still pending.
-        for (uint32_t part = 0; part < 2; ++part) {
-            CrossCoreWaitFlag<0x4, PIPE_V>(part == 0 ? kFlagD : kFlagD2);
-            Saxpy32VF(ubState_, ubD_[part * 32 * kDim], decay, part * 32);
-        }
+        CrossCoreWaitFlag<0x4, PIPE_V>(kFlagD);
+        SaxpyStateVF(ubState_, ubD_, decay);
         SetFlag<HardEvent::V_MTE3>(1);
     }
 
@@ -600,6 +642,11 @@ private:
                     Copy64(ubScratch_, ubEg_);
                     egNow = ubScratch_;
                 }
+                // Next chunk's GM load overlaps v_new, o and the saxpy. It used to
+                // sit inside PublishStaged, in front of the cube's K@K / V wait.
+                if (owner && nxt < nChunk) {
+                    PrepareLoad(nxt);
+                }
                 CrossCoreWaitFlag<0x4, PIPE_V>(kFlagP);
                 const float decay = DecayOf(egNow);
                 VnewHalfVF(ubU_, ubP_, egNow, ubVn_, ubVg_, sub_ * 16);
@@ -620,7 +667,6 @@ private:
                 }
                 // K's L2 and the K flag go out before q's L2, so K@K is not behind q.
                 if (owner && nxt < nChunk) {
-                    PrepareLoad(nxt);
                     PublishStaged(nxt);
                 }
             }
@@ -633,9 +679,10 @@ private:
             const int64_t elem = static_cast<int64_t>(
                 (static_cast<uint64_t>(batchIdx_) * valueHeadNum_ + headIdx_) * kDim * kDim +
                 static_cast<uint64_t>(sub_) * nElem);
+            PanelsToNd(ubD_, ubState_);
             SetFlag<HardEvent::V_MTE3>(1);
             WaitFlag<HardEvent::V_MTE3>(1);
-            DataCopy(stateGm_[elem], ubState_, nElem);
+            DataCopy(stateGm_[elem], ubD_, nElem);
         }
     }
 
@@ -655,27 +702,40 @@ private:
         SetFlag<HardEvent::M_FIX>(bank);
     }
 
+    // K@K only. The inverse starts on this flag, so it is issued before the H wait
+    // and the H stall covers the mad. Q@K stays later, under v_new.
+    __aicore__ inline void Kkt(uint32_t chunk, uint8_t bank)
+    {
+        const uint32_t owner = chunk & 1U;
+        const uint32_t slot = owner;
+        CrossCoreWaitFlag<0x4, PIPE_MTE1>(Seen(kFlagQk, owner));
+        Mad(l1K_[slot], l1K_[slot], kBt, kBt, kDim, false, bank);
+        WaitFlag<HardEvent::M_FIX>(bank);
+        GdnFwd32::FixpipeFp32Ub(ubKkt_, L0COf(bank), kBt, kBt, static_cast<uint8_t>(owner));
+        SetFlag<HardEvent::FIX_M>(bank);
+        CrossCoreSetFlag<0x4, PIPE_FIX>(Seen(kFlagKkt, owner));
+    }
+
+    __aicore__ inline void Qk(uint32_t chunk, uint8_t bank)
+    {
+        const uint32_t owner = chunk & 1U;
+        const uint32_t slot = owner;
+        CrossCoreWaitFlag<0x4, PIPE_MTE1>(Seen(kFlagQ, owner));
+        Mad(l1Q_[slot], l1K_[slot], kBt, kBt, kDim, false, bank);
+        WaitFlag<HardEvent::M_FIX>(bank);
+        GdnFwd32::FixpipeFp32Ub(ubQk_, L0COf(bank), kBt, kBt, static_cast<uint8_t>(owner));
+        SetFlag<HardEvent::FIX_M>(bank);
+        CrossCoreSetFlag<0x4, PIPE_FIX>(Seen(kFlagAttn, owner));
+    }
+
     // bothBanks: K@K on bank 0 and Q@K on bank 1, so the Q load overlaps the K mad.
     // Otherwise both gemms stay on bank 1 and bank 0 (the live H) is left alone.
     __aicore__ inline void KktQk(uint32_t chunk, bool bothBanks)
     {
-        const uint32_t owner = chunk & 1U;
-        const uint32_t slot = owner;
         const uint8_t b0 = bothBanks ? static_cast<uint8_t>(0) : static_cast<uint8_t>(1);
         const uint8_t b1 = bothBanks ? static_cast<uint8_t>(1) : b0;
-        CrossCoreWaitFlag<0x4, PIPE_MTE1>(Seen(kFlagQk, owner));
-        Mad(l1K_[slot], l1K_[slot], kBt, kBt, kDim, false, b0);
-        WaitFlag<HardEvent::M_FIX>(b0);
-        GdnFwd32::FixpipeFp32Ub(ubKkt_, L0COf(b0), kBt, kBt, static_cast<uint8_t>(owner));
-        SetFlag<HardEvent::FIX_M>(b0);
-        // Inverse needs L, which needs kkt only. qk is still running on the prologue.
-        CrossCoreSetFlag<0x4, PIPE_FIX>(Seen(kFlagKkt, owner));
-        CrossCoreWaitFlag<0x4, PIPE_MTE1>(Seen(kFlagQ, owner));
-        Mad(l1Q_[slot], l1K_[slot], kBt, kBt, kDim, false, b1);
-        WaitFlag<HardEvent::M_FIX>(b1);
-        GdnFwd32::FixpipeFp32Ub(ubQk_, L0COf(b1), kBt, kBt, static_cast<uint8_t>(owner));
-        SetFlag<HardEvent::FIX_M>(b1);
-        CrossCoreSetFlag<0x4, PIPE_FIX>(Seen(kFlagAttn, owner));
+        Kkt(chunk, b0);
+        Qk(chunk, b1);
     }
 
     __aicore__ inline void ProcessAic()
@@ -750,29 +810,31 @@ private:
                 CrossCoreSetFlag<0x4, PIPE_FIX>(kFlagO);
                 CrossCoreSetFlag<0x4, PIPE_FIX>(static_cast<uint16_t>(kFlagO + kAiv1));
 
+                // One 64-row panel per AIV. ubD_ is 64*128 bf16, so both saxpy slices
+                // land in one fixpipe. The two L0C tiles are 32KB apart.
+                constexpr int kDm = 64;
                 constexpr uint8_t dBank = 0;
                 WaitFlag<HardEvent::M_MTE1>(dBank);
-                GdnFwd32::LoadL1NzToL0AB(l1K_[slot], l1Vg_, l0A_[0], l0B_[0], kBt, kDim, kBt, true, 0, dBank, true,
+                GdnFwd32::LoadL1NzToL0AB(l1K_[slot], l1Vg_, l0A_[0], l0B_[0], kDm, kDim, kBt, true, 0, dBank, true,
                                          false);
-                for (int part = 0; part < 4; ++part) {
-                    const uint8_t ev = static_cast<uint8_t>(part & 1);
-                    LocalTensor<float> l0c = (ev == 0) ? l0C0_ : l0C1_;
+                for (int part = 0; part < 2; ++part) {
+                    const uint8_t ev = static_cast<uint8_t>(part);
+                    LocalTensor<float> l0c = l0C0_[static_cast<uint32_t>(part) * static_cast<uint32_t>(kDm * kDim)];
                     WaitFlag<HardEvent::MTE1_M>(dBank);
-                    GdnFwd32::MmadL0ToL0C(l0A_[0], l0B_[0], l0c, kBt, kDim, kBt, true, ev);
+                    GdnFwd32::MmadL0ToL0C(l0A_[0], l0B_[0], l0c, kDm, kDim, kBt, true, ev);
                     SetFlag<HardEvent::M_FIX>(ev);
                     SetFlag<HardEvent::M_MTE1>(dBank);
-                    if (part + 1 < 4) {
+                    if (part + 1 < 2) {
                         WaitFlag<HardEvent::M_MTE1>(dBank);
-                        auto kPart = l1K_[slot][static_cast<uint32_t>((part + 1) * 2 * kBt * 16)];
-                        GdnFwd32::LoadL1NzToL0A(kPart, l0A_[0], kBt, kBt, true);
+                        auto kPart = l1K_[slot][static_cast<uint32_t>(2 * 2 * kBt * 16)];
+                        GdnFwd32::LoadL1NzToL0A(kPart, l0A_[0], kDm, kBt, true);
                         SetFlag<HardEvent::MTE1_M>(dBank);
                     }
                     WaitFlag<HardEvent::M_FIX>(ev);
-                    const uint8_t dstSub = static_cast<uint8_t>(part >= 2);
-                    const uint32_t localRow = static_cast<uint32_t>(part & 1) * kBt;
-                    GdnFwd32::FixpipeBf16Ub(ubD_[localRow * kDim], l0c, kBt, kDim, dstSub);
+                    const uint8_t dstSub = static_cast<uint8_t>(part);
+                    GdnFwd32::FixpipeBf16UbNz(ubD_, l0c, kDm, kDim, dstSub);
                     SetFlag<HardEvent::FIX_M>(ev);
-                    CrossCoreSetFlag<0x4, PIPE_FIX>(Seen((part & 1) == 0 ? kFlagD : kFlagD2, dstSub));
+                    CrossCoreSetFlag<0x4, PIPE_FIX>(Seen(kFlagD, dstSub));
                 }
             }
         }
