@@ -525,6 +525,12 @@ __aicore__ inline void GateAttnVF(LocalTensor<float> &eg, LocalTensor<float> &be
                 Mul(outL, gate, bI, preg32);
                 Mul(outL, outL, kk, preg32);
                 Select(outL, outL, zero, lowerMask);
+                // Which=1 feeds Solve32, whose update is y += x*L. Negate while
+                // the row is still in a register; a later pass over the 32x32
+                // block would read and write the whole matrix.
+                if constexpr (Which == 1) {
+                    Muls(outL, outL, -1.0f, preg32);
+                }
                 StoreAlign(lAddr + static_cast<uint32_t>(i) * kBt, outL, preg32);
             }
             if constexpr (Which != 1) {
@@ -943,18 +949,18 @@ __aicore__ inline void Scatter16VF(__ubuf__ float *dst, __ubuf__ float *src, uin
 }
 
 
-// (I+L)^{-1}. L is negated first, so the solve adds L into the running rows.
+// (I+L)^{-1}. GateAttn Which=1 already stored -L, so the solve's add is the
+// triangular subtraction. L is left negated: the next GateAttn overwrites it,
+// and the attn pass does not read it.
 __aicore__ inline void InvertAVF(LocalTensor<float> lower, LocalTensor<float> a, LocalTensor<bfloat16_t> aBf,
                                  LocalTensor<float> eye)
 {
     __ubuf__ float *lAddr = (__ubuf__ float *)lower.GetPhyAddr();
     __ubuf__ float *aAddr = (__ubuf__ float *)a.GetPhyAddr();
     __ubuf__ float *eyeAddr = (__ubuf__ float *)eye.GetPhyAddr();
-    NegateRowsVF(lAddr, static_cast<uint16_t>((kBt * kBt) / 64));
     // Solve16Live matches the digits but the 64-wide vlds made the vector pipe
     // slower (vec 6.3 -> 11). Solve32 stays the fast path.
     Solve32VF(lAddr, aAddr, eyeAddr);
-    NegateRowsVF(lAddr, static_cast<uint16_t>((kBt * kBt) / 64));
     Cast(aBf, a, RoundMode::CAST_RINT, kBt * kBt);
 }
 
