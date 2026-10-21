@@ -69,13 +69,23 @@ function(op_add_subdirectory OP_LIST OP_DIR_LIST)
 
     if(ENABLE_EXPERIMENTAL)
         message(STATUS "Build experimental module")
-        # 实验树是稳定树的同构镜像（见 docs/architecture/experimental 构建适配设计.md §4.1）。
-        # 这里只做一条递归匹配：根目录下任意深度的 CMakeLists.txt 都算候选，
-        # 具体哪个目录算算子，由下面 foreach 里的 op_host 判定与 tests 过滤决定。
-        # 收益：新增实验算子、甚至新增实验域，都不需要修改本文件。
-        file(GLOB_RECURSE OP_HOST_CMAKE_FILES
-        "${CMAKE_CURRENT_SOURCE_DIR}/experimental/CMakeLists.txt"
-        )
+        # experimental/<operator>/CMakeLists.txt is the only operator marker.
+        # Directories beginning with '_' are reserved for shared build inputs.
+        file(GLOB EXPERIMENTAL_OPERATOR_CMAKE_FILES
+             LIST_DIRECTORIES false
+             "${CMAKE_CURRENT_SOURCE_DIR}/experimental/*/CMakeLists.txt")
+        set(OP_HOST_CMAKE_FILES)
+        foreach(_experimental_cmake ${EXPERIMENTAL_OPERATOR_CMAKE_FILES})
+            get_filename_component(_experimental_dir "${_experimental_cmake}" DIRECTORY)
+            get_filename_component(_experimental_name "${_experimental_dir}" NAME)
+            if(NOT _experimental_name MATCHES "^_")
+                if(NOT _experimental_name MATCHES "^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
+                    message(FATAL_ERROR
+                        "Invalid experimental operator directory name: ${_experimental_name}")
+                endif()
+                list(APPEND OP_HOST_CMAKE_FILES "${_experimental_cmake}")
+            endif()
+        endforeach()
     else()
         file(GLOB_RECURSE OP_HOST_CMAKE_FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/fla/ops/ascendc/CMakeLists.txt"
@@ -151,34 +161,26 @@ macro(add_op_to_compiled_list)
 endmacro()
 
 
-# 解析 <op>_depends 里的一个取值到「实际可用」的相对路径（相对仓库根）。
-#   OFF 模式 -> <dep>
-#   ON  模式 -> 优先 experimental/<dep>；实验树里没有该算子则回退 <dep>（显式告警，只报一次）
-#
-# 为什么需要回退：实验树要求自带依赖，否则依赖会被静默丢弃；后果不是「少编一个算子」，
-# 而是没有任何算子提供 tiling OBJECT 库，最终 cust_opmaster 链接报
-# cannot find -lophost_transformer_tiling_obj。
-#
-# 依赖目录补挂（op_add_depend_directory）与 kernel 源 copy（add_bin_compile_target）必须用
-# 同一套解析，否则会出现「op_host 从稳定树挂上、kernel 源却从实验树拷空」的不一致。
+# Resolve one dependency to a repository-relative path.
+# Stable mode keeps the legacy path-based dependency contract. Experimental mode
+# uses the flat experimental/<operator> contract and never falls back to stable.
 function(fla_resolve_depend_path depend_info out_var)
     if (ENABLE_EXPERIMENTAL)
+        if ("${depend_info}" MATCHES "[/\\\\]" OR
+            "${depend_info}" MATCHES "(^|/)\\.\\.?(/|$)" OR
+            "${depend_info}" MATCHES "^[A-Za-z]:")
+            message(FATAL_ERROR
+                "Experimental dependency must be an operator name, got '${depend_info}'.")
+        endif()
+        if ("${depend_info}" MATCHES "^_")
+            message(FATAL_ERROR
+                "Experimental dependency cannot reference reserved directory '${depend_info}'.")
+        endif()
         set(_resolve_cand "experimental/${depend_info}")
-        set(_resolve_exp_hit FALSE)
-        set(_resolve_stable_hit FALSE)
-        if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/experimental/${depend_info}/op_host/CMakeLists.txt")
-            set(_resolve_exp_hit TRUE)
-        endif()
-        if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${depend_info}/op_host/CMakeLists.txt")
-            set(_resolve_stable_hit TRUE)
-        endif()
-        if (NOT _resolve_exp_hit AND _resolve_stable_hit)
-            string(REPLACE "/" "_" _resolve_key "${depend_info}")
-            if (NOT DEFINED _FLA_DEP_FALLBACK_${_resolve_key})
-                set(_FLA_DEP_FALLBACK_${_resolve_key} TRUE CACHE INTERNAL "" FORCE)
-                message(STATUS "[experimental] 依赖不在实验树，回退稳定树: ${depend_info}")
-            endif()
-            set(_resolve_cand "${depend_info}")
+        if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${_resolve_cand}/CMakeLists.txt")
+            message(FATAL_ERROR
+                "Experimental dependency is missing: dependency=${depend_info}, "
+                "expected=${CMAKE_CURRENT_SOURCE_DIR}/${_resolve_cand}/CMakeLists.txt")
         endif()
     else()
         set(_resolve_cand "${depend_info}")
@@ -194,8 +196,10 @@ function(op_add_depend_directory)
         if (DEFINED ${op_name}_depends)
             foreach(depend_info ${${op_name}_depends})
                 fla_resolve_depend_path(${depend_info} depend_info_update)
-                if (NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${depend_info_update}/op_host/CMakeLists.txt AND NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/${depend_info_update}/CMakeLists.txt)
-                    continue()
+                if (NOT ENABLE_EXPERIMENTAL)
+                    if (NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${depend_info_update}/op_host/CMakeLists.txt AND NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/${depend_info_update}/CMakeLists.txt)
+                        continue()
+                    endif ()
                 endif ()
 
                 get_filename_component(_depend_op_name "${depend_info}" NAME)

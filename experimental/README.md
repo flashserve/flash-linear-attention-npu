@@ -1,53 +1,50 @@
-# experimental —— 实验算子目录
+# experimental 实验算子目录
 
-本目录存放**尚未稳定、随时可能增删**的算子。它们与稳定树（`fla/ops/ascendc/`）**结构同构**，
-由同一个开关 `--experimental` 二选一进入构建：**开启时只编本目录，关闭时完全不参与**。
+本目录存放尚未完成转测、暂不进入正式商用版本，但需要在仓内持续开发和共同维护的算子。进入本目录不表示算子已经达到正式发布要求。
 
-设计说明见 [`docs/architecture/experimental 构建适配设计.md`](../docs/architecture/experimental%20构建适配设计.md)。
+- 目标设计：[experimental 构建适配设计.md](../docs/architecture/experimental%20构建适配设计.md)
+- 调研与验证记录：[experimental 构建适配过程记录.md](../docs/architecture/experimental%20构建适配过程记录.md)
+- 验收要求：[Issue #931](https://github.com/flashserve/flash-linear-attention-npu/issues/931)
 
 ## 目录约定
 
-镜像稳定树的仓库相对路径，即 `experimental/` 后面接原本的完整路径：
+`experimental/` 后的第一个子目录名就是算子名，算子目录必须包含根层 `CMakeLists.txt`：
 
-```
-fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/          ← 稳定树
-│
-└── 实验版放在 →
-experimental/fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/
-├── CMakeLists.txt
-├── op_host/
+```text
+experimental/
+├── _common/
+│   └── manifest.txt
+├── recurrent_gated_delta_rule/
 │   ├── CMakeLists.txt
-│   └── chunk_fwd_o_def.cpp
-└── op_kernel/
+│   ├── op_host/
+│   └── op_kernel/
+└── <another_operator>/
+    ├── CMakeLists.txt
+    ├── op_host/
+    └── op_kernel/
 ```
 
-**为什么必须镜像**：`<op>_depends` 里写的是仓根相对路径（如
-`fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h`），实验模式下框架统一在它前面拼
-`experimental/`。只有路径同构，拼接结果才真实存在；否则依赖会被**静默跳过**（不报错）。
+名称以 `_` 开头的一级目录是框架保留目录，不作为算子发现。算子名在实验树内必须全局唯一；根层 CMake 中的依赖只填写其他实验算子名，不填写仓库路径。实验算子的直接依赖、传递依赖和公共代码必须全部位于 `experimental/` 下，形成可独立构建的完整闭包。
 
-## 三条硬性约束
+## 严格隔离约束
 
-| 约束 | 原因 |
-| --- | --- |
-| 不要在本目录**根层**放 `CMakeLists.txt` | 发现逻辑用 `GLOB_RECURSE …/experimental/CMakeLists.txt` 递归匹配；根层那份会被当成一个名叫 `experimental` 的算子 |
-| `experimental/<...>/common` 若是分叉副本，必须是稳定树的**超集** | 框架在实验模式下只复制实验树那份到 `src/common`；稳定树独有的头不会进来 → 编译期缺头，且不报「路径不存在」 |
-| 实验算子只能依赖**实验树内**的算子 | 前缀会把依赖指到实验树；实验树里没有 → 静默丢依赖 |
+1. 未启用 experimental 时只能发现、编译和打包稳定算子。
+2. 启用 experimental 后只能发现、编译和打包实验算子。
+3. 实验依赖缺失时构建必须明确失败，不得回退到稳定树或静默跳过。
+4. `experimental/_common` 不完整时构建必须明确失败，不得从稳定 common 补齐。
+5. 实验产物只包含所选实验算子及其实验依赖，并使用独立制品标识。
+6. 实验制品不得进入正式 Release，也不能作为正式商用能力使用。
 
-## 使用
+## 构建方式
+
+目标命令如下：
 
 ```bash
-# 编一个实验算子
-bash build.sh --pkg --experimental --soc=ascend910b --ops=<算子名>
+# 构建一个实验算子及其完整实验依赖闭包
+bash build.sh --pkg --experimental --soc=ascend910b --ops=<实验算子名>
 
-# 编全部实验算子
+# 构建实验树中的全部算子
 bash build.sh --pkg --experimental --soc=ascend910b
 ```
 
-开启后走的是**实验包**，与稳定包是两个独立产物，不会合并。
-
-## 已知限制
-
-- 与 `--pkg-type=rpm/deb` 互斥（另注：`--pkg-type=all` 会绕过该检查，请自行避免）。
-- 与 `--static` 未做适配。
-- Python / wheel 侧（`torch_custom/fla_npu/`）目前不感知 `--experimental`。
-- 当前 CI 没有实验 job，这条链尚未在 CI 上被验证。
+当前代码与上述目标约束之间的差距记录在“构建适配过程记录”中。在严格依赖失败、公共代码切换、独立 CI 和产物审计全部完成前，不应将当前 experimental 构建视为 Issue #931 已验收。

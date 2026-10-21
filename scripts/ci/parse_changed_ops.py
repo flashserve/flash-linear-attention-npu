@@ -14,20 +14,20 @@ import sys
 import re
 import logging
 from pathlib import Path
-# 本仓算子树的仓库相对根（见 docs/architecture/experimental 构建适配设计.md §4.1）：
+# 本仓稳定算子树仍使用仓库相对路径；experimental 使用一级扁平算子目录：
 #   稳定树 fla/ops/ascendc/<域>/<算子>/…
-#   实验树 experimental/fla/ops/ascendc/<域>/<算子>/…    ← 同构镜像
+#   实验树 experimental/<算子>/…/CMakeLists.txt
 _OPS_TREE_ROOT = ("fla", "ops", "ascendc")
 _EXPERIMENTAL_PREFIX = ("experimental",)
 
-# 受支持的域。本仓为 cp / gdn / kda（common 只放公共头，不是算子）
+# 稳定树的受支持域。experimental 不依赖域名单。
 OP_DOMAINS = ("cp", "gdn", "kda")
 
 # 非算子目录：即使层级对上，也不应当成算子
 NON_OP_DIRS = ("common", "3rd", "tools", "tests", "internal_ops")
 
-# 算子目录下的固定子目录。第一个出现的标记之前，整段就是算子目录本身。
-# 用它定位而不是固定下标，是因为本仓算子层级不固定：
+# 稳定树算子目录下的固定子目录。第一个出现的标记之前，整段就是算子目录本身。
+# 用它定位而不是固定下标，是因为稳定树算子层级不固定：
 #   fla/ops/ascendc/kda/chunk_kda_fwd/…                                  算子在第 2 层
 #   fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/…                      算子在第 3 层
 #   fla/ops/ascendc/kda/chunk_kda_bwd/internal_ops/kda_gate_bwd_post/…   算子在第 4 层
@@ -66,7 +66,7 @@ def extract_operator_name(file_path, is_experimental):
 def _tree_root(is_experimental):
     """本次判定的树根。"""
     if is_experimental == "TRUE":
-        return _EXPERIMENTAL_PREFIX + _OPS_TREE_ROOT
+        return _EXPERIMENTAL_PREFIX
     return _OPS_TREE_ROOT
 
 
@@ -84,6 +84,13 @@ def _locate_op_dir(path_parts, is_experimental):
     n = len(root)
     if len(path_parts) <= n or tuple(path_parts[:n]) != root:
         return None, None, None
+
+    if is_experimental == "TRUE":
+        operator_name = path_parts[n]
+        if operator_name.startswith("_"):
+            return None, None, None
+        op_dir = root + (operator_name,)
+        return "", operator_name, op_dir
 
     rest = list(path_parts[n:])
     cut = len(rest)
@@ -107,20 +114,21 @@ def _should_return_default(domain, operator_name, op_dir_parts, is_experimental)
     if operator_name in BlackList:
         return True
 
-    # 域必须受支持；common / 3rd / tools / tests 等不是算子
-    if domain not in OP_DOMAINS or operator_name in NON_OP_DIRS:
-        return True
-
     # 该路径必须真实对应一个算子目录（op_dir_parts 相对当前工作目录，即仓库根）
     op_dir = Path(*op_dir_parts)
     if not op_dir.is_dir():
         return True
 
-    # 实验分支额外要求实验树里确实有 op_host/
     if is_experimental == "TRUE":
-        target = op_dir / "op_host"
-        if not (target.exists() and target.is_dir()):
+        # experimental 目录的根 CMake 是唯一算子标记；保留目录不会进入这里。
+        target = op_dir / "CMakeLists.txt"
+        if not target.is_file():
             return True
+        return False
+
+    # 稳定树域必须受支持；common / 3rd / tools / tests 等不是算子。
+    if domain not in OP_DOMAINS or operator_name in NON_OP_DIRS:
+        return True
     return False
 
 

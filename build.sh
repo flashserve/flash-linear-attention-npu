@@ -95,9 +95,14 @@ dotted_line="-------------------------------------------------------------------
 ########################################################################################################################
 
 function list_supported_ops() {
+    local experimental_args=()
+    if [[ "${ENABLE_EXPERIMENTAL}" == "TRUE" ]]; then
+        experimental_args+=(--experimental)
+    fi
     python3 "${CURRENT_DIR}/scripts/check_build_ops.py" \
         --repo-root "${CURRENT_DIR}" \
-        --list "$@"
+        --list "$@" \
+        "${experimental_args[@]}"
 }
 
 # 前置校验 --ops/-n 传入的算子名：必须在 CMake 配置之前完成（issue #482）
@@ -105,11 +110,16 @@ function check_ops_filter() {
     if [ -z "${OPS_FILTER_VALUE}" ]; then
         return 0
     fi
+    local experimental_args=()
+    if [[ "${ENABLE_EXPERIMENTAL}" == "TRUE" ]]; then
+        experimental_args+=(--experimental)
+    fi
     if ! python3 "${CURRENT_DIR}/scripts/check_build_ops.py" \
         --repo-root="${CURRENT_DIR}" \
         --ops="${OPS_FILTER_VALUE}" \
         --source="${OPS_FILTER_SOURCE}" \
-        --origin="${OPS_FILTER_SOURCE} parameter of build.sh"; then
+        --origin="${OPS_FILTER_SOURCE} parameter of build.sh" \
+        "${experimental_args[@]}"; then
         exit 1
     fi
 }
