@@ -99,8 +99,8 @@ __aicore__ inline uint16_t Seen(uint16_t id, uint32_t sub)
 }
 
 // [m, n] L0C, m is a multiple of 32. Each call writes m/2 rows to one AIV.
-// The second half starts one 16x16 fractal in, and srcStride stays the full
-// height, matching kda's l0c_ub_bf16. dualDstCtl cannot be combined with bf16.
+// dualDstCtl 0b01 would split M in one instruction, but it rejects F322BF16
+// (aicore 169: fixpipe parameter invalid). The cast stays on each call.
 __aicore__ inline void FixpipeHalfBf16(LocalTensor<bfloat16_t> ub, LocalTensor<float> l0C, int m, int n)
 {
     FixpipeParamsArch3510<CO2Layout::ROW_MAJOR> p;
@@ -253,15 +253,14 @@ public:
     __aicore__ inline Kernel() {}
 
     __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR beta, GM_ADDR initial, GM_ADDR o,
-                                GM_ADDR finalState, GM_ADDR workspace, const ChunkGatedDeltaRuleFwd32TilingData &td)
+                                GM_ADDR finalState, GM_ADDR workspace, const ChunkGatedDeltaRuleFwd32TilingData &tilingData)
     {
-        (void)workspace;
         sub_ = GetSubBlockIdx();
-        batchSize_ = td.B;
-        valueHeadNum_ = td.HV;
-        seqLen_ = td.T;
-        scale_ = td.scale;
-        hasInitial_ = td.hasInitial;
+        batchSize_ = tilingData.B;
+        valueHeadNum_ = tilingData.HV;
+        seqLen_ = tilingData.T;
+        scale_ = tilingData.scale;
+        hasInitial_ = tilingData.hasInitial;
         uint32_t aicIdx = GetBlockIdx();
         if ASCEND_IS_AIV {
             const uint32_t subNum = GetSubBlockNum();
@@ -269,7 +268,7 @@ public:
                 aicIdx /= subNum;
             }
         }
-        aicNum_ = td.coreNum == 0 ? 1 : td.coreNum;
+        aicNum_ = tilingData.coreNum == 0 ? 1 : tilingData.coreNum;
         const uint32_t totalHeads = batchSize_ * valueHeadNum_;
         isActive_ = valueHeadNum_ != 0 && aicIdx < totalHeads;
         headBegin_ = isActive_ ? aicIdx : 0;
@@ -362,13 +361,6 @@ private:
         return (chunk & 1U) == sub_;
     }
 
-    __aicore__ inline void ZeroState()
-    {
-        constexpr uint32_t nElem = 64 * 128;
-        Duplicate(ubState_, static_cast<bfloat16_t>(0), nElem);
-        SetFlag<HardEvent::V_MTE3>(1);
-    }
-
     __aicore__ inline void InitState()
     {
         constexpr uint32_t nElem = 64 * 128;
@@ -377,8 +369,9 @@ private:
                 (static_cast<uint64_t>(batchIdx_) * valueHeadNum_ + headIdx_) * kDim * kDim +
                 static_cast<uint64_t>(sub_) * nElem);
             DataCopy(ubD_, initGm_[elem], nElem);
-            SetFlag<HardEvent::MTE2_V>(0);
-            WaitFlag<HardEvent::MTE2_V>(0);
+            // Event 1. PrepareLoad owns event 0, and both copies are in flight.
+            SetFlag<HardEvent::MTE2_V>(1);
+            WaitFlag<HardEvent::MTE2_V>(1);
             NdToPanels(ubState_, ubD_);
         } else {
             Duplicate(ubState_, static_cast<bfloat16_t>(0), nElem);
@@ -395,7 +388,7 @@ private:
         GdnFwd32::CumsumExp2VF<true>(ubG2_, ubGp2_, ubEg2_, ubSh_);
     }
 
-    // One vector register. Used to keep this chunk's eg while PrepareUb fills ubEg_.
+    // One vector register. Used to keep this chunk's eg while the next chunk fills ubEg_.
     __aicore__ inline void Copy64(LocalTensor<float> dst, LocalTensor<float> src)
     {
         __ubuf__ float *sAddr = (__ubuf__ float *)src.GetPhyAddr();
@@ -431,44 +424,11 @@ private:
     __aicore__ inline void WaitLoads()
     {
         WaitFlag<HardEvent::MTE2_V>(0);
-        // Previous PublishQk may still be reading the NZ buffers this VF overwrites.
+        // The previous publish may still be reading the NZ buffers this VF overwrites.
         if (nzArmed_ != 0) {
             WaitFlag<HardEvent::MTE3_V>(3);
             nzArmed_ = 0;
         }
-    }
-
-    __aicore__ inline void PrepareCompute()
-    {
-        WaitLoads();
-        GdnFwd32::BetaSigmoidVF(ubBeta_, ubBe_);
-        GdnFwd32::CumsumExp2VF<true>(ubG_, ubGp_, ubEg_, ubSh_);
-        GdnFwd32::L2InplaceQKVF(ubQ_, ubK_, ubKbg_, ubQexp_, ubBe_, ubEg_, ubQnz_, ubKnz_);
-        GdnFwd32::ScaleRowsVF<true>(ubV_, ubV_, ubBe_, reinterpret_cast<__ubuf__ bfloat16_t *>(ubVnz_.GetPhyAddr()));
-    }
-
-    __aicore__ inline void PrepareUb(uint32_t chunk)
-    {
-        PrepareLoad(chunk);
-        PrepareCompute();
-    }
-
-    __aicore__ inline void PublishQk(uint32_t chunk)
-    {
-        const uint32_t slot = chunk & 1U;
-        SetFlag<HardEvent::V_MTE3>(0);
-        WaitFlag<HardEvent::V_MTE3>(0);
-        GdnFwd32::CopyNzToL1(l1K_[slot], ubKnz_, kBt, kDim);
-        CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagQk);
-        GdnFwd32::CopyNzToL1(l1Q_[slot], ubQnz_, kBt, kDim);
-        // K@K only needs K. Q is a second flag so the prologue can overlap q's L2
-        // with K@K. Both flags are set here once the two NZ images are queued.
-        CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagQ);
-        GdnFwd32::CopyNzToL1(l1Vb_[slot], ubVnz_, kBt, kDim);
-        GdnFwd32::CopyNzToL1(l1Kbg_[slot], ubKbg_, kBt, kDim);
-        GdnFwd32::CopyNzToL1(l1Qexp_[slot], ubQexp_, kBt, kDim);
-        SetFlag<HardEvent::MTE3_V>(3);
-        nzArmed_ = 1;
     }
 
     // K's L2 and the K copy complete before q's L2, and K@K runs under that
@@ -575,116 +535,7 @@ private:
         SetFlag<HardEvent::V_MTE3>(1);
     }
 
-    __aicore__ inline void ProcessAiv()
-    {
-        if (!isActive_) {
-            return;
-        }
-        const uint32_t nChunk = seqLen_ / static_cast<uint32_t>(kBt);
-        const uint32_t totalHeads = batchSize_ * valueHeadNum_;
-        bool tables = false;
-        for (uint32_t head = headBegin_; head < totalHeads; head += aicNum_) {
-            batchIdx_ = valueHeadNum_ == 0 ? 0 : head / valueHeadNum_;
-            headIdx_ = valueHeadNum_ == 0 ? 0 : head - batchIdx_ * valueHeadNum_;
-            const bool prime = sub_ < nChunk;
-            // Loads first, then the table VF, so the old scalar SetValue loop is
-            // not sitting in front of MTE2. No initial state on this path.
-            if (prime && hasInitial_ == 0) {
-                PrepareLoad(sub_);
-            }
-            if (!tables) {
-                GdnFwd32::BuildTablesVF(ubSh_, ubEye_);
-                tables = true;
-            }
-            if (hasInitial_ != 0) {
-                InitState();
-                if (prime) {
-                    PrepareUb(sub_);
-                    PublishQk(sub_);
-                }
-            } else {
-                ZeroState();
-                if (prime) {
-                    PublishStaged(sub_);
-                }
-            }
-            uint32_t invDone = 0xFFFFFFFFU;
-            // 1 once the updated state is already in L1 for this chunk.
-            uint32_t uploaded = 0;
-            for (uint32_t c = 0; c < nChunk; ++c) {
-                const bool owner = Owns(c);
-                if (owner && invDone != c) {
-                    CrossCoreWaitFlag<0x4, PIPE_V>(kFlagKkt);
-                    InverseUb(c);
-                    InverseL1(c);
-                }
-                // H before the gate. The non-owner cumsum was the cube's H bubble.
-                if (uploaded == 0) {
-                    UploadH();
-                }
-                uploaded = 0;
-                // Chunk 1's kkt is ready before this loop (Q/K came from the prologue).
-                // Invert it here, under chunk 0's A@v, instead of after v_new.
-                if (!owner && c == 0 && c + 1 < nChunk) {
-                    CrossCoreWaitFlag<0x4, PIPE_V>(kFlagKkt);
-                    InverseUb(c + 1);
-                    InverseL1(c + 1);
-                    invDone = c + 1;
-                }
-                if (!owner) {
-                    LoadGate(c);
-                }
-                // eg of this chunk is saved before the next PrepareUb, which reuses ubEg_.
-                // L2 is after the H upload: the next chunk's w@H was waiting on it.
-                const uint32_t nxt = c + 2;
-                LocalTensor<float> egNow = owner ? ubEg_ : ubEg2_;
-                if (owner && nxt < nChunk) {
-                    Copy64(ubScratch_, ubEg_);
-                    egNow = ubScratch_;
-                }
-                // Next chunk's GM load overlaps v_new, o and the saxpy. It used to
-                // sit inside PublishStaged, in front of the cube's K@K / V wait.
-                if (owner && nxt < nChunk) {
-                    PrepareLoad(nxt);
-                }
-                CrossCoreWaitFlag<0x4, PIPE_V>(kFlagP);
-                const float decay = DecayOf(egNow);
-                VnewHalfVF(ubU_, ubP_, egNow, ubVn_, ubVg_, sub_ * 16);
-                PublishHalf(c);
-                if (!owner && c + 1 < nChunk && invDone != c + 1) {
-                    CrossCoreWaitFlag<0x4, PIPE_V>(kFlagKkt);
-                    InverseUb(c + 1);
-                    InverseL1(c + 1);
-                    invDone = c + 1;
-                }
-                CrossCoreWaitFlag<0x4, PIPE_V>(kFlagO);
-                StoreO(c);
-                ApplyD(decay);
-                // Next H before PublishQk. Q/K copies were sitting in front of the H flag.
-                if (c + 1 < nChunk) {
-                    UploadH();
-                    uploaded = 1;
-                }
-                // K's L2 and the K flag go out before q's L2, so K@K is not behind q.
-                if (owner && nxt < nChunk) {
-                    PublishStaged(nxt);
-                }
-            }
-            WaitFlag<HardEvent::V_MTE3>(1);
-            if (nzArmed_ != 0) {
-                WaitFlag<HardEvent::MTE3_V>(3);
-                nzArmed_ = 0;
-            }
-            constexpr uint32_t nElem = 64 * 128;
-            const int64_t elem = static_cast<int64_t>(
-                (static_cast<uint64_t>(batchIdx_) * valueHeadNum_ + headIdx_) * kDim * kDim +
-                static_cast<uint64_t>(sub_) * nElem);
-            PanelsToNd(ubD_, ubState_);
-            SetFlag<HardEvent::V_MTE3>(1);
-            WaitFlag<HardEvent::V_MTE3>(1);
-            DataCopy(stateGm_[elem], ubD_, nElem);
-        }
-    }
+
 
     __aicore__ inline LocalTensor<float> L0COf(uint8_t bank)
     {
@@ -702,8 +553,7 @@ private:
         SetFlag<HardEvent::M_FIX>(bank);
     }
 
-    // K@K only. The inverse starts on this flag, so it is issued before the H wait
-    // and the H stall covers the mad. Q@K stays later, under v_new.
+    // K@K only. kFlagKkt is the inverse's start flag.
     __aicore__ inline void Kkt(uint32_t chunk, uint8_t bank)
     {
         const uint32_t owner = chunk & 1U;
@@ -738,6 +588,107 @@ private:
         Qk(chunk, b1);
     }
 
+    __aicore__ inline void ProcessAiv()
+    {
+        if (!isActive_) {
+            return;
+        }
+        const uint32_t nChunk = seqLen_ / static_cast<uint32_t>(kBt);
+        const uint32_t totalHeads = batchSize_ * valueHeadNum_;
+        // One issue for the whole core. The first PrepareLoad then runs on MTE2
+        // while this VF is still on the vector pipe. InitState uses MTE2_V(1).
+        GdnFwd32::BuildTablesVF(ubSh_, ubEye_);
+        for (uint32_t head = headBegin_; head < totalHeads; head += aicNum_) {
+            batchIdx_ = valueHeadNum_ == 0 ? 0 : head / valueHeadNum_;
+            headIdx_ = valueHeadNum_ == 0 ? 0 : head - batchIdx_ * valueHeadNum_;
+            const bool prime = sub_ < nChunk;
+            if (prime) {
+                PrepareLoad(sub_);
+            }
+            InitState();
+            if (prime) {
+                PublishStaged(sub_);
+            }
+            uint32_t invDone = 0xFFFFFFFFU;
+            // 1 once the updated state is already in L1 for this chunk.
+            uint32_t uploaded = 0;
+            for (uint32_t c = 0; c < nChunk; ++c) {
+                const bool owner = Owns(c);
+                if (owner && invDone != c) {
+                    CrossCoreWaitFlag<0x4, PIPE_V>(kFlagKkt);
+                    InverseUb(c);
+                    InverseL1(c);
+                }
+                // H before the gate. The non-owner cumsum was the cube's H bubble.
+                if (uploaded == 0) {
+                    UploadH();
+                }
+                uploaded = 0;
+                // Chunk 1's kkt is ready before this loop (Q/K came from the prologue).
+                // Invert it here, under chunk 0's A@v, instead of after v_new.
+                if (!owner && c == 0 && c + 1 < nChunk) {
+                    CrossCoreWaitFlag<0x4, PIPE_V>(kFlagKkt);
+                    InverseUb(c + 1);
+                    InverseL1(c + 1);
+                    invDone = c + 1;
+                }
+                if (!owner) {
+                    LoadGate(c);
+                }
+                // eg of this chunk is saved before the next publish, which reuses ubEg_.
+                // L2 is after the H upload: the next chunk's w@H was waiting on it.
+                const uint32_t nxt = c + 2;
+                LocalTensor<float> egNow = owner ? ubEg_ : ubEg2_;
+                if (owner && nxt < nChunk) {
+                    Copy64(ubScratch_, ubEg_);
+                    egNow = ubScratch_;
+                }
+                // Next chunk's GM load overlaps v_new, o and the saxpy. It used to
+                // sit inside PublishStaged, in front of the cube's K@K / V wait.
+                if (owner && nxt < nChunk) {
+                    PrepareLoad(nxt);
+                }
+                CrossCoreWaitFlag<0x4, PIPE_V>(kFlagP);
+                const float decay = DecayOf(egNow);
+                VnewHalfVF(ubU_, ubP_, egNow, ubVn_, ubVg_, sub_ * 16);
+                PublishHalf(c);
+                // The solve does not read P, but it shares this vector with v_new.
+                // Running it first holds off kFlagV and the cube waits there.
+                if (!owner && c + 1 < nChunk && invDone != c + 1) {
+                    CrossCoreWaitFlag<0x4, PIPE_V>(kFlagKkt);
+                    InverseUb(c + 1);
+                    InverseL1(c + 1);
+                    invDone = c + 1;
+                }
+                CrossCoreWaitFlag<0x4, PIPE_V>(kFlagO);
+                StoreO(c);
+                ApplyD(decay);
+                // Next H before the next publish. Q/K copies were sitting in front of the H flag.
+                if (c + 1 < nChunk) {
+                    UploadH();
+                    uploaded = 1;
+                }
+                // K's L2 and the K flag go out before q's L2, so K@K is not behind q.
+                if (owner && nxt < nChunk) {
+                    PublishStaged(nxt);
+                }
+            }
+            WaitFlag<HardEvent::V_MTE3>(1);
+            if (nzArmed_ != 0) {
+                WaitFlag<HardEvent::MTE3_V>(3);
+                nzArmed_ = 0;
+            }
+            constexpr uint32_t nElem = 64 * 128;
+            const int64_t elem = static_cast<int64_t>(
+                (static_cast<uint64_t>(batchIdx_) * valueHeadNum_ + headIdx_) * kDim * kDim +
+                static_cast<uint64_t>(sub_) * nElem);
+            PanelsToNd(ubD_, ubState_);
+            SetFlag<HardEvent::V_MTE3>(1);
+            WaitFlag<HardEvent::V_MTE3>(1);
+            DataCopy(stateGm_[elem], ubD_, nElem);
+        }
+    }
+
     __aicore__ inline void ProcessAic()
     {
         if (!isActive_) {
@@ -750,42 +701,72 @@ private:
         const uint32_t nChunk = seqLen_ / static_cast<uint32_t>(kBt);
         const uint32_t totalHeads = batchSize_ * valueHeadNum_;
         for (uint32_t head = headBegin_; head < totalHeads; head += aicNum_) {
-            if (nChunk > 0) {
-                KktQk(0, true);
+            // Chunk 0 uses L0C bank 0 and chunk 1 uses bank 1, so the second
+            // MMAD overlaps the first fixpipe. Both K@K still finish before
+            // either Q@K, so AIV1's inverse is not waiting out AIV0's Q@K.
+            for (uint32_t c = 0; c < nChunk && c < 2; ++c) {
+                Kkt(c, static_cast<uint8_t>(c));
             }
-            // Chunk 1's Q/K are already published. Its kkt overlaps chunk 0's inverse.
-            if (nChunk > 1) {
-                KktQk(1, true);
+            for (uint32_t c = 0; c < nChunk && c < 2; ++c) {
+                Qk(c, static_cast<uint8_t>(c));
             }
             for (uint32_t c = 0; c < nChunk; ++c) {
                 const uint32_t owner = c & 1U;
                 const uint32_t slot = owner;
                 CrossCoreWaitFlag<0x4, PIPE_MTE1>(Seen(kFlagInv, owner));
 
-                // w's load overlaps u's mad. Different L0C, so u's fixpipe overlaps w's mad.
-                Mad(l1A_[slot], l1Vb_[slot], kBt, kDim, kBt, true, 0);
-                Mad(l1A_[slot], l1Kbg_[slot], kBt, kDim, kBt, true, 1);
+                // Same two L0A/L0B/L0C banks and the same Mad / M_FIX / fixpipe
+                // steps as the opening K@K pair. The old bank-1 token is taken
+                // first. Cube sets a new one only once A@v is in L0 and its mad
+                // is the next cube op, so A@kbg's Mad starts its load then.
+                WaitFlag<HardEvent::M_MTE1>(1);
+                WaitFlag<HardEvent::M_MTE1>(0);
+                GdnFwd32::LoadL1NzToL0AB(l1A_[slot], l1Vb_[slot], l0A_[0], l0B_[0], kBt, kDim, kBt, true, 0, 0,
+                                         false, false);
+                WaitFlag<HardEvent::MTE1_M>(0);
+                WaitFlag<HardEvent::FIX_M>(0);
+                SetFlag<HardEvent::M_MTE1>(1);
+                AscendC::MmadParams madU;
+                madU.m = kBt;
+                madU.n = kDim;
+                madU.k = kBt;
+                madU.cmatrixInitVal = true;
+                madU.cmatrixSource = false;
+                madU.unitFlag = 0;
+                AscendC::Mmad(l0C0_, l0A_[0], l0B_[0], madU);
+                SetFlag<HardEvent::M_MTE1>(0);
+                SetFlag<HardEvent::M_FIX>(0);
                 WaitFlag<HardEvent::M_FIX>(0);
                 FixpipeHalfBf16(ubU_, l0C0_, kBt, kDim);
                 SetFlag<HardEvent::FIX_M>(0);
+                Mad(l1A_[slot], l1Kbg_[slot], kBt, kDim, kBt, true, 1);
+                // H does not depend on W. Bank 0 was freed by A@v, so this load
+                // overlaps A@kbg's mad. W is loaded after its fixpipe.
+                WaitFlag<HardEvent::M_MTE1>(0);
+                CrossCoreWaitFlag<0x4, PIPE_MTE1>(Seen(kFlagH, 0));
+                CrossCoreWaitFlag<0x4, PIPE_MTE1>(Seen(kFlagH, 1));
+                GdnFwd32::LoadL1NzToL0B(l1H_, l0B_[0], kDim, kDim, true);
+
                 WaitFlag<HardEvent::M_FIX>(1);
                 GdnFwd32::FixpipeBf16L1(l1W_[slot], l0C1_, kBt, kDim);
                 SetFlag<HardEvent::FIX_M>(1);
                 SetFlag<HardEvent::FIX_MTE1>(0);
                 WaitFlag<HardEvent::FIX_MTE1>(0);
-
-                // H is the updated state. A@v above overlaps the upload.
-                CrossCoreWaitFlag<0x4, PIPE_MTE1>(Seen(kFlagH, 0));
-                CrossCoreWaitFlag<0x4, PIPE_MTE1>(Seen(kFlagH, 1));
-                Mad(l1W_[slot], l1H_, kBt, kDim, kDim, true, 0);
+                GdnFwd32::LoadL1NzToL0A(l1W_[slot], l0A_[0], kBt, kDim, false);
+                SetFlag<HardEvent::MTE1_M>(0);
+                WaitFlag<HardEvent::MTE1_M>(0);
+                GdnFwd32::MmadL0ToL0C(l0A_[0], l0B_[0], l0C0_, kBt, kDim, kDim, true, 0);
+                SetFlag<HardEvent::M_MTE1>(0);
+                SetFlag<HardEvent::M_FIX>(0);
                 WaitFlag<HardEvent::M_FIX>(0);
                 FixpipeHalfBf16(ubP_, l0C0_, kBt, kDim);
                 SetFlag<HardEvent::FIX_M>(0);
                 CrossCoreSetFlag<0x4, PIPE_FIX>(kFlagP);
                 CrossCoreSetFlag<0x4, PIPE_FIX>(static_cast<uint16_t>(kFlagP + kAiv1));
 
-                // H stays in l0B_[0]. q_exp is in L1 already; load it before v_new so
-                // q@H does not move H again. Bank 1 holds the next kkt.
+                // H stays in l0B_[0]. q_exp is loaded before v_new so q@H does not move H.
+                // Next K@K stays here, under v_new. Issuing it before w@H stalls on
+                // the K flag, which is published only after the previous chunk's D.
                 WaitFlag<HardEvent::M_MTE1>(0);
                 GdnFwd32::LoadL1NzToL0A(l1Qexp_[slot], l0A_[0], kBt, kDim, false);
                 SetFlag<HardEvent::MTE1_M>(0);
