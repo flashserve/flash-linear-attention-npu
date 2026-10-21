@@ -11,8 +11,11 @@
 #include "chunk_fwd_h.h"
 #include <dlfcn.h>
 #include <new>
+#include <vector>
+#include <algorithm>
 
 #include "aclnn_kernels/contiguous.h"
+#include "aclnn_kernels/transpose.h"
 #include "acl/acl.h"
 #include "aclnn/aclnn_base.h"
 #include "aclnn_kernels/common/op_error_check.h"
@@ -291,6 +294,31 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
     return ACLNN_SUCCESS;
 }
 
+// state_v_first=true 的末两维转置辅助（照抄 chunk_gated_delta_rule_fwd_h 同名实现，
+// 第七轮方案③：gated 路径 kernel 恒 [K,V] 产出，aclnn 层做 [K,V]<->[V,K] 适配）
+static op::Shape SwapLastTwo(const op::Shape &input)
+{
+    op::Shape output = input;
+    const int64_t dimA = input.GetDim(input.GetDimNum() - 2);
+    const int64_t dimB = input.GetDim(input.GetDimNum() - 1);
+    output.SetDim(input.GetDimNum() - 2, dimB);
+    output.SetDim(input.GetDimNum() - 1, dimA);
+    return output;
+}
+
+static const aclTensor *TransposeLastTwo(const aclTensor *input, aclOpExecutor *executor)
+{
+    const size_t rank = input->GetViewShape().GetDimNum();
+    std::vector<int64_t> perm(rank);
+    for (size_t idx = 0; idx < rank; ++idx) {
+        perm[idx] = static_cast<int64_t>(idx);
+    }
+    std::swap(perm[rank - 2], perm[rank - 1]);
+    const aclIntArray *permArray = executor->AllocIntArray(perm.data(), perm.size());
+    CHECK_RET(permArray != nullptr, nullptr);
+    return l0op::Transpose(input, permArray, executor);
+}
+
 static aclnnStatus ParamsDataContiguous(ChunkFwdHParams &params, aclOpExecutor *executorPtr)
 {
     auto status = DataContiguous(params.k, executorPtr);
@@ -440,21 +468,54 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
     if (ret != ACLNN_SUCCESS) {
         return ret;
     }
+    // stateVFirst=true（第七轮方案③，照抄 gated）：initial 转回 [K,V] 进 kernel；
+    // h/final_state 走 [K,V] 中转缓冲，kernel 原生产出后 TransposeLastTwo 落 [V,K]。
+    // gated 复用路径的 kernel 恒 [K,V] 产出（谓词对 vfirst=1 放开后走 vfirst=0
+    // 同款 kernel 形态），老路径 kernel 的 STATE_V_FIRST 模板同样产出 [K,V] 逻辑
+    // 内容——两条 kernel 路径在 [K,V] 语义上统一，aclnn 层适配输出契约。
+    const aclTensor *initialStateCompute = params.initialStateOptional;
+    const aclTensor *hCompute = params.hOut;
+    const aclTensor *finalStateCompute = params.finalStateOut;
+    if (params.stateVFirst && initialStateCompute != nullptr) {
+        initialStateCompute = TransposeLastTwo(initialStateCompute, executorPtr);
+        CHECK_RET(initialStateCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
+    if (params.stateVFirst) {
+        hCompute = executorPtr->AllocTensor(
+            SwapLastTwo(params.hOut->GetViewShape()), params.hOut->GetDataType(), Format::FORMAT_ND);
+        CHECK_RET(hCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (params.finalStateOut != nullptr) {
+            finalStateCompute = executorPtr->AllocTensor(
+                SwapLastTwo(params.finalStateOut->GetViewShape()), params.finalStateOut->GetDataType(),
+                Format::FORMAT_ND);
+            CHECK_RET(finalStateCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        }
+    }
     auto result = l0op::ChunkFwdH(
-        params.k, params.w, params.u, params.gOptional, params.gkOptional, params.initialStateOptional,
+        params.k, params.w, params.u, params.gOptional, params.gkOptional, initialStateCompute,
         params.cuSeqlensOptional, params.chunkIndicesOptional, params.outputFinalState, params.chunkSize,
-        params.saveNewValue, params.useExp2, params.stateVFirst,
-        params.hOut, params.vNewOut, params.finalStateOut, executorPtr);
+        params.saveNewValue, params.useExp2, false,
+        hCompute, params.vNewOut, finalStateCompute, executorPtr);
     CHECK_RET(result[0] != nullptr && result[1] != nullptr &&
                   (!outputFinalState || result[2] != nullptr),
               ACLNN_ERR_INNER_NULLPTR);
 
-    auto viewCopyResult0 = l0op::ViewCopy(result[0], params.hOut, executorPtr);
+    const aclTensor *hResult = result[0];
+    if (params.stateVFirst) {
+        hResult = TransposeLastTwo(hResult, executorPtr);
+        CHECK_RET(hResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
+    auto viewCopyResult0 = l0op::ViewCopy(hResult, params.hOut, executorPtr);
     CHECK_RET(viewCopyResult0 != nullptr, ACLNN_ERR_INNER_NULLPTR);
     auto viewCopyResult1 = l0op::ViewCopy(result[1], params.vNewOut, executorPtr);
     CHECK_RET(viewCopyResult1 != nullptr, ACLNN_ERR_INNER_NULLPTR);
     if (outputFinalState && params.finalStateOut != nullptr) {
-        auto viewCopyResult2 = l0op::ViewCopy(result[2], params.finalStateOut, executorPtr);
+        const aclTensor *finalStateResult = result[2];
+        if (params.stateVFirst) {
+            finalStateResult = TransposeLastTwo(finalStateResult, executorPtr);
+            CHECK_RET(finalStateResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        }
+        auto viewCopyResult2 = l0op::ViewCopy(finalStateResult, params.finalStateOut, executorPtr);
         CHECK_RET(viewCopyResult2 != nullptr, ACLNN_ERR_INNER_NULLPTR);
     }
 

@@ -156,7 +156,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tilingCtx.gatedGateDtype = gateDtypeToken == CHUNK_FWD_H_TPL_FP32 ? 2 : 1;
     tilingCtx.gatedStateDtype = stateDtypeToken == CHUNK_FWD_H_TPL_FP32 ? 2 : 1;
     // gated 复用 eligible（与 kernel 谓词 FwdHGatedReusable 同条件镜像）
-    tilingCtx.gatedEligible = useG && useExp2 && !stateVFirst && storeFinalState &&
+    tilingCtx.gatedEligible = useG && useExp2 && storeFinalState &&
         stateDtypeToken == CHUNK_FWD_H_TPL_FP32 &&
         gateDtypeToken == CHUNK_FWD_H_TPL_FP32;
     tilingCtx.libApiWorkSpaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
