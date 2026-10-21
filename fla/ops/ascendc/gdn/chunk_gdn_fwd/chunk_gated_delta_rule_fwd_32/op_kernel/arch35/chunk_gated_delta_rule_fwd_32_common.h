@@ -104,6 +104,7 @@ constexpr uint32_t L1_VNEWG = 96 * 1024;
 constexpr uint32_t L1_ATTN = 104 * 1024;
 
 constexpr AscendC::FixpipeConfig kFixUbNz2Nd = {AscendC::CO2Layout::ROW_MAJOR, true};
+constexpr AscendC::FixpipeConfig kFixUbNz = {AscendC::CO2Layout::NZ, true};
 
 // Stage1/2 ping-pong. One AIV owns two chunks (db 0/1). A round is 4 chunks:
 //   task 0 AIV0 db0 [0,32)   task 1 AIV1 db0 [32,64)

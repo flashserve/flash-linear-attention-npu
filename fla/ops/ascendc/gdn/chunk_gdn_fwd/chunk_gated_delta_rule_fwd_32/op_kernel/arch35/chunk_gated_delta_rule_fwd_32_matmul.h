@@ -210,6 +210,23 @@ __aicore__ inline void FixpipeBf16Ub(LocalTensor<bfloat16_t> ub, LocalTensor<flo
     AscendC::Fixpipe<bfloat16_t, float, kFixUbNz2Nd>(ub, l0C, p);
 }
 
+// L0C fp32 -> UB bf16 NZ. One column panel is [m, 16] contiguous, same image
+// CopyNdRowsToFullNz writes, so the state saxpy can stay elementwise.
+__aicore__ inline void FixpipeBf16UbNz(LocalTensor<bfloat16_t> ub, LocalTensor<float> l0C, int m, int n,
+                                       uint8_t subBlk = 0)
+{
+    AscendC::FixpipeParamsArch3510<AscendC::CO2Layout::NZ> p;
+    p.nSize = static_cast<uint16_t>(n);
+    p.mSize = static_cast<uint16_t>(m);
+    p.srcStride = static_cast<uint16_t>(m);
+    p.dstStride = static_cast<uint32_t>(m) * 16;
+    p.quantPre = QuantMode_t::F322BF16;
+    p.dualDstCtl = 0;
+    p.subBlockId = (subBlk != 0);
+    p.isChannelSplit = false;
+    AscendC::Fixpipe<bfloat16_t, float, kFixUbNz>(ub, l0C, p);
+}
+
 constexpr AscendC::FixpipeConfig kFixNzL1 = {AscendC::CO2Layout::NZ, false};
 
 // L0C fp32 NZ -> L1 bf16 NZ, C0=16. Column-fractal stride is m * 16 elements.
