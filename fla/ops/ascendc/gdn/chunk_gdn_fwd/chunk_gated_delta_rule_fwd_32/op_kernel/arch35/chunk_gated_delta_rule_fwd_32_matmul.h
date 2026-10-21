@@ -54,6 +54,20 @@ __aicore__ inline void LoadL1NzToL0AB(LocalTensor<bfloat16_t> l1A, LocalTensor<b
     }
 }
 
+// Reload only L0B. Caller already waited M_MTE1. The matching L0A load and
+// MTE1_M flag come later, so this load can sit under the previous mad.
+__aicore__ inline void LoadL1NzToL0B(LocalTensor<bfloat16_t> l1B, LocalTensor<bfloat16_t> l0B, int32_t n, int32_t k,
+                                     bool transposeB)
+{
+    constexpr uint32_t c0 = 16;
+    const uint16_t bMFracs = transposeB ? static_cast<uint16_t>(k / 16) : static_cast<uint16_t>(n / 16);
+    const uint16_t bKFracs = transposeB ? static_cast<uint16_t>(n / c0) : static_cast<uint16_t>(k / c0);
+    const uint16_t bDst = transposeB ? static_cast<uint16_t>(n / 16) : bMFracs;
+    AscendC::LoadData2DParamsV2 loadB;
+    FillLoad2D(loadB, bMFracs, bKFracs, bMFracs, bDst, transposeB);
+    AscendC::LoadData(l0B, l1B, loadB);
+}
+
 // Reload only L0A. L0B stays, so the four D slices share one v_new_g load.
 // Caller waited M_MTE1 and will set/wait MTE1_M around the following mad.
 __aicore__ inline void LoadL1NzToL0A(LocalTensor<bfloat16_t> l1A, LocalTensor<bfloat16_t> l0A, int32_t m, int32_t k,
