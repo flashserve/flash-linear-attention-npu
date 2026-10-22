@@ -142,8 +142,7 @@ __aicore__ inline void VnewHalfVF(LocalTensor<bfloat16_t> u, LocalTensor<bfloat1
             RegTensor<bfloat16_t> a, b, glo, ghi;
             RegTensor<float> ri, gate;
             LoadAlign(a, uAddr + static_cast<uint32_t>(r) * kDim);
-            LoadAlign(b, pAddr + static_cast<uint32_t>(r) * kDim);
-            Sub(a, a, b, m128);
+            (void)pAddr;
             // Tight NZ, panel height 16. PublishHalf then needs one copy, not eight.
             StoreAlign<bfloat16_t, DataCopyMode::DATA_BLOCK_COPY>(nAddr + static_cast<uint32_t>(r) * 16, a, 16,
                                                                   m128);
@@ -770,10 +769,7 @@ private:
                 madU.unitFlag = 0;
                 AscendC::Mmad(l0C0_, l0A_[0], l0B_[0], madU);
                 SetFlag<HardEvent::M_MTE1>(0);
-                SetFlag<HardEvent::M_FIX>(0);
-                WaitFlag<HardEvent::M_FIX>(0);
-                FixpipeHalfBf16(ubU_, l0C0_, kBt, kDim);
-                SetFlag<HardEvent::FIX_M>(0);
+                // u stays in l0C0. kbg is stored negated, so w@H accumulates -p.
                 Mad(l1A_[slot], l1Kbg_[slot], kBt, kDim, kBt, true, 1);
                 // H does not depend on W. Bank 0 was freed by A@v, so this load
                 // overlaps A@kbg's mad. W is loaded after its fixpipe.
@@ -790,11 +786,12 @@ private:
                 GdnFwd32::LoadL1NzToL0A(l1W_[slot], l0A_[0], kBt, kDim, false);
                 SetFlag<HardEvent::MTE1_M>(0);
                 WaitFlag<HardEvent::MTE1_M>(0);
-                GdnFwd32::MmadL0ToL0C(l0A_[0], l0B_[0], l0C0_, kBt, kDim, kDim, true, 0);
+                // initC false: l0C0 still holds u, and W @ H is -p.
+                GdnFwd32::MmadL0ToL0C(l0A_[0], l0B_[0], l0C0_, kBt, kDim, kDim, false, 0);
                 SetFlag<HardEvent::M_MTE1>(0);
                 SetFlag<HardEvent::M_FIX>(0);
                 WaitFlag<HardEvent::M_FIX>(0);
-                FixpipeHalfBf16(ubP_, l0C0_, kBt, kDim);
+                FixpipeHalfBf16(ubU_, l0C0_, kBt, kDim);
                 SetFlag<HardEvent::FIX_M>(0);
                 CrossCoreSetFlag<0x4, PIPE_FIX>(kFlagP);
                 CrossCoreSetFlag<0x4, PIPE_FIX>(static_cast<uint16_t>(kFlagP + kAiv1));
