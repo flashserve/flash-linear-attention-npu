@@ -306,12 +306,13 @@ bool ResolveChunkLocalCumsumOutputDtype(
     }
 
     // 调用ACLNN算子
+    bool use_exp2_flag = static_cast<bool>(use_exp2.value_or(gK_.defined()));
     EXEC_NPU_CMD_EXT(
         aclnnChunkGatedDeltaRuleBwdDhu,
         q, k, w, d_o, dv,
         g_, gK_, h0_, dht_,
         cu_seqlens, chunk_indices,
-        scale, chunk_size, static_cast<bool>(use_exp2.value_or(gK_.defined())), stateVFirst,
+        scale, chunk_size, use_exp2_flag, stateVFirst,
         dh, dh0, dv2
     );
     return std::make_tuple(dh, dh0, dv2);
@@ -739,7 +740,6 @@ at::Tensor npu_kda_gate_cumsum(
     at::Tensor gk = at::empty(g.sizes(), g.options().dtype(at::kFloat));
     const at::Tensor &A_log_ = c10::value_or_else(A_log, [] { return at::Tensor(); });
     const at::Tensor &dt_bias_ = c10::value_or_else(dt_bias, [] { return at::Tensor(); });
-    const char *layout_cstr = layout_str.c_str();
     EXEC_NPU_CMD_EXT(
         aclnnKdaGateCumsum,
         g, A_log_, dt_bias_, cu_seqlens,
@@ -977,12 +977,14 @@ at::Tensor npu_causal_conv1d(
                 "activation_mode only supports 0/1, got ", activation_mode);
     const std::string activation = activation_mode == 0 ? "none" : "silu";
 
+    int placeholder_head = -1;
+    int placeholder_pad = -1;
     EXEC_NPU_CMD_EXT(
         aclnnCausalConv1d,
         x, weight, bias_tensor, conv_states,
         device_metadata, device_metadata, device_metadata, device_metadata,
         query_start_loc_host, cache_indices_host, has_initial_state_host, num_accepted_tokens_host,
-        activation, pad_slot_id, -1, run_mode, head_num, -1,
+        activation, pad_slot_id, placeholder_pad, run_mode, head_num, placeholder_head,
         y
     );
     return y;
