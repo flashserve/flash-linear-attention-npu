@@ -201,6 +201,10 @@ __aicore__ inline void L2InplaceQKVF(LocalTensor<bfloat16_t> &q, LocalTensor<bfl
         Mul(o0, o0, sc0, pregAll);                                                                                    \
         Mul(e1, e1, sc1, pregAll);                                                                                    \
         Mul(o1, o1, sc1, pregAll);                                                                                    \
+        Muls(e0, e0, -1.0f, pregAll);                                                                                 \
+        Muls(o0, o0, -1.0f, pregAll);                                                                                 \
+        Muls(e1, e1, -1.0f, pregAll);                                                                                 \
+        Muls(o1, o1, -1.0f, pregAll);                                                                                 \
         StoreNzEvenOdd(kbgAddr, static_cast<uint32_t>(i) * 2, e0, o0, m16, m128);                                     \
         StoreNzEvenOdd(kbgAddr, static_cast<uint32_t>(i) * 2 + 1, e1, o1, m16, m128);                                 \
     }
