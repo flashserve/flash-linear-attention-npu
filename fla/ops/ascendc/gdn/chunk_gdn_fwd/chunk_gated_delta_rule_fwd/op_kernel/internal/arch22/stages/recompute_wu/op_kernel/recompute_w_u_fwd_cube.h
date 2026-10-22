@@ -152,7 +152,7 @@ public:
             uint32_t hEnd = 0;
             DecodeRecomputeTask<kFlattenHeadTasks, kAbcTaskOrder>(
                 loopIdx, params.ptrCuSeqLens, params.Hv, params.T, params.ChunkSize(),
-                params.chunkNum, chunkIdx, hBegin, hEnd);
+                params.chunkNum, params.hvPerHk, chunkIdx, hBegin, hEnd);
             GetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.Hv, params.T,
                             params.ChunkSize(), chunkIdx, bos, eos);
             uint32_t curChunkSize = eos - bos;

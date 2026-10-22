@@ -464,6 +464,8 @@ __aicore__ inline void RunFrontBatchBody(
         static_cast<int64_t>(abc.B), static_cast<int64_t>(abc.T),
         static_cast<int64_t>(abc.Hv), static_cast<int64_t>(Config::ChunkSize(abc)),
         1, static_cast<int64_t>(phase6->solveSequenceCount), 0, 0, 0};
+    problem.frontHeadsPerKey = static_cast<int64_t>(abc.hvPerHk);
+    problem.frontChunkIndices = chunkIndices;
     if (problem.sequences == 0) {
         problem.tasks32 = (problem.tokens + 31) / 32 * problem.batch * problem.heads;
         problem.tasks64 = (problem.tokens + 63) / 64 * problem.batch * problem.heads;

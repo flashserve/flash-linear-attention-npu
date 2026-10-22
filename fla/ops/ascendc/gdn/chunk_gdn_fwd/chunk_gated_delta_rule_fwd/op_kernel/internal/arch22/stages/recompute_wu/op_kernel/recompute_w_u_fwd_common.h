@@ -14,6 +14,7 @@
 
 #ifndef RECOMPUTE_W_U_FWD_COMMON_H
 #define RECOMPUTE_W_U_FWD_COMMON_H
+#include "../../../common/front_task_order.h"
 constexpr uint64_t SYNC_AIV_AIC_FLAG_3 = 3;
 constexpr uint64_t SYNC_AIC_AIV_FLAG_5 = 5;
 constexpr uint64_t ONE_BLOCK_32 = 32;
@@ -49,32 +50,39 @@ __aicore__ void inline GetChunkOffset(GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
 template <bool kFlattenHeadTasks, bool kAbcTaskOrder>
 __aicore__ inline void DecodeRecomputeTask(
     uint32_t loopIdx, GM_ADDR cuSeqlens, uint64_t H, uint64_t T, uint64_t chunkSize,
-    uint64_t chunkNum, uint32_t &chunkIdx, uint32_t &hBegin, uint32_t &hEnd)
+    uint64_t chunkNum, uint64_t headsPerKey, uint32_t &chunkIdx, uint32_t &hBegin, uint32_t &hEnd)
 {
     if constexpr (!kFlattenHeadTasks) {
         chunkIdx = loopIdx;
         hBegin = 0;
         hEnd = static_cast<uint32_t>(H);
         return;
-    }
-    if constexpr (!kAbcTaskOrder) {
+    } else if constexpr (!kAbcTaskOrder) {
         chunkIdx = loopIdx / static_cast<uint32_t>(H);
         hBegin = loopIdx % static_cast<uint32_t>(H);
         hEnd = hBegin + 1;
         return;
-    }
-
-    if (cuSeqlens != nullptr) {
-        chunkIdx = loopIdx % static_cast<uint32_t>(chunkNum);
-        hBegin = loopIdx / static_cast<uint32_t>(chunkNum);
     } else {
-        const uint32_t chunksPerBatch = static_cast<uint32_t>((T + chunkSize - 1) / chunkSize);
-        const uint32_t tasksPerBatch = static_cast<uint32_t>(H) * chunksPerBatch;
-        const uint32_t batchIdx = loopIdx / tasksPerBatch;
-        const uint32_t taskInBatch = loopIdx % tasksPerBatch;
-        hBegin = taskInBatch / chunksPerBatch;
-        chunkIdx = batchIdx * chunksPerBatch + taskInBatch % chunksPerBatch;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+        const int64_t chunks = cuSeqlens != nullptr ? static_cast<int64_t>(chunkNum)
+            : static_cast<int64_t>((T + chunkSize - 1) / chunkSize);
+        const auto parent = GdnFrontTaskOrder::Decode(loopIdx, H, headsPerKey, chunks);
+        chunkIdx = static_cast<uint32_t>(parent.batch * chunks + parent.chunk);
+        hBegin = static_cast<uint32_t>(parent.head);
+#else
+        if (cuSeqlens != nullptr) {
+            chunkIdx = loopIdx % static_cast<uint32_t>(chunkNum);
+            hBegin = loopIdx / static_cast<uint32_t>(chunkNum);
+        } else {
+            const uint32_t chunksPerBatch = static_cast<uint32_t>((T + chunkSize - 1) / chunkSize);
+            const uint32_t tasksPerBatch = static_cast<uint32_t>(H) * chunksPerBatch;
+            const uint32_t batchIdx = loopIdx / tasksPerBatch;
+            const uint32_t taskInBatch = loopIdx % tasksPerBatch;
+            hBegin = taskInBatch / chunksPerBatch;
+            chunkIdx = batchIdx * chunksPerBatch + taskInBatch % chunksPerBatch;
+        }
+#endif
+        hEnd = hBegin + 1;
     }
-    hEnd = hBegin + 1;
 }
 #endif // RECOMPUTE_W_U_FWD_COMMON_H

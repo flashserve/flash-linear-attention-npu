@@ -200,7 +200,7 @@ __aicore__ inline void RecomputeWUFwdVectorProcess<kType, betaType,
         uint32_t hBegin = 0;
         uint32_t hEnd = 0;
         DecodeRecomputeTask<kFlattenHeadTasks, kAbcTaskOrder>(
-            loopIdx, cu_seqlens, Hv, T, ChunkSize(), chunkNum, chunkIdx, hBegin, hEnd);
+            loopIdx, cu_seqlens, Hv, T, ChunkSize(), chunkNum, hvPerHk, chunkIdx, hBegin, hEnd);
         GetChunkOffset(cu_seqlens, chunk_indices, B, Hv, T, ChunkSize(), chunkIdx, bos, eos);
         uint32_t curChunkSize = eos - bos;
         for (uint32_t h = hBegin; h < hEnd; ++h) {

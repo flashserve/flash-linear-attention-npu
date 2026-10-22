@@ -3,6 +3,7 @@
 
 #include "kernel_operator.h"
 #include "../../common/gdn_raw_front_resources.h"
+#include "../../common/front_task_order.h"
 #include "kernel_tiling/kernel_tiling.h"
 #include "lib/matmul_intf.h"
 #include <type_traits>
@@ -200,12 +201,21 @@ private:
         return lhs < rhs ? lhs : rhs;
     }
 
-    __aicore__ inline void DecodeTask(int64_t task, int64_t &b, int64_t &h, int64_t &chunk, int64_t &rowStart,
+    __aicore__ inline int64_t DecodeTask(int64_t task, int64_t &b, int64_t &h, int64_t &chunk, int64_t &rowStart,
                                       int64_t &valid) const
     {
-        chunk = task % NT_;
-        h = (task / NT_) % taskHeads_;
-        b = task / (taskHeads_ * NT_);
+        int64_t legacyTask = task;
+        if constexpr (kRawFront && StoreFp32SolveInput) {
+            const auto parent = GdnFrontTaskOrder::Decode(task, taskHeads_, hvPerHk_, NT_);
+            b = parent.batch;
+            h = parent.head;
+            chunk = parent.chunk;
+            legacyTask = GdnFrontTaskOrder::LegacyParent(parent, taskHeads_, NT_);
+        } else {
+            chunk = task % NT_;
+            h = (task / NT_) % taskHeads_;
+            b = task / (taskHeads_ * NT_);
+        }
         if (isVarlen_ != 0) {
             const int64_t seqId = chunkIndicesGm.GetValue(chunk * 2);
             const int64_t localChunk = chunkIndicesGm.GetValue(chunk * 2 + 1);
@@ -222,6 +232,7 @@ private:
         if (valid < 0) {
             valid = 0;
         }
+        return legacyTask;
     }
 
     __aicore__ inline void ComputeScoreTask(int64_t task)
@@ -256,7 +267,7 @@ private:
         int64_t chunk = 0;
         int64_t rowStart = 0;
         int64_t valid = 0;
-        DecodeTask(task, b, h, chunk, rowStart, valid);
+        const int64_t legacyTask = DecodeTask(task, b, h, chunk, rowStart, valid);
         if (valid <= 0) {
             return;
         }
@@ -281,10 +292,9 @@ private:
         // g/beta 同一 MTE2 前缀先就绪；后面的 score DMA 仍与 GateBlock 重叠。
         WaitMte2ToV();
 
-        int64_t scoreTask = task;
+        int64_t scoreTask = legacyTask;
         if constexpr (SharedKkt) {
-            // DecodeTask replaces varlen chunk with its sequence-local index;
-            // derive the packed Hk slot from the original task instead.
+            // score GM 仍按旧 head-major 编号；只压缩共享 Hk 轴。
             scoreTask -= (b * (taskHeads_ - Hk_) + h - h / hvPerHk_) * NT_;
         }
         const int64_t scoreBaseOffset = scoreTask * ChunkSize() * ChunkSize();

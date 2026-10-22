@@ -7,6 +7,7 @@
 #endif
 #include "kernel_operator.h"
 #include "../../common/gdn_raw_front_resources.h"
+#include "../../common/front_task_order.h"
 #include "solve_tri_fp32.h"
 namespace GdnFp32Solve {
 using namespace AscendC;
@@ -19,6 +20,9 @@ struct FullProblem {
     // 仅 RunOwnedBatch 使用：物理组内的完整 parent 子区间，GM 全局形状不变。
     int64_t localParentBegin = 0;
     int64_t localParentCount = -1;
+    // Parent=true 仅由 A2 Front 调用；GM layout 和原分核范围不变。
+    int64_t frontHeadsPerKey = 1;
+    GM_ADDR frontChunkIndices = nullptr;
 };
 struct WorkItem {
     int64_t b, h, t, base, length;
@@ -70,7 +74,7 @@ __aicore__ inline int64_t SpanTaskEnd(FullProblem p, int span, int64_t tasks, in
 }
 
 // 默认 false 走原 grid-stride 定位；Parent=true 时本地任务按同 parent 连续块映射，
-// 与 KKT DecodeTask 的 chunk-fast/head/batch 顺序一致。
+// 仅 RunOwnedBatch 的 Front 实例使用同一私有 helper，不增加运行时顺序选择。
 template <bool Parent = false, int kStaticBT = 0>
 __aicore__ inline WorkItem locate(int64_t task, int span, FullProblem p, GlobalTensor<int64_t> cu)
 {
@@ -84,20 +88,18 @@ __aicore__ inline WorkItem locate(int64_t task, int span, FullProblem p, GlobalT
         int64_t parent = CoreGroup() * per + p.localParentBegin + task / subs;
         int64_t subtile = task % subs;
         int64_t nt = n / (p.batch * p.heads);
-        int64_t chunk = parent % nt;
-        int64_t head = (parent / nt) % p.heads;
+        const auto coord = GdnFrontTaskOrder::Decode(parent, p.heads, p.frontHeadsPerKey, nt);
         if (p.sequences == 0) {
-            return {parent / (p.heads * nt), head, chunk * ChunkSize<kStaticBT>(p) + subtile * span, 0, p.tokens};
+            return {coord.batch, coord.head, coord.chunk * ChunkSize<kStaticBT>(p) + subtile * span,
+                    0, p.tokens};
         }
-        for (int64_t seq = 0; seq < p.sequences; ++seq) {
-            int64_t base = cu.GetValue(seq), length = cu.GetValue(seq + 1) - base;
-            int64_t count = (length + ChunkSize<kStaticBT>(p) - 1) / ChunkSize<kStaticBT>(p);
-            if (chunk < count) {
-                return {0, head, chunk * ChunkSize<kStaticBT>(p) + subtile * span, base, length};
-            }
-            chunk -= count;
-        }
-        return {0, 0, 0, 0, 0};
+        GlobalTensor<int64_t> indices;
+        indices.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(p.frontChunkIndices));
+        const int64_t seq = indices.GetValue(coord.chunk * 2);
+        const int64_t chunk = indices.GetValue(coord.chunk * 2 + 1);
+        const int64_t base = cu.GetValue(seq);
+        return {0, coord.head, chunk * ChunkSize<kStaticBT>(p) + subtile * span,
+                base, cu.GetValue(seq + 1) - base};
     }
     task = CoreGroup() + task * GetBlockNum();
     if (p.sequences == 0) {
