@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <tuple>
 #include <vector>
 #include <torch/library.h>
 #include <torch/csrc/autograd/custom_function.h>
@@ -1163,4 +1164,163 @@ at::Tensor npu_chunk_local_cumsum(
     return out;
 }
 
+namespace {
+at::Tensor optional_tensor(const c10::optional<at::Tensor> &value)
+{
+    return value.has_value() ? *value : at::Tensor();
+}
+
+c10::optional<at::Tensor> defined_tensor(const at::Tensor &value)
+{
+    return value.defined() ? c10::optional<at::Tensor>(value) : c10::nullopt;
+}
+} // namespace
+
+::std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor,
+             c10::optional<at::Tensor>, c10::optional<at::Tensor>, c10::optional<at::Tensor>>
+npu_chunk_gated_delta_rule_bwd(
+    const at::Tensor &q, const at::Tensor &k, const at::Tensor &v, const at::Tensor &g,
+    const at::Tensor &beta, const at::Tensor &A, const at::Tensor &d_o, double scale,
+    int64_t chunk_size, at::OptionalIntArrayRef cu_seqlens, at::OptionalIntArrayRef chunk_indices,
+    const c10::optional<at::Tensor> &initial_state, const c10::optional<at::Tensor> &dht,
+    const c10::optional<at::Tensor> &q_rstd, const c10::optional<at::Tensor> &k_rstd,
+    const c10::optional<at::Tensor> &beta_raw, c10::optional<bool> use_exp2,
+    c10::optional<bool> use_qk_l2norm_in_kernel, c10::optional<bool> use_gate_in_kernel,
+    c10::optional<bool> use_beta_sigmoid_in_kernel, c10::optional<bool> allow_neg_eigval,
+    c10::optional<bool> return_intermediate_states, c10::optional<bool> state_v_first,
+    const c10::optional<at::Tensor> &a_log, const c10::optional<at::Tensor> &dt_bias,
+    c10::string_view layout)
+{
+    TORCH_CHECK(!allow_neg_eigval.value_or(false),
+                "npu_chunk_gated_delta_rule_bwd: allow_neg_eigval is not supported by aclnn");
+    (void)return_intermediate_states;
+    const std::string layout_str(layout);
+    const bool sequence_major = layout_str == "BSND" || layout_str == "TND";
+    TORCH_CHECK(sequence_major || layout_str == "BNSD" || layout_str == "NTD",
+                "npu_chunk_gated_delta_rule_bwd: unsupported layout ", layout_str);
+    TORCH_CHECK(q.dim() == 4 && v.dim() == 4,
+                "npu_chunk_gated_delta_rule_bwd: q and v must be rank 4");
+    const int64_t batch = q.size(0);
+    const int64_t tokens = q.size(sequence_major ? 1 : 2);
+    const int64_t heads = v.size(sequence_major ? 2 : 1);
+
+    at::Tensor dq = at::empty_like(q);
+    at::Tensor dk = at::empty_like(k);
+    at::Tensor dv = at::empty_like(v);
+    at::Tensor d_beta = at::empty({batch, tokens, heads}, beta.options());
+    at::Tensor d_g = at::empty({batch, tokens, heads}, g.options());
+    at::Tensor dh0 = initial_state.has_value() && initial_state->defined()
+                         ? at::empty_like(*initial_state) : at::Tensor();
+    at::Tensor d_a_log;
+    at::Tensor d_dt_bias;
+    at::Tensor initial_state_arg = optional_tensor(initial_state);
+    at::Tensor dht_arg = optional_tensor(dht);
+    at::Tensor q_rstd_arg = optional_tensor(q_rstd);
+    at::Tensor k_rstd_arg = optional_tensor(k_rstd);
+    at::Tensor beta_raw_arg = optional_tensor(beta_raw);
+    at::Tensor a_log_arg = optional_tensor(a_log);
+    at::Tensor dt_bias_arg = optional_tensor(dt_bias);
+    const char *layout_arg = layout_str.c_str();
+    bool use_exp2_arg = use_exp2.value_or(false);
+    bool use_gate_arg = use_gate_in_kernel.value_or(false);
+    bool use_qk_norm_arg = use_qk_l2norm_in_kernel.value_or(false);
+    bool use_beta_sigmoid_arg = use_beta_sigmoid_in_kernel.value_or(false);
+    bool state_v_first_arg = state_v_first.value_or(false);
+
+    EXEC_NPU_CMD_EXT(
+        aclnnChunkGatedDeltaRuleBwd, q, k, v, g, beta, A, d_o,
+        initial_state_arg, dht_arg, q_rstd_arg, k_rstd_arg, beta_raw_arg,
+        a_log_arg, dt_bias_arg, cu_seqlens, chunk_indices, layout_arg,
+        scale, chunk_size, use_exp2_arg, use_gate_arg, use_qk_norm_arg,
+        use_beta_sigmoid_arg, state_v_first_arg, dq, dk, dv, d_beta, d_g,
+        dh0, d_a_log, d_dt_bias);
+    return std::make_tuple(dq, dk, dv, d_beta, d_g, defined_tensor(dh0),
+                           c10::nullopt, c10::nullopt);
+}
+
+::std::tuple<at::Tensor, at::Tensor, c10::optional<at::Tensor>, c10::optional<at::Tensor>,
+             c10::optional<at::Tensor>, at::Tensor, at::Tensor, at::Tensor, at::Tensor>
+npu_chunk_gated_delta_rule_fwd_prepare(
+    const at::Tensor &q, const at::Tensor &k, const at::Tensor &v, const at::Tensor &g,
+    const at::Tensor &beta, int64_t chunk_size, bool use_qk_l2norm_in_kernel,
+    bool use_gate_in_kernel, bool use_beta_sigmoid_in_kernel, bool allow_neg_eigval,
+    bool use_exp2, const c10::optional<at::Tensor> &a_log,
+    const c10::optional<at::Tensor> &dt_bias, at::OptionalIntArrayRef cu_seqlens,
+    at::OptionalIntArrayRef chunk_indices)
+{
+    TORCH_CHECK(q.dim() == 4 && v.dim() == 4,
+                "npu_chunk_gated_delta_rule_fwd_prepare: q and v must be rank 4");
+    TORCH_CHECK(!allow_neg_eigval || use_beta_sigmoid_in_kernel,
+                "npu_chunk_gated_delta_rule_fwd_prepare: allow_neg_eigval requires beta sigmoid");
+    TORCH_CHECK(!use_gate_in_kernel || (a_log.has_value() && a_log->defined()),
+                "npu_chunk_gated_delta_rule_fwd_prepare: a_log is required for fused gate");
+    const int64_t batch = q.size(0);
+    const int64_t key_heads = q.size(1);
+    const int64_t tokens = q.size(2);
+    const int64_t value_heads = v.size(1);
+    at::Tensor g_out = at::empty({batch, value_heads, tokens}, g.options().dtype(at::kFloat));
+    at::Tensor w = at::empty({batch, value_heads, tokens, q.size(3)}, k.options());
+    at::Tensor u = at::empty_like(v);
+    at::Tensor a_out = at::empty({batch, value_heads, tokens, chunk_size}, k.options());
+    at::Tensor q_hat = use_qk_l2norm_in_kernel ? at::empty_like(q) : at::Tensor();
+    at::Tensor k_hat = use_qk_l2norm_in_kernel ? at::empty_like(k) : at::Tensor();
+    at::Tensor q_rstd = use_qk_l2norm_in_kernel
+                            ? at::empty({batch, key_heads, tokens}, q.options().dtype(at::kFloat))
+                            : at::Tensor();
+    at::Tensor k_rstd = use_qk_l2norm_in_kernel
+                            ? at::empty({batch, key_heads, tokens}, k.options().dtype(at::kFloat))
+                            : at::Tensor();
+    at::Tensor beta_eff = use_beta_sigmoid_in_kernel
+                              ? at::empty({batch, value_heads, tokens}, beta.options().dtype(at::kFloat))
+                              : at::Tensor();
+    at::Tensor a_log_arg = use_gate_in_kernel ? optional_tensor(a_log) : at::Tensor();
+    at::Tensor dt_bias_arg = use_gate_in_kernel ? optional_tensor(dt_bias) : at::Tensor();
+    bool output_a = true;
+    EXEC_NPU_CMD_EXT(
+        aclnnChunkGatedDeltaRuleFwdPrepare, q, k, v, g, beta, a_log_arg, dt_bias_arg,
+        cu_seqlens, chunk_indices, chunk_size, allow_neg_eigval, use_exp2, output_a,
+        g_out, w, u, a_out, q_hat, k_hat, q_rstd, k_rstd, beta_eff);
+    return std::make_tuple(use_qk_l2norm_in_kernel ? q_hat : q,
+                           use_qk_l2norm_in_kernel ? k_hat : k,
+                           defined_tensor(q_rstd), defined_tensor(k_rstd),
+                           defined_tensor(beta_eff), g_out, w, u, a_out);
+}
+
+::std::tuple<c10::optional<at::Tensor>, at::Tensor, at::Tensor, at::Tensor, at::Tensor>
+npu_chunk_kda_bwd_recompute(
+    const at::Tensor &q, const at::Tensor &k, const at::Tensor &v, const at::Tensor &g,
+    const at::Tensor &beta, const at::Tensor &A, int64_t chunk_size,
+    const c10::optional<at::Tensor> &A_log, const c10::optional<at::Tensor> &dt_bias,
+    at::OptionalIntArrayRef cu_seqlens, at::OptionalIntArrayRef chunk_indices,
+    c10::optional<bool> use_gate_in_kernel, c10::optional<bool> use_exp2,
+    c10::optional<double> lower_bound)
+{
+    TORCH_CHECK(q.dim() == 4 && v.dim() == 4 && g.dim() == 4,
+                "npu_chunk_kda_bwd_recompute: q, v and g must be rank 4");
+    bool use_gate_arg = use_gate_in_kernel.value_or(true);
+    bool use_exp2_arg = use_exp2.value_or(true);
+    double lower_bound_arg = lower_bound.value_or(-5.0);
+    at::Tensor w = at::empty({v.size(0), v.size(1), v.size(2), q.size(3)}, v.options());
+    at::Tensor u = at::empty_like(v);
+    at::Tensor qg = at::empty(g.sizes(), q.options().dtype(at::kBFloat16));
+    at::Tensor kg = at::empty(g.sizes(), k.options().dtype(at::kBFloat16));
+    at::Tensor gk = use_gate_arg
+                        ? at::empty(g.sizes(), g.options().dtype(at::kFloat)) : at::Tensor();
+    at::Tensor a_log_arg = optional_tensor(A_log);
+    at::Tensor dt_bias_arg = optional_tensor(dt_bias);
+    EXEC_NPU_CMD_EXT(
+        aclnnChunkKdaBwdRecompute, q, k, v, g, beta, A, a_log_arg, dt_bias_arg,
+        cu_seqlens, chunk_indices, chunk_size, use_exp2_arg, lower_bound_arg,
+        w, u, qg, kg, gk);
+    return std::make_tuple(defined_tensor(gk), w, u, qg, kg);
+}
+
+at::Tensor npu_merge_fwd_bwd_kernel(
+    at::Tensor &h, const at::Tensor &ag_hm, int64_t pre_or_post_num_ranks,
+    int64_t rank, bool forward, bool state_v_first)
+{
+    EXEC_NPU_CMD_EXT(aclnnMergeFwdBwdKernel, h, ag_hm,
+                     pre_or_post_num_ranks, rank, forward, state_v_first);
+    return h;
+}
 }  // namespace op_api
