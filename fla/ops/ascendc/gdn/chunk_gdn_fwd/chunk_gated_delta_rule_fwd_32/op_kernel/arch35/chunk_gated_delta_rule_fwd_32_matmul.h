@@ -85,10 +85,13 @@ __aicore__ inline void LoadL1NzToL0A(LocalTensor<bfloat16_t> l1A, LocalTensor<bf
     AscendC::LoadData(l0A, l1A, loadA);
 }
 
+// waitFix is false when this tile sits above a live L0C result. The caller
+// still has to wait that FIX_M once before setting it again.
 __aicore__ inline void MmadL0ToL0C(LocalTensor<bfloat16_t> l0A, LocalTensor<bfloat16_t> l0B, LocalTensor<float> l0C,
-                                   int32_t m, int32_t n, int32_t k, bool initC, uint8_t evt = 0)
+                                   int32_t m, int32_t n, int32_t k, bool initC, uint8_t evt = 0,
+                                   bool waitFix = true)
 {
-    if (initC) {
+    if (initC && waitFix) {
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(evt);
     }
     AscendC::MmadParams mmad;
