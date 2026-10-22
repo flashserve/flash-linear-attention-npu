@@ -431,21 +431,38 @@ private:
         }
     }
 
-    // K's L2 and the K copy complete before q's L2, and K@K runs under that
-    // second L2. vb/kbg/qexp still go out after both flags.
-    __aicore__ inline void PublishStaged(uint32_t chunk)
+    // K's L2 only. The L1 slot is still the live chunk's K until D has read it,
+    // so the copy and kFlagQk are PublishKFlag, after ApplyD.
+    __aicore__ inline void PublishK(uint32_t chunk)
     {
-        const uint32_t slot = chunk & 1U;
+        (void)chunk;
         WaitLoads();
         GdnFwd32::BetaSigmoidVF(ubBeta_, ubBe_);
         GdnFwd32::CumsumExp2VF<true>(ubG_, ubGp_, ubEg_, ubSh_);
         GdnFwd32::L2InplaceQKVF<2>(ubQ_, ubK_, ubKbg_, ubQexp_, ubBe_, ubEg_, ubQnz_, ubKnz_);
+    }
+
+    __aicore__ inline void PublishKFlag(uint32_t chunk)
+    {
+        const uint32_t slot = chunk & 1U;
         SetFlag<HardEvent::V_MTE3>(0);
         WaitFlag<HardEvent::V_MTE3>(0);
         GdnFwd32::CopyNzToL1(l1K_[slot], ubKnz_, kBt, kDim);
         CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagQk);
+    }
+
+    // Q L2 and the v scale. UB only: q_exp is still the live chunk's until q@H,
+    // so the L1 copies are PublishQFlag, after ApplyD.
+    __aicore__ inline void PublishQ(uint32_t chunk)
+    {
+        (void)chunk;
         GdnFwd32::L2InplaceQKVF<1>(ubQ_, ubK_, ubKbg_, ubQexp_, ubBe_, ubEg_, ubQnz_, ubKnz_);
         GdnFwd32::ScaleRowsVF<true>(ubV_, ubV_, ubBe_, reinterpret_cast<__ubuf__ bfloat16_t *>(ubVnz_.GetPhyAddr()));
+    }
+
+    __aicore__ inline void PublishQFlag(uint32_t chunk)
+    {
+        const uint32_t slot = chunk & 1U;
         SetFlag<HardEvent::V_MTE3>(0);
         WaitFlag<HardEvent::V_MTE3>(0);
         GdnFwd32::CopyNzToL1(l1Q_[slot], ubQnz_, kBt, kDim);
@@ -455,6 +472,15 @@ private:
         GdnFwd32::CopyNzToL1(l1Qexp_[slot], ubQexp_, kBt, kDim);
         SetFlag<HardEvent::MTE3_V>(3);
         nzArmed_ = 1;
+    }
+
+    // Prologue: both halves before the cube starts. The K slot is empty here.
+    __aicore__ inline void PublishStaged(uint32_t chunk)
+    {
+        PublishK(chunk);
+        PublishKFlag(chunk);
+        PublishQ(chunk);
+        PublishQFlag(chunk);
     }
 
     // Gate and inverse stay in UB. The L1 copy is separate so this can run
@@ -652,6 +678,11 @@ private:
                 const float decay = DecayOf(egNow);
                 VnewHalfVF(ubU_, ubP_, egNow, ubVn_, ubVg_, sub_ * 16);
                 PublishHalf(c);
+                // K flag before o / saxpy / H. The next cube's K@K sits behind it,
+                // and those three used to push the L2 past that wait.
+                if (owner && nxt < nChunk) {
+                    PublishK(nxt);
+                }
                 // The solve does not read P, but it shares this vector with v_new.
                 // Running it first holds off kFlagV and the cube waits there.
                 if (!owner && c + 1 < nChunk && invDone != c + 1) {
@@ -663,14 +694,18 @@ private:
                 CrossCoreWaitFlag<0x4, PIPE_V>(kFlagO);
                 StoreO(c);
                 ApplyD(decay);
-                // Next H before the next publish. Q/K copies were sitting in front of the H flag.
+                // D has released this K slot. The L2 image was built under o / D.
+                if (owner && nxt < nChunk) {
+                    PublishKFlag(nxt);
+                }
+                // Next H before q's L2. The cube's w@H waits on this flag.
                 if (c + 1 < nChunk) {
                     UploadH();
                     uploaded = 1;
                 }
-                // K's L2 and the K flag go out before q's L2, so K@K is not behind q.
                 if (owner && nxt < nChunk) {
-                    PublishStaged(nxt);
+                    PublishQ(nxt);
+                    PublishQFlag(nxt);
                 }
             }
             WaitFlag<HardEvent::V_MTE3>(1);
