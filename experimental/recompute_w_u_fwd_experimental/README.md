@@ -1,10 +1,11 @@
 # RecomputeWUFwdExperimental
 
-This operator is a build and packaging fixture for the experimental directory.
-It is derived from the stable `recompute_w_u_fwd` implementation on upstream
-`main` at `ed987cdf5c3083633542f76ce34c1e1a62aecefa`. The operator type,
-kernel entry, `opFile`, aclnn exports, and source filenames have distinct
-experimental names. The stable operator source is unchanged.
+This is a compile-only fixture, not an implementation of the stable
+`recompute_w_u_fwd` computation. It retains a distinct operator type, kernel
+entry, `opFile` and aclnn exports. The kernel copies one eight-element FP32
+tile to exercise compilation and includes `experimental/_common/build_probe.hpp`
+to exercise the isolated common-header path. Do not run it as a recompute op.
+The stable operator source is unchanged.
 
 Build and install validation does not require running the operator:
 
@@ -15,6 +16,8 @@ bash build.sh --pkg --experimental --soc=ascend950 \
   --install-path=/tmp/fla-experimental-recompute-opp --quiet
 ```
 
-The installed OPP must contain `recompute_w_u_fwd_experimental` and must not
-contain the stable `recompute_w_u_fwd` operator. The stable build is checked
-separately with `--ops=recompute_w_u_fwd` and without `--experimental`.
+Check that the installed OPP contains only `recompute_w_u_fwd_experimental`
+kernel/config/dynamic/proto files, the independent common header, and the
+`aclnnRecomputeWUFwdExperimental*` exports. Check the stable build separately
+with `--ops=recompute_w_u_fwd` and without `--experimental`. No operator
+execution or numerical validation is part of this fixture.

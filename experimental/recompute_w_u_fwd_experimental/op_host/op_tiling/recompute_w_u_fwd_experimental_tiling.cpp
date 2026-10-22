@@ -1,111 +1,25 @@
-/**
- * Copyright (c) 2025 Tianjin University, Ltd.
- * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
- * the BSD 3-Clause License (the "License").
- * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- */
-
-/*!
- * \file recompute_w_u_fwd_experimental_tiling.cpp
- * \brief
- */
-
-#include "recompute_w_u_fwd_experimental_tiling.h"
-#include "recompute_w_u_fwd_experimental_tiling_processor.h"
+#include <exe_graph/runtime/tiling_context.h>
+#include <graph/utils/type_utils.h>
 #include <register/op_impl_registry.h>
-#include "platform/soc_spec.h"
-#include "tiling_base/data_copy_transpose_tiling.h"
-#include "tiling_base/tiling_templates_registry.h"
+#include "../../op_kernel/recompute_w_u_fwd_experimental_tiling.h"
 
 namespace optiling {
-
-static void RecomputeWUFwdExperimentalTilingDataPrint(gert::TilingContext *context, const RecomputeWUFwdExperimentalTilingData &tiling)
-{
-    auto nodeName = context->GetNodeName();
-    OP_LOGD(nodeName, ">>>>>>>>>>>>>>> Start to print RecomputeWUFwdExperimental tiling data <<<<<<<<<<<<<<<<");
-    OP_LOGD(nodeName, "=== B: %ld", tiling.B);
-    OP_LOGD(nodeName, "=== Hk: %ld", tiling.Hk);
-    OP_LOGD(nodeName, "=== Hv: %ld", tiling.Hv);
-    OP_LOGD(nodeName, "=== hvPerHk: %ld", tiling.hvPerHk);
-    OP_LOGD(nodeName, "=== T: %ld", tiling.T);
-    OP_LOGD(nodeName, "=== K: %ld", tiling.K);
-    OP_LOGD(nodeName, "=== V: %ld", tiling.V);
-    OP_LOGD(nodeName, "=== chunkSize: %ld", tiling.chunkSize);
-    OP_LOGD(nodeName, "=== vbVecRow: %ld", tiling.vbVecRow);
-    OP_LOGD(nodeName, "=== kbgExpVecRow: %ld", tiling.kbgExpVecRow);
-    OP_LOGD(nodeName, "=== interleavedVecRow: %ld", tiling.interleavedVecRow);
-    OP_LOGD(nodeName, ">>>>>>>>>>>>>>> Print RecomputeWUFwdExperimental tiling data end <<<<<<<<<<<<<<<<");
-}
+struct RecomputeWUFwdExperimentalCompileInfo {};
 
 ge::graphStatus Tiling4RecomputeWUFwdExperimental(gert::TilingContext *context)
 {
-    OP_LOGD(context->GetNodeName(), "Tiling4RecomputeWUFwdExperimental start.");
-    RecomputeWUFwdExperimentalTilingData *tiling = context->GetTilingData<RecomputeWUFwdExperimentalTilingData>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
-
-    auto attrPtr = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrPtr);
-
-    auto kDesc = context->GetDynamicInputDesc(RECOMPUTE_W_U_FWD_EXPERIMENTAL_INPUT_K_IDX, 0);
-    auto betaDesc = context->GetDynamicInputDesc(RECOMPUTE_W_U_FWD_EXPERIMENTAL_INPUT_BETA_IDX, 0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, kDesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, betaDesc);
-
-    const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
-    uint64_t ubSize = 0;
-    ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
-    size_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
-    bool enableA5CompactWorkspace =
-        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510;
-
-    auto cuSeqlensTensor = context->GetOptionalInputTensor(RECOMPUTE_W_U_FWD_EXPERIMENTAL_INPUT_SEQLENS_IDX);
-    auto chunkIndicesTensor = context->GetOptionalInputTensor(RECOMPUTE_W_U_FWD_EXPERIMENTAL_INPUT_CHUNK_INDICES_IDX);
-    const int64_t *cuSeqlensData = cuSeqlensTensor != nullptr ? cuSeqlensTensor->GetData<int64_t>() : nullptr;
-    const int64_t *chunkIndicesData =
-        chunkIndicesTensor != nullptr ? chunkIndicesTensor->GetData<int64_t>() : nullptr;
-
-    RecomputeWUFwdExperimentalTilingContext ctx{
-        context->GetNodeName(),
-        context->GetRequiredInputShape(RECOMPUTE_W_U_FWD_EXPERIMENTAL_INPUT_K_IDX),
-        context->GetRequiredInputShape(RECOMPUTE_W_U_FWD_EXPERIMENTAL_INPUT_V_IDX),
-        context->GetRequiredInputShape(RECOMPUTE_W_U_FWD_EXPERIMENTAL_INPUT_BETA_IDX),
-        context->GetRequiredInputShape(RECOMPUTE_W_U_FWD_EXPERIMENTAL_INPUT_A_IDX),
-        context->GetRequiredInputShape(RECOMPUTE_W_U_FWD_EXPERIMENTAL_INPUT_G_IDX),
-        context->GetOptionalInputShape(RECOMPUTE_W_U_FWD_EXPERIMENTAL_INPUT_SEQLENS_IDX),
-        context->GetOptionalInputShape(RECOMPUTE_W_U_FWD_EXPERIMENTAL_INPUT_CHUNK_INDICES_IDX),
-        cuSeqlensData,
-        chunkIndicesData,
-        *(attrPtr->GetAttrPointer<int32_t>(0)),
-        kDesc->GetDataType(),
-        betaDesc->GetDataType(),
-        ubSize,
-        sysWorkspaceSize,
-        ascendcPlatform.GetCoreNumAic(),
-        enableA5CompactWorkspace,
-    };
-
-    RecomputeWUFwdExperimentalTilingProcessor processor(ctx, *tiling);
-    OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-
-    if (tiling->V == RECOMPUTE_W_U_FWD_EXPERIMENTAL_V_DIM_256) {
-        context->SetTilingKey(2);
-    } else {
-        context->SetTilingKey(1);
+    auto *data = context->GetTilingData<Experimental::RecomputeWUFwdExperimentalTilingData>();
+    if (data == nullptr) {
+        return ge::GRAPH_FAILED;
     }
-    OP_LOGD(context->GetNodeName(), "tilingKey: %d (V=%ld)", context->GetTilingKey(), tiling->V);
-    RecomputeWUFwdExperimentalTilingDataPrint(context, *tiling);
-
-    context->SetBlockDim(ascendcPlatform.GetCoreNumAic());
-    size_t *currentWorkspace = context->GetWorkspaceSizes(1);
-    currentWorkspace[0] = processor.GetWorkspaceSize();
-    context->SetScheduleMode(1);
-    OP_LOGD(context->GetNodeName(), "Tiling4RecomputeWUFwdExperimental end.");
+    data->elements = 8;
+    context->SetBlockDim(1);
+    context->SetTilingKey(1);
+    context->GetWorkspaceSizes(1)[0] = 0;
     return ge::GRAPH_SUCCESS;
 }
 
-ge::graphStatus TilingRecomputeForRecomputeWUFwdExperimental(gert::TilingParseContext *context)
+ge::graphStatus ParseRecomputeWUFwdExperimental(gert::TilingParseContext *context)
 {
     (void)context;
     return ge::GRAPH_SUCCESS;
@@ -113,6 +27,5 @@ ge::graphStatus TilingRecomputeForRecomputeWUFwdExperimental(gert::TilingParseCo
 
 IMPL_OP_OPTILING(RecomputeWUFwdExperimental)
     .Tiling(Tiling4RecomputeWUFwdExperimental)
-    .TilingParse<RecomputeWUFwdExperimentalCompileInfo>(TilingRecomputeForRecomputeWUFwdExperimental);
-
+    .TilingParse<RecomputeWUFwdExperimentalCompileInfo>(ParseRecomputeWUFwdExperimental);
 } // namespace optiling

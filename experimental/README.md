@@ -47,6 +47,6 @@ bash build.sh --pkg --experimental --soc=ascend910b --ops=<实验算子名>
 bash build.sh --pkg --experimental --soc=ascend910b
 ```
 
-`recompute_w_u_fwd_experimental` 是从稳定算子复制并重命名的构建验证用例；稳定算子仍留在原目录。A5 验证只编译、打包并安装到隔离目录，检查算子文件清单，不运行算子。缺失 `_common/manifest.txt` 的负向用例只检查构建期失败。
+`recompute_w_u_fwd_experimental` 是独立命名的最小编译验证用例，不实现原算子的计算语义；稳定算子仍留在原目录。A5 验证只编译、打包并安装到隔离目录，检查算子文件清单和 aclnn 导出，不运行算子。缺失 `_common/manifest.txt` 或清单内头文件的负向用例只检查构建期失败。
 
 当前仍需完成独立 experimental CI、独立制品命名和完整产物门禁，Issue #931 才能验收。
