@@ -1,1 +1,7 @@
-build_probe.hpp
+kernel_utils/block/block_mmad_pingpong_tla.hpp
+kernel_utils/block/block_mmad_pingpong_tla_multi.hpp
+kernel_utils/block/block_mmad_pingpong_tla_pipelined.hpp
+kernel_utils/block/block_mmad_pingpong_tla_preload.hpp
+kernel_utils/block/block_mmad_pingpong_tla_preloadA_l1B.hpp
+kernel_utils/tile/copy_l0c_to_ub.hpp
+kernel_utils/vector/regbase.hpp

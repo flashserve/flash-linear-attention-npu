@@ -227,6 +227,17 @@ fla_npu_experimental_linux-<arch>.run
 
 实验制品不得进入正式 Release，也不得覆盖同一流水线中的稳定制品。
 
+#### 安装与运行隔离的实施方案（待实现）
+
+当前稳定包与实验包仍共用 `fla_npu_linux-<arch>.run` 文件名和 `fla_npu_transformer` vendor；安装脚本的 wheel overlay 会复制到同一 vendor 并覆盖共享库。`--install-path` 分开使用只能约束验证人员，不能防止误装，因此不能作为最终隔离方案。
+
+1. 仅在 `ENABLE_EXPERIMENTAL=ON` 时设置独立的 CMake vendor（例如 `fla_npu_experimental_transformer`）和 `fla_npu_experimental_linux-<arch>.run`；OFF 的 `VENDOR_NAME`、CPack 名称及安装清单保持原值。`libcust_opapi.so`、proto、tiling、kernel、config 和 common 全部落在实验 vendor 下。
+2. 为实验包生成独立安装入口，要求显式 `--install-path=<全新空目录>`；拒绝 `--full`/wheel overlay、默认 `ASCEND_OPP_PATH` 安装，以及包含稳定 vendor 或已有 OPP 的目标根目录。稳定包继续使用原安装脚本，不能因为实验包增加条件分支或改变文件内容。
+3. 实验运行只在独立进程中显式设置实验 vendor 的 `ASCEND_CUSTOM_OPP_PATH` 和 op_api 库路径；不得修改稳定 wheel 的 `fla_npu` 自动加载逻辑。未来若需 Python 调用，应使用独立实验 wheel/命名空间，并核对 CANN 初始化前的 OPP 搜索路径。
+4. CI 分别生成 ON/OFF 包，比较包内 vendor、算子清单和导出符号；实验包安装到新根目录并实际调用实验 ACLNN，稳定包安装/运行回归需证明源码清单、导出及运行结果不变。还要验证误用默认安装、wheel overlay、已有稳定根目录时实验安装器明确失败，且稳定安装文件的哈希不变。
+
+只有上述保护和负向安装测试都通过，才能声明“实验包无法改变稳定安装与运行”。在此之前，实验验证只能使用独立 `--install-path`，不能把实验制品发布或合入稳定 OPP。
+
 ### 5.7 Python 与 wheel
 
 Python/wheel 构建必须感知同一个 experimental 开关，不能继续使用完整稳定算子注册表。实现要求是：

@@ -208,7 +208,7 @@ cp -a "$SRC/." "$DST/"
 
 ## 9. 稳定路径零影响与模式互斥复审（2026-10-22）
 
-本节审计当前 PR 的实际实现，不把第 5 节的目标设计视为已完成能力。“互斥”分别检查构建输入、包内容、安装目标、运行时发现路径和 CI 执行路径；其中任何一层未隔离，都不能声称 Issue #931 已满足。
+本节记录精简样例阶段的复审；第 10 节记录随后恢复完整实验算子的结果。不把第 5 节的目标设计视为已完成能力。“互斥”分别检查构建输入、包内容、安装目标、运行时发现路径和 CI 执行路径；其中任何一层未隔离，都不能声称 Issue #931 已满足。
 
 | 维度 | 当前代码与证据 | 结论 |
 | --- | --- | --- |
@@ -228,3 +228,16 @@ A5 / Ascend 950 / CANN 9.2.0 对照记录：
 - A5 `zzy` 环境的 Python CI 契约测试 156 项通过，其中 `ci.tests.test_experimental_build_contract` 的 6 项发现/解析和阶段隔离测试通过。`ci/tests/test_run_checks_stage_pipeline.sh` 在 A5 宿主机上使用假 `ASCEND_OPP_PATH`，被本机 toolkit `set_env.sh` 覆盖而失败；这不能作为真实容器或 GitHub-hosted CI 的通过证据，需要在其目标环境重跑。
 
 合入前必须补齐：实验包独立文件名和 vendor、安装器拒绝合并到稳定 wheel/OPP、实验 runtime/wheel 策略与稳定调用回归、独立 experimental CI 与包来源审计、A2/A3/A5 稳定全量 NPU CI。当前只能确认上述 A5 隔离安装场景；**不能宣称构建、安装、运行、CI 四个维度已全面互斥，也不能据此关闭 Issue #931**。
+
+## 10. 完整实验算子恢复与 A5 运行验证（2026-10-22）
+
+先前把 `recompute_w_u_fwd_experimental` 精简成单 tile 编译 fixture 的步骤过早：它不能证明原始移植的运行链。现从 PR 提交 `a0e0e31f` 恢复 `experimental/recompute_w_u_fwd_experimental/` 及其七个 `_common` 头文件，保留独立的 `RecomputeWUFwdExperimental` 算子类型、kernel 入口、`opFile`、aclnn 导出和源码文件名。稳定 `recompute_w_u_fwd` 目录未修改，也不再继续精简该移植。
+
+A5（Ascend950PR、CANN 9.2.0、conda `zzy`）在独立源码和 OPP 根目录执行：
+
+1. `bash build.sh --pkg --experimental --soc=ascend950 --ops=recompute_w_u_fwd_experimental -j4` 成功，生成四个实验 Ascend 950 kernel 变体和 `.run`；稳定 ONNX plugin 编译对象为 0。
+2. `.run --install-path=/home/zzy1205/fla-restored-recompute-install-20261022 --quiet` 成功；kernel 目录仅有实验名，`libcust_opapi.so` 只导出 `aclnnRecomputeWUFwdExperimental` 及其 `GetWorkspaceSize`，七个 manifest 公共头齐全。
+3. `ci/run_experimental_validation.sh` 串行执行发现测试、构建、隔离安装、kernel/config/dynamic/proto/aclnn/common 清单审计和 ACLNN 实际运行，退出码为 0。测试进程只设置隔离 OPP 的 `ASCEND_CUSTOM_OPP_PATH`，不安装或覆盖稳定 wheel/OPP。
+4. 两个 FP16、`A=I`、`k=v=beta=1`、`g=0` 的可核对用例通过：`V=128/chunk=64` 与 `V=256/chunk=128` 的全部 `w/u` 输出均为 1。该 smoke 覆盖实际 kernel 启动及两个形状分支，不等同于 ATK 全量精度、BF16、varlen 或性能验收。
+
+本节所称 CI 是在 A5 直接运行仓内独立 CI 入口脚本，**不是 GitHub 自托管 NPU 检查已通过**。新 workflow 只在 PR 分支新增时不能单靠 `workflow_dispatch` 在主仓触发；正式独立实验 CI 仍需仓库管理员接入现有受控触发链或在目标分支部署后运行。第 9 节同名 `.run` / 同 vendor 安装风险仍在；独立 vendor、安装器拒绝混装、实验 wheel/runtime 及 A2/A3 稳定回归尚未实现，Issue #931 仍不可关闭。
