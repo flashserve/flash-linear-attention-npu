@@ -77,18 +77,13 @@ class VectorResources {
     Resource *owner_ = nullptr;
 public:
     KktLayout kkt;
-    WuLayout vb, kbg;
     PrepareLayout prepare;
 
     __aicore__ inline void Init(Resource &owner, uint32_t bt, uint32_t btAlign,
-                               uint64_t heads, uint32_t k, uint32_t v,
-                               uint32_t rows, uint32_t inputBytes)
+                               uint64_t heads, uint32_t inputBytes)
     {
         owner_ = &owner;
         kkt.Init(bt, btAlign, inputBytes);
-        vb.Init(rows, v, inputBytes, false);
-        // 原 KbgExp 实际使用 vbVecRow，保留该取槽和分块合同。
-        kbg.Init(rows, k, inputBytes, true);
         prepare.Init(bt, heads);
     }
 

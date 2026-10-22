@@ -507,15 +507,15 @@ __aicore__ inline void RunFrontBatchBody(
             userWorkspace + phase6->solveWorkspaceOffset, cuSeqlens, problem, resources);
         const RecomputeTaskRange range{begin, end, capacity};
         if constexpr (kStaticV != 0) {
-            DispatchRecompute<InputT, float, kStaticV, true, kStaticV, kStaticBT, kQkvLayout, true>(
+            DispatchRecompute<InputT, float, kStaticV, true, kStaticV, kStaticBT, kQkvLayout>(
                 resource, resources, k, v, beta, A, gCumsumBht, cuSeqlens, chunkIndices, w, u,
                 wuWorkspace, &recomputeTiling, &range, Config::InputSequenceMajor(abc));
         } else if (recomputeTiling.V == 256) {
-            DispatchRecompute<InputT, float, 256, true, 0, 0, -1, true>(
+            DispatchRecompute<InputT, float, 256, true, 0, 0, -1>(
                 resource, resources, k, v, beta, A, gCumsumBht, cuSeqlens, chunkIndices, w, u,
                 wuWorkspace, &recomputeTiling, &range, Config::InputSequenceMajor(abc));
         } else {
-            DispatchRecompute<InputT, float, 128, true, 0, 0, -1, true>(
+            DispatchRecompute<InputT, float, 128, true, 0, 0, -1>(
                 resource, resources, k, v, beta, A, gCumsumBht, cuSeqlens, chunkIndices, w, u,
                 wuWorkspace, &recomputeTiling, &range, Config::InputSequenceMajor(abc));
         }
@@ -590,8 +590,7 @@ __aicore__ inline void RunPhase6(
     GdnRawFront::VectorResources *vectors = nullptr;
     if ASCEND_IS_AIV {
         vectorResources.Init(resource, Config::ChunkSize(abc), Config::ChunkAlign(abc), abc.Hv,
-                             recomputeTiling.K, Config::ValueDim(recomputeTiling),
-                             recomputeTiling.vbVecRow, sizeof(InputT));
+                             sizeof(InputT));
         vectors = &vectorResources;
     }
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220

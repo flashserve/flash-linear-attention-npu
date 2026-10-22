@@ -173,66 +173,6 @@ public:
         return ge::GRAPH_SUCCESS;
     }
 
-    ge::graphStatus SetKbgExpVecRow(uint64_t ubSize, ge::DataType kType, ge::DataType betaType)
-    {
-        uint64_t rowNum = static_cast<uint64_t>(chunkSize);
-        uint64_t sizeofKType = RECOMPUTE_W_U_FWD_SIZE_FP32;
-        uint64_t sizeofBetaType = RECOMPUTE_W_U_FWD_SIZE_FP32;
-        if (kType != ge::DataType::DT_FLOAT) {
-            sizeofKType = RECOMPUTE_W_U_FWD_SIZE_HALF;
-        }
-        if (betaType != ge::DataType::DT_FLOAT) {
-            sizeofBetaType = RECOMPUTE_W_U_FWD_SIZE_HALF;
-        }
-        while (rowNum >= 8) {
-            uint64_t useUbSize = 0;
-            useUbSize += 2 * rowNum * static_cast<uint64_t>(K) * sizeofKType;
-            useUbSize += 2 * rowNum * sizeofBetaType;
-            useUbSize += 2 * rowNum * sizeofBetaType;
-            useUbSize += 2 * rowNum * static_cast<uint64_t>(K) * sizeofKType;
-            useUbSize += rowNum * static_cast<uint64_t>(K) * sizeof(float);
-            useUbSize += rowNum * sizeof(float);
-            useUbSize += rowNum * sizeof(float);
-            useUbSize += rowNum * RECOMPUTE_W_U_FWD_ONE_BLOCK_32;
-
-            if (useUbSize <= ubSize) {
-                break;
-            }
-            rowNum = rowNum / 2;
-        }
-        tiling_.kbgExpVecRow = static_cast<int64_t>(rowNum);
-        return ge::GRAPH_SUCCESS;
-    }
-
-    ge::graphStatus SetVbVecRow(uint64_t ubSize, ge::DataType kType, ge::DataType betaType)
-    {
-        uint64_t rowNum = static_cast<uint64_t>(chunkSize);
-        uint64_t sizeofKType = RECOMPUTE_W_U_FWD_SIZE_FP32;
-        uint64_t sizeofBetaType = RECOMPUTE_W_U_FWD_SIZE_FP32;
-        if (kType != ge::DataType::DT_FLOAT) {
-            sizeofKType = RECOMPUTE_W_U_FWD_SIZE_HALF;
-        }
-        if (betaType != ge::DataType::DT_FLOAT) {
-            sizeofBetaType = RECOMPUTE_W_U_FWD_SIZE_HALF;
-        }
-        while (rowNum >= 8) {
-            uint64_t useUbSize = 0;
-            useUbSize += 2 * rowNum * static_cast<uint64_t>(V) * sizeofKType;
-            useUbSize += 2 * rowNum * sizeofBetaType;
-            useUbSize += 2 * rowNum * static_cast<uint64_t>(V) * sizeofKType;
-            useUbSize += rowNum * static_cast<uint64_t>(V) * sizeof(float);
-            useUbSize += rowNum * sizeof(float);
-            useUbSize += rowNum * RECOMPUTE_W_U_FWD_ONE_BLOCK_32;
-
-            if (useUbSize <= ubSize) {
-                break;
-            }
-            rowNum = rowNum / 2;
-        }
-        tiling_.vbVecRow = static_cast<int64_t>(rowNum);
-        return ge::GRAPH_SUCCESS;
-    }
-
     void SetInterleavedMembaseVecRow(uint64_t ubSize, ge::DataType kType)
     {
         constexpr uint64_t reservedBytes = 16 * 1024;
@@ -350,10 +290,6 @@ public:
                     return ge::GRAPH_FAILED);
         tiling_.chunkSize = chunkSize;
 
-        OP_CHECK_IF(SetVbVecRow(ctx_.ubSize, ctx_.kDtype, ctx_.betaDtype) != ge::GRAPH_SUCCESS,
-                    OP_LOGE(ctx_.nodeName, "SetVbVecRow Failed."), return ge::GRAPH_FAILED);
-        OP_CHECK_IF(SetKbgExpVecRow(ctx_.ubSize, ctx_.kDtype, ctx_.betaDtype) != ge::GRAPH_SUCCESS,
-                    OP_LOGE(ctx_.nodeName, "SetKbgExpVecRow Failed."), return ge::GRAPH_FAILED);
         SetInterleavedMembaseVecRow(ctx_.ubSize, ctx_.kDtype);
         return ge::GRAPH_SUCCESS;
     }

@@ -38,8 +38,6 @@ struct GdnMegaArch22RecomputeWUTilingData {
     int64_t V;
     int64_t chunkNum;
     int64_t chunkSize;
-    int64_t vbVecRow;
-    int64_t kbgExpVecRow;
     int64_t interleavedMembaseVecRow;
     int64_t isVariable;
 };
