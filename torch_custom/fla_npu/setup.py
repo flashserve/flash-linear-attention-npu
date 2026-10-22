@@ -168,6 +168,8 @@ def _setup_legacy_extension():
 
     def get_compile_args():
         compile_args = ["-std=c++17"]
+        if len(version_parts) >= 2:
+            compile_args.append(f"-DCURRENT_VERSION=V{version_parts[0]}R{version_parts[1]}")
         if sys.platform == "win32":
             compile_args.append("/MD")
         elif sys.platform == "linux":
