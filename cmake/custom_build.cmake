@@ -349,43 +349,64 @@ if (DEFINED MC2_OPT AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/mc2/common/CMakeLists
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/mc2/3rd)
 endif()
 
-# Resolve and mount the complete dependency closure. New dependencies become
-# the next frontier only after their CMakeLists has been evaluated, so their
-# own <op>_depends declarations are available to the next iteration.
-set(_DEPENDENCY_FRONTIER ${OP_LIST})
-while (_DEPENDENCY_FRONTIER)
+# Only experimental builds need transitive dependency closure. Keep the stable
+# branch identical to the pre-experimental single-pass dependency flow.
+if (ENABLE_EXPERIMENTAL)
+    set(_DEPENDENCY_FRONTIER ${OP_LIST})
+    while (_DEPENDENCY_FRONTIER)
+        set(OP_DEPEND_DIR_LIST)
+        op_add_depend_directory(
+                OP_LIST ${_DEPENDENCY_FRONTIER}
+                OP_DIR_LIST OP_DEPEND_DIR_LIST
+        )
+        set(_NEXT_DEPENDENCY_FRONTIER)
+        foreach (OP_DEPEND_DIR ${OP_DEPEND_DIR_LIST})
+            get_filename_component(SUB_DIR ${OP_DEPEND_DIR} NAME)
+            if ("${SUB_DIR}" IN_LIST OP_LIST)
+                continue()
+            endif()
+            list(APPEND OP_LIST ${SUB_DIR})
+            list(APPEND ASCEND_OP_NAME ${SUB_DIR})
+            list(APPEND OP_DIR_LIST ${OP_DEPEND_DIR})
+            add_subdirectory(${OP_DEPEND_DIR})
+            list(APPEND _NEXT_DEPENDENCY_FRONTIER ${SUB_DIR})
+        endforeach ()
+        set(_DEPENDENCY_FRONTIER ${_NEXT_DEPENDENCY_FRONTIER})
+    endwhile ()
+    list(REMOVE_DUPLICATES OP_DIR_LIST)
+else()
     set(OP_DEPEND_DIR_LIST)
     op_add_depend_directory(
-            OP_LIST ${_DEPENDENCY_FRONTIER}
+            OP_LIST ${OP_LIST}
             OP_DIR_LIST OP_DEPEND_DIR_LIST
     )
-    set(_NEXT_DEPENDENCY_FRONTIER)
+    # 仅针对被依赖的算子重新add_subdirectory
     foreach (OP_DEPEND_DIR ${OP_DEPEND_DIR_LIST})
         get_filename_component(SUB_DIR ${OP_DEPEND_DIR} NAME)
-        if ("${SUB_DIR}" IN_LIST OP_LIST)
-            continue()
+        if ("${ASCEND_OP_NAME}" STREQUAL "all" OR "${ASCEND_OP_NAME}" STREQUAL "ALL")
+            if ( "${OP_DEPEND_DIR}" MATCHES ".*attention.*")
+                continue()
+            endif()
         endif()
-        if (NOT ENABLE_EXPERIMENTAL AND
-            ("${ASCEND_OP_NAME}" STREQUAL "all" OR "${ASCEND_OP_NAME}" STREQUAL "ALL") AND
-            "${OP_DEPEND_DIR}" MATCHES ".*attention.*")
-            continue()
+        if (NOT ${SUB_DIR} IN_LIST ASCEND_OP_NAME)
+            list(APPEND ASCEND_OP_NAME ${SUB_DIR})
+            if (EXISTS "${OP_DEPEND_DIR}/op_host")
+                add_subdirectory(${OP_DEPEND_DIR}/op_host)
+            else()
+                add_subdirectory(${OP_DEPEND_DIR})
+            endif()
+        endif ()
+        if ( "${OP_DEPEND_DIR}" MATCHES ".*moe_inplace_index_add_with_sorted.*")
+           list(APPEND OP_DIR_LIST ${OPS_TRANSFORMER_DIR}/moe/3rd/moe_inplace_index_add_with_sorted)
         endif()
-
-        list(APPEND OP_LIST ${SUB_DIR})
-        list(APPEND ASCEND_OP_NAME ${SUB_DIR})
-        list(APPEND OP_DIR_LIST ${OP_DEPEND_DIR})
-        if (ENABLE_EXPERIMENTAL)
-            add_subdirectory(${OP_DEPEND_DIR})
-        elseif (EXISTS "${OP_DEPEND_DIR}/op_host")
-            add_subdirectory(${OP_DEPEND_DIR}/op_host)
-        else()
-            add_subdirectory(${OP_DEPEND_DIR})
+        if ( "${OP_DEPEND_DIR}" MATCHES ".*moe_inplace_index_add.*")
+           list(APPEND OP_DIR_LIST ${OPS_TRANSFORMER_DIR}/moe/3rd/moe_inplace_index_add)
         endif()
-        list(APPEND _NEXT_DEPENDENCY_FRONTIER ${SUB_DIR})
+        if ( "${OP_DEPEND_DIR}" MATCHES ".*moe_masked_scatter.*")
+           list(APPEND OP_DIR_LIST ${OPS_TRANSFORMER_DIR}/moe/3rd/moe_masked_scatter)
+        endif()
     endforeach ()
-    set(_DEPENDENCY_FRONTIER ${_NEXT_DEPENDENCY_FRONTIER})
-endwhile ()
-list(REMOVE_DUPLICATES OP_DIR_LIST)
+endif()
 
 # ------------------------------------------------ aclnn ------------------------------------------------
 get_target_property(base_aclnn_srcs op_host_aclnn SOURCES)
@@ -988,10 +1009,15 @@ foreach (op_dir ${OP_DIR_LIST})
     )
 
     foreach (op_depend_dir ${${_op_name}_depends})
-        fla_resolve_depend_path(${op_depend_dir} _resolved_depend_dir)
-        set(CURRENT_KERNEL_DIR "${CMAKE_SOURCE_DIR}/${_resolved_depend_dir}/op_kernel")
+        if (ENABLE_EXPERIMENTAL)
+            fla_resolve_depend_path(${op_depend_dir} _resolved_depend_dir)
+            set(CURRENT_KERNEL_DIR "${CMAKE_SOURCE_DIR}/${_resolved_depend_dir}/op_kernel")
+            get_filename_component(_op_depened_name "${_resolved_depend_dir}" NAME)
+        else()
+            set(CURRENT_KERNEL_DIR "${OPS_TRANSFORMER_DIR}/${op_depend_dir}/op_kernel")
+            get_filename_component(_op_depened_name "${op_depend_dir}" NAME)
+        endif()
         file(GLOB KERNEL_SUB_DIRS RELATIVE "${CURRENT_KERNEL_DIR}" "${CURRENT_KERNEL_DIR}/*")
-        get_filename_component(_op_depened_name "${_resolved_depend_dir}" NAME)
         filter_copy_files(SELECTED_DEPEND_FILES SELECTED_DEPEND_DIRS)
         install(FILES ${SELECTED_DEPEND_FILES}
                 DESTINATION ${IMPL_INSTALL_DIR}/ascendc/${_op_depened_name}

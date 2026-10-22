@@ -14,25 +14,9 @@ import sys
 import re
 import logging
 from pathlib import Path
-# 本仓稳定算子树仍使用仓库相对路径；experimental 使用一级扁平算子目录：
-#   稳定树 fla/ops/ascendc/<域>/<算子>/…
-#   实验树 experimental/<算子>/…/CMakeLists.txt
-_OPS_TREE_ROOT = ("fla", "ops", "ascendc")
+# Keep the pre-existing parser contract for non-experimental callers.
+NEW_OPS_PATH = ("mc2", "attention", "ffn", "gmm", "moe")
 _EXPERIMENTAL_PREFIX = ("experimental",)
-
-# 稳定树的受支持域。experimental 不依赖域名单。
-OP_DOMAINS = ("cp", "gdn", "kda")
-
-# 非算子目录：即使层级对上，也不应当成算子
-NON_OP_DIRS = ("common", "3rd", "tools", "tests", "internal_ops")
-
-# 稳定树算子目录下的固定子目录。第一个出现的标记之前，整段就是算子目录本身。
-# 用它定位而不是固定下标，是因为稳定树算子层级不固定：
-#   fla/ops/ascendc/kda/chunk_kda_fwd/…                                  算子在第 2 层
-#   fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/…                      算子在第 3 层
-#   fla/ops/ascendc/kda/chunk_kda_bwd/internal_ops/kda_gate_bwd_post/…   算子在第 4 层
-_OP_SUBDIR_MARKERS = ("op_host", "op_kernel", "op_kernel_aicpu", "op_api",
-                      "op_graph", "op_tiling", "tests", "examples")
 
 
 class OperatorChangeInfo:
@@ -51,95 +35,25 @@ BlackList = {
 
 def extract_operator_name(file_path, is_experimental):
     path_parts = file_path.lstrip('/').split('/')
-    domain, operator_name, op_dir_parts = _locate_op_dir(path_parts, is_experimental)
-    if domain is None:
+    if is_experimental != "TRUE":
+        return _extract_stable_operator_name(path_parts)
+    if len(path_parts) < 2 or path_parts[0] != "experimental":
         return ""
-
-    # 判断是否直接返回默认名称（黑名单、域非法、非算子目录、目录不存在、op_host 缺失）
-    if _should_return_default(domain, operator_name, op_dir_parts, is_experimental):
-        return _get_default_name(domain)
-
-    # 其他情况返回 operator_name
-    return operator_name
+    operator_name = path_parts[1]
+    if operator_name.startswith("_"):
+        return ""
+    return operator_name if (Path(*_EXPERIMENTAL_PREFIX, operator_name) / "CMakeLists.txt").is_file() else ""
 
 
-def _tree_root(is_experimental):
-    """本次判定的树根。"""
-    if is_experimental == "TRUE":
-        return _EXPERIMENTAL_PREFIX
-    return _OPS_TREE_ROOT
-
-
-def _locate_op_dir(path_parts, is_experimental):
-    """定位变更文件所属的算子目录。
-
-    返回 ``(domain, operator_name, op_dir_parts)``；路径不在本仓算子树下时返回
-    ``(None, None, None)``。
-
-    不按固定下标取域/算子，而是用 ``_OP_SUBDIR_MARKERS`` 定位算子目录的边界：
-    第一个 ``op_host`` / ``op_kernel`` / ``tests`` … 之前的全部段落就是算子目录，
-    其第 1 段是域、最后 1 段是算子名。
-    """
-    root = _tree_root(is_experimental)
-    n = len(root)
-    if len(path_parts) <= n or tuple(path_parts[:n]) != root:
-        return None, None, None
-
-    if is_experimental == "TRUE":
-        operator_name = path_parts[n]
-        if operator_name.startswith("_"):
-            return None, None, None
-        op_dir = root + (operator_name,)
-        return "", operator_name, op_dir
-
-    rest = list(path_parts[n:])
-    cut = len(rest)
-    for i, seg in enumerate(rest):
-        if seg in _OP_SUBDIR_MARKERS:
-            cut = i
-            break
-    op_dir = rest[:cut]
-
-    # 变更文件可能直接落在算子目录里（如 <算子>/CMakeLists.txt）：
-    # 从末尾逐段回退，直到剩下的是一个真实存在的目录。
-    while op_dir and not Path(*(root + tuple(op_dir))).is_dir():
-        op_dir = op_dir[:-1]
-    if not op_dir:
-        return None, None, None
-    return op_dir[0], op_dir[-1], root + tuple(op_dir)
-
-
-def _should_return_default(domain, operator_name, op_dir_parts, is_experimental):
-    """检查是否应使用默认名称（而不是 operator_name）"""
-    if operator_name in BlackList:
-        return True
-
-    # 该路径必须真实对应一个算子目录（op_dir_parts 相对当前工作目录，即仓库根）
-    op_dir = Path(*op_dir_parts)
-    if not op_dir.is_dir():
-        return True
-
-    if is_experimental == "TRUE":
-        # experimental 目录的根 CMake 是唯一算子标记；保留目录不会进入这里。
-        target = op_dir / "CMakeLists.txt"
-        if not target.is_file():
-            return True
-        return False
-
-    # 稳定树域必须受支持；common / 3rd / tools / tests 等不是算子。
-    if domain not in OP_DOMAINS or operator_name in NON_OP_DIRS:
-        return True
-    return False
-
-
-def _get_default_name(domain):
-    """域的兜底算子名。
-
-    参考仓在未命中白名单时会回退到某个「大盘算子」（如 fused_infer_attention_score）；
-    本仓没有这个等价物，统一返回空串 —— 让调用方走「本次不编任何算子」，
-    而不是把一个无关算子塞进编译范围。
-    """
-    return ""
+def _extract_stable_operator_name(path_parts):
+    if len(path_parts) < 2:
+        return ""
+    domain, operator_name = path_parts[:2]
+    default = "fused_infer_attention_score" if domain == "attention" else ""
+    if (operator_name in BlackList or operator_name == "common" or
+            not os.path.exists(f"experimental/{domain}/{operator_name}")):
+        return default
+    return operator_name if domain in NEW_OPS_PATH else default
 
 
 def get_operator_info_from_ci(changed_file_info_from_ci, is_experimental):

@@ -205,3 +205,26 @@ cp -a "$SRC/." "$DST/"
 | 产物名称 | 与稳定包相同 | 带 experimental 标识 |
 
 这次过程的主要价值是确认了真实构建链及其旁路，也证明“只把直接算子放进 experimental”不足以完成严格隔离。一级算子目录契约降低了发现和审计复杂度，但最终实现仍必须以完整依赖闭包、公共代码切换和产物审计为边界。
+
+## 9. 稳定路径零影响与模式互斥复审（2026-10-22）
+
+本节审计当前 PR 的实际实现，不把第 5 节的目标设计视为已完成能力。“互斥”分别检查构建输入、包内容、安装目标、运行时发现路径和 CI 执行路径；其中任何一层未隔离，都不能声称 Issue #931 已满足。
+
+| 维度 | 当前代码与证据 | 结论 |
+| --- | --- | --- |
+| 默认构建参数 | `build.sh` 默认 `ENABLE_EXPERIMENTAL=FALSE`，只有显式 `--experimental` 才增加 `--experimental` 校验参数与 CMake `TRUE`；普通运行先清理 `build/`，继续使用 CMake 默认 `OFF` | 普通命令行参数保持原样 |
+| 算子发现与依赖 | OFF 保留稳定树 glob、原单轮依赖挂载及原 kernel 依赖安装路径；ON 只发现 `experimental/<算子>/CMakeLists.txt`，缺失或路径形式实验依赖报错，不回退稳定树 | A5 单算子及依赖算子已验证；尚需 A2/A3 与全量覆盖 |
+| 公共代码与编译输入 | OFF 仍使用 `fla/ops/ascendc/common`；ON 改用 manifest 校验的 `experimental/_common`，并跳过 `common/src/framework` 的稳定 ONNX plugin 源。根 `common/` 的通用 tiling/framework 基础设施仍共享 | A5 ON 构建仅有实验 kernel，稳定 ONNX plugin `.o` 为 0；任意 symlink/CMake 跨树引用尚无完整门禁 |
+| 包内容 | A5 ON 隔离安装的 Ascend 950 kernel 目录仅有 `recompute_w_u_fwd_experimental`，aclnn 导出只有实验名；OFF 稳定包没有实验文件 | 当前两个单算子包的内容互斥，不代表全量包已审计 |
+| 安装目标 | 两种模式当前仍生成同名 `.run`、同名 `fla_npu_transformer` vendor。安装脚本的 wheel overlay 会向该 vendor 合并文件并覆盖共享库；只用不同 `--install-path` 才能人为隔离 | **未保证**。禁止把实验包安装到稳定 wheel、稳定 CANN OPP 或其相同根目录；独立制品/vendor 和安装器拒绝混装是合入阻断项 |
+| 运行时 | `torch_custom/fla_npu` 未修改，仍固定解析稳定 wheel 内的 `fla_npu_transformer`。若实验包覆盖同一 vendor，稳定进程可能加载被替换的 `libcust_opapi.so`；当前 fixture 也不是可运行的真实算子 | **未验证且未保证**。独立 runtime/wheel、加载路径与稳定执行回归仍需完成 |
+| CI 与 Release | 默认 workflow 未设置 `CI_EXPERIMENTAL`，普通容器不传此变量；显式实验模式仅允许 OPP 打包阶段，禁止继续进入稳定 wheel、安装和运行阶段。当前没有独立 experimental job 或实验制品上传链路 | 稳定 CI 默认入口未切换；双平台正式 NPU CI、独立实验 CI 和 Release 产物审计仍待完成 |
+
+A5 / Ascend 950 / CANN 9.2.0 对照记录：
+
+- 同一 `--ops=kda_gate_bwd_post` 稳定包，修正前递归依赖逻辑带入 7 个 kernel 目录、453 个安装文件；恢复旧单轮逻辑后仅有选定算子的 kernel 目录、364 个安装文件，依赖 host 的 aclnn 导出集合相同。该差异证明原 PR 曾改变 OFF 包内容，不能以“OFF 单算子编译通过”替代回归。
+- 修正后的 `--experimental --ops=recompute_w_u_fwd_experimental` 编译、打包和隔离安装通过；kernel 目录仅有实验名，构建目录无稳定 ONNX plugin `.o`。缺少实验 common 文件、缺少实验依赖、用稳定路径声明实验依赖均在 configure 阶段失败。
+- 修正后的 OFF 依赖算子编译、打包和隔离安装通过；未运行算子，也未验证稳定 Python 调用、精度、性能或 A2/A3 的构建和安装。
+- A5 `zzy` 环境的 Python CI 契约测试 156 项通过，其中 `ci.tests.test_experimental_build_contract` 的 6 项发现/解析和阶段隔离测试通过。`ci/tests/test_run_checks_stage_pipeline.sh` 在 A5 宿主机上使用假 `ASCEND_OPP_PATH`，被本机 toolkit `set_env.sh` 覆盖而失败；这不能作为真实容器或 GitHub-hosted CI 的通过证据，需要在其目标环境重跑。
+
+合入前必须补齐：实验包独立文件名和 vendor、安装器拒绝合并到稳定 wheel/OPP、实验 runtime/wheel 策略与稳定调用回归、独立 experimental CI 与包来源审计、A2/A3/A5 稳定全量 NPU CI。当前只能确认上述 A5 隔离安装场景；**不能宣称构建、安装、运行、CI 四个维度已全面互斥，也不能据此关闭 Issue #931**。

@@ -126,7 +126,7 @@ add_subdirectory(op_host)
 
 ### 5.1 开关与入口
 
-`ENABLE_EXPERIMENTAL` 默认值为 `OFF`，`build.sh --experimental` 将其置为 `ON`。每次配置都显式下发 `TRUE/FALSE`，避免任何调用方式复用旧 CMake 状态。
+`ENABLE_EXPERIMENTAL` 默认值为 `OFF`。普通 `build.sh` 保持原参数列表，并在配置前清理 `build/`；只有显式传入 `--experimental` 才下发 `-DENABLE_EXPERIMENTAL=TRUE`。直接调用 CMake 且复用构建目录的用户必须明确指定该开关，不允许把两种模式的缓存视为可互换。
 
 两种模式共享构建框架，但算子树根、公共代码根、算子注册清单和产物身份必须同时切换。
 
@@ -203,6 +203,8 @@ endif()
 4. staging 和 install 的来源都是实验 common。
 
 Catlass、CANN SDK 头和纯构建框架可以继续作为两种模式的外部共享基础设施，但不得包含本仓稳定算子的实现或注册信息。
+
+仓根 `common/src/framework` 内含稳定 ONNX plugin 注册源；experimental 模式不挂载这个子目录，普通模式保持原有挂载。共享 `common` 中其余部分只作为通用构建/tiling 基础设施使用。
 
 仓根 `common/` 当前无条件参与构建，也必须完成内容分类：如果其中包含算子实现、注册或入包文件，则需要提供 experimental 独立副本并随模式切换；只有经审计确认与算子无关的构建基础设施才允许共享。此目录的变更必须同时触发 experimental 与稳定回归。
 

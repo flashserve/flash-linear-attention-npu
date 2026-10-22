@@ -146,11 +146,6 @@ function set_env() {
     CONVERT_ASCEND_COMPUTE_UNIT="$(convert_string ${ASCEND_COMPUTE_UNIT})"
 
     CONVERT_ASCEND_OP_NAME="$(convert_string ${ASCEND_OP_NAME})"
-
-    # 显式兜默认值 OFF。本开关由 config.cmake 无条件透传，缺省时会是空串；
-    # 空串在 CMake 里等价于 OFF，行为上不会出错，但日志与 CMakeCache 里看不出
-    # 「实验模式已关闭」，排查时容易误判成参数没传下来。这里是可读性修正，不是 bug 修复。
-    ENABLE_EXPERIMENTAL="${ENABLE_EXPERIMENTAL:-OFF}"
 }
 
 function build() {

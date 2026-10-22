@@ -50,3 +50,5 @@ bash build.sh --pkg --experimental --soc=ascend910b
 `recompute_w_u_fwd_experimental` 是独立命名的最小编译验证用例，不实现原算子的计算语义；稳定算子仍留在原目录。A5 验证只编译、打包并安装到隔离目录，检查算子文件清单和 aclnn 导出，不运行算子。缺失 `_common/manifest.txt` 或清单内头文件的负向用例只检查构建期失败。
 
 当前仍需完成独立 experimental CI、独立制品命名和完整产物门禁，Issue #931 才能验收。
+
+当前 `.run` 与稳定包仍同名、同 vendor；只能用 `--install-path` 安装到独立 OPP 根目录验证。不要将实验包合并安装到稳定 wheel 或稳定 CANN OPP 根目录，也不要在稳定进程的 `ASCEND_CUSTOM_OPP_PATH` 中加入实验目录。此隔离依赖操作约束，尚不是安装器或运行时强制保证。

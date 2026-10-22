@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -59,6 +61,12 @@ class ExperimentalBuildContractTest(unittest.TestCase):
             ["rwkv_recurrent"],
         )
 
+    def test_default_discovery_stays_on_the_stable_tree(self):
+        stable_host = self.root / "fla" / "ops" / "ascendc" / "gdn" / "stable_probe" / "op_host"
+        stable_host.mkdir(parents=True)
+        (stable_host / "CMakeLists.txt").write_text("# stable\n", encoding="utf-8")
+        self.assertEqual(check_build_ops.discover_supported_ops(self.root), ["stable_probe"])
+
     def test_experimental_path_parser_uses_first_directory(self):
         previous_cwd = os.getcwd()
         os.chdir(self.root)
@@ -78,6 +86,47 @@ class ExperimentalBuildContractTest(unittest.TestCase):
             ),
             "",
         )
+
+    def test_non_experimental_change_parser_keeps_legacy_results(self):
+        previous_cwd = os.getcwd()
+        os.chdir(self.root)
+        try:
+            (self.root / "experimental" / "attention" / "legacy_probe").mkdir(parents=True)
+            self.assertEqual(
+                parse_changed_ops.extract_operator_name(
+                    "attention/legacy_probe/op_host/def.cpp", "FALSE"
+                ),
+                "legacy_probe",
+            )
+            self.assertEqual(
+                parse_changed_ops.extract_operator_name(
+                    "attention/missing/op_host/def.cpp", "FALSE"
+                ),
+                "fused_infer_attention_score",
+            )
+            self.assertEqual(
+                parse_changed_ops.extract_operator_name(
+                    "fla/ops/ascendc/gdn/stable_probe/op_host/def.cpp", "FALSE"
+                ),
+                "",
+            )
+        finally:
+            os.chdir(previous_cwd)
+
+    @unittest.skipUnless(shutil.which("bash"), "bash is required for the CI entry point")
+    def test_experimental_ci_cannot_enter_stable_runtime_stages(self):
+        env = os.environ.copy()
+        env.update(CI_EXPERIMENTAL="true", CI_STAGE="all")
+        result = subprocess.run(
+            ["bash", "ci/run_checks.sh"],
+            cwd=REPO_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("supports only CI_STAGE=opp-package", result.stderr)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,10 @@ ci_soc="${CI_SOC:-${NPU_SOC:-ascend910b}}"
 ci_ops="${CI_OPS:-}"
 ci_experimental="${CI_EXPERIMENTAL:-false}"
 requested_ascend_opp_path="${ASCEND_OPP_PATH:-}"
+if [[ "$ci_experimental" == "true" && "${CI_STAGE:-all}" != "opp-package" ]]; then
+    echo "[CI][ERROR] Experimental CI currently supports only CI_STAGE=opp-package; stable wheel, install, and runtime stages must not consume an experimental OPP." >&2
+    exit 2
+fi
 if [[ "$ci_soc" == "unknown" ]]; then
     ci_soc="ascend910b"
 fi
@@ -205,7 +209,7 @@ fi
 
 # Toolkit set_env.sh may overwrite ASCEND_OPP_PATH. Preserve an explicit caller
 # value so CI tests and isolated OPP installs can point at their own staging tree.
-if [[ -n "$requested_ascend_opp_path" ]]; then
+if [[ "$ci_experimental" == "true" && -n "$requested_ascend_opp_path" ]]; then
     export ASCEND_OPP_PATH="$requested_ascend_opp_path"
 fi
 
