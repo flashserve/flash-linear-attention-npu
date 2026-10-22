@@ -12,7 +12,9 @@
  * after the next H is queued. Chunk c+2's K L2 runs under
  * o and D; its L1 copy and q L2 run after D, and H is uploaded before q's L2.
  * H stays in L0B across q@H. q_exp is loaded before the v_new wait, so
- * q@H does not move H a second time. A@kbg uses the other L0 bank.
+ * q@H does not move H a second time. D then uses the other L0 bank, so its
+ * load overlaps q@H. The second K tile overlaps the first D mad, and that
+ * mad's fixpipe overlaps the second D mad. A@kbg uses the other L0 bank.
  */
 
 #ifndef GDN_KDA_PIPE_H
@@ -830,28 +832,29 @@ private:
                 GdnFwd32::MmadL0ToL0C(l0A_[0], l0B_[0], l0C0_, kBt, kDim, kDim, true, 0);
                 SetFlag<HardEvent::M_MTE1>(0);
 
-                // q@H stays in the low 16KB of l0C0 for o. D uses bank 0 and the
-                // L0C at 64KB, and its fixpipe runs before o, so saxpy overlaps o.
+                // q@H keeps bank 0 and the low 16KB of l0C0 for o. D's K and v_g
+                // load into bank 1 under that mad. The second K tile reuses v_g
+                // and loads into bank 0 once q@H has released it. L0C is at 64KB.
                 constexpr int kDm = 64;
-                constexpr uint8_t dBank = 0;
                 constexpr uint32_t kL0cD = 16 * 1024;
-                WaitFlag<HardEvent::M_MTE1>(dBank);
-                GdnFwd32::LoadL1NzToL0AB(l1K_[slot], l1Vg_, l0A_[0], l0B_[0], kDm, kDim, kBt, true, 0, dBank, true,
+                WaitFlag<HardEvent::M_MTE1>(1);
+                GdnFwd32::LoadL1NzToL0AB(l1K_[slot], l1Vg_, l0A_[1], l0B_[1], kDm, kDim, kBt, true, 0, 1, true,
                                          false);
-                LocalTensor<float> l0cD = l0C0_[kL0cD];
-                WaitFlag<HardEvent::MTE1_M>(dBank);
-                GdnFwd32::MmadL0ToL0C(l0A_[0], l0B_[0], l0cD, kDm, kDim, kBt, true, 0, false);
-                SetFlag<HardEvent::M_MTE1>(dBank);
-                WaitFlag<HardEvent::M_MTE1>(dBank);
+                WaitFlag<HardEvent::M_MTE1>(0);
                 auto kPart = l1K_[slot][static_cast<uint32_t>(2 * 2 * kBt * 16)];
                 GdnFwd32::LoadL1NzToL0A(kPart, l0A_[0], kDm, kBt, true);
-                SetFlag<HardEvent::MTE1_M>(dBank);
-                WaitFlag<HardEvent::MTE1_M>(dBank);
-                GdnFwd32::MmadL0ToL0C(l0A_[0], l0B_[0], l0cD[static_cast<uint32_t>(kDm * kDim)], kDm, kDim, kBt, true,
-                                      1, false);
-                SetFlag<HardEvent::M_MTE1>(dBank);
-
+                SetFlag<HardEvent::MTE1_M>(0);
+                LocalTensor<float> l0cD = l0C0_[kL0cD];
+                WaitFlag<HardEvent::MTE1_M>(1);
+                GdnFwd32::MmadL0ToL0C(l0A_[1], l0B_[1], l0cD, kDm, kDim, kBt, true, 0, false);
+                // fixpipe0 starts when this mad ends, so it overlaps the second mad.
                 SetFlag<HardEvent::M_FIX>(0);
+                WaitFlag<HardEvent::MTE1_M>(0);
+                GdnFwd32::MmadL0ToL0C(l0A_[0], l0B_[1], l0cD[static_cast<uint32_t>(kDm * kDim)], kDm, kDim, kBt, true,
+                                      1, false);
+                SetFlag<HardEvent::M_MTE1>(0);
+                SetFlag<HardEvent::M_MTE1>(1);
+
                 WaitFlag<HardEvent::M_FIX>(0);
                 GdnFwd32::FixpipeBf16UbNz(ubD_, l0cD, kDm, kDim, 0);
                 SetFlag<HardEvent::FIX_M>(0);
