@@ -14,7 +14,7 @@
 experimental/
 ├── _common/
 │   └── manifest.txt
-├── recurrent_gated_delta_rule/
+├── recompute_w_u_fwd_experimental/
 │   ├── CMakeLists.txt
 │   ├── op_host/
 │   └── op_kernel/
@@ -47,4 +47,6 @@ bash build.sh --pkg --experimental --soc=ascend910b --ops=<实验算子名>
 bash build.sh --pkg --experimental --soc=ascend910b
 ```
 
-当前代码与上述目标约束之间的差距记录在“构建适配过程记录”中。在严格依赖失败、公共代码切换、独立 CI 和产物审计全部完成前，不应将当前 experimental 构建视为 Issue #931 已验收。
+`recompute_w_u_fwd_experimental` 是从稳定算子复制并重命名的构建验证用例；稳定算子仍留在原目录。A5 验证只编译、打包并安装到隔离目录，检查算子文件清单，不运行算子。缺失 `_common/manifest.txt` 的负向用例只检查构建期失败。
+
+当前仍需完成独立 experimental CI、独立制品命名和完整产物门禁，Issue #931 才能验收。
