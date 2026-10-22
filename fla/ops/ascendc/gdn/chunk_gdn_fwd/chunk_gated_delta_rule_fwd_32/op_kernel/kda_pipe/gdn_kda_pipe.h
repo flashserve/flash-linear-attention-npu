@@ -8,12 +8,11 @@
  * fixpipe lands. The next chunk's P and o_inter use the updated state.
  *
  * Cube order inside a chunk matches KDA's consumers: kkt/qk, then A@vb and
- * w@H, then v_new, then o and the four D slices. L2 of chunk c+2 runs after
- * the H upload, so the next w@H is not waiting out that L2.
+ * w@H, then v_new, then D, then o. D's fixpipe releases the saxpy; o is stored
+ * after the next H is queued. Chunk c+2's K L2 runs under
+ * o and D; its L1 copy and q L2 run after D, and H is uploaded before q's L2.
  * H stays in L0B across q@H. q_exp is loaded before the v_new wait, so
  * q@H does not move H a second time. A@kbg uses the other L0 bank.
- * In-loop Q/K publish splits L2 the same way as the prologue: the K flag
- * is set before q's L2, so K@K is not waiting on q.
  */
 
 #ifndef GDN_KDA_PIPE_H
@@ -41,7 +40,7 @@ constexpr uint16_t kFlagP = 4;
 constexpr uint16_t kFlagV = 5;
 constexpr uint16_t kFlagO = 6;
 constexpr uint16_t kFlagD = 7;
-constexpr uint16_t kFlagD2 = 8;
+constexpr uint16_t kFlagOd = 8;
 constexpr uint16_t kFlagAttn = 10;
 
 constexpr uint32_t kUbState = 0;
@@ -65,13 +64,11 @@ constexpr uint32_t kUbA = 100 * 1024;
 constexpr uint32_t kUbAbf = 104 * 1024;
 constexpr uint32_t kUbAttn = 106 * 1024;
 constexpr uint32_t kUbU = 108 * 1024;
-constexpr uint32_t kUbP = 116 * 1024;
 constexpr uint32_t kUbVn = 124 * 1024;
 constexpr uint32_t kUbVg = 128 * 1024;
 constexpr uint32_t kUbO = 132 * 1024;
 // Two 32-row D slices per AIV, so the cube can land both before the saxpy.
 constexpr uint32_t kUbD = 176 * 1024;
-constexpr uint32_t kUbEye16 = 136 * 1024;
 constexpr uint32_t kUbEye = 144 * 1024;
 constexpr uint32_t kUbSh = 148 * 1024;
 constexpr uint32_t kUbScratch = 152 * 1024;
@@ -120,13 +117,12 @@ __aicore__ inline void FixpipeHalfBf16(LocalTensor<bfloat16_t> ub, LocalTensor<f
     Fixpipe<bfloat16_t, float, kFixUbNz2Nd>(ub, l0C[16 * 16], p);
 }
 
-// 16 ND rows. u/p are the half this AIV received from the dual fixpipe.
+// 16 ND rows of u-p, the half this AIV received from the fixpipe.
 // global row = rowBase + r, so the gate reads that lane of eg.
-__aicore__ inline void VnewHalfVF(LocalTensor<bfloat16_t> u, LocalTensor<bfloat16_t> p, LocalTensor<float> eg,
-                                  LocalTensor<bfloat16_t> vNew, LocalTensor<bfloat16_t> vNewG, uint32_t rowBase)
+__aicore__ inline void VnewHalfVF(LocalTensor<bfloat16_t> u, LocalTensor<float> eg, LocalTensor<bfloat16_t> vNew,
+                                  LocalTensor<bfloat16_t> vNewG, uint32_t rowBase)
 {
     __ubuf__ bfloat16_t *uAddr = (__ubuf__ bfloat16_t *)u.GetPhyAddr();
-    __ubuf__ bfloat16_t *pAddr = (__ubuf__ bfloat16_t *)p.GetPhyAddr();
     __ubuf__ float *eAddr = (__ubuf__ float *)eg.GetPhyAddr();
     __ubuf__ bfloat16_t *nAddr = (__ubuf__ bfloat16_t *)vNew.GetPhyAddr();
     __ubuf__ bfloat16_t *gAddr = (__ubuf__ bfloat16_t *)vNewG.GetPhyAddr();
@@ -139,10 +135,9 @@ __aicore__ inline void VnewHalfVF(LocalTensor<bfloat16_t> u, LocalTensor<bfloat1
         RegTensor<float> last;
         LoadAlign<float, LoadDist::DIST_BRC_B32>(last, eAddr + (kBt - 1));
         for (uint16_t r = 0; r < 16; ++r) {
-            RegTensor<bfloat16_t> a, b, glo, ghi;
+            RegTensor<bfloat16_t> a, glo, ghi;
             RegTensor<float> ri, gate;
             LoadAlign(a, uAddr + static_cast<uint32_t>(r) * kDim);
-            (void)pAddr;
             // Tight NZ, panel height 16. PublishHalf then needs one copy, not eight.
             StoreAlign<bfloat16_t, DataCopyMode::DATA_BLOCK_COPY>(nAddr + static_cast<uint32_t>(r) * 16, a, 16,
                                                                   m128);
@@ -184,8 +179,21 @@ __aicore__ inline void ScaleHalfVF(LocalTensor<bfloat16_t> src, LocalTensor<bflo
     }
 }
 
+// Dense 128 bf16. Even/odd is the same per-element saxpy; Or writes the row back.
+__aicore__ inline void StoreFlat128(__ubuf__ bfloat16_t *dst, RegTensor<float> &even, RegTensor<float> &odd,
+                                    MaskReg &m16, MaskReg &m128)
+{
+    RegTensor<bfloat16_t> lo, hi;
+    Cast<bfloat16_t, float, GdnFwd32::kCastB322B16>(lo, even, m16);
+    Cast<bfloat16_t, float, GdnFwd32::kCastB322B16Hi>(hi, odd, m16);
+    Or((RegTensor<uint16_t> &)lo, (RegTensor<uint16_t> &)lo, (RegTensor<uint16_t> &)hi, m16);
+    StoreAlign(dst, lo, m128);
+}
+
 // state = decay * state + d over one AIV's 64x128 tile. Both buffers are the
 // NZ panel image (8 contiguous [64, 16] panels), so this is a flat saxpy.
+// Four rows stay live. Their casts overlap, and each D load sits under the
+// previous row's store. Mul then Add keeps the one-row rounding.
 __aicore__ inline void SaxpyStateVF(LocalTensor<bfloat16_t> state, LocalTensor<bfloat16_t> d, float decay)
 {
     __ubuf__ bfloat16_t *sAddr = (__ubuf__ bfloat16_t *)state.GetPhyAddr();
@@ -193,21 +201,42 @@ __aicore__ inline void SaxpyStateVF(LocalTensor<bfloat16_t> state, LocalTensor<b
     __VEC_SCOPE__
     {
         MaskReg preg = CreateMask<float, MaskPattern::ALL>();
+        MaskReg m16 = CreateMask<uint16_t, MaskPattern::ALL>();
+        uint32_t n128 = 128;
+        MaskReg m128 = UpdateMask<bfloat16_t>(n128);
         RegTensor<float> dec;
         Duplicate(dec, decay, preg);
-        for (uint16_t i = 0; i < 64; ++i) {
-            const uint32_t off = static_cast<uint32_t>(i) * 128;
-            RegTensor<float> s0, s1, d0, d1;
-            GdnFwd32::LoadCastBf16(sAddr + off, s0, preg);
-            GdnFwd32::LoadCastBf16(sAddr + off + 64, s1, preg);
-            GdnFwd32::LoadCastBf16(dAddr + off, d0, preg);
-            GdnFwd32::LoadCastBf16(dAddr + off + 64, d1, preg);
-            Mul(s0, s0, dec, preg);
-            Mul(s1, s1, dec, preg);
-            Add(s0, s0, d0, preg);
-            Add(s1, s1, d1, preg);
-            GdnFwd32::StoreCastBf16(sAddr + off, s0, preg);
-            GdnFwd32::StoreCastBf16(sAddr + off + 64, s1, preg);
+        for (uint16_t i = 0; i < 16; ++i) {
+            const uint32_t off = static_cast<uint32_t>(i) * 512;
+            RegTensor<float> e0, o0, e1, o1, e2, o2, e3, o3, f, g;
+            GdnFwd32::LoadEvenOdd(sAddr + off, e0, o0, m16);
+            GdnFwd32::LoadEvenOdd(sAddr + off + 128, e1, o1, m16);
+            GdnFwd32::LoadEvenOdd(sAddr + off + 256, e2, o2, m16);
+            GdnFwd32::LoadEvenOdd(sAddr + off + 384, e3, o3, m16);
+            Mul(e0, e0, dec, preg);
+            Mul(o0, o0, dec, preg);
+            Mul(e1, e1, dec, preg);
+            Mul(o1, o1, dec, preg);
+            Mul(e2, e2, dec, preg);
+            Mul(o2, o2, dec, preg);
+            Mul(e3, e3, dec, preg);
+            Mul(o3, o3, dec, preg);
+            GdnFwd32::LoadEvenOdd(dAddr + off, f, g, m16);
+            Add(e0, e0, f, preg);
+            Add(o0, o0, g, preg);
+            GdnFwd32::LoadEvenOdd(dAddr + off + 128, f, g, m16);
+            StoreFlat128(sAddr + off, e0, o0, m16, m128);
+            Add(e1, e1, f, preg);
+            Add(o1, o1, g, preg);
+            GdnFwd32::LoadEvenOdd(dAddr + off + 256, f, g, m16);
+            StoreFlat128(sAddr + off + 128, e1, o1, m16, m128);
+            Add(e2, e2, f, preg);
+            Add(o2, o2, g, preg);
+            GdnFwd32::LoadEvenOdd(dAddr + off + 384, f, g, m16);
+            StoreFlat128(sAddr + off + 256, e2, o2, m16, m128);
+            Add(e3, e3, f, preg);
+            Add(o3, o3, g, preg);
+            StoreFlat128(sAddr + off + 384, e3, o3, m16, m128);
         }
     }
 }
@@ -271,6 +300,7 @@ public:
         const uint32_t totalHeads = batchSize_ * valueHeadNum_;
         isActive_ = valueHeadNum_ != 0 && aicIdx < totalHeads;
         headBegin_ = isActive_ ? aicIdx : 0;
+        (void)workspace;
 
         qGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(q));
         kGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(k));
@@ -304,13 +334,11 @@ public:
         ubAbf_ = buf.template GetBuffer<BufferType::ASCEND_UB, bfloat16_t>(kUbAbf);
         ubAttn_ = buf.template GetBuffer<BufferType::ASCEND_UB, bfloat16_t>(kUbAttn);
         ubU_ = buf.template GetBuffer<BufferType::ASCEND_UB, bfloat16_t>(kUbU);
-        ubP_ = buf.template GetBuffer<BufferType::ASCEND_UB, bfloat16_t>(kUbP);
         ubVn_ = buf.template GetBuffer<BufferType::ASCEND_UB, bfloat16_t>(kUbVn);
         ubVg_ = buf.template GetBuffer<BufferType::ASCEND_UB, bfloat16_t>(kUbVg);
         ubO_ = buf.template GetBuffer<BufferType::ASCEND_UB, bfloat16_t>(kUbO);
         ubD_ = buf.template GetBuffer<BufferType::ASCEND_UB, bfloat16_t>(kUbD);
         ubEye_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(kUbEye);
-        ubEye16_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(kUbEye16);
         ubSh_ = buf.template GetBuffer<BufferType::ASCEND_UB, uint32_t>(kUbSh);
         ubScratch_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(kUbScratch);
         l1H_ = buf.template GetBuffer<BufferType::ASCEND_CB, bfloat16_t>(kL1H);
@@ -545,10 +573,12 @@ private:
     __aicore__ inline void StoreO(uint32_t chunk)
     {
         ScaleHalfVF(ubO_, ubO_, scale_);
-        SetFlag<HardEvent::V_MTE3>(0);
-        WaitFlag<HardEvent::V_MTE3>(0);
+        // Event 0 is PublishKFlag. H is already queued on event 1.
+        SetFlag<HardEvent::V_MTE3>(2);
+        WaitFlag<HardEvent::V_MTE3>(2);
         const int64_t token = TokenBase() + static_cast<int64_t>(chunk) * kBt + static_cast<int64_t>(sub_) * 16;
         DataCopy(oGm_[token * kDim], ubO_, 16 * kDim);
+        CrossCoreSetFlag<0x4, PIPE_MTE3>(Seen(kFlagOd, sub_));
     }
 
     __aicore__ inline void ApplyD(float decay)
@@ -567,15 +597,27 @@ private:
         return bank == 0 ? l0C0_ : l0C1_;
     }
 
-    // One L0 bank. M_MTE1(bank) and M_FIX(bank) are set; FIX_M(bank) is consumed.
+    // One L0 bank, initC. M_MTE1(bank) is set on the way out. FIX_M(bank) is
+    // consumed inside the mad. signalFix is false when the L0C result stays
+    // live for a later accumulating mad. handoff >= 0 takes that other bank's
+    // token before this load and returns it before this mad, so the other
+    // bank's load overlaps the mad.
     __aicore__ inline void Mad(LocalTensor<bfloat16_t> a, LocalTensor<bfloat16_t> b, int m, int n, int k,
-                               bool transposeB, uint8_t bank)
+                               bool transposeB, uint8_t bank, bool signalFix = true, int handoff = -1)
     {
+        if (handoff >= 0) {
+            WaitFlag<HardEvent::M_MTE1>(static_cast<uint8_t>(handoff));
+        }
         WaitFlag<HardEvent::M_MTE1>(bank);
         GdnFwd32::LoadL1NzToL0AB(a, b, l0A_[bank], l0B_[bank], m, n, k, transposeB, 0, bank);
+        if (handoff >= 0) {
+            SetFlag<HardEvent::M_MTE1>(static_cast<uint8_t>(handoff));
+        }
         GdnFwd32::MmadL0ToL0C(l0A_[bank], l0B_[bank], L0COf(bank), m, n, k, true, bank);
         SetFlag<HardEvent::M_MTE1>(bank);
-        SetFlag<HardEvent::M_FIX>(bank);
+        if (signalFix) {
+            SetFlag<HardEvent::M_FIX>(bank);
+        }
     }
 
     // K@K only. kFlagKkt is the inverse's start flag.
@@ -634,29 +676,25 @@ private:
             if (prime) {
                 PublishStaged(sub_);
             }
-            uint32_t invDone = 0xFFFFFFFFU;
-            // 1 once the updated state is already in L1 for this chunk.
-            uint32_t uploaded = 0;
+            // Chunk 0 and chunk 1 already have K@K from the prologue, so each
+            // owner inverts once here. Chunk 0 finishes before the initial H
+            // upload. Chunk 1 stays after that upload and overlaps chunk 0's A@v.
+            // Later chunks are inverted one iteration early, inside the loop.
+            if (nChunk > 0 && Owns(0)) {
+                CrossCoreWaitFlag<0x4, PIPE_V>(kFlagKkt);
+                InverseUb(0);
+                InverseL1(0);
+            }
+            if (nChunk > 0) {
+                UploadH();
+            }
+            if (nChunk > 1 && !Owns(0)) {
+                CrossCoreWaitFlag<0x4, PIPE_V>(kFlagKkt);
+                InverseUb(1);
+                InverseL1(1);
+            }
             for (uint32_t c = 0; c < nChunk; ++c) {
                 const bool owner = Owns(c);
-                if (owner && invDone != c) {
-                    CrossCoreWaitFlag<0x4, PIPE_V>(kFlagKkt);
-                    InverseUb(c);
-                    InverseL1(c);
-                }
-                // H before the gate. The non-owner cumsum was the cube's H bubble.
-                if (uploaded == 0) {
-                    UploadH();
-                }
-                uploaded = 0;
-                // Chunk 1's kkt is ready before this loop (Q/K came from the prologue).
-                // Invert it here, under chunk 0's A@v, instead of after v_new.
-                if (!owner && c == 0 && c + 1 < nChunk) {
-                    CrossCoreWaitFlag<0x4, PIPE_V>(kFlagKkt);
-                    InverseUb(c + 1);
-                    InverseL1(c + 1);
-                    invDone = c + 1;
-                }
                 if (!owner) {
                     LoadGate(c);
                 }
@@ -675,7 +713,7 @@ private:
                 }
                 CrossCoreWaitFlag<0x4, PIPE_V>(kFlagP);
                 const float decay = DecayOf(egNow);
-                VnewHalfVF(ubU_, ubP_, egNow, ubVn_, ubVg_, sub_ * 16);
+                VnewHalfVF(ubU_, egNow, ubVn_, ubVg_, sub_ * 16);
                 PublishHalf(c);
                 // K flag before o / saxpy / H. The next cube's K@K sits behind it,
                 // and those three used to push the L2 past that wait.
@@ -684,28 +722,24 @@ private:
                 }
                 // The solve does not read P, but it shares this vector with v_new.
                 // Running it first holds off kFlagV and the cube waits there.
-                if (!owner && c + 1 < nChunk && invDone != c + 1) {
+                // Chunk 1 was inverted before this loop.
+                if (!owner && c > 0 && c + 1 < nChunk) {
                     CrossCoreWaitFlag<0x4, PIPE_V>(kFlagKkt);
                     InverseUb(c + 1);
                     InverseL1(c + 1);
-                    invDone = c + 1;
                 }
-                CrossCoreWaitFlag<0x4, PIPE_V>(kFlagO);
-                StoreO(c);
+                // D does not read o. Saxpy and the next H are queued before o is stored.
                 ApplyD(decay);
-                // D has released this K slot. The L2 image was built under o / D.
-                if (owner && nxt < nChunk) {
-                    PublishKFlag(nxt);
-                }
-                // Next H before q's L2. The cube's w@H waits on this flag.
                 if (c + 1 < nChunk) {
                     UploadH();
-                    uploaded = 1;
                 }
                 if (owner && nxt < nChunk) {
+                    PublishKFlag(nxt);
                     PublishQ(nxt);
                     PublishQFlag(nxt);
                 }
+                CrossCoreWaitFlag<0x4, PIPE_V>(kFlagO);
+                StoreO(c);
             }
             WaitFlag<HardEvent::V_MTE3>(1);
             if (nzArmed_ != 0) {
@@ -749,27 +783,10 @@ private:
                 const uint32_t slot = owner;
                 CrossCoreWaitFlag<0x4, PIPE_MTE1>(Seen(kFlagInv, owner));
 
-                // Same two L0A/L0B/L0C banks and the same Mad / M_FIX / fixpipe
-                // steps as the opening K@K pair. The old bank-1 token is taken
-                // first. Cube sets a new one only once A@v is in L0 and its mad
-                // is the next cube op, so A@kbg's Mad starts its load then.
-                WaitFlag<HardEvent::M_MTE1>(1);
-                WaitFlag<HardEvent::M_MTE1>(0);
-                GdnFwd32::LoadL1NzToL0AB(l1A_[slot], l1Vb_[slot], l0A_[0], l0B_[0], kBt, kDim, kBt, true, 0, 0,
-                                         false, false);
-                WaitFlag<HardEvent::MTE1_M>(0);
-                WaitFlag<HardEvent::FIX_M>(0);
-                SetFlag<HardEvent::M_MTE1>(1);
-                AscendC::MmadParams madU;
-                madU.m = kBt;
-                madU.n = kDim;
-                madU.k = kBt;
-                madU.cmatrixInitVal = true;
-                madU.cmatrixSource = false;
-                madU.unitFlag = 0;
-                AscendC::Mmad(l0C0_, l0A_[0], l0B_[0], madU);
-                SetFlag<HardEvent::M_MTE1>(0);
-                // u stays in l0C0. kbg is stored negated, so w@H accumulates -p.
+                // A@v on bank 0, A@kbg on bank 1. u stays in l0C0 (no FIX signal).
+                // Bank 1 is handed back before A@v's mad, so A@kbg's load overlaps it.
+                // kbg is stored negated, so the later w@H accumulates -p into u.
+                Mad(l1A_[slot], l1Vb_[slot], kBt, kDim, kBt, true, 0, false, 1);
                 Mad(l1A_[slot], l1Kbg_[slot], kBt, kDim, kBt, true, 1);
                 // H does not depend on W. Bank 0 was freed by A@v, so this load
                 // overlaps A@kbg's mad. W is loaded after its fixpipe.
@@ -812,43 +829,60 @@ private:
                 WaitFlag<HardEvent::MTE1_M>(0);
                 GdnFwd32::MmadL0ToL0C(l0A_[0], l0B_[0], l0C0_, kBt, kDim, kDim, true, 0);
                 SetFlag<HardEvent::M_MTE1>(0);
+
+                // q@H stays in the low 16KB of l0C0 for o. D uses bank 0 and the
+                // L0C at 64KB, and its fixpipe runs before o, so saxpy overlaps o.
+                constexpr int kDm = 64;
+                constexpr uint8_t dBank = 0;
+                constexpr uint32_t kL0cD = 16 * 1024;
+                WaitFlag<HardEvent::M_MTE1>(dBank);
+                GdnFwd32::LoadL1NzToL0AB(l1K_[slot], l1Vg_, l0A_[0], l0B_[0], kDm, kDim, kBt, true, 0, dBank, true,
+                                         false);
+                LocalTensor<float> l0cD = l0C0_[kL0cD];
+                WaitFlag<HardEvent::MTE1_M>(dBank);
+                GdnFwd32::MmadL0ToL0C(l0A_[0], l0B_[0], l0cD, kDm, kDim, kBt, true, 0, false);
+                SetFlag<HardEvent::M_MTE1>(dBank);
+                WaitFlag<HardEvent::M_MTE1>(dBank);
+                auto kPart = l1K_[slot][static_cast<uint32_t>(2 * 2 * kBt * 16)];
+                GdnFwd32::LoadL1NzToL0A(kPart, l0A_[0], kDm, kBt, true);
+                SetFlag<HardEvent::MTE1_M>(dBank);
+                WaitFlag<HardEvent::MTE1_M>(dBank);
+                GdnFwd32::MmadL0ToL0C(l0A_[0], l0B_[0], l0cD[static_cast<uint32_t>(kDm * kDim)], kDm, kDim, kBt, true,
+                                      1, false);
+                SetFlag<HardEvent::M_MTE1>(dBank);
+
+                SetFlag<HardEvent::M_FIX>(0);
+                WaitFlag<HardEvent::M_FIX>(0);
+                GdnFwd32::FixpipeBf16UbNz(ubD_, l0cD, kDm, kDim, 0);
+                SetFlag<HardEvent::FIX_M>(0);
+                CrossCoreSetFlag<0x4, PIPE_FIX>(Seen(kFlagD, 0));
+
+                WaitFlag<HardEvent::FIX_M>(1);
+                SetFlag<HardEvent::M_FIX>(1);
+                WaitFlag<HardEvent::M_FIX>(1);
+                GdnFwd32::FixpipeBf16UbNz(ubD_, l0cD[static_cast<uint32_t>(kDm * kDim)], kDm, kDim, 1);
+                SetFlag<HardEvent::FIX_M>(1);
+                CrossCoreSetFlag<0x4, PIPE_FIX>(Seen(kFlagD, 1));
+
                 WaitFlag<HardEvent::M_MTE1>(1);
                 GdnFwd32::LoadL1NzToL0AB(l1Attn_[slot], l1Vn_, l0A_[1], l0B_[1], kBt, kDim, kBt, true, 0, 1);
                 GdnFwd32::MmadL0ToL0C(l0A_[1], l0B_[1], l0C0_, kBt, kDim, kBt, false, 0);
                 SetFlag<HardEvent::M_MTE1>(1);
+                WaitFlag<HardEvent::FIX_M>(0);
                 SetFlag<HardEvent::M_FIX>(0);
                 WaitFlag<HardEvent::M_FIX>(0);
+                if (c > 0) {
+                    CrossCoreWaitFlag<0x4, PIPE_FIX>(Seen(kFlagOd, 0));
+                    CrossCoreWaitFlag<0x4, PIPE_FIX>(Seen(kFlagOd, 1));
+                }
                 FixpipeHalfBf16(ubO_, l0C0_, kBt, kDim);
                 SetFlag<HardEvent::FIX_M>(0);
                 CrossCoreSetFlag<0x4, PIPE_FIX>(kFlagO);
                 CrossCoreSetFlag<0x4, PIPE_FIX>(static_cast<uint16_t>(kFlagO + kAiv1));
-
-                // One 64-row panel per AIV. ubD_ is 64*128 bf16, so both saxpy slices
-                // land in one fixpipe. The two L0C tiles are 32KB apart.
-                constexpr int kDm = 64;
-                constexpr uint8_t dBank = 0;
-                WaitFlag<HardEvent::M_MTE1>(dBank);
-                GdnFwd32::LoadL1NzToL0AB(l1K_[slot], l1Vg_, l0A_[0], l0B_[0], kDm, kDim, kBt, true, 0, dBank, true,
-                                         false);
-                for (int part = 0; part < 2; ++part) {
-                    const uint8_t ev = static_cast<uint8_t>(part);
-                    LocalTensor<float> l0c = l0C0_[static_cast<uint32_t>(part) * static_cast<uint32_t>(kDm * kDim)];
-                    WaitFlag<HardEvent::MTE1_M>(dBank);
-                    GdnFwd32::MmadL0ToL0C(l0A_[0], l0B_[0], l0c, kDm, kDim, kBt, true, ev);
-                    SetFlag<HardEvent::M_FIX>(ev);
-                    SetFlag<HardEvent::M_MTE1>(dBank);
-                    if (part + 1 < 2) {
-                        WaitFlag<HardEvent::M_MTE1>(dBank);
-                        auto kPart = l1K_[slot][static_cast<uint32_t>(2 * 2 * kBt * 16)];
-                        GdnFwd32::LoadL1NzToL0A(kPart, l0A_[0], kDm, kBt, true);
-                        SetFlag<HardEvent::MTE1_M>(dBank);
-                    }
-                    WaitFlag<HardEvent::M_FIX>(ev);
-                    const uint8_t dstSub = static_cast<uint8_t>(part);
-                    GdnFwd32::FixpipeBf16UbNz(ubD_, l0c, kDm, kDim, dstSub);
-                    SetFlag<HardEvent::FIX_M>(ev);
-                    CrossCoreSetFlag<0x4, PIPE_FIX>(Seen(kFlagD, dstSub));
-                }
+            }
+            if (nChunk > 0) {
+                CrossCoreWaitFlag<0x4, PIPE_FIX>(Seen(kFlagOd, 0));
+                CrossCoreWaitFlag<0x4, PIPE_FIX>(Seen(kFlagOd, 1));
             }
         }
         WaitFlag<HardEvent::M_MTE1>(0);
@@ -861,8 +895,8 @@ private:
     GlobalTensor<bfloat16_t> qGm_, kGm_, vGm_, betaGm_, oGm_, stateGm_, initGm_;
     GlobalTensor<float> gGm_;
     LocalTensor<bfloat16_t> ubState_, ubQ_, ubK_, ubV_, ubQnz_, ubKnz_, ubKbg_, ubQexp_, ubVnz_;
-    LocalTensor<bfloat16_t> ubBeta_, ubAbf_, ubAttn_, ubU_, ubP_, ubVn_, ubVg_, ubO_, ubD_;
-    LocalTensor<float> ubG_, ubBe_, ubGp_, ubEg_, ubKkt_, ubQk_, ubL_, ubA_, ubEye_, ubEye16_, ubScratch_;
+    LocalTensor<bfloat16_t> ubBeta_, ubAbf_, ubAttn_, ubU_, ubVn_, ubVg_, ubO_, ubD_;
+    LocalTensor<float> ubG_, ubBe_, ubGp_, ubEg_, ubKkt_, ubQk_, ubL_, ubA_, ubEye_, ubScratch_;
     LocalTensor<float> ubG2_, ubGp2_, ubEg2_;
     LocalTensor<uint32_t> ubSh_;
     LocalTensor<bfloat16_t> l1H_, l1Vn_, l1Vg_;
