@@ -61,8 +61,8 @@ torch.ops.npu.npu_solve_tri(
 | 参数 | 数据类型 | 是否必须 | 描述 |
 |------|----------|----------|------|
 | x | FLOAT16/BFLOAT16 | 是 | 输入下三角矩阵 |
-| cu_seqlens | INT64 | TND 模式必须 | 累积序列长度 |
-| chunk_indices | INT64 | TND 模式必须 | chunk 索引数组 |
+| cu_seqlens | INT64 | TND/NTD 模式必须 | 累积序列长度 |
+| chunk_indices | INT64 | TND/NTD 模式必须 | chunk 索引数组 |
 | layout | string | 否 | 数据布局，支持 "bsnd"、"bnsd"、"tnd"、"ntd"，默认 "bsnd" |
 
 ---
@@ -77,8 +77,12 @@ torch.ops.npu.npu_solve_tri(
    - 在 Ascend 950 系列上：64 和 128 均正常计算
 3. **数据布局**：
    - `bsnd`: 输入 shape 为 `[B, S, H, chunkSize]`，单 chunk 内数据不连续
+   - `bnsd`: 输入 shape 为 `[B, H, S, chunkSize]`，单 chunk 内数据连续（`bhtd` 为其兼容别名）
    - `tnd`: 输入 shape 为 `[total_T, H, chunkSize]`，需配合 cu_seqlens 和 chunk_indices 使用，单 chunk 内数据不连续
-4. **变长模式**：当 layout 为 "tnd" 时，cu_seqlens 和 chunk_indices 必须提供，数据类型为 INT64
+   - `ntd`: 输入 shape 为 `[H, total_T, chunkSize]`，需配合 cu_seqlens 和 chunk_indices 使用，单 chunk 内数据连续
+4. **变长模式**：cu_seqlens 和 chunk_indices 必须同时提供或同时缺省，数据类型为 INT64
+   - 当 layout 为 "tnd"/"ntd" 时，cu_seqlens 和 chunk_indices 必须提供
+   - 当 layout 为 "bsnd"/"bnsd"（含别名 "bhtd"）时，不得传入 cu_seqlens 和 chunk_indices；dense 布局不读取变长元数据，传入会被静默忽略并产生错误结果，host 侧将直接拒绝并返回 ACLNN_ERR_PARAM_INVALID
 
 ---
 
