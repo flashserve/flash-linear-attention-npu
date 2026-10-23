@@ -231,6 +231,35 @@ __simd_vf__ inline void FinalizeStage0VF(
     }
 }
 
+// One Stage2 row, single physical definition shared by the unrolled pair
+// and the tail call.  Rows are address-disjoint and every per-row value is
+// row-local, so calling it per row is bit-level neutral by construction.
+__simd_callee__ inline void FinalizeStage2RowVF(
+    __ubuf__ bfloat16_t *zbNd, __ubuf__ float *zV, __ubuf__ float *zW,
+    RegTensor<float> &betaFp, RegTensor<float> &zero, MaskReg &fpMask,
+    RegTensor<uint16_t> &nzIndex, uint16_t row)
+{
+    const uint32_t rowOffset = static_cast<uint32_t>(row) * KDA_FINALIZE_CHUNK;
+    RegTensor<float> zv;
+    RegTensor<float> zw;
+    RegTensor<float> result;
+    RegTensor<bfloat16_t> packed;
+    LoadAlign(zv, zV + rowOffset);
+    LoadAlign(zw, zW + rowOffset);
+    Sub(result, zv, zw, fpMask);
+    Mul(result, result, betaFp, fpMask);
+    uint32_t lowerCount = row;
+    MaskReg lower = UpdateMask<float>(lowerCount);
+    Select(result, result, zero, lower);
+    Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, result, fpMask);
+    FinalizeStoreNz64(zbNd + row * 16, packed, nzIndex);
+    RegTensor<float> high;
+    Cast<float, bfloat16_t, ctHalf2Fp32Zero>(high, packed, fpMask);
+    Sub(high, result, high, fpMask);
+    Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, high, fpMask);
+    FinalizeStoreNz64(zbNd + 4096 + row * 16, packed, nzIndex);
+}
+
 // Stage2 BuildZ.  zV/zW are direct FP32 FixPipe results in row-major UB.
 // Paired Zb is produced in NZ order before the contiguous L1 publication.
 template <typename BetaT>
@@ -261,26 +290,15 @@ __simd_vf__ inline void FinalizeStage2VF(
     ShiftRights(block, column, int16_t(4), indexMask);
     Muls(block, block, uint16_t(1008), indexMask);
     Add(nzIndex, column, block, indexMask);
-    for (uint16_t row = 0; row < validRows; ++row) {
-        const uint32_t rowOffset = static_cast<uint32_t>(row) * KDA_FINALIZE_CHUNK;
-        RegTensor<float> zv;
-        RegTensor<float> zw;
-        RegTensor<float> result;
-        RegTensor<bfloat16_t> packed;
-        LoadAlign(zv, zV + rowOffset);
-        LoadAlign(zw, zW + rowOffset);
-        Sub(result, zv, zw, fpMask);
-        Mul(result, result, betaFp, fpMask);
-        uint32_t lowerCount = row;
-        MaskReg lower = UpdateMask<float>(lowerCount);
-        Select(result, result, zero, lower);
-        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, result, fpMask);
-        FinalizeStoreNz64(zbNd + row * 16, packed, nzIndex);
-        RegTensor<float> high;
-        Cast<float, bfloat16_t, ctHalf2Fp32Zero>(high, packed, fpMask);
-        Sub(high, result, high, fpMask);
-        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, high, fpMask);
-        FinalizeStoreNz64(zbNd + 4096 + row * 16, packed, nzIndex);
+    // Unroll-2: one row helper per slot, called for rows (row, row+1) each
+    // iteration; a single tail guard keeps arbitrary runtime counts correct.
+    uint16_t row = 0;
+    for (; row + 1U < validRows; row += 2U) {
+        FinalizeStage2RowVF(zbNd, zV, zW, betaFp, zero, fpMask, nzIndex, row);
+        FinalizeStage2RowVF(zbNd, zV, zW, betaFp, zero, fpMask, nzIndex, row + 1U);
+    }
+    if (row < validRows) {
+        FinalizeStage2RowVF(zbNd, zV, zW, betaFp, zero, fpMask, nzIndex, row);
     }
     if (validRows < KDA_FINALIZE_CHUNK) {
         FinalizeZeroNzTail(zbNd, validRows, KDA_FINALIZE_CHUNK);
@@ -646,6 +664,28 @@ __simd_vf__ inline void FinalizeStage5VF(
     }
 }
 
+// One Stage5 dAqk row, single physical definition shared by the unrolled
+// pair and the tail call.  Rows are address-disjoint (dAqk row vector plus
+// its own diagonal element, the diagonal+row scalar slot, dAqkOut NZ
+// planes), so calling it per row is bit-level neutral by construction.
+__simd_callee__ inline void FinalizeStage5DaqkRowVF(
+    __ubuf__ FinalizeLocalType *dAqkOut, __ubuf__ float *dAqk,
+    __ubuf__ float *diagonal, RegTensor<float> &zero, MaskReg &fpMask,
+    MaskReg &one, RegTensor<uint16_t> &nzIndex, uint16_t row)
+{
+    const uint32_t offset = static_cast<uint32_t>(row) * KDA_FINALIZE_CHUNK;
+    RegTensor<float> value;
+    RegTensor<float> diag;
+    DataCopy<float, LoadDist::DIST_BRC_B32>(diag, dAqk + offset + row);
+    DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(diagonal + row, diag, one);
+    LoadAlign(value, dAqk + offset);
+    uint32_t count = row;
+    MaskReg strict = UpdateMask<float>(count);
+    Select(value, value, zero, strict);
+    Muls(value, value, 65536.0f, fpMask);
+    FinalizeStoreLocalRow(dAqkOut + row * 16, value, fpMask, nzIndex);
+}
+
 // Retain the FP32 dAqk input as BF16 high/residual planes.
 __simd_vf__ inline void FinalizeStage5DaqkVF(
     __ubuf__ FinalizeLocalType *dAqkOut, __ubuf__ float *dAqk,
@@ -661,18 +701,15 @@ __simd_vf__ inline void FinalizeStage5DaqkVF(
     ShiftRights(block, column, int16_t(4), indexMask);
     Muls(block, block, uint16_t(1008), indexMask);
     Add(nzIndex, column, block, indexMask);
-    for (uint16_t row = 0; row < validRows; ++row) {
-        const uint32_t offset = static_cast<uint32_t>(row) * KDA_FINALIZE_CHUNK;
-        RegTensor<float> value;
-        RegTensor<float> diag;
-        DataCopy<float, LoadDist::DIST_BRC_B32>(diag, dAqk + offset + row);
-        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(diagonal + row, diag, one);
-        LoadAlign(value, dAqk + offset);
-        uint32_t count = row;
-        MaskReg strict = UpdateMask<float>(count);
-        Select(value, value, zero, strict);
-        Muls(value, value, 65536.0f, fpMask);
-        FinalizeStoreLocalRow(dAqkOut + row * 16, value, fpMask, nzIndex);
+    // Unroll-2: one row helper per slot, called for rows (row, row+1) each
+    // iteration; a single tail guard keeps arbitrary runtime counts correct.
+    uint16_t row = 0;
+    for (; row + 1U < validRows; row += 2U) {
+        FinalizeStage5DaqkRowVF(dAqkOut, dAqk, diagonal, zero, fpMask, one, nzIndex, row);
+        FinalizeStage5DaqkRowVF(dAqkOut, dAqk, diagonal, zero, fpMask, one, nzIndex, row + 1U);
+    }
+    if (row < validRows) {
+        FinalizeStage5DaqkRowVF(dAqkOut, dAqk, diagonal, zero, fpMask, one, nzIndex, row);
     }
 }
 
@@ -852,6 +889,47 @@ __simd_vf__ inline void FinalizeStage9VF(
     }
 }
 
+// One Stage10 row, single physical definition shared by the unrolled pair
+// and the tail call.  Rows are address-disjoint and the norm block is
+// row-local, so calling it per row is bit-level neutral by construction.
+// hasNorm stays a per-row branch.
+__simd_callee__ inline void FinalizeStage10RowVF(
+    __ubuf__ bfloat16_t *out, __ubuf__ float *delta, __ubuf__ float *base,
+    __ubuf__ bfloat16_t *k, __ubuf__ float *rstd, uint32_t hasNorm,
+    MaskReg &mask, MaskReg &bfMask, uint16_t row)
+{
+    uint32_t offset = row * KDA_FINALIZE_DIM;
+    RegTensor<float> d0, d1, b0, b1;
+    LoadAlign<float, LoadDist::DIST_DINTLV_B32>(d0, d1, delta + offset);
+    LoadAlign<float, LoadDist::DIST_DINTLV_B32>(b0, b1, base + offset);
+    Add(d0, d0, b0, mask);
+    Add(d1, d1, b1, mask);
+    if (hasNorm != 0U) {
+        RegTensor<bfloat16_t> kb;
+        RegTensor<float> k0, k1, p0, p1, dot, rs;
+        LoadIn<bfloat16_t, false>(kb, k + offset);
+        CastHalf2Float<bfloat16_t>(k0, k1, kb, bfMask);
+        Mul(p0, d0, k0, mask);
+        Mul(p1, d1, k1, mask);
+        Add(p0, p0, p1, mask);
+        ReduceSum(dot, p0, mask);
+        DataCopy<float, LoadDist::DIST_BRC_B32>(rs, rstd + row);
+        // ReduceSum only guarantees lane 0; broadcast it in-register
+        // instead of a UB scratch round trip.
+        RegTensor<float> dotBrc;
+        Duplicate(dotBrc, dot, mask);
+        Mul(p0, k0, dotBrc, mask);
+        Mul(p1, k1, dotBrc, mask);
+        Sub(d0, d0, p0, mask);
+        Sub(d1, d1, p1, mask);
+        Mul(d0, d0, rs, mask);
+        Mul(d1, d1, rs, mask);
+    }
+    RegTensor<bfloat16_t> packed;
+    FinalizeCastBf16(packed, d0, d1, mask);
+    StoreAlign(out + offset, packed, bfMask);
+}
+
 template <typename BetaT>
 __simd_vf__ inline void FinalizeStage10VF(
     __ubuf__ bfloat16_t *out, __ubuf__ BetaT *dbOut,
@@ -863,37 +941,16 @@ __simd_vf__ inline void FinalizeStage10VF(
     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
     MaskReg mask = CreateMask<float, MaskPattern::ALL>();
     MaskReg bfMask = CreateMask<half, MaskPattern::ALL>();
-    for (uint16_t row = 0; row < rows; ++row) {
-        uint32_t offset = row * KDA_FINALIZE_DIM;
-        RegTensor<float> d0, d1, b0, b1;
-        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(d0, d1, delta + offset);
-        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(b0, b1, base + offset);
-        Add(d0, d0, b0, mask);
-        Add(d1, d1, b1, mask);
-        if (hasNorm != 0U) {
-            RegTensor<bfloat16_t> kb;
-            RegTensor<float> k0, k1, p0, p1, dot, rs;
-            LoadIn<bfloat16_t, false>(kb, k + offset);
-            CastHalf2Float<bfloat16_t>(k0, k1, kb, bfMask);
-            Mul(p0, d0, k0, mask);
-            Mul(p1, d1, k1, mask);
-            Add(p0, p0, p1, mask);
-            ReduceSum(dot, p0, mask);
-            DataCopy<float, LoadDist::DIST_BRC_B32>(rs, rstd + row);
-            // ReduceSum only guarantees lane 0; broadcast it in-register
-            // instead of a UB scratch round trip.
-            RegTensor<float> dotBrc;
-            Duplicate(dotBrc, dot, mask);
-            Mul(p0, k0, dotBrc, mask);
-            Mul(p1, k1, dotBrc, mask);
-            Sub(d0, d0, p0, mask);
-            Sub(d1, d1, p1, mask);
-            Mul(d0, d0, rs, mask);
-            Mul(d1, d1, rs, mask);
-        }
-        RegTensor<bfloat16_t> packed;
-        FinalizeCastBf16(packed, d0, d1, mask);
-        StoreAlign(out + offset, packed, bfMask);
+    // Unroll-2: one row helper per slot, called for rows (row, row+1) each
+    // iteration.  rows is a runtime count (a partial tail band can be odd),
+    // so a single tail guard keeps arbitrary counts correct.
+    uint16_t row = 0;
+    for (; row + 1U < rows; row += 2U) {
+        FinalizeStage10RowVF(out, delta, base, k, rstd, hasNorm, mask, bfMask, row);
+        FinalizeStage10RowVF(out, delta, base, k, rstd, hasNorm, mask, bfMask, row + 1U);
+    }
+    if (row < rows) {
+        FinalizeStage10RowVF(out, delta, base, k, rstd, hasNorm, mask, bfMask, row);
     }
     uint32_t count = rows;
     MaskReg rowMask = UpdateMask<float>(count);
@@ -910,6 +967,24 @@ __simd_vf__ inline void FinalizeStage10VF(
     }
 }
 
+// One dW residual NZ row, single physical definition shared by the
+// unrolled pair and the tail call.  Rows are address-disjoint and values
+// are row-local, so calling it per row is bit-level neutral by construction.
+__simd_callee__ inline void FinalizeDwResidualRowVF(
+    __ubuf__ bfloat16_t *dst, __ubuf__ float *src, MaskReg &fpMask,
+    MaskReg &bfMask, RegTensor<uint16_t> &nzIndex, uint16_t row)
+{
+    RegTensor<float> value0, value1, high0, high1;
+    RegTensor<bfloat16_t> packed;
+    LoadAlign<float, LoadDist::DIST_DINTLV_B32>(value0, value1, src + row * 128);
+    FinalizeCastBf16(packed, value0, value1, fpMask);
+    CastHalf2Float<bfloat16_t>(high0, high1, packed, bfMask);
+    Sub(value0, value0, high0, fpMask);
+    Sub(value1, value1, high1, fpMask);
+    FinalizeCastBf16(packed, value0, value1, fpMask);
+    Scatter(dst + row * 16, packed, nzIndex, bfMask);
+}
+
 // The dW residual has 128 columns. Produce one NZ row per iteration.
 __simd_vf__ inline void FinalizeDwResidualVF(
     __ubuf__ bfloat16_t *dst, __ubuf__ float *src)
@@ -921,17 +996,37 @@ __simd_vf__ inline void FinalizeDwResidualVF(
     ShiftRights(block, column, int16_t(4), bfMask);
     Muls(block, block, uint16_t(1008), bfMask);
     Add(nzIndex, column, block, bfMask);
-    for (uint16_t row = 0; row < KDA_FINALIZE_CHUNK; ++row) {
-        RegTensor<float> value0, value1, high0, high1;
-        RegTensor<bfloat16_t> packed;
-        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(value0, value1, src + row * 128);
-        FinalizeCastBf16(packed, value0, value1, fpMask);
-        CastHalf2Float<bfloat16_t>(high0, high1, packed, bfMask);
-        Sub(value0, value0, high0, fpMask);
-        Sub(value1, value1, high1, fpMask);
-        FinalizeCastBf16(packed, value0, value1, fpMask);
-        Scatter(dst + row * 16, packed, nzIndex, bfMask);
+    // Unroll-2: one row helper per slot, called for rows (row, row+1) each
+    // iteration.  The trip is the compile-time even KDA_FINALIZE_CHUNK; the
+    // uniform even-step + single-tail-guard form matches the other unrolled
+    // loops and the guard is dead code here.
+    static_assert(KDA_FINALIZE_CHUNK % 2U == 0U, "unrolled pairs need an even trip");
+    uint16_t row = 0;
+    for (; row + 1U < KDA_FINALIZE_CHUNK; row += 2U) {
+        FinalizeDwResidualRowVF(dst, src, fpMask, bfMask, nzIndex, row);
+        FinalizeDwResidualRowVF(dst, src, fpMask, bfMask, nzIndex, row + 1U);
     }
+    if (row < KDA_FINALIZE_CHUNK) {
+        FinalizeDwResidualRowVF(dst, src, fpMask, bfMask, nzIndex, row);
+    }
+}
+
+// One residual 64-wide block, single physical definition shared by the
+// unrolled pair and the tail call.  Blocks are address-disjoint and values
+// are block-local, so calling it per block is bit-level neutral by
+// construction.
+__simd_callee__ inline void FinalizeResidualBlockVF(
+    __ubuf__ bfloat16_t *dst, __ubuf__ float *src, MaskReg &mask,
+    RegTensor<uint16_t> &nzIndex, uint16_t block)
+{
+    RegTensor<float> value, high;
+    RegTensor<bfloat16_t> packed;
+    LoadAlign(value, src + block * 64U);
+    Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, value, mask);
+    Cast<float, bfloat16_t, ctHalf2Fp32Zero>(high, packed, mask);
+    Sub(value, value, high, mask);
+    Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, value, mask);
+    FinalizeStoreNz64(dst + block * 16U, packed, nzIndex);
 }
 
 __simd_vf__ inline void FinalizeResidualVF(
@@ -944,15 +1039,18 @@ __simd_vf__ inline void FinalizeResidualVF(
     ShiftRights(block, column, int16_t(4), indexMask);
     Muls(block, block, uint16_t(1008), indexMask);
     Add(nzIndex, column, block, indexMask);
-    for (uint16_t block = 0; block < blocks; ++block) {
-        RegTensor<float> value, high;
-        RegTensor<bfloat16_t> packed;
-        LoadAlign(value, src + block * 64U);
-        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, value, mask);
-        Cast<float, bfloat16_t, ctHalf2Fp32Zero>(high, packed, mask);
-        Sub(value, value, high, mask);
-        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, value, mask);
-        FinalizeStoreNz64(dst + block * 16U, packed, nzIndex);
+    // Unroll-2: one block helper per slot, called for blocks (blk, blk+1)
+    // each iteration.  blocks is a runtime count (the only live call site
+    // passes the even 64), so a single-block tail guard keeps arbitrary
+    // counts correct.  The loop variable is named blk to avoid redefining
+    // the function-scope RegTensor named block.
+    uint16_t blk = 0;
+    for (; blk + 1U < blocks; blk += 2U) {
+        FinalizeResidualBlockVF(dst, src, mask, nzIndex, blk);
+        FinalizeResidualBlockVF(dst, src, mask, nzIndex, blk + 1U);
+    }
+    if (blk < blocks) {
+        FinalizeResidualBlockVF(dst, src, mask, nzIndex, blk);
     }
 }
 
