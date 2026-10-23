@@ -20,7 +20,7 @@ chunk_bwd_dqkwg
 `tests/atk/chunk_gated_delta_rule_bwd_finalize/scripts/chunk_gated_delta_rule_bwd_finalize_cpu.py`
 中经 GPU/Triton 对齐的 `chunk_gated_delta_rule_bwd_finalize_golden` 为唯一目标语义。
 该 golden 覆盖从 `chunk_bwd_dqkwg` 到 `fused_beta_sigmoid_bwd` 的完整调用链，
-并显式保留 GPU 路径中的 BF16 落盘边界。
+其中 dq/dk partial 保持原有 BF16 落盘边界，门控点积读取 Stage 13 的 FP32 累加结果。
 
 实现结构参考 Ascend C
 [`chunk_gated_delta_rule_bwd_dhu`](https://github.com/flashserve/flash-linear-attention-npu/tree/main/fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_dhu)
@@ -861,7 +861,7 @@ dk_base  = v_decay @ DHc                   # DHc=dh.T: [V,K]；dk_base: [BT,K]
 前序依赖：`ds/do_g/v_decay` 均由 S12 生成并分别落入三个 workspace；`h` 从 S1、
 `k` 从 S5 起保留在 L1，`q/dh` 为本 Stage 原始输入。S11 搬入的 `v_new` resident
 在 S13 被 `do_g/v_decay` 按顺序复用，不再保留原始语义。
-其中 `dq_hv` 在同一 L0C 中先执行 `do_g @ Hc`，再累加 `ds @ k`，最后只做一次 Fixpipe。
+其中 `dq_hv` 在同一 L0C 中先执行 `do_g @ Hc`，再累加 `ds @ k`，累加完成后分别 Fixpipe 为 BF16 partial 和 FP32 gate operand。
 
 空间布局（L1，单位 KiB）：
 
@@ -887,15 +887,19 @@ L1[384,512)  空闲；无数据；S13 可复用
    复用 S12 已结束生命周期的 `dkb`、`dkb_t`、`v_decay` 物理槽；`ds` 位于
    `UB[176,192)`，不被 S13 输出覆盖。同 owner 的后续 HEAD 使用另一个
    local-HV slot，所以 S12/S13 可以保持单 HEAD 粒度的流水。
-3. 释放全部 L1 数据。
+3. 每个 L0C 累加结果同时写入独立 FP32 GM region：`gateDq/gateDkBase/gateDkIntra`。
+   地址使用与原 workspace 相同的 `core/window/head` slot，FP32 元素索引不变。
+   原 BF16 UB partial 继续用于 dq/dk；FP32 副本供 S14 门控点积使用。
+   两次 Fixpipe 完成后才发布现有 C->V ready，并通过 `FIX_M` 保护 L0C 复用。
+4. 释放全部 L1 数据。
 
 ### Stage 14：Vector，DQ/DK 与 gate 最终 backward
 
 ```text
 dk_raw_hv = dk_base + dk_intra + dk_prepare # dk_raw_hv: [BT,K]
-dq_dot = rowSum(dq_hv * q)                 # dq_dot: [BT]
-dk_base_dot = rowSum(dk_base * k)          # dk_base_dot: [BT]
-dk_intra_dot = rowSum(dk_intra * k)        # dk_intra_dot: [BT]
+dq_dot = rowSum(dq_hv_fp32 * q)                 # dq_dot: [BT]
+dk_base_dot = rowSum(dk_base_fp32 * k)          # dk_base_dot: [BT]
+dk_intra_dot = rowSum(dk_intra_fp32 * k)        # dk_intra_dot: [BT]
 x = dq_dot - dk_base_dot - dk_intra_dot
 x[M-1] += sum(dk_base_dot) + state_term
 dg[t] = sum(x[j] + dg_prepare[j], j=t..M-1) # reverse suffix sum
@@ -915,7 +919,9 @@ UB[80,112)     dq_hv[2]；BF16；S13 逐 slot 覆盖已消费的 dkb_t，S14 写
 UB[112,144)    q[2]；BF16；S14 从 GM 搬入；G=3/4 时同一 AIV 内复用
 UB[144,176)    dk_intra[2]；BF16；S13 写入，S14 消费后释放
 UB[208,240)    dk_prepare[2]；BF16；保留至 S14，消费后释放
-UB[240,244)    空闲；无数据；S14 可复用
+UB[192,208)    gate tile；FP32 [32,128]；S14 按矩阵/行块顺序复用
+UB[240,240.75) gate dots；FP32 [3,64]；S14 当前 HEAD 的三个行点积
+UB[240.75,244) 空闲
 UB[244,244.5)  空闲；S14 不读取 q_rstd/k_rstd
 UB[244.5,245)  空闲；无数据
 UB[245,245.5)  dg_prepare[2]；FP32；保留至 S14，消费后释放
@@ -929,12 +935,17 @@ UB[247.5,248)  空闲；S12 已完成 bg 的末次消费
 操作流程：
 
 1. `q` 从 GM 搬入；本 Stage 不读取 `q_rstd/k_rstd`。
-2. 单次 VF 完成 `dk_raw_hv`、三个点积和 `dg` reverse suffix sum；`dg` 以
-   FP32 驻留。FP32 ABI 直接写回，BF16 ABI 仅在最终 MTE3 前打包。
-3. `dq_hv` 写入 `dqStage12Workspace`，`dk_raw_hv` 写入
+2. 三份 FP32 operand 依次从 GM 搬入 `UB[192,208)`，每次最多 32 行。
+   原有 BF16 partial、q/k 和 dk_prepare 仍存活，三份完整 FP32 矩阵无法同时驻留 UB，
+   因此使用 GM 中转。每块通过 MTE2->V ready 后计算行点积，V->MTE2 完成后才复用 scratch。
+   三个点积保留到 `UB[240,240.75)`，由 VEC_STORE->VEC_LOAD barrier 保证后续读取。
+   S8 的 scratch 生命周期已结束；S15 仅在 S14 完成后复用这些地址。
+3. `Stage14VF` 按原顺序合成 BF16 `dk_raw_hv`，用 FP32 点积计算 `dg` reverse suffix sum。
+   BF16 ABI 仅在最终 MTE3 前打包。单 token 零状态时，避免提前 BF16 舍入破坏点积相消。
+4. `dq_hv` 写入 `dqStage12Workspace`，`dk_raw_hv` 写入
    `dvbDkbTWorkspace`，`dg` 直接写最终输出。两份 partial 使用当前
    `core/window/HEAD` 固定 slot，S15 在本组内按相同 slot 聚合。
-4. 两个 AIV 完成整组 S14 MTE3 后在 `stage14To15Flag` 聚合。该点之后
+5. 两个 AIV 完成整组 S14 MTE3 后在 `stage14To15Flag` 聚合。该点之后
    S13 的 `dk_base/dq_hv/dk_intra` Fixpipe 目标已全部完成末次消费，
    两个 AIV 立即通过 `vecToCube` 释放 AIC；S15 不再属于该跨核等待区间。
 
@@ -1093,10 +1104,10 @@ headGroupNum = HK / gvaPerTask
 slot = coreIdx * 8 + (localTaskRound % 2) * 4 + headOffset
 S = 64 * 128 * sizeof(DT)
 R = blockDim * 8 * S
-workspaceUserBytes = 7 * R
+workspaceUserBytes = 13 * R
 ```
 
-kernel 入口切分 7 个 region。向量在当前 slot 中使用 `[64,128]`；矩阵
+kernel 入口保留 7 个 BF16 region，并增加 3 个占用 `2*R` 的 FP32 region。向量在当前 slot 中使用 `[64,128]`；矩阵
 使用同一 slot 的 `[64,64]` 前半区。AIC 最多比 AIV 超前一个 task group，
 因此奇偶双 window 能保留上一个逻辑任务仍在 S15 消费的 partial；第三个任务的 S1
 必须等待 AIV 完成上一组 S15 后发出的 S0 ready，不会提前覆盖同奇偶 slot。
@@ -1112,9 +1123,15 @@ kernel 入口切分 7 个 region。向量在当前 slot 中使用 `[64,128]`；�
 | 4 | `dA0Workspace` | S4 `dA0` -> S5；释放后 S8 `dA` -> S9 |
 | 5 | `dk0Workspace` | S2 `kb` -> S9；释放后 S12 `v_decay` -> S13 |
 | 6 | `dsWorkspace` | S12 `ds` -> S13 |
+| 7--8 | `gateDq` | S13 FP32 `dq_hv` -> S14 点积 |
+| 9--10 | `gateDkBase` | S13 FP32 `dk_base` -> S14 点积 |
+| 11--12 | `gateDkIntra` | S13 FP32 `dk_intra` -> S14 点积 |
 
-`ds0/dA_u/dA_w0/dvb/a2/dA2/dkbg0/dq_hv(S13)/dk_intra/dk_base` 都不占用
-额外 workspace：它们由 Cube Fixpipe 直接写 owner AIV UB。最终 `dv/dbeta/dg` 在各自
+`ds0/dA_u/dA_w0/dvb/a2/dA2/dkbg0` 不占用额外 workspace。
+S13 的 BF16 partial 直接写 owner AIV UB；额外 FP32 region 仅供门控点积使用，
+与原双 window 使用同一 ready/free 生命周期，S14 末次消费后释放。
+额外 workspace 为 `6*R`，即每个 block 768 KiB。每个 HV/chunk 额外写入和读取
+各 `3*M*128*4` 字节；L1 和 UB 分配总量不变。最终 `dv/dbeta/dg` 在各自
 Vector Stage 直接写输出，最终 `dq/dk` 由 S15 写输出。
 
 ### 5.2 Stage 序列
@@ -1304,6 +1321,7 @@ S12:
 S14:
     k[2] + dkPrepare[2] + dqHv[2] + dkIntra[2]
     + dkBase[2] + q[2]                                   = 192 KiB
+    FP32 gate tile + dots                                 = 16.75 KiB
     FP32 小向量                                           <= 3 KiB
 S15:
     dqAcc[2] + dkAcc[2] + dq/dk partial input + q + k   = 128 KiB
@@ -1324,8 +1342,7 @@ UB 生命周期检查同样以完整任务组为边界。`gate_dA/k/v/bg` 等从
 重叠执行的限制与 L1 相同：必须先扩充 resident bank 或将跨组数据落到 GM，不能
 依赖双缓冲 EventID 或核间 flag 自动解决地址冲突。
 
-每个 Vector Stage 在 VF 调用前一次性完成完整逻辑输入搬运，并通过一次 VF 完成全部
-公式。当前 Stage 输入、临时量、跨 Stage 数据和输出共同计入 248 KiB 总量。
+除 S14 的 FP32 gate operand 按 32 行搬运和归约外，其余 Vector Stage 在 VF 调用前完成完整逻辑输入搬运。当前 Stage 输入、临时量、跨 Stage 数据和输出共同计入 248 KiB 总量。
 
 各 Stage 的 UB 绝对偏移已经写在对应“空间布局”中。`dkbg0` 由 S7 写入
 `UB[208,240)` 并原址保留到 S12；S9 的 `dkb/dkb_t` 在 GM workspace 驻留，
@@ -1335,7 +1352,7 @@ Vector Stage 的完整 shape 结果按生命周期复用已消费的 UB 地址�
 `do -> do_g`、`v_new -> v_decay`、`dkbg0 -> dk_prepare`、
 `dk_base -> dk_raw_hv`。
 `AdA/dq_hv` 等只在单次 VF 表达式内部使用，不分配跨 Stage 完整 tensor；
-S14 的点积归约只在寄存器和 `dg_scratch` 中存在；`q_rstd/k_rstd` 仅由 S15
+S14 的点积结果在 `gateDots` 驻留至最终 `dg` 合成；`q_rstd/k_rstd` 仅由 S15
 在启用 norm backward 时搬入。
 
 ### 5.5 跨 stage 数据保留原则

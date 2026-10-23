@@ -319,7 +319,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     // HEAD window 奇偶轮转，避免 workspace 随逻辑 task 数增长。
     const uint64_t vectorBytes = static_cast<uint64_t>(tiling->chunkSize) * tiling->K * sizeof(uint16_t);
     constexpr uint64_t workspaceBufferCount = 8; // 2 windows * 4 HEADs
-    constexpr uint64_t workspaceRegionCount = 7;
+    constexpr uint64_t workspaceRegionCount = 13;
     const uint64_t userWorkspace = static_cast<uint64_t>(blockDim) *
         workspaceBufferCount * workspaceRegionCount * vectorBytes;
     size_t *workspaceSizes = context->GetWorkspaceSizes(1);

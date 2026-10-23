@@ -47,6 +47,9 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_finalize(
     GM_ADDR dA0Workspace = userWorkspace + 4 * workspaceRegionBytes;
     GM_ADDR dk0Workspace = userWorkspace + 5 * workspaceRegionBytes;
     GM_ADDR dsWorkspace = userWorkspace + 6 * workspaceRegionBytes;
+    GM_ADDR gateDq = userWorkspace + 7 * workspaceRegionBytes;
+    GM_ADDR gateDkBase = userWorkspace + 9 * workspaceRegionBytes;
+    GM_ADDR gateDkIntra = userWorkspace + 11 * workspaceRegionBytes;
     if ASCEND_IS_AIC {
         GDN::ChunkGatedDeltaRuleBwdFinalizeCube<QType> cube;
         // dkb/dkb_t 分别复用 vb/dvb 区；Stage 9 写入时旧语义已完成消费。
@@ -54,7 +57,7 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_finalize(
                   kbgDoGWorkspace, vbDkbWorkspace, dA0Workspace,
                   dqStage12Workspace, vbDkbWorkspace, dvbDkbTWorkspace,
                   dsWorkspace, kbgDoGWorkspace, dk0Workspace, dk0Workspace,
-                  cu_seqlens, chunk_indices, &tilingData);
+                  cu_seqlens, chunk_indices, gateDq, gateDkBase, gateDkIntra, &tilingData);
         cube.Process();
     } else {
         using GType = typename GDN::DTypeTraits<D_T_G>::type;
@@ -70,7 +73,7 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_finalize(
                  vbDkbWorkspace, dvbDkbTWorkspace,
                  kbgDoGWorkspace,
                  beta_raw, dbeta, dsWorkspace, dqStage12Workspace, dv,
-                 dk0Workspace, dk0Workspace, &tilingData, &pipe);
+                 dk0Workspace, dk0Workspace, gateDq, gateDkBase, gateDkIntra, &tilingData, &pipe);
         vec.Process();
     }
 }

@@ -27,7 +27,7 @@ public:
         GM_ADDR kbg, GM_ADDR vb, GM_ADDR dA0, GM_ADDR ds0Out,
         GM_ADDR dkbOut, GM_ADDR dkbTOut, GM_ADDR dsIn,
         GM_ADDR doGIn, GM_ADDR vDecayIn, GM_ADDR workspace,
-        GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
+        GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR gateDq, GM_ADDR gateDkBase, GM_ADDR gateDkIntra,
         const ChunkGatedDeltaRuleBwdFinalizeTilingData *tiling)
     {
         q_ = q;
@@ -48,6 +48,9 @@ public:
         doGIn_ = doGIn;
         vDecayIn_ = vDecayIn;
         workspace_ = workspace;
+        gateDq_ = gateDq;
+        gateDkBase_ = gateDkBase;
+        gateDkIntra_ = gateDkIntra;
         cuSeqlens_ = cuSeqlens;
         chunkIndices_ = chunkIndices;
         tiling_ = tiling;
@@ -327,6 +330,8 @@ private:
         ArchTag, DT, LayoutRowMajor, DT, LayoutColumnMajor, DT, LayoutRowMajor>;
     using TileCopyDvbToUb = Common::Tile::PackedTileCopyTlaToUB<
         ArchTag, DT, LayoutRowMajor, DT, LayoutRowMajor, DT, LayoutRowMajor>;
+    using TileCopyGate = Catlass::Gemm::Tile::PackedTileCopyTla<
+        ArchTag, DT, LayoutRowMajor, DT, LayoutRowMajor, float, LayoutRowMajor>;
     using ElementAccumulator = typename TileCopyDau::ElementAccumulator;
     using CopyDauL1ToL0A = typename TileCopyDau::CopyL1ToL0A;
     using CopyDauL1ToL0B = typename TileCopyDau::CopyL1ToL0B;
@@ -1567,6 +1572,13 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(dqL0CSlot);
         typename TileCopyDvbToUb::template CopyL0CToDst<decltype(blockDqCv)>{}(
             blockDqCv, tensorDqL0C, static_cast<uint8_t>(ownerSubBlock), 0);
+        {
+            AscendC::GlobalTensor<float> gm;
+            gm.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(gateDq_) + workspaceBase);
+            auto output = tla::MakeTensor(gm, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
+            auto tile = tla::GetTile(output, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, K_SIZE_128));
+            typename TileCopyGate::template CopyL0CToDst<decltype(tile)>{}(tile, tensorDqL0C);
+        }
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(dqL0CSlot);
 
         // do_g resident 已进入 L0，复用同一事件搬入当前 HK 的 q。
@@ -1681,6 +1693,13 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(dk0L0CSlot);
         typename TileCopyDvbToUb::template CopyL0CToDst<decltype(blockDk0Cv)>{}(
             blockDk0Cv, tensorDk0L0C, static_cast<uint8_t>(ownerSubBlock), 0);
+        {
+            AscendC::GlobalTensor<float> gm;
+            gm.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(gateDkBase_) + workspaceBase);
+            auto output = tla::MakeTensor(gm, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
+            auto tile = tla::GetTile(output, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, K_SIZE_128));
+            typename TileCopyGate::template CopyL0CToDst<decltype(tile)>{}(tile, tensorDk0L0C);
+        }
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(dk0L0CSlot);
 
         // v_decay 已完成 GM->L1，原 UB 源地址可以覆盖。此处执行
@@ -1688,6 +1707,13 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(dkL0CSlot);
         typename TileCopyDvbToUb::template CopyL0CToDst<decltype(blockDkCv)>{}(
             blockDkCv, tensorDkL0C, static_cast<uint8_t>(ownerSubBlock), 0);
+        {
+            AscendC::GlobalTensor<float> gm;
+            gm.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(gateDkIntra_) + workspaceBase);
+            auto output = tla::MakeTensor(gm, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
+            auto tile = tla::GetTile(output, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, K_SIZE_128));
+            typename TileCopyGate::template CopyL0CToDst<decltype(tile)>{}(tile, tensorDkL0C);
+        }
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(dkL0CSlot);
     }
 
@@ -1714,6 +1740,9 @@ private:
     GM_ADDR doGIn_ = nullptr;
     GM_ADDR vDecayIn_ = nullptr;
     GM_ADDR workspace_ = nullptr;
+    GM_ADDR gateDq_ = nullptr;
+    GM_ADDR gateDkBase_ = nullptr;
+    GM_ADDR gateDkIntra_ = nullptr;
     GM_ADDR cuSeqlens_ = nullptr;
     GM_ADDR chunkIndices_ = nullptr;
     const ChunkGatedDeltaRuleBwdFinalizeTilingData *tiling_ = nullptr;
