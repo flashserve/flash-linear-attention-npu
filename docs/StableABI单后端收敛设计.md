@@ -123,3 +123,48 @@ CPU 检查、非有限输出和已知数值差异必须分别保留为验证缺�
 `ct_tool-0.9.1-py3-none-any.whl`，安装后用 `ct --version` 核验。根 `requirements.txt`
 已声明 `expecttest`，但没有声明 `ct_tool` 或 `ml_dtypes`；安装 `expecttest` 和 `ml_dtypes`
 不能解决 `import ct` 失败。不得创建替代 `ct` 模块或放宽原金标/容差来使这些用例通过。
+
+## 7. 修复后验证与提交状态（2026-10-23）
+
+主干实现提交为 `521e1a63`、`48a9bf22`，测试依赖修复为 `50eab8c2`，对应
+PR #961；overlay 已正常合入这些提交，代码提交为 `620ced27`，对应 PR #878。
+下列结果来自实际 Ascend950/CANN 9.2.0、Python 3.12、torch/torch_npu 2.13 环境。
+本节后的纯文档更新不改变已测试代码或 launcher 构建戳。
+
+| 检查 | 实测结果 |
+|---|---|
+| 主干核心与 CI 契约 | Linux 核心 160 项通过，无跳过；CI unittest 150 项通过，无跳过 |
+| Overlay Linux 回归 | 相同 core+overlay 套件 200 项通过，CI 完整套件 158 项通过，均无跳过；禁用 NPU 自动加载执行 |
+| 公共签名及覆盖门禁 | 37 个入口、74 个公开名称的冻结签名与首次解析检查通过；strict coverage 37/37；缺失注册/入口、参数/枚举漂移等负向门禁通过 |
+| 实际安装 | Stable-only 子目录 wheel、根目录 scoped wheel 原生构建成功；安装后 37 个实际 dispatcher 注册齐全 |
+| Conv1d 前向/更新 | 原有 16 项测试通过，包含 head_num reshape、状态更新与 validate_data 负向检查；显式 None 与默认槽 0 的区别已独立复现 |
+| Conv1d backward | 原有 3 组测试通过，包含先前被拒绝的 BSH 子例 |
+| cumsum | 原有 35 个场景通过，覆盖三类输入 dtype、输出 dtype、same、定长/变长、尾块、reverse 与 scale |
+| SolveTri | 原有 128 次调用的 CPU 检查通过；修改前后输入、逐输出与元数据比较通过 |
+| KDA prepare | A5 支持的 BNSD 定长/NTD 变长组合共 16 个场景、48 个精确输出比较通过；同输入前后比较通过，不代表其他布局已支持 |
+| 补充三个入口 | FastGELU forward、backward 零点导数及 KDA gate 的 3 项测试、4 次调用通过；前后比较通过。backward 零点不代表一般值域精度 |
+| fwd-o / fwd-h 一致性 | fwd-o 完整 CLI 默认用例、fwd-h 既有 T=64/V=64 小 recipe 的前后记录通过；二者没有独立精度验收结论，小 recipe 不替代长用例 |
+| 其他已有设备检查 | mutation、stream、输入生命周期、GDN 输出契约、preprocess、KDA prepare 负向和 launcher 失败行为通过；KDA intra 236 项通过 |
+| 完整 OPP ABI | 实际头文件检查 29 个调用点，无不匹配；保留 SolveTri 已有公共头文件例外 |
+| Overlay | 原生库的 capability=1，源码/Python/库内 stamp 一致，37 个注册齐全；base→overlay→移除的 cumsum 校验值为 8320→16640→8320，未覆盖算子哈希相同，base 文件哈希不变 |
+| Overlay 拒绝与恢复 | 缺 manifest 安装被拒绝；损坏后 import 被拒绝；独立 status/remove 管理和恢复通过 |
+
+初次编排中的测试依赖、漏传命令行参数、源码路径遮蔽已安装包，以及 SolveTri 的 300 秒
+时限不足，均在原始日志中保留；修正编排后的结果单独记录，不能将编排失败作为产品回归。
+elementwise 的门控 CPU reference 本身未改变，仅将无关的完整 fused reference 导入延迟
+到实际使用处。Conv1d 的预期异常单独运行，严格结果记录器仍拒绝调用异常，不豁免负向记录。
+
+**当前结论是可继续代码审查，尚未完成全面验收；两份 PR 保持 Draft。** 剩余条件包括：
+
+- 尚无全部 37 个入口完整成功的前后数值记录；部分用例只证明前后一致，没有独立精度断言。
+- KKT 小形状首例的 tiling 失败、DHU 非有限输出为修改前后共同失败，不能计作通过。
+  KDA prepare 的完整通用矩阵含 A5 不支持的 BSND/TND 场景，完整矩阵仍失败；支持范围内
+  的 16 项成功记录与完整矩阵结果分别保留。旧 fwd-h 独立脚本 T=256/V=128
+  在基线出现 AIcore timeout（507014），小规模 recipe 通过不能豁免该失败。
+- 缺少仓内指定 CT Tool v0.9.1 和 ATK 可执行环境，部分旧调用方的 CPU/ATK 精度、性能、
+  确定性与内存门禁未完成；正式 CT 发布下载在本次环境返回 HTTP 401。
+- A5 主机 GCC 13 生成的 OPP host 库要求 GLIBCXX_3.4.32，高于 wheel 声明上限
+  3.4.29，发布检查按预期拒绝。需用规定工具链重新构建，不能放宽 watermark；overlay
+  launcher 自身的 ELF 审计通过不代表整包发布检查通过。
+- A2/A3、最低 torch 版本及完整 dtype/layout/可选参数组合未全部实测。GitHub CI 当前
+  为 `action_required`，正式 A2+A5 NPU CI 和两位批准尚未取得；本机测试不能替代这些条件。
