@@ -119,6 +119,7 @@ npu-smi info
 | `FLA_NPU_ENV`          | `fla_npu_transformer` 的 `set_env.bash` 路径；设置后脚本会 source                  |
 | `ATK_OUTPUT_ROOT`      | ATK 输出根目录，默认是算子目录下的`./atk_output`                                     |
 | `ATK_GM_INIT_MODE`     | GM 数据初始化模式，默认`on`；可设 `on/off`                                        |
+| `ATK_GM_INIT_MB`       | 可选正十进制整数（无前导零）；仅精度阶段使用，`on` 时传 `--gm_init_flag <值>`，默认空保留 ATK 默认策略；`off` 与非空值冲突 |
 | `REQUIRED_ATK_VERSION` | ATK 最低版本要求，默认`26.8.8`；一般无需修改                                         |
 | `ATK_TIMEOUT`          | 精度阶段超时时间，默认`14400`                                                        |
 | `DC_LOOP_NUMS`         | 确定性循环次数，默认`50`                                                             |
@@ -126,6 +127,19 @@ npu-smi info
 | `PERFORMANCE_TIMEOUT`  | 性能阶段超时时间，默认`2000`                                                         |
 | `MSS_TOOL`             | mssanitizer 工具，默认`memcheck`                                                     |
 | `MSS_LOG_PATH`         | ATK`-msl` 日志路径；默认 `${ATK_OUTPUT_ROOT}/mssanitizer_<op>_<时间戳>.log`        |
+
+ATK 26.9.8 的 GM 初始化存在已确认的字节/元素数差异：
+`atk/tasks/backends/npu_backend.py` 中 `calculate_gm_reserve_size` 返回字节数，
+调用方将其直接作为 `torch.empty` 的元素数；默认 float32 下实际申请约为计算字节数的
+4 倍。默认策略因此可能申请接近全部空闲 HBM，实测可在算子执行前因申请 122.41 GiB
+而 OOM。此类失败属于测试工具初始化失败，不能记作算子数值回归或已通过精度验收。
+
+需要显式限制初始化规模时，可设置 `ATK_GM_INIT_MODE=on ATK_GM_INIT_MB=512`。
+脚本记录该值并传递官方 CLI `--gm_init_flag 512`，仍执行 NaN 初始化；由于上述
+26.9.8 实现差异，该配置在默认 float32 下实际约申请 2 GiB，不能将变量名中的 MB
+直接当作此版本的实际分配量。该选项只调整测试环境的初始化内存规模，不修改 JSON、
+输入 seed、CPU 标杆、比较方法或容差；重跑仍须执行原有全部用例。未设置该变量时
+保留原行为，`ATK_GM_INIT_MODE=off` 与非空 `ATK_GM_INIT_MB` 会直接报错。
 
 ## 统一脚本
 

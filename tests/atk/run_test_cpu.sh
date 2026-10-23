@@ -23,6 +23,8 @@ show_usage() {
   FLA_NPU_ENV                    fla_npu_transformer set_env.bash 路径，设置后 source
   ATK_OUTPUT_ROOT                输出根目录，默认 ./atk_output
   ATK_GM_INIT_MODE               GM 数据初始化模式，默认 on；可设 on/off
+  ATK_GM_INIT_MB                 可选正十进制整数（无前导零）；on 时传 --gm_init_flag <值>
+                                默认空保留 ATK 默认策略；off 时不能设置，仅用于精度阶段
   ATK_TIMEOUT                    精度阶段超时，默认 14400
   DC_LOOP_NUMS                   确定性循环次数，默认 50（与 ATK 一致）
   DC_TIMEOUT                     确定性阶段超时，默认 3600
@@ -216,6 +218,7 @@ check_atk_version() {
 # on（默认）：开启；off：关闭。
 resolve_gm_init_args() {
   local mode="$ATK_GM_INIT_MODE"
+  local size="$ATK_GM_INIT_MB"
   local enable=""
   case "$mode" in
     on|enable|true|1) enable="on" ;;
@@ -223,8 +226,18 @@ resolve_gm_init_args() {
     *) die "不支持的 ATK_GM_INIT_MODE：${mode}，请使用 on/off" ;;
   esac
   GM_INIT_ARGS=()
+  if [[ -n "$size" ]]; then
+    [[ "$size" =~ ^[1-9][0-9]*$ ]] || die "ATK_GM_INIT_MB 必须是无前导零的正十进制整数：${size}"
+    [[ "$enable" == "on" ]] || die "设置 ATK_GM_INIT_MB 时 ATK_GM_INIT_MODE 必须为 on"
+  fi
   if [[ "$enable" == "on" ]]; then
     GM_INIT_ARGS=(--gm_init_flag)
+    if [[ -n "$size" ]]; then
+      GM_INIT_ARGS+=("$size")
+      log_info "GM 初始化参数：ATK_GM_INIT_MB=${size}；ATK CLI --gm_init_flag ${size}"
+    else
+      log_info "GM 初始化参数：ATK CLI --gm_init_flag（保留 ATK 默认大小策略）"
+    fi
   fi
   log_info "GM 数据初始化（ATK_GM_INIT_MODE=${mode}）：${enable}"
 }
@@ -234,6 +247,7 @@ NPU_DEVICE_ID="${NPU_DEVICE_ID:-0}"
 SOC="${SOC:-auto}"
 RUN_SCOPE="${RUN_SCOPE:-all}"
 ATK_GM_INIT_MODE="${ATK_GM_INIT_MODE:-on}"
+ATK_GM_INIT_MB="${ATK_GM_INIT_MB:-}"
 REQUIRED_ATK_VERSION="${REQUIRED_ATK_VERSION:-26.8.8}"
 ATK_TIMEOUT="${ATK_TIMEOUT:-14400}"
 DC_LOOP_NUMS="${DC_LOOP_NUMS:-50}"
