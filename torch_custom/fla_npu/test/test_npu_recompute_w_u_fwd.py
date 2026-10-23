@@ -313,11 +313,13 @@ def test_recompute_w_u_fwd(
 
     print("================== w ==================")
     cpu_w = compute_w_golden(k, v, beta, A, g, cu_seqlens, chunk_indices, B, Hv, T, K, chunk_size, NT, Hk=Hk)
-    ct.isclose(w.cpu(), cpu_w.cpu(), diff_thd=0.1)
+    w_result = ct.isclose(w.cpu(), cpu_w.cpu(), diff_thd=0.1)
+    assert w_result["result"] == "success", f"w comparison failed: {w_result}"
 
     print("================== u ==================")
     cpu_u = compute_u_golden(v, beta, A, cu_seqlens, chunk_indices, B, Hv, T, chunk_size, NT)
-    ct.isclose(u.cpu(), cpu_u.cpu(), diff_thd=0.1)
+    u_result = ct.isclose(u.cpu(), cpu_u.cpu(), diff_thd=0.1)
+    assert u_result["result"] == "success", f"u comparison failed: {u_result}"
 
     print(f"test_recompute_w_u_fwd 被调用了第 {test_recompute_w_u_fwd.call_count} 次")
     return w, u

@@ -189,6 +189,8 @@ run_case() {
         grep -Fq 'python3 tests/test_stable_gates.py -b' "$command_log"
         grep -Fq 'python3 tests/test_stable_only_runtime.py -b' "$command_log"
         grep -Fq 'python3 tests/test_verify_stable_only_results.py -b' "$command_log"
+        grep -Fq 'python3 tests/test_ct_comparison_contracts.py -b' "$command_log"
+        grep -Fq 'python3 tests/test_atk_kkt_reference_contract.py -b' "$command_log"
         grep -Fq 'python3 torch_custom/fla_npu/tools/stable_coverage.py --strict' "$command_log"
         grep -Fq 'bash ci/prepare_ci_cache.sh' "$command_log"
         grep -Fq 'bash build.sh --pkg --soc=ascend910b' "$command_log"

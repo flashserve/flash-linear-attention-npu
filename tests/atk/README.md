@@ -321,6 +321,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 from _ascendc_common_executor import _case_spec
 ```
 
+## 结果门禁
+
+`run_test_cpu.sh` 将四个阶段分别输出到 `accuracy`、`perf`、`determinism` 和
+`mssanitizer` 子目录，并用本次开始时间、所选 JSON 的用例数量和精确 ID 集合检查报告。
+缺少检查器、报告缺失/损坏/过期、空跑、部分执行、未知或失败状态均返回非零退出码。
+不能用历史成功报告补足本次执行。报告字段按官方 ATK 26.9.8 的 `summary` 和
+`statistic` 表核验；单节点性能没有对比标杆时，必须仍有每个用例的成功状态与有限正耗时。
+这些耗时只证明完成采样，不代表已通过性能回归目标。
+
+内存检查同时将同一个 `MSS_LOG_PATH` 传给外层 `mssanitizer --log-file` 与 ATK
+`-msl`；该文件必须是本次新路径。除 XLSX 结果外，还要求本次非空日志中目标 OPP
+kernel 的检测开始、无错误完成记录相互匹配，且次数不小于所选用例数。只有工具启动信息、
+辅助 kernel、空日志、未插桩/不支持或未完成记录均不能通过。当前工具日志没有 case ID，
+因此日志与 XLSX 的组合证明本次检测数量和用例执行集合，不提供逐 case 的日志绑定。
+
+`all` 会检查现有固化 JSON 的全部用例，但不能代替本文件要求的接口、seed、平台和
+TilingKey 覆盖审查；缺少相应资产或覆盖时，仍不能宣布完整验收。
+
 ## 验收结果记录
 
 正式验收结果写入当前算子的 ATK README，至少包含：

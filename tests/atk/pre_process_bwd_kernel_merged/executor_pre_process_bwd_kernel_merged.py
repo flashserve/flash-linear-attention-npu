@@ -187,11 +187,11 @@ def run_npu(spec: dict, input_data: InputDataset):
     tensors = build_inputs(spec, _marker_device(input_data))
     if want is not None:
         # 反向（拦截）用例：算子必须报错，且返回码与用例声明一致。返回码取自异常文本里的
-        # ``aclnnStatus=<code>``（与 tests/atk/chunk_kda_fwd 的负向处理同一套口径）。
+        # Stable 的 ``GetWorkspaceSize failed: <code>`` 或原 ACLNN 状态格式。
         try:
             _call_op(tensors, spec, npu=True)
-        except Exception as exc:  # aclnn 抛 RuntimeError，取其中的 aclnnStatus
-            match = re.search(r"aclnnStatus=(\d+)", str(exc))
+        except Exception as exc:  # 必须匹配实际状态码，不能把任意异常当作预期拦截。
+            match = re.search(r"(?:aclnnStatus=|GetWorkspaceSize failed:\s*)(\d+)\b", str(exc))
             got = int(match.group(1)) if match else None
             if got != want:
                 raise RuntimeError(

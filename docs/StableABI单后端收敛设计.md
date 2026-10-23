@@ -161,10 +161,46 @@ elementwise 的门控 CPU reference 本身未改变，仅将无关的完整 fuse
   KDA prepare 的完整通用矩阵含 A5 不支持的 BSND/TND 场景，完整矩阵仍失败；支持范围内
   的 16 项成功记录与完整矩阵结果分别保留。旧 fwd-h 独立脚本 T=256/V=128
   在基线出现 AIcore timeout（507014），小规模 recipe 通过不能豁免该失败。
-- 缺少仓内指定 CT Tool v0.9.1 和 ATK 可执行环境，部分旧调用方的 CPU/ATK 精度、性能、
-  确定性与内存门禁未完成；正式 CT 发布下载在本次环境返回 HTTP 401。
+- 本节执行时缺少仓内指定 CT Tool v0.9.1 和 ATK 可执行环境；当时 CT 下载返回
+  HTTP 401。后续已取得官方工具并补跑，参见第 8 节；工具安装成功不等于算子验收通过。
 - A5 主机 GCC 13 生成的 OPP host 库要求 GLIBCXX_3.4.32，高于 wheel 声明上限
   3.4.29，发布检查按预期拒绝。需用规定工具链重新构建，不能放宽 watermark；overlay
   launcher 自身的 ELF 审计通过不代表整包发布检查通过。
 - A2/A3、最低 torch 版本及完整 dtype/layout/可选参数组合未全部实测。GitHub CI 当前
   为 `action_required`，正式 A2+A5 NPU CI 和两位批准尚未取得；本机测试不能替代这些条件。
+
+## 8. 官方 ATK/CT 补验与验收脚本修复
+
+从 [MindStudio ATK](https://gitcode.com/Ascend/ATK) 固定提交
+`9504bee6076820ca74259fb919a790a12ef88cf8` 构建 ATK 26.9.8，满足最低版本 26.8.8。
+wheel SHA256 为 `4e14fa2b66d7031b408165409576283ce4bd01b0bcc351753b25faf94e0f5836`。
+`mixed_tolerance_bm` 使用官方公开实现，真实 CLI、executor 接口及 CPU 正反例检查通过。
+从 [CT v0.9.1 官方发布页](https://gitcode.com/Wei_NaChuan/ct/releases/v0.9.1)
+取得 wheel，其 SHA256 `0bdd83003c172f5dac8a010aff889400cc91f2caa6ba49f4c24127980f9b25c8`
+与官方公布值一致。两者安装到独立 venv；原 zzy 的完整 distribution 清单前后相同，
+torch/torch_npu 未变。`ct --version`、CLI 及 CPU 图形诊断已实际运行。
+
+本次发现并修复以下测试问题；这些修改不改变设备 kernel、JSON 输入、随机种子或容差：
+
+- ATK 汇总不能将缺报告、零用例、缺失字段和部分执行视为通过。四阶段现在要求本次新鲜
+  报告、精确用例 ID/数量和逐例状态；性能必须有真实有限正耗时。
+- 原 runner 未将 `MSS_LOG_PATH` 传给外层 mssanitizer，ATK 会把空日志判为成功。
+  现在显式连接 `--log-file` 和 `-msl`，同时要求目标 OPP kernel 的开始与无错误完成记录。
+  修复前的 XLSX `True` 不计内存验收；日志本身无 case ID，不能声称具备逐 case 日志关联。
+- KDA fwd prepare executor 的 `a_log` 改为 Stable 的 `A_log`；preprocess backward
+  负向检查识别 Stable 的 `GetWorkspaceSize failed` 状态码，仍拒绝无关异常或错误状态码。
+- KKT ATK 标杆误将 beta 按列广播，已按接口 `beta[t]` 和既有独立 CPU reference
+  修为按行广播。手算非等 beta 用例通过；BF16/FP16 × 3 seed 的同输入校准中，
+  修正参考按官方混合容差 6/6 通过，原错误轴负控制 6/6 失败，正确参考最大误差
+  不超过 `2.80e-9`。原始两条 NPU ATK 精度失败及基线同样失败的记录保留。
+- CT `isclose` 和 `dual` 比较失败通常只返回状态。Recompute 的 w/u、prepare-full
+  的四个输出现在均断言真实成功；bwd-dv 的双标杆参数修为 `test, gt=高精度真值,
+  bench=低精度对照`。原来退出 0 却未检查比较结果的运行不能算精度通过。
+
+资产审计发现 28 个 ATK 目录直接覆盖 28/37 个公共入口，固化 JSON 包含精度 5951 条、
+性能 174 条和内存/确定性 578 条。仍有 9 个入口没有直接 ATK 工程，部分目录缺少
+`all` 必需的性能或 MSS JSON。Conv1d 的状态/参数修复、BSH 别名、cumsum 新增 dtype
+行为仍须保留第 7 节的专项测试；现有 ATK 的固定参数不能替代这些证据。
+
+`all` 执行现有 JSON 的结果与覆盖完整性分别记录。完整公共运行时验收、正式 CI 和发布
+工具链条件仍然有效，不因补齐 ATK/CT 或收紧测试门禁而豁免。
