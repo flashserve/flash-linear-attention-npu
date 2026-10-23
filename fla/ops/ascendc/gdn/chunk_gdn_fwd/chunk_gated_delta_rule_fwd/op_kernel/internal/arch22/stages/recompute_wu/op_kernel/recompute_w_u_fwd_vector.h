@@ -53,6 +53,9 @@ public:
 
     __aicore__ inline void Process(const GDN::RecomputeTaskRange *range = nullptr);
     __aicore__ inline void ProcessInterleaved();
+    __aicore__ inline void BeginPreparation(const GDN::RecomputeTaskRange *range);
+    __aicore__ inline void PrepareRange(uint64_t localBegin, uint64_t localEnd);
+    __aicore__ inline void EndPreparation();
     __aicore__ inline void Init(const GdnMegaArch22RecomputeWUTilingData &tiling,
                                 GdnRawFront::VectorResources *resources);
 
@@ -98,6 +101,15 @@ private:
     GM_ADDR workspace;
     GdnRawFront::VectorResources *frontResources = nullptr;
     const GDN::RecomputeTaskRange *taskRange = nullptr;
+    GdnRawFront::WuLayout interleavedLayout;
+    uint32_t rawBlock = 0;
+
+    template <bool kPrepareOnly>
+    __aicore__ inline void BeginInterleaved();
+    template <bool kPrepareOnly>
+    __aicore__ inline void ProcessInterleavedRange(uint32_t loopBegin, uint32_t loopEnd);
+    template <bool kPrepareOnly>
+    __aicore__ inline void EndInterleaved();
 
 private:
     GlobalTensor<kType> kTensor;
@@ -168,33 +180,108 @@ template <typename kType, typename betaType, bool kFlattenHeadTasks, bool kAbcTa
 __aicore__ inline void RecomputeWUFwdVectorProcess<kType, betaType,
     kFlattenHeadTasks, kAbcTaskOrder, kRawFront, kStaticV, kStaticBT, kQkvLayout>::ProcessInterleaved()
 {
+    if (taskRange->fullyPrepared) {
+        // 所有 RHS 已由最终 Solve 逐窗生产；只闭合原 Cube 的四任务通知协议。
+        // 第二 Solve 退休 ACK 已消费，才允许复用 ready3/free5。
+        for (uint64_t begin = taskRange->begin; begin < taskRange->end;
+             begin += GDN::RECOMPUTE_WU_SYNC_WINDOW_TASKS) {
+            CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_3);
+            if (begin != taskRange->begin) {
+                CrossCoreWaitFlag<0x2>(SYNC_AIC_AIV_FLAG_5);
+            }
+        }
+        return;
+    }
+    BeginInterleaved<false>();
+    ProcessInterleavedRange<false>(static_cast<uint32_t>(taskRange->begin),
+                                   static_cast<uint32_t>(taskRange->end));
+    EndInterleaved<false>();
+}
+
+template <typename kType, typename betaType, bool kFlattenHeadTasks, bool kAbcTaskOrder, bool kRawFront,
+          int kStaticV, int kStaticBT, int kQkvLayout>
+__aicore__ inline void RecomputeWUFwdVectorProcess<kType, betaType,
+    kFlattenHeadTasks, kAbcTaskOrder, kRawFront, kStaticV, kStaticBT, kQkvLayout>::BeginPreparation(
+        const GDN::RecomputeTaskRange *range)
+{
+    static_assert(sizeof(kType) == 2, "A2 WU preparation preserves two-byte input rounding");
+    static_assert(3 * 128 * 128 + 64 * (12 * 128 + 56) <= Catlass::Arch::AtlasA2::UB_SIZE,
+                  "A2 WU preparation and final Solve views exceed UB");
+    taskRange = range;
+    BeginInterleaved<true>();
+}
+
+template <typename kType, typename betaType, bool kFlattenHeadTasks, bool kAbcTaskOrder, bool kRawFront,
+          int kStaticV, int kStaticBT, int kQkvLayout>
+__aicore__ inline void RecomputeWUFwdVectorProcess<kType, betaType,
+    kFlattenHeadTasks, kAbcTaskOrder, kRawFront, kStaticV, kStaticBT, kQkvLayout>::PrepareRange(
+        uint64_t localBegin, uint64_t localEnd)
+{
+    ProcessInterleavedRange<true>(static_cast<uint32_t>(taskRange->begin + localBegin),
+                                  static_cast<uint32_t>(taskRange->begin + localEnd));
+}
+
+template <typename kType, typename betaType, bool kFlattenHeadTasks, bool kAbcTaskOrder, bool kRawFront,
+          int kStaticV, int kStaticBT, int kQkvLayout>
+__aicore__ inline void RecomputeWUFwdVectorProcess<kType, betaType,
+    kFlattenHeadTasks, kAbcTaskOrder, kRawFront, kStaticV, kStaticBT, kQkvLayout>::EndPreparation()
+{
+    EndInterleaved<true>();
+}
+
+template <typename kType, typename betaType, bool kFlattenHeadTasks, bool kAbcTaskOrder, bool kRawFront,
+          int kStaticV, int kStaticBT, int kQkvLayout>
+template <bool kPrepareOnly>
+__aicore__ inline void RecomputeWUFwdVectorProcess<kType, betaType,
+    kFlattenHeadTasks, kAbcTaskOrder, kRawFront, kStaticV, kStaticBT, kQkvLayout>::BeginInterleaved()
+{
+    const uint32_t rowNum = interleavedMembaseVecRow;
+    const uint32_t width = static_cast<uint32_t>(K > ValueDim() ? K : ValueDim());
+    const uint32_t ubOffset = kPrepareOnly
+        ? static_cast<uint32_t>(ChunkSize() * ChunkSize() / 2 * (sizeof(float32_t) + sizeof(kType))) : 0;
+    constexpr uint32_t eventOffset = kPrepareOnly ? 2 : 0;
+    interleavedLayout.Init(rowNum, width, sizeof(kType), true);
+    const auto &layout = interleavedLayout;
+    rawBlock = 0;
+    for (uint32_t slot = 0; slot < 2; ++slot) {
+        SetFlag<HardEvent::V_MTE2>(frontResources->template Event<HardEvent::V_MTE2>(slot + eventOffset));
+        SetFlag<HardEvent::MTE3_V>(frontResources->template Event<HardEvent::MTE3_V>(slot + eventOffset));
+    }
+    vFp32Buf.BindView(frontResources, ubOffset + layout.fp32, rowNum * ValueDim() * sizeof(float32_t));
+    kFp32Buf.BindView(frontResources, ubOffset + layout.fp32, rowNum * K * sizeof(float32_t));
+    betaFp32Buf.BindView(frontResources, ubOffset + layout.betaFp32, rowNum * sizeof(float32_t));
+    betaFp32BrcbBuf.BindView(frontResources, ubOffset + layout.brcb, rowNum * ONE_BLOCK_32);
+    gFp32Buf.BindView(frontResources, ubOffset + layout.gFp32, rowNum * sizeof(float32_t));
+}
+
+template <typename kType, typename betaType, bool kFlattenHeadTasks, bool kAbcTaskOrder, bool kRawFront,
+          int kStaticV, int kStaticBT, int kQkvLayout>
+template <bool kPrepareOnly>
+__aicore__ inline void RecomputeWUFwdVectorProcess<kType, betaType,
+    kFlattenHeadTasks, kAbcTaskOrder, kRawFront, kStaticV, kStaticBT, kQkvLayout>::ProcessInterleavedRange(
+        uint32_t loopBegin, uint32_t loopEnd)
+{
     // Only the owned A2 parent-batch caller instantiates this non-null-range path.
     const uint32_t rowNum = interleavedMembaseVecRow;
     const uint32_t width = static_cast<uint32_t>(K > ValueDim() ? K : ValueDim());
+    // 原最终 Solve f/o 位于低区；各准备窗口持续借用同一高区和 event2/3。
+    const uint32_t ubOffset = kPrepareOnly
+        ? static_cast<uint32_t>(ChunkSize() * ChunkSize() / 2 * (sizeof(float32_t) + sizeof(kType))) : 0;
+    constexpr uint32_t eventOffset = kPrepareOnly ? 2 : 0;
     const uint64_t coreLoopsInB = (T + ChunkSize() - 1) / ChunkSize();
-    GdnRawFront::WuLayout layout;
-    layout.Init(rowNum, width, sizeof(kType), true);
+    const auto &layout = interleavedLayout;
     const uint32_t inputSlotBytes = GdnRawFront::Align(rowNum * width * sizeof(kType));
     const uint32_t betaSlotBytes = GdnRawFront::Align(rowNum * sizeof(float32_t));
-    uint32_t rawBlock = 0;
-    uint32_t vecTaskIdx = 0;
+    uint32_t vecTaskIdx = loopBegin - static_cast<uint32_t>(taskRange->begin);
     uint32_t bos = 0;
     uint32_t eos = 0;
     uint32_t curRowNum = rowNum;
     uint32_t subBlockIdx = GetSubBlockIdx();
-    frontResources->BeginWuPhase();
-    vFp32Buf.BindView(frontResources, layout.fp32, rowNum * ValueDim() * sizeof(float32_t));
-    kFp32Buf.BindView(frontResources, layout.fp32, rowNum * K * sizeof(float32_t));
-    betaFp32Buf.BindView(frontResources, layout.betaFp32, rowNum * sizeof(float32_t));
-    betaFp32BrcbBuf.BindView(frontResources, layout.brcb, rowNum * ONE_BLOCK_32);
-    gFp32Buf.BindView(frontResources, layout.gFp32, rowNum * sizeof(float32_t));
     auto tensorVFp32 = vFp32Buf.template Get<float32_t>();
     auto tensorKFp32 = kFp32Buf.template Get<float32_t>();
     auto tensorGFP32 = gFp32Buf.template Get<float32_t>();
     auto tensorBetaFP32 = betaFp32Buf.template Get<float32_t>();
     auto tensorBetaBrcbFP32 = betaFp32BrcbBuf.template Get<float32_t>();
-    const uint32_t loopBegin = static_cast<uint32_t>(taskRange->begin);
-    const uint32_t loopEnd = static_cast<uint32_t>(taskRange->end);
     for (uint32_t loopIdx = loopBegin; loopIdx < loopEnd; ++loopIdx) {
         uint32_t chunkIdx = 0;
         uint32_t hBegin = 0;
@@ -207,10 +294,12 @@ __aicore__ inline void RecomputeWUFwdVectorProcess<kType, betaType,
             ++vecTaskIdx;
             const bool isLast = loopIdx + 1 == loopEnd && h + 1 == hEnd;
             if ((vecTaskIdx & 0b01) != subBlockIdx) {
-                if ((vecTaskIdx & 0b11) == 0 || isLast) {
-                    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_3);
-                    if (vecTaskIdx > GDN::RECOMPUTE_WU_SYNC_WINDOW_TASKS) {
-                        CrossCoreWaitFlag<0x2>(SYNC_AIC_AIV_FLAG_5);
+                if constexpr (!kPrepareOnly) {
+                    if ((vecTaskIdx & 0b11) == 0 || isLast) {
+                        CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_3);
+                        if (vecTaskIdx > GDN::RECOMPUTE_WU_SYNC_WINDOW_TASKS) {
+                            CrossCoreWaitFlag<0x2>(SYNC_AIC_AIV_FLAG_5);
+                        }
                     }
                 }
                 continue;
@@ -224,10 +313,10 @@ __aicore__ inline void RecomputeWUFwdVectorProcess<kType, betaType,
                 LocalTensor<betaType> tensorBetain;
                 LocalTensor<kType> tensorVbOut;
                 rawSlot = rawBlock++ & 1;
-                WaitFlag<HardEvent::V_MTE2>(frontResources->template Event<HardEvent::V_MTE2>(rawSlot));
-                tensorVin = frontResources->template View<kType>(layout.input + rawSlot * inputSlotBytes, rowNum * ValueDim() * sizeof(kType));
-                tensorBetain = frontResources->template View<betaType>(layout.beta + rawSlot * betaSlotBytes, rowNum * sizeof(betaType));
-                tensorVbOut = frontResources->template View<kType>(layout.out + rawSlot * inputSlotBytes, rowNum * ValueDim() * sizeof(kType));
+                WaitFlag<HardEvent::V_MTE2>(frontResources->template Event<HardEvent::V_MTE2>(rawSlot + eventOffset));
+                tensorVin = frontResources->template View<kType>(ubOffset + layout.input + rawSlot * inputSlotBytes, rowNum * ValueDim() * sizeof(kType));
+                tensorBetain = frontResources->template View<betaType>(ubOffset + layout.beta + rawSlot * betaSlotBytes, rowNum * sizeof(betaType));
+                tensorVbOut = frontResources->template View<kType>(ubOffset + layout.out + rawSlot * inputSlotBytes, rowNum * ValueDim() * sizeof(kType));
                 // copyin
                 {
                     if (InputSequenceMajor()) {
@@ -249,12 +338,12 @@ __aicore__ inline void RecomputeWUFwdVectorProcess<kType, betaType,
                     }
                     DataCopyPad(tensorBetain, betaTensor[betaOffset], {1, curRowNum * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0},{false, 0, 0, 0});
 
-                    SetFlag<HardEvent::MTE2_V>(frontResources->template Event<HardEvent::MTE2_V>(rawSlot));
+                    SetFlag<HardEvent::MTE2_V>(frontResources->template Event<HardEvent::MTE2_V>(rawSlot + eventOffset));
                 }
                 // compute
                 {
-                    WaitFlag<HardEvent::MTE2_V>(frontResources->template Event<HardEvent::MTE2_V>(rawSlot));
-                    WaitFlag<HardEvent::MTE3_V>(frontResources->template Event<HardEvent::MTE3_V>(rawSlot));
+                    WaitFlag<HardEvent::MTE2_V>(frontResources->template Event<HardEvent::MTE2_V>(rawSlot + eventOffset));
+                    WaitFlag<HardEvent::MTE3_V>(frontResources->template Event<HardEvent::MTE3_V>(rawSlot + eventOffset));
 
                     // cast FP32
                     if constexpr (!std::is_same<betaType, float32_t>()) {
@@ -278,16 +367,16 @@ __aicore__ inline void RecomputeWUFwdVectorProcess<kType, betaType,
                     // cast
                     Cast(tensorVbOut, tensorVFp32, RoundMode::CAST_RINT, ValueDim() * curRowNum);
 
-                    SetFlag<HardEvent::V_MTE2>(frontResources->template Event<HardEvent::V_MTE2>(rawSlot));
-                    SetFlag<HardEvent::V_MTE3>(frontResources->template Event<HardEvent::V_MTE3>(rawSlot));
+                    SetFlag<HardEvent::V_MTE2>(frontResources->template Event<HardEvent::V_MTE2>(rawSlot + eventOffset));
+                    SetFlag<HardEvent::V_MTE3>(frontResources->template Event<HardEvent::V_MTE3>(rawSlot + eventOffset));
 
                 }
                 // copyout
                 {
-                    WaitFlag<HardEvent::V_MTE3>(frontResources->template Event<HardEvent::V_MTE3>(rawSlot));
+                    WaitFlag<HardEvent::V_MTE3>(frontResources->template Event<HardEvent::V_MTE3>(rawSlot + eventOffset));
                     const uint64_t dstOffset = ((loopIdx - taskRange->begin) * ChunkSize() + rowOffset) * ValueDim();
                     DataCopy(workSpaceTensor[dstOffset], tensorVbOut, ValueDim() * curRowNum);
-                    SetFlag<HardEvent::MTE3_V>(frontResources->template Event<HardEvent::MTE3_V>(rawSlot));
+                    SetFlag<HardEvent::MTE3_V>(frontResources->template Event<HardEvent::MTE3_V>(rawSlot + eventOffset));
                 }
             }
 
@@ -309,11 +398,11 @@ __aicore__ inline void RecomputeWUFwdVectorProcess<kType, betaType,
                 LocalTensor<betaType> tensorGin;
                 LocalTensor<kType> tensorOut;
                 rawSlot = rawBlock++ & 1;
-                WaitFlag<HardEvent::V_MTE2>(frontResources->template Event<HardEvent::V_MTE2>(rawSlot));
-                tensorKin = frontResources->template View<kType>(layout.input + rawSlot * inputSlotBytes, rowNum * K * sizeof(kType));
-                tensorBetain = frontResources->template View<betaType>(layout.beta + rawSlot * betaSlotBytes, rowNum * sizeof(betaType));
-                tensorGin = frontResources->template View<betaType>(layout.g + rawSlot * betaSlotBytes, rowNum * sizeof(betaType));
-                tensorOut = frontResources->template View<kType>(layout.out + rawSlot * inputSlotBytes, rowNum * K * sizeof(kType));
+                WaitFlag<HardEvent::V_MTE2>(frontResources->template Event<HardEvent::V_MTE2>(rawSlot + eventOffset));
+                tensorKin = frontResources->template View<kType>(ubOffset + layout.input + rawSlot * inputSlotBytes, rowNum * K * sizeof(kType));
+                tensorBetain = frontResources->template View<betaType>(ubOffset + layout.beta + rawSlot * betaSlotBytes, rowNum * sizeof(betaType));
+                tensorGin = frontResources->template View<betaType>(ubOffset + layout.g + rawSlot * betaSlotBytes, rowNum * sizeof(betaType));
+                tensorOut = frontResources->template View<kType>(ubOffset + layout.out + rawSlot * inputSlotBytes, rowNum * K * sizeof(kType));
                 // copyin
                 {
                     if (InputSequenceMajor()) {
@@ -335,12 +424,12 @@ __aicore__ inline void RecomputeWUFwdVectorProcess<kType, betaType,
                     }
                     DataCopyPad(tensorBetain, betaTensor[betaOffset], {1, curRowNum * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0},{false, 0, 0, 0});
                     DataCopyPad(tensorGin, gTensor[betaOffset], {1, curRowNum * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0},{false, 0, 0, 0});
-                    SetFlag<HardEvent::MTE2_V>(frontResources->template Event<HardEvent::MTE2_V>(rawSlot));
+                    SetFlag<HardEvent::MTE2_V>(frontResources->template Event<HardEvent::MTE2_V>(rawSlot + eventOffset));
                 }
                 // compute
                 {
-                    WaitFlag<HardEvent::MTE2_V>(frontResources->template Event<HardEvent::MTE2_V>(rawSlot));
-                    WaitFlag<HardEvent::MTE3_V>(frontResources->template Event<HardEvent::MTE3_V>(rawSlot));
+                    WaitFlag<HardEvent::MTE2_V>(frontResources->template Event<HardEvent::MTE2_V>(rawSlot + eventOffset));
+                    WaitFlag<HardEvent::MTE3_V>(frontResources->template Event<HardEvent::MTE3_V>(rawSlot + eventOffset));
                     // cast FP32
                     if constexpr (!std::is_same<betaType, float32_t>()) {
                         Cast(tensorBetaFP32, tensorBetain, RoundMode::CAST_NONE, curRowNum);
@@ -368,27 +457,41 @@ __aicore__ inline void RecomputeWUFwdVectorProcess<kType, betaType,
                     }
                     PipeBarrier<PIPE_V>();
                     Cast(tensorOut, tensorKFp32, RoundMode::CAST_RINT, K * curRowNum);
-                    SetFlag<HardEvent::V_MTE2>(frontResources->template Event<HardEvent::V_MTE2>(rawSlot));
-                    SetFlag<HardEvent::V_MTE3>(frontResources->template Event<HardEvent::V_MTE3>(rawSlot));
+                    SetFlag<HardEvent::V_MTE2>(frontResources->template Event<HardEvent::V_MTE2>(rawSlot + eventOffset));
+                    SetFlag<HardEvent::V_MTE3>(frontResources->template Event<HardEvent::V_MTE3>(rawSlot + eventOffset));
                 }
                 // copyout
                 {
-                    WaitFlag<HardEvent::V_MTE3>(frontResources->template Event<HardEvent::V_MTE3>(rawSlot));
+                    WaitFlag<HardEvent::V_MTE3>(frontResources->template Event<HardEvent::V_MTE3>(rawSlot + eventOffset));
                     const uint64_t dstOffset = taskRange->capacity * ChunkSize() * ValueDim() +
                         ((loopIdx - taskRange->begin) * ChunkSize() + rowOffset) * K;
                     DataCopy(workSpaceTensor[dstOffset], tensorOut, K * curRowNum);
-                    SetFlag<HardEvent::MTE3_V>(frontResources->template Event<HardEvent::MTE3_V>(rawSlot));
+                    SetFlag<HardEvent::MTE3_V>(frontResources->template Event<HardEvent::MTE3_V>(rawSlot + eventOffset));
                 }
             }
-            if ((vecTaskIdx & 0b11) == 0 || isLast) {
-                CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_3);
-                if (vecTaskIdx > GDN::RECOMPUTE_WU_SYNC_WINDOW_TASKS) {
-                    CrossCoreWaitFlag<0x2>(SYNC_AIC_AIV_FLAG_5);
+            if constexpr (!kPrepareOnly) {
+                if ((vecTaskIdx & 0b11) == 0 || isLast) {
+                    CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_3);
+                    if (vecTaskIdx > GDN::RECOMPUTE_WU_SYNC_WINDOW_TASKS) {
+                        CrossCoreWaitFlag<0x2>(SYNC_AIC_AIV_FLAG_5);
+                    }
                 }
             }
         }
     }
-    frontResources->EndWuPhase();
+}
+
+template <typename kType, typename betaType, bool kFlattenHeadTasks, bool kAbcTaskOrder, bool kRawFront,
+          int kStaticV, int kStaticBT, int kQkvLayout>
+template <bool kPrepareOnly>
+__aicore__ inline void RecomputeWUFwdVectorProcess<kType, betaType,
+    kFlattenHeadTasks, kAbcTaskOrder, kRawFront, kStaticV, kStaticBT, kQkvLayout>::EndInterleaved()
+{
+    constexpr uint32_t eventOffset = kPrepareOnly ? 2 : 0;
+    for (uint32_t slot = 0; slot < 2; ++slot) {
+        WaitFlag<HardEvent::V_MTE2>(frontResources->template Event<HardEvent::V_MTE2>(slot + eventOffset));
+        WaitFlag<HardEvent::MTE3_V>(frontResources->template Event<HardEvent::MTE3_V>(slot + eventOffset));
+    }
 }
 
 #endif // RECOMPUTE_W_U_FWD_VECTOR_H

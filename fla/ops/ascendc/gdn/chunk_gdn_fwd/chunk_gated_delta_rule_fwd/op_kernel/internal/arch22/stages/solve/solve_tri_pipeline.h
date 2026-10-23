@@ -28,6 +28,10 @@ struct WorkItem {
     int64_t b, h, t, base, length;
 };
 
+struct NoRangePreparation {
+    static constexpr bool kEnabled = false;
+};
+
 template <int kStaticBT = 0>
 __aicore__ inline int64_t ChunkSize(FullProblem p)
 {
@@ -139,10 +143,12 @@ __aicore__ inline void full_gemm(MM &mm, GlobalTensor<float> a, GlobalTensor<flo
     mm(ta, tb, tc, GemmCoord{uint32_t(m), uint32_t(n), uint32_t(k)});
 }
 
-template <int S, class Out, int Group = 16, bool Parent = false, bool Raw = false, int kStaticBT = 0>
+template <int S, class Out, int Group = 16, bool Parent = false, bool Raw = false, int kStaticBT = 0,
+          class RangePreparation = NoRangePreparation>
 __aicore__ inline void pipeline_merge(GdnRawFront::Resource &resource,
                                       GM_ADDR input, GM_ADDR prev, GM_ADDR output, GM_ADDR workspace, GM_ADDR cuAddr,
-                                      FullProblem info, int64_t tasks, GdnRawFront::VectorResources *resources)
+                                      FullProblem info, int64_t tasks, GdnRawFront::VectorResources *resources,
+                                      RangePreparation *preparation = nullptr)
 {
     static_assert(S == 64, "pipeline_merge only supports S=64");
     constexpr int W = S > 32 ? S : 32;
@@ -215,8 +221,13 @@ __aicore__ inline void pipeline_merge(GdnRawFront::Resource &resource,
         int sub = GetSubBlockIdx();
         for (int64_t task = begin; task < end; ++task) {
             int64_t index = task - begin, slot = index % (BATCH * 2);
-            if (index % BATCH == 0)
+            if (index % BATCH == 0) {
+                if constexpr (RangePreparation::kEnabled) {
+                    const int64_t count = end - task < BATCH ? end - task : BATCH;
+                    preparation->PrepareRange(index, index + count);
+                }
                 CrossCoreWaitFlag(4 + (index / BATCH) % 2);
+            }
             auto w = locate<Parent, kStaticBT>(task, S * 2, info, cu);
             int n0 = w.length - w.t < S ? w.length - w.t : S, n1 = w.length - w.t - S < S ? w.length - w.t - S : S;
             int rows = sub == 0 ? n0 : n1;
@@ -261,10 +272,12 @@ __aicore__ inline void pipeline_merge(GdnRawFront::Resource &resource,
     }
 }
 
-template <int S, class Out, int Group = 8, bool Parent = false, bool Raw = false, int kStaticBT = 0>
+template <int S, class Out, int Group = 8, bool Parent = false, bool Raw = false, int kStaticBT = 0,
+          class RangePreparation = NoRangePreparation>
 __aicore__ inline void stage64_merge(GdnRawFront::Resource &resource,
                                      GM_ADDR input, GM_ADDR prev, GM_ADDR output, GM_ADDR workspace, GM_ADDR cuAddr,
-                                     FullProblem info, int64_t tasks, GdnRawFront::VectorResources *resources)
+                                     FullProblem info, int64_t tasks, GdnRawFront::VectorResources *resources,
+                                     RangePreparation *preparation = nullptr)
 {
     static_assert(S == 32, "stage64_merge only supports S=32");
     constexpr int W = S > 32 ? S : 32;
@@ -359,8 +372,13 @@ __aicore__ inline void stage64_merge(GdnRawFront::Resource &resource,
         int sub = GetSubBlockIdx();
         for (int64_t task = begin; task < end; ++task) {
             int64_t index = task - begin, slot = index % (BATCH * 2);
-            if (index % BATCH == 0)
+            if (index % BATCH == 0) {
+                if constexpr (RangePreparation::kEnabled) {
+                    const int64_t count = end - task < BATCH ? end - task : BATCH;
+                    preparation->PrepareRange(index, index + count);
+                }
                 CrossCoreWaitFlag(4 + (index / BATCH) % 2);
+            }
             auto w = locate<Parent, kStaticBT>(task, S * 2, info, cu);
             int n0 = w.length - w.t < S ? w.length - w.t : S, n1 = w.length - w.t - S < S ? w.length - w.t - S : S;
             int rows = sub == 0 ? n0 : n1;
@@ -680,27 +698,32 @@ __aicore__ inline void OrderMmadCreditReuse()
 
 // 调用方已经通过配对AIV→AIC→AIV发布本批x。所有子层属于同一物理组，
 // 保留 ready/free 并有向交接 MM credit；Raw AIV 仅绑定视图，不构造局部 TPipe。
-template <class Out, bool Raw = false, int kStaticBT = 0>
+template <class Out, bool Raw, int kStaticBT, class RangePreparation>
 __aicore__ inline void RunOwnedBatch(GdnRawFront::Resource &resource,
                                     GM_ADDR x, GM_ADDR d16, GM_ADDR d32, GM_ADDR d64,
                                     GM_ADDR y, GM_ADDR ws, GM_ADDR cu, FullProblem p,
-                                    GdnRawFront::VectorResources *resources)
+                                    GdnRawFront::VectorResources *resources, RangePreparation &preparation)
 {
     leaf_merge_pipeline<32, true, true, Raw, kStaticBT>(resource, x, d16, d32, ws, cu, p, p.tasks32, resources);
     OrderMmadCreditReuse();
     if constexpr (kStaticBT == 128) {
         stage64_merge<32, float, 8, true, Raw, kStaticBT>(resource, x, d32, d64, ws, cu, p, p.tasks64, resources);
         OrderMmadCreditReuse();
-        pipeline_merge<64, Out, 16, true, Raw, kStaticBT>(resource, x, d64, y, ws, cu, p, p.tasks128, resources);
+        preparation.Begin();
+        pipeline_merge<64, Out, 16, true, Raw, kStaticBT>(resource, x, d64, y, ws, cu, p, p.tasks128, resources, &preparation);
     } else if constexpr (kStaticBT == 64) {
-        stage64_merge<32, Out, 8, true, Raw, kStaticBT>(resource, x, d32, y, ws, cu, p, p.tasks64, resources);
+        preparation.Begin();
+        stage64_merge<32, Out, 8, true, Raw, kStaticBT>(resource, x, d32, y, ws, cu, p, p.tasks64, resources, &preparation);
     } else if (p.bt == 128) {
         stage64_merge<32, float, 8, true, Raw, kStaticBT>(resource, x, d32, d64, ws, cu, p, p.tasks64, resources);
         OrderMmadCreditReuse();
-        pipeline_merge<64, Out, 16, true, Raw, kStaticBT>(resource, x, d64, y, ws, cu, p, p.tasks128, resources);
+        preparation.Begin();
+        pipeline_merge<64, Out, 16, true, Raw, kStaticBT>(resource, x, d64, y, ws, cu, p, p.tasks128, resources, &preparation);
     } else {
-        stage64_merge<32, Out, 8, true, Raw, kStaticBT>(resource, x, d32, y, ws, cu, p, p.tasks64, resources);
+        preparation.Begin();
+        stage64_merge<32, Out, 8, true, Raw, kStaticBT>(resource, x, d32, y, ws, cu, p, p.tasks64, resources, &preparation);
     }
+    preparation.End();
     OrderMmadCreditReuse();
     if ASCEND_IS_AIV {
         // 末次 MTE3_V 的 V 侧消费完成后，WU 才能重新预置同方向的 credit。

@@ -26,6 +26,8 @@ struct RecomputeTaskRange {
     uint64_t begin;
     uint64_t end;
     uint64_t capacity;
+    // 仅 owned FrontBatch 使用：全部 RHS 已按最终 Solve 窗口写入本批独立 GM。
+    bool fullyPrepared = false;
 };
 
 struct GdnMegaArch22RecomputeWUTilingData {

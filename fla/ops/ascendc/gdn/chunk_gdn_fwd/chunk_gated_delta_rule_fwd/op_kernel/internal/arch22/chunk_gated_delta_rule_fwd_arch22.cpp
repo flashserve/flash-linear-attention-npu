@@ -436,6 +436,41 @@ __aicore__ inline void RunKktEpilogueBatch(
     // 不再重复本地 PIPE_ALL / Reset / TPipe 析构。
 }
 
+// 每 Front 批只初始化一次准备对象；最终 Solve 各窗口借同一高 UB/event2/3。
+template <typename InputT, int kStaticV, int kStaticBT, int kQkvLayout>
+struct FrontWuRangePreparation {
+    static constexpr bool kEnabled = true;
+    RecomputeWUFwdVectorProcess<InputT, float, true, true, true,
+        kStaticV, kStaticBT, kQkvLayout> process;
+    const GdnMegaArch22RecomputeWUTilingData *tiling;
+    const RecomputeTaskRange *range;
+    GdnRawFront::VectorResources *resources;
+    bool inputSequenceMajor;
+
+    __aicore__ inline void Begin()
+    {
+        if ASCEND_IS_AIV {
+            process.Init(*tiling, resources);
+            process.ConfigureInputLayout(inputSequenceMajor);
+            process.BeginPreparation(range);
+        }
+    }
+
+    __aicore__ inline void PrepareRange(uint64_t localBegin, uint64_t localEnd)
+    {
+        if ASCEND_IS_AIV {
+            process.PrepareRange(localBegin, localEnd);
+        }
+    }
+
+    __aicore__ inline void End()
+    {
+        if ASCEND_IS_AIV {
+            process.EndPreparation();
+        }
+    }
+};
+
 template <typename InputT, bool kPreparedCumsum, bool kSharedKkt,
           int kStaticV, int kStaticBT, int kQkvLayout>
 __aicore__ inline void RunFrontBatchBody(
@@ -503,11 +538,23 @@ __aicore__ inline void RunFrontBatchBody(
         }
         problem.localParentBegin = static_cast<int64_t>(begin - ownerBegin);
         problem.localParentCount = static_cast<int64_t>(end - begin);
+        const RecomputeTaskRange range{begin, end, capacity, true};
+        FrontWuRangePreparation<InputT, kStaticV,
+            kStaticV != 0 ? kStaticBT : 0, kStaticV != 0 ? kQkvLayout : -1> wuPreparation{
+                {k, v, beta, A, gCumsumBht, cuSeqlens, chunkIndices, w, u, wuWorkspace},
+                &recomputeTiling, &range, resources, Config::InputSequenceMajor(abc)};
         GdnFp32Solve::RunOwnedBatch<InputT, true, kStaticBT>(
             resource, x, userWorkspace + phase6->solveD16Offset, userWorkspace + phase6->solveD32Offset,
             userWorkspace + phase6->solveD64Offset, A,
-            userWorkspace + phase6->solveWorkspaceOffset, cuSeqlens, problem, resources);
-        const RecomputeTaskRange range{begin, end, capacity};
+            userWorkspace + phase6->solveWorkspaceOffset, cuSeqlens, problem, resources, wuPreparation);
+        // 本地 V_S 不能证明 AIC 已消费最后 Solve free3；退休后才复用为 WU ready3。
+        // 入场 ACK7 已消费，后续 WU done7 仍保持原有代际顺序。
+        if ASCEND_IS_AIC {
+            AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(FRONT_ACK_DONE_FLAG);
+        }
+        if ASCEND_IS_AIV {
+            AscendC::CrossCoreWaitFlag(FRONT_ACK_DONE_FLAG);
+        }
         if constexpr (kStaticV != 0) {
             DispatchRecompute<InputT, float, kStaticV, true, kStaticV, kStaticBT, kQkvLayout>(
                 resource, resources, k, v, beta, A, gCumsumBht, cuSeqlens, chunkIndices, w, u,
