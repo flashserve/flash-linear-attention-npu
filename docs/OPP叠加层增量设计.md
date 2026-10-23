@@ -381,6 +381,17 @@ python -m fla_npu.install_opp --remove-overlay
 
 ABI 校验是 overlay 流程的默认安全步骤，不增加命令参数：custom 包在原构建命令结束前运行 `op_abi_validate.py`，overlay 安装和 import 分别进行 vendor 契约比对。
 
+### 6.4 构建调度、中断与重试
+
+构建调度的进程边界也属于产物正确性的一部分：
+
+- `build.sh -jN` 负责一次构建内部的并行编译；`ci/pkg/make_packages.py` 可并行运行 arm/x86 队列，同一架构内的多个 SoC 仍串行使用独占的 build 目录；
+- 本地 Docker 构建和远程 x86 构建都必须放在独立 process group 中；用户中断时向整个进程组转发 `SIGINT`，必要时升级到 `SIGTERM`/`SIGKILL`；
+- 进程组退出后才清理 `build/`、`build_out/`、`third_party/` 和本轮 wheel 输出；没有 `.run`/wheel 的完整产物不得进入成功结果；
+- `build.sh` 单次调用不负责自动重试，CI 调度器默认最多重试三次；每次重试都从清理后的目录重新开始；用户中断会停止后续组合，不把中断当成自动重试。
+
+这条边界避免顶层 shell 已退出但 CMake、make 或 `asc_opc` 子进程仍继续写共享目录，导致下一次重试读到半成品。
+
 ### 6.2 CLI
 
 | 参数 | 行为 |
@@ -413,6 +424,8 @@ fla_npu_overlay_[A-Za-z0-9][A-Za-z0-9_.-]*
 ## 7. 构建范围与依赖闭包
 
 本方案的“增量”是**算子范围裁剪**，不是复用旧对象文件：每次仍从干净构建状态生成指定算子的完整 vendor 产物。
+
+`--pkg --jit` 是另一种产物契约：它省略预编译 device kernel `.o`，依赖运行环境完成首次 JIT。当前 wheel staging 校验器要求 AOT 的 kernel `.o` 与 binary-info，因此 JIT run 包不能直接按 AOT wheel 规则验收。A5/CANN 9.2 的实测中，PR 前 `7e39f966` 与当前 PR 的同算子 JIT vendor 文件集合仅差 README，二者首调都返回 `161001`；该结果记录为既有 JIT 路径边界，不作为 overlay 逻辑回归。
 
 | 改动类型 | `--ops` 范围 |
 |---|---|
@@ -467,6 +480,8 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 | ABI 安全 | custom/scoped 构建默认检查所选 adapter/header；安装与 import 默认拒绝 overlay/base 公共 aclnn 原型漂移；强制历史 launcher 仅在 ABI 通过后告警继续 |
 | 构建范围 | 单算子包只包含目标算子；A5/A2 已完成原生构建与运行，A3 已完成交叉编译 |
 | 回滚 | 卸载后输出和 vendor 顺序回到基线；新进程生效 |
+| 构建中断与重试 | 本地/远程进程组终止后清理半成品，再从干净目录重试；单次 `build.sh` 不自动重试 |
+| JIT | 只确认 JIT 包布局不含 `.o`；当前 AOT wheel staging 和 A5 首调不通过，不能宣称 JIT wheel/运行支持 |
 
 与本次路径修复直接相关的回归结果：
 
@@ -614,6 +629,7 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 | `tests/test_wheel_environment.py` | wheel 环境、生成脚本和运行时加载契约回归 |
 | `build.sh` | 全量与 `--ops` scoped 包构建后的 Stable-ABI adapter/header 门禁 |
 | `ci/run_checks.sh` | ABI、环境与构建验收接入 |
+| `ci/pkg/make_packages.py` | 本地/远程构建 process group、信号转发和清理后重试 |
 
 ## 14. 术语
 
