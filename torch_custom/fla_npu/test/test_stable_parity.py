@@ -8,40 +8,30 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""Stable-ABI launcher 与 ctypes 参考实现的**逐算子一致性对照**。
+"""Stable-only baseline/candidate comparison for representative overlay operators.
 
-为什么需要它：适配器（``csrc/src/stable_<op>.cpp``）与 ctypes wrapper 是同一算子的两份 host 实现，
-两者的参数编组必须逐项等价。launcher 侧的改动、以及任何"半自动生成适配器"的尝试，都需要一个
-可执行的一致性判据——本脚本就是那个判据。
+Run the same script in fresh, isolated baseline/candidate installations::
 
-用法（两次运行 + 一次比较）::
+    python test_stable_parity.py dump /tmp/parity-before.json
+    python test_stable_parity.py dump /tmp/parity-after.json
+    python test_stable_parity.py compare /tmp/parity-before.json /tmp/parity-after.json
 
-    FLA_NPU_STABLE_ABI=ctypes python test_stable_parity.py dump /tmp/parity-ctypes.json
-    FLA_NPU_STABLE_ABI=stable python test_stable_parity.py dump /tmp/parity-stable.json
-    python test_stable_parity.py compare /tmp/parity-ctypes.json /tmp/parity-stable.json
-
-可用 ``FLA_NPU_PARITY_OPS=npu_op_a,npu_op_b`` 显式限定两轮配方；未知名称会
-直接报错，compare 也会拒绝两份报告选择不同的配方集合。
-
-判据：
-* 每个算子记录 **实际服务它的后端**（``entry`` 字段）——若 launcher 那一轮某算子仍由 ctypes 服务，
-  说明该算子不被 launcher 携带（或 launcher 不可用），比较对它**无意义**，必须以 ``SKIP`` 呈现而不是 PASS；
-* 覆盖到的算子要求输出**逐值一致**（sha256 相同）。
-
-比较默认是严格模式：任何 ``ERROR``、``SKIP`` 或预期后端未命中都会返回 1。
-仅生成探索性报告时可设置 ``FLA_NPU_PARITY_ALLOW_INCOMPLETE=1``。
-
-配方（``RECIPES``）是"算子 → 确定性输入 + 调用"的登记表；新增算子只需加一条，未登记的在报告里列为 ``NO_RECIPE``。
+Both runs use Stable ABI. FLA_NPU_PARITY_OPS selects a comma-separated subset
+of RECIPES; unknown names fail. The shared before/after verifier records public
+signatures, exact inputs/outputs, optional returns, mutation/version counters
+and errors. Missing calls, mismatched inputs, non-finite results and failed
+recipes fail closed. These representative recipes supplement full public API
+and ATK checks; they are not a 37-operator numerical acceptance claim.
 """
 
 from __future__ import annotations
 
-import hashlib
+import importlib.util
 import inspect
-import json
 import math
 import sys
 from typing import Callable
+from pathlib import Path
 
 
 torch = None
@@ -61,18 +51,6 @@ def _load_runtime() -> None:
     torch = torch_module
     ascendc_ops = ascendc_module
     _ascendc_mod = ascendc_module
-
-
-def _digest(tensor: torch.Tensor) -> dict:
-    array = tensor.detach().float().cpu().numpy()
-    return {
-        "shape": list(tensor.shape),
-        "dtype": str(tensor.dtype),
-        "sha256": hashlib.sha256(array.tobytes()).hexdigest(),
-        "sum": float(array.sum()),
-        "max": float(array.max()) if array.size else None,
-        "min": float(array.min()) if array.size else None,
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -153,156 +131,40 @@ def _selected_recipes() -> dict[str, Callable[[], object]]:
     return {name: RECIPES[name] for name in names}
 
 
-def _served_by(op_name: str) -> tuple[str, int]:
-    """回读仓库自己的后端记账（``BACKENDS`` / ``FALLBACKS``）。
+def _verification_tool():
+    """Reuse the main Stable-only verifier; compare stays torch/NPU-free."""
 
-    包装函数的 ``__module__`` 只能说明它挂在哪个模块（都在 ``fla_npu.ops.ascendc``），
-    真正服务该算子的是 ``_note_backend()`` 记下来的 backend 名（``stable`` / ``ctypes``）。
-    """
-
-    backend = getattr(_ascendc_mod, "BACKENDS", {}).get(op_name, "?")
-    fallbacks = getattr(_ascendc_mod, "FALLBACKS", {}).get(op_name, 0)
-    return backend, fallbacks
+    path = Path(__file__).resolve().parents[3] / "scripts/verify_stable_only_results.py"
+    spec = importlib.util.spec_from_file_location("overlay_stable_results", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def dump(path: str) -> int:
-    try:
-        import torch_npu  # noqa: F401
-    except Exception as exc:  # pragma: no cover
-        print(f"torch_npu is required: {exc}")
-        return 2
-
-    _load_runtime()
-    from fla_npu.ops.ascendc import _stable
-
-    try:
-        recipes = _selected_recipes()
-    except ValueError as exc:
-        print(exc)
-        return 2
-
-    report = {
-        "backend_env": __import__("os").environ.get("FLA_NPU_STABLE_ABI"),
-        "stable_backend_selected": _ascendc_mod._stable_backend_selected(),
-        "launcher_usable": bool(_stable.available()),
-        # 全部已发布算子：compare 用它报告 NO_RECIPE（未登记配方的算子），
-        # 否则"覆盖率"无从判断，测试会因为"只跑了有配方的几个"而假通过。
-        "published_ops": [name for name in getattr(_ascendc_mod, "_ASCENDC_OPS", ())],
-        "requested_ops": sorted(recipes),
-        "operators": {},
-    }
-    for name, recipe in recipes.items():
-        record: dict = {"entry": _served_by(name)[0]}
-        try:
-            outputs = recipe()
-            if not isinstance(outputs, (tuple, list)):
-                outputs = [outputs]
-            record["outputs"] = [_digest(t) for t in outputs if isinstance(t, torch.Tensor)]
-            record["status"] = "ok"
-        except Exception as exc:  # 配方失败（形状约束/环境限制）要如实记录，不能算通过
-            record["status"] = "error"
-            record["error"] = f"{type(exc).__name__}: {str(exc)[:200]}"
-        backend, fallbacks = _served_by(name)
-        record["entry"] = backend
-        record["fallbacks"] = fallbacks
-        report["operators"][name] = record
-        print(f"[{report['backend_env']}] {name:38s} backend={backend:7s} "
-              f"fallbacks={fallbacks} {record['status']}")
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(report, handle, ensure_ascii=False, indent=2)
-    print(f"written {path}")
-    return 0
+    names = tuple(_selected_recipes())
+    return _verification_tool().record(Path(path), Path(__file__), ["run", *names])
 
 
 def compare(left_path: str, right_path: str) -> int:
-    with open(left_path, encoding="utf-8") as handle:
-        left = json.load(handle)
-    with open(right_path, encoding="utf-8") as handle:
-        right = json.load(handle)
-    print(f"left : {left_path}  FLA_NPU_STABLE_ABI={left['backend_env']}  "
-          f"launcher_usable={left['launcher_usable']}")
-    print(f"right: {right_path}  FLA_NPU_STABLE_ABI={right['backend_env']}  "
-          f"launcher_usable={right['launcher_usable']}")
-    if sorted(left.get("requested_ops") or left["operators"]) != sorted(
-            right.get("requested_ops") or right["operators"]):
-        print("parity FAILED: the two reports selected different recipe sets")
-        return 1
-    names = sorted(set(left["operators"]) | set(right["operators"]))
-    environ = __import__("os").environ
-    allow_incomplete = (environ.get("FLA_NPU_PARITY_ALLOW_INCOMPLETE") or "").upper() in {
-        "1", "TRUE", "YES", "ON"
-    }
-    legacy_strict = environ.get("FLA_NPU_PARITY_STRICT")
-    strict = not allow_incomplete
-    if legacy_strict is not None:
-        strict = legacy_strict.upper() in {"1", "TRUE", "YES", "ON"}
-    failed: list[str] = []      # 数值不一致
-    errored: list[str] = []     # 配方失败（环境/形状）
-    vacuous: list[str] = []     # 两轮同一后端 ⇒ 不构成对照
-    wrong_backend: list[str] = []
-    expected_left = "ctypes" if left.get("backend_env") == "ctypes" else "stable"
-    expected_right = "ctypes" if right.get("backend_env") == "ctypes" else "stable"
+    names = tuple(_selected_recipes())
+    return _verification_tool().compare(Path(left_path), Path(right_path), names)
+
+
+def run(names: list[str]) -> int:
+    unknown = sorted(set(names) - set(RECIPES))
+    if not names or unknown:
+        raise ValueError(f"Expected known recipe names, got {names!r}")
+    _load_runtime()
     for name in names:
-        a = left["operators"].get(name, {})
-        b = right["operators"].get(name, {})
-        if a.get("status") != "ok" or b.get("status") != "ok":
-            errored.append(name)
-            print(f"  {name:38s} ERROR   left={a.get('status')} right={b.get('status')}"
-                  f"  {a.get('error') or b.get('error') or ''}")
-            continue
-        if a.get("entry") != expected_left or b.get("entry") != expected_right:
-            wrong_backend.append(name)
-            print(f"  {name:38s} BACKEND left={a.get('entry')} (expected {expected_left}) "
-                  f"right={b.get('entry')} (expected {expected_right})")
-            continue
-        # 只有"两轮由不同后端服务"时，比较才有意义。
-        if a["entry"] == b["entry"]:
-            vacuous.append(name)
-            print(f"  {name:38s} SKIP    两轮同一后端({a['entry']})——不构成对照"
-                  f"（launcher 未承载或不可用）")
-            continue
-        left_outputs = [
-            (x.get("shape"), x.get("dtype"), x.get("sha256")) for x in a.get("outputs", [])
-        ]
-        right_outputs = [
-            (x.get("shape"), x.get("dtype"), x.get("sha256")) for x in b.get("outputs", [])
-        ]
-        same = bool(left_outputs) and left_outputs == right_outputs
-        detail = ""
-        if not same:
-            pairs = zip(a["outputs"], b["outputs"])
-            detail = "  " + " | ".join(
-                f"sum {x['sum']:+.5f} vs {y['sum']:+.5f}" for x, y in pairs)
-            failed.append(name)
-        print(f"  {name:38s} {'PASS' if same else 'FAIL'}    "
-              f"{a['entry']} vs {b['entry']}{detail}")
-
-    published = sorted(set(left.get("published_ops") or []) | set(right.get("published_ops") or []))
-    no_recipe = [name for name in published if name not in left["operators"] and name not in right["operators"]]
-    if no_recipe:
-        print(f"  {'（未登记配方）':36s} NO_RECIPE  {len(no_recipe)}/{len(published)}: "
-              f"{', '.join(no_recipe[:6])}{' …' if len(no_recipe) > 6 else ''}")
-
-    print(f"  汇总: PASS={len(names) - len(failed) - len(errored) - len(vacuous) - len(wrong_backend)} "
-          f"FAIL={len(failed)} ERROR={len(errored)} SKIP={len(vacuous)} "
-          f"BACKEND={len(wrong_backend)} NO_RECIPE={len(no_recipe)}  "
-          f"严格模式={'开' if strict else '关'}")
-    if failed:
-        print(f"parity FAILED for: {', '.join(failed)}")
-        return 1
-    if strict and (errored or vacuous or wrong_backend):
-        # 严格模式：任何"没测到"的算子都算失败——launcher 不可用/未承载会让所有用例
-        # 走同一后端，此时"parity OK"是假通过，必须由调用方（CI）看见非零退出码。
-        print("parity FAILED (strict)：存在 ERROR、SKIP 或 BACKEND 错配 —— "
-              "说明没有真正对照到指定后端"
-              f"（launcher_usable={right.get('launcher_usable')}）")
-        return 1
-    print("parity OK（覆盖到的算子逐值一致；SKIP/NO_RECIPE 需在 launcher 侧补齐承载或补配方）"
-          + ("；严格模式已开启" if strict else ""))
+        RECIPES[name]()
+        torch.npu.synchronize()
     return 0
 
 
 def main(argv: list[str]) -> int:
+    if len(argv) >= 3 and argv[1] == "run":
+        return run(argv[2:])
     if len(argv) >= 3 and argv[1] == "dump":
         return dump(argv[2])
     if len(argv) >= 4 and argv[1] == "compare":

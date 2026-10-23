@@ -136,7 +136,7 @@ void* Runtime::symbol(const std::string& name) {
   }
   void* addr = nullptr;
   // Ordered search: the first custom library that exports the symbol wins, so an
-  // overlay vendor overrides the base vendor regardless of the backend choice.
+  // overlay vendor overrides the base vendor for every Stable adapter.
   for (void* handle : custom_handles_) {
     if (handle == nullptr) {
       continue;
@@ -154,6 +154,24 @@ void* Runtime::symbol(const std::string& name) {
   }
   cache_[name] = addr;
   return addr;
+}
+
+std::string Runtime::recent_error_message() {
+  using GetError = const char* (*)();
+  GetError get_error = nullptr;
+  try {
+    get_error = reinterpret_cast<GetError>(symbol("aclGetRecentErrMsg"));
+  } catch (const std::exception&) {
+    static void* acl = dlopen("libascendcl.so", RTLD_NOW | RTLD_LOCAL);
+    if (acl != nullptr) {
+      get_error = reinterpret_cast<GetError>(dlsym(acl, "aclGetRecentErrMsg"));
+    }
+  }
+  if (get_error == nullptr) {
+    return {};
+  }
+  const char* message = get_error();
+  return message == nullptr ? std::string() : std::string(message);
 }
 
 void* Runtime::queue_enqueue() {
@@ -202,3 +220,11 @@ void Runtime::enqueue(const std::string& name, const std::function<int()>& fn) {
 }
 
 }  // namespace fla_npu_stable
+
+// Version 1 guarantees overlay-first lookup across FLA_NPU_OP_API_LIBS before
+// the CANN fallback. Python checks this exact loaded library before resolving
+// any operator, so an older single-library launcher cannot silently mix vendors.
+extern "C" __attribute__((visibility("default")))
+std::int32_t fla_npu_stable_overlay_order_version() {
+  return 1;
+}

@@ -313,11 +313,11 @@ private:
             workgroup_, localHead, Workspace::kArch22WorkgroupStride,
             Workspace::kArch22SlotStride);
         auto l1Bytes = l1Buf_.Get<uint8_t>();
-        auto akkL1 = l1Bytes[L1::kAkk + localHead * L1::kAkkStride]
-                         .template ReinterpretCast<bfloat16_t>();
-        AscendC::GlobalTensor<bfloat16_t> akkSource;
-        akkSource.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
-            args_.workspace + slot + Workspace::kPayload + Workspace::kAkk));
+        auto akkL1 = l1Bytes[L1::kHeadLane[localHead] + Arch22L1::kAkkInHeadLane]
+                         .template ReinterpretCast<float>();
+        AscendC::GlobalTensor<float> akkSource;
+        akkSource.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+            args_.workspace + slot + Workspace::kArch22AkkFp32));
         AscendC::Nd2NzParams akkCopy{};
         akkCopy.ndNum = 1;
         akkCopy.nValue = Shape::kChunkRows;
@@ -518,15 +518,28 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(mToFix_);
 
         const uint32_t bottomRows = chunk.validRows - 32;
-        auto l1Fix = AscendC::FixpipeParamsV220(
-            32, bottomRows, 32, Shape::kChunkRows, false);
-        l1Fix.quantPre = QuantMode_t::F322BF16;
-        auto akkL1 = l1Bytes[L1::kAkk + localHead * L1::kAkkStride]
-                         .template ReinterpretCast<bfloat16_t>();
-        // q10 在两字节 NZ 中从 (N1=0,M1=2) 开始，即 32*16 个元素；
-        // dstStride=64 个 datablock 跨过完整 64 行 M 轴。
-        AscendC::Fixpipe<bfloat16_t, float, kFixpipeNz>(
-            akkL1[L1::kAkkQ10Elements], l0C, l1Fix);
+        // FP32 结果经 GM ND 转为 L1 NZ，保留 V3 已写入的两个对角块。
+        const uint64_t slot = WorkspaceSlotBase(
+            workgroup_, localHead, Workspace::kArch22WorkgroupStride,
+            Workspace::kArch22SlotStride);
+        AscendC::GlobalTensor<float> akkSource;
+        akkSource.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+            args_.workspace + slot + Workspace::kArch22AkkFp32));
+        auto l1Fix = AscendC::FixpipeParamsV220(32, 32, 32, 64, false);
+        auto akkL1 = l1Bytes[L1::kHeadLane[localHead] + Arch22L1::kAkkInHeadLane]
+                         .template ReinterpretCast<float>();
+        AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(
+            akkSource[32 * 64], l0C, l1Fix);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_MTE2>(fixToMte2_[localHead]);
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE2>(fixToMte2_[localHead]);
+        AscendC::Nd2NzParams akkCopy{};
+        akkCopy.ndNum = 1;
+        akkCopy.nValue = 64;
+        akkCopy.dValue = 64;
+        akkCopy.srcDValue = 64;
+        akkCopy.dstNzNStride = 1;
+        akkCopy.dstNzC0Stride = 64;
+        AscendC::DataCopy(akkL1, akkSource, akkCopy);
         if constexpr (CompilePolicy::outputAkk) {
             AscendC::GlobalTensor<bfloat16_t> akkOutput;
             akkOutput.SetGlobalBuffer(
@@ -540,7 +553,7 @@ private:
             AscendC::Fixpipe<bfloat16_t, float, AscendC::CFG_ROW_MAJOR>(
                 akkOutput, l0C, outputFix);
         }
-        AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(fixToMte1_[localHead]);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(tReady_[localHead]);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(fixToM_);
     }
 
@@ -550,186 +563,113 @@ private:
                                    uint32_t pair,
                                    uint16_t freeFlagId)
     {
-        const bool hasBottom = chunk.validRows > 32;
-        const uint32_t m = hasBottom ? 64 : 32;
+        const uint32_t m = chunk.validRows > 32 ? 64 : 32;
         auto l1Bytes = l1Buf_.Get<uint8_t>();
-
-        // 先把同一 pair 两个有效 head 的 K_beta_g/V_beta 全部搬入各自的专用 L1 lane
-        // （kRhsLane[localHead]，每个 head 一条，C2/C4 不碰）。跨 chunk / 跨 pair 的
-        // 写后读由 MTE1_MTE2 事件保证：上一次 C7 对这些 lane 的 MTE1 读必须已经结束。
+        // 两个 pair 复用两条 FP32 lane；等待上一 pair 的最后一次 MTE1 读取。
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(rhsLaneFree_);
-
-        AscendC::Nd2NzParams rhsCopy{};
-        rhsCopy.ndNum = 1;
-        rhsCopy.nValue = m;
-        rhsCopy.dValue = Shape::kHeadDim;
-        rhsCopy.srcDValue = Shape::kHeadDim;
-        rhsCopy.srcNdMatrixStride = 0;
-        rhsCopy.dstNzNStride = 1;
-        rhsCopy.dstNzC0Stride = m;
-        rhsCopy.dstNzMatrixStride = 0;
+        AscendC::Nd2NzParams copy{};
+        copy.ndNum = 1;
+        copy.nValue = m;
+        copy.dValue = Shape::kHeadDim;
+        copy.srcDValue = Shape::kHeadDim;
+        copy.dstNzNStride = 1;
+        copy.dstNzC0Stride = m;
         for (uint32_t headInPair = 0; headInPair < 2; ++headInPair) {
             const uint32_t localHead = pair * 2 + headInPair;
             if (localHead >= activeHeads) {
                 continue;
             }
-            const uint32_t valueHead = groupBegin + localHead;
             const uint64_t slot = WorkspaceSlotBase(
                 workgroup_, localHead, Workspace::kArch22WorkgroupStride,
                 Workspace::kArch22SlotStride);
-            // RHS 只落在 C7 独占的 lane 上，不再与 C2 的 score 共址。
-            auto kBetaL1 =
-                l1Bytes[L1::kRhsLane[localHead] + L1::kRhsKBetaG]
-                    .template ReinterpretCast<bfloat16_t>();
-            auto vBetaL1 =
-                l1Bytes[L1::kRhsLane[localHead] + L1::kRhsVBeta]
-                    .template ReinterpretCast<bfloat16_t>();
-            AscendC::GlobalTensor<bfloat16_t> kBetaRelay;
-            AscendC::GlobalTensor<bfloat16_t> vBetaRelay;
-            kBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
+            auto kBetaL1 = l1Bytes[Arch22L1::kRhsLane[headInPair]]
+                               .template ReinterpretCast<float>();
+            auto vBetaL1 = l1Bytes[Arch22L1::kRhsLane[headInPair] + Arch22L1::kRhsVBeta]
+                               .template ReinterpretCast<float>();
+            AscendC::GlobalTensor<float> kBetaRelay, vBetaRelay;
+            kBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
                 args_.workspace + slot + Workspace::kArch22RhsKBetaG));
-            vBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
+            vBetaRelay.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
                 args_.workspace + slot + Workspace::kArch22RhsVBeta));
-            // 读侧加固（保守）：读 AIV 刚写过的 relay 之前先让本核缓存行失效，
-            // 否则 MTE2 可能命中旧行，把上一代（或空）的 K_beta_g/V_beta 读成
-            // 本代的 RHS（现场表现为同一 Stage 里 W 正常、U 整块错）。
-            AscendC::DataCacheCleanAndInvalid<bfloat16_t, AscendC::CacheLine::ENTIRE_DATA_CACHE,
+            AscendC::DataCacheCleanAndInvalid<float, AscendC::CacheLine::ENTIRE_DATA_CACHE,
                                               AscendC::DcciDst::CACHELINE_OUT>(kBetaRelay);
-            AscendC::DataCacheCleanAndInvalid<bfloat16_t, AscendC::CacheLine::ENTIRE_DATA_CACHE,
+            AscendC::DataCacheCleanAndInvalid<float, AscendC::CacheLine::ENTIRE_DATA_CACHE,
                                               AscendC::DcciDst::CACHELINE_OUT>(vBetaRelay);
             AscendC::DataSyncBarrier<AscendC::MemDsbT::DDR>();
-            AscendC::DataCopy(kBetaL1, kBetaRelay, rhsCopy);
-            AscendC::DataCopy(vBetaL1, vBetaRelay, rhsCopy);
+            AscendC::DataCopy(kBetaL1, kBetaRelay, copy);
+            AscendC::DataCopy(vBetaL1, vBetaRelay, copy);
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(mte2ToMte1_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(mte2ToMte1_);
+        // 两个 RHS 均已离开 GM，维持原有的提前归还协议。
+        AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(freeFlagId);
 
-        // RHS 已全部离开 workspace；一次 collective free 同时归还 pair 的两个 slot，
-        // 让下一个 chunk 的 V0/V1 与本次 W/U 重叠（lane 本身由 MTE1_MTE2 保护）。
-        AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(
-            freeFlagId);
-
-        // 再逐 head 消费 L1 常驻的 Akk 与两个 RHS，分别计算 W、U。
         for (uint32_t headInPair = 0; headInPair < 2; ++headInPair) {
             const uint32_t localHead = pair * 2 + headInPair;
             if (localHead >= activeHeads) {
                 continue;
             }
-            const uint32_t valueHead = groupBegin + localHead;
-            if (hasBottom) {
-                AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE1>(
-                    fixToMte1_[localHead]);
+            if (chunk.validRows > 32) {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(tReady_[localHead]);
             }
-
-            auto akkL1 =
-                l1Bytes[L1::kAkk + localHead * L1::kAkkStride]
-                    .template ReinterpretCast<bfloat16_t>();
-            auto kBetaL1 =
-                l1Bytes[L1::kRhsLane[localHead] + L1::kRhsKBetaG]
-                    .template ReinterpretCast<bfloat16_t>();
-            auto vBetaL1 =
-                l1Bytes[L1::kRhsLane[localHead] + L1::kRhsVBeta]
-                    .template ReinterpretCast<bfloat16_t>();
-            const uint64_t outputOffset = HeadTensorOffset(
-                args_.tiling, chunk, valueHead, Shape::kHeadDim);
-
-            // W = Akk @ K_beta_g。
-            auto l0A = l0ABuf_.Get<bfloat16_t>();
-            auto l0BForW = l0BBuf_.Get<bfloat16_t>();
+            auto akkL1 = l1Bytes[L1::kHeadLane[localHead] + Arch22L1::kAkkInHeadLane]
+                             .template ReinterpretCast<float>();
+            auto l0A = l0ABuf_.Get<float>();
+            auto l0B = l0BBuf_.Get<float>();
             auto l0C = l0CBuf_.Get<float>();
-            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
-            constexpr uint32_t kBf16FractalElements = 16 * 16;
-            const uint32_t mFractals = m / 16;
+            const uint64_t out = HeadTensorOffset(
+                args_.tiling, chunk, groupBegin + localHead, Shape::kHeadDim);
+            // FP32 NZ 的基本块为 16x8；A 的 K 维为 32/64，M 维同样为 32/64。
             AscendC::LoadData2DParams loadA{};
-            loadA.startIndex = 0;
-            loadA.repeatTimes = mFractals;
-            // Akk 在 L1 中始终按 64x64 zN 常驻。
+            loadA.repeatTimes = m / 8;
             loadA.srcStride = Shape::kChunkRows / 16;
-            loadA.dstGap = 0;
-            loadA.ifTranspose = false;
-            loadA.sid = 0;
-            loadA.addrMode = 0;
-            for (uint32_t rowFractal = 0; rowFractal < mFractals;
-                 ++rowFractal) {
-                AscendC::LoadData(
-                    l0A[rowFractal * mFractals * kBf16FractalElements],
-                    akkL1[rowFractal * kBf16FractalElements], loadA);
+            AscendC::LoadData3DParamsV2<float> loadB{};
+            loadB.l1H = 1;
+            loadB.l1W = m;
+            loadB.channelSize = Shape::kHeadDim;
+            // Load3D 的 K 指源 channel（本次 GEMM 的 N），M 指源 HW（GEMM 的 K）。
+            loadB.kExtension = Shape::kHeadDim;
+            loadB.mExtension = m;
+            loadB.strideW = 1;
+            loadB.strideH = 1;
+            loadB.filterW = 1;
+            loadB.filterH = 1;
+            loadB.dilationFilterW = 1;
+            loadB.dilationFilterH = 1;
+            loadB.enTranspose = true;
+            AscendC::SetHF32Mode(false);
+            for (uint32_t rhs = 0; rhs < 2; ++rhs) {
+                AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
+                for (uint32_t row = 0; row < m / 16; ++row) {
+                    AscendC::LoadData(l0A[row * (m / 8) * 128],
+                                      akkL1[row * 128], loadA);
+                }
+                auto rhsL1 = l1Bytes[Arch22L1::kRhsLane[headInPair] + rhs * Arch22L1::kRhsVBeta]
+                                 .template ReinterpretCast<float>();
+                AscendC::LoadData(l0B, rhsL1, loadB);
+                AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
+                AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(fixToM_);
+                AscendC::MmadParams mm{};
+                mm.m = m;
+                mm.n = Shape::kHeadDim;
+                mm.k = m;
+                mm.cmatrixInitVal = true;
+                AscendC::Mmad(l0C, l0A, l0B, mm);
+                AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
+                AscendC::SetFlag<AscendC::HardEvent::M_FIX>(mToFix_);
+                AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(mToFix_);
+                auto fix = AscendC::FixpipeParamsV220(
+                    Shape::kHeadDim, chunk.validRows, m, Shape::kHeadDim, false);
+                fix.quantPre = QuantMode_t::F322BF16;
+                if (rhs == 0) {
+                    AscendC::Fixpipe<bfloat16_t, float, AscendC::CFG_ROW_MAJOR>(wGm_[out], l0C, fix);
+                } else {
+                    AscendC::Fixpipe<bfloat16_t, float, AscendC::CFG_ROW_MAJOR>(uGm_[out], l0C, fix);
+                }
+                AscendC::SetFlag<AscendC::HardEvent::FIX_M>(fixToM_);
             }
-
-            AscendC::LoadData2DParams loadW{};
-            loadW.startIndex = 0;
-            loadW.repeatTimes = Shape::kHeadDim / 16;
-            loadW.srcStride = mFractals;
-            loadW.dstGap = 0;
-            loadW.ifTranspose = true;
-            loadW.sid = 0;
-            loadW.addrMode = 0;
-            for (uint32_t rowFractal = 0; rowFractal < mFractals;
-                 ++rowFractal) {
-                AscendC::LoadData(
-                    l0BForW[rowFractal * (Shape::kHeadDim / 16) *
-                            kBf16FractalElements],
-                    kBetaL1[rowFractal * kBf16FractalElements], loadW);
-            }
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
-            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(fixToM_);
-            AscendC::MmadParams wMmad{};
-            wMmad.m = m;
-            wMmad.n = Shape::kHeadDim;
-            wMmad.k = m;
-            wMmad.cmatrixInitVal = true;
-            wMmad.cmatrixSource = false;
-            wMmad.unitFlag = 0;
-            AscendC::Mmad(l0C, l0A, l0BForW, wMmad);
-            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
-            AscendC::SetFlag<AscendC::HardEvent::M_FIX>(mToFix_);
-            AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(mToFix_);
-            auto wFix = AscendC::FixpipeParamsV220(
-                Shape::kHeadDim, chunk.validRows, m,
-                Shape::kHeadDim, false);
-            wFix.quantPre = QuantMode_t::F322BF16;
-            AscendC::Fixpipe<bfloat16_t, float, AscendC::CFG_ROW_MAJOR>(
-                wGm_[outputOffset], l0C, wFix);
-            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(fixToM_);
-
-            // U = Akk @ V_beta；复用 L0 前等待 W 的 reader 与 Fixpipe 完成。
-            auto l0BForU = l0BBuf_.Get<bfloat16_t>();
-            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
-            for (uint32_t rowFractal = 0; rowFractal < mFractals;
-                 ++rowFractal) {
-                AscendC::LoadData(
-                    l0A[rowFractal * mFractals * kBf16FractalElements],
-                    akkL1[rowFractal * kBf16FractalElements], loadA);
-                AscendC::LoadData(
-                    l0BForU[rowFractal * (Shape::kHeadDim / 16) *
-                            kBf16FractalElements],
-                    vBetaL1[rowFractal * kBf16FractalElements], loadW);
-            }
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(mte1ToM_);
-            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(fixToM_);
-            AscendC::MmadParams uMmad{};
-            uMmad.m = m;
-            uMmad.n = Shape::kHeadDim;
-            uMmad.k = m;
-            uMmad.cmatrixInitVal = true;
-            uMmad.cmatrixSource = false;
-            uMmad.unitFlag = 0;
-            AscendC::Mmad(l0C, l0A, l0BForU, uMmad);
-            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(mToMte1_);
-            AscendC::SetFlag<AscendC::HardEvent::M_FIX>(mToFix_);
-            AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(mToFix_);
-            auto uFix = AscendC::FixpipeParamsV220(
-                Shape::kHeadDim, chunk.validRows, m,
-                Shape::kHeadDim, false);
-            uFix.quantPre = QuantMode_t::F322BF16;
-            AscendC::Fixpipe<bfloat16_t, float, AscendC::CFG_ROW_MAJOR>(
-                uGm_[outputOffset], l0C, uFix);
-            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(fixToM_);
         }
-
-        // RHS 的 MTE1 读已经全部下发，允许下一次 C7 覆盖这些 lane。
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(rhsLaneFree_);
     }
 

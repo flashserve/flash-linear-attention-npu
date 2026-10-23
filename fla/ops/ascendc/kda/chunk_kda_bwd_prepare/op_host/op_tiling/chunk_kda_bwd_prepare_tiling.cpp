@@ -25,8 +25,9 @@ ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
     OP_CHECK_NULL_WITH_CONTEXT(context, dODesc);
     OP_CHECK_NULL_WITH_CONTEXT(context, hDesc);
 
-    const double *scale = attrs->GetAttrPointer<double>(KDA_PREPARE_ATTR_SCALE);
+    const float *scale = attrs->GetAttrPointer<float>(KDA_PREPARE_ATTR_SCALE);
     const int64_t *chunkSize = attrs->GetAttrPointer<int64_t>(KDA_PREPARE_ATTR_CHUNK_SIZE);
+    const char *layout = attrs->GetStr(KDA_PREPARE_ATTR_LAYOUT);
     const bool *stateVFirst = attrs->GetAttrPointer<bool>(KDA_PREPARE_ATTR_STATE_V_FIRST);
     OP_CHECK_NULL_WITH_CONTEXT(context, scale);
     OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
@@ -36,18 +37,23 @@ ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
     }
 
     const auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
+    const auto *cuShape = context->GetOptionalInputShape(KDA_PREPARE_INPUT_CU_SEQLENS);
+    const auto *indicesShape = context->GetOptionalInputShape(KDA_PREPARE_INPUT_CHUNK_INDICES);
+    // Opaque ACLNN may represent an absent optional input with an empty shape.
+    if (cuShape && cuShape->GetStorageShape().GetDimNum() == 0) cuShape = nullptr;
+    if (indicesShape && indicesShape->GetStorageShape().GetDimNum() == 0) indicesShape = nullptr;
     ChunkKdaBwdPrepareTilingContext ctx{
         context->GetNodeName(),
         context->GetRequiredInputShape(KDA_PREPARE_INPUT_AQK),
         context->GetRequiredInputShape(KDA_PREPARE_INPUT_V_NEW),
         context->GetRequiredInputShape(KDA_PREPARE_INPUT_D_O),
         context->GetRequiredInputShape(KDA_PREPARE_INPUT_H),
-        context->GetOptionalInputShape(KDA_PREPARE_INPUT_CU_SEQLENS),
-        context->GetOptionalInputShape(KDA_PREPARE_INPUT_CHUNK_INDICES),
+        cuShape, indicesShape,
         aqkDesc->GetDataType(), vNewDesc->GetDataType(), dODesc->GetDataType(), hDesc->GetDataType(),
         *scale, *chunkSize, stateVFirst != nullptr && *stateVFirst,
-        static_cast<uint32_t>(platform.GetCoreNumAic()),
+        layout, static_cast<uint32_t>(platform.GetCoreNumAic()),
         static_cast<size_t>(platform.GetLibApiWorkSpaceSize()),
+        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950,
     };
     ChunkKdaBwdPrepareTilingProcessor processor(ctx, *tiling);
     OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);

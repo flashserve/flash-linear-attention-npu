@@ -90,11 +90,16 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
 
     CHECK_RET(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     const bool useGateInKernel = params.gkOutOptional != nullptr;
+    const aclTensor *gkBuffer = params.gkOutOptional;
+    if (gkBuffer == nullptr) {
+        gkBuffer = executorPtr->AllocTensor(params.g->GetViewShape(), DataType::DT_FLOAT, Format::FORMAT_ND);
+        CHECK_COND(gkBuffer != nullptr, ACLNN_ERR_INNER_NULLPTR, "Unable to allocate internal gk output.");
+    }
     auto outputs = l0op::ChunkKdaBwdRecompute(
         params.q, params.k, params.v, params.g, params.beta, params.a, params.aLogOptional,
         params.dtBiasOptional, params.cuSeqlensOptional, params.chunkIndicesOptional, params.chunkSize,
         useGateInKernel, params.useExp2, params.lowerBound, params.wOut, params.uOut, params.qgOut,
-        params.kgOut, params.gkOutOptional, executorPtr);
+        params.kgOut, gkBuffer, executorPtr);
     CHECK_COND(outputs[0] != nullptr, ACLNN_ERR_INNER_NULLPTR, "ChunkKdaBwdRecompute launch failed.");
 
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1160" viewBox="0 0 1800 1160" role="img" aria-labelledby="title desc">
   <title id="title">fla_npu 构建期与运行期组件关系</title>
-  <desc id="desc">展示 CANN 构建工具链、wheel、PyTorch tensor、Ascend PyTorch NPU 运行时能力、ctypes、OPP、CANN runtime 和 NPU 的上下游关系，并区分构建期与运行期依赖。</desc>
+  <desc id="desc">展示 CANN 构建工具链、wheel、PyTorch tensor、Ascend PyTorch NPU 运行时能力、Stable ABI、OPP、CANN runtime 和 NPU 的上下游关系，并区分构建期与运行期依赖。</desc>
   <defs>
     <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 Z" fill="#4C9B60"/></marker>
     <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 Z" fill="#5B7DB1"/></marker>
@@ -24,7 +24,7 @@
 
   <rect width="1800" height="1160" fill="#FFFFFF"/>
   <text class="title" x="900" y="54" text-anchor="middle">fla_npu 构建期与运行期组件关系</text>
-  <text class="subtitle" x="900" y="90" text-anchor="middle">默认构建只固化 CANN / host / SoC 产物；PyTorch 与 Ascend NPU 能力在目标环境按运行时接口接入</text>
+  <text class="subtitle" x="900" y="90" text-anchor="middle">构建使用 CANN、vendored Stable 头与 torch 链接库；运行时通过稳定 C 接口访问 tensor 和 Ascend NPU</text>
 
   <rect class="panel" x="30" y="120" width="1740" height="350" fill="#F8FAFD" stroke="#9BB0C7"/>
   <rect class="box" x="55" y="140" width="260" height="50" fill="#E8F1FF" stroke="#5B7DB1"/>
@@ -37,14 +37,14 @@
   <rect class="box" x="790" y="215" width="305" height="115" fill="#FFF7E8" stroke="#D9970B"/>
   <text x="812"><tspan class="node-title" x="812" y="242" fill="#5D4200">OPP vendor 产物</tspan><tspan class="node-text" x="812" y="269">• libcust_opapi.so</tspan><tspan class="node-text" x="812" y="292">• op_host / tiling / proto</tspan><tspan class="node-text" x="812" y="315">• kernel object / config</tspan></text>
   <rect class="box" x="1165" y="215" width="305" height="115" fill="#EFF9F1" stroke="#4C9B60"/>
-  <text x="1187"><tspan class="node-title" x="1187" y="242" fill="#244B2F">wheel 组装器</tspan><tspan class="node-text" x="1187" y="269">• 纯 Python ctypes wrapper</tspan><tspan class="node-text" x="1187" y="292">• Triton Python 源码映射</tspan><tspan class="node-text" x="1187" y="315">• 内嵌 OPP vendor 树</tspan></text>
+  <text x="1187"><tspan class="node-title" x="1187" y="242" fill="#244B2F">wheel 组装器</tspan><tspan class="node-text" x="1187" y="269">• Python + Stable launcher</tspan><tspan class="node-text" x="1187" y="292">• Triton Python 源码映射</tspan><tspan class="node-text" x="1187" y="315">• 内嵌 OPP vendor 树</tspan></text>
   <rect class="box" x="1535" y="215" width="205" height="115" fill="#EFF9F1" stroke="#4C9B60" stroke-width="2.5"/>
-  <text x="1638" text-anchor="middle"><tspan class="node-title" x="1638" y="246" fill="#244B2F">发布 wheel</tspan><tspan class="node-text" x="1638" y="276">py3-none-any</tspan><tspan class="node-text" x="1638" y="303">按 host / SoC 区分文件</tspan></text>
+  <text x="1638" text-anchor="middle"><tspan class="node-title" x="1638" y="246" fill="#244B2F">发布 wheel</tspan><tspan class="node-text" x="1638" y="276">py3-none-platform</tspan><tspan class="node-text" x="1638" y="303">按 host / SoC 区分文件</tspan></text>
 
   <rect class="box" x="60" y="365" width="660" height="75" fill="#FFF1F1" stroke="#D85C5C" stroke-dasharray="8 5"/>
-  <text x="390" text-anchor="middle"><tspan class="node-title" x="390" y="392" fill="#7A2929">默认构建隔离区：不进入 wheel 构建 ABI</tspan><tspan class="node-text" x="390" y="420" fill="#7A2929">ATen / c10　|　torch_npu op-plugin / libtorch_npu　|　CPython C extension　|　gcc / libstdc++ ABI</tspan></text>
+  <text x="390" text-anchor="middle"><tspan class="node-title" x="390" y="392" fill="#7A2929">构建边界：Stable C 接口与平台 ABI</tspan><tspan class="node-text" x="390" y="420" fill="#7A2929">不生成 op-plugin / CPython 扩展；C++ 标准库与平台 ABI 仍需审计</tspan></text>
   <rect class="box" x="790" y="365" width="305" height="75" fill="#EEF4FF" stroke="#5B7DB1"/>
-  <text x="943" text-anchor="middle"><tspan class="node-title" x="943" y="393" fill="#24466F">仓库 Python 源码</tspan><tspan class="node-text" x="943" y="420">fla_npu 包 / Triton 映射 / metadata</tspan></text>
+  <text x="943" text-anchor="middle"><tspan class="node-title" x="943" y="393" fill="#24466F">Python / launcher 构建</tspan><tspan class="node-text" x="943" y="420">vendored 头 + torch 库 + metadata</tspan></text>
 
   <!-- Build artifact flow; all arrows stay in the gaps between components. -->
   <path class="edge" d="M345 273 H415" stroke="#5B7DB1" marker-end="url(#arrow-blue)"/>
@@ -67,7 +67,7 @@
   <rect class="box" x="365" y="625" width="285" height="125" fill="#EFF9F1" stroke="#4C9B60" stroke-width="2.5"/>
   <text x="387"><tspan class="node-title" x="387" y="652" fill="#244B2F">site-packages/fla_npu</tspan><tspan class="node-text" x="387" y="679">• 稳定 Python API</tspan><tspan class="node-text" x="387" y="702">• 参数与输出组织</tspan><tspan class="node-text" x="387" y="725">• autograd / mutation wrapper</tspan></text>
   <rect class="box" x="720" y="625" width="255" height="125" fill="#F4F0FF" stroke="#8266B5"/>
-  <text x="848" text-anchor="middle"><tspan class="node-title" x="848" y="654" fill="#49366B">Python ctypes bridge</tspan><tspan class="node-text" x="848" y="686">aclTensor / int-array descriptor</tspan><tspan class="node-text" x="848" y="714">aclnn 两段式调用</tspan></text>
+  <text x="848" text-anchor="middle"><tspan class="node-title" x="848" y="654" fill="#49366B">Stable ABI launcher</tspan><tspan class="node-text" x="848" y="686">aclTensor / int-array descriptor</tspan><tspan class="node-text" x="848" y="714">aclnn 两段式调用</tspan></text>
   <rect class="box" x="1045" y="625" width="280" height="125" fill="#FFF7E8" stroke="#D9970B"/>
   <text x="1185" text-anchor="middle"><tspan class="node-title" x="1185" y="654" fill="#5D4200">wheel 内嵌 OPP</tspan><tspan class="node-text" x="1185" y="686">libcust_opapi.so</tspan><tspan class="node-text" x="1185" y="714">op_host / tiling / kernel</tspan></text>
   <rect class="box" x="1395" y="625" width="325" height="135" fill="#FFF7E8" stroke="#D9970B" stroke-width="2.5"/>
@@ -76,7 +76,7 @@
   <rect class="box" x="60" y="870" width="265" height="140" fill="#F4F0FF" stroke="#8266B5" stroke-dasharray="7 5"/>
   <text x="82"><tspan class="node-title" x="82" y="898" fill="#49366B">可选 PyTorch 高阶能力</tspan><tspan class="node-text" x="82" y="928">• autograd</tspan><tspan class="node-text" x="82" y="952">• torch.library / schema</tspan><tspan class="node-text" x="82" y="976">• compile / export / FakeTensor</tspan></text>
   <rect class="box" x="365" y="855" width="285" height="120" fill="#EEF4FF" stroke="#5B7DB1"/>
-  <text x="508" text-anchor="middle"><tspan class="node-title" x="508" y="884" fill="#24466F">PyTorch Python tensor API</tspan><tspan class="node-text" x="508" y="916">data_ptr / storage</tspan><tspan class="node-text" x="508" y="944">shape / stride / dtype / device</tspan></text>
+  <text x="508" text-anchor="middle"><tspan class="node-title" x="508" y="884" fill="#24466F">PyTorch tensor / Stable C API</tspan><tspan class="node-text" x="508" y="916">data_ptr / storage</tspan><tspan class="node-text" x="508" y="944">shape / stride / dtype / device</tspan></text>
   <rect class="box" x="720" y="835" width="330" height="140" fill="#EEF4FF" stroke="#5B7DB1"/>
   <text x="885" text-anchor="middle"><tspan class="node-title" x="885" y="864" fill="#24466F">Ascend PyTorch NPU 运行时能力</tspan><tspan class="node-text" x="885" y="897">通常由 torch_npu 提供</tspan><tspan class="node-text" x="885" y="925">NPU device / allocator / guard</tspan><tspan class="node-text" x="885" y="950">current stream</tspan></text>
   <rect class="box" x="1450" y="885" width="220" height="110" fill="#FFF1F1" stroke="#D85C5C" stroke-width="2.5"/>

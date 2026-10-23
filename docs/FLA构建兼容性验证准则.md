@@ -318,23 +318,23 @@ bash build.sh --list-ops --json
 
 接口变化必须优先在编译期拦截，不能依赖运行时告警或自动回落。PR #878 当前落地的规则是：
 
-1. 通过 `build.sh` 生成 custom 包且启用 Stable-ABI launcher 时，默认执行 `op_abi_validate.py`，校验 stable adapter 与本次 OPP 公共 aclnn 头的参数数量、顺序及类型；用户不需要增加构建参数；
+1. 通过 `build.sh` 生成完整 custom 包时，强制执行 `op_abi_validate.py`，校验 stable adapter 与本次 OPP 公共 aclnn 头的参数数量、顺序及类型；用户不需要增加构建参数；
 2. `--ops` scoped 包只检查同一算子集合；全量包检查全部可对应的 adapter/header；
-3. `FLA_NPU_BUILD_STABLE_ABI=0` 的 pure-ctypes wheel 不构建 launcher，因此跳过该 launcher ABI 门禁；不生成完整 custom 包的非打包、`--opkernel`、`--ophost`、`--opapi`、测试和 static 路径保持原行为；
+3. Stable-only wheel 构建拒绝 `FLA_NPU_BUILD_STABLE_ABI=0`；直接运行 `build.sh --pkg` 也不以此跳过 adapter/header 门禁；不生成完整 custom 包的非打包、`--opkernel`、`--ophost`、`--opapi`、测试和 static 路径保持原行为；
 4. overlay 安装前由 `_op_abi.py` 直接比较 overlay 与 base 的公共 aclnn 头；import 时再次比较，防止手工复制绕过安装器；
 5. 同名 aclnn 原型不一致，或 overlay 出现 base wheel 未声明的新 aclnn 符号时，安装/import 必须硬错误，不能告警后继续，也不能自动回落 base/ctypes；
-6. 历史 launcher 被显式强制使用时同样先执行上述比较；ABI 失败直接报错，只有 ABI 通过后才允许以“L1 使用 base、L2-L4 仍按 overlay 优先”的已告警模式继续；
+6. 首次 `_stable.load()` 加载实际 launcher 并通过严格 build stamp 后，若启用多个 host 库，必须从实际库（含 `FLA_NPU_STABLE_LIB` 覆盖路径）取得 `fla_npu_stable_overlay_order_version() >= 1`，否则禁止算子解析与执行。安装仅校验 ACLNN ABI，不能宣称 launcher 能力已通过；
 7. 失败构建不得被标记、安装或上传为 PASS 产物。
 
-当前实现不要求 overlay 携带独立 ABI manifest。后续 `artifact-manifest.json` 生成器落地时，应把规范化公共 aclnn 签名纳入其中；安装器和 import 可优先比较该结构化记录，但仍要能对实际头文件或其可信摘要做一致性校验。
+当前 overlay 必须携带 `abi_manifest.json`；安装/import 核验规范化公共 aclnn 签名、host 库及头文件哈希。规划中的更广泛 `artifact-manifest.json` 不替代这个现有硬门禁。
 
-ctypes wrapper、torch schema、mutation 和 attribute 语义也必须纳入长期接口契约。不过这类检查不能错误宣称已由当前 public-header 比较完全覆盖。
+Stable wrapper、torch schema、mutation 和 attribute 语义也必须纳入长期接口契约。不过这类检查不能错误宣称已由当前 public-header 比较完全覆盖。
 
 自动检查无法可靠识别“类型不变但业务语义改变”。这类变化需要：
 
 - schema/mutation/attribute 语义 manifest；
 - 代码评审标签；
-- stable/ctypes 对照；
+- 同一 Stable 后端的 baseline/candidate 对照；
 - 针对性边界用例；
 - 必要时强制完整 wheel 发布。
 
@@ -365,7 +365,7 @@ GitHub active branch 决定被测源码集合，但不自动表示每个分支�
 - 有 bool/enum/layout 分支的算子；
 - 有多个 kernel 变体的算子；
 - 有复合依赖关系的算子；
-- stable 与 ctypes 都承载的算子。
+- Stable 公共入口（完整验收要求所有 37 个算子；代表配方只证明所选集合）。
 
 若某分支不存在某类别，报告 `NOT_APPLICABLE` 和发现依据。
 
@@ -373,7 +373,7 @@ GitHub active branch 决定被测源码集合，但不自动表示每个分支�
 
 ```text
 AOT 输出 == JIT 输出
-stable 输出 == ctypes 输出
+Stable baseline 输出 == Stable candidate 输出（同输入与 seed；语义不变的改动）
 online 构建输出 == network-disabled 构建输出
 启用 overlay：目标算子来自 overlay
 启用 overlay：非目标算子回落 base
@@ -418,7 +418,7 @@ online 构建输出 == network-disabled 构建输出
 9. 先执行 ABI/接口门禁，再执行产物差异判定；
 10. 安装到 base 副本，不修改真实用户环境；
 11. 对每个 runtime CANN 使用全新 shell/process；
-12. 分别运行 stable、ctypes、overlay disabled/enabled/rollback；
+12. 分别在 Stable baseline/candidate 上运行 overlay disabled/enabled/rollback；
 13. 记录实际动态库映射、backend 和 vendor 顺序，不能只由环境变量推断；
 14. 卸载 overlay，验证 base manifest 和运行输出恢复；
 15. 生成机器可读 verdict。
@@ -441,8 +441,8 @@ online 构建输出 == network-disabled 构建输出
 ├── base-regression-delta.json
 ├── overlay-delta.json
 ├── abi-report.json
-├── runtime-stable-<cann>.json
-├── runtime-ctypes-<cann>.json
+├── runtime-stable-baseline-<cann>.json
+├── runtime-stable-candidate-<cann>.json
 ├── rollback.json
 └── verdict.json
 ```
@@ -494,7 +494,7 @@ online 构建输出 == network-disabled 构建输出
 | 级别 | 触发时机 | 范围 |
 |---|---|---|
 | L0 | 每次提交 | 参数解析、静态检查、manifest 工具单测、ABI 负向测试 |
-| L1 | 普通 PR | 当前分支；每个 SoC 的主 CANN；AOT/JIT；代表算子；stable/ctypes |
+| L1 | 普通 PR | 当前分支；每个 SoC 的主 CANN；AOT/JIT；代表算子；Stable baseline/candidate |
 | L2 | 修改 `build.sh`、CMake、setup、打包/安装或 offline bundle | 所有 SoC；所有登记 CANN 的同版本原生构建运行；online/network-disabled；重复/并行/失败重试 |
 | L3 | nightly | 所有 active branch x SoC x 登记 CANN；同版本原生运行；核心参数 pairwise |
 | L4 | release | L3 + 完整 `build CANN X -> runtime CANN Y` 有向矩阵 + 全部关键参数分支 |

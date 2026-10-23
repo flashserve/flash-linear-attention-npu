@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1320" height="910" viewBox="0 0 1320 910" role="img" aria-labelledby="title desc">
   <title id="title">fla_npu 新旧路径的版本依赖对比</title>
-  <desc id="desc">左侧展示旧 C++ 扩展如何同时绑定 CPython、PyTorch、torch_npu 和 C++ ABI；右侧展示默认 Python ctypes 路径如何通过目标环境能力探测覆盖多组框架版本。箭头方向均从依赖来源指向结果。</desc>
+  <desc id="desc">左侧展示旧 C++ 扩展如何同时绑定 CPython、PyTorch、torch_npu 和 C++ ABI；右侧展示Stable ABI 唯一路径如何通过目标环境能力探测覆盖多组框架版本。箭头方向均从依赖来源指向结果。</desc>
   <defs>
     <style>
       .canvas { fill: #ffffff; }
@@ -37,7 +37,7 @@
   <rect class="box" x="50" y="90" width="570" height="48" fill="#FDECEC" stroke="#D85C5C"/>
   <text class="panel-title" x="335" y="121" text-anchor="middle" fill="#7A2929">旧扩展路径：dispatcher 桥接库形成多层 ABI 绑定</text>
   <rect class="box" x="700" y="90" width="570" height="48" fill="#E9F7EE" stroke="#4C9B60"/>
-  <text class="panel-title" x="985" y="121" text-anchor="middle" fill="#244B2F">当前默认路径：Python ctypes + 内嵌 OPP</text>
+  <text class="panel-title" x="985" y="121" text-anchor="middle" fill="#244B2F">当前路径：Stable ABI + 内嵌 OPP</text>
 
   <!-- All arrows are behind nodes and terminate at explicit node boundaries. -->
   <path class="edge" d="M290 222.5 L350 319.5" stroke="#C94040" marker-end="url(#arrow-red)"/>
@@ -105,8 +105,8 @@
   <!-- Current default path -->
   <rect class="box" x="710" y="180" width="250" height="100" fill="#F2FAF4" stroke="#4C9B60"/>
   <text text-anchor="middle" x="835">
-    <tspan class="node-title" x="835" y="211">纯 Python 包</tspan>
-    <tspan class="node-text" x="835" y="240">py3-none-any wheel</tspan>
+    <tspan class="node-title" x="835" y="211">Python + Stable launcher</tspan>
+    <tspan class="node-text" x="835" y="240">py3-none-platform wheel</tspan>
     <tspan class="node-text" x="835" y="265">无 CPython 扩展 ABI</tspan>
   </text>
   <rect class="box" x="1010" y="180" width="250" height="100" fill="#F2FAF4" stroke="#4C9B60"/>
@@ -117,7 +117,7 @@
   </text>
   <rect class="box" x="790" y="340" width="390" height="100" fill="#FFF8E7" stroke="#D9970B"/>
   <text text-anchor="middle" x="985">
-    <tspan class="node-title" x="985" y="370">Python ctypes ABI wrapper</tspan>
+    <tspan class="node-title" x="985" y="370">Stable ABI wrapper</tspan>
     <tspan class="node-text" x="985" y="398">构造 ACL tensor descriptor</tspan>
     <tspan class="node-text" x="985" y="423">直调 aclnn*GetWorkspaceSize / aclnn*</tspan>
   </text>
@@ -136,8 +136,8 @@
   </text>
   <rect class="box" x="710" y="775" width="550" height="90" fill="#EAF7ED" stroke="#4C9B60" stroke-width="2.5"/>
   <text text-anchor="middle" x="985">
-    <tspan class="result-title" x="985" y="801" fill="#C62828">结果：默认 wheel 避开四类上层 ABI 绑定</tspan>
-    <tspan class="result-text" x="985" y="827" font-weight="700" fill="#C62828">不绑定 torch_npu dispatcher、PyTorch C++、CPython 与 C++ ABI</tspan>
+    <tspan class="result-title" x="985" y="801" fill="#C62828">结果：wheel 减少框架版本绑定</tspan>
+    <tspan class="result-text" x="985" y="827" font-weight="700" fill="#C62828">不绑定 CPython 扩展与 libtorch C++ 接口；平台 ABI 仍需验证</tspan>
     <tspan class="result-text" x="985" y="851" font-weight="700" fill="#C62828">同一 wheel 覆盖经过验证的多组框架版本</tspan>
   </text>
 

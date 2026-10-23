@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 cd "$(dirname "$0")"
-bash gen.sh npu_custom.yaml
+PYTHONPATH="../../scripts${PYTHONPATH:+:$PYTHONPATH}" python3 -c 'from pathlib import Path; from stable_build_policy import validate_build_options, reject_legacy_artifacts; validate_build_options(); reject_legacy_artifacts(Path("fla_npu"))'
 rm -rf build dist flash_linear_attention_npu*.egg-info fla_npu.egg-info
 python3 setup.py bdist_wheel
 shopt -s nullglob

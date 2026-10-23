@@ -335,7 +335,7 @@ def _validate_overlay_abi(vendor_src: Path) -> None:
     detail = "\n  - ".join(problems)
     raise RuntimeError(
         "Refusing to install an overlay whose public aclnn ABI differs from the "
-        "base wheel. The wheel's launcher and ctypes wrappers were compiled for "
+        "base wheel. The wheel's Stable launcher and wrappers were compiled for "
         "the base contract; rebuild and install a complete matching wheel instead."
         f"\n  - {detail}"
     )

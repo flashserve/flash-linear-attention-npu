@@ -83,8 +83,7 @@ public:
             .ExtendCfgInfo("prebuildPattern.value", "Opaque")
             .ExtendCfgInfo("coreType.value", "AiCore")
             .ExtendCfgInfo("aclnnSupport.value", "support_aclnn");
-        this->AICore().AddConfig("ascend910b", config);
-        this->AICore().AddConfig("ascend910_93", config);
+        // A2/A3 的公开 Bwd 由 L2 编排 Prepare/Dhu/Finalize，不再注册整体 device kernel。
         this->AICore().AddConfig("ascend950", config);
     }
 };

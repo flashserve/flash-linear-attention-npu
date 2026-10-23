@@ -393,5 +393,67 @@
       "--accuracy-tensors",
       "o,dq,dk,dv,dbeta,dg"
     ]
+  },
+  {
+    "name": "chunk_kda_fwd_varlen_tail_workspace_t949_h96",
+    "description": "ChunkKDA 尾块 workspace 看护：TND 打包、4 条序列都带尾块（padding 203 行）、HV=96、不传保存输出，post-Wu 暂存区必须按 chunk 分块口径分配，前向输出必须全部有限。",
+    "script": "examples/chunk_kda.py",
+    "enabled": true,
+    "B": 1,
+    "T": 949,
+    "chunk_size": 64,
+    "query_head": 96,
+    "value_head": 96,
+    "Kdim": 128,
+    "Vdim": 128,
+    "dtype": "bf16",
+    "gate_source": "g",
+    "gate_function": "safe",
+    "varlen": true,
+    "initial_state": "none",
+    "output_final_state": false,
+    "qk_l2norm": false,
+    "demo_model": false,
+    "extra_args": [
+      "--seed",
+      "42",
+      "--layout",
+      "TND",
+      "--cu-seqlens",
+      "0,219,479,751,949",
+      "--check-finite"
+    ]
+  },
+  {
+    "name": "chunk_kda_fwd_empty_seq_guard",
+    "description": "ChunkKDA 零长度序列看护：首段空序列位置，去掉空序列后重跑，o/u/v_new 必须逐字节一致且全部有限。",
+    "script": "examples/chunk_kda.py",
+    "enabled": true,
+    "B": 1,
+    "T": 249,
+    "chunk_size": 64,
+    "query_head": 32,
+    "value_head": 32,
+    "Kdim": 128,
+    "Vdim": 128,
+    "dtype": "bf16",
+    "gate_source": "g",
+    "gate_function": "safe",
+    "varlen": true,
+    "initial_state": "none",
+    "output_final_state": false,
+    "qk_l2norm": false,
+    "demo_model": false,
+    "extra_args": [
+      "--seed",
+      "42",
+      "--layout",
+      "TND",
+      "--cu-seqlens",
+      "0,0,19,102,249",
+      "--check-finite",
+      "--empty-seq-guard",
+      "--forward-only"
+    ]
   }
 ]

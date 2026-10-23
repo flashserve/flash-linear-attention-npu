@@ -22,6 +22,17 @@ if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
     endforeach()
 else()
     unset(chunk_kda_bwd_depends CACHE)
+    add_compile_definitions(KDA_BWD_STAGES_ARCH22)
+    set(KDA_BWD_STAGE_PATHS
+        "fla/ops/ascendc/kda/chunk_kda_bwd_prepare;fla/ops/ascendc/kda/chunk_kda_bwd_finalize;fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_dhu"
+        )
+    foreach(DEP_PATH IN LISTS KDA_BWD_STAGE_PATHS)
+        get_filename_component(DEP_NAME "${DEP_PATH}" NAME)
+        if(NOT "${DEP_NAME}" IN_LIST OP_LIST)
+            add_subdirectory("${PROJECT_SOURCE_DIR}/${DEP_PATH}/op_host"
+                "${CMAKE_CURRENT_BINARY_DIR}/stages/${DEP_NAME}")
+        endif()
+    endforeach()
 endif()
 
 add_op_to_compiled_list()
@@ -36,6 +47,12 @@ add_modules_sources(
     OPTYPE chunk_kda_bwd
     ACLNNTYPE aclnn_exclude
 )
+
+if(NOT "${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
+    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/op_api/aclnn_chunk_kda_bwd.cpp
+        TARGET_DIRECTORY ${OPHOST_NAME}_opapi_obj PROPERTIES
+        COMPILE_DEFINITIONS KDA_BWD_STAGES_ARCH22)
+endif()
 
 if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
     set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/op_api/aclnn_chunk_kda_bwd_v2.cpp

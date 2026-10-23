@@ -1,7 +1,7 @@
 # FLA NPU 算子包「单算子叠加层」增量设计
 
 - **作者**：zzy1205
-- **状态**：已实现；已有 A5/A2 行为验证。本轮最终检视修复的证据与未覆盖范围见[修复验证记录](PR878最终检视修复验证.md)
+- **状态**：已适配主干 Stable-only；历史 A5/A2 证据见[修复验证记录](PR878最终检视修复验证.md)。本次新增 launcher 能力门禁的离线验证与待补硬件验证见 §10，不继承旧双后端验收结论。
 - **适用范围**：`flash-linear-attention-npu` wheel 内嵌 OPP 的单算子或少量算子迭代
 - **过程归档**：[《OPP 叠加层设计过程记录》](OPP叠加层增量设计-过程记录.md)
 - **兼容性准则**：[《FLA 构建兼容性验证准则》](FLA构建兼容性验证准则.md)
@@ -28,13 +28,20 @@ site-packages/fla_npu/opp/vendors/fla_npu_transformer/
 
 ### 1.1 运行期查找模型
 
-![运行期四条查找链与分层来源](images/pr878-01-lookup-layers.png)
+```mermaid
+flowchart LR
+    P[Python Stable wrapper] --> S[Stable launcher]
+    S --> L1[L1: overlay → base → CANN host]
+    L1 --> C[CANN runtime]
+    C --> L2[L2: overlay → base → built-in 算子清单]
+    C --> L3[L3/L4: 同顺序 tiling 与 kernel]
+```
 
 一次自定义算子调用涉及四条查找链：
 
 | 层 | 查找对象 | 产物 | 选择方 |
 |---|---|---|---|
-| L1 | host aclnn 符号 | `op_api/lib/libcust_opapi.so` | ctypes 或 Stable-ABI launcher（wheel 内的高性能 C++ aclnn 调用库 `libfla_npu_stable.so`） |
+| L1 | host aclnn 符号 | `op_api/lib/libcust_opapi.so` | Stable-ABI launcher（wheel 内的 C++ aclnn 调用库 `libfla_npu_stable.so`） |
 | L2 | 自定义算子发现与登记 | `aic-<soc>-ops-info.json` | CANN |
 | L3 | kernel 变体 | `binary_info_config.json` | CANN |
 | L4 | tiling/proto/kernel 实体 | `op_tiling/**`、`op_proto/**`、`kernel/<soc>/<op>/*.o` | CANN |
@@ -72,7 +79,7 @@ site-packages/fla_npu/opp/vendors/fla_npu_transformer/
 
 - 支持只构建一个或少量算子，并安装为包内 overlay vendor。
 - overlay 中存在的算子覆盖 base，不存在的算子自动回落 base。
-- ctypes 与当前 Stable-ABI launcher 使用相同的 host 库顺序。
+- 唯一执行后端 Stable-ABI launcher 必须按与 CANN 一致的 host 库顺序查找。
 - CANN 侧用于确认“自定义算子存在”的算子清单，以及后续 tiling、kernel 的查找顺序，与 L1 host aclnn 库保持同一 `overlay -> base` 优先级。
 - 支持多个 overlay，顺序明确、可审计、可单独卸载。
 - base vendor 在 overlay 安装和卸载过程中保持不变。
@@ -80,7 +87,7 @@ site-packages/fla_npu/opp/vendors/fla_npu_transformer/
 
 | 兼容场景 | 业务含义与代码出处 | 确定行为 |
 |---|---|---|
-| 旧版 Stable-ABI launcher | wheel 内的高性能 C++ aclnn 调用库 `libfla_npu_stable.so`；旧版 `Runtime::symbol()` 只查 `FLA_NPU_OP_API_LIB` 指向的一个 custom 库 | 未指定后端时改走 ctypes；显式 stable 时先完成 ABI 校验，失败则报错，通过后告警“L1 只能命中 base”并继续 |
+| 旧版 Stable-ABI launcher | wheel 内的高性能 C++ aclnn 调用库 `libfla_npu_stable.so`；旧版 `Runtime::symbol()` 只查 `FLA_NPU_OP_API_LIB` 指向的一个 custom 库 | 安装/import 先验证公共 ABI；首次加载实际 launcher 时若缺少有序多库能力导出或版本小于 1，硬失败，不解析或执行算子 |
 | `FLA_NPU_OVERLAY_VENDOR` | `fla_npu/__init__.py` 与 `.pth` 启动钩子读取的环境变量，用于选择启用哪些 overlay 及其优先级 | 未设置时按 `config.ini`/目录自动发现；显式名称列表按给定顺序；显式空值时禁用全部 overlay，只使用 base |
 | 已有错误 OPP 路径 | shell 可能已把 base 放在 overlay 前面，或遗留 `<pkg>/opp`、`vendor/op_api/lib` 条目 | 自动清理当前包的旧条目并归一化为 `overlay -> base -> external`；实际发生修正时告警一次 |
 
@@ -94,7 +101,7 @@ site-packages/fla_npu/opp/vendors/fla_npu_transformer/
 
 ## 4. 总体架构
 
-![叠加层架构与数据流](images/opp-overlay-arch.png)
+下列目录与 §4.1 调用链定义当前 Stable-only 架构；历史双后端图片仅保留在过程记录中。
 
 ```text
 site-packages/fla_npu/
@@ -149,7 +156,8 @@ Stable-ABI 路径的一次完整调用为：
 
 ```text
 Python npu_xxx(...)
-  -> fla_npu 后端分发选择 stable
+  -> 唯一 Stable wrapper
+  -> 首次 load：严格 build stamp + overlay 有序多库版本门禁
   -> torch.ops.fla_npu_stable.npu_xxx
   -> libfla_npu_stable.so 中该算子的 C++ adapter
   -> Runtime::symbol("aclnnXxxGetWorkspaceSize" / "aclnnXxx")
@@ -165,7 +173,7 @@ Python npu_xxx(...)
 | 产物 | 所在位置 | 作用与归属 |
 |---|---|---|
 | `.pth` 启动钩子 | `site-packages/fla_npu_opp_env.pth` + `.py` | 在 CANN 初始化前选择并排列 vendor |
-| Python 分发与 wrapper | `fla_npu/__init__.py`、`fla_npu/ops/ascendc/*.py` | 解析来源、选择 ctypes/launcher、组织调用参数 |
+| Python 分发与 wrapper | `fla_npu/__init__.py`、`fla_npu/ops/ascendc/*.py` | 解析来源、组织 Stable 调用参数；顶层 import 不导入 Torch |
 | launcher build-stamp | `fla_npu/ops/ascendc/_stable_hash.py` | 确认 launcher 二进制与同 wheel adapter 源码匹配 |
 | Stable-ABI launcher | `fla_npu/libfla_npu_stable.so` | wheel 级 L1 C++ 调用入口，内含算子 adapter 与 `Runtime::symbol()`，所有 vendor 共用 |
 | vendor 优先级 | `opp/vendors/config.ini` | 记录 overlay 到 base 的默认顺序 |
@@ -187,7 +195,6 @@ Python npu_xxx(...)
 
 | 层 | 最终顺序 | miss 行为 |
 |---|---|---|
-| ctypes host 符号 | `overlay_lib... -> base_lib -> libopapi.so` | 继续下一个句柄 |
 | Stable-ABI host 符号 | `FLA_NPU_OP_API_LIBS` 中的 `overlay_lib... -> base_lib -> libopapi.so` | 继续下一个句柄 |
 | CANN 自定义算子清单/tiling/kernel | `ASCEND_CUSTOM_OPP_PATH` 中的 `overlay_vendor... -> base_vendor`，最后由 CANN built-in 兜底 | 继续下一个 vendor |
 
@@ -200,10 +207,10 @@ Python npu_xxx(...)
 | `vendor_dirs` | 当前 wheel 内的有序 vendor 列表：`[overlay..., base]` |
 | `FLA_NPU_OVERLAY_VENDOR` | 可选的 `os.pathsep` 分隔 overlay 名称列表；设置后覆盖自动发现顺序 |
 | `FLA_NPU_OP_API_LIBS` | 当前 launcher 使用的有序 host 库列表：`overlay... -> base` |
-| `FLA_NPU_OP_API_LIB` | 旧 launcher 的兼容输入，始终指向完整 base 库 |
+| `FLA_NPU_OP_API_LIB` | 单 vendor 输入，始终指向完整 base 库；启用 overlay 时以复数列表为准 |
 | `ASCEND_CUSTOM_OPP_PATH` | CANN 自定义 OPP vendor 目录列表，只登记 vendor 目录 |
 | `FLA_NPU_OPP_PATH` | 当前 wheel 的 OPP root，供诊断使用，不参与 `ASCEND_CUSTOM_OPP_PATH` 查找 |
-| `FLA_NPU_STABLE_ABI` | 后端选择；`ctypes` 强制参考路径，其他值选择 launcher |
+| `FLA_NPU_STABLE_ABI` | 兼容开关；未设置/空值/`stable` 及启用别名 `1/true/yes/on` 使用 Stable，`ctypes` 和其他无效值直接报错 |
 | `FLA_NPU_DISABLE_PTH` | 禁用解释器启动阶段的 `.pth` 环境预置 |
 
 `FLA_NPU_OVERLAY_VENDOR` 的状态必须严格区分：
@@ -273,88 +280,48 @@ import fla_npu
   -> _resolve_vendor_dirs()               # [overlay..., base]
   -> 再次归一化 ASCEND_CUSTOM_OPP_PATH    # 幂等
   -> 设置 FLA_NPU_OP_API_LIB(S)
-  -> 应用旧 launcher 兼容策略
   -> 加载 libopapi.so 与各 custom libcust_opapi.so
   -> 缓存 [overlay_lib..., base_lib, cann_lib]
 ```
 
-ctypes 侧按缓存列表逐符号查找。当前 launcher 读取复数变量 `FLA_NPU_OP_API_LIBS`，逐个 `dlopen` 并按相同顺序 `dlsym`；custom 全部 miss 后才落 CANN。
+顶层 import 只完成路径、公共 ABI 与 host 库准备，不导入 Torch。首次 `_stable.load()` 加载 launcher 并通过 build stamp 与能力门禁后，C++ runtime 读取 `FLA_NPU_OP_API_LIBS`，逐个 `dlopen` 并按相同顺序 `dlsym`；custom 全部 miss 后才落 CANN。
 
-### 5.3 overlay 状态与 L1 后端组合
+### 5.3 overlay 状态与唯一 Stable 后端
 
-overlay 是否启用与 L1 使用哪个调用后端是两个独立维度：
-
-- overlay 状态决定可查找的来源集合；
-- ctypes 或 Stable-ABI launcher 决定由 Python 还是 C++ 执行 L1 host 符号查找。
-
-下表中的 `C++ Runtime::symbol()` 即 §4.1 所述的 launcher 内部成员；它由当前算子的 C++ adapter 调用，不是独立于 launcher 的第三种后端。
-
-| L1 调用后端 | 未启用 overlay | 启用 overlay |
+| 实际加载的 Stable launcher | 未启用 overlay | 启用 overlay |
 |---|---|---|
-| ctypes | Python `_runtime.symbol()`：`base -> CANN` | Python `_runtime.symbol()`：`overlay... -> base -> CANN` |
-| 当前 wheel launcher（支持有序多库，默认） | C++ `Runtime::symbol()`：`base -> CANN` | C++ `Runtime::symbol()`：`overlay... -> base -> CANN` |
-| 历史 wheel launcher（只支持单个 custom 库） | 单 base 库可正常使用 | 未指定后端时自动切换 ctypes；显式 stable 时 ABI 失败则报错，ABI 通过后告警 L1 从 base 查找并继续 |
+| 导出有序多库版本 `>= 1` | C++ `Runtime::symbol()`：`base -> CANN` | `overlay... -> base -> CANN` |
+| 缺失导出或版本 `< 1` | 仍须通过加载、严格 build stamp、算子注册检查 | 首次 `load()` 硬失败，不解析算子，不执行任何 kernel |
 
-“启用 overlay”不等同于“目录已经安装”。例如 overlay 目录存在但 `FLA_NPU_OVERLAY_VENDOR=""` 时，overlay 被显式禁用，应走“未启用 overlay”列。
+“启用 overlay”指 `FLA_NPU_OP_API_LIBS` 中有多个非空库路径。目录存在但 `FLA_NPU_OVERLAY_VENDOR=""` 时仅选择 base。CANN 的 L2-L4 同样按启用后的 vendor 列表查找。没有第二执行后端，也没有告警后允许 base host 与 overlay tiling/kernel 混用的分支。
 
-CANN 的 L2-L4 不区分 ctypes/stable：未启用 overlay 时按 `base -> built-in` 查找；启用 overlay 时按 `overlay... -> base -> built-in` 查找。当前两种 L1 后端都使用同一列的来源顺序，从而避免 host 入口与 tiling/kernel 来自不同 vendor。
+### 5.4 Launcher 能力与失败时机
 
-这里的“当前/历史 launcher”描述的是**安装中的 wheel 所携带的 `libfla_npu_stable.so` 能力版本**，不是“base 算子包/overlay 算子包”各自带了一份 launcher。
-
-### 5.4 Launcher 选择与兼容原则
-
-launcher 相关设计收敛为三条原则，按顺序执行：
-
-1. **接口安全优先**：先判断 overlay 与 wheel launcher/wrapper 的 aclnn 契约是否一致；不一致直接失败，不能通过回落 base 掩盖问题。
-2. **接口不变就复用 wheel launcher**：普通 overlay 只修改已有算子的 host 内部逻辑、tiling 或 kernel 时，继续使用 wheel 根目录中的 `libfla_npu_stable.so`，不需要在 overlay 中复制或重编 launcher。
-3. **历史 launcher 只处理查找能力不足**：历史版本只识别单数 `FLA_NPU_OP_API_LIB`，问题是不能按 overlay 到 base 查多个 host 库，不代表 ABI 必然不兼容；默认切换到 ctypes，用户强制 stable 时仅在 ABI 通过后告警继续。
-
-完整决策树如下：
+1. **公共 ABI**：构建期比较 adapter 与 OPP 头；安装/import 比较 overlay/base 的清单、哈希、公共 aclnn 原型。失败即拒绝。
+2. **实际二进制**：首次 `_stable.load()`（通常由第一次算子调用触发）按 `FLA_NPU_STABLE_LIB` 或包内路径调用 `torch.ops.load_library()`，再严格验证 `_stable_hash.py` 与库的 source hash。
+3. **有序查找能力**：启用 overlay 时，对上一步的同一实际路径调用 `ctypes.CDLL(path)`，读取显式 C 导出 `int32_t fla_npu_stable_overlay_order_version()`；当前实现返回 `1`。导出不存在、探测异常或版本 `< 1` 均抛错。
+4. **注册与执行**：只有以上校验通过后才记录成功加载状态、解析 `_op(name)` 并允许 adapter 调用。缺失注册同样硬失败。
 
 ```text
-启用 overlay
-  │
-  ├─ overlay 与 wheel 的 aclnn 接口是否一致？
-  │    ├─ 否 -> 报错；必须重编并发布完整 wheel
-  │    └─ 是
-  │
-  ├─ wheel launcher 是否支持有序多库？
-  │    ├─ 是 -> 使用 launcher
-  │    │        L1: overlay -> base -> CANN
-  │    │        L2-L4: overlay -> base -> built-in
-  │    │
-  │    └─ 否（历史 launcher）
-  │         ├─ 用户未强制 stable -> 自动使用 ctypes
-  │         │    L1/L2-L4 都按 overlay -> base 回落
-  │         │
-  │         └─ 用户强制 stable
-  │              ├─ ABI 未通过 -> 报错，不执行算子
-  │              └─ ABI 已通过 -> 告警后继续
-  │                   L1: base -> CANN
-  │                   L2-L4: overlay -> base -> built-in
+安装 / import
+  -> 校验 overlay/base ACLNN ABI 与产物完整性
+  -> 准备 overlay -> base 的 OPP / host 库顺序（不导入 Torch）
+
+首次 _stable.load() / 算子调用
+  -> 加载实际 launcher（包含 FLA_NPU_STABLE_LIB 覆盖）
+  -> 严格 build stamp
+  -> 多库启用？
+       ├─ 否：继续 base-only 注册检查
+       └─ 是：实际库导出 overlay_order_version >= 1？
+                ├─ 否：硬失败，禁止算子解析/执行
+                └─ 是：注册检查 -> overlay -> base -> CANN
 ```
 
-现有实现保留“强制历史 launcher 时告警继续”的兼容行为。公共 aclnn ABI 校验只验证 L1 函数原型，不能证明 base host 与 overlay tiling/kernel 的内部结构、序列化格式或业务语义兼容。这条强制路径不属于完整 overlay 正确性的保证范围：
+**安装成功仅证明 ACLNN ABI/产物校验通过，不证明实际 launcher 的多库能力已经通过。** 能力门禁位于首次 load，不能为了提前探测而在 `import fla_npu` 时导入 Torch、改变 OPP 在 CANN 初始化前准备的顺序。这里使用标准库 ctypes 读取一个 C 能力函数，不恢复 ctypes 算子执行后端。
 
-- overlay 的 **host 实现修改不会生效**，因为 L1 仍命中 base；
-- overlay 的 tiling/kernel 修改仍可能生效；
-- host 与 tiling/kernel 混用来源需要单独验证；正常使用应升级 launcher，或使用默认的 ctypes 回退。
+公共 aclnn 原型一致不能证明 base host 与 overlay 内部 tiling data 格式兼容，因此所有不具备有序多库能力的 launcher 都被阻止；不保留强制 stable 告警继续、自动 ctypes 或二进制字符串猜测路径。无法执行时仍可用不导入运行时的 `python -m fla_npu_opp_manage --status` / `--remove-overlay --overlay-name <name>` 恢复，随后启动新进程。
 
-决策树只依赖三类证据：
-
-| 决策依据 | 检查位置 | 结果如何使用 |
-|---|---|---|
-| aclnn 接口是否一致 | 构建期 `op_abi_validate.py`；安装/import 时 `_op_abi.py` 比较 overlay/base public aclnn 头 | 不一致直接失败；一致才继续判断 launcher 能力 |
-| launcher 是否支持多库 | `fla_npu/__init__.py::_launcher_supports_overlay_order()` | 支持则使用 launcher 的 `overlay -> base` 查找；不支持则进入历史 launcher 分支 |
-| wheel launcher 自身是否完整 | build stamp 与 `_get_stable_op()` | 二进制/adapter 不匹配或算子未注册时，按既有规则报错或回落 ctypes |
-
-对应到改动类型：
-
-- **已有算子的实现改动，接口不变**：复用 wheel launcher，不需要重编；
-- **aclnn/schema/adapter 契约变化**：构建、安装或 import 失败；必须更新 launcher/wrapper 并发布完整 wheel，不能只发布 overlay；
-- **全新算子且 base wheel 从未声明**：仅复制 OPP overlay 不足以增加 Python 公共入口，需要同步更新 wheel 的算子清单、wrapper 和 launcher/ctypes 承载。
-
-overlay 没有携带 launcher 是正常设计，不会因为“缺少 launcher”而告警，也不存在从 base vendor 再取一份 launcher 的动作；进程始终使用 wheel 根目录中的那一份 `libfla_npu_stable.so`。
+接口不变的 host/tiling/kernel 修改可复用**已经具备上述能力且 stamp 匹配**的 wheel launcher。aclnn/schema/adapter 契约改变或新增公共算子必须同步更新完整 wheel 的 wrapper、schema、adapter、算子清单和测试。overlay 本身不携带 launcher；`FLA_NPU_STABLE_LIB` 覆盖的库也必须满足同样的 stamp 与能力要求。
 
 ## 6. 安装、卸载与审计
 
@@ -383,7 +350,7 @@ python -m fla_npu_opp_manage --remove-overlay
 
 ### 6.2 完整契约与打包门禁
 
-CPack 在 staging 后、生成 run 包前调用 `_op_abi.py --write-manifest`。工具用 `nm -D` 枚举真实 `aclnn*` 导出，要求每个导出都有可解析的公共契约，且 GetWorkspaceSize 与执行入口配对；随后把契约、host 库与所有公共头的 SHA256 写入 `abi_manifest.json`。无头文件、未覆盖导出、未知类型或不完整的两阶段接口都会使打包失败。pure-ctypes 包同样执行此检查。
+CPack 在 staging 后、生成 run 包前调用 `_op_abi.py --write-manifest`。工具用 `nm -D` 枚举真实 `aclnn*` 导出，要求每个导出都有可解析的公共契约，且 GetWorkspaceSize 与执行入口配对；随后把契约、host 库与所有公共头的 SHA256 写入 `abi_manifest.json`。无头文件、未覆盖导出、未知类型或不完整的两阶段接口都会使打包失败。此检查对所有 custom run 包执行；Stable-only wheel 不再提供关闭 launcher 的构建模式。
 
 run 包的安装和升级脚本必须复制该清单。wheel staging 对安装后的清单再次校验，避免出现“归档内有清单，但实际安装时丢失”的产物。
 
@@ -451,7 +418,7 @@ fla_npu_overlay_[A-Za-z0-9][A-Za-z0-9_.-]*
 | 改动类型 | `--ops` 范围 |
 |---|---|
 | 算子内部 host/tiling/kernel 实现，公开接口不变 | 只构建该算子 |
-| 导出的公共头或 aclnn 接口签名变化 | 同时构建所有依赖方，并更新 schema、ctypes/launcher 适配器和测试 |
+| 导出的公共头或 aclnn 接口签名变化 | 同时构建所有依赖方，并更新 schema、Stable wrapper/C++ adapter 和测试 |
 | 依赖方内嵌了被改算子的实现拷贝，且希望该拷贝同步变化 | 显式加入依赖方 |
 | 仅算子内部使用的 kernel 常量或结构 | 不扩展到其他算子 |
 
@@ -464,7 +431,7 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 1. **完整 base 始终存在且不被 overlay 生命周期修改。**
 2. **所有 custom 来源都位于 wheel 包内，并通过解析后的路径边界校验。**
 3. **L1 与 L2-L4 的 overlay/base 顺序一致。**
-4. **当前 launcher 与 ctypes 都逐符号回落；旧 launcher 不允许静默混用来源。**
+4. **Stable launcher 必须显式声明有序多库能力；不允许任何旧 launcher 混用 base host 与 overlay tiling/kernel。**
 5. **`ASCEND_CUSTOM_OPP_PATH` 只含 vendor 目录，包内条目由代码整体归一化。**
 6. **未设置 `FLA_NPU_OVERLAY_VENDOR` 表示自动发现，显式空值表示禁用 overlay。**
 7. **安装和卸载后需要新进程，不能承诺热更新。**
@@ -477,7 +444,7 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 | 安装 overlay、未设置 `FLA_NPU_OVERLAY_VENDOR` | 按 `config.ini` 与目录自动发现 |
 | `FLA_NPU_OVERLAY_VENDOR` 显式为空 | 禁用全部 overlay，只使用 base |
 | 多个 overlay | 环境变量已设置时按其中的名称顺序；未设置时按 `config.ini` 顺序逐项覆盖、逐项回落 |
-| 旧 launcher | 未显式选择时自动走 ctypes；显式 stable 时先校验 ABI，失败报错，通过后告警 L1 从 base 查找并继续 |
+| 旧 launcher | 启用 overlay 后，首次加载缺少有序多库能力的实际 launcher 时硬失败；独立 manager 可审计/卸载并重启恢复 |
 | `pip install --force-reinstall` / wheel 升级 | wheel 可能恢复 base 内容；通过 `--status` 审计并重新安装 overlay |
 | 回滚单个 overlay | `--remove-overlay --overlay-name <name>`，然后重启进程 |
 | 回滚全部 overlay | 逐个移除；`config.ini` 回到仅 base |
@@ -486,19 +453,23 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 
 ## 10. 验收结论
 
-详细脚本、日志、digest 和逐轮排障见[过程记录](OPP叠加层增量设计-过程记录.md)。规范性结论如下：
+历史脚本、日志、digest 和逐轮排障见[过程记录](OPP叠加层增量设计-过程记录.md)。下表保留此前平台验证的边界，不把旧双后端结果当作本轮 Stable-only 数值验收。
+
+本轮新增门禁覆盖正常/新版导出、缺失/旧版/异常导出、实际 override 路径、base-only、stamp 失败先行以及 root import 不加载 Torch。`test_stable_parity.py` 已改为同一 Stable 后端的 baseline/candidate 对比，复用 `verify_stable_only_results.py`，记录签名、精确输入输出、可选返回和状态版本；旧后端报告、空运行或错误不能通过。代表配方不等同于全 37 算子数值验证。
+
+本轮离线集成测试为 185 PASS、4 SKIP、451 subtests PASS；CI 契约为 130 PASS、28 SKIP，详见[新增验证记录](PR878最终检视修复验证.md#stable-only-合并适配验证2026-10-23)。本次新版本 launcher 的原生编译、显式导出实测、A5 overlay 覆盖/回落/卸载后数值复验仍待补，不能宣称已完成硬件验收。
 
 | 维度 | 验收结论 |
 |---|---|
 | 覆盖与回落 | overlay 算子的 host 与 kernel 改动可观察；未携带算子继续从 base 运行 |
 | base 完整性 | A5/A2 安装、卸载和多 overlay 生命周期中 base 指纹保持不变 |
 | 多 overlay | 可并存、可排序、可独立卸载；同名算子由最高优先级来源承载 |
-| 两种后端 | ctypes 与当前 launcher 均按 overlay 到 base 逐符号解析；端到端输出一致 |
+| 历史双后端验证 | 旧版本曾验证 ctypes/Stable 输出一致；本轮不再保留 ctypes 路径，需以同一 Stable 后端 baseline/candidate 重新验收 |
 | 路径归一化 | 干净、已有反序路径和旧 root/lib 条目都收敛为 `overlay...:base:external` |
 | `FLA_NPU_OVERLAY_VENDOR` 显式为空 | `.pth` 与 runtime 均只选择 base；不会出现 base host 搭配 overlay kernel |
 | 生成脚本 | source overlay/base 的先后顺序不影响最终优先级 |
 | 安全边界 | 非法 overlay 名称、路径逃逸和 base 删除均被拒绝 |
-| ABI 安全 | custom/scoped 构建默认检查所选 adapter/header；安装与 import 默认拒绝 overlay/base 公共 aclnn 原型漂移；强制历史 launcher 仅在 ABI 通过后告警继续 |
+| ABI 安全 | custom/scoped 构建强制检查所选 adapter/header；安装与 import 拒绝公共 aclnn 原型漂移；首次 launcher load 拒绝缺失或旧版有序多库能力 |
 | 构建范围 | 单算子包只包含目标算子；A5/A2 已完成原生构建与运行，A3 已完成交叉编译 |
 | 回滚 | 卸载后输出和 vendor 顺序回到基线；新进程生效 |
 | 构建中断与重试 | 本地/远程进程组终止后清理半成品，再从干净目录重试；单次 `build.sh` 不自动重试 |
@@ -520,16 +491,16 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 | 风险/约束 | 处理 |
 |---|---|
 | CANN 初始化和动态库句柄会缓存来源 | 明确要求安装、卸载后启动新进程 |
-| 旧 launcher 不支持多库 | 未显式选择时自动 ctypes；显式 stable 时 ABI 失败报错，通过后告警混合来源并继续 |
+| 旧 launcher 不支持多库 | 启用 overlay 后首次 launcher load 硬失败；升级匹配 launcher 或用独立 manager 移除 overlay 后重启 |
 | overlay 改变 aclnn 参数契约 | 编译期优先由 scoped gate 拦截，安装期比较 overlay/base 公共头，运行期再次校验；任一不一致均失败 |
 | pip 不管理 overlay 文件 | 使用 `--status` 与 `--remove-overlay`；wheel 重装后重新审计 |
 | 其他 CANN 版本的多 vendor 行为可能变化 | 新 CANN 版本需要复跑“覆盖 + 回落 + 多 overlay”验收 |
 | A3 尚无真机运行验证 | 保留交叉编译证据，真机接入后补运行验收 |
-| interface/schema 变化超出普通单算子实现改动 | 按 §7 扩展依赖闭包并同步两种后端适配器 |
+| interface/schema 变化超出普通单算子实现改动 | 按 §7 扩展依赖闭包并同步 Stable wrapper/schema/adapter |
 
 ## 12. PR 前行为兼容性自查
 
-自查基线为上游提交 `7e39f9668eed285fc91cde0502f46cd48686a681`。审计范围覆盖命令行与环境变量、CMake/编译目标、产物名称与目录、安装写盘边界、运行时后端选择、退出条件、性能开销、算子源码和 CI 调用链。
+初版自查基线为 `7e39f9668eed285fc91cde0502f46cd48686a681`；本表已按主干 `8762b613` 的 Stable-only 收敛提交 `521e1a63` 更新。历史实验结论不自动等同于新合并版本的验收。审计范围覆盖命令行与环境变量、CMake/编译目标、产物名称与目录、安装写盘边界、运行时后端选择、退出条件、性能开销、算子源码和 CI 调用链。
 
 结论使用四种标记：
 
@@ -551,7 +522,7 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 | `--jit`（不带 `--pkg`） | 不满足完整 custom package 条件，不运行门禁 | **不变/不适用** |
 | `--pkg --jit --ops=...` | 保持 host-only/JIT package 构建；若生成 public aclnn 头，则 package 后按 scoped adapter 校验 | **命令兼容**，接口漂移新增失败 |
 | 多 SoC `--soc=a,b,...` | 每个 SoC 仍按原循环配置和打包；每份 custom package 完成后执行同一 ABI 门禁 | **产物流程不变**，增加逐包校验 |
-| `FLA_NPU_BUILD_STABLE_ABI=0` | 继续构建 pure-ctypes wheel；跳过 Stable-ABI adapter/header 门禁，仍执行 CPack 导出/清单门禁 | **命令兼容**；缺失公共契约会失败 |
+| `FLA_NPU_BUILD_STABLE_ABI=0` | wheel 构建立即拒绝；直接 `build.sh --pkg` 也不能以此跳过 adapter/header 门禁 | **有意移除**旧无 launcher 构建路径 |
 | 非法 `--ops` 名称 | 仍由既有前置校验在 CMake 前拒绝 | **不变** |
 | 直接调用 CMake/Make 目标 | custom CPack package 执行清单门禁；单独编译目标不生成清单，也不执行 `build.sh` 的 adapter 门禁 | 应使用推荐的完整打包入口 |
 
@@ -565,7 +536,7 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 | run 包名称与格式 | `fla_npu_linux-<arch>.run` | 不变；仍由原 CPack/run package 流程生成 | **不变** |
 | wheel 名称、tier、platform tag | 既有 A2/A3/A5 分发规则 | 不因 overlay 改名；仍为原 tier/platform 规则 | **不变** |
 | wheel launcher | `fla_npu/libfla_npu_stable.so` | 文件名和位置不变；内部 `Runtime` 新增 `FLA_NPU_OP_API_LIBS` 多句柄能力，并保留单数变量兼容 | **兼容扩展** |
-| pure-ctypes wheel | 不携带 launcher | 仍可通过 `FLA_NPU_BUILD_STABLE_ABI=0` 生成 | **不变** |
+| 无 launcher 的 wheel | 历史 ctypes 模式 | 构建、finalize 与发布检查均拒绝；launcher、有效 `_stable_hash.py` 和 Torch/Torch-NPU 下限依赖必须齐全 | **有意移除** |
 | wheel Python 文件 | 原运行模块 | `_op_abi.py` 校验导出契约与哈希；新增顶层 `fla_npu_opp_manage.py` 提供独立恢复入口 | **兼容扩展**；不改变公开算子 API |
 | vendor ABI 清单 | 不存在 | 新包包含 `abi_manifest.json`；旧 base 可兼容，旧 overlay 需重建 | **新增产物与 overlay 失败条件** |
 | base OPP 内容 | 完整聚合 host/索引/tiling/kernel | overlay 安装器不修改 base；完整 wheel/run 包仍走原 base 产物 | **不变** |
@@ -593,7 +564,7 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 | `<pkg>/opp` 条目 | 不再写入 | 不再写入 | 该 root 对此变量不必要且不充分，删除是**有意修复** |
 | `vendor/op_api/lib` 条目 | 不再写入 `ASCEND_CUSTOM_OPP_PATH` | 同左 | host 库由绝对路径加载，不依赖该错误条目 |
 | `LD_LIBRARY_PATH` | 本设计不因 OPP overlay 注入 custom op_api/lib | 同左 | 保持包内绝对路径加载边界 |
-| `FLA_NPU_OP_API_LIB` | 指向完整 base | 仍指向完整 base，兼容历史 launcher | **不变** |
+| `FLA_NPU_OP_API_LIB` | 指向完整 base | 仍指向完整 base；overlay 使用复数列表且强制校验 launcher 能力 | **不变** |
 | `FLA_NPU_OP_API_LIBS` | `[base]` | `[overlay..., base]` | **新增环境变量**，当前 launcher 消费 |
 | `FLA_NPU_OVERLAY_VENDOR` 未设置 | 无目录时只用 base | 从 `config.ini`/合法目录自动发现 | **新增功能** |
 | `FLA_NPU_OVERLAY_VENDOR=""` | 只用 base | 显式禁用全部 overlay，只用 base | **确定语义**，`.pth` 与 runtime 一致 |
@@ -607,11 +578,11 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 | 场景 | 本设计后的行为 | 判定 |
 |---|---|---|
 | 无 overlay，默认 stable | 仍使用 wheel launcher，L1 为 `base -> CANN`，L2-L4 为 `base -> built-in` | **不变** |
-| 无 overlay，`FLA_NPU_STABLE_ABI=ctypes` | 仍强制 Python ctypes 路径 | **不变** |
-| 无 launcher/pure-ctypes wheel | 有 ctypes wrapper 的算子继续运行；launcher-only 算子按既有规则报错 | **不变** |
+| `FLA_NPU_STABLE_ABI=ctypes` | import/解析前报错，不能选择已删除的后端 | **有意移除** |
+| 无 launcher 或有效 build stamp | 构建/发布拒绝；运行期首次 load 硬失败 | **有意新增失败条件** |
 | 当前 launcher + overlay | stable 保持默认后端，L1/L2-L4 均按 overlay 到 base | **新增功能** |
-| 历史 launcher + overlay，未强制 stable | 自动置为 ctypes，使 L1/L2-L4 都按 overlay 到 base | **新增兼容策略** |
-| 历史 launcher + overlay，强制 stable | 先执行 ABI 比对；失败报错，通过后告警 L1 使用 base、L2-L4 使用 overlay 优先 | **有意的显式降级行为** |
+| 历史 launcher + overlay | 首次实际 load 检查导出版本，缺失或小于 1 即硬失败 | **有意新增失败条件** |
+| `FLA_NPU_STABLE_LIB` 覆盖 launcher | 检查覆盖路径实际加载的库及其 stamp/能力，不能借包内另一份库绕过门禁 | **覆盖路径同等校验** |
 | overlay public aclnn 契约漂移 | 安装阶段拒绝；手工绕过安装器时 import 再次拒绝 | **新增失败条件** |
 | overlay 不存在或显式禁用 | `_validate_overlay_abi()` 不遍历 overlay，不读取 overlay 头 | base-only 选择**不变** |
 | 安装/卸载后同一进程 | 已加载句柄和符号缓存不热切换 | **既有动态库约束**；仍要求新进程 |
@@ -625,13 +596,13 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 | 验证边界 | 仅保留已核对的 SolveTri 冻结契约；“类型相同但业务语义变化”和内部 tiling ABI 仍需行为测试 |
 | 构建开销 | staging 后读取 ELF 导出、头文件并计算哈希，package 后比较 adapter；不增加 CXX/opc 次数 |
 | import 开销 | base-only 不解析 overlay；启用 overlay 时核验库/头 SHA256 和完整公共契约 |
-| 诊断 | 路径被归一化时告警一次；launcher fallback 可通过 `FLA_NPU_STABLE_TRACE=1` 查看；ABI 错误列出具体符号和参数类型差异 |
+| 诊断 | 路径被归一化时告警一次；Stable 选择可通过 `FLA_NPU_STABLE_TRACE=1` 查看；能力不足列出实际 launcher 路径与独立恢复命令；ABI 错误列出具体符号和参数类型差异 |
 
 ### 12.7 源码、CI 与验证结论
 
 - 本 PR 净 diff 不包含 `fla/ops/ascendc`；验证期间为对照 `7e39f966` 临时同步的 4 个 GDN/KDA 文件已移除，不借 overlay 设计修改已有 kernel 实现。
 - 导出/清单门禁位于 CPack staging 后，adapter 门禁位于 `build.sh` package 后；CI 复用这些构建入口。
-- 本轮契约、安装、环境和进程控制回归为 93 PASS、1 个 build-stamp 前置条件 SKIP；A5 全量 run 安装后 74 个导出全部覆盖，adapter 检查 29 个调用点、0 mismatch；新 wheel 的覆盖、回落和恢复通过代表算子验证。
+- 此前 `822d31d0` 的契约、安装、环境和进程控制回归为 93 PASS、1 个 build-stamp 前置条件 SKIP；A5 全量 run 安装后 74 个导出全部覆盖，adapter 检查 29 个调用点、0 mismatch；新 wheel 的覆盖、回落和恢复通过代表算子验证。
 - `ci/tests/test_run_checks_stage_pipeline.sh` 的 mock 安装路径失败可在未修改的 `a877211a` 同样复现，判定为既有测试夹具问题，不是本轮 ABI/兼容性改动引入。
 - 尚未重跑完整 NPU CI 7 分项；A3 仍只有交叉编译证据，没有真机运行结论。
 
@@ -639,13 +610,15 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 
 | 文件 | 职责 |
 |---|---|
-| `torch_custom/fla_npu/fla_npu/__init__.py` | overlay 解析、包内边界、路径归一化、host 库列表、旧 launcher 策略 |
+| `torch_custom/fla_npu/fla_npu/__init__.py` | overlay 解析、包内边界、公共 ABI 校验、路径归一化与 host 库列表；不导入 Torch |
 | `torch_custom/fla_npu/fla_npu/_op_abi.py` | 严格解析公共契约、生成清单、校验哈希并比较 overlay/base ABI |
 | `cmake/write_opp_abi_manifest.cmake` | CPack staging 后生成并校验 ABI 清单 |
 | `torch_custom/fla_npu/fla_npu_opp_manage.py` | 不导入运行时的独立安装/诊断/回滚入口 |
 | `torch_custom/fla_npu/fla_npu_opp_env.py` | `.pth` 启动阶段解析 `FLA_NPU_OVERLAY_VENDOR` 并预置路径 |
 | `torch_custom/fla_npu/fla_npu/install_opp.py` | overlay 安装、卸载、状态与 `config.ini` 维护 |
-| `torch_custom/fla_npu/csrc/src/runtime.cpp` | 当前 launcher 的多句柄加载与逐符号回落 |
+| `torch_custom/fla_npu/csrc/src/runtime.cpp` | 多句柄加载、逐符号回落与 `fla_npu_stable_overlay_order_version()` 显式版本导出 |
+| `torch_custom/fla_npu/fla_npu/ops/ascendc/_stable.py` | 实际 launcher 的 stamp 与有序多库能力校验，成功后才解析算子 |
+| `tests/test_overlay_launcher_capability.py` | 能力导出版本、失败顺序、override 与 base-only 回归 |
 | `torch_custom/fla_npu/csrc/include/stable/runtime.h` | launcher 多句柄状态 |
 | `setup.py` | wheel 内 base OPP 的环境脚本生成 |
 | `scripts/package/ops_transformer/scripts/finalize_wheel_opp.py` | run 包写入 wheel 后刷新环境脚本与 `RECORD` |

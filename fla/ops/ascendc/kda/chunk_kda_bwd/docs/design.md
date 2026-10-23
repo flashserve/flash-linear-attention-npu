@@ -1,5 +1,12 @@
 # KDA 反向优化设计
 
+## 原 ACLNN 入口的形状描述
+
+`aclnnChunkKdaBwdGetWorkspaceSize` 在调用 L0 前，将所有非空输入和输出的
+`OriginalShape` 统一为 `ViewShape`，避免一维存储描述导致 tiling 误判逻辑 rank。
+该操作原地更新 descriptor，不改变 StorageShape、stride、offset 或数据布局；
+连续布局要求及 dense/varlen 的 rank 校验保持不变。V2 入口不受本次修改影响。
+
 ## 执行流程
 
 V2 由三个阶段组成，保存中间量模式跳过前向重计算：

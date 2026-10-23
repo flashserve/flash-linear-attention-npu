@@ -1,0 +1,890 @@
+{
+  "source_commit": "8762b6139de96e62205cefb1595aa41e38497e82",
+  "operators": [
+    "npu_fast_gelu_custom",
+    "npu_fast_gelu_custom_backward",
+    "npu_causal_conv1d",
+    "npu_causal_conv1d_fn",
+    "npu_causal_conv1d_update",
+    "npu_causal_conv1d_bwd",
+    "npu_prepare_wy_repr_bwd_full",
+    "npu_prepare_wy_repr_bwd",
+    "npu_chunk_gated_delta_rule_bwd_dhu",
+    "npu_chunk_gated_delta_rule_bwd",
+    "npu_chunk_gated_delta_rule_fwd_prepare",
+    "npu_chunk_gated_delta_rule_bwd_finalize",
+    "npu_chunk_bwd_dv_local",
+    "npu_pre_process_bwd_kernel_merged",
+    "npu_chunk_gdn_bwd_intra",
+    "npu_prepare_wy_repr_bwd_da",
+    "npu_chunk_bwd_dqkwg",
+    "npu_chunk_fwd_o",
+    "npu_chunk_gated_delta_rule_fwd_h",
+    "npu_pre_process_fwd_kernel_merged",
+    "npu_chunk_fwd_h",
+    "npu_chunk_kda_fwd_finalize",
+    "npu_chunk_kda_fwd_prepare",
+    "npu_recompute_w_u_fwd",
+    "npu_recurrent_gated_delta_rule",
+    "npu_chunk_gated_delta_rule_fwd",
+    "npu_chunk_local_cumsum",
+    "npu_chunk_scaled_dot_kkt",
+    "npu_solve_tri",
+    "npu_chunk_kda_fwd",
+    "npu_chunk_kda_bwd",
+    "npu_chunk_kda_bwd_intra",
+    "npu_chunk_kda_bwd_recompute",
+    "npu_chunk_kda_bwd_prepare",
+    "npu_merge_fwd_bwd_kernel",
+    "npu_kda_gate_cumsum",
+    "npu_recurrent_kda"
+  ],
+  "dispatch_arguments": {
+    "npu_recurrent_gated_delta_rule": [
+      {
+        "op": "npu_recurrent_gated_delta_rule",
+        "expressions": [
+          "query",
+          "key",
+          "value",
+          "state",
+          "beta",
+          "actual_seq_lengths",
+          "ssm_state_indices",
+          "num_accepted_tokens",
+          "g",
+          "gk",
+          "float(scale)",
+          "stream"
+        ]
+      }
+    ],
+    "npu_recurrent_kda": [
+      {
+        "op": "npu_recurrent_kda",
+        "expressions": [
+          "q",
+          "k",
+          "v",
+          "g",
+          "beta",
+          "initial_state",
+          "cu_seqlens",
+          "ssm_state_indices",
+          "A_log",
+          "dt_bias",
+          "num_accepted_tokens",
+          "layout_code",
+          "scale_value",
+          "bool(output_final_state)",
+          "bool(inplace_final_state)",
+          "bool(use_qk_l2norm_in_kernel)",
+          "bool(use_gate_in_kernel)",
+          "bool(use_beta_sigmoid_in_kernel)",
+          "bool(allow_neg_eigval)",
+          "bool(safe_gate)",
+          "lower",
+          "bool(state_v_first)",
+          "stream"
+        ]
+      }
+    ],
+    "npu_fast_gelu_custom": [
+      {
+        "op": "npu_fast_gelu_custom",
+        "expressions": [
+          "self",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_fast_gelu_custom_backward": [
+      {
+        "op": "npu_fast_gelu_custom_backward",
+        "expressions": [
+          "grad",
+          "self",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_kda_gate_cumsum": [
+      {
+        "op": "npu_kda_gate_cumsum",
+        "expressions": [
+          "g",
+          "A_log",
+          "dt_bias",
+          "_host_ints(cu_seqlens)",
+          "chunk_size",
+          "False if use_gate_in_kernel is None else bool(use_gate_in_kernel)",
+          "False if safe_gate is None else bool(safe_gate)",
+          "-5.0 if lower_bound is None else float(lower_bound)",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_chunk_kda_bwd_intra": [
+      {
+        "op": "npu_chunk_kda_bwd_intra",
+        "expressions": [
+          "q",
+          "k",
+          "gk",
+          "beta",
+          "dAqk",
+          "dAkk",
+          "dq",
+          "dk",
+          "db",
+          "dg",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "chunk_size",
+          "safe_gate",
+          "_char_code('npu_chunk_kda_bwd_intra', 'layout', str(layout))",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_chunk_bwd_dv_local": [
+      {
+        "op": "npu_chunk_bwd_dv_local",
+        "expressions": [
+          "q",
+          "k",
+          "d_o",
+          "g",
+          "g_gamma",
+          "A",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "scale",
+          "chunk_size",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_pre_process_bwd_kernel_merged": [
+      {
+        "op": "npu_pre_process_bwd_kernel_merged",
+        "expressions": [
+          "q",
+          "k",
+          "w",
+          "d_o",
+          "dv",
+          "g",
+          "gk",
+          "_host_ints(cu_seqlens)",
+          "float(scale)",
+          "int(chunk_size)",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_chunk_local_cumsum": [
+      {
+        "op": "npu_chunk_local_cumsum",
+        "expressions": [
+          "g",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices_out)",
+          "chunk_size",
+          "reverse",
+          "scale",
+          "head_first",
+          "_char_code('npu_chunk_local_cumsum', 'output_dtype', output_dtype)",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_chunk_scaled_dot_kkt": [
+      {
+        "op": "npu_chunk_scaled_dot_kkt",
+        "expressions": [
+          "k",
+          "g",
+          "beta",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "chunk_size",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_chunk_bwd_dqkwg": [
+      {
+        "op": "npu_chunk_bwd_dqkwg",
+        "expressions": [
+          "q",
+          "k",
+          "v",
+          "g",
+          "h",
+          "dox",
+          "dh",
+          "dv",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "w",
+          "g_gamma",
+          "1.0 if scale is None else float(scale)",
+          "chunk_size",
+          "False if use_exp2 is None else bool(use_exp2)",
+          "False if transpose_state_layout is None else bool(transpose_state_layout)",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_prepare_wy_repr_bwd_da": [
+      {
+        "op": "npu_prepare_wy_repr_bwd_da",
+        "expressions": [
+          "k",
+          "v",
+          "beta",
+          "A",
+          "dw",
+          "du",
+          "g",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "chunk_size",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_prepare_wy_repr_bwd_full": [
+      {
+        "op": "npu_prepare_wy_repr_bwd_full",
+        "expressions": [
+          "k",
+          "v",
+          "beta",
+          "A",
+          "dA",
+          "dw",
+          "du",
+          "g",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "chunk_size",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_prepare_wy_repr_bwd": [
+      {
+        "op": "npu_prepare_wy_repr_bwd",
+        "expressions": [
+          "k",
+          "v",
+          "beta",
+          "A",
+          "dw",
+          "du",
+          "g",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "chunk_size",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_recompute_w_u_fwd": [
+      {
+        "op": "npu_recompute_w_u_fwd",
+        "expressions": [
+          "k",
+          "v",
+          "beta",
+          "A",
+          "g",
+          "gk",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "chunk_size",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_causal_conv1d_bwd": [
+      {
+        "op": "npu_causal_conv1d_bwd",
+        "expressions": [
+          "x",
+          "y",
+          "weight",
+          "dy",
+          "initial_state",
+          "dht",
+          "_host_ints(query_start_loc)",
+          "activation",
+          "_char_code('npu_causal_conv1d_bwd', 'input_layout', str(input_layout))",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_chunk_fwd_o": [
+      {
+        "op": "npu_chunk_fwd_o",
+        "expressions": [
+          "q",
+          "k",
+          "v",
+          "h",
+          "g",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "scale",
+          "64 if chunk_size is None else chunk_size",
+          "False if use_exp2 is None else bool(use_exp2)",
+          "bool(transpose_state_layout)",
+          "_char_code('npu_chunk_fwd_o', 'output_layout', output_layout)",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_chunk_gdn_bwd_intra": [
+      {
+        "op": "npu_chunk_gdn_bwd_intra",
+        "expressions": [
+          "q",
+          "k",
+          "v",
+          "g",
+          "beta",
+          "A",
+          "d_o",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "scale",
+          "chunk_size",
+          "use_exp2",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_causal_conv1d_fn": [
+      {
+        "op": "npu_causal_conv1d_fn",
+        "expressions": [
+          "x",
+          "weight",
+          "bias",
+          "conv_states",
+          "query_start_loc",
+          "cache_indices",
+          "has_initial_state",
+          "None if query_start_loc_cpu is None else _host_ints(query_start_loc_cpu)",
+          "None if cache_indices_cpu is None else _host_ints(cache_indices_cpu)",
+          "None if has_initial_state_cpu is None else _host_ints(has_initial_state_cpu)",
+          "code",
+          "_PAD_SLOT_ID if pad_slot_id is None else pad_slot_id",
+          "_NULL_BLOCK_ID if null_block_id is None else null_block_id",
+          "head_num",
+          "stream"
+        ]
+      }
+    ],
+    "npu_causal_conv1d_update": [
+      {
+        "op": "npu_causal_conv1d_update",
+        "expressions": [
+          "x",
+          "conv_state",
+          "weight",
+          "bias",
+          "code",
+          "conv_state_indices",
+          "num_accepted_tokens",
+          "query_start_loc",
+          "max_query_len",
+          "_NULL_BLOCK_ID if null_block_id is None else null_block_id",
+          "None if conv_state_indices_cpu is None else _host_ints(conv_state_indices_cpu)",
+          "None if num_accepted_tokens_cpu is None else _host_ints(num_accepted_tokens_cpu)",
+          "None if query_start_loc_cpu is None else _host_ints(query_start_loc_cpu)",
+          "out",
+          "stream"
+        ]
+      }
+    ],
+    "npu_causal_conv1d": [
+      {
+        "op": "npu_causal_conv1d",
+        "expressions": [
+          "x",
+          "weight",
+          "bias",
+          "conv_states",
+          "_host_ints(query_start_loc)",
+          "_host_ints(cache_indices)",
+          "_host_ints(initial_state_mode)",
+          "_host_ints(num_accepted_tokens)",
+          "_CONV1D_ACTIVATION_CODES['silu' if activation_mode == 1 else 'none']",
+          "pad_slot_id",
+          "run_mode",
+          "head_num",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_chunk_fwd_h": [
+      {
+        "op": "npu_chunk_fwd_h",
+        "expressions": [
+          "k",
+          "w",
+          "u",
+          "g",
+          "gk",
+          "initial_state",
+          "output_final_state",
+          "chunk_size",
+          "save_new_value",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "use_exp2",
+          "state_v_first",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_chunk_gated_delta_rule_fwd_h": [
+      {
+        "op": "npu_chunk_gated_delta_rule_fwd_h",
+        "expressions": [
+          "k",
+          "w",
+          "u",
+          "g",
+          "gk",
+          "initial_state",
+          "output_final_state",
+          "chunk_size",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "state_v_first",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_chunk_gated_delta_rule_bwd_dhu": [
+      {
+        "op": "npu_chunk_gated_delta_rule_bwd_dhu",
+        "expressions": [
+          "q",
+          "k",
+          "w",
+          "d_o",
+          "dv",
+          "g",
+          "gK",
+          "h0",
+          "dht",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "scale",
+          "chunk_size",
+          "use_exp2",
+          "transpose_state_layout",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_chunk_kda_bwd_recompute": [
+      {
+        "op": "npu_chunk_kda_bwd_recompute",
+        "expressions": [
+          "q",
+          "k",
+          "v",
+          "g",
+          "beta",
+          "a",
+          "A_log",
+          "dt_bias",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "chunk_size",
+          "True if use_exp2 is None else bool(use_exp2)",
+          "-5.0 if lower_bound is None else float(lower_bound)",
+          "bool(use_gate_in_kernel)",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_chunk_kda_fwd": [
+      {
+        "op": "npu_chunk_kda_fwd",
+        "expressions": [
+          "q",
+          "k",
+          "v",
+          "g",
+          "beta",
+          "A_log",
+          "dt_bias",
+          "initial_state",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "_char_code('npu_chunk_kda_fwd', 'layout', layout)",
+          "float(scale)",
+          "chunk_size",
+          "bool(safe_gate)",
+          "-5.0 if lower_bound is None else float(lower_bound)",
+          "bool(use_gate_in_kernel)",
+          "bool(state_v_first)",
+          "epsilon",
+          "use_qk_l2norm_in_kernel",
+          "use_beta_sigmoid_in_kernel",
+          "allow_neg_eigval",
+          "use_exp2",
+          "bool(output_final_state)",
+          "bool(disable_recompute)",
+          "bool(return_intermediate_states)",
+          "q_hat_out",
+          "k_hat_out",
+          "q_rstd_out",
+          "k_rstd_out",
+          "beta_eff_out",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_chunk_kda_bwd_prepare": [
+      {
+        "op": "npu_chunk_kda_bwd_prepare",
+        "expressions": [
+          "aqk",
+          "v_new",
+          "d_o",
+          "h",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "_char_code('npu_chunk_kda_bwd_prepare', 'layout', layout)",
+          "float(scale)",
+          "int(chunk_size)",
+          "bool(state_v_first)",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_chunk_kda_fwd_prepare": [
+      {
+        "op": "npu_chunk_kda_fwd_prepare",
+        "expressions": [
+          "q",
+          "k",
+          "v",
+          "g",
+          "beta",
+          "A_log",
+          "dt_bias",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "_char_code('npu_chunk_kda_fwd_prepare', 'layout', layout)",
+          "float(scale)",
+          "chunk_size",
+          "1e-06 if epsilon is None else float(epsilon)",
+          "bool(use_qk_l2norm_in_kernel)",
+          "bool(use_gate_in_kernel)",
+          "bool(use_beta_sigmoid_in_kernel)",
+          "bool(allow_neg_eigval)",
+          "bool(safe_gate)",
+          "-5.0 if lower_bound is None else float(lower_bound)",
+          "True if use_exp2 is None else bool(use_exp2)",
+          "gk_out",
+          "aqk_out",
+          "akk_out",
+          "w_out",
+          "u_out",
+          "qg_out",
+          "kg_out",
+          "qg_scaled_out",
+          "q_hat_out",
+          "k_hat_out",
+          "q_rstd_out",
+          "k_rstd_out",
+          "beta_eff_out",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_chunk_kda_fwd_finalize": [
+      {
+        "op": "npu_chunk_kda_fwd_finalize",
+        "expressions": [
+          "qg_scaled",
+          "aqk",
+          "v_new",
+          "h",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "_char_code('npu_chunk_kda_fwd_finalize', 'output_layout', output_layout)",
+          "bool(state_v_first)",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_chunk_gated_delta_rule_fwd": [
+      {
+        "op": "npu_chunk_gated_delta_rule_fwd",
+        "expressions": [
+          "q",
+          "k",
+          "v",
+          "g",
+          "beta",
+          "initial_state",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "_char_code('npu_chunk_gated_delta_rule_fwd', 'layout', layout)",
+          "float(scale)",
+          "chunk_size",
+          "bool(use_exp2)",
+          "bool(use_qk_l2norm_in_kernel)",
+          "bool(use_beta_sigmoid_in_kernel)",
+          "bool(allow_neg_eigval)",
+          "bool(disable_recompute)",
+          "bool(output_final_state)",
+          "bool(return_intermediate_states)",
+          "bool(state_v_first)",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_solve_tri": [
+      {
+        "op": "npu_solve_tri",
+        "expressions": [
+          "x.contiguous()",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "_char_code('npu_solve_tri', 'layout', layout)",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_chunk_gated_delta_rule_fwd_prepare": [
+      {
+        "op": "npu_chunk_gated_delta_rule_fwd_prepare",
+        "expressions": [
+          "q",
+          "k",
+          "v",
+          "g",
+          "beta",
+          "a_log if use_gate_in_kernel else None",
+          "dt_bias if use_gate_in_kernel else None",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "chunk_size",
+          "bool(use_qk_l2norm_in_kernel)",
+          "bool(use_gate_in_kernel)",
+          "bool(use_beta_sigmoid_in_kernel)",
+          "bool(allow_neg_eigval)",
+          "bool(use_exp2)",
+          "bool(output_a)",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_chunk_gated_delta_rule_bwd_finalize": [
+      {
+        "op": "npu_chunk_gated_delta_rule_bwd_finalize",
+        "expressions": [
+          "q",
+          "k",
+          "v",
+          "v_new",
+          "do",
+          "du",
+          "g",
+          "beta",
+          "h",
+          "dh",
+          "a",
+          "q_rstd",
+          "k_rstd",
+          "beta_raw",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "float(scale)",
+          "chunk_size",
+          "bool(use_qk_l2_norm_in_kernel)",
+          "bool(use_beta_sigmoid_in_kernel)",
+          "bool(use_gate_in_kernel)",
+          "bool(state_v_first)",
+          "bool(use_exp2)",
+          "_current_stream_ptr()"
+        ]
+      },
+      {
+        "op": "npu_chunk_gated_delta_rule_bwd_finalize",
+        "expressions": [
+          "q",
+          "k",
+          "v",
+          "v_new",
+          "do",
+          "du",
+          "g",
+          "beta",
+          "h",
+          "dh",
+          "a",
+          "q_rstd",
+          "k_rstd",
+          "beta_raw",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "float(scale)",
+          "chunk_size",
+          "bool(use_qk_l2_norm_in_kernel)",
+          "bool(use_beta_sigmoid_in_kernel)",
+          "bool(use_gate_in_kernel)",
+          "bool(state_v_first)",
+          "bool(use_exp2)",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_chunk_gated_delta_rule_bwd": [
+      {
+        "op": "npu_chunk_gated_delta_rule_bwd",
+        "expressions": [
+          "q",
+          "k",
+          "v",
+          "g",
+          "beta",
+          "A",
+          "d_o",
+          "initial_state",
+          "dht",
+          "q_rstd",
+          "k_rstd",
+          "beta_raw",
+          "a_log",
+          "dt_bias",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "_char_code('npu_chunk_gated_delta_rule_bwd', 'layout', layout)",
+          "float(scale)",
+          "chunk_size",
+          "bool(use_exp2)",
+          "bool(use_gate_in_kernel)",
+          "bool(use_qk_l2norm_in_kernel)",
+          "bool(use_beta_sigmoid_in_kernel)",
+          "bool(state_v_first)",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_chunk_kda_bwd": [
+      {
+        "op": "npu_chunk_kda_bwd",
+        "expressions": [
+          "q",
+          "k",
+          "v",
+          "beta",
+          "gk",
+          "Aqk",
+          "Akk",
+          "w",
+          "qg",
+          "kg",
+          "v_new",
+          "h",
+          "d_o",
+          "raw_g",
+          "A_log",
+          "dt_bias",
+          "_host_ints(cu_seqlens)",
+          "_host_ints(chunk_indices)",
+          "float(scale)",
+          "int(chunk_size)",
+          "bool(safe_gate)",
+          "bool(use_gate_in_kernel)",
+          "float(lower_bound)",
+          "True",
+          "True",
+          "False",
+          "False",
+          "None",
+          "None",
+          "_current_stream_ptr()"
+        ]
+      },
+      {
+        "op": "npu_chunk_kda_bwd",
+        "expressions": [
+          "a['q']",
+          "a['k']",
+          "a['v']",
+          "a['beta']",
+          "a['gk']",
+          "a['Aqk']",
+          "a['Akk']",
+          "a['w']",
+          "a['qg']",
+          "a['kg']",
+          "a['v_new']",
+          "a['h']",
+          "a['d_o']",
+          "a['raw_g']",
+          "a['A_log']",
+          "a['dt_bias']",
+          "_host_ints(a['cu_seqlens'])",
+          "_host_ints(a['chunk_indices'])",
+          "float(a['scale'])",
+          "int(a['chunk_size'])",
+          "a['safe_gate']",
+          "a['use_gate_in_kernel']",
+          "a['lower_bound']",
+          "a['disable_recompute']",
+          "a['use_exp2']",
+          "a['state_v_first']",
+          "True",
+          "a['q_rstd']",
+          "a['k_rstd']",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_merge_fwd_bwd_kernel": [
+      {
+        "op": "npu_merge_fwd_bwd_kernel",
+        "expressions": [
+          "h",
+          "ag_hm",
+          "int(pre_or_post_num_ranks)",
+          "int(rank)",
+          "bool(forward)",
+          "bool(state_v_first)",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_pre_process_fwd_kernel_merged": [
+      {
+        "op": "npu_pre_process_fwd_kernel_merged",
+        "expressions": [
+          "k",
+          "w",
+          "u",
+          "g",
+          "gk",
+          "bg",
+          "v",
+          "_host_ints(cu_seqlens)",
+          "64 if chunk_size is None else int(chunk_size)",
+          "_current_stream_ptr()"
+        ]
+      }
+    ]
+  }
+}

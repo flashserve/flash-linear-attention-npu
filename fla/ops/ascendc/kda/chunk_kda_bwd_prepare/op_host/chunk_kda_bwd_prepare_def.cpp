@@ -11,10 +11,10 @@ class ChunkKdaBwdPrepare : public OpDef {
 public:
     explicit ChunkKdaBwdPrepare(const char *name) : OpDef(name)
     {
-        const std::initializer_list<ge::DataType> bf16 = {ge::DT_BF16, ge::DT_BF16};
-        const std::initializer_list<ge::DataType> fp32 = {ge::DT_FLOAT, ge::DT_FLOAT};
-        const std::initializer_list<ge::DataType> int64 = {ge::DT_INT64, ge::DT_INT64};
-        const std::initializer_list<ge::Format> nd = {ge::FORMAT_ND, ge::FORMAT_ND};
+        const std::initializer_list<ge::DataType> bf16 = {ge::DT_BF16};
+        const std::initializer_list<ge::DataType> fp32 = {ge::DT_FLOAT};
+        const std::initializer_list<ge::DataType> int64 = {ge::DT_INT64};
+        const std::initializer_list<ge::Format> nd = {ge::FORMAT_ND};
 
         this->Input("aqk").ParamType(REQUIRED).DataType(bf16).Format(nd).UnknownShapeFormat(nd);
         this->Input("v_new").ParamType(REQUIRED).DataType(bf16).Format(nd).UnknownShapeFormat(nd);
@@ -32,6 +32,7 @@ public:
         this->Attr("scale").AttrType(REQUIRED).Float();
         this->Attr("chunk_size").AttrType(REQUIRED).Int(64);
         this->Attr("state_v_first").AttrType(OPTIONAL).Bool(false);
+        this->Attr("layout").AttrType(REQUIRED).String();
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)
@@ -44,6 +45,8 @@ public:
             .ExtendCfgInfo("coreType.value", "AiCore")
             .ExtendCfgInfo("opFile.value", "chunk_kda_bwd_prepare")
             .ExtendCfgInfo("aclnnSupport.value", "support_aclnn");
+        this->AICore().AddConfig("ascend910b", config);
+        this->AICore().AddConfig("ascend910_93", config);
         this->AICore().AddConfig("ascend950", config);
     }
 };

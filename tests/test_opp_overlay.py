@@ -230,71 +230,60 @@ class EarlyOppEnvironmentTest(unittest.TestCase):
 
 class StableParityContractTest(unittest.TestCase):
     def _module(self) -> dict:
-        torch = types.ModuleType("torch")
-        torch.Tensor = type("Tensor", (), {})
-        ascendc = types.ModuleType("fla_npu.ops.ascendc")
-        ascendc._ASCENDC_OPS = ("npu_test",)
-        ops = types.ModuleType("fla_npu.ops")
-        ops.ascendc = ascendc
-        package = types.ModuleType("fla_npu")
-        package.ops = ops
-        with mock.patch.dict(
-            sys.modules,
-            {
-                "torch": torch,
-                "fla_npu": package,
-                "fla_npu.ops": ops,
-                "fla_npu.ops.ascendc": ascendc,
-            },
-        ):
-            return runpy.run_path(str(PARITY))
+        return runpy.run_path(str(PARITY))
 
     @staticmethod
-    def _report(backend: str, *, entry: str, status: str = "ok", **output) -> dict:
-        record = {"entry": entry, "status": status, "outputs": [output] if output else []}
-        if status != "ok":
-            record["error"] = "injected"
+    def _report() -> dict:
+        verify = runpy.run_path(str(REPO_ROOT / "scripts/verify_stable_only_results.py"))
+        tensor = {"tensor": True, "shape": [1], "dtype": "torch.float32",
+                  "sha256": "0" * 64, "finite": True, "requires_grad": False,
+                  "version": 0, "device": "npu:0", "stride": [1], "storage_offset": 0}
+        inputs = {"kind": "tuple", "items": [tensor]}
         return {
-            "backend_env": backend,
-            "launcher_usable": backend == "stable",
-            "published_ops": ["npu_test"],
-            "operators": {"npu_test": record},
+            "format": 2, "script": PARITY.name, "script_sha256": "same-script",
+            "torch": "2.7.1", "public_ops": ["npu_chunk_fwd_o"], "exit_code": 0,
+            "arguments": ["run", "npu_chunk_fwd_o"],
+            "signatures_before": {"npu_chunk_fwd_o": "(q)"},
+            "signatures_after": {"npu_chunk_fwd_o": "(q)"},
+            "calls": [{"op": "npu_chunk_fwd_o", "inputs": inputs,
+                       "input_sha256": verify["digest_description"](inputs),
+                       "outputs": tensor.copy(), "inputs_after": inputs, "finite": True}],
         }
 
-    def _compare(self, left: dict, right: dict, *, allow_incomplete: bool = False) -> int:
+    def _compare(self, left: dict, right: dict) -> int:
         module = self._module()
         with tempfile.TemporaryDirectory() as temp_dir:
-            left_path = Path(temp_dir) / "left.json"
-            right_path = Path(temp_dir) / "right.json"
+            left_path, right_path = Path(temp_dir) / "left.json", Path(temp_dir) / "right.json"
             left_path.write_text(json.dumps(left), encoding="utf-8")
             right_path.write_text(json.dumps(right), encoding="utf-8")
-            env = {"FLA_NPU_PARITY_ALLOW_INCOMPLETE": "1"} if allow_incomplete else {}
-            with mock.patch.dict(os.environ, env, clear=True):
+            with mock.patch.dict(os.environ, {"FLA_NPU_PARITY_OPS": "npu_chunk_fwd_o"}, clear=True):
                 return module["compare"](str(left_path), str(right_path))
 
-    def test_default_rejects_same_backend_and_errors(self) -> None:
-        output = {"shape": [1], "dtype": "torch.float32", "sha256": "same", "sum": 1.0}
-        left = self._report("ctypes", entry="ctypes", **output)
-        same_backend = self._report("stable", entry="ctypes", **output)
-        errored = self._report("stable", entry="stable", status="error")
-        self.assertEqual(self._compare(left, same_backend), 1)
-        self.assertEqual(self._compare(left, errored), 1)
-        self.assertEqual(self._compare(left, same_backend, allow_incomplete=True), 0)
+    def test_both_stable_runs_compare_signatures_inputs_and_outputs(self) -> None:
+        self.assertEqual(self._compare(self._report(), self._report()), 0)
+        for field, value in (("shape", [1, 1]), ("dtype", "torch.float16"),
+                             ("sha256", "1" * 64), ("finite", False)):
+            with self.subTest(field=field):
+                right = self._report()
+                right["calls"][0]["outputs"][field] = value
+                self.assertEqual(self._compare(self._report(), right), 1)
 
-    def test_compares_shape_dtype_and_values(self) -> None:
-        base = {"shape": [1], "dtype": "torch.float32", "sha256": "same", "sum": 1.0}
-        left = self._report("ctypes", entry="ctypes", **base)
-        self.assertEqual(self._compare(left, self._report("stable", entry="stable", **base)), 0)
-        for changed in (
-            dict(base, shape=[1, 1]),
-            dict(base, dtype="torch.float16"),
-            dict(base, sha256="different"),
-        ):
-            with self.subTest(changed=changed):
-                self.assertEqual(
-                    self._compare(left, self._report("stable", entry="stable", **changed)),
-                    1,
-                )
+    def test_errors_empty_runs_and_legacy_backend_reports_fail(self) -> None:
+        for report in ({"backend_env": "ctypes", "operators": {}},
+                       dict(self._report(), calls=[]), dict(self._report(), exit_code=1)):
+            with self.subTest(report=report):
+                self.assertEqual(self._compare(self._report(), report), 1)
+        right = self._report()
+        right["calls"][0]["error"] = {"type": "RuntimeError", "message": "injected"}
+        self.assertEqual(self._compare(self._report(), right), 1)
+
+    def test_dump_records_exact_recipe_selection(self) -> None:
+        module = self._module()
+        verifier = types.SimpleNamespace(record=mock.Mock(return_value=0))
+        with mock.patch.dict(module["dump"].__globals__, {"_verification_tool": lambda: verifier}), \
+                mock.patch.dict(os.environ, {"FLA_NPU_PARITY_OPS": "npu_chunk_fwd_o"}, clear=True):
+            self.assertEqual(module["dump"]("report.json"), 0)
+        verifier.record.assert_called_once_with(Path("report.json"), PARITY, ["run", "npu_chunk_fwd_o"])
 
     def test_recipe_selection_rejects_unknown_names(self) -> None:
         module = self._module()

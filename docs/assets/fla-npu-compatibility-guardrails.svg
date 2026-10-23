@@ -63,9 +63,9 @@
   <rect class="box" x="560" y="325" width="380" height="75" fill="#FFFFFF" stroke="#D9970B"/>
   <text x="750" text-anchor="middle"><tspan x="750" y="351" font-size="13" font-weight="700">Ascend PyTorch NPU 运行时能力</tspan><tspan class="node-text" x="750" y="378">通常由 torch_npu 提供；普通 import 不执行 NPU smoke</tspan></text>
   <rect class="box" x="560" y="425" width="380" height="75" fill="#FFFFFF" stroke="#D9970B"/>
-  <text x="750" text-anchor="middle"><tspan class="node-title" x="750" y="454">tensor / storage API 演进</tspan><tspan class="node-text" x="750" y="480">py3-none-any 不会自动证明 Python 能力兼容</tspan></text>
+  <text x="750" text-anchor="middle"><tspan class="node-title" x="750" y="454">tensor / storage API 演进</tspan><tspan class="node-text" x="750" y="480">py3-none-platform 不会自动证明 Python 能力兼容</tspan></text>
   <rect class="box" x="560" y="525" width="380" height="75" fill="#FFFFFF" stroke="#D9970B"/>
-  <text x="750" text-anchor="middle"><tspan class="node-title" x="750" y="554">autograd / alias / mutation</tspan><tspan class="node-text" x="750" y="580">raw ctypes 不自动声明 cache 副作用和图语义</tspan></text>
+  <text x="750" text-anchor="middle"><tspan class="node-title" x="750" y="554">autograd / alias / mutation</tspan><tspan class="node-text" x="750" y="580">状态修改必须有 schema 或 wrapper 契约</tspan></text>
   <rect class="box" x="560" y="625" width="380" height="75" fill="#FFFFFF" stroke="#D9970B"/>
   <text x="750" text-anchor="middle"><tspan class="node-title" x="750" y="654">同名符号后的 ABI 变化</tspan><tspan class="node-text" x="750" y="680">参数签名变化仍需 header diff 和调用测试发现</tspan></text>
 

@@ -1,6 +1,11 @@
 #include "aclnn_chunk_kda_bwd.h"
 
 #include "chunk_kda_bwd.h"
+#ifdef KDA_BWD_STAGES_ARCH22
+#include "chunk_kda_bwd_stages.h"
+#endif
+
+#include <initializer_list>
 
 #include "aclnn/aclnn_base.h"
 #include "aclnn_kernels/common/op_error_check.h"
@@ -11,6 +16,16 @@
 using namespace op;
 
 namespace {
+
+void NormalizeOriginalShapes(
+    std::initializer_list<const aclTensor *> tensors)
+{
+    for (const aclTensor *tensor : tensors) {
+        if (tensor != nullptr) {
+            tensor->SetOriginalShape(tensor->GetViewShape());
+        }
+    }
+}
 
 const aclTensor *ConvertIntArrayToTensor(
     const aclIntArray *array, aclOpExecutor *executor)
@@ -118,6 +133,14 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
                ACLNN_ERR_PARAM_INVALID,
                "dbias output is required when dt_bias is present.");
     const op::Shape &qShape = q->GetViewShape();
+#ifdef KDA_BWD_STAGES_ARCH22
+    CHECK_COND(aqk->GetDataType() == DataType::DT_BF16 &&
+                   vNewOptional->GetDataType() == DataType::DT_BF16 &&
+                   dO->GetDataType() == DataType::DT_BF16 &&
+                   hOptional->GetDataType() == DataType::DT_BF16,
+               ACLNN_ERR_PARAM_INVALID,
+               "optimized backward prepare requires BF16 aqk/v_new/d_o/h; FP16 is unsupported.");
+#endif
     const op::Shape &hShape = hOptional->GetViewShape();
     const bool isVarLen = cuSeqlensOptional != nullptr;
     CHECK_COND(qShape.GetDimNum() == (isVarLen ? 3U : 4U) &&
@@ -148,6 +171,21 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         dAOutOptional != nullptr ? dAOutOptional : dgOut;
     const aclTensor *dBiasForKernel =
         dBiasOutOptional != nullptr ? dBiasOutOptional : dgOut;
+    // 一维存储描述可能使 OriginalShape 展平；下发前按逻辑视图统一形状，不改变数据布局。
+    NormalizeOriginalShapes({
+        q, k, v, beta, gk, aqk, akk, wOptional, qgOptional, kgOptional,
+        vNewOptional, hOptional, dO, rawGOptional, aLogOptional,
+        dtBiasOptional, cuTensor, chunkTensor, dqOut, dkOut, dvOut, dbOut,
+        dgOut, dAForKernel, dBiasForKernel});
+#ifdef KDA_BWD_STAGES_ARCH22
+    CHECK_COND(AppendKdaBwdStages(
+        q, k, v, beta, gk, aqk, akk, wOptional, qgOptional, kgOptional,
+        vNewOptional, hOptional, dO, rawGOptional, aLogOptional, dtBiasOptional,
+        cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, safeGate,
+        useGateInKernel, lowerBound, dqOut, dkOut, dvOut, dbOut, dgOut,
+        dAForKernel, dBiasForKernel, executorPtr),
+        ACLNN_ERR_INNER_NULLPTR, "KDA backward L0 composition failed.");
+#else
     const auto result = l0op::ChunkKdaBwd(
         q, k, v, beta, gk, aqk, akk, wOptional, qgOptional, kgOptional,
         vNewOptional, hOptional, dO,
@@ -165,6 +203,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     CHECK_RET(dtBiasOptional == nullptr || result[6] != nullptr,
               ACLNN_ERR_INNER_NULLPTR);
 
+#endif
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);
     return ACLNN_SUCCESS;

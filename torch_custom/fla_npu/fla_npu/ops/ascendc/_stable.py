@@ -1,14 +1,13 @@
 """Stable-ABI backend (Phase 1).
 
 Loads ``libfla_npu_stable.so`` (a plain shared object registered through
-``STABLE_TORCH_LIBRARY``) and exposes the same Python call shape as the ctypes
-reference.  This module contains no ABI-sensitive code: the only tensor objects
+``STABLE_TORCH_LIBRARY``) and exposes the public Python operator contract.  This module contains no ABI-sensitive code: the only tensor objects
 crossing the boundary are handled by torch's own dispatcher.
 
 The mutation contract (version bump / requires_grad rejection) is *not*
 provided by the dispatcher for these ops -- measured in Phase 1 -- so the
-dispatch layer keeps applying ``_wrap_mutable_direct_op`` on top of whatever
-backend it picks.
+dispatch layer applies ``_wrap_mutable_direct_op`` unless a hot wrapper
+already enforces the contract in its own frame.
 """
 
 from __future__ import annotations
@@ -19,11 +18,10 @@ import sys
 
 _LIB_ENV = "FLA_NPU_STABLE_LIB"
 # Lowest torch whose stable runtime symbols the launcher was verified against.
-# Keep in sync with STABLE_ABI_MIN_TORCH in scripts/build_wheel.py.
+# Keep in sync with MIN_TORCH in scripts/npu_compat.py.
 _MIN_TORCH = "2.7.1"
 # KDA chunked forward 的 K/V 只交付两档且必须同档：K=V=64 或 K=V=128。
-# 混合档（K=64/V=128 等）与其它取值都不支持，判据与 ctypes 参考
-# （``_aclnn_ctypes._KDA_FWD_SUPPORTED_KV_DIMS``）及 aclnn L2 校验保持一致。
+# 混合档（K=64/V=128 等）与其它取值都不支持，与 aclnn L2 校验保持一致。
 _KDA_FWD_SUPPORTED_KV_DIMS = frozenset({64, 128})
 _loaded_path: str | None = None
 # ctypes handle of the loaded launcher; see _launcher_lib.
@@ -70,6 +68,7 @@ _ENUM = {
     "npu_chunk_fwd_o": {"output_layout": _LAYOUT_CODES},
     "npu_chunk_gated_delta_rule_fwd": {"layout": _LAYOUT_CODES},
     "npu_chunk_kda_bwd_intra": {"layout": {"BSND": 0, "BNSD": 1, "TND": 2}},
+    "npu_chunk_kda_bwd_prepare": {"layout": _LAYOUT_CODES},
     "npu_chunk_kda_fwd": {"layout": _LAYOUT_CODES},
     "npu_chunk_kda_fwd_finalize": {"output_layout": _LAYOUT_CODES},
     "npu_chunk_kda_fwd_prepare": {"layout": _LAYOUT_CODES},
@@ -283,7 +282,7 @@ def _current_stream_ptr() -> int:
 # in their own body and the dispatch layer skips its wrapper for them --
 # `_fla_npu_inplace_contract` is the marker it reads (see
 # __init__._get_direct_op).  Which arguments are mutable is still declared once,
-# in __init__.MUTATED_ARGUMENTS: that table is what the ctypes path and
+# in __init__.MUTATED_ARGUMENTS: that table is what the generic wrappers and
 # tests/.../regression_mutation_contract.py read.
 
 
@@ -370,7 +369,6 @@ def load() -> None:
     """dlopen the stable library through torch (no-op when already loaded)."""
 
     global _loaded_path
-    _init_hot()
     # Hot path: once a library is loaded, re-resolving it means an environment
     # lookup plus a filesystem stat on every single operator call (~47us
     # measured).  Only an explicitly different FLA_NPU_STABLE_LIB re-resolves.
@@ -378,6 +376,10 @@ def load() -> None:
         requested = os.environ.get(_LIB_ENV)
         if not requested or requested == _loaded_path:
             return
+    from ..._backend_policy import validate_backend_environment
+
+    validate_backend_environment()
+    _init_hot()
     path = _lib_path()
     if _loaded_path == path:
         return
@@ -392,7 +394,45 @@ def load() -> None:
             f"torch {torch.__version__}. {_load_failure_hint(path, exc)} "
             f"Original error: {exc}") from exc
     _check_build_stamp(path)
+    _check_overlay_order_capability(path)
     _loaded_path = path
+
+
+def _check_overlay_order_capability(path: str) -> None:
+    """Require ordered symbol lookup from the launcher that was actually loaded.
+
+    This runs after the build stamp check and before any dispatcher op is
+    resolved.  Checking the packaged filename would miss FLA_NPU_STABLE_LIB
+    overrides; checking binary strings does not prove an implementation exists.
+    Root-package import only prepares OPP paths and never loads torch for this
+    probe. Changing overlay selection after a successful load requires a fresh
+    process, just like changing CANN's OPP registry.
+    """
+
+    libraries = [part for part in os.environ.get("FLA_NPU_OP_API_LIBS", "").split(
+        os.pathsep) if part]
+    if len(libraries) < 2:
+        return
+    try:
+        import ctypes
+
+        library = ctypes.CDLL(path)
+        probe = library.fla_npu_stable_overlay_order_version
+        probe.argtypes = []
+        probe.restype = ctypes.c_int32
+        version = int(probe())
+        if version < 1:
+            raise ValueError(f"ordered overlay lookup version is {version}; need >= 1")
+    except Exception as exc:
+        raise RuntimeError(
+            f"fla_npu: Stable-ABI launcher {path} cannot verify ordered overlay "
+            "lookup (fla_npu_stable_overlay_order_version >= 1 is required). "
+            "Refusing to mix base host entries with overlay tiling/kernel artifacts. "
+            "Install a matching wheel/launcher with overlay support, or recover "
+            "without loading vendor code using python -m fla_npu_opp_manage "
+            "--status / --remove-overlay --overlay-name <name>, then start a "
+            f"new process. Original error: {exc}"
+        ) from exc
 
 
 def _load_failure_hint(path: str, exc: Exception) -> str:
@@ -418,32 +458,31 @@ def _load_failure_hint(path: str, exc: Exception) -> str:
 
 
 def _check_build_stamp(path: str) -> None:
-    """Refuse a library built from different adapter sources than this glue.
-
-    ``build_stable.py`` stamps the library with the hash of the sources it
-    compiled and writes the same value into ``_stable_hash``; a wrapper whose
-    matching adapter was not rebuilt otherwise shows up as a dispatcher error
-    deep inside a call or -- when only a stack index moved -- as a wrong stream,
-    which is much harder to read.  A library predating the stamp reports
-    ``unknown`` and is accepted, and a tree without the generated module (a
-    source checkout that never built one) skips the check.
-    """
+    """Require a launcher built from the adapter sources shipped in this wheel."""
 
     try:
         from . import _stable_hash
 
         expected = _stable_hash.SOURCE_HASH
-    except Exception:
-        return
+        if not expected or expected == "unknown":
+            raise ValueError("empty or unknown SOURCE_HASH")
+    except Exception as exc:
+        raise RuntimeError(
+            "This fla_npu package has no valid Stable-ABI build stamp. "
+            "Install a complete wheel or rebuild its launcher."
+        ) from exc
     try:
         import ctypes
 
         lib = ctypes.CDLL(path)
         lib.fla_npu_stable_source_hash.restype = ctypes.c_char_p
         actual = lib.fla_npu_stable_source_hash().decode("utf-8", "replace")
-    except Exception:
-        return
-    if actual in ("unknown", expected):
+    except Exception as exc:
+        raise RuntimeError(
+            f"The Stable-ABI launcher {path} cannot report its build stamp. "
+            "Install a complete matching wheel or rebuild the launcher."
+        ) from exc
+    if actual == expected:
         return
     raise RuntimeError(
         f"{path} was built from different adapter sources than this package "
@@ -461,10 +500,6 @@ def available() -> bool:
         return False
 
 
-# The conv1d family used to be re-exported from the ctypes module with only its
-# launch handed to an internal op, which meant every call kept paying for the
-# reference marshalling.  It now has three real adapters (see the hand-written
-# wrappers at the end of this module and csrc/src/stable_causal_conv1d*.cpp).
 def _op(name: str):
     """Cached torch.ops handle: the attribute chain is not free per call."""
 
@@ -473,7 +508,13 @@ def _op(name: str):
         load()
         import torch
 
-        op = getattr(torch.ops.fla_npu_stable, name)
+        try:
+            op = getattr(torch.ops.fla_npu_stable, name)
+        except AttributeError as exc:
+            raise RuntimeError(
+                f"The loaded Stable-ABI launcher {_loaded_path} does not register "
+                f"{name}. Install a complete matching fla_npu wheel."
+            ) from exc
         _OP_CACHE[name] = op
     return op
 
@@ -593,7 +634,7 @@ def npu_recurrent_kda(
 
     ``layout`` is mapped to an int code (BSND=0, TND=1) because the stable
     argument conversions do not carry strings.  Mutates ``initial_state`` in
-    place when ``inplace_final_state`` is true, exactly like the ctypes path.
+    place when ``inplace_final_state`` is true.
     """
 
     layout_code = _char_code("npu_recurrent_kda", "layout", layout)
@@ -606,8 +647,8 @@ def npu_recurrent_kda(
             and initial_state.requires_grad):
         _refuse_grad_state("npu_recurrent_kda", initial_state)
     if not inplace_final_state:
-        # ctypes drives the same kernel with a scratch state and returns it,
-        # leaving the caller's tensor untouched.  The stable launcher only
+        # Run the same kernel with a scratch state and return it, leaving the
+        # caller's tensor untouched. The stable launcher only
         # exposes the inplace form (handing the caller's handle back as a second
         # output trips over shared ownership), so build the scratch here -- which
         # is also what keeps the mutation contract honest: the caller's tensor is
@@ -669,8 +710,8 @@ def npu_recurrent_kda(
     elif inplace_final_state and final_state is None:
         # The launcher returns the inplace result implicitly (the kernel writes
         # the caller's tensor); the stable ABI cannot hand that handle back as a
-        # second output without a double ownership release, so mirror ctypes
-        # here, which also returns the caller's object.
+        # second output without a double ownership release, so return the
+        # caller's object here.
         final_state = initial_state
     if initial_state is not None:
         bump = _INC_VERSION
@@ -736,9 +777,7 @@ def _char_code(op_name: str, argument: str, value):
 # does no argument binding at run time) that maps the public argument names
 # onto the adapter's schema and nothing else.  Validation stays with the
 # operator: an illegal input either reaches aclnn and comes back as a status,
-# or is caught by the C++ adapter.  FLA_NPU_STABLE_VALIDATE=1 routes
-# such a call through the ctypes reference instead, which validates in Python
-# and reports a precise message.
+# or is caught by the C++ adapter.
 #
 # These wrappers are appended after the generated import so a hand-written one
 # always wins, which is what makes migrating an operator a one-file change on
@@ -746,7 +785,7 @@ def _char_code(op_name: str, argument: str, value):
 
 
 def npu_fast_gelu_custom(self):
-    """GELU with the operator's own approximation; mirrors the ctypes shape."""
+    """GELU with the operator's own approximation."""
 
     return _op("npu_fast_gelu_custom")(self, _current_stream_ptr())
 
@@ -763,9 +802,8 @@ def npu_kda_gate_cumsum(g, chunk_size, *, A_log=None, dt_bias=None,
                         safe_gate=False, lower_bound=None):
     """KDA gate with the log-cumsum folded in.
 
-    The schema can only carry real values, so the optional-argument defaults the
-    ctypes reference applies are applied here too (`lower_bound` defaults to
-    -5.0 there, and passing None straight through is not representable).
+    The schema can only carry real values, so the optional-argument default
+    `lower_bound=-5.0` is applied before entering the dispatcher.
     """
 
     return _op("npu_kda_gate_cumsum")(
@@ -788,12 +826,7 @@ def npu_chunk_kda_bwd_intra(q, k, gk, beta, dAqk, dAkk, dq, dk, db, dg, *,
 
     All three layouts go to the kernel: the aclnn entry point takes the layout
     as a string and the kernel reads the tensor as ND, so BSND needs no
-    transposed copy (the ctypes reference does the same thing).  The previous
-    shape/flag guard only kept the dense-BNSD case on this path and sent
-    everything else through the ctypes reference, which cost as much as the
-    reference for the whole operator; validation is now the kernel's job, and
-    FLA_NPU_STABLE_VALIDATE=1 routes a call through the reference when a precise
-    Python-side message matters.
+    transposed copy. Shape validation remains in the adapter and kernel.
     """
 
     # `safe_gate=False` is reserved but not implemented, and the adapter passes
@@ -879,9 +912,8 @@ def npu_chunk_bwd_dqkwg(q, k, v, g, h, dox, dh, dv, chunk_size, *,
                         transpose_state_layout=None):
     """dq / dk / dw / dg of one chunk.
 
-    The three trailing flags are optional in the published signature; the
-    ctypes reference supplies ``scale=1.0`` and ``False`` for the booleans, so
-    do the same here rather than passing None into a scalar slot.
+    The three trailing flags are optional in the published signature. Convert
+    None to ``scale=1.0`` and ``False`` before passing a value to a scalar slot.
     """
 
     return _op("npu_chunk_bwd_dqkwg")(
@@ -966,9 +998,8 @@ def npu_chunk_fwd_o(q, k, v, h, scale, *, g=None, g_gamma=None,
                     output_layout="BNSD"):
     """Output of one chunked attention pass.
 
-    ``g_gamma`` is part of the published signature and ignored, exactly as the
-    ctypes reference ignores it.  ``chunk_size`` defaults to 64 and ``use_exp2``
-    to False, matching the reference's defaults.
+    ``g_gamma`` is part of the published signature and ignored. ``chunk_size``
+    defaults to 64 and ``use_exp2`` to False.
     """
 
     return _op("npu_chunk_fwd_o")(
@@ -1031,18 +1062,30 @@ def _reject_conv1d_scheduling(**values):
             "Ascend operator: " + ", ".join(enabled))
 
 
-def npu_causal_conv1d_fn(x, weight, bias, conv_states=None,
-                         query_start_loc=None, cache_indices=None,
-                         has_initial_state=None, activation="silu",
-                         pad_slot_id=_PAD_SLOT_ID,
-                         null_block_id=_NULL_BLOCK_ID,
-                         block_idx_first_scheduled_token=None,
-                         block_idx_last_scheduled_token=None,
-                         initial_state_idx=None, num_computed_tokens=None,
-                         block_size_to_align=0, metadata=None,
-                         validate_data=False, *, query_start_loc_cpu=None,
-                         cache_indices_cpu=None, has_initial_state_cpu=None,
-                         head_num=0):
+def npu_causal_conv1d_fn(
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor | None,
+    conv_states: torch.Tensor | None = None,
+    query_start_loc: torch.Tensor | None = None,
+    cache_indices: torch.Tensor | None = None,
+    has_initial_state: torch.Tensor | None = None,
+    activation: str | None = "silu",
+    pad_slot_id: int = _PAD_SLOT_ID,
+    null_block_id: int | None = _NULL_BLOCK_ID,
+    block_idx_first_scheduled_token: torch.Tensor | None = None,
+    block_idx_last_scheduled_token: torch.Tensor | None = None,
+    initial_state_idx: torch.Tensor | None = None,
+    num_computed_tokens: torch.Tensor | None = None,
+    block_size_to_align: int = 0,
+    metadata: object | None = None,
+    validate_data: bool = False,
+    *,
+    query_start_loc_cpu: torch.Tensor | Sequence[int] | None = None,
+    cache_indices_cpu: torch.Tensor | Sequence[int] | None = None,
+    has_initial_state_cpu: torch.Tensor | Sequence[int] | None = None,
+    head_num: int = 0,
+) -> torch.Tensor:
     """Prefill: convolve ``x`` and roll its tail into ``conv_states``."""
 
     if (block_idx_first_scheduled_token is not None
@@ -1092,16 +1135,26 @@ def npu_causal_conv1d_fn(x, weight, bias, conv_states=None,
     return result
 
 
-def npu_causal_conv1d_update(x, conv_state, weight, bias=None, activation=None,
-                             conv_state_indices=None,
-                             num_accepted_tokens=None, query_start_loc=None,
-                             max_query_len=-1,
-                             null_block_id=_NULL_BLOCK_ID,
-                             block_idx_last_scheduled_token=None,
-                             initial_state_idx=None, validate_data=False,
-                             out=None, *, conv_state_indices_cpu=None,
-                             num_accepted_tokens_cpu=None,
-                             query_start_loc_cpu=None):
+def npu_causal_conv1d_update(
+    x: torch.Tensor,
+    conv_state: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor | None = None,
+    activation: str | None = None,
+    conv_state_indices: torch.Tensor | None = None,
+    num_accepted_tokens: torch.Tensor | None = None,
+    query_start_loc: torch.Tensor | None = None,
+    max_query_len: int = -1,
+    null_block_id: int | None = _NULL_BLOCK_ID,
+    block_idx_last_scheduled_token: torch.Tensor | None = None,
+    initial_state_idx: torch.Tensor | None = None,
+    validate_data: bool = False,
+    out: torch.Tensor | None = None,
+    *,
+    conv_state_indices_cpu: torch.Tensor | Sequence[int] | None = None,
+    num_accepted_tokens_cpu: torch.Tensor | Sequence[int] | None = None,
+    query_start_loc_cpu: torch.Tensor | Sequence[int] | None = None,
+) -> torch.Tensor:
     """Decode: one token per sequence, mutating ``conv_state`` in place."""
 
     if (block_idx_last_scheduled_token is not None
@@ -1352,6 +1405,19 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
     return (*result, initial_state)
 
 
+def npu_chunk_kda_bwd_prepare(
+    aqk, v_new, d_o, h, *, scale, layout, chunk_size=64,
+    state_v_first=False, cu_seqlens=None, chunk_indices=None,
+):
+    """Partial KDA gradients with contiguous head-major outputs."""
+    return _op("npu_chunk_kda_bwd_prepare")(
+        aqk, v_new, d_o, h, _host_ints(cu_seqlens), _host_ints(chunk_indices),
+        _char_code("npu_chunk_kda_bwd_prepare", "layout", layout),
+        float(scale), int(chunk_size), bool(state_v_first),
+        _current_stream_ptr(),
+    )
+
+
 def npu_chunk_kda_fwd_prepare(q, k, v, g, beta, scale, chunk_size=64, *,
                               layout="BSND", cu_seqlens=None, chunk_indices=None,
                               safe_gate=False, lower_bound=None,
@@ -1367,7 +1433,7 @@ def npu_chunk_kda_fwd_prepare(q, k, v, g, beta, scale, chunk_size=64, *,
     """
     if cu_seqlens and not chunk_indices:
         chunk_indices = _canonical_chunk_indices(cu_seqlens, chunk_size)
-    # 与 ctypes 后端同一口径：L2 的档位契约要求 gk/aqk/w/u/kg/qg_scaled 六个槽
+    # L2 的档位契约要求 gk/aqk/w/u/kg/qg_scaled 六个槽
     # 必选，aux 只在 recompute/save 档出现。调用方省略的前置槽在这里补齐，
     # 这样"不给/只给部分输出槽"都不会报错。
     import torch
@@ -1606,18 +1672,38 @@ def npu_chunk_gated_delta_rule_fwd_prepare(
     return q_hat, k_hat, q_rstd, k_rstd, beta_out, g_cumsum, w, u, a
 
 
+def _chunk_gated_delta_rule_bwd_finalize_arch22(
+        q, k, v, v_new, do, du, g, beta, h, dh, a, *, q_rstd=None,
+        k_rstd=None, beta_raw=None, cu_seqlens=None, chunk_indices=None,
+        scale=None, chunk_size=64, use_qk_l2_norm_in_kernel=False,
+        use_beta_sigmoid_in_kernel=False, use_gate_in_kernel=False,
+        state_v_first=False, use_exp2=True):
+    """Launch the A2/A3 finalize through the stable ABI."""
+
+    if use_gate_in_kernel:
+        raise RuntimeError(
+            "npu_chunk_gated_delta_rule_bwd_finalize: use_gate_in_kernel only "
+            "supports False.")
+    if scale is None:
+        scale = 1.0 / (128.0 ** 0.5)
+    return _op("npu_chunk_gated_delta_rule_bwd_finalize")(
+        q, k, v, v_new, do, du, g, beta, h, dh, a,
+        q_rstd, k_rstd, beta_raw,
+        _host_ints(cu_seqlens), _host_ints(chunk_indices),
+        float(scale), chunk_size, bool(use_qk_l2_norm_in_kernel),
+        bool(use_beta_sigmoid_in_kernel), bool(use_gate_in_kernel),
+        bool(state_v_first), bool(use_exp2),
+        _current_stream_ptr(),
+    )
+
+
 def npu_chunk_gated_delta_rule_bwd_finalize(
         q, k, v, v_new, do, du, g, beta, h, dh, a, *, q_rstd=None,
         k_rstd=None, beta_raw=None, cu_seqlens=None, chunk_indices=None,
         scale=None, chunk_size=64, use_qk_l2_norm_in_kernel=False,
         use_beta_sigmoid_in_kernel=False, use_gate_in_kernel=False,
         state_v_first=False, use_exp2=True):
-    """The Ascend950-only backward finalize, returning dq/dk/dv/dbeta/dg.
-
-    The kernel exists only for Ascend950, and calling it anywhere else has no
-    defined result, so the device is checked here rather than letting the
-    launch decide.
-    """
+    """Dispatch A2/A3 explicitly and preserve the Ascend950 finalize path."""
 
     import torch
 
@@ -1625,6 +1711,17 @@ def npu_chunk_gated_delta_rule_bwd_finalize(
     if device_index is None:
         device_index = torch.npu.current_device()
     device_name = torch.npu.get_device_name(device_index)
+    if device_name.startswith(("Ascend910B", "Ascend910C", "Ascend910_93")):
+        return _chunk_gated_delta_rule_bwd_finalize_arch22(
+            q, k, v, v_new, do, du, g, beta, h, dh, a,
+            q_rstd=q_rstd, k_rstd=k_rstd, beta_raw=beta_raw,
+            cu_seqlens=cu_seqlens, chunk_indices=chunk_indices,
+            scale=scale, chunk_size=chunk_size,
+            use_qk_l2_norm_in_kernel=use_qk_l2_norm_in_kernel,
+            use_beta_sigmoid_in_kernel=use_beta_sigmoid_in_kernel,
+            use_gate_in_kernel=use_gate_in_kernel,
+            state_v_first=state_v_first, use_exp2=use_exp2,
+        )
     if not device_name.startswith("Ascend950"):
         raise RuntimeError(
             "npu_chunk_gated_delta_rule_bwd_finalize only supports Ascend "
@@ -1754,17 +1851,14 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
     * on A2 an odd head count gets a duplicated partner head, because the
       Intra pipeline processes heads in pairs.
 
-    The split/padding rules are the launcher's port of the reference strategy:
     Atlas A5 splits every packed tail, Atlas A2 additionally splits packed
     tails and V=256 calls and pads odd head counts, and Atlas A3 keeps the
-    fused packed launch, where its gradients already match the split path
-    bitwise.  The only other difference from the reference is that the dense
-    call goes to the launcher instead of to ctypes.
+    fused packed launch, where its gradients match the split path bitwise.
     """
 
     import torch
 
-    from ._runtime import optional_bool as _optional_bool
+    from ._parameters import optional_bool as _optional_bool
     from ._kda_policy import _select_kda_bwd_optimized
 
     if _select_kda_bwd_optimized(
@@ -1977,7 +2071,7 @@ def npu_merge_fwd_bwd_kernel(
         )
     loaded_torch_npu = sys.modules.get("torch_npu")
     if loaded_torch_npu is not None:
-        # NCHW=0, ND=2, NCDHW=30, NCL=47. Same public set as the ctypes path.
+        # Public CANN formats: NCHW=0, ND=2, NCDHW=30, NCL=47.
         public_formats = {0, 2, 30, 47}
         for name, tensor in (("h", h), ("ag_hm", ag_hm)):
             try:
@@ -2016,7 +2110,7 @@ del _contract_op
 # [stable-abi adapter] npu_pre_process_fwd_kernel_merged
 def npu_pre_process_fwd_kernel_merged(k, w, u, g=None, *, gk=None, bg=None,
                                       v=None, cu_seqlens=None,
-                                      chunk_size=None):
+                                      chunk_size=64):
     """CP 前处理：把 token 窗口压成仿射链 (h | m)。
 
     与 aclnn 头文件逐参对齐（stream 固定在最后）：
@@ -2024,7 +2118,7 @@ def npu_pre_process_fwd_kernel_merged(k, w, u, g=None, *, gk=None, bg=None,
     也允许子区间 0 <= cu[0] < cu[-1] <= T）。返回 hm[Nseq, HV, K, V+K] FP32。
 
     bg 与 v 是 DPLR 专用参数，本版本不支持 DPLR：必须传 None，
-    传非空直接抛 NotImplementedError（与 ctypes 入口、host 校验判据一致）。
+    传非空直接抛 NotImplementedError（与 host 校验判据一致）。
     """
 
     if cu_seqlens is None:
