@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include "../op_kernel/arch22/chunk_kda_fwd_prepare_target_config.h"
 
 namespace optiling {
 
@@ -38,6 +39,7 @@ struct ChunkKdaFwdPrepareScheduleContext {
     bool isVarLen = false;
     // 调用方未显式识别平台时按较大的 Arch22 slot 保守分配。
     uint64_t workspaceSlotBytes = CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES;
+    bool targetPipeline = false;
 };
 
 struct ChunkKdaFwdPrepareSchedule {
@@ -63,7 +65,12 @@ public:
             (context_.workspaceSlotBytes !=
                  CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES &&
              context_.workspaceSlotBytes !=
-                 CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES)) {
+                 CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES &&
+             context_.workspaceSlotBytes !=
+                 KdaPrepare::Arch22TargetConfig::kSlotBytes) ||
+            context_.targetPipeline !=
+                (context_.workspaceSlotBytes ==
+                 KdaPrepare::Arch22TargetConfig::kSlotBytes)) {
             return false;
         }
 
@@ -87,6 +94,26 @@ public:
         if (chunkWorkItems < context_.aicCoreNum && context_.qkHeadNum > 1) {
             headsPerPartition = context_.valueHeadNum / context_.qkHeadNum;
             partitionCount = context_.qkHeadNum;
+        }
+        if (context_.targetPipeline) {
+            const uint64_t qkGroup =
+                context_.valueHeadNum / context_.qkHeadNum;
+            uint64_t bestCost = std::numeric_limits<uint64_t>::max();
+            for (uint64_t p = 1; p <= context_.qkHeadNum && p <= 4; ++p) {
+                if (context_.valueHeadNum % p != 0 ||
+                    (context_.valueHeadNum / p) % qkGroup != 0) {
+                    continue;
+                }
+                const uint64_t items = chunkWorkItems * p;
+                const uint64_t cores = std::min(items, context_.aicCoreNum);
+                const uint64_t cost =
+                    ((items + cores - 1) / cores) * (context_.valueHeadNum / p);
+                if (cost < bestCost) {
+                    bestCost = cost;
+                    partitionCount = p;
+                }
+            }
+            headsPerPartition = context_.valueHeadNum / partitionCount;
         }
 
         uint64_t totalWorkItems = 0;

@@ -554,6 +554,16 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     const uint64_t aicCoreNum = platform.GetCoreNumAic();
     const bool isAscend950 =
         platform.GetCurNpuArch() == NpuArch::DAV_3510;
+    const bool useArch22TargetVariant =
+        KdaPrepare::Arch22TargetConfig::Matches({
+            static_cast<uint64_t>(shape.batch),
+            static_cast<uint64_t>(shape.seqLen),
+            static_cast<uint64_t>(shape.qkHeadNum),
+            static_cast<uint64_t>(shape.valueHeadNum), totalChunks,
+            isAscend950, isVarLen, shape.sequenceMajor,
+            betaDesc->GetDataType() == ge::DT_BF16,
+            *useNormPtr, *useBetaPtr && !*allowNegPtr, !*useGatePtr,
+            *useExp2Ptr, outputMode == CHUNK_KDA_FWD_PREPARE_OUTPUT_SAVE});
     ChunkKdaFwdPrepareScheduleContext scheduleContext;
     scheduleContext.batch = static_cast<uint64_t>(shape.batch);
     scheduleContext.qkHeadNum = static_cast<uint64_t>(shape.qkHeadNum);
@@ -563,9 +573,12 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     scheduleContext.aicCoreNum = aicCoreNum;
     scheduleContext.libApiWorkspaceBytes = platform.GetLibApiWorkSpaceSize();
     scheduleContext.isVarLen = isVarLen;
+    scheduleContext.targetPipeline = useArch22TargetVariant;
     scheduleContext.workspaceSlotBytes =
         isAscend950 ? CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES
-                    : CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES;
+        : (useArch22TargetVariant
+               ? KdaPrepare::Arch22TargetConfig::kSlotBytes
+               : CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES);
     ChunkKdaFwdPrepareSchedule schedule;
     if (!ChunkKdaFwdPrepareTilingProcessor(scheduleContext).Process(schedule)) {
         OP_LOGE(context->GetNodeName(),
@@ -595,7 +608,9 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     const uint64_t tilingKey = GET_TPL_TILING_KEY(
         gateDtypeToken, betaDtypeToken, normMode, betaMode, gateMode,
         static_cast<uint64_t>(*useExp2Ptr),
-        static_cast<uint64_t>(*safeGatePtr), outputMode);
+        useArch22TargetVariant ? uint64_t{1}
+                               : static_cast<uint64_t>(*safeGatePtr),
+        outputMode);
 
     ChunkKdaFwdPrepareTilingData tiling;
     tiling.set_batch(static_cast<uint32_t>(shape.batch));

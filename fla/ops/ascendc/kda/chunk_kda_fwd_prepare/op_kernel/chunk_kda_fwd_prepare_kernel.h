@@ -19,6 +19,8 @@
 #else
 #include "arch22/chunk_kda_fwd_prepare_cube.h"
 #include "arch22/chunk_kda_fwd_prepare_vec.h"
+#include "arch22/chunk_kda_fwd_prepare_cube_target.h"
+#include "arch22/chunk_kda_fwd_prepare_vec_target.h"
 #endif
 
 namespace KdaPrepare {
@@ -43,24 +45,38 @@ __aicore__ inline void RunPrepare(const PrepareKernelArgs &args)
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         Arch35::ChunkKdaFwdPrepareVec<GateT, BetaT, CompilePolicy> vec;
         vec.Init(args);
+        vec.Process();
 #else
         AscendC::TPipe pipe;
-        Arch22::ChunkKdaFwdPrepareVec<GateT, BetaT, CompilePolicy> vec;
-        vec.Init(args, &pipe);
+        if constexpr (CompilePolicy::arch22FastLeaf) {
+            Arch22Target::TargetVectorContext<GateT, BetaT, CompilePolicy> vec;
+            Arch22Target::InitTargetVec(vec, args, &pipe);
+            Arch22Target::ProcessTargetVec(vec);
+        } else {
+            Arch22::ChunkKdaFwdPrepareVec<GateT, BetaT, CompilePolicy> vec;
+            vec.Init(args, &pipe);
+            vec.Process();
+        }
 #endif
-        vec.Process();
     }
 
     if ASCEND_IS_AIC {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         Arch35::ChunkKdaFwdPrepareCube<CompilePolicy> cube;
         cube.Init(args);
+        cube.Process();
 #else
         AscendC::TPipe pipe;
-        Arch22::ChunkKdaFwdPrepareCube<CompilePolicy> cube;
-        cube.Init(args, &pipe);
+        if constexpr (CompilePolicy::arch22FastLeaf) {
+            Arch22Target::TargetCubeContext<CompilePolicy> cube;
+            Arch22Target::InitTargetCube(cube, args, &pipe);
+            Arch22Target::ProcessTargetCube(cube);
+        } else {
+            Arch22::ChunkKdaFwdPrepareCube<CompilePolicy> cube;
+            cube.Init(args, &pipe);
+            cube.Process();
+        }
 #endif
-        cube.Process();
     }
 }
 

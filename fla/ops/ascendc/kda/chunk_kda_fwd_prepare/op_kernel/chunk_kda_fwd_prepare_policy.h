@@ -117,6 +117,11 @@ struct PrepareCompilePolicy {
     static constexpr bool useExp2 = USE_EXP2;
     static constexpr bool safeGate = SAFE_GATE;
     static constexpr OutputMode outputMode = OUTPUT_MODE;
+    // SAFE_GATE is unused by precomputed gate. Its otherwise unreachable
+    // value 1 selects the internal arch22 target variant without changing ABI.
+    static constexpr bool arch22FastLeaf =
+        SAFE_GATE && GATE_MODE == GateMode::PrecomputedStep;
+    static constexpr bool arch22CubeLeaf = arch22FastLeaf;
     // None/Forward/Recompute/Save 四档的搬出集合：
     //   outputAkk          : Akk（None 之外都写）
     //   outputRecomputeAux : qHat/kHat/qRstd/kRstd/betaEff

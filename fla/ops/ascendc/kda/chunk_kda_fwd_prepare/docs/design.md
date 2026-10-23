@@ -1,5 +1,37 @@
 # ChunkKdaFwdPrepare 设计
 
+### Arch22 target variant
+
+An internal template variant isolates the throughput pipeline from the existing
+arch22 implementation. `arch22/chunk_kda_fwd_prepare_target_config.h` defines
+the host selection contract and the shared workspace slot size. The host emits
+the otherwise unused precomputed-gate `SAFE_GATE=1` keys for that contract only.
+The public `safe_gate` contract and the 13 output slots are unchanged.
+
+The target retains the measured pipeline's AIC norm-sum lookahead, 16-row vector
+tiles, chained Kminus bands, and one-round leaf inverse. For each 32-row leaf,
+the inverse approximation retains terms through `L^3`; the off-diagonal C4/C5
+composition and C7 accumulation retain their FP32 operations. This approximation
+needs precision validation against the unchanged reference and tolerance.
+
+The target workspace has four `0x32400`-byte slots per workgroup. Each slot holds
+the Q/K context and stage payload, raw score/T relay, independent BF16 C7 RHS,
+FP32 norm-sum relay, and `0x7000` bytes of leaf-inverse scratch. Its constants
+live in `Arch22Target`, so the upstream FP32 RHS/Akk fallback layout and A5
+resources remain independent. The target uses 192 KiB UB and 368 KiB L1;
+compile-time assertions bound both resources and match the host slot size.
+
+For B=1, T=8192, HK=HV=96 and 24 AIC cores, the target selects three head
+partitions, each with 32 heads: 128 chunks become 384 work items. With 20 cores,
+two partitions of 48 heads produce 256 work items; the equal-cost four-way
+split is skipped because ties retain the smaller partition count. Both engines
+use the same target-local mapping. Other contracts retain the existing host
+schedule, kernel implementation, cache policy and workspace layout.
+
+The saved candidate was validated on its historical base. Porting to a newer
+base changes the build identity: previous T0/T1 and performance measurements are
+historical evidence, and do not establish acceptance of the ported commit.
+
 ## 1. 边界
 
 `ChunkKdaFwdPrepare` 是独立的 Ascend C 算子，完成：

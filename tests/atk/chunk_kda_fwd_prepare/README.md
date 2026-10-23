@@ -149,6 +149,26 @@ atk node --backend npu --devices 0 task \
 单条仍使用 60 秒上限。内存检查恢复后需另行构建 sanitizer 包并分别运行 memcheck、
 racecheck、initcheck 和 synccheck，不能复用普通优化包的结论。
 
+## Arch22 target variant 验证
+
+新增的内部 target key 使用 BF16/FP32 两种 gate dtype、BF16 beta、L2 norm、
+sigmoid beta、预计算 gate、exp2 和 save 输出；仅 BNSD 的 B=1、T=8192、
+HK=HV=96、完整 64-row chunk 命中。两种 gate dtype 均需单独验证；原有
+432-key 用例的通过不能替代这两个 target key 的验证。
+
+host contract、普通/target slot 和分核的独立检查（从仓库根目录执行）：
+
+```bash
+g++ -std=c++17 -I. \
+  tests/atk/chunk_kda_fwd_prepare/scripts/test_target_tiling.cpp \
+  -o /tmp/chunk_kda_prepare_target_tiling_test
+/tmp/chunk_kda_prepare_target_tiling_test
+```
+
+最新基线移植版的 A2/A3 编译、原精度用例、两个新增 key 的精度/确定性/
+sanitizer、性能 A/B 和低占用护栏需在本提交重新运行。历史候选的测量不能
+作为移植版的通过结论；未执行项保留为 pending。
+
 ## 静态检查
 
 ```bash
