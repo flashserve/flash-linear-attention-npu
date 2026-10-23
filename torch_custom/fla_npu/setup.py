@@ -38,7 +38,7 @@ class CleanBuildPy(_build_py):
         if built_package_dir.exists():
             shutil.rmtree(built_package_dir)
         super().run()
-        for name in ("fla_npu_opp_env.py", "fla_npu_opp_env.pth"):
+        for name in ("fla_npu_opp_env.py", "fla_npu_opp_env.pth", "fla_npu_opp_manage.py"):
             src = SETUP_DIR / name
             if src.exists():
                 self.copy_file(str(src), str(Path(self.build_lib) / name))

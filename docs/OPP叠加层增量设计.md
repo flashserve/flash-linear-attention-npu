@@ -1,7 +1,7 @@
 # FLA NPU 算子包「单算子叠加层」增量设计
 
 - **作者**：zzy1205
-- **状态**：已实现；A5（Ascend950PR）与 A2（Ascend910B3）已完成行为验证
+- **状态**：已实现；已有 A5/A2 行为验证。本轮最终检视修复的证据与未覆盖范围见[修复验证记录](PR878最终检视修复验证.md)
 - **适用范围**：`flash-linear-attention-npu` wheel 内嵌 OPP 的单算子或少量算子迭代
 - **过程归档**：[《OPP 叠加层设计过程记录》](OPP叠加层增量设计-过程记录.md)
 - **兼容性准则**：[《FLA 构建兼容性验证准则》](FLA构建兼容性验证准则.md)
@@ -103,6 +103,7 @@ site-packages/fla_npu/
     ├── config.ini
     ├── fla_npu_overlay_transformer/   # 本 PR 新增的默认 overlay vendor
     │   ├── op_api/lib/libcust_opapi.so
+    │   ├── abi_manifest.json          # 导出契约与 host 库/公共头 SHA256
     │   ├── op_impl/.../config/<soc>/aic-<soc>-ops-info.json
     │   ├── op_impl/.../kernel/<soc>/<op>/*.o
     │   ├── op_impl/.../op_tiling/
@@ -170,6 +171,7 @@ Python npu_xxx(...)
 | vendor 优先级 | `opp/vendors/config.ini` | 记录 overlay 到 base 的默认顺序 |
 | shell 环境脚本 | `<vendor>/bin/set_env.bash` | source 时归一化 `ASCEND_CUSTOM_OPP_PATH` |
 | public aclnn 头 | `<vendor>/op_api/include/aclnnop/*.h` | 编译、安装和运行期可检查的 L1 ABI 契约 |
+| ABI 清单 | `<vendor>/abi_manifest.json` | 打包时验证导出覆盖；安装/import 时核验库与头文件完整性 |
 | custom host 库 | `<vendor>/op_api/lib/libcust_opapi.so` | L1 aclnn 实现 |
 | 算子发现清单 | `<vendor>/op_impl/.../config/<soc>/aic-*-ops-info.json` | L2：CANN 确认自定义算子存在 |
 | 实现源码/JIT 支撑 | `<vendor>/op_impl/.../<vendor>_impl/{dynamic,ascendc}/**` | 随包携带的实现源码、公共头和动态/JIT 支撑文件；不单独决定 overlay 顺序 |
@@ -332,11 +334,11 @@ launcher 相关设计收敛为三条原则，按顺序执行：
   │                   L2-L4: overlay -> base -> built-in
 ```
 
-ABI 通过后允许强制历史 launcher，是因为 base host 入口与 overlay tiling/kernel 的参数契约一致，不会发生参数错位或结构布局不兼容；但这不是完整的 overlay 生效状态：
+现有实现保留“强制历史 launcher 时告警继续”的兼容行为。公共 aclnn ABI 校验只验证 L1 函数原型，不能证明 base host 与 overlay tiling/kernel 的内部结构、序列化格式或业务语义兼容。这条强制路径不属于完整 overlay 正确性的保证范围：
 
 - overlay 的 **host 实现修改不会生效**，因为 L1 仍命中 base；
 - overlay 的 tiling/kernel 修改仍可能生效；
-- 因此这是“可能部分生效，必须告警”，不是“接口不安全，必须报错”。
+- host 与 tiling/kernel 混用来源需要单独验证；正常使用应升级 launcher，或使用默认的 ctypes 回退。
 
 决策树只依赖三类证据：
 
@@ -367,19 +369,35 @@ bash build.sh --pkg --soc=<soc> --ops=<op>[,<dependent>...] \
 build_out/fla_npu_*.run --install-path=<dir> --quiet
 
 # 3. 安装为当前 wheel 内的 overlay
-python -m fla_npu.install_opp \
+python -m fla_npu_opp_manage \
   --overlay \
   --source <dir>/vendors \
   --force
 
 # 4. 审计或回滚
-python -m fla_npu.install_opp --status
-python -m fla_npu.install_opp --remove-overlay
+python -m fla_npu_opp_manage --status
+python -m fla_npu_opp_manage --remove-overlay
 ```
 
 安装或卸载后必须启动新进程。
 
-ABI 校验是 overlay 流程的默认安全步骤，不增加命令参数：custom 包在原构建命令结束前运行 `op_abi_validate.py`，overlay 安装和 import 分别进行 vendor 契约比对。
+### 6.2 完整契约与打包门禁
+
+CPack 在 staging 后、生成 run 包前调用 `_op_abi.py --write-manifest`。工具用 `nm -D` 枚举真实 `aclnn*` 导出，要求每个导出都有可解析的公共契约，且 GetWorkspaceSize 与执行入口配对；随后把契约、host 库与所有公共头的 SHA256 写入 `abi_manifest.json`。无头文件、未覆盖导出、未知类型或不完整的两阶段接口都会使打包失败。pure-ctypes 包同样执行此检查。
+
+run 包的安装和升级脚本必须复制该清单。wheel staging 对安装后的清单再次校验，避免出现“归档内有清单，但实际安装时丢失”的产物。
+
+类型解析保留基础类型和每一级指针，明确区分 `double` / `double*`、`aclTensor*` / `aclTensor**`，拒绝未支持的声明语法。参数名及 cv 限定不参与 C 调用 ABI 比较。当前只有两类显式兼容项：`SolveTri` 头未公开 C 接口，采用已核对源码的冻结契约；`CausalConv1d` 和 `CausalConv1dBwd` 的 Tensor 变体共用各自的执行入口。修改这些接口必须同步修改契约和测试，不能增加泛化的“缺头跳过”。
+
+`build.sh` 在 package 后继续检查 Stable-ABI adapter 与 public 头是否一致。scoped 构建按 aclnn 符号与算子名关联 adapter，也支持原有文件名关联；`causal_conv1d` 即使实现位于 `stable_causal_conv1d_common.cpp` 也必须检查。指定算子找不到 call site 时失败，不能以零检查成功退出。
+
+### 6.3 安装、运行校验与损坏恢复
+
+安装器在写入 overlay 前校验清单和文件 SHA256，再比较 overlay/base 的完整两阶段接口；import 在加载 vendor 动态库前重复校验。旧 base wheel 可以使用其公共头作为兼容基线；overlay 必须有新清单，旧 overlay 需要重新构建。缺失或损坏的清单、缺头、库或头被替换、base 未声明的符号、参数类型漂移均拒绝启用。
+
+清单用于发现构建遗漏和产物不一致，不是数字签名，也不能证明 kernel 算法或内部 tiling ABI 正确。运行校验不执行 `nm`，只使用 Python 标准库；读取并计算 host 库 SHA256 是启用 overlay 后的额外启动开销。
+
+`fla_npu_opp_manage` 是与 `fla_npu` 并列安装的顶层模块，按自身安装路径加载管理器，不导入 `fla_npu.__init__` 或 vendor 库。即使损坏的 overlay 让 `import fla_npu` 失败，`--status` 仍能报告 `ABI: INVALID`，`--remove-overlay` 仍可回滚。原 `python -m fla_npu.install_opp` 在健康环境保留兼容，但恢复操作应使用新的独立入口。
 
 ### 6.4 构建调度、中断与重试
 
@@ -387,7 +405,10 @@ ABI 校验是 overlay 流程的默认安全步骤，不增加命令参数：cust
 
 - `build.sh -jN` 负责一次构建内部的并行编译；`ci/pkg/make_packages.py` 可并行运行 arm/x86 队列，同一架构内的多个 SoC 仍串行使用独占的 build 目录；
 - 本地 Docker 构建和远程 x86 构建都必须放在独立 process group 中；用户中断时向整个进程组转发 `SIGINT`，必要时升级到 `SIGTERM`/`SIGKILL`；
+- 远程使用 `setsid` 建立进程组，内部 `timeout --foreground` 保持编译子树在同组；记录 PGID 与进程启动时间，发信号前检查 PID 是否被复用；
+- 判断退出时检查整个进程组，忽略僵尸状态，不能只等待组长；本地 Docker 失败或中断时按本次唯一容器名执行 `docker rm -f`，因为容器进程由 Docker daemon 管理；
 - 进程组退出后才清理 `build/`、`build_out/`、`third_party/` 和本轮 wheel 输出；没有 `.run`/wheel 的完整产物不得进入成功结果；
+- 清理失败使用不可重试的 `BuildCleanupError`，调度器停止后续重试和 SoC 组合，避免仍有写入者时清理目录；
 - `build.sh` 单次调用不负责自动重试，CI 调度器默认最多重试三次；每次重试都从清理后的目录重新开始；用户中断会停止后续组合，不把中断当成自动重试。
 
 这条边界避免顶层 shell 已退出但 CMake、make 或 `asc_opc` 子进程仍继续写共享目录，导致下一次重试读到半成品。
@@ -483,7 +504,7 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 | 构建中断与重试 | 本地/远程进程组终止后清理半成品，再从干净目录重试；单次 `build.sh` 不自动重试 |
 | JIT | 只确认 JIT 包布局不含 `.o`；当前 AOT wheel staging 和 A5 首调不通过，不能宣称 JIT wheel/运行支持 |
 
-与本次路径修复直接相关的回归结果：
+此前路径修复的回归结果如下；本轮最终检视修复的新增门禁与产物结果见[修复验证记录](PR878最终检视修复验证.md)：
 
 - `tests/test_opp_overlay.py`：12/12 PASS；
 - `tests/test_stable_gates.py`：26 PASS、1 个既有 build-stamp 前置条件 SKIP；
@@ -530,11 +551,11 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 | `--jit`（不带 `--pkg`） | 不满足完整 custom package 条件，不运行门禁 | **不变/不适用** |
 | `--pkg --jit --ops=...` | 保持 host-only/JIT package 构建；若生成 public aclnn 头，则 package 后按 scoped adapter 校验 | **命令兼容**，接口漂移新增失败 |
 | 多 SoC `--soc=a,b,...` | 每个 SoC 仍按原循环配置和打包；每份 custom package 完成后执行同一 ABI 门禁 | **产物流程不变**，增加逐包校验 |
-| `FLA_NPU_BUILD_STABLE_ABI=0` | 继续构建 pure-ctypes wheel；`build.sh` 明确跳过 Stable-ABI adapter/header 门禁 | **不变**，不会因未构建 launcher 被误伤 |
+| `FLA_NPU_BUILD_STABLE_ABI=0` | 继续构建 pure-ctypes wheel；跳过 Stable-ABI adapter/header 门禁，仍执行 CPack 导出/清单门禁 | **命令兼容**；缺失公共契约会失败 |
 | 非法 `--ops` 名称 | 仍由既有前置校验在 CMake 前拒绝 | **不变** |
-| 直接调用 CMake/Make 目标 | 未接入 `build.sh` 的 post-package 门禁 | **不变**；但不属于文档推荐的 overlay 构建入口 |
+| 直接调用 CMake/Make 目标 | custom CPack package 执行清单门禁；单独编译目标不生成清单，也不执行 `build.sh` 的 adapter 门禁 | 应使用推荐的完整打包入口 |
 
-新增门禁只解析已生成的源码/头文件，不增加 CXX、opc 或 kernel 编译次数，也不改变 CMake 依赖图；它会增加一次 package 后的确定性检查耗时。
+门禁解析已生成的源码/头文件、读取 ELF 导出并计算产物哈希，不增加 CXX、opc 或 kernel 编译次数；检查分别发生在 CPack staging 后与 package 完成后。
 
 ### 12.2 构建产物与包布局
 
@@ -545,7 +566,8 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 | wheel 名称、tier、platform tag | 既有 A2/A3/A5 分发规则 | 不因 overlay 改名；仍为原 tier/platform 规则 | **不变** |
 | wheel launcher | `fla_npu/libfla_npu_stable.so` | 文件名和位置不变；内部 `Runtime` 新增 `FLA_NPU_OP_API_LIBS` 多句柄能力，并保留单数变量兼容 | **兼容扩展** |
 | pure-ctypes wheel | 不携带 launcher | 仍可通过 `FLA_NPU_BUILD_STABLE_ABI=0` 生成 | **不变** |
-| wheel Python 文件 | 原运行模块 | 新增 `_op_abi.py`，用于 overlay public aclnn 原型比较 | **兼容扩展**；不改变公开算子 API |
+| wheel Python 文件 | 原运行模块 | `_op_abi.py` 校验导出契约与哈希；新增顶层 `fla_npu_opp_manage.py` 提供独立恢复入口 | **兼容扩展**；不改变公开算子 API |
+| vendor ABI 清单 | 不存在 | 新包包含 `abi_manifest.json`；旧 base 可兼容，旧 overlay 需重建 | **新增产物与 overlay 失败条件** |
 | base OPP 内容 | 完整聚合 host/索引/tiling/kernel | overlay 安装器不修改 base；完整 wheel/run 包仍走原 base 产物 | **不变** |
 | overlay vendor | 不存在 | 新增 `fla_npu_overlay_*` 同级目录，只含增量算子 | **新增功能** |
 | torch/aclnn/schema | 既有公开接口 | 本 PR 不修改算子 `def`、aclnn 参数或 torch schema | **不变** |
@@ -558,7 +580,7 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 | 既有 run 包 `--full`/默认安装 | 主安装器流程与算子支持状态输出不因 overlay CLI 改写 | **不变** |
 | run 包 `--install-path=<dir>` | 仍解出 `<dir>/vendors/fla_npu_transformer`；不执行 overlay/base ABI 比对 | **不变** |
 | `python -m fla_npu.install_opp --install-path` | 保持外部 OPP 拷贝语义，不进入 overlay 校验 | **不变** |
-| `python -m fla_npu.install_opp --overlay` | 新命令；写入独立 overlay 目录和 `config.ini`，写盘前默认比较 overlay/base public aclnn 原型 | **新增功能 + 安全条件** |
+| `python -m fla_npu_opp_manage --overlay` | 写入独立 overlay 目录和 `config.ini`，写盘前校验清单、哈希和 overlay/base 公共契约 | **新增功能 + 安全条件** |
 | `--remove-overlay` | 只删除合法 overlay 并刷新 `config.ini`，拒绝 base 名称和路径逃逸 | **新增功能** |
 | pip `RECORD` | 完整 wheel/run 覆盖流程仍按既有 finalizer 刷新；独立 overlay 不写入 pip 账本 | base 流程**不变**；overlay 由专用 CLI 管理 |
 | `libopapi.so` 别名 | 旧包可能遗留 custom alias | 继续由既有安装/import 清理逻辑移除，避免遮蔽 CANN `libopapi.so` | **不变** |
@@ -598,19 +620,19 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 
 | 维度 | 变化 |
 |---|---|
-| 新增构建失败 | stable adapter 与本次 custom 包 public aclnn 头在参数数量、顺序或类型上不一致；非 custom 和 pure-ctypes 构建不受影响 |
-| 新增安装/import 失败 | overlay 新增 base wheel 未声明的 aclnn 符号，或同名符号 public 原型不同 |
-| 保留的已知缺口 | 没有 public aclnn 头的已登记算子需已知缺口/人工确认；“类型相同但业务语义变化”仍需 schema 和行为测试 |
-| 构建开销 | package 后增加文本解析和比较，不增加 CXX/opc 次数，不重配 CMake |
-| import 开销 | base-only 不解析 overlay 头；启用 overlay 时读取 public aclnn 头做一次进程级检查 |
+| 新增构建失败 | custom 包缺头、导出未覆盖或两阶段不配对；stable adapter 与头的参数数量、顺序或类型不一致；scoped 算子无 call site |
+| 新增安装/import 失败 | overlay 清单缺失、库/头哈希不符、base 未声明符号，或同名符号公共原型不同 |
+| 验证边界 | 仅保留已核对的 SolveTri 冻结契约；“类型相同但业务语义变化”和内部 tiling ABI 仍需行为测试 |
+| 构建开销 | staging 后读取 ELF 导出、头文件并计算哈希，package 后比较 adapter；不增加 CXX/opc 次数 |
+| import 开销 | base-only 不解析 overlay；启用 overlay 时核验库/头 SHA256 和完整公共契约 |
 | 诊断 | 路径被归一化时告警一次；launcher fallback 可通过 `FLA_NPU_STABLE_TRACE=1` 查看；ABI 错误列出具体符号和参数类型差异 |
 
 ### 12.7 源码、CI 与验证结论
 
 - 本 PR 净 diff 不包含 `fla/ops/ascendc`；验证期间为对照 `7e39f966` 临时同步的 4 个 GDN/KDA 文件已移除，不借 overlay 设计修改已有 kernel 实现。
-- ABI gate 位于 `build.sh`，CI 复用同一入口，不在 `ci/run_checks.sh` 外层重复执行。
-- 相关本地/A5 回归为 72 PASS、1 个既有 build-stamp 前置条件 SKIP；实际 base3/delta1 public 头检查 3 个 call site、0 mismatch；注入类型漂移按预期失败；契约完整的 A5 3+1 为 4/4 PASS。
-- `ci/tests/test_run_checks_stage_pipeline.sh` 的 mock 安装路径失败可在未修改的 `f17dbc1` 同样复现，判定为既有测试夹具问题，不是本轮 ABI/兼容性改动引入。
+- 导出/清单门禁位于 CPack staging 后，adapter 门禁位于 `build.sh` package 后；CI 复用这些构建入口。
+- 本轮契约、安装、环境和进程控制回归为 93 PASS、1 个 build-stamp 前置条件 SKIP；A5 全量 run 安装后 74 个导出全部覆盖，adapter 检查 29 个调用点、0 mismatch；新 wheel 的覆盖、回落和恢复通过代表算子验证。
+- `ci/tests/test_run_checks_stage_pipeline.sh` 的 mock 安装路径失败可在未修改的 `a877211a` 同样复现，判定为既有测试夹具问题，不是本轮 ABI/兼容性改动引入。
 - 尚未重跑完整 NPU CI 7 分项；A3 仍只有交叉编译证据，没有真机运行结论。
 
 ## 13. 实现位置
@@ -618,7 +640,9 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 | 文件 | 职责 |
 |---|---|
 | `torch_custom/fla_npu/fla_npu/__init__.py` | overlay 解析、包内边界、路径归一化、host 库列表、旧 launcher 策略 |
-| `torch_custom/fla_npu/fla_npu/_op_abi.py` | 解析 public aclnn 原型并比较 overlay/base ABI |
+| `torch_custom/fla_npu/fla_npu/_op_abi.py` | 严格解析公共契约、生成清单、校验哈希并比较 overlay/base ABI |
+| `cmake/write_opp_abi_manifest.cmake` | CPack staging 后生成并校验 ABI 清单 |
+| `torch_custom/fla_npu/fla_npu_opp_manage.py` | 不导入运行时的独立安装/诊断/回滚入口 |
 | `torch_custom/fla_npu/fla_npu_opp_env.py` | `.pth` 启动阶段解析 `FLA_NPU_OVERLAY_VENDOR` 并预置路径 |
 | `torch_custom/fla_npu/fla_npu/install_opp.py` | overlay 安装、卸载、状态与 `config.ini` 维护 |
 | `torch_custom/fla_npu/csrc/src/runtime.cpp` | 当前 launcher 的多句柄加载与逐符号回落 |

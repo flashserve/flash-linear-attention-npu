@@ -17,12 +17,14 @@ FLA_SETUP = REPO_ROOT / "torch_custom" / "fla_npu"
 INSTALL_OPP = FLA_SETUP / "fla_npu" / "install_opp.py"
 OPP_ENV = FLA_SETUP / "fla_npu_opp_env.py"
 PARITY = FLA_SETUP / "test" / "test_stable_parity.py"
+ABI = runpy.run_path(str(FLA_SETUP / "fla_npu" / "_op_abi.py"))
 
 
 def _minimal_vendor(path: Path) -> None:
     library = path / "op_api" / "lib" / "libcust_opapi.so"
     library.parent.mkdir(parents=True, exist_ok=True)
     library.write_bytes(b"test")
+    _write_aclnn_header(path, "int64_t")
 
 
 def _write_aclnn_header(vendor: Path, scalar_type: str) -> None:
@@ -33,9 +35,15 @@ def _write_aclnn_header(vendor: Path, scalar_type: str) -> None:
         "    const aclTensor *x,\n"
         f"    {scalar_type} mode,\n"
         "    uint64_t *workspaceSize,\n"
-        "    aclOpExecutor **executor);\n",
+        "    aclOpExecutor **executor);\n"
+        "aclnnStatus aclnnDemo(void *workspace, uint64_t workspaceSize,\n"
+        "    aclOpExecutor *executor, aclrtStream stream);\n",
         encoding="utf-8",
     )
+    with mock.patch.dict(ABI["write_manifest"].__globals__, {
+        "exported_symbols": lambda _: {"aclnnDemo", "aclnnDemoGetWorkspaceSize"}
+    }):
+        ABI["write_manifest"](vendor)
 
 
 class OverlayInstallerTest(unittest.TestCase):

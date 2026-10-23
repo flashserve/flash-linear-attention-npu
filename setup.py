@@ -547,6 +547,13 @@ def _validate_staged_opp(vendor_dir):
     if aicpu_impl.exists() and not _has_glob(aicpu_impl, "*.so"):
         raise RuntimeError(f"Embedded OPP AICPU impl is incomplete under {aicpu_impl}")
 
+    # Validate the installed payload: a manifest in the .run archive is not
+    # sufficient if the run installer forgot to copy it into the wheel.
+    spec = importlib.util.spec_from_file_location("fla_npu_build_abi", FLA_NPU_PACKAGE_DIR / "_op_abi.py")
+    abi = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(abi)
+    abi.validated_contracts(vendor_dir, require_manifest=True)
+
 
 def _stage_run_package(run_file, opp_root):
     opp_root = Path(opp_root).resolve()
@@ -771,7 +778,7 @@ class FlaNpuBuildPy(_build_py):
         _stage_run_package(run_package, Path(self.build_lib) / "fla_npu" / "opp")
         _stage_offline_bundle(Path(self.build_lib))
         opp_env_src = REPO_ROOT / "torch_custom" / "fla_npu"
-        for name in ("fla_npu_opp_env.py", "fla_npu_opp_env.pth"):
+        for name in ("fla_npu_opp_env.py", "fla_npu_opp_env.pth", "fla_npu_opp_manage.py"):
             src = opp_env_src / name
             if src.exists():
                 shutil.copyfile(str(src), str(Path(self.build_lib) / name))

@@ -398,7 +398,7 @@ def install_overlay(
     print(
         "  note: pip's RECORD is intentionally not rewritten (the overlay is not a "
         "pip-managed file set). Remove it with:\n"
-        f"        python -m fla_npu.install_opp --remove-overlay --overlay-name {overlay_name}"
+        f"        python -m fla_npu_opp_manage --remove-overlay --overlay-name {overlay_name}"
     )
     return vendor_dst
 
@@ -441,6 +441,9 @@ def print_status() -> None:
             kind = "overlay?"  # installed but not part of the active load order
         files = sum(1 for path in child.rglob("*") if path.is_file())
         print(f"  [{kind:8s}] {child.name}: {files} files, ops={_vendor_ops(child)}")
+        if _is_overlay_name(child.name):
+            problems = compare_overlay_to_base(child, vendors_root / BASE_VENDOR_NAME)
+            print("    ABI: " + ("INVALID: " + "; ".join(problems) if problems else "OK"))
     if not env_set:
         installed = sorted(
             child.name

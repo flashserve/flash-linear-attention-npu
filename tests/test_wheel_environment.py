@@ -111,6 +111,7 @@ def _create_minimal_vendor(vendor_dir: Path, *, include_alias: bool = False) -> 
 
     if include_alias:
         (vendor_dir / "op_api" / "lib" / "libopapi.so").write_bytes(b"unsafe")
+    _write_aclnn_header(vendor_dir, "int64_t")
 
 
 def _write_aclnn_header(vendor_dir: Path, scalar_type: str) -> None:
@@ -121,9 +122,16 @@ def _write_aclnn_header(vendor_dir: Path, scalar_type: str) -> None:
         "    const aclTensor *x,\n"
         f"    {scalar_type} mode,\n"
         "    uint64_t *workspaceSize,\n"
-        "    aclOpExecutor **executor);\n",
+        "    aclOpExecutor **executor);\n"
+        "aclnnStatus aclnnDemo(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream);\n",
         encoding="utf-8",
     )
+
+    abi = runpy.run_path(str(OP_ABI_SOURCE))
+    with mock.patch.dict(abi["write_manifest"].__globals__, {
+        "exported_symbols": lambda _: {"aclnnDemo", "aclnnDemoGetWorkspaceSize"}
+    }):
+        abi["write_manifest"](vendor_dir)
 
 
 def _create_runtime_package(site_root: Path) -> tuple[Path, Path, Path]:
@@ -143,6 +151,16 @@ class WheelEnvironmentTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.setup_globals, cls.setup_kwargs = _load_setup()
+
+    def test_staged_wheel_requires_installed_manifest(self) -> None:
+        validate = self.setup_globals["_validate_staged_opp"]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            vendor = Path(temp_dir) / "vendor"
+            _create_minimal_vendor(vendor)
+            validate(vendor)
+            (vendor / "abi_manifest.json").unlink()
+            with self.assertRaisesRegex(RuntimeError, "Missing.*abi_manifest"):
+                validate(vendor)
 
     def test_staging_removes_conflicting_libopapi_alias(self) -> None:
         stage_run_package = self.setup_globals["_stage_run_package"]
@@ -1076,6 +1094,8 @@ source {set_env!s}
             )
             overlay = base.parent / "fla_npu_overlay_transformer"
             _create_minimal_vendor(overlay)
+            _write_aclnn_header(base, "int64_t")
+            _write_aclnn_header(overlay, "int64_t")
 
             with mock.patch.dict(
                 os.environ,

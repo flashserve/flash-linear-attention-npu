@@ -395,39 +395,56 @@ def artifact_name(meta: dict, soc: str, arch: str) -> str:
 # 子进程 / SSH / rsync
 # ---------------------------------------------------------------------------
 
+class BuildCleanupError(RuntimeError):
+    """The build may still own writers; no subsequent build may clean its tree."""
+
+
+def _process_group_alive(pgid: int) -> bool:
+    """Ignore dead zombies but include descendants after the leader exits."""
+    if sys.platform.startswith("linux"):
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+                if int(fields[2]) == pgid and fields[0] not in {"Z", "X"}:
+                    return True
+            except (OSError, ValueError, IndexError):
+                continue
+        return False
+    try:
+        os.killpg(pgid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+
 def _terminate_process_group(process: subprocess.Popen, *, grace_seconds: float = 5.0) -> None:
-    """Stop a locally launched process and every child it may have spawned."""
-    if process.poll() is not None:
-        return
-    try:
-        if os.name == "posix":
-            os.killpg(process.pid, signal.SIGINT)
-        else:  # pragma: no cover - the package runner is deployed on Linux.
-            process.send_signal(signal.SIGINT)
-    except ProcessLookupError:
-        return
-    try:
-        process.wait(timeout=grace_seconds)
-        return
-    except subprocess.TimeoutExpired:
-        pass
-    try:
-        if os.name == "posix":
-            os.killpg(process.pid, signal.SIGTERM)
-        else:  # pragma: no cover
+    """Confirm the entire owned group is stopped before allowing a retry."""
+    if os.name != "posix":  # pragma: no cover - deployed on Linux
+        if process.poll() is None:
             process.terminate()
-        process.wait(timeout=grace_seconds)
+            try:
+                process.wait(timeout=grace_seconds)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=grace_seconds)
         return
-    except (ProcessLookupError, subprocess.TimeoutExpired):
-        pass
-    try:
-        if os.name == "posix":
-            os.killpg(process.pid, signal.SIGKILL)
-        else:  # pragma: no cover
-            process.kill()
-    except ProcessLookupError:
-        return
-    process.wait()
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
+        process.poll()  # The leader's exit is not group completion.
+        if not _process_group_alive(process.pid):
+            return
+        try:
+            os.killpg(process.pid, sig)
+        except ProcessLookupError:
+            pass
+        deadline = time.monotonic() + grace_seconds
+        while time.monotonic() < deadline:
+            process.poll()
+            if not _process_group_alive(process.pid):
+                return
+            time.sleep(0.05)
+    raise BuildCleanupError(f"Build process group {process.pid} is still alive; refusing cleanup/retry")
 
 
 def run_logged(argv: list, log_file: Path, prefix: str = "",
@@ -444,10 +461,16 @@ def run_logged(argv: list, log_file: Path, prefix: str = "",
             start_new_session=(os.name == "posix"))
         watcher_done = threading.Event()
         watcher: threading.Thread | None = None
+        cancellation_errors: list[Exception] = []
         if stop is not None:
             def watch_stop() -> None:
-                if stop.wait() and not watcher_done.is_set():
-                    _terminate_process_group(process)
+                while not watcher_done.wait(0.1):
+                    if stop.is_set():
+                        try:
+                            _terminate_process_group(process)
+                        except Exception as exc:
+                            cancellation_errors.append(exc)
+                        return
 
             watcher = threading.Thread(target=watch_stop,
                                        name="fla-pkg-stop-watcher",
@@ -461,15 +484,32 @@ def run_logged(argv: list, log_file: Path, prefix: str = "",
                 print(f"{prefix}{line}", end="", flush=True)
             returncode = process.wait()
             handle.write(f"[exit={returncode}]\n")
-        except BaseException:
-            _terminate_process_group(process)
-            raise
         finally:
             watcher_done.set()
             if watcher is not None:
-                watcher.join(timeout=1)
+                watcher.join()
             process.stdout.close()
+            if cancellation_errors:
+                raise BuildCleanupError("Build cancellation failed") from cancellation_errors[0]
+            # A leader can exit while descendants still write the build tree.
+            try:
+                _terminate_process_group(process)
+            except Exception as exc:
+                raise BuildCleanupError(f"Build process group cleanup failed: {exc}") from exc
     return returncode
+
+
+def _remote_build_startup(out_dir: str, build_timeout: int) -> str:
+    inner = (
+        "awk '{print $22}' /proc/$$/stat > start_time; echo $$ > pgid; "
+        f"timeout --foreground {build_timeout} bash build.sh; rc=$?; echo $rc > status"
+    )
+    return (
+        f"cd {shlex.quote(out_dir)}\n"
+        f"nohup setsid bash -c {shlex.quote(inner)} > build.log 2>&1 < /dev/null &\n"
+        "echo $! > pid\n"
+        "echo BOOT:$(awk '/^btime/{print $2}' /proc/stat 2>/dev/null || echo unknown)\n"
+    )
 
 
 class Remote:
@@ -567,23 +607,42 @@ class Remote:
         """Terminate a detached remote build and its descendants."""
         out_q = shlex.quote(out_dir)
         script = f"""
-pgid=$(cat {out_q}/pgid 2>/dev/null || true)
-pid=$(cat {out_q}/pid 2>/dev/null || true)
+for attempt in $(seq 1 30); do
+    pgid=$(cat {out_q}/pgid 2>/dev/null || true)
+    [[ -n "$pgid" ]] && break
+    [[ -f {out_q}/pid ]] || exit 0
+    sleep 0.1
+done
 case "$pgid" in
-  ''|*[!0-9]*)
-    case "$pid" in
-      ''|*[!0-9]*) ;;
-      *) kill -INT "$pid" 2>/dev/null || true ;;
-    esac
-    ;;
-  *)
-    kill -INT -- -"$pgid" 2>/dev/null || true
-    sleep 2
-    kill -TERM -- -"$pgid" 2>/dev/null || true
-    ;;
+  ''|*[!0-9]*|0|1) echo "Missing/invalid build PGID; refusing cleanup" >&2; exit 1 ;;
 esac
+if [[ -r /proc/$pgid/stat ]]; then
+    recorded=$(cat {out_q}/start_time 2>/dev/null)
+    actual=$(awk '{{print $22}}' /proc/$pgid/stat)
+    [[ -n "$recorded" && "$recorded" == "$actual" ]] || {{
+        echo "Build PID identity changed; refusing to signal it" >&2; exit 1;
+    }}
+fi
+group_alive() {{
+    ps -eo pgid=,stat= | awk -v wanted="$pgid" '$1 == wanted && $2 !~ /^[ZX]/ {{ alive=1 }} END {{ exit !alive }}'
+}}
+for sig in INT TERM KILL; do
+    group_alive || exit 0
+    kill -"$sig" -- -"$pgid" 2>/dev/null || true
+    for attempt in $(seq 1 30); do
+        group_alive || exit 0
+        sleep 0.1
+    done
+done
+echo "Build process group is still alive; refusing cleanup/retry" >&2
+exit 1
 """
-        self.exec(script, timeout=60)
+        try:
+            result = self.exec(script, timeout=60)
+        except Exception as exc:
+            raise BuildCleanupError(f"Cannot confirm remote build cancellation: {exc}") from exc
+        if result.returncode != 0:
+            raise BuildCleanupError(f"Remote build cancellation failed: {result.stderr}")
 
 
 # ---------------------------------------------------------------------------
@@ -614,9 +673,10 @@ def build_arm(repo_root: Path, soc: str, wheel_dir: Path, log_file: Path,
         f"FLA_NPU_SOC={soc} python3 scripts/build_wheel.py "
         f"--wheel-dir /workspace/pkg-out"
     )
+    container_name = f"fla-pkg-{soc}-arm-{os.getpid()}-{time.time_ns()}"
     argv = [
         "docker", "run", "--rm",
-        "--name", f"fla-pkg-{soc}-arm-{int(time.time())}",
+        "--name", container_name,
         "--network", "host",
         "-v", f"{repo_root}:/workspace/repo",
         "-v", f"{wheel_dir}:/workspace/pkg-out",
@@ -631,7 +691,18 @@ def build_arm(repo_root: Path, soc: str, wheel_dir: Path, log_file: Path,
             argv += ["-e", f"{name}={value}"]
     argv += [image, "bash", "-lc", command]
 
-    returncode = run_logged(argv, log_file, prefix="    ", stop=stop)
+    returncode = None
+    try:
+        returncode = run_logged(argv, log_file, prefix="    ", stop=stop)
+    finally:
+        if returncode != 0:
+            # Container processes are owned by dockerd, not by the CLI PGID.
+            try:
+                cleanup = subprocess.run(["docker", "rm", "-f", container_name], capture_output=True, text=True)
+            except Exception as exc:
+                raise BuildCleanupError(f"Cannot stop build container {container_name}: {exc}") from exc
+            if cleanup.returncode and "No such container" not in cleanup.stderr:
+                raise BuildCleanupError(f"Cannot stop build container {container_name}: {cleanup.stderr}")
     if returncode != 0:
         raise RuntimeError(f"arm 容器编译失败 (soc={soc}, exit={returncode})，详见日志 {log_file}")
 
@@ -756,7 +827,7 @@ class RemoteWorkspace:
         探活远程编译进程 (pid + uptime)，进程丢失 (如服务器重启) 立即
         失败，不再傻等到超时。
 
-        stop 非空时，置位后轮询尽快退出 (远程编译进程不受影响)。
+        stop 非空时，置位后终止远程构建进程组并退出轮询。
         """
         remote = self.remote
         out_dir = f"{self.base}/out/{soc}-x86"
@@ -790,10 +861,12 @@ class RemoteWorkspace:
             f"scripts/build_wheel.py --wheel-dir {shlex.quote(out_dir)}\n"
         )
         encoded = base64.b64encode(build_script.encode("utf-8")).decode("ascii")
+        remote.cancel_remote_process_group(out_dir)
         remote.check(
             f"mkdir -p {shlex.quote(out_dir)}\n"
             f"rm -f {shlex.quote(out_dir)}/status "
-            f"{shlex.quote(out_dir)}/build.log\n"
+            f"{shlex.quote(out_dir)}/build.log {shlex.quote(out_dir)}/pgid "
+            f"{shlex.quote(out_dir)}/pid {shlex.quote(out_dir)}/start_time\n"
             f"echo {encoded} | base64 -d > {shlex.quote(out_dir)}/build.sh\n",
             timeout=120)
 
@@ -802,16 +875,7 @@ class RemoteWorkspace:
         #    启动时间 (/proc/stat 的 btime 秒级时间戳，比 uptime -s 兼容
         #    性好: BusyBox uptime 不支持 -s，输出随时间变化会误判重启)，
         #    供轮询阶段探活校验
-        startup = remote.check(
-            f"cd {shlex.quote(out_dir)}\n"
-            "nohup setsid bash -c "
-            f"'timeout {build_timeout} bash build.sh; rc=$?; echo $rc > status' "
-            "> build.log 2>&1 < /dev/null &\n"
-            "echo $! > pid\n"
-            "ps -o pgid= -p $! | tr -d ' ' > pgid\n"
-            "echo BOOT:$(awk '/^btime/{print $2}' /proc/stat 2>/dev/null "
-            "|| echo unknown)\n",
-            timeout=120)
+        startup = remote.check(_remote_build_startup(out_dir, build_timeout), timeout=120)
         boot_ref = ""
         for line in startup.splitlines():
             if line.startswith("BOOT:"):
@@ -913,6 +977,9 @@ class RemoteWorkspace:
                         log(f"[警告] 远程 status 异常 ({status!r})，按失败处理")
                     handle.write(f"[remote exit={returncode}]\n")
 
+        # timeout or the build shell may finish before its descendants.
+        # Do not collect artifacts or allow a retry until the group is stopped.
+        remote.cancel_remote_process_group(out_dir)
         if returncode != 0:
             raise RuntimeError(
                 f"x86 远程编译失败 (soc={soc}, exit={returncode})，详见日志 {log_file}")
@@ -1471,6 +1538,8 @@ def main() -> int:
                                                 stop=stop)
                     break
                 except Exception as exc:  # noqa: BLE001 — 失败自动重试
+                    if isinstance(exc, BuildCleanupError):
+                        stop.set()  # A failed cleanup forbids retries and later SOCs.
                     if stop.is_set() or attempt >= max_retries:
                         raise
                     retries_done += 1
@@ -1524,11 +1593,12 @@ def main() -> int:
     except KeyboardInterrupt:
         stop.set()
         interrupted = "用户中断 (Ctrl-C)"
-        log("[中断] 已请求停止后续组合，正在编译的组合完成后收尾；"
+        log("[中断] 已请求终止当前构建并停止后续组合，等待进程组和容器清理；"
             "已完成的产物将在收尾时统一上传，未执行组合将注明'未执行'")
-        # 给工作线程短暂机会完成手头的上传动作
+        # Cleanup may take longer than ten seconds (INT, TERM, KILL and SSH).
+        # Daemon workers must finish cleanup before the main process exits.
         for thread in threads:
-            thread.join(timeout=10)
+            thread.join()
 
     # 收尾: 一次性上传所有成功组合的 wheel，描述注明失败 / 未执行原因
     release_info: dict | None = None
