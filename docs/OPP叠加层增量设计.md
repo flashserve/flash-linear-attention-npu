@@ -457,7 +457,7 @@ Stable-ABI adapter 不属于 vendor overlay。只要 aclnn 接口不变，修改
 
 本轮新增门禁覆盖正常/新版导出、缺失/旧版/异常导出、实际 override 路径、base-only、stamp 失败先行以及 root import 不加载 Torch。`test_stable_parity.py` 已改为同一 Stable 后端的 baseline/candidate 对比，复用 `verify_stable_only_results.py`，记录签名、精确输入输出、可选返回和状态版本；旧后端报告、空运行或错误不能通过。代表配方不等同于全 37 算子数值验证。
 
-本轮离线集成测试为 185 PASS、4 SKIP、451 subtests PASS；CI 契约为 130 PASS、28 SKIP，详见[新增验证记录](PR878最终检视修复验证.md#stable-only-合并适配验证2026-10-23)。本次新版本 launcher 的原生编译、显式导出实测、A5 overlay 覆盖/回落/卸载后数值复验仍待补，不能宣称已完成硬件验收。
+合入主干契约修复 `48a9bf22` 后，离线集成测试为 196 PASS、4 SKIP、503 subtests PASS；CI 契约为 130 PASS、28 SKIP，详见[新增验证记录](PR878最终检视修复验证.md#stable-only-合并适配验证2026-10-23)。本次新版本 launcher 的原生编译、显式导出实测、A5 overlay 覆盖/回落/卸载后数值复验仍待补，不能宣称已完成硬件验收。
 
 | 维度 | 验收结论 |
 |---|---|

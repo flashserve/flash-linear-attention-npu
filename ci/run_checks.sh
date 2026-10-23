@@ -577,6 +577,7 @@ check_environment_contracts() {
     python3 tests/test_stable_build_policy.py -b
     python3 tests/test_stable_gates.py -b
     python3 tests/test_stable_only_runtime.py -b
+    python3 tests/test_stable_only_contracts.py -b
     python3 tests/test_verify_stable_only_results.py -b
     python3 tests/test_aclnn_error_probe.py -b
     python3 tests/test_stable_consumer_migration.py -b

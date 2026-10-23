@@ -32,7 +32,7 @@ jobs:
 
       - name: 执行 Stable 单后端契约与门禁自测
         run: |
-          python -m pytest -q tests/test_stable_gates.py tests/test_stable_only_runtime.py tests/test_verify_stable_only_results.py tests/test_aclnn_error_probe.py tests/test_stable_consumer_migration.py tests/test_stable_build_policy.py tests/test_wheel_environment.py torch_custom/fla_npu/test/test_chunk_kda_bwd_intra_wrapper.py torch_custom/fla_npu/test/test_pre_process_fwd_kernel_merged.py::PreProcessStableTest torch_custom/fla_npu/test/test_aclnn_ctypes_abi.py::StableAbiContractTest torch_custom/fla_npu/test/test_runtime_device_guard.py torch_custom/fla_npu/test/test_ascendc_mutation_contract.py
+          python -m pytest -q tests/test_stable_gates.py tests/test_stable_only_runtime.py tests/test_stable_only_contracts.py tests/test_verify_stable_only_results.py tests/test_aclnn_error_probe.py tests/test_stable_consumer_migration.py tests/test_stable_build_policy.py tests/test_wheel_environment.py torch_custom/fla_npu/test/test_chunk_kda_bwd_intra_wrapper.py torch_custom/fla_npu/test/test_pre_process_fwd_kernel_merged.py::PreProcessStableTest torch_custom/fla_npu/test/test_aclnn_ctypes_abi.py::StableAbiContractTest torch_custom/fla_npu/test/test_runtime_device_guard.py torch_custom/fla_npu/test/test_ascendc_mutation_contract.py
           python -m pytest -q tests/test_opp_overlay.py tests/test_opp_abi_contract.py tests/test_overlay_launcher_capability.py
           python torch_custom/fla_npu/tools/stable_coverage.py --strict
           python torch_custom/fla_npu/tools/stable_ctypes_fallbacks.py
