@@ -315,7 +315,7 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
             cCtx.types[i] = desc->GetDataType();
         }
     }
-    cCtx.types[KDA_C_DQ_RAW] = ge::DT_FLOAT;
+    cCtx.types[KDA_C_DQ_RAW] = isAscend950 ? ge::DT_BF16 : ge::DT_FLOAT;
     cCtx.types[KDA_C_DAQK] = ge::DT_FLOAT;
     cCtx.scale = *scale;
     cCtx.chunkSize = *chunkSize;
@@ -375,8 +375,10 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
         return static_cast<uint32_t>(bytes / KDA::KDA_BWD_WORKSPACE_ALIGN);
     };
     tiling->dv0Offset = encodeOffset(reserve(tokenCount * vDim * dataBytes));
+    // dq_raw stores as BF16 on A5 (KdaBwdDqRawStoreT), FP32 elsewhere.
+    const uint64_t dqRawElemBytes = isAscend950 ? 2U : sizeof(float);
     tiling->dqRawOffset =
-        encodeOffset(reserve(tokenCount * kDim * sizeof(float)));
+        encodeOffset(reserve(tokenCount * kDim * dqRawElemBytes));
     tiling->dAqkOffset = encodeOffset(
         reserve(static_cast<uint64_t>(akkShape.GetShapeSize()) * sizeof(float)));
     tiling->dhOffset = encodeOffset(
