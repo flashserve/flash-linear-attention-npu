@@ -50,6 +50,8 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+from stable_build_policy import validate_build_stamp  # noqa: E402
 
 # Measured on the release build image: glibc 2.34 is what the launcher
 # (dlopen/dlsym/dlerror) and the OPP host libraries need under the pinned Ubuntu
@@ -210,7 +212,6 @@ def check_wheel(
     # Fails closed: without it the version must be the released one exactly.
     allow_local_version: bool = False,
     require_offline_bundle: bool,
-    require_launcher: bool,
     max_glibc: str,
     max_glibcxx: str,
     allow_missing_readelf: bool,
@@ -307,16 +308,15 @@ def check_wheel(
                 f"{wheel.name}: Requires-Python {requires_python!r} does not cover 3.9"
             )
         requires = fields.get("Requires-Dist", [])
-        if require_launcher:
-            # build_wheel.py injects these when the wheel carries the launcher;
-            # a launcher that is not backed by the declaration would fail at
-            # import time on an environment pip was told was fine.
-            for pin in ("torch>=2.7.1", "torch_npu>=2.7.1"):
-                if pin not in requires:
-                    raise CheckFailure(
-                        f"{wheel.name}: the launcher needs {pin!r} in Requires-Dist "
-                        f"(got: {', '.join(requires) or '<none>'})"
-                    )
+        # Every wheel declares these mandatory runtime dependencies;
+        # a launcher that is not backed by the declaration would fail at
+        # import time on an environment pip was told was fine.
+        for pin in ("torch>=2.7.1", "torch_npu>=2.7.1"):
+            if pin not in requires:
+                raise CheckFailure(
+                    f"{wheel.name}: the launcher needs {pin!r} in Requires-Dist "
+                    f"(got: {', '.join(requires) or '<none>'})"
+                )
 
         def find(pattern: str) -> list[str]:
             regex = re.compile(pattern)
@@ -332,12 +332,21 @@ def check_wheel(
                 raise CheckFailure(f"{wheel.name}: missing {what} ({pattern})")
             return found
 
-        if require_launcher:
-            require(r"^fla_npu/libfla_npu_stable\.so$", "the Stable-ABI launcher")
-            require(
-                r"^fla_npu/ops/ascendc/_stable_hash\.py$",
-                "the launcher build stamp (_stable_hash.py)",
-            )
+        launcher = require(r"^fla_npu/libfla_npu_stable\.so$", "the Stable-ABI launcher")
+        stamp = require(
+            r"^fla_npu/ops/ascendc/_stable_hash\.py$",
+            "the launcher build stamp (_stable_hash.py)",
+        )
+        if not archive.read(launcher[0]):
+            raise CheckFailure(f"{wheel.name}: the Stable-ABI launcher is empty")
+        try:
+            validate_build_stamp(archive.read(stamp[0]))
+        except RuntimeError as exc:
+            raise CheckFailure(f"{wheel.name}: {exc}") from exc
+        forbidden = find(r"(^|/)custom_aclnn_extension_lib[^/]*$")
+        forbidden += find(r"^fla_npu/ops/ascendc/_(aclnn_ctypes|runtime)\.py$")
+        if forbidden:
+            raise CheckFailure(f"{wheel.name}: removed backend payload: {', '.join(forbidden)}")
         build_meta = require(r"^fla_npu/_build_meta\.py$", "the tier marker (_build_meta.py)")
         compat = require(r"^fla_npu/_compat\.py$", "the generated version table (_compat.py)")
         tier_source = archive.read(build_meta[0]).decode("utf-8")
@@ -456,11 +465,6 @@ def main() -> int:
         help="accept a daily build: <version>+<branch>_dev<commit>; without it the "
              "version must equal __version__ exactly (what a published wheel carries)",
     )
-    parser.add_argument(
-        "--without-launcher",
-        action="store_true",
-        help="the wheel was built with FLA_NPU_BUILD_STABLE_ABI=0",
-    )
     parser.add_argument("--max-glibc", default=DEFAULT_MAX_GLIBC)
     parser.add_argument("--max-glibcxx", default=DEFAULT_MAX_GLIBCXX)
     parser.add_argument("--allow-missing-readelf", action="store_true")
@@ -487,7 +491,6 @@ def main() -> int:
                 expect_version=expect_version,
                 allow_local_version=args.allow_local_version,
                 require_offline_bundle=args.require_offline_bundle,
-                require_launcher=not args.without_launcher,
                 max_glibc=args.max_glibc,
                 max_glibcxx=args.max_glibcxx,
                 allow_missing_readelf=args.allow_missing_readelf,

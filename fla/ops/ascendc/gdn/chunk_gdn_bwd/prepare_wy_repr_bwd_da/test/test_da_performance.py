@@ -1,3 +1,4 @@
+from fla_npu.ops import ascendc
 import torch
 import torch_npu
 from typing import Optional
@@ -20,7 +21,7 @@ def prepare_cu_seqlens(T: int, L: int = 32, seed: int = 42) -> list[int]:
       - 严格单调递增，无重复
       - 所有值在 [0, T] 范围内
       - 可复现（固定随机种子）
-      
+
     此函数完全避开 torch.Tensor，直接返回 Python 原生 list，
     完美适配 npu 算子对 'Optional[list[int]]' 的类型要求。
 
@@ -48,7 +49,7 @@ def prepare_cu_seqlens(T: int, L: int = 32, seed: int = 42) -> list[int]:
     # 候选集合：1, 2, ..., T-1
     # random.sample 直接返回不重复的列表，无需担心重复
     middle_points = random.sample(range(1, T), L - 2)
-    
+
     # 必须排序以保证单调递增
     middle_points.sort()
 
@@ -62,21 +63,21 @@ def prepare_cu_seqlens(T: int, L: int = 32, seed: int = 42) -> list[int]:
 def prepare_chunk_indices(
     cu_seqlens: list[int],
     chunk_size: int
-) -> list[int]: 
+) -> list[int]:
     """
     基于 cu_seqlens (list[int]) 生成 chunk 索引。
-    
+
     注意：原 PyTorch 版本返回的是 shape [N, 2] 的 Tensor。
     为了保持纯 Python 兼容性，这里返回 list[tuple[start_seq_idx, chunk_idx_in_seq]]。
     如果算子需要扁平化的 list[int] (如 [s0, c0, s1, c1, ...])，请在调用前展开。
-    
+
     逻辑复刻原代码：
     1. 计算每个序列的长度: lens[i] = cu_seqlens[i+1] - cu_seqlens[i]
     2. 计算每个序列需要的 chunk 数: ceil(lens[i] / chunk_size)
     3. 生成对应的 (sequence_id, chunk_id) 对
     """
     indices = []
-    
+
     # 遍历每个序列段
     for i in range(len(cu_seqlens) - 1):
         start = cu_seqlens[i]
@@ -103,9 +104,9 @@ def create_incremental_tensor(shape, dtype=torch.float16, start=1, step=1):
     for dim in shape:
         total_elements *= dim
     tensor = torch.arange(
-        start, 
-        start + total_elements * step, 
-        step, 
+        start,
+        start + total_elements * step,
+        step,
         dtype=dtype
     ).reshape(shape)
     return tensor
@@ -168,7 +169,7 @@ def test_prepare_wy_repr_bwd_da_variable(
     du_npu = du.npu()
     g_npu = g.npu()
 
-    dA_npu = torch.ops.npu.npu_prepare_wy_repr_bwd_da(
+    dA_npu = ascendc.npu_prepare_wy_repr_bwd_da(
         k_npu, v_npu, beta_npu, A_npu, dw_npu, du_npu, g_npu,
         chunk_size=chunk_size, cu_seqlens=cu_seqlens, chunk_indices=chunk_indices
     )
@@ -227,7 +228,7 @@ def test_prepare_wy_repr_bwd_da_fix(
     du_npu = du.npu()
     g_npu = g.npu()
 
-    dA_npu = torch.ops.npu.npu_prepare_wy_repr_bwd_da(
+    dA_npu = ascendc.npu_prepare_wy_repr_bwd_da(
         k_npu, v_npu, beta_npu, A_npu, dw_npu, du_npu, g_npu,
         chunk_size=chunk_size, cu_seqlens=None, chunk_indices=None
     )

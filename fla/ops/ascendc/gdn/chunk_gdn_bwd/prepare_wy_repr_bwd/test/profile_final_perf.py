@@ -42,11 +42,7 @@ PERF_CASES = (
 
 
 def release_aclnn_keepalive():
-    try:
-        runtime_mod = importlib.import_module("fla_npu.ops.ascendc._runtime")
-        runtime_mod._RECENT_LAUNCH_STORAGE.clear()
-    except Exception:
-        pass
+    torch.npu.synchronize()
 
 
 def rand_symmetric(shape: tuple[int, ...], device: str, dtype: torch.dtype):

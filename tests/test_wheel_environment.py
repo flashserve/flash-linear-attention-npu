@@ -117,11 +117,27 @@ def _create_runtime_package(site_root: Path) -> tuple[Path, Path, Path]:
     package_dir.mkdir(parents=True)
     runtime_path = package_dir / "__init__.py"
     shutil.copy2(RUNTIME_SOURCE, runtime_path)
+    for name in ("_backend_policy.py", "_guard.py"):
+        shutil.copy2(RUNTIME_SOURCE.parent / name, package_dir / name)
     vendor_dir = package_dir / "opp" / "vendors" / "fla_npu_transformer"
     packaged_opapi = vendor_dir / "op_api" / "lib" / "libcust_opapi.so"
     packaged_opapi.parent.mkdir(parents=True)
     packaged_opapi.write_bytes(b"packaged-test")
     return runtime_path, vendor_dir, packaged_opapi
+
+
+def _load_runtime(path: Path) -> dict[str, object]:
+    """Load package-relative policy imports just as an installed package does."""
+    spec = importlib.util.spec_from_file_location("fla_npu", path,
+                                                 submodule_search_locations=[str(path.parent)])
+    module = importlib.util.module_from_spec(spec)
+    with mock.patch.dict(sys.modules):
+        for name in list(sys.modules):
+            if name == "fla_npu" or name.startswith("fla_npu."):
+                del sys.modules[name]
+        sys.modules["fla_npu"] = module
+        spec.loader.exec_module(module)
+    return vars(module)
 
 
 class WheelEnvironmentTest(unittest.TestCase):
@@ -192,7 +208,7 @@ class WheelEnvironmentTest(unittest.TestCase):
             setup_globals, setup_kwargs = _load_setup()
             # The predicate reads os.environ, so it has to be called while the
             # environment under test is still in place.
-            self.assertTrue(setup_globals["_stable_build_enabled"]())
+            setup_globals["validate_build_options"]()
             distribution = setup_kwargs["distclass"]()
             self.assertFalse(distribution.is_pure())
             self.assertFalse(distribution.has_ext_modules())
@@ -218,11 +234,10 @@ class WheelEnvironmentTest(unittest.TestCase):
         self.assertNotEqual(platform, "any")
         self.assertEqual(platform, "manylinux_2_34_aarch64")
 
-    def test_stable_launcher_can_be_turned_off(self) -> None:
-        with mock.patch.dict(os.environ,
-                             {"FLA_NPU_BUILD_STABLE_ABI": "0"}):
-            setup_globals, _ = _load_setup()
-            self.assertFalse(setup_globals["_stable_build_enabled"]())
+    def test_stable_launcher_cannot_be_turned_off(self) -> None:
+        with mock.patch.dict(os.environ, {"FLA_NPU_BUILD_STABLE_ABI": "0"}):
+            with self.assertRaisesRegex(RuntimeError, "mandatory Stable-ABI"):
+                _load_setup()
 
     @staticmethod
     def _artifacts_globals() -> dict[str, object]:
@@ -449,7 +464,7 @@ class WheelEnvironmentTest(unittest.TestCase):
         vendor = "fla_npu/opp/vendors/fla_npu_transformer"
         entries = {
             "fla_npu/libfla_npu_stable.so": b"\x7fELF stable",
-            "fla_npu/ops/ascendc/_stable_hash.py": b"SOURCE_HASH = 'deadbeef'\n",
+            "fla_npu/ops/ascendc/_stable_hash.py": b"SOURCE_HASH = '0123456789abcdef0123456789abcdef'\n",
             "fla_npu/_build_meta.py": f"TIER = {declared_tier or tier!r}\n".encode(),
             "fla_npu/_compat.py": b"MIN_CANN = '8.5.2'\nMIN_TORCH = '2.7.1'\n",
             f"{vendor}/op_api/lib/libcust_opapi.so": b"\x7fELF opapi",
@@ -485,7 +500,6 @@ class WheelEnvironmentTest(unittest.TestCase):
                 expect_arch="aarch64",
                 expect_version="26.9.0",
                 require_offline_bundle=False,
-                require_launcher=True,
                 max_glibc="2.28",
                 max_glibcxx="3.4.29",
                 allow_missing_readelf=True,
@@ -535,7 +549,6 @@ class WheelEnvironmentTest(unittest.TestCase):
                 expect_version=expect_version,
                 allow_local_version=allow_local_version,
                 require_offline_bundle=False,
-                require_launcher=True,
                 max_glibc="2.34",
                 max_glibcxx="3.4.29",
                 allow_missing_readelf=True,
@@ -599,41 +612,72 @@ class WheelEnvironmentTest(unittest.TestCase):
                     expect_arch="aarch64",
                     expect_version="26.9.0",
                     require_offline_bundle=False,
-                    require_launcher=True,
-                    max_glibc="2.34",
+                        max_glibc="2.34",
                     max_glibcxx="3.4.29",
                     allow_missing_readelf=True,
                 )
         self.assertTrue(any("kernel" in note for note in notes), notes)
         self.assertTrue(any("purelib" in note for note in notes), notes)
 
-    def test_pure_ctypes_wheel_is_not_required_to_carry_the_launcher(self) -> None:
+    def test_release_gate_rejects_missing_stable_payload_and_old_backends(self) -> None:
         gate = runpy.run_path(str(REPO_ROOT / "scripts" / "check_pypi_wheel.py"))
+        cases = (
+            ("fla_npu/libfla_npu_stable.so", None, "Stable-ABI launcher"),
+            ("fla_npu/ops/ascendc/_stable_hash.py", None, "build stamp"),
+            ("fla_npu/libfla_npu_stable.so", b"", "launcher is empty"),
+            ("fla_npu/ops/ascendc/_stable_hash.py", b"", "Invalid Stable-ABI build stamp"),
+            ("fla_npu/ops/ascendc/_stable_hash.py", b"SOURCE_HASH = 'unknown'", "Invalid Stable-ABI build stamp"),
+            ("fla_npu/ops/ascendc/_stable_hash.py", b"SOURCE_HASH = call()", "Invalid Stable-ABI build stamp"),
+            ("fla_npu/custom_aclnn_extension_lib.cpython-311.so", b"old", "removed backend"),
+            ("fla_npu/ops/ascendc/_aclnn_ctypes.py", b"old", "removed backend"),
+            ("fla_npu/ops/ascendc/_runtime.py", b"old", "removed backend"),
+        )
         with tempfile.TemporaryDirectory() as temp_dir:
             wheel = Path(temp_dir) / (
                 "flash_linear_attention_npu_a5-26.9.0-py3-none-"
                 "manylinux_2_34_x86_64.whl")
-            self._write_release_wheel(wheel, tier="a5", soc="ascend950")
-            with zipfile.ZipFile(wheel) as archive:
-                payload = {i.filename: archive.read(i.filename)
-                           for i in archive.infolist()}
-            payload.pop("fla_npu/libfla_npu_stable.so")
-            payload.pop("fla_npu/ops/ascendc/_stable_hash.py")
-            with zipfile.ZipFile(wheel, "w") as archive:
-                for name, blob in payload.items():
-                    archive.writestr(name, blob)
-            with mock.patch("shutil.which", return_value=None):
-                gate["check_wheel"](
-                    wheel,
-                    expect_tier="a5",
-                    expect_arch="x86_64",
-                    expect_version="26.9.0",
-                    require_offline_bundle=False,
-                    require_launcher=False,
-                    max_glibc="2.34",
-                    max_glibcxx="3.4.29",
-                    allow_missing_readelf=True,
-                )
+            for member, value, message in cases:
+                with self.subTest(member=member):
+                    self._write_release_wheel(wheel, tier="a5", soc="ascend950")
+                    with zipfile.ZipFile(wheel) as archive:
+                        payload = {i.filename: archive.read(i.filename) for i in archive.infolist()}
+                    if value is None:
+                        payload.pop(member)
+                    else:
+                        payload[member] = value
+                    with zipfile.ZipFile(wheel, "w") as archive:
+                        for name, blob in payload.items():
+                            archive.writestr(name, blob)
+                    with mock.patch("shutil.which", return_value=None):
+                        with self.assertRaisesRegex(gate["CheckFailure"], message):
+                            gate["check_wheel"](
+                                wheel, expect_tier="a5", expect_arch="x86_64",
+                                expect_version="26.9.0", require_offline_bundle=False,
+                                max_glibc="2.34", max_glibcxx="3.4.29",
+                                allow_missing_readelf=True,
+                            )
+
+    def test_release_gate_requires_each_runtime_dependency(self) -> None:
+        gate = runpy.run_path(str(REPO_ROOT / "scripts" / "check_pypi_wheel.py"))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wheel = Path(temp_dir) / (
+                "flash_linear_attention_npu_a5-26.9.0-py3-none-manylinux_2_34_x86_64.whl")
+            for pin in ("torch>=2.7.1", "torch_npu>=2.7.1"):
+                with self.subTest(pin=pin):
+                    self._write_release_wheel(wheel, tier="a5", soc="ascend950")
+                    with zipfile.ZipFile(wheel) as archive:
+                        payload = {name: archive.read(name) for name in archive.namelist()}
+                    meta = next(name for name in payload if name.endswith("/METADATA"))
+                    payload[meta] = payload[meta].replace(f"Requires-Dist: {pin}\n".encode(), b"")
+                    with zipfile.ZipFile(wheel, "w") as archive:
+                        for name, blob in payload.items():
+                            archive.writestr(name, blob)
+                    with self.assertRaisesRegex(gate["CheckFailure"], re.escape(pin)):
+                        gate["check_wheel"](
+                            wheel, expect_tier="a5", expect_arch="x86_64",
+                            expect_version="26.9.0", require_offline_bundle=False,
+                            max_glibc="2.34", max_glibcxx="3.4.29", allow_missing_readelf=True,
+                        )
 
     def _write_minimal_wheel(self, path: Path, entries: dict) -> None:
         info = "demo-1.0.dist-info"
@@ -665,25 +709,23 @@ class WheelEnvironmentTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             wheel = Path(temp_dir) / "demo-1.0-py3-none-any.whl"
             self._write_minimal_wheel(
-                wheel, {"fla_npu/libfla_npu_stable.so": b"\x7fELF"})
+                wheel, {"fla_npu/libfla_npu_stable.so": b"\x7fELF",
+                        "fla_npu/ops/ascendc/_stable_hash.py": b"SOURCE_HASH = '0123456789abcdef0123456789abcdef'"})
             build_wheel["_inject_runtime_pins"](wheel)
             text = self._wheel_metadata(wheel)
         self.assertIn("Requires-Dist: torch>=2.7.1", text)
         self.assertIn("Requires-Dist: torch_npu>=2.7.1", text)
         self.assertNotIn("Requires-Dist: torch==", text)
 
-    def test_pure_ctypes_wheel_declares_nothing(self) -> None:
-        """No compiled launcher means no torch constraint to add."""
-
+    def test_wheel_without_launcher_cannot_be_finalized(self) -> None:
         build_wheel = runpy.run_path(str(REPO_ROOT / "scripts" / "build_wheel.py"))
         with tempfile.TemporaryDirectory() as temp_dir:
             wheel = Path(temp_dir) / "demo-1.0-py3-none-any.whl"
             self._write_minimal_wheel(wheel, {"fla_npu/__init__.py": b""})
-            before = self._wheel_metadata(wheel)
-            build_wheel["_inject_runtime_pins"](wheel)
-            after = self._wheel_metadata(wheel)
-        self.assertEqual(before, after)
+            with self.assertRaisesRegex(RuntimeError, "required Stable-ABI payload"):
+                build_wheel["_inject_runtime_pins"](wheel)
 
+    @unittest.skipUnless(shutil.which("bash"), "requires bash; exercised by Linux CI")
     def test_generated_set_env_is_idempotent(self) -> None:
         rewrite_set_env = self.setup_globals["_rewrite_set_env"]
 
@@ -742,6 +784,7 @@ source {set_env!s}
                 (installed_vendor / "op_api" / "lib" / "libopapi.so").exists()
             )
 
+    @unittest.skipUnless(shutil.which("bash"), "requires bash; exercised by Linux CI")
     def test_run_package_overlay_finalization_is_idempotent(self) -> None:
         finalize_wheel_opp = _load_run_package_finalizer()["finalize_wheel_opp"]
 
@@ -872,15 +915,12 @@ source {set_env!s}
         )
         self.assertIn("finalize_wheel_opp.py", custom_build)
 
-    def test_legacy_extension_rpath_keeps_standard_vendor_layout(self) -> None:
-        setup_source = (
-            REPO_ROOT / "torch_custom" / "fla_npu" / "setup.py"
-        ).read_text(encoding="utf-8")
-        self.assertNotIn("-Wl,-rpath,$ORIGIN/_lib", setup_source)
-        self.assertIn(
-            "-Wl,-rpath,$ORIGIN/opp/vendors/fla_npu_transformer/op_api/lib",
-            setup_source,
-        )
+    def test_standalone_build_has_no_legacy_codegen_or_extension(self) -> None:
+        setup_source = (REPO_ROOT / "torch_custom/fla_npu/setup.py").read_text(encoding="utf-8")
+        build_source = (REPO_ROOT / "torch_custom/fla_npu/build.sh").read_text(encoding="utf-8")
+        self.assertNotIn("CppExtension", setup_source)
+        self.assertNotIn("bash gen.sh", build_source)
+        self.assertFalse((REPO_ROOT / "torch_custom/fla_npu/gen.sh").exists())
 
     def test_public_environment_diagnostic_recognizes_packaged_opapi(self) -> None:
         collector = runpy.run_path(str(REPO_ROOT / "scripts" / "collect_public_env.py"))
@@ -909,7 +949,7 @@ source {set_env!s}
     def test_import_requires_cann_environment(self) -> None:
         with mock.patch.dict(os.environ, {}, clear=True):
             with self.assertRaisesRegex(RuntimeError, "CANN environment is not initialized"):
-                runpy.run_path(str(RUNTIME_SOURCE))
+                _load_runtime(RUNTIME_SOURCE)
 
     def test_import_loads_runtime_and_removes_stale_libopapi_alias(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -940,7 +980,7 @@ source {set_env!s}
 
                 with mock.patch("ctypes.CDLL", side_effect=fake_cdll) as cdll:
                     with self.assertWarnsRegex(RuntimeWarning, "Removed a stale"):
-                        runtime_globals = runpy.run_path(str(runtime_path))
+                        runtime_globals = _load_runtime(runtime_path)
                     first = runtime_globals["load_ascendc_opapi_libraries"]()
                     second = runtime_globals["load_ascendc_opapi_libraries"]()
                     self.assertIs(first, second)
@@ -1008,7 +1048,7 @@ source {set_env!s}
                         RuntimeError,
                         r"Unable to load the CANN op_api library.*source.*CANN set_env\.sh",
                     ):
-                        runpy.run_path(str(runtime_path))
+                        _load_runtime(runtime_path)
 
     def test_import_accepts_packaged_opapi_in_standard_vendor_layout(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1025,7 +1065,7 @@ source {set_env!s}
                     "ctypes.CDLL",
                     side_effect=(mock.sentinel.cann_opapi, mock.sentinel.custom_opapi),
                 ) as cdll:
-                    runtime_globals = runpy.run_path(str(runtime_path))
+                    runtime_globals = _load_runtime(runtime_path)
                     self.assertEqual(
                         runtime_globals["load_ascendc_opapi_libraries"](),
                         [mock.sentinel.custom_opapi, mock.sentinel.cann_opapi],
@@ -1058,7 +1098,7 @@ source {set_env!s}
                     FileNotFoundError,
                     r"packaged FLA NPU op_api library",
                 ):
-                    runpy.run_path(str(runtime_path))
+                    _load_runtime(runtime_path)
 
 if __name__ == "__main__":
     unittest.main()

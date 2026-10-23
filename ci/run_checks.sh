@@ -530,9 +530,6 @@ for name in (
     "torch_npu",
     "triton",
     "pybind11",
-    "torchnpugen.gen_op_plugin_functions",
-    "torchnpugen.gen_backend_stubs",
-    "torchnpugen.struct.gen_struct_opapi",
 ):
     try:
         importlib.import_module(name)
@@ -574,6 +571,17 @@ PY
 
 check_environment_contracts() {
     python3 tests/test_wheel_environment.py -b
+    python3 tests/test_stable_build_policy.py -b
+    python3 tests/test_stable_gates.py -b
+    python3 tests/test_stable_only_runtime.py -b
+    python3 tests/test_stable_only_contracts.py -b
+    python3 tests/test_verify_stable_only_results.py -b
+    python3 tests/test_aclnn_error_probe.py -b
+    python3 tests/test_stable_consumer_migration.py -b
+    python3 tests/test_ct_comparison_contracts.py -b
+    TORCH_DEVICE_BACKEND_AUTOLOAD=0 python3 tests/test_atk_kkt_reference_contract.py -b
+    python3 torch_custom/fla_npu/tools/stable_coverage.py --strict
+    python3 torch_custom/fla_npu/tools/stable_ctypes_fallbacks.py
     python3 torch_custom/fla_npu/test/test_aclnn_ctypes_abi.py -b
     python3 torch_custom/fla_npu/test/test_runtime_device_guard.py -b
     python3 torch_custom/fla_npu/test/test_ascendc_mutation_contract.py -b

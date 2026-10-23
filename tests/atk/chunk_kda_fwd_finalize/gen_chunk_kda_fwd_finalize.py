@@ -127,7 +127,7 @@ def _case(index, profile, layout, state_v_first):
         "version": "v2.1",
         "api": "pytorch",
         "api_type": "executor_chunk_kda_fwd_finalize",
-        "expected_error_msg": "",
+        "expected_error_msg": None,
         "backward": False,
         "standard": STANDARD,
         "outputs": None,

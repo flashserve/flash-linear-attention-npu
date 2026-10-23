@@ -32,7 +32,6 @@ except Exception:  # pragma: no cover - permits CPU-only syntax checks
     torch_npu = None
 
 from fla_npu.ops import ascendc as fla_ascendc  # noqa: E402
-from tests.reference.chunk_kda_reference import chunk_kda_forward_reference  # noqa: E402
 
 
 OUTPUT_NAMES = (
@@ -591,6 +590,10 @@ def run_diagnostic(
     gate_bsnd = _head_major_to_bsnd(gate_reference)
 
     reference_start = time.perf_counter()
+    # The full fused reference is optional in source distributions. Standalone
+    # gate checks use the self-contained CPU oracle above and do not need it.
+    from tests.reference.chunk_kda_reference import chunk_kda_forward_reference
+
     reference = chunk_kda_forward_reference(
         q.detach().cpu(),
         k.detach().cpu(),

@@ -1,3 +1,4 @@
+from fla_npu.ops import ascendc
 import torch
 import torch_npu
 from typing import Optional
@@ -54,11 +55,11 @@ def generate_cu_seqlens(
         seq_lengths.append(seq_len)
         remaining -= seq_len
     seq_lengths.append(remaining)
-    
+
     cu_seqlens = [0]
     for seq_len in seq_lengths:
         cu_seqlens.append(cu_seqlens[-1] + seq_len)
-    
+
     tensor = torch.tensor(cu_seqlens, dtype=torch.long)
     if device is not None:
         tensor = tensor.to(device)
@@ -457,7 +458,7 @@ def test_chunk_bwd_dv_local_fix(
     d_o_npu = d_o.npu()
     g_npu = g.npu()
 
-    dv = torch.ops.npu.npu_chunk_bwd_dv_local(
+    dv = ascendc.npu_chunk_bwd_dv_local(
         q_npu, k_npu, d_o_npu, g_npu,
         g_gamma=None,
         A=None,
@@ -519,7 +520,7 @@ def test_chunk_bwd_dv_local_variable(
     cu_seqlens_list = cu_seqlens.tolist()
     chunk_indices_list = chunk_indices.flatten().tolist()
 
-    dv = torch.ops.npu.npu_chunk_bwd_dv_local(
+    dv = ascendc.npu_chunk_bwd_dv_local(
         q_npu, k_npu, d_o_npu, g_npu,
         g_gamma=None,
         A=None,
