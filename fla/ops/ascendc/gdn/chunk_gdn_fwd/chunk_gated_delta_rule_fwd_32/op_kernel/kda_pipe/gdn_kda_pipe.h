@@ -156,17 +156,22 @@ __aicore__ inline void VnewHalfVF(LocalTensor<bfloat16_t> u, LocalTensor<float> 
             const uint16_t r = static_cast<uint16_t>(r0 + k);
             RegTensor<bfloat16_t> a, glo, ghi;
             RegTensor<float> ri, gate;
+            RegTensor<float> even, odd;
             LoadAlign(a, uAddr + static_cast<uint32_t>(r) * kDim);
             // Tight NZ, panel height 16. Each column panel is 16 rows.
             StoreAlign<bfloat16_t, DataCopyMode::DATA_BLOCK_COPY>(nAddr + static_cast<uint32_t>(r) * 16, a, 16,
                                                                   m128);
+            // Gate stays fp32 through the multiply. One CAST_RINT writes v_new_g.
             LoadAlign<float, LoadDist::DIST_BRC_B32>(ri, eAddr + 32 + rowBase + r);
             Mul(gate, last, ri, pregAll);
-            Cast<bfloat16_t, float, GdnFwd32::kCastB322B16>(glo, gate, m16);
-            Cast<bfloat16_t, float, GdnFwd32::kCastB322B16Hi>(ghi, gate, m16);
+            Cast<float, bfloat16_t, GdnFwd32::kCastB162B32>(even, a, m16);
+            Cast<float, bfloat16_t, GdnFwd32::kCastB162B32Hi>(odd, a, m16);
+            Mul(even, even, gate, pregAll);
+            Mul(odd, odd, gate, pregAll);
+            Cast<bfloat16_t, float, GdnFwd32::kCastB322B16>(glo, even, m16);
+            Cast<bfloat16_t, float, GdnFwd32::kCastB322B16Hi>(ghi, odd, m16);
             Or((RegTensor<uint16_t> &)glo, (RegTensor<uint16_t> &)glo, (RegTensor<uint16_t> &)ghi, m16);
-            Mul(a, a, glo, m128);
-            StoreAlign<bfloat16_t, DataCopyMode::DATA_BLOCK_COPY>(gAddr + static_cast<uint32_t>(r) * 16, a, 16,
+            StoreAlign<bfloat16_t, DataCopyMode::DATA_BLOCK_COPY>(gAddr + static_cast<uint32_t>(r) * 16, glo, 16,
                                                                   m128);
         }
     }

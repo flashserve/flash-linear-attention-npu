@@ -326,9 +326,10 @@ __aicore__ inline void BuildTablesVF(LocalTensor<uint32_t> &shiftIdx, LocalTenso
     }
 }
 
-// g' = cumsum(g) / ln(2), eg = exp2(g'). Five gather-adds over the 32 live
-// lanes. shiftIdx[s] gathers lane i from i-2^s (0 when i < 2^s). StoreRcp
-// writes 1/eg into the next 32 lanes so Gate and v_new are multiplies.
+// g_cumsum stays in natural units (useExp2=false). eg = exp(g_cumsum).
+// Five gather-adds over the 32 live lanes. shiftIdx[s] gathers lane i from
+// i-2^s (0 when i < 2^s). StoreRcp writes 1/eg into the next 32 lanes so
+// Gate and v_new are multiplies.
 template <bool StoreRcp = false>
 __aicore__ inline void CumsumExp2VF(LocalTensor<float> &g, LocalTensor<float> &gp, LocalTensor<float> &eg,
                                     LocalTensor<uint32_t> &shiftIdx)
@@ -358,9 +359,7 @@ __aicore__ inline void CumsumExp2VF(LocalTensor<float> &g, LocalTensor<float> &g
             Xor(pregRange, pregHi, pregLo, pregAll);
             Add<float, MaskMergeMode::MERGING>(v, v, shifted, pregRange);
         }
-        Muls(v, v, kRcpLn2, pregN);
         StoreAlign(gpAddr, v, pregN);
-        Muls(v, v, kLn2, pregN);
         Exp(v, v, pregN);
         StoreAlign(egAddr, v, pregN);
         if constexpr (StoreRcp) {
@@ -498,7 +497,7 @@ __aicore__ inline void ScaleRowsBetaExpVF(LocalTensor<bfloat16_t> &x, LocalTenso
 
 // L[i,j] = (i>j) ? beta[i] * eg[i] / eg[j] * kkt : 0
 // attn[i,j] = (i>=j) ? eg[i] / eg[j] * qk : 0, stored as bf16.
-// eg = exp2(g'), so the ratio is exp2(g'[i]-g'[j]) without a per-row Exp.
+// eg = exp(g_cumsum), so the ratio is exp(g[i]-g[j]) without a per-row Exp.
 // Which: 0 both, 1 L only (kkt is ready, qk is not), 2 attn only.
 template <int Which = 0>
 __aicore__ inline void GateAttnVF(LocalTensor<float> &eg, LocalTensor<float> &beta, LocalTensor<float> &kkt,
