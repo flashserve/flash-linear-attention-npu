@@ -83,7 +83,7 @@ def _prepare_kda_bwd_optimized(args):
     import torch
     import torch_npu
     import math
-    from ._runtime import (
+    from ._parameters import (
         optional_bool as _optional_bool, optional_float as _optional_float,
         ACL_FORMAT_ND, ACL_FORMAT_NCHW, ACL_FORMAT_NCDHW, ACL_FORMAT_NCL,
     )

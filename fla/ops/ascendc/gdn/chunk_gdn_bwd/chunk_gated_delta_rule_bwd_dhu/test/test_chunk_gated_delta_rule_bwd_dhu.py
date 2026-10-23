@@ -1,3 +1,4 @@
+from fla_npu.ops import ascendc
 import math
 import torch
 import torch_npu
@@ -486,17 +487,17 @@ def test_fix(
     dv_npu = dv.npu()
     g_npu = g.npu()
 
-    dh_npu, dh0_npu, dv2_npu = torch.ops.npu.npu_chunk_gated_delta_rule_bwd_dhu(
-        q_npu, k_npu, w_npu, d_o_npu, dv_npu, 
-        scale=scale, 
+    dh_npu, dh0_npu, dv2_npu = ascendc.npu_chunk_gated_delta_rule_bwd_dhu(
+        q_npu, k_npu, w_npu, d_o_npu, dv_npu,
+        scale=scale,
         chunk_size=chunk_size,
         g=g_npu,
-        gK=None, 
-        h0=None, 
+        gK=None,
+        h0=None,
         dht=None,
-        cu_seqlens=None, 
+        cu_seqlens=None,
         chunk_indices=None,
-        # use_exp2=False, 
+        # use_exp2=False,
         # transpose_state_layout=False
     )
 
@@ -553,17 +554,17 @@ def test_variable(
     dv_npu = dv.npu()
     g_npu = g.npu()
 
-    dh_npu, dh0_npu, dv2_npu = torch.ops.npu.npu_chunk_gated_delta_rule_bwd_dhu(
-        q_npu, k_npu, w_npu, d_o_npu, dv_npu, 
-        scale=scale, 
+    dh_npu, dh0_npu, dv2_npu = ascendc.npu_chunk_gated_delta_rule_bwd_dhu(
+        q_npu, k_npu, w_npu, d_o_npu, dv_npu,
+        scale=scale,
         chunk_size=chunk_size,
         g=g_npu,
-        gK=None, 
-        h0=None, 
+        gK=None,
+        h0=None,
         dht=None,
-        cu_seqlens=cu_seqlens, 
+        cu_seqlens=cu_seqlens,
         chunk_indices=chunk_indices,
-        # use_exp2=False, 
+        # use_exp2=False,
         # transpose_state_layout=False
     )
 

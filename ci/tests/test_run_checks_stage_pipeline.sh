@@ -74,13 +74,21 @@ bash() {
             return 24
         fi
         mkdir -p build_out
+        mkdir -p build/fake/packages/vendors/fla_npu_transformer/op_api/include/aclnnop
         printf '#!/usr/bin/env bash\nexit 0\n' >build_out/fla_npu_linux-stage-test.run
         chmod +x build_out/fla_npu_linux-stage-test.run
     fi
     return 0
 }
 
-export -f python3 bash
+source() {
+    # Keep this orchestration fixture independent of any CANN/ATB installation
+    # on the test host. Real set_env.sh otherwise overwrites the fake OPP path.
+    printf 'source %q\n' "$1" >>"$CI_TEST_COMMAND_LOG"
+    return 0
+}
+
+export -f python3 bash source
 
 assert_report() {
     local report_file="$1"
@@ -179,6 +187,12 @@ run_case() {
     fi
 
     if [[ "$name" == "scoped" ]]; then
+        grep -Fq 'python3 tests/test_stable_gates.py -b' "$command_log"
+        grep -Fq 'python3 tests/test_stable_only_runtime.py -b' "$command_log"
+        grep -Fq 'python3 tests/test_verify_stable_only_results.py -b' "$command_log"
+        grep -Fq 'python3 tests/test_ct_comparison_contracts.py -b' "$command_log"
+        grep -Fq 'python3 tests/test_atk_kkt_reference_contract.py -b' "$command_log"
+        grep -Fq 'python3 torch_custom/fla_npu/tools/stable_coverage.py --strict' "$command_log"
         grep -Fq 'bash ci/prepare_ci_cache.sh' "$command_log"
         grep -Fq 'bash build.sh --pkg --soc=ascend910b' "$command_log"
     elif [[ "$name" == "prerequisite-failure" ]]; then

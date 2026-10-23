@@ -712,16 +712,20 @@ def test_prepare_wy_repr_bwd_full(
         import ct
         cpu_dv = compute_dv_golden(A, du, beta, cu_seqlens, chunk_indices, B, HV, T, K, chunk_size, NT)
         cpu_dv_high_precision = compute_dv_golden_high_precision(A, du, beta, cu_seqlens, chunk_indices, B, HV, T, K, chunk_size, NT)
-        ct.dual(dv.cpu(), cpu_dv_high_precision, cpu_dv)
+        dv_result = ct.dual(dv.cpu(), cpu_dv_high_precision, cpu_dv)
+        assert dv_result["success"] is True, f"dv comparison failed: {dv_result}"
         cpu_dk = compute_dk_golden(A, dw, g, beta, dA,k, cu_seqlens, chunk_indices, B, HK, HV, T, K, chunk_size, NT)
         cpu_dk_high_precision = compute_dk_golden_high_precision(A, dw, g, beta, dA,k, cu_seqlens, chunk_indices, B, HK, HV, T, K, chunk_size, NT)
-        ct.dual(dk.cpu(), cpu_dk_high_precision, cpu_dk)
+        dk_result = ct.dual(dk.cpu(), cpu_dk_high_precision, cpu_dk)
+        assert dk_result["success"] is True, f"dk comparison failed: {dk_result}"
         cpu_dg = compute_dg_golden(A, dw, g, beta, dA,k, cu_seqlens, chunk_indices, B, HK, HV, T, K, chunk_size, NT)
         cpu_dg_high_precision = compute_dg_golden_high_precision(A, dw, g, beta, dA,k, cu_seqlens, chunk_indices, B, HK, HV, T, K, chunk_size, NT)
-        ct.dual(dg.cpu(), cpu_dg_high_precision, cpu_dg)
+        dg_result = ct.dual(dg.cpu(), cpu_dg_high_precision, cpu_dg)
+        assert dg_result["success"] is True, f"dg comparison failed: {dg_result}"
         cpu_dbeta = compute_dbeta_golden(A, dw, g, beta, dA,k,v,du, cu_seqlens, chunk_indices, B, HK, HV, T, K, chunk_size, NT)
         cpu_dbeta_high_precision = compute_dbeta_golden_high_precision(A, dw, g, beta, dA,k,v,du, cu_seqlens, chunk_indices, B, HK, HV, T, K, chunk_size, NT)
-        ct.dual(dbeta.cpu(), cpu_dbeta_high_precision, cpu_dbeta)
+        dbeta_result = ct.dual(dbeta.cpu(), cpu_dbeta_high_precision, cpu_dbeta)
+        assert dbeta_result["success"] is True, f"dbeta comparison failed: {dbeta_result}"
     finally:
         pass
     # torch.save(cpu_dbeta, "cpu_dbeta.pt") 

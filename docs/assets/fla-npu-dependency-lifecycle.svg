@@ -54,7 +54,7 @@
     <tspan class="body" x="350" y="267" text-anchor="start">• 公开版本与源码标识</tspan>
     <tspan class="body" x="350" y="302" text-anchor="start">• Python wrapper 内容</tspan>
     <tspan class="body" x="350" y="337" text-anchor="start">• 完整 OPP vendor 树</tspan>
-    <tspan class="body" x="350" y="372" text-anchor="start">• 默认不含 legacy 扩展</tspan>
+    <tspan class="body" x="350" y="372" text-anchor="start">• Stable launcher 与构建戳</tspan>
   </text>
 
   <rect class="box" x="620" y="150" width="250" height="350" fill="#EFF9F1" stroke="#4C9B60"/>
@@ -91,7 +91,7 @@
   <rect class="box" x="30" y="575" width="545" height="120" fill="#EEF4FF" stroke="#5B7DB1"/>
   <text x="302.5" text-anchor="middle">
     <tspan class="summary-title" x="302.5" y="608" fill="#C62828">构建时未冻结框架 ABI</tspan>
-    <tspan class="summary" x="302.5" y="638">不读取 torch / torch_npu 头文件、生成代码或 dispatcher</tspan>
+    <tspan class="summary" x="302.5" y="638">vendored Stable 头文件 + torch C ABI 链接库</tspan>
     <tspan class="summary" x="302.5" y="666">不生成 CPython / PyTorch C++ 扩展</tspan>
   </text>
   <rect class="box" x="620" y="575" width="840" height="120" fill="#F4F0FF" stroke="#8266B5"/>
@@ -107,6 +107,6 @@
   <text x="750" text-anchor="middle">
     <tspan x="750" y="800" font-size="18" font-weight="700" fill="#C62828">CI / 发布矩阵给出真实框架兼容范围</tspan>
     <tspan x="750" y="833" font-size="16" fill="#244B2F">逐组验证 Python、torch、torch_npu 的 tensor、stream、autograd、精度和 Example/ST</tspan>
-    <tspan x="750" y="863" font-size="16" font-weight="700" fill="#C62828">结论是“这些组合经过验证”，不是“py3-none-any 自动保证所有组合”</tspan>
+    <tspan x="750" y="863" font-size="16" font-weight="700" fill="#C62828">结论是“这些组合经过验证”，不是“py3-none-platform 自动保证所有组合”</tspan>
   </text>
 </svg>

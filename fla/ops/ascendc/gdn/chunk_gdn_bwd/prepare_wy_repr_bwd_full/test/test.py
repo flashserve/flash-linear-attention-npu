@@ -1,3 +1,4 @@
+from fla_npu.ops import ascendc
 import torch
 import torch_npu
 import os
@@ -601,7 +602,7 @@ def prepare_cu_seqlens(T: int, L: int = 32, seed: int = 42) -> list[int]:
       - 严格单调递增，无重复
       - 所有值在 [0, T] 范围内
       - 可复现（固定随机种子）
-      
+
     此函数完全避开 torch.Tensor，直接返回 Python 原生 list，
     完美适配 npu 算子对 'Optional[list[int]]' 的类型要求。
 
@@ -629,7 +630,7 @@ def prepare_cu_seqlens(T: int, L: int = 32, seed: int = 42) -> list[int]:
     # 候选集合：1, 2, ..., T-1
     # random.sample 直接返回不重复的列表，无需担心重复
     middle_points = random.sample(range(1, T), L - 2)
-    
+
     # 必须排序以保证单调递增
     middle_points.sort()
 
@@ -642,40 +643,40 @@ def prepare_cu_seqlens(T: int, L: int = 32, seed: int = 42) -> list[int]:
 def prepare_chunk_indices(
     cu_seqlens: list[int],
     chunk_size: int
-) -> list[int]: 
+) -> list[int]:
     """
     基于 cu_seqlens (list[int]) 生成 chunk 索引。
-    
+
     注意：原 PyTorch 版本返回的是 shape [N, 2] 的 Tensor。
     为了保持纯 Python 兼容性，这里返回 list[tuple[start_seq_idx, chunk_idx_in_seq]]。
     如果算子需要扁平化的 list[int] (如 [s0, c0, s1, c1, ...])，请在调用前展开。
-    
+
     逻辑复刻原代码：
     1. 计算每个序列的长度: lens[i] = cu_seqlens[i+1] - cu_seqlens[i]
     2. 计算每个序列需要的 chunk 数: ceil(lens[i] / chunk_size)
     3. 生成对应的 (sequence_id, chunk_id) 对
     """
     indices = []
-    
+
     # 遍历每个序列段
     for i in range(len(cu_seqlens) - 1):
         start = cu_seqlens[i]
         end = cu_seqlens[i+1]
         length = end - start
-        
+
         if length <= 0:
             continue
-            
+
         # 计算该序列需要多少个 chunk
         # 等价于 cdiv(length, chunk_size)
         num_chunks = (length + chunk_size - 1) // chunk_size
-        
+
         for chunk_id in range(num_chunks):
             # 原逻辑: indices.eq(0).cumsum(0) - 1 对应的是序列索引 i
             # 原逻辑: indices 对应的是 chunk_id
             indices.append((i))
             indices.append((chunk_id))
-            
+
     return indices
 
 def test_prepare_wy_repr_bwd_full(
@@ -727,7 +728,7 @@ def test_prepare_wy_repr_bwd_full(
 
     # 将张量移到 NPU 并调用反向算子
     if chunk_indices != None:
-        dk, dv, dbeta, dg = torch.ops.npu.npu_prepare_wy_repr_bwd_full(
+        dk, dv, dbeta, dg = ascendc.npu_prepare_wy_repr_bwd_full(
             k.npu(),
             v.npu(),
             beta.npu(),
@@ -741,7 +742,7 @@ def test_prepare_wy_repr_bwd_full(
             chunk_size=chunk_size
         )
     else:
-        dk, dv, dbeta, dg = torch.ops.npu.npu_prepare_wy_repr_bwd_full(
+        dk, dv, dbeta, dg = ascendc.npu_prepare_wy_repr_bwd_full(
             k.npu(),
             v.npu(),
             beta.npu(),
@@ -758,7 +759,7 @@ def test_prepare_wy_repr_bwd_full(
         NT = len(chunk_indices) // 2
     else:
         NT = (T + chunk_size - 1) // chunk_size
-    
+
     try:
         import ct
         cpu_dv = compute_dv_golden(A, du, beta, cu_seqlens, chunk_indices, B, VH, T, K, chunk_size, NT)
@@ -775,7 +776,7 @@ def test_prepare_wy_repr_bwd_full(
         ct.dual(dbeta.cpu(), cpu_dbeta_high_precision, cpu_dbeta)
     finally:
         pass
-    
+
     print(f"test_prepare_wy_repr_bwd_full 被调用了第 {test_prepare_wy_repr_bwd_full.call_count} 次")
     return dk, dv, dbeta, dg
 
@@ -840,7 +841,7 @@ if __name__ == "__main__":
     # cu_seqlens = prepare_cu_seqlens(T = 65536, L = 25)
     # chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size = 64)
     # test_prepare_wy_repr_bwd_full(B = 1, KH = 8, VH = 8, T = 65536, K = 128, V = 128, chunk_size = 64, ktype=torch.float16, btype=torch.float16, cu_seqlens = cu_seqlens, chunk_indices=chunk_indices)
-    
+
     # # 二阶段泛化用例
     # # L7
     # cu_seqlens = prepare_cu_seqlens(T = 16384, L = 128)

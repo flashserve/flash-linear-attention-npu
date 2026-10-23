@@ -8,7 +8,7 @@
 | `pre_process_bwd_kernel_merged.yaml` | ATK 用例 schema（`atk case -f` 用；标准 `mixed_tolerance_bm`） |
 | `gen_pre_process_bwd_kernel_merged.py` | 由 `gen_<op>.py` 内联用例表 展开出精度 / 性能 / 内存三份 ATK 用例矩阵；同时注册 `-scope=gen_cases` 用的 generator |
 | `executor_pre_process_bwd_kernel_merged.py` | ATK executor：按 `case_spec` 确定性构造输入，NPU 走 `fla_npu.ops.ascendc`，CPU 走 `scripts/reference.py` 标杆 |
-| `atk_pre_process_bwd_kernel_merged.json` | 精度矩阵（12 条，`standard.acc` 用 ATK 原生 `output_dtype_overrides` 按模型 dtype 判 `dhm`） |
+| `atk_pre_process_bwd_kernel_merged.json` | 25 条：12 条精度正例和 13 条错误码负例；正例用原生 `output_dtype_overrides` 按模型 dtype 判 `dhm` |
 | `atk_pre_process_bwd_kernel_merged_perf.json` | 性能精简矩阵（4 条：dense / varlen / 32 chunk 长链 / Hv=96 多 head 分核） |
 | `atk_pre_process_bwd_kernel_merged_mss.json` | 内存检测与确定性矩阵（5 条，覆盖 4 种模板参数组合 + varlen） |
 | `scripts/reference.py` | CPU 全精度参考：`preprocess_reference` 给出 `dhm = [E_r \| P_r]`；`dh_scan_direct` 用非零 `dht` 反扫得到真实 `dh0`；`check_affine` 校验 `dh0 == P_r @ dht + E_r` |
@@ -38,8 +38,12 @@ bash tests/atk/run_test_cpu.sh \
 | A5 / `ascend950` | `... -scope=performance`（3 条：dense / varlen / 32 chunk） | **3/3 执行成功**，device 中位耗时 270.7 / 274.1 / 1066.7 µs（见下） |
 
 上面两条精度行是把同一份 `atk_<op>.json` 用 `atk node ... --task accuracy` 直接执行的结果；同一份用例也可以走
-`run_test_cpu.sh -scope=accuracy`。`fla_npu.ops.ascendc` 在本机稳定入口不可用时会自动回退 ctypes 参考通路，
-两条通路共用同一份手写 aclnn，稳定入口本身另有验证（见下文"稳定入口"一节）。
+`run_test_cpu.sh -scope=accuracy`。上述结果是历史版本的执行记录；当前 `fla_npu.ops.ascendc`
+只执行 Stable ABI，缺 launcher 或注册直接报错，不再回退 ctypes。
+
+完整精度矩阵也会经过 13 条负例的 CPU 分支。ATK 丢弃 `non_param` 后，executor 从标量
+通道取得顶层 `Hv/K/V`；负例占位输出据此分配，不读取已不存在的嵌套 `shape`。
+占位张量不表示设备精度通过，NPU 分支仍须真正调用接口并核对精确错误码和预期异常。
 
 `-scope=accuracy` 会走 `--bm_device cpu`，CPU 标杆的比较任务经 ATK 的 broker 队列派发；该 broker 默认占用
 本机 `127.0.0.1:9090`。若 9090 已被其它服务占用（本机即是），runner 会在 compare 阶段报

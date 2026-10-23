@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <stdexcept>
 #include <tuple>
 
 namespace {
@@ -20,6 +21,7 @@ using torch::stable::Tensor;
 using fla_npu_stable::stable::TensorMeta;
 using fla_npu_stable::stable::at_shim::kBFloat16;
 using fla_npu_stable::stable::at_shim::kFloat;
+using fla_npu_stable::stable::at_shim::kHalf;
 using fla_npu_stable::stable::allocate_like;
 using fla_npu_stable::stable::allocate_sizes;
 using fla_npu_stable::stable::cstr;
@@ -35,8 +37,8 @@ using fla_npu_stable::stable::tensor;
 // npu_chunk_local_cumsum
 // ---------------------------------------------------------------------------
 
-constexpr const char* kChunkLocalCumsumOutputDtypeNames[] = {"float32",
-                                                             "bfloat16"};
+constexpr const char* kChunkLocalCumsumOutputDtypeNames[] = {
+    "float32", "bfloat16", "float16", "same"};
 
 constexpr const char* kSchema_chunk_local_cumsum =
     "npu_chunk_local_cumsum(Tensor g, Tensor? cu_seqlens, "
@@ -49,8 +51,16 @@ Tensor run_npu_chunk_local_cumsum(Tensor g, std::optional<Tensor> cu_seqlens,
                                   bool head_first, int64_t output_dtype,
                                   int64_t stream) {
   const TensorMeta g_meta = meta_of(g);
-  Tensor out = allocate_sizes(g_meta.sizes,
-                              output_dtype == 0 ? kFloat : kBFloat16, g_meta);
+  int32_t out_dtype;
+  switch (output_dtype) {
+    case 0: out_dtype = kFloat; break;
+    case 1: out_dtype = kBFloat16; break;
+    case 2: out_dtype = kHalf; break;
+    case 3: out_dtype = g_meta.scalar_type; break;
+    default:
+      throw std::runtime_error("chunk_local_cumsum: invalid output_dtype code");
+  }
+  Tensor out = allocate_sizes(g_meta.sizes, out_dtype, g_meta);
   FLA_STABLE_EXEC("aclnnChunkLocalCumsum", g_meta, stream, tensor(g_meta),
                   int_array(cu_seqlens), int_array(chunk_indices_out),
                   scalar(chunk_size), scalar(reverse), scalar(scale),

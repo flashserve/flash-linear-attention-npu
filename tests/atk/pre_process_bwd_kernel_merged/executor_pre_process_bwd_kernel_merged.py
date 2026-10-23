@@ -143,10 +143,11 @@ def _negative_expected_code(spec: dict):
 def _placeholder_output(spec: dict):
     """反向用例没有真实输出：按用例参数的形状给一个占位 dhm（标准里已标 not_key，不做比对）。"""
 
-    shape = spec["shape"]
-    value_heads = int(shape["Hv"])
-    k_dim = int(shape["K"])
-    v_dim = int(shape["V"])
+    # ATK strips the non_param case_spec; _case_spec reconstructs the flat
+    # scalar attributes, as used by build_inputs and _validate_outputs.
+    value_heads = int(spec["Hv"])
+    k_dim = int(spec["K"])
+    v_dim = int(spec["V"])
     return (torch.zeros((value_heads, k_dim, v_dim + k_dim), dtype=torch.float32),)
 
 
@@ -187,11 +188,11 @@ def run_npu(spec: dict, input_data: InputDataset):
     tensors = build_inputs(spec, _marker_device(input_data))
     if want is not None:
         # 反向（拦截）用例：算子必须报错，且返回码与用例声明一致。返回码取自异常文本里的
-        # ``aclnnStatus=<code>``（与 tests/atk/chunk_kda_fwd 的负向处理同一套口径）。
+        # Stable 的 ``GetWorkspaceSize failed: <code>`` 或原 ACLNN 状态格式。
         try:
             _call_op(tensors, spec, npu=True)
-        except Exception as exc:  # aclnn 抛 RuntimeError，取其中的 aclnnStatus
-            match = re.search(r"aclnnStatus=(\d+)", str(exc))
+        except Exception as exc:  # 必须匹配实际状态码，不能把任意异常当作预期拦截。
+            match = re.search(r"(?:aclnnStatus=|GetWorkspaceSize failed:\s*)(\d+)\b", str(exc))
             got = int(match.group(1)) if match else None
             if got != want:
                 raise RuntimeError(

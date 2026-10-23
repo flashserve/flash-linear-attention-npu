@@ -70,7 +70,7 @@ def _chunk_scaled_dot_kkt_ref(inputs):
                 score = torch.matmul(k_chunk, k_chunk.t())
                 gate = torch.exp(g_chunk[:, None] - g_chunk[None, :])
                 mask = torch.tril(torch.ones((length, length), dtype=calc, device=k.device), diagonal=-1)
-                out[b, hk, start:end, :length] = score * gate * beta_chunk[None, :] * mask
+                out[b, hk, start:end, :length] = score * gate * beta_chunk[:, None] * mask
     return out.to(torch.float32)
 
 

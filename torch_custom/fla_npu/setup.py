@@ -12,59 +12,68 @@ import os
 import shutil
 import subprocess
 import sys
-import sysconfig
 from pathlib import Path
 
-from setuptools import find_packages, setup
+from setuptools import Distribution, find_packages, setup
 from setuptools.command.build_py import build_py as _build_py
-
+from wheel.bdist_wheel import bdist_wheel as _bdist_wheel
 
 SETUP_DIR = Path(__file__).resolve().parent
-REPO_ROOT = Path(__file__).resolve().parents[2]
-PACKAGE_NAME = "flash-linear-attention-npu"
-DEFAULT_VERSION = "1.0.0"
+REPO_ROOT = SETUP_DIR.parents[1]
+PACKAGE_DIR = SETUP_DIR / "fla_npu"
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+from fla_npu_artifacts import (  # noqa: E402
+    get_distribution_name, get_package_version, get_wheel_build_tag,
+    get_wheel_platform_tag,
+)
+from stable_build_policy import (  # noqa: E402
+    LAUNCHER_FILES, RUNTIME_REQUIREMENTS, reject_legacy_artifacts,
+    validate_build_options, validate_launcher_payload, write_runtime_meta,
+)
+
 TRITON_CORE_PACKAGE = "fla_npu.ops.triton.triton_core"
 TRITON_CORE_SOURCE = REPO_ROOT / "fla" / "ops" / "triton" / "triton_core"
-OPP_PACKAGE_DATA = [
-    "opp/**/*",
-    "opp/vendors/config.ini",
-    "opp/vendors/fla_npu_transformer/README.txt",
-]
+OPP_PACKAGE_DATA = ["opp/**/*", "opp/vendors/config.ini"]
 
 
 class CleanBuildPy(_build_py):
     def run(self):
+        validate_build_options()
+        reject_legacy_artifacts(PACKAGE_DIR)
+        _build_stable_abi_library()
+        write_runtime_meta(PACKAGE_DIR)
         built_package_dir = Path(self.build_lib) / "fla_npu"
         if built_package_dir.exists():
             shutil.rmtree(built_package_dir)
         super().run()
-        for name in ("fla_npu_opp_env.py", "fla_npu_opp_env.pth"):
+        for name in ("fla_npu_opp_env.py", "fla_npu_opp_env.pth", "fla_npu_opp_manage.py"):
             src = SETUP_DIR / name
             if src.exists():
                 self.copy_file(str(src), str(Path(self.build_lib) / name))
+        validate_launcher_payload(built_package_dir)
 
 
-def _env_flag(name):
-    return os.getenv(name, "FALSE").upper() in {"1", "TRUE", "YES", "ON"}
+class BinaryDistribution(Distribution):
+    def is_pure(self):
+        return False
+
+    def has_ext_modules(self):
+        return False
 
 
-def _package_version():
-    scripts_dir = REPO_ROOT / "scripts"
-    if not scripts_dir.exists():
-        return DEFAULT_VERSION
+class StableBdistWheel(_bdist_wheel):
+    def finalize_options(self):
+        if self.skip_build:
+            raise RuntimeError(
+                "--skip-build is not supported: rebuild and validate the mandatory "
+                "Stable-ABI launcher and stamp; stale legacy artifacts must not be packaged"
+            )
+        super().finalize_options()
+        self.root_is_pure = False
+        self.build_number = get_wheel_build_tag() or None
 
-    sys.path.insert(0, str(scripts_dir))
-    try:
-        from fla_npu_artifacts import get_package_version
-
-        return get_package_version(REPO_ROOT)
-    except Exception:
-        return DEFAULT_VERSION
-    finally:
-        try:
-            sys.path.remove(str(scripts_dir))
-        except ValueError:
-            pass
+    def get_tag(self):
+        return "py3", "none", get_wheel_platform_tag()
 
 
 def _packages():
@@ -77,173 +86,32 @@ def _packages():
 def _package_dir():
     if not TRITON_CORE_SOURCE.exists():
         return {}
-    # Keep a single Triton source tree in fla/ and map it into the standalone wheel.
-    triton_core_dir = os.path.relpath(TRITON_CORE_SOURCE, SETUP_DIR).replace(os.sep, "/")
-    return {TRITON_CORE_PACKAGE: triton_core_dir}
+    return {TRITON_CORE_PACKAGE: os.path.relpath(TRITON_CORE_SOURCE, SETUP_DIR).replace(os.sep, "/")}
 
 
-def _setup_pure_python():
-    stable_abi_data = _build_stable_abi_library()
-    setup(
-        name=PACKAGE_NAME,
-        version=_package_version(),
-        description="FLA NPU Python runtime",
-        packages=_packages(),
-        package_dir=_package_dir(),
-        package_data={"fla_npu": OPP_PACKAGE_DATA + stable_abi_data},
-        include_package_data=True,
-        zip_safe=False,
-        cmdclass={"build_py": CleanBuildPy},
-    )
-
-
-def _build_stable_abi_library() -> list[str]:
-    """Bundle ``libfla_npu_stable.so`` (the default launcher).
-
-    This is the ABI-free launcher: a plain shared object with no CPython and no
-    libtorch C++ dependency, so a wheel that ships only this (and pure Python)
-    stays usable across Python and torch versions.  Build-time only needs torch
-    headers; nothing is linked against libtorch.  It is built unless
-    ``FLA_NPU_BUILD_STABLE_ABI=0`` asks for a pure-Python (ctypes-only) wheel.
-    """
-
-    if os.getenv("FLA_NPU_BUILD_STABLE_ABI", "TRUE").upper() in {
-            "0", "FALSE", "NO", "OFF"}:
-        return []
-    import subprocess
-
+def _build_stable_abi_library():
+    """Build the mandatory launcher using vendored headers and torch link libraries."""
     builder = SETUP_DIR / "csrc" / "build_stable.py"
-    out = SETUP_DIR / "fla_npu" / "libfla_npu_stable.so"
     subprocess.run(
-        [sys.executable, str(builder), "--no-debug-probe", "--out", str(out)],
+        [sys.executable, str(builder), "--no-debug-probe", "--out",
+         str(PACKAGE_DIR / "libfla_npu_stable.so")],
         check=True,
     )
-    return ["libfla_npu_stable.so"]
+    validate_launcher_payload(PACKAGE_DIR)
 
 
-def _setup_legacy_extension():
-    import torch
-    import torch_npu
-    from torch.utils.cpp_extension import BuildExtension, CppExtension
-
-    pytorch_version = subprocess.check_output(
-        [sys.executable, "-c", 'import torch; print(torch.__version__.split("+")[0])']
-    ).decode("utf-8").strip()
-    version_parts = pytorch_version.split(".")
-    pytorch_version_dir = f"v{version_parts[0]}r{version_parts[1]}"
-
-    os.environ["PYTORCH_VERSION"] = pytorch_version
-    os.environ["PYTORCH_CUSTOM_DERIVATIVES_PATH"] = os.path.join(
-        os.path.dirname(__file__), f"op-plugin/config/{pytorch_version_dir}/derivatives.yaml"
-    )
-    os.environ["ACNN_EXTENSION_PATH"] = os.path.dirname(__file__)
-    os.environ["ACNN_EXTENSION_SWITCH"] = "TRUE"
-
-    def get_sources():
-        sources = []
-        setup_dir = os.path.dirname(__file__)  # setup.py 所在目录
-        
-        aten_dir = os.path.join(setup_dir, "torch_npu/csrc/aten")  # 改为相对基准
-        if os.path.exists(aten_dir):
-            for root, _, files in os.walk(aten_dir):
-                for file in files:
-                    if file.endswith((".cpp", ".cc")):
-                        # 转换为相对于 setup.py 的路径
-                        rel_path = os.path.relpath(os.path.join(root, file), setup_dir)
-                        sources.append(rel_path)
-        
-        ops_dir = os.path.join(setup_dir, "op_plugin")
-        if os.path.exists(ops_dir):
-            for root, _, files in os.walk(ops_dir):
-                for file in files:
-                    if file.endswith((".cpp", ".cc")):
-                        rel_path = os.path.relpath(os.path.join(root, file), setup_dir)
-                        sources.append(rel_path)
-        
-        # 排除的文件也需要用相对路径
-        excluded = {
-            os.path.join("torch_npu/csrc/aten", "VariableTypeEverything.cpp"),
-            os.path.join("torch_npu/csrc/aten", "ADInplaceOrViewTypeEverything.cpp"),
-            os.path.join("torch_npu/csrc/aten", "python_functionsEverything.cpp"),
-            os.path.join("torch_npu/csrc/aten", "RegisterFunctionalizationEverything.cpp"),
-        }
-        return [
-            os.path.relpath(source, SETUP_DIR)
-            for source in sources
-            if source not in excluded
-        ]
-
-    def get_include_dirs():
-        torch_npu_path = os.path.dirname(os.path.realpath(torch_npu.__file__))
-        base_dir = os.path.dirname(__file__)
-        include_dirs = []
-        for relative in ("torch_npu/csrc/aten", "op_plugin", "."):
-            path = os.path.join(base_dir, relative)
-            if os.path.exists(path):
-                include_dirs.append(path)
-        include_dirs.extend(
-            [
-                os.path.join(torch_npu_path, "include"),
-                os.path.join(torch_npu_path, "include", "third_party", "acl", "inc"),
-                os.path.join(torch_npu_path, "include", "third_party", "hccl", "inc"),
-                os.path.join(torch_npu_path, "include", "third_party", "op-plugin"),
-            ]
-        )
-        return include_dirs
-
-    def get_compile_args():
-        compile_args = ["-std=c++17"]
-        if sys.platform == "win32":
-            compile_args.append("/MD")
-        elif sys.platform == "linux":
-            compile_args.append("-fPIC")
-        return compile_args
-
-    def get_link_args():
-        torch_lib = os.path.join(os.path.dirname(torch.__file__), "lib")
-        torch_npu_lib = os.path.join(os.path.dirname(torch_npu.__file__), "lib")
-        link_args = [
-            "-ltorch_npu",
-            "-ltorch",
-            "-lc10",
-            f"-L{sysconfig.get_config_var('LIBDIR')}",
-            f"-L{torch_lib}",
-            f"-L{torch_npu_lib}",
-        ]
-        if sys.platform == "linux":
-            link_args.extend(
-                [
-                    "-Wl,--enable-new-dtags",
-                    "-Wl,-rpath,$ORIGIN/../torch/lib",
-                    "-Wl,-rpath,$ORIGIN/../torch_npu/lib",
-                    "-Wl,-rpath,$ORIGIN/opp/vendors/fla_npu_transformer/op_api/lib",
-                ]
-            )
-        return link_args
-
-    setup(
-        name=PACKAGE_NAME,
-        version=_package_version(),
-        description="FLA NPU legacy PyTorch extension",
-        ext_modules=[
-            CppExtension(
-                "fla_npu.custom_aclnn_extension_lib",
-                sources=get_sources(),
-                include_dirs=get_include_dirs(),
-                extra_compile_args=get_compile_args(),
-                extra_link_args=get_link_args(),
-            )
-        ],
-        cmdclass={"build_ext": BuildExtension, "build_py": CleanBuildPy},
-        zip_safe=False,
-        packages=_packages(),
-        package_dir=_package_dir(),
-        package_data={"fla_npu": OPP_PACKAGE_DATA},
-        include_package_data=True,
-    )
-
-
-if _env_flag("FLA_NPU_BUILD_LEGACY_EXTENSION"):
-    _setup_legacy_extension()
-else:
-    _setup_pure_python()
+validate_build_options()
+setup(
+    name=get_distribution_name(),
+    version=get_package_version(REPO_ROOT),
+    description="FLA NPU Stable-ABI runtime",
+    packages=_packages(),
+    package_dir=_package_dir(),
+    package_data={"fla_npu": OPP_PACKAGE_DATA + list(LAUNCHER_FILES)},
+    include_package_data=True,
+    zip_safe=False,
+    python_requires=">=3.9",
+    install_requires=RUNTIME_REQUIREMENTS,
+    distclass=BinaryDistribution,
+    cmdclass={"build_py": CleanBuildPy, "bdist_wheel": StableBdistWheel},
+)

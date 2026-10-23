@@ -64,7 +64,7 @@ def test_variable():
     chunk_indices_list = chunk_indices.flatten().tolist()
 
     dv = ascendc_ops.npu_chunk_bwd_dv_local(q_npu, k_npu, d_o_npu, g_npu, scale=scale, chunk_size=chunk_size, g_gamma=None, A=None, cu_seqlens=cu_seqlens_list, chunk_indices=chunk_indices_list)
-    result = ct.dual(dv.cpu(), dv_golden, dv_golden_high_precision)
+    result = ct.dual(test=dv.cpu(), gt=dv_golden_high_precision, bench=dv_golden)
     assert result["success"] is True
 
 
@@ -98,7 +98,7 @@ def test_fix():
     d_o_npu = d_o.npu()
     g_npu = g.npu()
     dv = ascendc_ops.npu_chunk_bwd_dv_local(q_npu, k_npu, d_o_npu, g_npu, scale=scale, chunk_size=chunk_size, g_gamma=None, A=None, cu_seqlens=None, chunk_indices=None)
-    result = ct.dual(dv.cpu(), dv_golden, dv_golden_high_precision)
+    result = ct.dual(test=dv.cpu(), gt=dv_golden_high_precision, bench=dv_golden)
     assert result["success"] is True
 
 

@@ -119,6 +119,7 @@ npu-smi info
 | `FLA_NPU_ENV`          | `fla_npu_transformer` 的 `set_env.bash` 路径；设置后脚本会 source                  |
 | `ATK_OUTPUT_ROOT`      | ATK 输出根目录，默认是算子目录下的`./atk_output`                                     |
 | `ATK_GM_INIT_MODE`     | GM 数据初始化模式，默认`on`；可设 `on/off`                                        |
+| `ATK_GM_INIT_MB`       | 可选正十进制整数（无前导零）；仅精度阶段使用，`on` 时传 `--gm_init_flag <值>`，默认空保留 ATK 默认策略；`off` 与非空值冲突 |
 | `REQUIRED_ATK_VERSION` | ATK 最低版本要求，默认`26.8.8`；一般无需修改                                         |
 | `ATK_TIMEOUT`          | 精度阶段超时时间，默认`14400`                                                        |
 | `DC_LOOP_NUMS`         | 确定性循环次数，默认`50`                                                             |
@@ -126,6 +127,19 @@ npu-smi info
 | `PERFORMANCE_TIMEOUT`  | 性能阶段超时时间，默认`2000`                                                         |
 | `MSS_TOOL`             | mssanitizer 工具，默认`memcheck`                                                     |
 | `MSS_LOG_PATH`         | ATK`-msl` 日志路径；默认 `${ATK_OUTPUT_ROOT}/mssanitizer_<op>_<时间戳>.log`        |
+
+ATK 26.9.8 的 GM 初始化存在已确认的字节/元素数差异：
+`atk/tasks/backends/npu_backend.py` 中 `calculate_gm_reserve_size` 返回字节数，
+调用方将其直接作为 `torch.empty` 的元素数；默认 float32 下实际申请约为计算字节数的
+4 倍。默认策略因此可能申请接近全部空闲 HBM，实测可在算子执行前因申请 122.41 GiB
+而 OOM。此类失败属于测试工具初始化失败，不能记作算子数值回归或已通过精度验收。
+
+需要显式限制初始化规模时，可设置 `ATK_GM_INIT_MODE=on ATK_GM_INIT_MB=512`。
+脚本记录该值并传递官方 CLI `--gm_init_flag 512`，仍执行 NaN 初始化；由于上述
+26.9.8 实现差异，该配置在默认 float32 下实际约申请 2 GiB，不能将变量名中的 MB
+直接当作此版本的实际分配量。该选项只调整测试环境的初始化内存规模，不修改 JSON、
+输入 seed、CPU 标杆、比较方法或容差；重跑仍须执行原有全部用例。未设置该变量时
+保留原行为，`ATK_GM_INIT_MODE=off` 与非空 `ATK_GM_INIT_MB` 会直接报错。
 
 ## 统一脚本
 
@@ -320,6 +334,41 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 
 from _ascendc_common_executor import _case_spec
 ```
+
+## 结果门禁
+
+`run_test_cpu.sh` 将四个阶段分别输出到 `accuracy`、`perf`、`determinism` 和
+`mssanitizer` 子目录，并用本次开始时间、所选 JSON 的用例数量和精确 ID 集合检查报告。
+缺少检查器、报告缺失/损坏/过期、空跑、部分执行、未知或失败状态均返回非零退出码。
+不能用历史成功报告补足本次执行。报告字段按官方 ATK 26.9.8 的 `summary` 和
+`statistic` 表核验；单节点性能没有对比标杆时，必须仍有每个用例的成功状态与有限正耗时。
+这些耗时只证明完成采样，不代表已通过性能回归目标。
+
+内存检查同时将同一个 `MSS_LOG_PATH` 传给外层 `mssanitizer --log-file` 与 ATK
+`-msl`；该文件必须是本次新路径。除 XLSX 结果外，还要求本次非空日志中目标 OPP
+kernel 的检测开始、无错误完成记录相互匹配，且次数不小于所选用例数。只有工具启动信息、
+辅助 kernel、空日志、未插桩/不支持或未完成记录均不能通过。当前工具日志没有 case ID，
+因此日志与 XLSX 的组合证明本次检测数量和用例执行集合，不提供逐 case 的日志绑定。
+
+`all` 会检查现有固化 JSON 的全部用例，但不能代替本文件要求的接口、seed、平台和
+TilingKey 覆盖审查；缺少相应资产或覆盖时，仍不能宣布完整验收。
+
+正常用例的顶层 `expected_error_msg` 必须为 `null` 或省略；真实负例保留明确的非空
+错误匹配文本。统一入口在执行前拒绝空字符串和纯空白。ATK 26.9.8 的执行阶段用
+`is None` 判断是否允许捕获异常，后处理却用字符串真值判断是否匹配预期错误，
+因此空字符串可能吞掉 DUT 异常并留下空输出。配置检查不能用“只看 SUCCESS”替代；
+历史空哨兵报告需修正配置后重跑，确定性结果为 True 也不能证明曾产生有效输出。
+精度阶段另外从所选 JSON 传入负例 ID 与非空预期错误；检查器默认将所有用例视为正例，
+不会根据报告自行豁免。负例必须执行成功，报告中的用例 ID/预期错误须与输入配置一致，
+DUT 精度布尔值及 `精度详情` 中的官方错误匹配结果均须为 True，并重新核对实际异常。
+此时 CPU 精度列的 False 是 ATK 的非数值比较占位，不能当作正例精度通过。汇总分别要求
+数值通过数等于正例数、错误信息匹配数等于负例数，总数和执行成功数仍须覆盖全部用例。
+例如 preprocess 的 25 条精度用例必须证明 12 条数值通过及 13 条预期异常匹配。
+这里只修正错误预期的哨兵，不改变输入、seed、CPU 标杆或容差。`input_bytes` /
+`output_bytes` 在正常非性能任务中也可能未填充，不能将其默认 `None` 单独当作失败依据。
+确定性门禁另外核对官方 `output_info_list`：每个用例必须至少有一个非零元素 Tensor 的
+合法 dtype、shape、stride 描述符。允许多输出中的可选 `None` 或空 Tensor，但只有空集合、
+只有 `None`、描述符损坏或整组输出均为空时，即使确定性布尔结果为 True 也不通过。
 
 ## 验收结果记录
 

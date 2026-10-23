@@ -1,0 +1,505 @@
+{
+  "baseline": "8762b6139de96e62205cefb1595aa41e38497e82",
+  "calls": {
+    "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dqkwg/tests/pta.py": [
+      {
+        "op": "npu_chunk_bwd_dqkwg",
+        "args": [
+          "q_npu",
+          "k_npu",
+          "v_npu",
+          "g_npu",
+          "h_npu",
+          "do_npu",
+          "dh_npu",
+          "dv_npu",
+          "chunk_size"
+        ],
+        "kwargs": [
+          [
+            "cu_seqlens",
+            "cu_seqlens"
+          ],
+          [
+            "chunk_indices",
+            "chunk_indices_npu"
+          ],
+          [
+            "w",
+            "None"
+          ],
+          [
+            "g_gamma",
+            "None"
+          ],
+          [
+            "scale",
+            "scale"
+          ],
+          [
+            "transpose_state_layout",
+            "None"
+          ]
+        ]
+      }
+    ],
+    "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dv_local/tests/test.py": [
+      {
+        "op": "npu_chunk_bwd_dv_local",
+        "args": [
+          "q_npu",
+          "k_npu",
+          "d_o_npu",
+          "g_npu"
+        ],
+        "kwargs": [
+          [
+            "g_gamma",
+            "None"
+          ],
+          [
+            "A",
+            "None"
+          ],
+          [
+            "cu_seqlens",
+            "None"
+          ],
+          [
+            "chunk_indices",
+            "None"
+          ],
+          [
+            "scale",
+            "scale"
+          ],
+          [
+            "chunk_size",
+            "chunk_size"
+          ]
+        ]
+      },
+      {
+        "op": "npu_chunk_bwd_dv_local",
+        "args": [
+          "q_npu",
+          "k_npu",
+          "d_o_npu",
+          "g_npu"
+        ],
+        "kwargs": [
+          [
+            "g_gamma",
+            "None"
+          ],
+          [
+            "A",
+            "None"
+          ],
+          [
+            "cu_seqlens",
+            "cu_seqlens_list"
+          ],
+          [
+            "chunk_indices",
+            "chunk_indices_list"
+          ],
+          [
+            "scale",
+            "scale"
+          ],
+          [
+            "chunk_size",
+            "chunk_size"
+          ]
+        ]
+      }
+    ],
+    "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_dhu/test/test_chunk_gated_delta_rule_bwd_dhu.py": [
+      {
+        "op": "npu_chunk_gated_delta_rule_bwd_dhu",
+        "args": [
+          "q_npu",
+          "k_npu",
+          "w_npu",
+          "d_o_npu",
+          "dv_npu"
+        ],
+        "kwargs": [
+          [
+            "scale",
+            "scale"
+          ],
+          [
+            "chunk_size",
+            "chunk_size"
+          ],
+          [
+            "g",
+            "g_npu"
+          ],
+          [
+            "gK",
+            "None"
+          ],
+          [
+            "h0",
+            "None"
+          ],
+          [
+            "dht",
+            "None"
+          ],
+          [
+            "cu_seqlens",
+            "None"
+          ],
+          [
+            "chunk_indices",
+            "None"
+          ]
+        ]
+      },
+      {
+        "op": "npu_chunk_gated_delta_rule_bwd_dhu",
+        "args": [
+          "q_npu",
+          "k_npu",
+          "w_npu",
+          "d_o_npu",
+          "dv_npu"
+        ],
+        "kwargs": [
+          [
+            "scale",
+            "scale"
+          ],
+          [
+            "chunk_size",
+            "chunk_size"
+          ],
+          [
+            "g",
+            "g_npu"
+          ],
+          [
+            "gK",
+            "None"
+          ],
+          [
+            "h0",
+            "None"
+          ],
+          [
+            "dht",
+            "None"
+          ],
+          [
+            "cu_seqlens",
+            "cu_seqlens"
+          ],
+          [
+            "chunk_indices",
+            "chunk_indices"
+          ]
+        ]
+      }
+    ],
+    "fla/ops/ascendc/gdn/chunk_gdn_bwd/prepare_wy_repr_bwd_da/test/test_da.py": [
+      {
+        "op": "npu_prepare_wy_repr_bwd_da",
+        "args": [
+          "k_npu",
+          "v_npu",
+          "beta_npu",
+          "A_npu",
+          "dw_npu",
+          "du_npu",
+          "g_npu"
+        ],
+        "kwargs": [
+          [
+            "chunk_size",
+            "chunk_size"
+          ],
+          [
+            "cu_seqlens",
+            "cu_seqlens"
+          ],
+          [
+            "chunk_indices",
+            "chunk_indices"
+          ]
+        ]
+      },
+      {
+        "op": "npu_prepare_wy_repr_bwd_da",
+        "args": [
+          "k_npu",
+          "v_npu",
+          "beta_npu",
+          "A_npu",
+          "dw_npu",
+          "du_npu",
+          "g_npu"
+        ],
+        "kwargs": [
+          [
+            "chunk_size",
+            "chunk_size"
+          ],
+          [
+            "cu_seqlens",
+            "None"
+          ],
+          [
+            "chunk_indices",
+            "None"
+          ]
+        ]
+      }
+    ],
+    "fla/ops/ascendc/gdn/chunk_gdn_bwd/prepare_wy_repr_bwd_da/test/test_da_performance.py": [
+      {
+        "op": "npu_prepare_wy_repr_bwd_da",
+        "args": [
+          "k_npu",
+          "v_npu",
+          "beta_npu",
+          "A_npu",
+          "dw_npu",
+          "du_npu",
+          "g_npu"
+        ],
+        "kwargs": [
+          [
+            "chunk_size",
+            "chunk_size"
+          ],
+          [
+            "cu_seqlens",
+            "cu_seqlens"
+          ],
+          [
+            "chunk_indices",
+            "chunk_indices"
+          ]
+        ]
+      },
+      {
+        "op": "npu_prepare_wy_repr_bwd_da",
+        "args": [
+          "k_npu",
+          "v_npu",
+          "beta_npu",
+          "A_npu",
+          "dw_npu",
+          "du_npu",
+          "g_npu"
+        ],
+        "kwargs": [
+          [
+            "chunk_size",
+            "chunk_size"
+          ],
+          [
+            "cu_seqlens",
+            "None"
+          ],
+          [
+            "chunk_indices",
+            "None"
+          ]
+        ]
+      }
+    ],
+    "fla/ops/ascendc/gdn/chunk_gdn_bwd/prepare_wy_repr_bwd_full/test/test.py": [
+      {
+        "op": "npu_prepare_wy_repr_bwd_full",
+        "args": [
+          "k.npu()",
+          "v.npu()",
+          "beta.npu()",
+          "A.npu()",
+          "dA.npu()",
+          "dw.npu()",
+          "du.npu()",
+          "g.npu()"
+        ],
+        "kwargs": [
+          [
+            "cu_seqlens",
+            "cu_seqlens"
+          ],
+          [
+            "chunk_indices",
+            "chunk_indices"
+          ],
+          [
+            "chunk_size",
+            "chunk_size"
+          ]
+        ]
+      },
+      {
+        "op": "npu_prepare_wy_repr_bwd_full",
+        "args": [
+          "k.npu()",
+          "v.npu()",
+          "beta.npu()",
+          "A.npu()",
+          "dA.npu()",
+          "dw.npu()",
+          "du.npu()",
+          "g.npu()"
+        ],
+        "kwargs": [
+          [
+            "cu_seqlens",
+            "None"
+          ],
+          [
+            "chunk_indices",
+            "None"
+          ],
+          [
+            "chunk_size",
+            "chunk_size"
+          ]
+        ]
+      }
+    ],
+    "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/tests/pta/test_fwd_o.py": [
+      {
+        "op": "npu_chunk_fwd_o",
+        "args": [
+          "q",
+          "k",
+          "v",
+          "h",
+          "gdn_fwd_o_input.scale"
+        ],
+        "kwargs": [
+          [
+            "g",
+            "g"
+          ],
+          [
+            "g_gamma",
+            "None"
+          ],
+          [
+            "cu_seqlens",
+            "input_tensor.cu_seqlens.tolist() if input_tensor.cu_seqlens is not None else None"
+          ],
+          [
+            "chunk_indices",
+            "input_tensor.chunk_offsets.flatten().tolist() if input_tensor.chunk_offsets is not None else None"
+          ],
+          [
+            "chunk_size",
+            "gdn_fwd_o_input.chunk_size"
+          ],
+          [
+            "transpose_state_layout",
+            "False"
+          ]
+        ]
+      }
+    ],
+    "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/tests/pta/test_fwd_h.py": [
+      {
+        "op": "npu_chunk_gated_delta_rule_fwd_h",
+        "args": [
+          "input_tensor.k.npu()",
+          "input_tensor.w.npu()",
+          "input_tensor.u.npu()"
+        ],
+        "kwargs": [
+          [
+            "g",
+            "input_tensor.g.npu()"
+          ],
+          [
+            "initial_state",
+            "input_tensor.initial_state.npu() if input_tensor.initial_state is not None else None"
+          ],
+          [
+            "output_final_state",
+            "gdn_fwd_h_input.store_final_state"
+          ],
+          [
+            "chunk_size",
+            "gdn_fwd_h_input.chunk_size"
+          ],
+          [
+            "cu_seqlens",
+            "_as_int_list(input_tensor.cu_seqlens)"
+          ],
+          [
+            "chunk_indices",
+            "_as_int_list(input_tensor.chunk_offsets)"
+          ]
+        ]
+      }
+    ],
+    "fla/ops/ascendc/gdn/chunk_gdn_fwd/recompute_w_u_fwd/test/test.py": [
+      {
+        "op": "npu_recompute_w_u_fwd",
+        "args": [
+          "k.npu()",
+          "v.npu()",
+          "beta.npu()",
+          "A.npu()",
+          "chunk_size"
+        ],
+        "kwargs": [
+          [
+            "g",
+            "g.npu()"
+          ],
+          [
+            "gk",
+            "None"
+          ],
+          [
+            "cu_seqlens",
+            "cu_seqlens"
+          ],
+          [
+            "chunk_indices",
+            "chunk_indices"
+          ]
+        ]
+      },
+      {
+        "op": "npu_recompute_w_u_fwd",
+        "args": [
+          "k.npu()",
+          "v.npu()",
+          "beta.npu()",
+          "A.npu()",
+          "chunk_size"
+        ],
+        "kwargs": [
+          [
+            "g",
+            "g.npu()"
+          ],
+          [
+            "gk",
+            "None"
+          ],
+          [
+            "cu_seqlens",
+            "None"
+          ],
+          [
+            "chunk_indices",
+            "None"
+          ]
+        ]
+      }
+    ]
+  }
+}
