@@ -166,7 +166,16 @@ def _setup_legacy_extension():
             os.path.join("torch_npu/csrc/aten", "ADInplaceOrViewTypeEverything.cpp"),
             os.path.join("torch_npu/csrc/aten", "python_functionsEverything.cpp"),
             os.path.join("torch_npu/csrc/aten", "RegisterFunctionalizationEverything.cpp"),
+            os.path.join("op_plugin", "OpInterfaceEverything.cpp"),
+            os.path.join("op_plugin", "ops", "opapi", "StructKernelNpuOpApiEverything.cpp"),
         }
+        for aggregate, split_prefix in (
+            ("op_plugin/OpInterface.cpp", "op_plugin/OpInterface_"),
+            ("op_plugin/ops/opapi/StructKernelNpuOpApi.cpp",
+             "op_plugin/ops/opapi/StructKernelNpuOpApi_"),
+        ):
+            if any(source.startswith(split_prefix) and source.endswith(".cpp") for source in sources):
+                excluded.add(aggregate)
         return [
             os.path.relpath(source, SETUP_DIR)
             for source in sources
@@ -193,6 +202,9 @@ def _setup_legacy_extension():
 
     def get_compile_args():
         compile_args = ["-std=c++17"]
+        # Select the PyTorch 2.13+ compatibility branch in torch_npu op-plugin headers.
+        if len(version_parts) >= 2:
+            compile_args.append(f"-DCURRENT_VERSION=V{version_parts[0]}R{version_parts[1]}")
         if sys.platform == "win32":
             compile_args.append("/MD")
         elif sys.platform == "linux":
