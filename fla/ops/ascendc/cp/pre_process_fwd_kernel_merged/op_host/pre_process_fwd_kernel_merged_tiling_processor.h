@@ -76,6 +76,33 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     const int64_t gateMode = hasGk ? GDN::PPFM_GATE_USE_GK : GDN::PPFM_GATE_USE_G;
     const ge::DataType gateDtype = hasG ? gTensor->GetDataType() : gkTensor->GetDataType();
 
+    // g / gk 的 shape 必须与 docs/api.md §2.1 的契约一致：
+    //   g  [1, Hv, T]      gk [1, Hv, T, K]     （gate 按 value head）
+    if (hasG) {
+        const gert::StorageShape *gShapePtr = context->GetOptionalInputShape(INPUT_G_IDX);
+        OP_CHECK_NULL_WITH_CONTEXT(context, gShapePtr);
+        const gert::Shape gShape = gShapePtr->GetStorageShape();
+        OP_CHECK_IF(gShape.GetDimNum() != 3,
+                    OP_LOGE(context->GetNodeName(), "g must be [1,Hv,T], got dim num %ld",
+                            static_cast<int64_t>(gShape.GetDimNum())),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(gShape.GetDim(0) != 1 || gShape.GetDim(1) != Hv || gShape.GetDim(2) != T,
+                    OP_LOGE(context->GetNodeName(), "g must be [1,Hv,T] matching u's Hv and k's T"),
+                    return ge::GRAPH_FAILED);
+    } else {
+        const gert::StorageShape *gkShapePtr = context->GetOptionalInputShape(INPUT_GK_IDX);
+        OP_CHECK_NULL_WITH_CONTEXT(context, gkShapePtr);
+        const gert::Shape gkShape = gkShapePtr->GetStorageShape();
+        OP_CHECK_IF(gkShape.GetDimNum() != 4,
+                    OP_LOGE(context->GetNodeName(), "gk must be [1,Hv,T,K], got dim num %ld",
+                            static_cast<int64_t>(gkShape.GetDimNum())),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(gkShape.GetDim(0) != 1 || gkShape.GetDim(1) != Hv || gkShape.GetDim(2) != T ||
+                        gkShape.GetDim(3) != K,
+                    OP_LOGE(context->GetNodeName(), "gk must be [1,Hv,T,K] matching u's Hv and k's T/K"),
+                    return ge::GRAPH_FAILED);
+    }
+
     // cu_seqlens：host int 数组，必给；校验 0 <= cu[0] < ... < cu[-1] <= T
     auto cuSeqlensTensor = context->GetOptionalInputTensor(INPUT_SEQLENS_IDX);
     OP_CHECK_IF(cuSeqlensTensor == nullptr,
