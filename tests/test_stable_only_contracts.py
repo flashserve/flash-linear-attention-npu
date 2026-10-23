@@ -135,6 +135,86 @@ class StablePublicContractTests(unittest.TestCase):
                 self.stable.npu_chunk_local_cumsum(self.x, 64, output_dtype=value)
         self.resolve.return_value.assert_not_called()
 
+    def test_kda_prepare_layouts_allocate_documented_head_major_slots(self):
+        # README/API shape contract, independently of the wrapper's dimension
+        # extraction. Unequal T/H and GVA prevent a swapped-axis implementation
+        # from passing; NTD/TND must expose the same head-major output shapes.
+        cases = [
+            ("NTD", (1, 16, 128), (1, 16, 128),
+             (1, 16, 128), (1, 16, 64), (1, 16, 128), (1, 16), (1, 16)),
+            ("TND", (16, 1, 128), (16, 1, 128),
+             (1, 16, 128), (1, 16, 64), (1, 16, 128), (1, 16), (1, 16)),
+            ("NTD", (2, 17, 128), (6, 17, 128),
+             (6, 17, 128), (6, 17, 64), (2, 17, 128), (2, 17), (6, 17)),
+            ("TND", (17, 2, 128), (17, 6, 128),
+             (6, 17, 128), (6, 17, 64), (2, 17, 128), (2, 17), (6, 17)),
+            ("NTD", (3, 33, 128), (15, 33, 128),
+             (15, 33, 128), (15, 33, 64), (3, 33, 128), (3, 33), (15, 33)),
+            ("TND", (33, 3, 128), (33, 15, 128),
+             (15, 33, 128), (15, 33, 64), (3, 33, 128), (3, 33), (15, 33)),
+            ("BNSD", (2, 3, 33, 128), (2, 15, 33, 128),
+             (2, 15, 33, 128), (2, 15, 33, 64), (2, 3, 33, 128),
+             (2, 3, 33), (2, 15, 33)),
+            ("BSND", (2, 33, 3, 128), (2, 33, 15, 128),
+             (2, 15, 33, 128), (2, 15, 33, 64), (2, 3, 33, 128),
+             (2, 3, 33), (2, 15, 33)),
+        ]
+        mode_slots = {
+            "none": {0, 1, 3, 4, 6, 7},
+            "forward": {0, 1, 2, 3, 4, 6, 7},
+            "recompute": set(range(13)) - {5},
+            "save": set(range(13)),
+        }
+        layout_codes = {"BSND": 0, "BNSD": 1, "TND": 2, "NTD": 3}
+        torch = sys.modules["torch"]
+
+        def allocate(shape, *, dtype, device):
+            return Tensor(shape=tuple(shape), dtype=dtype, device=device.name)
+
+        self.resolve.return_value.side_effect = lambda *args: tuple(args[20:33])
+        with mock.patch.object(torch, "float32", "float32", create=True), \
+                mock.patch.object(torch, "empty", side_effect=allocate, create=True) as empty:
+            for layout, q_shape, v_shape, vm, block, km, ks, vs in cases:
+                expected_shapes = (vm, block, block, vm, vm, vm, vm, vm, km, km, ks, ks, vs)
+                for mode, enabled in mode_slots.items():
+                    with self.subTest(layout=layout, q=q_shape, v=v_shape, mode=mode):
+                        empty.reset_mock()
+                        q, k = (Tensor(shape=q_shape, dtype="bfloat16") for _ in range(2))
+                        v, g = (Tensor(shape=v_shape, dtype="bfloat16") for _ in range(2))
+                        beta = Tensor(shape=v_shape[:-1], dtype="bfloat16")
+                        outputs = self.stable.npu_chunk_kda_fwd_prepare(
+                            q, k, v, g, beta, 0.5, layout=layout, backward_mode=mode)
+                        args = self.resolve.return_value.call_args.args
+                        self.assertEqual(args[:5], (q, k, v, g, beta))
+                        self.assertEqual((args[9], args[10], args[11], args[-1]),
+                                         (layout_codes[layout], 0.5, 64, 99))
+                        self.assertEqual(len(outputs), 13)
+                        self.assertEqual(empty.call_count, len(enabled))
+                        self.assertEqual(len({id(x) for x in outputs if x is not None}),
+                                         len(enabled))
+                        for index, (output, shape) in enumerate(zip(outputs, expected_shapes)):
+                            if index not in enabled:
+                                self.assertIsNone(output)
+                                continue
+                            self.assertEqual(output.shape, shape)
+                            self.assertEqual(output.dtype,
+                                             "float32" if index in {0, 10, 11, 12} else "bfloat16")
+                            self.assertEqual(output.device.name, "npu:0")
+
+    def test_kda_prepare_invalid_output_mode_does_not_allocate_or_launch(self):
+        q = Tensor(shape=(2, 17, 128), dtype="bfloat16")
+        v = Tensor(shape=(6, 17, 128), dtype="bfloat16")
+        beta = Tensor(shape=(6, 17), dtype="bfloat16")
+        torch = sys.modules["torch"]
+        with mock.patch.object(torch, "float32", "float32", create=True), \
+                mock.patch.object(torch, "empty", create=True) as empty, \
+                self.assertRaisesRegex(RuntimeError, "backward_mode must be"):
+            self.stable.npu_chunk_kda_fwd_prepare(
+                q, q, v, v, beta, 1.0, layout="NTD", backward_mode="invalid")
+        empty.assert_not_called()
+        self.resolve.assert_not_called()
+        self.get_stream.assert_not_called()
+
     def test_conv1d_backward_bsh_alias_matches_documented_bsnd_arguments(self):
         for layout in ("BSH", "BSND"):
             self.stable.npu_causal_conv1d_bwd(
