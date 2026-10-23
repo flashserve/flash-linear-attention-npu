@@ -54,17 +54,18 @@ __aicore__ inline void LoadL1NzToL0AB(LocalTensor<bfloat16_t> l1A, LocalTensor<b
     }
 }
 
-// One K-half of H. L1 is a 128-row NZ image; srcStride stays 8 so the next
-// column panel is 128 rows away. rowFrac is 0 or 4 (rows 0 or 64).
-__aicore__ inline void LoadL1NzHHalf(LocalTensor<bfloat16_t> l1H, LocalTensor<bfloat16_t> l0B, uint32_t rowFrac)
+// 64 columns of the full 128-row H. colFrac is 0 or 4. srcStride stays 8
+// because each column panel in L1 is still 128 rows tall. dstStride matches
+// a packed N=64 tile.
+__aicore__ inline void LoadL1NzHCols(LocalTensor<bfloat16_t> l1H, LocalTensor<bfloat16_t> l0B, uint32_t colFrac)
 {
     AscendC::LoadData2DParamsV2 loadB;
-    loadB.mStartPosition = rowFrac;
-    loadB.kStartPosition = 0;
-    loadB.mStep = 4;
-    loadB.kStep = 8;
+    loadB.mStartPosition = 0;
+    loadB.kStartPosition = colFrac;
+    loadB.mStep = 8;
+    loadB.kStep = 4;
     loadB.srcStride = 8;
-    loadB.dstStride = 8;
+    loadB.dstStride = 4;
     loadB.ifTranspose = true;
     loadB.sid = 0;
     AscendC::LoadData(l0B, l1H, loadB);
