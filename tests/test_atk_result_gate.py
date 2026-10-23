@@ -273,9 +273,11 @@ def runner(tmp_path):
     # Reuse fixture report writer via an isolated import, without pytest tests.
     stub = bin_dir / "atk"
     stub.write_text(f"#!{sys.executable}\n" + '''
-import importlib.util, os, pathlib, sys
+import importlib.util, json, os, pathlib, sys
 if '--version' in sys.argv:
     print('26.9.8'); raise SystemExit(0)
+if os.environ.get('ATK_STUB_ARGS'):
+    pathlib.Path(os.environ['ATK_STUB_ARGS']).write_text(json.dumps(sys.argv[1:]))
 mode = os.environ.get('ATK_STUB_MODE', '')
 if mode == 'exit': raise SystemExit(7)
 if mode == 'missing': raise SystemExit(0)
@@ -310,7 +312,8 @@ exec "$@"
     env = os.environ.copy()
     env.update(PATH=str(bin_dir) + os.pathsep + env["PATH"],
                ATK_OUTPUT_ROOT=str(tmp_path / "output"), ATK_FIXTURE=str(Path(__file__).resolve()))
-    for key in ("ATK_ENV", "CANN_ENV", "FLA_NPU_ENV", "FLA_NPU_OPP_ENV", "CASE_START", "CASE_END"):
+    for key in ("ATK_ENV", "CANN_ENV", "FLA_NPU_ENV", "FLA_NPU_OPP_ENV", "CASE_START", "CASE_END",
+                "ATK_GM_INIT_MODE", "ATK_GM_INIT_MB"):
         env.pop(key, None)
     return atk, env
 
@@ -328,3 +331,46 @@ def test_shell_checks_all_stages_and_fails_closed(runner, mode):
         assert result.stdout.count(": Pass (2 cases)") == 4
     else:
         assert result.returncode != 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("mode,size,expected", [
+    (None, None, "default"), ("on", "", "default"), ("off", "", None),
+    ("on", "512", "512"), ("on", "1", "1"), ("enable", "512", "512"),
+])
+def test_shell_gm_initialization_cli(runner, mode, size, expected):
+    atk, env = runner
+    args_path = atk / "args.json"
+    env["ATK_STUB_ARGS"] = str(args_path)
+    if mode is not None:
+        env["ATK_GM_INIT_MODE"] = mode
+    if size is not None:
+        env["ATK_GM_INIT_MB"] = size
+    result = subprocess.run(["bash", str(atk / "run_test_cpu.sh"), "-op=op", "-soc=A5", "-scope=accuracy"],
+                            env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    args = json.loads(args_path.read_text())
+    if expected is None:
+        assert "--gm_init_flag" not in args
+    else:
+        index = args.index("--gm_init_flag")
+        assert args[index + 1] == ("-to" if expected == "default" else expected)
+        if expected != "default":
+            assert f"ATK_GM_INIT_MB={size}" in result.stdout
+            assert f"ATK CLI --gm_init_flag {size}" in result.stdout
+
+
+@pytest.mark.parametrize("mode,size", [
+    ("on", "0"), ("on", "-1"), ("on", "1.5"), ("on", "abc"),
+    ("on", " 512"), ("on", "512 "), ("on", "+512"), ("on", "01"),
+    ("on", "0x200"), ("on", "1e3"), ("on", "512\n"),
+    ("off", "512"), ("false", "512"), ("0", "512"), ("disable", "512"),
+])
+def test_shell_gm_invalid_or_disabled_size_rejected(runner, mode, size):
+    atk, env = runner
+    args_path = atk / "args.json"
+    env.update(ATK_GM_INIT_MODE=mode, ATK_GM_INIT_MB=size, ATK_STUB_ARGS=str(args_path))
+    result = subprocess.run(["bash", str(atk / "run_test_cpu.sh"), "-op=op", "-soc=A5", "-scope=accuracy"],
+                            env=env, capture_output=True, text=True)
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "ATK_GM_INIT_MB" in result.stderr
+    assert not args_path.exists(), "invalid configuration must fail before launching an ATK task"
