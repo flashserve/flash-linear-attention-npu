@@ -1,6 +1,7 @@
 """CPU-only evidence-gate tests, using the official ATK 26.9.8 XLSX schema."""
 
 import ast
+import builtins
 import importlib.util
 import json
 import os
@@ -35,6 +36,10 @@ def report(path, phase="accuracy", count=2):
     statistic.append(["编号", "运行结果", result])
     for case in range(count):
         statistic.append([case, "SUCCESS", 8.6481 if phase == "performance" else True])
+    if phase == "determinism":
+        statistic.cell(1, 4, "output_info_list")
+        for row in range(2, count + 2):
+            statistic.cell(row, 4, "[{'dtype': 'torch.float32', 'shape': [2, 4], 'stride': [4, 1]}]")
     if phase == "performance":
         # Real ATK single-NPU performance has no comparison summary rows.
         summary.append(["名称"])
@@ -73,6 +78,44 @@ def test_inapplicable_reference_row_and_column(tmp_path):
     workbook.save(path)
     workbook.close()
     assert gate.validate_report(path, "accuracy", 2) == 2
+
+
+@pytest.mark.parametrize("outputs", [
+    "[]", "None", None, "[None]", "[{'dtype': None, 'shape': None, 'stride': None}]",
+    "not a descriptor", "[", "{}", "[{}]", "[42]",
+    "[{'dtype': 'torch.float32', 'shape': [0, 2], 'stride': [2, 1]}]",
+    "[{'dtype': 'invalid', 'shape': [2], 'stride': [1]}]",
+    "[{'dtype': 'torch.float32', 'shape': [-1], 'stride': [1]}]",
+    "[{'dtype': 'torch.float32', 'shape': [2.0], 'stride': [1]}]",
+    "[{'dtype': 'torch.float32', 'shape': [True], 'stride': [1]}]",
+    "[{'dtype': 'torch.float32', 'shape': [2], 'stride': []}]",
+    "[{'dtype': 'torch.float32', 'shape': [2], 'stride': None}]",
+    "[{'dtype': None, 'shape': [2], 'stride': [1]}]",
+])
+def test_determinism_true_without_real_output_evidence_fails(outputs, tmp_path):
+    path = report(tmp_path / "report.xlsx", "determinism")
+    alter(path, "statistic", "D2", outputs)
+    with pytest.raises(gate.InvalidReport):
+        gate.validate_report(path, "determinism", 2)
+
+
+@pytest.mark.parametrize("outputs", [
+    "[None, {'dtype': 'torch.bfloat16', 'shape': [2], 'stride': [1]}]",
+    "[{'dtype': None, 'shape': None, 'stride': None}, {'dtype': 'torch.float32', 'shape': [2], 'stride': [1]}]",
+    "[{'dtype': 'torch.float16', 'shape': [0], 'stride': [1]}, {'dtype': 'torch.float32', 'shape': [2], 'stride': [1]}]",
+    "[{'dtype': 'torch.float32', 'shape': [], 'stride': []}]",
+])
+def test_determinism_allows_optional_outputs_with_real_tensor(outputs, tmp_path):
+    path = report(tmp_path / "report.xlsx", "determinism")
+    alter(path, "statistic", "D2", outputs)
+    assert gate.validate_report(path, "determinism", 2) == 2
+
+
+def test_determinism_requires_output_descriptor_column(tmp_path):
+    path = report(tmp_path / "report.xlsx", "determinism")
+    alter(path, "statistic", "D1", "not_output_evidence")
+    with pytest.raises(gate.InvalidReport, match="missing columns"):
+        gate.validate_report(path, "determinism", 2)
 
 
 @pytest.mark.parametrize("value", [True, "True", "TRUE"])
@@ -253,6 +296,43 @@ def test_preprocess_negative_accepts_only_expected_aclnn_status(message, expecte
     assert (str(error.value) == "EXPECTED") is expected
 
 
+def test_formal_case_error_expectations_are_explicit():
+    negatives = []
+    for path in (ROOT / "tests/atk").rglob("atk_*.json"):
+        cases = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(cases, list):
+            continue
+        for case in cases:
+            pattern = case.get("expected_error_msg")
+            assert pattern is None or (isinstance(pattern, str) and pattern.strip()), (path, case.get("id"))
+            if pattern:
+                negatives.append((path.parent.name, case["id"], pattern))
+    assert len(negatives) == 13
+    assert all(op == "pre_process_bwd_kernel_merged" for op, _, _ in negatives)
+
+
+@pytest.mark.parametrize("op", ["chunk_kda_fwd_prepare", "chunk_kda_fwd_finalize"])
+def test_kda_generators_keep_positive_error_sentinel_null(op, monkeypatch):
+    # Exercise generation without importing optional ATK/torch dependencies.
+    original_import = builtins.__import__
+    def without_atk(name, *args, **kwargs):
+        if name == "atk" or name.startswith("atk."):
+            raise ModuleNotFoundError("ATK is optional for this CPU test", name="atk")
+        return original_import(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, "__import__", without_atk)
+    path = ROOT / f"tests/atk/{op}/gen_{op}.py"
+    spec = importlib.util.spec_from_file_location(f"_test_gen_{op}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if op.endswith("prepare"):
+        cases = [case for suite in module.SUITES for case in module._cases(suite)]
+        assert len(cases) == 642
+    else:
+        cases = [case for build in module.SUITES.values() for case in build()]
+        assert len(cases) == 222
+    assert all(case["expected_error_msg"] is None for case in cases)
+
+
 # Run the real shell orchestration with an ATK stub on Linux. The stub only
 # writes official-schema evidence; no torch import, NPU or alternate golden.
 @pytest.fixture
@@ -374,3 +454,24 @@ def test_shell_gm_invalid_or_disabled_size_rejected(runner, mode, size):
     assert result.returncode != 0, result.stdout + result.stderr
     assert "ATK_GM_INIT_MB" in result.stderr
     assert not args_path.exists(), "invalid configuration must fail before launching an ATK task"
+
+
+@pytest.mark.parametrize("pattern,valid", [(None, True), ("", False), (" ", False), ("\t\n", False),
+                                         ("ACLNN_ERR_PARAM_INVALID: expected", True)])
+def test_shell_error_expectation_preflight(runner, pattern, valid):
+    atk, env = runner
+    args_path = atk / "args.json"
+    env["ATK_STUB_ARGS"] = str(args_path)
+    path = atk / "op/atk_op.json"
+    cases = json.loads(path.read_text())
+    cases[0]["expected_error_msg"] = pattern
+    path.write_text(json.dumps(cases))
+    result = subprocess.run(["bash", str(atk / "run_test_cpu.sh"), "-op=op", "-soc=A5", "-scope=accuracy"],
+                            env=env, capture_output=True, text=True)
+    if valid:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert args_path.exists()
+    else:
+        assert result.returncode != 0, result.stdout + result.stderr
+        assert "expected_error_msg" in result.stderr
+        assert not args_path.exists()

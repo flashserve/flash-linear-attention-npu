@@ -630,6 +630,11 @@ CMDCLASS = {"build_py": FlaNpuBuildPy}
 if _bdist_wheel is not None:
     class FlaNpuBdistWheel(_bdist_wheel):
         def finalize_options(self):
+            if self.skip_build:
+                raise RuntimeError(
+                    "--skip-build is not supported: rebuild and validate the mandatory "
+                    "Stable-ABI launcher and stamp; stale legacy artifacts must not be packaged"
+                )
             super().finalize_options()
             # The launcher and OPP are platform-specific package data.
             self.root_is_pure = False

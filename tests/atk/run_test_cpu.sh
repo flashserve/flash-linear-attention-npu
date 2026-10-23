@@ -170,6 +170,14 @@ except (OSError, UnicodeError, json.JSONDecodeError) as error:
 
 if not isinstance(data, (dict, list)) or len(data) == 0:
     raise SystemExit(f"{label}没有可执行用例：{file_path}")
+cases = data.values() if isinstance(data, dict) else data
+for case in cases:
+    pattern = case.get("expected_error_msg")
+    if isinstance(pattern, str) and not pattern.strip():
+        raise SystemExit(
+            f"{label} case {case.get('id')}: expected_error_msg 不能为空串或纯空白；"
+            "正常用例请使用 null，负例必须保留明确的预期错误信息"
+        )
 PY
 }
 

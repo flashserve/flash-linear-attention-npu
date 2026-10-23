@@ -143,10 +143,11 @@ def _negative_expected_code(spec: dict):
 def _placeholder_output(spec: dict):
     """反向用例没有真实输出：按用例参数的形状给一个占位 dhm（标准里已标 not_key，不做比对）。"""
 
-    shape = spec["shape"]
-    value_heads = int(shape["Hv"])
-    k_dim = int(shape["K"])
-    v_dim = int(shape["V"])
+    # ATK strips the non_param case_spec; _case_spec reconstructs the flat
+    # scalar attributes, as used by build_inputs and _validate_outputs.
+    value_heads = int(spec["Hv"])
+    k_dim = int(spec["K"])
+    v_dim = int(spec["V"])
     return (torch.zeros((value_heads, k_dim, v_dim + k_dim), dtype=torch.float32),)
 
 
