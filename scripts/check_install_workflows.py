@@ -262,6 +262,14 @@ from pathlib import Path
 
 import fla_npu
 from fla_npu.ops import ascendc
+from fla_npu.ops.ascendc import _stable
+
+_stable.load()
+for name in ascendc._ASCENDC_OPS:
+    _stable._op(name)
+for name in ("load_legacy_torch_ops", "is_legacy_torch_ops_loaded"):
+    if hasattr(fla_npu, name):
+        raise AssertionError(f"removed backend API remains: {name}")
 
 for name in filter(None, os.environ.get("FLA_NPU_EXPECT_OPS", "").split(",")):
     if not hasattr(ascendc, name) or not hasattr(ascendc, f"npu_{name}"):
@@ -275,6 +283,9 @@ if len(first) != 2:
     raise AssertionError(f"expected custom and CANN op_api handles, got {len(first)}")
 
 package_dir = Path(fla_npu.__file__).resolve().parent
+for removed in ("_aclnn_ctypes.py", "_runtime.py"):
+    if (package_dir / "ops" / "ascendc" / removed).exists():
+        raise AssertionError(f"removed backend file remains: {removed}")
 expected = (
     package_dir
     / "opp"

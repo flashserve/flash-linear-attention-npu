@@ -1,3 +1,4 @@
+from fla_npu.ops import ascendc
 import torch
 import torch_npu
 import os
@@ -60,7 +61,7 @@ def compute_w_golden(
         # 遍历所有batch
             for i_h in range(H):
                 # print("hello?")
-            # 遍历所有head 
+            # 遍历所有head
                 # 获取当前chunk的A向量
                 # A形状: [B, T, H, chunk_size]
                 # 我们需要获取这个chunk对应的A向量
@@ -68,7 +69,7 @@ def compute_w_golden(
                 A_chunk = A[i_b,i_h, bos:eos,:eos - bos]
                 hk = i_h // hvPerHk
                 k_chunk = k[i_b,hk, bos:eos,:]
-                
+
                 # 获取当前chunk的beta
                 beta_chunk = beta[i_b,i_h, bos:eos]  # [chunk_size]
                 g_chunk = g[i_b,i_h, bos:eos]  # [chunk_size]
@@ -80,11 +81,11 @@ def compute_w_golden(
                 # 步骤1: b_dv_beta = A_chunk @ du_chunk
                 # print(A_chunk.size())
                 b_w = torch.matmul(A_chunk.to(torch.float32), kbgexp_chunk.to(torch.float32))  # [chunk_size, V]
-                
+
 
                 # 存储结果
                 w[i_b,i_h, bos:eos, :] = b_w.to(w.dtype)
-    
+
     return w
 
 
@@ -114,17 +115,17 @@ def compute_u_golden(
             bos,eos = get_bos_eos(idx, T, chunk_size, cu_seqlens, chunk_indices)
         # 遍历所有batch
             for i_h in range(Hv):
-            # 遍历所有head 
+            # 遍历所有head
                 # 获取当前chunk的A向量
                 # A形状: [B, T, H, chunk_size]
                 # 我们需要获取这个chunk对应的A向量
                 # 注意: A的每个位置存储的是该chunk对应的A向量
                 u_chunk = u[i_b,i_h, bos:eos,:]
                 A_chunk = A[i_b,i_h, bos:eos,: eos - bos]  # [chunk_size, chunk_size]
-                
+
                 # 获取当前chunk的dw
                 v_chunk = v[i_b,i_h, bos:eos, :]  # [chunk_size, D]
-           
+
                 # 获取当前chunk的beta,g
                 beta_chunk = beta[i_b,i_h, bos:eos]  # [chunk_size]
                 vb_chunk = v_chunk.to(torch.float32) * beta_chunk[:,None].to(torch.float32)
@@ -150,7 +151,7 @@ def prepare_cu_seqlens(T: int, L: int = 32, seed: int = 42) -> list[int]:
       - 严格单调递增，无重复
       - 所有值在 [0, T] 范围内
       - 可复现（固定随机种子）
-      
+
     此函数完全避开 torch.Tensor，直接返回 Python 原生 list，
     完美适配 npu 算子对 'Optional[list[int]]' 的类型要求。
 
@@ -178,7 +179,7 @@ def prepare_cu_seqlens(T: int, L: int = 32, seed: int = 42) -> list[int]:
     # 候选集合：1, 2, ..., T-1
     # random.sample 直接返回不重复的列表，无需担心重复
     middle_points = random.sample(range(1, T), L - 2)
-    
+
     # 必须排序以保证单调递增
     middle_points.sort()
 
@@ -191,40 +192,40 @@ def prepare_cu_seqlens(T: int, L: int = 32, seed: int = 42) -> list[int]:
 def prepare_chunk_indices(
     cu_seqlens: list[int],
     chunk_size: int
-) -> list[int]: 
+) -> list[int]:
     """
     基于 cu_seqlens (list[int]) 生成 chunk 索引。
-    
+
     注意：原 PyTorch 版本返回的是 shape [N, 2] 的 Tensor。
     为了保持纯 Python 兼容性，这里返回 list[tuple[start_seq_idx, chunk_idx_in_seq]]。
     如果算子需要扁平化的 list[int] (如 [s0, c0, s1, c1, ...])，请在调用前展开。
-    
+
     逻辑复刻原代码：
     1. 计算每个序列的长度: lens[i] = cu_seqlens[i+1] - cu_seqlens[i]
     2. 计算每个序列需要的 chunk 数: ceil(lens[i] / chunk_size)
     3. 生成对应的 (sequence_id, chunk_id) 对
     """
     indices = []
-    
+
     # 遍历每个序列段
     for i in range(len(cu_seqlens) - 1):
         start = cu_seqlens[i]
         end = cu_seqlens[i+1]
         length = end - start
-        
+
         if length <= 0:
             continue
-            
+
         # 计算该序列需要多少个 chunk
         # 等价于 cdiv(length, chunk_size)
         num_chunks = (length + chunk_size - 1) // chunk_size
-        
+
         for chunk_id in range(num_chunks):
             # 原逻辑: indices.eq(0).cumsum(0) - 1 对应的是序列索引 i
             # 原逻辑: indices 对应的是 chunk_id
             indices.append((i))
             indices.append((chunk_id))
-            
+
     return indices
 
 def test_recompute_w_u_fwd(
@@ -277,7 +278,7 @@ def test_recompute_w_u_fwd(
 
     # 将张量移到 NPU 并调用反向算子
     if chunk_indices != None:
-        w, u = torch.ops.npu.npu_recompute_w_u_fwd(
+        w, u = ascendc.npu_recompute_w_u_fwd(
             k.npu(),
             v.npu(),
             beta.npu(),
@@ -289,7 +290,7 @@ def test_recompute_w_u_fwd(
             chunk_indices=chunk_indices
         )
     else:
-        w, u = torch.ops.npu.npu_recompute_w_u_fwd(
+        w, u = ascendc.npu_recompute_w_u_fwd(
             k.npu(),
             v.npu(),
             beta.npu(),
@@ -305,12 +306,12 @@ def test_recompute_w_u_fwd(
     print(f"==================cpu=========================\n")
     ct.isclose(w.cpu(), cpu_w.cpu(), diff_thd=0.1)
     print(f"==================ct=========================\n")
-    
+
     print(f"==================u=========================\n")
     cpu_u = compute_u_golden(v, beta, A, cu_seqlens, chunk_indices, B, Hv, T, chunk_size, NT)
     ct.isclose(u.cpu(), cpu_u.cpu(), diff_thd=0.1)
 
-    
+
     print(f"test_recompute_w_u_fwd 被调用了第 {test_recompute_w_u_fwd.call_count} 次")
     return w, u
 
@@ -395,7 +396,7 @@ if __name__ == "__main__":
     # test_recompute_w_u_fwd(B = 64, H = 8, T = 2048, K = 128, V = 128, chunk_size = 64, ktype=torch.bfloat16, btype=torch.float32)
     # #F7
     # test_recompute_w_u_fwd(B = 32, H = 16, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float16)
-    # #F8    
+    # #F8
     # test_recompute_w_u_fwd(B = 16, H = 32, T = 8192, K = 128, V = 128, chunk_size = 128, ktype=torch.bfloat16, btype=torch.bfloat16)
     # #F9
     # test_recompute_w_u_fwd(B = 64, H = 8, T = 4096, K = 128, V = 128, chunk_size = 128, ktype=torch.float16, btype=torch.float16)

@@ -12,8 +12,7 @@ out = chunk_fwd_o(...)
 ## 1. 新增算子适配
 
 一次适配 = **新建 1 个算子文件 + 1 行 include + 2 行注册 + 1 个 Python wrapper + 1 行 public 名**。
-**不需要先写一份 ctypes 适配**：ctypes 只是回退后端，没有它算子照样交付，这也是新算子的默认
-形态（[接入指南 §8](../../docs/architecture/适配层接入指南.md)）。
+**所有 AscendC 算子仅通过 Stable ABI 交付**，不提供 ctypes 执行后端或 legacy 扩展；验证要求见[接入指南 §8](../../docs/architecture/适配层接入指南.md)。
 
 ### 1.1 交付件
 
@@ -50,7 +49,7 @@ _ASCENDC_OPS = (
 | `stable_<前缀>_common.cpp` | 只放**被 ≥2 个算子共用**的 helper，文件名带共享前缀（当前是 `stable_causal_conv1d_common.cpp`、`stable_fwd_h_common.cpp`）；在 include 列表里排在用它的算子之前 |
 | `stable_ops.cpp` | 两件事：include 各算子文件（共享文件在前、其余按算子名排序）+ `m.def(kSchema_<op>)`、`m.impl("<op>", &boxed_adapter<run_<op>>)` 两行注册 |
 | `_stable.py` | 真签名 wrapper（不要 `*args` / `**kwargs`），位置参数顺序与 schema 形参一致；字符串用 `_char_code`、host 数组用 `_host_ints`、stream 用 `_current_stream_ptr()` |
-| `__init__.py` | `_ASCENDC_OPS` 加一行 public 名；算子会原地写参数时再登记 `MUTATED_ARGUMENTS`（必要时 `MUTATION_FLAGS`）。没有 ctypes 回退不用声明任何东西 |
+| `__init__.py` | `_ASCENDC_OPS` 加一行 public 名；算子会原地写参数时再登记 `MUTATED_ARGUMENTS`（必要时 `MUTATION_FLAGS`）。所有公开入口都必须通过 Stable 覆盖门禁 |
 
 参数类型对照、模板、门禁命令、设备回归矩阵和常见坑见
 [适配层接入指南](../../docs/architecture/适配层接入指南.md)；「为什么必须用宏」（boxed kernel 的
@@ -135,5 +134,16 @@ python3 torch_custom/fla_npu/csrc/build_stable.py --out /tmp/libfla_npu_stable.s
 ## 3. 测试要求
 
 - **host 下发性能**：不劣化，不引入毫秒级开销。
-- **编译期不绑定版本**：产物不绑 torch / torch_npu / Python 版本，任意满足最低要求的版本都能直接用同一个 wheel。
+- **编译期 ABI 约束**：launcher 用 vendored Stable 头文件与 torch 链接库构建，不绑定 CPython 扩展 ABI；支持范围由框架/平台测试矩阵验证。
 - **接口兼容性**：`fla_npu.ops.ascendc.xxx` 的公开签名、原地语义与返回值保持兼容。
+
+## 4. 构建与交付约束
+
+`python setup.py bdist_wheel` 在实际构建阶段编译 launcher，读取包元数据不会触发编译。
+构建需要 CANN/编译工具及 torch 链接库；不运行 torchnpugen，不依赖 torch_npu 代码生成。
+子目录与根目录均生成按 a2/a3/a5 命名的 `py3-none-manylinux_2_34_<arch>` wheel，必须包含
+`libfla_npu_stable.so`、匹配的 `_stable_hash.py`、档位元数据以及 torch/torch_npu 运行时最低依赖。
+子目录 wheel 的 OPP 骨架须通过对应 run 包安装补齐；`build.sh` 依次完成 wheel 和 run 安装。
+
+删除旧脚本中的 `FLA_NPU_BUILD_STABLE_ABI=0`、`FLA_NPU_BUILD_LEGACY_EXTENSION=1`、
+`FLA_NPU_SKIP_TORCH_GEN`；这些模式已明确拒绝。包中残留旧扩展也会阻止构建。

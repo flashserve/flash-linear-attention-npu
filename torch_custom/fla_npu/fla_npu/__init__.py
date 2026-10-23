@@ -10,8 +10,6 @@ from typing import Optional
 _PACKAGE_DIR = pathlib.Path(__file__).resolve().parent
 _DEFAULT_VENDOR_DIR = "fla_npu_transformer"
 _ASCENDC_OPAPI_LIBRARIES: Optional[list[ctypes.CDLL]] = None
-_LEGACY_TORCH_OPS_LOADED = False
-_LEGACY_TORCH_OPS_LIBRARY: Optional[pathlib.Path] = None
 
 
 def _prepend_env_path(name: str, value: pathlib.Path) -> None:
@@ -165,81 +163,13 @@ def load_ascendc_opapi_libraries() -> list[ctypes.CDLL]:
     return libraries
 
 
-def _find_ascendc_extension_library() -> pathlib.Path:
-    so_files = list(_PACKAGE_DIR.glob("custom_aclnn_extension_lib*.so"))
-    if not so_files:
-        raise FileNotFoundError(f"not find custom_aclnn_extension_lib*.so in {_PACKAGE_DIR}")
-    return so_files[0].resolve()
-
-
-def _preload_library(path: pathlib.Path) -> None:
-    if not path.exists():
-        return
-    mode = getattr(os, "RTLD_GLOBAL", 0) | getattr(os, "RTLD_NOW", 0)
-    ctypes.CDLL(str(path), mode=mode)
-
-
-def _preload_torch_npu_dependencies(torch_module, torch_npu_module) -> None:
-    torch_lib = pathlib.Path(torch_module.__file__).resolve().parent / "lib"
-    torch_npu_lib = pathlib.Path(torch_npu_module.__file__).resolve().parent / "lib"
-    _prepend_env_path("LD_LIBRARY_PATH", torch_lib)
-    _prepend_env_path("LD_LIBRARY_PATH", torch_npu_lib)
-
-    for lib_path in (
-        torch_lib / "libc10.so",
-        torch_lib / "libtorch.so",
-        torch_lib / "libtorch_cpu.so",
-        torch_npu_lib / "libtorch_npu.so",
-    ):
-        _preload_library(lib_path)
-
-
 def load_ascendc_extension():
     """Backward-compatible alias for loading the decoupled Ascend C runtime."""
 
     return load_ascendc_opapi_libraries()
 
 
-def load_legacy_torch_ops() -> pathlib.Path:
-    """Load the legacy PyTorch dispatcher custom ops.
-
-    ``import fla_npu`` initializes the decoupled Ascend C runtime, but does not
-    import torch, torch_npu, or register ``torch.ops.npu`` kernels. Call this
-    function only when old call sites such as
-    ``torch.ops.npu.npu_chunk_fwd_o(...)`` must keep working during the
-    migration to the decoupled ``fla_npu.ops.ascendc`` API.
-    """
-
-    global _LEGACY_TORCH_OPS_LOADED, _LEGACY_TORCH_OPS_LIBRARY
-    if _LEGACY_TORCH_OPS_LOADED and _LEGACY_TORCH_OPS_LIBRARY is not None:
-        return _LEGACY_TORCH_OPS_LIBRARY
-
-    import torch
-    import torch_npu
-
-    load_ascendc_opapi_libraries()
-    _preload_torch_npu_dependencies(torch, torch_npu)
-    legacy_library = _find_ascendc_extension_library()
-    torch.ops.load_library(str(legacy_library))
-    from .ops.ascendc import install_legacy_torch_ops_warning, install_torch_npu_ops_compat
-
-    install_torch_npu_ops_compat()
-    install_legacy_torch_ops_warning()
-    _LEGACY_TORCH_OPS_LOADED = True
-    _LEGACY_TORCH_OPS_LIBRARY = legacy_library
-    return legacy_library
-
-
-def is_legacy_torch_ops_loaded() -> bool:
-    return _LEGACY_TORCH_OPS_LOADED
-
-
-__all__ = [
-    "is_legacy_torch_ops_loaded",
-    "load_ascendc_extension",
-    "load_ascendc_opapi_libraries",
-    "load_legacy_torch_ops",
-]
+__all__ = ["load_ascendc_extension", "load_ascendc_opapi_libraries"]
 
 
 def _run_import_guards() -> None:
@@ -254,6 +184,9 @@ def _run_import_guards() -> None:
         warnings.warn(f"fla_npu environment guard skipped: {exc}", RuntimeWarning)
 
 
+from ._backend_policy import validate_backend_environment as _validate_backend_environment
+
+_validate_backend_environment()
 _run_import_guards()
 _warn_if_embedded_opp_not_preconfigured()
 load_ascendc_opapi_libraries()

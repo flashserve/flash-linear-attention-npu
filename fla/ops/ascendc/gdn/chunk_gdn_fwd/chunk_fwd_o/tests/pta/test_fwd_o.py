@@ -1,3 +1,4 @@
+from fla_npu.ops import ascendc
 import os
 import sys
 import logging
@@ -37,7 +38,7 @@ def prepare_chunk_offsets(
     cu_seqlens: torch.LongTensor,
     chunk_size: int
 ) -> torch.LongTensor:
-    return torch.cat([cu_seqlens.new_tensor([0]), cdiv_torch(prepare_lens(cu_seqlens), chunk_size)]).cumsum(-1) 
+    return torch.cat([cu_seqlens.new_tensor([0]), cdiv_torch(prepare_lens(cu_seqlens), chunk_size)]).cumsum(-1)
 
 def forward_o_trans_cpu(
     q,k,v,hidden_state,g,gk,
@@ -52,7 +53,7 @@ def forward_o_trans_cpu(
     g = g.to(torch.float32).npu()
 
     B, HK, T, K = k.shape[0], k.shape[1], k.shape[2], k.shape[3]
-    HV, V = v.shape[1], v.shape[3] 
+    HV, V = v.shape[1], v.shape[3]
 
     BT = chunk_size
     chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size) if cu_seqlens is not None else None
@@ -76,9 +77,9 @@ def forward_o_trans_cpu(
             T_inner = eos - bos
             NT_inner = (T_inner + BT - 1) // BT
             boh = chunk_offsets[n]
-        
+
         for h in range(HV):
-            # B H T D -> 
+            # B H T D ->
             for i in range(NT_inner):
                 q_sel = torch.zeros((BT, q.shape[-1]), device=q.device, dtype=q.dtype)
                 k_sel = torch.zeros((BT, k.shape[-1]), device=k.device, dtype=k.dtype)
@@ -86,17 +87,17 @@ def forward_o_trans_cpu(
                 g_sel = torch.zeros((BT), device=g.device, dtype=g.dtype)
                 actual_len = min(bos + (i + 1) * BT, eos) - (bos + i * BT)
 
-                if cu_seqlens is None: 
+                if cu_seqlens is None:
                     q_sel[:actual_len, :] = q[n, h // head_ratio, bos + i * BT : bos + i * BT + actual_len, :]
                     k_sel[:actual_len, :] = k[n, h // head_ratio, bos + i * BT : bos + i * BT + actual_len, :]
                     v_sel[:actual_len, :] = v[n, h, bos + i * BT : bos + i * BT + actual_len, :]
                     g_sel[:actual_len] = g[n, h, bos + i * BT : bos + i * BT + actual_len]
                     hidden_state_sel = hidden_state[n, boh+i, h]
-                    attn = q_sel @ k_sel.transpose(-1, -2) 
-                    L_mask = (g_sel.unsqueeze(-1) - g_sel.unsqueeze(-2)).exp() 
-                    attn = attn*L_mask    
+                    attn = q_sel @ k_sel.transpose(-1, -2)
+                    L_mask = (g_sel.unsqueeze(-1) - g_sel.unsqueeze(-2)).exp()
+                    attn = attn*L_mask
                     del L_mask
-                    attn = torch.tril(attn, 0) 
+                    attn = torch.tril(attn, 0)
                     o_inter = (q_sel * g_sel.to(torch.float16).exp()[:, None]) @ hidden_state_sel
                     o = (o_inter + attn @ v_sel) * scale
                     o_output[n, h, bos + i * BT: bos + i * BT + actual_len,:] = o[:actual_len, :]
@@ -106,11 +107,11 @@ def forward_o_trans_cpu(
                     v_sel[:actual_len, :] = v[0, h, bos + i * BT : bos + i * BT + actual_len, :]
                     g_sel[:actual_len] = g[0, h, bos + i * BT : bos + i * BT + actual_len]
                     hidden_state_sel = hidden_state[0, boh+i, h]
-                    attn = q_sel @ k_sel.transpose(-1, -2) 
-                    L_mask = (g_sel.unsqueeze(-1) - g_sel.unsqueeze(-2)).exp() 
-                    attn = attn*L_mask           
+                    attn = q_sel @ k_sel.transpose(-1, -2)
+                    L_mask = (g_sel.unsqueeze(-1) - g_sel.unsqueeze(-2)).exp()
+                    attn = attn*L_mask
                     del L_mask
-                    attn = torch.tril(attn, 0) 
+                    attn = torch.tril(attn, 0)
                     o_inter = (q_sel * g_sel.exp()[:, None]) @ hidden_state_sel
                     o = (o_inter + attn @ v_sel) * scale
                     o_output[0, h, bos + i * BT: bos + i * BT + actual_len,:] = o[:actual_len, :]
@@ -266,7 +267,7 @@ if __name__ == "__main__":
         input_tensor = parse_actual_input(gdn_fwd_o_input)
     else:
         input_tensor = gen_input_data(gdn_fwd_o_input)
-    
+
     if gdn_fwd_o_input.use_actual_output:
         output_tensor = parse_actual_output(gdn_fwd_o_input)
     else:
@@ -311,7 +312,7 @@ if __name__ == "__main__":
     torch.npu.synchronize()
     print("step 6: before custom op")
 
-    result = torch.ops.npu.npu_chunk_fwd_o(
+    result = ascendc.npu_chunk_fwd_o(
         q,
         k,
         v,
@@ -322,7 +323,7 @@ if __name__ == "__main__":
         cu_seqlens=input_tensor.cu_seqlens.tolist() if input_tensor.cu_seqlens is not None else None,
         chunk_indices=input_tensor.chunk_offsets.flatten().tolist() if input_tensor.chunk_offsets is not None else None,
         chunk_size=gdn_fwd_o_input.chunk_size,
-        transpose_state_layout=False, 
+        transpose_state_layout=False,
     )
 
     print("step 7: after custom op")

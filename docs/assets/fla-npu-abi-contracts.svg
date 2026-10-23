@@ -38,9 +38,9 @@
   <path class="edge" d="M940 895 H1030" stroke="#9A74C8" marker-end="url(#arrow-violet)"/>
 
   <rect class="box" x="40" y="195" width="900" height="80" fill="#EFF9F1" stroke="#4C9B60"/>
-  <text x="65"><tspan class="node-title" x="65" y="220">1  torch tensor / storage Python 能力契约</tspan><tspan class="node-text" x="65" y="246">device、dtype、shape、stride、storage、data_ptr、storage_offset</tspan><tspan class="node-text" x="65" y="267">输出分配和 storage 生命周期语义</tspan></text>
+  <text x="65"><tspan class="node-title" x="65" y="220">1  torch tensor / storage 与 Stable C ABI 契约</tspan><tspan class="node-text" x="65" y="246">device、dtype、shape、stride、storage、data_ptr、storage_offset</tspan><tspan class="node-text" x="65" y="267">输出分配和 storage 生命周期语义</tspan></text>
   <rect class="box" x="1030" y="195" width="430" height="80" fill="#EFF9F1" stroke="#4C9B60"/>
-  <text x="1245" text-anchor="middle"><tspan class="node-title" x="1245" y="219">能力探测 + Python adapter</tspan><tspan class="node-text" x="1245" y="243">保留 untyped_storage / storage fallback</tspan><tspan class="node-text" x="1245" y="265">不按 torch patch 锁版本</tspan></text>
+  <text x="1245" text-anchor="middle"><tspan class="node-title" x="1245" y="219">能力探测 + Python adapter</tspan><tspan class="node-text" x="1245" y="243">Stable C API 读取 tensor metadata</tspan><tspan class="node-text" x="1245" y="265">不按 torch patch 锁版本</tspan></text>
 
   <rect class="box" x="40" y="305" width="900" height="80" fill="#EEF4FF" stroke="#5B7DB1"/>
   <text x="65"><tspan class="node-title" x="65" y="330">2  Ascend PyTorch NPU 运行时能力（通常由 torch_npu 提供）</tspan><tspan class="node-text" x="65" y="356">NPU device 注册与 guard、NPU tensor 可执行性</tspan><tspan class="node-text" x="65" y="377">torch.npu.current_stream(device)、npu_stream 与外部 executor 语义</tspan></text>
