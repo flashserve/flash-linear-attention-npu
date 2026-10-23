@@ -23,7 +23,7 @@ gate = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(gate)
 
 
-def report(path, phase="accuracy", count=2):
+def report(path, phase="accuracy", count=2, expected_errors=None):
     """Matches official bool cells, CPU comparison nodes and header-only perf."""
     path.parent.mkdir(parents=True, exist_ok=True)
     workbook = openpyxl.Workbook()
@@ -53,6 +53,21 @@ def report(path, phase="accuracy", count=2):
         summary.append([node, str(count), str(count), "0", str(count), "0", "100.0",
                         "-" if phase == "determinism" else "Pass"]
                        + (["Pass"] if phase == "determinism" else []))
+    if expected_errors:
+        assert phase == "accuracy"
+        statistic.cell(1, 4, "精度详情")
+        statistic.cell(1, 5, "用例json信息")
+        statistic.cell(1, 6, "npu_npu_dut_精度通过")
+        for key, message in expected_errors.items():
+            case = int(key)
+            statistic.cell(case + 2, 3, False)
+            detail = {"npu_npu_dut": [{"result": True, "error_info":
+                      f"报错与预期一致，用例通过\n期望报错信息为：{message}\n算子报错信息为：RuntimeError: {message}"}]}
+            statistic.cell(case + 2, 4, repr(detail))
+            statistic.cell(case + 2, 5, json.dumps({"id": case, "expected_error_msg": message}))
+            statistic.cell(case + 2, 6, True)
+        summary.cell(2, 5, str(count - len(expected_errors)))
+        summary.cell(2, 6, str(len(expected_errors)))
     workbook.save(path)
     workbook.close()
     return path
@@ -78,6 +93,98 @@ def test_inapplicable_reference_row_and_column(tmp_path):
     workbook.save(path)
     workbook.close()
     assert gate.validate_report(path, "accuracy", 2) == 2
+
+
+NEGATIVE_MESSAGE = "ACLNN_ERR_PARAM_INVALID (161001): expected host validation"
+
+
+def test_accuracy_twelve_numeric_plus_thirteen_expected_errors(tmp_path):
+    errors = {str(case): f"{NEGATIVE_MESSAGE} case {case}" for case in range(12, 25)}
+    path = report(tmp_path / "report.xlsx", count=25, expected_errors=errors)
+    assert gate.validate_report(path, "accuracy", 25, list(range(25)), errors) == 25
+    # Reports cannot grant their own exception waivers.
+    with pytest.raises(gate.InvalidReport):
+        gate.validate_report(path, "accuracy", 25, list(range(25)))
+
+
+@pytest.mark.parametrize("metadata,ids,phase", [
+    ({"1": ""}, [0, 1], "accuracy"), ({"1": " \n"}, [0, 1], "accuracy"),
+    ({"1": None}, [0, 1], "accuracy"), ({"1": False}, [0, 1], "accuracy"),
+    ({"2": NEGATIVE_MESSAGE}, [0, 1], "accuracy"),
+    ({"01": NEGATIVE_MESSAGE}, [0, 1], "accuracy"),
+    ({"-1": NEGATIVE_MESSAGE}, [0, 1], "accuracy"),
+    ({1: NEGATIVE_MESSAGE}, [0, 1], "accuracy"),
+    ({"1": NEGATIVE_MESSAGE}, None, "accuracy"),
+    ({"1": NEGATIVE_MESSAGE}, [0, 1], "determinism"),
+    ([1], [0, 1], "accuracy"),
+])
+def test_expected_error_metadata_must_be_explicit_and_selected(metadata, ids, phase, tmp_path):
+    path = report(tmp_path / "report.xlsx", phase)
+    with pytest.raises(gate.InvalidReport):
+        gate.validate_report(path, phase, 2, ids, metadata)
+
+
+@pytest.mark.parametrize("sheet,cell,value", [
+    ("statistic", "B3", "FAILED"), ("statistic", "B3", "unknown"),
+    ("statistic", "C2", False),  # Positive precision remains mandatory.
+    ("statistic", "C3", "unknown"),
+    ("statistic", "F3", False), ("statistic", "F3", None), ("statistic", "F3", 1),
+    ("statistic", "F3", "unknown"), ("statistic", "F1", "wrong_match_node"),
+    ("statistic", "D3", None), ("statistic", "D3", "not a dict"),
+    ("statistic", "D3", "{}"), ("statistic", "D3", "{'npu_npu_dut': []}"),
+    ("statistic", "D1", "missing_error_details"),
+    ("statistic", "E3", None), ("statistic", "E3", "{}"),
+    ("statistic", "E3", json.dumps({"id": 0, "expected_error_msg": NEGATIVE_MESSAGE})),
+    ("statistic", "E3", json.dumps({"id": 1, "expected_error_msg": "WRONG"})),
+    ("summary", "B2", 1), ("summary", "C2", 1), ("summary", "D2", 1),
+    ("summary", "E2", 2), ("summary", "F2", 0), ("summary", "F2", 2),
+    ("summary", "F2", None), ("summary", "F1", "missing_error_count"),
+])
+def test_expected_error_missing_or_contradictory_evidence_fails(sheet, cell, value, tmp_path):
+    errors = {"1": NEGATIVE_MESSAGE}
+    path = report(tmp_path / "report.xlsx", expected_errors=errors)
+    alter(path, sheet, cell, value)
+    with pytest.raises(gate.InvalidReport):
+        gate.validate_report(path, "accuracy", 2, [0, 1], errors)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("result", False), ("result", None), ("result", "unknown"), ("result", 1),
+    ("error_info", None), ("error_info", "unknown"),
+    ("error_info", "报错与预期不一致，用例失败"),
+    ("actual", ""), ("actual", "None"), ("actual", "RuntimeError: unrelated allocation failure"),
+    ("actual", NEGATIVE_MESSAGE.replace("161001", "161002")),
+    ("expected", "WRONG"),
+])
+def test_expected_error_boolean_and_actual_exception_must_agree(field, value, tmp_path):
+    errors = {"1": NEGATIVE_MESSAGE}
+    path = report(tmp_path / "report.xlsx", expected_errors=errors)
+    expected = value if field == "expected" else NEGATIVE_MESSAGE
+    actual = value if field == "actual" else "RuntimeError: " + NEGATIVE_MESSAGE
+    detail = {"result": True, "error_info":
+              f"报错与预期一致，用例通过\n期望报错信息为：{expected}\n算子报错信息为：{actual}"}
+    if field in ("result", "error_info"):
+        detail[field] = value
+    alter(path, "statistic", "D3", repr({"npu_npu_dut": [detail]}))
+    with pytest.raises(gate.InvalidReport):
+        gate.validate_report(path, "accuracy", 2, [0, 1], errors)
+
+
+def test_expected_error_does_not_hide_failure_reason(tmp_path):
+    errors = {"1": NEGATIVE_MESSAGE}
+    path = report(tmp_path / "report.xlsx", expected_errors=errors)
+    alter(path, "statistic", "G1", "失败原因")
+    alter(path, "statistic", "G3", "unexpected process failure")
+    with pytest.raises(gate.InvalidReport, match="failure reason"):
+        gate.validate_report(path, "accuracy", 2, [0, 1], errors)
+
+
+def test_expected_error_official_regex_matching(tmp_path):
+    errors = {"1": r"status=16100[12]"}
+    path = report(tmp_path / "report.xlsx", expected_errors=errors)
+    info = "报错与预期一致，用例通过\n期望报错信息为：status=16100[12]\n算子报错信息为：RuntimeError: status=161001"
+    alter(path, "statistic", "D3", repr({"npu_npu_dut": [{"result": True, "error_info": info}]}))
+    assert gate.validate_report(path, "accuracy", 2, [0, 1], errors) == 2
 
 
 @pytest.mark.parametrize("outputs", [
@@ -368,7 +475,19 @@ phase = {'accuracy': 'accuracy', 'accuracy_dc': 'determinism',
 root = pathlib.Path(sys.argv[sys.argv.index('--output_path') + 1])
 assert root.is_absolute()
 path = root / 'atk_output/atk_op_new/report/report.xlsx'
-fixtures.report(path, phase, 1 if mode == 'partial' else 2)
+cases = json.loads(pathlib.Path(sys.argv[sys.argv.index('-c') + 1]).read_text())
+start = int(sys.argv[sys.argv.index('-s') + 1]) if '-s' in sys.argv else 0
+end = int(sys.argv[sys.argv.index('-e') + 1]) if '-e' in sys.argv else len(cases)
+selected = cases[start:end]
+errors = {str(i): case['expected_error_msg'] for i, case in enumerate(selected)
+          if case.get('expected_error_msg') is not None}
+if mode == 'missing_error': errors = {}
+fixtures.report(path, phase, 1 if mode == 'partial' else len(selected), errors)
+for i, case in enumerate(selected):
+    fixtures.alter(path, 'statistic', f'A{i+2}', case['id'])
+    if str(i) in errors:
+        fixtures.alter(path, 'statistic', f'E{i+2}', json.dumps(
+            {'id': case['id'], 'expected_error_msg': case['expected_error_msg']}))
 if mode == 'failed': fixtures.alter(path, 'statistic', 'B2', 'FAILED')
 if mode == 'wrong_ids': fixtures.alter(path, 'statistic', 'A2', 70)
 if mode == 'stale': os.utime(path, ns=(1000000000, 1000000000))
@@ -456,7 +575,7 @@ def test_shell_gm_invalid_or_disabled_size_rejected(runner, mode, size):
     assert not args_path.exists(), "invalid configuration must fail before launching an ATK task"
 
 
-@pytest.mark.parametrize("pattern,valid", [(None, True), ("", False), (" ", False), ("\t\n", False),
+@pytest.mark.parametrize("pattern,valid", [(None, True), ("", False), (" ", False), ("\t\n", False), (7, False),
                                          ("ACLNN_ERR_PARAM_INVALID: expected", True)])
 def test_shell_error_expectation_preflight(runner, pattern, valid):
     atk, env = runner
@@ -475,3 +594,39 @@ def test_shell_error_expectation_preflight(runner, pattern, valid):
         assert result.returncode != 0, result.stdout + result.stderr
         assert "expected_error_msg" in result.stderr
         assert not args_path.exists()
+
+
+@pytest.mark.parametrize("mode", ["", "missing_error"])
+def test_shell_expected_error_metadata_is_required_for_negative_cases(runner, mode):
+    atk, env = runner
+    env["ATK_STUB_MODE"] = mode
+    path = atk / "op/atk_op.json"
+    path.write_text(json.dumps([{"id": 0}, {"id": 1, "expected_error_msg": NEGATIVE_MESSAGE}]))
+    result = subprocess.run(["bash", str(atk / "run_test_cpu.sh"), "-op=op", "-soc=A5", "-scope=accuracy"],
+                            env=env, capture_output=True, text=True)
+    assert (result.returncode == 0) is (not mode), result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("start,end", [(0, 1), (1, 2)])
+def test_shell_error_metadata_uses_selected_json_array_slice(runner, start, end):
+    atk, env = runner
+    path = atk / "op/atk_op.json"
+    path.write_text(json.dumps([{"id": 0}, {"id": 70, "expected_error_msg": NEGATIVE_MESSAGE}]))
+    env.update(CASE_START=str(start), CASE_END=str(end))
+    result = subprocess.run(["bash", str(atk / "run_test_cpu.sh"), "-op=op", "-soc=A5", "-scope=accuracy"],
+                            env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert ": Pass (1 cases)" in result.stdout
+
+
+def test_shell_expected_error_cannot_waive_other_phase_checks(runner):
+    atk, env = runner
+    path = atk / "op/atk_op_mss.json"
+    path.write_text(json.dumps([{"id": 0}, {"id": 1, "expected_error_msg": NEGATIVE_MESSAGE}]))
+    args_path = atk / "args.json"
+    env["ATK_STUB_ARGS"] = str(args_path)
+    result = subprocess.run(["bash", str(atk / "run_test_cpu.sh"), "-op=op", "-soc=A5", "-scope=determinism"],
+                            env=env, capture_output=True, text=True)
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert not args_path.exists()
+    assert "expected-error cases" in result.stderr
