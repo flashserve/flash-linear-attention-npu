@@ -25,7 +25,7 @@ KDA `implementation="legacy"` 表示原 fused 算法，仍经 Stable launcher �
 ## 2. 运行时
 
 公开函数保持名称、参数、默认值、返回结构、autograd 和 mutation 契约；既有 Stable 实现
-遗漏的已公开行为按下述四项补齐，而不是将基线错误固化为新契约。所有算子只解析
+遗漏的已公开行为按下述五项补齐，而不是将基线错误固化为新契约。所有算子只解析
 Stable wrapper 及其真实 dispatcher 注册；缺库、缺注册、缺失或不匹配的构建戳均保留
 根本原因并直接报错。不存在自动回退和 legacy 扩展加载 API。
 
@@ -41,6 +41,7 @@ ctypes 注释或代码而删除版本计数、requires_grad 检查、每次取 s
 | Conv1d fn/update 遗漏预检 | `validate_data=True` 时执行独立的 query_start_loc 边界、类型、设备及 max_query_len 检查；update 保留 max_query_len 的基本约束。拒绝发生在下发与状态修改之前 | CPU 检查非法元数据不下发、不修改状态，以及关闭可选预检时不读回设备元数据；原 NPU update/变长测试仍须执行 |
 | Conv1d fn/update 混淆显式 None 与默认 null slot | 显式 `null_block_id=None` 转发 -1，以关闭 null-slot 过滤；省略该参数或显式传 0 仍保持默认过滤 slot 0。原 Stable 错误地把 None 转成 0，会跳过实际缓存槽 | CPU 分别检查省略、0、正整数和 None 的转发；重跑原 head_num/变长 CPU golden 用例，确认原 `max_abs_diff=11.500977` 问题消失 |
 | `npu_causal_conv1d_bwd` 拒绝文档中的 BSH 别名 | 将 BSH 规范化为已有 BSND 编码，保持 dispatcher schema 与 C++ 枚举不变 | CPU 检查别名转发；原 BSH × dtype/activation 的 CPU golden 用例须在 NPU 重跑 |
+| `npu_chunk_kda_fwd_prepare` 把 NTD 当 TND 解包 | NTD 按 `[H,T,D]` 提取 token/head 维度，并从 v 的第 0 维取得 value heads；输出仍保持规定的 head-major 形状 | 全部布局、GVA、模式的 13 槽 shape/dtype/可选性契约；原 NTD case 2 和 BNSD case 13 用相同输入做 ATK CPU 精度和不变路径前后比较 |
 
 `tests/test_stable_only_contracts.py` 纳入普通 CPU CI 和 NPU CI 的环境契约阶段。
 `tests/stable_public_api.json` 只更新 cumsum dtype 和 Conv1d fn/update null_block_id 的三个
@@ -58,6 +59,8 @@ ctypes 注释或代码而删除版本计数、requires_grad 检查、每次取 s
 `FLA_NPU_BUILD_STABLE_ABI=0` 和 `FLA_NPU_BUILD_LEGACY_EXTENSION=1` 拒绝执行；旧生成
 开关移除。保留 SoC、host 架构、scoped OPP 和离线包构建能力。wheel 使用平台相关的
 `py3-none-<platform>` 标签，不再提供 legacy CPython 标签分支。
+两处 `bdist_wheel` 还必须拒绝 `--skip-build`，防止跳过 launcher/hash 检查并直接将旧
+`build/lib` 中的 legacy 扩展装入新 wheel；真实旧 staging 负例须验证非零退出且无产物。
 
 实际构建器使用 vendored Stable C 面头文件，但仍使用 torch 安装中的链接库；不能宣称
 完全无需 torch 构建。删除的是 torch_npu/torchnpugen 的 legacy 生成依赖，目标环境仍需
@@ -196,6 +199,14 @@ torch/torch_npu 未变。`ct --version`、CLI 及 CPU 图形诊断已实际运�
 - CT `isclose` 和 `dual` 比较失败通常只返回状态。Recompute 的 w/u、prepare-full
   的四个输出现在均断言真实成功；bwd-dv 的双标杆参数修为 `test, gt=高精度真值,
   bench=低精度对照`。原来退出 0 却未检查比较结果的运行不能算精度通过。
+- KDA prepare/finalize 六份矩阵中的 864 个顶层 `expected_error_msg=""` 改为 `null`，
+  并修正 finalize 生成器。ATK 对空字符串会捕获异常，却不进行预期异常匹配，可能留下
+  `SUCCESS` 和空输出；runner 现在拒绝空白哨兵。除该字段外六份 JSON 的语义哈希
+  前后完全一致，preprocess 的 13 条真实预期异常保持原样。
+- 确定性检查不能只相信 `True`：官方工具将两组空输出也视为相等。逐例还须提供可解析的
+  `output_info_list`，至少包含一个真实非零 tensor；可选 `None` 槽仍可与真实输出并存。
+- preprocess backward 的负例 CPU 占位分支改为读取实际标量通道的顶层 `Hv/K/V`，
+  解决 13 条负例进入精度任务时的 `KeyError: shape`；NPU 的精确错误码检查继续保留。
 
 资产审计发现 28 个 ATK 目录直接覆盖 28/37 个公共入口，固化 JSON 包含精度 5951 条、
 性能 174 条和内存/确定性 578 条。仍有 9 个入口没有直接 ATK 工程，部分目录缺少
@@ -204,3 +215,55 @@ torch/torch_npu 未变。`ct --version`、CLI 及 CPU 图形诊断已实际运�
 
 `all` 执行现有 JSON 的结果与覆盖完整性分别记录。完整公共运行时验收、正式 CI 和发布
 工具链条件仍然有效，不因补齐 ATK/CT 或收紧测试门禁而豁免。
+
+## 9. 补验结果与明确阻断（2026-10-24）
+
+主干完整 CPU 回归固定 `6d8906ad`，overlay 固定正常合并后的 `91c8d623`：
+主干 core 314、CI 150，overlay core 354、CI 158 全部通过且无跳过；两边 stage pipeline
+各 5 场景通过，strict coverage 均为 37/37、零 blocker。使用真实构建产物补齐 stamp，
+源码与实际库的导出戳分别为 `818c0486ea10903539154d7c22149fa3`、
+`33fe30b984d217cb15b8fe34973bd354`；overlay 实际 capability=1。
+全部 1765/1782 个跟踪源码文件测试前后哈希相同。后续仅汇总门禁和文档改动另做针对性验证。
+最终预期异常门禁提交 `c0e69a81` 的 Linux 完整门禁 202/202 通过；真实 25 条混合矩阵、
+既有 8 份正例报告和 KDA prepare 200 精度/10 性能报告重验通过。该提交的最终 runner
+也在健康 A5 上重新执行原 25 条 preprocess 精度矩阵，20.416 秒退出 0，准确区分
+12 个数值通过与 13 个预期异常匹配；没有将负例计为数值精度通过。
+
+| A5 补验 | 实际结果与边界 |
+|---|---|
+| KKT 原 ATK JSON | 基线与修改后均完成 accuracy 2、performance 1、DC 1、MSS 1，四阶段全部通过；使用修正并独立校准的按行 beta 标杆 |
+| cumsum / Conv1d fn | 各自原 JSON 的四阶段通过（2/1/1/1）；MSS 含真实目标 kernel 的完整无错误记录 |
+| Conv1d backward | accuracy 200、performance 1、DC 1、MSS 1 全部通过；固定参数矩阵之外的 BSH 等接口修复仍由第 7 节专项测试覆盖 |
+| KDA fwd prepare | 修复 NTD 解包后，完整 200 条精度与 10 条性能通过；原 case 2 输入字节与基线相同，从 161002 变为 13 输出精度通过；不变 BNSD case 13 的 13 个输出与基线逐文件字节相等 |
+| preprocess backward | 修复 CPU 占位分支后，健康设备完成 25 个执行成功：12 个数值精度通过、13 个精确预期异常匹配；这不是 25 个数值精度通过 |
+| CT bwd-dv | 修改前后均通过原双标杆精度及严格输入/输出比较；成功的严格记录器前后证据增至 11 个公共入口 |
+| CT recompute-wu / prepare-full | 修改前后均出现 AIcore timeout 507014，比较按失败保留；CT 工具缺失已经解决，不能继续将失败归于未安装依赖 |
+
+ATK 26.9.8 的 GM 默认策略将按字节计算的 reserve_size 直接用于 FP32 `torch.empty`
+元素数量，实际分配约四倍；KKT FP16 首轮在进入算子前发生 OOM。补跑显式设置
+`ATK_GM_INIT_MODE=on ATK_GM_INIT_MB=512`，保留 NaN 初始化、原输入/种子/容差，
+该版本实际分配约 2 GiB。此配置用于 KKT、Conv1d backward、KDA prepare 和 preprocess
+补跑，不宣称覆盖默认策略的全部空闲 HBM。默认策略的失败日志保持原样。
+
+`29463eae` 通过项目子目录正式路径重新构建了包含 NTD 修复的 runtime wheel，SHA256 为
+`f80a88811528c177e015683e1c5e95f6849113d3e7f6860c879fa189692446a5`。
+wheel 中 wrapper 与已提交源码一致，1285 个 OPP 文件与已验证完整 OPP 逐一相同；
+launcher 重新编译、stamp 匹配、37 个 dispatcher 解析通过，相关 Linux 契约 56 项通过。
+该产物是 `fla_npu` runtime wheel；第 7 节根目录完整/scoped 构建记录属于此前版本。
+
+**完整验收仍不通过，两份 PR 保持 Draft。** 已确认的主要阻断为：
+
+- preprocess backward 的原 5 条 MSS 在基线和修改后均报告 40 条每次 512 字节的 GM
+  写越界告警，5 次目标 kernel 完成均为 `See all detected errors above`。ATK XLSX
+  仍显示 memory Pass，因为它漏检这些 WARNING；新门禁正确拒绝。两侧用例配置一致，
+  raw log 没有 case ID，不能从 kernel 日志推导逐输入关联。未修改 kernel 或豁免告警。
+- recompute-wu、prepare-full 及此前 fwd-h 长用例的超时，DHU 非有限输出和旧 KKT
+  非法小形状用例失败仍保留；共同失败不等于通过。设备曾超时后的额外停滞运行单独
+  记录为未完成，健康设备串行复测用于补证，未执行设备重置。
+- KDA prepare 的 432 条 DC/MSS 矩阵未完成；全仓 37 入口、全部布局/dtype/分支、
+  多 seed 及 A2/A3/最低 torch 组合尚无完整验收证据。现有小矩阵四阶段通过不能替代这些条件。
+- 新 wheel 的完整发布检查仍被 OPP host 库的 `GLIBCXX_3.4.32 > 3.4.29` 拒绝，
+  launcher 自身 ELF 审计通过不能代表整包可发布。正式 A2+A5 CI 与两位批准仍是合入前置条件。
+
+原始 XLSX、日志、输入/输出摘要、源码与产物哈希保存在 A5 的
+`/home/zzy1205/stable-only-20261023/evidence/`，并已取回本地证据归档。
