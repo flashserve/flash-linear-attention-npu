@@ -100,14 +100,27 @@ __aicore__ inline uint16_t Seen(uint16_t id, uint32_t sub)
 // [m, n] L0C, m is a multiple of 32. Each call writes m/2 rows to one AIV.
 // dualDstCtl 0b01 would split M in one instruction, but it rejects F322BF16
 // (aicore 169: fixpipe parameter invalid). The cast stays on each call.
-__aicore__ inline void FixpipeHalfBf16(LocalTensor<bfloat16_t> ub, LocalTensor<float> l0C, int m, int n)
+// scale == 0 keeps a plain cast. A nonzero scale is applied in the fixpipe
+// (fp32 multiply, then bf16), so the vector core does not scale o again.
+__aicore__ inline void FixpipeHalfBf16(LocalTensor<bfloat16_t> ub, LocalTensor<float> l0C, int m, int n,
+                                       float scale = 0.f)
 {
     FixpipeParamsArch3510<CO2Layout::ROW_MAJOR> p;
     p.nSize = static_cast<uint16_t>(n);
     p.mSize = static_cast<uint16_t>(m / 2);
     p.srcStride = static_cast<uint16_t>(m);
     p.dstStride = static_cast<uint32_t>(n);
-    p.quantPre = QuantMode_t::F322BF16;
+    if (scale == 0.f) {
+        p.quantPre = QuantMode_t::F322BF16;
+    } else {
+        p.quantPre = QuantMode_t::QF322BF16_PRE;
+        union {
+            float f;
+            uint32_t u;
+        } bits;
+        bits.f = scale;
+        p.deqScalar = static_cast<uint64_t>(bits.u);
+    }
     p.dualDstCtl = 0;
     p.isChannelSplit = false;
     p.params.ndNum = 1;
@@ -574,10 +587,9 @@ private:
 
     __aicore__ inline void StoreO(uint32_t chunk)
     {
-        ScaleHalfVF(ubO_, ubO_, scale_);
-        // Event 0 is PublishKFlag. H is already queued on event 1.
-        SetFlag<HardEvent::V_MTE3>(2);
-        WaitFlag<HardEvent::V_MTE3>(2);
+        // The fixpipe already multiplied by scale_. Wait on MTE3 so the copy
+        // sees that write; the old vector scale was the only consumer of kFlagO.
+        CrossCoreWaitFlag<0x4, PIPE_MTE3>(kFlagO);
         const int64_t token = TokenBase() + static_cast<int64_t>(chunk) * kBt + static_cast<int64_t>(sub_) * 16;
         DataCopy(oGm_[token * kDim], ubO_, 16 * kDim);
         CrossCoreSetFlag<0x4, PIPE_MTE3>(Seen(kFlagOd, sub_));
@@ -740,7 +752,6 @@ private:
                     PublishQ(nxt);
                     PublishQFlag(nxt);
                 }
-                CrossCoreWaitFlag<0x4, PIPE_V>(kFlagO);
                 StoreO(c);
             }
             WaitFlag<HardEvent::V_MTE3>(1);
@@ -790,13 +801,10 @@ private:
                 // kbg is stored negated, so the later w@H accumulates -p into u.
                 Mad(l1A_[slot], l1Vb_[slot], kBt, kDim, kBt, true, 0, false, 1);
                 Mad(l1A_[slot], l1Kbg_[slot], kBt, kDim, kBt, true, 1);
-                // H does not depend on W. Bank 0 was freed by A@v, so this load
-                // overlaps A@kbg's mad. W is loaded after its fixpipe.
+                // W's fixpipe and L0 reload do not need H. Queue them before the
+                // scalar stall so they run during saxpy. H is the only load left
+                // after the flag, and it lands in L0B while W already sits in L0A.
                 WaitFlag<HardEvent::M_MTE1>(0);
-                CrossCoreWaitFlag<0x4, PIPE_MTE1>(Seen(kFlagH, 0));
-                CrossCoreWaitFlag<0x4, PIPE_MTE1>(Seen(kFlagH, 1));
-                GdnFwd32::LoadL1NzToL0B(l1H_, l0B_[0], kDim, kDim, true);
-
                 WaitFlag<HardEvent::M_FIX>(1);
                 GdnFwd32::FixpipeBf16L1(l1W_[slot], l0C1_, kBt, kDim);
                 SetFlag<HardEvent::FIX_M>(1);
@@ -804,10 +812,30 @@ private:
                 WaitFlag<HardEvent::FIX_MTE1>(0);
                 GdnFwd32::LoadL1NzToL0A(l1W_[slot], l0A_[0], kBt, kDim, false);
                 SetFlag<HardEvent::MTE1_M>(0);
+
+                // The owner AIV finishes H first. Its 64 rows are one K-half, so
+                // that half of w@H starts while the other AIV is still uploading.
+                // K accumulation order does not matter. Full H is reloaded into
+                // L0B afterwards for q@H.
+                const uint32_t fast = c & 1U;
+                const uint32_t slow = fast ^ 1U;
+                CrossCoreWaitFlag<0x4, PIPE_MTE1>(Seen(kFlagH, fast));
+                GdnFwd32::LoadL1NzHHalf(l1H_, l0B_[0], fast == 0U ? 0U : 4U);
+                SetFlag<HardEvent::MTE1_M>(1);
                 WaitFlag<HardEvent::MTE1_M>(0);
-                // initC false: l0C0 still holds u, and W @ H is -p.
-                GdnFwd32::MmadL0ToL0C(l0A_[0], l0B_[0], l0C0_, kBt, kDim, kDim, false, 0);
+                WaitFlag<HardEvent::MTE1_M>(1);
+                LocalTensor<bfloat16_t> wFast = fast == 0U ? l0A_[0] : l0A_[0][2048];
+                GdnFwd32::MmadL0ToL0C(wFast, l0B_[0], l0C0_, kBt, kDim, 64, false, 0);
+
+                CrossCoreWaitFlag<0x4, PIPE_MTE1>(Seen(kFlagH, slow));
+                WaitFlag<HardEvent::M_MTE1>(1);
+                GdnFwd32::LoadL1NzHHalf(l1H_, l0B_[1], slow == 0U ? 0U : 4U);
+                SetFlag<HardEvent::MTE1_M>(1);
+                WaitFlag<HardEvent::MTE1_M>(1);
+                LocalTensor<bfloat16_t> wSlow = slow == 0U ? l0A_[0] : l0A_[0][2048];
+                GdnFwd32::MmadL0ToL0C(wSlow, l0B_[1], l0C0_, kBt, kDim, 64, false, 1);
                 SetFlag<HardEvent::M_MTE1>(0);
+                SetFlag<HardEvent::M_MTE1>(1);
                 SetFlag<HardEvent::M_FIX>(0);
                 WaitFlag<HardEvent::M_FIX>(0);
                 FixpipeHalfBf16(ubU_, l0C0_, kBt, kDim);
@@ -815,10 +843,10 @@ private:
                 CrossCoreSetFlag<0x4, PIPE_FIX>(kFlagP);
                 CrossCoreSetFlag<0x4, PIPE_FIX>(static_cast<uint16_t>(kFlagP + kAiv1));
 
-                // H stays in l0B_[0]. q_exp is loaded before v_new so q@H does not move H.
-                // Next K@K stays here, under v_new. Issuing it before w@H stalls on
-                // the K flag, which is published only after the previous chunk's D.
+                // Full H again, packed, so q@H stays one mad and D can still load
+                // under it. The reload shares MTE1 with q_exp; one flag covers both.
                 WaitFlag<HardEvent::M_MTE1>(0);
+                GdnFwd32::LoadL1NzToL0B(l1H_, l0B_[0], kDim, kDim, true);
                 GdnFwd32::LoadL1NzToL0A(l1Qexp_[slot], l0A_[0], kBt, kDim, false);
                 SetFlag<HardEvent::MTE1_M>(0);
                 if (c >= 1 && c + 1 < nChunk) {
@@ -878,7 +906,7 @@ private:
                     CrossCoreWaitFlag<0x4, PIPE_FIX>(Seen(kFlagOd, 0));
                     CrossCoreWaitFlag<0x4, PIPE_FIX>(Seen(kFlagOd, 1));
                 }
-                FixpipeHalfBf16(ubO_, l0C0_, kBt, kDim);
+                FixpipeHalfBf16(ubO_, l0C0_, kBt, kDim, scale_);
                 SetFlag<HardEvent::FIX_M>(0);
                 CrossCoreSetFlag<0x4, PIPE_FIX>(kFlagO);
                 CrossCoreSetFlag<0x4, PIPE_FIX>(static_cast<uint16_t>(kFlagO + kAiv1));
