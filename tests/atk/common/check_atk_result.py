@@ -65,7 +65,7 @@ def _table(workbook, sheet, allow_empty=False):
     return header, data
 
 
-def _summary(header, rows, phase, count):
+def _summary(header, rows, phase, count, negative_count=0):
     verdict = PHASES[phase][1]
     required = {"名称"}
     if phase != "performance":
@@ -83,7 +83,9 @@ def _summary(header, rows, phase, count):
         if active:
             active_nodes.append(str(row["名称"]))
         counts = {"总用例数": count, "执行成功用例个数": count,
-                  "执行失败用例个数": 0, "通过用例个数": count}
+                  "执行失败用例个数": 0, "通过用例个数": count - negative_count}
+        if phase == "accuracy":
+            counts["错误信息匹配用例个数"] = negative_count
         for name, expected in counts.items():
             value = row.get(name)
             must_exist = active and (name == "总用例数" or phase in ("accuracy", "determinism"))
@@ -100,6 +102,80 @@ def _summary(header, rows, phase, count):
     if phase != "performance" and not active_nodes:
         raise InvalidReport(f"summary: no explicit {verdict}=Pass")
     return active_nodes
+
+
+def _expected_errors(metadata, expected_ids, phase):
+    if metadata is None:
+        return {}
+    if not isinstance(metadata, dict):
+        raise InvalidReport("expected errors must be an object mapping case IDs to messages")
+    if not metadata:
+        return {}
+    if phase != "accuracy" or not isinstance(expected_ids, list) or not expected_ids:
+        raise InvalidReport("expected errors require accuracy and explicit expected IDs")
+    selected = {_integer(value, "expected ID") for value in expected_ids}
+    result = {}
+    for key, message in metadata.items():
+        if not isinstance(key, str) or not re.fullmatch(r"0|[1-9][0-9]*", key):
+            raise InvalidReport(f"invalid expected error case ID {key!r}")
+        case = int(key)
+        if case not in selected:
+            raise InvalidReport(f"negative case {case} is not in expected IDs")
+        if not isinstance(message, str) or not message.strip():
+            raise InvalidReport(f"case {case}: expected error must be a nonempty message")
+        result[case] = message
+    return result
+
+
+def _negative_accuracy(row, case, expected, active_nodes):
+    """ATK write_error_msg stores its match result on the DUT AccuracyConfig.
+
+    CPU precision=False is an inapplicable placeholder for these cases. Require
+    the explicitly selected JSON expectation, DUT boolean and detailed actual
+    exception; never infer an exception waiver from the report itself.
+    """
+    try:
+        config = json.loads(row.get("用例json信息"))
+        details = ast.literal_eval(row.get("精度详情"))
+    except (TypeError, ValueError, SyntaxError) as error:
+        raise InvalidReport(f"case {case}: missing/malformed expected-error evidence") from error
+    if (not isinstance(config, dict) or type(config.get("id")) is not int
+            or config["id"] != case or config.get("expected_error_msg") != expected):
+        raise InvalidReport(f"case {case}: report expectation differs from selected JSON")
+    if not isinstance(details, dict) or len(details) != 1:
+        raise InvalidReport(f"case {case}: missing/unexpected DUT error-match details")
+    node, checks = next(iter(details.items()))
+    if (not isinstance(node, str) or not node.startswith(("npu_", "pyaclnn_"))
+            or not _true(row.get(f"{node}_精度通过"))
+            or not isinstance(checks, list) or len(checks) != 1
+            or not isinstance(checks[0], dict) or not _true(checks[0].get("result"))):
+        raise InvalidReport(f"case {case}: DUT expected-error match is not True")
+    prefix = f"报错与预期一致，用例通过\n期望报错信息为：{expected}\n算子报错信息为："
+    info = checks[0].get("error_info")
+    if not isinstance(info, str) or not info.startswith(prefix):
+        raise InvalidReport(f"case {case}: missing exact expected-error match evidence")
+    actual = info[len(prefix):]
+    # Mirror the official literal-first, then regex matching, applied only to
+    # the actual exception section (not its echoed expected-message header).
+    matched = bool(actual.strip()) and expected in actual
+    if actual.strip() and not matched:
+        try:
+            matched = re.search(expected, actual, flags=re.DOTALL) is not None
+        except re.error:
+            matched = False
+    if not matched:
+        raise InvalidReport(f"case {case}: actual exception does not match expected error")
+    for name, value in row.items():
+        if name.endswith("_精度通过") and not _missing(value):
+            if name == f"{node}_精度通过":
+                continue
+            if name in {f"{active}_精度通过" for active in active_nodes}:
+                # Official CPU benchmark placeholder; only a real boolean is
+                # permitted, not an unknown/pending state.
+                if value is False or (isinstance(value, str) and value.strip().lower() == "false"):
+                    continue
+            if not _true(value):
+                raise InvalidReport(f"case {case}: unexpected precision state {name}={value!r}")
 
 
 def _determinism_outputs(value, case):
@@ -136,7 +212,7 @@ def _determinism_outputs(value, case):
         raise InvalidReport(f"case {case}: determinism has no nonempty tensor output evidence")
 
 
-def _statistic(header, rows, phase, active_nodes):
+def _statistic(header, rows, phase, active_nodes, expected_errors):
     required = {"编号", "运行结果"}
     if phase == "determinism":
         required.add("output_info_list")
@@ -160,6 +236,11 @@ def _statistic(header, rows, phase, active_nodes):
         seen.add(case)
         if row["运行结果"] != "SUCCESS":
             raise InvalidReport(f"case {case}: 运行结果={row['运行结果']!r}")
+        if not _missing(row.get("失败原因")):
+            raise InvalidReport(f"case {case}: nonempty failure reason")
+        if case in expected_errors:
+            _negative_accuracy(row, case, expected_errors[case], active_nodes)
+            continue
         if phase == "determinism":
             _determinism_outputs(row["output_info_list"], case)
         values = [row[h] for h in columns if not _missing(row[h])]
@@ -189,7 +270,7 @@ def _statistic(header, rows, phase, active_nodes):
     return seen
 
 
-def validate_report(path, phase, expected_count=None, expected_ids=None):
+def validate_report(path, phase, expected_count=None, expected_ids=None, expected_errors=None):
     """Return the proven case count, or raise InvalidReport on any gap."""
     try:
         workbook = openpyxl.load_workbook(path, read_only=True, data_only=True)
@@ -208,8 +289,9 @@ def validate_report(path, phase, expected_count=None, expected_ids=None):
         expected = _integer(expected_count, "expected count")
         if expected == 0 or len(cases) != expected:
             raise InvalidReport(f"statistic count={len(cases)}, expected={expected}")
-    nodes = _summary(summary_header, summary, phase, len(cases))
-    actual_ids = _statistic(statistic_header, cases, phase, nodes)
+    errors = _expected_errors(expected_errors, expected_ids, phase)
+    nodes = _summary(summary_header, summary, phase, len(cases), len(errors))
+    actual_ids = _statistic(statistic_header, cases, phase, nodes, errors)
     if expected_ids is not None:
         if not isinstance(expected_ids, list) or not expected_ids:
             raise InvalidReport("expected IDs must be a nonempty list")
@@ -219,7 +301,8 @@ def validate_report(path, phase, expected_count=None, expected_ids=None):
     return len(cases)
 
 
-def check_report(output_root, op, phase, started_after_ns=None, expected_count=None, expected_ids=None):
+def check_report(output_root, op, phase, started_after_ns=None, expected_count=None, expected_ids=None,
+                 expected_errors=None):
     folder = PHASES[phase][0]
     candidates = list(Path(output_root).glob(f"{folder}/atk_output/atk_{op}_*/report/*.xlsx"))
     if started_after_ns is not None:
@@ -228,7 +311,7 @@ def check_report(output_root, op, phase, started_after_ns=None, expected_count=N
         raise InvalidReport(f"no current {phase} report under {output_root}")
     # A corrupt newest report is a failure; never fall back to an older Pass.
     path = max(candidates, key=lambda p: p.stat().st_mtime_ns)
-    return path, validate_report(path, phase, expected_count, expected_ids)
+    return path, validate_report(path, phase, expected_count, expected_ids, expected_errors)
 
 
 def validate_mss_log(path, started_after_ns, op, tool="memcheck", expected_count=None):
@@ -271,6 +354,8 @@ def main(argv=None):
     parser.add_argument("--started-after-ns", type=int)
     parser.add_argument("--expected-count", type=int)
     parser.add_argument("--expected-ids", type=json.loads)
+    parser.add_argument("--expected-errors", type=json.loads,
+                        help="JSON object of selected accuracy negative case IDs to nonempty expected messages")
     parser.add_argument("--mss-log")
     parser.add_argument("--mss-tool", default="memcheck")
     args = parser.parse_args(argv)
@@ -281,7 +366,8 @@ def main(argv=None):
                 validate_mss_log(args.mss_log, args.started_after_ns, args.op,
                                  args.mss_tool, args.expected_count)
             path, count = check_report(args.output_root, args.op, phase,
-                                       args.started_after_ns, args.expected_count, args.expected_ids)
+                                       args.started_after_ns, args.expected_count, args.expected_ids,
+                                       args.expected_errors)
             print(f"[ATK结果检查] {phase}: Pass ({count} cases) [{path}]")
         except (InvalidReport, OSError) as error:
             failed = True

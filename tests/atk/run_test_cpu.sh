@@ -60,17 +60,17 @@ die() {
 # 全局变量：记录已执行的测试类型与未通过项数
 RAN_TYPES=()
 RESULT_FAIL_COUNT=0
-declare -A STAGE_START_NS=() STAGE_EXPECTED_COUNT=() STAGE_EXPECTED_IDS=()
+declare -A STAGE_START_NS=() STAGE_EXPECTED_COUNT=() STAGE_EXPECTED_IDS=() STAGE_EXPECTED_ERRORS=()
 
 # Count the selected JSON cases before ATK runs; exit-zero with a partial or
 # historical report must not count as a successful stage.
 begin_stage() {
-  local stage="$1" file="$2" start="$3" end="$4"
-  STAGE_EXPECTED_IDS["$stage"]="$(python3 - "$file" "$start" "$end" <<'PY'
+  local stage="$1" file="$2" start="$3" end="$4" metadata
+  metadata="$(python3 - "$file" "$start" "$end" "$stage" <<'PY'
 import json
 import sys
 
-path, start, end = sys.argv[1:]
+path, start, end, stage = sys.argv[1:]
 with open(path, encoding="utf-8") as stream:
     cases = json.load(stream)
 if not isinstance(cases, list):
@@ -89,9 +89,20 @@ if not cases:
 ids = [case.get("id") for case in cases]
 if any(type(value) is not int or value < 0 for value in ids) or len(set(ids)) != len(ids):
     raise SystemExit("case IDs must be unique nonnegative integers")
-print(json.dumps(ids))
+errors = {}
+for case in cases:
+    message = case.get("expected_error_msg")
+    if message is not None:
+        if not isinstance(message, str) or not message.strip():
+            raise SystemExit("expected_error_msg must be null or a nonempty string")
+        errors[str(case["id"])] = message
+if errors and stage != "accuracy":
+    raise SystemExit("expected-error cases are supported only by the accuracy gate")
+print(json.dumps({"ids": ids, "errors": errors}))
 PY
 )" || die "无法确定 ${stage} 用例数量"
+  STAGE_EXPECTED_IDS["$stage"]="$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["ids"]))' "$metadata")"
+  STAGE_EXPECTED_ERRORS["$stage"]="$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["errors"]))' "$metadata")"
   STAGE_EXPECTED_COUNT["$stage"]="$(python3 -c 'import json,sys; print(len(json.loads(sys.argv[1])))' "${STAGE_EXPECTED_IDS[$stage]}")"
   STAGE_START_NS["$stage"]="$(python3 -c 'import time; print(time.time_ns())')"
 }
@@ -119,7 +130,8 @@ print_result_summary() {
         --output-root "$ATK_OUTPUT_ROOT" --op "$OP" \
         --started-after-ns "${STAGE_START_NS[$t]}" \
         --expected-count "${STAGE_EXPECTED_COUNT[$t]}" \
-        --expected-ids "${STAGE_EXPECTED_IDS[$t]}" "${extra_args[@]}"; then
+        --expected-ids "${STAGE_EXPECTED_IDS[$t]}" \
+        --expected-errors "${STAGE_EXPECTED_ERRORS[$t]}" "${extra_args[@]}"; then
       pass=$((pass + 1))
     else
       fail=$((fail + 1))
@@ -173,7 +185,7 @@ if not isinstance(data, (dict, list)) or len(data) == 0:
 cases = data.values() if isinstance(data, dict) else data
 for case in cases:
     pattern = case.get("expected_error_msg")
-    if isinstance(pattern, str) and not pattern.strip():
+    if pattern is not None and (not isinstance(pattern, str) or not pattern.strip()):
         raise SystemExit(
             f"{label} case {case.get('id')}: expected_error_msg 不能为空串或纯空白；"
             "正常用例请使用 null，负例必须保留明确的预期错误信息"
