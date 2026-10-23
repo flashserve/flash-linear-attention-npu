@@ -454,10 +454,15 @@ public:
     // begin/end是全局parent区间；仅缩小任务范围，沿用同一后处理及舍入实现。
     __aicore__ inline void ProcessEpilogueRange(int64_t begin, int64_t end)
     {
-        const int64_t subBlockNum = static_cast<int64_t>(GetSubBlockNum());
         const int64_t subBlockIdx = static_cast<int64_t>(GetSubBlockIdx());
-        for (int64_t task = begin + subBlockIdx; task < end; task += subBlockNum) {
-            ComputeEpilogueTask(task);
+        // 按全局四parent块分配连续两head，再裁剪Range首尾。
+        for (int64_t quad = (begin / 4) * 4; quad < end; quad += 4) {
+            const int64_t pairBegin = quad + 2 * subBlockIdx;
+            const int64_t taskBegin = pairBegin > begin ? pairBegin : begin;
+            const int64_t taskEnd = MinI64(end, pairBegin + 2);
+            for (int64_t task = taskBegin; task < taskEnd; ++task) {
+                ComputeEpilogueTask(task);
+            }
         }
     }
 
