@@ -10,7 +10,7 @@
 #pragma once
 
 #ifndef CATLASS_ARCH
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if (defined(__CCE_AICORE__) && __CCE_AICORE__ == 310) || (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
 #define CATLASS_ARCH 3510
 #else
 #define CATLASS_ARCH 2201
@@ -81,7 +81,7 @@ constexpr uint64_t KDA_WORKSPACE_ALIGN = 512;
 constexpr uint32_t KDA_GATE_TILE_ROWS = 32;
 constexpr uint32_t KDA_CUBE_MIN_REDUCTION = 16;
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if (defined(__CCE_AICORE__) && __CCE_AICORE__ == 310) || (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
 using KdaArchTag = Catlass::Arch::Ascend950;
 #else
 using KdaArchTag = Catlass::Arch::AtlasA2;
@@ -427,20 +427,20 @@ private:
         const uint64_t rowBytes = cols * sizeof(CopyT);
         const uint64_t gapBytes = (dstStride - cols) * sizeof(CopyT);
         DataCopyParams params{
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if (defined(__CCE_AICORE__) && __CCE_AICORE__ == 310) || (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
             1,
 #else
             static_cast<uint16_t>(rows),
 #endif
             static_cast<uint16_t>(rowBytes / blockBytes),
             0,
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if (defined(__CCE_AICORE__) && __CCE_AICORE__ == 310) || (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
             0
 #else
             static_cast<uint16_t>(gapBytes / blockBytes)
 #endif
         };
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if (defined(__CCE_AICORE__) && __CCE_AICORE__ == 310) || (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
         const uint64_t dstRowBytes = dstStride * sizeof(CopyT);
         LoopModeParams loopParams{
             static_cast<uint32_t>(rows), 1, rowBytes, dstRowBytes, 0, 0};
@@ -642,7 +642,7 @@ private:
         }
         return maxRows;
     }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if (defined(__CCE_AICORE__) && __CCE_AICORE__ == 310) || (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
     __aicore__ inline void ComputeOutputCubeStagedArch35(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start,
                                                      uint64_t curT)
     {
@@ -1096,7 +1096,7 @@ private:
     __aicore__ inline void ComputeOutputCube(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start,
                                              uint64_t curT)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if (defined(__CCE_AICORE__) && __CCE_AICORE__ == 310) || (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
         SetLoadDataPaddingValue<T>(static_cast<T>(0));
         if (BT_ == 64 && curT == BT_) {
             ComputeOutputCubeStagedArch35(b, hv, chunkIdx, start, curT);
@@ -1273,7 +1273,7 @@ private:
         if constexpr (IsSameType<T, float>::value) {
             return;
         }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if (defined(__CCE_AICORE__) && __CCE_AICORE__ == 310) || (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
         if constexpr (IsSameType<T, bfloat16_t>::value) {
             if (!isVarLen_ && T_ % BT_ == 0 && BT_ == 64 && K_ == 128 && V_ == 128) {
                 return;
@@ -1310,7 +1310,7 @@ private:
         if constexpr (IsSameType<T, float>::value) {
             return;
         }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if (defined(__CCE_AICORE__) && __CCE_AICORE__ == 310) || (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
         if (!isVarLen_ && T_ % BT_ == 0 && BT_ == 64 && K_ == 128 && V_ == 128) {
             ProcessOutAicPipelinedArch35();
             return;

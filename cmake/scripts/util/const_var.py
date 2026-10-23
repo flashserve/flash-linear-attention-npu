@@ -25,7 +25,8 @@ WMODES = stat.S_IWUSR | stat.S_IRUSR
 SOC_MAP_EXT = {'ascend310p': 'Ascend310P3', 'ascend310b': 'Ascend310B1',
                'ascend910': 'Ascend910A', 'ascend910b': 'Ascend910B1',
                'ascend910_93': 'Ascend910_9391', 'ascend610lite': 'Ascend610Lite',
-               'ascend950': 'Ascend950PR_9599', 'kirinx90': 'KirinX90',
+               'ascend950': 'Ascend950PR_9599', 'ascend960dt': 'Ascend960DT_968B7',
+               'kirinx90': 'KirinX90',
                'kirin9030': 'Kirin9030'}
 BIN_CMD = 'asc_opc $1 --main_func={fun} --input_param={param} --soc_version={soc} \
 --output=$2 --impl_mode={impl} --simplified_key_mode=0 --op_mode=dynamic\n'

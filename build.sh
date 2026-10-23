@@ -52,7 +52,7 @@ KERNEL_TEMPLATE_INPUT=""
 OPS_FILTER_VALUE=""
 OPS_FILTER_SOURCE=""
 ASCEND_SOC_UNITS="ascend910b"
-SUPPORT_COMPUTE_UNIT_SHORT=("ascend910b" "ascend910_93" "ascend950" "ascend310p" "kirinx90" "kirin9030" "mc62cm12a")
+SUPPORT_COMPUTE_UNIT_SHORT=("ascend910b" "ascend910_93" "ascend950" "ascend960dt" "ascend310p" "kirinx90" "kirin9030" "mc62cm12a")
 CMAKE_BUILD_MODE=""
 BUILD_TYPE=""
 VERSION=""
@@ -567,7 +567,7 @@ function build_example()
         return 1
     fi
     # Obtain the example file corresponding to the input soc unit.
-    if [[ "$ASCEND_SOC_UNITS" == "ascend950" ]]; then
+    if [[ "$ASCEND_SOC_UNITS" == "ascend950" || "$ASCEND_SOC_UNITS" == "ascend960dt" ]]; then
         # 1. ascend950/ascend950 example is independent of other soc units.
         files=($(find ../ -path "*/${EXAMPLE_NAME}/examples/arch35/${pattern}*.cpp"))
         if [[ -z "$files" ]]; then
@@ -847,7 +847,8 @@ package_static() {
 
 function process_soc_input(){
     local input_string="$1"
-    input_string=$(echo "$input_string" | sed 's/ascend950/ascend950/g')
+    # 统一 ascend960DT(A6) 的写法：仓内与 ops-transformer/ops-nn 保持一致，统一用小写 ascend960dt
+    input_string=$(echo "$input_string" | sed -E 's/ascend960DT/ascend960dt/gi')
     local value_part="${input_string#*=}"
     ASCEND_SOC_UNITS="${value_part//,/;}"
 
@@ -856,6 +857,7 @@ function process_soc_input(){
         [ascend910_93]="Atlas A3"
         [ascend310p]="Atlas Inference"
         [ascend950]="Ascend 950PR/Ascend 950DT"
+        [ascend960dt]="Ascend960DT_968B7"
     )
 
     if [[ ${SOC_HARDWARE_MAP[$ASCEND_SOC_UNITS]} ]]; then

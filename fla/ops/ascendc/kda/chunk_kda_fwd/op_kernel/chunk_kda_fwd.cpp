@@ -2,7 +2,8 @@
 #include "lib/matmul_intf.h"
 
 #include "chunk_kda_fwd_common.h"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310 && \
+#if ((defined(__CCE_AICORE__) && __CCE_AICORE__ == 310) || \
+     (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)) && \
     (!defined(TILING_KEY_VAR) || TILING_KEY_VAR == 2UL)
 #define KDA_COMPILE_ARCH35_FAST_PATH 1
 #include "arch35/chunk_kda_fwd_impl.h"
@@ -140,7 +141,7 @@ __aicore__ inline void DispatchArch35SafeGate(
             kg, vNew, h, userWorkspace, tiling, pipe);
     }
 }
-#elif defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#elif (defined(__CCE_AICORE__) && __CCE_AICORE__ == 310) || (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
 template <typename T, typename BETA_T, typename TilingData,
           uint32_t COMPILE_BT, uint32_t COMPILE_K, uint32_t COMPILE_V>
 __aicore__ inline void DispatchArch35SafeGate(
@@ -190,9 +191,15 @@ extern "C" __global__ __aicore__ void chunk_kda_fwd(
     GM_ADDR w, GM_ADDR u, GM_ADDR qg, GM_ADDR kg, GM_ADDR v_new, GM_ADDR h,
     GM_ADDR qg_scaled, GM_ADDR u_seed, GM_ADDR workspace, GM_ADDR tiling)
 {
+#if (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
+    KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_1);
+    KERNEL_TASK_TYPE(2, KERNEL_TYPE_MIX_AIC_1_1);
+#else
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
     KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
     KERNEL_TASK_TYPE(2, KERNEL_TYPE_MIX_AIC_1_2);
+#endif
     GM_ADDR userWorkspace = AscendC::GetUserWorkspace(workspace);
     GET_TILING_DATA_WITH_STRUCT(ChunkKdaFwdTilingData, tilingData, tiling);
     if (TILING_KEY_IS(1)) {
@@ -220,7 +227,7 @@ extern "C" __global__ __aicore__ void chunk_kda_fwd(
                 tilingData);
             return;
         }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if (defined(__CCE_AICORE__) && __CCE_AICORE__ == 310) || (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
         KdaForward::DispatchArch35SafeGate<DTYPE_Q, DTYPE_BETA,
             ChunkKdaFwdTilingData, 64, 128, 128>(
 #else
