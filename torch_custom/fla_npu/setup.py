@@ -193,6 +193,9 @@ def _setup_legacy_extension():
 
     def get_compile_args():
         compile_args = ["-std=c++17"]
+        # Select the PyTorch 2.13+ compatibility branch in torch_npu op-plugin headers.
+        if len(version_parts) >= 2:
+            compile_args.append(f"-DCURRENT_VERSION=V{version_parts[0]}R{version_parts[1]}")
         if sys.platform == "win32":
             compile_args.append("/MD")
         elif sys.platform == "linux":
