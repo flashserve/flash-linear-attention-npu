@@ -186,6 +186,39 @@ class StableBuildPolicyTest(unittest.TestCase):
                     self.assertIn("Requires-Dist: " + requirement, metadata)
                 self.assertFalse(any("custom_aclnn_extension_lib" in name for name in names))
 
+    def test_skip_build_rejects_unvalidated_staging_in_both_setup_entries(self):
+        # Run the actual setuptools command against stale build/lib contents.
+        # --skip-build used to bypass both build_py validation implementations.
+        for relative in ("setup.py", "torch_custom/fla_npu/setup.py"):
+            with self.subTest(entry=relative), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                for name in ("setup.py", "torch_custom/fla_npu/setup.py", "fla/__init__.py",
+                             "scripts/stable_build_policy.py", "scripts/fla_npu_artifacts.py",
+                             "scripts/npu_compat.py", "scripts/check_build_ops.py", "README.md"):
+                    target = root / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(ROOT / name, target)
+                for name in ("torch_custom/fla_npu/fla_npu", "fla/ops/triton/triton_core"):
+                    package = root / name
+                    package.mkdir(parents=True, exist_ok=True)
+                    (package / "__init__.py").write_text("", encoding="utf-8")
+                entry = root / relative
+                staged = entry.parent / "build/lib/fla_npu"
+                staged.mkdir(parents=True)
+                (staged / "__init__.py").write_text("", encoding="utf-8")
+                legacy = staged / "custom_aclnn_extension_lib.so"
+                legacy.write_bytes(b"stale legacy library")
+                env = dict(os.environ, FLA_NPU_DISABLE_LOCAL_VERSION="TRUE",
+                           FLA_NPU_SOC="ascend950", TORCH_DEVICE_BACKEND_AUTOLOAD="0")
+                result = subprocess.run(
+                    [sys.executable, "setup.py", "bdist_wheel", "--skip-build"],
+                    cwd=entry.parent, env=env, capture_output=True, text=True,
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("--skip-build is not supported", result.stdout + result.stderr)
+                self.assertFalse(list(root.rglob("*.whl")))
+                self.assertEqual(legacy.read_bytes(), b"stale legacy library")
+
 
 if __name__ == "__main__":
     unittest.main()

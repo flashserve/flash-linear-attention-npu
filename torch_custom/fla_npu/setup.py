@@ -63,6 +63,11 @@ class BinaryDistribution(Distribution):
 
 class StableBdistWheel(_bdist_wheel):
     def finalize_options(self):
+        if self.skip_build:
+            raise RuntimeError(
+                "--skip-build is not supported: rebuild and validate the mandatory "
+                "Stable-ABI launcher and stamp; stale legacy artifacts must not be packaged"
+            )
         super().finalize_options()
         self.root_is_pure = False
         self.build_number = get_wheel_build_tag() or None
