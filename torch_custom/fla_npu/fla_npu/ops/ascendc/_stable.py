@@ -77,7 +77,9 @@ _ENUM = {
     "npu_recurrent_kda": {"layout": {"BSND": 0, "TND": 1}},
     "npu_chunk_gated_delta_rule_bwd": {"layout": _LAYOUT_CODES},
     "npu_chunk_local_cumsum": {"output_dtype": {"float32": 0,
-                                                "bfloat16": 1}},
+                                                "bfloat16": 1,
+                                                "float16": 2,
+                                                "same": 3}},
     "npu_solve_tri": {"layout": {"bsnd": 0, "bnsd": 1, "tnd": 2, "ntd": 3}},
 }
 
@@ -835,6 +837,22 @@ def npu_pre_process_bwd_kernel_merged(q, k, w, d_o, dv, scale, chunk_size, *,
     )
 
 
+def _chunk_local_cumsum_output_dtype(output_dtype):
+    """Canonicalize the public dtype spellings without importing torch."""
+    if output_dtype is None:
+        return "float32"
+    name = str(output_dtype).removeprefix("torch.").lower()
+    if name in {"", "float", "float32", "fp32"}:
+        return "float32"
+    if name in {"half", "float16", "fp16"}:
+        return "float16"
+    if name in {"bf16", "bfloat16"}:
+        return "bfloat16"
+    if name in {"same", "same_as_input", "input", "none", "null"}:
+        return "same"
+    raise TypeError(f"Unsupported chunk_local_cumsum output_dtype: {output_dtype}.")
+
+
 def npu_chunk_local_cumsum(g, chunk_size, *, cu_seqlens=None,
                            chunk_indices_out=None, reverse=False, scale=1.0,
                            head_first=True, output_dtype="float32"):
@@ -848,7 +866,8 @@ def npu_chunk_local_cumsum(g, chunk_size, *, cu_seqlens=None,
         reverse,
         scale,
         head_first,
-        _char_code("npu_chunk_local_cumsum", "output_dtype", output_dtype),
+        _char_code("npu_chunk_local_cumsum", "output_dtype",
+                   _chunk_local_cumsum_output_dtype(output_dtype)),
         _current_stream_ptr(),
     )
 
@@ -945,6 +964,9 @@ def npu_causal_conv1d_bwd(x, y, weight, dy, initial_state=None, dht=None, *,
     name and the query_start_loc values.
     """
 
+    # The operator documents BSH as the 3-D spelling of BSND.
+    if input_layout == "BSH":
+        input_layout = "BSND"
     return _op("npu_causal_conv1d_bwd")(
         x, y, weight, dy, initial_state, dht,
         _host_ints(query_start_loc),
@@ -1064,6 +1086,10 @@ def npu_causal_conv1d_fn(
         raise NotImplementedError(
             "CausalConv1d block_size_to_align is not supported by the Ascend "
             "operator")
+    if validate_data:
+        from ._conv1d_validation import validate_query_start_loc
+
+        validate_query_start_loc(x, query_start_loc, query_start_loc_cpu)
     # Hot path, same shape as the decode wrappers: resolve what can be resolved
     # once and call no helper on the way in.  See the note above `_INC_VERSION`.
     if conv_states is not None and conv_states.requires_grad:
@@ -1086,7 +1112,7 @@ def npu_causal_conv1d_fn(
             has_initial_state_cpu),
         code,
         _PAD_SLOT_ID if pad_slot_id is None else pad_slot_id,
-        _NULL_BLOCK_ID if null_block_id is None else null_block_id,
+        -1 if null_block_id is None else null_block_id,
         head_num, stream,
     )
     if conv_states is not None:
@@ -1124,6 +1150,20 @@ def npu_causal_conv1d_update(
         _reject_conv1d_scheduling(
             block_idx_last_scheduled_token=block_idx_last_scheduled_token,
             initial_state_idx=initial_state_idx)
+    if isinstance(max_query_len, bool) or not isinstance(max_query_len, int):
+        raise TypeError(
+            f"max_query_len must be an int, got {type(max_query_len).__name__}")
+    if max_query_len < -1:
+        raise ValueError(f"max_query_len must be >= -1, got {max_query_len}")
+    if query_start_loc is not None or query_start_loc_cpu is not None:
+        if max_query_len < 0:
+            raise ValueError(
+                "max_query_len must be provided and non-negative for varlen update")
+    if validate_data:
+        from ._conv1d_validation import validate_query_start_loc
+
+        validate_query_start_loc(
+            x, query_start_loc, query_start_loc_cpu, max_query_len=max_query_len)
     if conv_state is not None and conv_state.requires_grad:
         _refuse_grad_state("npu_causal_conv1d_update", conv_state)
     code = _CONV1D_ACTIVATION_CODES.get(
@@ -1138,7 +1178,7 @@ def npu_causal_conv1d_update(
         x, conv_state, weight, bias, code,
         conv_state_indices, num_accepted_tokens, query_start_loc,
         max_query_len,
-        _NULL_BLOCK_ID if null_block_id is None else null_block_id,
+        -1 if null_block_id is None else null_block_id,
         None if conv_state_indices_cpu is None else _host_ints(
             conv_state_indices_cpu),
         None if num_accepted_tokens_cpu is None else _host_ints(

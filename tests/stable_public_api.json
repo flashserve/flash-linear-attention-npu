@@ -1,5 +1,10 @@
 {
   "source_commit": "8762b6139de96e62205cefb1595aa41e38497e82",
+  "reviewed_dispatcher_changes": {
+    "npu_chunk_local_cumsum": "Restore documented output_dtype spellings and float16/same allocation in Stable; normalize argument 7 before enum encoding. Historical public signature snapshot remains unchanged.",
+    "npu_causal_conv1d_fn": "Restore explicit null_block_id=None as -1 (disable null-slot filtering); omitted/default 0 still filters slot 0. Historical public signature snapshot remains unchanged.",
+    "npu_causal_conv1d_update": "Restore explicit null_block_id=None as -1 (disable null-slot filtering); omitted/default 0 still filters slot 0. Historical public signature snapshot remains unchanged."
+  },
   "operators": [
     "npu_fast_gelu_custom",
     "npu_fast_gelu_custom_backward",
@@ -194,7 +199,7 @@
           "reverse",
           "scale",
           "head_first",
-          "_char_code('npu_chunk_local_cumsum', 'output_dtype', output_dtype)",
+          "_char_code('npu_chunk_local_cumsum', 'output_dtype', _chunk_local_cumsum_output_dtype(output_dtype))",
           "_current_stream_ptr()"
         ]
       }
@@ -382,7 +387,7 @@
           "None if has_initial_state_cpu is None else _host_ints(has_initial_state_cpu)",
           "code",
           "_PAD_SLOT_ID if pad_slot_id is None else pad_slot_id",
-          "_NULL_BLOCK_ID if null_block_id is None else null_block_id",
+          "-1 if null_block_id is None else null_block_id",
           "head_num",
           "stream"
         ]
@@ -401,7 +406,7 @@
           "num_accepted_tokens",
           "query_start_loc",
           "max_query_len",
-          "_NULL_BLOCK_ID if null_block_id is None else null_block_id",
+          "-1 if null_block_id is None else null_block_id",
           "None if conv_state_indices_cpu is None else _host_ints(conv_state_indices_cpu)",
           "None if num_accepted_tokens_cpu is None else _host_ints(num_accepted_tokens_cpu)",
           "None if query_start_loc_cpu is None else _host_ints(query_start_loc_cpu)",

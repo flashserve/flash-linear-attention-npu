@@ -2,7 +2,9 @@
 
 本设计以主干 `8762b6139de96e62205cefb1595aa41e38497e82` 为修改前基线。
 目标是移除 ctypes 算子执行后端和 legacy PyTorch 扩展，所有 AscendC 公共入口只使用
-`libfla_npu_stable.so`。Triton、KDA 的原 fused/V2 算法选择和算子 kernel 不在本次变更范围。
+`libfla_npu_stable.so`。Triton、KDA 的原 fused/V2 算法选择和设备 kernel 不在本次变更范围。
+本次也修复审查中确认的 Stable 接口缺口，包括 Python 参数规范化、输入预检以及 cumsum
+C++ 适配层的输出分配；因此不能将本变更描述为“37 个计算体完全不变”或只有加载路径变化。
 
 ## 1. 完整性分析
 
@@ -22,13 +24,29 @@ KDA `implementation="legacy"` 表示原 fused 算法，仍经 Stable launcher �
 
 ## 2. 运行时
 
-公开函数保持名称、参数、默认值、返回结构、autograd 和 mutation 契约。所有算子只解析
+公开函数保持名称、参数、默认值、返回结构、autograd 和 mutation 契约；既有 Stable 实现
+遗漏的已公开行为按下述四项补齐，而不是将基线错误固化为新契约。所有算子只解析
 Stable wrapper 及其真实 dispatcher 注册；缺库、缺注册、缺失或不匹配的构建戳均保留
 根本原因并直接报错。不存在自动回退和 legacy 扩展加载 API。
 
 正常 import 保持延迟加载 torch 的边界，实际调用必须完成 launcher 验证。不得因删除
 ctypes 注释或代码而删除版本计数、requires_grad 检查、每次取 stream、设备 guard 或
 输入生命周期保障。`FLA_NPU_STABLE_ABI=ctypes` 和 `FLA_NPU_STABLE_VALIDATE=1` 明确报错。
+
+审查确认并纳入本次实现的接口修复如下：
+
+| 接口缺口 | 修改及边界 | 验证要求 |
+|---|---|---|
+| `npu_chunk_local_cumsum` 的 Stable 路径只接受 float32/bfloat16 | 恢复既有 `output_dtype` 字符串别名、torch dtype 的字符串形式、显式 None 对应 float32，以及 float16 和 same/same_as_input/input 输出策略；Python 规范化后编码，C++ 按相应 dtype 分配输出 | CPU 检查规范化、编码和非法值拒绝；重新编译 launcher 后执行原 NPU dtype/数值用例，不能把基线拒绝 float16 当期望结果 |
+| Conv1d fn/update 遗漏预检 | `validate_data=True` 时执行独立的 query_start_loc 边界、类型、设备及 max_query_len 检查；update 保留 max_query_len 的基本约束。拒绝发生在下发与状态修改之前 | CPU 检查非法元数据不下发、不修改状态，以及关闭可选预检时不读回设备元数据；原 NPU update/变长测试仍须执行 |
+| Conv1d fn/update 混淆显式 None 与默认 null slot | 显式 `null_block_id=None` 转发 -1，以关闭 null-slot 过滤；省略该参数或显式传 0 仍保持默认过滤 slot 0。原 Stable 错误地把 None 转成 0，会跳过实际缓存槽 | CPU 分别检查省略、0、正整数和 None 的转发；重跑原 head_num/变长 CPU golden 用例，确认原 `max_abs_diff=11.500977` 问题消失 |
+| `npu_causal_conv1d_bwd` 拒绝文档中的 BSH 别名 | 将 BSH 规范化为已有 BSND 编码，保持 dispatcher schema 与 C++ 枚举不变 | CPU 检查别名转发；原 BSH × dtype/activation 的 CPU golden 用例须在 NPU 重跑 |
+
+`tests/test_stable_only_contracts.py` 纳入普通 CPU CI 和 NPU CI 的环境契约阶段。
+`tests/stable_public_api.json` 只更新 cumsum dtype 和 Conv1d fn/update null_block_id 的三个
+精确 dispatcher 表达式，并记录变更理由；其余参数位置/表达式仍严格校验。
+`tests/fixtures/stable_public_api.json`
+保留原公开签名快照，不因修复行为而重生成。枚举名、顺序和整数编码继续双向核对。
 
 ## 3. 构建和交付
 
@@ -64,7 +82,7 @@ FLA_NPU_STABLE_LIB 覆盖时只检查包内另一份库。新增算子或 ABI/sc
 | 覆盖门禁 | 正常树通过；缺 wrapper/schema/run/注册/include、参数/枚举漂移、公共入口丢失、零解析均失败 |
 | 打包 | 根/子目录入口；完整与 scoped 构建；无 launcher/hash/pin 和遗留扩展均拒绝；安装后真实 API 检查 |
 | 调用方 | 仓内旧调用迁移；原输入、CPU 标杆、混合容差保持；ATK、Example/ST 和安装流程实际执行 |
-| 数值回归 | 修改前后使用同一输入、环境、平台与 kernel；逐输出比较类型/shape/数值及状态；再对独立 CPU 标杆 |
+| 数值回归 | 修改前后使用同一输入、环境、平台与设备 kernel；逐输出比较类型/shape/数值及状态，再对独立 CPU 标杆；上述接口修复单独验证预期行为变化，不豁免数值失败 |
 | 平台 | A2/A3/A5 按各算子支持范围验证；单平台结果不能替代跨平台结论 |
 | Overlay | base→overlay→移除生命周期，多层优先级、未覆盖算子、ABI 拒绝、旧 launcher 拒绝及损坏恢复 |
 
@@ -74,3 +92,34 @@ FLA_NPU_STABLE_LIB 覆盖时只检查包内另一份库。新增算子或 ABI/sc
 
 验证结果记录实际执行项、失败项与未执行项。只有相应平台全部要求完成后才标记该平台
 验收完成；PR 的正式合入继续遵守仓库要求的两位批准和 A2+A5 NPU CI。
+
+## 6. 首轮 A5 证据与未完成项
+
+2026-10-23 首轮执行在上述接口修复前完成了 13 对 before/after 记录。对应
+`*-before.json`、`*-after.json`、`*-compare.log` 及测试日志显示 3 对比较通过、10 对失败。
+这只是首轮证据，不能作为接口修复后版本或全部 37 个算子的验收结论；后续重跑应记录
+实际代码、launcher 构建戳和独立结果，不覆盖或混淆本轮结论。
+
+| 首轮用例 | 观察到的结果与限制 |
+|---|---|
+| gelu、bwd-dqkwg | 两侧测试退出 0，记录比较通过 |
+| prepare-da | 两侧各 2 次调用有限且一致；原脚本只计算 CPU golden，没有比较/断言，因此仅证明此次前后一致 |
+| fwd-h、fwd-o | 两侧缺少 `ml_dtypes`，均为 0 次调用，必须补齐测试依赖后重跑 |
+| recompute-wu、bwd-dv | 两侧缺少 `ct`，均为 0 次调用；bwd-dv 原有双 CPU golden 与明确的 `ct.dual(...)["success"]` 断言尚未执行 |
+| prepare-full | 两侧各一次输出有限且一致，之后导入 `ct` 失败；四组 CPU 验证未执行，原脚本也未显式检查 `ct.dual` 返回值 |
+| kkt | 首例 B=1、Hk=Hv=1、T=1、K=8、BT=16、FP16，两侧 GetWorkspaceSize 均以 561103/EZ1008 报 tiling 失败；有效 CPU golden、误差及零区域检查未执行到 |
+| bwd-dhu | 两侧三次调用的 dh/dv2 均有非有限值，输入有限；原脚本只打印形状，没有 CPU 精度断言。尚无证据证明这是 padding 或记录工具误报 |
+| cumsum | 两侧第三次调用均拒绝 float16；这是本次修复的接口缺口，须重编译并重跑 |
+| conv1d | 两侧均出现变长 reshape 的 CPU golden 差异 `max_abs_diff=11.500977`，以及 update 预期 ValueError 未抛；前者的 None/null-slot 转发缺口已修复，仍需 NPU 重跑，不能由 CPU 参数测试代替数值验收 |
+| conv1d-bwd | 两侧九个 BSH 子例均被 Stable 枚举拒绝；别名修复后须完整重跑 |
+
+首轮比较没有报告修改前后结果或元数据差异，但“共同失败”并不等于通过。缺调用、未执行
+CPU 检查、非有限输出和已知数值差异必须分别保留为验证缺口。设备 kernel 未修改也不能
+据此推导数值正确，A5 单平台局部记录不能替代 ATK、Example/ST、全 37 入口或 A2+A5 CI。
+
+`ct` 是测试工具依赖，其仓内指定来源为
+[`精度对比与定位`](agents/reference/精度对比与定位.md#共同准备) 中的
+[CT Tool v0.9.1](https://gitcode.com/Wei_NaChuan/ct/releases/v0.9.1)，安装包名为
+`ct_tool-0.9.1-py3-none-any.whl`，安装后用 `ct --version` 核验。根 `requirements.txt`
+已声明 `expecttest`，但没有声明 `ct_tool` 或 `ml_dtypes`；安装 `expecttest` 和 `ml_dtypes`
+不能解决 `import ct` 失败。不得创建替代 `ct` 模块或放宽原金标/容差来使这些用例通过。
