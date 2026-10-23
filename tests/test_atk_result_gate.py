@@ -36,6 +36,10 @@ def report(path, phase="accuracy", count=2):
     statistic.append(["编号", "运行结果", result])
     for case in range(count):
         statistic.append([case, "SUCCESS", 8.6481 if phase == "performance" else True])
+    if phase == "determinism":
+        statistic.cell(1, 4, "output_info_list")
+        for row in range(2, count + 2):
+            statistic.cell(row, 4, "[{'dtype': 'torch.float32', 'shape': [2, 4], 'stride': [4, 1]}]")
     if phase == "performance":
         # Real ATK single-NPU performance has no comparison summary rows.
         summary.append(["名称"])
@@ -74,6 +78,44 @@ def test_inapplicable_reference_row_and_column(tmp_path):
     workbook.save(path)
     workbook.close()
     assert gate.validate_report(path, "accuracy", 2) == 2
+
+
+@pytest.mark.parametrize("outputs", [
+    "[]", "None", None, "[None]", "[{'dtype': None, 'shape': None, 'stride': None}]",
+    "not a descriptor", "[", "{}", "[{}]", "[42]",
+    "[{'dtype': 'torch.float32', 'shape': [0, 2], 'stride': [2, 1]}]",
+    "[{'dtype': 'invalid', 'shape': [2], 'stride': [1]}]",
+    "[{'dtype': 'torch.float32', 'shape': [-1], 'stride': [1]}]",
+    "[{'dtype': 'torch.float32', 'shape': [2.0], 'stride': [1]}]",
+    "[{'dtype': 'torch.float32', 'shape': [True], 'stride': [1]}]",
+    "[{'dtype': 'torch.float32', 'shape': [2], 'stride': []}]",
+    "[{'dtype': 'torch.float32', 'shape': [2], 'stride': None}]",
+    "[{'dtype': None, 'shape': [2], 'stride': [1]}]",
+])
+def test_determinism_true_without_real_output_evidence_fails(outputs, tmp_path):
+    path = report(tmp_path / "report.xlsx", "determinism")
+    alter(path, "statistic", "D2", outputs)
+    with pytest.raises(gate.InvalidReport):
+        gate.validate_report(path, "determinism", 2)
+
+
+@pytest.mark.parametrize("outputs", [
+    "[None, {'dtype': 'torch.bfloat16', 'shape': [2], 'stride': [1]}]",
+    "[{'dtype': None, 'shape': None, 'stride': None}, {'dtype': 'torch.float32', 'shape': [2], 'stride': [1]}]",
+    "[{'dtype': 'torch.float16', 'shape': [0], 'stride': [1]}, {'dtype': 'torch.float32', 'shape': [2], 'stride': [1]}]",
+    "[{'dtype': 'torch.float32', 'shape': [], 'stride': []}]",
+])
+def test_determinism_allows_optional_outputs_with_real_tensor(outputs, tmp_path):
+    path = report(tmp_path / "report.xlsx", "determinism")
+    alter(path, "statistic", "D2", outputs)
+    assert gate.validate_report(path, "determinism", 2) == 2
+
+
+def test_determinism_requires_output_descriptor_column(tmp_path):
+    path = report(tmp_path / "report.xlsx", "determinism")
+    alter(path, "statistic", "D1", "not_output_evidence")
+    with pytest.raises(gate.InvalidReport, match="missing columns"):
+        gate.validate_report(path, "determinism", 2)
 
 
 @pytest.mark.parametrize("value", [True, "True", "TRUE"])

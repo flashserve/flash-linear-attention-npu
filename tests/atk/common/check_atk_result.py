@@ -8,6 +8,7 @@ partial reports. Standalone checks can omit the time when auditing old evidence.
 """
 
 import argparse
+import ast
 from collections import Counter
 import json
 import math
@@ -101,8 +102,44 @@ def _summary(header, rows, phase, count):
     return active_nodes
 
 
+def _determinism_outputs(value, case):
+    """Require tensor output evidence; empty-vs-empty DC comparisons are True.
+
+    ATK AccuracyInfoJson emits repr(list[dict(dtype, shape, stride)]). Optional
+    None/empty outputs may coexist with real tensors. Byte counters belong to
+    performance metadata and are not a substitute for this output contract.
+    """
+    try:
+        outputs = ast.literal_eval(value) if isinstance(value, str) else value
+    except (SyntaxError, ValueError, TypeError) as error:
+        raise InvalidReport(f"case {case}: malformed output_info_list") from error
+    if not isinstance(outputs, list):
+        raise InvalidReport(f"case {case}: output_info_list must be a list")
+    real_tensor = False
+    for output in outputs:
+        if output is None:
+            continue
+        if not isinstance(output, dict) or not {"dtype", "shape", "stride"}.issubset(output):
+            raise InvalidReport(f"case {case}: malformed output descriptor {output!r}")
+        dtype, shape, stride = output["dtype"], output["shape"], output["stride"]
+        if dtype is None and shape in (None, []) and stride in (None, []):
+            continue
+        if not isinstance(dtype, str) or not re.fullmatch(
+                r"torch\.(?:bool|u?int(?:8|16|32|64)|bfloat16|float(?:16|32|64)|complex(?:32|64|128)|float8_[a-z0-9]+)", dtype):
+            raise InvalidReport(f"case {case}: invalid tensor dtype {dtype!r}")
+        if (not isinstance(shape, list) or not isinstance(stride, list)
+                or len(shape) != len(stride)
+                or any(type(v) is not int or v < 0 for v in shape + stride)):
+            raise InvalidReport(f"case {case}: invalid tensor shape/stride {shape!r}/{stride!r}")
+        real_tensor |= math.prod(shape) > 0
+    if not real_tensor:
+        raise InvalidReport(f"case {case}: determinism has no nonempty tensor output evidence")
+
+
 def _statistic(header, rows, phase, active_nodes):
     required = {"编号", "运行结果"}
+    if phase == "determinism":
+        required.add("output_info_list")
     if not required.issubset(header):
         raise InvalidReport(f"statistic: missing columns {sorted(required - set(header))}")
     suffix = PHASES[phase][2]
@@ -123,6 +160,8 @@ def _statistic(header, rows, phase, active_nodes):
         seen.add(case)
         if row["运行结果"] != "SUCCESS":
             raise InvalidReport(f"case {case}: 运行结果={row['运行结果']!r}")
+        if phase == "determinism":
+            _determinism_outputs(row["output_info_list"], case)
         values = [row[h] for h in columns if not _missing(row[h])]
         if not values:
             raise InvalidReport(f"case {case}: missing {suffix} result")
