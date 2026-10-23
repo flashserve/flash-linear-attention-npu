@@ -28,7 +28,7 @@ jobs:
           package-manager-cache: false
 
       - name: 安装测试依赖
-        run: python -m pip install --disable-pip-version-check pyyaml pytest "setuptools>=70.1" wheel packaging
+        run: python -m pip install --disable-pip-version-check pyyaml pytest "setuptools>=70.1" wheel packaging openpyxl
 
       - name: 执行 Stable 单后端契约与门禁自测
         run: |
@@ -37,6 +37,8 @@ jobs:
           python torch_custom/fla_npu/tools/stable_coverage.py --strict
           python torch_custom/fla_npu/tools/stable_ctypes_fallbacks.py
           python tests/atk/chunk_gated_delta_rule_fwd/aclnn_abi_contract.py
+          python -m pytest -q tests/test_atk_result_gate.py
+          python -m pytest -q tests/test_ct_comparison_contracts.py
 
       - name: 执行 CI 契约单元测试
         run: python -m unittest discover -s ci/tests -p 'test_*.py' -b
