@@ -54,6 +54,22 @@ __aicore__ inline void LoadL1NzToL0AB(LocalTensor<bfloat16_t> l1A, LocalTensor<b
     }
 }
 
+// One K-half of H. L1 is a 128-row NZ image; srcStride stays 8 so the next
+// column panel is 128 rows away. rowFrac is 0 or 4 (rows 0 or 64).
+__aicore__ inline void LoadL1NzHHalf(LocalTensor<bfloat16_t> l1H, LocalTensor<bfloat16_t> l0B, uint32_t rowFrac)
+{
+    AscendC::LoadData2DParamsV2 loadB;
+    loadB.mStartPosition = rowFrac;
+    loadB.kStartPosition = 0;
+    loadB.mStep = 4;
+    loadB.kStep = 8;
+    loadB.srcStride = 8;
+    loadB.dstStride = 8;
+    loadB.ifTranspose = true;
+    loadB.sid = 0;
+    AscendC::LoadData(l0B, l1H, loadB);
+}
+
 // Reload only L0B. Caller already waited M_MTE1. The matching L0A load and
 // MTE1_M flag come later, so this load can sit under the previous mad.
 __aicore__ inline void LoadL1NzToL0B(LocalTensor<bfloat16_t> l1B, LocalTensor<bfloat16_t> l0B, int32_t n, int32_t k,
