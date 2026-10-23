@@ -1,5 +1,7 @@
 """Raw negative ABI helper must never become an execution backend."""
+import ast
 import importlib.util
+import json
 from pathlib import Path
 import unittest
 from unittest import mock
@@ -52,6 +54,43 @@ class RawAbiProbeTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "descriptor"):
                 PROBE.reject_workspace("aclnnTest", mock.Mock(side_effect=ValueError("descriptor")))
         context.destroy.assert_called_once()
+
+
+class PreprocessNegativeCpuContractTest(unittest.TestCase):
+    def test_all_frozen_negative_cases_accept_actual_flat_atk_attributes(self):
+        folder = PATH.parent.parent / "pre_process_bwd_kernel_merged"
+        source = folder / "executor_pre_process_bwd_kernel_merged.py"
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        names = {"_placeholder_output", "_negative_expected_code", "run_cpu"}
+        functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                     and node.name in names]
+        self.assertEqual({node.name for node in functions}, names)
+        torch = mock.Mock()
+        torch.float32 = "float32"
+        namespace = {"torch": torch, "InputDataset": object,
+                     "_ACLNN_CODES": {"ACLNN_ERR_PARAM_INVALID": 161001,
+                                      "ACLNN_ERR_PARAM_NULLPTR": 161002},
+                     "OP_NAME": "pre_process_bwd_kernel_merged",
+                     "build_inputs": mock.Mock(side_effect=AssertionError("negative CPU must not build invalid tensors")),
+                     "_call_op": mock.Mock(side_effect=AssertionError("negative CPU must not call reference"))}
+        exec(compile(ast.Module(body=functions, type_ignores=[]), str(source), "exec"), namespace)
+        cases = json.loads((folder / "atk_pre_process_bwd_kernel_merged.json").read_text())
+        negatives = [case for case in cases if case.get("expected_error_msg")]
+        self.assertEqual(len(negatives), 13)
+        for case in negatives:
+            with self.subTest(case=case["id"]):
+                # This is the scalar channel that survives ATK before_call.
+                spec = {item["name"]: item["range_values"] for item in case["inputs"]
+                        if item.get("type") == "attr"}
+                self.assertNotIn("shape", spec)
+                torch.zeros.reset_mock()
+                output = namespace["run_cpu"](spec, object())
+                torch.zeros.assert_called_once_with(
+                    (int(spec["Hv"]), int(spec["K"]), int(spec["V"]) + int(spec["K"])),
+                    dtype="float32")
+                self.assertEqual(output, (torch.zeros.return_value,))
+        namespace["build_inputs"].assert_not_called()
+        namespace["_call_op"].assert_not_called()
 
 
 if __name__ == "__main__":
