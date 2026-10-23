@@ -65,3 +65,19 @@ Set/Wait 将消费完成传回 FIX，再允许 BeginFusedMmadPhase 重发 FIX_M�
 
 Finalize 的输入输出及源码入口见
 [算子说明](../../chunk_kda_bwd_finalize/README.md)。
+
+## 910B dense 保存值路径优化
+
+| 阶段 | 改动 | 不变项 |
+| --- | --- | --- |
+| WY/Intra | 每核按 8 个 work round 交替生产、消费；相同 head/chunk 保持同一 core 所有权 | 每个 GEMM 的输入、累加顺序和输出 dtype |
+| Intra Vector | 固定物理 ping/pong IO；full chunk 的 q/k/gk 分带驻留；模板常量地址计算和 core workspace 基址缓存 | 尾块有效区、归约顺序、输出布局 |
+| Gate | H=32 时沿 chunk 分成三组，写每 chunk FP32 部分和；全核同步后按 chunk 原顺序折叠 | 每 chunk 内计算和跨 chunk 累加顺序 |
+
+Local WY/Intra 调度限定 B=1、H=32、K=V=128、BF16 data/beta、FP32 raw gate、dense safe gate。
+A5 和其它组合保留主线调度；Gate 分块使用既有 reserved 字段，不改变 tiling payload 大小或公开 ABI。
+性能验收及覆盖范围见 [ATK 记录](../../../../../../tests/atk/chunk_kda_bwd/README.md)。
+
+Intra 片上预算为每 AIV 184 KiB：IO ping/pong 48 KiB、arena 84 KiB、row cache 48 KiB、
+reduce + triangle mask 4 KiB，低于 192 KiB 上限。固定 IO 的每个 slot 都有 ready/free 事件闭环；
+释放前等待最后一次消费。Gate 部分和为每 head/chunk 136 个 FP32，额外 GM workspace 按 512 字节对齐。

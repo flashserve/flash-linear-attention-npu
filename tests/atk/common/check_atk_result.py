@@ -40,7 +40,9 @@ def _find_accuracy_reports(output_root, op):
 
 def _find_root_reports(output_root, op):
     """determinism 和 mssanitizer 报告共享 atk_<op>_* 目录。"""
-    return _find_xlsx_files(output_root, f"atk_{op}_*")
+    files = _find_xlsx_files(output_root, f"atk_{op}_*")
+    files += _find_xlsx_files(output_root, f"atk_output/atk_{op}_*")
+    return sorted(set(files), key=os.path.getmtime)
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +147,7 @@ def _extract_summary_row(header, data_rows):
                 pass
         if err_match_idx is not None and row[err_match_idx] is not None:
             try:
-                check_fail += int(row[err_match_idx])
+                check_pass += int(row[err_match_idx])
             except (ValueError, TypeError):
                 pass
         if rate_idx is not None and row[rate_idx] is not None:
@@ -161,11 +163,16 @@ def _extract_summary_row(header, data_rows):
                     all_pass = False
 
     # mssanitizer 没有 exec_fail，用 total - (pass count) 估算
-    if exec_fail == 0 and total > 0 and check_pass == 0:
+    if _is_mssanitizer_report(header) and check_pass_idx is None and total > 0:
         # mssanitizer 情况：total 个用例，达标判断看 "内存检测是否达标"
-        exec_pass = total
+        if exec_pass_idx is None:
+            exec_pass = total
         check_pass = total if all_pass else 0
         check_fail = 0 if all_pass else total
+
+    check_fail = max(total - check_pass, 0)
+    all_pass = (all_pass and total > 0 and check_pass == total and exec_fail == 0
+                and (exec_pass_idx is None or exec_pass == total))
 
     return {
         "total": total,
@@ -271,7 +278,6 @@ def main():
         if not r["all_pass"]:
             any_fail = True
         xlsx_name = os.path.basename(r.get("xlsx", "")) if r.get("xlsx") else ""
-        # 实际失败数 = 总用例 - 通过用例 (check_fail 是"错误信息匹配"，不等价于未通过)
         actual_fail = r["total"] - r["check_pass"]
         print(f"[ATK结果检查] {label}: {status} "
               f"(总用例={r['total']}, 通过={r['check_pass']}, "
