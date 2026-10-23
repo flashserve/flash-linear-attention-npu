@@ -69,13 +69,23 @@ function(op_add_subdirectory OP_LIST OP_DIR_LIST)
 
     if(ENABLE_EXPERIMENTAL)
         message(STATUS "Build experimental module")
-        file(GLOB OP_HOST_CMAKE_FILES
-        "${CMAKE_CURRENT_SOURCE_DIR}/experimental/ffn/**/op_host/CMakeLists.txt"
-        "${CMAKE_CURRENT_SOURCE_DIR}/experimental/chunk_gated_delta_rule/**/op_host/CMakeLists.txt"
-        "${CMAKE_CURRENT_SOURCE_DIR}/experimental/gmm/**/op_host/CMakeLists.txt"
-        "${CMAKE_CURRENT_SOURCE_DIR}/experimental/moe/**/op_host/CMakeLists.txt"
-        "${CMAKE_CURRENT_SOURCE_DIR}/experimental/posembedding/**/op_host/CMakeLists.txt"
-        )
+        # experimental/<operator>/CMakeLists.txt is the only operator marker.
+        # Directories beginning with '_' are reserved for shared build inputs.
+        file(GLOB EXPERIMENTAL_OPERATOR_CMAKE_FILES
+             LIST_DIRECTORIES false
+             "${CMAKE_CURRENT_SOURCE_DIR}/experimental/*/CMakeLists.txt")
+        set(OP_HOST_CMAKE_FILES)
+        foreach(_experimental_cmake ${EXPERIMENTAL_OPERATOR_CMAKE_FILES})
+            get_filename_component(_experimental_dir "${_experimental_cmake}" DIRECTORY)
+            get_filename_component(_experimental_name "${_experimental_dir}" NAME)
+            if(NOT _experimental_name MATCHES "^_")
+                if(NOT _experimental_name MATCHES "^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
+                    message(FATAL_ERROR
+                        "Invalid experimental operator directory name: ${_experimental_name}")
+                endif()
+                list(APPEND OP_HOST_CMAKE_FILES "${_experimental_cmake}")
+            endif()
+        endforeach()
     else()
         file(GLOB_RECURSE OP_HOST_CMAKE_FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/fla/ops/ascendc/CMakeLists.txt"
@@ -151,6 +161,34 @@ macro(add_op_to_compiled_list)
 endmacro()
 
 
+# Resolve one dependency to a repository-relative path.
+# Stable mode keeps the legacy path-based dependency contract. Experimental mode
+# uses the flat experimental/<operator> contract and never falls back to stable.
+function(fla_resolve_depend_path depend_info out_var)
+    if (ENABLE_EXPERIMENTAL)
+        if ("${depend_info}" MATCHES "[/\\\\]" OR
+            "${depend_info}" MATCHES "(^|/)\\.\\.?(/|$)" OR
+            "${depend_info}" MATCHES "^[A-Za-z]:")
+            message(FATAL_ERROR
+                "Experimental dependency must be an operator name, got '${depend_info}'.")
+        endif()
+        if ("${depend_info}" MATCHES "^_")
+            message(FATAL_ERROR
+                "Experimental dependency cannot reference reserved directory '${depend_info}'.")
+        endif()
+        set(_resolve_cand "experimental/${depend_info}")
+        if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${_resolve_cand}/CMakeLists.txt")
+            message(FATAL_ERROR
+                "Experimental dependency is missing: dependency=${depend_info}, "
+                "expected=${CMAKE_CURRENT_SOURCE_DIR}/${_resolve_cand}/CMakeLists.txt")
+        endif()
+    else()
+        set(_resolve_cand "${depend_info}")
+    endif()
+    set(${out_var} "${_resolve_cand}" PARENT_SCOPE)
+endfunction()
+
+
 function(op_add_depend_directory)
     cmake_parse_arguments(DEP "" "OP_DIR_LIST" "OP_LIST" ${ARGN})
     set(_OP_DEPEND_DIR_LIST)
@@ -158,12 +196,12 @@ function(op_add_depend_directory)
         if (DEFINED ${op_name}_depends)
             foreach(depend_info ${${op_name}_depends})
                 if (ENABLE_EXPERIMENTAL)
- 	                set(depend_info_update "experimental/${depend_info}")
- 	            else()
- 	                set(depend_info_update ${depend_info})
- 	            endif()
- 	            if (NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${depend_info_update}/op_host/CMakeLists.txt AND NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/${depend_info_update}/CMakeLists.txt)
-                    continue()
+                    fla_resolve_depend_path(${depend_info} depend_info_update)
+                else()
+                    set(depend_info_update ${depend_info})
+                    if (NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${depend_info_update}/op_host/CMakeLists.txt AND NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/${depend_info_update}/CMakeLists.txt)
+                        continue()
+                    endif ()
                 endif ()
 
                 get_filename_component(_depend_op_name "${depend_info}" NAME)
@@ -538,10 +576,10 @@ function(add_bin_compile_target)
             if (DEFINED ${op_file}_depends)
                 foreach(depend_info ${${op_file}_depends})
                     if (ENABLE_EXPERIMENTAL)
- 	                    set(depend_info_update "experimental/${depend_info}")
- 	                else()
- 	                    set(depend_info_update ${depend_info})
- 	                endif()
+                        fla_resolve_depend_path(${depend_info} depend_info_update)
+                    else()
+                        set(depend_info_update ${depend_info})
+                    endif()
                     get_filename_component(_depend_op_name "${depend_info}" NAME)
                     set(_depend_op_target ${_depend_op_name}_${BINARY_COMPUTE_UNIT}_src_copy)
                     add_ops_src_copy(

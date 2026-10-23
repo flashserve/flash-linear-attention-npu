@@ -181,6 +181,10 @@ container_command=(bash ci/run_checks.sh)
 if [[ -n "${CI_CONTAINER_COMMAND:-}" ]]; then
     container_command=(bash -lc "$CI_CONTAINER_COMMAND")
 fi
+experimental_env_args=()
+if [[ "${CI_EXPERIMENTAL:-false}" == "true" ]]; then
+    experimental_env_args=(-e CI_EXPERIMENTAL=true)
+fi
 
 docker run --rm \
     --name "$container_name" \
@@ -199,6 +203,7 @@ docker run --rm \
     -e CI_STAGE="${CI_STAGE:-all}" \
     -e CI_SOC="${CI_SOC:-${NPU_SOC}}" \
     -e CI_OPS="${CI_OPS:-}" \
+    "${experimental_env_args[@]}" \
     -e CI_JOBS="${CI_JOBS:-}" \
     -e CI_CPACK_JOBS="${CI_CPACK_JOBS:-}" \
     -e CI_FORCE_CLEAN_CACHE="${CI_FORCE_CLEAN_CACHE:-false}" \

@@ -37,8 +37,40 @@ set(OP_DEBUG_CONFIG               "false"                         CACHE   STRING
 #   源码树相关路径
 get_filename_component(OPS_ADV_DIR                  "${CMAKE_CURRENT_SOURCE_DIR}"           REALPATH)
 get_filename_component(OPS_ADV_CMAKE_DIR            "${OPS_ADV_DIR}/cmake"                  REALPATH)
-# get_filename_component(OPS_ADV_UTILS_KERNEL_INC     "${OPS_ADV_DIR}/common/include/kernel"   REALPATH)
-get_filename_component(OPS_ADV_UTILS_KERNEL_INC     "${OPS_ADV_DIR}/fla/ops/ascendc/common/"   REALPATH)
+# The kernel common headers are part of the selected operator tree. They must
+# not silently fall back to the stable tree in experimental mode.
+if (ENABLE_EXPERIMENTAL)
+    set(_experimental_common_dir "${OPS_ADV_DIR}/experimental/_common")
+    if (NOT IS_DIRECTORY "${_experimental_common_dir}")
+        message(FATAL_ERROR
+            "Experimental common directory is missing: ${_experimental_common_dir}")
+    endif()
+    set(_experimental_common_manifest "${_experimental_common_dir}/manifest.txt")
+    if (NOT EXISTS "${_experimental_common_manifest}")
+        message(FATAL_ERROR
+            "Experimental common manifest is missing: ${_experimental_common_manifest}")
+    endif()
+    file(STRINGS "${_experimental_common_manifest}" _experimental_common_files)
+    foreach(_common_file ${_experimental_common_files})
+        if ("${_common_file}" STREQUAL "" OR "${_common_file}" MATCHES "^[#;]")
+            continue()
+        endif()
+        if ("${_common_file}" MATCHES "^[/\\\\]" OR
+            "${_common_file}" MATCHES "^[A-Za-z]:" OR
+            "${_common_file}" MATCHES "(^|/)\\.\\.?(/|$)")
+            message(FATAL_ERROR
+                "Experimental common manifest contains an invalid path: ${_common_file}")
+        endif()
+        if (NOT EXISTS "${_experimental_common_dir}/${_common_file}")
+            message(FATAL_ERROR
+                "Experimental common file is missing: ${_experimental_common_dir}/${_common_file}")
+        endif()
+    endforeach()
+    get_filename_component(OPS_ADV_UTILS_KERNEL_INC "${_experimental_common_dir}" REALPATH)
+else()
+    get_filename_component(OPS_ADV_UTILS_KERNEL_INC
+        "${OPS_ADV_DIR}/fla/ops/ascendc/common/" REALPATH)
+endif()
 # 三方 Catlass：OPS_ADV_CATLASS_INC 由 cmake/third_party/catlass.cmake（FetchContent）在 include(config) 之前设置
 if(NOT OPS_ADV_CATLASS_INC)
     message(FATAL_ERROR "OPS_ADV_CATLASS_INC 未设置：请在 CMakeLists.txt 中于 config.cmake 之前 include(cmake/third_party/catlass.cmake)。")
