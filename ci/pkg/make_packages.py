@@ -65,7 +65,7 @@
         "FLA_NPU_SOC=<SOC> python3 scripts/build_wheel.py"。
         容器内 <repo> 挂载到 /workspace/repo (third_party 在仓库目录
         内由编译脚本自动下载)，wheel 输出到独立目录。
-* x86 : 通过 SSH 连接远程服务器 (默认 root@192.168.13.246，IdentityFile
+* x86 : 通过 SSH 连接远程服务器 (默认 root@192.168.13.247，IdentityFile
         /workspace/huangjunzhe/ci/id_rsa)，把本地当前仓库 (已包含 PR 代码)
         直接同步到远程后按 SOC 顺序执行同样的编译命令，再把 wheel 同步回
         本机，无需在远程重新拉取代码。
@@ -112,14 +112,20 @@ GitHub Release (--gh-release)
     FLA_PKG_COMMIT_ID    commit id (默认取完整 sha 的前 7 位)
     FLA_PKG_DATETIME     时间戳 YYYYMMDD-HHMMSS (默认当前东八区时间)
 本地 arm 编译:
-    FLA_PKG_DOCKER_IMAGE        默认 fla-npu-ci:9.1.0-910b
-远程 x86 编译:
-    FLA_PKG_REMOTE_HOST      默认 192.168.13.246
+    FLA_PKG_DOCKER_IMAGE        arm 侧全部 SOC 与 x86 侧 910b/910_93 用；
+                             默认 fla-npu-ci:9.1.0-910b
+远程 x86 编译 (宿主只同步代码并启动容器):
+    FLA_PKG_REMOTE_HOST      默认 192.168.13.247
     FLA_PKG_REMOTE_USER      默认 root
     FLA_PKG_SSH_KEY          默认 /workspace/huangjunzhe/ci/id_rsa
-    FLA_PKG_REMOTE_WORKROOT  默认 /root/fla-npu-pkg
-    FLA_PKG_REMOTE_PYTHON    默认 /root/miniconda3/envs/atk_fla/bin/python
-    FLA_PKG_REMOTE_CANN_ENV  默认 source /usr/local/Ascend/ascend-toolkit/set_env.sh
+    FLA_PKG_REMOTE_WORKROOT  默认 /data/fla-npu-pkg (必须在数据盘上: 出包机根分区
+                             通常很小，/root 下放不下一次编译的中间产物)
+    FLA_PKG_DOCKER_IMAGE_ASCEND950   ascend950 的 x86 镜像，
+                             默认 fla-npu-ci:9.1.0-950 (与发布路径 pypi.yml 一致)
+    FLA_PKG_BUILD_JOBS       容器内编译并行度 (OPS_CPU_NUMBER)，默认 64。
+                             出包机 system.slice 有内存上限 (246 是 128GiB) 时
+                             必须限流: 不限流会在 kernel 生成阶段被 OOM kill
+                             (容器 exit 137，编译中间态与产物一起丢)
 远程 x86 编译运行控制:
     FLA_PKG_CONNECT_WAIT     启动时远程连接重试窗口秒数，默认 1800 (半小时内
                              每 30s 重试一次，每次尝试都打日志)
@@ -162,12 +168,17 @@ SUPPORTED_SOCS = ("ascend910b", "ascend910_93", "ascend950")
 SUPPORTED_ARCHES = ("arm", "x86")
 
 DEFAULT_DOCKER_IMAGE = "fla-npu-ci:9.1.0-910b"
-DEFAULT_REMOTE_HOST = "192.168.13.246"
+DEFAULT_DOCKER_IMAGE_ASCEND950 = "fla-npu-ci:9.1.0-950"
+
+# 出包机 system.slice 通常带 cgroup 内存上限 (246 是 128GiB)。build.sh 默认按
+# 2 x nproc 起编译器，248 核机器上 kernel 生成阶段会被内核 OOM kill —— 容器
+# 以 exit 137 结束，编译中间态与产物一起丢。发布路径 pypi.yml 同样按行限制
+# 并行度 (OPS_CPU_NUMBER)，这里跟随同一个开关，出包机可用 FLA_PKG_BUILD_JOBS 覆盖。
+DEFAULT_BUILD_JOBS = "64"
+DEFAULT_REMOTE_HOST = "192.168.13.247"
 DEFAULT_REMOTE_USER = "root"
 DEFAULT_SSH_KEY = "/workspace/huangjunzhe/ci/id_rsa"
-DEFAULT_REMOTE_WORKROOT = "/root/fla-npu-pkg"
-DEFAULT_REMOTE_PYTHON = "/root/miniconda3/envs/atk_fla/bin/python"
-DEFAULT_REMOTE_CANN_ENV = "source /usr/local/Ascend/ascend-toolkit/set_env.sh"
+DEFAULT_REMOTE_WORKROOT = "/data/fla-npu-pkg"
 
 # --gh-release (cron / 独立调用) 模式: 代码始终来自目标仓 flashserve，
 # 在固定目录 clone 最新代码后编译，产物上传到目标仓 Release。
@@ -201,6 +212,71 @@ def log(message: str) -> None:
 def env_or(name: str, default: str) -> str:
     value = os.getenv(name, "").strip()
     return value or default
+
+
+def docker_image(soc: str, arch: str) -> str:
+    """编译镜像: 每个 (SOC, 架构) 一套固定基座。
+
+    镜像里钉着 CANN / torch / torch_npu / 工具链，发布门禁的水位断言
+    (GLIBCXX <= 3.4.29、manylinux_2_34) 就是针对这套基座算的。编译一旦
+    回落到宿主环境，宿主升级 gcc (13 -> GLIBCXX_3.4.32) 或 CANN 就会静默
+    改变产物水位，用户侧才报 "version 'GLIBCXX_3.4.32' not found"。
+
+    同名 tag 在各编译机上按架构各自构建: arm 机上是 arm64 镜像，x86 机上
+    是 amd64 镜像 (ci/Dockerfile 一条配方，基础镜像本身就是多架构 manifest)。
+    ascend950 的 x86 侧用 950 镜像，与发布路径 pypi.yml 的 a5 行一致；
+    arm 侧目前没有 950 镜像，沿用 910b 镜像。
+    """
+    if soc == "ascend950" and arch == "x86":
+        return env_or("FLA_PKG_DOCKER_IMAGE_ASCEND950",
+                      DEFAULT_DOCKER_IMAGE_ASCEND950)
+    return env_or("FLA_PKG_DOCKER_IMAGE", DEFAULT_DOCKER_IMAGE)
+
+
+def x86_build_script(repo_dir: str, out_dir: str, soc: str, image: str,
+                     container: str, container_env: str) -> str:
+    """远程 x86 编译脚本 (在远程机上以 root 执行)。
+
+    宿主只做三件事: 清掉上一次的 build/ 与 third_party/、准备 wheel 输出目录、
+    启动容器。编译本体跑在 CI 镜像里，CANN / torch / torch_npu / 工具链全部
+    取自镜像，宿主 pip 一次或升级 gcc / CANN 都不会再改变产物水位。
+
+    容器内顺序: 重建 third_party 种子 (两侧架构拉到同一份 catlass/opbase，
+    kernel 才同源) -> 编译 -> 跑发布门禁的水位检查 (GLIBCXX <= 3.4.29、
+    manylinux_2_34、tier/arch 命名)，x86 的水位越线在每日包里就红。
+    """
+    inner = (
+        "set -euo pipefail\n"
+        "source /usr/local/Ascend/ascend-toolkit/set_env.sh\n"
+        # launcher 在构建机上链接 torch，镜像里的 torch 必须可导入
+        "python3 -c 'import torch; print(\"[pkg] torch\", torch.__version__)'\n"
+        "echo \"[pkg] 构建基座: ${FLA_NPU_CI_BASELINE:-unknown} $(uname -m)\"\n"
+        "bash ci/prepare_ci_cache.sh\n"
+        f"FLA_NPU_SOC={soc} python3 scripts/build_wheel.py "
+        "--wheel-dir /workspace/pkg-out\n"
+        "tier=$(python3 -c \"import sys; sys.path.insert(0, 'scripts'); "
+        "from fla_npu_artifacts import get_tier; print(get_tier())\")\n"
+        "python3 scripts/check_pypi_wheel.py /workspace/pkg-out/*.whl "
+        "--expect-tier \"$tier\" --expect-arch \"$(uname -m)\" "
+        "--allow-local-version\n"
+    )
+    return (
+        "#!/usr/bin/env bash\n"
+        "cd " + shlex.quote(repo_dir) + "\n"
+        "rm -rf " + shlex.quote(repo_dir) + "/build "
+        + shlex.quote(repo_dir) + "/third_party\n"
+        "mkdir -p " + shlex.quote(out_dir) + "\n"
+        "rm -f " + shlex.quote(out_dir) + "/*.whl\n"
+        "echo \"[pkg] 编译镜像: $(docker image inspect --format '{{.Id}}' "
+        + shlex.quote(image) + ")\"\n"
+        "docker run --rm --name " + shlex.quote(container) + " --network host \\\n"
+        "  -v " + shlex.quote(repo_dir) + ":/workspace/repo \\\n"
+        "  -v " + shlex.quote(out_dir) + ":/workspace/pkg-out \\\n"
+        "  -e FLA_NPU_SOC=" + soc + " -e TORCH_DEVICE_BACKEND_AUTOLOAD=0 "
+        "-e HOME=/root \\\n"
+        + container_env
+        + "  " + shlex.quote(image) + " bash -lc " + shlex.quote(inner) + "\n"
+    )
 
 
 def clean_build_state(repo_root: Path) -> None:
@@ -422,8 +498,6 @@ class Remote:
         self.user = env_or("FLA_PKG_REMOTE_USER", DEFAULT_REMOTE_USER)
         self.key = env_or("FLA_PKG_SSH_KEY", DEFAULT_SSH_KEY)
         self.workroot = env_or("FLA_PKG_REMOTE_WORKROOT", DEFAULT_REMOTE_WORKROOT)
-        self.python = env_or("FLA_PKG_REMOTE_PYTHON", DEFAULT_REMOTE_PYTHON)
-        self.cann_env = env_or("FLA_PKG_REMOTE_CANN_ENV", DEFAULT_REMOTE_CANN_ENV)
         if not Path(self.key).is_file():
             raise RuntimeError(f"SSH 私钥不存在或不可读: {self.key}")
         self.ssh_options = [
@@ -434,7 +508,12 @@ class Remote:
             "-o", "ServerAliveCountMax=20",
             "-o", "BatchMode=yes",
         ]
-        self.rsync_shell = "ssh " + " ".join(self.ssh_options[0:6])
+        # rsync 的 ssh 必须显式带上 -i <key> 与 BatchMode=yes: 远端通常只授权
+        # FLA_PKG_SSH_KEY 这一把 key (默认 key 恰好也被授权时才会"看起来正常"，
+        # 246 就是这种情况)，缺 -i 会直接 Permission denied (publickey)，缺
+        # BatchMode 则可能卡在交互式提示上。
+        self.rsync_shell = ("ssh -i " + shlex.quote(self.key) + " "
+                            + " ".join(self.ssh_options))
 
     @property
     def target(self) -> str:
@@ -510,8 +589,19 @@ class Remote:
 # arm: 本地 Docker 容器编译
 # ---------------------------------------------------------------------------
 
+def image_digest(image: str) -> str:
+    """镜像的不可变 ID: 记进日志，事后能回溯产物是哪套基座编的。"""
+    try:
+        out = subprocess.check_output(
+            ["docker", "image", "inspect", "--format", "{{.Id}}", image],
+            encoding="utf-8", stderr=subprocess.DEVNULL).strip()
+    except Exception:
+        return "unknown"
+    return out.split(":")[-1][:12] or "unknown"
+
+
 def build_arm(repo_root: Path, soc: str, wheel_dir: Path, log_file: Path) -> list[Path]:
-    image = env_or("FLA_PKG_DOCKER_IMAGE", DEFAULT_DOCKER_IMAGE)
+    image = docker_image(soc, "arm")
 
     # 每个组合编译前清掉仓库下的 build/ 与 third_party/: 不同 SOC /
     # 分支的中间产物互相污染会导致编译偶发失败；third_party 由编译
@@ -525,13 +615,19 @@ def build_arm(repo_root: Path, soc: str, wheel_dir: Path, log_file: Path) -> lis
             f"Docker 镜像 {image} 不存在。请先构建 CI 镜像，例如:\n"
             f"  docker build -t {image} -f ci/Dockerfile .")
 
+    log(f"arm 编译镜像: {image} ({image_digest(image)})")
     wheel_dir.mkdir(parents=True, exist_ok=True)
     command = (
         "source /usr/local/Ascend/ascend-toolkit/latest/set_env.sh 2>/dev/null "
         "|| source /usr/local/Ascend/ascend-toolkit/set_env.sh 2>/dev/null || true\n"
         "cd /workspace/repo\n"
         f"FLA_NPU_SOC={soc} python3 scripts/build_wheel.py "
-        f"--wheel-dir /workspace/pkg-out"
+        f"--wheel-dir /workspace/pkg-out\n"
+        "tier=$(python3 -c \"import sys; sys.path.insert(0, 'scripts'); "
+        "from fla_npu_artifacts import get_tier; print(get_tier())\")\n"
+        "python3 scripts/check_pypi_wheel.py /workspace/pkg-out/*.whl "
+        "--expect-tier \"$tier\" --expect-arch \"$(uname -m)\" "
+        "--allow-local-version"
     )
     argv = [
         "docker", "run", "--rm",
@@ -679,12 +775,22 @@ class RemoteWorkspace:
         """
         remote = self.remote
         out_dir = f"{self.base}/out/{soc}-x86"
-        build_env = ""
+        image = docker_image(soc, "x86")
+        container = f"fla-pkg-{soc}-x86-{int(time.time())}"
+        # 编译环境由容器提供，宿主只负责 rsync 与启动 docker: CANN / torch /
+        # torch_npu / 工具链都取自镜像，宿主 pip 一次或升级 gcc / CANN 不会再
+        # 改变产物 (旧路径直接跑宿主的 atk_fla conda env，是水位越线的来源)。
+        container_env = (
+            "  -e OPS_CPU_NUMBER="
+            + shlex.quote(env_or("FLA_PKG_BUILD_JOBS", DEFAULT_BUILD_JOBS))
+            + " \\\n"
+        )
         for name in ("FLA_NPU_OPS", "FLA_NPU_BUILD_ARGS",
-                     "FLA_NPU_BRANCH_NAME", "FLA_NPU_COMMIT_ID"):
+                     "FLA_NPU_BRANCH_NAME", "FLA_NPU_COMMIT_ID",
+                     "FLA_NPU_DISABLE_LOCAL_VERSION"):
             value = os.getenv(name, "").strip()
             if value:
-                build_env += f"export {name}={shlex.quote(value)}\n"
+                container_env += f"  -e {name}={shlex.quote(value)} \\\n"
 
         build_timeout = int(env_or("FLA_PKG_BUILD_TIMEOUT", "14400"))
         poll_interval = int(env_or("FLA_PKG_POLL_INTERVAL", "30"))
@@ -694,22 +800,19 @@ class RemoteWorkspace:
         #    编译前清掉远程旧 wheel: wheel 输出目录固定，增量构建遇到同名
         #    旧文件会跳过重新生成，旧分支的包会被误当成本次产物回传
         #    同时清掉仓库下的 build/ 与 third_party/: 不同 SOC / 分支的
-        #    中间产物互相污染会导致编译偶发失败，third_party 由编译脚本
-        #    自动重新拉取，一律从干净状态开始
-        build_script = (
-            "#!/usr/bin/env bash\n"
-            f"{remote.cann_env}\n"
-            f"cd {shlex.quote(self.repo_dir)}\n"
-            f"rm -rf {shlex.quote(self.repo_dir)}/build "
-            f"{shlex.quote(self.repo_dir)}/third_party\n"
-            f"mkdir -p {shlex.quote(out_dir)}\n"
-            f"rm -f {shlex.quote(out_dir)}/*.whl\n"
-            f"{build_env}"
-            f"FLA_NPU_SOC={soc} {shlex.quote(remote.python)} "
-            f"scripts/build_wheel.py --wheel-dir {shlex.quote(out_dir)}\n"
-        )
+        #    中间产物互相污染会导致编译偶发失败，third_party 由镜像提供的
+        #    种子重建，一律从干净状态开始
+        # 宿主不再需要 CANN / conda: 容器自带 toolkit 与 python，只启动 docker
+        build_script = x86_build_script(self.repo_dir, out_dir, soc, image,
+                                        container, container_env)
         encoded = base64.b64encode(build_script.encode("utf-8")).decode("ascii")
         remote.check(
+            # 镜像缺失要在启动编译前就失败，并说清补法: 编译机上按架构执行
+            # docker build -t <image> -f <ci/Dockerfile | ci/Dockerfile.ascend950> .
+            f"docker image inspect {shlex.quote(image)} >/dev/null 2>&1 || {{ "
+            f"echo '[pkg] 编译镜像缺失: {image}；在该编译机上执行 "
+            f"docker build -t {image} -f ci/Dockerfile . "
+            "(ascend950 用 ci/Dockerfile.ascend950)' >&2; exit 3; }\n"
             f"mkdir -p {shlex.quote(out_dir)}\n"
             f"rm -f {shlex.quote(out_dir)}/status "
             f"{shlex.quote(out_dir)}/build.log\n"
