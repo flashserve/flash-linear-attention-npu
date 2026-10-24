@@ -15,6 +15,7 @@ const std::array<const aclTensor *, 7> ChunkKdaBwdFinalize(
     const aclIntArray *cuSeqlensOptional, const aclIntArray *chunkIndicesOptional,
     double scale, double lowerBound, int64_t chunkSize,
     bool safeGate, bool useGateInKernel, bool useExp2, bool stateVFirst,
+    bool useBetaSigmoidInKernel, bool allowNegEigval, const char *outputLayout,
     const aclTensor *dqOut, const aclTensor *dkOut, const aclTensor *dvOut,
     const aclTensor *dBetaOut, const aclTensor *dGOut,
     const aclTensor *dALogOut, const aclTensor *dDtBiasOut,

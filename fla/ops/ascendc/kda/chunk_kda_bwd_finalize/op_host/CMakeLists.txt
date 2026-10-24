@@ -1,10 +1,6 @@
+unset(chunk_kda_bwd_finalize_depends CACHE)
 if(NOT "${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
     add_compile_definitions(KDA_BWD_STAGES_ARCH22)
-    set(chunk_kda_bwd_finalize_depends
-    "fla/ops/ascendc/kda/chunk_kda_bwd"
-    CACHE STRING "Shared KDA backward stage sources" FORCE)
-else()
-    unset(chunk_kda_bwd_finalize_depends CACHE)
 endif()
 add_op_to_compiled_list()
 if(BUILD_OPEN_PROJECT)
@@ -15,6 +11,13 @@ if(BUILD_OPEN_PROJECT)
 endif()
 
 add_modules_sources(OPTYPE chunk_kda_bwd_finalize ACLNNTYPE aclnn_exclude)
+if(NOT "${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
+    set_source_files_properties(
+        ${CMAKE_CURRENT_SOURCE_DIR}/op_api/chunk_kda_bwd_finalize.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/op_api/aclnn_chunk_kda_bwd_finalize.cpp
+        TARGET_DIRECTORY ${OPHOST_NAME}_opapi_obj PROPERTIES
+        COMPILE_DEFINITIONS KDA_BWD_STAGES_ARCH22)
+endif()
 add_ops_compile_options(
     OP_NAME ChunkKdaBwdFinalize
     OPTIONS --cce-auto-sync=off

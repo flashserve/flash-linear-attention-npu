@@ -9,15 +9,15 @@ public:
     explicit ChunkKdaBwdFinalize(const char *name) : OpDef(name)
     {
 #ifdef KDA_BWD_STAGES_ARCH22
-        constexpr auto gateParam = OPTIONAL;
-        const std::initializer_list<ge::DataType> bf16 = {ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT16, ge::DT_FLOAT16};
-        const std::initializer_list<ge::DataType> fp32 = {ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
-        const std::initializer_list<ge::DataType> betaTypes = {ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT};
-        const std::initializer_list<ge::DataType> aLogTypes = {ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
-        const std::initializer_list<ge::DataType> int64 = {ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64};
-        const std::initializer_list<ge::DataType> gradTypes = {ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
-        const std::initializer_list<ge::DataType> dbTypes = {ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
-        const std::initializer_list<ge::Format> nd = {ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND};
+        constexpr auto gateParam = REQUIRED;
+        const std::initializer_list<ge::DataType> bf16 = {ge::DT_BF16, ge::DT_BF16};
+        const std::initializer_list<ge::DataType> fp32 = {ge::DT_FLOAT, ge::DT_FLOAT};
+        const std::initializer_list<ge::DataType> betaTypes = {ge::DT_BF16, ge::DT_FLOAT};
+        const auto aLogTypes = fp32;
+        const std::initializer_list<ge::DataType> int64 = {ge::DT_INT64, ge::DT_INT64};
+        const auto gradTypes = bf16;
+        const auto dbTypes = betaTypes;
+        const std::initializer_list<ge::Format> nd = {ge::FORMAT_ND, ge::FORMAT_ND};
 #else
         constexpr auto gateParam = REQUIRED;
         const std::initializer_list<ge::DataType> bf16 = {ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16};
@@ -74,6 +74,9 @@ public:
         this->Attr("use_gate_in_kernel").AttrType(OPTIONAL).Bool(true);
         this->Attr("use_exp2").AttrType(OPTIONAL).Bool(true);
         this->Attr("state_v_first").AttrType(OPTIONAL).Bool(false);
+        this->Attr("use_beta_sigmoid_in_kernel").AttrType(OPTIONAL).Bool(false);
+        this->Attr("allow_neg_eigval").AttrType(OPTIONAL).Bool(false);
+        this->Attr("output_layout").AttrType(OPTIONAL).String("BNSD");
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)
