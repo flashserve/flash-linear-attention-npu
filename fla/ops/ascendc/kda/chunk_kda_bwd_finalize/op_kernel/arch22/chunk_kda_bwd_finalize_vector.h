@@ -846,6 +846,12 @@ public:
             AscendC::Add(center, g[start * HEAD_DIM], g[(end - 1) * HEAD_DIM], HEAD_DIM);
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::Muls(center, center, 0.5f, HEAD_DIM);
+            AscendC::PipeBarrier<PIPE_V>();
+            // The previous band has consumed bandExp; reuse it to round the anchor.
+            AscendC::Cast(bandExp.ReinterpretCast<int32_t>(), center, AscendC::RoundMode::CAST_RINT, HEAD_DIM);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Cast(center, bandExp.ReinterpretCast<int32_t>(), AscendC::RoundMode::CAST_NONE, HEAD_DIM);
+            AscendC::PipeBarrier<PIPE_V>();
             AscendC::Duplicate(bandExp, 0.0f, 32 * HEAD_DIM);
             // qPos and bkPos use the same positive exponent in each tile.
             for (uint32_t phase = 0; phase < (CONSUME_BANDS ? 2 : 1); ++phase) {
@@ -884,22 +890,19 @@ public:
                             // Never evaluate Exp on masked rows or reconstruct gk from Stage
                             // 1's exponent.
                             AscendC::PipeBarrier<PIPE_V>();
-                            if (matrix == 0) {
-                                AscendC::Sub(exponent, center, g[first * HEAD_DIM], 64, active, {1, 1, 1, 16, 0, 16});
-                                AscendC::Sub(exponent[64], center[64], g[first * HEAD_DIM + 64], 64, active,
-                                             {1, 1, 1, 16, 0, 16});
-                            } else if (matrix == 1) {
-                                AscendC::Sub(exponent, g[first * HEAD_DIM], center, 64, active, {1, 1, 1, 16, 16, 0});
-                                AscendC::Sub(exponent[64], g[first * HEAD_DIM + 64], center[64], 64, active,
-                                             {1, 1, 1, 16, 16, 0});
-                            }
-                            AscendC::PipeBarrier<PIPE_V>();
                             if (matrix != 2) {
-                                // exp2(x) = 2^n * exp((x - n) * ln(2)). Keep the
-                                // Exp argument small so reciprocal factors do not
-                                // amplify rounding of a large x * ln(2).
                                 const uint32_t count = active * HEAD_DIM;
                                 auto power = rebuilt.ReinterpretCast<int32_t>();
+                                if (matrix == 0) {
+                                    AscendC::Sub(exponent, center, g[first * HEAD_DIM], 64, active, {1, 1, 1, 16, 0, 16});
+                                    AscendC::Sub(exponent[64], center[64], g[first * HEAD_DIM + 64], 64, active,
+                                                 {1, 1, 1, 16, 0, 16});
+                                } else {
+                                    AscendC::Sub(exponent, g[first * HEAD_DIM], center, 64, active, {1, 1, 1, 16, 16, 0});
+                                    AscendC::Sub(exponent[64], g[first * HEAD_DIM + 64], center[64], 64, active,
+                                                 {1, 1, 1, 16, 16, 0});
+                                }
+                                AscendC::PipeBarrier<PIPE_V>();
                                 AscendC::Maxs(operand, exponent, -126.0f, count);
                                 AscendC::PipeBarrier<PIPE_V>();
                                 AscendC::Mins(operand, operand, 127.0f, count);
@@ -908,13 +911,27 @@ public:
                                 AscendC::PipeBarrier<PIPE_V>();
                                 AscendC::Cast(operand, power, AscendC::RoundMode::CAST_NONE, count);
                                 AscendC::PipeBarrier<PIPE_V>();
-                                AscendC::Sub(exponent, exponent, operand, count);
+                                // Recompute the residual from original gk, not the rounded
+                                // gk-center difference. Integer center +/- power stays exact.
+                                if (matrix == 0) {
+                                    AscendC::Sub(operand, center, operand, 64, active, {1, 1, 1, 16, 0, 16});
+                                    AscendC::Sub(operand[64], center[64], operand[64], 64, active,
+                                                 {1, 1, 1, 16, 0, 16});
+                                    AscendC::PipeBarrier<PIPE_V>();
+                                    AscendC::Sub(exponent, operand, g[first * HEAD_DIM], count);
+                                } else {
+                                    AscendC::Add(operand, operand, center, 64, active, {1, 1, 1, 16, 16, 0});
+                                    AscendC::Add(operand[64], operand[64], center[64], 64, active,
+                                                 {1, 1, 1, 16, 16, 0});
+                                    AscendC::PipeBarrier<PIPE_V>();
+                                    AscendC::Sub(exponent, g[first * HEAD_DIM], operand, count);
+                                }
                                 AscendC::Adds(power, power, static_cast<int32_t>(127), count);
                                 AscendC::PipeBarrier<PIPE_V>();
                                 AscendC::ShiftLeft(power, power, static_cast<int32_t>(23), count);
-                                AscendC::Muls(exponent, exponent, LN2, active * HEAD_DIM);
+                                AscendC::Muls(exponent, exponent, LN2, count);
                                 AscendC::PipeBarrier<PIPE_V>();
-                                AscendC::Exp(exponent, exponent, active * HEAD_DIM);
+                                AscendC::Exp(exponent, exponent, count);
                                 AscendC::PipeBarrier<PIPE_V>();
                                 AscendC::Mul(exponent, exponent, rebuilt, count);
                             }
