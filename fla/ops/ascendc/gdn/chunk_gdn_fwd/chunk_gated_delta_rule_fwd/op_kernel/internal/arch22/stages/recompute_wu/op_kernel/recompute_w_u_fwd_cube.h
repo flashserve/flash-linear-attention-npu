@@ -188,10 +188,16 @@ public:
                     auto tensorBlockU = GetTile(tensorU, tla::MakeCoord(0, 0),
                                                     tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                     // Compute block-scoped matrix multiply-add
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+                    // Host BT64/128 and L1 K256 guarantee one retained A tile for U/W.
+                    blockMmad.template operator()<true, false>(
+                        tensorBlockA, tensorBlockVb, tensorBlockU, actualBlockShape);
+#else
                     blockMmad(tensorBlockA, tensorBlockVb, tensorBlockU, actualBlockShape);
+#endif
                 }
 
-                // W follows U on the same MMAD object; two L1A slots may still reload A.
+                // W shares U's A slot; its final MTE1 A read releases the slot for the next pair.
                 // 窗口通知已覆盖本窗口全部任务的 Vb+KbgExp，无需再等待。
                 GemmCoord actualBlockShape{curChunkSize, static_cast<uint32_t>(params.K), curChunkSize};
                 const uint64_t kbgOffset = (loopIdx - params.taskRange->begin) * params.ChunkSize() * params.K;
@@ -207,7 +213,12 @@ public:
                                             tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
                 auto tensorBlockW = GetTile(tensorW, tla::MakeCoord(0, 0),
                                             tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+                blockMmad.template operator()<false, true>(
+                    tensorBlockA, tensorBlockKbgExp, tensorBlockW, actualBlockShape);
+#else
                 blockMmad(tensorBlockA, tensorBlockKbgExp, tensorBlockW, actualBlockShape);
+#endif
                 // Parent batches may reuse the GM temporary addresses; invalidate per task.
                 blockMmad.RestoreStatus();
             }
