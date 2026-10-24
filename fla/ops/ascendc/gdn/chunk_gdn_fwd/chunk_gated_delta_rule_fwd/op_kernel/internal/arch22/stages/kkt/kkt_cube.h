@@ -22,6 +22,7 @@
 #include "catlass/layout/layout.hpp"
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
+#include <type_traits>
 
 namespace NsChunkKktCube {
 using namespace AscendC;
@@ -53,6 +54,25 @@ class ChunkKktCube {
         tla::MakeLayout<T, LayoutTagL1A>(tla::Int<MAX_BT>{}, tla::Int<K_DIM>{});
     static constexpr auto L1B_LAYOUT =
         tla::MakeLayout<T, LayoutTagL1B>(tla::Int<K_DIM>{}, tla::Int<MAX_BT>{});
+
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+    static constexpr bool SINGLE_K_L1 = true;
+    static_assert(sizeof(T) == 2 &&
+                      std::is_same_v<LayoutTagL1A, Catlass::layout::zN> &&
+                      std::is_same_v<LayoutTagL1B, Catlass::layout::nZ>,
+                  "Single-L1 KKT requires FP16/BF16 zN K and nZ Kt aliases");
+    static_assert(tla::get<0, 0>(L1A_LAYOUT.shape()) == tla::get<1, 0>(L1B_LAYOUT.shape()) &&
+                      tla::get<0, 1>(L1A_LAYOUT.shape()) == tla::get<1, 1>(L1B_LAYOUT.shape()) &&
+                      tla::get<1, 0>(L1A_LAYOUT.shape()) == tla::get<0, 0>(L1B_LAYOUT.shape()) &&
+                      tla::get<1, 1>(L1A_LAYOUT.shape()) == tla::get<0, 1>(L1B_LAYOUT.shape()) &&
+                      tla::get<0, 0>(L1A_LAYOUT.stride()) == tla::get<1, 0>(L1B_LAYOUT.stride()) &&
+                      tla::get<0, 1>(L1A_LAYOUT.stride()) == tla::get<1, 1>(L1B_LAYOUT.stride()) &&
+                      tla::get<1, 0>(L1A_LAYOUT.stride()) == tla::get<0, 0>(L1B_LAYOUT.stride()) &&
+                      tla::get<1, 1>(L1A_LAYOUT.stride()) == tla::get<0, 1>(L1B_LAYOUT.stride()),
+                  "Single-L1 KKT requires exact transpose-alias shape and stride");
+#else
+    static constexpr bool SINGLE_K_L1 = false;
+#endif
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     using MatmulAType = matmul::MatmulType<TPosition::GM, CubeFormat::ND, T>;
@@ -110,7 +130,10 @@ public:
         ProcessAscend950(k, cuSeqlens, chunkIndices, score, tiling);
 #else
         auto l1A = resource.l1Buf.template GetBufferByByte<T>(0);
-        auto l1B = resource.l1Buf.template GetBufferByByte<T>(MAX_BT * K_DIM * sizeof(T));
+        // zN(MAX_BT, K_DIM)[m,k] and nZ(K_DIM, MAX_BT)[k,m]
+        // address the same packed elements. Only their logical coordinates differ.
+        auto l1B = resource.l1Buf.template GetBufferByByte<T>(
+            SINGLE_K_L1 ? 0 : MAX_BT * K_DIM * sizeof(T));
         auto l0A = resource.l0ABuf.template GetBufferByByte<T>(0);
         auto l0B = resource.l0BBuf.template GetBufferByByte<T>(0);
         auto l0C = resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(0);
@@ -124,7 +147,9 @@ public:
         constexpr int32_t EVENT_L0B = 1;
         constexpr int32_t EVENT_L0C = 0;
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_L1A);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_L1B);
+        if constexpr (!SINGLE_K_L1) {
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_L1B);
+        }
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
@@ -145,7 +170,9 @@ public:
         }
 
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_L1A);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_L1B);
+        if constexpr (!SINGLE_K_L1) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_L1B);
+        }
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
@@ -303,9 +330,11 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(eventL1A);
         copyGmToL1A(tensorL1A, blockK);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(eventL1A);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(eventL1B);
-        copyGmToL1B(tensorL1B, blockKt);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(eventL1B);
+        if constexpr (!SINGLE_K_L1) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(eventL1B);
+            copyGmToL1B(tensorL1B, blockKt);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(eventL1B);
+        }
 
         uint32_t mActual = static_cast<uint32_t>(valid == 1 ? 16 : valid);
         auto tensorL0A = tla::MakeTensor(
@@ -317,11 +346,18 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(eventL1A);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(eventL0A);
         copyL1ToL0A(tensorL0A, tileL1A);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(eventL1A);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(eventL1B);
+        if constexpr (!SINGLE_K_L1) {
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(eventL1A);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(eventL1B);
+        }
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(eventL0B);
         copyL1ToL0B(tensorL0B, tileL1B);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(eventL1B);
+        // Both MTE1 readers must finish before the next task can overwrite K.
+        if constexpr (SINGLE_K_L1) {
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(eventL1A);
+        } else {
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(eventL1B);
+        }
 
         auto tensorL0C = tla::MakeTensor(l0C, tla::MakeLayoutL0C(mActual, valid), Catlass::Arch::PositionL0C{});
         auto tileL0C = tla::GetTile(tensorL0C, tla::MakeCoord(0, 0), tla::MakeShape(mActual, valid));
