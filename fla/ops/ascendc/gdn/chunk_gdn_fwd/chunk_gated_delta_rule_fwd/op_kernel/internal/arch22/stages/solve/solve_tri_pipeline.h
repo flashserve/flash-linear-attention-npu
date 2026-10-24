@@ -360,9 +360,11 @@ __aicore__ inline void stage64_merge(GdnRawFront::Resource &resource,
     if ASCEND_IS_AIV {
         GdnRawFront::SolveStage<Raw> pipe(resources);
         GdnRawFront::Buffer<Raw> fb, ob;
-        pipe.BindBuffer(fb, S * 2 * S * 4);
+        // 成对批处理：单轮 V/MTE2/MTE3 协议服务相邻两任务，flag 对数量减半；
+        // BATCH=16 与步长2对齐，批边界恒落在对边界，不跨批。
+        pipe.BindBuffer(fb, 2 * S * 2 * S * 4);
         if constexpr (sizeof(Out) != 4)
-            pipe.BindBuffer(ob, S * 2 * S * sizeof(Out));
+            pipe.BindBuffer(ob, 2 * S * 2 * S * sizeof(Out));
         auto f = fb.template Get<float>();
         LocalTensor<Out> o;
         if constexpr (sizeof(Out) == 4)
@@ -370,55 +372,80 @@ __aicore__ inline void stage64_merge(GdnRawFront::Resource &resource,
         else
             o = ob.template Get<Out>();
         int sub = GetSubBlockIdx();
-        for (int64_t task = begin; task < end; ++task) {
-            int64_t index = task - begin, slot = index % (BATCH * 2);
-            if (index % BATCH == 0) {
-                if constexpr (RangePreparation::kEnabled) {
-                    const int64_t count = end - task < BATCH ? end - task : BATCH;
-                    preparation->PrepareRange(index, index + count);
+        constexpr int64_t taskElems = S * 2 * S;
+        for (int64_t task = begin; task < end; task += 2) {
+            const int count = end - task >= 2 ? 2 : 1;
+            WorkItem jobs[2];
+            int rowsArr[2], n0Arr[2];
+            int64_t slots[2];
+            for (int j = 0; j < count; ++j) {
+                int64_t index = task + j - begin;
+                if (index % BATCH == 0) {
+                    if constexpr (RangePreparation::kEnabled) {
+                        const int64_t prepareCount = end - (task + j) < BATCH ? end - (task + j) : BATCH;
+                        preparation->PrepareRange(index, index + prepareCount);
+                    }
+                    CrossCoreWaitFlag(4 + (index / BATCH) % 2);
                 }
-                CrossCoreWaitFlag(4 + (index / BATCH) % 2);
+                auto w = locate<Parent, kStaticBT>(task + j, S * 2, info, cu);
+                jobs[j] = w;
+                int n0 = w.length - w.t < S ? w.length - w.t : S, n1 = w.length - w.t - S < S ? w.length - w.t - S : S;
+                n0Arr[j] = n0;
+                rowsArr[j] = sub == 0 ? n0 : n1;
+                slots[j] = index % (BATCH * 2);
+                Duplicate(f[j * taskElems], 0.0f, S * 2 * S);
             }
-            auto w = locate<Parent, kStaticBT>(task, S * 2, info, cu);
-            int n0 = w.length - w.t < S ? w.length - w.t : S, n1 = w.length - w.t - S < S ? w.length - w.t - S : S;
-            int rows = sub == 0 ? n0 : n1;
-            Duplicate(f, 0.0f, S * 2 * S);
             PipeBarrier<PIPE_V>();
             SetFlag<HardEvent::V_MTE2>(GdnRawFront::SolveEvent<Raw, HardEvent::V_MTE2>(resources));
             WaitFlag<HardEvent::V_MTE2>(GdnRawFront::SolveEvent<Raw, HardEvent::V_MTE2>(resources));
-            if (rows > 0) {
-                int rounded = (rows + 7) / 8 * 8;
-                DataCopyPadExtParams<float> pad{true, 0, (uint8_t)(rounded - rows), 0};
-                DataCopyExtParams cp{(uint16_t)rows, (uint32_t)(rows * 4), (uint32_t)((stride(info, S) - rows) * 4),
-                                     (uint32_t)((2 * S - rounded) / 8), 0};
-                DataCopyPad(f[sub * S], d[pos(info, w, w.t + sub * S, S)], cp, pad);
-                if (sub == 1) {
-                    DataCopyExtParams cross{(uint16_t)rows, (uint32_t)(n0 * 4), (uint32_t)((W - n0) * 4),
-                                            (uint32_t)((2 * S - n0) / 8), 0};
-                    DataCopyPadExtParams<float> noPad{false, 0, 0, 0};
-                    DataCopyPad(f, batchWs[slot * E], cross, noPad);
+            for (int j = 0; j < count; ++j) {
+                auto w = jobs[j];
+                int rows = rowsArr[j], n0 = n0Arr[j];
+                if (rows > 0) {
+                    int rounded = (rows + 7) / 8 * 8;
+                    DataCopyPadExtParams<float> pad{true, 0, (uint8_t)(rounded - rows), 0};
+                    DataCopyExtParams cp{(uint16_t)rows, (uint32_t)(rows * 4), (uint32_t)((stride(info, S) - rows) * 4),
+                                         (uint32_t)((2 * S - rounded) / 8), 0};
+                    DataCopyPad(f[j * taskElems + sub * S], d[pos(info, w, w.t + sub * S, S)], cp, pad);
+                    if (sub == 1) {
+                        DataCopyExtParams cross{(uint16_t)rows, (uint32_t)(n0 * 4), (uint32_t)((W - n0) * 4),
+                                                (uint32_t)((2 * S - n0) / 8), 0};
+                        DataCopyPadExtParams<float> noPad{false, 0, 0, 0};
+                        DataCopyPad(f[j * taskElems], batchWs[slots[j] * E], cross, noPad);
+                    }
                 }
             }
             SetFlag<HardEvent::MTE2_V>(GdnRawFront::SolveEvent<Raw, HardEvent::MTE2_V>(resources));
             WaitFlag<HardEvent::MTE2_V>(GdnRawFront::SolveEvent<Raw, HardEvent::MTE2_V>(resources));
-            if (sub == 1 && rows > 0) {
-                Muls(f, f, -1.0f, S, (uint8_t)rows, {1, 1, (uint8_t)(2 * S / 8), (uint8_t)(2 * S / 8)});
-                PipeBarrier<PIPE_V>();
+            for (int j = 0; j < count; ++j) {
+                if (sub == 1 && rowsArr[j] > 0) {
+                    Muls(f[j * taskElems], f[j * taskElems], -1.0f, S, (uint8_t)rowsArr[j],
+                         {1, 1, (uint8_t)(2 * S / 8), (uint8_t)(2 * S / 8)});
+                    PipeBarrier<PIPE_V>();
+                }
             }
-            if constexpr (sizeof(Out) != 4)
-                Cast(o, f, RoundMode::CAST_RINT, S * 2 * S);
+            if constexpr (sizeof(Out) != 4) {
+                for (int j = 0; j < count; ++j)
+                    Cast(o[j * taskElems], f[j * taskElems], RoundMode::CAST_RINT, S * 2 * S);
+            }
             PipeBarrier<PIPE_V>();
             SetFlag<HardEvent::V_MTE3>(GdnRawFront::SolveEvent<Raw, HardEvent::V_MTE3>(resources));
             WaitFlag<HardEvent::V_MTE3>(GdnRawFront::SolveEvent<Raw, HardEvent::V_MTE3>(resources));
-            if (rows > 0) {
-                DataCopyExtParams cp{(uint16_t)rows, (uint32_t)(2 * S * sizeof(Out)), 0,
-                                     (uint32_t)((stride(info, 2 * S) - 2 * S) * sizeof(Out)), 0};
-                DataCopyPad(y[pos(info, w, w.t + sub * S, 2 * S)], o, cp);
+            for (int j = 0; j < count; ++j) {
+                auto w = jobs[j];
+                if (rowsArr[j] > 0) {
+                    DataCopyExtParams cp{(uint16_t)rowsArr[j], (uint32_t)(2 * S * sizeof(Out)), 0,
+                                         (uint32_t)((stride(info, 2 * S) - 2 * S) * sizeof(Out)), 0};
+                    DataCopyPad(y[pos(info, w, w.t + sub * S, 2 * S)], o[j * taskElems], cp);
+                }
             }
             SetFlag<HardEvent::MTE3_V>(GdnRawFront::SolveEvent<Raw, HardEvent::MTE3_V>(resources));
             WaitFlag<HardEvent::MTE3_V>(GdnRawFront::SolveEvent<Raw, HardEvent::MTE3_V>(resources));
-            if ((index + 1) % BATCH == 0 || task + 1 == end)
-                CrossCoreSetFlag<0x2, PIPE_MTE3>(2 + (index / BATCH) % 2);
+            for (int j = 0; j < count; ++j) {
+                int64_t index = task + j - begin;
+                if ((index + 1) % BATCH == 0 || task + j + 1 == end)
+                    CrossCoreSetFlag<0x2, PIPE_MTE3>(2 + (index / BATCH) % 2);
+            }
         }
     }
 }
@@ -443,7 +470,7 @@ public:
         sub = s;
         pipe.BindBuffer(ab, E * 4);
         pipe.BindBuffer(pb, E * 4);
-        pipe.BindBuffer(rb, L * 16 * 4);
+        pipe.BindBuffer(rb, 2 * L * 16 * 4);
         a = ab.template Get<float>();
         prod = pb.template Get<float>();
         row = rb.template Get<float>();
@@ -478,13 +505,20 @@ public:
         WaitFlag<HardEvent::MTE2_V>(GdnRawFront::SolveEvent<Raw, HardEvent::MTE2_V>(resources_));
         Muls(a, a, -1.0f, E);
         PipeBarrier<PIPE_V>();
+        // 行预取双缓冲：i+1 轮的取数/广播与 i 轮的乘加树无 UB 冲突，
+        // 相邻屏障间的独立指令数翻倍，摊薄每轮 8 屏障的等待。
+        DataCopy(row, a[2 * 16], {(uint16_t)L, 2, 30, 0});
+        PipeBarrier<PIPE_V>();
         for (int i = 2; i < 16; ++i) {
-            DataCopy(row, a[i * 16], {(uint16_t)L, 2, 30, 0});
+            LocalTensor<float> cur = row[(i % 2) * L * 16];
+            if (i + 1 < 16) {
+                DataCopy(row[((i + 1) % 2) * L * 16], a[(i + 1) * 16], {(uint16_t)L, 2, 30, 0});
+            }
             PipeBarrier<PIPE_V>();
             // 每个系数广播到对应16元素行；两次写入交错的32B块。
             // prod先存系数，乘法原位覆盖后继续使用原来的加法树。
-            Brcb(prod, row, L * 2, {2, 16});
-            Brcb(prod[8], row, L * 2, {2, 16});
+            Brcb(prod, cur, L * 2, {2, 16});
+            Brcb(prod[8], cur, L * 2, {2, 16});
             PipeBarrier<PIPE_V>();
             Mul(prod, a, prod, E);
             PipeBarrier<PIPE_V>();
@@ -611,9 +645,9 @@ __aicore__ inline void leaf_merge_pipeline(GdnRawFront::Resource &resource,
     if ASCEND_IS_AIV {
         GdnRawFront::SolveStage<Raw> pipe(resources);
         GdnRawFront::Buffer<Raw> fb, ob;
-        pipe.BindBuffer(fb, S * 2 * S * 4);
+        pipe.BindBuffer(fb, 2 * S * 2 * S * 4);
         if constexpr (sizeof(Out) != 4)
-            pipe.BindBuffer(ob, S * 2 * S * sizeof(Out));
+            pipe.BindBuffer(ob, 2 * S * 2 * S * sizeof(Out));
         auto f = fb.template Get<float>();
         LocalTensor<Out> o;
         if constexpr (sizeof(Out) == 4)
@@ -635,50 +669,77 @@ __aicore__ inline void leaf_merge_pipeline(GdnRawFront::Resource &resource,
                 if (chunk + L < end)
                     leaf.Produce(chunk + L, end, version + 1);
             }
-            for (int64_t task = chunk; task < end && task < chunk + L; ++task) {
-                int64_t index = task - begin, slot = index % (BATCH * 2);
-                if (index % BATCH == 0)
-                    CrossCoreWaitFlag(4 + (index / BATCH) % 2);
-                auto w = locate<Parent, kStaticBT>(task, S * 2, info, cu);
-                int n0 = w.length - w.t < S ? w.length - w.t : S, n1 = w.length - w.t - S < S ? w.length - w.t - S : S;
-                int rows = sub == 0 ? n0 : n1;
-                Duplicate(f, 0.0f, S * 2 * S);
+            // 成对批处理：单轮 V/MTE2/MTE3 协议服务相邻两任务，flag 对数量减半；
+            // BATCH=16 与步长2对齐，批边界恒落在对边界，不跨批。
+            constexpr int64_t taskElems = S * 2 * S;
+            for (int64_t task = chunk; task < end && task < chunk + L; task += 2) {
+                const int count = task + 1 < end && task + 1 < chunk + L ? 2 : 1;
+                WorkItem jobs[2];
+                int rowsArr[2], n0Arr[2];
+                int64_t slots[2];
+                for (int j = 0; j < count; ++j) {
+                    int64_t index = task + j - begin;
+                    if (index % BATCH == 0)
+                        CrossCoreWaitFlag(4 + (index / BATCH) % 2);
+                    auto w = locate<Parent, kStaticBT>(task + j, S * 2, info, cu);
+                    jobs[j] = w;
+                    int n0 = w.length - w.t < S ? w.length - w.t : S, n1 = w.length - w.t - S < S ? w.length - w.t - S : S;
+                    n0Arr[j] = n0;
+                    rowsArr[j] = sub == 0 ? n0 : n1;
+                    slots[j] = index % (BATCH * 2);
+                    Duplicate(f[j * taskElems], 0.0f, S * 2 * S);
+                }
                 PipeBarrier<PIPE_V>();
                 SetFlag<HardEvent::V_MTE2>(GdnRawFront::SolveEvent<Raw, HardEvent::V_MTE2>(resources));
                 WaitFlag<HardEvent::V_MTE2>(GdnRawFront::SolveEvent<Raw, HardEvent::V_MTE2>(resources));
-                if (rows > 0) {
-                    int rounded = (rows + 7) / 8 * 8;
-                    DataCopyPadExtParams<float> pad{true, 0, (uint8_t)(rounded - rows), 0};
-                    DataCopyExtParams cp{(uint16_t)rows, (uint32_t)(rows * 4), (uint32_t)((stride(info, S) - rows) * 4),
-                                         (uint32_t)((2 * S - rounded) / 8), 0};
-                    DataCopyPad(f[sub * S], d[pos(info, w, w.t + sub * S, S)], cp, pad);
-                    if (sub == 1) {
-                        DataCopyExtParams cross{(uint16_t)rows, (uint32_t)(n0 * 4), (uint32_t)((W - n0) * 4),
-                                                (uint32_t)((2 * S - n0) / 8), 0};
-                        DataCopyPadExtParams<float> noPad{false, 0, 0, 0};
-                        DataCopyPad(f, batchWs[slot * E], cross, noPad);
+                for (int j = 0; j < count; ++j) {
+                    auto w = jobs[j];
+                    int rows = rowsArr[j], n0 = n0Arr[j];
+                    if (rows > 0) {
+                        int rounded = (rows + 7) / 8 * 8;
+                        DataCopyPadExtParams<float> pad{true, 0, (uint8_t)(rounded - rows), 0};
+                        DataCopyExtParams cp{(uint16_t)rows, (uint32_t)(rows * 4), (uint32_t)((stride(info, S) - rows) * 4),
+                                             (uint32_t)((2 * S - rounded) / 8), 0};
+                        DataCopyPad(f[j * taskElems + sub * S], d[pos(info, w, w.t + sub * S, S)], cp, pad);
+                        if (sub == 1) {
+                            DataCopyExtParams cross{(uint16_t)rows, (uint32_t)(n0 * 4), (uint32_t)((W - n0) * 4),
+                                                    (uint32_t)((2 * S - n0) / 8), 0};
+                            DataCopyPadExtParams<float> noPad{false, 0, 0, 0};
+                            DataCopyPad(f[j * taskElems], batchWs[slots[j] * E], cross, noPad);
+                        }
                     }
                 }
                 SetFlag<HardEvent::MTE2_V>(GdnRawFront::SolveEvent<Raw, HardEvent::MTE2_V>(resources));
                 WaitFlag<HardEvent::MTE2_V>(GdnRawFront::SolveEvent<Raw, HardEvent::MTE2_V>(resources));
-                if (sub == 1 && rows > 0) {
-                    Muls(f, f, -1.0f, S, (uint8_t)rows, {1, 1, (uint8_t)(2 * S / 8), (uint8_t)(2 * S / 8)});
-                    PipeBarrier<PIPE_V>();
+                for (int j = 0; j < count; ++j) {
+                    if (sub == 1 && rowsArr[j] > 0) {
+                        Muls(f[j * taskElems], f[j * taskElems], -1.0f, S, (uint8_t)rowsArr[j],
+                             {1, 1, (uint8_t)(2 * S / 8), (uint8_t)(2 * S / 8)});
+                        PipeBarrier<PIPE_V>();
+                    }
                 }
-                if constexpr (sizeof(Out) != 4)
-                    Cast(o, f, RoundMode::CAST_RINT, S * 2 * S);
+                if constexpr (sizeof(Out) != 4) {
+                    for (int j = 0; j < count; ++j)
+                        Cast(o[j * taskElems], f[j * taskElems], RoundMode::CAST_RINT, S * 2 * S);
+                }
                 PipeBarrier<PIPE_V>();
                 SetFlag<HardEvent::V_MTE3>(GdnRawFront::SolveEvent<Raw, HardEvent::V_MTE3>(resources));
                 WaitFlag<HardEvent::V_MTE3>(GdnRawFront::SolveEvent<Raw, HardEvent::V_MTE3>(resources));
-                if (rows > 0) {
-                    DataCopyExtParams cp{(uint16_t)rows, (uint32_t)(2 * S * sizeof(Out)), 0,
-                                         (uint32_t)((stride(info, 2 * S) - 2 * S) * sizeof(Out)), 0};
-                    DataCopyPad(y[pos(info, w, w.t + sub * S, 2 * S)], o, cp);
+                for (int j = 0; j < count; ++j) {
+                    auto w = jobs[j];
+                    if (rowsArr[j] > 0) {
+                        DataCopyExtParams cp{(uint16_t)rowsArr[j], (uint32_t)(2 * S * sizeof(Out)), 0,
+                                             (uint32_t)((stride(info, 2 * S) - 2 * S) * sizeof(Out)), 0};
+                        DataCopyPad(y[pos(info, w, w.t + sub * S, 2 * S)], o[j * taskElems], cp);
+                    }
                 }
                 SetFlag<HardEvent::MTE3_V>(GdnRawFront::SolveEvent<Raw, HardEvent::MTE3_V>(resources));
                 WaitFlag<HardEvent::MTE3_V>(GdnRawFront::SolveEvent<Raw, HardEvent::MTE3_V>(resources));
-                if ((index + 1) % BATCH == 0 || task + 1 == end)
-                    CrossCoreSetFlag<0x2, PIPE_MTE3>(2 + (index / BATCH) % 2);
+                for (int j = 0; j < count; ++j) {
+                    int64_t index = task + j - begin;
+                    if ((index + 1) % BATCH == 0 || task + j + 1 == end)
+                        CrossCoreSetFlag<0x2, PIPE_MTE3>(2 + (index / BATCH) % 2);
+                }
             }
         }
     }

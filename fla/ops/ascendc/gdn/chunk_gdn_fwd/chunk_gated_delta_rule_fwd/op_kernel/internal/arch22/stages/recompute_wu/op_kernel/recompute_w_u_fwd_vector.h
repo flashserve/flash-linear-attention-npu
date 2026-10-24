@@ -205,6 +205,7 @@ __aicore__ inline void RecomputeWUFwdVectorProcess<kType, betaType,
         const GDN::RecomputeTaskRange *range)
 {
     static_assert(sizeof(kType) == 2, "A2 WU preparation preserves two-byte input rounding");
+    // 最终 Solve 低区：BT64 成对为24KiB，BT128 单任务为48KiB；后者仍为最大值。
     static_assert(3 * 128 * 128 + 64 * (12 * 128 + 56) <= Catlass::Arch::AtlasA2::UB_SIZE,
                   "A2 WU preparation and final Solve views exceed UB");
     taskRange = range;
@@ -238,7 +239,7 @@ __aicore__ inline void RecomputeWUFwdVectorProcess<kType, betaType,
     const uint32_t rowNum = interleavedMembaseVecRow;
     const uint32_t width = static_cast<uint32_t>(K > ValueDim() ? K : ValueDim());
     const uint32_t ubOffset = kPrepareOnly
-        ? static_cast<uint32_t>(ChunkSize() * ChunkSize() / 2 * (sizeof(float32_t) + sizeof(kType))) : 0;
+        ? static_cast<uint32_t>(ChunkSize() * 64 * (sizeof(float32_t) + sizeof(kType))) : 0;
     constexpr uint32_t eventOffset = kPrepareOnly ? 2 : 0;
     interleavedLayout.Init(rowNum, width, sizeof(kType), true);
     const auto &layout = interleavedLayout;
@@ -264,9 +265,9 @@ __aicore__ inline void RecomputeWUFwdVectorProcess<kType, betaType,
     // Only the owned A2 parent-batch caller instantiates this non-null-range path.
     const uint32_t rowNum = interleavedMembaseVecRow;
     const uint32_t width = static_cast<uint32_t>(K > ValueDim() ? K : ValueDim());
-    // 原最终 Solve f/o 位于低区；各准备窗口持续借用同一高区和 event2/3。
+    // BT64 成对 f/o 占24KiB，BT128 最终单任务占48KiB；准备区与其分离，保护跨窗异步读写。
     const uint32_t ubOffset = kPrepareOnly
-        ? static_cast<uint32_t>(ChunkSize() * ChunkSize() / 2 * (sizeof(float32_t) + sizeof(kType))) : 0;
+        ? static_cast<uint32_t>(ChunkSize() * 64 * (sizeof(float32_t) + sizeof(kType))) : 0;
     constexpr uint32_t eventOffset = kPrepareOnly ? 2 : 0;
     const uint64_t coreLoopsInB = (T + ChunkSize() - 1) / ChunkSize();
     const auto &layout = interleavedLayout;
