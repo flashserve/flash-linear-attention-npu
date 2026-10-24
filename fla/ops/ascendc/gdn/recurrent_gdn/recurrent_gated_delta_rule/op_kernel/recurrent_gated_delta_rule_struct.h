@@ -63,6 +63,7 @@ struct alignas(8) RecurrentGatedDeltaRuleTilingData {
     uint32_t stateStride0;
  	uint32_t stateStride1;
  	uint32_t stateStride2;
+    uint32_t stateIndicesStride;
 };
 #pragma pack(pop)
 
