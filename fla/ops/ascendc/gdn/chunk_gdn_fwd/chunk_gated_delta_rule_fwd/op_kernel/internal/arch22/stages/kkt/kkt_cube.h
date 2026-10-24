@@ -130,10 +130,8 @@ public:
         ProcessAscend950(k, cuSeqlens, chunkIndices, score, tiling);
 #else
         auto l1A = resource.l1Buf.template GetBufferByByte<T>(0);
-        // zN(MAX_BT, K_DIM)[m,k] and nZ(K_DIM, MAX_BT)[k,m]
-        // address the same packed elements. Only their logical coordinates differ.
-        auto l1B = resource.l1Buf.template GetBufferByByte<T>(
-            SINGLE_K_L1 ? 0 : MAX_BT * K_DIM * sizeof(T));
+        // A2 uses these two regions for consecutive K tasks, one copy per task.
+        auto l1B = resource.l1Buf.template GetBufferByByte<T>(MAX_BT * K_DIM * sizeof(T));
         auto l0A = resource.l0ABuf.template GetBufferByByte<T>(0);
         auto l0B = resource.l0BBuf.template GetBufferByByte<T>(0);
         auto l0C = resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(0);
@@ -147,9 +145,7 @@ public:
         constexpr int32_t EVENT_L0B = 1;
         constexpr int32_t EVENT_L0C = 0;
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_L1A);
-        if constexpr (!SINGLE_K_L1) {
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_L1B);
-        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_L1B);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
@@ -157,6 +153,34 @@ public:
         const int64_t begin = static_cast<int64_t>(AscendC::GetBlockIdx()) * tiling->tilesPerCore;
         int64_t end = begin + tiling->tilesPerCore;
         end = end < tiling->taskNum ? end : static_cast<int64_t>(tiling->taskNum);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+        int64_t cursor = begin;
+        KktTask current;
+        if (DecodeNextTask(cursor, end, cuSeqlens, chunkIndices, tiling, current)) {
+            int32_t slot = EVENT_L1A;
+            LoadK(k, current.inputOffset, current.valid, tiling, l1A, slot);
+            while (true) {
+                KktTask next;
+                const bool hasNext = DecodeNextTask(cursor, end, cuSeqlens, chunkIndices, tiling, next);
+                const int32_t nextSlot = slot ^ 1;
+                if (hasNext) {
+                    auto nextL1 = nextSlot == EVENT_L1A ? l1A : l1B;
+                    // Issue the independent next task before consuming current K.
+                    LoadK(k, next.inputOffset, next.valid, tiling, nextL1, nextSlot);
+                }
+                auto currentL1 = slot == EVENT_L1A ? l1A : l1B;
+                RunTask<true>(k, score, current.task, current.inputOffset, current.valid,
+                              tiling, currentL1, currentL1, l0A, l0B, l0C,
+                              copyL1ToL0A, copyL1ToL0B, tileMmad,
+                              slot, slot, EVENT_L0A, EVENT_L0B, EVENT_L0C);
+                if (!hasNext) {
+                    break;
+                }
+                current = next;
+                slot = nextSlot;
+            }
+        }
+#else
         for (int64_t task = begin; task < end; ++task) {
             int64_t inputOffset = 0;
             int64_t valid = 0;
@@ -168,11 +192,10 @@ public:
                     copyL1ToL0A, copyL1ToL0B, tileMmad,
                     EVENT_L1A, EVENT_L1B, EVENT_L0A, EVENT_L0B, EVENT_L0C);
         }
+#endif
 
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_L1A);
-        if constexpr (!SINGLE_K_L1) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_L1B);
-        }
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_L1B);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
@@ -279,13 +302,62 @@ private:
         }
     }
 
-    template <typename TilingData, typename L1Tensor, typename L0Tensor, typename L0CTensor>
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+    struct KktTask {
+        int64_t task{0};
+        int64_t inputOffset{0};
+        int64_t valid{0};
+    };
+
+    template <typename TilingData>
+    __aicore__ inline bool DecodeNextTask(int64_t &cursor, int64_t end,
+                                         GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
+                                         const TilingData *tiling, KktTask &next)
+    {
+        while (cursor < end) {
+            next.task = cursor++;
+            DecodeTask(next.task, cuSeqlens, chunkIndices, tiling, next.inputOffset, next.valid);
+            if (next.valid > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    template <typename TilingData, typename L1Tensor>
+    __aicore__ inline void LoadK(GM_ADDR k, int64_t inputOffset, int64_t valid,
+                                const TilingData *tiling, L1Tensor l1, int32_t eventL1)
+    {
+        AscendC::GlobalTensor<T> kGm;
+        const uint64_t kElements = static_cast<uint64_t>(tiling->B) *
+                                   static_cast<uint64_t>(tiling->Hk) *
+                                   static_cast<uint64_t>(tiling->T) *
+                                   static_cast<uint64_t>(tiling->K);
+        const uint64_t kOffset = static_cast<uint64_t>(inputOffset);
+        kGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(k) + inputOffset,
+                            kElements > kOffset ? kElements - kOffset : 0);
+        const int64_t rowStride = tiling->K * (InputSequenceMajor() ? tiling->Hk : 1);
+        auto tensorK = tla::MakeTensor(kGm,
+            tla::MakeLayoutFromTag(LayoutK(valid, tiling->K, rowStride)), Catlass::Arch::PositionGM{});
+        auto blockK = tla::GetTile(tensorK, tla::MakeCoord(0, 0), tla::MakeShape(valid, tiling->K));
+        using CopyGmToL1A = typename TileCopy::template CopyGmToL1A<decltype(blockK)>;
+        CopyGmToL1A copyGmToL1A;
+        auto tensorL1A = tla::MakeTensor(l1, L1A_LAYOUT, Catlass::Arch::PositionL1{});
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(eventL1);
+        copyGmToL1A(tensorL1A, blockK);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(eventL1);
+    }
+#endif
+
+    template <bool kPreloaded = false, typename TilingData, typename L1Tensor,
+              typename L0Tensor, typename L0CTensor>
     __aicore__ inline void RunTask(
         GM_ADDR k, GM_ADDR score, int64_t task, int64_t inputOffset, int64_t valid,
         const TilingData *tiling, L1Tensor l1A, L1Tensor l1B, L0Tensor l0A, L0Tensor l0B, L0CTensor l0C,
         CopyL1ToL0A &copyL1ToL0A, CopyL1ToL0B &copyL1ToL0B, TileMmad &tileMmad,
         int32_t eventL1A, int32_t eventL1B, int32_t eventL0A, int32_t eventL0B, int32_t eventL0C)
     {
+        static_assert(!kPreloaded || SINGLE_K_L1, "Preloaded KKT requires shared A/B L1");
         AscendC::GlobalTensor<T> kGm;
         AscendC::GlobalTensor<float> scoreGm;
         const uint64_t kElements = static_cast<uint64_t>(tiling->B) *
@@ -327,13 +399,15 @@ private:
         auto tensorL1A = tla::MakeTensor(l1A, L1A_LAYOUT, Catlass::Arch::PositionL1{});
         auto tensorL1B = tla::MakeTensor(l1B, L1B_LAYOUT, Catlass::Arch::PositionL1{});
 
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(eventL1A);
-        copyGmToL1A(tensorL1A, blockK);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(eventL1A);
-        if constexpr (!SINGLE_K_L1) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(eventL1B);
-            copyGmToL1B(tensorL1B, blockKt);
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(eventL1B);
+        if constexpr (!kPreloaded) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(eventL1A);
+            copyGmToL1A(tensorL1A, blockK);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(eventL1A);
+            if constexpr (!SINGLE_K_L1) {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(eventL1B);
+                copyGmToL1B(tensorL1B, blockKt);
+                AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(eventL1B);
+            }
         }
 
         uint32_t mActual = static_cast<uint32_t>(valid == 1 ? 16 : valid);
