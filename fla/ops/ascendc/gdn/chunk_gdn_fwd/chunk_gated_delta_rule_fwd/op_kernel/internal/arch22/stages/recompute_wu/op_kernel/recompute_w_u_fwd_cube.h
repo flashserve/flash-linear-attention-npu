@@ -39,6 +39,9 @@ using GDN::GdnMegaArch22RecomputeWUTilingData;
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
 #include "catlass/arch/cross_core_sync.hpp"
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#include "recompute_w_u_fwd_concat_cube.h"
+#endif
 using namespace Catlass;
 using namespace tla;
 namespace Catlass::Gemm::Kernel {
@@ -68,6 +71,15 @@ public:
     using LayoutW = typename BlockMmadW::LayoutC;
     static constexpr bool kFlattenHeadTasks = kFlattenHeadTasks_;
     static constexpr bool kAbcTaskOrder = kAbcTaskOrder_;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+    static constexpr bool kConcatUW = kStaticBT == 64 && kStaticV == 128 &&
+                                      sizeof(ElementA) == 2 && sizeof(ElementVb) == 2;
+    using SelectedBlockMmad = typename Catlass::Gemm::Block::RecomputeWUConcatSelector<
+        BlockMmadU, kConcatUW>::Type;
+#else
+    static constexpr bool kConcatUW = false;
+    using SelectedBlockMmad = BlockMmadU;
+#endif
     /// Parameters structure
     struct Params {
         // Data members
@@ -137,7 +149,7 @@ public:
         uint32_t bos = 0;
         uint32_t eos = 0;
         uint32_t taskIdx = 0;
-        BlockMmadU blockMmad(resource);
+        SelectedBlockMmad blockMmad(resource);
         blockMmad.preSetFlags();
         AscendC::GlobalTensor<ElementA> gmA;
         AscendC::GlobalTensor<ElementVb> gmVb;
@@ -170,55 +182,71 @@ public:
                         AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
                     }
                 }
-                uint32_t tileN = tla::get<1>(BdkL1TileShape{});
-                for (uint32_t nOffset = 0; nOffset < params.ValueDim(); nOffset += tileN) {
-                    uint32_t curN = (nOffset + tileN > params.ValueDim()) ? (params.ValueDim() - nOffset) : tileN;
-                    GemmCoord actualBlockShape{curChunkSize, curN, curChunkSize};
-                    const uint64_t vbOffset = (loopIdx - params.taskRange->begin) * params.ChunkSize() * params.ValueDim();
-                    gmVb.SetGlobalBuffer((__gm__ ElementVb *)params.ptrVb + vbOffset + nOffset);
-                    gmU.SetGlobalBuffer((__gm__ ElementU *)params.ptrU + (h * params.T + bos) * params.ValueDim() + nOffset);
-
+                if constexpr (kConcatUW) {
+                    const uint64_t vbOffset =
+                        (loopIdx - params.taskRange->begin) * params.ChunkSize() * params.ValueDim();
+                    const uint64_t kbgOffset =
+                        (loopIdx - params.taskRange->begin) * params.ChunkSize() * params.K;
+                    gmVb.SetGlobalBuffer((__gm__ ElementVb *)params.ptrVb + vbOffset);
+                    gmU.SetGlobalBuffer((__gm__ ElementU *)params.ptrU + (h * params.T + bos) * params.ValueDim());
+                    gmKbgExp.SetGlobalBuffer((__gm__ ElementKbgExp *)params.ptrKbgExp + kbgOffset);
+                    gmW.SetGlobalBuffer((__gm__ ElementW *)params.ptrW + (h * params.T + bos) * params.K);
                     auto tensorVb = tla::MakeTensor(gmVb, params.layoutVb, Arch::PositionGM{});
                     auto tensorU = tla::MakeTensor(gmU, params.layoutU, Arch::PositionGM{});
-                    // Make tiled views
-                    auto tensorBlockA = GetTile(tensorA, tla::MakeCoord(0, 0),
-                                                    tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
-                    auto tensorBlockVb = GetTile(tensorVb, tla::MakeCoord(0, 0),
-                                                    tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
-                    auto tensorBlockU = GetTile(tensorU, tla::MakeCoord(0, 0),
-                                                    tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
-                    // Compute block-scoped matrix multiply-add
+                    auto tensorKbgExp = tla::MakeTensor(gmKbgExp, params.layoutKbgExp, Arch::PositionGM{});
+                    auto tensorW = tla::MakeTensor(gmW, params.layoutW, Arch::PositionGM{});
+                    blockMmad.RunPair(tensorA, tensorVb, tensorKbgExp, tensorU, tensorW, curChunkSize);
+                } else {
+                    uint32_t tileN = tla::get<1>(BdkL1TileShape{});
+                    for (uint32_t nOffset = 0; nOffset < params.ValueDim(); nOffset += tileN) {
+                        uint32_t curN = (nOffset + tileN > params.ValueDim()) ? (params.ValueDim() - nOffset) : tileN;
+                        GemmCoord actualBlockShape{curChunkSize, curN, curChunkSize};
+                        const uint64_t vbOffset = (loopIdx - params.taskRange->begin) * params.ChunkSize() * params.ValueDim();
+                        gmVb.SetGlobalBuffer((__gm__ ElementVb *)params.ptrVb + vbOffset + nOffset);
+                        gmU.SetGlobalBuffer((__gm__ ElementU *)params.ptrU + (h * params.T + bos) * params.ValueDim() + nOffset);
+
+                        auto tensorVb = tla::MakeTensor(gmVb, params.layoutVb, Arch::PositionGM{});
+                        auto tensorU = tla::MakeTensor(gmU, params.layoutU, Arch::PositionGM{});
+                        // Make tiled views
+                        auto tensorBlockA = GetTile(tensorA, tla::MakeCoord(0, 0),
+                                                        tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
+                        auto tensorBlockVb = GetTile(tensorVb, tla::MakeCoord(0, 0),
+                                                        tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
+                        auto tensorBlockU = GetTile(tensorU, tla::MakeCoord(0, 0),
+                                                        tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
+                        // Compute block-scoped matrix multiply-add
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
-                    // Host BT64/128 and L1 K256 guarantee one retained A tile for U/W.
-                    blockMmad.template operator()<true, false>(
-                        tensorBlockA, tensorBlockVb, tensorBlockU, actualBlockShape);
+                        // Host BT64/128 and L1 K256 guarantee one retained A tile for U/W.
+                        blockMmad.template operator()<true, false>(
+                            tensorBlockA, tensorBlockVb, tensorBlockU, actualBlockShape);
 #else
-                    blockMmad(tensorBlockA, tensorBlockVb, tensorBlockU, actualBlockShape);
+                        blockMmad(tensorBlockA, tensorBlockVb, tensorBlockU, actualBlockShape);
+#endif
+                    }
+
+                    // W shares U's A slot; its final MTE1 A read releases the slot for the next pair.
+                    // 窗口通知已覆盖本窗口全部任务的 Vb+KbgExp，无需再等待。
+                    GemmCoord actualBlockShape{curChunkSize, static_cast<uint32_t>(params.K), curChunkSize};
+                    const uint64_t kbgOffset = (loopIdx - params.taskRange->begin) * params.ChunkSize() * params.K;
+                    gmKbgExp.SetGlobalBuffer((__gm__ ElementKbgExp *)params.ptrKbgExp + kbgOffset);
+                    gmW.SetGlobalBuffer((__gm__ ElementW *)params.ptrW + (h * params.T + bos) * params.K);
+
+                    auto tensorKbgExp = tla::MakeTensor(gmKbgExp, params.layoutKbgExp, Arch::PositionGM{});
+                    auto tensorW = tla::MakeTensor(gmW, params.layoutW, Arch::PositionGM{});
+
+                    auto tensorBlockA = GetTile(tensorA, tla::MakeCoord(0, 0),
+                                                tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
+                    auto tensorBlockKbgExp = GetTile(tensorKbgExp, tla::MakeCoord(0, 0),
+                                                tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
+                    auto tensorBlockW = GetTile(tensorW, tla::MakeCoord(0, 0),
+                                                tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+                    blockMmad.template operator()<false, true>(
+                        tensorBlockA, tensorBlockKbgExp, tensorBlockW, actualBlockShape);
+#else
+                    blockMmad(tensorBlockA, tensorBlockKbgExp, tensorBlockW, actualBlockShape);
 #endif
                 }
-
-                // W shares U's A slot; its final MTE1 A read releases the slot for the next pair.
-                // 窗口通知已覆盖本窗口全部任务的 Vb+KbgExp，无需再等待。
-                GemmCoord actualBlockShape{curChunkSize, static_cast<uint32_t>(params.K), curChunkSize};
-                const uint64_t kbgOffset = (loopIdx - params.taskRange->begin) * params.ChunkSize() * params.K;
-                gmKbgExp.SetGlobalBuffer((__gm__ ElementKbgExp *)params.ptrKbgExp + kbgOffset);
-                gmW.SetGlobalBuffer((__gm__ ElementW *)params.ptrW + (h * params.T + bos) * params.K);
-
-                auto tensorKbgExp = tla::MakeTensor(gmKbgExp, params.layoutKbgExp, Arch::PositionGM{});
-                auto tensorW = tla::MakeTensor(gmW, params.layoutW, Arch::PositionGM{});
-
-                auto tensorBlockA = GetTile(tensorA, tla::MakeCoord(0, 0),
-                                            tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
-                auto tensorBlockKbgExp = GetTile(tensorKbgExp, tla::MakeCoord(0, 0),
-                                            tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
-                auto tensorBlockW = GetTile(tensorW, tla::MakeCoord(0, 0),
-                                            tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
-                blockMmad.template operator()<false, true>(
-                    tensorBlockA, tensorBlockKbgExp, tensorBlockW, actualBlockShape);
-#else
-                blockMmad(tensorBlockA, tensorBlockKbgExp, tensorBlockW, actualBlockShape);
-#endif
                 // Parent batches may reuse the GM temporary addresses; invalidate per task.
                 blockMmad.RestoreStatus();
             }
