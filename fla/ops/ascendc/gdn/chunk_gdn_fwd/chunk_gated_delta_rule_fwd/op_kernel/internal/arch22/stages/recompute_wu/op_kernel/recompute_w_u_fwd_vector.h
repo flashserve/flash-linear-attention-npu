@@ -263,6 +263,9 @@ __aicore__ inline void RecomputeWUFwdVectorProcess<kType, betaType,
         uint32_t loopBegin, uint32_t loopEnd)
 {
     // Only the owned A2 parent-batch caller instantiates this non-null-range path.
+    // This static host path uses R64: Vb leaves the same head's complete beta in betaFP32.
+    constexpr bool kReuseVbBeta = kPrepareOnly && kRawFront && kFlattenHeadTasks && kAbcTaskOrder &&
+        kStaticBT == 64 && kStaticV == 128 && std::is_same<betaType, float32_t>();
     const uint32_t rowNum = interleavedMembaseVecRow;
     const uint32_t width = static_cast<uint32_t>(K > ValueDim() ? K : ValueDim());
     // BT64 成对 f/o 占24KiB，BT128 最终单任务占48KiB；准备区与其分离，保护跨窗异步读写。
@@ -423,7 +426,9 @@ __aicore__ inline void RecomputeWUFwdVectorProcess<kType, betaType,
                     } else {
                         DataCopy(tensorKin, kTensor[kSrcOffset], K * curRowNum);
                     }
-                    DataCopyPad(tensorBetain, betaTensor[betaOffset], {1, curRowNum * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0},{false, 0, 0, 0});
+                    if constexpr (!kReuseVbBeta) {
+                        DataCopyPad(tensorBetain, betaTensor[betaOffset], {1, curRowNum * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0},{false, 0, 0, 0});
+                    }
                     DataCopyPad(tensorGin, gTensor[betaOffset], {1, curRowNum * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0},{false, 0, 0, 0});
                     SetFlag<HardEvent::MTE2_V>(frontResources->template Event<HardEvent::MTE2_V>(rawSlot + eventOffset));
                 }
@@ -436,7 +441,9 @@ __aicore__ inline void RecomputeWUFwdVectorProcess<kType, betaType,
                         Cast(tensorBetaFP32, tensorBetain, RoundMode::CAST_NONE, curRowNum);
                         Cast(tensorGFP32, tensorGin, RoundMode::CAST_NONE, curRowNum);
                     } else {
-                        DataCopy(tensorBetaFP32, tensorBetain, rowNum);
+                        if constexpr (!kReuseVbBeta) {
+                            DataCopy(tensorBetaFP32, tensorBetain, rowNum);
+                        }
                         DataCopy(tensorGFP32, tensorGin, rowNum);
                     }
                     Cast(tensorKFp32, tensorKin, RoundMode::CAST_NONE, K * curRowNum);
