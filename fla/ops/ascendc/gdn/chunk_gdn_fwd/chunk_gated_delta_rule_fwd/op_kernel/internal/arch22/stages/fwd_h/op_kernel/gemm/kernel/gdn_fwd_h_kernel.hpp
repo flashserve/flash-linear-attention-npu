@@ -618,7 +618,15 @@ public:
                 BlockMmadKV blockMmadKV(resource);
                 BlockMmadWH blockMmadWHTail(resource);
                 BlockMmadKVTail blockMmadKVTail(resource);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+                if (waveIdx == 0) {
+                    AscendC::SyncAll<false>();
+                } else {
+                    AscendC::PipeBarrier<PIPE_ALL>();
+                }
+#else
                 AscendC::SyncAll<false>();
+#endif
                 cubeBlockScheduler.InitTaskWave(waveIdx);
                 uint32_t currStage = 0; // 0: C1, 1: C2
                 while (cubeBlockScheduler.isRunning) {
@@ -845,7 +853,16 @@ public:
 
                 }
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+                if (waveIdx == 0) {
+                    AscendC::SyncAll<false>();
+                } else {
+                    AscendC::PipeBarrier<PIPE_ALL>();
+                    Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+                }
+#else
                 AscendC::SyncAll<false>();
+#endif
                 vecBlockScheduler.InitTaskWave(waveIdx);
                 Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[0]);
                 Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[1]);
