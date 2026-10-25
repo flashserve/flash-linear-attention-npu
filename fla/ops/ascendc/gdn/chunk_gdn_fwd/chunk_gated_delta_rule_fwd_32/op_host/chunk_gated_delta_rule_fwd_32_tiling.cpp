@@ -115,8 +115,7 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
     if (workspace == nullptr) {
         return ge::GRAPH_FAILED;
     }
-    const uint64_t userWorkspace = static_cast<uint64_t>(b) * static_cast<uint64_t>(hv) * kGdn32WsStride;
-    workspace[0] = workspaceBytes + userWorkspace;
+    workspace[0] = workspaceBytes;
     tiling->workspaceOffset = 0;
     return ge::GRAPH_SUCCESS;
 }
