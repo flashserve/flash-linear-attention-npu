@@ -18,13 +18,18 @@ static ge::graphStatus InferShapeChunkGatedDeltaRuleFwd32(gert::InferShapeContex
     const int64_t k = qShape->GetDim(3);
     const int64_t hv = vShape->GetDim(1);
     const int64_t v = vShape->GetDim(3);
+    int64_t seqNum = b;
+    const gert::Shape *cuShape = context->GetInputShape(6);
+    if (cuShape != nullptr && cuShape->GetDimNum() == 1 && cuShape->GetDim(0) > 1) {
+        seqNum = cuShape->GetDim(0) - 1;
+    }
     oShape->SetDimNum(4);
     oShape->SetDim(0, b);
     oShape->SetDim(1, hv);
     oShape->SetDim(2, t);
     oShape->SetDim(3, v);
     stateShape->SetDimNum(4);
-    stateShape->SetDim(0, b);
+    stateShape->SetDim(0, seqNum);
     stateShape->SetDim(1, hv);
     stateShape->SetDim(2, k);
     stateShape->SetDim(3, v);

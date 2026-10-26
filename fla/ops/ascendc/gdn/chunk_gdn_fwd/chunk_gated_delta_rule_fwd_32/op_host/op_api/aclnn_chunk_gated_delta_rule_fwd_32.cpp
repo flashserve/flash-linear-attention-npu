@@ -20,10 +20,44 @@ struct Params {
     const aclTensor *g;
     const aclTensor *beta;
     const aclTensor *initial;
+    const aclIntArray *cu;
+    const aclIntArray *chunks;
     double scale;
     const aclTensor *o;
     const aclTensor *finalState;
 };
+
+aclnnStatus CheckMetadata(const aclIntArray *cu, const aclIntArray *chunks, int64_t batch, int64_t tokens,
+                          int64_t &seqNum)
+{
+    seqNum = batch;
+    if (cu == nullptr && chunks == nullptr) {
+        return ACLNN_SUCCESS;
+    }
+    CHECK_COND(cu != nullptr && chunks != nullptr, ACLNN_ERR_PARAM_INVALID,
+               "cu_seqlens and chunk_indices must both be present or both be absent.");
+    CHECK_COND(batch == 1, ACLNN_ERR_PARAM_INVALID, "packed sequences require B = 1.");
+    CHECK_COND(cu->Size() >= 2, ACLNN_ERR_PARAM_INVALID, "cu_seqlens must contain at least [0, T].");
+    CHECK_COND((*cu)[0] == 0 && (*cu)[cu->Size() - 1] == tokens, ACLNN_ERR_PARAM_INVALID,
+               "cu_seqlens must start at 0 and end at T.");
+    int64_t pair = 0;
+    for (size_t seq = 0; seq + 1 < cu->Size(); ++seq) {
+        CHECK_COND((*cu)[seq] <= (*cu)[seq + 1], ACLNN_ERR_PARAM_INVALID, "cu_seqlens must be nondecreasing.");
+        const int64_t length = (*cu)[seq + 1] - (*cu)[seq];
+        const int64_t nChunk = length == 0 ? 0 : (length + 31) / 32;
+        for (int64_t local = 0; local < nChunk; ++local) {
+            const size_t pos = static_cast<size_t>(pair * 2);
+            CHECK_COND(pos + 1 < chunks->Size() && (*chunks)[pos] == static_cast<int64_t>(seq) &&
+                           (*chunks)[pos + 1] == local,
+                       ACLNN_ERR_PARAM_INVALID, "chunk_indices must be canonical sequence-major (seqId, localChunk).");
+            ++pair;
+        }
+    }
+    CHECK_COND(static_cast<int64_t>(chunks->Size()) == pair * 2, ACLNN_ERR_PARAM_INVALID,
+               "chunk_indices must contain one pair per chunk.");
+    seqNum = static_cast<int64_t>(cu->Size()) - 1;
+    return ACLNN_SUCCESS;
+}
 
 aclnnStatus CheckParams(const Params &p)
 {
@@ -50,8 +84,9 @@ aclnnStatus CheckParams(const Params &p)
     const int64_t hv = v.GetDim(1);
     const int64_t value = v.GetDim(3);
     CHECK_COND(key == 128 && value == 128, ACLNN_ERR_PARAM_INVALID, "K and V must be 128.");
-    CHECK_COND(hv == hk && hv > 0, ACLNN_ERR_PARAM_INVALID, "the first version requires Hv == Hk > 0.");
-    CHECK_COND(t > 0 && (t % 32) == 0, ACLNN_ERR_PARAM_INVALID, "T must be a positive multiple of 32.");
+    CHECK_COND(hk > 0 && hv > 0 && (hv % hk) == 0, ACLNN_ERR_PARAM_INVALID,
+               "Hv must be a positive multiple of Hk.");
+    CHECK_COND(t > 0, ACLNN_ERR_PARAM_INVALID, "T must be positive.");
     CHECK_COND(k.GetDim(0) == b && k.GetDim(1) == hk && k.GetDim(2) == t && k.GetDim(3) == key,
                ACLNN_ERR_PARAM_INVALID, "k must match q.");
     CHECK_COND(v.GetDim(0) == b && v.GetDim(2) == t, ACLNN_ERR_PARAM_INVALID, "v must match q in B and T.");
@@ -59,20 +94,25 @@ aclnnStatus CheckParams(const Params &p)
                "g must be [B, Hv, T].");
     CHECK_COND(beta.GetDim(0) == b && beta.GetDim(1) == hv && beta.GetDim(2) == t, ACLNN_ERR_PARAM_INVALID,
                "beta must be [B, Hv, T].");
+    int64_t seqNum = b;
+    auto meta = CheckMetadata(p.cu, p.chunks, b, t, seqNum);
+    if (meta != ACLNN_SUCCESS) {
+        return meta;
+    }
     const auto &o = p.o->GetViewShape();
     const auto &state = p.finalState->GetViewShape();
     CHECK_COND(o.GetDimNum() == 4 && o.GetDim(0) == b && o.GetDim(1) == hv && o.GetDim(2) == t && o.GetDim(3) == value,
                ACLNN_ERR_PARAM_INVALID, "o must be [B, Hv, T, V].");
-    CHECK_COND(state.GetDimNum() == 4 && state.GetDim(0) == b && state.GetDim(1) == hv && state.GetDim(2) == key &&
-                   state.GetDim(3) == value,
-               ACLNN_ERR_PARAM_INVALID, "final_state must be [B, Hv, K, V].");
+    CHECK_COND(state.GetDimNum() == 4 && state.GetDim(0) == seqNum && state.GetDim(1) == hv &&
+                   state.GetDim(2) == key && state.GetDim(3) == value,
+               ACLNN_ERR_PARAM_INVALID, "final_state must be [N, Hv, K, V].");
     if (p.initial != nullptr) {
         CHECK_COND(p.initial->GetDataType() == DataType::DT_BF16, ACLNN_ERR_PARAM_INVALID,
                    "initial_state must be bfloat16.");
         const auto &init = p.initial->GetViewShape();
-        CHECK_COND(init.GetDimNum() == 4 && init.GetDim(0) == b && init.GetDim(1) == hv && init.GetDim(2) == key &&
-                       init.GetDim(3) == value,
-                   ACLNN_ERR_PARAM_INVALID, "initial_state must be [B, Hv, K, V].");
+        CHECK_COND(init.GetDimNum() == 4 && init.GetDim(0) == seqNum && init.GetDim(1) == hv &&
+                       init.GetDim(2) == key && init.GetDim(3) == value,
+                   ACLNN_ERR_PARAM_INVALID, "initial_state must be [N, Hv, K, V].");
     }
     CHECK_COND(std::isfinite(p.scale), ACLNN_ERR_PARAM_INVALID, "scale must be finite.");
     return ACLNN_SUCCESS;
@@ -89,14 +129,17 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
 extern "C" {
 aclnnStatus aclnnChunkGatedDeltaRuleFwd32GetWorkspaceSize(
     const aclTensor *q, const aclTensor *k, const aclTensor *v, const aclTensor *g, const aclTensor *beta,
-    const aclTensor *initialStateOptional, double scale, const aclTensor *o, const aclTensor *finalState,
+    const aclTensor *initialStateOptional, const aclIntArray *cuSeqlensOptional,
+    const aclIntArray *chunkIndicesOptional, double scale, const aclTensor *o, const aclTensor *finalState,
     uint64_t *workspaceSize, aclOpExecutor **executor)
 {
     CHECK_COND(workspaceSize != nullptr && executor != nullptr, ACLNN_ERR_PARAM_NULLPTR,
                "workspaceSize and executor must not be null.");
-    Params params{q, k, v, g, beta, initialStateOptional, scale, o, finalState};
+    Params params{q, k, v, g, beta, initialStateOptional, cuSeqlensOptional, chunkIndicesOptional, scale, o,
+                  finalState};
     L2_DFX_PHASE_1(aclnnChunkGatedDeltaRuleFwd32,
-                   DFX_IN(q, k, v, g, beta, initialStateOptional, scale), DFX_OUT(o, finalState));
+                   DFX_IN(q, k, v, g, beta, initialStateOptional, cuSeqlensOptional, chunkIndicesOptional, scale),
+                   DFX_OUT(o, finalState));
     auto status = CheckParams(params);
     if (status != ACLNN_SUCCESS) {
         return status;
@@ -131,8 +174,8 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwd32GetWorkspaceSize(
         }
     }
     const auto *result = l0op::ChunkGatedDeltaRuleFwd32(
-        params.q, params.k, params.v, params.g, params.beta, params.initial, params.scale, params.o, params.finalState,
-        executorPtr);
+        params.q, params.k, params.v, params.g, params.beta, params.initial, params.cu, params.chunks, params.scale,
+        params.o, params.finalState, executorPtr);
     CHECK_RET(result != nullptr, ACLNN_ERR_INNER_NULLPTR);
     const auto *oCopy = l0op::ViewCopy(result, params.o, executorPtr);
     CHECK_RET(oCopy != nullptr, ACLNN_ERR_INNER_NULLPTR);
