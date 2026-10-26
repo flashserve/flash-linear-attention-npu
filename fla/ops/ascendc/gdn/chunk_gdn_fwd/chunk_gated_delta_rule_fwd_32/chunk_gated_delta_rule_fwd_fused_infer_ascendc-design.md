@@ -87,7 +87,9 @@ O = \mathrm{scale} \Bigl( \bigl(Q \odot e\bigr) H + \mathrm{Attn}\, V^{\mathrm{n
 ```python
 o, final_state = npu_chunk_gated_delta_rule_fwd_32(
     q, k, v, g, beta,
-    initial_state=None,   # BF16 [B, Hv, K, V]，可空
+    initial_state=None,   # BF16 [N, Hv, K, V]，可空
+    cu_seqlens=None,      # int64 [N+1]，与 chunk_indices 同时给出
+    chunk_indices=None,   # int64，按序列的 (seqId, localChunkId)
     scale=None,           # None 时为 1/sqrt(K)
 )
 ```
@@ -98,23 +100,28 @@ o, final_state = npu_chunk_gated_delta_rule_fwd_32(
 | v | `[B, Hv, T, V]` | BF16 | 入 |
 | g | `[B, Hv, T]` | FP32 | 入，原始门控 |
 | beta | `[B, Hv, T]` | BF16 | 入，kernel 内 sigmoid |
-| initial_state | `[B, Hv, K, V]` | BF16 | 可选 |
+| initial_state | `[N, Hv, K, V]` | BF16 | 可选 |
+| cu_seqlens | `[N+1]` | INT64 | 可选，与 chunk_indices 同时给出 |
+| chunk_indices | `[2·Nc]` | INT64 | 可选，规范的 (seqId, localChunkId) |
 | o | `[B, Hv, T, V]` | BF16 | 出 |
-| final_state | `[B, Hv, K, V]` | BF16 | 出 |
+| final_state | `[N, Hv, K, V]` | BF16 | 出 |
 
-Tiling 拒绝这些情况：`T` 不是 32 的倍数，`K` 或 `V` 不是 128，`Hv != Hk`，dtype 或 rank 不符，`o` / `final_state` 的 shape 不符。`scale` 是必选属性，缺省 `0.0883883476`（\(1/\sqrt{128}\)）。`blockDim = min(B·Hv, AIC 核数)`，tiling key 为 0，schedule mode 为 1。
+Tiling 拒绝这些情况：`T <= 0`，`K` 或 `V` 不是 128，`Hv` 不是 `Hk` 的正倍数，dtype 或 rank 不符，`o` / `final_state` 的 shape 不符。`T` 可以不是 32、64、128 的倍数，最后一块在 UB 里补零到 32，只把有效行写出。`scale` 是必选属性，缺省 `0.0883883476`（\(1/\sqrt{128}\)）。`blockDim = min(B·Hv, AIC 核数)`，按 V 头分核。GVA 时多个 V 头共用一个 K 头，每个核各自重读 q/k。tiling key 为 0，schedule mode 为 1。
 
 kernel 类型是 `KERNEL_TYPE_MIX_AIC_1_2`，符号 `chunk_gated_delta_rule_fwd32`。`Init` 收到 workspace 后不使用。host 只申请 lib 工作区，`workspaceOffset = 0`。
 
-GM 下标。token 基址是 `(b·Hv + hv)·T`：
+GM 下标。v/g/beta/o 的 token 基址是 `(b·Hv + hv)·T`，q/k 的 token 基址是 `(b·Hk + hv / (Hv/Hk))·T`。`Hv == Hk` 时两个基址相同。
 
 ```text
-q/k/v/o 的一行     (token_base + t) * 128
-g / beta           token_base + t
+q/k 的一行         (q_base + t) * 128
+v/o 的一行         (v_base + t) * 128
+g / beta           v_base + t
 state 的一个 AIV   ((b·Hv + hv) * 128 + sub * 64) * 128
 ```
 
-`Hv == Hk`，所以 q/k 的 head 下标和 v 相同。每个 AIV 只持有状态的 64 行：sub 0 是行 `0..63`，sub 1 是行 `64..127`。
+每个 AIV 只持有状态的 64 行：sub 0 是行 `0..63`，sub 1 是行 `64..127`。一个核上的下一个 `(b, hv)` 在写 final state 之前发出自己的 PrepareLoad，MTE2 和这次写出重叠。
+
+不带 `cu_seqlens` 时 `N = B`，每个 batch 行是一条等长序列，状态槽就是这个 batch。带上 `cu_seqlens` 时物理 `B = 1`，`T` 里按顺序排着 N 条序列，`N = len(cu_seqlens) - 1`。`cu_seqlens[0] = 0`，`cu_seqlens[N] = T`，相邻值可以相等（空序列）。`chunk_indices` 必须是按序列、按块的 `(seqId, localChunkId)`，块长 32。每条序列的 chunk 从它自己的起始 token 算起，起始 token 不必 32 对齐。`o` 仍是整段 `[1, Hv, T, V]`。`final_state` 和 `initial_state` 是 `[N, Hv, 128, 128]`，一条序列一个槽。序列边界上先发出下一条序列的 PrepareLoad，再写本条的 final state，让这段读和这次写重叠。空序列不跑 cube：有 initial state 就把它抄到对应槽，否则写 0。定长路径仍走原来的 `ProcessAiv` / `ProcessAic`。
 
 ## 3. 舍入
 
