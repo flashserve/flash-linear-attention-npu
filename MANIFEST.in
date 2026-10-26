@@ -12,6 +12,7 @@ recursive-include cmake *
 recursive-include common *
 recursive-include scripts *
 recursive-include fla *
+recursive-include experiment *
 recursive-include torch_custom/fla_npu *
 prune build
 prune build_out

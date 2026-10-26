@@ -83,6 +83,13 @@ function(op_add_subdirectory OP_LIST OP_DIR_LIST)
         )
     endif()
 
+    # 单数 experiment/ 树是本仓的并行实验算子入口（与 #954 的 experimental/ 契约
+    # 不同），两种构建模式都必须纳入，否则该目录下的算子不会进入 wheel/OPP 产物。
+    file(GLOB_RECURSE EXPERIMENT_OP_CMAKE_FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/experiment/fla/ops/ascendc/CMakeLists.txt"
+    )
+    list(APPEND OP_HOST_CMAKE_FILES ${EXPERIMENT_OP_CMAKE_FILES})
+
     foreach(OP_CMAKE_FILE ${OP_HOST_CMAKE_FILES})
         if ("${OP_CMAKE_FILE}" MATCHES "op_host")
             get_filename_component(OP_HOST_DIR "${OP_CMAKE_FILE}" DIRECTORY)

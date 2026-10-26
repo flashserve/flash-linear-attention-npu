@@ -36,10 +36,11 @@ from typing import List, Optional, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# Discovery root: every custom operator of this repository lives under
-# fla/ops/ascendc/<group>/<sub_group>/<op_name>/, so the directory names below
-# this root are exactly the names accepted by --ops / FLA_NPU_OPS.
-OP_SEARCH_ROOTS = ("fla/ops/ascendc",)
+# Discovery roots: custom operators live under fla/ops/ascendc/<group>/<sub_group>/<op_name>/
+# or under the parallel experiment tree experiment/fla/ops/ascendc/<group>/<op_name>/,
+# so the directory names below these roots are exactly the names accepted by
+# --ops / FLA_NPU_OPS.
+OP_SEARCH_ROOTS = ("fla/ops/ascendc", "experiment/fla/ops/ascendc")
 # CMake reads these as "compile every operator" instead of an operator name.
 BUILD_ALL_SENTINELS = frozenset({"all", "ALL"})
 LIST_COMMAND = "bash build.sh --list-ops"
