@@ -77,6 +77,9 @@ using _65536 = tla::Int<65536>;
 #include "kernel_operator.h"
 #include "../../../../../pipeline/chunk_gated_delta_rule_ho_pipeline.h"
 #include "../../chunk_fwd_o_struct.h"
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#include "../block/block_mmad_qkh_concat.hpp"
+#endif
 using namespace Catlass;
 using namespace tla;
 
@@ -401,8 +404,147 @@ public:
         }
     }
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+private:
+    __aicore__ inline bool HasH4WorkspaceCapacity() const
+    {
+        // 旧/低层 tiling 不保证 host 分配资格与此模板相同，以真实专用区为准。
+        if (hWorkspaceOffset < 0 || attnWorkspaceOffset < hWorkspaceOffset) {
+            return false;
+        }
+        const uint64_t coreNum = AscendC::GetBlockNum();
+        constexpr uint64_t bytesPerCore = 4ULL * 64 * 128 * sizeof(float);
+        constexpr uint64_t maxOffset = 0x7fffffffffffffffULL;
+        if (coreNum == 0 || coreNum > maxOffset / bytesPerCore) {
+            return false;
+        }
+        const uint64_t hBytes = static_cast<uint64_t>(attnWorkspaceOffset) -
+                               static_cast<uint64_t>(hWorkspaceOffset);
+        return hBytes >= coreNum * bytesPerCore;
+    }
+
+    __aicore__ inline static void RetireQkhInputCredits()
+    {
+        // 将旧final的信用消费反馈到下一pre，避免二值free票跨调用合并。
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(0);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(0);
+    }
+
+public:
+    template <class BlockMmadQKH, uint32_t HWorkStages>
+    __aicore__ inline void ProcessQkhConcat()
+    {
+        static_assert(HWorkStages == 2 || HWorkStages == 4);
+        uint32_t coreIdx = AscendC::GetBlockIdx();
+        uint32_t coreNum = AscendC::GetBlockNum();
+        BlockMmadQKH blockMmadQKH(resource);
+        BlockMmadAttenVNEW128 blockMmadAttenVNEW128(resource);
+        const int64_t qkStride = static_cast<int64_t>(kHeadDim) * (InputSequenceMajor() ? kNumHead : 1);
+        auto qLayout = tla::MakeLayoutFromTag(LayoutQ(shapeBatch * kNumHead * seqlen, kHeadDim, qkStride));
+        auto kLayout = tla::MakeLayoutFromTag(LayoutK(kHeadDim, shapeBatch * kNumHead * seqlen, qkStride));
+        auto hLayout = tla::MakeLayout<ElementH, LayoutH>(shapeBatch * vNumHead * seqlen * kHeadDim, ValueDim());
+        auto ointerLayout = tla::MakeLayout<ElementOinter, LayoutOinter>(
+            coreNum * ChunkSize() * GDN_FWD_O_PING_PONG_STAGES, cubeBlockScheduler.vBlockSize);
+        auto vnewLayout = tla::MakeLayout<ElementVNEW, LayoutVNEW>(shapeBatch * vNumHead * seqlen, ValueDim());
+        bool needRun = false;
+        while (cubeBlockScheduler.isRunning) {
+            cubeBlockScheduler.InitTask();
+            if (cubeBlockScheduler.isRunning && coreIdx < coreNum) {
+                uint32_t streamId = cubeBlockScheduler.GetCurStageId();
+                GDNFwdOOffsets& offsets = cubeBlockScheduler.GetCube1Offsets();
+                auto attenLayout = tla::MakeLayout<ElementAtten, LayoutAtten>(
+                    coreNum * ChunkSize() * GDN_FWD_O_PING_PONG_STAGES, offsets.blockTokens);
+                auto tensorQ = tla::MakeTensor(gmQ[RawQkOffset(offsets.qkOffset)], qLayout, Catlass::Arch::PositionGM{});
+                auto tensorK = tla::MakeTensor(gmK[RawQkOffset(offsets.qkOffset)], kLayout, Catlass::Arch::PositionGM{});
+                auto tensorH = tla::MakeTensor(gmH[offsets.hOffset], hLayout, Catlass::Arch::PositionGM{});
+                auto tensorRaw = tla::MakeTensor(gmAttnWorkspace[offsets.attnWorkOffset],
+                                                 attenLayout, Catlass::Arch::PositionGM{});
+                auto tensorHWork = tla::MakeTensor(gmHWorkspace[offsets.hWorkOffset],
+                                                   ointerLayout, Catlass::Arch::PositionGM{});
+                blockMmadQKH.preSetFlags();
+                blockMmadQKH.RunRaw(tensorQ, tensorK, tensorH, tensorRaw, offsets.blockTokens);
+                Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeBlockScheduler.cube1Done[streamId]);
+                if constexpr (HWorkStages == 2) {
+                    // 两槽保留 8ef 的 current 写权消费位置。
+                    Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[streamId]);
+                }
+                blockMmadQKH.StoreH(tensorHWork, offsets.blockTokens);
+                blockMmadQKH.finalWaitFlags();
+                RetireQkhInputCredits();
+            }
+
+            if (needRun && coreIdx < coreNum) {
+                uint32_t streamId = cubeBlockScheduler.GetPrevStageId();
+                Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec1Done[streamId]);
+                if constexpr (HWorkStages == 4) {
+                    // H(t) 与 H(t-2) 分槽；prev 消费原 V 写权也退休 H(t-4) 读者。
+                    Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[streamId]);
+                }
+            }
+            AscendC::PipeBarrier<PIPE_MTE2>();
+            AscendC::PipeBarrier<PIPE_FIX>();
+            if (needRun && coreIdx < coreNum) {
+                uint32_t streamId = cubeBlockScheduler.GetPrevStageId();
+                GDNFwdOOffsets& cube3Offsets = cubeBlockScheduler.GetCube23Offsets();
+                int64_t cube3OffsetAttnMask = cube3Offsets.attnWorkOffset;
+                int64_t cube3OffsetV = cube3Offsets.ovOffset;
+                int64_t cube3OffsetVWork = cube3Offsets.hvWorkOffset;
+                auto attenLayout = tla::MakeLayout<ElementAtten, LayoutAtten>(
+                    coreNum * ChunkSize() * GDN_FWD_O_PING_PONG_STAGES, cube3Offsets.blockTokens);
+                auto tensorAttnMask = tla::MakeTensor(gmAftermaskWorkspace[cube3OffsetAttnMask], attenLayout, Catlass::Arch::PositionGM{});
+                auto tensorV = tla::MakeTensor(gmV[cube3OffsetV], vnewLayout, Catlass::Arch::PositionGM{});
+                auto tensorVWork = tla::MakeTensor(gmVWorkspace[cube3OffsetVWork], ointerLayout, Catlass::Arch::PositionGM{});
+                GemmCoord cube3Shape{cube3Offsets.blockTokens, cube3Offsets.vBlockDim, cube3Offsets.blockTokens};
+                auto tensorBlockAttnMask = GetTile(tensorAttnMask, tla::MakeCoord(0, 0), tla::MakeShape(cube3Shape.m(), cube3Shape.k()));
+                auto tensorBlockV = GetTile(tensorV, tla::MakeCoord(0, 0), tla::MakeShape(cube3Shape.k(), cube3Shape.n()));
+                auto tensorBlockVWork = GetTile(tensorVWork, tla::MakeCoord(0, 0), tla::MakeShape(cube3Shape.m(), cube3Shape.n()));
+                blockMmadAttenVNEW128.preSetFlags();
+                blockMmadAttenVNEW128(tensorBlockAttnMask, tensorBlockV, tensorBlockVWork, cube3Shape);
+                blockMmadAttenVNEW128.finalWaitFlags();
+                RetireQkhInputCredits();
+                Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeBlockScheduler.cube3Done[streamId]);
+            }
+            needRun = true;
+        }
+        // 最后空current轮只排prev的AttV；两slot的最终output票仍由原收尾消费。
+        Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[0]);
+        Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[1]);
+    }
+#endif
+
     __aicore__ inline void Process() {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+        bool useQkhConcat = false;
+        if constexpr (kStaticBT == 64 && kStaticV == 128 && sizeof(INPUT_TYPE) == 2 &&
+                      std::is_same_v<WORKSPACE_TYPE, float>) {
+            useQkhConcat = kHeadDim == 128 && !chunkPipelineEnabled && !idlePipelineEnabled;
+        }
+        const bool useH4 = useQkhConcat && HasH4WorkspaceCapacity();
         if ASCEND_IS_AIC {
+            cubeBlockScheduler.ConfigureHWorkRing(useH4);
+        }
+        if ASCEND_IS_AIV {
+            vecBlockScheduler.ConfigureHWorkRing(useH4);
+        }
+#endif
+        if ASCEND_IS_AIC {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+            if constexpr (kStaticBT == 64 && kStaticV == 128 && sizeof(INPUT_TYPE) == 2 &&
+                          std::is_same_v<WORKSPACE_TYPE, float>) {
+                // 入口只分派一次；pipeline仍沿用完整原路径。
+                if (useQkhConcat) {
+                    using BlockMmadQKH = Gemm::Block::GDNFwdOQKHConcatMmad<BlockMmadQK, TileCopyQH>;
+                    if (useH4) {
+                        ProcessQkhConcat<BlockMmadQKH, 4>();
+                    } else {
+                        ProcessQkhConcat<BlockMmadQKH, 2>();
+                    }
+                    return;
+                }
+            }
+#endif
             uint32_t coreIdx = AscendC::GetBlockIdx();
             uint32_t coreNum = AscendC::GetBlockNum();
 
@@ -566,7 +708,11 @@ public:
                         static_cast<uint64_t>(vNumHead) * ValueDim() : ValueDim();
                     int64_t vec2OffsetG = vec2Offsets.gOffset;
                     int64_t vec2OffsetVWork = vec2Offsets.hvWorkOffset;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+                    int64_t vec2OffsetHWork = vec2Offsets.hWorkOffset;
+#else
                     int64_t vec2OffsetHWork = vec2Offsets.hvWorkOffset;
+#endif
                     EpilogueGDNFwdOOutput epilogueGDNFwdOOutput(resource);
                     epilogueGDNFwdOOutput(
                         gmO[vec2OffsetO],

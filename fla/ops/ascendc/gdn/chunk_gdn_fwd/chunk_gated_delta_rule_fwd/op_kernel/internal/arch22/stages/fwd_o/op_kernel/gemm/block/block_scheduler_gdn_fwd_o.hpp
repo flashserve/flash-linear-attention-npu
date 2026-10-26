@@ -25,6 +25,9 @@ struct GDNFwdOOffsets {
     int64_t gOffset;
     int64_t attnWorkOffset;
     int64_t hvWorkOffset;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+    int64_t hWorkOffset;
+#endif
     uint32_t vBlockOffset;
     uint32_t vBlockDim;
     bool isFinalState;
@@ -74,6 +77,15 @@ struct BlockSchedulerGdnFwdO {
     uint32_t taskIdx;
     uint32_t cubeCoreIdx;
     uint32_t cubeCoreNum;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+    uint32_t hWorkStages{GDN_FWD_O_PING_PONG_STAGES};
+    uint32_t hWorkSlotMask{GDN_FWD_O_PING_PONG_STAGES - 1};
+    CATLASS_DEVICE
+    void ConfigureHWorkRing(bool enableH4) {
+        hWorkStages = enableH4 ? 4 : GDN_FWD_O_PING_PONG_STAGES;
+        hWorkSlotMask = hWorkStages - 1;
+    }
+#endif
     uint32_t taskNum;
     uint32_t headGroups;
 
@@ -285,6 +297,19 @@ struct BlockSchedulerGdnFwdO {
         offsets[currStage].gOffset = ovRowOffset;
         offsets[currStage].attnWorkOffset = workStageOffset * ChunkSize() * ChunkSize();
         offsets[currStage].hvWorkOffset = workStageOffset * ChunkSize() * vBlockSize;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+        // 原 owner 的连续 pair 每次跨 2*C；两 AIV 用相同 task ordinal 寻址。
+        // mask=1 保持原两槽地址，mask=3 才启用每 core 独立四槽。
+        if constexpr (kStaticBT == 64 && kStaticV == 128) {
+            const uint32_t pairParity = (static_cast<uint64_t>(curTaskIdx) /
+                                         (2ULL * cubeCoreNum)) & 1;
+            const uint32_t hSlot = (currStage + 2 * pairParity) & hWorkSlotMask;
+            offsets[currStage].hWorkOffset =
+                (static_cast<int64_t>(cubeCoreIdx) * hWorkStages + hSlot) * ChunkSize() * vBlockSize;
+        } else {
+            offsets[currStage].hWorkOffset = offsets[currStage].hvWorkOffset;
+        }
+#endif
         offsets[currStage].vBlockOffset = vBlockOffset;
         offsets[currStage].vBlockDim = vBlockDim;
         offsets[currStage].isFinalState = chunkIdx == (numChunks - 1) || (isVariedLen && gmChunkOffsets.GetValue(2 * chunkIdx + 3) == 0);
