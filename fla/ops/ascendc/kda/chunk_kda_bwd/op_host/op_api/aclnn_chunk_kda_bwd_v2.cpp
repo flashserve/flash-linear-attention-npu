@@ -199,7 +199,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
             ACLNN_ERR_INNER_NULLPTR);
         const auto recomputeResult = l0op::ChunkKdaBwdRecompute(
             q4, k4, v4, rawG4, beta3, akk4, aLog, dtBias, cu, indices,
-            64, true, true, lowerBound, w4, u4, qg4, kg4, gk4, ex);
+            64, true, true, lowerBound, "BNSD", w4, u4, qg4, kg4, gk4, ex);
         for (const auto *value : recomputeResult) {
             CHECK_RET(value, ACLNN_ERR_INNER_NULLPTR);
         }

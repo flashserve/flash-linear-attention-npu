@@ -5,6 +5,7 @@
 #include "chunk_kda_bwd_recompute_tiling.h"
 #include "../chunk_kda_bwd_recompute_tiling_processor.h"
 #include <algorithm>
+#include <cstring>
 #include <register/op_impl_registry.h>
 #include "platform/soc_spec.h"
 #include "tiling_base/tiling_templates_registry.h"
@@ -18,6 +19,11 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
 
     auto attrPtr = context->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context, attrPtr);
+    const char *inputLayout = attrPtr->GetStr(KDA_RECOMPUTE_INPUT_LAYOUT_ATTR);
+    OP_CHECK_IF(inputLayout == nullptr ||
+                    (std::strcmp(inputLayout, "BNSD") != 0 && std::strcmp(inputLayout, "NTD") != 0),
+                OP_LOGE(context->GetNodeName(), "Recompute input_layout must be BNSD or NTD."),
+                return ge::GRAPH_FAILED);
 
     const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     uint64_t ubSize = 0;

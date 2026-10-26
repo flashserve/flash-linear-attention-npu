@@ -1,5 +1,6 @@
 #include "aclnn_chunk_kda_bwd_recompute.h"
 #include "chunk_kda_bwd_recompute.h"
+#include <cstring>
 
 #include "aclnn_kernels/common/op_error_check.h"
 #include "aclnn_kernels/contiguous.h"
@@ -30,6 +31,7 @@ struct ChunkKdaBwdRecomputeParams {
     int64_t chunkSize = 64;
     bool useExp2 = true;
     double lowerBound = -5.0;
+    const char *inputLayout = "BNSD";
     const aclTensor *wOut = nullptr;
     const aclTensor *uOut = nullptr;
     const aclTensor *qgOut = nullptr;
@@ -71,12 +73,16 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
     const aclTensor *q, const aclTensor *k, const aclTensor *v, const aclTensor *g, const aclTensor *beta,
     const aclTensor *a, const aclTensor *aLogOptional, const aclTensor *dtBiasOptional,
     const aclIntArray *cuSeqlensOptional, const aclIntArray *chunkIndicesOptional, int64_t chunkSize,
-    bool useExp2, double lowerBound, const aclTensor *wOut, const aclTensor *uOut, const aclTensor *qgOut,
+    bool useExp2, double lowerBound, const char *inputLayout,
+    const aclTensor *wOut, const aclTensor *uOut, const aclTensor *qgOut,
     const aclTensor *kgOut, const aclTensor *gkOutOptional, uint64_t *workspaceSize, aclOpExecutor **executor)
 {
     ChunkKdaBwdRecomputeParams params{
         q, k, v, g, beta, a, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkIndicesOptional,
-        chunkSize, useExp2, lowerBound, wOut, uOut, qgOut, kgOut, gkOutOptional};
+        chunkSize, useExp2, lowerBound, inputLayout, wOut, uOut, qgOut, kgOut, gkOutOptional};
+    CHECK_COND(inputLayout && (std::strcmp(inputLayout, "BNSD") == 0 ||
+                              std::strcmp(inputLayout, "NTD") == 0),
+               ACLNN_ERR_PARAM_INVALID, "Recompute input_layout must be BNSD or NTD.");
     CHECK_COND(params.q != nullptr && params.k != nullptr && params.v != nullptr && params.g != nullptr &&
                    params.beta != nullptr && params.a != nullptr && params.wOut != nullptr &&
                    params.uOut != nullptr && params.qgOut != nullptr && params.kgOut != nullptr,
@@ -98,7 +104,8 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
     auto outputs = l0op::ChunkKdaBwdRecompute(
         params.q, params.k, params.v, params.g, params.beta, params.a, params.aLogOptional,
         params.dtBiasOptional, params.cuSeqlensOptional, params.chunkIndicesOptional, params.chunkSize,
-        useGateInKernel, params.useExp2, params.lowerBound, params.wOut, params.uOut, params.qgOut,
+        useGateInKernel, params.useExp2, params.lowerBound, params.inputLayout,
+        params.wOut, params.uOut, params.qgOut,
         params.kgOut, gkBuffer, executorPtr);
     CHECK_COND(outputs[0] != nullptr, ACLNN_ERR_INNER_NULLPTR, "ChunkKdaBwdRecompute launch failed.");
 

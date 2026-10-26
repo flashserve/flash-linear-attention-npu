@@ -35,6 +35,7 @@ constexpr size_t KDA_RECOMPUTE_CHUNK_SIZE_ATTR = 0;
 constexpr size_t KDA_RECOMPUTE_USE_GATE_ATTR = 1;
 constexpr size_t KDA_RECOMPUTE_USE_EXP2_ATTR = 2;
 constexpr size_t KDA_RECOMPUTE_LOWER_BOUND_ATTR = 3;
+constexpr size_t KDA_RECOMPUTE_INPUT_LAYOUT_ATTR = 4;
 
 struct ChunkKdaBwdRecomputeTilingContext {
     const char *nodeName;

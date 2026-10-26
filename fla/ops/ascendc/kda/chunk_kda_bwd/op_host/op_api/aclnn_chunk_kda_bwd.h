@@ -7,9 +7,9 @@
 extern "C" {
 #endif
 
-// Single-launch KDA backward megakernel. Inputs use the canonical internal
-// head-major token layout consumed by the fused forward exports:
-// dense [B,H,T,D], varlen [H,T,D]. Saved h remains chunk-major.
+// A2/A3 compose backward L0 operators; A5 keeps its fused kernel.
+// Saved caches remain head-major, with chunk-major h. External token inputs
+// and public token gradients follow inputLayout and outputLayout.
 __attribute__((visibility("default")))
 aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     const aclTensor *q,
@@ -40,6 +40,12 @@ aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     bool disableRecompute,
     bool useExp2,
     bool stateVFirst,
+    const aclTensor *qRstdOptional,
+    const aclTensor *kRstdOptional,
+    const char *inputLayout,
+    const char *outputLayout,
+    bool useBetaSigmoidInKernel,
+    bool allowNegEigval,
     const aclTensor *dqOut,
     const aclTensor *dkOut,
     const aclTensor *dvOut,

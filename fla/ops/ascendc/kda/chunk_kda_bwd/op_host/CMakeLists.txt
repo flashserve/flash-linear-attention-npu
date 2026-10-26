@@ -24,7 +24,7 @@ else()
     unset(chunk_kda_bwd_depends CACHE)
     add_compile_definitions(KDA_BWD_STAGES_ARCH22)
     set(KDA_BWD_STAGE_PATHS
-        "fla/ops/ascendc/kda/chunk_kda_bwd_prepare;fla/ops/ascendc/kda/chunk_kda_bwd_finalize;fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_dhu"
+        "fla/ops/ascendc/kda/chunk_kda_bwd_prepare;fla/ops/ascendc/kda/chunk_kda_bwd_finalize;fla/ops/ascendc/kda/chunk_kda_bwd_recompute;fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h;fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_dhu"
         )
     foreach(DEP_PATH IN LISTS KDA_BWD_STAGE_PATHS)
         get_filename_component(DEP_NAME "${DEP_PATH}" NAME)

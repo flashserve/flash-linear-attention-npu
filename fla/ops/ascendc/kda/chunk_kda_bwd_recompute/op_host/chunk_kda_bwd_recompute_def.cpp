@@ -47,6 +47,7 @@ public:
         this->Attr("use_gate_in_kernel").AttrType(REQUIRED).Bool(true);
         this->Attr("use_exp2").AttrType(REQUIRED).Bool(true);
         this->Attr("lower_bound").AttrType(REQUIRED).Float(-5.0);
+        this->Attr("input_layout").AttrType(OPTIONAL).String("BNSD");
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)
