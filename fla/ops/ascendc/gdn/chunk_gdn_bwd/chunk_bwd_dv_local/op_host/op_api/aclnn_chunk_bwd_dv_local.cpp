@@ -175,8 +175,12 @@ aclnnStatus aclnnChunkBwdDvLocalGetWorkspaceSize(
                    DFX_OUT(out));
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
+
+    OP_LOGW("npu_chunk_bwd_dv_local",
+            "npu_chunk_bwd_dv_local is deprecated and will be removed after "
+            "a later version; use the fused npu_chunk_gated_delta_rule_bwd instead.");
+
     // 固定写法，参数检查
     auto ret = CheckParams(params);
     CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);

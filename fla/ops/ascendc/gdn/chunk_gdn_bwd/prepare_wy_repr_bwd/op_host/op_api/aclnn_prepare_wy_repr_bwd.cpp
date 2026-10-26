@@ -135,8 +135,12 @@ aclnnStatus aclnnPrepareWyReprBwdGetWorkspaceSize(
         DFX_OUT(dkOut, dvOut, dbetaOut, dgOut));
 
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
+
+    OP_LOGW("npu_prepare_wy_repr_bwd",
+            "npu_prepare_wy_repr_bwd is deprecated and will be removed after "
+            "a later version; use npu_prepare_wy_repr_bwd_full or the fused "
+            "npu_chunk_gated_delta_rule_bwd instead.");
 
     CHECK_RET(CheckParams(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
