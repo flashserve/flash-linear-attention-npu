@@ -1,3 +1,4 @@
+from fla_npu.ops import ascendc
 import os
 import sys
 import logging
@@ -34,7 +35,7 @@ def prepare_chunk_offsets(
     cu_seqlens: torch.LongTensor,
     chunk_size: int
 ) -> torch.LongTensor:
-    return torch.cat([cu_seqlens.new_tensor([0]), cdiv_torch(prepare_lens(cu_seqlens), chunk_size)]).cumsum(-1) 
+    return torch.cat([cu_seqlens.new_tensor([0]), cdiv_torch(prepare_lens(cu_seqlens), chunk_size)]).cumsum(-1)
 
 def forward_h_trans_cpu(
     k: torch.Tensor,
@@ -204,7 +205,7 @@ def parse_actual_input(h_input):
             initial_state = actual_data['initial_state'].reshape([h_input.shape_batch, h_input.v_num_head, h_input.token_batch, h_input.k_head_dim, h_input.v_head_dim]).contiguous().to(h_input.state_dtype)
         else:
             initial_state = torch.randn([h_input.shape_batch, h_input.v_num_head, h_input.token_batch, h_input.k_head_dim, h_input.v_head_dim], dtype=h_input.state_dtype)
-    
+
     return GDNFwdHInputTensor(k, w, u, g, cu_seqlens, chunk_offsets, initial_state)
 
 def parse_actual_output(h_input):
@@ -320,7 +321,7 @@ if __name__ == "__main__":
 
     torch.npu.synchronize()
     # 与 npu_custom.yaml / FLA chunk_gated_delta_rule_fwd_h 对齐：k,w,u 为位置参数，g/gk 至少提供一个。
-    result = torch.ops.npu.npu_chunk_gated_delta_rule_fwd_h(
+    result = ascendc.npu_chunk_gated_delta_rule_fwd_h(
         input_tensor.k.npu(),
         input_tensor.w.npu(),
         input_tensor.u.npu(),

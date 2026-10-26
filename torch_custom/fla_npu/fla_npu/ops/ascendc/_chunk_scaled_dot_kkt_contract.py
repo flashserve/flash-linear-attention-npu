@@ -1,4 +1,4 @@
-"""Input contract shared by the ctypes and Stable-ABI KKT entry points."""
+"""Input contract for the public Stable-ABI KKT entry point."""
 
 
 def validate(k, g, beta, cu_seqlens, chunk_indices, chunk_size):

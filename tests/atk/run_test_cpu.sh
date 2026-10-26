@@ -23,6 +23,8 @@ show_usage() {
   FLA_NPU_ENV                    fla_npu_transformer set_env.bash 路径，设置后 source
   ATK_OUTPUT_ROOT                输出根目录，默认 ./atk_output
   ATK_GM_INIT_MODE               GM 数据初始化模式，默认 on；可设 on/off
+  ATK_GM_INIT_MB                 可选正十进制整数（无前导零）；on 时传 --gm_init_flag <值>
+                                默认空保留 ATK 默认策略；off 时不能设置，仅用于精度阶段
   ATK_TIMEOUT                    精度阶段超时，默认 14400
   DC_LOOP_NUMS                   确定性循环次数，默认 50（与 ATK 一致）
   DC_TIMEOUT                     确定性阶段超时，默认 3600
@@ -58,6 +60,52 @@ die() {
 # 全局变量：记录已执行的测试类型与未通过项数
 RAN_TYPES=()
 RESULT_FAIL_COUNT=0
+declare -A STAGE_START_NS=() STAGE_EXPECTED_COUNT=() STAGE_EXPECTED_IDS=() STAGE_EXPECTED_ERRORS=()
+
+# Count the selected JSON cases before ATK runs; exit-zero with a partial or
+# historical report must not count as a successful stage.
+begin_stage() {
+  local stage="$1" file="$2" start="$3" end="$4" metadata
+  metadata="$(python3 - "$file" "$start" "$end" "$stage" <<'PY'
+import json
+import sys
+
+path, start, end, stage = sys.argv[1:]
+with open(path, encoding="utf-8") as stream:
+    cases = json.load(stream)
+if not isinstance(cases, list):
+    raise SystemExit("ATK case JSON must be an array")
+total = len(cases)
+if start or end:
+    try:
+        start, end = int(start), int(end)
+    except ValueError:
+        raise SystemExit("case range must contain integer start/end")
+    if not 0 <= start < end <= total:
+        raise SystemExit(f"invalid case range [{start}, {end}) for {total} cases")
+    cases = cases[start:end]
+if not cases:
+    raise SystemExit("zero selected cases")
+ids = [case.get("id") for case in cases]
+if any(type(value) is not int or value < 0 for value in ids) or len(set(ids)) != len(ids):
+    raise SystemExit("case IDs must be unique nonnegative integers")
+errors = {}
+for case in cases:
+    message = case.get("expected_error_msg")
+    if message is not None:
+        if not isinstance(message, str) or not message.strip():
+            raise SystemExit("expected_error_msg must be null or a nonempty string")
+        errors[str(case["id"])] = message
+if errors and stage != "accuracy":
+    raise SystemExit("expected-error cases are supported only by the accuracy gate")
+print(json.dumps({"ids": ids, "errors": errors}))
+PY
+)" || die "无法确定 ${stage} 用例数量"
+  STAGE_EXPECTED_IDS["$stage"]="$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["ids"]))' "$metadata")"
+  STAGE_EXPECTED_ERRORS["$stage"]="$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["errors"]))' "$metadata")"
+  STAGE_EXPECTED_COUNT["$stage"]="$(python3 -c 'import json,sys; print(len(json.loads(sys.argv[1])))' "${STAGE_EXPECTED_IDS[$stage]}")"
+  STAGE_START_NS["$stage"]="$(python3 -c 'import time; print(time.time_ns())')"
+}
 
 # 记录已执行的测试阶段，供最终汇总使用。
 record_ran_type() {
@@ -68,15 +116,22 @@ record_ran_type() {
 # 多项时输出每项结果 + 汇总行；单项时仅输出该项结果，不显示汇总行。
 print_result_summary() {
   if [[ ! -f "$RESULT_CHECK_PY" ]]; then
-    log_info "跳过结果检查：找不到 ${RESULT_CHECK_PY}"
-    return 0
+    die "找不到结果检查器：${RESULT_CHECK_PY}"
   fi
   local fail=0 ran="${#RAN_TYPES[@]}"
   [[ $ran -gt 0 ]] || return 0
   local pass=0
   for t in "${RAN_TYPES[@]}"; do
+    local extra_args=()
+    if [[ "$t" == "mssanitizer" ]]; then
+      extra_args=(--mss-log "$MSS_LOG_PATH" --mss-tool "$MSS_TOOL")
+    fi
     if python3 "$RESULT_CHECK_PY" --type "$t" \
-        --output-root "$ATK_OUTPUT_ROOT" --op "$OP"; then
+        --output-root "$ATK_OUTPUT_ROOT" --op "$OP" \
+        --started-after-ns "${STAGE_START_NS[$t]}" \
+        --expected-count "${STAGE_EXPECTED_COUNT[$t]}" \
+        --expected-ids "${STAGE_EXPECTED_IDS[$t]}" \
+        --expected-errors "${STAGE_EXPECTED_ERRORS[$t]}" "${extra_args[@]}"; then
       pass=$((pass + 1))
     else
       fail=$((fail + 1))
@@ -127,6 +182,14 @@ except (OSError, UnicodeError, json.JSONDecodeError) as error:
 
 if not isinstance(data, (dict, list)) or len(data) == 0:
     raise SystemExit(f"{label}没有可执行用例：{file_path}")
+cases = data.values() if isinstance(data, dict) else data
+for case in cases:
+    pattern = case.get("expected_error_msg")
+    if pattern is not None and (not isinstance(pattern, str) or not pattern.strip()):
+        raise SystemExit(
+            f"{label} case {case.get('id')}: expected_error_msg 不能为空串或纯空白；"
+            "正常用例请使用 null，负例必须保留明确的预期错误信息"
+        )
 PY
 }
 
@@ -175,6 +238,7 @@ check_atk_version() {
 # on（默认）：开启；off：关闭。
 resolve_gm_init_args() {
   local mode="$ATK_GM_INIT_MODE"
+  local size="$ATK_GM_INIT_MB"
   local enable=""
   case "$mode" in
     on|enable|true|1) enable="on" ;;
@@ -182,8 +246,18 @@ resolve_gm_init_args() {
     *) die "不支持的 ATK_GM_INIT_MODE：${mode}，请使用 on/off" ;;
   esac
   GM_INIT_ARGS=()
+  if [[ -n "$size" ]]; then
+    [[ "$size" =~ ^[1-9][0-9]*$ ]] || die "ATK_GM_INIT_MB 必须是无前导零的正十进制整数：${size}"
+    [[ "$enable" == "on" ]] || die "设置 ATK_GM_INIT_MB 时 ATK_GM_INIT_MODE 必须为 on"
+  fi
   if [[ "$enable" == "on" ]]; then
     GM_INIT_ARGS=(--gm_init_flag)
+    if [[ -n "$size" ]]; then
+      GM_INIT_ARGS+=("$size")
+      log_info "GM 初始化参数：ATK_GM_INIT_MB=${size}；ATK CLI --gm_init_flag ${size}"
+    else
+      log_info "GM 初始化参数：ATK CLI --gm_init_flag（保留 ATK 默认大小策略）"
+    fi
   fi
   log_info "GM 数据初始化（ATK_GM_INIT_MODE=${mode}）：${enable}"
 }
@@ -193,6 +267,7 @@ NPU_DEVICE_ID="${NPU_DEVICE_ID:-0}"
 SOC="${SOC:-auto}"
 RUN_SCOPE="${RUN_SCOPE:-all}"
 ATK_GM_INIT_MODE="${ATK_GM_INIT_MODE:-on}"
+ATK_GM_INIT_MB="${ATK_GM_INIT_MB:-}"
 REQUIRED_ATK_VERSION="${REQUIRED_ATK_VERSION:-26.8.8}"
 ATK_TIMEOUT="${ATK_TIMEOUT:-14400}"
 DC_LOOP_NUMS="${DC_LOOP_NUMS:-50}"
@@ -315,6 +390,10 @@ fi
 
 ATK_BIN="$(command -v atk || true)"
 [[ -n "$ATK_BIN" ]] || die "找不到 atk，请先安装并激活 ATK 环境"
+if [[ "$RUN_SCOPE" != "gen_cases" ]]; then
+  [[ -f "$RESULT_CHECK_PY" ]] || die "找不到结果检查器：${RESULT_CHECK_PY}"
+  python3 -c 'import openpyxl' || die "结果检查需要 openpyxl"
+fi
 
 case "$RUN_SCOPE" in
   all)
@@ -358,6 +437,8 @@ fi
 cd "$OP_DIR"
 ATK_OUTPUT_ROOT="${ATK_OUTPUT_ROOT:-./atk_output}"
 mkdir -p "${ATK_OUTPUT_ROOT}/accuracy" "${ATK_OUTPUT_ROOT}/perf"
+ATK_OUTPUT_ROOT="$(cd "$ATK_OUTPUT_ROOT" && pwd)"
+mkdir -p "${ATK_OUTPUT_ROOT}/determinism" "${ATK_OUTPUT_ROOT}/mssanitizer"
 # mssanitizer 日志路径：未显式指定时使用 ATK_OUTPUT_ROOT 下的带时间戳绝对路径
 # ATK celery worker 工作目录与脚本不同，必须用绝对路径，否则无法找到日志文件
 MSS_LOG_PATH="${MSS_LOG_PATH:-$(cd "${ATK_OUTPUT_ROOT}" && pwd)/mssanitizer_${OP}_$(date +%Y%m%d_%H%M%S).log}"
@@ -386,6 +467,7 @@ fi
 if should_run accuracy; then
   log_info "开始精度与 NaN 检测：mixed_tolerance_bm + CPU单标杆 + GM 初始化"
   set_case_range_args "精度与 NaN 检测 case 范围" "$ACCURACY_START" "$ACCURACY_END"
+  begin_stage accuracy "$CASE_FILE" "$ACCURACY_START" "$ACCURACY_END"
   "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
       --output_path "${ATK_OUTPUT_ROOT}/accuracy" \
     node --name cpu_golden --backend cpu \
@@ -405,6 +487,7 @@ fi
 if should_run performance; then
   log_info "开始性能测试：performance_device"
   set_case_range_args "性能测试 case 范围" "$PERFORMANCE_START" "$PERFORMANCE_END"
+  begin_stage performance "$PERFORMANCE_CASE_FILE" "$PERFORMANCE_START" "$PERFORMANCE_END"
   "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
       --output_path "${ATK_OUTPUT_ROOT}/perf" \
     task \
@@ -416,12 +499,15 @@ if should_run performance; then
       -sp \
       -to "$PERFORMANCE_TIMEOUT"
   log_info "完成性能测试"
+  record_ran_type performance
 fi
 
 if should_run determinism; then
   log_info "开始确定性测试：accuracy_dc（循环次数=${DC_LOOP_NUMS}，超时=${DC_TIMEOUT}s）"
   set_case_range_args "确定性测试 case 范围" "$DETERMINISM_START" "$DETERMINISM_END"
+  begin_stage determinism "$MSS_CASE_FILE" "$DETERMINISM_START" "$DETERMINISM_END"
   "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
+      --output_path "${ATK_OUTPUT_ROOT}/determinism" \
     task \
       -c "atk_${OP}_mss.json" \
       -p "executor_${OP}.py" \
@@ -438,9 +524,11 @@ if should_run mssanitizer; then
   log_info "开始内存检测：mssanitizer ${MSS_TOOL}"
   log_info "ATK mssanitizer 日志：${MSS_LOG_PATH}"
   set_case_range_args "内存检测 case 范围" "$MSS_START" "$MSS_END"
-  touch "$MSS_LOG_PATH"
-  mssanitizer --tool="$MSS_TOOL" -- \
+  begin_stage mssanitizer "$MSS_CASE_FILE" "$MSS_START" "$MSS_END"
+  [[ ! -e "$MSS_LOG_PATH" ]] || die "内存检测需要本次新日志路径：${MSS_LOG_PATH} 已存在"
+  mssanitizer --tool="$MSS_TOOL" --log-file "$MSS_LOG_PATH" --log-level info -- \
     "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
+      --output_path "${ATK_OUTPUT_ROOT}/mssanitizer" \
     task \
       -c "atk_${OP}_mss.json" \
       -p "executor_${OP}.py" \

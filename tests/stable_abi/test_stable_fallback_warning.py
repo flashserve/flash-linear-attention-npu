@@ -1,28 +1,8 @@
 #!/usr/bin/env python3
-"""A launcher that cannot load must say so, not silently serve from ctypes.
+"""Fail closed for missing/foreign launchers, and resolve the real launcher.
 
-The failure this guards is quiet by construction: the wheel installs, every
-accuracy test passes, the kernels are the same ones the reference drives -- only
-the host-side speedup is missing.  It showed up in the torch-version matrix as
-"2.7.1 loads fine but the ratios look like the reference", which is exactly the
-kind of report a warning has to pre-empt.
-
-Three cases, each in a fresh interpreter because the warning fires once per
-process and the backend record is global:
-
-  missing    FLA_NPU_STABLE_LIB points at a file that is not there
-  foreign    ... at a real shared object that is not the launcher
-  real       ... at the built launcher (skipped when none is available)
-
-The first two must warn and record the reason as "the stable launcher is
-unusable"; the third must stay quiet and resolve to the stable backend.  The
-reason is read back through ``FLA_NPU_STABLE_TRACE=1``, which is also the only
-place the two fallback causes can be told apart.
-
-usage::
-
-    FLA_NPU_STABLE_LIB=/path/libfla_npu_stable.so PYTHONPATH=<env> \
-        python tests/stable_abi/test_stable_fallback_warning.py [--lib PATH]
+The historical filename is retained for CI invocations. No case may resolve a
+ctypes backend. Run with --lib pointing at the built Stable launcher.
 """
 
 from __future__ import annotations
@@ -47,7 +27,7 @@ REASON = "the stable launcher is unusable"
 # OPP overlaid into it).
 CHILD = r'''
 import json, sys, warnings
-result = {"warnings": [], "backends": {}, "fallbacks": {}, "error": None}
+result = {"warnings": [], "backends": {}, "error": None}
 try:
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -58,7 +38,6 @@ try:
             result["error"] = f"{type(exc).__name__}: {exc}"
         result["warnings"] = [f"{w.category.__name__}: {w.message}" for w in caught]
         result["backends"] = dict(ascendc.BACKENDS)
-        result["fallbacks"] = dict(ascendc.FALLBACKS)
 except Exception as exc:
     result["skip"] = f"{type(exc).__name__}: {exc}"
 print("RESULT " + json.dumps(result))
@@ -90,19 +69,10 @@ def check_warns(case: str, result: dict, problems: list[str]) -> None:
     if "skip" in result:
         problems.append(f"{case}: child could not run: {result['skip']}")
         return
-    hits = [w for w in result["warnings"] if WARNING_MARKER in w]
-    if len(hits) != 1:
-        problems.append(
-            f"{case}: expected exactly one launcher warning, got {len(hits)} "
-            f"({result['warnings'][:3]})")
-    if result["backends"].get(OP) != "ctypes":
-        problems.append(f"{case}: backend is {result['backends'].get(OP)!r}, "
-                        f"expected 'ctypes'")
-    if OP not in result["fallbacks"]:
-        problems.append(f"{case}: no fallback recorded for {OP}")
-    if f"({REASON})" not in result["stderr"]:
-        problems.append(f"{case}: the trace line does not blame the launcher "
-                        f"({REASON!r} missing from stderr)")
+    if not result["error"] or "Stable" not in result["error"]:
+        problems.append(f"{case}: expected actionable Stable launcher error, got {result}")
+    if result["backends"].get(OP):
+        problems.append(f"{case}: failed launcher selected a backend: {result['backends']}")
 
 
 def check_quiet(result: dict, problems: list[str]) -> None:
@@ -115,8 +85,8 @@ def check_quiet(result: dict, problems: list[str]) -> None:
     if result["backends"].get(OP) != "stable":
         problems.append(f"real: backend is {result['backends'].get(OP)!r}, "
                         f"expected 'stable'")
-    if OP in result["fallbacks"]:
-        problems.append(f"real: {OP} fell back although the launcher answered")
+    if result["error"]:
+        problems.append(f"real: {result['error']}")
 
 
 def main() -> int:
@@ -139,11 +109,11 @@ def main() -> int:
         print(f"SKIP real: no launcher at {args.lib!r}")
 
     if problems:
-        print("FAIL stable fallback warning")
+        print("FAIL Stable-only launcher failure handling")
         for line in problems:
             print("  -", line)
         return 1
-    print("OK stable fallback warning")
+    print("OK Stable-only launcher failure handling")
     return 0
 
 

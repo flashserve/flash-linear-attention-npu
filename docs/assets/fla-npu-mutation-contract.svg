@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1500" height="900" viewBox="0 0 1500 900" role="img" aria-labelledby="title desc">
-  <title id="title">ctypes 直接修改 cache 时 wrapper 必须补齐 PyTorch 语义</title>
-  <desc id="desc">底层 ctypes 修改 cache 后，分别通过 eager mutable、compiler-visible mutable 或 functional state 三种 wrapper 契约向 PyTorch 表达副作用。</desc>
+  <title id="title">ACLNN 修改 cache 时 wrapper 必须补齐 PyTorch 语义</title>
+  <desc id="desc">Stable adapter 调用 ACLNN 修改 cache 后，分别通过 eager mutable、compiler-visible mutable 或 functional state 三种 wrapper 契约向 PyTorch 表达副作用。</desc>
   <defs>
     <marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 Z" fill="#D85C5C"/></marker>
     <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 Z" fill="#D9970B"/></marker>
@@ -21,18 +21,18 @@
     </style>
   </defs>
   <rect width="1500" height="900" fill="#FFFFFF"/>
-  <text class="title" x="750" y="55" text-anchor="middle">ctypes 直接修改 cache：wrapper 必须补齐 PyTorch 语义</text>
+  <text class="title" x="750" y="55" text-anchor="middle">ACLNN 修改 cache：wrapper 必须补齐 PyTorch 语义</text>
   <text class="subtitle" x="750" y="92" text-anchor="middle">stream 保证真实执行顺序；alias / mutation schema 保证 autograd 和编译器理解副作用</text>
 
   <rect class="box" x="240" y="125" width="1020" height="95" fill="#EEF4FF" stroke="#5B7DB1"/>
-  <text x="750" text-anchor="middle"><tspan class="node-title" x="750" y="154">1  aclnn / ctypes 实际行为</tspan><tspan class="node-text" x="750" y="181">kernel 通过 data pointer 读取并改写 conv_states storage</tspan><tspan class="node-text" x="750" y="204">输出 y 是新 tensor；cache 修改发生在 current NPU stream</tspan></text>
+  <text x="750" text-anchor="middle"><tspan class="node-title" x="750" y="154">1  Stable / ACLNN 实际行为</tspan><tspan class="node-text" x="750" y="181">kernel 通过 data pointer 读取并改写 conv_states storage</tspan><tspan class="node-text" x="750" y="204">输出 y 是新 tensor；cache 修改发生在 current NPU stream</tspan></text>
 
   <path class="edge" d="M750 220 V265" stroke="#D85C5C" marker-end="url(#arrow-red)"/>
   <rect x="705" y="228" width="90" height="24" rx="4" fill="#FFFFFF"/>
   <text class="edge-label" x="750" y="245" text-anchor="middle" fill="#7A2929">实际写入</text>
 
   <rect class="box" x="425" y="265" width="650" height="100" fill="#FFF1F1" stroke="#D85C5C" stroke-width="2.5"/>
-  <text x="750" text-anchor="middle"><tspan class="node-title" x="750" y="296" fill="#6F2424">2  raw ctypes 的语义缺口</tspan><tspan class="node-text" x="750" y="324" fill="#6F2424">PyTorch 只看到 Python 返回了 y，看不到 conv_states 已被修改</tspan><tspan class="node-text" x="750" y="348" fill="#6F2424">不会自动推进版本计数，也没有 dispatcher alias / mutation schema</tspan></text>
+  <text x="750" text-anchor="middle"><tspan class="node-title" x="750" y="296" fill="#6F2424">2  未声明副作用的语义缺口</tspan><tspan class="node-text" x="750" y="324" fill="#6F2424">PyTorch 只看到 Python 返回了 y，看不到 conv_states 已被修改</tspan><tspan class="node-text" x="750" y="348" fill="#6F2424">不会自动推进版本计数，也没有 dispatcher alias / mutation schema</tspan></text>
 
   <!-- Three separated routes leave the gap box from different ports; no route crosses a node. -->
   <path class="edge" d="M555 365 V410 H260 V455" stroke="#D9970B" marker-end="url(#arrow-amber)"/>

@@ -306,7 +306,6 @@ done
 
 export FLA_NPU_SOC="$soc"
 export FLA_NPU_OPS="$ops"
-export FLA_NPU_BUILD_LEGACY_EXTENSION="FALSE"
 export TMPDIR="$tmp_dir"
 export TORCH_EXTENSIONS_DIR="$cache_root/torch_extensions_${soc}"
 export ASCEND_RT_VISIBLE_DEVICES="$device"
