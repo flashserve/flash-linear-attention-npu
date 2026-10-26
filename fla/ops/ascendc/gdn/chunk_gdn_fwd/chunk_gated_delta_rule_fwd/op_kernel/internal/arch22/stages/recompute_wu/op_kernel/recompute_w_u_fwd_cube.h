@@ -144,6 +144,9 @@ public:
         }
     };
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+    template <bool kFullyPrepared = false>
+#endif
     CATLASS_DEVICE void RunInterleaved(Arch::Resource<ArchTag> &resource, Params const &params)
     {
         uint32_t bos = 0;
@@ -158,6 +161,13 @@ public:
         AscendC::GlobalTensor<ElementW> gmW;
         const uint32_t loopBegin = static_cast<uint32_t>(params.taskRange->begin);
         const uint32_t loopEnd = static_cast<uint32_t>(params.taskRange->end);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+        if constexpr (kFullyPrepared) {
+            if (params.taskRange->begin < params.taskRange->end) {
+                AscendC::CrossCoreWaitFlag<0x2>(SYNC_AIV_AIC_FLAG_3);
+            }
+        }
+#endif
         for (uint32_t loopIdx = loopBegin; loopIdx < loopEnd; ++loopIdx) {
             uint32_t chunkIdx = 0;
             uint32_t hBegin = 0;
@@ -176,12 +186,18 @@ public:
                 auto tensorA = tla::MakeTensor(gmA, params.layoutA, Arch::PositionGM{});
 
                 // === 第一部分：U = A @ Vb ===
-                if ((taskIdx & 0b11) == 1) {
-                    AscendC::CrossCoreWaitFlag<0x2>(SYNC_AIV_AIC_FLAG_3);
-                    if (taskIdx > GDN::RECOMPUTE_WU_SYNC_WINDOW_TASKS) {
-                        AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+                if constexpr (!kFullyPrepared) {
+#endif
+                    if ((taskIdx & 0b11) == 1) {
+                        AscendC::CrossCoreWaitFlag<0x2>(SYNC_AIV_AIC_FLAG_3);
+                        if (taskIdx > GDN::RECOMPUTE_WU_SYNC_WINDOW_TASKS) {
+                            AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
+                        }
                     }
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
                 }
+#endif
                 if constexpr (kConcatUW) {
                     const uint64_t vbOffset =
                         (loopIdx - params.taskRange->begin) * params.ChunkSize() * params.ValueDim();
@@ -267,6 +283,12 @@ public:
     template <>
     CATLASS_DEVICE void operator()<AscendC::AIC>(Arch::Resource<ArchTag> &resource, Params const &params)
     {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+        if (params.taskRange->fullyPrepared) {
+            RunInterleaved<true>(resource, params);
+            return;
+        }
+#endif
         RunInterleaved(resource, params);
     }
 };

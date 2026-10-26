@@ -181,6 +181,12 @@ __aicore__ inline void RecomputeWUFwdVectorProcess<kType, betaType,
     kFlattenHeadTasks, kAbcTaskOrder, kRawFront, kStaticV, kStaticBT, kQkvLayout>::ProcessInterleaved()
 {
     if (taskRange->fullyPrepared) {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+        // 整批 RHS 独占 GM；保留一次 MTE3 发布，末 done7 保护下一批复用。
+        if (taskRange->begin < taskRange->end) {
+            CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_3);
+        }
+#else
         // 所有 RHS 已由最终 Solve 逐窗生产；只闭合原 Cube 的四任务通知协议。
         // 第二 Solve 退休 ACK 已消费，才允许复用 ready3/free5。
         for (uint64_t begin = taskRange->begin; begin < taskRange->end;
@@ -190,6 +196,7 @@ __aicore__ inline void RecomputeWUFwdVectorProcess<kType, betaType,
                 CrossCoreWaitFlag<0x2>(SYNC_AIC_AIV_FLAG_5);
             }
         }
+#endif
         return;
     }
     BeginInterleaved<false>();
