@@ -593,7 +593,89 @@ public:
         }
     }
 
-    __aicore__ inline void Process() {
+    template <bool kFinalStored>
+    __aicore__ inline void PrepareNextStreamH0(uint32_t streamId)
+    {
+        static_assert(EpilogueGDNFwdHUpdate::kSharedLowResident,
+            "Stream refill requires the private A2 SharedLowResident path.");
+        constexpr uint32_t ROWS = 64; // 原 MIX_AIC_1_2 的每 AIV 半个 K128 state。
+        constexpr uint32_t COLS = 128;
+        constexpr uint32_t ELEMS = ROWS * COLS;
+        static_assert(ELEMS * sizeof(float) == 32 * 1024 &&
+            ELEMS * sizeof(ElementH) == 16 * 1024, "Reuse only the existing stream slots.");
+        uint32_t nextInitialOffset = 0;
+        uint32_t nextHOffset = 0;
+        if (!vecBlockScheduler.PeekNextTaskH0(streamId, nextInitialOffset, nextHOffset)) {
+            return;
+        }
+        const uint32_t rowBegin = AscendC::GetSubBlockIdx() * ROWS;
+        const uint32_t eventOffset = streamId * 4;
+        auto state = resource.ubBuf.template GetBufferByByte<float>(
+            (streamId == 0 ? 64 : 128) * 1024);
+        auto low = resource.ubBuf.template GetBufferByByte<ElementH>(
+            (streamId == 0 ? 32 : 96) * 1024);
+        if constexpr (kFinalStored) {
+            // 原 final-state MTE3 最后读者先退休；原 EVENT0 的正式 Set 保留在 caller。
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + eventOffset);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + eventOffset);
+        } else {
+            // 原最后 V2 skip 分支仍持有 V1 留下的 V_MTE2 EVENT0。
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + eventOffset);
+        }
+        if (useInitialState) {
+            AscendC::DataCopy(state, gmInitialState[nextInitialOffset + rowBegin * COLS], ELEMS);
+        }
+        // 零初态也必须把旧读者的退休顺序传递到 Vector。
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + eventOffset);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + eventOffset);
+        if (useInitialState) {
+            AscendC::Cast(low, state, AscendC::RoundMode::CAST_RINT, ELEMS);
+        } else {
+            AscendC::Duplicate(low, static_cast<ElementH>(0), ELEMS);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + eventOffset);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + eventOffset);
+        AscendC::DataCopy(gmH[nextHOffset + rowBegin * COLS], low, ELEMS);
+        if constexpr (!kFinalStored) {
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + eventOffset);
+        }
+    }
+
+    template <bool kEnabled>
+    struct StreamFinalRefill {
+        GDNFwdHKernel* kernel;
+        uint32_t streamId;
+        CATLASS_DEVICE void operator()() const
+        {
+            if constexpr (kEnabled) {
+                kernel->template PrepareNextStreamH0<true>(streamId);
+            }
+        }
+    };
+
+    __aicore__ inline void Process()
+    {
+        if constexpr (EpilogueGDNFwdHUpdate::kSharedLowResident) {
+            bool twoStreams = false;
+            if ASCEND_IS_AIC {
+                twoStreams = cubeBlockScheduler.streamsPerWave == PING_PONG_STAGES;
+            }
+            if ASCEND_IS_AIV {
+                twoStreams = vecBlockScheduler.streamsPerWave == PING_PONG_STAGES;
+            }
+            // 仅入口分派一次；其它模式保留原 wave 实例，不在每 chunk 判断模式。
+            if (isVariedLen && twoStreams && !chunkPipelineEnabled && !idleCfg.enabled &&
+                kHeadDim == 128 && ValueDim() == 128 &&
+                (ChunkSize() == 64 || ChunkSize() == 128)) {
+                ProcessTaskEpoch<true>();
+                return;
+            }
+        }
+        ProcessTaskEpoch<false>();
+    }
+
+    template <bool kStreamRefill>
+    __aicore__ inline void ProcessTaskEpoch() {
         if (isVariedLen) {
             AscendC::SyncAll<false>();
         }
@@ -613,6 +695,9 @@ public:
             auto vworkLayout = tla::MakeLayout<ElementV, LayoutV>(coreNum * ChunkSize() * PING_PONG_STAGES, cubeBlockScheduler.vBlockSize);
             auto hworkLayout = tla::MakeLayout<ElementHWork, LayoutH>(coreNum * kHeadDim * PING_PONG_STAGES, cubeBlockScheduler.vBlockSize);
             uint32_t taskWaveCount = cubeBlockScheduler.GetTaskWaveCount();
+            if constexpr (kStreamRefill) {
+                taskWaveCount = 1;
+            }
             for (uint32_t waveIdx = 0; waveIdx < taskWaveCount; ++waveIdx) {
                 BlockMmadWH blockMmadWH(resource);
                 BlockMmadKV blockMmadKV(resource);
@@ -627,7 +712,11 @@ public:
 #else
                 AscendC::SyncAll<false>();
 #endif
-                cubeBlockScheduler.InitTaskWave(waveIdx);
+                if constexpr (kStreamRefill) {
+                    cubeBlockScheduler.InitStreamEpoch();
+                } else {
+                    cubeBlockScheduler.InitTaskWave(waveIdx);
+                }
                 uint32_t currStage = 0; // 0: C1, 1: C2
                 while (cubeBlockScheduler.isRunning) {
                     if (currStage == 0) {
@@ -770,6 +859,9 @@ public:
             AscendC::LocalTensor<ElementH> hUbTensorPong =
                 resource.ubBuf.template GetBufferByByte<ElementH>(160 * 1024);
             uint32_t taskWaveCount = vecBlockScheduler.GetTaskWaveCount();
+            if constexpr (kStreamRefill) {
+                taskWaveCount = 1;
+            }
             InitPipelineSync();
             InitIdlePipelineSlots();
             for (uint32_t waveIdx = 0; waveIdx < taskWaveCount; ++waveIdx) {
@@ -863,7 +955,11 @@ public:
 #else
                 AscendC::SyncAll<false>();
 #endif
-                vecBlockScheduler.InitTaskWave(waveIdx);
+                if constexpr (kStreamRefill) {
+                    vecBlockScheduler.InitStreamEpoch();
+                } else {
+                    vecBlockScheduler.InitTaskWave(waveIdx);
+                }
                 Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[0]);
                 Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[1]);
                 PresetVectorPipelineEvents();
@@ -933,12 +1029,16 @@ public:
                                 vec2Offsets.blockTokens, kHeadDim, vec2Offsets.vBlockDim, ValueDim(), vecBlockScheduler.cube2Done[streamId],
                                 vec2Offsets.isInitialState, vec2Offsets.isFinalState, storeFinalState,
                                 useInitialState, (streamId == 0), false,
-                                vec2Offsets.globalChunkIdx * gLastExpStride + vec2Offsets.headIdx
+                                vec2Offsets.globalChunkIdx * gLastExpStride + vec2Offsets.headIdx,
+                                StreamFinalRefill<kStreamRefill>{this, streamId}
                             );
                             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
                             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
                         } else {
                             Arch::CrossCoreWaitFlag(vecBlockScheduler.cube2Done[streamId]);
+                            if constexpr (kStreamRefill) {
+                                PrepareNextStreamH0<false>(streamId);
+                            }
                         }
                         PublishIdleChunk(stream.batchIdx, stream.vHeadIdx, stream.vBlockIdx, stream.chunkIdx);
                         Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[streamId]);

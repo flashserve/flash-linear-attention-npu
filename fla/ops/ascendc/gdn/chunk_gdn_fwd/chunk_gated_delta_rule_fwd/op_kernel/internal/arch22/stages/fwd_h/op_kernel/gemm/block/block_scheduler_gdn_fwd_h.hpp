@@ -278,6 +278,37 @@ struct BlockSchedulerGdnFwdH {
         isRunning = firstTaskIdx < taskNum;
     }
 
+    // 固定物理 stream 的队列；InitTasks 仍在原 C1/V1 入口推进当前描述符。
+    CATLASS_DEVICE
+    void InitStreamEpoch() {
+        InitTaskWave(0);
+        taskStride = PING_PONG_STAGES * cubeCoreNum;
+    }
+
+    // 只读下一 head 的 H0 地址，不提前改变当前 chunk/nextTaskIdx/offset。
+    CATLASS_DEVICE
+    bool PeekNextTaskH0(uint32_t streamId, uint32_t& initialStateOffset, uint32_t& hOffset) {
+        const auto& stream = runningQ.streams[streamId];
+        const uint32_t nextTaskIdx = stream.nextTaskIdx;
+        if (nextTaskIdx >= taskNum) {
+            return false;
+        }
+        const uint32_t tasksPerVBlock = batch * vNumHead;
+        const uint32_t logicalTask = nextTaskIdx % tasksPerVBlock;
+        GDNFwdHStream nextStream;
+        nextStream.vBlockIdx = nextTaskIdx / tasksPerVBlock;
+        nextStream.batchIdx = logicalTask / vNumHead;
+        nextStream.vHeadIdx = logicalTask % vNumHead;
+        nextStream.shapeBatchIdx = isVariedLen ? 0 : nextStream.batchIdx;
+        ResolveVarlenSequence(nextStream.batchIdx, nextStream);
+        const uint32_t vBlockOffset = nextStream.vBlockIdx * vBlockSize;
+        initialStateOffset = (nextStream.batchIdx * vNumHead + nextStream.vHeadIdx) *
+            kHeadDim * ValueDim() + vBlockOffset;
+        hOffset = ((nextStream.shapeBatchIdx * totalChunks + nextStream.chunkOffset) *
+            vNumHead + nextStream.vHeadIdx) * kHeadDim * ValueDim() + vBlockOffset;
+        return nextStream.batchChunks > 0;
+    }
+
     CATLASS_DEVICE
     uint32_t GetTaskWaveCount() const {
         return CeilDiv(taskNum, cubeCoreNum * streamsPerWave);

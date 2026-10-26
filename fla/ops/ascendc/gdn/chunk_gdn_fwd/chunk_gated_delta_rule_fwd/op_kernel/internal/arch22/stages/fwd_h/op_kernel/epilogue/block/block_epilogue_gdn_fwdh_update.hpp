@@ -18,6 +18,10 @@
 
 namespace Catlass::Epilogue::Block {
 
+struct GDNFwdHNoFinalRefill {
+    CATLASS_DEVICE void operator()() const {}
+};
+
 template <
     class HOutputType_,
     class GInputType_,
@@ -180,6 +184,7 @@ public:
         }
     }
 
+    template <class FinalRefill = GDNFwdHNoFinalRefill>
     CATLASS_DEVICE
     void operator()(
         AscendC::GlobalTensor<HElementOutput> hOutput,
@@ -200,7 +205,8 @@ public:
         bool useInitialState,
         bool isPing,
         bool cube2AlreadyWaited,
-        uint64_t gLastExpIndex
+        uint64_t gLastExpIndex,
+        const FinalRefill& finalRefill = FinalRefill{}
     )
     {
         static constexpr uint32_t ROW_TILE = 16;
@@ -404,6 +410,8 @@ public:
                         }
                     } else if constexpr (kSharedLowResident) {
                         AscendC::DataCopy(finalStateThisSubBlock, updatedStateUbTensor, mActualThisSubBlock * nActual);
+                        // 仅原末 V2 分支：H0 完成后才发布原 EVENT0 和 vec2Done。
+                        finalRefill();
                     }
                     if constexpr (!overlapStateStoreCast) {
                         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
