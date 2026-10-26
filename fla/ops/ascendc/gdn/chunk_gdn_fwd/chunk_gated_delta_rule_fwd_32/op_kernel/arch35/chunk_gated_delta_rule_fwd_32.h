@@ -93,15 +93,18 @@ class Kernel {
 public:
     __aicore__ inline Kernel() {}
 
-    __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR beta, GM_ADDR initial, GM_ADDR o,
-                                GM_ADDR finalState, GM_ADDR workspace, const ChunkGatedDeltaRuleFwd32TilingData &tilingData)
+    __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR beta, GM_ADDR initial,
+                                GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR o, GM_ADDR finalState, GM_ADDR workspace,
+                                const ChunkGatedDeltaRuleFwd32TilingData &tilingData)
     {
         sub_ = GetSubBlockIdx();
         batchSize_ = tilingData.B;
         valueHeadNum_ = tilingData.HV;
+        keyHeadNum_ = tilingData.HK == 0 ? tilingData.HV : tilingData.HK;
         seqLen_ = tilingData.T;
         scale_ = tilingData.scale;
         hasInitial_ = tilingData.hasInitial;
+        seqNum_ = tilingData.seqNum;
         uint32_t aicIdx = GetBlockIdx();
         if ASCEND_IS_AIV {
             const uint32_t subNum = GetSubBlockNum();
@@ -111,8 +114,12 @@ public:
         }
         aicNum_ = tilingData.coreNum == 0 ? 1 : tilingData.coreNum;
         totalHeads_ = batchSize_ * valueHeadNum_;
-        // Host rejects T that is not a positive multiple of 32, so this is at least 1.
-        nChunk_ = seqLen_ / static_cast<uint32_t>(kBt);
+        group_ = keyHeadNum_ == 0 ? 1 : valueHeadNum_ / keyHeadNum_;
+        // tailRows_ == 0 means every chunk is a full 32. Otherwise the last chunk
+        // has that many valid tokens and the kernel zero-pads the rest.
+        tailRows_ = seqLen_ % static_cast<uint32_t>(kBt);
+        nChunk_ = tailRows_ == 0 ? seqLen_ / static_cast<uint32_t>(kBt)
+                                 : seqLen_ / static_cast<uint32_t>(kBt) + 1;
         hasHead_ = valueHeadNum_ != 0 && aicIdx < totalHeads_;
         headBegin_ = hasHead_ ? aicIdx : 0;
         (void)workspace;
@@ -126,6 +133,10 @@ public:
         stateGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(finalState));
         if (hasInitial_ != 0 && initial != nullptr) {
             initGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(initial));
+        }
+        (void)chunkIndices;
+        if (seqNum_ != 0 && cuSeqlens != nullptr) {
+            cuGm_.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(cuSeqlens));
         }
 
         ubState_ = buf.template GetBuffer<BufferType::ASCEND_UB, bfloat16_t>(kUbState);
@@ -183,21 +194,80 @@ public:
     __aicore__ inline void Process()
     {
         if ASCEND_IS_AIV {
-            ProcessAiv();
+            if (seqNum_ == 0) {
+                ProcessAiv();
+            } else {
+                ProcessAivVarlen();
+            }
         }
         if ASCEND_IS_AIC {
-            ProcessAic();
+            if (seqNum_ == 0) {
+                ProcessAic();
+            } else {
+                ProcessAicVarlen();
+            }
         }
     }
 
 private:
-    // One flat head index. curSeqStartTokenIdx_ is the first token of this (b, hv).
+    // One flat (batch, value-head) task. q/k use the shared key head.
     __aicore__ inline void GetCurIdx(uint32_t head)
     {
         batchIdx_ = valueHeadNum_ == 0 ? 0 : head / valueHeadNum_;
         headIdx_ = valueHeadNum_ == 0 ? 0 : head - batchIdx_ * valueHeadNum_;
-        curSeqStartTokenIdx_ = static_cast<int64_t>(
+        const uint32_t keyHead = group_ <= 1 ? headIdx_ : headIdx_ / group_;
+        vHeadBase_ = static_cast<int64_t>(
             (static_cast<uint64_t>(batchIdx_) * valueHeadNum_ + headIdx_) * seqLen_);
+        qHeadBase_ = static_cast<int64_t>(
+            (static_cast<uint64_t>(batchIdx_) * keyHeadNum_ + keyHead) * seqLen_);
+        vTokenBase_ = vHeadBase_;
+        qTokenBase_ = qHeadBase_;
+    }
+
+    // 0 means this chunk is a full 32 rows.
+    __aicore__ inline uint32_t ChunkRows(uint32_t chunk) const
+    {
+        if (tailRows_ == 0 || chunk + 1U < nChunk_) {
+            return static_cast<uint32_t>(kBt);
+        }
+        return tailRows_;
+    }
+
+    template <typename T>
+    __aicore__ inline void CopyGmToUb(LocalTensor<T> dst, GlobalTensor<T> src, int64_t offset, uint32_t count)
+    {
+        const uint32_t bytes = count * static_cast<uint32_t>(sizeof(T));
+        if (bytes >= 32U && (bytes & 31U) == 0U) {
+            DataCopy(dst, src[offset], count);
+            return;
+        }
+        // An unpadded tail is still written out to 32 bytes, and those extra lanes
+        // are not the zeros Duplicate left behind. Pad them with 0 so a short g
+        // keeps eg[31] equal to the last valid token.
+        const uint32_t padBytes = (32U - (bytes & 31U)) & 31U;
+        const uint32_t padElems = padBytes / static_cast<uint32_t>(sizeof(T));
+        DataCopyParams params{1, static_cast<uint16_t>(bytes), 0, 0};
+        DataCopyPadParams pad{true, 0, static_cast<uint8_t>(padElems), 0};
+        DataCopyPad(dst, src[offset], params, pad);
+    }
+
+    // Same bytes as CopyGmToUb, and also accepts a GM address that is not 32-byte aligned.
+    // A packed sequence can start at any token. q/k/v rows are 256 bytes, so they stay aligned;
+    // g is 4 bytes and beta is 2, so a full chunk of those two may not be.
+    template <typename T>
+    __aicore__ inline void CopyGmToUbRelaxed(LocalTensor<T> dst, GlobalTensor<T> src, int64_t offset, uint32_t count)
+    {
+        const uint32_t bytes = count * static_cast<uint32_t>(sizeof(T));
+        const bool addrAligned = ((static_cast<uint64_t>(offset) * sizeof(T)) & 31U) == 0U;
+        if (addrAligned && bytes >= 32U && (bytes & 31U) == 0U) {
+            DataCopy(dst, src[offset], count);
+            return;
+        }
+        const uint32_t padBytes = (32U - (bytes & 31U)) & 31U;
+        const uint32_t padElems = padBytes / static_cast<uint32_t>(sizeof(T));
+        DataCopyParams params{1, static_cast<uint16_t>(bytes), 0, 0};
+        DataCopyPadParams pad{padElems != 0U, 0, static_cast<uint8_t>(padElems), 0};
+        DataCopyPad(dst, src[offset], params, pad);
     }
 
     // Even chunks belong to AIV0, odd chunks to AIV1.
@@ -226,8 +296,16 @@ private:
 
     __aicore__ inline void LoadGate(uint32_t chunk)
     {
-        const int64_t token = curSeqStartTokenIdx_ + static_cast<int64_t>(chunk) * kBt;
-        DataCopy(ubG2_, gGm_[token], kBt);
+        const int64_t token = vTokenBase_ + static_cast<int64_t>(chunk) * kBt;
+        const uint32_t rows = ChunkRows(chunk);
+        if (rows == static_cast<uint32_t>(kBt)) {
+            DataCopy(ubG2_, gGm_[token], kBt);
+        } else {
+            Duplicate(ubG2_, 0.f, static_cast<uint32_t>(kBt));
+            SetFlag<HardEvent::V_MTE2>(1);
+            WaitFlag<HardEvent::V_MTE2>(1);
+            CopyGmToUb(ubG2_, gGm_, token, rows);
+        }
         SetFlag<HardEvent::MTE2_V>(2);
         WaitFlag<HardEvent::MTE2_V>(2);
         CumsumExp2VF<true>(ubG2_, ubEg2_, ubSh_);
@@ -243,13 +321,70 @@ private:
     // GM loads only. Issued before the inverse VF so the L2 wait is not an MTE2 stall.
     __aicore__ inline void PrepareLoad(uint32_t chunk)
     {
-        const int64_t token = curSeqStartTokenIdx_ + static_cast<int64_t>(chunk) * kBt;
-        const int32_t nRow = kBt * kDim;
-        DataCopy(ubQ_, qGm_[token * kDim], nRow);
-        DataCopy(ubK_, kGm_[token * kDim], nRow);
-        DataCopy(ubV_, vGm_[token * kDim], nRow);
-        DataCopy(ubG_, gGm_[token], kBt);
-        DataCopy(ubBeta_, betaGm_[token], kBt);
+        const int64_t qToken = qTokenBase_ + static_cast<int64_t>(chunk) * kBt;
+        const int64_t vToken = vTokenBase_ + static_cast<int64_t>(chunk) * kBt;
+        const uint32_t rows = ChunkRows(chunk);
+        if (rows == static_cast<uint32_t>(kBt)) {
+            const int32_t nRow = kBt * kDim;
+            DataCopy(ubQ_, qGm_[qToken * kDim], nRow);
+            DataCopy(ubK_, kGm_[qToken * kDim], nRow);
+            DataCopy(ubV_, vGm_[vToken * kDim], nRow);
+            DataCopy(ubG_, gGm_[vToken], kBt);
+            DataCopy(ubBeta_, betaGm_[vToken], kBt);
+        } else {
+            Duplicate(ubQ_, static_cast<bfloat16_t>(0), static_cast<uint32_t>(kBt * kDim));
+            Duplicate(ubK_, static_cast<bfloat16_t>(0), static_cast<uint32_t>(kBt * kDim));
+            Duplicate(ubV_, static_cast<bfloat16_t>(0), static_cast<uint32_t>(kBt * kDim));
+            Duplicate(ubG_, 0.f, static_cast<uint32_t>(kBt));
+            Duplicate(ubBeta_, static_cast<bfloat16_t>(0), static_cast<uint32_t>(kBt));
+            SetFlag<HardEvent::V_MTE2>(0);
+            WaitFlag<HardEvent::V_MTE2>(0);
+            const uint32_t nRow = rows * static_cast<uint32_t>(kDim);
+            CopyGmToUb(ubQ_, qGm_, qToken * kDim, nRow);
+            CopyGmToUb(ubK_, kGm_, qToken * kDim, nRow);
+            CopyGmToUb(ubV_, vGm_, vToken * kDim, nRow);
+            CopyGmToUb(ubG_, gGm_, vToken, rows);
+            CopyGmToUb(ubBeta_, betaGm_, vToken, rows);
+        }
+        SetFlag<HardEvent::MTE2_V>(0);
+    }
+
+    // Varlen copies. A sequence start only has to be aligned for the 256-byte q/k/v row.
+    __aicore__ inline void LoadGateVar(uint32_t chunk)
+    {
+        const int64_t token = vTokenBase_ + static_cast<int64_t>(chunk) * kBt;
+        const uint32_t rows = ChunkRows(chunk);
+        if (rows != static_cast<uint32_t>(kBt)) {
+            Duplicate(ubG2_, 0.f, static_cast<uint32_t>(kBt));
+            SetFlag<HardEvent::V_MTE2>(1);
+            WaitFlag<HardEvent::V_MTE2>(1);
+        }
+        CopyGmToUbRelaxed(ubG2_, gGm_, token, rows);
+        SetFlag<HardEvent::MTE2_V>(2);
+        WaitFlag<HardEvent::MTE2_V>(2);
+        CumsumExp2VF<true>(ubG2_, ubEg2_, ubSh_);
+    }
+
+    __aicore__ inline void PrepareLoadVar(uint32_t chunk)
+    {
+        const int64_t qToken = qTokenBase_ + static_cast<int64_t>(chunk) * kBt;
+        const int64_t vToken = vTokenBase_ + static_cast<int64_t>(chunk) * kBt;
+        const uint32_t rows = ChunkRows(chunk);
+        if (rows != static_cast<uint32_t>(kBt)) {
+            Duplicate(ubQ_, static_cast<bfloat16_t>(0), static_cast<uint32_t>(kBt * kDim));
+            Duplicate(ubK_, static_cast<bfloat16_t>(0), static_cast<uint32_t>(kBt * kDim));
+            Duplicate(ubV_, static_cast<bfloat16_t>(0), static_cast<uint32_t>(kBt * kDim));
+            Duplicate(ubG_, 0.f, static_cast<uint32_t>(kBt));
+            Duplicate(ubBeta_, static_cast<bfloat16_t>(0), static_cast<uint32_t>(kBt));
+            SetFlag<HardEvent::V_MTE2>(0);
+            WaitFlag<HardEvent::V_MTE2>(0);
+        }
+        const uint32_t nRow = rows * static_cast<uint32_t>(kDim);
+        CopyGmToUbRelaxed(ubQ_, qGm_, qToken * kDim, nRow);
+        CopyGmToUbRelaxed(ubK_, kGm_, qToken * kDim, nRow);
+        CopyGmToUbRelaxed(ubV_, vGm_, vToken * kDim, nRow);
+        CopyGmToUbRelaxed(ubG_, gGm_, vToken, rows);
+        CopyGmToUbRelaxed(ubBeta_, betaGm_, vToken, rows);
         SetFlag<HardEvent::MTE2_V>(0);
     }
 
@@ -374,8 +509,14 @@ private:
     __aicore__ inline void StoreO(uint32_t chunk)
     {
         // The caller has waited kFlagO. The fixpipe already multiplied by scale_.
-        const int64_t token = curSeqStartTokenIdx_ + static_cast<int64_t>(chunk) * kBt + static_cast<int64_t>(sub_) * 16;
-        DataCopy(oGm_[token * kDim], ubO_, 16 * kDim);
+        // A partial chunk writes only the valid rows of this AIV's 16-row half.
+        const uint32_t rows = ChunkRows(chunk);
+        const uint32_t row0 = sub_ * 16U;
+        if (row0 < rows) {
+            const uint32_t n = rows - row0 < 16U ? rows - row0 : 16U;
+            const int64_t token = vTokenBase_ + static_cast<int64_t>(chunk) * kBt + static_cast<int64_t>(row0);
+            DataCopy(oGm_[token * kDim], ubO_, n * static_cast<uint32_t>(kDim));
+        }
         CrossCoreSetFlag<0x4, PIPE_MTE3>(static_cast<uint16_t>(kFlagOd + sub_ * kAiv1));
     }
 
@@ -608,10 +749,22 @@ private:
         // One issue for the whole core. The first PrepareLoad then runs on MTE2
         // while this VF is still on the vector pipe. InitState uses MTE2_V(1).
         GenAuxMatrixVF(ubSh_, ubEye_);
+        // prefetched: the previous task already issued this task's PrepareLoad
+        // so it overlaps that task's final-state store.
+        bool prefetched = false;
+        // The state store reads ubD_ on MTE3. The next task's initial-state copy
+        // writes that same buffer on MTE2, so the copy waits until the store is done.
+        bool stateLive = false;
         for (uint32_t head = headBegin_; head < totalHeads_; head += aicNum_) {
-            GetCurIdx(head);
-            if (loadPrologue) {
-                PrepareLoad(sub_);
+            if (!prefetched) {
+                GetCurIdx(head);
+                if (loadPrologue) {
+                    PrepareLoad(sub_);
+                }
+            }
+            prefetched = false;
+            if (stateLive) {
+                WaitFlag<HardEvent::MTE3_MTE2>(0);
             }
             InitState();
             if (loadPrologue) {
@@ -681,21 +834,300 @@ private:
                 CrossCoreWaitFlag<0x4, PIPE_MTE3>(kFlagO);
                 StoreO(c);
             }
+            constexpr uint32_t nElem = 64 * 128;
+            const int64_t elem = static_cast<int64_t>(
+                (static_cast<uint64_t>(batchIdx_) * valueHeadNum_ + headIdx_) * kDim * kDim +
+                static_cast<uint64_t>(sub_) * nElem);
+            const uint32_t next = head + aicNum_;
+            if (loadPrologue && next < totalHeads_) {
+                GetCurIdx(next);
+                PrepareLoad(sub_);
+                prefetched = true;
+            }
             WaitFlag<HardEvent::V_MTE3>(1);
             WaitFlag<HardEvent::V_MTE3>(2);
             if (nzArmed_ != 0) {
                 WaitFlag<HardEvent::MTE3_V>(3);
                 nzArmed_ = 0;
             }
-            constexpr uint32_t nElem = 64 * 128;
-            const int64_t elem = static_cast<int64_t>(
-                (static_cast<uint64_t>(batchIdx_) * valueHeadNum_ + headIdx_) * kDim * kDim +
-                static_cast<uint64_t>(sub_) * nElem);
             PanelsToNd(ubD_, ubState_);
             SetFlag<HardEvent::V_MTE3>(1);
             WaitFlag<HardEvent::V_MTE3>(1);
             DataCopy(stateGm_[elem], ubD_, nElem);
+            if (hasInitial_ != 0 && next < totalHeads_) {
+                SetFlag<HardEvent::MTE3_MTE2>(0);
+                stateLive = true;
+            }
         }
+    }
+
+    __aicore__ inline int64_t StateElem() const
+    {
+        constexpr uint32_t nElem = 64 * 128;
+        return static_cast<int64_t>((static_cast<uint64_t>(stateSlot_) * valueHeadNum_ + headIdx_) * kDim * kDim +
+                                    static_cast<uint64_t>(sub_) * nElem);
+    }
+
+    // One packed sequence. Token 0 of the sequence is cu[seq], not a global multiple of 32.
+    __aicore__ inline void BindSequence(uint32_t seq)
+    {
+        const int64_t begin = cuGm_.GetValue(static_cast<int64_t>(seq));
+        const int64_t end = cuGm_.GetValue(static_cast<int64_t>(seq) + 1);
+        const uint32_t len = end > begin ? static_cast<uint32_t>(end - begin) : 0U;
+        tailRows_ = len % static_cast<uint32_t>(kBt);
+        nChunk_ = len == 0U ? 0U
+                            : (tailRows_ == 0U ? len / static_cast<uint32_t>(kBt)
+                                               : len / static_cast<uint32_t>(kBt) + 1U);
+        stateSlot_ = seq;
+        vTokenBase_ = vHeadBase_ + begin;
+        qTokenBase_ = qHeadBase_ + begin;
+    }
+
+    __aicore__ inline void InitStateSeq()
+    {
+        constexpr uint32_t nElem = 64 * 128;
+        if (hasInitial_ != 0) {
+            DataCopy(ubD_, initGm_[StateElem()], nElem);
+            SetFlag<HardEvent::MTE2_V>(1);
+            WaitFlag<HardEvent::MTE2_V>(1);
+            NdToPanels(ubState_, ubD_);
+        } else {
+            Duplicate(ubState_, static_cast<bfloat16_t>(0), nElem);
+        }
+        SetFlag<HardEvent::V_MTE3>(1);
+    }
+
+    // Issue the initial-state copy, or zero ubD, before the next sequence's PrepareLoad.
+    __aicore__ inline void FillEmptyUbD()
+    {
+        constexpr uint32_t nElem = 64 * 128;
+        if (hasInitial_ != 0) {
+            DataCopy(ubD_, initGm_[StateElem()], nElem);
+            SetFlag<HardEvent::MTE2_MTE3>(1);
+        } else {
+            // The previous sequence's store may still be reading ubD on MTE3.
+            SetFlag<HardEvent::MTE3_V>(0);
+            WaitFlag<HardEvent::MTE3_V>(0);
+            Duplicate(ubD_, static_cast<bfloat16_t>(0), nElem);
+            SetFlag<HardEvent::V_MTE3>(1);
+            WaitFlag<HardEvent::V_MTE3>(1);
+        }
+    }
+
+    __aicore__ inline void FinishEmptyStore()
+    {
+        if (hasInitial_ != 0) {
+            WaitFlag<HardEvent::MTE2_MTE3>(1);
+        }
+    }
+
+    // GM loads of the next sequence only. Publishing K waits until that sequence
+    // starts, because D of this sequence still reads l1K_.
+    __aicore__ inline bool PrefetchNext(uint32_t head, uint32_t seq)
+    {
+        const uint32_t nextHead = head + aicNum_;
+        if (seq + 1U < seqNum_) {
+            BindSequence(seq + 1U);
+        } else if (nextHead < totalHeads_) {
+            GetCurIdx(nextHead);
+            BindSequence(0);
+        } else {
+            return false;
+        }
+        if (nChunk_ > 0U && (sub_ == 0U || nChunk_ > 1U)) {
+            PrepareLoadVar(sub_);
+            return true;
+        }
+        return false;
+    }
+
+    __aicore__ inline void StoreState(int64_t elem)
+    {
+        constexpr uint32_t nElem = 64 * 128;
+        WaitFlag<HardEvent::V_MTE3>(1);
+        WaitFlag<HardEvent::V_MTE3>(2);
+        if (nzArmed_ != 0) {
+            WaitFlag<HardEvent::MTE3_V>(3);
+            nzArmed_ = 0;
+        }
+        PanelsToNd(ubD_, ubState_);
+        SetFlag<HardEvent::V_MTE3>(1);
+        WaitFlag<HardEvent::V_MTE3>(1);
+        DataCopy(stateGm_[elem], ubD_, nElem);
+    }
+
+    __aicore__ inline void RunSequence()
+    {
+        const bool moreThanOneChunk = nChunk_ > 1;
+        const bool loadPrologue = sub_ == 0 || moreThanOneChunk;
+        if (loadPrologue) {
+            PublishStaged(sub_);
+        }
+        if (AivOf(0) == sub_) {
+            CrossCoreWaitFlag<0x4, PIPE_V>(kFlagKkt);
+            InverseL1(0);
+            CrossCoreWaitFlag<0x4, PIPE_V>(kFlagAttn);
+            AttnL1(0);
+        }
+        UploadH();
+        if (moreThanOneChunk && AivOf(1) == sub_) {
+            CrossCoreWaitFlag<0x4, PIPE_V>(kFlagKkt);
+            InverseL1(1);
+            CrossCoreWaitFlag<0x4, PIPE_V>(kFlagAttn);
+            AttnL1(1);
+        }
+        for (uint32_t c = 0; c < nChunk_; ++c) {
+            const uint32_t chunkAiv = AivOf(c);
+            const bool onThisAiv = chunkAiv == sub_;
+            if (!onThisAiv) {
+                LoadGateVar(c);
+            }
+            const uint32_t nxt = c + 2;
+            LocalTensor<float> egNow = onThisAiv ? ubEg_ : ubEg2_;
+            if (onThisAiv && nxt < nChunk_) {
+                Copy64(ubScratch_, ubEg_);
+                egNow = ubScratch_;
+            }
+            if (onThisAiv && nxt < nChunk_) {
+                PrepareLoadVar(nxt);
+            }
+            CrossCoreWaitFlag<0x4, PIPE_V>(kFlagP);
+            const float decay = DecayOf(egNow);
+            EmitV(egNow);
+            if (onThisAiv && nxt < nChunk_) {
+                PublishK();
+            }
+            if (!onThisAiv && c > 0 && c + 1 < nChunk_) {
+                CrossCoreWaitFlag<0x4, PIPE_V>(kFlagKkt);
+                InverseL1(c + 1);
+                CrossCoreWaitFlag<0x4, PIPE_V>(kFlagAttn);
+                AttnL1(c + 1);
+            }
+            CrossCoreWaitFlag<0x4, PIPE_V>(kFlagD);
+            ApplyD(decay, c + 1 < nChunk_);
+            if (onThisAiv && nxt < nChunk_) {
+                PublishKFlag(nxt);
+                PublishQ();
+                PublishQFlag(nxt);
+            }
+            CrossCoreWaitFlag<0x4, PIPE_MTE3>(kFlagO);
+            StoreO(c);
+        }
+    }
+
+    __aicore__ inline void ProcessAivVarlen()
+    {
+        if (!hasHead_) {
+            return;
+        }
+        GenAuxMatrixVF(ubSh_, ubEye_);
+        bool prefetched = false;
+        bool stateLive = false;
+        for (uint32_t head = headBegin_; head < totalHeads_; head += aicNum_) {
+            if (!prefetched) {
+                GetCurIdx(head);
+            }
+            for (uint32_t seq = 0; seq < seqNum_; ++seq) {
+                const bool prepared = prefetched;
+                if (!prepared) {
+                    BindSequence(seq);
+                }
+                prefetched = false;
+                if (stateLive) {
+                    WaitFlag<HardEvent::MTE3_MTE2>(0);
+                    stateLive = false;
+                }
+                const bool more = seq + 1U < seqNum_ || head + aicNum_ < totalHeads_;
+                if (nChunk_ == 0U) {
+                    const int64_t elem = StateElem();
+                    FillEmptyUbD();
+                    prefetched = PrefetchNext(head, seq);
+                    FinishEmptyStore();
+                    DataCopy(stateGm_[elem], ubD_, 64U * 128U);
+                    if (more) {
+                        SetFlag<HardEvent::MTE3_MTE2>(0);
+                        stateLive = true;
+                    }
+                    continue;
+                }
+                const bool loadPrologue = sub_ == 0 || nChunk_ > 1;
+                if (!prepared && loadPrologue) {
+                    PrepareLoadVar(sub_);
+                }
+                InitStateSeq();
+                RunSequence();
+                const int64_t elem = StateElem();
+                prefetched = PrefetchNext(head, seq);
+                StoreState(elem);
+                if (more) {
+                    SetFlag<HardEvent::MTE3_MTE2>(0);
+                    stateLive = true;
+                }
+            }
+        }
+    }
+
+    __aicore__ inline void ProcessAicVarlen()
+    {
+        if (!hasHead_) {
+            return;
+        }
+        SetFlag<HardEvent::M_MTE1>(0);
+        SetFlag<HardEvent::M_MTE1>(1);
+        SetFlag<HardEvent::FIX_M>(0);
+        SetFlag<HardEvent::FIX_M>(1);
+        for (uint32_t head = headBegin_; head < totalHeads_; head += aicNum_) {
+            GetCurIdx(head);
+            for (uint32_t seq = 0; seq < seqNum_; ++seq) {
+                BindSequence(seq);
+                if (nChunk_ == 0U) {
+                    continue;
+                }
+                for (uint32_t c = 0; c < nChunk_ && c < 2; ++c) {
+                    Kkt(c, static_cast<uint8_t>(c));
+                }
+                for (uint32_t c = 0; c < nChunk_ && c < 2; ++c) {
+                    Qk(c, static_cast<uint8_t>(c));
+                }
+                for (uint32_t c = 0; c < nChunk_; ++c) {
+                    const uint32_t slot = AivOf(c);
+                    CrossCoreWaitFlag<0x4, PIPE_MTE1>(static_cast<uint16_t>(kFlagInv + slot * kAiv1));
+                    MatmulAvAndKbgLoadW(slot);
+
+                    CrossCoreWaitFlag<0x4, PIPE_MTE1>(kFlagH0);
+                    CrossCoreWaitFlag<0x4, PIPE_MTE1>(static_cast<uint16_t>(kFlagH0 + kAiv1));
+                    MatmulWHCols0To63();
+
+                    CrossCoreWaitFlag<0x4, PIPE_MTE1>(kFlagH);
+                    CrossCoreWaitFlag<0x4, PIPE_MTE1>(static_cast<uint16_t>(kFlagH + kAiv1));
+                    WaitFlag<HardEvent::M_MTE1>(1);
+                    MatmulWHCols64To127WriteVnew();
+
+                    ReloadHAndQexp(slot);
+                    SetFlag<HardEvent::MTE1_M>(0);
+                    if (c >= 1 && c + 1 < nChunk_) {
+                        KktQk(c + 1, false);
+                    }
+                    CrossCoreWaitFlag<0x4, PIPE_MTE1>(kFlagV);
+                    CrossCoreWaitFlag<0x4, PIPE_MTE1>(static_cast<uint16_t>(kFlagV + kAiv1));
+                    WaitFlag<HardEvent::MTE1_M>(0);
+                    MatmulQexpHAndD(slot);
+
+                    MatmulAttnVnew(slot);
+                    if (c > 0) {
+                        CrossCoreWaitFlag<0x4, PIPE_FIX>(kFlagOd);
+                        CrossCoreWaitFlag<0x4, PIPE_FIX>(static_cast<uint16_t>(kFlagOd + kAiv1));
+                    }
+                    FixpipeScaledO();
+                }
+                CrossCoreWaitFlag<0x4, PIPE_FIX>(kFlagOd);
+                CrossCoreWaitFlag<0x4, PIPE_FIX>(static_cast<uint16_t>(kFlagOd + kAiv1));
+            }
+        }
+        WaitFlag<HardEvent::M_MTE1>(0);
+        WaitFlag<HardEvent::M_MTE1>(1);
+        WaitFlag<HardEvent::FIX_M>(0);
+        WaitFlag<HardEvent::FIX_M>(1);
     }
 
     __aicore__ inline void ProcessAic()
@@ -760,6 +1192,7 @@ private:
     OnChipBuffer buf;
     GlobalTensor<bfloat16_t> qGm_, kGm_, vGm_, betaGm_, oGm_, stateGm_, initGm_;
     GlobalTensor<float> gGm_;
+    GlobalTensor<int64_t> cuGm_;
     LocalTensor<bfloat16_t> ubState_, ubQ_, ubK_, ubV_, ubQnz_, ubKnz_, ubKbg_, ubQexp_, ubVnz_;
     LocalTensor<bfloat16_t> ubBeta_, ubAbf_, ubAttn_, ubU_, ubVn_, ubVg_, ubO_, ubD_;
     LocalTensor<float> ubG_, ubBe_, ubEg_, ubKkt_, ubQk_, ubL_, ubA_, ubEye_, ubScratch_;
@@ -775,12 +1208,20 @@ private:
     uint32_t headBegin_ = 0;
     uint32_t batchSize_ = 0;
     uint32_t valueHeadNum_ = 0;
+    uint32_t keyHeadNum_ = 0;
+    uint32_t group_ = 1;
     uint32_t seqLen_ = 0;
     uint32_t nChunk_ = 0;
+    uint32_t tailRows_ = 0;
     uint32_t totalHeads_ = 0;
     uint32_t batchIdx_ = 0;
     uint32_t headIdx_ = 0;
-    int64_t curSeqStartTokenIdx_ = 0;
+    int64_t qTokenBase_ = 0;
+    int64_t vTokenBase_ = 0;
+    int64_t qHeadBase_ = 0;
+    int64_t vHeadBase_ = 0;
+    uint32_t seqNum_ = 0;
+    uint32_t stateSlot_ = 0;
     uint32_t hasInitial_ = 0;
     uint32_t nzArmed_ = 0;
     float scale_ = 0.f;

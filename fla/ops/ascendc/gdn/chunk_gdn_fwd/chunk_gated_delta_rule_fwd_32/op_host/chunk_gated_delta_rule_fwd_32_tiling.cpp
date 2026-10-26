@@ -9,13 +9,36 @@
 namespace optiling {
 namespace {
 constexpr uint32_t kDim = 128;
-constexpr uint32_t kChunk = 32;
 constexpr uint64_t kDefaultWorkspace = 16ULL * 1024ULL * 1024ULL;
 
 bool Same4(const gert::Shape &shape, int64_t d0, int64_t d1, int64_t d2, int64_t d3)
 {
     return shape.GetDimNum() == 4 && shape.GetDim(0) == d0 && shape.GetDim(1) == d1 && shape.GetDim(2) == d2 &&
            shape.GetDim(3) == d3;
+}
+
+// chunk_indices must be the canonical sequence-major (seqId, localChunkId) list.
+bool CanonicalChunks(const int64_t *cu, int64_t cuCount, const int64_t *indices, int64_t indexCount, int64_t tokens)
+{
+    if (cu == nullptr || indices == nullptr || cuCount < 2 || cu[0] != 0 || cu[cuCount - 1] != tokens) {
+        return false;
+    }
+    int64_t pair = 0;
+    for (int64_t seq = 0; seq + 1 < cuCount; ++seq) {
+        if (cu[seq] > cu[seq + 1]) {
+            return false;
+        }
+        const int64_t length = cu[seq + 1] - cu[seq];
+        const int64_t chunks = length == 0 ? 0 : (length + 31) / 32;
+        for (int64_t local = 0; local < chunks; ++local) {
+            const int64_t pos = pair * 2;
+            if (pos + 1 >= indexCount || indices[pos] != seq || indices[pos + 1] != local) {
+                return false;
+            }
+            ++pair;
+        }
+    }
+    return indexCount == pair * 2;
 }
 }  // namespace
 
@@ -56,15 +79,39 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
     const int64_t key = q.GetDim(3);
     const int64_t hv = v.GetDim(1);
     const int64_t value = v.GetDim(3);
-    if (b <= 0 || hk <= 0 || hv != hk || t <= 0 || (t % kChunk) != 0 || key != kDim || value != kDim) {
+    if (b <= 0 || hk <= 0 || hv <= 0 || (hv % hk) != 0 || t <= 0 || key != kDim || value != kDim) {
         return ge::GRAPH_FAILED;
     }
     if (!Same4(k, b, hk, t, key) || !Same4(v, b, hv, t, value) || g.GetDim(0) != b || g.GetDim(1) != hv ||
         g.GetDim(2) != t || beta.GetDim(0) != b || beta.GetDim(1) != hv || beta.GetDim(2) != t) {
         return ge::GRAPH_FAILED;
     }
+    const auto *cuTensor = context->GetOptionalInputTensor(6);
+    const auto *chunkTensor = context->GetOptionalInputTensor(7);
+    if ((cuTensor == nullptr) != (chunkTensor == nullptr)) {
+        return ge::GRAPH_FAILED;
+    }
+    uint32_t seqNum = 0;
+    int64_t stateBatch = b;
+    if (cuTensor != nullptr) {
+        const int64_t *cu = cuTensor->GetData<int64_t>();
+        const int64_t *indices = chunkTensor->GetData<int64_t>();
+        const auto &cuShape = cuTensor->GetStorageShape();
+        const auto &chunkShape = chunkTensor->GetStorageShape();
+        if (b != 1 || cu == nullptr || indices == nullptr || cuShape.GetDimNum() != 1 ||
+            chunkShape.GetDimNum() != 1) {
+            return ge::GRAPH_FAILED;
+        }
+        const int64_t cuCount = cuShape.GetDim(0);
+        const int64_t indexCount = chunkShape.GetDim(0);
+        if (!CanonicalChunks(cu, cuCount, indices, indexCount, t)) {
+            return ge::GRAPH_FAILED;
+        }
+        seqNum = static_cast<uint32_t>(cuCount - 1);
+        stateBatch = cuCount - 1;
+    }
     if (!Same4(oShape->GetStorageShape(), b, hv, t, value) ||
-        !Same4(stateShape->GetStorageShape(), b, hv, key, value)) {
+        !Same4(stateShape->GetStorageShape(), stateBatch, hv, key, value)) {
         return ge::GRAPH_FAILED;
     }
     if (qDesc->GetDataType() != ge::DT_BF16 || kDesc->GetDataType() != ge::DT_BF16 ||
@@ -82,7 +129,7 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
     const auto *initialShape = context->GetOptionalInputShape(5);
     if (initialDesc != nullptr && initialShape != nullptr) {
         if (initialDesc->GetDataType() != ge::DT_BF16 ||
-            !Same4(initialShape->GetStorageShape(), b, hv, key, value)) {
+            !Same4(initialShape->GetStorageShape(), stateBatch, hv, key, value)) {
             return ge::GRAPH_FAILED;
         }
         hasInitial = 1;
@@ -94,6 +141,7 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
     }
     tiling->B = static_cast<uint32_t>(b);
     tiling->HV = static_cast<uint32_t>(hv);
+    tiling->HK = static_cast<uint32_t>(hk);
     tiling->T = static_cast<uint32_t>(t);
     tiling->hasInitial = hasInitial;
     tiling->scale = static_cast<float>(*scaleAttr);
@@ -117,6 +165,7 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
     }
     workspace[0] = workspaceBytes;
     tiling->workspaceOffset = 0;
+    tiling->seqNum = seqNum;
     return ge::GRAPH_SUCCESS;
 }
 

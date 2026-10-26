@@ -12,7 +12,8 @@ extern "C" {
 
 __attribute__((visibility("default"))) aclnnStatus aclnnChunkGatedDeltaRuleFwd32GetWorkspaceSize(
     const aclTensor *q, const aclTensor *k, const aclTensor *v, const aclTensor *g, const aclTensor *beta,
-    const aclTensor *initialStateOptional, double scale, const aclTensor *o, const aclTensor *finalState,
+    const aclTensor *initialStateOptional, const aclIntArray *cuSeqlensOptional,
+    const aclIntArray *chunkIndicesOptional, double scale, const aclTensor *o, const aclTensor *finalState,
     uint64_t *workspaceSize, aclOpExecutor **executor);
 
 __attribute__((visibility("default"))) aclnnStatus aclnnChunkGatedDeltaRuleFwd32(
@@ -25,7 +26,8 @@ __attribute__((visibility("default"))) aclnnStatus aclnnChunkGatedDeltaRuleFwd32
 namespace l0op {
 const aclTensor *ChunkGatedDeltaRuleFwd32(
     const aclTensor *q, const aclTensor *k, const aclTensor *v, const aclTensor *g, const aclTensor *beta,
-    const aclTensor *initialStateOptional, double scale, const aclTensor *o, const aclTensor *finalState,
+    const aclTensor *initialStateOptional, const aclIntArray *cuSeqlensOptional,
+    const aclIntArray *chunkIndicesOptional, double scale, const aclTensor *o, const aclTensor *finalState,
     aclOpExecutor *executor);
 }
 

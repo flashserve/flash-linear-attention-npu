@@ -42,6 +42,20 @@ public:
             .FormatList({ge::FORMAT_ND})
             .UnknownShapeFormat({ge::FORMAT_ND})
             .AutoContiguous();
+        this->Input("cu_seqlens")
+            .ParamType(OPTIONAL)
+            .ValueDepend(OPTIONAL)
+            .DataType({ge::DT_INT64})
+            .FormatList({ge::FORMAT_ND})
+            .UnknownShapeFormat({ge::FORMAT_ND})
+            .AutoContiguous();
+        this->Input("chunk_indices")
+            .ParamType(OPTIONAL)
+            .ValueDepend(OPTIONAL)
+            .DataType({ge::DT_INT64})
+            .FormatList({ge::FORMAT_ND})
+            .UnknownShapeFormat({ge::FORMAT_ND})
+            .AutoContiguous();
 
         this->Output("o")
             .ParamType(REQUIRED)

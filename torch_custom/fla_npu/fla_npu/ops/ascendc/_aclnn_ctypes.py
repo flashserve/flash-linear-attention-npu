@@ -57,6 +57,8 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
         ctypes.c_double,
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -4629,9 +4631,19 @@ def npu_chunk_gated_delta_rule_fwd_32(
     beta,
     *,
     initial_state=None,
+    cu_seqlens=None,
+    chunk_indices=None,
     scale=None,
 ):
-    """Fused GDN infer forward. q/k/v are BNSD, g/beta are [B, Hv, T]."""
+    """Fused GDN infer forward. q/k are [B, Hk, T, K], v is [B, Hv, T, V], g/beta are [B, Hv, T].
+
+    Hv must be a multiple of Hk. T may be any positive length; a partial last chunk is padded
+    inside the kernel. Each (batch, value head) is one task.
+
+    cu_seqlens and chunk_indices are both absent, or both present. When present, B is 1 and T
+    packs N sequences. final_state and initial_state are then [N, Hv, K, V]. chunk_indices is
+    the canonical (seqId, localChunkId) list; omitting it builds that list from cu_seqlens.
+    """
 
     import math
 
@@ -4639,12 +4651,21 @@ def npu_chunk_gated_delta_rule_fwd_32(
         raise RuntimeError("q, k and v must be rank-4, and q must match k.")
     b, hk, tokens, key = _shape(q)
     _, hv, tokens_v, value = _shape(v)
-    if tokens != tokens_v or hv != hk or key != 128 or value != 128 or tokens % 32 != 0:
+    if tokens != tokens_v or hk <= 0 or hv <= 0 or hv % hk != 0 or key != 128 or value != 128 or tokens <= 0:
         raise RuntimeError(
-            "chunk_gated_delta_rule_fwd_32 requires Hv==Hk, K=V=128 and T a multiple of 32."
+            "chunk_gated_delta_rule_fwd_32 requires Hv multiple of Hk, K=V=128 and T > 0."
         )
     if _shape(g) != (b, hv, tokens) or _shape(beta) != (b, hv, tokens):
         raise RuntimeError("g and beta must be [B, Hv, T].")
+    cu = _as_int_list(cu_seqlens)
+    chunks = _as_int_list(chunk_indices)
+    if (cu is None) != (chunks is None):
+        if cu is None:
+            raise RuntimeError("chunk_indices requires cu_seqlens.")
+        chunks = _chunk_indices_from_cu_seqlens(cu, 32)
+    seq_num = b if cu is None else len(cu) - 1
+    if cu is not None and b != 1:
+        raise RuntimeError("packed sequences require B = 1.")
     if scale is None:
         scale = 1.0 / math.sqrt(key)
     q = q.contiguous()
@@ -4655,7 +4676,7 @@ def npu_chunk_gated_delta_rule_fwd_32(
     if initial_state is not None:
         initial_state = initial_state.contiguous()
     out = _zeros((b, hv, tokens, value), q)
-    final_state = _zeros((b, hv, key, value), q)
+    final_state = _zeros((seq_num, hv, key, value), q)
 
     def nd(ctx, tensor, name):
         if tensor is None:
@@ -4673,6 +4694,8 @@ def npu_chunk_gated_delta_rule_fwd_32(
             nd(ctx, g, "g"),
             nd(ctx, beta, "beta"),
             nd(ctx, initial_state, "initial_state"),
+            ctx.int_array(cu),
+            ctx.int_array(chunks),
             ctypes.c_double(float(scale)),
             nd(ctx, out, "o"),
             nd(ctx, final_state, "final_state"),
