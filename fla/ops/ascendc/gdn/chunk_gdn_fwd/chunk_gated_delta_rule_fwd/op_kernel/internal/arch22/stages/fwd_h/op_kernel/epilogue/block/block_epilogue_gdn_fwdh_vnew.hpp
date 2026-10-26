@@ -108,6 +108,30 @@ public:
     CATLASS_DEVICE
     ~BlockEpilogue() {}
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+    // 仅同owner BT64私有实例调用；默认构造布局与原fallback保持。
+    CATLASS_DEVICE void ConfigureOwnerLocal(Arch::Resource<ArchTag> &resource)
+    {
+        static_assert(kSharedLowResident, "Owner-local HV1 requires the original shared-low math");
+        calcUbTensor = resource.ubBuf.template GetBufferByByte<float>(16 * 1024);
+        uUbTensor_ping = resource.ubBuf.template GetBufferByByte<UElementInput>(83 * 1024);
+        uUbTensor_pong = resource.ubBuf.template GetBufferByByte<UElementInput>(99 * 1024);
+        wsUbTensor_ping = resource.ubBuf.template GetBufferByByte<float>(48 * 1024);
+        wsUbTensor_pong = resource.ubBuf.template GetBufferByByte<float>(64 * 1024);
+        vNewOutputUbTensor_ping = resource.ubBuf.template GetBufferByByte<VElementOutput>(83 * 1024);
+        vNewDecayUbTensor_ping = resource.ubBuf.template GetBufferByByte<VElementOutput>(83 * 1024);
+        vNewOutputUbTensor_pong = resource.ubBuf.template GetBufferByByte<VElementOutput>(99 * 1024);
+        vNewDecayUbTensor_pong = resource.ubBuf.template GetBufferByByte<VElementOutput>(99 * 1024);
+        gUbTensor_ping = resource.ubBuf.template GetBufferByByte<float>(115 * 1024);
+        gLastUbTensor_ping = resource.ubBuf.template GetBufferByByte<float>(116 * 1024);
+        gInputUbTensor_ping = resource.ubBuf.template GetBufferByByte<GElementInput>(116 * 1024);
+        gUbTensor_pong = resource.ubBuf.template GetBufferByByte<float>(117 * 1024);
+        gLastUbTensor_pong = resource.ubBuf.template GetBufferByByte<float>(118 * 1024);
+        gInputUbTensor_pong = resource.ubBuf.template GetBufferByByte<GElementInput>(118 * 1024);
+        shareBuffer_ = resource.ubBuf.template GetBufferByByte<uint8_t>(121 * 1024);
+    }
+#endif
+
     CATLASS_DEVICE
     void ConfigureGDecay(GM_ADDR addr)
     {
@@ -227,6 +251,7 @@ public:
         AscendC::PipeBarrier<PIPE_V>();
     }
 
+    template <bool kOwnerLocal = false>
     CATLASS_DEVICE
     void operator()(
         AscendC::GlobalTensor<VElementOutput> vnewOutput,
@@ -268,6 +293,10 @@ public:
         }
         uint32_t pingpongFlag = isPing ? 0 : pongBaseEvent;
         if (rowBegin >= mActual) {
+            if constexpr (kOwnerLocal) {
+                // zero没有进入PrepareG，必须取走原G lease。
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
+            }
             if (!cube1AlreadyWaited) {
                 Arch::CrossCoreWaitFlag(cube1Done);
             }
@@ -279,8 +308,10 @@ public:
                     EVENT_ID0 + pingpongFlag);
             }
             Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
+            if constexpr (!kOwnerLocal) {
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
+            }
             return;
         }
         AscendC::ResetMask();
@@ -342,7 +373,9 @@ public:
                 AscendC::Adds<float>(calcUbTensor, wsUbTensor, 0.0f, mActualThisSubBlock * nvActual);
             }
             AscendC::PipeBarrier<PIPE_V>();
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
+            if constexpr (!kOwnerLocal) {
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
+            }
 
             AscendC::Cast(vNewDecayUbTensor, calcUbTensor[decayOffset], AscendC::RoundMode::CAST_RINT, mActualThisSubBlock * nvActual);
             AscendC::PipeBarrier<PIPE_V>();
@@ -367,7 +400,9 @@ public:
             if constexpr (!kGated) {
                 // 保留 raw vNew 写回 drain，并重置下一次调用的乒乓标记。
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
-                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
+                if constexpr (!kOwnerLocal) {
+                    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
+                }
             }
 
             if constexpr (kGated) {

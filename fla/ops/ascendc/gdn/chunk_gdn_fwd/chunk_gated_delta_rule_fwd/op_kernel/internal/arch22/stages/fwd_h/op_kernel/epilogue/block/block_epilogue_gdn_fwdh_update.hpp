@@ -116,6 +116,25 @@ public:
     CATLASS_DEVICE
     ~BlockEpilogue() {}
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+    CATLASS_DEVICE void ConfigureOwnerLocal(Arch::Resource<ArchTag> &resource)
+    {
+        static_assert(kSharedLowResident, "Owner-local HV2 preserves the original shared-low recurrence");
+        calcUbTensor = resource.ubBuf.template GetBufferByByte<float>(16 * 1024);
+        hUpdateUbTensor_ping = resource.ubBuf.template GetBufferByByte<float>(48 * 1024);
+        hUpdateUbTensor_pong = resource.ubBuf.template GetBufferByByte<float>(48 * 1024);
+        residentStateUbTensor_ping = resource.ubBuf.template GetBufferByByte<float>(123 * 1024);
+        residentStateUbTensor_pong = resource.ubBuf.template GetBufferByByte<float>(155 * 1024);
+        hUbTensor_ping = resource.ubBuf.template GetBufferByByte<HElementOutput>(83 * 1024);
+        hUbTensor_pong = resource.ubBuf.template GetBufferByByte<HElementOutput>(99 * 1024);
+        finalOutputUbTensor_ping = resource.ubBuf.template GetBufferByByte<FinalStateElement>(123 * 1024);
+        finalOutputUbTensor_pong = resource.ubBuf.template GetBufferByByte<FinalStateElement>(155 * 1024);
+        // S.SetValue可能越过Q的MTE3_V；不能与Q/O Gcomp(117KiB)别名。
+        glastUbTensor_ping = resource.ubBuf.template GetBufferByByte<float>(119 * 1024);
+        glastUbTensor_pong = resource.ubBuf.template GetBufferByByte<float>(120 * 1024);
+    }
+#endif
+
     __aicore__ inline void ConfigureGLastExp(GM_ADDR addr)
     {
         if (addr != nullptr) {

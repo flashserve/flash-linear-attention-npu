@@ -109,6 +109,23 @@ public:
     ~BlockEpilogue()
     {}
 
+    CATLASS_DEVICE void ConfigureOwnerLocal(Arch::Resource<ArchTag> &resource)
+    {
+        maskUbTensor = resource.ubBuf.template GetBufferByByte<float>(0);
+        gbrcUpUbTensor = resource.ubBuf.template GetBufferByByte<float>(16 * 1024);
+        gbrcLeftcastUbTensor = resource.ubBuf.template GetBufferByByte<float>(48 * 1024);
+        shareUbTensor = resource.ubBuf.template GetBufferByByte<uint8_t>(57 * 1024 + 512);
+        gcompUbTensor = resource.ubBuf.template GetBufferByByte<float>(117 * 1024);
+        gUbTensorPing = gUbTensorPong = resource.ubBuf.template GetBufferByByte<float>(115 * 1024);
+        gUbFPTensorPing = gUbFPTensorPong = resource.ubBuf.template GetBufferByByte<GElementInput>(116 * 1024);
+        gUbBFTensorPing = gUbBFTensorPong = resource.ubBuf.template GetBufferByByte<GElementInput>(116 * 1024);
+        aUbTensorPing = aUbTensorPong = resource.ubBuf.template GetBufferByByte<float>(48 * 1024);
+        outUbTensorPing = outUbTensorPong = resource.ubBuf.template GetBufferByByte<float>(57 * 1024 + 512);
+        outUbFPTensorPing = outUbFPTensorPong = resource.ubBuf.template GetBufferByByte<AElementOutput>(24 * 1024);
+        outUbBFTensorPing = outUbBFTensorPong = resource.ubBuf.template GetBufferByByte<AElementOutput>(24 * 1024);
+    }
+
+    template <bool kOwnerLocal = false>
     CATLASS_DEVICE
     void operator()(
         AscendC::GlobalTensor<AElementOutput> maskOutput,
@@ -193,20 +210,22 @@ public:
             AscendC::LocalTensor<GElementInput> gUbFPTensor = (pingpongFlag == 0) ? gUbFPTensorPing : gUbFPTensorPong;
             AscendC::LocalTensor<GElementInput> gUbBFTensor = (pingpongFlag == 0) ? gUbBFTensorPing : gUbBFTensorPong;
 
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + pingpongFlag);
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>((kOwnerLocal ? 3u : EVENT_ID0 + pingpongFlag));
+            if constexpr (!kOwnerLocal) {
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>((kOwnerLocal ? 7u : EVENT_ID1 + pingpongFlag));
+            }
 
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(kOwnerLocal ? 3u : EVENT_ID0);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(kOwnerLocal ? 3u : EVENT_ID0);
 
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>((kOwnerLocal ? 3u : EVENT_ID0 + pingpongFlag));
             if constexpr(std::is_same<GElementInput, float>::value) {
                 AscendC::DataCopyPad(gUbTensor, gInputThisSubBlock, gfloatUbParams, gUbPadParams);
             } else {
                 AscendC::DataCopyPad(gUbFPTensor, gInputThisSubBlock, ghalfUbParams, gUbPadParams);
             }
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>((kOwnerLocal ? 3u : EVENT_ID0 + pingpongFlag));
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>((kOwnerLocal ? 3u : EVENT_ID0 + pingpongFlag));
             if constexpr(!std::is_same<GElementInput, float>::value) {
                 AscendC::Cast(gUbTensor, gUbFPTensor, AscendC::RoundMode::CAST_NONE, mActual);
                 AscendC::PipeBarrier<PIPE_V>();
@@ -242,11 +261,15 @@ public:
             {1, 1, static_cast<uint8_t>(alignedNActual/8), static_cast<uint8_t>(alignedNActual/8)});
             AscendC::PipeBarrier<PIPE_V>();
 
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + pingpongFlag);
+            if constexpr (kOwnerLocal) {
+                // compact raw与left别名：最后left读取完成后才释放MTE2写权。
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(7);
+            }
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>((kOwnerLocal ? 7u : EVENT_ID1 + pingpongFlag));
             if(isContiguousFullTile) AscendC::DataCopy(aUbTensor, attnInputThisSubBlock, mActualThisSubBlock*nActual);
             else AscendC::DataCopyPad(aUbTensor, attnInputThisSubBlock, aInputUbParams, aInputUbPadParams);
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>((kOwnerLocal ? 7u : EVENT_ID1 + pingpongFlag));
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>((kOwnerLocal ? 7u : EVENT_ID1 + pingpongFlag));
             AscendC::Mul(outUbTensor, aUbTensor, gbrcUpUbTensor, mActualThisSubBlock * alignedNActual);
             AscendC::PipeBarrier<PIPE_V>();
 
@@ -254,8 +277,8 @@ public:
             {
                 AscendC::Cast(outUbFPTensor, outUbTensor, AscendC::RoundMode::CAST_NONE, mActualThisSubBlock * alignedNActual);
                 AscendC::PipeBarrier<PIPE_V>();
-                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>((kOwnerLocal ? 3u : EVENT_ID0 + pingpongFlag));
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>((kOwnerLocal ? 3u : EVENT_ID0 + pingpongFlag));
                 if(isContiguousFullTile) AscendC::DataCopy(maskOutputThisSubBlock, outUbFPTensor, mActualThisSubBlock*nActual);
                 else AscendC::DataCopyPad(maskOutputThisSubBlock, outUbFPTensor, aOutputUbParams);
             }
@@ -263,8 +286,8 @@ public:
             {
                 AscendC::Cast(outUbBFTensor, outUbTensor, AscendC::RoundMode::CAST_RINT, mActualThisSubBlock * alignedNActual);
                 AscendC::PipeBarrier<PIPE_V>();
-                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>((kOwnerLocal ? 3u : EVENT_ID0 + pingpongFlag));
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>((kOwnerLocal ? 3u : EVENT_ID0 + pingpongFlag));
                 if(isContiguousFullTile) AscendC::DataCopy(maskOutputThisSubBlock, outUbBFTensor, mActualThisSubBlock*nActual);
                 else AscendC::DataCopyPad(maskOutputThisSubBlock, outUbBFTensor, aOutputUbParams);
             }

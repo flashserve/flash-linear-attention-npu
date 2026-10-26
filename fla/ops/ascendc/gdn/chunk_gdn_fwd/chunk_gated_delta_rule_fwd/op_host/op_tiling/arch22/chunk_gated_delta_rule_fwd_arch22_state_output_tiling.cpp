@@ -164,10 +164,73 @@ bool FillOTilingWorkspace(GDN::GdnMegaArch22FwdOTilingData &tiling, uint32_t aic
     return true;
 }
 
+struct OwnerHWorkspace {
+    size_t v{0}, decay{0}, kDecay{0}, h{0}, numSeq{0}, numChunks{0}, end{0}, shiftedEnd{0};
+};
+
+bool AddOwnerBytes(size_t bytes, size_t &offset)
+{
+    if (offset > MAX_INT64_AS_SIZE_T || bytes > MAX_INT64_AS_SIZE_T - offset) { return false; }
+    offset += bytes;
+    return true;
+}
+
+bool AppendOwnerH(size_t bytes, size_t &offset)
+{
+    // 原H的AH(n)=(n+512)/512*512；整除时也多512，不能换普通AlignUp。
+    if (bytes > MAX_INT64_AS_SIZE_T - WORKSPACE_ALIGNMENT) { return false; }
+    return AddOwnerBytes((bytes + WORKSPACE_ALIGNMENT) / WORKSPACE_ALIGNMENT * WORKSPACE_ALIGNMENT, offset);
+}
+
+bool CheckOwnerHBeforeProcessor(const ChunkGatedDeltaRuleFwdHTilingContext &ctx,
+                                size_t recomputeWorkspace, size_t elementSize, OwnerHWorkspace &expected)
+{
+    if (ctx.seqlen <= 0 || ctx.vNumHead <= 0 || ctx.shapeBatchDim <= 0 ||
+        ctx.kHeadDim != 128 || ctx.vHeadDim != 128 || ctx.chunkSize != 64 || ctx.useGk ||
+        (ctx.hasCuSeqlens && ctx.cuSeqlensDim0 <= 1) ||
+        ctx.libApiWorkSpaceSize > MAX_INT64_AS_SIZE_T ||
+        recomputeWorkspace < ctx.libApiWorkSpaceSize || recomputeWorkspace > MAX_INT64_AS_SIZE_T) { return false; }
+    const size_t tokenBatch = ctx.hasCuSeqlens ? static_cast<size_t>(ctx.cuSeqlensDim0 - 1) : 1;
+    size_t wh = 0, delta = 0, meta = 0;
+    if (tokenBatch >= MAX_INT64_AS_SIZE_T ||
+        !CheckedWorkspaceBytes({ctx.aicCoreNum, 2, 64, 128, sizeof(float)}, wh) ||
+        !CheckedWorkspaceBytes({ctx.aicCoreNum, 2, 128, 128, sizeof(float)}, delta) ||
+        !CheckedWorkspaceBytes({tokenBatch + 1, sizeof(int64_t)}, meta)) { return false; }
+    size_t off = ctx.libApiWorkSpaceSize;
+    if (!AddOwnerBytes(WORKSPACE_RESERVE, off)) { return false; }
+    expected.v = off;
+    if (!AppendOwnerH(wh, off)) { return false; }
+    expected.decay = off;
+    if (!AppendOwnerH(wh, off)) { return false; }
+    expected.kDecay = expected.h = off;
+    if (!AppendOwnerH(delta, off)) { return false; }
+    expected.numSeq = off;
+    if (!AppendOwnerH(meta, off)) { return false; }
+    expected.numChunks = off;
+    if (!AppendOwnerH(meta, off) || !AddOwnerBytes(WORKSPACE_RESERVE, off)) { return false; }
+    expected.end = off;
+    // 旧W/U布局的每项乘、对齐、相加在执行原表达式前预检，包含hoShift。
+    size_t wBytes = 0, uBytes = 0;
+    if (!CheckedWorkspaceBytes({static_cast<size_t>(ctx.shapeBatchDim), static_cast<size_t>(ctx.vNumHead),
+                                static_cast<size_t>(ctx.seqlen), 128, elementSize}, wBytes) ||
+        !CheckedWorkspaceBytes({static_cast<size_t>(ctx.shapeBatchDim), static_cast<size_t>(ctx.vNumHead),
+                                static_cast<size_t>(ctx.seqlen), 128, elementSize}, uBytes)) { return false; }
+    size_t wuEnd = 0;
+    if (!AppendWorkspace(recomputeWorkspace - ctx.libApiWorkSpaceSize, wuEnd) ||
+        !AppendWorkspace(wBytes, wuEnd) || !AppendWorkspace(uBytes, wuEnd)) { return false; }
+    size_t defaultBase = ctx.libApiWorkSpaceSize;
+    if (!AddOwnerBytes(WORKSPACE_RESERVE, defaultBase)) { return false; }
+    size_t hoBase = 0;
+    if (!AppendWorkspace(std::max(defaultBase, wuEnd), hoBase)) { return false; }
+    expected.shiftedEnd = expected.end;
+    return AddOwnerBytes(hoBase - defaultBase, expected.shiftedEnd);
+}
+
 } // namespace
 
 ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingContext *context,
-                                                               bool separateHoWorkspace)
+                                                               bool separateHoWorkspace,
+                                                               bool ownerLocalWorkspace)
 {
     OP_LOGD(context->GetNodeName(), "Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput start.");
     const auto *qShapePtr = context->GetOptionalInputShape(INPUT_Q);
@@ -364,11 +427,27 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     hContext.aicCoreNum = aicCoreNum;
     hContext.libApiWorkSpaceSize = sysWorkspaceSize;
 
+    const size_t elementSize = qDesc->GetDataType() == ge::DT_FLOAT ? sizeof(float) : sizeof(uint16_t);
+    OwnerHWorkspace expectedOwner{};
+    OP_CHECK_IF(ownerLocalWorkspace &&
+                    !CheckOwnerHBeforeProcessor(hContext, recomputeProcessor.GetWorkspaceSize(), elementSize, expectedOwner),
+                OP_LOGE(context->GetNodeName(), "Owner-local H/WU workspace precheck exceeds int64 range."),
+                return ge::GRAPH_FAILED);
     ::GdnMegaArch22FwdHTilingData hPlain{};
     uint32_t hBlockDim = 0;
     size_t hWorkspaceSize = 0;
     ChunkGatedDeltaRuleFwdHTilingProcessor hProcessor(hContext);
     hProcessor.Process(hPlain, hBlockDim, hWorkspaceSize);
+    OP_CHECK_IF(ownerLocalWorkspace &&
+                    (hPlain.vWorkspaceOffset != static_cast<int64_t>(expectedOwner.v) ||
+                     hPlain.vUpdateWorkspaceOffset != static_cast<int64_t>(expectedOwner.decay) ||
+                     hPlain.kDecayWorkspaceOffset != static_cast<int64_t>(expectedOwner.kDecay) ||
+                     hPlain.hWorkspaceOffset != static_cast<int64_t>(expectedOwner.h) ||
+                     hPlain.numSeqWorkspaceOffset != static_cast<int64_t>(expectedOwner.numSeq) ||
+                     hPlain.numChunksWorkspaceOffset != static_cast<int64_t>(expectedOwner.numChunks) ||
+                     hWorkspaceSize != expectedOwner.end),
+                OP_LOGE(context->GetNodeName(), "Owner-local H workspace differs from the checked original layout."),
+                return ge::GRAPH_FAILED);
 
     GdnMegaArch22FwdHTilingData hTiling;
     FillHMacroTiling(hPlain, hTiling);
@@ -385,7 +464,6 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     oTiling.dataType = hContext.dataType;
     oTiling.gDataType = hContext.gDataType;
     oTiling.scale = static_cast<float>(scale);
-    const size_t elementSize = qDesc->GetDataType() == ge::DT_FLOAT ? sizeof(float) : sizeof(uint16_t);
     const size_t recomputeScratchBytes =
         recomputeProcessor.GetWorkspaceSize() - sysWorkspaceSize;
     const size_t wBytes = static_cast<size_t>(batch) * vNumHead * seqlen * kHeadDim * elementSize;
@@ -406,6 +484,9 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     };
     ShiftHWorkspace(hTiling);
     hWorkspaceSize += hoShift;
+    OP_CHECK_IF(ownerLocalWorkspace && hWorkspaceSize != expectedOwner.shiftedEnd,
+                OP_LOGE(context->GetNodeName(), "Owner-local shifted H workspace differs from the checked end."),
+                return ge::GRAPH_FAILED);
     // 只扩静态 prepared BT64/V128 的专用 H 区，后续 O 区及完整 reserve 原大小顺延。
     // Device 仍以实际 H/attn offset 间距决定 H4；旧路径可继续使用前两槽。
     const size_t oHWorkStages = platform.GetCurNpuArch() == NpuArch::DAV_2201 &&

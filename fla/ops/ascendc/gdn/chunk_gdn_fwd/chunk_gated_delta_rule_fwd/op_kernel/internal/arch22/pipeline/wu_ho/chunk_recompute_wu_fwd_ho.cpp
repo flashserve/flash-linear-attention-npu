@@ -7,6 +7,7 @@
 #undef CATLASS_ARCH
 #include "../../stages/fwd_o/op_kernel/chunk_fwd_o_struct.h"
 #include "../../stages/fwd_o/op_kernel/gemm/kernel/gdn_fwd_o_kernel.hpp"
+#include "gdn_ho_owner_local_kernel.hpp"
 #include "../../stages/recompute_wu/op_kernel/recompute_w_u_fwd_common.h"
 #include "../../stages/recompute_wu/op_kernel/recompute_w_u_fwd_cube.h"
 #include "../../stages/recompute_wu/op_kernel/recompute_w_u_fwd_vector.h"
@@ -48,8 +49,25 @@ __aicore__ inline void RunFwdH(GdnRawFront::Resource &resource, GM_ADDR k, GM_AD
                                GM_ADDR userWorkspace,
                                const GdnHoPipeline::HoPipelineConfig *idleConfig = nullptr,
                                GM_ADDR hoReadyAddr = nullptr, bool inputSequenceMajor = false,
-                               GM_ADDR gLastExp = nullptr, GM_ADDR gDecay = nullptr)
+                               GM_ADDR gLastExp = nullptr, GM_ADDR gDecay = nullptr,
+                                const HoOwnerLocal::Config *ownerConfig = nullptr)
 {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+    if constexpr (kStaticV == 128 && kStaticBT == 64 && kQkvLayout >= 0 && kQkvLayout <= 1 && !kGated &&
+                  sizeof(InputT) == 2 && std::is_same_v<GT, float> && std::is_same_v<StateT, float>) {
+        if (ownerConfig != nullptr && ownerConfig->enabled) {
+            using OwnerKernel = Catlass::Gemm::Kernel::GDNFwdHOOwnerLocalKernel<InputT, TileShapes, kQkvLayout>;
+            OwnerKernel kernel(resource);
+            kernel.Init(k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
+                        tiling, userWorkspace);
+            kernel.ConfigureInputLayout(inputSequenceMajor);
+            if (gLastExp != nullptr) { kernel.ConfigureGLastExp(gLastExp); }
+            kernel.ConfigureGDecay(gDecay);
+            kernel.ProcessOwnerLocal(*ownerConfig);
+            return;
+        }
+    }
+#endif
     // Keep the same H implementation mode as the established FwdHO kernel.
     // The final boolean enables the H/O fused scheduling path; using the
     // standalone-H mode here changes synchronization and precision behavior.
@@ -84,7 +102,8 @@ __aicore__ inline void DispatchFwdH(GdnRawFront::Resource &resource, GM_ADDR k, 
                                     GM_ADDR userWorkspace,
                                     const GdnHoPipeline::HoPipelineConfig *idleConfig = nullptr,
                                     GM_ADDR hoReadyAddr = nullptr, bool inputSequenceMajor = false,
-                                    GM_ADDR gLastExp = nullptr, GM_ADDR gDecay = nullptr)
+                                    GM_ADDR gLastExp = nullptr, GM_ADDR gDecay = nullptr,
+                                const HoOwnerLocal::Config *ownerConfig = nullptr)
 {
     const __gm__ GdnMegaArch22FwdHTilingData *hTiling =
         reinterpret_cast<const __gm__ GdnMegaArch22FwdHTilingData *>(tiling);
@@ -95,20 +114,20 @@ __aicore__ inline void DispatchFwdH(GdnRawFront::Resource &resource, GM_ADDR k, 
         if (hTiling->useGk) {
             RunFwdH<InputT, float, float, TileShapes, true, kStaticV, kStaticBT, kQkvLayout>(
                 resource, k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
-                tiling, userWorkspace, idleConfig, hoReadyAddr, inputSequenceMajor, gLastExp, gDecay);
+                tiling, userWorkspace, idleConfig, hoReadyAddr, inputSequenceMajor, gLastExp, gDecay, ownerConfig);
         } else {
             RunFwdH<InputT, float, float, TileShapes, false, kStaticV, kStaticBT, kQkvLayout>(
                 resource, k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
-                tiling, userWorkspace, idleConfig, hoReadyAddr, inputSequenceMajor, gLastExp, gDecay);
+                tiling, userWorkspace, idleConfig, hoReadyAddr, inputSequenceMajor, gLastExp, gDecay, ownerConfig);
         }
     } else if (hTiling->useGk) {
         RunFwdH<InputT, float, InputT, TileShapes, true, kStaticV, kStaticBT, kQkvLayout>(
             resource, k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
-            tiling, userWorkspace, idleConfig, hoReadyAddr, inputSequenceMajor, gLastExp, gDecay);
+            tiling, userWorkspace, idleConfig, hoReadyAddr, inputSequenceMajor, gLastExp, gDecay, ownerConfig);
     } else {
         RunFwdH<InputT, float, InputT, TileShapes, false, kStaticV, kStaticBT, kQkvLayout>(
             resource, k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
-            tiling, userWorkspace, idleConfig, hoReadyAddr, inputSequenceMajor, gLastExp, gDecay);
+            tiling, userWorkspace, idleConfig, hoReadyAddr, inputSequenceMajor, gLastExp, gDecay, ownerConfig);
     }
 }
 

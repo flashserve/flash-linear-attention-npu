@@ -115,6 +115,23 @@ public:
     ~BlockEpilogue()
     {}
 
+    CATLASS_DEVICE void ConfigureOwnerLocal(Arch::Resource<ArchTag> &resource)
+    {
+        maskUbTensor = resource.ubBuf.template GetBufferByByte<float>(0);
+        gbrcLeftcastUbTensor = resource.ubBuf.template GetBufferByByte<float>(48 * 1024);
+        gbrcUpUbTensor = resource.ubBuf.template GetBufferByByte<float>(67 * 1024);
+        shareUbTensor = resource.ubBuf.template GetBufferByByte<uint8_t>(67 * 1024);
+        gcompUbTensor = resource.ubBuf.template GetBufferByByte<float>(117 * 1024);
+        gUbTensorPing = gUbTensorPong = resource.ubBuf.template GetBufferByByte<float>(115 * 1024);
+        gUbFPTensorPing = gUbFPTensorPong = resource.ubBuf.template GetBufferByByte<GElementInput>(116 * 1024);
+        gUbBFTensorPing = gUbBFTensorPong = resource.ubBuf.template GetBufferByByte<GElementInput>(116 * 1024);
+        hUbTensorPing = hUbTensorPong = resource.ubBuf.template GetBufferByByte<float>(16 * 1024);
+        aUbTensorPing = aUbTensorPong = resource.ubBuf.template GetBufferByByte<float>(32 * 1024);
+        outUbTensorPing = outUbTensorPong = resource.ubBuf.template GetBufferByByte<float>(16 * 1024);
+        outUbFPTensorPing = outUbFPTensorPong = resource.ubBuf.template GetBufferByByte<HElementOutput>(48 * 1024);
+        outUbBFTensorPing = outUbBFTensorPong = resource.ubBuf.template GetBufferByByte<HElementOutput>(48 * 1024);
+    }
+
     CATLASS_DEVICE
     void CopyOutputToGm(
         AscendC::GlobalTensor<HElementOutput> output,
@@ -275,6 +292,7 @@ public:
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1);
     }
 
+    template <bool kOwnerLocal = false>
     CATLASS_DEVICE
     void operator()(
         AscendC::GlobalTensor<HElementOutput> hOutput,
@@ -344,21 +362,23 @@ public:
             AscendC::LocalTensor<GElementInput> gUbFPTensor = (pingpongFlag == 0) ? gUbFPTensorPing : gUbFPTensorPong;
             AscendC::LocalTensor<GElementInput> gUbBFTensor = (pingpongFlag == 0) ? gUbBFTensorPing : gUbBFTensorPong;
 
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + pingpongFlag);
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + pingpongFlag);
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>((kOwnerLocal ? 3u : EVENT_ID0 + pingpongFlag));
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>((kOwnerLocal ? 7u : EVENT_ID1 + pingpongFlag));
+            if constexpr (!kOwnerLocal) {
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>((kOwnerLocal ? 3u : EVENT_ID2 + pingpongFlag));
+            }
 
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(kOwnerLocal ? 3u : EVENT_ID0);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(kOwnerLocal ? 3u : EVENT_ID0);
 
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>((kOwnerLocal ? 3u : EVENT_ID0 + pingpongFlag));
             if constexpr(std::is_same<GElementInput, float>::value) {
                 AscendC::DataCopyPad(gUbTensor, gInputThisSubBlock, gfloatUbParams, gUbPadParams);
             } else {
                 AscendC::DataCopyPad(gUbFPTensor, gInputThisSubBlock, ghalfUbParams, gUbPadParams);
             }
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>((kOwnerLocal ? 3u : EVENT_ID0 + pingpongFlag));
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>((kOwnerLocal ? 3u : EVENT_ID0 + pingpongFlag));
             if constexpr(!std::is_same<GElementInput, float>::value) {
                 AscendC::Cast(gUbTensor, gUbFPTensor, AscendC::RoundMode::CAST_NONE, mActual);
                 AscendC::PipeBarrier<PIPE_V>();
@@ -367,23 +387,27 @@ public:
             AscendC::PipeBarrier<PIPE_V>();
 
 
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1 + pingpongFlag);
+            if constexpr (kOwnerLocal) {
+                // G-ready(3)已由V消费，反馈AV写权后才能再生产ready(3)。
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(3);
+            }
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>((kOwnerLocal ? 7u : EVENT_ID1 + pingpongFlag));
             AscendC::DataCopy(hUbTensor, hInputThisSubBlock, mActualThisSubBlock * nActual);
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>((kOwnerLocal ? 7u : EVENT_ID1 + pingpongFlag));
 
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + pingpongFlag);
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>((kOwnerLocal ? 3u : EVENT_ID2 + pingpongFlag));
             AscendC::DataCopy(aUbTensor, attnInputThisSubBlock, mActualThisSubBlock * nActual);
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>((kOwnerLocal ? 3u : EVENT_ID2 + pingpongFlag));
 
             AscendC::Exp(gcompUbTensor, gcompUbTensor, mActual);
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::Broadcast<float, 2, 1>(gbrcLeftcastUbTensor, gcompUbTensor[gbrcRealStart], dstShape_, srcShape_, shareUbTensor);
             AscendC::PipeBarrier<PIPE_V>();
 
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>((kOwnerLocal ? 7u : EVENT_ID1 + pingpongFlag));
             AscendC::Mul(gbrcUpUbTensor, hUbTensor, gbrcLeftcastUbTensor[gbrcEffStart*nActual], mActualThisSubBlock * nActual);
             AscendC::PipeBarrier<PIPE_V>();
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>((kOwnerLocal ? 3u : EVENT_ID2 + pingpongFlag));
 
             AscendC::Add(gbrcUpUbTensor, aUbTensor, gbrcUpUbTensor, mActualThisSubBlock * nActual);
             AscendC::PipeBarrier<PIPE_V>();
@@ -393,21 +417,21 @@ public:
             {
                 AscendC::Cast(outUbFPTensor, outUbTensor, AscendC::RoundMode::CAST_NONE, mActualThisSubBlock * nActual);
                 AscendC::PipeBarrier<PIPE_V>();
-                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>((kOwnerLocal ? 3u : EVENT_ID0 + pingpongFlag));
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>((kOwnerLocal ? 3u : EVENT_ID0 + pingpongFlag));
                 CopyOutputToGm(hOutputThisSubBlock, outUbFPTensor, mActualThisSubBlock, nActual, outputStride);
-                AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0 + pingpongFlag);
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0 + pingpongFlag);
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_V>((kOwnerLocal ? 3u : EVENT_ID0 + pingpongFlag));
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>((kOwnerLocal ? 3u : EVENT_ID0 + pingpongFlag));
             }
             else
             {
                 AscendC::Cast(outUbBFTensor, outUbTensor, AscendC::RoundMode::CAST_RINT, mActualThisSubBlock * nActual);
                 AscendC::PipeBarrier<PIPE_V>();
-                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>((kOwnerLocal ? 3u : EVENT_ID0 + pingpongFlag));
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>((kOwnerLocal ? 3u : EVENT_ID0 + pingpongFlag));
                 CopyOutputToGm(hOutputThisSubBlock, outUbBFTensor, mActualThisSubBlock, nActual, outputStride);
-                AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0 + pingpongFlag);
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0 + pingpongFlag);
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_V>((kOwnerLocal ? 3u : EVENT_ID0 + pingpongFlag));
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>((kOwnerLocal ? 3u : EVENT_ID0 + pingpongFlag));
             }
             pingpongFlag = 1 - pingpongFlag;
         }

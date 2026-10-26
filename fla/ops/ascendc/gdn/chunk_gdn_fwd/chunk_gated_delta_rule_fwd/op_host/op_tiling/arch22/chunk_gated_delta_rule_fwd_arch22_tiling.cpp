@@ -20,7 +20,8 @@
 namespace optiling {
 
 ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingContext *context,
-                                                               bool separateHoWorkspace);
+                                                               bool separateHoWorkspace,
+                                                               bool ownerLocalWorkspace);
 
 namespace {
 
@@ -366,7 +367,19 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
             hoReadyRegionBytes = 0;
         }
     }
-    OP_CHECK_IF(Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(context, hoPipelineReserved) !=
+    // owner-local只复用key100/101的全局模式；varlen只用序列数上界预留，不读cu内容。
+    const auto *ownerInitial = context->GetOptionalInputDesc(INPUT_INITIAL_STATE);
+    const uint64_t ownerSequencesUpper = static_cast<uint64_t>(isVarlen
+        ? cuShape->GetStorageShape().GetDim(0) - 1 : batch);
+    uint64_t ownerTasksUpper = 0;
+    const bool ownerLocalPossible = useFp32Solve && rawGLayout == 1 && oLayout == 1 &&
+        kDim == SUPPORTED_K_DIM && vDim == SUPPORTED_V_DIM_128 && *chunkSize == CHUNK_64 &&
+        context->GetOptionalInputDesc(INPUT_GK) == nullptr &&
+        (ownerInitial == nullptr || ownerInitial->GetDataType() == ge::DT_FLOAT) &&
+        !MulOverflow(ownerSequencesUpper, static_cast<uint64_t>(valueHeads), &ownerTasksUpper) &&
+        ownerTasksUpper > aicCoreNum;
+    OP_CHECK_IF(Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(
+                    context, hoPipelineReserved || ownerLocalPossible, ownerLocalPossible) !=
                     ge::GRAPH_SUCCESS,
                 OP_LOGE(context->GetNodeName(), "Reuse of the accepted Phase 5 suffix tiling failed."),
                 return ge::GRAPH_FAILED);

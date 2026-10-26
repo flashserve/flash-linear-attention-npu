@@ -53,7 +53,12 @@ public:
     CATLASS_DEVICE
     explicit GDNFwdOQKHConcatMmad(Arch::Resource<typename Base::ArchTag> &resource) : Base(resource) {}
 
-    template <class TensorQ, class TensorK, class TensorH, class TensorRaw>
+    CATLASS_DEVICE void BindOwnerL1B(AscendC::LocalTensor<ElementB> buffer)
+    {
+        this->l1BTensorList[this->l1BListId] = buffer;
+    }
+
+    template <bool kSkipOwnerH = false, class TensorQ, class TensorK, class TensorH, class TensorRaw>
     CATLASS_DEVICE void RunRaw(TensorQ &tensorQ, TensorK &tensorK, TensorH &tensorH,
                               TensorRaw &tensorRaw, uint32_t valid)
     {
@@ -85,7 +90,9 @@ public:
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(this->l1AEventList[a1]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(this->l1BEventList[b1]);
         copyK(tensorL1K, blockK);
-        copyH(tensorL1H, blockH);
+        if constexpr (!kSkipOwnerH) {
+            copyH(tensorL1H, blockH);
+        }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(this->l1BEventList[b1]);
 
         auto layoutL0A = tla::MakeLayout<ElementA, typename Base::LayoutTagL0A>(mActual, HEAD_DIM);

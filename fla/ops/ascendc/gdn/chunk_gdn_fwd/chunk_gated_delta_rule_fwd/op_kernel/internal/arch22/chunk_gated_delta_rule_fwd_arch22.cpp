@@ -811,6 +811,31 @@ __aicore__ inline void RunPhase6(
     const GdnHoPipeline::HoPipelineConfig *hoIdleConfigPtr = nullptr;
     GM_ADDR hoIdleReadyAddr = nullptr;
 #endif
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+    if constexpr (kPreparedCumsum && kStaticV == 128 && kStaticBT == 64 &&
+                  kQkvLayout >= 0 && kQkvLayout <= 1 && kOLayout == 1 && sizeof(InputT) == 2) {
+        // 编译域外保原H后CopyOTiling；未命中时本作用域也在原H之前结束。
+        const uint64_t ownerOTilingOffset =
+            AlignPhase6(sizeof(GdnMegaArch22FwdHTilingData), PHASE6_TILING_ALIGNMENT);
+        const auto *ownerGmOTiling = reinterpret_cast<const __gm__ GdnMegaArch22FwdOTilingData *>(
+            tiling + ownerOTilingOffset);
+        GdnMegaArch22FwdOTilingData ownerOTiling{};
+        CopyOTiling(ownerGmOTiling, ownerOTiling);
+        const HoOwnerLocal::Config ownerConfig = HoOwnerLocal::Resolve(
+            tiling, cuSeqlens, q, o, userWorkspace, ownerOTiling,
+            phase5->hIntermediateOffset, phase5->vNewIntermediateOffset, hoIdleEnabled,
+            Config::OutputSequenceMajor(abc));
+        if (ownerConfig.enabled) {
+            DispatchFwdH<InputT, TileShapes, kStaticV, kStaticBT, kQkvLayout>(
+                resource, k, w, u, gCumsumBht, gk, initialState, cuSeqlens, chunkIndices,
+                h, vNew, finalState, tiling, userWorkspace, nullptr, nullptr,
+                Config::InputSequenceMajor(abc), gLastExp, gDecay, &ownerConfig);
+            // 原E826的全核会合作为新H+O尾边界；命中后O不再执行第二次。
+            AscendC::SyncAll<false>();
+            return;
+        }
+    }
+#endif
     // 全部实际核仍调用 H，保留原 entry 及唯一 wave 的 SyncAll。
     DispatchFwdH<InputT, TileShapes, kStaticV, kStaticBT, kQkvLayout>(resource, k, w, u, gCumsumBht, gk, initialState, cuSeqlens,
                              chunkIndices, h, vNew, finalState, tiling, userWorkspace,
