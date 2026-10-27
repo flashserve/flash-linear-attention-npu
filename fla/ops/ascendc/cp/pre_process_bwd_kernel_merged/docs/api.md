@@ -99,7 +99,9 @@ kernel 侧不使用 `TILING_KEY_IS` 分支，由 key 直接选中模板实例。
 | `ACLNN_ERR_PARAM_NULLPTR` | `q`/`k`/`w`/`d_o`/`dv`/`dhm` 为空 |
 | `ACLNN_ERR_PARAM_INVALID` | tiling 校验失败：`k` 与 `q` shape 不一致；`w` 不是 `[B,Hv,T,K]`；`dv` 与 `d_o` shape 不一致；`Hv % Hk != 0`；`K != 128` 或 `V != 128`（本版只支持 `K = V = 128`：状态行按 64 行分组、列按 16 元素成组、Vector 逐行读写依赖该行宽）；`chunk_size != 64`；`g`/`gk` 同时非空；`g`/`gk` shape 与 dtype 不匹配；`cu_seqlens` 少于 2 项；`B > 1`（无论 dense 还是 varlen） |
 
-报错文本会给出实际 shape、`Hk`/`Hv` 与触发的约束，便于定位；`g`/`gk` 同时非空的报错会明确指出二者互斥。
+公共参数拦截在 CANN 9.x 使用 `OP_LOGE_FOR_*` / `OP_LOGE_WITH_INVALID_INPUT` 上报结构化错误，报错文本
+包含参数名、实际值、期望值或明确原因；CANN 8.5 保留可读日志降级路径。反向用例同时断言返回码和
+关键错误文本，`g`/`gk` 同时非空时会明确指出二者互斥。
 
 ## 6. 典型 shape
 

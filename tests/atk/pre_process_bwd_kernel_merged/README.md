@@ -93,7 +93,7 @@ atk node --backend npu --devices <device_id> task \
 
 | 平台 | 结果 |
 | --- | --- |
-| A5 / `ascend950` | `Total Task: 13, success 13, failed 0`，13 条命中的 `aclnnStatus` 均为 161001 |
+| A5 / `ascend950` | `Total Task: 13, success 13, failed 0`，13 条命中的 `aclnnStatus` 均为 161002 |
 | A2 / `ascend910b` | `Total Task: 13, success 13, failed 0`，同上 |
 
 判据：executor 先从算子异常文本里取 `aclnnStatus=<code>` 与用例声明的 `expected_return_code` 比对，
@@ -180,7 +180,7 @@ python tests/atk/pre_process_bwd_kernel_merged/scripts/reference.py
 环境要点（复现该入口时容易踩）：稳定入口要求 custom OPP 指向**本算子 run 包的安装目录**
 （`<install>/vendors/<vendor>`，同时把 `FLA_NPU_ENV` 指向该目录的 `set_env.bash`）。把 OPP
 **复制**到别处再用会在 A2 上解析不到 tiling compile-info（`InitTilingParseCtx failed ...
-compile info not contain [_pattern]`），从而在 `GetWorkspaceSize` 报 `aclnnStatus=161001`；
+compile info not contain [_pattern]`），从而在 `GetWorkspaceSize` 报 `aclnnStatus=161002`；
 指回原安装目录即恢复正常。
 
 ## 精度判据
