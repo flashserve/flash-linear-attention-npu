@@ -20,6 +20,7 @@
 namespace optiling {
 
 ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(gert::TilingContext *context);
+ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *context);
 
 namespace {
 
@@ -41,6 +42,7 @@ constexpr size_t ATTR_CHUNK_SIZE = 1;
 constexpr int64_t SUPPORTED_K_DIM = 128;
 constexpr int64_t SUPPORTED_V_DIM_128 = 128;
 constexpr int64_t SUPPORTED_V_DIM_256 = 256;
+constexpr int64_t CHUNK_32 = 32;
 constexpr int64_t CHUNK_64 = 64;
 constexpr int64_t CHUNK_128 = 128;
 constexpr uint32_t TILING_KEY_V128 = 1;
@@ -130,6 +132,11 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35(gert::TilingContext *context
     OP_CHECK_IF(context == nullptr || context->GetAttrs() == nullptr,
                 OP_LOGE("ChunkGatedDeltaRuleFwd", "Invalid tiling context."),
                 return ge::GRAPH_FAILED);
+    const int64_t *requestedChunkSize =
+        context->GetAttrs()->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE);
+    if (requestedChunkSize != nullptr && *requestedChunkSize == CHUNK_32) {
+        return Tiling4ChunkGatedDeltaRuleFwdChunk32(context);
+    }
     const auto *qShape = context->GetOptionalInputShape(INPUT_Q);
     const auto *kShape = context->GetOptionalInputShape(INPUT_K);
     const auto *vShape = context->GetOptionalInputShape(INPUT_V);

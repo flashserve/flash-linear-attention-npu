@@ -2872,8 +2872,11 @@ def npu_chunk_gated_delta_rule_fwd(
         )
     if beta_shape != (batch, tokens, v_heads) or g_shape != beta_shape:
         raise RuntimeError("npu_chunk_gated_delta_rule_fwd: beta and g must have shape [B,T,Hv].")
-    if chunk_size not in (64, 128):
-        raise RuntimeError("npu_chunk_gated_delta_rule_fwd: chunk_size must be 64 or 128.")
+    if chunk_size not in (32, 64, 128):
+        raise RuntimeError("npu_chunk_gated_delta_rule_fwd: chunk_size must be 32, 64 or 128.")
+    is_chunk32 = chunk_size == 32
+    if is_chunk32 and v_dim != 128:
+        raise RuntimeError("npu_chunk_gated_delta_rule_fwd: chunk_size=32 requires V=128.")
     if (cu_seqlens is None) != (chunk_indices is None):
         raise RuntimeError("npu_chunk_gated_delta_rule_fwd: cu_seqlens and chunk_indices must be provided together.")
     if cu_seqlens is not None:
@@ -2905,21 +2908,40 @@ def npu_chunk_gated_delta_rule_fwd(
         raise ValueError("use_gate_in_kernel=True is not supported.")
     if a_log is not None or dt_bias is not None:
         raise ValueError("a_log and dt_bias must be None while gate-in-kernel is unsupported.")
+    if is_chunk32:
+        if layout not in ("BNSD", "NTD"):
+            raise ValueError("chunk_size=32 supports BNSD/NTD input only.")
+        if use_exp2 or not use_qk_l2norm_in_kernel or not use_beta_sigmoid_in_kernel:
+            raise ValueError(
+                "chunk_size=32 requires use_exp2=False, "
+                "use_qk_l2norm_in_kernel=True and use_beta_sigmoid_in_kernel=True."
+            )
+        if allow_neg_eigval or state_v_first:
+            raise ValueError(
+                "chunk_size=32 requires allow_neg_eigval=False and state_v_first=False."
+            )
+        if disable_recompute or return_intermediate_states:
+            raise ValueError(
+                "chunk_size=32 does not export g_cumsum, A or intermediate states; "
+                "set disable_recompute=False and return_intermediate_states=False."
+            )
+        if initial_state is not None and initial_state.dtype not in (torch.bfloat16, torch.float32):
+            raise ValueError("chunk_size=32 initial_state must be bfloat16 or float32.")
     scale = _optional_float(scale, float(k_dim) ** -0.5)
     o = _empty((batch, tokens, v_heads, v_dim), v)
     g_cumsum = (
         _empty((batch, tokens, v_heads), g, dtype=torch.float32)
-        if disable_recompute
+        if disable_recompute and not is_chunk32
         else None
     )
     A = (
         _empty((batch, v_heads, tokens, int(chunk_size)), q)
-        if disable_recompute
+        if disable_recompute and not is_chunk32
         else None
     )
     beta_eff = (
         _empty((batch, tokens, v_heads), beta, dtype=torch.float32)
-        if use_beta_sigmoid_in_kernel
+        if use_beta_sigmoid_in_kernel and not is_chunk32
         else None
     )
     final_state = None
@@ -2945,11 +2967,19 @@ def npu_chunk_gated_delta_rule_fwd(
         h = _empty((batch, chunks, v_heads, *state_tail), q)
     layout_buffer = ctypes.create_string_buffer(layout.encode("utf-8"))
     # Hats alias the original inputs when normalization is disabled.
-    q_hat = _empty(q_shape, q) if use_qk_l2norm_in_kernel else q
-    k_hat = _empty(k_shape, k) if use_qk_l2norm_in_kernel else k
+    q_hat = _empty(q_shape, q) if use_qk_l2norm_in_kernel and not is_chunk32 else (None if is_chunk32 else q)
+    k_hat = _empty(k_shape, k) if use_qk_l2norm_in_kernel and not is_chunk32 else (None if is_chunk32 else k)
     norm_shape = (batch, k_heads, tokens)
-    q_rstd = _empty(norm_shape, q, dtype=torch.float32) if use_qk_l2norm_in_kernel else None
-    k_rstd = _empty(norm_shape, k, dtype=torch.float32) if use_qk_l2norm_in_kernel else None
+    q_rstd = (
+        _empty(norm_shape, q, dtype=torch.float32)
+        if use_qk_l2norm_in_kernel and not is_chunk32
+        else None
+    )
+    k_rstd = (
+        _empty(norm_shape, k, dtype=torch.float32)
+        if use_qk_l2norm_in_kernel and not is_chunk32
+        else None
+    )
     outputs = (o, final_state, g_cumsum, A, beta_eff, h, q_hat, k_hat, q_rstd, k_rstd)
     return _call_aclnn(
         "aclnnChunkGatedDeltaRuleFwd",
@@ -4643,9 +4673,15 @@ def npu_chunk_gated_delta_rule_fwd_32(
     cu_seqlens and chunk_indices are both absent, or both present. When present, B is 1 and T
     packs N sequences. final_state and initial_state are then [N, Hv, K, V]. chunk_indices is
     the canonical (seqId, localChunkId) list; omitting it builds that list from cu_seqlens.
+
+    final_state uses initial_state's dtype. With no initial_state it is float32. A bfloat16
+    initial_state is widened once; the on-chip recurrence stays float32 and the bfloat16
+    final_state is rounded on the way out.
     """
 
     import math
+
+    import torch
 
     if q.shape != k.shape or q.ndim != 4 or v.ndim != 4:
         raise RuntimeError("q, k and v must be rank-4, and q must match k.")
@@ -4673,10 +4709,15 @@ def npu_chunk_gated_delta_rule_fwd_32(
     v = v.contiguous()
     g = g.contiguous()
     beta = beta.contiguous()
-    if initial_state is not None:
+    if initial_state is None:
+        state_dtype = torch.float32
+    else:
+        if initial_state.dtype not in (torch.bfloat16, torch.float32):
+            raise RuntimeError("initial_state must be bfloat16 or float32.")
         initial_state = initial_state.contiguous()
+        state_dtype = initial_state.dtype
     out = _zeros((b, hv, tokens, value), q)
-    final_state = _zeros((seq_num, hv, key, value), q)
+    final_state = _zeros((seq_num, hv, key, value), q, dtype=state_dtype)
 
     def nd(ctx, tensor, name):
         if tensor is None:

@@ -262,6 +262,7 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=gen_cases
 | `chunk_bwd_dv_local`             | `fla_npu.ops.ascendc.chunk_bwd_dv_local`             | 见[`chunk_bwd_dv_local/README.md`](./chunk_bwd_dv_local/README.md)                         |
 | `chunk_fwd_o`                    | `fla_npu.ops.ascendc.chunk_fwd_o`                    | 见[`chunk_fwd_o/README.md`](./chunk_fwd_o/README.md)                                       |
 | `chunk_gated_delta_rule_fwd`     | `fla_npu.ops.ascendc.chunk_gated_delta_rule_fwd`     | 见[`chunk_gated_delta_rule_fwd/README.md`](./chunk_gated_delta_rule_fwd/README.md)           |
+| `chunk_gated_delta_rule_fwd_32`  | `fla_npu.ops.ascendc.npu_chunk_gated_delta_rule_fwd_32` | 见[`chunk_gated_delta_rule_fwd_32/README.md`](./chunk_gated_delta_rule_fwd_32/README.md)；`mixed_tolerance_bm` |
 | `chunk_gdn_bwd_intra`            | `fla_npu.ops.ascendc.chunk_gdn_bwd_intra`            | 见[`chunk_gdn_bwd_intra/README.md`](./chunk_gdn_bwd_intra/README.md)                       |
 | `chunk_gated_delta_rule_bwd_dhu` | `fla_npu.ops.ascendc.chunk_gated_delta_rule_bwd_dhu` | 见[`chunk_gated_delta_rule_bwd_dhu/README.md`](./chunk_gated_delta_rule_bwd_dhu/README.md) |
 | `chunk_gated_delta_rule_fwd_h`   | `fla_npu.ops.ascendc.chunk_gated_delta_rule_fwd_h`   | 见[`chunk_gated_delta_rule_fwd_h/README.md`](./chunk_gated_delta_rule_fwd_h/README.md)     |

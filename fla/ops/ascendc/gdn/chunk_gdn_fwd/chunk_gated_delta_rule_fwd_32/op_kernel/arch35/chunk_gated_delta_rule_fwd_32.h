@@ -69,6 +69,11 @@ constexpr uint32_t kUbVg = 128 * 1024;
 constexpr uint32_t kUbO = 132 * 1024;
 // Two 32-row D slices per AIV, so the cube can land both before the saxpy.
 constexpr uint32_t kUbD = 176 * 1024;
+// FP32 recurrence, 64x128, ends at 224KB. The BF16 cube image stays at kUbState.
+constexpr uint32_t kUbStateF = 192 * 1024;
+// FP32 ND staging. Same bytes as the KKT tile; Init and the final store finish
+// before that tile is live. The scatter over-reads 48 floats past this range.
+constexpr uint32_t kUbNdF = 88 * 1024;
 constexpr uint32_t kUbEye = 144 * 1024;
 constexpr uint32_t kUbSh = 148 * 1024;
 constexpr uint32_t kUbScratch = 152 * 1024;
@@ -104,6 +109,8 @@ public:
         seqLen_ = tilingData.T;
         scale_ = tilingData.scale;
         hasInitial_ = tilingData.hasInitial;
+        initialFp32_ = tilingData.initialFp32;
+        finalFp32_ = tilingData.finalFp32;
         seqNum_ = tilingData.seqNum;
         uint32_t aicIdx = GetBlockIdx();
         if ASCEND_IS_AIV {
@@ -130,9 +137,17 @@ public:
         gGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(g));
         betaGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(beta));
         oGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(o));
-        stateGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(finalState));
+        if (finalFp32_ != 0) {
+            stateFGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(finalState));
+        } else {
+            stateGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(finalState));
+        }
         if (hasInitial_ != 0 && initial != nullptr) {
-            initGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(initial));
+            if (initialFp32_ != 0) {
+                initFGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(initial));
+            } else {
+                initGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(initial));
+            }
         }
         (void)chunkIndices;
         if (seqNum_ != 0 && cuSeqlens != nullptr) {
@@ -140,6 +155,8 @@ public:
         }
 
         ubState_ = buf.template GetBuffer<BufferType::ASCEND_UB, bfloat16_t>(kUbState);
+        ubStateF_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(kUbStateF);
+        ubNdF_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(kUbNdF);
         ubQ_ = buf.template GetBuffer<BufferType::ASCEND_UB, bfloat16_t>(kUbQ);
         ubK_ = buf.template GetBuffer<BufferType::ASCEND_UB, bfloat16_t>(kUbK);
         ubV_ = buf.template GetBuffer<BufferType::ASCEND_UB, bfloat16_t>(kUbV);
@@ -276,6 +293,27 @@ private:
         return chunk & 1U;
     }
 
+    // BF16 initial is widened once. FP32 initial is copied into the recurrence
+    // and rounded once into the cube image.
+    __aicore__ inline void LoadInitial(int64_t elem)
+    {
+        constexpr uint32_t nElem = 64 * 128;
+        if (initialFp32_ == 0) {
+            DataCopy(ubD_, initGm_[elem], nElem);
+            // Event 1. PrepareLoad owns event 0, and both copies are in flight.
+            SetFlag<HardEvent::MTE2_V>(1);
+            WaitFlag<HardEvent::MTE2_V>(1);
+            NdToPanels(ubState_, ubD_);
+            Cast(ubStateF_, ubState_, RoundMode::CAST_NONE, nElem);
+        } else {
+            DataCopy(ubNdF_, initFGm_[elem], nElem);
+            SetFlag<HardEvent::MTE2_V>(1);
+            WaitFlag<HardEvent::MTE2_V>(1);
+            NdFp32ToPanels(ubStateF_, ubNdF_);
+            Cast(ubState_, ubStateF_, RoundMode::CAST_RINT, nElem);
+        }
+    }
+
     __aicore__ inline void InitState()
     {
         constexpr uint32_t nElem = 64 * 128;
@@ -283,13 +321,10 @@ private:
             const int64_t elem = static_cast<int64_t>(
                 (static_cast<uint64_t>(batchIdx_) * valueHeadNum_ + headIdx_) * kDim * kDim +
                 static_cast<uint64_t>(sub_) * nElem);
-            DataCopy(ubD_, initGm_[elem], nElem);
-            // Event 1. PrepareLoad owns event 0, and both copies are in flight.
-            SetFlag<HardEvent::MTE2_V>(1);
-            WaitFlag<HardEvent::MTE2_V>(1);
-            NdToPanels(ubState_, ubD_);
+            LoadInitial(elem);
         } else {
             Duplicate(ubState_, static_cast<bfloat16_t>(0), nElem);
+            Duplicate(ubStateF_, 0.f, nElem);
         }
         SetFlag<HardEvent::V_MTE3>(1);
     }
@@ -525,7 +560,7 @@ private:
     // for the epilogue.
     __aicore__ inline void ApplyD(float decay, bool upload)
     {
-        SaxpyStateVF(ubState_, ubD_, decay, 0, 8);
+        SaxpyStateVF(ubStateF_, ubState_, ubD_, decay, 0, 8);
         SetFlag<HardEvent::V_MTE3>(1);
         if (upload) {
             WaitFlag<HardEvent::V_MTE3>(1);
@@ -533,7 +568,7 @@ private:
             // Fires when those panels land, while the second saxpy is in flight.
             CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagH0);
         }
-        SaxpyStateVF(ubState_, ubD_, decay, 8, 8);
+        SaxpyStateVF(ubStateF_, ubState_, ubD_, decay, 8, 8);
         SetFlag<HardEvent::V_MTE3>(2);
         if (upload) {
             WaitFlag<HardEvent::V_MTE3>(2);
@@ -752,9 +787,11 @@ private:
         // prefetched: the previous task already issued this task's PrepareLoad
         // so it overlaps that task's final-state store.
         bool prefetched = false;
-        // The state store reads ubD_ on MTE3. The next task's initial-state copy
-        // writes that same buffer on MTE2, so the copy waits until the store is done.
+        // BF16 final reads ubD_ on MTE3. The next task's BF16 initial copy writes
+        // that buffer on MTE2. FP32 final reads ubNdF_; the next head's inverse
+        // reuses that range, so the vector waits for the store.
         bool stateLive = false;
+        bool stateNdLive = false;
         for (uint32_t head = headBegin_; head < totalHeads_; head += aicNum_) {
             if (!prefetched) {
                 GetCurIdx(head);
@@ -763,6 +800,9 @@ private:
                 }
             }
             prefetched = false;
+            if (stateNdLive) {
+                WaitFlag<HardEvent::MTE3_V>(4);
+            }
             if (stateLive) {
                 WaitFlag<HardEvent::MTE3_MTE2>(0);
             }
@@ -844,19 +884,16 @@ private:
                 PrepareLoad(sub_);
                 prefetched = true;
             }
-            WaitFlag<HardEvent::V_MTE3>(1);
-            WaitFlag<HardEvent::V_MTE3>(2);
-            if (nzArmed_ != 0) {
-                WaitFlag<HardEvent::MTE3_V>(3);
-                nzArmed_ = 0;
-            }
-            PanelsToNd(ubD_, ubState_);
-            SetFlag<HardEvent::V_MTE3>(1);
-            WaitFlag<HardEvent::V_MTE3>(1);
-            DataCopy(stateGm_[elem], ubD_, nElem);
-            if (hasInitial_ != 0 && next < totalHeads_) {
-                SetFlag<HardEvent::MTE3_MTE2>(0);
-                stateLive = true;
+            StoreState(elem);
+            if (next < totalHeads_) {
+                if (finalFp32_ != 0) {
+                    SetFlag<HardEvent::MTE3_V>(4);
+                    stateNdLive = true;
+                }
+                if (hasInitial_ != 0) {
+                    SetFlag<HardEvent::MTE3_MTE2>(0);
+                    stateLive = true;
+                }
             }
         }
     }
@@ -887,20 +924,33 @@ private:
     {
         constexpr uint32_t nElem = 64 * 128;
         if (hasInitial_ != 0) {
-            DataCopy(ubD_, initGm_[StateElem()], nElem);
-            SetFlag<HardEvent::MTE2_V>(1);
-            WaitFlag<HardEvent::MTE2_V>(1);
-            NdToPanels(ubState_, ubD_);
+            LoadInitial(StateElem());
         } else {
             Duplicate(ubState_, static_cast<bfloat16_t>(0), nElem);
+            Duplicate(ubStateF_, 0.f, nElem);
         }
         SetFlag<HardEvent::V_MTE3>(1);
     }
 
-    // Issue the initial-state copy, or zero ubD, before the next sequence's PrepareLoad.
+    // Issue the initial-state copy, or zero the store buffer, before the next sequence's PrepareLoad.
+    // FP32 final keeps the initial bits. BF16 final copies the BF16 initial.
     __aicore__ inline void FillEmptyUbD()
     {
         constexpr uint32_t nElem = 64 * 128;
+        if (finalFp32_ != 0) {
+            if (hasInitial_ != 0) {
+                DataCopy(ubNdF_, initFGm_[StateElem()], nElem);
+                SetFlag<HardEvent::MTE2_MTE3>(1);
+            } else {
+                // The previous sequence's store may still be reading ubNdF_ on MTE3.
+                SetFlag<HardEvent::MTE3_V>(0);
+                WaitFlag<HardEvent::MTE3_V>(0);
+                Duplicate(ubNdF_, 0.f, nElem);
+                SetFlag<HardEvent::V_MTE3>(1);
+                WaitFlag<HardEvent::V_MTE3>(1);
+            }
+            return;
+        }
         if (hasInitial_ != 0) {
             DataCopy(ubD_, initGm_[StateElem()], nElem);
             SetFlag<HardEvent::MTE2_MTE3>(1);
@@ -911,6 +961,16 @@ private:
             Duplicate(ubD_, static_cast<bfloat16_t>(0), nElem);
             SetFlag<HardEvent::V_MTE3>(1);
             WaitFlag<HardEvent::V_MTE3>(1);
+        }
+    }
+
+    __aicore__ inline void EmitPreparedState(int64_t elem)
+    {
+        constexpr uint32_t nElem = 64 * 128;
+        if (finalFp32_ != 0) {
+            DataCopy(stateFGm_[elem], ubNdF_, nElem);
+        } else {
+            DataCopy(stateGm_[elem], ubD_, nElem);
         }
     }
 
@@ -950,10 +1010,17 @@ private:
             WaitFlag<HardEvent::MTE3_V>(3);
             nzArmed_ = 0;
         }
-        PanelsToNd(ubD_, ubState_);
-        SetFlag<HardEvent::V_MTE3>(1);
-        WaitFlag<HardEvent::V_MTE3>(1);
-        DataCopy(stateGm_[elem], ubD_, nElem);
+        if (finalFp32_ != 0) {
+            PanelsFp32ToNd(ubNdF_, ubStateF_);
+            SetFlag<HardEvent::V_MTE3>(1);
+            WaitFlag<HardEvent::V_MTE3>(1);
+            DataCopy(stateFGm_[elem], ubNdF_, nElem);
+        } else {
+            PanelsToNd(ubD_, ubState_);
+            SetFlag<HardEvent::V_MTE3>(1);
+            WaitFlag<HardEvent::V_MTE3>(1);
+            DataCopy(stateGm_[elem], ubD_, nElem);
+        }
     }
 
     __aicore__ inline void RunSequence()
@@ -1023,6 +1090,7 @@ private:
         GenAuxMatrixVF(ubSh_, ubEye_);
         bool prefetched = false;
         bool stateLive = false;
+        bool stateNdLive = false;
         for (uint32_t head = headBegin_; head < totalHeads_; head += aicNum_) {
             if (!prefetched) {
                 GetCurIdx(head);
@@ -1033,6 +1101,10 @@ private:
                     BindSequence(seq);
                 }
                 prefetched = false;
+                if (stateNdLive) {
+                    WaitFlag<HardEvent::MTE3_V>(4);
+                    stateNdLive = false;
+                }
                 if (stateLive) {
                     WaitFlag<HardEvent::MTE3_MTE2>(0);
                     stateLive = false;
@@ -1043,7 +1115,11 @@ private:
                     FillEmptyUbD();
                     prefetched = PrefetchNext(head, seq);
                     FinishEmptyStore();
-                    DataCopy(stateGm_[elem], ubD_, 64U * 128U);
+                    EmitPreparedState(elem);
+                    if (finalFp32_ != 0 && more) {
+                        SetFlag<HardEvent::MTE3_V>(4);
+                        stateNdLive = true;
+                    }
                     if (more) {
                         SetFlag<HardEvent::MTE3_MTE2>(0);
                         stateLive = true;
@@ -1059,6 +1135,10 @@ private:
                 const int64_t elem = StateElem();
                 prefetched = PrefetchNext(head, seq);
                 StoreState(elem);
+                if (finalFp32_ != 0 && more) {
+                    SetFlag<HardEvent::MTE3_V>(4);
+                    stateNdLive = true;
+                }
                 if (more) {
                     SetFlag<HardEvent::MTE3_MTE2>(0);
                     stateLive = true;
@@ -1191,12 +1271,12 @@ private:
 
     OnChipBuffer buf;
     GlobalTensor<bfloat16_t> qGm_, kGm_, vGm_, betaGm_, oGm_, stateGm_, initGm_;
-    GlobalTensor<float> gGm_;
+    GlobalTensor<float> gGm_, stateFGm_, initFGm_;
     GlobalTensor<int64_t> cuGm_;
     LocalTensor<bfloat16_t> ubState_, ubQ_, ubK_, ubV_, ubQnz_, ubKnz_, ubKbg_, ubQexp_, ubVnz_;
     LocalTensor<bfloat16_t> ubBeta_, ubAbf_, ubAttn_, ubU_, ubVn_, ubVg_, ubO_, ubD_;
     LocalTensor<float> ubG_, ubBe_, ubEg_, ubKkt_, ubQk_, ubL_, ubA_, ubEye_, ubScratch_;
-    LocalTensor<float> ubG2_, ubEg2_;
+    LocalTensor<float> ubG2_, ubEg2_, ubStateF_, ubNdF_;
     LocalTensor<uint32_t> ubSh_;
     LocalTensor<bfloat16_t> l1H_, l1Vn_, l1Vg_;
     LocalTensor<bfloat16_t> l1Q_[2], l1K_[2], l1Vb_[2], l1Kbg_[2], l1Qexp_[2], l1A_[2], l1Attn_[2], l1W_[2];
@@ -1223,6 +1303,8 @@ private:
     uint32_t seqNum_ = 0;
     uint32_t stateSlot_ = 0;
     uint32_t hasInitial_ = 0;
+    uint32_t initialFp32_ = 0;
+    uint32_t finalFp32_ = 0;
     uint32_t nzArmed_ = 0;
     float scale_ = 0.f;
     bool hasHead_ = false;
