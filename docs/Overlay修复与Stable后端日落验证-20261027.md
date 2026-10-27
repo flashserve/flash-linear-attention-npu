@@ -1,6 +1,6 @@
 # Overlay 修复与 Stable 后端日落验证（2026-10-27）
 
-本记录包含两个阶段。最新主干已同步到 `c54ed595`；当前复验见文末“主干六笔提交同步与复验”。第一阶段的范围与结果保留为历史记录，不与本次结果累加。
+本记录包含三个阶段。主干已同步到 `c54ed595`；最新结果见文末“侧边测试修复整合与复验（2026-10-28）”。前两个阶段保留为历史记录，不与最新结果累加。
 
 ## 第一阶段：overlay 修复与后端日落
 
@@ -190,3 +190,54 @@ KDA recompute 性能任务两版均因 `cv_fused_double_benchmark` 未注册而�
 - 本地：`artifacts/pr878-main-sync-20261027/evidence/sync-summary.json`、原始日志/XML/JSON 及 `reports/` 的 ATK 原始工作簿。
 - `merge-audit.json` 保存父提交、重叠文件和两侧保留检查；`source-verification.json` 保存实际验证源码校验；`opp-version-parity.json` 保存安装路径、OPP 二进制哈希与输出哈希。
 - 原始失败、脚本调用错误及修正后的重跑日志均保留，未覆盖或把命令返回 0 直接当作 ATK case 通过。
+
+## 侧边测试修复整合与复验（2026-10-28）
+
+从 PR878 的 `4c2f9dfd` 整合侧边基于 `c54ed595` 的 12 文件修改，并更新本记录，共 13 个文件。按补丁整合，没有覆盖 PR878 已迁移到 `aclnn_error_probe` 的负向执行器，也没有恢复 ctypes 产品后端或 legacy 扩展。
+
+### 本次修改清单与依据
+
+| 文件（仓库相对路径） | 修改与兼容理由 |
+| --- | --- |
+| `fla/ops/ascendc/kda/chunk_kda_fwd/op_host/op_api/aclnn_chunk_kda_fwd.cpp` | V1/V2 返回 `CheckParams` 的原始状态；空指针的 `161001` 不再被转换成 `161002`。两阶段函数签名、成功路径、kernel/tiling 和输出计算不变。 |
+| `tests/atk/chunk_kda_fwd/executor_chunk_kda_fwd.py` | dtype 负例先于 `k_*`/`v_*` 尺寸分派，避免 KeyError；删除把可选 `akkOut` 当必选的无效负例分支。保留包外只执行 GetWorkspaceSize 的探针。 |
+| `tests/atk/chunk_kda_fwd/gen_chunk_kda_fwd.py` | 修正 `aqkOut`、chunk size、K/V 档位的错误预期；移除 `null_akk` 后每个平台有 53 个负例。保留逻辑 ID 49 的空位，确保其余用例的逻辑名称、seed、dtype 和输入参数不变；生成后的物理位置按 53 例重新排列。 |
+| `tests/atk/chunk_kda_fwd_prepare/executor_chunk_kda_fwd_prepare.py` | fixture 的 `a_log` 映射到公开参数 `A_log`，修正实际调用关键字。 |
+| `tests/atk/chunk_kda_fwd_prepare/README.md` | 区分 fixture 字段与公开 Python 参数名。 |
+| `fla/ops/ascendc/kda/chunk_kda_fwd_prepare/README.md`、`docs/api.md` | 示例和公开参数表统一写 `A_log`；不重命名 JSON fixture。 |
+| `tests/atk/chunk_scaled_dot_kkt/executor_chunk_scaled_dot_kkt.py` | CPU 标杆按行 token 乘 beta，输出按 Hv 分配、用 `hk = hv // (Hv / Hk)` 映射 K head。依据既有 ACLNN 文档、原生 CPU reference 和 Triton 公式；修正的是标杆，不是 NPU 数学实现。 |
+| 同目录 `gen_chunk_scaled_dot_kkt.py`、`atk_chunk_scaled_dot_kkt.json`、`README.md` | 保留原 BF16/FP16 两例的完整输入，再追加 FP16 GVA 用例；没有用新例替换旧失败例，也没有修改旧例种子、值域或容差。 |
+| `tests/stable_abi/test_chunk_kda_bwd_prepare.py` | A5 正例只覆盖已实现的 fixed BNSD / variable NTD，其余六种布局/变长组合验证明确拒绝；A2/A3 原矩阵保留，未宣称这些平台已验证。 |
+| 本文件 | 区分已修复、实测通过、已有失败和待验收事项。 |
+
+标准库 ctypes 的库/能力/stream 查询以及 KDA `implementation="legacy"` 算法选项继续保持上一阶段边界。没有新增产品环境变量；测试识别 A5 时优先读取设备名称，查询异常时使用既有 `FLA_NPU_SOC` 作为提示。
+
+### 本次实际验证
+
+Ascend 950 / CANN 9.2.0 / ATK 26.9.8。对整合源码执行 `bash build.sh --pkg --jit --soc=ascend950 -j16`，重新构建全部 host 库并通过打包；在隔离安装副本替换新 `libcust_opapi.so`，重新生成 ABI manifest。未修改的 kernel 二进制和 Stable launcher 复用 `4c2f9dfd` 的全量构建产物；**这不是重新完成全量 kernel / wheel 发布构建**。12 个整合文件的 SHA256 与实际测试源码一致。
+
+| 检查 | 结果 |
+| --- | --- |
+| 公共单测 / CI 单测 | 171 PASS、3 SKIP；CI 173 PASS。跳过项为源码树未生成构建戳、两个需显式 `--npu` 的测试入口；真实 ABI 另跑 12/12 通过。 |
+| 覆盖 / ABI | 38 个公开算子覆盖通过；38 adapters / 13 stack slots 为 0 mismatch；新构建 OPP 头文件的 31 个真实调用点为 0 mismatch。 |
+| KDA fwd 负向 | ATK 53/53 成功；额外对 V1/V2 各运行相同 53 例，106/106 错误码及消息匹配。新测试对旧库为 90/106，差异仅为两个入口各 8 个空指针分支的错误码，证明 host 修复实际生效。 |
+| KDA fwd 正向 | 原抽查 3/3 ATK 精度通过；未扩展为该算子全部精度矩阵。 |
+| KDA fwd prepare | 冻结的 200 例 ATK 精度全部通过，包括此前被错误关键字阻塞的用例；以原始工作簿逐行结果为准。 |
+| KKT CPU 标杆 | 27 组固定输入覆盖 HK/HV=1/1、1/2、2/4，T=1/17/33 和三个种子。FP64 标杆与独立 scalar 公式转 FP32 后逐位一致，并与既有原生 CPU reference 对齐；所有 T>1 输入都能识别错误的按列 beta。 |
+| KKT ATK | 原两例和新增 GVA：精度 3/3、确定性 3/3（每例 20 轮）通过；device profiling 三例为 7.8709 / 7.7684 / 8.4203 µs。无旧版同环境性能对照，不声称性能提升或全量性能验收。 |
+| KDA bwd prepare | extended：60 个支持场景、180 个输出精确对比通过；6 个不支持组合按预期拒绝；2 个 nonfinite 上三角/tail 掩码用例通过。原 30 个 raw ACLNN 负例及公开 Stable 异常传播通过。 |
+| 原生 NPU 套件 | 261 PASS、3 FAIL；三个失败名称和异常文本与 `4c2f9dfd` 完全相同。 |
+| 静态检视 | issue 快照覆盖检查通过（188 个 completed issue / 21 条规则）。KDA host 的静态 DFX 扫描前后均命中 102 处 guard，未宣称扫描通过或完成全仓结构化报错整改。实际 53 个负例已逐条校验错误码及消息。 |
+
+第一次外部 V1/V2 诊断脚本漏加 `tests/atk/common` 搜索路径，导入失败，未计入通过；修正脚本后重新验证上述 106 例，首次日志保留。仓内 ATK 53 例直接运行通过。此前“未改 golden”的描述属于前两个阶段；本阶段明确修正 KKT golden，并未调整容差来制造通过。
+
+### 合入判断与剩余事项
+
+**本批修复已验证并可提交；整份 PR 仍不能标为可合入或全量验收完成。**
+
+1. 三个已复现的 conv1d 失败仍在：varlen/device metadata/head_num 数值差异、update `max_query_len` 未抛预期 ValueError、bwd `BSH` 布局被 wrapper 拒绝。本批未改这三个用例或实现。
+2. KDA recompute 的 ATK `cv_fused_double_benchmark` 缺失、发布产物要求 `GLIBCXX_3.4.32` 超出 `3.4.29` 上限，沿用上一阶段未解决状态；本批未重跑或消除这些阻塞。
+3. 未完成 38 算子全量 ATK、各算子三份 JSON 对应的完整精度/性能/DC/MSS、A2/A3 真机与框架矩阵、Example/ST、真实 Docker 取消验证，以及规定发布工具链的重构建。KKT 未新增 Triton JIT 实跑或 CT Tool 值域校准，不将当前 CPU/ATK 回归冒充这些专项验收。
+4. 现有 host 使用通用 guard 的结构化 DFX 整改仍是遗留风险，本批只修正返回码丢失。新 head 仍须取得同一次 A2+A5 正式运行的七项 NPU CI、自动 `CI 契约测试`、两个 approval 及 ABI Code Owner 确认。保持 Draft。
+
+原始证据以 `integration-audit.json`、`installed-identity.json`、`integration-summary.json`、单测 XML、V1/V2 前后 JSON、ATK 原始工作簿及日志保存。前两个阶段的结果保留为历史，不能计入本次重新执行的通过数。
