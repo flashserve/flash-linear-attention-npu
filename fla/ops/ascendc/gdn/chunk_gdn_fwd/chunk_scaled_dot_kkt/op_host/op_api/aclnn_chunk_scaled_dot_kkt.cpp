@@ -152,8 +152,8 @@ aclnnStatus aclnnChunkScaledDotKktGetWorkspaceSize(
     auto executorPtr = uniqueExecutor.get();
 
     OP_LOGW("npu_chunk_scaled_dot_kkt",
-            "npu_chunk_scaled_dot_kkt is deprecated and will be removed in "
-            "a later version; use the fused npu_chunk_gated_delta_rule_fwd instead.");
+            "npu_chunk_scaled_dot_kkt is deprecated and will be removed on "
+            "January 15, 2027; use the fused npu_chunk_gated_delta_rule_fwd instead.");
 
     auto ret = MakeContiguous(p.k, executorPtr);
     if (ret != ACLNN_SUCCESS) {

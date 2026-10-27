@@ -91,8 +91,8 @@ aclnnStatus aclnnChunkLocalCumsumGetWorkspaceSize(
     auto executorPtr = uniqueExecutor.get();
 
     OP_LOGW("npu_chunk_local_cumsum",
-            "npu_chunk_local_cumsum is deprecated and will be removed in "
-            "a later version; use the fused npu_chunk_gated_delta_rule_fwd instead.");
+            "npu_chunk_local_cumsum is deprecated and will be removed on "
+            "January 15, 2027; use the fused npu_chunk_gated_delta_rule_fwd instead.");
 
     auto ret = CheckParams(params);
     CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);

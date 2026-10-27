@@ -206,8 +206,8 @@ aclnnStatus aclnnChunkBwdDqkwgGetWorkspaceSize(
     auto executorPtr = uniqueExecutor.get();
 
     OP_LOGW("npu_chunk_bwd_dqkwg",
-            "npu_chunk_bwd_dqkwg is deprecated and will be removed in "
-            "a later version; use the fused npu_chunk_gated_delta_rule_bwd instead.");
+            "npu_chunk_bwd_dqkwg is deprecated and will be removed on "
+            "January 15, 2027; use the fused npu_chunk_gated_delta_rule_bwd instead.");
 
     auto ret = CheckParams(params);
     CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);

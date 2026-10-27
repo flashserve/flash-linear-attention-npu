@@ -138,7 +138,7 @@ aclnnStatus aclnnPrepareWyReprBwdDaGetWorkspaceSize(
 
     OP_LOGW("npu_prepare_wy_repr_bwd_da",
             "npu_prepare_wy_repr_bwd_da is deprecated and will be removed "
-            "in a later version; use the fused npu_chunk_gated_delta_rule_bwd "
+            "on January 15, 2027; use the fused npu_chunk_gated_delta_rule_bwd "
             "instead.");
 
     auto ret = CheckParams(params);
