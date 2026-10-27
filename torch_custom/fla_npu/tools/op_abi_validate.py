@@ -12,10 +12,8 @@ Disagreement is not a theoretical concern: when the OPP grew a
 as a bare ``161001`` on 910B.  Comparing against the header turns that into an
 offline check.
 
-Tensor and int[] parameters are both pointers at this level, so those kinds
-are compared as "wildcard": a wrong *order*, a missing scalar parameter or a
-parameter count change still shows up, which is what actually happens in
-practice.
+Header parsing is shared with the installation/runtime contract validator.
+Descriptor kinds and pointer levels are distinct; unsupported declarations fail.
 
 Usage::
 
@@ -32,6 +30,7 @@ Exits non-zero when a call site disagrees with the header.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import re
 import sys
@@ -41,135 +40,22 @@ HERE = Path(__file__).resolve().parent
 PACKAGE = HERE.parent
 SRC_DIR = PACKAGE / "csrc" / "src"
 
-# Kind of a parameter as far as a mismatch is concerned. Pointer descriptors
-# have the same machine representation, but confusing aclTensor, aclIntArray and
-# aclScalar is still an ABI contract violation and must not pass the gate.
+# Load the pure contract helper without importing fla_npu (which loads CANN).
+_spec = importlib.util.spec_from_file_location("fla_npu_op_abi", PACKAGE / "fla_npu" / "_op_abi.py")
+_abi = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_abi)
 WILDCARD = "?"
-TENSOR = "tensor"
-INT_ARRAY = "int_array"
-ACL_SCALAR = "acl_scalar"
-
-_HEADER_KINDS = (
-    (re.compile(r"\bconst\s+aclTensor\s*\*|\baclTensor\s*\*"), TENSOR),
-    (re.compile(r"\bconst\s+aclIntArray\s*\*|\baclIntArray\s*\*"), INT_ARRAY),
-    (re.compile(r"\bconst\s+aclScalar\s*\*|\baclScalar\s*\*"), ACL_SCALAR),
-    (re.compile(r"\b(?:const\s+)?char\s*\*"), "char_ptr"),
-    (re.compile(r"\bdouble\b"), "double"),
-    (re.compile(r"\bfloat\b"), "float"),
-    (re.compile(r"\bint64_t\b"), "int64"),
-    (re.compile(r"\bint32_t\b"), "int32"),
-    (re.compile(r"\bbool\b"), "bool"),
-)
-
-# The two out-parameters every GetWorkspaceSize prototype ends with.  The
-# generic executor owns them, so they are not part of the comparison.
-_TRAILING = ("workspaceSize", "executor")
-
-# Entry points this tree calls that the OPP publishes no public header for.
-# Each one is a reason to check by hand rather than a silent pass, so the list
-# is a constant instead of a command-line escape hatch.
-KNOWN_HEADER_GAPS = {
-    "aclnnSolveTri": "the OPP header declares only the l0op::SolveTri "
-                     "prototype, not aclnnSolveTriGetWorkspaceSize",
-}
-
-
-def strip_comments(text: str) -> str:
-    """Drop C comments, leaving string literals alone.
-
-    An adapter may put a line comment between two arguments (`// the fused
-    kernel takes no cu_seqlens/chunk_indices`).  Those comments routinely carry
-    a comma, and counting one as a separator adds a phantom parameter -- which
-    is exactly how this gate started reporting
-    `aclnnChunkGatedDeltaRuleBwdDhu` as one argument too long.
-    """
-
-    out: list[str] = []
-    index, size = 0, len(text)
-    quote = ""
-    while index < size:
-        char = text[index]
-        if quote:
-            out.append(char)
-            if char == "\\" and index + 1 < size:
-                out.append(text[index + 1])
-                index += 2
-                continue
-            if char == quote:
-                quote = ""
-            index += 1
-            continue
-        if char in "\"'":
-            quote = char
-            out.append(char)
-            index += 1
-            continue
-        if char == "/" and text.startswith("//", index):
-            while index < size and text[index] != "\n":
-                index += 1
-            continue
-        if char == "/" and text.startswith("/*", index):
-            end = text.find("*/", index + 2)
-            index = size if end < 0 else end + 2
-            continue
-        out.append(char)
-        index += 1
-    return "".join(out)
-
-
-def split_params(text: str) -> list[str]:
-    """Split a C parameter list on top-level commas."""
-
-    text = strip_comments(text)
-
-    parts: list[str] = []
-    depth = 0
-    current: list[str] = []
-    for ch in text:
-        if ch in "([{<":
-            depth += 1
-        elif ch in ")]}>":
-            depth -= 1
-        if ch == "," and depth == 0:
-            parts.append("".join(current).strip())
-            current = []
-            continue
-        current.append(ch)
-    tail = "".join(current).strip()
-    if tail:
-        parts.append(tail)
-    return [part for part in parts if part]
-
-
-def header_kind(param: str) -> str:
-    for pattern, kind in _HEADER_KINDS:
-        if pattern.search(param):
-            return kind
-    raise RuntimeError(f"unrecognised header parameter: {param!r}")
+TENSOR, INT_ARRAY, ACL_SCALAR = _abi.TENSOR, _abi.INT_ARRAY, _abi.ACL_SCALAR
+strip_comments, split_params = _abi.strip_comments, _abi.split_params
+header_kind = _abi.parameter_kind
+KNOWN_HEADER_GAPS = {}  # Legacy gaps now have explicit contracts in _op_abi.
 
 
 def parse_headers(include_dir: Path, wanted: set[str]) -> dict[str, list[str]]:
-    """symbol -> parameter kinds, for the *wanted* entry points declared there.
-
-    Only the wanted prototypes are parsed.  A CANN include directory holds
-    thousands of operators whose parameters use types this comparison has no
-    opinion about, and reading them all would turn an unrelated header into a
-    gate failure.
-    """
-
-    found: dict[str, list[str]] = {}
-    for header in sorted(include_dir.glob("aclnn_*.h")):
-        text = header.read_text(encoding="utf-8", errors="replace")
-        for match in re.finditer(
-                r"aclnnStatus\s+(\w+)GetWorkspaceSize\s*\((.*?)\)\s*;",
-                text, re.S):
-            symbol, params = match.group(1), split_params(match.group(2))
-            if symbol not in wanted:
-                continue
-            while params and any(token in params[-1] for token in _TRAILING):
-                params.pop()
-            found[symbol] = [header_kind(param) for param in params]
-    return found
+    signatures = _abi.parse_aclnn_signatures(include_dir, wanted)
+    if (include_dir / "aclnn_solve_tri.h").is_file() and "aclnnSolveTri" in wanted:
+        signatures.setdefault("aclnnSolveTri", _abi.KNOWN_CONTRACTS["aclnnSolveTriGetWorkspaceSize"][:-2])
+    return {s: list(kinds) for s, kinds in signatures.items()}
 
 
 _EXEC_CALL = re.compile(r"FLA_STABLE_EXEC\(\s*\"(\w+)\"\s*,(.*?)\)\s*;", re.S)
@@ -366,11 +252,19 @@ def filter_adapters(
     }
     if not selected:
         return adapters
-    return {
-        symbol: value
-        for symbol, value in adapters.items()
-        if value[0].stem.removeprefix("stable_") in selected
-    }
+    matches = {}
+    for name in sorted(selected):
+        # Shared implementations need not be named stable_<operator>.cpp.
+        normalized = name.replace("_", "").lower()
+        owned = {
+            symbol: value for symbol, value in adapters.items()
+            if symbol.removeprefix("aclnn").replace("_", "").lower() == normalized
+            or value[0].stem.removeprefix("stable_") == name
+        }
+        if not owned:
+            raise RuntimeError(f"No ABI call sites found for selected operator {name!r}")
+        matches.update(owned)
+    return matches
 
 
 def main() -> int:

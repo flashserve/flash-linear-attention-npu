@@ -380,6 +380,20 @@ class HeaderKindGateTest(unittest.TestCase):
         )
         self.assertEqual(tool.filter_adapters(adapters, ""), adapters)
 
+    def test_shared_adapter_is_selected_by_aclnn_symbol(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        adapters = tool.adapter_calls(SRC_DIR)
+        selected = tool.filter_adapters(adapters, "causal_conv1d")
+        self.assertIn("aclnnCausalConv1d", selected)
+        self.assertEqual(selected["aclnnCausalConv1d"][0].name, "stable_causal_conv1d_common.cpp")
+        with self.assertRaisesRegex(RuntimeError, "No ABI call sites"):
+            tool.filter_adapters(adapters, "unknown_operator")
+
+    def test_pointer_changes_are_not_scalar_matches(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        self.assertNotEqual(tool.header_kind("double value"), tool.header_kind("double *value"))
+        self.assertNotEqual(tool.header_kind("aclTensor *x"), tool.header_kind("aclTensor **x"))
+
     def test_scoped_cli_fails_on_selected_header_drift(self) -> None:
         tool = _load_tool("op_abi_validate.py")
         with tempfile.TemporaryDirectory() as temp_dir:

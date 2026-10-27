@@ -181,7 +181,9 @@ def _validate_overlay_abi(vendor_dirs: list[pathlib.Path]) -> None:
         raise RuntimeError(
             "fla_npu: overlay aclnn ABI differs from the installed wheel. The "
             "wheel launcher and ctypes wrappers cannot safely call this overlay; "
-            "rebuild and install a complete matching wheel."
+            "rebuild a matching overlay or wheel. For recovery without loading "
+            "vendor code, run python -m fla_npu_opp_manage --status or "
+            "python -m fla_npu_opp_manage --remove-overlay --overlay-name <name>."
             f"\n  - {detail}"
         )
 
