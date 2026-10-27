@@ -42,7 +42,13 @@ static ge::graphStatus InferDataTypeChunkGatedDeltaRuleFwd32(gert::InferDataType
         return ge::GRAPH_FAILED;
     }
     context->SetOutputDataType(0, ge::DT_BF16);
-    context->SetOutputDataType(1, ge::DT_BF16);
+    // Same dtype as initial_state. An absent initial_state yields FP32.
+    ge::DataType stateDtype = ge::DT_FLOAT;
+    const ge::DataType initialDtype = context->GetOptionalInputDataType(5);
+    if (initialDtype == ge::DT_BF16 || initialDtype == ge::DT_FLOAT) {
+        stateDtype = initialDtype;
+    }
+    context->SetOutputDataType(1, stateDtype);
     return ge::GRAPH_SUCCESS;
 }
 

@@ -87,7 +87,7 @@ O = \mathrm{scale} \Bigl( \bigl(Q \odot e\bigr) H + \mathrm{Attn}\, V^{\mathrm{n
 ```python
 o, final_state = npu_chunk_gated_delta_rule_fwd_32(
     q, k, v, g, beta,
-    initial_state=None,   # BF16 [N, Hv, K, V]，可空
+    initial_state=None,   # BF16 或 FP32，可空；空时 final_state 为 FP32
     cu_seqlens=None,      # int64 [N+1]，与 chunk_indices 同时给出
     chunk_indices=None,   # int64，按序列的 (seqId, localChunkId)
     scale=None,           # None 时为 1/sqrt(K)
@@ -100,11 +100,11 @@ o, final_state = npu_chunk_gated_delta_rule_fwd_32(
 | v | `[B, Hv, T, V]` | BF16 | 入 |
 | g | `[B, Hv, T]` | FP32 | 入，原始门控 |
 | beta | `[B, Hv, T]` | BF16 | 入，kernel 内 sigmoid |
-| initial_state | `[N, Hv, K, V]` | BF16 | 可选 |
+| initial_state | `[N, Hv, K, V]` | BF16 或 FP32 | 可选。BF16 进入递推时扩成 FP32 一次，FP32 原样进入 |
 | cu_seqlens | `[N+1]` | INT64 | 可选，与 chunk_indices 同时给出 |
 | chunk_indices | `[2·Nc]` | INT64 | 可选，规范的 (seqId, localChunkId) |
 | o | `[B, Hv, T, V]` | BF16 | 出 |
-| final_state | `[N, Hv, K, V]` | BF16 | 出 |
+| final_state | `[N, Hv, K, V]` | 与 initial_state 同 dtype，无 initial_state 时为 FP32 | 出 |
 
 Tiling 拒绝这些情况：`T <= 0`，`K` 或 `V` 不是 128，`Hv` 不是 `Hk` 的正倍数，dtype 或 rank 不符，`o` / `final_state` 的 shape 不符。`T` 可以不是 32、64、128 的倍数，最后一块在 UB 里补零到 32，只把有效行写出。`scale` 是必选属性，缺省 `0.0883883476`（\(1/\sqrt{128}\)）。`blockDim = min(B·Hv, AIC 核数)`，按 V 头分核。GVA 时多个 V 头共用一个 K 头，每个核各自重读 q/k。tiling key 为 0，schedule mode 为 1。
 
@@ -141,10 +141,10 @@ state 的一个 AIV   ((b·Hv + hv) * 128 + sub * 64) * 128
 | \(V^{\mathrm{new}}\) | L0C FP32，再 UB/L1 BF16 | `u` 与 \(-WH\) 在 L0C 累加，Fixpipe `F322BF16` |
 | \(V^{\mathrm{new}}_g\) | L1 BF16 | 把 BF16 的 \(V^{\mathrm{new}}\) cast 回 FP32，乘 \(\mathrm{decay}/e_i\)，一次 `CAST_RINT` |
 | \(D = K^{\mathsf T} V^{\mathrm{new}}_g\) | UB BF16 NZ | Fixpipe 直接写成 BF16，再在 saxpy 里 cast 回 FP32 |
-| \(R\) | UB BF16 NZ | `FP32(decay)·FP32(R) + FP32(D)`，`CAST_RINT` 写回。每个 chunk 都舍入 |
+| \(R\) | UB FP32 NZ | `decay·R + FP32(D)` 不舍入。BF16 镜像只给 Cube 的 H；BF16 的 `final_state` 在写出时按 `CAST_RINT` 生成 |
 | \(o\) | GM BF16 | `q_exp@H + Attn@V^{new}` 留在 FP32 L0C，Fixpipe `QF322BF16` 乘 `scale` 后一次舍入。Vector 不再乘 scale |
 
-状态从 head 开始到结束都是 BF16。`initial_state` 读入后转成 NZ panel；`final_state` 在最后一个 chunk 之后由 panel 转回 ND 写出。
+递推状态从 head 开始到结束都是 FP32。Cube 仍吃 BF16 的 H，那份镜像每个 chunk 由当前 FP32 状态收一次，不把舍入结果写回递推。`initial_state` 读入后转成 NZ panel。`final_state` 与 `initial_state` 同 dtype，不传 `initial_state` 时为 FP32：FP32 输出由 FP32 panel 转回 ND，BF16 输出由 BF16 镜像转回 ND。
 
 ## 4. 计算怎么落在 Cube 和 Vector 上
 
@@ -228,7 +228,7 @@ GM  q[32,128] k[32,128] v[32,128] g[32] beta[32]     上一 chunk 留下的 H[12
         │ MTE3                                         │ 两个 AIV
         ▼                                              ▼
 GM  o[32,128]                          ┌ Vector  状态 ─────────────────────────┐
-token [32c, 32c+16) 由 AIV0 写         │ state = CAST_RINT(decay * state + D)   │
+token [32c, 32c+16) 由 AIV0 写         │ state = decay * state + D，FP32 不舍入 │
 token 行 16:32 由 AIV1 写              │ 各持 64×128，8 个 [64,16] panel       │
                                        │ c<NT-1：panel 0:4 置 H0，4:8 置 H     │
                                        │ 这份 H 是 chunk c+1 的入口             │
@@ -277,7 +277,7 @@ L1 上 `q/k/vb/kbg/q_exp/A/attn/W` 有两套槽，下标是 `chunk & 1`。`H`、
 8. owner 若还有 `nxt`：`PublishKFlag`、`PublishQ`、`PublishQFlag`。Q 的 L2 和四份 L1 拷贝发生在 \(H\) 已经排队之后。
 9. 主循环等 `kFlagO`，然后 `StoreO(c)` 把本 AIV 的 16×128 写到 GM，置 `kFlagOd`。
 
-head 收尾：等 saxpy 的 `V_MTE3`，必要时再等 NZ 缓冲上的 `MTE3_V(3)`。`PanelsToNd` 后把 64×128 写到 `final_state`。
+head 收尾：等 saxpy 的 `V_MTE3`，必要时再等 NZ 缓冲上的 `MTE3_V(3)`。FP32 的 `final_state` 把 FP32 panel 转成 ND 写出；BF16 的 `final_state` 用 BF16 镜像做 `PanelsToNd`。
 
 `nzArmed_` 记录上一轮 `PublishQFlag` 是否还在读 `q/k/kbg/q_exp/v` 的 NZ 缓冲。下一次 `WaitLoads` 会先等 `MTE3_V(3)`。
 
@@ -518,4 +518,38 @@ CPU 标杆在同目录 `cpu_golden_fused_infer.py`。
 
 `test_precision.py` 同时打印逐 token 标杆和 `kda_aligned_reference(use_exp2=True)`。对拍本 kernel 的公式时，以 `run_infer_golden` 和 `chunk32_reference(use_exp2=False)` 为准。`g` 的幅度在 `0.02` 附近时，`exp` 和 `exp2` 的 BF16 结果通常重合，这不改变 kernel 使用自然底 `exp` 这一事实。
 
-比较时把 FP64 标杆 cast 成 BF16 再转回 FP32，与 kernel 的 BF16 读回值比。`o` 的舍入点是最后一次 Fixpipe。`final_state` 每个 chunk 都经过一次 BF16 写回，误差可以大于 `o`。
+`o` 和 BF16 的 `final_state` 比较时把 FP64 标杆 cast 成 BF16 再转回 FP32。FP32 的 `final_state` 直接和 FP64 标杆比。`o` 的舍入点是最后一次 Fixpipe。片上递推不再每个 chunk 把状态舍入回 BF16；BF16 的 `final_state` 只在写出时收一次。
+
+## 12. 未启用：D 与 u−P 直接落 FP32
+
+当前 kernel 仍按第 3 节：\(D\) 用 `FixpipeBf16UbNz`（`F322BF16`），\(u-P\) 用 `FixpipeHalfBf16`。下面这版在 2026-10-27 编过、对过精度、量过 T=16K，然后退回。后续可以再改，现在不要启用。
+
+改动只动这两处 Fixpipe 的量化，Cube 的 matmul 仍是 BF16×BF16。
+
+| 量 | 这版的落点 | Vector 接着做什么 |
+| --- | --- | --- |
+| \(u-P\) | `FixpipeHalfFp32`，`ROW_MAJOR`，`NoQuant`。一个 AIV 16×128 个 float，8KB | 用这份 FP32 做一次 `CAST_RINT` 得到给 Cube 的 \(V^{\mathrm{new}}\)。门控乘在 FP32 上，再一次 `CAST_RINT` 得到 \(V^{\mathrm{new}}_g\) |
+| \(D\) | `FixpipeFp32UbNz`，`NoQuant`，`isChannelSplit = false`，`dstStride = m*16`。一个 AIV 64×128 个 float，32KB。元素顺序与现在的 BF16 NZ 相同 | saxpy 用 `DIST_DINTLV_B32` 直接加，不再把 \(D\) cast 回 FP32 |
+
+UB：`kUbU` 改成 float，占到 124KB。`kUbD` 从 176KB 挪到 160KB，32KB，尽头是 192KB 的 `kUbStateF`。`kUbG2`、`kUbEg2` 挪到 224KB、226KB。L0C 上 \(D\) 仍在 `l0C0_ + 16*1024` 个 float。
+
+精度：`test_initial_fp32.py` 在 NPU 4 上 `failed=0`。T=64、B=1、Hk=Hv=2、无初态、FP32 `final_state` 的 state max/mean ratio 从退回后的 0.7375 / 0.1084 降到 0.6025 / 0.0851。`o` 几乎不动。
+
+性能：NPU 4，B=1，H=28，T=16384，无初态，FP32 `final_state`。对照是现在这版，Task Duration **868.80 µs**（对象 sha256 `90a4d99b…`）。
+
+| 调度 | Task Duration | 说明 |
+| --- | --- | --- |
+| 整块 FP32 Fixpipe，两个 AIV 的 \(D\) 都到齐再 saxpy | **905.67 µs** | `aic_cube` 仍是 168.80 µs。`aic_fixpipe` 从 348 µs 升到 488 µs |
+| 每个 AIV 先送 \(D\) 的 0:64 列（16KB，与现在整块 BF16 一样大）并置 `kFlagD`，64:128 列复用已经消费过的 `kFlagP`，saxpy 中间再等 | **905.68 µs** | 精度与整块相同。墙钟没动 |
+
+每个 chunk、每个 AIV，\(D\) 从 16KB 变成 32KB，\(u-P\) 从 4KB 变成 8KB。512 个 chunk 把这段 Fixpipe 流量加倍。多出来的约 140 µs 活跃时间里，大部分和原来的 MTE1 叠上了，露在关键路径上的是 37 µs。拆半只让 AIV 更早开始 saxpy；Cube 仍要把后一半搬完才能做下一个 matmul，所以墙钟不变。超过相对 872.32 µs 的 +20 µs 线，已退回。源码和已安装的 `ChunkGatedDeltaRuleFwd32_af0e2452…o` 都是 868.80 µs 那份。
+
+同一天下午又把「只改 \(D\)」「只改 \(u-P\)」「两处都改」各跑了一遍 ATK 混合容差（26.9.8，GM 初始化关，102 条）和 T=16K。性能都在 NPU 6、1650 MHz，B=1、H=28、T=16384、无初态、FP32 `final_state`。对照仍是 868.80 µs 那份。`o` 全部通过。失败的都是 `final_state` 的 `matched_ratio` 低于 0.99。
+
+| Fixpipe | 混合容差 | state 失败条的 matched_ratio | Task Duration | aic_fixpipe |
+| --- | --- | --- | --- | --- |
+| \(D\) 与 \(u-P\) 都落 FP32 | 24/102 | 0.2438–0.9844，均值 0.352 | **916.06 µs** | 493 µs |
+| 只 \(D\) 落 FP32 | 24/102 | 0.2236–0.9844，均值 0.349 | **903.44 µs** | 455 µs |
+| 只 \(u-P\) 落 FP32 | 23/102 | 0.2235–0.9869，均值 0.333 | **900.86 µs** | 396 µs |
+
+多出来的那 1 条是 `0030`（BNSD、T=1、FP32 初态、seed 0）。只改 \(u-P\) 时它的 matched_ratio 是 0.9869，停在阈值下，通过数回到退回前的 23/102。长序列的 `final_state` 仍在 0.3 附近。三组都超过 +20 µs，源码已退回，已安装对象 sha256 恢复为 `90a4d99b…`。

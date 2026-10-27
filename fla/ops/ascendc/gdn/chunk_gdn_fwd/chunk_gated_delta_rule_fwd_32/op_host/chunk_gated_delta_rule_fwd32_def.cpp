@@ -6,68 +6,74 @@ class ChunkGatedDeltaRuleFwd32 : public OpDef {
 public:
     explicit ChunkGatedDeltaRuleFwd32(const char *name) : OpDef(name)
     {
+        const std::initializer_list<ge::DataType> bf16Types = {ge::DT_BF16, ge::DT_BF16};
+        const std::initializer_list<ge::DataType> fp32Types = {ge::DT_FLOAT, ge::DT_FLOAT};
+        const std::initializer_list<ge::DataType> stateTypes = {ge::DT_BF16, ge::DT_FLOAT};
+        const std::initializer_list<ge::DataType> indexTypes = {ge::DT_INT64, ge::DT_INT64};
+        const std::initializer_list<ge::Format> formats = {ge::FORMAT_ND, ge::FORMAT_ND};
+
         this->Input("q")
             .ParamType(REQUIRED)
-            .DataType({ge::DT_BF16})
-            .FormatList({ge::FORMAT_ND})
-            .UnknownShapeFormat({ge::FORMAT_ND})
+            .DataType(bf16Types)
+            .FormatList(formats)
+            .UnknownShapeFormat(formats)
             .AutoContiguous();
         this->Input("k")
             .ParamType(REQUIRED)
-            .DataType({ge::DT_BF16})
-            .FormatList({ge::FORMAT_ND})
-            .UnknownShapeFormat({ge::FORMAT_ND})
+            .DataType(bf16Types)
+            .FormatList(formats)
+            .UnknownShapeFormat(formats)
             .AutoContiguous();
         this->Input("v")
             .ParamType(REQUIRED)
-            .DataType({ge::DT_BF16})
-            .FormatList({ge::FORMAT_ND})
-            .UnknownShapeFormat({ge::FORMAT_ND})
+            .DataType(bf16Types)
+            .FormatList(formats)
+            .UnknownShapeFormat(formats)
             .AutoContiguous();
         this->Input("g")
             .ParamType(REQUIRED)
-            .DataType({ge::DT_FLOAT})
-            .FormatList({ge::FORMAT_ND})
-            .UnknownShapeFormat({ge::FORMAT_ND})
+            .DataType(fp32Types)
+            .FormatList(formats)
+            .UnknownShapeFormat(formats)
             .AutoContiguous();
         this->Input("beta")
             .ParamType(REQUIRED)
-            .DataType({ge::DT_BF16})
-            .FormatList({ge::FORMAT_ND})
-            .UnknownShapeFormat({ge::FORMAT_ND})
+            .DataType(bf16Types)
+            .FormatList(formats)
+            .UnknownShapeFormat(formats)
             .AutoContiguous();
         this->Input("initial_state")
             .ParamType(OPTIONAL)
-            .DataType({ge::DT_BF16})
-            .FormatList({ge::FORMAT_ND})
-            .UnknownShapeFormat({ge::FORMAT_ND})
+            .DataType(stateTypes)
+            .FormatList(formats)
+            .UnknownShapeFormat(formats)
             .AutoContiguous();
         this->Input("cu_seqlens")
             .ParamType(OPTIONAL)
             .ValueDepend(OPTIONAL)
-            .DataType({ge::DT_INT64})
-            .FormatList({ge::FORMAT_ND})
-            .UnknownShapeFormat({ge::FORMAT_ND})
+            .DataType(indexTypes)
+            .FormatList(formats)
+            .UnknownShapeFormat(formats)
             .AutoContiguous();
         this->Input("chunk_indices")
             .ParamType(OPTIONAL)
             .ValueDepend(OPTIONAL)
-            .DataType({ge::DT_INT64})
-            .FormatList({ge::FORMAT_ND})
-            .UnknownShapeFormat({ge::FORMAT_ND})
+            .DataType(indexTypes)
+            .FormatList(formats)
+            .UnknownShapeFormat(formats)
             .AutoContiguous();
 
         this->Output("o")
             .ParamType(REQUIRED)
-            .DataType({ge::DT_BF16})
-            .FormatList({ge::FORMAT_ND})
-            .UnknownShapeFormat({ge::FORMAT_ND})
+            .DataType(bf16Types)
+            .FormatList(formats)
+            .UnknownShapeFormat(formats)
             .AutoContiguous();
         this->Output("final_state")
             .ParamType(REQUIRED)
-            .DataType({ge::DT_BF16})
-            .FormatList({ge::FORMAT_ND})
-            .UnknownShapeFormat({ge::FORMAT_ND})
+            .DataType(stateTypes)
+            .FormatList(formats)
+            .UnknownShapeFormat(formats)
             .AutoContiguous();
 
         this->Attr("scale").AttrType(REQUIRED).Float(0.0883883476f);

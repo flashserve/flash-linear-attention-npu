@@ -66,8 +66,8 @@ aclnnStatus CheckParams(const Params &p)
     CHECK_COND(p.o != nullptr && p.finalState != nullptr, ACLNN_ERR_PARAM_NULLPTR, "o and final_state must not be null.");
     CHECK_COND(p.q->GetDataType() == DataType::DT_BF16 && p.k->GetDataType() == DataType::DT_BF16 &&
                    p.v->GetDataType() == DataType::DT_BF16 && p.beta->GetDataType() == DataType::DT_BF16 &&
-                   p.o->GetDataType() == DataType::DT_BF16 && p.finalState->GetDataType() == DataType::DT_BF16,
-               ACLNN_ERR_PARAM_INVALID, "q, k, v, beta, o and final_state must be bfloat16.");
+                   p.o->GetDataType() == DataType::DT_BF16,
+               ACLNN_ERR_PARAM_INVALID, "q, k, v, beta and o must be bfloat16.");
     CHECK_COND(p.g->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID, "g must be float32.");
     const auto &q = p.q->GetViewShape();
     const auto &k = p.k->GetViewShape();
@@ -107,12 +107,20 @@ aclnnStatus CheckParams(const Params &p)
                    state.GetDim(2) == key && state.GetDim(3) == value,
                ACLNN_ERR_PARAM_INVALID, "final_state must be [N, Hv, K, V].");
     if (p.initial != nullptr) {
-        CHECK_COND(p.initial->GetDataType() == DataType::DT_BF16, ACLNN_ERR_PARAM_INVALID,
-                   "initial_state must be bfloat16.");
+        CHECK_COND(p.initial->GetDataType() == DataType::DT_BF16 || p.initial->GetDataType() == DataType::DT_FLOAT,
+                   ACLNN_ERR_PARAM_INVALID, "initial_state must be bfloat16 or float32.");
         const auto &init = p.initial->GetViewShape();
         CHECK_COND(init.GetDimNum() == 4 && init.GetDim(0) == seqNum && init.GetDim(1) == hv &&
                        init.GetDim(2) == key && init.GetDim(3) == value,
                    ACLNN_ERR_PARAM_INVALID, "initial_state must be [N, Hv, K, V].");
+    }
+    const auto finalDtype = p.finalState->GetDataType();
+    if (p.initial == nullptr || p.initial->GetDataType() == DataType::DT_FLOAT) {
+        CHECK_COND(finalDtype == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
+                   "final_state must be float32 when initial_state is absent or float32.");
+    } else {
+        CHECK_COND(finalDtype == DataType::DT_BF16, ACLNN_ERR_PARAM_INVALID,
+                   "final_state must be bfloat16 when initial_state is bfloat16.");
     }
     CHECK_COND(std::isfinite(p.scale), ACLNN_ERR_PARAM_INVALID, "scale must be finite.");
     return ACLNN_SUCCESS;
