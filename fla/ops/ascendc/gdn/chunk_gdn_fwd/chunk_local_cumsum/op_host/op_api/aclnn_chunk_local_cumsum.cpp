@@ -87,6 +87,7 @@ aclnnStatus aclnnChunkLocalCumsumGetWorkspaceSize(
                    DFX_OUT(out));
 
     auto uniqueExecutor = CREATE_EXECUTOR();
+    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
 
     OP_LOGW("npu_chunk_local_cumsum",

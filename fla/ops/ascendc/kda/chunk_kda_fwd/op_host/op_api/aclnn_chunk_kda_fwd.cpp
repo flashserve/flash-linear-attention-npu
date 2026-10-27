@@ -707,6 +707,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
                 qgOut, kgOut, vNewOut, hOut));
 
     auto uniqueExecutor = CREATE_EXECUTOR();
+    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
@@ -984,6 +985,7 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
                 kRstdOut, betaEffOut));
 
     auto uniqueExecutor = CREATE_EXECUTOR();
+    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;

@@ -175,6 +175,7 @@ aclnnStatus aclnnChunkBwdDvLocalGetWorkspaceSize(
                    DFX_OUT(out));
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
+    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
 
     OP_LOGW("npu_chunk_bwd_dv_local",

@@ -133,6 +133,7 @@ aclnnStatus aclnnPrepareWyReprBwdDaGetWorkspaceSize(
                    DFX_IN(k, v, beta, a, dw, du, g, cuSeqlensOptional, chunkIndicesOptional, chunkSize),
                    DFX_OUT(dAOut));
     auto uniqueExecutor = CREATE_EXECUTOR();
+    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
 
     OP_LOGW("npu_prepare_wy_repr_bwd_da",

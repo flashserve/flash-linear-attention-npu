@@ -767,7 +767,7 @@ def npu_kda_gate_cumsum(g, chunk_size, *, A_log=None, dt_bias=None,
                         safe_gate=False, lower_bound=None):
     warnings.warn(
         "fla_npu.ops.ascendc.npu_kda_gate_cumsum is a deprecated API "
-        "and will be removed in 2027/06. Use the fused "
+        "and will be removed in a later version. Use the fused "
         "npu_chunk_kda_fwd instead.",
         FutureWarning,
         stacklevel=4,
@@ -828,7 +828,7 @@ def npu_chunk_bwd_dv_local(q, k, d_o, g, scale, chunk_size, *, g_gamma=None,
                            A=None, cu_seqlens=None, chunk_indices=None):
     warnings.warn(
         "fla_npu.ops.ascendc.npu_chunk_bwd_dv_local is a deprecated API "
-        "and will be removed in 2027/06. Use the fused "
+        "and will be removed in a later version. Use the fused "
         "npu_chunk_gated_delta_rule_bwd instead.",
         FutureWarning,
         stacklevel=4,
@@ -863,7 +863,7 @@ def npu_chunk_local_cumsum(g, chunk_size, *, cu_seqlens=None,
                            head_first=True, output_dtype="float32"):
     warnings.warn(
         "fla_npu.ops.ascendc.npu_chunk_local_cumsum is a deprecated API "
-        "and will be removed in 2027/06. Use the fused "
+        "and will be removed in a later version. Use the fused "
         "npu_chunk_gated_delta_rule_fwd instead.",
         FutureWarning,
         stacklevel=4,
@@ -887,7 +887,7 @@ def npu_chunk_scaled_dot_kkt(k, g, beta, *, cu_seqlens=None,
                              chunk_indices=None, chunk_size=64):
     warnings.warn(
         "fla_npu.ops.ascendc.npu_chunk_scaled_dot_kkt is a deprecated API "
-        "and will be removed in 2027/06. Use the fused "
+        "and will be removed in a later version. Use the fused "
         "npu_chunk_gated_delta_rule_fwd instead.",
         FutureWarning,
         stacklevel=4,
@@ -911,7 +911,7 @@ def npu_chunk_bwd_dqkwg(q, k, v, g, h, dox, dh, dv, chunk_size, *,
                         transpose_state_layout=None):
     warnings.warn(
         "fla_npu.ops.ascendc.npu_chunk_bwd_dqkwg is a deprecated API "
-        "and will be removed in 2027/06. Use the fused "
+        "and will be removed in a later version. Use the fused "
         "npu_chunk_gated_delta_rule_bwd instead.",
         FutureWarning,
         stacklevel=4,
@@ -940,7 +940,7 @@ def npu_prepare_wy_repr_bwd_da(k, v, beta, A, dw, du, g, *, chunk_size,
                                cu_seqlens=None, chunk_indices=None):
     warnings.warn(
         "fla_npu.ops.ascendc.npu_prepare_wy_repr_bwd_da is a deprecated API "
-        "and will be removed in 2027/06. Use the fused "
+        "and will be removed in a later version. Use the fused "
         "npu_chunk_gated_delta_rule_bwd instead.",
         FutureWarning,
         stacklevel=4,
@@ -958,7 +958,7 @@ def npu_prepare_wy_repr_bwd_full(k, v, beta, A, dA, dw, du, g, chunk_size, *,
                                  cu_seqlens=None, chunk_indices=None):
     warnings.warn(
         "fla_npu.ops.ascendc.npu_prepare_wy_repr_bwd_full is a deprecated API "
-        "and will be removed in 2027/06. Use the fused "
+        "and will be removed in a later version. Use the fused "
         "npu_chunk_gated_delta_rule_bwd instead.",
         FutureWarning,
         stacklevel=4,
@@ -976,7 +976,7 @@ def npu_prepare_wy_repr_bwd(k, v, beta, A, dw, du, g, chunk_size, *,
                             cu_seqlens=None, chunk_indices=None):
     warnings.warn(
         "fla_npu.ops.ascendc.npu_prepare_wy_repr_bwd is a deprecated API "
-        "and will be removed in 2027/06. Use "
+        "and will be removed in a later version. Use "
         "npu_prepare_wy_repr_bwd_full or the fused "
         "npu_chunk_gated_delta_rule_bwd instead.",
         FutureWarning,
@@ -995,7 +995,7 @@ def npu_recompute_w_u_fwd(k, v, beta, A, chunk_size, *, g=None, gk=None,
                           cu_seqlens=None, chunk_indices=None):
     warnings.warn(
         "fla_npu.ops.ascendc.npu_recompute_w_u_fwd is a deprecated API "
-        "and will be removed in 2027/06. Use the fused "
+        "and will be removed in a later version. Use the fused "
         "npu_chunk_gated_delta_rule_fwd / npu_chunk_gated_delta_rule_bwd "
         "instead.",
         FutureWarning,

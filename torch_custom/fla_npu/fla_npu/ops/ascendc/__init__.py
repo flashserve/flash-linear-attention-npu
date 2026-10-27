@@ -611,7 +611,7 @@ def _make_raw_wrapper(name: str) -> Callable:
             if name in _DEPRECATED_OPS:
                 warnings.warn(
                     f"fla_npu.ops.ascendc.{name} is a deprecated API "
-                    f"and will be removed in 2027/06. Use "
+                    f"and will be removed in a later version. Use "
                     f"{_DEPRECATED_OPS_REPLACEMENTS.get(name, 'the fused operator')} "
                     f"instead.",
                     FutureWarning,
