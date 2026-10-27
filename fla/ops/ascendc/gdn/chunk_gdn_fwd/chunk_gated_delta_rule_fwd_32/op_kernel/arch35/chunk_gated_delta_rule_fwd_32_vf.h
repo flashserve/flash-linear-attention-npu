@@ -540,16 +540,24 @@ __aicore__ inline void StoreFlat128(__ubuf__ bfloat16_t *dst, RegTensor<float> &
     StoreAlign(dst, lo, m128);
 }
 
-// state = decay * state + d over one AIV's 64x128 tile. Both buffers are the
-// NZ panel image (8 contiguous [64, 16] panels), so this is a flat saxpy.
-// Four rows stay live. Their casts overlap, and each D load sits under the
-// previous row's store. Mul then Add keeps the one-row rounding.
-// i0/nIter select a run of the 16 flat groups (512 elements). Groups 0-7 are
-// panels 0-3, so that half can be copied to L1 while groups 8-15 run.
-__aicore__ inline void SaxpyStateVF(LocalTensor<bfloat16_t> state, LocalTensor<bfloat16_t> d, float decay,
-                                    uint16_t i0 = 0, uint16_t nIter = 16)
+// FP32 state stays unrounded. The BF16 image is the cube's H and is rounded here.
+__aicore__ inline void StoreState128(__ubuf__ float *fp32, __ubuf__ bfloat16_t *bf16, RegTensor<float> &even,
+                                     RegTensor<float> &odd, MaskReg &preg, MaskReg &m16, MaskReg &m128)
 {
-    __ubuf__ bfloat16_t *sAddr = (__ubuf__ bfloat16_t *)state.GetPhyAddr();
+    StoreAlign<float, StoreDist::DIST_INTLV_B32>(fp32, even, odd, preg);
+    StoreFlat128(bf16, even, odd, m16, m128);
+}
+
+// state = decay * state + d over one AIV's 64x128 tile. state is FP32 NZ and
+// stateB is the BF16 NZ mirror the cube reads. d is the BF16 NZ fixpipe image.
+// Four rows stay live. i0/nIter select a run of the 16 flat groups (512
+// elements). Groups 0-7 are panels 0-3, so that half can be copied to L1
+// while groups 8-15 run.
+__aicore__ inline void SaxpyStateVF(LocalTensor<float> state, LocalTensor<bfloat16_t> stateB,
+                                    LocalTensor<bfloat16_t> d, float decay, uint16_t i0 = 0, uint16_t nIter = 16)
+{
+    __ubuf__ float *sAddr = (__ubuf__ float *)state.GetPhyAddr();
+    __ubuf__ bfloat16_t *bAddr = (__ubuf__ bfloat16_t *)stateB.GetPhyAddr();
     __ubuf__ bfloat16_t *dAddr = (__ubuf__ bfloat16_t *)d.GetPhyAddr();
     __VEC_SCOPE__
     {
@@ -562,10 +570,10 @@ __aicore__ inline void SaxpyStateVF(LocalTensor<bfloat16_t> state, LocalTensor<b
         for (uint16_t i = 0; i < nIter; ++i) {
             const uint32_t off = (static_cast<uint32_t>(i0) + i) * 512;
             RegTensor<float> e0, o0, e1, o1, e2, o2, e3, o3, f, g;
-            LoadEvenOdd(sAddr + off, e0, o0, m16);
-            LoadEvenOdd(sAddr + off + 128, e1, o1, m16);
-            LoadEvenOdd(sAddr + off + 256, e2, o2, m16);
-            LoadEvenOdd(sAddr + off + 384, e3, o3, m16);
+            LoadAlign<float, LoadDist::DIST_DINTLV_B32>(e0, o0, sAddr + off);
+            LoadAlign<float, LoadDist::DIST_DINTLV_B32>(e1, o1, sAddr + off + 128);
+            LoadAlign<float, LoadDist::DIST_DINTLV_B32>(e2, o2, sAddr + off + 256);
+            LoadAlign<float, LoadDist::DIST_DINTLV_B32>(e3, o3, sAddr + off + 384);
             Mul(e0, e0, dec, preg);
             Mul(o0, o0, dec, preg);
             Mul(e1, e1, dec, preg);
@@ -578,18 +586,18 @@ __aicore__ inline void SaxpyStateVF(LocalTensor<bfloat16_t> state, LocalTensor<b
             Add(e0, e0, f, preg);
             Add(o0, o0, g, preg);
             LoadEvenOdd(dAddr + off + 128, f, g, m16);
-            StoreFlat128(sAddr + off, e0, o0, m16, m128);
+            StoreState128(sAddr + off, bAddr + off, e0, o0, preg, m16, m128);
             Add(e1, e1, f, preg);
             Add(o1, o1, g, preg);
             LoadEvenOdd(dAddr + off + 256, f, g, m16);
-            StoreFlat128(sAddr + off + 128, e1, o1, m16, m128);
+            StoreState128(sAddr + off + 128, bAddr + off + 128, e1, o1, preg, m16, m128);
             Add(e2, e2, f, preg);
             Add(o2, o2, g, preg);
             LoadEvenOdd(dAddr + off + 384, f, g, m16);
-            StoreFlat128(sAddr + off + 256, e2, o2, m16, m128);
+            StoreState128(sAddr + off + 256, bAddr + off + 256, e2, o2, preg, m16, m128);
             Add(e3, e3, f, preg);
             Add(o3, o3, g, preg);
-            StoreFlat128(sAddr + off + 384, e3, o3, m16, m128);
+            StoreState128(sAddr + off + 384, bAddr + off + 384, e3, o3, preg, m16, m128);
         }
     }
 }
@@ -625,6 +633,51 @@ __aicore__ inline void PanelsToNd(LocalTensor<bfloat16_t> nd, LocalTensor<bfloat
             RegTensor<bfloat16_t> row;
             LoadAlign<bfloat16_t, DataCopyMode::DATA_BLOCK_COPY>(row, zAddr + static_cast<uint32_t>(r) * 16, 64, m128);
             StoreAlign(nAddr + static_cast<uint32_t>(r) * kDim, row, m128);
+        }
+    }
+}
+
+// [64, 128] FP32 ND <-> 8 contiguous [64, 16] panels. A float register is 64
+// lanes, so each 16-wide panel row is masked. The last row of the last panel
+// loads 48 floats past the tile; both callers place that read inside UB.
+__aicore__ inline void NdFp32ToPanels(LocalTensor<float> nz, LocalTensor<float> nd)
+{
+    __ubuf__ float *nAddr = (__ubuf__ float *)nd.GetPhyAddr();
+    __ubuf__ float *zAddr = (__ubuf__ float *)nz.GetPhyAddr();
+    __VEC_SCOPE__
+    {
+        uint32_t n16 = 16;
+        MaskReg m16 = UpdateMask<float>(n16);
+        for (uint16_t r = 0; r < 64; ++r) {
+            for (uint16_t p = 0; p < 8; ++p) {
+                RegTensor<float> v;
+                const uint32_t src = static_cast<uint32_t>(r) * static_cast<uint32_t>(kDim) +
+                                     static_cast<uint32_t>(p) * 16;
+                const uint32_t dst = static_cast<uint32_t>(p) * (64 * 16) + static_cast<uint32_t>(r) * 16;
+                LoadAlign(v, nAddr + src);
+                StoreAlign(zAddr + dst, v, m16);
+            }
+        }
+    }
+}
+
+__aicore__ inline void PanelsFp32ToNd(LocalTensor<float> nd, LocalTensor<float> nz)
+{
+    __ubuf__ float *nAddr = (__ubuf__ float *)nd.GetPhyAddr();
+    __ubuf__ float *zAddr = (__ubuf__ float *)nz.GetPhyAddr();
+    __VEC_SCOPE__
+    {
+        uint32_t n16 = 16;
+        MaskReg m16 = UpdateMask<float>(n16);
+        for (uint16_t r = 0; r < 64; ++r) {
+            for (uint16_t p = 0; p < 8; ++p) {
+                RegTensor<float> v;
+                const uint32_t src = static_cast<uint32_t>(p) * (64 * 16) + static_cast<uint32_t>(r) * 16;
+                const uint32_t dst = static_cast<uint32_t>(r) * static_cast<uint32_t>(kDim) +
+                                     static_cast<uint32_t>(p) * 16;
+                LoadAlign(v, zAddr + src);
+                StoreAlign(nAddr + dst, v, m16);
+            }
         }
     }
 }
