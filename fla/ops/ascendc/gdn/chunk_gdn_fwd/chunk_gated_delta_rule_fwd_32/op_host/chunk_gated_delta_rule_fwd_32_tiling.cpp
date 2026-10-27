@@ -54,14 +54,15 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
     const auto *betaShape = context->GetInputShape(4);
     const auto *oShape = context->GetOutputShape(0);
     const auto *stateShape = context->GetOutputShape(1);
+    const auto *stateDesc = context->GetOutputDesc(1);
     const auto *qDesc = context->GetInputDesc(0);
     const auto *kDesc = context->GetInputDesc(1);
     const auto *vDesc = context->GetInputDesc(2);
     const auto *gDesc = context->GetInputDesc(3);
     const auto *betaDesc = context->GetInputDesc(4);
     if (qShape == nullptr || kShape == nullptr || vShape == nullptr || gShape == nullptr || betaShape == nullptr ||
-        oShape == nullptr || stateShape == nullptr || qDesc == nullptr || kDesc == nullptr || vDesc == nullptr ||
-        gDesc == nullptr ||
+        oShape == nullptr || stateShape == nullptr || stateDesc == nullptr || qDesc == nullptr || kDesc == nullptr ||
+        vDesc == nullptr || gDesc == nullptr ||
         betaDesc == nullptr || context->GetAttrs() == nullptr) {
         return ge::GRAPH_FAILED;
     }
@@ -125,14 +126,27 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
     }
 
     uint32_t hasInitial = 0;
+    uint32_t initialFp32 = 0;
     const auto *initialDesc = context->GetOptionalInputDesc(5);
     const auto *initialShape = context->GetOptionalInputShape(5);
     if (initialDesc != nullptr && initialShape != nullptr) {
-        if (initialDesc->GetDataType() != ge::DT_BF16 ||
+        const auto dtype = initialDesc->GetDataType();
+        if ((dtype != ge::DT_BF16 && dtype != ge::DT_FLOAT) ||
             !Same4(initialShape->GetStorageShape(), stateBatch, hv, key, value)) {
             return ge::GRAPH_FAILED;
         }
         hasInitial = 1;
+        initialFp32 = dtype == ge::DT_FLOAT ? 1U : 0U;
+    }
+    const auto finalDtype = stateDesc->GetDataType();
+    uint32_t finalFp32 = 0;
+    if (hasInitial == 0 || initialFp32 != 0) {
+        if (finalDtype != ge::DT_FLOAT) {
+            return ge::GRAPH_FAILED;
+        }
+        finalFp32 = 1;
+    } else if (finalDtype != ge::DT_BF16) {
+        return ge::GRAPH_FAILED;
     }
 
     auto *tiling = context->GetTilingData<ChunkGatedDeltaRuleFwd32TilingData>();
@@ -166,6 +180,8 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
     workspace[0] = workspaceBytes;
     tiling->workspaceOffset = 0;
     tiling->seqNum = seqNum;
+    tiling->initialFp32 = initialFp32;
+    tiling->finalFp32 = finalFp32;
     return ge::GRAPH_SUCCESS;
 }
 
