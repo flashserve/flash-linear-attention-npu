@@ -8,6 +8,7 @@
 #define CHUNK_KDA_FWD_PREPARE_POLICY_H
 
 #include <cstdint>
+#include "arch22/chunk_kda_fwd_prepare_relay_config.h"
 
 #define CHUNK_KDA_FWD_PREPARE_TPL_BF16 10
 #define CHUNK_KDA_FWD_PREPARE_TPL_FP32 30
@@ -117,6 +118,11 @@ struct PrepareCompilePolicy {
     static constexpr bool useExp2 = USE_EXP2;
     static constexpr bool safeGate = SAFE_GATE;
     static constexpr OutputMode outputMode = OUTPUT_MODE;
+    // SAFE_GATE is unused by precomputed gate. Its otherwise unreachable
+    // value 1 selects the internal arch22 target variant without changing ABI.
+    static constexpr bool arch22FastLeaf =
+        SAFE_GATE && GATE_MODE == GateMode::PrecomputedStep;
+    static constexpr bool arch22CubeLeaf = arch22FastLeaf;
     // None/Forward/Recompute/Save 四档的搬出集合：
     //   outputAkk          : Akk（None 之外都写）
     //   outputRecomputeAux : qHat/kHat/qRstd/kRstd/betaEff
@@ -172,13 +178,17 @@ constexpr uint32_t kArch22TRelay = kArch22CubeRelay;
 // (value head, chunk) 的 U 整块异常而同一 Stage 的 W 正常；写侧/读侧 clean 都
 // 修不了它，因为根因是地址复用而不是可见性。
 //
-// 现在 RHS 独占 slot 尾部 32 KiB，除本代 V6 外没有任何 stage 写它。
+// RHS reserves64KiB per slot. FP32 uses each complete32KiB matrix lane;
+// the BF16 relay variant uses its first16KiB without changing the offsets.
 constexpr uint32_t kArch22RhsBase = kArch22CubeRelay + kArch22RawScoreBytes;
-constexpr uint32_t kArch22RhsMatrixBytes = 0x4000; // [64,128] * BF16
+constexpr uint32_t kArch22RhsMatrixBytes = 0x8000; // [64,128] * FP32
 constexpr uint32_t kArch22RhsKBetaG = kArch22RhsBase;
 constexpr uint32_t kArch22RhsVBeta = kArch22RhsBase + kArch22RhsMatrixBytes;
 constexpr uint32_t kArch22RhsBytes = 2 * kArch22RhsMatrixBytes;
-constexpr uint32_t kArch22SlotStride = kArch22RhsBase + kArch22RhsBytes;
+// FP32 fallback keeps the inverse unrounded until C7. The BF16 variant
+// consumes the completed inverse from its separate payload/L1 representation.
+constexpr uint32_t kArch22AkkFp32 = kArch22RhsBase + kArch22RhsBytes;
+constexpr uint32_t kArch22SlotStride = kArch22AkkFp32 + 0x4000;
 
 // payload 在不同 Stage 原址换义，不在 UB/L1 内搬位。
 constexpr uint32_t kX0 = 0x0000;
@@ -191,6 +201,11 @@ constexpr uint32_t kVBeta = 0xB800;
 constexpr uint32_t kArch22SlotCount = 4;
 constexpr uint32_t kArch22WorkgroupStride =
     kArch22SlotCount * kArch22SlotStride;
+static_assert(kArch22SlotStride == Arch22RelayConfig::kSlotBytes);
+static_assert(kArch22SlotCount == Arch22RelayConfig::kSlotsPerWorkgroup);
+static_assert(kPayload + kAkk + 64 * 64 * 2 <= kArch22CubeRelay);
+static_assert(kArch22RhsKBetaG + 64 * 128 * 2 <= kArch22RhsVBeta);
+static_assert(kArch22RhsVBeta + 64 * 128 * 2 <= kArch22AkkFp32);
 constexpr uint32_t kArch35SlotCount = 4;
 constexpr uint32_t kArch35WorkgroupStride =
     kArch35SlotCount * kSlotStride;
@@ -239,6 +254,18 @@ constexpr uint32_t kRhsVBeta = 0x4000;
 
 constexpr uint32_t kPeak = 0x7C000;
 } // namespace L1
+
+namespace Arch22L1 {
+// C2 结束后，各 head lane 中 [16,32) KiB 已不再使用；C4 的 B 只占前 4 KiB。
+// Completed FP32/BF16 Akk stays live through this head's C7 LoadData;
+// the next work's C2 may overwrite it only after the existing L1-free token.
+constexpr uint32_t kAkkInHeadLane = 0x4000;
+// 一次 C7 只消费一个 pair。两个 FP32 RHS lane 共用原来的 128 KiB 区域，
+// pair 之间由 rhsLaneFree_ 的 MTE1_MTE2 事件保护，C2/C4 不访问此区域。
+constexpr uint32_t kRhsLane[2] = {0x5C000, 0x6C000};
+constexpr uint32_t kRhsVBeta = 0x8000;
+static_assert(kRhsLane[1] + 0x10000 <= L1::kCapacity);
+} // namespace Arch22L1
 
 namespace Arch35Ub {
 constexpr uint32_t kCapacity = 0x3E000; // 248 KiB

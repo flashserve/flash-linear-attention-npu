@@ -30,7 +30,8 @@ class ChunkGatedDeltaRuleBwdDhuVector {
 public:
     __aicore__ inline ChunkGatedDeltaRuleBwdDhuVector() = default;
 
-    __aicore__ inline void Init(GM_ADDR q, GM_ADDR gate, GM_ADDR dv, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR dh,
+    __aicore__ inline void Init(GM_ADDR q, GM_ADDR gate, GM_ADDR dv, GM_ADDR dht,
+                                GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR dh,
                                 GM_ADDR dh0, GM_ADDR dv2, GM_ADDR workspace,
                                 const ChunkGatedDeltaRuleBwdDhuTilingData *__restrict tilingData,
                                 AscendC::TPipe *pipe)
@@ -38,6 +39,10 @@ public:
         qGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(q));
         gateGm_.SetGlobalBuffer(reinterpret_cast<__gm__ GT *>(gate));
         dvGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dv));
+        hasDht_ = dht != nullptr;
+        if (hasDht_) {
+            dhtGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dht));
+        }
         cuSeqlens_ = cuSeqlens;
         chunkIndices_ = chunkIndices;
         // q/g/dv 均为一次性流式读，禁 L2 防止写分配驱逐 dh/dv2 及 qg/termQ/termW
@@ -194,7 +199,12 @@ public:
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2Event_[stateIdx]);
                     AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stateMte3ToMte2Event_[stateIdx]);
                     AscendC::LocalTensor<float> stateFp32 = stateBuf_[stateIdx];
-                    AscendC::Duplicate(stateFp32, 0.0f, elems);
+                    if (hasDht_) {
+                        LoadDhtRows(stateFp32, (seqIdx * HV_ + hvBase + headOffset) * K_ * V_,
+                                    rowOffset, curRows);
+                    } else {
+                        AscendC::Duplicate(stateFp32, 0.0f, elems);
+                    }
                     AscendC::PipeBarrier<PIPE_V>();
                     CopyOutStateRows(stateIdx, stateFp32, StateWorkspaceFloatOffset(workspaceBase, rowOffset), elems);
                     curStatePingPong_ ^= 1U;
@@ -511,6 +521,9 @@ private:
 
     __aicore__ inline void InitVectorEvents()
     {
+        if (hasDht_ && stateVFirst_) {
+            dhtMte3ToMte2Event_ = pipe_->AllocEventID<AscendC::HardEvent::MTE3_MTE2>();
+        }
         for (uint32_t eventIdx = 0; eventIdx < BUFFER_COUNT; ++eventIdx) {
             qMte2ToVEvent_[eventIdx] = pipe_->AllocEventID<AscendC::HardEvent::MTE2_V>();
             qVToMte2Event_[eventIdx] = pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>();
@@ -532,6 +545,9 @@ private:
 
     __aicore__ inline void ReleaseVectorEvents()
     {
+        if (hasDht_ && stateVFirst_) {
+            pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_MTE2>(dhtMte3ToMte2Event_);
+        }
         for (uint32_t eventIdx = 0; eventIdx < BUFFER_COUNT; ++eventIdx) {
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[eventIdx]);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(gateVToMte2Event_[eventIdx]);
@@ -615,8 +631,47 @@ private:
         curOutputPingPong_ ^= 1U;
     }
 
+    // Load the terminal gradient into the internal fp32 [K, V] state.
+    __aicore__ inline void LoadDhtRows(AscendC::LocalTensor<float> dstTensor, int64_t stateBase,
+                                       int64_t rowOffset, int64_t rowCount)
+    {
+        if (!stateVFirst_) {
+            const uint32_t inputIdx = curQInputPingPong_;
+            const uint32_t elements = static_cast<uint32_t>(rowCount * V_);
+            CopyInRows(dhtGm_, qInputBuf_[inputIdx], stateBase + rowOffset * V_, elements);
+            CastInputRows(dstTensor, qInputBuf_[inputIdx], elements, inputIdx);
+            AscendC::PipeBarrier<PIPE_V>();
+            return;
+        }
+
+        // Reuse the two output tiles: [V, 16] -> [16, V]. No additional UB is needed.
+        // q slot 0 protects scratch reuse after V; MTE3->MTE2 protects the previous task's output DMA.
+        constexpr uint32_t SCRATCH_SLOT = 0;
+        constexpr int64_t TILE_ROWS = 16;
+        for (int64_t tileRow = 0; tileRow < rowCount; tileRow += TILE_ROWS) {
+            const int64_t curRows = Min(TILE_ROWS, rowCount - tileRow);
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[SCRATCH_SLOT]);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(dhtMte3ToMte2Event_);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(dhtMte3ToMte2Event_);
+            AscendC::DataCopyExtParams copyParams{
+                static_cast<uint16_t>(V_), static_cast<uint32_t>(curRows * sizeof(DT)),
+                static_cast<uint32_t>((K_ - curRows) * sizeof(DT)), 0, 0};
+            AscendC::DataCopyPadExtParams<DT> padParams{false, 0, 0, 0};
+            AscendC::DataCopyPad(outputBuf_[0], dhtGm_[stateBase + rowOffset + tileRow], copyParams, padParams);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(qMte2ToVEvent_[SCRATCH_SLOT]);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(qMte2ToVEvent_[SCRATCH_SLOT]);
+            TransposeStateTile(outputBuf_[1], outputBuf_[0], true);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Cast(dstTensor[tileRow * V_], outputBuf_[1], AscendC::RoundMode::CAST_NONE,
+                          static_cast<uint32_t>(curRows * V_));
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[SCRATCH_SLOT]);
+        }
+    }
+
     __aicore__ inline void TransposeStateTile(AscendC::LocalTensor<DT> dstTensor,
-                                              AscendC::LocalTensor<DT> srcTensor) const
+                                              AscendC::LocalTensor<DT> srcTensor,
+                                              bool vFirstInput = false) const
     {
         constexpr uint32_t TRANSPOSE_ROWS = 16;
         constexpr uint32_t ELEMS_PER_BLOCK = 16;
@@ -627,11 +682,11 @@ private:
         const uint16_t repeatTimes = static_cast<uint16_t>(V_ / ELEMS_PER_BLOCK);
         AscendC::TransDataTo5HDParams transposeParams{
             false, false, static_cast<uint8_t>(repeatTimes),
-            static_cast<uint16_t>(repeatTimes > 1 ? TRANSPOSE_ROWS : 0),
-            static_cast<uint16_t>(repeatTimes > 1 ? 1 : 0)};
+            static_cast<uint16_t>(repeatTimes > 1 ? (vFirstInput ? 1 : TRANSPOSE_ROWS) : 0),
+            static_cast<uint16_t>(repeatTimes > 1 ? (vFirstInput ? TRANSPOSE_ROWS : 1) : 0)};
         for (uint32_t row = 0; row < TRANSPOSE_ROWS; ++row) {
-            srcList[row] = srcAddr + row * V_ * sizeof(uint16_t);
-            dstList[row] = dstAddr + row * TRANSPOSE_ROWS * sizeof(uint16_t);
+            srcList[row] = srcAddr + row * (vFirstInput ? TRANSPOSE_ROWS : V_) * sizeof(uint16_t);
+            dstList[row] = dstAddr + row * (vFirstInput ? V_ : TRANSPOSE_ROWS) * sizeof(uint16_t);
         }
         AscendC::TransDataTo5HD<uint16_t>(dstList, srcList, transposeParams);
     }
@@ -736,6 +791,7 @@ private:
     AscendC::GlobalTensor<DT> qGm_;
     AscendC::GlobalTensor<GT> gateGm_;
     AscendC::GlobalTensor<DT> dvGm_;
+    AscendC::GlobalTensor<DT> dhtGm_;
     AscendC::GlobalTensor<DT> dhGm_;
     AscendC::GlobalTensor<DT> dh0Gm_;
     AscendC::GlobalTensor<DT> dv2Gm_;
@@ -775,6 +831,7 @@ private:
     AscendC::TEventID stateVToMte2Event_[BUFFER_COUNT];
     AscendC::TEventID stateVToMte3Event_[BUFFER_COUNT];
     AscendC::TEventID stateMte3ToMte2Event_[BUFFER_COUNT];
+    AscendC::TEventID dhtMte3ToMte2Event_;
     uint32_t curQInputPingPong_ = 0;
     uint32_t curGateInputPingPong_ = 0;
     uint32_t curOutputPingPong_ = 0;
@@ -804,6 +861,7 @@ private:
     int64_t isVariable_ = 0;
     float scale_ = 1.0f;
     bool hasDh0_ = false;
+    bool hasDht_ = false;
     bool stateVFirst_ = false;
     int64_t dh0ClearCoreNum_ = 0;
     int64_t dh0ClearElemsPerCore_ = 0;

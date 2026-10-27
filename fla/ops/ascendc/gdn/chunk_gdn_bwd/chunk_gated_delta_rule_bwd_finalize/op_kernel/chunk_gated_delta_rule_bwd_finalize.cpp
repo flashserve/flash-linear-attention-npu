@@ -1,7 +1,14 @@
 #include "kernel_operator.h"
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#ifndef TORCH_MODE
+#include "lib/matmul_intf.h"
+#endif
+#include "arch22/chunk_gated_delta_rule_bwd_finalize_a2.h"
+#else
 #include "arch35/chunk_gated_delta_rule_bwd_finalize_struct.h"
 #include "arch35/chunk_gated_delta_rule_bwd_finalize_cube.h"
 #include "arch35/chunk_gated_delta_rule_bwd_finalize_vector.h"
+#endif
 
 namespace GDN {
 
@@ -36,6 +43,27 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_finalize(
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
 
     using QType = typename GDN::DTypeTraits<D_T_Q>::type;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+    using GType = typename GDN::DTypeTraits<D_T_G>::type;
+#define GDN_RUN_A2(V, BT) \
+    GDN::A2FinalizeRun<QType, GType, V, BT, USE_QK_L2NORM, USE_BETA_SIGMOID, USE_EXP2>( \
+        q, k, v, v_new, dO, du, g, beta, h, dh, A, q_rstd, k_rstd, beta_raw, \
+        cu_seqlens, chunk_indices, dq, dk, dv, dbeta, dg, userWorkspace, tilingData)
+    if (tilingData.chunkSize == 64) {
+        if (tilingData.V == 128) {
+            GDN_RUN_A2(128, 64);
+        } else {
+            GDN_RUN_A2(256, 64);
+        }
+    } else {
+        if (tilingData.V == 128) {
+            GDN_RUN_A2(128, 128);
+        } else {
+            GDN_RUN_A2(256, 128);
+        }
+    }
+#undef GDN_RUN_A2
+#else
     const int64_t workspaceRegionBytes = static_cast<int64_t>(AscendC::GetBlockNum()) *
         GDN::WORKSPACE_BUFFER_COUNT_8 * GDN::WORKSPACE_VECTOR_ELEMS * sizeof(QType);
     // Workspace aliases follow the actual stage lifetimes. Some regions are
@@ -73,5 +101,6 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_finalize(
                  dk0Workspace, dk0Workspace, &tilingData, &pipe);
         vec.Process();
     }
+#endif
 }
 #endif

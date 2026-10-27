@@ -1,6 +1,6 @@
 # ChunkKdaFwdPrepare
 
-[设计文档](docs/design.md) | [API 文档](docs/api.md)
+[A2 实现设计](docs/design_a2.md) | [原有设计 / A5](docs/design.md) | [API 文档](docs/api.md)
 
 ## 功能
 
@@ -115,8 +115,8 @@ tiling 参数位置不会随策略变化。L2 接口允许未保留的七项传 
 
 默认值为 `"save"`，保持原来 13 项全部返回的兼容行为。各档都执行相同的前向数学计算、
 静态 UB/L1 布局和跨核同步，仅关闭未请求结果的公开 GM 写回；`Akk/qg` 等数据在本算子
-内部仍按 C4/C5/C7 或 BF16 舍入语义使用。四档由 TilingKey 的编译期 `OUTPUT_MODE`
-选择，Stage 内不读取运行时输出 mask。
+内部仍按 C4/C5/C7 或 BF16 舍入语义使用。A2通过调用内不可变的tiling `outputMode`
+选择四档；A5保持编译期输出策略。两者均不借用关闭的公开输出作为scratch。
 
 完整 forward 的 `output_final_state` 与 `return_intermediate_states` 是和
 `backward_mode` 正交的用户输出开关，只控制 `final_state/h`。这两个数据由 FwdH/完整
@@ -155,3 +155,6 @@ head。S 固定为 4，C2 以四个 16 行 query band 生成因果 score。UB、
 ready/free 双向握手，生产者不会覆盖仍被消费者使用的 slot。
 
 生产实现位于 `op_kernel/`。
+当前 A2 每组最多4个 value head，AIV0处理0/2，AIV1处理1/3；两个 pair 不代表2-head工作组。
+正式 A2 ATK 交付件维护在 [work_tool PR #32](https://gitcode.com/chen-linxin4/work_tool/pull/32)
+的 `FLA_ATK/chunk_kda_fwd_prepare_a2`，避免在算子优化 PR 重复提交完整测试工程。

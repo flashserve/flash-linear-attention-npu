@@ -140,7 +140,7 @@ flowchart TD
 
 ## 你需要准备什么
 
-- A2、A5 各一台可运行 self-hosted runner 的 Ascend NPU 服务器，例如 `<a2-ci-host>` 和 `<a5-ci-host>`
+- A2、A5 各一台可运行 self-hosted runner 的 Huawei Ascend NPU 服务器，例如 `<a2-ci-host>` 和 `<a5-ci-host>`
 - A2 服务器是 Linux/aarch64，A5 服务器是 Linux/x86_64；两者都已安装匹配的 Ascend 驱动，宿主机能执行 `npu-smi info`
 - 两台服务器都已安装 Docker，并且 runner 服务账号可以执行 `docker`
 - GitHub 仓库管理员权限

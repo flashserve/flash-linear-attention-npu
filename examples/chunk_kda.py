@@ -106,6 +106,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--demo-model", action="store_true", default=False)
     parser.add_argument("--legacy-unfused-core", action="store_true", default=False)
     parser.add_argument("--accuracy-check", action="store_true", default=False)
+    parser.add_argument("--check-finite", action="store_true", default=False,
+                        help="任一前向输出出现非有限值即失败（尾块 workspace 看护）")
+    parser.add_argument("--empty-seq-guard", action="store_true", default=False,
+                        help="同一输入去掉零长度序列后重跑，o/u/v_new 必须逐字节一致")
+    parser.add_argument("--forward-only", action="store_true", default=False,
+                        help="只跑前向（配合 --check-finite / --empty-seq-guard 使用）")
     parser.add_argument("--accuracy-tensors", default=",".join(ACCURACY_TENSORS))
     parser.add_argument("--accuracy-output-tol", type=float,
                         default=DEFAULT_TOLERANCES["output_tol"])
@@ -401,6 +407,59 @@ def run_once(args: argparse.Namespace) -> int:
         torch.npu.synchronize()
     (o, final_state, gk, aqk, akk, w, u, qg, kg, v_new, hstate, _initial) = outputs
 
+    if args.check_finite:
+        # 尾块 workspace 越界会先污染 u/v_new/h，再传导到 attn_out；这里对前向全部
+        # 可见输出做有限性判定，任一非有限值即失败，避免它被后续 smoke 输出掩盖。
+        named_outputs = (
+            ("o", o), ("gk", gk), ("Aqk", aqk), ("Akk", akk), ("w", w),
+            ("u", u), ("qg", qg), ("kg", kg), ("v_new", v_new), ("h", hstate),
+        )
+        nonfinite = {}
+        for name, tensor in named_outputs:
+            if tensor is None:
+                continue
+            bad = int((~torch.isfinite(tensor.float())).sum().item())
+            if bad:
+                nonfinite[name] = bad
+        if nonfinite:
+            print(f"finite check failed: {nonfinite}", file=sys.stderr)
+            return 1
+        print("finite check passed", flush=True)
+
+    if args.empty_seq_guard:
+        # 零长度序列不贡献 chunk，但会占用 fwd_h 调度器的任务槽；同一份输入去掉
+        # 这些空槽后结果必须逐字节一致，否则说明调度器丢了真实任务。
+        if not packed or cu is None:
+            raise ValueError("--empty-seq-guard requires packed input with --cu-seqlens")
+        dedup = [value for index, value in enumerate(cu)
+                 if index == 0 or value > cu[index - 1]]
+        if len(dedup) == len(cu):
+            print("empty seq guard: --cu-seqlens has no zero-length sequence",
+                  file=sys.stderr)
+            return 2
+        guard_kwargs = dict(fwd_kwargs)
+        guard_kwargs["cu_seqlens"] = tuple(dedup)
+        guard_kwargs["chunk_indices"] = None
+        guard_outputs = chunk_kda_fwd(
+            q_op, k_op, v_op, g_op, beta_op, scale, args.chunk_size, **guard_kwargs)
+        if torch_npu is not None and device.type == "npu":
+            torch.npu.synchronize()
+        baseline = {"o": o, "u": u, "v_new": v_new}
+        guard = {"o": guard_outputs[0], "u": guard_outputs[6],
+                 "v_new": guard_outputs[9]}
+        mismatched = []
+        for name, expected in baseline.items():
+            if not bool(torch.equal(guard[name], expected)):
+                diff = (guard[name].float() - expected.float()).abs()
+                print(f"empty seq guard mismatch: {name} count="
+                      f"{int((diff > 0).sum().item())} max_abs="
+                      f"{float(diff.max().item()):.6g}", flush=True)
+                mismatched.append(name)
+        if mismatched:
+            print(f"empty seq guard failed: {', '.join(mismatched)}", file=sys.stderr)
+            return 1
+        print(f"empty seq guard passed (cu_seqlens={list(cu)} -> {dedup})", flush=True)
+
     if args.qk_l2norm:
         q_ref = q.float()
         expect_bsnd = torch.rsqrt(q_ref.square().sum(-1) + 1e-6)  # [B,T,H]
@@ -412,6 +471,11 @@ def run_once(args: argparse.Namespace) -> int:
         if diff > 1e-3:
             print("q_rstd 校验失败", file=sys.stderr)
             return 2
+
+    if args.forward_only:
+        print(f"{args.case_name}: forward-only OK "
+              f"(o absmax={o.detach().float().abs().max().item():.6g})", flush=True)
+        return 0
 
     # 反向：用前向保存量算梯度。反向的 q/k/v/beta 一律是 head-major
     # （dense 为 [B,H,T,D]、packed 为 [H,T,D]），与前向的公开输入布局不同。

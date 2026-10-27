@@ -25,6 +25,10 @@ class Runtime {
   // when a symbol cannot be resolved.
   void* symbol(const std::string& name);
 
+  // Read CANN's thread-local ErrorManager immediately after a failed call.
+  // Missing diagnostic symbols never replace the original aclnn status.
+  std::string recent_error_message();
+
   // torch_npu's entry point for "run this callable on the task queue"
   // (`at_npu::native::OpCommand::RunOpApiV2`).  Null on a host whose torch_npu
   // does not export it; the launcher then stays on the inline path.

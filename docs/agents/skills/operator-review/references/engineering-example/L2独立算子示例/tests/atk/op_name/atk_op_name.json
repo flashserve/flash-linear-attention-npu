@@ -1,0 +1,293 @@
+[
+  {
+    "id": 0,
+    "default_seed": 20260923,
+    "name": "op_name",
+    "aclnn_name": "OpName",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_op_name",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "mixed_tolerance_bm",
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "save_name": "op_name",
+    "inputs": [
+      {
+        "name": "x",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [1, 64, 2, 128],
+        "range_values": [-5, 5],
+        "backward": false
+      },
+      {
+        "name": "g",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [1, 64, 2],
+        "range_values": [-5, 5],
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BSND",
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 1.0,
+        "backward": false
+      },
+      {
+        "name": "epsilon",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 1e-06,
+        "backward": false
+      },
+      {
+        "name": "return_saved",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 1,
+    "default_seed": 20260924,
+    "name": "op_name",
+    "aclnn_name": "OpName",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_op_name",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "mixed_tolerance_bm",
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "save_name": "op_name",
+    "inputs": [
+      {
+        "name": "x",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [1, 2, 256, 128],
+        "range_values": [-5, 5],
+        "backward": false
+      },
+      {
+        "name": "g",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [1, 2, 256],
+        "range_values": [-5, 5],
+        "backward": false
+      },
+      {
+        "name": "a_log",
+        "type": "tensor",
+        "required": false,
+        "dtype": "fp32",
+        "shape": [2],
+        "range_values": [-1, 1],
+        "backward": false
+      },
+      {
+        "name": "initial_state",
+        "type": "tensor",
+        "required": false,
+        "dtype": "fp16",
+        "shape": [1, 2, 128],
+        "range_values": [-5, 5],
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BNSD",
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.5,
+        "backward": false
+      },
+      {
+        "name": "epsilon",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 1e-05,
+        "backward": false
+      },
+      {
+        "name": "return_saved",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 2,
+    "default_seed": 20260925,
+    "name": "op_name",
+    "aclnn_name": "OpName",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_op_name",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "mixed_tolerance_bm",
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "save_name": "op_name",
+    "inputs": [
+      {
+        "name": "x",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [192, 2, 128],
+        "range_values": [-5, 5],
+        "backward": false
+      },
+      {
+        "name": "g",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [192, 2],
+        "range_values": [-5, 5],
+        "backward": false
+      },
+      {
+        "name": "a_log",
+        "type": "tensor",
+        "required": false,
+        "dtype": "fp32",
+        "shape": [2],
+        "range_values": [-1, 1],
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "tensor",
+        "required": false,
+        "dtype": "int64",
+        "shape": [3],
+        "range_values": [0, 192],
+        "backward": false
+      },
+      {
+        "name": "chunk_indices",
+        "type": "tensor",
+        "required": false,
+        "dtype": "int64",
+        "shape": [3, 2],
+        "range_values": [0, 1],
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "TND",
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 2.0,
+        "backward": false
+      },
+      {
+        "name": "epsilon",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 1e-06,
+        "backward": false
+      },
+      {
+        "name": "return_saved",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      }
+    ]
+  }
+]

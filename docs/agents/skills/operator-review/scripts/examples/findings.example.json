@@ -1,0 +1,76 @@
+{
+  "findings": [
+    {
+      "id": "F1",
+      "level": "lv0",
+      "category": "空值/null",
+      "file": "fla/ops/ascendc/kda/chunk_kda_fwd/op_host/chunk_kda_fwd_tiling.cpp",
+      "line": 420,
+      "summary": "空 tensor 未拦截，取 cu_seqlens 末元素继续分核",
+      "valid": null
+    },
+    {
+      "id": "F2",
+      "level": "lv3",
+      "category": "同步/事件时序",
+      "file": "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/chunk_kda_fwd_prepare.h",
+      "line": 270,
+      "summary": "Gate 暂存区复用时缺少反向同步",
+      "valid": null
+    },
+    {
+      "id": "F3",
+      "level": "lv2",
+      "category": "越界/地址偏移",
+      "file": "fla/ops/ascendc/kda/chunk_kda_bwd/op_kernel/chunk_kda_bwd_dk.h",
+      "line": 520,
+      "summary": "对齐后尾部未写中性值，末行越界读取",
+      "valid": null
+    },
+    {
+      "id": "F4",
+      "level": "lv1",
+      "category": "shape/校验缺失",
+      "file": "fla/ops/ascendc/kda/chunk_kda_fwd/op_host/chunk_kda_fwd_tiling.cpp",
+      "line": 208,
+      "summary": "K/V 混合档未拦截",
+      "valid": null
+    },
+    {
+      "id": "F5",
+      "level": "lv1",
+      "category": "dtype/format",
+      "file": "fla/ops/ascendc/kda/chunk_kda_fwd_prepare/op_host/chunk_kda_fwd_prepare_def.cpp",
+      "line": 50,
+      "summary": "输出 dtype 列表与输入长度不一致",
+      "valid": null
+    },
+    {
+      "id": "F6",
+      "level": "lv2",
+      "category": "内存容量/超限",
+      "file": "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h/op_kernel/arch35/chunk_fwd_h_cube.h",
+      "line": 300,
+      "summary": "L1 驻留份数疑似超过规格（无法在给定容差内定位到具体行）",
+      "valid": false
+    },
+    {
+      "id": "F7",
+      "level": "lv0",
+      "category": "索引/计数",
+      "file": "fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/chunk_kda_fwd_varlen.h",
+      "line": 77,
+      "summary": "varlen 有效长度按 block 而非有效行裁剪（额外发现）",
+      "valid": true
+    },
+    {
+      "id": "F8",
+      "level": "lv1",
+      "category": "shape/校验缺失",
+      "file": "fla/ops/ascendc/kda/chunk_kda_fwd_finalize/op_host/chunk_kda_fwd_finalize_tiling.cpp",
+      "line": 132,
+      "summary": "finalize 侧未校验 hidden 维度（待确认）",
+      "valid": null
+    }
+  ]
+}

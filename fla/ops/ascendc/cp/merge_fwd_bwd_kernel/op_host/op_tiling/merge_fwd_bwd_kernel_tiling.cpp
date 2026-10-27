@@ -174,7 +174,10 @@ ge::graphStatus Tiling4MergeFwdBwdKernel(gert::TilingContext *context)
 
     auto *rawTiling = context->GetRawTilingData();
     OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);
-    rawTiling->SetDataSize(sizeof(MergeFwBwd::MergeFwdBwdKernelTilingData));
+    // Kernel GET_TILING_DATA opParaSize is sizeof+8 on this CANN; mismatch
+    // makes sanitizer report an 88-byte illegal tiling LOAD and can leave
+    // tiling GM unbound.
+    rawTiling->SetDataSize(sizeof(MergeFwBwd::MergeFwdBwdKernelTilingData) + 8);
     return ge::GRAPH_SUCCESS;
 }
 

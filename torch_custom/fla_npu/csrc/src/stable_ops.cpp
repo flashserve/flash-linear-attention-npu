@@ -32,6 +32,8 @@
 #include "stable_chunk_gdn_bwd_intra.cpp"
 #include "stable_chunk_kda_bwd.cpp"
 #include "stable_chunk_kda_bwd_intra.cpp"
+#include "stable_chunk_kda_bwd_prepare.cpp"
+#include "stable_chunk_kda_bwd_finalize.cpp"
 #include "stable_chunk_kda_bwd_recompute.cpp"
 #include "stable_chunk_kda_fwd.cpp"
 #include "stable_chunk_kda_fwd_finalize.cpp"
@@ -101,6 +103,8 @@ STABLE_TORCH_LIBRARY(fla_npu_stable, m) {
   m.def(kSchema_npu_fast_gelu_custom_backward);
   m.def(kSchema_kda_gate_cumsum);
   m.def(kSchema_chunk_kda_bwd_intra);
+  m.def(kSchema_chunk_kda_bwd_prepare);
+  m.def(kSchema_chunk_kda_bwd_finalize);
   m.def(kSchema_chunk_kda_bwd_recompute);
   m.def(kSchema_chunk_kda_fwd);
   m.def(kSchema_chunk_kda_fwd_finalize);
@@ -149,6 +153,10 @@ STABLE_TORCH_LIBRARY_IMPL(fla_npu_stable, CompositeExplicitAutograd, m) {
          &fla_npu_stable::stable::boxed_adapter<run_npu_kda_gate_cumsum>);
   m.impl("npu_chunk_kda_bwd_intra",
          &fla_npu_stable::stable::boxed_adapter<run_npu_chunk_kda_bwd_intra>);
+  m.impl("npu_chunk_kda_bwd_prepare",
+         &fla_npu_stable::stable::boxed_adapter<run_npu_chunk_kda_bwd_prepare>);
+  m.impl("npu_chunk_kda_bwd_finalize",
+         &fla_npu_stable::stable::boxed_adapter<run_npu_chunk_kda_bwd_finalize>);
   m.impl("npu_chunk_kda_bwd_recompute",
          &fla_npu_stable::stable::boxed_adapter<
              run_npu_chunk_kda_bwd_recompute>);
