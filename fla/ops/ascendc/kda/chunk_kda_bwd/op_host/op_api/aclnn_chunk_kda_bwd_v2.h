@@ -9,7 +9,8 @@ extern "C" {
 
 // Optimized multi-stage KDA backward. Inputs use the canonical internal
 // head-major token layout consumed by the fused forward exports:
-// dense [B,H,T,D], varlen [H,T,D]. Saved h is head-major.
+// dense [B,H,T,D], varlen [H,T,D]. Saved h is chunk-major:
+// dense [B,Nc,H,K,V], varlen [Nc,H,K,V].
 __attribute__((visibility("default")))
 aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
     const aclTensor *q,

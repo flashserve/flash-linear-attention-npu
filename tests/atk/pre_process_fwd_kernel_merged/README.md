@@ -98,7 +98,7 @@ GPU 服务器端的容器 / ATK server 启动方式与本仓交付件里的其�
 
 **默认 = CP 组同口径**：ATK 原生 `mixed_tolerance_bm` + `output_dtype_overrides {"0": "bf16"}` ——
 "`hm` 虽是 FP32 输出，但链上中间量按设计用模型 dtype 传递 ⇒ **按模型 dtype 判精度**"，
-与兄弟算子 `chunk_delta_h_bwd_preprocess` 完全一致；**不在 executor 里自定义任何指标**。
+与兄弟算子 `pre_process_bwd_kernel_merged` 完全一致；**不在 executor 里自定义任何指标**。
 该标准名需要 **ATK ≥ 26.8.8** 才注册（26.7.8.dev / 26.9.24 会 `KeyError: mixed_tolerance_bm`）。
 
 **备选（非默认）**：`cv_fused_double_benchmark`（DUT + 同精度标杆 vs FP64 真值两路），
@@ -127,7 +127,7 @@ executor 支持的环境变量：
 ### 精度口径（重要）
 
 - **实现侧（精度等级）**：h 链的 `W@h`、`Kᵀ@v_new` 与 m 链的 `Kw = LᵀW`、`Kw @ m`，
-  都是 **bf16 操作数 + FP32 累加** —— 与 CP 组兄弟算子 `chunk_delta_h_bwd_preprocess` 的
+  都是 **bf16 操作数 + FP32 累加** —— 与 CP 组兄弟算子 `pre_process_bwd_kernel_merged` 的
   链式量同级；`hm` 以 FP32 输出、不做额外舍入（与 `docs/design.md` §1.3 的舍入点清单一致）。
 - **判据侧**：链式量的绝对误差随链长（chunk 数）放大、逐元素相对误差又会被参考里的极小值污染，
   因此**不在 executor 里自造指标**，直接用 ATK 原生的 `mixed_tolerance_bm` +

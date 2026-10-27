@@ -10,9 +10,9 @@
 #include "aclnn/aclnn_base.h"
 #include "aclnn_kernels/common/op_error_check.h"
 #include "aclnn_kernels/cast.h"
+#include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/reshape.h"
 #include "aclnn_kernels/transpose.h"
-#include "aclnn_kernels/contiguous.h"
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
 #include "opdev/tensor_view_utils.h"
@@ -199,7 +199,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
             ACLNN_ERR_INNER_NULLPTR);
         const auto recomputeResult = l0op::ChunkKdaBwdRecompute(
             q4, k4, v4, rawG4, beta3, akk4, aLog, dtBias, cu, indices,
-            64, true, true, lowerBound, w4, u4, qg4, kg4, gk4, ex);
+            64, true, true, lowerBound, "BNSD", w4, u4, qg4, kg4, gk4, ex);
         for (const auto *value : recomputeResult) {
             CHECK_RET(value, ACLNN_ERR_INNER_NULLPTR);
         }
@@ -216,7 +216,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
     const auto *dvScan=AllocTensor(ex,token,DataType::DT_BF16);
     CHECK_RET(dAqk && dv0 && dqRaw && dh && dvScan,ACLNN_ERR_INNER_NULLPTR);
     const auto prepareResult = l0op::ChunkKdaBwdPrepare(
-        aqk, vNew, dO, h, cu, indices, scale, 64, false, dAqk, dv0, dqRaw, ex);
+        aqk, vNew, dO, h, cu, indices, packed ? "NTD" : "BNSD", scale, 64, false, dAqk, dv0, dqRaw, ex);
     for (const auto *value : prepareResult) {
         CHECK_RET(value, ACLNN_ERR_INNER_NULLPTR);
     }
@@ -239,13 +239,28 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
     rawG = ToFloat32(rawG,ex);
     aLog = ToFloat32(aLog,ex);
     CHECK_RET(rawG && aLog, ACLNN_ERR_INNER_NULLPTR);
+    // Finalize exports gate/beta gradients in token-major order. The total
+    // backward API keeps its existing head-major output contract.
+    const auto *dbToken = AllocTensor(ex, packed ? MakeShape({T,H}) : MakeShape({B,T,H}), beta->GetDataType());
+    const auto *dgToken = AllocTensor(ex, packed ? MakeShape({T,H,128}) : MakeShape({B,T,H,128}), DataType::DT_FLOAT);
+    CHECK_RET(dbToken && dgToken, ACLNN_ERR_INNER_NULLPTR);
     const auto finalizeResult = l0op::ChunkKdaBwdFinalize(
         q, k, v, gk, rawG, beta, aLog, dtBias, akk, vNew, h, dh, dvScan, dAqk, dqRaw,
         qRstd, kRstd, cu, indices, scale, lowerBound, 64, true, true, true, false,
-        dq, dk, dv, db, dg, dA, dBias, ex);
+        false, false, packed ? "NTD" : "BNSD",
+        dq, dk, dv, dbToken, dgToken, dA, dBias, ex);
     for (const auto *value : finalizeResult) {
         CHECK_RET(value, ACLNN_ERR_INNER_NULLPTR);
     }
+    const std::vector<int64_t> betaPerm = packed ? std::vector<int64_t>{1,0} : std::vector<int64_t>{0,2,1};
+    const std::vector<int64_t> gatePerm = packed ? std::vector<int64_t>{1,0,2} : std::vector<int64_t>{0,2,1,3};
+    const auto *betaOrder = ex->AllocIntArray(betaPerm.data(), betaPerm.size());
+    const auto *gateOrder = ex->AllocIntArray(gatePerm.data(), gatePerm.size());
+    CHECK_RET(betaOrder && gateOrder, ACLNN_ERR_INNER_NULLPTR);
+    const auto *dbHead = l0op::Transpose(dbToken, betaOrder, ex);
+    const auto *dgHead = l0op::Transpose(dgToken, gateOrder, ex);
+    CHECK_RET(dbHead && dgHead, ACLNN_ERR_INNER_NULLPTR);
+    CHECK_RET(l0op::ViewCopy(dbHead, db, ex) && l0op::ViewCopy(dgHead, dg, ex), ACLNN_ERR_INNER_NULLPTR);
     *workspaceSize=owner->GetWorkspaceSize();
     owner.ReleaseTo(executor);
     return ACLNN_SUCCESS;

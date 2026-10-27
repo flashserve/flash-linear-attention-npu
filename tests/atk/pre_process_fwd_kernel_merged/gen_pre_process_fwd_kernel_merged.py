@@ -44,7 +44,7 @@ BT = 64
 SEED0 = 20260818
 
 STANDARD = {
-    # 与 CP 组兄弟算子 `chunk_delta_h_bwd_preprocess` 同口径：`hm` 是 FP32 输出，但
+    # 与 CP 组兄弟算子 `pre_process_bwd_kernel_merged` 同口径：`hm` 是 FP32 输出，但
     # `m` 链的 `Kw@m` / h 链的 `W@h`、`Kᵀ@v_new` 的中间量按设计用**模型 dtype** 入 Cube
     # （bf16 操作数 + FP32 累加）⇒ 按模型 dtype 判精度（ATK 原生 `output_dtype_overrides`），
     # 不在 executor 里自定义指标。需要 ATK >= 26.8.8。
@@ -228,7 +228,7 @@ def _case_payload(case_id: int, profile: dict, standard: dict, seed: int) -> dic
         # 所以 executor 运行时需要的标量必须**单独**走普通属性通道下发，否则会被静默忽略：
         #   case_spec 里曾同时写着 seed 与 cu_seqlens，实际都收不到 —— seed 回落成默认值、
         #   cu_seqlens 回落成 [0, T]，于是多段/子区间用例退化成单窗口，用例名与真实输入不符。
-        # cu_seqlens 是 list，按 chunk_delta_h_bwd_preprocess 的约定用逗号分隔的 string 下发。
+        # cu_seqlens 是 list，按 pre_process_bwd_kernel_merged 的约定用逗号分隔的 string 下发。
         _input("cu_seqlens", "string", ",".join(str(int(x)) for x in spec["cu_seqlens"])),
         _input("seed", "int", spec["seed"]),
         _input("dtype", "string", spec["dtype"]),

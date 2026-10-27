@@ -792,7 +792,7 @@ if _bdist_wheel is not None:
 setup(
     name=get_distribution_name(),
     version=get_package_version(REPO_ROOT),
-    description="High-performance linear attention operators for Ascend NPU",
+    description="High-performance linear attention operators for Huawei Ascend NPU",
     long_description=(REPO_ROOT / "README.md").read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",
     classifiers=[

@@ -24,6 +24,11 @@ container_tmpdir="${CI_TMPDIR:-}"
 host_tmpdir="${CI_HOST_TMPDIR:-}"
 npu_lock_fd=""
 npu_lock_file=""
+container_id_dir=""
+
+if [[ -n "${TMPDIR:-}" ]]; then
+    mkdir -p "$TMPDIR"
+fi
 
 if [[ -z "$cache_root" ]]; then
     if [[ -d /workspace ]]; then
@@ -41,6 +46,37 @@ release_npu_lock() {
         npu_lock_fd=""
         npu_lock_file=""
     fi
+}
+
+cleanup_ci() {
+    local status=$?
+    trap - EXIT INT TERM
+    if [[ -n "$container_id_dir" ]]; then
+        if [[ -s "$container_id_dir/id" ]]; then
+            # Also handles a container stopped by the stale-commit monitor.
+            docker rm -f "$(cat "$container_id_dir/id")" >/dev/null 2>&1 || true
+            local cleanup_mounts=(-v "$repo_dir:/ci-repo")
+            local cleanup_paths=(/ci-repo)
+            if [[ -n "$host_tmpdir" ]]; then
+                cleanup_mounts+=(-v "$host_tmpdir:/ci-tmp")
+                cleanup_paths+=(/ci-tmp)
+            fi
+            # Package installation uses root inside the image; return its bind-
+            # mounted outputs to the caller without requiring host sudo.
+            if ! docker run --rm --network none --user 0:0 --entrypoint bash \
+                "${cleanup_mounts[@]}" "$image" \
+                -c 'owner="$1"; shift; chown -Rh -- "$owner" "$@"' \
+                -- "$(id -u):$(id -g)" "${cleanup_paths[@]}"; then
+                echo "[CI][ERROR] Could not return CI outputs to the invoking user." >&2
+                if (( status == 0 )); then status=1; fi
+            fi
+        fi
+        if ! { rm -f -- "$container_id_dir/id" && rmdir -- "$container_id_dir"; }; then
+            if (( status == 0 )); then status=1; fi
+        fi
+    fi
+    release_npu_lock
+    exit "$status"
 }
 
 acquire_npu_lock() {
@@ -76,9 +112,6 @@ acquire_npu_lock() {
                 npu_lock_fd="$fd"
                 npu_lock_file="$candidate_lock"
                 eval "$(bash ci/detect_npu.sh --env-for "$id")"
-                trap release_npu_lock EXIT
-                trap 'release_npu_lock; exit 130' INT
-                trap 'release_npu_lock; exit 143' TERM
                 echo "[CI] Acquired NPU lock: $npu_lock_file"
                 return
             fi
@@ -94,6 +127,10 @@ acquire_npu_lock() {
         sleep "$lock_retry_seconds"
     done
 }
+
+trap cleanup_ci EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 if [[ "$require_preloaded_image" == "true" ]]; then
     if [[ "$rebuild_image" == "true" ]]; then
@@ -147,6 +184,13 @@ if [[ -n "$host_tmpdir" ]]; then
     fi
     mkdir -p "$host_tmpdir"
     host_tmpdir="$(realpath "$host_tmpdir")"
+    for protected_dir in / /tmp /home "${HOME:-/}" "$repo_dir" "$cache_root" "${TMPDIR:-/tmp}"; do
+        protected_dir="$(realpath -m "$protected_dir")"
+        if [[ "$protected_dir" == "$host_tmpdir" || "$protected_dir" == "$host_tmpdir/"* ]]; then
+            echo "[CI][ERROR] CI_HOST_TMPDIR must be a dedicated temporary subdirectory." >&2
+            exit 2
+        fi
+    done
 fi
 
 mount_args=(
@@ -182,7 +226,9 @@ if [[ -n "${CI_CONTAINER_COMMAND:-}" ]]; then
     container_command=(bash -lc "$CI_CONTAINER_COMMAND")
 fi
 
+container_id_dir="$(mktemp -d "${TMPDIR:-/tmp}/fla-npu-container.XXXXXX")"
 docker run --rm \
+    --cidfile "$container_id_dir/id" \
     --name "$container_name" \
     --network host \
     --ipc host \
@@ -235,4 +281,6 @@ docker run --rm \
     -e FLA_NPU_TORCH_VERSION="${FLA_NPU_TORCH_VERSION:-}" \
     -e FLA_NPU_CXX11_ABI="${FLA_NPU_CXX11_ABI:-}" \
     "$image" \
-    "${container_command[@]}"
+    "${container_command[@]}" &
+docker_pid=$!
+wait "$docker_pid"

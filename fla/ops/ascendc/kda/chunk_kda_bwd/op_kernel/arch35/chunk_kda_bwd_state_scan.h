@@ -317,7 +317,7 @@ public:
             l0C[1] = resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(L0C_TILE_BYTES);
         }
         const uint32_t cvStrideBytes =
-            static_cast<uint32_t>(vecRow_ * V_ * static_cast<int64_t>(sizeof(DT)));
+            static_cast<uint32_t>(vecRow_ * V_ * static_cast<int64_t>(sizeof(float)));
         AscendC::LocalTensor<DT> matrixCvBuf[CV_BUFFER_COUNT] = {
             resource.ubBuf.template GetBufferByByte<DT>(0),
             resource.ubBuf.template GetBufferByByte<DT>(cvStrideBytes)};
@@ -370,7 +370,7 @@ public:
                     LayoutTagState tagState = LayoutTagState::MakeLayout<DT>(K_, V_DIM);
                     LayoutTagDvState tagDvState = LayoutTagDvState::MakeLayout<DT>(chunkSize_, V_DIM);
                     LayoutTagDO tagDO = LayoutTagDO::MakeLayout<DT>(chunkSize_, V_DIM);
-                    LayoutTagTermQ tagTermQ = LayoutTagTermQ::MakeLayout<DT>(K_, V_DIM);
+                    LayoutTagTermQ tagTermQ = LayoutTagTermQ::MakeLayout<float>(K_, V_DIM);
 
                     auto layoutK = tla::MakeLayoutFromTag(tagK);
                     auto layoutState = tla::MakeLayoutFromTag(tagState);
@@ -382,14 +382,14 @@ public:
                     AscendC::GlobalTensor<DT> gmState;
                     AscendC::GlobalTensor<DT> gmDvState;
                     AscendC::GlobalTensor<DT> gmDO;
-                    AscendC::GlobalTensor<DT> gmTermQ;
+                    AscendC::GlobalTensor<float> gmTermQ;
                     gmK.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(k_) + kBase);
                     gmState.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dh_) + dhBase);
                     gmDvState.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(workspace_) + slotBase +
                                               dvStateWorkspaceOffset_);
                     gmDO.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dO_) + dOBase);
-                    gmTermQ.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(workspace_) + slotBase +
-                                            termQWorkspaceOffset_);
+                    gmTermQ.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+                        workspace_ + (slotBase + termQWorkspaceOffset_) * sizeof(DT)));
 
                     auto tensorK = tla::MakeTensor(gmK, layoutK, Catlass::Arch::PositionGM{});
                     constexpr bool useL0KResident = std::is_same<DT, bfloat16_t>::value && V_DIM == 128;
@@ -638,7 +638,7 @@ public:
 
                     LayoutTagWT tagWT = LayoutTagWT::MakeLayout<DT>(K_, chunkSize_);
                     LayoutTagDv2 tagDv2 = LayoutTagDv2::MakeLayout<DT>(chunkSize_, V_DIM);
-                    LayoutTagTermW tagTermW = LayoutTagTermW::MakeLayout<DT>(K_, V_DIM);
+                    LayoutTagTermW tagTermW = LayoutTagTermW::MakeLayout<float>(K_, V_DIM);
 
                     auto layoutWT = tla::MakeLayoutFromTag(tagWT);
                     auto layoutDv2 = tla::MakeLayoutFromTag(tagDv2);
@@ -646,11 +646,11 @@ public:
 
                     AscendC::GlobalTensor<DT> gmWT;
                     AscendC::GlobalTensor<DT> gmDv2;
-                    AscendC::GlobalTensor<DT> gmTermW;
+                    AscendC::GlobalTensor<float> gmTermW;
                     gmWT.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(w_) + wBase);
                     gmDv2.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dv2_) + dv2Base);
-                    gmTermW.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(workspace_) + slotBase +
-                                            termWWorkspaceOffset_);
+                    gmTermW.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+                        workspace_ + (slotBase + termWWorkspaceOffset_) * sizeof(DT)));
 
                     auto tensorWT = tla::MakeTensor(gmWT, layoutWT, Catlass::Arch::PositionGM{});
                     auto tensorDv2 = tla::MakeTensor(gmDv2, layoutDv2, Catlass::Arch::PositionGM{});
@@ -785,7 +785,8 @@ public:
                                                             static_cast<uint32_t>(vecRow_) :
                                                             leftRows;
                                 auto tensorCv = tla::MakeTensor(
-                                    matrixCvBuf[cvListId], UB_LAYOUT_TERMW_CV, Catlass::Arch::PositionUB{});
+                                    matrixCvBuf[cvListId].template ReinterpretCast<float>(),
+                                    UB_LAYOUT_TERMW_CV, Catlass::Arch::PositionUB{});
                                 auto blockCv = tla::GetTile(
                                     tensorCv, tla::MakeCoord(0, 0),
                                     tla::MakeShape(cvRows, static_cast<uint32_t>(V_DIM)));
@@ -835,13 +836,13 @@ private:
     using TileCopyDvState =
         Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, DT, LayoutTagK, DT, LayoutTagState, DT, LayoutTagDvState>;
     using TileCopyTermQ =
-        Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, DT, LayoutTagQGT, DT, LayoutTagDO, DT, LayoutTagTermQ>;
+        Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, DT, LayoutTagQGT, DT, LayoutTagDO, float, LayoutTagTermQ>;
     using TileCopyTermW =
-        Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, DT, LayoutTagWT, DT, LayoutTagDv2, DT, LayoutTagTermW>;
+        Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, DT, LayoutTagWT, DT, LayoutTagDv2, float, LayoutTagTermW>;
     using TileCopyDvStateToUB =
         Common::Tile::PackedTileCopyTlaToUB<ArchTag, DT, LayoutTagK, DT, LayoutTagState, DT, LayoutTagDvState>;
     using TileCopyTermWToUB =
-        Common::Tile::PackedTileCopyTlaToUB<ArchTag, DT, LayoutTagWT, DT, LayoutTagDv2, DT, LayoutTagTermW>;
+        Common::Tile::PackedTileCopyTlaToUB<ArchTag, DT, LayoutTagWT, DT, LayoutTagDv2, float, LayoutTagTermW>;
     using ElementAccumulator = typename TileCopyDvState::ElementAccumulator;
     using CopyL1ToL0A_DvState = typename TileCopyDvState::CopyL1ToL0A;
     using CopyL1ToL0B_DvState = typename TileCopyDvState::CopyL1ToL0B;
@@ -908,7 +909,7 @@ private:
     static constexpr auto UB_LAYOUT_DVSTATE_CV =
         tla::MakeLayout<DT, LayoutTagDvState>(tla::Int<CHUNK_MAX>{}, tla::Int<V_DIM>{});
     static constexpr auto UB_LAYOUT_TERMW_CV =
-        tla::MakeLayout<DT, LayoutTagTermW>(tla::Int<K_DIM>{}, tla::Int<V_DIM>{});
+        tla::MakeLayout<float, LayoutTagTermW>(tla::Int<K_DIM>{}, tla::Int<V_DIM>{});
     static constexpr uint32_t K_RESIDENT_BUFFER_COUNT = BUFFER_COUNT_2;
     static constexpr uint32_t W_RESIDENT_BUFFER_COUNT = BUFFER_COUNT_2;
     static constexpr uint32_t L1A_SCRATCH_BUFFER_COUNT = HEADS_PER_TASK;
@@ -1411,11 +1412,11 @@ public:
 
         const int64_t inputElems = vecRow_ * (K_ > V_ ? K_ : V_);
         if constexpr (std::is_same<DT, bfloat16_t>::value) {
-            pipe_->InitBuffer(matrixCvPing_, vecRow_ * V_ * static_cast<int64_t>(sizeof(DT)));
-            pipe_->InitBuffer(matrixCvPong_, vecRow_ * V_ * static_cast<int64_t>(sizeof(DT)));
+            pipe_->InitBuffer(matrixCvPing_, vecRow_ * V_ * static_cast<int64_t>(sizeof(float)));
+            pipe_->InitBuffer(matrixCvPong_, vecRow_ * V_ * static_cast<int64_t>(sizeof(float)));
         }
-        pipe_->InitBuffer(qInputPing_, inputElems * static_cast<int64_t>(sizeof(DT)));
-        pipe_->InitBuffer(qInputPong_, inputElems * static_cast<int64_t>(sizeof(DT)));
+        pipe_->InitBuffer(qInputPing_, inputElems * static_cast<int64_t>(sizeof(float)));
+        pipe_->InitBuffer(qInputPong_, inputElems * static_cast<int64_t>(sizeof(float)));
         pipe_->InitBuffer(gInputPing_, gateElems_ * static_cast<int64_t>(sizeof(GT)));
         pipe_->InitBuffer(gInputPong_, gateElems_ * static_cast<int64_t>(sizeof(GT)));
         pipe_->InitBuffer(outputPing_, inputElems * static_cast<int64_t>(sizeof(DT)));
@@ -1753,7 +1754,8 @@ public:
                     }
                     const int64_t workspaceBase = WorkspaceBase(coreIdx, workspaceSlot);
                     const int64_t stateBase = StateWorkspaceFloatOffset(workspaceBase, 0);
-                    const int64_t termQBase = workspaceBase + termQWorkspaceOffset_;
+                    const int64_t termQBase =
+                        (workspaceBase + termQWorkspaceOffset_) * sizeof(DT) / sizeof(float);
                     AscendC::LocalTensor<float> termQFp32 = qFp32Buf_.template Get<float>();
                     AscendC::LocalTensor<float> outFp32 = outFp32Buf_.template Get<float>();
                     uint32_t cvListId = 0;
@@ -1763,24 +1765,25 @@ public:
                         const uint32_t elems = static_cast<uint32_t>(curRows * V_);
                         const int64_t rowElems = rowOffset * V_;
                         const uint32_t termQIdx = CopyInRows(
-                            workspaceGm_, qInputBuf_[curQInputPingPong_], termQBase + rowElems, elems);
-                        CastInputRows(termQFp32, qInputBuf_[termQIdx], elems, termQIdx);
+                            workspaceStateGm_, qInputBuf_[curQInputPingPong_].template ReinterpretCast<float>(),
+                            termQBase + rowElems, elems);
+                        CopyTermInputRows(termQFp32, elems, termQIdx);
                         const uint32_t stateIdx = CopyInStateRows(
                             stateBuf_[curStatePingPong_], stateBase + rowElems, elems);
                         if constexpr (std::is_same<DT, bfloat16_t>::value) {
                             const bool useGmTermW = V_ == 256 && chunkInfo.chunkLen > 64;
                             if (useGmTermW) {
-                                const int64_t termWBase = workspaceBase + termWWorkspaceOffset_;
+                                const int64_t termWBase =
+                                    (workspaceBase + termWWorkspaceOffset_) * sizeof(DT) / sizeof(float);
                                 const uint32_t termWIdx = CopyInRows(
-                                    workspaceGm_, qInputBuf_[curQInputPingPong_], termWBase + rowElems, elems);
-                                CastInputRows(outFp32, qInputBuf_[termWIdx], elems, termWIdx);
+                                    workspaceStateGm_, qInputBuf_[curQInputPingPong_].template ReinterpretCast<float>(),
+                                    termWBase + rowElems, elems);
+                                CopyTermInputRows(outFp32, elems, termWIdx);
                             } else {
                                 AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
                                     MATRIX_CV_AIC_TO_AIV_FLAG_BEGIN + cvListId);
-                                CastLocalToFloatRegbase<DT>(
-                                    (__ubuf__ float *)reinterpret_cast<uint64_t>(outFp32.GetPhyAddr()),
-                                    (__ubuf__ DT *)reinterpret_cast<uint64_t>(matrixCvBuf_[cvListId].GetPhyAddr()),
-                                    static_cast<uint16_t>(elems));
+                                AscendC::Adds(outFp32, matrixCvBuf_[cvListId].template ReinterpretCast<float>(),
+                                              0.0f, elems);
                                 if (headCnt < HEADS_PER_TASK) {
                                     AscendC::PipeBarrier<PIPE_V>();
                                 }
@@ -1789,10 +1792,12 @@ public:
                                 cvListId ^= 1U;
                             }
                         } else {
-                            const int64_t termWBase = workspaceBase + termWWorkspaceOffset_;
+                            const int64_t termWBase =
+                                (workspaceBase + termWWorkspaceOffset_) * sizeof(DT) / sizeof(float);
                             const uint32_t termWIdx = CopyInRows(
-                                workspaceGm_, qInputBuf_[curQInputPingPong_], termWBase + rowElems, elems);
-                            CastInputRows(outFp32, qInputBuf_[termWIdx], elems, termWIdx);
+                                workspaceStateGm_, qInputBuf_[curQInputPingPong_].template ReinterpretCast<float>(),
+                                termWBase + rowElems, elems);
+                            CopyTermInputRows(outFp32, elems, termWIdx);
                         }
                         AscendC::LocalTensor<float> stateFp32 = stateBuf_[stateIdx];
                         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(stateMte2ToVEvent_[stateIdx]);
@@ -1919,6 +1924,14 @@ private:
         CastLocalToFloatRegbase<DT>((__ubuf__ float *)reinterpret_cast<uint64_t>(dstTensor.GetPhyAddr()),
                                     (__ubuf__ DT *)reinterpret_cast<uint64_t>(srcTensor.GetPhyAddr()),
                                     static_cast<uint16_t>(elements));
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[inputIdx]);
+    }
+
+    __aicore__ inline void CopyTermInputRows(
+        AscendC::LocalTensor<float> dstTensor, uint32_t elements, uint32_t inputIdx)
+    {
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(qMte2ToVEvent_[inputIdx]);
+        AscendC::Adds(dstTensor, qInputBuf_[inputIdx].template ReinterpretCast<float>(), 0.0f, elements);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[inputIdx]);
     }
 

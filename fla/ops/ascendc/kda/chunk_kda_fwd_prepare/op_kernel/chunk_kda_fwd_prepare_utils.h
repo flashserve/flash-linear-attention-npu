@@ -116,6 +116,48 @@ __aicore__ inline void HeadRange(
     }
 }
 
+__aicore__ inline uint32_t TokenBalancedWorkBoundary(
+    const PrepareKernelArgs &args, uint32_t total, uint32_t rank,
+    uint32_t rankCount)
+{
+    if (rankCount == 0 || !args.tiling.isVarLen ||
+        UseHeadSplit(args.tiling) || args.chunkIndices == nullptr ||
+        args.cuSeqlens == nullptr || args.tiling.seqLen == 0) {
+        return WorkBegin(total, rank, rankCount);
+    }
+    if (rank == 0 || rank >= rankCount) {
+        return rank == 0 ? 0 : total;
+    }
+    const uint64_t target = static_cast<uint64_t>(args.tiling.seqLen) *
+                            rank / rankCount;
+    const __gm__ int64_t *indices =
+        reinterpret_cast<const __gm__ int64_t *>(args.chunkIndices);
+    const __gm__ int64_t *cu =
+        reinterpret_cast<const __gm__ int64_t *>(args.cuSeqlens);
+    uint32_t begin = 0;
+    uint32_t end = total;
+    while (begin < end) {
+        const uint32_t middle = begin + (end - begin) / 2;
+        const int64_t sequence = indices[middle * 2];
+        const int64_t localChunk = indices[middle * 2 + 1];
+        if (sequence < 0 || sequence >= args.tiling.seqNum || localChunk < 0) {
+            return WorkBegin(total, rank, rankCount);
+        }
+        const int64_t sequenceBegin = cu[sequence];
+        if (sequenceBegin < 0) {
+            return WorkBegin(total, rank, rankCount);
+        }
+        const uint64_t tokenBegin = static_cast<uint64_t>(sequenceBegin) +
+            static_cast<uint64_t>(localChunk) * Shape::kChunkRows;
+        if (tokenBegin < target) {
+            begin = middle + 1;
+        } else {
+            end = middle;
+        }
+    }
+    return begin;
+}
+
 __aicore__ inline bool ResolveChunk(const PrepareKernelArgs &args,
                                     uint32_t globalChunk, ChunkRange &chunk)
 {

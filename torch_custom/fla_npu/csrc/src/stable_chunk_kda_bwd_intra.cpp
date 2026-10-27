@@ -32,7 +32,7 @@ using fla_npu_stable::stable::int_array;
 using fla_npu_stable::stable::int_values;
 using fla_npu_stable::stable::meta_of;
 using fla_npu_stable::stable::nd_optional_tensor;
-using fla_npu_stable::stable::nd_out_tensor;
+using fla_npu_stable::stable::nd_logical_out_tensor;
 using fla_npu_stable::stable::nd_tensor;
 using fla_npu_stable::stable::optional_tensor;
 using fla_npu_stable::stable::out_tensor;
@@ -80,8 +80,10 @@ std::tuple<Tensor, Tensor, Tensor, Tensor> run_npu_chunk_kda_bwd_intra(
       nd_tensor(meta_of(db)), nd_tensor(meta_of(dg)),
       int_array(cu_seqlens), int_array(chunk_indices), scalar(chunk_size),
       scalar(safe_gate), cstr(kChunkKdaBwdIntraLayoutNames, layout),
-      nd_out_tensor(meta_of(out_dq)), nd_out_tensor(meta_of(out_dk)),
-      nd_out_tensor(meta_of(out_db)), nd_out_tensor(meta_of(out_dg)));
+      nd_logical_out_tensor(meta_of(out_dq)),
+      nd_logical_out_tensor(meta_of(out_dk)),
+      nd_logical_out_tensor(meta_of(out_db)),
+      nd_logical_out_tensor(meta_of(out_dg)));
   return std::make_tuple(out_dq, out_dk, out_db, out_dg);
 }
 

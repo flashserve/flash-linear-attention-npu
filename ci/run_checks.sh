@@ -211,12 +211,14 @@ if command -v npu-smi >/dev/null 2>&1; then
     fi
 fi
 
-ci_jobs="${CI_JOBS:-$(nproc)}"
+ci_jobs="${CI_JOBS:-16}"
 ci_cpack_jobs="${CI_CPACK_JOBS:-$ci_jobs}"
 ci_test_device="${CI_CONTAINER_DEVICE:-0}"
 
 export CMAKE_BUILD_PARALLEL_LEVEL="$ci_cpack_jobs"
 export MAKEFLAGS="${MAKEFLAGS:+$MAKEFLAGS }-j${ci_cpack_jobs}"
+export MAX_JOBS="$ci_jobs"
+export FLA_NPU_BUILD_ARGS="${FLA_NPU_BUILD_ARGS:+$FLA_NPU_BUILD_ARGS }-j${ci_jobs}"
 export TORCH_DEVICE_BACKEND_AUTOLOAD="${TORCH_DEVICE_BACKEND_AUTOLOAD:-0}"
 if [[ -z "${PYTORCH_VERSION:-}" ]]; then
     PYTORCH_VERSION="$(python3 - <<'PY'

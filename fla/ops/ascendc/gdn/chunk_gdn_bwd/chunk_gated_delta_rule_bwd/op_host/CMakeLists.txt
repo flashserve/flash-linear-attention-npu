@@ -1,6 +1,23 @@
 add_op_to_compiled_list()
+set(_gdn_bwd_enable_arch22 0)
+foreach(_gdn_bwd_soc IN LISTS ASCEND_COMPUTE_UNIT)
+    string(TOLOWER "${_gdn_bwd_soc}" _gdn_bwd_soc_lower)
+    if (_gdn_bwd_soc_lower STREQUAL "ascend910b" OR _gdn_bwd_soc_lower STREQUAL "ascend910_93")
+        set(_gdn_bwd_enable_arch22 1)
+    endif()
+endforeach()
+
+# 先保留 A5 基线依赖，再按构建的 SoC 加入 A2/A3 私有前序算子。
+# 混合 SoC 构建共用 Host 对象，包含 A2/A3 时保留其依赖和运行期分派。
+set(_gdn_bwd_depends
+    "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gdn_bwd_intra;fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h;fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_dhu;fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_finalize")
+if (_gdn_bwd_enable_arch22)
+    list(APPEND _gdn_bwd_depends
+        "fla/ops/ascendc/gdn/chunk_gdn_fwd/recompute_w_u_fwd"
+        "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dv_local")
+endif()
 set(chunk_gated_delta_rule_bwd_depends
-    "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gdn_bwd_intra;fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h;fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_dhu;fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_finalize"
+    "${_gdn_bwd_depends}"
     CACHE STRING "Kernel source dependencies for chunk_gated_delta_rule_bwd" FORCE)
 
 # 上面只解决了"依赖算子的 kernel 源码参与编译"（libcust_opapi.so 的符号）。
@@ -50,3 +67,5 @@ foreach(_gdn_bwd_dep ${chunk_gated_delta_rule_bwd_depends})
 endforeach()
 
 add_modules_sources(OPTYPE chunk_gated_delta_rule_bwd ACLNNTYPE aclnn_exclude)
+target_compile_definitions(${OPHOST_NAME}_opapi_obj PRIVATE
+    GDN_BWD_ENABLE_ARCH22=${_gdn_bwd_enable_arch22})

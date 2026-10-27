@@ -6,6 +6,7 @@
 
 | 参数 | 默认值 | 含义 |
 |---|---|---|
+| use_gate_in_kernel | True | 仅支持 True，在反向算子内完成门控激活的链式求导，需要提供 raw_g 和 A_log |
 | implementation | "auto" | 可选 auto、legacy、optimized |
 | q_rstd | None | 前向 Q 归一化保存的 FP32 标准差倒数 |
 | k_rstd | None | 前向 K 归一化保存的 FP32 标准差倒数 |

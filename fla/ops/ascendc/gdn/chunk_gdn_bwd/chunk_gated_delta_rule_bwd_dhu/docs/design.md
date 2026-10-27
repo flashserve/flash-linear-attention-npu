@@ -24,9 +24,29 @@ varlen:        seqNum * ceil_div(HV, 4)
 1. stage0 已调通，固定/变长使用同一套 kernel 主流程。
 2. 当前三阶段首版已经接入 Vector/Cube 跨核 ready 边界、workspace 段布局、Cube 侧 `dvState/termQ/termW` 三个 GEMM，以及 Vector 侧 `dv2` 写回和 `dhState` 倒序更新。
 3. Cube 侧直接对齐 `prepare_wy_repr_bwd` 的 tile 级 resident/双缓冲写法：使用 `GM->L1->L0A/L0B->TileMmadTla->L0C->Dst`，其中 Dst 按路径选择 GM 或 AIV UB。
-4. 后续仍需继续对齐 `dht/h0/dh0` 初始/输出语义、`state_v_first` 布局，以及必要的 AIC/AIV UB 直连性能优化。
+4. 支持非零 `dht` 初始化，保持当前 README 定义的状态布局和 dtype；后续继续评估 AIC/AIV UB 直连性能优化。
 
 说明：完整递推版本的 `dH` 在相邻 chunk 间存在倒序依赖。当前代码已经让每个 `(seq,hv)` 的 `dhState` 由负责该 head 的 Vector subblock 以 row tile 形式在 workspace state 段和 UB 间跨 chunk 倒序流转，chunk 主循环按 seq 内倒序执行；定长和变长差异仍只在 chunk offset helper 内处理，不在 kernel 主流程拆两套分支。
+
+### 1.1 末端梯度初始化（#924）
+
+kernel 入口将可选 `dht` 传给 Vector，在每个有效序列、value head 的倒序 chunk 循环前初始化 fp32 状态。
+定长使用 `seqIdx=batchIdx`，变长使用逻辑序列编号，状态基址均为
+`(seqIdx * HV + hv) * K * V`，不能使用 packed token 偏移或 key head 编号。
+
+- `dht=None` 保留原有清零路径。
+- `[N,HV,K,V]` 按 `vecRow` 搬入现有 q 输入缓冲并转为 fp32。
+- `[N,HV,V,K]` 每次从 GM 搬入最多 16 个 K 列，利用现有两个 output 缓冲转置
+  `[V,16] -> [16,V]`，再转为 fp32。尾部少于 16 行时只使用有效行。
+- A5 UB 驻留状态直接写入对应 head 的 resident slot；非驻留状态和通用路径写入原有 fp32 workspace。
+
+初始化不新增 UB 或 workspace，不改变 tilingKey、Cube 计算、跨核 ready/free 协议及三阶段递推公式。
+状态张量的 shape/dtype 以算子 README 为准：`dht/dh0` 与 `q` 同 dtype，`dh` 固定 NT-first。
+
+转置输入复用 output 缓冲时，使用 q 输入事件槽 0 的 `V_MTE2` 保护前一次转置/cast 读取完成，
+使用 `MTE2_V` 等待输入搬运完成，转置与 cast 之间通过 V pipe barrier 表达 UB 读写依赖。
+另外仅在非空 `dht` 且 V-first 时分配一个 `MTE3_MTE2` 事件，搬入前成对 set/wait，
+等待上一 task 对 output 缓冲的 MTE3 读取完成。事件在退出时释放，原有输出事件保持闭环。
 
 ## 2. 接口与形状
 
@@ -297,9 +317,9 @@ for headOffset = 0; headOffset < headCnt; ++headOffset:
 | `stage_1` | 等 `dh/qgDt`；读取公开输出 `dh[chunk]` 作为 `dH_old`；A5 `g` 分支从 `l1AScratch[headOffset]` 读取，`gK` 分支从当前 window 内该 `hk` 首个 head 对应的共享 slot 读取；A2 从 qg workspace 搬入。复用或读取 `K_blk/dO`，计算 `dvState = K_blk @ dH_old`、`termQ = qgDt.T @ dO`；A5 bf16 将 `dvState` 按 row tile 写矩阵 CV，A2 和 fp16/fp32 写 GM workspace；`termQ` 写 GM workspace；A5 BF16 `V=128` 时，同一 `hk` 的连续 V heads 复用 K 的 L0A slot0，`termQ` 使用独立 slot1 | 等 `dvState` ready；A5 bf16 从矩阵 CV 消费，A2 和 fp16/fp32 从 workspace 消费；若传 `g`，复用 stage0 驻留的 `dvGateFactor` 计算 `dv2=cast(dvState*dvGateFactor+dv)`；若传 `gK`，计算 `dv2=cast(dvState+dv)`；只写公开输出 `dv2`，写完后通知 Cube | 矩阵 CV 或 workspace 中的 `dvState[M,BV]`，workspace `termQ[K,BV]`；A5 BF16 V128 的 K L0A resident；公开输出 `dv2` |
 | `stage_2` | 等 `dv2` ready；读取公开输出 `dv2`，并复用或读取 `W`；计算 `termW = W.T @ dv2`；A5 bf16 在首个 CV tile 前通知 Vector 可启动，再按 row tile 写矩阵 CV，A2 和 fp16/fp32 写 GM workspace 后通知 Vector | 等 stage2 可启动；读取 workspace `termQ`，A5 bf16 按 tile 等待矩阵 CV `termW`，A2 和 fp16/fp32 读取 workspace `termW`；同时把 fp32 workspace state row tile 搬入 `stateFp32`；计算 `dhState = dhState + termQ * scale - termW` 并写回 workspace | 矩阵 CV 或 workspace 中的 `termW[K,BV]`；fp32 `dhState[K,V]` workspace 段 |
 
-### 5.1 当前代码 stage 对齐状态
+### 5.1 三阶段首版记录
 
-当前 `op_kernel` 已从 stage0 推进到三阶段递推首版，已经和代码行为对齐如下：
+以下保留三阶段首版的演进记录。其中 `dht` 初始化缺口现已按 §1.1 修复；当前状态布局和输出 dtype 以算子 README 为准。
 
 | 代码位置 | 当前已实现 | 还未实现 |
 |---|---|---|
@@ -318,7 +338,7 @@ for headOffset = 0; headOffset < headCnt; ++headOffset:
 
 因此，当前代码已经完成的是 `g/gK` 二选一、shape/tilingKey 分支、固定/变长统一 seq-head task 调度、seq 内 chunk 倒序串行、Vector fp32 `dhState` workspace carry 和专用 `stateFp32` ping/pong UB、`g` 自然指数与 `gK` exp2 的分支语义、stage0 的 `qgDt/dh`、stage1 的 `dvState/termQ/dv2`、stage2 的 `termW` 和 state update，以及 A5 bf16 `dvState/termW` 共用矩阵 CV 双缓冲传递。继续缺口主要是 `dht/h0/dh0` 完整语义、`state_v_first` 布局和进一步性能流水。
 
-### 5.2 当前代码与完整方案不一致项
+### 5.2 首版与完整方案对照（历史记录）
 
 | 项目 | 当前代码 | 完整目标/需要更新的方向 |
 |---|---|---|
@@ -863,6 +883,8 @@ Vector 内部同步遵循：
 4. 同一 UB 上 V pipe 写后再读，必要时使用 `PipeBarrier<PIPE_V>()`。
 
 ## 13. 实现步骤建议
+
+本节为首版开发规划；`dht` 初始化现已实现，具体缓冲与同步方案见 §1.1。
 
 已完成 stage0：骨架和纯功能
 

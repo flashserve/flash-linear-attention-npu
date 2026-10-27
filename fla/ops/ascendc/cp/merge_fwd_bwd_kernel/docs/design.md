@@ -119,7 +119,7 @@ C = M @ H
 
 旁注：`M` 与 `H` 都是 FP32、行主序、不转置。`M` 分成上下两块 `[64, 128]`，`H` 是 `[128, 128]`。每个 64 行块再沿 K 切成两段 64 做 MMAD，FP32 累加到 L0C。`initC` 在每个 K 段的第一段为真。
 
-A3 的 L1 是单缓冲，绝对字节区间：
+A2/A3 的 L1 是单缓冲：先完整装入 `H` 与两段 `M`，再做两段 MMAD。绝对字节区间：
 
 ```text
 L1[0, 65536)         H；FP32 [128, 128] 行主序；64 KiB；本步 MTE2 写入，两段 MMAD 读完后释放
@@ -129,9 +129,11 @@ L1[65536, 131072)    空闲；无数据
 L1[163840, 196608)   空闲；无数据
 ```
 
-已用最高地址 229376，A2/A3 L1 按 512 KiB 计，后面约 282 KiB 连续空闲。`H` 与两段 `M` 同时在 L1，直到下半 MMAD 结束才允许下一轮 MTE2 覆盖（`MTE1_MTE2`）。
+已用最高地址 229376，L1 按 512 KiB 计，后面约 282 KiB 连续空闲。`H` 与两段 `M` 同时在 L1，直到下半 MMAD 结束才允许下一轮 MTE2 覆盖（`MTE1_MTE2`）。
 
-L0：一段 `L0A` 是 `[64, 64]` FP32（16 KiB），`L0B` 是 `[64, 128]` FP32（32 KiB）。A3 的两块 L0C 各 64 KiB（`kL0CTileBytes`），放一个 `[64, 128]` FP32 累加结果。K 向两段在同一块 L0C 上累加。
+A5 用双 stage L1（每 stage 256 KiB：`H` + `M0` + `M1`）：先装 `H`+`M0`，`M1` 与 C0 MMAD 重叠；C0 Fixpipe 前 `Wait` M1（避免 MTE2 与 FIX 并发，mssanitizer AIC 271）；下一 head / 下一步的 `H`+`M0` 在另一 stage 上与 C1 重叠装入。
+
+L0：一段 `L0A` 是 `[64, 64]` FP32（16 KiB），`L0B` 是 `[64, 128]` FP32（32 KiB）。A3 的两块 L0C 各 64 KiB（`kL0CTileBytes`），放一个 `[64, 128]` FP32 累加结果；A5 的两块 L0C 各 128 KiB。K 向两段在同一块 L0C 上累加。
 
 A3 写出：`FixpipeParamsV220`，`CFG_ROW_MAJOR`，无量化。上半 C 写到 scratch bank 0 的前 `64 * 128` 个 FP32，下半写后一半。写完上半 `Set` CV0（flag 2，`PIPE_FIX`），写完下半 `Set` CV1（flag 3）。
 
@@ -187,7 +189,7 @@ Flag 的 mode 放在 `kCrossCoreModeAiv`。A5 是 `0x4`，AIV1 的 id 为 base+1
 | VC | 4 | AIV `PIPE_MTE3` → AIC `PIPE_MTE2` | 未置位 | `H` 和当前 `M` 已在 scratch |
 | CV0 | 2 | AIC `PIPE_FIX` → AIV `PIPE_V` | 未置位 | 上 64 行 C 可见 |
 | CV1 | 3 | AIC `PIPE_FIX` → AIV `PIPE_V` | 未置位 | 下 64 行 C 可见 |
-| CUbFree | 5 | 仅 A5。AIV `PIPE_V` → AIC `PIPE_FIX` | prologue 置一次 | `fp32Buf` 已腾出，Cube 可以 Fixpipe |
+| CUbFree | 5 | 仅 A5。AIV `PIPE_MTE3` → AIC `PIPE_FIX` | 本 AIV 的 prologue 装完后置一次，此后每处理完一个 head 再置一次 | `fp32Buf` 已腾出，Cube 可以 Fixpipe |
 
 A3 不使用 `CUbFree`。mode `0x2` 要求两个 AIV 对同一 id 都 set、都 wait。非 owner 不搬数，但每个 head 都要走同一面 flag，否则 AIC 的 wait 不返回。owner 的 VC set 排在自己的 MTE3 之后，AIC 要等两个 set 都完成，因此不会在 `H`/`M` 写完前开读。
 
@@ -197,6 +199,7 @@ A3 不使用 `CUbFree`。mode `0x2` 要求两个 AIV 对同一 id 都 set、都 
 S0:
   owner: 写 H、写 M_1
   双方 Set VC
+  A5 owner: 名下 head 都装完后 Set CUbFree。同一 AIV 的 head 共用一块 fp32Buf，不能在装完前放开 Fixpipe
 
 每个 step = 1 .. N-1:
   AIC Wait VC

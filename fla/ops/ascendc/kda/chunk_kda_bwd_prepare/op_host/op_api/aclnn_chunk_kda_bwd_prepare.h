@@ -14,6 +14,7 @@ aclnnStatus aclnnChunkKdaBwdPrepareGetWorkspaceSize(
     const aclTensor *h,
     const aclIntArray *cuSeqlensOptional,
     const aclIntArray *chunkIndicesOptional,
+    const char *layout,
     double scale,
     int64_t chunkSize,
     bool stateVFirst,

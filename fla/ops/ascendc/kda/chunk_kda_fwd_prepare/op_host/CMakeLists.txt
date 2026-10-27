@@ -19,6 +19,18 @@ add_ops_compile_options(
             -Wno-deprecated-declarations
 )
 
+# The template extractor receives this option as well as the device compiler.
+# Keep A5 on its existing declaration and implementation.
+# This repository's options parser expects concrete SoC names and normalizes
+# them to the respective ascend910b / ascend910_93 family.
+foreach(PREPARE_RUNTIME_SOC ascend910b3 ascend910_9391)
+    add_ops_compile_options(
+        OP_NAME ChunkKdaFwdPrepare
+        COMPUTE_UNIT ${PREPARE_RUNTIME_SOC}
+        OPTIONS -DCHUNK_KDA_PREPARE_RUNTIME_KEYS=1
+    )
+endforeach()
+
 if(ENABLE_TEST)
     add_subdirectory(tests)
 endif()

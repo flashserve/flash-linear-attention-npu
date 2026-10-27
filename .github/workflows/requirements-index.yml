@@ -56,8 +56,6 @@ env:
   INDEX_TITLE: '需求汇总：近期规划与进展同步'
   # 算子标签前缀：需求按 `op:<算子名>` 分组
   OP_LABEL_PREFIX: 'op:'
-  # 算子名清单文件：由前面步骤从 aclnn 头文件与 OpDef 类名生成
-  OP_NAMES_FILE: ${{ runner.temp }}/op-names.txt
   # 标题/正文只提到算子家族时的兜底分组
   FAMILY_LABELS: 'kda,gdn'
   # 未识别到算子时的分组名
@@ -90,6 +88,10 @@ jobs:
 
       - name: 生成并置顶需求汇总
         uses: actions/github-script@v7
+        env:
+          # 算子名清单文件：由上一步从 aclnn 头文件与 OpDef 类名生成。
+          # `runner` 上下文只在 step 级 env 可用；写在工作流级 env 会导致整个 workflow 校验失败。
+          OP_NAMES_FILE: ${{ runner.temp }}/op-names.txt
         with:
           script: |
             const fs = require('fs');

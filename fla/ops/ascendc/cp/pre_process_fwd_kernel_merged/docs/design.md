@@ -117,7 +117,7 @@ hm[i_h, 0:K, V:V+K] = FP32(m_{NT})
 2. `h` 的累加 `decay*h + dH` 在 FP32 上完成，chunk 之间不降精度；
 3. `m` 链的 `Kw = LᵀW`、`M_c` 在 FP32 内累加；**`M_c @ m` 的右操作数按模型 dtype（BF16）入
    Cube**（`m` 的 bf16 影子），chunk 之间链式量按模型 dtype 传递 —— 与 CP 组兄弟算子
-   `chunk_delta_h_bwd_preprocess` 的链式量同级，验收也按模型 dtype 判
+   `pre_process_bwd_kernel_merged` 的链式量同级，验收也按模型 dtype 判
    （见 `tests/atk/pre_process_fwd_kernel_merged/README.md`「精度口径」）。
    *备选*：`-DPPFM_M_CHAIN_FP32=1` 时整条 m 链用 **IEEE FP32 Cube**（见 2.6），
    精度与上游 H20 `ieee` 同档，代价实测 +65~80%；
@@ -637,7 +637,7 @@ Stage3AIV(item, c, part):
 
 > **口径说明（先读这条）**：**交付默认**的 S4 是"按模型 dtype 入 Cube"——
 > 实现用结合律 `T2 = leftᵀ @ BF16(W_c @ BF16(m))`（`m` 的 bf16 影子 `mBf_`，
-> 与 CP 组 `chunk_delta_h_bwd_preprocess` 的链式量同级），本节的"两侧 FP32 操作数"是
+> 与 CP 组 `pre_process_bwd_kernel_merged` 的链式量同级），本节的"两侧 FP32 操作数"是
 > **备选方案**（内核 `-DPPFM_M_CHAIN_FP32=1`，ATK 双标杆口径时才需要）。
 
 - **公式、shape 与 dtype**：`m_c[K,K] = FP32(M_c[K,K]) @ FP32(m_c[K,K])`。**两侧操作数 dtype

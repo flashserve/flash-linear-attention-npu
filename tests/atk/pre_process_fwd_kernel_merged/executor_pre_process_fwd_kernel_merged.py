@@ -23,7 +23,7 @@ CPU 标杆：本目录 `scripts/pre_process_fwd_kernel_merged_cpu.py`
 本身不参与比较）。CPU 双标杆同样可用，但真值与同精度标杆都在 CPU 上跑，更慢。
 
 精度口径（重要）：**交付默认按模型 dtype 判**（与 CP 组兄弟算子
-`chunk_delta_h_bwd_preprocess` 同口径）—— 用例的 `standard.acc` 是
+`pre_process_bwd_kernel_merged` 同口径）—— 用例的 `standard.acc` 是
 `mixed_tolerance_bm` + `output_dtype_overrides {"0": "bf16"}`，**本 executor 不自造任何指标**，
 只负责构造输入、跑三方角色（DUT / 同精度 benchmark / 高精度 golden）。
 `scripts/pre_process_fwd_kernel_merged_cpu.py` 的模块文档写明：kernel 的 h/m 累加器是 FP32，

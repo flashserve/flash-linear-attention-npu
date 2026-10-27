@@ -90,7 +90,7 @@ def _prepare_kda_bwd_optimized(args):
 
     args = dict(args)
     for name, default in (("disable_recompute",True),("safe_gate",True),
-                          ("use_gate_in_kernel",False),("use_exp2",True),("state_v_first",False)):
+                          ("use_gate_in_kernel",True),("use_exp2",True),("state_v_first",False)):
         args[name] = _optional_bool(args[name],default)
     args["lower_bound"] = _optional_float(args["lower_bound"],-5.0)
     q = args["q"]
@@ -156,3 +156,137 @@ def _prepare_kda_bwd_optimized(args):
 
     args.update(dt_bias=bias, cu_seqlens=cu, chunk_indices=indices)
     return args
+
+
+def _is_kda_bwd_arch22(q):
+    """Select the A2/A3 composition before applying A5 implementation policy."""
+    import torch
+
+    if q.device.type != "npu":
+        return False
+    index = q.device.index
+    if index is None:
+        index = torch.npu.current_device()
+    name = str(torch.npu.get_device_name(index))
+    return name.startswith(("Ascend910B", "Ascend910C", "Ascend910_93"))
+
+
+def _validate_kda_recompute_layout(input_layout):
+    """Reserved attribute; it does not change the rank-4 tensor contract."""
+    if input_layout not in ("BNSD", "NTD"):
+        raise ValueError("Recompute input_layout must be BNSD or NTD")
+    return input_layout
+
+
+def _validate_kda_bwd_a5_options(args):
+    packed = args["cu_seqlens"] is not None
+    allowed = ("BNSD", "NTD") if packed else ("BNSD",)
+    if (args["input_layout"] not in allowed or args["output_layout"] not in allowed
+            or args["use_beta_sigmoid_in_kernel"] or args["allow_neg_eigval"]):
+        raise ValueError("A5 backward keeps its existing layout and beta capabilities")
+
+
+def _prepare_kda_bwd_arch22(args):
+    """Validate the original total L2's A2/A3 inputs without selecting V2."""
+    import math
+    import torch
+    import torch_npu
+    from ._runtime import (
+        optional_bool, optional_float, ACL_FORMAT_ND, ACL_FORMAT_NCHW,
+        ACL_FORMAT_NCDHW, ACL_FORMAT_NCL,
+    )
+
+    a = dict(args)
+    if a["implementation"] not in ("auto", "legacy", "optimized"):
+        raise ValueError("implementation must be auto, legacy or optimized")
+    for name, default in (("disable_recompute", True), ("safe_gate", True),
+                          ("use_gate_in_kernel", True), ("use_exp2", True),
+                          ("state_v_first", False), ("use_beta_sigmoid_in_kernel", False),
+                          ("allow_neg_eigval", False)):
+        a[name] = optional_bool(a[name], default)
+    a["lower_bound"] = optional_float(a["lower_bound"], -5.0)
+    a["scale"] = float(a["scale"])
+    a["chunk_size"] = int(a["chunk_size"])
+    if not math.isfinite(a["scale"]) or not math.isfinite(a["lower_bound"]):
+        raise ValueError("scale and lower_bound must be finite")
+    if a["chunk_size"] != 64 or not a["use_exp2"] or a["state_v_first"]:
+        raise ValueError("A2/A3 backward requires C=64, exp2 and K-first state")
+    if a["initial_state"] is not None or a["dht"] is not None:
+        raise ValueError("initial_state/dht are not supported")
+    if (a["q_rstd"] is None) != (a["k_rstd"] is None):
+        raise ValueError("q_rstd and k_rstd must be supplied together")
+    if a["allow_neg_eigval"] and not a["use_beta_sigmoid_in_kernel"]:
+        raise ValueError("allow_neg_eigval requires use_beta_sigmoid_in_kernel")
+
+    packed = a["cu_seqlens"] is not None
+    valid = ("NTD", "TND") if packed else ("BNSD", "BSND")
+    for name in ("input_layout", "output_layout"):
+        layout = a[name]
+        if packed:
+            layout = {"BNSD": "NTD", "BSND": "TND"}.get(layout, layout)
+        if layout not in valid:
+            raise ValueError(f"{name} does not match dense/packed tensor rank")
+        a[name] = layout
+    if not a["disable_recompute"]:
+        _validate_kda_recompute_layout(a["input_layout"])
+
+    shape = tuple(a["v"].shape)
+    if len(shape) != (3 if packed else 4):
+        raise ValueError("dense Token rank must be 4 and packed Token rank must be 3")
+    tm = a["input_layout"] in ("BSND", "TND")
+    b = 1 if packed else shape[0]
+    first = 0 if packed else 1
+    h, t = (shape[first + 1], shape[first]) if tm else shape[first:first + 2]
+    if min(b, h, t) <= 0 or shape[-1] != 128:
+        raise ValueError("A2/A3 backward requires positive B/H/T and K=V=128")
+    head = (h, t, 128) if packed else (b, h, t, 128)
+    scalar = head[:-1]
+    matrix = (*scalar, 64)
+    cu, indices, nc = _canonical_kda_bwd_metadata(a["cu_seqlens"], a["chunk_indices"], t)
+    state = (nc, h, 128, 128) if packed else (b, nc, h, 128, 128)
+    formats = {ACL_FORMAT_ND, ACL_FORMAT_NCHW, ACL_FORMAT_NCDHW, ACL_FORMAT_NCL}
+    bf16, fp32 = (torch.bfloat16,), (torch.float32,)
+    mixed = (torch.bfloat16, torch.float32)
+
+    def check(name, expected, dtypes, optional=False):
+        x = a[name]
+        if optional and x is None:
+            return
+        if x is None or tuple(x.shape) != expected or x.dtype not in dtypes:
+            raise ValueError(f"{name}: expected shape {expected}, dtype {dtypes}")
+        if x.device != a["q"].device or not x.is_contiguous():
+            raise ValueError(f"{name} must be contiguous on q.device")
+        if int(torch_npu.get_npu_format(x)) not in formats:
+            raise ValueError(f"{name}: private NPU storage formats are not supported")
+
+    for name in ("q", "k"):
+        check(name, head if a["q_rstd"] is not None else shape, bf16)
+    for name in ("v", "d_o"):
+        check(name, shape, bf16)
+    check("beta", scalar, mixed)
+    for name in ("Aqk", "Akk"):
+        check(name, matrix, bf16)
+    for name in ("q_rstd", "k_rstd"):
+        check(name, scalar, fp32, optional=True)
+    saved = ("gk", "w", "qg", "kg", "v_new", "h")
+    if a["disable_recompute"]:
+        for name in saved:
+            check(name, state if name == "h" else head, fp32 if name == "gk" else bf16)
+    elif any(a[name] is not None for name in saved):
+        raise ValueError("recompute mode requires gk/w/qg/kg/v_new/h to be None")
+    if a["use_gate_in_kernel"]:
+        check("raw_g", shape, mixed)
+        check("A_log", (h,), mixed)
+    elif any(a[name] is not None for name in ("raw_g", "A_log", "dt_bias")):
+        raise ValueError("raw_g/A_log/dt_bias require use_gate_in_kernel=True")
+    bias = a["dt_bias"]
+    if bias is not None:
+        if (bias.dtype != torch.float32 or bias.numel() != h * 128
+                or not bias.is_contiguous() or bias.device != a["q"].device):
+            raise ValueError("dt_bias must be contiguous FP32 with H*K elements on q.device")
+        a["dt_bias"] = bias.view(h, 128)
+    out_tm = a["output_layout"] in ("BSND", "TND")
+    out_token = ((t, h, 128) if packed else (b, t, h, 128)) if out_tm else head
+    a.update(cu_seqlens=cu, chunk_indices=indices,
+             _output_token_shape=out_token, _output_beta_shape=out_token[:-1])
+    return a

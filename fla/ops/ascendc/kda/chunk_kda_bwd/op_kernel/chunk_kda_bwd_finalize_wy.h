@@ -959,15 +959,14 @@ public:
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                 1U;
 #else
-                tiling_.isVarLen == 0 && validLen == kWyChunkSize ? 1U : 2U;
+                tiling_.isVarLen == 0 && validLen == kWyChunkSize &&
+                headCount == kWyFusedHeadsPerWindow ? 1U : 2U;
 #endif
-            // A2's packed square-tail MMAD can leave part of the physical
-            // destination plane untouched on its first layout binding.  A
-            // second overwrite pass makes the logical tile independent of
-            // resident L1/L0 contents.  Varlen uses the recovery pass because
-            // adjacent mixed-length tasks can bind different physical tail
-            // layouts; dense uses it only for the final short chunk.  Dense
-            // full chunks and the A5 path are unchanged.
+            // Generic square MMAD also needs the recovery pass for a lone
+            // head in a full dense chunk.  Without it, S6/S7 can propagate
+            // prior scratch contents into dAkk and then dk/db/dg (issue 874).
+            // Packed and short-tail tasks already use two overwrite passes.
+            // Retain one pass for full dense paired-head windows and A5.
             for (uint32_t pass = 0; pass < squarePasses; ++pass) {
                 for (uint32_t lane = 0; lane < headCount; ++lane) {
                     const uint32_t head = headBase + lane;

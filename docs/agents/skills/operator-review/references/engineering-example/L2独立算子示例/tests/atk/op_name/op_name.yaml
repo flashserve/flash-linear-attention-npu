@@ -1,0 +1,181 @@
+# 示例文件：tests/atk/op_name/op_name.yaml（仓内命名：<算子>.yaml）
+#
+# 命名与工程结构按本仓 tests/atk/README.md（<算子>.yaml + gen_<算子>.py + executor_<算子>.py +
+# 三份固化用例 JSON）；内容质量要求参考 ATK 仓 skill/atk-quality-guard
+# （SKILL.md 步骤 3a、references/atk_user_guide.md、references/experimental_standard.md）。
+# skill 只作为内容指导，不改本仓的目录与文件命名。
+#
+# 注意事项：
+#   1. **用例必须使用算子真实的 inputs / attr / outputs**：这里逐个声明 x、g、a_log、initial_state、
+#      cu_seqlens、chunk_indices 与 layout/chunk_size/scale/epsilon/return_saved，与
+#      fla/ops/ascendc/ops_classify/op_name/README.md 的输入表逐项对应。
+#      禁止用 low_precision_marker / fp32_marker / case_spec 这类占位参数承载参数空间或用例元数据：
+#      那类写法会让用例参数表与算子签名脱钩，检视时看不出真实 shape/dtype/Attr 组合。
+#   2. YAML 只声明**参数空间**（dtypes / dim_values / ranges / random_types / attr 候选值）。
+#      把非法参数修正到合法范围是 gen_op_name.py 的事，那边不得再定义范围。
+#   3. `dim_values` 必须用 `values` 离散列表（2^n 与 2^n-1 边界对，覆盖 chunk/tiling 切分边界）；
+#      禁止 `range: [1, N]`：ATK 按笛卡尔积展开会爆炸甚至生成卡死。
+#   4. 小数值禁止写 `1e-5`，必须写 `1.0e-5`（YAML 会把 `1e-5` 解析成字符串）。
+#   5. `dtype_numbers` 步骤 3a 只写占位值 `1`，步骤 4 按约束清单回填。
+#   6. 精度标准固定 `mixed_tolerance_bm`（每次任务都要读 experimental_standard.md 的最新版本）。
+#   7. `boundary` 只用于 tensor 类型；attr/scalar 不写 `boundary`。
+#   8. schema 是 `extra='forbid'`：只写本文件出现过的字段。
+#   9. `outputs` 字段属于 ATK 内置 function/graph 插件（用于指向承载输出的入参槽位）；
+#      本算子用自定义 `api_type`（executor_op_name.py）直接返回真实输出 y/state/x_norm，因此保持 `null`。
+#      注意：这里的 `outputs` 是 ATK 的入参槽位指针，不是"可选输出"开关；本算子的可选输出由
+#      `return_saved` 控制，`return_saved=False` 时 executor 返回 (y, None, None)。
+api: pytorch
+api_type: executor_op_name       # 与 executor_op_name.py 的 @register 名称一致
+version: v2.1
+name: op_name
+aclnn_name: OpName
+generate: generator_op_name      # 与 gen_op_name.py 的 @GENERATOR_REGISTRY.register 名称一致
+dtype_numbers: 1                 # 步骤 3a 占位符；步骤 4 回填
+extra_numbers: 0
+standard:
+  acc: mixed_tolerance_bm
+  perf: not_key
+shape_distributions:
+  - [0, 1.0]                     # 默认值必须写 [0, 1.0]，其它配置极易导致生成死循环
+outputs: null                    # 自定义 api_type 由 executor 返回真实输出，不用该字段
+inputs:
+  - name: x
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [[-5, 5]]
+        random_types:
+          - name: nd
+            mean: [-5, 5]
+            std: [0.1, 2]
+        custom_dist_ratio: [[0.5, 0.0], [0.5, 0.0]]
+      invalid:
+        values: [[-5, 5]]
+    shapes:
+      dim_numbers:
+        values: [3, 4]            # BSND/BNSD 为 4 维，TND/NTD 为 3 维；由 gen 按 layout 收窄
+      dim_values:
+        values: [1, 2, 3, 4, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256, 511, 512, 1023, 1024]
+      max_length: 4096
+    boundary:
+      has_empty: true
+      has_infnan: true
+      has_scalar: true
+      has_lower_border: true
+      has_upper_border: false
+  - name: g
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp32]        # A5 支持 fp32；A2/A3 由 gen 的 dtype 修正回退到 bf16
+    ranges:
+      valid:
+        values: [[-5, 5]]
+        random_types:
+          - name: nd
+            mean: [-5, 5]
+            std: [0.1, 2]
+        custom_dist_ratio: [[0.5, 0.0], [0.5, 0.0]]
+      invalid:
+        values: [[-5, 5]]
+    shapes:
+      dim_numbers:
+        values: [2, 3]            # 比 x 少 D 维；由 gen 按 layout 收窄
+      dim_values:
+        values: [1, 2, 3, 4, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256]
+      max_length: 4096
+    boundary:
+      has_empty: true
+      has_infnan: true
+      has_scalar: true
+      has_lower_border: true
+      has_upper_border: false
+  - name: a_log
+    type: tensor
+    required: false
+    dtypes:
+      values: [fp32]
+    ranges:
+      valid:
+        values: [[-5, 5]]
+    shapes:
+      dim_numbers:
+        values: [1]
+      dim_values:
+        values: [1, 2, 4, 8, 16, 32, 64, 128]
+  - name: initial_state
+    type: tensor
+    required: false
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [[-5, 5]]
+    shapes:
+      dim_numbers:
+        values: [2, 3]            # [B,H,D] 或 varlen 下的 [H,D]；由 gen 按 layout 收窄
+      dim_values:
+        values: [1, 2, 4, 8, 16, 32, 64, 128]
+  - name: cu_seqlens
+    type: tensor
+    required: false
+    dtypes:
+      values: [int64]              # 与算子 README 一致：变长元数据用 INT64
+    shapes:
+      dim_numbers:
+        values: [1]
+      dim_values:
+        values: [2, 3, 5, 9, 17, 33]
+  - name: chunk_indices
+    type: tensor
+    required: false
+    dtypes:
+      values: [int64]              # 与算子 README 一致：变长元数据用 INT64
+    shapes:
+      dim_numbers:
+        values: [2]
+      dim_values:
+        values: [1, 2, 4, 8, 16, 32, 64]
+  - name: layout
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: [BSND, BNSD, TND, NTD]
+  - name: chunk_size
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [64, 128]
+  - name: scale
+    type: attr
+    required: true
+    dtypes:
+      values: [float]
+    ranges:
+      valid:
+        values: [0.5, 1.0, 2.0]
+  - name: epsilon
+    type: attr
+    required: true
+    dtypes:
+      values: [float]
+    ranges:
+      valid:
+        values: [1.0e-06, 1.0e-05, 1.0e-04]
+  - name: return_saved
+    type: attr
+    required: true
+    dtypes:
+      values: [attr_bool]
+    ranges:
+      valid:
+        values: [true, false]
