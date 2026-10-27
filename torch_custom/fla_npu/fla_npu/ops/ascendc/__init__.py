@@ -611,7 +611,7 @@ def _make_raw_wrapper(name: str) -> Callable:
             if name in _DEPRECATED_OPS:
                 warnings.warn(
                     f"fla_npu.ops.ascendc.{name} is a deprecated API "
-                    f"and will be removed on January 15, 2027. Use "
+                    f"and will be removed on January 15, 2027 (v26.12.0). Use "
                     f"{_DEPRECATED_OPS_REPLACEMENTS.get(name, 'the fused operator')} "
                     f"instead.",
                     FutureWarning,
@@ -718,7 +718,7 @@ def causal_conv1d(
 
     warnings.warn(
         "fla_npu.ops.ascendc.causal_conv1d is a deprecated compatibility API "
-        "and will be removed in 2027/02. Use causal_conv1d_fn or "
+        "and will be removed on January 15, 2027 (v26.12.0). Use causal_conv1d_fn or "
         "causal_conv1d_update instead.",
         FutureWarning,
         stacklevel=2,

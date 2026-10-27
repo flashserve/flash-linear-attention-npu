@@ -207,7 +207,7 @@ aclnnStatus aclnnChunkBwdDqkwgGetWorkspaceSize(
 
     OP_LOGW("npu_chunk_bwd_dqkwg",
             "npu_chunk_bwd_dqkwg is deprecated and will be removed on "
-            "January 15, 2027; use the fused npu_chunk_gated_delta_rule_bwd instead.");
+            "January 15, 2027 (v26.12.0); use the fused npu_chunk_gated_delta_rule_bwd instead.");
 
     auto ret = CheckParams(params);
     CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);

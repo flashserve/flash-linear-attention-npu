@@ -83,7 +83,7 @@ python scripts/check_packaged_wheel_api.py
 bash tests/atk/run_test_cpu.sh -op=<算子名> -npu_device_id=0
 ```
 
-`-op` 使用 `tests/atk` 下的测试工程目录名；算子工程名及 ATK 使用说明见 [算子概览](docs/算子概览.md#atk-op-options)。
+`-op` 使用 `tests/atk` 下的测试工程目录名；算子工程名及 ATK 使用说明见 [算子概览](docs/op_list.md#atk-op-options)。
 
 ## 开发者指引
 
@@ -96,7 +96,7 @@ bash tests/atk/run_test_cpu.sh -op=<算子名> -npu_device_id=0
 
 ## 维护文档
 
-- 算子介绍、API 索引及弃用备注见 [算子概览](docs/算子概览.md)。
+- 算子介绍、API 索引及弃用备注见 [算子概览](docs/op_list.md)。
 - NPU CI 维护说明见 [`docs/Fla-npu仓CI部署教程.md`](docs/Fla-npu仓CI部署教程.md)。
 - 旧版本用户升级与兼容迁移见 [`docs/兼容与迁移指南.md`](docs/兼容与迁移指南.md)。
 - 开发者分场景指南见 [`docs/开发者指南.md`](docs/开发者指南.md)。

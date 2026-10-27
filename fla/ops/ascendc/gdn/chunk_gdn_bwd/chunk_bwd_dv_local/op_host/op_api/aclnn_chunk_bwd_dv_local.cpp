@@ -180,7 +180,7 @@ aclnnStatus aclnnChunkBwdDvLocalGetWorkspaceSize(
 
     OP_LOGW("npu_chunk_bwd_dv_local",
             "npu_chunk_bwd_dv_local is deprecated and will be removed on "
-            "January 15, 2027; use the fused npu_chunk_gated_delta_rule_bwd instead.");
+            "January 15, 2027 (v26.12.0); use the fused npu_chunk_gated_delta_rule_bwd instead.");
 
     // 固定写法，参数检查
     auto ret = CheckParams(params);

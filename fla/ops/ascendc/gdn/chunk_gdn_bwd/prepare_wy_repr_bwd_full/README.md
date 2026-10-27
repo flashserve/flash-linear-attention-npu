@@ -1,6 +1,6 @@
 # PrepareWyReprBwdFull 算子说明
 
-> **[已弃用]** 本算子已弃用，将在2027年1月15日移除。请使用融合算子 `npu_chunk_gated_delta_rule_bwd` 替代。
+> **[已弃用]** 本算子已弃用，将在2027年1月15日（v26.12.0）移除。请使用融合算子 `npu_chunk_gated_delta_rule_bwd` 替代。
 
 `PrepareWyReprBwdFull` 是一个用于分块门控 delta 规则（Chunk Gated Delta Rule）中 WY 表示（WY Representation）反向传播过程的自定义算子。该算子根据前向保存的中间矩阵、权重及上游梯度，计算并输出针对 Key（k）、Value（v）、Beta（β）和 Gate（g）的梯度，并支持 Key head 数（`HK`）与 Value head 数（`HV`）分离的 GVA 形态。
 

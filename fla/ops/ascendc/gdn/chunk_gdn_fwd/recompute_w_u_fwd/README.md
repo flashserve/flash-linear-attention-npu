@@ -1,6 +1,6 @@
 # RecomputeWUFwd 算子说明
 
-> **[已弃用]** 本算子已弃用，将在2027年1月15日移除。请使用融合算子 `npu_chunk_gated_delta_rule_fwd / npu_chunk_gated_delta_rule_bwd` 替代。
+> **[已弃用]** 本算子已弃用，将在2027年1月15日（v26.12.0）移除。请使用融合算子 `npu_chunk_gated_delta_rule_fwd / npu_chunk_gated_delta_rule_bwd` 替代。
 
 
 `RecomputeWUFwd` 是一个用于分块序列计算中的前向重计算算子。该算子基于 `k`、`v`、`beta`、`A` 和 `g`，在每个 chunk 内重计算并输出中间张量 `w` 和 `u`。

@@ -1,6 +1,6 @@
 # ChunkLocalCumsum 算子说明
 
-> **[已弃用]** 本算子已弃用，将在2027年1月15日移除。请使用融合算子 `npu_chunk_gated_delta_rule_fwd` 替代。
+> **[已弃用]** 本算子已弃用，将在2027年1月15日（v26.12.0）移除。请使用融合算子 `npu_chunk_gated_delta_rule_fwd` 替代。
 
 
 `ChunkLocalCumsum` 是用于 Gated Delta Rule 中门控张量 `g` 的 chunk 内局部累加算子。该算子从 Triton `chunk_local_cumsum` 迁移为 AscendC 自定义算子，支持固定长度序列和基于 `cu_seqlens`、`chunk_indices_out` 的变长序列。

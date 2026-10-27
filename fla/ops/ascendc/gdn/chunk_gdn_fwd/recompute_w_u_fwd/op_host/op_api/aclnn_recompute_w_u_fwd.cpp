@@ -191,7 +191,7 @@ aclnnStatus aclnnRecomputeWUFwdGetWorkspaceSize(
 
     OP_LOGW("npu_recompute_w_u_fwd",
             "npu_recompute_w_u_fwd is deprecated and will be removed on "
-            "January 15, 2027; use the fused npu_chunk_gated_delta_rule_fwd / "
+            "January 15, 2027 (v26.12.0); use the fused npu_chunk_gated_delta_rule_fwd / "
             "npu_chunk_gated_delta_rule_bwd instead.");
 
     // 固定写法，参数检查
