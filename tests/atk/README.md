@@ -1,9 +1,11 @@
 # ATK 单算子验证工程
 
 本目录保存 `flash-linear-attention-npu` 仓内 Ascend C 算子的 ATK 单算子验证工程。
-所有精度、性能、确定性、内存检测和用例生成动作都通过 ATK 发起；公共脚本只负责拼装
-ATK 命令，不在脚本内导出 `PYTHONPATH`。本文件维护 ATK 资产、执行和结果记录，不负责值域校准
-或精度定位。
+精度、性能、确定性和内存检测均通过 ATK 发起；公共脚本负责拼装 ATK 命令，运行环境
+负责准备 `PYTHONPATH`。
+
+每个算子使用 `tests/atk/<op_name>/reference.py` 作为唯一纯 CPU/PyTorch 数学标杆。ATK executor
+的 `run_cpu` 负责参数转换并调用该文件。
 
 ## 目录结构
 
@@ -16,18 +18,18 @@ tests/atk/
 |   └-- check_atk_result.py
 |-- <op_name>/
 |   |-- README.md
+|   |-- reference.py               # 唯一纯 CPU/PyTorch 数学标杆
 |   |-- atk_<op_name>.json          # 逻辑分支覆盖用例（精度检测使用）
 |   |-- atk_<op_name>_perf.json     # 性能精简用例（模型 case）
 |   |-- atk_<op_name>_mss.json      # 内存检测精简用例（需覆盖所有 tilingKey）
 |   |-- <op_name>.yaml
-|   |-- gen_<op_name>.py
 |   |-- scripts/
 |   |   └-- <本算子专用脚本>
 |   └-- executor_<op_name>.py
 ```
 
-每个算子目录保留 `scripts/`，用于本算子专属杂项脚本、分析脚本或 CPU 标杆。当前除
-`chunk_bwd_dqkwg/scripts/chunk_bwd_dqkwg_cpu.py` 外，其它算子的 `scripts/` 暂为空。
+每个算子目录保留 `scripts/`，用于本算子专属的整链路 smoke、数据采集或分析脚本。CPU 数学
+标杆集中在 `reference.py`。
 
 ATK 运行产生的 `atk_output/`、`result/`、profiling、sanitizer 日志、XLSX、Python 缓存
 和临时输出不得提交。
@@ -36,27 +38,28 @@ ATK 运行产生的 `atk_output/`、`result/`、profiling、sanitizer 日志、X
 
 | 文件                                   | 职责                                                                                     |
 | -------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `run_test_cpu.sh`                    | 统一入口，覆盖混合容差精度、性能、确定性、mssanitizer 和用例生成                         |
+| `run_test_cpu.sh`                    | 统一入口，覆盖混合容差精度、性能、确定性和 mssanitizer                                  |
 | `common/_ascendc_common_executor.py` | executor 共用的基础工具函数，例如 dtype 转换、case_spec 解析、确定性数据生成、有限值检查 |
-| `<op>/executor_<op>.py`              | 本算子的输入构造、CPU 标杆、NPU DUT 调用和 ATK`FunctionApi`                            |
-| `<op>/gen_<op>.py`                   | 本算子的 ATK 精度候选用例生成器                                                          |
-| `<op>/scripts/`                      | 本算子专用的杂项脚本、分析脚本或辅助标杆，不放跨算子公共逻辑                             |
+| `<op>/reference.py`                  | 唯一纯 CPU/PyTorch 数学标杆，供 ATK CPU 节点调用                                        |
+| `<op>/executor_<op>.py`              | 本算子的输入构造、`reference.py` 调用、NPU DUT 调用和 ATK `FunctionApi`                   |
+| `<op>/scripts/`                      | 公开 API 整链路 smoke、数据采集或分析脚本，不放数学标杆或跨算子公共逻辑                   |
 | `<op>/<op>.yaml`                     | ATK case 生成配置，shape 与 dtype 必须符合算子 README 和 tiling 限制                     |
 | `<op>/atk_<op>.json`                 | 逻辑分支覆盖用例，精度检测使用                                                          |
 | `<op>/atk_<op>_perf.json`            | 性能精简用例（模型 case）                                                                |
 | `<op>/atk_<op>_mss.json`             | 内存检测与确定性精简用例（需覆盖所有 tilingKey）                                         |
-| `<op>/README.md`                     | 本算子的输入限制、标杆来源、SoC 支持、TilingKey 清单、用例映射、实际选择记录和执行示例     |
+| `<op>/README.md`                     | 本算子的输入限制、标杆接口、SoC 支持、TilingKey 清单、用例映射、实际选择记录和执行示例     |
 
-`common/` 只放跨算子复用的基础函数。具体 CPU 标杆、`run_cpu`、`run_npu`、输入生成和
-`FunctionApi` 必须留在各自算子目录中；若需要额外脚本，放入本算子的 `scripts/`。
+`common/` 只放跨算子复用的基础函数。数学实现只存在于 `<op>/reference.py`；executor 中的
+`run_cpu` 完成参数转换并调用该文件。`run_npu`、输入生成和 `FunctionApi` 留在各自算子目录中；
+若需要额外脚本，放入本算子的 `scripts/`。
 
 ## 用例规模与覆盖
 
-ATK 只执行已固化的精度基线。执行前，接口、CPU 标杆、输入生成器和混合容差必须与校准记录
-一致，JSON 使用其中的值域、有效区域和固定随机种子。本节只维护用例规模和覆盖维度。
+ATK 精度测试以当前版本的接口、`reference.py`、executor 和精度策略为准，JSON 使用相同的值域、
+有效区域和固定随机种子。本节只维护用例规模和覆盖维度。
 
 `atk_<op_name>.json` 中的“全部用例”是指已设计的逻辑分支覆盖用例全部执行，不表示必须生成
-大量 CASE。`atk_<op_name>_perf.json` 使用用户在算子开发开始时提供的模型 case，和功能精度
+大量 CASE。`atk_<op_name>_perf.json` 使用指定的用户模型 case，和功能精度
 用例分开维护；性能用例只运行 NPU DUT，测量性能、资源占用和稳定性，不运行 CPU 标杆或做
 CPU 精度对比。
 
@@ -70,23 +73,21 @@ CPU 精度对比。
 - 单 task 与同一 core 连续多 task，包括设计要求的 slot 复用和同步过程。
 - 目标 SoC，以及公共逻辑涉及的其他支持 SoC。
 
-正常用例使用已确认的 CPU 标杆生成预期结果；异常用例验证接口契约规定的 host 校验、错误
+正常用例使用 `reference.py` 生成预期结果；异常用例验证接口契约规定的 host 校验、错误
 类型和返回码。具体算子的 README 列出适用的覆盖项及其对应 case。
 
 ## 正式验收用例包
 
-每个进入单算子正式验收的算子必须具备以下三份可解析且非空的 JSON，三者来源不同，不能互相
+每个进入单算子正式验收的算子必须具备以下三份可解析且非空的 JSON，三者覆盖目的不同，不能互相
 替代：
 
-| 文件 | 来源 | 完整条件 |
+| 文件 | 覆盖依据 | 完整条件 |
 | --- | --- | --- |
-| `atk_<op>.json` | `gen_cases` 生成的精度候选用例经筛选、补充后形成 | 每个可达逻辑分支具有独立最小用例，每个精度用例至少包含 3 个固定种子，并覆盖适用的正常、边界和异常场景 |
-| `atk_<op>_perf.json` | 用户在算子开发开始时提供的模型 case | 每个模型 case 均保留原始 shape、dtype、属性和目标 SoC；存在性能目标时逐 case 记录基线、目标和统计方式 |
-| `atk_<op>_mss.json` | 根据设计和实现中的全部可达 TilingKey 人工构造 | 每个可达 TilingKey 至少有一个最小代表用例，并覆盖该 key 下与内存、同步或复用有关的关键路径 |
+| `atk_<op>.json` | 公开接口、executor、host tiling 和 kernel 的全部可达分支 | 每个可达逻辑分支具有独立最小用例，数值敏感路径包含多个固定 seed，并覆盖适用的正常、边界和异常场景 |
+| `atk_<op>_perf.json` | 用户模型性能 case | 每个模型 case 均保留原始 shape、dtype、属性和目标 SoC；存在性能目标时逐 case 记录基线、目标和统计方式 |
+| `atk_<op>_mss.json` | 最终实现的全部可达 TilingKey 和内存、同步、复用路径 | 每个可达 TilingKey 至少有一个最小代表用例，并覆盖该 key 下与内存、同步或复用有关的关键路径 |
 
-`gen_cases` 只调用当前算子的 `gen_<op>.py` 生成精度候选用例，不生成 `_perf.json` 或
-`_mss.json`。性能用例和 TilingKey 覆盖用例必须分别依据用户模型 case 和实际 TilingKey 人工
-构造；脚本只检查文件完整性并执行测试。
+三份 ATK 格式 JSON 是正式验收的固定输入；正式精度覆盖以最终代码分支分析和 case 映射为准。
 
 算子 ATK README 必须建立三类映射：逻辑分支到精度 case id、用户模型 case 到性能 case id、
 可达 TilingKey 到 `_mss.json` case id。文件存在但映射缺失或覆盖不全，仍视为用例包不完整。
@@ -140,12 +141,12 @@ bash tests/atk/run_test_cpu.sh -op=<op_name>
 | 参数                    | 说明                                                                                                           |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------- |
 | `-op=<op_name>`       | `tests/atk` 下的算子目录名                                                                                   |
-| `-npu_device_id=<id>` | 传给`atk node --devices` 的 NPU 设备号，默认`0`；`gen_cases` 不需要                                       |
-| `-scope=<scope>`      | 执行动作，支持`all/accuracy/performance/determinism/mssanitizer/gen_cases`                                   |
+| `-npu_device_id=<id>` | 传给`atk node --devices` 的 NPU 设备号，默认`0`                                                       |
+| `-scope=<scope>`      | 执行动作，支持`all/accuracy/performance/determinism/mssanitizer`                                        |
 | `-soc=<soc>`          | SOC 标识，支持`ascend910b/A2`、`ascend910_93/A3`、`ascend950/A5`；默认 `auto`，由 `npu-smi` 自动探测 |
 
 `all` 包含 `accuracy`、`performance`、`determinism` 和 `mssanitizer`，并在运行前检查三份
-用例 JSON 均可解析且非空。`gen_cases` 不在 `all` 中，必须显式指定。
+用例 JSON 均可解析且非空。
 
 示例：
 
@@ -155,7 +156,6 @@ bash tests/atk/run_test_cpu.sh -op=causal_conv1d -scope=accuracy
 bash tests/atk/run_test_cpu.sh -op=causal_conv1d -scope=performance
 bash tests/atk/run_test_cpu.sh -op=causal_conv1d -scope=determinism
 bash tests/atk/run_test_cpu.sh -op=causal_conv1d -scope=mssanitizer
-bash tests/atk/run_test_cpu.sh -op=causal_conv1d -scope=gen_cases
 ```
 
 ## case 范围
@@ -219,38 +219,18 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=determinism
 bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=mssanitizer
 ```
 
-### 精度候选用例生成
+## 执行顺序
 
-精度候选用例生成通过 ATK `case` 执行：
-
-```bash
-bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=gen_cases
-```
-
-生成结果位于 `result/<op>/json/all_<op>.json`。开发者检查并筛选该文件后更新
-`atk_<op>.json`；该命令不会修改三份正式验收 JSON。
-
-生成相关变量：
-
-| 变量                        | 默认值       | 说明                 |
-| --------------------------- | ------------ | -------------------- |
-| `GEN_CASES_DTYPE_NUMBERS` | `100`      | 传给`atk case -dt` |
-| `GEN_CASES_EXTRA_NUMBERS` | `0`        | 传给`atk case -en` |
-| `GEN_CASES_SEED`          | `20260813` | 传给`atk case -s`  |
-
-## 执行阶段
-
-开发迭代期间按以下顺序执行：
-
-1. 确认 CPU 标杆版本，并完成 CPU 标杆自身验证；存在已确认的参考实现时，重新检查代表性用例。
-2. 构建并安装当前代码，确认运行时加载的是本轮构建结果。
-3. 需要新增或扩充精度用例时执行 `gen_cases`，检查生成结果后更新 `atk_<op>.json`。
-4. 对每个受影响算子执行 `accuracy`；精度通过后，该版本才可以进入正式验收。
-
-正式验收前，根据用户模型 case 准备 `_perf.json`，根据全部可达 TilingKey 准备 `_mss.json`，
-并在算子 ATK README 中完成三类映射。正式验收时固定代码、CPU 标杆、三份测试文件和构建结果，
-不设置 case 范围，对每个受影响算子执行 `all`；精度阶段必须执行全部 `(case, seed)` 组合，所有
-组合均通过后才能判定精度验收通过。
+1. 检查 `reference.py`、executor 和 YAML 可导入，三份正式测试 JSON 可解析且非空，并确认算子
+   README 中的逻辑分支、模型 case、TilingKey 到 case id 的映射完整。
+2. 构建并安装当前被测代码，确认公开 Python API 可以导入。
+3. 使用算子 `scripts/` 下的 smoke 入口调用公开 Python API，快速检查 ABI、kernel 启动、同步和
+   基本精度。
+4. 使用 `ACCURACY_START=<id>`、`ACCURACY_END=<id+1>` 和 `-scope=accuracy` 运行一个代表性 ATK
+   case，确认 executor、YAML 判据和公开调用链正确；需要时再扩大到受影响 case 集合。
+5. 固定被测代码、`reference.py`、三份测试 JSON 和构建结果，不设置 case 范围，对每个受影响
+   算子执行一次 `all`。精度阶段必须执行全部 `(case, seed)` 组合，所有组合均通过后才能判定
+   精度验收通过。PR CI 重放同一批测试资产和验收规则。
 
 ## 算子索引
 
@@ -284,15 +264,16 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=gen_cases
 
 新增算子工程时按以下顺序处理：
 
-1. 在 `tests/atk/<op_name>/` 下放置 `README.md`、三份正式验收 JSON、`<op_name>.yaml`、
-   `gen_<op_name>.py`、`executor_<op_name>.py` 和 `scripts/`。
-2. `atk_<op_name>.json` 从精度候选用例形成；`atk_<op_name>_perf.json` 按用户模型 case 手工
-   建立；`atk_<op_name>_mss.json` 按全部可达 TilingKey 手工建立。
+1. 在 `tests/atk/<op_name>/` 下放置 `README.md`、`reference.py`、三份正式验收 JSON、
+   `<op_name>.yaml`、`executor_<op_name>.py` 和 `scripts/`。
+2. 根据最终公开接口、executor、host tiling 和 kernel 的可达分支生成逻辑分支精度 JSON；根据
+   用户模型 case 生成性能 JSON；根据全部可达 TilingKey 及内存、同步和复用路径生成 mss JSON。
 3. 在算子 README 中写清输入 shape、dtype、属性、可选输入、变长元数据和 tiling 限制。
-4. `executor_<op_name>.py` 中保留本算子的 `build_inputs`、CPU 标杆、`run_cpu`、`run_npu` 和 `FunctionApi`。
+4. `reference.py` 保留唯一数学实现；`executor_<op_name>.py` 负责输入构造和 ATK 接入，其中
+   `run_cpu` 转换输入并调用 `reference.py`，`run_npu` 调用 NPU 算子，`FunctionApi` 对接 ATK。
 5. 若需要公共基础函数，从 `tests/atk/common/_ascendc_common_executor.py` 引入；不要把算子专属逻辑放入 `common/`。
 6. YAML 与 JSON 中的 shape 必须同时满足源码 README、tiling 检查和 executor 输入构造。
-7. 修改后至少执行 Python 语法和导入检查；具备 NPU 环境时，按“执行阶段”和阶段 5 的验证路由运行对应测试。
+7. 修改后至少执行 Python 语法和导入检查；具备 NPU 环境时，按“执行顺序”运行对应测试。
 
 ### TilingKey 覆盖交付
 
@@ -305,7 +286,7 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=gen_cases
 维护要求：
 
 1. 每个可达 key 都要有普通和边界用例；同一 key 的不同运行时分支也要有对应覆盖。
-2. 覆盖表中的每个 key 都必须注明对应的 case id，并能在 `gen_<op>.py` 或生成的 JSON 中找到这些 case。
+2. 覆盖表中的每个 key 都必须注明对应的 case id，并能在三份正式验收 JSON 中找到这些 case。
 3. `atk_<op>_mss.json` 至少放入每个 key 的精简用例；性能路径涉及某个 key 时，`atk_<op>_perf.json` 也要覆盖该 key。
 4. 用例中的输入条件只表示预期 key，必须补充 host tiling UT 或运行时记录确认实际选中的 key。没有实际选择证据时，不得在 README 中标记为已覆盖。
 5. 不同 SoC 的 tiling 条件不一致时，按 SoC 分别记录覆盖；不适用的 key 要注明原因。
@@ -325,7 +306,7 @@ from _ascendc_common_executor import _case_spec
 
 正式验收结果写入当前算子的 ATK README，至少包含：
 
-- CPU 标杆、测试文件和被测代码版本，以及参考实现对齐或用户确认情况。
+- `reference.py`、测试文件和被测代码版本。
 - 目标 SoC、执行的测试动作和结果；精度用例总数、失败数和必要的错误分类。
 - 逻辑分支、边界、异常、TilingKey、确定性和内存检查的覆盖结论。
 - 接口或功能修改的新增、变化和原有场景回归结论。

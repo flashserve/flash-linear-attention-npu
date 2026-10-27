@@ -2,7 +2,7 @@
 
 > 方案设计规则版本：`V2`
 >
-> 本文按仓库 `docs/agents/03-方案设计.md` 的 R01--R21 及“公式书写规范”独立推导。
+> 本文按 CANNBot `catlass-linear-attention-v1` 的 Stage、资源和同步规则独立推导。
 > Stage 采用“Cube score -> Vector 合并 w/u 与 D -> Cube 合并 w/u 与 dv_local”的三阶段
 > 方案。
 
