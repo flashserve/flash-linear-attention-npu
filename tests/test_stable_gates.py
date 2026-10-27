@@ -332,8 +332,9 @@ class HeaderKindGateTest(unittest.TestCase):
 
     def test_header_kinds_are_recognised(self) -> None:
         tool = _load_tool("op_abi_validate.py")
-        self.assertEqual(tool.header_kind("const aclTensor *q"), tool.WILDCARD)
-        self.assertEqual(tool.header_kind("const aclIntArray *cu"), tool.WILDCARD)
+        self.assertEqual(tool.header_kind("const aclTensor *q"), tool.TENSOR)
+        self.assertEqual(tool.header_kind("const aclIntArray *cu"), tool.INT_ARRAY)
+        self.assertEqual(tool.header_kind("const aclScalar *scale"), tool.ACL_SCALAR)
         self.assertEqual(tool.header_kind("int64_t chunkSize"), "int64")
         self.assertEqual(tool.header_kind("bool useExp2"), "bool")
         self.assertEqual(tool.header_kind("double scale"), "double")
@@ -356,6 +357,61 @@ class HeaderKindGateTest(unittest.TestCase):
         # String literals are left alone: a layout name can hold anything.
         self.assertEqual(tool.split_params('cstr("a//b"), scalar(c)'),
                          ['cstr("a//b")', 'scalar(c)'])
+
+    def test_descriptor_kind_replacement_is_reported(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        self.assertEqual(tool.compare([tool.TENSOR], [tool.INT_ARRAY]), [
+            "param 0: header tensor != call site int_array"
+        ])
+
+    def test_scoped_filter_checks_only_selected_adapter_sources(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        adapters = {
+            "aclnnChunkFwdO": (Path("stable_chunk_fwd_o.cpp"), [tool.TENSOR]),
+            "aclnnSolveTri": (Path("stable_solve_tri.cpp"), [tool.TENSOR]),
+        }
+        self.assertEqual(
+            set(tool.filter_adapters(adapters, "chunk_fwd_o")),
+            {"aclnnChunkFwdO"},
+        )
+        self.assertEqual(
+            set(tool.filter_adapters(adapters, "npu_solve_tri")),
+            {"aclnnSolveTri"},
+        )
+        self.assertEqual(tool.filter_adapters(adapters, ""), adapters)
+
+    def test_scoped_cli_fails_on_selected_header_drift(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "src"
+            include_dir = root / "include"
+            source_dir.mkdir()
+            include_dir.mkdir()
+            (source_dir / "stable_demo.cpp").write_text(
+                "void run_demo(Tensor x, int64_t mode) {\n"
+                '  FLA_STABLE_EXEC("aclnnDemo", meta, stream, '
+                "tensor(x), scalar(mode));\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            (include_dir / "aclnn_demo.h").write_text(
+                "aclnnStatus aclnnDemoGetWorkspaceSize(\n"
+                "    const aclTensor *x, bool mode, uint64_t *workspaceSize,\n"
+                "    aclOpExecutor **executor);\n",
+                encoding="utf-8",
+            )
+            argv = [
+                "op_abi_validate.py",
+                "--src-dir",
+                str(source_dir),
+                "--opp-include",
+                str(include_dir),
+                "--ops",
+                "demo",
+            ]
+            with mock.patch.object(sys, "argv", argv):
+                self.assertEqual(tool.main(), 1)
 
 
 class LauncherOnlyCoverageTest(unittest.TestCase):

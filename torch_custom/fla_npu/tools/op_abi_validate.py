@@ -41,15 +41,18 @@ HERE = Path(__file__).resolve().parent
 PACKAGE = HERE.parent
 SRC_DIR = PACKAGE / "csrc" / "src"
 
-# Kind of a parameter as far as a mismatch is concerned.  Tensor and int[]
-# descriptors are both plain pointers here, so both sides report WILDCARD and
-# only the scalars (and the count) carry information.
+# Kind of a parameter as far as a mismatch is concerned. Pointer descriptors
+# have the same machine representation, but confusing aclTensor, aclIntArray and
+# aclScalar is still an ABI contract violation and must not pass the gate.
 WILDCARD = "?"
+TENSOR = "tensor"
+INT_ARRAY = "int_array"
+ACL_SCALAR = "acl_scalar"
 
 _HEADER_KINDS = (
-    (re.compile(r"\bconst\s+aclTensor\s*\*|\baclTensor\s*\*"), WILDCARD),
-    (re.compile(r"\bconst\s+aclIntArray\s*\*|\baclIntArray\s*\*"), WILDCARD),
-    (re.compile(r"\bconst\s+aclScalar\s*\*|\baclScalar\s*\*"), WILDCARD),
+    (re.compile(r"\bconst\s+aclTensor\s*\*|\baclTensor\s*\*"), TENSOR),
+    (re.compile(r"\bconst\s+aclIntArray\s*\*|\baclIntArray\s*\*"), INT_ARRAY),
+    (re.compile(r"\bconst\s+aclScalar\s*\*|\baclScalar\s*\*"), ACL_SCALAR),
     (re.compile(r"\b(?:const\s+)?char\s*\*"), "char_ptr"),
     (re.compile(r"\bdouble\b"), "double"),
     (re.compile(r"\bfloat\b"), "float"),
@@ -171,6 +174,19 @@ def parse_headers(include_dir: Path, wanted: set[str]) -> dict[str, list[str]]:
 
 _EXEC_CALL = re.compile(r"FLA_STABLE_EXEC\(\s*\"(\w+)\"\s*,(.*?)\)\s*;", re.S)
 
+_TENSOR_HOLDERS = {
+    "tensor",
+    "optional_tensor",
+    "out_tensor",
+    "nd_tensor",
+    "nd_optional_tensor",
+    "nd_out_tensor",
+    "nd_logical_out_tensor",
+    "logical_tensor",
+    "logical_optional_tensor",
+    "logical_out_tensor",
+}
+
 # The two oldest adapters predate the macro: they call the entry point
 # themselves (`get_ws(...)` on a `Runtime::symbol(...)` pointer) and build their
 # argument list from local `AclTensorView`s.  Their call sites are checked the
@@ -282,9 +298,13 @@ def adapter_calls(src_dir: Path) -> dict[str, tuple[Path, list[str]]]:
                 callee, inner = call.group(1), call.group(2)
                 if callee == "scalar":
                     kinds.append(_scalar_kind(inner, owner))
-                elif callee == "cstr":
+                elif callee in {"cstr", "CStrArg"}:
                     kinds.append("char_ptr")
-                else:  # tensor / optional_tensor / out_tensor / int_array
+                elif callee == "int_array":
+                    kinds.append(INT_ARRAY)
+                elif callee in _TENSOR_HOLDERS:
+                    kinds.append(TENSOR)
+                else:
                     kinds.append(WILDCARD)
             calls[symbol] = (source, kinds)
     return calls
@@ -334,6 +354,25 @@ def compare(expected: list[str], actual: list[str]) -> list[str]:
     return problems
 
 
+def filter_adapters(
+    adapters: dict[str, tuple[Path, list[str]]], raw_ops: str
+) -> dict[str, tuple[Path, list[str]]]:
+    """Limit a scoped build gate to adapters owned by ``--ops`` sources."""
+
+    selected = {
+        name.removeprefix("npu_")
+        for entry in raw_ops.split(",")
+        if (name := entry.strip())
+    }
+    if not selected:
+        return adapters
+    return {
+        symbol: value
+        for symbol, value in adapters.items()
+        if value[0].stem.removeprefix("stable_") in selected
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--opp-include", required=True, nargs="+",
@@ -341,11 +380,18 @@ def main() -> int:
                              "the vendor OPP's, and CANN's for the built-in "
                              "operators (FastGelu)")
     parser.add_argument("--src-dir", default=str(SRC_DIR))
+    parser.add_argument(
+        "--ops",
+        default="",
+        help="comma-separated scoped build operator names; only their stable "
+        "adapter call sites are checked",
+    )
     parser.add_argument("--json", default="")
     args = parser.parse_args()
 
     adapters = adapter_calls(Path(args.src_dir))
     adapters.update(hand_written_calls(Path(args.src_dir)))
+    adapters = filter_adapters(adapters, args.ops)
     wanted = set(adapters)
 
     headers: dict[str, list[str]] = {}

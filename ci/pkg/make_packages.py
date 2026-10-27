@@ -147,6 +147,7 @@ import json
 import os
 import re
 import shlex
+import signal
 import shutil
 import subprocess
 import sys
@@ -394,8 +395,44 @@ def artifact_name(meta: dict, soc: str, arch: str) -> str:
 # 子进程 / SSH / rsync
 # ---------------------------------------------------------------------------
 
+def _terminate_process_group(process: subprocess.Popen, *, grace_seconds: float = 5.0) -> None:
+    """Stop a locally launched process and every child it may have spawned."""
+    if process.poll() is not None:
+        return
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, signal.SIGINT)
+        else:  # pragma: no cover - the package runner is deployed on Linux.
+            process.send_signal(signal.SIGINT)
+    except ProcessLookupError:
+        return
+    try:
+        process.wait(timeout=grace_seconds)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, signal.SIGTERM)
+        else:  # pragma: no cover
+            process.terminate()
+        process.wait(timeout=grace_seconds)
+        return
+    except (ProcessLookupError, subprocess.TimeoutExpired):
+        pass
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, signal.SIGKILL)
+        else:  # pragma: no cover
+            process.kill()
+    except ProcessLookupError:
+        return
+    process.wait()
+
+
 def run_logged(argv: list, log_file: Path, prefix: str = "",
-               env: dict | None = None, cwd: Path | None = None) -> int:
+               env: dict | None = None, cwd: Path | None = None,
+               stop: "threading.Event | None" = None) -> int:
     """执行命令，输出同时打到本脚本 stdout 与日志文件。"""
     print(f"$ {' '.join(shlex.quote(a) for a in argv)}", flush=True)
     log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -403,14 +440,35 @@ def run_logged(argv: list, log_file: Path, prefix: str = "",
         handle.write(f"$ {' '.join(shlex.quote(a) for a in argv)}\n")
         process = subprocess.Popen(
             argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            env=env, cwd=str(cwd) if cwd else None, text=True, bufsize=1)
+            env=env, cwd=str(cwd) if cwd else None, text=True, bufsize=1,
+            start_new_session=(os.name == "posix"))
+        watcher_done = threading.Event()
+        watcher: threading.Thread | None = None
+        if stop is not None:
+            def watch_stop() -> None:
+                if stop.wait() and not watcher_done.is_set():
+                    _terminate_process_group(process)
+
+            watcher = threading.Thread(target=watch_stop,
+                                       name="fla-pkg-stop-watcher",
+                                       daemon=True)
+            watcher.start()
         assert process.stdout is not None
-        for line in process.stdout:
-            handle.write(line)
-            handle.flush()
-            print(f"{prefix}{line}", end="", flush=True)
-        returncode = process.wait()
-        handle.write(f"[exit={returncode}]\n")
+        try:
+            for line in process.stdout:
+                handle.write(line)
+                handle.flush()
+                print(f"{prefix}{line}", end="", flush=True)
+            returncode = process.wait()
+            handle.write(f"[exit={returncode}]\n")
+        except BaseException:
+            _terminate_process_group(process)
+            raise
+        finally:
+            watcher_done.set()
+            if watcher is not None:
+                watcher.join(timeout=1)
+            process.stdout.close()
     return returncode
 
 
@@ -505,12 +563,35 @@ class Remote:
         self._rsync(argv, f"rsync 回传失败 ({remote_path} -> {local_dir})",
                     attempts=attempts)
 
+    def cancel_remote_process_group(self, out_dir: str) -> None:
+        """Terminate a detached remote build and its descendants."""
+        out_q = shlex.quote(out_dir)
+        script = f"""
+pgid=$(cat {out_q}/pgid 2>/dev/null || true)
+pid=$(cat {out_q}/pid 2>/dev/null || true)
+case "$pgid" in
+  ''|*[!0-9]*)
+    case "$pid" in
+      ''|*[!0-9]*) ;;
+      *) kill -INT "$pid" 2>/dev/null || true ;;
+    esac
+    ;;
+  *)
+    kill -INT -- -"$pgid" 2>/dev/null || true
+    sleep 2
+    kill -TERM -- -"$pgid" 2>/dev/null || true
+    ;;
+esac
+"""
+        self.exec(script, timeout=60)
+
 
 # ---------------------------------------------------------------------------
 # arm: 本地 Docker 容器编译
 # ---------------------------------------------------------------------------
 
-def build_arm(repo_root: Path, soc: str, wheel_dir: Path, log_file: Path) -> list[Path]:
+def build_arm(repo_root: Path, soc: str, wheel_dir: Path, log_file: Path,
+              stop: "threading.Event | None" = None) -> list[Path]:
     image = env_or("FLA_PKG_DOCKER_IMAGE", DEFAULT_DOCKER_IMAGE)
 
     # 每个组合编译前清掉仓库下的 build/ 与 third_party/: 不同 SOC /
@@ -550,7 +631,7 @@ def build_arm(repo_root: Path, soc: str, wheel_dir: Path, log_file: Path) -> lis
             argv += ["-e", f"{name}={value}"]
     argv += [image, "bash", "-lc", command]
 
-    returncode = run_logged(argv, log_file, prefix="    ")
+    returncode = run_logged(argv, log_file, prefix="    ", stop=stop)
     if returncode != 0:
         raise RuntimeError(f"arm 容器编译失败 (soc={soc}, exit={returncode})，详见日志 {log_file}")
 
@@ -723,10 +804,11 @@ class RemoteWorkspace:
         #    供轮询阶段探活校验
         startup = remote.check(
             f"cd {shlex.quote(out_dir)}\n"
-            "nohup bash -c "
-            f"'timeout {build_timeout} bash build.sh; echo $? > status' "
+            "nohup setsid bash -c "
+            f"'timeout {build_timeout} bash build.sh; rc=$?; echo $rc > status' "
             "> build.log 2>&1 < /dev/null &\n"
             "echo $! > pid\n"
+            "ps -o pgid= -p $! | tr -d ' ' > pgid\n"
             "echo BOOT:$(awk '/^btime/{print $2}' /proc/stat 2>/dev/null "
             "|| echo unknown)\n",
             timeout=120)
@@ -746,17 +828,19 @@ class RemoteWorkspace:
         with open(log_file, "a", encoding="utf-8") as handle:
             while returncode is None:
                 if stop is not None and stop.is_set():
+                    remote.cancel_remote_process_group(out_dir)
                     raise RuntimeError(
                         "收到本地中断请求，停止等待远程编译 "
-                        "(远程进程可能仍在运行，重跑该组合前请先确认)")
+                        "(远程进程组已请求终止)")
                 if stop is not None:
                     stop.wait(poll_interval)
                 else:
                     time.sleep(poll_interval)
                 if time.monotonic() >= deadline:
+                    remote.cancel_remote_process_group(out_dir)
                     raise RuntimeError(
                         f"x86 远程编译超时 (> {build_timeout}s，soc={soc})，"
-                        f"远程进程可能仍在运行，详见日志 {log_file}")
+                        f"远程进程组已请求终止，详见日志 {log_file}")
 
                 poll_error: str | None = None
                 status = size = None
@@ -782,9 +866,10 @@ class RemoteWorkspace:
                     if fail_deadline is None:
                         fail_deadline = now + poll_fail_limit
                     if now >= fail_deadline:
+                        remote.cancel_remote_process_group(out_dir)
                         raise RuntimeError(
                             f"x86 远程状态轮询连续失败超过 {poll_fail_limit}s "
-                            f"(soc={soc})，编译进程可能仍在远程运行，"
+                            f"(soc={soc})，远程进程组已请求终止，"
                             f"详见日志 {log_file}")
                     # 每次失败都打日志 (含已连续失败时长)，避免静默等待
                     # 看起来像卡死；多行错误压缩成单行
@@ -1379,7 +1464,8 @@ def main() -> int:
                 wheel_dir.mkdir(parents=True, exist_ok=True)
                 try:
                     if arch == "arm":
-                        wheels = build_arm(repo_root, soc, wheel_dir, log_file)
+                        wheels = build_arm(repo_root, soc, wheel_dir, log_file,
+                                           stop=stop)
                     else:
                         wheels = workspace.build(soc, wheel_dir, log_file,
                                                 stop=stop)
