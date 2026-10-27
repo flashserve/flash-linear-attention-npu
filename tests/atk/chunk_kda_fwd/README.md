@@ -48,7 +48,8 @@ bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -npu_device_id=0 -scope=accurac
 
 确定性回归会重复运行 MSS 用例并逐位比较全部可见输出。MSS 包含 #440 的 63-token 单序列
 尾块场景，通过 96 个 value heads 放大并行调度覆盖，同时启用 `disable_recompute=true`、最终状态
-和全部中间量：
+和全部中间量；同时包含 #7850 的 64-token 单满 chunk、128 个 value heads 场景，覆盖 bounded
+MMAD 在任务数超过 AICore 数时的跨任务复用：
 
 ```bash
 DC_LOOP_NUMS=100 \

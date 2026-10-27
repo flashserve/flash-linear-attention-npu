@@ -211,7 +211,13 @@ struct BlockSchedulerGdnFwdH {
         vBlockSize = vHeadDim;
         taskNum = batch * vNumHead;
         headGroups = vNumHead / kNumHead;
-        uint32_t maxTaskCntPerLoop = taskNum > cubeCoreNum ? PING_PONG_STAGES : 1;
+        // The bounded/tail path drives MMAD preSetFlags/finalWaitFlags per
+        // task. Concurrent streams on one core reuse the same L1/L0 pipeline,
+        // so keep a single task stream for varlen or non-aligned dense inputs.
+        const bool useBoundedMmad =
+            isVariedLen || (seqlen % chunkSize != 0);
+        uint32_t maxTaskCntPerLoop =
+            (!useBoundedMmad && taskNum > cubeCoreNum) ? PING_PONG_STAGES : 1;
         taskStride = cubeCoreNum * maxTaskCntPerLoop;
         for (uint32_t streamId = 0; streamId < PING_PONG_STAGES; ++streamId) {
             auto& stream = runningQ.streams[streamId];
