@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import importlib
-import importlib.util
 import os
 import re
 import shutil
@@ -42,15 +41,6 @@ TORCH_NPU_GDN_FIX_RELEASE_URL = (
     "presetConfig={%22tags%22:229,%22release%22:122}"
 )
 
-TORCHNPUGEN_MODULES = (
-    "torchnpugen.gen_op_plugin_functions",
-    "torchnpugen.gen_derivatives",
-    "torchnpugen.gen_op_backend",
-    "torchnpugen.gen_backend_stubs",
-    "torchnpugen.struct.gen_struct_opapi",
-)
-
-
 def _ok(message: str) -> None:
     print(f"[OK] {message}")
 
@@ -73,18 +63,6 @@ def _import_module(failures: list[str], module_name: str):
     origin = getattr(module, "__file__", None) or "built-in"
     _ok(f"{module_name}: {origin}")
     return module
-
-
-def _find_module(failures: list[str], module_name: str) -> None:
-    try:
-        spec = importlib.util.find_spec(module_name)
-    except Exception as exc:
-        _fail(failures, f"{module_name}: {exc}")
-        return
-    if spec is None:
-        _fail(failures, f"{module_name}: not found")
-        return
-    _ok(f"{module_name}: {spec.origin or 'namespace package'}")
 
 
 def _distribution_version(name: str) -> str:
@@ -452,17 +430,7 @@ def main() -> int:
     parser.add_argument(
         "--build-only",
         action="store_true",
-        help="Only check dependencies required to build the Python-only wheel.",
-    )
-    parser.add_argument(
-        "--legacy-extension",
-        action="store_true",
-        help="Also check torch, torch_npu, torchnpugen and triton-ascend for legacy extension builds.",
-    )
-    parser.add_argument(
-        "--skip-torchnpugen",
-        action="store_true",
-        help="Skip torchnpugen checks. Intended only for internal maintenance builds.",
+        help="Only check build dependencies, including torch link libraries; no NPU required.",
     )
     args = parser.parse_args()
 
@@ -500,14 +468,12 @@ def main() -> int:
     _check_setuptools_version(failures)
     _check_build_system_deps(failures)
 
-    check_runtime = not args.build_only or args.legacy_extension
+    check_runtime = not args.build_only
+    # The launcher links torch's C ABI shims even with vendored headers.
+    torch = _import_module(failures, "torch")
+    torch_npu = _import_module(failures, "torch_npu") if check_runtime else None
     if not check_runtime:
-        _ok("skipping torch/torch_npu/triton checks for Python-only wheel build")
-        torch = None
-        torch_npu = None
-    else:
-        torch = _import_module(failures, "torch")
-        torch_npu = _import_module(failures, "torch_npu")
+        _ok("skipping torch_npu/triton/NPU checks for Stable-ABI wheel build")
 
     if torch is not None:
         torch_version = getattr(torch, "__version__", "<unknown>")
@@ -515,7 +481,9 @@ def main() -> int:
         _check_min_version(failures, "torch", torch_version, MIN_TORCH)
         if ascend_home or ascend_opp:
             _report_validated_combo(_detect_cann_version(), torch_version)
-        if hasattr(torch, "npu"):
+        if not check_runtime:
+            _ok("torch link libraries available; NPU runtime is not needed for building")
+        elif hasattr(torch, "npu"):
             try:
                 npu_available = bool(torch.npu.is_available())
             except Exception as exc:
@@ -534,12 +502,6 @@ def main() -> int:
         torch_npu_version = getattr(torch_npu, "__version__", "<unknown>")
         _ok(f"torch_npu version: {torch_npu_version}")
         _check_torch_npu_gdn_fix(failures, torch_npu_version)
-
-    if args.legacy_extension and not args.skip_torchnpugen:
-        for module_name in TORCHNPUGEN_MODULES:
-            _find_module(failures, module_name)
-    elif args.skip_torchnpugen:
-        _warn("skipping torchnpugen checks")
 
     if check_runtime:
         triton = _import_module(failures, "triton")

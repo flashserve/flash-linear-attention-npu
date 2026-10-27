@@ -261,7 +261,7 @@ class StableParityContractTest(unittest.TestCase):
             "operators": {"npu_test": record},
         }
 
-    def _compare(self, left: dict, right: dict, *, allow_incomplete: bool = False) -> int:
+    def _compare(self, left: dict, right: dict, *, allow_incomplete: bool = False, versions: bool = False) -> int:
         module = self._module()
         with tempfile.TemporaryDirectory() as temp_dir:
             left_path = Path(temp_dir) / "left.json"
@@ -270,7 +270,26 @@ class StableParityContractTest(unittest.TestCase):
             right_path.write_text(json.dumps(right), encoding="utf-8")
             env = {"FLA_NPU_PARITY_ALLOW_INCOMPLETE": "1"} if allow_incomplete else {}
             with mock.patch.dict(os.environ, env, clear=True):
-                return module["compare"](str(left_path), str(right_path))
+                return module["compare"](str(left_path), str(right_path), versions=versions)
+
+    def test_versions_require_distinct_real_packages_and_stable_results(self) -> None:
+        output = dict(shape=[1], dtype="float32", sha256="same-output")
+        left = self._report("stable", entry="stable", **output)
+        right = self._report("stable", entry="stable", **output)
+        left.update(revision="base", package_source_sha256="a" * 64)
+        right.update(revision="candidate", package_source_sha256="b" * 64)
+        self.assertEqual(self._compare(left, right, versions=True), 0)
+        for field in ("revision", "package_source_sha256"):
+            invalid = dict(right, **{field: left[field]})
+            self.assertEqual(self._compare(left, invalid, versions=True), 1)
+        bad = json.loads(json.dumps(right))
+        bad["operators"]["npu_test"]["fallbacks"] = 1
+        self.assertEqual(self._compare(left, bad, versions=True), 1)
+        bad["operators"]["npu_test"]["fallbacks"] = 0
+        bad["operators"]["npu_test"]["outputs"][0]["sha256"] = "different"
+        self.assertEqual(self._compare(left, bad, versions=True), 1)
+        bad["operators"]["npu_test"]["status"] = "error"
+        self.assertEqual(self._compare(left, bad, versions=True, allow_incomplete=True), 1)
 
     def test_default_rejects_same_backend_and_errors(self) -> None:
         output = {"shape": [1], "dtype": "torch.float32", "sha256": "same", "sum": 1.0}

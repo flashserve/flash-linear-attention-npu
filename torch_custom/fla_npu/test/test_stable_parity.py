@@ -8,7 +8,12 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""Stable-ABI launcher 与 ctypes 参考实现的**逐算子一致性对照**。
+"""Stable-ABI 修改前后及历史后端的逐算子一致性对照。
+
+Stable-only 迁移验证：在修改前/后的包环境分别设置不同的
+FLA_NPU_PARITY_REVISION，运行 dump，再用 compare-versions 比较。
+此模式要求两个实际 package source hash 不同、双方均走 Stable 且无回退；
+原 compare 命令继续保留跨历史后端对照，不能用相同后端自证通过。
 
 为什么需要它：适配器（``csrc/src/stable_<op>.cpp``）与 ctypes wrapper 是同一算子的两份 host 实现，
 两者的参数编组必须逐项等价。launcher 侧的改动、以及任何"半自动生成适配器"的尝试，都需要一个
@@ -40,6 +45,7 @@ import hashlib
 import inspect
 import json
 import math
+from pathlib import Path
 import sys
 from typing import Callable
 
@@ -183,7 +189,9 @@ def dump(path: str) -> int:
 
     report = {
         "backend_env": __import__("os").environ.get("FLA_NPU_STABLE_ABI"),
-        "stable_backend_selected": _ascendc_mod._stable_backend_selected(),
+        "stable_backend_selected": (getattr(_ascendc_mod, "_stable_backend_selected", lambda: True)()),
+        "package_source_sha256": hashlib.sha256(Path(_stable.__file__).read_bytes().replace(b"\r\n", b"\n")).hexdigest(),
+        "revision": __import__("os").environ.get("FLA_NPU_PARITY_REVISION"),
         "launcher_usable": bool(_stable.available()),
         # 全部已发布算子：compare 用它报告 NO_RECIPE（未登记配方的算子），
         # 否则"覆盖率"无从判断，测试会因为"只跑了有配方的几个"而假通过。
@@ -214,7 +222,7 @@ def dump(path: str) -> int:
     return 0
 
 
-def compare(left_path: str, right_path: str) -> int:
+def compare(left_path: str, right_path: str, *, versions: bool = False) -> int:
     with open(left_path, encoding="utf-8") as handle:
         left = json.load(handle)
     with open(right_path, encoding="utf-8") as handle:
@@ -227,6 +235,16 @@ def compare(left_path: str, right_path: str) -> int:
             right.get("requested_ops") or right["operators"]):
         print("parity FAILED: the two reports selected different recipe sets")
         return 1
+    if versions:
+        if (not left.get("revision") or not right.get("revision")
+                or left["revision"] == right["revision"]
+                or not left.get("package_source_sha256") or not right.get("package_source_sha256")
+                or left["package_source_sha256"] == right["package_source_sha256"]):
+            print("parity FAILED: version comparison requires distinct revisions and actual package source hashes")
+            return 1
+        if not left.get("launcher_usable") or not right.get("launcher_usable"):
+            print("parity FAILED: version comparison requires usable Stable launchers")
+            return 1
     names = sorted(set(left["operators"]) | set(right["operators"]))
     environ = __import__("os").environ
     allow_incomplete = (environ.get("FLA_NPU_PARITY_ALLOW_INCOMPLETE") or "").upper() in {
@@ -236,12 +254,16 @@ def compare(left_path: str, right_path: str) -> int:
     strict = not allow_incomplete
     if legacy_strict is not None:
         strict = legacy_strict.upper() in {"1", "TRUE", "YES", "ON"}
+    if versions:
+        strict = True
     failed: list[str] = []      # 数值不一致
     errored: list[str] = []     # 配方失败（环境/形状）
     vacuous: list[str] = []     # 两轮同一后端 ⇒ 不构成对照
     wrong_backend: list[str] = []
     expected_left = "ctypes" if left.get("backend_env") == "ctypes" else "stable"
     expected_right = "ctypes" if right.get("backend_env") == "ctypes" else "stable"
+    if versions:
+        expected_left = expected_right = "stable"
     for name in names:
         a = left["operators"].get(name, {})
         b = right["operators"].get(name, {})
@@ -256,7 +278,11 @@ def compare(left_path: str, right_path: str) -> int:
                   f"right={b.get('entry')} (expected {expected_right})")
             continue
         # 只有"两轮由不同后端服务"时，比较才有意义。
-        if a["entry"] == b["entry"]:
+        if versions and (a.get("fallbacks", 0) or b.get("fallbacks", 0)):
+            wrong_backend.append(name)
+            print(f"  {name} BACKEND: fallback observed in Stable version comparison")
+            continue
+        if a["entry"] == b["entry"] and not versions:
             vacuous.append(name)
             print(f"  {name:38s} SKIP    两轮同一后端({a['entry']})——不构成对照"
                   f"（launcher 未承载或不可用）")
@@ -272,7 +298,7 @@ def compare(left_path: str, right_path: str) -> int:
         if not same:
             pairs = zip(a["outputs"], b["outputs"])
             detail = "  " + " | ".join(
-                f"sum {x['sum']:+.5f} vs {y['sum']:+.5f}" for x, y in pairs)
+                f"sum {x.get('sum')!r} vs {y.get('sum')!r}" for x, y in pairs)
             failed.append(name)
         print(f"  {name:38s} {'PASS' if same else 'FAIL'}    "
               f"{a['entry']} vs {b['entry']}{detail}")
@@ -305,6 +331,8 @@ def compare(left_path: str, right_path: str) -> int:
 def main(argv: list[str]) -> int:
     if len(argv) >= 3 and argv[1] == "dump":
         return dump(argv[2])
+    if len(argv) >= 4 and argv[1] == "compare-versions":
+        return compare(argv[2], argv[3], versions=True)
     if len(argv) >= 4 and argv[1] == "compare":
         return compare(argv[2], argv[3])
     print(__doc__)

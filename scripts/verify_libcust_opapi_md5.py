@@ -50,8 +50,8 @@ from pathlib import Path
 PYTHON_WRAPPER_MODULES = (
     "__init__.py",
     "ops/ascendc/__init__.py",
-    "ops/ascendc/_aclnn_ctypes.py",
-    "ops/ascendc/_runtime.py",
+    "ops/ascendc/_stable.py",
+    "ops/ascendc/_parameters.py",
 )
 
 

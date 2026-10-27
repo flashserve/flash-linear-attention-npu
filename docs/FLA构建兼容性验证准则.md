@@ -320,7 +320,7 @@ bash build.sh --list-ops --json
 
 1. 通过 `build.sh` 生成 custom 包且启用 Stable-ABI launcher 时，默认执行 `op_abi_validate.py`，校验 stable adapter 与本次 OPP 公共 aclnn 头的参数数量、顺序及类型；用户不需要增加构建参数；
 2. `--ops` scoped 包只检查同一算子集合；全量包检查全部可对应的 adapter/header；
-3. `FLA_NPU_BUILD_STABLE_ABI=0` 的 pure-ctypes wheel 不构建 launcher，因此跳过该 launcher ABI 门禁；不生成完整 custom 包的非打包、`--opkernel`、`--ophost`、`--opapi`、测试和 static 路径保持原行为；
+3. 新 wheel 必须构建 Stable launcher，`FLA_NPU_BUILD_STABLE_ABI=0` 和 `--without-launcher` 豁免均不再支持；不生成完整 custom 包的非打包、`--opkernel`、`--ophost`、`--opapi`、测试和 static 路径保持原行为；
 4. overlay 安装前由 `_op_abi.py` 直接比较 overlay 与 base 的公共 aclnn 头；import 时再次比较，防止手工复制绕过安装器；
 5. 同名 aclnn 原型不一致，或 overlay 出现 base wheel 未声明的新 aclnn 符号时，安装/import 必须硬错误，不能告警后继续，也不能自动回落 base/ctypes；
 6. 历史 launcher 被显式强制使用时同样先执行上述比较；ABI 失败直接报错，只有 ABI 通过后才允许以“L1 使用 base、L2-L4 仍按 overlay 优先”的已告警模式继续；

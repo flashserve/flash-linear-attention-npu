@@ -1,7 +1,5 @@
 import glob
 import importlib
-from importlib import metadata as importlib_metadata
-import importlib.util
 import os
 import shlex
 import shutil
@@ -9,7 +7,6 @@ import stat
 import subprocess
 import sys
 import tempfile
-import re
 import time
 from pathlib import Path
 
@@ -39,10 +36,13 @@ TRITON_CORE_SOURCE = REPO_ROOT / "fla" / "ops" / "triton" / "triton_core"
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 from check_build_ops import validate_ops_filter as _validate_ops_filter  # noqa: E402
 import npu_compat  # noqa: E402
+from stable_build_policy import (  # noqa: E402
+    RUNTIME_REQUIREMENTS, reject_legacy_artifacts,
+    validate_build_options, validate_launcher_payload, write_runtime_meta,
+)
 from fla_npu_artifacts import (  # noqa: E402
     get_distribution_name,
     get_package_version,
-    get_tier,
     get_wheel_build_tag,
     get_wheel_platform_tag,
 )
@@ -56,22 +56,6 @@ MIN_PYTHON = (3, 9)
 # is the single source of truth, so a tiered wheel and the build-time check
 # cannot drift apart.
 MIN_TORCH = npu_compat.MIN_TORCH
-MIN_TRITON_ASCEND = npu_compat.MIN_TRITON_ASCEND
-MIN_TRITON_ASCEND_A5 = npu_compat.MIN_TRITON_ASCEND_A5
-TORCH_NPU_GDN_FIX_MINIMUMS = npu_compat.TORCH_NPU_GDN_FIX_MINIMUMS
-MIN_TORCH_NPU_FUTURE_FIX_FAMILY = npu_compat.MIN_TORCH_NPU_FUTURE_FIX_FAMILY
-TORCH_NPU_GDN_FIX_RELEASE_URL = (
-    "https://gitcode.com/Ascend/pytorch/releases?"
-    "presetConfig={%22tags%22:229,%22release%22:122}"
-)
-
-TORCHNPUGEN_MODULES = (
-    "torchnpugen.gen_op_plugin_functions",
-    "torchnpugen.gen_derivatives",
-    "torchnpugen.gen_op_backend",
-    "torchnpugen.gen_backend_stubs",
-    "torchnpugen.struct.gen_struct_opapi",
-)
 
 
 def _read_requirements():
@@ -144,63 +128,6 @@ def _version_obj(value):
         return None
 
 
-def _version_key(value):
-    parts = re.findall(r"\d+", value.split("+", 1)[0])
-    if not parts:
-        return None
-    nums = [int(part) for part in parts[:3]]
-    while len(nums) < 3:
-        nums.append(0)
-    return tuple(nums)
-
-
-def _check_torch_npu_gdn_fix(failures, actual):
-    actual_version = _version_obj(actual)
-    if actual_version is None:
-        failures.append(f"torch_npu has an unsupported version string: {actual}")
-        return
-
-    minimum = TORCH_NPU_GDN_FIX_MINIMUMS.get(actual_version.base_version)
-    if minimum and actual_version >= Version(minimum):
-        return
-
-    if actual_version >= Version(MIN_TORCH_NPU_FUTURE_FIX_FAMILY):
-        return
-
-    if minimum is None:
-        return
-
-    requirements = ", ".join(
-        f"{family}>={minimum}" for family, minimum in TORCH_NPU_GDN_FIX_MINIMUMS.items()
-    )
-    failures.append(
-        "torch_npu must come from an Ascend PyTorch release that contains the "
-        "GDN aclnn_extension stream fix. Packages from releases before "
-        "v26.1.0-beta.1, such as v26.0.0-pytorch2.x, are rejected. "
-        f"Expected one of: {requirements}, or torch_npu>={MIN_TORCH_NPU_FUTURE_FIX_FAMILY} "
-        f"from {TORCH_NPU_GDN_FIX_RELEASE_URL}; got {actual}."
-    )
-
-
-def _check_triton_ascend_a5_compat(failures, actual):
-    soc = os.getenv("FLA_NPU_SOC", DEFAULT_SOC)
-    if soc != "ascend950":
-        return
-    actual_version = _version_obj(actual)
-    if actual_version is None or actual_version < Version(MIN_TRITON_ASCEND_A5):
-        failures.append(
-            f"triton-ascend>={MIN_TRITON_ASCEND_A5} is required for FLA_NPU_SOC={soc}; got {actual}. "
-            "triton-ascend 3.2.0 can crash on the A5 Triton runtime."
-        )
-
-
-def _distribution_version(name):
-    try:
-        return importlib_metadata.version(name)
-    except Exception:
-        return ""
-
-
 def _detect_cann_version():
     candidates = []
     for env_name in ("ASCEND_HOME_PATH", "ASCEND_OPP_PATH"):
@@ -235,7 +162,8 @@ def _detect_cann_version():
 
 def _check_build_environment():
     failures = []
-    build_legacy_extension = _env_flag("FLA_NPU_BUILD_LEGACY_EXTENSION")
+    validate_build_options()
+    reject_legacy_artifacts(FLA_NPU_PACKAGE_DIR)
 
     if shutil.which("bash") is None:
         failures.append("bash is required")
@@ -260,52 +188,14 @@ def _check_build_environment():
     else:
         print(f"[fla-npu build][OK] Python: {sys.version.split()[0]}")
 
-    if build_legacy_extension:
-        torch = None
-        torch_npu = None
-        for module in ("torch", "torch_npu"):
-            try:
-                loaded = importlib.import_module(module)
-                print(f"[fla-npu build][OK] {module}: {getattr(loaded, '__version__', '<unknown>')}")
-                if module == "torch":
-                    torch = loaded
-                else:
-                    torch_npu = loaded
-            except Exception as exc:
-                failures.append(f"{module}: {exc}")
-
-        if torch is not None:
-            _check_min_version(failures, "torch", getattr(torch, "__version__", ""), MIN_TORCH)
-        if torch_npu is not None:
-            _check_torch_npu_gdn_fix(failures, getattr(torch_npu, "__version__", ""))
-
-        triton_ascend_version = _distribution_version("triton-ascend")
-        try:
-            triton = importlib.import_module("triton")
-            print(f"[fla-npu build][OK] triton: {getattr(triton, '__file__', '<unknown>')}")
-        except Exception as exc:
-            failures.append(f"triton: {exc}")
-
-        if triton_ascend_version:
-            print(f"[fla-npu build][OK] triton-ascend: {triton_ascend_version}")
-            _check_min_version(failures, "triton-ascend", triton_ascend_version, MIN_TRITON_ASCEND)
-            _check_triton_ascend_a5_compat(failures, triton_ascend_version)
-        else:
-            failures.append("triton-ascend distribution was not found")
-    else:
-        print("[fla-npu build][OK] Skipping torch/torch_npu build-time checks for Python-only wheel")
-
-    if build_legacy_extension and not _env_flag("FLA_NPU_SKIP_TORCH_GEN"):
-        for module in TORCHNPUGEN_MODULES:
-            try:
-                spec = importlib.util.find_spec(module)
-            except Exception as exc:
-                failures.append(f"{module}: {exc}")
-                continue
-            if spec is None:
-                failures.append(f"{module}: not found")
-            else:
-                print(f"[fla-npu build][OK] {module}: {spec.origin or 'namespace package'}")
+    # Vendored headers avoid a torch header-version dependency, but the plain
+    # launcher still links the C ABI shims in torch's shared libraries.
+    try:
+        torch = importlib.import_module("torch")
+        _check_min_version(failures, "torch", getattr(torch, "__version__", ""), MIN_TORCH)
+        print(f"[fla-npu build][OK] torch link libraries: {torch.__file__}")
+    except Exception as exc:
+        failures.append(f"torch link libraries: {exc}")
 
     print(f"[fla-npu build][OK] FLA_NPU_SOC={os.getenv('FLA_NPU_SOC', DEFAULT_SOC)}")
     print(f"[fla-npu build][OK] FLA NPU vendor={DEFAULT_VENDOR_NAME}")
@@ -314,8 +204,7 @@ def _check_build_environment():
         raise RuntimeError(
             "Build environment check failed:\n  - "
             + "\n  - ".join(failures)
-            + "\nInstall matching CANN and, when FLA_NPU_BUILD_LEGACY_EXTENSION=1, "
-              "torch, torch_npu, torchnpugen and triton-ascend first, "
+            + "\nInstall matching CANN and torch >= 2.7.1 first, "
               "then run `pip install --no-build-isolation .`."
         )
 
@@ -581,35 +470,7 @@ def _stage_run_package(run_file, opp_root):
 
 
 def _write_runtime_meta() -> None:
-    """Embed wheel-tier and version-table metadata for the import-time guard.
-
-    Every build carries two generated files: ``_build_meta.py`` (which tier this
-    wheel is) and ``_compat.py`` (the version promise, mirrored from
-    scripts/npu_compat.py).  A local build behaves exactly like the published
-    wheel, so the import-time advisory is exercised before release instead of
-    appearing for the first time in a user's environment.
-    """
-    tier = get_tier()
-    build_meta = FLA_NPU_PACKAGE_DIR / "_build_meta.py"
-    compat_py = FLA_NPU_PACKAGE_DIR / "_compat.py"
-    build_meta.write_text(
-        '"""Generated at wheel build time. Do not edit."""\n'
-        f"TIER = {tier!r}\n",
-        encoding="utf-8",
-    )
-    compat_py.write_text(
-        "".join(
-            [
-                '"""Generated at wheel build time from scripts/npu_compat.py."""\n',
-                f"MIN_CANN = {npu_compat.MIN_CANN_BY_TIER[tier]!r}\n",
-                f"MIN_TORCH = {npu_compat.MIN_TORCH!r}\n",
-                "TORCH_NPU_GDN_FIX_MINIMUMS = "
-                f"{npu_compat.TORCH_NPU_GDN_FIX_MINIMUMS!r}\n",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    print(f"[fla-npu build] runtime meta written: tier={tier}, {compat_py.name}")
+    write_runtime_meta(FLA_NPU_PACKAGE_DIR)
 
 
 def _cleanup_build_residuals():
@@ -635,31 +496,6 @@ def _cleanup_build_residuals():
         FLA_NPU_PACKAGE_DIR / "ops" / "ascendc" / "_stable_hash.py",
     ):
         generated.unlink(missing_ok=True)
-
-
-def _build_torch_extension_inplace():
-    for so_file in FLA_NPU_PACKAGE_DIR.glob("custom_aclnn_extension_lib*.so"):
-        so_file.unlink()
-
-    if not _env_flag("FLA_NPU_BUILD_LEGACY_EXTENSION"):
-        print("[fla-npu build] Skipping legacy PyTorch C++ extension build for Python-only wheel")
-        return
-
-    if not _env_flag("FLA_NPU_SKIP_TORCH_GEN"):
-        _run(["bash", "gen.sh", "npu_custom.yaml"], TORCH_EXTENSION_DIR)
-
-    build_dir = TORCH_EXTENSION_DIR / "build"
-    if build_dir.exists():
-        shutil.rmtree(build_dir)
-
-    _run([sys.executable, "setup.py", "build_ext", "--force", "--inplace"], TORCH_EXTENSION_DIR)
-
-    so_files = sorted(FLA_NPU_PACKAGE_DIR.glob("custom_aclnn_extension_lib*.so"))
-    if not so_files:
-        raise RuntimeError(
-            "custom_aclnn_extension_lib*.so was not produced under "
-            f"{FLA_NPU_PACKAGE_DIR}"
-        )
 
 
 _EXTERNAL_BUILD_DONE = False
@@ -717,17 +553,6 @@ def _stage_offline_bundle(build_lib: Path) -> None:
     print(f"[fla-npu build] Offline third-party bundle staged at {third_party_dst}", flush=True)
 
 
-def _stable_build_enabled() -> bool:
-    """Whether to build the ABI-free Stable-ABI launcher.
-
-    On by default; ``FLA_NPU_BUILD_STABLE_ABI=0`` produces a pure-ctypes wheel
-    (no compiled launcher at all).
-    """
-
-    value = os.getenv("FLA_NPU_BUILD_STABLE_ABI", "TRUE")
-    return value.upper() not in {"0", "FALSE", "NO", "OFF"}
-
-
 def _build_stable_inplace():
     """Compile libfla_npu_stable.so into the source package before staging.
 
@@ -736,8 +561,8 @@ def _build_stable_inplace():
     free (``py3-none-<platform>``) even though the payload is platform-specific.
     """
 
-    if not _stable_build_enabled():
-        return
+    validate_build_options()
+    reject_legacy_artifacts(FLA_NPU_PACKAGE_DIR)
     out = FLA_NPU_PACKAGE_DIR / "libfla_npu_stable.so"
     _run(
         [
@@ -749,15 +574,10 @@ def _build_stable_inplace():
         ],
         TORCH_EXTENSION_DIR,
     )
-    if not out.exists():
-        raise RuntimeError(f"libfla_npu_stable.so was not produced under {FLA_NPU_PACKAGE_DIR}")
+    validate_launcher_payload(FLA_NPU_PACKAGE_DIR)
 
 
-# Nothing in the default build pins the CPython or the libtorch C++ ABI: the
-# launcher ships as an ordinary data file.  Only the legacy torch extension
-# puts a compiled module in the wheel.
-_LEGACY_BUILD_ENABLED = _env_flag("FLA_NPU_BUILD_LEGACY_EXTENSION")
-_STABLE_BUILD_ENABLED = _stable_build_enabled()
+validate_build_options()
 
 
 class FlaNpuBuildPy(_build_py):
@@ -766,7 +586,6 @@ class FlaNpuBuildPy(_build_py):
         if not _EXTERNAL_BUILD_DONE:
             _check_build_environment()
             _RUN_PACKAGE = _build_run_package()
-            _build_torch_extension_inplace()
             _build_stable_inplace()
             _EXTERNAL_BUILD_DONE = True
 
@@ -783,25 +602,26 @@ class FlaNpuBuildPy(_build_py):
             if src.exists():
                 shutil.copyfile(str(src), str(Path(self.build_lib) / name))
         stable_so = FLA_NPU_PACKAGE_DIR / "libfla_npu_stable.so"
-        if _STABLE_BUILD_ENABLED and stable_so.exists():
+        validate_launcher_payload(FLA_NPU_PACKAGE_DIR)
+        if stable_so.exists():
             shutil.copy2(
                 str(stable_so),
                 str(Path(self.build_lib) / "fla_npu" / stable_so.name),
             )
+        validate_launcher_payload(built_package_dir)
 
 
 class BinaryDistribution(Distribution):
     """Never pure: the payload is a host-specific launcher plus its OPP.
 
-    It pins a CPython/libtorch C++ ABI only when the legacy torch extension is
-    built, which is what ``has_ext_modules`` answers.
+    The launcher has no CPython module, so the Python and ABI tags stay free.
     """
 
     def is_pure(self):
         return False
 
     def has_ext_modules(self):
-        return _LEGACY_BUILD_ENABLED
+        return False
 
 
 CMDCLASS = {"build_py": FlaNpuBuildPy}
@@ -810,21 +630,16 @@ CMDCLASS = {"build_py": FlaNpuBuildPy}
 if _bdist_wheel is not None:
     class FlaNpuBdistWheel(_bdist_wheel):
         def finalize_options(self):
+            if self.skip_build:
+                raise RuntimeError("--skip-build is not supported: rebuild and validate the mandatory Stable launcher and artifacts")
             super().finalize_options()
-            # Never pure: even without the legacy extension the payload holds a
-            # launcher built for this host plus the OPP it loads.  What the
-            # wheel should *not* claim is a CPython version, which get_tag()
-            # below takes care of.
+            # The launcher and OPP are platform-specific package data.
             self.root_is_pure = False
             build_tag = get_wheel_build_tag()
             if build_tag:
                 self.build_number = build_tag
 
         def get_tag(self):
-            python, abi, plat = super().get_tag()
-            if _LEGACY_BUILD_ENABLED:
-                # The legacy extension really is a CPython extension module.
-                return python, abi, plat
             # py3-none-manylinux_<glibc>_<arch>: the payload is a host launcher
             # plus the OPP, not a CPython extension, so the wheel is not
             # Python-versioned; "any" would let pip install an aarch64 payload
@@ -873,5 +688,5 @@ setup(
     distclass=BinaryDistribution,
     cmdclass=CMDCLASS,
     python_requires=">=3.9",
-    install_requires=_read_requirements(),
+    install_requires=_read_requirements() + RUNTIME_REQUIREMENTS,
 )

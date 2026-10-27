@@ -704,9 +704,9 @@ docker image inspect fla-npu-ci:9.1.0-950 \
 
 通常是容器内传了宿主机物理卡号。例如宿主机选择了卡 `2`，容器里应该传 `--device 0`，不要传 `--device 2`。
 
-### 报 `torchnpugen` 缺失
+### 旧镜像仍检查 torchnpugen
 
-说明镜像里的 `torch_npu` 不对。A2 应确认 Ascend PyTorch `v26.1.0-beta.1` 对应的 `torch_npu` wheel；A5 应确认 `torch_npu==2.12.0` 的 CPython 3.12 x86_64 wheel。不要混用平台、Python ABI 或 PyTorch 版本，也不要重新拉 `op-plugin` 编译。
+当前 Stable-only 构建和 CI 不再要求 torchnpugen。出现这类检查时，先确认使用的是当前提交的 Dockerfile、CI 脚本和镜像；不要为恢复已删除的生成链路重新拉取 op-plugin 编译。
 
 ### 报 `triton` namespace 或重复注册问题
 

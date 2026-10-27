@@ -1,4 +1,5 @@
 import torch
+from fla_npu.ops import ascendc as ascendc_ops
 import torch_npu
 from typing import Optional
 import math
@@ -457,7 +458,7 @@ def test_chunk_bwd_dv_local_fix(
     d_o_npu = d_o.npu()
     g_npu = g.npu()
 
-    dv = torch.ops.npu.npu_chunk_bwd_dv_local(
+    dv = ascendc_ops.npu_chunk_bwd_dv_local(
         q_npu, k_npu, d_o_npu, g_npu,
         g_gamma=None,
         A=None,
@@ -519,7 +520,7 @@ def test_chunk_bwd_dv_local_variable(
     cu_seqlens_list = cu_seqlens.tolist()
     chunk_indices_list = chunk_indices.flatten().tolist()
 
-    dv = torch.ops.npu.npu_chunk_bwd_dv_local(
+    dv = ascendc_ops.npu_chunk_bwd_dv_local(
         q_npu, k_npu, d_o_npu, g_npu,
         g_gamma=None,
         A=None,

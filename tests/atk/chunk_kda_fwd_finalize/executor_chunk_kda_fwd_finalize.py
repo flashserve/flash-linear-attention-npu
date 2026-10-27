@@ -8,7 +8,6 @@ GPU 双标杆（golden=FP64 真值 / 普通任务=scripts/gpu.py 所选 GPU cont
 
 from __future__ import annotations
 
-import ctypes
 import importlib.util
 import sys
 from dataclasses import dataclass
@@ -207,40 +206,12 @@ def run_cpu(inputs: Inputs, high_precision: bool = True) -> torch.Tensor:
 
 
 def run_npu(inputs: Inputs) -> torch.Tensor:
-    # 局限于 ATK 交付目录的 aclnn 直调，不向共享 Python 注册表添加临时入口。
-    from fla_npu.ops.ascendc._runtime import ACL_FORMAT_ND, call_aclnn
+    from fla_npu.ops.ascendc import chunk_kda_fwd_finalize
 
-    output = torch.empty(_output_shape(inputs), dtype=torch.bfloat16,
-                         device=inputs.qg_scaled.device)
-    layout_bytes = ctypes.create_string_buffer(inputs.output_layout.encode("ascii"))
-
-    def nd_tensor(ctx, tensor, name):
-        tensor = tensor.contiguous()
-        if tensor.storage_offset():
-            tensor = tensor.clone()
-        return ctx.tensor(tensor, name, acl_format_override=ACL_FORMAT_ND,
-                          storage_shape_override=tuple(tensor.shape))
-
-    argtypes = [
-        *([ctypes.c_void_p] * 6), ctypes.c_char_p, ctypes.c_bool,
-        ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint64),
-        ctypes.POINTER(ctypes.c_void_p),
-    ]
-    return call_aclnn(
-        "aclnnChunkKdaFwdFinalize",
-        lambda ctx: [
-            nd_tensor(ctx, inputs.qg_scaled, "qg_scaled"),
-            nd_tensor(ctx, inputs.aqk, "aqk"),
-            nd_tensor(ctx, inputs.v_new, "v_new"),
-            nd_tensor(ctx, inputs.h, "h"),
-            ctx.int_array(inputs.cu_seqlens),
-            ctx.int_array(inputs.chunk_indices),
-            ctypes.cast(layout_bytes, ctypes.c_char_p),
-            ctypes.c_bool(inputs.state_v_first),
-            nd_tensor(ctx, output, "attn_out"),
-        ],
-        output,
-        get_workspace_argtypes=argtypes,
+    return chunk_kda_fwd_finalize(
+        inputs.qg_scaled, inputs.aqk, inputs.v_new, inputs.h,
+        cu_seqlens=inputs.cu_seqlens, chunk_indices=inputs.chunk_indices,
+        output_layout=inputs.output_layout, state_v_first=inputs.state_v_first,
     )
 
 

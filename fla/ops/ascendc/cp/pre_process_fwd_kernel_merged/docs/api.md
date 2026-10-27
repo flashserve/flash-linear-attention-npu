@@ -101,7 +101,7 @@ hm = pre_process_fwd_kernel_merged(          # hm: [Nseq, HV, K, V+K] FP32
 
 | # | 文件 | 改动 |
 | --- | --- | --- |
-| ① | `torch_custom/fla_npu/fla_npu/ops/ascendc/_aclnn_ctypes.py` | 加 `_GET_WORKSPACE_ARGTYPES["aclnnPreProcessFwdKernelMerged"]`；加 `npu_pre_process_fwd_kernel_merged(...)`（`bg`/`v` 传非空抛 `NotImplementedError`；`hm` 由 Python 侧预分配后作为输出张量传入） |
+| ① | `torch_custom/fla_npu/fla_npu/ops/ascendc/_stable.py` | 公共 Python wrapper；保留 `bg`/`v` 非空拒绝和 `chunk_size=64` 默认契约，调用 Stable dispatcher |
 | ② | `torch_custom/fla_npu/fla_npu/ops/ascendc/__init__.py` | `_ASCENDC_OPS` 注册 `"npu_pre_process_fwd_kernel_merged"`（自动导出两个名字） |
 | ③ | `torch_custom/fla_npu/csrc/src/stable_pre_process_fwd_kernel_merged.cpp` + `stable_ops.cpp` | Stable-ABI 适配器与注册（`#include` / `m.def` / `m.impl`） |
 

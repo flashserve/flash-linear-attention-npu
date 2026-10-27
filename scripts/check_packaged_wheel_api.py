@@ -19,23 +19,8 @@ import sys
 from pathlib import Path
 
 
-ASCENDC_NAMES = (
-    "causal_conv1d",
-    "causal_conv1d_bwd",
-    "causal_conv1d_fn",
-    "causal_conv1d_update",
-    "chunk_bwd_dqkwg",
-    "chunk_bwd_dv_local",
-    "chunk_fwd_o",
-    "chunk_gated_delta_rule_bwd_dhu",
-    "chunk_gated_delta_rule_fwd_prepare",
-    "chunk_gated_delta_rule_fwd_h",
-    "prepare_wy_repr_bwd_da",
-    "prepare_wy_repr_bwd_full",
-    "recompute_w_u_fwd",
-    "recurrent_gated_delta_rule",
-    "solve_tri",
-)
+ASCENDC_NAMES = ('fast_gelu_custom', 'fast_gelu_custom_backward', 'causal_conv1d', 'causal_conv1d_fn', 'causal_conv1d_update', 'causal_conv1d_bwd', 'prepare_wy_repr_bwd_full', 'prepare_wy_repr_bwd', 'chunk_gated_delta_rule_bwd_dhu', 'chunk_gated_delta_rule_bwd', 'chunk_gated_delta_rule_fwd_prepare', 'chunk_gated_delta_rule_bwd_finalize', 'chunk_bwd_dv_local', 'pre_process_bwd_kernel_merged', 'chunk_gdn_bwd_intra', 'prepare_wy_repr_bwd_da', 'chunk_bwd_dqkwg', 'chunk_fwd_o', 'chunk_gated_delta_rule_fwd_h', 'pre_process_fwd_kernel_merged', 'chunk_fwd_h', 'chunk_kda_fwd_finalize', 'chunk_kda_fwd_prepare', 'recompute_w_u_fwd', 'recurrent_gated_delta_rule', 'chunk_gated_delta_rule_fwd', 'chunk_local_cumsum', 'chunk_scaled_dot_kkt', 'solve_tri', 'chunk_kda_fwd', 'chunk_kda_bwd', 'chunk_kda_bwd_intra', 'chunk_kda_bwd_recompute', 'chunk_kda_bwd_prepare', 'chunk_kda_bwd_finalize', 'merge_fwd_bwd_kernel', 'kda_gate_cumsum', 'recurrent_kda')
+
 
 TRITON_NAMES = (
     "autocast_custom_bwd",
@@ -166,24 +151,39 @@ def main() -> int:
         action="store_true",
         help="Also validate fla_npu.ops.triton exports. This may initialize the triton backend.",
     )
-    parser.add_argument(
-        "--check-legacy-torch-npu",
-        action="store_true",
-        help="Also validate optional torch_npu.ops compatibility exports.",
-    )
     args = parser.parse_args()
 
     import fla_npu
     from fla_npu.ops import ascendc
 
-    if fla_npu.is_legacy_torch_ops_loaded():
-        raise AssertionError("packaged wheel API check should not load legacy torch.ops.npu extension")
-    if "torch_npu" in sys.modules and not args.check_legacy_torch_npu:
-        raise AssertionError("packaged wheel API check should not import torch_npu by default")
+    for name in ("load_legacy_torch_ops", "is_legacy_torch_ops_loaded"):
+        if hasattr(fla_npu, name):
+            raise AssertionError(f"removed API remains: fla_npu.{name}")
+    package_root = Path(fla_npu.__file__).resolve().parent
+    forbidden = list(package_root.rglob("custom_aclnn_extension_lib*.so"))
+    forbidden += [package_root / "ops/ascendc" / name for name in ("_aclnn_ctypes.py", "_runtime.py")
+                  if (package_root / "ops/ascendc" / name).exists()]
+    if forbidden:
+        raise AssertionError(f"removed backend payload remains: {forbidden}")
+    from fla_npu.ops.ascendc import _stable
+    _stable.load()
+    if set(ascendc._ASCENDC_OPS) != {"npu_" + n for n in ASCENDC_NAMES}:
+        raise AssertionError("installed public operator inventory differs from the release contract")
+    for name in ascendc._ASCENDC_OPS:
+        _stable._op(name)  # Verify all actual registrations, without running kernels.
 
     for name in ASCENDC_NAMES:
         _require_attr(ascendc, name, "fla_npu.ops.ascendc")
         _require_attr(ascendc, f"npu_{name}", "fla_npu.ops.ascendc")
+
+    ascendc.install_torch_npu_ops_compat()
+    import torch_npu
+    for name in ascendc._TORCH_NPU_COMPAT_OPS:
+        for alias in (name, name[4:]):
+            if getattr(torch_npu.ops, alias, None) is not getattr(ascendc, alias):
+                raise AssertionError(f"Stable compatibility alias mismatch: {alias}")
+    if ascendc.FALLBACKS:
+        raise AssertionError("Stable-only package recorded a fallback")
 
     _require_attr(ascendc, "causal_conv1d_fn", "fla_npu.ops.ascendc")
     _require_attr(ascendc, "causal_conv1d_update", "fla_npu.ops.ascendc")
@@ -193,14 +193,6 @@ def main() -> int:
             raise AssertionError(
                 f"fla_npu.ops.ascendc.{name} must not be kept as a compatibility alias"
             )
-
-    if args.check_legacy_torch_npu:
-        import torch_npu
-
-        ascendc.install_torch_npu_ops_compat()
-        for name in ASCENDC_NAMES:
-            _require_attr(torch_npu.ops, name, "torch_npu.ops")
-            _require_attr(torch_npu.ops, f"npu_{name}", "torch_npu.ops")
 
     _require_packaged_opp_configs(fla_npu)
     _require_safe_packaged_opapi(fla_npu)

@@ -19,13 +19,10 @@ _DEFAULT_OVERLAY_VENDOR_DIR = "fla_npu_overlay_transformer"
 # the base vendor and is auto-discovered when FLA_NPU_OVERLAY_VENDOR is unset.
 _OVERLAY_VENDOR_PREFIX = "fla_npu_overlay_"
 _OVERLAY_VENDOR_ENV = "FLA_NPU_OVERLAY_VENDOR"
-_STABLE_ABI_ENV = "FLA_NPU_STABLE_ABI"
 _OVERLAY_VENDOR_NAME_RE = re.compile(
     rf"{re.escape(_OVERLAY_VENDOR_PREFIX)}[A-Za-z0-9][A-Za-z0-9_.-]*\Z"
 )
 _ASCENDC_OPAPI_LIBRARIES: Optional[list[ctypes.CDLL]] = None
-_LEGACY_TORCH_OPS_LOADED = False
-_LEGACY_TORCH_OPS_LIBRARY: Optional[pathlib.Path] = None
 
 
 def _prepend_env_path(name: str, value: pathlib.Path) -> None:
@@ -94,56 +91,6 @@ def overlay_vendor_names() -> list[str]:
     return _discover_overlay_vendor_names()
 
 
-def _launcher_supports_overlay_order() -> bool:
-    """True when the bundled launcher honours the ordered ``FLA_NPU_OP_API_LIBS`` list.
-
-    Older launchers resolve every aclnn symbol from the single library named by
-    ``FLA_NPU_OP_API_LIB`` (``Runtime::symbol()`` only dlsym()s one custom
-    handle), so with an overlay installed they would silently run the *base*
-    implementation.  Detecting the capability lets us pick a correct backend
-    instead of leaving the outcome to an unrelated environment variable.
-    """
-
-    try:
-        return b"FLA_NPU_OP_API_LIBS" in (_PACKAGE_DIR / "libfla_npu_stable.so").read_bytes()
-    except OSError:
-        return False
-
-
-def _apply_overlay_backend_policy(vendor_dirs: list[pathlib.Path]) -> None:
-    """Keep "an overlay is installed" and "which implementation runs" consistent.
-
-    * no overlay                     → nothing to do (default backend rules apply)
-    * overlay + capable launcher     → launcher searches overlay first, so the
-                                       launcher may stay the default backend
-    * overlay + legacy launcher      → force the ctypes reference path (which
-                                       resolves symbols per library); if the user
-                                       explicitly asked for the launcher, fail
-                                       instead of mixing base host code with an
-                                       overlay tiling/kernel implementation
-    """
-
-    if len(vendor_dirs) < 2:
-        return
-    requested = (os.environ.get(_STABLE_ABI_ENV) or "").strip()
-    if _launcher_supports_overlay_order():
-        return
-    if not requested:
-        os.environ[_STABLE_ABI_ENV] = "ctypes"
-        return
-    if requested == "ctypes":
-        return
-    message = (
-        "fla_npu: an overlay vendor is installed, but FLA_NPU_STABLE_ABI="
-        f"{requested!r} selects a Stable-ABI launcher that resolves every aclnn "
-        "symbol from the single library in FLA_NPU_OP_API_LIB. The overlaid "
-        "operators would mix the base host entry with overlay tiling/kernel "
-        "artifacts. Install a wheel with ordered FLA_NPU_OP_API_LIBS launcher "
-        "support, or set FLA_NPU_STABLE_ABI=ctypes explicitly."
-    )
-    warnings.warn(message, RuntimeWarning, stacklevel=2)
-
-
 def _validate_overlay_abi(vendor_dirs: list[pathlib.Path]) -> None:
     """Fail before loading code when an overlay changes the wheel's aclnn ABI."""
 
@@ -180,7 +127,7 @@ def _validate_overlay_abi(vendor_dirs: list[pathlib.Path]) -> None:
         detail = "\n  - ".join(failures)
         raise RuntimeError(
             "fla_npu: overlay aclnn ABI differs from the installed wheel. The "
-            "wheel launcher and ctypes wrappers cannot safely call this overlay; "
+            "Stable launcher and wrappers cannot safely call this overlay; "
             "rebuild a matching overlay or wheel. For recovery without loading "
             "vendor code, run python -m fla_npu_opp_manage --status or "
             "python -m fla_npu_opp_manage --remove-overlay --overlay-name <name>."
@@ -332,22 +279,17 @@ def _prepare_embedded_opp() -> list[pathlib.Path]:
     # overlay; keep unrelated external entries behind the package vendors.
     _normalize_custom_opp_path(vendor_dirs)
 
-    # The first vendor is the highest-priority implementation; keep the legacy
-    # single-library variable pointing at it and expose the full order too.
-    # The Stable-ABI launcher (libfla_npu_stable.so) resolves every aclnn symbol
-    # from the single library named here, so it must point at a *complete* op set:
-    # an overlay vendor alone would hide every operator it does not carry.
+    # Retain the complete base path for single-vendor integrations. Stable
+    # execution uses the ordered plural list whenever overlays are enabled.
     base_vendor = next(
         (vendor_dir for vendor_dir in vendor_dirs if vendor_dir.name == _DEFAULT_VENDOR_DIR),
         vendor_dirs[0],
     )
     os.environ["FLA_NPU_OP_API_LIB"] = str(_resolve_packaged_opapi(base_vendor))
     os.environ["FLA_NPU_OP_API_LIBS"] = os.pathsep.join(str(path) for path in op_api_libs)
-    # The launcher's symbol lookup decides whether an overlay can be honoured:
-    # legacy launchers resolve every symbol from the single FLA_NPU_OP_API_LIB
-    # handle, plural-capable launchers search the ordered FLA_NPU_OP_API_LIBS
-    # list (overlay first).  Keep the backend choice consistent with that.
-    _apply_overlay_backend_policy(vendor_dirs)
+    # The actual launcher (including FLA_NPU_STABLE_LIB overrides) is checked
+    # in _stable.load(), after its stamp and before any op is resolved. Do not
+    # import torch here: OPP paths must be ready before CANN initializes.
     os.environ.setdefault("FLA_NPU_OPP_PATH", str(vendor_dirs[0].parent.parent))
 
     return vendor_dirs
@@ -430,82 +372,13 @@ def load_ascendc_opapi_libraries() -> list[ctypes.CDLL]:
     return libraries
 
 
-def _find_ascendc_extension_library() -> pathlib.Path:
-    so_files = list(_PACKAGE_DIR.glob("custom_aclnn_extension_lib*.so"))
-    if not so_files:
-        raise FileNotFoundError(f"not find custom_aclnn_extension_lib*.so in {_PACKAGE_DIR}")
-    return so_files[0].resolve()
-
-
-def _preload_library(path: pathlib.Path) -> None:
-    if not path.exists():
-        return
-    mode = getattr(os, "RTLD_GLOBAL", 0) | getattr(os, "RTLD_NOW", 0)
-    ctypes.CDLL(str(path), mode=mode)
-
-
-def _preload_torch_npu_dependencies(torch_module, torch_npu_module) -> None:
-    torch_lib = pathlib.Path(torch_module.__file__).resolve().parent / "lib"
-    torch_npu_lib = pathlib.Path(torch_npu_module.__file__).resolve().parent / "lib"
-    _prepend_env_path("LD_LIBRARY_PATH", torch_lib)
-    _prepend_env_path("LD_LIBRARY_PATH", torch_npu_lib)
-
-    for lib_path in (
-        torch_lib / "libc10.so",
-        torch_lib / "libtorch.so",
-        torch_lib / "libtorch_cpu.so",
-        torch_npu_lib / "libtorch_npu.so",
-    ):
-        _preload_library(lib_path)
-
-
 def load_ascendc_extension():
     """Backward-compatible alias for loading the decoupled Ascend C runtime."""
 
     return load_ascendc_opapi_libraries()
 
 
-def load_legacy_torch_ops() -> pathlib.Path:
-    """Load the legacy PyTorch dispatcher custom ops.
-
-    ``import fla_npu`` initializes the decoupled Ascend C runtime, but does not
-    import torch, torch_npu, or register ``torch.ops.npu`` kernels. Call this
-    function only when old call sites such as
-    ``torch.ops.npu.npu_chunk_fwd_o(...)`` must keep working during the
-    migration to the decoupled ``fla_npu.ops.ascendc`` API.
-    """
-
-    global _LEGACY_TORCH_OPS_LOADED, _LEGACY_TORCH_OPS_LIBRARY
-    if _LEGACY_TORCH_OPS_LOADED and _LEGACY_TORCH_OPS_LIBRARY is not None:
-        return _LEGACY_TORCH_OPS_LIBRARY
-
-    import torch
-    import torch_npu
-
-    load_ascendc_opapi_libraries()
-    _preload_torch_npu_dependencies(torch, torch_npu)
-    legacy_library = _find_ascendc_extension_library()
-    torch.ops.load_library(str(legacy_library))
-    from .ops.ascendc import install_legacy_torch_ops_warning, install_torch_npu_ops_compat
-
-    install_torch_npu_ops_compat()
-    install_legacy_torch_ops_warning()
-    _LEGACY_TORCH_OPS_LOADED = True
-    _LEGACY_TORCH_OPS_LIBRARY = legacy_library
-    return legacy_library
-
-
-def is_legacy_torch_ops_loaded() -> bool:
-    return _LEGACY_TORCH_OPS_LOADED
-
-
-__all__ = [
-    "overlay_vendor_names",
-    "is_legacy_torch_ops_loaded",
-    "load_ascendc_extension",
-    "load_ascendc_opapi_libraries",
-    "load_legacy_torch_ops",
-]
+__all__ = ["overlay_vendor_names", "load_ascendc_extension", "load_ascendc_opapi_libraries"]
 
 
 def _run_import_guards() -> None:
@@ -520,6 +393,9 @@ def _run_import_guards() -> None:
         warnings.warn(f"fla_npu environment guard skipped: {exc}", RuntimeWarning)
 
 
+from ._backend_policy import validate_backend_environment as _validate_backend_environment
+
+_validate_backend_environment()
 _run_import_guards()
 _warn_if_embedded_opp_not_preconfigured()
 load_ascendc_opapi_libraries()

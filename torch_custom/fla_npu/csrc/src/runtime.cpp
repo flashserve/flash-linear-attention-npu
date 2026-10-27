@@ -220,3 +220,9 @@ void Runtime::enqueue(const std::string& name, const std::function<int()>& fn) {
 }
 
 }  // namespace fla_npu_stable
+
+// Version 1 guarantees overlay -> base -> CANN lookup in this launcher.
+extern "C" __attribute__((visibility("default")))
+std::int32_t fla_npu_stable_overlay_order_version() {
+  return 1;
+}

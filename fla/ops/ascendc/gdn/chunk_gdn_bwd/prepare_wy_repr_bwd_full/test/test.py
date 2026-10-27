@@ -1,4 +1,5 @@
 import torch
+from fla_npu.ops import ascendc as ascendc_ops
 import torch_npu
 import os
 from typing import Optional
@@ -727,7 +728,7 @@ def test_prepare_wy_repr_bwd_full(
 
     # 将张量移到 NPU 并调用反向算子
     if chunk_indices != None:
-        dk, dv, dbeta, dg = torch.ops.npu.npu_prepare_wy_repr_bwd_full(
+        dk, dv, dbeta, dg = ascendc_ops.npu_prepare_wy_repr_bwd_full(
             k.npu(),
             v.npu(),
             beta.npu(),
@@ -741,7 +742,7 @@ def test_prepare_wy_repr_bwd_full(
             chunk_size=chunk_size
         )
     else:
-        dk, dv, dbeta, dg = torch.ops.npu.npu_prepare_wy_repr_bwd_full(
+        dk, dv, dbeta, dg = ascendc_ops.npu_prepare_wy_repr_bwd_full(
             k.npu(),
             v.npu(),
             beta.npu(),

@@ -7,12 +7,15 @@ executor or launch a kernel.
 """
 import argparse
 import ctypes
+from pathlib import Path
+import sys
 
 import torch
 import torch_npu  # noqa: F401
 
 from fla_npu.ops import ascendc
-from fla_npu.ops.ascendc import _runtime
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "atk" / "common"))
+import aclnn_error_probe as _raw_abi
 
 
 def fixture():
@@ -28,8 +31,8 @@ def fixture():
 def check_raw(name, updates, code, parameter, *, null_output_pointer=None, status=161002):
     case = fixture()
     case.update(updates)
-    runtime = _runtime.runtime()
-    context = _runtime._CallContext(runtime, case["v_new"].device)
+    runtime = _raw_abi.runtime()
+    context = _raw_abi._CallContext(runtime, case["v_new"].device)
     api = runtime.symbol("aclnnChunkKdaBwdPrepareGetWorkspaceSize")
     api.argtypes = ([ctypes.c_void_p] * 6 +
                     [ctypes.c_char_p, ctypes.c_double, ctypes.c_int64, ctypes.c_bool] +
