@@ -190,9 +190,9 @@ aclnnStatus aclnnRecomputeWUFwdGetWorkspaceSize(
     auto executorPtr = uniqueExecutor.get();
 
     OP_LOGW("npu_recompute_w_u_fwd",
-            "npu_recompute_w_u_fwd is deprecated and will be removed after "
+            "npu_recompute_w_u_fwd is deprecated and will be removed in "
             "a later version; use the fused npu_chunk_gated_delta_rule_fwd / "
-            "npu_chunk_gated_delta_rule_bwd instead. ");
+            "npu_chunk_gated_delta_rule_bwd instead.");
 
     // 固定写法，参数检查
     CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR);

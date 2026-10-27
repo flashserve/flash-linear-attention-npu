@@ -1,5 +1,8 @@
 # ChunkBwdDqkwg 算子说明
 
+> **[已弃用]** 本算子已弃用，将在后续版本中移除。请使用融合算子 `npu_chunk_gated_delta_rule_bwd` 替代。
+
+
 `ChunkBwdDqkwg` 是一个用于分块门控 delta 规则（Chunk Gated Delta Rule）反向传播过程中的自定义算子。该算子根据前向激活值、权重及梯度输入，计算并输出针对 Query（q）、Key（k）、Weight（w）和 Gate（g）的梯度。
 
 ---

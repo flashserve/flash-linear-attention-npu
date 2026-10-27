@@ -1,5 +1,8 @@
 # PrepareWyReprBwdDa 算子说明
 
+> **[已弃用]** 本算子已弃用，将在后续版本中移除。请使用融合算子 `npu_chunk_gated_delta_rule_bwd` 替代。
+
+
 `PrepareWyReprBwdDa` 是用于线性注意力（Linear Attention）或相关变体（如 Delta Rule）中 WY 表示（WY Representation）反向传播过程的自定义算子。该算子根据前向输入的 Key、Value、Beta、A 矩阵以及反向传入的 dw、du 梯度和 Gate，计算并输出针对 A 矩阵的梯度 `dA`。
 
 该算子支持 **GVA（Grouped Value Attention）** 特性，允许 Key 头数（HK）与 Value 头数（HV）不等，即 `HV = group_size × HK`（group_size ≥ 1），同时支持 `Vdim = 256` 的较大 Value 维度。

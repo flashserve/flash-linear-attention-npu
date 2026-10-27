@@ -6,6 +6,22 @@
 - [2026/06] 发布 v26.6.0 预编译 wheel，覆盖 A2 / A3 / A5 目标，可在 [Release v26.6.0](https://github.com/flashserve/flash-linear-attention-npu/releases/tag/v26.6.0) 下载。
 - [2026/03] flash-linear-attention-npu 项目首次上线。
 
+## 🌅 日落废弃算子公告
+
+以下 9 个冗余小算子已进入日落阶段一（标记弃用，保留入口并给出调用告警与替代算子说明），将在后续版本中移除。调用时会触发 `FutureWarning`（Python 侧）和 `OP_LOGW`（aclnn C++ 侧）告警，请按替代入口迁移：
+
+| 已弃用算子 | 替代算子 |
+| --- | --- |
+| `npu_chunk_bwd_dqkwg` | `npu_chunk_gated_delta_rule_bwd` |
+| `npu_chunk_bwd_dv_local` | `npu_chunk_gated_delta_rule_bwd` |
+| `npu_prepare_wy_repr_bwd` | `npu_chunk_gated_delta_rule_bwd` |
+| `npu_prepare_wy_repr_bwd_da` | `npu_chunk_gated_delta_rule_bwd` |
+| `npu_prepare_wy_repr_bwd_full` | `npu_chunk_gated_delta_rule_bwd` |
+| `npu_chunk_local_cumsum` | `npu_chunk_gated_delta_rule_fwd` |
+| `npu_chunk_scaled_dot_kkt` | `npu_chunk_gated_delta_rule_fwd` |
+| `npu_recompute_w_u_fwd` | `npu_chunk_gated_delta_rule_fwd` / `npu_chunk_gated_delta_rule_bwd` |
+| `npu_kda_gate_cumsum` | `npu_chunk_kda_fwd` |
+
 ## 🚀概述
 
 flash-linear-attention-npu 算子库由天津大学主导开发，是一个面向昇腾架构的高性能线性注意力算子库，对标 Flash-Linear-Attention 项目，旨在为昇腾平台提供高效的线性注意力计算实现。
@@ -87,8 +103,8 @@ bash tests/atk/run_test_cpu.sh -op=<算子名> -npu_device_id=0
 
 - `causal_conv1d`
 - `causal_conv1d_bwd`
-- `chunk_bwd_dqkwg`
-- `chunk_bwd_dv_local`
+- `chunk_bwd_dqkwg` （已弃用，替代：chunk_gated_delta_rule_bwd）
+- `chunk_bwd_dv_local` （已弃用，替代：chunk_gated_delta_rule_bwd）
 - `chunk_fwd_h`
 - `chunk_fwd_o`
 - `chunk_gated_delta_rule_bwd`
@@ -102,12 +118,12 @@ bash tests/atk/run_test_cpu.sh -op=<算子名> -npu_device_id=0
 - `chunk_kda_fwd`
 - `chunk_kda_fwd_finalize`
 - `chunk_kda_fwd_prepare`
-- `chunk_local_cumsum`
-- `chunk_scaled_dot_kkt`
-- `prepare_wy_repr_bwd`
-- `prepare_wy_repr_bwd_da`
-- `prepare_wy_repr_bwd_full`
-- `recompute_w_u_fwd`
+- `chunk_local_cumsum` （已弃用，替代：chunk_gated_delta_rule_fwd）
+- `chunk_scaled_dot_kkt` （已弃用，替代：chunk_gated_delta_rule_fwd）
+- `prepare_wy_repr_bwd` （已弃用，替代：chunk_gated_delta_rule_bwd）
+- `prepare_wy_repr_bwd_da` （已弃用，替代：chunk_gated_delta_rule_bwd）
+- `prepare_wy_repr_bwd_full` （已弃用，替代：chunk_gated_delta_rule_bwd）
+- `recompute_w_u_fwd` （已弃用，替代：chunk_gated_delta_rule_fwd / bwd）
 - `recurrent_gated_delta_rule`
 - `recurrent_kda`
 - `solve_tri`

@@ -663,8 +663,7 @@ def npu_prepare_wy_repr_bwd(
 
     warnings.warn(
         "fla_npu.ops.ascendc.npu_prepare_wy_repr_bwd is a deprecated API "
-        "and will be removed in a later version. Use "
-        "npu_prepare_wy_repr_bwd_full or the fused "
+        "and will be removed in a later version. Use the fused "
         "npu_chunk_gated_delta_rule_bwd instead.",
         FutureWarning,
         stacklevel=4,
@@ -4412,6 +4411,16 @@ def npu_kda_gate_cumsum(
     safe_gate=False,
     lower_bound=None,
 ):
+    import warnings
+
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_kda_gate_cumsum is a deprecated API "
+        "and will be removed in a later version. Use the fused "
+        "npu_chunk_kda_fwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
+
     import torch
 
     out = _empty(_shape(g), g, dtype=torch.float32)

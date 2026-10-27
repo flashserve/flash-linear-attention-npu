@@ -243,7 +243,7 @@ _DEPRECATED_OPS = frozenset({
 })
 
 _DEPRECATED_OPS_REPLACEMENTS = {
-    "npu_prepare_wy_repr_bwd": "npu_prepare_wy_repr_bwd_full or the fused npu_chunk_gated_delta_rule_bwd",
+    "npu_prepare_wy_repr_bwd": "the fused npu_chunk_gated_delta_rule_bwd",
     "npu_prepare_wy_repr_bwd_da": "the fused npu_chunk_gated_delta_rule_bwd",
     "npu_prepare_wy_repr_bwd_full": "the fused npu_chunk_gated_delta_rule_bwd",
     "npu_chunk_bwd_dqkwg": "the fused npu_chunk_gated_delta_rule_bwd",

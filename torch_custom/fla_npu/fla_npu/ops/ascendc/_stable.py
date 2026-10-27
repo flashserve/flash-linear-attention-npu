@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import sys
+import warnings
 
 
 _LIB_ENV = "FLA_NPU_STABLE_LIB"
@@ -765,6 +766,13 @@ def npu_fast_gelu_custom_backward(grad, self):
 def npu_kda_gate_cumsum(g, chunk_size, *, A_log=None, dt_bias=None,
                         cu_seqlens=None, use_gate_in_kernel=False,
                         safe_gate=False, lower_bound=None):
+    """KDA gate with the log-cumsum folded in.
+
+    The schema can only carry real values, so the optional-argument defaults the
+    ctypes reference applies are applied here too (`lower_bound` defaults to
+    -5.0 there, and passing None straight through is not representable).
+    """
+
     warnings.warn(
         "fla_npu.ops.ascendc.npu_kda_gate_cumsum is a deprecated API "
         "and will be removed in a later version. Use the fused "
@@ -772,12 +780,6 @@ def npu_kda_gate_cumsum(g, chunk_size, *, A_log=None, dt_bias=None,
         FutureWarning,
         stacklevel=4,
     )
-    """KDA gate with the log-cumsum folded in.
-
-    The schema can only carry real values, so the optional-argument defaults the
-    ctypes reference applies are applied here too (`lower_bound` defaults to
-    -5.0 there, and passing None straight through is not representable).
-    """
 
     return _op("npu_kda_gate_cumsum")(
         g,
@@ -826,6 +828,8 @@ def npu_chunk_kda_bwd_intra(q, k, gk, beta, dAqk, dAkk, dq, dk, db, dg, *,
 
 def npu_chunk_bwd_dv_local(q, k, d_o, g, scale, chunk_size, *, g_gamma=None,
                            A=None, cu_seqlens=None, chunk_indices=None):
+    """Local dv contribution of the chunked GDN backward."""
+
     warnings.warn(
         "fla_npu.ops.ascendc.npu_chunk_bwd_dv_local is a deprecated API "
         "and will be removed in a later version. Use the fused "
@@ -833,7 +837,6 @@ def npu_chunk_bwd_dv_local(q, k, d_o, g, scale, chunk_size, *, g_gamma=None,
         FutureWarning,
         stacklevel=4,
     )
-    """Local dv contribution of the chunked GDN backward."""
 
     return _op("npu_chunk_bwd_dv_local")(
         q, k, d_o, g, g_gamma, A,
@@ -861,6 +864,8 @@ def npu_pre_process_bwd_kernel_merged(q, k, w, d_o, dv, scale, chunk_size, *,
 def npu_chunk_local_cumsum(g, chunk_size, *, cu_seqlens=None,
                            chunk_indices_out=None, reverse=False, scale=1.0,
                            head_first=True, output_dtype="float32"):
+    """Per-chunk cumulative sum of ``g``."""
+
     warnings.warn(
         "fla_npu.ops.ascendc.npu_chunk_local_cumsum is a deprecated API "
         "and will be removed in a later version. Use the fused "
@@ -868,7 +873,6 @@ def npu_chunk_local_cumsum(g, chunk_size, *, cu_seqlens=None,
         FutureWarning,
         stacklevel=4,
     )
-    """Per-chunk cumulative sum of ``g``."""
 
     return _op("npu_chunk_local_cumsum")(
         g,
@@ -885,6 +889,8 @@ def npu_chunk_local_cumsum(g, chunk_size, *, cu_seqlens=None,
 
 def npu_chunk_scaled_dot_kkt(k, g, beta, *, cu_seqlens=None,
                              chunk_indices=None, chunk_size=64):
+    """Chunked scaled dot product used to build the WY representation."""
+
     warnings.warn(
         "fla_npu.ops.ascendc.npu_chunk_scaled_dot_kkt is a deprecated API "
         "and will be removed in a later version. Use the fused "
@@ -892,7 +898,6 @@ def npu_chunk_scaled_dot_kkt(k, g, beta, *, cu_seqlens=None,
         FutureWarning,
         stacklevel=4,
     )
-    """Chunked scaled dot product used to build the WY representation."""
 
     from ._chunk_scaled_dot_kkt_contract import validate as _validate_chunk_scaled_dot_kkt
 
@@ -909,6 +914,13 @@ def npu_chunk_bwd_dqkwg(q, k, v, g, h, dox, dh, dv, chunk_size, *,
                         cu_seqlens=None, chunk_indices=None, w=None,
                         g_gamma=None, scale=None, use_exp2=None,
                         transpose_state_layout=None):
+    """dq / dk / dw / dg of one chunk.
+
+    The three trailing flags are optional in the published signature; the
+    ctypes reference supplies ``scale=1.0`` and ``False`` for the booleans, so
+    do the same here rather than passing None into a scalar slot.
+    """
+
     warnings.warn(
         "fla_npu.ops.ascendc.npu_chunk_bwd_dqkwg is a deprecated API "
         "and will be removed in a later version. Use the fused "
@@ -916,12 +928,6 @@ def npu_chunk_bwd_dqkwg(q, k, v, g, h, dox, dh, dv, chunk_size, *,
         FutureWarning,
         stacklevel=4,
     )
-    """dq / dk / dw / dg of one chunk.
-
-    The three trailing flags are optional in the published signature; the
-    ctypes reference supplies ``scale=1.0`` and ``False`` for the booleans, so
-    do the same here rather than passing None into a scalar slot.
-    """
 
     return _op("npu_chunk_bwd_dqkwg")(
         q, k, v, g, h, dox, dh, dv,
@@ -938,6 +944,8 @@ def npu_chunk_bwd_dqkwg(q, k, v, g, h, dox, dh, dv, chunk_size, *,
 
 def npu_prepare_wy_repr_bwd_da(k, v, beta, A, dw, du, g, *, chunk_size,
                                cu_seqlens=None, chunk_indices=None):
+    """dA only, for backends that already have the other gradients."""
+
     warnings.warn(
         "fla_npu.ops.ascendc.npu_prepare_wy_repr_bwd_da is a deprecated API "
         "and will be removed in a later version. Use the fused "
@@ -945,7 +953,6 @@ def npu_prepare_wy_repr_bwd_da(k, v, beta, A, dw, du, g, *, chunk_size,
         FutureWarning,
         stacklevel=4,
     )
-    """dA only, for backends that already have the other gradients."""
 
     return _op("npu_prepare_wy_repr_bwd_da")(
         k, v, beta, A, dw, du, g,
@@ -956,6 +963,8 @@ def npu_prepare_wy_repr_bwd_da(k, v, beta, A, dw, du, g, *, chunk_size,
 
 def npu_prepare_wy_repr_bwd_full(k, v, beta, A, dA, dw, du, g, chunk_size, *,
                                  cu_seqlens=None, chunk_indices=None):
+    """dk / dv / dbeta / dg, taking dA as an input."""
+
     warnings.warn(
         "fla_npu.ops.ascendc.npu_prepare_wy_repr_bwd_full is a deprecated API "
         "and will be removed in a later version. Use the fused "
@@ -963,7 +972,6 @@ def npu_prepare_wy_repr_bwd_full(k, v, beta, A, dA, dw, du, g, chunk_size, *,
         FutureWarning,
         stacklevel=4,
     )
-    """dk / dv / dbeta / dg, taking dA as an input."""
 
     return _op("npu_prepare_wy_repr_bwd_full")(
         k, v, beta, A, dA, dw, du, g,
@@ -974,15 +982,15 @@ def npu_prepare_wy_repr_bwd_full(k, v, beta, A, dA, dw, du, g, chunk_size, *,
 
 def npu_prepare_wy_repr_bwd(k, v, beta, A, dw, du, g, chunk_size, *,
                             cu_seqlens=None, chunk_indices=None):
+    """dk / dv / dbeta / dg; produces dA internally."""
+
     warnings.warn(
         "fla_npu.ops.ascendc.npu_prepare_wy_repr_bwd is a deprecated API "
-        "and will be removed in a later version. Use "
-        "npu_prepare_wy_repr_bwd_full or the fused "
+        "and will be removed in a later version. Use the fused "
         "npu_chunk_gated_delta_rule_bwd instead.",
         FutureWarning,
         stacklevel=4,
     )
-    """dk / dv / dbeta / dg; produces dA internally."""
 
     return _op("npu_prepare_wy_repr_bwd")(
         k, v, beta, A, dw, du, g,
@@ -993,6 +1001,8 @@ def npu_prepare_wy_repr_bwd(k, v, beta, A, dw, du, g, chunk_size, *,
 
 def npu_recompute_w_u_fwd(k, v, beta, A, chunk_size, *, g=None, gk=None,
                           cu_seqlens=None, chunk_indices=None):
+    """Recompute w and u for the backward pass."""
+
     warnings.warn(
         "fla_npu.ops.ascendc.npu_recompute_w_u_fwd is a deprecated API "
         "and will be removed in a later version. Use the fused "
@@ -1001,7 +1011,6 @@ def npu_recompute_w_u_fwd(k, v, beta, A, chunk_size, *, g=None, gk=None,
         FutureWarning,
         stacklevel=4,
     )
-    """Recompute w and u for the backward pass."""
 
     return _op("npu_recompute_w_u_fwd")(
         k, v, beta, A, g, gk,
