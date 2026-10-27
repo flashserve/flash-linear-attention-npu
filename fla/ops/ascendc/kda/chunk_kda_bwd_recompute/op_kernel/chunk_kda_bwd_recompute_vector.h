@@ -187,7 +187,7 @@ private:
                         Cast(gFp32, gIn, RoundMode::CAST_NONE, K_ * curRowNum);
                     }
                     if constexpr (std::is_same<BetaType, float>::value) {
-                        DataCopy(betaFp32, betaIn, curRowNum);
+                        DataCopy(betaFp32, betaIn, CeilDiv(curRowNum, 8U) * 8U);
                     } else {
                         Cast(betaFp32, betaIn, RoundMode::CAST_NONE, curRowNum);
                     }
@@ -335,7 +335,7 @@ private:
                     auto betaIn = betaInQue_.DeQue<BetaType>();
                     Cast(vFp32, vIn, RoundMode::CAST_NONE, V_ * curRowNum);
                     if constexpr (std::is_same<BetaType, float>::value) {
-                        DataCopy(betaFp32, betaIn, curRowNum);
+                        DataCopy(betaFp32, betaIn, CeilDiv(curRowNum, 8U) * 8U);
                     } else {
                         Cast(betaFp32, betaIn, RoundMode::CAST_NONE, curRowNum);
                     }
@@ -454,6 +454,7 @@ private:
                 {1, 1, 0, repeatStride, repeatStride, 1});
             offset += KDA_BWD_RECOMPUTE_FP32_PER_REPEAT_64;
         }
+        PipeBarrier<PIPE_V>();
     }
 
     __aicore__ inline void ComputeKg(
