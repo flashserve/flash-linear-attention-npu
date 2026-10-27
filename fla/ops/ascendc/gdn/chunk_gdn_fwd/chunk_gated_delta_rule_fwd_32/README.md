@@ -97,7 +97,7 @@ Python 入口是 `npu_chunk_gated_delta_rule_fwd_32`，返回 `(o, final_state)`
 | `v` | 输入 | 必选 | Value | `BFLOAT16` | `ND` | BNSD / NTD `[B, Hv, T, V]` | 支持 |
 | `g` | 输入 | 必选 | 原始门控，kernel 内做 cumsum 和 `exp` | `FLOAT` | `ND` | BNSD / NTD `[B, Hv, T]` | 支持 |
 | `beta` | 输入 | 必选 | Delta 系数，kernel 内做 sigmoid | `BFLOAT16` | `ND` | BNSD / NTD `[B, Hv, T]` | 支持 |
-| `initial_state` | 输入 | 可选 | 每条序列的初始状态 | `BFLOAT16` | `ND` | BNSD `[B, Hv, K, V]`；NTD `[N, Hv, K, V]` | 支持 |
+| `initial_state` | 输入 | 可选 | 每条序列的初始状态。片上递推始终用 FP32。BF16 输入进入递推时扩成 FP32 一次，FP32 输入原样进入 | `BFLOAT16`、`FLOAT` | `ND` | BNSD `[B, Hv, K, V]`；NTD `[N, Hv, K, V]` | 支持 |
 | `cu_seqlens` | 输入 | 可选 | NTD 的累计长度。给出后进入 NTD | `INT64` | `ND` | `[N+1]` | - |
 | `chunk_indices` | 输入 | 可选 | NTD 的 `(seqId, localChunkId)` 扁平列表 | `INT64` | `ND` | `[2·Nc]` | - |
 
@@ -112,7 +112,7 @@ Python 入口是 `npu_chunk_gated_delta_rule_fwd_32`，返回 `(o, final_state)`
 | 参数名 | 输入/输出 | 描述 | 数据类型 | 数据格式 | 维度（Shape） | 非连续 Tensor |
 |---|---|---|---|---|---|---|
 | `o` | 输出 | 前向注意力输出 | `BFLOAT16` | `ND` | BNSD / NTD `[B, Hv, T, V]` | 支持 |
-| `final_state` | 输出 | 每条序列最后一个 token 之后的状态 | `BFLOAT16` | `ND` | BNSD `[B, Hv, K, V]`；NTD `[N, Hv, K, V]` | 支持 |
+| `final_state` | 输出 | 每条序列最后一个 token 之后的状态。与 `initial_state` 同 dtype；不传 `initial_state` 时为 `FLOAT` | `BFLOAT16`、`FLOAT` | `ND` | BNSD `[B, Hv, K, V]`；NTD `[N, Hv, K, V]` | 支持 |
 | `workspaceSize` | 输出 | Device 侧所需 workspace 大小 | `uint64_t` | - | 标量 | - |
 | `executor` | 输出 | 算子执行器 | `aclOpExecutor*` | - | - | - |
 
@@ -139,7 +139,7 @@ BNSD 和 NTD 的轴顺序相同，都是 `[B, H, T, D]`。本算子没有 `layou
 
 - `cu_seqlens` 和 `chunk_indices` 必须同时给出，或同时不给。
 - 只给 `chunk_indices` 会报错。Python 侧只给 `cu_seqlens` 时，会按块长 32 补出 canonical `chunk_indices`。
-- `initial_state` 可空。给出时形状与 `final_state` 相同。
+- `initial_state` 可空。给出时形状与 `final_state` 相同，`final_state` 与它同 dtype。不传时 `final_state` 为 `FLOAT`。
 
 ### 4.2 形状约束（强约束）
 
@@ -170,7 +170,7 @@ BNSD 和 NTD 的轴顺序相同，都是 `[B, H, T, D]`。本算子没有 `layou
 - 每条序列从自己的起始 token 重新分块，起始 token 不必 32 对齐
 - 一条序列结束时写出该序列的 `final_state`，下一条从自己的 `initial_state` 或 0 重新开始。状态不跨序列传递
 - 下一条序列的 Prepare 读在本条 `final_state` 写出之前发出，两段在同一核上重叠
-- 空序列不跑 cube。有 `initial_state` 时把对应槽抄到 `final_state`，否则该槽写 0
+- 空序列不跑 cube。有 `initial_state` 时按 `final_state` 的 dtype 把对应槽抄出去，否则该槽写 0
 
 同一 head 上的多条序列属于同一个任务，按 `cu_seqlens` 的顺序在这个核上串行处理。
 
@@ -178,7 +178,9 @@ BNSD 和 NTD 的轴顺序相同，都是 `[B, H, T, D]`。本算子没有 `layou
 
 - `scale` 在 ACL 属性里必填，缺省 \(1/\sqrt{128}\)。Python 传 `None` 时同样取 \(1/\sqrt{K}\)。
 - `o` 在写出前乘 `scale`。
-- 比较精度时，把 FP64 标杆先 cast 成 BF16 再转回 FP32。`o` 和 `final_state` 的通过标准是 BF16 ulp 比值 `max < 5`、`mean < 1.5`、`rms < 1.5`。
+- 块与块之间的状态以 FP32 驻留。送给 Cube 的 H 按 RINT 收成 BF16。BF16 的 `initial_state` 只在进入递推时扩成 FP32 一次。
+- `final_state` 为 `FLOAT` 时写出这份 FP32 递推。`final_state` 为 `BFLOAT16` 时，在写出那一刻按 RINT 收成 BF16。
+- 比较精度时，`o` 和 BF16 的 `final_state` 把 FP64 标杆先 cast 成 BF16 再转回 FP32。FP32 的 `final_state` 直接和 FP64 标杆比。通过标准都是 BF16 ulp 比值 `max < 5`、`mean < 1.5`、`rms < 1.5`。
 
 ---
 
@@ -222,7 +224,7 @@ if __name__ == "__main__":
     test_chunk_gated_delta_rule_fwd_32_fixed()
 ```
 
-`B > 1` 时 `final_state` 的第 0 维仍是 `B`。不需要 `initial_state` 时传 `None`。
+`B > 1` 时 `final_state` 的第 0 维仍是 `B`。不需要 `initial_state` 时传 `None`，这时 `final_state` 为 `float32`。传入 `initial_state` 时 `final_state` 与它同 dtype。
 
 ### 5.2 变长模式调用示例
 
