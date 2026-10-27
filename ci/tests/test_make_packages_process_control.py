@@ -88,8 +88,13 @@ class ProcessControlTest(unittest.TestCase):
                      "signal.signal(signal.SIGINT,signal.SIG_IGN); "
                      "signal.signal(signal.SIGTERM,signal.SIG_IGN); "
                      f"Path({str(ready)!r}).touch(); time.sleep(60)")
+            # Background shells may pass SIGINT=SIG_IGN to this fixture. The
+            # leader must handle SIGINT so this case actually tests an exited
+            # leader with a surviving child, regardless of how CI was started.
             parent = subprocess.Popen([sys.executable, "-c",
-                f"import subprocess,sys,time; subprocess.Popen([sys.executable,'-c',{child!r}]); time.sleep(60)"],
+                "import signal,subprocess,sys,time; "
+                "signal.signal(signal.SIGINT,signal.default_int_handler); "
+                f"subprocess.Popen([sys.executable,'-c',{child!r}]); time.sleep(60)"],
                 start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             try:
                 deadline = time.monotonic()+5
