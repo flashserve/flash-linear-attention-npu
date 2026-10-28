@@ -41,6 +41,7 @@ using GDN::GdnMegaArch22RecomputeWUTilingData;
 #include "catlass/arch/cross_core_sync.hpp"
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
 #include "recompute_w_u_fwd_concat_cube.h"
+#include "block_mmad_recompute_wu_keepa.hpp"
 #endif
 using namespace Catlass;
 using namespace tla;
@@ -74,8 +75,9 @@ public:
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
     static constexpr bool kConcatUW = kStaticBT == 64 && kStaticV == 128 &&
                                       sizeof(ElementA) == 2 && sizeof(ElementVb) == 2;
-    using SelectedBlockMmad = typename Catlass::Gemm::Block::RecomputeWUConcatSelector<
-        BlockMmadU, kConcatUW>::Type;
+    using SelectedBlockMmad = std::conditional_t<kConcatUW,
+        typename Catlass::Gemm::Block::RecomputeWUConcatSelector<BlockMmadU, kConcatUW>::Type,
+        Catlass::Gemm::Block::RecomputeWUKeepAMmad<BlockMmadU>>;
 #else
     static constexpr bool kConcatUW = false;
     using SelectedBlockMmad = BlockMmadU;

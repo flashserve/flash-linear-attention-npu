@@ -342,14 +342,10 @@ public:
     }
 
     /// Perform a block-scoped matrix multiply-accumulate
-    // KeepA/ReuseA pair adjacent calls on one L1 K tile without external-A configuration.
-    // KeepA loads and retains the current A slot; ReuseA reads it, releases it and advances.
-    template <bool KeepA = false, bool ReuseA = false,
-              class TensorA, class TensorB, class TensorC, class TensorBias = EmptyClass>
+    template <class TensorA, class TensorB, class TensorC, class TensorBias = EmptyClass>
     CATLASS_DEVICE void operator()(TensorA &tensorA, TensorB &tensorB, TensorC &tensorC, GemmCoord const &actualShape,
         TensorBias const &tensorBias = {}, bool clearL1Padding = false)
     {
-        static_assert(!(KeepA && ReuseA), "KeepA and ReuseA must be separate calls");
         // Check L1TileShape
         if constexpr (HAS_BIAS) {
             static constexpr uint32_t BIAS_BUF_SIZE = L0_TILE_N * sizeof(ElementAccumulator);
@@ -397,41 +393,37 @@ public:
 
         uint32_t kL1Actual = min(kBlockActual, L1_TILE_K);
         // load first matrix A tile from GM to L1
-        if constexpr (!ReuseA) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1AEventList[l1AListId]);
-            if (clearL1Padding && !useExternalL1AThisCall) {
-                AscendC::InitConstValueParams<ElementA> clearParams(
-                    1, static_cast<uint16_t>(L1A_TILE_SIZE / 32), 0,
-                    static_cast<ElementA>(0));
-                AscendC::InitConstValue(l1ATensorList[l1AListId], clearParams);
-            }
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1AEventList[l1AListId]);
+        if (clearL1Padding && !useExternalL1AThisCall) {
+            AscendC::InitConstValueParams<ElementA> clearParams(
+                1, static_cast<uint16_t>(L1A_TILE_SIZE / 32), 0,
+                static_cast<ElementA>(0));
+            AscendC::InitConstValue(l1ATensorList[l1AListId], clearParams);
         }
         auto tensorL1A = tla::MakeTensor(
             useExternalL1AThisCall ? externalL1ATensor : l1ATensorList[l1AListId],
             L1A_LAYOUT, Arch::PositionL1{});
-        if constexpr (!ReuseA) {
-            auto tensorTileA = GetTileA(tensorA, 0, 0, mBlockActual, kL1Actual);
-            if (skipNextADataCopy) {
-                skipNextADataCopy = false;
-            } else if constexpr (ENABLE_L1_RESIDENT) {
-                // If the currently loaded GM pointer and block coordinates are the same as the last loaded ones,
-                // skip this loading.
-                if (lastAddrA[l1AListId] != tensorTileA.data().GetPhyAddr()
-                    || tla::get<0>(tensorTileA.coord()) != lastCoordA[l1AListId].row()
-                    || tla::get<1>(tensorTileA.coord()) != lastCoordA[l1AListId].column()) {
-                    copyGmToL1A(tensorL1A, tensorTileA);
-                    lastCoordA[l1AListId] = MatrixCoord{
-                        static_cast<uint32_t>(tla::get<0>(tensorTileA.coord())),
-                        static_cast<uint32_t>(tla::get<1>(tensorTileA.coord()))};
-                    lastAddrA[l1AListId] = const_cast<__gm__ typename AscendC::GlobalTensor<ElementA>::PrimType *>(
-                        tensorTileA.data().GetPhyAddr()
-                    );
-                }
-            } else {
+        auto tensorTileA = GetTileA(tensorA, 0, 0, mBlockActual, kL1Actual);
+        if (skipNextADataCopy) {
+            skipNextADataCopy = false;
+        } else if constexpr (ENABLE_L1_RESIDENT) {
+            // If the currently loaded GM pointer and block coordinates are the same as the last loaded ones,
+            // skip this loading.
+            if (lastAddrA[l1AListId] != tensorTileA.data().GetPhyAddr()
+                || tla::get<0>(tensorTileA.coord()) != lastCoordA[l1AListId].row()
+                || tla::get<1>(tensorTileA.coord()) != lastCoordA[l1AListId].column()) {
                 copyGmToL1A(tensorL1A, tensorTileA);
+                lastCoordA[l1AListId] = MatrixCoord{
+                    static_cast<uint32_t>(tla::get<0>(tensorTileA.coord())),
+                    static_cast<uint32_t>(tla::get<1>(tensorTileA.coord()))};
+                lastAddrA[l1AListId] = const_cast<__gm__ typename AscendC::GlobalTensor<ElementA>::PrimType *>(
+                    tensorTileA.data().GetPhyAddr()
+                );
             }
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(l1AEventList[l1AListId]);
+        } else {
+            copyGmToL1A(tensorL1A, tensorTileA);
         }
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(l1AEventList[l1AListId]);
 
         // load first matrix B tile from GM to L1
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1BEventList[l1BListId]);
@@ -574,19 +566,15 @@ public:
                     auto tensorTileL1A = GetTileA(tensorL1A, mL0Idx * L0_TILE_M, kL0Idx * L0_TILE_K, mL0Actual, kL0Actual);
 
                     AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0AEventList[l0AListId]);
-                    if constexpr (!ReuseA) {
-                        if ((mL0Idx == 0) && (kL0Idx == 0)) {
-                            AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(l1AEventList[l1AListId]);
-                        }
+                    if ((mL0Idx == 0) && (kL0Idx == 0)) {
+                        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(l1AEventList[l1AListId]);
                     }
 
                     // Load current tile from L1 to L0A
                     copyL1ToL0A(tensorL0A, tensorTileL1A);
 
-                    if constexpr (!KeepA) {
-                        if ((mL0Idx == mL0Loop - 1) && (kL0Idx == kL0Loop - 1)) {
-                            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(l1AEventList[l1AListId]);
-                        }
+                    if ((mL0Idx == mL0Loop - 1) && (kL0Idx == kL0Loop - 1)) {
+                        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(l1AEventList[l1AListId]);
                     }
 
                     bool initC = ((kL1Idx == 0) && (kL0Idx == 0));
@@ -681,10 +669,8 @@ public:
                     l0AListId = (l0AListId + 1 < L0A_STAGES) ? (l0AListId + 1) : 0;
                 }
             }
-            if constexpr (!KeepA) {
-                if (!useExternalL1AThisCall) {
-                    l1AListId = l1AListIdNext;
-                }
+            if (!useExternalL1AThisCall) {
+                l1AListId = l1AListIdNext;
             }
             l1BListId = l1BListIdNext;
             kL1Actual = kL1ActualNext;
