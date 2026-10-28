@@ -1,0 +1,2408 @@
+[
+  {
+    "id": 0,
+    "default_seed": 0,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"saved_dense\",\"B\":1,\"H\":8,\"T\":64,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":true,\"norm\":false,\"seed\":0}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 1,
+    "default_seed": 20260630,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"saved_dense\",\"B\":1,\"H\":8,\"T\":64,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":true,\"norm\":false,\"seed\":20260630}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 2,
+    "default_seed": 7,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"saved_dense\",\"B\":1,\"H\":8,\"T\":64,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":true,\"norm\":false,\"seed\":7}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 3,
+    "default_seed": 0,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"saved_packed\",\"B\":1,\"H\":8,\"T\":128,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":true,\"norm\":false,\"cu_seqlens\":[0,64,128],\"seed\":0}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 4,
+    "default_seed": 20260630,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"saved_packed\",\"B\":1,\"H\":8,\"T\":128,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":true,\"norm\":false,\"cu_seqlens\":[0,64,128],\"seed\":20260630}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 5,
+    "default_seed": 7,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"saved_packed\",\"B\":1,\"H\":8,\"T\":128,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":true,\"norm\":false,\"cu_seqlens\":[0,64,128],\"seed\":7}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 6,
+    "default_seed": 0,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"saved_dense_norm_beta32\",\"B\":1,\"H\":8,\"T\":100,\"dtype\":\"bf16\",\"beta_dtype\":\"fp32\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":true,\"norm\":true,\"seed\":0}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 7,
+    "default_seed": 20260630,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"saved_dense_norm_beta32\",\"B\":1,\"H\":8,\"T\":100,\"dtype\":\"bf16\",\"beta_dtype\":\"fp32\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":true,\"norm\":true,\"seed\":20260630}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 8,
+    "default_seed": 7,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"saved_dense_norm_beta32\",\"B\":1,\"H\":8,\"T\":100,\"dtype\":\"bf16\",\"beta_dtype\":\"fp32\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":true,\"norm\":true,\"seed\":7}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 9,
+    "default_seed": 0,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"saved_packed_norm\",\"B\":1,\"H\":8,\"T\":130,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":true,\"norm\":true,\"cu_seqlens\":[0,97,130],\"seed\":0}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 10,
+    "default_seed": 20260630,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"saved_packed_norm\",\"B\":1,\"H\":8,\"T\":130,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":true,\"norm\":true,\"cu_seqlens\":[0,97,130],\"seed\":20260630}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 11,
+    "default_seed": 7,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"saved_packed_norm\",\"B\":1,\"H\":8,\"T\":130,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":true,\"norm\":true,\"cu_seqlens\":[0,97,130],\"seed\":7}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 12,
+    "default_seed": 0,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"recompute_dense\",\"B\":1,\"H\":8,\"T\":100,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":false,\"norm\":false,\"seed\":0}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 13,
+    "default_seed": 20260630,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"recompute_dense\",\"B\":1,\"H\":8,\"T\":100,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":false,\"norm\":false,\"seed\":20260630}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 14,
+    "default_seed": 7,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"recompute_dense\",\"B\":1,\"H\":8,\"T\":100,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":false,\"norm\":false,\"seed\":7}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 15,
+    "default_seed": 0,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"recompute_packed\",\"B\":1,\"H\":8,\"T\":128,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":false,\"norm\":false,\"cu_seqlens\":[0,64,128],\"seed\":0}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 16,
+    "default_seed": 20260630,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"recompute_packed\",\"B\":1,\"H\":8,\"T\":128,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":false,\"norm\":false,\"cu_seqlens\":[0,64,128],\"seed\":20260630}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 17,
+    "default_seed": 7,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"recompute_packed\",\"B\":1,\"H\":8,\"T\":128,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":false,\"norm\":false,\"cu_seqlens\":[0,64,128],\"seed\":7}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 18,
+    "default_seed": 0,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"recompute_dense_norm_beta32\",\"B\":1,\"H\":8,\"T\":64,\"dtype\":\"bf16\",\"beta_dtype\":\"fp32\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":false,\"norm\":true,\"seed\":0}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 19,
+    "default_seed": 20260630,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"recompute_dense_norm_beta32\",\"B\":1,\"H\":8,\"T\":64,\"dtype\":\"bf16\",\"beta_dtype\":\"fp32\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":false,\"norm\":true,\"seed\":20260630}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 20,
+    "default_seed": 7,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"recompute_dense_norm_beta32\",\"B\":1,\"H\":8,\"T\":64,\"dtype\":\"bf16\",\"beta_dtype\":\"fp32\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":false,\"norm\":true,\"seed\":7}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 21,
+    "default_seed": 0,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"recompute_packed_norm\",\"B\":1,\"H\":8,\"T\":130,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":false,\"norm\":true,\"cu_seqlens\":[0,97,130],\"seed\":0}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 22,
+    "default_seed": 20260630,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"recompute_packed_norm\",\"B\":1,\"H\":8,\"T\":130,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":false,\"norm\":true,\"cu_seqlens\":[0,97,130],\"seed\":20260630}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 23,
+    "default_seed": 7,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"recompute_packed_norm\",\"B\":1,\"H\":8,\"T\":130,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":false,\"norm\":true,\"cu_seqlens\":[0,97,130],\"seed\":7}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 24,
+    "default_seed": 0,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"saved_dense_odd_norm\",\"B\":1,\"H\":3,\"T\":100,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":true,\"norm\":true,\"seed\":0}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 25,
+    "default_seed": 20260630,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"saved_dense_odd_norm\",\"B\":1,\"H\":3,\"T\":100,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":true,\"norm\":true,\"seed\":20260630}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 26,
+    "default_seed": 7,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"saved_dense_odd_norm\",\"B\":1,\"H\":3,\"T\":100,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":true,\"norm\":true,\"seed\":7}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 27,
+    "default_seed": 0,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"saved_packed_odd\",\"B\":1,\"H\":3,\"T\":130,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":true,\"norm\":false,\"cu_seqlens\":[0,97,130],\"seed\":0}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 28,
+    "default_seed": 20260630,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"saved_packed_odd\",\"B\":1,\"H\":3,\"T\":130,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":true,\"norm\":false,\"cu_seqlens\":[0,97,130],\"seed\":20260630}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 29,
+    "default_seed": 7,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16",
+            "6": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"saved_packed_odd\",\"B\":1,\"H\":3,\"T\":130,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":true,\"norm\":false,\"cu_seqlens\":[0,97,130],\"seed\":7}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 30,
+    "default_seed": 0,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"saved_dense_b2_nobias_tail\",\"B\":2,\"H\":8,\"T\":100,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":false,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":true,\"norm\":false,\"seed\":0}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 31,
+    "default_seed": 20260630,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"saved_dense_b2_nobias_tail\",\"B\":2,\"H\":8,\"T\":100,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":false,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":true,\"norm\":false,\"seed\":20260630}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 32,
+    "default_seed": 7,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"saved_dense_b2_nobias_tail\",\"B\":2,\"H\":8,\"T\":100,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":false,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":true,\"norm\":false,\"seed\":7}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 33,
+    "default_seed": 0,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"recompute_dense_b2_nobias_tail\",\"B\":2,\"H\":8,\"T\":100,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":false,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":false,\"norm\":false,\"seed\":0}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 34,
+    "default_seed": 20260630,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"recompute_dense_b2_nobias_tail\",\"B\":2,\"H\":8,\"T\":100,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":false,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":false,\"norm\":false,\"seed\":20260630}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 35,
+    "default_seed": 7,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "bf16"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"recompute_dense_b2_nobias_tail\",\"B\":2,\"H\":8,\"T\":100,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":false,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":false,\"norm\":false,\"seed\":7}",
+        "backward": false
+      }
+    ]
+  }
+]

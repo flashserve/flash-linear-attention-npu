@@ -1,0 +1,69 @@
+import math
+import sys
+from pathlib import Path
+
+import torch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from executor_chunk_kda_bwd import build_inputs, run_cpu
+
+
+def one_step_reference(values, spec):
+    names = ["q", "k", "v", "beta", "raw_g", "A_log"]
+    if "dt_bias" in values:
+        names.append("dt_bias")
+    leaves = {name: values[name].detach().double().requires_grad_(True) for name in names}
+    q, k = leaves["q"], leaves["k"]
+    if spec.get("norm"):
+        q = (q * torch.rsqrt(q.square().sum(-1, keepdim=True) + 1.0e-6)).to(torch.bfloat16).double()
+        k = (k * torch.rsqrt(k.square().sum(-1, keepdim=True) + 1.0e-6)).to(torch.bfloat16).double()
+    raw = leaves["raw_g"]
+    if "dt_bias" in leaves:
+        raw = raw + leaves["dt_bias"].view(1, -1, 1, 128)
+    gate = -5.0 * torch.sigmoid(leaves["A_log"].exp().view(1, -1, 1, 1) * raw)
+    beta = leaves["beta"]
+    state = k[:, :, 0].unsqueeze(-1) * (beta[:, :, 0].unsqueeze(-1) * leaves["v"][:, :, 0]).unsqueeze(-2)
+    state = state + gate[:, :, 0].exp().unsqueeze(-1) * 0.0
+    output = torch.einsum("bhkv,bhk->bhv", state, q[:, :, 0]) / math.sqrt(128)
+    loss = (output * values["d_o"].double()[:, :, 0]).sum()
+    gradients = torch.autograd.grad(loss, [leaves[name] for name in names])
+    if spec.get("cu_seqlens"):
+        gradients = tuple(g.squeeze(0) if i < 5 else g for i, g in enumerate(gradients))
+    return tuple(g.float() for g in gradients)
+
+
+def main():
+    generator = torch.Generator().manual_seed(20261027)
+    shape = (1, 2, 1, 128)
+    values = {
+        name: torch.randn(shape, generator=generator, dtype=torch.float64) * scale
+        for name, scale in (("q", 0.05), ("k", 0.05), ("v", 0.05),
+                            ("raw_g", 1.25), ("d_o", 51.2))
+    }
+    values["beta"] = torch.rand(shape[:-1], generator=generator, dtype=torch.float64) * 0.8 + 0.1
+    values["A_log"] = torch.randn(2, generator=generator, dtype=torch.float64) * 0.12
+    values["dt_bias"] = torch.randn(2, 128, generator=generator, dtype=torch.float64) * 1.65 - 3.0
+    for norm, packed, with_bias in ((False, False, True), (True, False, True), (False, True, False)):
+        current = dict(values)
+        if not with_bias:
+            current.pop("dt_bias")
+        spec = {"norm": norm, "cu_seqlens": [0, 1] if packed else None}
+        actual = run_cpu(current, spec)
+        expected = one_step_reference(current, spec)
+        assert len(actual) == len(expected) == (7 if with_bias else 6)
+        for index, (a, e) in enumerate(zip(actual, expected)):
+            assert a.shape == e.shape, (norm, packed, index, a.shape, e.shape)
+            torch.testing.assert_close(a, e, rtol=1.0e-5, atol=1.0e-5)
+        print(f"CPU one-step OK norm={norm} packed={packed} outputs={len(actual)}")
+    spec = dict(B=1, H=8, T=64, seed=0, dtype="bf16", beta_dtype="fp32", dt_bias=True)
+    first = build_inputs(spec, torch.device("cpu"), high_precision=True)
+    second = build_inputs(spec, torch.device("cpu"), high_precision=True)
+    assert first.keys() == second.keys()
+    assert all(torch.equal(first[name], second[name]) for name in first)
+    assert first["q"].shape == (1, 8, 64, 128)
+    assert first["beta"].shape == (1, 8, 64)
+    print("CPU deterministic input construction OK")
+
+
+if __name__ == "__main__":
+    main()

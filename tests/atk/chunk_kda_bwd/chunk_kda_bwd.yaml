@@ -1,0 +1,53 @@
+api: pytorch
+api_type: executor_chunk_kda_bwd
+version: v2.1
+name: chunk_kda_bwd
+aclnn_name: ChunkKdaBwd
+generate: generator_chunk_kda_bwd
+dtype_numbers: 1
+extra_numbers: 0
+standard:
+  acc:
+    mixed_tolerance_bm: {}
+  perf: not_key
+inputs:
+  - name: low_precision_marker
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16]
+    ranges:
+      valid:
+        values: [[0, 0]]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [1]
+      dim_values:
+        values: [1]
+  - name: fp32_marker
+    type: tensor
+    required: true
+    dtypes:
+      values: [fp32]
+    ranges:
+      valid:
+        values: [[0, 0]]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [1]
+      dim_values:
+        values: [1]
+  - name: case_spec
+    type: attr
+    required: true
+    dtypes:
+      values: [non_param]
+    ranges:
+      valid:
+        values: ["{\"op\":\"chunk_kda_bwd\",\"case_key\":\"saved_dense\",\"B\":1,\"H\":8,\"T\":64,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"seed\":0,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":true,\"norm\":false}"]
+      invalid:
+        values: []
