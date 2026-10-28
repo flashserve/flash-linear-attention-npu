@@ -758,13 +758,13 @@ __simd_vf__ inline void FinalizeStage5DaqkVF(
 
 // Stage7 consumes the FP32 Cube result, writes the final BF16 dq, and updates
 // dg_base in FP32 for the later K and gate stages.  The band factor is
-// recomputed inline from the resident raw gates and the band center.
+// computed once and retained in the band-local scratch for Stage9.
 __simd_vf__ inline void FinalizeStage7VF(
     __ubuf__ bfloat16_t *dqOut, __ubuf__ float *dgBase,
     __ubuf__ float *dqLocalRaw, __ubuf__ float *dqBase,
     __ubuf__ float *g, __ubuf__ float *center, __ubuf__ bfloat16_t *q,
     __ubuf__ float *qRstd, uint32_t hasQkL2Norm, uint16_t validRows,
-    __ubuf__ float *diagonal, __ubuf__ bfloat16_t *k)
+    __ubuf__ float *diagonal, __ubuf__ bfloat16_t *k, __ubuf__ float *bandExp)
 {
     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
     MaskReg fpMask = CreateMask<float, MaskPattern::ALL>();
@@ -791,6 +791,7 @@ __simd_vf__ inline void FinalizeStage7VF(
         Muls(exp1, exp1, KDA_FINALIZE_LN2, fpMask);
         Exp(exp0, exp0, fpMask);
         Exp(exp1, exp1, fpMask);
+        StoreAlign<float, StoreDist::DIST_INTLV_B32>(bandExp + offset, exp0, exp1, fpMask);
         Mul(raw0, raw0, exp0, fpMask);
         Mul(raw1, raw1, exp1, fpMask);
         Muls(raw0, raw0, 1.0f / 65536.0f, fpMask);
@@ -861,7 +862,7 @@ __simd_vf__ inline void FinalizeStage7VF(
 template <typename BetaT>
 __simd_vf__ inline void FinalizeStage9VF(
     __ubuf__ float *left, __ubuf__ float *right, __ubuf__ float *dbDelta,
-    __ubuf__ float *dg, __ubuf__ float *g, __ubuf__ float *center,
+    __ubuf__ float *dg, __ubuf__ float *bandExp,
     __ubuf__ bfloat16_t *k, __ubuf__ BetaT *beta, uint16_t rows,
     __ubuf__ float *diagonal, __ubuf__ bfloat16_t *q)
 {
@@ -869,22 +870,13 @@ __simd_vf__ inline void FinalizeStage9VF(
     MaskReg mask = CreateMask<float, MaskPattern::ALL>();
     MaskReg bfMask = CreateMask<half, MaskPattern::ALL>();
     MaskReg one = CreateMask<float, MaskPattern::VL1>();
-    RegTensor<float> center0;
-    RegTensor<float> center1;
-    LoadAlign<float, LoadDist::DIST_DINTLV_B32>(center0, center1, center);
     for (uint16_t row = 0; row < rows; ++row) {
         uint32_t offset = row * KDA_FINALIZE_DIM;
         RegTensor<float> l0, l1, r0, r1, e0, e1, k0, k1, g0, g1, b;
         RegTensor<bfloat16_t> kb, bb;
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(l0, l1, left + offset);
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(r0, r1, right + offset);
-        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(e0, e1, g + offset);
-        Sub(e0, e0, center0, mask);
-        Sub(e1, e1, center1, mask);
-        Muls(e0, e0, KDA_FINALIZE_LN2, mask);
-        Muls(e1, e1, KDA_FINALIZE_LN2, mask);
-        Exp(e0, e0, mask);
-        Exp(e1, e1, mask);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(e0, e1, bandExp + offset);
         Mul(l0, l0, e0, mask);
         Mul(l1, l1, e1, mask);
         Muls(l0, l0, 1.0f / 65536.0f, mask);
@@ -1779,10 +1771,11 @@ private:
         // egress reads before the next band's cube writes these ranges.
         auto dqOut = UbBytes(slot * 32 * 1024).ReinterpretCast<bfloat16_t>();
         auto dkOut = UbBytes(64 * 1024 + slot * 32 * 1024).ReinterpretCast<bfloat16_t>();
-        // The resident g frame holds the raw log gates; Stage7/9 recompute the
-        // band factor inline with this band's persistent center slot.
+        // The resident g frame holds the raw log gates; Stage7 computes the
+        // band factor once and Stage9 reuses it from the released qPos range.
         auto g = UbBytes(KDA_FINALIZE_UB_EXP2_GK).ReinterpretCast<float>()[offset];
         auto center = UbBytes(209 * 1024 + 512).ReinterpretCast<float>();
+        auto bandExp = UbBytes(80 * 1024).ReinterpretCast<float>();
         auto q = UbBytes(KDA_FINALIZE_UB_Q).ReinterpretCast<bfloat16_t>()[offset];
         auto k = UbBytes(KDA_FINALIZE_UB_K).ReinterpretCast<bfloat16_t>()[offset];
         auto beta = UbBytes(KDA_FINALIZE_UB_BETA).ReinterpretCast<DTYPE_BETA>()[rowBegin];
@@ -1816,7 +1809,8 @@ private:
             reinterpret_cast<__ubuf__ bfloat16_t *>(q.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(qRstd.GetPhyAddr()), tiling_->hasQkL2Norm, rows,
             reinterpret_cast<__ubuf__ float *>(diagonal.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()));
+            reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(bandExp.GetPhyAddr()));
         // Drain the slice's dv egress out of the right area before KE_READY
         // lets cube Stage8 rewrite it.
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
@@ -1827,8 +1821,7 @@ private:
             reinterpret_cast<__ubuf__ float *>(right.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(dbDelta.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(dg[offset].GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(g.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(center.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(bandExp.GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()),
             reinterpret_cast<__ubuf__ DTYPE_BETA *>(beta.GetPhyAddr()), rows,
             reinterpret_cast<__ubuf__ float *>(diagonal.GetPhyAddr()),
