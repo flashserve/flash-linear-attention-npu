@@ -25,7 +25,7 @@ const std::array<const aclTensor *, 7> ChunkKdaBwdFinalize(
     const aclTensor *dqOut, const aclTensor *dkOut, const aclTensor *dvOut,
     const aclTensor *dBetaOut, const aclTensor *dGOut,
     const aclTensor *dALogOut, const aclTensor *dDtBiasOut,
-    aclOpExecutor *executor)
+    aclOpExecutor *executor, bool gateOutputHeadMajor)
 {
     L0_DFX(ChunkKdaBwdFinalize,
            q, k, v, gk, rawG, beta, aLog, dtBias, akk,
@@ -113,13 +113,39 @@ const std::array<const aclTensor *, 7> ChunkKdaBwdFinalize(
         OP_OUTPUT(dqOut, dkOut, dvOut, dBetaOut, dGOut, dALogOut, dDtBiasOut),
         OP_ATTR(scale, lowerBound, chunkSize, safeGate,
                 useGateInKernel, useExp2, stateVFirst,
-                useBetaSigmoidInKernel, allowNegEigval, outputLayout));
+                useBetaSigmoidInKernel, allowNegEigval, outputLayout, gateOutputHeadMajor));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID,
                 "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaBwdFinalize failed");
         return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     }
     return requested;
+}
+
+const std::array<const aclTensor *, 7> ChunkKdaBwdFinalize(
+    const aclTensor *q, const aclTensor *k, const aclTensor *v,
+    const aclTensor *gk, const aclTensor *rawG, const aclTensor *beta,
+    const aclTensor *aLog, const aclTensor *dtBias, const aclTensor *akk,
+    const aclTensor *vNew, const aclTensor *h, const aclTensor *dh,
+    const aclTensor *dvScan, const aclTensor *dAqk, const aclTensor *dqRaw,
+    const aclTensor *qRstdOptional, const aclTensor *kRstdOptional,
+    const aclIntArray *cuSeqlensOptional, const aclIntArray *chunkIndicesOptional,
+    double scale, double lowerBound, int64_t chunkSize,
+    bool safeGate, bool useGateInKernel, bool useExp2, bool stateVFirst,
+    bool useBetaSigmoidInKernel, bool allowNegEigval, const char *outputLayout,
+    const aclTensor *dqOut, const aclTensor *dkOut, const aclTensor *dvOut,
+    const aclTensor *dBetaOut, const aclTensor *dGOut,
+    const aclTensor *dALogOut, const aclTensor *dDtBiasOut,
+    aclOpExecutor *executor)
+{
+    return ChunkKdaBwdFinalize(
+        q, k, v, gk, rawG, beta, aLog, dtBias, akk, vNew, h, dh, dvScan,
+        dAqk, dqRaw, qRstdOptional, kRstdOptional,
+        cuSeqlensOptional, chunkIndicesOptional, scale, lowerBound, chunkSize,
+        safeGate, useGateInKernel, useExp2, stateVFirst,
+        useBetaSigmoidInKernel, allowNegEigval, outputLayout,
+        dqOut, dkOut, dvOut, dBetaOut, dGOut, dALogOut, dDtBiasOut,
+        executor, false);
 }
 
 } // namespace l0op

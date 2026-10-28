@@ -12,7 +12,8 @@ namespace {
 ge::graphStatus ValidateFinalize(
     gert::TilingContext *context, const ChunkKdaBwdFinalizeTilingContext &ctx,
     KDA::ChunkKdaBwdFinalizeTilingData &shape, bool arch22,
-    bool useBetaSigmoid, bool allowNegEigval, const char *outputLayout)
+    bool useBetaSigmoid, bool allowNegEigval, const char *outputLayout,
+    bool gateOutputHeadMajor)
 {
     if (allowNegEigval && !useBetaSigmoid) {
         OP_LOGE(ctx.nodeName, "allowNegEigval=true requires useBetaSigmoidInKernel=true");
@@ -27,6 +28,8 @@ ge::graphStatus ValidateFinalize(
         OP_LOGE(ctx.nodeName, "invalid finalize shape, dtype, layout or metadata");
         return ge::GRAPH_FAILED;
     };
+    if (arch22 && gateOutputHeadMajor) return fail();
+    const bool gateTokenMajor = !gateOutputHeadMajor;
     const bool variable = shape.isVariable != 0;
     const size_t rank = ctx.q->GetStorageShape().GetDimNum();
     const size_t base = rank == 3 ? 0 : 1;
@@ -103,8 +106,8 @@ ge::graphStatus ValidateFinalize(
     for (size_t i = 0; i < 3; ++i) {
         if (!tokenShape(context->GetOutputShape(i), 128, tokenMajor)) return fail();
     }
-    if (!scalarShape(context->GetOutputShape(3), true) ||
-        !tokenShape(context->GetOutputShape(4), 128, true)) return fail();
+    if (!scalarShape(context->GetOutputShape(3), gateTokenMajor) ||
+        !tokenShape(context->GetOutputShape(4), 128, gateTokenMajor)) return fail();
     const auto qType = context->GetOutputDesc(0)->GetDataType();
     if (qType != ge::DT_BF16 || context->GetOutputDesc(1)->GetDataType() != qType ||
         context->GetOutputDesc(2)->GetDataType() != ge::DT_BF16) return fail();
@@ -121,6 +124,7 @@ ge::graphStatus ValidateFinalize(
         }
     }
     shape.outputTokenMajor = tokenMajor;
+    shape.outputGateTokenMajor = gateTokenMajor;
     shape.betaMode = useBetaSigmoid ? (allowNegEigval ? 2 : 1) : 0;
     return ge::GRAPH_SUCCESS;
 }
@@ -142,9 +146,11 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
     const bool *useBetaSigmoid = attrs->GetAttrPointer<bool>(ATTR_USE_BETA_SIGMOID);
     const bool *allowNegEigval = attrs->GetAttrPointer<bool>(ATTR_ALLOW_NEG_EIGVAL);
     const char *outputLayout = attrs->GetStr(ATTR_OUTPUT_LAYOUT);
+    const bool *gateOutputHeadMajor = attrs->GetAttrPointer<bool>(ATTR_GATE_OUTPUT_HEAD_MAJOR);
     OP_CHECK_NULL_WITH_CONTEXT(context, useBetaSigmoid);
     OP_CHECK_NULL_WITH_CONTEXT(context, allowNegEigval);
     OP_CHECK_NULL_WITH_CONTEXT(context, outputLayout);
+    OP_CHECK_NULL_WITH_CONTEXT(context, gateOutputHeadMajor);
     OP_CHECK_NULL_WITH_CONTEXT(context, scale);
     OP_CHECK_NULL_WITH_CONTEXT(context, lowerBound);
     OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
@@ -205,7 +211,7 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
     OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
     const bool arch22 = platform.GetSocVersion() != platform_ascendc::SocVersion::ASCEND950;
     if (ValidateFinalize(context, ctx, shape, arch22, *useBetaSigmoid,
-                         *allowNegEigval, outputLayout) != ge::GRAPH_SUCCESS) return ge::GRAPH_FAILED;
+                         *allowNegEigval, outputLayout, *gateOutputHeadMajor) != ge::GRAPH_SUCCESS) return ge::GRAPH_FAILED;
     if (arch22) return TilingFinalizeArch22(context, ctx, shape);
     auto *tiling = context->GetTilingData<KDA::ChunkKdaBwdFinalizeTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
