@@ -19,6 +19,11 @@ struct ChunkGatedDeltaRuleFwd32TilingData {
     // 1: final_state is FP32. That is the absent-initial case and the FP32-initial case.
     // A BF16 initial writes a BF16 final. The on-chip recurrence stays FP32 either way.
     uint32_t finalFp32;
+    // 1: GM initial/final state is physical [V,K], and the on-chip H uses that
+    // same axis order. 0 keeps the historical [K,V] schedule.
+    uint32_t stateVFirst;
+    // 1: beta_eff = 2 * sigmoid(beta). 0 keeps sigmoid(beta).
+    uint32_t allowNegEigval;
 };
 
 #endif

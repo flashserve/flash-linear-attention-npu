@@ -100,6 +100,22 @@ __aicore__ inline void LoadL1ToL0AB(LocalTensor<bfloat16_t> l1A, LocalTensor<bfl
     AscendC::LoadData(l0B, l1B, loadB);
 }
 
+// 64 rows of the full 128-column H when H is stored as physical [V,K].
+// rowFrac is 0 or 4. The source region is [n, k] = [64, 128]; matmul B is [K, 64].
+__aicore__ inline void LoadL1NzHRows(LocalTensor<bfloat16_t> l1H, LocalTensor<bfloat16_t> l0B, uint32_t rowFrac)
+{
+    AscendC::LoadData2DParamsV2 loadB;
+    loadB.mStartPosition = rowFrac;
+    loadB.kStartPosition = 0;
+    loadB.mStep = 4;
+    loadB.kStep = 8;
+    loadB.srcStride = 8;
+    loadB.dstStride = 4;
+    loadB.ifTranspose = false;
+    loadB.sid = 0;
+    AscendC::LoadData(l0B, l1H, loadB);
+}
+
 // 64 columns of the full 128-row H. colFrac is 0 or 4. srcStride stays 8
 // because each column panel in L1 is still 128 rows tall. dstStride matches
 // a packed N=64 tile.
