@@ -29,7 +29,7 @@ outputs = chunk_kda_fwd_prepare(
     safe_gate=False,
     lower_bound=-5.0,
     use_exp2=False,
-    a_log=None,
+    A_log=None,
     dt_bias=None,
     cu_seqlens=None,
     chunk_indices=None,
@@ -50,14 +50,14 @@ L2 层传 `nullptr`，不参与公开 GM 写回，因此调用方按需取 `q_ha
 ## 输入输出
 
 `q/k/v` 固定为 BF16，K/V 维固定为 128，`chunk_size` 固定为 64。`g/beta` 支持
-BF16 或 FP32，`a_log/dt_bias` 固定为 FP32。
+BF16 或 FP32，`A_log/dt_bias` 固定为 FP32。
 
 | 输入 | dense shape | 无 batch shape | 说明 |
 | --- | --- | --- | --- |
 | `q/k` | BNSD `[B,HK,T,128]`；BSND `[B,T,HK,128]` | NTD `[HK,T,128]`；TND `[T,HK,128]` | BF16 |
 | `v/g` | BNSD `[B,HV,T,128]`；BSND `[B,T,HV,128]` | NTD `[HV,T,128]`；TND `[T,HV,128]` | `v` 为 BF16；`g` 为 BF16/FP32 |
 | `beta` | BNSD `[B,HV,T]`；BSND `[B,T,HV]` | NTD `[HV,T]`；TND `[T,HV]` | BF16/FP32 |
-| `a_log` | `[HV]` | `[HV]` | 仅 kernel 内计算 gate 时必传 |
+| `A_log` | `[HV]` | `[HV]` | 仅 kernel 内计算 gate 时必传 |
 | `dt_bias` | `[HV*128]` | `[HV*128]` | 可选，逻辑 shape 为 `[HV,128]` |
 
 `cu_seqlens` 和 `chunk_indices` 是可选 host int array，不是 tensor。前者 shape 为
@@ -126,7 +126,7 @@ forward 产生，不属于 Prepare 的 13 个输出，也不会进入 Prepare �
 
 - `use_qk_l2norm_in_kernel=false`：`q_hat=q`、`k_hat=k`，有效 token 的 rstd 为 1。
 - `use_gate_in_kernel=false`：`g` 是自然对数域的单 token gate step；算子仍执行 cumsum。
-- `use_gate_in_kernel=true`：由 `g + dt_bias` 和 `a_log` 计算 Softplus 或 SafeSigmoid gate。
+- `use_gate_in_kernel=true`：由 `g + dt_bias` 和 `A_log` 计算 Softplus 或 SafeSigmoid gate。
 - `use_beta_sigmoid_in_kernel=false`：`beta_eff=fp32(beta)`。
 - `use_beta_sigmoid_in_kernel=true`：`beta_eff=sigmoid(beta)`；启用
   `allow_neg_eigval` 时为 `2*sigmoid(beta)`。

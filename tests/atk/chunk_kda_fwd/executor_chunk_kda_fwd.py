@@ -904,8 +904,6 @@ def _mutate_raw(inputs: _PreparedInputs, spec: dict, outputs: list):
         outputs[0] = None
     elif mutation == "null_aqk":
         outputs[3] = None
-    elif mutation == "null_akk":
-        outputs[4] = None
     elif mutation == "missing_alog":
         values["A_log"] = None
     elif mutation == "chunk_invalid":
@@ -938,6 +936,12 @@ def _mutate_raw(inputs: _PreparedInputs, spec: dict, outputs: list):
         values["v"] = _resize_axis(inputs.v, head_axis, hv_num)
         values["g"] = _resize_axis(inputs.g, head_axis, hv_num)
         values["beta"] = _resize_axis(inputs.beta, head_axis, hv_num)
+    elif mutation == "q_fp32":
+        values["q"] = inputs.q.float()
+    elif mutation == "k_dtype":
+        values["k"] = inputs.k.float()
+    elif mutation == "v_dtype":
+        values["v"] = inputs.v.float()
     elif mutation.startswith("k_"):
         # k_mixed 把 K 降到 64 而 V 保持 128：K/V 不同档，公开契约要求两侧都拒绝。
         k_size = {"k_lt_16": 8, "k_gt_256": 272, "k_unaligned": 24,
@@ -950,12 +954,6 @@ def _mutate_raw(inputs: _PreparedInputs, spec: dict, outputs: list):
         v_size = {"v_lt_16": 8, "v_gt_256": 272, "v_unaligned": 24,
                   "v_mixed": 64}[mutation]
         values["v"] = _resize_axis(inputs.v, inputs.v.dim() - 1, v_size)
-    elif mutation == "q_fp32":
-        values["q"] = inputs.q.float()
-    elif mutation == "k_dtype":
-        values["k"] = inputs.k.float()
-    elif mutation == "v_dtype":
-        values["v"] = inputs.v.float()
     elif mutation == "g_fp16":
         values["g"] = inputs.g.half()
     elif mutation == "beta_fp16":
