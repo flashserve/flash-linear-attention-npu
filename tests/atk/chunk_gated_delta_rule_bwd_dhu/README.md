@@ -109,15 +109,35 @@ GVA 与 `USE_GK=0` 保留原 AIV staging、共享与 gate 路径，公开接口�
 
 参考工作树中的早期 standalone 实验和联合 V2 环境记录仅作历史参考，不作为本独立分支的
 最终验收证据。其它 PR（包括 PR913）或“前三项优化”联合环境的布局、精度和性能结果均不
-归入本 PR。本分支的最终构建和 NPU 复测尚未完成，因此本节不声明精度、sanitizer 或性能
-通过，也不转录联合环境的 saved/recompute 性能数字。
+归入本 PR。以下是本次 c9e2+Dhu 独立分支的真实复测结果，不转录联合环境结果。
 
-独立复测至少应覆盖：
+| 项目 | 本次独立分支结果 | 证据 |
+| --- | --- | --- |
+| A5 build | 通过 | `runs/pr_delivery_20261028/dhu_build.log` |
+| A2/A3 交叉编译 | 均通过；未执行 A2/A3 实机测试 | `runs/pr_delivery_20261028/dhu/a2_dhu_build.log`；`runs/pr_delivery_20261028/dhu/a3_dhu_build.log` |
+| wheel 安装匹配 | **1318/1318** 个 `fla_npu` 文件匹配，`wheel_install_mismatches=[]` | `runs/pr_delivery_20261028/dhu/install_verify.log` |
+| fresh 基线对象比较 | 仅 **2 个 Dhu 对象**变化；其余 **185** 个对象名称/hash 全同，scoped 比较通过 | `runs/pr_delivery_20261028/base/object_compare_final.log` |
+| smoke | **20/20 bit-exact**（saved 10/10、recompute 10/10） | `runs/pr_delivery_20261028/dhu/smoke/compare.log` |
+| 非零 dht ATK | **384/384 PASS** | `runs/pr_delivery_20261028/dhu/atk/dht384/case_detail.json` |
+| 默认 ATK | **200/200 PASS** | `runs/pr_delivery_20261028/dhu/atk/default200/case_detail.json` |
+| direct ATK | **192/192 PASS** | `runs/pr_delivery_20261028/dhu/atk/direct192/case_detail.json` |
+| minimal 输出对照 | 16 case、**48/48** 张量逐位一致 | `runs/pr_delivery_20261028/dhu/minimal/compare.json` |
+| C64/C128 memcheck | C64 **16/16**、C128 **8/8** 报告 Pass；两侧 audit 通过，新增 **WARNING=0** | `runs/pr_delivery_20261028/dhu/mss/mem_c64_compare.json`；`runs/pr_delivery_20261028/dhu/mss/mem_c128_compare.json` |
+| C64/C128 racecheck | C64 **16/16**、C128 **8/8** `No error detected`；两侧 audit 通过，新增 **WARNING=0** | `runs/pr_delivery_20261028/dhu/mss/pr_c64_race/sanitizer.log`；`runs/pr_delivery_20261028/dhu/mss/pr_c128_race/sanitizer.log`；`runs/pr_delivery_20261028/dhu/mss/race_c64_audit.json`；`runs/pr_delivery_20261028/dhu/mss/race_c128_audit.json` |
 
-- direct 的 BF16/FP16、C64/C128、V128/V256、dense/varlen、dht 为空/非空、尾 chunk、
-  多 chunk 和同奇偶 head 的 L1A slot 复用，并与基线做输出对照。
-- raw-gate 与 GVA 回退路径，确认原 AIV staging、组内共享和 gate 行为不变；共享 `Init`
-  签名还需覆盖 A2/A3 交叉构建，实机结果只按实际执行环境记录。
-- direct 与回退路径的 memcheck/racecheck，以及同环境、同用例的基线/候选
-  `msprof op_summary.Task Duration(us)` 对比；既有 sanitizer WARNING 需单独保留，不能把
-  工具“报告通过”写成零告警。
+这里的“新增 WARNING=0”是候选相对基线的 `new_warnings=[]`，**不是总告警数为零**。
+memcheck 的既有告警数在基线/候选两侧均为 C64=240、C128=96，warning signatures 保持一致；
+audit 同时确认 `missing_warnings=[]`、`pass=true`，既有告警仍保留，不能把报告通过写成零告警。
+
+saved/recompute 性能只取本独立分支的 `runs/pr_delivery_20261028/dhu/perf/perf_saved.json` 和
+`runs/pr_delivery_20261028/dhu/perf/perf_recompute.json`。两份 JSON 各 6 轮；Dhu 一栏的配对差
+中位数是逐轮 `candidate - baseline` 的中位数，比值变化直接取 `kernel_delta_percent`
+（两侧 kernel 中位数的比值减 1），不将两种统计量混用。
+
+| 路径 | Dhu 基线中位数 (µs) | Dhu 候选中位数 (µs) | Dhu 配对差中位数 (µs) | Dhu 比值变化 | bwd 配对差中位数 (µs) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| saved | 1438.9415 | 1302.9905 | -136.9220 | -9.447987% | -143.7635 |
+| recompute | 1330.3625 | 1293.8535 | -36.7550 | -2.744290% | -25.5505 |
+
+上述 direct、回退路径和 C64/C128 单算子检查均不构成联合环境或整链验收结论。
+**整链 msSanitizer 尚未闭环**；A2/A3 仅完成交叉编译，**未跑 A2/A3 实机，整体 ST 未跑**。
