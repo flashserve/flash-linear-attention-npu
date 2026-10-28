@@ -544,13 +544,26 @@ private:
     __aicore__ inline void StoreO(uint32_t chunk)
     {
         // The caller has waited kFlagO. The fixpipe already multiplied by scale_.
-        // A partial chunk writes only the valid rows of this AIV's 16-row half.
+        // Public o is BSND [B,T,Hv,V]. UB holds this head's rows packed, so each
+        // row is stored with a stride of (Hv-1)*V instead of an ACLNN transpose.
         const uint32_t rows = ChunkRows(chunk);
         const uint32_t row0 = sub_ * 16U;
         if (row0 < rows) {
             const uint32_t n = rows - row0 < 16U ? rows - row0 : 16U;
-            const int64_t token = vTokenBase_ + static_cast<int64_t>(chunk) * kBt + static_cast<int64_t>(row0);
-            DataCopy(oGm_[token * kDim], ubO_, n * static_cast<uint32_t>(kDim));
+            const int64_t local = vTokenBase_ - vHeadBase_ +
+                                  static_cast<int64_t>(chunk) * kBt + static_cast<int64_t>(row0);
+            const int64_t gm = ((static_cast<int64_t>(batchIdx_) * static_cast<int64_t>(seqLen_) + local) *
+                                    static_cast<int64_t>(valueHeadNum_) +
+                                static_cast<int64_t>(headIdx_)) *
+                               kDim;
+            DataCopyExtParams params;
+            params.blockCount = static_cast<uint16_t>(n);
+            params.blockLen = static_cast<uint32_t>(kDim * sizeof(bfloat16_t));
+            params.srcStride = 0;
+            params.dstStride =
+                static_cast<uint32_t>((valueHeadNum_ - 1U) * static_cast<uint32_t>(kDim) * sizeof(bfloat16_t));
+            params.rsv = 0;
+            DataCopyPad(oGm_[gm], ubO_, params);
         }
         CrossCoreSetFlag<0x4, PIPE_MTE3>(static_cast<uint16_t>(kFlagOd + sub_ * kAiv1));
     }

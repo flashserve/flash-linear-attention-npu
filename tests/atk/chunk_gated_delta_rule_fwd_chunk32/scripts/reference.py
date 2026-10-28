@@ -1,4 +1,4 @@
-"""CPU golden for chunk_gated_delta_rule_fwd_32.
+"""CPU golden for the migrated chunk32 path of chunk_gated_delta_rule_fwd.
 
 The expected value is the three forward operators' own goldens, chained:
 
@@ -13,7 +13,8 @@ Flags are the natural-exp path those goldens already implement
 stays off. Chunk size is 64, the size those three operators' goldens use.
 ``w`` and ``u`` are cast to BF16 before ``chunk_fwd_h``, which is the dtype that
 golden consumes. The 32-kernel's extra BF16 round-trips of ``D`` and ``u-P``
-are not part of this golden.
+are not part of this golden. Mixed tolerance accounts for those intentional
+low-precision round trips.
 """
 
 from __future__ import annotations

@@ -2,15 +2,22 @@
   {
     "id": 0,
     "default_seed": 20261027,
-    "name": "chunk_gated_delta_rule_fwd_32_0000_bnsd_gva_align_B2_H1x2_T256_none_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0000_bnsd_gva_align_B2_H1x2_T256_none_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -162,20 +169,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 1,
     "default_seed": 20261028,
-    "name": "chunk_gated_delta_rule_fwd_32_0001_bnsd_gva_align_B2_H1x2_T256_none_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0001_bnsd_gva_align_B2_H1x2_T256_none_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -327,20 +341,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 2,
     "default_seed": 20261029,
-    "name": "chunk_gated_delta_rule_fwd_32_0002_bnsd_gva_align_B2_H1x2_T256_none_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0002_bnsd_gva_align_B2_H1x2_T256_none_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -492,20 +513,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 3,
     "default_seed": 20261030,
-    "name": "chunk_gated_delta_rule_fwd_32_0003_bnsd_gva_align_B3_H1x2_T64_none_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0003_bnsd_gva_align_B3_H1x2_T64_none_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -657,20 +685,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 4,
     "default_seed": 20261031,
-    "name": "chunk_gated_delta_rule_fwd_32_0004_bnsd_gva_align_B3_H1x2_T64_none_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0004_bnsd_gva_align_B3_H1x2_T64_none_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -822,20 +857,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 5,
     "default_seed": 20261032,
-    "name": "chunk_gated_delta_rule_fwd_32_0005_bnsd_gva_align_B3_H1x2_T64_none_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0005_bnsd_gva_align_B3_H1x2_T64_none_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -987,20 +1029,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 6,
     "default_seed": 20261033,
-    "name": "chunk_gated_delta_rule_fwd_32_0006_bnsd_gva_tail_B1_H2x8_T129_none_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0006_bnsd_gva_tail_B1_H2x8_T129_none_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1152,20 +1201,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 7,
     "default_seed": 20261034,
-    "name": "chunk_gated_delta_rule_fwd_32_0007_bnsd_gva_tail_B1_H2x8_T129_none_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0007_bnsd_gva_tail_B1_H2x8_T129_none_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1317,20 +1373,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 8,
     "default_seed": 20261035,
-    "name": "chunk_gated_delta_rule_fwd_32_0008_bnsd_gva_tail_B1_H2x8_T129_none_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0008_bnsd_gva_tail_B1_H2x8_T129_none_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1482,20 +1545,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 9,
     "default_seed": 20261036,
-    "name": "chunk_gated_delta_rule_fwd_32_0009_bnsd_gva_tail_B1_H1x4_T191_none_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0009_bnsd_gva_tail_B1_H1x4_T191_none_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1647,20 +1717,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 10,
     "default_seed": 20261037,
-    "name": "chunk_gated_delta_rule_fwd_32_0010_bnsd_gva_tail_B1_H1x4_T191_none_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0010_bnsd_gva_tail_B1_H1x4_T191_none_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1812,20 +1889,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 11,
     "default_seed": 20261038,
-    "name": "chunk_gated_delta_rule_fwd_32_0011_bnsd_gva_tail_B1_H1x4_T191_none_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0011_bnsd_gva_tail_B1_H1x4_T191_none_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1977,20 +2061,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 12,
     "default_seed": 20261039,
-    "name": "chunk_gated_delta_rule_fwd_32_0012_bnsd_mha_tail_B1_H4x4_T191_none_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0012_bnsd_mha_tail_B1_H4x4_T191_none_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -2142,20 +2233,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 13,
     "default_seed": 20261040,
-    "name": "chunk_gated_delta_rule_fwd_32_0013_bnsd_mha_tail_B1_H4x4_T191_none_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0013_bnsd_mha_tail_B1_H4x4_T191_none_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -2307,20 +2405,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 14,
     "default_seed": 20261041,
-    "name": "chunk_gated_delta_rule_fwd_32_0014_bnsd_mha_tail_B1_H4x4_T191_none_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0014_bnsd_mha_tail_B1_H4x4_T191_none_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -2472,20 +2577,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 15,
     "default_seed": 20261042,
-    "name": "chunk_gated_delta_rule_fwd_32_0015_bnsd_mha_tail_B1_H1x1_T274_none_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0015_bnsd_mha_tail_B1_H1x1_T274_none_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -2637,20 +2749,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 16,
     "default_seed": 20261043,
-    "name": "chunk_gated_delta_rule_fwd_32_0016_bnsd_mha_tail_B1_H1x1_T274_none_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0016_bnsd_mha_tail_B1_H1x1_T274_none_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -2802,20 +2921,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 17,
     "default_seed": 20261044,
-    "name": "chunk_gated_delta_rule_fwd_32_0017_bnsd_mha_tail_B1_H1x1_T274_none_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0017_bnsd_mha_tail_B1_H1x1_T274_none_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -2967,20 +3093,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 18,
     "default_seed": 20261045,
-    "name": "chunk_gated_delta_rule_fwd_32_0018_bnsd_mha_tail_B1_H1x1_T1_bf16_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0018_bnsd_mha_tail_B1_H1x1_T1_bf16_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -3132,20 +3265,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 19,
     "default_seed": 20261046,
-    "name": "chunk_gated_delta_rule_fwd_32_0019_bnsd_mha_tail_B1_H1x1_T1_bf16_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0019_bnsd_mha_tail_B1_H1x1_T1_bf16_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -3297,20 +3437,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 20,
     "default_seed": 20261047,
-    "name": "chunk_gated_delta_rule_fwd_32_0020_bnsd_mha_tail_B1_H1x1_T1_bf16_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0020_bnsd_mha_tail_B1_H1x1_T1_bf16_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -3462,20 +3609,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 21,
     "default_seed": 20261048,
-    "name": "chunk_gated_delta_rule_fwd_32_0021_bnsd_gva_tail_B1_H2x8_T129_bf16_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0021_bnsd_gva_tail_B1_H2x8_T129_bf16_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -3627,20 +3781,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 22,
     "default_seed": 20261049,
-    "name": "chunk_gated_delta_rule_fwd_32_0022_bnsd_gva_tail_B1_H2x8_T129_bf16_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0022_bnsd_gva_tail_B1_H2x8_T129_bf16_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -3792,20 +3953,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 23,
     "default_seed": 20261050,
-    "name": "chunk_gated_delta_rule_fwd_32_0023_bnsd_gva_tail_B1_H2x8_T129_bf16_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0023_bnsd_gva_tail_B1_H2x8_T129_bf16_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -3957,20 +4125,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 24,
     "default_seed": 20261051,
-    "name": "chunk_gated_delta_rule_fwd_32_0024_ntd_mha_tail_B1_H1x1_T1_bf16_seq1_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0024_ntd_mha_tail_B1_H1x1_T1_bf16_seq1_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -4122,20 +4297,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 25,
     "default_seed": 20261052,
-    "name": "chunk_gated_delta_rule_fwd_32_0025_ntd_mha_tail_B1_H1x1_T1_bf16_seq1_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0025_ntd_mha_tail_B1_H1x1_T1_bf16_seq1_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -4287,20 +4469,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 26,
     "default_seed": 20261053,
-    "name": "chunk_gated_delta_rule_fwd_32_0026_ntd_mha_tail_B1_H1x1_T1_bf16_seq1_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0026_ntd_mha_tail_B1_H1x1_T1_bf16_seq1_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -4452,20 +4641,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 27,
     "default_seed": 20261054,
-    "name": "chunk_gated_delta_rule_fwd_32_0027_ntd_gva_tail_B1_H2x8_T129_bf16_seq129_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0027_ntd_gva_tail_B1_H2x8_T129_bf16_seq129_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -4617,20 +4813,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 28,
     "default_seed": 20261055,
-    "name": "chunk_gated_delta_rule_fwd_32_0028_ntd_gva_tail_B1_H2x8_T129_bf16_seq129_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0028_ntd_gva_tail_B1_H2x8_T129_bf16_seq129_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -4782,20 +4985,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 29,
     "default_seed": 20261056,
-    "name": "chunk_gated_delta_rule_fwd_32_0029_ntd_gva_tail_B1_H2x8_T129_bf16_seq129_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0029_ntd_gva_tail_B1_H2x8_T129_bf16_seq129_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -4947,20 +5157,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 30,
     "default_seed": 20261057,
-    "name": "chunk_gated_delta_rule_fwd_32_0030_bnsd_mha_tail_B1_H1x1_T1_fp32_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0030_bnsd_mha_tail_B1_H1x1_T1_fp32_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -5112,20 +5329,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 31,
     "default_seed": 20261058,
-    "name": "chunk_gated_delta_rule_fwd_32_0031_bnsd_mha_tail_B1_H1x1_T1_fp32_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0031_bnsd_mha_tail_B1_H1x1_T1_fp32_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -5277,20 +5501,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 32,
     "default_seed": 20261059,
-    "name": "chunk_gated_delta_rule_fwd_32_0032_bnsd_mha_tail_B1_H1x1_T1_fp32_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0032_bnsd_mha_tail_B1_H1x1_T1_fp32_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -5442,20 +5673,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 33,
     "default_seed": 20261060,
-    "name": "chunk_gated_delta_rule_fwd_32_0033_bnsd_gva_tail_B1_H2x8_T129_fp32_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0033_bnsd_gva_tail_B1_H2x8_T129_fp32_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -5607,20 +5845,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 34,
     "default_seed": 20261061,
-    "name": "chunk_gated_delta_rule_fwd_32_0034_bnsd_gva_tail_B1_H2x8_T129_fp32_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0034_bnsd_gva_tail_B1_H2x8_T129_fp32_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -5772,20 +6017,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 35,
     "default_seed": 20261062,
-    "name": "chunk_gated_delta_rule_fwd_32_0035_bnsd_gva_tail_B1_H2x8_T129_fp32_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0035_bnsd_gva_tail_B1_H2x8_T129_fp32_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -5937,20 +6189,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 36,
     "default_seed": 20261063,
-    "name": "chunk_gated_delta_rule_fwd_32_0036_ntd_mha_tail_B1_H1x1_T1_fp32_seq1_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0036_ntd_mha_tail_B1_H1x1_T1_fp32_seq1_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -6102,20 +6361,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 37,
     "default_seed": 20261064,
-    "name": "chunk_gated_delta_rule_fwd_32_0037_ntd_mha_tail_B1_H1x1_T1_fp32_seq1_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0037_ntd_mha_tail_B1_H1x1_T1_fp32_seq1_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -6267,20 +6533,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 38,
     "default_seed": 20261065,
-    "name": "chunk_gated_delta_rule_fwd_32_0038_ntd_mha_tail_B1_H1x1_T1_fp32_seq1_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0038_ntd_mha_tail_B1_H1x1_T1_fp32_seq1_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -6432,20 +6705,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 39,
     "default_seed": 20261066,
-    "name": "chunk_gated_delta_rule_fwd_32_0039_ntd_gva_tail_B1_H2x8_T129_fp32_seq129_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0039_ntd_gva_tail_B1_H2x8_T129_fp32_seq129_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -6597,20 +6877,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 40,
     "default_seed": 20261067,
-    "name": "chunk_gated_delta_rule_fwd_32_0040_ntd_gva_tail_B1_H2x8_T129_fp32_seq129_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0040_ntd_gva_tail_B1_H2x8_T129_fp32_seq129_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -6762,20 +7049,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 41,
     "default_seed": 20261068,
-    "name": "chunk_gated_delta_rule_fwd_32_0041_ntd_gva_tail_B1_H2x8_T129_fp32_seq129_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0041_ntd_gva_tail_B1_H2x8_T129_fp32_seq129_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -6927,20 +7221,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 42,
     "default_seed": 20261069,
-    "name": "chunk_gated_delta_rule_fwd_32_0042_ntd_gva_align_B1_H1x2_T64_none_seq64_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0042_ntd_gva_align_B1_H1x2_T64_none_seq64_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -7092,20 +7393,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 43,
     "default_seed": 20261070,
-    "name": "chunk_gated_delta_rule_fwd_32_0043_ntd_gva_align_B1_H1x2_T64_none_seq64_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0043_ntd_gva_align_B1_H1x2_T64_none_seq64_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -7257,20 +7565,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 44,
     "default_seed": 20261071,
-    "name": "chunk_gated_delta_rule_fwd_32_0044_ntd_gva_align_B1_H1x2_T64_none_seq64_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0044_ntd_gva_align_B1_H1x2_T64_none_seq64_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -7422,20 +7737,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 45,
     "default_seed": 20261072,
-    "name": "chunk_gated_delta_rule_fwd_32_0045_ntd_gva_tail_B1_H2x8_T129_none_seq129_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0045_ntd_gva_tail_B1_H2x8_T129_none_seq129_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -7587,20 +7909,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 46,
     "default_seed": 20261073,
-    "name": "chunk_gated_delta_rule_fwd_32_0046_ntd_gva_tail_B1_H2x8_T129_none_seq129_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0046_ntd_gva_tail_B1_H2x8_T129_none_seq129_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -7752,20 +8081,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 47,
     "default_seed": 20261074,
-    "name": "chunk_gated_delta_rule_fwd_32_0047_ntd_gva_tail_B1_H2x8_T129_none_seq129_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0047_ntd_gva_tail_B1_H2x8_T129_none_seq129_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -7917,20 +8253,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 48,
     "default_seed": 20261075,
-    "name": "chunk_gated_delta_rule_fwd_32_0048_ntd_gva_tail_B1_H2x4_T244_none_seq53-64-127_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0048_ntd_gva_tail_B1_H2x4_T244_none_seq53-64-127_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -8082,20 +8425,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 49,
     "default_seed": 20261076,
-    "name": "chunk_gated_delta_rule_fwd_32_0049_ntd_gva_tail_B1_H2x4_T244_none_seq53-64-127_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0049_ntd_gva_tail_B1_H2x4_T244_none_seq53-64-127_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -8247,20 +8597,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 50,
     "default_seed": 20261077,
-    "name": "chunk_gated_delta_rule_fwd_32_0050_ntd_gva_tail_B1_H2x4_T244_none_seq53-64-127_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0050_ntd_gva_tail_B1_H2x4_T244_none_seq53-64-127_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -8412,20 +8769,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 51,
     "default_seed": 20261078,
-    "name": "chunk_gated_delta_rule_fwd_32_0051_ntd_mha_tail_B1_H4x4_T129_none_seq129_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0051_ntd_mha_tail_B1_H4x4_T129_none_seq129_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -8577,20 +8941,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 52,
     "default_seed": 20261079,
-    "name": "chunk_gated_delta_rule_fwd_32_0052_ntd_mha_tail_B1_H4x4_T129_none_seq129_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0052_ntd_mha_tail_B1_H4x4_T129_none_seq129_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -8742,20 +9113,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 53,
     "default_seed": 20261080,
-    "name": "chunk_gated_delta_rule_fwd_32_0053_ntd_mha_tail_B1_H4x4_T129_none_seq129_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0053_ntd_mha_tail_B1_H4x4_T129_none_seq129_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -8907,20 +9285,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 54,
     "default_seed": 20261081,
-    "name": "chunk_gated_delta_rule_fwd_32_0054_ntd_mha_tail_B1_H2x2_T281_none_seq281_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0054_ntd_mha_tail_B1_H2x2_T281_none_seq281_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -9072,20 +9457,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 55,
     "default_seed": 20261082,
-    "name": "chunk_gated_delta_rule_fwd_32_0055_ntd_mha_tail_B1_H2x2_T281_none_seq281_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0055_ntd_mha_tail_B1_H2x2_T281_none_seq281_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -9237,20 +9629,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 56,
     "default_seed": 20261083,
-    "name": "chunk_gated_delta_rule_fwd_32_0056_ntd_mha_tail_B1_H2x2_T281_none_seq281_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0056_ntd_mha_tail_B1_H2x2_T281_none_seq281_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -9402,20 +9801,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 57,
     "default_seed": 20261084,
-    "name": "chunk_gated_delta_rule_fwd_32_0057_bnsd_mha_tail_B1_H1x1_T1_none_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0057_bnsd_mha_tail_B1_H1x1_T1_none_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -9567,20 +9973,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 58,
     "default_seed": 20261085,
-    "name": "chunk_gated_delta_rule_fwd_32_0058_bnsd_mha_tail_B1_H1x1_T1_none_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0058_bnsd_mha_tail_B1_H1x1_T1_none_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -9732,20 +10145,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 59,
     "default_seed": 20261086,
-    "name": "chunk_gated_delta_rule_fwd_32_0059_bnsd_mha_tail_B1_H1x1_T1_none_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0059_bnsd_mha_tail_B1_H1x1_T1_none_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -9897,20 +10317,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 60,
     "default_seed": 20261087,
-    "name": "chunk_gated_delta_rule_fwd_32_0060_bnsd_gva_tail_B2_H2x4_T31_none_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0060_bnsd_gva_tail_B2_H2x4_T31_none_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -10062,20 +10489,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 61,
     "default_seed": 20261088,
-    "name": "chunk_gated_delta_rule_fwd_32_0061_bnsd_gva_tail_B2_H2x4_T31_none_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0061_bnsd_gva_tail_B2_H2x4_T31_none_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -10227,20 +10661,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 62,
     "default_seed": 20261089,
-    "name": "chunk_gated_delta_rule_fwd_32_0062_bnsd_gva_tail_B2_H2x4_T31_none_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0062_bnsd_gva_tail_B2_H2x4_T31_none_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -10392,20 +10833,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 63,
     "default_seed": 20261090,
-    "name": "chunk_gated_delta_rule_fwd_32_0063_ntd_mha_tail_B1_H1x1_T1_none_seq1_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0063_ntd_mha_tail_B1_H1x1_T1_none_seq1_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -10557,20 +11005,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 64,
     "default_seed": 20261091,
-    "name": "chunk_gated_delta_rule_fwd_32_0064_ntd_mha_tail_B1_H1x1_T1_none_seq1_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0064_ntd_mha_tail_B1_H1x1_T1_none_seq1_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -10722,20 +11177,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 65,
     "default_seed": 20261092,
-    "name": "chunk_gated_delta_rule_fwd_32_0065_ntd_mha_tail_B1_H1x1_T1_none_seq1_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0065_ntd_mha_tail_B1_H1x1_T1_none_seq1_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -10887,20 +11349,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 66,
     "default_seed": 20261093,
-    "name": "chunk_gated_delta_rule_fwd_32_0066_ntd_mha_tail_B1_H2x2_T14_none_seq14_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0066_ntd_mha_tail_B1_H2x2_T14_none_seq14_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -11052,20 +11521,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 67,
     "default_seed": 20261094,
-    "name": "chunk_gated_delta_rule_fwd_32_0067_ntd_mha_tail_B1_H2x2_T14_none_seq14_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0067_ntd_mha_tail_B1_H2x2_T14_none_seq14_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -11217,20 +11693,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 68,
     "default_seed": 20261095,
-    "name": "chunk_gated_delta_rule_fwd_32_0068_ntd_mha_tail_B1_H2x2_T14_none_seq14_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0068_ntd_mha_tail_B1_H2x2_T14_none_seq14_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -11382,20 +11865,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 69,
     "default_seed": 20261096,
-    "name": "chunk_gated_delta_rule_fwd_32_0069_bnsd_gva_tail_B1_H2x8_T129_zero_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0069_bnsd_gva_tail_B1_H2x8_T129_zero_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -11547,20 +12037,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 70,
     "default_seed": 20261097,
-    "name": "chunk_gated_delta_rule_fwd_32_0070_bnsd_gva_tail_B1_H2x8_T129_zero_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0070_bnsd_gva_tail_B1_H2x8_T129_zero_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -11712,20 +12209,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 71,
     "default_seed": 20261098,
-    "name": "chunk_gated_delta_rule_fwd_32_0071_bnsd_gva_tail_B1_H2x8_T129_zero_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0071_bnsd_gva_tail_B1_H2x8_T129_zero_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -11877,20 +12381,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 72,
     "default_seed": 20261099,
-    "name": "chunk_gated_delta_rule_fwd_32_0072_bnsd_gva_align_B2_H1x2_T256_zero_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0072_bnsd_gva_align_B2_H1x2_T256_zero_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -12042,20 +12553,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 73,
     "default_seed": 20261100,
-    "name": "chunk_gated_delta_rule_fwd_32_0073_bnsd_gva_align_B2_H1x2_T256_zero_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0073_bnsd_gva_align_B2_H1x2_T256_zero_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -12207,20 +12725,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 74,
     "default_seed": 20261101,
-    "name": "chunk_gated_delta_rule_fwd_32_0074_bnsd_gva_align_B2_H1x2_T256_zero_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0074_bnsd_gva_align_B2_H1x2_T256_zero_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -12372,20 +12897,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 75,
     "default_seed": 20261102,
-    "name": "chunk_gated_delta_rule_fwd_32_0075_ntd_gva_tail_B1_H2x8_T129_zero_seq129_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0075_ntd_gva_tail_B1_H2x8_T129_zero_seq129_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -12537,20 +13069,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 76,
     "default_seed": 20261103,
-    "name": "chunk_gated_delta_rule_fwd_32_0076_ntd_gva_tail_B1_H2x8_T129_zero_seq129_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0076_ntd_gva_tail_B1_H2x8_T129_zero_seq129_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -12702,20 +13241,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 77,
     "default_seed": 20261104,
-    "name": "chunk_gated_delta_rule_fwd_32_0077_ntd_gva_tail_B1_H2x8_T129_zero_seq129_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0077_ntd_gva_tail_B1_H2x8_T129_zero_seq129_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -12867,20 +13413,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 78,
     "default_seed": 20261105,
-    "name": "chunk_gated_delta_rule_fwd_32_0078_ntd_gva_tail_B1_H2x4_T244_zero_seq53-64-127_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0078_ntd_gva_tail_B1_H2x4_T244_zero_seq53-64-127_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -13032,20 +13585,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 79,
     "default_seed": 20261106,
-    "name": "chunk_gated_delta_rule_fwd_32_0079_ntd_gva_tail_B1_H2x4_T244_zero_seq53-64-127_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0079_ntd_gva_tail_B1_H2x4_T244_zero_seq53-64-127_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -13197,20 +13757,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 80,
     "default_seed": 20261107,
-    "name": "chunk_gated_delta_rule_fwd_32_0080_ntd_gva_tail_B1_H2x4_T244_zero_seq53-64-127_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0080_ntd_gva_tail_B1_H2x4_T244_zero_seq53-64-127_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -13362,20 +13929,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 81,
     "default_seed": 20261108,
-    "name": "chunk_gated_delta_rule_fwd_32_0081_bnsd_mha_align_B4_H1x1_T64_none_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0081_bnsd_mha_align_B4_H1x1_T64_none_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -13527,20 +14101,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 82,
     "default_seed": 20261109,
-    "name": "chunk_gated_delta_rule_fwd_32_0082_bnsd_mha_align_B4_H1x1_T64_none_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0082_bnsd_mha_align_B4_H1x1_T64_none_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -13692,20 +14273,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 83,
     "default_seed": 20261110,
-    "name": "chunk_gated_delta_rule_fwd_32_0083_bnsd_mha_align_B4_H1x1_T64_none_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0083_bnsd_mha_align_B4_H1x1_T64_none_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -13857,20 +14445,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 84,
     "default_seed": 20261111,
-    "name": "chunk_gated_delta_rule_fwd_32_0084_bnsd_mha_align_B1_H1x1_T64_none_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0084_bnsd_mha_align_B1_H1x1_T64_none_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -14022,20 +14617,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 85,
     "default_seed": 20261112,
-    "name": "chunk_gated_delta_rule_fwd_32_0085_bnsd_mha_align_B1_H1x1_T64_none_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0085_bnsd_mha_align_B1_H1x1_T64_none_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -14187,20 +14789,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 86,
     "default_seed": 20261113,
-    "name": "chunk_gated_delta_rule_fwd_32_0086_bnsd_mha_align_B1_H1x1_T64_none_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0086_bnsd_mha_align_B1_H1x1_T64_none_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -14352,20 +14961,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 87,
     "default_seed": 20261114,
-    "name": "chunk_gated_delta_rule_fwd_32_0087_bnsd_mha_align_B1_H1x1_T128_none_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0087_bnsd_mha_align_B1_H1x1_T128_none_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -14517,20 +15133,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 88,
     "default_seed": 20261115,
-    "name": "chunk_gated_delta_rule_fwd_32_0088_bnsd_mha_align_B1_H1x1_T128_none_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0088_bnsd_mha_align_B1_H1x1_T128_none_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -14682,20 +15305,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 89,
     "default_seed": 20261116,
-    "name": "chunk_gated_delta_rule_fwd_32_0089_bnsd_mha_align_B1_H1x1_T128_none_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0089_bnsd_mha_align_B1_H1x1_T128_none_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -14847,20 +15477,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 90,
     "default_seed": 20261117,
-    "name": "chunk_gated_delta_rule_fwd_32_0090_bnsd_gva_align_B1_H2x4_T64_none_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0090_bnsd_gva_align_B1_H2x4_T64_none_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -15012,20 +15649,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 91,
     "default_seed": 20261118,
-    "name": "chunk_gated_delta_rule_fwd_32_0091_bnsd_gva_align_B1_H2x4_T64_none_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0091_bnsd_gva_align_B1_H2x4_T64_none_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -15177,20 +15821,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 92,
     "default_seed": 20261119,
-    "name": "chunk_gated_delta_rule_fwd_32_0092_bnsd_gva_align_B1_H2x4_T64_none_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0092_bnsd_gva_align_B1_H2x4_T64_none_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -15342,20 +15993,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 93,
     "default_seed": 20261120,
-    "name": "chunk_gated_delta_rule_fwd_32_0093_bnsd_gva_align_B1_H1x2_T128_fp32_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0093_bnsd_gva_align_B1_H1x2_T128_fp32_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -15507,20 +16165,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 94,
     "default_seed": 20261121,
-    "name": "chunk_gated_delta_rule_fwd_32_0094_bnsd_gva_align_B1_H1x2_T128_fp32_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0094_bnsd_gva_align_B1_H1x2_T128_fp32_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -15672,20 +16337,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 95,
     "default_seed": 20261122,
-    "name": "chunk_gated_delta_rule_fwd_32_0095_bnsd_gva_align_B1_H1x2_T128_fp32_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0095_bnsd_gva_align_B1_H1x2_T128_fp32_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -15837,20 +16509,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 96,
     "default_seed": 20261123,
-    "name": "chunk_gated_delta_rule_fwd_32_0096_bnsd_mha_align_B1_H1x1_T64_bf16_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0096_bnsd_mha_align_B1_H1x1_T64_bf16_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -16002,20 +16681,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 97,
     "default_seed": 20261124,
-    "name": "chunk_gated_delta_rule_fwd_32_0097_bnsd_mha_align_B1_H1x1_T64_bf16_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0097_bnsd_mha_align_B1_H1x1_T64_bf16_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -16167,20 +16853,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 98,
     "default_seed": 20261125,
-    "name": "chunk_gated_delta_rule_fwd_32_0098_bnsd_mha_align_B1_H1x1_T64_bf16_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0098_bnsd_mha_align_B1_H1x1_T64_bf16_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -16332,20 +17025,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 99,
     "default_seed": 20261126,
-    "name": "chunk_gated_delta_rule_fwd_32_0099_ntd_mha_align_B1_H2x2_T128_none_seq64-64_s0",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0099_ntd_mha_align_B1_H2x2_T128_none_seq64-64_s0",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -16497,20 +17197,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 100,
     "default_seed": 20261127,
-    "name": "chunk_gated_delta_rule_fwd_32_0100_ntd_mha_align_B1_H2x2_T128_none_seq64-64_s1",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0100_ntd_mha_align_B1_H2x2_T128_none_seq64-64_s1",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -16662,20 +17369,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 101,
     "default_seed": 20261128,
-    "name": "chunk_gated_delta_rule_fwd_32_0101_ntd_mha_align_B1_H2x2_T128_none_seq64-64_s2",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0101_ntd_mha_align_B1_H2x2_T128_none_seq64-64_s2",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -16827,6 +17541,6 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   }
 ]
