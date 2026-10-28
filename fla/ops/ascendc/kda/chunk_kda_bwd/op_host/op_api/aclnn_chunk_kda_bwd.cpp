@@ -214,8 +214,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         (packed ? MakeShape({T,H,128}) : MakeShape({B,T,H,128})) : token;
     const auto outputToken = outputTokenMajor ?
         (packed ? MakeShape({T,H,128}) : MakeShape({B,T,H,128})) : token;
-    const auto outputScalar = outputTokenMajor ?
-        (packed ? MakeShape({T,H}) : MakeShape({B,T,H})) : scalar;
+    const auto gateToken = packed ? MakeShape({T,H,128}) : MakeShape({B,T,H,128});
+    const auto gateScalar = packed ? MakeShape({T,H}) : MakeShape({B,T,H});
     CHECK_COND(MatchesTensor(q, qRstdOptional ? token : externalToken, DataType::DT_BF16) &&
                    MatchesTensor(k, kRstdOptional ? token : externalToken, DataType::DT_BF16) &&
                    MatchesTensor(v, externalToken, DataType::DT_BF16) &&
@@ -230,16 +230,14 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
                    (MatchesTensor(qRstdOptional, scalar, DataType::DT_FLOAT) &&
                     MatchesTensor(kRstdOptional, scalar, DataType::DT_FLOAT)),
                ACLNN_ERR_PARAM_INVALID, "rstd must be a head-major FP32 pair.");
-    for (const auto *out : {dqOut, dkOut}) {
-        CHECK_COND(MatchesTensor(out, outputToken, DataType::DT_FLOAT) ||
-                       MatchesTensor(out, outputToken, DataType::DT_BF16),
-                   ACLNN_ERR_PARAM_INVALID, "dq/dk shape or dtype mismatch.");
-    }
+    CHECK_COND(MatchesTensor(dqOut, outputToken, q->GetDataType()) &&
+                   MatchesTensor(dkOut, outputToken, k->GetDataType()),
+               ACLNN_ERR_PARAM_INVALID, "dq/dk must match output_layout and q/k dtype.");
     CHECK_COND(MatchesTensor(dvOut, outputToken, DataType::DT_BF16) &&
-                   (MatchesTensor(dbOut, outputScalar, DataType::DT_FLOAT) ||
-                    MatchesTensor(dbOut, outputScalar, DataType::DT_BF16)) &&
-                   MatchesTensor(dgOut, outputToken, DataType::DT_FLOAT),
-               ACLNN_ERR_PARAM_INVALID, "Invalid public gradient descriptors.");
+                   (MatchesTensor(dbOut, gateScalar, DataType::DT_FLOAT) ||
+                    MatchesTensor(dbOut, gateScalar, DataType::DT_BF16)) &&
+                   MatchesTensor(dgOut, gateToken, DataType::DT_FLOAT),
+               ACLNN_ERR_PARAM_INVALID, "dv must match output_layout; db/dg must use BSND/TND.");
     CHECK_COND(!useGateInKernel ||
                    ((MatchesTensor(rawGOptional, externalToken, DataType::DT_FLOAT) ||
                      MatchesTensor(rawGOptional, externalToken, DataType::DT_BF16)) &&
@@ -381,35 +379,26 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     const auto *betaFinal = ToFloat32(beta, ex);
     CHECK_RET(betaFinal && (!rawGOptional || rawHead) && (!aLogOptional || aLog),
               ACLNN_ERR_INNER_NULLPTR);
-    const auto *dqFinal = dqOut->GetDataType() == DataType::DT_BF16 ? dqOut : alloc(outputToken, DataType::DT_BF16);
-    const auto *dkFinal = dkOut->GetDataType() == DataType::DT_BF16 ? dkOut : alloc(outputToken, DataType::DT_BF16);
-    const auto tokenMajorScalar = packed ? MakeShape({T,H}) : MakeShape({B,T,H});
-    const auto tokenMajorToken = packed ? MakeShape({T,H,128}) : MakeShape({B,T,H,128});
-    const auto *dbFinal = outputTokenMajor && dbOut->GetDataType() == DataType::DT_FLOAT ?
-        dbOut : alloc(tokenMajorScalar, DataType::DT_FLOAT);
-    const auto *dgFinal = outputTokenMajor ? dgOut : alloc(tokenMajorToken, DataType::DT_FLOAT);
+    // Finalize writes QKV in outputLayout and gate gradients in BSND/TND.
+    const auto *dbFinal = dbOut->GetDataType() == DataType::DT_FLOAT ?
+        dbOut : alloc(gateScalar, DataType::DT_FLOAT);
     const auto *dA = dAOutOptional ? dAOutOptional : alloc(MakeShape({H}), DataType::DT_FLOAT);
     const auto *dBias = alloc(MakeShape({H,128}), DataType::DT_FLOAT);
-    CHECK_RET(dqFinal && dkFinal && dbFinal && dgFinal && dA && dBias, ACLNN_ERR_INNER_NULLPTR);
+    CHECK_RET(dbFinal && dA && dBias, ACLNN_ERR_INNER_NULLPTR);
     NormalizeOriginalShapes({qHead, kHead, vHead, gk, rawHead, betaFinal, aLog, dtBias,
         akk, vNew, h, dh, dvScan, dAqk, dqRaw, qRstdOptional, kRstdOptional,
-        dqFinal, dkFinal, dvOut, dbFinal, dgFinal, dA, dBias});
+        dqOut, dkOut, dvOut, dbFinal, dgOut, dA, dBias});
     const auto finalize = l0op::ChunkKdaBwdFinalize(
         qHead, kHead, vHead, gk, rawHead, betaFinal, aLog, dtBias,
         akk, vNew, h, dh, dvScan, dAqk, dqRaw, qRstdOptional, kRstdOptional,
         cuSeqlensOptional, chunkIndicesOptional, scale, lowerBound, chunkSize,
         safeGate, useGateInKernel, useExp2, stateVFirst,
         useBetaSigmoidInKernel, allowNegEigval, outputLayout,
-        dqFinal, dkFinal, dvOut, dbFinal, dgFinal, dA, dBias, ex);
+        dqOut, dkOut, dvOut, dbFinal, dgOut, dA, dBias, ex);
     for (const auto *value : finalize) {
         CHECK_RET(value, ACLNN_ERR_INNER_NULLPTR);
     }
-    if (!outputTokenMajor) {
-        dbFinal = SwapHeadToken(dbFinal, packed, ex);
-        dgFinal = SwapHeadToken(dgFinal, packed, ex);
-    }
-    CHECK_COND(CopyGradient(dqFinal, dqOut, ex) && CopyGradient(dkFinal, dkOut, ex) &&
-                   CopyGradient(dbFinal, dbOut, ex) && CopyGradient(dgFinal, dgOut, ex) &&
+    CHECK_COND(CopyGradient(dbFinal, dbOut, ex) &&
                    (!dBiasOutOptional || CopyGradient(dBias, dBiasOutOptional, ex)),
                ACLNN_ERR_INNER_NULLPTR, "Unable to adapt KDA backward outputs.");
 #else

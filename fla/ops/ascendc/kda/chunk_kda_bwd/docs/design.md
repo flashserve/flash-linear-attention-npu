@@ -1,5 +1,16 @@
 # KDA 反向优化设计
 
+## A2/A3 输出直写
+
+设计规则版本：V2。本轮只调整总接口的输出适配，Stage、tiling、workspace
+地址和同步不变，接口以 [api.md](api.md) 的 A2/A3 输出约定为准。
+
+- Stable C++ 与 ctypes 直接按 q/k dtype 分配 dq/dk，Finalize 直写。
+- db/dg 独立分配 token-major 形状，删除 Finalize 后的布局转置。
+- 直接 ACLNN 客户使用 BF16 dbOut 时，保留原有 FP32→BF16 转换。
+- dq/dk/dv 使用 output_layout；参数梯度与输入 gate 的必要适配不变。
+- C++ 绑定在 legacy/auto/optimized 全部模式下识别 A2/A3；A5 分支维持原输出。
+
 ## 原 ACLNN 入口的形状描述
 
 `aclnnChunkKdaBwdGetWorkspaceSize` 在调用 L0 前，将所有非空输入和输出的

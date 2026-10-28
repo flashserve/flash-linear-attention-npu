@@ -3416,11 +3416,11 @@ def _run_kda_bwd_arch22(args):
     a = _prepare_kda_bwd_arch22(args)
     q = a["q"]
     token, scalar = a["_output_token_shape"], a["_output_beta_shape"]
-    dq = _empty(token, q, dtype=torch.float32)
-    dk = _empty(token, q, dtype=torch.float32)
-    dv = _empty(token, q, dtype=torch.bfloat16)
+    dq = _empty(token, q, dtype=q.dtype)
+    dk = _empty(token, a["k"], dtype=a["k"].dtype)
+    dv = _empty(token, a["v"], dtype=a["v"].dtype)
     db = _empty(scalar, q, dtype=torch.float32)
-    dg = _empty(token, q, dtype=torch.float32)
+    dg = _empty(a["_output_gate_shape"], q, dtype=torch.float32)
     heads = a["beta"].shape[0 if a["cu_seqlens"] is not None else 1]
     da = _empty((heads,), q, dtype=torch.float32) if a["use_gate_in_kernel"] else None
     dbias = (_empty(bias_shape, q, dtype=torch.float32)
@@ -3497,7 +3497,8 @@ def npu_chunk_kda_bwd(
 
     Gate backward requires use_gate_in_kernel=True, raw_g and A_log.
 
-    A2/A3 support explicit input/output layouts via the L0 composition.
+    A2/A3 dq/dk/dv follow their input dtypes and output_layout; db/dg always
+    use BSND/TND and FP32, independently of output_layout.
     The legacy head-major policy below remains on the A5 fused path.
 
     Dense tensors use ``[B, H, T, D]`` and packed tensors use ``[H, T, D]``.

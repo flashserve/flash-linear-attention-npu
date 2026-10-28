@@ -286,7 +286,9 @@ def _prepare_kda_bwd_arch22(args):
             raise ValueError("dt_bias must be contiguous FP32 with H*K elements on q.device")
         a["dt_bias"] = bias.view(h, 128)
     out_tm = a["output_layout"] in ("BSND", "TND")
-    out_token = ((t, h, 128) if packed else (b, t, h, 128)) if out_tm else head
+    gate_token = (t, h, 128) if packed else (b, t, h, 128)
+    out_token = gate_token if out_tm else head
     a.update(cu_seqlens=cu, chunk_indices=indices,
-             _output_token_shape=out_token, _output_beta_shape=out_token[:-1])
+             _output_token_shape=out_token, _output_gate_shape=gate_token,
+             _output_beta_shape=gate_token[:-1])
     return a

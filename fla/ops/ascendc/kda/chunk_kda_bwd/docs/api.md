@@ -1,5 +1,25 @@
 # KDA 反向优化接口
 
+## A2/A3 总接口输出约定
+
+A2/A3 的所有 implementation 模式统一使用原总 ACLNN 接口编排小算子。
+本次不新增接口或参数，返回顺序仍为 `(dq, dk, dv, db, dg, dh0, dA, dbias)`。
+
+| 输出 | dtype | 布局 |
+| --- | --- | --- |
+| dq/dk/dv | 分别跟随 q/k/v，当前仅支持 BF16 输入 | output_layout：BNSD/BSND/NTD/TND |
+| db/dg | Python 返回 FP32 | 固定 BSND/TND，不受 output_layout 控制 |
+| dh0/dA/dbias | 沿用现有约定 | 不受 output_layout 控制 |
+
+直接调用 ACLNN 时，dqOut/dkOut 必须与 q/k 类型相同，不能再传 FP32 输出。
+dbOut 保留已有 BF16/FP32 支持，dgOut 为 FP32；两者必须为 token-major。
+无论是否重计算、是否融合 norm/sigmoid，均使用以上输出规则。输入限制不变。
+
+这是输出语义调整，签名和返回数量不变。旧调用方应删除 db/dg 的
+head-major→token-major 转置，并更新 dq/dk dtype 断言。H=T 时不能靠 shape
+识别旧布局用法，调用方必须同步更新。新版绑定与 op-api 库需配套部署。
+A5 原版和 V2 的输出类型、布局和路由保持不变；下文原优化路径说明针对 A5。
+
 ## 调用方式
 
 沿用 Python 入口 `chunk_kda_bwd`，新增三个可选参数：

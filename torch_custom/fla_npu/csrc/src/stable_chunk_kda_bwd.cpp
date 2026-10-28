@@ -145,15 +145,12 @@ run_npu_chunk_kda_bwd(
     throw std::runtime_error("npu_chunk_kda_bwd: use_gate_in_kernel must be True.");
   }
   // Direct dispatcher callers must also keep A2/A3 on the original total L2.
-  bool arch22 = false;
-  if (optimized) {
-    using SocNameFn = const char* (*)();
-    const auto soc_name = reinterpret_cast<SocNameFn>(
-        fla_npu_stable::Runtime::instance().symbol("aclrtGetSocName"));
-    const char* soc = soc_name();
-    arch22 = soc && (std::strstr(soc, "Ascend910B") ||
-                    std::strstr(soc, "Ascend910C") || std::strstr(soc, "Ascend910_93"));
-  }
+  using SocNameFn = const char* (*)();
+  const auto soc_name = reinterpret_cast<SocNameFn>(
+      fla_npu_stable::Runtime::instance().symbol("aclrtGetSocName"));
+  const char* soc = soc_name();
+  const bool arch22 = soc && (std::strstr(soc, "Ascend910B") ||
+      std::strstr(soc, "Ascend910C") || std::strstr(soc, "Ascend910_93"));
   if (optimized && !arch22) {
     if ((input_layout != 1 && input_layout != 3) ||
         (output_layout != 1 && output_layout != 3) ||
@@ -187,15 +184,19 @@ run_npu_chunk_kda_bwd(
   if (input_tm != output_tm) {
     std::swap(output_shape.at(first), output_shape.at(first + 1));
   }
-  auto beta_shape = output_shape;
+  auto gate_shape = output_shape;
+  if (arch22 && !output_tm) {
+    std::swap(gate_shape.at(first), gate_shape.at(first + 1));
+  }
+  auto beta_shape = gate_shape;
   beta_shape.pop_back();
-  // Preserve the original output dtypes: dq/dk/db are FP32, dv follows v,
-  // and dg is FP32 even when gk is restored inside the executor.
-  Tensor out_dq = allocate_sizes(output_shape, kFloat, q_meta);
-  Tensor out_dk = allocate_sizes(output_shape, kFloat, k_meta);
+  // A2/A3 write BF16 dq/dk and token-major gate gradients directly.
+  // Keep the A5 legacy output contract unchanged.
+  Tensor out_dq = allocate_sizes(output_shape, arch22 ? q_meta.scalar_type : kFloat, q_meta);
+  Tensor out_dk = allocate_sizes(output_shape, arch22 ? k_meta.scalar_type : kFloat, k_meta);
   Tensor out_dv = allocate_sizes(output_shape, v_meta.scalar_type, v_meta);
   Tensor out_db = allocate_sizes(beta_shape, kFloat, q_meta);
-  Tensor out_dg = allocate_sizes(output_shape, kFloat, q_meta);
+  Tensor out_dg = allocate_sizes(gate_shape, kFloat, q_meta);
   std::optional<Tensor> out_d_a_log;
   std::optional<Tensor> out_d_dt_bias;
   // Packed inputs are [H, T, D]; dense ones are [B, H, T, D].
