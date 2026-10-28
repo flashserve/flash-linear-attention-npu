@@ -404,8 +404,8 @@ extern "C" __global__ __aicore__ void chunk_gated_delta_rule_fwd(
         GET_TILING_DATA_WITH_STRUCT(
             ChunkGatedDeltaRuleFwd32TilingData, chunk32Tiling, tiling);
         GdnFwd32::Kernel op;
-        op.Init(q, k, v, raw_g, a_storage, initial_state, cu_seqlens, chunk_indices,
-                o, final_state, workspace, chunk32Tiling);
+        op.Init(q, k, v, raw_g, a_storage, initial_state, cu_seqlens,
+                o, final_state, chunk32Tiling);
         op.Process();
     } else if (TILING_KEY_IS(1)) {
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);

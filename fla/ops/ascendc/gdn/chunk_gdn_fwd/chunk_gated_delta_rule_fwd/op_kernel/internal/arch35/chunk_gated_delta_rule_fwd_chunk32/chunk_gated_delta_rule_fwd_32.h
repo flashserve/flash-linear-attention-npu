@@ -99,7 +99,7 @@ public:
     __aicore__ inline Kernel() {}
 
     __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR beta, GM_ADDR initial,
-                                GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR o, GM_ADDR finalState, GM_ADDR workspace,
+                                GM_ADDR cuSeqlens, GM_ADDR o, GM_ADDR finalState,
                                 const ChunkGatedDeltaRuleFwd32TilingData &tilingData)
     {
         sub_ = GetSubBlockIdx();
@@ -131,7 +131,6 @@ public:
                                  : seqLen_ / static_cast<uint32_t>(kBt) + 1;
         hasHead_ = valueHeadNum_ != 0 && aicIdx < totalHeads_;
         headBegin_ = hasHead_ ? aicIdx : 0;
-        (void)workspace;
 
         qGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(q));
         kGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(k));
@@ -151,7 +150,6 @@ public:
                 initGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(initial));
             }
         }
-        (void)chunkIndices;
         if (seqNum_ != 0 && cuSeqlens != nullptr) {
             cuGm_.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(cuSeqlens));
         }
@@ -345,7 +343,7 @@ private:
         }
         SetFlag<HardEvent::MTE2_V>(2);
         WaitFlag<HardEvent::MTE2_V>(2);
-        CumsumExp2VF<true>(ubG2_, ubEg2_, ubSh_);
+        CumsumExp2VF(ubG2_, ubEg2_, ubSh_);
     }
 
     __aicore__ inline float DecayOf(LocalTensor<float> eg)
@@ -399,7 +397,7 @@ private:
         CopyGmToUbRelaxed(ubG2_, gGm_, token, rows);
         SetFlag<HardEvent::MTE2_V>(2);
         WaitFlag<HardEvent::MTE2_V>(2);
-        CumsumExp2VF<true>(ubG2_, ubEg2_, ubSh_);
+        CumsumExp2VF(ubG2_, ubEg2_, ubSh_);
     }
 
     __aicore__ inline void PrepareLoadVar(uint32_t chunk)
@@ -440,7 +438,7 @@ private:
         } else {
             BetaSigmoidVF<false>(ubBeta_, ubBe_);
         }
-        CumsumExp2VF<true>(ubG_, ubEg_, ubSh_);
+        CumsumExp2VF(ubG_, ubEg_, ubSh_);
         L2NormKAndKbgVF(ubK_, ubKnz_, ubKbg_, ubBe_, ubEg_);
     }
 
