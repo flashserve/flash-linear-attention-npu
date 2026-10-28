@@ -546,11 +546,9 @@ static aclnnStatus CheckChunk32Params(const ChunkGatedDeltaRuleFwdParams &params
                     std::strcmp(params.layout, "TND") == 0),
                ACLNN_ERR_PARAM_INVALID,
                "chunkSize=32 supports BNSD, BSND, NTD and TND.");
-    CHECK_COND(!params.useExp2 && params.useQkL2norm &&
-                   !params.allowNegEigval && !params.stateVFirst,
+    CHECK_COND(!params.useExp2 && params.useQkL2norm,
                ACLNN_ERR_PARAM_INVALID,
-               "chunkSize=32 requires useExp2=false, useQkL2norm=true, "
-               "allowNegEigval=false and stateVFirst=false.");
+               "chunkSize=32 requires useExp2=false and useQkL2norm=true.");
     CHECK_COND(params.aLogOptional == nullptr && params.dtBiasOptional == nullptr,
                ACLNN_ERR_PARAM_INVALID,
                "chunkSize=32 does not support aLog or dtBias.");
@@ -616,11 +614,13 @@ static aclnnStatus CheckChunk32Params(const ChunkGatedDeltaRuleFwdParams &params
               ACLNN_ERR_PARAM_INVALID);
 
     const int64_t seqNum = SeqNum(params, batch);
+    const int64_t stateDim0 = params.stateVFirst ? valueDim : keyDim;
+    const int64_t stateDim1 = params.stateVFirst ? keyDim : valueDim;
     CHECK_RET(CheckStateShape(params.initialStateOptional, "initialState", seqNum,
-                              valueHeads, keyDim, valueDim) == ACLNN_SUCCESS,
+                              valueHeads, stateDim0, stateDim1) == ACLNN_SUCCESS,
               ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckStateShape(params.finalStateOutOptional, "finalStateOut", seqNum,
-                              valueHeads, keyDim, valueDim) == ACLNN_SUCCESS,
+                              valueHeads, stateDim0, stateDim1) == ACLNN_SUCCESS,
               ACLNN_ERR_PARAM_INVALID);
     if (params.initialStateOptional != nullptr) {
         const DataType stateDtype = params.initialStateOptional->GetDataType();
@@ -885,10 +885,12 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
             params.initialStateOptional == nullptr
                 ? DataType::DT_FLOAT
                 : params.initialStateOptional->GetDataType();
+        const int64_t stateDim0 = params.stateVFirst ? vDim : kDim;
+        const int64_t stateDim1 = params.stateVFirst ? kDim : vDim;
         const aclTensor *finalState =
             params.finalStateOutOptional == nullptr
                 ? executorPtr->AllocTensor(
-                      MakeShape({seqNum, hv, kDim, vDim}),
+                      MakeShape({seqNum, hv, stateDim0, stateDim1}),
                       stateDtype, Format::FORMAT_ND)
                 : params.finalStateOutOptional;
         const aclTensor *gCumsumPlaceholder = executorPtr->AllocTensor(
@@ -910,7 +912,7 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
             params.chunkIndicesOptional, true,
             CHUNK_GATED_DELTA_RULE_FWD_CHUNK_32, params.scale, false,
             params.oOut, finalState, gCumsumPlaceholder, aPlaceholder,
-            0, 0, 0, executorPtr);
+            0, 0, 0, params.stateVFirst, params.allowNegEigval, executorPtr);
         GDN_STAGE_CHECK(chunk32Result[0] != nullptr &&
                             chunk32Result[1] != nullptr,
                         169115);
@@ -1181,7 +1183,7 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         outputFinalState, params.chunkSize, params.scale, params.gCumsumOutOptional != nullptr,
         oCompute, finalState,
         gCumsumCompute, aCompute, usePreparedCumsum ? 1 : 0, nativeQkv ? 1 : 0,
-        sequenceMajorOutput ? 1 : 0, executorPtr);
+        sequenceMajorOutput ? 1 : 0, false, false, executorPtr);
     GDN_STAGE_CHECK(phase6Result[0] != nullptr && phase6Result[2] != nullptr &&
                         phase6Result[3] != nullptr,
                         169112);

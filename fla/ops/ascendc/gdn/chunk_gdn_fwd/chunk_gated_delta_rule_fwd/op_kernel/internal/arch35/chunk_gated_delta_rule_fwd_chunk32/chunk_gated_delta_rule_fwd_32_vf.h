@@ -199,6 +199,7 @@ __aicore__ inline void L2NormQAndQexpVF(LocalTensor<bfloat16_t> &q, LocalTensor<
 #undef GDN32_L2_REDUCE
 
 
+template <bool ScaleByTwo>
 __aicore__ inline void BetaSigmoidVF(LocalTensor<bfloat16_t> &beta, LocalTensor<float> &betaOut)
 {
     __ubuf__ bfloat16_t *src = (__ubuf__ bfloat16_t *)beta.GetPhyAddr();
@@ -214,6 +215,9 @@ __aicore__ inline void BetaSigmoidVF(LocalTensor<bfloat16_t> &beta, LocalTensor<
         Duplicate(one, 1.0f, preg);
         Add(den, one, e, preg);
         Div(x, one, den, preg);
+        if constexpr (ScaleByTwo) {
+            Muls(x, x, 2.0f, preg);
+        }
         StoreAlign(dst, x, preg);
     }
 }
