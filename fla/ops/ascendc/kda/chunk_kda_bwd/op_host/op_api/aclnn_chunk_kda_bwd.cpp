@@ -1,17 +1,17 @@
 #include "aclnn_chunk_kda_bwd.h"
 
 #include "chunk_kda_bwd.h"
+#include "aclnn_kernels/cast.h"
+#include "aclnn_kernels/contiguous.h"
+#include "opdev/tensor_view_utils.h"
 #ifdef KDA_BWD_STAGES_ARCH22
 #include "../../../chunk_kda_bwd_prepare/op_host/op_api/chunk_kda_bwd_prepare.h"
 #include "../../../chunk_kda_bwd_finalize/op_host/op_api/chunk_kda_bwd_finalize.h"
 #include "../../../chunk_kda_bwd_recompute/op_host/op_api/chunk_kda_bwd_recompute.h"
 #include "../../../../gdn/chunk_gdn_fwd/chunk_fwd_h/op_host/op_api/chunk_fwd_h.h"
 #include "../../../../gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_dhu/op_host/op_api/chunk_gated_delta_rule_bwd_dhu.h"
-#include "aclnn_kernels/cast.h"
-#include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/reshape.h"
 #include "aclnn_kernels/transpose.h"
-#include "opdev/tensor_view_utils.h"
 #endif
 
 #include <initializer_list>
@@ -235,9 +235,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
                    MatchesTensor(dkOut, outputToken, k->GetDataType()),
                ACLNN_ERR_PARAM_INVALID, "dq/dk must match output_layout and q/k dtype.");
     CHECK_COND(MatchesTensor(dvOut, outputToken, DataType::DT_BF16) &&
-                   (MatchesTensor(dbOut, gateScalar, DataType::DT_FLOAT) ||
-                    MatchesTensor(dbOut, gateScalar, DataType::DT_BF16)) &&
-                   MatchesTensor(dgOut, gateToken, DataType::DT_FLOAT),
+                   MatchesTensor(dbOut, gateScalar, beta->GetDataType()) &&
+                   MatchesTensor(dgOut, gateToken, rawGOptional ? rawGOptional->GetDataType() : DataType::DT_FLOAT),
                ACLNN_ERR_PARAM_INVALID, "dv/db/dg must match output_layout.");
     CHECK_COND(!useGateInKernel ||
                    ((MatchesTensor(rawGOptional, externalToken, DataType::DT_FLOAT) ||
@@ -249,7 +248,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
                    (dtBiasOptional->GetDataType() == DataType::DT_FLOAT &&
                     IsContiguous(dtBiasOptional) && dtBiasOptional->GetViewShape().GetShapeSize() == H * 128),
                ACLNN_ERR_PARAM_INVALID, "dt_bias must be contiguous FP32 with H*K elements.");
-    CHECK_COND(!dAOutOptional || MatchesTensor(dAOutOptional, MakeShape({H}), DataType::DT_FLOAT),
+    CHECK_COND(!dAOutOptional || (aLogOptional && MatchesTensor(dAOutOptional, MakeShape({H}), aLogOptional->GetDataType())),
                ACLNN_ERR_PARAM_INVALID, "Invalid dA output.");
     CHECK_COND(!dBiasOutOptional || (dtBiasOptional && IsContiguous(dBiasOutOptional) &&
                    dBiasOutOptional->GetDataType() == DataType::DT_FLOAT &&
@@ -377,13 +376,12 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     // Keep gate casts near Finalize, matching the A5 V2 cold-start ordering.
     rawHead = ToFloat32(rawHead, ex);
     aLog = ToFloat32(aLog, ex);
-    const auto *betaFinal = ToFloat32(beta, ex);
+    const auto *betaFinal = beta;
     CHECK_RET(betaFinal && (!rawGOptional || rawHead) && (!aLogOptional || aLog),
               ACLNN_ERR_INNER_NULLPTR);
     // Finalize writes all five gradients directly in outputLayout.
-    const auto *dbFinal = dbOut->GetDataType() == DataType::DT_FLOAT ?
-        dbOut : alloc(gateScalar, DataType::DT_FLOAT);
-    const auto *dA = dAOutOptional ? dAOutOptional : alloc(MakeShape({H}), DataType::DT_FLOAT);
+    const auto *dbFinal = dbOut;
+    const auto *dA = dAOutOptional ? dAOutOptional : alloc(MakeShape({H}), aLogOptional->GetDataType());
     const auto *dBias = alloc(MakeShape({H,128}), DataType::DT_FLOAT);
     CHECK_RET(dbFinal && dA && dBias, ACLNN_ERR_INNER_NULLPTR);
     NormalizeOriginalShapes({qHead, kHead, vHead, gk, rawHead, betaFinal, aLog, dtBias,
@@ -399,8 +397,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     for (const auto *value : finalize) {
         CHECK_RET(value, ACLNN_ERR_INNER_NULLPTR);
     }
-    CHECK_COND(CopyGradient(dbFinal, dbOut, ex) &&
-                   (!dBiasOutOptional || CopyGradient(dBias, dBiasOutOptional, ex)),
+    CHECK_COND(!dBiasOutOptional || CopyGradient(dBias, dBiasOutOptional, ex),
                ACLNN_ERR_INNER_NULLPTR, "Unable to adapt KDA backward outputs.");
 #else
     const bool packedLayout = cuSeqlensOptional != nullptr;
@@ -487,16 +484,29 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     // These aliases are never written unless the corresponding feature is
     // enabled, in which case the public validation above requires real
     // dA/dbias outputs.
-    const aclTensor *dAForKernel =
-        dAOutOptional != nullptr ? dAOutOptional : dgOut;
+    // Legacy A5 keeps its FP32 device ABI. Adapt at L2; V2 writes the
+    // requested dtype directly in Finalize and does not take this fallback.
+    CHECK_COND(dbOut->GetDataType() == beta->GetDataType() &&
+                   (!useGateInKernel || (dgOut->GetDataType() == rawGOptional->GetDataType() &&
+                    dAOutOptional->GetDataType() == aLogOptional->GetDataType())),
+               ACLNN_ERR_PARAM_INVALID, "gate gradients must match their input dtypes.");
+    auto fp32Output = [&](const aclTensor *out) -> const aclTensor * {
+        if (!out || out->GetDataType() == DataType::DT_FLOAT) return out;
+        return executorPtr->AllocTensor(out->GetViewShape(), DataType::DT_FLOAT, Format::FORMAT_ND);
+    };
+    const auto *dbKernel = fp32Output(dbOut);
+    const auto *dgKernel = fp32Output(dgOut);
+    const auto *dAKernel = fp32Output(dAOutOptional);
+    CHECK_RET(dbKernel && dgKernel && (!dAOutOptional || dAKernel), ACLNN_ERR_INNER_NULLPTR);
+    const aclTensor *dAForKernel = dAKernel ? dAKernel : dgKernel;
     const aclTensor *dBiasForKernel =
         dBiasOutOptional != nullptr ? dBiasOutOptional : dgOut;
     // 一维存储描述可能使 OriginalShape 展平；下发前按逻辑视图统一形状，不改变数据布局。
     NormalizeOriginalShapes({
         q, k, v, beta, gk, aqk, akk, wOptional, qgOptional, kgOptional,
         vNewOptional, hOptional, dO, rawGOptional, aLogOptional,
-        dtBiasOptional, cuTensor, chunkTensor, dqOut, dkOut, dvOut, dbOut,
-        dgOut, dAForKernel, dBiasForKernel});
+        dtBiasOptional, cuTensor, chunkTensor, dqOut, dkOut, dvOut, dbKernel,
+        dgKernel, dAForKernel, dBiasForKernel});
 
     const auto result = l0op::ChunkKdaBwd(
         q, k, v, beta, gk, aqk, akk, wOptional, qgOptional, kgOptional,
@@ -505,7 +515,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         static_cast<float>(scale), chunkSize, safeGate, useGateInKernel,
         static_cast<float>(lowerBound), disableRecompute, useExp2,
         stateVFirst,
-        dqOut, dkOut, dvOut, dbOut, dgOut,
+        dqOut, dkOut, dvOut, dbKernel, dgKernel,
         dAForKernel, dBiasForKernel, executorPtr);
     for (size_t i = 0; i < 5; ++i) {
         CHECK_RET(result[i] != nullptr, ACLNN_ERR_INNER_NULLPTR);
@@ -514,6 +524,13 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
               ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(dtBiasOptional == nullptr || result[6] != nullptr,
               ACLNN_ERR_INNER_NULLPTR);
+
+    for (const auto &pair : {std::pair<const aclTensor *, const aclTensor *>{dbKernel, dbOut},
+                            {dgKernel, dgOut}, {dAKernel, dAOutOptional}}) {
+        if (!pair.second || pair.first == pair.second) continue;
+        const auto *converted = l0op::Cast(pair.first, pair.second->GetDataType(), executorPtr);
+        CHECK_RET(converted && l0op::ViewCopy(converted, pair.second, executorPtr), ACLNN_ERR_INNER_NULLPTR);
+    }
 
 #endif
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();

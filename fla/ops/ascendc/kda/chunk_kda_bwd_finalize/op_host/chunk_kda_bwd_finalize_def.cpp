@@ -8,28 +8,55 @@ class ChunkKdaBwdFinalize : public OpDef {
 public:
     explicit ChunkKdaBwdFinalize(const char *name) : OpDef(name)
     {
+        // L2 may supply FP32 working inputs and lower-precision output descriptors.
+        // Enumerate beta, a_log (A5), dg and dA independently.
+        constexpr auto gateParam = REQUIRED;
+        const std::initializer_list<ge::DataType> bf16 = {
+            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
+            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
+            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
+            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16};
+        const std::initializer_list<ge::DataType> fp32 = {
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
+        const std::initializer_list<ge::DataType> betaTypes = {
+            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
+            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
+        const std::initializer_list<ge::DataType> dgTypes = {
+            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT,
+            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT,
+            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT,
+            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT};
+        const std::initializer_list<ge::DataType> daTypes = {
+            ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT,
+            ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT,
+            ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT,
+            ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT};
+        const std::initializer_list<ge::DataType> int64 = {
+            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
+            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
+            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
+            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64};
 #ifdef KDA_BWD_STAGES_ARCH22
-        constexpr auto gateParam = REQUIRED;
-        const std::initializer_list<ge::DataType> bf16 = {ge::DT_BF16, ge::DT_BF16};
-        const std::initializer_list<ge::DataType> fp32 = {ge::DT_FLOAT, ge::DT_FLOAT};
-        const std::initializer_list<ge::DataType> betaTypes = {ge::DT_BF16, ge::DT_FLOAT};
         const auto aLogTypes = fp32;
-        const std::initializer_list<ge::DataType> int64 = {ge::DT_INT64, ge::DT_INT64};
-        const auto gradTypes = bf16;
-        const auto dbTypes = betaTypes;
-        const std::initializer_list<ge::Format> nd = {ge::FORMAT_ND, ge::FORMAT_ND};
 #else
-        constexpr auto gateParam = REQUIRED;
-        const std::initializer_list<ge::DataType> bf16 = {ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16};
-        const std::initializer_list<ge::DataType> fp32 = {ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
-        const std::initializer_list<ge::DataType> betaTypes = {ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT};
-        const std::initializer_list<ge::DataType> aLogTypes = {ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16};
-        const std::initializer_list<ge::DataType> int64 = {ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64};
-        const std::initializer_list<ge::Format> nd = {ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND};
-
+        const std::initializer_list<ge::DataType> aLogTypes = {
+            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
+#endif
+        const std::initializer_list<ge::Format> nd = {
+            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
+            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
+            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
+            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND};
         const auto gradTypes = bf16;
         const auto dbTypes = betaTypes;
-#endif
 
 #define ADD_INPUT(NAME, PARAM, TYPES) \
         this->Input(NAME).ParamType(PARAM).DataType(TYPES).Format(nd).UnknownShapeFormat(nd).AutoContiguous()
@@ -60,8 +87,8 @@ public:
         ADD_OUTPUT("dk", gradTypes);
         ADD_OUTPUT("dv", bf16);
         ADD_OUTPUT("d_beta", dbTypes);
-        ADD_OUTPUT("d_g", fp32);
-        ADD_OUTPUT("d_a_log", fp32);
+        ADD_OUTPUT("d_g", dgTypes);
+        ADD_OUTPUT("d_a_log", daTypes);
         ADD_OUTPUT("d_dt_bias", fp32);
 
 #undef ADD_OUTPUT

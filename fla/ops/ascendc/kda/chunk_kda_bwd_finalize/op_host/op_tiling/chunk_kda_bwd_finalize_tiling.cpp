@@ -109,9 +109,11 @@ ge::graphStatus ValidateFinalize(
     if (qType != ge::DT_BF16 || context->GetOutputDesc(1)->GetDataType() != qType ||
         context->GetOutputDesc(2)->GetDataType() != ge::DT_BF16) return fail();
     if (context->GetOutputDesc(3)->GetDataType() != betaType) return fail();
-    for (size_t i = 4; i < 7; ++i) {
-        if (context->GetOutputDesc(i)->GetDataType() != ge::DT_FLOAT) return fail();
+    for (size_t i : {4U, 5U}) {
+        const auto dtype = context->GetOutputDesc(i)->GetDataType();
+        if (dtype != ge::DT_FLOAT && dtype != ge::DT_BF16) return fail();
     }
+    if (context->GetOutputDesc(6)->GetDataType() != ge::DT_FLOAT) return fail();
     for (size_t i = 0; i < 2; ++i) {
         const auto &input = context->GetRequiredInputShape(INPUT_A_LOG + i)->GetStorageShape();
         const auto &output = context->GetOutputShape(5 + i)->GetStorageShape();

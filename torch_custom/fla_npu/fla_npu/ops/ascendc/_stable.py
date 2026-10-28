@@ -1944,8 +1944,9 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
     Gate backward requires use_gate_in_kernel=True, raw_g and A_log.
 
     A2/A3 use one total L2 composition for all implementation modes.
-    Their dq/dk/dv follow the input dtypes and output_layout; FP32 db/dg
-    follow output_layout together with dq/dk/dv.
+    Their dq/dk/dv follow the input dtypes and output_layout. On all platforms,
+    db/dg/dA follow beta/raw_g/A_log dtypes; db/dg also follow output_layout.
+    Gate arithmetic and parameter reductions remain FP32.
     The legacy workarounds below remain on the A5 fused path.
 
     Three shape-specific workarounds sit on top of the single launch, and they

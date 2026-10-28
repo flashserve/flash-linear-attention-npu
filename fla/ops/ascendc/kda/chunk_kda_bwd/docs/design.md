@@ -7,7 +7,9 @@
 
 - Stable C++ 与 ctypes 直接按 q/k dtype 分配 dq/dk，Finalize 直写。
 - dq/dk/dv/db/dg 统一按 output_layout 分配，Finalize 直接写回，删除总接口中的布局转置。
-- 直接 ACLNN 客户使用 BF16 dbOut 时，保留原有 FP32→BF16 转换。
+- db/dg/dA 按原始 beta/raw_g/A_log dtype 分配，A2/A3 和 A5 V2 由 Finalize
+  写回时转换；内部 FP32 工作张量不会改变对外输出 dtype。A5 legacy 保留
+  FP32 kernel ABI，通过 L2 转换输出。
 - Finalize 的 A2/A3 与 A5 写回共用已有 outputTokenMajor 标记选择输出地址和行间 stride。
 - 参数梯度与输入 gate 的必要适配不变；A5 V2 直接接收 Finalize 的 head-major 输出。
 - C++ 绑定在 legacy/auto/optimized 全部模式下识别 A2/A3；A5 分支维持原输出。

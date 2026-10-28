@@ -974,7 +974,7 @@ public:
         rawG_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(rawG));
         aLog_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_A_LOG *>(aLog));
         dtBias_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dtBias));
-        dG_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dG));
+        dG_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_D_G *>(dG));
         k_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(k));
         v_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(v));
         gk_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(gk));
@@ -1194,14 +1194,21 @@ private:
             reinterpret_cast<__ubuf__ DTYPE_A_LOG *>(log.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(da.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(db.GetPhyAddr()), chunk.validRows, tiling_->lowerBound);
+        // raw is dead after the chain rule; partials remain FP32.
+        auto packedG = raw.ReinterpretCast<DTYPE_D_G>();
+        if constexpr (sizeof(DTYPE_D_G) == 2) {
+            AscendC::Cast(packedG, dg, AscendC::RoundMode::CAST_RINT, elems);
+        } else {
+            packedG = dg.ReinterpretCast<DTYPE_D_G>();
+        }
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
         const int64_t partial = head * tiling_->totalChunkNum + chunkTask;
         const bool tokenMajor = tiling_->outputTokenMajor != 0U;
         const uint64_t out = FinalizeOutputOffset(*tiling_, chunk, head, 0, KDA_FINALIZE_DIM, tokenMajor);
-        AscendC::DataCopyPad(dG_[out], dg, AscendC::DataCopyExtParams{
-            static_cast<uint16_t>(chunk.validRows), KDA_FINALIZE_DIM * sizeof(float), 0,
-            tokenMajor ? static_cast<uint32_t>((tiling_->NV - 1) * KDA_FINALIZE_DIM * sizeof(float)) : 0U, 0});
+        AscendC::DataCopyPad(dG_[out], packedG, AscendC::DataCopyExtParams{
+            static_cast<uint16_t>(chunk.validRows), KDA_FINALIZE_DIM * sizeof(DTYPE_D_G), 0,
+            tokenMajor ? static_cast<uint32_t>((tiling_->NV - 1) * KDA_FINALIZE_DIM * sizeof(DTYPE_D_G)) : 0U, 0});
         AscendC::DataCopyPad(workspace_[tiling_->gatePartialOffset].ReinterpretCast<float>()[partial * 8], da,
             AscendC::DataCopyExtParams{1, sizeof(float), 0, 0, 0});
         AscendC::DataCopy(
@@ -1676,7 +1683,8 @@ private:
 
 
     AscendC::GlobalTensor<float> kRstd_;
-    AscendC::GlobalTensor<float> rawG_, dtBias_, dG_;
+    AscendC::GlobalTensor<float> rawG_, dtBias_;
+    AscendC::GlobalTensor<DTYPE_D_G> dG_;
     AscendC::GlobalTensor<DTYPE_A_LOG> aLog_;
     AscendC::GlobalTensor<bfloat16_t> dk_;
     AscendC::GlobalTensor<DTYPE_BETA> dBeta_;

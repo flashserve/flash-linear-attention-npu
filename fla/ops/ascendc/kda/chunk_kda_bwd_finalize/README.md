@@ -38,10 +38,12 @@ dh 与 h 一致，使用 dense [B,Nc,H,K,V] 或 packed [Nc,H,K,V]。
 dq/dk/dv/d_beta/d_g，dense 默认 BNSD，packed 默认 NTD。
 写回实现见 [输出布局设计](docs/design.md)。
 
-dq/dk/dv 为 BF16，d_beta 与 beta 同类型，d_g/d_a_log/d_dt_bias 为 FP32。
+dq/dk/dv 为 BF16，d_beta 与 beta 同类型，d_a_log 与 a_log 同类型。
+独立接口的 raw_g 仍要求 FP32，因此 d_g 为 FP32；d_dt_bias 为 FP32。
 
 上表及本节类型描述的是独立 `aclnnChunkKdaBwdFinalize` 接口。A2/A3 整体 Bwd
-通过 L0 调用时，dq/dk/dv 直接输出 BF16，Python db/dg 为 FP32；五个梯度
+通过 L0 调用时，dq/dk/dv 直接输出 BF16，db/dg/dA 分别跟随总接口的
+beta/raw_g/A_log 输入 dtype；五个 Token 梯度
 均按总接口的 output_layout 写回，无需总接口再做布局转置。
 A2/A3 支持 BF16/FP32 beta，融合 sigmoid 反向时需要前向保存的 FP32 beta_eff；
 a_log 为 FP32。成对传入 q_rstd/k_rstd 时，在 Finalize 内完成 Q/K L2Norm 反向。

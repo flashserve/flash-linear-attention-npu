@@ -3386,8 +3386,8 @@ def _run_kda_bwd_optimized(args):
     cu, indices = args["cu_seqlens"], args["chunk_indices"]
     dq,dk,dv = (torch.empty_like(args[name]) for name in ("q","k","v"))
     db = torch.empty_like(args["beta"])
-    dg = torch.empty(token,dtype=torch.float32,device=q.device)
-    da = torch.empty((h,),dtype=torch.float32,device=q.device)
+    dg = torch.empty(token,dtype=args["raw_g"].dtype,device=q.device)
+    da = torch.empty((h,),dtype=args["A_log"].dtype,device=q.device)
     dbias = None if args["dt_bias"] is None else torch.empty(bias_shape, dtype=torch.float32, device=q.device)
     outputs = (dq,dk,dv,db,dg,None,da,dbias)
 
@@ -3419,10 +3419,10 @@ def _run_kda_bwd_arch22(args):
     dq = _empty(token, q, dtype=q.dtype)
     dk = _empty(token, a["k"], dtype=a["k"].dtype)
     dv = _empty(token, a["v"], dtype=a["v"].dtype)
-    db = _empty(scalar, q, dtype=torch.float32)
-    dg = _empty(a["_output_gate_shape"], q, dtype=torch.float32)
+    db = _empty(scalar, q, dtype=a["beta"].dtype)
+    dg = _empty(a["_output_gate_shape"], q, dtype=a["raw_g"].dtype)
     heads = a["beta"].shape[0 if a["cu_seqlens"] is not None else 1]
-    da = _empty((heads,), q, dtype=torch.float32) if a["use_gate_in_kernel"] else None
+    da = _empty((heads,), q, dtype=a["A_log"].dtype) if a["use_gate_in_kernel"] else None
     dbias = (_empty(bias_shape, q, dtype=torch.float32)
              if a["use_gate_in_kernel"] and bias_shape is not None else None)
     outputs = (dq, dk, dv, db, dg, None, da, dbias)
@@ -3622,7 +3622,7 @@ def npu_chunk_kda_bwd(
             raise RuntimeError("npu_chunk_kda_bwd: A_log must be float32 [H].")
         if safe_gate and not (-5.0 <= lower_bound < 0.0):
             raise RuntimeError("npu_chunk_kda_bwd: lower_bound must be in [-5,0) for safe_gate.")
-        d_a = _empty((heads,), q, dtype=torch.float32)
+        d_a = _empty((heads,), q, dtype=A_log.dtype)
         if dt_bias is not None:
             if _shape(dt_bias) != (heads, key_dim) or dt_bias.dtype != torch.float32:
                 raise RuntimeError("npu_chunk_kda_bwd: dt_bias must be float32 [H,K].")
@@ -3769,7 +3769,7 @@ def npu_chunk_kda_bwd(
         A_log = duplicate_last_head(A_log, 0)
         dt_bias = duplicate_last_head(dt_bias, 0)
         heads += 1
-        d_a = _empty((heads,), q, dtype=torch.float32) if d_a is not None else None
+        d_a = _empty((heads,), q, dtype=A_log.dtype) if d_a is not None else None
         d_bias = (
             _empty((heads, key_dim), q, dtype=torch.float32)
             if d_bias is not None else None
@@ -3778,8 +3778,8 @@ def npu_chunk_kda_bwd(
     dq = _empty_like(q, dtype=torch.float32)
     dk = _empty_like(k, dtype=torch.float32)
     dv = _empty_like(v)
-    db = _empty_like(beta, dtype=torch.float32)
-    dg = _empty_like(gk)
+    db = _empty_like(beta)
+    dg = _empty_like(raw_g)
     # Keep the public result contract aligned with the upstream GPU operator.
     # The device ABI still has seven materialized outputs: initial_state/dh0 is
     # reserved but unsupported, so its public slot is an explicit None.

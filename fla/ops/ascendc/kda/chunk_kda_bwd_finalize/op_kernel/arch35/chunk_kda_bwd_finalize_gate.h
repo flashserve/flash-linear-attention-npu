@@ -120,20 +120,22 @@ __aicore__ inline void FinalizeStage12(
     auto daIn = dbIn[16384];
     auto dbOut = daIn[1024];
     auto daOut = dbOut[128];
-    AscendC::GlobalTensor<float> partialA, partialB, outA, outB;
+    AscendC::GlobalTensor<float> partialA, partialB, outB;
+    AscendC::GlobalTensor<DTYPE_D_A_LOG> outA;
     partialA.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace + tiling.gatePartialOffset));
     partialB.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace + tiling.dtBiasPartialOffset));
-    outA.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dALog));
+    outA.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_D_A_LOG *>(dALog));
     outB.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dDtBias));
     const auto mte2V = pipe.AllocEventID<AscendC::HardEvent::MTE2_V>();
     const auto vMte2 = pipe.AllocEventID<AscendC::HardEvent::V_MTE2>();
     const auto vMte3 = pipe.AllocEventID<AscendC::HardEvent::V_MTE3>();
     const auto mte3V = pipe.AllocEventID<AscendC::HardEvent::MTE3_V>();
+    constexpr int64_t headsPerBlock = 32 / sizeof(DTYPE_D_A_LOG);
     // Own complete 32-byte output blocks, including a possible final tail.
     // No two cores write adjacent scalar lanes of the same DMA block.
-    for (int64_t group = AscendC::GetBlockIdx() * 8; group < tiling.NV;
-         group += AscendC::GetBlockNum() * AscendC::GetSubBlockNum() * 8) {
-        const int64_t end = FinalizeMin(group + 8, tiling.NV);
+    for (int64_t group = AscendC::GetBlockIdx() * headsPerBlock; group < tiling.NV;
+         group += AscendC::GetBlockNum() * AscendC::GetSubBlockNum() * headsPerBlock) {
+        const int64_t end = FinalizeMin(group + headsPerBlock, tiling.NV);
         for (int64_t head = group; head < end; ++head) {
             for (int64_t start = 0; start < tiling.totalChunkNum; start += 128) {
                 const uint16_t rows = static_cast<uint16_t>(FinalizeMin(128, tiling.totalChunkNum - start));
@@ -156,10 +158,16 @@ __aicore__ inline void FinalizeStage12(
             AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3V);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3V);
         }
+        auto packedA = daOut[16].ReinterpretCast<DTYPE_D_A_LOG>();
+        if constexpr (sizeof(DTYPE_D_A_LOG) == 2) {
+            AscendC::Cast(packedA, daOut, AscendC::RoundMode::CAST_RINT, headsPerBlock);
+        } else {
+            packedA = daOut.ReinterpretCast<DTYPE_D_A_LOG>();
+        }
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vMte3);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vMte3);
-        AscendC::DataCopyPad(outA[group], daOut,
-            AscendC::DataCopyExtParams{1, static_cast<uint32_t>((end - group) * sizeof(float)), 0, 0, 0});
+        AscendC::DataCopyPad(outA[group], packedA,
+            AscendC::DataCopyExtParams{1, static_cast<uint32_t>((end - group) * sizeof(DTYPE_D_A_LOG)), 0, 0, 0});
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3V);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3V);
     }

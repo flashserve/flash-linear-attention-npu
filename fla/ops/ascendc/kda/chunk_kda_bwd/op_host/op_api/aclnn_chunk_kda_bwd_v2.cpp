@@ -115,14 +115,14 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         MatchesTensor(db,scalar,beta->GetDataType()), ACLNN_ERR_PARAM_INVALID, "dbeta must match beta dtype/shape.");
     CHECK_COND(MatchesTensor(rawG,token,DataType::DT_FLOAT) || MatchesTensor(rawG,token,DataType::DT_BF16),
         ACLNN_ERR_PARAM_INVALID, "raw_g must match token shape, BF16/FP32.");
-    CHECK_COND(MatchesTensor(dg,token,DataType::DT_FLOAT), ACLNN_ERR_PARAM_INVALID, "dg must be FP32.");
+    CHECK_COND(MatchesTensor(dg,token,rawG->GetDataType()), ACLNN_ERR_PARAM_INVALID, "dg must match raw_g dtype.");
     CHECK_COND(MatchesTensor(aLog,MakeShape({H}),DataType::DT_FLOAT) || MatchesTensor(aLog,MakeShape({H}),DataType::DT_BF16),
         ACLNN_ERR_PARAM_INVALID, "A_log must be [H], BF16/FP32.");
     CHECK_COND(!dtBias || MatchesTensor(dtBias,MakeShape({H,128}),DataType::DT_FLOAT), ACLNN_ERR_PARAM_INVALID,
         "V2 dt_bias must be FP32 [H,128] when supplied.");
     CHECK_COND((!qRstd && !kRstd) || (MatchesTensor(qRstd,scalar,DataType::DT_FLOAT) && MatchesTensor(kRstd,scalar,DataType::DT_FLOAT)),
         ACLNN_ERR_PARAM_INVALID, "rstd must be a matching FP32 pair.");
-    CHECK_COND((!dA || MatchesTensor(dA,MakeShape({H}),DataType::DT_FLOAT)) &&
+    CHECK_COND((!dA || MatchesTensor(dA,MakeShape({H}),aLog->GetDataType())) &&
         (!dBias || MatchesTensor(dBias,MakeShape({H,128}),DataType::DT_FLOAT)), ACLNN_ERR_PARAM_INVALID, "Parameter output shape/dtype mismatch.");
     int64_t nc = (T + 63) / 64;
     if (packed) {
@@ -163,7 +163,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         CHECK_RET(dtBias, ACLNN_ERR_INNER_NULLPTR);
     }
     if (!dA) {
-        dA = AllocTensor(ex, MakeShape({H}), DataType::DT_FLOAT);
+        dA = AllocTensor(ex, MakeShape({H}), aLog->GetDataType());
     }
     if (!dBias) {
         dBias = AllocTensor(ex, MakeShape({H,128}), DataType::DT_FLOAT);

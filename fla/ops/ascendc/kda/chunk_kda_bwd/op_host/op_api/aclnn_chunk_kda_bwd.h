@@ -10,7 +10,8 @@ extern "C" {
 // A2/A3 compose backward L0 operators; A5 keeps its fused kernel.
 // Saved caches remain head-major, with chunk-major h. External token inputs
 // follow inputLayout. On A2/A3, dq/dk/dv follow their input dtypes and
-// outputLayout; db/dg also follow outputLayout. A5 keeps its output contract.
+// outputLayout; db/dg also follow outputLayout. On all platforms, db/dg/dA
+// must match beta/rawG/aLog dtypes. dbias remains FP32.
 __attribute__((visibility("default")))
 aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     const aclTensor *q,

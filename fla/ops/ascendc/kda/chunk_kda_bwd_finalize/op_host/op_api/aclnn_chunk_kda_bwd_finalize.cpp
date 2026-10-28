@@ -69,7 +69,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
     for (const auto &item : {
              std::pair<const aclTensor *, const char *>(gk, "gk"),
              {rawG, "raw_g"}, {dtBias, "dt_bias"}, {dAqk, "d_aqk"},
-             {dqRaw, "dq_raw"}, {dGOut, "d_g"}, {dALogOut, "d_a_log"},
+             {dqRaw, "dq_raw"}, {dGOut, "d_g"},
              {dDtBiasOut, "d_dt_bias"}}) {
         CHECK_RET(CheckRequired(item.first, DataType::DT_FLOAT, item.second) == ACLNN_SUCCESS,
                   ACLNN_ERR_PARAM_INVALID);
@@ -79,6 +79,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
     CHECK_COND(aLog->GetDataType() == DataType::DT_FLOAT ||
                    aLog->GetDataType() == DataType::DT_BF16,
                ACLNN_ERR_PARAM_INVALID, "a_log must be FP32 or BF16");
+    CHECK_RET(CheckRequired(dALogOut, aLog->GetDataType(), "d_a_log") == ACLNN_SUCCESS,
+              ACLNN_ERR_PARAM_INVALID);
     CHECK_COND((qRstdOptional == nullptr) == (kRstdOptional == nullptr),
                ACLNN_ERR_PARAM_INVALID, "q_rstd and k_rstd must appear together");
     if (qRstdOptional != nullptr) {

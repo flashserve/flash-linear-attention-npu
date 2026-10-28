@@ -1263,7 +1263,7 @@ public:
         dtBias_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(tail.dtBias));
         kRstd_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(tail.kRstd));
         dk_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(tail.dk));
-        dg_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(tail.dg));
+        dg_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_D_G *>(tail.dg));
         db_.SetGlobalBuffer(reinterpret_cast<__gm__ BetaT *>(tail.db));
         partial_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(tail.partial));
     }
@@ -1641,6 +1641,14 @@ public:
                 AscendC::Cast(packedDb.template ReinterpretCast<BetaT>(), rowScale,
                               AscendC::RoundMode::CAST_RINT, 8, ROWS, {1, 1, 1, 1});
             }
+            // The raw-gate input slot is dead after the gate chain rule; reuse it
+            // for BF16 writeback without rounding parameter-reduction partials.
+            auto gatePacked = raw.template ReinterpretCast<DTYPE_D_G>();
+            if constexpr (sizeof(DTYPE_D_G) == 2) {
+                AscendC::Cast(gatePacked, gateOut, AscendC::RoundMode::CAST_RINT, E);
+            } else {
+                gatePacked = gateOut.template ReinterpretCast<DTYPE_D_G>();
+            }
             AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
             if (active != 0) {
@@ -1658,18 +1666,10 @@ public:
                 } else {
                     AscendC::DataCopy(dk_[(token + first) * HEAD_DIM], packedDk, active * HEAD_DIM);
                 }
-                // dG rows are 512-byte aligned. DataCopy strides use 32-byte
-                // blocks; keep the byte-stride path when uint16_t would overflow.
-                if (!CAPTURE && tiling.heads <= 4096) {
-                    AscendC::DataCopy(
-                        dg_[outputToken * HEAD_DIM], gateOut,
-                        AscendC::DataCopyParams{static_cast<uint16_t>(active), HEAD_DIM / 8, 0,
-                                                static_cast<uint16_t>(outputStride * (HEAD_DIM / 8))});
-                } else {
-                    AscendC::DataCopyPad(dg_[outputToken * HEAD_DIM], gateOut,
-                                         {static_cast<uint16_t>(active), HEAD_DIM * 4, 0,
-                                          static_cast<uint32_t>(outputStride * HEAD_DIM * 4), 0});
-                }
+                constexpr uint32_t gateBytes = HEAD_DIM * sizeof(DTYPE_D_G);
+                AscendC::DataCopyPad(dg_[outputToken * HEAD_DIM], gatePacked,
+                    {static_cast<uint16_t>(active), gateBytes, 0,
+                     static_cast<uint32_t>(outputStride * gateBytes), 0});
                 AscendC::DataCopyPad(
                     db_[outputToken], packedDb.template ReinterpretCast<BetaT>(),
                     {static_cast<uint16_t>(active), sizeof(BetaT), 0,
@@ -1682,8 +1682,8 @@ public:
                 AscendC::DataCopy(saved[CAPTURE_DB / 4 + first], db, ROWS);
             }
             AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
-            if constexpr (CAPTURE) {
-                // Snapshots read input slots too; only the debug build needs this drain.
+            if constexpr (CAPTURE || sizeof(DTYPE_D_G) == 2) {
+                // BF16 writeback and snapshots read input slots before MTE2 reuse.
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
             }
@@ -1783,7 +1783,8 @@ private:
     AscendC::GlobalTensor<BetaT> beta_, db_;
     AscendC::GlobalTensor<bfloat16_t> q_, dq_;
     AscendC::GlobalTensor<float> qRstd_;
-    AscendC::GlobalTensor<float> rawG_, aLog_, dtBias_, kRstd_, dg_, partial_;
+    AscendC::GlobalTensor<float> rawG_, aLog_, dtBias_, kRstd_, partial_;
+    AscendC::GlobalTensor<DTYPE_D_G> dg_;
     AscendC::GlobalTensor<bfloat16_t> dk_;
     FinalizeTailArgs tail_;
     float scale_ = 1.0f;

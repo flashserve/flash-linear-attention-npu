@@ -71,13 +71,13 @@ run_kda_bwd_v2(
   Tensor out_dk = allocate_like(k_meta);
   Tensor out_dv = allocate_sizes(v_meta.sizes, v_meta.scalar_type, v_meta);
   Tensor out_db = allocate_like(meta_of(beta));
-  Tensor out_dg = allocate_sizes(q_meta.sizes, kFloat, q_meta);
+  Tensor out_dg = allocate_sizes(q_meta.sizes, meta_of(*raw_g).scalar_type, q_meta);
   std::optional<Tensor> out_d_a_log;
   std::optional<Tensor> out_d_dt_bias;
   // Packed inputs are [H, T, D]; dense ones are [B, H, T, D].
   const int64_t key_heads = SIZE_OF(q_meta, q_meta.ndim == 3 ? 0 : 1);
   if (use_gate_in_kernel) {
-    out_d_a_log = allocate_sizes({key_heads}, kFloat, q_meta);
+    out_d_a_log = allocate_sizes({key_heads}, meta_of(*A_log).scalar_type, q_meta);
     if (dt_bias.has_value()) {
       out_d_dt_bias = allocate_sizes({key_heads, SIZE_OF(q_meta, q_meta.ndim - 1)}, kFloat,
                                      q_meta);
@@ -141,8 +141,8 @@ run_npu_chunk_kda_bwd(
     bool state_v_first, bool optimized, std::optional<Tensor> q_rstd,
     std::optional<Tensor> k_rstd, int64_t input_layout, int64_t output_layout,
     bool use_beta_sigmoid_in_kernel, bool allow_neg_eigval, int64_t stream) {
-  if (!use_gate_in_kernel) {
-    throw std::runtime_error("npu_chunk_kda_bwd: use_gate_in_kernel must be True.");
+  if (!use_gate_in_kernel || !raw_g.has_value() || !A_log.has_value()) {
+    throw std::runtime_error("npu_chunk_kda_bwd: use_gate_in_kernel=True requires raw_g and A_log.");
   }
   // Direct dispatcher callers must also keep A2/A3 on the original total L2.
   using SocNameFn = const char* (*)();
@@ -188,17 +188,17 @@ run_npu_chunk_kda_bwd(
   auto beta_shape = gate_shape;
   beta_shape.pop_back();
   // A2/A3 write BF16 dq/dk; all five gradients follow output_layout.
-  // Keep the A5 legacy output contract unchanged.
+  // A5 legacy retains FP32 dq/dk; gate gradients follow their inputs.
   Tensor out_dq = allocate_sizes(output_shape, arch22 ? q_meta.scalar_type : kFloat, q_meta);
   Tensor out_dk = allocate_sizes(output_shape, arch22 ? k_meta.scalar_type : kFloat, k_meta);
   Tensor out_dv = allocate_sizes(output_shape, v_meta.scalar_type, v_meta);
-  Tensor out_db = allocate_sizes(beta_shape, kFloat, q_meta);
-  Tensor out_dg = allocate_sizes(gate_shape, kFloat, q_meta);
+  Tensor out_db = allocate_sizes(beta_shape, meta_of(beta).scalar_type, q_meta);
+  Tensor out_dg = allocate_sizes(gate_shape, meta_of(*raw_g).scalar_type, q_meta);
   std::optional<Tensor> out_d_a_log;
   std::optional<Tensor> out_d_dt_bias;
   // Packed inputs are [H, T, D]; dense ones are [B, H, T, D].
   if (use_gate_in_kernel) {
-    out_d_a_log = allocate_sizes({key_heads}, kFloat, q_meta);
+    out_d_a_log = allocate_sizes({key_heads}, meta_of(*A_log).scalar_type, q_meta);
     if (dt_bias.has_value()) {
       out_d_dt_bias = allocate_sizes(
           {key_heads, SIZE_OF(q_meta, q_meta.ndim - 1)}, kFloat, q_meta);
