@@ -4,6 +4,7 @@ import json
 import os
 import runpy
 import shutil
+import subprocess
 import sys
 import tempfile
 import types
@@ -132,6 +133,137 @@ class OverlayInstallerTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "public aclnn ABI differs"):
                 self.module["install_overlay"](source)
             self.assertFalse((vendors / "fla_npu_overlay_transformer").exists())
+
+    def test_failed_replacement_preserves_previous_overlay_base_and_config(self) -> None:
+        for failure in ("copy", "staged_abi", "set_env", "move_old", "move_new", "config"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temp_dir, \
+                    mock.patch.dict(os.environ, {}, clear=True):
+                vendors, base, source = self._tree(Path(temp_dir))
+                install = self.module["install_overlay"]
+                target = install(source)
+                (target / "revision").write_text("old")
+                (source / "revision").write_text("new")
+                snapshot = lambda path: {p.relative_to(path): p.read_bytes()
+                                         for p in path.rglob("*") if p.is_file()}
+                old_overlay, old_base = snapshot(target), snapshot(base)
+                config = vendors / "config.ini"
+                old_config = config.read_bytes()
+                real_rename = Path.rename
+                real_validate = install.__globals__["_validate_overlay_abi"]
+
+                def fail_copy(src, dst):
+                    Path(dst).mkdir()
+                    (Path(dst) / "partial").write_text("incomplete")
+                    self.assertEqual(snapshot(target), old_overlay)
+                    raise OSError("injected copy failure")
+
+                def validate(path):
+                    if path.name == "new":
+                        raise OSError("injected staged_abi failure")
+                    return real_validate(path)
+
+                def rename(path, destination):
+                    if ((failure == "move_old" and path == target)
+                            or (failure == "move_new" and path.name == "new")):
+                        raise OSError("injected rename failure")
+                    return real_rename(path, destination)
+
+                def fail_config(_):
+                    config.write_bytes(b"partial config")
+                    raise OSError("injected config failure")
+
+                replacements = {
+                    "staged_abi": {"_validate_overlay_abi": validate},
+                    "set_env": {"_write_set_env": mock.Mock(side_effect=OSError("injected set_env failure"))},
+                    "config": {"_write_vendors_config": fail_config},
+                }.get(failure, {})
+                with mock.patch.dict(install.__globals__, replacements), \
+                        mock.patch.object(Path, "rename", rename):
+                    if failure == "copy":
+                        with mock.patch.object(shutil, "copytree", side_effect=fail_copy), \
+                                self.assertRaisesRegex(OSError, "injected"):
+                            install(source, force=True)
+                    else:
+                        with self.assertRaisesRegex(OSError, "injected"):
+                            install(source, force=True)
+                self.assertEqual(snapshot(target), old_overlay)
+                self.assertEqual(snapshot(base), old_base)
+                self.assertEqual(config.read_bytes(), old_config)
+                self.assertEqual(list(vendors.parent.glob(".overlay-*")), [])
+
+    def test_successful_replacement_discovers_only_final_vendor(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict(os.environ, {}, clear=True):
+            vendors, _, source = self._tree(Path(temp_dir))
+            install = self.module["install_overlay"]
+            target = install(source)
+            (target / "old-only").touch()
+            (source / "new-only").touch()
+            real_write = install.__globals__["_write_set_env"]
+
+            def observe_staging(path):
+                self.assertEqual(self.module["overlay_vendor_names"](), [target.name])
+                self.assertNotEqual(path.parent, vendors)
+                real_write(path)
+
+            with mock.patch.dict(install.__globals__, {"_write_set_env": observe_staging}):
+                install(source, force=True)
+            self.assertTrue((target / "new-only").is_file())
+            self.assertFalse((target / "old-only").exists())
+            self.assertEqual(list(vendors.parent.glob(".overlay-*")), [])
+
+    def test_first_install_failure_restores_absent_config_and_vendor(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict(os.environ, {}, clear=True):
+            vendors, _, source = self._tree(Path(temp_dir))
+            install = self.module["install_overlay"]
+            config = vendors / "config.ini"
+
+            def fail_config(_):
+                config.write_text("partial")
+                raise OSError("injected config failure")
+
+            with mock.patch.dict(install.__globals__, {"_write_vendors_config": fail_config}), \
+                    self.assertRaisesRegex(OSError, "injected"):
+                install(source)
+            self.assertFalse((vendors / "fla_npu_overlay_transformer").exists())
+            self.assertFalse(config.exists())
+
+    def test_failed_rollback_preserves_recovery_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict(os.environ, {}, clear=True):
+            vendors, _, source = self._tree(Path(temp_dir))
+            install = self.module["install_overlay"]
+            target = install(source)
+            (target / "old-only").touch()
+            old_config = (vendors / "config.ini").read_bytes()
+            real_rename = Path.rename
+
+            def rename(path, destination):
+                if path.name == "previous":
+                    raise OSError("cannot restore backup")
+                return real_rename(path, destination)
+
+            with mock.patch.dict(install.__globals__, {
+                    "_write_vendors_config": mock.Mock(side_effect=OSError("config failure"))}), \
+                    mock.patch.object(Path, "rename", rename), \
+                    self.assertRaisesRegex(RuntimeError, "recovery files preserved"):
+                install(source, force=True)
+            recovery, = vendors.parent.glob(".overlay-*")
+            self.assertTrue((recovery / "previous/old-only").is_file())
+            self.assertEqual((recovery / "config.ini").read_bytes(), old_config)
+
+    @unittest.skipUnless(os.name == "posix", "Linux interprocess management lock")
+    def test_management_lock_rejects_competing_remove(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict(os.environ, {}, clear=True):
+            vendors, _, source = self._tree(Path(temp_dir))
+            target = self.module["install_overlay"](source)
+            script = (f"import runpy; from pathlib import Path; m=runpy.run_path({str(INSTALL_OPP)!r}); "
+                      f"m['remove_overlay'].__globals__['PACKAGE_OPP_ROOT']=Path({str(vendors.parent)!r}); "
+                      "m['remove_overlay']()")
+            with self.module["_overlay_update_lock"]():
+                result = subprocess.run([sys.executable, "-c", script], capture_output=True,
+                                        text=True, timeout=10, env=dict(os.environ))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Another overlay install/remove is in progress", result.stderr)
+            self.assertTrue(target.is_dir())
 
 
 class EarlyOppEnvironmentTest(unittest.TestCase):

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import importlib.util
 import json
 import os
 import re
 import shutil
+import tempfile
 import warnings
 from pathlib import Path
 
@@ -120,28 +122,48 @@ def _write_set_env(vendor_dir: Path) -> None:
                 "    done",
                 '    _FLA_NPU_VENDOR_ORDER+=("${candidate}")',
                 "}",
-                "if [[ -f \"${_FLA_NPU_VENDORS_DIR}/config.ini\" ]]; then",
-                '    while IFS= read -r _FLA_NPU_LINE; do',
-                '        case "${_FLA_NPU_LINE}" in',
-                "            load_priority=*)",
-                '                IFS=\',\' read -r -a _FLA_NPU_NAMES <<< "${_FLA_NPU_LINE#load_priority=}"',
-                '                for _FLA_NPU_NAME in "${_FLA_NPU_NAMES[@]}"; do',
-                '                    _fla_npu_add_vendor_name "${_FLA_NPU_NAME}"',
-                "                done",
-                "                break",
-                "                ;;",
-                "        esac",
-                '    done < "${_FLA_NPU_VENDORS_DIR}/config.ini"',
+                "_fla_npu_add_overlay() {",
+                '    local name="$1"',
+                '    name="${name#"${name%%[![:space:]]*}"}"',
+                '    name="${name%"${name##*[![:space:]]}"}"',
+                '    [[ "${name}" =~ ^fla_npu_overlay_[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || return 0',
+                '    _fla_npu_add_vendor_name "${name}"',
+                "}",
+                "_fla_npu_discover_overlays() {",
+                "    local LC_ALL=C _FLA_NPU_ENTRY",
+                '    for _FLA_NPU_ENTRY in "${_FLA_NPU_VENDORS_DIR}"/fla_npu_overlay_*; do',
+                '        [[ -d "${_FLA_NPU_ENTRY}" ]] || continue',
+                '        _fla_npu_add_overlay "${_FLA_NPU_ENTRY##*/}"',
+                "    done",
+                "}",
+                'if [[ ${FLA_NPU_OVERLAY_VENDOR+x} ]]; then',
+                '    IFS=\':\' read -r -a _FLA_NPU_NAMES <<< "${FLA_NPU_OVERLAY_VENDOR}"',
+                '    for _FLA_NPU_NAME in "${_FLA_NPU_NAMES[@]}"; do',
+                '        _fla_npu_add_overlay "${_FLA_NPU_NAME}"',
+                "    done",
+                "else",
+                '    if [[ -f "${_FLA_NPU_VENDORS_DIR}/config.ini" ]]; then',
+                '        while IFS= read -r _FLA_NPU_LINE || [[ -n "${_FLA_NPU_LINE}" ]]; do',
+                '            _FLA_NPU_LINE="${_FLA_NPU_LINE#"${_FLA_NPU_LINE%%[![:space:]]*}"}"',
+                '            case "${_FLA_NPU_LINE}" in',
+                "                load_priority=*)",
+                '                    IFS=\',\' read -r -a _FLA_NPU_NAMES <<< "${_FLA_NPU_LINE#load_priority=}"',
+                '                    for _FLA_NPU_NAME in "${_FLA_NPU_NAMES[@]}"; do',
+                '                        _fla_npu_add_overlay "${_FLA_NPU_NAME}"',
+                "                    done",
+                "                    break",
+                "                    ;;",
+                "            esac",
+                '        done < "${_FLA_NPU_VENDORS_DIR}/config.ini"',
+                "    fi",
+                "    _fla_npu_discover_overlays",
                 "fi",
-                '_FLA_NPU_CURRENT_NAME="${_FLA_NPU_VENDOR_DIR##*/}"',
-                "_FLA_NPU_CURRENT_FOUND=0",
-                'for _FLA_NPU_ENTRY in "${_FLA_NPU_VENDOR_ORDER[@]}"; do',
-                '    [[ "${_FLA_NPU_ENTRY}" == "${_FLA_NPU_VENDOR_DIR}" ]] && _FLA_NPU_CURRENT_FOUND=1',
-                "done",
-                "if [[ ${_FLA_NPU_CURRENT_FOUND} -eq 0 ]]; then",
-                '    case "${_FLA_NPU_CURRENT_NAME}" in',
-                '        fla_npu_overlay_*) _FLA_NPU_VENDOR_ORDER=("${_FLA_NPU_VENDOR_DIR}" "${_FLA_NPU_VENDOR_ORDER[@]}") ;;',
-                '        *) _FLA_NPU_VENDOR_ORDER+=("${_FLA_NPU_VENDOR_DIR}") ;;',
+                '_fla_npu_add_vendor_name "fla_npu_transformer"',
+                # Preserve standalone external vendor exports without a FLA base.
+                'if [[ ! -d "${_FLA_NPU_VENDORS_DIR}/fla_npu_transformer" ]]; then',
+                '    case "${_FLA_NPU_VENDOR_DIR##*/}" in',
+                '        fla_npu_overlay_*) ;;',
+                '        *) _fla_npu_add_vendor_name "${_FLA_NPU_VENDOR_DIR##*/}" ;;',
                 "    esac",
                 "fi",
                 '_FLA_NPU_OLD_PATH="${ASCEND_CUSTOM_OPP_PATH-}"',
@@ -165,11 +187,22 @@ def _write_set_env(vendor_dir: Path) -> None:
                 "fi",
                 'export ASCEND_CUSTOM_OPP_PATH="${_FLA_NPU_NEW_PATH}"',
                 'export FLA_NPU_OPP_PATH="${_FLA_NPU_OPP_ROOT}"',
-                'export FLA_NPU_OP_API_LIB="${_FLA_NPU_VENDOR_DIR}/op_api/lib/libcust_opapi.so"',
-                "unset -f _fla_npu_add_vendor_name",
+                '_FLA_NPU_LIB_ORDER=()',
+                'for _FLA_NPU_ENTRY in "${_FLA_NPU_VENDOR_ORDER[@]}"; do',
+                '    _FLA_NPU_LIB_ORDER+=("${_FLA_NPU_ENTRY}/op_api/lib/libcust_opapi.so")',
+                "done",
+                'export FLA_NPU_OP_API_LIBS="$(IFS=:; printf "%s" "${_FLA_NPU_LIB_ORDER[*]}")"',
+                'if [[ -d "${_FLA_NPU_VENDORS_DIR}/fla_npu_transformer" ]]; then',
+                '    export FLA_NPU_OP_API_LIB="${_FLA_NPU_VENDORS_DIR}/fla_npu_transformer/op_api/lib/libcust_opapi.so"',
+                'elif [[ ${#_FLA_NPU_LIB_ORDER[@]} -gt 0 ]]; then',
+                '    export FLA_NPU_OP_API_LIB="${_FLA_NPU_LIB_ORDER[0]}"',
+                "else",
+                '    unset FLA_NPU_OP_API_LIB',
+                "fi",
+                "unset -f _fla_npu_add_vendor_name _fla_npu_add_overlay _fla_npu_discover_overlays",
                 "unset _FLA_NPU_SCRIPT_DIR _FLA_NPU_VENDOR_DIR _FLA_NPU_VENDORS_DIR _FLA_NPU_OPP_ROOT",
                 "unset _FLA_NPU_VENDOR_ORDER _FLA_NPU_NAMES _FLA_NPU_NAME _FLA_NPU_LINE",
-                "unset _FLA_NPU_CURRENT_NAME _FLA_NPU_CURRENT_FOUND _FLA_NPU_CURRENT_PATHS",
+                "unset _FLA_NPU_CURRENT_PATHS _FLA_NPU_LIB_ORDER",
                 "unset _FLA_NPU_ENTRY _FLA_NPU_EXTERNAL_PATHS _FLA_NPU_PATH_ORDER",
                 "unset _FLA_NPU_OLD_PATH _FLA_NPU_NEW_PATH _FLA_NPU_HAD_PACKAGE_PATH",
                 "",
@@ -347,6 +380,72 @@ def _default_overlay_name() -> str:
     return DEFAULT_OVERLAY_NAME
 
 
+@contextmanager
+def _overlay_update_lock():
+    """Serialize overlay management on the supported Linux hosts."""
+    with (PACKAGE_OPP_ROOT / ".overlay.lock").open("a") as lock:
+        if os.name == "posix":
+            import fcntl
+
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise RuntimeError("Another overlay install/remove is in progress; retry later") from exc
+        yield
+
+
+def _replace_overlay(vendor_src: Path, vendor_dst: Path, force: bool) -> list[str]:
+    """Stage first; roll back the directory and config on a failed switch."""
+    if (vendor_dst.exists() or vendor_dst.is_symlink()) and not force:
+        raise FileExistsError(f"{vendor_dst} already exists. Use --force to replace the overlay.")
+    vendors_root = vendor_dst.parent
+    # Outside vendors/: neither auto-discovery nor external export sees staging.
+    transaction = Path(tempfile.mkdtemp(prefix=".overlay-", dir=vendors_root.parent))
+    staged, backup = transaction / "new", transaction / "previous"
+    config = vendors_root / "config.ini"
+    saved_config = transaction / "config.ini"
+    installed = False
+    keep_recovery = False
+    try:
+        if config.exists():
+            saved_config.write_bytes(config.read_bytes())
+        shutil.copytree(vendor_src, staged)
+        _validate_overlay_abi(staged)
+        alias = staged / "op_api" / "lib" / "libopapi.so"
+        if alias.exists() or alias.is_symlink():
+            alias.unlink()
+        _write_set_env(staged)
+        try:
+            if vendor_dst.exists() or vendor_dst.is_symlink():
+                vendor_dst.rename(backup)
+            staged.rename(vendor_dst)
+            installed = True
+            order = _write_vendors_config(vendors_root)
+        except BaseException:
+            try:
+                if installed:
+                    shutil.rmtree(vendor_dst)
+                if backup.exists() or backup.is_symlink():
+                    backup.rename(vendor_dst)
+                if saved_config.exists():
+                    saved_config.replace(config)
+                else:
+                    config.unlink(missing_ok=True)
+            except Exception as exc:
+                keep_recovery = True
+                raise RuntimeError(
+                    f"Overlay rollback incomplete; recovery files preserved at {transaction}"
+                ) from exc
+            raise
+        return order
+    finally:
+        if not keep_recovery:
+            try:
+                shutil.rmtree(transaction)
+            except OSError as exc:
+                warnings.warn(f"Cannot remove overlay staging directory {transaction}: {exc}", RuntimeWarning)
+
+
 def install_overlay(
     source: Path,
     overlay_name: str | None = None,
@@ -368,27 +467,11 @@ def install_overlay(
             [overlay_name, *[n for n in overlay_vendor_names() if n != overlay_name]]
         )
 
-    vendor_src = _resolve_overlay_source(source)
-    _validate_overlay_abi(vendor_src)
     vendor_dst = vendors_root / overlay_name
-    if vendor_dst.exists():
-        if not force:
-            raise FileExistsError(
-                f"{vendor_dst} already exists. Use --force to replace the overlay."
-            )
-        shutil.rmtree(vendor_dst)
-    shutil.copytree(vendor_src, vendor_dst)
-
-    custom_opapi = vendor_dst / "op_api" / "lib" / "libcust_opapi.so"
-    if not custom_opapi.is_file():
-        shutil.rmtree(vendor_dst, ignore_errors=True)
-        raise FileNotFoundError(f"Custom op_api library not found in the overlay: {custom_opapi}")
-    op_api_alias = vendor_dst / "op_api" / "lib" / "libopapi.so"
-    if op_api_alias.exists() or op_api_alias.is_symlink():
-        op_api_alias.unlink()
-    _write_set_env(vendor_dst)
-
-    order = _write_vendors_config(vendors_root)
+    with _overlay_update_lock():
+        vendor_src = _resolve_overlay_source(source)
+        _validate_overlay_abi(vendor_src)
+        order = _replace_overlay(vendor_src, vendor_dst, force)
 
     files = sum(1 for path in vendor_dst.rglob("*") if path.is_file())
     print(f"Installed overlay vendor: {vendor_dst}")
@@ -409,11 +492,15 @@ def remove_overlay(overlay_name: str | None = None) -> bool:
     vendors_root = _vendors_root()
     overlay_name = _validate_overlay_name(overlay_name or _default_overlay_name())
     vendor_dir = vendors_root / overlay_name
-    if not vendor_dir.is_dir():
+    if not vendors_root.is_dir():
         print(f"No overlay vendor to remove: {vendor_dir}")
         return False
-    shutil.rmtree(vendor_dir)
-    order = _write_vendors_config(vendors_root)
+    with _overlay_update_lock():
+        if not vendor_dir.is_dir():
+            print(f"No overlay vendor to remove: {vendor_dir}")
+            return False
+        shutil.rmtree(vendor_dir)
+        order = _write_vendors_config(vendors_root)
     print(f"Removed overlay vendor: {vendor_dir}")
     print(f"  load_priority: {','.join(order)}")
     return True

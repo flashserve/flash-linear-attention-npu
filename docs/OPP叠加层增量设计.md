@@ -86,7 +86,9 @@ overlay 不携带另一份 launcher。接口不变的 host/tiling/kernel 更新�
 
 默认 `.pth` 在用户代码及通常的 `import torch_npu` 之前设置 OPP 路径。`import fla_npu` 重复选择与校验，并准备 host 库。CANN 初始化以后改变路径、安装或移除 overlay，都不能刷新已加载的索引、动态库句柄和符号缓存；必须启动新进程。
 
-**当前手动启动路径的待修差异：** 生成的 `set_env.bash` 只遵循 `config.ini`，没有执行环境变量的显式禁用/选序规则，且 source overlay 脚本会把单数库变量指向该 overlay。正常 `.pth`/Python runtime 会重建这些值。关闭 `.pth` 时，应先 `import fla_npu` 再初始化 CANN；不能把单独 source 脚本视为已经完成上述选择契约。两处脚本生成器应统一策略，并补充手动启动回归。
+toolkit 的 `set_env.sh` 配置 CANN 工具链与运行依赖；vendor 的 `bin/set_env.bash` 配置本份自定义 OPP 的发现路径。两者均是环境准备，source 本身不等于设备运行时初始化。
+
+两处生成器的 `set_env.bash` 与 `.pth`/Python runtime 使用相同的 overlay 选择规则，显式禁用时即使 source overlay 脚本也只登记 base；重复 source 不改变结果。单数库变量固定指向 base，复数变量按选定顺序生成。关闭 `.pth` 时，在初始化 CANN 前 source 对应 vendor 脚本；环境选择必须在此之前确定。无 FLA base 的独立外部 vendor 保留原 source 导出能力，不因此成为 Python host 库的外部来源。
 
 ## 4. ABI 门禁与错误处理
 
@@ -127,7 +129,9 @@ python -m fla_npu_opp_manage --remove-overlay
 
 `fla_npu_opp_manage` 是顶层模块，加载管理器时不执行 `fla_npu.__init__`、不加载 vendor 动态库。损坏 overlay 使正常 import 失败时，仍可查询 `ABI: INVALID` 或移除；旧 `python -m fla_npu.install_opp` 保留健康环境兼容，不用作损坏恢复入口。
 
-**当前替换不是原子事务。** `--force` 先删除旧 overlay 再复制新目录；复制失败不会自动恢复旧 overlay，可能留下半成品。base 保持不变，可移除失败目录后重装。更新前保留可重装产物，停止使用该安装目录的进程；当前没有并发安装锁。需要保留旧 overlay 的失败回滚能力时，应补充同文件系统 staging、校验、备份切换及失败恢复。
+`--force` 先在 OPP root 的暂存目录复制、验证产物并生成环境脚本，再备份旧 overlay、切换目录和更新配置；复制或校验失败时旧版本不变，切换或配置更新失败时恢复旧目录与原配置。暂存及备份不进入 vendor 发现范围。若回滚本身失败，报错给出保留的恢复目录，不清除旧备份。Linux 安装与移除共用管理锁，相互冲突时明确拒绝。
+
+该保护针对单次管理操作中可处理的异常，不承诺并发运行进程看到无间隙切换，也不提供断电或强制杀进程后的自动事务恢复。装卸前停止使用该安装目录的进程，完成后重新启动。外部 `--install-path` 的既有拷贝流程不在本次改造范围内。
 
 `--pkg --jit` 省略预编译 kernel，不能直接用 AOT wheel 的 `.o`/binary-info 验收规则宣布通过；普通增量工作流使用满足目标 wheel 产物契约的包。
 

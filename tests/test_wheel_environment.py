@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import importlib
+import json
 import os
 import re
 import runpy
@@ -823,6 +824,86 @@ source {overlay_env!s}
 [[ "${{ASCEND_CUSTOM_OPP_PATH}}" == "{overlay}:{base}:{external}" ]]
 """
             subprocess.run(["bash", "-c", script], check=True)
+
+    @unittest.skipUnless(shutil.which("bash"), "requires bash; exercised by Linux CI")
+    def test_shell_pth_and_runtime_agree_on_overlay_selection(self) -> None:
+        installer = runpy.run_path(str(RUNTIME_SOURCE.with_name("install_opp.py")))
+        generators = (installer["_write_set_env"], _load_run_package_finalizer()["_write_set_env"])
+        with tempfile.TemporaryDirectory() as temp_dir:
+            site = Path(temp_dir) / "site"
+            runtime, base, _ = _create_runtime_package(site)
+            a, b = (base.parent / ("fla_npu_overlay_" + name) for name in ("Z", "a"))
+            for vendor in (base, a, b):
+                _create_minimal_vendor(vendor)
+            hook = site / "fla_npu_opp_env.py"
+            shutil.copy2(REPO_ROOT / "torch_custom/fla_npu/fla_npu_opp_env.py", hook)
+            config = base.parent / "config.ini"
+            external = str(Path(temp_dir) / "external")
+            # Explicit expectations are independent of all three implementations.
+            cases = ((None, [b, a, base]), ("", [base]), (" \t:: ", [base]),
+                     (f"{b.name}:{a.name}:{b.name}", [b, a, base]),
+                     (a.name, [a, base]), ("fla_npu_overlay_missing", [base]),
+                     ("../fla_npu_overlay_a:fla_npu_transformer", [base]))
+            import shlex
+
+            for generate in generators:
+                for vendor in (base, a):
+                    generate(vendor)
+                    for selection, expected in cases:
+                        with self.subTest(generator=generate.__code__.co_filename,
+                                          sourced=vendor.name, selection=selection):
+                            config.write_text(f"load_priority={b.name},{base.name},{a.name}\n")
+                            env = {k: v for k, v in os.environ.items() if not k.startswith("FLA_NPU_")}
+                            env.update(ASCEND_HOME_PATH="/fake/cann", FLA_NPU_DISABLE_PTH="1",
+                                       ASCEND_CUSTOM_OPP_PATH=f"{base}:{external}:{a}:{base.parent.parent}")
+                            if selection is not None:
+                                env["FLA_NPU_OVERLAY_VENDOR"] = selection
+                            keys = ("ASCEND_CUSTOM_OPP_PATH", "FLA_NPU_OP_API_LIB", "FLA_NPU_OP_API_LIBS")
+                            dump = "import os,json; print(json.dumps({k:os.environ.get(k) for k in " + repr(keys) + "}))"
+                            shell = ("set -euo pipefail\nsource " + shlex.quote(str(vendor / "bin/set_env.bash"))
+                                     + "\nsource " + shlex.quote(str(vendor / "bin/set_env.bash"))
+                                     + "\n" + shlex.quote(sys.executable) + " -S -c " + shlex.quote(dump))
+                            result = subprocess.run(["bash", "-c", shell], env=env, text=True,
+                                                    check=True, capture_output=True)
+                            prepared = json.loads(result.stdout)
+                            expected_paths = [str(p) for p in expected] + [external]
+                            self.assertEqual(prepared["ASCEND_CUSTOM_OPP_PATH"].split(":"), expected_paths)
+                            expected_libs = [str(p / "op_api/lib/libcust_opapi.so") for p in expected]
+                            self.assertEqual(prepared["FLA_NPU_OP_API_LIBS"].split(":"), expected_libs)
+                            self.assertEqual(prepared["FLA_NPU_OP_API_LIB"], expected_libs[-1])
+                            # Capture what an earlier CANN initialization sees;
+                            # later root import must not change its vendor order.
+                            with mock.patch.dict(os.environ, {**env, **prepared}, clear=True), \
+                                    mock.patch("ctypes.CDLL", return_value=mock.sentinel.library):
+                                _load_runtime(runtime)
+                                self.assertEqual(os.environ["ASCEND_CUSTOM_OPP_PATH"].split(":"), expected_paths)
+                                self.assertEqual(os.environ["FLA_NPU_OP_API_LIBS"].split(":"), expected_libs)
+                            with mock.patch.dict(os.environ, env, clear=True):
+                                del os.environ["FLA_NPU_DISABLE_PTH"]
+                                runpy.run_path(str(hook))
+                                self.assertEqual(os.environ["ASCEND_CUSTOM_OPP_PATH"].split(":"), expected_paths)
+                    config.unlink()
+                    env.pop("FLA_NPU_OVERLAY_VENDOR", None)
+                    result = subprocess.run(["bash", "-c", shell], env=env, text=True,
+                                            check=True, capture_output=True)
+                    self.assertEqual(json.loads(result.stdout)["ASCEND_CUSTOM_OPP_PATH"].split(":"),
+                                     [str(a), str(b), str(base), external])
+
+    @unittest.skipUnless(shutil.which("bash"), "requires bash; exercised by Linux CI")
+    def test_set_env_preserves_standalone_external_vendor(self) -> None:
+        import shlex
+
+        installer = runpy.run_path(str(RUNTIME_SOURCE.with_name("install_opp.py")))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            vendor = Path(temp_dir) / "opp/vendors/standalone_vendor"
+            for generate in (installer["_write_set_env"], _load_run_package_finalizer()["_write_set_env"]):
+                generate(vendor)
+                env = {k: v for k, v in os.environ.items() if not k.startswith("FLA_NPU_")}
+                env.update(FLA_NPU_OVERLAY_VENDOR="", ASCEND_CUSTOM_OPP_PATH="")
+                script = ("set -euo pipefail\nsource " + shlex.quote(str(vendor / "bin/set_env.bash"))
+                          + '\n[[ "$ASCEND_CUSTOM_OPP_PATH" == ' + shlex.quote(str(vendor)) + ' ]]'
+                          + '\n[[ "$FLA_NPU_OP_API_LIB" == "$FLA_NPU_OP_API_LIBS" ]]')
+                subprocess.run(["bash", "-c", script], env=env, check=True)
 
     def test_external_opp_install_removes_conflicting_alias(self) -> None:
         install_opp_globals = runpy.run_path(
