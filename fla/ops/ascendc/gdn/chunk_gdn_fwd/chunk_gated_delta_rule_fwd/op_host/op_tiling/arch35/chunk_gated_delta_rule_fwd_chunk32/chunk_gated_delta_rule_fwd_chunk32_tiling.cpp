@@ -56,7 +56,7 @@ bool IsShape(const gert::StorageShape *shape, std::initializer_list<int64_t> dim
 
 } // namespace
 
-ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *context)
+ge::graphStatus TilingForChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *context)
 {
     OP_CHECK_IF(context == nullptr || context->GetAttrs() == nullptr,
                 OP_LOGE("ChunkGatedDeltaRuleFwd", "Invalid chunk32 tiling context."),
@@ -187,7 +187,6 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *contex
     tiling->T = static_cast<uint32_t>(tokens);
     tiling->hasInitial = hasInitial;
     tiling->scale = static_cast<float>(*scale);
-    tiling->workspaceOffset = 0;
     tiling->seqNum = seqNum;
     tiling->initialFp32 = initialFp32;
     tiling->finalFp32 = stateDtype == ge::DT_FLOAT ? 1U : 0U;
