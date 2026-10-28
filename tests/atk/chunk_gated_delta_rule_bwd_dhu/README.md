@@ -90,3 +90,34 @@ memcheck 日志包含原有 `dh0` 清零 `AscendC::Fill` 调用的 GM 越界 WAR
 性能按原有 `_perf.json` 的 BF16 模型用例单轮采集，`B=1, HK=HV=4, T=512, K=V=128, chunk=64`，
 `dht=None`。取 `op_summary` 中该算子的 `Task Duration(us)`：基线 `39.136 us`，修复后 `38.972 us`；
 pipe 字段完整。此处只记录单轮数据。
+
+## A5 pre-gated qg direct（独立 c9e2+Dhu 分支）
+
+### 适用边界
+
+`USE_GK=1 && HRatio==1` 时，q 已是 pre-gated qg。AIC 在当前 head 的 `DH_READY`
+等待前直接将 q 从 GM 装载到该 head 原来的 qg L1A slot，AIV 不再执行 GM→UB、恒等 cast 和
+UB→L1 staging。GEMM 输入内容、布局和计算顺序不变。direct 使用本地 MTE2/MTE1 ready/free，
+最后一个 K tile 的 L1→L0A 后释放 L1，不增加跨核旗、跨 task 预取或 L1 峰值。
+GVA 与 `USE_GK=0` 保留原 AIV staging、共享与 gate 路径，公开接口和跨核旗不变。
+共享 kernel 入口给 A2/A3/A5 的 Cube `Init` 都传入 q；A2/A3 不使用该参数，原数据路径不变。
+
+本独立分支只包含 c9e2 基线上的 Dhu qg direct 和测试 `ct` 延迟导入，不包含 Finalize、
+公共 V2 ATK README、Python 路由或其它算子的改动。
+
+### 历史口径与独立复测范围
+
+参考工作树中的早期 standalone 实验和联合 V2 环境记录仅作历史参考，不作为本独立分支的
+最终验收证据。其它 PR（包括 PR913）或“前三项优化”联合环境的布局、精度和性能结果均不
+归入本 PR。本分支的最终构建和 NPU 复测尚未完成，因此本节不声明精度、sanitizer 或性能
+通过，也不转录联合环境的 saved/recompute 性能数字。
+
+独立复测至少应覆盖：
+
+- direct 的 BF16/FP16、C64/C128、V128/V256、dense/varlen、dht 为空/非空、尾 chunk、
+  多 chunk 和同奇偶 head 的 L1A slot 复用，并与基线做输出对照。
+- raw-gate 与 GVA 回退路径，确认原 AIV staging、组内共享和 gate 行为不变；共享 `Init`
+  签名还需覆盖 A2/A3 交叉构建，实机结果只按实际执行环境记录。
+- direct 与回退路径的 memcheck/racecheck，以及同环境、同用例的基线/候选
+  `msprof op_summary.Task Duration(us)` 对比；既有 sanitizer WARNING 需单独保留，不能把
+  工具“报告通过”写成零告警。
