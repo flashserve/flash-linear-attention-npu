@@ -1,7 +1,8 @@
-"""chunk_gated_delta_rule_fwd_32 ATK executor.
+"""Migrated chunk32 path of chunk_gated_delta_rule_fwd.
 
 CPU golden is the prepare + chunk_fwd_h + chunk_fwd_o chain in ``scripts/reference.py``.
-NPU DUT is ``npu_chunk_gated_delta_rule_fwd_32``. Both sides read the same seeded inputs.
+NPU DUT is ``npu_chunk_gated_delta_rule_fwd(..., chunk_size=32)``. Both sides
+read the same seeded inputs.
 """
 
 from __future__ import annotations
@@ -20,24 +21,11 @@ from atk.configs.dataset_config import InputDataset
 from atk.configs.results_config import TaskResult
 from atk.tasks.api_execute import register
 from atk.tasks.api_execute.base_api import BaseApi
-from atk.tasks.post_process.single_benchmark_compare import SingleBenchmarkAccuracyCompare
-from atk.tasks.task_plugins_register import ACCURACY_REGISTRY
 
 from _ascendc_common_executor import _case_spec, _finite_tuple, _marker_device
 from reference import default_scale, forward_reference
 
-# Published ATK 26.9.24 does not register this name. Compare workers import
-# every module under atk.tasks.post_process, so the copy installed there is
-# what the post-process process actually sees. Registering here covers a
-# worker that imports this executor before the lookup.
-if "mixed_tolerance_bm" not in ACCURACY_REGISTRY:
-    ACCURACY_REGISTRY.register_with_key(
-        "mixed_tolerance_bm",
-        SingleBenchmarkAccuracyCompare,
-    )
-
-
-OP_NAME = "chunk_gated_delta_rule_fwd_32"
+OP_NAME = "chunk_gated_delta_rule_fwd_chunk32"
 
 
 def _seqlens(spec: dict[str, Any]) -> Optional[list[int]]:
@@ -118,7 +106,7 @@ def build_inputs(spec: dict[str, Any], device: torch.device) -> dict[str, Any]:
 
 def run_cpu(spec: dict[str, Any]):
     inputs = build_inputs(spec, torch.device("cpu"))
-    return forward_reference(
+    o, final_state = forward_reference(
         inputs["q"],
         inputs["k"],
         inputs["v"],
@@ -128,33 +116,58 @@ def run_cpu(spec: dict[str, Any]):
         inputs["seqlens"],
         inputs["scale"],
     )
+    return o.transpose(1, 2).contiguous(), final_state
+
+
+def _metadata(seqlens: Optional[list[int]]) -> tuple[Optional[list[int]], Optional[list[int]]]:
+    if seqlens is None:
+        return None, None
+    cu = [0]
+    chunks = []
+    for sequence, length in enumerate(seqlens):
+        cu.append(cu[-1] + int(length))
+        for local_chunk in range((int(length) + 31) // 32):
+            chunks.extend((sequence, local_chunk))
+    return cu, chunks
 
 
 def run_npu(spec: dict[str, Any], input_data: InputDataset):
     inputs = build_inputs(spec, _marker_device(input_data))
-    from fla_npu.ops.ascendc import npu_chunk_gated_delta_rule_fwd_32
+    from fla_npu.ops.ascendc import npu_chunk_gated_delta_rule_fwd
 
     os.environ["TBE_PARALLEL_COMPILE_ENABLE"] = "0"
     os.environ["PARALLEL_COMPILE"] = "0"
     torch.npu.config.allow_internal_format = False
     torch.npu.set_compile_mode(jit_compile=False)
-    cu = None if inputs["seqlens"] is None else [0, *torch.tensor(inputs["seqlens"]).cumsum(0).tolist()]
-    # Python fills canonical chunk_indices at block 32 when only cu_seqlens is set.
-    outputs = npu_chunk_gated_delta_rule_fwd_32(
+    cu, chunks = _metadata(inputs["seqlens"])
+    g = inputs["g"].transpose(1, 2).contiguous()
+    beta = inputs["beta"].transpose(1, 2).contiguous()
+    outputs = npu_chunk_gated_delta_rule_fwd(
         inputs["q"],
         inputs["k"],
         inputs["v"],
-        inputs["g"],
-        inputs["beta"],
+        g,
+        beta,
         initial_state=inputs["initial_state"],
+        output_final_state=True,
+        chunk_size=32,
         cu_seqlens=cu,
+        chunk_indices=chunks,
         scale=inputs["scale"],
+        use_exp2=False,
+        use_qk_l2norm_in_kernel=True,
+        use_beta_sigmoid_in_kernel=True,
+        allow_neg_eigval=False,
+        disable_recompute=False,
+        return_intermediate_states=False,
+        state_v_first=False,
+        layout=str(spec.get("layout", "BNSD")).upper(),
     )
     torch.npu.synchronize()
-    return tuple(tensor.detach().cpu() for tensor in outputs)
+    return outputs[0].detach().cpu(), outputs[1].detach().cpu()
 
 
-@register("executor_chunk_gated_delta_rule_fwd_32")
+@register("executor_chunk_gated_delta_rule_fwd_chunk32")
 class FunctionApi(BaseApi):
     def __init__(self, task_result: TaskResult):
         super(FunctionApi, self).__init__(task_result)
