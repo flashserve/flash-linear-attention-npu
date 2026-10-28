@@ -40,6 +40,8 @@ Finalize 对 h、dh 分别寻址，Dhu 和内嵌 state_scan 均产生 NT-first d
   在循环内按操作交错展开相邻两行或两块，循环外保留独立单尾；逐行/逐块算术、掩码及写回顺序不变。
 - Stage7 将 `exp2(g-center)` 的 FP32 结果保存在已发布的 qPos 高位区 [80,96) KiB，
   Stage9 按同布局读取；下一 band 才复用 qPos，UB 峰值、算术顺序和跨核旗均不变。
+- A5 host 将原始 tiling 的逻辑大小设为 `sizeof(TilingData)+8`，与设备 `opParaSize` 一致；
+  不改写字段内容或设备复制长度，arch22 路径不变。
 - dg 及参数梯度部分和写入 workspace，采用固定顺序归约，不使用原子累加。
 - 融合反向入口在同一块私有 workspace 内依次铺设 dv0/dq_raw/dAqk/dh/dv_scan/dAkk 六个跨阶段缓冲、
   Kernel B 与 Kernel C 区域；各区域按 512 字节对齐，跨阶段偏移以 512 字节为单位写入 tiling，

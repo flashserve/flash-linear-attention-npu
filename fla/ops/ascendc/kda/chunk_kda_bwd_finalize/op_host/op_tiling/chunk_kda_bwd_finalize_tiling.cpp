@@ -216,6 +216,9 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
     auto *tiling = context->GetTilingData<KDA::ChunkKdaBwdFinalizeTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
     *tiling = shape;
+    auto *rawTiling = context->GetRawTilingData();
+    OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);
+    rawTiling->SetDataSize(sizeof(KDA::ChunkKdaBwdFinalizeTilingData) + 8);
     context->SetTilingKey(processor.GetTilingKey());
     context->SetBlockDim(processor.GetBlockDim());
     context->GetWorkspaceSizes(1)[0] = processor.GetWorkspaceSize();
