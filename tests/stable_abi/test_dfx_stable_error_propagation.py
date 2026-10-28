@@ -7,6 +7,7 @@ import torch
 import torch_npu  # noqa: F401
 
 from fla_npu.ops import ascendc
+from fla_npu.ops.ascendc import _runtime
 
 
 def _empty(shape, dtype=torch.bfloat16):
@@ -31,6 +32,10 @@ def _capture_error(call):
     raise AssertionError("invalid operator call was accepted")
 
 
+def _recent_aclnn_error():
+    return _runtime.runtime()._recent_error_message().strip()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", type=int, default=0)
@@ -44,6 +49,7 @@ def main():
     assert "aclnnChunkKdaFwd" in message, message
     assert "Error message:" in message and "EZ" in message, message
     assert message.count("Error message:") == 1, message
+    assert _recent_aclnn_error() in message, message
     assert ascendc.BACKENDS["npu_chunk_kda_fwd"] == "stable", ascendc.BACKENDS
     print("PASS ChunkKdaFwd Stable-ABI exception contains ACLNN details", flush=True)
 
@@ -76,6 +82,7 @@ def main():
     assert "aclnnPreProcessBwdKernelMergedGetWorkspaceSize failed: 161002" in message, message
     assert "EZ0027" in message and "q.shape[3]" in message, message
     assert message.count("Error message:") == 1, message
+    assert _recent_aclnn_error() in message, message
     assert ascendc.BACKENDS[
         "npu_pre_process_bwd_kernel_merged"] == "stable", ascendc.BACKENDS
     print("PASS PreProcessBwdKernelMerged Stable-ABI exception contains "
