@@ -55,8 +55,8 @@ outputs = chunk_kda_fwd(
 | `safe_gate` | `False` | bool | 走 safe gate 形式 |
 | `lower_bound` | `None` | float | safe gate 下界，缺省等价 `-5.0` |
 | `use_gate_in_kernel` | `False` | bool | `true` 时 kernel 内用 `A_log`/`dt_bias` 算 gate |
-| `A_log` | `None` | `[H_v]`；FP32 | `use_gate_in_kernel=true` 时必选 |
-| `dt_bias` | `None` | `[H_v*K]`；FP32 | gate bias |
+| `A_log` | `None` | `[H_v]`；V1 FP32，V2 BF16/FP32 | `use_gate_in_kernel=true` 时必选 |
+| `dt_bias` | `None` | `[H_v*K]`；V1 FP32，V2 BF16/FP32 | gate bias |
 | `disable_recompute` | `False` | bool | `true` 时返回反向所需的 `w/u/qg/kg/v_new`（见返回策略） |
 | `return_intermediate_states` | `False` | bool | `true` 时额外返回 `h` |
 | `state_v_first` | `False` | bool | state 末两维顺序 |
@@ -327,3 +327,12 @@ assert final_state.shape == (B, H, K, V)
 直调样例仅覆盖 dense BNSD、K=128、V=128，并保留“调用方传入已累计 gk”的低层测试接口；
 直调路径是低层诊断入口，不套用公开的 `K/V` 档位拦截；公开顶层语义与全部参数约束以
 稳定 Python/aclnn 接口为准。
+
+## BF16 gate 参数
+
+Prepare / 前向 V2 的 A_log 和 dt_bias 分别支持 BF16/FP32（与 g/beta 类型独立）。
+参数在片上转 FP32，计算与输出类型不变。形状仍为 A_log=[HV]、dt_bias=[HV*K]，
+bias 可省略。Python 收到 BF16 参数时选择满足约束的 V2；不满足 V2 约束时拒绝，
+不隐式插入 GM Cast。V1 保留原 FP32 参数约束。
+前向总接口 V2 要求 q/k/v=BF16、K=V=128、chunk_size=64，变长边界严格递增
+（不含空序列）；显式强制 V1 时不能传 BF16 A_log/dt_bias。

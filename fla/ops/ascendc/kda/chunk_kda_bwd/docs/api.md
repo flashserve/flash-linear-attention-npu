@@ -105,4 +105,4 @@ A2/A3 staged、A5 V2 和独立 Finalize 支持 raw_g、beta、A_log、dt_bias �
 16 种 BF16/FP32 组合。saved 模式将原始输入直接传给 Finalize，取消原先
 raw_g/A_log 的 GM Cast；调用方应删除反向前 dt_bias.float()，直接传原始 bias。
 重算分支仍为 Recompute 单独创建 FP32 临时参数，随后 Finalize 使用原始输入。
-A5 legacy 的 dt_bias 仍要求 FP32。本次不改变前向的参数 dtype 支持范围。
+A5 legacy 的 dt_bias 仍要求 FP32。前向参数 dtype 支持范围见 [前向接口](../../chunk_kda_fwd/docs/api.md)。

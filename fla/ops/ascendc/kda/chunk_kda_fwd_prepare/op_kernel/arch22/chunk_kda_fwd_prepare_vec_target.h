@@ -485,8 +485,8 @@ struct TargetVectorContext {
     AscendC::GlobalTensor<bfloat16_t> vGm_{};
     AscendC::GlobalTensor<GateT> gateGm_{};
     AscendC::GlobalTensor<BetaT> betaGm_{};
-    AscendC::GlobalTensor<float> dtBiasGm_{};
-    AscendC::GlobalTensor<float> aLogGm_{};
+    AscendC::GlobalTensor<DTYPE_DT_BIAS> dtBiasGm_{};
+    AscendC::GlobalTensor<DTYPE_A_LOG> aLogGm_{};
     AscendC::GlobalTensor<bfloat16_t> qgGm_{};
     AscendC::GlobalTensor<bfloat16_t> qgScaledGm_{};
     AscendC::GlobalTensor<bfloat16_t> kgGm_{};
@@ -580,10 +580,10 @@ __aicore__ inline void InitTargetVec(TargetVectorContext<GateT, BetaT, CompilePo
     ctx.gateGm_.SetGlobalBuffer(reinterpret_cast<__gm__ GateT *>(ctx.args_.rawGate));
     ctx.betaGm_.SetGlobalBuffer(reinterpret_cast<__gm__ BetaT *>(ctx.args_.beta));
     if (ctx.args_.dtBias != nullptr) {
-        ctx.dtBiasGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(ctx.args_.dtBias));
+        ctx.dtBiasGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_DT_BIAS *>(ctx.args_.dtBias));
     }
     if (ctx.args_.aLog != nullptr) {
-        ctx.aLogGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(ctx.args_.aLog));
+        ctx.aLogGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_A_LOG *>(ctx.args_.aLog));
     }
     if constexpr (CompilePolicy::outputMode == OutputMode::Save) {
         ctx.qgGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(ctx.args_.qg));
@@ -760,6 +760,11 @@ __aicore__ inline void StageV0(TargetVectorContext<GateT, BetaT, CompilePolicy> 
     auto betaEff = ub[base + Arch22Ub::kBetaEff].template ReinterpretCast<float>();
     auto dtBias = ub[base + Arch22Ub::kDtBias].template ReinterpretCast<float>();
     auto aLog = ub[base + Arch22Ub::kALog].template ReinterpretCast<float>();
+    // Private gaps: beta uses at most 256 bytes; scalar log uses one DMA block.
+    auto biasInput = ub[base + (sizeof(DTYPE_DT_BIAS) == 2 ? Arch22Ub::kBetaRaw + 256 : Arch22Ub::kDtBias)]
+                         .template ReinterpretCast<DTYPE_DT_BIAS>();
+    auto logInput = ub[base + Arch22Ub::kALog + (sizeof(DTYPE_A_LOG) == 2 ? 32 : 0)]
+                        .template ReinterpretCast<DTYPE_A_LOG>();
     auto qRstd = ub[base + Arch22Ub::kQRstd].template ReinterpretCast<float>();
     auto kRstd = ub[base + Arch22Ub::kKRstd].template ReinterpretCast<float>();
     auto g = ub[Arch22Ub::kSharedG].template ReinterpretCast<float>();
@@ -789,7 +794,6 @@ __aicore__ inline void StageV0(TargetVectorContext<GateT, BetaT, CompilePolicy> 
     AscendC::DataCopyPadExtParams<GateT> gatePad{false, 0, 0, 0};
     AscendC::DataCopyPad(gate, ctx.gateGm_[gateOffset], gateCopy, gatePad);
     AscendC::DataCopyPadExtParams<BetaT> betaPad{false, 0, 0, 0};
-    AscendC::DataCopyPadExtParams<float> fp32Pad{false, 0, 0, 0};
     if (ctx.args_.tiling.inputSequenceMajor) {
         const uint32_t betaStride =
             static_cast<uint32_t>(static_cast<uint64_t>(ctx.args_.tiling.valueHeadNum - 1) * sizeof(BetaT));
@@ -806,14 +810,14 @@ __aicore__ inline void StageV0(TargetVectorContext<GateT, BetaT, CompilePolicy> 
         if (ctx.args_.tiling.hasDtBias) {
             // 公开接口将 dt_bias 固定为展平的 [HV,K]。
             AscendC::DataCopyPad(
-                dtBias, ctx.dtBiasGm_[valueHead * Shape::kHeadDim],
-                AscendC::DataCopyExtParams{1, static_cast<uint32_t>(Shape::kHeadDim * sizeof(float)), 0, 0, 0},
-                fp32Pad);
+                biasInput, ctx.dtBiasGm_[valueHead * Shape::kHeadDim],
+                AscendC::DataCopyExtParams{1, static_cast<uint32_t>(Shape::kHeadDim * sizeof(DTYPE_DT_BIAS)), 0, 0, 0},
+                AscendC::DataCopyPadExtParams<DTYPE_DT_BIAS>{false, 0, 0, 0});
         }
         if (ctx.args_.aLog != nullptr) {
             // 公开接口将 a_log 固定为 [HV]。
-            AscendC::DataCopyPad(aLog, ctx.aLogGm_[valueHead],
-                                 AscendC::DataCopyExtParams{1, static_cast<uint32_t>(sizeof(float)), 0, 0, 0}, fp32Pad);
+            AscendC::DataCopyPad(logInput, ctx.aLogGm_[valueHead],
+                                 AscendC::DataCopyExtParams{1, static_cast<uint32_t>(sizeof(DTYPE_A_LOG)), 0, 0, 0}, AscendC::DataCopyPadExtParams<DTYPE_A_LOG>{false, 0, 0, 0});
         }
     }
     // Gram relay 占 16 KiB，必须避开尚未消费的 gate。FP32 gate 在共享 G，
@@ -842,6 +846,16 @@ __aicore__ inline void StageV0(TargetVectorContext<GateT, BetaT, CompilePolicy> 
     }
     AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(ctx.inputReady_[pair]);
     AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(ctx.inputReady_[pair]);
+    if constexpr (sizeof(DTYPE_DT_BIAS) == 2) {
+        if (ctx.args_.tiling.hasDtBias) AscendC::Cast(dtBias, biasInput, AscendC::RoundMode::CAST_NONE, Shape::kHeadDim);
+    }
+    if constexpr (sizeof(DTYPE_A_LOG) == 2) {
+        if (static_cast<GateMode>(ctx.args_.tiling.gateMode) != GateMode::PrecomputedStep)
+            AscendC::Cast(aLog, logInput, AscendC::RoundMode::CAST_NONE, 1);
+    }
+    if constexpr (sizeof(DTYPE_A_LOG) == 2 || sizeof(DTYPE_DT_BIAS) == 2) {
+        AscendC::PipeBarrier<PIPE_V>();
+    }
     if (ctx.args_.tiling.inputSequenceMajor) {
         // 偏移表放在本 pair 的 private 尾部，V1 的 Kminus 会覆盖它，
         // 因此每个 work 的 StageV0 都重写一次；只影响 sequence-major。

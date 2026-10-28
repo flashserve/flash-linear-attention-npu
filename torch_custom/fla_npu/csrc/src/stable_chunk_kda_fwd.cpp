@@ -172,7 +172,9 @@ run_npu_chunk_kda_fwd(
   }
   const bool switches_requested =
       epsilon != kChunkKdaFwdDefaultEpsilon || use_qk_l2norm_in_kernel ||
-      use_beta_sigmoid_in_kernel || allow_neg_eigval || !use_exp2;
+      use_beta_sigmoid_in_kernel || allow_neg_eigval || !use_exp2 ||
+      (A_log.has_value() && meta_of(*A_log).scalar_type == kBFloat16) ||
+      (dt_bias.has_value() && meta_of(*dt_bias).scalar_type == kBFloat16);
   const bool v2_scenario =
       q_meta.scalar_type == kBFloat16 && k_dim == 128 && v_dim == 128 &&
       chunk_size == 64 && cu_strictly_increasing;

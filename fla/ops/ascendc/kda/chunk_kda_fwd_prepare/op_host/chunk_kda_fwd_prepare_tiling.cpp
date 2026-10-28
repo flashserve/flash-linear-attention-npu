@@ -329,18 +329,18 @@ bool CheckOptionalInput(gert::TilingContext *context,
                         const PrepareShapeInfo &shape, bool useGateInKernel,
                         bool safeGate, bool &hasDtBias)
 {
-    const auto *aLogDesc = context->GetOptionalInputDesc(PREPARE_INPUT_A_LOG);
-    const auto *dtBiasDesc = context->GetOptionalInputDesc(PREPARE_INPUT_DT_BIAS);
-    const auto *aLogShape = context->GetOptionalInputShape(PREPARE_INPUT_A_LOG);
-    const auto *dtBiasShape = context->GetOptionalInputShape(PREPARE_INPUT_DT_BIAS);
+    const auto *aLogDesc = context->GetInputDesc(PREPARE_INPUT_A_LOG);
+    const auto *dtBiasDesc = context->GetInputDesc(PREPARE_INPUT_DT_BIAS);
+    const auto *aLogShape = context->GetInputShape(PREPARE_INPUT_A_LOG);
+    const auto *dtBiasShape = context->GetInputShape(PREPARE_INPUT_DT_BIAS);
     if ((aLogDesc == nullptr) != (aLogShape == nullptr) ||
         (dtBiasDesc == nullptr) != (dtBiasShape == nullptr)) {
         OP_LOGE(context->GetNodeName(),
                 "a_log/dt_bias 的 descriptor 与 shape 元数据必须成对存在。");
         return false;
     }
-    const bool hasALog = aLogDesc != nullptr;
-    hasDtBias = dtBiasDesc != nullptr;
+    const bool hasALog = aLogShape != nullptr && aLogShape->GetStorageShape().GetShapeSize() != 0;
+    hasDtBias = dtBiasShape != nullptr && dtBiasShape->GetStorageShape().GetShapeSize() != 0;
 
     if (!useGateInKernel) {
         if (hasALog || hasDtBias || safeGate) {
@@ -355,9 +355,9 @@ bool CheckOptionalInput(gert::TilingContext *context,
                 "use_gate_in_kernel=true 时必须传入 a_log。");
         return false;
     }
-    if (aLogDesc->GetDataType() != ge::DT_FLOAT ||
-        (dtBiasDesc != nullptr && dtBiasDesc->GetDataType() != ge::DT_FLOAT)) {
-        OP_LOGE(context->GetNodeName(), "a_log 和 dt_bias 只支持 FP32。");
+    if ((aLogDesc->GetDataType() != ge::DT_FLOAT && aLogDesc->GetDataType() != ge::DT_BF16) ||
+        (dtBiasDesc != nullptr && dtBiasDesc->GetDataType() != ge::DT_FLOAT && dtBiasDesc->GetDataType() != ge::DT_BF16)) {
+        OP_LOGE(context->GetNodeName(), "a_log 和 dt_bias 只支持 BF16/FP32。");
         return false;
     }
     const auto &aLog = aLogShape->GetStorageShape();

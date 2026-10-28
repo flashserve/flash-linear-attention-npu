@@ -1371,6 +1371,9 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
                       k_rstd_out=None, beta_eff_out=None):
     """KDA chunked forward, returning the saved tensors the backward needs.
 
+    A_log/dt_bias may independently be BF16/FP32 in V2. BF16 parameters
+    select V2, requiring BF16 q/k/v, K=V=128, C=64 and nonempty sequences.
+
     ``disable_recompute`` is what makes `w`/`u`/`qg`/`kg`/`v_new` real outputs
     rather than null handles, and `chunk_indices` defaults to the canonical
     sequence-major list the kernel expects.  The trailing value is the caller's
