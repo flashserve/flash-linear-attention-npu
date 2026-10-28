@@ -884,6 +884,10 @@ private:
                       std::is_same_v<GateT, float>) {
             L2NormRowsBatched(q, qRstd, tileBuf, validRows);
             L2NormRowsBatched(k, kRstd, tileBuf, validRows);
+        } else if (RuntimeMath<CompilePolicy>::Norm(args_.tiling) == QkNormMode::L2 &&
+                       std::is_same_v<GateT, bfloat16_t>) {
+            L2NormRowsBatched(q, qRstd, g, validRows);
+            L2NormRowsBatched(k, kRstd, g, validRows);
         } else if (RuntimeMath<CompilePolicy>::Norm(args_.tiling) == QkNormMode::L2) {
             // 每行按冻结语义执行 x * rsqrt(sum(x^2) + epsilon)。AR
             // ReduceSum 以 isReuseSource=true 调用，归约复用平方结果区；
