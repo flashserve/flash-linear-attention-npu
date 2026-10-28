@@ -2,8 +2,12 @@ import math
 import torch
 import torch_npu
 from typing import Optional, Tuple, List
-import ct
 import fla_npu
+
+
+def _ct_single(*args, **kwargs):
+    import ct
+    return ct.single(*args, **kwargs)
 
 # fp16/bf16：在尽量无 NaN 的前提下抬高输出数量级（dv2 中位 ~1e-3；dh 非零元 |x| 最大可至 ~1e-3 量级）
 _LOW_PRECISION_INPUT_HALF_RANGE_QK = 6.5e-3
@@ -503,9 +507,9 @@ def test_fix(
     dh_npu_cpu = dh_npu.detach().cpu()
     dv2_npu_cpu = dv2_npu.detach().cpu()
     print("dh comparison:")
-    ct.single(dh_npu_cpu, dh_golden)
+    _ct_single(dh_npu_cpu, dh_golden)
     print("dv2 comparison:")
-    ct.single(dv2_npu_cpu, dv2_golden)
+    _ct_single(dv2_npu_cpu, dv2_golden)
     assert_finite_after_npu_golden_compare(dh_npu_cpu, dv2_npu_cpu, dh_golden, dv2_golden)
     print(f"test_fix 被调用了第 {test_fix.call_count} 次")
 
@@ -574,9 +578,9 @@ def test_variable(
     print("dh_npu shape is", dh_npu_cpu.shape)
     print("dv2_npu shape is", dv2_npu_cpu.shape)
     print("dh comparison:")
-    ct.single(dh_npu_cpu, dh_golden)
+    _ct_single(dh_npu_cpu, dh_golden)
     print("dv2 comparison:")
-    ct.single(dv2_npu_cpu, dv2_golden)
+    _ct_single(dv2_npu_cpu, dv2_golden)
 
     # NPU 与 golden 对比全部完成后，再检查 NaN/Inf，最后落盘
     assert_finite_after_npu_golden_compare(dh_npu_cpu, dv2_npu_cpu, dh_golden, dv2_golden)
