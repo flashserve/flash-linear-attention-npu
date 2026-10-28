@@ -14,7 +14,7 @@ from typing import Any, Optional
 
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "common"))
 sys.path.insert(0, str(Path(__file__).resolve().parent / "scripts"))
 
 from atk.configs.dataset_config import InputDataset
