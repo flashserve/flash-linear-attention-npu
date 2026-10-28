@@ -209,7 +209,7 @@ class TestCausalConv1d(unittest.TestCase):
         npu_state = make_tensor((1, 3, 16), start=301.0)
         causal_state = npu_state.clone()
 
-        with self.assertWarnsRegex(FutureWarning, "2027/02"):
+        with self.assertWarnsRegex(FutureWarning, r"January 15, 2027 \(v26\.12\.0\)"):
             npu_y = ascendc_ops.npu_causal_conv1d(
                 x,
                 weight,
@@ -217,7 +217,7 @@ class TestCausalConv1d(unittest.TestCase):
                 npu_state,
                 activation_mode=1,
             )
-        with self.assertWarnsRegex(FutureWarning, "2027/02"):
+        with self.assertWarnsRegex(FutureWarning, r"January 15, 2027 \(v26\.12\.0\)"):
             causal_y = ascendc_ops.causal_conv1d(
                 x,
                 weight,
