@@ -2899,10 +2899,6 @@ def npu_chunk_gated_delta_rule_fwd(
                 "chunk_size=32 requires use_exp2=False, "
                 "use_qk_l2norm_in_kernel=True and use_beta_sigmoid_in_kernel=True."
             )
-        if allow_neg_eigval or state_v_first:
-            raise ValueError(
-                "chunk_size=32 requires allow_neg_eigval=False and state_v_first=False."
-            )
         if disable_recompute or return_intermediate_states:
             raise ValueError(
                 "chunk_size=32 does not export g_cumsum, A or intermediate states; "

@@ -26,6 +26,8 @@ constexpr size_t OUTPUT_O = 0;
 constexpr size_t OUTPUT_FINAL_STATE = 1;
 constexpr size_t ATTR_CHUNK_SIZE = 1;
 constexpr size_t ATTR_SCALE = 2;
+constexpr size_t ATTR_STATE_V_FIRST = 7;
+constexpr size_t ATTR_ALLOW_NEG_EIGVAL = 8;
 
 constexpr int64_t CHUNK_SIZE = 32;
 constexpr int64_t HEAD_DIM = 128;
@@ -189,6 +191,10 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *contex
     tiling->seqNum = seqNum;
     tiling->initialFp32 = initialFp32;
     tiling->finalFp32 = stateDtype == ge::DT_FLOAT ? 1U : 0U;
+    const bool *stateVFirst = context->GetAttrs()->GetAttrPointer<bool>(ATTR_STATE_V_FIRST);
+    tiling->stateVFirst = stateVFirst != nullptr && *stateVFirst ? 1U : 0U;
+    const bool *allowNeg = context->GetAttrs()->GetAttrPointer<bool>(ATTR_ALLOW_NEG_EIGVAL);
+    tiling->allowNegEigval = allowNeg != nullptr && *allowNeg ? 1U : 0U;
 
     uint32_t aicNum = 1;
     uint64_t workspaceBytes = DEFAULT_WORKSPACE_BYTES;

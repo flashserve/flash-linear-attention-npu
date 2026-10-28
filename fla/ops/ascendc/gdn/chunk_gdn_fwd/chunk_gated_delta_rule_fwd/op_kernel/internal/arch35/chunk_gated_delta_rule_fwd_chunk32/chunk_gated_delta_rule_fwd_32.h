@@ -111,6 +111,8 @@ public:
         hasInitial_ = tilingData.hasInitial;
         initialFp32_ = tilingData.initialFp32;
         finalFp32_ = tilingData.finalFp32;
+        stateVFirst_ = tilingData.stateVFirst;
+        allowNegEigval_ = tilingData.allowNegEigval;
         seqNum_ = tilingData.seqNum;
         uint32_t aicIdx = GetBlockIdx();
         if ASCEND_IS_AIV {
@@ -433,7 +435,11 @@ private:
             WaitFlag<HardEvent::MTE3_V>(3);
             nzArmed_ = 0;
         }
-        BetaSigmoidVF(ubBeta_, ubBe_);
+        if (allowNegEigval_ != 0) {
+            BetaSigmoidVF<true>(ubBeta_, ubBe_);
+        } else {
+            BetaSigmoidVF<false>(ubBeta_, ubBe_);
+        }
         CumsumExp2VF<true>(ubG_, ubEg_, ubSh_);
         L2NormKAndKbgVF(ubK_, ubKnz_, ubKbg_, ubBe_, ubEg_);
     }
@@ -687,7 +693,11 @@ private:
     // runs while columns 64-127 are still being updated. W stays the full K.
     __aicore__ inline void MatmulWHCols0To63()
     {
-        LoadL1NzHCols(l1H_, l0B_[0], 0);
+        if (stateVFirst_ != 0) {
+            LoadL1NzHRows(l1H_, l0B_[0], 0);
+        } else {
+            LoadL1NzHCols(l1H_, l0B_[0], 0);
+        }
         SetFlag<HardEvent::MTE1_M>(1);
         WaitFlag<HardEvent::MTE1_M>(0);
         WaitFlag<HardEvent::MTE1_M>(1);
@@ -698,7 +708,11 @@ private:
     // columns of a [32, 128] tile start at 2048 floats.
     __aicore__ inline void MatmulWHCols64To127WriteVnew()
     {
-        LoadL1NzHCols(l1H_, l0B_[1], 4);
+        if (stateVFirst_ != 0) {
+            LoadL1NzHRows(l1H_, l0B_[1], 4);
+        } else {
+            LoadL1NzHCols(l1H_, l0B_[1], 4);
+        }
         SetFlag<HardEvent::MTE1_M>(1);
         WaitFlag<HardEvent::MTE1_M>(1);
         MmadL0ToL0C(l0A_[0], l0B_[1], l0C0_[2048], kBt, 64, kDim, false);
@@ -717,7 +731,9 @@ private:
     __aicore__ inline void ReloadHAndQexp(uint32_t slot)
     {
         WaitFlag<HardEvent::M_MTE1>(0);
-        LoadL1ToL0B(l1H_, l0B_[0], kDim, kDim, true);
+        // [K,V] H is already [k, n]. Physical [V,K] is [n, k], so the load
+        // transpose flips and q@H still produces [BT, V].
+        LoadL1ToL0B(l1H_, l0B_[0], kDim, kDim, stateVFirst_ == 0);
         LoadL1ToL0A(l1Qexp_[slot], l0A_[0], kBt, kDim, false);
     }
 
@@ -733,10 +749,15 @@ private:
         constexpr int kDm = 64;
         constexpr uint32_t kL0cD = 16 * 1024;
         WaitFlag<HardEvent::M_MTE1>(1);
-        LoadL1ToL0AB(l1K_[slot], l1Vg_, l0A_[1], l0B_[1], kDm, kDim, kBt, true, true);
+        if (stateVFirst_ != 0) {
+            // D lands as [V,K]: each AIV owns 64 V-rows and the full K.
+            LoadL1ToL0AB(l1Vg_, l1K_[slot], l0A_[1], l0B_[1], kDm, kDim, kBt, true, true);
+        } else {
+            LoadL1ToL0AB(l1K_[slot], l1Vg_, l0A_[1], l0B_[1], kDm, kDim, kBt, true, true);
+        }
         SetFlag<HardEvent::MTE1_M>(1);
         WaitFlag<HardEvent::M_MTE1>(0);
-        auto kPart = l1K_[slot][static_cast<uint32_t>(2 * 2 * kBt * 16)];
+        auto kPart = (stateVFirst_ != 0 ? l1Vg_ : l1K_[slot])[static_cast<uint32_t>(2 * 2 * kBt * 16)];
         LoadL1ToL0A(kPart, l0A_[0], kDm, kBt, true);
         SetFlag<HardEvent::MTE1_M>(0);
         LocalTensor<float> l0cD = l0C0_[kL0cD];
@@ -1318,6 +1339,8 @@ private:
     uint32_t hasInitial_ = 0;
     uint32_t initialFp32_ = 0;
     uint32_t finalFp32_ = 0;
+    uint32_t stateVFirst_ = 0;
+    uint32_t allowNegEigval_ = 0;
     uint32_t nzArmed_ = 0;
     float scale_ = 0.f;
     bool hasHead_ = false;
