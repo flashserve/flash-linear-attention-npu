@@ -1,7 +1,7 @@
-# Finalize 输出布局直写
+# Finalize 输出布局、dtype 与片上转换
 
-设计规则版本：V2。接口见 [api.md](api.md)。本次只改变末阶段 dg/db 的 GM
-输出地址及行间 stride，保留数学计算、UB 排布、workspace、核任务和同步事件。
+设计规则版本：V3。接口见 [api.md](api.md)。布局直写、梯度 dtype 和参数片上转换
+共用原有 FP32 数学计算与 workspace。下面分别说明布局、写回和类型转换的实现。
 
 A2/A3 使用现有 outputTokenMajor：token-major 地址为 `(b*T+t)*H+h`，
 head-major 地址为 `(b*H+h)*T+t`。dg 按 D=128 展开，db 为标量。
@@ -34,7 +34,8 @@ No UB allocation or workspace size changes are needed.
 Stage 12 casts dA only after the FP32 reduction. A2/A3 uses sum+8 (a spare
 32-byte-aligned slot); A5 uses daOut+16, within the existing 70 KiB buffer.
 BF16 output ownership groups 16 adjacent heads per core to avoid competing
-writes within one 32-byte DMA block. dt_bias partials and outputs stay FP32.
+writes within one 32-byte DMA block. dt_bias partials stay FP32; the final
+output matches dt_bias, using a disjoint packed slot after the reduction.
 The output descriptors select writeback types; no extra launch is introduced
 in A2/A3 or A5 V2. A5 legacy retains its FP32 device ABI and L2 converts its
 outputs as a compatibility fallback; it does not gain the V2 fusion benefit.
@@ -57,3 +58,40 @@ BNSD/BSND/NTD/TND、尾块、空序列、norm、sigmoid/2-sigmoid 和 H=17。
 验证目录为 `/home/chenlinxin/wys/pr993-dtype-20261028`，wheel SHA256 为
 `a8f99a088a716236a61e4a4323582238725e47910736418c3d45e6aa99e05cec`。
 本轮按用户要求只验证 A2，未验证 A3/A5 设备，未执行完整 ATK、性能或 sanitizer 验收。
+
+## 原始 gate 参数的片上类型转换
+
+Finalize 的 raw_g、beta、A_log、dt_bias 分别支持 BF16/FP32；dg、dbeta、dA_log、d_dt_bias 分别跟随对应输入。FP32 累计量 gk、d_aqk、dq_raw、归约 workspace 不变，output_layout 仍控制五个逐 token 梯度。
+
+A2/A3 Stage11 将 BF16 raw_g 读入既有 raw 槽，在每个 tile 的临时区尚未使用时扩展为 FP32（compact 使用 [184,192) KiB product 区，其他路径使用 [128,136) KiB q 区），再复制回 raw 槽，避免重叠 Cast；A_log 和 dt_bias 使用互不重叠的常驻参数临时区。双缓冲事件继续保护 MTE2/V/MTE3 生命周期。A5 在 Stage11 VF 加载 BF16 寄存器后转换 FP32，沿用原有 FP32 链式求导。Stage12 的参数跨 chunk 归约保持 FP32，只在最终写回时进行 BF16 舍入。
+
+总接口 saved 模式直接透传原始参数，不再插入 Finalize 输入 Cast。recompute 分支单独创建重算所需 FP32 参数，Finalize 仍接收原始输入；重算算子的 Cast 不属于本次消除范围。A5 legacy 单体实现保留原有支持范围，本次融合覆盖 A2/A3 staged 和 A5 V2/独立 Finalize。
+
+验证：对照修改前 FP32 Finalize，覆盖 16 种参数 dtype 组合、packed/dense、输出布局、saved/recompute、可选 bias 和尾块；A2 真机比较结果与既有输出按目标 dtype 舍入后的结果。模型长序列使用相同输入和 profiler 配置，按 OP Type 比较 Cast 数量及 Finalize/全链路耗时。A5 单独编译检查，真机结果不得由 A2 结果替代。
+
+### Cast 融合定向验证（2026-10-28）
+
+A2 / Ascend910B3 / CANN 9.2.0：146 组 × Stable/ctypes 两入口，共 292 次调用，
+全部输出与 e6896d9b 基线按目标 dtype 舍入后逐元素一致，4 项错误输出 dtype 被拒绝。
+覆盖 16 种参数 dtype 组合、dense/packed、保存/重算、两种输出顺序、norm、
+sigmoid/2-sigmoid、空序列、尾块、H=17、可选 bias。真实前向缓存接反向、
+独立 Finalize 与总接口对比 32/32 通过；新旧 BF16 模型 smoke，以及 BF16/FP32
+小算子与总接口 smoke 均逐元素一致。独立 CPU 标杆自检通过。
+
+相同模型模拟输入 T=131072、H=4、D=128、31 段、2066 chunks，预热 5 次、采样 10 次：
+
+| gate | 每轮 Cast | Cast 耗时合计（μs） | 全链路 Task Duration 合计（ms） |
+| --- | --- | --- | --- |
+| BF16 | 6 → 2 | 287.362 → 2.278 | 25.307 → 25.142 |
+| 外层转 FP32 | 7 → 4 | 652.858 → 654.958 | 20.825 → 20.882 |
+
+该表不是端到端 wall time；FP32 模式未测到整体加速。剩余 Cast 为前向参数转换，
+以及 FP32 模式外层 gate.float()/CastBackward；两种模式 Transpose 均保持 5 次。
+BF16 模式 Finalize 自身 8.135 → 8.205 ms，片上转换增加约 71 μs，
+但删除的独立输入/输出 Cast 合计约 285 μs。
+
+验证目录 `/home/chenlinxin/wys/pr993-fused-cast-20261028`。A2 wheel SHA256：
+`e33db38fdef0b55c792c1801cd77e94c610d6c6fde06e91acebd2ef17a32ece4`。
+A5 交叉编包通过，wheel SHA256：
+`a04b4f36047dcc3fa8d7033eaa5f86719eaf13ad05cc6954c44c59fe8282591c`。
+A3/A5 真机、完整 ATK、sanitizer 和双平台 quick CI 尚未验收。

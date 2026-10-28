@@ -10,11 +10,11 @@ A2/A3 的所有 implementation 模式统一使用原总 ACLNN 接口编排小算
 | dq/dk/dv | 分别跟随 q/k/v，当前仅支持 BF16 输入 | output_layout：BNSD/BSND/NTD/TND |
 | db/dg | 分别跟随 beta/raw_g 的输入 dtype | 跟随 output_layout；db 省略末尾 D 维 |
 | dA | 跟随 A_log 的输入 dtype | 不受 output_layout 控制 |
-| dh0/dbias | None / FP32，未传 dt_bias 时 dbias 为 None | 不受 output_layout 控制 |
+| dh0/dbias | dh0 为 None；dbias 跟随 dt_bias，未传时为 None | 不受 output_layout 控制 |
 
 直接调用 ACLNN 时，dqOut/dkOut 必须与 q/k 类型相同，不能再传 FP32 输出。
 dbOut/dgOut/dAOut 必须分别匹配 beta/raw_g/A_log 的 dtype；dbOut/dgOut 跟随 output_layout。
-无论是否重计算、是否融合 norm/sigmoid，均使用以上输出规则。输入限制不变。
+无论是否重计算、是否融合 norm/sigmoid，均使用以上输出规则。dt_bias 扩展为 BF16/FP32，其余输入限制不变。
 
 总接口保留原有输出布局约定，旧调用方的 head-major→token-major 转置不变。
 dq/dk 从 FP32 改为跟随输入 dtype，调用方需更新相关 dtype 断言。
@@ -71,12 +71,12 @@ BF16 张量；Finalize 已融合归一化反向，调用方不应重复计算。
 | h 布局 | 与前向一致：[B,Nc,H,K,V] 或 [Nc,H,K,V]，连续存储 |
 | q/k/v/dO、Aqk/Akk、Token/状态缓存 | BF16；gk 为 FP32 |
 | beta / db | BF16 或 FP32，输入输出类型一致 |
-| raw_g / A_log | BF16 或 FP32，执行器按需转为 FP32 |
-| dt_bias | 可选 FP32，共 H×128 个元素 |
+| raw_g / A_log | BF16 或 FP32，Finalize 在片上转为 FP32 |
+| dt_bias | 可选 BF16/FP32，共 H×128 个元素 |
 | q_rstd / k_rstd | 成对提供，FP32，形状为 Token 形状去掉最后一维 |
 | dq/dk/dv | BF16 |
 | dg/dA | 分别跟随 raw_g/A_log 的 dtype |
-| dbias | FP32；未传 dt_bias 时为 None |
+| dbias | 跟随 dt_bias 的 dtype；未传时为 None |
 | 状态 | 不支持 initial_state/dht；dh0 为 None，state_v_first=False |
 | Gate | safe_gate、use_gate_in_kernel、use_exp2 均为 True；-5≤lower_bound<0 |
 
@@ -98,3 +98,11 @@ Stable ABI 扩展现有 `npu_chunk_kda_bwd` 注册，由 C++ 选择原 ACLNN 或
 V2 是独立 L2 符号，保留旧 ABI；声明见
 [aclnn_chunk_kda_bwd_v2.h](../op_host/op_api/aclnn_chunk_kda_bwd_v2.h)。
 设计见 [设计说明](design.md)。
+
+## Finalize Cast 融合
+
+A2/A3 staged、A5 V2 和独立 Finalize 支持 raw_g、beta、A_log、dt_bias 的
+16 种 BF16/FP32 组合。saved 模式将原始输入直接传给 Finalize，取消原先
+raw_g/A_log 的 GM Cast；调用方应删除反向前 dt_bias.float()，直接传原始 bias。
+重算分支仍为 Recompute 单独创建 FP32 临时参数，随后 Finalize 使用原始输入。
+A5 legacy 的 dt_bias 仍要求 FP32。本次不改变前向的参数 dtype 支持范围。

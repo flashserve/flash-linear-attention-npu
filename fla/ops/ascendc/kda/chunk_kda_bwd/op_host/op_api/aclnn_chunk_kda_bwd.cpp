@@ -245,13 +245,13 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
                      MatchesTensor(aLogOptional, MakeShape({H}), DataType::DT_BF16))),
                ACLNN_ERR_PARAM_INVALID, "raw_g and a_log are required for gate backward.");
     CHECK_COND(!dtBiasOptional ||
-                   (dtBiasOptional->GetDataType() == DataType::DT_FLOAT &&
+                   ((dtBiasOptional->GetDataType() == DataType::DT_FLOAT || dtBiasOptional->GetDataType() == DataType::DT_BF16) &&
                     IsContiguous(dtBiasOptional) && dtBiasOptional->GetViewShape().GetShapeSize() == H * 128),
-               ACLNN_ERR_PARAM_INVALID, "dt_bias must be contiguous FP32 with H*K elements.");
+               ACLNN_ERR_PARAM_INVALID, "dt_bias must be contiguous BF16/FP32 with H*K elements.");
     CHECK_COND(!dAOutOptional || (aLogOptional && MatchesTensor(dAOutOptional, MakeShape({H}), aLogOptional->GetDataType())),
                ACLNN_ERR_PARAM_INVALID, "Invalid dA output.");
     CHECK_COND(!dBiasOutOptional || (dtBiasOptional && IsContiguous(dBiasOutOptional) &&
-                   dBiasOutOptional->GetDataType() == DataType::DT_FLOAT &&
+                   dBiasOutOptional->GetDataType() == dtBiasOptional->GetDataType() &&
                    dBiasOutOptional->GetViewShape().GetShapeSize() == H * 128),
                ACLNN_ERR_PARAM_INVALID, "Invalid dbias output.");
     int64_t nc = (T + 63) / 64;
@@ -321,9 +321,10 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     const aclTensor *w = wOptional, *qg = qgOptional, *kg = kgOptional;
     const aclTensor *vNew = vNewOptional, *h = hOptional;
     if (!disableRecompute) {
-        rawHead = ToFloat32(rawHead, ex);
-        aLog = ToFloat32(aLog, ex);
-        CHECK_RET(rawHead, ACLNN_ERR_INNER_NULLPTR);
+        const auto *rawRecompute = ToFloat32(rawHead, ex);
+        const auto *logRecompute = ToFloat32(aLog, ex);
+        const auto *biasRecompute = ToFloat32(dtBias, ex);
+        CHECK_RET(rawRecompute && logRecompute && biasRecompute, ACLNN_ERR_INNER_NULLPTR);
         w = alloc(token, DataType::DT_BF16);
         qg = alloc(token, DataType::DT_BF16);
         kg = alloc(token, DataType::DT_BF16);
@@ -334,8 +335,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         CHECK_RET(w && qg && kg && vNew && h && gk && u, ACLNN_ERR_INNER_NULLPTR);
         const auto result = l0op::ChunkKdaBwdRecompute(
             BatchView(qHead, packed, ex), BatchView(kHead, packed, ex), BatchView(vHead, packed, ex),
-            BatchView(rawHead, packed, ex), BatchView(beta, packed, ex), BatchView(akk, packed, ex),
-            aLog, dtBias, cuSeqlensOptional, chunkIndicesOptional, chunkSize, useGateInKernel,
+            BatchView(rawRecompute, packed, ex), BatchView(beta, packed, ex), BatchView(akk, packed, ex),
+            logRecompute, biasRecompute, cuSeqlensOptional, chunkIndicesOptional, chunkSize, useGateInKernel,
             useExp2, lowerBound, inputLayout, BatchView(w, packed, ex), BatchView(u, packed, ex),
             BatchView(qg, packed, ex), BatchView(kg, packed, ex), BatchView(gk, packed, ex), ex);
         for (const auto *value : result) {
@@ -373,16 +374,14 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         scale, chunkSize, useExp2, false, BatchView(dh, packed, ex), nullptr,
         BatchView(dvScan, packed, ex), ex);
     CHECK_RET(scan[0] && scan[2], ACLNN_ERR_INNER_NULLPTR);
-    // Keep gate casts near Finalize, matching the A5 V2 cold-start ordering.
-    rawHead = ToFloat32(rawHead, ex);
-    aLog = ToFloat32(aLog, ex);
+    // Finalize converts original gate parameters on-chip.
     const auto *betaFinal = beta;
     CHECK_RET(betaFinal && (!rawGOptional || rawHead) && (!aLogOptional || aLog),
               ACLNN_ERR_INNER_NULLPTR);
     // Finalize writes all five gradients directly in outputLayout.
     const auto *dbFinal = dbOut;
     const auto *dA = dAOutOptional ? dAOutOptional : alloc(MakeShape({H}), aLogOptional->GetDataType());
-    const auto *dBias = alloc(MakeShape({H,128}), DataType::DT_FLOAT);
+    const auto *dBias = alloc(MakeShape({H,128}), dtBias->GetDataType());
     CHECK_RET(dbFinal && dA && dBias, ACLNN_ERR_INNER_NULLPTR);
     NormalizeOriginalShapes({qHead, kHead, vHead, gk, rawHead, betaFinal, aLog, dtBias,
         akk, vNew, h, dh, dvScan, dAqk, dqRaw, qRstdOptional, kRstdOptional,

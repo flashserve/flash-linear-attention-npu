@@ -21,10 +21,11 @@ A2/A3 的 Python `npu_chunk_kda_bwd` 和 `aclnnChunkKdaBwd` 接口保持不变�
 | akk | BF16 | 块内中间量 |
 | h、dh | BF16 | 前向状态与状态梯度 |
 | dv_scan | BF16 | Dhu 输出 |
-| gk、raw_g | FP32 | 累积 Gate 与原始 Gate |
+| gk | FP32 | 累积 Gate |
+| raw_g | BF16 / FP32 | 原始 Gate |
 | d_aqk、dq_raw | FP32 | Prepare 输出 |
 | beta、a_log | BF16 / FP32 | 衰减与 Gate 参数 |
-| dt_bias | FP32 | Gate 偏置 |
+| dt_bias | BF16 / FP32 | Gate 偏置 |
 | q_rstd、k_rstd | 可选 FP32 | 成对提供的归一化中间量 |
 | cu_seqlens、chunk_indices | 可选 INT64 | 变长序列元数据 |
 
@@ -39,14 +40,15 @@ dq/dk/dv/d_beta/d_g，dense 默认 BNSD，packed 默认 NTD。
 写回实现见 [输出布局设计](docs/design.md)。
 
 dq/dk/dv 为 BF16，d_beta 与 beta 同类型，d_a_log 与 a_log 同类型。
-独立接口的 raw_g 仍要求 FP32，因此 d_g 为 FP32；d_dt_bias 为 FP32。
+d_g 与 raw_g 同类型，d_dt_bias 与 dt_bias 同类型；四个 Gate 参数可独立选择 dtype。
+Stage11 读入后在片上转 FP32，Stage12 以 FP32 归约，最终写回时才舍入。
 
 上表及本节类型描述的是独立 `aclnnChunkKdaBwdFinalize` 接口。A2/A3 整体 Bwd
 通过 L0 调用时，dq/dk/dv 直接输出 BF16，db/dg/dA 分别跟随总接口的
 beta/raw_g/A_log 输入 dtype；五个 Token 梯度
 均按总接口的 output_layout 写回，无需总接口再做布局转置。
 A2/A3 支持 BF16/FP32 beta，融合 sigmoid 反向时需要前向保存的 FP32 beta_eff；
-a_log 为 FP32。成对传入 q_rstd/k_rstd 时，在 Finalize 内完成 Q/K L2Norm 反向。
+raw_g/a_log/dt_bias 支持 BF16/FP32。成对传入 q_rstd/k_rstd 时，在 Finalize 内完成 Q/K L2Norm 反向。
 
 | 属性 | 要求 |
 |---|---|

@@ -118,12 +118,13 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
     CHECK_COND(MatchesTensor(dg,token,rawG->GetDataType()), ACLNN_ERR_PARAM_INVALID, "dg must match raw_g dtype.");
     CHECK_COND(MatchesTensor(aLog,MakeShape({H}),DataType::DT_FLOAT) || MatchesTensor(aLog,MakeShape({H}),DataType::DT_BF16),
         ACLNN_ERR_PARAM_INVALID, "A_log must be [H], BF16/FP32.");
-    CHECK_COND(!dtBias || MatchesTensor(dtBias,MakeShape({H,128}),DataType::DT_FLOAT), ACLNN_ERR_PARAM_INVALID,
-        "V2 dt_bias must be FP32 [H,128] when supplied.");
+    CHECK_COND(!dtBias || MatchesTensor(dtBias,MakeShape({H,128}),DataType::DT_FLOAT) ||
+        MatchesTensor(dtBias,MakeShape({H,128}),DataType::DT_BF16), ACLNN_ERR_PARAM_INVALID,
+        "V2 dt_bias must be BF16/FP32 [H,128] when supplied.");
     CHECK_COND((!qRstd && !kRstd) || (MatchesTensor(qRstd,scalar,DataType::DT_FLOAT) && MatchesTensor(kRstd,scalar,DataType::DT_FLOAT)),
         ACLNN_ERR_PARAM_INVALID, "rstd must be a matching FP32 pair.");
     CHECK_COND((!dA || MatchesTensor(dA,MakeShape({H}),aLog->GetDataType())) &&
-        (!dBias || MatchesTensor(dBias,MakeShape({H,128}),DataType::DT_FLOAT)), ACLNN_ERR_PARAM_INVALID, "Parameter output shape/dtype mismatch.");
+        (!dBias || (dtBias && MatchesTensor(dBias,MakeShape({H,128}),dtBias->GetDataType()))), ACLNN_ERR_PARAM_INVALID, "Parameter output shape/dtype mismatch.");
     int64_t nc = (T + 63) / 64;
     if (packed) {
         CHECK_COND(cu->Size() >= 2 && (*cu)[0] == 0 && (*cu)[cu->Size()-1] == T,
@@ -166,13 +167,14 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         dA = AllocTensor(ex, MakeShape({H}), aLog->GetDataType());
     }
     if (!dBias) {
-        dBias = AllocTensor(ex, MakeShape({H,128}), DataType::DT_FLOAT);
+        dBias = AllocTensor(ex, MakeShape({H,128}), dtBias->GetDataType());
     }
     CHECK_RET(dA && dBias, ACLNN_ERR_INNER_NULLPTR);
     if (!disableRecompute) {
-        rawG = ToFloat32(rawG,ex);
-        aLog = ToFloat32(aLog,ex);
-        CHECK_RET(rawG && aLog, ACLNN_ERR_INNER_NULLPTR);
+        const auto *rawRecompute = ToFloat32(rawG,ex);
+        const auto *logRecompute = ToFloat32(aLog,ex);
+        const auto *biasRecompute = ToFloat32(dtBias,ex);
+        CHECK_RET(rawRecompute && logRecompute && biasRecompute, ACLNN_ERR_INNER_NULLPTR);
         w = AllocTensor(ex, token, DataType::DT_BF16);
         qg = AllocTensor(ex, token, DataType::DT_BF16);
         kg = AllocTensor(ex, token, DataType::DT_BF16);
@@ -184,7 +186,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         const auto *q4 = BatchView(q, packed, ex);
         const auto *k4 = BatchView(k, packed, ex);
         const auto *v4 = BatchView(v, packed, ex);
-        const auto *rawG4 = BatchView(rawG, packed, ex);
+        const auto *rawG4 = BatchView(rawRecompute, packed, ex);
         const auto *beta3 = BatchView(beta, packed, ex);
         const auto *akk4 = BatchView(akk, packed, ex);
         const auto *w4 = BatchView(w, packed, ex);
@@ -197,7 +199,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         CHECK_RET(q4 && k4 && v4 && rawG4 && beta3 && akk4 && w4 && u4 && qg4 && kg4 && gk4 && h5 && vNew4,
             ACLNN_ERR_INNER_NULLPTR);
         const auto recomputeResult = l0op::ChunkKdaBwdRecompute(
-            q4, k4, v4, rawG4, beta3, akk4, aLog, dtBias, cu, indices,
+            q4, k4, v4, rawG4, beta3, akk4, logRecompute, biasRecompute, cu, indices,
             64, true, true, lowerBound, "BNSD", w4, u4, qg4, kg4, gk4, ex);
         for (const auto *value : recomputeResult) {
             CHECK_RET(value, ACLNN_ERR_INNER_NULLPTR);
@@ -232,12 +234,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         qg4, kg4, w4, dO4, dv04, nullptr, gk4, nullptr, nullptr,
         cu, indices, scale, 64, true, false, dh5, nullptr, dvScan4, ex);
     CHECK_RET(dhuResult[0] && dhuResult[2], ACLNN_ERR_INNER_NULLPTR);
-    // Saved mode needs these conversions only in finalize. Keep them at that
-    // consumer, after the custom-op platform tiling has been initialized.
-    // CANN 9.1 Cast otherwise reports coreNum=0 on a cold BF16-gate call.
-    rawG = ToFloat32(rawG,ex);
-    aLog = ToFloat32(aLog,ex);
-    CHECK_RET(rawG && aLog, ACLNN_ERR_INNER_NULLPTR);
+    // Finalize consumes original dtypes; recompute temporaries stay local to that branch.
     const auto finalizeResult = l0op::ChunkKdaBwdFinalize(
         q, k, v, gk, rawG, beta, aLog, dtBias, akk, vNew, h, dh, dvScan, dAqk, dqRaw,
         qRstd, kRstd, cu, indices, scale, lowerBound, 64, true, true, true, false,

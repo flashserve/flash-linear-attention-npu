@@ -11,9 +11,22 @@
 namespace KDA {
 using namespace AscendC::MicroAPI;
 
-template <typename LogT>
+template <typename T>
+__simd_callee__ inline void LoadGatePair(RegTensor<float> &even, RegTensor<float> &odd,
+                                        __ubuf__ T *input, MaskReg &mask)
+{
+    if constexpr (AscendC::IsSameType<T, float>::value) {
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(even, odd, input);
+    } else {
+        RegTensor<bfloat16_t> packed;
+        LoadIn(packed, input);
+        CastHalf2Float(even, odd, packed, mask);
+    }
+}
+
+template <typename LogT, typename RawT, typename BiasT>
 __simd_vf__ inline void FinalizeStage11VF(
-    __ubuf__ float *dg, __ubuf__ float *raw, __ubuf__ float *bias,
+    __ubuf__ float *dg, __ubuf__ RawT *raw, __ubuf__ BiasT *bias,
     __ubuf__ LogT *aLog, __ubuf__ float *da, __ubuf__ float *db,
     uint16_t rows, float lowerBound)
 {
@@ -36,7 +49,7 @@ __simd_vf__ inline void FinalizeStage11VF(
     Duplicate(da1, 0.0f, mask);
     Duplicate(db0, 0.0f, mask);
     Duplicate(db1, 0.0f, mask);
-    LoadAlign<float, LoadDist::DIST_DINTLV_B32>(bias0, bias1, bias);
+    LoadGatePair(bias0, bias1, bias, mask);
     // Reverse scan and both parameter partials remain in registers.
     for (uint16_t reverse = 0; reverse < rows; ++reverse) {
         const uint32_t offset = (rows - 1U - reverse) * KDA_FINALIZE_DIM;
@@ -44,7 +57,7 @@ __simd_vf__ inline void FinalizeStage11VF(
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(g0, g1, dg + offset);
         Add(sum0, sum0, g0, mask);
         Add(sum1, sum1, g1, mask);
-        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(x0, x1, raw + offset);
+        LoadGatePair(x0, x1, raw + offset, mask);
         Add(x0, x0, bias0, mask);
         Add(x1, x1, bias1, mask);
         Mul(s0, x0, e, mask);
@@ -120,12 +133,13 @@ __aicore__ inline void FinalizeStage12(
     auto daIn = dbIn[16384];
     auto dbOut = daIn[1024];
     auto daOut = dbOut[128];
-    AscendC::GlobalTensor<float> partialA, partialB, outB;
+    AscendC::GlobalTensor<float> partialA, partialB;
+    AscendC::GlobalTensor<DTYPE_D_DT_BIAS> outB;
     AscendC::GlobalTensor<DTYPE_D_A_LOG> outA;
     partialA.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace + tiling.gatePartialOffset));
     partialB.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace + tiling.dtBiasPartialOffset));
     outA.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_D_A_LOG *>(dALog));
-    outB.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dDtBias));
+    outB.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_D_DT_BIAS *>(dDtBias));
     const auto mte2V = pipe.AllocEventID<AscendC::HardEvent::MTE2_V>();
     const auto vMte2 = pipe.AllocEventID<AscendC::HardEvent::V_MTE2>();
     const auto vMte3 = pipe.AllocEventID<AscendC::HardEvent::V_MTE3>();
@@ -152,9 +166,15 @@ __aicore__ inline void FinalizeStage12(
                 AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(vMte2);
                 AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(vMte2);
             }
+            auto packedBias = daOut[32].ReinterpretCast<DTYPE_D_DT_BIAS>();
+            if constexpr (sizeof(DTYPE_D_DT_BIAS) == 2) {
+                AscendC::Cast(packedBias, dbOut, AscendC::RoundMode::CAST_RINT, 128);
+            } else {
+                packedBias = dbOut.ReinterpretCast<DTYPE_D_DT_BIAS>();
+            }
             AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vMte3);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vMte3);
-            AscendC::DataCopy(outB[head * 128], dbOut, 128);
+            AscendC::DataCopy(outB[head * 128], packedBias, 128);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3V);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3V);
         }

@@ -1444,6 +1444,8 @@ def npu_chunk_kda_bwd_finalize(
 ):
     """Finalize KDA gradients; output_layout controls dq/dk/dv/dBeta/dG.
 
+    raw_g/beta/a_log/dt_bias accept BF16/FP32; their gradients match each input.
+    Gate computation and parameter reductions remain FP32.
     On A5, use_beta_sigmoid_in_kernel is reserved and must remain False.
     """
     if allow_neg_eigval and not use_beta_sigmoid_in_kernel:
@@ -1946,6 +1948,7 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
     A2/A3 use one total L2 composition for all implementation modes.
     Their dq/dk/dv follow the input dtypes and output_layout. On all platforms,
     db/dg/dA follow beta/raw_g/A_log dtypes; db/dg also follow output_layout.
+    A2/A3 and A5 optimized also accept BF16/FP32 dt_bias and return matching dbias.
     Gate arithmetic and parameter reductions remain FP32.
     The legacy workarounds below remain on the A5 fused path.
 

@@ -57,9 +57,9 @@ std::tuple<Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor> run_npu_chunk
     Tensor dk = allocate_sizes(qkvShape, kBFloat16, meta);
     Tensor dv = allocate_sizes(qkvShape, kBFloat16, meta);
     Tensor db = allocate_sizes(betaShape, meta_of(beta).scalar_type, meta);
-    Tensor dg = allocate_sizes(qkvShape, kFloat, meta);
+    Tensor dg = allocate_sizes(qkvShape, meta_of(raw_g).scalar_type, meta);
     Tensor da = allocate_sizes(meta_of(a_log).sizes, meta_of(a_log).scalar_type, meta);
-    Tensor dbias = allocate_sizes(meta_of(dt_bias).sizes, kFloat, meta);
+    Tensor dbias = allocate_sizes(meta_of(dt_bias).sizes, meta_of(dt_bias).scalar_type, meta);
     FLA_STABLE_EXEC(
         "aclnnChunkKdaBwdFinalize", meta, stream,
         nd_tensor(meta), nd_tensor(meta_of(k)), nd_tensor(meta_of(v)), nd_tensor(meta_of(gk)),

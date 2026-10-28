@@ -87,18 +87,17 @@ ge::graphStatus ValidateFinalize(
     const auto betaType = context->GetInputDesc(INPUT_BETA)->GetDataType();
     const auto logType = context->GetInputDesc(INPUT_A_LOG)->GetDataType();
     if ((betaType != ge::DT_FLOAT && (useBetaSigmoid || betaType != ge::DT_BF16)) ||
-        (logType != ge::DT_FLOAT && (arch22 || logType != ge::DT_BF16))) return fail();
+        (logType != ge::DT_FLOAT && logType != ge::DT_BF16)) return fail();
     if (ctx.useGateInKernel) {
-        for (size_t i : {INPUT_RAW_G}) {
+        for (size_t i : {INPUT_RAW_G, INPUT_DT_BIAS}) {
             const auto *d = context->GetOptionalInputDesc(i);
-            if (!d || d->GetDataType() != ge::DT_FLOAT) return fail();
+            if (!d || (d->GetDataType() != ge::DT_FLOAT && d->GetDataType() != ge::DT_BF16)) return fail();
         }
         const auto *a = context->GetOptionalInputShape(INPUT_A_LOG);
         const auto *bias = context->GetOptionalInputShape(INPUT_DT_BIAS);
         if (!tokenShape(context->GetOptionalInputShape(INPUT_RAW_G), 128, false) ||
             !a || a->GetStorageShape().GetShapeSize() != shape.NV ||
-            (!bias || (bias->GetStorageShape().GetShapeSize() != shape.NV * 128 ||
-                      context->GetOptionalInputDesc(INPUT_DT_BIAS)->GetDataType() != ge::DT_FLOAT))) return fail();
+            (!bias || bias->GetStorageShape().GetShapeSize() != shape.NV * 128)) return fail();
     }
     for (size_t i = 0; i < 3; ++i) {
         if (!tokenShape(context->GetOutputShape(i), 128, tokenMajor)) return fail();
@@ -109,11 +108,9 @@ ge::graphStatus ValidateFinalize(
     if (qType != ge::DT_BF16 || context->GetOutputDesc(1)->GetDataType() != qType ||
         context->GetOutputDesc(2)->GetDataType() != ge::DT_BF16) return fail();
     if (context->GetOutputDesc(3)->GetDataType() != betaType) return fail();
-    for (size_t i : {4U, 5U}) {
-        const auto dtype = context->GetOutputDesc(i)->GetDataType();
-        if (dtype != ge::DT_FLOAT && dtype != ge::DT_BF16) return fail();
-    }
-    if (context->GetOutputDesc(6)->GetDataType() != ge::DT_FLOAT) return fail();
+    if (context->GetOutputDesc(4)->GetDataType() != context->GetInputDesc(INPUT_RAW_G)->GetDataType() ||
+        context->GetOutputDesc(5)->GetDataType() != logType ||
+        context->GetOutputDesc(6)->GetDataType() != context->GetInputDesc(INPUT_DT_BIAS)->GetDataType()) return fail();
     for (size_t i = 0; i < 2; ++i) {
         const auto &input = context->GetRequiredInputShape(INPUT_A_LOG + i)->GetStorageShape();
         const auto &output = context->GetOutputShape(5 + i)->GetStorageShape();

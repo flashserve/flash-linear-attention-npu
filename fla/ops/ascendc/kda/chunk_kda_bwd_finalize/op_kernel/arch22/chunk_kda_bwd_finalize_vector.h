@@ -1258,9 +1258,9 @@ public:
     __aicore__ inline void InitStage11(const FinalizeTailArgs &tail)
     {
         tail_ = tail;
-        rawG_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(tail.rawG));
-        aLog_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(tail.aLog));
-        dtBias_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(tail.dtBias));
+        rawG_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_RAW_G *>(tail.rawG));
+        aLog_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_A_LOG *>(tail.aLog));
+        dtBias_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_DT_BIAS *>(tail.dtBias));
         kRstd_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(tail.kRstd));
         dk_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(tail.dk));
         dg_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_D_G *>(tail.dg));
@@ -1273,8 +1273,14 @@ public:
     {
         auto scalar = ub_[87 * 1024 + 256].ReinterpretCast<float>();
         auto factor = ub_[UB11_BETA_FACTOR].ReinterpretCast<float>();
-        AscendC::DataCopy(ub_[UB11_BIAS].ReinterpretCast<float>(), dtBias_[head * HEAD_DIM], HEAD_DIM);
-        AscendC::DataCopyPad(scalar, aLog_[head], {1, 4, 0, 0, 0}, {true, 0, 0, 0.0f});
+        auto bias = ub_[UB11_BIAS].ReinterpretCast<float>();
+        auto biasIn = (sizeof(DTYPE_DT_BIAS) == 2 ? ub_[83 * 1024] : ub_[UB11_BIAS])
+                          .ReinterpretCast<DTYPE_DT_BIAS>();
+        auto logIn = (sizeof(DTYPE_A_LOG) == 2 ? ub_[87 * 1024 + 320] : ub_[87 * 1024 + 256])
+                         .ReinterpretCast<DTYPE_A_LOG>();
+        AscendC::DataCopy(biasIn, dtBias_[head * HEAD_DIM], HEAD_DIM);
+        AscendC::DataCopyPad(logIn, aLog_[head], {1, sizeof(DTYPE_A_LOG), 0, 0, 0},
+                             {true, 0, 0, static_cast<DTYPE_A_LOG>(0)});
         if constexpr (K_NORM) {
             AscendC::DataCopyPad(ub_[UB11_RSTD].ReinterpretCast<float>(), kRstd_[token], {1, rows * 4, 0, 0, 0},
                                  {true, 0, 0, 0.0f});
@@ -1292,6 +1298,13 @@ public:
             AscendC::Mul(factor, factor, beta, CHUNK_SIZE);
         }
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(inputReady_[0]);
+        if constexpr (sizeof(DTYPE_DT_BIAS) == 2) {
+            AscendC::Cast(bias, biasIn, AscendC::RoundMode::CAST_NONE, HEAD_DIM);
+        }
+        if constexpr (sizeof(DTYPE_A_LOG) == 2) {
+            AscendC::Cast(scalar, logIn, AscendC::RoundMode::CAST_NONE, 8);
+        }
+        AscendC::PipeBarrier<PIPE_V>();
         AscendC::Exp(scalar, scalar, 8);
         AscendC::PipeBarrier<PIPE_V>();
         AscendC::Brcb(ub_[UB11_EXP_A].ReinterpretCast<float>(), scalar, 1, {1, 8});
@@ -1354,6 +1367,7 @@ public:
             auto raw = ub_[88 * 1024].ReinterpretCast<float>()[4 * E];
             constexpr uint32_t active = ROWS;
             constexpr uint32_t count = E;
+            ExpandRawGate<COMPACT>(raw, count);
             AscendC::Add(raw, raw, ub_[UB11_BIAS].ReinterpretCast<float>(), 64, active, {1, 1, 1, 16, 16, 0});
             AscendC::Add(raw[64], raw[64], ub_[UB11_BIAS].ReinterpretCast<float>()[64], 64, active,
                          {1, 1, 1, 16, 16, 0});
@@ -1412,6 +1426,11 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
             if (active != 0) {
                 const uint32_t count = active * HEAD_DIM;
+                if constexpr (FULL_CHUNK && !CAPTURE && K_NORM && ROWS == 8) {
+                    if (tile != 0) ExpandRawGate<COMPACT>(raw, count);
+                } else {
+                    ExpandRawGate<COMPACT>(raw, count);
+                }
                 auto exponent = ub_[160 * 1024].ReinterpretCast<float>()[(first - start) * HEAD_DIM];
                 if constexpr (!COMPACT) {
                     AscendC::Cast(queryTile, ub_.ReinterpretCast<bfloat16_t>()[first * HEAD_DIM],
@@ -1728,6 +1747,19 @@ public:
     }
 
 private:
+    template <bool COMPACT>
+    __aicore__ inline void ExpandRawGate(AscendC::LocalTensor<float> raw, uint32_t count)
+    {
+        if constexpr (sizeof(DTYPE_RAW_G) == 2) {
+            // Product (compact) or q scratch is not live yet; expanding Cast is disjoint.
+            auto expanded = ub_[(COMPACT ? 184 : 128) * 1024].ReinterpretCast<float>();
+            AscendC::Cast(expanded, raw.ReinterpretCast<DTYPE_RAW_G>(), AscendC::RoundMode::CAST_NONE, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Copy(raw, expanded, static_cast<uint64_t>(64), count / 64, {1, 1, 8, 8});
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+    }
+
     template <uint32_t ROWS = 8, bool COMPACT = false>
     __aicore__ inline void LoadStage11Tile(AscendC::GlobalTensor<float> ws, int64_t token, uint32_t first, uint32_t end,
                                            uint32_t slot)
@@ -1745,10 +1777,10 @@ private:
         const uint32_t active = first < end ? (end - first < ROWS ? end - first : ROWS) : 0;
         if constexpr (COMPACT) {
             // The bitmask frees the old [64,80) KiB triangle for two raw-gate tiles.
-            AscendC::DataCopy(ub_[(64 + slot * 8) * 1024].ReinterpretCast<float>(),
+            AscendC::DataCopy(ub_[(64 + slot * 8) * 1024].ReinterpretCast<DTYPE_RAW_G>(),
                               rawG_[(token + first) * HEAD_DIM], E);
         } else if (active != 0) {
-            AscendC::DataCopy(input[4 * E], rawG_[(token + first) * HEAD_DIM], active * HEAD_DIM);
+            AscendC::DataCopy(input[4 * E].ReinterpretCast<DTYPE_RAW_G>(), rawG_[(token + first) * HEAD_DIM], active * HEAD_DIM);
         }
     }
     template <bool KEEP_INPUTS = false>
@@ -1783,7 +1815,10 @@ private:
     AscendC::GlobalTensor<BetaT> beta_, db_;
     AscendC::GlobalTensor<bfloat16_t> q_, dq_;
     AscendC::GlobalTensor<float> qRstd_;
-    AscendC::GlobalTensor<float> rawG_, aLog_, dtBias_, kRstd_, partial_;
+    AscendC::GlobalTensor<DTYPE_RAW_G> rawG_;
+    AscendC::GlobalTensor<DTYPE_A_LOG> aLog_;
+    AscendC::GlobalTensor<DTYPE_DT_BIAS> dtBias_;
+    AscendC::GlobalTensor<float> kRstd_, partial_;
     AscendC::GlobalTensor<DTYPE_D_G> dg_;
     AscendC::GlobalTensor<bfloat16_t> dk_;
     FinalizeTailArgs tail_;

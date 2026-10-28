@@ -3388,7 +3388,7 @@ def _run_kda_bwd_optimized(args):
     db = torch.empty_like(args["beta"])
     dg = torch.empty(token,dtype=args["raw_g"].dtype,device=q.device)
     da = torch.empty((h,),dtype=args["A_log"].dtype,device=q.device)
-    dbias = None if args["dt_bias"] is None else torch.empty(bias_shape, dtype=torch.float32, device=q.device)
+    dbias = None if args["dt_bias"] is None else torch.empty(bias_shape, dtype=args["dt_bias"].dtype, device=q.device)
     outputs = (dq,dk,dv,db,dg,None,da,dbias)
 
     def build(ctx):
@@ -3423,7 +3423,7 @@ def _run_kda_bwd_arch22(args):
     dg = _empty(a["_output_gate_shape"], q, dtype=a["raw_g"].dtype)
     heads = a["beta"].shape[0 if a["cu_seqlens"] is not None else 1]
     da = _empty((heads,), q, dtype=a["A_log"].dtype) if a["use_gate_in_kernel"] else None
-    dbias = (_empty(bias_shape, q, dtype=torch.float32)
+    dbias = (_empty(bias_shape, q, dtype=a["dt_bias"].dtype)
              if a["use_gate_in_kernel"] and bias_shape is not None else None)
     outputs = (dq, dk, dv, db, dg, None, da, dbias)
 
