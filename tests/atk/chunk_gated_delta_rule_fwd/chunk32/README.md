@@ -117,15 +117,12 @@
 
 ## 运行
 
-```bash
-bash tests/atk/run_test_cpu.sh -op=chunk_gated_delta_rule_fwd_chunk32 -soc=ascend950
-```
-
-也可使用本目录的独立包装脚本，第一个参数是物理 NPU 号，第二个参数是 scope：
+这份用例不挂在 `tests/atk` 的顶层 `-op=` 上，避免和 64/128 的测试集混在一次运行里。
+第一个参数是物理 NPU 号，第二个参数是 scope：
 
 ```bash
 unset ASCEND_RT_VISIBLE_DEVICES ASCEND_VISIBLE_DEVICES
-bash tests/atk/chunk_gated_delta_rule_fwd_chunk32/run_chunk32_atk.sh 6 accuracy
+bash tests/atk/chunk_gated_delta_rule_fwd/chunk32/run_chunk32_atk.sh 6 accuracy
 ```
 
 精度标准走源码安装的 ATK 26.9.8（`https://gitcode.com/Ascend/ATK.git`，
@@ -133,5 +130,5 @@ commit `99c8a84`）。这一版自带 `mixed_tolerance_bm`，不要再把它别�
 `single_bm`。重生成三份 JSON：
 
 ```bash
-python3 tests/atk/chunk_gated_delta_rule_fwd_chunk32/gen_chunk_gated_delta_rule_fwd_chunk32.py
+python3 tests/atk/chunk_gated_delta_rule_fwd/chunk32/gen_chunk_gated_delta_rule_fwd_chunk32.py
 ```

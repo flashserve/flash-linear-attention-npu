@@ -30,7 +30,7 @@ STANDARD = {
 }
 SEEDS_PER_SHAPE = 3
 HERE = Path(__file__).resolve().parent
-CONTRACT = HERE.parent / "chunk_gated_delta_rule_fwd" / "case_matrix_contract.py"
+CONTRACT = HERE.parent / "case_matrix_contract.py"
 
 
 def _load_contract():

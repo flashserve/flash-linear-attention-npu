@@ -26,7 +26,7 @@ from typing import Optional
 
 import torch
 
-_ATK = Path(__file__).resolve().parents[2]
+_ATK = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_ATK / "chunk_gated_delta_rule_fwd_prepare" / "scripts"))
 sys.path.insert(0, str(_ATK / "chunk_fwd_h"))
 
