@@ -1644,7 +1644,9 @@ public:
             AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
             if (active != 0) {
-                const int64_t outputToken = ((batch * tiling.tokens + chunk.tokenStart + first) * tiling.heads + head);
+                const int64_t outputToken = tiling.outputTokenMajor ?
+                    ((batch * tiling.tokens + chunk.tokenStart + first) * tiling.heads + head) : token + first;
+                const uint32_t outputStride = tiling.outputTokenMajor ? tiling.heads - 1 : 0;
                 if (tiling.outputTokenMajor) {
                     const uint64_t dst = (static_cast<uint64_t>(batch) * tiling.tokens + chunk.tokenStart + first) *
                                              tiling.heads * HEAD_DIM +
@@ -1662,16 +1664,16 @@ public:
                     AscendC::DataCopy(
                         dg_[outputToken * HEAD_DIM], gateOut,
                         AscendC::DataCopyParams{static_cast<uint16_t>(active), HEAD_DIM / 8, 0,
-                                                static_cast<uint16_t>((tiling.heads - 1) * (HEAD_DIM / 8))});
+                                                static_cast<uint16_t>(outputStride * (HEAD_DIM / 8))});
                 } else {
                     AscendC::DataCopyPad(dg_[outputToken * HEAD_DIM], gateOut,
                                          {static_cast<uint16_t>(active), HEAD_DIM * 4, 0,
-                                          static_cast<uint32_t>((tiling.heads - 1) * HEAD_DIM * 4), 0});
+                                          static_cast<uint32_t>(outputStride * HEAD_DIM * 4), 0});
                 }
                 AscendC::DataCopyPad(
                     db_[outputToken], packedDb.template ReinterpretCast<BetaT>(),
                     {static_cast<uint16_t>(active), sizeof(BetaT), 0,
-                     static_cast<uint32_t>((tiling.heads - 1) * sizeof(BetaT)), 0});
+                     static_cast<uint32_t>(outputStride * sizeof(BetaT)), 0});
             }
             if constexpr (CAPTURE) {
                 AscendC::DataCopy(saved[CAPTURE_DK / 4 + first * HEAD_DIM], dk, E);

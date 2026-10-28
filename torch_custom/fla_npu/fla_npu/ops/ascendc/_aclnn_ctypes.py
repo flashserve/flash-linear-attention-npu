@@ -3498,7 +3498,7 @@ def npu_chunk_kda_bwd(
     Gate backward requires use_gate_in_kernel=True, raw_g and A_log.
 
     A2/A3 dq/dk/dv follow their input dtypes and output_layout; db/dg always
-    use BSND/TND and FP32, independently of output_layout.
+    use FP32 and follow output_layout together with dq/dk/dv.
     The legacy head-major policy below remains on the A5 fused path.
 
     Dense tensors use ``[B, H, T, D]`` and packed tensors use ``[H, T, D]``.

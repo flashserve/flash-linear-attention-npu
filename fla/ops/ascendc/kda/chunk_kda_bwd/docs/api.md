@@ -8,17 +8,22 @@ A2/A3 的所有 implementation 模式统一使用原总 ACLNN 接口编排小算
 | 输出 | dtype | 布局 |
 | --- | --- | --- |
 | dq/dk/dv | 分别跟随 q/k/v，当前仅支持 BF16 输入 | output_layout：BNSD/BSND/NTD/TND |
-| db/dg | Python 返回 FP32 | 固定 BSND/TND，不受 output_layout 控制 |
+| db/dg | Python 返回 FP32 | 跟随 output_layout；db 省略末尾 D 维 |
 | dh0/dA/dbias | 沿用现有约定 | 不受 output_layout 控制 |
 
 直接调用 ACLNN 时，dqOut/dkOut 必须与 q/k 类型相同，不能再传 FP32 输出。
-dbOut 保留已有 BF16/FP32 支持，dgOut 为 FP32；两者必须为 token-major。
+dbOut 保留已有 BF16/FP32 支持，dgOut 为 FP32；两者跟随 output_layout。
 无论是否重计算、是否融合 norm/sigmoid，均使用以上输出规则。输入限制不变。
 
-这是输出语义调整，签名和返回数量不变。旧调用方应删除 db/dg 的
-head-major→token-major 转置，并更新 dq/dk dtype 断言。H=T 时不能靠 shape
-识别旧布局用法，调用方必须同步更新。新版绑定与 op-api 库需配套部署。
+总接口保留原有输出布局约定，旧调用方的 head-major→token-major 转置不变。
+dq/dk 从 FP32 改为跟随输入 dtype，调用方需更新相关 dtype 断言。
+签名和返回数量不变，新版绑定与 op-api 库需配套部署。
 A5 原版和 V2 的输出类型、布局和路由保持不变；下文原优化路径说明针对 A5。
+
+Finalize 小接口的 output_layout 统一控制 dq/dk/dv/db/dg，由 kernel 直接按目标
+布局写回。默认 dense 为 BNSD、packed 为 NTD。直接使用 #962 Finalize 的调用方
+不能再假设 db/dg 恒为 token-major，应按所选 output_layout 处理这五个输出。
+总接口无需在 Finalize 后转置；Python 的 FP32 db/dg 直接写入返回张量。
 
 ## 调用方式
 

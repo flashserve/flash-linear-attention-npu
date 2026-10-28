@@ -1442,7 +1442,7 @@ def npu_chunk_kda_bwd_finalize(
     q_rstd=None, k_rstd=None, cu_seqlens=None, chunk_indices=None,
     use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False, output_layout=None,
 ):
-    """Finalize KDA gradients; dBeta and dG always use token-major order.
+    """Finalize KDA gradients; output_layout controls dq/dk/dv/dBeta/dG.
 
     On A5, use_beta_sigmoid_in_kernel is reserved and must remain False.
     """
@@ -1945,7 +1945,7 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
 
     A2/A3 use one total L2 composition for all implementation modes.
     Their dq/dk/dv follow the input dtypes and output_layout; FP32 db/dg
-    always use BSND/TND, independently of output_layout.
+    follow output_layout together with dq/dk/dv.
     The legacy workarounds below remain on the A5 fused path.
 
     Three shape-specific workarounds sit on top of the single launch, and they

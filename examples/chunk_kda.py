@@ -551,7 +551,8 @@ def run_once(args: argparse.Namespace) -> int:
     ref_dq, ref_dk, ref_dv, ref_dbeta, ref_dg_raw = grads
 
     def to_bsnd(tensor: torch.Tensor, is_beta: bool = False) -> torch.Tensor:
-        # 将 head-major 输出转为参考使用的 BSND。
+        # 反向输出恒为 head-major（dense [B,H,T,D] / packed [H,T,D]），
+        # 与参考的 BSND 口径对比时要转回来。
         if not packed:
             return (tensor.permute(0, 2, 1) if is_beta
                     else tensor.permute(0, 2, 1, 3))
@@ -559,20 +560,14 @@ def run_once(args: argparse.Namespace) -> int:
         return unflat.reshape(batch, tokens, *unflat.shape[1:])
 
     # 前向 attn_out 恒为 sequence-major（dense BSND / packed TND），无需转置；
-    # dq/dk/dv 使用 head-major；dBeta/dG 在 A2/A3 上已是 BSND/TND。
+    # 反向输出是 head-major，需要用 to_bsnd 转回 BSND。
     o_bsnd = (o.detach().reshape(batch, tokens, *o.shape[1:]) if packed
               else o.detach())
     dq_bsnd = to_bsnd(dq.detach())
     dk_bsnd = to_bsnd(dk.detach())
     dv_bsnd = to_bsnd(dv.detach())
-    gate_token_major = str(torch.npu.get_device_name(device)).startswith(
-        ("Ascend910B", "Ascend910C", "Ascend910_93"))
-    if gate_token_major:
-        dbeta_bsnd = dbeta.detach().reshape(batch, tokens, hv)
-        dg_bsnd = dg.detach().reshape(batch, tokens, hv, kd)
-    else:
-        dbeta_bsnd = to_bsnd(dbeta.detach(), is_beta=True)
-        dg_bsnd = to_bsnd(dg.detach())
+    dbeta_bsnd = to_bsnd(dbeta.detach(), is_beta=True)
+    dg_bsnd = to_bsnd(dg.detach())
 
     if args.qk_l2norm:
         # 反向返回的是对归一化 q/k 的梯度，参考也按同样口径（leaves 即归一化后的 q/k）。

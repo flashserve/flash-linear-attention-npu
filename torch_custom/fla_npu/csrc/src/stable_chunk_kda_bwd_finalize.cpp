@@ -44,22 +44,20 @@ std::tuple<Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor> run_npu_chunk
 {
     const auto meta = meta_of(q);
     auto qkvShape = meta.sizes;
-    auto gateShape = meta.sizes;
     if (meta.sizes.size() != 3 && meta.sizes.size() != 4) {
         throw std::invalid_argument("finalize q must have rank 3 or 4");
     }
     const size_t first = meta.sizes.size() == 3 ? 0 : 1;
-    std::swap(gateShape.at(first), gateShape.at(first + 1));
     if (output_layout == 0 || output_layout == 2) {
-        qkvShape = gateShape;
+        std::swap(qkvShape.at(first), qkvShape.at(first + 1));
     }
-    auto betaShape = gateShape;
+    auto betaShape = qkvShape;
     betaShape.pop_back();
     Tensor dq = allocate_sizes(qkvShape, kBFloat16, meta);
     Tensor dk = allocate_sizes(qkvShape, kBFloat16, meta);
     Tensor dv = allocate_sizes(qkvShape, kBFloat16, meta);
     Tensor db = allocate_sizes(betaShape, meta_of(beta).scalar_type, meta);
-    Tensor dg = allocate_sizes(gateShape, kFloat, meta);
+    Tensor dg = allocate_sizes(qkvShape, kFloat, meta);
     Tensor da = allocate_sizes(meta_of(a_log).sizes, kFloat, meta);
     Tensor dbias = allocate_sizes(meta_of(dt_bias).sizes, kFloat, meta);
     FLA_STABLE_EXEC(

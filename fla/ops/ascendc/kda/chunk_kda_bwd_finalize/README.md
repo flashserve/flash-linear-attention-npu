@@ -34,14 +34,17 @@ dh 与 h 一致，使用 dense [B,Nc,H,K,V] 或 packed [Nc,H,K,V]。
 
 ## 输出与属性
 
+输出布局以 [接口约定](docs/api.md) 为准：output_layout 统一控制
+dq/dk/dv/d_beta/d_g，dense 默认 BNSD，packed 默认 NTD。
+写回实现见 [输出布局设计](docs/design.md)。
+
 dq/dk/dv 为 BF16，d_beta 与 beta 同类型，d_g/d_a_log/d_dt_bias 为 FP32。
 
 上表及本节类型描述的是独立 `aclnnChunkKdaBwdFinalize` 接口。A2/A3 整体 Bwd
-通过 L0 调用时，Finalize 直接输出 FP32 的 dq/dk/d_beta，dv 保持输入类型，
-以保持原 Python Bwd 的返回契约；支持 FP16/BF16 数据及 FP32/BF16 beta。
-该 L0 路径允许关闭 `use_gate_in_kernel`，此时返回的 `dg` 已完成 chunk 内 reverse cumsum，
-与原整体 Bwd 一致；调用方只需继续做外部 Gate 激活反向，不要重复累加。
-独立接口在 A2/A3 上仍要求 FP32 beta/a_log，Q/K L2Norm 反向在算子外完成。
+通过 L0 调用时，dq/dk/dv 直接输出 BF16，Python db/dg 为 FP32；五个梯度
+均按总接口的 output_layout 写回，无需总接口再做布局转置。
+A2/A3 支持 BF16/FP32 beta，融合 sigmoid 反向时需要前向保存的 FP32 beta_eff；
+a_log 为 FP32。成对传入 q_rstd/k_rstd 时，在 Finalize 内完成 Q/K L2Norm 反向。
 
 | 属性 | 要求 |
 |---|---|

@@ -103,8 +103,8 @@ ge::graphStatus ValidateFinalize(
     for (size_t i = 0; i < 3; ++i) {
         if (!tokenShape(context->GetOutputShape(i), 128, tokenMajor)) return fail();
     }
-    if (!scalarShape(context->GetOutputShape(3), true) ||
-        !tokenShape(context->GetOutputShape(4), 128, true)) return fail();
+    if (!scalarShape(context->GetOutputShape(3), tokenMajor) ||
+        !tokenShape(context->GetOutputShape(4), 128, tokenMajor)) return fail();
     const auto qType = context->GetOutputDesc(0)->GetDataType();
     if (qType != ge::DT_BF16 || context->GetOutputDesc(1)->GetDataType() != qType ||
         context->GetOutputDesc(2)->GetDataType() != ge::DT_BF16) return fail();

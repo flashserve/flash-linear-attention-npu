@@ -214,8 +214,9 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         (packed ? MakeShape({T,H,128}) : MakeShape({B,T,H,128})) : token;
     const auto outputToken = outputTokenMajor ?
         (packed ? MakeShape({T,H,128}) : MakeShape({B,T,H,128})) : token;
-    const auto gateToken = packed ? MakeShape({T,H,128}) : MakeShape({B,T,H,128});
-    const auto gateScalar = packed ? MakeShape({T,H}) : MakeShape({B,T,H});
+    const auto gateToken = outputToken;
+    const auto gateScalar = outputTokenMajor ?
+        (packed ? MakeShape({T,H}) : MakeShape({B,T,H})) : scalar;
     CHECK_COND(MatchesTensor(q, qRstdOptional ? token : externalToken, DataType::DT_BF16) &&
                    MatchesTensor(k, kRstdOptional ? token : externalToken, DataType::DT_BF16) &&
                    MatchesTensor(v, externalToken, DataType::DT_BF16) &&
@@ -237,7 +238,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
                    (MatchesTensor(dbOut, gateScalar, DataType::DT_FLOAT) ||
                     MatchesTensor(dbOut, gateScalar, DataType::DT_BF16)) &&
                    MatchesTensor(dgOut, gateToken, DataType::DT_FLOAT),
-               ACLNN_ERR_PARAM_INVALID, "dv must match output_layout; db/dg must use BSND/TND.");
+               ACLNN_ERR_PARAM_INVALID, "dv/db/dg must match output_layout.");
     CHECK_COND(!useGateInKernel ||
                    ((MatchesTensor(rawGOptional, externalToken, DataType::DT_FLOAT) ||
                      MatchesTensor(rawGOptional, externalToken, DataType::DT_BF16)) &&
@@ -379,7 +380,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     const auto *betaFinal = ToFloat32(beta, ex);
     CHECK_RET(betaFinal && (!rawGOptional || rawHead) && (!aLogOptional || aLog),
               ACLNN_ERR_INNER_NULLPTR);
-    // Finalize writes QKV in outputLayout and gate gradients in BSND/TND.
+    // Finalize writes all five gradients directly in outputLayout.
     const auto *dbFinal = dbOut->GetDataType() == DataType::DT_FLOAT ?
         dbOut : alloc(gateScalar, DataType::DT_FLOAT);
     const auto *dA = dAOutOptional ? dAOutOptional : alloc(MakeShape({H}), DataType::DT_FLOAT);

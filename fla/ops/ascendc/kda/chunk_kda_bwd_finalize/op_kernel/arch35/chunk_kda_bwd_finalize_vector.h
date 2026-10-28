@@ -1197,10 +1197,11 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
         const int64_t partial = head * tiling_->totalChunkNum + chunkTask;
-        const uint64_t out = FinalizeOutputOffset(*tiling_, chunk, head, 0, KDA_FINALIZE_DIM, true);
+        const bool tokenMajor = tiling_->outputTokenMajor != 0U;
+        const uint64_t out = FinalizeOutputOffset(*tiling_, chunk, head, 0, KDA_FINALIZE_DIM, tokenMajor);
         AscendC::DataCopyPad(dG_[out], dg, AscendC::DataCopyExtParams{
             static_cast<uint16_t>(chunk.validRows), KDA_FINALIZE_DIM * sizeof(float), 0,
-            static_cast<uint32_t>((tiling_->NV - 1) * KDA_FINALIZE_DIM * sizeof(float)), 0});
+            tokenMajor ? static_cast<uint32_t>((tiling_->NV - 1) * KDA_FINALIZE_DIM * sizeof(float)) : 0U, 0});
         AscendC::DataCopyPad(workspace_[tiling_->gatePartialOffset].ReinterpretCast<float>()[partial * 8], da,
             AscendC::DataCopyExtParams{1, sizeof(float), 0, 0, 0});
         AscendC::DataCopy(
@@ -1663,10 +1664,10 @@ private:
             tokenMajor ? static_cast<uint32_t>((tiling_->NV - 1) * KDA_FINALIZE_DIM * sizeof(bfloat16_t)) : 0U, 0};
         AscendC::DataCopyPad(dq_[out], dqOut, matrixCopy);
         AscendC::DataCopyPad(dk_[out], dkOut, matrixCopy);
-        const uint64_t betaOut = FinalizeOutputOffset(*tiling_, chunk, head, rowBegin, 1, true);
+        const uint64_t betaOut = FinalizeOutputOffset(*tiling_, chunk, head, rowBegin, 1, tokenMajor);
         AscendC::DataCopyPad(dBeta_[betaOut], dbOut, AscendC::DataCopyExtParams{
             static_cast<uint16_t>(rows), sizeof(DTYPE_BETA), 0,
-            static_cast<uint32_t>((tiling_->NV - 1) * sizeof(DTYPE_BETA)), 0});
+            tokenMajor ? static_cast<uint32_t>((tiling_->NV - 1) * sizeof(DTYPE_BETA)) : 0U, 0});
         // The next Stage5 uses these UB ranges. Preserve all output reads.
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);

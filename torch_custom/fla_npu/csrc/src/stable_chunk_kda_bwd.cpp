@@ -185,12 +185,9 @@ run_npu_chunk_kda_bwd(
     std::swap(output_shape.at(first), output_shape.at(first + 1));
   }
   auto gate_shape = output_shape;
-  if (arch22 && !output_tm) {
-    std::swap(gate_shape.at(first), gate_shape.at(first + 1));
-  }
   auto beta_shape = gate_shape;
   beta_shape.pop_back();
-  // A2/A3 write BF16 dq/dk and token-major gate gradients directly.
+  // A2/A3 write BF16 dq/dk; all five gradients follow output_layout.
   // Keep the A5 legacy output contract unchanged.
   Tensor out_dq = allocate_sizes(output_shape, arch22 ? q_meta.scalar_type : kFloat, q_meta);
   Tensor out_dk = allocate_sizes(output_shape, arch22 ? k_meta.scalar_type : kFloat, k_meta);
