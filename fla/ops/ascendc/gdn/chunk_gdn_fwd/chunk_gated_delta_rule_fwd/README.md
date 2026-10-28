@@ -86,7 +86,7 @@ Python 接受 `a_log=None, dt_bias=None` 预留参数；当前仅支持
 | --- | --- | --- |
 | `layout` | A2/A3 和 A5 新路径支持 `BNSD/BSND/NTD/TND`；A5 Phase6 路径支持 `BNSD/NTD` | q/k/v 的输入布局；A2/A3 原生加载并直接输出 BSND，A5 新路径将 sequence-major QKV 转为 head-first |
 | `scale` | 通常为 `K**-0.5` | Query 缩放因子 |
-| `chunkSize` | `64`、`128` | 分块大小 |
+| `chunkSize` | `32`、`64`、`128` | `32` 仅 A5。q/k/v 进核前是 BNSD/NTD，g/beta 进核前是 `[B,Hv,T]`，o 由核按 stride 直接写成 BSND |
 | `useExp2` | A5 新路径支持 `true/false` | 只控制门控累计和后续状态、输出阶段使用 `exp2` 或 `exp`，三个小算子均按新路径规格选择优化实现 |
 | `useQkL2norm` | A5 新路径支持 `true/false` | true 时由 prepare 生成归一化 Q/K；false 时 H/O 直接使用输入 Q/K |
 | `allowNegEigval` | A5 新路径支持 | 为 true 时必须提供 `betaEffOutOptional` |

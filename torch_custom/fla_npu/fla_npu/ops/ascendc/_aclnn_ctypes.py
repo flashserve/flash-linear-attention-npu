@@ -50,21 +50,6 @@ from ._runtime import (
 # strings or otherwise ambiguous scalar conversion are listed here to prevent
 # ctypes from narrowing or mis-converting arguments.
 _GET_WORKSPACE_ARGTYPES = {
-    "aclnnChunkGatedDeltaRuleFwd32": [
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_double,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_uint64),
-        ctypes.POINTER(ctypes.c_void_p),
-    ],
     "aclnnCausalConv1d": [
         ctypes.c_void_p,  # x
         ctypes.c_void_p,  # weight
@@ -2870,11 +2855,11 @@ def npu_chunk_gated_delta_rule_fwd(
         raise RuntimeError(
             "npu_chunk_gated_delta_rule_fwd: Phase 6 GVA requires value heads divisible by key heads."
         )
-    if beta_shape != (batch, tokens, v_heads) or g_shape != beta_shape:
-        raise RuntimeError("npu_chunk_gated_delta_rule_fwd: beta and g must have shape [B,T,Hv].")
     if chunk_size not in (32, 64, 128):
         raise RuntimeError("npu_chunk_gated_delta_rule_fwd: chunk_size must be 32, 64 or 128.")
     is_chunk32 = chunk_size == 32
+    if beta_shape != (batch, tokens, v_heads) or g_shape != beta_shape:
+        raise RuntimeError("npu_chunk_gated_delta_rule_fwd: beta and g must have shape [B,T,Hv].")
     if is_chunk32 and v_dim != 128:
         raise RuntimeError("npu_chunk_gated_delta_rule_fwd: chunk_size=32 requires V=128.")
     if (cu_seqlens is None) != (chunk_indices is None):
@@ -2909,8 +2894,6 @@ def npu_chunk_gated_delta_rule_fwd(
     if a_log is not None or dt_bias is not None:
         raise ValueError("a_log and dt_bias must be None while gate-in-kernel is unsupported.")
     if is_chunk32:
-        if layout not in ("BNSD", "NTD"):
-            raise ValueError("chunk_size=32 supports BNSD/NTD input only.")
         if use_exp2 or not use_qk_l2norm_in_kernel or not use_beta_sigmoid_in_kernel:
             raise ValueError(
                 "chunk_size=32 requires use_exp2=False, "
@@ -2928,7 +2911,8 @@ def npu_chunk_gated_delta_rule_fwd(
         if initial_state is not None and initial_state.dtype not in (torch.bfloat16, torch.float32):
             raise ValueError("chunk_size=32 initial_state must be bfloat16 or float32.")
     scale = _optional_float(scale, float(k_dim) ** -0.5)
-    o = _empty((batch, tokens, v_heads, v_dim), v)
+    o_shape = (batch, tokens, v_heads, v_dim)
+    o = _empty(o_shape, v)
     g_cumsum = (
         _empty((batch, tokens, v_heads), g, dtype=torch.float32)
         if disable_recompute and not is_chunk32
@@ -4650,98 +4634,6 @@ def npu_solve_tri(x, *, cu_seqlens=None, chunk_indices=None, layout="bsnd"):
             ctx.tensor(out, "out"),
         ],
         out,
-    )
-
-
-def npu_chunk_gated_delta_rule_fwd_32(
-    q,
-    k,
-    v,
-    g,
-    beta,
-    *,
-    initial_state=None,
-    cu_seqlens=None,
-    chunk_indices=None,
-    scale=None,
-):
-    """Fused GDN infer forward. q/k are [B, Hk, T, K], v is [B, Hv, T, V], g/beta are [B, Hv, T].
-
-    Hv must be a multiple of Hk. T may be any positive length; a partial last chunk is padded
-    inside the kernel. Each (batch, value head) is one task.
-
-    cu_seqlens and chunk_indices are both absent, or both present. When present, B is 1 and T
-    packs N sequences. final_state and initial_state are then [N, Hv, K, V]. chunk_indices is
-    the canonical (seqId, localChunkId) list; omitting it builds that list from cu_seqlens.
-
-    final_state uses initial_state's dtype. With no initial_state it is float32. A bfloat16
-    initial_state is widened once; the on-chip recurrence stays float32 and the bfloat16
-    final_state is rounded on the way out.
-    """
-
-    import math
-
-    import torch
-
-    if q.shape != k.shape or q.ndim != 4 or v.ndim != 4:
-        raise RuntimeError("q, k and v must be rank-4, and q must match k.")
-    b, hk, tokens, key = _shape(q)
-    _, hv, tokens_v, value = _shape(v)
-    if tokens != tokens_v or hk <= 0 or hv <= 0 or hv % hk != 0 or key != 128 or value != 128 or tokens <= 0:
-        raise RuntimeError(
-            "chunk_gated_delta_rule_fwd_32 requires Hv multiple of Hk, K=V=128 and T > 0."
-        )
-    if _shape(g) != (b, hv, tokens) or _shape(beta) != (b, hv, tokens):
-        raise RuntimeError("g and beta must be [B, Hv, T].")
-    cu = _as_int_list(cu_seqlens)
-    chunks = _as_int_list(chunk_indices)
-    if (cu is None) != (chunks is None):
-        if cu is None:
-            raise RuntimeError("chunk_indices requires cu_seqlens.")
-        chunks = _chunk_indices_from_cu_seqlens(cu, 32)
-    seq_num = b if cu is None else len(cu) - 1
-    if cu is not None and b != 1:
-        raise RuntimeError("packed sequences require B = 1.")
-    if scale is None:
-        scale = 1.0 / math.sqrt(key)
-    q = q.contiguous()
-    k = k.contiguous()
-    v = v.contiguous()
-    g = g.contiguous()
-    beta = beta.contiguous()
-    if initial_state is None:
-        state_dtype = torch.float32
-    else:
-        if initial_state.dtype not in (torch.bfloat16, torch.float32):
-            raise RuntimeError("initial_state must be bfloat16 or float32.")
-        initial_state = initial_state.contiguous()
-        state_dtype = initial_state.dtype
-    out = _zeros((b, hv, tokens, value), q)
-    final_state = _zeros((seq_num, hv, key, value), q, dtype=state_dtype)
-
-    def nd(ctx, tensor, name):
-        if tensor is None:
-            return ctx.tensor(None, name)
-        return ctx.tensor(
-            tensor, name, acl_format_override=ACL_FORMAT_ND, storage_shape_override=_shape(tensor)
-        )
-
-    return _call_aclnn(
-        "aclnnChunkGatedDeltaRuleFwd32",
-        lambda ctx: [
-            nd(ctx, q, "q"),
-            nd(ctx, k, "k"),
-            nd(ctx, v, "v"),
-            nd(ctx, g, "g"),
-            nd(ctx, beta, "beta"),
-            nd(ctx, initial_state, "initial_state"),
-            ctx.int_array(cu),
-            ctx.int_array(chunks),
-            ctypes.c_double(float(scale)),
-            nd(ctx, out, "o"),
-            nd(ctx, final_state, "final_state"),
-        ],
-        (out, final_state),
     )
 
 

@@ -103,11 +103,16 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *contex
                 OP_LOGE(context->GetNodeName(),
                         "Chunk32 requires positive B/H/T, Hv divisible by Hk, and K=V=128."),
                 return ge::GRAPH_FAILED);
+    // A caller-owned contiguous o can arrive with its storage collapsed to
+    // numel. The logical BNSD layout is already checked in ACLNN.
+    const int64_t oNumel = batch * valueHeads * tokens * valueDim;
+    const gert::Shape &oStorage = oShape->GetStorageShape();
+    const bool oFlat = oStorage.GetDimNum() == 1 && oStorage.GetDim(0) == oNumel;
     OP_CHECK_IF(!IsShape(kShape, {batch, keyHeads, tokens, keyDim}) ||
                     !IsShape(vShape, {batch, valueHeads, tokens, valueDim}) ||
                     !IsShape(betaShape, {batch, valueHeads, tokens}) ||
                     !IsShape(gShape, {batch, valueHeads, tokens}) ||
-                    !IsShape(oShape, {batch, valueHeads, tokens, valueDim}),
+                    !(IsShape(oShape, {batch, valueHeads, tokens, valueDim}) || oFlat),
                 OP_LOGE(context->GetNodeName(), "Chunk32 input or output storage shape is invalid."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(qDesc->GetDataType() != ge::DT_BF16 ||
