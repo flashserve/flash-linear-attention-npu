@@ -2,15 +2,22 @@
   {
     "id": 0,
     "default_seed": 20262027,
-    "name": "chunk_gated_delta_rule_fwd_32_0000_perf_bnsd_h4_t512",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0000_perf_bnsd_h4_t512",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -162,20 +169,27 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   },
   {
     "id": 1,
     "default_seed": 20262028,
-    "name": "chunk_gated_delta_rule_fwd_32_0001_perf_ntd_gva_t256",
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0001_perf_ntd_gva_t256",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
-    "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -327,6 +341,6 @@
         "backward": false
       }
     ],
-    "save_name": "chunk_gated_delta_rule_fwd_32"
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
   }
 ]

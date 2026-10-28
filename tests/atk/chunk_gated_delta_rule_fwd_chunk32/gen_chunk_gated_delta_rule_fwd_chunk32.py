@@ -1,10 +1,9 @@
-"""Build the frozen ATK matrices for chunk_gated_delta_rule_fwd_32.
+"""Build frozen ATK matrices for the migrated chunk32 forward path.
 
 Shapes come from ``chunk_gated_delta_rule_fwd/case_matrix_contract.py``.
-V=256, FP16 and token-major TND are dropped: this op only accepts BF16,
-K=V=128, and head-major BNSD / packed NTD. T and ``B*Hv*T`` stay in the
-medium band of that contract so the CPU golden does not run out of memory.
-Each kept shape is repeated on three seeds.
+V=256, FP16 and token-major layouts are dropped: the specialized path of
+``npu_chunk_gated_delta_rule_fwd`` only accepts BF16, K=V=128 and head-major
+BNSD / packed NTD. Each kept shape is repeated on three seeds.
 """
 
 from __future__ import annotations
@@ -15,9 +14,20 @@ from collections import defaultdict
 from pathlib import Path
 
 
-OP_NAME = "chunk_gated_delta_rule_fwd_32"
+OP_NAME = "chunk_gated_delta_rule_fwd_chunk32"
 SEED_BASE = 20261027
-STANDARD = {"acc": "mixed_tolerance_bm", "perf": "not_key", "mem": 1.1}
+STANDARD = {
+    "acc": {
+        "mixed_tolerance_bm": {
+            # o is BF16. FP32 final_state preserves state bits, but each chunk's
+            # Cube image is intentionally rounded to BF16, so both outputs use
+            # the model-dtype mixed-tolerance contract.
+            "output_dtype_overrides": {"0": "bf16", "1": "bf16"}
+        }
+    },
+    "perf": "not_key",
+    "mem": 1.1,
+}
 SEEDS_PER_SHAPE = 3
 HERE = Path(__file__).resolve().parent
 CONTRACT = HERE.parent / "chunk_gated_delta_rule_fwd" / "case_matrix_contract.py"
@@ -35,8 +45,7 @@ def _state_dtype(scenario: str, local_index: int) -> str:
         return "none"
     if scenario == "state_zero_final":
         return "zero"
-    # initial_final and initial_only both become an initial tensor. The 32 op
-    # always writes final_state, so the sibling's "initial only" still compares it.
+    # This separated suite always requests final_state from the migrated API.
     if local_index % 2 == 0:
         return "bf16" if scenario == "state_initial_final" else "fp32"
     return "fp32" if scenario == "state_initial_final" else "bf16"
@@ -274,7 +283,7 @@ def perf_specs() -> list[dict]:
 
 
 def mss_specs() -> list[dict]:
-    """Tiling key is 0 for every supported input. These four cover the memory paths."""
+    """Tiling key is 32 for every supported input. Cover all state/layout paths."""
 
     rows = [
         ("mss_bnsd_none", "BNSD", 1, 1, 1, 64, "none", ""),
@@ -352,7 +361,7 @@ def _case_payload(case_id: int, spec: dict) -> dict:
         "aclnn_name": None,
         "version": "v2.1",
         "api": "pytorch",
-        "api_type": "executor_chunk_gated_delta_rule_fwd_32",
+        "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
         "expected_error_msg": None,
         "backward": False,
         "standard": STANDARD,
