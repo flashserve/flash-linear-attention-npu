@@ -262,9 +262,8 @@ __aicore__ inline void GenAuxMatrixVF(LocalTensor<uint32_t> &shiftIdx, LocalTens
 
 // g_cumsum stays in natural units (useExp2=false). eg = exp(g_cumsum).
 // Five gather-adds over the 32 live lanes. shiftIdx[s] gathers lane i from
-// i-2^s (0 when i < 2^s). StoreRcp writes 1/eg into the next 32 lanes so
-// Gate and v_new are multiplies.
-template <bool StoreRcp = false>
+// i-2^s (0 when i < 2^s). 1/eg is written into the next 32 lanes so Gate and
+// v_new are multiplies.
 __aicore__ inline void CumsumExp2VF(LocalTensor<float> &g, LocalTensor<float> &eg,
                                     LocalTensor<uint32_t> &shiftIdx)
 {
@@ -294,12 +293,10 @@ __aicore__ inline void CumsumExp2VF(LocalTensor<float> &g, LocalTensor<float> &e
         }
         Exp(v, v, pregN);
         StoreAlign(egAddr, v, pregN);
-        if constexpr (StoreRcp) {
-            RegTensor<float> oneR, rcp;
-            Duplicate(oneR, 1.0f, pregN);
-            Div(rcp, oneR, v, pregN);
-            StoreAlign(egAddr + 32, rcp, pregN);
-        }
+        RegTensor<float> oneR, rcp;
+        Duplicate(oneR, 1.0f, pregN);
+        Div(rcp, oneR, v, pregN);
+        StoreAlign(egAddr + 32, rcp, pregN);
     }
 }
 
