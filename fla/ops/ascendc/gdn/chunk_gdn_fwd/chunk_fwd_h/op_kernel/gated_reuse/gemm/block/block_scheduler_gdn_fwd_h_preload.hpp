@@ -10,8 +10,8 @@
 #include "catlass/gemm_coord.hpp"
 using namespace Catlass;
 
-// 原版构建经 gdn_fwd_h_kernel.hpp → block_scheduler_gdn_fwd_h.hpp 定义；独立
-// include（gated 复用路径）时此处兜底定义。
+// gated 复用拷贝仅引入 preload 链：原版经非 preload scheduler（本拷贝未引入）
+// 传递的 PING_PONG_STAGES 在此兜底定义。
 #ifndef PING_PONG_STAGES
 constexpr uint32_t PING_PONG_STAGES = 2;
 #endif
