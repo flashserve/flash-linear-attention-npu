@@ -278,7 +278,8 @@ class WheelEnvironmentTest(unittest.TestCase):
         version = self._public_version()
         for soc, tier in (("ascend910b", "a2"),
                           ("ascend910_93", "a3"),
-                          ("ascend950", "a5")):
+                          ("ascend950", "a5"),
+                          ("ascend960dt", "a6")):
             environment = {
                 "FLA_NPU_DISABLE_LOCAL_VERSION": "TRUE",
                 "FLA_NPU_SOC": soc,
@@ -430,6 +431,13 @@ class WheelEnvironmentTest(unittest.TestCase):
             compat = compat_py.read_text(encoding="utf-8")
             self.assertIn("MIN_CANN = '9.0.0'", compat)
             self.assertIn("MIN_TORCH = '2.7.1'", compat)
+
+            with mock.patch.dict(os.environ, {"FLA_NPU_SOC": "ascend960dt"}):
+                setup_globals, _ = _load_setup()
+                setup_globals["_write_runtime_meta"]()
+            self.assertIn("TIER = 'a6'", build_meta.read_text(encoding="utf-8"))
+            self.assertIn("MIN_CANN = '9.2.0'",
+                          compat_py.read_text(encoding="utf-8"))
 
             # Rebuilding another tier must overwrite, never inherit, the marker.
             with mock.patch.dict(os.environ, {"FLA_NPU_SOC": "ascend910b"}):
@@ -607,6 +615,24 @@ class WheelEnvironmentTest(unittest.TestCase):
                 )
         self.assertTrue(any("kernel" in note for note in notes), notes)
         self.assertTrue(any("purelib" in note for note in notes), notes)
+
+    def test_a6_wheel_gate_infers_tier_and_checks_dt_payload(self) -> None:
+        gate = runpy.run_path(str(REPO_ROOT / "scripts" / "check_pypi_wheel.py"))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wheel = Path(temp_dir) / (
+                "flash_linear_attention_npu_a6-26.9.0-py3-none-"
+                "manylinux_2_34_x86_64.whl")
+            options = dict(
+                expect_tier=None, expect_arch="x86_64", expect_version="26.9.0",
+                require_offline_bundle=False, require_launcher=True,
+                max_glibc="2.34", max_glibcxx="3.4.29", allow_missing_readelf=True,
+            )
+            self._write_release_wheel(wheel, tier="a6", soc="ascend960dt")
+            with mock.patch("shutil.which", return_value=None):
+                gate["check_wheel"](wheel, **options)
+                self._write_release_wheel(wheel, tier="a6", soc="ascend950")
+                with self.assertRaises(gate["CheckFailure"]):
+                    gate["check_wheel"](wheel, **options)
 
     def test_pure_ctypes_wheel_is_not_required_to_carry_the_launcher(self) -> None:
         gate = runpy.run_path(str(REPO_ROOT / "scripts" / "check_pypi_wheel.py"))

@@ -12,7 +12,7 @@ show_usage() {
 常用参数：
   -op=chunk_kda_fwd              ATK 算子目录名
   -npu_device_id=0               传给 ATK node --devices 的 NPU 卡号，默认 0；gen_cases 不需要
-  -soc=ascend910b                可选：ascend910b/A2、ascend910_93/A3、ascend950/A5；默认 auto 自动探测
+  -soc=ascend910b                可选：ascend910b/A2、ascend910_93/A3、ascend950/A5、ascend960dt/A6；默认 auto 自动探测
   -scope=all                     可选：all、accuracy、performance、determinism、mssanitizer、gen_cases
                                  all 包含 accuracy/performance/determinism/mssanitizer；
                                  gen_cases 只生成精度候选用例，不在 all 中
@@ -141,7 +141,7 @@ set_case_range_args() {
   fi
 }
 
-# 从 npu-smi 探测真实 SOC，返回 ascend910b/ascend910_93/ascend950；探测失败返回空。
+# 从 npu-smi 探测真实 SOC，返回 ascend910b/ascend910_93/ascend950/ascend960dt；探测失败返回空。
 detect_soc_from_npu() {
   local name
   name=$(npu-smi info 2>/dev/null | awk -F'|' '/^\|[[:space:]]*[0-9]+[[:space:]]+[^[:space:]]+[[:space:]]*\|/ {
@@ -154,6 +154,7 @@ detect_soc_from_npu() {
     *910B*|*910b*) echo "ascend910b" ;;
     *910_93*|*910*93*) echo "ascend910_93" ;;
     *950*|*Ascend950*) echo "ascend950" ;;
+    *960DT*|*960dt*) echo "ascend960dt" ;;
     *) echo "" ;;
   esac
 }
@@ -280,7 +281,8 @@ case "$SOC" in
   a2|A2|ascend910b) SOC="ascend910b" ;;
   a3|A3|ascend910_93) SOC="ascend910_93" ;;
   a5|A5|ascend950) SOC="ascend950" ;;
-  *) die "不支持的 SOC：${SOC}，请使用 ascend910b/A2、ascend910_93/A3 或 ascend950/A5" ;;
+  a6|A6|ascend960dt) SOC="ascend960dt" ;;
+  *) die "不支持的 SOC：${SOC}，请使用 ascend910b/A2、ascend910_93/A3、ascend950/A5 或 ascend960dt/A6" ;;
 esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
