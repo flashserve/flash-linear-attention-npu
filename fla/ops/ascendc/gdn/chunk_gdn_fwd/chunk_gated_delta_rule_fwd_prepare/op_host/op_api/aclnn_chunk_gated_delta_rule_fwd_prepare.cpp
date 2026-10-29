@@ -9,6 +9,7 @@
 #include "acl/acl.h"
 #include "aclnn/aclnn_base.h"
 #include "aclnn_kernels/common/op_error_check.h"
+#include "aclnn_kernels/cast.h"
 #include "aclnn_kernels/contiguous.h"
 #include "opdev/common_types.h"
 #include "opdev/data_type_utils.h"
@@ -19,6 +20,8 @@
 #include "opdev/op_log.h"
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
+#include <cstring>
+#include <cstdint>
 
 using namespace op;
 
@@ -33,6 +36,15 @@ constexpr int64_t CHUNK_SIZE = 64;
 constexpr int64_t DIM_4 = 4;
 constexpr int64_t DIM_3 = 3;
 constexpr int64_t DIM_1 = 1;
+
+static bool IsA2PrepareSoc()
+{
+    const char *soc = aclrtGetSocName();
+    return soc != nullptr && (std::strncmp(soc, "Ascend910B", std::strlen("Ascend910B")) == 0 ||
+        std::strcmp(soc, "ascend910b") == 0 ||
+        std::strncmp(soc, "Ascend910_93", std::strlen("Ascend910_93")) == 0 ||
+        std::strncmp(soc, "ascend910_93", std::strlen("ascend910_93")) == 0);
+}
 
 struct ChunkGatedDeltaRuleFwdPrepareParams {
     const aclTensor *q = nullptr;
@@ -59,11 +71,6 @@ struct ChunkGatedDeltaRuleFwdPrepareParams {
     const aclTensor *betaEffOptional = nullptr;
 };
 
-static bool IsHalfDtype(DataType dtype)
-{
-    return dtype == DataType::DT_BF16 || dtype == DataType::DT_FLOAT16;
-}
-
 static bool IsGateDtype(DataType dtype)
 {
     return dtype == DataType::DT_FLOAT || dtype == DataType::DT_BF16 || dtype == DataType::DT_FLOAT16;
@@ -88,8 +95,7 @@ static aclnnStatus CheckNotNull(const ChunkGatedDeltaRuleFwdPrepareParams &param
         CHECK_COND(hasQHat == hasKHat && hasQHat == hasQRstd && hasQHat == hasKRstd, ACLNN_ERR_PARAM_INVALID,
                    "qHat/kHat/qRstd/kRstd must all be set or all be nullptr.");
     }
-    CHECK_COND(params.chunkSize == CHUNK_SIZE, ACLNN_ERR_PARAM_INVALID,
-               "chunkSize currently only supports 64.");
+    CHECK_COND(params.chunkSize == CHUNK_SIZE, ACLNN_ERR_PARAM_INVALID, "chunkSize must be 64.");
     CHECK_COND(!(params.dtBiasOptional != nullptr && params.aLogOptional == nullptr), ACLNN_ERR_PARAM_INVALID,
                "dtBiasOptional requires aLogOptional (use_gate_in_kernel).");
     CHECK_COND(!(params.allowNegEigval && params.betaEffOptional == nullptr), ACLNN_ERR_PARAM_INVALID,
@@ -103,8 +109,7 @@ static aclnnStatus CheckNotNull(const ChunkGatedDeltaRuleFwdPrepareParams &param
 
 static aclnnStatus CheckDtype(const ChunkGatedDeltaRuleFwdPrepareParams &params)
 {
-    CHECK_COND(IsHalfDtype(params.q->GetDataType()) && params.q->GetDataType() == DataType::DT_BF16,
-               ACLNN_ERR_PARAM_INVALID, "q currently only supports bfloat16.");
+    CHECK_COND(params.q->GetDataType() == DataType::DT_BF16, ACLNN_ERR_PARAM_INVALID, "q must be bfloat16.");
     CHECK_COND(params.k->GetDataType() == params.q->GetDataType(), ACLNN_ERR_PARAM_INVALID,
                "k dtype must match q.");
     CHECK_COND(params.v->GetDataType() == params.q->GetDataType(), ACLNN_ERR_PARAM_INVALID,
@@ -156,6 +161,40 @@ static bool ShapeEqual(const op::Shape &lhs, const op::Shape &rhs)
     return true;
 }
 
+static aclnnStatus CheckA2PrepareMetadata(const ChunkGatedDeltaRuleFwdPrepareParams &params, int64_t tokens)
+{
+    CHECK_COND((params.cuSeqlensOptional == nullptr) == (params.chunkIndicesOptional == nullptr),
+               ACLNN_ERR_PARAM_INVALID, "A2 cuSeqlens and chunkIndices must be provided together.");
+    if (params.cuSeqlensOptional == nullptr) return ACLNN_SUCCESS;
+    const auto &cu = *params.cuSeqlensOptional;
+    const auto &indices = *params.chunkIndicesOptional;
+    CHECK_COND(cu.Size() >= 2 && cu[0] == 0 && cu[cu.Size() - 1] == tokens,
+               ACLNN_ERR_PARAM_INVALID, "cuSeqlens must start at 0 and end at T.");
+    uint64_t chunks = 0;
+    for (size_t seq = 0; seq + 1 < cu.Size(); ++seq) {
+        CHECK_COND(cu[seq] >= 0 && cu[seq] < cu[seq + 1] && cu[seq + 1] <= tokens,
+                   ACLNN_ERR_PARAM_INVALID, "cuSeqlens must be strictly increasing within [0,T].");
+        const uint64_t length = static_cast<uint64_t>(cu[seq + 1] - cu[seq]);
+        const uint64_t count = length / params.chunkSize + (length % params.chunkSize != 0);
+        CHECK_COND(chunks <= static_cast<uint64_t>(INT64_MAX) - count, ACLNN_ERR_PARAM_INVALID,
+                   "A2 chunk count overflows.");
+        chunks += count;
+    }
+    CHECK_COND(indices.Size() % 2 == 0 && indices.Size() / 2 == chunks, ACLNN_ERR_PARAM_INVALID,
+               "chunkIndices must contain one canonical pair per chunk.");
+    size_t index = 0;
+    for (size_t seq = 0; seq + 1 < cu.Size(); ++seq) {
+        const int64_t length = cu[seq + 1] - cu[seq];
+        const int64_t count = length / params.chunkSize + (length % params.chunkSize != 0);
+        for (int64_t chunk = 0; chunk < count; ++chunk) {
+            CHECK_COND(indices[index] == static_cast<int64_t>(seq) && indices[index + 1] == chunk,
+                       ACLNN_ERR_PARAM_INVALID, "chunkIndices must use canonical sequence-major order.");
+            index += 2;
+        }
+    }
+    return ACLNN_SUCCESS;
+}
+
 static aclnnStatus CheckShape(const ChunkGatedDeltaRuleFwdPrepareParams &params)
 {
     const op::Shape qShape = params.q->GetViewShape();
@@ -175,6 +214,11 @@ static aclnnStatus CheckShape(const ChunkGatedDeltaRuleFwdPrepareParams &params)
     const int64_t K = qShape.GetDim(3);
     const int64_t HV = vShape.GetDim(1);
     const int64_t V = vShape.GetDim(3);
+    if (IsA2PrepareSoc()) {
+        CHECK_COND(B > 0 && HK > 0 && HV > 0 && T > 0, ACLNN_ERR_PARAM_INVALID,
+                   "A2 Prepare requires positive B/Hk/Hv/T.");
+        CHECK_RET(CheckA2PrepareMetadata(params, T) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    }
     CHECK_COND(vShape.GetDim(0) == B && vShape.GetDim(2) == T, ACLNN_ERR_PARAM_INVALID,
                "v batch/seq must match q.");
     CHECK_COND(gShape.GetDim(0) == B && gShape.GetDim(1) == HV && gShape.GetDim(2) == T, ACLNN_ERR_PARAM_INVALID,
@@ -183,7 +227,8 @@ static aclnnStatus CheckShape(const ChunkGatedDeltaRuleFwdPrepareParams &params)
     CHECK_COND(V == 128 || V == 256, ACLNN_ERR_PARAM_INVALID, "V must be 128 or 256.");
     CHECK_COND(HK > 0 && HV % HK == 0, ACLNN_ERR_PARAM_INVALID, "Hv must be divisible by Hk.");
     const int64_t ratio = HV / HK;
-    CHECK_COND(ratio >= 1 && ratio <= 4, ACLNN_ERR_PARAM_INVALID, "Hv/Hk must be in {1,2,3,4}.");
+    CHECK_COND(ratio >= 1 && ratio <= (IsA2PrepareSoc() ? 16 : 4), ACLNN_ERR_PARAM_INVALID,
+               "Hv/Hk must be in [1,16] on A2/A3 or [1,4] on Ascend950.");
 
     if (params.aLogOptional != nullptr) {
         const op::Shape aLogShape = params.aLogOptional->GetViewShape();
@@ -264,6 +309,69 @@ static aclnnStatus ParamsDataContiguous(ChunkGatedDeltaRuleFwdPrepareParams &par
     return ACLNN_SUCCESS;
 }
 
+static bool A2PrepareElementCount(const op::Shape &shape, uint64_t &count)
+{
+    count = 1;
+    if (shape.GetDimNum() == 0) return false;
+    for (size_t axis = 0; axis < shape.GetDimNum(); ++axis) {
+        const int64_t dim = shape.GetDim(axis);
+        if (dim <= 0 || count > static_cast<uint64_t>(INT64_MAX) / static_cast<uint64_t>(dim)) return false;
+        count *= static_cast<uint64_t>(dim);
+    }
+    return true;
+}
+
+static const aclTensor *A2PrepareDenseInput(const aclTensor *tensor, bool fp32, aclOpExecutor *executor)
+{
+    if (tensor == nullptr) return nullptr;
+    if (fp32 && tensor->GetDataType() != DataType::DT_FLOAT)
+        tensor = l0op::Cast(tensor, DataType::DT_FLOAT, executor);
+    if (tensor == nullptr) return nullptr;
+    uint64_t count = 0, capacity = 0;
+    const int64_t base = tensor->GetViewOffset();
+    if (!A2PrepareElementCount(tensor->GetViewShape(), count) ||
+        !A2PrepareElementCount(tensor->GetStorageShape(), capacity) || base < 0 ||
+        static_cast<uint64_t>(base) > capacity || count > capacity - static_cast<uint64_t>(base))
+        return nullptr;
+    auto *view = executor->CreateView(tensor, tensor->GetViewShape(), tensor->GetViewOffset());
+    if (view != nullptr) {
+        view->SetStorageShape(tensor->GetViewShape());
+        view->SetOriginalShape(tensor->GetViewShape());
+    }
+    return view;
+}
+
+static aclnnStatus MakeA2PrepareCompute(const ChunkGatedDeltaRuleFwdPrepareParams &params,
+                                        ChunkGatedDeltaRuleFwdPrepareParams &compute, aclOpExecutor *executor)
+{
+    compute = params;
+    compute.q = A2PrepareDenseInput(params.q, false, executor);
+    compute.k = A2PrepareDenseInput(params.k, false, executor);
+    compute.v = A2PrepareDenseInput(params.v, false, executor);
+    compute.g = A2PrepareDenseInput(params.g, true, executor);
+    compute.beta = A2PrepareDenseInput(params.beta, true, executor);
+    compute.aLogOptional = A2PrepareDenseInput(params.aLogOptional, true, executor);
+    compute.dtBiasOptional = A2PrepareDenseInput(params.dtBiasOptional, true, executor);
+    auto shadow = [executor](const aclTensor *output) -> const aclTensor * {
+        return output == nullptr ? nullptr :
+            executor->AllocTensor(output->GetViewShape(), output->GetDataType(), Format::FORMAT_ND);
+    };
+    // Prepare 内部写独立输出，全部 raw Q/K/g/beta 读取结束后才 ViewCopy 公开 view。
+    compute.gOut = shadow(params.gOut); compute.wOut = shadow(params.wOut); compute.uOut = shadow(params.uOut);
+    // outputA=false 时内核把 A 写入 checked scratch；此端口保持调用方占位且不写/不复制。
+    compute.aOut = params.outputA ? shadow(params.aOut) : params.aOut;
+    compute.qHatOptional = shadow(params.qHatOptional); compute.kHatOptional = shadow(params.kHatOptional);
+    compute.qRstdOptional = shadow(params.qRstdOptional); compute.kRstdOptional = shadow(params.kRstdOptional);
+    compute.betaEffOptional = shadow(params.betaEffOptional);
+    CHECK_RET(compute.q && compute.k && compute.v && compute.g && compute.beta &&
+                  compute.gOut && compute.wOut && compute.uOut && compute.aOut &&
+                  (!params.aLogOptional || compute.aLogOptional) && (!params.dtBiasOptional || compute.dtBiasOptional) &&
+                  (!params.qHatOptional || (compute.qHatOptional && compute.kHatOptional &&
+                                            compute.qRstdOptional && compute.kRstdOptional)) &&
+                  (!params.betaEffOptional || compute.betaEffOptional), ACLNN_ERR_INNER_NULLPTR);
+    return ACLNN_SUCCESS;
+}
+
 static aclnnStatus ViewCopyIfPresent(const aclTensor *src, const aclTensor *dst, aclOpExecutor *executor)
 {
     if (dst == nullptr || src == nullptr) {
@@ -329,13 +437,18 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
     CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
                "ParamsDataContiguous failed.");
 
+    const bool a2 = IsA2PrepareSoc();
+    auto compute = params;
+    if (a2) {
+        CHECK_RET(MakeA2PrepareCompute(params, compute, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
+    }
     auto result = l0op::ChunkGatedDeltaRuleFwdPrepare(
-        params.q, params.k, params.v, params.g, params.beta, params.aLogOptional, params.dtBiasOptional,
-        params.cuSeqlensOptional, params.chunkIndicesOptional, params.chunkSize, params.allowNegEigval,
-        params.useExp2, params.qHatOptional != nullptr,
-        params.aLogOptional != nullptr, params.betaEffOptional != nullptr, params.outputA,
-        params.gOut, params.wOut, params.uOut, params.aOut, params.qHatOptional, params.kHatOptional, params.qRstdOptional,
-        params.kRstdOptional, params.betaEffOptional, executorPtr);
+        compute.q, compute.k, compute.v, compute.g, compute.beta, compute.aLogOptional, compute.dtBiasOptional,
+        compute.cuSeqlensOptional, compute.chunkIndicesOptional, compute.chunkSize, compute.allowNegEigval,
+        compute.useExp2, compute.qHatOptional != nullptr,
+        compute.aLogOptional != nullptr, compute.betaEffOptional != nullptr, compute.outputA,
+        compute.gOut, compute.wOut, compute.uOut, compute.aOut, compute.qHatOptional, compute.kHatOptional,
+        compute.qRstdOptional, compute.kRstdOptional, compute.betaEffOptional, executorPtr);
     CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(result[1] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(result[2] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
@@ -344,7 +457,9 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
     CHECK_RET(ViewCopyIfPresent(result[0], params.gOut, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(ViewCopyIfPresent(result[1], params.wOut, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(ViewCopyIfPresent(result[2], params.uOut, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(ViewCopyIfPresent(result[3], params.aOut, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
+    if (!a2 || params.outputA) {
+        CHECK_RET(ViewCopyIfPresent(result[3], params.aOut, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
+    }
     CHECK_RET(ViewCopyIfPresent(result[4], params.qHatOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(ViewCopyIfPresent(result[5], params.kHatOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(ViewCopyIfPresent(result[6], params.qRstdOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
