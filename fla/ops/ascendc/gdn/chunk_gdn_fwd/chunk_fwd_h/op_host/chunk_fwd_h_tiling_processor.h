@@ -170,6 +170,15 @@ private:
     // move. Falls back to the uniform partition (coreBoundCount=0) when the
     // sequence weights are unavailable or degenerate (dense / fewer tasks
     // than cores / greedy produced fewer spans than cores).
+    //
+    // ——A 轮 pair 原子化（2026-10-29）：切分最小单元改为 (seq, head-pair)——
+    // 单任务粒度的贪心在"少任务 × 长序列"形态（case32 类：每核 ~≤2 任务）会跨
+    // 序列切 span，核内 round 配到跨序列 head 对，破坏 MIX_AIC_1_2 双 AIV 并行
+    // 前提（pair slot 需同序列 2 head 各扛一链，画像铁证：vector1 空转 +12.9%）。
+    // pair 原子化后 span 边界恒对齐 pair 边界——核内连续 2 任务恒同序列，每
+    // round 配对自然成立。奇 vNumHead 的末 head 退化为单任务单元（该 round 单
+    // AIV，仅奇 head 形态受影响）。大任务数形态（case2 类）均衡粒度 2 倍化，
+    // 段长大数定律下均衡收益不变。GreedySpanCount 只看权重序列，签名不变。
     void FillBalancedCoreBounds(::ChunkFwdHPlainTilingData &tiling,
                                 uint32_t blockDim, uint64_t totalHeadTasks) const
     {
@@ -183,23 +192,32 @@ private:
             static_cast<int64_t>(blockDim) > CHUNK_FWD_H_MAX_CORE_BOUNDS) {
             return;
         }
-        std::vector<int64_t> weights;
-        weights.reserve(totalHeadTasks);
+        struct Unit {
+            int64_t weight;
+            uint64_t taskBegin;
+        };
+        std::vector<Unit> units;
+        std::vector<int64_t> unitWeights;
+        units.reserve(totalHeadTasks / 2 + static_cast<uint64_t>(ctx_.seqCount));
+        uint64_t taskCursor = 0;
         for (int64_t seq = 0; seq < ctx_.seqCount; ++seq) {
             const int64_t chunks = ctx_.seqChunkCounts[seq];
             if (chunks <= 0) {
                 return; // malformed host table — fall back to uniform partition
             }
-            for (int64_t head = 0; head < ctx_.vNumHead; ++head) {
-                weights.push_back(chunks);
+            for (int64_t head = 0; head < ctx_.vNumHead; head += 2) {
+                const int64_t pairHeads = (head + 1 < ctx_.vNumHead) ? 2 : 1;
+                units.push_back({pairHeads * chunks, taskCursor});
+                unitWeights.push_back(pairHeads * chunks);
+                taskCursor += static_cast<uint64_t>(pairHeads);
             }
         }
-        if (static_cast<uint64_t>(weights.size()) != totalHeadTasks) {
+        if (taskCursor != totalHeadTasks || units.empty()) {
             return;
         }
         int64_t maxWeight = 0;
         int64_t totalWeight = 0;
-        for (const int64_t w : weights) {
+        for (const int64_t w : unitWeights) {
             maxWeight = w > maxWeight ? w : maxWeight;
             totalWeight += w;
         }
@@ -208,30 +226,31 @@ private:
         int64_t hi = totalWeight;
         while (lo < hi) {
             const int64_t mid = lo + (hi - lo) / 2;
-            if (GreedySpanCount(weights, mid) <= blockDim) {
+            if (GreedySpanCount(unitWeights, mid) <= blockDim) {
                 hi = mid;
             } else {
                 lo = mid + 1;
             }
         }
         // Greedy cut at the minimal capacity; force exactly blockDim spans by
-        // opening a new span whenever the remaining tasks equal the remaining
-        // spans to place (keeps every span non-empty).
+        // opening a new span whenever the remaining units equal the remaining
+        // spans to place (keeps every span non-empty). Span bounds are unit
+        // boundaries — a pair never straddles two cores.
         const int64_t capacity = lo;
         std::vector<int64_t> bounds(static_cast<size_t>(blockDim), 0);
         int64_t spanCount = 1;
         int64_t sum = 0;
-        for (uint64_t task = 0; task < totalHeadTasks; ++task) {
-            const uint64_t remainingTasks = totalHeadTasks - task;
+        for (size_t u = 0; u < units.size(); ++u) {
+            const uint64_t remainingUnits = units.size() - u;
             const int64_t remainingSpans = static_cast<int64_t>(blockDim) - spanCount;
-            const bool mustSplit = sum + weights[task] > capacity ||
-                remainingTasks <= static_cast<uint64_t>(remainingSpans);
+            const bool mustSplit = sum + units[u].weight > capacity ||
+                remainingUnits <= static_cast<uint64_t>(remainingSpans);
             if (mustSplit && spanCount < static_cast<int64_t>(blockDim)) {
-                bounds[static_cast<size_t>(spanCount - 1)] = static_cast<int64_t>(task);
+                bounds[static_cast<size_t>(spanCount - 1)] = static_cast<int64_t>(units[u].taskBegin);
                 spanCount += 1;
                 sum = 0;
             }
-            sum += weights[task];
+            sum += units[u].weight;
         }
         bounds[static_cast<size_t>(spanCount - 1)] = static_cast<int64_t>(totalHeadTasks);
         if (spanCount != static_cast<int64_t>(blockDim)) {
