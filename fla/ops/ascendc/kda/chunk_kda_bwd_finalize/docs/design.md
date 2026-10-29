@@ -31,21 +31,18 @@ The A5 gate stage uses its retired raw-gate tile at UB[176,208) KiB for the
 BF16 result; the existing stage7 MTE3-to-MTE2 event protects its lifetime.
 No UB allocation or workspace size changes are needed.
 
-Stage 12 casts dA only after the FP32 reduction. A2/A3 uses sum+8 (a spare
-32-byte-aligned slot); A5 uses daOut+16, within the existing 70 KiB buffer.
-BF16 output ownership groups 16 adjacent heads per core to avoid competing
-writes within one 32-byte DMA block. dt_bias partials stay FP32; the final
-output matches dt_bias, using a disjoint packed slot after the reduction.
+Stage 12 reduces and writes dA/dbias in FP32, retaining the original
+FP32 parameter reduction and writeback path. A_log/dt_bias are FP32 inputs.
 The output descriptors select writeback types; no extra launch is introduced
 in A2/A3 or A5 V2. A5 legacy retains its FP32 device ABI and L2 converts its
 outputs as a compatibility fallback; it does not gain the V2 fusion benefit.
 
-Validation compares all eight raw_g/beta/A_log dtype combinations against
+Validation compares all four raw_g/beta dtype combinations with FP32 A_log/dt_bias against
 FP32-output baseline results rounded once to each requested output dtype.
 Cover both output orders, saved/recompute, dense/packed, empty sequence and
 partial chunks. Separately compare the independent CPU mathematical golden.
 
-### A2 dtype 定向验证（2026-10-28）
+### A2 dtype 定向验证（2026-10-28，历史 BF16 参数扩展版本）
 
 179.166.1.3 / Ascend910B3 / CANN 9.2.0，独立 wheel 构建、安装通过。
 72 组用例在 Stable 与 ctypes 两入口共 144 次调用通过；比较全部有效输出，
@@ -61,15 +58,15 @@ BNSD/BSND/NTD/TND、尾块、空序列、norm、sigmoid/2-sigmoid 和 H=17。
 
 ## 原始 gate 参数的片上类型转换
 
-Finalize 的 raw_g、beta、A_log、dt_bias 分别支持 BF16/FP32；dg、dbeta、dA_log、d_dt_bias 分别跟随对应输入。FP32 累计量 gk、d_aqk、dq_raw、归约 workspace 不变，output_layout 仍控制五个逐 token 梯度。
+Finalize 的 raw_g/beta 支持 BF16/FP32，dg/dbeta 跟随对应输入；A_log/dt_bias 及其梯度固定 FP32。FP32 累计量 gk、d_aqk、dq_raw、归约 workspace 不变，output_layout 仍控制五个逐 token 梯度。
 
-A2/A3 Stage11 将 BF16 raw_g 读入既有 raw 槽，在每个 tile 的临时区尚未使用时扩展为 FP32（compact 使用 [184,192) KiB product 区，其他路径使用 [128,136) KiB q 区），再复制回 raw 槽，避免重叠 Cast；A_log 和 dt_bias 使用互不重叠的常驻参数临时区。双缓冲事件继续保护 MTE2/V/MTE3 生命周期。A5 在 Stage11 VF 加载 BF16 寄存器后转换 FP32，沿用原有 FP32 链式求导。Stage12 的参数跨 chunk 归约保持 FP32，只在最终写回时进行 BF16 舍入。
+A2/A3 Stage11 将 BF16 raw_g 读入既有 raw 槽，在每个 tile 的临时区尚未使用时扩展为 FP32（compact 使用 [184,192) KiB product 区，其他路径使用 [128,136) KiB q 区），再复制回 raw 槽，避免重叠 Cast；A_log 和 dt_bias 直接按 FP32 读取。双缓冲事件继续保护 MTE2/V/MTE3 生命周期。A5 在 Stage11 VF 加载 BF16 寄存器后转换 FP32，沿用原有 FP32 链式求导。Stage12 的参数跨 chunk 归约及写回均保持 FP32。
 
 总接口 saved 模式直接透传原始参数，不再插入 Finalize 输入 Cast。recompute 分支单独创建重算所需 FP32 参数，Finalize 仍接收原始输入；重算算子的 Cast 不属于本次消除范围。A5 legacy 单体实现保留原有支持范围，本次融合覆盖 A2/A3 staged 和 A5 V2/独立 Finalize。
 
-验证：对照修改前 FP32 Finalize，覆盖 16 种参数 dtype 组合、packed/dense、输出布局、saved/recompute、可选 bias 和尾块；A2 真机比较结果与既有输出按目标 dtype 舍入后的结果。模型长序列使用相同输入和 profiler 配置，按 OP Type 比较 Cast 数量及 Finalize/全链路耗时。A5 单独编译检查，真机结果不得由 A2 结果替代。
+验证：对照修改前 FP32 Finalize，覆盖 raw_g/beta 四种 dtype 组合（A_log/dt_bias 固定 FP32）、packed/dense、输出布局、saved/recompute、可选 bias 和尾块；A2 真机比较结果与既有输出按目标 dtype 舍入后的结果。模型长序列使用相同输入和 profiler 配置，按 OP Type 比较 Cast 数量及 Finalize/全链路耗时。A5 单独编译检查，真机结果不得由 A2 结果替代。
 
-### Cast 融合定向验证（2026-10-28）
+### Cast 融合定向验证（2026-10-28，历史 BF16 参数扩展版本）
 
 A2 / Ascend910B3 / CANN 9.2.0：146 组 × Stable/ctypes 两入口，共 292 次调用，
 全部输出与 e6896d9b 基线按目标 dtype 舍入后逐元素一致，4 项错误输出 dtype 被拒绝。
@@ -95,3 +92,27 @@ BF16 模式 Finalize 自身 8.135 → 8.205 ms，片上转换增加约 71 μs，
 A5 交叉编包通过，wheel SHA256：
 `a04b4f36047dcc3fa8d7033eaa5f86719eaf13ad05cc6954c44c59fe8282591c`。
 A3/A5 真机、完整 ATK、sanitizer 和双平台 quick CI 尚未验收。
+
+## FP32 参数约定回归（2026-10-29）
+
+本轮撤回 A_log/dt_bias 的 BF16 扩展，两者及其梯度固定 FP32；raw_g/beta
+四种 dtype 组合、布局直写和片上转换保留。前向源码及 Python 前向函数与 PR 基线一致。
+
+A2 / Ascend910B3 / CANN 9.2.0：完整 KDA 前后向 wheel 编包安装通过。
+42 组反向 × Stable/ctypes 两入口共 84 次调用，全部输出与修改前 FP32 参数路径
+逐元素一致；覆盖 saved/recompute、dense/packed、两种输出顺序、norm、sigmoid、
+空序列、尾块、H=17 和可选 bias。4 项非法梯度 dtype、4 项 BF16 参数输入检查通过。
+前向四布局 × 四种 g/beta 组合 × 两入口 × 总接口/Prepare，共 64 次对照通过，
+并拒绝 BF16 A_log/dt_bias；12 组可选参数及保存模式检查通过。
+8 组真实前向缓存接反向验证通过，每组检查两种输出布局及独立 Finalize 与总接口一致。
+
+原 CI example 4/4 通过：定长/变长前后向精度、大 head 尾块和空序列 guard；example 文件未修改。
+
+A5 Prepare/Finalize 定向交叉编译通过。Prepare 仅在验证目录选取覆盖四种
+g/beta 组合及 safe-gate/softplus 的 8 个 tiling key，生产 selector 未修改；
+该 wheel 不作为完整发布包。A3/A5 实卡、完整 ATK、sanitizer 与双平台 quick CI 未完成。
+
+验证记录目录名为 `pr993-fp32-params-20261029`；A2 wheel SHA256：
+`45cbd2edff6aaeca9411bb2403e06d9a7d1550443ba4d55c8a8a867f2c283c22`。
+A5 定向验证 wheel SHA256：
+`a22d4b7b0faee83d782d83401799c9f1fc736df8722648843690d3187ca4c963`。

@@ -30,7 +30,7 @@ op::Shape MakeShape(std::initializer_list<int64_t> dims)
     return shape;
 }
 
-const aclTensor *TensorOrEmptyDescriptor(const aclTensor *output,
+const aclTensor *OutputOrEmptyDescriptor(const aclTensor *output,
                                          DataType dtype,
                                          aclOpExecutor *executor)
 {
@@ -123,25 +123,21 @@ ChunkKdaFwdPrepareOutputs ChunkKdaFwdPrepare(
     // REQUIRED 输出不能把 nullptr 直接交给 launcher，否则部分 CANN 版本会
     // 压缩参数并使后续 kernel 参数错位。零元素 descriptor 不承载真实数据，
     // 编译期 outputMode 同时保证对应 kernel 形参不发生搬出。
-    const aclTensor *akkForKernel = TensorOrEmptyDescriptor(
+    const aclTensor *akkForKernel = OutputOrEmptyDescriptor(
         akkOut, DataType::DT_BF16, executor);
-    const aclTensor *qgForKernel = TensorOrEmptyDescriptor(
+    const aclTensor *qgForKernel = OutputOrEmptyDescriptor(
         qgOut, DataType::DT_BF16, executor);
-    const aclTensor *qHatForKernel = TensorOrEmptyDescriptor(
+    const aclTensor *qHatForKernel = OutputOrEmptyDescriptor(
         qHatOut, DataType::DT_BF16, executor);
-    const aclTensor *kHatForKernel = TensorOrEmptyDescriptor(
+    const aclTensor *kHatForKernel = OutputOrEmptyDescriptor(
         kHatOut, DataType::DT_BF16, executor);
-    const aclTensor *qRstdForKernel = TensorOrEmptyDescriptor(
+    const aclTensor *qRstdForKernel = OutputOrEmptyDescriptor(
         qRstdOut, DataType::DT_FLOAT, executor);
-    const aclTensor *kRstdForKernel = TensorOrEmptyDescriptor(
+    const aclTensor *kRstdForKernel = OutputOrEmptyDescriptor(
         kRstdOut, DataType::DT_FLOAT, executor);
-    const aclTensor *betaEffForKernel = TensorOrEmptyDescriptor(
+    const aclTensor *betaEffForKernel = OutputOrEmptyDescriptor(
         betaEffOut, DataType::DT_FLOAT, executor);
-    const aclTensor *aLogForKernel = TensorOrEmptyDescriptor(
-        aLogOptional, DataType::DT_FLOAT, executor);
-    const aclTensor *dtBiasForKernel = TensorOrEmptyDescriptor(
-        dtBiasOptional, DataType::DT_FLOAT, executor);
-    if (aLogForKernel == nullptr || dtBiasForKernel == nullptr || akkForKernel == nullptr || qgForKernel == nullptr ||
+    if (akkForKernel == nullptr || qgForKernel == nullptr ||
         qHatForKernel == nullptr || kHatForKernel == nullptr ||
         qRstdForKernel == nullptr || kRstdForKernel == nullptr ||
         betaEffForKernel == nullptr) {
@@ -151,7 +147,7 @@ ChunkKdaFwdPrepareOutputs ChunkKdaFwdPrepare(
 
     const auto status = ADD_TO_LAUNCHER_LIST_AICORE(
         ChunkKdaFwdPrepare,
-        OP_INPUT(q, k, v, g, beta, aLogForKernel, dtBiasForKernel,
+        OP_INPUT(q, k, v, g, beta, aLogOptional, dtBiasOptional,
                  cuSeqlens, chunkIndices),
         OP_OUTPUT(gkOut, aqkOut, akkForKernel, wOut, uOut, qgForKernel,
                   kgOut, qgScaledOut, qHatForKernel, kHatForKernel,

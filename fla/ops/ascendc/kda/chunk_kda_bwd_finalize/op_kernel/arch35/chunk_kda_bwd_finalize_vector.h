@@ -972,8 +972,8 @@ public:
     {
         q_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(q));
         rawG_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_RAW_G *>(rawG));
-        aLog_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_A_LOG *>(aLog));
-        dtBias_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_DT_BIAS *>(dtBias));
+        aLog_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(aLog));
+        dtBias_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dtBias));
         dG_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_D_G *>(dG));
         k_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(k));
         v_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(v));
@@ -1174,8 +1174,8 @@ private:
         // in place for the unchanged full-chunk reverse scan.
         auto dg = UbBytes(KDA_FINALIZE_UB_DG).ReinterpretCast<float>();
         auto raw = UbBytes(176 * 1024).ReinterpretCast<DTYPE_RAW_G>();
-        auto bias = UbBytes(160 * 1024).ReinterpretCast<DTYPE_DT_BIAS>();
-        auto log = UbBytes(161 * 1024).ReinterpretCast<DTYPE_A_LOG>();
+        auto bias = UbBytes(160 * 1024).ReinterpretCast<float>();
+        auto log = UbBytes(161 * 1024).ReinterpretCast<float>();
         auto da = UbBytes(162 * 1024).ReinterpretCast<float>();
         auto db = UbBytes(163 * 1024).ReinterpretCast<float>();
         const int64_t token = FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_DIM);
@@ -1183,15 +1183,15 @@ private:
         AscendC::DataCopy(raw, rawG_[token], elems);
         AscendC::DataCopy(bias, dtBias_[head * KDA_FINALIZE_DIM], KDA_FINALIZE_DIM);
         AscendC::DataCopyPad(log, aLog_[head],
-            AscendC::DataCopyExtParams{1, sizeof(DTYPE_A_LOG), 0, 0, 0},
-            AscendC::DataCopyPadExtParams<DTYPE_A_LOG>{false, 0, 0, static_cast<DTYPE_A_LOG>(0)});
+            AscendC::DataCopyExtParams{1, sizeof(float), 0, 0, 0},
+            AscendC::DataCopyPadExtParams<float>{false, 0, 0, static_cast<float>(0)});
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[0]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[0]);
-        FinalizeStage11VF<DTYPE_A_LOG, DTYPE_RAW_G, DTYPE_DT_BIAS>(
+        FinalizeStage11VF<DTYPE_RAW_G>(
             reinterpret_cast<__ubuf__ float *>(dg.GetPhyAddr()),
             reinterpret_cast<__ubuf__ DTYPE_RAW_G *>(raw.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ DTYPE_DT_BIAS *>(bias.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ DTYPE_A_LOG *>(log.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(bias.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(log.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(da.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(db.GetPhyAddr()), chunk.validRows, tiling_->lowerBound);
         // raw is dead after the chain rule; partials remain FP32.
@@ -1684,9 +1684,9 @@ private:
 
     AscendC::GlobalTensor<float> kRstd_;
     AscendC::GlobalTensor<DTYPE_RAW_G> rawG_;
-    AscendC::GlobalTensor<DTYPE_DT_BIAS> dtBias_;
+    AscendC::GlobalTensor<float> dtBias_;
     AscendC::GlobalTensor<DTYPE_D_G> dG_;
-    AscendC::GlobalTensor<DTYPE_A_LOG> aLog_;
+    AscendC::GlobalTensor<float> aLog_;
     AscendC::GlobalTensor<bfloat16_t> dk_;
     AscendC::GlobalTensor<DTYPE_BETA> dBeta_;
     AscendC::GlobalTensor<bfloat16_t> q_;

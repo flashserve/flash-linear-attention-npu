@@ -241,17 +241,16 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     CHECK_COND(!useGateInKernel ||
                    ((MatchesTensor(rawGOptional, externalToken, DataType::DT_FLOAT) ||
                      MatchesTensor(rawGOptional, externalToken, DataType::DT_BF16)) &&
-                    (MatchesTensor(aLogOptional, MakeShape({H}), DataType::DT_FLOAT) ||
-                     MatchesTensor(aLogOptional, MakeShape({H}), DataType::DT_BF16))),
-               ACLNN_ERR_PARAM_INVALID, "raw_g and a_log are required for gate backward.");
+                    MatchesTensor(aLogOptional, MakeShape({H}), DataType::DT_FLOAT)),
+               ACLNN_ERR_PARAM_INVALID, "raw_g must be BF16/FP32 and a_log must be FP32 for gate backward.");
     CHECK_COND(!dtBiasOptional ||
-                   ((dtBiasOptional->GetDataType() == DataType::DT_FLOAT || dtBiasOptional->GetDataType() == DataType::DT_BF16) &&
+                   (dtBiasOptional->GetDataType() == DataType::DT_FLOAT &&
                     IsContiguous(dtBiasOptional) && dtBiasOptional->GetViewShape().GetShapeSize() == H * 128),
-               ACLNN_ERR_PARAM_INVALID, "dt_bias must be contiguous BF16/FP32 with H*K elements.");
-    CHECK_COND(!dAOutOptional || (aLogOptional && MatchesTensor(dAOutOptional, MakeShape({H}), aLogOptional->GetDataType())),
+               ACLNN_ERR_PARAM_INVALID, "dt_bias must be contiguous FP32 with H*K elements.");
+    CHECK_COND(!dAOutOptional || (aLogOptional && MatchesTensor(dAOutOptional, MakeShape({H}), DataType::DT_FLOAT)),
                ACLNN_ERR_PARAM_INVALID, "Invalid dA output.");
     CHECK_COND(!dBiasOutOptional || (dtBiasOptional && IsContiguous(dBiasOutOptional) &&
-                   dBiasOutOptional->GetDataType() == dtBiasOptional->GetDataType() &&
+                   dBiasOutOptional->GetDataType() == DataType::DT_FLOAT &&
                    dBiasOutOptional->GetViewShape().GetShapeSize() == H * 128),
                ACLNN_ERR_PARAM_INVALID, "Invalid dbias output.");
     int64_t nc = (T + 63) / 64;
@@ -322,8 +321,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     const aclTensor *vNew = vNewOptional, *h = hOptional;
     if (!disableRecompute) {
         const auto *rawRecompute = ToFloat32(rawHead, ex);
-        const auto *logRecompute = ToFloat32(aLog, ex);
-        const auto *biasRecompute = ToFloat32(dtBias, ex);
+        const auto *logRecompute = aLog;
+        const auto *biasRecompute = dtBias;
         CHECK_RET(rawRecompute && logRecompute && biasRecompute, ACLNN_ERR_INNER_NULLPTR);
         w = alloc(token, DataType::DT_BF16);
         qg = alloc(token, DataType::DT_BF16);
@@ -380,8 +379,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
               ACLNN_ERR_INNER_NULLPTR);
     // Finalize writes all five gradients directly in outputLayout.
     const auto *dbFinal = dbOut;
-    const auto *dA = dAOutOptional ? dAOutOptional : alloc(MakeShape({H}), aLogOptional->GetDataType());
-    const auto *dBias = alloc(MakeShape({H,128}), dtBias->GetDataType());
+    const auto *dA = dAOutOptional ? dAOutOptional : alloc(MakeShape({H}), DataType::DT_FLOAT);
+    const auto *dBias = alloc(MakeShape({H,128}), DataType::DT_FLOAT);
     CHECK_RET(dbFinal && dA && dBias, ACLNN_ERR_INNER_NULLPTR);
     NormalizeOriginalShapes({qHead, kHead, vHead, gk, rawHead, betaFinal, aLog, dtBias,
         akk, vNew, h, dh, dvScan, dAqk, dqRaw, qRstdOptional, kRstdOptional,
@@ -455,6 +454,10 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
                    dBiasOutOptional != nullptr,
                ACLNN_ERR_PARAM_INVALID,
                "dbias output is required when dt_bias is present.");
+    for (const auto *param : {aLogOptional, dtBiasOptional, dAOutOptional, dBiasOutOptional}) {
+        CHECK_COND(param == nullptr || param->GetDataType() == DataType::DT_FLOAT,
+                   ACLNN_ERR_PARAM_INVALID, "a_log, dt_bias and their gradients must be FP32.");
+    }
     const op::Shape &qShape = q->GetViewShape();
 
     const op::Shape &hShape = hOptional->GetViewShape();
@@ -495,7 +498,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     };
     const auto *dbKernel = fp32Output(dbOut);
     const auto *dgKernel = fp32Output(dgOut);
-    const auto *dAKernel = fp32Output(dAOutOptional);
+    const auto *dAKernel = dAOutOptional;
     CHECK_RET(dbKernel && dgKernel && (!dAOutOptional || dAKernel), ACLNN_ERR_INNER_NULLPTR);
     const aclTensor *dAForKernel = dAKernel ? dAKernel : dgKernel;
     const aclTensor *dBiasForKernel =

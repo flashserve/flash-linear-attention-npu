@@ -14,47 +14,19 @@ class ChunkKdaFwdPrepare : public OpDef {
 public:
     explicit ChunkKdaFwdPrepare(const char *name) : OpDef(name)
     {
-        // Independent gate/beta/A_log/dt_bias dtype bits.
+        // gate 与 beta 可以独立选择 BF16/FP32，因此显式登记四种 dtype 组合。
         const std::initializer_list<ge::DataType> dataTypes = {
-            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
-            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
-            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
             ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16};
+        const std::initializer_list<ge::DataType> gateTypes = {
+            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT};
+        const std::initializer_list<ge::DataType> betaTypes = {
+            ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT};
         const std::initializer_list<ge::DataType> fp32Types = {
-            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
-            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
-            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
             ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
         const std::initializer_list<ge::DataType> indexTypes = {
-            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
-            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
-            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
             ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64};
         const std::initializer_list<ge::Format> formats = {
-            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
-            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
-            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
             ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND};
-        const std::initializer_list<ge::DataType> gateTypes = {
-            ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT,
-            ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT,
-            ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT,
-            ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT};
-        const std::initializer_list<ge::DataType> betaTypes = {
-            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT,
-            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT,
-            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT,
-            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT};
-        const std::initializer_list<ge::DataType> logTypes = {
-            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
-            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
-            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
-            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
-        const std::initializer_list<ge::DataType> biasTypes = {
-            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
-            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
-            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
-            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
 
         this->Input("q").ParamType(REQUIRED).DataType(dataTypes).Format(formats)
             .UnknownShapeFormat(formats).AutoContiguous();
@@ -66,11 +38,9 @@ public:
             .UnknownShapeFormat(formats).AutoContiguous();
         this->Input("beta").ParamType(REQUIRED).DataType(betaTypes).Format(formats)
             .UnknownShapeFormat(formats).AutoContiguous();
-        // Required internal descriptors keep both dtype axes in binary selection.
-        // L0 represents absent public parameters with zero-element FP32 tensors.
-        this->Input("a_log").ParamType(REQUIRED).DataType(logTypes).Format(formats)
+        this->Input("a_log").ParamType(OPTIONAL).DataType(fp32Types).Format(formats)
             .UnknownShapeFormat(formats).AutoContiguous();
-        this->Input("dt_bias").ParamType(REQUIRED).DataType(biasTypes).Format(formats)
+        this->Input("dt_bias").ParamType(OPTIONAL).DataType(fp32Types).Format(formats)
             .UnknownShapeFormat(formats).AutoContiguous();
         this->Input("cu_seqlens").ParamType(OPTIONAL).ValueDepend(OPTIONAL)
             .DataType(indexTypes).Format(formats).UnknownShapeFormat(formats).AutoContiguous();

@@ -8,47 +8,19 @@ class ChunkKdaBwdFinalize : public OpDef {
 public:
     explicit ChunkKdaBwdFinalize(const char *name) : OpDef(name)
     {
-        // Four independent input dtype bits; each gradient follows its input.
+        // raw_g and beta vary independently; A_log/dt_bias and their gradients are FP32.
         constexpr auto gateParam = REQUIRED;
         const std::initializer_list<ge::DataType> bf16 = {
-            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
-            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
-            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
             ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16};
         const std::initializer_list<ge::DataType> fp32 = {
-            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
-            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
-            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
             ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
         const std::initializer_list<ge::DataType> int64 = {
-            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
-            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
-            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
             ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64};
         const std::initializer_list<ge::DataType> rawTypes = {
-            ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT,
-            ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT,
-            ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT,
             ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT};
         const std::initializer_list<ge::DataType> betaTypes = {
-            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT,
-            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT,
-            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT,
             ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT};
-        const std::initializer_list<ge::DataType> aLogTypes = {
-            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
-            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
-            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
-            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
-        const std::initializer_list<ge::DataType> biasTypes = {
-            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
-            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
-            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
-            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
         const std::initializer_list<ge::Format> nd = {
-            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
-            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
-            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
             ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND};
         const auto gradTypes = bf16;
         const auto dbTypes = betaTypes;
@@ -64,8 +36,8 @@ public:
         ADD_INPUT("gk", REQUIRED, fp32);
         ADD_INPUT("raw_g", gateParam, rawTypes);
         ADD_INPUT("beta", REQUIRED, betaTypes);
-        ADD_INPUT("a_log", gateParam, aLogTypes);
-        ADD_INPUT("dt_bias", gateParam, biasTypes);
+        ADD_INPUT("a_log", gateParam, fp32);
+        ADD_INPUT("dt_bias", gateParam, fp32);
         ADD_INPUT("akk", REQUIRED, bf16);
         ADD_INPUT("v_new", REQUIRED, bf16);
         ADD_INPUT("h", REQUIRED, bf16);
@@ -83,8 +55,8 @@ public:
         ADD_OUTPUT("dv", bf16);
         ADD_OUTPUT("d_beta", dbTypes);
         ADD_OUTPUT("d_g", rawTypes);
-        ADD_OUTPUT("d_a_log", aLogTypes);
-        ADD_OUTPUT("d_dt_bias", biasTypes);
+        ADD_OUTPUT("d_a_log", fp32);
+        ADD_OUTPUT("d_dt_bias", fp32);
 
 #undef ADD_OUTPUT
 #undef ADD_INPUT

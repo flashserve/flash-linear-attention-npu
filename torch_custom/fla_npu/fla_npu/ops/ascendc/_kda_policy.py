@@ -139,7 +139,7 @@ def _prepare_kda_bwd_optimized(args):
     for name in ("Aqk","Akk"):
         check(name,(*scalar,64),bf16)
     check("raw_g",token,mixed)
-    check("A_log",(h,),mixed)
+    check("A_log",(h,),fp32)
     for name in ("q_rstd","k_rstd"):
         check(name,scalar,fp32,optional=True)
     saved = ("gk","w","qg","kg","v_new","h")
@@ -150,8 +150,8 @@ def _prepare_kda_bwd_optimized(args):
         raise ValueError("recompute mode requires gk/w/qg/kg/v_new/h to be None")
     bias = args["dt_bias"]
     if bias is not None:
-        if bias.dtype not in (torch.bfloat16, torch.float32) or bias.numel() != h*128 or not bias.is_contiguous() or bias.device != q.device:
-            raise ValueError("dt_bias must be contiguous BF16/FP32 with H*128 elements on q.device")
+        if bias.dtype != torch.float32 or bias.numel() != h*128 or not bias.is_contiguous() or bias.device != q.device:
+            raise ValueError("dt_bias must be contiguous FP32 with H*128 elements on q.device")
         bias = bias.view(h,128)
 
     args.update(dt_bias=bias, cu_seqlens=cu, chunk_indices=indices)
@@ -276,14 +276,14 @@ def _prepare_kda_bwd_arch22(args):
         raise ValueError("recompute mode requires gk/w/qg/kg/v_new/h to be None")
     if a["use_gate_in_kernel"]:
         check("raw_g", shape, mixed)
-        check("A_log", (h,), mixed)
+        check("A_log", (h,), fp32)
     elif any(a[name] is not None for name in ("raw_g", "A_log", "dt_bias")):
         raise ValueError("raw_g/A_log/dt_bias require use_gate_in_kernel=True")
     bias = a["dt_bias"]
     if bias is not None:
-        if (bias.dtype not in (torch.bfloat16, torch.float32) or bias.numel() != h * 128
+        if (bias.dtype != torch.float32 or bias.numel() != h * 128
                 or not bias.is_contiguous() or bias.device != a["q"].device):
-            raise ValueError("dt_bias must be contiguous BF16/FP32 with H*K elements on q.device")
+            raise ValueError("dt_bias must be contiguous FP32 with H*K elements on q.device")
         a["dt_bias"] = bias.view(h, 128)
     out_tm = a["output_layout"] in ("BSND", "TND")
     gate_token = (t, h, 128) if packed else (b, t, h, 128)

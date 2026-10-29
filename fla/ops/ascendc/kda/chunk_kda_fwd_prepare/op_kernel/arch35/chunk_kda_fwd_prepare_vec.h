@@ -142,7 +142,7 @@ template <typename GateT, typename BetaT, typename CompilePolicy,
 __simd_vf__ inline void StageV0Vf(
     __ubuf__ bfloat16_t *q, __ubuf__ bfloat16_t *k,
     __ubuf__ GateT *rawGate,
-    __ubuf__ BetaT *betaRaw, __ubuf__ DTYPE_DT_BIAS *dtBias, __ubuf__ DTYPE_A_LOG *aLog,
+    __ubuf__ BetaT *betaRaw, __ubuf__ float *dtBias, __ubuf__ float *aLog,
     __ubuf__ float *g, __ubuf__ float *gRef, __ubuf__ float *gLast,
     __ubuf__ float *qRstd, __ubuf__ float *kRstd,
     __ubuf__ float *betaEff, uint16_t validRows, float epsilon,
@@ -163,7 +163,8 @@ __simd_vf__ inline void StageV0Vf(
     // dt_bias 和 A_log 都是 head 常量，在行循环前只判断和读取一次。
     if constexpr (CompilePolicy::gateMode != GateMode::PrecomputedStep) {
         if (hasDtBias) {
-            Load128AsFp32(biasLow, biasHigh, dtBias);
+            LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
+                biasLow, biasHigh, dtBias);
         } else {
             Duplicate(biasLow, 0.0F, mask);
             Duplicate(biasHigh, 0.0F, mask);
@@ -835,10 +836,10 @@ public:
             kGm_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         }
         if (args.dtBias != nullptr) {
-            dtBiasGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_DT_BIAS *>(args.dtBias));
+            dtBiasGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.dtBias));
         }
         if (args.aLog != nullptr) {
-            aLogGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_A_LOG *>(args.aLog));
+            aLogGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args.aLog));
         }
         if constexpr (CompilePolicy::outputMode == OutputMode::Save) {
             qgGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args.qg));
@@ -1052,10 +1053,9 @@ private:
             state + Arch35Ub::kGRef[0]);
         auto gLast = resource_.ubBuf.template GetBufferByByte<float>(
             state + Arch35Ub::kGLast);
-        auto dtBias = resource_.ubBuf.template GetBufferByByte<DTYPE_DT_BIAS>(
+        auto dtBias = resource_.ubBuf.template GetBufferByByte<float>(
             computeSlot + Arch35Ub::kV0Work);
-        auto aLog = resource_.ubBuf.template GetBufferByByte<DTYPE_A_LOG>(
-            computeSlot + Arch35Ub::kV0Work + Shape::kHeadDim * sizeof(float));
+        auto aLog = dtBias[Shape::kHeadDim];
 
         const uint32_t qkHead = QkHeadForValueHead(args_.tiling, valueHead);
         const uint64_t qkOffset = QkInputOffset(args_.tiling, chunk, qkHead);
@@ -1114,8 +1114,8 @@ private:
             }
             if (args_.aLog != nullptr) {
                 AscendC::DataCopyExtParams scalarCopy{
-                    1, static_cast<uint32_t>(sizeof(DTYPE_A_LOG)), 0, 0, 0};
-                AscendC::DataCopyPadExtParams<DTYPE_A_LOG> scalarPad{
+                    1, static_cast<uint32_t>(sizeof(float)), 0, 0, 0};
+                AscendC::DataCopyPadExtParams<float> scalarPad{
                     false, 0, 0, 0};
                 AscendC::DataCopyPad(aLog, aLogGm_[valueHead], scalarCopy,
                                      scalarPad);
@@ -1131,8 +1131,8 @@ private:
                 reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()),
                 reinterpret_cast<__ubuf__ GateT *>(gate.GetPhyAddr()),
                 reinterpret_cast<__ubuf__ BetaT *>(beta.GetPhyAddr()),
-                reinterpret_cast<__ubuf__ DTYPE_DT_BIAS *>(dtBias.GetPhyAddr()),
-                reinterpret_cast<__ubuf__ DTYPE_A_LOG *>(aLog.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(dtBias.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(aLog.GetPhyAddr()),
                 reinterpret_cast<__ubuf__ float *>(g.GetPhyAddr()),
                 reinterpret_cast<__ubuf__ float *>(gRef.GetPhyAddr()),
                 reinterpret_cast<__ubuf__ float *>(gLast.GetPhyAddr()),
@@ -1149,8 +1149,8 @@ private:
                 reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()),
                 reinterpret_cast<__ubuf__ GateT *>(gate.GetPhyAddr()),
                 reinterpret_cast<__ubuf__ BetaT *>(beta.GetPhyAddr()),
-                reinterpret_cast<__ubuf__ DTYPE_DT_BIAS *>(dtBias.GetPhyAddr()),
-                reinterpret_cast<__ubuf__ DTYPE_A_LOG *>(aLog.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(dtBias.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(aLog.GetPhyAddr()),
                 reinterpret_cast<__ubuf__ float *>(g.GetPhyAddr()),
                 reinterpret_cast<__ubuf__ float *>(gRef.GetPhyAddr()),
                 reinterpret_cast<__ubuf__ float *>(gLast.GetPhyAddr()),
@@ -1466,8 +1466,8 @@ private:
     AscendC::GlobalTensor<bfloat16_t> vGm_{};
     AscendC::GlobalTensor<GateT> gateGm_{};
     AscendC::GlobalTensor<BetaT> betaGm_{};
-    AscendC::GlobalTensor<DTYPE_DT_BIAS> dtBiasGm_{};
-    AscendC::GlobalTensor<DTYPE_A_LOG> aLogGm_{};
+    AscendC::GlobalTensor<float> dtBiasGm_{};
+    AscendC::GlobalTensor<float> aLogGm_{};
     AscendC::GlobalTensor<bfloat16_t> qgGm_{};
     AscendC::GlobalTensor<bfloat16_t> qgScaledGm_{};
     AscendC::GlobalTensor<bfloat16_t> kgGm_{};

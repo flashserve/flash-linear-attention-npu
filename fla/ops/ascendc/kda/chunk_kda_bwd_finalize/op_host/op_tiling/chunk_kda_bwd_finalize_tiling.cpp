@@ -80,16 +80,16 @@ ge::graphStatus ValidateFinalize(
         const auto *d = context->GetInputDesc(i);
         if (!d || d->GetDataType() != ge::DT_BF16) return fail();
     }
-    for (size_t i : {INPUT_GK, INPUT_D_AQK, INPUT_DQ_RAW, INPUT_Q_RSTD, INPUT_K_RSTD}) {
+    for (size_t i : {INPUT_GK, INPUT_D_AQK, INPUT_DQ_RAW, INPUT_Q_RSTD, INPUT_K_RSTD, INPUT_DT_BIAS}) {
         const auto *d = context->GetOptionalInputDesc(i);
         if (d && d->GetDataType() != ge::DT_FLOAT) return fail();
     }
     const auto betaType = context->GetInputDesc(INPUT_BETA)->GetDataType();
     const auto logType = context->GetInputDesc(INPUT_A_LOG)->GetDataType();
     if ((betaType != ge::DT_FLOAT && (useBetaSigmoid || betaType != ge::DT_BF16)) ||
-        (logType != ge::DT_FLOAT && logType != ge::DT_BF16)) return fail();
+        logType != ge::DT_FLOAT) return fail();
     if (ctx.useGateInKernel) {
-        for (size_t i : {INPUT_RAW_G, INPUT_DT_BIAS}) {
+        for (size_t i : {INPUT_RAW_G}) {
             const auto *d = context->GetOptionalInputDesc(i);
             if (!d || (d->GetDataType() != ge::DT_FLOAT && d->GetDataType() != ge::DT_BF16)) return fail();
         }
@@ -109,8 +109,8 @@ ge::graphStatus ValidateFinalize(
         context->GetOutputDesc(2)->GetDataType() != ge::DT_BF16) return fail();
     if (context->GetOutputDesc(3)->GetDataType() != betaType) return fail();
     if (context->GetOutputDesc(4)->GetDataType() != context->GetInputDesc(INPUT_RAW_G)->GetDataType() ||
-        context->GetOutputDesc(5)->GetDataType() != logType ||
-        context->GetOutputDesc(6)->GetDataType() != context->GetInputDesc(INPUT_DT_BIAS)->GetDataType()) return fail();
+        context->GetOutputDesc(5)->GetDataType() != ge::DT_FLOAT ||
+        context->GetOutputDesc(6)->GetDataType() != ge::DT_FLOAT) return fail();
     for (size_t i = 0; i < 2; ++i) {
         const auto &input = context->GetRequiredInputShape(INPUT_A_LOG + i)->GetStorageShape();
         const auto &output = context->GetOutputShape(5 + i)->GetStorageShape();

@@ -103,8 +103,8 @@ aclnnStatus aclnnChunkKdaFwdPrepare(
 | `v` | BF16 | V=128；head 数为 HV |
 | `g` | BF16/FP32 | 与 `v` 的 B/HV/T 一致，末维 128 |
 | `beta` | BF16/FP32 | 与 `v` 的 B/HV/T 一致 |
-| `a_log` | BF16 / FP32 | kernel 内 gate 模式必传，shape `[HV]` |
-| `dt_bias` | BF16 / FP32 | 可空；shape `[HV*128]` |
+| `a_log` | FP32 | kernel 内 gate 模式必传，shape `[HV]` |
+| `dt_bias` | FP32 | 可空；shape `[HV*128]` |
 | `cu_seqlens` | host int array | 可空；变长模式为 `[sequence_count+1]`，首元素为 0，末元素为 T，且非递减 |
 | `chunk_indices` | host int array | 可空；仅能与 `cu_seqlens` 同时传入，内容为规范的 sequence-major `(sequence_id, local_chunk_id)` 序列 |
 | `layout` | string | `BNSD`、`BSND`、`NTD` 或 `TND`，区分大小写 |
@@ -157,12 +157,3 @@ descriptor 占位；空/非空组合必须恰好落在 `none/forward/recompute/s
 | `ACLNN_ERR_INNER_CREATE_EXECUTOR` | executor 创建失败 |
 | `ACLNN_ERR_INNER_NULLPTR` | 连续化、元数据转换或 L0 调用未返回有效 tensor |
 | `ACLNN_ERR_INNER` | kernel executor 执行失败 |
-
-## BF16 gate 参数
-
-Prepare / 前向 V2 的 A_log 和 dt_bias 分别支持 BF16/FP32（与 g/beta 类型独立）。
-参数在片上转 FP32，计算与输出类型不变。形状仍为 A_log=[HV]、dt_bias=[HV*K]，
-bias 可省略。Python 收到 BF16 参数时选择满足约束的 V2；不满足 V2 约束时拒绝，
-不隐式插入 GM Cast。V1 保留原 FP32 参数约束。
-前向总接口 V2 要求 q/k/v=BF16、K=V=128、chunk_size=64，变长边界严格递增
-（不含空序列）；显式强制 V1 时不能传 BF16 A_log/dt_bias。

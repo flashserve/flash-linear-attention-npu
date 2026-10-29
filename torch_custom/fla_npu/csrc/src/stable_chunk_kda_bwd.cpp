@@ -77,9 +77,9 @@ run_kda_bwd_v2(
   // Packed inputs are [H, T, D]; dense ones are [B, H, T, D].
   const int64_t key_heads = SIZE_OF(q_meta, q_meta.ndim == 3 ? 0 : 1);
   if (use_gate_in_kernel) {
-    out_d_a_log = allocate_sizes({key_heads}, meta_of(*A_log).scalar_type, q_meta);
+    out_d_a_log = allocate_sizes({key_heads}, kFloat, q_meta);
     if (dt_bias.has_value()) {
-      out_d_dt_bias = allocate_sizes({key_heads, SIZE_OF(q_meta, q_meta.ndim - 1)}, meta_of(*dt_bias).scalar_type,
+      out_d_dt_bias = allocate_sizes({key_heads, SIZE_OF(q_meta, q_meta.ndim - 1)}, kFloat,
                                      q_meta);
     }
   }
@@ -141,6 +141,10 @@ run_npu_chunk_kda_bwd(
     bool state_v_first, bool optimized, std::optional<Tensor> q_rstd,
     std::optional<Tensor> k_rstd, int64_t input_layout, int64_t output_layout,
     bool use_beta_sigmoid_in_kernel, bool allow_neg_eigval, int64_t stream) {
+  if ((A_log.has_value() && meta_of(*A_log).scalar_type != kFloat) ||
+      (dt_bias.has_value() && meta_of(*dt_bias).scalar_type != kFloat)) {
+    throw std::runtime_error("npu_chunk_kda_bwd: A_log and dt_bias must be FP32.");
+  }
   if (!use_gate_in_kernel || !raw_g.has_value() || !A_log.has_value()) {
     throw std::runtime_error("npu_chunk_kda_bwd: use_gate_in_kernel=True requires raw_g and A_log.");
   }
@@ -198,10 +202,10 @@ run_npu_chunk_kda_bwd(
   std::optional<Tensor> out_d_dt_bias;
   // Packed inputs are [H, T, D]; dense ones are [B, H, T, D].
   if (use_gate_in_kernel) {
-    out_d_a_log = allocate_sizes({key_heads}, meta_of(*A_log).scalar_type, q_meta);
+    out_d_a_log = allocate_sizes({key_heads}, kFloat, q_meta);
     if (dt_bias.has_value()) {
       out_d_dt_bias = allocate_sizes(
-          {key_heads, SIZE_OF(q_meta, q_meta.ndim - 1)}, meta_of(*dt_bias).scalar_type, q_meta);
+          {key_heads, SIZE_OF(q_meta, q_meta.ndim - 1)}, kFloat, q_meta);
     }
   }
 

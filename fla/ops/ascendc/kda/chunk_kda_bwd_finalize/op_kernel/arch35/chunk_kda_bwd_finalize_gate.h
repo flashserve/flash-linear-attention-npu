@@ -24,22 +24,16 @@ __simd_callee__ inline void LoadGatePair(RegTensor<float> &even, RegTensor<float
     }
 }
 
-template <typename LogT, typename RawT, typename BiasT>
+template <typename RawT>
 __simd_vf__ inline void FinalizeStage11VF(
-    __ubuf__ float *dg, __ubuf__ RawT *raw, __ubuf__ BiasT *bias,
-    __ubuf__ LogT *aLog, __ubuf__ float *da, __ubuf__ float *db,
+    __ubuf__ float *dg, __ubuf__ RawT *raw, __ubuf__ float *bias,
+    __ubuf__ float *aLog, __ubuf__ float *da, __ubuf__ float *db,
     uint16_t rows, float lowerBound)
 {
     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
     MaskReg mask = CreateMask<float, MaskPattern::ALL>();
     RegTensor<float> e;
-    if constexpr (AscendC::IsSameType<LogT, float>::value) {
-        LoadIn<float, true>(e, aLog);
-    } else {
-        RegTensor<bfloat16_t> packed;
-        LoadIn<bfloat16_t, true>(packed, aLog);
-        Cast<float, bfloat16_t, ctHalf2Fp32Zero>(e, packed, mask);
-    }
+    LoadIn<float, true>(e, aLog);
     Exp(e, e, mask);
     RegTensor<float> one, sum0, sum1, da0, da1, db0, db1, bias0, bias1;
     Duplicate(one, 1.0f, mask);
@@ -49,7 +43,7 @@ __simd_vf__ inline void FinalizeStage11VF(
     Duplicate(da1, 0.0f, mask);
     Duplicate(db0, 0.0f, mask);
     Duplicate(db1, 0.0f, mask);
-    LoadGatePair(bias0, bias1, bias, mask);
+    LoadAlign<float, LoadDist::DIST_DINTLV_B32>(bias0, bias1, bias);
     // Reverse scan and both parameter partials remain in registers.
     for (uint16_t reverse = 0; reverse < rows; ++reverse) {
         const uint32_t offset = (rows - 1U - reverse) * KDA_FINALIZE_DIM;
@@ -133,23 +127,20 @@ __aicore__ inline void FinalizeStage12(
     auto daIn = dbIn[16384];
     auto dbOut = daIn[1024];
     auto daOut = dbOut[128];
-    AscendC::GlobalTensor<float> partialA, partialB;
-    AscendC::GlobalTensor<DTYPE_D_DT_BIAS> outB;
-    AscendC::GlobalTensor<DTYPE_D_A_LOG> outA;
+    AscendC::GlobalTensor<float> partialA, partialB, outA, outB;
     partialA.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace + tiling.gatePartialOffset));
     partialB.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace + tiling.dtBiasPartialOffset));
-    outA.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_D_A_LOG *>(dALog));
-    outB.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_D_DT_BIAS *>(dDtBias));
+    outA.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dALog));
+    outB.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dDtBias));
     const auto mte2V = pipe.AllocEventID<AscendC::HardEvent::MTE2_V>();
     const auto vMte2 = pipe.AllocEventID<AscendC::HardEvent::V_MTE2>();
     const auto vMte3 = pipe.AllocEventID<AscendC::HardEvent::V_MTE3>();
     const auto mte3V = pipe.AllocEventID<AscendC::HardEvent::MTE3_V>();
-    constexpr int64_t headsPerBlock = 32 / sizeof(DTYPE_D_A_LOG);
     // Own complete 32-byte output blocks, including a possible final tail.
     // No two cores write adjacent scalar lanes of the same DMA block.
-    for (int64_t group = AscendC::GetBlockIdx() * headsPerBlock; group < tiling.NV;
-         group += AscendC::GetBlockNum() * AscendC::GetSubBlockNum() * headsPerBlock) {
-        const int64_t end = FinalizeMin(group + headsPerBlock, tiling.NV);
+    for (int64_t group = AscendC::GetBlockIdx() * 8; group < tiling.NV;
+         group += AscendC::GetBlockNum() * AscendC::GetSubBlockNum() * 8) {
+        const int64_t end = FinalizeMin(group + 8, tiling.NV);
         for (int64_t head = group; head < end; ++head) {
             for (int64_t start = 0; start < tiling.totalChunkNum; start += 128) {
                 const uint16_t rows = static_cast<uint16_t>(FinalizeMin(128, tiling.totalChunkNum - start));
@@ -166,28 +157,16 @@ __aicore__ inline void FinalizeStage12(
                 AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(vMte2);
                 AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(vMte2);
             }
-            auto packedBias = daOut[32].ReinterpretCast<DTYPE_D_DT_BIAS>();
-            if constexpr (sizeof(DTYPE_D_DT_BIAS) == 2) {
-                AscendC::Cast(packedBias, dbOut, AscendC::RoundMode::CAST_RINT, 128);
-            } else {
-                packedBias = dbOut.ReinterpretCast<DTYPE_D_DT_BIAS>();
-            }
             AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vMte3);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vMte3);
-            AscendC::DataCopy(outB[head * 128], packedBias, 128);
+            AscendC::DataCopy(outB[head * 128], dbOut, 128);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3V);
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3V);
         }
-        auto packedA = daOut[16].ReinterpretCast<DTYPE_D_A_LOG>();
-        if constexpr (sizeof(DTYPE_D_A_LOG) == 2) {
-            AscendC::Cast(packedA, daOut, AscendC::RoundMode::CAST_RINT, headsPerBlock);
-        } else {
-            packedA = daOut.ReinterpretCast<DTYPE_D_A_LOG>();
-        }
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vMte3);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vMte3);
-        AscendC::DataCopyPad(outA[group], packedA,
-            AscendC::DataCopyExtParams{1, static_cast<uint32_t>((end - group) * sizeof(DTYPE_D_A_LOG)), 0, 0, 0});
+        AscendC::DataCopyPad(outA[group], daOut,
+            AscendC::DataCopyExtParams{1, static_cast<uint32_t>((end - group) * sizeof(float)), 0, 0, 0});
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3V);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3V);
     }

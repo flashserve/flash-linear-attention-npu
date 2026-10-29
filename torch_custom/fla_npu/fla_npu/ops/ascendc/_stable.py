@@ -1371,9 +1371,6 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
                       k_rstd_out=None, beta_eff_out=None):
     """KDA chunked forward, returning the saved tensors the backward needs.
 
-    A_log/dt_bias may independently be BF16/FP32 in V2. BF16 parameters
-    select V2, requiring BF16 q/k/v, K=V=128, C=64 and nonempty sequences.
-
     ``disable_recompute`` is what makes `w`/`u`/`qg`/`kg`/`v_new` real outputs
     rather than null handles, and `chunk_indices` defaults to the canonical
     sequence-major list the kernel expects.  The trailing value is the caller's
@@ -1447,7 +1444,8 @@ def npu_chunk_kda_bwd_finalize(
 ):
     """Finalize KDA gradients; output_layout controls dq/dk/dv/dBeta/dG.
 
-    raw_g/beta/a_log/dt_bias accept BF16/FP32; their gradients match each input.
+    raw_g/beta accept BF16/FP32; their gradients match each input.
+    a_log/dt_bias and their gradients are FP32.
     Gate computation and parameter reductions remain FP32.
     On A5, use_beta_sigmoid_in_kernel is reserved and must remain False.
     """
@@ -1950,8 +1948,8 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
 
     A2/A3 use one total L2 composition for all implementation modes.
     Their dq/dk/dv follow the input dtypes and output_layout. On all platforms,
-    db/dg/dA follow beta/raw_g/A_log dtypes; db/dg also follow output_layout.
-    A2/A3 and A5 optimized also accept BF16/FP32 dt_bias and return matching dbias.
+    db/dg follow beta/raw_g dtypes and output_layout.
+    A_log/dt_bias and their gradients dA/dbias are FP32.
     Gate arithmetic and parameter reductions remain FP32.
     The legacy workarounds below remain on the A5 fused path.
 

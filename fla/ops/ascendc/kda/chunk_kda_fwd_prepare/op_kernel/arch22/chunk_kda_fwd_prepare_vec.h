@@ -51,10 +51,10 @@ public:
         gateGm_.SetGlobalBuffer(reinterpret_cast<__gm__ GateT *>(args_.rawGate));
         betaGm_.SetGlobalBuffer(reinterpret_cast<__gm__ BetaT *>(args_.beta));
         if (args_.dtBias != nullptr) {
-            dtBiasGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_DT_BIAS *>(args_.dtBias));
+            dtBiasGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.dtBias));
         }
         if (args_.aLog != nullptr) {
-            aLogGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_A_LOG *>(args_.aLog));
+            aLogGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.aLog));
         }
         if (RuntimeMath<CompilePolicy>::Output(args_.tiling) == OutputMode::Save) {
             qgGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.qg));
@@ -252,11 +252,6 @@ private:
         auto betaEff = ub[base + Arch22Ub::kBetaEff].template ReinterpretCast<float>();
         auto dtBias = ub[base + Arch22Ub::kDtBias].template ReinterpretCast<float>();
         auto aLog = ub[base + Arch22Ub::kALog].template ReinterpretCast<float>();
-        // Private gaps: beta uses at most 256 bytes; scalar log uses one DMA block.
-        auto biasInput = ub[base + (sizeof(DTYPE_DT_BIAS) == 2 ? Arch22Ub::kBetaRaw + 256 : Arch22Ub::kDtBias)]
-                             .template ReinterpretCast<DTYPE_DT_BIAS>();
-        auto logInput = ub[base + Arch22Ub::kALog + (sizeof(DTYPE_A_LOG) == 2 ? 32 : 0)]
-                            .template ReinterpretCast<DTYPE_A_LOG>();
         auto qRstd = ub[base + Arch22Ub::kQRstd].template ReinterpretCast<float>();
         auto kRstd = ub[base + Arch22Ub::kKRstd].template ReinterpretCast<float>();
         auto g = ub[Arch22Ub::kSharedG].template ReinterpretCast<float>();
@@ -295,6 +290,7 @@ private:
         AscendC::DataCopyPadExtParams<GateT> gatePad{false, 0, 0, 0};
         AscendC::DataCopyPad(gate, gateGm_[gateOffset], gateCopy, gatePad);
         AscendC::DataCopyPadExtParams<BetaT> betaPad{false, 0, 0, 0};
+        AscendC::DataCopyPadExtParams<float> fp32Pad{false, 0, 0, 0};
         if (args_.tiling.inputSequenceMajor) {
             const uint32_t betaStride =
                 static_cast<uint32_t>(static_cast<uint64_t>(
@@ -313,31 +309,21 @@ private:
         if (static_cast<GateMode>(args_.tiling.gateMode) != GateMode::PrecomputedStep) {
             if (args_.tiling.hasDtBias) {
                 // 公开接口将 dt_bias 固定为展平的 [HV,K]。
-                AscendC::DataCopyPad(biasInput, dtBiasGm_[valueHead * Shape::kHeadDim],
+                AscendC::DataCopyPad(dtBias, dtBiasGm_[valueHead * Shape::kHeadDim],
                     AscendC::DataCopyExtParams{
-                        1, static_cast<uint32_t>(Shape::kHeadDim * sizeof(DTYPE_DT_BIAS)),
-                        0, 0, 0}, AscendC::DataCopyPadExtParams<DTYPE_DT_BIAS>{false, 0, 0, 0});
+                        1, static_cast<uint32_t>(Shape::kHeadDim * sizeof(float)),
+                        0, 0, 0}, fp32Pad);
             }
             if (args_.aLog != nullptr) {
                 // 公开接口将 a_log 固定为 [HV]。
-                AscendC::DataCopyPad(logInput, aLogGm_[valueHead],
+                AscendC::DataCopyPad(aLog, aLogGm_[valueHead],
                     AscendC::DataCopyExtParams{
-                        1, static_cast<uint32_t>(sizeof(DTYPE_A_LOG)), 0, 0, 0},
-                    AscendC::DataCopyPadExtParams<DTYPE_A_LOG>{false, 0, 0, 0});
+                        1, static_cast<uint32_t>(sizeof(float)), 0, 0, 0},
+                    fp32Pad);
             }
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(inputReady_[pair]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(inputReady_[pair]);
-        if constexpr (sizeof(DTYPE_DT_BIAS) == 2) {
-            if (args_.tiling.hasDtBias) AscendC::Cast(dtBias, biasInput, AscendC::RoundMode::CAST_NONE, Shape::kHeadDim);
-        }
-        if constexpr (sizeof(DTYPE_A_LOG) == 2) {
-            if (static_cast<GateMode>(args_.tiling.gateMode) != GateMode::PrecomputedStep)
-            AscendC::Cast(aLog, logInput, AscendC::RoundMode::CAST_NONE, 1);
-        }
-        if constexpr (sizeof(DTYPE_A_LOG) == 2 || sizeof(DTYPE_DT_BIAS) == 2) {
-            AscendC::PipeBarrier<PIPE_V>();
-        }
         if (args_.tiling.inputSequenceMajor) {
             auto offsets = ub[Arch22Ub::kBetaGatherOffsets]
                                .template ReinterpretCast<uint32_t>();
@@ -1845,8 +1831,8 @@ private:
     AscendC::GlobalTensor<bfloat16_t> vGm_{};
     AscendC::GlobalTensor<GateT> gateGm_{};
     AscendC::GlobalTensor<BetaT> betaGm_{};
-    AscendC::GlobalTensor<DTYPE_DT_BIAS> dtBiasGm_{};
-    AscendC::GlobalTensor<DTYPE_A_LOG> aLogGm_{};
+    AscendC::GlobalTensor<float> dtBiasGm_{};
+    AscendC::GlobalTensor<float> aLogGm_{};
     AscendC::GlobalTensor<bfloat16_t> qgGm_{};
     AscendC::GlobalTensor<bfloat16_t> qgScaledGm_{};
     AscendC::GlobalTensor<bfloat16_t> kgGm_{};

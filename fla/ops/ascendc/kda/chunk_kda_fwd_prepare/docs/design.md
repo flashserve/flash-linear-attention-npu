@@ -207,22 +207,3 @@ TilingKey 编译期选择 gate dtype、beta dtype、norm 模式、beta 模式、
 
 输出搬出在模板实例中使用 `if constexpr` 消除；设备侧 tiling 不保存运行时
 `outputMask`，Stage 和 VF 循环都不执行运行时输出判断。
-
-## A_log / dt_bias 片上转换
-
-Prepare 和前向 V2 接受 A_log、dt_bias 独立的 BF16/FP32 类型，不改变形状、
-输出 dtype、数学计算和 FP32 累积。A2/A3 的通用与 target V0 均将 BF16 bias
-放入私有 beta 槽末尾未使用的 256 字节（kBetaRaw+256），BF16 A_log 放入
-kALog+32；等待 MTE2 后以不重叠 Cast 扩展到原有 FP32 参数槽，再进入原计算。
-这些暂存区按 pair 私有，且在 beta Gather、norm、gate 运算前完成转换。
-A5 将原 dtype 参数读入现有 V0Work 区，复用 Load128AsFp32/LoadScalarAsFp32
-在寄存器中转换。无额外 workspace 或 kernel launch。
-
-公开 Python 路由在收到 BF16 参数时选择 V2（需满足其 shape/metadata 约束），
-FP32 参数保留原路由；V1 的 FP32 参数约束保持不变。单独 Prepare 同样支持
-混合参数 dtype。对照等值 FP32 参数检查全部输出，覆盖布局、尾块、保存模式、
-可选 bias 和 norm/beta/gate 开关，再用同配置模型脚本检查 op_summary。
-
-内部 OpDef 将 A_log/dt_bias 登记为 REQUIRED，确保二进制选择包含两者的 dtype；
-L0 用零元素 FP32 descriptor 表示公开接口的 None，tiling 按元素数判断存在性。
-公开 Python/aclnn 的可选参数语义不变，空 descriptor 不产生设备搬运或 Cast。

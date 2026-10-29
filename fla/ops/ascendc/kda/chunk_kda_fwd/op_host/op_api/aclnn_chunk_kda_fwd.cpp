@@ -338,7 +338,7 @@ aclnnStatus ResolveShapeInfo(const ChunkKdaFwdParams &params, KdaFwdLayout layou
     return ACLNN_SUCCESS;
 }
 
-aclnnStatus CheckDtypes(const ChunkKdaFwdParams &params, bool mixedGateParams)
+aclnnStatus CheckDtypes(const ChunkKdaFwdParams &params)
 {
     const DataType dataType = params.q->GetDataType();
     CHECK_COND((dataType == DataType::DT_FLOAT16 || dataType == DataType::DT_BF16) &&
@@ -351,14 +351,12 @@ aclnnStatus CheckDtypes(const ChunkKdaFwdParams &params, bool mixedGateParams)
     CHECK_COND(betaType == DataType::DT_FLOAT || betaType == DataType::DT_BF16,
                ACLNN_ERR_PARAM_INVALID, "beta must be float32 or bfloat16.");
     if (params.aLogOptional != nullptr) {
-        CHECK_COND((params.aLogOptional->GetDataType() == DataType::DT_FLOAT ||
-                    (mixedGateParams && params.aLogOptional->GetDataType() == DataType::DT_BF16)), ACLNN_ERR_PARAM_INVALID,
-                   "aLogOptional must be FP32 (V2 also accepts BF16).");
+        CHECK_COND(params.aLogOptional->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
+                   "aLogOptional must be float32.");
     }
     if (params.dtBiasOptional != nullptr) {
-        CHECK_COND((params.dtBiasOptional->GetDataType() == DataType::DT_FLOAT ||
-                    (mixedGateParams && params.dtBiasOptional->GetDataType() == DataType::DT_BF16)), ACLNN_ERR_PARAM_INVALID,
-                   "dtBiasOptional must be FP32 (V2 also accepts BF16).");
+        CHECK_COND(params.dtBiasOptional->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
+                   "dtBiasOptional must be float32.");
     }
     if (params.initialStateOptional != nullptr) {
         CHECK_COND(params.initialStateOptional->GetDataType() == DataType::DT_FLOAT,
@@ -462,7 +460,7 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdParams &params, const KdaShapeInf
     return ACLNN_SUCCESS;
 }
 
-aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, KdaShapeInfo &info, bool mixedGateParams = false)
+aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, KdaShapeInfo &info)
 {
     CHECK_COND(params.q != nullptr && params.k != nullptr && params.v != nullptr &&
                    params.g != nullptr && params.beta != nullptr,
@@ -496,7 +494,7 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
                "K/V must both be 64 or both be 128; mixed K/V and other dims are not "
                "supported, but got Kdim=%ld, Vdim=%ld.",
                info.kDim, info.vDim);
-    CHECK_RET(CheckDtypes(params, mixedGateParams) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckDtypes(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckCuSeqlens(params.cuSeqlensOptional, info.seqlen) == ACLNN_SUCCESS,
               ACLNN_ERR_PARAM_INVALID);
     CHECK_COND(params.cuSeqlensOptional == nullptr || info.isRank3 || info.batch == 1,
@@ -991,7 +989,7 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
     auto executorPtr = uniqueExecutor.get();
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
-    CHECK_RET(CheckParams(params, parsedLayout, info, true) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
 
     // V2 只实现三个独立算子的组合路径；场景不满足时由 Python 入口回落到

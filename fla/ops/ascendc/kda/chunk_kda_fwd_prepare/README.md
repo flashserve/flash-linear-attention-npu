@@ -50,7 +50,7 @@ L2 层传 `nullptr`，不参与公开 GM 写回，因此调用方按需取 `q_ha
 ## 输入输出
 
 `q/k/v` 固定为 BF16，K/V 维固定为 128，`chunk_size` 固定为 64。`g/beta` 支持
-BF16 或 FP32，`a_log/dt_bias` 分别支持 BF16/FP32，读入后在片上转为 FP32。
+BF16 或 FP32，`a_log/dt_bias` 固定为 FP32。
 
 | 输入 | dense shape | 无 batch shape | 说明 |
 | --- | --- | --- | --- |

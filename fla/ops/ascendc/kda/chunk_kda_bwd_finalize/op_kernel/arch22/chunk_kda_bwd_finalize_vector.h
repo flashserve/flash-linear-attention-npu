@@ -1259,8 +1259,8 @@ public:
     {
         tail_ = tail;
         rawG_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_RAW_G *>(tail.rawG));
-        aLog_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_A_LOG *>(tail.aLog));
-        dtBias_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_DT_BIAS *>(tail.dtBias));
+        aLog_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(tail.aLog));
+        dtBias_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(tail.dtBias));
         kRstd_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(tail.kRstd));
         dk_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(tail.dk));
         dg_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_D_G *>(tail.dg));
@@ -1274,13 +1274,9 @@ public:
         auto scalar = ub_[87 * 1024 + 256].ReinterpretCast<float>();
         auto factor = ub_[UB11_BETA_FACTOR].ReinterpretCast<float>();
         auto bias = ub_[UB11_BIAS].ReinterpretCast<float>();
-        auto biasIn = (sizeof(DTYPE_DT_BIAS) == 2 ? ub_[83 * 1024] : ub_[UB11_BIAS])
-                          .ReinterpretCast<DTYPE_DT_BIAS>();
-        auto logIn = (sizeof(DTYPE_A_LOG) == 2 ? ub_[87 * 1024 + 320] : ub_[87 * 1024 + 256])
-                         .ReinterpretCast<DTYPE_A_LOG>();
-        AscendC::DataCopy(biasIn, dtBias_[head * HEAD_DIM], HEAD_DIM);
-        AscendC::DataCopyPad(logIn, aLog_[head], {1, sizeof(DTYPE_A_LOG), 0, 0, 0},
-                             {true, 0, 0, static_cast<DTYPE_A_LOG>(0)});
+        AscendC::DataCopy(bias, dtBias_[head * HEAD_DIM], HEAD_DIM);
+        AscendC::DataCopyPad(scalar, aLog_[head], {1, sizeof(float), 0, 0, 0},
+                             {true, 0, 0, 0.0f});
         if constexpr (K_NORM) {
             AscendC::DataCopyPad(ub_[UB11_RSTD].ReinterpretCast<float>(), kRstd_[token], {1, rows * 4, 0, 0, 0},
                                  {true, 0, 0, 0.0f});
@@ -1298,13 +1294,6 @@ public:
             AscendC::Mul(factor, factor, beta, CHUNK_SIZE);
         }
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(inputReady_[0]);
-        if constexpr (sizeof(DTYPE_DT_BIAS) == 2) {
-            AscendC::Cast(bias, biasIn, AscendC::RoundMode::CAST_NONE, HEAD_DIM);
-        }
-        if constexpr (sizeof(DTYPE_A_LOG) == 2) {
-            AscendC::Cast(scalar, logIn, AscendC::RoundMode::CAST_NONE, 8);
-        }
-        AscendC::PipeBarrier<PIPE_V>();
         AscendC::Exp(scalar, scalar, 8);
         AscendC::PipeBarrier<PIPE_V>();
         AscendC::Brcb(ub_[UB11_EXP_A].ReinterpretCast<float>(), scalar, 1, {1, 8});
@@ -1816,8 +1805,8 @@ private:
     AscendC::GlobalTensor<bfloat16_t> q_, dq_;
     AscendC::GlobalTensor<float> qRstd_;
     AscendC::GlobalTensor<DTYPE_RAW_G> rawG_;
-    AscendC::GlobalTensor<DTYPE_A_LOG> aLog_;
-    AscendC::GlobalTensor<DTYPE_DT_BIAS> dtBias_;
+    AscendC::GlobalTensor<float> aLog_;
+    AscendC::GlobalTensor<float> dtBias_;
     AscendC::GlobalTensor<float> kRstd_, partial_;
     AscendC::GlobalTensor<DTYPE_D_G> dg_;
     AscendC::GlobalTensor<bfloat16_t> dk_;

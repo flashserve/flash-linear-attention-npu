@@ -277,14 +277,12 @@ aclnnStatus CheckDtype(const ChunkKdaFwdPrepareParams &params)
                    betaDtype == DataType::DT_FLOAT,
                ACLNN_ERR_PARAM_INVALID, "beta 只支持 BF16 或 FP32。");
     if (params.aLogOptional != nullptr) {
-        CHECK_COND((params.aLogOptional->GetDataType() == DataType::DT_FLOAT ||
-                    params.aLogOptional->GetDataType() == DataType::DT_BF16),
-                   ACLNN_ERR_PARAM_INVALID, "aLogOptional 只支持 BF16/FP32。");
+        CHECK_COND(params.aLogOptional->GetDataType() == DataType::DT_FLOAT,
+                   ACLNN_ERR_PARAM_INVALID, "aLogOptional 只支持 FP32。");
     }
     if (params.dtBiasOptional != nullptr) {
-        CHECK_COND((params.dtBiasOptional->GetDataType() == DataType::DT_FLOAT ||
-                    params.dtBiasOptional->GetDataType() == DataType::DT_BF16),
-                   ACLNN_ERR_PARAM_INVALID, "dtBiasOptional 只支持 BF16/FP32。");
+        CHECK_COND(params.dtBiasOptional->GetDataType() == DataType::DT_FLOAT,
+                   ACLNN_ERR_PARAM_INVALID, "dtBiasOptional 只支持 FP32。");
     }
 
     const aclTensor *bf16Outputs[] = {

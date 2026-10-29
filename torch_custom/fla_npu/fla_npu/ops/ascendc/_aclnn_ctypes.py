@@ -3387,8 +3387,8 @@ def _run_kda_bwd_optimized(args):
     dq,dk,dv = (torch.empty_like(args[name]) for name in ("q","k","v"))
     db = torch.empty_like(args["beta"])
     dg = torch.empty(token,dtype=args["raw_g"].dtype,device=q.device)
-    da = torch.empty((h,),dtype=args["A_log"].dtype,device=q.device)
-    dbias = None if args["dt_bias"] is None else torch.empty(bias_shape, dtype=args["dt_bias"].dtype, device=q.device)
+    da = torch.empty((h,),dtype=torch.float32,device=q.device)
+    dbias = None if args["dt_bias"] is None else torch.empty(bias_shape, dtype=torch.float32, device=q.device)
     outputs = (dq,dk,dv,db,dg,None,da,dbias)
 
     def build(ctx):
@@ -3422,8 +3422,8 @@ def _run_kda_bwd_arch22(args):
     db = _empty(scalar, q, dtype=a["beta"].dtype)
     dg = _empty(a["_output_gate_shape"], q, dtype=a["raw_g"].dtype)
     heads = a["beta"].shape[0 if a["cu_seqlens"] is not None else 1]
-    da = _empty((heads,), q, dtype=a["A_log"].dtype) if a["use_gate_in_kernel"] else None
-    dbias = (_empty(bias_shape, q, dtype=a["dt_bias"].dtype)
+    da = _empty((heads,), q, dtype=torch.float32) if a["use_gate_in_kernel"] else None
+    dbias = (_empty(bias_shape, q, dtype=torch.float32)
              if a["use_gate_in_kernel"] and bias_shape is not None else None)
     outputs = (dq, dk, dv, db, dg, None, da, dbias)
 
@@ -3622,7 +3622,7 @@ def npu_chunk_kda_bwd(
             raise RuntimeError("npu_chunk_kda_bwd: A_log must be float32 [H].")
         if safe_gate and not (-5.0 <= lower_bound < 0.0):
             raise RuntimeError("npu_chunk_kda_bwd: lower_bound must be in [-5,0) for safe_gate.")
-        d_a = _empty((heads,), q, dtype=A_log.dtype)
+        d_a = _empty((heads,), q, dtype=torch.float32)
         if dt_bias is not None:
             if _shape(dt_bias) != (heads, key_dim) or dt_bias.dtype != torch.float32:
                 raise RuntimeError("npu_chunk_kda_bwd: dt_bias must be float32 [H,K].")
@@ -3769,7 +3769,7 @@ def npu_chunk_kda_bwd(
         A_log = duplicate_last_head(A_log, 0)
         dt_bias = duplicate_last_head(dt_bias, 0)
         heads += 1
-        d_a = _empty((heads,), q, dtype=A_log.dtype) if d_a is not None else None
+        d_a = _empty((heads,), q, dtype=torch.float32) if d_a is not None else None
         d_bias = (
             _empty((heads, key_dim), q, dtype=torch.float32)
             if d_bias is not None else None
@@ -3997,10 +3997,10 @@ def npu_chunk_kda_fwd(
             "scenario (bfloat16 q/k/v, K=V=128, chunk_size=64)."
         )
     if use_gate_in_kernel:
-        if A_log is None or _shape(A_log) != (hv_num,) or A_log.dtype not in (torch.bfloat16, torch.float32):
-            raise RuntimeError("npu_chunk_kda_fwd: A_log must be BF16/FP32 [HV] when use_gate_in_kernel=True.")
-        if dt_bias is not None and (_shape(dt_bias) != (hv_num * k_dim,) or dt_bias.dtype not in (torch.bfloat16, torch.float32)):
-            raise RuntimeError("npu_chunk_kda_fwd: dt_bias must be BF16/FP32 [HV*K].")
+        if A_log is None or _shape(A_log) != (hv_num,) or A_log.dtype != torch.float32:
+            raise RuntimeError("npu_chunk_kda_fwd: A_log must be float32 [HV] when use_gate_in_kernel=True.")
+        if dt_bias is not None and (_shape(dt_bias) != (hv_num * k_dim,) or dt_bias.dtype != torch.float32):
+            raise RuntimeError("npu_chunk_kda_fwd: dt_bias must be float32 [HV*K].")
     lower_bound = _optional_float(lower_bound, -5.0)
     if use_gate_in_kernel and safe_gate and not (-5.0 <= lower_bound < 0.0):
         raise RuntimeError("npu_chunk_kda_fwd: lower_bound must be in [-5, 0) for safe gate.")
@@ -4084,8 +4084,6 @@ def npu_chunk_kda_fwd(
         or use_beta_sigmoid_in_kernel
         or allow_neg_eigval
         or not use_exp2
-        or (A_log is not None and A_log.dtype == torch.bfloat16)
-        or (dt_bias is not None and dt_bias.dtype == torch.bfloat16)
     )
     use_v2 = _chunk_kda_fwd_use_v2(
         dtype=q.dtype,
@@ -4261,12 +4259,12 @@ def npu_chunk_kda_fwd_prepare(
     allow_neg_eigval = _optional_bool(allow_neg_eigval, False)
     use_exp2 = _optional_bool(use_exp2, True)
     if use_gate_in_kernel:
-        if A_log is None or _shape(A_log) != (hv_num,) or A_log.dtype not in (torch.bfloat16, torch.float32):
+        if A_log is None or _shape(A_log) != (hv_num,) or A_log.dtype != torch.float32:
             raise RuntimeError(
-                "npu_chunk_kda_fwd_prepare: A_log must be BF16/FP32 [HV] when use_gate_in_kernel=True.")
+                "npu_chunk_kda_fwd_prepare: A_log must be float32 [HV] when use_gate_in_kernel=True.")
         if dt_bias is not None and (_shape(dt_bias) != (hv_num * k_dim,) or
-                                    dt_bias.dtype not in (torch.bfloat16, torch.float32)):
-            raise RuntimeError("npu_chunk_kda_fwd_prepare: dt_bias must be BF16/FP32 [HV*K].")
+                                    dt_bias.dtype != torch.float32):
+            raise RuntimeError("npu_chunk_kda_fwd_prepare: dt_bias must be float32 [HV*K].")
     lower_bound = _optional_float(lower_bound, -5.0)
     if use_gate_in_kernel and safe_gate and not (-5.0 <= lower_bound < 0.0):
         raise RuntimeError(
