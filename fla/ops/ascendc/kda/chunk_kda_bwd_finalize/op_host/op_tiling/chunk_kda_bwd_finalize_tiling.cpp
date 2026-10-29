@@ -30,7 +30,7 @@ ge::graphStatus ValidateFinalize(
         return ge::GRAPH_FAILED;
     };
     if (arch22 && gateOutputHeadMajor) {
-        OP_LOGE_FOR_INVALID_VALUE(ctx.nodeName, "gate_output_head_major", "true",
+        OP_LOGE_WITH_INVALID_ATTR(ctx.nodeName, "gate_output_head_major", "true",
             "false on A2/A3 because the arch22 finalize kernel supports only token-major gate outputs");
         return ge::GRAPH_FAILED;
     }
