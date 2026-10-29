@@ -91,3 +91,28 @@ Finalize 注册额外两种组合：raw_g 为 BF16/FP32、有效 beta FP32、db 
 A2/A3 vector 写回改用输出 DTYPE_D_BETA，使用已有每行 32 字节对齐的 UB 暂存和 DataCopyPad；输入仍用 BetaT。
 梯度先在 FP32 中完成 sigmoid 导数，再在写回时一次 CAST_RINT 至 BF16，不新增 GM 临时张量或独立 Cast。
 CPU 公式不变；新增 BF16 db 的预期为旧 FP32 梯度按模型 beta dtype 舍入。验证需覆盖原始 beta 两种 dtype、融合开关/scale=2、保存/重计算、四种 layout、两套 Python 后端、独立 Finalize 回归与非法缓存。
+
+
+## A5 V2 单 layout 适配
+
+本节扩展总接口；历史 legacy 的流水和 workspace 说明不代表 V2 实现。
+公开契约以 [api.md](api.md) 为准。前向及 A5 重计算 H 限制保持原样。
+
+| 阶段 | 本次改动 |
+|---|---|
+| Python/Stable/ctypes | 共用布局校验和输出分配；A5 auto/optimized 路由 V2，legacy 拒绝 |
+| ACLNN V2 | 按 v 与 layout 解析维度；缓存固定 head-major；beta 转置一次；保留 sigmoid 参数并拒绝非默认值 |
+| Prepare | do 独立计算 GM offset、行 stride、头 stride；四维变长通过 B=1 的 reshape view 进入现有 NTD kernel，不搬动数据 |
+| Dhu | do_token_major=True 时仅改变 do 的 GM offset/行 stride；默认 False 保留 GDN 行为 |
+| Recompute | reserved 位分别控制 raw_g、q/k、v 的 stride 读取；两条 Vector 分支一致，缓存写出不变 |
+| Finalize | q/k、v、raw_g 分别按标志读取；Cube 两处 v 读取同步调整；dq/dk/dv 随 layout，dg/db 固定 token-major |
+
+不改变数学公式、累加 dtype、tile、分核、UB/L1 布局、workspace 或事件协议。
+GM→UB 每行连续 128 元素，非连续行使用 DataCopyPad；GM→L1 保持原 CATLASS
+搬运与尾块清零，只调整实际 GM leading dimension。beta 的 BF16/FP32 转换仍在片上完成。
+
+验证分三层：保留独立小接口的 head-major 组合为布局等价基线，使用独立 CPU
+递推标杆检查数学结果，再检查真实前向缓存接入。覆盖定长/三维及四维变长、尾块、
+空段压缩、L2Norm、g/beta 四种 dtype、保存/重算、双 Python 后端及直接 ACLNN 拒绝检查。
+
+BF16 raw_g 的 Stage 11 转换使用 BF16 全掩码，覆盖全部 128 个元素；此前误用 FP32 掩码会遗漏部分 BF16 lane，影响 dg/dA/dbias。本次同步修正，不改变 FP32 路径。

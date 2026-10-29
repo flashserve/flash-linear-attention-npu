@@ -53,7 +53,6 @@ ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
         if ((rank != 3 && rank != 4) || o.GetDimNum() != rank ||
             (base && a.GetDim(0) != o.GetDim(0)) || a.GetDim(base) != o.GetDim(base+1) ||
             a.GetDim(base+1) != o.GetDim(base) || a.GetDim(base+2) != o.GetDim(base+2)) return ge::GRAPH_FAILED;
-        if (platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950) return ge::GRAPH_FAILED;
     }
     ChunkKdaBwdPrepareTilingContext ctx{
         context->GetNodeName(),

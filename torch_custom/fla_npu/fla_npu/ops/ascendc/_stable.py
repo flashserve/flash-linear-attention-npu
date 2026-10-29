@@ -1886,34 +1886,15 @@ def _kda_bwd_single_launch(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h,
 
 
 def _kda_bwd_optimized_launch(args):
-    """Share input policy with the reference, but launch V2 through Stable ABI."""
-    from ._kda_policy import _prepare_kda_bwd_optimized
+    return _kda_bwd_arch22_launch(args, optimized=True)
+
+
+def _kda_bwd_arch22_launch(args, optimized=False):
+    """Share argument assembly; select original L2 on A2/A3 or V2 on A5."""
+    from ._kda_policy import _prepare_kda_bwd_arch22, _prepare_kda_bwd_optimized
 
     bias_shape = None if args["dt_bias"] is None else args["dt_bias"].shape
-    a = _prepare_kda_bwd_optimized(args)
-    outputs = _op("npu_chunk_kda_bwd")(
-        a["q"], a["k"], a["v"], a["beta"], a["gk"], a["Aqk"], a["Akk"],
-        a["w"], a["qg"], a["kg"], a["v_new"], a["h"], a["d_o"],
-        a["raw_g"], a["A_log"], a["dt_bias"],
-        _host_ints(a["cu_seqlens"]), _host_ints(a["chunk_indices"]),
-        float(a["scale"]), int(a["chunk_size"]), a["safe_gate"],
-        a["use_gate_in_kernel"], a["lower_bound"], a["disable_recompute"],
-        a["use_exp2"], a["state_v_first"], True, a["q_rstd"], a["k_rstd"],
-        3 if a["cu_seqlens"] is not None else 1,
-        False, False,
-        _current_stream_ptr(),
-    )
-    if bias_shape is not None:
-        outputs = (*outputs[:-1], outputs[-1].view(bias_shape))
-    return outputs
-
-
-def _kda_bwd_arch22_launch(args):
-    """A2/A3 always use the original total L2, including norm and recompute."""
-    from ._kda_policy import _prepare_kda_bwd_arch22
-
-    bias_shape = None if args["dt_bias"] is None else args["dt_bias"].shape
-    a = _prepare_kda_bwd_arch22(args)
+    a = (_prepare_kda_bwd_optimized if optimized else _prepare_kda_bwd_arch22)(args)
     outputs = _op("npu_chunk_kda_bwd")(
         a["q"], a["k"], a["v"], a["beta"], a["gk"], a["Aqk"], a["Akk"],
         a["w"], a["qg"], a["kg"], a["v_new"], a["h"], a["d_o"],
@@ -1921,7 +1902,7 @@ def _kda_bwd_arch22_launch(args):
         _host_ints(a["cu_seqlens"]), _host_ints(a["chunk_indices"]),
         a["scale"], a["chunk_size"], a["safe_gate"], a["use_gate_in_kernel"],
         a["lower_bound"], a["disable_recompute"], a["use_exp2"], a["state_v_first"],
-        False, a["q_rstd"], a["k_rstd"], a["beta_eff"],
+        optimized, a["q_rstd"], a["k_rstd"], a["beta_eff"],
         _char_code("npu_chunk_kda_bwd", "layout", a["layout"]),
         a["use_beta_sigmoid_in_kernel"], a["allow_neg_eigval"],
         _current_stream_ptr(),
@@ -1940,13 +1921,14 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
                       state_v_first=False, implementation="auto",
                       q_rstd=None, k_rstd=None, layout="BNSD", use_beta_sigmoid_in_kernel=False,
                       allow_neg_eigval=False, beta_eff=None):
-    """Return (dq, dk, dv, db, dg, dh0, dA, dbias), currently on A2/A3.
+    """Return (dq, dk, dv, db, dg, dh0, dA, dbias), on A2/A3 and A5 V2.
 
     layout controls q/k/v and dq/dk/dv (BNSD/BSND/NTD/TND).
     With q_rstd/k_rstd, q/k are saved head-major normalized tensors.
     do/raw_g/beta and dg/db are always token-major. With fused sigmoid,
     beta is original logits and beta_eff is required FP32 head-major cache.
     Without fused sigmoid beta is effective beta and beta_eff must be None.
+    A5 V2 reserves fused sigmoid: beta_eff=None and both sigmoid flags False.
     All saved Token caches are head-major. 4D varlen calls require B=1.
     dg/db follow raw_g/beta dtypes; A_log/dt_bias and dA/dbias are FP32.
     """

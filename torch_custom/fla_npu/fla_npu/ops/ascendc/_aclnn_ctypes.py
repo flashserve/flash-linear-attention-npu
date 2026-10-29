@@ -426,7 +426,9 @@ _GET_WORKSPACE_ARGTYPES = {
         *([ctypes.c_void_p] * 20),
         ctypes.c_double, ctypes.c_int64, ctypes.c_bool, ctypes.c_bool,
         ctypes.c_double, ctypes.c_bool, ctypes.c_bool, ctypes.c_bool,
-        *([ctypes.c_void_p] * 10),  # rstd pair followed by eight public output slots
+        *([ctypes.c_void_p] * 3),  # rstd pair and reserved beta_eff
+        ctypes.c_char_p, ctypes.c_bool, ctypes.c_bool,
+        *([ctypes.c_void_p] * 8),
         ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_void_p),
     ],
     "aclnnChunkKdaBwdRecompute": [
@@ -3375,45 +3377,15 @@ def _kda_total_chunks(batch: int, seqlen: int, chunk_size: int, cu_seqlens, chun
 
 
 def _run_kda_bwd_optimized(args):
+    return _run_kda_bwd_arch22(args, optimized=True)
+
+
+def _run_kda_bwd_arch22(args, optimized=False):
     import torch
+    from ._kda_policy import _prepare_kda_bwd_arch22, _prepare_kda_bwd_optimized
 
     bias_shape = None if args["dt_bias"] is None else args["dt_bias"].shape
-    args = _prepare_kda_bwd_optimized(args)
-    q = args["q"]
-    token = tuple(q.shape)
-    h = token[0 if args["cu_seqlens"] is not None else 1]
-    bias = args["dt_bias"]
-    cu, indices = args["cu_seqlens"], args["chunk_indices"]
-    dq,dk,dv = (torch.empty_like(args[name]) for name in ("q","k","v"))
-    db = torch.empty_like(args["beta"])
-    dg = torch.empty(token,dtype=args["raw_g"].dtype,device=q.device)
-    da = torch.empty((h,),dtype=torch.float32,device=q.device)
-    dbias = None if args["dt_bias"] is None else torch.empty(bias_shape, dtype=torch.float32, device=q.device)
-    outputs = (dq,dk,dv,db,dg,None,da,dbias)
-
-    def build(ctx):
-        def nd(x,name):
-            return ctx.tensor(x,name,acl_format_override=ACL_FORMAT_ND,
-                storage_shape_override=tuple(x.shape) if x is not None else None)
-        values = [nd(args[name],name) for name in
-            ("q","k","v","beta","gk","Aqk","Akk","w","qg","kg","v_new","h","d_o","raw_g","A_log")]
-        values += [nd(bias,"dt_bias"),nd(None,"initial_state"),nd(None,"dht"),ctx.int_array(cu),ctx.int_array(indices),
-            ctypes.c_double(float(args["scale"])),ctypes.c_int64(64),ctypes.c_bool(True),ctypes.c_bool(True),
-            ctypes.c_double(float(args["lower_bound"])),ctypes.c_bool(bool(args["disable_recompute"])),
-            ctypes.c_bool(True),ctypes.c_bool(False),nd(args["q_rstd"],"q_rstd"),nd(args["k_rstd"],"k_rstd")]
-        values += [nd(x,name) for x,name in zip((dq,dk,dv,db,dg,None,da,
-            None if dbias is None else dbias.view(h,128)),("dq","dk","dv","db","dg","dh0","dA","dbias"))]
-        return values
-
-    return _call_aclnn("aclnnChunkKdaBwdV2",build,outputs)
-
-
-def _run_kda_bwd_arch22(args):
-    import torch
-    from ._kda_policy import _prepare_kda_bwd_arch22
-
-    bias_shape = None if args["dt_bias"] is None else args["dt_bias"].shape
-    a = _prepare_kda_bwd_arch22(args)
+    a = (_prepare_kda_bwd_optimized if optimized else _prepare_kda_bwd_arch22)(args)
     q = a["q"]
     token, scalar = a["_output_token_shape"], a["_output_beta_shape"]
     dq = _empty(token, q, dtype=q.dtype)
@@ -3452,7 +3424,7 @@ def _run_kda_bwd_arch22(args):
                    zip(physical, ("dq", "dk", "dv", "db", "dg", "dh0", "dA", "dbias"))]
         return values
 
-    return _call_aclnn("aclnnChunkKdaBwd", build, outputs)
+    return _call_aclnn("aclnnChunkKdaBwdV2" if optimized else "aclnnChunkKdaBwd", build, outputs)
 
 
 def npu_chunk_kda_bwd(
@@ -3493,13 +3465,14 @@ def npu_chunk_kda_bwd(
     allow_neg_eigval=False,
     beta_eff=None,
 ):
-    """Return (dq, dk, dv, db, dg, dh0, dA, dbias), currently on A2/A3.
+    """Return (dq, dk, dv, db, dg, dh0, dA, dbias), on A2/A3 and A5 V2.
 
     layout controls q/k/v and dq/dk/dv (BNSD/BSND/NTD/TND).
     With q_rstd/k_rstd, q/k are saved head-major normalized tensors.
     do/raw_g/beta and dg/db are always token-major. With fused sigmoid,
     beta is original logits and beta_eff is required FP32 head-major cache.
     Without fused sigmoid beta is effective beta and beta_eff must be None.
+    A5 V2 reserves fused sigmoid: beta_eff=None and both sigmoid flags False.
     All saved Token caches are head-major. 4D varlen calls require B=1.
     dg/db follow raw_g/beta dtypes; A_log/dt_bias and dA/dbias are FP32.
     """

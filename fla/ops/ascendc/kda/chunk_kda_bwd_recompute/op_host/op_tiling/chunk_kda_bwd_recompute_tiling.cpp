@@ -49,8 +49,8 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
     const bool modelTm = mixed && (std::strcmp(modelLayout, "BSND") == 0 || std::strcmp(modelLayout, "TND") == 0);
     const auto *qkHeadAttr = attrPtr->GetAttrPointer<bool>(6);
     const bool qkTm = modelTm && !(qkHeadAttr && *qkHeadAttr);
-    OP_CHECK_IF(mixed && (isAscend950 || (!modelTm && std::strcmp(modelLayout, "BNSD") != 0 &&
-                    std::strcmp(modelLayout, "NTD") != 0)),
+    OP_CHECK_IF(mixed && (!modelTm && std::strcmp(modelLayout, "BNSD") != 0 &&
+                    std::strcmp(modelLayout, "NTD") != 0),
                 OP_LOGE(context->GetNodeName(), "Unsupported Recompute model_layout on this platform."),
                 return ge::GRAPH_FAILED);
     if (mixed) {

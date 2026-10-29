@@ -178,7 +178,6 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
     const bool mixed = modelLayout && modelLayout[0];
     const bool modelTm = mixed && (std::strcmp(modelLayout,"BSND") == 0 || std::strcmp(modelLayout,"TND") == 0);
     if (mixed && !modelTm && std::strcmp(modelLayout,"BNSD") && std::strcmp(modelLayout,"NTD")) return ge::GRAPH_FAILED;
-    if (mixed && platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950) return ge::GRAPH_FAILED;
     ChunkKdaBwdFinalizeTilingContext ctx{
         context->GetNodeName(),
         context->GetRequiredInputShape(mixed ? INPUT_GK : INPUT_Q),

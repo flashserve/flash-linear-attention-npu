@@ -104,7 +104,6 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
         const auto &o = context->GetRequiredInputShape(CGDR_BWD_DHU_INPUT_DO_IDX)->GetStorageShape();
         if (v.GetDimNum() != 4 || o.GetDimNum() != 4 || v.GetDim(0) != o.GetDim(0) ||
             v.GetDim(1) != o.GetDim(2) || v.GetDim(2) != o.GetDim(1) || v.GetDim(3) != o.GetDim(3)) return ge::GRAPH_FAILED;
-        if (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510) return ge::GRAPH_FAILED;
     }
     uint64_t ubSize = 0;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);

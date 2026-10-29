@@ -20,7 +20,10 @@ __simd_callee__ inline void LoadGatePair(RegTensor<float> &even, RegTensor<float
     } else {
         RegTensor<bfloat16_t> packed;
         LoadIn(packed, input);
-        CastHalf2Float(even, odd, packed, mask);
+        // Cast both interleaved BF16 halves; a float mask covers only half
+        // the BF16 lanes and silently zeros part of raw_g.
+        MaskReg bf16Mask = CreateMask<bfloat16_t, MaskPattern::ALL>();
+        CastHalf2Float(even, odd, packed, bf16Mask);
     }
 }
 
