@@ -876,6 +876,39 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessCVect
             Cast(tensorDgAdd, tensorDgIn[BT], RoundMode::CAST_NONE, BT);
         }
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+        if (std::is_same<DataType, bfloat16_t>::value &&
+            BT == 64 && K == 128 && gvaMode && BUFFER_NUM == 2 &&
+            real_BT > 32 && real_BT <= 64) {
+            auto tensorDqFull = inQue1.AllocTensor<float>();
+            auto tensorDqScratch = inQue2.AllocTensor<DataType>();
+            const uint32_t rawDqOffset = static_cast<uint32_t>(BT * K);
+            DataCopy(tensorDqScratch[rawDqOffset], gmMm4[mm4Offset], actual_dqSize);
+            inQue2.EnQue(tensorDqScratch);
+            tensorDqScratch = inQue2.DeQue<DataType>();
+            Cast(tensorDqFull, tensorDqScratch[rawDqOffset], RoundMode::CAST_NONE, actual_dqSize);
+            PipeBarrier<PIPE_V>();
+            auto tensorQProduct = tensorDqScratch.template ReinterpretCast<float>();
+            ComputeDqState(tensorDqFull, tensorGFp32, tensorGTmpFp32, real_BT);
+            Mul(tensorQProduct, tensorDqFull, tensorQResident, actual_dqSize);
+            PipeBarrier<PIPE_V>();
+            Add(tensorQProduct, tensorQProduct, tensorQProduct[FP32_PER_REPEAT],
+                FP32_PER_REPEAT, real_BT, {1, 1, 1, 16, 16, 16});
+            PipeBarrier<PIPE_V>();
+            WholeReduceSum(tensorDgOut, tensorQProduct, FP32_PER_REPEAT, real_BT, 1, 1, 16);
+            PipeBarrier<PIPE_V>();
+            if (h % scheduleRatio == 0) {
+                tensorDqSum = inQue1.AllocTensor<float>();
+                DataCopy(tensorDqSum, tensorDqFull, actual_dqSize);
+            } else {
+                Add(tensorDqSum, tensorDqSum, tensorDqFull, actual_dqSize);
+            }
+            PipeBarrier<PIPE_V>();
+            inQue1.FreeTensor(tensorDqFull);
+            inQue2.FreeTensor(tensorDqScratch);
+        } else
+#endif
+        {
         // gva模式下，dq在UB上做累加，由于UB大小限制，dq和q分两次拷入计算
         // CopyIn First half: dq_inner, q
         {
@@ -963,6 +996,8 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessCVect
                 }
                 inQue2.FreeTensor(tensorDqInFp16);
             }
+        }
+
         }
 
         Add(tensorDgOut, tensorDgAdd, tensorDgOut, real_BT);

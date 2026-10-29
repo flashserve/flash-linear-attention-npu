@@ -266,8 +266,8 @@ __aicore__ inline void A2FinalizePrepare(
     }
 }
 
-// S3：每个 (chunk, HV) 仅有一个 AIV owner；scan 严格限制在该 chunk 有效行内。
-template <typename GT, bool USE_BETA_SIGMOID>
+// S3：每个 (chunk, head group) 仅有一个 AIV owner；chunk64/128 统一选择 128/64 个 head。
+template <typename GT, bool USE_BETA_SIGMOID, uint32_t CHUNK_SIZE>
 __aicore__ inline void A2FinalizeGateTail(
     GM_ADDR betaRaw, GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
     GM_ADDR dbeta, GM_ADDR dg, GM_ADDR workspace,
@@ -275,25 +275,94 @@ __aicore__ inline void A2FinalizeGateTail(
     const A2FinalizeWorkspaceLayout &layout, AscendC::TPipe &pipe)
 {
     AscendC::TBuf<AscendC::TPosition::VECCALC> buf;
-    pipe.InitBuffer(buf, 8 * 1024);
-    auto left = buf.GetWithOffset<float>(128, 0);
-    auto right = buf.GetWithOffset<float>(128, 512);
-    auto values = buf.GetWithOffset<float>(128, 1024);
-    auto raw = buf.GetWithOffset<GT>(128, 1536);
-    auto result = buf.GetWithOffset<GT>(128, 2048);
-    auto sigmoid = buf.GetWithOffset<float>(128, 2560);
-    auto ones = buf.GetWithOffset<float>(128, 3072);
-    auto scanBlocks = buf.GetWithOffset<float>(128 * 8, 3584);
-    auto scanOffsets = buf.GetWithOffset<int32_t>(128, 7680);
-    auto scanOffsetsU32 = scanOffsets.ReinterpretCast<uint32_t>();
+    static_assert(CHUNK_SIZE == 64 || CHUNK_SIZE == 128, "GateTail chunk class is unsupported");
+    constexpr uint32_t HEAD_BATCH = CHUNK_SIZE == 64 ? 128 : 64;
+    constexpr uint32_t MAX_ELEMENTS = 8192;
+    static_assert(CHUNK_SIZE * HEAD_BATCH == MAX_ELEMENTS, "GateTail chunk/head product mismatch");
+    constexpr uint32_t REGION_BYTES = MAX_ELEMENTS * sizeof(float);
+    constexpr uint32_t SCALAR_BYTES = 128 * sizeof(float);
+    constexpr uint32_t BUFFER_BYTES = 128 * 1024;
+    constexpr uint32_t LEFT_OFFSET = 0;
+    constexpr uint32_t RIGHT_OFFSET = LEFT_OFFSET + REGION_BYTES;
+    // Add 原地写 left；right 在 Add/PIPE_V 后复用为 scan，逆 Gather/PIPE_ALL 后复用为 result。
+    constexpr uint32_t VALUES_OFFSET = LEFT_OFFSET;
+    constexpr uint32_t SCAN_OFFSET = RIGHT_OFFSET;
+    constexpr uint32_t TRANSPOSE_OFFSET = SCAN_OFFSET + REGION_BYTES;
+    constexpr uint32_t OUTPUT_OFFSET = TRANSPOSE_OFFSET + REGION_BYTES;
+    constexpr uint32_t RESULT_OFFSET = SCAN_OFFSET;
+    // DG 的 MTE3/PIPE_ALL 后，DBeta 仅占 values 首 S 字节，三个小向量取其后方。
+    constexpr uint32_t RAW_OFFSET = VALUES_OFFSET + SCALAR_BYTES;
+    constexpr uint32_t SIGMOID_OFFSET = RAW_OFFSET + SCALAR_BYTES;
+    constexpr uint32_t ONES_OFFSET = SIGMOID_OFFSET + SCALAR_BYTES;
+    // 正向 Gather/PIPE_V 后旧 values 已死；seed 只供首轮 scan Add，逆 Gather 才覆盖。
+    constexpr uint32_t SEED_OFFSET = VALUES_OFFSET;
+    constexpr uint32_t END_OFFSET = OUTPUT_OFFSET + REGION_BYTES;
+    static_assert(sizeof(GT) <= sizeof(float), "GateTail GT exceeds reserved float storage");
+    static_assert(sizeof(uint32_t) == sizeof(float), "GateTail index region width mismatch");
+    static_assert(REGION_BYTES % 32 == 0 && SCALAR_BYTES % 32 == 0 &&
+                  (HEAD_BATCH * sizeof(float)) % 32 == 0, "GateTail UB regions must be block aligned");
+    static_assert(END_OFFSET <= BUFFER_BYTES, "GateTail UB regions exceed buffer capacity");
+    static_assert(4 * SCALAR_BYTES <= REGION_BYTES && HEAD_BATCH * sizeof(float) <= SCALAR_BYTES,
+                  "GateTail temporary aliases exceed values region");
+    pipe.InitBuffer(buf, BUFFER_BYTES);
+    auto left = buf.GetWithOffset<float>(MAX_ELEMENTS, LEFT_OFFSET);
+    auto right = buf.GetWithOffset<float>(MAX_ELEMENTS, RIGHT_OFFSET);
+    auto values = buf.GetWithOffset<float>(MAX_ELEMENTS, VALUES_OFFSET);
+    auto scanBlocks = buf.GetWithOffset<float>(MAX_ELEMENTS, SCAN_OFFSET);
+    auto transposeOffsets = buf.GetWithOffset<uint32_t>(MAX_ELEMENTS, TRANSPOSE_OFFSET);
+    auto outputOffsets = buf.GetWithOffset<uint32_t>(MAX_ELEMENTS, OUTPUT_OFFSET);
+    auto result = buf.GetWithOffset<GT>(MAX_ELEMENTS, RESULT_OFFSET);
+    auto raw = buf.GetWithOffset<GT>(128, RAW_OFFSET);
+    auto sigmoid = buf.GetWithOffset<float>(128, SIGMOID_OFFSET);
+    auto ones = buf.GetWithOffset<float>(128, ONES_OFFSET);
+    auto seed = buf.GetWithOffset<float>(HEAD_BATCH, SEED_OFFSET);
     const uint32_t chunkSize = static_cast<uint32_t>(t.chunkSize);
-    // SDK CreateVecIndex pairs its temporary S_V event while this TPipe is live.
     AscendC::SetMaskNorm();
     AscendC::ResetMask();
-    AscendC::CreateVecIndex<int32_t>(scanOffsets, int32_t(0), chunkSize);
+    constexpr uint32_t HEAD_LOG2 = CHUNK_SIZE == 64 ? 7U : 6U;
+    static_assert((1U << HEAD_LOG2) == HEAD_BATCH, "GateTail index head radix mismatch");
+    constexpr uint32_t chunkLog2 = CHUNK_SIZE == 64 ? 6U : 7U;
+    const int32_t indexCount = static_cast<int32_t>(chunkSize * HEAD_BATCH);
+    // 数据搬入前暂借 left/right 作 base/tmp；所有 reinterpret 只改视图，不转换数值。
+    auto indexBase = left.ReinterpretCast<int32_t>();
+    auto indexBaseU = indexBase.ReinterpretCast<uint32_t>();
+    auto indexTmp = right.ReinterpretCast<uint32_t>();
+    auto indexTmpI = indexTmp.ReinterpretCast<int32_t>();
+    auto transposeOffsetsI = transposeOffsets.ReinterpretCast<int32_t>();
+    auto outputOffsetsI = outputOffsets.ReinterpretCast<int32_t>();
+    AscendC::CreateVecIndex<int32_t>(indexBase, int32_t(0), static_cast<uint32_t>(indexCount));
     AscendC::PipeBarrier<PIPE_V>();
-    AscendC::Muls(scanOffsets, scanOffsets, int32_t(32), chunkSize);
+    // i=u*HB+r：tmp=u*4，dst=r*BT*4。高位截断后的右移必须保持 unsigned。
+    AscendC::ShiftRight<uint32_t>(indexTmp, indexBaseU, uint32_t(HEAD_LOG2), indexCount);
     AscendC::PipeBarrier<PIPE_V>();
+    AscendC::ShiftLeft<uint32_t>(indexTmp, indexTmp, uint32_t(2), indexCount);
+    AscendC::PipeBarrier<PIPE_V>();
+    AscendC::ShiftLeft<uint32_t>(transposeOffsets, indexBaseU, uint32_t(32U - HEAD_LOG2), indexCount);
+    AscendC::PipeBarrier<PIPE_V>();
+    AscendC::ShiftRight<uint32_t>(transposeOffsets, transposeOffsets,
+                                uint32_t(30U - HEAD_LOG2 - chunkLog2), indexCount);
+    AscendC::PipeBarrier<PIPE_V>();
+    AscendC::Add<int32_t>(transposeOffsetsI, transposeOffsetsI, indexTmpI, indexCount);
+    AscendC::PipeBarrier<PIPE_V>();
+    // i=u*BT+r：同一 base 构造逆表；上一 Add 的 tmp 读取完成后才重写 tmp。
+    AscendC::ShiftRight<uint32_t>(indexTmp, indexBaseU, uint32_t(chunkLog2), indexCount);
+    AscendC::PipeBarrier<PIPE_V>();
+    AscendC::ShiftLeft<uint32_t>(indexTmp, indexTmp, uint32_t(2), indexCount);
+    AscendC::PipeBarrier<PIPE_V>();
+    AscendC::ShiftLeft<uint32_t>(outputOffsets, indexBaseU, uint32_t(32U - chunkLog2), indexCount);
+    AscendC::PipeBarrier<PIPE_V>();
+    AscendC::ShiftRight<uint32_t>(outputOffsets, outputOffsets,
+                                uint32_t(30U - chunkLog2 - HEAD_LOG2), indexCount);
+    AscendC::PipeBarrier<PIPE_V>();
+    AscendC::Add<int32_t>(outputOffsetsI, outputOffsetsI, indexTmpI, indexCount);
+    AscendC::PipeBarrier<PIPE_V>();
+    // 关闭 base/tmp 的 V 读取后才允许后续 MTE2 重用；临时事件成对归还。
+    const auto indexScratchFree = pipe.AllocEventID<AscendC::HardEvent::V_MTE2>();
+    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(indexScratchFree);
+    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(indexScratchFree);
+    pipe.ReleaseEventID<AscendC::HardEvent::V_MTE2>(indexScratchFree);
+    AscendC::SetMaskNorm();
+    AscendC::ResetMask();
     AscendC::GlobalTensor<float> dg1Gm, dg2Gm, dbetaGm;
     AscendC::GlobalTensor<GT> dbetaOutGm, dgOutGm, betaRawGm;
     dg1Gm.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace + layout.dgDqOffset));
@@ -306,94 +375,104 @@ __aicore__ inline void A2FinalizeGateTail(
     }
     const auto wyTiling = A2FinalizeWyTiling(t);
     const int64_t aivNum = AscendC::GetBlockNum() * 2;
-    for (int64_t work = AscendC::GetBlockIdx(); work < t.totalChunkNum * t.HV; work += aivNum) {
-        const int64_t chunk = work / t.HV;
-        const int64_t hv = work % t.HV;
+    const int64_t headGroups = (t.HV + HEAD_BATCH - 1) / HEAD_BATCH;
+    for (int64_t work = AscendC::GetBlockIdx(); work < t.totalChunkNum * headGroups; work += aivNum) {
+        const int64_t chunk = work / headGroups;
+        const int64_t hv = (work % headGroups) * HEAD_BATCH;
+        const uint32_t heads = static_cast<uint32_t>(t.HV - hv < HEAD_BATCH ? t.HV - hv : HEAD_BATCH);
         PrepareWyReprBwdTaskInfo task;
         PrepareWyReprBwdGetTaskInfo(cuSeqlens, chunkIndices, wyTiling, chunk, task);
         const uint32_t rows = task.curChunkSize;
-        const int64_t base = hv * t.T + task.valueBos;
-        // Brcb reads ceil(rows / 8) groups, including initialized tail lanes.
-        AscendC::Duplicate(values, 0.0f, chunkSize);
-        A2FinalizeCopyIn(left, dg1Gm, base, rows);
-        A2FinalizeCopyIn(right, dg2Gm, base, rows);
+        const uint32_t elements = chunkSize * HEAD_BATCH;
+        // All padding and absent head lanes are initialized before the transpose.
+        AscendC::Duplicate(left, 0.0f, elements);
+        AscendC::Duplicate(right, 0.0f, elements);
         AscendC::PipeBarrier<PIPE_ALL>();
-        AscendC::Add(values, left, right, rows);
+        for (uint32_t lane = 0; lane < heads; ++lane) {
+            const int64_t base = (hv + lane) * t.T + task.valueBos;
+            A2FinalizeCopyIn(left[lane * chunkSize], dg1Gm, base, rows);
+            A2FinalizeCopyIn(right[lane * chunkSize], dg2Gm, base, rows);
+        }
         AscendC::PipeBarrier<PIPE_ALL>();
+        AscendC::Add(values, left, right, elements);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Gather(scanBlocks, values, transposeOffsets, 0, elements);
+        AscendC::PipeBarrier<PIPE_V>();
         if (rows > 0) {
-            AscendC::SetMaskNorm();
-            AscendC::ResetMask();
-            AscendC::Brcb(scanBlocks, values, static_cast<uint8_t>((rows + 7) / 8), {1, 8});
-            AscendC::PipeBarrier<PIPE_V>();
-            // Merge consumed left; its first block is the independent +0 seed.
-            AscendC::Duplicate(left, 0.0f, 8);
+            AscendC::Duplicate(seed, 0.0f, HEAD_BATCH);
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::SetMaskCount();
-            AscendC::SetVectorMask<float>(0, 8);
-            const AscendC::BinaryRepeatParams scanParams;
+            AscendC::SetVectorMask<float>(0, HEAD_BATCH);
+            const AscendC::BinaryRepeatParams scanParams{1, 1, 1, 8, 8, 8};
             for (uint32_t row = rows; row > 0; --row) {
-                auto prefix = row == rows ? left : scanBlocks[row * 8];
+                auto prefix = row == rows ? seed : scanBlocks[row * HEAD_BATCH];
                 AscendC::Add<float, false>(
-                    scanBlocks[(row - 1) * 8], prefix, scanBlocks[(row - 1) * 8],
+                    scanBlocks[(row - 1) * HEAD_BATCH], prefix, scanBlocks[(row - 1) * HEAD_BATCH],
                     AscendC::MASK_PLACEHOLDER, 1, scanParams);
                 AscendC::PipeBarrier<PIPE_V>();
             }
             AscendC::SetMaskNorm();
             AscendC::ResetMask();
-            AscendC::Gather(values, scanBlocks, scanOffsetsU32, 0, rows);
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::SetMaskNorm();
-            AscendC::ResetMask();
         }
+        AscendC::Gather(values, scanBlocks, outputOffsets, 0, elements);
+        AscendC::PipeBarrier<PIPE_V>();
         AscendC::PipeBarrier<PIPE_ALL>();
-        if constexpr (std::is_same<GT, float>::value) {
-            A2FinalizeCopyOut(dgOutGm, values, base, rows);
-        } else {
-            AscendC::Cast(result, values, AscendC::RoundMode::CAST_RINT, rows);
+        if constexpr (!std::is_same<GT, float>::value) {
+            AscendC::Cast(result, values, AscendC::RoundMode::CAST_RINT, elements);
             AscendC::PipeBarrier<PIPE_V>();
             AscendC::PipeBarrier<PIPE_ALL>();
-            A2FinalizeCopyOut(dgOutGm, result, base, rows);
         }
-        AscendC::PipeBarrier<PIPE_ALL>();
-        A2FinalizeCopyIn(values, dbetaGm, base, rows);
-        if constexpr (USE_BETA_SIGMOID) {
-            A2FinalizeCopyIn(raw, betaRawGm, base, rows);
-        }
-        AscendC::PipeBarrier<PIPE_ALL>();
-        if constexpr (USE_BETA_SIGMOID) {
+        for (uint32_t lane = 0; lane < heads; ++lane) {
+            const int64_t base = (hv + lane) * t.T + task.valueBos;
             if constexpr (std::is_same<GT, float>::value) {
-                AscendC::Adds(sigmoid, raw, 0.0f, rows);
+                A2FinalizeCopyOut(dgOutGm, values[lane * chunkSize], base, rows);
             } else {
-                AscendC::Cast(sigmoid, raw, AscendC::RoundMode::CAST_NONE, rows);
+                A2FinalizeCopyOut(dgOutGm, result[lane * chunkSize], base, rows);
             }
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Muls(sigmoid, sigmoid, -1.0f, rows);
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Exp(sigmoid, sigmoid, rows);
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Adds(sigmoid, sigmoid, 1.0f, rows);
-            AscendC::Duplicate(ones, 1.0f, rows);
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Div(sigmoid, ones, sigmoid, rows);
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Sub(ones, ones, sigmoid, rows);
-            AscendC::Mul(values, values, sigmoid, rows);
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Mul(values, values, ones, rows);
-            AscendC::PipeBarrier<PIPE_V>();
-        }
-        if constexpr (std::is_same<GT, float>::value) {
-            if constexpr (USE_BETA_SIGMOID) {
-                AscendC::PipeBarrier<PIPE_ALL>();
-            }
-            A2FinalizeCopyOut(dbetaOutGm, values, base, rows);
-        } else {
-            AscendC::Cast(result, values, AscendC::RoundMode::CAST_RINT, rows);
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::PipeBarrier<PIPE_ALL>();
-            A2FinalizeCopyOut(dbetaOutGm, result, base, rows);
         }
         AscendC::PipeBarrier<PIPE_ALL>();
+        for (uint32_t lane = 0; lane < heads; ++lane) {
+            const int64_t base = (hv + lane) * t.T + task.valueBos;
+            A2FinalizeCopyIn(values, dbetaGm, base, rows);
+            if constexpr (USE_BETA_SIGMOID) {
+                A2FinalizeCopyIn(raw, betaRawGm, base, rows);
+            }
+            AscendC::PipeBarrier<PIPE_ALL>();
+            if constexpr (USE_BETA_SIGMOID) {
+                if constexpr (std::is_same<GT, float>::value) {
+                    AscendC::Adds(sigmoid, raw, 0.0f, rows);
+                } else {
+                    AscendC::Cast(sigmoid, raw, AscendC::RoundMode::CAST_NONE, rows);
+                }
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::Muls(sigmoid, sigmoid, -1.0f, rows);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::Exp(sigmoid, sigmoid, rows);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::Adds(sigmoid, sigmoid, 1.0f, rows);
+                AscendC::Duplicate(ones, 1.0f, rows);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::Div(sigmoid, ones, sigmoid, rows);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::Sub(ones, ones, sigmoid, rows);
+                AscendC::Mul(values, values, sigmoid, rows);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::Mul(values, values, ones, rows);
+                AscendC::PipeBarrier<PIPE_V>();
+            }
+            if constexpr (std::is_same<GT, float>::value) {
+                if constexpr (USE_BETA_SIGMOID) {
+                    AscendC::PipeBarrier<PIPE_ALL>();
+                }
+                A2FinalizeCopyOut(dbetaOutGm, values, base, rows);
+            } else {
+                AscendC::Cast(result, values, AscendC::RoundMode::CAST_RINT, rows);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::PipeBarrier<PIPE_ALL>();
+                A2FinalizeCopyOut(dbetaOutGm, result, base, rows);
+            }
+            AscendC::PipeBarrier<PIPE_ALL>();
+        }
     }
     pipe.Reset();
 }
@@ -414,10 +493,10 @@ __aicore__ inline void A2FinalizeNormTile(
     AscendC::PipeBarrier<PIPE_V>();
     AscendC::Mul(product, x, grad, rows * K);
     AscendC::PipeBarrier<PIPE_V>();
-    for (uint32_t row = 0; row < rows; ++row) {
-        // 与 WY 的 128 列归约使用相同布局：每行两个 64 列 partial，行距 32B。
-        AscendC::WholeReduceSum(reduceWork[row * 8], product[row * K], 64, 2, 1, 1, 8);
-    }
+    // 保留每行 64+64 partial 的布局；两批分离写之间保守保留 V barrier。
+    AscendC::WholeReduceSum(reduceWork, product, 64, rows, 8, 1, 16);
+    AscendC::PipeBarrier<PIPE_V>();
+    AscendC::WholeReduceSum(reduceWork[1], product[64], 64, rows, 8, 1, 16);
     AscendC::PipeBarrier<PIPE_V>();
     AscendC::WholeReduceSum(sum, reduceWork, 2, rows, 1, 1, 1);
     AscendC::PipeBarrier<PIPE_V>();
@@ -526,7 +605,8 @@ __aicore__ inline void A2FinalizeQkTail(
 }
 
 template <typename QT, typename GT, uint32_t V_DIM, uint32_t CHUNK_SIZE,
-          bool USE_QK_L2NORM, bool USE_BETA_SIGMOID, bool USE_EXP2>
+          bool USE_QK_L2NORM, bool USE_BETA_SIGMOID, bool USE_EXP2,
+          bool ENABLE_MHA_OWNER = false>
 __aicore__ inline void A2FinalizeRun(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR vNew, GM_ADDR dO, GM_ADDR du,
     GM_ADDR g, GM_ADDR beta, GM_ADDR h, GM_ADDR dh, GM_ADDR a,
@@ -589,11 +669,11 @@ __aicore__ inline void A2FinalizeRun(
     }
     if ASCEND_IS_AIV {
         AscendC::TPipe pipe;
-        PrepareWyReprBwdVectorProcess<QT, float, V_DIM, CHUNK_SIZE> vec(
+        PrepareWyReprBwdVectorProcess<QT, float, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER> vec(
             k, v, workspace + layout.betaOffset, workspace + layout.gOffset,
             cuSeqlens, chunkIndices, workspace + layout.dkWyOffset, dv,
             workspace + layout.dbetaOffset, workspace + layout.dgWyOffset, stageWorkspace);
-        vec.Init(wyTiling, &pipe);
+        vec.Init(wyTiling, &pipe, static_cast<uint64_t>(t.seqNum));
         vec.Process();
         AscendC::PipeBarrier<PIPE_ALL>();
         pipe.Reset();
@@ -602,7 +682,7 @@ __aicore__ inline void A2FinalizeRun(
     AscendC::SyncAll<false>();
     if ASCEND_IS_AIV {
         AscendC::TPipe pipe;
-        A2FinalizeGateTail<GT, USE_BETA_SIGMOID>(
+        A2FinalizeGateTail<GT, USE_BETA_SIGMOID, CHUNK_SIZE>(
             betaRaw, cuSeqlens, chunkIndices, dbeta, dg, workspace, t, layout, pipe);
         A2FinalizeQkTail<QT, USE_QK_L2NORM>(
             q, k, qRstd, kRstd, cuSeqlens, chunkIndices, dq, dk, workspace, t, layout, pipe);

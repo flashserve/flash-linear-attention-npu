@@ -352,10 +352,17 @@ ge::graphStatus Tiling(gert::TilingContext *context,
                 OP_LOGE(context->GetNodeName(), "A2 workspace size overflows."),
                 return ge::GRAPH_FAILED);
     context->GetWorkspaceSizes(1)[0] = systemWorkspace + layout.totalBytes;
-    context->SetTilingKey(GET_TPL_TILING_KEY(
+    const uint64_t baseTilingKey = GET_TPL_TILING_KEY(
         static_cast<uint64_t>(qKey), static_cast<uint64_t>(gKey),
         static_cast<uint64_t>(useL2NormValue), static_cast<uint64_t>(useBetaSigmoidValue),
-        static_cast<uint64_t>(useExp2Value)));
+        static_cast<uint64_t>(useExp2Value));
+    OP_CHECK_IF(baseTilingKey >= GDN::A2_FINALIZE_MHA_OWNER_KEY_MASK,
+                OP_LOGE(context->GetNodeName(), "A2 Finalize base TilingKey overlaps the private MHA-owner bit."),
+                return ge::GRAPH_FAILED);
+    const bool enableMhaOwner = qKey == TPL_BF16 && tiling->K == K_SIZE_128 &&
+        tiling->chunkSize == CHUNK_SIZE_64 && tiling->V == V_SIZE_128 && tiling->HK == tiling->HV;
+    context->SetTilingKey(baseTilingKey |
+        (enableMhaOwner ? GDN::A2_FINALIZE_MHA_OWNER_KEY_MASK : uint64_t{0}));
     context->SetBlockDim(blockDim);
     context->SetScheduleMode(1);
     return ge::GRAPH_SUCCESS;
