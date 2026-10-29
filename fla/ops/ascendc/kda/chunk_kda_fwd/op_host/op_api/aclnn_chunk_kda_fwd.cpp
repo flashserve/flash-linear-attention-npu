@@ -8,6 +8,7 @@
 #include "chunk_kda_fwd.h"
 #include "aclnn_chunk_kda_fwd_v2.h"
 #include "chunk_kda_fwd_v2.h"
+#include "../../../chunk_kda_fwd_fused/op_host/op_api/chunk_kda_fwd_fused.h"
 
 #include <algorithm>
 #include <cstring>
@@ -16,6 +17,7 @@
 #include "acl/acl.h"
 #include "aclnn/aclnn_base.h"
 #include "aclnn_kernels/common/op_error_check.h"
+#include "aclnn_kernels/cast.h"
 #include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/reshape.h"
 #include "aclnn_kernels/transpose.h"
@@ -67,7 +69,7 @@ struct ChunkKdaFwdParams {
     double lowerBound = -5.0;
     bool useGateInKernel = false;
     bool stateVFirst = false;
-    // 归一化 / 指数开关：v1 入口固定使用与历史实现一致的默认值，
+    // 归一化 / 指数开关:v1 入口固定使用默认值,
     // 只有 aclnnChunkKdaFwdV2 才会按调用方传参设置。
     double epsilon = 1.0e-6;
     bool useQkL2normInKernel = false;
@@ -471,7 +473,8 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
     CHECK_COND(params.aqkOut != nullptr, ACLNN_ERR_PARAM_NULLPTR,
                "aqkOut must not be nullptr.");
     CHECK_COND(params.chunkSize == 64, ACLNN_ERR_PARAM_INVALID,
-               "chunkSize only supports 64.");
+               "chunkSize only supports 64 on the three-stage path "
+               "(32 is handled by the chunk_kda_fwd_fused kernel).");
     CHECK_RET(ParseLayout(params.layout, layout) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(ResolveShapeInfo(params, layout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     // 空 tensor（batch 或序列长度为 0）无法构成可执行的计算规模。host 侧在进入 tiling
@@ -659,6 +662,349 @@ bool IsAscend950()
     const char *socName = aclrtGetSocName();
     return socName != nullptr && std::strstr(socName, "Ascend950") != nullptr;
 }
+// ==================== chunk32 大融合路由(issue #829)====================
+// chunkSize==32 → 单 kernel 大融合(chunk_kda_fwd_fused)。
+// chunk32 没有第二条实现路径,不满足融合 kernel 契约即报错。
+// kernel 契约:[B*H,T,K] 头连续 bf16(batch 拍平进头维);K=V=128;任意 T>0
+// (尾块核内钳制);HV % H == 0;dense batch 使用单启动任务循环;
+// 原始 g + a_log(fp32 [H]) + dt_bias(fp32 [H*K]);beta 核内 sigmoid、q/k 核内 L2 归一;
+// 产出 attn_out + 可选 final_state;可选 initial_state(fp32 [1,H,128,128],state_v_first=false);
+// varlen 支持 TND/NTD;不支持中间态导出。
+aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor *executor,
+                                        const KdaShapeInfo &info);
+
+aclnnStatus CheckChunkKdaFwd32Params(const ChunkKdaFwdParams &params, KdaFwdLayout &layout,
+                                     KdaShapeInfo &info)
+{
+    CHECK_COND(params.q != nullptr && params.k != nullptr && params.v != nullptr &&
+                   params.g != nullptr && params.beta != nullptr && params.attnOut != nullptr,
+               ACLNN_ERR_PARAM_NULLPTR, "q, k, v, g, beta and attnOut must not be nullptr.");
+    CHECK_COND(params.safeGate, ACLNN_ERR_PARAM_INVALID,
+               "chunkSize=32 (fused kernel) currently requires safeGate=true.");
+    CHECK_RET(ParseLayout(params.layout, layout) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(ResolveShapeInfo(params, layout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckCuSeqlens(params.cuSeqlensOptional, info.seqlen) == ACLNN_SUCCESS,
+              ACLNN_ERR_PARAM_INVALID);
+    CHECK_COND(params.cuSeqlensOptional == nullptr || info.isRank3 || info.batch == 1,
+               ACLNN_ERR_PARAM_INVALID,
+               "chunkSize=32 (fused kernel) rank4 varlen input requires B=1.");
+    CHECK_COND(params.cuSeqlensOptional == nullptr || info.seqNum <= MAX_KDA_VARLEN_SEQUENCES,
+               ACLNN_ERR_PARAM_INVALID,
+               "chunkSize=32 (fused kernel) varlen supports at most 1024 sequences.");
+    CHECK_RET(CheckChunkIndices(params.chunkIndicesOptional, params.cuSeqlensOptional,
+                                info.totalChunks, params.chunkSize) == ACLNN_SUCCESS,
+              ACLNN_ERR_PARAM_INVALID);
+    CHECK_COND(params.gkOut == nullptr &&
+                   params.wOut == nullptr && params.uOut == nullptr &&
+                   params.qgOut == nullptr && params.kgOut == nullptr &&
+                   params.vNewOut == nullptr && params.hOut == nullptr,
+               ACLNN_ERR_PARAM_INVALID,
+               "chunkSize=32 (fused kernel) only exports attn_out/final_state; gk/w/u/qg/kg/v_new/h "
+               "are not produced.");
+    if (params.initialStateOptional != nullptr || params.finalStateOut != nullptr) {
+        CHECK_COND(!params.stateVFirst, ACLNN_ERR_PARAM_INVALID,
+                   "chunkSize=32 (fused kernel) state IO requires state_v_first=false.");
+    }
+    CHECK_COND(params.useGateInKernel && params.aLogOptional != nullptr,
+               ACLNN_ERR_PARAM_INVALID,
+               "chunkSize=32 (fused kernel) requires useGateInKernel=true with aLog.");
+    CHECK_COND(params.dtBiasOptional != nullptr, ACLNN_ERR_PARAM_INVALID,
+               "chunkSize=32 (fused kernel) requires dtBiasOptional to be non-null.");
+    CHECK_COND(HasShape(params.aLogOptional, {info.hvNum}), ACLNN_ERR_PARAM_INVALID,
+               "chunkSize=32 (fused kernel) aLogOptional must have shape [HV].");
+    CHECK_COND(HasShape(params.dtBiasOptional, {info.hvNum * info.kDim}), ACLNN_ERR_PARAM_INVALID,
+               "chunkSize=32 (fused kernel) dtBiasOptional must have shape [HV*K].");
+    CHECK_RET(CheckDtypes(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    // q/k/v 必须 bf16;g/beta 到达侧只可能
+    // fp32/bf16,规则见下方 gateDt:任一 fp32 → 两者无损上转 fp32(组合 1)。
+    CHECK_COND(params.q->GetDataType() == DataType::DT_BF16, ACLNN_ERR_PARAM_INVALID,
+               "chunkSize=32 (fused kernel) requires q/k/v all bf16.");
+    // dense batch:kernel 单启动内按任务(task = batch*HV + value_head)循环,
+    // 拍平后 HV 维携带 batch;dt_bias/a_log 由 tiling 传 hvNumReal 保持按真实头寻址。
+    CHECK_COND(info.batch >= 1, ACLNN_ERR_PARAM_INVALID,
+               "chunkSize=32 (fused kernel) requires batch >= 1, but got B=%ld.", info.batch);
+    // GVA(issue #829):HV 是 H 的整数倍即可(H==HV 为特例),kernel 按组映射 q/k 头
+    CHECK_COND(info.hNum > 0 && info.hvNum >= info.hNum && info.hvNum % info.hNum == 0,
+               ACLNN_ERR_PARAM_INVALID,
+               "chunkSize=32 (fused kernel) requires HV to be a positive multiple of H, "
+               "but got H=%ld HV=%ld.", info.hNum, info.hvNum);
+    CHECK_COND(info.kDim == KDA_FWD_KV_DIM_LARGE && info.vDim == KDA_FWD_KV_DIM_LARGE,
+               ACLNN_ERR_PARAM_INVALID,
+               "chunkSize=32 (fused kernel) requires K == V == 128, but got K=%ld V=%ld.",
+               info.kDim, info.vDim);
+    CHECK_COND(info.seqlen > 0, ACLNN_ERR_PARAM_INVALID,
+               "chunkSize=32 (fused kernel) requires T > 0, got T=%ld.",
+               info.seqlen);
+    CHECK_RET(CheckStateShape(params.initialStateOptional, "initialStateOptional", info,
+                              params.stateVFirst) == ACLNN_SUCCESS,
+              ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckOutputShapes(params, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    return ACLNN_SUCCESS;
+}
+
+aclnnStatus RunChunkKdaFwd32FusedDense(ChunkKdaFwdParams &params, aclOpExecutor *executor)
+{
+    KdaFwdLayout layout = KdaFwdLayout::BSND;
+    KdaShapeInfo info;
+    CHECK_RET(CheckChunkKdaFwd32Params(params, layout, info) == ACLNN_SUCCESS,
+              ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(ContiguousInputs(params, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+
+    // dense BSND:等长 batch 可表示为整齐 varlen,合成
+    // cu=[0,T,2T,...],[B,S,H,*] 连续视图零成本压成 packed [B*S,H,*],走 varlen
+    // 核内直读路径,省掉 q/k/v/g 的 host 大转置(实测占端到端 ~28%)与回拷。
+    // B=1 同样成立(cu=[0,T]);BNSD 本就头连续零转置,均不受此影响。
+    if (!info.isRank3 && layout == KdaFwdLayout::BSND) {
+        std::vector<int64_t> cuVals(info.batch + 1);
+        for (int64_t b = 0; b <= info.batch; ++b) {
+            cuVals[b] = b * info.seqlen;
+        }
+        aclIntArray *cuArr = aclCreateIntArray(cuVals.data(), cuVals.size());
+        CHECK_RET(cuArr != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        ChunkKdaFwdParams ps = params;
+        const int64_t totalTok = info.batch * info.seqlen;
+        ps.q = l0op::Reshape(params.q, MakeShape({totalTok, info.hNum, info.kDim}), executor);
+        ps.k = l0op::Reshape(params.k, MakeShape({totalTok, info.hNum, info.kDim}), executor);
+        ps.v = l0op::Reshape(params.v, MakeShape({totalTok, info.hvNum, info.vDim}), executor);
+        ps.g = l0op::Reshape(params.g, MakeShape({totalTok, info.hvNum, info.kDim}), executor);
+        ps.beta = l0op::Reshape(params.beta, MakeShape({totalTok, info.hvNum}), executor);
+        ps.attnOut = l0op::Reshape(params.attnOut, MakeShape({totalTok, info.hvNum, info.vDim}), executor);
+        ps.cuSeqlensOptional = cuArr;
+        aclnnStatus ret = ACLNN_ERR_INNER;
+        if (ps.q != nullptr && ps.k != nullptr && ps.v != nullptr && ps.g != nullptr &&
+            ps.beta != nullptr && ps.attnOut != nullptr) {
+            KdaShapeInfo vinfo;   // packed 形态:TND 同构(batch=1, seqlen=B*T)
+            vinfo.isRank3 = true;
+            vinfo.batch = 1;
+            vinfo.seqlen = totalTok;
+            vinfo.hNum = info.hNum;
+            vinfo.hvNum = info.hvNum;
+            vinfo.kDim = info.kDim;
+            vinfo.vDim = info.vDim;
+            vinfo.seqNum = info.batch;
+            ret = RunChunkKdaFwd32FusedVarlen(ps, executor, vinfo);
+        }
+        aclDestroyIntArray(cuArr);
+        return ret;
+    }
+
+    // 布局规整到 [H,T,K] 头连续:NTD rank3 直达,其余 host 侧转置
+    const aclTensor *qNtd = params.q;
+    const aclTensor *kNtd = params.k;
+    const aclTensor *vNtd = params.v;
+    const aclTensor *gNtd = params.g;
+    const aclTensor *betaNtd = params.beta;
+    const bool rank3Ntd = info.isRank3 && layout == KdaFwdLayout::NTD;
+    if (!rank3Ntd) {
+        if (info.isRank3 && layout == KdaFwdLayout::TND) {
+            qNtd = Transpose(params.q, {1, 0, 2}, executor);
+            kNtd = Transpose(params.k, {1, 0, 2}, executor);
+            vNtd = Transpose(params.v, {1, 0, 2}, executor);
+            gNtd = Transpose(params.g, {1, 0, 2}, executor);
+            betaNtd = Transpose(params.beta, {1, 0}, executor);
+        } else if (!info.isRank3 && layout == KdaFwdLayout::BSND) {
+            qNtd = Transpose(params.q, {0, 2, 1, 3}, executor);
+            kNtd = Transpose(params.k, {0, 2, 1, 3}, executor);
+            vNtd = Transpose(params.v, {0, 2, 1, 3}, executor);
+            gNtd = Transpose(params.g, {0, 2, 1, 3}, executor);
+            betaNtd = Transpose(params.beta, {0, 2, 1}, executor);
+        } else if (!info.isRank3 && layout == KdaFwdLayout::BNSD) {
+            // [B,H,S,*] 已是头连续,去 batch 维即可
+        } else {
+            CHECK_COND(false, ACLNN_ERR_PARAM_INVALID,
+                       "chunkSize=32 (fused kernel) got unsupported layout/rank combination.");
+        }
+        CHECK_RET(qNtd != nullptr && kNtd != nullptr && vNtd != nullptr && gNtd != nullptr &&
+                      betaNtd != nullptr,
+                  ACLNN_ERR_INNER_NULLPTR);
+        if (!info.isRank3) {
+            // [B,H,T,*] → [B*H,T,*](batch 拍平进头维;转置后物理布局 batch-outer 头连续,
+            // flatten 合法;kernel 任务号 fh = batch*HV + head 与此布局一一对应)
+            qNtd = l0op::Reshape(qNtd, MakeShape({info.batch * info.hNum, info.seqlen, info.kDim}), executor);
+            kNtd = l0op::Reshape(kNtd, MakeShape({info.batch * info.hNum, info.seqlen, info.kDim}), executor);
+            vNtd = l0op::Reshape(vNtd, MakeShape({info.batch * info.hvNum, info.seqlen, info.vDim}), executor);
+            gNtd = l0op::Reshape(gNtd, MakeShape({info.batch * info.hvNum, info.seqlen, info.kDim}), executor);
+            betaNtd = l0op::Reshape(betaNtd, MakeShape({info.batch * info.hvNum, info.seqlen}), executor);
+            CHECK_RET(qNtd != nullptr && kNtd != nullptr && vNtd != nullptr && gNtd != nullptr &&
+                          betaNtd != nullptr,
+                      ACLNN_ERR_INNER_NULLPTR);
+        }
+    }
+
+    // g/beta dtype 规则:任一为 fp32 → 两者都无损上转 fp32
+    // (bf16→fp32 逐位保真),走 def 组合 1(kernel 核内 fp32 原生,全程无量化);
+    // 全 bf16 → 组合 0。q 恒 bf16,不再以 q 的 dtype 为锚。
+    const bool gateFp32 = (gNtd->GetDataType() == DataType::DT_FLOAT) ||
+                          (betaNtd->GetDataType() == DataType::DT_FLOAT);
+    const DataType gateDt = gateFp32 ? DataType::DT_FLOAT : DataType::DT_BF16;
+    if (gNtd->GetDataType() != gateDt) {
+        gNtd = l0op::Cast(gNtd, gateDt, executor);
+        CHECK_RET(gNtd != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
+    if (betaNtd->GetDataType() != gateDt) {
+        betaNtd = l0op::Cast(betaNtd, gateDt, executor);
+        CHECK_RET(betaNtd != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
+
+    // 输出:attnOut 恒定序列主序(TND/BSND,见 CheckOutputShapes),kernel 产出
+    // [H,T,V] 头连续,统一写临时张量再转置回写。
+    const aclTensor *oTmp = AllocTensor(executor, MakeShape({info.batch * info.hvNum, info.seqlen, info.vDim}),
+                                        params.q->GetDataType());
+    CHECK_RET(oTmp != nullptr, ACLNN_ERR_INNER_NULLPTR);
+
+    // initial_state:[N_seq,H,K,V] 拍平成 [N_seq*H,K,V](kernel 按 (seq*H+head) 寻址);
+    // final_state 先写 [N_seq*H,K,V] 临时张量,结束后 ViewCopy 回 [N_seq,H,K,V] 输出槽。
+    const int64_t stateHeads = info.seqNum * info.hvNum;
+    const aclTensor *initialStateHead = nullptr;
+    if (params.initialStateOptional != nullptr) {
+        initialStateHead = l0op::Reshape(params.initialStateOptional,
+                                         MakeShape({stateHeads, info.kDim, info.vDim}), executor);
+        CHECK_RET(initialStateHead != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
+    const aclTensor *finalStateTmp = nullptr;
+    if (params.finalStateOut != nullptr) {
+        finalStateTmp = AllocTensor(executor, MakeShape({stateHeads, info.kDim, info.vDim}),
+                                    DataType::DT_FLOAT);
+        CHECK_RET(finalStateTmp != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    } else {
+        // optional 输出缺省时本框架不生成 placeholder,kernel 参数
+        // 序列少一个指针,tiling 指针错位 → AICore 异常(507015)。始终给一个真实张量:
+        // [1,1,1] 在 tiling 侧按"未请求"处理(ShapeSize==1),kernel 不会写它。
+        finalStateTmp = AllocTensor(executor, MakeShape({1, 1, 1}), DataType::DT_FLOAT);
+        CHECK_RET(finalStateTmp != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
+
+    const aclTensor *fused = l0op::KdaChunkForwardFused(
+        qNtd, kNtd, vNtd, gNtd, betaNtd, params.aLogOptional, params.dtBiasOptional,
+        initialStateHead, params.scale, params.lowerBound, oTmp, finalStateTmp,
+        nullptr /* dense 无 cu_seqlens */, params.epsilon, executor);
+    CHECK_RET(fused != nullptr, ACLNN_ERR_INNER_NULLPTR);
+
+    const aclTensor *oBack = nullptr;
+    if (info.isRank3) {  // TND/NTD:[H,T,V] → [T,H,V]
+        oBack = Transpose(oTmp, {1, 0, 2}, executor);
+    } else {             // BSND/BNSD:[B*HV,S,V] → [B,HV,S,V] → [B,S,HV,V]
+        const aclTensor *oRank4 =
+            l0op::Reshape(oTmp, MakeShape({info.batch, info.hvNum, info.seqlen, info.vDim}), executor);
+        CHECK_RET(oRank4 != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        oBack = Transpose(oRank4, {0, 2, 1, 3}, executor);
+    }
+    CHECK_RET(oBack != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    auto copied = l0op::ViewCopy(oBack, params.attnOut, executor);
+    CHECK_RET(copied != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (params.finalStateOut != nullptr) {
+        const aclTensor *fsBack = l0op::Reshape(
+            finalStateTmp, MakeShape({info.seqNum, info.hvNum, info.kDim, info.vDim}), executor);
+        CHECK_RET(fsBack != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        auto fsCopied = l0op::ViewCopy(fsBack, params.finalStateOut, executor);
+        CHECK_RET(fsCopied != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
+    return ACLNN_SUCCESS;
+}
+
+// ==================== chunk32 varlen:单 kernel 启动====================
+// 任务 = seq*HV + value_head 拍平,一次融合 kernel 启动处理全部序列:序列边界经
+// cu_seqlens attr 打包进 tiling,kernel 逐任务解析;packed token-major 布局核内
+// 跨步直读(不再逐序列转置/启动);空序列 kernel 内写 final=initial(或 0)。
+aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor *executor,
+                                        const KdaShapeInfo &info)
+{
+    const int64_t nSeq = static_cast<int64_t>(params.cuSeqlensOptional->Size()) - 1;
+
+    CHECK_RET(ContiguousInputs(params, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+
+    // token-major 视图:BSND [1,T,*] 去 B 维;TND 直通
+    const aclTensor *qTok = params.q;
+    const aclTensor *kTok = params.k;
+    const aclTensor *vTok = params.v;
+    const aclTensor *gTok = params.g;
+    const aclTensor *betaTok = params.beta;
+    const aclTensor *oTok = params.attnOut;
+    if (!info.isRank3) {   // BSND:[1,T,HV,*] → [T,HV,*](B==1 由外层契约卡住)
+        qTok = l0op::Reshape(params.q, MakeShape({info.seqlen, info.hNum, info.kDim}), executor);
+        kTok = l0op::Reshape(params.k, MakeShape({info.seqlen, info.hNum, info.kDim}), executor);
+        vTok = l0op::Reshape(params.v, MakeShape({info.seqlen, info.hvNum, info.vDim}), executor);
+        gTok = l0op::Reshape(params.g, MakeShape({info.seqlen, info.hvNum, info.kDim}), executor);
+        betaTok = l0op::Reshape(params.beta, MakeShape({info.seqlen, info.hvNum}), executor);
+        oTok = l0op::Reshape(params.attnOut, MakeShape({info.seqlen, info.hvNum, info.vDim}), executor);
+        CHECK_RET(qTok != nullptr && kTok != nullptr && vTok != nullptr && gTok != nullptr &&
+                      betaTok != nullptr && oTok != nullptr,
+                  ACLNN_ERR_INNER_NULLPTR);
+    }
+    // g/beta dtype 规则同 dense 路径:任一 fp32 → 两者无损上转 fp32(组合 1),否则 bf16
+    const bool gateFp32 = (gTok->GetDataType() == DataType::DT_FLOAT) ||
+                          (betaTok->GetDataType() == DataType::DT_FLOAT);
+    const DataType gateDt = gateFp32 ? DataType::DT_FLOAT : DataType::DT_BF16;
+    if (gTok->GetDataType() != gateDt) {
+        gTok = l0op::Cast(gTok, gateDt, executor);
+        CHECK_RET(gTok != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
+    if (betaTok->GetDataType() != gateDt) {
+        betaTok = l0op::Cast(betaTok, gateDt, executor);
+        CHECK_RET(betaTok != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
+    // beta 仅 token-major 需要转置为头连续 [HV,T]；NTD 输入已是该布局。
+    if (std::strcmp(params.layout, "NTD") != 0) {
+        betaTok = Transpose(betaTok, {1, 0}, executor);
+        CHECK_RET(betaTok != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
+
+    // state:[nSeq,HV,K,V] 拍平 [nSeq*HV,K,V](kernel 按任务号 fh = seq*HV+head 寻址)
+    const int64_t stateHeads = nSeq * info.hvNum;
+    const aclTensor *initialStateHead = nullptr;
+    if (params.initialStateOptional != nullptr) {
+        initialStateHead = l0op::Reshape(params.initialStateOptional,
+                                         MakeShape({stateHeads, info.kDim, info.vDim}), executor);
+        CHECK_RET(initialStateHead != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
+    // final_state:直写调用方输出的拍平视图(少一次回拷);空序列契约 final=initial
+    // 由整体预填兜住(kernel 只写非空序列;无 initial 时空序列由 kernel 清零)。
+    const aclTensor *finalStateTmp = nullptr;
+    if (params.finalStateOut != nullptr) {
+        finalStateTmp = l0op::Reshape(params.finalStateOut,
+                                      MakeShape({stateHeads, info.kDim, info.vDim}), executor);
+        CHECK_RET(finalStateTmp != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (initialStateHead != nullptr) {
+            // 核内 istate 直通实测不稳定(见 kernel WriteEmptyFinalState 注释);
+            // ViewCopy 的 dst 不能是 workspace 张量,故预填直接落在调用方输出上
+            auto pre = l0op::ViewCopy(params.initialStateOptional, params.finalStateOut, executor);
+            CHECK_RET(pre != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        }
+    } else {
+        finalStateTmp = AllocTensor(executor, MakeShape({1, 1, 1}), DataType::DT_FLOAT);
+        CHECK_RET(finalStateTmp != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
+
+    const aclTensor *fused = l0op::KdaChunkForwardFused(
+        qTok, kTok, vTok, gTok, betaTok, params.aLogOptional, params.dtBiasOptional,
+        initialStateHead, params.scale, params.lowerBound, oTok, finalStateTmp,
+        params.cuSeqlensOptional, params.epsilon, executor,
+        std::strcmp(params.layout, "NTD") == 0 ? "NTD" : "TND");
+    CHECK_RET(fused != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    return ACLNN_SUCCESS;
+}
+
+aclnnStatus RunChunkKdaFwd32Fused(ChunkKdaFwdParams &params, aclOpExecutor *executor)
+{
+    // epsilon 用于 q/k 核内 L2 归一化并传递到 kernel;chunk32 路径不经过
+    // CheckParams,校验在此兜底(与通用路径同一语义:转 fp32 后有限且大于 0)
+    const float epsilonFp32 = static_cast<float>(params.epsilon);
+    CHECK_COND(std::isfinite(epsilonFp32) && epsilonFp32 > 0.0F, ACLNN_ERR_PARAM_INVALID,
+               "epsilon must be a positive finite number, but got %f.", params.epsilon);
+    if (params.cuSeqlensOptional == nullptr) {
+        return RunChunkKdaFwd32FusedDense(params, executor);
+    }
+    KdaFwdLayout layout = KdaFwdLayout::BSND;
+    KdaShapeInfo info;
+    CHECK_RET(CheckChunkKdaFwd32Params(params, layout, info) == ACLNN_SUCCESS,
+              ACLNN_ERR_PARAM_INVALID);
+    // varlen 支持 BSND/TND 的 token-major 布局和 NTD 的 head-major 布局;BNSD 使用 chunk64 路径
+    CHECK_COND(layout != KdaFwdLayout::BNSD, ACLNN_ERR_PARAM_INVALID,
+               "chunkSize=32 (fused kernel) varlen requires sequence-major layout (BSND/TND) or NTD; BNSD must use chunk64.");
+    return RunChunkKdaFwd32FusedVarlen(params, executor, info);
+}
+
+
 } // namespace
 
 aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
@@ -709,6 +1055,15 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
+    if (params.chunkSize == 32) {
+        // chunk32 → 单 kernel 大融合(issue #829),独立校验与执行路径;
+        // 产出 attn_out + 可选 final_state,不产出中间量,契约不满足时由路由内部报错。
+        CHECK_RET(RunChunkKdaFwd32Fused(params, executorPtr) == ACLNN_SUCCESS,
+                  ACLNN_ERR_PARAM_INVALID);
+        *workspaceSize = uniqueExecutor->GetWorkspaceSize();
+        uniqueExecutor.ReleaseTo(executor);
+        return ACLNN_SUCCESS;
+    }
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
     CHECK_RET(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
@@ -987,6 +1342,28 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
+    if (params.chunkSize == 32) {
+        // issue #829:公开入口 aclnnChunkKdaFwdV2 同样接受 chunk_size=32,
+        // 走与 V1 相同的单 kernel 大融合路径。V2 特有的反向保存值出口在 chunk32
+        // 无意义,必须全空;kernel 语义固定(核内 L2norm/sigmoid、exp2),
+        // 显式请求与之矛盾的开关直接拒绝,不静默误算。
+        CHECK_COND(params.qHatOut == nullptr && params.kHatOut == nullptr &&
+                   params.qRstdOut == nullptr && params.kRstdOut == nullptr &&
+                   params.betaEffOut == nullptr,
+                   ACLNN_ERR_PARAM_INVALID,
+                   "chunkSize=32 (fused kernel) does not export backward saved values "
+                   "(q_hat/k_hat/q_rstd/k_rstd/beta_eff).");
+        CHECK_COND(params.useQkL2normInKernel && params.useBetaSigmoidInKernel &&
+                   !params.allowNegEigval && params.useExp2,
+                   ACLNN_ERR_PARAM_INVALID,
+                   "chunkSize=32 (fused kernel) fixes use_qk_l2norm_in_kernel=true, "
+                   "use_beta_sigmoid_in_kernel=true, allow_neg_eigval=false, use_exp2=true.");
+        CHECK_RET(RunChunkKdaFwd32Fused(params, executorPtr) == ACLNN_SUCCESS,
+                  ACLNN_ERR_PARAM_INVALID);
+        *workspaceSize = uniqueExecutor->GetWorkspaceSize();
+        uniqueExecutor.ReleaseTo(executor);
+        return ACLNN_SUCCESS;
+    }
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
     CHECK_RET(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);

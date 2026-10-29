@@ -1378,9 +1378,10 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
     API returns it the same way).
 
     ``epsilon`` / ``use_qk_l2norm_in_kernel`` / ``use_beta_sigmoid_in_kernel``
-    / ``allow_neg_eigval`` / ``use_exp2`` 是三算子组合入口才有的归一化与 gate
-    语义开关，默认值即历史语义；取非默认值时调用必须落在组合场景
-    （bfloat16 q/k/v、K=V=128、chunk_size=64），否则按参考实现拒绝。
+    / ``allow_neg_eigval`` / ``use_exp2`` 是组合入口的归一化与 gate 语义开关。
+    chunk64 沿用三算子组合场景；chunk32 走公开 V2 的融合分支，只接受
+    bfloat16 q/k/v、K=V=128、safe_gate=True、核内 norm/sigmoid、
+    allow_neg_eigval=False 和 use_exp2=True。
     """
 
     epsilon = 1e-6 if epsilon is None else float(epsilon)
@@ -1406,7 +1407,33 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
         raise RuntimeError(
             "npu_chunk_kda_fwd: allow_neg_eigval=True requires "
             "use_beta_sigmoid_in_kernel=True.")
-    if (use_qk_l2norm_in_kernel or use_beta_sigmoid_in_kernel
+    if int(chunk_size) == 32:
+        if not bool(safe_gate):
+            raise RuntimeError(
+                "npu_chunk_kda_fwd: chunk_size=32 currently requires safe_gate=True.")
+        if not (q.dtype == torch.bfloat16 and k.dtype == torch.bfloat16
+                and v.dtype == torch.bfloat16 and key_dim == 128 and value_dim == 128
+                and use_qk_l2norm_in_kernel and use_beta_sigmoid_in_kernel
+                and not allow_neg_eigval and use_exp2):
+            raise RuntimeError(
+                "npu_chunk_kda_fwd: chunk_size=32 requires bfloat16 q/k/v, K=V=128, "
+                "use_qk_l2norm_in_kernel=True, use_beta_sigmoid_in_kernel=True, "
+                "allow_neg_eigval=False and use_exp2=True.")
+        if not bool(use_gate_in_kernel) or A_log is None:
+            raise RuntimeError(
+                "npu_chunk_kda_fwd: chunk_size=32 (fused kernel) requires "
+                "use_gate_in_kernel=True with A_log.")
+        if disable_recompute or return_intermediate_states:
+            raise RuntimeError(
+                "npu_chunk_kda_fwd: chunk_size=32 (fused kernel) does not export "
+                "intermediate states (disable_recompute/return_intermediate_states "
+                "must be False).")
+        if any(value is not None for value in
+               (q_hat_out, k_hat_out, q_rstd_out, k_rstd_out, beta_eff_out)):
+            raise RuntimeError(
+                "npu_chunk_kda_fwd: chunk_size=32 (fused kernel) does not export "
+                "backward saved values (q_hat/k_hat/q_rstd/k_rstd/beta_eff).")
+    elif (use_qk_l2norm_in_kernel or use_beta_sigmoid_in_kernel
             or allow_neg_eigval or not use_exp2):
         if (q.dtype != torch.bfloat16 or key_dim != 128 or value_dim != 128
                 or int(chunk_size) != 64):
@@ -1415,8 +1442,39 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
                 "the three-stage scenario (bfloat16 q/k/v, K=V=128, "
                 "chunk_size=64).")
 
-    if cu_seqlens and not chunk_indices:
+    # dense batch:chunk32 融合 kernel 原生支持(suggestion.md 建议八,2026-10-22)——
+    # 单次启动内按任务(task = batch*HV + value_head)循环,替代逐 batch 递归+cat。
+    # (历史:python 逐 b 拆分曾用于规避 kernel 只认 B=1 与图内多 launch 的
+    # 1~3 ULP 地址敏感,见 runs/20261021-issue174;单启动任务化后两者均不复存在。)
+
+    if int(chunk_size) == 32:
+        canonical_indices = _canonical_chunk_indices(cu_seqlens, chunk_size) \
+            if cu_seqlens is not None else None
+        if chunk_indices is None:
+            chunk_indices = canonical_indices
+        else:
+            chunk_indices = [int(value) for value in chunk_indices]
+            if canonical_indices is None or chunk_indices != canonical_indices:
+                raise RuntimeError(
+                    "npu_chunk_kda_fwd: chunk_indices must use canonical "
+                    "sequence-major order and requires cu_seqlens.")
+    elif cu_seqlens and not chunk_indices:
         chunk_indices = _canonical_chunk_indices(cu_seqlens, chunk_size)
+    # chunk32 的 q/k/v 目标只保留 BF16；g/beta 的 BF16/FP32 原生组合由 host 处理。
+    if int(chunk_size) == 32 and bool(use_gate_in_kernel) and A_log is not None and dt_bias is None:
+        # issue #829 契约:dt_bias=None ⇔ dt≡0。host 补零张量(fp32 [HV*K],HV 由
+        # A_log 形状读出),kernel 内 raw = g + 0 与原语义逐位等价,免改 kernel/dispatcher。
+        dt_bias = torch.zeros(int(A_log.shape[0]) * key_dim, dtype=torch.float32, device=q.device)
+    # chunk32 融合 kernel 的 state IO 只有 K-first([seq,HV,K,V])一种形态;
+    # state_v_first=True 在 host 侧吸收:istate 末两维转置进、final_state 转置回,
+    # 与 kernel/dispatcher 零耦合(dense/varlen 同路径)。
+    svf_absorb = (int(chunk_size) == 32 and bool(state_v_first)
+                  and (initial_state is not None or output_final_state))
+    caller_initial_state = initial_state
+    if svf_absorb:
+        if initial_state is not None:
+            initial_state = initial_state.transpose(-1, -2).contiguous()
+        state_v_first = False
     result = _op("npu_chunk_kda_fwd")(
         q, k, v, g, beta, A_log, dt_bias, initial_state,
         _host_ints(cu_seqlens), _host_ints(chunk_indices),
@@ -1432,7 +1490,10 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
         q_hat_out, k_hat_out, q_rstd_out, k_rstd_out, beta_eff_out,
         _current_stream_ptr(),
     )
-    return (*result, initial_state)
+    if svf_absorb and output_final_state and result[1] is not None:
+        # 转回调用方期望的 V-first 布局;尾槽仍返回调用方自己的 initial_state。
+        result = (result[0], result[1].transpose(-1, -2).contiguous(), *result[2:])
+    return (*result, caller_initial_state)
 
 
 def npu_chunk_kda_bwd_finalize(

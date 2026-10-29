@@ -28,7 +28,7 @@ def load_aclnn_ctypes_module():
     package.__path__ = [str(ASCENDC_DIR)]
     sys.modules[package_name] = package
 
-    for module_name in ("_runtime", "_kda_policy", "_aclnn_ctypes"):
+    for module_name in ("_runtime", "_kda_policy", "_aclnn_ctypes", "_stable"):
         qualified_name = f"{package_name}.{module_name}"
         spec = importlib.util.spec_from_file_location(
             qualified_name,
@@ -43,6 +43,7 @@ def load_aclnn_ctypes_module():
 
 
 ACLNN_CTYPES = load_aclnn_ctypes_module()
+STABLE = sys.modules["fla_npu_test_aclnn_ctypes._stable"]
 
 
 class FakeTensor:
@@ -65,6 +66,7 @@ class FakeCallContext:
     def __init__(self):
         self.descriptor_names = []
         self.descriptor_metadata = []
+        self.int_arrays = []
 
     def tensor(
         self,
@@ -81,7 +83,7 @@ class FakeCallContext:
         return ctypes.c_void_p(0x1000 + len(self.descriptor_names))
 
     def int_array(self, values):
-        del values
+        self.int_arrays.append(values)
         self.descriptor_names.append("query_start_loc")
         return ctypes.c_void_p(0x2000)
 
@@ -661,6 +663,231 @@ class AclnnCtypesAbiTest(unittest.TestCase):
                 "dh0",
             ],
         )
+
+
+class ChunkKdaFwdWrapperContractTest(unittest.TestCase):
+    """CPU-only contract tests for both public KDA forward wrappers."""
+
+    def _torch(self):
+        fake_torch = types.ModuleType("torch")
+        fake_torch.float16 = object()
+        fake_torch.bfloat16 = object()
+        fake_torch.float32 = object()
+        fake_torch.int64 = object()
+        return fake_torch
+
+    def _inputs(self, fake_torch, *, layout="BSND", seqlen=65, with_state=True):
+        if layout == "TND":
+            q_shape = (seqlen, 2, 128)
+            beta_shape = (seqlen, 2)
+        else:
+            q_shape = (1, seqlen, 2, 128)
+            beta_shape = (1, seqlen, 2)
+        q = FakeTensor(q_shape, fake_torch.bfloat16)
+        k = FakeTensor(q_shape, fake_torch.bfloat16)
+        v = FakeTensor(q_shape, fake_torch.bfloat16)
+        g = FakeTensor(q_shape, fake_torch.float32)
+        beta = FakeTensor(beta_shape, fake_torch.bfloat16)
+        a_log = FakeTensor((2,), fake_torch.float32)
+        dt_bias = FakeTensor((256,), fake_torch.float32)
+        state = (
+            FakeTensor((1, 2, 128, 128), fake_torch.float32)
+            if with_state else None
+        )
+        return q, k, v, g, beta, a_log, dt_bias, state
+
+    def _options(self, chunk_size):
+        return {
+            "chunk_size": chunk_size,
+            "safe_gate": True,
+            "use_gate_in_kernel": True,
+            "use_qk_l2norm_in_kernel": True,
+            "use_beta_sigmoid_in_kernel": True,
+            "allow_neg_eigval": False,
+            "use_exp2": True,
+        }
+
+    def _call(self, backend, fake_torch, inputs, options, *, captured=None):
+        captured = {} if captured is None else captured
+        q, k, v, g, beta, a_log, dt_bias, state = inputs
+        call_options = dict(options)
+        layout = call_options.pop("layout", "BSND")
+        chunk_size = int(call_options["chunk_size"])
+        output_final_state = call_options.get("output_final_state", False)
+        kwargs = dict(
+            layout=layout,
+            initial_state=state,
+            A_log=a_log,
+            dt_bias=dt_bias,
+            **call_options,
+        )
+        with mock.patch.dict(sys.modules, {"torch": fake_torch}):
+            if backend == "stable":
+                result = [FakeTensor((1,), fake_torch.bfloat16), None]
+                result.append(None)  # gk
+                for _ in range(2):  # Aqk/Akk, materialized only for chunk64
+                    result.append(
+                        None if chunk_size == 32 else FakeTensor((1,), fake_torch.bfloat16)
+                    )
+                result.extend([None] * 6)
+                if output_final_state:
+                    result[1] = FakeTensor((1, 2, 128, 128), fake_torch.float32)
+                result = tuple(result)
+
+                def fake_op(name):
+                    self.assertEqual(name, "npu_chunk_kda_fwd")
+
+                    def launch(*args):
+                        captured["launch"] = name
+                        captured["args"] = args
+                        return result
+
+                    return launch
+
+                with mock.patch.object(STABLE, "_op", side_effect=fake_op), \
+                        mock.patch.object(STABLE, "_host_ints", side_effect=lambda x: x), \
+                        mock.patch.object(STABLE, "_current_stream_ptr", return_value=0):
+                    return STABLE.npu_chunk_kda_fwd(q, k, v, g, beta, 0.125, **kwargs)
+
+            def fake_empty(shape, like, **kwargs):
+                captured.setdefault("allocations", []).append(tuple(shape))
+                return FakeTensor(shape, kwargs.get("dtype", like.dtype))
+
+            def fake_call(name, build_args, outputs):
+                context = FakeCallContext()
+                captured["launch"] = name
+                captured["args"] = build_args(context)
+                captured["tensors"] = {
+                    row[0]: row[1] for row in context.descriptor_metadata
+                }
+                captured["int_arrays"] = context.int_arrays
+                return outputs
+
+            with mock.patch.object(ACLNN_CTYPES, "_empty", side_effect=fake_empty), \
+                    mock.patch.object(ACLNN_CTYPES, "_call_aclnn", side_effect=fake_call):
+                return ACLNN_CTYPES.npu_chunk_kda_fwd(q, k, v, g, beta, 0.125, **kwargs)
+
+    def test_chunk32_v2_epsilon_and_output_contract(self):
+        for backend in ("stable", "ctypes"):
+            for epsilon in (1e-6, 2e-6):
+                with self.subTest(backend=backend, epsilon=epsilon):
+                    fake_torch = self._torch()
+                    inputs = self._inputs(fake_torch)
+                    captured = {}
+                    options = self._options(32)
+                    options.update(output_final_state=True, epsilon=epsilon)
+                    outputs = self._call(
+                        backend, fake_torch, inputs, options, captured=captured
+                    )
+                    self.assertEqual(len(outputs), 12)
+                    self.assertIsNotNone(outputs[0])
+                    self.assertIsNotNone(outputs[1])
+                    self.assertTrue(all(value is None for value in outputs[2:11]))
+                    self.assertIs(outputs[11], inputs[-1])
+                    args = captured["args"]
+                    self.assertAlmostEqual(args[17].value if backend == "ctypes" else args[17], epsilon)
+                    self.assertEqual(args[12].value if backend == "ctypes" else args[12], 32)
+                    if backend == "ctypes":
+                        self.assertEqual(captured["launch"], "aclnnChunkKdaFwdV2")
+                        self.assertIsNone(captured["tensors"]["Aqk"])
+                        self.assertIsNone(captured["tensors"]["Akk"])
+                        self.assertNotIn((1, 2, 65, 32), captured["allocations"])
+
+    def test_chunk32_rejects_unsupported_switches_before_launch(self):
+        negative_options = (
+            {"safe_gate": False},
+            {"use_qk_l2norm_in_kernel": False},
+            {"use_beta_sigmoid_in_kernel": False},
+            {"allow_neg_eigval": True},
+            {"use_exp2": False},
+            {"use_gate_in_kernel": False},
+            {"disable_recompute": True},
+            {"return_intermediate_states": True},
+        )
+        for backend in ("stable", "ctypes"):
+            for override in negative_options:
+                with self.subTest(backend=backend, override=override):
+                    fake_torch = self._torch()
+                    inputs = self._inputs(fake_torch)
+                    options = self._options(32)
+                    options.update(override)
+                    captured = {}
+                    with self.assertRaises(RuntimeError):
+                        self._call(backend, fake_torch, inputs, options, captured=captured)
+                    self.assertNotIn("launch", captured)
+            with self.subTest(backend=backend, override="saved output"):
+                fake_torch = self._torch()
+                inputs = self._inputs(fake_torch)
+                options = self._options(32)
+                options["q_hat_out"] = FakeTensor((1,), fake_torch.bfloat16)
+                captured = {}
+                with self.assertRaisesRegex(RuntimeError, "does not export backward saved values"):
+                    self._call(backend, fake_torch, inputs, options, captured=captured)
+                self.assertNotIn("launch", captured)
+            with self.subTest(backend=backend, override="fp16"):
+                fake_torch = self._torch()
+                inputs = list(self._inputs(fake_torch))
+                for index in range(3):
+                    inputs[index].dtype = fake_torch.float16
+                captured = {}
+                with self.assertRaises(RuntimeError):
+                    self._call(backend, fake_torch, tuple(inputs), self._options(32), captured=captured)
+                self.assertNotIn("launch", captured)
+
+    def test_stable_and_ctypes_explicit_chunk_indices_are_canonical(self):
+        canonical = (0, 0, 0, 1, 2, 0)
+        invalid = (
+            (0, 0, 2, 0, 0, 1),
+            canonical[:-2],
+            (0, 0, 0, 1, 2, 1),
+        )
+        for backend in ("stable", "ctypes"):
+            fake_torch = self._torch()
+            inputs = self._inputs(fake_torch, layout="TND", with_state=False)
+            options = self._options(32)
+            options.update(layout="TND", cu_seqlens=(0, 33, 33, 65), chunk_indices=canonical)
+            captured = {}
+            outputs = self._call(backend, fake_torch, inputs, options, captured=captured)
+            self.assertEqual(len(outputs), 12)
+            observed_indices = (
+                captured["args"][9] if backend == "stable"
+                else captured["int_arrays"][1]
+            )
+            self.assertEqual(tuple(observed_indices), canonical)
+            for indices in invalid:
+                with self.subTest(backend=backend, indices=indices):
+                    bad_options = dict(options, chunk_indices=indices)
+                    captured = {}
+                    with self.assertRaisesRegex(RuntimeError, "canonical sequence-major order"):
+                        self._call(backend, fake_torch, inputs, bad_options, captured=captured)
+                    self.assertNotIn("launch", captured)
+            with self.subTest(backend=backend, indices="without cu"):
+                bad_options = self._options(32)
+                bad_options.update(layout="TND", chunk_indices=(0, 0))
+                captured = {}
+                with self.assertRaisesRegex(RuntimeError, "canonical sequence-major order"):
+                    self._call(backend, fake_torch, inputs, bad_options, captured=captured)
+                self.assertNotIn("launch", captured)
+
+    def test_chunk64_materializes_matrices_and_keeps_safe_gate_false(self):
+        for backend in ("stable", "ctypes"):
+            with self.subTest(backend=backend):
+                fake_torch = self._torch()
+                inputs = self._inputs(fake_torch)
+                options = self._options(64)
+                options["safe_gate"] = False
+                captured = {}
+                outputs = self._call(backend, fake_torch, inputs, options, captured=captured)
+                self.assertEqual(len(outputs), 12)
+                self.assertIsNotNone(outputs[3])
+                self.assertIsNotNone(outputs[4])
+                args = captured["args"]
+                self.assertFalse(args[13].value if backend == "ctypes" else args[13])
+                if backend == "ctypes":
+                    self.assertEqual(captured["launch"], "aclnnChunkKdaFwdV2")
+                    self.assertIs(captured["tensors"]["Aqk"], outputs[3])
+                    self.assertIs(captured["tensors"]["Akk"], outputs[4])
+                    self.assertIn((1, 2, 65, 64), captured["allocations"])
 
 
 @unittest.skipUnless("--npu" in sys.argv, "pass --npu to run Ascend 950 integration tests")

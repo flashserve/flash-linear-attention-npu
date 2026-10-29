@@ -46,7 +46,7 @@ outputs = chunk_kda_fwd(
 | `g` | 必选 | 去掉 V 维的 Shape（含 K 维）；FP32/BF16 | raw gate，或已激活的自然对数 gate |
 | `beta` | 必选 | 去掉 K 维的 Shape；FP32/BF16 | delta 系数 |
 | `scale` | 必选 | float | attention scale |
-| `chunk_size` | `64` | int | 分块长度；只支持 `64`，其它取值（含 `128`）参数校验阶段返回 `ACLNN_ERR_PARAM_INVALID` |
+| `chunk_size` | `64` | int | 分块长度；支持 `64`（三段式）与 `32`（单 kernel 大融合，见下），其它取值参数校验阶段返回 `ACLNN_ERR_PARAM_INVALID` |
 | `layout` | `"BSND"` | str | `BSND`/`BNSD`/`TND`/`NTD`，只解释输入 |
 | `initial_state` | `None` | `[N,H_v,K,V]` 或 `state_v_first=true` 时 `[N,H_v,V,K]`；FP32 | 算子就地更新，第 12 个返回值就是它本身 |
 | `output_final_state` | `False` | bool | 控制第 2 槽 `final_state` 是否返回 |
@@ -73,6 +73,13 @@ outputs = chunk_kda_fwd(
 `use_exp2` 取非默认值时，调用必须落在三算子组合场景（BF16 q/k/v、`K=V=128`、
 `chunk_size=64`），否则 Python 入口在发起调用前按 fla-org 参考实现拒绝，不会静默忽略；
 具体字段语义见 [归一化 / gate 开关](#归一化--gate-开关)。
+
+`chunk_size=32` 走单 kernel 大融合实现（`chunk_kda_fwd_fused`，issue #829），契约收紧：
+BF16 全部输入、`K=V=128`、`T%128==0`、`B==1`、`H==HV`、dense（不支持 varlen）、
+不支持 `initial_state`、不导出 `final_state`/中间态（`aqk/akk` 槽位保留但内容无效）、
+必须 `use_gate_in_kernel=true` 且提供 `A_log` 与 `dt_bias`；gate 语义为核内
+`lower_bound·sigmoid((g+dt_bias)·exp(A_log))` 形式（safe-gate 变体），与三段式
+`use_exp2` 默认路径的数值差异见算子 README 与精度报告。
 
 ### 返回
 
