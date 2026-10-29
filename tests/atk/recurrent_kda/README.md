@@ -10,7 +10,7 @@
 - `cu_seqlens` 可选；传入时为同设备 `INT32/INT64` tensor，shape 为 `[seq_num+1]`，首项为 `0`，末项不超过 token capacity，offset 单调不减。
 - `q/k/v/out` 仅支持 `BFLOAT16`；`g/beta` 支持 `FLOAT/BFLOAT16/FLOAT16`，`A_log/dt_bias` 支持 `FLOAT`。
 - `HV % H == 0`，`H/HV <= 256`；当前支持 `K=128,V=128` 或 `K=128,V=256`。
-- A2/A3 支持多时间窗口长序列；A5 每段仍不超过 8；显式 `ssm_state_indices` 可使 `state_capacity > seq_num`。
+- A2/A3 支持多时间窗口长序列；A5/A6 每段不超过 8；显式 `ssm_state_indices` 可使 `state_capacity > seq_num`。
 - 当前 ATK 用例遵循上述约束，并通过 `case_spec` 固定具体取值；扩展用例时应继续满足这些限制。
 
 ## 标杆来源
@@ -21,7 +21,7 @@ CPU 标杆、输入构造、run_cpu、run_npu 和 FunctionApi 均在本目录的
 
 ## SOC 支持
 
-YAML 元信息覆盖 `ascend910b`、`ascend910_93` 和 `ascend950`，可配合统一脚本的 `-soc=ascend910b|ascend910_93|ascend950` 使用。
+YAML 元信息覆盖 `ascend910b`、`ascend910_93`、`ascend950` 和 `ascend960dt`，可配合统一脚本的 `-soc=ascend910b|ascend910_93|ascend950|ascend960dt` 使用。
 
 ## 默认用例
 
@@ -30,6 +30,7 @@ YAML 元信息覆盖 `ascend910b`、`ascend910_93` 和 `ascend950`，可配合�
 ## 执行方式
 
 ```bash
+bash tests/atk/run_test_cpu.sh -op=recurrent_kda -soc=ascend960dt -npu_device_id=0 -scope=all
 bash tests/atk/run_test_cpu.sh -op=recurrent_kda -npu_device_id=6
 bash tests/atk/run_test_cpu.sh -op=recurrent_kda -npu_device_id=6 -scope=accuracy
 bash tests/atk/run_test_cpu.sh -op=recurrent_kda -npu_device_id=6 -scope=performance

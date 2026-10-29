@@ -20,7 +20,7 @@ CPU 标杆、输入构造、run_cpu、run_npu 和 FunctionApi 均在本目录的
 
 ## SOC 支持
 
-YAML 元信息覆盖 `ascend910b`、`ascend910_93` 和 `ascend950`，可配合统一脚本的 `-soc=ascend910b|ascend910_93|ascend950` 使用。
+YAML 元信息覆盖 `ascend910b`、`ascend910_93`、`ascend950` 和 `ascend960dt`，可配合统一脚本的 `-soc=ascend910b|ascend910_93|ascend950|ascend960dt` 使用。
 
 ## 默认用例
 
@@ -30,6 +30,7 @@ YAML 元信息覆盖 `ascend910b`、`ascend910_93` 和 `ascend950`，可配合�
 ## 执行方式
 
 ```bash
+bash tests/atk/run_test_cpu.sh -op=causal_conv1d_bwd -soc=ascend960dt -npu_device_id=0 -scope=all
 bash tests/atk/run_test_cpu.sh -op=causal_conv1d_bwd -npu_device_id=6
 bash tests/atk/run_test_cpu.sh -op=causal_conv1d_bwd -npu_device_id=6 -scope=accuracy
 bash tests/atk/run_test_cpu.sh -op=causal_conv1d_bwd -npu_device_id=6 -scope=performance

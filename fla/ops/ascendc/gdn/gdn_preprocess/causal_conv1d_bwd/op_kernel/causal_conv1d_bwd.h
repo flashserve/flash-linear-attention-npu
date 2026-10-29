@@ -48,11 +48,14 @@
 #define CAUSAL_CONV1D_BWD_ARCH32_VECTOR 0
 #endif
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+#include "arch92/causal_conv1d_bwd_regbase.h"
+#define CAUSAL_CONV1D_BWD_REGBASE 1
+#elif defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #include "arch35/causal_conv1d_bwd_regbase.h"
-#define CAUSAL_CONV1D_BWD_ARCH35_REGBASE 1
+#define CAUSAL_CONV1D_BWD_REGBASE 1
 #else
-#define CAUSAL_CONV1D_BWD_ARCH35_REGBASE 0
+#define CAUSAL_CONV1D_BWD_REGBASE 0
 #endif
 
 using namespace AscendC;
@@ -137,7 +140,7 @@ private:
     __aicore__ inline bool ResolveChunk(uint32_t chunkIdx, uint32_t &i_b, uint32_t &i_t,
                                         uint64_t &bos, uint32_t &seqLen);
     __aicore__ inline bool Arch32UseDirectVector() const;
-    __aicore__ inline bool Arch35UseDirectRegbase() const;
+    __aicore__ inline bool UseDirectRegbase() const;
 
     TPipe *pipe_;
     TBuf<TPosition::VECIN> xBuf_;
@@ -263,7 +266,7 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitBuffer(TPipe *in
         }
         return;
     }
-    if (Arch35UseDirectRegbase()) {
+    if (UseDirectRegbase()) {
         pipe_->InitBuffer(xBuf_, 2 * btBdCount_ * sizeof(inputT));
         pipe_->InitBuffer(dyBuf_, 2 * dyBdCount_ * sizeof(inputT));
         pipe_->InitBuffer(dxBuf_, btBdCount_ * FP32_DTYPE_SIZE);
@@ -1181,7 +1184,7 @@ template <typename inputT, typename calT>
 __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInDirectTileRawAsync(
     uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen, uint32_t slot, event_t mte2ToVEvent)
 {
-#if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
+#if CAUSAL_CONV1D_BWD_REGBASE
     LocalTensor<inputT> xSlot = xBuf_.Get<inputT>()[slot * btBdCount_];
     LocalTensor<inputT> dySlot = dyBuf_.Get<inputT>()[slot * dyBdCount_];
     LocalTensor<inputT> ySlot = yBuf_.Get<inputT>()[slot * dyBdCount_];
@@ -1210,7 +1213,7 @@ template <typename inputT, typename calT>
 __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeTileDirectRegbase(
     uint32_t i_t, uint32_t seqLen, uint32_t slot)
 {
-#if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
+#if CAUSAL_CONV1D_BWD_REGBASE
     if constexpr (!IsSameType<inputT, half>::value && !IsSameType<inputT, bfloat16_t>::value) {
         (void)i_t;
         (void)seqLen;
@@ -1533,9 +1536,9 @@ __aicore__ inline bool CausalConv1dBwdKernel<inputT, calT>::Arch32UseDirectVecto
 }
 
 template <typename inputT, typename calT>
-__aicore__ inline bool CausalConv1dBwdKernel<inputT, calT>::Arch35UseDirectRegbase() const
+__aicore__ inline bool CausalConv1dBwdKernel<inputT, calT>::UseDirectRegbase() const
 {
-#if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
+#if CAUSAL_CONV1D_BWD_REGBASE
     if constexpr (!IsSameType<inputT, half>::value && !IsSameType<inputT, bfloat16_t>::value) {
         return false;
     } else {
@@ -1557,7 +1560,7 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::Process()
     uint32_t bIdx = GetBlockIdx();
     uint32_t blockNum = GetBlockNum();
     bool useDirectVector = Arch32UseDirectVector();
-    bool useDirectRegbase = Arch35UseDirectRegbase();
+    bool useDirectRegbase = UseDirectRegbase();
 
     uint32_t loopC = (bIdx < tailChunk_) ? (chunkPerCore_ + 1) : chunkPerCore_;
 
