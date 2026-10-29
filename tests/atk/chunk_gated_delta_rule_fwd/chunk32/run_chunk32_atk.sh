@@ -19,8 +19,8 @@ log_info() { echo "[chunk32 ATK] $*"; }
 die() { echo "[chunk32 ATK] 错误：$*" >&2; exit 1; }
 
 case "$SCOPE" in
-  accuracy|performance|determinism|mssanitizer|all) ;;
-  *) die "scope 只能是 accuracy、performance、determinism、mssanitizer 或 all" ;;
+  accuracy|double|performance|determinism|mssanitizer|all) ;;
+  *) die "scope 只能是 accuracy、double、performance、determinism、mssanitizer 或 all" ;;
 esac
 
 if [[ -n "${ATK_ENV:-}" && -f "${ATK_ENV}/bin/activate" ]]; then
@@ -46,7 +46,7 @@ ATK_BIN="$(command -v atk || true)"
 [[ -n "$ATK_BIN" ]] || die "找不到 atk"
 
 cd "$SCRIPT_DIR"
-mkdir -p "${ATK_OUTPUT_ROOT}/accuracy" "${ATK_OUTPUT_ROOT}/perf"
+mkdir -p "${ATK_OUTPUT_ROOT}/accuracy" "${ATK_OUTPUT_ROOT}/double" "${ATK_OUTPUT_ROOT}/perf"
 MSS_LOG_PATH="${MSS_LOG_PATH:-$(cd "${ATK_OUTPUT_ROOT}" && pwd)/mssanitizer_${OP}_$(date +%Y%m%d_%H%M%S).log}"
 GM_INIT_ARGS=(--gm_init_flag)
 if [[ "${ATK_GM_INIT_MODE:-on}" == "off" ]]; then
@@ -64,6 +64,27 @@ run_accuracy() {
       --bm_device cpu \
       -p "./executor_${OP}.py" \
       "${GM_INIT_ARGS[@]}" \
+      -to "$ATK_TIMEOUT"
+}
+
+run_double() {
+  local gpu_host="${GPU_HOST:-}"
+  local gpu_port="${GPU_HOST_PORT:-9090}"
+  local gpu_device="${GPU_DEVICE_ID:-0}"
+  [[ -n "$gpu_host" ]] || die "双标杆需要 GPU_HOST，GPU 节点跑 gpu_triton_fwd.py"
+  "$ATK_BIN" node --name npu_dut --backend npu --devices "$DEVICE_ID" \
+      --output_path "${ATK_OUTPUT_ROOT}/double" \
+    node --name gold --backend gpu --host "$gpu_host" --port "$gpu_port" \
+      --devices "$gpu_device" --is_compare true \
+      --output_path "${ATK_OUTPUT_ROOT}/double" \
+    task \
+      -c "./atk_${OP}_double.json" \
+      --task accuracy \
+      -bd cpu \
+      -p "./executor_${OP}.py" \
+      --syc_dataset \
+      "${GM_INIT_ARGS[@]}" \
+      -mt "${DOUBLE_MAX_TASK:-1}" \
       -to "$ATK_TIMEOUT"
 }
 
@@ -111,9 +132,13 @@ check_one() {
 }
 
 if [[ "$SCOPE" == "all" || "$SCOPE" == "accuracy" ]]; then
-  log_info "精度"
+  log_info "混合容差"
   run_accuracy
   check_one accuracy
+fi
+if [[ "$SCOPE" == "double" ]]; then
+  log_info "双标杆"
+  run_double
 fi
 if [[ "$SCOPE" == "all" || "$SCOPE" == "performance" ]]; then
   log_info "性能"
