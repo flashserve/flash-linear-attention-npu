@@ -1,3 +1,4 @@
+#include "op_common/log/log.h"
 #include "chunk_kda_bwd_finalize_tiling.h"
 
 #include <cmath>
@@ -28,7 +29,11 @@ ge::graphStatus ValidateFinalize(
         OP_LOGE(ctx.nodeName, "invalid finalize shape, dtype, layout or metadata");
         return ge::GRAPH_FAILED;
     };
-    if (arch22 && gateOutputHeadMajor) return fail();
+    if (arch22 && gateOutputHeadMajor) {
+        OP_LOGE_FOR_INVALID_VALUE(ctx.nodeName, "gate_output_head_major", "true",
+            "false on A2/A3 because the arch22 finalize kernel supports only token-major gate outputs");
+        return ge::GRAPH_FAILED;
+    }
     const bool gateTokenMajor = !gateOutputHeadMajor;
     const bool variable = shape.isVariable != 0;
     const size_t rank = ctx.q->GetStorageShape().GetDimNum();
