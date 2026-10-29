@@ -7,6 +7,9 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+// Load structured reporters before opdev's legacy logging macros. The opdev
+// headers must retain their logging convention for CHECK_RET and DFX helpers.
+#include "op_common/log/log.h"
 #include "aclnn_chunk_fwd_h.h"
 #include "chunk_fwd_h.h"
 #include <dlfcn.h>
@@ -297,6 +300,17 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 
 // state_v_first=true 的末两维转置辅助（照抄 chunk_gated_delta_rule_fwd_h 同名实现，
 // 第七轮方案③：gated 路径 kernel 恒 [K,V] 产出，aclnn 层做 [K,V]<->[V,K] 适配）
+// typed DFX 上报：内部翻译原语（l0op::Cast / TransposeLastTwo / AllocTensor）失败时
+// 携带参数名、实际值与期望值，替代裸 CHECK_RET 的无上下文状态码返回（报错宏惯例
+// 对齐 chunk_kda_bwd_prepare，返回码保持 ACLNN_ERR_INNER_NULLPTR 不变）。
+static constexpr const char *OP_NAME = "aclnnChunkFwdH";
+
+static aclnnStatus TranslationNullptr(const char *name, const char *expected)
+{
+    OP_LOGE_FOR_INVALID_VALUE(OP_NAME, name, "nullptr", expected);
+    return ACLNN_ERR_INNER_NULLPTR;
+}
+
 static op::Shape SwapLastTwo(const op::Shape &input)
 {
     op::Shape output = input;
@@ -316,7 +330,11 @@ static const aclTensor *TransposeLastTwo(const aclTensor *input, aclOpExecutor *
     }
     std::swap(perm[rank - 2], perm[rank - 1]);
     const aclIntArray *permArray = executor->AllocIntArray(perm.data(), perm.size());
-    CHECK_RET(permArray != nullptr, nullptr);
+    if (permArray == nullptr) {
+        OP_LOGE_FOR_INVALID_VALUE(OP_NAME, "perm", "nullptr perm array",
+                                  "int64 perm swapping the last two dims");
+        return nullptr;
+    }
     return l0op::Transpose(input, permArray, executor);
 }
 
@@ -345,7 +363,9 @@ static aclnnStatus ParamsDataContiguous(ChunkFwdHParams &params, aclOpExecutor *
         // gate 会在 bf16 域算 decay，精度低，故必须选入口 cast 而非原生放行）。
         if (params.gOptional->GetDataType() == DataType::DT_BF16) {
             const aclTensor *gFp32 = l0op::Cast(params.gOptional, DataType::DT_FLOAT, executorPtr);
-            CHECK_RET(gFp32 != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            if (gFp32 == nullptr) {
+                return TranslationNullptr("g", "fp32 gate tensor after the bf16 -> fp32 entry cast");
+            }
             params.gOptional = gFp32;
         }
     }
@@ -489,17 +509,23 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
     const aclTensor *finalStateCompute = params.finalStateOut;
     if (translateVFirst && initialStateCompute != nullptr) {
         initialStateCompute = TransposeLastTwo(initialStateCompute, executorPtr);
-        CHECK_RET(initialStateCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (initialStateCompute == nullptr) {
+            return TranslationNullptr("initial_state", "transposed [K,V] tensor from TransposeLastTwo");
+        }
     }
     if (translateVFirst) {
         hCompute = executorPtr->AllocTensor(
             SwapLastTwo(params.hOut->GetViewShape()), params.hOut->GetDataType(), Format::FORMAT_ND);
-        CHECK_RET(hCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (hCompute == nullptr) {
+            return TranslationNullptr("h", "swapped-layout staging tensor from AllocTensor");
+        }
         if (params.finalStateOut != nullptr) {
             finalStateCompute = executorPtr->AllocTensor(
                 SwapLastTwo(params.finalStateOut->GetViewShape()), params.finalStateOut->GetDataType(),
                 Format::FORMAT_ND);
-            CHECK_RET(finalStateCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            if (finalStateCompute == nullptr) {
+                return TranslationNullptr("final_state", "swapped-layout staging tensor from AllocTensor");
+            }
         }
     }
     auto result = l0op::ChunkFwdH(
@@ -514,7 +540,9 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
     const aclTensor *hResult = result[0];
     if (translateVFirst) {
         hResult = TransposeLastTwo(hResult, executorPtr);
-        CHECK_RET(hResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (hResult == nullptr) {
+            return TranslationNullptr("h", "transposed output tensor from TransposeLastTwo");
+        }
     }
     auto viewCopyResult0 = l0op::ViewCopy(hResult, params.hOut, executorPtr);
     CHECK_RET(viewCopyResult0 != nullptr, ACLNN_ERR_INNER_NULLPTR);
@@ -524,7 +552,9 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
         const aclTensor *finalStateResult = result[2];
         if (translateVFirst) {
             finalStateResult = TransposeLastTwo(finalStateResult, executorPtr);
-            CHECK_RET(finalStateResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            if (finalStateResult == nullptr) {
+                return TranslationNullptr("final_state", "transposed output tensor from TransposeLastTwo");
+            }
         }
         auto viewCopyResult2 = l0op::ViewCopy(finalStateResult, params.finalStateOut, executorPtr);
         CHECK_RET(viewCopyResult2 != nullptr, ACLNN_ERR_INNER_NULLPTR);
