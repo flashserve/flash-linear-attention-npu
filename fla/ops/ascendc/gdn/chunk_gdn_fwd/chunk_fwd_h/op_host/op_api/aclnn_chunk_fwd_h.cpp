@@ -305,6 +305,14 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 // 对齐 chunk_kda_bwd_prepare，返回码保持 ACLNN_ERR_INNER_NULLPTR 不变）。
 static constexpr const char *OP_NAME = "aclnnChunkFwdH";
 
+// gated 引擎与配套翻译链（TransposeLastTwo / bf16 gate Cast）仅在 A2/A3（DAV_2201）
+// 生效——A5 与未来芯片的 kernel 无 gated 分支，aclnn 层不翻译、不 cast，保持基线
+// 行为（arch 探测先例：chunk_gated_delta_rule_fwd.cpp 同款）。
+static bool SocSupportsGatedPath()
+{
+    return GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201;
+}
+
 static aclnnStatus TranslationNullptr(const char *name, const char *expected)
 {
     OP_LOGE_FOR_INVALID_VALUE(OP_NAME, name, "nullptr", expected);
@@ -361,7 +369,8 @@ static aclnnStatus ParamsDataContiguous(ChunkFwdHParams &params, aclOpExecutor *
         // gated 谓词要求 fp32 gate——bf16 g 在此 cast 到 fp32（无损），kernel 侧
         // 恒见 float gate；数值与老路径"先 cast 再算"完全等价（gated 原生 bf16
         // gate 会在 bf16 域算 decay，精度低，故必须选入口 cast 而非原生放行）。
-        if (params.gOptional->GetDataType() == DataType::DT_BF16) {
+        // 仅 DAV_2201（A2/A3）cast——A5 无 gated 分支，保持基线 bf16 gate 实例。
+        if (params.gOptional->GetDataType() == DataType::DT_BF16 && SocSupportsGatedPath()) {
             const aclTensor *gFp32 = l0op::Cast(params.gOptional, DataType::DT_FLOAT, executorPtr);
             if (gFp32 == nullptr) {
                 return TranslationNullptr("g", "fp32 gate tensor after the bf16 -> fp32 entry cast");
@@ -503,7 +512,10 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
     // false 进 gated，含税端到端优于老路径）；varlen 不翻译（vfirst 原样直达，
     // kernel 谓词送老路径 STATE_V_FIRST 模板——A/B 实测裁定：老路径 ~5939 优于
     // gated 含税 ~7292，h 1GB 级 Transpose 税吞掉 gated 全部优势）。
-    const bool translateVFirst = params.stateVFirst && params.cuSeqlensOptional == nullptr;
+    // 翻译仅服务 gated 路径，故仅 DAV_2201（A2/A3）启用——A5/未来芯片 kernel 原生
+    // 解释 state_v_first（STATE_V_FIRST 模板），不付转置开销，保持基线行为。
+    const bool translateVFirst = params.stateVFirst && params.cuSeqlensOptional == nullptr &&
+        SocSupportsGatedPath();
     const aclTensor *initialStateCompute = params.initialStateOptional;
     const aclTensor *hCompute = params.hOut;
     const aclTensor *finalStateCompute = params.finalStateOut;
