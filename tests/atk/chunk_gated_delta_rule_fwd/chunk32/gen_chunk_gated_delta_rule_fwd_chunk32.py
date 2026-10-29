@@ -24,6 +24,18 @@ STANDARD = {
     "perf": "not_key",
     "mem": 1.1,
 }
+# Same thresholds as the parent chunk_gated_delta_rule_fwd double benchmark.
+DOUBLE_STANDARD = {
+    "acc": {
+        "cv_fused_double_benchmark": {
+            "max_re_ratio": 5,
+            "avg_re_ratio": 1.5,
+            "root_mean_squared_ratio": 1.5,
+        }
+    },
+    "perf": "not_key",
+    "mem": 1.1,
+}
 HERE = Path(__file__).resolve().parent
 SCALE = 128 ** -0.5
 
@@ -187,7 +199,7 @@ def _input(name: str, dtype: str, value, *, input_type: str = "attr", shape=None
     }
 
 
-def _case_payload(case_id: int, spec: dict) -> dict:
+def _case_payload(case_id: int, spec: dict, standard: dict | None = None) -> dict:
     metadata = dict(spec)
     metadata["case_id"] = case_id
     inputs = [
@@ -221,15 +233,17 @@ def _case_payload(case_id: int, spec: dict) -> dict:
         "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
         "expected_error_msg": None,
         "backward": False,
-        "standard": STANDARD,
+        "standard": STANDARD if standard is None else standard,
         "outputs": None,
         "inputs": inputs,
         "save_name": OP_NAME,
     }
 
 
-def _write(name: str, specs: list[dict]) -> None:
-    payloads = [_case_payload(case_id, spec) for case_id, spec in enumerate(specs)]
+def _write(name: str, specs: list[dict], standard: dict | None = None) -> None:
+    payloads = [
+        _case_payload(case_id, spec, standard) for case_id, spec in enumerate(specs)
+    ]
     path = HERE / name
     path.write_text(json.dumps(payloads, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"{name}: {len(payloads)} cases")
@@ -245,6 +259,7 @@ def main() -> None:
             f"neg={int(row['allow_neg_eigval'])} sv={int(row['state_v_first'])}"
         )
     _write(f"atk_{OP_NAME}.json", specs)
+    _write(f"atk_{OP_NAME}_double.json", specs, DOUBLE_STANDARD)
     _write(f"atk_{OP_NAME}_perf.json", perf_specs())
     _write(f"atk_{OP_NAME}_mss.json", mss_specs())
 

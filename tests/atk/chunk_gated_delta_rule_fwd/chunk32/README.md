@@ -16,14 +16,24 @@
 
 ## 标杆
 
-混合容差的 CPU 标杆是 `cpu_golden_fwd_emu.py` 里的
-`cpu_chunk_gated_delta_rule_fwd_emu`。它按 GPU Triton 前向逐步复现 BF16 舍入和
-`exp2`，chunk 为 32。L2 和 sigmoid 打开，`allow_neg_eigval` 关闭。
-本目录的用例把 BNSD 和打包 NTD 都存成 `[B,H,T,D]`，所以标杆按 `bnsd` 读入，
-比较前再把 `o` 转到 BSND。
+同一份执行器按设备分三路，输入都从用例 seed 重建：
+
+| 角色 | 设备 | 实现 |
+| --- | --- | --- |
+| DUT | NPU | `npu_chunk_gated_delta_rule_fwd(..., chunk_size=32)` |
+| 混合容差标杆 / 双标杆 golden | CPU | `cpu_golden_fwd_emu.py` 的 `cpu_chunk_gated_delta_rule_fwd_emu` |
+| 双标杆同精度标杆 | GPU | `gpu_triton_fwd.py` 的 `gpu_chunk_gated_delta_rule_fwd`，`chunk_size=32` |
+
+CPU 仿真按 GPU Triton 前向逐步复现 BF16 舍入，chunk 为 32。L2 和 sigmoid 打开。
+`allow_neg_eigval` 和 `state_v_first` 跟用例走。公开 `o` 比较前统一成 BSND。
+`final_state` 在 BF16 初态时是 BF16，其余是 FP32。
+
+双标杆标准与父目录 `chunk_gated_delta_rule_fwd` 相同：`cv_fused_double_benchmark`，
+最大相对误差比例 5、平均相对误差比例 1.5、均方根误差比例 1.5。
+NPU 节点名是 `npu_dut`，GPU 节点名是 `gold`，CPU golden 由 `-bd cpu` 自动拉起。
 
 数值范围沿用算子精度测试：`q/k/v` 为 `randn * 0.05` 后收 BF16，`g` 为
-`randn * 0.02` 的 FP32，`beta` 为 `randn` 后收 BF16。同一条用例的 CPU 和 NPU
+`randn * 0.02` 的 FP32，`beta` 为 `randn` 后收 BF16。同一条用例的 NPU、CPU 和 GPU
 用同一个 seed。
 
 ## Shape
@@ -37,7 +47,8 @@ MHA（H=4×4）和 GVA（H=2×8）做完全积，再乘上四种形状：`T=1024
 
 | 文件 | 用途 |
 | --- | --- |
-| `atk_chunk_gated_delta_rule_fwd_chunk32.json` | 精度，604 条 |
+| `atk_chunk_gated_delta_rule_fwd_chunk32.json` | 混合容差精度，604 条 |
+| `atk_chunk_gated_delta_rule_fwd_chunk32_double.json` | 双标杆精度，同一批 604 条 |
 | `atk_chunk_gated_delta_rule_fwd_chunk32_perf.json` | 性能 |
 | `atk_chunk_gated_delta_rule_fwd_chunk32_mss.json` | 确定性与内存检测 |
 
@@ -71,9 +82,17 @@ unset ASCEND_RT_VISIBLE_DEVICES ASCEND_VISIBLE_DEVICES
 bash tests/atk/chunk_gated_delta_rule_fwd/chunk32/run_chunk32_atk.sh 6 accuracy
 ```
 
+双标杆在 NPU 侧发起，远端 GPU server 承载 `gold` 节点。GPU 环境需要 CUDA、Triton 和
+`fla`；没有安装包时设置 `FLA_ROOT`。`GPU_HOST` 必填。
+
+```bash
+GPU_HOST=<gpu-server-ip> GPU_HOST_PORT=9090 \
+  bash tests/atk/chunk_gated_delta_rule_fwd/chunk32/run_chunk32_atk.sh 6 double
+```
+
 精度标准走源码安装的 ATK 26.9.8（`https://gitcode.com/Ascend/ATK.git`，
 commit `99c8a84`）。这一版自带 `mixed_tolerance_bm`，不要再把它别名到
-`single_bm`。重生成三份 JSON：
+`single_bm`。`cv_fused_double_benchmark` 也由这一版 ATK 提供。重生成四份 JSON：
 
 ```bash
 python3 tests/atk/chunk_gated_delta_rule_fwd/chunk32/gen_chunk_gated_delta_rule_fwd_chunk32.py

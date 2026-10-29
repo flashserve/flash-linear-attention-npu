@@ -1,9 +1,9 @@
 """Migrated chunk32 path of chunk_gated_delta_rule_fwd.
 
-CPU golden is ``cpu_golden_fwd_emu.cpu_chunk_gated_delta_rule_fwd_emu``, the
-step-by-step GPU emulation. NPU DUT is
-``npu_chunk_gated_delta_rule_fwd(..., chunk_size=32)``. Both sides read the
-same seeded inputs.
+Mixed tolerance compares the NPU DUT with the CPU emulation in
+``cpu_golden_fwd_emu``. Double benchmark keeps that CPU emulation as the
+golden and adds the GPU Triton forward in ``gpu_triton_fwd`` as the
+same-precision benchmark. Both modes rebuild inputs from the case seed.
 """
 
 from __future__ import annotations
@@ -136,6 +136,17 @@ def _cu(seqlens: Optional[list[int]]) -> Optional[torch.Tensor]:
     return torch.tensor(values, dtype=torch.int64)
 
 
+def _contract(output: torch.Tensor, state: torch.Tensor, spec: dict[str, Any]) -> tuple[torch.Tensor, torch.Tensor]:
+    """Match the public dtypes the NPU writes: BF16 ``o``, and BF16 state only for a BF16 initial state."""
+
+    state_name = str(spec.get("state_dtype", "none")).lower()
+    state_dtype = torch.bfloat16 if state_name == "bf16" else torch.float32
+    return (
+        output.detach().to(device="cpu", dtype=torch.bfloat16).contiguous(),
+        state.detach().to(device="cpu", dtype=state_dtype).contiguous(),
+    )
+
+
 def run_cpu(spec: dict[str, Any]):
     inputs = build_inputs(spec, torch.device("cpu"))
     # Public NTD/TND are rank-4 packed tensors, not the emulator's rank-3 names.
@@ -158,7 +169,7 @@ def run_cpu(spec: dict[str, Any]):
     )
     if not inputs["sequence_major"]:
         o = o.transpose(1, 2).contiguous()
-    return o, final_state
+    return _contract(o, final_state, spec)
 
 
 def _metadata(seqlens: Optional[list[int]]) -> tuple[Optional[list[int]], Optional[list[int]]]:
@@ -209,7 +220,41 @@ def run_npu(spec: dict[str, Any], input_data: InputDataset):
         layout=inputs["layout"],
     )
     torch.npu.synchronize()
-    return outputs[0].detach().cpu(), outputs[1].detach().cpu()
+    return _contract(outputs[0], outputs[1], spec)
+
+
+def run_gpu(spec: dict[str, Any]):
+    """Same-precision benchmark: FLA Triton chunk forward at chunk size 32."""
+
+    if not torch.cuda.is_available():
+        raise RuntimeError("GPU Triton benchmark requires CUDA")
+    from gpu_triton_fwd import gpu_chunk_gated_delta_rule_fwd
+
+    inputs = build_inputs(spec, torch.device("cuda"))
+    # Public NTD/TND are rank-4 packed tensors, same as the CPU emulation.
+    golden_layout = "bsnd" if inputs["sequence_major"] else "bnsd"
+    cu = _cu(inputs["seqlens"])
+    output, final_state = gpu_chunk_gated_delta_rule_fwd(
+        inputs["q"],
+        inputs["k"],
+        inputs["v"],
+        inputs["g"],
+        inputs["beta"],
+        scale=inputs["scale"],
+        initial_state=inputs["initial_state"],
+        output_final_state=True,
+        cu_seqlens=None if cu is None else cu.to(device="cuda"),
+        chunk_size=32,
+        layout=golden_layout,
+        use_qk_l2norm_in_kernel=True,
+        use_beta_sigmoid_in_kernel=True,
+        allow_neg_eigval=inputs["allow_neg_eigval"],
+        state_v_first=inputs["state_v_first"],
+    )
+    torch.cuda.synchronize()
+    if not inputs["sequence_major"]:
+        output = output.transpose(1, 2).contiguous()
+    return _contract(output, final_state, spec)
 
 
 @register("executor_chunk_gated_delta_rule_fwd_chunk32")
@@ -220,12 +265,28 @@ class FunctionApi(BaseApi):
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
         spec = _case_spec(input_data, OP_NAME)
+        case_id = spec.get("case_id", "?")
         if self.device in {"npu", "pyaclnn"}:
+            print(
+                f"[chunk32-atk] case={case_id} role=dut target=npu_chunk32",
+                flush=True,
+            )
             outputs = run_npu(spec, input_data)
+        elif self.device == "gpu":
+            print(
+                f"[chunk32-atk] case={case_id} role=benchmark target=gpu_triton_chunk32",
+                flush=True,
+            )
+            outputs = run_gpu(spec)
         elif self.device == "cpu":
+            role = "golden" if self.is_benchmark_task else "mixed"
+            print(
+                f"[chunk32-atk] case={case_id} role={role} target=cpu_emu_chunk32",
+                flush=True,
+            )
             outputs = run_cpu(spec)
         else:
             raise RuntimeError(
-                f"{OP_NAME} only runs an NPU DUT and a CPU golden, got device {self.device!r}"
+                f"{OP_NAME} supports NPU DUT, CPU emulation and GPU Triton, got device {self.device!r}"
             )
         return _finite_tuple(outputs)
