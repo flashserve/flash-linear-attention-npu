@@ -1,30 +1,36 @@
 # chunk_kda_fwd_fused — KDA forward chunk32 大融合(issue #829)
 
-编译器 demo(`kda-fusion/kda_fusion_demo_compiler/`,chunk32 原生)的忠实翻译,
-双源 mix kernel:AIC 裸指令 + AIV MicroAPI,一次 launch 完成 prepare+forward+finalize。
+面向 Ascend950 的单 kernel KDA 正向实现：AIC 裸指令 + AIV MicroAPI，一次 launch 完成
+prepare、state forward 和 finalize。公开调用统一走 `aclnnChunkKdaFwdV2`，由顶层
+`chunk_kda_fwd` 在 `chunk_size=32` 时路由到本目录的融合实现。
 
-## 契约(与生产语义对齐处)
+## 当前契约
 
-- 输入:`q/k/v/g/beta` bf16,**[H,T,K] 头连续 3 维**(非生产 BSND);`a_log` fp32 [H]
-  **原始对数门控,核内 exp**(入仓适配;demo 是 host 预 expf,两者 ulp 级差异);
-  `dt_bias` fp32 [H*K]
-- 输出:`o` bf16 [H,T,128];**不写 final_state**(demo 无此输出)
-- 约束:K=V=128、T%128==0、单 batch;不支持 varlen / initial_state
-- blockDim = H(一核一头);tiling key 恒 1
-- kernel 每拍处理 128 token(内部 4 个 32 行 chunk 两级迭代)
-- gate 语义:`lower_bound·sigmoid((g+dt_bias)·exp(A_log))`(生产 safe-gate 变体);
-  beta 核内 sigmoid;q/k 核内 L2 归一
+- q/k/v/o 为 BF16，`K=V=128`；g/beta 必须同为 BF16 或同为 FP32。
+- `A_log`、`dt_bias`、initial/final state 为 FP32。
+- `T>0`，kernel 处理非 128 对齐尾块；支持 dense batch 和 varlen。
+- 支持 GVA：`HV` 为 `H` 的正整数倍，`H==HV` 是特例。
+- 支持可选 `initial_state` 和 `output_final_state`；`state_v_first=true` 由 host 转置适配。
+- 公开 chunk32 路径要求 `safe_gate=true`、`use_gate_in_kernel=true` 并提供 `A_log`；
+  `dt_bias=None` 等价于零偏置。gate 语义为
+  `lower_bound * sigmoid(exp(A_log) * (g + dt_bias))`。
+- q/k 核内 L2 normalization，beta 核内 sigmoid；要求
+  `use_qk_l2norm_in_kernel=true`、`use_beta_sigmoid_in_kernel=true`、
+  `allow_neg_eigval=false`、`use_exp2=true`。
+- `chunk_indices` 仅接受与 `cu_seqlens` 对应的 canonical sequence-major 顺序。
 
-## 已知缺口(后续 Step 处理)
+直接 aclnn 融合入口使用头连续视图：q/k 为 `[H,T,K]`，v/g 为 `[HV,T,K/V]`，beta 为
+`[HV,T]`；dense state 为 `[HV,K,V]`，varlen state 为 `[nSeq*HV,K,V]`。公开 V2 入口负责
+BSND/BNSD/NTD/TND 布局适配及 dense/varlen 参数转换。
 
-1. 布局:生产链路是 BSND [B,S,H,K],融合 kernel 要 [H,T,K];接入 dispatch 时需
-   在 aclnn 层转置或扩展 kernel 寻址。
-2. final_state:训练/续跑需要状态输出,demo 不写;需在 Step3 数值评审后补。
-3. initial_state:demo 从零状态起算;decode 续跑不支持。
-4. 数值:demo 相对 golden 有约 19% 偏差(compare-bed 有证据链),翻译原样保留,
-   修复在 Step3 评审后另行批准。
+## 不导出的内容
+
+chunk32 融合路径不导出 recompute 中间态或反向保存值：
+`disable_recompute=false`、`return_intermediate_states=false`，`Aqk`/`Akk` 返回槽为 `None`，
+不导出 `q_hat/k_hat/q_rstd/k_rstd/beta_eff`。这不影响可选 `final_state` 输出。
 
 ## 验证
 
-- 逐位对齐 demo:`runs/20261010-chunk32-fused/trans/verify_annot.sh`(净卡 5/5 biteq=1.0)
-- 性能对齐 demo:同 harness wall 2.3~3.0ms vs demo 2.4~3.0ms @H96/T8192
+- A5 官方 ATK `accuracy` 扩展套件：34/34 通过，覆盖 dense/varlen、GVA、尾块、
+  initial/final state、不同 layout 及 BF16/FP32 g/beta。
+- Stable/ctypes ABI 测试：22 passed、122 subtests passed、1 skipped。

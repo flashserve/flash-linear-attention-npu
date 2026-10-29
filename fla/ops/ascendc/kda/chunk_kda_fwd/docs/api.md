@@ -74,12 +74,18 @@ outputs = chunk_kda_fwd(
 `chunk_size=64`），否则 Python 入口在发起调用前按 fla-org 参考实现拒绝，不会静默忽略；
 具体字段语义见 [归一化 / gate 开关](#归一化--gate-开关)。
 
-`chunk_size=32` 走单 kernel 大融合实现（`chunk_kda_fwd_fused`，issue #829），契约收紧：
-BF16 全部输入、`K=V=128`、`T%128==0`、`B==1`、`H==HV`、dense（不支持 varlen）、
-不支持 `initial_state`、不导出 `final_state`/中间态（`aqk/akk` 槽位保留但内容无效）、
-必须 `use_gate_in_kernel=true` 且提供 `A_log` 与 `dt_bias`；gate 语义为核内
-`lower_bound·sigmoid((g+dt_bias)·exp(A_log))` 形式（safe-gate 变体），与三段式
-`use_exp2` 默认路径的数值差异见算子 README 与精度报告。
+`chunk_size=32` 走单 kernel 大融合实现（`chunk_kda_fwd_fused`，issue #829）。当前契约：
+
+- q/k/v 为 BF16，`K=V=128`；g/beta 必须同为 BF16 或同为 FP32；`A_log`、`dt_bias` 和 state 为 FP32。
+- `T>0`，kernel 处理非 128 对齐尾块；支持 dense batch、varlen，以及 `HV` 为 `H` 正整数倍的 GVA。
+- 支持可选 `initial_state` 和 `output_final_state`；`state_v_first=true` 由 host 转置适配。
+- 必须 `safe_gate=true`、`use_gate_in_kernel=true` 并提供 `A_log`；`dt_bias=None` 等价于零偏置。
+  gate 语义为 `lower_bound * sigmoid(exp(A_log) * (g + dt_bias))`。
+- 必须 `use_qk_l2norm_in_kernel=true`、`use_beta_sigmoid_in_kernel=true`、
+  `allow_neg_eigval=false`、`use_exp2=true`。
+- 不导出 recompute 中间态或反向保存值：`disable_recompute` 和
+  `return_intermediate_states` 必须为 `false`，`Aqk`/`Akk` 槽位返回 `None`。
+- `chunk_indices` 仅接受与 `cu_seqlens` 对应的 canonical sequence-major 顺序。
 
 ### 返回
 
@@ -94,8 +100,8 @@ BF16 全部输入、`K=V=128`、`T%128==0`、`B==1`、`H==HV`、dense（不支�
 | 0 | `attn_out` | 始终 | 固定 sequence-major（rank-4 为 BSND，rank-3 为 TND） |
 | 1 | `final_state` | `output_final_state=true` | `[N,H_v,K,V]`，`state_v_first=true` 时末两维交换 |
 | 2 | `gk` | `use_gate_in_kernel=false` 或 `disable_recompute=true` | head-major |
-| 3 | `Aqk` | 始终 | head-major |
-| 4 | `Akk` | 始终 | head-major |
+| 3 | `Aqk` | `chunk_size=64`；chunk32 不导出，返回 `None` | head-major |
+| 4 | `Akk` | `chunk_size=64`；chunk32 不导出，返回 `None` | head-major |
 | 5–9 | `w` / `u` / `qg` / `kg` / `v_new` | `disable_recompute=true` | head-major |
 | 10 | `h` | `disable_recompute=true` 或 `return_intermediate_states=true` | sequence-major |
 | 11 | `initial_state` | 始终 | Python 层对入参 `initial_state` 的原对象透传（算子就地更新），不是 aclnn 输出 |

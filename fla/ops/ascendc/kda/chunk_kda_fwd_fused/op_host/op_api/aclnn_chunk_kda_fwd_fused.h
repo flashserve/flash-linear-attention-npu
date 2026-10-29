@@ -1,11 +1,11 @@
 // -----------------------------------------------------------------------------------------------------------
 // aclnnChunkKdaFwdFused — chunk32 大融合 KDA forward(issue #829)
 // kernel 契约:
-//   q/k/v/g/beta:bf16,[H,T,K] 头连续(3 维),K=V=128,T%128==0
-//   a_log:fp32 [H] 原始值(核内 exp);dt_bias:fp32 [H*K]
-//   o:bf16 [H,T,128]
-//   initial_state(可空):fp32 [H,K,V] ND(state_v_first=false 形态)
-//   final_state(可空):fp32 [H,K,V],非空即请求末组状态写回
+//   q/k:bf16 [H,T,K];v/g:[HV,T,K/V];beta:[HV,T];HV 为 H 的正整数倍
+//   g/beta 必须同为 bf16 或 fp32;K=V=128,T>0(kernel 处理非 128 对齐尾块)
+//   a_log:fp32 [HV] 原始值(核内 exp);dt_bias:fp32 [HV*K]
+//   o:bf16 [HV,T,V]
+//   initial_state/final_state(可空):fp32 [HV,K,V](dense)或 [nSeq*HV,K,V](varlen)
 //   varlen 由 aclnnChunkKdaFwdV2 入口支持,布局为 TND 或 NTD
 // -----------------------------------------------------------------------------------------------------------
 #ifndef OP_API_INC_ACLNN_CHUNK_KDA_FWD_FUSED_H
