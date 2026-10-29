@@ -1068,6 +1068,99 @@ def npu_chunk_gated_delta_rule_fwd_prepare(
     return q_hat, k_hat, q_rstd, k_rstd, beta_out, g_cumsum, w, u, A
 
 
+def _chunk_gated_delta_rule_bwd_finalize_arch22(
+    q,
+    k,
+    v,
+    v_new,
+    do,
+    du,
+    g,
+    beta,
+    h,
+    dh,
+    a,
+    *,
+    q_rstd=None,
+    k_rstd=None,
+    beta_raw=None,
+    cu_seqlens=None,
+    chunk_indices=None,
+    scale=None,
+    chunk_size=64,
+    use_qk_l2_norm_in_kernel=False,
+    use_beta_sigmoid_in_kernel=False,
+    use_gate_in_kernel=False,
+    state_v_first=False,
+    use_exp2=True,
+):
+    """Run the A2/A3 finalize with view-safe descriptors and dense outputs.
+
+    Returns ``dq, dk, dv, dbeta, dg``.
+    """
+
+    if int(chunk_size) not in (64, 128):
+        raise ValueError("chunk_size supports 64 on A5 and 64/128 on A2/A3.")
+    if scale is None:
+        scale = 1.0 / (128.0 ** 0.5)
+    if (cu_seqlens is None) != (chunk_indices is None):
+        raise ValueError("cu_seqlens and chunk_indices must be both None or both provided.")
+    if use_qk_l2_norm_in_kernel and (q_rstd is None or k_rstd is None):
+        raise ValueError("q_rstd and k_rstd are required when Q/K L2Norm backward is enabled.")
+    if use_beta_sigmoid_in_kernel and beta_raw is None:
+        raise ValueError("beta_raw is required when beta sigmoid backward is enabled.")
+    if bool(use_gate_in_kernel):
+        raise ValueError("use_gate_in_kernel only supports False.")
+    if g.dtype != beta.dtype:
+        raise ValueError("g and beta must use the same dtype.")
+
+    batch, _, total_tokens, key_dim = q.shape
+    value_heads = v.shape[1]
+    # kernel 直接连续写输出；empty_like 会保留转置输入的非连续 stride。
+    outputs = (
+        _empty(_shape(q), q),
+        _empty(_shape(k), k),
+        _empty(_shape(v), v),
+        _empty(_shape(beta), beta),
+        _empty(_shape(g), g),
+    )
+    def logical_tensor(ctx, tensor, name):
+        # 零 offset 的连续 tensor 保留逻辑 rank，避免 h/dh 的物理 padding 进入 tiling。
+        # 其余 view 使用真实 backing 范围，并保留 stride/offset；L2 Contiguous
+        # 负责连续化及恢复逻辑 storage shape，不能把 view numel 当作 backing 大小。
+        storage_shape = (
+            _shape(tensor)
+            if tensor is not None and tensor.is_contiguous() and int(tensor.storage_offset()) == 0
+            else None
+        )
+        return ctx.tensor(tensor, name, storage_shape_override=storage_shape)
+
+    result = _call_aclnn(
+        "aclnnChunkGatedDeltaRuleBwdFinalize",
+        lambda ctx: [
+            logical_tensor(ctx, q, "q"), logical_tensor(ctx, k, "k"), logical_tensor(ctx, v, "v"),
+            logical_tensor(ctx, v_new, "v_new"), logical_tensor(ctx, do, "do"), logical_tensor(ctx, du, "du"),
+            logical_tensor(ctx, g, "g"), logical_tensor(ctx, beta, "beta"), logical_tensor(ctx, h, "h"),
+            logical_tensor(ctx, dh, "dh"), logical_tensor(ctx, a, "a"),
+            logical_tensor(ctx, q_rstd, "q_rstd"), logical_tensor(ctx, k_rstd, "k_rstd"),
+            logical_tensor(ctx, beta_raw, "beta_raw"),
+                ctx.int_array(cu_seqlens), ctx.int_array(chunk_indices),
+            ctypes.c_double(float(scale)), ctypes.c_int64(int(chunk_size)),
+            ctypes.c_bool(bool(use_qk_l2_norm_in_kernel)),
+            ctypes.c_bool(bool(use_beta_sigmoid_in_kernel)),
+            ctypes.c_bool(bool(use_gate_in_kernel)),
+            ctypes.c_bool(bool(state_v_first)),
+            ctypes.c_bool(bool(use_exp2)),
+            *[logical_tensor(ctx, output, name) for output, name in zip(
+                outputs,
+                ("dq_out", "dk_out", "dv_out", "dbeta_out", "dg_out")
+            )],
+        ],
+        outputs,
+    )
+    return tuple(result)
+
+
 def npu_chunk_gated_delta_rule_bwd_finalize(
     q,
     k,
@@ -1110,6 +1203,17 @@ def npu_chunk_gated_delta_rule_bwd_finalize(
     if device_index is None:
         device_index = npu.current_device()
     device_name = npu.get_device_name(device_index)
+    if device_name.startswith(("Ascend910B", "Ascend910C", "Ascend910_93")):
+        return _chunk_gated_delta_rule_bwd_finalize_arch22(
+            q, k, v, v_new, do, du, g, beta, h, dh, a,
+            q_rstd=q_rstd, k_rstd=k_rstd, beta_raw=beta_raw,
+            cu_seqlens=cu_seqlens, chunk_indices=chunk_indices,
+            scale=scale, chunk_size=chunk_size,
+            use_qk_l2_norm_in_kernel=use_qk_l2_norm_in_kernel,
+            use_beta_sigmoid_in_kernel=use_beta_sigmoid_in_kernel,
+            use_gate_in_kernel=use_gate_in_kernel,
+            state_v_first=state_v_first, use_exp2=use_exp2,
+        )
     if not device_name.startswith("Ascend950"):
         raise RuntimeError(
             "npu_chunk_gated_delta_rule_bwd_finalize only supports Ascend 950, "

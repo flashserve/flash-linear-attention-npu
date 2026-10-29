@@ -1606,18 +1606,38 @@ def npu_chunk_gated_delta_rule_fwd_prepare(
     return q_hat, k_hat, q_rstd, k_rstd, beta_out, g_cumsum, w, u, a
 
 
+def _chunk_gated_delta_rule_bwd_finalize_arch22(
+        q, k, v, v_new, do, du, g, beta, h, dh, a, *, q_rstd=None,
+        k_rstd=None, beta_raw=None, cu_seqlens=None, chunk_indices=None,
+        scale=None, chunk_size=64, use_qk_l2_norm_in_kernel=False,
+        use_beta_sigmoid_in_kernel=False, use_gate_in_kernel=False,
+        state_v_first=False, use_exp2=True):
+    """Launch the A2/A3 finalize through the stable ABI."""
+
+    if use_gate_in_kernel:
+        raise RuntimeError(
+            "npu_chunk_gated_delta_rule_bwd_finalize: use_gate_in_kernel only "
+            "supports False.")
+    if scale is None:
+        scale = 1.0 / (128.0 ** 0.5)
+    return _op("npu_chunk_gated_delta_rule_bwd_finalize")(
+        q, k, v, v_new, do, du, g, beta, h, dh, a,
+        q_rstd, k_rstd, beta_raw,
+        _host_ints(cu_seqlens), _host_ints(chunk_indices),
+        float(scale), chunk_size, bool(use_qk_l2_norm_in_kernel),
+        bool(use_beta_sigmoid_in_kernel), bool(use_gate_in_kernel),
+        bool(state_v_first), bool(use_exp2),
+        _current_stream_ptr(),
+    )
+
+
 def npu_chunk_gated_delta_rule_bwd_finalize(
         q, k, v, v_new, do, du, g, beta, h, dh, a, *, q_rstd=None,
         k_rstd=None, beta_raw=None, cu_seqlens=None, chunk_indices=None,
         scale=None, chunk_size=64, use_qk_l2_norm_in_kernel=False,
         use_beta_sigmoid_in_kernel=False, use_gate_in_kernel=False,
         state_v_first=False, use_exp2=True):
-    """The Ascend950-only backward finalize, returning dq/dk/dv/dbeta/dg.
-
-    The kernel exists only for Ascend950, and calling it anywhere else has no
-    defined result, so the device is checked here rather than letting the
-    launch decide.
-    """
+    """Dispatch A2/A3 explicitly and preserve the Ascend950 finalize path."""
 
     import torch
 
@@ -1625,6 +1645,17 @@ def npu_chunk_gated_delta_rule_bwd_finalize(
     if device_index is None:
         device_index = torch.npu.current_device()
     device_name = torch.npu.get_device_name(device_index)
+    if device_name.startswith(("Ascend910B", "Ascend910C", "Ascend910_93")):
+        return _chunk_gated_delta_rule_bwd_finalize_arch22(
+            q, k, v, v_new, do, du, g, beta, h, dh, a,
+            q_rstd=q_rstd, k_rstd=k_rstd, beta_raw=beta_raw,
+            cu_seqlens=cu_seqlens, chunk_indices=chunk_indices,
+            scale=scale, chunk_size=chunk_size,
+            use_qk_l2_norm_in_kernel=use_qk_l2_norm_in_kernel,
+            use_beta_sigmoid_in_kernel=use_beta_sigmoid_in_kernel,
+            use_gate_in_kernel=use_gate_in_kernel,
+            state_v_first=state_v_first, use_exp2=use_exp2,
+        )
     if not device_name.startswith("Ascend950"):
         raise RuntimeError(
             "npu_chunk_gated_delta_rule_bwd_finalize only supports Ascend "
