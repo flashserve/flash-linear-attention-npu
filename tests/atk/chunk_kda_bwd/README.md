@@ -4,8 +4,10 @@
 
 本包验收 `fla_npu.ops.ascendc.chunk_kda_bwd(..., implementation="optimized")` 的 public V2，
 不测试或改写 `auto/legacy/optimized` 路由。代码基线为 upstream/main
-`c9e2f1dbe6733d7d74c6bc4e1567e136f77da509`；候选增加 Finalize 五组 helper unroll-2、
-A5/V2 原生 head-major db/dg、Stage7→9 FP32 中心因子复用，以及 A5 tiling ABI 修复。
+`c9e2f1dbe6733d7d74c6bc4e1567e136f77da509`，当前生产 head 为
+`1c132d95`。性能优化为 Finalize 五组 VF 同一成对循环内按操作 A/B 交错并在循环外保留独立单尾、
+Stage7→9 FP32 中心因子复用，以及 A5/V2 原生 head-major db/dg。A5 raw tiling ABI 修复、arch22
+布局拒绝、host/ATK 测试与文档整改均属非性能修改，不分配性能收益。
 本次复测环境为 CANN 9.1.0、ATK 26.9.8、Ascend950DT；安装目录和结果目录由下文变量指定，不固定本机临时路径。
 只声明 A5/BF16 token、K=V=128、chunk=64、safe gate、`use_exp2=True` 的本包覆盖；
 不覆盖 unsafe、FP16、initial state/dht，也不声称 A2/A3 已在设备上验收。
@@ -33,7 +35,8 @@ dt_bias std=1.65 且均值 -3、dO std=51.2，先量化到输入 dtype。
 
 每个逻辑 case 使用固定种子 `0 / 20260630 / 7`，共 12 逻辑 case、36 个 `(case, seed)`。
 `atk_chunk_kda_bwd.json` 与 `gen_chunk_kda_bwd.py` 的 36 条真实输入/seed 完全一致；
-CPU golden 与 NPU DUT 均消费 ATK 提供的张量，独立 CPU 自校验才使用无 provided 回退。
+CPU golden 与 NPU DUT 均消费 `input_data.kwargs` 中的真实 ATK 张量和属性，独立 CPU 自校验才使用
+`provided=None` 回退。用例设计与 TilingKey/mss 映射详见 `test_case_design_report.md`。
 正常偶数头 H=8；recompute 满足 H≤256 且 H%8=0；另覆盖 odd-head、尾块、B2 和无 bias。
 
 | 逻辑 id | accuracy id | 路径 | layout / norm | B/H/T 或 cu | beta / dt_bias |
@@ -68,93 +71,116 @@ Finalize key 为 `(variable ? 2 : 1) + (hasRstd ? 2 : 0)`；新增内部 gate la
 这些是 public V2 组合内的 key/用例映射，不是内存检测通过结论，也不替代各子算子独立全 key 验收。
 旧直接基准的小形状前向非有限值不属于本包的反向失败；本包使用上述三阶段输入准备。
 ABI 修复在 A5 设置 raw tiling 为 `sizeof(TilingData)+8`，与仓内 `MergeFwdBwd` 的
-CANN `GET_TILING_DATA opParaSize` 处理一致，arch22 路径不变。
+CANN `GET_TILING_DATA opParaSize` 处理一致，arch22 token-major 转发不变。arch22 对
+`gate_output_head_major=true` 使用 `OP_LOGE_WITH_INVALID_ATTR` 拒绝，不用 scoped build 缺宏的
+`OP_LOGE_FOR_INVALID_VALUE`；规范 host 测试位于 `tests/operators/chunk_kda_bwd_finalize`。
 
 ## 正式结果与证据
 
-`RESULT_ROOT` 指向本次 `pr913` 结果目录；下文证据也可按工作区相对路径
-`runs/pr_delivery_20261028/pr913` 解读。除特别注明外，结果来自本次 A5 实机复测。
+`RESULT_ROOT` 指向 `runs/pr_final_20261029/pr913`，`REGRESSION_ROOT` 指向
+`$RESULT_ROOT/final_regression_r3`，`DFX_ROOT` 指向
+`runs/pr913_finalize_dfx_20261029/build_tests_operators`，`REVIEW_ROOT` 指向
+`runs/pr_final_20261029/review`。除特别注明外，结果来自当前生产 head 的最终 A5 组合复测。
 
-| 动作 | 本次真实结果 | 证据 |
+| 动作 | 最终真实结果 | 证据 |
 | --- | --- | --- |
-| A5 build | 通过 | `runs/pr_delivery_20261028/pr913_build.log` |
-| A2/A3 交叉编译 | 均通过；未执行 A2/A3 实机测试 | `$RESULT_ROOT/a2_finalize_build.log`；`$RESULT_ROOT/a3_finalize_build.log` |
-| wheel 安装匹配 | **1318/1318** 个 `fla_npu` 文件匹配，安装差异为 0 | `$RESULT_ROOT/install_verify.log` |
-| fresh 基线对象比较 | 非 Finalize 的 **183** 个对象名称/hash 全同；两侧 Finalize 各 **4** 个对象；scoped 比较通过 | `runs/pr_delivery_20261028/base/object_compare_final.log` |
-| smoke | **20/20 bit-exact**（saved 10/10、recompute 10/10） | `$RESULT_ROOT/smoke/compare.log` |
-| public V2 ATK accuracy | **36/36 PASS**，12 逻辑 case × 3 seeds | `$RESULT_ROOT/atk/public_gm/accuracy_case_detail.json` |
-| saved/optimized 扩展精度 | **63/63 PASS**；排除由 legacy/拒绝路径看护的 9 个不适用 id | `$RESULT_ROOT/atk/saved_opt63/case_detail.json`；`$RESULT_ROOT/atk/saved_opt63/atk_run.log` |
-| accuracy_dc | **12/12 × 50 PASS** | `$RESULT_ROOT/atk/public_gm/determinism_check_actual.log` |
-| CPU reference | 单步 norm/packed 与确定性输入构造自校验通过 | `$RESULT_ROOT/atk/cpu_reference.log` |
-| CPU recurrent | 六项输出通过既定容差 | `$RESULT_ROOT/numeric/accuracy.log` |
-| 大形状位比较 | **15/15** 张量逐位一致 | `$RESULT_ROOT/numeric/compare.log` |
-| 数值矩阵 | 16 case × 15 张量，**240/240 bit-exact** | `$RESULT_ROOT/numeric/matrix_compare.log` |
-| saved/recompute rstd layout | 8 case、**80/80** 张量逐位一致 | `$RESULT_ROOT/layout_norm/compare.json` |
-| 独立默认布局 direct | 20 case、**140/140** 张量逐位一致 | `$RESULT_ROOT/direct_matrix/compare.json` |
+| A5 build | 通过 | `$RESULT_ROOT/build_final.log` |
+| A2/A3 交叉编译 | 均通过；未执行 A2/A3 实机测试 | `$RESULT_ROOT/a2_finalize_build_r2.log`；`$RESULT_ROOT/a3_finalize_build_r2.log` |
+| 最终 wheel 与路由 | SHA256 `21568e8a0f6d5530e47320211765faf6ed3d7f21acc88831a72781d5d089fc14`；**1318/1318** 文件匹配、差异为 0、路由不变 | `$RESULT_ROOT/install_verify_final.log` |
+| 对象与运行时隔离 | **183** 个非 Finalize 对象名称/hash 全同；隔离 `fla_npu`/OPP/opapi 已核验 | `$RESULT_ROOT/install_verify_final.log`；`$RESULT_ROOT/runtime_final.log` |
+| host tiling 正负测 | **6/6 PASS**，CTest **1/1 PASS**；不替代 A2/A3 实机 | `$DFX_ROOT/test_binary.log`；`$DFX_ROOT/ctest.log` |
+| smoke | **20/20 bit-exact**（saved 10/10、recompute 10/10） | `$REGRESSION_ROOT/smoke/compare.json` |
+| public V2 ATK accuracy | **36/36 PASS**，12 逻辑 case × 3 seeds | `$REGRESSION_ROOT/public/accuracy_case_detail.json` |
+| saved/optimized 扩展精度 | **63/63 PASS**；显式 optimized，排除 9 个 legacy/拒绝路径看护 id | `$REGRESSION_ROOT/saved_opt63/case_detail.json`；`$REGRESSION_ROOT/saved_opt63/atk_run.log` |
+| accuracy_dc | **12/12 × 50 PASS** | `$REGRESSION_ROOT/public/determinism_check.log` |
+| CPU reference | **4/4** 自校验通过 | `$RESULT_ROOT/cpu_reference.log` |
+| CPU recurrent | **6/6** 输出通过既定容差 | `$REGRESSION_ROOT/numeric/accuracy.log` |
+| 大形状位比较 | **15/15** 张量逐位一致 | `$REGRESSION_ROOT/numeric/compare.log` |
+| 数值矩阵 | 16 case × 15 张量，**240/240 bit-exact** | `$REGRESSION_ROOT/numeric/matrix_compare.log` |
+| saved/recompute rstd layout | 8 case、**80/80** 张量逐位一致 | `$REGRESSION_ROOT/layout_norm_compare.json` |
+| 独立默认布局 direct | 20 case、**140/140** 张量逐位一致 | `$REGRESSION_ROOT/direct_matrix_compare.json` |
 
 确定性结论来自真实报告的复核，未以脚本退出前的“未找到报告（跳过）”或 `atk task success`
 代替报告核验。合法 saved 集合排除 `{42,43,44,51,52,53,57,58,59}`，不将整包 72 例冒充 V2 正例。
 旧 gatekeeper 默认值为 legacy，因此 saved 扩展验收必须显式设置 `KDA_GK_IMPL=optimized`，不能只读
 63/63 数字推断路由。
 
-### 性能模型 case
+PR967 最终白盒无新增确认问题，issue corpus 为 191 completed issues；静态报告的
+209 errors / 2 warnings 为存量，不宣称静态检查全绿。证据为
+`$REVIEW_ROOT/pr913_final_diff.json`、`issue_sync_check.log` 和 `issue_coverage_final.log`。
+
+### 最终组合 kernel 性能
 
 `atk_chunk_kda_bwd_perf.json` 保留 B1/H96/T8192/K=V=128/C64，BF16 token、FP32 raw gate、
-safe gate、dense、norm off，saved/recompute 各一条。ATK 的前向缓存构造不计入性能。
-同输入、同口径的 `msprof op_summary.Task Duration(us)` 原始结果在
-`$RESULT_ROOT/perf/perf_saved.json` 和 `$RESULT_ROOT/perf/perf_recompute.json`；saved 为 6 轮、
-recompute 为 3 轮。bwd kernel sum 包含 Prepare/Dhu/Finalize/附属转换，recompute 另含 Recompute/FwdH。
+safe gate、dense，saved/recompute 各一条。最终实测为 core/norm off 且 beta sigmoid=False；
+两条路径均做六轮交替 A/B，每次 profile 取 tail-3 中位数，再取六轮中位数与配对差中位数。
+证据为 `$RESULT_ROOT/final_perf/kernel/perf_{saved,recompute}.json`，不是独立 ATK `performance_device`。
 
-| 路径 | Finalize 基线中位数 (µs) | Finalize 候选中位数 (µs) | Finalize 配对差中位数 (µs) | Finalize 比值变化 | bwd 配对差中位数 (µs) |
+| 路径 | Finalize 基线→候选 (µs) | 中位数变化 | Finalize 配对差 (µs) | bwd 基线→候选 (µs) | bwd 配对差 (µs) | Finalize MFU |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| saved | 5354.0265→5085.2025 | -5.020969% | -271.9465 | 8031.492→7373.545 | -657.8565 | 13.9096673%→14.6449875% |
+| recompute | 5350.994→5076.1455 | -5.136401% | -276.3540 | 9951.6945→9287.9475 | -678.0500 | 13.9175501%→14.6711175% |
+
+V2 外层两个 Transpose 在 saved 为 **407.706→0 µs**、recompute 为 **407.5415→0 µs**。
+它们属于 Finalize 之后的布局恢复，不是 Finalize 单 kernel 内部收益；bwd kernel sum 也不是完整 e2e。
+“配对差”是逐轮 `candidate-baseline` 的中位数，与两侧中位数的比值变化分开统计。
+
+独立 O1-only 数据不混入上述组合结果。其候选为 `fe6c9360` 加与最终版等价的五组 vector 修改，
+仅 4 个 Finalize.o 和 4 个 json 变化，其余 1319 个安装文件不变；证据根为 `$O1_ROOT`，对应
+`runs/pr_final_20261029/pr913/o1_interleaved/acceptance`。
+
+| 路径 | Finalize 基线→候选 (µs) | 中位数变化 / 配对差 | bwd 基线→候选 (µs) | bwd 配对差 (µs) | Finalize MFU |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| saved | 5357.4075 | 5110.0340 | -247.2200 | -4.617411% | -656.0965 |
-| recompute | 5359.6560 | 5106.4650 | -253.1910 | -4.724016% | -665.7660 |
+| saved | 5354.677→5181.794 | -3.228635% / -171.3715 | 8032.8695→7860.708 | -175.0515 | 13.9079775%→14.3719969% |
+| recompute | 5353.75→5184.3825 | -3.163530% / -171.4870 | 9967.9405→9818.8800 | -145.2205 | 13.9103857%→14.3648211% |
 
-“配对差中位数”是逐轮 `candidate - baseline` 差值的中位数；“比值变化”直接取 JSON 的
-`kernel_delta_percent`，即两侧 Finalize 中位数的比值减 1。二者不是同一统计量，不能用配对差中位数
-除以基线中位数替代。bwd 一栏同样只报告 JSON 中的逐轮配对差中位数，不额外推算比值。
+O1-only saved/recompute smoke 均 10/10 bit-exact，allocated/reserved 均 0/0 MiB；
+性能证据为 `$O1_ROOT/perf/perf_{saved,recompute}.json`，显存证据为
+`$O1_ROOT/memory_current/summary.json`。O2/F1 历史增量继续保留 `$INCREMENTAL_ROOT` 口径。
 
-### E2E 结果
+### core/norm off 与 norm on e2e
 
-`$RESULT_ROOT/e2e/summary.json` 的 saved/recompute 各有 3 轮、每轮 20 次采样。下表转录其
-`summary` 的五类指标；`event`/`wall` 的基线→候选为两侧中位数（ms），随后分别是逐轮配对差中位数
-（ms）和 JSON 的中位数比值变化，三者不混用。
+两种语义均为 3 轮紧配对，每轮预热 3 次、采集 20 个公开 forward+backward event；
+core/norm off 与 norm on 都保持 beta sigmoid=False，不包含额外 beta 链或模型布局恢复。
+event 的基线→候选为两侧中位数，配对差由逐轮 `candidate-baseline` 计算；MFU 只针对 Finalize。
 
-| 路径 | 指标 | event 基线→候选 (ms) | event 配对差中位数 (ms) | event 比值变化 | wall 基线→候选 (ms) | wall 配对差中位数 (ms) | wall 比值变化 |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| saved | fwd | 3.474484→3.641146 | +0.154445 | +4.796729% | 3.886780→3.997450 | +0.093235 | +2.847344% |
-| saved | bwd | 8.450121→7.868250 | -0.562238 | -6.885957% | 9.035080→8.210520 | -0.824560 | -9.126205% |
-| saved | bwd_with_beta_chain | 8.453660→7.881665 | -0.530789 | -6.766246% | 9.150370→8.275275 | -0.790330 | -9.563492% |
-| saved | bwd_full | 8.873215→8.312673 | -0.593772 | -6.317243% | 9.600885→8.720840 | -0.709985 | -9.166292% |
-| saved | e2e | 12.077152→11.538548 | -0.533109 | -4.459696% | 12.572150→11.904250 | -0.732710 | -5.312536% |
-| recompute | fwd | 3.496078→3.491073 | -0.005974 | -0.143133% | 3.998615→3.922730 | -0.085430 | -1.897782% |
-| recompute | bwd | 10.084047→9.358140 | -0.697776 | -7.198562% | 11.011455→9.890170 | -1.121285 | -10.182895% |
-| recompute | bwd_with_beta_chain | 10.227564→9.463698 | -0.763866 | -7.468699% | 10.918485→9.922955 | -0.995530 | -9.117838% |
-| recompute | bwd_full | 10.526616→9.912820 | -0.684624 | -5.830893% | 11.190110→10.378255 | -0.800120 | -7.255113% |
-| recompute | e2e | 13.834198→13.188031 | -0.634184 | -4.670793% | 14.452500→13.716265 | -0.734200 | -5.094170% |
+| 语义 | 路径 | event 基线→候选 (ms) | 中位数变化 | 配对差中位 (ms) | Finalize MFU |
+| --- | --- | ---: | ---: | ---: | ---: |
+| core/norm off | saved | 11.4248438→10.7700992 | -5.730885% | -0.6547446 | 13.8972950%→14.6605773% |
+| core/norm off | recompute | 13.1426930→12.4079571 | -5.590452% | -0.6562715 | 13.9007528%→14.6602974% |
+| norm on | saved | 11.6627965→11.0080752 | -5.613759% | -0.6632800 | 13.5028989%→14.2244650% |
+| norm on | recompute | 13.4452333→12.7647848 | -5.060890% | -0.6804485 | 13.4886480%→14.2219496% |
+
+norm on 仅开启 Q/K L2Norm；对应 Finalize 为 saved **5515.314→5235.538 µs**、
+recompute **5521.141→5236.464 µs**。证据分别为
+`$RESULT_ROOT/final_e2e_memory/e2e_normoff/summary_{saved,recompute}.json` 和
+`$RESULT_ROOT/final_normon_memory/e2e_normon/summary_{saved,recompute}.json`。
 
 ### 显存
 
 生产形状下先构造并保留对应前向缓存，三次反向预热后清空缓存、重置峰值，再测一次公开反向。
-四份原始结果为 `$RESULT_ROOT/memory/base_saved.json`、`$RESULT_ROOT/memory/pr_saved.json`、
-`$RESULT_ROOT/memory/base_recompute.json` 和 `$RESULT_ROOT/memory/pr_recompute.json`。
-dg 在两侧均为 `[1,96,8192,128]` FP32，输出布局没有变化。
+dg 在两侧均为 `[1,96,8192,128]` FP32，输出布局没有变化；证据为
+`$RESULT_ROOT/final_normon_memory/memory_summary.json`。
 
 | 路径 | 基线 allocated / reserved 峰值 | 候选 allocated / reserved 峰值 | allocated / reserved 均下降 |
 | --- | ---: | ---: | ---: |
 | saved | 5997.473 / 6018.0 MiB | 5669.473 / 5690.0 MiB | **328 / 328 MiB** |
 | recompute | 5669.476 / 5690.0 MiB | 5477.476 / 5498.0 MiB | **192 / 192 MiB** |
 
+最终显存下降归因于 O3 删除 token-major 临时量与布局恢复；O1-only 为 0/0 MiB，
+O2/F1 历史增量保持对应实现口径。
+
 ## 执行
 
-以下命令从仓库根目录执行。`ENV_DIR` 为安装环境根目录，`ATK_ROOT` 为 ATK 根目录，
-`RESULT_ROOT` 为本次结果目录；三者按实际环境设置，不在示例中写本机临时路径。
-`CANN_SET_ENV` 默认使用标准 CANN 路径，也可覆盖。
+以下命令从仓库根目录执行，输出到独立复现目录，不覆盖归档证据。`ENV_DIR` 为隔离安装环境，
+`ATK_ROOT` 为 ATK 根目录，`RESULT_ROOT` 为上述最终结果目录；`CANN_SET_ENV` 可覆盖。
 
 ```bash
 : "${ENV_DIR:?set ENV_DIR to the installed fla_npu environment}"
 : "${ATK_ROOT:?set ATK_ROOT to the ATK root}"
 : "${RESULT_ROOT:?set RESULT_ROOT to the pr913 result directory}"
+: "${LEGACY_ROOT:?set LEGACY_ROOT to the legacy saved ATK operator directory}"
+REPRO_ROOT="${REPRO_ROOT:-$RESULT_ROOT/reproduce}"
 CANN_SET_ENV="${CANN_SET_ENV:-/usr/local/Ascend/cann-9.1.0/set_env.sh}"
 source "$CANN_SET_ENV"
 export PATH="$ATK_ROOT/bin:$PATH"
@@ -163,20 +189,38 @@ export ASCEND_CUSTOM_OPP_PATH="$ENV_DIR/fla_npu/opp/vendors/fla_npu_transformer:
 export FLA_NPU_DISABLE_PTH=1
 export ASCEND_RT_VISIBLE_DEVICES="${ASCEND_RT_VISIBLE_DEVICES:-0}"
 NPU_DEVICE_ID="${NPU_DEVICE_ID:-0}"
-export ATK_OUTPUT_ROOT="$RESULT_ROOT/atk/public_gm"
 
 GEN_CASES_DTYPE_NUMBERS=36 bash tests/atk/run_test_cpu.sh -op=chunk_kda_bwd -scope=gen_cases -soc=ascend950
-# 按阶段顺序执行，避免 ATK 端口复用；mss 结果必须另看设备日志，不能只看退出码。
+export ATK_OUTPUT_ROOT="$REPRO_ROOT/public_accuracy"
 bash tests/atk/run_test_cpu.sh -op=chunk_kda_bwd -npu_device_id="$NPU_DEVICE_ID" -scope=accuracy -soc=ascend950
-bash tests/atk/run_test_cpu.sh -op=chunk_kda_bwd -npu_device_id="$NPU_DEVICE_ID" -scope=performance -soc=ascend950
+export ATK_OUTPUT_ROOT="$REPRO_ROOT/public_determinism"
 bash tests/atk/run_test_cpu.sh -op=chunk_kda_bwd -npu_device_id="$NPU_DEVICE_ID" -scope=determinism -soc=ascend950
+export KDA_GK_IMPL=optimized
+ids=()
+for ((i=0; i<72; i++)); do
+  case "$i" in 42|43|44|51|52|53|57|58|59) ;; *) ids+=("$i") ;; esac
+done
+mkdir -p "$REPRO_ROOT/saved_opt63/accuracy"
+python3 -m atk node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
+  --output_path "$REPRO_ROOT/saved_opt63/accuracy" \
+  node --name cpu_golden --backend cpu --output_path "$REPRO_ROOT/saved_opt63/accuracy" \
+  task -c "$LEGACY_ROOT/atk_chunk_kda_bwd.json" --task accuracy --bm_device cpu \
+  -p "$LEGACY_ROOT/executor_chunk_kda_bwd.py" -sp -mt 1 -to 1800 \
+  -wl "[$(IFS=,; echo "${ids[*]}")]"
+unset KDA_GK_IMPL
 ```
 
-正式 accuracy 使用默认 GM-on；saved/optimized 扩展精度另需显式设置 `KDA_GK_IMPL=optimized`。
-运行生成的 `atk_output/`、`result/`、日志和 `__pycache__` 均不提交。
+正式 accuracy 使用默认 GM-on；saved/optimized 扩展精度必须显式 `KDA_GK_IMPL=optimized`。
+host tiling 从零构建和运行见 `tests/operators/chunk_kda_bwd_finalize/README.md`；已有构建目录可执行
+`ctest --test-dir "$DFX_ROOT" --output-on-failure` 和
+`"$DFX_ROOT/chunk_kda_bwd_finalize_tiling_test"`。运行生成的 `atk_output/`、`result/`、日志和
+`__pycache__` 均不提交。
 
 ## 未闭环项
 
-- **整链 msSanitizer 尚未闭环**，不能将当前候选标为整链 memcheck/racecheck 通过或正式全量验收完成。
-  上述普通执行、bit-exact 和显存峰值结果不能替代完整 sanitizer 证据。
-- A2/A3 仅完成交叉编译，**未跑 A2/A3 实机**；**整体 ST 未跑**。
+- 完整 Finalize 及 saved+recompute 整链 msSanitizer **未运行**；普通执行、bit-exact、确定性和
+  显存结果不能替代 memcheck/racecheck。
+- A2/A3 实机、整体 ST、当前 head 7 项 NPU CI **未运行**；交叉编译和 host 模拟不等于设备通过。
+- 独立 ATK `performance_device` **未运行**；本文性能来自最终紧配对 msprof/e2e 证据。
+- 最终硬件双发射**未证明**；没有 IR/反汇编，只声明源码为编译器提供调度机会。
+- optional attr、内部 L0 重载、TilingData 与 raw tiling `sizeof+8` 仍需 ABI owner 复核。
