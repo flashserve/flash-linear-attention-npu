@@ -14,6 +14,7 @@
 #include <vector>
 #include <algorithm>
 
+#include "aclnn_kernels/cast.h"
 #include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/transpose.h"
 #include "acl/acl.h"
@@ -338,6 +339,15 @@ static aclnnStatus ParamsDataContiguous(ChunkFwdHParams &params, aclOpExecutor *
         if (status != ACLNN_SUCCESS) {
             return status;
         }
+        // bf16 gate cast 翻译（放宽轮④，先例 gated 本尊整链对 beta/g 的同款处理）：
+        // gated 谓词要求 fp32 gate——bf16 g 在此 cast 到 fp32（无损），kernel 侧
+        // 恒见 float gate；数值与老路径"先 cast 再算"完全等价（gated 原生 bf16
+        // gate 会在 bf16 域算 decay，精度低，故必须选入口 cast 而非原生放行）。
+        if (params.gOptional->GetDataType() == DataType::DT_BF16) {
+            const aclTensor *gFp32 = l0op::Cast(params.gOptional, DataType::DT_FLOAT, executorPtr);
+            CHECK_RET(gFp32 != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            params.gOptional = gFp32;
+        }
     }
     if (params.gkOptional != nullptr) {
         status = DataContiguous(params.gkOptional, executorPtr);
@@ -468,19 +478,20 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
     if (ret != ACLNN_SUCCESS) {
         return ret;
     }
-    // stateVFirst=true（第七轮方案③，照抄 gated）：initial 转回 [K,V] 进 kernel；
-    // h/final_state 走 [K,V] 中转缓冲，kernel 原生产出后 TransposeLastTwo 落 [V,K]。
-    // gated 复用路径的 kernel 恒 [K,V] 产出（谓词对 vfirst=1 放开后走 vfirst=0
-    // 同款 kernel 形态），老路径 kernel 的 STATE_V_FIRST 模板同样产出 [K,V] 逻辑
-    // 内容——两条 kernel 路径在 [K,V] 语义上统一，aclnn 层适配输出契约。
+    // stateVFirst=true 的 aclnn 层翻译（第七轮方案③，照抄 gated）——varlen 感知
+    // （2026-10-26 分流路由收口轮）：dense 维持翻译（转 [K,V] 进 kernel + 传
+    // false 进 gated，含税端到端优于老路径）；varlen 不翻译（vfirst 原样直达，
+    // kernel 谓词送老路径 STATE_V_FIRST 模板——A/B 实测裁定：老路径 ~5939 优于
+    // gated 含税 ~7292，h 1GB 级 Transpose 税吞掉 gated 全部优势）。
+    const bool translateVFirst = params.stateVFirst && params.cuSeqlensOptional == nullptr;
     const aclTensor *initialStateCompute = params.initialStateOptional;
     const aclTensor *hCompute = params.hOut;
     const aclTensor *finalStateCompute = params.finalStateOut;
-    if (params.stateVFirst && initialStateCompute != nullptr) {
+    if (translateVFirst && initialStateCompute != nullptr) {
         initialStateCompute = TransposeLastTwo(initialStateCompute, executorPtr);
         CHECK_RET(initialStateCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
     }
-    if (params.stateVFirst) {
+    if (translateVFirst) {
         hCompute = executorPtr->AllocTensor(
             SwapLastTwo(params.hOut->GetViewShape()), params.hOut->GetDataType(), Format::FORMAT_ND);
         CHECK_RET(hCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
@@ -494,14 +505,14 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
     auto result = l0op::ChunkFwdH(
         params.k, params.w, params.u, params.gOptional, params.gkOptional, initialStateCompute,
         params.cuSeqlensOptional, params.chunkIndicesOptional, params.outputFinalState, params.chunkSize,
-        params.saveNewValue, params.useExp2, false,
+        params.saveNewValue, params.useExp2, params.stateVFirst && !translateVFirst,
         hCompute, params.vNewOut, finalStateCompute, executorPtr);
     CHECK_RET(result[0] != nullptr && result[1] != nullptr &&
                   (!outputFinalState || result[2] != nullptr),
               ACLNN_ERR_INNER_NULLPTR);
 
     const aclTensor *hResult = result[0];
-    if (params.stateVFirst) {
+    if (translateVFirst) {
         hResult = TransposeLastTwo(hResult, executorPtr);
         CHECK_RET(hResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
     }
@@ -511,7 +522,7 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
     CHECK_RET(viewCopyResult1 != nullptr, ACLNN_ERR_INNER_NULLPTR);
     if (outputFinalState && params.finalStateOut != nullptr) {
         const aclTensor *finalStateResult = result[2];
-        if (params.stateVFirst) {
+        if (translateVFirst) {
             finalStateResult = TransposeLastTwo(finalStateResult, executorPtr);
             CHECK_RET(finalStateResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
         }

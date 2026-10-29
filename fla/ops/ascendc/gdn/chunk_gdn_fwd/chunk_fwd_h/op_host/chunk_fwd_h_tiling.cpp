@@ -155,9 +155,15 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     // gated 复用路径 dtype（gated tiling 约定：1=bf16, 2=fp32）
     tilingCtx.gatedGateDtype = gateDtypeToken == CHUNK_FWD_H_TPL_FP32 ? 2 : 1;
     tilingCtx.gatedStateDtype = stateDtypeToken == CHUNK_FWD_H_TPL_FP32 ? 2 : 1;
-    // gated 复用 eligible（与 kernel 谓词 FwdHGatedReusable 同条件镜像）
-    tilingCtx.gatedEligible = useG && useExp2 && storeFinalState &&
-        stateDtypeToken == CHUNK_FWD_H_TPL_FP32 &&
+    // gated 复用 eligible（与 kernel 谓词 FwdHGatedReusable 同条件镜像）：
+    // vfirst 条件 2026-10-26 收口轮补回（fe54077c 曾删）——gated 恒 [K,V]
+    // 产出，仅 vfirst=0 语义匹配；vfirst=1 由老路径 STATE_V_FIRST 模板处理
+    // （aclnn 层 varlen 感知路由：dense 翻译后进 gated / varlen 不翻译走老路径）。
+    // storeFinal 两值均放行（放宽轮①）：gated scheduler 运行时读
+    // storeFinalState 跳末段，与老路径同语义；性能上界实测 -26%/-47%。
+    // state fp32/bf16 均放行（放宽轮②）：gated update epilogue 原生支持
+    // bf16 final（CAST_RINT 量化同老路径），StateT 在 kernel 分流点选型。
+    tilingCtx.gatedEligible = useG && useExp2 && !stateVFirst &&
         gateDtypeToken == CHUNK_FWD_H_TPL_FP32;
     tilingCtx.libApiWorkSpaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
 
