@@ -8,22 +8,24 @@ class ChunkKdaBwdFinalize : public OpDef {
 public:
     explicit ChunkKdaBwdFinalize(const char *name) : OpDef(name)
     {
-        // raw_g and beta vary independently; A_log/dt_bias and their gradients are FP32.
+        // Four legacy dtype rows plus two fused-sigmoid rows: FP32 effective beta
+        // may write BF16 db when the total API receives BF16 original logits.
         constexpr auto gateParam = REQUIRED;
         const std::initializer_list<ge::DataType> bf16 = {
-            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16};
+            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16};
         const std::initializer_list<ge::DataType> fp32 = {
-            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
         const std::initializer_list<ge::DataType> int64 = {
-            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64};
+            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64};
         const std::initializer_list<ge::DataType> rawTypes = {
-            ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT};
+            ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT};
         const std::initializer_list<ge::DataType> betaTypes = {
-            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT};
+            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
         const std::initializer_list<ge::Format> nd = {
-            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND};
+            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND};
         const auto gradTypes = bf16;
-        const auto dbTypes = betaTypes;
+        const std::initializer_list<ge::DataType> dbTypes = {
+            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_BF16, ge::DT_BF16};
 
 #define ADD_INPUT(NAME, PARAM, TYPES) \
         this->Input(NAME).ParamType(PARAM).DataType(TYPES).Format(nd).UnknownShapeFormat(nd).AutoContiguous()
@@ -71,6 +73,7 @@ public:
         this->Attr("use_beta_sigmoid_in_kernel").AttrType(OPTIONAL).Bool(false);
         this->Attr("allow_neg_eigval").AttrType(OPTIONAL).Bool(false);
         this->Attr("output_layout").AttrType(OPTIONAL).String("BNSD");
+        this->Attr("model_layout").AttrType(OPTIONAL).String("");
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)

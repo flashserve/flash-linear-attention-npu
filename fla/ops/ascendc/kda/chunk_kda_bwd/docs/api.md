@@ -1,36 +1,26 @@
-# KDA 反向优化接口
+# KDA 反向接口
 
-## A2/A3 总接口输出约定
+## A2/A3 总接口：单 layout 与原始 beta / beta_eff
 
-A2/A3 的所有 implementation 模式统一使用原总 ACLNN 接口编排小算子。
-本次不新增接口或参数，返回顺序仍为 `(dq, dk, dv, db, dg, dh0, dA, dbias)`。
+本节为当前 A2/A3 实验接口契约；替代旧 input_layout/output_layout 以及融合时 beta 参数承载缓存的约定。
+Python `npu_chunk_kda_bwd` 新增 keyword-only `beta_eff=None`。返回顺序仍为
+`(dq, dk, dv, db, dg, dh0, dA, dbias)`。ACLNN 在 kRstdOptional 后、layout 前新增 betaEffOptional；新版绑定和 OPP 必须配套更新。
 
-| 输出 | dtype | 布局 |
-| --- | --- | --- |
-| dq/dk/dv | 分别跟随 q/k/v，当前仅支持 BF16 输入 | output_layout：BNSD/BSND/NTD/TND |
-| db/dg | 分别跟随 beta/raw_g 的输入 dtype | 跟随 output_layout；db 省略末尾 D 维 |
-| dA | FP32 | 不受 output_layout 控制 |
-| dh0/dbias | dh0 为 None；dbias 为 FP32，未传时为 None | 不受 output_layout 控制 |
+- layout=BSND/BNSD/TND/NTD 只控制 qkv 输入及 dq/dk/dv 输出；传成对 rstd 时 q/k 为固定 head-major 的 q_hat/k_hat。
+- do/raw_g/beta 和 dg/db 固定 token-major；beta 的 scalar shape 为 [B,T,H] 或 [T,H]，支持 BF16/FP32。
+- sigmoid 关闭：beta 是前向实际使用的有效 beta，beta_eff 必须为空。
+- sigmoid 开启：beta 是前向接口的原始 logits，beta_eff 必须为前向保存的 FP32 head-major [B,H,T] 或 [H,T]。
+- beta_eff 必须连续、与 q 同 device、rank/shape 匹配；仅传缓存而缺少原始 beta、缺失缓存、关闭 sigmoid 却传缓存均报错。
+- db 的 dtype 始终跟随原始 beta，shape 始终为 token-major；融合时 db 是对原始 logits 的梯度。
+- dg 跟随 raw_g dtype；dq/dk/dv 跟随 BF16 q/k/v；A_log/dt_bias 及梯度固定 FP32；dh0=None。
+- 保存和重计算路径选择同一份有效 beta：融合时使用 beta_eff，关闭时使用 beta 的一次 head-major 转置。融合时不读取或转置原始 beta 的数值。
+- 普通 sigmoid 导数因子为 beta_eff*(1-beta_eff)；allow_neg_eigval=True 时为 beta_eff*(1-beta_eff/2)，仅在融合模式允许。
+- 缓存保持 head-major；四维变长支持 B=1。A5 尚不支持此实验总接口，保持明确拒绝，不扩大平台支持声明。
 
-直接调用 ACLNN 时，dqOut/dkOut 必须与 q/k 类型相同，不能再传 FP32 输出。
-dbOut/dgOut 必须分别匹配 beta/raw_g 的 dtype，dAOut/dbias 固定 FP32；dbOut/dgOut 跟随 output_layout。
-无论是否重计算、是否融合 norm/sigmoid，均使用以上输出规则。A_log/dt_bias 固定 FP32，其余输入限制不变。
+独立 Finalize Python/ACLNN 接口语义保持不变，融合时仍传 FP32 有效 beta、默认返回 FP32 db。
+总接口内部的 Finalize model_layout 路径允许 FP32 有效 beta 直接写出 BF16 db；不在算子外增加 Cast。
 
-总接口保留原有输出布局约定，旧调用方的 head-major→token-major 转置不变。
-dq/dk 从 FP32 改为跟随输入 dtype，调用方需更新相关 dtype 断言。
-签名和返回数量不变，新版绑定与 op-api 库需配套部署。
-A5 原版和 V2 同样采用 db/dg 跟随输入 dtype、dA/dbias 固定 FP32 的规则；布局和路由不变。
-这是明确的非兼容 dtype 变更，调用方需更新原先固定 FP32 的断言和输出分配。
-下文优化路径说明针对 A5。
-
-Finalize 小接口的 output_layout 统一控制 dq/dk/dv/db/dg，由 kernel 直接按目标
-布局写回。默认 dense 为 BNSD、packed 为 NTD。直接使用 #962 Finalize 的调用方
-不能再假设 db/dg 恒为 token-major，应按所选 output_layout 处理这五个输出。
-总接口无需在 Finalize 后转置；A2/A3 和 A5 V2 直接按目标 dtype 写入返回张量。
-数学计算、参数梯度的分块累加和最终归约仍为 FP32，仅最终写回转为输入 dtype。
-A5 legacy 保留 FP32 kernel ABI，由 L2 转换输出，仍会有独立 Cast。
-sigmoid 模式下 beta 指接口实际接收的 FP32 beta_eff，db 跟随该张量；
-接口不会推断模型中生成 beta_eff 之前的投影 dtype。
+以下历史优化路径说明针对 A5，并不覆盖上述实验 A2/A3 接口。
 
 ## 调用方式
 

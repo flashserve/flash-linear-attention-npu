@@ -79,3 +79,15 @@ Set/Wait 将消费完成传回 FIX，再允许 BeginFusedMmadPhase 重发 FIX_M�
 
 Finalize 的输入输出及源码入口见
 [算子说明](../../chunk_kda_bwd_finalize/README.md)。
+
+
+## 原始 beta 与 beta_eff 分离（A2/A3）
+
+接口以 [api.md](api.md) 为准。本次数学公式、FP32 累加、分核、tile、workspace 和同步不变。
+总接口从 beta descriptor 分配 db，从 beta_eff（融合）或转换后的 beta（不融合）选择计算输入。
+Prepare/Dhu 不新增 beta 输入；Recompute/Finalize 共享所选有效 beta。
+Finalize 注册额外两种组合：raw_g 为 BF16/FP32、有效 beta FP32、db BF16；原四种组合保留。
+仅融合且 model_layout 路径可解耦有效 beta 和 db dtype，独立小接口的校验保持原约定。
+A2/A3 vector 写回改用输出 DTYPE_D_BETA，使用已有每行 32 字节对齐的 UB 暂存和 DataCopyPad；输入仍用 BetaT。
+梯度先在 FP32 中完成 sigmoid 导数，再在写回时一次 CAST_RINT 至 BF16，不新增 GM 临时张量或独立 Cast。
+CPU 公式不变；新增 BF16 db 的预期为旧 FP32 梯度按模型 beta dtype 舍入。验证需覆盖原始 beta 两种 dtype、融合开关/scale=2、保存/重计算、四种 layout、两套 Python 后端、独立 Finalize 回归与非法缓存。

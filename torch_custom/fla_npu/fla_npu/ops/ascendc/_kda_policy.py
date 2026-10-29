@@ -179,11 +179,7 @@ def _validate_kda_recompute_layout(input_layout):
 
 
 def _validate_kda_bwd_a5_options(args):
-    packed = args["cu_seqlens"] is not None
-    allowed = ("BNSD", "NTD") if packed else ("BNSD",)
-    if (args["input_layout"] not in allowed or args["output_layout"] not in allowed
-            or args["use_beta_sigmoid_in_kernel"] or args["allow_neg_eigval"]):
-        raise ValueError("A5 backward keeps its existing layout and beta capabilities")
+    raise NotImplementedError("Single-layout backward is currently implemented on A2/A3 only")
 
 
 def _prepare_kda_bwd_arch22(args):
@@ -218,28 +214,26 @@ def _prepare_kda_bwd_arch22(args):
     if a["allow_neg_eigval"] and not a["use_beta_sigmoid_in_kernel"]:
         raise ValueError("allow_neg_eigval requires use_beta_sigmoid_in_kernel")
 
-    packed = a["cu_seqlens"] is not None
-    valid = ("NTD", "TND") if packed else ("BNSD", "BSND")
-    for name in ("input_layout", "output_layout"):
-        layout = a[name]
-        if packed:
-            layout = {"BNSD": "NTD", "BSND": "TND"}.get(layout, layout)
-        if layout not in valid:
-            raise ValueError(f"{name} does not match dense/packed tensor rank")
-        a[name] = layout
-    if not a["disable_recompute"]:
-        _validate_kda_recompute_layout(a["input_layout"])
-
+    variable = a["cu_seqlens"] is not None
+    layout = a["layout"]
+    if layout not in ("BNSD", "BSND", "NTD", "TND"):
+        raise ValueError("layout must be BNSD, BSND, NTD or TND")
+    packed = layout in ("NTD", "TND")
     shape = tuple(a["v"].shape)
     if len(shape) != (3 if packed else 4):
-        raise ValueError("dense Token rank must be 4 and packed Token rank must be 3")
-    tm = a["input_layout"] in ("BSND", "TND")
+        raise ValueError("layout does not match Token rank")
+    if packed and not variable:
+        raise ValueError("3D calls require cu_seqlens")
+    if variable and not packed and shape[0] != 1:
+        raise ValueError("4D varlen calls require B=1")
+    tm = layout in ("BSND", "TND")
     b = 1 if packed else shape[0]
     first = 0 if packed else 1
     h, t = (shape[first + 1], shape[first]) if tm else shape[first:first + 2]
     if min(b, h, t) <= 0 or shape[-1] != 128:
         raise ValueError("A2/A3 backward requires positive B/H/T and K=V=128")
     head = (h, t, 128) if packed else (b, h, t, 128)
+    gate_token = (t, h, 128) if packed else (b, t, h, 128)
     scalar = head[:-1]
     matrix = (*scalar, 64)
     cu, indices, nc = _canonical_kda_bwd_metadata(a["cu_seqlens"], a["chunk_indices"], t)
@@ -261,9 +255,13 @@ def _prepare_kda_bwd_arch22(args):
 
     for name in ("q", "k"):
         check(name, head if a["q_rstd"] is not None else shape, bf16)
-    for name in ("v", "d_o"):
-        check(name, shape, bf16)
-    check("beta", scalar, mixed)
+    check("v", shape, bf16)
+    check("d_o", gate_token, bf16)
+    check("beta", gate_token[:-1], mixed)
+    if a["use_beta_sigmoid_in_kernel"]:
+        check("beta_eff", scalar, fp32)
+    elif a.get("beta_eff") is not None:
+        raise ValueError("beta_eff requires use_beta_sigmoid_in_kernel=True")
     for name in ("Aqk", "Akk"):
         check(name, matrix, bf16)
     for name in ("q_rstd", "k_rstd"):
@@ -275,7 +273,7 @@ def _prepare_kda_bwd_arch22(args):
     elif any(a[name] is not None for name in saved):
         raise ValueError("recompute mode requires gk/w/qg/kg/v_new/h to be None")
     if a["use_gate_in_kernel"]:
-        check("raw_g", shape, mixed)
+        check("raw_g", gate_token, mixed)
         check("A_log", (h,), fp32)
     elif any(a[name] is not None for name in ("raw_g", "A_log", "dt_bias")):
         raise ValueError("raw_g/A_log/dt_bias require use_gate_in_kernel=True")
@@ -285,10 +283,7 @@ def _prepare_kda_bwd_arch22(args):
                 or not bias.is_contiguous() or bias.device != a["q"].device):
             raise ValueError("dt_bias must be contiguous FP32 with H*K elements on q.device")
         a["dt_bias"] = bias.view(h, 128)
-    out_tm = a["output_layout"] in ("BSND", "TND")
-    gate_token = (t, h, 128) if packed else (b, t, h, 128)
-    out_token = gate_token if out_tm else head
     a.update(cu_seqlens=cu, chunk_indices=indices,
-             _output_token_shape=out_token, _output_gate_shape=out_token,
-             _output_beta_shape=out_token[:-1])
+             _output_token_shape=shape, _output_gate_shape=gate_token,
+             _output_beta_shape=gate_token[:-1])
     return a

@@ -142,13 +142,16 @@ private:
                                      src[head * headStride + row * stride], p);
         }
     }
-    template <uint32_t WIDTH>
+    template <uint32_t WIDTH, bool IS_DO = false>
     __aicore__ inline void LoadToken(AscendC::LocalTensor<bfloat16_t> dst,
         AscendC::GlobalTensor<bfloat16_t> src, const ChunkInfo &chunk, int64_t head,
         uint32_t rows, uint32_t cols, uint32_t count)
     {
-        const int64_t off = TokenInputOffset<INPUT_LAYOUT>(*t_, chunk, head, WIDTH);
-        const int64_t stride = TokenInputRowStride<INPUT_LAYOUT>(*t_, WIDTH);
+        const bool modelDo = IS_DO && t_->doTokenMajor;
+        const int64_t batch = chunk.batchIndex;
+        const int64_t off = modelDo ? ((batch * t_->T + chunk.tokenStart) * t_->NV + head) * WIDTH :
+            TokenInputOffset<INPUT_LAYOUT>(*t_, chunk, head, WIDTH);
+        const int64_t stride = modelDo ? t_->NV * WIDTH : TokenInputRowStride<INPUT_LAYOUT>(*t_, WIDTH);
         if constexpr (HEAD_CONTIGUOUS) {
             if (cols == WIDTH) {
                 // No padding or extra token rows are read. Tail Aqk keeps
@@ -158,7 +161,7 @@ private:
             }
         }
         const int64_t headStride = count == 2
-            ? TokenInputOffset<INPUT_LAYOUT>(*t_, chunk, head + 1, WIDTH) - off : 0;
+            ? (modelDo ? WIDTH : TokenInputOffset<INPUT_LAYOUT>(*t_, chunk, head + 1, WIDTH) - off) : 0;
         constexpr uint32_t dstStride = HEAD_CONTIGUOUS ? 64 * WIDTH
             : HEAD_OWNER_BYTES / sizeof(bfloat16_t);
         Load(dst, src[off], rows, cols, stride, 64, count, headStride, dstStride);
@@ -170,7 +173,7 @@ private:
             for (uint32_t i = first; i < first + count; ++i)
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(ownerFree_[i]);
             const int64_t head = begin + first;
-            LoadToken<128>(Owner(first, 0), dO_, chunk, head, rows, 128, count);
+            LoadToken<128, true>(Owner(first, 0), dO_, chunk, head, rows, 128, count);
             LoadToken<128>(Owner(first, 16 * 1024), vNew_, chunk, head, rows, 128, count);
             AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(pairReady_[pair * 3]);
             Load(Owner(first, 32 * 1024), h_[StateOffset(*t_, chunk, head)],

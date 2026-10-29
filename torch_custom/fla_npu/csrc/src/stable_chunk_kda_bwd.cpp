@@ -122,8 +122,8 @@ constexpr const char* kSchema_chunk_kda_bwd =
     "Tensor? dt_bias, Tensor? cu_seqlens, Tensor? chunk_indices, float scale, "
     "int chunk_size, bool safe_gate, bool use_gate_in_kernel, "
     "float lower_bound, bool disable_recompute, bool use_exp2, "
-    "bool state_v_first, bool optimized, Tensor? q_rstd, Tensor? k_rstd, "
-    "int input_layout, int output_layout, bool use_beta_sigmoid_in_kernel, "
+    "bool state_v_first, bool optimized, Tensor? q_rstd, Tensor? k_rstd, Tensor? beta_eff, "
+    "int layout, bool use_beta_sigmoid_in_kernel, "
     "bool allow_neg_eigval, int stream) "
     "-> (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor?, Tensor?, Tensor?)";
 
@@ -139,7 +139,7 @@ run_npu_chunk_kda_bwd(
     double scale, int64_t chunk_size, bool safe_gate, bool use_gate_in_kernel,
     double lower_bound, bool disable_recompute, bool use_exp2,
     bool state_v_first, bool optimized, std::optional<Tensor> q_rstd,
-    std::optional<Tensor> k_rstd, int64_t input_layout, int64_t output_layout,
+    std::optional<Tensor> k_rstd, std::optional<Tensor> beta_eff, int64_t layout,
     bool use_beta_sigmoid_in_kernel, bool allow_neg_eigval, int64_t stream) {
   if ((A_log.has_value() && meta_of(*A_log).scalar_type != kFloat) ||
       (dt_bias.has_value() && meta_of(*dt_bias).scalar_type != kFloat)) {
@@ -155,16 +155,8 @@ run_npu_chunk_kda_bwd(
   const char* soc = soc_name();
   const bool arch22 = soc && (std::strstr(soc, "Ascend910B") ||
       std::strstr(soc, "Ascend910C") || std::strstr(soc, "Ascend910_93"));
-  if (optimized && !arch22) {
-    if ((input_layout != 1 && input_layout != 3) ||
-        (output_layout != 1 && output_layout != 3) ||
-        use_beta_sigmoid_in_kernel || allow_neg_eigval) {
-      throw std::runtime_error("A5 V2 keeps its existing layout and beta capabilities");
-    }
-    return run_kda_bwd_v2(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h,
-        d_o, raw_g, A_log, dt_bias, cu_seqlens, chunk_indices, scale,
-        chunk_size, safe_gate, use_gate_in_kernel, lower_bound,
-        disable_recompute, use_exp2, state_v_first, q_rstd, k_rstd, stream);
+  if (!arch22) {
+    throw std::runtime_error("Single-layout backward is currently implemented on A2/A3 only");
   }
   if (disable_recompute && !gk.has_value()) {
     throw std::runtime_error("legacy KDA backward requires gk");
@@ -172,27 +164,20 @@ run_npu_chunk_kda_bwd(
   const TensorMeta q_meta = meta_of(q);
   const TensorMeta k_meta = meta_of(k);
   const TensorMeta v_meta = meta_of(v);
-  const bool packed = cu_seqlens.has_value();
-  const bool input_tm = input_layout == 0 || input_layout == 2;
-  const bool output_tm = output_layout == 0 || output_layout == 2;
-  if ((packed ? v_meta.ndim != 3 : v_meta.ndim != 4) ||
-      (packed ? (input_layout != 2 && input_layout != 3) :
-                (input_layout != 0 && input_layout != 1)) ||
-      (packed ? (output_layout != 2 && output_layout != 3) :
-                (output_layout != 0 && output_layout != 1))) {
+  const bool packed = layout == 2 || layout == 3;
+  const bool input_tm = layout == 0 || layout == 2;
+  if (layout < 0 || layout > 3 || v_meta.ndim != (packed ? 3 : 4) ||
+      (packed && !cu_seqlens.has_value())) {
     throw std::runtime_error("KDA backward layout does not match Token rank");
   }
   const size_t first = packed ? 0 : 1;
   const int64_t key_heads = SIZE_OF(v_meta, first + (input_tm ? 1 : 0));
   auto output_shape = v_meta.sizes;
-  if (input_tm != output_tm) {
-    std::swap(output_shape.at(first), output_shape.at(first + 1));
-  }
   auto gate_shape = output_shape;
+  if (!input_tm) std::swap(gate_shape.at(first), gate_shape.at(first + 1));
   auto beta_shape = gate_shape;
   beta_shape.pop_back();
-  // A2/A3 write BF16 dq/dk; all five gradients follow output_layout.
-  // A5 legacy retains FP32 dq/dk; gate gradients follow their inputs.
+  // q/k/v gradients follow layout; gate gradients are always token-major.
   Tensor out_dq = allocate_sizes(output_shape, arch22 ? q_meta.scalar_type : kFloat, q_meta);
   Tensor out_dk = allocate_sizes(output_shape, arch22 ? k_meta.scalar_type : kFloat, k_meta);
   Tensor out_dv = allocate_sizes(output_shape, v_meta.scalar_type, v_meta);
@@ -226,8 +211,7 @@ run_npu_chunk_kda_bwd(
       scalar(safe_gate), scalar(use_gate_in_kernel), scalar(lower_bound),
       scalar(disable_recompute), scalar(use_exp2), scalar(state_v_first),
       nd_optional_tensor(q_rstd), nd_optional_tensor(k_rstd),
-      cstr(kChunkKdaBwdLayoutNames, input_layout),
-      cstr(kChunkKdaBwdLayoutNames, output_layout),
+      nd_optional_tensor(beta_eff), cstr(kChunkKdaBwdLayoutNames, layout),
       scalar(use_beta_sigmoid_in_kernel), scalar(allow_neg_eigval),
       nd_logical_out_tensor(meta_of(out_dq)),
       nd_logical_out_tensor(meta_of(out_dk)),

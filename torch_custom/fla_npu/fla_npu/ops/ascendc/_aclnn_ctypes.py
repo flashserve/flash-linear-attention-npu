@@ -415,8 +415,8 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.c_bool,
         ctypes.c_bool,
         ctypes.c_bool,
-        *([ctypes.c_void_p] * 2),  # q/k rstd
-        ctypes.c_char_p, ctypes.c_char_p,
+        *([ctypes.c_void_p] * 3),  # q/k rstd and optional beta_eff
+        ctypes.c_char_p,
         ctypes.c_bool, ctypes.c_bool,
         *([ctypes.c_void_p] * 8),
         ctypes.POINTER(ctypes.c_uint64),
@@ -3421,7 +3421,7 @@ def _run_kda_bwd_arch22(args):
     dv = _empty(token, a["v"], dtype=a["v"].dtype)
     db = _empty(scalar, q, dtype=a["beta"].dtype)
     dg = _empty(a["_output_gate_shape"], q, dtype=a["raw_g"].dtype)
-    heads = a["beta"].shape[0 if a["cu_seqlens"] is not None else 1]
+    heads = a["_output_gate_shape"][-2]
     da = _empty((heads,), q, dtype=torch.float32) if a["use_gate_in_kernel"] else None
     dbias = (_empty(bias_shape, q, dtype=torch.float32)
              if a["use_gate_in_kernel"] and bias_shape is not None else None)
@@ -3442,8 +3442,8 @@ def _run_kda_bwd_arch22(args):
             ctypes.c_double(a["lower_bound"]), ctypes.c_bool(a["disable_recompute"]),
             ctypes.c_bool(a["use_exp2"]), ctypes.c_bool(a["state_v_first"]),
             nd(a["q_rstd"], "q_rstd"), nd(a["k_rstd"], "k_rstd"),
-            ctypes.c_char_p(a["input_layout"].encode("utf-8")),
-            ctypes.c_char_p(a["output_layout"].encode("utf-8")),
+            nd(a["beta_eff"], "beta_eff"),
+            ctypes.c_char_p(a["layout"].encode("utf-8")),
             ctypes.c_bool(a["use_beta_sigmoid_in_kernel"]), ctypes.c_bool(a["allow_neg_eigval"]),
         ]
         physical = (dq, dk, dv, db, dg, None, da,
@@ -3488,26 +3488,20 @@ def npu_chunk_kda_bwd(
     implementation="auto",
     q_rstd=None,
     k_rstd=None,
-    input_layout="BNSD",
-    output_layout="BNSD",
+    layout="BNSD",
     use_beta_sigmoid_in_kernel=False,
     allow_neg_eigval=False,
+    beta_eff=None,
 ):
-    """Run KDA backward through the platform's total ACLNN entry point.
+    """Return (dq, dk, dv, db, dg, dh0, dA, dbias), currently on A2/A3.
 
-    Gate backward requires use_gate_in_kernel=True, raw_g and A_log.
-
-    A2/A3 dq/dk/dv follow their input dtypes and output_layout; db/dg always
-    use FP32 and follow output_layout together with dq/dk/dv.
-    The legacy head-major policy below remains on the A5 fused path.
-
-    Dense tensors use ``[B, H, T, D]`` and packed tensors use ``[H, T, D]``.
-    ``Aqk/Akk/w/qg/kg/v_new/h/gk`` are the saved intermediates returned by
-    ``npu_chunk_kda_fwd(..., disable_recompute=True)`` after canonicalization.
-    The return value is always ``(dq, dk, dv, db, dg, dh0, dA, dbias)`` to
-    match the upstream GPU interface. ``dh0`` is ``None`` because the current
-    fused path does not support ``initial_state``; ``dA`` and ``dbias`` are
-    ``None`` unless raw-gate backward is enabled.
+    layout controls q/k/v and dq/dk/dv (BNSD/BSND/NTD/TND).
+    With q_rstd/k_rstd, q/k are saved head-major normalized tensors.
+    do/raw_g/beta and dg/db are always token-major. With fused sigmoid,
+    beta is original logits and beta_eff is required FP32 head-major cache.
+    Without fused sigmoid beta is effective beta and beta_eff must be None.
+    All saved Token caches are head-major. 4D varlen calls require B=1.
+    dg/db follow raw_g/beta dtypes; A_log/dt_bias and dA/dbias are FP32.
     """
     import torch
     from ._kda_policy import _is_kda_bwd_arch22, _validate_kda_bwd_a5_options

@@ -116,3 +116,10 @@ g/beta 组合及 safe-gate/softplus 的 8 个 tiling key，生产 selector 未�
 `45cbd2edff6aaeca9411bb2403e06d9a7d1550443ba4d55c8a8a867f2c283c22`。
 A5 定向验证 wheel SHA256：
 `a22d4b7b0faee83d782d83401799c9f1fc736df8722648843690d3187ca4c963`。
+
+
+## 总接口内部 FP32 beta_eff / BF16 db
+
+A2/A3 总接口按原始 beta dtype 分配 db，通过现有 model_layout 调用 Finalize。
+输入 BetaT 与输出 DTYPE_D_BETA 分离，原 FP32 数学和 UB 生命周期保持不变，仅最终 pack/store 使用输出类型。
+独立 Finalize API 继续要求 db dtype 与其 beta 输入一致；新增组合只供融合 sigmoid 的总接口路径使用。
