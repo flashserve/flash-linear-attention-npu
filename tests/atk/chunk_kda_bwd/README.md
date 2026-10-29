@@ -32,7 +32,8 @@ dt_bias std=1.65 且均值 -3、dO std=51.2，先量化到输入 dtype。
 ## 精度矩阵
 
 每个逻辑 case 使用固定种子 `0 / 20260630 / 7`，共 12 逻辑 case、36 个 `(case, seed)`。
-`atk_chunk_kda_bwd.json` 与 `gen_chunk_kda_bwd.py` 的 36 条 spec/seed 完全一致。
+`atk_chunk_kda_bwd.json` 与 `gen_chunk_kda_bwd.py` 的 36 条真实输入/seed 完全一致；
+CPU golden 与 NPU DUT 均消费 ATK 提供的张量，独立 CPU 自校验才使用无 provided 回退。
 正常偶数头 H=8；recompute 满足 H≤256 且 H%8=0；另覆盖 odd-head、尾块、B2 和无 bias。
 
 | 逻辑 id | accuracy id | 路径 | layout / norm | B/H/T 或 cu | beta / dt_bias |

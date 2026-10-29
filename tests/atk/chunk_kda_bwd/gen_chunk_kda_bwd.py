@@ -11,6 +11,7 @@ except ModuleNotFoundError as exc:
 
 
 OP_NAME = "chunk_kda_bwd"
+DIM = 128
 SEEDS = (0, 20260630, 7)
 
 
@@ -49,6 +50,56 @@ def spec(index):
     return values
 
 
+def _normal(std, mean=0.0):
+    return {"name": "nd", "mean": [mean], "std": [std]}
+
+
+def _tensor(name, dtype, shape, range_values, required=True):
+    return dict(
+        name=name, type="tensor", required=required, dtype=dtype, shape=shape,
+        range_values=range_values, backward=False,
+    )
+
+
+def _attr(name, dtype, value):
+    return dict(
+        name=name, type="attr", required=True, dtype=dtype, shape=None,
+        range_values=value, backward=False,
+    )
+
+
+def _inputs(config):
+    packed = bool(config.get("cu_seqlens"))
+    batch, heads, tokens = (int(config[name]) for name in ("B", "H", "T"))
+    token_shape = [heads, tokens, DIM] if packed else [batch, heads, tokens, DIM]
+    beta_shape = [heads, tokens] if packed else [batch, heads, tokens]
+    cu_seqlens = ",".join(str(value) for value in config.get("cu_seqlens", []))
+    has_dt_bias = bool(config.get("dt_bias", True))
+    return [
+        _tensor("q", config["dtype"], token_shape, _normal(0.05)),
+        _tensor("k", config["dtype"], token_shape, _normal(0.05)),
+        _tensor("v", config["dtype"], token_shape, _normal(0.05)),
+        _tensor("raw_g", "fp32", token_shape, _normal(1.25)),
+        _tensor("beta", config["beta_dtype"], beta_shape, [0.1, 0.9]),
+        _tensor("d_o", config["dtype"], token_shape, _normal(51.2)),
+        _tensor("A_log", "fp32", [heads], _normal(0.12)),
+        _tensor(
+            "dt_bias", "fp32", [heads, DIM],
+            _normal(1.65, mean=-3.0) if has_dt_bias else "default", required=False,
+        ),
+        _attr("cu_seqlens", "string", cu_seqlens),
+        _attr("disable_recompute", "bool", bool(config["disable_recompute"])),
+        _attr("norm", "bool", bool(config["norm"])),
+        _attr("safe_gate", "bool", bool(config["safe_gate"])),
+        _attr("lower_bound", "float", float(config["lower_bound"])),
+        _attr("soc", "string", config["soc"]),
+        _attr("dtype", "string", config["dtype"]),
+        _attr("beta_dtype", "string", config["beta_dtype"]),
+        _attr("has_dt_bias", "bool", has_dt_bias),
+        _attr("seed", "int", int(config["seed"])),
+    ]
+
+
 def case(index, config):
     output_count = 7 if config.get("dt_bias", True) else 6
     dtypes = {str(i): "bf16" for i in range(output_count)}
@@ -59,15 +110,7 @@ def case(index, config):
         standard={"acc": {"mixed_tolerance_bm": {"output_dtype_overrides": dtypes}},
                   "perf": "not_key"},
         outputs=None,
-        inputs=[
-            dict(name="low_precision_marker", type="tensor", required=True,
-                 dtype="bf16", shape=[1], range_values=[0, 0], backward=False),
-            dict(name="fp32_marker", type="tensor", required=True,
-                 dtype="fp32", shape=[1], range_values=[0, 0], backward=False),
-            dict(name="case_spec", type="attr", required=True, dtype="non_param",
-                 shape=None, range_values=json.dumps(config, separators=(",", ":")),
-                 backward=False),
-        ],
+        inputs=_inputs(config),
     )
 
 
@@ -100,14 +143,23 @@ if GENERATOR_REGISTRY is not None:
             index = max(int(self.index) - 1, 0)
             values = spec(index)
             generated = case(index, values)
+            expected_names = [item["name"] for item in generated["inputs"]]
+            actual_names = [
+                (item[0] if isinstance(item, list) else item).name
+                for item in config.inputs
+            ]
+            if actual_names != expected_names:
+                raise ValueError("YAML input names or order differ from the generated public inputs")
             config.id = index
             config.default_seed = values["seed"]
             config.expected_error_msg = None
             config.standard = type(config.standard)(**generated["standard"])
-            for item in config.inputs:
+            for item, source in zip(config.inputs, generated["inputs"]):
                 item = item[0] if isinstance(item, list) else item
-                if item.name == "case_spec":
-                    item.range_values = json.dumps(values, separators=(",", ":"))
+                item.dtype = source["dtype"]
+                item.shape = source["shape"]
+                item.range_values = source["range_values"]
+                item.required = source["required"]
             return config
 
 

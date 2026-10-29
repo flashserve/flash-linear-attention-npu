@@ -11,13 +11,7 @@ from atk.tasks.api_execute import register
 from atk.tasks.api_execute.base_api import BaseApi
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
-from _ascendc_common_executor import (
-    _case_spec,
-    _finite_tuple,
-    _marker_device,
-    _rand,
-    _randn,
-)
+from _ascendc_common_executor import _finite_tuple, _orig_dtype, _rand, _randn
 
 
 OP_NAME = "chunk_kda_bwd"
@@ -25,7 +19,51 @@ DIM = 128
 CHUNK_SIZE = 64
 
 
-def build_inputs(spec, device, high_precision=False):
+def _as_bool(value):
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _parse_cu_seqlens(value):
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        value = value.detach().cpu().reshape(-1).tolist()
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+        value = value.split(",")
+    values = [int(item) for item in value]
+    return values or None
+
+
+def _spec_from_kwargs(kwargs):
+    q = kwargs["q"]
+    cu_seqlens = _parse_cu_seqlens(kwargs.get("cu_seqlens"))
+    if cu_seqlens is None:
+        if q.dim() != 4:
+            raise ValueError("dense q must have shape [B,H,T,128]")
+        batch, heads, tokens, dim = q.shape
+    else:
+        if q.dim() != 3:
+            raise ValueError("packed q must have shape [H,T,128]")
+        heads, tokens, dim = q.shape
+        batch = 1
+    if dim != DIM:
+        raise ValueError("public V2 acceptance requires K=V=128")
+    return dict(
+        B=int(batch), H=int(heads), T=int(tokens), cu_seqlens=cu_seqlens,
+        disable_recompute=_as_bool(kwargs["disable_recompute"]),
+        norm=_as_bool(kwargs["norm"]), safe_gate=_as_bool(kwargs["safe_gate"]),
+        lower_bound=float(kwargs["lower_bound"]), soc=str(kwargs["soc"]),
+        dtype=str(kwargs["dtype"]), beta_dtype=str(kwargs["beta_dtype"]),
+        has_dt_bias=_as_bool(kwargs["has_dt_bias"]), seed=int(kwargs["seed"]),
+    )
+
+
+def build_inputs(spec, device, high_precision=False, provided=None):
     batch, heads, tokens = (int(spec[name]) for name in ("B", "H", "T"))
     shape = (batch, heads, tokens, DIM)
     seed = int(spec["seed"])
@@ -33,27 +71,64 @@ def build_inputs(spec, device, high_precision=False):
     beta_type = str(spec.get("beta_dtype", "bf16"))
     if dtype_name != "bf16" or beta_type not in {"bf16", "fp32"}:
         raise ValueError("public V2 acceptance uses BF16 tokens and BF16/FP32 beta")
+    if not _as_bool(spec.get("safe_gate", True)):
+        raise ValueError("public V2 acceptance requires safe_gate=True")
     calc = torch.float64 if high_precision else torch.bfloat16
     beta_calc = torch.float64 if high_precision else (
         torch.bfloat16 if beta_type == "bf16" else torch.float32
     )
     fp = torch.float64 if high_precision else torch.float32
-    cu = spec.get("cu_seqlens")
-    if cu is not None and (batch != 1 or not cu or int(cu[-1]) != tokens):
+    cu = _parse_cu_seqlens(spec.get("cu_seqlens"))
+    packed = cu is not None
+    if packed and (batch != 1 or not cu or int(cu[-1]) != tokens):
         raise ValueError("packed cases require B=1 and cu_seqlens[-1]=T")
-    values = {
-        "q": _randn(shape, dtype_name, calc, device, seed + 1, 0.05),
-        "k": _randn(shape, dtype_name, calc, device, seed + 2, 0.05),
-        "v": _randn(shape, dtype_name, calc, device, seed + 3, 0.05),
-        "raw_g": _randn(shape, "fp32", fp, device, seed + 4, 1.25),
-        "beta": _rand(shape[:-1], beta_type, beta_calc, device, seed + 5, 0.1, 0.9),
-        "A_log": _randn((heads,), "fp32", fp, device, seed + 6, 0.12),
-        "d_o": _randn(shape, dtype_name, calc, device, seed + 7, 51.2),
+    has_dt_bias = _as_bool(spec.get("has_dt_bias", spec.get("dt_bias", True)))
+    if provided is None:
+        values = {
+            "q": _randn(shape, dtype_name, calc, device, seed + 1, 0.05),
+            "k": _randn(shape, dtype_name, calc, device, seed + 2, 0.05),
+            "v": _randn(shape, dtype_name, calc, device, seed + 3, 0.05),
+            "raw_g": _randn(shape, "fp32", fp, device, seed + 4, 1.25),
+            "beta": _rand(shape[:-1], beta_type, beta_calc, device, seed + 5, 0.1, 0.9),
+            "A_log": _randn((heads,), "fp32", fp, device, seed + 6, 0.12),
+            "d_o": _randn(shape, dtype_name, calc, device, seed + 7, 51.2),
+        }
+        if has_dt_bias:
+            values["dt_bias"] = (
+                _randn((heads, DIM), "fp32", torch.float32, device, seed + 8, 1.65) - 3.0
+            ).to(fp)
+        return values
+
+    token_shape = (heads, tokens, DIM) if packed else shape
+    beta_shape = (heads, tokens) if packed else shape[:-1]
+    expected_shapes = {
+        "q": token_shape, "k": token_shape, "v": token_shape,
+        "raw_g": token_shape, "beta": beta_shape, "d_o": token_shape,
+        "A_log": (heads,), "dt_bias": (heads, DIM),
     }
-    if spec.get("dt_bias", True):
-        values["dt_bias"] = (
-            _randn((heads, DIM), "fp32", torch.float32, device, seed + 8, 1.65) - 3.0
-        ).to(fp)
+    dtypes = {
+        "q": (dtype_name, calc), "k": (dtype_name, calc), "v": (dtype_name, calc),
+        "raw_g": ("fp32", fp), "beta": (beta_type, beta_calc),
+        "d_o": (dtype_name, calc), "A_log": ("fp32", fp), "dt_bias": ("fp32", fp),
+    }
+    names = ["q", "k", "v", "raw_g", "beta", "d_o", "A_log"]
+    if has_dt_bias:
+        names.append("dt_bias")
+    values = {}
+    for name in names:
+        value = provided[name]
+        if not isinstance(value, torch.Tensor):
+            raise TypeError(f"ATK input {name} must be a tensor")
+        if tuple(value.shape) != tuple(expected_shapes[name]):
+            raise ValueError(
+                f"ATK input {name} has shape {tuple(value.shape)}, "
+                f"expected {tuple(expected_shapes[name])}"
+            )
+        original_dtype, target_dtype = dtypes[name]
+        value = value.to(_orig_dtype(original_dtype)).to(target_dtype).to(device)
+        if packed and name in {"q", "k", "v", "raw_g", "beta", "d_o"}:
+            value = value.unsqueeze(0)
+        values[name] = value.contiguous()
     return values
 
 
@@ -116,8 +191,10 @@ def _prepare_forward(values, spec):
 
     packed = bool(spec.get("cu_seqlens"))
     cu = spec.get("cu_seqlens")
-    saved = bool(spec.get("disable_recompute", True))
-    norm = bool(spec.get("norm", False))
+    saved = _as_bool(spec.get("disable_recompute", True))
+    norm = _as_bool(spec.get("norm", False))
+    safe_gate = _as_bool(spec.get("safe_gate", True))
+    lower_bound = float(spec.get("lower_bound", -5.0))
     layout = "TND" if packed else "BNSD"
     stage = {
         name: _stage_input(values[name], packed, scalar=name == "beta")
@@ -127,7 +204,7 @@ def _prepare_forward(values, spec):
     prepared = ascendc.npu_chunk_kda_fwd_prepare(
         stage["q"], stage["k"], stage["v"], stage["raw_g"], stage["beta"],
         1.0 / math.sqrt(DIM), CHUNK_SIZE,
-        layout=layout, cu_seqlens=cu, safe_gate=True, lower_bound=-5.0,
+        layout=layout, cu_seqlens=cu, safe_gate=safe_gate, lower_bound=lower_bound,
         use_gate_in_kernel=True, A_log=values["A_log"],
         dt_bias=None if dt_bias is None else dt_bias.reshape(-1),
         epsilon=1.0e-6, use_qk_l2norm_in_kernel=norm,
@@ -173,9 +250,17 @@ class FunctionApi(BaseApi):
         super().__init__(task_result)
 
     def init_by_input_data(self, input_data: InputDataset):
-        self.spec = _case_spec(input_data, OP_NAME)
-        device = torch.device("cpu") if self.device == "cpu" else _marker_device(input_data)
-        self.values = build_inputs(self.spec, device, high_precision=self.device == "cpu")
+        self.spec = _spec_from_kwargs(input_data.kwargs)
+        if not self.spec["has_dt_bias"]:
+            input_data.kwargs.pop("dt_bias", None)
+        device = (
+            torch.device("cpu") if self.device == "cpu"
+            else input_data.kwargs["q"].device
+        )
+        self.values = build_inputs(
+            self.spec, device, high_precision=self.device == "cpu",
+            provided=input_data.kwargs,
+        )
         if self.device == "cpu":
             return
         from fla_npu.ops import ascendc
@@ -183,8 +268,8 @@ class FunctionApi(BaseApi):
         self.operator = ascendc.chunk_kda_bwd
         v = self.values
         packed = bool(self.spec.get("cu_seqlens"))
-        saved = bool(self.spec.get("disable_recompute", True))
-        norm = bool(self.spec.get("norm", False))
+        saved = _as_bool(self.spec.get("disable_recompute", True))
+        norm = _as_bool(self.spec.get("norm", False))
         forward = _prepare_forward(v, self.spec)
         tokens = {
             name: v[name].squeeze(0).contiguous() if packed else v[name]
@@ -205,7 +290,8 @@ class FunctionApi(BaseApi):
         self.kwargs = dict(
             raw_g=tokens["raw_g"], A_log=v["A_log"],
             dt_bias=None if "dt_bias" not in v else v["dt_bias"].view(self.spec["H"], DIM),
-            chunk_size=CHUNK_SIZE, safe_gate=True, lower_bound=-5.0,
+            chunk_size=CHUNK_SIZE,
+            safe_gate=self.spec["safe_gate"], lower_bound=self.spec["lower_bound"],
             cu_seqlens=self.spec.get("cu_seqlens"), use_gate_in_kernel=True,
             disable_recompute=saved, use_exp2=True, state_v_first=False,
             implementation="optimized",

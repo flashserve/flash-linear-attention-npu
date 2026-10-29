@@ -28,40 +28,258 @@
     "outputs": null,
     "inputs": [
       {
-        "name": "low_precision_marker",
+        "name": "q",
         "type": "tensor",
         "required": true,
         "dtype": "bf16",
         "shape": [
-          1
+          1,
+          96,
+          8192,
+          128
         ],
-        "range_values": [
-          0,
-          0
-        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.05
+          ]
+        },
         "backward": false
       },
       {
-        "name": "fp32_marker",
+        "name": "k",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          96,
+          8192,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.05
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "v",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          96,
+          8192,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.05
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "raw_g",
         "type": "tensor",
         "required": true,
         "dtype": "fp32",
         "shape": [
-          1
+          1,
+          96,
+          8192,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            1.25
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "beta",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          96,
+          8192
         ],
         "range_values": [
-          0,
-          0
+          0.1,
+          0.9
         ],
         "backward": false
       },
       {
-        "name": "case_spec",
+        "name": "d_o",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          96,
+          8192,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            51.2
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "A_log",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          96
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.12
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "dt_bias",
+        "type": "tensor",
+        "required": false,
+        "dtype": "fp32",
+        "shape": [
+          96,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            -3.0
+          ],
+          "std": [
+            1.65
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
         "type": "attr",
         "required": true,
-        "dtype": "non_param",
+        "dtype": "string",
         "shape": null,
-        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"model_h96_saved\",\"B\":1,\"H\":96,\"T\":8192,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"seed\":20260630,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":true,\"norm\":false}",
+        "range_values": "",
+        "backward": false
+      },
+      {
+        "name": "disable_recompute",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "norm",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "safe_gate",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "lower_bound",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": -5.0,
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend950",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "beta_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "has_dt_bias",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20260630,
         "backward": false
       }
     ]
@@ -95,40 +313,258 @@
     "outputs": null,
     "inputs": [
       {
-        "name": "low_precision_marker",
+        "name": "q",
         "type": "tensor",
         "required": true,
         "dtype": "bf16",
         "shape": [
-          1
+          1,
+          96,
+          8192,
+          128
         ],
-        "range_values": [
-          0,
-          0
-        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.05
+          ]
+        },
         "backward": false
       },
       {
-        "name": "fp32_marker",
+        "name": "k",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          96,
+          8192,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.05
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "v",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          96,
+          8192,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.05
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "raw_g",
         "type": "tensor",
         "required": true,
         "dtype": "fp32",
         "shape": [
-          1
+          1,
+          96,
+          8192,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            1.25
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "beta",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          96,
+          8192
         ],
         "range_values": [
-          0,
-          0
+          0.1,
+          0.9
         ],
         "backward": false
       },
       {
-        "name": "case_spec",
+        "name": "d_o",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          96,
+          8192,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            51.2
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "A_log",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          96
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.12
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "dt_bias",
+        "type": "tensor",
+        "required": false,
+        "dtype": "fp32",
+        "shape": [
+          96,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            -3.0
+          ],
+          "std": [
+            1.65
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
         "type": "attr",
         "required": true,
-        "dtype": "non_param",
+        "dtype": "string",
         "shape": null,
-        "range_values": "{\"op\":\"chunk_kda_bwd\",\"case_key\":\"model_h96_recompute\",\"B\":1,\"H\":96,\"T\":8192,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"seed\":20260630,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":false,\"norm\":false}",
+        "range_values": "",
+        "backward": false
+      },
+      {
+        "name": "disable_recompute",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "norm",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "safe_gate",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "lower_bound",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": -5.0,
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend950",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "beta_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "has_dt_bias",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20260630,
         "backward": false
       }
     ]

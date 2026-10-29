@@ -11,43 +11,184 @@ standard:
     mixed_tolerance_bm: {}
   perf: not_key
 inputs:
-  - name: low_precision_marker
+  - &token_input
+    name: q
     type: tensor
     required: true
     dtypes:
       values: [bf16]
     ranges:
       valid:
-        values: [[0, 0]]
+        values: [[-0.05, 0.05]]
+        random_types:
+          - name: nd
+            mean: [0.0]
+            std: [0.05]
       invalid:
         values: []
     shapes:
       dim_numbers:
-        values: [1]
+        values: [4]
       dim_values:
-        values: [1]
-  - name: fp32_marker
+        - values: [1]
+        - values: [8]
+        - values: [64]
+        - values: [128]
+  - <<: *token_input
+    name: k
+  - <<: *token_input
+    name: v
+  - <<: *token_input
+    name: raw_g
+    dtypes:
+      values: [fp32]
+    ranges:
+      valid:
+        values: [[-1.25, 1.25]]
+        random_types:
+          - name: nd
+            mean: [0.0]
+            std: [1.25]
+      invalid:
+        values: []
+  - name: beta
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp32]
+    ranges:
+      valid:
+        values: [[0.1, 0.9]]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [3]
+      dim_values:
+        - values: [1]
+        - values: [8]
+        - values: [64]
+  - <<: *token_input
+    name: d_o
+    ranges:
+      valid:
+        values: [[-51.2, 51.2]]
+        random_types:
+          - name: nd
+            mean: [0.0]
+            std: [51.2]
+      invalid:
+        values: []
+  - name: A_log
     type: tensor
     required: true
     dtypes:
       values: [fp32]
     ranges:
       valid:
-        values: [[0, 0]]
+        values: [[-0.12, 0.12]]
+        random_types:
+          - name: nd
+            mean: [0.0]
+            std: [0.12]
       invalid:
         values: []
     shapes:
       dim_numbers:
         values: [1]
       dim_values:
-        values: [1]
-  - name: case_spec
+        - values: [8]
+  - name: dt_bias
+    type: tensor
+    required: false
+    dtypes:
+      values: [fp32]
+    ranges:
+      valid:
+        values: [[-3.0, -3.0]]
+        random_types:
+          - name: nd
+            mean: [-3.0]
+            std: [1.65]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [2]
+      dim_values:
+        - values: [8]
+        - values: [128]
+  - &string_attr
+    name: cu_seqlens
     type: attr
     required: true
     dtypes:
-      values: [non_param]
+      values: [string]
     ranges:
       valid:
-        values: ["{\"op\":\"chunk_kda_bwd\",\"case_key\":\"saved_dense\",\"B\":1,\"H\":8,\"T\":64,\"dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"dt_bias\":true,\"seed\":0,\"soc\":\"ascend950\",\"safe_gate\":true,\"lower_bound\":-5.0,\"disable_recompute\":true,\"norm\":false}"]
+        values: ["", "0,64,128", "0,97,130"]
+      invalid:
+        values: []
+  - &bool_attr
+    name: disable_recompute
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [false, true]
+      invalid:
+        values: []
+  - <<: *bool_attr
+    name: norm
+  - <<: *bool_attr
+    name: safe_gate
+    ranges:
+      valid:
+        values: [true]
+      invalid:
+        values: []
+  - name: lower_bound
+    type: attr
+    required: true
+    dtypes:
+      values: [float]
+    ranges:
+      valid:
+        values: [-5.0]
+      invalid:
+        values: []
+  - <<: *string_attr
+    name: soc
+    ranges:
+      valid:
+        values: [ascend950]
+      invalid:
+        values: []
+  - <<: *string_attr
+    name: dtype
+    ranges:
+      valid:
+        values: [bf16]
+      invalid:
+        values: []
+  - <<: *string_attr
+    name: beta_dtype
+    ranges:
+      valid:
+        values: [bf16, fp32]
+      invalid:
+        values: []
+  - <<: *bool_attr
+    name: has_dt_bias
+  - name: seed
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [0, 20260630, 7]
       invalid:
         values: []
