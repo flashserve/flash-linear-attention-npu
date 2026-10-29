@@ -4,10 +4,10 @@
  */
 #include "../../chunk_gated_delta_rule_fwd_tiling.h"
 
-#include "../../../op_kernel/internal/arch22/operators/chunk_fwd_o/op_kernel/chunk_fwd_o_struct.h"
-#include "../../../op_kernel/internal/arch22/operators/chunk_gated_delta_rule_fwd_h/op_host/chunk_gated_delta_rule_fwd_h_tiling.h"
-#include "../../../op_kernel/internal/arch22/operators/chunk_gated_delta_rule_fwd_h/op_kernel/chunk_gated_delta_rule_fwd_h_struct.h"
-#include "../../../op_kernel/internal/arch22/operators/chunk_recompute_wu_fwd_ho/op_kernel/chunk_recompute_wu_fwd_ho_struct.h"
+#include "../../../op_kernel/internal/arch22/stages/fwd_o/op_kernel/chunk_fwd_o_struct.h"
+#include "../../../op_kernel/internal/arch22/stages/fwd_h/op_host/chunk_gated_delta_rule_fwd_h_tiling.h"
+#include "../../../op_kernel/internal/arch22/stages/fwd_h/op_kernel/chunk_gated_delta_rule_fwd_h_struct.h"
+#include "../../../op_kernel/internal/arch22/pipeline/wu_ho/chunk_recompute_wu_fwd_ho_struct.h"
 #include "../../../op_kernel/internal/arch22/chunk_gated_delta_rule_fwd_arch22_struct.h"
 
 #include "securec.h"
@@ -20,7 +20,8 @@
 namespace optiling {
 
 ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingContext *context,
-                                                               bool separateHoWorkspace);
+                                                               bool separateHoWorkspace,
+                                                               bool ownerLocalWorkspace);
 
 namespace {
 
@@ -51,6 +52,7 @@ constexpr uint32_t TILING_KEY_V128 = 1;
 constexpr uint32_t TILING_KEY_V256 = 2;
 constexpr uint32_t TILING_KEY_PREPARED_BTH = 3;
 constexpr uint32_t TILING_KEY_PREPARED_BTH_V256 = 4;
+constexpr uint32_t TILING_KEY_STATIC_BASE = 100;
 constexpr uint64_t WORKSPACE_ALIGNMENT = 512;
 constexpr uint64_t TILING_ALIGNMENT = 8;
 constexpr uint64_t FP32_BLOCK_ELEMS = 8;
@@ -58,6 +60,7 @@ constexpr uint64_t FP32_BLOCK_ELEMS = 8;
 // (uint32 bytes).  This is a transport-field bound, not a supported-head
 // whitelist; larger tensors are routed through the BHT layout by the host.
 constexpr uint64_t MAX_PREPARE_HEADS = 0xffffffffULL / sizeof(float) + 1;
+constexpr uint64_t MAX_KERNEL_TASKS = 0x7fffffffffffffffULL;
 constexpr uint64_t LOW_PRECISION_SOLVE_WORKSPACE_SLOTS = 5;
 constexpr uint64_t FP32_SOLVE_WORKSPACE_SLOTS = 4;
 
@@ -305,6 +308,19 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
     OP_CHECK_IF(!IsShape(aShape, {batch, valueHeads, tokens, *chunkSize}),
                 OP_LOGE(context->GetNodeName(), "Phase 6 requires a_storage=[B,Hv,T,chunk_size]."),
                 return ge::GRAPH_FAILED);
+    // 六阶段共享正任务合同。Stage P 使用 B*NT，KKT/Solve 使用 B*Hv*NT；
+    // 后者会转入 int64 任务索引，必须在任何乘法及转换前核对可表示范围。
+    // T>0、BT=64/128 和正 varlenChunks 已由上方检查保证，空序列仍由设备处理。
+    const uint64_t numChunks = isVarlen
+        ? varlenChunks : CeilDiv(static_cast<uint64_t>(tokens), static_cast<uint64_t>(*chunkSize));
+    uint64_t prepareTaskNum = 0;
+    uint64_t abcTaskNum = 0;
+    OP_CHECK_IF(numChunks == 0 ||
+                    MulOverflow(static_cast<uint64_t>(batch), numChunks, &prepareTaskNum) ||
+                    MulOverflow(prepareTaskNum, static_cast<uint64_t>(valueHeads), &abcTaskNum) ||
+                    abcTaskNum > MAX_KERNEL_TASKS,
+                OP_LOGE(context->GetNodeName(), "Phase 6 task counts exceed the kernel int64 range."),
+                return ge::GRAPH_FAILED);
     // A2 判定与实际 AIC/AIV 核数只计算一次：HO 预留判定与后续 ABC 布局复用。
     const bool useFp32Solve = platform.GetCurNpuArch() == NpuArch::DAV_2201;
     const uint64_t aicCoreNum = std::max<uint64_t>(1, platform.GetCoreNumAic());
@@ -320,10 +336,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
     // 协议 uint32 参数范围内；任一不满足则不预留（三个新字段清零，
     // StateOutput 保持原串行布局）。
     const uint64_t hoVBlockNum = CeilDiv(static_cast<uint64_t>(vDim), SUPPORTED_V_DIM_128);
-    const uint64_t hoReadyBankCount = isVarlen
-                                          ? varlenChunks
-                                          : CeilDiv(static_cast<uint64_t>(tokens),
-                                                    static_cast<uint64_t>(*chunkSize));
+    const uint64_t hoReadyBankCount = numChunks;
     uint64_t hoReadyRegionBytes = 0;
     bool hoPipelineReserved = false;
     if (useFp32Solve && context->GetOptionalInputDesc(INPUT_GK) == nullptr &&
@@ -354,7 +367,19 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
             hoReadyRegionBytes = 0;
         }
     }
-    OP_CHECK_IF(Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(context, hoPipelineReserved) !=
+    // owner-local只复用key100/101的全局模式；varlen只用序列数上界预留，不读cu内容。
+    const auto *ownerInitial = context->GetOptionalInputDesc(INPUT_INITIAL_STATE);
+    const uint64_t ownerSequencesUpper = static_cast<uint64_t>(isVarlen
+        ? cuShape->GetStorageShape().GetDim(0) - 1 : batch);
+    uint64_t ownerTasksUpper = 0;
+    const bool ownerLocalPossible = useFp32Solve && rawGLayout == 1 && oLayout == 1 &&
+        kDim == SUPPORTED_K_DIM && vDim == SUPPORTED_V_DIM_128 && *chunkSize == CHUNK_64 &&
+        context->GetOptionalInputDesc(INPUT_GK) == nullptr &&
+        (ownerInitial == nullptr || ownerInitial->GetDataType() == ge::DT_FLOAT) &&
+        !MulOverflow(ownerSequencesUpper, static_cast<uint64_t>(valueHeads), &ownerTasksUpper) &&
+        ownerTasksUpper > aicCoreNum;
+    OP_CHECK_IF(Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(
+                    context, hoPipelineReserved || ownerLocalPossible, ownerLocalPossible) !=
                     ge::GRAPH_SUCCESS,
                 OP_LOGE(context->GetNodeName(), "Reuse of the accepted Phase 5 suffix tiling failed."),
                 return ge::GRAPH_FAILED);
@@ -376,10 +401,10 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
     abc.T = static_cast<uint64_t>(tokens);
     abc.K = SUPPORTED_K_DIM;
     abc.BT = static_cast<uint64_t>(*chunkSize);
-    abc.NT = isVarlen ? varlenChunks : CeilDiv(abc.T, abc.BT);
+    abc.NT = numChunks;
     // ABC produces one KKT/solve tile per value head. K is shared by the
     // contiguous group of hvPerHk value heads mapped to one logical K head.
-    abc.taskNum = abc.B * abc.Hv * abc.NT;
+    abc.taskNum = abcTaskNum;
     abc.usedAicNum = aicCoreNum;
     abc.usedAivNum = std::min<uint64_t>(aivCoreNum, aicCoreNum * 2);
     abc.btAlign = AlignUp(abc.BT, FP32_BLOCK_ELEMS);
@@ -434,6 +459,33 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
     workspaceOffset += aicCoreNum * abc.solveWorkspacePerCoreBytes;
     trailer.gCumsumBhtOffset = workspaceOffset;
     workspaceOffset += AlignUp(abc.B * abc.Hv * abc.T * sizeof(float), WORKSPACE_ALIGNMENT);
+    if (rawGLayout == 1) {
+        uint64_t headStride = 0;
+        uint64_t taskCount = 0;
+        uint64_t elementCount = 0;
+        uint64_t bytes = 0;
+        uint64_t alignedBytes = 0;
+        uint64_t nextOffset = 0;
+        OP_CHECK_IF(AlignUpChecked(static_cast<uint64_t>(abc.Hv), 8, &headStride) ||
+                        MulOverflow(static_cast<uint64_t>(abc.B), static_cast<uint64_t>(abc.NT), &taskCount) ||
+                        MulOverflow(taskCount, headStride, &elementCount) ||
+                        MulOverflow(elementCount, sizeof(float), &bytes) ||
+                        AlignUpChecked(bytes, WORKSPACE_ALIGNMENT, &alignedBytes) ||
+                        AddOverflow(workspaceOffset, alignedBytes, &nextOffset),
+                    OP_LOGE(context->GetNodeName(), "Stage P g_last exp workspace overflows uint64."),
+                    return ge::GRAPH_FAILED);
+        trailer.gLastExpOffset = workspaceOffset;
+        workspaceOffset = nextOffset;
+        OP_CHECK_IF(MulOverflow(static_cast<uint64_t>(abc.B), static_cast<uint64_t>(abc.Hv), &elementCount) ||
+                        MulOverflow(elementCount, static_cast<uint64_t>(abc.T), &elementCount) ||
+                        MulOverflow(elementCount, sizeof(float), &bytes) ||
+                        AlignUpChecked(bytes, WORKSPACE_ALIGNMENT, &alignedBytes) ||
+                        AddOverflow(workspaceOffset, alignedBytes, &nextOffset),
+                    OP_LOGE(context->GetNodeName(), "Stage P g decay workspace overflows uint64."),
+                    return ge::GRAPH_FAILED);
+        trailer.gDecayOffset = workspaceOffset;
+        workspaceOffset = nextOffset;
+    }
     trailer.outputGCumsum = (outputGCumsum == nullptr || *outputGCumsum) ? 1 : 0;
     if (useFp32Solve) {
         // 独立保存 FP32 数据版本；只复用已 drain 的跨层 scratch。
@@ -466,6 +518,8 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
         uint64_t hoReadyEnd = 0;
         if (!AlignUpChecked(workspaceOffset, WORKSPACE_ALIGNMENT, &hoReadyOffset) &&
             !AddOverflow(hoReadyOffset, hoReadyRegionBytes, &hoReadyEnd)) {
+            // 该标志蕴含上方完整的元数据合同及正 uint32 bank 数；设备仅复核
+            // 实际核数、cu_seqlens 的非空序列/多 chunk 和生产消费任务比例。
             trailer.hoPipelineAvailable = 1;
             trailer.hoReadyWorkspaceOffset = hoReadyOffset;
             trailer.hoReadyBankCount = abc.NT;
@@ -504,10 +558,18 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
                 OP_LOGE(context->GetNodeName(), "Serialize Phase 6 ABC trailer failed."),
                 return ge::GRAPH_FAILED);
     rawTiling->SetDataSize(rawTilingSize);
-    context->SetTilingKey(rawGLayout == 1 ?
-                          (vDim == SUPPORTED_V_DIM_256 ? TILING_KEY_PREPARED_BTH_V256 :
-                           TILING_KEY_PREPARED_BTH) :
-                          (vDim == SUPPORTED_V_DIM_256 ? TILING_KEY_V256 : TILING_KEY_V128));
+    if (useFp32Solve && rawGLayout == 1 && oLayout == 1) {
+        // V128/256 x BT64/128 x QKV BHTD/BTHD，prepared 和序列优先 O 固定。
+        const uint32_t staticKey = TILING_KEY_STATIC_BASE +
+            (vDim == SUPPORTED_V_DIM_256 ? 4U : 0U) +
+            (*chunkSize == CHUNK_128 ? 2U : 0U) + static_cast<uint32_t>(qkvLayout);
+        context->SetTilingKey(staticKey);
+    } else {
+        context->SetTilingKey(rawGLayout == 1 ?
+                              (vDim == SUPPORTED_V_DIM_256 ? TILING_KEY_PREPARED_BTH_V256 :
+                               TILING_KEY_PREPARED_BTH) :
+                              (vDim == SUPPORTED_V_DIM_256 ? TILING_KEY_V256 : TILING_KEY_V128));
+    }
     context->SetScheduleMode(1);
     OP_LOGD(context->GetNodeName(),
             "Phase 6 tiling: B=%ld, Hk=%ld, Hv=%ld, T=%ld, K=%ld, V=%ld, blocks=%lu, tasks=%lu, "
