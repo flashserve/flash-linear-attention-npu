@@ -1,8 +1,8 @@
 [
   {
     "id": 0,
-    "default_seed": 20262027,
-    "name": "chunk_gated_delta_rule_fwd_chunk32_0000_perf_bnsd_h4_t512",
+    "default_seed": 20262028,
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0000_perf_bnsd_h8_t8192",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
@@ -57,7 +57,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":4,\"HV\":4,\"K\":128,\"T\":512,\"V\":128,\"case_id\":0,\"case_key\":\"perf_bnsd_h4_t512\",\"dtype\":\"bf16\",\"layout\":\"BNSD\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20262027,\"seqlens\":\"\",\"sibling_index\":0,\"sibling_scenario\":\"perf\",\"soc\":\"ascend950\",\"state_dtype\":\"none\",\"tags\":\"performance\"}",
+        "range_values": "{\"B\":1,\"HK\":8,\"HV\":8,\"K\":128,\"T\":8192,\"V\":128,\"allow_neg_eigval\":false,\"case_id\":0,\"case_key\":\"perf_bnsd_h8_t8192\",\"dtype\":\"bf16\",\"layout\":\"BNSD\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20262028,\"seqlens\":\"\",\"soc\":\"ascend950\",\"state_dtype\":\"none\",\"state_v_first\":false,\"tags\":\"performance\"}",
         "backward": false
       },
       {
@@ -93,7 +93,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 4,
+        "range_values": 8,
         "backward": false
       },
       {
@@ -102,7 +102,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 4,
+        "range_values": 8,
         "backward": false
       },
       {
@@ -111,7 +111,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 512,
+        "range_values": 8192,
         "backward": false
       },
       {
@@ -165,7 +165,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20262027,
+        "range_values": 20262028,
         "backward": false
       }
     ],
@@ -173,8 +173,8 @@
   },
   {
     "id": 1,
-    "default_seed": 20262028,
-    "name": "chunk_gated_delta_rule_fwd_chunk32_0001_perf_ntd_gva_t256",
+    "default_seed": 20262029,
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0001_perf_bsnd_gva_t4096_neg_sv",
     "aclnn_name": null,
     "version": "v2.1",
     "api": "pytorch",
@@ -229,7 +229,7 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":2,\"HV\":4,\"K\":128,\"T\":256,\"V\":128,\"case_id\":1,\"case_key\":\"perf_ntd_gva_t256\",\"dtype\":\"bf16\",\"layout\":\"NTD\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20262028,\"seqlens\":\"128,128\",\"sibling_index\":1,\"sibling_scenario\":\"perf\",\"soc\":\"ascend950\",\"state_dtype\":\"fp32\",\"tags\":\"performance\"}",
+        "range_values": "{\"B\":1,\"HK\":4,\"HV\":8,\"K\":128,\"T\":4096,\"V\":128,\"allow_neg_eigval\":true,\"case_id\":1,\"case_key\":\"perf_bsnd_gva_t4096_neg_sv\",\"dtype\":\"bf16\",\"layout\":\"BSND\",\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20262029,\"seqlens\":\"\",\"soc\":\"ascend950\",\"state_dtype\":\"none\",\"state_v_first\":true,\"tags\":\"performance\"}",
         "backward": false
       },
       {
@@ -238,7 +238,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "NTD",
+        "range_values": "BSND",
         "backward": false
       },
       {
@@ -265,7 +265,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 2,
+        "range_values": 4,
         "backward": false
       },
       {
@@ -274,7 +274,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 4,
+        "range_values": 8,
         "backward": false
       },
       {
@@ -283,7 +283,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 256,
+        "range_values": 4096,
         "backward": false
       },
       {
@@ -310,7 +310,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "fp32",
+        "range_values": "none",
         "backward": false
       },
       {
@@ -319,7 +319,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "128,128",
+        "range_values": "",
         "backward": false
       },
       {
@@ -337,7 +337,7 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20262028,
+        "range_values": 20262029,
         "backward": false
       }
     ],
