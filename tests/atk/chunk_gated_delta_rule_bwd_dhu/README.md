@@ -183,4 +183,4 @@ saved/recompute 性能只取本独立分支的 `runs/pr_delivery_20261028/dhu/pe
 
 上述 direct、回退路径和 C64/C128 单算子检查均不构成联合环境或整链验收结论。
 **整链 msSanitizer 尚未闭环**；A2/A3 仅完成交叉编译，**未跑 A2/A3 实机，整体 ST 未跑**。
-当前 head 的 7 项 A2+A5 NPU CI 与 CI 契约测试未执行；既有 memcheck WARNING 仍需跟踪，不能写成零告警。
+当前 head 的 7 项 A2+A5 NPU CI 未执行，CI 契约测试已通过；既有 memcheck WARNING 仍需跟踪，不能写成零告警。
