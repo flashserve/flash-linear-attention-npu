@@ -8,7 +8,7 @@
 #include "chunk_kda_fwd.h"
 #include "aclnn_chunk_kda_fwd_v2.h"
 #include "chunk_kda_fwd_v2.h"
-#include "../../../chunk_kda_fwd_fused/op_host/op_api/chunk_kda_fwd_fused.h"
+#include "../../arch35/chunk32/op_host/op_api/chunk_kda_fwd_fused.h"
 
 #include <algorithm>
 #include <cstring>

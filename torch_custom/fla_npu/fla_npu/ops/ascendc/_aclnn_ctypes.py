@@ -4045,7 +4045,7 @@ def npu_chunk_kda_fwd(
     total_chunks = _kda_total_chunks(batch, seqlen, chunk_size, cu, indices)
 
     if chunk_size == 32:
-        # chunk32 走单 kernel 大融合(issue #829,算子 chunk_kda_fwd_fused)。
+        # chunk32 走统一 chunk_kda_fwd 算子的 arch35 单 kernel 融合路径(issue #829)。
         # 契约收紧(与 aclnn 层一致,提前在 Python 给出可读报错):
         # BF16 q/k/v、K=V=128、任意 T>0(尾块核内钳制)、GVA、dense/varlen、
         # safe_gate=true、核内 norm/sigmoid、use_exp2=true、不导出中间态。

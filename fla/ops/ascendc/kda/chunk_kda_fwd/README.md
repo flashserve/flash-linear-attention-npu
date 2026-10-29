@@ -6,6 +6,9 @@
 自然对数 gate。Gate、Prepare、PostWu、FwdH 和 Finalize 复用同一个私有 L0；A5 的非对齐多 chunk
 场景按四个阶段依次提交，其他场景保持单次提交。该内部调度不改变 ACLNN 或 Python 公共接口。
 
+Ascend950 的 `chunk_size=32` 使用本目录 `arch35/chunk32/` 中的单 kernel 融合实现，
+由公开 `ChunkKdaFwd` V2 路由调用；目录和构建依赖统一收口，chunk64 的公开接口不变。
+
 Shape 符号与布局约定见 [KDA 模型符号表](../README.md#model-shape-symbols)。
 
 ## Gate 公式
@@ -57,7 +60,7 @@ Python 返回顺序为：
 
 - `attn_out` 固定为 BSND/TND。
 - `final_state` 固定按序列排列，末两维服从 `state_v_first`。
-- `Aqk/Akk` 始终返回，固定为 head-major。
+- `Aqk/Akk` 在 chunk64 返回 head-major；chunk32 不导出，槽位为 `None`。
 - `gk/w/u/qg/kg/v_new` 是供反向使用的 head-major 中间量。
 - 公开 `h` 与内部 `hCompute` 均为 NT-first，Finalize 直接消费。
 - 第 12 个返回值是 Python 层对 `initial_state` 的原对象透传，不是 aclnn 输出。
@@ -70,7 +73,7 @@ Python 返回顺序为：
 | --- | --- |
 | `output_final_state=true` | 返回 `final_state`，否则为 `None` |
 | `use_gate_in_kernel=false` 或 `disable_recompute=true` | 返回 `gk` |
-| 始终 | 返回 `Aqk/Akk` |
+| `chunk_size=64` | 返回 `Aqk/Akk`；chunk32 对应槽位为 `None` |
 | `disable_recompute=true` | 返回 `w/u/qg/kg/v_new` |
 | `disable_recompute=true` 或 `return_intermediate_states=true` | 返回 `h` |
 
@@ -110,7 +113,7 @@ Python 入口 `fla_npu.ops.ascendc.chunk_kda_fwd` 通过关键字参数
 | --- | --- | --- |
 | `layout` | `BSND` | `BSND/BNSD/TND/NTD` |
 | `scale` | 必传 | 通常为 `K**-0.5` |
-| `chunk_size` | `64` | `64`（其它取值参数校验阶段拦截） |
+| `chunk_size` | `64` | `64`（三段式）或 `32`（A5 arch35 单 kernel 融合） |
 | `output_final_state` | `false` | bool |
 | `safe_gate` | `false` | bool |
 | `lower_bound` | `-5.0` | safe raw gate 时 `[-5,0)` |
@@ -126,11 +129,12 @@ Python 入口 `fla_npu.ops.ascendc.chunk_kda_fwd` 通过关键字参数
 
 ## 支持范围
 
-- A2 (`ascend910b`)、A3 (`ascend910_93`)、A5 (`ascend950`)。
+- A2 (`ascend910b`)、A3 (`ascend910_93`) 支持 chunk64；A5 (`ascend950`) 支持 chunk64 和 chunk32。
 - `K/V` 只支持两档且必须同档：`K=V=64` 或 `K=V=128`。混合档（如 `K=64,V=128`）
   与其它取值（含 `V=256`）都不支持，会在参数校验阶段返回 `ACLNN_ERR_PARAM_INVALID`。
-- `chunk_size` 只支持 `64`；其它取值（含 `128`）在参数校验阶段返回
-  `ACLNN_ERR_PARAM_INVALID`（报错文本为 `chunkSize only supports 64.`），不会下沉到 tiling。
+- `chunk_size` 支持 `64` 和 `32`。chunk32 仅走 Ascend950 的 arch35 融合路径，要求
+  BF16 q/k/v、`K=V=128`、safe gate、核内 q/k L2 normalization 和 beta sigmoid；
+  支持 GVA、dense/varlen、尾块及 initial/final state，不导出 recompute 中间态。
 - TND/NTD 均支持多 head。
 - 变长调用最多 1024 条逻辑序列，rank-4 变长输入要求 B=1。
 - 空 tensor 不支持：`B` 或序列长度（TND/NTD 为总 token 数）为 0 时，参数校验阶段
@@ -143,6 +147,7 @@ Python 入口 `fla_npu.ops.ascendc.npu_chunk_kda_fwd` 负责场景选择：
 
 | 场景 | 走的 aclnn 入口 | L0 实现 |
 | --- | --- | --- |
+| `chunk_size=32`、Ascend950 | `aclnnChunkKdaFwdV2` | 本算子的 arch35/chunk32 单 kernel 融合实现 |
 | `q/k/v` 为 BF16、`K=V=128`、`chunk_size=64`、`cu_seqlens` 严格递增、输出连续 | `aclnnChunkKdaFwdV2` | `ChunkKdaFwdPrepare -> ChunkFwdH -> ChunkKdaFwdFinalize` 三个独立算子组合 |
 | 其余场景（FP16、`K=V=64`、含空序列、输出非连续） | `aclnnChunkKdaFwd`（签名与 ABI 未变） | 本算子的私有 L0 融合实现 |
 

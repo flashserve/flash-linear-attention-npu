@@ -74,7 +74,7 @@ outputs = chunk_kda_fwd(
 `chunk_size=64`），否则 Python 入口在发起调用前按 fla-org 参考实现拒绝，不会静默忽略；
 具体字段语义见 [归一化 / gate 开关](#归一化--gate-开关)。
 
-`chunk_size=32` 走单 kernel 大融合实现（`chunk_kda_fwd_fused`，issue #829）。当前契约：
+`chunk_size=32` 使用本目录 `arch35/chunk32/` 中的单 kernel 大融合实现（issue #829）。当前契约：
 
 - q/k/v 为 BF16，`K=V=128`；g/beta 必须同为 BF16 或同为 FP32；`A_log`、`dt_bias` 和 state 为 FP32。
 - `T>0`，kernel 处理非 128 对齐尾块；支持 dense batch、varlen，以及 `HV` 为 `H` 正整数倍的 GVA。

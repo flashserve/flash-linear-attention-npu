@@ -195,6 +195,11 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=accuracy
 三路双标杆，精度入口为该算子 `README.md` 中的 `scripts/run_matrix.sh`；统一脚本仍用于其
 性能、确定性和 mssanitizer。
 
+`chunk_kda_fwd` 的 Ascend950 chunk32 融合路径使用独立子目录
+`chunk_kda_fwd/chunk32/`，精度、性能和 mssanitizer 分别由其中的
+`run_chunk32_atk.sh accuracy|performance|mssanitizer` 发起；其 TilingKey 为 `32`，
+与 chunk64 用例分开维护。
+
 ### 性能执行
 
 性能测试使用 ATK `performance_device`：

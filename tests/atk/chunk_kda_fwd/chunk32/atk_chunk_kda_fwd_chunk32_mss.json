@@ -1,0 +1,1352 @@
+[
+  {
+    "id": 0,
+    "default_seed": 20261014,
+    "name": "chunk_kda_fwd_fd32_ext_00_ntd_h2_t128",
+    "aclnn_name": "ChunkKdaFwd",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v2.1",
+    "expected_error_msg": "",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_fwd",
+    "aclnn_api_type": "aclnn_function",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "save_name": "chunk_kda_fwd",
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"B\":1,\"H\":2,\"HV\":2,\"K\":128,\"V\":128,\"T\":128,\"chunk_size\":32,\"layout\":\"NTD\",\"q_dtype\":\"bf16\",\"g_dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"scale\":0.08838834764831843,\"initial_state\":false,\"output_final_state\":false,\"cu_seqlens\":\"\",\"explicit_chunk_indices\":false,\"safe_gate\":true,\"lower_bound\":-0.001,\"use_gate_in_kernel\":true,\"use_beta_sigmoid_in_kernel\":true,\"use_qk_l2norm_in_kernel\":true,\"dt_bias\":true,\"disable_recompute\":false,\"return_intermediate_states\":false,\"state_v_first\":false,\"data_profile\":\"normal\",\"distribution\":\"normal\",\"data_scale\":0.5,\"gate_scale\":1.25,\"qk_scale\":0.08838834764831843,\"v_scale\":0.05,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_scale\":0.35,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":1.65,\"seed\":20261014,\"soc\":\"ascend950\",\"route\":\"ascendc\",\"profile\":\"a5_accuracy\",\"case_key\":\"fd32_ext_ntd_h2_t128\",\"shape_spec\":\"B=1,H=2,HV=2,T=128,K=128,V=128\",\"optional_spec\":\"initial=False,final=False,varlen=False,disable_recompute=False\",\"tags\":\"accuracy,chunk32,fused,ext\"}"
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "ascend950"
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "ascendc"
+      },
+      {
+        "name": "batch",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 1
+      },
+      {
+        "name": "head",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 2
+      },
+      {
+        "name": "value_head",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 2
+      },
+      {
+        "name": "total_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 128
+      },
+      {
+        "name": "key_dim",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 128
+      },
+      {
+        "name": "value_dim",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 128
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 32
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "NTD"
+      },
+      {
+        "name": "q_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "bf16"
+      },
+      {
+        "name": "g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "bf16"
+      },
+      {
+        "name": "beta_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "bf16"
+      },
+      {
+        "name": "initial_state",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      },
+      {
+        "name": "output_final_state",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      },
+      {
+        "name": "varlen",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      },
+      {
+        "name": "safe_gate",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "lower_bound",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": -0.001
+      },
+      {
+        "name": "use_gate_in_kernel",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "use_beta_sigmoid_in_kernel",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "use_qk_l2norm_in_kernel",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "disable_recompute",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      },
+      {
+        "name": "return_intermediate_states",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      },
+      {
+        "name": "negative_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      }
+    ]
+  },
+  {
+    "id": 1,
+    "default_seed": 20261041,
+    "name": "chunk_kda_fwd_fd32_extstate_27_ntd_h2_t128_ist1_fst1",
+    "aclnn_name": "ChunkKdaFwd",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v2.1",
+    "expected_error_msg": "",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_fwd",
+    "aclnn_api_type": "aclnn_function",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "save_name": "chunk_kda_fwd",
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"B\":1,\"H\":2,\"HV\":2,\"K\":128,\"V\":128,\"T\":128,\"chunk_size\":32,\"layout\":\"NTD\",\"q_dtype\":\"bf16\",\"g_dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"scale\":0.08838834764831843,\"initial_state\":true,\"output_final_state\":true,\"cu_seqlens\":\"\",\"explicit_chunk_indices\":false,\"safe_gate\":true,\"lower_bound\":-0.001,\"use_gate_in_kernel\":true,\"use_beta_sigmoid_in_kernel\":true,\"use_qk_l2norm_in_kernel\":true,\"dt_bias\":true,\"disable_recompute\":false,\"return_intermediate_states\":false,\"state_v_first\":false,\"data_profile\":\"normal\",\"distribution\":\"normal\",\"data_scale\":0.5,\"gate_scale\":1.25,\"qk_scale\":0.08838834764831843,\"v_scale\":0.05,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_scale\":0.35,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":1.65,\"seed\":20261041,\"soc\":\"ascend950\",\"route\":\"ascendc\",\"profile\":\"a5_accuracy\",\"case_key\":\"fd32_extstate_ntd_h2_t128_ist1_fst1\",\"shape_spec\":\"B=1,H=2,HV=2,T=128,K=128,V=128\",\"optional_spec\":\"initial=True,final=True,varlen=False,disable_recompute=False\",\"tags\":\"accuracy,chunk32,fused,extstate\"}"
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "ascend950"
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "ascendc"
+      },
+      {
+        "name": "batch",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 1
+      },
+      {
+        "name": "head",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 2
+      },
+      {
+        "name": "value_head",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 2
+      },
+      {
+        "name": "total_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 128
+      },
+      {
+        "name": "key_dim",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 128
+      },
+      {
+        "name": "value_dim",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 128
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 32
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "NTD"
+      },
+      {
+        "name": "q_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "bf16"
+      },
+      {
+        "name": "g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "bf16"
+      },
+      {
+        "name": "beta_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "bf16"
+      },
+      {
+        "name": "initial_state",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "output_final_state",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "varlen",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      },
+      {
+        "name": "safe_gate",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "lower_bound",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": -0.001
+      },
+      {
+        "name": "use_gate_in_kernel",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "use_beta_sigmoid_in_kernel",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "use_qk_l2norm_in_kernel",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "disable_recompute",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      },
+      {
+        "name": "return_intermediate_states",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      },
+      {
+        "name": "negative_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      }
+    ]
+  },
+  {
+    "id": 2,
+    "default_seed": 20261046,
+    "name": "chunk_kda_fwd_fd32_exttail_29_ntd_h2_t194_ist0_fst0",
+    "aclnn_name": "ChunkKdaFwd",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v2.1",
+    "expected_error_msg": "",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_fwd",
+    "aclnn_api_type": "aclnn_function",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "save_name": "chunk_kda_fwd",
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"B\":1,\"H\":2,\"HV\":2,\"K\":128,\"V\":128,\"T\":194,\"chunk_size\":32,\"layout\":\"NTD\",\"q_dtype\":\"bf16\",\"g_dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"scale\":0.08838834764831843,\"initial_state\":false,\"output_final_state\":false,\"cu_seqlens\":\"\",\"explicit_chunk_indices\":false,\"safe_gate\":true,\"lower_bound\":-0.001,\"use_gate_in_kernel\":true,\"use_beta_sigmoid_in_kernel\":true,\"use_qk_l2norm_in_kernel\":true,\"dt_bias\":true,\"disable_recompute\":false,\"return_intermediate_states\":false,\"state_v_first\":false,\"data_profile\":\"normal\",\"distribution\":\"normal\",\"data_scale\":0.5,\"gate_scale\":1.25,\"qk_scale\":0.08838834764831843,\"v_scale\":0.05,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_scale\":0.35,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":1.65,\"seed\":20261046,\"soc\":\"ascend950\",\"route\":\"ascendc\",\"profile\":\"a5_accuracy\",\"case_key\":\"fd32_exttail_ntd_h2_t194\",\"shape_spec\":\"B=1,H=2,HV=2,T=194,K=128,V=128\",\"optional_spec\":\"initial=False,final=False,varlen=False,disable_recompute=False\",\"tags\":\"accuracy,chunk32,fused,exttail\"}"
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "ascend950"
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "ascendc"
+      },
+      {
+        "name": "batch",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 1
+      },
+      {
+        "name": "head",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 2
+      },
+      {
+        "name": "value_head",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 2
+      },
+      {
+        "name": "total_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 194
+      },
+      {
+        "name": "key_dim",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 128
+      },
+      {
+        "name": "value_dim",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 128
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 32
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "NTD"
+      },
+      {
+        "name": "q_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "bf16"
+      },
+      {
+        "name": "g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "bf16"
+      },
+      {
+        "name": "beta_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "bf16"
+      },
+      {
+        "name": "initial_state",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      },
+      {
+        "name": "output_final_state",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      },
+      {
+        "name": "varlen",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      },
+      {
+        "name": "safe_gate",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "lower_bound",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": -0.001
+      },
+      {
+        "name": "use_gate_in_kernel",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "use_beta_sigmoid_in_kernel",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "use_qk_l2norm_in_kernel",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "disable_recompute",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      },
+      {
+        "name": "return_intermediate_states",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      },
+      {
+        "name": "negative_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      }
+    ]
+  },
+  {
+    "id": 3,
+    "default_seed": 20261050,
+    "name": "chunk_kda_fwd_chunk32_varlen_ntd_fp32",
+    "aclnn_name": "ChunkKdaFwd",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v2.1",
+    "expected_error_msg": "",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_fwd",
+    "aclnn_api_type": "aclnn_function",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "save_name": "chunk_kda_fwd",
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"B\":1,\"H\":4,\"HV\":4,\"K\":128,\"V\":128,\"T\":193,\"chunk_size\":32,\"layout\":\"NTD\",\"q_dtype\":\"bf16\",\"g_dtype\":\"fp32\",\"beta_dtype\":\"fp32\",\"scale\":0.08838834764831843,\"initial_state\":true,\"output_final_state\":true,\"cu_seqlens\":\"0,96,96,193\",\"explicit_chunk_indices\":true,\"safe_gate\":true,\"lower_bound\":-0.001,\"use_gate_in_kernel\":true,\"use_beta_sigmoid_in_kernel\":true,\"use_qk_l2norm_in_kernel\":true,\"dt_bias\":true,\"disable_recompute\":false,\"return_intermediate_states\":false,\"state_v_first\":false,\"data_profile\":\"normal\",\"distribution\":\"normal\",\"data_scale\":0.5,\"gate_scale\":1.25,\"qk_scale\":0.08838834764831843,\"v_scale\":0.05,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_scale\":0.35,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":1.65,\"seed\":20261050,\"soc\":\"ascend950\",\"route\":\"ascendc\",\"profile\":\"a5_accuracy\",\"case_key\":\"chunk32_varlen_ntd_fp32\",\"shape_spec\":\"B=1,H=2,HV=2,T=193,K=128,V=128,varlen=NTD,g=fp32\",\"optional_spec\":\"initial=True,final=True,varlen=False,disable_recompute=False\",\"tags\":\"accuracy,chunk32,fused,exttail\"}"
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "ascend950"
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "ascendc"
+      },
+      {
+        "name": "batch",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 1
+      },
+      {
+        "name": "head",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 4
+      },
+      {
+        "name": "value_head",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 4
+      },
+      {
+        "name": "total_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 193
+      },
+      {
+        "name": "key_dim",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 128
+      },
+      {
+        "name": "value_dim",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 128
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 32
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "BSND"
+      },
+      {
+        "name": "q_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "bf16"
+      },
+      {
+        "name": "g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "bf16"
+      },
+      {
+        "name": "beta_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "bf16"
+      },
+      {
+        "name": "initial_state",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "output_final_state",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "varlen",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      },
+      {
+        "name": "safe_gate",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "lower_bound",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": -0.001
+      },
+      {
+        "name": "use_gate_in_kernel",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "use_beta_sigmoid_in_kernel",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "use_qk_l2norm_in_kernel",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "disable_recompute",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      },
+      {
+        "name": "return_intermediate_states",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      },
+      {
+        "name": "negative_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      }
+    ]
+  },
+  {
+    "id": 4,
+    "default_seed": 20261050,
+    "name": "chunk_kda_fwd_chunk32_varlen_tnd_fp32",
+    "aclnn_name": "ChunkKdaFwd",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v2.1",
+    "expected_error_msg": "",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_fwd",
+    "aclnn_api_type": "aclnn_function",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "save_name": "chunk_kda_fwd",
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"B\":1,\"H\":4,\"HV\":4,\"K\":128,\"V\":128,\"T\":193,\"chunk_size\":32,\"layout\":\"TND\",\"q_dtype\":\"bf16\",\"g_dtype\":\"fp32\",\"beta_dtype\":\"fp32\",\"scale\":0.08838834764831843,\"initial_state\":true,\"output_final_state\":true,\"cu_seqlens\":\"0,96,96,193\",\"explicit_chunk_indices\":true,\"safe_gate\":true,\"lower_bound\":-0.001,\"use_gate_in_kernel\":true,\"use_beta_sigmoid_in_kernel\":true,\"use_qk_l2norm_in_kernel\":true,\"dt_bias\":true,\"disable_recompute\":false,\"return_intermediate_states\":false,\"state_v_first\":false,\"data_profile\":\"normal\",\"distribution\":\"normal\",\"data_scale\":0.5,\"gate_scale\":1.25,\"qk_scale\":0.08838834764831843,\"v_scale\":0.05,\"a_log_scale\":0.12,\"beta_bias\":1.5,\"beta_scale\":0.35,\"dt_bias_mean\":-3.0,\"dt_bias_scale\":1.65,\"seed\":20261050,\"soc\":\"ascend950\",\"route\":\"ascendc\",\"profile\":\"a5_accuracy\",\"case_key\":\"chunk32_varlen_tnd_fp32\",\"shape_spec\":\"B=1,H=2,HV=2,T=193,K=128,V=128,varlen=TND,g=fp32\",\"optional_spec\":\"initial=True,final=True,varlen=False,disable_recompute=False\",\"tags\":\"accuracy,chunk32,fused,exttail\"}"
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "ascend950"
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "ascendc"
+      },
+      {
+        "name": "batch",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 1
+      },
+      {
+        "name": "head",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 4
+      },
+      {
+        "name": "value_head",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 4
+      },
+      {
+        "name": "total_tokens",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 193
+      },
+      {
+        "name": "key_dim",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 128
+      },
+      {
+        "name": "value_dim",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 128
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": 32
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "BSND"
+      },
+      {
+        "name": "q_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "bf16"
+      },
+      {
+        "name": "g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "bf16"
+      },
+      {
+        "name": "beta_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "bf16"
+      },
+      {
+        "name": "initial_state",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "output_final_state",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "varlen",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      },
+      {
+        "name": "safe_gate",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "lower_bound",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": -0.001
+      },
+      {
+        "name": "use_gate_in_kernel",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "use_beta_sigmoid_in_kernel",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "use_qk_l2norm_in_kernel",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": true
+      },
+      {
+        "name": "disable_recompute",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      },
+      {
+        "name": "return_intermediate_states",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      },
+      {
+        "name": "negative_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": false
+      }
+    ]
+  }
+]
