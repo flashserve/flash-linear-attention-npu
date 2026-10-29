@@ -254,12 +254,10 @@ def dht_regression_profiles():
         yield spec
 
 
-def write_dht_regression(output: Path, minimal: bool = False):
+def _write_profiles(output: Path, profiles):
     template = json.loads(Path(__file__).with_name(f"atk_{OP_NAME}.json").read_text(encoding="utf-8"))[0]
     cases = []
-    for spec in dht_regression_profiles():
-        if minimal and (spec["chunk_size"] != 64 or not spec["with_h0"] or spec["seed"] != 20261020):
-            continue
+    for spec in profiles:
         case = deepcopy(template)
         case.update(id=spec["case_id"], default_seed=spec["seed"], name=f"{OP_NAME}_{spec['name']}")
         for item in case["inputs"]:
@@ -272,6 +270,57 @@ def write_dht_regression(output: Path, minimal: bool = False):
                 cfg["range_values"] = spec[cfg["name"]]
         cases.append(case)
     output.write_text(json.dumps(cases, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+
+
+def write_dht_regression(output: Path, minimal: bool = False):
+    profiles = (
+        spec for spec in dht_regression_profiles()
+        if not minimal or (spec["chunk_size"] == 64 and spec["with_h0"] and spec["seed"] == 20261020)
+    )
+    _write_profiles(output, profiles)
+
+
+def direct_regression_profiles():
+    """保留 dht 的 192 条 gK 组合，并复制为 HRatio==1 的 direct 输入。"""
+    for original in dht_regression_profiles():
+        if not original["use_gk"]:
+            continue
+        spec = deepcopy(original)
+        spec["HK"] = spec["HV"] = 4
+        spec["name"] += "_hratio1"
+        yield spec
+
+    boundary_profiles = [
+        {"name": "direct_h1_tail1", "dtype": "bf16", "B": 1, "HK": 1, "HV": 1,
+         "T": 65, "K": 128, "V": 128, "chunk_size": 64, "state_v_first": False,
+         "case_id": 384, "seed": 20261023},
+        {"name": "direct_h2_tail65_task_reuse", "dtype": "fp16", "B": 48, "HK": 2, "HV": 2,
+         "T": 65, "K": 128, "V": 128, "chunk_size": 128, "state_v_first": True,
+         "case_id": 385, "seed": 20261024},
+        {"name": "direct_h3_v256_tail17_task_reuse", "dtype": "bf16", "B": 65, "HK": 3, "HV": 3,
+         "T": 17, "K": 128, "V": 256, "chunk_size": 64, "state_v_first": False,
+         "case_id": 386, "seed": 20261025},
+        {"name": "direct_h4_tail1_task_reuse", "dtype": "fp16", "B": 96, "HK": 4, "HV": 4,
+         "T": 1, "K": 128, "V": 128, "chunk_size": 64, "state_v_first": True,
+         "with_h0": False, "with_dht": False, "case_id": 387, "seed": 20261026},
+    ]
+    for spec in boundary_profiles:
+        spec.update(use_gk=True, op=OP_NAME, route="ascendc", soc="ascend950")
+        spec.setdefault("with_h0", True)
+        spec.setdefault("with_dht", True)
+        yield spec
+
+
+def direct_mss_profiles():
+    """C64/C128 各 16 条代表组合，加 4 条 head-window/task 复用边界。"""
+    for spec in direct_regression_profiles():
+        if spec["case_id"] >= 384 or (spec["with_h0"] and spec["seed"] == 20261020):
+            yield spec
+
+
+def write_direct_regression(output: Path, minimal: bool = False):
+    profiles = direct_mss_profiles() if minimal else direct_regression_profiles()
+    _write_profiles(output, profiles)
 
 
 def _spec(index):
@@ -302,9 +351,20 @@ if GENERATOR_REGISTRY is not None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="生成非零 dht 的 384 条 ATK 补充回归用例（每个结构 3 个种子）")
-    parser.add_argument("--dht-output", type=Path, required=True)
+    parser = argparse.ArgumentParser(description="生成 Dhu 非零 dht 与 qg direct ATK 回归用例")
+    parser.add_argument("--dht-output", type=Path)
     parser.add_argument("--dht-minimal", action="store_true", help="仅保留 32 条内存/确定性检查代表用例")
+    parser.add_argument("--direct-output", type=Path, help="生成 196 条 HRatio==1 的 direct 精度用例")
+    parser.add_argument("--direct-mss-output", type=Path, help="生成 36 条 direct 内存/确定性代表用例")
     args = parser.parse_args()
-    write_dht_regression(args.dht_output, args.dht_minimal)
+    if not any((args.dht_output, args.direct_output, args.direct_mss_output)):
+        parser.error("至少指定 --dht-output、--direct-output 或 --direct-mss-output")
+    if args.dht_minimal and not args.dht_output:
+        parser.error("--dht-minimal 需要同时指定 --dht-output")
+    if args.dht_output:
+        write_dht_regression(args.dht_output, args.dht_minimal)
+    if args.direct_output:
+        write_direct_regression(args.direct_output)
+    if args.direct_mss_output:
+        write_direct_regression(args.direct_mss_output, minimal=True)
 

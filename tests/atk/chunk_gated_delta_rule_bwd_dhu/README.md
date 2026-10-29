@@ -105,6 +105,42 @@ GVA 与 `USE_GK=0` 保留原 AIV staging、共享与 gate 路径，公开接口�
 本独立分支只包含 c9e2 基线上的 Dhu qg direct 和测试 `ct` 延迟导入，不包含 Finalize、
 公共 V2 ATK README、Python 路由或其它算子的改动。
 
+### 仓内 direct 持久回归
+
+`atk_chunk_gated_delta_rule_bwd_dhu_direct.json` 和
+`atk_chunk_gated_delta_rule_bwd_dhu_direct_mss.json` 由仓内 generator 生成，不依赖外部实验目录。
+在仓库根目录执行：
+
+```bash
+python tests/atk/chunk_gated_delta_rule_bwd_dhu/gen_chunk_gated_delta_rule_bwd_dhu.py \
+  --direct-output tests/atk/chunk_gated_delta_rule_bwd_dhu/atk_chunk_gated_delta_rule_bwd_dhu_direct.json \
+  --direct-mss-output tests/atk/chunk_gated_delta_rule_bwd_dhu/atk_chunk_gated_delta_rule_bwd_dhu_direct_mss.json
+```
+
+精度文件共 196 条：先从 dht profile 复制 192 条 `use_gk=true` 组合并改为 `HK=HV=4`，保留原有
+BF16/FP16、V128/V256、C64/C128、KV/VK 布局、dense/varlen、h0 和固定种子分布；再增加
+case id 384–387，覆盖 1/2/3/4-head window、3-head/V256、尾长 1/17/65 以及多 task 输入。
+独立 `_mss.json` 共 36 条，包括 C64/C128 各 16 条代表组合和上述 4 条边界用例；其中
+B=48/65/96 的用例用于覆盖跨 task 及奇偶 workspace slot 复用。
+
+所有 direct 用例均满足 `use_gk=true && HK==HV`，并保留现有 `case_spec`、executor 和
+`mixed_tolerance_bm`。模板中的 `outputs: null` 表示比较 executor 返回的完整 `(dh, dh0, dv2)`；
+`h0` 存在时同时比较非空 `dh0` golden，可选 `dht/h0` 的存在与缺失均保留。
+`USE_GK=0` 的 raw-gate 和 `HK!=HV` 的 GVA 仍走原 AIV staging 回退路径；默认 200 条和
+dht 384 条 profile 不被 direct 生成入口改写。
+
+direct 精度复现命令：
+
+```bash
+atk node --backend npu --devices 0 node --backend cpu task \
+  -c tests/atk/chunk_gated_delta_rule_bwd_dhu/atk_chunk_gated_delta_rule_bwd_dhu_direct.json \
+  --task accuracy --bm_device cpu \
+  -p tests/atk/chunk_gated_delta_rule_bwd_dhu/executor_chunk_gated_delta_rule_bwd_dhu.py -to 2000
+```
+
+本节只记录持久化生成入口和静态覆盖；新增仓内 196/36 条用例未在本轮执行 NPU 测试，亦未记录实际
+headsPerTask/tiling 选择。下文历史 direct 192/192 结果不涵盖新增边界用例和独立 `_mss.json`。
+
 ### 历史口径与独立复测范围
 
 参考工作树中的早期 standalone 实验和联合 V2 环境记录仅作历史参考，不作为本独立分支的
