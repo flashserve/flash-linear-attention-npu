@@ -163,8 +163,13 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     // storeFinalState 跳末段，与老路径同语义；性能上界实测 -26%/-47%。
     // state fp32/bf16 均放行（放宽轮②）：gated update epilogue 原生支持
     // bf16 final（CAST_RINT 量化同老路径），StateT 在 kernel 分流点选型。
+    // soc 门控（第四处白名单，2026-10-29 A5 零影响加固）：gated 引擎仅
+    // A2/A3（arch22）编译，A5/未来芯片 kernel 无 gated 分支——host 若置
+    // eligible 会强设 blockDim=全核并预留 gated workspace，造成 A5 与基线的
+    // 行为偏差（2af1ad58 起存在的已知偏差，本次按"PR 修改禁止影响 A5"收敛）。
     tilingCtx.gatedEligible = useG && useExp2 && !stateVFirst &&
-        gateDtypeToken == CHUNK_FWD_H_TPL_FP32;
+        gateDtypeToken == CHUNK_FWD_H_TPL_FP32 &&
+        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
     tilingCtx.libApiWorkSpaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
 
     // P1: per-sequence chunk counts (ListInt attr #11, built by l0op from the
