@@ -169,13 +169,13 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
 
     // P1: per-sequence chunk counts (ListInt attr #11, built by l0op from the
     // host-readable cu_seqlens). Empty/absent list keeps the uniform partition.
-    // 950 门控：均衡分区仅在非 ASCEND950 上启用（运行时判定，先例同
-    // chunk_delta_h_bwd_preprocess_tiling.cpp）——A5 未经验证，varlen 保持
-    // 均分原路径；专项验证后删除本判定的 != 分支即放开。
+    // 门控白名单（2026-10-29 用户裁定，原 !=ASCEND950 黑名单式改）：仅 DAV_2201
+    // （A2/A3 家族）启用均衡分区——A5（3510）与未来新芯片默认不进，专项验证后
+    // 加白（黑名单式会让未验证的新芯片误入本分支）。
     tilingCtx.seqChunkCounts = nullptr;
     tilingCtx.seqCount = 0;
     const bool socSupportsBalanced =
-        ascendcPlatform.GetSocVersion() != platform_ascendc::SocVersion::ASCEND950;
+        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
     if (socSupportsBalanced) {
         const auto *seqChunkList = attrPtr->GetListInt(ATTR_SEQ_CHUNK_COUNTS_IDX);
         if (seqChunkList != nullptr && seqChunkList->GetSize() > 0) {
@@ -183,6 +183,12 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
             tilingCtx.seqCount = static_cast<int64_t>(seqChunkList->GetSize());
         }
     }
+    // 链摊满 soc 门控（2026-10-29，用户约束"A2 的修改不能影响到 A5"+白名单裁定）：
+    // 仅 DAV_2201（A2/A3 家族——Ascend910B1~B4/B2C/910_93 同归本架构，运行时核数
+    // 经 GetCoreNumAic 自适应）启用；未来新芯片默认不进，待专项验证后加白。
+    // 勿用 !=ASCEND950 黑名单式（新芯片会误入未验证分支）。
+    tilingCtx.spreadChainsAllowed =
+        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
 
     if (tilingCtx.aicCoreNum == 0) {
         OP_LOGE(context->GetNodeName(), "Platform reports zero AIC cores; cannot build ChunkFwdH tiling.");
@@ -226,10 +232,12 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     // 其余形态（变长/4-head unit）恒走原 TILE_ROWS=8 双 slot 路径，行为不变。
     // unitHeads 由每核 head 数对 FWD_H_AIC_HEAD_SLOTS=4 的切分决定：unit 头数
     // ≤2 即 headsPerCore ≤2（均分口径 ceil(total/cores)≤2）。
-    // soc 门控沿用 P1 先例（!=ASCEND950）：A5/950 不开，arch35 路径零改动。
+    // soc 门控白名单（2026-10-29 用户裁定，原 !=ASCEND950 黑名单式改）：仅
+    // DAV_2201（A2/A3）开 T16；A5（3510）arch35 路径零改动；未来新芯片默认
+    // 不进，专项验证后加白。
     const bool denseT16Eligible = !plainTiling.isVariedLen &&
         plainTiling.vNumHead <= 2 * static_cast<int64_t>(blockDim) && plainTiling.seqlen > 0 &&
-        ascendcPlatform.GetSocVersion() != platform_ascendc::SocVersion::ASCEND950;
+        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
 
     using namespace GDN;
     const uint64_t tilingKey = GET_TPL_TILING_KEY(

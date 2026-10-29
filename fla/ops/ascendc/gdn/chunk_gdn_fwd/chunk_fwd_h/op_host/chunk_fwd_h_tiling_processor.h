@@ -69,6 +69,11 @@ struct ChunkFwdHTilingContext {
     // eligible 时 blockDim 恒 aicCoreNum（gated 调度器要求全核参与 mode2
     // 配对——收缩 launch 会导致 flag 配对残缺损）。
     bool gatedEligible = false;
+    // 链摊满 soc 门控（2026-10-29，用户约束"A2 的修改不能影响到 A5"+白名单裁定）：
+    // tiling.cpp 注入 GetCurNpuArch()==DAV_2201（A2/A3 家族白名单）——A5/950 恒
+    // false，spread 分支不触发，blockDim 保持原公式（A5 行为不变）。默认 false
+    // （保守：未显式注入则不开）。
+    bool spreadChainsAllowed = false;
 };
 
 class ChunkFwdHTilingProcessor {
@@ -102,9 +107,35 @@ public:
         const uint64_t physicalAicCores = static_cast<uint64_t>(ctx_.aicCoreNum);
         const uint64_t headsPerCore =
             (totalHeadTasks + physicalAicCores - 1) / physicalAicCores;
-        blockDim = ctx_.gatedEligible
-            ? static_cast<uint32_t>(physicalAicCores)
-            : static_cast<uint32_t>((totalHeadTasks + headsPerCore - 1) / headsPerCore);
+        // ——链摊满试验（2026-10-29，§9.10.10 后续）：少任务形态（任务数 < 2×物理核）
+        // 放开 blockDim 到 min(cores, tasks)——pair 核每核 AIC 串行服务 2 链指令流，
+        // 若 AIC 段是 chunk 周期主体（画像 AIV vec 仅 52.6% 佐证），单链核把 AIC 段
+        // 砍半可缩短链周期。gated 路径不参与（blockDim 恒全核）；dense 不受影响
+        // （headsPerCore≥2 时走原公式）。1 任务/核的正确性有 fn_ 小 head 用例先例。
+        // soc 门控（A5 隔离，用户约束）：spreadChainsAllowed 恒 false 于 A5/950。
+        // 可行性预判前置（守卫回退空核修复）：只有 任务数>核数 的区间 blockDim 才
+        // 偏离原公式（≤核数时原公式本就每核 1 链）；该区间若链摊满表写不成（dense
+        // 无权重表 / 对齐守卫不满足），抬高的 blockDim 只会带尾部空核（gk 定长实测
+        // +2.4%）——预判不过则回原公式。预判与 FillBalancedCoreBounds 内守卫同条件
+        // （r=任务-核、s=2核-任务，须 s 为 vNumHead 倍数且 2r≤vNumHead）。
+        bool spreadOk = ctx_.spreadChainsAllowed &&
+            !ctx_.gatedEligible && totalHeadTasks < 2 * physicalAicCores;
+        if (spreadOk && totalHeadTasks > physicalAicCores) {
+            const int64_t r = static_cast<int64_t>(totalHeadTasks) -
+                static_cast<int64_t>(physicalAicCores);
+            const int64_t s = 2 * static_cast<int64_t>(physicalAicCores) -
+                static_cast<int64_t>(totalHeadTasks);
+            spreadOk = ctx_.seqChunkCounts != nullptr && ctx_.seqCount > 0 &&
+                s >= 0 && s % ctx_.vNumHead == 0 && 2 * r <= ctx_.vNumHead;
+        }
+        if (spreadOk) {
+            blockDim = static_cast<uint32_t>(
+                totalHeadTasks < physicalAicCores ? totalHeadTasks : physicalAicCores);
+        } else {
+            blockDim = ctx_.gatedEligible
+                ? static_cast<uint32_t>(physicalAicCores)
+                : static_cast<uint32_t>((totalHeadTasks + headsPerCore - 1) / headsPerCore);
+        }
         const int64_t activeAicCoreNum = static_cast<int64_t>(blockDim);
         constexpr int64_t chunkSize = CHUNK_FWD_H_CHUNK_SIZE;
         constexpr int64_t kHeadDim = CHUNK_FWD_H_K_DIM;
@@ -214,6 +245,24 @@ private:
         }
         if (taskCursor != totalHeadTasks || units.empty()) {
             return;
+        }
+        // ——链摊满分配（核多于 pair 数时，与 blockDim 放开分支配套）——
+        // r = 双任务核数（尾段），s = 单任务核数：s + r = blockDim 且 s + 2r = total。
+        // 双核区间 [s, s+2r) 须整段在一个序列内（连续 2 任务同序列 pair）——对齐守卫：
+        // s 为 vNumHead 倍数且 2r ≤ vNumHead；不满足则回退 pair 贪心（安全）。
+        // 尾段 = seq-major 最后序列区间，case32 恰为最短序列（双核扛轻链最优）。
+        if (static_cast<int64_t>(blockDim) > static_cast<int64_t>(units.size())) {
+            const int64_t totalT = static_cast<int64_t>(totalHeadTasks);
+            const int64_t r = totalT - static_cast<int64_t>(blockDim);
+            const int64_t s = 2 * static_cast<int64_t>(blockDim) - totalT;
+            if (r > 0 && s >= 0 && s % ctx_.vNumHead == 0 && 2 * r <= ctx_.vNumHead) {
+                for (int64_t core = 0; core < static_cast<int64_t>(blockDim); ++core) {
+                    const int64_t end = core < s ? (core + 1) : (s + 2 * (core - s + 1));
+                    tiling.coreTaskBounds[static_cast<size_t>(core)] = end;
+                }
+                tiling.coreBoundCount = static_cast<int64_t>(blockDim);
+            }
+            return; // 对齐不满足（跨界风险）→ 无表 = kernel 均分回退，安全
         }
         int64_t maxWeight = 0;
         int64_t totalWeight = 0;
