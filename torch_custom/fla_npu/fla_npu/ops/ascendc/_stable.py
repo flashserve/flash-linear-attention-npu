@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import sys
+import warnings
 
 
 _LIB_ENV = "FLA_NPU_STABLE_LIB"
@@ -70,6 +71,10 @@ _ENUM = {
     "npu_chunk_fwd_o": {"output_layout": _LAYOUT_CODES},
     "npu_chunk_gated_delta_rule_fwd": {"layout": _LAYOUT_CODES},
     "npu_chunk_kda_bwd_intra": {"layout": {"BSND": 0, "BNSD": 1, "TND": 2}},
+    "npu_chunk_kda_bwd_prepare": {"layout": _LAYOUT_CODES},
+    "npu_chunk_kda_bwd": {"input_layout": _LAYOUT_CODES, "output_layout": _LAYOUT_CODES},
+    "npu_chunk_kda_bwd_recompute": {"input_layout": _LAYOUT_CODES},
+    "npu_chunk_kda_bwd_finalize": {"output_layout": _LAYOUT_CODES},
     "npu_chunk_kda_fwd": {"layout": _LAYOUT_CODES},
     "npu_chunk_kda_fwd_finalize": {"output_layout": _LAYOUT_CODES},
     "npu_chunk_kda_fwd_prepare": {"layout": _LAYOUT_CODES},
@@ -768,6 +773,14 @@ def npu_kda_gate_cumsum(g, chunk_size, *, A_log=None, dt_bias=None,
     -5.0 there, and passing None straight through is not representable).
     """
 
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_kda_gate_cumsum is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_kda_fwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
+
     return _op("npu_kda_gate_cumsum")(
         g,
         A_log,
@@ -817,6 +830,14 @@ def npu_chunk_bwd_dv_local(q, k, d_o, g, scale, chunk_size, *, g_gamma=None,
                            A=None, cu_seqlens=None, chunk_indices=None):
     """Local dv contribution of the chunked GDN backward."""
 
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_chunk_bwd_dv_local is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_gated_delta_rule_bwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
+
     return _op("npu_chunk_bwd_dv_local")(
         q, k, d_o, g, g_gamma, A,
         _host_ints(cu_seqlens), _host_ints(chunk_indices),
@@ -824,10 +845,34 @@ def npu_chunk_bwd_dv_local(q, k, d_o, g, scale, chunk_size, *, g_gamma=None,
     )
 
 
+def npu_pre_process_bwd_kernel_merged(q, k, w, d_o, dv, scale, chunk_size, *,
+                                     g=None, gk=None, cu_seqlens=None):
+    """CP backward state preprocess: ``dhm = [E_r | P_r]`` (FP32 ``[Hv, K, V+K]``).
+
+    The launcher only allocates the output: ``q``/``k`` are ``[B, Hk, T, K]``,
+    ``w`` is ``[B, Hv, T, K]``, ``d_o``/``dv`` are ``[B, Hv, T, V]``, and ``g``
+    (``[B, Hv, T]``) / ``gk`` (``[B, Hv, T, K]``) are the two mutually exclusive
+    gate forms; ``cu_seqlens`` carries the single packed segment.
+    """
+
+    return _op("npu_pre_process_bwd_kernel_merged")(
+        q, k, w, d_o, dv, g, gk, _host_ints(cu_seqlens),
+        float(scale), int(chunk_size), _current_stream_ptr(),
+    )
+
+
 def npu_chunk_local_cumsum(g, chunk_size, *, cu_seqlens=None,
                            chunk_indices_out=None, reverse=False, scale=1.0,
                            head_first=True, output_dtype="float32"):
     """Per-chunk cumulative sum of ``g``."""
+
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_chunk_local_cumsum is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_gated_delta_rule_fwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
 
     return _op("npu_chunk_local_cumsum")(
         g,
@@ -845,6 +890,14 @@ def npu_chunk_local_cumsum(g, chunk_size, *, cu_seqlens=None,
 def npu_chunk_scaled_dot_kkt(k, g, beta, *, cu_seqlens=None,
                              chunk_indices=None, chunk_size=64):
     """Chunked scaled dot product used to build the WY representation."""
+
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_chunk_scaled_dot_kkt is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_gated_delta_rule_fwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
 
     from ._chunk_scaled_dot_kkt_contract import validate as _validate_chunk_scaled_dot_kkt
 
@@ -868,6 +921,14 @@ def npu_chunk_bwd_dqkwg(q, k, v, g, h, dox, dh, dv, chunk_size, *,
     do the same here rather than passing None into a scalar slot.
     """
 
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_chunk_bwd_dqkwg is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_gated_delta_rule_bwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
+
     return _op("npu_chunk_bwd_dqkwg")(
         q, k, v, g, h, dox, dh, dv,
         _host_ints(cu_seqlens), _host_ints(chunk_indices),
@@ -885,6 +946,14 @@ def npu_prepare_wy_repr_bwd_da(k, v, beta, A, dw, du, g, *, chunk_size,
                                cu_seqlens=None, chunk_indices=None):
     """dA only, for backends that already have the other gradients."""
 
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_prepare_wy_repr_bwd_da is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_gated_delta_rule_bwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
+
     return _op("npu_prepare_wy_repr_bwd_da")(
         k, v, beta, A, dw, du, g,
         _host_ints(cu_seqlens), _host_ints(chunk_indices),
@@ -895,6 +964,14 @@ def npu_prepare_wy_repr_bwd_da(k, v, beta, A, dw, du, g, *, chunk_size,
 def npu_prepare_wy_repr_bwd_full(k, v, beta, A, dA, dw, du, g, chunk_size, *,
                                  cu_seqlens=None, chunk_indices=None):
     """dk / dv / dbeta / dg, taking dA as an input."""
+
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_prepare_wy_repr_bwd_full is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_gated_delta_rule_bwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
 
     return _op("npu_prepare_wy_repr_bwd_full")(
         k, v, beta, A, dA, dw, du, g,
@@ -907,6 +984,14 @@ def npu_prepare_wy_repr_bwd(k, v, beta, A, dw, du, g, chunk_size, *,
                             cu_seqlens=None, chunk_indices=None):
     """dk / dv / dbeta / dg; produces dA internally."""
 
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_prepare_wy_repr_bwd is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_gated_delta_rule_bwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
+
     return _op("npu_prepare_wy_repr_bwd")(
         k, v, beta, A, dw, du, g,
         _host_ints(cu_seqlens), _host_ints(chunk_indices),
@@ -917,6 +1002,15 @@ def npu_prepare_wy_repr_bwd(k, v, beta, A, dw, du, g, chunk_size, *,
 def npu_recompute_w_u_fwd(k, v, beta, A, chunk_size, *, g=None, gk=None,
                           cu_seqlens=None, chunk_indices=None):
     """Recompute w and u for the backward pass."""
+
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_recompute_w_u_fwd is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_gated_delta_rule_fwd / npu_chunk_gated_delta_rule_bwd "
+        "instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
 
     return _op("npu_recompute_w_u_fwd")(
         k, v, beta, A, g, gk,
@@ -1141,7 +1235,7 @@ def npu_causal_conv1d(x, weight, bias=None, conv_states=None, *,
 
     warnings.warn(
         "fla_npu.ops.ascendc.npu_causal_conv1d is a deprecated compatibility "
-        "API and will be removed in 2027/02. Use causal_conv1d_fn or "
+        "API and will be removed on January 15, 2027 (v26.12.0). Use causal_conv1d_fn or "
         "causal_conv1d_update instead.",
         FutureWarning,
         stacklevel=4,
@@ -1237,7 +1331,8 @@ def npu_chunk_gated_delta_rule_bwd_dhu(
 def npu_chunk_kda_bwd_recompute(q, k, v, g, beta, a, chunk_size, *,
                                 A_log=None, dt_bias=None, cu_seqlens=None,
                                 chunk_indices=None, use_gate_in_kernel=True,
-                                use_exp2=True, lower_bound=-5.0):
+                                use_exp2=True, lower_bound=-5.0,
+                                input_layout="BNSD"):
     """Recompute the KDA saved tensors (`gk`, `w`, `u`, `qg`, `kg`).
 
     The declared order starts with the gate cumsum because that is the tensor
@@ -1245,12 +1340,16 @@ def npu_chunk_kda_bwd_recompute(q, k, v, g, beta, a, chunk_size, *,
     so the adapter reorders the results before returning them.
     """
 
+    from ._kda_policy import _validate_kda_recompute_layout
+
+    _validate_kda_recompute_layout(input_layout)
     return _op("npu_chunk_kda_bwd_recompute")(
         q, k, v, g, beta, a, A_log, dt_bias,
         _host_ints(cu_seqlens), _host_ints(chunk_indices),
         chunk_size,
         True if use_exp2 is None else bool(use_exp2),
         -5.0 if lower_bound is None else float(lower_bound),
+        _char_code("npu_chunk_kda_bwd_recompute", "input_layout", input_layout),
         bool(use_gate_in_kernel),
         _current_stream_ptr(),
     )
@@ -1336,6 +1435,58 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
     return (*result, initial_state)
 
 
+def npu_chunk_kda_bwd_finalize(
+    q, k, v, gk, raw_g, beta, a_log, dt_bias, akk, v_new, h, dh,
+    dv_scan, d_aqk, dq_raw, *, scale, lower_bound=-5.0, chunk_size=64,
+    safe_gate=True, use_gate_in_kernel=True, use_exp2=True, state_v_first=False,
+    q_rstd=None, k_rstd=None, cu_seqlens=None, chunk_indices=None,
+    use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False, output_layout=None,
+):
+    """Finalize KDA gradients; dBeta and dG always use token-major order.
+
+    On A5, use_beta_sigmoid_in_kernel is reserved and must remain False.
+    """
+    if allow_neg_eigval and not use_beta_sigmoid_in_kernel:
+        raise ValueError(
+            "npu_chunk_kda_bwd_finalize: allow_neg_eigval=True requires "
+            "use_beta_sigmoid_in_kernel=True.")
+    if q.ndim not in (3, 4):
+        raise ValueError("q must have rank 3 or 4")
+    rank3 = q.ndim == 3
+    if output_layout is None:
+        output_layout = "NTD" if rank3 else "BNSD"
+    valid_layouts = ("NTD", "TND") if rank3 else ("BNSD", "BSND")
+    if output_layout not in valid_layouts:
+        raise ValueError("output_layout does not match input rank")
+    if cu_seqlens is None and chunk_indices is not None:
+        raise ValueError("chunk_indices requires cu_seqlens")
+    if (q_rstd is None) != (k_rstd is None):
+        raise ValueError("q_rstd and k_rstd must appear together")
+    return _op("npu_chunk_kda_bwd_finalize")(
+        q, k, v, gk, raw_g, beta, a_log, dt_bias, akk, v_new, h, dh,
+        dv_scan, d_aqk, dq_raw, q_rstd, k_rstd,
+        _host_ints(cu_seqlens), _host_ints(chunk_indices),
+        float(scale), float(lower_bound), int(chunk_size), bool(safe_gate),
+        bool(use_gate_in_kernel), bool(use_exp2), bool(state_v_first),
+        bool(use_beta_sigmoid_in_kernel), bool(allow_neg_eigval),
+        _char_code("npu_chunk_kda_bwd_finalize", "output_layout", output_layout),
+        _current_stream_ptr(),
+    )
+
+
+def npu_chunk_kda_bwd_prepare(
+    aqk, v_new, d_o, h, *, scale, layout, chunk_size=64,
+    state_v_first=False, cu_seqlens=None, chunk_indices=None,
+):
+    """Partial KDA gradients with contiguous head-major outputs."""
+    return _op("npu_chunk_kda_bwd_prepare")(
+        aqk, v_new, d_o, h, _host_ints(cu_seqlens), _host_ints(chunk_indices),
+        _char_code("npu_chunk_kda_bwd_prepare", "layout", layout),
+        float(scale), int(chunk_size), bool(state_v_first),
+        _current_stream_ptr(),
+    )
+
+
 def npu_chunk_kda_fwd_prepare(q, k, v, g, beta, scale, chunk_size=64, *,
                               layout="BSND", cu_seqlens=None, chunk_indices=None,
                               safe_gate=False, lower_bound=None,
@@ -1358,7 +1509,11 @@ def npu_chunk_kda_fwd_prepare(q, k, v, g, beta, scale, chunk_size=64, *,
 
     rank3 = layout in ("TND", "NTD")
     sequence_major = layout in ("BSND", "TND")
-    if rank3:
+    if rank3 and not sequence_major:
+        qk_heads, seq_len, key_dim = q.shape
+        value_heads, value_dim = v.shape[0], v.shape[2]
+        batch = 1
+    elif rank3:
         seq_len, qk_heads, key_dim = q.shape
         value_heads, value_dim = v.shape[1], v.shape[2]
         batch = 1
@@ -1535,12 +1690,6 @@ def npu_solve_tri(x, *, cu_seqlens=None, chunk_indices=None, layout="bsnd"):
     """
 
     layout = str(layout)
-    if layout == "tnd":
-        raise RuntimeError(
-            "npu_solve_tri: layout='tnd' is refused because the operator "
-            "crashes the process for that spelling on this OPP (verified on "
-            "both the ctypes and the Stable-ABI path). Use layout='bsnd' or "
-            "'bnsd'.")
     return _op("npu_solve_tri")(
         x.contiguous(), _host_ints(cu_seqlens), _host_ints(chunk_indices),
         _char_code("npu_solve_tri", "layout", layout),
@@ -1596,18 +1745,38 @@ def npu_chunk_gated_delta_rule_fwd_prepare(
     return q_hat, k_hat, q_rstd, k_rstd, beta_out, g_cumsum, w, u, a
 
 
+def _chunk_gated_delta_rule_bwd_finalize_arch22(
+        q, k, v, v_new, do, du, g, beta, h, dh, a, *, q_rstd=None,
+        k_rstd=None, beta_raw=None, cu_seqlens=None, chunk_indices=None,
+        scale=None, chunk_size=64, use_qk_l2_norm_in_kernel=False,
+        use_beta_sigmoid_in_kernel=False, use_gate_in_kernel=False,
+        state_v_first=False, use_exp2=True):
+    """Launch the A2/A3 finalize through the stable ABI."""
+
+    if use_gate_in_kernel:
+        raise RuntimeError(
+            "npu_chunk_gated_delta_rule_bwd_finalize: use_gate_in_kernel only "
+            "supports False.")
+    if scale is None:
+        scale = 1.0 / (128.0 ** 0.5)
+    return _op("npu_chunk_gated_delta_rule_bwd_finalize")(
+        q, k, v, v_new, do, du, g, beta, h, dh, a,
+        q_rstd, k_rstd, beta_raw,
+        _host_ints(cu_seqlens), _host_ints(chunk_indices),
+        float(scale), chunk_size, bool(use_qk_l2_norm_in_kernel),
+        bool(use_beta_sigmoid_in_kernel), bool(use_gate_in_kernel),
+        bool(state_v_first), bool(use_exp2),
+        _current_stream_ptr(),
+    )
+
+
 def npu_chunk_gated_delta_rule_bwd_finalize(
         q, k, v, v_new, do, du, g, beta, h, dh, a, *, q_rstd=None,
         k_rstd=None, beta_raw=None, cu_seqlens=None, chunk_indices=None,
         scale=None, chunk_size=64, use_qk_l2_norm_in_kernel=False,
         use_beta_sigmoid_in_kernel=False, use_gate_in_kernel=False,
         state_v_first=False, use_exp2=True):
-    """The Ascend950-only backward finalize, returning dq/dk/dv/dbeta/dg.
-
-    The kernel exists only for Ascend950, and calling it anywhere else has no
-    defined result, so the device is checked here rather than letting the
-    launch decide.
-    """
+    """Dispatch A2/A3 explicitly and preserve the Ascend950 finalize path."""
 
     import torch
 
@@ -1615,6 +1784,17 @@ def npu_chunk_gated_delta_rule_bwd_finalize(
     if device_index is None:
         device_index = torch.npu.current_device()
     device_name = torch.npu.get_device_name(device_index)
+    if device_name.startswith(("Ascend910B", "Ascend910C", "Ascend910_93")):
+        return _chunk_gated_delta_rule_bwd_finalize_arch22(
+            q, k, v, v_new, do, du, g, beta, h, dh, a,
+            q_rstd=q_rstd, k_rstd=k_rstd, beta_raw=beta_raw,
+            cu_seqlens=cu_seqlens, chunk_indices=chunk_indices,
+            scale=scale, chunk_size=chunk_size,
+            use_qk_l2_norm_in_kernel=use_qk_l2_norm_in_kernel,
+            use_beta_sigmoid_in_kernel=use_beta_sigmoid_in_kernel,
+            use_gate_in_kernel=use_gate_in_kernel,
+            state_v_first=state_v_first, use_exp2=use_exp2,
+        )
     if not device_name.startswith("Ascend950"):
         raise RuntimeError(
             "npu_chunk_gated_delta_rule_bwd_finalize only supports Ascend "
@@ -1696,6 +1876,8 @@ def _kda_bwd_single_launch(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h,
         True,  # use_exp2 likewise
         False,  # state_v_first likewise
         False, None, None,  # legacy implementation, no norm backward
+        3 if cu_seqlens is not None else 1, 3 if cu_seqlens is not None else 1,
+        False, False,
         _current_stream_ptr(),
     )
 
@@ -1714,6 +1896,32 @@ def _kda_bwd_optimized_launch(args):
         float(a["scale"]), int(a["chunk_size"]), a["safe_gate"],
         a["use_gate_in_kernel"], a["lower_bound"], a["disable_recompute"],
         a["use_exp2"], a["state_v_first"], True, a["q_rstd"], a["k_rstd"],
+        3 if a["cu_seqlens"] is not None else 1, 3 if a["cu_seqlens"] is not None else 1,
+        False, False,
+        _current_stream_ptr(),
+    )
+    if bias_shape is not None:
+        outputs = (*outputs[:-1], outputs[-1].view(bias_shape))
+    return outputs
+
+
+def _kda_bwd_arch22_launch(args):
+    """A2/A3 always use the original total L2, including norm and recompute."""
+    from ._kda_policy import _prepare_kda_bwd_arch22
+
+    bias_shape = None if args["dt_bias"] is None else args["dt_bias"].shape
+    a = _prepare_kda_bwd_arch22(args)
+    outputs = _op("npu_chunk_kda_bwd")(
+        a["q"], a["k"], a["v"], a["beta"], a["gk"], a["Aqk"], a["Akk"],
+        a["w"], a["qg"], a["kg"], a["v_new"], a["h"], a["d_o"],
+        a["raw_g"], a["A_log"], a["dt_bias"],
+        _host_ints(a["cu_seqlens"]), _host_ints(a["chunk_indices"]),
+        a["scale"], a["chunk_size"], a["safe_gate"], a["use_gate_in_kernel"],
+        a["lower_bound"], a["disable_recompute"], a["use_exp2"], a["state_v_first"],
+        False, a["q_rstd"], a["k_rstd"],
+        _char_code("npu_chunk_kda_bwd", "input_layout", a["input_layout"]),
+        _char_code("npu_chunk_kda_bwd", "output_layout", a["output_layout"]),
+        a["use_beta_sigmoid_in_kernel"], a["allow_neg_eigval"],
         _current_stream_ptr(),
     )
     if bias_shape is not None:
@@ -1725,32 +1933,54 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
                       scale, *, raw_g=None, A_log=None, dt_bias=None,
                       initial_state=None, dht=None, cu_seqlens=None,
                       chunk_indices=None, chunk_size=64, safe_gate=True,
-                      lower_bound=-5.0, use_gate_in_kernel=False,
+                      lower_bound=-5.0, use_gate_in_kernel=True,
                       disable_recompute=True, use_exp2=True,
                       state_v_first=False, implementation="auto",
-                      q_rstd=None, k_rstd=None):
-    """Fused KDA backward, returning `(dq, dk, dv, db, dg, dh0, dA, dbias)`.
+                      q_rstd=None, k_rstd=None, input_layout="BNSD",
+                      output_layout="BNSD", use_beta_sigmoid_in_kernel=False,
+                      allow_neg_eigval=False):
+    """KDA backward, returning `(dq, dk, dv, db, dg, dh0, dA, dbias)`.
+
+    Gate backward requires use_gate_in_kernel=True, raw_g and A_log.
+
+    A2/A3 use one total L2 composition for all implementation modes.
+    The legacy workarounds below remain on the A5 fused path.
 
     Three shape-specific workarounds sit on top of the single launch, and they
     are the reason this wrapper is longer than the others:
 
-    * a packed sequence whose last chunk is short (or a packed V=256 call on
-      Atlas A2) is split into independent dense calls, because the fused
-      pipeline produces stale or non-finite values for those;
+    * a packed sequence whose last chunk is short on Atlas A2/A5 (or a packed
+      V=256 call on Atlas A2) is split into independent dense calls, because
+      the fused pipeline produces stale or non-finite values for those; Atlas
+      A3 keeps the fused packed launch, where its gradients match the split
+      path bitwise and the split costs about twice the runtime;
     * a single packed sequence with a short tail is instead padded inside its
       last chunk and the token gradients sliced back;
     * on A2 an odd head count gets a duplicated partner head, because the
       Intra pipeline processes heads in pairs.
 
-    All three are the reference's own strategy; the only difference here is
-    that the dense call goes to the launcher instead of to ctypes.
+    The split/padding rules are the launcher's port of the reference strategy:
+    Atlas A5 splits every packed tail, Atlas A2 additionally splits packed
+    tails and V=256 calls and pads odd head counts, and Atlas A3 keeps the
+    fused packed launch, where its gradients already match the split path
+    bitwise.  The only other difference from the reference is that the dense
+    call goes to the launcher instead of to ctypes.
     """
 
     import torch
 
     from ._runtime import optional_bool as _optional_bool
-    from ._kda_policy import _select_kda_bwd_optimized
+    from ._kda_policy import (
+        _select_kda_bwd_optimized, _is_kda_bwd_arch22, _validate_kda_bwd_a5_options,
+    )
 
+    use_gate_in_kernel = _optional_bool(use_gate_in_kernel, True)
+    if not use_gate_in_kernel:
+        raise ValueError("npu_chunk_kda_bwd: use_gate_in_kernel must be True.")
+
+    if _is_kda_bwd_arch22(q):
+        return _kda_bwd_arch22_launch(locals())
+    _validate_kda_bwd_a5_options(locals())
     if _select_kda_bwd_optimized(
             implementation, q_rstd, k_rstd,
             _optional_bool(disable_recompute, True)):
@@ -1791,7 +2021,6 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
                else tuple(int(x) for x in chunk_indices))
     if indices is None and cu is not None:
         indices = _canonical_chunk_indices(cu, chunk_size)
-    use_gate_in_kernel = bool(use_gate_in_kernel)
     safe_gate = bool(safe_gate)
     lower_bound = -5.0 if lower_bound is None else float(lower_bound)
     scale = float(scale)
@@ -1801,16 +2030,22 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
     has_varlen_tail = is_varlen and any(
         (end - begin) % chunk_size != 0 for begin, end in zip(cu, cu[1:]))
     is_a2_device = False
+    is_a3_device = False
     if use_dense_varlen_fallback or heads % 2 != 0 or has_varlen_tail:
         device_index = q.device.index
         if device_index is None:
             device_index = torch.npu.current_device()
         device_name = str(torch.npu.get_device_name(device_index))
         is_a2_device = device_name.startswith("Ascend910B")
+        is_a3_device = "910_93" in device_name
 
-    # 短尾 packed 序列统一拆成逐序列 dense 调用：fused packed 流水线对其会产生
-    # 陈旧/非有限值，拆开后每条序列走已验证的 dense 路径（A2 上 V=256 同理）。
-    if (is_a2_device and use_dense_varlen_fallback) or has_varlen_tail:
+    # 短尾 packed 序列的逐序列拆分按设备区分：A5 原生 packed 短尾会暴露 C-Intra
+    # AIC/AIV 竞态，A2 上 fused packed 流水线对短尾也会留下陈旧/非有限值，两者
+    # 继续拆分（A2 上 V=256 一并拆分）。A3 已实测直连 fused packed 与拆分路径的
+    # 梯度逐位一致，直连可省掉约两倍的逐序列 dense 调用开销。设备名无法识别时
+    # 保持保守策略（继续拆分）。
+    if (is_a2_device and use_dense_varlen_fallback) or (
+            has_varlen_tail and not is_a3_device):
         sequence_results = []
         chunk_begin = 0
         for token_begin, token_end in zip(cu, cu[1:]):
@@ -1893,7 +2128,8 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
         raw_g = pad_rows_of(raw_g)
         seqlen = padded_seqlen
         cu = None if cu is None else (0, padded_seqlen)
-        indices = _canonical_chunk_indices(cu, chunk_size)
+        # Dense calls have no sequence metadata, including after tail padding.
+        indices = None if cu is None else _canonical_chunk_indices(cu, chunk_size)
 
     # A2's fused Intra pipeline processes heads in pairs; a lone final head can
     # keep a stale correction from the previous launch.
@@ -1938,6 +2174,42 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
     return tuple(restored)
 
 
+def npu_merge_fwd_bwd_kernel(
+        h, ag_hm, pre_or_post_num_ranks, rank, *, forward=True,
+        state_v_first=False):
+    """CP merge: h <- He_0, then h <- M_i @ h + He_i.
+
+    Argument order matches FLA: ``h``, ``ag_hm``, ``pre_or_post_num_ranks``,
+    ``rank``. ``h`` is written in place. ``state_v_first=False`` stores each
+    head as [K, V]; ``True`` stores [V, K]. Both are [HV, 128, 128].
+    """
+
+    if not h.is_contiguous():
+        raise RuntimeError(
+            "npu_merge_fwd_bwd_kernel: h is written in place and must be contiguous."
+        )
+    loaded_torch_npu = sys.modules.get("torch_npu")
+    if loaded_torch_npu is not None:
+        # NCHW=0, ND=2, NCDHW=30, NCL=47. Same public set as the ctypes path.
+        public_formats = {0, 2, 30, 47}
+        for name, tensor in (("h", h), ("ag_hm", ag_hm)):
+            try:
+                actual_format = int(loaded_torch_npu.get_npu_format(tensor))
+            except Exception as exc:
+                raise RuntimeError(
+                    f"npu_merge_fwd_bwd_kernel: cannot determine the real NPU format of {name}."
+                ) from exc
+            if actual_format not in public_formats:
+                raise RuntimeError(
+                    f"npu_merge_fwd_bwd_kernel: {name} must use a non-private format, "
+                    f"got {actual_format}."
+                )
+    return _op("npu_merge_fwd_bwd_kernel")(
+        h, ag_hm, int(pre_or_post_num_ranks), int(rank), bool(forward),
+        bool(state_v_first), _current_stream_ptr(),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Which wrappers apply the in-place contract themselves
 # ---------------------------------------------------------------------------
@@ -1953,3 +2225,45 @@ for _contract_op in (
         "npu_recurrent_kda"):
     globals()[_contract_op]._fla_npu_inplace_contract = True
 del _contract_op
+
+# [stable-abi adapter] npu_pre_process_fwd_kernel_merged
+def npu_pre_process_fwd_kernel_merged(k, w, u, g=None, *, gk=None, bg=None,
+                                      v=None, cu_seqlens=None,
+                                      chunk_size=None):
+    """CP 前处理：把 token 窗口压成仿射链 (h | m)。
+
+    与 aclnn 头文件逐参对齐（stream 固定在最后）：
+    k/w/u 必给；g 与 gk 二选一；cu_seqlens 必给（varlen 打包窗口，
+    也允许子区间 0 <= cu[0] < cu[-1] <= T）。返回 hm[Nseq, HV, K, V+K] FP32。
+
+    bg 与 v 是 DPLR 专用参数，本版本不支持 DPLR：必须传 None，
+    传非空直接抛 NotImplementedError（与 ctypes 入口、host 校验判据一致）。
+    """
+
+    if cu_seqlens is None:
+        raise ValueError(
+            "pre_process_fwd_kernel_merged requires cu_seqlens (varlen only): "
+            "pass a host int list such as [bos, eos] or [0, s1, s2, ..., T]."
+        )
+    if (g is None) == (gk is None):
+        raise ValueError("exactly one of g / gk must be provided.")
+    if bg is not None:
+        # TilingKey 3（USE_BG）不支持：传进来会静默按 GDN/KDA 语义算，宁可明确拒绝。
+        raise NotImplementedError(
+            "bg is not supported: DPLR is not implemented in this release (GDN/KDA only)."
+        )
+    if v is not None:
+        raise NotImplementedError(
+            "v is not supported: it is DPLR-only; GDN/KDA takes the values from u."
+        )
+    if chunk_size not in (None, 64):
+        raise ValueError(
+            f"pre_process_fwd_kernel_merged only supports chunk_size=64, got {chunk_size}."
+        )
+
+    return _op("npu_pre_process_fwd_kernel_merged")(
+        k, w, u, g, gk, bg, v,
+        _host_ints(cu_seqlens),
+        64 if chunk_size is None else int(chunk_size),
+        _current_stream_ptr(),
+    )

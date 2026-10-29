@@ -92,11 +92,11 @@ static bool IsAscend950()
     return IsRegbase(npuArch);
 }
 
-static bool IsDav2201CandidateSoc();
+static bool IsDav2201Device();
 
 static bool IsNativeQkvLayout(const ChunkGatedDeltaRuleFwdParams &params)
 {
-    return IsDav2201CandidateSoc() && params.layout != nullptr &&
+    return IsDav2201Device() && params.layout != nullptr &&
            (std::strcmp(params.layout, "BSND") == 0 || std::strcmp(params.layout, "TND") == 0);
 }
 
@@ -123,7 +123,8 @@ static bool UsePreparePath(const ChunkGatedDeltaRuleFwdParams &params)
     }
     const bool legacyLayout = std::strcmp(params.layout, "BNSD") == 0 ||
                               std::strcmp(params.layout, "NTD") == 0;
-    // A2 reads token-major QKV directly; feature selection is otherwise unchanged.
+    // DAV_2201 A2/A3 devices read token-major QKV directly; feature selection is
+    // otherwise unchanged across the two products.
     return params.useExp2 || params.useQkL2norm ||
            params.aLogOptional != nullptr || params.dtBiasOptional != nullptr ||
            params.betaEffOutOptional != nullptr || params.allowNegEigval ||
@@ -348,21 +349,18 @@ static aclnnStatus CheckOptionalRank(const aclTensor *tensor, size_t rank, const
     return tensor == nullptr ? ACLNN_SUCCESS : CheckRank(tensor, rank, name);
 }
 
-static bool IsDav2201CandidateSoc()
+static bool IsDav2201Device()
 {
-    const char *socName = aclrtGetSocName();
-    // A2 910B variants are the DAV_2201 deployment targets. Unknown or other
-    // SoC names stay on the historical BHT route until tiling proves the
-    // candidate architecture explicitly.
-    return socName != nullptr &&
-           (std::strncmp(socName, "Ascend910B", std::strlen("Ascend910B")) == 0 ||
-            std::strcmp(socName, "ascend910b") == 0);
+    // A2 and A3 share the DAV_2201 instruction/tiling contract. Select the
+    // common Phase 6 route from the runtime architecture instead of
+    // hard-coding the A2 910B SoC name.
+    return GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201;
 }
 
 static bool UsePreparedCumsum(const ChunkGatedDeltaRuleFwdParams &params,
                               const GdnShapeInfo &info)
 {
-    return IsDav2201CandidateSoc() && !UsePreparePath(params) &&
+    return IsDav2201Device() && !UsePreparePath(params) &&
            info.hv <= CUMSUM_PREPARE_MAX_HEADS &&
            info.kDim == HEAD_DIM_128 &&
            (info.vDim == HEAD_DIM_128 ||
@@ -850,7 +848,7 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
                         gCumsumCompute != nullptr && aCompute != nullptr,
                     169101);
 
-    const bool sequenceMajorOutput = IsDav2201CandidateSoc();
+    const bool sequenceMajorOutput = IsDav2201Device();
     const aclTensor *oCompute = executorPtr->AllocTensor(
         sequenceMajorOutput ? MakeShape({batch, seqlen, hv, vDim}) : MakeShape({batch, hv, seqlen, vDim}),
         params.q->GetDataType(), Format::FORMAT_ND);

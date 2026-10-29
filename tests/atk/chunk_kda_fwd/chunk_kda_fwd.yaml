@@ -140,7 +140,7 @@ inputs:
       valid:
         values: [64]
       invalid:
-        values: [32]
+        values: [32, 128]
   - name: layout
     type: attr
     required: true

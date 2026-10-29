@@ -5,8 +5,6 @@
 
 namespace KDA {
 
-constexpr int32_t KDA_GATE_POST_MAX_CHUNKS = 1024;
-
 // Private tiling contract for the delivery fallback that applies the raw-gate
 // chain rule after the fused ABC kernel has produced chunk-local accumulated
 // dg.  It is intentionally not exposed through the public L2 ABI.

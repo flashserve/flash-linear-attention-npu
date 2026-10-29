@@ -17,6 +17,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import zipfile
@@ -655,40 +656,44 @@ def main() -> int:
     )
     _prepare_abi_free_launcher()
     build_log = wheel_dir / _BUILD_LOG_NAME
-    command = [
-        sys.executable,
-        "-m",
-        "pip",
-        "wheel",
-        "--log",
-        str(build_log),
-        "--no-build-isolation",
-        "--no-deps",
-        ".",
-        "-w",
-        str(wheel_dir),
-    ]
+    # 只检查本次构建的产物，避免选中输出目录中残留的旧 wheel。
+    # 临时目录与输出目录位于同一文件系统，确保完整 wheel 可以原子替换目标文件。
+    with tempfile.TemporaryDirectory(prefix=".fla-wheel-", dir=wheel_dir) as tmp:
+        staging_dir = Path(tmp)
+        command = [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            "--log",
+            str(build_log),
+            "--no-build-isolation",
+            "--no-deps",
+            ".",
+            "-w",
+            str(staging_dir),
+        ]
 
-    env = os.environ.copy()
-    build_args = _assemble_build_args(args)
-    if build_args:
-        env["FLA_NPU_BUILD_ARGS"] = build_args
-    returncode = _run_with_progress(command, env, progress, follow_path=build_log)
-    progress.close(returncode == 0)
-    if returncode != 0:
-        _report_build_log(build_log)
-        raise subprocess.CalledProcessError(returncode, command)
+        env = os.environ.copy()
+        build_args = _assemble_build_args(args)
+        if build_args:
+            env["FLA_NPU_BUILD_ARGS"] = build_args
+        returncode = _run_with_progress(command, env, progress, follow_path=build_log)
+        progress.close(returncode == 0)
+        if returncode != 0:
+            _report_build_log(build_log)
+            raise subprocess.CalledProcessError(returncode, command)
 
-    # The wheel is tagged for the host platform and (outside PyPI mode) the
-    # build tag carries the SoC, so resolve the actual file instead of
-    # predicting the full name -- but the distribution name is decided by the
-    # build mode (tiered PyPI name vs. the base name), so filter on it.
-    wheel_files = sorted(wheel_dir.glob(f"{get_wheel_dist_name()}-*.whl"))
-    if not wheel_files:
-        raise RuntimeError(f"Expected wheel was not produced under {wheel_dir}")
-    wheel_path = wheel_files[-1]
-
-    _inject_runtime_pins(wheel_path)
+        wheel_files = list(staging_dir.glob(f"{get_wheel_dist_name()}-*.whl"))
+        if len(wheel_files) != 1:
+            raise RuntimeError(
+                f"Expected exactly one wheel from this build, found {len(wheel_files)}: "
+                f"{[path.name for path in wheel_files]}"
+            )
+        staged_wheel = wheel_files[0]
+        _inject_runtime_pins(staged_wheel)
+        wheel_path = wheel_dir / staged_wheel.name
+        staged_wheel.replace(wheel_path)
 
     print(f"[fla-npu build] Wheel: {wheel_path}", flush=True)
     print(f"[fla-npu build] Build log: {build_log}", flush=True)

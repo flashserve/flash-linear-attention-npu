@@ -3,20 +3,6 @@ official:
 
 
 custom:
-  - func: npu_fast_gelu_custom(Tensor self) -> Tensor
-    op_api: all_version
-    gen_opapi:
-      out:
-        size: self
-        dtype: self
-      exec: aclnnFastGelu
-  - func: npu_fast_gelu_custom_backward(Tensor grad, Tensor self) -> Tensor
-    op_api: all_version
-    gen_opapi:
-      out:
-        size: grad
-        dtype: grad
-      exec: aclnnFastGeluBackward
   - func: npu_causal_conv1d(Tensor x, Tensor weight, Tensor? bias, Tensor conv_states, *, int[]? query_start_loc=None, int[]? cache_indices=None, int[]? initial_state_mode=None, int[]? num_accepted_tokens=None, int activation_mode=0, int pad_slot_id=-1, int run_mode=0, int head_num=0) -> Tensor
     op_api: all_version
   - func: npu_causal_conv1d_bwd(Tensor x, Tensor? y, Tensor weight, Tensor dy, Tensor? initial_state=None, Tensor? dht=None, *, int[]? query_start_loc=None, int activation=0, str input_layout="BSND") -> (Tensor dx, Tensor dw, Tensor db, Tensor dh0)
@@ -52,6 +38,8 @@ custom:
   - func: npu_kda_gate_cumsum(Tensor g, int chunk_size, *, Tensor? A_log=None, Tensor? dt_bias=None, int[]? cu_seqlens=None, bool? use_gate_in_kernel=False, bool? safe_gate=False, float? lower_bound=None) -> Tensor
     op_api: all_version
   - func: npu_chunk_kda_bwd_recompute(Tensor q, Tensor k, Tensor v, Tensor g, Tensor beta, Tensor A, int chunk_size, *, Tensor? A_log=None, Tensor? dt_bias=None, int[]? cu_seqlens=None, int[]? chunk_indices=None, bool? use_gate_in_kernel=True, bool? use_exp2=True, float? lower_bound=-5.0) -> (Tensor?, Tensor, Tensor, Tensor, Tensor)
+    op_api: all_version
+  - func: npu_merge_fwd_bwd_kernel(Tensor(a!) h, Tensor ag_hm, int pre_or_post_num_ranks, int rank, *, bool forward=True, bool state_v_first=False) -> Tensor
     op_api: all_version
   - func: npu_recurrent_kda(Tensor q, Tensor k, Tensor v, Tensor g, Tensor beta, Tensor(a!) initial_state, *, Tensor? cu_seqlens=None, Tensor? ssm_state_indices=None, Tensor? A_log=None, Tensor? dt_bias=None, Tensor? num_accepted_tokens=None, str layout="BSND", float? scale=None, bool? output_final_state=False, bool? inplace_final_state=True, bool? use_qk_l2norm_in_kernel=False, bool? use_gate_in_kernel=False, bool? use_beta_sigmoid_in_kernel=False, bool? allow_neg_eigval=False, bool? safe_gate=False, float? lower_bound=None, bool? state_v_first=False) -> (Tensor, Tensor)
     op_api: all_version

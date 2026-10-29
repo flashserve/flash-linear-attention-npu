@@ -164,8 +164,13 @@ class ChunkKdaFwdPrepareKernel {
 public:
     using OUT_T = T;
     using AKK_T = float;
+    // 计分因子（QG/KG）按 fp16 存放时指数跨度裕度不足：raw gate（safe_gate=false）
+    // 的累计门控可以远超 fp16 的可用范围，跨度超过约 2^5 后对角项
+    // q*2^(g-ref) 与 k*2^(ref-g) 不再能精确对消，Aqk/attn_out 出现成块偏差。
+    // 三算子路径与同精度标杆模型都以 bf16 存放这些因子，这里统一为
+    // “fp16 输入即用 bf16 存放”，使融合路径与二者一致。
     using SCORE_T =
-        std::conditional_t<SAFE_GATE && IsSameType<T, half>::value, bfloat16_t, T>;
+        std::conditional_t<IsSameType<T, half>::value, bfloat16_t, T>;
     template <typename TilingData>
     __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR beta, GM_ADDR initialState,
                                 GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR preparedQG, GM_ADDR preparedAqk,

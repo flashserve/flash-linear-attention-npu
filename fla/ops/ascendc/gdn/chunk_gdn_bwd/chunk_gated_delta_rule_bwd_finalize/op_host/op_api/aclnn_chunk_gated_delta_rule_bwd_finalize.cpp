@@ -1,12 +1,25 @@
+#ifndef GDN_FINALIZE_ENABLE_ARCH22
+#define GDN_FINALIZE_ENABLE_ARCH22 0
+#endif
+
 #include "aclnn_chunk_gated_delta_rule_bwd_finalize.h"
 #include "chunk_gated_delta_rule_bwd_finalize.h"
 
 #include "aclnn_kernels/common/op_error_check.h"
 #include "aclnn_kernels/contiguous.h"
+#if GDN_FINALIZE_ENABLE_ARCH22
+#include "external/aclnn_kernels/aclnn_platform.h"
+#endif
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/tensor_view_utils.h"
+
+#if GDN_FINALIZE_ENABLE_ARCH22
+#include <cstring>
+
+#include "../arch22/aclnn_chunk_gated_delta_rule_bwd_finalize_arch22.h"
+#endif
 
 using namespace op;
 
@@ -57,6 +70,23 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
                    dbetaOut != nullptr && dgOut != nullptr &&
                    workspaceSize != nullptr && executor != nullptr,
                ACLNN_ERR_PARAM_NULLPTR, "Output, workspaceSize and executor must not be nullptr.");
+#if GDN_FINALIZE_ENABLE_ARCH22
+    // A2/A3 使用私有 Host 路径；A5 继续执行原有校验、连续化和 executor 流程。
+    if (GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201) {
+        return gdn_finalize_arch22::GetWorkspaceSize(
+            q, k, v, vNew, dO, du, g, beta, h, dh, a,
+            qRstdOptional, kRstdOptional, betaRawOptional,
+            cuSeqlensOptional, chunkIndicesOptional,
+            scale, chunkSize, useQkL2NormInKernel,
+            useBetaSigmoidInKernel, useGateInKernel, stateVFirst, useExp2,
+            dqOut, dkOut, dvOut, dbetaOut, dgOut, workspaceSize, executor);
+    }
+    const char *socName = aclrtGetSocName();
+    CHECK_COND(socName != nullptr && std::strstr(socName, "Ascend950") != nullptr,
+               ACLNN_ERR_PARAM_INVALID,
+               "ChunkGatedDeltaRuleBwdFinalize supports Ascend910B, Ascend910C and Ascend950.");
+#endif
+
     CHECK_COND(chunkSize == 64, ACLNN_ERR_PARAM_INVALID, "chunkSize only supports 64.");
     CHECK_COND(!useGateInKernel, ACLNN_ERR_PARAM_INVALID,
                "useGateInKernel only supports false.");

@@ -41,11 +41,13 @@ _ASCENDC_OPS = (
     "npu_chunk_gated_delta_rule_fwd_prepare",
     "npu_chunk_gated_delta_rule_bwd_finalize",
     "npu_chunk_bwd_dv_local",
+    "npu_pre_process_bwd_kernel_merged",
     "npu_chunk_gdn_bwd_intra",
     "npu_prepare_wy_repr_bwd_da",
     "npu_chunk_bwd_dqkwg",
     "npu_chunk_fwd_o",
     "npu_chunk_gated_delta_rule_fwd_h",
+    "npu_pre_process_fwd_kernel_merged",
     "npu_chunk_fwd_h",
     "npu_chunk_kda_fwd_finalize",
     "npu_chunk_kda_fwd_prepare",
@@ -59,6 +61,9 @@ _ASCENDC_OPS = (
     "npu_chunk_kda_bwd",
     "npu_chunk_kda_bwd_intra",
     "npu_chunk_kda_bwd_recompute",
+    "npu_chunk_kda_bwd_prepare",
+    "npu_chunk_kda_bwd_finalize",
+    "npu_merge_fwd_bwd_kernel",
     "npu_kda_gate_cumsum",
     "npu_recurrent_kda",
 )
@@ -77,7 +82,7 @@ _LAUNCHER_ONLY_OPS: tuple[str, ...] = tuple(
 _TORCH_NPU_COMPAT_OPS = tuple(
     name for name in _ASCENDC_OPS
     if name not in {"npu_chunk_fwd_h", "npu_chunk_kda_fwd_finalize",
-                    "npu_chunk_kda_fwd_prepare"}
+                    "npu_chunk_kda_fwd_prepare", "npu_pre_process_bwd_kernel_merged"}
 )
 
 BACKWARD_OPS = {
@@ -101,6 +106,7 @@ MUTATED_ARGUMENTS = {
     "npu_recurrent_kda": ("initial_state",),
     "recurrent_gated_delta_rule": ("state",),
     "npu_recurrent_gated_delta_rule": ("state",),
+    "npu_merge_fwd_bwd_kernel": ("h",),
 }
 
 # Some mutable operators only write the state tensor for some argument values,
@@ -222,6 +228,31 @@ _LEGACY_TORCH_OPS_WARNING = (
     "in a future fla_npu release. Use fla_npu.ops.ascendc.{public_name}(...) "
     "or the decoupled Ascend C API instead."
 )
+
+
+_DEPRECATED_OPS = frozenset({
+    "npu_prepare_wy_repr_bwd",
+    "npu_prepare_wy_repr_bwd_da",
+    "npu_prepare_wy_repr_bwd_full",
+    "npu_chunk_bwd_dqkwg",
+    "npu_chunk_bwd_dv_local",
+    "npu_chunk_local_cumsum",
+    "npu_chunk_scaled_dot_kkt",
+    "npu_recompute_w_u_fwd",
+    "npu_kda_gate_cumsum",
+})
+
+_DEPRECATED_OPS_REPLACEMENTS = {
+    "npu_prepare_wy_repr_bwd": "the fused npu_chunk_gated_delta_rule_bwd",
+    "npu_prepare_wy_repr_bwd_da": "the fused npu_chunk_gated_delta_rule_bwd",
+    "npu_prepare_wy_repr_bwd_full": "the fused npu_chunk_gated_delta_rule_bwd",
+    "npu_chunk_bwd_dqkwg": "the fused npu_chunk_gated_delta_rule_bwd",
+    "npu_chunk_bwd_dv_local": "the fused npu_chunk_gated_delta_rule_bwd",
+    "npu_chunk_local_cumsum": "the fused npu_chunk_gated_delta_rule_fwd",
+    "npu_chunk_scaled_dot_kkt": "the fused npu_chunk_gated_delta_rule_fwd",
+    "npu_recompute_w_u_fwd": "the fused npu_chunk_gated_delta_rule_fwd / npu_chunk_gated_delta_rule_bwd",
+    "npu_kda_gate_cumsum": "the fused npu_chunk_kda_fwd",
+}
 
 _DIRECT_RUNTIME_READY = False
 _DIRECT_RUNTIME_ERROR: Optional[Exception] = None
@@ -577,6 +608,15 @@ def _make_raw_wrapper(name: str) -> Callable:
     @functools.wraps(_get_direct_op)
     def wrapper(*args, **kwargs):
         if not bound:
+            if name in _DEPRECATED_OPS:
+                warnings.warn(
+                    f"fla_npu.ops.ascendc.{name} is a deprecated API "
+                    f"and will be removed on January 15, 2027 (v26.12.0). Use "
+                    f"{_DEPRECATED_OPS_REPLACEMENTS.get(name, 'the fused operator')} "
+                    f"instead.",
+                    FutureWarning,
+                    stacklevel=2,
+                )
             bound.append(_get_direct_op(name))
             # The backend is fixed for the life of the process, so hand the
             # module-level names straight to it: this frame plus the
@@ -678,7 +718,7 @@ def causal_conv1d(
 
     warnings.warn(
         "fla_npu.ops.ascendc.causal_conv1d is a deprecated compatibility API "
-        "and will be removed in 2027/02. Use causal_conv1d_fn or "
+        "and will be removed on January 15, 2027 (v26.12.0). Use causal_conv1d_fn or "
         "causal_conv1d_update instead.",
         FutureWarning,
         stacklevel=2,

@@ -150,9 +150,9 @@ static aclnnStatus CheckVariableLengthInputs(const ChunkFwdHParams &params)
                ACLNN_ERR_PARAM_INVALID,
                "cuSeqlensOptional last element must equal T=%ld.", kShape.GetDim(2));
     for (size_t seq = 0; seq + 1 < params.cuSeqlensOptional->Size(); ++seq) {
-        CHECK_COND((*params.cuSeqlensOptional)[seq] < (*params.cuSeqlensOptional)[seq + 1],
+        CHECK_COND((*params.cuSeqlensOptional)[seq] <= (*params.cuSeqlensOptional)[seq + 1],
                    ACLNN_ERR_PARAM_INVALID,
-                   "cuSeqlensOptional must be strictly increasing; empty sequences are not supported.");
+                   "cuSeqlensOptional must be non-decreasing; equal neighbours denote empty sequences.");
     }
 
     if (params.chunkIndicesOptional == nullptr) {

@@ -5,12 +5,20 @@
  */
 
 #include "kernel_operator.h"
+#if defined(CHUNK_KDA_PREPARE_RUNTIME_KEYS)
+#include "chunk_kda_fwd_prepare_runtime_key.h"
+#else
 #include "chunk_kda_fwd_prepare_tiling_key.h"
+#endif
 #include "chunk_kda_fwd_prepare_kernel.h"
 
+#if defined(CHUNK_KDA_PREPARE_RUNTIME_KEYS)
+template <int D_T_GATE, int D_T_BETA, uint32_t PIPELINE_VARIANT>
+#else
 template <int D_T_GATE, int D_T_BETA, uint32_t NORM_MODE,
           uint32_t BETA_MODE, uint32_t GATE_MODE,
           bool USE_EXP2, bool SAFE_GATE, uint32_t OUTPUT_MODE>
+#endif
 __global__ __aicore__ void chunk_kda_fwd_prepare(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR beta,
     GM_ADDR a_log, GM_ADDR dt_bias, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
@@ -67,12 +75,26 @@ __global__ __aicore__ void chunk_kda_fwd_prepare(
     args.tiling.isVarLen = tilingData.isVarLen;
     args.tiling.inputSequenceMajor = tilingData.inputSequenceMajor;
     args.tiling.hasDtBias = tilingData.hasDtBias;
+    args.tiling.normMode = tilingData.normMode;
+    args.tiling.betaMode = tilingData.betaMode;
+    args.tiling.gateMode = tilingData.gateMode;
+    args.tiling.outputMode = tilingData.outputMode;
+    args.tiling.pipelineVariant = tilingData.pipelineVariant;
+    args.tiling.useExp2 = tilingData.useExp2;
 
+#if defined(CHUNK_KDA_PREPARE_RUNTIME_KEYS)
+    static_assert(PIPELINE_VARIANT <= 1, "Unknown A2 prepare pipeline");
+    static_assert(PIPELINE_VARIANT == 0 || D_T_BETA == 10,
+                  "Target pipeline requires BF16 beta");
+    using Policy = std::conditional_t<PIPELINE_VARIANT == 0,
+        KdaPrepare::PrepareRuntimePolicy, KdaPrepare::PrepareTargetPolicy>;
+#else
     using Policy = KdaPrepare::PrepareCompilePolicy<
         static_cast<KdaPrepare::QkNormMode>(NORM_MODE),
         static_cast<KdaPrepare::BetaMode>(BETA_MODE),
         static_cast<KdaPrepare::GateMode>(GATE_MODE), USE_EXP2, SAFE_GATE,
         static_cast<KdaPrepare::OutputMode>(OUTPUT_MODE)>;
+#endif
     using GateT = typename KdaPrepare::PrepareStorageType<D_T_GATE>::type;
     using BetaT = typename KdaPrepare::PrepareStorageType<D_T_BETA>::type;
     KdaPrepare::RunPrepare<GateT, BetaT, Policy>(args);

@@ -1,4 +1,7 @@
 # ChunkBwdDvLocal 算子说明
+
+> **[已弃用]** 本算子已弃用，将在2027年1月15日（v26.12.0）移除。请使用融合算子 `npu_chunk_gated_delta_rule_bwd` 替代。
+
 `ChunkBwdDvLocal` 是 Gated Delta Rule（门控 Delta 规则）线性注意力机制反向传播过程中的自定义算子。该算子根据查询（Q）、键（K）、门控（g）和输出梯度（dO）计算 Value 的本地梯度 $dV_{\text{local}}$。
 
 ---

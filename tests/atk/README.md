@@ -278,6 +278,7 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=gen_cases
 | `recurrent_gated_delta_rule`     | `fla_npu.ops.ascendc.recurrent_gated_delta_rule`     | 见[`recurrent_gated_delta_rule/README.md`](./recurrent_gated_delta_rule/README.md)         |
 | `recurrent_kda`                  | `fla_npu.ops.ascendc.recurrent_kda`                  | 见[`recurrent_kda/README.md`](./recurrent_kda/README.md)                                   |
 | `solve_tri`                      | `fla_npu.ops.ascendc.solve_tri`                      | 见[`solve_tri/README.md`](./solve_tri/README.md) |
+| `pre_process_fwd_kernel_merged`   | `fla_npu.ops.ascendc.pre_process_fwd_kernel_merged`   | 见[`pre_process_fwd_kernel_merged/README.md`](./pre_process_fwd_kernel_merged/README.md)；CP 前处理（h|m 融合），`B≡1` + host `cu_seqlens`，输出 `hm[Nseq,HV,K,V+K]` |
 
 ## 新增或维护算子
 
