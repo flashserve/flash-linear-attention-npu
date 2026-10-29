@@ -47,21 +47,35 @@ struct FwdHKernelTraits {
         USE_GK ? FwdHGateMode::KEY_GK : FwdHGateMode::SCALAR_G, USE_EXP2, STATE_FP32,
         STORE_FINAL, DENSE_T16>;
     static constexpr bool STATE_V_FIRST_VALUE = STATE_V_FIRST;
-    // gated 复用路径的编译期 eligible 判定：g 模式（非 gk）+ FP32 state +
-    // STORE_FINAL + V=128。vfirst=1 时 gated 输出为 [V,K] 物理布局（与
-    // chunk_fwd_h 的 state_v_first=True 语义一致）；vfirst=0 时 gated 输出
-    // [K,V]——两侧语义同构，gated kernel 原生产出即所需布局，无需转置。
+    // gated 复用路径的编译期 eligible 判定（与 FwdHGatedReusable 谓词同条件，
+    // 唯一消费方是注释/审读——代码零引用）。gated preload kernel 恒按 [K,V]
+    // 读写 state（update epilogue 行=kHeadDim、列=vHeadDim），仅匹配
+    // state_v_first=False 契约；vfirst=1 须 aclnn 层 TransposeLastTwo 翻译后
+    // 以 false 进 kernel（独立算子门已做），否则回落老路径 STATE_V_FIRST 模板。
     static constexpr bool GATED_REUSABLE =
-        !USE_GK && STATE_FP32 && STORE_FINAL && V_DIM == 128 &&
+        !USE_GK && V_DIM == 128 &&
         !STATE_V_FIRST && D_T_G == CHUNK_FWD_H_TPL_FP32;
 };
 
 #if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
-// gated 复用谓词：g 模式 + FP32 state + STORE_FINAL + gate fp32 + vfirst=0。
+// gated 复用谓词：g 模式 + gate fp32 + vfirst=0。
+// storeFinal 两值均放行（2026-10-26 放宽轮①）：gated scheduler 的
+// NeedProcessStage2 = storeFinalState || !isFinalState 与老路径跳末段同款语义
+// （运行时读 tiling，镜像已透传该字段）；storeFinal=false 时 l0op 层的 {0} 占位
+// finalState 不被写（epilogue 仅 isFinalState && storeFinalState 才写）。
+// state fp32/bf16 均放行（2026-10-26 放宽轮②）：gated update epilogue 的非
+// float 分支原生支持 bf16 final（CAST_RINT 量化，与老路径 BF16 state 模板
+// 同款量化点），kernel 主循环事件预置按 FinalStateElement 类型自动切换；
+// StateT 由分流点按 CompilePolicy::STATE_FP32 选型传入。
+// vfirst 条件（2026-10-26 收口轮补回，fe54077c 曾删）：gated preload kernel 恒
+// [K,V] 产出，vfirst=0 才语义匹配。对独立算子 aclnnChunkFwdH 是死条件——其
+// aclnn 层已把 vfirst=1 翻译成 false+转置张量进 kernel（dense 形态；varlen
+// 形态不翻译、由本谓词送老路径 STATE_V_FIRST 模板）。本条件真正拦截的是无
+// 翻译层的 l0op 组合调用（gated 整链 chunk_gated_delta_rule_fwd 透传
+// stateVFirst=1 等）：vfirst=1 直达 gated 会产出 [K,V] 与调用方 [V,K] 契约
+// 错乱，须回落老路径。
 // （bf16 gate 首版不接入——gated 的 bf16 gate 路径未在本战役验证过；
-//   vfirst=1 回落原路径——gated state 原生 [K,V] 布局（= state_v_first=False
-//   契约，2026-10-20 实证：vfirst0 用例 PASS / vfirst1 用例 h/final_state
-//   转置错乱）；vfirst=1 若要接入须 epilogue 侧转置配合，首版不碰。）
+//   vfirst=1 若要接入须调用方 aclnn 层转置配合——先例见 b+ 路线图归档。）
 template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST>
 __aicore__ inline constexpr bool FwdHGatedReusable()
 {
@@ -71,8 +85,8 @@ __aicore__ inline constexpr bool FwdHGatedReusable()
     // 行=kHeadDim、列=vHeadDim），仅匹配 state_v_first=False 契约——与 host
     // 侧 gatedEligible（tiling.cpp）及 Traits::GATED_REUSABLE 三处同条件。
     return CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G &&
-           CompilePolicy::STATE_FP32 && CompilePolicy::STORE_FINAL &&
-           CompilePolicy::USE_EXP2 && std::is_same_v<GateT, float>;
+           CompilePolicy::USE_EXP2 && !STATE_V_FIRST &&
+           std::is_same_v<GateT, float>;
 }
 
 // gated 复用分支：从 ChunkFwdHTilingData + 模板参构造 gated tiling 镜像
@@ -80,13 +94,15 @@ __aicore__ inline constexpr bool FwdHGatedReusable()
 // kernel。镜像由每个 AIC 核独立构造（同值幂等写，skeleton varlen 建表先例
 // 同款）；AIV 侧不构造——gated kernel 的 Init 在 AIC/AIV 分别读同一 GM 镜像。
 // 输入侧 g 已是 log2 域（调用方 Python 层 RCP_LN2 缩放，与 gated 上游一致）。
-// 注意：gated preload 的 state 固定走 FP32 链（H 链 GM BF16），final_state
-// FP32 直写——与 chunk_fwd_h 的 STATE_FP32 模板语义等价。
-template <typename GateT>
+// StateT 按实际 state dtype 实例化（放宽轮②）：fp32 state 走 FP32 直写链
+// （update epilogue 的 float 分支），bf16 state 走 CAST_RINT 量化链（非 float
+// 分支——量化点与老路径 BF16 state 模板同款，kernel 主循环的事件预置配置
+// 亦按 FinalStateElement 类型自动切换，bf16 原生支持）。
+template <typename GateT, typename StateT>
 __aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
 {
     using DataT = bfloat16_t;
-    using GatedKernel = Catlass::Gemm::Kernel::GDNFwdHKernelPreload<DataT, GateT, float, float>;
+    using GatedKernel = Catlass::Gemm::Kernel::GDNFwdHKernelPreload<DataT, GateT, StateT, float>;
     __gm__ uint8_t *user = args.workspace;
     // [对照实验 gr2：临时回退共享镜像（昨晚构建成功形态）——判环境 vs 代码]
     __gm__ ChunkGatedDeltaRuleFwdHTilingData *gtiling = reinterpret_cast<
@@ -103,7 +119,7 @@ __aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
         gtiling->storeFinalState = args.tiling.storeFinalState;
         gtiling->dataType = 1; // bf16 输入
         gtiling->gDataType = 2; // fp32 gate（GATED_REUSABLE 限定）
-        gtiling->stateDataType = 2; // fp32 state
+        gtiling->stateDataType = std::is_same_v<StateT, float> ? 2 : 1;
         gtiling->isVariedLen = args.tiling.isVariedLen;
         gtiling->shapeBatch = args.tiling.shapeBatch;
         gtiling->tokenBatch = args.tiling.tokenBatch;
@@ -132,9 +148,11 @@ __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
 #if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
     // gated 复用分流（编译期折叠）：eligible 形态整体走 gated preload
     // kernel——其双流骨架/调度器/epilogue 为生产验证形态。非 eligible
-    // （gk/非 FP32 state/非 storeFinal/gate bf16/vfirst=1）回落原路径。
+    // （gk/gate bf16/vfirst=1）回落原路径；state fp32/bf16 均放行（放宽轮②，
+    // StateT 按 CompilePolicy::STATE_FP32 选型，镜像 stateDataType 同步设置）。
     if constexpr (FwdHGatedReusable<GateT, CompilePolicy, STATE_V_FIRST>()) {
-        RunFwdHGatedReuse<GateT>(args);
+        using GatedStateT = std::conditional_t<CompilePolicy::STATE_FP32, float, bfloat16_t>;
+        RunFwdHGatedReuse<GateT, GatedStateT>(args);
         return;
     }
 #endif
