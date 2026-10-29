@@ -1,319 +1,176 @@
-"""Build frozen ATK matrices for the migrated chunk32 forward path.
+"""Build the chunk32 ATK matrices.
 
-Shapes come from ``chunk_gated_delta_rule_fwd/case_matrix_contract.py``.
-V=256, FP16 and token-major layouts are dropped: the specialized path of
-``npu_chunk_gated_delta_rule_fwd`` only accepts BF16, K=V=128 and head-major
-BNSD / packed NTD. Each kept shape is repeated on three seeds.
+Accuracy covers the combinations chunk32 actually accepts: four layouts,
+MHA/GVA, fixed and packed sequences, aligned and tail lengths, both
+``allow_neg_eigval`` and ``state_v_first`` values, and initial state
+none/bf16/fp32/zero. ``use_exp2``, L2 and beta sigmoid stay on the required
+values. Shapes are medium; the longest sequences are about 24K tokens.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import json
-from collections import defaultdict
 from pathlib import Path
 
 
 OP_NAME = "chunk_gated_delta_rule_fwd_chunk32"
-SEED_BASE = 20261027
+SEED_BASE = 20261028
 STANDARD = {
     "acc": {
         "mixed_tolerance_bm": {
-            # o is BF16. FP32 final_state preserves state bits, but each chunk's
-            # Cube image is intentionally rounded to BF16, so both outputs use
-            # the model-dtype mixed-tolerance contract.
             "output_dtype_overrides": {"0": "bf16", "1": "bf16"}
         }
     },
     "perf": "not_key",
     "mem": 1.1,
 }
-SEEDS_PER_SHAPE = 3
 HERE = Path(__file__).resolve().parent
-CONTRACT = HERE.parent / "case_matrix_contract.py"
+SCALE = 128 ** -0.5
 
 
-def _load_contract():
-    spec = importlib.util.spec_from_file_location("gdn_case_matrix_contract", CONTRACT)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def _state_dtype(scenario: str, local_index: int) -> str:
-    if scenario in {"dense", "varlen"}:
-        return "none"
-    if scenario == "state_zero_final":
-        return "zero"
-    # This separated suite always requests final_state from the migrated API.
-    if local_index % 2 == 0:
-        return "bf16" if scenario == "state_initial_final" else "fp32"
-    return "fp32" if scenario == "state_initial_final" else "bf16"
-
-
-def _bucket(scenario: str, batch: int, k_heads: int, v_heads: int, tokens: int, varlen: bool) -> str:
-    gva = v_heads > k_heads
-    aligned = tokens % 32 == 0
-    packed = "ntd" if varlen else "bnsd"
-    if tokens <= 33:
-        return f"tiny_{packed}"
-    if scenario in {"dense", "varlen"}:
-        if not varlen and batch > 1:
-            return "bnsd_batch"
-        if gva and aligned:
-            return f"{packed}_gva_align"
-        if gva:
-            return f"{packed}_gva_tail"
-        if aligned:
-            return f"{packed}_mha_align"
-        return f"{packed}_mha_tail"
-    if scenario == "state_zero_final":
-        return f"zero_{packed}"
-    return f"init_pending_{packed}"
-
-
-def _lengths(cu_spec: str) -> str:
-    if cu_spec in {"", "none"}:
-        return ""
-    offsets = [int(item) for item in cu_spec.split(",") if item.strip()]
-    return ",".join(str(right - left) for left, right in zip(offsets, offsets[1:]))
-
-
-def iter_filtered():
-    contract = _load_contract()
-    for scenario in contract.SCENARIOS:
-        for local_index in range(contract.CASES_PER_SCENARIO):
-            batch, k_heads, v_heads, tokens, value, _chunk, varlen, cu_spec = contract.case_contract(
-                scenario, local_index
-            )
-            if value != 128 or tokens > 384 or batch * v_heads * tokens > 2048:
-                continue
-            state = _state_dtype(scenario, local_index)
-            bucket = _bucket(scenario, batch, k_heads, v_heads, tokens, varlen)
-            # Recompute the init bucket from the actual state, not from tokens.
-            if scenario.startswith("state_") and scenario != "state_zero_final":
-                bucket = f"init_{state}_{'ntd' if varlen else 'bnsd'}"
-            yield {
-                "scenario": scenario,
-                "local_index": local_index,
-                "bucket": bucket,
-                "B": batch,
-                "HK": k_heads,
-                "HV": v_heads,
-                "T": tokens,
-                "state_dtype": state,
-                "seqlens": _lengths(cu_spec) if varlen else "",
-                "layout": "NTD" if varlen else "BNSD",
-                "aligned": tokens % 32 == 0,
-                "gva": v_heads > k_heads,
-            }
-
-
-def _row(
-    scenario: str,
-    local_index: int,
-    bucket: str,
+def _spec(
+    *,
+    case_key: str,
+    layout: str,
     batch: int,
     k_heads: int,
     v_heads: int,
     tokens: int,
-    state: str,
-    seqlens: str,
-    layout: str,
+    state: str = "none",
+    seqlens: str = "",
+    allow_neg: bool = False,
+    state_v_first: bool = False,
+    tags: str = "accuracy",
+    seed: int,
 ) -> dict:
     return {
-        "scenario": scenario,
-        "local_index": local_index,
-        "bucket": bucket,
+        "case_key": case_key,
+        "tags": tags,
+        "route": "ascendc",
+        "soc": "ascend950",
+        "dtype": "bf16",
+        "layout": layout,
         "B": batch,
         "HK": k_heads,
         "HV": v_heads,
         "T": tokens,
-        "state_dtype": state,
-        "seqlens": seqlens,
-        "layout": layout,
-        "aligned": tokens % 32 == 0,
-        "gva": v_heads > k_heads,
-    }
-
-
-def select_bases() -> list[dict]:
-    """Up to two sibling shapes per coverage bucket, then the aligned holes.
-
-    The sibling contract's B=1 aligned lengths are real ``TOKEN_EDGES`` values
-    (64 and 128). Under the V=128 filter they are not paired with B=1, so those
-    two edges are added explicitly. Heads stay inside ``HEAD_PAIRS``.
-    """
-
-    grouped: dict[str, list[dict]] = defaultdict(list)
-    filtered = list(iter_filtered())
-    for row in filtered:
-        grouped[row["bucket"]].append(row)
-    chosen = []
-    seen = set()
-
-    def add(row: dict) -> None:
-        key = (
-            row["B"],
-            row["HK"],
-            row["HV"],
-            row["T"],
-            row["seqlens"],
-            row["state_dtype"],
-        )
-        if key in seen:
-            return
-        seen.add(key)
-        chosen.append(row)
-
-    for bucket in sorted(grouped):
-        for row in grouped[bucket][:2]:
-            add(row)
-    for row in filtered:
-        if row["bucket"] == "bnsd_batch" and row["HK"] == row["HV"] and row["aligned"]:
-            add(row)
-            break
-    # TOKEN_EDGES {64, 128} and HEAD_PAIRS (1,1), (2,4). Not emitted for V=128, B=1.
-    for tokens, k_heads, v_heads, state, bucket in (
-        (64, 1, 1, "none", "bnsd_mha_align"),
-        (128, 1, 1, "none", "bnsd_mha_align"),
-        (64, 2, 4, "none", "bnsd_gva_align"),
-        (128, 1, 2, "fp32", "init_fp32_bnsd_align"),
-        (64, 1, 1, "bf16", "init_bf16_bnsd_align"),
-    ):
-        add(
-            _row(
-                "edge",
-                tokens,
-                bucket,
-                1,
-                k_heads,
-                v_heads,
-                tokens,
-                state,
-                "",
-                "BNSD",
-            )
-        )
-    add(_row("edge", 128, "ntd_mha_align", 1, 2, 2, 128, "none", "64,64", "NTD"))
-    return chosen
-
-
-def _spec(base: dict, seed: int, replica: int) -> dict:
-    tag = "gva" if base["gva"] else "mha"
-    align = "align" if base["aligned"] else "tail"
-    seq = "" if not base["seqlens"] else "_seq" + base["seqlens"].replace(",", "-")
-    key = (
-        f"{base['layout'].lower()}_{tag}_{align}_B{base['B']}_H{base['HK']}x{base['HV']}"
-        f"_T{base['T']}_{base['state_dtype']}{seq}_s{replica}"
-    )
-    return {
-        "case_key": key,
-        "tags": "accuracy",
-        "route": "ascendc",
-        "soc": "ascend950",
-        "dtype": "bf16",
-        "layout": base["layout"],
-        "B": base["B"],
-        "HK": base["HK"],
-        "HV": base["HV"],
-        "T": base["T"],
         "K": 128,
         "V": 128,
-        "state_dtype": base["state_dtype"],
-        "seqlens": base["seqlens"],
-        "sibling_scenario": base["scenario"],
-        "sibling_index": base["local_index"],
-        "scale": 0.08838834764831845,
+        "state_dtype": state,
+        "seqlens": seqlens,
+        "allow_neg_eigval": allow_neg,
+        "state_v_first": state_v_first,
+        "scale": SCALE,
         "seed": seed,
     }
 
 
+def _key(layout: str, k_heads: int, v_heads: int, tokens: int, state: str,
+         seqlens: str, allow_neg: bool, state_v_first: bool, batch: int) -> str:
+    head = "gva" if v_heads > k_heads else "mha"
+    packed = "var" if seqlens else "fix"
+    seq = "" if not seqlens else "_seq" + seqlens.replace(",", "-")
+    return (
+        f"{layout.lower()}_{head}_{packed}_B{batch}_H{k_heads}x{v_heads}"
+        f"_T{tokens}_{state}{seq}_neg{int(allow_neg)}_sv{int(state_v_first)}"
+    )
+
+
 def accuracy_specs() -> list[dict]:
-    specs = []
-    for index, base in enumerate(select_bases()):
-        for replica in range(SEEDS_PER_SHAPE):
-            specs.append(_spec(base, SEED_BASE + index * SEEDS_PER_SHAPE + replica, replica))
+    """600 cells. Free axes are fully crossed at medium T; 16K is only the cap."""
+
+    layouts = ("BNSD", "BSND", "NTD", "TND")
+    negs = (False, True)
+    svs = (False, True)
+    states = ("none", "bf16", "fp32", "zero")
+    heads = ((4, 4), (2, 8))  # MHA, GVA
+    # Fixed aligned, fixed tail, multi-batch, packed. Varlen stays at B=1.
+    profiles = (
+        {"batch": 1, "tokens": 1024, "seqlens": ""},
+        {"batch": 1, "tokens": 1000, "seqlens": ""},
+        {"batch": 2, "tokens": 512, "seqlens": ""},
+        {"batch": 1, "tokens": 1536, "seqlens": "512,1024"},
+    )
+    specs: list[dict] = []
+
+    def add(layout, hk, hv, batch, tokens, state, seqlens, allow_neg, state_v_first) -> None:
+        specs.append(
+            _spec(
+                case_key=_key(layout, hk, hv, tokens, state, seqlens, allow_neg, state_v_first, batch),
+                layout=layout, batch=batch, k_heads=hk, v_heads=hv, tokens=tokens,
+                state=state, seqlens=seqlens, allow_neg=allow_neg, state_v_first=state_v_first,
+                seed=SEED_BASE + len(specs),
+            )
+        )
+
+    for layout in layouts:
+        for allow_neg in negs:
+            for state_v_first in svs:
+                for state in states:
+                    for hk, hv in heads:
+                        for profile in profiles:
+                            add(
+                                layout, hk, hv, profile["batch"], profile["tokens"],
+                                state, profile["seqlens"], allow_neg, state_v_first,
+                            )
+    # Longer medium sequences, still at or under 16K. MHA only at 2048,
+    # GVA on BNSD/BSND at 4096, then one 16K case per layout.
+    for layout in layouts:
+        for allow_neg in negs:
+            for state_v_first in svs:
+                for state in states:
+                    add(layout, 4, 4, 1, 2048, state, "", allow_neg, state_v_first)
+    for layout in ("BNSD", "BSND"):
+        for allow_neg in negs:
+            for state_v_first in svs:
+                for state in ("none", "bf16", "fp32"):
+                    add(layout, 2, 8, 1, 4096, state, "", allow_neg, state_v_first)
+    long_cases = (
+        ("BNSD", 4, 4, 16384, "none", "", False, False),
+        ("BSND", 4, 8, 16384, "bf16", "", True, True),
+        ("NTD", 2, 8, 16384, "fp32", "4096,12288", False, True),
+        ("TND", 4, 4, 16000, "zero", "6000,10000", True, False),
+    )
+    for layout, hk, hv, tokens, state, seqlens, allow_neg, state_v_first in long_cases:
+        add(layout, hk, hv, 1, tokens, state, seqlens, allow_neg, state_v_first)
+    if len(specs) != 604:
+        raise RuntimeError(f"expected 604 accuracy cases, got {len(specs)}")
     return specs
 
 
 def perf_specs() -> list[dict]:
-    """NPU-only medium shapes. T=16K stays on the existing profiler, not in this JSON."""
-
     rows = [
-        {
-            "case_key": "perf_bnsd_h4_t512",
-            "layout": "BNSD",
-            "B": 1,
-            "HK": 4,
-            "HV": 4,
-            "T": 512,
-            "state_dtype": "none",
-            "seqlens": "",
-        },
-        {
-            "case_key": "perf_ntd_gva_t256",
-            "layout": "NTD",
-            "B": 1,
-            "HK": 2,
-            "HV": 4,
-            "T": 256,
-            "state_dtype": "fp32",
-            "seqlens": "128,128",
-        },
+        ("BNSD", 1, 8, 8, 8192, "none", "", False, False, "perf_bnsd_h8_t8192"),
+        ("BSND", 1, 4, 8, 4096, "none", "", True, True, "perf_bsnd_gva_t4096_neg_sv"),
     ]
     specs = []
-    for index, row in enumerate(rows):
+    for index, (layout, batch, hk, hv, tokens, state, seqlens, allow_neg, state_v_first, key) in enumerate(rows):
         specs.append(
-            {
-                **row,
-                "tags": "performance",
-                "route": "ascendc",
-                "soc": "ascend950",
-                "dtype": "bf16",
-                "K": 128,
-                "V": 128,
-                "sibling_scenario": "perf",
-                "sibling_index": index,
-                "scale": 0.08838834764831845,
-                "seed": SEED_BASE + 1000 + index,
-            }
+            _spec(
+                case_key=key, tags="performance", layout=layout, batch=batch,
+                k_heads=hk, v_heads=hv, tokens=tokens, state=state, seqlens=seqlens,
+                allow_neg=allow_neg, state_v_first=state_v_first, seed=SEED_BASE + 1000 + index,
+            )
         )
     return specs
 
 
 def mss_specs() -> list[dict]:
-    """Tiling key is 32 for every supported input. Cover all state/layout paths."""
-
     rows = [
-        ("mss_bnsd_none", "BNSD", 1, 1, 1, 64, "none", ""),
-        ("mss_bnsd_bf16", "BNSD", 1, 1, 2, 40, "bf16", ""),
-        ("mss_bnsd_fp32", "BNSD", 2, 2, 2, 32, "fp32", ""),
-        ("mss_ntd_gva", "NTD", 1, 1, 2, 96, "none", "64,32"),
+        ("BNSD", 1, 4, 4, 64, "none", "", False, False),
+        ("BSND", 1, 2, 4, 96, "bf16", "", True, True),
+        ("NTD", 1, 2, 4, 96, "fp32", "64,32", False, False),
+        ("TND", 1, 2, 4, 80, "zero", "48,32", True, True),
     ]
     specs = []
-    for index, (key, layout, batch, hk, hv, tokens, state, seqlens) in enumerate(rows):
+    for index, (layout, batch, hk, hv, tokens, state, seqlens, allow_neg, state_v_first) in enumerate(rows):
         specs.append(
-            {
-                "case_key": key,
-                "tags": "mss",
-                "route": "ascendc",
-                "soc": "ascend950",
-                "dtype": "bf16",
-                "layout": layout,
-                "B": batch,
-                "HK": hk,
-                "HV": hv,
-                "T": tokens,
-                "K": 128,
-                "V": 128,
-                "state_dtype": state,
-                "seqlens": seqlens,
-                "sibling_scenario": "mss",
-                "sibling_index": index,
-                "scale": 0.08838834764831845,
-                "seed": SEED_BASE + 2000 + index,
-            }
+            _spec(
+                case_key=_key(layout, hk, hv, tokens, state, seqlens, allow_neg, state_v_first, batch),
+                tags="mss", layout=layout, batch=batch, k_heads=hk, v_heads=hv, tokens=tokens,
+                state=state, seqlens=seqlens, allow_neg=allow_neg, state_v_first=state_v_first,
+                seed=SEED_BASE + 2000 + index,
+            )
         )
     return specs
 
@@ -379,14 +236,15 @@ def _write(name: str, specs: list[dict]) -> None:
 
 
 def main() -> None:
-    bases = select_bases()
-    print(f"base shapes: {len(bases)}")
-    for row in bases:
+    specs = accuracy_specs()
+    print(f"accuracy: {len(specs)}")
+    for row in specs:
         print(
-            f"  {row['bucket']:22} {row['layout']} B={row['B']} H={row['HK']}x{row['HV']} "
-            f"T={row['T']} state={row['state_dtype']} seqlens={row['seqlens'] or '-'}"
+            f"  {row['layout']} B={row['B']} H={row['HK']}x{row['HV']} T={row['T']} "
+            f"state={row['state_dtype']} seq={row['seqlens'] or '-'} "
+            f"neg={int(row['allow_neg_eigval'])} sv={int(row['state_v_first'])}"
         )
-    _write(f"atk_{OP_NAME}.json", accuracy_specs())
+    _write(f"atk_{OP_NAME}.json", specs)
     _write(f"atk_{OP_NAME}_perf.json", perf_specs())
     _write(f"atk_{OP_NAME}_mss.json", mss_specs())
 
