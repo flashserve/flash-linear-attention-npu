@@ -7,12 +7,15 @@ if(NOT UT_COMMON_DIR)
     message(FATAL_ERROR "Set UT_COMMON_DIR to the existing host UT common directory")
 endif()
 
-get_filename_component(REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../../.." REALPATH)
+get_filename_component(REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../.." REALPATH)
+set(FINALIZE_OP_TILING_DIR
+    "${REPO_ROOT}/fla/ops/ascendc/kda/chunk_kda_bwd_finalize/op_host/op_tiling"
+)
 set(CANN_ARCH_DIR "${ASCEND_CANN_PACKAGE_PATH}/${CMAKE_SYSTEM_PROCESSOR}-linux")
 
 add_executable(chunk_kda_bwd_finalize_tiling_test
     chunk_kda_bwd_finalize_tiling_test.cpp
-    ../op_tiling/chunk_kda_bwd_finalize_tiling.cpp
+    ${FINALIZE_OP_TILING_DIR}/chunk_kda_bwd_finalize_tiling.cpp
     ${UT_COMMON_DIR}/tiling_context_faker.cpp
 )
 target_compile_features(chunk_kda_bwd_finalize_tiling_test PRIVATE cxx_std_17)
@@ -22,6 +25,7 @@ target_compile_definitions(chunk_kda_bwd_finalize_tiling_test PRIVATE
 )
 target_include_directories(chunk_kda_bwd_finalize_tiling_test PRIVATE
     ${REPO_ROOT}/common/include
+    ${FINALIZE_OP_TILING_DIR}
     ${UT_COMMON_DIR}
     ${CANN_ARCH_DIR}/include
     ${CANN_ARCH_DIR}/include/op_common

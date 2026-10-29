@@ -13,8 +13,8 @@
 #include "base/runtime/runtime_attrs_def.h"
 #include "platform/platform_infos_def.h"
 #include "tiling_context_faker.h"
-#include "../op_tiling/chunk_kda_bwd_finalize_tiling.h"
-#include "../op_tiling/chunk_kda_bwd_finalize_arch22.h"
+#include "chunk_kda_bwd_finalize_tiling.h"
+#include "chunk_kda_bwd_finalize_arch22.h"
 
 namespace optiling {
 ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context);
