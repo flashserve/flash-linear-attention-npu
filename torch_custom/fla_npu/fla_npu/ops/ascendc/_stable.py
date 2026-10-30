@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import sys
+import warnings
 
 
 _LIB_ENV = "FLA_NPU_STABLE_LIB"
@@ -772,6 +773,14 @@ def npu_kda_gate_cumsum(g, chunk_size, *, A_log=None, dt_bias=None,
     -5.0 there, and passing None straight through is not representable).
     """
 
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_kda_gate_cumsum is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_kda_fwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
+
     return _op("npu_kda_gate_cumsum")(
         g,
         A_log,
@@ -821,6 +830,14 @@ def npu_chunk_bwd_dv_local(q, k, d_o, g, scale, chunk_size, *, g_gamma=None,
                            A=None, cu_seqlens=None, chunk_indices=None):
     """Local dv contribution of the chunked GDN backward."""
 
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_chunk_bwd_dv_local is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_gated_delta_rule_bwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
+
     return _op("npu_chunk_bwd_dv_local")(
         q, k, d_o, g, g_gamma, A,
         _host_ints(cu_seqlens), _host_ints(chunk_indices),
@@ -849,6 +866,14 @@ def npu_chunk_local_cumsum(g, chunk_size, *, cu_seqlens=None,
                            head_first=True, output_dtype="float32"):
     """Per-chunk cumulative sum of ``g``."""
 
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_chunk_local_cumsum is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_gated_delta_rule_fwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
+
     return _op("npu_chunk_local_cumsum")(
         g,
         _host_ints(cu_seqlens),
@@ -865,6 +890,14 @@ def npu_chunk_local_cumsum(g, chunk_size, *, cu_seqlens=None,
 def npu_chunk_scaled_dot_kkt(k, g, beta, *, cu_seqlens=None,
                              chunk_indices=None, chunk_size=64):
     """Chunked scaled dot product used to build the WY representation."""
+
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_chunk_scaled_dot_kkt is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_gated_delta_rule_fwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
 
     from ._chunk_scaled_dot_kkt_contract import validate as _validate_chunk_scaled_dot_kkt
 
@@ -888,6 +921,14 @@ def npu_chunk_bwd_dqkwg(q, k, v, g, h, dox, dh, dv, chunk_size, *,
     do the same here rather than passing None into a scalar slot.
     """
 
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_chunk_bwd_dqkwg is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_gated_delta_rule_bwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
+
     return _op("npu_chunk_bwd_dqkwg")(
         q, k, v, g, h, dox, dh, dv,
         _host_ints(cu_seqlens), _host_ints(chunk_indices),
@@ -905,6 +946,14 @@ def npu_prepare_wy_repr_bwd_da(k, v, beta, A, dw, du, g, *, chunk_size,
                                cu_seqlens=None, chunk_indices=None):
     """dA only, for backends that already have the other gradients."""
 
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_prepare_wy_repr_bwd_da is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_gated_delta_rule_bwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
+
     return _op("npu_prepare_wy_repr_bwd_da")(
         k, v, beta, A, dw, du, g,
         _host_ints(cu_seqlens), _host_ints(chunk_indices),
@@ -915,6 +964,14 @@ def npu_prepare_wy_repr_bwd_da(k, v, beta, A, dw, du, g, *, chunk_size,
 def npu_prepare_wy_repr_bwd_full(k, v, beta, A, dA, dw, du, g, chunk_size, *,
                                  cu_seqlens=None, chunk_indices=None):
     """dk / dv / dbeta / dg, taking dA as an input."""
+
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_prepare_wy_repr_bwd_full is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_gated_delta_rule_bwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
 
     return _op("npu_prepare_wy_repr_bwd_full")(
         k, v, beta, A, dA, dw, du, g,
@@ -927,6 +984,14 @@ def npu_prepare_wy_repr_bwd(k, v, beta, A, dw, du, g, chunk_size, *,
                             cu_seqlens=None, chunk_indices=None):
     """dk / dv / dbeta / dg; produces dA internally."""
 
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_prepare_wy_repr_bwd is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_gated_delta_rule_bwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
+
     return _op("npu_prepare_wy_repr_bwd")(
         k, v, beta, A, dw, du, g,
         _host_ints(cu_seqlens), _host_ints(chunk_indices),
@@ -937,6 +1002,15 @@ def npu_prepare_wy_repr_bwd(k, v, beta, A, dw, du, g, chunk_size, *,
 def npu_recompute_w_u_fwd(k, v, beta, A, chunk_size, *, g=None, gk=None,
                           cu_seqlens=None, chunk_indices=None):
     """Recompute w and u for the backward pass."""
+
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_recompute_w_u_fwd is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_gated_delta_rule_fwd / npu_chunk_gated_delta_rule_bwd "
+        "instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
 
     return _op("npu_recompute_w_u_fwd")(
         k, v, beta, A, g, gk,
@@ -1161,7 +1235,7 @@ def npu_causal_conv1d(x, weight, bias=None, conv_states=None, *,
 
     warnings.warn(
         "fla_npu.ops.ascendc.npu_causal_conv1d is a deprecated compatibility "
-        "API and will be removed in 2027/02. Use causal_conv1d_fn or "
+        "API and will be removed on January 15, 2027 (v26.12.0). Use causal_conv1d_fn or "
         "causal_conv1d_update instead.",
         FutureWarning,
         stacklevel=4,

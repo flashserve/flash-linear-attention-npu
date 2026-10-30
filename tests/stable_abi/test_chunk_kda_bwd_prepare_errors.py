@@ -15,6 +15,12 @@ from fla_npu.ops import ascendc
 from fla_npu.ops.ascendc import _runtime
 
 
+def has_error_code(message, code):
+    # CANN 9.0.0 only has the legacy attribute/dtype entries in its error catalog.
+    legacy = {"EZ0008": "EZ0002", "EZ0019": "EZ0007", "EZ0024": "EZ0002"}
+    return code in message or (code in legacy and legacy[code] in message)
+
+
 def fixture():
     def empty(shape, dtype=torch.bfloat16):
         return torch.empty(shape, dtype=dtype, device="npu")
@@ -53,7 +59,7 @@ def check_raw(name, updates, code, parameter, *, null_output_pointer=None, statu
         result = api(*args)
         message = runtime._recent_error_message()
         assert result == status, (name, result, status, message)
-        assert code in message and parameter in message and "aclnnChunkKdaBwdPrepare" in message, (name, message)
+        assert has_error_code(message, code) and parameter in message and "aclnnChunkKdaBwdPrepare" in message, (name, message)
         assert not executor.value and workspace.value == 0, (name, workspace.value, executor.value)
         print(f"PASS {name}: aclnnStatus={result}; {message.strip()}", flush=True)
     finally:
@@ -116,8 +122,9 @@ def main():
                                     scale=0.125, layout="BNSD")
     except RuntimeError as error:
         message = str(error)
-        assert "161002" in message and "EZ0008" in message and "h" in message, message
-        print("PASS public Stable-ABI exception contains aclnnStatus, EZ0008 and shape details", flush=True)
+        assert "161002" in message and has_error_code(message, "EZ0008") and "h" in message, message
+        assert "128" in message and "64" in message, message
+        print("PASS public Stable-ABI exception contains aclnnStatus, structured code and shape details", flush=True)
     else:
         raise AssertionError("invalid state shape was accepted")
     assert ascendc.BACKENDS["npu_chunk_kda_bwd_prepare"] == "stable", ascendc.BACKENDS

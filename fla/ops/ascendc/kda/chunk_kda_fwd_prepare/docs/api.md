@@ -101,13 +101,13 @@ aclnnStatus aclnnChunkKdaFwdPrepare(
 | --- | --- | --- |
 | `q/k` | BF16 | K=128；head 数为 HK |
 | `v` | BF16 | V=128；head 数为 HV |
-| `g` | BF16/FP32 | 与 `v` 的 B/HV/T 一致，末维 128 |
-| `beta` | BF16/FP32 | 与 `v` 的 B/HV/T 一致 |
+| `g` | BF16/FP32 | 跟随 layout：BNSD `[B,HV,T,128]`；BSND `[B,T,HV,128]`；NTD `[HV,T,128]`；TND `[T,HV,128]` |
+| `beta` | BF16/FP32 | 跟随 layout：BNSD `[B,HV,T]`；BSND `[B,T,HV]`；NTD `[HV,T]`；TND `[T,HV]` |
 | `a_log` | FP32 | kernel 内 gate 模式必传，shape `[HV]` |
 | `dt_bias` | FP32 | 可空；shape `[HV*128]` |
 | `cu_seqlens` | host int array | 可空；变长模式为 `[sequence_count+1]`，首元素为 0，末元素为 T，且非递减 |
 | `chunk_indices` | host int array | 可空；仅能与 `cu_seqlens` 同时传入，内容为规范的 sequence-major `(sequence_id, local_chunk_id)` 序列 |
-| `layout` | string | `BNSD`、`BSND`、`NTD` 或 `TND`，区分大小写 |
+| `layout` | string | 描述 q/k/v/g/beta：`BNSD`、`BSND`、`NTD` 或 `TND`，区分大小写 |
 | `scale` | float | 转为 FP32 后为有限值 |
 | `chunk_size` | int | 固定为 64 |
 | `epsilon` | float | 转为 FP32 后有限且大于 0 |
@@ -117,8 +117,14 @@ aclnnStatus aclnnChunkKdaFwdPrepare(
 `B/T/HK/HV` 必须为正数且可由 `uint32_t` 表示；GVA 要求 `0 < HK <= HV` 且
 `HV % HK == 0`。tensor descriptor 必须使用标准、
 非私有且可连续化的 ND 物理布局；输出必须连续，因为 kernel 直接写入输出地址。
-`BSND/TND` 输入还要求 q/k、v、g 和 beta 的跨 head DMA stride 均可由 `uint32_t`
-表示，完整公式见 [README 输入输出约束](../README.md#输入输出)。
+q/k/v/g/beta 均跟随 layout。跨 head DMA stride 的 `uint32_t` 限制仅对 BSND/TND
+生效，完整公式见 [README 输入输出约束](../README.md#输入输出)。
+BNSD/NTD 按 head 连续读取；T=HV 等 shape 歧义不改变 layout 指定的轴语义。
+普通非连续 view 由 L2 连续化，不产生默认的全量布局转置。
+
+A2 支持 `use_exp2=false/true`，不增加指数域 tiling key；累计 gate 的输出域遵循原接口。
+A2 的 g、beta 各自支持 BF16/FP32；输入加载类型不改变内部 FP32 gate/beta 计算或 BF16 relay。
+A5 沿用原 arch35 支持范围和入口。
 
 ## Shape
 
@@ -153,7 +159,7 @@ descriptor 占位；空/非空组合必须恰好落在 `none/forward/recompute/s
 | --- | --- |
 | `ACLNN_SUCCESS` | workspace 查询或执行成功 |
 | `ACLNN_ERR_PARAM_NULLPTR` | 必传输入、六项正向必需输出、`workspaceSize` 或 `executor` 为空 |
-| `ACLNN_ERR_PARAM_INVALID` | dtype、shape、format、属性、三档输出指针组合或变长元数据不合法 |
+| `ACLNN_ERR_PARAM_INVALID` | dtype、shape、format、属性、四档输出指针组合或变长元数据不合法 |
 | `ACLNN_ERR_INNER_CREATE_EXECUTOR` | executor 创建失败 |
 | `ACLNN_ERR_INNER_NULLPTR` | 连续化、元数据转换或 L0 调用未返回有效 tensor |
 | `ACLNN_ERR_INNER` | kernel executor 执行失败 |

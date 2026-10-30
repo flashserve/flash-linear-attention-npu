@@ -609,6 +609,15 @@ def npu_prepare_wy_repr_bwd_full(
     cu_seqlens=None,
     chunk_indices=None,
 ):
+    import warnings
+
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_prepare_wy_repr_bwd_full is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_gated_delta_rule_bwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
     dk = _empty_like(k)
     dv = _empty_like(v)
     dbeta = _empty_like(beta)
@@ -650,6 +659,15 @@ def npu_prepare_wy_repr_bwd(
     cu_seqlens=None,
     chunk_indices=None,
 ):
+    import warnings
+
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_prepare_wy_repr_bwd is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_gated_delta_rule_bwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
     dk = _empty_like(k)
     dv = _empty_like(v)
     dbeta = _empty_like(beta)
@@ -1293,6 +1311,15 @@ def npu_chunk_bwd_dv_local(
     cu_seqlens=None,
     chunk_indices=None,
 ):
+    import warnings
+
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_chunk_bwd_dv_local is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_gated_delta_rule_bwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
     out = _empty_like(d_o)
     return _call_aclnn(
         "aclnnChunkBwdDvLocal",
@@ -1412,6 +1439,15 @@ def npu_prepare_wy_repr_bwd_da(
     cu_seqlens=None,
     chunk_indices=None,
 ):
+    import warnings
+
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_prepare_wy_repr_bwd_da is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_gated_delta_rule_bwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
     out = _empty_like(A)
     return _call_aclnn(
         "aclnnPrepareWyReprBwdDa",
@@ -1451,6 +1487,15 @@ def npu_chunk_bwd_dqkwg(
     use_exp2=None,
     transpose_state_layout=None,
 ):
+    import warnings
+
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_chunk_bwd_dqkwg is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_gated_delta_rule_bwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
     import torch
 
     # 参数校验: None/标量/维度错误/dtype 错误在 Python 侧崩溃或只会触发 CANN
@@ -2038,6 +2083,16 @@ def npu_recompute_w_u_fwd(
     cu_seqlens=None,
     chunk_indices=None,
 ):
+    import warnings
+
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_recompute_w_u_fwd is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_gated_delta_rule_fwd / npu_chunk_gated_delta_rule_bwd "
+        "instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
     w_shape = list(_shape(v))
     w_shape[3] = int(k.shape[3])
     w_out = _empty(w_shape, v, dtype=k.dtype)
@@ -2319,6 +2374,15 @@ def npu_chunk_local_cumsum(
     head_first=True,
     output_dtype="float32",
 ):
+    import warnings
+
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_chunk_local_cumsum is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_gated_delta_rule_fwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
     output_dtype_name, out_dtype = _chunk_local_cumsum_output_dtype(g, output_dtype)
     g_contig = g.contiguous()
     out = _empty(_shape(g_contig), g_contig, dtype=out_dtype)
@@ -2349,6 +2413,15 @@ def npu_chunk_scaled_dot_kkt(
     chunk_indices=None,
     chunk_size=64,
 ):
+    import warnings
+
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_chunk_scaled_dot_kkt is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_gated_delta_rule_fwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
     import torch
 
     B, Hv, T = _validate_chunk_scaled_dot_kkt(k, g, beta, cu_seqlens, chunk_indices, chunk_size)
@@ -2990,7 +3063,7 @@ def npu_causal_conv1d(
 
     warnings.warn(
         "fla_npu.ops.ascendc.npu_causal_conv1d is a deprecated compatibility "
-        "API and will be removed in 2027/02. Use causal_conv1d_fn or "
+        "API and will be removed on January 15, 2027 (v26.12.0). Use causal_conv1d_fn or "
         "causal_conv1d_update instead.",
         FutureWarning,
         stacklevel=4,
@@ -4338,6 +4411,16 @@ def npu_kda_gate_cumsum(
     safe_gate=False,
     lower_bound=None,
 ):
+    import warnings
+
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_kda_gate_cumsum is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_kda_fwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
+
     import torch
 
     out = _empty(_shape(g), g, dtype=torch.float32)

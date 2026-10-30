@@ -11,25 +11,18 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include "../op_kernel/arch22/chunk_kda_fwd_prepare_target_config.h"
-#include "../op_kernel/arch22/chunk_kda_fwd_prepare_relay_config.h"
+#include "../op_kernel/arch22/chunk_kda_fwd_prepare_resource.h"
 
 namespace optiling {
 
 constexpr uint64_t CHUNK_KDA_FWD_PREPARE_CHUNK_ROWS = 64;
 constexpr uint64_t CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES = 0x1A400;
-// Arch22：105 KiB 公共区 + 20 KiB Cube relay + 64 KiB FP32 RHS + 16 KiB FP32 Akk。
-// 该值必须与 kernel 侧 Workspace::kArch22SlotStride 保持一致。
-constexpr uint64_t CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES =
-    KdaPrepare::Arch22RelayConfig::kSlotBytes;
-constexpr uint64_t CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP =
-    KdaPrepare::Arch22RelayConfig::kSlotsPerWorkgroup;
+constexpr uint64_t CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP = 4;
 constexpr uint64_t CHUNK_KDA_FWD_PREPARE_ARCH35_WORKGROUP_BYTES =
     CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES *
     CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP;
 constexpr uint64_t CHUNK_KDA_FWD_PREPARE_ARCH22_WORKGROUP_BYTES =
-    CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES *
-    CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP;
+    KdaPrepare::Arch22::GroupBytes;
 
 struct ChunkKdaFwdPrepareScheduleContext {
     uint64_t batch = 0;
@@ -40,9 +33,7 @@ struct ChunkKdaFwdPrepareScheduleContext {
     uint64_t aicCoreNum = 0;
     uint64_t libApiWorkspaceBytes = 0;
     bool isVarLen = false;
-    // 调用方未显式识别平台时按较大的 Arch22 slot 保守分配。
-    uint64_t workspaceSlotBytes = CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES;
-    bool targetPipeline = false;
+    bool isArch22 = true;
 };
 
 struct ChunkKdaFwdPrepareSchedule {
@@ -64,16 +55,7 @@ public:
         if (context_.batch == 0 || context_.qkHeadNum == 0 ||
             context_.valueHeadNum < context_.qkHeadNum ||
             context_.valueHeadNum % context_.qkHeadNum != 0 ||
-            context_.aicCoreNum == 0 ||
-            (context_.workspaceSlotBytes !=
-                 CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES &&
-             context_.workspaceSlotBytes !=
-                 CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES &&
-             context_.workspaceSlotBytes !=
-                 KdaPrepare::Arch22TargetConfig::kSlotBytes) ||
-            context_.targetPipeline !=
-                (context_.workspaceSlotBytes ==
-                 KdaPrepare::Arch22TargetConfig::kSlotBytes)) {
+            context_.aicCoreNum == 0) {
             return false;
         }
 
@@ -91,32 +73,16 @@ public:
             return false;
         }
 
-        // 先仅按 chunk 分核。chunk 数不足时，才以完整 GVA QK 头组为单位分 head。
         uint64_t headsPerPartition = context_.valueHeadNum;
         uint64_t partitionCount = 1;
-        if (chunkWorkItems < context_.aicCoreNum && context_.qkHeadNum > 1) {
+        if (context_.isArch22) {
+            // One AIC and two AIV lanes consume the same value-head pair.
+            headsPerPartition = 2;
+            partitionCount = context_.valueHeadNum / 2 + context_.valueHeadNum % 2;
+        } else if (chunkWorkItems < context_.aicCoreNum && context_.qkHeadNum > 1) {
+            // Preserve A5's complete QK-group partition policy.
             headsPerPartition = context_.valueHeadNum / context_.qkHeadNum;
             partitionCount = context_.qkHeadNum;
-        }
-        if (context_.targetPipeline) {
-            const uint64_t qkGroup =
-                context_.valueHeadNum / context_.qkHeadNum;
-            uint64_t bestCost = std::numeric_limits<uint64_t>::max();
-            for (uint64_t p = 1; p <= context_.qkHeadNum && p <= 4; ++p) {
-                if (context_.valueHeadNum % p != 0 ||
-                    (context_.valueHeadNum / p) % qkGroup != 0) {
-                    continue;
-                }
-                const uint64_t items = chunkWorkItems * p;
-                const uint64_t cores = std::min(items, context_.aicCoreNum);
-                const uint64_t cost =
-                    ((items + cores - 1) / cores) * (context_.valueHeadNum / p);
-                if (cost < bestCost) {
-                    bestCost = cost;
-                    partitionCount = p;
-                }
-            }
-            headsPerPartition = context_.valueHeadNum / partitionCount;
         }
 
         uint64_t totalWorkItems = 0;
@@ -127,12 +93,11 @@ public:
             return false;
         }
         const uint64_t usedCoreNum = std::min(context_.aicCoreNum, totalWorkItems);
-        uint64_t workgroupBytes = 0;
+        const uint64_t workgroupBytes = context_.isArch22
+            ? CHUNK_KDA_FWD_PREPARE_ARCH22_WORKGROUP_BYTES
+            : CHUNK_KDA_FWD_PREPARE_ARCH35_WORKGROUP_BYTES;
         uint64_t userWorkspaceBytes = 0;
-        if (!CheckedMultiply(context_.workspaceSlotBytes,
-                             CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP,
-                             workgroupBytes) ||
-            !CheckedMultiply(usedCoreNum, workgroupBytes,
+        if (!CheckedMultiply(usedCoreNum, workgroupBytes,
                              userWorkspaceBytes) ||
             context_.libApiWorkspaceBytes >
                 std::numeric_limits<uint64_t>::max() - userWorkspaceBytes ||

@@ -35,7 +35,6 @@ STAGE_NAMES = (
     "standalone-layout",
     "torch-adapter",
     "gdr-example-st",
-    "scoped-overlay",
 )
 
 ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
@@ -763,7 +762,6 @@ def build_reproduction(
         _shell_assignment("CI_SOC", soc),
         _shell_assignment("FLA_NPU_SOC", soc),
         _shell_assignment("CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK", "true"),
-        _shell_assignment("CI_RUN_SCOPED_WHEEL_INSTALL_CHECK", "true"),
     ]
     reproduction_stage = failed_stage or ("opp-package" if ops else "")
     if reproduction_stage:
