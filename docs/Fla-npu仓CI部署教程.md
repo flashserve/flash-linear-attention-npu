@@ -282,6 +282,8 @@ A2/A5 job 统一设置 `CI_TMPDIR=/tmp/fla-npu-ci`。A5 Triton/BiShengIR 编译�
 
 现有 workflow 清理步骤只删除本次 `CI_HOST_TMPDIR` 和 A5 的精确源码归档目录 `${CI_ROOT}/tmp/fla-npu-source-<run>-<attempt>`，并校验目录边界及符号链接。A2 的 Example/ST 配置中转使用 `TMPDIR` 下的独立 `mktemp` 目录，由该步骤自己的 `EXIT` trap 清理。静态 `TMPDIR` 根目录始终保留。
 
+每台 A2/A5 runner 的 `CI_TIMING_ROOT` 固定为 `${CI_ROOT}/results/ci-timings`。在启用新版 workflow 前，先给 runner 服务账号创建可写目录，例如 `sudo install -d -o ubuntu -g fla-npu-ci -m 2775 "${CI_ROOT}/results" "${CI_ROOT}/results/ci-timings"`。运行时写入 `<run_id>/<attempt>/<platform>/`：`host-events.jsonl` 记录宿主机镜像准备、设备锁等待、容器运行和清理；`events.jsonl` 逐次记录容器内六个阶段的状态、UTC 时间和耗时；`stages.json` 是最新阶段快照。每次事件写入后立即 `fsync`，因此失败、中断时也保留已记录的事件。强制断电或进程被杀时，最后一个 running 事件可能没有结束耗时。该目录不在 checkout、容器临时目录或 GitHub artifact 的清理范围内；历史数据由运维按容量单独制定保留策略。
+
 缓存固定使用 `CI_CACHE_ROOT=${CI_ROOT}/cache_root`；NPU 锁固定使用 `${CI_ROOT}/tmp/npu-locks`，跨运行共享，不能按 run 分开。单次运行的收尾保留共享缓存与锁文件，不递归修改它们的所有权。
 
 源码获取保持原有顺序：A5 直接通过 GitHub API 准备源码；A2 第一次 checkout 先直连，只有失败后才执行原有“启动代理并获取端口”步骤，再按原顺序等待并重试。runner 服务的 GitHub 控制连接继续使用代理；A5 API 和 A2 首次 checkout 的步骤环境会清空继承的 HTTP/HTTPS/ALL/Git 代理变量，并设置 `NO_PROXY=*`，确保这两次源码访问直连。
@@ -297,6 +299,7 @@ sudo groupadd -f fla-npu-ci
 sudo usermod -aG docker,HwHiAiUser,fla-npu-ci ubuntu
 sudo install -d -o ubuntu -g fla-npu-ci -m 2775 \
   "${CI_ROOT}/tmp" "${CI_ROOT}/cache_root" \
+  "${CI_ROOT}/results" "${CI_ROOT}/results/ci-timings" \
   "${CI_ROOT}/actions-runner"
 ```
 
@@ -878,3 +881,4 @@ export CI_LOG_CLEANUP_ENABLED=false
 - GitHub self-hosted runners 文档：<https://docs.github.com/actions/hosting-your-own-runners/managing-self-hosted-runners/adding-self-hosted-runners>
 - GitHub branch protection 文档：<https://docs.github.com/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches>
 - GitHub `GITHUB_TOKEN` 权限文档：<https://docs.github.com/actions/security-for-github-actions/security-guides/automatic-token-authentication>
+

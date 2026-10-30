@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import time
 from typing import Any
 
 
@@ -35,22 +37,57 @@ def _metadata() -> dict[str, str]:
 def _write(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    with temporary.open("w", encoding="utf-8") as stream:
+        json.dump(payload, stream, indent=2, sort_keys=True)
+        stream.flush()
+        os.fsync(stream.fileno())
     temporary.replace(path)
+    if os.name == "posix":
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+
+
+def _now() -> tuple[str, int]:
+    return datetime.now(timezone.utc).isoformat(), time.monotonic_ns()
+
+
+def _persist(path: Path, payload: dict[str, Any], event: dict[str, Any]) -> None:
+    archive_name = os.environ.get("CI_TIMING_ARCHIVE_DIR")
+    if archive_name:
+        archive = Path(archive_name)
+        if not archive.is_dir():
+            raise ValueError(f"CI timing archive directory does not exist: {archive}")
+        record = {"metadata": payload["metadata"], **event}
+        encoded = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
+        fd = os.open(archive / "events.jsonl", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        try:
+            os.write(fd, encoded)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        _write(archive / "stages.json", payload)
+    _write(path, payload)
 
 
 def initialize(path: Path) -> None:
+    timestamp, monotonic_ns = _now()
     payload = {
         "schema": SCHEMA,
         "complete": False,
         "metadata": _metadata(),
         "status": "running",
         "stages": {
-            stage: {"status": "not_run", "exit_code": None, "reason": ""}
+            stage: {"status": "not_run", "exit_code": None, "reason": "",
+                    "started_at": None, "finished_at": None, "duration_seconds": None,
+                    "started_at_monotonic_ns": None}
             for stage in STAGES
         },
     }
-    _write(path, payload)
+    _persist(path, payload, {"kind": "report", "status": "initialized",
+                             "timestamp": timestamp, "monotonic_ns": monotonic_ns})
 
 
 def _read(path: Path) -> dict[str, Any]:
@@ -73,20 +110,39 @@ def update(path: Path, stage: str, status: str, exit_code: int | None, reason: s
         raise ValueError(f"stage status {status} must not have an exit code")
 
     payload = _read(path)
+    timestamp, monotonic_ns = _now()
+    previous = payload["stages"][stage]
+    started_at = previous.get("started_at")
+    started_ns = previous.get("started_at_monotonic_ns")
+    if status == "running" and not started_ns:
+        started_at, started_ns = timestamp, monotonic_ns
+    finished_at = timestamp if status in {"success", "failure"} else None
+    duration_seconds = None
+    if finished_at and started_ns is not None:
+        duration_seconds = round((monotonic_ns - started_ns) / 1_000_000_000, 3)
     payload["stages"][stage] = {
         "status": status,
         "exit_code": exit_code,
         "reason": reason,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "duration_seconds": duration_seconds,
+        "started_at_monotonic_ns": started_ns,
     }
-    _write(path, payload)
+    _persist(path, payload, {"kind": "stage", "stage": stage, "status": status,
+                             "exit_code": exit_code, "reason": reason,
+                             "timestamp": timestamp, "monotonic_ns": monotonic_ns,
+                             "duration_seconds": duration_seconds})
 
 
 def finalize(path: Path) -> int:
     payload = _read(path)
+    timestamp, monotonic_ns = _now()
     failed = any(item.get("status") == "failure" for item in payload["stages"].values())
     payload["complete"] = True
     payload["status"] = "failure" if failed else "success"
-    _write(path, payload)
+    _persist(path, payload, {"kind": "report", "status": payload["status"],
+                             "timestamp": timestamp, "monotonic_ns": monotonic_ns})
     return 1 if failed else 0
 
 
@@ -119,3 +175,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

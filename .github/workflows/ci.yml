@@ -424,6 +424,8 @@ jobs:
       CI_HOST_TMPDIR: /home/huangjunzhe/ci/tmp/container-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
       CI_CACHE_ROOT: /home/huangjunzhe/ci/cache_root
       CI_NPU_LOCK_DIR: /home/huangjunzhe/ci/tmp/npu-locks
+      # Per-run timing records live on each runner host, outside _work and tmp.
+      CI_TIMING_ROOT: /home/huangjunzhe/ci/results/ci-timings
       TMPDIR: /home/huangjunzhe/ci/tmp
       CI_CONTAINER_NAME: fla-npu-ci-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
@@ -1308,3 +1310,4 @@ jobs:
             if (failures.length > 0) {
               core.setFailed(`仍有 ${failures.length} 个 NPU CI 分项状态未能收敛。`);
             }
+
