@@ -23,6 +23,8 @@ struct ChunkGatedDeltaRuleFwd32TilingData {
     uint32_t stateVFirst;
     // 1: beta_eff = 2 * sigmoid(beta). 0 keeps sigmoid(beta).
     uint32_t allowNegEigval;
+    // 1: write q_hat, k_hat and both rstd. 0 is the inference launch.
+    uint32_t isOutL2norm;
 };
 
 #endif

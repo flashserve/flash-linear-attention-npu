@@ -218,6 +218,7 @@ def run_npu(spec: dict[str, Any], input_data: InputDataset):
         return_intermediate_states=False,
         state_v_first=inputs["state_v_first"],
         layout=inputs["layout"],
+        is_out_l2norm=False,
     )
     torch.npu.synchronize()
     return _contract(outputs[0], outputs[1], spec)

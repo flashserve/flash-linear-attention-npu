@@ -552,16 +552,15 @@ static aclnnStatus CheckChunk32Params(const ChunkGatedDeltaRuleFwdParams &params
     CHECK_COND(params.aLogOptional == nullptr && params.dtBiasOptional == nullptr,
                ACLNN_ERR_PARAM_INVALID,
                "chunkSize=32 does not support aLog or dtBias.");
-    CHECK_COND(params.qHatOutOptional == nullptr &&
-                   params.kHatOutOptional == nullptr &&
-                   params.qRstdOutOptional == nullptr &&
-                   params.kRstdOutOptional == nullptr &&
-                   params.betaEffOutOptional == nullptr &&
-                   params.gCumsumOutOptional == nullptr &&
-                   params.aOutOptional == nullptr &&
-                   params.hOutOptional == nullptr,
+    CHECK_COND((params.gCumsumOutOptional == nullptr) == (params.aOutOptional == nullptr),
                ACLNN_ERR_PARAM_INVALID,
-               "chunkSize=32 does not export intermediate tensors.");
+               "chunkSize=32 g_cumsum and A must be provided together.");
+    const bool anyL2 = params.qHatOutOptional != nullptr || params.kHatOutOptional != nullptr ||
+                       params.qRstdOutOptional != nullptr || params.kRstdOutOptional != nullptr;
+    const bool allL2 = params.qHatOutOptional != nullptr && params.kHatOutOptional != nullptr &&
+                       params.qRstdOutOptional != nullptr && params.kRstdOutOptional != nullptr;
+    CHECK_COND(!anyL2 || allL2, ACLNN_ERR_PARAM_INVALID,
+               "chunkSize=32 L2 outputs must be provided together.");
     CHECK_COND(Rank(params.q) == 4 && Rank(params.k) == 4 &&
                    Rank(params.v) == 4 && Rank(params.oOut) == 4 &&
                    Rank(params.g) == 3 && Rank(params.beta) == 3,
@@ -592,6 +591,45 @@ static aclnnStatus CheckChunk32Params(const ChunkGatedDeltaRuleFwdParams &params
                ACLNN_ERR_PARAM_INVALID,
                "chunkSize=32 expects q/k/v in the requested layout, g/beta as [B,T,Hv], "
                "and o as BSND [B,T,Hv,V].");
+    if (params.qHatOutOptional != nullptr) {
+        const bool hatShape = sequenceMajor
+                                  ? HasShape(params.qHatOutOptional, {batch, tokens, keyHeads, keyDim}) &&
+                                        HasShape(params.kHatOutOptional, {batch, tokens, keyHeads, keyDim})
+                                  : HasShape(params.qHatOutOptional, {batch, keyHeads, tokens, keyDim}) &&
+                                        HasShape(params.kHatOutOptional, {batch, keyHeads, tokens, keyDim});
+        CHECK_COND(hatShape &&
+                       HasShape(params.qRstdOutOptional, {batch, keyHeads, tokens}) &&
+                       HasShape(params.kRstdOutOptional, {batch, keyHeads, tokens}) &&
+                       params.qRstdOutOptional->GetDataType() == DataType::DT_FLOAT &&
+                       params.kRstdOutOptional->GetDataType() == DataType::DT_FLOAT &&
+                       params.qHatOutOptional->GetDataType() == DataType::DT_BF16 &&
+                       params.kHatOutOptional->GetDataType() == DataType::DT_BF16,
+                   ACLNN_ERR_PARAM_INVALID,
+                   "chunkSize=32 q_hat/k_hat match q/k, and rstd is FP32 [B,Hk,T].");
+    }
+    if (params.betaEffOutOptional != nullptr) {
+        CHECK_COND(HasShape(params.betaEffOutOptional, {batch, tokens, valueHeads}) &&
+                       params.betaEffOutOptional->GetDataType() == DataType::DT_FLOAT,
+                   ACLNN_ERR_PARAM_INVALID,
+                   "chunkSize=32 beta_eff is FP32 [B,T,Hv].");
+    }
+    if (params.hOutOptional != nullptr) {
+        const op::Shape &hShape = params.hOutOptional->GetViewShape();
+        CHECK_COND(hShape.GetDimNum() == 5 && hShape.GetDim(0) == batch &&
+                       hShape.GetDim(2) == valueHeads && hShape.GetDim(3) == HEAD_DIM_128 &&
+                       hShape.GetDim(4) == HEAD_DIM_128 &&
+                       params.hOutOptional->GetDataType() == DataType::DT_BF16,
+                   ACLNN_ERR_PARAM_INVALID,
+                   "chunkSize=32 h is BF16 [B,NT,Hv,128,128].");
+    }
+    if (params.gCumsumOutOptional != nullptr) {
+        CHECK_COND(HasShape(params.gCumsumOutOptional, {batch, tokens, valueHeads}) &&
+                       params.gCumsumOutOptional->GetDataType() == DataType::DT_FLOAT &&
+                       HasShape(params.aOutOptional, {batch, valueHeads, tokens, CHUNK_GATED_DELTA_RULE_FWD_CHUNK_32}) &&
+                       params.aOutOptional->GetDataType() == DataType::DT_BF16,
+                   ACLNN_ERR_PARAM_INVALID,
+                   "chunkSize=32 g_cumsum is FP32 [B,T,Hv] and A is BF16 [B,Hv,T,32].");
+    }
 
     CHECK_COND(params.q->GetDataType() == DataType::DT_BF16 &&
                    params.k->GetDataType() == DataType::DT_BF16 &&
@@ -893,26 +931,81 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
                       MakeShape({seqNum, hv, stateDim0, stateDim1}),
                       stateDtype, Format::FORMAT_ND)
                 : params.finalStateOutOptional;
-        const aclTensor *gCumsumPlaceholder = executorPtr->AllocTensor(
-            MakeShape({1}), DataType::DT_FLOAT, Format::FORMAT_ND);
-        const aclTensor *aPlaceholder = executorPtr->AllocTensor(
-            MakeShape({1}), DataType::DT_BF16, Format::FORMAT_ND);
+        const int64_t seqlen = sequenceMajor ? Dim(params.q, 1) : Dim(params.q, 2);
+        const bool exportGA = params.gCumsumOutOptional != nullptr;
+        const bool exportBeta = params.betaEffOutOptional != nullptr;
+        const bool exportH = params.hOutOptional != nullptr;
+        const aclTensor *betaArg = exportBeta
+            ? executorPtr->AllocTensor(MakeShape({batch, hv, seqlen}), DataType::DT_FLOAT, Format::FORMAT_ND)
+            : executorPtr->AllocTensor(MakeShape({1}), DataType::DT_FLOAT, Format::FORMAT_ND);
+        const aclTensor *gCumsumArg = exportGA
+            ? executorPtr->AllocTensor(MakeShape({batch, hv, seqlen}), DataType::DT_FLOAT, Format::FORMAT_ND)
+            : executorPtr->AllocTensor(MakeShape({1}), DataType::DT_FLOAT, Format::FORMAT_ND);
+        const aclTensor *aArg = exportGA
+            ? params.aOutOptional
+            : executorPtr->AllocTensor(MakeShape({1}), DataType::DT_BF16, Format::FORMAT_ND);
         GDN_STAGE_CHECK(qHead != nullptr && kHead != nullptr && vHead != nullptr &&
                             gBht != nullptr && betaBht != nullptr &&
                             params.oOut != nullptr && finalState != nullptr &&
-                            gCumsumPlaceholder != nullptr &&
-                            aPlaceholder != nullptr,
+                            gCumsumArg != nullptr &&
+                            aArg != nullptr,
                         169114);
 
         // The public beta slot is FP32. Chunk32 keeps its BF16 beta in the
         // unused a_storage slot and its FP32 g in raw_g. oOut stays BSND.
+        // Hats are head-major inside the kernel. Sequence-major callers get a
+        // transpose back into the public tensor after the kernel returns.
+        const int64_t hq = sequenceMajor ? Dim(params.q, 2) : Dim(params.q, 1);
+        const bool exportL2 = params.qHatOutOptional != nullptr;
+        const aclTensor *qHatHead = nullptr;
+        const aclTensor *kHatHead = nullptr;
+        const aclTensor *qRstdArg = params.qRstdOutOptional;
+        const aclTensor *kRstdArg = params.kRstdOutOptional;
+        if (exportL2 && sequenceMajor) {
+            qHatHead = executorPtr->AllocTensor(MakeShape({batch, hq, seqlen, kDim}),
+                                                DataType::DT_BF16, Format::FORMAT_ND);
+            kHatHead = executorPtr->AllocTensor(MakeShape({batch, hq, seqlen, kDim}),
+                                                DataType::DT_BF16, Format::FORMAT_ND);
+        } else if (exportL2) {
+            qHatHead = params.qHatOutOptional;
+            kHatHead = params.kHatOutOptional;
+        } else {
+            // Keep the kernel argument list fixed. A missing optional output is
+            // dropped by the launcher and shifts workspace/tiling.
+            qHatHead = executorPtr->AllocTensor(MakeShape({1}), DataType::DT_BF16, Format::FORMAT_ND);
+            kHatHead = executorPtr->AllocTensor(MakeShape({1}), DataType::DT_BF16, Format::FORMAT_ND);
+            qRstdArg = executorPtr->AllocTensor(MakeShape({1}), DataType::DT_FLOAT, Format::FORMAT_ND);
+            kRstdArg = executorPtr->AllocTensor(MakeShape({1}), DataType::DT_FLOAT, Format::FORMAT_ND);
+        }
         auto chunk32Result = l0op::ChunkGatedDeltaRuleFwd(
             qHead, kHead, vHead, gBht, betaBht, gBht, nullptr,
             params.initialStateOptional, params.cuSeqlensOptional,
             params.chunkIndicesOptional, true,
-            CHUNK_GATED_DELTA_RULE_FWD_CHUNK_32, params.scale, false,
-            params.oOut, finalState, gCumsumPlaceholder, aPlaceholder,
-            0, 0, 0, params.stateVFirst, params.allowNegEigval, executorPtr);
+            CHUNK_GATED_DELTA_RULE_FWD_CHUNK_32, params.scale, exportGA,
+            params.oOut, finalState, gCumsumArg, aArg,
+            0, 0, 0, params.stateVFirst, params.allowNegEigval,
+            qHatHead, kHatHead, qRstdArg, kRstdArg, exportL2,
+            exportH ? params.hOutOptional
+                    : executorPtr->AllocTensor(MakeShape({1}), DataType::DT_BF16, Format::FORMAT_ND),
+            exportH, betaArg, exportBeta, executorPtr);
+        if (exportL2 && sequenceMajor) {
+            const aclTensor *qHatBsnd = TransposeContiguous(qHatHead, {0, 2, 1, 3}, executorPtr);
+            const aclTensor *kHatBsnd = TransposeContiguous(kHatHead, {0, 2, 1, 3}, executorPtr);
+            CHECK_RET(ViewCopyIfPresent(qHatBsnd, params.qHatOutOptional, executorPtr) == ACLNN_SUCCESS,
+                      ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(ViewCopyIfPresent(kHatBsnd, params.kHatOutOptional, executorPtr) == ACLNN_SUCCESS,
+                      ACLNN_ERR_INNER_NULLPTR);
+        }
+        if (exportGA) {
+            const aclTensor *gPublic = TransposeContiguous(gCumsumArg, {0, 2, 1}, executorPtr);
+            CHECK_RET(ViewCopyIfPresent(gPublic, params.gCumsumOutOptional, executorPtr) == ACLNN_SUCCESS,
+                      ACLNN_ERR_INNER_NULLPTR);
+        }
+        if (exportBeta) {
+            const aclTensor *betaPublic = TransposeContiguous(betaArg, {0, 2, 1}, executorPtr);
+            CHECK_RET(ViewCopyIfPresent(betaPublic, params.betaEffOutOptional, executorPtr) == ACLNN_SUCCESS,
+                      ACLNN_ERR_INNER_NULLPTR);
+        }
         GDN_STAGE_CHECK(chunk32Result[0] != nullptr &&
                             chunk32Result[1] != nullptr,
                         169115);
@@ -1183,7 +1276,16 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         outputFinalState, params.chunkSize, params.scale, params.gCumsumOutOptional != nullptr,
         oCompute, finalState,
         gCumsumCompute, aCompute, usePreparedCumsum ? 1 : 0, nativeQkv ? 1 : 0,
-        sequenceMajorOutput ? 1 : 0, false, false, executorPtr);
+        sequenceMajorOutput ? 1 : 0, false, false,
+        executorPtr->AllocTensor(MakeShape({1}), DataType::DT_BF16, Format::FORMAT_ND),
+        executorPtr->AllocTensor(MakeShape({1}), DataType::DT_BF16, Format::FORMAT_ND),
+        executorPtr->AllocTensor(MakeShape({1}), DataType::DT_FLOAT, Format::FORMAT_ND),
+        executorPtr->AllocTensor(MakeShape({1}), DataType::DT_FLOAT, Format::FORMAT_ND),
+        false,
+        executorPtr->AllocTensor(MakeShape({1}), DataType::DT_BF16, Format::FORMAT_ND),
+        false,
+        executorPtr->AllocTensor(MakeShape({1}), DataType::DT_FLOAT, Format::FORMAT_ND),
+        false, executorPtr);
     GDN_STAGE_CHECK(phase6Result[0] != nullptr && phase6Result[2] != nullptr &&
                         phase6Result[3] != nullptr,
                         169112);

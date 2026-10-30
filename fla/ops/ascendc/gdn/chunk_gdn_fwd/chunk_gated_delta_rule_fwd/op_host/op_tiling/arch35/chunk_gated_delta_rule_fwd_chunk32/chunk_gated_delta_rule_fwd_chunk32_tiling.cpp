@@ -24,10 +24,15 @@ constexpr size_t INPUT_CU_SEQLENS = 8;
 constexpr size_t INPUT_CHUNK_INDICES = 9;
 constexpr size_t OUTPUT_O = 0;
 constexpr size_t OUTPUT_FINAL_STATE = 1;
+constexpr size_t OUTPUT_Q_HAT = 4;
 constexpr size_t ATTR_CHUNK_SIZE = 1;
+constexpr size_t ATTR_OUTPUT_G_CUMSUM = 3;
 constexpr size_t ATTR_SCALE = 2;
 constexpr size_t ATTR_STATE_V_FIRST = 7;
 constexpr size_t ATTR_ALLOW_NEG_EIGVAL = 8;
+constexpr size_t ATTR_IS_OUT_L2NORM = 9;
+constexpr size_t ATTR_OUTPUT_H = 10;
+constexpr size_t ATTR_OUTPUT_BETA_EFF = 11;
 
 constexpr int64_t CHUNK_SIZE = 32;
 constexpr int64_t HEAD_DIM = 128;
@@ -187,7 +192,27 @@ ge::graphStatus TilingForChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *cont
     tiling->T = static_cast<uint32_t>(tokens);
     tiling->hasInitial = hasInitial;
     tiling->scale = static_cast<float>(*scale);
+    // Optional q_hat is a real tensor only when the caller asked for L2 output.
+    // A missing optional output is not a reliable null pointer inside the kernel.
+    const bool *outAttr = context->GetAttrs()->GetAttrPointer<bool>(ATTR_IS_OUT_L2NORM);
+    const bool exportL2 = outAttr != nullptr && *outAttr;
+    if (exportL2) {
+        seqNum |= 0x80000000u;
+    }
+    const bool *outGA = context->GetAttrs()->GetAttrPointer<bool>(ATTR_OUTPUT_G_CUMSUM);
+    if (outGA != nullptr && *outGA) {
+        seqNum |= 0x40000000u;
+    }
+    const bool *outH = context->GetAttrs()->GetAttrPointer<bool>(ATTR_OUTPUT_H);
+    if (outH != nullptr && *outH) {
+        seqNum |= 0x20000000u;
+    }
+    const bool *outBeta = context->GetAttrs()->GetAttrPointer<bool>(ATTR_OUTPUT_BETA_EFF);
+    if (outBeta != nullptr && *outBeta) {
+        seqNum |= 0x10000000u;
+    }
     tiling->seqNum = seqNum;
+    tiling->isOutL2norm = exportL2 ? 1U : 0U;
     tiling->initialFp32 = initialFp32;
     tiling->finalFp32 = stateDtype == ge::DT_FLOAT ? 1U : 0U;
     const bool *stateVFirst = context->GetAttrs()->GetAttrPointer<bool>(ATTR_STATE_V_FIRST);

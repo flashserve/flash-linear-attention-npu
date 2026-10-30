@@ -1496,8 +1496,13 @@ def npu_chunk_gated_delta_rule_fwd(q, k, v, g, beta, *, initial_state=None,
                                    disable_recompute=True,
                                    return_intermediate_states=False,
                                    state_v_first=False, a_log=None,
-                                   dt_bias=None, layout="BNSD"):
+                                   dt_bias=None, layout="BNSD",
+                                   is_out_l2norm=True):
     """Fused GDN forward: `o` plus the intermediates the backward consumes.
+
+    ``is_out_l2norm=False`` is refused for chunk_size 64 and 128. Chunk 32
+    uses that setting for the inference launch, which returns only ``o`` and
+    an optional ``final_state``.
 
     The tuple is fixed at ten slots -- `(o, final_state, g_cumsum, A, beta_eff,
     h, q_hat, k_hat, q_rstd, k_rstd)` -- carrying `None` in the slots the flags
@@ -1541,6 +1546,10 @@ def npu_chunk_gated_delta_rule_fwd(q, k, v, g, beta, *, initial_state=None,
         raise RuntimeError(
             "npu_chunk_gated_delta_rule_fwd: a_log and dt_bias must be None "
             "while gate-in-kernel is unsupported.")
+    if int(chunk_size) in (64, 128) and not bool(is_out_l2norm):
+        raise RuntimeError(
+            "npu_chunk_gated_delta_rule_fwd: is_out_l2norm=False is not supported "
+            "when chunk_size is 64 or 128.")
     if scale is None:
         scale = float(k.shape[-1]) ** -0.5
     return _op("npu_chunk_gated_delta_rule_fwd")(
