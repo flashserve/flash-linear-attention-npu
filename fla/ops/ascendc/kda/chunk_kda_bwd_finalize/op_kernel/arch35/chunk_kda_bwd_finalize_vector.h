@@ -1377,7 +1377,8 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
         const int64_t partial = head * tiling_->totalChunkNum + chunkTask;
-        const bool gateTokenMajor = tiling_->outputGateTokenMajor != 0U;
+        const bool gateTokenMajor =
+            (tiling_->betaMode & KDA_FINALIZE_GATE_OUTPUT_TOKEN_MAJOR) != 0U;
         const uint64_t out = FinalizeOutputOffset(
             *tiling_, chunk, head, 0, KDA_FINALIZE_DIM, gateTokenMajor);
         AscendC::DataCopyPad(dG_[out], dg, AscendC::DataCopyExtParams{
@@ -1846,7 +1847,8 @@ private:
             tokenMajor ? static_cast<uint32_t>((tiling_->NV - 1) * KDA_FINALIZE_DIM * sizeof(bfloat16_t)) : 0U, 0};
         AscendC::DataCopyPad(dq_[out], dqOut, matrixCopy);
         AscendC::DataCopyPad(dk_[out], dkOut, matrixCopy);
-        const bool gateTokenMajor = tiling_->outputGateTokenMajor != 0U;
+        const bool gateTokenMajor =
+            (tiling_->betaMode & KDA_FINALIZE_GATE_OUTPUT_TOKEN_MAJOR) != 0U;
         const uint64_t betaOut = FinalizeOutputOffset(
             *tiling_, chunk, head, rowBegin, 1, gateTokenMajor);
         AscendC::DataCopyPad(dBeta_[betaOut], dbOut, AscendC::DataCopyExtParams{

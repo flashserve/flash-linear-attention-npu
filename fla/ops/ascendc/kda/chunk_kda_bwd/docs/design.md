@@ -49,7 +49,8 @@ Finalize 对 h、dh 分别寻址，Dhu 和内嵌 state_scan 均产生 NT-first d
 - q_rstd/k_rstd 成对提供时，在 Finalize 内完成归一化反向，不增加第四个 kernel。
 - A5/V2 的 db/dg 由 Finalize 按公开 head-major 直接写出，取消 token-major
   临时张量及后续 Transpose/ViewCopy；独立 Finalize 默认仍按 token-major 输出。
-  内部 `gate_output_head_major` 默认关闭且仅允许 A5 使用，既有调用与 A2/A3 行为不变。
+  db/dg 的布局由现有输出 shape 推导，A5 使用 `betaMode` 的保留高位传递，不新增属性、
+  aclnn/L0 入参或 TilingData 字段；A2/A3 仍只接受 token-major 输出 shape。
   该改动只调整输出 DMA 的地址和 stride，不改变 Gate 反扫、参数归约或算术顺序。
 
 Python 层统一处理参数校验、空序列压缩和规范 chunk 元数据。

@@ -3,14 +3,16 @@
 ## 用途与边界
 
 本目录是独立的 host tiling 测试工程。测试直接编译并调用当前算子的
-`Tiling4ChunkKdaBwdFinalize`，通过真实 `TilingContext` 检查以下契约：
+`Tiling4ChunkKdaBwdFinalize`，通过真实 `TilingContext` 检查以下契约，不构造任何新增属性：
 
-| 平台信息 | `gate_output_head_major` | 检查点 |
+| 平台信息 | db/dg 输出 shape | 检查点 |
 | --- | --- | --- |
-| Ascend910B、Ascend910_93 | `true` | 返回 `ge::GRAPH_FAILED`；实际 OP 日志包含属性名、`true`、`false`、`A2/A3` 和 `token-major` 平台原因 |
-| Ascend910B、Ascend910_93 | `false` | 原 Arch22 校验和转发路径成功，tiling key 为 101 |
-| Ascend950 | `true`、`false` | 两种属性值均接受，并正确设置 gate 输出布局字段 |
+| Ascend910B、Ascend910_93 | head-major | 返回 `ge::GRAPH_FAILED`；实际 OP 日志包含 `dBetaOut/dGOut`、`head-major`、`A2/A3` 和 `token-major` 平台原因 |
+| Ascend910B、Ascend910_93 | token-major | 原 Arch22 校验和转发路径成功，tiling key 为 101 |
+| Ascend950 | head-major、token-major | 两种输出 shape 均接受，并由现有 `betaMode` 的保留高位传递布局，不新增 attr 或 TilingData 字段 |
 
+测试同时用 `static_assert` 检查 `TilingData` 为基线的 168 字节，并检查 Arch22 的
+`betaMode` 不携带布局高位，避免布局优化改变原有 ABI 或 beta 语义。
 这些平台由 host 上下文模拟。测试不启动设备 kernel，不构成 A2/A3/A5 实机、aclnn 或精度结论。
 
 ## 环境变量/配置变量契约
@@ -37,7 +39,7 @@ CMake target 消费，不被算子、wheel、OPP 或安装流程读取。命令�
 - `UT_COMMON_DIR` 保持默认空值时，CMake 配置以 `FATAL_ERROR` 终止，不生成测试目标，也不回退到伪造路径。
 - `UT_COMMON_DIR` 指向不存在目录或缺少所需文件时，配置或编译失败；不会下载替代实现。
 - `ASCEND_CANN_PACKAGE_PATH` 指向不存在或内容不兼容的 CANN 包时，头文件查找、编译或链接失败；不会切换到另一套 CANN。
-- A2/A3 的 `true` 用例中，`GRAPH_FAILED` 是预期结果，不是测试框架故障。若返回码不符，或实际报告缺少上述任一文本，测试二进制返回非零。
+- A2/A3 的 head-major 输出 shape 用例中，`GRAPH_FAILED` 是预期结果，不是测试框架故障。若返回码不符，或实际报告缺少上述任一文本，测试二进制返回非零。
 - 任一正常路径、布局字段或报告检查失败时，二进制打印 `FAIL`、返回非零，CTest 随之失败。只有内部 6/6 用例通过时二进制才返回零。
 
 这些变量只在测试配置和测试进程生命周期内有效。工程不安装文件、不修改 CANN 或 UT common，也不生成生产包；删除其独立构建目录即可清除对应 cache 和构建产物。
@@ -62,7 +64,7 @@ ctest --test-dir "$BUILD_DIR" --output-on-failure
 "$BUILD_DIR/chunk_kda_bwd_finalize_tiling_test"
 ```
 
-预期 CTest 为 1/1 通过，直接运行二进制为 6/6 通过，并打印两个 A2/A3 负向用例的完整属性报告。
+预期 CTest 为 1/1 通过，直接运行二进制为 6/6 通过，并打印两个 A2/A3 负向用例的完整输出 shape 报告。
 
 ## 依赖与回退
 

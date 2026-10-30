@@ -77,7 +77,6 @@ public:
         this->Attr("use_beta_sigmoid_in_kernel").AttrType(OPTIONAL).Bool(false);
         this->Attr("allow_neg_eigval").AttrType(OPTIONAL).Bool(false);
         this->Attr("output_layout").AttrType(OPTIONAL).String("BNSD");
-        this->Attr("gate_output_head_major").AttrType(OPTIONAL).Bool(false);
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)

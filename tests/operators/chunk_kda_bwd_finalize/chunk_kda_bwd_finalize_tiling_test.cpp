@@ -20,6 +20,8 @@ namespace optiling {
 ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context);
 }
 
+static_assert(sizeof(KDA::ChunkKdaBwdFinalizeTilingData) == 168, "Finalize tiling ABI size changed");
+
 namespace {
 
 struct TilingResult {
@@ -27,6 +29,7 @@ struct TilingResult {
     uint64_t tilingKey = 0;
     uint32_t blockDim = 0;
     uint32_t usedCoreNum = 0;
+    uint32_t betaMode = 0;
     uint32_t outputGateTokenMajor = UINT32_MAX;
     std::string message;
 };
@@ -39,11 +42,11 @@ std::unique_ptr<gert::Tensor> MakeTensor(const gert::StorageShape &shape, ge::Da
         gert::TensorPlacement::kOnHost, dtype, nullptr);
 }
 
-void SetFinalizeAttrs(gert::TilingContext *context, bool gateOutputHeadMajor)
+void SetFinalizeAttrs(gert::TilingContext *context)
 {
     auto *attrs = const_cast<gert::RuntimeAttrs *>(context->GetAttrs());
     auto *def = reinterpret_cast<RuntimeAttrsDef *>(attrs);
-    def->attr_num = 11;
+    def->attr_num = 10;
     size_t index = 0;
     size_t offset = sizeof(RuntimeAttrsDef) + def->attr_num * sizeof(size_t);
     auto write = [&](const void *value, size_t size) {
@@ -67,7 +70,6 @@ void SetFinalizeAttrs(gert::TilingContext *context, bool gateOutputHeadMajor)
     write(&disabled, sizeof(disabled));
     write(&disabled, sizeof(disabled));
     write(layout, sizeof(layout));
-    write(&gateOutputHeadMajor, sizeof(gateOutputHeadMajor));
 }
 
 std::string RunWithCapturedLog(gert::TilingContext *context, ge::graphStatus &status)
@@ -186,7 +188,6 @@ TilingResult RunTiling(const char *socVersion, bool gateOutputHeadMajor)
         .Attr("use_beta_sigmoid_in_kernel", false)
         .Attr("allow_neg_eigval", false)
         .Attr("output_layout", ge::AscendString("NTD"))
-        .Attr("gate_output_head_major", gateOutputHeadMajor)
         .Attr("reserved_0", static_cast<int64_t>(0))
         .Attr("reserved_1", static_cast<int64_t>(0));
     auto contextHolder = faker.Build();
@@ -210,16 +211,18 @@ TilingResult RunTiling(const char *socVersion, bool gateOutputHeadMajor)
     context->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
     context->GetPlatformInfo()->SetPlatformRes("version", versions);
 
-    SetFinalizeAttrs(context, gateOutputHeadMajor);
+    SetFinalizeAttrs(context);
     result.message = RunWithCapturedLog(context, result.status);
     if (result.status == ge::GRAPH_SUCCESS) {
         result.tilingKey = context->GetTilingKey();
         result.blockDim = context->GetBlockDim();
         if (std::string(socVersion) == "Ascend950") {
             result.outputGateTokenMajor =
-                context->GetTilingData<KDA::ChunkKdaBwdFinalizeTilingData>()->outputGateTokenMajor;
+                context->GetTilingData<KDA::ChunkKdaBwdFinalizeTilingData>()->betaMode &
+                KDA::KDA_FINALIZE_GATE_OUTPUT_TOKEN_MAJOR;
         } else {
             result.usedCoreNum = context->GetTilingData<KDA::Arch22::FinalizeTilingData>()->usedCoreNum;
+            result.betaMode = context->GetTilingData<KDA::Arch22::FinalizeTilingData>()->betaMode;
         }
     }
     return result;
@@ -229,10 +232,10 @@ bool CheckNegative(const char *socVersion)
 {
     const auto result = RunTiling(socVersion, true);
     bool ok = result.status == ge::GRAPH_FAILED;
-    for (const char *text : {"gate_output_head_major", "true", "false", "A2/A3", "token-major"}) {
+    for (const char *text : {"dBetaOut/dGOut", "head-major", "A2/A3", "token-major"}) {
         ok = result.message.find(text) != std::string::npos && ok;
     }
-    std::cout << socVersion << " gate_output_head_major=true: status=" << result.status
+    std::cout << socVersion << " head-major gate output shape: status=" << result.status
               << ", report=" << result.message << '\n';
     return ok;
 }
@@ -241,8 +244,8 @@ bool CheckArch22Forward(const char *socVersion)
 {
     const auto result = RunTiling(socVersion, false);
     const bool ok = result.status == ge::GRAPH_SUCCESS && result.tilingKey == 101 &&
-        result.blockDim == 1 && result.usedCoreNum == 1;
-    std::cout << socVersion << " gate_output_head_major=false: status=" << result.status
+        result.blockDim == 1 && result.usedCoreNum == 1 && result.betaMode == 0;
+    std::cout << socVersion << " token-major gate output shape: status=" << result.status
               << ", key=" << result.tilingKey << ", blocks=" << result.blockDim << '\n';
     return ok;
 }
@@ -252,8 +255,8 @@ bool CheckA5(bool gateOutputHeadMajor)
     const auto result = RunTiling("Ascend950", gateOutputHeadMajor);
     const uint32_t expected = gateOutputHeadMajor ? 0U : 1U;
     const bool ok = result.status == ge::GRAPH_SUCCESS && result.tilingKey == 1 &&
-        result.blockDim == 1 && result.outputGateTokenMajor == expected;
-    std::cout << "Ascend950 gate_output_head_major=" << (gateOutputHeadMajor ? "true" : "false")
+        result.blockDim == 1 && (result.outputGateTokenMajor != 0U) == (expected != 0U);
+    std::cout << "Ascend950 gate head-major shape=" << (gateOutputHeadMajor ? "true" : "false")
               << ": status=" << result.status << ", key=" << result.tilingKey
               << ", outputGateTokenMajor=" << result.outputGateTokenMajor << '\n';
     return ok;
