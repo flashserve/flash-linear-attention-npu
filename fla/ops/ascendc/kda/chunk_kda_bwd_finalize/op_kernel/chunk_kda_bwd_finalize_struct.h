@@ -9,8 +9,6 @@
 
 namespace KDA {
 
-inline constexpr uint32_t KDA_FINALIZE_GATE_OUTPUT_TOKEN_MAJOR = 1U << 31;
-
 // Shared A5 Host/device tiling for the complete finalize kernel.
 struct ChunkKdaBwdFinalizeTilingData {
     int64_t B;

@@ -54,12 +54,8 @@ const std::array<const aclTensor *, 7> ChunkKdaBwdFinalize(
     const size_t rank = q->GetViewShape().GetDimNum();
     if (rank != 3 && rank != 4) return empty;
     const bool rank3 = rank == 3;
-    const bool denseGateHeadAlias = std::strcmp(outputLayout, "BNSD_GATE_HEAD_MAJOR") == 0;
-    const bool packedGateHeadAlias = std::strcmp(outputLayout, "NTD_GATE_HEAD_MAJOR") == 0;
-    const char *valueOutputLayout = denseGateHeadAlias ? "BNSD" :
-        (packedGateHeadAlias ? "NTD" : outputLayout);
-    const bool tokenMajor = std::strcmp(valueOutputLayout, rank3 ? "TND" : "BSND") == 0;
-    if (!tokenMajor && std::strcmp(valueOutputLayout, rank3 ? "NTD" : "BNSD") != 0) return empty;
+    const bool tokenMajor = std::strcmp(outputLayout, rank3 ? "TND" : "BSND") == 0;
+    if (!tokenMajor && std::strcmp(outputLayout, rank3 ? "NTD" : "BNSD") != 0) return empty;
     const std::array<const aclTensor *, 7> requested{dqOut, dkOut, dvOut, dBetaOut, dGOut, dALogOut, dDtBiasOut};
     for (auto *output : requested) if (!output) return empty;
     // Generate metadata once on Host; both direct L0 and ACLNN use this path.
