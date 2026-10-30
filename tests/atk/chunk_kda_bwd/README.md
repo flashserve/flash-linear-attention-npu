@@ -9,8 +9,9 @@
 范围限定为 Ascend950、K=V=128、chunk=64、safe gate、`use_exp2=True`、BF16 token；
 不覆盖 unsafe、FP16、initial state/dht，不把本包结果外推为其他路由的验收结论。
 
-性能机制仅为 Finalize 的 O1 五组 VF 同一成对循环内 A/B 交错与独立单尾，以及
-O2 Stage7→9 FP32 bandExp 复用。A5 raw tiling、DFX、host/ATK 资产和文档修改不计性能收益。
+性能机制包括 Finalize 的 O1 五组 VF 同一成对循环内 A/B 交错与独立单尾、
+O2 Stage7→9 FP32 bandExp 复用，以及 O4 原生 token-major do 输入。A5 raw tiling、
+DFX、host/ATK 资产和文档修改不计性能收益；普通 beta 的既有转置不属于 O4。
 
 结果根记为 `$R=/home/vllm_ascend_m/kda_opt_workspace/runs/pr913_pr993_20261030`。
 被测 wheel 的生产提交为 `b39f223e`；逐输出比较合同对应测试提交 `4f190ea2`。
@@ -32,7 +33,8 @@ dense `BSND` 和 packed `TND`。q/k/v 及 dq/dk/dv 随 layout，有成对 rstd �
 前向保存的 head-major q_hat/k_hat。公开 do/raw_g/beta 与 dg/db 固定 token-major。
 dq/dk/dv 为 BF16，dg 跟随 raw_g 的真实 dtype，db 跟随 beta，A_log/dt_bias 及其梯度固定 FP32。
 
-ACLNN 将 do 转置一次供 Prepare/Dhu 共用，普通 beta 转置一次供 Recompute/Finalize 共用；
+A5 V2 的 ACLNN 将原始 token-major do 直接传给 Prepare/Dhu，由内部可选标志按原生行距读取；
+普通 beta 仍转置一次供 Recompute/Finalize 共用。独立小接口默认 head-major。
 Finalize 内部 beta 仍为 head-major。独立 Finalize 的 `output_layout` 控制全部五个逐 token
 梯度，内部可选 `model_layout` 默认空字符串表示 standalone，不用 shape 猜测 `T == H` 的布局。
 

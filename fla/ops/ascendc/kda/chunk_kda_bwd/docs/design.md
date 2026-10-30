@@ -58,8 +58,9 @@ Finalize 对 h、dh 分别寻址，Dhu 和内嵌 state_scan 均产生 NT-first d
 - **O2**：Stage7 将 `exp2(g-center)` 的 FP32 bandExp 保存在已释放的 qPos 高位区
   [80,96) KiB，Stage9 按同布局复用；下一 band 才复用 qPos，UB 峰值、算术顺序和
   跨核旗均不变。
-- 本轮性能机制仅为上述 O1/O2。A5 Finalize raw tiling 修复、DFX、host/ATK 资产和文档
-  调整均为非性能修改，不据此分配性能收益。
+- 本轮性能机制为上述 O1/O2，以及后文 O4 原生 token-major do 输入。A5 raw tiling、
+  DFX、host/ATK 资产和文档调整均为非性能修改，不据此分配性能收益。普通 beta 的
+  既有转置不属于 O4，也不计入其收益。
 - A5 host 的 `ChunkKdaBwdFinalizeTilingData` 逻辑大小为 184 字节，raw tiling size 设为
   `sizeof(TilingData)+8`，即 192 字节，与设备 `opParaSize` 一致；Arch22 路径不变。
 - dg 及参数梯度部分和写入 workspace，采用固定顺序归约，不使用原子累加。
@@ -117,9 +118,9 @@ CPU 公式不变；新增 BF16 db 的预期为旧 FP32 梯度按模型 beta dtyp
 | 阶段 | 当前设计 |
 |---|---|
 | Python/Stable/ctypes | 共用单一 layout 的校验和输出分配；A5 auto/optimized 路由 V2，legacy 拒绝新契约 |
-| ACLNN V2 | 按 v 与 layout 解析维度；缓存固定 head-major；do 转置一次供 Prepare/Dhu，普通 beta 转置一次供 Recompute/Finalize；A5 保留 sigmoid 参数并拒绝非默认值 |
-| Prepare | 接收 ACLNN 转换后的 head-major do；四维变长通过 B=1 的 reshape view 进入现有 NTD kernel |
-| Dhu | 与 Prepare 共用 head-major do；接口、tiling 和 kernel 均保持原实现 |
+| ACLNN V2 | 按 v 与 layout 解析维度；缓存固定 head-major；do 以原始 token-major 直接传给 Prepare/Dhu，普通 beta 转置一次供 Recompute/Finalize；A5 保留 sigmoid 参数并拒绝非默认值 |
+| Prepare | 接收原始 token-major do；四维变长通过 B=1 的 reshape view 进入现有 NTD kernel |
+| Dhu | 与 Prepare 共用原始 token-major do；内部可选标志控制实际行距，独立调用默认 head-major |
 | Recompute | reserved 位分别控制 raw_g、q/k、v 的 stride 读取；两条 Vector 分支一致，缓存写出不变；接收已转换的 head-major 普通 beta |
 | Finalize | q/k、v、raw_g 分别按标志读取，有 rstd 时 q/k 固定 head-major；Cube 两处 v 读取同步调整；内部 beta 为 head-major，dq/dk/dv 随 layout，公开 dg/db 固定 token-major |
 
@@ -139,15 +140,28 @@ GM→UB 每行连续 128 元素，非连续行使用 DataCopyPad；GM→L1 保�
 
 BF16 raw_g 的 Stage 11 转换使用 BF16 全掩码，覆盖全部 128 个元素；此前误用 FP32 掩码会遗漏部分 BF16 lane，影响 dg/dA/dbias。本次同步修正，不改变 FP32 路径。
 
-## do 在总接口统一转置（A2/A3、A5 V2）
+## A5 V2 原生 token-major do 输入
 
-按模型约定，do 始终以 BSND/TND 输入，不受 qkv 的 layout 控制。
-总接口在 Prepare 前调用一次 SwapHeadToken，生成 BNSD/NTD 的 dOHead，
-由 Prepare 和 Dhu 顺序共用；Finalize 不接收 do。保存和重计算路径使用同一处理。
-撤回 Prepare/Dhu 的 do_token_major 属性、L0 参数和 kernel 寻址分支，复用原小算子。
+模型输入 do 始终为 BSND/TND，与 qkv 的 layout 无关。旧路径先在总接口执行
+`SwapHeadToken + Contiguous`，生成 head-major dOHead，再由 Prepare 和 Dhu 顺序共用。
+新路径直接下传原始 do，不再生成 dOHead：
 
-定长和 B=1 四维变长交换第 1/2 维；三维变长交换第 0/1 维。
-A5 四维变长的 Prepare 仅去掉 B=1 视图，Dhu 的三维输入仅补 B=1 视图，均不再次转置。
-dOHead 由 executor 管理，生成后只读，存活至 Dhu 消费完成；额外占用 B×H×T×V×2 字节，
-增加一次等量 GM 读写。原 kernel 的 UB/L1、分核和同步不变；CPU 标杆和梯度 dtype 不变。
-profiling 预期新增一次 do Transpose，普通 beta 的一次 Transpose 保留。
+```text
+旧：do GM -> Transpose/Contiguous -> dOHead GM -> Prepare/Dhu L1/L0
+新：do GM -- 原生 stride 读取 ----------> Prepare/Dhu L1/L0
+```
+
+Prepare 用 vNew、Dhu 用 dv 推导规范 B/H/T/V，内部 L0 末尾的
+`doTokenMajor=false` 与 op_def optional attr 显式选择新寻址；独立小接口保持
+head-major，公开 Python 与总 ACLNN 签名不变。T==H 也只由该标志消歧。
+dense 地址为 `((b*T+t)*H+h)*V`，token 行距为 H*V，head 间距为 V；
+packed 的 b 为 0。四维变长 Prepare 去 B=1 view、Dhu 补 B=1 view，均不搬运数据。
+
+L1/L0 tile、UB/workspace、cache hint、分核和事件协议保持不变。A5 host 分别设置
+Prepare/Dhu raw tiling 为 `sizeof(TilingData)+8`，并拒绝超出 uint32 行距的输入；
+不支持的平台和非法布局由带参数上下文的结构化报错拦截。默认 false 路径、A2/A3
+以及 legacy 的紧凑 tiling 不增加字段、不改变寻址。
+
+普通 beta 仍由总接口转置一次为 head-major，供 Recompute/Finalize 共用；本项不改变
+该数据流，也不计入 beta 的性能或显存变化。do 的独立性能与显存结果以 ATK README
+和最终 wheel 的实测记录为准。
