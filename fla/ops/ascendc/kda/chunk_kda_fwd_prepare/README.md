@@ -1,6 +1,6 @@
 # ChunkKdaFwdPrepare
 
-[A2 实现设计](docs/design_a2.md) | [原有设计 / A5](docs/design.md) | [API 文档](docs/api.md)
+[A5设计文档](docs/design.md) | [A2设计文档](docs/design_a2.md) | [API 文档](docs/api.md)
 
 ## 功能
 
@@ -28,7 +28,7 @@ outputs = chunk_kda_fwd_prepare(
     allow_neg_eigval=False,
     safe_gate=False,
     lower_bound=-5.0,
-    use_exp2=False,
+    use_exp2=True,
     A_log=None,
     dt_bias=None,
     cu_seqlens=None,
@@ -55,20 +55,44 @@ BF16 或 FP32，`A_log/dt_bias` 固定为 FP32。
 | 输入 | dense shape | 无 batch shape | 说明 |
 | --- | --- | --- | --- |
 | `q/k` | BNSD `[B,HK,T,128]`；BSND `[B,T,HK,128]` | NTD `[HK,T,128]`；TND `[T,HK,128]` | BF16 |
-| `v/g` | BNSD `[B,HV,T,128]`；BSND `[B,T,HV,128]` | NTD `[HV,T,128]`；TND `[T,HV,128]` | `v` 为 BF16；`g` 为 BF16/FP32 |
-| `beta` | BNSD `[B,HV,T]`；BSND `[B,T,HV]` | NTD `[HV,T]`；TND `[T,HV]` | BF16/FP32 |
+| `v` | BNSD `[B,HV,T,128]`；BSND `[B,T,HV,128]` | NTD `[HV,T,128]`；TND `[T,HV,128]` | BF16 |
+| `g` | BNSD `[B,HV,T,128]`；BSND `[B,T,HV,128]` | NTD `[HV,T,128]`；TND `[T,HV,128]` | BF16/FP32，跟随 layout |
+| `beta` | BNSD `[B,HV,T]`；BSND `[B,T,HV]` | NTD `[HV,T]`；TND `[T,HV]` | BF16/FP32，跟随 layout |
 | `A_log` | `[HV]` | `[HV]` | 仅 kernel 内计算 gate 时必传 |
 | `dt_bias` | `[HV*128]` | `[HV*128]` | 可选，逻辑 shape 为 `[HV,128]` |
 
 `cu_seqlens` 和 `chunk_indices` 是可选 host int array，不是 tensor。前者 shape 为
 `[sequence_count+1]`；后者若提供，扁平长度必须为 `2*total_chunks`。
 
+## 支持范围
+
+A2 实现的合同范围为：
+
+- `q/k/v` 为 BF16，`K=V=128`，`chunk_size=64`；
+- `g` 和 `beta` 各自支持 BF16/FP32，四种组合独立选择正确的输入加载；其余 dtype 由 host 拒绝；
+- 布局为 BNSD、BSND、NTD 或 TND，输入连续；变长输入使用 `cu_seqlens`，rank-4 变长容器要求 `B=1`；
+- GVA 要求 `0 < HK <= HV` 且 `HV % HK == 0`；
+- A2 支持 `use_exp2=false/true`，按原接口选择自然对数域或 log2 域；A5 保留原 arch35 入口和原有属性合同；
+- `backward_mode` 为 `none`、`forward`、`recompute` 或 `save`，13 个输出槽位及其返回顺序不变。
+
+不在上述范围内的组合必须在 host 侧返回参数错误，不会静默落入 A2 流水。A2 的通用 key 由
+`normMode × gateMode` 组成六个实际实例；beta 模式、输出模式和 Exp2 通过本次调用内不可变的 tiling
+字段传入。四个 dtype 对象各包含相同六个 key，不增加数学模式的笛卡尔积。
+实现位于 `op_kernel/arch22/`；A2 只有统一 BF16 resident relay，不再保留 Target/GeneralVec 或 FP32 relay 分支。
+关闭的公开输出不能作为 scratch。完整数学、平台和工具验收以对应的独立报告为准。
+
+## 已知限制
+
+本次优化的设备验收范围为 A2；A3 需要独立编译和设备 smoke 验证。GVA 的 `chunk_size=32` 不在支持范围内。
+Issue 672 针对 `chunk_kda_bwd_prepare`，本算子是前向 Prepare，不能用本 README 或本 PR 声称关闭该 issue。
+
 `B/T/HK/HV` 必须为正数且可由 `uint32_t` 表示；GVA 要求 `0 < HK <= HV` 且
 `HV % HK == 0`。所有输出固定为 head-major：
 
-`BSND/TND` 输入按 token 读取同一行内的各个 head，跨 head DMA stride 必须可由
-`uint32_t` 表示。具体要求为 `(HK-1)*128*2`、`(HV-1)*128*2`、
-`(HV-1)*128*sizeof(g)` 和 `(HV-1)*sizeof(beta)` 均不超过 `UINT32_MAX`。
+`layout` 同时描述 q/k/v/g/beta。仅 BSND/TND 的跨 head DMA 要求
+`(HK-1)*128*2`、`(HV-1)*128*2`、`(HV-1)*128*sizeof(g)` 和
+`(HV-1)*sizeof(beta)` 不超过 `UINT32_MAX`；BNSD/NTD 按 head 连续读取。
+不根据 shape 猜测或自动切换布局语义，也不增加整张输入的布局转置。
 
 | 输出 | dense shape | 无 batch shape | dtype |
 | --- | --- | --- | --- |
@@ -143,18 +167,41 @@ sequence-major `(sequence_id, local_chunk_id)` 序列。rank-4 变长容器要�
 
 ## 实现
 
-内核支持 A2、A3 和 A5，采用 MIX AIC/AIV 八阶段流水：
+各平台共用公开接口，内部调度分别实现。
+
+A2 使用 value-head pair：一个 AIC 配两个 AIV，每个 AIV 准备一个完整 value head。
+两个 lane 映射到不同 Q/K head 时分别准备 Q/K；奇数 head 的 inactive lane 仍参与事件协议。
+六个 Norm/Gate key 共用 BF16 resident relay、W/U inverse 复用、paired L0 和两代 GM workspace。
+普通/GVA、四布局及变长尾块使用同一计算流水。具体资源和事件见 [A2 设计](docs/design_a2.md)。
+
+A5 保留原有 MIX AIC/AIV 八阶段流水及 [A5 设计](docs/design.md)：
 
 ```text
 V0 -> V1 -> C2 -> V3 -> C4 -> C5 -> V6 -> C7
 ```
 
-Prepare 首先按 chunk 分核，只有 chunk 数不足以覆盖已用核时才按完整 GVA Q/K 头组切分
-head。S 固定为 4，C2 以四个 16 行 query band 生成因果 score。UB、L1 和 workspace 均为
-静态地址规划；A5 使用 Mutex 表达核内 pipe 生命周期，A2/A3 使用 HardEvent。跨核采用
-ready/free 双向握手，生产者不会覆盖仍被消费者使用的 slot。
+A5 首先按 chunk 分核，chunk 数不足时才按完整 GVA Q/K 头组切分 head；S 固定为 4，
+C2 以四个 16 行 query band 生成因果 score，使用 Mutex 表达核内 pipe 生命周期。
+两条实现均采用静态资源规划和跨核 ready/free 握手，slot 复用前等待消费者释放。
 
 生产实现位于 `op_kernel/`。
-当前 A2 每组最多4个 value head，AIV0处理0/2，AIV1处理1/3；两个 pair 不代表2-head工作组。
-正式 A2 ATK 交付件维护在 [work_tool PR #32](https://gitcode.com/chen-linxin4/work_tool/pull/32)
-的 `FLA_ATK/chunk_kda_fwd_prepare_a2`，避免在算子优化 PR 重复提交完整测试工程。
+
+## 验证记录
+
+原布局合同的源码 `d83844f2f597b1690e363b121254849711f4a652` 通过原生双标杆
+32/32 模型、416/416 输出和 200/200 通用用例、2096/2096 输出。
+随后 `39e32e6b754af9ee6e45f3da659b9c0f61eb6894` 撤回共享 Host 的无关诊断重构；
+四个 device 对象重新编译后与前者逐位一致，该新包的六 key、四布局及直接 Host 拒绝检查通过。
+更大范围的新包复测仍按实际包身份记录。
+当前 Precomputed 两个 key 在 UB 内完成64阶 FP32 求逆，再统一交接 BF16 完整逆；
+该精度修复后的新包重新验收，不能继承前述源码的通过标签。
+
+32 模型和 20 个同规模组合已完成同输入 ABBA；warmup5/repeat50/3groups，Task 与 Event 分列。
+相对布局恢复前候选，Task 分别变化 −0.36%～−0.05% 和 −0.50%～+0.30%；
+这不代表此前 Precomputed 精度修复的成本已消除。哈希匹配的 A5 对比中，30/32 模型达到
+A5/A2≥0.5，case1/case3 分别为 0.4884/0.4937，整体性能目标尚未全部达到。
+
+六 key DC50 通过。MSS 四工具零 ERROR；memcheck 的 56,460 条跨核 ownership WARNING
+均映射至实际 Akk 内，36 个输出 redzone 探针完整。synccheck 另有 6,340 条冗余等待 WARNING；
+不宣称零警告验收。逐例数据、源码/包身份及运行命令维护在
+[独立 ATK 交付件](https://gitcode.com/chen-linxin4/work_tool/pull/32)，不在本 PR 重复提交测试工程。

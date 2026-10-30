@@ -30,7 +30,3 @@ foreach(PREPARE_RUNTIME_SOC ascend910b3 ascend910_9391)
         OPTIONS -DCHUNK_KDA_PREPARE_RUNTIME_KEYS=1
     )
 endforeach()
-
-if(ENABLE_TEST)
-    add_subdirectory(tests)
-endif()
