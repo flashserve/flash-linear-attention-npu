@@ -17,9 +17,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -262,6 +262,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {
@@ -302,9 +311,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -547,6 +556,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {
@@ -587,9 +605,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -835,6 +853,15 @@
         "backward": false
       },
       {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
+        "backward": false
+      },
+      {
         "name": "has_dt_bias",
         "type": "attr",
         "required": true,
@@ -872,9 +899,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -1111,6 +1138,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {
@@ -1151,9 +1187,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -1390,6 +1426,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {
@@ -1430,9 +1475,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -1672,6 +1717,15 @@
         "backward": false
       },
       {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
+        "backward": false
+      },
+      {
         "name": "has_dt_bias",
         "type": "attr",
         "required": true,
@@ -1708,10 +1762,10 @@
             "0": "bf16",
             "1": "bf16",
             "2": "bf16",
-            "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "3": "fp32",
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -1949,6 +2003,15 @@
       },
       {
         "name": "beta_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
         "type": "attr",
         "required": true,
         "dtype": "string",
@@ -1993,10 +2056,10 @@
             "0": "bf16",
             "1": "bf16",
             "2": "bf16",
-            "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "3": "fp32",
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -2242,6 +2305,15 @@
         "backward": false
       },
       {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
+        "backward": false
+      },
+      {
         "name": "has_dt_bias",
         "type": "attr",
         "required": true,
@@ -2278,10 +2350,10 @@
             "0": "bf16",
             "1": "bf16",
             "2": "bf16",
-            "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "3": "fp32",
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -2519,6 +2591,15 @@
       },
       {
         "name": "beta_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
         "type": "attr",
         "required": true,
         "dtype": "string",
@@ -2564,9 +2645,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -2803,6 +2884,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {
@@ -2843,9 +2933,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -3082,6 +3172,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {
@@ -3122,9 +3221,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -3364,6 +3463,15 @@
         "backward": false
       },
       {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
+        "backward": false
+      },
+      {
         "name": "has_dt_bias",
         "type": "attr",
         "required": true,
@@ -3401,9 +3509,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -3646,6 +3754,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {
@@ -3686,9 +3803,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -3931,6 +4048,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {
@@ -3971,9 +4097,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -4219,6 +4345,15 @@
         "backward": false
       },
       {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
+        "backward": false
+      },
+      {
         "name": "has_dt_bias",
         "type": "attr",
         "required": true,
@@ -4256,9 +4391,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -4495,6 +4630,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {
@@ -4535,9 +4679,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -4774,6 +4918,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {
@@ -4814,9 +4967,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -5056,6 +5209,15 @@
         "backward": false
       },
       {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
+        "backward": false
+      },
+      {
         "name": "has_dt_bias",
         "type": "attr",
         "required": true,
@@ -5092,10 +5254,10 @@
             "0": "bf16",
             "1": "bf16",
             "2": "bf16",
-            "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "3": "fp32",
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -5333,6 +5495,15 @@
       },
       {
         "name": "beta_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
         "type": "attr",
         "required": true,
         "dtype": "string",
@@ -5377,10 +5548,10 @@
             "0": "bf16",
             "1": "bf16",
             "2": "bf16",
-            "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "3": "fp32",
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -5626,6 +5797,15 @@
         "backward": false
       },
       {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
+        "backward": false
+      },
+      {
         "name": "has_dt_bias",
         "type": "attr",
         "required": true,
@@ -5662,10 +5842,10 @@
             "0": "bf16",
             "1": "bf16",
             "2": "bf16",
-            "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "3": "fp32",
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -5903,6 +6083,15 @@
       },
       {
         "name": "beta_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
         "type": "attr",
         "required": true,
         "dtype": "string",
@@ -5948,9 +6137,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -6187,6 +6376,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {
@@ -6227,9 +6425,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -6466,6 +6664,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {
@@ -6506,9 +6713,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -6745,6 +6952,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {
@@ -6785,9 +7001,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -7030,6 +7246,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {
@@ -7070,9 +7295,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -7315,6 +7540,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {
@@ -7355,9 +7589,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -7600,6 +7834,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {
@@ -7640,9 +7883,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -7879,6 +8122,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {
@@ -7919,9 +8171,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -8158,6 +8410,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {
@@ -8198,9 +8459,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -8440,6 +8701,15 @@
         "backward": false
       },
       {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
+        "backward": false
+      },
+      {
         "name": "has_dt_bias",
         "type": "attr",
         "required": true,
@@ -8477,8 +8747,8 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16"
+            "4": "fp32",
+            "5": "fp32"
           }
         }
       },
@@ -8713,6 +8983,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {
@@ -8753,8 +9032,8 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16"
+            "4": "fp32",
+            "5": "fp32"
           }
         }
       },
@@ -8989,6 +9268,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {
@@ -9029,8 +9317,8 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16"
+            "4": "fp32",
+            "5": "fp32"
           }
         }
       },
@@ -9265,6 +9553,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {
@@ -9305,8 +9602,8 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16"
+            "4": "fp32",
+            "5": "fp32"
           }
         }
       },
@@ -9541,6 +9838,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {
@@ -9581,8 +9887,8 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16"
+            "4": "fp32",
+            "5": "fp32"
           }
         }
       },
@@ -9817,6 +10123,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {
@@ -9857,8 +10172,8 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16"
+            "4": "fp32",
+            "5": "fp32"
           }
         }
       },
@@ -10096,12 +10411,1767 @@
         "backward": false
       },
       {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
+        "backward": false
+      },
+      {
         "name": "has_dt_bias",
         "type": "attr",
         "required": true,
         "dtype": "bool",
         "shape": null,
         "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 7,
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 36,
+    "default_seed": 0,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "fp32",
+            "6": "fp32"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "q",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          2,
+          2,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.05
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "k",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          2,
+          2,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.05
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "v",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          2,
+          2,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.05
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "raw_g",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          2,
+          2,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            1.25
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "beta",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          2,
+          2
+        ],
+        "range_values": [
+          0.1,
+          0.9
+        ],
+        "backward": false
+      },
+      {
+        "name": "d_o",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          2,
+          2,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            51.2
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "A_log",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          2
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.12
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "dt_bias",
+        "type": "tensor",
+        "required": false,
+        "dtype": "fp32",
+        "shape": [
+          2,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            -3.0
+          ],
+          "std": [
+            1.65
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
+      },
+      {
+        "name": "disable_recompute",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "norm",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "safe_gate",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "lower_bound",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": -5.0,
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend950",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "beta_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "has_dt_bias",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 0,
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 37,
+    "default_seed": 20260630,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "fp32",
+            "6": "fp32"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "q",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          2,
+          2,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.05
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "k",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          2,
+          2,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.05
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "v",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          2,
+          2,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.05
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "raw_g",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          2,
+          2,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            1.25
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "beta",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          2,
+          2
+        ],
+        "range_values": [
+          0.1,
+          0.9
+        ],
+        "backward": false
+      },
+      {
+        "name": "d_o",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          2,
+          2,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            51.2
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "A_log",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          2
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.12
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "dt_bias",
+        "type": "tensor",
+        "required": false,
+        "dtype": "fp32",
+        "shape": [
+          2,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            -3.0
+          ],
+          "std": [
+            1.65
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
+      },
+      {
+        "name": "disable_recompute",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "norm",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "safe_gate",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "lower_bound",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": -5.0,
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend950",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "beta_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "has_dt_bias",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20260630,
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 38,
+    "default_seed": 7,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "fp32",
+            "6": "fp32"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "q",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          2,
+          2,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.05
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "k",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          2,
+          2,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.05
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "v",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          2,
+          2,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.05
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "raw_g",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          2,
+          2,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            1.25
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "beta",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          2,
+          2
+        ],
+        "range_values": [
+          0.1,
+          0.9
+        ],
+        "backward": false
+      },
+      {
+        "name": "d_o",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          2,
+          2,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            51.2
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "A_log",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          2
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.12
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "dt_bias",
+        "type": "tensor",
+        "required": false,
+        "dtype": "fp32",
+        "shape": [
+          2,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            -3.0
+          ],
+          "std": [
+            1.65
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
+      },
+      {
+        "name": "disable_recompute",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "norm",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "safe_gate",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "lower_bound",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": -5.0,
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend950",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "beta_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "has_dt_bias",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 7,
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 39,
+    "default_seed": 0,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "fp32",
+            "6": "fp32"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "q",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          8,
+          8,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.05
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "k",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          8,
+          8,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.05
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "v",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          8,
+          8,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.05
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "raw_g",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          8,
+          8,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            1.25
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "beta",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          8,
+          8
+        ],
+        "range_values": [
+          0.1,
+          0.9
+        ],
+        "backward": false
+      },
+      {
+        "name": "d_o",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          8,
+          8,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            51.2
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "A_log",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          8
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.12
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "dt_bias",
+        "type": "tensor",
+        "required": false,
+        "dtype": "fp32",
+        "shape": [
+          8,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            -3.0
+          ],
+          "std": [
+            1.65
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "0,8",
+        "backward": false
+      },
+      {
+        "name": "disable_recompute",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "norm",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "safe_gate",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "lower_bound",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": -5.0,
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend950",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "beta_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "has_dt_bias",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 0,
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 40,
+    "default_seed": 20260630,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "fp32",
+            "6": "fp32"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "q",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          8,
+          8,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.05
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "k",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          8,
+          8,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.05
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "v",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          8,
+          8,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.05
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "raw_g",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          8,
+          8,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            1.25
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "beta",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          8,
+          8
+        ],
+        "range_values": [
+          0.1,
+          0.9
+        ],
+        "backward": false
+      },
+      {
+        "name": "d_o",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          8,
+          8,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            51.2
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "A_log",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          8
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.12
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "dt_bias",
+        "type": "tensor",
+        "required": false,
+        "dtype": "fp32",
+        "shape": [
+          8,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            -3.0
+          ],
+          "std": [
+            1.65
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "0,8",
+        "backward": false
+      },
+      {
+        "name": "disable_recompute",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "norm",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "safe_gate",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "lower_bound",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": -5.0,
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend950",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "beta_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "has_dt_bias",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20260630,
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 41,
+    "default_seed": 7,
+    "name": "chunk_kda_bwd",
+    "aclnn_name": "ChunkKdaBwd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16",
+            "5": "fp32",
+            "6": "fp32"
+          }
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "q",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          8,
+          8,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.05
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "k",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          8,
+          8,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.05
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "v",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          8,
+          8,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.05
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "raw_g",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          8,
+          8,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            1.25
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "beta",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          8,
+          8
+        ],
+        "range_values": [
+          0.1,
+          0.9
+        ],
+        "backward": false
+      },
+      {
+        "name": "d_o",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          8,
+          8,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            51.2
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "A_log",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          8
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0
+          ],
+          "std": [
+            0.12
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "dt_bias",
+        "type": "tensor",
+        "required": false,
+        "dtype": "fp32",
+        "shape": [
+          8,
+          128
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            -3.0
+          ],
+          "std": [
+            1.65
+          ]
+        },
+        "backward": false
+      },
+      {
+        "name": "cu_seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "0,8",
+        "backward": false
+      },
+      {
+        "name": "disable_recompute",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "norm",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "safe_gate",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "lower_bound",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": -5.0,
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend950",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "beta_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "has_dt_bias",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
         "backward": false
       },
       {

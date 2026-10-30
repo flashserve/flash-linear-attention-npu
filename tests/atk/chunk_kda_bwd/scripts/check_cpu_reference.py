@@ -5,7 +5,9 @@ from pathlib import Path
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from executor_chunk_kda_bwd import build_inputs, run_cpu
+from executor_chunk_kda_bwd import (
+    _head_major_output, _token_major_input, build_inputs, run_cpu,
+)
 
 
 def one_step_reference(values, spec):
@@ -32,6 +34,27 @@ def one_step_reference(values, spec):
     return tuple(g.float() for g in gradients)
 
 
+def check_layout_roundtrip():
+    vector = torch.arange(24, dtype=torch.float64).reshape(1, 2, 3, 4)
+    scalar = torch.arange(6, dtype=torch.float64).reshape(1, 2, 3)
+    for packed in (False, True):
+        for value, is_scalar in ((vector, False), (scalar, True)):
+            original = value.clone()
+            token_major = _token_major_input(value, packed, scalar=is_scalar)
+            expected_token_shape = (
+                (3, 2) if is_scalar else (3, 2, 4)
+            ) if packed else (
+                (1, 3, 2) if is_scalar else (1, 3, 2, 4)
+            )
+            assert token_major.shape == expected_token_shape
+            restored = _head_major_output(token_major, packed, scalar=is_scalar)
+            expected = value.squeeze(0) if packed else value
+            assert restored.shape == expected.shape
+            assert torch.equal(restored, expected)
+            assert torch.equal(value, original)
+    print("CPU dense/packed layout roundtrip OK")
+
+
 def main():
     generator = torch.Generator().manual_seed(20261027)
     shape = (1, 2, 1, 128)
@@ -43,18 +66,33 @@ def main():
     values["beta"] = torch.rand(shape[:-1], generator=generator, dtype=torch.float64) * 0.8 + 0.1
     values["A_log"] = torch.randn(2, generator=generator, dtype=torch.float64) * 0.12
     values["dt_bias"] = torch.randn(2, 128, generator=generator, dtype=torch.float64) * 1.65 - 3.0
-    for norm, packed, with_bias in ((False, False, True), (True, False, True), (False, True, False)):
+    cases = (
+        (False, False, True, "fp32"),
+        (True, False, True, "fp32"),
+        (False, True, False, "fp32"),
+        (False, False, True, "bf16"),
+    )
+    for norm, packed, with_bias, raw_g_dtype in cases:
         current = dict(values)
+        if raw_g_dtype == "bf16":
+            current["raw_g"] = current["raw_g"].to(torch.bfloat16).double()
         if not with_bias:
             current.pop("dt_bias")
-        spec = {"norm": norm, "cu_seqlens": [0, 1] if packed else None}
+        spec = {
+            "norm": norm, "cu_seqlens": [0, 1] if packed else None,
+            "raw_g_dtype": raw_g_dtype,
+        }
         actual = run_cpu(current, spec)
         expected = one_step_reference(current, spec)
         assert len(actual) == len(expected) == (7 if with_bias else 6)
         for index, (a, e) in enumerate(zip(actual, expected)):
             assert a.shape == e.shape, (norm, packed, index, a.shape, e.shape)
+            assert a.dtype == torch.float32
             torch.testing.assert_close(a, e, rtol=1.0e-5, atol=1.0e-5)
-        print(f"CPU one-step OK norm={norm} packed={packed} outputs={len(actual)}")
+        print(
+            f"CPU one-step OK norm={norm} packed={packed} "
+            f"raw_g={raw_g_dtype} outputs={len(actual)}"
+        )
     spec = dict(B=1, H=8, T=64, seed=0, dtype="bf16", beta_dtype="fp32", dt_bias=True)
     first = build_inputs(spec, torch.device("cpu"), high_precision=True)
     second = build_inputs(spec, torch.device("cpu"), high_precision=True)
@@ -63,6 +101,19 @@ def main():
     assert first["q"].shape == (1, 8, 64, 128)
     assert first["beta"].shape == (1, 8, 64)
     print("CPU deterministic input construction OK")
+
+    bf16_spec = dict(spec, raw_g_dtype="bf16")
+    bf16_golden = build_inputs(bf16_spec, torch.device("cpu"), high_precision=True)
+    assert torch.equal(bf16_golden["raw_g"], first["raw_g"].to(torch.bfloat16).double())
+    runtime = build_inputs(bf16_spec, torch.device("cpu"), high_precision=False)
+    assert runtime["raw_g"].dtype == torch.bfloat16
+    provided = build_inputs(
+        bf16_spec, torch.device("cpu"), high_precision=True, provided=runtime,
+    )
+    assert provided["raw_g"].dtype == torch.float64
+    assert torch.equal(provided["raw_g"], runtime["raw_g"].double())
+    print("CPU BF16 raw_g quantization and provided-input consumption OK")
+    check_layout_roundtrip()
 
 
 if __name__ == "__main__":

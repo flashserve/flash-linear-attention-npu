@@ -41,7 +41,7 @@ inputs:
   - <<: *token_input
     name: raw_g
     dtypes:
-      values: [fp32]
+      values: [bf16, fp32]
     ranges:
       valid:
         values: [[-1.25, 1.25]]
@@ -175,6 +175,13 @@ inputs:
         values: []
   - <<: *string_attr
     name: beta_dtype
+    ranges:
+      valid:
+        values: [bf16, fp32]
+      invalid:
+        values: []
+  - <<: *string_attr
+    name: raw_g_dtype
     ranges:
       valid:
         values: [bf16, fp32]

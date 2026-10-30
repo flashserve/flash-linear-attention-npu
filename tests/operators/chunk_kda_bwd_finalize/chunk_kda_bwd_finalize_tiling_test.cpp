@@ -20,7 +20,7 @@ namespace optiling {
 ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context);
 }
 
-static_assert(sizeof(KDA::ChunkKdaBwdFinalizeTilingData) == 168, "Finalize tiling ABI size changed");
+static_assert(sizeof(KDA::ChunkKdaBwdFinalizeTilingData) == 184, "Finalize tiling ABI size changed");
 
 namespace {
 
@@ -30,7 +30,12 @@ struct TilingResult {
     uint32_t blockDim = 0;
     uint32_t usedCoreNum = 0;
     uint32_t betaMode = 0;
-    uint32_t outputGateTokenMajor = UINT32_MAX;
+    uint32_t outputTokenMajor = UINT32_MAX;
+    uint32_t qkTokenMajor = UINT32_MAX;
+    uint32_t vTokenMajor = UINT32_MAX;
+    uint32_t rawTokenMajor = UINT32_MAX;
+    uint32_t gateOutputTokenMajor = UINT32_MAX;
+    uint32_t rawDataSize = 0;
     std::string message;
 };
 
@@ -42,11 +47,12 @@ std::unique_ptr<gert::Tensor> MakeTensor(const gert::StorageShape &shape, ge::Da
         gert::TensorPlacement::kOnHost, dtype, nullptr);
 }
 
-void SetFinalizeAttrs(gert::TilingContext *context, const char *outputLayout)
+void SetFinalizeAttrs(
+    gert::TilingContext *context, const char *outputLayout, const char *modelLayout)
 {
     auto *attrs = const_cast<gert::RuntimeAttrs *>(context->GetAttrs());
     auto *def = reinterpret_cast<RuntimeAttrsDef *>(attrs);
-    def->attr_num = 10;
+    def->attr_num = 11;
     size_t index = 0;
     size_t offset = sizeof(RuntimeAttrsDef) + def->attr_num * sizeof(size_t);
     auto write = [&](const void *value, size_t size) {
@@ -69,6 +75,7 @@ void SetFinalizeAttrs(gert::TilingContext *context, const char *outputLayout)
     write(&disabled, sizeof(disabled));
     write(&disabled, sizeof(disabled));
     write(outputLayout, std::strlen(outputLayout) + 1);
+    write(modelLayout, std::strlen(modelLayout) + 1);
 }
 
 std::string RunWithCapturedLog(gert::TilingContext *context, ge::graphStatus &status)
@@ -109,19 +116,40 @@ std::string RunWithCapturedLog(gert::TilingContext *context, ge::graphStatus &st
 }
 
 TilingResult RunTiling(
-    const char *socVersion, bool gateOutputHeadMajor, bool square = false,
-    const char *outputLayout = "NTD")
+    const char *socVersion, const char *modelLayout = "", bool square = false,
+    const char *outputLayout = "NTD", ge::DataType rawType = ge::DT_FLOAT,
+    bool withRstd = false, bool mismatchedRawShape = false)
 {
     constexpr int64_t heads = 2;
     const int64_t tokens = square ? heads : 64;
-    const gert::StorageShape token128({heads, tokens, 128}, {heads, tokens, 128});
-    const gert::StorageShape token64({heads, tokens, 64}, {heads, tokens, 64});
-    const gert::StorageShape gateToken128({tokens, heads, 128}, {tokens, heads, 128});
-    const gert::StorageShape scalarHead({heads, tokens}, {heads, tokens});
-    const gert::StorageShape scalarToken({tokens, heads}, {tokens, heads});
+    const bool mixed = modelLayout[0] != '\0';
+    const bool modelTokenMajor =
+        std::strcmp(modelLayout, "BSND") == 0 || std::strcmp(modelLayout, "TND") == 0;
+    const bool outputTokenMajor =
+        std::strcmp(outputLayout, "BSND") == 0 || std::strcmp(outputLayout, "TND") == 0;
+    const bool qkTokenMajor = modelTokenMajor && !withRstd;
+    const bool dense =
+        std::strcmp(modelLayout, "BSND") == 0 || std::strcmp(modelLayout, "BNSD") == 0;
+    auto shape = [dense](int64_t first, int64_t second, int64_t width = -1) {
+        if (dense) {
+            return width < 0 ?
+                gert::StorageShape({1, first, second}, {1, first, second}) :
+                gert::StorageShape({1, first, second, width}, {1, first, second, width});
+        }
+        return width < 0 ?
+            gert::StorageShape({first, second}, {first, second}) :
+            gert::StorageShape({first, second, width}, {first, second, width});
+    };
+    const gert::StorageShape token128 = shape(heads, tokens, 128);
+    const gert::StorageShape token64 = shape(heads, tokens, 64);
+    const gert::StorageShape gateToken128 = shape(tokens, heads, 128);
+    const gert::StorageShape scalarHead = shape(heads, tokens);
+    const gert::StorageShape scalarToken = shape(tokens, heads);
     const gert::StorageShape aLog({heads}, {heads});
     const gert::StorageShape dtBias({heads, 128}, {heads, 128});
-    const gert::StorageShape state({1, heads, 128, 128}, {1, heads, 128, 128});
+    const gert::StorageShape state = dense ?
+        gert::StorageShape({1, 1, heads, 128, 128}, {1, 1, heads, 128, 128}) :
+        gert::StorageShape({1, heads, 128, 128}, {1, heads, 128, 128});
 
     std::vector<std::unique_ptr<gert::Tensor>> inputKeepAlive;
     std::vector<gert::Tensor *> inputs;
@@ -129,11 +157,11 @@ TilingResult RunTiling(
         inputKeepAlive.push_back(MakeTensor(shape, dtype));
         inputs.push_back(inputKeepAlive.back().get());
     };
-    addInput(token128, ge::DT_BF16);
-    addInput(token128, ge::DT_BF16);
-    addInput(token128, ge::DT_BF16);
+    addInput(qkTokenMajor ? gateToken128 : token128, ge::DT_BF16);
+    addInput(qkTokenMajor ? gateToken128 : token128, ge::DT_BF16);
+    addInput(modelTokenMajor ? gateToken128 : token128, ge::DT_BF16);
     addInput(token128, ge::DT_FLOAT);
-    addInput(token128, ge::DT_FLOAT);
+    addInput(mixed != mismatchedRawShape ? gateToken128 : token128, rawType);
     addInput(scalarHead, ge::DT_FLOAT);
     addInput(aLog, ge::DT_FLOAT);
     addInput(dtBias, ge::DT_FLOAT);
@@ -144,6 +172,10 @@ TilingResult RunTiling(
     addInput(token128, ge::DT_BF16);
     addInput(token64, ge::DT_FLOAT);
     addInput(token128, ge::DT_FLOAT);
+    if (withRstd) {
+        addInput(scalarHead, ge::DT_FLOAT);
+        addInput(scalarHead, ge::DT_FLOAT);
+    }
 
     std::vector<std::unique_ptr<gert::Tensor>> outputKeepAlive;
     std::vector<gert::Tensor *> outputs;
@@ -151,11 +183,11 @@ TilingResult RunTiling(
         outputKeepAlive.push_back(MakeTensor(shape, dtype));
         outputs.push_back(outputKeepAlive.back().get());
     };
-    addOutput(token128, ge::DT_BF16);
-    addOutput(token128, ge::DT_BF16);
-    addOutput(token128, ge::DT_BF16);
-    addOutput(gateOutputHeadMajor ? scalarHead : scalarToken, ge::DT_FLOAT);
-    addOutput(gateOutputHeadMajor ? token128 : gateToken128, ge::DT_FLOAT);
+    addOutput(outputTokenMajor ? gateToken128 : token128, ge::DT_BF16);
+    addOutput(outputTokenMajor ? gateToken128 : token128, ge::DT_BF16);
+    addOutput(outputTokenMajor ? gateToken128 : token128, ge::DT_BF16);
+    addOutput(mixed || outputTokenMajor ? scalarToken : scalarHead, ge::DT_FLOAT);
+    addOutput(mixed || outputTokenMajor ? gateToken128 : token128, rawType);
     addOutput(aLog, ge::DT_FLOAT);
     addOutput(dtBias, ge::DT_FLOAT);
 
@@ -165,8 +197,7 @@ TilingResult RunTiling(
     auto tilingData = gert::TilingData::CreateCap(4096);
     auto workspaceHolder = gert::ContinuousVector::Create<size_t>(4096);
     auto *workspace = reinterpret_cast<gert::ContinuousVector *>(workspaceHolder.get());
-    const std::vector<uint32_t> inputInstances(15, 1);
-    std::vector<uint32_t> allInputInstances = inputInstances;
+    std::vector<uint32_t> allInputInstances(withRstd ? 17 : 15, 1);
     allInputInstances.resize(19, 0);
     const std::vector<uint32_t> outputInstances(7, 1);
 
@@ -189,6 +220,7 @@ TilingResult RunTiling(
         .Attr("use_beta_sigmoid_in_kernel", false)
         .Attr("allow_neg_eigval", false)
         .Attr("output_layout", ge::AscendString(outputLayout))
+        .Attr("model_layout", ge::AscendString(modelLayout))
         .Attr("reserved_0", static_cast<int64_t>(0))
         .Attr("reserved_1", static_cast<int64_t>(0));
     auto contextHolder = faker.Build();
@@ -212,91 +244,93 @@ TilingResult RunTiling(
     context->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
     context->GetPlatformInfo()->SetPlatformRes("version", versions);
 
-    SetFinalizeAttrs(context, outputLayout);
+    SetFinalizeAttrs(context, outputLayout, modelLayout);
     result.message = RunWithCapturedLog(context, result.status);
     if (result.status == ge::GRAPH_SUCCESS) {
         result.tilingKey = context->GetTilingKey();
         result.blockDim = context->GetBlockDim();
         if (std::string(socVersion) == "Ascend950") {
-            result.outputGateTokenMajor =
-                context->GetTilingData<KDA::ChunkKdaBwdFinalizeTilingData>()->betaMode &
-                KDA::KDA_FINALIZE_GATE_OUTPUT_TOKEN_MAJOR;
+            result.rawDataSize = context->GetRawTilingData()->GetDataSize();
+            const auto *tiling = context->GetTilingData<KDA::ChunkKdaBwdFinalizeTilingData>();
+            result.outputTokenMajor = tiling->outputTokenMajor;
+            result.qkTokenMajor = tiling->qkTokenMajor;
+            result.vTokenMajor = tiling->vTokenMajor;
+            result.rawTokenMajor = tiling->rawTokenMajor;
+            result.gateOutputTokenMajor = tiling->gateOutputTokenMajor;
+            result.betaMode = tiling->betaMode;
         } else {
-            result.usedCoreNum = context->GetTilingData<KDA::Arch22::FinalizeTilingData>()->usedCoreNum;
-            result.betaMode = context->GetTilingData<KDA::Arch22::FinalizeTilingData>()->betaMode;
+            const auto *tiling = context->GetTilingData<KDA::Arch22::FinalizeTilingData>();
+            result.usedCoreNum = tiling->usedCoreNum;
+            result.betaMode = tiling->betaMode;
+            result.qkTokenMajor = tiling->qkTokenMajor;
+            result.vTokenMajor = tiling->vTokenMajor;
+            result.rawTokenMajor = tiling->rawTokenMajor;
+            result.gateOutputTokenMajor = tiling->gateOutputTokenMajor;
         }
     }
     return result;
 }
 
-bool CheckNegative(const char *socVersion)
+bool CheckStandalone(const char *socVersion, bool square, bool tokenOutput)
 {
-    const auto result = RunTiling(socVersion, true);
-    bool ok = result.status == ge::GRAPH_FAILED;
-    for (const char *text : {"dBetaOut/dGOut", "head-major", "A2/A3", "token-major"}) {
-        ok = result.message.find(text) != std::string::npos && ok;
-    }
-    std::cout << socVersion << " head-major gate output shape: status=" << result.status
-              << ", report=" << result.message << '\n';
-    return ok;
-}
-
-bool CheckArch22Forward(const char *socVersion)
-{
-    const auto result = RunTiling(socVersion, false);
-    const bool ok = result.status == ge::GRAPH_SUCCESS && result.tilingKey == 101 &&
-        result.blockDim == 1 && result.usedCoreNum == 1 && result.betaMode == 0;
-    std::cout << socVersion << " token-major gate output shape: status=" << result.status
-              << ", key=" << result.tilingKey << ", blocks=" << result.blockDim << '\n';
-    return ok;
-}
-
-bool CheckA5(bool gateOutputHeadMajor)
-{
+    const bool a5 = std::string(socVersion) == "Ascend950";
     const auto result = RunTiling(
-        "Ascend950", gateOutputHeadMajor, false,
-        gateOutputHeadMajor ? "NTD_GATE_HEAD_MAJOR" : "NTD");
-    const uint32_t expected = gateOutputHeadMajor ? 0U : 1U;
-    const bool ok = result.status == ge::GRAPH_SUCCESS && result.tilingKey == 1 &&
-        result.blockDim == 1 && (result.outputGateTokenMajor != 0U) == (expected != 0U);
-    std::cout << "Ascend950 gate head-major shape=" << (gateOutputHeadMajor ? "true" : "false")
+        socVersion, "", square, tokenOutput ? "TND" : "NTD");
+    const uint32_t expectedGate = tokenOutput ? 1U : 0U;
+    const bool ok = result.status == ge::GRAPH_SUCCESS &&
+        result.tilingKey == (a5 ? 1U : 101U) && result.blockDim == 1 &&
+        result.qkTokenMajor == 0 && result.vTokenMajor == 0 &&
+        result.rawTokenMajor == 0 && result.gateOutputTokenMajor == expectedGate &&
+        result.betaMode == 0 && (!a5 || result.rawDataSize == 192);
+    std::cout << socVersion << " standalone square=" << square
+              << " tokenOutput=" << tokenOutput << ": status=" << result.status
+              << ", key=" << result.tilingKey << ", blocks=" << result.blockDim
+              << ", gateOutputTokenMajor=" << result.gateOutputTokenMajor
+              << ", rawDataSize=" << result.rawDataSize << '\n';
+    return ok;
+}
+
+bool CheckMixed(
+    const char *socVersion, const char *layout, bool withRstd, bool square,
+    ge::DataType rawType = ge::DT_FLOAT)
+{
+    const bool a5 = std::string(socVersion) == "Ascend950";
+    const bool tokenMajor = std::strcmp(layout, "BSND") == 0 || std::strcmp(layout, "TND") == 0;
+    const auto result = RunTiling(
+        socVersion, layout, square, layout, rawType, withRstd);
+    const uint32_t expectedQK = tokenMajor && !withRstd ? 1U : 0U;
+    const uint32_t expectedV = tokenMajor ? 1U : 0U;
+    const uint32_t expectedKey = a5 ? (withRstd ? 3U : 1U) : (withRstd ? 102U : 101U);
+    const bool ok = result.status == ge::GRAPH_SUCCESS &&
+        result.tilingKey == expectedKey && result.blockDim == 1 &&
+        result.qkTokenMajor == expectedQK && result.vTokenMajor == expectedV &&
+        result.rawTokenMajor == 1 && result.gateOutputTokenMajor == 1 &&
+        result.betaMode == 0 && (!a5 || result.rawDataSize == 192);
+    std::cout << socVersion << " mixed=" << layout << " square=" << square
+              << " rstd=" << withRstd << " rawType=" << rawType
               << ": status=" << result.status << ", key=" << result.tilingKey
-              << ", outputGateTokenMajor=" << result.outputGateTokenMajor << '\n';
+              << ", qkTokenMajor=" << result.qkTokenMajor
+              << ", vTokenMajor=" << result.vTokenMajor
+              << ", rawTokenMajor=" << result.rawTokenMajor
+              << ", gateOutputTokenMajor=" << result.gateOutputTokenMajor
+              << ", rawDataSize=" << result.rawDataSize << ", report=" << result.message << '\n';
     return ok;
 }
 
-bool CheckSquareDefault(const char *socVersion, bool headGate)
+bool CheckInvalidModelLayout()
 {
-    const auto result = RunTiling(socVersion, headGate, true);
-    const bool ok = result.status == ge::GRAPH_SUCCESS && result.tilingKey == 101 &&
-        result.blockDim == 1 && result.usedCoreNum == 1 && result.betaMode == 0;
-    std::cout << socVersion << " square default token-major, head-shape=" << headGate
-              << ": status=" << result.status << ", key=" << result.tilingKey << '\n';
-    return ok;
-}
-
-bool CheckSquareAliasRejected(const char *socVersion)
-{
-    const auto result = RunTiling(socVersion, true, true, "NTD_GATE_HEAD_MAJOR");
-    bool ok = result.status == ge::GRAPH_FAILED;
-    for (const char *text : {"output_layout", "NTD_GATE_HEAD_MAJOR", "head-major", "A2/A3"}) {
-        ok = result.message.find(text) != std::string::npos && ok;
-    }
-    std::cout << socVersion << " square head-major layout request: status=" << result.status
+    const auto result = RunTiling("Ascend950", "BTHD");
+    std::cout << "Ascend950 invalid model_layout: status=" << result.status
               << ", report=" << result.message << '\n';
-    return ok;
+    return result.status == ge::GRAPH_FAILED;
 }
 
-bool CheckSquareA5(bool alias)
+bool CheckStandaloneRejectsTokenRaw()
 {
-    const auto result = RunTiling(
-        "Ascend950", alias, true, alias ? "NTD_GATE_HEAD_MAJOR" : "NTD");
-    const bool ok = result.status == ge::GRAPH_SUCCESS && result.tilingKey == 1 &&
-        result.blockDim == 1 && (result.outputGateTokenMajor != 0U) == !alias;
-    std::cout << "Ascend950 square alias=" << alias << ": status=" << result.status
-              << ", key=" << result.tilingKey
-              << ", outputGateTokenMajor=" << result.outputGateTokenMajor << '\n';
-    return ok;
+    const auto result = RunTiling("Ascend950", "", false, "NTD", ge::DT_FLOAT, false, true);
+    std::cout << "Ascend950 standalone rejects token-major raw_g: status=" << result.status
+              << ", report=" << result.message << '\n';
+    return result.status == ge::GRAPH_FAILED;
 }
 
 } // namespace
@@ -306,20 +340,21 @@ int main()
     setenv("ASCEND_SLOG_PRINT_TO_STDOUT", "1", 0);
     setenv("ASCEND_GLOBAL_LOG_LEVEL", "3", 0);
     const std::vector<std::pair<std::string, bool>> cases = {
-        {"Ascend910B rejects head-major gate output", CheckNegative("Ascend910B")},
-        {"Ascend910B keeps token-major Arch22 forwarding", CheckArch22Forward("Ascend910B")},
-        {"Ascend910_93 rejects head-major gate output", CheckNegative("Ascend910_93")},
-        {"Ascend910_93 keeps token-major Arch22 forwarding", CheckArch22Forward("Ascend910_93")},
-        {"Ascend950 accepts head-major gate output", CheckA5(true)},
-        {"Ascend950 accepts token-major gate output", CheckA5(false)},
-        {"Ascend910B square default token-major with token shape", CheckSquareDefault("Ascend910B", false)},
-        {"Ascend910B square default token-major with head shape", CheckSquareDefault("Ascend910B", true)},
-        {"Ascend910_93 square default token-major with token shape", CheckSquareDefault("Ascend910_93", false)},
-        {"Ascend910_93 square default token-major with head shape", CheckSquareDefault("Ascend910_93", true)},
-        {"Ascend910B rejects square head-major layout alias", CheckSquareAliasRejected("Ascend910B")},
-        {"Ascend910_93 rejects square head-major layout alias", CheckSquareAliasRejected("Ascend910_93")},
-        {"Ascend950 square head-major layout alias", CheckSquareA5(true)},
-        {"Ascend950 square default token-major", CheckSquareA5(false)},
+        {"Ascend950 standalone head-major gradients", CheckStandalone("Ascend950", false, false)},
+        {"Ascend950 standalone token-major gradients", CheckStandalone("Ascend950", false, true)},
+        {"Ascend950 square standalone remains unambiguous", CheckStandalone("Ascend950", true, false)},
+        {"Ascend950 mixed BSND", CheckMixed("Ascend950", "BSND", false, false)},
+        {"Ascend950 square TND rstd BF16 raw_g", CheckMixed("Ascend950", "TND", true, true, ge::DT_BF16)},
+        {"Ascend950 mixed BNSD keeps head-major qkv gradients", CheckMixed("Ascend950", "BNSD", false, false)},
+        {"Ascend950 mixed NTD BF16 raw_g", CheckMixed("Ascend950", "NTD", false, false, ge::DT_BF16)},
+        {"Ascend910B standalone", CheckStandalone("Ascend910B", false, false)},
+        {"Ascend910B square standalone", CheckStandalone("Ascend910B", true, false)},
+        {"Ascend910B mixed BSND BF16 raw_g", CheckMixed("Ascend910B", "BSND", false, false, ge::DT_BF16)},
+        {"Ascend910B mixed TND rstd", CheckMixed("Ascend910B", "TND", true, false)},
+        {"Ascend910_93 standalone", CheckStandalone("Ascend910_93", false, false)},
+        {"Ascend910_93 mixed BSND rstd BF16 raw_g", CheckMixed("Ascend910_93", "BSND", true, false, ge::DT_BF16)},
+        {"invalid model_layout is rejected", CheckInvalidModelLayout()},
+        {"standalone does not infer raw_g layout from shape", CheckStandaloneRejectsTokenRaw()},
     };
     size_t passed = 0;
     for (const auto &item : cases) {

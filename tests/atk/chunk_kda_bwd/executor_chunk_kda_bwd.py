@@ -59,6 +59,7 @@ def _spec_from_kwargs(kwargs):
         norm=_as_bool(kwargs["norm"]), safe_gate=_as_bool(kwargs["safe_gate"]),
         lower_bound=float(kwargs["lower_bound"]), soc=str(kwargs["soc"]),
         dtype=str(kwargs["dtype"]), beta_dtype=str(kwargs["beta_dtype"]),
+        raw_g_dtype=str(kwargs.get("raw_g_dtype", "fp32")),
         has_dt_bias=_as_bool(kwargs["has_dt_bias"]), seed=int(kwargs["seed"]),
     )
 
@@ -69,13 +70,20 @@ def build_inputs(spec, device, high_precision=False, provided=None):
     seed = int(spec["seed"])
     dtype_name = str(spec.get("dtype", "bf16"))
     beta_type = str(spec.get("beta_dtype", "bf16"))
-    if dtype_name != "bf16" or beta_type not in {"bf16", "fp32"}:
-        raise ValueError("public V2 acceptance uses BF16 tokens and BF16/FP32 beta")
+    raw_g_type = str(spec.get("raw_g_dtype", "fp32"))
+    if (dtype_name != "bf16" or beta_type not in {"bf16", "fp32"}
+            or raw_g_type not in {"bf16", "fp32"}):
+        raise ValueError(
+            "public V2 acceptance uses BF16 tokens and BF16/FP32 beta/raw_g"
+        )
     if not _as_bool(spec.get("safe_gate", True)):
         raise ValueError("public V2 acceptance requires safe_gate=True")
     calc = torch.float64 if high_precision else torch.bfloat16
     beta_calc = torch.float64 if high_precision else (
         torch.bfloat16 if beta_type == "bf16" else torch.float32
+    )
+    raw_g_calc = torch.float64 if high_precision else (
+        torch.bfloat16 if raw_g_type == "bf16" else torch.float32
     )
     fp = torch.float64 if high_precision else torch.float32
     cu = _parse_cu_seqlens(spec.get("cu_seqlens"))
@@ -88,7 +96,7 @@ def build_inputs(spec, device, high_precision=False, provided=None):
             "q": _randn(shape, dtype_name, calc, device, seed + 1, 0.05),
             "k": _randn(shape, dtype_name, calc, device, seed + 2, 0.05),
             "v": _randn(shape, dtype_name, calc, device, seed + 3, 0.05),
-            "raw_g": _randn(shape, "fp32", fp, device, seed + 4, 1.25),
+            "raw_g": _randn(shape, raw_g_type, raw_g_calc, device, seed + 4, 1.25),
             "beta": _rand(shape[:-1], beta_type, beta_calc, device, seed + 5, 0.1, 0.9),
             "A_log": _randn((heads,), "fp32", fp, device, seed + 6, 0.12),
             "d_o": _randn(shape, dtype_name, calc, device, seed + 7, 51.2),
@@ -108,7 +116,7 @@ def build_inputs(spec, device, high_precision=False, provided=None):
     }
     dtypes = {
         "q": (dtype_name, calc), "k": (dtype_name, calc), "v": (dtype_name, calc),
-        "raw_g": ("fp32", fp), "beta": (beta_type, beta_calc),
+        "raw_g": (raw_g_type, raw_g_calc), "beta": (beta_type, beta_calc),
         "d_o": (dtype_name, calc), "A_log": ("fp32", fp), "dt_bias": ("fp32", fp),
     }
     names = ["q", "k", "v", "raw_g", "beta", "d_o", "A_log"]
@@ -179,11 +187,17 @@ def run_cpu(values, spec=None):
     return tuple(gradient.float() for gradient in gradients)
 
 
-def _stage_input(value, packed, scalar=False):
-    if not packed:
-        return value.contiguous()
-    value = value.squeeze(0)
-    return (value.permute(1, 0) if scalar else value.permute(1, 0, 2)).contiguous()
+def _token_major_input(value, packed, scalar=False):
+    if packed:
+        value = value.squeeze(0)
+        return (value.permute(1, 0) if scalar else value.permute(1, 0, 2)).contiguous()
+    return (value.permute(0, 2, 1) if scalar else value.permute(0, 2, 1, 3)).contiguous()
+
+
+def _head_major_output(value, packed, scalar=False):
+    if packed:
+        return (value.permute(1, 0) if scalar else value.permute(1, 0, 2)).contiguous()
+    return (value.permute(0, 2, 1) if scalar else value.permute(0, 2, 1, 3)).contiguous()
 
 
 def _prepare_forward(values, spec):
@@ -195,9 +209,9 @@ def _prepare_forward(values, spec):
     norm = _as_bool(spec.get("norm", False))
     safe_gate = _as_bool(spec.get("safe_gate", True))
     lower_bound = float(spec.get("lower_bound", -5.0))
-    layout = "TND" if packed else "BNSD"
+    layout = "TND" if packed else "BSND"
     stage = {
-        name: _stage_input(values[name], packed, scalar=name == "beta")
+        name: _token_major_input(values[name], packed, scalar=name == "beta")
         for name in ("q", "k", "v", "raw_g", "beta")
     }
     dt_bias = values.get("dt_bias")
@@ -272,7 +286,7 @@ class FunctionApi(BaseApi):
         norm = _as_bool(self.spec.get("norm", False))
         forward = _prepare_forward(v, self.spec)
         tokens = {
-            name: v[name].squeeze(0).contiguous() if packed else v[name]
+            name: _token_major_input(v[name], packed, scalar=name == "beta")
             for name in ("q", "k", "v", "raw_g", "beta", "d_o")
         }
         q = forward["q_hat"] if norm else tokens["q"]
@@ -297,13 +311,23 @@ class FunctionApi(BaseApi):
             implementation="optimized",
             q_rstd=forward["q_rstd"] if norm else None,
             k_rstd=forward["k_rstd"] if norm else None,
+            beta_eff=None, layout="TND" if packed else "BSND",
+            use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False,
         )
         torch.npu.synchronize()
 
     def run_npu(self):
         outputs = self.operator(*self.args, **self.kwargs)
-        return tuple(outputs[index] for index in (0, 1, 2, 3, 4, 6, 7)
-                     if outputs[index] is not None)
+        packed = bool(self.spec.get("cu_seqlens"))
+        restored = []
+        for index in (0, 1, 2, 3, 4, 6, 7):
+            output = outputs[index]
+            if output is None:
+                continue
+            if index < 5:
+                output = _head_major_output(output, packed, scalar=index == 3)
+            restored.append(output)
+        return tuple(restored)
 
     def __call__(self, input_data: InputDataset, with_output=False):
         if self.device == "cpu":

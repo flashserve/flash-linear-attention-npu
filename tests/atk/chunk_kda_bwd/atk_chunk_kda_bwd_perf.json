@@ -17,9 +17,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -262,6 +262,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {
@@ -302,9 +311,9 @@
             "1": "bf16",
             "2": "bf16",
             "3": "bf16",
-            "4": "bf16",
-            "5": "bf16",
-            "6": "bf16"
+            "4": "fp32",
+            "5": "fp32",
+            "6": "fp32"
           }
         }
       },
@@ -547,6 +556,15 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "raw_g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32",
         "backward": false
       },
       {

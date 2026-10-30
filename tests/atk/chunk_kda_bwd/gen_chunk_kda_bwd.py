@@ -18,8 +18,8 @@ SEEDS = (0, 20260630, 7)
 def _profile(key, disable_recompute, packed, norm, **updates):
     spec = dict(
         op=OP_NAME, case_key=key, B=1, H=8, T=100, dtype="bf16",
-        beta_dtype="bf16", dt_bias=True, soc="ascend950", safe_gate=True,
-        lower_bound=-5.0, disable_recompute=disable_recompute, norm=norm,
+        beta_dtype="bf16", raw_g_dtype="fp32", dt_bias=True, soc="ascend950",
+        safe_gate=True, lower_bound=-5.0, disable_recompute=disable_recompute, norm=norm,
     )
     if packed:
         spec["T"] = 128
@@ -41,6 +41,10 @@ PROFILES = [
     _profile("saved_packed_odd", True, True, False, H=3, T=130, cu_seqlens=[0, 97, 130]),
     _profile("saved_dense_b2_nobias_tail", True, False, False, B=2, dt_bias=False),
     _profile("recompute_dense_b2_nobias_tail", False, False, False, B=2, dt_bias=False),
+    _profile("saved_dense_t_eq_h_raw_g_bf16", True, False, False,
+             H=2, T=2, raw_g_dtype="bf16"),
+    _profile("recompute_packed_t_eq_h_norm_raw_g_bf16", False, True, True,
+             H=8, T=8, cu_seqlens=[0, 8], raw_g_dtype="bf16"),
 ]
 
 
@@ -79,7 +83,7 @@ def _inputs(config):
         _tensor("q", config["dtype"], token_shape, _normal(0.05)),
         _tensor("k", config["dtype"], token_shape, _normal(0.05)),
         _tensor("v", config["dtype"], token_shape, _normal(0.05)),
-        _tensor("raw_g", "fp32", token_shape, _normal(1.25)),
+        _tensor("raw_g", config.get("raw_g_dtype", "fp32"), token_shape, _normal(1.25)),
         _tensor("beta", config["beta_dtype"], beta_shape, [0.1, 0.9]),
         _tensor("d_o", config["dtype"], token_shape, _normal(51.2)),
         _tensor("A_log", "fp32", [heads], _normal(0.12)),
@@ -95,14 +99,20 @@ def _inputs(config):
         _attr("soc", "string", config["soc"]),
         _attr("dtype", "string", config["dtype"]),
         _attr("beta_dtype", "string", config["beta_dtype"]),
+        _attr("raw_g_dtype", "string", config.get("raw_g_dtype", "fp32")),
         _attr("has_dt_bias", "bool", has_dt_bias),
         _attr("seed", "int", int(config["seed"])),
     ]
 
 
 def case(index, config):
-    output_count = 7 if config.get("dt_bias", True) else 6
-    dtypes = {str(i): "bf16" for i in range(output_count)}
+    output_dtypes = [
+        config["dtype"], config["dtype"], config["dtype"], config["beta_dtype"],
+        config.get("raw_g_dtype", "fp32"), "fp32",
+    ]
+    if config.get("dt_bias", True):
+        output_dtypes.append("fp32")
+    dtypes = {str(i): dtype for i, dtype in enumerate(output_dtypes)}
     return dict(
         id=index, default_seed=config["seed"], name=OP_NAME,
         aclnn_name="ChunkKdaBwd", version="v2.1", api="pytorch",
@@ -117,8 +127,8 @@ def case(index, config):
 def _model_spec(saved):
     return dict(
         op=OP_NAME, case_key="model_h96_saved" if saved else "model_h96_recompute",
-        B=1, H=96, T=8192, dtype="bf16", beta_dtype="bf16", dt_bias=True,
-        seed=20260630, soc="ascend950", safe_gate=True, lower_bound=-5.0,
+        B=1, H=96, T=8192, dtype="bf16", beta_dtype="bf16", raw_g_dtype="fp32",
+        dt_bias=True, seed=20260630, soc="ascend950", safe_gate=True, lower_bound=-5.0,
         disable_recompute=saved, norm=False,
     )
 
