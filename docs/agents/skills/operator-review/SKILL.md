@@ -1,6 +1,6 @@
 ---
 name: operator-review
-description: 对 flash-linear-attention-npu 的算子、PR diff 或新增算子资产做四层静态检视：功能正确性、工程结构、DFX 拦截与报错、文档正确性与易用性。需要结合仓内工程样例、历史 issue 分类和可执行静态检查时使用。
+description: 对 flash-linear-attention-npu 的算子、PR diff 或新增算子资产做四层静态检视：功能正确性、工程结构（含已发布 Python 接口兼容性）、DFX 拦截与报错、文档正确性与易用性。需要结合仓内工程样例、历史 issue 分类和可执行静态检查时使用。
 metadata:
   short-description: 算子四层静态检视与 issue 回归覆盖
 ---
@@ -56,6 +56,11 @@ metadata:
 重点检查目录职责、必需文件、平台目录、调用层归属、测试位置、冗余文件和构建依赖。新增文件必须
 能在工程样例中找到对应角色；不能解释职责的文件应先删除或归档。
 
+只要 diff 涉及 `fla_npu.ops.ascendc` 公开入口、Stable-ABI schema、Python wrapper、参数或返回
+tuple，都必须执行公开接口兼容性检查。以改动前的已发布 tag/基线提交为准，逐项比较入口名、参数名与
+顺序、positional/keyword-only 属性、是否必选、默认值、类型和语义、返回槽位，以及 stable、ctypes、
+legacy 入口是否继续提供同一调用形状。只证明当前代码、当前 YAML、当前文档彼此一致，不构成兼容性证据。
+
 ### 3. DFX 设计
 
 读取 [`references/dfx-error-review.md`](references/dfx-error-review.md)。
@@ -101,8 +106,9 @@ python3 docs/agents/skills/operator-review/scripts/check_issue_coverage.py
 1. issue corpus 覆盖全部 `COMPLETED` issue，且每条至少有一个规则；
 2. 目标算子的相关 issue 规则逐条检查，结论能落到文件行号；
 3. 工程结构、DFX、文档检查完成；
-4. 每条意见说明问题分类、位置、问题、可能导致的结果和可执行修改方法；
-5. 不把“未发现问题”写成问题项，不用无问题总结代替具体检视条目。
+4. diff 涉及公开接口时，已与改动前的已发布基线逐项比较 Python 签名、默认值、返回值和各后端入口；
+5. 每条意见说明问题分类、位置、问题、可能导致的结果和可执行修改方法；
+6. 不把“未发现问题”写成问题项，不用无问题总结代替具体检视条目。
 
 输出格式见 [`references/review-output-format.md`](references/review-output-format.md)。如仓库根
 `AGENTS.md` 对格式有更严格规定，以根规范为准。

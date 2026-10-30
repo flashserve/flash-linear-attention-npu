@@ -54,7 +54,66 @@
 5. `def`/schema/aclnn/Python 入口的 ABI 变化同步 CODEOWNERS 要求的检视材料；
 6. 示例和测试资产有实际构建入口，不依赖历史目录或外部残留文件。
 
-## 5. 环境变量与隐式开关预警
+## 5. 公开接口兼容性
+
+公开接口兼容性属于工程结构检视。只有以下情况需要完整检查：
+
+- 新增、删除或重命名 `fla_npu.ops.ascendc` 的公开算子；
+- 修改 `_stable.py` 中公开 wrapper 的参数、默认值、参数种类或返回结构；
+- 修改 `kSchema_<op>`、Stable-ABI adapter 与 Python 参数映射；
+- 修改稳定的 aclnn 符号、layout/枚举值或可选输出语义；
+- 声称保持 legacy `torch.ops.npu`、`torch_npu.ops` 或 ctypes 回退兼容。
+
+### 5.1 先固定比较基线
+
+兼容性基线是改动前的已发布 tag 或 PR base 提交，不是本 PR 修改后的代码、YAML 或文档。优先使用
+仓库已提供的公开接口契约文件；当前仓库尚未提供时，至少从基线提交中读取：
+
+1. `fla_npu/ops/ascendc/__init__.py` 的公开名；
+2. `fla_npu/ops/ascendc/_stable.py` 的真签名 wrapper；
+3. `csrc/src/stable_<op>.cpp` 的 `kSchema_<op>` 和 adapter；
+4. `_aclnn_ctypes.py` 中仍发布的回退入口；
+5. `docs/api.md`、迁移指南及 `npu_custom.yaml`——仅当 PR 明确继续承诺对应 legacy 入口时使用。
+
+同一 PR 同时修改代码、schema、YAML 和文档后，这些文件仍然彼此一致是交付完整性检查，不能替代与
+基线版本的兼容性比较。
+
+### 5.2 逐项比较调用契约
+
+对每个已发布入口核对：
+
+1. 公开名：算子名、Python 短名和 raw/stable op 名的映射是否保持不变；
+2. 参数：参数数量、顺序、名字、positional-only / positional-or-keyword / keyword-only 属性；
+3. 默认行为：是否必选、默认值及省略参数时的语义；
+4. 类型与语义：Tensor/optional/scalar/int-array/layout 的跨边界形式是否变化；
+5. 返回：tuple 数量、顺序、optional 标记、shape/layout 语义；
+6. 枚举与开关：字符串 layout、枚举整数码、布尔开关的默认值和含义；
+7. 后端一致性：stable、ctypes、legacy 同一次调用不能被解析成不同参数或不同语义。
+
+只允许向后兼容的追加方式：在参数表末尾新增带历史默认值的关键字参数，或按仓库既定规则在返回
+tuple 末尾追加可选输出。默认值必须复现旧行为，新增开关不能在默认状态下改变结果。
+
+以下变化默认按不兼容变更阻断：
+
+- 删除或重命名已发布算子或任意参数；
+- 删除、插入或重排既有参数；
+- 把可选参数改为必选，或把 keyword-only 参数改为可与其他参数混用而改变调用解析；
+- 修改既有参数默认值、类型、单位、layout 或语义；
+- 修改返回 tuple 的数量、顺序或既有槽位语义；
+- 修改 enum/string value 到内部 code 的映射；
+- 仅在一个后端改签名、默认值或语义，造成 `FLA_NPU_STABLE_ABI` 切换后调用行为变化。
+
+若不兼容变化确有必要，必须要求以下证据之一：保留旧参数/旧算子作为 deprecated alias 并明确迁移
+期限，或发布新的版本化入口。alias 必须有 warning、正向回归和迁移文档；不得静默接受旧关键字后改变
+语义。若 PR 声称 legacy 兼容，还需核对对应的 YAML、生成接口和测试，不能只修 stable 入口。
+
+### 5.3 输出与定级
+
+旧调用会因参数解析失败或语义变化而得到错误结果时，按根规范输出 `问题分类：功能正确性`、
+`问题性质：兼容性问题`；缺少兼容基线、alias、迁移证据或跨后端一致性保障时，按工程结构/测试问题
+输出。位置必须同时落到公开 wrapper、schema、adapter 或测试的实际行；不能只引用 PR 描述。
+
+## 6. 环境变量与隐式开关预警
 
 新增、删除或改变环境变量、CMake cache 开关、`-D` 编译定义以及会改变 include/构建语义的宏时，
 必须在 PR 中单独预警，不能混在其他改动里静默引入。至少写清：
@@ -73,7 +132,7 @@
 优先用函数参数、CMake target 属性、独立 prelude/target 或显式配置文件表达差异。禁止用新环境变量
 或 `-D` 宏隐式选择业务范围、兼容路径、header include 顺序或测试语义。
 
-## 6. 输出
+## 7. 输出
 
 每条结构问题用分类 `cleancode` 或 `兼容性问题`，位置必须落到具体文件。对“缺少文件”写清是在
 哪一种工程形态下缺什么职责；对“多余文件”写清谁引用、为什么不满足现状。
