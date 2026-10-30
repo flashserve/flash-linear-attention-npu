@@ -498,6 +498,8 @@ PY
 
 check_environment_contracts() {
     python3 tests/test_wheel_environment.py -b
+    python3 torch_custom/fla_npu/tools/stable_coverage.py --strict
+    python3 torch_custom/fla_npu/tools/op_abi_parity.py
     python3 tests/test_opp_overlay.py -b
     python3 tests/test_opp_abi_contract.py -b
     python3 tests/test_stable_gates.py -b
