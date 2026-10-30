@@ -1,4 +1,3 @@
-#include "op_common/log/log.h"
 #include "chunk_kda_bwd_finalize_tiling.h"
 
 #include <cmath>
@@ -34,18 +33,8 @@ ge::graphStatus ValidateFinalize(
     if (shape.NV > UINT32_MAX / (128 * sizeof(float)) ||
         static_cast<uint64_t>(shape.B) > INT64_MAX / 128 / sizeof(float) /
             static_cast<uint64_t>(shape.NV) / static_cast<uint64_t>(shape.T)) return fail();
-    const bool denseGateHeadAlias = std::strcmp(outputLayout, "BNSD_GATE_HEAD_MAJOR") == 0;
-    const bool packedGateHeadAlias = std::strcmp(outputLayout, "NTD_GATE_HEAD_MAJOR") == 0;
-    const bool gateHeadRequested = denseGateHeadAlias || packedGateHeadAlias;
-    if (arch22 && gateHeadRequested) {
-        OP_LOGE_WITH_INVALID_ATTR(ctx.nodeName, "output_layout", outputLayout,
-            "BNSD/NTD on A2/A3 because gate head-major is unsupported");
-        return ge::GRAPH_FAILED;
-    }
-    const char *valueOutputLayout = denseGateHeadAlias ? "BNSD" :
-        (packedGateHeadAlias ? "NTD" : outputLayout);
-    const bool headMajor = std::strcmp(valueOutputLayout, rank == 3 ? "NTD" : "BNSD") == 0;
-    const bool tokenMajor = std::strcmp(valueOutputLayout, rank == 3 ? "TND" : "BSND") == 0;
+    const bool headMajor = std::strcmp(outputLayout, rank == 3 ? "NTD" : "BNSD") == 0;
+    const bool tokenMajor = std::strcmp(outputLayout, rank == 3 ? "TND" : "BSND") == 0;
     if (!headMajor && !tokenMajor) return fail();
     auto tokenShape = [&](const gert::StorageShape *storage, int64_t width, bool tm) {
         if (!storage || storage->GetStorageShape().GetDimNum() != rank) return false;
@@ -60,18 +49,10 @@ ge::graphStatus ValidateFinalize(
         return (base == 0 || s.GetDim(0) == shape.B) && s.GetDim(base) == (tm ? shape.T : shape.NV) &&
             s.GetDim(base + 1) == (tm ? shape.NV : shape.T);
     };
-    const bool tokenGate = scalarShape(context->GetOutputShape(3), true) &&
-        tokenShape(context->GetOutputShape(4), 128, true);
-    const bool headGate = scalarShape(context->GetOutputShape(3), false) &&
-        tokenShape(context->GetOutputShape(4), 128, false);
-    const bool gateTokenMajor = !gateHeadRequested;
-    if (arch22 && !gateHeadRequested && !tokenGate && headGate) {
-        OP_LOGE_WITH_INVALID_INPUT_SHAPE(ctx.nodeName, 3, "head-major",
-            "token-major dBetaOut/dGOut on A2/A3");
-        return ge::GRAPH_FAILED;
-    }
-    if ((gateHeadRequested && !headGate) || (!gateHeadRequested && !tokenGate)) return fail();
-    for (size_t i : {INPUT_Q, INPUT_K, INPUT_V, INPUT_GK, INPUT_V_NEW, INPUT_DV_SCAN, INPUT_DQ_RAW}) {
+    if (!tokenShape(context->GetRequiredInputShape(INPUT_Q), 128, shape.qkTokenMajor) ||
+        !tokenShape(context->GetRequiredInputShape(INPUT_K), 128, shape.qkTokenMajor) ||
+        !tokenShape(context->GetRequiredInputShape(INPUT_V), 128, shape.vTokenMajor)) return fail();
+    for (size_t i : {INPUT_GK, INPUT_V_NEW, INPUT_DV_SCAN, INPUT_DQ_RAW}) {
         if (!tokenShape(context->GetRequiredInputShape(i), 128, false)) return fail();
     }
     for (size_t i : {INPUT_AKK, INPUT_D_AQK}) {
@@ -102,38 +83,42 @@ ge::graphStatus ValidateFinalize(
         const auto *d = context->GetInputDesc(i);
         if (!d || d->GetDataType() != ge::DT_BF16) return fail();
     }
-    for (size_t i : {INPUT_GK, INPUT_D_AQK, INPUT_DQ_RAW, INPUT_Q_RSTD, INPUT_K_RSTD}) {
+    for (size_t i : {INPUT_GK, INPUT_D_AQK, INPUT_DQ_RAW, INPUT_Q_RSTD, INPUT_K_RSTD, INPUT_DT_BIAS}) {
         const auto *d = context->GetOptionalInputDesc(i);
         if (d && d->GetDataType() != ge::DT_FLOAT) return fail();
     }
     const auto betaType = context->GetInputDesc(INPUT_BETA)->GetDataType();
     const auto logType = context->GetInputDesc(INPUT_A_LOG)->GetDataType();
     if ((betaType != ge::DT_FLOAT && (useBetaSigmoid || betaType != ge::DT_BF16)) ||
-        (logType != ge::DT_FLOAT && (arch22 || logType != ge::DT_BF16))) return fail();
+        logType != ge::DT_FLOAT) return fail();
     if (ctx.useGateInKernel) {
         for (size_t i : {INPUT_RAW_G}) {
             const auto *d = context->GetOptionalInputDesc(i);
-            if (!d || d->GetDataType() != ge::DT_FLOAT) return fail();
+            if (!d || (d->GetDataType() != ge::DT_FLOAT && d->GetDataType() != ge::DT_BF16)) return fail();
         }
         const auto *a = context->GetOptionalInputShape(INPUT_A_LOG);
         const auto *bias = context->GetOptionalInputShape(INPUT_DT_BIAS);
-        if (!tokenShape(context->GetOptionalInputShape(INPUT_RAW_G), 128, false) ||
+        if (!tokenShape(context->GetOptionalInputShape(INPUT_RAW_G), 128, shape.rawTokenMajor) ||
             !a || a->GetStorageShape().GetShapeSize() != shape.NV ||
-            (!bias || (bias->GetStorageShape().GetShapeSize() != shape.NV * 128 ||
-                      context->GetOptionalInputDesc(INPUT_DT_BIAS)->GetDataType() != ge::DT_FLOAT))) return fail();
+            (!bias || bias->GetStorageShape().GetShapeSize() != shape.NV * 128)) return fail();
     }
     for (size_t i = 0; i < 3; ++i) {
         if (!tokenShape(context->GetOutputShape(i), 128, tokenMajor)) return fail();
     }
-    if (!scalarShape(context->GetOutputShape(3), gateTokenMajor) ||
-        !tokenShape(context->GetOutputShape(4), 128, gateTokenMajor)) return fail();
+    if (!scalarShape(context->GetOutputShape(3), shape.rawTokenMajor || tokenMajor) ||
+        !tokenShape(context->GetOutputShape(4), 128, shape.rawTokenMajor || tokenMajor)) return fail();
     const auto qType = context->GetOutputDesc(0)->GetDataType();
     if (qType != ge::DT_BF16 || context->GetOutputDesc(1)->GetDataType() != qType ||
         context->GetOutputDesc(2)->GetDataType() != ge::DT_BF16) return fail();
-    if (context->GetOutputDesc(3)->GetDataType() != betaType) return fail();
-    for (size_t i = 4; i < 7; ++i) {
-        if (context->GetOutputDesc(i)->GetDataType() != ge::DT_FLOAT) return fail();
-    }
+    const auto dbType = context->GetOutputDesc(3)->GetDataType();
+    // Only the A2/A3 total-interface model-layout path separates effective beta
+    // storage from original beta gradient dtype. Standalone Finalize is unchanged.
+    if (dbType != betaType &&
+        !(arch22 && shape.rawTokenMajor && useBetaSigmoid &&
+          betaType == ge::DT_FLOAT && dbType == ge::DT_BF16)) return fail();
+    if (context->GetOutputDesc(4)->GetDataType() != context->GetInputDesc(INPUT_RAW_G)->GetDataType() ||
+        context->GetOutputDesc(5)->GetDataType() != ge::DT_FLOAT ||
+        context->GetOutputDesc(6)->GetDataType() != ge::DT_FLOAT) return fail();
     for (size_t i = 0; i < 2; ++i) {
         const auto &input = context->GetRequiredInputShape(INPUT_A_LOG + i)->GetStorageShape();
         const auto &output = context->GetOutputShape(5 + i)->GetStorageShape();
@@ -143,10 +128,8 @@ ge::graphStatus ValidateFinalize(
         }
     }
     shape.outputTokenMajor = tokenMajor;
+    shape.gateOutputTokenMajor = shape.rawTokenMajor || tokenMajor;
     shape.betaMode = useBetaSigmoid ? (allowNegEigval ? 2 : 1) : 0;
-    if (!arch22 && gateTokenMajor) {
-        shape.betaMode |= KDA::KDA_FINALIZE_GATE_OUTPUT_TOKEN_MAJOR;
-    }
     return ge::GRAPH_SUCCESS;
 }
 } // namespace
@@ -191,11 +174,15 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
         OP_LOGW(context->GetNodeName(),
                 "platform info did not report AIC count; fallback to %u", aicCoreNum);
     }
+    const char *modelLayout = attrs->GetStr(10);
+    const bool mixed = modelLayout && modelLayout[0];
+    const bool modelTm = mixed && (std::strcmp(modelLayout,"BSND") == 0 || std::strcmp(modelLayout,"TND") == 0);
+    if (mixed && !modelTm && std::strcmp(modelLayout,"BNSD") && std::strcmp(modelLayout,"NTD")) return ge::GRAPH_FAILED;
     ChunkKdaBwdFinalizeTilingContext ctx{
         context->GetNodeName(),
-        context->GetRequiredInputShape(INPUT_Q),
-        context->GetRequiredInputShape(INPUT_K),
-        context->GetRequiredInputShape(INPUT_V),
+        context->GetRequiredInputShape(mixed ? INPUT_GK : INPUT_Q),
+        context->GetRequiredInputShape(mixed ? INPUT_GK : INPUT_K),
+        context->GetRequiredInputShape(mixed ? INPUT_GK : INPUT_V),
         context->GetRequiredInputShape(INPUT_GK),
         context->GetRequiredInputShape(INPUT_BETA),
         context->GetRequiredInputShape(INPUT_AKK),
@@ -228,6 +215,9 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
     }
     ChunkKdaBwdFinalizeTilingProcessor processor(ctx, shape);
     OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
+    shape.qkTokenMajor = modelTm && !ctx.qRstd;
+    shape.vTokenMajor = modelTm;
+    shape.rawTokenMajor = mixed;
     const bool arch22 = platform.GetSocVersion() != platform_ascendc::SocVersion::ASCEND950;
     if (ValidateFinalize(context, ctx, shape, arch22, *useBetaSigmoid,
                          *allowNegEigval, outputLayout) != ge::GRAPH_SUCCESS) return ge::GRAPH_FAILED;
@@ -235,9 +225,6 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
     auto *tiling = context->GetTilingData<KDA::ChunkKdaBwdFinalizeTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
     *tiling = shape;
-    auto *rawTiling = context->GetRawTilingData();
-    OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);
-    rawTiling->SetDataSize(sizeof(KDA::ChunkKdaBwdFinalizeTilingData) + 8);
     context->SetTilingKey(processor.GetTilingKey());
     context->SetBlockDim(processor.GetBlockDim());
     context->GetWorkspaceSizes(1)[0] = processor.GetWorkspaceSize();

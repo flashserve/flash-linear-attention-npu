@@ -380,7 +380,6 @@ jobs:
             image: fla-npu-ci:9.1.0-910b
             dockerfile: ci/Dockerfile
             require_preloaded_image: 'false'
-            tmpdir: ''
           - platform: a5
             name: A5 / ascend950
             runner_labels: '["self-hosted","linux","x64","npu","ascend950","flash-linear-attention-npu-a5"]'
@@ -388,7 +387,6 @@ jobs:
             image: fla-npu-ci:9.1.0-950
             dockerfile: ci/Dockerfile.ascend950
             require_preloaded_image: 'true'
-            tmpdir: /tmp/fla-npu-ci
     runs-on: ${{ fromJSON(matrix.runner_labels) }}
     timeout-minutes: 240
     permissions:
@@ -397,6 +395,9 @@ jobs:
     env:
       CI_MODE: ${{ needs.prepare.outputs.ci_mode }}
       CI_OPS: ${{ needs.prepare.outputs.ops }}
+      CI_JOBS: '16'
+      CI_CPACK_JOBS: '16'
+      CI_PROXY_SCRIPT: /home/huangjunzhe/ci/vpn-proxy.sh
       CI_STAGE: ${{ needs.prepare.outputs.ops == '' && 'all' || 'opp-package' }}
       CI_SOC: ${{ matrix.soc }}
       FLA_NPU_SOC: ${{ matrix.soc }}
@@ -415,11 +416,26 @@ jobs:
       CI_IMAGE: ${{ matrix.image }}
       CI_DOCKERFILE: ${{ matrix.dockerfile }}
       CI_REQUIRE_PRELOADED_IMAGE: ${{ matrix.require_preloaded_image }}
-      CI_TMPDIR: ${{ matrix.tmpdir }}
+      # BiSheng requires a /tmp path inside the container; all backing storage
+      # belongs to the runner's writable data directories on the host.
+      CI_TMPDIR: /tmp/fla-npu-ci
+      CI_HOST_TMPDIR: /home/huangjunzhe/ci/tmp/container-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+      CI_CACHE_ROOT: /home/huangjunzhe/ci/cache_root
+      CI_NPU_LOCK_DIR: /home/huangjunzhe/ci/tmp/npu-locks
+      TMPDIR: /home/huangjunzhe/ci/tmp
+      CI_CONTAINER_NAME: fla-npu-ci-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: 通过 GitHub API 准备 A5 源码
         if: matrix.platform == 'a5'
         env:
+          # Runner services inherit proxyon; this source path stays direct.
+          # GitHub env keys are case-insensitive; no_proxy also bypasses inherited proxies.
+          http_proxy: ''
+          https_proxy: ''
+          all_proxy: ''
+          GIT_HTTP_PROXY: ''
+          GIT_HTTPS_PROXY: ''
+          no_proxy: '*'
           GITHUB_TOKEN: ${{ github.token }}
           NPU_CI_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
           NPU_CI_BASE_REF: ${{ needs.prepare.outputs.base_ref }}
@@ -429,7 +445,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          archive_dir="${RUNNER_TEMP}/fla-npu-source-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          archive_dir="${TMPDIR}/fla-npu-source-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           rm -rf repo trusted-ci "$archive_dir"
           mkdir -p repo trusted-ci "$archive_dir"
           export NPU_CI_ARCHIVE_DIR="$archive_dir"
@@ -731,6 +747,15 @@ jobs:
         continue-on-error: true
         timeout-minutes: 5
         uses: actions/checkout@v5
+        env:
+          # Try direct access before enabling the existing A2 proxy fallback.
+          # GitHub env keys are case-insensitive; no_proxy also bypasses inherited proxies.
+          http_proxy: ''
+          https_proxy: ''
+          all_proxy: ''
+          GIT_HTTP_PROXY: ''
+          GIT_HTTPS_PROXY: ''
+          no_proxy: '*'
         with:
           repository: ${{ github.repository }}
           ref: ${{ needs.prepare.outputs.base_sha }}
@@ -740,84 +765,18 @@ jobs:
       - name: 启动代理并获取端口
         if: steps.checkout_pr_1.outcome == 'failure' && matrix.platform == 'a2'
         run: |
-          # 1. 备份现有环境变量
-          echo "========== 备份原有代理配置 =========="
-          
-          # 备份环境变量
-          if [ -n "$http_proxy" ]; then
-            export OLD_http_proxy="$http_proxy"
-            echo "OLD_http_proxy=$http_proxy" >> $GITHUB_ENV
-            echo "备份 http_proxy: $http_proxy"
-          fi
-          
-          if [ -n "$https_proxy" ]; then
-            export OLD_https_proxy="$https_proxy"
-            echo "OLD_https_proxy=$https_proxy" >> $GITHUB_ENV
-            echo "备份 https_proxy: $https_proxy"
-          fi
-          
-          if [ -n "$HTTP_PROXY" ]; then
-            export OLD_HTTP_PROXY="$HTTP_PROXY"
-            echo "OLD_HTTP_PROXY=$HTTP_PROXY" >> $GITHUB_ENV
-            echo "备份 HTTP_PROXY: $HTTP_PROXY"
-          fi
-          
-          if [ -n "$HTTPS_PROXY" ]; then
-            export OLD_HTTPS_PROXY="$HTTPS_PROXY"
-            echo "OLD_HTTPS_PROXY=$HTTPS_PROXY" >> $GITHUB_ENV
-            echo "备份 HTTPS_PROXY: $HTTPS_PROXY"
-          fi
-          
-          if [ -n "$all_proxy" ]; then
-            export OLD_all_proxy="$all_proxy"
-            echo "OLD_all_proxy=$all_proxy" >> $GITHUB_ENV
-            echo "备份 all_proxy: $all_proxy"
-          fi
-          
-          # 备份 Git 代理配置
-          echo "========== 备份 Git 代理配置 =========="
-          OLD_GIT_HTTP_PROXY=$(git config --global --get http.proxy || echo "")
-          OLD_GIT_HTTPS_PROXY=$(git config --global --get https.proxy || echo "")
-          
-          if [ -n "$OLD_GIT_HTTP_PROXY" ]; then
-            echo "OLD_GIT_HTTP_PROXY=$OLD_GIT_HTTP_PROXY" >> $GITHUB_ENV
-            echo "备份 git http.proxy: $OLD_GIT_HTTP_PROXY"
-          fi
-          
-          if [ -n "$OLD_GIT_HTTPS_PROXY" ]; then
-            echo "OLD_GIT_HTTPS_PROXY=$OLD_GIT_HTTPS_PROXY" >> $GITHUB_ENV
-            echo "备份 git https.proxy: $OLD_GIT_HTTPS_PROXY"
-          fi
-          
-          # 2. 启动新代理
-          echo "========== 启动新代理 =========="
-          # 加载代理配置
-          source /etc/profile.d/vpn-proxy.sh
+          set -euo pipefail
+          source "$CI_PROXY_SCRIPT"
           proxyon
-          
-          # 从环境变量获取实际端口
-          HTTP_PORT=$(echo $http_proxy | sed 's/http:\/\/127.0.0.1://' || echo "7899")
-          SOCKS_PORT=$(echo $all_proxy | sed 's/socks5h:\/\/127.0.0.1://' || echo "7891")
-          
-          # 如果环境变量未设置，从 runtime.yaml 读取
-          if [ -z "$HTTP_PORT" ]; then
-            HTTP_PORT=$(grep -A5 'proxies:' /root/clashctl/resources/runtime.yaml | grep -m1 'port:' | awk '{print $2}' || echo "7899")
-          fi
-          
-          # 保存到 GITHUB_ENV，供后续步骤使用
-          echo "PROXY_HTTP_PORT=$HTTP_PORT" >> $GITHUB_ENV
-          echo "PROXY_SOCKS_PORT=$SOCKS_PORT" >> $GITHUB_ENV
-          echo "http_proxy=http://127.0.0.1:$HTTP_PORT" >> $GITHUB_ENV
-          echo "https_proxy=http://127.0.0.1:$HTTP_PORT" >> $GITHUB_ENV
-          echo "all_proxy=socks5h://127.0.0.1:$SOCKS_PORT" >> $GITHUB_ENV
-          
-          echo "检测到代理端口: HTTP=$HTTP_PORT, SOCKS=$SOCKS_PORT"
-          export HOME=${HOME:-/workspace/ci/}
-          echo "HOME=$HOME" >> $GITHUB_ENV
-          # 配置 Git 代理
-          git config --global http.proxy http://127.0.0.1:$HTTP_PORT
-          git config --global https.proxy http://127.0.0.1:$HTTP_PORT
-          git config --global http.postBuffer 524288000
+          for variable in http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY \
+            no_proxy NO_PROXY GIT_HTTP_PROXY GIT_HTTPS_PROXY PROXY_HTTP_PORT PROXY_SOCKS_PORT PROXY_MIXED_PORT; do
+            value="${!variable-}"
+            if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
+              echo "[CI][ERROR] Proxy variable $variable contains a newline." >&2
+              exit 1
+            fi
+            printf '%s=%s\n' "$variable" "$value" >> "$GITHUB_ENV"
+          done
 
       - name: 等待后重试拉取目标分支代码
         if: matrix.platform == 'a2' && steps.checkout_pr_1.outcome == 'failure'
@@ -966,7 +925,8 @@ jobs:
           # 当前 workflow commit 的不可变 SHA 选择可信 CI，同时允许 CI 自身修改在合入前验证。
           # 但 Example/ST 用例配置属于被验证内容：新 PR 中新增或修改的 enabled 用例
           # 必须跟随当前目标分支和 PR head 的现场合并结果一起进入容器，并被 /run-npu-ci quick 实际执行验证。
-          case_archive="$(mktemp -d "${RUNNER_TEMP}/example-st-cases.XXXXXX")"
+          case_archive="$(mktemp -d "${TMPDIR}/example-st-cases.XXXXXX")"
+          trap 'rm -rf -- "$case_archive"' EXIT
           export NPU_CI_CASE_ARCHIVE="$case_archive"
           python3 - <<'PY'
           import json
@@ -1040,16 +1000,15 @@ jobs:
           if [ -f "$case_archive/example_st_cases.json" ]; then
             cp "$case_archive/example_st_cases.json" repo/ci/example_st_cases.json
           fi
-          rm -rf "$case_archive"
 
       - name: 运行 ${{ matrix.name }} NPU CI 容器
+        id: npu_ci
         working-directory: repo
         env:
           GITHUB_TOKEN: ${{ github.token }}
           NPU_CI_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
           NPU_CI_TARGET_SHA: ${{ needs.prepare.outputs.head_sha }}
           NPU_CI_HEAD_POLL_SECONDS: '60'
-          CI_CONTAINER_NAME: fla-npu-ci-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
 
@@ -1180,17 +1139,32 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          repo_path="$(realpath repo)"
+          repo_path="$(realpath -m repo)"
           raw_log_path="$(realpath -m "repo/${CI_RAW_LOG_FILE}")"
-          container_tmp_path="$(realpath -m "repo/.ci-tmp/container-tmp")"
           case "$raw_log_path" in
             "$repo_path"/*) rm -f "$raw_log_path" ;;
             *) echo "[CI][ERROR] Refusing to clean log outside the repository workspace." >&2; exit 1 ;;
           esac
-          case "$container_tmp_path" in
-            "$repo_path"/.ci-tmp/container-tmp) rm -rf -- "$container_tmp_path" ;;
-            *) echo "[CI][ERROR] Refusing to clean container temp outside the repository workspace." >&2; exit 1 ;;
-          esac
+          expected_host_tmpdir="/home/huangjunzhe/ci/tmp/container-${CI_ACCURACY_PLATFORM}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if [[ "$CI_HOST_TMPDIR" != "$expected_host_tmpdir" ]]; then
+            echo "[CI][ERROR] Refusing to clean an unexpected temporary directory." >&2
+            exit 1
+          fi
+          cleanup_directories=("$CI_HOST_TMPDIR")
+          if [[ "$CI_ACCURACY_PLATFORM" == a5 ]]; then
+            archive_dir="${TMPDIR}/fla-npu-source-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            if [[ "$archive_dir" != "/home/huangjunzhe/ci/tmp/fla-npu-source-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" ]]; then
+              echo "[CI][ERROR] Refusing to clean an unexpected source archive directory." >&2
+              exit 1
+            fi
+            cleanup_directories+=("$archive_dir")
+          fi
+          for directory in "${cleanup_directories[@]}"; do
+            [[ ! -L "$directory" ]] || { echo "[CI][ERROR] Refusing to clean a symlink." >&2; exit 1; }
+          done
+          for directory in "${cleanup_directories[@]}"; do
+            rm -rf -- "$directory"
+          done
 
       - name: 记录 ${{ matrix.name }} 执行结果
         if: always()

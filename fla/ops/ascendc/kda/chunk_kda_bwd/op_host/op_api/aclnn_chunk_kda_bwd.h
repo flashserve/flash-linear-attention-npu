@@ -7,9 +7,12 @@
 extern "C" {
 #endif
 
-// A2/A3 compose backward L0 operators; A5 keeps its fused kernel.
-// Saved caches remain head-major, with chunk-major h. External token inputs
-// and public token gradients follow inputLayout and outputLayout.
+// A2/A3 single-layout contract: q/k/v and dq/dk/dv follow layout.
+// A supplied rstd pair identifies saved head-major q_hat/k_hat.
+// dO/rawG and dg/db are token-major; saved caches remain head-major.
+// beta is always original token-major input; fused sigmoid additionally requires
+// saved FP32 head-major betaEffOptional. db follows original beta dtype.
+// Gate gradients follow input dtype; A_log/dt_bias and their gradients are FP32.
 __attribute__((visibility("default")))
 aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     const aclTensor *q,
@@ -42,8 +45,8 @@ aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     bool stateVFirst,
     const aclTensor *qRstdOptional,
     const aclTensor *kRstdOptional,
-    const char *inputLayout,
-    const char *outputLayout,
+    const aclTensor *betaEffOptional,
+    const char *layout,
     bool useBetaSigmoidInKernel,
     bool allowNegEigval,
     const aclTensor *dqOut,

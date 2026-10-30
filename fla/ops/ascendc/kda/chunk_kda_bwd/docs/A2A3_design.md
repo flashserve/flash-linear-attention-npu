@@ -1,8 +1,10 @@
 # chunk_kda_bwd：A2/A3 L0 编排改造方案
 
-方案设计规则版本：V2。状态：方案稿，本次仅修改文档。
+> 历史阶段设计。当前 A5 V2 已同步单 layout 契约，路由及 ABI 以 [api.md](api.md) 为准；下文“V2 定义不变”的结论已被本次非兼容升级替代。
 
-本方案以本轮明确的七条原则为准：**只改 A2/A3 的执行逻辑，A5 保留原入口和 V2 两条路径。** 下文代码展示目标接口与编排，尚未实施。
+方案设计规则版本：V2。输出约定以 [api.md](api.md) 为准：dq/dk 跟随输入 dtype，五个梯度统一使用 output_layout。以下保留原编排设计，输出适配已按该约定更新。
+
+本方案以本轮明确的七条原则为准：**只改 A2/A3 的执行逻辑，A5 保留原入口和 V2 两条路径。** 下文展示接口与编排。
 
 ## 1. 改造范围
 
@@ -39,14 +41,14 @@ def npu_chunk_kda_bwd(
     ...
 ```
 
-返回仍是 (dq, dk, dv, db, dg, dh0, dA, dbias)。旧调用省略这四项时，仍按默认 head-major 布局、关闭 beta sigmoid 反向处理，保持原有输入输出约定；A2/A3 的底层路径按本方案统一。
+返回仍是 (dq, dk, dv, db, dg, dh0, dA, dbias)。旧调用省略这四项时，仍按默认 head-major 布局、关闭 beta sigmoid 反向处理，输入约定保持不变；A2/A3 输出遵循 api.md，不再保留 FP32 dq/dk 和 head-major db/dg。
 
 门控按后续确认要求 use_gate_in_kernel 默认且必须为 True，Stable 与 ctypes 在平台和实现模式分流前校验，None 归一化仍使用 True；显式 False 在 Python 入口抛出 ValueError。Stable C++ dispatcher 和原 ACLNN 入口也增加对应校验，V2 保留已有约束。所有平台适用该门控限制，A5 的路由和计算实现不变。调用方仍须提供 raw_g 和 A_log，dt_bias 保持可选；本次不改 Finalize kernel。
 
 | 新参数 | 含义 |
 | --- | --- |
 | input_layout | 有重计算时传 Recompute，仅允许归一化后的 BNSD/NTD；无重计算时传 Prepare，沿用其布局范围。默认 BNSD，packed 时归一化为 NTD；BSND 在 packed 时归一化为 TND |
-| output_layout | Token 梯度返回布局；默认保持原 head-major 顺序 |
+| output_layout | dq/dk/dv/db/dg 的返回布局 |
 | use_beta_sigmoid_in_kernel | 是否由 Finalize 完成 beta sigmoid 链式反向 |
 | allow_neg_eigval | 开启 beta sigmoid 反向时，使用前向 beta=2×sigmoid(x) 对应的导数 |
 
@@ -150,8 +152,8 @@ if (isA2OrA3) {
     // 有重计算传默认布局，无重计算传外部 inputLayout。
     l0op::ChunkKdaBwdPrepare(..., prepareInputLayout, ...);
     l0op::ChunkGatedDeltaRuleBwdDhu(...);
-    l0op::ChunkKdaBwdFinalize(...);
-    // 在本 cpp 内完成必要输出布局/dtype 适配。
+    l0op::ChunkKdaBwdFinalize(..., outputLayout, ...);
+    // 五个梯度由 Finalize 直写；仅保留直接 ACLNN 的 BF16 db 类型兼容及参数梯度适配。
 } else {
     // A5：保留当前原融合算子调用。
     l0op::ChunkKdaBwd(...);
@@ -183,7 +185,7 @@ inputLayout 传给路径中的第一个 L0 后，不再沿后续算子重复传�
 | 参数 | A2/A3 总层处理 | 实际消费者 |
 | --- | --- | --- |
 | inputLayout | 有重计算仅接受 BNSD/NTD，总层先建立 BNSD 视图、再透传参数，后续 Prepare 用默认布局；无重计算才传 Prepare | Recompute 仅校验字符串值域，不按它处理张量；Prepare 按其已有契约处理布局 |
-| outputLayout | 按目标布局分配输出，处理 db/dg 的布局差异 | Finalize 与总层输出适配 |
+| outputLayout | 按目标布局分配 dq/dk/dv/db/dg | Finalize 直接写回 |
 | qRstd/kRstd | 成对校验并透传，参考 A5 V2 | Finalize 内完成 Q/K norm 反向 |
 | useBetaSigmoidInKernel | 透传，不在总层再做一次 sigmoid 反向 | Finalize |
 | allowNegEigval | 与 beta sigmoid 开关一起校验、透传 | Finalize |
@@ -192,11 +194,11 @@ inputLayout 传给路径中的第一个 L0 后，不再沿后续算子重复传�
 
 - Recompute 新增 input_layout，仅在 Host 校验字符串是否为 BNSD/NTD；张量按总层提供的 rank-4 BNSD 视图计算，不按字符串处理 rank、视图或寻址。重计算路径的 FwdH 和 Prepare 使用默认布局。
 - 无重计算时，Prepare 接收总接口的 inputLayout，并将输出统一为 head-major，再交给 Dhu/Finalize。Prepare 的实际输入张量仍须符合其 layout 契约，不能混用不同物理布局。
-- Finalize 输入固定 head-major；dq/dk/dv 按 outputLayout，db/dg 固定 token-major。总接口默认返回旧 head-major db/dg 时，在总层转换。
+- Finalize 输入固定 head-major；dq/dk/dv/db/dg 均按 outputLayout 直接写回。总接口保留这五个输出的布局。
 - 没有 rstd 时 q/k 受 inputLayout 控制；有成对 rstd 时 q/k 是前向保存的 q_hat/k_hat，固定 head-major，不能再按外部布局误转置。其他前向缓存保持原布局。
 - beta 是前向有效 beta。Finalize 负责一次链式梯度：普通 sigmoid 乘 beta×(1-beta)，2sigmoid 乘 beta×(1-beta/2)。Dhu 不新增这些参数。
 
-布局和 dtype 适配使用已有 L0 能力，保持既有调用的输出契约，不额外设计一套计算模式。
+dq/dk 直接按输入 dtype 分配；不增加输出选项或计算模式。旧调用方按 api.md 更新输出约定。
 
 ### 5.4 中间量和必要保护
 
@@ -276,7 +278,7 @@ const std::array<const aclTensor *, 5> l0op::ChunkKdaBwdRecompute(
 
 | 要验证的事 | 核查方式 |
 | --- | --- |
-| 四个新参数省略不影响原有约定 | 旧调用与显式四默认值逐输出比较 shape、dtype、布局、None 和数值 |
+| 省略四个参数仍满足新输出约定 | 旧调用与显式四默认值逐输出比较 shape、dtype、布局、None 和数值 |
 | A2/A3 路由统一 | legacy/auto/optimized × 有无成对 rstd × 保存/重计算，均确认调用原 aclnnChunkKdaBwd |
 | 保存模式不重计算 | 任务序列有 Prepare/Dhu/Finalize，没有 Recompute/FwdH |
 | 重计算顺序正确 | 任务序列为 Recompute/FwdH/Prepare/Dhu/Finalize；与同输入保存模式、独立 CPU 标杆对齐 |
@@ -286,7 +288,7 @@ const std::array<const aclTensor *, 5> l0op::ChunkKdaBwdRecompute(
 | 重计算布局别名 | packed 默认 BNSD 归一化为 NTD 后允许；BSND 归一化为 TND 后仍拒绝，不静默转置 |
 | Recompute 内部不改计算 | 不新增视图处理、device layout 字段、布局专用 key 或转置任务；总层 BatchView 与 A5 V2 一致，增加参数前后结果保持 |
 | 无重计算的布局传递 | 使用非默认外部布局，确认 Prepare 收到 inputLayout，输出统一为内部布局后交给 Dhu/Finalize |
-| 新增布局生效 | dense/packed 的输入/输出布局组合，特别核对外部 dO 等张量的实际布局、db/dg 默认布局及 rstd 场景 |
+| 新增布局生效 | dense/packed 的输入/输出布局组合，特别核对外部 dO 等张量的实际布局、db/dg 跟随 output_layout 及 rstd 场景 |
 | norm/beta 反向正确 | rstd 成对与不成对，beta off/sigmoid/2sigmoid，确认没有重复反向 |
 | A5 不受影响 | 普通调用仍走原融合；原优化条件仍进 V2；原合法/非法组合及输出保持 |
 | ABI 配套 | Stable、ctypes 和 OPP 的原 L2 新参数顺序一致，V2 公开签名不变 |

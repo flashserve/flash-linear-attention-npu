@@ -78,6 +78,22 @@ public:
     }
 
 private:
+    // flags: raw gate=1, q/k=2, v=4; workspaces always remain head-major.
+    template <typename T>
+    __aicore__ inline void LoadModel(LocalTensor<T> dst, GlobalTensor<T> src,
+        uint64_t offset, uint32_t rows, uint64_t width, uint64_t heads, int64_t flag)
+    {
+        if (!(tiling_->reserved & flag)) { DataCopy(dst, src[offset], rows * width); return; }
+        const uint64_t token = offset / width;
+        const uint64_t bh = token / T_;
+        const uint64_t pos = token % T_;
+        const uint64_t base = ((bh / heads * T_ + pos) * heads + bh % heads) * width;
+        DataCopyPad(dst, src[base],
+            {static_cast<uint16_t>(rows), static_cast<uint32_t>(width * sizeof(T)),
+             static_cast<uint32_t>((heads - 1) * width * sizeof(T)), 0, 0},
+            {false, 0, 0, T(0)});
+    }
+
     __aicore__ inline void AllocAuxEvents()
     {
         auxMte2ToVEvent_ = pipe_->AllocEventID<HardEvent::MTE2_V>();
@@ -172,7 +188,7 @@ private:
                 {
                     auto gIn = gInQue_.AllocTensor<GateType>();
                     auto betaIn = betaInQue_.AllocTensor<BetaType>();
-                    DataCopy(gIn, gTensor_[gBase + rowOffset * K_], K_ * curRowNum);
+                    LoadModel(gIn, gTensor_, gBase + rowOffset * K_, curRowNum, K_, Hv_, 1);
                     DataCopyPad(betaIn, betaTensor_[betaBase + rowOffset],
                                 {1, curRowNum * static_cast<uint32_t>(sizeof(BetaType)), 0, 0, 0}, {false, 0, 0, 0});
                     gInQue_.EnQue(gIn);
@@ -187,7 +203,7 @@ private:
                         Cast(gFp32, gIn, RoundMode::CAST_NONE, K_ * curRowNum);
                     }
                     if constexpr (std::is_same<BetaType, float>::value) {
-                        DataCopy(betaFp32, betaIn, curRowNum);
+                        DataCopy(betaFp32, betaIn, CeilDiv(curRowNum, 8U) * 8U);
                     } else {
                         Cast(betaFp32, betaIn, RoundMode::CAST_NONE, curRowNum);
                     }
@@ -212,8 +228,8 @@ private:
                 {
                     auto qIn = qInQue_.AllocTensor<QkType>();
                     auto kIn = kInQue_.AllocTensor<QkType>();
-                    DataCopy(qIn, qTensor_[qkBase + rowOffset * K_], K_ * curRowNum);
-                    DataCopy(kIn, kTensor_[qkBase + rowOffset * K_], K_ * curRowNum);
+                    LoadModel(qIn, qTensor_, qkBase + rowOffset * K_, curRowNum, K_, Hk_, 2);
+                    LoadModel(kIn, kTensor_, qkBase + rowOffset * K_, curRowNum, K_, Hk_, 2);
                     qInQue_.EnQue(qIn);
                     kInQue_.EnQue(kIn);
                 }
@@ -258,7 +274,7 @@ private:
                 {
                     auto kIn = kInQue_.AllocTensor<QkType>();
                     DataCopy(gFp32, gkTensor_[outBase + rowOffset * K_], K_ * curRowNum);
-                    DataCopy(kIn, kTensor_[qkBase + rowOffset * K_], K_ * curRowNum);
+                    LoadModel(kIn, kTensor_, qkBase + rowOffset * K_, curRowNum, K_, Hk_, 2);
                     kInQue_.EnQue(kIn);
                 }
                 SetFlag<HardEvent::MTE2_V>(auxMte2ToVEvent_);
@@ -324,7 +340,7 @@ private:
                 {
                     auto vIn = vInQue_.AllocTensor<QkType>();
                     auto betaIn = betaInQue_.AllocTensor<BetaType>();
-                    DataCopy(vIn, vTensor_[vOffset], V_ * curRowNum);
+                    LoadModel(vIn, vTensor_, vOffset, curRowNum, V_, Hv_, 4);
                     DataCopyPad(betaIn, betaTensor_[betaOffset],
                                 {1, curRowNum * static_cast<uint32_t>(sizeof(BetaType)), 0, 0, 0}, {false, 0, 0, 0});
                     vInQue_.EnQue(vIn);
@@ -335,7 +351,7 @@ private:
                     auto betaIn = betaInQue_.DeQue<BetaType>();
                     Cast(vFp32, vIn, RoundMode::CAST_NONE, V_ * curRowNum);
                     if constexpr (std::is_same<BetaType, float>::value) {
-                        DataCopy(betaFp32, betaIn, curRowNum);
+                        DataCopy(betaFp32, betaIn, CeilDiv(curRowNum, 8U) * 8U);
                     } else {
                         Cast(betaFp32, betaIn, RoundMode::CAST_NONE, curRowNum);
                     }
@@ -454,6 +470,7 @@ private:
                 {1, 1, 0, repeatStride, repeatStride, 1});
             offset += KDA_BWD_RECOMPUTE_FP32_PER_REPEAT_64;
         }
+        PipeBarrier<PIPE_V>();
     }
 
     __aicore__ inline void ComputeKg(

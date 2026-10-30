@@ -33,6 +33,10 @@ struct ChunkKdaBwdFinalizeTilingData {
     uint32_t useExp2;
     uint32_t stateVFirst;
     uint32_t outputTokenMajor;
+    uint32_t qkTokenMajor = 0;
+    uint32_t vTokenMajor = 0;
+    uint32_t rawTokenMajor = 0;
+    uint32_t gateOutputTokenMajor = 0;
     uint32_t betaMode;
     float scale;
     float lowerBound;

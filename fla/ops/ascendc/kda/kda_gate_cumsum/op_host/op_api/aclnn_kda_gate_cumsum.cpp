@@ -154,6 +154,11 @@ aclnnStatus aclnnKdaGateCumsumGetWorkspaceSize(
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
+
+    OP_LOGW("npu_kda_gate_cumsum",
+            "npu_kda_gate_cumsum is deprecated and will be removed on "
+            "January 15, 2027 (v26.12.0); use the fused npu_chunk_kda_fwd instead.");
+
     CHECK_RET(KdaGateCheckParams(g, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkSize, useGateInKernel,
                                  safeGate, lowerBound, gkOut) == ACLNN_SUCCESS,
               ACLNN_ERR_PARAM_INVALID);

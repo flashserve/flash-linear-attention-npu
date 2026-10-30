@@ -10,7 +10,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-CPU_NUM=$(($(cat /proc/cpuinfo | grep "^processor" | wc -l)*2))
+CPU_NUM=${CMAKE_BUILD_PARALLEL_LEVEL:-$(($(cat /proc/cpuinfo | grep "^processor" | wc -l)*2))}
 JOB_NUM="-j${CPU_NUM}"
 
 while [[ $# -gt 0 ]]; do
