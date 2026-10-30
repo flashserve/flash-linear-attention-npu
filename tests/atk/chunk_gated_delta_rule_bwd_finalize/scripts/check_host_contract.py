@@ -101,15 +101,17 @@ def main():
     from arch22_identity import _arch22_runtime_identity
     torch.npu.set_device(a.device)
     rt = runtime()
-    identity = _arch22_runtime_identity()
+    pre_call_identity = _arch22_runtime_identity()
     records = [run_case(rt, torch, f"npu:{a.device}", item) for item in cases()]
-    maps = Path("/proc/self/maps").read_text()
+    identity = _arch22_runtime_identity(require_tiling=True, refresh=True)
+    maps = identity["proc_maps"]
     libraries = sorted({line.split()[-1] for line in maps.splitlines() if "cust_opapi" in line})
     result = dict(schema="finalize-arch22-host-contract/v1", verdict="pass" if all(x["passed"] for x in records) else "fail",
                   launched=False, fla_npu_file=str(Path(fla_npu.__file__).resolve()),
                   source_commit_requested=os.getenv("FINALIZE_SOURCE_COMMIT"),
                   binding_sha256_requested=os.getenv("FINALIZE_BINDING_SHA256"),
                   measured_identity=identity["measured_identity"],
+                  pre_call_identity=pre_call_identity["measured_identity"],
                   libraries=[dict(path=path, sha256=hashlib.sha256(Path(path).read_bytes()).hexdigest()) for path in libraries],
                   proc_maps=maps, cases=records)
     a.output.parent.mkdir(parents=True, exist_ok=True)

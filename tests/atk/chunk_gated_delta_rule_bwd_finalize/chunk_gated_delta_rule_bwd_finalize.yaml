@@ -7,6 +7,8 @@ generate: generator_chunk_gated_delta_rule_bwd_finalize
 dtype_numbers: 1
 extra_numbers: 0
 standard:
+  # 原 A5 模板不改。arch22 生成器逐 case 设置官方 output_dtype_overrides：
+  # dq/dk/dv=bf16；dbeta/dg 跟随该 case 实际 g/beta 声明 bf16 或 fp32。
   acc: mixed_tolerance_bm
   perf: not_key
 inputs:

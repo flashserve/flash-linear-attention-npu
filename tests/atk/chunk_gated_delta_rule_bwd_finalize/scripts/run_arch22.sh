@@ -47,7 +47,8 @@ EOF
 elif [[ "$scope" == mssanitizer ]]; then
     command -v mssanitizer >/dev/null
     args=(node --name finalize --backend npu --devices "$device" task -c "$run_dir/cases.json"
-          -p "$op_dir/executor_chunk_gated_delta_rule_bwd_finalize.py" --task run --mssanitizer -msl "$run_dir/mssanitizer.log")
+          -p "$op_dir/executor_chunk_gated_delta_rule_bwd_finalize.py" --task run --mssanitizer -msl "$run_dir/mssanitizer.log"
+          -mt 1 --single_process -to "${ATK_TIMEOUT:-14400}")
 elif [[ "$scope" == determinism ]]; then
     args=(node --name finalize --backend npu --devices "$device" task -c "$run_dir/cases.json"
           -p "$op_dir/executor_chunk_gated_delta_rule_bwd_finalize.py" --task accuracy_dc
@@ -61,7 +62,7 @@ else
 fi
 command=("${atk_cmd[@]}" "${args[@]}")
 if [[ "$scope" == mssanitizer ]]; then
-    command=(mssanitizer --tool="${MSS_TOOL:-memcheck}" -- "${command[@]}")
+    command=(mssanitizer --tool="${MSS_TOOL:-memcheck}" --log-file="$run_dir/mssanitizer.log" --log-level=info -- "${command[@]}")
 fi
 printf '%q ' "${command[@]}" > "$run_dir/command.txt"
 printf '\n' >> "$run_dir/command.txt"

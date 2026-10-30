@@ -442,9 +442,13 @@ def _arch22_payload(case_id: int, spec: dict, seed: int) -> dict:
     for name, value in attrs.items():
         dtype = "bool" if isinstance(value, bool) else "int" if isinstance(value, int) else "float"
         inputs.append(_input(name, dtype, value))
+    standard = deepcopy(STANDARD)
+    standard["acc"] = {"mixed_tolerance_bm": {"output_dtype_overrides": {
+        "0": "bf16", "1": "bf16", "2": "bf16", "3": gt, "4": gt,
+    }}}
     return dict(id=case_id, default_seed=seed, name=f"{OP_NAME}_{case_id:04d}_{spec['case_key']}_seed{seed}",
                 aclnn_name=None, version="v2.1", api="pytorch", api_type=ARCH22_API,
-                expected_error_msg=None, backward=False, standard=deepcopy(STANDARD),
+                expected_error_msg=None, backward=False, standard=standard,
                 outputs=None, inputs=inputs, save_name=OP_NAME)
 
 

@@ -85,6 +85,8 @@ bash tests/atk/run_test_cpu.sh -op=chunk_gated_delta_rule_bwd_finalize -scope=ge
 新增 `executor_chunk_gated_delta_rule_bwd_finalize_arch22` 独立注册，使用真实公开输入与属性，
 不新增 `case_spec` 或用来替代真实 shape 的控制字段。`cu_seqlens/chunk_indices` 是公开的
 int64 列表参数，以 `non_param` JSON 列表字面量存储后解码成列表；不是随机整数张量。
+ATK 在 `before_call` 过滤该通道之前，先调用 executor 的 `init_by_input_data`；此时已将
+真实元数据量化/解析并缓存到 `actual/case/data`，后续调用使用该缓存，不重新读取被过滤的字段。
 
 | 正式资产 | 新增 A2/A3 | 原 A5 | 合计 |
 | --- | ---: | ---: | ---: |
@@ -114,6 +116,15 @@ int64 列表参数，以 `non_param` JSON 列表字面量存储后解码成列�
   不把中间量或输出降成 BF16/FP32。ATK 原生 `mixed_tolerance_bm` 保持不变，
   lowp 成功不能替代或遮盖 NPU 对 FP64 的失败。
 - 三个角色均记录同一公开输入的 SHA，只有摘要进入回执，不保存张量。
+- DUT 先严格校验原生输出 dtype；lowp 的 `dq/dk/dv` 按 BF16、`dbeta/dg` 按公开 GT
+  保留 BF16 或 FP32 数值。三个角色交 ATK 的比较载体统一无损升为 FP64，真 FP64
+  golden 的计算、中间量与结果始终保持 FP64，不通过降精度绕开框架检查。
+- ATK 26.9.8 的前置 dtype 检查不接受 BF16/FP32 与 FP64 配对。每条新 case 使用官方
+  `standard.acc={"mixed_tolerance_bm":{"output_dtype_overrides":...}}`，输出 0/1/2 固定
+  `bf16`，输出 3/4 按该 case 的真实 GT 声明 `bf16` 或 `fp32`。只选择原有 ABI
+  dtype 对应标准，不修改任何阈值，也不让 FP64 载体落入其他比较方法。
+- 输出回执的 `dtype/sha256` 保留原生或 CPU 生产值；`comparison_dtype/comparison_sha256`
+  单列实际交给 ATK 的 FP64 载体。BF16 原生 SHA 仅用独立 FP32 临时副本计算。
 
 新增矩阵保留原 q/k `[-0.2,0.2]`、v `[-0.5,0.5]`、gradient/state/A
 `[-0.03,0.03]`、g/beta/beta_raw `[-0.09,0.09]`，未收窄范围或提高阈值。
@@ -203,7 +214,10 @@ bash tests/atk/chunk_gated_delta_rule_bwd_finalize/scripts/run_arch22.sh keys 0 
 ```
 
 worker 首次调用核 binding 原始 SHA、frozen、源码 HEAD/clean、完整 installed_files 成员/字节/SHA，
-并核实际 `fla_npu.__file__`、实际加载的 cust_opapi 及相关库均属于该安装树。
+并核实际 `fla_npu.__file__`、目标双符号解析到的 cust_opapi 及该安装树内库的实测 SHA；
+允许的 CANN 默认 registry/proto 库按精确路径单列 `external_dependencies`。
+DUT 成功调用后刷新身份，要求新包 tiling 库已映射且 SHA 匹配，独立保存新的 maps 快照；
+库映射不能证明回调被选中，还须与该 case 的真实 `actualKey` Host 标记联合核验。
 每个 DUT 回执记录实测身份、库 SHA 与 `/proc/self/maps` 原件；CPU 角色不加载 NPU 库。
 仅请求中的 `SOURCE_COMMIT/BINDING_SHA` 环境值不能充当实测证据。
 
@@ -212,6 +226,8 @@ worker 首次调用核 binding 原始 SHA、frozen、源码 HEAD/clean、完整 
 默认后验盘点拒绝 tensor 归档和符号链接；不通过删除数据后改判 no-save。
 `summary.json` 只有原生结果、角色完整性、实测身份、同输入 SHA 与 no-save 均满足时才写 pass。
 204 个新精度 case 是 68 种小 shape ×3 seed；MSS 仅 40 条，不扩展成全形状开关笛卡尔积。
+MSS 外层 `--log-file` 与 ATK 的 `-msl` 使用同一个新日志文件，保留 info 级工具记录；
+不得通过创建空日志或只检查 ATK 退出码代替实际 sanitizer 覆盖和错误检查。
 MSS 运行时间尚未实测；建议预留 10–20 分钟，实际总时长按原日志统计，不能把估计当验收耗时。
 
 ### 真实 Host 负向

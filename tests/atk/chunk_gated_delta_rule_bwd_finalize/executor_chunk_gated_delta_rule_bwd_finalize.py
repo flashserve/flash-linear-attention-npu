@@ -223,9 +223,9 @@ def _arch22_value(value):
     return value.decode("utf-8") if isinstance(value, bytes) else value
 
 
-def _arch22_runtime_identity():
+def _arch22_runtime_identity(*, require_tiling=False, refresh=False):
     from arch22_identity import _arch22_runtime_identity as identity
-    return identity()
+    return identity(require_tiling=require_tiling, refresh=refresh)
 
 
 def _arch22_input_identity(actual):
@@ -308,22 +308,32 @@ class Arch22FunctionApi(BaseApi):
             fn = _ARCH22.finalize_cpu_fp64 if self.role == "fp64" else _ARCH22.finalize_cpu_lowp
             result = fn(self.case, self.data)
             values = [torch.from_numpy(np.ascontiguousarray(result[name])) for name in _ARCH22.OUTPUT_NAMES]
+            if self.role == "lowp":
+                # NumPy 用 FP32 表示已经舍入的 BF16 值；交 ATK 前恢复公开 ABI dtype。
+                gate_dtype = torch.bfloat16 if self.gate_dtype == "bf16" else torch.float32
+                dtypes = (torch.bfloat16, torch.bfloat16, torch.bfloat16, gate_dtype, gate_dtype)
+                values = [value.to(dtype) for value, dtype in zip(values, dtypes)]
         outputs, metadata = [], {}
         for name, value in zip(_ARCH22.OUTPUT_NAMES, values):
             value = value.detach().cpu()
-            if value.dtype == torch.bfloat16:
-                value = value.float()
             if not torch.isfinite(value).all().item():
                 raise RuntimeError(f"A2/A3 {self.role}/{name}: nonfinite output")
+            # NumPy 不支持 BF16；只把独立临时副本用于摘要，保留生产角色的 dtype 记录。
+            hash_value = value.float() if value.dtype == torch.bfloat16 else value
+            # ATK 26.9.8 的前置 dtype 检查要求与真 FP64 golden 使用同一表示。
+            # BF16/FP32 -> FP64 无损；判据由每条 case 的公开 ABI dtype override 决定。
+            comparison_value = value.to(torch.float64)
             metadata[name] = dict(shape=list(value.shape), dtype=str(value.dtype),
-                                  sha256=hashlib.sha256(value.contiguous().numpy().tobytes()).hexdigest())
-            outputs.append(value)
+                                  sha256=hashlib.sha256(hash_value.contiguous().numpy().tobytes()).hexdigest(),
+                                  comparison_dtype=str(comparison_value.dtype),
+                                  comparison_sha256=hashlib.sha256(comparison_value.contiguous().numpy().tobytes()).hexdigest())
+            outputs.append(comparison_value)
         record = dict(case_id=self.case_id, role=self.role, input_sha256=self.input_sha256,
                       seconds=time.monotonic() - begin, outputs=metadata,
                       reference_sha256=_ARCH22.REFERENCE_ARTIFACT_SHA256,
                       cpu_lowp_precision=_ARCH22.cpu_lowp_precision_ledger() if self.role == "lowp" else None)
         if self.role == "dut":
-            record["runtime"] = _arch22_runtime_identity()
+            record["runtime"] = _arch22_runtime_identity(require_tiling=True, refresh=True)
             record["measured_identity"] = record["runtime"]["measured_identity"]
         folder = os.getenv("FINALIZE_CPU_EVIDENCE")
         if folder:

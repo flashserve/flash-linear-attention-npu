@@ -80610,7 +80610,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -80880,7 +80890,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -81150,7 +81170,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -81420,7 +81450,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -81690,7 +81730,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -81960,7 +82010,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -82230,7 +82290,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -82516,7 +82586,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -82802,7 +82882,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -83088,7 +83178,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -83374,7 +83474,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -83660,7 +83770,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -83946,7 +84066,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -84248,7 +84378,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -84550,7 +84690,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -84852,7 +85002,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -85154,7 +85314,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -85456,7 +85626,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -85758,7 +85938,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -86076,7 +86266,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -86394,7 +86594,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -86712,7 +86922,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -87030,7 +87250,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -87348,7 +87578,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -87666,7 +87906,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -87936,7 +88186,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -88206,7 +88466,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -88476,7 +88746,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -88746,7 +89026,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -89016,7 +89306,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -89286,7 +89586,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -89572,7 +89882,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -89858,7 +90178,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -90144,7 +90474,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -90430,7 +90770,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -90716,7 +91066,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -91002,7 +91362,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -91304,7 +91674,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -91606,7 +91986,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -91908,7 +92298,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -92210,7 +92610,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -92512,7 +92922,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -92814,7 +93234,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -93132,7 +93562,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -93450,7 +93890,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -93768,7 +94218,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -94086,7 +94546,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -94404,7 +94874,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -94722,7 +95202,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -94992,7 +95482,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -95262,7 +95762,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -95532,7 +96042,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -95802,7 +96322,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -96072,7 +96602,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -96342,7 +96882,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -96628,7 +97178,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -96914,7 +97474,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -97200,7 +97770,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -97486,7 +98066,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -97772,7 +98362,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -98058,7 +98658,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -98360,7 +98970,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -98662,7 +99282,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -98964,7 +99594,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -99266,7 +99906,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -99568,7 +100218,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -99870,7 +100530,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -100188,7 +100858,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -100506,7 +101186,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -100824,7 +101514,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -101142,7 +101842,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -101460,7 +102170,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -101778,7 +102498,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -102048,7 +102778,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -102318,7 +103058,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -102588,7 +103338,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -102858,7 +103618,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -103128,7 +103898,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -103398,7 +104178,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -103684,7 +104474,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -103970,7 +104770,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -104256,7 +105066,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -104542,7 +105362,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -104828,7 +105658,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -105114,7 +105954,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -105416,7 +106266,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -105718,7 +106578,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -106020,7 +106890,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -106322,7 +107202,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -106624,7 +107514,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -106926,7 +107826,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -107244,7 +108154,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -107562,7 +108482,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -107880,7 +108810,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -108198,7 +109138,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -108516,7 +109466,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -108834,7 +109794,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -109122,7 +110092,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -109410,7 +110390,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -109698,7 +110688,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -109986,7 +110986,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -110274,7 +111284,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -110562,7 +111582,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -110866,7 +111896,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -111170,7 +112210,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -111474,7 +112524,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -111778,7 +112838,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -112082,7 +113152,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -112386,7 +113466,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -112706,7 +113796,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -113026,7 +114126,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -113346,7 +114456,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -113666,7 +114786,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -113986,7 +115116,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -114306,7 +115446,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -114642,7 +115792,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -114978,7 +116138,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -115314,7 +116484,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -115650,7 +116830,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -115986,7 +117176,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -116322,7 +117522,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -116610,7 +117820,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -116898,7 +118118,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -117186,7 +118416,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -117474,7 +118714,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -117762,7 +119012,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -118050,7 +119310,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -118354,7 +119624,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -118658,7 +119938,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -118962,7 +120252,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -119266,7 +120566,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -119570,7 +120880,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -119874,7 +121194,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -120194,7 +121524,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -120514,7 +121854,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -120834,7 +122184,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -121154,7 +122514,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -121474,7 +122844,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -121794,7 +123174,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -122130,7 +123520,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -122466,7 +123866,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -122802,7 +124212,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -123138,7 +124558,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -123474,7 +124904,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -123810,7 +125250,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -124098,7 +125548,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -124386,7 +125846,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -124674,7 +126144,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -124962,7 +126442,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -125250,7 +126740,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -125538,7 +127038,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -125842,7 +127352,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -126146,7 +127666,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -126450,7 +127980,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -126754,7 +128294,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -127058,7 +128608,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -127362,7 +128922,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -127682,7 +129252,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -128002,7 +129582,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -128322,7 +129912,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -128642,7 +130242,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -128962,7 +130572,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -129282,7 +130902,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -129618,7 +131248,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -129954,7 +131594,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -130290,7 +131940,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -130626,7 +132286,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -130962,7 +132632,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -131298,7 +132978,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -131586,7 +133276,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -131874,7 +133574,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -132162,7 +133872,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -132450,7 +134170,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -132738,7 +134468,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -133026,7 +134766,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -133330,7 +135080,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -133634,7 +135394,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -133938,7 +135708,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -134242,7 +136022,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -134546,7 +136336,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -134850,7 +136650,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -135170,7 +136980,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -135490,7 +137310,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -135810,7 +137640,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -136130,7 +137970,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -136450,7 +138300,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -136770,7 +138630,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -137106,7 +138976,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -137442,7 +139322,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -137778,7 +139668,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -138114,7 +140014,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -138450,7 +140360,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -138786,7 +140706,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -139056,7 +140986,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -139326,7 +141266,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -139596,7 +141546,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -139914,7 +141874,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -140232,7 +142202,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -140550,7 +142530,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -140820,7 +142810,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -141090,7 +143090,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "bf16",
+            "4": "bf16"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -141360,7 +143370,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -141696,7 +143716,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -142032,7 +144062,17 @@
     "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "mixed_tolerance_bm": {
+          "output_dtype_overrides": {
+            "0": "bf16",
+            "1": "bf16",
+            "2": "bf16",
+            "3": "fp32",
+            "4": "fp32"
+          }
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
