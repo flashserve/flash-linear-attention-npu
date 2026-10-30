@@ -1018,7 +1018,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
     fi
 """,
         )
-        fixture += "\nrun_case parallelism all false 0 success success,success,skipped,success,success,skipped true\n"
+        fixture += "\nrun_case parallelism all false 0 success success,success,skipped,success,success true\n"
         for soc in ("ascend910b", "ascend950"):
             with self.subTest(soc=soc), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)

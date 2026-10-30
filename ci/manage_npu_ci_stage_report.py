@@ -80,8 +80,8 @@ def _update_timing_table(payload: dict[str, Any]) -> None:
                 writer.writeheader()
                 writer.writerows(rows)
                 stream.flush()
-                os.fsync(stream.fileno())
                 os.fchmod(stream.fileno(), 0o644)
+                os.fsync(stream.fileno())
             temporary.replace(path)
             directory_fd = os.open(path.parent, os.O_RDONLY)
             try:
