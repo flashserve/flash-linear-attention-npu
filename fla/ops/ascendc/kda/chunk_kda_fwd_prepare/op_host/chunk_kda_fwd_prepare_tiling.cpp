@@ -554,7 +554,8 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     const uint64_t aicCoreNum = platform.GetCoreNumAic();
     const bool isAscend950 =
-        platform.GetCurNpuArch() == NpuArch::DAV_3510;
+        platform.GetCurNpuArch() == NpuArch::DAV_3510 ||
+        platform.GetCurNpuArch() == NpuArch::DAV_9201;
     const bool useArch22TargetVariant =
         KdaPrepare::Arch22TargetConfig::Matches({
             static_cast<uint64_t>(shape.batch),
