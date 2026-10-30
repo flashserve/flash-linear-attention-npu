@@ -679,6 +679,13 @@ __aicore__ inline void RunPhase6(
         } else {
             kktCube.Process(resource, k, cuSeqlens, chunkIndices, scoreWorkspace, &abc);
         }
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+        if constexpr (!kPreparedCumsum) {
+            // raw0 的 Front 可能跨组读 score，先汇合全部 AIC 的 FIX 写回。
+            AscendC::CrossCoreSetFlag<0x0, PIPE_FIX>(SCORE_READY_FLAG);
+            AscendC::CrossCoreWaitFlag(SCORE_READY_FLAG);
+        }
+#endif
         AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(SCORE_READY_FLAG);
     }
     if ASCEND_IS_AIV {
