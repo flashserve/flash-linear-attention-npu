@@ -28,7 +28,7 @@ const std::array<const aclTensor *, 5> ChunkKdaBwdRecompute(
     const aclTensor *qgOut,
     const aclTensor *kgOut,
     const aclTensor *gkOut,
-    aclOpExecutor *executor);
+    aclOpExecutor *executor, const char *modelLayout = "", bool qkHeadMajor = false);
 } // namespace l0op
 
 #endif

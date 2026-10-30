@@ -48,6 +48,8 @@ public:
         this->Attr("use_exp2").AttrType(REQUIRED).Bool(true);
         this->Attr("lower_bound").AttrType(REQUIRED).Float(-5.0);
         this->Attr("input_layout").AttrType(OPTIONAL).String("BNSD");
+        this->Attr("model_layout").AttrType(OPTIONAL).String("");
+        this->Attr("qk_head_major").AttrType(OPTIONAL).Bool(false);
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)

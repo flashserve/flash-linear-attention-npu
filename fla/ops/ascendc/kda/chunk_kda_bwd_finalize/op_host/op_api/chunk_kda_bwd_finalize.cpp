@@ -25,7 +25,7 @@ const std::array<const aclTensor *, 7> ChunkKdaBwdFinalize(
     const aclTensor *dqOut, const aclTensor *dkOut, const aclTensor *dvOut,
     const aclTensor *dBetaOut, const aclTensor *dGOut,
     const aclTensor *dALogOut, const aclTensor *dDtBiasOut,
-    aclOpExecutor *executor)
+    aclOpExecutor *executor, const char *modelLayout)
 {
     L0_DFX(ChunkKdaBwdFinalize,
            q, k, v, gk, rawG, beta, aLog, dtBias, akk,
@@ -60,7 +60,7 @@ const std::array<const aclTensor *, 7> ChunkKdaBwdFinalize(
     for (auto *output : requested) if (!output) return empty;
     // Generate metadata once on Host; both direct L0 and ACLNN use this path.
     if (cuSeqlensOptional) {
-        const int64_t tokens = q->GetViewShape().GetDim(rank - 2);
+        const int64_t tokens = gk->GetViewShape().GetDim(rank - 2);
         const size_t size = cuSeqlensOptional->Size();
         if (tokens <= 0 || chunkSize != 64 || size < 2 ||
             (!rank3 && q->GetViewShape().GetDim(0) != 1) ||
@@ -113,7 +113,7 @@ const std::array<const aclTensor *, 7> ChunkKdaBwdFinalize(
         OP_OUTPUT(dqOut, dkOut, dvOut, dBetaOut, dGOut, dALogOut, dDtBiasOut),
         OP_ATTR(scale, lowerBound, chunkSize, safeGate,
                 useGateInKernel, useExp2, stateVFirst,
-                useBetaSigmoidInKernel, allowNegEigval, outputLayout));
+                useBetaSigmoidInKernel, allowNegEigval, outputLayout, modelLayout));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID,
                 "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaBwdFinalize failed");

@@ -1,17 +1,17 @@
 #include "aclnn_chunk_kda_bwd.h"
 
 #include "chunk_kda_bwd.h"
+#include "aclnn_kernels/cast.h"
+#include "aclnn_kernels/contiguous.h"
+#include "opdev/tensor_view_utils.h"
 #ifdef KDA_BWD_STAGES_ARCH22
 #include "../../../chunk_kda_bwd_prepare/op_host/op_api/chunk_kda_bwd_prepare.h"
 #include "../../../chunk_kda_bwd_finalize/op_host/op_api/chunk_kda_bwd_finalize.h"
 #include "../../../chunk_kda_bwd_recompute/op_host/op_api/chunk_kda_bwd_recompute.h"
 #include "../../../../gdn/chunk_gdn_fwd/chunk_fwd_h/op_host/op_api/chunk_fwd_h.h"
 #include "../../../../gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_dhu/op_host/op_api/chunk_gated_delta_rule_bwd_dhu.h"
-#include "aclnn_kernels/cast.h"
-#include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/reshape.h"
 #include "aclnn_kernels/transpose.h"
-#include "opdev/tensor_view_utils.h"
 #endif
 
 #include <initializer_list>
@@ -101,12 +101,6 @@ const aclTensor *BatchView(const aclTensor *tensor, bool packed, aclOpExecutor *
     return l0op::Reshape(tensor, shape, executor);
 }
 
-const aclTensor *ToFloat32(const aclTensor *tensor, aclOpExecutor *executor)
-{
-    if (!tensor || tensor->GetDataType() == DataType::DT_FLOAT) return tensor;
-    return l0op::Cast(tensor, DataType::DT_FLOAT, executor);
-}
-
 bool CopyGradient(const aclTensor *source, const aclTensor *target, aclOpExecutor *executor)
 {
     if (!source || !target) return false;
@@ -141,7 +135,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     bool useGateInKernel, double lowerBound,
     bool disableRecompute, bool useExp2, bool stateVFirst,
     const aclTensor *qRstdOptional, const aclTensor *kRstdOptional,
-    const char *inputLayout, const char *outputLayout,
+    const aclTensor *betaEffOptional, const char *layout,
     bool useBetaSigmoidInKernel, bool allowNegEigval,
     const aclTensor *dqOut, const aclTensor *dkOut,
     const aclTensor *dvOut, const aclTensor *dbOut,
@@ -157,8 +151,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
                initialStateOptional, dhtOptional, cuSeqlensOptional,
                chunkIndicesOptional, scale, chunkSize, safeGate,
                useGateInKernel, lowerBound, disableRecompute, useExp2,
-               stateVFirst, qRstdOptional, kRstdOptional, inputLayout,
-               outputLayout, useBetaSigmoidInKernel, allowNegEigval),
+               stateVFirst, qRstdOptional, kRstdOptional, betaEffOptional, layout, useBetaSigmoidInKernel, allowNegEigval),
         DFX_OUT(dqOut, dkOut, dvOut, dbOut, dgOut, dh0OutOptional,
                 dAOutOptional, dBiasOutOptional));
 
@@ -184,21 +177,16 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     CHECK_COND(std::isfinite(static_cast<float>(scale)) &&
                    std::isfinite(static_cast<float>(lowerBound)),
                ACLNN_ERR_PARAM_INVALID, "scale/lower_bound must be finite.");
-    const bool packed = cuSeqlensOptional != nullptr;
-    const bool inputTokenMajor = inputLayout &&
-        std::strcmp(inputLayout, packed ? "TND" : "BSND") == 0;
-    const bool outputTokenMajor = outputLayout &&
-        std::strcmp(outputLayout, packed ? "TND" : "BSND") == 0;
-    CHECK_COND(inputLayout && (inputTokenMajor ||
-                   std::strcmp(inputLayout, packed ? "NTD" : "BNSD") == 0) &&
-                   outputLayout && (outputTokenMajor ||
-                   std::strcmp(outputLayout, packed ? "NTD" : "BNSD") == 0),
-               ACLNN_ERR_PARAM_INVALID, "layout does not match dense/packed input.");
-    CHECK_COND(disableRecompute || !inputTokenMajor, ACLNN_ERR_PARAM_INVALID,
-               "Recompute input_layout must be BNSD or NTD.");
+    const bool variable = cuSeqlensOptional != nullptr;
+    const bool packed = layout && (std::strcmp(layout, "NTD") == 0 || std::strcmp(layout, "TND") == 0);
+    const bool inputTokenMajor = layout && (std::strcmp(layout, "BSND") == 0 || std::strcmp(layout, "TND") == 0);
+    CHECK_COND(layout && (packed || std::strcmp(layout, "BNSD") == 0 || std::strcmp(layout, "BSND") == 0),
+               ACLNN_ERR_PARAM_INVALID, "layout must be BNSD, BSND, NTD or TND.");
     const auto &vs = v->GetViewShape();
-    CHECK_COND(vs.GetDimNum() == (packed ? 3U : 4U),
-               ACLNN_ERR_PARAM_INVALID, "Invalid Token rank.");
+    CHECK_COND(vs.GetDimNum() == (packed ? 3U : 4U) && (!packed || variable),
+               ACLNN_ERR_PARAM_INVALID, "Layout rank mismatch; 3D calls require cu_seqlens.");
+    CHECK_COND(!variable || packed || vs.GetDim(0) == 1,
+               ACLNN_ERR_PARAM_INVALID, "4D varlen calls require B=1.");
     const size_t base = packed ? 0 : 1;
     const int64_t B = packed ? 1 : vs.GetDim(0);
     const int64_t H = vs.GetDim(base + (inputTokenMajor ? 1 : 0));
@@ -212,52 +200,54 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     const auto matrix = packed ? MakeShape({H,T,64}) : MakeShape({B,H,T,64});
     const auto externalToken = inputTokenMajor ?
         (packed ? MakeShape({T,H,128}) : MakeShape({B,T,H,128})) : token;
-    const auto outputToken = outputTokenMajor ?
+    const auto outputToken = inputTokenMajor ?
         (packed ? MakeShape({T,H,128}) : MakeShape({B,T,H,128})) : token;
-    const auto outputScalar = outputTokenMajor ?
-        (packed ? MakeShape({T,H}) : MakeShape({B,T,H})) : scalar;
+    const auto gateToken = packed ? MakeShape({T,H,128}) : MakeShape({B,T,H,128});
+    const auto gateScalar = packed ? MakeShape({T,H}) : MakeShape({B,T,H});
+    const auto betaShape = gateScalar;
     CHECK_COND(MatchesTensor(q, qRstdOptional ? token : externalToken, DataType::DT_BF16) &&
                    MatchesTensor(k, kRstdOptional ? token : externalToken, DataType::DT_BF16) &&
                    MatchesTensor(v, externalToken, DataType::DT_BF16) &&
-                   MatchesTensor(dO, externalToken, DataType::DT_BF16) &&
+                   MatchesTensor(dO, gateToken, DataType::DT_BF16) &&
                    MatchesTensor(aqk, matrix, DataType::DT_BF16) &&
                    MatchesTensor(akk, matrix, DataType::DT_BF16),
                ACLNN_ERR_PARAM_INVALID, "Invalid BF16 inputs or fixed head-major caches.");
-    CHECK_COND(MatchesTensor(beta, scalar, DataType::DT_BF16) ||
-                   MatchesTensor(beta, scalar, DataType::DT_FLOAT),
-               ACLNN_ERR_PARAM_INVALID, "beta must be head-major BF16/FP32 effective beta.");
+    CHECK_COND(MatchesTensor(beta, betaShape, DataType::DT_BF16) ||
+                   MatchesTensor(beta, betaShape, DataType::DT_FLOAT),
+               ACLNN_ERR_PARAM_INVALID, "beta must be the original token-major BF16/FP32 input.");
+    CHECK_COND(useBetaSigmoidInKernel
+                   ? MatchesTensor(betaEffOptional, scalar, DataType::DT_FLOAT)
+                   : betaEffOptional == nullptr,
+               ACLNN_ERR_PARAM_INVALID,
+               "Fused sigmoid requires FP32 head-major beta_eff; otherwise beta_eff must be null.");
     CHECK_COND(!qRstdOptional ||
                    (MatchesTensor(qRstdOptional, scalar, DataType::DT_FLOAT) &&
                     MatchesTensor(kRstdOptional, scalar, DataType::DT_FLOAT)),
                ACLNN_ERR_PARAM_INVALID, "rstd must be a head-major FP32 pair.");
-    for (const auto *out : {dqOut, dkOut}) {
-        CHECK_COND(MatchesTensor(out, outputToken, DataType::DT_FLOAT) ||
-                       MatchesTensor(out, outputToken, DataType::DT_BF16),
-                   ACLNN_ERR_PARAM_INVALID, "dq/dk shape or dtype mismatch.");
-    }
+    CHECK_COND(MatchesTensor(dqOut, outputToken, q->GetDataType()) &&
+                   MatchesTensor(dkOut, outputToken, k->GetDataType()),
+               ACLNN_ERR_PARAM_INVALID, "dq/dk must match layout and q/k dtype.");
     CHECK_COND(MatchesTensor(dvOut, outputToken, DataType::DT_BF16) &&
-                   (MatchesTensor(dbOut, outputScalar, DataType::DT_FLOAT) ||
-                    MatchesTensor(dbOut, outputScalar, DataType::DT_BF16)) &&
-                   MatchesTensor(dgOut, outputToken, DataType::DT_FLOAT),
-               ACLNN_ERR_PARAM_INVALID, "Invalid public gradient descriptors.");
+                   MatchesTensor(dbOut, gateScalar, beta->GetDataType()) &&
+                   MatchesTensor(dgOut, gateToken, rawGOptional ? rawGOptional->GetDataType() : DataType::DT_FLOAT),
+               ACLNN_ERR_PARAM_INVALID, "dv/db/dg must match layout.");
     CHECK_COND(!useGateInKernel ||
-                   ((MatchesTensor(rawGOptional, externalToken, DataType::DT_FLOAT) ||
-                     MatchesTensor(rawGOptional, externalToken, DataType::DT_BF16)) &&
-                    (MatchesTensor(aLogOptional, MakeShape({H}), DataType::DT_FLOAT) ||
-                     MatchesTensor(aLogOptional, MakeShape({H}), DataType::DT_BF16))),
-               ACLNN_ERR_PARAM_INVALID, "raw_g and a_log are required for gate backward.");
+                   ((MatchesTensor(rawGOptional, gateToken, DataType::DT_FLOAT) ||
+                     MatchesTensor(rawGOptional, gateToken, DataType::DT_BF16)) &&
+                    MatchesTensor(aLogOptional, MakeShape({H}), DataType::DT_FLOAT)),
+               ACLNN_ERR_PARAM_INVALID, "raw_g must be BF16/FP32 and a_log must be FP32 for gate backward.");
     CHECK_COND(!dtBiasOptional ||
                    (dtBiasOptional->GetDataType() == DataType::DT_FLOAT &&
                     IsContiguous(dtBiasOptional) && dtBiasOptional->GetViewShape().GetShapeSize() == H * 128),
                ACLNN_ERR_PARAM_INVALID, "dt_bias must be contiguous FP32 with H*K elements.");
-    CHECK_COND(!dAOutOptional || MatchesTensor(dAOutOptional, MakeShape({H}), DataType::DT_FLOAT),
+    CHECK_COND(!dAOutOptional || (aLogOptional && MatchesTensor(dAOutOptional, MakeShape({H}), DataType::DT_FLOAT)),
                ACLNN_ERR_PARAM_INVALID, "Invalid dA output.");
     CHECK_COND(!dBiasOutOptional || (dtBiasOptional && IsContiguous(dBiasOutOptional) &&
                    dBiasOutOptional->GetDataType() == DataType::DT_FLOAT &&
                    dBiasOutOptional->GetViewShape().GetShapeSize() == H * 128),
                ACLNN_ERR_PARAM_INVALID, "Invalid dbias output.");
     int64_t nc = (T + 63) / 64;
-    if (packed) {
+    if (variable) {
         const auto *cu = cuSeqlensOptional;
         const auto *indices = chunkIndicesOptional;
         CHECK_COND(cu->Size() >= 2 && cu->Size() <= 1025 &&
@@ -295,20 +285,16 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get(), ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto *ex = uniqueExecutor.get();
-    NormalizeOriginalShapes({q, k, v, beta, gk, aqk, akk, wOptional, qgOptional,
+    NormalizeOriginalShapes({q, k, v, beta, betaEffOptional, gk, aqk, akk, wOptional, qgOptional,
         kgOptional, vNewOptional, hOptional, dO, rawGOptional, aLogOptional,
         dtBiasOptional, qRstdOptional, kRstdOptional, dqOut, dkOut, dvOut, dbOut,
         dgOut, dAOutOptional, dBiasOutOptional});
     auto alloc = [&](const op::Shape &shape, DataType type) {
         return ex->AllocTensor(shape, type, Format::FORMAT_ND);
     };
-    const auto *qHead = inputTokenMajor && !qRstdOptional ? SwapHeadToken(q, packed, ex) : q;
-    const auto *kHead = inputTokenMajor && !kRstdOptional ? SwapHeadToken(k, packed, ex) : k;
-    const auto *vHead = inputTokenMajor ? SwapHeadToken(v, packed, ex) : v;
-    const auto *dOHead = inputTokenMajor ? SwapHeadToken(dO, packed, ex) : dO;
-    const auto *rawHead = inputTokenMajor && rawGOptional ? SwapHeadToken(rawGOptional, packed, ex) : rawGOptional;
-    CHECK_RET(qHead && kHead && vHead && dOHead && (!rawGOptional || rawHead),
-              ACLNN_ERR_INNER_NULLPTR);
+    // Recompute and Finalize share one head-major beta input.
+    const auto *betaHead = useBetaSigmoidInKernel ? betaEffOptional : SwapHeadToken(beta, packed, ex);
+    CHECK_RET(betaHead, ACLNN_ERR_INNER_NULLPTR);
     const aclTensor *aLog = aLogOptional;
     const aclTensor *dtBias = dtBiasOptional;
     if (!dtBias) {
@@ -323,9 +309,11 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     const aclTensor *w = wOptional, *qg = qgOptional, *kg = kgOptional;
     const aclTensor *vNew = vNewOptional, *h = hOptional;
     if (!disableRecompute) {
-        rawHead = ToFloat32(rawHead, ex);
-        aLog = ToFloat32(aLog, ex);
-        CHECK_RET(rawHead, ACLNN_ERR_INNER_NULLPTR);
+        // Recompute promotes BF16 raw gates to FP32 on-chip.
+        const auto *rawRecompute = rawGOptional;
+        const auto *logRecompute = aLog;
+        const auto *biasRecompute = dtBias;
+        CHECK_RET(rawRecompute && logRecompute && biasRecompute, ACLNN_ERR_INNER_NULLPTR);
         w = alloc(token, DataType::DT_BF16);
         qg = alloc(token, DataType::DT_BF16);
         kg = alloc(token, DataType::DT_BF16);
@@ -335,11 +323,11 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         const auto *u = alloc(token, DataType::DT_BF16);
         CHECK_RET(w && qg && kg && vNew && h && gk && u, ACLNN_ERR_INNER_NULLPTR);
         const auto result = l0op::ChunkKdaBwdRecompute(
-            BatchView(qHead, packed, ex), BatchView(kHead, packed, ex), BatchView(vHead, packed, ex),
-            BatchView(rawHead, packed, ex), BatchView(beta, packed, ex), BatchView(akk, packed, ex),
-            aLog, dtBias, cuSeqlensOptional, chunkIndicesOptional, chunkSize, useGateInKernel,
-            useExp2, lowerBound, inputLayout, BatchView(w, packed, ex), BatchView(u, packed, ex),
-            BatchView(qg, packed, ex), BatchView(kg, packed, ex), BatchView(gk, packed, ex), ex);
+            BatchView(q, packed, ex), BatchView(k, packed, ex), BatchView(v, packed, ex),
+            BatchView(rawRecompute, packed, ex), BatchView(betaHead, packed, ex), BatchView(akk, packed, ex),
+            logRecompute, biasRecompute, cuSeqlensOptional, chunkIndicesOptional, chunkSize, useGateInKernel,
+            useExp2, lowerBound, packed ? "NTD" : "BNSD", BatchView(w, packed, ex), BatchView(u, packed, ex),
+            BatchView(qg, packed, ex), BatchView(kg, packed, ex), BatchView(gk, packed, ex), ex, layout, qRstdOptional != nullptr);
         for (const auto *value : result) {
             CHECK_RET(value, ACLNN_ERR_INNER_NULLPTR);
         }
@@ -356,14 +344,12 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     const auto *dh = alloc(state, DataType::DT_BF16);
     const auto *dvScan = alloc(token, DataType::DT_BF16);
     CHECK_RET(dAqk && dvLocal && dqRaw && dh && dvScan, ACLNN_ERR_INNER_NULLPTR);
-    // Saved caches stay head-major. Prepare's three inputs must share its layout.
-    const auto *aqkPrepare = disableRecompute && inputTokenMajor ? SwapHeadToken(aqk, packed, ex) : aqk;
-    const auto *vNewPrepare = disableRecompute && inputTokenMajor ? SwapHeadToken(vNew, packed, ex) : vNew;
-    CHECK_RET(aqkPrepare && vNewPrepare, ACLNN_ERR_INNER_NULLPTR);
-    const char *prepareLayout = disableRecompute ? inputLayout : (packed ? "NTD" : "BNSD");
+    // Public do is token-major; Prepare and Dhu share one head-major copy.
+    const auto *dOHead = SwapHeadToken(dO, packed, ex);
+    CHECK_RET(dOHead, ACLNN_ERR_INNER_NULLPTR);
     const auto prepare = l0op::ChunkKdaBwdPrepare(
-        aqkPrepare, vNewPrepare, disableRecompute ? dO : dOHead, h,
-        cuSeqlensOptional, chunkIndicesOptional, prepareLayout, scale, chunkSize, stateVFirst,
+        aqk, vNew, dOHead, h,
+        cuSeqlensOptional, chunkIndicesOptional, packed ? "NTD" : "BNSD", scale, chunkSize, stateVFirst,
         dAqk, dvLocal, dqRaw, ex);
     for (const auto *value : prepare) {
         CHECK_RET(value, ACLNN_ERR_INNER_NULLPTR);
@@ -375,51 +361,33 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         scale, chunkSize, useExp2, false, BatchView(dh, packed, ex), nullptr,
         BatchView(dvScan, packed, ex), ex);
     CHECK_RET(scan[0] && scan[2], ACLNN_ERR_INNER_NULLPTR);
-    // Keep gate casts near Finalize, matching the A5 V2 cold-start ordering.
-    rawHead = ToFloat32(rawHead, ex);
-    aLog = ToFloat32(aLog, ex);
-    const auto *betaFinal = ToFloat32(beta, ex);
-    CHECK_RET(betaFinal && (!rawGOptional || rawHead) && (!aLogOptional || aLog),
+    // Finalize converts original gate parameters on-chip.
+    const auto *betaFinal = betaHead;
+    CHECK_RET(betaFinal && (!rawGOptional || rawGOptional) && (!aLogOptional || aLog),
               ACLNN_ERR_INNER_NULLPTR);
-    const auto *dqFinal = dqOut->GetDataType() == DataType::DT_BF16 ? dqOut : alloc(outputToken, DataType::DT_BF16);
-    const auto *dkFinal = dkOut->GetDataType() == DataType::DT_BF16 ? dkOut : alloc(outputToken, DataType::DT_BF16);
-    const auto tokenMajorScalar = packed ? MakeShape({T,H}) : MakeShape({B,T,H});
-    const auto tokenMajorToken = packed ? MakeShape({T,H,128}) : MakeShape({B,T,H,128});
-    const auto *dbFinal = outputTokenMajor && dbOut->GetDataType() == DataType::DT_FLOAT ?
-        dbOut : alloc(tokenMajorScalar, DataType::DT_FLOAT);
-    const auto *dgFinal = outputTokenMajor ? dgOut : alloc(tokenMajorToken, DataType::DT_FLOAT);
+    // Finalize writes q/k/v gradients in layout and gate gradients token-major.
+    const auto *dbFinal = dbOut;
     const auto *dA = dAOutOptional ? dAOutOptional : alloc(MakeShape({H}), DataType::DT_FLOAT);
     const auto *dBias = alloc(MakeShape({H,128}), DataType::DT_FLOAT);
-    CHECK_RET(dqFinal && dkFinal && dbFinal && dgFinal && dA && dBias, ACLNN_ERR_INNER_NULLPTR);
-    NormalizeOriginalShapes({qHead, kHead, vHead, gk, rawHead, betaFinal, aLog, dtBias,
+    CHECK_RET(dbFinal && dA && dBias, ACLNN_ERR_INNER_NULLPTR);
+    NormalizeOriginalShapes({q, k, v, gk, rawGOptional, betaFinal, aLog, dtBias,
         akk, vNew, h, dh, dvScan, dAqk, dqRaw, qRstdOptional, kRstdOptional,
-        dqFinal, dkFinal, dvOut, dbFinal, dgFinal, dA, dBias});
+        dqOut, dkOut, dvOut, dbFinal, dgOut, dA, dBias});
     const auto finalize = l0op::ChunkKdaBwdFinalize(
-        qHead, kHead, vHead, gk, rawHead, betaFinal, aLog, dtBias,
+        q, k, v, gk, rawGOptional, betaFinal, aLog, dtBias,
         akk, vNew, h, dh, dvScan, dAqk, dqRaw, qRstdOptional, kRstdOptional,
         cuSeqlensOptional, chunkIndicesOptional, scale, lowerBound, chunkSize,
         safeGate, useGateInKernel, useExp2, stateVFirst,
-        useBetaSigmoidInKernel, allowNegEigval, outputLayout,
-        dqFinal, dkFinal, dvOut, dbFinal, dgFinal, dA, dBias, ex);
+        useBetaSigmoidInKernel, allowNegEigval, layout,
+        dqOut, dkOut, dvOut, dbFinal, dgOut, dA, dBias, ex, layout);
     for (const auto *value : finalize) {
         CHECK_RET(value, ACLNN_ERR_INNER_NULLPTR);
     }
-    if (!outputTokenMajor) {
-        dbFinal = SwapHeadToken(dbFinal, packed, ex);
-        dgFinal = SwapHeadToken(dgFinal, packed, ex);
-    }
-    CHECK_COND(CopyGradient(dqFinal, dqOut, ex) && CopyGradient(dkFinal, dkOut, ex) &&
-                   CopyGradient(dbFinal, dbOut, ex) && CopyGradient(dgFinal, dgOut, ex) &&
-                   (!dBiasOutOptional || CopyGradient(dBias, dBiasOutOptional, ex)),
+    CHECK_COND(!dBiasOutOptional || CopyGradient(dBias, dBiasOutOptional, ex),
                ACLNN_ERR_INNER_NULLPTR, "Unable to adapt KDA backward outputs.");
 #else
-    const bool packedLayout = cuSeqlensOptional != nullptr;
-    CHECK_COND(inputLayout && outputLayout &&
-                   std::strcmp(inputLayout, packedLayout ? "NTD" : "BNSD") == 0 &&
-                   std::strcmp(outputLayout, packedLayout ? "NTD" : "BNSD") == 0 &&
-                   !qRstdOptional && !kRstdOptional &&
-                   !useBetaSigmoidInKernel && !allowNegEigval,
-               ACLNN_ERR_PARAM_INVALID, "A5 original backward keeps its existing interface capabilities.");
+    CHECK_COND(false, ACLNN_ERR_PARAM_INVALID,
+               "Single-layout backward is currently implemented on A2/A3 only.");
     const aclTensor *required[] = {
         q, k, v, beta, gk, aqk, akk, dO,
         dqOut, dkOut, dvOut, dbOut, dgOut};
@@ -469,6 +437,10 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
                    dBiasOutOptional != nullptr,
                ACLNN_ERR_PARAM_INVALID,
                "dbias output is required when dt_bias is present.");
+    for (const auto *param : {aLogOptional, dtBiasOptional, dAOutOptional, dBiasOutOptional}) {
+        CHECK_COND(param == nullptr || param->GetDataType() == DataType::DT_FLOAT,
+                   ACLNN_ERR_PARAM_INVALID, "a_log, dt_bias and their gradients must be FP32.");
+    }
     const op::Shape &qShape = q->GetViewShape();
 
     const op::Shape &hShape = hOptional->GetViewShape();
@@ -497,16 +469,29 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     // These aliases are never written unless the corresponding feature is
     // enabled, in which case the public validation above requires real
     // dA/dbias outputs.
-    const aclTensor *dAForKernel =
-        dAOutOptional != nullptr ? dAOutOptional : dgOut;
+    // Legacy A5 keeps its FP32 device ABI. Adapt at L2; V2 writes the
+    // requested dtype directly in Finalize and does not take this fallback.
+    CHECK_COND(dbOut->GetDataType() == beta->GetDataType() &&
+                   (!useGateInKernel || (dgOut->GetDataType() == rawGOptional->GetDataType() &&
+                    dAOutOptional->GetDataType() == aLogOptional->GetDataType())),
+               ACLNN_ERR_PARAM_INVALID, "gate gradients must match their input dtypes.");
+    auto fp32Output = [&](const aclTensor *out) -> const aclTensor * {
+        if (!out || out->GetDataType() == DataType::DT_FLOAT) return out;
+        return executorPtr->AllocTensor(out->GetViewShape(), DataType::DT_FLOAT, Format::FORMAT_ND);
+    };
+    const auto *dbKernel = fp32Output(dbOut);
+    const auto *dgKernel = fp32Output(dgOut);
+    const auto *dAKernel = dAOutOptional;
+    CHECK_RET(dbKernel && dgKernel && (!dAOutOptional || dAKernel), ACLNN_ERR_INNER_NULLPTR);
+    const aclTensor *dAForKernel = dAKernel ? dAKernel : dgKernel;
     const aclTensor *dBiasForKernel =
         dBiasOutOptional != nullptr ? dBiasOutOptional : dgOut;
     // 一维存储描述可能使 OriginalShape 展平；下发前按逻辑视图统一形状，不改变数据布局。
     NormalizeOriginalShapes({
         q, k, v, beta, gk, aqk, akk, wOptional, qgOptional, kgOptional,
         vNewOptional, hOptional, dO, rawGOptional, aLogOptional,
-        dtBiasOptional, cuTensor, chunkTensor, dqOut, dkOut, dvOut, dbOut,
-        dgOut, dAForKernel, dBiasForKernel});
+        dtBiasOptional, cuTensor, chunkTensor, dqOut, dkOut, dvOut, dbKernel,
+        dgKernel, dAForKernel, dBiasForKernel});
 
     const auto result = l0op::ChunkKdaBwd(
         q, k, v, beta, gk, aqk, akk, wOptional, qgOptional, kgOptional,
@@ -515,7 +500,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         static_cast<float>(scale), chunkSize, safeGate, useGateInKernel,
         static_cast<float>(lowerBound), disableRecompute, useExp2,
         stateVFirst,
-        dqOut, dkOut, dvOut, dbOut, dgOut,
+        dqOut, dkOut, dvOut, dbKernel, dgKernel,
         dAForKernel, dBiasForKernel, executorPtr);
     for (size_t i = 0; i < 5; ++i) {
         CHECK_RET(result[i] != nullptr, ACLNN_ERR_INNER_NULLPTR);
@@ -524,6 +509,13 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
               ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(dtBiasOptional == nullptr || result[6] != nullptr,
               ACLNN_ERR_INNER_NULLPTR);
+
+    for (const auto &pair : {std::pair<const aclTensor *, const aclTensor *>{dbKernel, dbOut},
+                            {dgKernel, dgOut}, {dAKernel, dAOutOptional}}) {
+        if (!pair.second || pair.first == pair.second) continue;
+        const auto *converted = l0op::Cast(pair.first, pair.second->GetDataType(), executorPtr);
+        CHECK_RET(converted && l0op::ViewCopy(converted, pair.second, executorPtr), ACLNN_ERR_INNER_NULLPTR);
+    }
 
 #endif
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();

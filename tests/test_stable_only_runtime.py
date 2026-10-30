@@ -1,7 +1,7 @@
-"""Stable-only dispatch and the complete pre-migration public API contract.
+"""Stable-only dispatch and the public API contract synchronized with main.
 
-The frozen signatures come from main c9e2f1db plus original overlay 5c53a2a3, not from the implementation under
-test. These CPU tests cover Python resolution and binding; NPU numerical tests
+The frozen signatures track accepted upstream API changes plus the original overlay,
+not the implementation under test. These CPU tests cover Python resolution and binding; NPU numerical tests
 remain responsible for actual kernels, gradients, devices and stream ordering.
 """
 
