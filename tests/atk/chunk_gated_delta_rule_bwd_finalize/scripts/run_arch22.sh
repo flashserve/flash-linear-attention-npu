@@ -20,7 +20,11 @@ run_dir=$(cd -- "$run_dir" && pwd)
 : "${FINALIZE_BINDING_PATH:?必须提供冻结 binding 路径}"
 : "${FINALIZE_BINDING_SHA256:?必须提供冻结 binding 原始字节 SHA}"
 export FINALIZE_CPU_EVIDENCE=${FINALIZE_CPU_EVIDENCE:-$run_dir/role-evidence}
-count=$("$python" -B "$script_dir/arch22_cases.py" --scope "$scope" --soc "$soc" --output "$run_dir")
+select_args=(--scope "$scope" --soc "$soc" --output "$run_dir")
+if [[ -n ${ARCH22_SOURCE_CASE_IDS+x} ]]; then
+    select_args+=(--source-case-ids "$ARCH22_SOURCE_CASE_IDS")
+fi
+count=$("$python" -B "$script_dir/arch22_cases.py" "${select_args[@]}")
 atk_cmd=("$python" -B "$atk_bin")
 version=$("${atk_cmd[@]}" --version)
 printf '%s\n' "$version" > "$run_dir/atk-version.txt"

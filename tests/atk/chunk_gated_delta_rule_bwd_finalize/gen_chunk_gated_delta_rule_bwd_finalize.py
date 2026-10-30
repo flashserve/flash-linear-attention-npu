@@ -453,18 +453,23 @@ def _arch22_payload(case_id: int, spec: dict, seed: int) -> dict:
 
 
 def formal_payloads(scope: str) -> list[dict]:
+    """原 A5 默认入口，只生成原 200/64/8 条资产。"""
     builders = {"accuracy": build_accuracy_specs, "perf": build_perf_specs, "mss": build_mss_specs}
-    original = _payloads(builders[scope]())
-    if scope == "perf":
-        return original
+    return _payloads(builders[scope]())
+
+
+def formal_arch22_payloads(scope: str) -> list[dict]:
+    """独立 A2/A3 资产；保留原源 ID，运行选择器另行从零编号。"""
+    source_id_start = {"accuracy": 200, "mss": 8}[scope]
     specs = build_arch22_specs()
     if scope == "mss":
         # 每个 key 一条，另保留 4 种边界和 4 条 shape/runtime 分支。
         specs = specs[:32] + [specs[i] for i in (32, 39, 48, 63, 64, 65, 66, 67)]
+    payloads = []
     for spec in specs:
         for seed in ARCH22_SEEDS if scope == "accuracy" else ARCH22_SEEDS[:1]:
-            original.append(_arch22_payload(len(original), spec, seed))
-    return original
+            payloads.append(_arch22_payload(source_id_start + len(payloads), spec, seed))
+    return payloads
 
 
 if GENERATOR_REGISTRY is not None:
@@ -498,11 +503,14 @@ def main() -> None:
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     accuracy, perf, mss = (formal_payloads(scope) for scope in ("accuracy", "perf", "mss"))
-    for suffix, payload in (("", accuracy), ("_perf", perf), ("_mss", mss)):
-        (args.output_dir / f"atk_{OP_NAME}{suffix}.json").write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    arch22_accuracy, arch22_mss = (formal_arch22_payloads(scope) for scope in ("accuracy", "mss"))
+    for suffix, payload in (("", accuracy), ("_perf", perf), ("_mss", mss),
+                            ("_arch22", arch22_accuracy), ("_arch22_mss", arch22_mss)):
+        (args.output_dir / f"atk_{OP_NAME}{suffix}.json").write_bytes(
+            (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
     if args.summary:
-        print(f"accuracy={len(accuracy)} perf={len(perf)} determinism={len(mss)} mss={len(mss)}")
+        print(f"accuracy={len(accuracy)} perf={len(perf)} determinism={len(mss)} mss={len(mss)} "
+              f"arch22_accuracy={len(arch22_accuracy)} arch22_mss={len(arch22_mss)}")
 
 
 if __name__ == "__main__":

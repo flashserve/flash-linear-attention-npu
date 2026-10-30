@@ -27,9 +27,12 @@ def prepare_inputs(inputs, gate_dtype):
     for name in ("q_rstd", "k_rstd"):
         if inputs.get(name) is not None:
             actual[name] = np.array(inputs[name], dtype=np.float32, copy=True)
-    for name in ("scale", "chunk_size", "use_qk_l2_norm_in_kernel",
-                 "use_beta_sigmoid_in_kernel", "use_gate_in_kernel", "state_v_first", "use_exp2"):
-        actual[name] = inputs[name]
+    # ATK 属性可能是 NumPy 标量；按公开 ABI 规范成 Python 标量，保留实际输入值。
+    actual["scale"] = float(inputs["scale"])
+    actual["chunk_size"] = int(inputs["chunk_size"])
+    for name in ("use_qk_l2_norm_in_kernel", "use_beta_sigmoid_in_kernel",
+                 "use_gate_in_kernel", "state_v_first", "use_exp2"):
+        actual[name] = bool(inputs[name])
     for name in ("cu_seqlens", "chunk_indices"):
         value = inputs.get(name)
         if isinstance(value, (bytes, str)):

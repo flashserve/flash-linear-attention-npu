@@ -33,7 +33,7 @@ def check(output):
     gen_spec = importlib.util.spec_from_file_location("finalize_generator", ROOT / "gen_chunk_gated_delta_rule_bwd_finalize.py")
     gen = importlib.util.module_from_spec(gen_spec)
     gen_spec.loader.exec_module(gen)
-    cases = [value for value in gen.formal_payloads("accuracy") if value["api_type"] == gen.ARCH22_API][::3]
+    cases = [value for value in gen.formal_arch22_payloads("accuracy") if value["api_type"] == gen.ARCH22_API][::3]
     measured = []
     for payload in cases:
         raw, gt = materialize(payload)

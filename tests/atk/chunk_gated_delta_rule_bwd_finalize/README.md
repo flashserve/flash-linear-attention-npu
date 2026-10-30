@@ -82,17 +82,25 @@ bash tests/atk/run_test_cpu.sh -op=chunk_gated_delta_rule_bwd_finalize -scope=ge
 ## A2/A3 新增回归（原 A5 路径保留）
 
 上方 200/64/8 条为原 A5 资产，ID、seed、payload 和原 CPU 标杆未改动。
+原三个 JSON 保持原始文件内容；`formal_payloads` 与默认 `Generator` 只生成这些 A5 用例，
+旧 `run_test_cpu.sh` 的 accuracy/MSS/DC 入口仍读取原文件，不会混入 arch22 矩阵。
 新增 `executor_chunk_gated_delta_rule_bwd_finalize_arch22` 独立注册，使用真实公开输入与属性，
 不新增 `case_spec` 或用来替代真实 shape 的控制字段。`cu_seqlens/chunk_indices` 是公开的
 int64 列表参数，以 `non_param` JSON 列表字面量存储后解码成列表；不是随机整数张量。
 ATK 在 `before_call` 过滤该通道之前，先调用 executor 的 `init_by_input_data`；此时已将
 真实元数据量化/解析并缓存到 `actual/case/data`，后续调用使用该缓存，不重新读取被过滤的字段。
 
-| 正式资产 | 新增 A2/A3 | 原 A5 | 合计 |
-| --- | ---: | ---: | ---: |
-| 精度 JSON | 68 个逻辑代表 × 3 seed = 204（ID 200–403） | 200 | 404 |
-| 性能 JSON | 0；保留原始 64 个模型 case | 64 | 64 |
-| MSS JSON | 32 key 最小代表 + 8 条内存关键分支（ID 8–47） | 8 | 48 |
+| 正式文件 | 用途 | 用例数与源 ID |
+| --- | --- | --- |
+| `atk_chunk_gated_delta_rule_bwd_finalize.json` | 原 A5 精度 | 200，ID 0–199 |
+| `atk_chunk_gated_delta_rule_bwd_finalize_perf.json` | 原 A5 性能 | 64，ID 0–63 |
+| `atk_chunk_gated_delta_rule_bwd_finalize_mss.json` | 原 A5 MSS/DC | 8，ID 0–7 |
+| `atk_chunk_gated_delta_rule_bwd_finalize_arch22.json` | 独立 A2/A3 精度 | 68 个逻辑代表 ×3 seed = 204，源 ID 200–403 |
+| `atk_chunk_gated_delta_rule_bwd_finalize_arch22_mss.json` | 独立 A2/A3 MSS/DC/keys | 32 key 代表 +8 条关键分支 =40，源 ID 8–47 |
+
+`formal_arch22_payloads` 单独生成 204/40；生成器 CLI 默认同时更新这五个文件。
+`scripts/arch22_cases.py` 只读取两个独立 arch22 文件，保留源 ID 并为 ATK 从零编号，
+不会改变旧 A5 文件、默认 Generator 或旧测试入口的用例数量。
 
 三个精度 seed 固定为 `20261030/20261031/20261032`，每个逻辑用例分别保留。
 32 条普通代表覆盖 GT BF16/FP32、norm、sigmoid、exp2、owner 五个独立模板维度。
@@ -116,6 +124,8 @@ ATK 在 `before_call` 过滤该通道之前，先调用 executor 的 `init_by_in
   不把中间量或输出降成 BF16/FP32。ATK 原生 `mixed_tolerance_bm` 保持不变，
   lowp 成功不能替代或遮盖 NPU 对 FP64 的失败。
 - 三个角色均记录同一公开输入的 SHA，只有摘要进入回执，不保存张量。
+- ATK 属性在输入边界按公开 ABI 规范成 Python 标量：scale 为 `float`、chunk_size 为
+  `int`、五个开关为 `bool`。NumPy FP32 scale 精确提升后供三个角色共享，不替换成常数。
 - DUT 先严格校验原生输出 dtype；lowp 的 `dq/dk/dv` 按 BF16、`dbeta/dg` 按公开 GT
   保留 BF16 或 FP32 数值。三个角色交 ATK 的比较载体统一无损升为 FP64，真 FP64
   golden 的计算、中间量与结果始终保持 FP64，不通过降精度绕开框架检查。
@@ -212,6 +222,10 @@ bash tests/atk/chunk_gated_delta_rule_bwd_finalize/scripts/run_arch22.sh mssanit
 bash tests/atk/chunk_gated_delta_rule_bwd_finalize/scripts/run_arch22.sh determinism 0 A2
 bash tests/atk/chunk_gated_delta_rule_bwd_finalize/scripts/run_arch22.sh keys 0 A2
 ```
+
+可选小批量使用 `ARCH22_SOURCE_CASE_IDS=<逗号分隔源ID>`，入口传给选择器的
+`--source-case-ids`。省略时仍运行该 scope 的全部 204/40 条；筛选只匹配源 ID，
+保留原输入、seed 与源 ID，运行 ID 重新从零编号。空值、重复或不存在的 ID 会报错。
 
 worker 首次调用核 binding 原始 SHA、frozen、源码 HEAD/clean、完整 installed_files 成员/字节/SHA，
 并核实际 `fla_npu.__file__`、目标双符号解析到的 cust_opapi 及该安装树内库的实测 SHA；

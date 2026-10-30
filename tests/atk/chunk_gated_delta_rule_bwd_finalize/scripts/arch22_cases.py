@@ -22,13 +22,33 @@ def expected_key(case):
             | (int(attr("use_exp2")) << 18) | (int(owner) << 19))
 
 
-def select(scope, output, soc):
+def parse_source_case_ids(value):
+    try:
+        ids = [int(part.strip()) for part in value.split(",")]
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("源 case ID 必须为非空的逗号分隔整数") from error
+    if len(set(ids)) != len(ids):
+        raise argparse.ArgumentTypeError("源 case ID 不能重复")
+    return ids
+
+
+def select(scope, output, soc, source_case_ids=None):
     suffix = "" if scope == "accuracy" else "_mss"
-    source = OP_DIR / f"atk_{OP}{suffix}.json"
+    source = OP_DIR / f"atk_{OP}_arch22{suffix}.json"
+    cases = [case for case in json.loads(source.read_text(encoding="utf-8")) if case["api_type"] == API]
+    if source_case_ids is not None:
+        ids = list(source_case_ids)
+        if not ids or any(type(value) is not int for value in ids):
+            raise ValueError("源 case ID 必须为非空整数列表")
+        if len(set(ids)) != len(ids):
+            raise ValueError("源 case ID 不能重复")
+        missing = set(ids) - {case["id"] for case in cases}
+        if missing:
+            raise ValueError(f"当前 scope 不存在源 case ID: {sorted(missing)}")
+        requested = set(ids)
+        cases = [case for case in cases if case["id"] in requested]
     selected, mapping = [], []
-    for case in json.loads(source.read_text(encoding="utf-8")):
-        if case["api_type"] != API:
-            continue
+    for case in cases:
         mapping.append(dict(case_id=len(selected), source_case_id=case["id"], name=case["name"],
                             seed=case["default_seed"], expected_key=expected_key(case),
                             actual_key=None, selection_evidence="pending Host UT/runtime evidence"))
@@ -53,5 +73,10 @@ if __name__ == "__main__":
     parser.add_argument("--scope", choices=("accuracy", "mssanitizer", "determinism", "keys"), required=True)
     parser.add_argument("--soc", choices=("A2", "A3"), required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--source-case-ids", type=parse_source_case_ids,
+                        help="可选的逗号分隔源 case ID；省略时选择该 scope 全部用例")
     args = parser.parse_args()
-    print(select(args.scope, args.output, args.soc))
+    try:
+        print(select(args.scope, args.output, args.soc, args.source_case_ids))
+    except ValueError as error:
+        parser.error(str(error))
