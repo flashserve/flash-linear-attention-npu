@@ -10,9 +10,11 @@
 - db/dg 按原始 beta/raw_g dtype 分配，dA/dbias 固定 FP32，A2/A3 和 A5 V2 由 Finalize
   写回时转换；内部 FP32 工作张量不会改变对外输出 dtype。A5 legacy 保留
   FP32 kernel ABI，通过 L2 转换输出。
-- Finalize 的 A2/A3 与 A5 写回共用已有 outputTokenMajor 标记选择输出地址和行间 stride。
-- 参数梯度与输入 gate 的必要适配不变；A5 V2 直接接收 Finalize 的 head-major 输出。
-- C++ 绑定在 legacy/auto/optimized 全部模式下识别 A2/A3；A5 分支维持原输出。
+- Finalize 的 A2/A3 写回使用 outputTokenMajor 选择输出地址和行间 stride；A5 总接口
+  另外区分 q/k/v 梯度与固定 token-major 的 Gate 梯度寻址。
+- A5 V2 的公开 dg/db 固定 token-major，dq/dk/dv 随单一 layout；输入 Gate 的必要适配见
+  “A5 V2 单 layout 适配”。
+- C++ 绑定在 legacy/auto/optimized 全部模式下识别 A2/A3；A5 分支按 PR993 契约分配输出。
 
 ## 原 ACLNN 入口的形状描述
 
@@ -50,24 +52,25 @@ Finalize 对 h、dh 分别寻址，Dhu 和内嵌 state_scan 均产生 NT-first d
 - Prepare 使用 128 KiB UB。
 - Finalize 使用每 AIV 248 KiB UB、每 AIC 128 KiB L1；双头窗口内每个 AIV 处理一个头。
 - Q/K/beta 常驻片上，矩阵数据直接组织为 NZ，按分带写回输出。
-- A5 Finalize 的 Stage2、Stage5 dAqk、Stage10、dW residual 和 residual 五组 VF
-  在循环内按操作交错展开相邻两行或两块，循环外保留独立单尾；逐行/逐块算术、掩码及写回顺序不变。
-- Stage7 将 `exp2(g-center)` 的 FP32 结果保存在已发布的 qPos 高位区 [80,96) KiB，
-  Stage9 按同布局读取；下一 band 才复用 qPos，UB 峰值、算术顺序和跨核旗均不变。
-- A5 host 将原始 tiling 的逻辑大小设为 `sizeof(TilingData)+8`，与设备 `opParaSize` 一致；
-  不改写字段内容或设备复制长度，arch22 路径不变。
+- **O1**：A5 Finalize 的 Stage2、Stage5 dAqk、Stage10、dW residual 和 residual 五组 VF
+  在同一成对循环内交错两组独立操作 A/B，循环外保留独立单尾；逐行/逐块算术、掩码及
+  写回顺序不变。
+- **O2**：Stage7 将 `exp2(g-center)` 的 FP32 bandExp 保存在已释放的 qPos 高位区
+  [80,96) KiB，Stage9 按同布局复用；下一 band 才复用 qPos，UB 峰值、算术顺序和
+  跨核旗均不变。
+- 本轮性能机制仅为上述 O1/O2。A5 Finalize raw tiling 修复、DFX、host/ATK 资产和文档
+  调整均为非性能修改，不据此分配性能收益。
+- A5 host 的 `ChunkKdaBwdFinalizeTilingData` 逻辑大小为 184 字节，raw tiling size 设为
+  `sizeof(TilingData)+8`，即 192 字节，与设备 `opParaSize` 一致；Arch22 路径不变。
 - dg 及参数梯度部分和写入 workspace，采用固定顺序归约，不使用原子累加。
 - 融合反向入口在同一块私有 workspace 内依次铺设 dv0/dq_raw/dAqk/dh/dv_scan/dAkk 六个跨阶段缓冲、
   Kernel B 与 Kernel C 区域；各区域按 512 字节对齐，跨阶段偏移以 512 字节为单位写入 tiling，
   因此在 tiling payload 大小不变的前提下，单次发射可寻址的私有 workspace 上限由 4 GiB 提升到 2 TiB。
 - q_rstd/k_rstd 成对提供时，在 Finalize 内完成归一化反向，不增加第四个 kernel。
-- A5/V2 的 db/dg 由 Finalize 按公开 head-major 直接写出，取消 token-major
-  临时张量及后续 Transpose/ViewCopy；独立 Finalize 默认仍按 token-major 输出。
-  V2 通过现有 `output_layout` 的 `BNSD/NTD_GATE_HEAD_MAJOR` 取值显式选择 head-major，
-  默认独立调用仍为 token-major，输出 shape 仅用于校验，避免 `T == H` 时猜测布局。
-  A5 使用 `betaMode` 的保留高位传递，不新增属性、aclnn/L0 入参或 TilingData 字段；
-  A2/A3 仍只接受 token-major 输出 shape。
-  该改动只调整输出 DMA 的地址和 stride，不改变 Gate 反扫、参数归约或算术顺序。
+- A5/V2 的 dq/dk/dv 按公开 layout 写回，dg/db 固定按 token-major 写回；Finalize 分别
+  使用 outputTokenMajor 与 gateOutputTokenMajor 选择地址和 stride。独立 Finalize 的
+  output_layout 仍控制全部五个梯度，内部 model_layout 默认空字符串表示独立调用。
+  输出 shape 仅用于校验，`T == H` 时不猜测布局；这些布局与 ABI 修正不属于 O1/O2。
 
 Python 层统一处理参数校验、空序列压缩和规范 chunk 元数据。
 
@@ -111,22 +114,28 @@ CPU 公式不变；新增 BF16 db 的预期为旧 FP32 梯度按模型 beta dtyp
 本节扩展总接口；历史 legacy 的流水和 workspace 说明不代表 V2 实现。
 公开契约以 [api.md](api.md) 为准。前向及 A5 重计算 H 限制保持原样。
 
-| 阶段 | 本次改动 |
+| 阶段 | 当前设计 |
 |---|---|
-| Python/Stable/ctypes | 共用布局校验和输出分配；A5 auto/optimized 路由 V2，legacy 拒绝 |
-| ACLNN V2 | 按 v 与 layout 解析维度；缓存固定 head-major；do、普通 beta 各转置一次；保留 sigmoid 参数并拒绝非默认值 |
+| Python/Stable/ctypes | 共用单一 layout 的校验和输出分配；A5 auto/optimized 路由 V2，legacy 拒绝新契约 |
+| ACLNN V2 | 按 v 与 layout 解析维度；缓存固定 head-major；do 转置一次供 Prepare/Dhu，普通 beta 转置一次供 Recompute/Finalize；A5 保留 sigmoid 参数并拒绝非默认值 |
 | Prepare | 接收 ACLNN 转换后的 head-major do；四维变长通过 B=1 的 reshape view 进入现有 NTD kernel |
 | Dhu | 与 Prepare 共用 head-major do；接口、tiling 和 kernel 均保持原实现 |
-| Recompute | reserved 位分别控制 raw_g、q/k、v 的 stride 读取；两条 Vector 分支一致，缓存写出不变 |
-| Finalize | q/k、v、raw_g 分别按标志读取；Cube 两处 v 读取同步调整；dq/dk/dv 随 layout，dg/db 固定 token-major |
+| Recompute | reserved 位分别控制 raw_g、q/k、v 的 stride 读取；两条 Vector 分支一致，缓存写出不变；接收已转换的 head-major 普通 beta |
+| Finalize | q/k、v、raw_g 分别按标志读取，有 rstd 时 q/k 固定 head-major；Cube 两处 v 读取同步调整；内部 beta 为 head-major，dq/dk/dv 随 layout，公开 dg/db 固定 token-major |
+
+公开 do/raw_g/beta 始终为 token-major，dg/db 同样固定 token-major；dg 跟随 raw_g
+dtype（BF16/FP32），db 跟随 beta dtype，A_log/dt_bias 及其梯度固定 FP32。
+总接口不增加 input_layout/output_layout 参数；独立 Finalize 的 output_layout 语义不变。
 
 不改变数学公式、累加 dtype、tile、分核、UB/L1 布局、workspace 或事件协议。
 GM→UB 每行连续 128 元素，非连续行使用 DataCopyPad；GM→L1 保持原 CATLASS
 搬运与尾块清零，只调整实际 GM leading dimension。beta 的 BF16/FP32 转换仍在片上完成。
 
-验证分三层：保留独立小接口的 head-major 组合为布局等价基线，使用独立 CPU
-递推标杆检查数学结果，再检查真实前向缓存接入。覆盖定长/三维及四维变长、尾块、
-空段压缩、L2Norm、g/beta 四种 dtype、保存/重算、双 Python 后端及直接 ACLNN 拒绝检查。
+验证分三层：保留独立小接口的 output_layout 组合为布局等价基线，使用独立 CPU
+递推标杆检查数学结果，再检查真实前向缓存接入。覆盖定长/三维及四维变长、四种 layout、
+`T == H`、尾块、空段压缩、L2Norm、raw_g/beta 四种 dtype、保存/重算、双 Python 后端及
+直接 ACLNN 拒绝检查。当前 ATK 入口保持 BSND/TND，CPU golden 保持 head-major，
+输出在比较前转回该排列；资产设计不替代实际设备结果。
 
 BF16 raw_g 的 Stage 11 转换使用 BF16 全掩码，覆盖全部 128 个元素；此前误用 FP32 掩码会遗漏部分 BF16 lane，影响 dg/dA/dbias。本次同步修正，不改变 FP32 路径。
 

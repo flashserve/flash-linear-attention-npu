@@ -3,18 +3,26 @@
 ## 用途与边界
 
 本目录是独立的 host tiling 测试工程。测试直接编译并调用当前算子的
-`Tiling4ChunkKdaBwdFinalize`，通过真实 `TilingContext` 检查以下契约，不构造任何新增属性：
+`Tiling4ChunkKdaBwdFinalize`，通过真实 `TilingContext` 构造 11 项属性，检查
+`output_layout` 与末尾新增的内部可选属性 `model_layout`。`model_layout=""`
+表示独立 Finalize；非空时仅接受 `BSND/BNSD/TND/NTD`，表示总接口的混合布局路径。
 
-| 平台信息 | 布局请求 / 输出 shape | 检查点 |
+| 平台信息 | 场景 | 检查点 |
 | --- | --- | --- |
-| Ascend910B、Ascend910_93 | 默认 token-major；head-major shape 或 `*_GATE_HEAD_MAJOR` 别名 | 默认 token-major 均接受；非法 shape 或显式 head-major 请求返回 `ge::GRAPH_FAILED`，并检查实际 OP 日志 |
-| Ascend910B、Ascend910_93 | 默认 token-major 且 `T == H` | 同形不引起误拒绝，保持原 Arch22 校验、tiling key=101 和 betaMode=0 |
-| Ascend950 | `*_GATE_HEAD_MAJOR` 别名或默认 token-major，含 `T == H` | 别名确定 head-major，默认确定 token-major；由现有 `betaMode` 的保留高位传递，不新增 attr、aclnn/L0 入参或 TilingData 字段 |
+| Ascend910B、Ascend910_93、Ascend950 | 独立调用，覆盖 NTD/TND 输出及 `T == H` | `output_layout` 显式控制全部五个梯度；A5 tiling key=1，Arch22 key=101，betaMode=0，不从方形 shape 猜测布局 |
+| Ascend950 | 总接口 BSND/BNSD/TND/NTD，覆盖 rstd、BF16 raw_g 及 `T == H` | q/k/v 按 `model_layout` 寻址，有 rstd 时 q/k 固定 head-major；raw_g 与公开 db/dg 为 token-major；无 rstd 时 key=1，有 rstd 时 key=3 |
+| Ascend910B、Ascend910_93 | 总接口 BSND/TND，覆盖 rstd、BF16 raw_g 及 `T == H` | 保持 Arch22 混合布局校验与 tiling key=101/102，不借用 A5 的结构或 raw tiling 大小 |
+| Ascend950 | 非法 `model_layout="BTHD"` | 返回 `ge::GRAPH_FAILED`，实际 OP 日志包含参数名 `model_layout`、实际值 `BTHD` 和合法集合 `BSND/BNSD/TND/NTD` |
+| Ascend950 | 独立调用传入不匹配的 token-major raw_g shape | 返回 `ge::GRAPH_FAILED`，不根据输出 shape 或同形维度推断 raw_g 布局 |
 
-方形场景不能只凭 shape 区分布局，测试用 `T == H` 验证现有 `output_layout` 字符串的显式消歧，
-不通过交换优先级掩盖歧义。测试同时用 `static_assert` 检查 `TilingData` 为基线的 168 字节，并检查 Arch22 的
-`betaMode` 不携带布局高位，避免布局优化改变原有 ABI 或 beta 语义。
+测试用 `static_assert` 检查 A5 `TilingData` 的逻辑大小为 **184 字节**，并检查 host 设置的
+raw tiling size 为 `sizeof(TilingData)+8`，即 **192 字节**。读取顺序也是检查的一部分：
+typed getter `GetTilingData<T>()` 会重置 raw size，因此测试先调用
+`GetRawTilingData()->GetDataSize()` 保存 192，再通过 typed getter 检查字段；不能交换这两步。
+`betaMode` 只表示 beta 计算模式，不承担布局编码。
+
 这些平台由 host 上下文模拟。测试不启动设备 kernel，不构成 A2/A3/A5 实机、aclnn 或精度结论。
+当前基线已实测二进制 **15/15**、CTest **1/1** 通过；该结果不替代设备验证。
 
 ## 环境变量/配置变量契约
 
@@ -40,8 +48,8 @@ CMake target 消费，不被算子、wheel、OPP 或安装流程读取。命令�
 - `UT_COMMON_DIR` 保持默认空值时，CMake 配置以 `FATAL_ERROR` 终止，不生成测试目标，也不回退到伪造路径。
 - `UT_COMMON_DIR` 指向不存在目录或缺少所需文件时，配置或编译失败；不会下载替代实现。
 - `ASCEND_CANN_PACKAGE_PATH` 指向不存在或内容不兼容的 CANN 包时，头文件查找、编译或链接失败；不会切换到另一套 CANN。
-- A2/A3 的 head-major 输出 shape 用例中，`GRAPH_FAILED` 是预期结果，不是测试框架故障。若返回码不符，或实际报告缺少上述任一文本，测试二进制返回非零。
-- 任一正常路径、布局字段或报告检查失败时，二进制打印 `FAIL`、返回非零，CTest 随之失败。只有内部 6/6 用例通过时二进制才返回零。
+- 非法 `model_layout` 和独立调用的 raw_g shape 负向用例中，`GRAPH_FAILED` 是预期结果，不是测试框架故障。非法布局用例还必须完整匹配参数名、实际值和合法集合；任一文本缺失都判定失败。
+- 任一正常路径、布局字段、raw size 或报告检查失败时，二进制打印 `FAIL`、返回非零，CTest 随之失败。只有内部 15/15 用例通过时二进制才返回零。
 
 这些变量只在测试配置和测试进程生命周期内有效。工程不安装文件、不修改 CANN 或 UT common，也不生成生产包；删除其独立构建目录即可清除对应 cache 和构建产物。
 
@@ -65,7 +73,8 @@ ctest --test-dir "$BUILD_DIR" --output-on-failure
 "$BUILD_DIR/chunk_kda_bwd_finalize_tiling_test"
 ```
 
-预期 CTest 为 1/1 通过，直接运行二进制为 14/14 通过，并打印 A2/A3 负向用例及 `T == H` 方形用例的完整报告。
+复现预期为 CTest 1/1、直接运行二进制 15/15 通过，并打印非法 `model_layout`、raw_g 负向用例及
+`T == H` 方形用例的完整报告。
 
 ## 依赖与回退
 
