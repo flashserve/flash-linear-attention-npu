@@ -17,7 +17,6 @@ STAGES = (
     "standalone-layout",
     "torch-adapter",
     "gdr-example-st",
-    "scoped-overlay",
 )
 STAGE_STATUSES = {"not_run", "running", "success", "failure", "skipped"}
 

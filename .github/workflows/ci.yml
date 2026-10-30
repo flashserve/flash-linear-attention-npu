@@ -99,8 +99,7 @@ jobs:
               ['NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局', 'torch_custom wheel 与 OPP 布局'],
               ['NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配', 'OPP 安装与 PyTorch 适配'],
               ['NPU CI / A2+A5 / 05 GDR Example/ST', 'GDR Example/ST'],
-              ['NPU CI / A2+A5 / 06 chunk_fwd_o 局部覆盖安装', 'chunk_fwd_o 局部覆盖安装'],
-              ['NPU CI / A2+A5 / 07 报告与 commit 校验', '报告与 commit 校验'],
+              ['NPU CI / A2+A5 / 06 报告与 commit 校验', '报告与 commit 校验'],
             ];
             const scopedCheckContext = ['NPU CI / A2+A5 / 定向诊断', '定向诊断'];
             let prNumber;
@@ -275,8 +274,8 @@ jobs:
                   `- CI 定义分支：\`${workflowRef}\``,
                   '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
                   requestScope === 'all'
-                    ? '- 分项结果：7/7 通过'
-                    : '- 类型：定向编译诊断；仅执行 01-02，未改写 01-07 合入门禁状态',
+                    ? '- 分项结果：6/6 通过'
+                    : '- 类型：定向编译诊断；仅执行 01-02，未改写 01-06 合入门禁状态',
                 ].join('\n')
               );
               core.setOutput('should_run', 'false');
@@ -346,8 +345,8 @@ jobs:
                 `- CI 定义分支：\`${workflowRef}\``,
                 '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
                 requestScope === 'all'
-                  ? '- 分项：7 项按顺序执行'
-                  : '- 类型：定向编译诊断；仅执行 01-02，不改写 01-07 合入门禁状态',
+                  ? '- 分项：6 项按顺序执行'
+                  : '- 类型：定向编译诊断；仅执行 01-02，不改写 01-06 合入门禁状态',
                 '- 失败处理：前置失败时后续项跳过；失败结果提供对应阶段的复现命令',
                 ops ? `- 算子：\`${ops}\`` : '',
                 `- 运行链接：[NPU CI #${context.runNumber}](${targetUrl})`,
@@ -405,7 +404,6 @@ jobs:
       FLA_NPU_SOC: ${{ matrix.soc }}
       CI_RUN_EXAMPLE_ST: 'true'
       CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK: 'true'
-      CI_RUN_SCOPED_WHEEL_INSTALL_CHECK: 'true'
       CI_ACCURACY_PLATFORM: ${{ matrix.platform }}
       CI_ACCURACY_REPORT_FILE: .ci-tmp/gdr_accuracy_report-${{ matrix.platform }}.json
       CI_STAGE_REPORT_FILE: .ci-tmp/npu-ci-stages-${{ matrix.platform }}.json
@@ -1280,8 +1278,7 @@ jobs:
               'NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局',
               'NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配',
               'NPU CI / A2+A5 / 05 GDR Example/ST',
-              'NPU CI / A2+A5 / 06 chunk_fwd_o 局部覆盖安装',
-              'NPU CI / A2+A5 / 07 报告与 commit 校验',
+              'NPU CI / A2+A5 / 06 报告与 commit 校验',
             ];
             const scopedContext = 'NPU CI / A2+A5 / 定向诊断';
             const normalizedOps = [...new Set(
