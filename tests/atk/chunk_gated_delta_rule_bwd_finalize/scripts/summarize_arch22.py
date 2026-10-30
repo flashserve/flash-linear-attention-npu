@@ -92,7 +92,8 @@ def _cv_details(path, cases):
         assert header.count(name) == 1
     details = []
     for cid, values in by_id.items():
-        assert values[header.index('npu_finalize_精度通过')] is True
+        # ATK 26.7的CV是一次combined判定；NPU独立pass列留空。
+        assert values[header.index('npu_finalize_精度通过')] is None
         assert values[header.index('cpu_cpu_lowp_精度通过')] is True
         text = values[header.index('精度详情')]
         class Names(ast.NodeTransformer):
@@ -103,16 +104,29 @@ def _cv_details(path, cases):
         tree = Names().visit(ast.parse(text, mode='eval'))
         ast.fix_missing_locations(tree)
         parsed = ast.literal_eval(tree)
-        assert set(parsed) == {'npu_finalize', 'cpu_cpu_lowp'}, '缺NPU或lowp对同golden的比较'
+        assert set(parsed) == {'cpu_cpu_lowp'}, 'CV必须是单组Actual/Benchmark对同high的combined判定'
         for role, outputs in parsed.items():
             assert len(outputs) == 5 and {item['filename'] for item in outputs} == {f'output_{i}.pt' for i in range(5)}
             for item in outputs:
                 assert item['result'] is True and not item['error_info'], 'CV逐输出未通过'
                 metrics = item['new_benchmark_indicate']
-                assert isinstance(metrics, dict) and any(key.startswith('Actual_') for key in metrics)
-                assert any(key.startswith('Benchmark_') for key in metrics), '缺Actual/Benchmark两侧原生指标'
+                assert isinstance(metrics, dict)
+                actual = {key[len('Actual_'):] for key in metrics if key.startswith('Actual_')}
+                benchmark = {key[len('Benchmark_'):] for key in metrics if key.startswith('Benchmark_')}
+                assert actual and actual == benchmark, '缺Actual/Benchmark成对原生指标'
                 details.append(dict(case_id=cid, role=role, output=item['filename'], metrics=_metrics_for_json(metrics)))
     return dict(case_ids=sorted(by_id), execution_rows=rows, judgments=details)
+
+
+def _cv_summary(rows, count):
+    assert len(rows) == 1 and rows[0]['名称'] == 'cpu_cpu_lowp', 'CV summary必须只有一条combined记录'
+    row = rows[0]
+    assert row['精度是否达标'] == 'Pass'
+    for name in ('总用例数', '执行成功用例个数', '通过用例个数'):
+        assert int(row[name]) == count, 'CV summary成功计数不符'
+    for name in ('执行失败用例个数', '错误信息匹配用例个数'):
+        assert int(row[name]) == 0, 'CV summary含失败或错误匹配'
+
 
 def native_report(path, scope, count, cases):
     assert len(cases) == count
@@ -149,8 +163,8 @@ def native_report(path, scope, count, cases):
         elif not effective or any(value.lower() not in PASS for value in effective):
             errors.append(f"{values[0]} native status {effective}")
         details.append(dict(zip(header, values)))
-    if scope == "accuracy" and len(details) < 2:
-        errors.append("三路精度至少需要 NPU 与 cpu_lowp 两条对 FP64 的原生结果")
+    if scope == 'accuracy':
+        _cv_summary(details, count)
     result = dict(path=str(path), bytes=path.stat().st_size, sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
                   evidence_kind='accuracy_summary' if scope == 'accuracy' else 'summary',
                   sheet='summary', rows=details, errors=errors)
