@@ -501,6 +501,8 @@ PY
 
 check_environment_contracts() {
     python3 tests/test_wheel_environment.py -b
+    python3 torch_custom/fla_npu/tools/stable_coverage.py --strict
+    python3 torch_custom/fla_npu/tools/op_abi_parity.py
     python3 torch_custom/fla_npu/test/test_aclnn_ctypes_abi.py -b
     python3 torch_custom/fla_npu/test/test_runtime_device_guard.py -b
     python3 torch_custom/fla_npu/test/test_ascendc_mutation_contract.py -b
