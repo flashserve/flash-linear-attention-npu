@@ -62,8 +62,8 @@ tuple，都必须执行公开接口兼容性检查。以改动前的已发布 ta
 legacy 入口是否继续提供同一调用形状。只证明当前代码、当前 YAML、当前文档彼此一致，不构成兼容性证据。
 版本化契约的完整快照见
 [`references/public-api-contract.v26.9.1.yaml`](references/public-api-contract.v26.9.1.yaml)。
-契约必须覆盖 `_ASCENDC_OPS` 中全部未日落公开入口，并与 `docs/op_list.md` 的算子责任面一致；
-不得只保留当前 diff 涉及的几个入口。
+契约必须覆盖 `docs/op_list.md` 中全部未日落模型算子；utility export（例如
+`fast_gelu_custom`）不纳入该契约。不得只保留当前 diff 涉及的几个入口。
 
 ### 3. DFX 设计
 
