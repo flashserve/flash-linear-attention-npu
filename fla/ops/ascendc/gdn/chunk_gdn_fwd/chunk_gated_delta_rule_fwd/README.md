@@ -98,6 +98,18 @@ Python 接受 `a_log=None, dt_bias=None` 预留参数；当前仅支持
 
 ## 验证
 
+### 参数校验与错误上报
+
+ACLNN host 在 tiling 和 launch 前统一校验张量 shape/dtype、支持范围、状态输出、
+chunkSize 和变长 metadata，并使用 opbase 的预定义参数错误宏上报实际值和期望值。
+scale 必须有限且在有限 FP32 范围内；先检查 chunkSize 和 metadata，再计算 chunk 数。
+状态 shape 的期望末两维由 stateVFirst 决定。
+
+Python 仅保留输出分配所需的 layout、q/v rank、chunkSize 正 int64、默认 scale 和
+final_state 序列数保护，以及未进入 ABI 的 gate 参数限制。其余语义错误由 host 返回。
+空输入沿用既有零 workspace 成功返回行为；定长 NTD/TND 的 batch 约束不作额外收紧。
+ACLNN ABI、输出顺序和计算公式保持原有契约。
+
 ATK 用例和执行说明位于
 [`tests/atk/chunk_gated_delta_rule_fwd`](../../../../../../tests/atk/chunk_gated_delta_rule_fwd/README.md)。
 精度双标杆分别使用融合算子、上述公开算子链和 FP64 recurrence，并在相同冻结输入上比较结果。
