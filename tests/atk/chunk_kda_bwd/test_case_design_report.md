@@ -77,8 +77,16 @@ head-major 规范排列；executor 不重新生成或替换这些张量，而是
 
 正态分布使用 ATK `range_values={"name":"nd","mean":[...],"std":[...]}`。
 张量保持声明的输入 dtype，CPU golden 转为 FP64，NPU 保持声明 dtype。
-raw_g 的 BF16/FP32 分支由 `raw_g_dtype` 控制，beta 由 `beta_dtype` 控制；
-generator 的 output dtype overrides 分别让 dg/db 跟随这两个类型。
+raw_g 的 BF16/FP32 分支由 `raw_g_dtype` 控制，beta 由 `beta_dtype` 控制。
+generator 的 `output_dtype_overrides` 是**逐输出比较判据**，不是公开输出 dtype 声明：
+dq/dk/dv/db/dA/dbias 使用已验证的 BF16 mixed-tolerance 校准，dg 按 raw_g 真实 dtype
+选择 FP32 或 BF16；executor 另行断言公开存储 dtype，db 跟随 beta、dg 跟随 raw_g。
+
+FP32 raw_g 对应的 dg 必须严格按 FP32 判据比较。当前串行 accuracy 为 42 条全部执行、
+26 通过、16 失败，失败全部为 FP32 dg 的 `output_4.pt`，case id 和 XLSX 证据见 README。
+三版本位一致只说明 O1/O2 未引入新差异，不能掩盖 PR993 base 继承的精度差距。
+错误注入检查表明 FP32 dg 不能用 BF16 判据漏检；没有经过误差预算和负例共同验证的
+替代 FP32 标准，不得称为“已校准”或“只是容差问题”。
 
 `cu_seqlens` 是精确的字符串属性：dense 为空字符串并解析为 None，packed 为
 `0,64,128`、`0,97,130` 或 `0,8` 并解析为 INT 列表，不随机化累计长度元数据。
@@ -104,8 +112,8 @@ None，Aqk/Akk 始终保留。前向缓存准备和有限值检查不属于反�
 固定种子为 `0 / 20260630 / 7`。当前 generator 有 **14 个逻辑 profile**，每个生成三个
 `(profile,seed)`，所以 `atk_chunk_kda_bwd.json` 共 **42 条 accuracy 资产**，id 0–41；
 逻辑 profile 内的种子顺序不变。`atk_chunk_kda_bwd_mss.json` 对每个 profile 保留
-seed=0 一条，共 **14 条**。下表同时给出 mss 与预期 Finalize TilingKey 映射，
-不表示已经取得设备选择日志、精度通过或内存检测通过结果。
+seed=0 一条，共 **14 条**。下表同时给出 mss 与预期 Finalize TilingKey 映射；
+映射本身不证明实际选 key 或 msSanitizer 通过，accuracy 实测结果见 README。
 
 表中 dtype 顺序为 raw_g/beta；执行 layout 指公开反向入口，不是 JSON 的规范输入排列。
 
@@ -158,14 +166,15 @@ mss id 与逻辑 profile id 相同，当前完整映射为：
 `atk_chunk_kda_bwd_perf.json` 保留 **2 条**模型 case：id 0 为 saved，id 1 为 recompute。
 二者均为 B1/H96/T8192、K=V=128、C64、dense BSND、norm off、BF16 token、FP32 raw_g、
 BF16 beta、有 dt_bias、safe gate、`lower_bound=-5`、Ascend950、seed=20260630，
-预期 Finalize Key 1。前向缓存构造不计入反向性能；本报告不填写未执行的耗时、
-增速或达标结论。
+预期 Finalize Key 1。前向缓存构造不计入反向性能。四组六轮配对性能及 2 条
+`performance_device` 的真实执行结果见 README；资产数量或执行完成均不等于性能达标。
 
 ## 6. 排除项与布局看护
 
-本包不覆盖 unsafe gate、FP16、initial state/dht，也不使用 legacy 扩展或旧 63 条结果
-作为当前结论。42 条 accuracy、14 条 mss、2 条 perf 只是当前资产数量，不等于相应
-NPU 执行或通过数量；A2/A3 实机和整链验收也不由本报告推断。
+本包不覆盖 unsafe gate、FP16、initial state/dht，也不使用 legacy 扩展结果作为当前结论。
+42 条 accuracy、14 条 mss、2 条 perf 是资产规模，不直接代表通过数量。当前 accuracy
+实测为 26/42 通过、16 条 FP32 dg 失败；determinism 的 14×50 和 `performance_device`
+的 2/2 执行结果分别按 README 中的真实报告解释。A2/A3 实机和整链验收不由本报告推断。
 
 独立 Finalize 的 `output_layout` 控制全部五个梯度。总接口内部通过可选字符串
 `model_layout` 传递 BSND/BNSD/TND/NTD，默认空字符串表示独立调用；输出 shape 只用于校验，
