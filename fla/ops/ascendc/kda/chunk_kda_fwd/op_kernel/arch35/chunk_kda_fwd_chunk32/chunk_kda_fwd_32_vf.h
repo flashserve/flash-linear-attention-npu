@@ -280,8 +280,8 @@ template <typename T, bool IsVarlen, bool HasTail>
 		uint64_t is_varlen_, uint64_t cu_base_, uint64_t epsilon_bits_,
 		uint64_t gate_flags_)
 	{
-		coreid = get_block_idx();
-		subid = get_subblockid()&1;
+		coreid = AscendC::GetBlockIdx() / AscendC::GetSubBlockNum();
+		subid = AscendC::GetSubBlockIdx() & 1;
 		// GVA(issue #829):一核一 value head,q/k 头按组映射 qk_head = head / (HV/H);
 		// qk_group_=1 时退化为 H==HV 原契约。batch 拍平后 fh/qk_group 恰为
 		// batch*H + qk 头(HV = H*qk_group 整除),见 BindTask。
@@ -319,25 +319,25 @@ template <typename T, bool IsVarlen, bool HasTail>
 		constexpr uint32_t tmp_slot_bytes = 5 * 512;         // tmp 槽:暂存数组区 + 16x16 fp32 表
 		constexpr uint32_t tmp_table_off = 3 * 512;          // strict_tril_mask/identity 在 tmp 槽内的偏移
 		uint64_t addr = 368*512;   // 本 kernel UB 区起点
-		q_ub[0] = (__ubuf__ void *)get_imm(addr); addr += qkg_slot_bytes;
-		q_ub[1] = (__ubuf__ void *)get_imm(addr); addr += qkg_slot_bytes + 256;   // 256B 间隙,不并入槽
-		g_ub[0] = (__ubuf__ void *)get_imm(addr); addr += qkg_slot_bytes;
+		q_ub[0] = (__ubuf__ void *)Ub(addr).GetPhyAddr(); addr += qkg_slot_bytes;
+		q_ub[1] = (__ubuf__ void *)Ub(addr).GetPhyAddr(); addr += qkg_slot_bytes + 256;   // 256B 间隙,不并入槽
+		g_ub[0] = (__ubuf__ void *)Ub(addr).GetPhyAddr(); addr += qkg_slot_bytes;
 		// 原 g_ub[1] 与 g_ub[0] 组成 fp32 raw slot 0(16KB);
 		// 第二个独立槽移到 addrUB[0] 腾出的 16KB,bf16 仍只使用各槽前 8KB。
-		g_ub[1] = (__ubuf__ void *)get_imm(0); addr += qkg_slot_bytes;
-		k_ub[0] = (__ubuf__ void *)get_imm(addr); addr += qkg_slot_bytes;
-		k_ub[1] = (__ubuf__ void *)get_imm(addr); addr += qkg_slot_bytes;
-		v_ub[0] = (__ubuf__ void *)get_imm(addr); addr += v_slot_bytes;
-		v_ub[1] = (__ubuf__ void *)get_imm(addr); addr += v_slot_bytes;
-		v_ub[2] = (__ubuf__ void *)get_imm(addr); addr += v_slot_bytes;
-		v_ub[3] = (__ubuf__ void *)get_imm(addr); addr += v_slot_bytes;
-		b_ub[0] = (__ubuf__ void *)get_imm(addr); addr += beta_slot_bytes;
-		b_ub[1] = (__ubuf__ void *)get_imm(addr); addr += beta_slot_bytes;
-		b_ub[2] = (__ubuf__ void *)get_imm(addr); addr += beta_slot_bytes;
-		b_ub[3] = (__ubuf__ void *)get_imm(addr); addr += beta_slot_bytes;
-		dt_ub = (__ubuf__ void *)get_imm(addr); addr += dt_slot_bytes;
-		tmp_ub[0] = (__ubuf__ void *)get_imm(addr); addr += tmp_slot_bytes;
-		tmp_ub[1] = (__ubuf__ void *)get_imm(addr); addr += tmp_slot_bytes;
+		g_ub[1] = (__ubuf__ void *)Ub(0).GetPhyAddr(); addr += qkg_slot_bytes;
+		k_ub[0] = (__ubuf__ void *)Ub(addr).GetPhyAddr(); addr += qkg_slot_bytes;
+		k_ub[1] = (__ubuf__ void *)Ub(addr).GetPhyAddr(); addr += qkg_slot_bytes;
+		v_ub[0] = (__ubuf__ void *)Ub(addr).GetPhyAddr(); addr += v_slot_bytes;
+		v_ub[1] = (__ubuf__ void *)Ub(addr).GetPhyAddr(); addr += v_slot_bytes;
+		v_ub[2] = (__ubuf__ void *)Ub(addr).GetPhyAddr(); addr += v_slot_bytes;
+		v_ub[3] = (__ubuf__ void *)Ub(addr).GetPhyAddr(); addr += v_slot_bytes;
+		b_ub[0] = (__ubuf__ void *)Ub(addr).GetPhyAddr(); addr += beta_slot_bytes;
+		b_ub[1] = (__ubuf__ void *)Ub(addr).GetPhyAddr(); addr += beta_slot_bytes;
+		b_ub[2] = (__ubuf__ void *)Ub(addr).GetPhyAddr(); addr += beta_slot_bytes;
+		b_ub[3] = (__ubuf__ void *)Ub(addr).GetPhyAddr(); addr += beta_slot_bytes;
+		dt_ub = (__ubuf__ void *)Ub(addr).GetPhyAddr(); addr += dt_slot_bytes;
+		tmp_ub[0] = (__ubuf__ void *)Ub(addr).GetPhyAddr(); addr += tmp_slot_bytes;
+		tmp_ub[1] = (__ubuf__ void *)Ub(addr).GetPhyAddr(); addr += tmp_slot_bytes;
 
 		strict_tril_mask = (__ubuf__ void *)((__ubuf__ uint8_t *)tmp_ub[0] + tmp_table_off);
 		identity = (__ubuf__ void *)((__ubuf__ uint8_t *)tmp_ub[1] + tmp_table_off);
@@ -396,8 +396,9 @@ template <typename T, bool IsVarlen, bool HasTail>
 		//[60:40]: src loop2 stride, in unit of Byte
 		set_loop2_stride_outtoub(0);
 
+		// Legacy DMA/SPR setup: no identical public AscendC replacement on Ascend950.
 		//set SPR
-		set_atomic_none();
+		AscendC::SetAtomicNone();
 		set_pcie_wr_ctrl(0);
 		set_pcie_rd_ctrl(0);
 	}
@@ -4059,7 +4060,7 @@ template <typename T, bool IsVarlen, bool HasTail>
 
 		// 任务循环:task_count=0 表示单任务
 		// fh = batch*HV + value_head。AIC 侧 Process 走同一任务序列(配平前提)。
-		const uint32_t task_begin = get_block_idx();
+		const uint32_t task_begin = AscendC::GetBlockIdx() / AscendC::GetSubBlockNum();
 		const uint32_t task_end = task_count ? (uint32_t)task_count : (task_begin + 1);
 		const uint32_t task_step = task_count ? (uint32_t)block_num : 1;
 		for (uint32_t task = task_begin; task < task_end; task += task_step) {

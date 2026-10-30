@@ -89,6 +89,7 @@ template <typename T, bool IsVarlen, bool HasTail>
 		//[49]: FP8 NaN preservation mode. 0 will turn NaN to 0.
 		// We set this register in Init().
 
+		// Legacy CTRL[51] has no public Ascend950 SetCtrlSpr replacement.
 		// Init Mmad Config Reg
 		uint64_t ctrl = get_ctrl();
 		//[45]: HiF8 ctrl bit, set to 0;
@@ -1650,7 +1651,7 @@ template <typename T, bool IsVarlen, bool HasTail>
 		// 任务循环:与 AIV 侧使用同一任务序列
 		// (task_count=0 → legacy 单任务)。AIC 无 GM 视图,任务间只需重置
 		// 同步生命周期;stage 计数全部由 iter 参数驱动。
-		const uint32_t task_begin = get_block_idx();
+		const uint32_t task_begin = AscendC::GetBlockIdx();
 		const uint32_t task_end = task_count ? (uint32_t)task_count : (task_begin + 1);
 		const uint32_t task_step = task_count ? (uint32_t)block_num : 1;
 		for (uint32_t task = task_begin; task < task_end; task += task_step) {
