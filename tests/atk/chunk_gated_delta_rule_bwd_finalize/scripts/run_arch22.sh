@@ -28,11 +28,18 @@ count=$("$python" -B "$script_dir/arch22_cases.py" "${select_args[@]}")
 atk_cmd=("$python" -B "$atk_bin")
 version=$("${atk_cmd[@]}" --version)
 printf '%s\n' "$version" > "$run_dir/atk-version.txt"
-"$python" -B - "$version" <<'PY'
+"$python" -B - "$version" "$scope" <<'PY'
 import re,sys
 m=re.search(r'(\d+)\.(\d+)\.(\d+)', sys.argv[1])
-if not m or tuple(map(int,m.groups())) < (26,8,8):
-    raise SystemExit('ATK 必须 >=26.8.8；mixed_tolerance_bm 不能降级')
+if not m or tuple(map(int,m.groups())) < (26,7,8):
+    raise SystemExit('ATK 必须 >=26.7.8')
+if sys.argv[2] in ('accuracy', 'determinism'):
+    from atk.tasks.post_process import AccuracyFactory
+    standard = 'cv_fused_double_benchmark' if sys.argv[2] == 'accuracy' else 'mixed_tolerance_bm'
+    try:
+        AccuracyFactory.get_accuracy(standard)
+    except (KeyError, ValueError) as error:
+        raise SystemExit(f'当前 ATK 缺少真实 {standard} 注册器；请用 ATK_BIN 指向具备该标准的安装') from error
 PY
 args=()
 if [[ "$scope" == accuracy ]]; then

@@ -320,9 +320,9 @@ class Arch22FunctionApi(BaseApi):
                 raise RuntimeError(f"A2/A3 {self.role}/{name}: nonfinite output")
             # NumPy 不支持 BF16；只把独立临时副本用于摘要，保留生产角色的 dtype 记录。
             hash_value = value.float() if value.dtype == torch.bfloat16 else value
-            # ATK 26.9.8 的前置 dtype 检查要求与真 FP64 golden 使用同一表示。
-            # BF16/FP32 -> FP64 无损；判据由每条 case 的公开 ABI dtype override 决定。
-            comparison_value = value.to(torch.float64)
+            # 沿用已转测 cv 双标杆的比较表示：DUT/lowp 为 FP32，真 golden 保持 FP64。
+            # BF16 -> FP32 无损；原生 ABI dtype 与其摘要仍独立记录。
+            comparison_value = value if self.role == "fp64" else value.float()
             metadata[name] = dict(shape=list(value.shape), dtype=str(value.dtype),
                                   sha256=hashlib.sha256(hash_value.contiguous().numpy().tobytes()).hexdigest(),
                                   comparison_dtype=str(comparison_value.dtype),

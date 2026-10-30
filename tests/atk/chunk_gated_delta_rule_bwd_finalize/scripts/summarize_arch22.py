@@ -1,6 +1,9 @@
 """保留原 Excel，汇总 ATK 原生结果、角色身份和 no-save 后验盘点。"""
 from __future__ import annotations
 import argparse
+import ast
+import math
+import re
 import hashlib
 import json
 import os
@@ -11,7 +14,112 @@ PASS = {"pass", "passed", "success", "successful", "true", "达标"}
 BANNED = {".pt", ".pth", ".bin", ".npy", ".npz", ".pkl", ".pickle", ".safetensors", ".tensor"}
 
 
-def native_report(path, scope, count):
+
+CV_STANDARD = {'cv_fused_double_benchmark': {'max_re_ratio': 5, 'avg_re_ratio': 1.5, 'root_mean_squared_ratio': 1.5}}
+
+
+def _metrics_for_json(value):
+    if isinstance(value, float) and not math.isfinite(value):
+        return {'nonfinite': repr(value)}
+    if isinstance(value, dict):
+        return {key: _metrics_for_json(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_metrics_for_json(item) for item in value]
+    return value
+
+
+def _declared_equal(expected, actual):
+    if isinstance(expected, dict):
+        assert isinstance(actual, dict)
+        for key, value in expected.items():
+            _declared_equal(value, actual[key])
+    elif isinstance(expected, list):
+        assert isinstance(actual, list) and len(expected) == len(actual)
+        for left, right in zip(expected, actual):
+            _declared_equal(left, right)
+    else:
+        assert expected == actual, '原生Excel的case字段/输入/seed/阈值不同'
+
+
+def _statistic_evidence(path, cases):
+    rows = _xlsx_rows(path, 'statistic')
+    assert len(rows) >= 2, 'statistic没有逐case数据'
+    header = rows[0]
+    required = ('编号', '运行结果', '失败原因', '用例json信息')
+    assert all(header.count(name) == 1 for name in required)
+    cols = {name: header.index(name) for name in required}
+    expected = {row['id']: row for row in cases}
+    assert cases and len(expected) == len(cases)
+    evidence, raw_by_id, seen = [], {}, set()
+    for raw in rows[1:]:
+        if not raw or all(value is None for value in raw):
+            continue
+        values = raw + [None] * max(0, len(header) - len(raw))
+        text = values[cols['编号']]
+        assert not isinstance(text, bool) and re.fullmatch(r'\d+', str(text)), 'case编号不是整数'
+        cid = int(text)
+        assert cid in expected and cid not in seen, '额外/重复case ID'
+        seen.add(cid)
+        status = str(values[cols['运行结果']] or '').strip()
+        assert status == 'SUCCESS', '逐case运行结果非SUCCESS（含SKIP）'
+        reason = values[cols['失败原因']]
+        assert reason is None or str(reason).strip() == '', '成功行仍有失败原因'
+        serialized = values[cols['用例json信息']]
+        native_case = json.loads(serialized)
+        # ATK用配置文件stem重写save_name；其他已声明字段必须逐项相等。
+        _declared_equal({key: value for key, value in expected[cid].items() if key != 'save_name'}, native_case)
+        evidence.append(dict(case_id=cid, run_result=status, failure_reason=reason,
+            case_json_sha256=hashlib.sha256(serialized.encode()).hexdigest()))
+        raw_by_id[cid] = values
+    assert seen == set(expected) and len(evidence) == len(cases), 'statistic缺失case'
+    failed = _xlsx_rows(path, 'failed cases')
+    assert failed and not any(row and any(value is not None for value in row) for row in failed[1:]), '原生failed cases非空'
+    return evidence, header, raw_by_id
+
+
+def _run_report(path, scope, cases):
+    assert scope in ('keys', 'mssanitizer') and len(cases) == 40, 'keys/MSS正式矩阵必须40条'
+    rows, _, _ = _statistic_evidence(path, cases)
+    return dict(path=str(path), bytes=path.stat().st_size, sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+        evidence_kind='task_run_statistic', sheet='statistic', run_success_count=40,
+        case_ids=sorted(row['case_id'] for row in rows), rows=rows, errors=[],
+        MSS_detection_coverage_proven=False)
+
+
+def _cv_details(path, cases):
+    rows, header, by_id = _statistic_evidence(path, cases)
+    for name in ('npu_finalize_精度通过', 'cpu_cpu_lowp_精度通过', '精度详情'):
+        assert header.count(name) == 1
+    details = []
+    for cid, values in by_id.items():
+        assert values[header.index('npu_finalize_精度通过')] is True
+        assert values[header.index('cpu_cpu_lowp_精度通过')] is True
+        text = values[header.index('精度详情')]
+        class Names(ast.NodeTransformer):
+            def visit_Name(self, node):
+                if node.id in ('inf', 'nan'):
+                    return ast.copy_location(ast.Constant(float(node.id)), node)
+                return node
+        tree = Names().visit(ast.parse(text, mode='eval'))
+        ast.fix_missing_locations(tree)
+        parsed = ast.literal_eval(tree)
+        assert set(parsed) == {'npu_finalize', 'cpu_cpu_lowp'}, '缺NPU或lowp对同golden的比较'
+        for role, outputs in parsed.items():
+            assert len(outputs) == 5 and {item['filename'] for item in outputs} == {f'output_{i}.pt' for i in range(5)}
+            for item in outputs:
+                assert item['result'] is True and not item['error_info'], 'CV逐输出未通过'
+                metrics = item['new_benchmark_indicate']
+                assert isinstance(metrics, dict) and any(key.startswith('Actual_') for key in metrics)
+                assert any(key.startswith('Benchmark_') for key in metrics), '缺Actual/Benchmark两侧原生指标'
+                details.append(dict(case_id=cid, role=role, output=item['filename'], metrics=_metrics_for_json(metrics)))
+    return dict(case_ids=sorted(by_id), execution_rows=rows, judgments=details)
+
+def native_report(path, scope, count, cases):
+    assert len(cases) == count
+    if scope == 'accuracy':
+        assert all(row['standard']['acc'] == CV_STANDARD for row in cases), '新accuracy仅接受固定CV标准'
+    if scope in ('keys', 'mssanitizer'):
+        return _run_report(path, scope, cases)
     rows = _xlsx_rows(path, "summary")
     if len(rows) < 2:
         raise ValueError("Excel summary 无数据行")
@@ -43,17 +151,22 @@ def native_report(path, scope, count):
         details.append(dict(zip(header, values)))
     if scope == "accuracy" and len(details) < 2:
         errors.append("三路精度至少需要 NPU 与 cpu_lowp 两条对 FP64 的原生结果")
-    return dict(path=str(path), bytes=path.stat().st_size, sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
-                rows=details, errors=errors)
+    result = dict(path=str(path), bytes=path.stat().st_size, sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+                  evidence_kind='accuracy_summary' if scope == 'accuracy' else 'summary',
+                  sheet='summary', rows=details, errors=errors)
+    if scope == 'accuracy':
+        result['case_evidence'] = _cv_details(path, cases)
+    return result
 
 
-def summarize(root, scope, rc, count):
+def summarize(root, scope, rc, count, output=None):
     errors = [] if rc == 0 else [f"native task rc={rc}"]
     reports = []
+    cases = json.loads((root / "cases.json").read_text(encoding="utf-8"))
     for path in sorted(root.rglob("*.xlsx")):
         try:
-            reports.append(native_report(path, scope, count))
-        except (ValueError, KeyError, TypeError) as exc:
+            reports.append(native_report(path, scope, count, cases))
+        except (AssertionError, ValueError, KeyError, TypeError) as exc:
             errors.append(f"{path}: {exc}")
     if not reports:
         errors.append("缺少可解析的 ATK 原生 Excel")
@@ -106,7 +219,9 @@ def summarize(root, scope, rc, count):
                   task_rc=rc, native_reports=reports, role_evidence=str(evidence),
                   no_save=dict(passed=not banned, forbidden_files=banned),
                   actual_key_evidence=actual_keys, verdict="pass" if not errors else "fail", errors=errors)
-    (root / "summary.json").write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    output = root / 'summary.json' if output is None else output
+    with output.open('x', encoding='utf-8', newline='\n') as handle:
+        handle.write(json.dumps(result, ensure_ascii=False, indent=2) + '\n')
     print(json.dumps(dict(verdict=result["verdict"], expected_cases=count, errors=errors[:12]), ensure_ascii=False))
     return 0 if not errors else 99
 
@@ -117,5 +232,6 @@ if __name__ == "__main__":
     p.add_argument("--scope", required=True)
     p.add_argument("--task-rc", type=int, required=True)
     p.add_argument("--expected-cases", type=int, required=True)
+    p.add_argument("--output", type=Path, help="新旁路汇总文件；拒绝覆盖原失败记录")
     a = p.parse_args()
-    raise SystemExit(summarize(a.root, a.scope, a.task_rc, a.expected_cases))
+    raise SystemExit(summarize(a.root, a.scope, a.task_rc, a.expected_cases, a.output))

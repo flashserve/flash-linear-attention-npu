@@ -359,6 +359,9 @@ def _payloads(specs: list[dict]) -> list[dict]:
 
 ARCH22_API = "executor_chunk_gated_delta_rule_bwd_finalize_arch22"
 ARCH22_SEEDS = (20261030, 20261031, 20261032)
+ARCH22_ACCURACY_ACC = {"cv_fused_double_benchmark": {
+    "max_re_ratio": 5, "avg_re_ratio": 1.5, "root_mean_squared_ratio": 1.5,
+}}
 
 
 def expected_arch22_key(spec: dict) -> int:
@@ -468,7 +471,10 @@ def formal_arch22_payloads(scope: str) -> list[dict]:
     payloads = []
     for spec in specs:
         for seed in ARCH22_SEEDS if scope == "accuracy" else ARCH22_SEEDS[:1]:
-            payloads.append(_arch22_payload(source_id_start + len(payloads), spec, seed))
+            payload = _arch22_payload(source_id_start + len(payloads), spec, seed)
+            if scope == "accuracy":
+                payload["standard"]["acc"] = deepcopy(ARCH22_ACCURACY_ACC)
+            payloads.append(payload)
     return payloads
 
 

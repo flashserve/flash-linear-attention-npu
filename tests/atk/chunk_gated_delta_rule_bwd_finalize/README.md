@@ -121,20 +121,23 @@ ATK 在 `before_call` 过滤该通道之前，先调用 executor 的 `init_by_in
   GVA 累加、BT64/128 DG2 规约、gate 尾处理和最终输出 dtype。BLAS MMA、Vector 指令
   超越函数、FTZ/NaN 尚未证明逐位等价，不能声称 bit exact。
 - CPU FP64 golden：共享同一份量化输入，独立执行 FP64 数学式；不调用 lowp 函数，
-  不把中间量或输出降成 BF16/FP32。ATK 原生 `mixed_tolerance_bm` 保持不变，
-  lowp 成功不能替代或遮盖 NPU 对 FP64 的失败。
+  不把中间量或输出降成 BF16/FP32。精度使用既有转测 ATK 的
+  `cv_fused_double_benchmark`，DUT 和 lowp 分别对同一真 FP64 记录误差，
+  按原 5/1.5/1.5 双标杆比例判据判断，不隐藏 lowp 本身的误差。
 - 三个角色均记录同一公开输入的 SHA，只有摘要进入回执，不保存张量。
 - ATK 属性在输入边界按公开 ABI 规范成 Python 标量：scale 为 `float`、chunk_size 为
   `int`、五个开关为 `bool`。NumPy FP32 scale 精确提升后供三个角色共享，不替换成常数。
 - DUT 先严格校验原生输出 dtype；lowp 的 `dq/dk/dv` 按 BF16、`dbeta/dg` 按公开 GT
-  保留 BF16 或 FP32 数值。三个角色交 ATK 的比较载体统一无损升为 FP64，真 FP64
-  golden 的计算、中间量与结果始终保持 FP64，不通过降精度绕开框架检查。
-- ATK 26.9.8 的前置 dtype 检查不接受 BF16/FP32 与 FP64 配对。每条新 case 使用官方
-  `standard.acc={"mixed_tolerance_bm":{"output_dtype_overrides":...}}`，输出 0/1/2 固定
-  `bf16`，输出 3/4 按该 case 的真实 GT 声明 `bf16` 或 `fp32`。只选择原有 ABI
-  dtype 对应标准，不修改任何阈值，也不让 FP64 载体落入其他比较方法。
+  保留 BF16 或 FP32 数值。沿用既有已实测执行器的比较表示，DUT/lowp 无损转 FP32，
+  golden 的计算、中间量与结果始终保持 FP64。原生 ABI 检查在表示转换之前完成。
+- 仅独立 204 条 accuracy 采用 `standard.acc={"cv_fused_double_benchmark":{
+  "max_re_ratio":5,"avg_re_ratio":1.5,"root_mean_squared_ratio":1.5}}`；
+  来自原转测双标杆合同。它与 `mixed_tolerance_bm` 固定容差并非同一判据，
+  这是新精度资产的标准修正，不把旧单标杆运行称为三角色精度通过。
+- 独立 40 条 MSS/DC/keys JSON 的全部输入和原 mixed/ABI overrides 声明保持；
+  不因 cv 名称触发额外 golden。对应任务的 DUT 比较表示为 FP32，DC 仍按确定性比较。
 - 输出回执的 `dtype/sha256` 保留原生或 CPU 生产值；`comparison_dtype/comparison_sha256`
-  单列实际交给 ATK 的 FP64 载体。BF16 原生 SHA 仅用独立 FP32 临时副本计算。
+  单列实际交给 ATK 的 FP32 或 FP64 表示。BF16 原生 SHA 仅用独立 FP32 临时副本计算。
 
 新增矩阵保留原 q/k `[-0.2,0.2]`、v `[-0.5,0.5]`、gradient/state/A
 `[-0.03,0.03]`、g/beta/beta_raw `[-0.09,0.09]`，未收窄范围或提高阈值。
@@ -204,7 +207,10 @@ worker 每次真实 ACLNN 调用前后打印 case 边界，Host `SetTilingKey` �
 
 ### 运行入口、身份与 no-save
 
-准备 ATK >=26.8.8（已验证环境可使用 26.9.8）、CANN/OPP、当前构建和冻结 binding。
+准备含真实 `cv_fused_double_benchmark` 注册器的既有 ATK >=26.7.8、CANN/OPP、当前构建和冻结 binding。
+仅版本号不够；须绑定实际比较器实现及安装树 SHA。当前 26.9.8 Python wheel 不含此注册器，
+不能靠添加别名或改标准名称冒充双标杆支持。确定性任务沿用含 `mixed_tolerance_bm`
+的 ATK（如 26.9.8）；可通过 `ATK_BIN` 显式选择对应安装，入口先检查实际注册器。
 入口不设置 PYTHONPATH、不安装依赖、不构建、不替换设备环境。
 
 ```bash
