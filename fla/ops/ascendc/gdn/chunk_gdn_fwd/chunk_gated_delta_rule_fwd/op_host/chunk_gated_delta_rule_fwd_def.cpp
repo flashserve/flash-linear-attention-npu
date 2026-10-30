@@ -50,6 +50,18 @@ public:
             .UnknownShapeFormat(formats);
         this->Output("A").ParamType(REQUIRED).DataType(inputTypes).Format(formats)
             .UnknownShapeFormat(formats);
+        this->Output("q_hat").ParamType(OPTIONAL).DataType(inputTypes).Format(formats)
+            .UnknownShapeFormat(formats);
+        this->Output("k_hat").ParamType(OPTIONAL).DataType(inputTypes).Format(formats)
+            .UnknownShapeFormat(formats);
+        this->Output("q_rstd").ParamType(OPTIONAL).DataType(gateTypes).Format(formats)
+            .UnknownShapeFormat(formats);
+        this->Output("k_rstd").ParamType(OPTIONAL).DataType(gateTypes).Format(formats)
+            .UnknownShapeFormat(formats);
+        this->Output("h").ParamType(OPTIONAL).DataType(inputTypes).Format(formats)
+            .UnknownShapeFormat(formats);
+        this->Output("beta_eff").ParamType(OPTIONAL).DataType(gateTypes).Format(formats)
+            .UnknownShapeFormat(formats);
 
         this->Attr("output_final_state").AttrType(REQUIRED).Bool(false);
         this->Attr("chunk_size").AttrType(REQUIRED).Int(64);
@@ -63,6 +75,9 @@ public:
         this->Attr("o_layout").AttrType(OPTIONAL).Int(0);
         this->Attr("state_v_first").AttrType(OPTIONAL).Bool(false);
         this->Attr("allow_neg_eigval").AttrType(OPTIONAL).Bool(false);
+        this->Attr("is_out_l2norm").AttrType(OPTIONAL).Bool(false);
+        this->Attr("output_h").AttrType(OPTIONAL).Bool(false);
+        this->Attr("output_beta_eff").AttrType(OPTIONAL).Bool(false);
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)

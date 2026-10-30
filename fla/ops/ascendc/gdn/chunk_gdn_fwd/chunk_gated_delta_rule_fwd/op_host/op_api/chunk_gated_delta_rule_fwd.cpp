@@ -57,12 +57,22 @@ const std::array<const aclTensor *, 4> ChunkGatedDeltaRuleFwd(
     int64_t oLayout,
     bool stateVFirst,
     bool allowNegEigval,
+    const aclTensor *qHatOut,
+    const aclTensor *kHatOut,
+    const aclTensor *qRstdOut,
+    const aclTensor *kRstdOut,
+    bool isOutL2norm,
+    const aclTensor *hOut,
+    bool outputH,
+    const aclTensor *betaEffOut,
+    bool outputBetaEff,
     aclOpExecutor *executor)
 {
     L0_DFX(ChunkGatedDeltaRuleFwd, q, k, v, beta, aStorage, rawG, gkOptional, initialStateOptional,
            cuSeqlensOptional, chunkIndicesOptional, outputFinalState, chunkSize, scale, outputGCumsum,
            oOut, finalStateOut, gCumsumBthOut, aOut, rawGLayout, qkvLayout, oLayout, stateVFirst,
-           allowNegEigval);
+           allowNegEigval, qHatOut, kHatOut, qRstdOut, kRstdOut, isOutL2norm, hOut, outputH,
+           betaEffOut, outputBetaEff);
     const aclTensor *cuSeqlens = ConvertMetadata(cuSeqlensOptional, executor);
     const aclTensor *chunkIndices = ConvertMetadata(chunkIndicesOptional, executor);
     if ((cuSeqlensOptional != nullptr && cuSeqlens == nullptr) ||
@@ -75,9 +85,10 @@ const std::array<const aclTensor *, 4> ChunkGatedDeltaRuleFwd(
         ChunkGatedDeltaRuleFwd,
         OP_INPUT(q, k, v, beta, aStorage, rawG, gkOptional, initialStateOptional,
                  cuSeqlens, chunkIndices),
-        OP_OUTPUT(oOut, finalStateOut, gCumsumBthOut, aOut),
+        OP_OUTPUT(oOut, finalStateOut, gCumsumBthOut, aOut, qHatOut, kHatOut, qRstdOut, kRstdOut, hOut,
+                  betaEffOut),
         OP_ATTR(outputFinalState, chunkSize, scale, outputGCumsum, rawGLayout, qkvLayout, oLayout,
-                stateVFirst, allowNegEigval));
+                stateVFirst, allowNegEigval, isOutL2norm, outputH, outputBetaEff));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE ChunkGatedDeltaRuleFwd failed.");
         return {nullptr, nullptr, nullptr, nullptr};

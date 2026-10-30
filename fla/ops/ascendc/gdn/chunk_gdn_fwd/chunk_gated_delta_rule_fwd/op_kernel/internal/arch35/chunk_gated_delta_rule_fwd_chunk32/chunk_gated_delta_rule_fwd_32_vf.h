@@ -32,6 +32,17 @@ __aicore__ inline void StoreNzEvenOdd(__ubuf__ bfloat16_t *nz, uint32_t row, Reg
     StoreAlign<bfloat16_t, DataCopyMode::DATA_BLOCK_COPY>(nz + row * 16, lo, static_cast<uint32_t>(kBt), m128);
 }
 
+// Same even/odd bf16 row, written contiguously. Used only by the export VF.
+__aicore__ inline void StoreNdFromEvenOdd(__ubuf__ bfloat16_t *nd, uint32_t row, RegTensor<float> &even,
+                                         RegTensor<float> &odd, MaskReg &m16, MaskReg &m128)
+{
+    RegTensor<bfloat16_t> lo, hi;
+    Cast<bfloat16_t, float, kCastB322B16>(lo, even, m16);
+    Cast<bfloat16_t, float, kCastB322B16Hi>(hi, odd, m16);
+    Or((RegTensor<uint16_t> &)lo, (RegTensor<uint16_t> &)lo, (RegTensor<uint16_t> &)hi, m16);
+    StoreAlign<bfloat16_t, StoreDist::DIST_NORM_B16>(nd + row * static_cast<uint32_t>(kDim), lo, m128);
+}
+
 __aicore__ inline void LoadEvenOdd(__ubuf__ bfloat16_t *src, RegTensor<float> &even, RegTensor<float> &odd,
                                    MaskReg &m16)
 {
@@ -82,6 +93,8 @@ __aicore__ inline void StoreCastBf16(__ubuf__ bfloat16_t *dst, RegTensor<float> 
     Mul(ee1, ee1, brc1, pregAll);                                                                                      \
     Mul(oo1, oo1, brc1, pregAll);
 
+// Empty on the inference VF. The export VF redefines it to keep ND hat and rstd.
+#define GDN32_L2_ND
 #define GDN32_L2_ROWS(xAddr, nzAddr)                                                                                   \
     {                                                                                                                  \
         RegTensor<float> e0, o0, e1, o1, e2, o2, e3, o3, s0, s1, mean0, mean1, mean2, mean3, r0, r1, brc0, brc1;      \
@@ -93,6 +106,7 @@ __aicore__ inline void StoreCastBf16(__ubuf__ bfloat16_t *dst, RegTensor<float> 
             GDN32_L2_APPLY(e0, o0, e1, o1, mean0, mean1)                                                               \
             StoreNzEvenOdd(nzAddr, static_cast<uint32_t>(i) * 2, e0, o0, m16, m128);                                  \
             StoreNzEvenOdd(nzAddr, static_cast<uint32_t>(i) * 2 + 1, e1, o1, m16, m128);                              \
+            GDN32_L2_ND                                                                                                \
             GDN32_L2_TAIL                                                                                              \
             e0 = e2;                                                                                                   \
             o0 = o2;                                                                                                   \
@@ -108,6 +122,7 @@ __aicore__ inline void StoreCastBf16(__ubuf__ bfloat16_t *dst, RegTensor<float> 
             GDN32_L2_APPLY(e0, o0, e1, o1, mean0, mean1)                                                               \
             StoreNzEvenOdd(nzAddr, static_cast<uint32_t>(i) * 2, e0, o0, m16, m128);                                  \
             StoreNzEvenOdd(nzAddr, static_cast<uint32_t>(i) * 2 + 1, e1, o1, m16, m128);                              \
+            GDN32_L2_ND                                                                                                \
             GDN32_L2_TAIL                                                                                              \
         }                                                                                                              \
     }
@@ -194,6 +209,101 @@ __aicore__ inline void L2NormQAndQexpVF(LocalTensor<bfloat16_t> &q, LocalTensor<
 #undef GDN32_L2_TAIL
     }
 }
+
+// Same math as the inference VFs. Also writes the ND hat back over the raw
+// row and the per-row rstd (1/sqrt(sum of squares + eps)).
+#undef GDN32_L2_ND
+#define GDN32_L2_ND                                                                                                    \
+    StoreNdFromEvenOdd(ndAddr, static_cast<uint32_t>(i) * 2, e0, o0, m16, m128);                                      \
+    StoreNdFromEvenOdd(ndAddr, static_cast<uint32_t>(i) * 2 + 1, e1, o1, m16, m128);                                  \
+    StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(rstdAddr + static_cast<uint32_t>(i) * 2, r0, pregMerge);    \
+    StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(rstdAddr + static_cast<uint32_t>(i) * 2 + 1, r1, pregMerge);
+
+__aicore__ inline void L2NormKAndKbgExportVF(LocalTensor<bfloat16_t> &k, LocalTensor<bfloat16_t> &kNz,
+                                            LocalTensor<bfloat16_t> &kbgNz, LocalTensor<float> &beta,
+                                            LocalTensor<float> &eg, LocalTensor<float> &rstd)
+{
+    constexpr uint32_t kRow = 2 * kVl;
+    constexpr uint32_t kPair = 2 * kRow;
+    __ubuf__ bfloat16_t *kAddr = (__ubuf__ bfloat16_t *)k.GetPhyAddr();
+    __ubuf__ bfloat16_t *kbgAddr = (__ubuf__ bfloat16_t *)kbgNz.GetPhyAddr();
+    __ubuf__ bfloat16_t *kNzAddr = (__ubuf__ bfloat16_t *)kNz.GetPhyAddr();
+    __ubuf__ bfloat16_t *ndAddr = kAddr;
+    __ubuf__ float *bAddr = (__ubuf__ float *)beta.GetPhyAddr();
+    __ubuf__ float *eAddr = (__ubuf__ float *)eg.GetPhyAddr();
+    __ubuf__ float *rstdAddr = (__ubuf__ float *)rstd.GetPhyAddr();
+    const uint16_t nEven = static_cast<uint16_t>(kBt >> 1);
+    __VEC_SCOPE__
+    {
+        MaskReg pregAll = CreateMask<float, MaskPattern::ALL>();
+        MaskReg pregMerge = CreateMask<float, MaskPattern::VL1>();
+        MaskReg m16 = CreateMask<uint16_t, MaskPattern::ALL>();
+        uint32_t n128 = 128;
+        MaskReg m128 = UpdateMask<bfloat16_t>(n128);
+        RegTensor<float> one;
+        Duplicate(one, 1.0f, pregMerge);
+#define GDN32_L2_TAIL                                                                                                  \
+    {                                                                                                                  \
+        RegTensor<float> g0, g1, be0, be1, sc0, sc1;                                                                  \
+        LoadAlign<float, LoadDist::DIST_BRC_B32>(g0, eAddr + i * 2);                                                  \
+        LoadAlign<float, LoadDist::DIST_BRC_B32>(g1, eAddr + i * 2 + 1);                                              \
+        LoadAlign<float, LoadDist::DIST_BRC_B32>(be0, bAddr + i * 2);                                                 \
+        LoadAlign<float, LoadDist::DIST_BRC_B32>(be1, bAddr + i * 2 + 1);                                             \
+        Mul(sc0, be0, g0, pregAll);                                                                                   \
+        Mul(sc1, be1, g1, pregAll);                                                                                   \
+        Muls(sc0, sc0, -1.0f, pregAll);                                                                               \
+        Muls(sc1, sc1, -1.0f, pregAll);                                                                               \
+        Mul(e0, e0, sc0, pregAll);                                                                                    \
+        Mul(o0, o0, sc0, pregAll);                                                                                    \
+        Mul(e1, e1, sc1, pregAll);                                                                                    \
+        Mul(o1, o1, sc1, pregAll);                                                                                    \
+        StoreNzEvenOdd(kbgAddr, static_cast<uint32_t>(i) * 2, e0, o0, m16, m128);                                     \
+        StoreNzEvenOdd(kbgAddr, static_cast<uint32_t>(i) * 2 + 1, e1, o1, m16, m128);                                 \
+    }
+        GDN32_L2_ROWS(kAddr, kNzAddr)
+#undef GDN32_L2_TAIL
+    }
+}
+
+__aicore__ inline void L2NormQAndQexpExportVF(LocalTensor<bfloat16_t> &q, LocalTensor<bfloat16_t> &qNz,
+                                             LocalTensor<bfloat16_t> &qexpNz, LocalTensor<float> &eg,
+                                             LocalTensor<float> &rstd)
+{
+    constexpr uint32_t kRow = 2 * kVl;
+    constexpr uint32_t kPair = 2 * kRow;
+    __ubuf__ bfloat16_t *qAddr = (__ubuf__ bfloat16_t *)q.GetPhyAddr();
+    __ubuf__ bfloat16_t *qeAddr = (__ubuf__ bfloat16_t *)qexpNz.GetPhyAddr();
+    __ubuf__ bfloat16_t *qNzAddr = (__ubuf__ bfloat16_t *)qNz.GetPhyAddr();
+    __ubuf__ bfloat16_t *ndAddr = qAddr;
+    __ubuf__ float *eAddr = (__ubuf__ float *)eg.GetPhyAddr();
+    __ubuf__ float *rstdAddr = (__ubuf__ float *)rstd.GetPhyAddr();
+    const uint16_t nEven = static_cast<uint16_t>(kBt >> 1);
+    __VEC_SCOPE__
+    {
+        MaskReg pregAll = CreateMask<float, MaskPattern::ALL>();
+        MaskReg pregMerge = CreateMask<float, MaskPattern::VL1>();
+        MaskReg m16 = CreateMask<uint16_t, MaskPattern::ALL>();
+        uint32_t n128 = 128;
+        MaskReg m128 = UpdateMask<bfloat16_t>(n128);
+        RegTensor<float> one;
+        Duplicate(one, 1.0f, pregMerge);
+#define GDN32_L2_TAIL                                                                                                  \
+    {                                                                                                                  \
+        RegTensor<float> g0, g1;                                                                                      \
+        LoadAlign<float, LoadDist::DIST_BRC_B32>(g0, eAddr + i * 2);                                                  \
+        LoadAlign<float, LoadDist::DIST_BRC_B32>(g1, eAddr + i * 2 + 1);                                              \
+        Mul(e0, e0, g0, pregAll);                                                                                     \
+        Mul(o0, o0, g0, pregAll);                                                                                     \
+        Mul(e1, e1, g1, pregAll);                                                                                     \
+        Mul(o1, o1, g1, pregAll);                                                                                     \
+        StoreNzEvenOdd(qeAddr, static_cast<uint32_t>(i) * 2, e0, o0, m16, m128);                                      \
+        StoreNzEvenOdd(qeAddr, static_cast<uint32_t>(i) * 2 + 1, e1, o1, m16, m128);                                  \
+    }
+        GDN32_L2_ROWS(qAddr, qNzAddr)
+#undef GDN32_L2_TAIL
+    }
+}
+#undef GDN32_L2_ND
 #undef GDN32_L2_ROWS
 #undef GDN32_L2_APPLY
 #undef GDN32_L2_REDUCE
@@ -310,6 +420,9 @@ __aicore__ inline void CumsumExp2VF(LocalTensor<float> &g, LocalTensor<float> &e
         MaskReg lane0 = CreateMask<float, MaskPattern::VL1>();
         StoreAlign(egAddr + kEgUnsafe, unsafe, lane0);
         StoreAlign(egAddr + kEgPrefix, v, pregN);
+        // Natural chunk-local cumsum stays in g. PublishKFlag copies it when
+        // g_cumsum is requested. eg is exp(cumsum); the recurrence reads eg.
+        StoreAlign(gAddr, v, pregN);
         Exp(v, v, pregN);
         StoreAlign(egAddr, v, pregN);
         RegTensor<float> oneR, rcp;
@@ -719,6 +832,50 @@ __aicore__ inline void NdToPanels(LocalTensor<bfloat16_t> nz, LocalTensor<bfloat
             LoadAlign(row, nAddr + static_cast<uint32_t>(r) * kDim);
             StoreAlign<bfloat16_t, DataCopyMode::DATA_BLOCK_COPY>(zAddr + static_cast<uint32_t>(r) * 16, row, 64,
                                                                   m128);
+        }
+    }
+}
+
+// Contiguous [64, 128] copy. Keeps the NZ panel layout; the GM store applies
+// the ND stride. Much less address work than a DATA_BLOCK_COPY transpose.
+__aicore__ inline void CopyStateTile(LocalTensor<bfloat16_t> dst, LocalTensor<bfloat16_t> src)
+{
+    __ubuf__ bfloat16_t *dAddr = (__ubuf__ bfloat16_t *)dst.GetPhyAddr();
+    __ubuf__ bfloat16_t *sAddr = (__ubuf__ bfloat16_t *)src.GetPhyAddr();
+    __VEC_SCOPE__
+    {
+        uint32_t n128 = 128;
+        MaskReg m128 = UpdateMask<bfloat16_t>(n128);
+        for (uint16_t i = 0; i < 64; ++i) {
+            RegTensor<bfloat16_t> v;
+            const uint32_t off = static_cast<uint32_t>(i) * 128U;
+            LoadAlign(v, sAddr + off);
+            StoreAlign(dAddr + off, v, m128);
+        }
+    }
+}
+
+// Same [64, 128] panel-to-ND as PanelsToNd, four rows in flight so the h
+// export does not pay a scalar round-trip per row.
+__aicore__ inline void PanelsToNdH(LocalTensor<bfloat16_t> nd, LocalTensor<bfloat16_t> nz)
+{
+    __ubuf__ bfloat16_t *nAddr = (__ubuf__ bfloat16_t *)nd.GetPhyAddr();
+    __ubuf__ bfloat16_t *zAddr = (__ubuf__ bfloat16_t *)nz.GetPhyAddr();
+    __VEC_SCOPE__
+    {
+        uint32_t n128 = 128;
+        MaskReg m128 = UpdateMask<bfloat16_t>(n128);
+        for (uint16_t r = 0; r < 16; ++r) {
+            const uint32_t row = static_cast<uint32_t>(r) * 4U;
+            RegTensor<bfloat16_t> a, b, c, d;
+            LoadAlign<bfloat16_t, DataCopyMode::DATA_BLOCK_COPY>(a, zAddr + (row + 0U) * 16U, 64, m128);
+            LoadAlign<bfloat16_t, DataCopyMode::DATA_BLOCK_COPY>(b, zAddr + (row + 1U) * 16U, 64, m128);
+            LoadAlign<bfloat16_t, DataCopyMode::DATA_BLOCK_COPY>(c, zAddr + (row + 2U) * 16U, 64, m128);
+            LoadAlign<bfloat16_t, DataCopyMode::DATA_BLOCK_COPY>(d, zAddr + (row + 3U) * 16U, 64, m128);
+            StoreAlign(nAddr + (row + 0U) * static_cast<uint32_t>(kDim), a, m128);
+            StoreAlign(nAddr + (row + 1U) * static_cast<uint32_t>(kDim), b, m128);
+            StoreAlign(nAddr + (row + 2U) * static_cast<uint32_t>(kDim), c, m128);
+            StoreAlign(nAddr + (row + 3U) * static_cast<uint32_t>(kDim), d, m128);
         }
     }
 }

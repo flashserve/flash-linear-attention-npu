@@ -79,6 +79,8 @@ constexpr uint32_t kUbSh = 148 * 1024;
 constexpr uint32_t kUbScratch = 152 * 1024;
 constexpr uint32_t kUbG2 = 160 * 1024;
 constexpr uint32_t kUbEg2 = 162 * 1024;
+// ND image of this AIV's 64x128 state. UB ends at 248KB.
+constexpr uint32_t kUbHnd = 224 * 1024;
 
 constexpr uint32_t kL1H = 0;
 constexpr uint32_t kL1Slot = 40 * 1024;
@@ -99,8 +101,9 @@ public:
     __aicore__ inline Kernel() {}
 
     __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR beta, GM_ADDR initial,
-                                GM_ADDR cuSeqlens, GM_ADDR o, GM_ADDR finalState,
-                                const ChunkGatedDeltaRuleFwd32TilingData &tilingData)
+                                GM_ADDR cuSeqlens, GM_ADDR o, GM_ADDR finalState, GM_ADDR gCumsum, GM_ADDR aOut,
+                                GM_ADDR qHat, GM_ADDR kHat, GM_ADDR qRstd, GM_ADDR kRstd, GM_ADDR hOut,
+                                GM_ADDR betaEff, const ChunkGatedDeltaRuleFwd32TilingData &tilingData)
     {
         sub_ = GetSubBlockIdx();
         batchSize_ = tilingData.B;
@@ -113,7 +116,7 @@ public:
         finalFp32_ = tilingData.finalFp32;
         stateVFirst_ = tilingData.stateVFirst;
         allowNegEigval_ = tilingData.allowNegEigval;
-        seqNum_ = tilingData.seqNum;
+        seqNum_ = tilingData.seqNum & 0x0fffffffu;
         uint32_t aicIdx = GetBlockIdx();
         if ASCEND_IS_AIV {
             const uint32_t subNum = GetSubBlockNum();
@@ -153,6 +156,29 @@ public:
         if (seqNum_ != 0 && cuSeqlens != nullptr) {
             cuGm_.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(cuSeqlens));
         }
+        // The export bit rides in seqNum. A missing optional output is not a null
+        // pointer, so the pointer alone cannot mean "do not write".
+        outL2_ = (tilingData.seqNum & 0x80000000u) != 0 && qHat != nullptr &&
+                 kHat != nullptr && qRstd != nullptr && kRstd != nullptr;
+        outGA_ = (tilingData.seqNum & 0x40000000u) != 0 && gCumsum != nullptr && aOut != nullptr;
+        outH_ = (tilingData.seqNum & 0x20000000u) != 0 && hOut != nullptr;
+        if (outH_ != 0) {
+            hGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(hOut));
+        }
+        outBeta_ = (tilingData.seqNum & 0x10000000u) != 0 && betaEff != nullptr;
+        if (outBeta_ != 0) {
+            betaEffGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(betaEff));
+        }
+        if (outGA_) {
+            gCumsumGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(gCumsum));
+            aGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(aOut));
+        }
+        if (outL2_) {
+            qHatGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(qHat));
+            kHatGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(kHat));
+            qRstdGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(qRstd));
+            kRstdGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(kRstd));
+        }
 
         ubState_ = buf.template GetBuffer<BufferType::ASCEND_UB, bfloat16_t>(kUbState);
         ubStateF_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(kUbStateF);
@@ -183,6 +209,9 @@ public:
         ubEye_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(kUbEye);
         ubSh_ = buf.template GetBuffer<BufferType::ASCEND_UB, uint32_t>(kUbSh);
         ubScratch_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(kUbScratch);
+        // Past the 64-float eg snapshot Copy64 keeps at the front of ubScratch_.
+        kRstdUb_ = ubScratch_[64];
+        qRstdUb_ = ubScratch_[96];
         l1H_ = buf.template GetBuffer<BufferType::ASCEND_CB, bfloat16_t>(kL1H);
         l1Vn_ = buf.template GetBuffer<BufferType::ASCEND_CB, bfloat16_t>(kL1Vn);
         l1Vg_ = buf.template GetBuffer<BufferType::ASCEND_CB, bfloat16_t>(kL1Vg);
@@ -205,6 +234,7 @@ public:
         l0C0_ = buf.template GetBuffer<BufferType::ASCEND_L0C, float>(0);
         l0C1_ = l0C0_[static_cast<uint32_t>(kBt * kDim)];
         ubG2_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(kUbG2);
+        ubHnd_ = buf.template GetBuffer<BufferType::ASCEND_UB, bfloat16_t>(kUbHnd);
         ubEg2_ = buf.template GetBuffer<BufferType::ASCEND_UB, float>(kUbEg2);
     }
 
@@ -239,6 +269,7 @@ private:
             (static_cast<uint64_t>(batchIdx_) * keyHeadNum_ + keyHead) * seqLen_);
         vTokenBase_ = vHeadBase_;
         qTokenBase_ = qHeadBase_;
+        hChunkBase_ = batchIdx_ * nChunk_;
     }
 
     // 0 means this chunk is a full 32 rows.
@@ -367,6 +398,10 @@ private:
     // GM loads only. Issued before the inverse VF so the L2 wait is not an MTE2 stall.
     __aicore__ inline void PrepareLoad(uint32_t chunk)
     {
+        if (hatCopyLive_ != 0) {
+            WaitFlag<HardEvent::MTE3_MTE2>(5);
+            hatCopyLive_ = 0;
+        }
         const int64_t qToken = qTokenBase_ + static_cast<int64_t>(chunk) * kBt;
         const int64_t vToken = vTokenBase_ + static_cast<int64_t>(chunk) * kBt;
         const uint32_t rows = ChunkRows(chunk);
@@ -413,6 +448,10 @@ private:
 
     __aicore__ inline void PrepareLoadVar(uint32_t chunk)
     {
+        if (hatCopyLive_ != 0) {
+            WaitFlag<HardEvent::MTE3_MTE2>(5);
+            hatCopyLive_ = 0;
+        }
         const int64_t qToken = qTokenBase_ + static_cast<int64_t>(chunk) * kBt;
         const int64_t vToken = vTokenBase_ + static_cast<int64_t>(chunk) * kBt;
         const uint32_t rows = ChunkRows(chunk);
@@ -434,10 +473,47 @@ private:
         SetFlag<HardEvent::MTE2_V>(0);
     }
 
+    __aicore__ inline bool KeyOwner() const
+    {
+        return group_ <= 1U || (headIdx_ % group_) == 0U;
+    }
+
+    template <typename T>
+    __aicore__ inline void CopyUbToGmCount(GlobalTensor<T> &dst, LocalTensor<T> &src, int64_t offset, uint32_t count)
+    {
+        const uint32_t bytes = count * static_cast<uint32_t>(sizeof(T));
+        if (bytes >= 32U && (bytes & 31U) == 0U) {
+            DataCopy(dst[offset], src, count);
+            return;
+        }
+        DataCopyExtParams params;
+        params.blockCount = 1;
+        params.blockLen = bytes;
+        params.srcStride = 0;
+        params.dstStride = 0;
+        params.rsv = 0;
+        DataCopyPad(dst[offset], src, params);
+    }
+
+    // ND hat and rstd were produced by the export VF. The cube flag is already
+    // set, so this MTE3 copy overlaps the next vector step.
+    __aicore__ inline void StoreHat(GlobalTensor<bfloat16_t> &hatGm, GlobalTensor<float> &rstdGm,
+                                   LocalTensor<bfloat16_t> &hatUb, LocalTensor<float> &rstdUb, uint32_t chunk)
+    {
+        const uint32_t rows = ChunkRows(chunk);
+        const int64_t token = qTokenBase_ + static_cast<int64_t>(chunk) * kBt;
+        CopyUbToGmCount(hatGm, hatUb, token * kDim, rows * static_cast<uint32_t>(kDim));
+        CopyUbToGmCount(rstdGm, rstdUb, token, rows);
+    }
+
     // K's L2 only. The L1 slot is still the live chunk's K until D has read it,
     // so the copy and kFlagQk are PublishKFlag, after ApplyD.
     __aicore__ inline void PublishK()
     {
+        if (betaCopyLive_ != 0) {
+            WaitFlag<HardEvent::MTE3_V>(7);
+            betaCopyLive_ = 0;
+        }
         WaitFlag<HardEvent::MTE2_V>(0);
         // The previous publish may still be reading the NZ buffers this VF overwrites.
         if (nzArmed_ != 0) {
@@ -450,7 +526,11 @@ private:
             BetaSigmoidVF<false>(ubBeta_, ubBe_);
         }
         CumsumExp2VF(ubG_, ubEg_, ubSh_);
-        L2NormKAndKbgVF(ubK_, ubKnz_, ubKbg_, ubBe_, ubEg_);
+        if (outL2_ != 0 && KeyOwner()) {
+            L2NormKAndKbgExportVF(ubK_, ubKnz_, ubKbg_, ubBe_, ubEg_, kRstdUb_);
+        } else {
+            L2NormKAndKbgVF(ubK_, ubKnz_, ubKbg_, ubBe_, ubEg_);
+        }
     }
 
     __aicore__ inline void PublishKFlag(uint32_t chunk)
@@ -460,13 +540,39 @@ private:
         WaitFlag<HardEvent::V_MTE3>(0);
         CopyNzToL1(l1K_[slot], ubKnz_, kBt, kDim);
         CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagQk);
+        if (outL2_ != 0 && KeyOwner()) {
+            StoreHat(kHatGm_, kRstdGm_, ubK_, kRstdUb_, chunk);
+        }
+        if (outGA_ != 0) {
+            const uint32_t rows = ChunkRows(chunk);
+            const int64_t token = vTokenBase_ + static_cast<int64_t>(chunk) * kBt;
+            // ubG_ holds the natural cumsum after CumsumExp2VF. The q-hat store
+            // later sets MTE3_MTE2(5) when this AIV also exports L2. Otherwise
+            // the next PrepareLoad must wait for this 32-wide copy itself.
+            CopyUbToGmCount(gCumsumGm_, ubG_, token, rows);
+            if (outL2_ == 0 || !KeyOwner()) {
+                SetFlag<HardEvent::MTE3_MTE2>(5);
+                hatCopyLive_ = 1;
+            }
+        }
+        if (outBeta_ != 0) {
+            const uint32_t rows = ChunkRows(chunk);
+            const int64_t token = vTokenBase_ + static_cast<int64_t>(chunk) * kBt;
+            CopyUbToGmCount(betaEffGm_, ubBe_, token, rows);
+            SetFlag<HardEvent::MTE3_V>(7);
+            betaCopyLive_ = 1;
+        }
     }
 
     // Q L2 and the v scale. UB only: q_exp is still the live chunk's until q@H,
     // so the L1 copies are PublishQFlag, after ApplyD.
     __aicore__ inline void PublishQ()
     {
-        L2NormQAndQexpVF(ubQ_, ubQnz_, ubQexp_, ubEg_);
+        if (outL2_ != 0 && KeyOwner()) {
+            L2NormQAndQexpExportVF(ubQ_, ubQnz_, ubQexp_, ubEg_, qRstdUb_);
+        } else {
+            L2NormQAndQexpVF(ubQ_, ubQnz_, ubQexp_, ubEg_);
+        }
         ScaleRowsVF(ubV_, ubBe_, reinterpret_cast<__ubuf__ bfloat16_t *>(ubVnz_.GetPhyAddr()));
     }
 
@@ -480,6 +586,11 @@ private:
         CopyNzToL1(l1Vb_[slot], ubVnz_, kBt, kDim);
         CopyNzToL1(l1Kbg_[slot], ubKbg_, kBt, kDim);
         CopyNzToL1(l1Qexp_[slot], ubQexp_, kBt, kDim);
+        if (outL2_ != 0 && KeyOwner()) {
+            StoreHat(qHatGm_, qRstdGm_, ubQ_, qRstdUb_, chunk);
+            SetFlag<HardEvent::MTE3_MTE2>(5);
+            hatCopyLive_ = 1;
+        }
         SetFlag<HardEvent::MTE3_V>(3);
         nzArmed_ = 1;
     }
@@ -499,6 +610,10 @@ private:
     // chunk reuses the DecayOf drain from the previous iteration.
     __aicore__ inline void InverseL1(uint32_t chunk)
     {
+        if (aCopyLive_ != 0) {
+            WaitFlag<HardEvent::MTE3_V>(2);
+            aCopyLive_ = 0;
+        }
         GateAttnVF<1>(ubEg_, ubBe_, ubKkt_, ubQk_, ubL_, ubAttn_, egUseDiff_);
         InvertAVF(ubL_, ubA_, ubAbf_, ubEye_);
         const uint32_t slot = chunk & 1U;
@@ -506,6 +621,13 @@ private:
         WaitFlag<HardEvent::V_MTE3>(0);
         CopyNdToL1(l1A_[slot], ubAbf_, kBt, kBt);
         CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagInv);
+        if (outGA_ != 0) {
+            const uint32_t rows = ChunkRows(chunk);
+            const int64_t token = vTokenBase_ + static_cast<int64_t>(chunk) * kBt;
+            CopyUbToGmCount(aGm_, ubAbf_, token * kBt, rows * static_cast<uint32_t>(kBt));
+            SetFlag<HardEvent::MTE3_V>(2);
+            aCopyLive_ = 1;
+        }
     }
 
     __aicore__ inline void AttnL1(uint32_t chunk)
@@ -536,6 +658,10 @@ private:
         CopyStatePanels(0, kDim / 16);
         CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagH0);
         CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagH);
+        if (outH_ != 0) {
+            SetFlag<HardEvent::MTE3_V>(6);
+            stateReadLive_ = 1;
+        }
     }
 
     // 16 tight-NZ rows into a height-32 L1 panel. The other AIV's half is the dst gap.
@@ -585,6 +711,45 @@ private:
         CrossCoreSetFlag<0x4, PIPE_MTE3>(static_cast<uint16_t>(kFlagOd + sub_ * kAiv1));
     }
 
+    // Pack just before the D wait so the gather overlaps the cube. FlushH copies
+    // the ND tile after the H flag. The o / final_state path never enters here.
+    __aicore__ inline void StoreH(uint32_t chunk)
+    {
+        if (outH_ == 0) {
+            return;
+        }
+        if (hTileLive0_ != 0) {
+            WaitFlag<HardEvent::MTE3_V>(1);
+            hTileLive0_ = 0;
+        }
+        if (stateReadLive_ != 0) {
+            WaitFlag<HardEvent::MTE3_V>(6);
+            stateReadLive_ = 0;
+        }
+        PanelsToNdH(ubHnd_, ubState_);
+        SetFlag<HardEvent::V_MTE3>(5);
+        hFlushChunk_ = chunk;
+    }
+
+    __aicore__ inline void FlushH()
+    {
+        if (outH_ == 0) {
+            return;
+        }
+        WaitFlag<HardEvent::V_MTE3>(5);
+        const uint32_t chunk = hFlushChunk_;
+        const int64_t chunkIndex = static_cast<int64_t>(hChunkBase_) + static_cast<int64_t>(chunk);
+        const int64_t row0 = static_cast<int64_t>(sub_) * 64;
+        const int64_t base = ((chunkIndex * static_cast<int64_t>(valueHeadNum_) +
+                               static_cast<int64_t>(headIdx_)) *
+                                  kDim +
+                              row0) *
+                             kDim;
+        DataCopy(hGm_[base], ubHnd_, 64U * static_cast<uint32_t>(kDim));
+        SetFlag<HardEvent::MTE3_V>(1);
+        hTileLive0_ = 1;
+    }
+
     // upload queues the first four panels before the second saxpy is issued, so
     // MTE3 copies them while that saxpy runs. The last chunk leaves both flags
     // for the epilogue.
@@ -604,7 +769,12 @@ private:
             WaitFlag<HardEvent::V_MTE3>(2);
             CopyStatePanels(4, 4);
             CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagH);
+            if (outH_ != 0) {
+                SetFlag<HardEvent::MTE3_V>(6);
+                stateReadLive_ = 1;
+            }
         }
+        FlushH();
     }
 
 
@@ -877,6 +1047,7 @@ private:
             for (uint32_t c = 0; c < nChunk_; ++c) {
                 const uint32_t chunkAiv = AivOf(c);
                 const bool onThisAiv = chunkAiv == sub_;
+                StoreH(c);
                 if (!onThisAiv) {
                     LoadGate(c);
                 }
@@ -945,6 +1116,7 @@ private:
                 }
             }
         }
+        DrainExport();
     }
 
     __aicore__ inline int64_t StateElem() const
@@ -967,6 +1139,14 @@ private:
         stateSlot_ = seq;
         vTokenBase_ = vHeadBase_ + begin;
         qTokenBase_ = qHeadBase_ + begin;
+        uint32_t packed = 0;
+        for (uint32_t i = 0; i < seq; ++i) {
+            const int64_t prevBegin = cuGm_.GetValue(static_cast<int64_t>(i));
+            const int64_t prevEnd = cuGm_.GetValue(static_cast<int64_t>(i) + 1);
+            const uint32_t prevLen = prevEnd > prevBegin ? static_cast<uint32_t>(prevEnd - prevBegin) : 0U;
+            packed += (prevLen + static_cast<uint32_t>(kBt) - 1U) / static_cast<uint32_t>(kBt);
+        }
+        hChunkBase_ = packed;
     }
 
     __aicore__ inline void InitStateSeq()
@@ -1097,6 +1277,7 @@ private:
         for (uint32_t c = 0; c < nChunk_; ++c) {
             const uint32_t chunkAiv = AivOf(c);
             const bool onThisAiv = chunkAiv == sub_;
+            StoreH(c);
             if (!onThisAiv) {
                 LoadGateVar(c);
             }
@@ -1198,6 +1379,7 @@ private:
                 }
             }
         }
+        DrainExport();
     }
 
     __aicore__ inline void ProcessAicVarlen()
@@ -1324,12 +1506,46 @@ private:
 
     OnChipBuffer buf;
     GlobalTensor<bfloat16_t> qGm_, kGm_, vGm_, betaGm_, oGm_, stateGm_, initGm_;
+    GlobalTensor<bfloat16_t> qHatGm_, kHatGm_;
+    GlobalTensor<float> qRstdGm_, kRstdGm_, gCumsumGm_, betaEffGm_;
+    GlobalTensor<bfloat16_t> aGm_, hGm_;
+    uint8_t outL2_ = 0;
+    uint8_t outGA_ = 0;
+    uint8_t outH_ = 0;
+    uint8_t outBeta_ = 0;
+    uint8_t betaCopyLive_ = 0;
+    uint8_t hatCopyLive_ = 0;
+    uint8_t aCopyLive_ = 0;
+    uint8_t hTileLive0_ = 0;
+    uint8_t stateReadLive_ = 0;
+
+    __aicore__ inline void DrainExport()
+    {
+        if (hatCopyLive_ != 0) {
+            WaitFlag<HardEvent::MTE3_MTE2>(5);
+            hatCopyLive_ = 0;
+        }
+        if (aCopyLive_ != 0) {
+            WaitFlag<HardEvent::MTE3_V>(2);
+            aCopyLive_ = 0;
+        }
+        if (hTileLive0_ != 0) {
+            WaitFlag<HardEvent::MTE3_V>(1);
+            hTileLive0_ = 0;
+        }
+        if (betaCopyLive_ != 0) {
+            WaitFlag<HardEvent::MTE3_V>(7);
+            betaCopyLive_ = 0;
+        }
+    }
     GlobalTensor<float> gGm_, stateFGm_, initFGm_;
     GlobalTensor<int64_t> cuGm_;
     LocalTensor<bfloat16_t> ubState_, ubQ_, ubK_, ubV_, ubQnz_, ubKnz_, ubKbg_, ubQexp_, ubVnz_;
     LocalTensor<bfloat16_t> ubBeta_, ubAbf_, ubAttn_, ubU_, ubVn_, ubVg_, ubO_, ubD_;
     LocalTensor<float> ubG_, ubBe_, ubEg_, ubKkt_, ubQk_, ubL_, ubA_, ubEye_, ubScratch_;
+    LocalTensor<float> kRstdUb_, qRstdUb_;
     LocalTensor<float> ubG2_, ubEg2_, ubStateF_, ubNdF_;
+    LocalTensor<bfloat16_t> ubHnd_;
     LocalTensor<uint32_t> ubSh_;
     LocalTensor<bfloat16_t> l1H_, l1Vn_, l1Vg_;
     LocalTensor<bfloat16_t> l1Q_[2], l1K_[2], l1Vb_[2], l1Kbg_[2], l1Qexp_[2], l1A_[2], l1Attn_[2], l1W_[2];
@@ -1356,6 +1572,8 @@ private:
     int64_t vHeadBase_ = 0;
     uint32_t seqNum_ = 0;
     uint32_t stateSlot_ = 0;
+    uint32_t hChunkBase_ = 0;
+    uint32_t hFlushChunk_ = 0;
     uint32_t hasInitial_ = 0;
     uint32_t initialFp32_ = 0;
     uint32_t finalFp32_ = 0;
