@@ -5,6 +5,7 @@
 #include "chunk_kda_bwd_prepare_tiling.h"
 
 #include <cmath>
+#include <cstring>
 #include <register/op_impl_registry.h>
 #include "platform/platform_ascendc.h"
 
@@ -29,6 +30,8 @@ ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
     const int64_t *chunkSize = attrs->GetAttrPointer<int64_t>(KDA_PREPARE_ATTR_CHUNK_SIZE);
     const char *layout = attrs->GetStr(KDA_PREPARE_ATTR_LAYOUT);
     const bool *stateVFirst = attrs->GetAttrPointer<bool>(KDA_PREPARE_ATTR_STATE_V_FIRST);
+    const bool *doTokenMajorPtr = attrs->GetAttrPointer<bool>(KDA_PREPARE_ATTR_DO_TOKEN_MAJOR);
+    const bool doTokenMajor = doTokenMajorPtr != nullptr && *doTokenMajorPtr;
     OP_CHECK_NULL_WITH_CONTEXT(context, scale);
     OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
     if (!std::isfinite(*scale)) {
@@ -42,21 +45,41 @@ ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
     // Opaque ACLNN may represent an absent optional input with an empty shape.
     if (cuShape && cuShape->GetStorageShape().GetDimNum() == 0) cuShape = nullptr;
     if (indicesShape && indicesShape->GetStorageShape().GetDimNum() == 0) indicesShape = nullptr;
+    if (doTokenMajor) {
+        if (!layout || (std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "NTD") != 0)) {
+            return ge::GRAPH_FAILED;
+        }
+        const auto &v = context->GetRequiredInputShape(KDA_PREPARE_INPUT_V_NEW)->GetStorageShape();
+        const auto &o = context->GetRequiredInputShape(KDA_PREPARE_INPUT_D_O)->GetStorageShape();
+        const size_t rank = v.GetDimNum(), base = rank == 3 ? 0 : 1;
+        if ((rank != 3 && rank != 4) || o.GetDimNum() != rank ||
+            (base && v.GetDim(0) != o.GetDim(0)) || v.GetDim(base) != o.GetDim(base + 1) ||
+            v.GetDim(base + 1) != o.GetDim(base) || v.GetDim(base + 2) != o.GetDim(base + 2)) {
+            return ge::GRAPH_FAILED;
+        }
+    }
+    const bool isA5 = platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
     ChunkKdaBwdPrepareTilingContext ctx{
         context->GetNodeName(),
         context->GetRequiredInputShape(KDA_PREPARE_INPUT_AQK),
         context->GetRequiredInputShape(KDA_PREPARE_INPUT_V_NEW),
-        context->GetRequiredInputShape(KDA_PREPARE_INPUT_D_O),
+        context->GetRequiredInputShape(doTokenMajor ? KDA_PREPARE_INPUT_V_NEW : KDA_PREPARE_INPUT_D_O),
         context->GetRequiredInputShape(KDA_PREPARE_INPUT_H),
         cuShape, indicesShape,
         aqkDesc->GetDataType(), vNewDesc->GetDataType(), dODesc->GetDataType(), hDesc->GetDataType(),
         *scale, *chunkSize, stateVFirst != nullptr && *stateVFirst,
         layout, static_cast<uint32_t>(platform.GetCoreNumAic()),
         static_cast<size_t>(platform.GetLibApiWorkSpaceSize()),
-        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950,
+        isA5,
     };
     ChunkKdaBwdPrepareTilingProcessor processor(ctx, *tiling);
     OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
+    tiling->doTokenMajor = doTokenMajor;
+    if (isA5) {
+        auto *rawTiling = context->GetRawTilingData();
+        OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);
+        rawTiling->SetDataSize(sizeof(KDA::ChunkKdaBwdPrepareTilingData) + 8);
+    }
     context->SetTilingKey(processor.GetTilingKey());
     context->SetBlockDim(processor.GetBlockDim());
     context->GetWorkspaceSizes(1)[0] = processor.GetWorkspaceSize();

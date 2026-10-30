@@ -96,16 +96,27 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
     const int32_t *chunkSizePtr = attrPtr->GetAttrPointer<int32_t>(CGDR_BWD_DHU_ATTR_CHUNK_SIZE_IDX);
     const bool *useExp2Ptr = attrPtr->GetAttrPointer<bool>(CGDR_BWD_DHU_ATTR_USE_EXP2_IDX);
     const bool *stateVFirstPtr = attrPtr->GetAttrPointer<bool>(CGDR_BWD_DHU_ATTR_STATE_V_FIRST_IDX);
+    const bool *doTokenMajorPtr = attrPtr->GetAttrPointer<bool>(CGDR_BWD_DHU_ATTR_DO_TOKEN_MAJOR_IDX);
+    const bool doTokenMajor = doTokenMajorPtr != nullptr && *doTokenMajorPtr;
+    if (doTokenMajor) {
+        const auto &v = context->GetRequiredInputShape(CGDR_BWD_DHU_INPUT_DV_IDX)->GetStorageShape();
+        const auto &o = context->GetRequiredInputShape(CGDR_BWD_DHU_INPUT_DO_IDX)->GetStorageShape();
+        if (v.GetDimNum() != 4 || o.GetDimNum() != 4 || v.GetDim(0) != o.GetDim(0) ||
+            v.GetDim(1) != o.GetDim(2) || v.GetDim(2) != o.GetDim(1) || v.GetDim(3) != o.GetDim(3)) {
+            return ge::GRAPH_FAILED;
+        }
+    }
 
     uint64_t ubSize = 0;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
+    const bool isA5 = ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510;
 
     ChunkGatedDeltaRuleBwdDhuTilingContext ctx{
         context->GetNodeName(),
         context->GetRequiredInputShape(CGDR_BWD_DHU_INPUT_Q_IDX),
         context->GetRequiredInputShape(CGDR_BWD_DHU_INPUT_K_IDX),
         context->GetRequiredInputShape(CGDR_BWD_DHU_INPUT_W_IDX),
-        context->GetRequiredInputShape(CGDR_BWD_DHU_INPUT_DO_IDX),
+        context->GetRequiredInputShape(doTokenMajor ? CGDR_BWD_DHU_INPUT_DV_IDX : CGDR_BWD_DHU_INPUT_DO_IDX),
         context->GetRequiredInputShape(CGDR_BWD_DHU_INPUT_DV_IDX),
         gInputShape,
         gkInputShape,
@@ -118,7 +129,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
         useExp2Ptr != nullptr ? *useExp2Ptr : false,
         stateVFirstPtr != nullptr ? *stateVFirstPtr : false,
         h0InputShape != nullptr,
-        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510,
+        isA5,
         true,
         scalePtr != nullptr ? static_cast<double>(*scalePtr) : 1.0,
         chunkSizePtr != nullptr ? *chunkSizePtr : 64,
@@ -129,6 +140,12 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
 
     ChunkGatedDeltaRuleBwdDhuTilingProcessor processor(ctx, *tiling);
     OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
+    tiling->doTokenMajor = doTokenMajor;
+    if (isA5) {
+        auto *rawTiling = context->GetRawTilingData();
+        OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);
+        rawTiling->SetDataSize(sizeof(ChunkGatedDeltaRuleBwdDhuTilingData) + 8);
+    }
 
     context->SetTilingKey(processor.GetTilingKey());
     context->SetBlockDim(processor.GetBlockDim());
