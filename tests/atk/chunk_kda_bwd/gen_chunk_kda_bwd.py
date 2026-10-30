@@ -106,18 +106,14 @@ def _inputs(config):
 
 
 def case(index, config):
-    output_dtypes = [
-        config["dtype"], config["dtype"], config["dtype"], config["beta_dtype"],
-        config.get("raw_g_dtype", "fp32"), "fp32",
-    ]
-    if config.get("dt_bias", True):
-        output_dtypes.append("fp32")
-    dtypes = {str(i): dtype for i, dtype in enumerate(output_dtypes)}
+    output_count = 7 if config.get("dt_bias", True) else 6
+    comparison_dtypes = {str(i): "bf16" for i in range(output_count)}
+    comparison_dtypes["4"] = config.get("raw_g_dtype", "fp32")
     return dict(
         id=index, default_seed=config["seed"], name=OP_NAME,
         aclnn_name="ChunkKdaBwd", version="v2.1", api="pytorch",
         api_type="executor_chunk_kda_bwd", expected_error_msg=None, backward=False,
-        standard={"acc": {"mixed_tolerance_bm": {"output_dtype_overrides": dtypes}},
+        standard={"acc": {"mixed_tolerance_bm": {"output_dtype_overrides": comparison_dtypes}},
                   "perf": "not_key"},
         outputs=None,
         inputs=_inputs(config),

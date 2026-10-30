@@ -319,11 +319,21 @@ class FunctionApi(BaseApi):
     def run_npu(self):
         outputs = self.operator(*self.args, **self.kwargs)
         packed = bool(self.spec.get("cu_seqlens"))
+        expected_dtypes = {
+            0: torch.bfloat16, 1: torch.bfloat16, 2: torch.bfloat16,
+            3: torch.bfloat16 if self.spec["beta_dtype"] == "bf16" else torch.float32,
+            4: torch.bfloat16 if self.spec["raw_g_dtype"] == "bf16" else torch.float32,
+            6: torch.float32, 7: torch.float32,
+        }
         restored = []
         for index in (0, 1, 2, 3, 4, 6, 7):
             output = outputs[index]
             if output is None:
                 continue
+            if output.dtype != expected_dtypes[index]:
+                raise RuntimeError(
+                    f"output {index} dtype {output.dtype} != {expected_dtypes[index]}"
+                )
             if index < 5:
                 output = _head_major_output(output, packed, scalar=index == 3)
             restored.append(output)
