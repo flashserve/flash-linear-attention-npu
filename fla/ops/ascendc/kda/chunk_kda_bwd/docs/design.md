@@ -32,6 +32,9 @@ V2 由三个阶段组成，保存中间量模式跳过前向重计算：
 | Finalize | 合并 dq/dk/dv/db，计算 Gate 与参数梯度；可融合 Q/K 归一化反向 |
 
 重计算模式先恢复 gk/w/qg/kg/v_new/h 等中间量，再执行同一反向链路。
+A2/A3 与 A5 V2 总接口直接将原始 dtype 的 raw_g 传给 Recompute；BF16 在其 Vector
+读入后转为 FP32，移除总接口的独立 Cast 及 FP32 GM 临时张量。FP32 输入路径、
+计算公式和 kernel 同步不变；回归覆盖 BF16/FP32、四种 layout、定长/变长及 L2Norm 开关。
 保存模式直接读取前向的 chunk-major h；Prepare 与 Finalize 使用对应偏移，
 Finalize 对 h、dh 分别寻址，Dhu 和内嵌 state_scan 均产生 NT-first dh。
 重计算模式由 ChunkFwdH 直接写出 chunk-major h，不再增加 Transpose/Contiguous；

@@ -80,7 +80,7 @@ Python 和 ACLNN 层拒绝。前反向须配套：A5 若需要 sigmoid，应在�
 - 普通 beta 在 ACLNN 内只转一次 head-major，供 Recompute/Finalize 共用；融合时直接复用 beta_eff。
   raw_g/qkv 按实际布局直接读入片上，梯度按约定布局写出。
 - Finalize 在片上转换 raw_g/beta，dg/db 直接按输入 dtype 写出。
-  重计算分支仍可能先为 Recompute 创建 FP32 raw_g 临时张量。
+  Recompute 同样直接接收 BF16/FP32 raw_g，片上升精度，不创建独立 Cast 的 FP32 临时张量。
 
 ## 接口升级
 

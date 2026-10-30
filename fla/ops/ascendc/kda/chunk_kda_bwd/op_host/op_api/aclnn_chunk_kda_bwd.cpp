@@ -101,12 +101,6 @@ const aclTensor *BatchView(const aclTensor *tensor, bool packed, aclOpExecutor *
     return l0op::Reshape(tensor, shape, executor);
 }
 
-const aclTensor *ToFloat32(const aclTensor *tensor, aclOpExecutor *executor)
-{
-    if (!tensor || tensor->GetDataType() == DataType::DT_FLOAT) return tensor;
-    return l0op::Cast(tensor, DataType::DT_FLOAT, executor);
-}
-
 bool CopyGradient(const aclTensor *source, const aclTensor *target, aclOpExecutor *executor)
 {
     if (!source || !target) return false;
@@ -315,7 +309,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     const aclTensor *w = wOptional, *qg = qgOptional, *kg = kgOptional;
     const aclTensor *vNew = vNewOptional, *h = hOptional;
     if (!disableRecompute) {
-        const auto *rawRecompute = ToFloat32(rawGOptional, ex);
+        // Recompute promotes BF16 raw gates to FP32 on-chip.
+        const auto *rawRecompute = rawGOptional;
         const auto *logRecompute = aLog;
         const auto *biasRecompute = dtBias;
         CHECK_RET(rawRecompute && logRecompute && biasRecompute, ACLNN_ERR_INNER_NULLPTR);
