@@ -31,7 +31,6 @@ STAGE_KEYS = (
     "standalone-layout",
     "torch-adapter",
     "gdr-example-st",
-    "scoped-overlay",
 )
 STATUS_CONTEXTS = (
     "NPU CI / A2+A5 / 01 环境、wheel 与运行时契约",
@@ -39,8 +38,7 @@ STATUS_CONTEXTS = (
     "NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局",
     "NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配",
     "NPU CI / A2+A5 / 05 GDR Example/ST",
-    "NPU CI / A2+A5 / 06 chunk_fwd_o 局部覆盖安装",
-    "NPU CI / A2+A5 / 07 报告与 commit 校验",
+    "NPU CI / A2+A5 / 06 报告与 commit 校验",
 )
 SCOPED_STATUS_CONTEXT = "NPU CI / A2+A5 / 定向诊断"
 CONTRACT_TEST_CONTEXT = "CI 契约测试"
@@ -1285,7 +1283,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
                 }
                 self.assertEqual(outputs["should_run"], "true")
                 pending = [item for item in records if item["kind"] == "status"]
-                self.assertEqual(len(pending), 7)
+                self.assertEqual(len(pending), 6)
                 self.assertTrue(all(item["payload"]["state"] == "pending" for item in pending))
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
@@ -1506,7 +1504,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         completed, comment, records = self._run_finalize_script()
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self._assert_statuses(records, ["success"] * 7)
+        self._assert_statuses(records, ["success"] * 6)
         self.assertIn("NPU CI 通过", comment)
         self.assertIn("4/4", comment)
         self.assertIn("分项结果", comment)
@@ -1555,7 +1553,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self._assert_statuses(
             records,
-            ["success", "failure", "failure", "failure", "failure", "failure", "failure"],
+            ["success", "failure", "failure", "failure", "failure", "failure"],
         )
         self.assertIn("opp-package: error: stage failed", comment)
         self.assertIn("CI_STAGE=opp-package", comment)
@@ -1569,7 +1567,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         )
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self._assert_statuses(records, ["failure"] * 7)
+        self._assert_statuses(records, ["failure"] * 6)
         self.assertIn("失败后", comment)
         self.assertIn("必须跳过", comment)
         self.assertIn("CI_STAGE='environment-contracts'", comment)
@@ -1584,7 +1582,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self._assert_statuses(
             records,
-            ["success", "success", "failure", "success", "success", "success", "failure"],
+            ["success", "success", "failure", "success", "success", "failure"],
         )
         self.assertIn("CI_STAGE='all'", comment)
         self.assertTrue(any(item["kind"] == "failed" for item in records))
@@ -1596,7 +1594,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         )
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self._assert_statuses(records, ["failure"] * 7)
+        self._assert_statuses(records, ["failure"] * 6)
         self.assertIn("分项结果未生成", comment)
         self.assertTrue(any(item["kind"] == "failed" for item in records))
 
@@ -1609,7 +1607,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self._assert_statuses(
             records,
-            ["success", "success", "success", "success", "failure", "success", "failure"],
+            ["success", "success", "success", "success", "failure", "failure"],
         )
         self.assertIn("缺少必跑精度用例：case1_current_default", comment)
         self.assertTrue(any(item["kind"] == "failed" for item in records))
@@ -1623,7 +1621,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self._assert_statuses(
             records,
-            ["success", "success", "success", "success", "failure", "success", "failure"],
+            ["success", "success", "success", "success", "failure", "failure"],
         )
         self.assertIn(
             "必跑精度用例契约不匹配：case1_current_default (tokens)",
@@ -1639,7 +1637,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self._assert_statuses(
             records,
-            ["success", "success", "success", "success", "failure", "success", "failure"],
+            ["success", "success", "success", "success", "failure", "failure"],
         )
         self.assertIn(
             "必跑精度用例契约不匹配：gdr_accuracy_tnd_3seq_t3991_h2_d128_fp16 (cu_seqlens)",
@@ -1656,7 +1654,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self._assert_statuses(
             records,
-            ["success", "success", "success", "success", "failure", "success", "failure"],
+            ["success", "success", "success", "success", "failure", "failure"],
         )
         self.assertIn("metric 集合不匹配", comment)
         self.assertIn("CI_STAGE='gdr-example-st'", comment)
@@ -1670,7 +1668,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self._assert_statuses(
             records,
-            ["success", "success", "success", "success", "failure", "success", "failure"],
+            ["success", "success", "success", "success", "failure", "failure"],
         )
         self.assertIn("包含重复 metric", comment)
         self.assertIn("CI_STAGE='gdr-example-st'", comment)
@@ -1684,7 +1682,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self._assert_statuses(
             records,
-            ["success", "success", "success", "success", "failure", "success", "failure"],
+            ["success", "success", "success", "success", "failure", "failure"],
         )
         self.assertIn("metric 阈值不匹配", comment)
         self.assertIn("CI_STAGE='gdr-example-st'", comment)
@@ -1698,7 +1696,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self._assert_statuses(
             records,
-            ["success", "success", "success", "success", "failure", "failure", "failure"],
+            ["success", "success", "success", "success", "failure", "failure"],
         )
         self.assertIn("精度异常", comment)
         self.assertIn("allclose=false", comment)
@@ -1711,7 +1709,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self._assert_statuses(
             records,
-            ["success", "success", "success", "success", "failure", "success", "failure"],
+            ["success", "success", "success", "success", "failure", "failure"],
         )
         self.assertTrue(any(item["kind"] == "failed" for item in records))
         self.assertIn("NPU CI 失败", comment)
@@ -1724,7 +1722,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self._assert_statuses(
             records,
-            ["success", "success", "success", "success", "failure", "success", "failure"],
+            ["success", "success", "success", "success", "failure", "failure"],
         )
         self.assertNotIn("@org/team", comment)
         self.assertNotIn("@org/tensor", comment)
@@ -1751,7 +1749,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         completed, comment, records = self._run_finalize_script(inconsistent="top")
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self._assert_statuses(records, ["success"] * 6 + ["failure"])
+        self._assert_statuses(records, ["success"] * 5 + ["failure"])
         self.assertIn("顶层状态与 execution/accuracy 不一致", comment)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
@@ -1761,7 +1759,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self._assert_statuses(
             records,
-            ["success", "success", "success", "success", "failure", "success", "failure"],
+            ["success", "success", "success", "success", "failure", "failure"],
         )
         self.assertIn("accuracy 与精度报告不一致", comment)
 
@@ -1770,7 +1768,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         completed, comment, records = self._run_finalize_script(matrix_result="failure")
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self._assert_statuses(records, ["success"] * 6 + ["failure"])
+        self._assert_statuses(records, ["success"] * 5 + ["failure"])
         self.assertIn("但双平台 artifact 均记录为通过", comment)
         self.assertIn("汇总异常复现", comment)
         self.assertEqual(comment.count("CI_STAGE='all'"), 2)
@@ -1782,7 +1780,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self._assert_statuses(
             records,
-            ["success", "success", "success", "success", "failure", "success", "failure"],
+            ["success", "success", "success", "success", "failure", "failure"],
         )
         self.assertIn("精度报告未完整结束", comment)
 
@@ -1791,7 +1789,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         completed, comment, records = self._run_finalize_script(hidden_payload="compile")
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self._assert_statuses(records, ["success"] * 6 + ["failure"])
+        self._assert_statuses(records, ["success"] * 5 + ["failure"])
         self.assertIn("broken compiler input", comment)
         self.assertIn("顶层状态与 execution/accuracy 不一致", comment)
 
@@ -1802,7 +1800,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self._assert_statuses(
             records,
-            ["success", "success", "success", "success", "failure", "success", "failure"],
+            ["success", "success", "success", "success", "failure", "failure"],
         )
         self.assertIn("精度成功但包含失败用例", comment)
         self.assertIn("hidden-failure", comment)
@@ -1814,7 +1812,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self._assert_statuses(
             records,
-            ["success", "success", "success", "success", "failure", "success", "failure"],
+            ["success", "success", "success", "success", "failure", "failure"],
         )
         self.assertIn("执行状态与 return_code 不一致", comment)
 

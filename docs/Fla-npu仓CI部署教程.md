@@ -44,7 +44,7 @@ export CI_ROOT="${CI_ROOT:-$HOME/ci}"
    A5 必须使用独立产品标签，不能只注册成通用 `npu` runner，否则无法证明一次触发确实覆盖了两个平台。
 
 8. **NPU CI 不会因为 PR 新建、重新打开、push 新 commit 自动执行。**
-   PR 新建、重新打开、push 新 commit 后，会自动出现 7 个 pending 分项状态，描述为“未执行”，用于阻止未验证 commit 合入。真正执行 NPU CI 仍需要仓库 Admin 权限账号点击 GitHub Actions 按钮，或在 PR 评论里发送 `/run-npu-ci quick` / `/run-npu-ci full` 触发。PR 更新 commit 后，旧 commit 上的 CI 成功状态不会再满足合入门禁。
+   PR 新建、重新打开、push 新 commit 后，会自动出现 6 个 pending 分项状态，描述为“未执行”，用于阻止未验证 commit 合入。真正执行 NPU CI 仍需要仓库 Admin 权限账号点击 GitHub Actions 按钮，或在 PR 评论里发送 `/run-npu-ci quick` / `/run-npu-ci full` 触发。PR 更新 commit 后，旧 commit 上的 CI 成功状态不会再满足合入门禁。
 
 9. **分支保护里的状态检查名称要完全一致。**
 
@@ -55,10 +55,9 @@ export CI_ROOT="${CI_ROOT:-$HOME/ci}"
    | 03 | `NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局` | `standalone-layout` |
    | 04 | `NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配` | `torch-adapter` |
    | 05 | `NPU CI / A2+A5 / 05 GDR Example/ST` | `gdr-example-st` |
-   | 06 | `NPU CI / A2+A5 / 06 chunk_fwd_o 局部覆盖安装` | `scoped-overlay` |
-   | 07 | `NPU CI / A2+A5 / 07 报告与 commit 校验` | 不适用，由汇总 job 执行 |
+   | 06 | `NPU CI / A2+A5 / 06 报告与 commit 校验` | 不适用，由汇总 job 执行 |
 
-   每个平台按 01 到 06 顺序执行。前置分项失败后，后续分项会标记为未执行，不会继续运行；失败诊断会保留关键错误，并给出带对应 `CI_STAGE` 的复现命令。07 由双平台汇总 job 最后执行并发布。除这 7 项外，还应把自动执行的 `CI 契约测试` 配置为必需检查，用于验证 CI 代码本身。所有名称都必须精确匹配；名字写错、大小写不同或空格不同，GitHub 都会认为没有通过。
+   每个平台按 01 到 05 顺序执行。前置分项失败后，后续分项会标记为未执行，不会继续运行；失败诊断会保留关键错误，并给出带对应 `CI_STAGE` 的复现命令。06 由双平台汇总 job 最后执行并发布。除这 6 项外，还应把自动执行的 `CI 契约测试` 配置为必需检查，用于验证 CI 代码本身。所有名称都必须精确匹配；名字写错、大小写不同或空格不同，GitHub 都会认为没有通过。
 
 10. **`weinachuan` 强行合入 bypass 不是写在代码里自动生效的。**
     需要 GitHub 管理员用 `scripts/github/apply_branch_protection.sh` 应用到 GitHub 分支保护规则。
@@ -87,7 +86,7 @@ flowchart TD
     A["PR 新建、重开或 push 新 commit"] --> B["NPU CI 默认状态 workflow 运行"]
     B --> C{"当前 head commit 是否已有执行结果"}
     C -- "有通过、失败或运行中状态" --> D["保留已有 NPU CI 状态"]
-    C -- "没有执行结果" --> E["写入 7 个分项 pending 状态"]
+    C -- "没有执行结果" --> E["写入 6 个分项 pending 状态"]
     E --> F["机器人评论：NPU CI 未执行"]
     F --> G["提示可请求触发的 CI 账号和 /run-npu-ci 命令"]
 ```
@@ -106,14 +105,14 @@ flowchart TD
     H -- "是" --> I["更新机器人评论：已通过，不重复运行"]
     H -- "否" --> J{"当前 commit 是否已有 NPU CI pending/running"}
     J -- "是" --> K["更新机器人评论：已在运行，不重复启动"]
-    J -- "否" --> L["写入 7 个分项 pending 状态"]
+    J -- "否" --> L["写入 6 个分项 pending 状态"]
     L --> M["A2 runner / ascend910b"]
     L --> N["A5 runner / ascend950：API 下载并校验源码归档"]
-    M --> O["A2 顺序执行 01-06；失败后跳过后续"]
-    N --> P["A5 顺序执行 01-06；失败后跳过后续"]
+    M --> O["A2 顺序执行 01-05；失败后跳过后续"]
+    N --> P["A5 顺序执行 01-05；失败后跳过后续"]
     O --> Q["上传带本次 run 身份的分项和精度结果"]
     P --> Q
-    Q --> R["GitHub-hosted finalize 校验并发布 7 个最终状态"]
+    Q --> R["GitHub-hosted finalize 校验并发布 6 个最终状态"]
 ```
 
 同一 PR + 同一 commit 重复触发流程：
@@ -372,7 +371,6 @@ CI_SOC=ascend910b \
 CI_MODE=quick \
 CI_RUN_EXAMPLE_ST=true \
 CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK=true \
-CI_RUN_SCOPED_WHEEL_INSTALL_CHECK=true \
 bash ci/run_ci_container.sh
 
 # A5：必须提前准备镜像
@@ -382,7 +380,6 @@ CI_REQUIRE_PRELOADED_IMAGE=true \
 CI_MODE=quick \
 CI_RUN_EXAMPLE_ST=true \
 CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK=true \
-CI_RUN_SCOPED_WHEEL_INSTALL_CHECK=true \
 bash ci/run_ci_container.sh
 ```
 
@@ -396,7 +393,6 @@ bash ci/run_ci_container.sh
 - 检查独立 `torch_custom` wheel 与 OPP 安装布局
 - 安装 OPP 并构建 PyTorch 适配
 - 执行 `ci/example_st_cases.json` 中启用的 GDR Example/ST 用例，仅覆盖容器内逻辑设备号 `--device 0`
-- 检查 `chunk_fwd_o` 局部 run 包覆盖 wheel OPP 的安装流程
 
 上述分项串行执行。一个分项失败后，脚本会停止实际测试并把后续分项标记为未执行；不会为了收集更多结果继续执行依赖已失败的步骤。失败日志和汇总诊断会给出类似下面的复现命令：
 
@@ -413,7 +409,7 @@ CI_REQUIRE_PRELOADED_IMAGE=true \
 bash ci/run_ci_container.sh
 ```
 
-`CI_STAGE` 可取 `environment-contracts`、`opp-package`、`standalone-layout`、`torch-adapter`、`gdr-example-st` 或 `scoped-overlay`。脚本会先执行该分项所需的前置分项，再执行目标分项；应优先使用失败诊断中给出的完整命令。
+`CI_STAGE` 可取 `environment-contracts`、`opp-package`、`standalone-layout`、`torch-adapter` 或 `gdr-example-st`。脚本会先执行该分项所需的前置分项，再执行目标分项；应优先使用失败诊断中给出的完整命令。`scoped-overlay` 分项暂时退出正式门禁，待安装流程修复后恢复。
 
 本地排障时可以只跑某个用例：
 
@@ -599,7 +595,7 @@ bash scripts/github/apply_branch_protection.sh main
 
 这个脚本会给 `main` 配置：
 
-- 必需状态检查：本教程“先看重点”第 9 项列出的 7 个精确 context
+- 必需状态检查：本教程“先看重点”第 9 项列出的 6 个精确 context
 - PR 至少 2 个 approval
 - 需要 Code Owners review；ABI 敏感路径的 code owner 是 `weinachuan`
 - Admin 也必须遵守分支保护
@@ -622,7 +618,7 @@ bash scripts/github/apply_branch_protection.sh main
 9. 勾选 `Require approval of the most recent reviewable push`
 10. 勾选 `Require status checks to pass before merging`
 11. 勾选 `Require branches to be up to date before merging`
-12. 添加本教程“先看重点”第 9 项列出的全部 7 个必需检查
+12. 添加本教程“先看重点”第 9 项列出的全部 6 个必需检查
 13. 勾选让 administrators 也遵守分支保护，或不要让普通 Admin 具备全局 bypass
 14. 在 bypass 或 pull request bypass allowance 中添加用户 `weinachuan`
 15. 保存规则
@@ -631,7 +627,7 @@ bash scripts/github/apply_branch_protection.sh main
 
 ## 第 10 步：验证触发方式
 
-本仓 NPU CI 不会被 PR 自动执行。PR 新建、重开或 push 新 commit 时，GitHub 会自动给当前 head commit 写入 7 个 pending 分项状态，描述为“未执行”。这些状态会出现在 PR checks 中，用来提醒该 commit 还没有完成双平台 NPU CI。
+本仓 NPU CI 不会被 PR 自动执行。PR 新建、重开或 push 新 commit 时，GitHub 会自动给当前 head commit 写入 6 个 pending 分项状态，描述为“未执行”。这些状态会出现在 PR checks 中，用来提醒该 commit 还没有完成双平台 NPU CI。
 
 如果 PR push 了新 commit，默认状态会重新写到新的 head commit 上，描述为“commit 已变化，请重新触发”。旧 commit 的 NPU CI success 不会给新 commit 使用。
 
@@ -650,7 +646,7 @@ bash scripts/github/apply_branch_protection.sh main
 5. 填写：
    - `pr_number`: PR 编号，例如 `23`
    - `ci_mode`: `quick` 或 `full`
-   - `ops`: 可选，逗号分隔的算子列表，仅用于编译定向诊断；填写后只执行第 01、02 项并发布 `NPU CI / A2+A5 / 定向诊断`，不会执行 GDR 精度，也不会写入或覆盖 01-07 正式门禁状态
+   - `ops`: 可选，逗号分隔的算子列表，仅用于编译定向诊断；填写后只执行第 01、02 项并发布 `NPU CI / A2+A5 / 定向诊断`，不会执行 GDR 精度，也不会写入或覆盖 01-06 正式门禁状态
 6. 点击绿色 `Run workflow`
 
 方式二：在 PR 评论区发送命令。
@@ -663,7 +659,7 @@ bash scripts/github/apply_branch_protection.sh main
 /run-npu-ci quick ci_ref=release-v2
 ```
 
-带 `ops=` 的命令只顺序执行第 01 项环境契约和第 02 项指定算子 OPP 构建，并发布 `NPU CI / A2+A5 / 定向诊断`；它不执行 GDR 精度或后续安装分项，也不会写入或覆盖 01-07 正式门禁状态。用于合入门禁的运行必须省略 `ops`。
+带 `ops=` 的命令只顺序执行第 01 项环境契约和第 02 项指定算子 OPP 构建，并发布 `NPU CI / A2+A5 / 定向诊断`；它不执行 GDR 精度或后续安装分项，也不会写入或覆盖 01-06 正式门禁状态。用于合入门禁的运行必须省略 `ops`。
 
 评论触发由默认分支上的 `NPU CI 评论分发` workflow 处理：没有指定 `ci_ref` 时自动使用 PR 的目标分支 `pr.base.ref`，指定后使用该分支的 `.github/workflows/ci.yml`。目标分支必须存在对应的 `workflow_dispatch`。只有仓库 Admin 权限账号可以触发；分发 workflow 和实际 NPU CI 都会调用 GitHub API 校验请求人权限。手动运行时，`Branch` 下拉框就是实际使用的 CI 定义分支。
 
@@ -675,20 +671,19 @@ NPU CI / A2+A5 / 02 全量 OPP 构建 pending
 NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局 pending
 NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配 pending
 NPU CI / A2+A5 / 05 GDR Example/ST pending
-NPU CI / A2+A5 / 06 chunk_fwd_o 局部覆盖安装 pending
-NPU CI / A2+A5 / 07 报告与 commit 校验 pending
+NPU CI / A2+A5 / 06 报告与 commit 校验 pending
 未执行：请维护者评论 /run-npu-ci quick
 ```
 
-如果是 push 新 commit，上述 7 个状态会重新变为 pending，并显示“未执行：commit 已变化，请重新触发 /run-npu-ci quick”。
+如果是 push 新 commit，上述 6 个状态会重新变为 pending，并显示“未执行：commit 已变化，请重新触发 /run-npu-ci quick”。
 
-维护者触发执行后，上述 7 个状态仍会保持 pending，但描述会变成类似“等待执行 (quick,all,A2+A5)”。
+维护者触发执行后，上述 6 个状态仍会保持 pending，但描述会变成类似“等待执行 (quick,all,A2+A5)”。
 
-成功后，上述 7 个状态都会变成 success。发生失败时，真正失败的分项会显示关键原因，依赖它的后续分项显示未执行；PR 评论和 Actions Summary 给出对应 `CI_STAGE` 复现命令。
+成功后，上述 6 个状态都会变成 success。发生失败时，真正失败的分项会显示关键原因，依赖它的后续分项显示未执行；PR 评论和 Actions Summary 给出对应 `CI_STAGE` 复现命令。
 
 PR 评论区也会出现或更新一条机器人评论，包含触发人、模式、Example ST 要求和 Actions run 链接。
 
-只有当前 head commit 的同一次 Actions run 已让 7 个 A2+A5 分项状态全部通过，重复触发才会跳过，不再占用 NPU。旧版状态或单平台状态不会命中该去重条件。
+只有当前 head commit 的同一次 Actions run 已让 6 个 A2+A5 分项状态全部通过，重复触发才会跳过，不再占用 NPU。旧版状态或单平台状态不会命中该去重条件。
 
 如果当前 head commit 已经有 NPU CI 处于排队或运行中，重复评论也会跳过，不会再启动新的 self-hosted runner job。机器人评论会更新为“已在运行”，并指向已有 Actions run。
 
@@ -716,7 +711,7 @@ PR 评论区也会出现或更新一条机器人评论，包含触发人、模�
 
 合入 PR 前确认两件事：
 
-1. 当前 head commit 上本教程“先看重点”第 9 项列出的 7 个状态全部是 success
+1. 当前 head commit 上本教程“先看重点”第 9 项列出的 6 个状态全部是 success
 2. GitHub 分支保护要求的 2 个 approval 已经满足
 
 如果 PR 又 push 了新 commit，需要重新跑 NPU CI。旧 commit 的成功结果不能给新 commit 使用。
@@ -799,7 +794,7 @@ Custom OPP op_api lib: /usr/local/Ascend/.../opp/vendors/fla_npu_transformer/op_
 - 目标分支的 `ci.yml` 是否声明 `workflow_dispatch`
 - Actions 页面是否先出现 `NPU CI 评论分发`，随后出现新的 `NPU CI` run
 
-### PR 创建后没有 7 个 NPU CI 分项的未执行状态
+### PR 创建后没有 6 个 NPU CI 分项的未执行状态
 
 检查：
 
