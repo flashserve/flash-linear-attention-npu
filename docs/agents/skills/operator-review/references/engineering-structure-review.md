@@ -76,14 +76,21 @@
 5. `docs/api.md`、迁移指南及 `npu_custom.yaml`——仅当 PR 明确继续承诺对应 legacy 入口时使用。
 
 若仓库采用公开接口契约文件，其结构可参考
-[`public-api-contract.example.yaml`](public-api-contract.example.yaml)。其中：
+[`public-api-contract.v26.9.1.yaml`](public-api-contract.v26.9.1.yaml)。其中：
 
 - `contract_version` 只表示契约文件格式版本，不能代表接口发布版本；
-- `release_tag` 必须填写 `v26.9.1` 这类不可变发布 tag，并记录该 tag 下的公开 Python 接口快照；
-- 每个算子记录 Python 入口、Stable-ABI op、位置参数/关键字参数分类、必选或默认值以及返回槽位；
-- 发布准备时更新 `release_tag` 后再打 tag；已经发布的 tag 内文件不得回写；
-- 检视当前分支时必须读取 `git show <release_tag>:<contract-file>`，与当前契约和当前 wrapper
-  三方比较。缺少 `release_tag`、读取不到基线文件或没有历史比较证据时，不能通过兼容性检视。
+- `baseline.tag` 必须填写 `v26.9.1` 这类不可变发布 tag，`baseline.source` 指向该 tag 中用于
+  兼容性比较的 Python wrapper 或后续版本的契约文件；
+- `operators` 必须覆盖 `docs/op_list.md` 中全部未日落算子，每个算子各有一条记录，记录 Python
+  入口、Stable-ABI op、位置参数/关键字参数分类、必选或默认值以及返回槽位；
+- `_DEPRECATED_OPS` 中的算子、旧 `npu_causal_conv1d` 接口以及不属于算子清单的 utility export
+  不进入契约；不能以“本 PR 没改到”为由漏掉其它未日落算子；
+- 新增未日落公开算子时必须在同一 PR 增加契约项；删除契约项只能随明确的日落状态、替代入口和
+  移除版本一起发生。其他缺项或多出项按编码红线问题报告；
+- 发布准备时把 `baseline.tag` 更新为最近一次不可变发布 tag；已经发布的 tag 内文件不得回写；
+- 检视当前分支时必须读取 `git show <baseline.tag>:<baseline.source>`：若基线还没有契约文件，
+  从该 tag 的 `_stable.py` 与公开名表生成；若已有契约文件，则直接读取该文件。随后与当前契约和
+  当前 wrapper 三方比较。缺少基线 tag、读取不到基线文件或没有历史比较证据时，不能通过兼容性检视。
 
 同一 PR 同时修改代码、schema、YAML 和文档后，这些文件仍然彼此一致是交付完整性检查，不能替代与
 基线版本的兼容性比较。
