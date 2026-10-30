@@ -114,7 +114,8 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     const bool isA5 = ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510;
     OP_CHECK_IF(doTokenMajor && !isA5,
-                OP_LOGE(context->GetNodeName(), "do_token_major is only supported on Ascend950"),
+                OP_LOGE_FOR_INVALID_VALUE(context->GetNodeName(), "do_token_major", "true",
+                    "false unless Ascend950"),
                 return ge::GRAPH_FAILED);
 
     ChunkGatedDeltaRuleBwdDhuTilingContext ctx{

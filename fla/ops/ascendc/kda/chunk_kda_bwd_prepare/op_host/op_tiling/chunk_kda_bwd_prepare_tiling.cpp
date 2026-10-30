@@ -48,7 +48,8 @@ ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
     if (indicesShape && indicesShape->GetStorageShape().GetDimNum() == 0) indicesShape = nullptr;
     if (doTokenMajor) {
         if (!layout || (std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "NTD") != 0)) {
-            OP_LOGE(context->GetNodeName(), "do_token_major requires internal BNSD or NTD layout");
+            OP_LOGE_FOR_INVALID_VALUE(context->GetNodeName(), "layout", layout ? layout : "null",
+                "BNSD or NTD when do_token_major is true");
             return ge::GRAPH_FAILED;
         }
         const auto &v = context->GetRequiredInputShape(KDA_PREPARE_INPUT_V_NEW)->GetStorageShape();
@@ -64,7 +65,8 @@ ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
     }
     const bool isA5 = platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
     OP_CHECK_IF(doTokenMajor && !isA5,
-                OP_LOGE(context->GetNodeName(), "do_token_major is only supported on Ascend950"),
+                OP_LOGE_FOR_INVALID_VALUE(context->GetNodeName(), "do_token_major", "true",
+                    "false unless Ascend950"),
                 return ge::GRAPH_FAILED);
     ChunkKdaBwdPrepareTilingContext ctx{
         context->GetNodeName(),
