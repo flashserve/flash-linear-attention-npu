@@ -3,15 +3,45 @@
 # the immutable release and file used for historical compatibility comparison.
 # Deprecated/sunset operators from _DEPRECATED_OPS and the old
 # npu_causal_conv1d interface are excluded.
-# Utility exports that are not operators in docs/op_list.md are excluded.
+# The operator inventory follows _ASCENDC_OPS so published utility operators
+# remain covered as well.
 contract_version: 1
 baseline:
   tag: v26.9.1
   source: torch_custom/fla_npu/fla_npu/ops/ascendc/_stable.py
 scope:
-  source: docs/op_list.md
+  source: torch_custom/fla_npu/fla_npu/ops/ascendc/__init__.py:_ASCENDC_OPS
   exclude_deprecated: true
+  active_operator_count: 28
 operators:
+  fast_gelu_custom:
+    python: fla_npu.ops.ascendc.fast_gelu_custom
+    stable_op: npu_fast_gelu_custom
+    signature:
+      positional_or_keyword:
+        input_tensor:
+          required: true
+      keyword_only: {}
+    raw_python: fla_npu.ops.ascendc.npu_fast_gelu_custom
+    raw_signature:
+      positional_or_keyword:
+        self:
+          required: true
+      keyword_only: {}
+    returns:
+    - Tensor
+  fast_gelu_custom_backward:
+    python: fla_npu.ops.ascendc.fast_gelu_custom_backward
+    stable_op: npu_fast_gelu_custom_backward
+    signature:
+      positional_or_keyword:
+        grad:
+          required: true
+        self:
+          required: true
+      keyword_only: {}
+    returns:
+    - Tensor
   causal_conv1d_fn:
     python: fla_npu.ops.ascendc.causal_conv1d_fn
     stable_op: npu_causal_conv1d_fn

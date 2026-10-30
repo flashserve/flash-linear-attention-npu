@@ -81,10 +81,11 @@
 - `contract_version` 只表示契约文件格式版本，不能代表接口发布版本；
 - `baseline.tag` 必须填写 `v26.9.1` 这类不可变发布 tag，`baseline.source` 指向该 tag 中用于
   兼容性比较的 Python wrapper 或后续版本的契约文件；
-- `operators` 必须覆盖 `docs/op_list.md` 中全部未日落算子，每个算子各有一条记录，记录 Python
-  入口、Stable-ABI op、位置参数/关键字参数分类、必选或默认值以及返回槽位；
-- `_DEPRECATED_OPS` 中的算子、旧 `npu_causal_conv1d` 接口以及不属于算子清单的 utility export
-  不进入契约；不能以“本 PR 没改到”为由漏掉其它未日落算子；
+- `operators` 必须覆盖 `_ASCENDC_OPS` 中全部未日落公开入口，并覆盖 published utility operator；
+  `docs/op_list.md` 中的模型算子责任面必须与契约一致。每个入口记录 Python、Stable-ABI op、
+  位置参数/关键字参数分类、必选或默认值以及返回槽位；
+- `_DEPRECATED_OPS` 中的算子和旧 `npu_causal_conv1d` 接口不进入契约；不能以“本 PR 没改到”
+  为由漏掉其它未日落公开入口；
 - 新增未日落公开算子时必须在同一 PR 增加契约项；删除契约项只能随明确的日落状态、替代入口和
   移除版本一起发生。其他缺项或多出项按编码红线问题报告；
 - 发布准备时把 `baseline.tag` 更新为最近一次不可变发布 tag；已经发布的 tag 内文件不得回写；
