@@ -15,6 +15,7 @@
 #include "tiling/platform/platform_ascendc.h"
 #include "tiling_base/tiling_templates_registry.h"
 #include <algorithm>
+#include <cinttypes>
 #include <register/op_impl_registry.h>
 
 namespace optiling {
@@ -319,7 +320,11 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
                     MulOverflow(static_cast<uint64_t>(batch), numChunks, &prepareTaskNum) ||
                     MulOverflow(prepareTaskNum, static_cast<uint64_t>(valueHeads), &abcTaskNum) ||
                     abcTaskNum > MAX_KERNEL_TASKS,
-                OP_LOGE(context->GetNodeName(), "Phase 6 task counts exceed the kernel int64 range."),
+                OP_LOGE(context->GetNodeName(),
+                        "Phase 6 task count limit exceeded: region=tasks, B=%" PRId64 ", NT=%" PRIu64
+                        ", Hv=%" PRId64 ", T=%" PRId64 ", BT=%" PRId64
+                        "; require 1 <= B*NT*Hv <= INT64_MAX=%" PRIu64 ".",
+                        batch, numChunks, valueHeads, tokens, *chunkSize, MAX_KERNEL_TASKS),
                 return ge::GRAPH_FAILED);
     // A2 判定与实际 AIC/AIV 核数只计算一次：HO 预留判定与后续 ABC 布局复用。
     const bool useFp32Solve = platform.GetCurNpuArch() == NpuArch::DAV_2201;
@@ -472,7 +477,13 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
                         MulOverflow(elementCount, sizeof(float), &bytes) ||
                         AlignUpChecked(bytes, WORKSPACE_ALIGNMENT, &alignedBytes) ||
                         AddOverflow(workspaceOffset, alignedBytes, &nextOffset),
-                    OP_LOGE(context->GetNodeName(), "Stage P g_last exp workspace overflows uint64."),
+                    OP_LOGE(context->GetNodeName(),
+                            "Stage P workspace limit exceeded: region=g_last_exp, B=%" PRIu64 ", NT=%" PRIu64
+                            ", Hv=%" PRIu64 ", headStride=%" PRIu64 ", offset=%" PRIu64
+                            ", elementBytes=%zu, alignment=%" PRIu64
+                            "; require offset+AlignUp(B*NT*headStride*elementBytes,alignment) <= UINT64_MAX=%" PRIu64 ".",
+                            abc.B, abc.NT, abc.Hv, headStride, workspaceOffset, sizeof(float),
+                            WORKSPACE_ALIGNMENT, UINT64_MAX),
                     return ge::GRAPH_FAILED);
         trailer.gLastExpOffset = workspaceOffset;
         workspaceOffset = nextOffset;
@@ -481,7 +492,11 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
                         MulOverflow(elementCount, sizeof(float), &bytes) ||
                         AlignUpChecked(bytes, WORKSPACE_ALIGNMENT, &alignedBytes) ||
                         AddOverflow(workspaceOffset, alignedBytes, &nextOffset),
-                    OP_LOGE(context->GetNodeName(), "Stage P g decay workspace overflows uint64."),
+                    OP_LOGE(context->GetNodeName(),
+                            "Stage P workspace limit exceeded: region=g_decay, B=%" PRIu64 ", Hv=%" PRIu64
+                            ", T=%" PRIu64 ", offset=%" PRIu64 ", elementBytes=%zu, alignment=%" PRIu64
+                            "; require offset+AlignUp(B*Hv*T*elementBytes,alignment) <= UINT64_MAX=%" PRIu64 ".",
+                            abc.B, abc.Hv, abc.T, workspaceOffset, sizeof(float), WORKSPACE_ALIGNMENT, UINT64_MAX),
                     return ge::GRAPH_FAILED);
         trailer.gDecayOffset = workspaceOffset;
         workspaceOffset = nextOffset;
