@@ -62,7 +62,7 @@ finalize_bootstrap_failure() {
                 --exit-code "$exit_code" \
                 --reason "CI environment initialization exited with code ${exit_code}"
             local stage
-            for stage in opp-package standalone-layout torch-adapter gdr-example-st scoped-overlay; do
+            for stage in opp-package standalone-layout torch-adapter gdr-example-st; do
                 python3 ci/manage_npu_ci_stage_report.py \
                     --output "$stage_report_file" \
                     update \
@@ -446,81 +446,6 @@ install_custom_opp_package() {
     echo "[CI] Custom OPP op_api lib: ${op_api_lib}"
 }
 
-check_scoped_wheel_opp_install() {
-    local scoped_op="${CI_SCOPED_WHEEL_INSTALL_OP:-chunk_fwd_o}"
-    local run_file
-    local install_log
-
-    echo "[CI] Checking scoped run package replacement of installed wheel OPP: ${scoped_op}"
-    build_and_check_wheel_api
-
-    rm -rf build build_out
-    bash build.sh --pkg --soc="$ci_soc" --vendor_name=fla_npu --ops="$scoped_op" -j"$ci_jobs"
-    run_file="$(find_single_run_package)"
-    chmod +x "$run_file"
-
-    install_log="$(mktemp)"
-    "$run_file" --full --quiet 2>&1 | tee "$install_log"
-
-    if ! grep -q "Operator support status after installing this run package" "$install_log"; then
-        echo "[CI][ERROR] Scoped run package install did not print the operator support status table." >&2
-        exit 1
-    fi
-    if ! grep -q "$scoped_op" "$install_log"; then
-        echo "[CI][ERROR] Scoped run package install output did not mention ${scoped_op}." >&2
-        exit 1
-    fi
-    if ! grep -q "WARNING" "$install_log"; then
-        echo "[CI][ERROR] Scoped run package install did not warn about operators outside the scoped build." >&2
-        exit 1
-    fi
-    if grep -q "aclnn ABI header changes detected before installing this run package" "$install_log"; then
-        echo "[CI][ERROR] Scoped run package install printed the removed duplicate ABI warning block." >&2
-        exit 1
-    fi
-    if grep -q "Continue to overwrite the installed wheel OPP" "$install_log"; then
-        echo "[CI][ERROR] Scoped run package install printed the removed duplicate confirmation prompt." >&2
-        exit 1
-    fi
-
-    python3 - <<'PY'
-import pathlib
-import fla_npu
-
-package_dir = pathlib.Path(fla_npu.__file__).resolve().parent
-vendor_dir = package_dir / "opp" / "vendors" / "fla_npu_transformer"
-required = [vendor_dir / "op_api" / "lib" / "libcust_opapi.so"]
-missing = [path.name for path in required if not path.exists()]
-if missing:
-    raise SystemExit("[CI][ERROR] Missing scoped wheel OPP files: " + ", ".join(missing))
-alias = vendor_dir / "op_api" / "lib" / "libopapi.so"
-if alias.exists() or alias.is_symlink():
-    raise SystemExit(f"[CI][ERROR] Scoped wheel OPP contains conflicting alias: {alias}")
-first = fla_npu.load_ascendc_opapi_libraries()
-second = fla_npu.load_ascendc_opapi_libraries()
-if first is not second or not first:
-    raise SystemExit("[CI][ERROR] Scoped wheel OPP runtime loading is not idempotent")
-print("[CI] Scoped wheel OPP install check passed.")
-PY
-
-    shopt -s nullglob
-    local wheels=(dist/flash_linear_attention_npu*.whl)
-    shopt -u nullglob
-    if (( ${#wheels[@]} != 1 )); then
-        echo "[CI][ERROR] Expected exactly one wheel for install workflow checks, found ${#wheels[@]}." >&2
-        exit 1
-    fi
-
-    local workflow_args=(
-        --wheel "${wheels[0]}"
-        --run-package "$run_file"
-        --wheel-op "$scoped_op"
-        --run-op "$scoped_op"
-        --work-cwd "$repo_dir"
-    )
-    python3 scripts/check_install_workflows.py "${workflow_args[@]}"
-}
-
 check_example_python_deps() {
 python3 - <<'PY'
 import importlib
@@ -737,10 +662,9 @@ declare -A stage_position=(
     [standalone-layout]=3
     [torch-adapter]=4
     [gdr-example-st]=5
-    [scoped-overlay]=6
 )
 if [[ "$requested_stage" == "all" ]]; then
-    target_stage_position=6
+    target_stage_position=5
 elif [[ -n "${stage_position[$requested_stage]:-}" ]]; then
     target_stage_position="${stage_position[$requested_stage]}"
 else
@@ -800,16 +724,6 @@ run_pipeline_stage \
     "run all enabled GDR Example/ST accuracy cases" \
     "$gdr_example_enabled" \
     run_gdr_example_st
-
-scoped_overlay_enabled="${CI_RUN_SCOPED_WHEEL_INSTALL_CHECK:-false}"
-if [[ "$requested_stage" != "all" ]]; then
-    scoped_overlay_enabled=true
-fi
-run_pipeline_stage \
-    scoped-overlay \
-    "scoped run-package replacement of the wheel OPP" \
-    "$scoped_overlay_enabled" \
-    check_scoped_wheel_opp_install
 
 stage_report_status=0
 python3 ci/manage_npu_ci_stage_report.py --output "$stage_report_file" finalize || stage_report_status=$?

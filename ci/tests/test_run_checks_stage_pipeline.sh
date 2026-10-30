@@ -100,7 +100,6 @@ stages = (
     "standalone-layout",
     "torch-adapter",
     "gdr-example-st",
-    "scoped-overlay",
 )
 actual = [report["stages"][stage]["status"] for stage in stages]
 assert report["complete"] is True, report
@@ -154,7 +153,6 @@ run_case() {
         CI_RUN_EXAMPLE_ST="$run_example_st" \
         CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK=false \
         CI_RUN_WHEEL_API_CHECK=false \
-        CI_RUN_SCOPED_WHEEL_INSTALL_CHECK=false \
         CI_TMPDIR="$case_dir/tmp" \
         CI_TMPDIR_MIN_KB=1 \
         CI_JOBS=1 \
@@ -212,7 +210,7 @@ run_case \
     false \
     0 \
     success \
-    success,success,skipped,skipped,skipped,skipped
+    success,success,skipped,skipped,skipped
 
 run_case \
     disabled-stage-continues \
@@ -220,7 +218,7 @@ run_case \
     false \
     0 \
     success \
-    success,success,skipped,success,success,skipped \
+    success,success,skipped,success,success \
     true
 
 run_case \
@@ -229,7 +227,7 @@ run_case \
     true \
     1 \
     failure \
-    failure,skipped,skipped,skipped,skipped,skipped
+    failure,skipped,skipped,skipped,skipped
 
 run_case \
     opp-failure \
@@ -237,7 +235,7 @@ run_case \
     false \
     1 \
     failure \
-    success,failure,skipped,skipped,skipped,skipped \
+    success,failure,skipped,skipped,skipped \
     true \
     opp-package
 
