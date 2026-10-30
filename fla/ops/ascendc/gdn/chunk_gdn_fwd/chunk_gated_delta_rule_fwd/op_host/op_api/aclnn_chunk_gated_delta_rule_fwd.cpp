@@ -218,13 +218,14 @@ static const aclTensor *A2PrepareInputView(const aclTensor *tensor, aclOpExecuto
         return true;
     };
     uint64_t count = 0;
-    uint64_t capacity = 0;
+    uint64_t storageElements = 0;
     const int64_t offset = tensor->GetViewOffset();
-    if (!elements(tensor->GetViewShape(), count) || !elements(tensor->GetStorageShape(), capacity) ||
-        offset < 0 || static_cast<uint64_t>(offset) > capacity ||
-        count > capacity - static_cast<uint64_t>(offset)) {
+    if (!elements(tensor->GetViewShape(), count) || !elements(tensor->GetStorageShape(), storageElements) ||
+        offset < 0 || static_cast<uint64_t>(offset) > static_cast<uint64_t>(INT64_MAX) - count) {
         return nullptr;
     }
+    // Storage shape may describe the logical view, not the backing allocation extent.
+    // Preserve the offset when sharing storage; a contiguous slice needs no data copy.
     auto *view = executor->CreateView(tensor, tensor->GetViewShape(), tensor->GetViewOffset());
     if (view != nullptr) {
         view->SetStorageShape(tensor->GetViewShape());

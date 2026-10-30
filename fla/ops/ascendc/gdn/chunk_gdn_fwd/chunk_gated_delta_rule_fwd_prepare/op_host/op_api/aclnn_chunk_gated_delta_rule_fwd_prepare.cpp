@@ -327,12 +327,14 @@ static const aclTensor *A2PrepareDenseInput(const aclTensor *tensor, bool fp32, 
     if (fp32 && tensor->GetDataType() != DataType::DT_FLOAT)
         tensor = l0op::Cast(tensor, DataType::DT_FLOAT, executor);
     if (tensor == nullptr) return nullptr;
-    uint64_t count = 0, capacity = 0;
+    uint64_t count = 0, storageElements = 0;
     const int64_t base = tensor->GetViewOffset();
     if (!A2PrepareElementCount(tensor->GetViewShape(), count) ||
-        !A2PrepareElementCount(tensor->GetStorageShape(), capacity) || base < 0 ||
-        static_cast<uint64_t>(base) > capacity || count > capacity - static_cast<uint64_t>(base))
+        !A2PrepareElementCount(tensor->GetStorageShape(), storageElements) || base < 0 ||
+        static_cast<uint64_t>(base) > static_cast<uint64_t>(INT64_MAX) - count)
         return nullptr;
+    // Storage shape may describe the logical view, not the backing allocation extent.
+    // Preserve the offset when sharing storage; a contiguous slice needs no data copy.
     auto *view = executor->CreateView(tensor, tensor->GetViewShape(), tensor->GetViewOffset());
     if (view != nullptr) {
         view->SetStorageShape(tensor->GetViewShape());
