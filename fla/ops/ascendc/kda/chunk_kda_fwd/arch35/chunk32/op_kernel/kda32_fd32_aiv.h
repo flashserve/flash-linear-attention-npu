@@ -1161,10 +1161,11 @@ public:
 	__aicore__ inline void vec_prepare_qplus_kplus_kminus_kres(__ubuf__ void *qplus_ub, __ubuf__ void *qplusb_ub, __ubuf__ void *kplus_ub, __ubuf__ void *kplusb_ub,
 		__ubuf__ void *kminus_ub, __ubuf__ void *kres_ub, __ubuf__ void *gate_sc_ub, __ubuf__ void *gamma_ub)
 	{
-		T scale = (T)1.0;
+		uint32_t scale_bits = (uint32_t)scale16 << bits_per_16b_elem;
+		float scale = *((float *)&scale_bits);
 
 		__VEC_SCOPE__{
-			RegTensor<T> vreg_scale16;
+			RegTensor<float> vreg_scale;
 			RegTensor<float> vreg_gs1, vreg_gs2, vreg_gss3, vreg_gss4, vreg_ngs1_exp, vreg_ngs2_exp, vreg_ngss3_exp, vreg_ngss4_exp;
 			RegTensor<float> vreg_gamma_exp1, vreg_gamma_exp2, vreg_gamma_exp3, vreg_zero, vreg_gs3, vreg_gs4;
 			RegTensor<float> vreg_gamma_exp1_f32_low, vreg_gamma_exp1_f32_high;
@@ -1172,7 +1173,7 @@ public:
 			MaskReg preg_all = CreateMask<uint16_t, MaskPattern::ALL>();
 
 			Duplicate(vreg_zero, (float)0.0);
-			Duplicate((RegTensor<uint16_t> &)vreg_scale16, (uint16_t)scale16);
+			Duplicate(vreg_scale, scale);
 			Duplicate(vreg_gs1, (float)0.0);
 			Duplicate(vreg_gs2, (float)0.0);
 			Duplicate(vreg_gss3, (float)0.0);
@@ -1185,9 +1186,6 @@ public:
 				Exp(vreg_gamma_exp2, vreg_gs4, preg_all);
 				Adds(vreg_gamma_exp1_f32_low, vreg_gamma_exp1, (float)0.0, preg_all);
 				Adds(vreg_gamma_exp1_f32_high, vreg_gamma_exp2, (float)0.0, preg_all);
-				Cast<T, float, f2bfZero>((RegTensor<T> &)vreg_gamma_exp1, vreg_gamma_exp1, preg_all);
-				Cast<T, float, f2bfOne>((RegTensor<T> &)vreg_gamma_exp2, vreg_gamma_exp2, preg_all);
-				Or((RegTensor<uint16_t> &)vreg_gamma_exp1, (RegTensor<uint16_t> &)vreg_gamma_exp1, (RegTensor<uint16_t> &)vreg_gamma_exp2, preg_all);
 
 				DataCopy(vreg_gamma_exp2, (__ubuf__ float *)gamma_ub);
 				DataCopy(vreg_gamma_exp3, (__ubuf__ float *)gamma_ub + half_channels);
@@ -1207,17 +1205,18 @@ public:
 			for(uint16_t i = 0; i < (uint16_t)chunk_half_rows; i ++) {
 				RegTensor<T> vreg_kk1, vreg_kk2, vreg_qq1, vreg_qq2;
 				RegTensor<float> vreg_gg1, vreg_gg2, vreg_gg3, vreg_gg4;
-				RegTensor<T> vreg_kkk, vreg_qqq;
 				RegTensor<float> vreg_gs1_exp, vreg_gs2_exp, vreg_gss3_exp, vreg_gss4_exp;
-				DataCopy(vreg_qq1, (__ubuf__ T *)q_ub[id] + i*key_dim);
+				RegTensor<float> vreg_kk1_f32_low, vreg_kk1_f32_high;
+				RegTensor<float> vreg_kk2_f32_low, vreg_kk2_f32_high;
+				RegTensor<float> vreg_qq1_f32_low, vreg_qq1_f32_high;
+				RegTensor<float> vreg_qq2_f32_low, vreg_qq2_f32_high;
 				DataCopy(vreg_kk1, (__ubuf__ T *)k_ub[id] + i*key_dim);
-				//DataCopy(vreg_qq2, (__ubuf__ T *)q_ub[id] + i*128*2 + 128);
-				DataCopy(vreg_qq2, (__ubuf__ T *)q_ub[id] + i*key_dim + chunk_half_rows*key_dim);
 				DataCopy(vreg_kk2, (__ubuf__ T *)k_ub[id] + i*key_dim + chunk_half_rows*key_dim);
-				//DataCopy(vreg_qq4, (__ubuf__ T *)q_ub[id] + i*128*2 + 16*128 + 128);
 
-				Mul((RegTensor<T> &)vreg_qq1, (RegTensor<T> &)vreg_qq1, vreg_scale16, preg_all);
-				Mul((RegTensor<T> &)vreg_qq2, (RegTensor<T> &)vreg_qq2, vreg_scale16, preg_all);
+				Cast<float, T, bf2fZero>(vreg_kk1_f32_low, vreg_kk1, preg_all);
+				Cast<float, T, bf2fOne>(vreg_kk1_f32_high, vreg_kk1, preg_all);
+				Cast<float, T, bf2fZero>(vreg_kk2_f32_low, vreg_kk2, preg_all);
+				Cast<float, T, bf2fOne>(vreg_kk2_f32_high, vreg_kk2, preg_all);
 
 				DataCopy(vreg_gg1, (__ubuf__ float *)g_ub[id] + i*half_channels);
 				DataCopy(vreg_gg2, (__ubuf__ float *)gate_sc_ub + i*half_channels);
@@ -1242,15 +1241,7 @@ public:
 				Exp(vreg_gss3_exp, vreg_gss3, preg_all);
 				Exp(vreg_gss4_exp, vreg_gss4, preg_all);
 
-				// kminus/kres 中间计算保持 FP32，仅在写回 UB 时转为 BF16。
-				RegTensor<float> vreg_kk1_f32_low, vreg_kk1_f32_high;
-				RegTensor<float> vreg_kk2_f32_low, vreg_kk2_f32_high;
-				Cast<float, T, bf2fZero>(vreg_kk1_f32_low, vreg_kk1, preg_all);
-				Cast<float, T, bf2fOne>(vreg_kk1_f32_high, vreg_kk1, preg_all);
-				Cast<float, T, bf2fZero>(vreg_kk2_f32_low, vreg_kk2, preg_all);
-				Cast<float, T, bf2fOne>(vreg_kk2_f32_high, vreg_kk2, preg_all);
-
-				// kMinus 使用 FP32 负指数；kRes 使用 gs3/gs4 和 gamma_exp2/3。
+				// kMinus/kRes 与 qPlus/kPlus 的全部中间计算均保持 FP32。
 				Mul(vreg_gg1, vreg_kk1_f32_low, vreg_ngs1_exp, preg_all);
 				Mul(vreg_gg3, vreg_kk1_f32_high, vreg_ngs2_exp, preg_all);
 				Mul(vreg_gg2, vreg_kk2_f32_low, vreg_ngss3_exp, preg_all);
@@ -1284,49 +1275,65 @@ public:
 				Or((RegTensor<uint16_t> &)vreg_pack, (RegTensor<uint16_t> &)vreg_kres2_f32_low, (RegTensor<uint16_t> &)vreg_kres2_f32_high, preg_all);
 				DataCopy<T, MicroAPI::DataCopyMode::DATA_BLOCK_COPY>((__ubuf__ T *)kres_ub + i*block_elems_16b + chunk_half_rows*block_elems_16b, vreg_pack, 33, preg_all);
 
-				// kplus qplus
-				Cast<T, float, f2bfZero>((RegTensor<T> &)vreg_gs1_exp, vreg_gs1_exp, preg_all);
-				Cast<T, float, f2bfOne>((RegTensor<T> &)vreg_gs2_exp, vreg_gs2_exp, preg_all);
-				// Cast<T, float, f2bfZero>((RegTensor<T> &)vreg_gs3, vreg_gs3, preg_all);
-				// Cast<T, float, f2bfZero>((RegTensor<T> &)vreg_gs4, vreg_gs4, preg_all);
-				Cast<T, float, f2bfZero>((RegTensor<T> &)vreg_gss3_exp, vreg_gss3_exp, preg_all);
-				Cast<T, float, f2bfOne>((RegTensor<T> &)vreg_gss4_exp, vreg_gss4_exp, preg_all);
+				// 前半 kPlus。
+				Mul(vreg_gg1, vreg_kk1_f32_low, vreg_gs1_exp, preg_all);
+				Mul(vreg_gg3, vreg_kk1_f32_high, vreg_gs2_exp, preg_all);
+				Cast<T, float, f2bfZero>((RegTensor<T> &)vreg_gg1, vreg_gg1, preg_all);
+				Cast<T, float, f2bfOne>((RegTensor<T> &)vreg_gg3, vreg_gg3, preg_all);
+				Or((RegTensor<uint16_t> &)vreg_pack, (RegTensor<uint16_t> &)vreg_gg1, (RegTensor<uint16_t> &)vreg_gg3, preg_all);
+				DataCopy<T, MicroAPI::DataCopyMode::DATA_BLOCK_COPY>((__ubuf__ T *)kplus_ub + i*block_elems_16b, vreg_pack, 33, preg_all);
 
-				Or((RegTensor<uint16_t> &)vreg_gs1_exp, (RegTensor<uint16_t> &)vreg_gs1_exp, (RegTensor<uint16_t> &)vreg_gs2_exp, preg_all);
-				// DeInterleave((RegTensor<uint16_t> &)vreg_gs3, (RegTensor<uint16_t> &)vreg_gs4, (RegTensor<uint16_t> &)vreg_gs3, (RegTensor<uint16_t> &)vreg_gs4);
-				Or((RegTensor<uint16_t> &)vreg_gss3_exp, (RegTensor<uint16_t> &)vreg_gss3_exp, (RegTensor<uint16_t> &)vreg_gss4_exp, preg_all);
+				// 后半先保留 kPlusB，再乘 anchor 得到 kPlus。
+				Mul(vreg_gg1, vreg_kk2_f32_low, vreg_gss3_exp, preg_all);
+				Mul(vreg_gg3, vreg_kk2_f32_high, vreg_gss4_exp, preg_all);
+				Mul(vreg_gg2, vreg_gg1, vreg_gamma_exp1_f32_low, preg_all);
+				Mul(vreg_gg4, vreg_gg3, vreg_gamma_exp1_f32_high, preg_all);
+				Cast<T, float, f2bfZero>((RegTensor<T> &)vreg_gg1, vreg_gg1, preg_all);
+				Cast<T, float, f2bfOne>((RegTensor<T> &)vreg_gg3, vreg_gg3, preg_all);
+				Or((RegTensor<uint16_t> &)vreg_pack, (RegTensor<uint16_t> &)vreg_gg1, (RegTensor<uint16_t> &)vreg_gg3, preg_all);
+				DataCopy<T, MicroAPI::DataCopyMode::DATA_BLOCK_COPY>((__ubuf__ T *)kplusb_ub + i*block_elems_16b, vreg_pack, 17, preg_all);
+				Cast<T, float, f2bfZero>((RegTensor<T> &)vreg_gg2, vreg_gg2, preg_all);
+				Cast<T, float, f2bfOne>((RegTensor<T> &)vreg_gg4, vreg_gg4, preg_all);
+				Or((RegTensor<uint16_t> &)vreg_pack, (RegTensor<uint16_t> &)vreg_gg2, (RegTensor<uint16_t> &)vreg_gg4, preg_all);
+				DataCopy<T, MicroAPI::DataCopyMode::DATA_BLOCK_COPY>((__ubuf__ T *)kplus_ub + i*block_elems_16b + chunk_half_rows*block_elems_16b, vreg_pack, 33, preg_all);
 
-				Mul((RegTensor<T> &)vreg_kk1, (RegTensor<T> &)vreg_kk1, (RegTensor<T> &)vreg_gs1_exp, preg_all);
-				Mul((RegTensor<T> &)vreg_qq1, (RegTensor<T> &)vreg_qq1, (RegTensor<T> &)vreg_gs1_exp, preg_all);
-				// Mul((RegTensor<T> &)vreg_qq1, (RegTensor<T> &)vreg_qq1, (RegTensor<T> &)vreg_scale16, preg_all);
-				Mul((RegTensor<T> &)vreg_kkk, (RegTensor<T> &)vreg_kk2, (RegTensor<T> &)vreg_gss3_exp, preg_all);
-				Mul((RegTensor<T> &)vreg_qqq, (RegTensor<T> &)vreg_qq2, (RegTensor<T> &)vreg_gss3_exp, preg_all);
-				// Mul((RegTensor<T> &)vreg_qqq, (RegTensor<T> &)vreg_qqq, (RegTensor<T> &)vreg_scale16, preg_all);
-				Mul((RegTensor<T> &)vreg_kk2, (RegTensor<T> &)vreg_kkk, (RegTensor<T> &)vreg_gamma_exp1, preg_all);
-				Mul((RegTensor<T> &)vreg_qq2, (RegTensor<T> &)vreg_qqq, (RegTensor<T> &)vreg_gamma_exp1, preg_all);
+				// k 全部写回后再处理 q，缩短 FP32 寄存器跨 Stage 的生命周期。
+				DataCopy(vreg_qq1, (__ubuf__ T *)q_ub[id] + i*key_dim);
+				DataCopy(vreg_qq2, (__ubuf__ T *)q_ub[id] + i*key_dim + chunk_half_rows*key_dim);
+				Cast<float, T, bf2fZero>(vreg_qq1_f32_low, vreg_qq1, preg_all);
+				Cast<float, T, bf2fOne>(vreg_qq1_f32_high, vreg_qq1, preg_all);
+				Cast<float, T, bf2fZero>(vreg_qq2_f32_low, vreg_qq2, preg_all);
+				Cast<float, T, bf2fOne>(vreg_qq2_f32_high, vreg_qq2, preg_all);
+				Mul(vreg_qq1_f32_low, vreg_qq1_f32_low, vreg_scale, preg_all);
+				Mul(vreg_qq1_f32_high, vreg_qq1_f32_high, vreg_scale, preg_all);
+				Mul(vreg_qq2_f32_low, vreg_qq2_f32_low, vreg_scale, preg_all);
+				Mul(vreg_qq2_f32_high, vreg_qq2_f32_high, vreg_scale, preg_all);
 
-				DataCopy<T, MicroAPI::DataCopyMode::DATA_BLOCK_COPY>((__ubuf__ T *)kplus_ub + i*block_elems_16b, (RegTensor<T> &)vreg_kk1, 33, preg_all);
-				DataCopy<T, MicroAPI::DataCopyMode::DATA_BLOCK_COPY>((__ubuf__ T *)qplus_ub + i*block_elems_16b, (RegTensor<T> &)vreg_qq1, 33, preg_all);
-				DataCopy<T, MicroAPI::DataCopyMode::DATA_BLOCK_COPY>((__ubuf__ T *)kplus_ub + i*block_elems_16b + chunk_half_rows*block_elems_16b, (RegTensor<T> &)vreg_kk2, 33, preg_all);
-				DataCopy<T, MicroAPI::DataCopyMode::DATA_BLOCK_COPY>((__ubuf__ T *)qplus_ub + i*block_elems_16b + chunk_half_rows*block_elems_16b, (RegTensor<T> &)vreg_qq2, 33, preg_all);
-				DataCopy<T, MicroAPI::DataCopyMode::DATA_BLOCK_COPY>((__ubuf__ T *)kplusb_ub + i*block_elems_16b, (RegTensor<T> &)vreg_kkk, 17, preg_all);
-				DataCopy<T, MicroAPI::DataCopyMode::DATA_BLOCK_COPY>((__ubuf__ T *)qplusb_ub + i*block_elems_16b, (RegTensor<T> &)vreg_qqq, 17, preg_all);
+				Mul(vreg_gg1, vreg_qq1_f32_low, vreg_gs1_exp, preg_all);
+				Mul(vreg_gg3, vreg_qq1_f32_high, vreg_gs2_exp, preg_all);
+				Cast<T, float, f2bfZero>((RegTensor<T> &)vreg_gg1, vreg_gg1, preg_all);
+				Cast<T, float, f2bfOne>((RegTensor<T> &)vreg_gg3, vreg_gg3, preg_all);
+				Or((RegTensor<uint16_t> &)vreg_pack, (RegTensor<uint16_t> &)vreg_gg1, (RegTensor<uint16_t> &)vreg_gg3, preg_all);
+				DataCopy<T, MicroAPI::DataCopyMode::DATA_BLOCK_COPY>((__ubuf__ T *)qplus_ub + i*block_elems_16b, vreg_pack, 33, preg_all);
+
+				Mul(vreg_gg1, vreg_qq2_f32_low, vreg_gss3_exp, preg_all);
+				Mul(vreg_gg3, vreg_qq2_f32_high, vreg_gss4_exp, preg_all);
+				Mul(vreg_gg2, vreg_gg1, vreg_gamma_exp1_f32_low, preg_all);
+				Mul(vreg_gg4, vreg_gg3, vreg_gamma_exp1_f32_high, preg_all);
+				Cast<T, float, f2bfZero>((RegTensor<T> &)vreg_gg1, vreg_gg1, preg_all);
+				Cast<T, float, f2bfOne>((RegTensor<T> &)vreg_gg3, vreg_gg3, preg_all);
+				Or((RegTensor<uint16_t> &)vreg_pack, (RegTensor<uint16_t> &)vreg_gg1, (RegTensor<uint16_t> &)vreg_gg3, preg_all);
+				DataCopy<T, MicroAPI::DataCopyMode::DATA_BLOCK_COPY>((__ubuf__ T *)qplusb_ub + i*block_elems_16b, vreg_pack, 17, preg_all);
+				Cast<T, float, f2bfZero>((RegTensor<T> &)vreg_gg2, vreg_gg2, preg_all);
+				Cast<T, float, f2bfOne>((RegTensor<T> &)vreg_gg4, vreg_gg4, preg_all);
+				Or((RegTensor<uint16_t> &)vreg_pack, (RegTensor<uint16_t> &)vreg_gg2, (RegTensor<uint16_t> &)vreg_gg4, preg_all);
+				DataCopy<T, MicroAPI::DataCopyMode::DATA_BLOCK_COPY>((__ubuf__ T *)qplus_ub + i*block_elems_16b + chunk_half_rows*block_elems_16b, vreg_pack, 33, preg_all);
 
 			}
 		}
 
 		AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(id);
 
-		// // debug
-		// pipe_barrier(PIPE_ALL);
-		// if(subid == 1 && arrive_cnt == 0) {
-		// 	// for(int i = 0; i < 32*128; i ++) ((__ubuf__ uint16_t *)(g_ub[id]))[i] = 0;
-		// 	//ub_gm_single<32,128,2>(tmp_gm, k_ub[id]);
-		// 	ub_gm_single<33,128,2>(tmp_gm, kminus_ub);
-		// 	//ub_gm_single<1,32,4>(tmp_gm, dt_ub[id]);
-		// }
-		// arrive_cnt ++;
-		// pipe_barrier(PIPE_ALL);
 
 
 		// if(gqkdb_cnt < group_count*2) {
