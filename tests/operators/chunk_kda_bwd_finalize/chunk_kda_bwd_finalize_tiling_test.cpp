@@ -320,9 +320,13 @@ bool CheckMixed(
 bool CheckInvalidModelLayout()
 {
     const auto result = RunTiling("Ascend950", "BTHD");
+    bool ok = result.status == ge::GRAPH_FAILED;
+    for (const char *text : {"model_layout", "BTHD", "BSND/BNSD/TND/NTD"}) {
+        ok = result.message.find(text) != std::string::npos && ok;
+    }
     std::cout << "Ascend950 invalid model_layout: status=" << result.status
               << ", report=" << result.message << '\n';
-    return result.status == ge::GRAPH_FAILED;
+    return ok;
 }
 
 bool CheckStandaloneRejectsTokenRaw()
