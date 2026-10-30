@@ -41,11 +41,46 @@ A5 模型 shape 分别来源于 `推理model.csv` 和 `训练model.csv`，原文
 
 ## TilingKey 覆盖
 
-| TilingKey | 选择条件 | 普通/边界用例 | SoC | 实际选择证据 |
-| --- | --- | --- | --- | --- |
-| 1 | `V=128`，未进入 A5 推理模型特化 | MSS 0、2、4 | A2/A3/A5 | 本 PR 硬件门禁补录 |
-| 2 | `V=256` | MSS 1、3、5 | A2/A3/A5 | 本 PR 硬件门禁补录 |
-| 301 | A5 性能 case 0 的推理模式，初态为 BF16/FP32 | MSS 尚未覆盖 | A5 | 原模型 shape 已实测命中；MSS 待补 |
+路由以 [arch22 host tiling](../../../fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd/op_host/op_tiling/arch22/chunk_gated_delta_rule_fwd_arch22_tiling.cpp)
+和 [arch35 host tiling](../../../fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd/op_host/op_tiling/arch35/chunk_gated_delta_rule_fwd_arch35_tiling.cpp) 为准。
+`BT` 表示 `chunk_size`；`raw_g_layout`、`o_layout`、`qkv_layout` 为内部 L0 属性。
+在 DAV_2201 上，`raw_g_layout=1` 且 `o_layout=1` 时选择静态 key：
+`100 + (V=256 ? 4 : 0) + (BT=128 ? 2 : 0) + qkv_layout`。
+其中 native BSND/TND 的 `qkv_layout=1`，BNSD/NTD 为 0。下表条件均以通过 host 校验为前提。
+
+| TilingKey | 选择条件 | SoC |
+| --- | --- | --- |
+| 1 | arch22：`raw_g_layout=0,V=128`；arch35：`V=128` 且未命中 301 | A2/A3/A5 |
+| 2 | arch22：`raw_g_layout=0,V=256`；arch35：`V=256` | A2/A3/A5 |
+| 3 | `raw_g_layout=1,o_layout=0,V=128` | A2/A3（DAV_2201） |
+| 4 | `raw_g_layout=1,o_layout=0,V=256` | A2/A3（DAV_2201） |
+| 100 | 静态条件，`V=128,BT=64,qkv_layout=0` | A2/A3（DAV_2201） |
+| 101 | 静态条件，`V=128,BT=64,qkv_layout=1` | A2/A3（DAV_2201） |
+| 102 | 静态条件，`V=128,BT=128,qkv_layout=0` | A2/A3（DAV_2201） |
+| 103 | 静态条件，`V=128,BT=128,qkv_layout=1` | A2/A3（DAV_2201） |
+| 104 | 静态条件，`V=256,BT=64,qkv_layout=0` | A2/A3（DAV_2201） |
+| 105 | 静态条件，`V=256,BT=64,qkv_layout=1` | A2/A3（DAV_2201） |
+| 106 | 静态条件，`V=256,BT=128,qkv_layout=0` | A2/A3（DAV_2201） |
+| 107 | 静态条件，`V=256,BT=128,qkv_layout=1` | A2/A3（DAV_2201） |
+| 301 | A5 性能 case 0 的 BF16 推理模型特化，初态为 BF16/FP32 | A5 |
+
+当前 executor 未传 `layout`，使用公开 wrapper 默认的 BNSD。DAV_2201 默认入口使用
+`raw_g_layout=1,o_layout=1,qkv_layout=0`，现有精度矩阵和 MSS 用例按参数推导如下。
+case id 分别属于精度 JSON 和 `_mss.json`；精度栏只列整块、尾块或变长代表用例。
+
+| TilingKey | 精度代表用例 | MSS 用例 | 实际选择证据 |
+| --- | --- | --- | --- |
+| 100 | 67（整块）、0（尾块）、1（变长） | 0、2、4 | 按参数推导 |
+| 102 | 126（整块）、22（尾块）、2（变长） | 无 | 按参数推导 |
+| 104 | 21（尾块）、43（变长） | 1 | 按参数推导 |
+| 106 | 30（尾块）、50（变长） | 3、5 | 按参数推导 |
+| 101、103、105、107 | 无 native QKV 布局定向用例 | 无 | 本表未关联 ATK 逐 case key 记录 |
+| 1、2、3、4（arch22） | 无内部 L0 属性定向用例 | 无 | 本表未关联 ATK 逐 case key 记录 |
+
+参数推导不等于 host tiling UT 或运行时 key 记录；实际执行范围和结果以对应原始报告为准。
+现有六条 MSS 只对应 100/104/106，缺少 102、native QKV 静态实例和 arch22 兼容实例的定向用例；
+已有精度结果不能替代 MSS 结果。A5 的 301 原模型 shape 已实测命中，当前 MSS 尚未覆盖；
+A5 的独立 prepare 组合路径应与上述 DAV_2201 分派分别记录。
 
 ## 执行
 

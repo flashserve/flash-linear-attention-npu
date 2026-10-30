@@ -14,6 +14,7 @@
 #include "tiling/platform/platform_ascendc.h"
 #include "tiling_base/tiling_templates_registry.h"
 #include <algorithm>
+#include <cinttypes>
 #include <initializer_list>
 #include <register/op_impl_registry.h>
 
@@ -431,7 +432,13 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     OwnerHWorkspace expectedOwner{};
     OP_CHECK_IF(ownerLocalWorkspace &&
                     !CheckOwnerHBeforeProcessor(hContext, recomputeProcessor.GetWorkspaceSize(), elementSize, expectedOwner),
-                OP_LOGE(context->GetNodeName(), "Owner-local H/WU workspace precheck exceeds int64 range."),
+                OP_LOGE(context->GetNodeName(),
+                        "Owner-local H/WU workspace precheck failed: region=H/WU, B=%" PRId64 ", Hv=%" PRId64
+                        ", T=%" PRId64 ", N=%" PRId64 ", K=%" PRId64 ", V=%" PRId64 ", BT=%" PRId64
+                        ", cores=%u, elementBytes=%zu, sysBytes=%zu, recomputeBytes=%zu; require K=V=128, BT=64,"
+                        " no gk, sysBytes<=recomputeBytes and each size/offset <= INT64_MAX=%zu.",
+                        batch, vNumHead, seqlen, tokenBatch, kHeadDim, vHeadDim, chunkSize, aicCoreNum,
+                        elementSize, sysWorkspaceSize, recomputeProcessor.GetWorkspaceSize(), MAX_INT64_AS_SIZE_T),
                 return ge::GRAPH_FAILED);
     ::GdnMegaArch22FwdHTilingData hPlain{};
     uint32_t hBlockDim = 0;
@@ -508,11 +515,20 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     }
     size_t oWorkspaceSize = 0;
     OP_CHECK_IF(!FillOTilingWorkspace(oTiling, aicCoreNum, oHWorkStages, oBase, oWorkspaceSize),
-                OP_LOGE(context->GetNodeName(), "O workspace exceeds int64 range."), return ge::GRAPH_FAILED);
+                OP_LOGE(context->GetNodeName(),
+                        "O workspace limit exceeded: region=O, base=%zu, cores=%u, BT=%" PRId64 ", V=%" PRId64
+                        ", hStages=%zu, pingPongStages=%" PRId64 ", elementBytes=%zu, alignment=%zu, reserveBytes=%zu;"
+                        " require base+aligned(v,h,attn,aftermask,mask,reserve) <= INT64_MAX=%zu.",
+                        oBase, aicCoreNum, chunkSize, vHeadDim, oHWorkStages, PING_PONG_STAGES,
+                        sizeof(float), WORKSPACE_ALIGNMENT, WORKSPACE_RESERVE, MAX_INT64_AS_SIZE_T),
+                return ge::GRAPH_FAILED);
 
     size_t workspaceOffset = 0;
     OP_CHECK_IF(!AppendWorkspace(std::max(hWorkspaceSize, oWorkspaceSize), workspaceOffset),
-                OP_LOGE(context->GetNodeName(), "HO workspace alignment exceeds int64 range."),
+                OP_LOGE(context->GetNodeName(),
+                        "HO workspace alignment limit exceeded: region=HO, hEnd=%zu, oEnd=%zu, alignment=%zu;"
+                        " require AlignUp(max(hEnd,oEnd),alignment) <= INT64_MAX=%zu.",
+                        hWorkspaceSize, oWorkspaceSize, WORKSPACE_ALIGNMENT, MAX_INT64_AS_SIZE_T),
                 return ge::GRAPH_FAILED);
     GDN::ChunkRecomputeWUFwdHOTrailer trailer{};
     trailer.recompute = recomputeTiling;
@@ -530,15 +546,31 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
                     !CheckedWorkspaceBytes({static_cast<size_t>(batch), static_cast<size_t>(vNumHead),
                                             static_cast<size_t>(seqlen), static_cast<size_t>(vHeadDim), elementSize},
                                            vNewIntermediateBytes),
-                OP_LOGE(context->GetNodeName(), "HO persistent workspace size exceeds int64 range."),
+                OP_LOGE(context->GetNodeName(),
+                        "HO persistent workspace size limit exceeded: region=%s, B=%" PRId64 ", hBatch=%" PRId64
+                        ", Hv=%" PRId64 ", T=%" PRId64 ", NT=%" PRId64 ", K=%" PRId64 ", V=%" PRId64
+                        ", elementBytes=%zu; require hBatch*Hv*NT*K*V*elementBytes and B*Hv*T*V*elementBytes"
+                        " <= INT64_MAX=%zu.",
+                        vNewIntermediateBytes == 0 ? "h" : "vNew", batch, isVarlen ? int64_t{1} : batch,
+                        vNumHead, seqlen, totalChunks, kHeadDim, vHeadDim, elementSize, MAX_INT64_AS_SIZE_T),
                 return ge::GRAPH_FAILED);
     trailer.hIntermediateOffset = static_cast<int64_t>(workspaceOffset);
     OP_CHECK_IF(!AppendWorkspace(hIntermediateBytes, workspaceOffset),
-                OP_LOGE(context->GetNodeName(), "Persistent h offset exceeds int64 range."), return ge::GRAPH_FAILED);
+                OP_LOGE(context->GetNodeName(),
+                        "Persistent workspace end limit exceeded: region=h, offset=%zu, bytes=%zu, alignment=%zu;"
+                        " require bytes<=INT64_MAX-(alignment-1) and offset+AlignUp(bytes,alignment) <= INT64_MAX=%zu.",
+                        workspaceOffset, hIntermediateBytes, WORKSPACE_ALIGNMENT, MAX_INT64_AS_SIZE_T),
+                return ge::GRAPH_FAILED);
     trailer.vNewIntermediateOffset = static_cast<int64_t>(workspaceOffset);
     OP_CHECK_IF(!AppendWorkspace(vNewIntermediateBytes, workspaceOffset) ||
                     !AppendWorkspace(WORKSPACE_RESERVE, workspaceOffset),
-                OP_LOGE(context->GetNodeName(), "Persistent vNew/reserve offset exceeds int64 range."),
+                OP_LOGE(context->GetNodeName(),
+                        "Persistent workspace end limit exceeded: region=%s, offset=%zu, vNewBase=%" PRId64
+                        ", vNewBytes=%zu, reserveBytes=%zu, alignment=%zu; require each appended bytes"
+                        " <= INT64_MAX-(alignment-1) and offset+AlignUp(bytes,alignment) <= INT64_MAX=%zu.",
+                        workspaceOffset == static_cast<size_t>(trailer.vNewIntermediateOffset) ? "vNew" : "reserve",
+                        workspaceOffset, trailer.vNewIntermediateOffset, vNewIntermediateBytes,
+                        WORKSPACE_RESERVE, WORKSPACE_ALIGNMENT, MAX_INT64_AS_SIZE_T),
                 return ge::GRAPH_FAILED);
 
     const size_t hTilingSize = hTiling.GetDataSize();
