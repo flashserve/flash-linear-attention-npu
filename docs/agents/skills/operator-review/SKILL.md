@@ -60,6 +60,8 @@ metadata:
 tuple，都必须执行公开接口兼容性检查。以改动前的已发布 tag/基线提交为准，逐项比较入口名、参数名与
 顺序、positional/keyword-only 属性、是否必选、默认值、类型和语义、返回槽位，以及 stable、ctypes、
 legacy 入口是否继续提供同一调用形状。只证明当前代码、当前 YAML、当前文档彼此一致，不构成兼容性证据。
+版本化契约的文件结构与 `contract_version` / `release_tag` 语义见
+[`references/public-api-contract.example.yaml`](references/public-api-contract.example.yaml)。
 
 ### 3. DFX 设计
 
