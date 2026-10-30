@@ -1369,13 +1369,13 @@ tensor 语义。任何复用都必须以真实末次消费者完成为前提。
 
 ## 6. A2/A3 共用 arch22 单 kernel 实现
 
-本节对应 `56945eda6e5dc1944a3a74c4b556168db9313b5a` 的 A2 扩展，按设计规则 V2
-记录本候选的实际路径。前文 A5 的数学 golden、实现和资源布局保持原定义。A2 首版复用
+本节基于 `56945eda6e5dc1944a3a74c4b556168db9313b5a` 的 A2 扩展，按设计规则 V2
+记录其路径；以下模板、owner 分工和资源布局已按当前源码纠正。前文 A5 的数学 golden、实现和资源布局保持原定义。A2 首版复用
 `07d1b942` 的 A2 DQ/WY 矩阵计算、cast 和归约顺序；旧链与 A5 golden 的矩阵缩放、GVA
 归约位置存在浮点顺序差异，是否满足精度由正式 Finalize golden 和既有阈值裁决。
 旧四 kernel 的精度、性能结论不能作为本单 kernel 的通过证据。
 
-当前反向 scan 向量化候选尚未完成 CANN 构建、精度与性能验收。
+以下关于首版尚未完成验收的记录属于该历史候选，不代表后续版本的验收状态。
 `state_v_first` 保留 Scalar 预转换；反向 scan 采用逐行依赖的 FP32 Vector Add，
 两者耗时均需由新对象的 profile 判断。
 
@@ -1386,7 +1386,9 @@ tensor 语义。任何复用都必须以真实末次消费者完成为前提。
 OpApi 按架构选择此路径，Python 入口接受对应产品名。A2/A3 保持 `K=128`，按 `BT in {64,128}`、
 `V in {128,256}` 在同一个 `__global__` 内选择四个编译实例；`q/k/v/v_new/do/du/h/dh/A`
 为 BF16，`g/beta/beta_raw` 共用 BF16 或 FP32 dtype。norm、sigmoid、exp2 三个编译开关
-沿用原来的 16 组 dtype/boolean TilingKey。
+加上私有 `ENABLE_MHA_OWNER`，共 `2*2*2*2*2=32` 组 dtype/boolean TilingKey。
+owner 开关仅在 BF16、K128、BT64、V128、HK=HV 的通用 MHA 类别启用；其余规格走
+owner=false 模板。BT/V 的四种几何仍在同一入口内选择。
 
 定义 `N=totalChunkNum`、`R=HV/HK`、`C=blockDim=min(AIC可用数,N)`、
 `S=B*HV*T`、`Q=B*HK*T*K`。定长 `N=B*ceil(T/BT)`；变长 `B=1`，
@@ -1403,9 +1405,11 @@ DQ 逻辑任务为 `task=chunk*P+partition`，按 `task=core,core+C,...` 分发�
 `[partition*HK/P*R,(partition+1)*HK/P*R)`，完整 HK 组不跨 mixed core，也不跨 core 原子归约。
 Cube/Vector 共用原 U32 资格选择 `Process<true/false>`；`P>1` 及 `P=1` 但不满足资格时走 wide。
 实际 launch、host tiling 与 workspace 不随 P 改变；小 N 的现有网格不恢复成旧独立 DQ 网格。
-WY 仍按 chunk 跨 `C` 分发，每个 task 遍历完整 HV。DQ 保留其各分支原 owner；
-WY 的两个 AIV 对每个 HV 横切 row tile，使用相同的 head 次序
-消费所有 ready。最终 GateTail 独占 `(chunk,HV)`，QkTail 独占 `(chunk,HK)`，
+WY 仍按 chunk 跨 `C` 分发，每个 task 遍历完整 HV。DQ 保留其各分支 owner。
+WY 的一般路径由两个 AIV 横切 row tile；满足输出地址不重叠和几何准入时，BT64/V128
+的 MHA 或偶数 GVA 类别由两个 AIV 分别承包完整 head 的输出，仍按协议消费 ready。
+最终 GateTail 以一个 AIV 独占 `(chunk,head group)`：BT64 每组最多 128 个 head，
+BT128 每组最多 64 个 head，最后一组只处理有效 head。QkTail 独占 `(chunk,HK)`，
 以物理 AIV id 和 `2*C` 跨步分发，输出无重叠。
 
 例如 `B=2,HK=2,HV=6,T=129,BT=64,V=128` 时 `N=6`，若设备至少有 6 个 AIC，
@@ -1438,11 +1442,11 @@ WY 的两个 AIV 对每个 HV 横切 row tile，使用相同的 head 次序
 | A2 S3-Vector | `dg=reverse_cumsum_chunk(dg1+dg2)`；可选 `dbeta=dbeta32*sigmoid(beta_raw)*(1-sigmoid(beta_raw))` | FP32 内部计算，最终才转 g/beta dtype；dg 不另乘 ln(2) |
 | A2 S4-Vector | `dkRaw=BF16(FP32(dk1)+FP32(dk2))`；可选 `rstd*(d-y*sum(y*d))` | dq/dk 最终 CAST_RINT；不开 norm 时保留 dq1/dkRaw |
 
-S3 scan 在两支 FP32 DG 合并后，用 Brcb 将每个值复制成含 8 个相同 FP32 lane 的
-32B 块。令 `s[m]=+0`，严格按 `r=m-1,...,0` 执行 `s[r]=FP32(s[r+1]+x[r])`，
-每步只发一条作用于 8 个 lane 的 Add；第一步读取独立正零 seed，后续步读取上一步块。
-Gather 按 `32*r` 字节偏移取每块第一份结果，回到原 DG 输出路径。不分段、不改变加法
-结合顺序，BT64/128 及 dense/varlen 尾行共用同一路径；只将数据 GetValue/SetValue 移到 Vector。
+S3 先合并两支 FP32 DG，再用 Gather 将 `[head,row]` 转成 `[row,head]`。每个 head
+独立令 `s[m]=+0`，严格按 `r=m-1,...,0` 执行 `s[r]=FP32(s[r+1]+x[r])`；一条 Add
+同时推进 head group 的各 lane，第一步读取独立正零 seed。逆 Gather 恢复输出布局。
+不分段、不改变单个 head 的加法结合顺序；BT64/128、dense/varlen 尾行共用此路径。
+不存在的 head 和无效尾行预先置零，不参与有效输出写回。
 
 S0→DQ、DQ→WY、WY→尾段之间共三个全参与 `SyncAll<false>()`。
 所有 AIC 和两个 AIV 均参加，不能把 barrier 放进仅有效 head/owner 分支。
@@ -1498,26 +1502,28 @@ A2 各阶段互斥使用物理空间；新阶段仅在上一阶段退出和 barr
 | 可选 state 转置 | `4*K*V`，最大 131,072 | 本 AIV 最后一个 state 的 h/dh 均已写回 |
 | DQ BT64 | 187,904 | 所有 TQue 入出队/Free 完成、末轮 clear 被 Cube 消费 |
 | DQ BT128 | 195,072 | 同上，低于 A2 196,608B 的 UB 约束 |
-| WY BT64 | 168,992 | 原 ReleaseVectorEvents 结束 |
+| WY BT64 普通 row tile | 168,992 | ReleaseVectorEvents 结束 |
+| WY BT64 full-row 输出 | 186,656 | 同上；包含独立 16KiB KKT cache |
 | WY BT128 | 176,160 | 同上；V=128/256 的 row tile 可不同，峰值相同 |
-| GateTail | 8,192 | 当前 AIV 所有 chunk/HV 输出写回 |
+| GateTail | 131,072 | 当前 AIV 所有 chunk/head group 输出写回 |
 | QkTail | 114,688 | 当前 AIV 所有 chunk/HK 输出写回 |
 
-GateTail 仍只分配一个 8KiB TBuf，各 view 的字节区间如下，最大尺寸由 BT128 决定。
+GateTail 分配一个 128KiB TBuf。BT64×128 head 或 BT128×64 head 均为
+8192 个 FP32 元素；每个大区为 32KiB，字节布局与别名如下。
 
 | 对象 | 字节区间 | 生命周期 |
 | --- | --- | --- |
-| left / right | `[0,512)` / `[512,1024)` | 两支 DG 搬入到 merge Add 后的 PIPE_ALL；随后 left 前 32B 复用为正零 seed |
-| values | `[1024,1536)` | 每任务先将 BT 个值置正零，再合并有效行；Brcb 读完后由 Gather 写回有效 scan，DG 输出完成后复用为 dbeta |
-| raw / result | `[1536,2048)` / `[2048,2560)` | beta_raw 搬入到 sigmoid 消费 / 最终输出 cast 到 MTE3 完成；BF16 只占每段前 256B |
-| sigmoid / ones | `[2560,3072)` / `[3072,3584)` | 可选 sigmoid 计算 |
-| scanBlocks | `[3584,7680)` | 最多 128 个 32B 块，Brcb 到 Gather 完成；只扫描有效行 |
-| scanOffsets | `[7680,8192)` | Gate scope 内初始化一次，`int32_t` 索引乘 32 后以同址 `uint32_t` view 供 Gather，只读到 GateTail 退出 |
+| left / values | `[0,32768)` | 两支 DG 合并，正向 Gather 消费后可复用；逆 Gather 写回 scan 结果，MTE3 完成后再复用为 dbeta |
+| right / scanBlocks / result | `[32768,65536)` | right 的 merge Add 完成后作为转置 scan，逆 Gather 完成后作为最终 dtype cast 区 |
+| transposeOffsets | `[65536,98304)` | 初始化后只读，将 `[head,row]` 转成 `[row,head]` |
+| outputOffsets | `[98304,131072)` | 初始化后只读，恢复 `[head,row]` 输出布局 |
+| seed | `[0,4*HEAD_BATCH)` | 正向 Gather 读完旧 values 后置正零，只供首轮 Add；逆 Gather 后失效 |
+| raw / sigmoid / ones | `[512,1024)` / `[1024,1536)` / `[1536,2048)` | DG 输出完成后才启用，与 values 前 512B 的单 head dbeta 不重叠 |
 
-Brcb 的 repeat 为 `ceil(m/8)`，读取的尾部额外值已经由本任务初始化，且不超过 BT；
-额外块不参与 scan/Gather 或 GM 写回。seed 复用发生在 left 的末次 merge 消费和 PIPE_ALL
-之后，不能以 `scanBlocks[m]` 作 seed。BT128 最大 Gather 偏移为 4064B，最后一次读取
-结束于 scanBlocks 的 4068B，均在其 4096B 区间内。未增加 GM workspace 或跨阶段驻留。
+索引生成先借 left/right 作 base/tmp，Vector 末次读取完成后，以成对分配、归还的
+V_MTE2 事件允许输入搬运复用。两个索引表的最大有效偏移均为 32764B，读取结束于
+各自 32KiB 数据区。每组只扫描有效 `m` 行，并仅写回实际 head 和行；没有新增 GM
+workspace 或跨阶段驻留。
 
 DQ 的逻辑 TPipe 顺序地址（从 UB 0 开始）如下；实际运行分配仍需构建/设备追溯验证。
 
@@ -1584,7 +1590,7 @@ Vector 已完成的新结果；搬运后的 PIPE_ALL 再保证下一 tile 复用
 同一规则覆盖 Prepare 的 g/beta 写回，以及 GateTail 中 BF16 DG、sigmoid 后 FP32 dbeta
 和 BF16 dbeta 的写回。state 转置的 Scalar SetValue 循环结束后仍执行 DataSyncBarrier<UB>。
 scan 不再进行数据 Scalar 读写，因此移除其专用 DSB；索引初始化的 Scalar→Vector 由 SDK
-内部 S_V 闭合。merge→Brcb 保留原 PIPE_ALL；Brcb/seed→Add、相邻 Add、末 Add→Gather
+内部 S_V 闭合。输入→merge 保留 PIPE_ALL；merge→Gather、Gather/seed→Add、相邻 Add、末 Add→逆 Gather
 均有 PIPE_V，Gather 后恢复 normal mode 与全 mask，再保留原 DG 输出前的 PIPE_ALL。
 下任务覆盖 left/values 前，当前任务的全部输出仍经末尾 PIPE_ALL 完成。
 
@@ -1593,8 +1599,8 @@ scan 不再进行数据 Scalar 读写，因此移除其专用 DSB；索引初始
 g/beta 在 S0 转为 FP32，exp2 仅把输入乘 ln(2)，不改变输出 dg 的约定。
 矩阵运算仍使用 BF16 乘数、原 Cube 累加与 BF16 输出；原 DQ/WY 归约、cast、KKT 复用
 保持现有顺序。norm 的 dot 和减法为 FP32，最终 dq/dk CAST_RINT；dbeta/dg 的 BF16
-转换只在对应最终输出处执行。高风险 exp 的无效行在访问前由 m 限定；Brcb 只读取本任务
-已初始化的尾部 padding，scan 和 GM 写回均只处理有效行。向量 scan 保留从正零开始的
+转换只在对应最终输出处执行。高风险 exp 的无效行在访问前由 m 限定；GateTail 的 Gather
+只读取本任务已初始化的大区，scan 和 GM 写回均只处理有效行。向量 scan 保留从正零开始的
 逐步 FP32 加法顺序，但 Scalar/Vector 在 subnormal、NaN 和舍入环境下是否逐位同仍需
 实际设备比对。sigmoid 中 exp 上溢时通过 `1/(1+exp(-raw))` 得到饱和端点，NaN/Inf 按实际
 设备分类采证，不能把有限值精度通过推成特殊值门禁。
@@ -1605,8 +1611,8 @@ g/beta 在 S0 转为 FP32，exp2 仅把输入乘 ln(2)，不改变输出 dg 的�
 S0 state 转置、scan 的逐行 Vector 依赖链、全局 barrier 和 DQ/WY 核间等待的耗时；旧四 kernel 的
 TaskSUM 或 50e 精度不可挪用。首版尚未达到这些门禁，不能宣称完成验收。
 
-本 scan 候选减少每个有效行的数据 Scalar UB 读取/写入，但增加 pad/seed Duplicate、
-Brcb、Gather 和逐次 Add 的 PIPE_V，仍有 m 级依赖链。旧首版 C01 约 20.18ms 仅为已知
+当前 scan 按 head group 批处理，保留 pad/seed Duplicate、正逆 Gather 和逐次 Add 的
+PIPE_V；单 head 仍有 m 级依赖链。旧首版 C01 约 20.18ms 仅为已知
 精度失败对象的总 Task Duration，不能归因为 scan 占比或充当本候选提速结论。
 
 

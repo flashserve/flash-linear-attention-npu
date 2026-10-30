@@ -2,10 +2,13 @@
 #define CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_TILING_ARCH22_H
 
 #include "../op_tiling/chunk_gated_delta_rule_bwd_finalize_tiling.h"
+#include "chunk_gated_delta_rule_bwd_finalize_validation_arch22.h"
+#include "chunk_gated_delta_rule_bwd_finalize_error_arch22.h"
 #include "../../op_kernel/arch22/chunk_gated_delta_rule_bwd_finalize_workspace.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cinttypes>
 #include <cstdint>
 #include <initializer_list>
 #include <limits>
@@ -19,6 +22,8 @@ namespace {
 namespace gdn_finalize_arch22 {
 
 using namespace GDN;
+using GDN::FinalizeHostArch22::ShapeString;
+using GDN::FinalizeHostArch22::ParameterKind;
 
 // A2/A3 的 shape、属性、调度和 workspace 检查不进入 A5 基线路径。
 enum InputIndex : size_t {
@@ -78,38 +83,75 @@ bool CheckRank(const gert::StorageShape *shape, size_t rank)
     return shape != nullptr && shape->GetStorageShape().GetDimNum() == rank;
 }
 
+ge::graphStatus InvalidParameter(gert::TilingContext *context, const std::string &parameter,
+                                 const std::string &actual, const std::string &expected,
+                                 ParameterKind kind = ParameterKind::VALUE, size_t inputIndex = 0)
+{
+    OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "A2/A3 parameter[%s]: actual=%s; expected=%s.",
+            parameter.c_str(), actual.c_str(), expected.c_str());
+    if (!GDN::FinalizeHostArch22::ReportParameterError(parameter, actual, expected, kind, inputIndex)) {
+        OP_LOGE(context->GetNodeName(), "A2/A3 parameter[%s]: actual=%s; expected=%s.",
+                parameter.c_str(), actual.c_str(), expected.c_str());
+    }
+    return ge::GRAPH_FAILED;
+}
+
+std::string ShapeString(std::initializer_list<int64_t> dimensions)
+{
+    std::ostringstream stream;
+    stream << "[";
+    size_t index = 0;
+    for (const int64_t dimension : dimensions) {
+        stream << (index++ == 0 ? "" : ", ") << dimension;
+    }
+    stream << "]";
+    return stream.str();
+}
+
+ge::graphStatus ValidateShape(gert::TilingContext *context, const char *parameter,
+                              const gert::Shape &actual, std::initializer_list<int64_t> expected, size_t inputIndex)
+{
+    size_t index = 0;
+    bool matches = actual.GetDimNum() == expected.size();
+    if (matches) {
+        for (const int64_t dimension : expected) {
+            matches = matches && actual.GetDim(index++) == dimension;
+        }
+    }
+    if (!matches) {
+        return InvalidParameter(context, parameter, ShapeString(actual), ShapeString(expected),
+                                ParameterKind::SHAPE, inputIndex);
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
 ge::graphStatus ValidateShapes(gert::TilingContext *context,
                                GDN::ChunkGatedDeltaRuleBwdFinalizeTilingData &tiling,
                                bool stateVFirst)
 {
-    // 先从真实输入 shape 提取运行时规格，再校验目标 SoC 支持的档位；
-    // 禁止用编译期常量代替 shape 推导结果写入 tiling data。
-    const auto qShape = context->GetRequiredInputShape(INPUT_Q_IDX);
-    const auto kShape = context->GetRequiredInputShape(INPUT_K_IDX);
-    const auto vShape = context->GetRequiredInputShape(INPUT_V_IDX);
-    const auto vNewShape = context->GetRequiredInputShape(INPUT_V_NEW_IDX);
-    const auto dOShape = context->GetRequiredInputShape(INPUT_DO_IDX);
-    const auto duShape = context->GetRequiredInputShape(INPUT_DU_IDX);
-    const auto gShape = context->GetRequiredInputShape(INPUT_G_IDX);
-    const auto betaShape = context->GetRequiredInputShape(INPUT_BETA_IDX);
-    const auto hShape = context->GetRequiredInputShape(INPUT_H_IDX);
-    const auto dhShape = context->GetRequiredInputShape(INPUT_DH_IDX);
-    const auto aShape = context->GetRequiredInputShape(INPUT_A_IDX);
-    OP_CHECK_IF(!CheckRank(qShape, 4) || !CheckRank(kShape, 4) || !CheckRank(vShape, 4) ||
-                    !CheckRank(vNewShape, 4) || !CheckRank(dOShape, 4) || !CheckRank(duShape, 4) ||
-                    !CheckRank(gShape, 3) || !CheckRank(betaShape, 3) || !CheckRank(hShape, 5) ||
-                    !CheckRank(dhShape, 5) || !CheckRank(aShape, 4),
-                OP_LOGE(context->GetNodeName(), "Required input rank check failed."), return ge::GRAPH_FAILED);
-
-    const gert::Shape q = qShape->GetStorageShape();
-    const gert::Shape k = kShape->GetStorageShape();
-    const gert::Shape v = vShape->GetStorageShape();
-    const gert::Shape vNew = vNewShape->GetStorageShape();
-    const gert::Shape dO = dOShape->GetStorageShape();
-    const gert::Shape du = duShape->GetStorageShape();
-    const gert::Shape a = aShape->GetStorageShape();
-    const gert::Shape h = hShape->GetStorageShape();
-    const gert::Shape dh = dhShape->GetStorageShape();
+    // 先检查真实输入 rank，再提取 shape；错误报告保留具体参数和 actual/expected。
+    const gert::StorageShape *shapes[] = {
+        context->GetRequiredInputShape(INPUT_Q_IDX), context->GetRequiredInputShape(INPUT_K_IDX),
+        context->GetRequiredInputShape(INPUT_V_IDX), context->GetRequiredInputShape(INPUT_V_NEW_IDX),
+        context->GetRequiredInputShape(INPUT_DO_IDX), context->GetRequiredInputShape(INPUT_DU_IDX),
+        context->GetRequiredInputShape(INPUT_G_IDX), context->GetRequiredInputShape(INPUT_BETA_IDX),
+        context->GetRequiredInputShape(INPUT_H_IDX), context->GetRequiredInputShape(INPUT_DH_IDX),
+        context->GetRequiredInputShape(INPUT_A_IDX)};
+    const char *names[] = {"q", "k", "v", "v_new", "do", "du", "g", "beta", "h", "dh", "a"};
+    const size_t ranks[] = {4, 4, 4, 4, 4, 4, 3, 3, 5, 5, 4};
+    for (size_t index = 0; index < 11; ++index) {
+        if (!CheckRank(shapes[index], ranks[index])) {
+            const std::string actual = shapes[index] == nullptr ? "absent" :
+                "rank=" + std::to_string(shapes[index]->GetStorageShape().GetDimNum()) +
+                ", shape=" + ShapeString(shapes[index]->GetStorageShape());
+            return InvalidParameter(context, std::string(names[index]) + ".rank", actual,
+                                    std::to_string(ranks[index]), ParameterKind::SHAPE, index);
+        }
+    }
+    const gert::Shape &q = shapes[INPUT_Q_IDX]->GetStorageShape();
+    const gert::Shape &v = shapes[INPUT_V_IDX]->GetStorageShape();
+    const gert::Shape &a = shapes[INPUT_A_IDX]->GetStorageShape();
+    const gert::Shape &h = shapes[INPUT_H_IDX]->GetStorageShape();
     tiling.B = q.GetDim(0);
     tiling.HK = q.GetDim(1);
     tiling.T = q.GetDim(2);
@@ -117,63 +159,64 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
     tiling.HV = v.GetDim(1);
     tiling.V = v.GetDim(3);
     tiling.chunkSize = a.GetDim(3);
-    OP_CHECK_IF(tiling.B <= 0 || tiling.HK <= 0 || tiling.HV <= 0 || tiling.T <= 0,
-                OP_LOGE(context->GetNodeName(), "B, HK, HV and T must be positive."), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(tiling.K != K_SIZE_128 ||
-                    (tiling.V != V_SIZE_128 && tiling.V != V_SIZE_256),
-                OP_LOGE(context->GetNodeName(), "K must be 128; V supports 128/256 on A2/A3."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(tiling.chunkSize != CHUNK_SIZE_64 &&
-                    tiling.chunkSize != CHUNK_SIZE_128,
-                OP_LOGE(context->GetNodeName(), "BT supports 64/128 on A2/A3."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(tiling.HV % tiling.HK != 0,
-                OP_LOGE(context->GetNodeName(), "HV must be divisible by HK."), return ge::GRAPH_FAILED);
+    if (tiling.B <= 0 || tiling.HK <= 0 || tiling.HV <= 0 || tiling.T <= 0) {
+        return InvalidParameter(context, "B/HK/HV/T",
+                                ShapeString({tiling.B, tiling.HK, tiling.HV, tiling.T}), "all dimensions > 0");
+    }
+    if (tiling.K != K_SIZE_128 || (tiling.V != V_SIZE_128 && tiling.V != V_SIZE_256)) {
+        return InvalidParameter(context, "K/V", ShapeString({tiling.K, tiling.V}), "K=128; V=128 or 256");
+    }
+    if (tiling.chunkSize != CHUNK_SIZE_64 && tiling.chunkSize != CHUNK_SIZE_128) {
+        return InvalidParameter(context, "a.BT", std::to_string(tiling.chunkSize), "64 or 128 on A2/A3");
+    }
+    if (tiling.HV % tiling.HK != 0) {
+        return InvalidParameter(context, "HV/HK", ShapeString({tiling.HV, tiling.HK}), "HV % HK == 0");
+    }
     tiling.headRatio = tiling.HV / tiling.HK;
-    OP_CHECK_IF(tiling.headRatio < 1,
-                OP_LOGE(context->GetNodeName(), "HV/HK must be positive."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!FitsProduct({tiling.B, tiling.HV, tiling.T,
-                              std::max({tiling.K, tiling.V, tiling.chunkSize}), 128}),
-                OP_LOGE(context->GetNodeName(), "Input dimensions overflow the internal address range."),
-                return ge::GRAPH_FAILED);
-
-    OP_CHECK_IF(k.GetDim(0) != tiling.B || k.GetDim(1) != tiling.HK ||
-                    k.GetDim(2) != tiling.T || k.GetDim(3) != tiling.K,
-                OP_LOGE(context->GetNodeName(), "k must have the same shape as q."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(v.GetDim(0) != tiling.B || v.GetDim(2) != tiling.T ||
-                    vNew.GetDim(0) != tiling.B || vNew.GetDim(1) != tiling.HV ||
-                    vNew.GetDim(2) != tiling.T || vNew.GetDim(3) != tiling.V ||
-                    dO.GetDim(0) != tiling.B || dO.GetDim(1) != tiling.HV ||
-                    dO.GetDim(2) != tiling.T || dO.GetDim(3) != tiling.V ||
-                    du.GetDim(0) != tiling.B || du.GetDim(1) != tiling.HV ||
-                    du.GetDim(2) != tiling.T || du.GetDim(3) != tiling.V,
-                OP_LOGE(context->GetNodeName(), "v, v_new, do and du must have shape [B, HV, T, V]."),
-                return ge::GRAPH_FAILED);
-
-    const gert::Shape g = gShape->GetStorageShape();
-    const gert::Shape beta = betaShape->GetStorageShape();
-    OP_CHECK_IF(g.GetDim(0) != tiling.B || g.GetDim(1) != tiling.HV || g.GetDim(2) != tiling.T ||
-                    beta.GetDim(0) != tiling.B || beta.GetDim(1) != tiling.HV || beta.GetDim(2) != tiling.T,
-                OP_LOGE(context->GetNodeName(), "g and beta must have shape [B, HV, T]."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(a.GetDim(0) != tiling.B || a.GetDim(1) != tiling.HV || a.GetDim(2) != tiling.T,
-                OP_LOGE(context->GetNodeName(), "A must have shape [B, HV, T, BT]."),
-                return ge::GRAPH_FAILED);
+    if (tiling.headRatio < 1) {
+        return InvalidParameter(context, "HV/HK", std::to_string(tiling.headRatio), ">= 1");
+    }
+    if (!FitsProduct({tiling.B, tiling.HV, tiling.T, std::max({tiling.K, tiling.V, tiling.chunkSize}), 128})) {
+        return InvalidParameter(context, "B/HV/T/max(K,V,BT)/128",
+                                ShapeString({tiling.B, tiling.HV, tiling.T,
+                                             std::max({tiling.K, tiling.V, tiling.chunkSize}), 128}),
+                                "positive factors with product <= INT64_MAX for A2/A3 address arithmetic");
+    }
+    if (ValidateShape(context, "k.shape", shapes[INPUT_K_IDX]->GetStorageShape(),
+                      {tiling.B, tiling.HK, tiling.T, tiling.K}, INPUT_K_IDX) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+    const size_t valueIndices[] = {INPUT_V_IDX, INPUT_V_NEW_IDX, INPUT_DO_IDX, INPUT_DU_IDX};
+    for (const size_t index : valueIndices) {
+        if (ValidateShape(context, (std::string(names[index]) + ".shape").c_str(),
+                          shapes[index]->GetStorageShape(), {tiling.B, tiling.HV, tiling.T, tiling.V}, index) !=
+                ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+    }
+    const size_t gateIndices[] = {INPUT_G_IDX, INPUT_BETA_IDX};
+    for (const size_t index : gateIndices) {
+        if (ValidateShape(context, (std::string(names[index]) + ".shape").c_str(),
+                          shapes[index]->GetStorageShape(), {tiling.B, tiling.HV, tiling.T}, index)
+                != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+    }
+    if (ValidateShape(context, "a.shape", a, {tiling.B, tiling.HV, tiling.T, tiling.chunkSize}, INPUT_A_IDX) !=
+            ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     const int64_t stateDim3 = stateVFirst ? tiling.V : tiling.K;
     const int64_t stateDim4 = stateVFirst ? tiling.K : tiling.V;
-    OP_CHECK_IF(h.GetDim(0) != tiling.B || h.GetDim(2) != tiling.HV ||
-                    h.GetDim(3) != stateDim3 || h.GetDim(4) != stateDim4 ||
-                    dh.GetDim(0) != tiling.B || dh.GetDim(2) != tiling.HV ||
-                    dh.GetDim(1) != h.GetDim(1) || dh.GetDim(3) != stateDim3 ||
-                    dh.GetDim(4) != stateDim4,
-                OP_LOGE(context->GetNodeName(),
-                        "h and dh state dimensions do not match state_v_first=%d, h shape is "
-                        "[%ld, %ld, %ld, %ld, %ld], dh shape is [%ld, %ld, %ld, %ld, %ld].",
-                        stateVFirst, h.GetDim(0), h.GetDim(1), h.GetDim(2), h.GetDim(3), h.GetDim(4),
-                        dh.GetDim(0), dh.GetDim(1), dh.GetDim(2), dh.GetDim(3), dh.GetDim(4)),
-                return ge::GRAPH_FAILED);
+    const size_t stateIndices[] = {INPUT_H_IDX, INPUT_DH_IDX};
+    for (const size_t index : stateIndices) {
+        if (ValidateShape(context, (std::string(names[index]) + ".shape (state_v_first=" +
+                                   (stateVFirst ? "true)" : "false)")).c_str(),
+                          shapes[index]->GetStorageShape(),
+                          {tiling.B, h.GetDim(1), tiling.HV, stateDim3, stateDim4}, index) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+    }
     return ge::GRAPH_SUCCESS;
 }
 
@@ -201,37 +244,58 @@ ge::graphStatus Tiling(gert::TilingContext *context,
     const bool useGateValue = useGate == nullptr ? false : *useGate;
     const bool useExp2Value = useExp2 == nullptr ? true : *useExp2;
     const int64_t actualChunkSize = chunkSize == nullptr ? tiling->chunkSize : *chunkSize;
-    OP_CHECK_IF(actualChunkSize != tiling->chunkSize,
-                OP_LOGE(context->GetNodeName(), "chunk_size must match A's last dimension."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(scale != nullptr &&
-                    (!std::isfinite(*scale) || !std::isfinite(static_cast<float>(*scale))),
-                OP_LOGE(context->GetNodeName(), "scale must be finite in FP32."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(useGateValue,
-                OP_LOGE(context->GetNodeName(), "use_gate_in_kernel only supports false."),
-                return ge::GRAPH_FAILED);
+    if (actualChunkSize != tiling->chunkSize) {
+        return InvalidParameter(context, "chunk_size", std::to_string(actualChunkSize),
+                                "a.BT=" + std::to_string(tiling->chunkSize));
+    }
+    if (scale != nullptr && (!std::isfinite(*scale) || !std::isfinite(static_cast<float>(*scale)))) {
+        return InvalidParameter(context, "scale", std::to_string(*scale), "finite after conversion to FP32");
+    }
+    if (useGateValue) {
+        return InvalidParameter(context, "use_gate_in_kernel", "true", "false on A2/A3");
+    }
     const auto cuShape = context->GetOptionalInputShape(INPUT_CU_SEQLENS_IDX);
     const auto chunkIndicesShape = context->GetOptionalInputShape(INPUT_CHUNK_INDICES_IDX);
-    OP_CHECK_IF((cuShape == nullptr) != (chunkIndicesShape == nullptr),
-                OP_LOGE(context->GetNodeName(), "cu_seqlens and chunk_indices must be both present or absent."),
-                return ge::GRAPH_FAILED);
+    if ((cuShape == nullptr) != (chunkIndicesShape == nullptr)) {
+        return InvalidParameter(context, "cu_seqlens/chunk_indices",
+                                std::string(cuShape == nullptr ? "absent/" : "present/") +
+                                (chunkIndicesShape == nullptr ? "absent" : "present"),
+                                "both present or both absent");
+    }
     tiling->isVariable = cuShape != nullptr ? 1 : 0;
     if (tiling->isVariable != 0) {
-        OP_CHECK_IF(!CheckRank(cuShape, 1) || !CheckRank(chunkIndicesShape, 1) || tiling->B != 1,
-                    OP_LOGE(context->GetNodeName(),
-                            "Varlen requires B=1 and rank-1 cu_seqlens/chunk_indices."),
-                    return ge::GRAPH_FAILED);
-        const gert::Shape cu = cuShape->GetStorageShape();
-        const gert::Shape chunks = chunkIndicesShape->GetStorageShape();
+        if (tiling->B != 1) {
+            return InvalidParameter(context, "B", std::to_string(tiling->B), "1 in varlen mode");
+        }
+        const gert::StorageShape *metadataShapes[] = {cuShape, chunkIndicesShape};
+        const char *metadataNames[] = {"cu_seqlens.rank", "chunk_indices.rank"};
+        for (size_t index = 0; index < 2; ++index) {
+            if (!CheckRank(metadataShapes[index], 1)) {
+                return InvalidParameter(context, metadataNames[index],
+                                        ShapeString(metadataShapes[index]->GetStorageShape()), "rank 1",
+                                        ParameterKind::SHAPE, INPUT_CU_SEQLENS_IDX + index);
+            }
+        }
+        const gert::Shape &cu = cuShape->GetStorageShape();
+        const gert::Shape &chunks = chunkIndicesShape->GetStorageShape();
         // aclIntArray 转成的 chunk_indices 是一维扁平数组，按
         // [seqIdx0, chunkIdx0, seqIdx1, chunkIdx1, ...] 两两分组。
-        OP_CHECK_IF(cu.GetDim(0) < 2 || chunks.GetDim(0) <= 0 || chunks.GetDim(0) % 2 != 0,
-                    OP_LOGE(context->GetNodeName(), "Invalid varlen index shapes."), return ge::GRAPH_FAILED);
+        if (cu.GetDim(0) < 2 || chunks.GetDim(0) <= 0 || chunks.GetDim(0) % 2 != 0) {
+            return InvalidParameter(context, "cu_seqlens.size/chunk_indices.size",
+                                    ShapeString({cu.GetDim(0), chunks.GetDim(0)}),
+                                    "cu_seqlens.size >= 2; positive even chunk_indices.size");
+        }
         tiling->seqNum = cu.GetDim(0) - 1;
         tiling->totalChunkNum = chunks.GetDim(0) / 2;
         tiling->chunkNumForT = 0;
     } else {
+        const uint64_t lastStart = static_cast<uint64_t>((tiling->T - 1) / tiling->chunkSize * tiling->chunkSize);
+        if (!GDN::FinalizeHostArch22::ChunkEndFitsUint32(lastStart, static_cast<uint64_t>(tiling->chunkSize))) {
+            return InvalidParameter(context, "T/BT", "T=" + std::to_string(tiling->T) +
+                                    ", last chunk start=" + std::to_string(lastStart) +
+                                    ", BT=" + std::to_string(tiling->chunkSize),
+                                    "last chunk start + BT <= UINT32_MAX on A2/A3");
+        }
         tiling->seqNum = tiling->B;
         tiling->chunkNumForT = CeilDiv(tiling->T, tiling->chunkSize);
         tiling->totalChunkNum = tiling->B * tiling->chunkNumForT;
@@ -239,14 +303,17 @@ ge::graphStatus Tiling(gert::TilingContext *context,
     const auto hShape = context->GetRequiredInputShape(INPUT_H_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context, hShape);
     const int64_t stateChunkNum = tiling->isVariable != 0 ? tiling->totalChunkNum : tiling->chunkNumForT;
-    OP_CHECK_IF(hShape->GetStorageShape().GetDim(1) != stateChunkNum,
-                OP_LOGE(context->GetNodeName(), "h/dh NT does not match the chunk schedule."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(std::max({tiling->B, tiling->HK, tiling->HV, tiling->T,
-                              tiling->totalChunkNum, tiling->seqNum}) >
-                        static_cast<int64_t>(std::numeric_limits<uint32_t>::max()),
-                OP_LOGE(context->GetNodeName(), "A2 dimensions exceed the uint32 scheduling range."),
-                return ge::GRAPH_FAILED);
+    if (hShape->GetStorageShape().GetDim(1) != stateChunkNum) {
+        return InvalidParameter(context, "h/dh.NT", std::to_string(hShape->GetStorageShape().GetDim(1)),
+                                "chunk schedule NT=" + std::to_string(stateChunkNum));
+    }
+    if (std::max({tiling->B, tiling->HK, tiling->HV, tiling->T, tiling->totalChunkNum, tiling->seqNum}) >
+            static_cast<int64_t>(std::numeric_limits<uint32_t>::max())) {
+        return InvalidParameter(context, "B/HK/HV/T/totalChunkNum/seqNum",
+                                ShapeString({tiling->B, tiling->HK, tiling->HV, tiling->T,
+                                             tiling->totalChunkNum, tiling->seqNum}),
+                                "each dimension <= UINT32_MAX on A2/A3");
+    }
 
     const uint32_t aicCoreNum = std::max<uint32_t>(1, platform.GetCoreNumAic());
     // A2 单次混合 kernel 中处理完整 chunk；HK/HV 归约不跨逻辑任务。
@@ -278,24 +345,25 @@ ge::graphStatus Tiling(gert::TilingContext *context,
     OP_CHECK_NULL_WITH_CONTEXT(context, aDesc);
     const int qKey = DTypeKey(qDesc->GetDataType());
     const int gKey = DTypeKey(gDesc->GetDataType());
-    const int betaKey = DTypeKey(betaDesc->GetDataType());
-    OP_CHECK_IF(qKey != TPL_BF16 ||
-                    (gKey != TPL_BF16 && gKey != TPL_FP32) ||
-                    (betaKey != TPL_BF16 && betaKey != TPL_FP32),
-                OP_LOGE(context->GetNodeName(), "Unsupported q, g or beta dtype."), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(gDesc->GetDataType() != betaDesc->GetDataType(),
-                OP_LOGE(context->GetNodeName(), "g and beta must use the same dtype."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(kDesc->GetDataType() != qDesc->GetDataType() ||
-                    vDesc->GetDataType() != qDesc->GetDataType() ||
-                    vNewDesc->GetDataType() != qDesc->GetDataType() ||
-                    dODesc->GetDataType() != qDesc->GetDataType() ||
-                    duDesc->GetDataType() != qDesc->GetDataType() ||
-                    hDesc->GetDataType() != qDesc->GetDataType() ||
-                    dhDesc->GetDataType() != qDesc->GetDataType() ||
-                    aDesc->GetDataType() != qDesc->GetDataType(),
-                OP_LOGE(context->GetNodeName(), "Main tensors must use BF16."),
-                return ge::GRAPH_FAILED);
+    decltype(qDesc) mainDescs[] = {qDesc, kDesc, vDesc, vNewDesc, dODesc, duDesc,
+                                                      hDesc, dhDesc, aDesc};
+    const char *mainNames[] = {"q", "k", "v", "v_new", "do", "du", "h", "dh", "a"};
+    for (size_t index = 0; index < 9; ++index) {
+        if (mainDescs[index]->GetDataType() != ge::DT_BF16) {
+            return InvalidParameter(context, std::string(mainNames[index]) + ".dtype",
+                                    std::to_string(static_cast<int>(mainDescs[index]->GetDataType())), "BF16",
+                                    ParameterKind::DTYPE);
+        }
+    }
+    if (gKey != TPL_BF16 && gKey != TPL_FP32) {
+        return InvalidParameter(context, "g.dtype", std::to_string(static_cast<int>(gDesc->GetDataType())),
+                                "BF16 or FP32", ParameterKind::DTYPE);
+    }
+    if (gDesc->GetDataType() != betaDesc->GetDataType()) {
+        return InvalidParameter(context, "beta.dtype", std::to_string(static_cast<int>(betaDesc->GetDataType())),
+                                "g.dtype=" + std::to_string(static_cast<int>(gDesc->GetDataType())),
+                                ParameterKind::DTYPE);
+    }
 
     // 可选输入按实际启用的 Stage 15/Stage 12 功能校验。
     const auto qRstdShape = context->GetOptionalInputShape(INPUT_Q_RSTD_IDX);
@@ -305,52 +373,63 @@ ge::graphStatus Tiling(gert::TilingContext *context,
     const auto kRstdDesc = context->GetOptionalInputDesc(INPUT_K_RSTD_IDX);
     const auto betaRawDesc = context->GetOptionalInputDesc(INPUT_BETA_RAW_IDX);
     if (useL2NormValue) {
-        OP_CHECK_IF(!CheckRank(qRstdShape, 3) || !CheckRank(kRstdShape, 3) ||
-                        qRstdDesc == nullptr || kRstdDesc == nullptr,
-                    OP_LOGE(context->GetNodeName(),
-                            "q_rstd and k_rstd are required when qk L2Norm is enabled."),
-                    return ge::GRAPH_FAILED);
-        const gert::Shape qRstd = qRstdShape->GetStorageShape();
-        const gert::Shape kRstd = kRstdShape->GetStorageShape();
-        OP_CHECK_IF(qRstd.GetDim(0) != tiling->B || qRstd.GetDim(1) != tiling->HK ||
-                        qRstd.GetDim(2) != tiling->T ||
-                        kRstd.GetDim(0) != tiling->B || kRstd.GetDim(1) != tiling->HK ||
-                        kRstd.GetDim(2) != tiling->T ||
-                        qRstdDesc->GetDataType() != ge::DT_FLOAT ||
-                        kRstdDesc->GetDataType() != ge::DT_FLOAT,
-                    OP_LOGE(context->GetNodeName(),
-                            "q_rstd and k_rstd must be fp32 [B, HK, T]."),
-                    return ge::GRAPH_FAILED);
+        const gert::StorageShape *rstdShapes[] = {qRstdShape, kRstdShape};
+        decltype(qRstdDesc) rstdDescs[] = {qRstdDesc, kRstdDesc};
+        const char *rstdNames[] = {"q_rstd", "k_rstd"};
+        for (size_t index = 0; index < 2; ++index) {
+            if (rstdShapes[index] == nullptr || rstdDescs[index] == nullptr) {
+                return InvalidParameter(context, rstdNames[index], "absent shape or descriptor",
+                                        "present when use_qk_l2_norm_in_kernel=true");
+            }
+            if (ValidateShape(context, rstdNames[index], rstdShapes[index]->GetStorageShape(),
+                              {tiling->B, tiling->HK, tiling->T}, INPUT_Q_RSTD_IDX + index) != ge::GRAPH_SUCCESS) {
+                return ge::GRAPH_FAILED;
+            }
+            if (rstdDescs[index]->GetDataType() != ge::DT_FLOAT) {
+                return InvalidParameter(context, std::string(rstdNames[index]) + ".dtype",
+                                        std::to_string(static_cast<int>(rstdDescs[index]->GetDataType())), "FP32",
+                                        ParameterKind::DTYPE);
+            }
+        }
     }
     if (useBetaSigmoidValue) {
-        OP_CHECK_IF(!CheckRank(betaRawShape, 3) || betaRawDesc == nullptr,
-                    OP_LOGE(context->GetNodeName(),
-                            "beta_raw is required when beta sigmoid backward is enabled."),
-                    return ge::GRAPH_FAILED);
-        const gert::Shape betaRaw = betaRawShape->GetStorageShape();
-        OP_CHECK_IF(betaRaw.GetDim(0) != tiling->B || betaRaw.GetDim(1) != tiling->HV ||
-                        betaRaw.GetDim(2) != tiling->T ||
-                        betaRawDesc->GetDataType() != betaDesc->GetDataType(),
-                    OP_LOGE(context->GetNodeName(),
-                            "beta_raw must match beta shape and dtype."),
-                    return ge::GRAPH_FAILED);
+        if (betaRawShape == nullptr || betaRawDesc == nullptr) {
+            return InvalidParameter(context, "beta_raw", "absent shape or descriptor",
+                                    "present when use_beta_sigmoid_in_kernel=true");
+        }
+        if (ValidateShape(context, "beta_raw.shape", betaRawShape->GetStorageShape(),
+                          {tiling->B, tiling->HV, tiling->T}, INPUT_BETA_RAW_IDX) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        if (betaRawDesc->GetDataType() != betaDesc->GetDataType()) {
+            return InvalidParameter(context, "beta_raw.dtype",
+                                    std::to_string(static_cast<int>(betaRawDesc->GetDataType())),
+                                    "beta.dtype=" + std::to_string(static_cast<int>(betaDesc->GetDataType())),
+                                    ParameterKind::DTYPE);
+        }
     }
 
     tiling->scale = scale == nullptr ? 1.0f : static_cast<float>(*scale);
     tiling->stateVFirst = stateVFirstValue ? 1 : 0;
 
     const uint32_t blockDim = std::max<uint32_t>(1, std::min<uint64_t>(aicCoreNum, tiling->taskNum));
-    OP_CHECK_IF(!FitsProduct({tiling->totalChunkNum, tiling->HV,
-                              tiling->K, tiling->V, 128}) ||
-                    !FitsProduct({blockDim, tiling->HV, tiling->chunkSize,
-                                  std::max({tiling->K, tiling->V, tiling->chunkSize}), 256}),
-                OP_LOGE(context->GetNodeName(), "State dimensions overflow A2 workspace arithmetic."),
-                return ge::GRAPH_FAILED);
+    const int64_t maxDimension = std::max({tiling->K, tiling->V, tiling->chunkSize});
+    if (!FitsProduct({tiling->totalChunkNum, tiling->HV, tiling->K, tiling->V, 128}) ||
+        !FitsProduct({blockDim, tiling->HV, tiling->chunkSize, maxDimension, 256})) {
+        return InvalidParameter(context, "state/workspace factors",
+                                "state=" + ShapeString({tiling->totalChunkNum, tiling->HV, tiling->K, tiling->V, 128}) +
+                                ", workspace=" + ShapeString({blockDim, tiling->HV,
+                                                              tiling->chunkSize, maxDimension, 256}),
+                                "positive factors with product <= INT64_MAX on A2/A3");
+    }
     const GDN::A2FinalizeWorkspaceLayout layout(*tiling, blockDim);
     const uint64_t systemWorkspace = platform.GetLibApiWorkSpaceSize();
-    OP_CHECK_IF(layout.totalBytes > std::numeric_limits<size_t>::max() - systemWorkspace,
-                OP_LOGE(context->GetNodeName(), "A2 workspace size overflows."),
-                return ge::GRAPH_FAILED);
+    if (layout.totalBytes > std::numeric_limits<size_t>::max() - systemWorkspace) {
+        return InvalidParameter(context, "workspace bytes",
+                                "operator=" + std::to_string(layout.totalBytes) +
+                                ", system=" + std::to_string(systemWorkspace),
+                                "operator + system <= SIZE_MAX=" + std::to_string(std::numeric_limits<size_t>::max()));
+    }
     context->GetWorkspaceSizes(1)[0] = systemWorkspace + layout.totalBytes;
     const uint64_t baseTilingKey = GET_TPL_TILING_KEY(
         static_cast<uint64_t>(qKey), static_cast<uint64_t>(gKey),
@@ -361,8 +440,14 @@ ge::graphStatus Tiling(gert::TilingContext *context,
                 return ge::GRAPH_FAILED);
     const bool enableMhaOwner = qKey == TPL_BF16 && tiling->K == K_SIZE_128 &&
         tiling->chunkSize == CHUNK_SIZE_64 && tiling->V == V_SIZE_128 && tiling->HK == tiling->HV;
-    context->SetTilingKey(baseTilingKey |
-        (enableMhaOwner ? GDN::A2_FINALIZE_MHA_OWNER_KEY_MASK : uint64_t{0}));
+    const uint64_t actualTilingKey = baseTilingKey |
+        (enableMhaOwner ? GDN::A2_FINALIZE_MHA_OWNER_KEY_MASK : uint64_t{0});
+    context->SetTilingKey(actualTilingKey);
+    OP_LOGD(context->GetNodeName(),
+            "GDN_FINALIZE_ARCH22_TILING actualKey=%" PRIu64 " owner=%u gKey=%d norm=%u sigmoid=%u exp2=%u",
+            actualTilingKey, static_cast<unsigned>(enableMhaOwner), gKey,
+            static_cast<unsigned>(useL2NormValue), static_cast<unsigned>(useBetaSigmoidValue),
+            static_cast<unsigned>(useExp2Value));
     context->SetBlockDim(blockDim);
     context->SetScheduleMode(1);
     return ge::GRAPH_SUCCESS;
