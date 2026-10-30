@@ -33,8 +33,7 @@ jobs:
               'NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局',
               'NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配',
               'NPU CI / A2+A5 / 05 GDR Example/ST',
-              'NPU CI / A2+A5 / 06 chunk_fwd_o 局部覆盖安装',
-              'NPU CI / A2+A5 / 07 报告与 commit 校验',
+              'NPU CI / A2+A5 / 06 报告与 commit 校验',
             ];
             // pull_request_target 只执行默认分支上的 workflow，任何 base 分支的 PR
             // 都由本 workflow 写入“未执行”占位状态。为了让每个分支的 PR 显示各自的
@@ -104,7 +103,7 @@ jobs:
             }
 
             // 清理不属于 base 分支门禁的历史 pending 占位状态（例如旧版逻辑给老分支
-            // PR 写入的新版 7 项 pending，老分支 CI 永远不会更新它们）。只覆盖
+            // PR 写入的新版 6 项 pending，老分支 CI 永远不会更新它们）。只覆盖
             // target_url 指向 PR 页面的占位状态，不触碰 target_url 指向 actions run
             // 的真实执行状态。
             const staleContexts = [...latestByContext.entries()]
@@ -161,7 +160,7 @@ jobs:
             const isDefaultProfile = checkContexts.length === defaultContexts.length &&
               checkContexts.every((statusContext, index) => statusContext === defaultContexts[index]);
             const requirementLine = isDefaultProfile
-              ? '- 合入要求：当前 commit 必须通过 7 个 `NPU CI / A2+A5 / 01..07` 分项状态'
+              ? '- 合入要求：当前 commit 必须通过 6 个 `NPU CI / A2+A5 / 01..06` 分项状态'
               : `- 合入要求：当前 commit 必须通过 ${checkContexts.length} 个状态：${checkContexts.map((statusContext) => `\`${statusContext}\``).join('、')}`;
             const body = [
               marker,

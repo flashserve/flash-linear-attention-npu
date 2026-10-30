@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import tempfile
 import time
 from typing import Any
 
@@ -19,7 +21,6 @@ STAGES = (
     "standalone-layout",
     "torch-adapter",
     "gdr-example-st",
-    "scoped-overlay",
 )
 STAGE_STATUSES = {"not_run", "running", "success", "failure", "skipped"}
 
@@ -35,59 +36,75 @@ def _metadata() -> dict[str, str]:
 
 
 def _write(path: Path, payload: dict[str, Any]) -> None:
+    _update_timing_table(payload)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
-    with temporary.open("w", encoding="utf-8") as stream:
-        json.dump(payload, stream, indent=2, sort_keys=True)
-        stream.flush()
-        os.fsync(stream.fileno())
+    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     temporary.replace(path)
-    if os.name == "posix":
-        directory_fd = os.open(path.parent, os.O_RDONLY)
+
+
+def _update_timing_table(payload: dict[str, Any]) -> None:
+    filename = os.environ.get("CI_STAGE_TIMING_FILE")
+    if not filename:
+        return
+    import fcntl  # The persistent table is written on Linux CI runners.
+
+    path = Path(filename)
+    metadata = payload["metadata"]
+    keys = ("run_id", "run_attempt", "platform")
+    identity = tuple(metadata[key] for key in keys)
+    if not all(identity):
+        raise ValueError("persistent stage timings require run_id, run_attempt and platform")
+    fields = [*keys, "head_sha", "soc", "stage", "status", "exit_code",
+              "started_at", "finished_at", "duration_seconds"]
+    # Lock a separate inode because the CSV is atomically replaced. Each run
+    # updates only its own rows, preserving concurrent runs and all history.
+    with path.with_suffix(".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        rows = []
+        if path.exists():
+            with path.open(newline="", encoding="utf-8") as stream:
+                reader = csv.DictReader(stream)
+                if reader.fieldnames != fields:
+                    raise ValueError(f"unexpected stage timing table header: {path}")
+                rows = [row for row in reader if tuple(row[key] for key in keys) != identity]
+        for stage, item in payload["stages"].items():
+            rows.append({field: {**metadata, **item, "stage": stage}.get(field, "")
+                         for field in fields})
+        temporary = None
         try:
-            os.fsync(directory_fd)
+            with tempfile.NamedTemporaryFile(mode="w", newline="", encoding="utf-8",
+                                             dir=path.parent, delete=False) as stream:
+                temporary = Path(stream.name)
+                writer = csv.DictWriter(stream, fieldnames=fields)
+                writer.writeheader()
+                writer.writerows(rows)
+                stream.flush()
+                os.fsync(stream.fileno())
+                os.fchmod(stream.fileno(), 0o644)
+            temporary.replace(path)
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
         finally:
-            os.close(directory_fd)
-
-
-def _now() -> tuple[str, int]:
-    return datetime.now(timezone.utc).isoformat(), time.monotonic_ns()
-
-
-def _persist(path: Path, payload: dict[str, Any], event: dict[str, Any]) -> None:
-    archive_name = os.environ.get("CI_TIMING_ARCHIVE_DIR")
-    if archive_name:
-        archive = Path(archive_name)
-        if not archive.is_dir():
-            raise ValueError(f"CI timing archive directory does not exist: {archive}")
-        record = {"metadata": payload["metadata"], **event}
-        encoded = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
-        fd = os.open(archive / "events.jsonl", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
-        try:
-            os.write(fd, encoded)
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-        _write(archive / "stages.json", payload)
-    _write(path, payload)
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
 
 def initialize(path: Path) -> None:
-    timestamp, monotonic_ns = _now()
     payload = {
         "schema": SCHEMA,
         "complete": False,
         "metadata": _metadata(),
         "status": "running",
         "stages": {
-            stage: {"status": "not_run", "exit_code": None, "reason": "",
-                    "started_at": None, "finished_at": None, "duration_seconds": None,
-                    "started_at_monotonic_ns": None}
+            stage: {"status": "not_run", "exit_code": None, "reason": ""}
             for stage in STAGES
         },
     }
-    _persist(path, payload, {"kind": "report", "status": "initialized",
-                             "timestamp": timestamp, "monotonic_ns": monotonic_ns})
+    _write(path, payload)
 
 
 def _read(path: Path) -> dict[str, Any]:
@@ -110,39 +127,30 @@ def update(path: Path, stage: str, status: str, exit_code: int | None, reason: s
         raise ValueError(f"stage status {status} must not have an exit code")
 
     payload = _read(path)
-    timestamp, monotonic_ns = _now()
-    previous = payload["stages"][stage]
-    started_at = previous.get("started_at")
-    started_ns = previous.get("started_at_monotonic_ns")
-    if status == "running" and not started_ns:
-        started_at, started_ns = timestamp, monotonic_ns
-    finished_at = timestamp if status in {"success", "failure"} else None
-    duration_seconds = None
-    if finished_at and started_ns is not None:
-        duration_seconds = round((monotonic_ns - started_ns) / 1_000_000_000, 3)
-    payload["stages"][stage] = {
+    item = payload["stages"][stage]
+    timestamp = datetime.now(timezone.utc).isoformat()
+    now_ns = time.monotonic_ns()
+    # Environment bootstrap and the stage dispatcher both report running.
+    if status == "running" and item.get("started_at_monotonic_ns") is None:
+        item.update(started_at=timestamp, started_at_monotonic_ns=now_ns)
+    if status in {"success", "failure"}:
+        item["finished_at"] = timestamp
+        start_ns = item.get("started_at_monotonic_ns")
+        item["duration_seconds"] = round((now_ns - start_ns) / 1e9, 3) if start_ns is not None else None
+    item.update({
         "status": status,
         "exit_code": exit_code,
         "reason": reason,
-        "started_at": started_at,
-        "finished_at": finished_at,
-        "duration_seconds": duration_seconds,
-        "started_at_monotonic_ns": started_ns,
-    }
-    _persist(path, payload, {"kind": "stage", "stage": stage, "status": status,
-                             "exit_code": exit_code, "reason": reason,
-                             "timestamp": timestamp, "monotonic_ns": monotonic_ns,
-                             "duration_seconds": duration_seconds})
+    })
+    _write(path, payload)
 
 
 def finalize(path: Path) -> int:
     payload = _read(path)
-    timestamp, monotonic_ns = _now()
     failed = any(item.get("status") == "failure" for item in payload["stages"].values())
     payload["complete"] = True
     payload["status"] = "failure" if failed else "success"
-    _persist(path, payload, {"kind": "report", "status": payload["status"],
-                             "timestamp": timestamp, "monotonic_ns": monotonic_ns})
+    _write(path, payload)
     return 1 if failed else 0
 
 
@@ -175,4 +183,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -64,7 +64,6 @@ def _stage_report(failed_stage):
         "standalone-layout",
         "torch-adapter",
         "gdr-example-st",
-        "scoped-overlay",
     )
     failed_index = stage_names.index(failed_stage)
     stages = {}
@@ -208,17 +207,17 @@ class SummarizeNpuCiTest(unittest.TestCase):
         self.assertIn("must skip opp-package after failure", markdown)
 
     def test_disabled_stage_may_be_followed_by_success(self):
-        stage_report = _stage_report("scoped-overlay")
+        stage_report = _stage_report("gdr-example-st")
         stage_report["status"] = "success"
         stage_report["stages"]["standalone-layout"] = {
             "status": "skipped",
             "exit_code": None,
             "reason": "stage is disabled by the current CI configuration",
         }
-        stage_report["stages"]["scoped-overlay"] = {
-            "status": "skipped",
-            "exit_code": None,
-            "reason": "stage is disabled by the current CI configuration",
+        stage_report["stages"]["gdr-example-st"] = {
+            "status": "success",
+            "exit_code": 0,
+            "reason": "",
         }
 
         return_code, payload, _, _ = self._run(
@@ -564,7 +563,6 @@ RuntimeError: ACL kernel launch failed
         command = payload["reproduction"][0]
         self.assertIn("CI_EXAMPLE_CASE_FILTER=failed-case,not-run-case", command)
         self.assertIn("CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK=true", command)
-        self.assertIn("CI_RUN_SCOPED_WHEEL_INSTALL_CHECK=true", command)
         self.assertIn("ci/run_ci_container.sh", command)
         self.assertNotIn(str(Path.cwd()), command)
         self.assertIn("failed-case", markdown)

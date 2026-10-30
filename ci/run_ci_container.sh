@@ -23,10 +23,6 @@ cache_root="${CI_CACHE_ROOT:-}"
 container_tmpdir="${CI_TMPDIR:-}"
 host_tmpdir="${CI_HOST_TMPDIR:-}"
 timing_root="${CI_TIMING_ROOT:-}"
-timing_dir=""
-timing_phase=""
-timing_phase_start_ns=""
-timing_run_start_ns=""
 npu_lock_fd=""
 npu_lock_file=""
 container_id_dir=""
@@ -53,81 +49,9 @@ release_npu_lock() {
     fi
 }
 
-record_host_timing() {
-    [[ -n "$timing_dir" ]] || return 0
-    local phase="$1" status="$2" duration="$3" exit_code="$4"
-    local now_ns timestamp
-    now_ns="$(date +%s%N)"
-    timestamp="$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)"
-    printf '{"kind":"host","phase":"%s","status":"%s","timestamp":"%s","epoch_ns":%s,"duration_seconds":%s,"exit_code":%s}\n' \
-        "$phase" "$status" "$timestamp" "$now_ns" "$duration" "$exit_code" >>"$timing_dir/host-events.jsonl"
-    sync -f "$timing_dir/host-events.jsonl"
-}
-
-monotonic_now_ns() {
-    python3 -c 'import time; print(time.monotonic_ns())'
-}
-
-begin_timed_phase() {
-    timing_phase="$1"
-    timing_phase_start_ns="$(monotonic_now_ns)"
-    record_host_timing "$timing_phase" running null null
-}
-
-end_timed_phase() {
-    local status="$1" exit_code="${2:-null}"
-    local elapsed_ns duration
-    elapsed_ns="$(( $(monotonic_now_ns) - timing_phase_start_ns ))"
-    printf -v duration '%d.%03d' "$(( elapsed_ns / 1000000000 ))" "$(( (elapsed_ns / 1000000) % 1000 ))"
-    record_host_timing "$timing_phase" "$status" "$duration" "$exit_code"
-    timing_phase=""
-    timing_phase_start_ns=""
-}
-
-prepare_timing_archive() {
-    [[ -n "$timing_root" ]] || return 0
-    local run_id="${CI_ACCURACY_RUN_ID:-${GITHUB_RUN_ID:-}}"
-    local attempt="${CI_ACCURACY_RUN_ATTEMPT:-${GITHUB_RUN_ATTEMPT:-}}"
-    local platform="${CI_ACCURACY_PLATFORM:-}"
-    if [[ "$timing_root" != /* || ! "$run_id" =~ ^[0-9]+$ || ! "$attempt" =~ ^[0-9]+$ || ! "$platform" =~ ^(a2|a5)$ ]]; then
-        echo "[CI][ERROR] CI_TIMING_ROOT requires an absolute path and numeric run/attempt plus a2/a5 platform." >&2
-        exit 2
-    fi
-    mkdir -p "$timing_root"
-    timing_root="$(realpath "$timing_root")"
-    local protected_dir
-    for protected_dir in "$repo_dir" /tmp "${TMPDIR:-/tmp}" "$host_tmpdir" "$cache_root"; do
-        [[ -n "$protected_dir" ]] || continue
-        protected_dir="$(realpath -m "$protected_dir")"
-        if [[ "$timing_root" == "$protected_dir" || "$timing_root" == "$protected_dir/"* ]]; then
-            echo "[CI][ERROR] CI_TIMING_ROOT must be outside the workspace, cache and temporary directories." >&2
-            exit 2
-        fi
-    done
-    local candidate_dir="$timing_root/$run_id/$attempt/$platform"
-    mkdir -p "$candidate_dir"
-    if ! touch "$candidate_dir/.write-check"; then
-        echo "[CI][ERROR] CI timing archive is not writable: $candidate_dir" >&2
-        exit 1
-    fi
-    rm -f "$candidate_dir/.write-check"
-    timing_dir="$candidate_dir"
-    timing_run_start_ns="$(monotonic_now_ns)"
-    record_host_timing run running null null
-    echo "[CI] Persistent timing archive: $timing_dir"
-}
-
 cleanup_ci() {
     local status=$?
     trap - EXIT INT TERM
-    if [[ -n "$timing_phase" ]]; then
-        if (( status == 0 )); then
-            end_timed_phase success 0
-        else
-            end_timed_phase failure "$status"
-        fi
-    fi
-    begin_timed_phase cleanup
     if [[ -n "$container_id_dir" ]]; then
         if [[ -s "$container_id_dir/id" ]]; then
             # Also handles a container stopped by the stale-commit monitor.
@@ -137,10 +61,6 @@ cleanup_ci() {
             if [[ -n "$host_tmpdir" ]]; then
                 cleanup_mounts+=(-v "$host_tmpdir:/ci-tmp")
                 cleanup_paths+=(/ci-tmp)
-            fi
-            if [[ -n "$timing_dir" ]]; then
-                cleanup_mounts+=(-v "$timing_dir:/ci-timings")
-                cleanup_paths+=(/ci-timings)
             fi
             # Package installation uses root inside the image; return its bind-
             # mounted outputs to the caller without requiring host sudo.
@@ -157,17 +77,6 @@ cleanup_ci() {
         fi
     fi
     release_npu_lock
-    if (( status == 0 )); then
-        end_timed_phase success 0
-    else
-        end_timed_phase failure "$status"
-    fi
-    if [[ -n "$timing_dir" ]]; then
-        local elapsed_ns duration
-        elapsed_ns="$(( $(monotonic_now_ns) - timing_run_start_ns ))"
-        printf -v duration '%d.%03d' "$(( elapsed_ns / 1000000000 ))" "$(( (elapsed_ns / 1000000) % 1000 ))"
-        record_host_timing run finished "$duration" "$status"
-    fi
     exit "$status"
 }
 
@@ -224,8 +133,25 @@ trap cleanup_ci EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-prepare_timing_archive
-begin_timed_phase image-preparation
+if [[ -n "$timing_root" ]]; then
+    if [[ "$timing_root" != /* ]]; then
+        echo "[CI][ERROR] CI_TIMING_ROOT must be an absolute persistent directory." >&2
+        exit 2
+    fi
+    timing_root="$(realpath -m "$timing_root")"
+    for temporary_dir in "$repo_dir" /tmp "${TMPDIR:-/tmp}" "$host_tmpdir" "$cache_root"; do
+        [[ -n "$temporary_dir" ]] || continue
+        temporary_dir="$(realpath -m "$temporary_dir")"
+        if [[ "$timing_root" == "$temporary_dir" || "$timing_root" == "$temporary_dir/"* ]]; then
+            echo "[CI][ERROR] CI_TIMING_ROOT must be outside the workspace, tmp and cache." >&2
+            exit 2
+        fi
+    done
+    mkdir -p "$timing_root"
+    timing_probe="$(mktemp "$timing_root/.write-check.XXXXXX")"
+    rm -f "$timing_probe"
+    echo "[CI] Persistent stage timing table: $timing_root/stage-timings.csv"
+fi
 
 if [[ "$require_preloaded_image" == "true" ]]; then
     if [[ "$rebuild_image" == "true" ]]; then
@@ -246,13 +172,9 @@ elif ! docker image inspect "$image" >/dev/null 2>&1 || [[ "$rebuild_image" == "
     echo "[CI] Building Docker image: $image from $dockerfile"
     docker build -t "$image" -f "$dockerfile" .
 fi
-end_timed_phase success 0
 
-begin_timed_phase npu-lock
 acquire_npu_lock
-end_timed_phase success 0
 
-begin_timed_phase container-setup
 if [[ "${CI_REQUIRE_HEALTHY_NPU:-false}" == "true" && "${NPU_SELECTED_HEALTH:-}" != "OK" ]]; then
     echo "[CI][ERROR] Selected NPU ${NPU_SELECTED_DEVICE:-unknown} health is ${NPU_SELECTED_HEALTH:-unknown}." >&2
     exit 1
@@ -301,8 +223,8 @@ mount_args=(
 if [[ -n "$host_tmpdir" ]]; then
     mount_args+=(-v "$host_tmpdir:$container_tmpdir")
 fi
-if [[ -n "$timing_dir" ]]; then
-    mount_args+=(-v "$timing_dir:/ci-timings")
+if [[ -n "$timing_root" ]]; then
+    mount_args+=(-v "$timing_root:/ci-timings")
 fi
 for path in \
     /usr/local/dcmi \
@@ -329,8 +251,6 @@ if [[ -n "${CI_CONTAINER_COMMAND:-}" ]]; then
 fi
 
 container_id_dir="$(mktemp -d "${TMPDIR:-/tmp}/fla-npu-container.XXXXXX")"
-end_timed_phase success 0
-begin_timed_phase container-run
 docker run --rm \
     --cidfile "$container_id_dir/id" \
     --name "$container_name" \
@@ -362,13 +282,11 @@ docker run --rm \
     -e CI_RUN_WHEEL_API_CHECK="${CI_RUN_WHEEL_API_CHECK:-false}" \
     -e CI_CHECK_TRITON_API="${CI_CHECK_TRITON_API:-false}" \
     -e CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK="${CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK:-false}" \
-    -e CI_RUN_SCOPED_WHEEL_INSTALL_CHECK="${CI_RUN_SCOPED_WHEEL_INSTALL_CHECK:-false}" \
-    -e CI_SCOPED_WHEEL_INSTALL_OP="${CI_SCOPED_WHEEL_INSTALL_OP:-chunk_fwd_o}" \
     -e CI_EXAMPLE_CASES_FILE="${CI_EXAMPLE_CASES_FILE:-ci/example_st_cases.json}" \
     -e CI_EXAMPLE_CASE_FILTER="${CI_EXAMPLE_CASE_FILTER:-}" \
     -e CI_ACCURACY_REPORT_FILE="${CI_ACCURACY_REPORT_FILE:-output/gdr_accuracy_report.json}" \
     -e CI_STAGE_REPORT_FILE="${CI_STAGE_REPORT_FILE:-.ci-tmp/npu-ci-stages.json}" \
-    -e CI_TIMING_ARCHIVE_DIR="${timing_dir:+/ci-timings}" \
+    -e CI_STAGE_TIMING_FILE="${timing_root:+/ci-timings/stage-timings.csv}" \
     -e CI_ACCURACY_PLATFORM="${CI_ACCURACY_PLATFORM:-}" \
     -e CI_ACCURACY_HEAD_SHA="${CI_ACCURACY_HEAD_SHA:-${NPU_CI_TARGET_SHA:-}}" \
     -e CI_ACCURACY_RUN_ID="${CI_ACCURACY_RUN_ID:-${GITHUB_RUN_ID:-}}" \
@@ -389,5 +307,3 @@ docker run --rm \
     "${container_command[@]}" &
 docker_pid=$!
 wait "$docker_pid"
-end_timed_phase success 0
-
