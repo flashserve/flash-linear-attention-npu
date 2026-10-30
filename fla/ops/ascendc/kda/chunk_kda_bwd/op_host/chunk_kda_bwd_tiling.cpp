@@ -133,6 +133,7 @@ ge::graphStatus BuildKernelBTiling(
     b.dh0ClearTailElems = 0;
     b.hasGk = 1;
     b.scale = scale;
+    b.doTokenMajor = 0;
 
     const uint64_t qSize = DtypeSize(qgDesc->GetDataType());
     // Retain both state-update GEMM terms in FP32 until subtraction on all SoCs.

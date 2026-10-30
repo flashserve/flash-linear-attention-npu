@@ -13,6 +13,7 @@
  */
 
 #include "chunk_gated_delta_rule_bwd_dhu_tiling.h"
+#include <limits>
 #include <register/op_impl_registry.h>
 #include "platform/platform_ascendc.h"
 
@@ -103,6 +104,8 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
         const auto &o = context->GetRequiredInputShape(CGDR_BWD_DHU_INPUT_DO_IDX)->GetStorageShape();
         if (v.GetDimNum() != 4 || o.GetDimNum() != 4 || v.GetDim(0) != o.GetDim(0) ||
             v.GetDim(1) != o.GetDim(2) || v.GetDim(2) != o.GetDim(1) || v.GetDim(3) != o.GetDim(3)) {
+            OP_LOGE_WITH_INVALID_INPUT_SHAPE(context->GetNodeName(), CGDR_BWD_DHU_INPUT_DO_IDX,
+                "head-major dO or mismatched dimensions", "token-major dO matching dv");
             return ge::GRAPH_FAILED;
         }
     }
@@ -110,6 +113,9 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
     uint64_t ubSize = 0;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     const bool isA5 = ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510;
+    OP_CHECK_IF(doTokenMajor && !isA5,
+                OP_LOGE(context->GetNodeName(), "do_token_major is only supported on Ascend950"),
+                return ge::GRAPH_FAILED);
 
     ChunkGatedDeltaRuleBwdDhuTilingContext ctx{
         context->GetNodeName(),
@@ -140,6 +146,11 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
 
     ChunkGatedDeltaRuleBwdDhuTilingProcessor processor(ctx, *tiling);
     OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
+    OP_CHECK_IF(doTokenMajor && isA5 &&
+                    tiling->HV > std::numeric_limits<uint32_t>::max() / tiling->V,
+                OP_LOGE_WITH_INVALID_INPUT_SHAPE(context->GetNodeName(), CGDR_BWD_DHU_INPUT_DO_IDX,
+                    "token-major row stride exceeds uint32_t", "HV*V within uint32_t"),
+                return ge::GRAPH_FAILED);
     tiling->doTokenMajor = doTokenMajor;
     if (isA5) {
         auto *rawTiling = context->GetRawTilingData();

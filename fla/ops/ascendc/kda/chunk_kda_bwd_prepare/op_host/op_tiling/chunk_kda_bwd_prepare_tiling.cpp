@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <register/op_impl_registry.h>
 #include "platform/platform_ascendc.h"
 
@@ -47,6 +48,7 @@ ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
     if (indicesShape && indicesShape->GetStorageShape().GetDimNum() == 0) indicesShape = nullptr;
     if (doTokenMajor) {
         if (!layout || (std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "NTD") != 0)) {
+            OP_LOGE(context->GetNodeName(), "do_token_major requires internal BNSD or NTD layout");
             return ge::GRAPH_FAILED;
         }
         const auto &v = context->GetRequiredInputShape(KDA_PREPARE_INPUT_V_NEW)->GetStorageShape();
@@ -55,10 +57,15 @@ ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
         if ((rank != 3 && rank != 4) || o.GetDimNum() != rank ||
             (base && v.GetDim(0) != o.GetDim(0)) || v.GetDim(base) != o.GetDim(base + 1) ||
             v.GetDim(base + 1) != o.GetDim(base) || v.GetDim(base + 2) != o.GetDim(base + 2)) {
+            OP_LOGE_WITH_INVALID_INPUT_SHAPE(context->GetNodeName(), KDA_PREPARE_INPUT_D_O,
+                "head-major dO or mismatched dimensions", "token-major dO matching vNew");
             return ge::GRAPH_FAILED;
         }
     }
     const bool isA5 = platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
+    OP_CHECK_IF(doTokenMajor && !isA5,
+                OP_LOGE(context->GetNodeName(), "do_token_major is only supported on Ascend950"),
+                return ge::GRAPH_FAILED);
     ChunkKdaBwdPrepareTilingContext ctx{
         context->GetNodeName(),
         context->GetRequiredInputShape(KDA_PREPARE_INPUT_AQK),
@@ -74,6 +81,11 @@ ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
     };
     ChunkKdaBwdPrepareTilingProcessor processor(ctx, *tiling);
     OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
+    OP_CHECK_IF(doTokenMajor && isA5 &&
+                    tiling->NV > std::numeric_limits<uint32_t>::max() / tiling->V,
+                OP_LOGE_WITH_INVALID_INPUT_SHAPE(context->GetNodeName(), KDA_PREPARE_INPUT_D_O,
+                    "token-major row stride exceeds uint32_t", "NV*V within uint32_t"),
+                return ge::GRAPH_FAILED);
     tiling->doTokenMajor = doTokenMajor;
     if (isA5) {
         auto *rawTiling = context->GetRawTilingData();
