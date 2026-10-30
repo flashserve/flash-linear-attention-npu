@@ -1369,61 +1369,43 @@ tensor 语义。任何复用都必须以真实末次消费者完成为前提。
 
 ## 6. A2/A3 共用 arch22 单 kernel 实现
 
-本节基于 `56945eda6e5dc1944a3a74c4b556168db9313b5a` 的 A2 扩展，按设计规则 V2
-记录其路径；以下模板、owner 分工和资源布局已按当前源码纠正。前文 A5 的数学 golden、实现和资源布局保持原定义。A2 首版复用
-`07d1b942` 的 A2 DQ/WY 矩阵计算、cast 和归约顺序；旧链与 A5 golden 的矩阵缩放、GVA
-归约位置存在浮点顺序差异，是否满足精度由正式 Finalize golden 和既有阈值裁决。
-旧四 kernel 的精度、性能结论不能作为本单 kernel 的通过证据。
-
-以下关于首版尚未完成验收的记录属于该历史候选，不代表后续版本的验收状态。
-`state_v_first` 保留 Scalar 预转换；反向 scan 采用逐行依赖的 FP32 Vector Add，
-两者耗时均需由新对象的 profile 判断。
+本节描述 A2/A3 的当前实现；接口与支持范围见 [api.md](api.md)，A5 设计沿用前文。
 
 ### 6.1 接口、任务域与架构分派
 
-公开参数、输出和 tiling 结构保持相同。`__CCE_AICORE__ == 220` 进入私有 `arch22`，
-其余既有路径仍进入 `arch35`。Ascend 910B 和 910C（`ascend910_93`）均为 `DAV_2201`，
-OpApi 按架构选择此路径，Python 入口接受对应产品名。A2/A3 保持 `K=128`，按 `BT in {64,128}`、
-`V in {128,256}` 在同一个 `__global__` 内选择四个编译实例；`q/k/v/v_new/do/du/h/dh/A`
-为 BF16，`g/beta/beta_raw` 共用 BF16 或 FP32 dtype。norm、sigmoid、exp2 三个编译开关
-加上私有 `ENABLE_MHA_OWNER`，共 `2*2*2*2*2=32` 组 dtype/boolean TilingKey。
-owner 开关仅在 BF16、K128、BT64、V128、HK=HV 的通用 MHA 类别启用；其余规格走
-owner=false 模板。BT/V 的四种几何仍在同一入口内选择。
+设备入口以 `__CCE_AICORE__ == 220` 选择 `arch22`；Host 以 `DAV_2201` 分派 A2/A3。
+构建期隔离由 [Finalize Host CMake](../op_host/CMakeLists.txt) 和
+[Bwd Host CMake](../../chunk_gated_delta_rule_bwd/op_host/CMakeLists.txt) 按目标 SoC 生成。
 
-定义 `N=totalChunkNum`、`R=HV/HK`、`C=blockDim=min(AIC可用数,N)`、
-`S=B*HV*T`、`Q=B*HK*T*K`。定长 `N=B*ceil(T/BT)`；变长 `B=1`，
-`N=len(chunk_indices)/2`。定长 chunk task 映射为
-`b=task/chunkNumForT`、`ci=task%chunkNumForT`、`start=ci*BT`；
-变长 task 从 `(seq,localChunk)` 得到 `start=cu[seq]+localChunk*BT`。
-有效行 `m=min(BT,sequenceEnd-start)`，只有 `0..m-1` 参与搬运、计算和写回。
-所有非空 metadata task 都必须有至少一行；该条件由 host 校验。
+TilingKey 由 g/beta 存储类型、norm、sigmoid、exp2 和 `ENABLE_MHA_OWNER` 组成，共 32 组；
+BT/V 的四种几何在同一设备入口内选择。owner=true 仅用于主矩阵 BF16、K128、BT64、V128、HK=HV；
+其余规格使用 owner=false 模板。
 
-DQ 在实际 launch `C` 内恢复原通用 HK 平衡，初始 `P=1`。仅当变长或定长 `T%BT==0`，
-且原 `DqkwgUseU32Schedule(B,numChunks,HV,HK,C,1)` 资格成立时，按 HK 的约数评分
-`ceil(N*P/C)*(HV/P)`；每分区须包含偶数个完整 HK，严格降低初始 peak 才采用，平手取较小 P。
-DQ 逻辑任务为 `task=chunk*P+partition`，按 `task=core,core+C,...` 分发，head 区间为
+令 `N=totalChunkNum`、`R=HV/HK`、`C=blockDim=min(AIC 可用数,N)`、`S=B*HV*T`、`Q=B*HK*T*K`。
+定长 `N=B*ceil(T/BT)`，task 映射为 `b=task/chunkNumForT`、`ci=task%chunkNumForT`、
+`start=ci*BT`；变长 `B=1`、`N=len(chunk_indices)/2`，从 `(seq,localChunk)` 得到
+`start=cu[seq]+localChunk*BT`。有效行 `m=min(BT,sequenceEnd-start)`，仅 `0..m-1` 参与
+搬运、计算和写回；Host 保证每个 metadata task 至少有一行。
+
+实际 launch 按 chunk 分发。DQ 在 core 内按 HK 分区，初始 `P=1`；仅当变长或定长 `T%BT==0`，
+且 `DqkwgUseU32Schedule(B,numChunks,HV,HK,C,1)` 资格成立时，按 HK 的约数评分
+`ceil(N*P/C)*(HV/P)`。每分区包含偶数个完整 HK，严格降低 peak 才采用，平手取较小 P。
+DQ 逻辑任务 `task=chunk*P+partition` 按 `task=core,core+C,...` 分发，head 区间为
 `[partition*HK/P*R,(partition+1)*HK/P*R)`，完整 HK 组不跨 mixed core，也不跨 core 原子归约。
-Cube/Vector 共用原 U32 资格选择 `Process<true/false>`；`P>1` 及 `P=1` 但不满足资格时走 wide。
-实际 launch、host tiling 与 workspace 不随 P 改变；小 N 的现有网格不恢复成旧独立 DQ 网格。
-WY 仍按 chunk 跨 `C` 分发，每个 task 遍历完整 HV。DQ 保留其各分支 owner。
-WY 的一般路径由两个 AIV 横切 row tile；满足输出地址不重叠和几何准入时，BT64/V128
-的 MHA 或偶数 GVA 类别由两个 AIV 分别承包完整 head 的输出，仍按协议消费 ready。
-最终 GateTail 以一个 AIV 独占 `(chunk,head group)`：BT64 每组最多 128 个 head，
-BT128 每组最多 64 个 head，最后一组只处理有效 head。QkTail 独占 `(chunk,HK)`，
-以物理 AIV id 和 `2*C` 跨步分发，输出无重叠。
+Cube/Vector 共用 U32 资格选择 `Process<true/false>`，P>1 或不满足资格时走 wide；
+P 仅改变逻辑任务和 head 范围，launch、tiling 与 workspace 不变，不额外拆分 HV 工作项。
 
-例如 `B=2,HK=2,HV=6,T=129,BT=64,V=128` 时 `N=6`，若设备至少有 6 个 AIC，
-`C=6`，每个 mixed core 处理 1 个 chunk；每个 chunk 的 `hv=0,1,2` 映射到 `hk=0`，
-`hv=3,4,5` 映射到 `hk=1`。尾块只有一行，scan 不跨到其它 chunk 或序列。
+WY 按 chunk 跨 C 分发，每个 task 遍历完整 HV。一般路径由两个 AIV 横切 row tile；
+满足地址不重叠和几何准入时，BT64/V128 的 MHA 或偶数 GVA 由两个 AIV 分别承包完整 head。
+GateTail 由一个 AIV 独占 `(chunk,head group)`：BT64 每组最多 128 个 head，BT128 最多 64 个；
+末组只处理有效 head。QkTail 独占 `(chunk,HK)`，按物理 AIV id 和 `2*C` 跨步分发。
 
-该首版以沿用已存在的 DQ/WY 设备协议建立正确性基线，尚未落实 V2 R20 所述的
-`CG=1/2/3/4` 沿 HV 分核候选和跨完整 task 的调优选择，也未证明 R10 所有重复读取消除。
-这些是后续结构评审与性能候选，不能把首版称作全部 V2 性能规则已经验收。
+例如 `B=2,HK=2,HV=6,T=129,BT=64,V=128`，`N=6`；AIC 至少 6 个时 `C=6`，每个 mixed core
+处理一个 chunk。`hv=0,1,2` 映射 `hk=0`，`hv=3,4,5` 映射 `hk=1`；尾块只有一行，scan 不跨序列。
 
 ### 6.2 计算与跨阶段生命周期
 
-入口只定义一个 `chunk_gated_delta_rule_bwd_finalize` 设备 kernel，不启动其它设备 kernel。
-`A2FinalizeRun` 在这一调用内执行以下各阶段。矩阵乘仍由 Cube/CATLASS 完成。
+`A2FinalizeRun` 在一次 `chunk_gated_delta_rule_bwd_finalize` 混合 kernel 内执行下列阶段。
 
 | 阶段 | 执行单元与实际计算 | 后继依赖与释放条件 |
 | --- | --- | --- |
@@ -1442,26 +1424,20 @@ BT128 每组最多 64 个 head，最后一组只处理有效 head。QkTail 独�
 | A2 S3-Vector | `dg=reverse_cumsum_chunk(dg1+dg2)`；可选 `dbeta=dbeta32*sigmoid(beta_raw)*(1-sigmoid(beta_raw))` | FP32 内部计算，最终才转 g/beta dtype；dg 不另乘 ln(2) |
 | A2 S4-Vector | `dkRaw=BF16(FP32(dk1)+FP32(dk2))`；可选 `rstd*(d-y*sum(y*d))` | dq/dk 最终 CAST_RINT；不开 norm 时保留 dq1/dkRaw |
 
-S3 先合并两支 FP32 DG，再用 Gather 将 `[head,row]` 转成 `[row,head]`。每个 head
-独立令 `s[m]=+0`，严格按 `r=m-1,...,0` 执行 `s[r]=FP32(s[r+1]+x[r])`；一条 Add
-同时推进 head group 的各 lane，第一步读取独立正零 seed。逆 Gather 恢复输出布局。
-不分段、不改变单个 head 的加法结合顺序；BT64/128、dense/varlen 尾行共用此路径。
-不存在的 head 和无效尾行预先置零，不参与有效输出写回。
+S3 合并两支 FP32 DG，用 Gather 将 `[head,row]` 转为 `[row,head]`。各 head 独立令 `s[m]=+0`，
+按 `r=m-1,...,0` 执行 `s[r]=FP32(s[r+1]+x[r])`；一条 Add 同时推进 head group 的各 lane，
+首步读取独立正零 seed，逆 Gather 恢复输出布局。单 head 加法顺序不变；无效 head/尾行先置零。
 
-S0→DQ、DQ→WY、WY→尾段之间共三个全参与 `SyncAll<false>()`。
-所有 AIC 和两个 AIV 均参加，不能把 barrier 放进仅有效 head/owner 分支。
-每个阶段先完成本核 `PipeBarrier<PIPE_ALL>()`；AIV 在全部队列消费完、硬事件闭合后
-`TPipe::Reset()`，再进入下一阶段。各阶段的 UB/L1 地址可以相同，但语义只在这个释放点改变。
-
-DQ 的 h/dh 四个寻址表达式已经从旧 `[B,HV,NT,K,V]` 修改为最新 main 的
-`[B,NT,HV,K,V]`。`state_v_first=true` 时，S0 对每个 `(b,nt,hv)` 的 VK 矩阵作逐元素转置，
-写入独立 KV workspace；状态的 `NT/HV` 轴不交换。其它 DQ/WY 算术 token 与来源一致。
+S0→DQ、DQ→WY、WY→尾段共三次 `SyncAll<false>()`，所有 AIC/AIV 均参与。
+阶段退出前完成本核 `PipeBarrier<PIPE_ALL>()`；AIV 消费完队列并闭合硬事件后才 `TPipe::Reset()`，
+后继阶段方可复用同一 UB/L1 地址。`state_v_first=true` 时，S0 将每个 `(b,nt,hv)` 的 VK 矩阵
+转置到独立 KV workspace，供 DQ 寻址；NT/HV 轴不交换。
 
 ### 6.3 Workspace 结构与搬运
 
-host/device 共用 `arch22/chunk_gated_delta_rule_bwd_finalize_workspace.h` 的
-`A2FinalizeWorkspaceLayout(t,C)`，host 分配 `libApiBytes+layout.totalBytes`，device
-从 `GetUserWorkspace` 指向的地址解释下表。每区末尾按 512B 对齐，所有偏移都是字节。
+Host/device 共用 `arch22/chunk_gated_delta_rule_bwd_finalize_workspace.h` 的
+`A2FinalizeWorkspaceLayout(t,C)`。Host 分配 `libApiBytes+layout.totalBytes`，device 从
+`GetUserWorkspace` 解释以下区域；每区末尾按 512B 对齐，offset 单位为字节。
 
 | 顺序 | 区域与逻辑字节数 | producer → consumer |
 | --- | --- | --- |
@@ -1473,28 +1449,21 @@ host/device 共用 `arch22/chunk_gated_delta_rule_bwd_finalize_workspace.h` 的
 | 8/9/10 | dg1/dg2/dbeta32，各 `4*S` | DQ/WY → GateTail |
 | 11 | DQ/WY 临时区，`max(DQ_bytes,WY_bytes)` | DQ 结束 barrier 后才能改变为 WY 语义 |
 
-设 `BK=2*C*HV*BT*K`、`BB=2*C*HV*BT*BT`，
-`DQ_bytes=4*BK+2*BB+align512(4*C*HV)`；这包括原 DQ 的四个 BTxK 矩阵、两个 BTxBT
-矩阵和 FP32 dg_last。设 `k=2*BT*K`、`v=2*BT*V`、`m=2*BT*BT`，
-`WY_bytes=C*4*(5*k+2*v+7*m)`。WY 每核 4 个原 slot，每 slot 保留
-`5*k+2*v+6*m`，另加四份 KKT 的 `4*m`；没有把四份窗口折叠成两份。
-DQ/WY 持久结果不与这一临时区重叠。
-DQ 分区只改变每 core 的逻辑任务数与 head 范围；临时区仍按实际 `C` 和完整 `HV` 分配，
-不新增 GM 区域、slot 或跨阶段驻留。
-设备 peak 评分显式限定已由原 U32 资格保证的 `N/HV/P<=UINT32_MAX`，先形成可表示的
-U64 `N*P` 再检查 INT64 上界。因 P 整除 HV、`waves<=N*P`，最终评分不超过
-`N*HV<=UINT32_MAX²`；不使用可能被编译器降为隐式128位乘法的除法式溢出判定。
+令 `BK=2*C*HV*BT*K`、`BB=2*C*HV*BT*BT`，
+`DQ_bytes=4*BK+2*BB+align512(4*C*HV)`：四个 BTxK、两个 BTxBT 矩阵及 FP32 dg_last。
+令 `k=2*BT*K`、`v=2*BT*V`、`m=2*BT*BT`，`WY_bytes=C*4*(5*k+2*v+7*m)`；
+每核 4 个 slot，每 slot 为 `5*k+2*v+6*m`，另有四份 KKT 共 `4*m`。持久结果与临时区不重叠。
+DQ 分区不新增区域、slot 或跨阶段驻留；评分在 U32 资格内以 U64 计算 `N*P` 并检查 INT64 上界，
+由 `P|HV` 得 `score<=N*HV<=UINT32_MAX²`。
 
-S0 每元素读取 g/beta 各一次并写 FP32 各一次；state VK 转置各读写一次。
-DQ/WY 内部搬运、BF16 落盘和缓存与来源相同，K/KKT/D/W 等已有复用保留。
-GateTail 每个有效标量读取 dg1/dg2/dbeta32 一次，sigmoid 启用时另读 beta_raw 一次，
-写最终 dg/dbeta 各一次。QkTail 读取 dq1/dk1/dk2 各一次，norm 启用时另读 q/k/rstd
-各一次，写最终 dq/dk 各一次。尾段均为连续行或连续 scalar tile 搬运，非对齐 scalar
-尾部使用 DataCopyPad，只写有效字节。
+S0 对 g/beta 各读一次、写 FP32 一次；state 转置各读写一次。GateTail 对 dg1/dg2/dbeta32
+各读一次，sigmoid 开启时另读 beta_raw 一次，最终 dg/dbeta 各写一次。QkTail 对 dq1/dk1/dk2
+各读一次，norm 开启时另读 q/k/rstd 各一次，最终 dq/dk 各写一次；非对齐 scalar 尾部用
+DataCopyPad，只搬运有效字节。
 
 ### 6.4 UB、L1、L0 与事件
 
-A2 各阶段互斥使用物理空间；新阶段仅在上一阶段退出和 barrier 后分配。
+各阶段互斥使用物理空间；阶段退出并完成 barrier 后再分配。
 
 | 阶段 | 每 AIV UB 峰值（字节） | 释放条件 |
 | --- | --- | --- |
@@ -1508,8 +1477,7 @@ A2 各阶段互斥使用物理空间；新阶段仅在上一阶段退出和 barr
 | GateTail | 131,072 | 当前 AIV 所有 chunk/head group 输出写回 |
 | QkTail | 114,688 | 当前 AIV 所有 chunk/HK 输出写回 |
 
-GateTail 分配一个 128KiB TBuf。BT64×128 head 或 BT128×64 head 均为
-8192 个 FP32 元素；每个大区为 32KiB，字节布局与别名如下。
+GateTail 的 128KiB TBuf 包含四个 32KiB 大区，BT64×128 或 BT128×64 均为 8192 个 FP32 元素。
 
 | 对象 | 字节区间 | 生命周期 |
 | --- | --- | --- |
@@ -1520,12 +1488,10 @@ GateTail 分配一个 128KiB TBuf。BT64×128 head 或 BT128×64 head 均为
 | seed | `[0,4*HEAD_BATCH)` | 正向 Gather 读完旧 values 后置正零，只供首轮 Add；逆 Gather 后失效 |
 | raw / sigmoid / ones | `[512,1024)` / `[1024,1536)` / `[1536,2048)` | DG 输出完成后才启用，与 values 前 512B 的单 head dbeta 不重叠 |
 
-索引生成先借 left/right 作 base/tmp，Vector 末次读取完成后，以成对分配、归还的
-V_MTE2 事件允许输入搬运复用。两个索引表的最大有效偏移均为 32764B，读取结束于
-各自 32KiB 数据区。每组只扫描有效 `m` 行，并仅写回实际 head 和行；没有新增 GM
-workspace 或跨阶段驻留。
+索引生成先借 left/right 作 base/tmp，Vector 末次读取后用成对 V_MTE2 事件允许输入搬运复用。
+两索引表最大有效偏移为 32764B，读取结束于各自 32KiB 数据区；每组仅写有效 head 和行。
 
-DQ 的逻辑 TPipe 顺序地址（从 UB 0 开始）如下；实际运行分配仍需构建/设备追溯验证。
+DQ 的逻辑 TPipe 顺序地址（从 UB 0 开始）：
 
 | 对象 | BT64 区间 | BT128 区间 | 生命周期 |
 | --- | --- | --- | --- |
@@ -1538,22 +1504,17 @@ DQ 的逻辑 TPipe 顺序地址（从 UB 0 开始）如下；实际运行分配�
 | dgBuf | `[185856,187904)` | `[190976,195072)` | DQ A-D 之间的 gate 局部量 |
 | 空闲 | `[187904,196608)` | `[195072,196608)` | 无仍存活 tensor |
 
-QK 112KiB buffer 的地址：五个 BF16 输入 tile 为 `[0,40960)`，gradQ 为
-`[40960,57344)`，gradK 为 `[57344,73728)`，x 为 `[73728,90112)`，product 为
-`[90112,106496)`，sum 位于 `[106496,106624)`，32B 对齐的逐行 partial 位于
-`[107520,108544)`，broadcast 位于 `[108544,109568)`，其余为间隔空闲空间。
-两个 64 列 partial 归约成每行标量后才供 Brcb 广播；不读取 Reduce 的未定义 lane。
+QK 的 112KiB buffer：五个 BF16 输入 tile 为 `[0,40960)`，gradQ `[40960,57344)`、
+gradK `[57344,73728)`、x `[73728,90112)`、product `[90112,106496)`、sum `[106496,106624)`、
+逐行 partial `[107520,108544)`、broadcast `[108544,109568)`；partial 按 32B 对齐，其余为空闲。
+每行两个 64 列 partial 归约成标量后才供 Brcb 广播，不读取 Reduce 未定义 lane。
 
-WY 保留两个 L1 scratch、两份 K/DW/DU/A resident，区间按下列公式定义：
-`s=max(k,v)`，scratch `[0,2*s)`，K `[2*s,2*s+2*k)`，
-DW `[2*s+2*k,2*s+4*k)`，DU `[2*s+4*k,2*s+4*k+2*v)`，
-A `[2*s+4*k+2*v,2*s+4*k+2*v+2*m)`。
-BT64/V128、BT64/V256、BT128/V128、BT128/V256 的 L1 总量分别为
-147,456 / 212,992 / 327,680 / 458,752B，均不超过 512KiB。
-L0A/L0B 保留两份；L0C 依据 `BT*max(K,V)*sizeof(acc)` 与架构 L0C 容量选择
-一份或两份，沿用源码 static_assert，不为融合擅自增加份数。
+WY L1 保留两个 scratch 和两份 K/DW/DU/A resident。令 `s=max(k,v)`：scratch `[0,2*s)`，K `[2*s,2*s+2*k)`，DW `[2*s+2*k,2*s+4*k)`，
+DU `[2*s+4*k,2*s+4*k+2*v)`，A `[2*s+4*k+2*v,2*s+4*k+2*v+2*m)`。
+BT64/V128、BT64/V256、BT128/V128、BT128/V256 总量为 147456/212992/327680/458752B，均不超 512KiB。
+L0A/L0B 各两份；L0C 按 `BT*max(K,V)*sizeof(acc)` 与容量选择一份或两份，由源码 static_assert 约束。
 
-下表 `M` 为采用 P 后本 core 的实际 DQ 逻辑任务数；不增加额外 clear 或末轮 drain。
+下表 M 为采用 P 后本 core 的 DQ 逻辑任务数。
 
 | 同步资源 | 真实生命周期 |
 | --- | --- |
@@ -1568,7 +1529,7 @@ L0A/L0B 保留两份；L0C 依据 `BT*max(K,V)*sizeof(acc)` 与架构 L0C 容量
 | WY Vector 硬事件 | InitVectorEvents → 每次搬入/计算/写回闭环 → ReleaseVectorEvents 等待所有已发布 free 并释放 id |
 | GateTail CreateVecIndex S_V | 当前 TPipe 存活期间初始化一次索引；目标 beta1 SDK 内写 8 个 Scalar 种子，并以 FetchEventID 后成对 SetFlag/WaitFlag 闭合临时 S_V，不分配手工 id |
 
-跨阶段同步伪代码为：
+跨阶段同步顺序：
 
 ```text
 所有 AIV: S0 -> PipeBarrier ALL -> TPipe Reset
@@ -1583,43 +1544,26 @@ AIV: WY Vector -> ReleaseVectorEvents -> PipeBarrier ALL -> TPipe Reset
 所有 AIV: QkTail -> PipeBarrier ALL -> TPipe Reset -> 返回
 ```
 
-不能根据历史 raw-credit 注释额外 drain：原 DQ 已经在 Cube 退出前清空 clear。
-SyncAll 只保证跨阶段完成，不能替代 DQ/WY 内部的 ready/free 和本地事件。
-QK 尾段在最终 BF16 Cast 后、MTE3 输出搬运前执行 PIPE_ALL，保证搬运读取的是
-Vector 已完成的新结果；搬运后的 PIPE_ALL 再保证下一 tile 复用 UB 时输出已读完。
-同一规则覆盖 Prepare 的 g/beta 写回，以及 GateTail 中 BF16 DG、sigmoid 后 FP32 dbeta
-和 BF16 dbeta 的写回。state 转置的 Scalar SetValue 循环结束后仍执行 DataSyncBarrier<UB>。
-scan 不再进行数据 Scalar 读写，因此移除其专用 DSB；索引初始化的 Scalar→Vector 由 SDK
-内部 S_V 闭合。输入→merge 保留 PIPE_ALL；merge→Gather、Gather/seed→Add、相邻 Add、末 Add→逆 Gather
-均有 PIPE_V，Gather 后恢复 normal mode 与全 mask，再保留原 DG 输出前的 PIPE_ALL。
-下任务覆盖 left/values 前，当前任务的全部输出仍经末尾 PIPE_ALL 完成。
+DQ Cube 退出前已经清空 clear；跨阶段 SyncAll 不能替代 DQ/WY 内部 ready/free 和本地事件。
+QK 及 GateTail 的最终 Cast 后、MTE3 前均有 PIPE_ALL，输出搬运后再次 PIPE_ALL，保护下个 tile 的 UB 复用。
+state 转置的 Scalar SetValue 后执行 DataSyncBarrier<UB>。scan 数据仅由 Vector 读写，索引初始化的
+Scalar→Vector 由 SDK 内部 S_V 闭合；输入→merge 使用 PIPE_ALL，merge→Gather、Gather/seed→Add、
+相邻 Add 及末 Add→逆 Gather 均有 PIPE_V。Gather 后恢复 normal mode 和全 mask，DG 输出前再执行 PIPE_ALL。
 
 ### 6.5 数值与验证边界
 
-g/beta 在 S0 转为 FP32，exp2 仅把输入乘 ln(2)，不改变输出 dg 的约定。
-矩阵运算仍使用 BF16 乘数、原 Cube 累加与 BF16 输出；原 DQ/WY 归约、cast、KKT 复用
-保持现有顺序。norm 的 dot 和减法为 FP32，最终 dq/dk CAST_RINT；dbeta/dg 的 BF16
-转换只在对应最终输出处执行。高风险 exp 的无效行在访问前由 m 限定；GateTail 的 Gather
-只读取本任务已初始化的大区，scan 和 GM 写回均只处理有效行。向量 scan 保留从正零开始的
-逐步 FP32 加法顺序，但 Scalar/Vector 在 subnormal、NaN 和舍入环境下是否逐位同仍需
-实际设备比对。sigmoid 中 exp 上溢时通过 `1/(1+exp(-raw))` 得到饱和端点，NaN/Inf 按实际
-设备分类采证，不能把有限值精度通过推成特殊值门禁。
+g/beta 在 S0 转 FP32，exp2 仅将输入乘 ln(2)，dg 不另乘 ln(2)。矩阵路径保持 BF16 乘数、Cube 累加及
+BF16 输出；norm 的 dot/减法使用 FP32，dq/dk 最终 CAST_RINT，dbeta/dg 仅在最终输出处转换存储 dtype。
+高风险 exp 前按 m 排除无效行；Gather 只读已初始化区间。scan 保持从正零开始的逐步 FP32 加法，
+subnormal、NaN/Inf 和 sigmoid 饱和端点单独验证，不由有限值精度结果推定。
 
-新单 kernel 必须独立完成：匹配当前源的 Finalize 单 op 编译/安装、正式公开入口、
-全部 dtype/boolean 可达组合、BT64/128 与 V128/256、dense/varlen、GVA/尾行、state VK
-布局、真实 kernel_count=1，以及同对象的精度和 Task Duration 性能。profile 需分别核对
-S0 state 转置、scan 的逐行 Vector 依赖链、全局 barrier 和 DQ/WY 核间等待的耗时；旧四 kernel 的
-TaskSUM 或 50e 精度不可挪用。首版尚未达到这些门禁，不能宣称完成验收。
+| 验证维度 | 覆盖范围 |
+| --- | --- |
+| 模板 | 两类g/beta存储类型，norm/sigmoid/exp2与owner的32个可达key |
+| 几何与任务 | BT64/128、V128/256、dense/varlen、GVA、尾行、空序列与合法乱序chunk |
+| 状态与输出 | KV/VK布局，dq/dk/dv/dbeta/dg的精度和dtype，norm/scan归约边界 |
+| 执行与资源 | 公开入口、单kernel launch、workspace、MSS与事件/同步边界 |
 
-当前 scan 按 head group 批处理，保留 pad/seed Duplicate、正逆 Gather 和逐次 Add 的
-PIPE_V；单 head 仍有 m 级依赖链。旧首版 C01 约 20.18ms 仅为已知
-精度失败对象的总 Task Duration，不能归因为 scan 占比或充当本候选提速结论。
-
-
-计算量估计以完整有效 chunk 为单位：DQ 的乘加 FLOP 上界为
-`2*HV*(3*BT*K*V + BT^2*(V+3*K))`，WY 为
-`2*HV*(5*BT^2*K + 2*BT^2*V + 2*BT^3)`，其中 KKT 共享可减少重复项。
-首版没有改变这些主 GEMM 的算量；单 launch 节省三个 kernel 启动/间隙，但 S0 新增
-FP32 转换搬运、三次全局同步、逐行向量 scan 和 Scalar state 循环可能进入关键路径，不能仅由 launch
-数量推断收益。逐模型 case 的 Task Duration 可达性和稳定波动仍需新 profile；本节不把
-旧四 kernel 的 TaskSUM 当作本单 kernel 的性能下界或已达标结论。
+实际测试入口、标准和结果见 [ATK README](../../../../../../../tests/atk/chunk_gated_delta_rule_bwd_finalize/README.md)。
+完整有效 chunk 的 FLOP 上界：DQ 为 `2*HV*(3*BT*K*V + BT^2*(V+3*K))`，
+WY 为 `2*HV*(5*BT^2*K + 2*BT^2*V + 2*BT^3)`；KKT 共享可减少重复项。

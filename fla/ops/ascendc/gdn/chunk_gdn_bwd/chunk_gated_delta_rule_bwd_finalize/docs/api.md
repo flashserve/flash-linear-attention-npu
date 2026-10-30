@@ -46,39 +46,6 @@ tiling 和 workspace 在内部按平台选择。精度、性能和内存检测�
 新增的 Host 校验、view 规范化和 arch22 tiling 位于 A2/A3 私有路径，A5 沿用原有流程。
 纯 `ascend950` 构建不编入这些新增 Host helper；含 A2/A3 的混合 SoC 构建保留运行期分派。
 
-## Host 构建宏契约
-
-以下宏用于构建期隔离私有 arch22 Host，不是 Python 属性、环境变量或运行期调优开关。
-
-| 宏 | 定义位置与消费者 | 合法值与缺省行为 |
-| --- | --- | --- |
-| `GDN_FINALIZE_ENABLE_ARCH22` | Finalize `op_host/CMakeLists.txt`；该算子的 OpApi、L0 和 tiling 编译单元 | `0/1`；源码未收到定义时按 `0` 处理 |
-| `GDN_BWD_ENABLE_ARCH22` | 完整 Bwd 的 `op_host/CMakeLists.txt`；Bwd OpApi 编译单元 | `0/1`；源码未收到定义时按 `0` 处理 |
-
-两个值均由 CMake 的 `ASCEND_COMPUTE_UNIT` 列表推导：逐项转小写，包含 `ascend910b`
-或 `ascend910_93` 即为 `1`，其余为 `0`。不读取同名环境变量，也不提供用户覆盖接口。
-缺少 SoC 列表或只构建 `ascend950` 时为 `0`；同时构建 A2/A3 与 A5 时为 `1`，
-实际调用仍按设备架构分派，A5 不进入私有 arch22 实现。
-
-定义以 `PRIVATE` 作用于共用的 `${OPHOST_NAME}_opapi_obj`（Finalize 还作用于
-`${OPHOST_NAME}_tiling_obj`），因此同 target 中其他源文件也会看到定义；当前仅上述 GDN
-消费者读取它们，不作为安装头或下游 target 的编译要求导出。Bwd 的 SoC 判断还决定
-是否加入 W/U 重算、local DV 的前序构建依赖。
-
-工程以 CMake 生成值为唯一受支持来源。外部重复 `-D`、非 `0/1` 定义或强制取消定义没有
-覆盖优先级保证，也没有额外的宏值诊断；不应借此选择产品实现。遗漏为 `0` 会使 arch22
-Host 分支不参与编译，不能据此产物声称支持 A2/A3。
-
-| 构建目标 | 两宏 | 运行期结果 |
-| --- | ---: | --- |
-| A2、A3，或 A2+A3 | `1` | `DAV_2201` 进入共用 arch22 Host |
-| 纯 A5 | `0` | 保持原 A5 Host 流程 |
-| A2/A3 与 A5 混合 | `1` | 保留架构判断，各设备进入相应实现 |
-
-这两个宏随产品隔离的 Host 生命周期维护；新增 SoC 或调整共用 Host target 时，须同时
-复核两处 CMake、消费者和上述构建矩阵。回退使用完整已验证源码及其匹配构建包，
-不通过临时修改宏值回退。
-
 ## aclnn
 
 ```cpp
