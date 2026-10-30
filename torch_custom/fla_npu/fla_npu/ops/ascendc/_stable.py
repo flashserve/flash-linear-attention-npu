@@ -1878,7 +1878,7 @@ def _kda_bwd_single_launch(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h,
         True,  # disable_recompute is the only supported spelling
         True,  # use_exp2 likewise
         False,  # state_v_first likewise
-        False, None, None,  # legacy implementation, no norm backward
+        False, None, None, None,  # original L2, no norm/beta cache
         3 if cu_seqlens is not None else 1,
         False, False,
         _current_stream_ptr(),
