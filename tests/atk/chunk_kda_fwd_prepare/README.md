@@ -5,7 +5,7 @@
 
 ## 输入与输出
 
-YAML 和三份冻结 JSON 声明 21 个输入；它们映射到以下公开调用参数，顺序与 executor 一致：
+YAML 和三份冻结 JSON 都直接声明以下 21 个公开输入，顺序与 executor 一致：
 
 ```text
 q, k, v, g, beta,
@@ -13,12 +13,11 @@ scale, layout, chunk_size, epsilon,
 use_qk_l2norm_in_kernel, use_gate_in_kernel,
 use_beta_sigmoid_in_kernel, allow_neg_eigval, safe_gate,
 lower_bound, use_exp2,
-A_log, dt_bias, cu_seqlens, chunk_indices, backward_mode
+a_log, dt_bias, cu_seqlens, chunk_indices, backward_mode
 ```
 
 用例中不使用 marker tensor、序列化 `case_spec` 或其他隐藏控制字段。
-冻结 JSON/YAML 中的 fixture 字段仍名为 `a_log`；executor 在公开 Python 调用边界将其映射为
-`A_log`。`A_log`、`dt_bias`、`cu_seqlens` 和 `chunk_indices` 按场景传空或真实数据。
+`a_log`、`dt_bias`、`cu_seqlens` 和 `chunk_indices` 按场景传空或真实数据。
 
 接口固定保留 13 个输出槽位：
 

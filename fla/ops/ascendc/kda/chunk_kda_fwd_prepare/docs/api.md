@@ -26,6 +26,7 @@ from fla_npu.ops.ascendc import chunk_kda_fwd_prepare
     g,
     beta,
     scale=1.0,
+    *,
     layout="BNSD",
     chunk_size=64,
     epsilon=1e-6,
@@ -35,8 +36,8 @@ from fla_npu.ops.ascendc import chunk_kda_fwd_prepare
     allow_neg_eigval=False,
     safe_gate=False,
     lower_bound=-5.0,
-    use_exp2=True,
-    A_log=None,
+    use_exp2=False,
+    a_log=None,
     dt_bias=None,
     cu_seqlens=None,
     chunk_indices=None,
@@ -102,7 +103,7 @@ aclnnStatus aclnnChunkKdaFwdPrepare(
 | `v` | BF16 | V=128；head 数为 HV |
 | `g` | BF16/FP32 | 跟随 layout：BNSD `[B,HV,T,128]`；BSND `[B,T,HV,128]`；NTD `[HV,T,128]`；TND `[T,HV,128]` |
 | `beta` | BF16/FP32 | 跟随 layout：BNSD `[B,HV,T]`；BSND `[B,T,HV]`；NTD `[HV,T]`；TND `[T,HV]` |
-| `A_log` | FP32 | kernel 内 gate 模式必传，shape `[HV]` |
+| `a_log` | FP32 | kernel 内 gate 模式必传，shape `[HV]` |
 | `dt_bias` | FP32 | 可空；shape `[HV*128]` |
 | `cu_seqlens` | host int array | 可空；变长模式为 `[sequence_count+1]`，首元素为 0，末元素为 T，且非递减 |
 | `chunk_indices` | host int array | 可空；仅能与 `cu_seqlens` 同时传入，内容为规范的 sequence-major `(sequence_id, local_chunk_id)` 序列 |

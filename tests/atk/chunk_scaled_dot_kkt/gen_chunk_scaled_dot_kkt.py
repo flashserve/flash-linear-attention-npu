@@ -37,16 +37,6 @@ PROFILES = [
     "T": 16,
     "K": 16,
     "chunk_size": 16
-  },
-  {
-    "name": "fp16_gva",
-    "dtype": "fp16",
-    "B": 1,
-    "HK": 1,
-    "HV": 2,
-    "T": 16,
-    "K": 16,
-    "chunk_size": 16
   }
 ]
 

@@ -171,14 +171,14 @@ NEGATIVE_CASES = (
     ("null_g", "ACLNN_ERR_PARAM_NULLPTR", 161001, "q, k, v, g and beta must not be nullptr"),
     ("null_beta", "ACLNN_ERR_PARAM_NULLPTR", 161001, "q, k, v, g and beta must not be nullptr"),
     ("null_attn", "ACLNN_ERR_PARAM_NULLPTR", 161001, "attnOut must not be nullptr"),
-    ("null_aqk", "ACLNN_ERR_PARAM_NULLPTR", 161001, "aqkOut must not be nullptr"),
+    ("null_aqk", "ACLNN_ERR_PARAM_NULLPTR", 161001, "aqkOut and akkOut must not be nullptr"),
     ("missing_alog", "ACLNN_ERR_PARAM_NULLPTR", 161001, "aLogOptional is required when useGateInKernel is true"),
-    ("chunk_invalid", "ACLNN_ERR_PARAM_INVALID", 161002, "chunkSize only supports 64"),
+    ("chunk_invalid", "ACLNN_ERR_PARAM_INVALID", 161002, "chunkSize must be 64 or 128"),
     ("layout_lower", "ACLNN_ERR_PARAM_INVALID", 161002, "layout must be uppercase and one of BSND, BNSD, TND or NTD"),
     ("layout_invalid", "ACLNN_ERR_PARAM_INVALID", 161002, "layout must be uppercase and one of BSND, BNSD, TND or NTD"),
     ("rank_invalid", "ACLNN_ERR_PARAM_INVALID", 161002, "q/k/v/g and beta ranks must match layout"),
     ("qk_shape", "ACLNN_ERR_PARAM_INVALID", 161002, "q and k must have identical shape"),
-    ("v_shape", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must both be 64 or both be 128"),
+    ("v_shape", "ACLNN_ERR_PARAM_INVALID", 161002, "expects v/g/beta"),
     ("g_shape", "ACLNN_ERR_PARAM_INVALID", 161002, "expects v/g/beta"),
     ("beta_shape", "ACLNN_ERR_PARAM_INVALID", 161002, "expects v/g/beta"),
     ("h_zero", "ACLNN_ERR_PARAM_INVALID", 161002, "H and HV must be positive"),
@@ -214,6 +214,7 @@ NEGATIVE_CASES = (
     ("dtbias_shape", "ACLNN_ERR_PARAM_INVALID", 161002, "dtBiasOptional must have shape [HV*K]"),
     ("lower_low", "ACLNN_ERR_PARAM_INVALID", 161002, "lowerBound must be in [-5, 0)"),
     ("lower_high", "ACLNN_ERR_PARAM_INVALID", 161002, "lowerBound must be in [-5, 0)"),
+    ("null_akk", "ACLNN_ERR_PARAM_NULLPTR", 161001, "aqkOut and akkOut must not be nullptr"),
     # 追加在末尾：既有负向用例的 id 与 dtype 奇偶分配保持不变。
     ("k_mixed", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must both be 64 or both be 128"),
     ("v_mixed", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must both be 64 or both be 128"),
@@ -228,11 +229,9 @@ NEGATIVE_COUNT = len(NEGATIVE_CASES)
 
 def _negative_case(local_id: int, soc: str) -> dict:
     mutation, code_name, code, message = NEGATIVE_CASES[local_id]
-    # Retire null_akk's logical ID 49 without changing surviving fixtures.
-    fixture_id = local_id if local_id < 49 else local_id + 1
     layout = "BSND"
     return {
-        "case_key": f"{soc}_negative_{fixture_id:02d}_{mutation}",
+        "case_key": f"{soc}_negative_{local_id:02d}_{mutation}",
         "tags": "negative,boundary",
         "route": "aclnn",
         "B": 1,
@@ -243,7 +242,7 @@ def _negative_case(local_id: int, soc: str) -> dict:
         "V": 128,
         "chunk_size": 64,
         "layout": layout,
-        "q_dtype": "bf16" if fixture_id % 2 == 0 else "fp16",
+        "q_dtype": "bf16" if local_id % 2 == 0 else "fp16",
         "g_dtype": "fp32",
         "beta_dtype": "fp32",
         "scale": 1.0 / math.sqrt(128),
@@ -260,7 +259,7 @@ def _negative_case(local_id: int, soc: str) -> dict:
         "state_v_first": mutation == "state_shape_vk",
         "data_scale": 0.08,
         "gate_scale": 1.0,
-        "seed": SEED_BASE + 5000 + fixture_id,
+        "seed": SEED_BASE + 5000 + local_id,
         "mutation": mutation,
         "expected_code_name": code_name,
         "expected_return_code": code,
