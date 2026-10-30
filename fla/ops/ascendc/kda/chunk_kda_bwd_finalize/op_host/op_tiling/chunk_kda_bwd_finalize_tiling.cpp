@@ -34,8 +34,18 @@ ge::graphStatus ValidateFinalize(
     if (shape.NV > UINT32_MAX / (128 * sizeof(float)) ||
         static_cast<uint64_t>(shape.B) > INT64_MAX / 128 / sizeof(float) /
             static_cast<uint64_t>(shape.NV) / static_cast<uint64_t>(shape.T)) return fail();
-    const bool headMajor = std::strcmp(outputLayout, rank == 3 ? "NTD" : "BNSD") == 0;
-    const bool tokenMajor = std::strcmp(outputLayout, rank == 3 ? "TND" : "BSND") == 0;
+    const bool denseGateHeadAlias = std::strcmp(outputLayout, "BNSD_GATE_HEAD_MAJOR") == 0;
+    const bool packedGateHeadAlias = std::strcmp(outputLayout, "NTD_GATE_HEAD_MAJOR") == 0;
+    const bool gateHeadRequested = denseGateHeadAlias || packedGateHeadAlias;
+    if (arch22 && gateHeadRequested) {
+        OP_LOGE_WITH_INVALID_ATTR(ctx.nodeName, "output_layout", outputLayout,
+            "BNSD/NTD on A2/A3 because gate head-major is unsupported");
+        return ge::GRAPH_FAILED;
+    }
+    const char *valueOutputLayout = denseGateHeadAlias ? "BNSD" :
+        (packedGateHeadAlias ? "NTD" : outputLayout);
+    const bool headMajor = std::strcmp(valueOutputLayout, rank == 3 ? "NTD" : "BNSD") == 0;
+    const bool tokenMajor = std::strcmp(valueOutputLayout, rank == 3 ? "TND" : "BSND") == 0;
     if (!headMajor && !tokenMajor) return fail();
     auto tokenShape = [&](const gert::StorageShape *storage, int64_t width, bool tm) {
         if (!storage || storage->GetStorageShape().GetDimNum() != rank) return false;
@@ -54,13 +64,13 @@ ge::graphStatus ValidateFinalize(
         tokenShape(context->GetOutputShape(4), 128, true);
     const bool headGate = scalarShape(context->GetOutputShape(3), false) &&
         tokenShape(context->GetOutputShape(4), 128, false);
-    if (!tokenGate && !headGate) return fail();
-    if (arch22 && headGate) {
+    const bool gateTokenMajor = !gateHeadRequested;
+    if (arch22 && !gateHeadRequested && !tokenGate && headGate) {
         OP_LOGE_WITH_INVALID_INPUT_SHAPE(ctx.nodeName, 3, "head-major",
             "token-major dBetaOut/dGOut on A2/A3");
         return ge::GRAPH_FAILED;
     }
-    const bool gateTokenMajor = tokenGate;
+    if ((gateHeadRequested && !headGate) || (!gateHeadRequested && !tokenGate)) return fail();
     for (size_t i : {INPUT_Q, INPUT_K, INPUT_V, INPUT_GK, INPUT_V_NEW, INPUT_DV_SCAN, INPUT_DQ_RAW}) {
         if (!tokenShape(context->GetRequiredInputShape(i), 128, false)) return fail();
     }

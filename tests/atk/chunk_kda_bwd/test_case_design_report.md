@@ -132,8 +132,9 @@ FP16、initial state/dht。扩展 saved 集合中的 `42,43,44,51,52,53,57,58,59
 仅用于 legacy/拒绝路径看护，不计入 V2 正例，不属于本文件所述 36 条 accuracy、
 2 条 perf 或 12 条 mss 正例。
 
-独立 Finalize 的默认 `gate_output_head_major=false`，其独立调用仍输出 token-major
-db/dg；A5/V2 组合路径通过内部重载直接产生公开 head-major db/dg。看护时必须保留
-独立 Finalize 默认布局用例，并保留 A2/A3 对 `gate_output_head_major=true` 的拒绝检查，
-不得用 public V2 的 head-major 结果替代或放宽这两类契约。本设计不据此宣称 A2/A3
+独立 Finalize 默认使用 token-major db/dg 输出 shape；A5/V2 组合路径通过现有
+`output_layout` 的 `BNSD/NTD_GATE_HEAD_MAJOR` 显式选择并直接产生公开 head-major db/dg，
+不新增 attr、L0 入参或 TilingData 字段。输出 shape 只用于校验，`T == H` 时不猜测布局。
+看护时必须保留独立 Finalize 默认布局用例、方形用例，以及 A2/A3 对显式 head-major 请求的
+拒绝检查，不得用 public V2 的 head-major 结果替代或放宽这些契约。本设计不据此宣称 A2/A3
 已完成设备验收。

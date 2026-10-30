@@ -244,7 +244,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
     const auto finalizeResult = l0op::ChunkKdaBwdFinalize(
         q, k, v, gk, rawG, beta, aLog, dtBias, akk, vNew, h, dh, dvScan, dAqk, dqRaw,
         qRstd, kRstd, cu, indices, scale, lowerBound, 64, true, true, true, false,
-        false, false, packed ? "NTD" : "BNSD",
+        false, false, packed ? "NTD_GATE_HEAD_MAJOR" : "BNSD_GATE_HEAD_MAJOR",
         dq, dk, dv, db, dg, dA, dBias, ex);
     for (const auto *value : finalizeResult) {
         CHECK_RET(value, ACLNN_ERR_INNER_NULLPTR);

@@ -71,9 +71,11 @@ Finalize key 为 `(variable ? 2 : 1) + (hasRstd ? 2 : 0)`；新增内部 gate la
 这些是 public V2 组合内的 key/用例映射，不是内存检测通过结论，也不替代各子算子独立全 key 验收。
 旧直接基准的小形状前向非有限值不属于本包的反向失败；本包使用上述三阶段输入准备。
 ABI 修复在 A5 设置 raw tiling 为 `sizeof(TilingData)+8`，与仓内 `MergeFwdBwd` 的
-CANN `GET_TILING_DATA opParaSize` 处理一致，arch22 token-major 转发不变。arch22 对
-`gate_output_head_major=true` 使用 `OP_LOGE_WITH_INVALID_ATTR` 拒绝，不用 scoped build 缺宏的
-`OP_LOGE_FOR_INVALID_VALUE`；规范 host 测试位于 `tests/operators/chunk_kda_bwd_finalize`。
+CANN `GET_TILING_DATA opParaSize` 处理一致，arch22 token-major 转发不变。A5/V2 通过现有
+`output_layout` 的 `BNSD/NTD_GATE_HEAD_MAJOR` 显式选择 head-major，默认独立调用仍为
+token-major；arch22 对非法 shape 使用 `OP_LOGE_WITH_INVALID_INPUT_SHAPE`，对别名使用
+`OP_LOGE_WITH_INVALID_ATTR` 拒绝。A5 复用 `betaMode` 保留高位，不新增 attr、L0 入参或
+TilingData 字段。规范 host 测试位于 `tests/operators/chunk_kda_bwd_finalize`，覆盖 `T == H`。
 
 ## 正式结果与证据
 

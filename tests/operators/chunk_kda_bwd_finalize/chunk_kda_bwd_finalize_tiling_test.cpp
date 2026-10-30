@@ -42,7 +42,7 @@ std::unique_ptr<gert::Tensor> MakeTensor(const gert::StorageShape &shape, ge::Da
         gert::TensorPlacement::kOnHost, dtype, nullptr);
 }
 
-void SetFinalizeAttrs(gert::TilingContext *context)
+void SetFinalizeAttrs(gert::TilingContext *context, const char *outputLayout)
 {
     auto *attrs = const_cast<gert::RuntimeAttrs *>(context->GetAttrs());
     auto *def = reinterpret_cast<RuntimeAttrsDef *>(attrs);
@@ -59,7 +59,6 @@ void SetFinalizeAttrs(gert::TilingContext *context)
     const int64_t chunkSize = 64;
     const bool enabled = true;
     const bool disabled = false;
-    const char layout[] = "NTD";
     write(&scale, sizeof(scale));
     write(&lowerBound, sizeof(lowerBound));
     write(&chunkSize, sizeof(chunkSize));
@@ -69,7 +68,7 @@ void SetFinalizeAttrs(gert::TilingContext *context)
     write(&disabled, sizeof(disabled));
     write(&disabled, sizeof(disabled));
     write(&disabled, sizeof(disabled));
-    write(layout, sizeof(layout));
+    write(outputLayout, std::strlen(outputLayout) + 1);
 }
 
 std::string RunWithCapturedLog(gert::TilingContext *context, ge::graphStatus &status)
@@ -109,10 +108,12 @@ std::string RunWithCapturedLog(gert::TilingContext *context, ge::graphStatus &st
     return log;
 }
 
-TilingResult RunTiling(const char *socVersion, bool gateOutputHeadMajor)
+TilingResult RunTiling(
+    const char *socVersion, bool gateOutputHeadMajor, bool square = false,
+    const char *outputLayout = "NTD")
 {
     constexpr int64_t heads = 2;
-    constexpr int64_t tokens = 64;
+    const int64_t tokens = square ? heads : 64;
     const gert::StorageShape token128({heads, tokens, 128}, {heads, tokens, 128});
     const gert::StorageShape token64({heads, tokens, 64}, {heads, tokens, 64});
     const gert::StorageShape gateToken128({tokens, heads, 128}, {tokens, heads, 128});
@@ -187,7 +188,7 @@ TilingResult RunTiling(const char *socVersion, bool gateOutputHeadMajor)
         .Attr("state_v_first", false)
         .Attr("use_beta_sigmoid_in_kernel", false)
         .Attr("allow_neg_eigval", false)
-        .Attr("output_layout", ge::AscendString("NTD"))
+        .Attr("output_layout", ge::AscendString(outputLayout))
         .Attr("reserved_0", static_cast<int64_t>(0))
         .Attr("reserved_1", static_cast<int64_t>(0));
     auto contextHolder = faker.Build();
@@ -211,7 +212,7 @@ TilingResult RunTiling(const char *socVersion, bool gateOutputHeadMajor)
     context->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
     context->GetPlatformInfo()->SetPlatformRes("version", versions);
 
-    SetFinalizeAttrs(context);
+    SetFinalizeAttrs(context, outputLayout);
     result.message = RunWithCapturedLog(context, result.status);
     if (result.status == ge::GRAPH_SUCCESS) {
         result.tilingKey = context->GetTilingKey();
@@ -252,12 +253,48 @@ bool CheckArch22Forward(const char *socVersion)
 
 bool CheckA5(bool gateOutputHeadMajor)
 {
-    const auto result = RunTiling("Ascend950", gateOutputHeadMajor);
+    const auto result = RunTiling(
+        "Ascend950", gateOutputHeadMajor, false,
+        gateOutputHeadMajor ? "NTD_GATE_HEAD_MAJOR" : "NTD");
     const uint32_t expected = gateOutputHeadMajor ? 0U : 1U;
     const bool ok = result.status == ge::GRAPH_SUCCESS && result.tilingKey == 1 &&
         result.blockDim == 1 && (result.outputGateTokenMajor != 0U) == (expected != 0U);
     std::cout << "Ascend950 gate head-major shape=" << (gateOutputHeadMajor ? "true" : "false")
               << ": status=" << result.status << ", key=" << result.tilingKey
+              << ", outputGateTokenMajor=" << result.outputGateTokenMajor << '\n';
+    return ok;
+}
+
+bool CheckSquareDefault(const char *socVersion, bool headGate)
+{
+    const auto result = RunTiling(socVersion, headGate, true);
+    const bool ok = result.status == ge::GRAPH_SUCCESS && result.tilingKey == 101 &&
+        result.blockDim == 1 && result.usedCoreNum == 1 && result.betaMode == 0;
+    std::cout << socVersion << " square default token-major, head-shape=" << headGate
+              << ": status=" << result.status << ", key=" << result.tilingKey << '\n';
+    return ok;
+}
+
+bool CheckSquareAliasRejected(const char *socVersion)
+{
+    const auto result = RunTiling(socVersion, true, true, "NTD_GATE_HEAD_MAJOR");
+    bool ok = result.status == ge::GRAPH_FAILED;
+    for (const char *text : {"output_layout", "NTD_GATE_HEAD_MAJOR", "head-major", "A2/A3"}) {
+        ok = result.message.find(text) != std::string::npos && ok;
+    }
+    std::cout << socVersion << " square head-major layout request: status=" << result.status
+              << ", report=" << result.message << '\n';
+    return ok;
+}
+
+bool CheckSquareA5(bool alias)
+{
+    const auto result = RunTiling(
+        "Ascend950", alias, true, alias ? "NTD_GATE_HEAD_MAJOR" : "NTD");
+    const bool ok = result.status == ge::GRAPH_SUCCESS && result.tilingKey == 1 &&
+        result.blockDim == 1 && (result.outputGateTokenMajor != 0U) == !alias;
+    std::cout << "Ascend950 square alias=" << alias << ": status=" << result.status
+              << ", key=" << result.tilingKey
               << ", outputGateTokenMajor=" << result.outputGateTokenMajor << '\n';
     return ok;
 }
@@ -275,6 +312,14 @@ int main()
         {"Ascend910_93 keeps token-major Arch22 forwarding", CheckArch22Forward("Ascend910_93")},
         {"Ascend950 accepts head-major gate output", CheckA5(true)},
         {"Ascend950 accepts token-major gate output", CheckA5(false)},
+        {"Ascend910B square default token-major with token shape", CheckSquareDefault("Ascend910B", false)},
+        {"Ascend910B square default token-major with head shape", CheckSquareDefault("Ascend910B", true)},
+        {"Ascend910_93 square default token-major with token shape", CheckSquareDefault("Ascend910_93", false)},
+        {"Ascend910_93 square default token-major with head shape", CheckSquareDefault("Ascend910_93", true)},
+        {"Ascend910B rejects square head-major layout alias", CheckSquareAliasRejected("Ascend910B")},
+        {"Ascend910_93 rejects square head-major layout alias", CheckSquareAliasRejected("Ascend910_93")},
+        {"Ascend950 square head-major layout alias", CheckSquareA5(true)},
+        {"Ascend950 square default token-major", CheckSquareA5(false)},
     };
     size_t passed = 0;
     for (const auto &item : cases) {

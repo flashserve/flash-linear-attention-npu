@@ -5,13 +5,14 @@
 本目录是独立的 host tiling 测试工程。测试直接编译并调用当前算子的
 `Tiling4ChunkKdaBwdFinalize`，通过真实 `TilingContext` 检查以下契约，不构造任何新增属性：
 
-| 平台信息 | db/dg 输出 shape | 检查点 |
+| 平台信息 | 布局请求 / 输出 shape | 检查点 |
 | --- | --- | --- |
-| Ascend910B、Ascend910_93 | head-major | 返回 `ge::GRAPH_FAILED`；实际 OP 日志包含 `dBetaOut/dGOut`、`head-major`、`A2/A3` 和 `token-major` 平台原因 |
-| Ascend910B、Ascend910_93 | token-major | 原 Arch22 校验和转发路径成功，tiling key 为 101 |
-| Ascend950 | head-major、token-major | 两种输出 shape 均接受，并由现有 `betaMode` 的保留高位传递布局，不新增 attr 或 TilingData 字段 |
+| Ascend910B、Ascend910_93 | 默认 token-major；head-major shape 或 `*_GATE_HEAD_MAJOR` 别名 | 默认 token-major 均接受；非法 shape 或显式 head-major 请求返回 `ge::GRAPH_FAILED`，并检查实际 OP 日志 |
+| Ascend910B、Ascend910_93 | 默认 token-major 且 `T == H` | 同形不引起误拒绝，保持原 Arch22 校验、tiling key=101 和 betaMode=0 |
+| Ascend950 | `*_GATE_HEAD_MAJOR` 别名或默认 token-major，含 `T == H` | 别名确定 head-major，默认确定 token-major；由现有 `betaMode` 的保留高位传递，不新增 attr、aclnn/L0 入参或 TilingData 字段 |
 
-测试同时用 `static_assert` 检查 `TilingData` 为基线的 168 字节，并检查 Arch22 的
+方形场景不能只凭 shape 区分布局，测试用 `T == H` 验证现有 `output_layout` 字符串的显式消歧，
+不通过交换优先级掩盖歧义。测试同时用 `static_assert` 检查 `TilingData` 为基线的 168 字节，并检查 Arch22 的
 `betaMode` 不携带布局高位，避免布局优化改变原有 ABI 或 beta 语义。
 这些平台由 host 上下文模拟。测试不启动设备 kernel，不构成 A2/A3/A5 实机、aclnn 或精度结论。
 
@@ -64,7 +65,7 @@ ctest --test-dir "$BUILD_DIR" --output-on-failure
 "$BUILD_DIR/chunk_kda_bwd_finalize_tiling_test"
 ```
 
-预期 CTest 为 1/1 通过，直接运行二进制为 6/6 通过，并打印两个 A2/A3 负向用例的完整输出 shape 报告。
+预期 CTest 为 1/1 通过，直接运行二进制为 14/14 通过，并打印 A2/A3 负向用例及 `T == H` 方形用例的完整报告。
 
 ## 依赖与回退
 

@@ -50,11 +50,11 @@ dq/dk/dv 为 BF16，d_beta 与 beta 同类型，d_g/d_a_log/d_dt_bias 为 FP32�
 | chunk_size | 64 |
 | safe_gate、use_gate_in_kernel、use_exp2 | True |
 | state_v_first | False |
-| db/dg 输出 shape | 独立调用默认 token-major；A5/V2 使用公开 head-major，由现有输出 shape 推导，不新增属性 |
+| db/dg 输出 shape 与 output_layout | 独立调用默认 token-major；A5/V2 用现有 `BNSD/NTD_GATE_HEAD_MAJOR` 显式选择 head-major，不新增属性 |
 
-独立 Finalize 默认按 token-major 输出 db/dg；A5/V2 由现有输出 shape 推导并直接写公开
-head-major db/dg，取消 token-major 临时缓冲与布局恢复。两种路径的 Gate 反扫、
-参数归约和算术顺序一致，公开 Python/aclnn、op def 与内部 L0 签名不变。
+独立 Finalize 默认按 token-major 输出 db/dg；A5/V2 通过现有 `output_layout` 显式选择并直接写公开
+head-major db/dg，取消 token-major 临时缓冲与布局恢复。输出 shape 用于校验，方形场景不再猜测布局。
+两种路径的 Gate 反扫、参数归约和算术顺序一致，公开 Python/aclnn、op def 与内部 L0 签名不变。
 
 ## 实现
 
