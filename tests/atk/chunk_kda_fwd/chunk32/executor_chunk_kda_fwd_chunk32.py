@@ -835,10 +835,8 @@ def _reference_model_parallel(inputs: _PreparedInputs, spec: dict):
         dtype=output_dtype,
         device=q.device,
     )
-    # 与融合 kernel 一致：递推 state 每个 chunk 都以 bf16 存储；计算时临时转回 fp32。
-    state_dtype = torch.bfloat16
     final_states = torch.zeros(
-        (seq_num, hv_num, k_dim, v_dim), dtype=state_dtype, device=q.device
+        (seq_num, hv_num, k_dim, v_dim), dtype=compute_dtype, device=q.device
     )
 
     lengths = {end - start for _, _, _, start, end in spans}
@@ -862,10 +860,10 @@ def _reference_model_parallel(inputs: _PreparedInputs, spec: dict):
         q_head = hv_index // group
         if inputs.initial_state is None:
             state = torch.zeros(
-                (seq_num, k_dim, v_dim), dtype=state_dtype, device=q.device
+                (seq_num, k_dim, v_dim), dtype=compute_dtype, device=q.device
             )
         else:
-            state = inputs.initial_state[:, hv_index].to(state_dtype)
+            state = inputs.initial_state[:, hv_index].to(compute_dtype)
             if _as_bool(spec["state_v_first"]):
                 state = state.transpose(-1, -2)
             state = state.clone()
@@ -884,9 +882,6 @@ def _reference_model_parallel(inputs: _PreparedInputs, spec: dict):
                 g_block.unsqueeze(0),
                 float(spec["scale"]),
                 operand_dtype=operand_dtype,
-                scale_in_q_operands=chunk_size == 32 and _as_bool(
-                    spec.get("_benchmark_scale_in_qk", True)
-                ),
             )
             qk = qk.squeeze(0)
             kk = kk.squeeze(0)
@@ -901,54 +896,17 @@ def _reference_model_parallel(inputs: _PreparedInputs, spec: dict):
             k_weighted = quantize_intermediate(
                 k_block * beta_block[:, None] * exp_g
             )
-            if chunk_size == 32 and _as_bool(spec.get("_benchmark_beta_bf16", True)):
-                # vec_v_corr 单独将 beta_eff 转成 bf16，再参与 v_new 计算。
-                v_weighted = quantize_intermediate(
-                    v_block * quantize_intermediate(beta_block)[:, None]
-                )
-            else:
-                v_weighted = quantize_intermediate(v_block * beta_block[:, None])
+            v_weighted = quantize_intermediate(v_block * beta_block[:, None])
             w_block = inverse_typed @ k_weighted
             u_block = inverse_typed @ v_weighted
             last_g = g_block[-1]
-            if chunk_size == 32 and length == 32 and _as_bool(spec.get("_benchmark_kernel_qg", True)):
-                # kernel 先将 scale 落入 bf16 q，再按半块生成 qPlus；不能在 matmul 后才乘 scale。
-                half = chunk_size // 2
-                half_g = g_block[half - 1]
-                q_scaled = quantize_intermediate(q_block * float(spec["scale"]))
-                exp_g_first = quantize_intermediate(torch.exp2(g_block[:half]))
-                exp_g_second = quantize_intermediate(torch.exp2(g_block[half:] - half_g))
-                qg_first = quantize_intermediate(q_scaled[:half] * exp_g_first)
-                qg_second = quantize_intermediate(q_scaled[half:] * exp_g_second)
-                exp_half = quantize_intermediate(torch.exp2(half_g))
-                qg_second = quantize_intermediate(qg_second * exp_half[None, :])
-                qg_block = torch.cat((qg_first, qg_second), dim=0)
-            else:
-                qg_block = quantize_intermediate(q_block * exp_g)
-            if chunk_size == 32 and length == 32 and not _as_bool(spec.get("_benchmark_direct_kres", False)):
-                # 与融合 kernel 的 kMinus→kRes 路径一致：先量化 exp(-g) 和 kMinus，
-                # 前半 chunk 再依次乘 exp(g_half)、exp(last_g-g_half)，后半只乘后者。
-                # 不能直接 k*exp(last_g-g) 一次量化，否则掩盖中间 bf16 舍入差异。
-                half = chunk_size // 2
-                half_g = g_block[half - 1]
-                second_g = g_block[half:] - half_g
-                exp_neg_g_first = quantize_intermediate(torch.exp2(-g_block[:half]))
-                exp_neg_g_second = quantize_intermediate(torch.exp2(-second_g))
-                k_minus_first = quantize_intermediate(k_block[:half] * exp_neg_g_first)
-                k_minus_second = quantize_intermediate(k_block[half:] * exp_neg_g_second)
-                exp_half = quantize_intermediate(torch.exp2(half_g))
-                exp_second = quantize_intermediate(torch.exp2(last_g - half_g))
-                kg_first = quantize_intermediate(k_minus_first * exp_half[None, :])
-                kg_first = quantize_intermediate(kg_first * exp_second[None, :])
-                kg_second = quantize_intermediate(k_minus_second * exp_second[None, :])
-                kg_block = torch.cat((kg_first, kg_second), dim=0)
-            else:
-                kg_block = quantize_intermediate(
-                    k_block * torch.exp2(last_g[None, :] - g_block)
-                )
+            qg_block = quantize_intermediate(q_block * exp_g)
+            kg_block = quantize_intermediate(
+                k_block * torch.exp2(last_g[None, :] - g_block)
+            )
             state_index = seq_id if cu is not None else batch_id
             previous = state[state_index].clone()
-            previous_typed = previous.to(compute_dtype)
+            previous_typed = quantize_intermediate(previous)
             w_typed = quantize_intermediate(w_block)
             u_typed = quantize_intermediate(u_block)
             v_new_block = u_typed - w_typed @ previous_typed
@@ -956,13 +914,9 @@ def _reference_model_parallel(inputs: _PreparedInputs, spec: dict):
             state[state_index] = (
                 torch.exp2(last_g)[:, None] * previous
                 + kg_block.T @ v_new_typed
-            ).to(state_dtype)
+            )
             out_block = (
-                qg_block @ previous_typed * (
-                    1.0 if chunk_size == 32 and length == 32
-                    and _as_bool(spec.get("_benchmark_kernel_qg", True))
-                    else float(spec["scale"])
-                )
+                qg_block @ previous_typed * float(spec["scale"])
                 + qk_typed @ v_new_typed
             )
 
