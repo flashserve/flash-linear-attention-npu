@@ -90,6 +90,30 @@ toolkit 的 `set_env.sh` 配置 CANN 工具链与运行依赖；vendor 的 `bin/
 
 两处生成器的 `set_env.bash` 与 `.pth`/Python runtime 使用相同的 overlay 选择规则，显式禁用时即使 source overlay 脚本也只登记 base；重复 source 不改变结果。单数库变量固定指向 base，复数变量按选定顺序生成。关闭 `.pth` 时，在初始化 CANN 前 source 对应 vendor 脚本；环境选择必须在此之前确定。无 FLA base 的独立外部 vendor 保留原 source 导出能力，不因此成为 Python host 库的外部来源。
 
+### 3.1 仓内 ATK 用例的兼容方式
+
+ATK 不直接识别 `fla_npu_overlay_*` 目录，也不负责合并 base 与 overlay。仓内用例能够命中增量算子，是因为统一启动脚本在 ATK 进程创建前准备发现环境，而 executor 使用 FLA 的公共 Python 入口：
+
+1. `tests/atk/run_test_cpu.sh` 依次激活 `ATK_ENV`、source `CANN_ENV`，再 source `FLA_NPU_ENV`（兼容旧名 `FLA_NPU_OPP_ENV`）指定的 vendor `bin/set_env.bash`。调用方已在外层 shell 完成这些动作时，脚本直接继承现有环境。
+2. 当前版本生成的 `set_env.bash` 不只登记被 source 的单个 vendor。它读取 `FLA_NPU_OVERLAY_VENDOR`；未显式设置时读取 `opp/vendors/config.ini` 并发现合法 overlay，然后生成两条一致的有序列表：
+   - `ASCEND_CUSTOM_OPP_PATH=overlay...:base:external...`，供 CANN 在启动时发现 L2–L4；
+   - `FLA_NPU_OP_API_LIBS=overlay_lib...:base_lib`，供 Stable launcher 在 L1 逐库查找符号。
+   `FLA_NPU_OP_API_LIB` 仍固定为完整 base，供只接受单库变量的兼容调用方使用。
+3. `atk node` 及其本机 NPU worker 继承上述环境。仓内 NPU executor 调用公开的 `fla_npu.ops.ascendc` wrapper；`import fla_npu` 会再次按相同规则归一化路径、校验 overlay/base ABI，并把有序 host 库交给 Stable launcher。overlay 提供的算子在 L1–L4 均命中 overlay，未提供的算子在同一进程内回落完整 base。需要构造非法描述符的负向用例通过 `load_ascendc_opapi_libraries()` 取得相同顺序的库句柄，不另建一套查找规则。
+4. 安装 wheel 后，`fla_npu_opp_env.pth` 是解释器启动阶段的第二道准备机制：只要 ATK worker 使用能够看到该 wheel 的 Python 环境且未设置 `FLA_NPU_DISABLE_PTH=1`，它会在 executor 或 `torch_npu` 导入前写入 overlay-first 的 `ASCEND_CUSTOM_OPP_PATH`。正式执行仍建议显式 source `FLA_NPU_ENV`，不把 worker 是否加载 `.pth` 当作唯一前提。
+
+推荐从仓库根目录按以下方式启动本机 ATK：
+
+```bash
+FLA_NPU_OVERLAY_VENDOR=fla_npu_overlay_transformer \
+ATK_ENV=<atk-venv> \
+CANN_ENV=<cann-set_env.sh> \
+FLA_NPU_ENV=<site-packages>/fla_npu/opp/vendors/fla_npu_transformer/bin/set_env.bash \
+bash tests/atk/run_test_cpu.sh -op=<op> -scope=accuracy
+```
+
+`FLA_NPU_OVERLAY_VENDOR` 显式空值表示只使用 base。overlay 的选择、安装或移除必须发生在 `atk node`、本机 worker 或常驻 Celery worker 初始化 CANN 之前；修改后须重启相应进程。远程或预先启动的 worker 不会继承控制端后来 source 的环境，必须在 worker 所在机器安装同一 wheel/overlay，并在启动 worker 的服务环境中准备上述变量。若 ATK 虚拟环境看不到安装 wheel，`run_test_cpu.sh` 不会替调用方修改 `PYTHONPATH`，应先修正 Python 环境；否则即使 CANN 能看到 L2–L4，executor 仍无法导入匹配的 Stable wrapper 和 launcher。
+
 ## 4. ABI 门禁与错误处理
 
 | 阶段 | 检查 |
@@ -174,6 +198,7 @@ Docker 进程由 daemon 管理，除本地客户端进程组外，还要按本�
 | ABI/恢复 | `_op_abi.py`、`install_opp.py`、`fla_npu_opp_manage.py` | 两阶段类型漂移、缺/坏清单、哈希损坏、包外软链、独立移除 |
 | 日落/构建 | `_stable.py`、`ops/ascendc/__init__.py`、`stable_build_policy.py`、两套 setup | 无回退，实际 launcher 校验，旧选项拒绝，完整 wheel 检查 |
 | 测试迁移 | `stable_public_api.json`、`stable_coverage.py`、仓内调用方 | 签名与调用参数、返回及 mutation、枚举、负例和真实 NPU 结果 |
+| ATK 增量调用 | `tests/atk/run_test_cpu.sh`、ATK executor、生成的 `set_env.bash` | worker 启动前路径顺序、公共 wrapper、overlay 命中与 base 回落、远程 worker 环境 |
 | 取消清理 | `ci/pkg/make_packages.py` | 组长退出但子进程存活、信号忽略、PID 身份变化、清理失败不重试 |
 | KDA/KKT 修复 | KDA host 返回码、ATK executor/golden | 旧库/新库负例差异、独立标杆、原用例保留、无容差放宽 |
 
