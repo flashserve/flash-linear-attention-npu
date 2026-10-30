@@ -2,8 +2,14 @@
 // aclnnChunkKdaFwdFused 实现(chunk32 大融合,issue #829)
 // -----------------------------------------------------------------------------------------------------------
 
+// Load structured reporters before opdev's legacy logging macros. The opdev
+// headers must retain their logging convention for CHECK_RET and DFX helpers.
+#include "op_common/log/log.h"
 #include "aclnn_chunk_kda_fwd_fused.h"
 #include "chunk_kda_fwd_fused.h"
+
+#include <sstream>
+#include <string>
 
 #include "acl/acl.h"
 #include "aclnn/aclnn_base.h"
@@ -14,6 +20,7 @@
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
 #include "opdev/tensor_view_utils.h"
+#include "graph/utils/type_utils.h"
 
 using namespace op;
 
@@ -24,6 +31,60 @@ extern "C" {
 namespace {
 constexpr int64_t KDA_FD32_HEAD_DIM = 128;
 constexpr int64_t KDA_FD32_CHUNK_TOKENS = 128;  // kernel 每组 128 token(4×32)
+constexpr const char *OP_NAME = "aclnnChunkKdaFwdFused";
+
+std::string ShapeText(const op::Shape &shape)
+{
+    std::ostringstream text;
+    text << '[';
+    for (size_t i = 0; i < shape.GetDimNum(); ++i) {
+        if (i != 0) text << ',';
+        text << shape.GetDim(i);
+    }
+    text << ']';
+    return text.str();
+}
+
+aclnnStatus Missing(const char *name)
+{
+    OP_LOGE_WITH_INVALID_INPUT(OP_NAME, name);
+    return ACLNN_ERR_PARAM_NULLPTR;
+}
+
+aclnnStatus InvalidValue(const char *name, const std::string &actual, const std::string &expected)
+{
+    OP_LOGE_FOR_INVALID_VALUE(OP_NAME, name, actual, expected);
+    return ACLNN_ERR_PARAM_INVALID;
+}
+
+aclnnStatus InvalidArgument(const char *name, const std::string &reason)
+{
+    OP_LOGE_FOR_INVALID_VALUE(OP_NAME, name, "invalid", reason);
+    return ACLNN_ERR_PARAM_INVALID;
+}
+
+aclnnStatus InvalidShapeText(const char *name, const std::string &actual, const std::string &expected)
+{
+    OP_LOGE_FOR_INVALID_SHAPE(OP_NAME, name, actual, expected);
+    return ACLNN_ERR_PARAM_INVALID;
+}
+
+aclnnStatus InvalidShape(const aclTensor *tensor, const char *name, const std::string &expected)
+{
+    const auto actual = ShapeText(tensor->GetViewShape());
+    // The predefined message supplies the enclosing brackets itself.
+    const auto shape = actual.substr(1, actual.size() - 2);
+    const auto correct = expected.size() >= 2 && expected.front() == '[' && expected.back() == ']'
+        ? expected.substr(1, expected.size() - 2) : expected;
+    return InvalidShapeText(name, shape, correct);
+}
+
+aclnnStatus InvalidDtype(const aclTensor *tensor, const char *name, const std::string &expected)
+{
+    OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, name,
+        ge::TypeUtils::DataTypeToSerialString(tensor->GetDataType()), expected);
+    return ACLNN_ERR_PARAM_INVALID;
+}
 
 aclnnStatus KdaFd32Contiguous(const aclTensor *&tensor, aclOpExecutor *executor)
 {
@@ -59,152 +120,240 @@ aclnnStatus KdaFd32CheckParams(
     const aclTensor *initialState, const aclTensor *o, const aclTensor *finalState,
     const aclIntArray *cuSeqlens, bool headMajorVarlen)
 {
-    CHECK_COND(q != nullptr && k != nullptr && v != nullptr && g != nullptr && beta != nullptr &&
-                   aLog != nullptr && dtBias != nullptr,
-               ACLNN_ERR_PARAM_NULLPTR, "q/k/v/g/beta/aLog/dtBias must not be nullptr.");
+    const aclTensor *required[] = {q, k, v, g, beta, aLog, dtBias};
+    const char *requiredNames[] = {"q", "k", "v", "g", "beta", "aLog", "dtBias"};
+    for (size_t i = 0; i < 7; ++i) {
+        if (required[i] == nullptr) return Missing(requiredNames[i]);
+    }
+    if (cuSeqlens != nullptr && o == nullptr) return Missing("o");
     if (cuSeqlens != nullptr) {
         if (headMajorVarlen) {
-            CHECK_COND(q->GetDataType() == DataType::DT_BF16,
-                       ACLNN_ERR_PARAM_INVALID, "q must be bf16.");
+            if (q->GetDataType() != DataType::DT_BF16) return InvalidDtype(q, "q", "BF16");
             const bool gOk = g->GetDataType() == DataType::DT_BF16 || g->GetDataType() == DataType::DT_FLOAT;
             const bool bOk = beta->GetDataType() == DataType::DT_BF16 || beta->GetDataType() == DataType::DT_FLOAT;
-            CHECK_COND(gOk && bOk && g->GetDataType() == beta->GetDataType(),
-                       ACLNN_ERR_PARAM_INVALID, "varlen g/beta must share the same dtype, bf16 or fp32.");
-            CHECK_COND(q->GetViewShape().GetDimNum() == 3 && SameShape3(q, k),
-                       ACLNN_ERR_PARAM_INVALID, "NTD varlen q/k must be [H, T_total, K] rank3.");
+            if (!(gOk && bOk && g->GetDataType() == beta->GetDataType())) {
+                if (!gOk) return InvalidDtype(g, "g", "BF16 or FP32, matching beta");
+                if (!bOk) return InvalidDtype(beta, "beta", "BF16 or FP32, matching g");
+                return InvalidArgument("g/beta",
+                    "actual g dtype=" + ge::TypeUtils::DataTypeToSerialString(g->GetDataType()) +
+                    ", beta dtype=" + ge::TypeUtils::DataTypeToSerialString(beta->GetDataType()) +
+                    "; expected identical dtypes, both BF16 or both FP32");
+            }
+            if (!(q->GetViewShape().GetDimNum() == 3 && SameShape3(q, k))) {
+                return InvalidShapeText("q/k",
+                    "q=" + ShapeText(q->GetViewShape()) + ",k=" + ShapeText(k->GetViewShape()),
+                    "rank-3 NTD varlen q/k with identical [H,T_total,K] shapes");
+            }
             const int64_t totalTok = Dim(q, 1);
             const int64_t headNum = Dim(q, 0);
             const int64_t kDim = Dim(q, 2);
-            CHECK_COND(kDim == KDA_FD32_HEAD_DIM && totalTok > 0, ACLNN_ERR_PARAM_INVALID,
-                       "NTD varlen requires K == 128 and T_total > 0.");
-            CHECK_COND(v->GetViewShape().GetDimNum() == 3 && Dim(v, 1) == totalTok &&
-                           Dim(v, 2) == KDA_FD32_HEAD_DIM && g->GetViewShape().GetDimNum() == 3 &&
-                           Dim(g, 1) == totalTok && Dim(g, 2) == kDim && Dim(v, 0) == Dim(g, 0),
-                       ACLNN_ERR_PARAM_INVALID, "NTD varlen v/g must be [HV, T_total, 128].");
+            if (!(kDim == KDA_FD32_HEAD_DIM && totalTok > 0)) {
+                return InvalidValue("K/T_total",
+                    "K=" + std::to_string(kDim) + ",T_total=" + std::to_string(totalTok),
+                    "K=128 and T_total>0");
+            }
+            if (!(v->GetViewShape().GetDimNum() == 3 && Dim(v, 1) == totalTok &&
+                  Dim(v, 2) == KDA_FD32_HEAD_DIM && g->GetViewShape().GetDimNum() == 3 &&
+                  Dim(g, 1) == totalTok && Dim(g, 2) == kDim && Dim(v, 0) == Dim(g, 0))) {
+                return InvalidShapeText("v/g",
+                    "v=" + ShapeText(v->GetViewShape()) + ",g=" + ShapeText(g->GetViewShape()),
+                    "v=[HV," + std::to_string(totalTok) + ",128],g=[HV," +
+                    std::to_string(totalTok) + "," + std::to_string(kDim) + "] with equal HV");
+            }
             const int64_t hvNum = Dim(v, 0);
-            CHECK_COND(hvNum >= headNum && hvNum % headNum == 0, ACLNN_ERR_PARAM_INVALID,
-                       "NTD varlen HV must be a positive multiple of H, got H=%ld HV=%ld.", headNum, hvNum);
-            CHECK_COND(beta->GetViewShape().GetDimNum() == 2 && Dim(beta, 0) == hvNum &&
-                           Dim(beta, 1) == totalTok,
-                       ACLNN_ERR_PARAM_INVALID, "NTD varlen beta must be [HV, T_total].");
-            CHECK_COND(aLog->GetDataType() == DataType::DT_FLOAT && aLog->GetViewShape().GetDimNum() == 1 &&
-                           Dim(aLog, 0) == hvNum,
-                       ACLNN_ERR_PARAM_INVALID, "aLog must be fp32 [HV].");
-            CHECK_COND(dtBias->GetDataType() == DataType::DT_FLOAT &&
-                           dtBias->GetViewShape().GetShapeSize() == hvNum * kDim,
-                       ACLNN_ERR_PARAM_INVALID, "dtBias must be fp32 [HV*K].");
-            CHECK_COND(o->GetViewShape().GetDimNum() == 3 && Dim(o, 0) == totalTok &&
-                           Dim(o, 1) == hvNum && Dim(o, 2) == KDA_FD32_HEAD_DIM,
-                       ACLNN_ERR_PARAM_INVALID, "NTD varlen o must remain TND [T_total, HV, V].");
+            if (!(headNum > 0 && hvNum >= headNum && hvNum % headNum == 0)) {
+                return InvalidValue("H/HV", "H=" + std::to_string(headNum) + ",HV=" + std::to_string(hvNum),
+                    "HV>=H and HV%H==0");
+            }
+            if (!(beta->GetViewShape().GetDimNum() == 2 && Dim(beta, 0) == hvNum &&
+                  Dim(beta, 1) == totalTok)) {
+                return InvalidShape(beta, "beta",
+                    "[" + std::to_string(hvNum) + "," + std::to_string(totalTok) + "]");
+            }
+            if (!(aLog->GetDataType() == DataType::DT_FLOAT && aLog->GetViewShape().GetDimNum() == 1 &&
+                  Dim(aLog, 0) == hvNum)) {
+                if (aLog->GetDataType() != DataType::DT_FLOAT) return InvalidDtype(aLog, "aLog", "FP32");
+                return InvalidShape(aLog, "aLog", "[" + std::to_string(hvNum) + "]");
+            }
+            if (!(dtBias->GetDataType() == DataType::DT_FLOAT &&
+                  dtBias->GetViewShape().GetShapeSize() == hvNum * kDim)) {
+                if (dtBias->GetDataType() != DataType::DT_FLOAT) return InvalidDtype(dtBias, "dtBias", "FP32");
+                return InvalidShape(dtBias, "dtBias",
+                    "element count " + std::to_string(hvNum * kDim) + " ([HV*K])");
+            }
+            if (!(o->GetViewShape().GetDimNum() == 3 && Dim(o, 0) == totalTok &&
+                  Dim(o, 1) == hvNum && Dim(o, 2) == KDA_FD32_HEAD_DIM)) {
+                return InvalidShape(o, "o",
+                    "[" + std::to_string(totalTok) + "," + std::to_string(hvNum) + ",128] (TND)");
+            }
             const int64_t nSeq = static_cast<int64_t>(cuSeqlens->Size()) - 1;
-            CHECK_COND(nSeq >= 1 && nSeq <= 1024, ACLNN_ERR_PARAM_INVALID,
-                       "varlen cu_seqlens: sequence count must be in [1, 1024].");
-            for (auto *state : {initialState, finalState}) {
+            if (!(nSeq >= 1 && nSeq <= 1024)) {
+                return InvalidValue("cuSeqlens.sequenceCount", std::to_string(nSeq), "[1,1024]");
+            }
+            const aclTensor *states[] = {initialState, finalState};
+            const char *stateNames[] = {"initialState", "finalState"};
+            for (size_t i = 0; i < 2; ++i) {
+                const aclTensor *state = states[i];
                 if (state == nullptr) {
                     continue;
                 }
-                CHECK_COND(state->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
-                           "initialState/finalState must be fp32.");
-                CHECK_COND(state->GetViewShape().GetDimNum() == 3 && Dim(state, 0) == nSeq * hvNum &&
-                               Dim(state, 1) == KDA_FD32_HEAD_DIM && Dim(state, 2) == KDA_FD32_HEAD_DIM,
-                           ACLNN_ERR_PARAM_INVALID,
-                           "varlen initialState/finalState must be [nSeq*HV, 128, 128].");
+                if (state->GetDataType() != DataType::DT_FLOAT) {
+                    return InvalidDtype(state, stateNames[i], "FP32");
+                }
+                if (!(state->GetViewShape().GetDimNum() == 3 && Dim(state, 0) == nSeq * hvNum &&
+                      Dim(state, 1) == KDA_FD32_HEAD_DIM && Dim(state, 2) == KDA_FD32_HEAD_DIM)) {
+                    return InvalidShape(state, stateNames[i],
+                        "[" + std::to_string(nSeq * hvNum) + ",128,128]");
+                }
             }
             return ACLNN_SUCCESS;
         }
         // token-major varlen:q/k [T,H,K],v/g [T,HV,*],beta [T,HV],
         // o [T,HV,V],state [nSeq*HV,K,V](aclnn 已拍平)。
-        CHECK_COND(q->GetDataType() == DataType::DT_BF16,
-                   ACLNN_ERR_PARAM_INVALID, "q must be bf16.");
+        if (q->GetDataType() != DataType::DT_BF16) return InvalidDtype(q, "q", "BF16");
         const bool gOk = g->GetDataType() == DataType::DT_BF16 || g->GetDataType() == DataType::DT_FLOAT;
         const bool bOk = beta->GetDataType() == DataType::DT_BF16 || beta->GetDataType() == DataType::DT_FLOAT;
-        CHECK_COND(gOk && bOk && g->GetDataType() == beta->GetDataType(),
-                   ACLNN_ERR_PARAM_INVALID, "varlen g/beta must share the same dtype, bf16 or fp32.");
-        CHECK_COND(q->GetViewShape().GetDimNum() == 3 && SameShape3(q, k),
-                   ACLNN_ERR_PARAM_INVALID, "varlen q/k must be [T, H, K] rank3.");
+        if (!(gOk && bOk && g->GetDataType() == beta->GetDataType())) {
+            if (!gOk) return InvalidDtype(g, "g", "BF16 or FP32, matching beta");
+            if (!bOk) return InvalidDtype(beta, "beta", "BF16 or FP32, matching g");
+            return InvalidArgument("g/beta",
+                "actual g dtype=" + ge::TypeUtils::DataTypeToSerialString(g->GetDataType()) +
+                ", beta dtype=" + ge::TypeUtils::DataTypeToSerialString(beta->GetDataType()) +
+                "; expected identical dtypes, both BF16 or both FP32");
+        }
+        if (!(q->GetViewShape().GetDimNum() == 3 && SameShape3(q, k))) {
+            return InvalidShapeText("q/k",
+                "q=" + ShapeText(q->GetViewShape()) + ",k=" + ShapeText(k->GetViewShape()),
+                "rank-3 varlen q/k with identical [T,H,K] shapes");
+        }
         const int64_t totalTok = Dim(q, 0);
         const int64_t headNum = Dim(q, 1);
         const int64_t kDim = Dim(q, 2);
-        CHECK_COND(kDim == KDA_FD32_HEAD_DIM && totalTok > 0, ACLNN_ERR_PARAM_INVALID,
-                   "varlen requires K == 128 and T > 0.");
-        CHECK_COND(v->GetViewShape().GetDimNum() == 3 && Dim(v, 0) == totalTok &&
-                       Dim(v, 2) == KDA_FD32_HEAD_DIM && g->GetViewShape().GetDimNum() == 3 &&
-                       Dim(g, 0) == totalTok && Dim(g, 2) == kDim && Dim(v, 1) == Dim(g, 1),
-                   ACLNN_ERR_PARAM_INVALID, "varlen v/g must be [T, HV, 128].");
+        if (!(kDim == KDA_FD32_HEAD_DIM && totalTok > 0)) {
+            return InvalidValue("K/T", "K=" + std::to_string(kDim) + ",T=" + std::to_string(totalTok),
+                "K=128 and T>0");
+        }
+        if (!(v->GetViewShape().GetDimNum() == 3 && Dim(v, 0) == totalTok &&
+              Dim(v, 2) == KDA_FD32_HEAD_DIM && g->GetViewShape().GetDimNum() == 3 &&
+              Dim(g, 0) == totalTok && Dim(g, 2) == kDim && Dim(v, 1) == Dim(g, 1))) {
+            return InvalidShapeText("v/g",
+                "v=" + ShapeText(v->GetViewShape()) + ",g=" + ShapeText(g->GetViewShape()),
+                "v=[" + std::to_string(totalTok) + ",HV,128],g=[" + std::to_string(totalTok) +
+                ",HV," + std::to_string(kDim) + "] with equal HV");
+        }
         const int64_t hvNum = Dim(v, 1);
-        CHECK_COND(hvNum >= headNum && hvNum % headNum == 0, ACLNN_ERR_PARAM_INVALID,
-                   "varlen HV must be a positive multiple of H, got H=%ld HV=%ld.", headNum, hvNum);
+        if (!(headNum > 0 && hvNum >= headNum && hvNum % headNum == 0)) {
+            return InvalidValue("H/HV", "H=" + std::to_string(headNum) + ",HV=" + std::to_string(hvNum),
+                "HV>=H and HV%H==0");
+        }
         // beta 在 aclnn varlen 路径里已被整调用一次转置为头连续 [HV, T]
-        CHECK_COND(beta->GetViewShape().GetDimNum() == 2 && Dim(beta, 0) == hvNum &&
-                       Dim(beta, 1) == totalTok,
-                   ACLNN_ERR_PARAM_INVALID, "varlen beta must be [HV, T] (host-transposed).");
-        CHECK_COND(aLog->GetDataType() == DataType::DT_FLOAT && aLog->GetViewShape().GetDimNum() == 1 &&
-                       Dim(aLog, 0) == hvNum,
-                   ACLNN_ERR_PARAM_INVALID, "aLog must be fp32 [HV].");
-        CHECK_COND(dtBias->GetDataType() == DataType::DT_FLOAT &&
-                       dtBias->GetViewShape().GetShapeSize() == hvNum * kDim,
-                   ACLNN_ERR_PARAM_INVALID, "dtBias must be fp32 [HV*K].");
-        CHECK_COND(SameShape3(o, v), ACLNN_ERR_PARAM_INVALID, "varlen o shape must match v [T, HV, V].");
+        if (!(beta->GetViewShape().GetDimNum() == 2 && Dim(beta, 0) == hvNum &&
+              Dim(beta, 1) == totalTok)) {
+            return InvalidShape(beta, "beta",
+                "[" + std::to_string(hvNum) + "," + std::to_string(totalTok) + "] (host-transposed)");
+        }
+        if (!(aLog->GetDataType() == DataType::DT_FLOAT && aLog->GetViewShape().GetDimNum() == 1 &&
+              Dim(aLog, 0) == hvNum)) {
+            if (aLog->GetDataType() != DataType::DT_FLOAT) return InvalidDtype(aLog, "aLog", "FP32");
+            return InvalidShape(aLog, "aLog", "[" + std::to_string(hvNum) + "]");
+        }
+        if (!(dtBias->GetDataType() == DataType::DT_FLOAT &&
+              dtBias->GetViewShape().GetShapeSize() == hvNum * kDim)) {
+            if (dtBias->GetDataType() != DataType::DT_FLOAT) return InvalidDtype(dtBias, "dtBias", "FP32");
+            return InvalidShape(dtBias, "dtBias",
+                "element count " + std::to_string(hvNum * kDim) + " ([HV*K])");
+        }
+        if (!SameShape3(o, v)) return InvalidShape(o, "o", ShapeText(v->GetViewShape()));
         const int64_t nSeq = static_cast<int64_t>(cuSeqlens->Size()) - 1;
-        CHECK_COND(nSeq >= 1 && nSeq <= 1024, ACLNN_ERR_PARAM_INVALID,
-                   "varlen cu_seqlens: sequence count must be in [1, 1024].");
-        for (auto *state : {initialState, finalState}) {
+        if (!(nSeq >= 1 && nSeq <= 1024)) {
+            return InvalidValue("cuSeqlens.sequenceCount", std::to_string(nSeq), "[1,1024]");
+        }
+        const aclTensor *states[] = {initialState, finalState};
+        const char *stateNames[] = {"initialState", "finalState"};
+        for (size_t i = 0; i < 2; ++i) {
+            const aclTensor *state = states[i];
             if (state == nullptr) {
                 continue;
             }
-            CHECK_COND(state->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
-                       "initialState/finalState must be fp32.");
-            CHECK_COND(state->GetViewShape().GetDimNum() == 3 && Dim(state, 0) == nSeq * hvNum &&
-                           Dim(state, 1) == KDA_FD32_HEAD_DIM && Dim(state, 2) == KDA_FD32_HEAD_DIM,
-                       ACLNN_ERR_PARAM_INVALID,
-                       "varlen initialState/finalState must be [nSeq*HV, 128, 128].");
+            if (state->GetDataType() != DataType::DT_FLOAT) {
+                return InvalidDtype(state, stateNames[i], "FP32");
+            }
+            if (!(state->GetViewShape().GetDimNum() == 3 && Dim(state, 0) == nSeq * hvNum &&
+                  Dim(state, 1) == KDA_FD32_HEAD_DIM && Dim(state, 2) == KDA_FD32_HEAD_DIM)) {
+                return InvalidShape(state, stateNames[i],
+                    "[" + std::to_string(nSeq * hvNum) + ",128,128]");
+            }
         }
         return ACLNN_SUCCESS;
     }
-    CHECK_COND(o != nullptr, ACLNN_ERR_PARAM_NULLPTR, "o must not be nullptr.");
-    CHECK_COND(q->GetDataType() == DataType::DT_BF16,
-               ACLNN_ERR_PARAM_INVALID, "q must be bf16.");
+    if (o == nullptr) return Missing("o");
+    if (q->GetDataType() != DataType::DT_BF16) return InvalidDtype(q, "q", "BF16");
     // g/beta:bf16(组合 0)或 fp32(组合 1),且两者必须同 dtype(def zip 组合只有这两种)
     const bool gOk = g->GetDataType() == DataType::DT_BF16 || g->GetDataType() == DataType::DT_FLOAT;
     const bool bOk = beta->GetDataType() == DataType::DT_BF16 || beta->GetDataType() == DataType::DT_FLOAT;
-    CHECK_COND(gOk && bOk && g->GetDataType() == beta->GetDataType(),
-               ACLNN_ERR_PARAM_INVALID, "g/beta must share the same dtype, bf16 or fp32.");
-    CHECK_COND(q->GetViewShape().GetDimNum() == 3, ACLNN_ERR_PARAM_INVALID,
-               "q must be [H, T, K] head-contiguous rank3 (kernel contract).");
-    CHECK_COND(SameShape3(q, k), ACLNN_ERR_PARAM_INVALID, "k shape must match q [H, T, K].");
+    if (!(gOk && bOk && g->GetDataType() == beta->GetDataType())) {
+        if (!gOk) return InvalidDtype(g, "g", "BF16 or FP32, matching beta");
+        if (!bOk) return InvalidDtype(beta, "beta", "BF16 or FP32, matching g");
+        return InvalidArgument("g/beta",
+            "actual g dtype=" + ge::TypeUtils::DataTypeToSerialString(g->GetDataType()) +
+            ", beta dtype=" + ge::TypeUtils::DataTypeToSerialString(beta->GetDataType()) +
+            "; expected identical dtypes, both BF16 or both FP32");
+    }
+    if (q->GetViewShape().GetDimNum() != 3) {
+        return InvalidShape(q, "q", "[H,T,K] head-contiguous rank 3 (kernel contract)");
+    }
+    if (!SameShape3(q, k)) return InvalidShape(k, "k", ShapeText(q->GetViewShape()));
     const int64_t headNum = Dim(q, 0);
     const int64_t seqLen = Dim(q, 1);
     const int64_t kDim = Dim(q, 2);
-    CHECK_COND(kDim == KDA_FD32_HEAD_DIM, ACLNN_ERR_PARAM_INVALID, "K must be 128.");
-    CHECK_COND(seqLen > 0, ACLNN_ERR_PARAM_INVALID,
-               "T must be positive (tail chunks with T % 128 != 0 are handled in-kernel).");
+    if (kDim != KDA_FD32_HEAD_DIM) return InvalidValue("K", std::to_string(kDim), "128");
+    if (seqLen <= 0) {
+        return InvalidValue("T", std::to_string(seqLen), ">0 (tail chunks with T%128!=0 are handled in-kernel)");
+    }
     // GVA(issue #829):v/g 为 [HV, T, K/V],HV 是 H 的整数倍(H==HV 为特例)
-    CHECK_COND(v->GetViewShape().GetDimNum() == 3 && g->GetViewShape().GetDimNum() == 3 &&
-                   Dim(v, 1) == seqLen && Dim(g, 1) == seqLen &&
-                   Dim(v, 2) == KDA_FD32_HEAD_DIM && Dim(g, 2) == kDim &&
-                   Dim(v, 0) == Dim(g, 0),
-               ACLNN_ERR_PARAM_INVALID, "v/g must be [HV, T, K/V] with V == 128.");
+    if (!(v->GetViewShape().GetDimNum() == 3 && g->GetViewShape().GetDimNum() == 3 &&
+          Dim(v, 1) == seqLen && Dim(g, 1) == seqLen &&
+          Dim(v, 2) == KDA_FD32_HEAD_DIM && Dim(g, 2) == kDim &&
+          Dim(v, 0) == Dim(g, 0))) {
+        return InvalidShapeText("v/g",
+            "v=" + ShapeText(v->GetViewShape()) + ",g=" + ShapeText(g->GetViewShape()),
+            "v=[HV," + std::to_string(seqLen) + ",128],g=[HV," + std::to_string(seqLen) +
+            "," + std::to_string(kDim) + "] with equal HV");
+    }
     const int64_t hvNum = Dim(v, 0);
-    CHECK_COND(hvNum >= headNum && hvNum % headNum == 0, ACLNN_ERR_PARAM_INVALID,
-               "HV must be a positive multiple of H (GVA), got H=%ld HV=%ld.", headNum, hvNum);
-    CHECK_COND(beta->GetViewShape().GetDimNum() == 2 && Dim(beta, 0) == hvNum && Dim(beta, 1) == seqLen,
-               ACLNN_ERR_PARAM_INVALID, "beta must be [HV, T].");
-    CHECK_COND(aLog->GetDataType() == DataType::DT_FLOAT && aLog->GetViewShape().GetDimNum() == 1 &&
-                   Dim(aLog, 0) == hvNum,
-               ACLNN_ERR_PARAM_INVALID, "aLog must be fp32 [HV].");
-    CHECK_COND(dtBias->GetDataType() == DataType::DT_FLOAT &&
-                   dtBias->GetViewShape().GetShapeSize() == hvNum * kDim,
-               ACLNN_ERR_PARAM_INVALID, "dtBias must be fp32 [HV*K].");
-    CHECK_COND(SameShape3(o, v), ACLNN_ERR_PARAM_INVALID, "o shape must match v [HV, T, V].");
-    for (auto *state : {initialState, finalState}) {
+    if (!(headNum > 0 && hvNum >= headNum && hvNum % headNum == 0)) {
+        return InvalidValue("H/HV", "H=" + std::to_string(headNum) + ",HV=" + std::to_string(hvNum),
+            "HV>=H and HV%H==0 (GVA)");
+    }
+    if (!(beta->GetViewShape().GetDimNum() == 2 && Dim(beta, 0) == hvNum && Dim(beta, 1) == seqLen)) {
+        return InvalidShape(beta, "beta", "[" + std::to_string(hvNum) + "," + std::to_string(seqLen) + "]");
+    }
+    if (!(aLog->GetDataType() == DataType::DT_FLOAT && aLog->GetViewShape().GetDimNum() == 1 &&
+          Dim(aLog, 0) == hvNum)) {
+        if (aLog->GetDataType() != DataType::DT_FLOAT) return InvalidDtype(aLog, "aLog", "FP32");
+        return InvalidShape(aLog, "aLog", "[" + std::to_string(hvNum) + "]");
+    }
+    if (!(dtBias->GetDataType() == DataType::DT_FLOAT &&
+          dtBias->GetViewShape().GetShapeSize() == hvNum * kDim)) {
+        if (dtBias->GetDataType() != DataType::DT_FLOAT) return InvalidDtype(dtBias, "dtBias", "FP32");
+        return InvalidShape(dtBias, "dtBias",
+            "element count " + std::to_string(hvNum * kDim) + " ([HV*K])");
+    }
+    if (!SameShape3(o, v)) return InvalidShape(o, "o", ShapeText(v->GetViewShape()));
+    const aclTensor *states[] = {initialState, finalState};
+    const char *stateNames[] = {"initialState", "finalState"};
+    for (size_t i = 0; i < 2; ++i) {
+        const aclTensor *state = states[i];
         if (state == nullptr) {
             continue;
         }
-        CHECK_COND(state->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
-                   "initialState/finalState must be fp32.");
-        CHECK_COND(state->GetViewShape().GetDimNum() == 3 && Dim(state, 0) == hvNum &&
-                       Dim(state, 1) == KDA_FD32_HEAD_DIM && Dim(state, 2) == KDA_FD32_HEAD_DIM,
-                   ACLNN_ERR_PARAM_INVALID, "initialState/finalState must be [HV, 128, 128].");
+        if (state->GetDataType() != DataType::DT_FLOAT) {
+            return InvalidDtype(state, stateNames[i], "FP32");
+        }
+        if (!(state->GetViewShape().GetDimNum() == 3 && Dim(state, 0) == hvNum &&
+              Dim(state, 1) == KDA_FD32_HEAD_DIM && Dim(state, 2) == KDA_FD32_HEAD_DIM)) {
+            return InvalidShape(state, stateNames[i], "[" + std::to_string(hvNum) + ",128,128]");
+        }
     }
     return ACLNN_SUCCESS;
 }

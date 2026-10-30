@@ -197,8 +197,13 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=accuracy
 
 `chunk_kda_fwd` 的 Ascend950 chunk32 融合路径使用独立子目录
 `chunk_kda_fwd/chunk32/`，精度、性能和 mssanitizer 分别由其中的
-`run_chunk32_atk.sh accuracy|performance|mssanitizer` 发起；其 TilingKey 为 `32`，
-与 chunk64 用例分开维护。
+`run_chunk32_atk.sh accuracy|performance|mssanitizer` 发起。子目录的
+`chunk_kda_fwd_chunk32.yaml` 与 `gen_chunk_kda_fwd_chunk32.py` 沿用 legacy marker 形式，
+只读校验并复用 40 条 accuracy、2 条 performance、5 条 mss 冻结 case，不重写三份 JSON；
+迁移到真实签名输入前不得在同一套件混用两种形式。公开调用入口为
+`fla_npu.ops.ascendc.chunk_kda_fwd`，底层进入 `aclnnChunkKdaFwdV2`；chunk32 实际选择
+`ChunkKdaFwdFused` 的 TilingKey `0`，既有外层 `ChunkKdaFwd` 仍为 `1/2`，
+`chunk_size=32` 不是 TilingKey。
 
 ### 性能执行
 

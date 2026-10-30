@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ACTION=${1:-accuracy}
-DEVICE=${2:-4}
+DEVICE=${2:-0}
 SUITE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ATK=${ATK:-atk}
 OUT=${ATK_OUTPUT_ROOT:-$SUITE_DIR/atk_output}/$ACTION
