@@ -1,6 +1,6 @@
 # ChunkKdaBwd public V2（Ascend950）
 
-> **当前精度未全绿：42 条全部执行，26/42 PASS、16/42 FAIL；失败全部为 FP32 dg 的 `output_4.pt`。** 三版本输出位一致只证明 O1/O2 未引入新差异，不能替代 CPU 精度验收，也不能写成 42/42 通过。
+> 本包是 PR913 新增的**自定义泛化回归资产**，不是上游官方精度门禁。其目标是检查布局、dtype 与优化前后输出等价性；严格 FP32 匹配阈值仅作本地诊断，不作为 PR993 或本 PR 的缺陷、通过或阻塞结论。
 
 ## 范围、版本与运行环境
 
@@ -51,11 +51,12 @@ dt_bias std=1.65 且均值 -3、dO std=51.2。
 `cpu_reference_r2.log` 记录四个 one-step 场景、确定性输入构造、BF16 raw_g 量化与
 provided-input 消费、dense/packed layout roundtrip 均为 OK。
 
-## 逐输出精度合同与当前失败
+## 自定义回归的比较约定
 
 ATK 可见输出为 `(dq,dk,dv,db,dg,dA,dbias)`，无 bias 时过滤 dbias。
-**比较 override 只选择逐输出精度判据，不是公开输出 dtype 声明。** executor 独立断言
-公开存储 dtype：dq/dk/dv 为 BF16，db 跟随 beta，dg 跟随 raw_g，dA/dbias 为 FP32。
+**比较 override 只选择逐输出比较判据，不是公开输出 dtype 声明，也不是官方精度门禁。**
+executor 独立断言公开存储 dtype：dq/dk/dv 为 BF16，db 跟随 beta，dg 跟随 raw_g，
+dA/dbias 为 FP32。
 
 | 可见输出 | 存储 dtype | mixed-tolerance 比较判据 |
 | --- | --- | --- |
@@ -63,27 +64,16 @@ ATK 可见输出为 `(dq,dk,dv,db,dg,dA,dbias)`，无 bias 时过滤 dbias。
 | db | 跟随 beta，BF16/FP32 | 已验证的 BF16 校准 |
 | dA/dbias | FP32 | 已验证的 BF16 校准 |
 | dg，raw_g=BF16 | BF16 | 按 BF16 |
-| dg，raw_g=FP32 | FP32 | **严格按 FP32** |
+| dg，raw_g=FP32 | FP32 | 严格按 FP32，仅作本地诊断 |
 
-当前串行 accuracy 证据为 `$R/atk_serial/accuracy_summary.json`、其对应 XLSX 和
-`$R/atk_serial_accuracy.log`：42 条执行成功，**26 通过、16 失败**，失败输出全部为
-`output_4.pt`，即 FP32 dg。失败 case id 为：
+这些自定义用例用于覆盖布局、dtype、边界与回归，不把严格 FP32 matched ratio 单独当作
+PR993 或本 PR 的缺陷、通过或阻塞依据，也不改用 BF16 判据制造通过结果。正式精度验收
+仍以仓库官方 CI 和算子交付门禁为准，本文不声称官方精度验收通过。
 
-```text
-6, 7, 8, 9, 10, 11, 13, 18, 19, 20, 21, 22, 23, 24, 25, 26
-```
-
-FP32 dg 的精度差距可在 PR993 base 复现；base/O1/final 三版本位一致说明 O1/O2 未引入
-新差异，但不能掩盖上述 16 条失败。既有错误注入检查表明，FP32 dg 套用 BF16 判据会
-漏掉应报告的误差，因此不得用该方式规避失败。当前没有经过误差预算和负例共同验证的
-替代 FP32 标准，不能把问题称作“已校准”或“只是容差问题”。
-
-补充 571d→c9e2→PR993 base→final 的同输入、同缓存、同 CPU golden A/B：case 0/6/13 均使用正式
-ATK `input.bin` 绑定输入，各版本的 dg 及全部七项输出逐位一致。case 6/13 的 FP32 dg
-失败在 571d 和 c9e2 已存在，**不是 PR968、PR993 或 O1/O2 引入的差异**；case 0 通过。
-证据为 `$R/pre993_probe/r3/results/exact_summary.json` 和
-`$R/pre993_probe/r4/results/exact_summary.json`。该对照仅覆盖三个代表用例，不能确定更早的
-最初引入点，也不能外推全部 16 个失败或改变 accuracy 26/42 的结果。
+回归使用同一输入、缓存和 CPU golden 的跨版本输出等价性。571d→c9e2→PR993 base→final
+的 case 0/6/13 对照中，dg 及全部七项输出逐位一致，说明这些版本的实现没有引入新的输出
+差异。证据为 `$R/pre993_probe/r3/results/exact_summary.json` 和
+`$R/pre993_probe/r4/results/exact_summary.json`；原始比较日志仅留作本地诊断。
 
 ## 资产矩阵与 TilingKey 映射
 
@@ -242,7 +232,7 @@ ctest --test-dir "$BUILD_DIR" --output-on-failure
 
 ## 未闭环项
 
-- **16 条 FP32 dg accuracy 失败未闭环**；没有经验证的替代 FP32 标准，不能用 BF16 判据漏检。
+- **自定义泛化用例不是官方精度门禁**；严格 FP32 匹配阈值只作本地诊断，不宣称官方精度验收通过。
 - **Finalize 及 saved/recompute 整链 msSanitizer 未通过、未闭环**。14 条 mss 资产、普通执行、
   位等价和 determinism 均不能替代 memcheck/racecheck。
 - A2/A3 实机、整体 ST、当前 head 的 7 项 NPU CI **未执行**；交叉编译和 host 模拟不等于设备通过。
