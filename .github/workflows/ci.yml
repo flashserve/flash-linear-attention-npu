@@ -370,7 +370,9 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.should_run == 'true'
     strategy:
-      fail-fast: false
+      # A2 and A5 jointly form one aggregate gate. Once either platform fails,
+      # the sibling job can no longer make the gate pass and should stop early.
+      fail-fast: true
       matrix:
         include:
           - platform: a2

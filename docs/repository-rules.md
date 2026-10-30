@@ -46,7 +46,7 @@ NPU 资源有限，`NPU CI` 不会由 PR 新建、重开或 push 新 commit 自�
 6. `NPU CI / A2+A5 / 06 chunk_fwd_o 局部覆盖安装`
 7. `NPU CI / A2+A5 / 07 报告与 commit 校验`
 
-一次触发固定并行验证 A2（`ascend910b`）和 A5（`ascend950`）。每个平台内部按顺序执行前 6 个分项；任一分项失败时，后续分项标记为未执行，不再继续运行。可执行分项失败时，关键诊断会给出 `CI_STAGE=<分项>`、CI 模式和目标 SOC 对应的 `bash ci/run_ci_container.sh` 复现命令。两个 self-hosted job 只上传带平台、SOC、commit、Actions run 和 attempt 身份的分项及精度结果；GitHub-hosted 汇总 job 校验两平台结果后发布 7 个 aggregate context，其中第 7 项负责报告完整性和 PR commit 一致性。7 个 context 必须来自同一次 A2+A5 Actions run；任一平台缺席、任一已执行分项失败、后续分项未执行、精度未通过或报告身份不匹配，都不能满足门禁。
+一次触发固定并行验证 A2（`ascend910b`）和 A5（`ascend950`）。每个平台内部按顺序执行前 6 个分项；任一分项失败时，后续分项标记为未执行，不再继续运行。任一平台 job 失败后，Actions 会取消仍在排队或运行的另一平台 job，避免继续占用 NPU；汇总结果仍按失败收敛。可执行分项失败时，关键诊断会给出 `CI_STAGE=<分项>`、CI 模式和目标 SOC 对应的 `bash ci/run_ci_container.sh` 复现命令。两个 self-hosted job 只上传带平台、SOC、commit、Actions run 和 attempt 身份的分项及精度结果；GitHub-hosted 汇总 job 校验两平台结果后发布 7 个 aggregate context，其中第 7 项负责报告完整性和 PR commit 一致性。7 个 context 必须来自同一次 A2+A5 Actions run；任一平台缺席、任一已执行分项失败、后续分项未执行、精度未通过或报告身份不匹配，都不能满足门禁。
 
 PR 合入前，当前 head commit 的 7 个 NPU 状态和自动执行的 `CI 契约测试` 必须全部成功；当 PR 更新 commit 后，旧 commit 上的 CI 成功状态自动失效，需要仓库 Admin 权限账号重新触发 NPU CI。
 

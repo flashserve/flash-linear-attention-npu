@@ -812,6 +812,11 @@ globalThis.core = {
         self.assertIn('mount_args+=(-v "$host_tmpdir:$container_tmpdir")', container_script)
         self.assertIn('CI_TMPDIR must be an absolute container path', container_script)
 
+    def test_matrix_failure_cancels_the_sibling_platform(self):
+        workflow = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
+        job = workflow["jobs"]["ascend-npu"]
+        self.assertTrue(job["strategy"]["fail-fast"])
+
     def test_proxy_fallback_preserves_direct_first_checkout_and_original_retry_order(self):
         job = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]["ascend-npu"]
         self.assertEqual(job["env"]["CI_PROXY_SCRIPT"], "/home/huangjunzhe/ci/vpn-proxy.sh")
