@@ -82,15 +82,6 @@ Python 和 ACLNN 层拒绝。前反向须配套：A5 若需要 sigmoid，应在�
 - Finalize 在片上转换 raw_g/beta，dg/db 直接按输入 dtype 写出。
   重计算分支仍可能先为 Recompute 创建 FP32 raw_g 临时张量。
 
-## A5 V2 范围
-
-- Ascend950，Hq=Hv，K=V=128，chunk_size=64，B/H/T 为正。
-- `implementation="auto"` 和 `"optimized"` 均走 V2；`"legacy"` 拒绝新契约，不自动回退。
-- safe_gate/use_gate_in_kernel/use_exp2 必须为 True，`-5<=lower_bound<0`。
-- state_v_first=False；不支持 initial_state/dht，dh0=None。
-- **保留现有重计算限制：H≤256 且 H 为 8 的倍数**；保存路径不受该限制。
-- 直接调用 V2 ACLNN 时须提供无空段的规范变长元数据。
-
 ## 接口升级
 
 这是非兼容升级。Python 总接口仅使用 `layout`，不接收 input_layout/output_layout。
