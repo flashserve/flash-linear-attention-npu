@@ -503,7 +503,7 @@ template <typename T, bool IsVarlen, bool HasTail>
 	}
 
 template <typename T, bool IsVarlen, bool HasTail>
-	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::copy_l0c_to_ub_1_iter1(int loop_id, uint32_t score_delta_a_ub1_slot, uint32_t score_delta_a_c1_slot) {
+	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::copy_score_delta_l0c_to_ub(int loop_id, uint32_t score_delta_a_ub1_slot, uint32_t score_delta_a_c1_slot) {
 		AscendC::LocalTensor<float> s_delta_l0c_1 = L0c<float>(addrL0C[score_delta_a_c1_slot]*l0_addr_unit);
 		AscendC::LocalTensor<float> s_delta_ub_1 = Ub<float>(addrUB[score_delta_a_ub1_slot]*ub_addr_unit);
 
@@ -599,7 +599,7 @@ template <bool STEADY>
 
 template <typename T, bool IsVarlen, bool HasTail>
 template <bool STEADY>
-	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_ub_1_iter1_u0(int iter, int group_count) {
+	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_writeback_score_delta_a_primary(int iter, int group_count) {
 		if (STEADY || (iter - 1 >= 0 && iter - 1 < group_count)) {
 		    AscendC::SetFlag<AscendC::HardEvent::M_FIX>(score_delta_a_c1_slot);
 		    AscendC::SetFlag<AscendC::HardEvent::M_FIX>(score_delta_a_c2_slot);
@@ -609,37 +609,25 @@ template <bool STEADY>
 		    AscendC::SetFlag<AscendC::HardEvent::M_FIX>(score_delta_a_c3_slot);
 		    syncCV.WaitIntraBlock<MTE3toFIX_UBRelease>(score_delta_a_ub1_slot);
 		    AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(score_delta_a_c1_slot);
-		    copy_l0c_to_ub_1_iter1(iter - 1, score_delta_a_ub1_slot, score_delta_a_c1_slot);
+		    copy_score_delta_l0c_to_ub(iter - 1, score_delta_a_ub1_slot, score_delta_a_c1_slot);
 		}
-	}
 
-template <typename T, bool IsVarlen, bool HasTail>
-template <bool STEADY>
-	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_ub_1_iter1_u0_x1(int iter, int group_count) {
 		if (STEADY || (iter - 1 >= 0 && iter - 1 < group_count)) {
 		    syncCV.SetIntraBlock<FIXtoV_UBReady>(score_delta_a_ub1_slot);
 		    AscendC::SetFlag<AscendC::HardEvent::FIX_M>(score_delta_a_c1_slot);
 		    syncCV.WaitIntraBlock<VtoFIX_UBRelease>(score_delta_a_ub2_slot);
 		    AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(score_delta_a_c2_slot);
-		    copy_l0c_to_ub_1_iter1(iter - 1, score_delta_a_ub2_slot, score_delta_a_c2_slot);
+		    copy_score_delta_l0c_to_ub(iter - 1, score_delta_a_ub2_slot, score_delta_a_c2_slot);
 		}
-	}
 
-template <typename T, bool IsVarlen, bool HasTail>
-template <bool STEADY>
-	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_ub_1_iter1_u0_x2(int iter, int group_count) {
 		if (STEADY || (iter - 1 >= 0 && iter - 1 < group_count)) {
 		    AscendC::SetFlag<AscendC::HardEvent::FIX_M>(score_delta_a_c2_slot);
 		    syncCV.SetIntraBlock<FIXtoV_UBReady>(score_delta_a_ub2_slot);
 		    syncCV.WaitIntraBlock<VtoFIX_UBRelease>(score_delta_a_ub4_slot);
 		    AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(score_delta_a_c4_slot);
-		    copy_l0c_to_ub_1_iter1(iter - 1, score_delta_a_ub4_slot, score_delta_a_c4_slot);
+		    copy_score_delta_l0c_to_ub(iter - 1, score_delta_a_ub4_slot, score_delta_a_c4_slot);
 		}
-	}
 
-template <typename T, bool IsVarlen, bool HasTail>
-template <bool STEADY>
-	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_ub_1_iter1_u0_x3(int iter, int group_count) {
 		if (STEADY || (iter - 1 >= 0 && iter - 1 < group_count)) {
 		    syncCV.SetIntraBlock<MTE3toFIX_UBRelease>(kds2_ub_auto_unroll_id_1_slot);
 		    syncCV.SetIntraBlock<MTE3toFIX_UBRelease>(score_delta_b_ub4_slot);
@@ -653,9 +641,10 @@ template <bool STEADY>
 		    syncCV.SetIntraBlock<VtoFIX_UBRelease>(kds2_ub_slot);
 		    syncCV.WaitIntraBlock<MTE3toFIX_UBRelease>(score_delta_a_ub3_slot);
 		    AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(score_delta_a_c3_slot);
-		    copy_l0c_to_ub_1_iter1(iter - 1, score_delta_a_ub3_slot, score_delta_a_c3_slot);
+		    copy_score_delta_l0c_to_ub(iter - 1, score_delta_a_ub3_slot, score_delta_a_c3_slot);
 		}
 	}
+
 
 template <typename T, bool IsVarlen, bool HasTail>
 template <bool STEADY>
@@ -909,7 +898,7 @@ template <bool STEADY>
 
 template <typename T, bool IsVarlen, bool HasTail>
 template <bool STEADY>
-	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_ub_1_iter1_u0_x4(int iter, int group_count) {
+	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_writeback_score_delta_b_primary(int iter, int group_count) {
 		if (STEADY || (iter - 1 >= 0 && iter - 1 < group_count)) {
 		    AscendC::SetFlag<AscendC::HardEvent::M_FIX>(score_delta_b_c2_slot);
 		    AscendC::SetFlag<AscendC::HardEvent::M_FIX>(score_delta_b_c3_slot);
@@ -919,45 +908,34 @@ template <bool STEADY>
 		    AscendC::SetFlag<AscendC::HardEvent::M_FIX>(score_delta_b_c4_slot);
 		    syncCV.WaitIntraBlock<VtoFIX_UBRelease>(score_delta_b_ub2_slot);
 		    AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(score_delta_b_c2_slot);
-		    copy_l0c_to_ub_1_iter1(iter - 1, score_delta_b_ub2_slot, score_delta_b_c2_slot);
+		    copy_score_delta_l0c_to_ub(iter - 1, score_delta_b_ub2_slot, score_delta_b_c2_slot);
 		}
-	}
 
-template <typename T, bool IsVarlen, bool HasTail>
-template <bool STEADY>
-	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_ub_1_iter1_u0_x5(int iter, int group_count) {
 		if (STEADY || (iter - 1 >= 0 && iter - 1 < group_count)) {
 		    syncCV.SetIntraBlock<FIXtoV_UBReady>(score_delta_b_ub2_slot);
 		    AscendC::SetFlag<AscendC::HardEvent::FIX_M>(score_delta_b_c2_slot);
 		    syncCV.WaitIntraBlock<VtoFIX_UBRelease>(score_delta_b_ub1_slot);
 		    AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(score_delta_b_c1_slot);
-		    copy_l0c_to_ub_1_iter1(iter - 1, score_delta_b_ub1_slot, score_delta_b_c1_slot);
+		    copy_score_delta_l0c_to_ub(iter - 1, score_delta_b_ub1_slot, score_delta_b_c1_slot);
 		}
-	}
 
-template <typename T, bool IsVarlen, bool HasTail>
-template <bool STEADY>
-	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_ub_1_iter1_u0_x6(int iter, int group_count) {
 		if (STEADY || (iter - 1 >= 0 && iter - 1 < group_count)) {
 		    syncCV.SetIntraBlock<FIXtoV_UBReady>(score_delta_b_ub1_slot);
 		    AscendC::SetFlag<AscendC::HardEvent::FIX_M>(score_delta_b_c1_slot);
 		    syncCV.WaitIntraBlock<MTE3toFIX_UBRelease>(score_delta_b_ub4_slot);
 		    AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(score_delta_b_c4_slot);
-		    copy_l0c_to_ub_1_iter1(iter - 1, score_delta_b_ub4_slot, score_delta_b_c4_slot);
+		    copy_score_delta_l0c_to_ub(iter - 1, score_delta_b_ub4_slot, score_delta_b_c4_slot);
 		}
-	}
 
-template <typename T, bool IsVarlen, bool HasTail>
-template <bool STEADY>
-	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_ub_1_iter1_u0_x7(int iter, int group_count) {
 		if (STEADY || (iter - 1 >= 0 && iter - 1 < group_count)) {
 		    AscendC::SetFlag<AscendC::HardEvent::FIX_M>(score_delta_b_c4_slot);
 		    syncCV.SetIntraBlock<FIXtoV_UBReady>(score_delta_b_ub4_slot);
 		    syncCV.WaitIntraBlock<VtoFIX_UBRelease>(score_delta_b_ub3_slot);
 		    AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(score_delta_b_c3_slot);
-		    copy_l0c_to_ub_1_iter1(iter - 1, score_delta_b_ub3_slot, score_delta_b_c3_slot);
+		    copy_score_delta_l0c_to_ub(iter - 1, score_delta_b_ub3_slot, score_delta_b_c3_slot);
 		}
 	}
+
 
 template <typename T, bool IsVarlen, bool HasTail>
 template <bool STEADY>
@@ -1139,7 +1117,7 @@ template <bool STEADY>
 
 template <typename T, bool IsVarlen, bool HasTail>
 template <bool STEADY>
-	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_ub_1_iter1_u1(int iter, int group_count) {
+	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_writeback_score_delta_a_unrolled(int iter, int group_count) {
 		if (STEADY || (iter - 1 >= 0 && iter - 1 < group_count)) {
 		    AscendC::SetFlag<AscendC::HardEvent::M_FIX>(score_delta_a_c1_auto_unroll_id_1_slot);
 		    AscendC::SetFlag<AscendC::HardEvent::M_FIX>(score_delta_a_c2_auto_unroll_id_1_slot);
@@ -1149,37 +1127,25 @@ template <bool STEADY>
 		    AscendC::SetFlag<AscendC::HardEvent::M_FIX>(score_delta_a_c3_auto_unroll_id_1_slot);
 		    syncCV.WaitIntraBlock<MTE3toFIX_UBRelease>(score_delta_a_ub1_auto_unroll_id_1_slot);
 		    AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(score_delta_a_c1_auto_unroll_id_1_slot);
-		    copy_l0c_to_ub_1_iter1(iter - 1, score_delta_a_ub1_auto_unroll_id_1_slot, score_delta_a_c1_auto_unroll_id_1_slot);
+		    copy_score_delta_l0c_to_ub(iter - 1, score_delta_a_ub1_auto_unroll_id_1_slot, score_delta_a_c1_auto_unroll_id_1_slot);
 		}
-	}
 
-template <typename T, bool IsVarlen, bool HasTail>
-template <bool STEADY>
-	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_ub_1_iter1_u1_x1(int iter, int group_count) {
 		if (STEADY || (iter - 1 >= 0 && iter - 1 < group_count)) {
 		    AscendC::SetFlag<AscendC::HardEvent::FIX_M>(score_delta_a_c1_auto_unroll_id_1_slot);
 		    syncCV.SetIntraBlock<FIXtoV_UBReady>(score_delta_a_ub1_auto_unroll_id_1_slot);
 		    syncCV.WaitIntraBlock<MTE3toFIX_UBRelease>(score_delta_a_ub2_auto_unroll_id_1_slot);
 		    AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(score_delta_a_c2_auto_unroll_id_1_slot);
-		    copy_l0c_to_ub_1_iter1(iter - 1, score_delta_a_ub2_auto_unroll_id_1_slot, score_delta_a_c2_auto_unroll_id_1_slot);
+		    copy_score_delta_l0c_to_ub(iter - 1, score_delta_a_ub2_auto_unroll_id_1_slot, score_delta_a_c2_auto_unroll_id_1_slot);
 		}
-	}
 
-template <typename T, bool IsVarlen, bool HasTail>
-template <bool STEADY>
-	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_ub_1_iter1_u1_x2(int iter, int group_count) {
 		if (STEADY || (iter - 1 >= 0 && iter - 1 < group_count)) {
 		    AscendC::SetFlag<AscendC::HardEvent::FIX_M>(score_delta_a_c2_auto_unroll_id_1_slot);
 		    syncCV.SetIntraBlock<FIXtoV_UBReady>(score_delta_a_ub2_auto_unroll_id_1_slot);
 		    syncCV.WaitIntraBlock<VtoFIX_UBRelease>(score_delta_a_ub4_auto_unroll_id_1_slot);
 		    AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(score_delta_a_c4_auto_unroll_id_1_slot);
-		    copy_l0c_to_ub_1_iter1(iter - 1, score_delta_a_ub4_auto_unroll_id_1_slot, score_delta_a_c4_auto_unroll_id_1_slot);
+		    copy_score_delta_l0c_to_ub(iter - 1, score_delta_a_ub4_auto_unroll_id_1_slot, score_delta_a_c4_auto_unroll_id_1_slot);
 		}
-	}
 
-template <typename T, bool IsVarlen, bool HasTail>
-template <bool STEADY>
-	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_ub_1_iter1_u1_x3(int iter, int group_count) {
 		if (STEADY || (iter - 1 >= 0 && iter - 1 < group_count))  syncCV.SetIntraBlock<FIXtoV_UBReady>(score_delta_a_ub4_auto_unroll_id_1_slot);
 		if (STEADY || (iter - 0 >= 0 && iter - 0 < group_count)) {
 		    syncCV.SetIntraBlock<MTE3toFIX_UBRelease>(qplus_kminus_ub_auto_unroll_id_1_slot);
@@ -1195,9 +1161,10 @@ template <bool STEADY>
 		if (STEADY || (iter - 1 >= 0 && iter - 1 < group_count)) {
 		    syncCV.WaitIntraBlock<MTE3toFIX_UBRelease>(score_delta_a_ub3_auto_unroll_id_1_slot);
 		    AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(score_delta_a_c3_auto_unroll_id_1_slot);
-		    copy_l0c_to_ub_1_iter1(iter - 1, score_delta_a_ub3_auto_unroll_id_1_slot, score_delta_a_c3_auto_unroll_id_1_slot);
+		    copy_score_delta_l0c_to_ub(iter - 1, score_delta_a_ub3_auto_unroll_id_1_slot, score_delta_a_c3_auto_unroll_id_1_slot);
 		}
 	}
+
 
 template <typename T, bool IsVarlen, bool HasTail>
 template <bool STEADY>
@@ -1470,7 +1437,7 @@ template <bool STEADY>
 
 template <typename T, bool IsVarlen, bool HasTail>
 template <bool STEADY>
-	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_ub_1_iter1_u1_x4(int iter, int group_count) {
+	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_writeback_score_delta_b_unrolled(int iter, int group_count) {
 		if (STEADY || (iter - 1 >= 0 && iter - 1 < group_count)) {
 		    AscendC::SetFlag<AscendC::HardEvent::M_FIX>(score_delta_b_c2_auto_unroll_id_1_slot);
 		    AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(iter_out_b_a_auto_unroll_id_1_slot);
@@ -1480,46 +1447,35 @@ template <bool STEADY>
 		    AscendC::SetFlag<AscendC::HardEvent::M_FIX>(score_delta_b_c3_auto_unroll_id_1_slot);
 		    syncCV.WaitIntraBlock<VtoFIX_UBRelease>(score_delta_b_ub2_auto_unroll_id_1_slot);
 		    AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(score_delta_b_c2_auto_unroll_id_1_slot);
-		    copy_l0c_to_ub_1_iter1(iter - 1, score_delta_b_ub2_auto_unroll_id_1_slot, score_delta_b_c2_auto_unroll_id_1_slot);
+		    copy_score_delta_l0c_to_ub(iter - 1, score_delta_b_ub2_auto_unroll_id_1_slot, score_delta_b_c2_auto_unroll_id_1_slot);
 		}
-	}
 
-template <typename T, bool IsVarlen, bool HasTail>
-template <bool STEADY>
-	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_ub_1_iter1_u1_x5(int iter, int group_count) {
 		if (STEADY || (iter - 1 >= 0 && iter - 1 < group_count)) {
 		    AscendC::SetFlag<AscendC::HardEvent::FIX_M>(score_delta_b_c2_auto_unroll_id_1_slot);
 		    syncCV.SetIntraBlock<FIXtoV_UBReady>(score_delta_b_ub2_auto_unroll_id_1_slot);
 		    syncCV.WaitIntraBlock<VtoFIX_UBRelease>(score_delta_b_ub1_auto_unroll_id_1_slot);
 		    AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(score_delta_b_c1_auto_unroll_id_1_slot);
-		    copy_l0c_to_ub_1_iter1(iter - 1, score_delta_b_ub1_auto_unroll_id_1_slot, score_delta_b_c1_auto_unroll_id_1_slot);
+		    copy_score_delta_l0c_to_ub(iter - 1, score_delta_b_ub1_auto_unroll_id_1_slot, score_delta_b_c1_auto_unroll_id_1_slot);
 		}
-	}
 
-template <typename T, bool IsVarlen, bool HasTail>
-template <bool STEADY>
-	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_ub_1_iter1_u1_x6(int iter, int group_count) {
 		if (STEADY || (iter - 1 >= 0 && iter - 1 < group_count)) {
 		    syncCV.SetIntraBlock<FIXtoV_UBReady>(score_delta_b_ub1_auto_unroll_id_1_slot);
 		    AscendC::SetFlag<AscendC::HardEvent::FIX_M>(score_delta_b_c1_auto_unroll_id_1_slot);
 		    syncCV.WaitIntraBlock<VtoFIX_UBRelease>(score_delta_b_ub4_auto_unroll_id_1_slot);
 		    AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(score_delta_b_c4_auto_unroll_id_1_slot);
-		    copy_l0c_to_ub_1_iter1(iter - 1, score_delta_b_ub4_auto_unroll_id_1_slot, score_delta_b_c4_auto_unroll_id_1_slot);
+		    copy_score_delta_l0c_to_ub(iter - 1, score_delta_b_ub4_auto_unroll_id_1_slot, score_delta_b_c4_auto_unroll_id_1_slot);
 		}
-	}
 
-template <typename T, bool IsVarlen, bool HasTail>
-template <bool STEADY>
-	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_ub_1_iter1_u1_x7(int iter, int group_count) {
 		if (STEADY || (iter - 1 >= 0 && iter - 1 < group_count)) {
 		    syncCV.SetIntraBlock<FIXtoV_UBReady>(score_delta_b_ub4_auto_unroll_id_1_slot);
 		    AscendC::SetFlag<AscendC::HardEvent::FIX_M>(score_delta_b_c4_auto_unroll_id_1_slot);
 		    syncCV.SetIntraBlock<VtoFIX_UBRelease>(out2_ub_auto_unroll_id_1_slot);
 		    syncCV.WaitIntraBlock<VtoFIX_UBRelease>(score_delta_b_ub3_auto_unroll_id_1_slot);
 		    AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(score_delta_b_c3_auto_unroll_id_1_slot);
-		    copy_l0c_to_ub_1_iter1(iter - 1, score_delta_b_ub3_auto_unroll_id_1_slot, score_delta_b_c3_auto_unroll_id_1_slot);
+		    copy_score_delta_l0c_to_ub(iter - 1, score_delta_b_ub3_auto_unroll_id_1_slot, score_delta_b_c3_auto_unroll_id_1_slot);
 		}
 	}
+
 
 template <typename T, bool IsVarlen, bool HasTail>
 template <bool STEADY>
@@ -1589,7 +1545,7 @@ template <bool STEADY>
 
 template <typename T, bool IsVarlen, bool HasTail>
 template <bool STEADY>
-	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_tail66(int iter, int group_count) {
+	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_finish_pipeline(int iter, int group_count) {
 		if (STEADY || (iter - 0 >= 0 && iter - 0 < group_count)) {
 		    AscendC::SetFlag<AscendC::HardEvent::FIX_M>(kds1_c_slot);
 		    syncCV.SetIntraBlock<FIXtoV_UBReady>(kds1_ub_slot);
@@ -1626,9 +1582,70 @@ template <bool STEADY>
 	}
 
 template <typename T, bool IsVarlen, bool HasTail>
+template <bool STEADY>
+	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::RunPipelineStages(int iter, int groupCount) {
+		// 静态流水顺序：准备、score/求逆、state 更新和输出写回不得交叉移动。
+		stage_l0ab_y1_u0<STEADY>(iter, groupCount);
+		stage_state_acc_a_u0<STEADY>(iter, groupCount);
+		stage_l1_y1_u0<STEADY>(iter, groupCount);
+		stage_l0ab_iter_out_a_u0<STEADY>(iter, groupCount);
+		stage_iter_out_a_u0<STEADY>(iter, groupCount);
+		stage_writeback_score_delta_a_primary<STEADY>(iter, groupCount);
+		stage_l0ab_kplus_kminus_u1<STEADY>(iter, groupCount);
+		stage_ub_kds1_u0<STEADY>(iter, groupCount);
+		stage_l0ab_kplus_kminus_u1_x1<STEADY>(iter, groupCount);
+		stage_kplus_kminus_u1<STEADY>(iter, groupCount);
+		stage_kplus_kminus_u1_x1<STEADY>(iter, groupCount);
+		stage_l0ab_kplus_qplus_score_b_u0<STEADY>(iter, groupCount);
+		stage_ub_kplus_kminus_u1<STEADY>(iter, groupCount);
+		stage_ub_kplus_kminus_u1_x1<STEADY>(iter, groupCount);
+		stage_kplus_qplus_score_a_u0<STEADY>(iter, groupCount);
+		stage_ub_gamma_u1<STEADY>(iter, groupCount);
+		stage_ub_kds1_u0_x1<STEADY>(iter, groupCount);
+		stage_l0ab_y2_u0<STEADY>(iter, groupCount);
+		stage_state_acc_a_u0_x1<STEADY>(iter, groupCount);
+		stage_l1_y1_u0_x1<STEADY>(iter, groupCount);
+		stage_l0ab_iter_out_b_u0<STEADY>(iter, groupCount);
+		stage_iter_out_a_u0_x1<STEADY>(iter, groupCount);
+		stage_writeback_score_delta_b_primary<STEADY>(iter, groupCount);
+		stage_ub_kds1_u0_x2<STEADY>(iter, groupCount);
+		stage_l0ab_kplus_qplus_score_a_u1<STEADY>(iter, groupCount);
+		stage_kplus_qplus_score_a_u1<STEADY>(iter, groupCount);
+		stage_ub_kds1_u1<STEADY>(iter, groupCount);
+		stage_l0ab_y1_u1<STEADY>(iter, groupCount);
+		stage_state_acc_a_u1<STEADY>(iter, groupCount);
+		stage_l1_y1_u1<STEADY>(iter, groupCount);
+		stage_l0ab_iter_out_a_u1<STEADY>(iter, groupCount);
+		stage_iter_out_a_u1<STEADY>(iter, groupCount);
+		stage_writeback_score_delta_a_unrolled<STEADY>(iter, groupCount);
+		stage_l0ab_kplus_kminus_u0<STEADY>(iter, groupCount);
+		stage_ub_kds1_u1_x1<STEADY>(iter, groupCount);
+		stage_l0ab_kplus_kminus_u0_x1<STEADY>(iter, groupCount);
+		stage_kplus_kminus_u0<STEADY>(iter, groupCount);
+		stage_l0ab_kplus_qplus_score_b_u1<STEADY>(iter, groupCount);
+		stage_kplus_kminus_u0_x1<STEADY>(iter, groupCount);
+		stage_ub_kplus_kminus_u0<STEADY>(iter, groupCount);
+		stage_ub_kplus_kminus_u0_x1<STEADY>(iter, groupCount);
+		stage_kplus_qplus_score_a_u1_x1<STEADY>(iter, groupCount);
+		stage_ub_gamma_u0<STEADY>(iter, groupCount);
+		stage_ub_kds1_u1_x2<STEADY>(iter, groupCount);
+		stage_l0ab_y2_u1<STEADY>(iter, groupCount);
+		stage_state_acc_a_u1_x1<STEADY>(iter, groupCount);
+		stage_l1_y1_u1_x1<STEADY>(iter, groupCount);
+		stage_l0ab_iter_out_b_u1<STEADY>(iter, groupCount);
+		stage_iter_out_a_u1_x1<STEADY>(iter, groupCount);
+		stage_writeback_score_delta_b_unrolled<STEADY>(iter, groupCount);
+		stage_ub_kds1_u1_x3<STEADY>(iter, groupCount);
+		stage_l0ab_kplus_qplus_score_a_u0<STEADY>(iter, groupCount);
+		stage_kplus_qplus_score_a_u0_x1<STEADY>(iter, groupCount);
+		stage_ub_kds1_u0_x3<STEADY>(iter, groupCount);
+		stage_finish_pipeline<STEADY>(iter, groupCount);
+	}
+
+template <typename T, bool IsVarlen, bool HasTail>
 	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::Process(int group_count) {
 
-		int iterN = 2;
+		const int pipelineStages = 2;
 
 		// 任务循环:与 AIV 侧使用同一任务序列
 		// (task_count=0 → legacy 单任务)。AIC 无 GM 视图,任务间只需重置
@@ -1638,7 +1655,7 @@ template <typename T, bool IsVarlen, bool HasTail>
 		const uint32_t task_step = task_count ? (uint32_t)block_num : 1;
 		for (uint32_t task = task_begin; task < task_end; task += task_step) {
 			// 每任务组数:IsVarlen 从 cu_seqlens 解析(与 AIV 同一数据);空序列跳过
-			int gc = group_count;
+			int groupCount = group_count;
 			if (is_varlen) {
 				const uint32_t seq = task / (uint32_t)hv_real;
 				const __gm__ int64_t *cu = (const __gm__ int64_t *)cu_base;
@@ -1646,218 +1663,20 @@ template <typename T, bool IsVarlen, bool HasTail>
 				if (len <= 0) {
 					continue;
 				}
-				gc = (int)((len + tokens_per_group - 1) / tokens_per_group);
+				groupCount = (int)((len + tokens_per_group - 1) / tokens_per_group);
 			}
 			syncCV.Init();
 
 			// 边沿组直接复用 stage;守卫、同步和 buffer 管理均留在 stage 内。
-			for (int iter = 0; iter < iterN - 1 && iter < gc; iter ++) {
-				stage_l0ab_y1_u0<false>(iter, gc);
-				stage_state_acc_a_u0<false>(iter, gc);
-				stage_l1_y1_u0<false>(iter, gc);
-				stage_l0ab_iter_out_a_u0<false>(iter, gc);
-				stage_iter_out_a_u0<false>(iter, gc);
-				stage_ub_1_iter1_u0<false>(iter, gc);
-				stage_ub_1_iter1_u0_x1<false>(iter, gc);
-				stage_ub_1_iter1_u0_x2<false>(iter, gc);
-				stage_ub_1_iter1_u0_x3<false>(iter, gc);
-				stage_l0ab_kplus_kminus_u1<false>(iter, gc);
-				stage_ub_kds1_u0<false>(iter, gc);
-				stage_l0ab_kplus_kminus_u1_x1<false>(iter, gc);
-				stage_kplus_kminus_u1<false>(iter, gc);
-				stage_kplus_kminus_u1_x1<false>(iter, gc);
-				stage_l0ab_kplus_qplus_score_b_u0<false>(iter, gc);
-				stage_ub_kplus_kminus_u1<false>(iter, gc);
-				stage_ub_kplus_kminus_u1_x1<false>(iter, gc);
-				stage_kplus_qplus_score_a_u0<false>(iter, gc);
-				stage_ub_gamma_u1<false>(iter, gc);
-				stage_ub_kds1_u0_x1<false>(iter, gc);
-				stage_l0ab_y2_u0<false>(iter, gc);
-				stage_state_acc_a_u0_x1<false>(iter, gc);
-				stage_l1_y1_u0_x1<false>(iter, gc);
-				stage_l0ab_iter_out_b_u0<false>(iter, gc);
-				stage_iter_out_a_u0_x1<false>(iter, gc);
-				stage_ub_1_iter1_u0_x4<false>(iter, gc);
-				stage_ub_1_iter1_u0_x5<false>(iter, gc);
-				stage_ub_1_iter1_u0_x6<false>(iter, gc);
-				stage_ub_1_iter1_u0_x7<false>(iter, gc);
-				stage_ub_kds1_u0_x2<false>(iter, gc);
-				stage_l0ab_kplus_qplus_score_a_u1<false>(iter, gc);
-				stage_kplus_qplus_score_a_u1<false>(iter, gc);
-				stage_ub_kds1_u1<false>(iter, gc);
-				stage_l0ab_y1_u1<false>(iter, gc);
-				stage_state_acc_a_u1<false>(iter, gc);
-				stage_l1_y1_u1<false>(iter, gc);
-				stage_l0ab_iter_out_a_u1<false>(iter, gc);
-				stage_iter_out_a_u1<false>(iter, gc);
-				stage_ub_1_iter1_u1<false>(iter, gc);
-				stage_ub_1_iter1_u1_x1<false>(iter, gc);
-				stage_ub_1_iter1_u1_x2<false>(iter, gc);
-				stage_ub_1_iter1_u1_x3<false>(iter, gc);
-				stage_l0ab_kplus_kminus_u0<false>(iter, gc);
-				stage_ub_kds1_u1_x1<false>(iter, gc);
-				stage_l0ab_kplus_kminus_u0_x1<false>(iter, gc);
-				stage_kplus_kminus_u0<false>(iter, gc);
-				stage_l0ab_kplus_qplus_score_b_u1<false>(iter, gc);
-				stage_kplus_kminus_u0_x1<false>(iter, gc);
-				stage_ub_kplus_kminus_u0<false>(iter, gc);
-				stage_ub_kplus_kminus_u0_x1<false>(iter, gc);
-				stage_kplus_qplus_score_a_u1_x1<false>(iter, gc);
-				stage_ub_gamma_u0<false>(iter, gc);
-				stage_ub_kds1_u1_x2<false>(iter, gc);
-				stage_l0ab_y2_u1<false>(iter, gc);
-				stage_state_acc_a_u1_x1<false>(iter, gc);
-				stage_l1_y1_u1_x1<false>(iter, gc);
-				stage_l0ab_iter_out_b_u1<false>(iter, gc);
-				stage_iter_out_a_u1_x1<false>(iter, gc);
-				stage_ub_1_iter1_u1_x4<false>(iter, gc);
-				stage_ub_1_iter1_u1_x5<false>(iter, gc);
-				stage_ub_1_iter1_u1_x6<false>(iter, gc);
-				stage_ub_1_iter1_u1_x7<false>(iter, gc);
-				stage_ub_kds1_u1_x3<false>(iter, gc);
-				stage_l0ab_kplus_qplus_score_a_u0<false>(iter, gc);
-				stage_kplus_qplus_score_a_u0_x1<false>(iter, gc);
-				stage_ub_kds1_u0_x3<false>(iter, gc);
-				stage_tail66<false>(iter, gc);
+			for (int iter = 0; iter < pipelineStages - 1 && iter < groupCount; iter ++) {
+				RunPipelineStages<false>(iter, groupCount);
 			}
 
-			for (int iter = iterN - 1; iter < gc; iter ++) {
-				stage_l0ab_y1_u0<true>(iter, gc);
-				stage_state_acc_a_u0<true>(iter, gc);
-				stage_l1_y1_u0<true>(iter, gc);
-				stage_l0ab_iter_out_a_u0<true>(iter, gc);
-				stage_iter_out_a_u0<true>(iter, gc);
-				stage_ub_1_iter1_u0<true>(iter, gc);
-				stage_ub_1_iter1_u0_x1<true>(iter, gc);
-				stage_ub_1_iter1_u0_x2<true>(iter, gc);
-				stage_ub_1_iter1_u0_x3<true>(iter, gc);
-				stage_l0ab_kplus_kminus_u1<true>(iter, gc);
-				stage_ub_kds1_u0<true>(iter, gc);
-				stage_l0ab_kplus_kminus_u1_x1<true>(iter, gc);
-				stage_kplus_kminus_u1<true>(iter, gc);
-				stage_kplus_kminus_u1_x1<true>(iter, gc);
-				stage_l0ab_kplus_qplus_score_b_u0<true>(iter, gc);
-				stage_ub_kplus_kminus_u1<true>(iter, gc);
-				stage_ub_kplus_kminus_u1_x1<true>(iter, gc);
-				stage_kplus_qplus_score_a_u0<true>(iter, gc);
-				stage_ub_gamma_u1<true>(iter, gc);
-				stage_ub_kds1_u0_x1<true>(iter, gc);
-				stage_l0ab_y2_u0<true>(iter, gc);
-				stage_state_acc_a_u0_x1<true>(iter, gc);
-				stage_l1_y1_u0_x1<true>(iter, gc);
-				stage_l0ab_iter_out_b_u0<true>(iter, gc);
-				stage_iter_out_a_u0_x1<true>(iter, gc);
-				stage_ub_1_iter1_u0_x4<true>(iter, gc);
-				stage_ub_1_iter1_u0_x5<true>(iter, gc);
-				stage_ub_1_iter1_u0_x6<true>(iter, gc);
-				stage_ub_1_iter1_u0_x7<true>(iter, gc);
-				stage_ub_kds1_u0_x2<true>(iter, gc);
-				stage_l0ab_kplus_qplus_score_a_u1<true>(iter, gc);
-				stage_kplus_qplus_score_a_u1<true>(iter, gc);
-				stage_ub_kds1_u1<true>(iter, gc);
-				stage_l0ab_y1_u1<true>(iter, gc);
-				stage_state_acc_a_u1<true>(iter, gc);
-				stage_l1_y1_u1<true>(iter, gc);
-				stage_l0ab_iter_out_a_u1<true>(iter, gc);
-				stage_iter_out_a_u1<true>(iter, gc);
-				stage_ub_1_iter1_u1<true>(iter, gc);
-				stage_ub_1_iter1_u1_x1<true>(iter, gc);
-				stage_ub_1_iter1_u1_x2<true>(iter, gc);
-				stage_ub_1_iter1_u1_x3<true>(iter, gc);
-				stage_l0ab_kplus_kminus_u0<true>(iter, gc);
-				stage_ub_kds1_u1_x1<true>(iter, gc);
-				stage_l0ab_kplus_kminus_u0_x1<true>(iter, gc);
-				stage_kplus_kminus_u0<true>(iter, gc);
-				stage_l0ab_kplus_qplus_score_b_u1<true>(iter, gc);
-				stage_kplus_kminus_u0_x1<true>(iter, gc);
-				stage_ub_kplus_kminus_u0<true>(iter, gc);
-				stage_ub_kplus_kminus_u0_x1<true>(iter, gc);
-				stage_kplus_qplus_score_a_u1_x1<true>(iter, gc);
-				stage_ub_gamma_u0<true>(iter, gc);
-				stage_ub_kds1_u1_x2<true>(iter, gc);
-				stage_l0ab_y2_u1<true>(iter, gc);
-				stage_state_acc_a_u1_x1<true>(iter, gc);
-				stage_l1_y1_u1_x1<true>(iter, gc);
-				stage_l0ab_iter_out_b_u1<true>(iter, gc);
-				stage_iter_out_a_u1_x1<true>(iter, gc);
-				stage_ub_1_iter1_u1_x4<true>(iter, gc);
-				stage_ub_1_iter1_u1_x5<true>(iter, gc);
-				stage_ub_1_iter1_u1_x6<true>(iter, gc);
-				stage_ub_1_iter1_u1_x7<true>(iter, gc);
-				stage_ub_kds1_u1_x3<true>(iter, gc);
-				stage_l0ab_kplus_qplus_score_a_u0<true>(iter, gc);
-				stage_kplus_qplus_score_a_u0_x1<true>(iter, gc);
-				stage_ub_kds1_u0_x3<true>(iter, gc);
-				stage_tail66<true>(iter, gc);
+			for (int iter = pipelineStages - 1; iter < groupCount; iter ++) {
+				RunPipelineStages<true>(iter, groupCount);
 			}
-			for (int iter = gc; iter < gc + iterN - 1; iter ++) {
-				stage_l0ab_y1_u0<false>(iter, gc);
-				stage_state_acc_a_u0<false>(iter, gc);
-				stage_l1_y1_u0<false>(iter, gc);
-				stage_l0ab_iter_out_a_u0<false>(iter, gc);
-				stage_iter_out_a_u0<false>(iter, gc);
-				stage_ub_1_iter1_u0<false>(iter, gc);
-				stage_ub_1_iter1_u0_x1<false>(iter, gc);
-				stage_ub_1_iter1_u0_x2<false>(iter, gc);
-				stage_ub_1_iter1_u0_x3<false>(iter, gc);
-				stage_l0ab_kplus_kminus_u1<false>(iter, gc);
-				stage_ub_kds1_u0<false>(iter, gc);
-				stage_l0ab_kplus_kminus_u1_x1<false>(iter, gc);
-				stage_kplus_kminus_u1<false>(iter, gc);
-				stage_kplus_kminus_u1_x1<false>(iter, gc);
-				stage_l0ab_kplus_qplus_score_b_u0<false>(iter, gc);
-				stage_ub_kplus_kminus_u1<false>(iter, gc);
-				stage_ub_kplus_kminus_u1_x1<false>(iter, gc);
-				stage_kplus_qplus_score_a_u0<false>(iter, gc);
-				stage_ub_gamma_u1<false>(iter, gc);
-				stage_ub_kds1_u0_x1<false>(iter, gc);
-				stage_l0ab_y2_u0<false>(iter, gc);
-				stage_state_acc_a_u0_x1<false>(iter, gc);
-				stage_l1_y1_u0_x1<false>(iter, gc);
-				stage_l0ab_iter_out_b_u0<false>(iter, gc);
-				stage_iter_out_a_u0_x1<false>(iter, gc);
-				stage_ub_1_iter1_u0_x4<false>(iter, gc);
-				stage_ub_1_iter1_u0_x5<false>(iter, gc);
-				stage_ub_1_iter1_u0_x6<false>(iter, gc);
-				stage_ub_1_iter1_u0_x7<false>(iter, gc);
-				stage_ub_kds1_u0_x2<false>(iter, gc);
-				stage_l0ab_kplus_qplus_score_a_u1<false>(iter, gc);
-				stage_kplus_qplus_score_a_u1<false>(iter, gc);
-				stage_ub_kds1_u1<false>(iter, gc);
-				stage_l0ab_y1_u1<false>(iter, gc);
-				stage_state_acc_a_u1<false>(iter, gc);
-				stage_l1_y1_u1<false>(iter, gc);
-				stage_l0ab_iter_out_a_u1<false>(iter, gc);
-				stage_iter_out_a_u1<false>(iter, gc);
-				stage_ub_1_iter1_u1<false>(iter, gc);
-				stage_ub_1_iter1_u1_x1<false>(iter, gc);
-				stage_ub_1_iter1_u1_x2<false>(iter, gc);
-				stage_ub_1_iter1_u1_x3<false>(iter, gc);
-				stage_l0ab_kplus_kminus_u0<false>(iter, gc);
-				stage_ub_kds1_u1_x1<false>(iter, gc);
-				stage_l0ab_kplus_kminus_u0_x1<false>(iter, gc);
-				stage_kplus_kminus_u0<false>(iter, gc);
-				stage_l0ab_kplus_qplus_score_b_u1<false>(iter, gc);
-				stage_kplus_kminus_u0_x1<false>(iter, gc);
-				stage_ub_kplus_kminus_u0<false>(iter, gc);
-				stage_ub_kplus_kminus_u0_x1<false>(iter, gc);
-				stage_kplus_qplus_score_a_u1_x1<false>(iter, gc);
-				stage_ub_gamma_u0<false>(iter, gc);
-				stage_ub_kds1_u1_x2<false>(iter, gc);
-				stage_l0ab_y2_u1<false>(iter, gc);
-				stage_state_acc_a_u1_x1<false>(iter, gc);
-				stage_l1_y1_u1_x1<false>(iter, gc);
-				stage_l0ab_iter_out_b_u1<false>(iter, gc);
-				stage_iter_out_a_u1_x1<false>(iter, gc);
-				stage_ub_1_iter1_u1_x4<false>(iter, gc);
-				stage_ub_1_iter1_u1_x5<false>(iter, gc);
-				stage_ub_1_iter1_u1_x6<false>(iter, gc);
-				stage_ub_1_iter1_u1_x7<false>(iter, gc);
-				stage_ub_kds1_u1_x3<false>(iter, gc);
-				stage_l0ab_kplus_qplus_score_a_u0<false>(iter, gc);
-				stage_kplus_qplus_score_a_u0_x1<false>(iter, gc);
-				stage_ub_kds1_u0_x3<false>(iter, gc);
-				stage_tail66<false>(iter, gc);
+			for (int iter = groupCount; iter < groupCount + pipelineStages - 1; iter ++) {
+				RunPipelineStages<false>(iter, groupCount);
 			}
 
 

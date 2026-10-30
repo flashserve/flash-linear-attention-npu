@@ -4000,7 +4000,7 @@ template <bool STEADY>
 
 template <typename T, bool IsVarlen, bool HasTail>
 template <bool STEADY>
-	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_tail36(int iter, int group_count) {
+	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_finish_pipeline(int iter, int group_count) {
 		AscendC::Mutex::Unlock<PIPE_V>(kplus_score1_ub);
 		AscendC::Mutex::Unlock<PIPE_V>(v_corr1_ub);
 		AscendC::Mutex::Unlock<PIPE_V>(beta_b_ub);
@@ -4011,50 +4011,51 @@ template <bool STEADY>
 	}
 
 template <typename T, bool IsVarlen, bool HasTail>
-	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::ProcessEdge(int iter, int group_count) {
-		stage_prepare_g1_u0<false>(iter, group_count);
-		stage_v_corr1_u0<false>(iter, group_count);
-		stage_qplus_kplus_u1<false>(iter, group_count);
-		stage_kminus_kres_u1<false>(iter, group_count);
-		stage_iter_partial1_u0<false>(iter, group_count);
-		stage_iter_final1_u0<false>(iter, group_count);
-		stage_s1_u0<false>(iter, group_count);
-		stage_tril_u1<false>(iter, group_count);
-		stage_v_corr2_u0<false>(iter, group_count);
-		stage_masked_qk_u1<false>(iter, group_count);
-		stage_v_corr1_u0_x1<false>(iter, group_count);
-		stage_out1_u0<false>(iter, group_count);
-		stage_tril_inv_u1<false>(iter, group_count);
-		stage_iter_partial2_u0<false>(iter, group_count);
-		stage_iter_final2_u1<false>(iter, group_count);
-		stage_mm_u1<false>(iter, group_count);
-		stage_prepare_qplus_kplus_kminus_kres_u0<false>(iter, group_count);
-		stage_s1_u1<false>(iter, group_count);
-		stage_out1_u0_x1<false>(iter, group_count);
-		stage_v_corr1_u1<false>(iter, group_count);
-		stage_qplus_kplus_u0<false>(iter, group_count);
-		stage_kminus_kres_u0<false>(iter, group_count);
-		stage_iter_partial1_u1<false>(iter, group_count);
-		stage_iter_final1_u1<false>(iter, group_count);
-		stage_s1_u1_x1<false>(iter, group_count);
-		stage_tril_u0<false>(iter, group_count);
-		stage_masked_qk_u0<false>(iter, group_count);
-		stage_v_corr1_u1_x1<false>(iter, group_count);
-		stage_out1_u1<false>(iter, group_count);
-		stage_tril_inv_u0<false>(iter, group_count);
-		stage_iter_partial2_u1<false>(iter, group_count);
-		stage_iter_final2_u1_x1<false>(iter, group_count);
-		stage_mm_u0<false>(iter, group_count);
-		stage_s1_u0_x1<false>(iter, group_count);
-		stage_out1_u1_x1<false>(iter, group_count);
-		stage_v_corr1_u0_x2<false>(iter, group_count);
-		stage_tail36<false>(iter, group_count);
+template <bool STEADY>
+	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::RunPipelineStages(int iter, int groupCount) {
+		stage_prepare_g1_u0<STEADY>(iter, groupCount);
+		stage_v_corr1_u0<STEADY>(iter, groupCount);
+		stage_qplus_kplus_u1<STEADY>(iter, groupCount);
+		stage_kminus_kres_u1<STEADY>(iter, groupCount);
+		stage_iter_partial1_u0<STEADY>(iter, groupCount);
+		stage_iter_final1_u0<STEADY>(iter, groupCount);
+		stage_s1_u0<STEADY>(iter, groupCount);
+		stage_tril_u1<STEADY>(iter, groupCount);
+		stage_v_corr2_u0<STEADY>(iter, groupCount);
+		stage_masked_qk_u1<STEADY>(iter, groupCount);
+		stage_v_corr1_u0_x1<STEADY>(iter, groupCount);
+		stage_out1_u0<STEADY>(iter, groupCount);
+		stage_tril_inv_u1<STEADY>(iter, groupCount);
+		stage_iter_partial2_u0<STEADY>(iter, groupCount);
+		stage_iter_final2_u1<STEADY>(iter, groupCount);
+		stage_mm_u1<STEADY>(iter, groupCount);
+		stage_prepare_qplus_kplus_kminus_kres_u0<STEADY>(iter, groupCount);
+		stage_s1_u1<STEADY>(iter, groupCount);
+		stage_out1_u0_x1<STEADY>(iter, groupCount);
+		stage_v_corr1_u1<STEADY>(iter, groupCount);
+		stage_qplus_kplus_u0<STEADY>(iter, groupCount);
+		stage_kminus_kres_u0<STEADY>(iter, groupCount);
+		stage_iter_partial1_u1<STEADY>(iter, groupCount);
+		stage_iter_final1_u1<STEADY>(iter, groupCount);
+		stage_s1_u1_x1<STEADY>(iter, groupCount);
+		stage_tril_u0<STEADY>(iter, groupCount);
+		stage_masked_qk_u0<STEADY>(iter, groupCount);
+		stage_v_corr1_u1_x1<STEADY>(iter, groupCount);
+		stage_out1_u1<STEADY>(iter, groupCount);
+		stage_tril_inv_u0<STEADY>(iter, groupCount);
+		stage_iter_partial2_u1<STEADY>(iter, groupCount);
+		stage_iter_final2_u1_x1<STEADY>(iter, groupCount);
+		stage_mm_u0<STEADY>(iter, groupCount);
+		stage_s1_u0_x1<STEADY>(iter, groupCount);
+		stage_out1_u1_x1<STEADY>(iter, groupCount);
+		stage_v_corr1_u0_x2<STEADY>(iter, groupCount);
+		stage_finish_pipeline<STEADY>(iter, groupCount);
 	}
 
 template <typename T, bool IsVarlen, bool HasTail>
 	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::Process(int dense_group_count) {
 
-		int iterN = 2;
+		const int pipelineStages = 2;
 
 		// 任务循环:task_count=0 表示单任务
 		// fh = batch*HV + value_head。AIC 侧 Process 走同一任务序列(配平前提)。
@@ -4084,48 +4085,12 @@ template <typename T, bool IsVarlen, bool HasTail>
 			}
 			AscendC::Mutex::Unlock<PIPE_V>(s1_ub);
 
-			ProcessEdge(0, current_group_count);
+			RunPipelineStages<false>(0, current_group_count);
 
-			for (int iter = iterN - 1; iter < current_group_count; iter ++) {
-				stage_prepare_g1_u0<true>(iter, current_group_count);
-				stage_v_corr1_u0<true>(iter, current_group_count);
-				stage_qplus_kplus_u1<true>(iter, current_group_count);
-				stage_kminus_kres_u1<true>(iter, current_group_count);
-				stage_iter_partial1_u0<true>(iter, current_group_count);
-				stage_iter_final1_u0<true>(iter, current_group_count);
-				stage_s1_u0<true>(iter, current_group_count);
-				stage_tril_u1<true>(iter, current_group_count);
-				stage_v_corr2_u0<true>(iter, current_group_count);
-				stage_masked_qk_u1<true>(iter, current_group_count);
-				stage_v_corr1_u0_x1<true>(iter, current_group_count);
-				stage_out1_u0<true>(iter, current_group_count);
-				stage_tril_inv_u1<true>(iter, current_group_count);
-				stage_iter_partial2_u0<true>(iter, current_group_count);
-				stage_iter_final2_u1<true>(iter, current_group_count);
-				stage_mm_u1<true>(iter, current_group_count);
-				stage_prepare_qplus_kplus_kminus_kres_u0<true>(iter, current_group_count);
-				stage_s1_u1<true>(iter, current_group_count);
-				stage_out1_u0_x1<true>(iter, current_group_count);
-				stage_v_corr1_u1<true>(iter, current_group_count);
-				stage_qplus_kplus_u0<true>(iter, current_group_count);
-				stage_kminus_kres_u0<true>(iter, current_group_count);
-				stage_iter_partial1_u1<true>(iter, current_group_count);
-				stage_iter_final1_u1<true>(iter, current_group_count);
-				stage_s1_u1_x1<true>(iter, current_group_count);
-				stage_tril_u0<true>(iter, current_group_count);
-				stage_masked_qk_u0<true>(iter, current_group_count);
-				stage_v_corr1_u1_x1<true>(iter, current_group_count);
-				stage_out1_u1<true>(iter, current_group_count);
-				stage_tril_inv_u0<true>(iter, current_group_count);
-				stage_iter_partial2_u1<true>(iter, current_group_count);
-				stage_iter_final2_u1_x1<true>(iter, current_group_count);
-				stage_mm_u0<true>(iter, current_group_count);
-				stage_s1_u0_x1<true>(iter, current_group_count);
-				stage_out1_u1_x1<true>(iter, current_group_count);
-				stage_v_corr1_u0_x2<true>(iter, current_group_count);
-				stage_tail36<true>(iter, current_group_count);
+			for (int iter = pipelineStages - 1; iter < current_group_count; iter ++) {
+				RunPipelineStages<true>(iter, current_group_count);
 			}
-			ProcessEdge(current_group_count, current_group_count);
+			RunPipelineStages<false>(current_group_count, current_group_count);
 
 
 

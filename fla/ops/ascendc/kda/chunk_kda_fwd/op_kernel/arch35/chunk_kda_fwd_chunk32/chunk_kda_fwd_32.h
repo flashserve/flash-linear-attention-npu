@@ -328,7 +328,7 @@ public:
 	__aicore__ inline void copy_l0c_to_ub_kds1(int loop_id, uint32_t kds1_ub_slot, uint32_t kds1_c_slot);
 	__aicore__ inline void copy_l0c_to_l1_y1(int loop_id, uint32_t stateAccA_slot, uint32_t y1_c_slot);
 
-	__aicore__ inline void copy_l0c_to_ub_1_iter1(int loop_id, uint32_t score_delta_a_ub1_slot, uint32_t score_delta_a_c1_slot);
+	__aicore__ inline void copy_score_delta_l0c_to_ub(int loop_id, uint32_t score_delta_a_ub1_slot, uint32_t score_delta_a_c1_slot);
 
 
 
@@ -373,16 +373,7 @@ public:
 	__aicore__ inline void stage_iter_out_a_u0(int iter, int group_count);
 
 	template <bool STEADY>
-	__aicore__ inline void stage_ub_1_iter1_u0(int iter, int group_count);
-
-	template <bool STEADY>
-	__aicore__ inline void stage_ub_1_iter1_u0_x1(int iter, int group_count);
-
-	template <bool STEADY>
-	__aicore__ inline void stage_ub_1_iter1_u0_x2(int iter, int group_count);
-
-	template <bool STEADY>
-	__aicore__ inline void stage_ub_1_iter1_u0_x3(int iter, int group_count);
+	__aicore__ inline void stage_writeback_score_delta_a_primary(int iter, int group_count);
 
 	template <bool STEADY>
 	__aicore__ inline void stage_l0ab_kplus_kminus_u1(int iter, int group_count);
@@ -433,16 +424,7 @@ public:
 	__aicore__ inline void stage_iter_out_a_u0_x1(int iter, int group_count);
 
 	template <bool STEADY>
-	__aicore__ inline void stage_ub_1_iter1_u0_x4(int iter, int group_count);
-
-	template <bool STEADY>
-	__aicore__ inline void stage_ub_1_iter1_u0_x5(int iter, int group_count);
-
-	template <bool STEADY>
-	__aicore__ inline void stage_ub_1_iter1_u0_x6(int iter, int group_count);
-
-	template <bool STEADY>
-	__aicore__ inline void stage_ub_1_iter1_u0_x7(int iter, int group_count);
+	__aicore__ inline void stage_writeback_score_delta_b_primary(int iter, int group_count);
 
 	template <bool STEADY>
 	__aicore__ inline void stage_ub_kds1_u0_x2(int iter, int group_count);
@@ -472,16 +454,7 @@ public:
 	__aicore__ inline void stage_iter_out_a_u1(int iter, int group_count);
 
 	template <bool STEADY>
-	__aicore__ inline void stage_ub_1_iter1_u1(int iter, int group_count);
-
-	template <bool STEADY>
-	__aicore__ inline void stage_ub_1_iter1_u1_x1(int iter, int group_count);
-
-	template <bool STEADY>
-	__aicore__ inline void stage_ub_1_iter1_u1_x2(int iter, int group_count);
-
-	template <bool STEADY>
-	__aicore__ inline void stage_ub_1_iter1_u1_x3(int iter, int group_count);
+	__aicore__ inline void stage_writeback_score_delta_a_unrolled(int iter, int group_count);
 
 	template <bool STEADY>
 	__aicore__ inline void stage_l0ab_kplus_kminus_u0(int iter, int group_count);
@@ -532,16 +505,7 @@ public:
 	__aicore__ inline void stage_iter_out_a_u1_x1(int iter, int group_count);
 
 	template <bool STEADY>
-	__aicore__ inline void stage_ub_1_iter1_u1_x4(int iter, int group_count);
-
-	template <bool STEADY>
-	__aicore__ inline void stage_ub_1_iter1_u1_x5(int iter, int group_count);
-
-	template <bool STEADY>
-	__aicore__ inline void stage_ub_1_iter1_u1_x6(int iter, int group_count);
-
-	template <bool STEADY>
-	__aicore__ inline void stage_ub_1_iter1_u1_x7(int iter, int group_count);
+	__aicore__ inline void stage_writeback_score_delta_b_unrolled(int iter, int group_count);
 
 	template <bool STEADY>
 	__aicore__ inline void stage_ub_kds1_u1_x3(int iter, int group_count);
@@ -556,7 +520,10 @@ public:
 	__aicore__ inline void stage_ub_kds1_u0_x3(int iter, int group_count);
 
 	template <bool STEADY>
-	__aicore__ inline void stage_tail66(int iter, int group_count);
+	__aicore__ inline void stage_finish_pipeline(int iter, int group_count);
+
+	template <bool STEADY>
+	__aicore__ inline void RunPipelineStages(int iter, int groupCount);
 
 	// Define Kernel Process
 	__aicore__ inline void Process(int group_count);
@@ -1100,10 +1067,12 @@ public:
 	__aicore__ inline void stage_v_corr1_u0_x2(int iter, int group_count);
 
 	template <bool STEADY>
-	__aicore__ inline void stage_tail36(int iter, int group_count);
+	__aicore__ inline void stage_finish_pipeline(int iter, int group_count);
 
 	// 实际执行集(数值验证 group_count=1..8 + 语句流模拟确认与三段逐条一致)。
-	__aicore__ inline void ProcessEdge(int iter, int group_count);
+
+	template <bool STEADY>
+	__aicore__ inline void RunPipelineStages(int iter, int groupCount);
 
 	// Define Kernel Process
 	__aicore__ inline void Process(int dense_group_count);
