@@ -1,4 +1,5 @@
 import os
+import json
 import signal
 import subprocess
 import sys
@@ -14,7 +15,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from ci.pkg.make_packages import (
-    _terminate_process_group, _process_group_alive, _remote_build_startup, Remote, run_logged, build_arm, BuildCleanupError,
+    _terminate_process_group, _process_group_alive, _remote_build_startup,
+    _remove_owned_orphan_containers, _docker_workspace_id, Remote, run_logged,
+    build_arm, BuildCleanupError,
 )
 
 
@@ -37,13 +40,57 @@ class ProcessControlTest(unittest.TestCase):
                 build_arm(path, "ascend950", path/"wheels", path/"build.log")
             argv = logged.call_args.args[0]
             container = argv[argv.index("--name")+1]
+            self.assertIn("com.flashserve.fla-npu-pkg.managed=1", argv)
+            self.assertEqual(argv[argv.index("--user") + 1], f"{os.getuid()}:{os.getgid()}")
             self.assertEqual(run.call_args.args[0], ["docker", "rm", "-f", container])
+
+    def test_orphan_cleanup_requires_labels_and_matching_workspace_mount(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp).resolve()
+            workspace_id = _docker_workspace_id(path)
+            record = [{
+                "Config": {"Labels": {
+                    "com.flashserve.fla-npu-pkg.managed": "1",
+                    "com.flashserve.fla-npu-pkg.workspace": workspace_id,
+                }},
+                "Mounts": [{"Source": str(path), "Destination": "/workspace/repo"}],
+            }]
+            replies = (
+                subprocess.CompletedProcess([], 0, "deadbeef\n", ""),
+                subprocess.CompletedProcess([], 0, json.dumps(record), ""),
+                subprocess.CompletedProcess([], 0, "deadbeef\n", ""),
+                subprocess.CompletedProcess([], 0, "", ""),
+            )
+            with mock.patch("ci.pkg.make_packages.subprocess.run", side_effect=replies) as run:
+                _remove_owned_orphan_containers(path)
+            self.assertEqual(run.call_args_list[-2].args[0], ["docker", "rm", "-f", "deadbeef"])
+
+    def test_orphan_cleanup_refuses_unverified_mount(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp).resolve()
+            workspace_id = _docker_workspace_id(path)
+            record = [{
+                "Config": {"Labels": {
+                    "com.flashserve.fla-npu-pkg.managed": "1",
+                    "com.flashserve.fla-npu-pkg.workspace": workspace_id,
+                }},
+                "Mounts": [{"Source": "/another/workspace", "Destination": "/workspace/repo"}],
+            }]
+            replies = (
+                subprocess.CompletedProcess([], 0, "deadbeef\n", ""),
+                subprocess.CompletedProcess([], 0, json.dumps(record), ""),
+            )
+            with mock.patch("ci.pkg.make_packages.subprocess.run", side_effect=replies):
+                with self.assertRaisesRegex(BuildCleanupError, "ownership checks"):
+                    _remove_owned_orphan_containers(path)
 
     def test_remote_build_records_process_group_and_cancellation(self):
         source = (REPO_ROOT / "ci" / "pkg" / "make_packages.py").read_text()
         self.assertIn("nohup setsid bash -c", source)
         self.assertIn("> pgid", source)
         self.assertIn("cancel_remote_process_group(out_dir)", source)
+        self.assertIn("set -o pipefail", source)
+        self.assertIn("Unable to inspect remote process groups", source)
 
     def test_terminate_process_group_stops_child_tree(self):
         process = subprocess.Popen(
@@ -163,6 +210,25 @@ class ProcessControlTest(unittest.TestCase):
                 if pgid is not None:
                     try: os.killpg(pgid, signal.SIGKILL)
                     except ProcessLookupError: pass
+
+    def test_remote_ps_failure_is_not_treated_as_group_exit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            (path / "pid").write_text("999999\n")
+            (path / "pgid").write_text("999999\n")
+            fake_bin = path / "bin"
+            fake_bin.mkdir()
+            fake_ps = fake_bin / "ps"
+            fake_ps.write_text("#!/bin/sh\nexit 7\n")
+            fake_ps.chmod(0o755)
+            remote = Remote.__new__(Remote)
+            env = {**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}"}
+            remote.exec = lambda script, timeout: subprocess.run(
+                ["bash", "-s"], input=script, text=True, capture_output=True,
+                timeout=timeout, env=env,
+            )
+            with self.assertRaisesRegex(BuildCleanupError, "Unable to inspect remote"):
+                remote.cancel_remote_process_group(str(path))
 
 
 if __name__ == "__main__":

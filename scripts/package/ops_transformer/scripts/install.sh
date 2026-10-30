@@ -715,6 +715,20 @@ finalize_wheel_opp() {
   fi
 }
 
+validate_wheel_base_source() {
+  local wheel_opp_root="$1"
+  local src_vendor="$2"
+  local python_bin
+  python_bin=$(get_python_bin)
+  if [ -z "${python_bin}" ] || ! "${python_bin}" "${CURR_PATH}/finalize_wheel_opp.py" \
+      --package-dir "$(dirname "${wheel_opp_root}")" \
+      --check-source-vendor "${src_vendor}"; then
+    logandprint "[ERROR]: Refusing to replace wheel base OPP: the run package is partial, stale, or ABI-incompatible. Use fla_npu_opp_manage --overlay for a scoped update."
+    exitlog
+    exit 1
+  fi
+}
+
 update_wheel_vendors_config() {
   local vendors_root="$1"
   local vendor_name="$2"
@@ -771,6 +785,7 @@ install_wheel_opp_package() {
   logandprint "[INFO]: Source vendor ${src_vendor}"
   logandprint "[INFO]: Target vendor ${dst_vendor}"
 
+  validate_wheel_base_source "${wheel_opp_root}" "${src_vendor}"
   confirm_partial_shared_lib_impact "${src_vendor}" "${dst_vendor}"
   merge_vendor_to_wheel_opp "${src_vendor}" "${dst_vendor}"
   update_wheel_vendors_config "${wheel_opp_root}/vendors" "fla_npu_transformer"

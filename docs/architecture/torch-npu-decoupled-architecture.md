@@ -176,7 +176,11 @@ host、tiling 和 kernel 发现；不把包内 `op_api/lib` 加入 `LD_LIBRARY_P
 `FLA_NPU_OP_API_LIB` 只记录 FLA 实际加载的包内绝对路径，用于诊断，不参与定位。
 
 `import fla_npu` 会先验证调用方已经 source CANN `set_env.sh`，再加载 CANN 和包内
-custom opapi。CANN 环境、包内 OPP 或动态库不满足要求时，import 直接失败。root
+custom opapi。base 的有效 manifest 还必须与 wheel 外置于 vendor 树的公共 ABI 快照
+一致，防止 `.run` 把 base 换成另一个版本而 Python/launcher 未同步。若 `torch_npu`
+或 CANN 已加载、但当前包内 vendor 顺序与所选 overlay/base 不一致，import 在改写环境
+或加载任何 custom host 库前直接失败，要求重启并先准备环境。CANN 环境、包内 OPP
+或动态库不满足要求时，import 直接失败。root
 import 不会因此导入 `torch`、`torch_npu` 或注册 legacy dispatcher。
 
 加载顺序与符号优先级是两个独立概念：CANN 句柄先创建，确保基础 runtime 先完成

@@ -5,6 +5,7 @@ import importlib.util
 import os
 import pathlib
 import re
+import sys
 import warnings
 from typing import Optional
 
@@ -92,10 +93,14 @@ def overlay_vendor_names() -> list[str]:
 
 
 def _validate_overlay_abi(vendor_dirs: list[pathlib.Path]) -> None:
-    """Fail before loading code when an overlay changes the wheel's aclnn ABI."""
+    """Authenticate the base and fail before loading ABI-incompatible code."""
 
     try:
-        from ._op_abi import compare_overlay_to_base
+        from ._op_abi import (
+            BASE_CONTRACT_SNAPSHOT_NAME,
+            compare_overlay_to_base,
+            validate_vendor_against_snapshot,
+        )
     except ImportError:  # run_path/direct-script diagnostics lack package context
         abi_path = _PACKAGE_DIR / "_op_abi.py"
         abi_spec = importlib.util.spec_from_file_location(
@@ -105,7 +110,9 @@ def _validate_overlay_abi(vendor_dirs: list[pathlib.Path]) -> None:
             raise
         abi_module = importlib.util.module_from_spec(abi_spec)
         abi_spec.loader.exec_module(abi_module)
+        BASE_CONTRACT_SNAPSHOT_NAME = abi_module.BASE_CONTRACT_SNAPSHOT_NAME
         compare_overlay_to_base = abi_module.compare_overlay_to_base
+        validate_vendor_against_snapshot = abi_module.validate_vendor_against_snapshot
 
     base_vendor = next(
         (path for path in vendor_dirs if path.name == _DEFAULT_VENDOR_DIR), None
@@ -115,6 +122,18 @@ def _validate_overlay_abi(vendor_dirs: list[pathlib.Path]) -> None:
             "fla_npu: no base vendor is available to validate overlay aclnn ABI. "
             "Reinstall the complete wheel before using an overlay."
         )
+    try:
+        validate_vendor_against_snapshot(
+            base_vendor,
+            _PACKAGE_DIR / BASE_CONTRACT_SNAPSHOT_NAME,
+            require_exact=True,
+        )
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise RuntimeError(
+            "fla_npu: the embedded base OPP no longer matches this wheel. "
+            "Reinstall a complete matching wheel; do not combine Python/launcher "
+            f"files with a base OPP from another build. Detail: {exc}"
+        ) from exc
     failures: list[str] = []
     for vendor_dir in vendor_dirs:
         if vendor_dir == base_vendor:
@@ -295,8 +314,27 @@ def _prepare_embedded_opp() -> list[pathlib.Path]:
     return vendor_dirs
 
 
+def _cann_runtime_may_be_initialized() -> bool:
+    """Conservatively detect an already-loaded CANN/torch_npu registry."""
+
+    if "torch_npu" in sys.modules or _ASCENDC_OPAPI_LIBRARIES is not None:
+        return True
+    if sys.platform.startswith("linux"):
+        try:
+            loaded = pathlib.Path("/proc/self/maps").read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except OSError:
+            return False
+        return any(
+            library in loaded
+            for library in ("libopapi.so", "libascendcl.so", "libacl_op_compiler.so")
+        )
+    return False
+
+
 def _warn_if_embedded_opp_not_preconfigured() -> None:
-    """Warn when the wheel-embedded custom OPP was not pre-configured.
+    """Reject a late vendor-order change after CANN may have initialized.
 
     CANN discovers custom operator host/tiling/kernel binaries when the runtime
     is initialized (e.g. at ``import torch_npu``). If CANN initializes before
@@ -307,11 +345,25 @@ def _warn_if_embedded_opp_not_preconfigured() -> None:
         vendor_dirs = _resolve_vendor_dirs()
     except Exception:
         return
-    parts = [part for part in os.environ.get("ASCEND_CUSTOM_OPP_PATH", "").split(os.pathsep) if part]
-    missing = [vendor_dir for vendor_dir in vendor_dirs if str(vendor_dir) not in parts]
-    if not missing:
+    current = [
+        pathlib.Path(part).resolve()
+        for part in os.environ.get("ASCEND_CUSTOM_OPP_PATH", "").split(os.pathsep)
+        if part and _is_package_opp_path(part)
+    ]
+    expected = [vendor_dir.resolve() for vendor_dir in vendor_dirs]
+    if current == expected:
         return
-    vendor_dir = missing[0]
+    if _cann_runtime_may_be_initialized():
+        raise RuntimeError(
+            "fla_npu: CANN/torch_npu appears to be initialized before the wheel's "
+            "base/overlay vendor order was configured. Refusing to change L1 host "
+            "libraries after kernel registration because that can mix base host "
+            "code with overlay kernels. Restart the process, source the wheel's "
+            "opp/vendors/fla_npu_transformer/bin/set_env.bash first, then import "
+            "torch_npu/fla_npu. Set FLA_NPU_OVERLAY_VENDOR='' before sourcing to "
+            "disable overlays explicitly."
+        )
+    vendor_dir = expected[0]
     warnings.warn(
         "[fla-npu] ASCEND_CUSTOM_OPP_PATH does not contain the custom OPP implements "
         "before import fla_npu, If you need to use fla_npu operators,  run:\n\n"

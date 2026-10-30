@@ -40,6 +40,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import re
 import shutil
 import subprocess
@@ -343,6 +345,33 @@ def check_wheel(
             validate_build_stamp(archive.read(stamp[0]))
         except RuntimeError as exc:
             raise CheckFailure(f"{wheel.name}: {exc}") from exc
+        base_snapshot = require(
+            r"^fla_npu/_base_opp_contract\.json$",
+            "the immutable base OPP ABI snapshot (_base_opp_contract.json)",
+        )
+        try:
+            snapshot = json.loads(archive.read(base_snapshot[0]))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise CheckFailure(f"{wheel.name}: invalid base OPP ABI snapshot: {exc}") from exc
+        contracts = snapshot.get("contracts") if isinstance(snapshot, dict) else None
+        if (
+            not isinstance(snapshot, dict)
+            or snapshot.get("schema_version") != 1
+            or not isinstance(contracts, dict)
+            or not contracts
+            or any(
+                not isinstance(symbol, str)
+                or not isinstance(signature, list)
+                or not all(isinstance(kind, str) for kind in signature)
+                for symbol, signature in contracts.items()
+            )
+        ):
+            raise CheckFailure(f"{wheel.name}: invalid base OPP ABI snapshot structure")
+        encoded = json.dumps(
+            contracts, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        if snapshot.get("fingerprint") != hashlib.sha256(encoded).hexdigest():
+            raise CheckFailure(f"{wheel.name}: stale or corrupted base OPP ABI snapshot")
         forbidden = find(r"(^|/)custom_aclnn_extension_lib[^/]*$")
         forbidden += find(r"^fla_npu/ops/ascendc/_(aclnn_ctypes|runtime)\.py$")
         if forbidden:

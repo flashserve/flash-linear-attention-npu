@@ -84,11 +84,11 @@ overlay 不携带另一份 launcher。接口不变的 host/tiling/kernel 更新�
 
 归一化会移除当前包遗留的 OPP root、`vendor/op_api/lib` 和旧 vendor 排序，再写入选定顺序；不应把 CANN built-in 填进 `ASCEND_CUSTOM_OPP_PATH`。vendor 及 host 库解析后的路径必须位于包内，拒绝通过软链把 host 来源引到包外。
 
-默认 `.pth` 在用户代码及通常的 `import torch_npu` 之前设置 OPP 路径。`import fla_npu` 重复选择与校验，并准备 host 库。CANN 初始化以后改变路径、安装或移除 overlay，都不能刷新已加载的索引、动态库句柄和符号缓存；必须启动新进程。
+默认 `.pth` 在用户代码及通常的 `import torch_npu` 之前设置 OPP 路径。`import fla_npu` 重复选择与校验，并准备 host 库。若检测到 `torch_npu`/CANN 已加载而当前包内 vendor 顺序与目标顺序不同，import 必须在改写环境和加载 host 库之前失败，不能只告警后继续。CANN 初始化以后改变路径、安装或移除 overlay，都不能刷新已加载的索引、动态库句柄和符号缓存；必须启动新进程。
 
 toolkit 的 `set_env.sh` 配置 CANN 工具链与运行依赖；vendor 的 `bin/set_env.bash` 配置本份自定义 OPP 的发现路径。两者均是环境准备，source 本身不等于设备运行时初始化。
 
-两处生成器的 `set_env.bash` 与 `.pth`/Python runtime 使用相同的 overlay 选择规则，显式禁用时即使 source overlay 脚本也只登记 base；重复 source 不改变结果。单数库变量固定指向 base，复数变量按选定顺序生成。关闭 `.pth` 时，在初始化 CANN 前 source 对应 vendor 脚本；环境选择必须在此之前确定。无 FLA base 的独立外部 vendor 保留原 source 导出能力，不因此成为 Python host 库的外部来源。
+wheel 构建、run 包收尾和 overlay 安装三处 `set_env.bash` 生成路径与 `.pth`/Python runtime 使用相同的 overlay 选择规则；wheel 构建直接复用 run 包收尾的纯生成函数，并由同一组行为用例对拍。显式禁用时即使 source overlay 脚本也只登记 base；重复 source 不改变结果。单数库变量固定指向 base，复数变量按选定顺序生成。关闭 `.pth` 时，在初始化 CANN 前 source 对应 vendor 脚本；环境选择必须在此之前确定。无 FLA base 的独立外部 vendor 保留原 source 导出能力，不因此成为 Python host 库的外部来源。
 
 ### 3.1 仓内 ATK 用例的兼容方式
 
@@ -126,7 +126,7 @@ bash tests/atk/run_test_cpu.sh -op=<op> -scope=accuracy
 
 类型解析保留每级指针，区分 `double`/`double*`、`aclTensor*`/`aclTensor**`，不猜测未知类型。参数名及 cv 限定不参与 C 调用 ABI 比较。仅保留两个显式例外：SolveTri 已核对源码的冻结契约；CausalConv1d 及 Bwd 的 Tensor 变体共用对应执行入口。
 
-`abi_manifest.json` 记录导出契约及 host 库、公共头的哈希。旧 base 无清单时允许以公共头为兼容基线；新 overlay 必须携带有效清单。缺头、未覆盖导出、阶段不配对、哈希不符、base 未声明接口或签名漂移均拒绝。
+`abi_manifest.json` 记录导出契约及 host 库、公共头的哈希。构建 wheel 时还会把 base 公共契约固化为 vendor 树之外的 `_base_opp_contract.json`；运行时同时验证 base 清单和这份不可随 `.run` 覆盖的契约快照。完整 `.run` 写入 wheel 前必须携带有效清单并与快照精确一致；局部构建不得替换共享 base，必须走 overlay。缺头、未覆盖导出、阶段不配对、哈希不符、base 未声明接口或签名漂移均拒绝。
 
 运行校验仅依赖 Python 标准库，不运行 `nm`。清单是完整性检查，不是数字签名，也不覆盖内部 tiling ABI 或 kernel 正确性。启用 overlay 会增加启动时读取头文件、计算 host 库哈希的开销。
 
@@ -186,7 +186,7 @@ python -m fla_npu_opp_manage --remove-overlay
 
 本地命令以独立进程组启动，取消时依次尝试 SIGINT、SIGTERM、SIGKILL，并确认整个组没有活跃进程，不能只检查组长退出。远程使用 `setsid` 和 `timeout --foreground` 保持构建子树同组，记录 PGID 与启动时间，发信号前检查进程身份。
 
-Docker 进程由 daemon 管理，除本地客户端进程组外，还要按本次唯一容器名检查归属并停止容器。未确认清理完成时抛出不可重试的 `BuildCleanupError`，停止后续重试和 SoC 组合。只有确认写入者退出后，才能清理共享 build 目录并开始下一轮。
+Docker 进程由 daemon 管理，容器以宿主调用用户的 UID/GID 运行，避免留下宿主用户无法清理的 root-owned 构建产物；除本地客户端进程组外，还要给容器写入 managed/workspace label。新一轮在清理前持有工作区锁，并只移除同时满足 label 与 `/workspace/repo` 挂载校验的同工作区孤儿容器。顶层控制器接收 SIGTERM 时设置统一 stop 事件并等待 worker 完成清理。远程 `ps` 查询开启 `pipefail` 且查询失败按清理失败处理，不能当成“进程已退出”。未确认清理完成时抛出不可重试的 `BuildCleanupError`，停止后续重试和 SoC 组合。只有确认写入者退出后，才能清理共享 build 目录并开始下一轮。
 
 这些规则不承诺终止主动逃离进程组的任意外部程序，也不以 mock 测试替代真实 Docker 取消验收。
 

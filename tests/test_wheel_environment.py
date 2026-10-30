@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import importlib
 import json
 import os
@@ -146,7 +147,17 @@ def _create_runtime_package(site_root: Path) -> tuple[Path, Path, Path]:
     packaged_opapi = vendor_dir / "op_api" / "lib" / "libcust_opapi.so"
     packaged_opapi.parent.mkdir(parents=True)
     packaged_opapi.write_bytes(b"packaged-test")
+    _write_aclnn_header(vendor_dir, "int64_t")
+    _write_base_contract_snapshot(package_dir, vendor_dir)
     return runtime_path, vendor_dir, packaged_opapi
+
+
+def _write_base_contract_snapshot(package_dir: Path, vendor_dir: Path) -> None:
+    abi = runpy.run_path(str(OP_ABI_SOURCE))
+    shutil.copy2(OP_ABI_SOURCE, package_dir / "_op_abi.py")
+    abi["write_base_contract_snapshot"](
+        vendor_dir, package_dir / abi["BASE_CONTRACT_SNAPSHOT_NAME"]
+    )
 
 
 def _load_runtime(path: Path) -> dict[str, object]:
@@ -508,9 +519,19 @@ class WheelEnvironmentTest(unittest.TestCase):
 
         info = f"flash_linear_attention_npu_{tier}-{version}.dist-info"
         vendor = "fla_npu/opp/vendors/fla_npu_transformer"
+        contracts = {"aclnnDemo": ["tensor"]}
+        contracts_blob = json.dumps(
+            contracts, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        base_snapshot = {
+            "schema_version": 1,
+            "fingerprint": hashlib.sha256(contracts_blob).hexdigest(),
+            "contracts": contracts,
+        }
         entries = {
             "fla_npu/libfla_npu_stable.so": b"\x7fELF stable",
             "fla_npu/ops/ascendc/_stable_hash.py": b"SOURCE_HASH = '0123456789abcdef0123456789abcdef'\n",
+            "fla_npu/_base_opp_contract.json": json.dumps(base_snapshot).encode("utf-8"),
             "fla_npu/_build_meta.py": f"TIER = {declared_tier or tier!r}\n".encode(),
             "fla_npu/_compat.py": b"MIN_CANN = '8.5.2'\nMIN_TORCH = '2.7.1'\n",
             f"{vendor}/op_api/lib/libcust_opapi.so": b"\x7fELF opapi",
@@ -670,6 +691,13 @@ class WheelEnvironmentTest(unittest.TestCase):
         cases = (
             ("fla_npu/libfla_npu_stable.so", None, "Stable-ABI launcher"),
             ("fla_npu/ops/ascendc/_stable_hash.py", None, "build stamp"),
+            ("fla_npu/_base_opp_contract.json", None, "base OPP ABI snapshot"),
+            ("fla_npu/_base_opp_contract.json", b"{}", "invalid base OPP ABI snapshot"),
+            (
+                "fla_npu/_base_opp_contract.json",
+                b'{"schema_version":1,"fingerprint":"bad","contracts":{"aclnnDemo":[]}}',
+                "stale or corrupted base OPP ABI snapshot",
+            ),
             ("fla_npu/libfla_npu_stable.so", b"", "launcher is empty"),
             ("fla_npu/ops/ascendc/_stable_hash.py", b"", "Invalid Stable-ABI build stamp"),
             ("fla_npu/ops/ascendc/_stable_hash.py", b"SOURCE_HASH = 'unknown'", "Invalid Stable-ABI build stamp"),
@@ -828,7 +856,11 @@ source {overlay_env!s}
     @unittest.skipUnless(shutil.which("bash"), "requires bash; exercised by Linux CI")
     def test_shell_pth_and_runtime_agree_on_overlay_selection(self) -> None:
         installer = runpy.run_path(str(RUNTIME_SOURCE.with_name("install_opp.py")))
-        generators = (installer["_write_set_env"], _load_run_package_finalizer()["_write_set_env"])
+        generators = (
+            self.setup_globals["_rewrite_set_env"],
+            installer["_write_set_env"],
+            _load_run_package_finalizer()["_write_set_env"],
+        )
         with tempfile.TemporaryDirectory() as temp_dir:
             site = Path(temp_dir) / "site"
             runtime, base, _ = _create_runtime_package(site)
@@ -953,6 +985,7 @@ source {overlay_env!s}
                 package_dir / "opp" / "vendors" / "fla_npu_transformer"
             )
             _create_minimal_vendor(vendor_dir, include_alias=True)
+            _write_base_contract_snapshot(package_dir, vendor_dir)
             config = package_dir / "opp" / "vendors" / "config.ini"
             config.write_text("load_priority=fla_npu_transformer\n", encoding="utf-8")
 
@@ -1049,6 +1082,19 @@ source {set_env!s}
                 checker["_manifest_from_directory"](package_dir),
             )
 
+    def test_run_package_rejects_cross_version_base_before_write(self) -> None:
+        validate_source = _load_run_package_finalizer()["validate_source_vendor"]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            package_dir = Path(temp_dir) / "site-packages" / "fla_npu"
+            base = package_dir / "opp/vendors/fla_npu_transformer"
+            source = Path(temp_dir) / "run/vendors/fla_npu_transformer"
+            _create_minimal_vendor(base)
+            _write_base_contract_snapshot(package_dir, base)
+            _create_minimal_vendor(source)
+            _write_aclnn_header(source, "bool")
+            with self.assertRaisesRegex(RuntimeError, "does not exactly match"):
+                validate_source(package_dir, source)
+
     def test_both_run_package_installers_finalize_wheel_overlay(self) -> None:
         installers = (
             REPO_ROOT / "cmake" / "scripts" / "custom" / "install.sh",
@@ -1063,6 +1109,11 @@ source {set_env!s}
             with self.subTest(installer=installer):
                 source = installer.read_text(encoding="utf-8")
                 self.assertIn('finalize_wheel_opp "${wheel_opp_root}"', source)
+                self.assertIn("validate_wheel_base_source", source)
+                self.assertLess(
+                    source.rfind("validate_wheel_base_source", 0, source.rfind("merge_vendor_to_wheel_opp")),
+                    source.rfind("merge_vendor_to_wheel_opp"),
+                )
                 self.assertNotIn(
                     '"${dst_vendor}/op_api/lib/libopapi.so"',
                     source,
@@ -1209,6 +1260,38 @@ source {set_env!s}
                 with self.assertRaisesRegex(RuntimeError, "overlay aclnn ABI differs"):
                     _load_runtime(runtime_path)
 
+    def test_late_import_refuses_to_change_vendor_order_after_torch_npu(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_path, base, _ = _create_runtime_package(
+                Path(temp_dir) / "site-packages"
+            )
+            overlay = base.parent / "fla_npu_overlay_transformer"
+            _create_minimal_vendor(overlay)
+            before = str(base)
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "ASCEND_HOME_PATH": "/fake/cann",
+                    "ASCEND_CUSTOM_OPP_PATH": before,
+                },
+                clear=True,
+            ), mock.patch.dict(sys.modules, {"torch_npu": mock.sentinel.torch_npu}), \
+                    mock.patch("ctypes.CDLL") as cdll:
+                with self.assertRaisesRegex(RuntimeError, "Refusing to change L1"):
+                    _load_runtime(runtime_path)
+                self.assertEqual(os.environ["ASCEND_CUSTOM_OPP_PATH"], before)
+                cdll.assert_not_called()
+
+    def test_import_rejects_tampered_base_even_when_manifest_is_refreshed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_path, base, _ = _create_runtime_package(
+                Path(temp_dir) / "site-packages"
+            )
+            _write_aclnn_header(base, "bool")
+            with mock.patch.dict(os.environ, {"ASCEND_HOME_PATH": "/fake/cann"}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "base OPP no longer matches"):
+                    _load_runtime(runtime_path)
+
     def test_overlay_import_prepares_order_without_loading_torch_or_launcher(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime_path, base, _ = _create_runtime_package(
@@ -1309,8 +1392,8 @@ source {set_env!s}
                 clear=True,
             ):
                 with self.assertRaisesRegex(
-                    FileNotFoundError,
-                    r"packaged FLA NPU op_api library",
+                    RuntimeError,
+                    r"embedded base OPP no longer matches",
                 ):
                     _load_runtime(runtime_path)
 

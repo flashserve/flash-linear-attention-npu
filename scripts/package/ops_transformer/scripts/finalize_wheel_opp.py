@@ -17,6 +17,7 @@ import argparse
 import base64
 import csv
 import hashlib
+import importlib.util
 import os
 import stat
 import tempfile
@@ -29,6 +30,28 @@ from pathlib import Path
 # dist-info at all and refuse to refresh RECORD.
 DIST_INFO_GLOB = "flash_linear_attention_npu*.dist-info"
 DEFAULT_VENDOR_DIR = "fla_npu_transformer"
+
+
+def _load_abi_helper(package_dir: Path):
+    helper_path = package_dir / "_op_abi.py"
+    spec = importlib.util.spec_from_file_location("fla_npu_run_abi", helper_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load wheel ABI helper: {helper_path}")
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    return helper
+
+
+def validate_source_vendor(package_dir: Path, source_vendor: Path) -> None:
+    """Reject partial/cross-version base replacement before any wheel write."""
+
+    package_dir = package_dir.expanduser().resolve()
+    helper = _load_abi_helper(package_dir)
+    helper.validate_vendor_against_snapshot(
+        source_vendor.expanduser().resolve(),
+        package_dir / helper.BASE_CONTRACT_SNAPSHOT_NAME,
+        require_exact=True,
+    )
 
 
 def _write_set_env(vendor_dir: Path) -> None:
@@ -218,6 +241,13 @@ def finalize_wheel_opp(package_dir: Path, vendor_name: str = DEFAULT_VENDOR_DIR)
     if not custom_opapi.is_file():
         raise RuntimeError(f"Wheel is missing packaged custom op_api: {custom_opapi}")
 
+    helper = _load_abi_helper(package_dir)
+    helper.validate_vendor_against_snapshot(
+        vendor_dir,
+        package_dir / helper.BASE_CONTRACT_SNAPSHOT_NAME,
+        require_exact=True,
+    )
+
     conflicting_alias = custom_opapi.with_name("libopapi.so")
     if conflicting_alias.exists() or conflicting_alias.is_symlink():
         conflicting_alias.unlink()
@@ -230,7 +260,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--package-dir", required=True, type=Path)
     parser.add_argument("--vendor-name", default=DEFAULT_VENDOR_DIR)
+    parser.add_argument(
+        "--check-source-vendor",
+        type=Path,
+        help="validate a complete run-package vendor before modifying the wheel",
+    )
     args = parser.parse_args()
+
+    if args.check_source_vendor is not None:
+        validate_source_vendor(args.package_dir, args.check_source_vendor)
+        print("Source vendor matches the installed wheel base ABI.")
+        return 0
 
     record = finalize_wheel_opp(args.package_dir, args.vendor_name)
     print(f"Finalized wheel OPP and refreshed {record.name}.")
