@@ -37,30 +37,43 @@ std::string ShapeText(const Shape &shape)
 
 aclnnStatus Missing(const char *name)
 {
-    OP_LOGE_WITH_INVALID_INPUT(OP_NAME, name);
+    // CANN 9.0.0's OP_LOGE_WITH_INVALID_INPUT references an undefined param_name.
+    // Use its structured reporter directly without redefining SDK macros.
+    OP_LOGE_WITHOUT_REPORT(OP_NAME, "OP[%s] get [%s] failed.", OP_NAME, name);
+    const std::vector<const char *> keys = {"op_name", "param_name"};
+    const std::vector<const char *> values = {OP_NAME, name};
+    REPORT_PREDEFINED_ERR_MSG("EZ0004", keys, values);
     return ACLNN_ERR_PARAM_NULLPTR;
 }
 
 aclnnStatus InvalidValue(const char *name, const std::string &actual, const std::string &expected)
 {
+#ifdef OP_LOGE_FOR_INVALID_VALUE
     OP_LOGE_FOR_INVALID_VALUE(OP_NAME, name, actual, expected);
+#else
+    OP_LOGE_WITH_INVALID_ATTR(OP_NAME, name, actual.c_str(), expected.c_str());
+#endif
     return ACLNN_ERR_PARAM_INVALID;
 }
 
 aclnnStatus InvalidArgument(const char *name, const std::string &reason)
 {
-    OP_LOGE_FOR_INVALID_VALUE(OP_NAME, name, "invalid", reason);
-    return ACLNN_ERR_PARAM_INVALID;
+    return InvalidValue(name, "invalid", reason);
 }
 
 aclnnStatus InvalidShape(const aclTensor *tensor, const char *name, const std::string &expected)
 {
     const auto actual = ShapeText(tensor->GetViewShape());
+#ifdef OP_LOGE_FOR_INVALID_SHAPE
     // The predefined message supplies the enclosing brackets itself.
     const auto shape = actual.substr(1, actual.size() - 2);
     const auto correct = expected.size() >= 2 && expected.front() == '[' && expected.back() == ']'
         ? expected.substr(1, expected.size() - 2) : expected;
     OP_LOGE_FOR_INVALID_SHAPE(OP_NAME, name, shape, correct);
+#else
+    // Older SDKs have no EZ0008 catalog entry. Keep details in their EZ0002 report.
+    OP_LOGE_WITH_INVALID_ATTR(OP_NAME, name, actual.c_str(), expected.c_str());
+#endif
     return ACLNN_ERR_PARAM_INVALID;
 }
 
@@ -68,9 +81,15 @@ aclnnStatus CheckTensor(const aclTensor *tensor, DataType dtype, const char *nam
 {
     if (tensor == nullptr) return Missing(name);
     if (tensor->GetDataType() != dtype) {
+#ifdef OP_LOGE_FOR_INVALID_DTYPE
         OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, name,
             ge::TypeUtils::DataTypeToSerialString(tensor->GetDataType()),
             ge::TypeUtils::DataTypeToSerialString(dtype));
+#else
+        const auto actual = ge::TypeUtils::DataTypeToSerialString(tensor->GetDataType());
+        const auto expected = ge::TypeUtils::DataTypeToSerialString(dtype);
+        OP_LOGE_WITH_INVALID_INPUT_DTYPE(OP_NAME, name, actual.c_str(), expected.c_str());
+#endif
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!IsContiguous(tensor)) return InvalidArgument(name, "must be contiguous");

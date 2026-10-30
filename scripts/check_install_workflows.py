@@ -226,10 +226,11 @@ def _assert_set_env_idempotent(package_dir: Path, env: dict[str, str], cwd: Path
 
     check = r'''
 set -euo pipefail
-unset ASCEND_CUSTOM_OPP_PATH LD_LIBRARY_PATH FLA_NPU_OPP_PATH FLA_NPU_OP_API_LIB
+unset ASCEND_CUSTOM_OPP_PATH LD_LIBRARY_PATH FLA_NPU_OPP_PATH FLA_NPU_OP_API_LIB FLA_NPU_OP_API_LIBS
 source "$1"
+printf '%s\n' "$ASCEND_CUSTOM_OPP_PATH" "${LD_LIBRARY_PATH-}" "$FLA_NPU_OPP_PATH" "$FLA_NPU_OP_API_LIB" "${FLA_NPU_OP_API_LIBS-}"
 source "$1"
-printf '%s\n' "$ASCEND_CUSTOM_OPP_PATH" "${LD_LIBRARY_PATH-}" "$FLA_NPU_OPP_PATH" "$FLA_NPU_OP_API_LIB"
+printf '%s\n' "$ASCEND_CUSTOM_OPP_PATH" "${LD_LIBRARY_PATH-}" "$FLA_NPU_OPP_PATH" "$FLA_NPU_OP_API_LIB" "${FLA_NPU_OP_API_LIBS-}"
 '''
     output = subprocess.check_output(
         ["bash", "-c", check, "check-set-env", str(set_env)],
@@ -237,14 +238,34 @@ printf '%s\n' "$ASCEND_CUSTOM_OPP_PATH" "${LD_LIBRARY_PATH-}" "$FLA_NPU_OPP_PATH
         env=env,
         encoding="utf-8",
     ).splitlines()
-    expected = [
+    op_api_lib = str(vendor_dir / "op_api" / "lib" / "libcust_opapi.so")
+    root_based_snapshot = [
         f"{vendor_dir.parent.parent}:{vendor_dir}",
         "",
         str(vendor_dir.parent.parent),
-        str(vendor_dir / "op_api" / "lib" / "libcust_opapi.so"),
+        op_api_lib,
+        "",
     ]
-    if output != expected:
-        raise AssertionError(f"set_env.bash is not idempotent: actual={output}, expected={expected}")
+    vendor_order_snapshot = [
+        str(vendor_dir),
+        "",
+        str(vendor_dir.parent.parent),
+        op_api_lib,
+        op_api_lib,
+    ]
+    snapshot_size = len(root_based_snapshot)
+    first = output[:snapshot_size]
+    second = output[snapshot_size:]
+    expected_snapshots = [root_based_snapshot, vendor_order_snapshot]
+    if first not in expected_snapshots:
+        raise AssertionError(
+            "set_env.bash produced an unexpected environment after the first source: "
+            f"actual={first}, expected one of {expected_snapshots}"
+        )
+    if second != first:
+        raise AssertionError(
+            f"set_env.bash is not idempotent: first={first}, second={second}"
+        )
 
 
 def _assert_runtime(

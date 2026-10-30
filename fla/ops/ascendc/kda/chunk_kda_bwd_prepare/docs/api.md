@@ -54,6 +54,9 @@ A5 的 BSND/TND 要求 H*128 不超过 uint32_t 上限（CATLASS 的行距字段
 shape 不匹配为 EZ0008，dtype 不匹配为 EZ0019，属性值非法为 EZ0024，
 非连续输入或元数据约束非法为 EZ0024；同时保留对应 ACLNN 状态返回值。
 Stable-ABI 与 ctypes 入口均在 ACLNN 失败时显示 Error Message 的详情。
+对于缺少 `OP_LOGE_FOR_INVALID_*` 的旧 SDK（如 CANN 9.0.0），shape/属性值/元数据
+使用其已有的 EZ0002，dtype 使用 EZ0007；缺失参数仍为 EZ0004。
+两种路径都保留参数名、实际值、期望值或原因，以及原有 ACLNN 状态返回值。
 
 调用层及错误信息可用以下脚本回归（`--device` 为进程可见设备编号）：
 

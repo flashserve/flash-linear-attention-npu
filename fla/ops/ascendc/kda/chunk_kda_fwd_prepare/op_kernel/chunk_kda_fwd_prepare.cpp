@@ -5,15 +5,18 @@
  */
 
 #include "kernel_operator.h"
+#include "lib/matmul_intf.h"
 #if defined(CHUNK_KDA_PREPARE_RUNTIME_KEYS)
 #include "chunk_kda_fwd_prepare_runtime_key.h"
+#include "arch22/chunk_kda_fwd_prepare_vector.h"
+#include "arch22/chunk_kda_fwd_prepare_cube.h"
 #else
 #include "chunk_kda_fwd_prepare_tiling_key.h"
-#endif
 #include "chunk_kda_fwd_prepare_kernel.h"
+#endif
 
 #if defined(CHUNK_KDA_PREPARE_RUNTIME_KEYS)
-template <int D_T_GATE, int D_T_BETA, uint32_t PIPELINE_VARIANT>
+template <uint32_t NORM_MODE, uint32_t GATE_MODE>
 #else
 template <int D_T_GATE, int D_T_BETA, uint32_t NORM_MODE,
           uint32_t BETA_MODE, uint32_t GATE_MODE,
@@ -83,19 +86,16 @@ __global__ __aicore__ void chunk_kda_fwd_prepare(
     args.tiling.useExp2 = tilingData.useExp2;
 
 #if defined(CHUNK_KDA_PREPARE_RUNTIME_KEYS)
-    static_assert(PIPELINE_VARIANT <= 1, "Unknown A2 prepare pipeline");
-    static_assert(PIPELINE_VARIANT == 0 || D_T_BETA == 10,
-                  "Target pipeline requires BF16 beta");
-    using Policy = std::conditional_t<PIPELINE_VARIANT == 0,
-        KdaPrepare::PrepareRuntimePolicy, KdaPrepare::PrepareTargetPolicy>;
+    static_assert(NORM_MODE<=1 && GATE_MODE<=2);
+    KdaPrepare::Arch22::Run<NORM_MODE,GATE_MODE,DTYPE_G,DTYPE_BETA>(args);
 #else
     using Policy = KdaPrepare::PrepareCompilePolicy<
         static_cast<KdaPrepare::QkNormMode>(NORM_MODE),
         static_cast<KdaPrepare::BetaMode>(BETA_MODE),
         static_cast<KdaPrepare::GateMode>(GATE_MODE), USE_EXP2, SAFE_GATE,
         static_cast<KdaPrepare::OutputMode>(OUTPUT_MODE)>;
-#endif
     using GateT = typename KdaPrepare::PrepareStorageType<D_T_GATE>::type;
     using BetaT = typename KdaPrepare::PrepareStorageType<D_T_BETA>::type;
     KdaPrepare::RunPrepare<GateT, BetaT, Policy>(args);
+#endif
 }
