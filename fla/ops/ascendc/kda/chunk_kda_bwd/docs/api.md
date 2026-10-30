@@ -1,5 +1,31 @@
 # KDA 反向总接口
 
+## 版本变更：26.9.1 → main / 26.10.0
+
+**本次反向总接口是非兼容变更。** 本文描述 main 分支本次变更后的接口；
+26.10.0 后续回合同一变更，26.9.1 保持旧接口。升级时须同步调整模型接入，
+不能只替换算子包后沿用原调用。
+
+| 要点 | 26.9.1 旧接口 | main / 26.10.0 新接口 |
+|---|---|---|
+| 布局参数 | 无 layout，也无 input_layout/output_layout | 新增单一 layout，支持 BSND/BNSD/TND/NTD，默认 BNSD |
+| q/k/v；dq/dk/dv | 固定 head-major（BNSD/NTD） | 随 layout；有成对 rstd 时，输入 q/k 固定为 head-major 的 q_hat/k_hat |
+| do/raw_g/beta；dg/dbeta | 固定 head-major | 固定 token-major（BSND/TND），不随 layout |
+| beta 与 sigmoid 反向 | beta 传有效值，无独立 beta_eff 和 sigmoid 反向标志 | 不融合时仍传有效 beta；融合时 beta 传原始 logits，另传 FP32 head-major 的 beta_eff；dbeta 对应原始 beta |
+| dq/dk/dbeta/dg dtype | A2/A3 原总接口均为 FP32；A5 V2 的 dq/dk 为 BF16、dbeta 跟随 beta、dg 为 FP32 | dq/dk 跟随 q/k；dbeta/dg 分别跟随 beta/raw_g，支持 BF16/FP32 门控输入 |
+| q/k/v dtype | 原总接口支持 FP16/BF16；A5 V2 为 BF16 | 统一只支持 BF16，dv 也为 BF16 |
+| gate 模式 | use_gate_in_kernel 默认 False | 默认且仅支持 True，必须提供 raw_g 和 FP32 A_log；dt_bias 可选且固定 FP32 |
+| 变长输入 | cu_seqlens 对应三维 head-major 张量 | 支持三维 NTD/TND，也支持 B=1 的四维 BNSD/BSND |
+| A5 路由 | auto 按条件选择 legacy/V2 | auto/optimized 统一走 V2，legacy 拒绝新接口 |
+
+A2/A3 支持融合 beta sigmoid 反向；**A5 仅预留接口**，当前必须保持
+beta_eff=None、use_beta_sigmoid_in_kernel=False、allow_neg_eigval=False。
+A_log/dt_bias 及其梯度在新接口中均固定 FP32；A5 旧 V2 接受 BF16 A_log 的调用也须调整。
+前向接口和反向返回顺序不变，Python 绑定、ACLNN 与 OPP/kernel 必须配套升级。
+
+迁移时重点检查：即使 layout 仍用默认 BNSD，do/raw_g/beta 与 dg/dbeta 也已改为
+BSND；融合 sigmoid 时保存并传入原始 beta 与 beta_eff；删除接入层中已不再需要的梯度 Cast/Transpose。
+
 A2/A3 与 A5 V2 使用相同的单 `layout` 接口。返回顺序为
 `(dq, dk, dv, db, dg, dh0, dA, dbias)`。
 
@@ -65,7 +91,7 @@ Python 和 ACLNN 层拒绝。前反向须配套：A5 若需要 sigmoid，应在�
 
 ## 接口升级
 
-这是非兼容升级。Python 总接口使用 `layout`，不再接收 input_layout/output_layout。
+这是非兼容升级。Python 总接口仅使用 `layout`，不接收 input_layout/output_layout。
 ACLNN 的 A2/A3 总接口与 A5 V2 均在 kRstdOptional 后按顺序接收
 `betaEffOptional, layout, useBetaSigmoidInKernel, allowNegEigval`。
 绑定、op-api、OPP/kernel 必须配套更新，不能与旧 V2 ABI 混用。
