@@ -4,7 +4,7 @@
 
 1. 顶层接口对齐非 CP 的 FLA `chunk_kda_fwd`。
 2. 顶层 `chunk_kda_fwd` 不新增公开算子原型；chunk=64 的 A5 快路径复用既有 `ChunkKdaFwd`
-   原型和外层 kernel 入口，chunk=32 则由公开 V2 入口路由到私有 `ChunkKdaFwdFused` L0。
+   原型和外层 kernel 入口，chunk=32 也由公开 V2 入口路由到同一个 `ChunkKdaFwd` L0。
 3. A2/A3/A5 使用同一数学定义；A5 保留 regbase 双发射特化。
 4. 输入 layout 与输出 layout 解耦。
 5. FwdH 同时服务 KDA 与 GDN，并支持可选 scalar gate、key-wise gate 和 `state_v_first`。
@@ -145,15 +145,15 @@ key2 下使用其对应单 launch 实现。tiling key 和私有 `stage` 均不�
 `chunk_size=32` 不复用上述 `ChunkKdaFwd` 外层 L0，也不经过
 `ChunkKdaFwdPrepare -> ChunkFwdH -> ChunkKdaFwdFinalize` 三算子链。公开 Python 入口选择
 `aclnnChunkKdaFwdV2`，其 chunk32 分支与 V1 的 chunk32 分支一样进入
-`RunChunkKdaFwd32Fused`，再由 `l0op::KdaChunkForwardFused` 单次启动私有
-`ChunkKdaFwdFused`：
+`RunChunkKdaFwd32Fused`，再由 `l0op::KdaChunkForward32` 单次启动同一个
+`ChunkKdaFwd` 的 key 32：
 
 ```text
 fla_npu.ops.ascendc.chunk_kda_fwd(chunk_size=32)
   -> aclnnChunkKdaFwdV2
   -> RunChunkKdaFwd32Fused[Dense|Varlen]
-  -> l0op::Exp(A_log) + l0op::KdaChunkForwardFused
-  -> ChunkKdaFwdFused（一次 mix kernel launch）
+  -> l0op::Exp(A_log) + l0op::KdaChunkForward32
+  -> ChunkKdaFwd（key 32，一次 mix kernel launch）
 ```
 
 host 负责连续化、公开 layout 转换、g/beta dtype 统一、state 形状适配和可选输出占位。
@@ -168,10 +168,11 @@ TilingKey 必须按实际 L0 区分：
 | --- | --- | --- |
 | 外层 `ChunkKdaFwd` 通用模板 | `1` | `op_host/chunk_kda_fwd_tiling.cpp` 的 `SetTilingKey(... ? 2 : 1)` |
 | 外层 `ChunkKdaFwd` chunk=64、K=V=128 模板 | `2` | 同上 |
-| 私有 `ChunkKdaFwdFused` chunk32 | `0` | `arch35/chunk32/op_host/chunk_kda_fwd_fused_tiling.cpp` 的 `SetTilingKey(0)` |
+| 同一 `ChunkKdaFwd` 的 chunk32 分支 | `32` | `op_host/chunk_kda_fwd_tiling.cpp` 的 `SetTilingKey(32)` |
 
-chunk32 的 `32` 是算法分块大小，不是 TilingKey；该路径也不会先进入外层 key 1/2 再转投
-fused。fused kernel 两个编译 pass 均使用 `KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2)`。
+chunk32 使用独立 TilingData，但不引入第二个 L0/def；key 32 与 key 1/2 共用同一个
+`chunk_kda_fwd` kernel 入口，先按 key 分发再解析各自 TilingData。fused 分支使用
+`KERNEL_TASK_TYPE(32, KERNEL_TYPE_MIX_AIC_1_2)`。
 
 ### 128-token group 与任务划分
 
@@ -202,7 +203,8 @@ NTD 也固定为 sequence-major TND `[T_total,HV,V]`。
 
 ### AIC/AIV Stage 职责
 
-`arch35/chunk32/op_kernel/chunk_kda_fwd_fused.cpp` 分别按 CUBE/VEC pass 编译同一个入口。
+`op_kernel/chunk_kda_fwd.cpp` 在 key 32 分支调用
+`op_kernel/arch35/chunk_kda_fwd_chunk32/`，分别按 CUBE/VEC pass 编译实现。
 AIC 使用裸 `mmad/fixpipe`，AIV 使用 MicroAPI；AIC 不读写 q/k/v/g/beta/state/o 的业务 GM，
 这些 GM I/O 和 state 常驻均由 AIV 负责。两侧的 Stage 名称直接对应软件流水函数，而不是
 多次 L0 launch。
@@ -246,7 +248,7 @@ AIC；末组完成后才聚集、转回 FP32 ND 并写 final state。final state
 `[N,HV,K,V]` FP32；Python 的 `state_v_first=true` 在进入 L2 前后转置，fused L2/L0 只接收
 K-first。
 
-生产路径不需要 GM workspace：`Tiling4ChunkKdaFwdFused` 将 workspace size 置 0。kernel ABI
+生产路径不需要 GM workspace：`TilingForChunkKdaFwd32` 将 workspace size 置 0。kernel ABI
 中的 `workspace` 仅接到 `tmp_gm` 供已注释的 debug dump 使用，正常 Stage 不通过它交换
 中间量；中间数据驻留 UB/L1/L0，跨核生命周期由 flag 保证。
 
@@ -274,12 +276,12 @@ AIC 向两个 AIV 分别 set 基础 id 与 id+16，并在反向等待两个 id�
 
 | 维度 | 覆盖/约束 |
 | --- | --- |
-| 平台与 L0 | Ascend950；`ChunkKdaFwdFused` key 0，一次 mix launch。 |
+| 平台与 L0 | Ascend950；`ChunkKdaFwd` key 32，一次 mix launch。 |
 | dtype | q/k/v/o BF16；公开 V2 的 g/beta 各自可为 BF16/FP32，任一 FP32 时 host 将两者统一上转 FP32；A_log/dt_bias/state FP32。 |
 | layout | dense BSND/BNSD；varlen BSND(B=1)/TND/NTD；NTD 原生 head-major 寻址，输出仍 TND。 |
 | shape | K=V=128，T>0，128-token group 尾块，GVA `HV%H==0`；varlen 最多 1024 序列并覆盖空序列。 |
 | state | 无 state、initial/final state、dense/varlen state；Python 覆盖 K-first/V-first 适配。 |
-| gate/norm | safe gate、核内 gate/L2 norm/beta sigmoid、BF16 与 FP32 g/beta。 |
+| gate/norm | safe gate、核内 gate/L2 norm/beta sigmoid、BF16 与 FP32 g/beta；chunk32 epsilon 固定为 `1e-6`。 |
 | ATK 用例 | accuracy 40（id 0–33 layout/长序列/尾块/state，34–35 FP32 g/beta+GVA，36–39 TND/NTD varlen/空序列）；performance 2；mss 5。 |
 
 已有验收记录为：全 FP32 q/k 准备中间计算版本在原始同精度 benchmark 下 40/40；正常数据

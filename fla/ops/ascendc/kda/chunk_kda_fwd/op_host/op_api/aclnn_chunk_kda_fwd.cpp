@@ -9,7 +9,6 @@
 #include "chunk_kda_fwd.h"
 #include "aclnn_chunk_kda_fwd_v2.h"
 #include "chunk_kda_fwd_v2.h"
-#include "../../arch35/chunk32/op_host/op_api/chunk_kda_fwd_fused.h"
 
 #include <algorithm>
 #include <cstring>
@@ -478,7 +477,7 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
                "aqkOut must not be nullptr.");
     CHECK_COND(params.chunkSize == 64, ACLNN_ERR_PARAM_INVALID,
                "chunkSize only supports 64 on the three-stage path "
-               "(32 is handled by the chunk_kda_fwd_fused kernel).");
+               "(32 is handled by the ChunkKdaFwd key-32 kernel).");
     CHECK_RET(ParseLayout(params.layout, layout) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(ResolveShapeInfo(params, layout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     // 空 tensor（batch 或序列长度为 0）无法构成可执行的计算规模。host 侧在进入 tiling
@@ -667,7 +666,7 @@ bool IsAscend950()
     return socName != nullptr && std::strstr(socName, "Ascend950") != nullptr;
 }
 // ==================== chunk32 大融合路由(issue #829)====================
-// chunkSize==32 → 单 kernel 大融合(chunk_kda_fwd_fused)。
+// chunkSize==32 → ChunkKdaFwd key-32 单 kernel 大融合。
 // chunk32 没有第二条实现路径,不满足融合 kernel 契约即报错。
 // kernel 契约:[B*H,T,K] 头连续 bf16(batch 拍平进头维);K=V=128;任意 T>0
 // (尾块核内钳制);HV % H == 0;dense batch 使用单启动任务循环;
@@ -1083,10 +1082,10 @@ aclnnStatus RunChunkKdaFwd32FusedDense(ChunkKdaFwdParams &params, aclOpExecutor 
         CHECK_RET(finalStateTmp != nullptr, ACLNN_ERR_INNER_NULLPTR);
     }
 
-    const aclTensor *fused = l0op::KdaChunkForwardFused(
+    const aclTensor *fused = l0op::KdaChunkForward32(
         qNtd, kNtd, vNtd, gNtd, betaNtd, params.aLogOptional, params.dtBiasOptional,
         initialStateHead, params.scale, params.lowerBound, oTmp, finalStateTmp,
-        nullptr /* dense 无 cu_seqlens */, params.epsilon, executor);
+        nullptr /* dense 无 cu_seqlens */, executor);
     CHECK_RET(fused != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
     const aclTensor *oBack = nullptr;
@@ -1184,10 +1183,10 @@ aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor
         CHECK_RET(finalStateTmp != nullptr, ACLNN_ERR_INNER_NULLPTR);
     }
 
-    const aclTensor *fused = l0op::KdaChunkForwardFused(
+    const aclTensor *fused = l0op::KdaChunkForward32(
         qTok, kTok, vTok, gTok, betaTok, params.aLogOptional, params.dtBiasOptional,
         initialStateHead, params.scale, params.lowerBound, oTok, finalStateTmp,
-        params.cuSeqlensOptional, params.epsilon, executor,
+        params.cuSeqlensOptional, executor,
         std::strcmp(params.layout, "NTD") == 0 ? "NTD" : "TND");
     CHECK_RET(fused != nullptr, ACLNN_ERR_INNER_NULLPTR);
     return ACLNN_SUCCESS;

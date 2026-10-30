@@ -75,7 +75,7 @@ outputs = chunk_kda_fwd(
 发起调用前按 fla-org 参考实现拒绝，不会静默忽略；具体字段语义见
 [归一化 / gate 开关](#归一化--gate-开关)。
 
-`chunk_size=32` 使用本目录 `arch35/chunk32/` 中的单 kernel 大融合实现（issue #829）。当前契约：
+`chunk_size=32` 使用 `ChunkKdaFwd` 内 `op_kernel/arch35/chunk_kda_fwd_chunk32/` 的单 kernel 大融合实现（issue #829）。当前契约：
 
 - q/k/v 为 BF16，`K=V=128`；g/beta 各自可为 BF16 或 FP32，任一为 FP32 时 host 将两者
   统一上转 FP32；`A_log`、`dt_bias` 和 state 为 FP32。
@@ -85,7 +85,7 @@ outputs = chunk_kda_fwd(
 - 必须 `safe_gate=true`、`use_gate_in_kernel=true` 并提供 `A_log`；`dt_bias=None` 等价于零偏置。
   gate 语义为 `lower_bound * sigmoid(exp(A_log) * (g + dt_bias))`。
 - 必须 `use_qk_l2norm_in_kernel=true`、`use_beta_sigmoid_in_kernel=true`、
-  `allow_neg_eigval=false`、`use_exp2=true`。
+  `allow_neg_eigval=false`、`use_exp2=true`；chunk32 的 epsilon 固定为 `1e-6`，不支持自定义。
 - 不导出 recompute 中间态或反向保存值：`disable_recompute` 和
   `return_intermediate_states` 必须为 `false`，`Aqk`/`Akk` 槽位返回 `None`，
   `gk/w/u/qg/kg/v_new/h` 也为 `None`。
@@ -240,14 +240,13 @@ aclnn L2 只描述张量与算法契约，不接收或解释 autograd 重计算�
 
 `aclnnChunkKdaFwdV2GetWorkspaceSize/aclnnChunkKdaFwdV2` 同时承接两类实现：chunk64 在
 同一个 executor 内组合 `ChunkKdaFwdPrepare -> ChunkFwdH -> ChunkKdaFwdFinalize`；chunk32
-则转入 `RunChunkKdaFwd32Fused`，单次启动私有 `ChunkKdaFwdFused`。入口关系如下：
+则转入 `RunChunkKdaFwd32Fused`，由 `ChunkKdaFwd` 的 key 32 单次启动融合 kernel。入口关系如下：
 
 | 调用场景 | 公开入口 | 实际实现 |
 | --- | --- | --- |
 | chunk64 私有 L0 路径 | `aclnnChunkKdaFwdGetWorkspaceSize` | 外层 `ChunkKdaFwd`，固定默认组合（调用方预先归一化 q/k、预先 sigmoid beta、`exp2` 门控） |
 | chunk64 三算子组合 | `aclnnChunkKdaFwdV2GetWorkspaceSize` | `ChunkKdaFwdPrepare -> ChunkFwdH -> ChunkKdaFwdFinalize`，由 5 个可选开关控制 |
-| chunk32 大融合 | `aclnnChunkKdaFwdV2GetWorkspaceSize`（Python 主路径）；V1 也有同实现分支 | `RunChunkKdaFwd32Fused -> ChunkKdaFwdFused`，核内 L2 norm/beta sigmoid/safe gate |
-| 低层直调 | `aclnnChunkKdaFwdFusedGetWorkspaceSize` | 同一个私有 `ChunkKdaFwdFused`，但直接使用 kernel 头连续/token-major 视图 |
+| chunk32 大融合 | `aclnnChunkKdaFwdV2GetWorkspaceSize`（Python 主路径）；V1 也有同实现分支 | `RunChunkKdaFwd32Fused -> ChunkKdaFwd` key 32，核内 L2 norm/beta sigmoid/safe gate |
 
 chunk64 V2 支持范围：`q/k/v` 为 BF16、`K=V=128`、`chunk_size=64`、公开输出连续、
 `cu_seqlens` 严格递增；不满足时返回 `ACLNN_ERR_PARAM_INVALID`（提示改用融合入口）。
@@ -292,11 +291,7 @@ guard 内部对 `q/k/v/g/beta/attnOut` 空指针使用 `ACLNN_ERR_PARAM_NULLPTR`
 `ACLNN_ERR_PARAM_INVALID`（161002），不能仅根据最内层空指针分支推断最终返回码。
 executor 创建等非 chunk32 guard 错误仍走原有 aclnn 状态契约。
 
-低层 `aclnnChunkKdaFwdFusedGetWorkspaceSize` 也将其 checker 失败统一映射为
-`ACLNN_ERR_PARAM_INVALID`。该入口要求 `aLog/dtBias/o` 非空，`finalState` 可空；dense 使用
-头连续 `[B*H,T,K]`/`[B*HV,T,*]`，varlen 使用 token-major TND，epsilon 固定为 `1e-6`。
-公开 layout、NTD varlen、epsilon 和 `state_v_first` 适配应使用 V2，而不是假设低层直调入口
-具有相同 host 转换能力。
+chunk32 只交付公开 V1/V2 入口；其 epsilon 固定为 `1e-6`，head/token-major 视图转换由 L2 完成。
 
 ### 归一化 / gate 开关
 
@@ -385,7 +380,6 @@ assert final_state.shape == (B, H, K, V)
 | 稳定 Python | `fla_npu.ops.ascendc.chunk_kda_fwd`；chunk32 选择 V2，chunk64 按场景选择 V1/V2 |
 | aclnn 通用 | `aclnnChunkKdaFwdGetWorkspaceSize/aclnnChunkKdaFwd` |
 | aclnn V2 | `aclnnChunkKdaFwdV2GetWorkspaceSize/aclnnChunkKdaFwdV2`；chunk64 三算子组合或 chunk32 fused |
-| aclnn fused 低层直调 | `aclnnChunkKdaFwdFusedGetWorkspaceSize/aclnnChunkKdaFwdFused`；仅 chunk32 低层视图契约 |
 | legacy | 显式加载后的 `torch.ops.npu.npu_chunk_kda_fwd`；当前 op_plugin 仅接受 chunk64/128，不路由 chunk32 |
 | 受限直调样例 | `torch.ops.ascend_ops.chunk_kda_fwd_direct` |
 

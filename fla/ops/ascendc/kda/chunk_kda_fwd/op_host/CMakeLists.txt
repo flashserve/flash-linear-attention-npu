@@ -12,7 +12,7 @@ add_op_to_compiled_list()
 # 因此它们也必须随 chunk_kda_fwd 一起编译，否则单独
 # `FLA_NPU_OPS=chunk_kda_fwd` 会产出 libcust_opapi.so 缺符号的坏包。
 set(chunk_kda_fwd_depends
-    "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h;fla/ops/ascendc/kda/kda_gate_cumsum;fla/ops/ascendc/kda/chunk_kda_fwd_prepare;fla/ops/ascendc/kda/chunk_kda_fwd_finalize;fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h;fla/ops/ascendc/kda/chunk_kda_fwd_fused"
+    "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h;fla/ops/ascendc/kda/kda_gate_cumsum;fla/ops/ascendc/kda/chunk_kda_fwd_prepare;fla/ops/ascendc/kda/chunk_kda_fwd_finalize;fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h"
     CACHE STRING "Kernel source dependencies for chunk_kda_fwd" FORCE)
 
 # 上面只解决了"依赖算子的源码参与编译"（libcust_opapi.so 的符号）。算子的编译产物

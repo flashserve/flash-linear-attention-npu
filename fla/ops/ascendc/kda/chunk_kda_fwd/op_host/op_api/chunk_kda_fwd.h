@@ -27,6 +27,14 @@ KdaCoreOutputs KdaChunkForward(
     const aclTensor *kgOut, const aclTensor *vNewOut, const aclTensor *hOut,
     const aclTensor *qgScaledOut, const aclTensor *uSeedOut, int64_t stage,
     aclOpExecutor *executor);
+
+// Ascend950 chunk32 分支；epsilon 在 tiling 中固定为 1e-6。
+const aclTensor *KdaChunkForward32(
+    const aclTensor *q, const aclTensor *k, const aclTensor *v, const aclTensor *g,
+    const aclTensor *beta, const aclTensor *aLog, const aclTensor *dtBias,
+    const aclTensor *initialState, double scale, double lowerBound,
+    const aclTensor *o, const aclTensor *finalState, const aclIntArray *cuSeqlens,
+    aclOpExecutor *executor, const char *layout = "TND");
 } // namespace l0op
 
 #endif

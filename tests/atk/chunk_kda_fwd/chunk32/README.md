@@ -7,24 +7,24 @@ FP64 golden 和同精度 benchmark。
 
 ## 契约与 TilingKey
 
-- `chunk_size=32` 仅用于 Ascend950 / A5；`32` 是分块大小，不是 TilingKey。
+- `chunk_size=32` 仅用于 Ascend950 / A5；在 `ChunkKdaFwd` 内使用 TilingKey `32` 和独立 chunk32 TilingData。
 - q/k/v/o 为 BF16，`K=V=128`；公开 V2 的 g/beta 各自可为 BF16 或 FP32，任一为 FP32 时统一上转。
 - 支持 dense batch、varlen、GVA、非 128 对齐尾块、initial/final state 和 NTD 原生布局。
 - `safe_gate=true`、`use_gate_in_kernel=true`，必须提供 `A_log`；`dt_bias=None` 等价于零偏置。
 - `use_qk_l2norm_in_kernel=true`、`use_beta_sigmoid_in_kernel=true`、
-  `allow_neg_eigval=false`、`use_exp2=true`。
+  `allow_neg_eigval=false`、`use_exp2=true`，epsilon 固定为 `1e-6`。
 - 不导出 recompute 中间态或反向保存值；`Aqk`/`Akk` 返回 `None`，`chunk_indices`
   仅接受 canonical sequence-major 顺序。
 
 | 算子路径 | TilingKey | 选择与源码证据 | 本子套件用例 |
 | --- | --- | --- | --- |
 | 既有 `ChunkKdaFwd` 非 fused 路径 | `1/2` | `fla/ops/ascendc/kda/chunk_kda_fwd/op_host/chunk_kda_fwd_tiling.cpp` 按模板条件执行 `SetTilingKey(... ? 2 : 1)` | 不由 chunk32 子套件新增；仍归父套件 |
-| `ChunkKdaFwdFused` chunk32 路径 | `0` | 公开 V2 host 在 `chunkSize == 32` 时选择 `RunChunkKdaFwd32Fused`；`arch35/chunk32/op_host/chunk_kda_fwd_fused_tiling.cpp` 执行 `SetTilingKey(0)` | accuracy 0–39、performance 0–1、mss 0–4 |
+| `ChunkKdaFwd` chunk32 分支 | `32` | 公开 V2 host 在 `chunkSize == 32` 时选择 `RunChunkKdaFwd32Fused`；`op_host/chunk_kda_fwd_tiling.cpp` 执行 `SetTilingKey(32)` | accuracy 0–39、performance 0–1、mss 0–4 |
 
 公开运行选择证据位于
 `fla/ops/ascendc/kda/chunk_kda_fwd/op_host/op_api/aclnn_chunk_kda_fwd.cpp` 的
-`aclnnChunkKdaFwdV2GetWorkspaceSize`：chunk32 分支直接进入 fused 路径，不经过外层
-`ChunkKdaFwd` 的 key 1/2 分派。
+`aclnnChunkKdaFwdV2GetWorkspaceSize`：chunk32 分支进入同一 `ChunkKdaFwd` 的 key 32，不经过
+key 1/2 的旧 TilingData 或独立 fused 算子。
 
 ## ATK 元数据与冻结用例
 
@@ -36,7 +36,7 @@ FP64 golden 和同精度 benchmark。
 | --- | ---: | --- |
 | `atk_chunk_kda_fwd_chunk32.json` | 40 | id 0–33：layout、长序列、尾块、initial/final state；id 34–35：FP32 g/beta + GVA + final_state；id 36–39：NTD/TND varlen、空序列、canonical indices、BF16/FP32 g/beta |
 | `atk_chunk_kda_fwd_chunk32_perf.json` | 2 | B=1、H=HV=96、K=V=128、T=8192，BF16/FP32 g/beta |
-| `atk_chunk_kda_fwd_chunk32_mss.json` | 5 | fused key 0 的 dense、state、尾块和两种 varlen layout 代表用例 |
+| `atk_chunk_kda_fwd_chunk32_mss.json` | 5 | `ChunkKdaFwd` key 32 的 dense、state、尾块和两种 varlen layout 代表用例 |
 
 静态校验命令：
 
@@ -67,8 +67,8 @@ bash tests/atk/chunk_kda_fwd/chunk32/run_chunk32_atk.sh accuracy 0
 bash tests/atk/chunk_kda_fwd/chunk32/run_chunk32_atk.sh performance 0
 bash tests/atk/chunk_kda_fwd/chunk32/run_chunk32_atk.sh mssanitizer 0
 
-# 直接 fused 私有入口的 H=HV=0 dense/TND varlen 负向回归。
-python3 tests/atk/chunk_kda_fwd/chunk32/negative_fused_zero_heads.py
+# 公开 V2 的 H=HV=0 dense/NTD varlen 负向回归。
+python3 tests/atk/chunk_kda_fwd/chunk32/negative_chunk32_zero_heads.py
 ```
 
 设备号由执行环境选择。输出默认写入本目录的 `atk_output/`，可用 `ATK_OUTPUT_ROOT` 改到其他位置；
