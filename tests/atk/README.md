@@ -119,11 +119,13 @@ npu-smi info
 | `FLA_NPU_ENV`          | `fla_npu_transformer` 的 `set_env.bash` 路径；设置后脚本会 source                  |
 | `ATK_OUTPUT_ROOT`      | ATK 输出根目录，默认是算子目录下的`./atk_output`                                     |
 | `ATK_GM_INIT_MODE`     | GM 数据初始化模式，默认`on`；可设 `on/off`                                        |
+| `ATK_GM_INIT_MB`       | 可选正整数，传给 ATK 的 `--gm_init_flag`；留空时沿用默认策略（数值参数需 ATK 26.9.8+） |
 | `REQUIRED_ATK_VERSION` | ATK 最低版本要求，默认`26.8.8`；一般无需修改                                         |
 | `ATK_TIMEOUT`          | 精度阶段超时时间，默认`14400`                                                        |
 | `DC_LOOP_NUMS`         | 确定性循环次数，默认`50`                                                             |
 | `DC_TIMEOUT`           | 确定性阶段超时时间，默认`3600`                                                       |
 | `PERFORMANCE_TIMEOUT`  | 性能阶段超时时间，默认`2000`                                                         |
+| `ATK_PERFORMANCE_DATA` | 可选原生 `--performance_data`：预热、采样、末尾平均样本数，如 `10,50,50`；默认沿用 ATK |
 | `MSS_TOOL`             | mssanitizer 工具，默认`memcheck`                                                     |
 | `MSS_LOG_PATH`         | ATK`-msl` 日志路径；默认 `${ATK_OUTPUT_ROOT}/mssanitizer_<op>_<时间戳>.log`        |
 
@@ -267,6 +269,7 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=gen_cases
 | `chunk_gated_delta_rule_fwd_h`   | `fla_npu.ops.ascendc.chunk_gated_delta_rule_fwd_h`   | 见[`chunk_gated_delta_rule_fwd_h/README.md`](./chunk_gated_delta_rule_fwd_h/README.md)     |
 | `chunk_gated_delta_rule_fwd_prepare` | `fla_npu.ops.ascendc.chunk_gated_delta_rule_fwd_prepare` | 见[`chunk_gated_delta_rule_fwd_prepare/README.md`](./chunk_gated_delta_rule_fwd_prepare/README.md)；CPU 双标杆 + `mixed_tolerance_bm` |
 | `chunk_kda_fwd`                  | `fla_npu.ops.ascendc.chunk_kda_fwd`                  | 见[`chunk_kda_fwd/README.md`](./chunk_kda_fwd/README.md)                                   |
+| `chunk_kda_bwd`                  | `fla_npu.ops.ascendc.chunk_kda_bwd`                  | 见[`chunk_kda_bwd/README.md`](./chunk_kda_bwd/README.md)；910B 保存值反向、CPU FP64 7 梯度 |
 | `chunk_kda_bwd_recompute`        | `fla_npu.ops.ascendc.chunk_kda_bwd_recompute`        | 见[`chunk_kda_bwd_recompute/README.md`](./chunk_kda_bwd_recompute/README.md)               |
 | `chunk_local_cumsum`             | `fla_npu.ops.ascendc.chunk_local_cumsum`             | 见[`chunk_local_cumsum/README.md`](./chunk_local_cumsum/README.md)                         |
 | `chunk_scaled_dot_kkt`           | `fla_npu.ops.ascendc.chunk_scaled_dot_kkt`           | 见[`chunk_scaled_dot_kkt/README.md`](./chunk_scaled_dot_kkt/README.md)                     |

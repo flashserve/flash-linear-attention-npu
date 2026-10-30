@@ -6,8 +6,11 @@ extern "C" __global__ __aicore__ void kda_gate_bwd_post(
     GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR dg, GM_ADDR dA,
     GM_ADDR dbias, GM_ADDR workspace, GM_ADDR tiling)
 {
-    (void)workspace;
+#if KDA_GATE_POST_ARCH35
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
+#else
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIV_1_0);
+#endif
     REGISTER_TILING_DEFAULT(KDA::KdaGateBwdPostTilingData);
     GET_TILING_DATA_WITH_STRUCT(
         KDA::KdaGateBwdPostTilingData, tilingData, tiling);
@@ -18,6 +21,7 @@ extern "C" __global__ __aicore__ void kda_gate_bwd_post(
         KDA::KdaGateBwdPostKernel<SAFE, DTYPE_RAW_G, VARLEN> process;         \
         process.Init(dg_act, raw_g, a_log, dt_bias, cu_seqlens,               \
                      chunk_indices, dg, dA, dbias, tilingData, &pipe);         \
+        process.InitParallel(AscendC::GetUserWorkspace(workspace));          \
         process.Process();                                                     \
     } while (0)
 

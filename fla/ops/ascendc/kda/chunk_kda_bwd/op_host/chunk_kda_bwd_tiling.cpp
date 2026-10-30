@@ -529,7 +529,13 @@ ge::graphStatus Tiling4KdaGateBwdPost(gert::TilingContext *context)
     // 32-byte GM block.  Other architectures retain the parallel head map.
     const bool isAscend950 =
         platform.GetCurNpuArch() == NpuArch::DAV_3510;
-    const uint32_t usedCoreNum = isAscend950 ? 1U : std::max<uint32_t>(
+    const auto *rawDesc = context->GetInputDesc(INPUT_RAW_G);
+    OP_CHECK_NULL_WITH_CONTEXT(context, rawDesc);
+    const bool gateChunkParallel = !isAscend950 && !isVarLen &&
+        batch == 1 && heads == 32 && *safeGate && !*inputScanned &&
+        rawDesc->GetDataType() == ge::DT_FLOAT && availableAiv >= 48U;
+    const uint32_t usedCoreNum = gateChunkParallel ? 48U :
+        isAscend950 ? 1U : std::max<uint32_t>(
         std::min<uint32_t>(static_cast<uint32_t>(heads), availableAiv), 1U);
     auto *tiling =
         context->GetTilingData<KDA::KdaGateBwdPostTilingData>();
@@ -546,7 +552,7 @@ ge::graphStatus Tiling4KdaGateBwdPost(gert::TilingContext *context)
     tiling->hasDtBias =
         context->GetOptionalInputShape(INPUT_DT_BIAS) != nullptr ? 1 : 0;
     tiling->inputScanned = *inputScanned ? 1 : 0;
-    tiling->reserved1 = 0;
+    tiling->reserved1 = gateChunkParallel ? 1 : 0;
     tiling->lowerBound = *lowerBound;
     if (isVarLen) {
         const auto *cuTensor =
@@ -595,8 +601,10 @@ ge::graphStatus Tiling4KdaGateBwdPost(gert::TilingContext *context)
     // Reuse the same device specialization for dense and packed layouts so
     // the proven A5 reverse-scan pipeline is compiled only once.
     context->SetTilingKey(*safeGate ? 1U : 3U);
+    const uint64_t gatePartialBytes = gateChunkParallel ?
+        static_cast<uint64_t>(heads) * chunkNum * 136ULL * sizeof(float) : 0ULL;
     context->GetWorkspaceSizes(1)[0] =
-        platform.GetLibApiWorkSpaceSize();
+        platform.GetLibApiWorkSpaceSize() + ((gatePartialBytes + 511ULL) & ~511ULL);
     return ge::GRAPH_SUCCESS;
 }
 

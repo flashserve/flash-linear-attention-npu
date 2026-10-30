@@ -184,6 +184,10 @@ resolve_gm_init_args() {
   GM_INIT_ARGS=()
   if [[ "$enable" == "on" ]]; then
     GM_INIT_ARGS=(--gm_init_flag)
+    if [[ -n "$ATK_GM_INIT_MB" ]]; then
+      [[ "$ATK_GM_INIT_MB" =~ ^[1-9][0-9]*$ ]] || die "ATK_GM_INIT_MB 必须是正整数"
+      GM_INIT_ARGS+=("$ATK_GM_INIT_MB")
+    fi
   fi
   log_info "GM 数据初始化（ATK_GM_INIT_MODE=${mode}）：${enable}"
 }
@@ -193,6 +197,7 @@ NPU_DEVICE_ID="${NPU_DEVICE_ID:-0}"
 SOC="${SOC:-auto}"
 RUN_SCOPE="${RUN_SCOPE:-all}"
 ATK_GM_INIT_MODE="${ATK_GM_INIT_MODE:-on}"
+ATK_GM_INIT_MB="${ATK_GM_INIT_MB:-}"
 REQUIRED_ATK_VERSION="${REQUIRED_ATK_VERSION:-26.8.8}"
 ATK_TIMEOUT="${ATK_TIMEOUT:-14400}"
 DC_LOOP_NUMS="${DC_LOOP_NUMS:-50}"
@@ -404,6 +409,11 @@ fi
 
 if should_run performance; then
   log_info "开始性能测试：performance_device"
+  PERFORMANCE_DATA_ARGS=()
+  if [[ -n "${ATK_PERFORMANCE_DATA:-}" ]]; then
+    [[ "$ATK_PERFORMANCE_DATA" =~ ^[1-9][0-9]*,[1-9][0-9]*,[1-9][0-9]*$ ]] || die "ATK_PERFORMANCE_DATA 必须是三个逗号分隔的正整数"
+    PERFORMANCE_DATA_ARGS=(--performance_data "$ATK_PERFORMANCE_DATA")
+  fi
   set_case_range_args "性能测试 case 范围" "$PERFORMANCE_START" "$PERFORMANCE_END"
   "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
       --output_path "${ATK_OUTPUT_ROOT}/perf" \
@@ -414,6 +424,7 @@ if should_run performance; then
       "${CASE_RANGE_ARGS[@]}" \
       --save_data profile \
       -sp \
+      "${PERFORMANCE_DATA_ARGS[@]}" \
       -to "$PERFORMANCE_TIMEOUT"
   log_info "完成性能测试"
 fi
@@ -422,6 +433,7 @@ if should_run determinism; then
   log_info "开始确定性测试：accuracy_dc（循环次数=${DC_LOOP_NUMS}，超时=${DC_TIMEOUT}s）"
   set_case_range_args "确定性测试 case 范围" "$DETERMINISM_START" "$DETERMINISM_END"
   "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
+      --output_path "${ATK_OUTPUT_ROOT}" \
     task \
       -c "atk_${OP}_mss.json" \
       -p "executor_${OP}.py" \
@@ -441,6 +453,7 @@ if should_run mssanitizer; then
   touch "$MSS_LOG_PATH"
   mssanitizer --tool="$MSS_TOOL" -- \
     "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
+      --output_path "${ATK_OUTPUT_ROOT}" \
     task \
       -c "atk_${OP}_mss.json" \
       -p "executor_${OP}.py" \
