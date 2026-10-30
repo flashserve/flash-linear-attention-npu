@@ -78,11 +78,12 @@ FP32 dg 的精度差距可在 PR993 base 复现；base/O1/final 三版本位一�
 漏掉应报告的误差，因此不得用该方式规避失败。当前没有经过误差预算和负例共同验证的
 替代 FP32 标准，不能把问题称作“已校准”或“只是容差问题”。
 
-补充 c9e2→PR993 base→final 的同输入、同缓存、同 CPU golden A/B：case 0/6/13 均使用正式
-ATK `input.bin` 绑定输入，三个版本的 dg 及全部七项输出逐位一致。case 6/13 的 FP32 dg
-失败在 c9e2 已存在，**不是 PR993 引入的回归，也不是 O1/O2 引入的差异**；case 0 通过。
-证据为 `$R/pre993_probe/r3/results/exact_summary.json`。该对照仅覆盖三个代表用例，不能
-外推全部 16 个失败，也不改变 accuracy 26/42 的结果。
+补充 571d→c9e2→PR993 base→final 的同输入、同缓存、同 CPU golden A/B：case 0/6/13 均使用正式
+ATK `input.bin` 绑定输入，各版本的 dg 及全部七项输出逐位一致。case 6/13 的 FP32 dg
+失败在 571d 和 c9e2 已存在，**不是 PR968、PR993 或 O1/O2 引入的差异**；case 0 通过。
+证据为 `$R/pre993_probe/r3/results/exact_summary.json` 和
+`$R/pre993_probe/r4/results/exact_summary.json`。该对照仅覆盖三个代表用例，不能确定更早的
+最初引入点，也不能外推全部 16 个失败或改变 accuracy 26/42 的结果。
 
 ## 资产矩阵与 TilingKey 映射
 
