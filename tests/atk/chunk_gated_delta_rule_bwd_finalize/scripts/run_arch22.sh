@@ -34,9 +34,12 @@ m=re.search(r'(\d+)\.(\d+)\.(\d+)', sys.argv[1])
 if not m or tuple(map(int,m.groups())) < (26,7,8):
     raise SystemExit('ATK 必须 >=26.7.8')
 if sys.argv[2] in ('accuracy', 'determinism'):
+    import importlib
     from atk.tasks.post_process import AccuracyFactory
     standard = 'cv_fused_double_benchmark' if sys.argv[2] == 'accuracy' else 'mixed_tolerance_bm'
     try:
+        if sys.argv[2] == 'accuracy':
+            importlib.import_module('atk.tasks.post_process.cv_fused_double_benchmark_compare')
         AccuracyFactory.get_accuracy(standard)
     except (KeyError, ValueError) as error:
         raise SystemExit(f'当前 ATK 缺少真实 {standard} 注册器；请用 ATK_BIN 指向具备该标准的安装') from error

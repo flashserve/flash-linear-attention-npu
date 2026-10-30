@@ -210,7 +210,8 @@ worker 每次真实 ACLNN 调用前后打印 case 边界，Host `SetTilingKey` �
 准备含真实 `cv_fused_double_benchmark` 注册器的既有 ATK >=26.7.8、CANN/OPP、当前构建和冻结 binding。
 仅版本号不够；须绑定实际比较器实现及安装树 SHA。当前 26.9.8 Python wheel 不含此注册器，
 不能靠添加别名或改标准名称冒充双标杆支持。确定性任务沿用含 `mixed_tolerance_bm`
-的 ATK（如 26.9.8）；可通过 `ATK_BIN` 显式选择对应安装，入口先检查实际注册器。
+的 ATK（如 26.9.8）；可通过 `ATK_BIN` 显式选择对应安装，入口按实际模块加载流程
+检查比较器注册，不添加别名。
 入口不设置 PYTHONPATH、不安装依赖、不构建、不替换设备环境。
 
 ```bash
