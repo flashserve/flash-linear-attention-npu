@@ -75,8 +75,10 @@ Python 和 ACLNN 层拒绝。前反向须配套：A5 若需要 sigmoid，应在�
 - `disable_recompute=False`：以上六个缓存必须为 None，仍传 Aqk/Akk。
   Recompute/FwdH 恢复缓存，再执行 Prepare → Dhu → Finalize。
 - 有 rstd 时，两条路径均使用前向保存的 q_hat/k_hat；Finalize 完成 L2Norm 反向。
-- beta 在 ACLNN 内只转一次 head-major，供 Recompute/Finalize 共用；do/raw_g/qkv
-  按实际布局直接读入片上，梯度按约定布局写出，不增加完整 token 张量的 Transpose。
+- do 固定为 token-major，由总接口 ACLNN 转一次 head-major，供 Prepare/Dhu 共用；
+  两个小算子保持原接口，不新增 do 布局参数。三维变长为 TND→NTD，四维为 BSND→BNSD。
+- 普通 beta 在 ACLNN 内只转一次 head-major，供 Recompute/Finalize 共用；融合时直接复用 beta_eff。
+  raw_g/qkv 按实际布局直接读入片上，梯度按约定布局写出。
 - Finalize 在片上转换 raw_g/beta，dg/db 直接按输入 dtype 写出。
   重计算分支仍可能先为 Recompute 创建 FP32 raw_g 临时张量。
 

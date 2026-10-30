@@ -244,22 +244,14 @@ private:
         auto l1V = resource.l1Buf.template GetBufferByByte<DT>(headSlot * L1_HEAD_SLOT_BYTES + VNEW_OFFSET);
         AscendC::GlobalTensor<DT> gmDO;
         AscendC::GlobalTensor<DT> gmV;
-        int64_t doOffset = tokenOffset;
-        if (tiling_->doTokenMajor) {
-            const int64_t flat = tokenOffset / KDA_PREPARE_DIM;
-            const int64_t batch = flat / (tiling_->NV * tiling_->T);
-            const int64_t head = (flat / tiling_->T) % tiling_->NV;
-            doOffset = ((batch * tiling_->T + flat % tiling_->T) * tiling_->NV + head) * KDA_PREPARE_DIM;
-        }
-        gmDO.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dO_) + doOffset);
+        gmDO.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dO_) + tokenOffset);
         gmV.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(vNew_) + tokenOffset);
         // Each tile is read once from GM and reused in L1.
         gmDO.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         gmV.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         auto tensorDO = tla::MakeTensor(
             gmDO, tla::MakeLayout<DT, LayoutRM>(
-                rows, tiling_->doTokenMajor ? tiling_->NV * KDA_PREPARE_DIM :
-                    TokenInputRowStride<INPUT_LAYOUT>(*tiling_, KDA_PREPARE_DIM)), Catlass::Arch::PositionGM{});
+                rows, TokenInputRowStride<INPUT_LAYOUT>(*tiling_, KDA_PREPARE_DIM)), Catlass::Arch::PositionGM{});
         auto tensorV = tla::MakeTensor(
             gmV, tla::MakeLayout<DT, LayoutCM>(
                 TokenInputRowStride<INPUT_LAYOUT>(*tiling_, KDA_PREPARE_DIM), rows), Catlass::Arch::PositionGM{});
@@ -280,8 +272,7 @@ private:
         for (uint32_t i = 0; i < headCount; ++i) {
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1HeadFree_[headSlot + i]);
         }
-        CopyHeads(copyDO, tensorL1DO, blockDO, headCount,
-                  tiling_->doTokenMajor ? KDA_PREPARE_DIM : tokenHeadStride);
+        CopyHeads(copyDO, tensorL1DO, blockDO, headCount, tokenHeadStride);
         CopyHeads(copyV, tensorL1V, blockV, headCount, tokenHeadStride);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(
             static_cast<AscendC::TEventID>((headSlot / 2U) * STAGE_COUNT + STAGE_A));

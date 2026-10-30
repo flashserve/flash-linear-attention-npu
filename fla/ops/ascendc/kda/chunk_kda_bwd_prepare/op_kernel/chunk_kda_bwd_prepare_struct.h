@@ -24,7 +24,6 @@ struct ChunkKdaBwdPrepareTilingData {
     int64_t chunkSize;
     uint32_t stateVFirst;
     uint32_t isVariable;
-    uint32_t doTokenMajor = 0;
     float scale;
     uint32_t inputLayout;
 };

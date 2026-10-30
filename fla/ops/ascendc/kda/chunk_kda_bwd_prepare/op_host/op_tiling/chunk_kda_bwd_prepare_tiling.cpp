@@ -5,7 +5,6 @@
 #include "chunk_kda_bwd_prepare_tiling.h"
 
 #include <cmath>
-#include <cstring>
 #include <register/op_impl_registry.h>
 #include "platform/platform_ascendc.h"
 
@@ -43,22 +42,11 @@ ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
     // Opaque ACLNN may represent an absent optional input with an empty shape.
     if (cuShape && cuShape->GetStorageShape().GetDimNum() == 0) cuShape = nullptr;
     if (indicesShape && indicesShape->GetStorageShape().GetDimNum() == 0) indicesShape = nullptr;
-    const bool *doTm = attrs->GetAttrPointer<bool>(4);
-    const bool modelDo = doTm && *doTm;
-    if (modelDo) {
-        if (!layout || (std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "NTD") != 0)) return ge::GRAPH_FAILED;
-        const auto &a = context->GetRequiredInputShape(KDA_PREPARE_INPUT_V_NEW)->GetStorageShape();
-        const auto &o = context->GetRequiredInputShape(KDA_PREPARE_INPUT_D_O)->GetStorageShape();
-        const size_t rank = a.GetDimNum(), base = rank == 3 ? 0 : 1;
-        if ((rank != 3 && rank != 4) || o.GetDimNum() != rank ||
-            (base && a.GetDim(0) != o.GetDim(0)) || a.GetDim(base) != o.GetDim(base+1) ||
-            a.GetDim(base+1) != o.GetDim(base) || a.GetDim(base+2) != o.GetDim(base+2)) return ge::GRAPH_FAILED;
-    }
     ChunkKdaBwdPrepareTilingContext ctx{
         context->GetNodeName(),
         context->GetRequiredInputShape(KDA_PREPARE_INPUT_AQK),
         context->GetRequiredInputShape(KDA_PREPARE_INPUT_V_NEW),
-        context->GetRequiredInputShape(modelDo ? KDA_PREPARE_INPUT_V_NEW : KDA_PREPARE_INPUT_D_O),
+        context->GetRequiredInputShape(KDA_PREPARE_INPUT_D_O),
         context->GetRequiredInputShape(KDA_PREPARE_INPUT_H),
         cuShape, indicesShape,
         aqkDesc->GetDataType(), vNewDesc->GetDataType(), dODesc->GetDataType(), hDesc->GetDataType(),
@@ -69,7 +57,6 @@ ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
     };
     ChunkKdaBwdPrepareTilingProcessor processor(ctx, *tiling);
     OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-    tiling->doTokenMajor = modelDo;
     context->SetTilingKey(processor.GetTilingKey());
     context->SetBlockDim(processor.GetBlockDim());
     context->GetWorkspaceSizes(1)[0] = processor.GetWorkspaceSize();

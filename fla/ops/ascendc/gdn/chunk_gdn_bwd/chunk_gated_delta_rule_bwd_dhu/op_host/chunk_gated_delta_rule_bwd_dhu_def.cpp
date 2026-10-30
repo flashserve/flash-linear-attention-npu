@@ -122,7 +122,6 @@ public:
         this->Attr("chunk_size").AttrType(OPTIONAL).Int(64);
         this->Attr("use_exp2").AttrType(OPTIONAL).Bool(false);
         this->Attr("state_v_first").AttrType(OPTIONAL).Bool(false);
-        this->Attr("do_token_major").AttrType(OPTIONAL).Bool(false);
 
         OpAICoreConfig aicoreConfig;
         aicoreConfig.DynamicCompileStaticFlag(true)

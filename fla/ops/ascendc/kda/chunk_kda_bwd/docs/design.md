@@ -101,9 +101,9 @@ CPU 公式不变；新增 BF16 db 的预期为旧 FP32 梯度按模型 beta dtyp
 | 阶段 | 本次改动 |
 |---|---|
 | Python/Stable/ctypes | 共用布局校验和输出分配；A5 auto/optimized 路由 V2，legacy 拒绝 |
-| ACLNN V2 | 按 v 与 layout 解析维度；缓存固定 head-major；beta 转置一次；保留 sigmoid 参数并拒绝非默认值 |
-| Prepare | do 独立计算 GM offset、行 stride、头 stride；四维变长通过 B=1 的 reshape view 进入现有 NTD kernel，不搬动数据 |
-| Dhu | do_token_major=True 时仅改变 do 的 GM offset/行 stride；默认 False 保留 GDN 行为 |
+| ACLNN V2 | 按 v 与 layout 解析维度；缓存固定 head-major；do、普通 beta 各转置一次；保留 sigmoid 参数并拒绝非默认值 |
+| Prepare | 接收 ACLNN 转换后的 head-major do；四维变长通过 B=1 的 reshape view 进入现有 NTD kernel |
+| Dhu | 与 Prepare 共用 head-major do；接口、tiling 和 kernel 均保持原实现 |
 | Recompute | reserved 位分别控制 raw_g、q/k、v 的 stride 读取；两条 Vector 分支一致，缓存写出不变 |
 | Finalize | q/k、v、raw_g 分别按标志读取；Cube 两处 v 读取同步调整；dq/dk/dv 随 layout，dg/db 固定 token-major |
 
@@ -116,3 +116,16 @@ GM→UB 每行连续 128 元素，非连续行使用 DataCopyPad；GM→L1 保�
 空段压缩、L2Norm、g/beta 四种 dtype、保存/重算、双 Python 后端及直接 ACLNN 拒绝检查。
 
 BF16 raw_g 的 Stage 11 转换使用 BF16 全掩码，覆盖全部 128 个元素；此前误用 FP32 掩码会遗漏部分 BF16 lane，影响 dg/dA/dbias。本次同步修正，不改变 FP32 路径。
+
+## do 在总接口统一转置（A2/A3、A5 V2）
+
+按模型约定，do 始终以 BSND/TND 输入，不受 qkv 的 layout 控制。
+总接口在 Prepare 前调用一次 SwapHeadToken，生成 BNSD/NTD 的 dOHead，
+由 Prepare 和 Dhu 顺序共用；Finalize 不接收 do。保存和重计算路径使用同一处理。
+撤回 Prepare/Dhu 的 do_token_major 属性、L0 参数和 kernel 寻址分支，复用原小算子。
+
+定长和 B=1 四维变长交换第 1/2 维；三维变长交换第 0/1 维。
+A5 四维变长的 Prepare 仅去掉 B=1 视图，Dhu 的三维输入仅补 B=1 视图，均不再次转置。
+dOHead 由 executor 管理，生成后只读，存活至 Dhu 消费完成；额外占用 B×H×T×V×2 字节，
+增加一次等量 GM 读写。原 kernel 的 UB/L1、分核和同步不变；CPU 标杆和梯度 dtype 不变。
+profiling 预期新增一次 do Transpose，普通 beta 的一次 Transpose 保留。

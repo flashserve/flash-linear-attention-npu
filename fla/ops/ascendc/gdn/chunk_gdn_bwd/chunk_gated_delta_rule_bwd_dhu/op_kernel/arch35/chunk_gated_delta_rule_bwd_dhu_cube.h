@@ -157,9 +157,7 @@ public:
                     const bool releaseKAfterUse = !nextHeadUsesSameK;
                     const int64_t hq = hv / HRatio_;
                     const int64_t kBase = ((chunkInfo.bIdx * HK_ + hq) * T_ + chunkInfo.tokenStart) * K_;
-                    const int64_t dOBase = tiling_->doTokenMajor ?
-                        ((chunkInfo.bIdx * T_ + chunkInfo.tokenStart) * HV_ + hv) * V_ :
-                        ((chunkInfo.bIdx * HV_ + hv) * T_ + chunkInfo.tokenStart) * V_;
+                    const int64_t dOBase = ((chunkInfo.bIdx * HV_ + hv) * T_ + chunkInfo.tokenStart) * V_;
                     const int64_t dhBase =
                         ((chunkInfo.bIdx * totalChunkNum_ + chunkInfo.outputChunkIdx) * HV_ + hv) * K_ * V_;
                     const int64_t slotBase = WorkspaceBase(blockIdx, workspaceSlot);
@@ -167,7 +165,7 @@ public:
                     LayoutTagK tagK = LayoutTagK::MakeLayout<DT>(chunkSize_, K_);
                     LayoutTagState tagState = LayoutTagState::MakeLayout<DT>(K_, V_DIM);
                     LayoutTagDvState tagDvState = LayoutTagDvState::MakeLayout<DT>(chunkSize_, V_DIM);
-                    LayoutTagDO tagDO = LayoutTagDO::MakeLayout<DT>(chunkSize_, tiling_->doTokenMajor ? HV_ * V_DIM : V_DIM);
+                    LayoutTagDO tagDO = LayoutTagDO::MakeLayout<DT>(chunkSize_, V_DIM);
                     LayoutTagTermQ tagTermQ = LayoutTagTermQ::MakeLayout<DT>(K_, V_DIM);
 
                     auto layoutK = tla::MakeLayoutFromTag(tagK);

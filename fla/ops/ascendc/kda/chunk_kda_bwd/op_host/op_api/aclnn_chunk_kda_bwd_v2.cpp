@@ -282,7 +282,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
     auto alloc = [&](const op::Shape &shape, DataType type) {
         return ex->AllocTensor(shape, type, Format::FORMAT_ND);
     };
-    // Only scalar beta is materialized in head-major order, once for both stages.
+    // Recompute and Finalize share one head-major beta input.
     const auto *betaHead = useBetaSigmoidInKernel ? betaEffOptional : SwapHeadToken(beta, packed, ex);
     CHECK_RET(betaHead, ACLNN_ERR_INNER_NULLPTR);
     const aclTensor *aLog = aLogOptional;
@@ -333,6 +333,9 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
     const auto *dh = alloc(state, DataType::DT_BF16);
     const auto *dvScan = alloc(token, DataType::DT_BF16);
     CHECK_RET(dAqk && dvLocal && dqRaw && dh && dvScan, ACLNN_ERR_INNER_NULLPTR);
+    // Public do is token-major; Prepare and Dhu share one head-major copy.
+    const auto *dOHead = SwapHeadToken(dO, packed, ex);
+    CHECK_RET(dOHead, ACLNN_ERR_INNER_NULLPTR);
     // A5 Prepare's existing varlen kernel uses rank-3 NTD. Drop only the
     // leading B=1 view dimension for 4D varlen callers; no data is moved.
     auto prepareView = [&](const aclTensor *tensor) -> const aclTensor * {
@@ -344,18 +347,18 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         return l0op::Reshape(tensor, shape, ex);
     };
     const auto prepare = l0op::ChunkKdaBwdPrepare(
-        prepareView(aqk), prepareView(vNew), prepareView(dO), prepareView(h),
+        prepareView(aqk), prepareView(vNew), prepareView(dOHead), prepareView(h),
         cuSeqlensOptional, chunkIndicesOptional, variable ? "NTD" : "BNSD", scale, chunkSize, stateVFirst,
-        prepareView(dAqk), prepareView(dvLocal), prepareView(dqRaw), ex, true);
+        prepareView(dAqk), prepareView(dvLocal), prepareView(dqRaw), ex);
     for (const auto *value : prepare) {
         CHECK_RET(value, ACLNN_ERR_INNER_NULLPTR);
     }
     const auto scan = l0op::ChunkGatedDeltaRuleBwdDhu(
         BatchView(qg, packed, ex), BatchView(kg, packed, ex), BatchView(w, packed, ex),
-        BatchView(dO, packed, ex), BatchView(dvLocal, packed, ex), nullptr,
+        BatchView(dOHead, packed, ex), BatchView(dvLocal, packed, ex), nullptr,
         BatchView(gk, packed, ex), nullptr, nullptr, cuSeqlensOptional, chunkIndicesOptional,
         scale, chunkSize, useExp2, false, BatchView(dh, packed, ex), nullptr,
-        BatchView(dvScan, packed, ex), ex, true);
+        BatchView(dvScan, packed, ex), ex);
     CHECK_RET(scan[0] && scan[2], ACLNN_ERR_INNER_NULLPTR);
     // Finalize converts original gate parameters on-chip.
     const auto *betaFinal = betaHead;
