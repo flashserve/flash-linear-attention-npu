@@ -232,6 +232,56 @@ ctest --test-dir "$BUILD_DIR" --output-on-failure
 "$BUILD_DIR/chunk_kda_bwd_finalize_tiling_test"
 ```
 
+## O4：原生 token-major do 输入（最终复测）
+
+O4 的基线是 PR993 + O1 + O2 final，生产提交为 `f91a20b2`。最终 wheel 的 SHA256 为
+`d08198070439e1848524c2b37dd3bbd9214e354213a6506d61790ace4631b20b`，安装于
+`/home/vllm_ascend_m/envs/kda_pr913_do_final_20261030`。安装文件 **1326/1326** 匹配，
+`fla_npu` 和实际加载的 opapi 均来自该目录。证据根记为
+`$R4=/home/vllm_ascend_m/kda_opt_workspace/runs/pr913_input_stride_20261030`。
+
+公开 do 直接下传，Prepare/Dhu 用内部显式标志按 token-major 行距读取，不再生成
+head-major dOHead。独立小接口仍默认 head-major；普通 beta 仍按原契约转置，不纳入 O4。
+公开 Python 和总 ACLNN 签名没有增加参数。
+
+### O4 输出与真实执行
+
+| 项目 | 结果 | 证据 |
+| --- | --- | --- |
+| saved/recompute × core/customer | **28/28 整数位模式一致**，无非有限张量 | `$R4/dumps/do_final_summary.json` |
+| BNSD/NTD saved/recompute | **32/32 整数位模式一致**，含 dense B2 和 packed | `$R4/do_final_layout_probes/summary.json` |
+| 42 条正式输入 | **288 个 NPU 输出 + 288 个 CPU golden 全部逐位一致** | `$R4/exact42/summary_do_final.json` |
+| determinism | **14/14 × 50 PASS**，真实 XLSX 已复核 | `$R4/do_final_atk/atk/determinism_verified.json` |
+| 独立 Dhu 默认 head-major smoke | dh/dv2 逐位一致；真实 NPU 执行，非完整 ATK CPU 精度验收 | `$R4/do_final_dhu_smoke/` |
+| A2/A3 交叉编译 | 均成功；未执行实机验证 | `$R4/do_cross_a2.log`、`do_cross_a3.log` |
+| 静态检视 | 本轮新增 DFX 告警为 0；既有告警保留，不宣称全绿 | `$R4/review_final/by_op/` |
+
+42 条整批 replay 在 case 40 遇到 `507015`，原始日志单独保留；case 40–41 的独立补跑为
+2/2 PASS，并合并完成全部 42 条逐位对照。该补测不代表整批运行或整链内存验收通过。
+独立 Dhu ATK 的 `ct` 依赖缺失未通过安装全局包规避，改用公开入口做真实 NPU 对照。
+常规并发 ATK 的驱动分配错误与上述结果分开记录，不视为精度门禁通过。
+
+### O4 单项性能与显存
+
+形状 B1/H96/T8192/K=V128/C64，dense BSND。core 为 norm off，customer 为 norm on。
+六轮正反顺序交替，每版本 warmup 3 次、采集 20 次，tail-3 中位数后再取逐轮配对差中位数。
+基线为 PR993 + O1 + O2 final，候选只增加 O4。性能与转置证据在 `$R4/do_final_perf/perf/`。
+
+| 语义 | 路径 | bwd kernel sum base→O4 (µs) | bwd 配对差 (µs) | bwd 变化 | Finalize MFU base→O4 | event 配对差 (ms) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| core | saved | 7575.4105→7324.1600 | **−254.7790** | **−3.316659%** | 14.543115%→14.571822% | **−0.369941** |
+| core | recompute | 9561.1815→9222.0520 | **−341.8040** | **−3.546941%** | 14.561378%→14.519272% | **−0.344895** |
+| customer | saved | 7646.6240→7447.1570 | **−177.2335** | **−2.608563%** | 14.126242%→14.146051% | **−0.253860** |
+| customer | recompute | 9772.7280→9346.1905 | **−428.9100** | **−4.364569%** | 14.112864%→14.100716% | **−0.441759** |
+
+O4 不针对 Finalize 本身，Finalize/MFU 的轻微波动不单独解释为收益；MFU 只按 Finalize
+单 kernel 的 shape-derived BF16 MMAD wall 口径计算。core/customer 的 23 次 public 调用中，
+`Transpose` 启动数分别由 **92→46**、**138→69**，减少的是 do 的搬运，其它布局操作保留。
+
+四组显存均为 allocated **−192 MiB**、reserved **−192 MiB**，对应删除的
+`1×8192×96×128×2` 字节 BF16 dOHead 临时量。证据为 `$R4/do_final_memory/memory/summary.json`。
+`performance_device` 已 2/2 执行完成，但不作为预设性能达标或整链 MFU 证据。
+
 ## 未闭环项
 
 - **自定义泛化用例不是官方精度门禁**；严格 FP32 匹配阈值只作本地诊断，不宣称官方精度验收通过。
