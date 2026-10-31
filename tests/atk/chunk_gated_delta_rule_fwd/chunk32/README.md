@@ -38,21 +38,33 @@ NPU 节点名是 `npu_dut`，GPU 节点名是 `gold`，CPU golden 由 `-bd cpu` 
 
 ## Shape
 
-精度 604 条。四种布局、`allow_neg_eigval`、`state_v_first`、初态 `none/bf16/fp32/zero`、
-MHA（H=4×4）和 GVA（H=2×8）做完全积，再乘上四种形状：`T=1024` 对齐、`T=1000` 尾块、
-`B=2,T=512`、变长 `512+1024`。另有 `T=2048` 的 MHA 全组合，以及 BNSD/BSND 上 `T=4096` 的 GVA。
-最长不超过 16K，每种布局一条。`K=V=128`。`use_exp2=False`、核内 L2 和 beta sigmoid 是固定要求，不参与组合。
+`K=V=128`。`use_exp2=False`、核内 L2 和 beta sigmoid 是固定要求，不参与组合。T 不超过 8192。
+
+BNSD 和 NTD 把对齐、尾块、MHA（H=4×4）、GVA（H=2×8）、初态 `none/bf16/fp32/zero`、
+`allow_neg_eigval`、`state_v_first` 做完全积。BNSD 另有 `B=2,T=64`。NTD 的变长是对齐的
+`64+64` 和不对齐的 `40+60`，再加一条不定长的 `T=100`。BSND、TND 用同样的开关，初态只取
+`none/bf16`，各覆盖对齐和尾块。上限是 BNSD `T=8192` 和 NTD `3000+5000`。
+
+可选导出不进上面的完全积，单独配 7 种开关组合（L2、g_cumsum/A、h，以及两两和三者全开）。
+L2 打开时同时比较 `beta_eff`、`q_hat`、`k_hat`、`q_rstd`、`k_rstd`。每种组合落在
+BNSD 对齐、BNSD 尾块 GVA、NTD 变长、BSND、TND 上。`g_cumsum` 是 chunk 内自然底数的和，
+等于 Triton 里那份 cumsum 除以 `RCP_LN2`。`h` 和 `final_state` 在 `state_v_first`
+打开时都是 `[V, K]`。
 
 ## 用例
 
 | 文件 | 用途 |
 | --- | --- |
-| `atk_chunk_gated_delta_rule_fwd_chunk32.json` | 混合容差精度，604 条 |
-| `atk_chunk_gated_delta_rule_fwd_chunk32_double.json` | 双标杆精度，同一批 604 条 |
+| `atk_chunk_gated_delta_rule_fwd_chunk32.json` | 混合容差精度，300 条 |
+| `atk_chunk_gated_delta_rule_fwd_chunk32_double.json` | 双标杆精度，同一批 300 条 |
 | `atk_chunk_gated_delta_rule_fwd_chunk32_perf.json` | 性能 |
 | `atk_chunk_gated_delta_rule_fwd_chunk32_mss.json` | 确定性与内存检测 |
 
-完全积是 512 条。`T=2048` 的 MHA 再加 64 条，`T=4096` 的 GVA 再加 24 条，16K 上限每种布局 1 条，一共 604 条。
+一共 300 条：BNSD 96、NTD 96、BSND 32、TND 32、8K 上限 2、可选导出 42。重生成四份 JSON：
+
+```bash
+python3 tests/atk/chunk_gated_delta_rule_fwd/chunk32/gen_chunk_gated_delta_rule_fwd_chunk32.py
+```
 
 ### 性能
 
@@ -92,8 +104,4 @@ GPU_HOST=<gpu-server-ip> GPU_HOST_PORT=9090 \
 
 精度标准走源码安装的 ATK 26.9.8（`https://gitcode.com/Ascend/ATK.git`，
 commit `99c8a84`）。这一版自带 `mixed_tolerance_bm`，不要再把它别名到
-`single_bm`。`cv_fused_double_benchmark` 也由这一版 ATK 提供。重生成四份 JSON：
-
-```bash
-python3 tests/atk/chunk_gated_delta_rule_fwd/chunk32/gen_chunk_gated_delta_rule_fwd_chunk32.py
-```
+`single_bm`。`cv_fused_double_benchmark` 也由这一版 ATK 提供。

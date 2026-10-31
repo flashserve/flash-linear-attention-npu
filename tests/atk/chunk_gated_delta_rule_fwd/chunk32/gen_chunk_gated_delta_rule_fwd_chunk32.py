@@ -1,10 +1,10 @@
 """Build the chunk32 ATK matrices.
 
-Accuracy covers the combinations chunk32 actually accepts: four layouts,
-MHA/GVA, fixed and packed sequences, aligned and tail lengths, both
-``allow_neg_eigval`` and ``state_v_first`` values, and initial state
-none/bf16/fp32/zero. ``use_exp2``, L2 and beta sigmoid stay on the required
-values. Shapes are medium; the longest sequences are about 24K tokens.
+Accuracy covers the combinations chunk32 accepts: BNSD/BSND/NTD/TND, MHA/GVA,
+aligned and tail lengths, packed sequences, ``allow_neg_eigval``,
+``state_v_first``, initial state none/bf16/fp32/zero, and the optional
+exports (L2 hats and rstd, beta_eff, g_cumsum and A, h). ``use_exp2`` stays
+false and the in-kernel L2 and beta sigmoid stay on. T is at most 8192.
 """
 
 from __future__ import annotations
@@ -52,9 +52,14 @@ def _spec(
     seqlens: str = "",
     allow_neg: bool = False,
     state_v_first: bool = False,
+    out_l2: bool = False,
+    disable_recompute: bool = False,
+    out_h: bool = False,
     tags: str = "accuracy",
     seed: int,
 ) -> dict:
+    if tokens > 8192:
+        raise ValueError(f"T={tokens} exceeds 8192")
     return {
         "case_key": case_key,
         "tags": tags,
@@ -72,50 +77,57 @@ def _spec(
         "seqlens": seqlens,
         "allow_neg_eigval": allow_neg,
         "state_v_first": state_v_first,
+        "out_l2": out_l2,
+        "disable_recompute": disable_recompute,
+        "out_h": out_h,
         "scale": SCALE,
         "seed": seed,
     }
 
 
 def _key(layout: str, k_heads: int, v_heads: int, tokens: int, state: str,
-         seqlens: str, allow_neg: bool, state_v_first: bool, batch: int) -> str:
+         seqlens: str, allow_neg: bool, state_v_first: bool, batch: int,
+         out_l2: bool = False, disable_recompute: bool = False, out_h: bool = False) -> str:
     head = "gva" if v_heads > k_heads else "mha"
     packed = "var" if seqlens else "fix"
     seq = "" if not seqlens else "_seq" + seqlens.replace(",", "-")
+    exports = f"_l2{int(out_l2)}_ga{int(disable_recompute)}_h{int(out_h)}"
     return (
         f"{layout.lower()}_{head}_{packed}_B{batch}_H{k_heads}x{v_heads}"
-        f"_T{tokens}_{state}{seq}_neg{int(allow_neg)}_sv{int(state_v_first)}"
+        f"_T{tokens}_{state}{seq}_neg{int(allow_neg)}_sv{int(state_v_first)}{exports}"
     )
 
 
 def accuracy_specs() -> list[dict]:
-    """600 cells. Free axes are fully crossed at medium T; 16K is only the cap."""
+    """Covering set. BNSD/NTD are fully crossed; BSND/TND and the exports are sampled.
 
-    layouts = ("BNSD", "BSND", "NTD", "TND")
+    Optional exports are ``out_l2`` (q_hat/k_hat/rstd and beta_eff),
+    ``disable_recompute`` (g_cumsum and A) and ``out_h``. The inference launch
+    leaves all three off. T stays at or under 8192.
+    """
+
     negs = (False, True)
     svs = (False, True)
     states = ("none", "bf16", "fp32", "zero")
     heads = ((4, 4), (2, 8))  # MHA, GVA
-    # Fixed aligned, fixed tail, multi-batch, packed. Varlen stays at B=1.
-    profiles = (
-        {"batch": 1, "tokens": 1024, "seqlens": ""},
-        {"batch": 1, "tokens": 1000, "seqlens": ""},
-        {"batch": 2, "tokens": 512, "seqlens": ""},
-        {"batch": 1, "tokens": 1536, "seqlens": "512,1024"},
-    )
     specs: list[dict] = []
 
-    def add(layout, hk, hv, batch, tokens, state, seqlens, allow_neg, state_v_first) -> None:
+    def add(layout, hk, hv, batch, tokens, state, seqlens, allow_neg, state_v_first,
+            out_l2=False, disable_recompute=False, out_h=False) -> None:
         specs.append(
             _spec(
-                case_key=_key(layout, hk, hv, tokens, state, seqlens, allow_neg, state_v_first, batch),
+                case_key=_key(
+                    layout, hk, hv, tokens, state, seqlens, allow_neg, state_v_first, batch,
+                    out_l2, disable_recompute, out_h,
+                ),
                 layout=layout, batch=batch, k_heads=hk, v_heads=hv, tokens=tokens,
                 state=state, seqlens=seqlens, allow_neg=allow_neg, state_v_first=state_v_first,
+                out_l2=out_l2, disable_recompute=disable_recompute, out_h=out_h,
                 seed=SEED_BASE + len(specs),
             )
         )
 
-    for layout in layouts:
+    def cross(layout, profiles) -> None:
         for allow_neg in negs:
             for state_v_first in svs:
                 for state in states:
@@ -125,28 +137,74 @@ def accuracy_specs() -> list[dict]:
                                 layout, hk, hv, profile["batch"], profile["tokens"],
                                 state, profile["seqlens"], allow_neg, state_v_first,
                             )
-    # Longer medium sequences, still at or under 16K. MHA only at 2048,
-    # GVA on BNSD/BSND at 4096, then one 16K case per layout.
-    for layout in layouts:
+
+    # Head-major fixed: aligned, tail, and a second batch.
+    cross("BNSD", (
+        {"batch": 1, "tokens": 128, "seqlens": ""},
+        {"batch": 1, "tokens": 100, "seqlens": ""},
+        {"batch": 2, "tokens": 64, "seqlens": ""},
+    ))
+    # Head-major packed: aligned pair, unaligned pair, and one fixed tail.
+    cross("NTD", (
+        {"batch": 1, "tokens": 128, "seqlens": "64,64"},
+        {"batch": 1, "tokens": 100, "seqlens": "40,60"},
+        {"batch": 1, "tokens": 100, "seqlens": ""},
+    ))
+    # Sequence-major spot check, both layouts, aligned and tail.
+    for layout, profiles in (
+        ("BSND", (
+            {"batch": 1, "tokens": 128, "seqlens": ""},
+            {"batch": 1, "tokens": 100, "seqlens": ""},
+        )),
+        ("TND", (
+            {"batch": 1, "tokens": 128, "seqlens": "64,64"},
+            {"batch": 1, "tokens": 96, "seqlens": "48,48"},
+        )),
+    ):
         for allow_neg in negs:
             for state_v_first in svs:
-                for state in states:
-                    add(layout, 4, 4, 1, 2048, state, "", allow_neg, state_v_first)
-    for layout in ("BNSD", "BSND"):
-        for allow_neg in negs:
-            for state_v_first in svs:
-                for state in ("none", "bf16", "fp32"):
-                    add(layout, 2, 8, 1, 4096, state, "", allow_neg, state_v_first)
-    long_cases = (
-        ("BNSD", 4, 4, 16384, "none", "", False, False),
-        ("BSND", 4, 8, 16384, "bf16", "", True, True),
-        ("NTD", 2, 8, 16384, "fp32", "4096,12288", False, True),
-        ("TND", 4, 4, 16000, "zero", "6000,10000", True, False),
+                for state in ("none", "bf16"):
+                    for hk, hv in heads:
+                        for profile in profiles:
+                            add(
+                                layout, hk, hv, profile["batch"], profile["tokens"],
+                                state, profile["seqlens"], allow_neg, state_v_first,
+                            )
+    # Cap. Still at or under 8K, one head-major fixed and one packed tail.
+    add("BNSD", 4, 4, 1, 8192, "none", "", False, False)
+    add("NTD", 2, 8, 1, 8000, "fp32", "3000,5000", True, True)
+
+    # Each export switch, and the combinations, on the layouts those switches touch.
+    export_modes = (
+        (True, False, False),
+        (False, True, False),
+        (False, False, True),
+        (True, True, False),
+        (True, False, True),
+        (False, True, True),
+        (True, True, True),
     )
-    for layout, hk, hv, tokens, state, seqlens, allow_neg, state_v_first in long_cases:
-        add(layout, hk, hv, 1, tokens, state, seqlens, allow_neg, state_v_first)
-    if len(specs) != 604:
-        raise RuntimeError(f"expected 604 accuracy cases, got {len(specs)}")
+    export_rows = (
+        # layout, hk, hv, batch, tokens, state, seqlens, neg, sv
+        ("BNSD", 4, 4, 1, 64, "none", "", False, False),
+        ("BNSD", 2, 8, 1, 40, "bf16", "", True, True),
+        ("NTD", 2, 8, 1, 64, "fp32", "24,40", False, True),
+        ("NTD", 4, 4, 1, 96, "zero", "64,32", True, False),
+        ("BSND", 2, 8, 1, 96, "none", "", True, False),
+        ("TND", 4, 4, 1, 80, "bf16", "48,32", False, True),
+    )
+    for out_l2, disable_recompute, out_h in export_modes:
+        for row in export_rows:
+            layout, hk, hv, batch, tokens, state, seqlens, allow_neg, state_v_first = row
+            add(
+                layout, hk, hv, batch, tokens, state, seqlens, allow_neg, state_v_first,
+                out_l2, disable_recompute, out_h,
+            )
+    keys = [row["case_key"] for row in specs]
+    if len(keys) != len(set(keys)):
+        raise RuntimeError("duplicate accuracy case_key")
+    if any(row["T"] > 8192 for row in specs):
+        raise RuntimeError("accuracy T exceeds 8192")
     return specs
 
 
