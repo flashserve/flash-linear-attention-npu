@@ -55,6 +55,13 @@ beta 为 `[B,H,T]` 或 `[H,T]`。h 为 `[B,Nc,H,K,V]` 或 `[Nc,H,K,V]`，dh 与 
 d_g 与 raw_g 同类型，d_a_log/d_dt_bias 固定 FP32。raw_g/beta 有四种 dtype 组合；
 Stage11 按需将 BF16 输入转换为 FP32，Stage12 以 FP32 归约并写回参数梯度。
 
+上表及本节类型描述的是独立 `aclnnChunkKdaBwdFinalize` 接口。A2/A3 整体 Bwd
+通过 L0 调用时，dq/dk/dv 直接输出 BF16，db/dg 分别跟随总接口的
+beta/raw_g 输入 dtype，dA/dbias 固定 FP32；五个 Token 梯度
+均按总接口的 output_layout 写回，无需总接口再做布局转置。
+A2/A3 支持 BF16/FP32 beta，融合 sigmoid 反向时需要前向保存的 FP32 beta_eff；
+raw_g 支持 BF16/FP32，a_log/dt_bias 固定 FP32。成对传入 q_rstd/k_rstd 时，在 Finalize 内完成 Q/K L2Norm 反向。
+
 ### 独立 Finalize
 
 独立 `aclnnChunkKdaBwdFinalize` 的公开签名保持不变，不暴露 `model_layout` 参数。
@@ -68,9 +75,9 @@ PR993 总接口只有一个公开 `layout`，合法值为 `BSND/BNSD/TND/NTD`。
 布局同时传给 `output_layout` 和 `model_layout`，形成以下契约：
 
 - q/k/v 与 dq/dk/dv 随布局；有 rstd 时 q/k 固定为 head-major q_hat/k_hat。
-- 公开 do/raw_g/beta 与 dg/db 固定 token-major。ACLNN 将 do 转置一次供 Prepare/Dhu
-  共用，将普通 beta 转置一次供 Recompute/Finalize 共用；Finalize 收到的 beta 仍为
-  head-major，raw_g 则按 token-major 直接读取。
+- 公开 do/raw_g/beta 与 dg/db 固定 token-major。A5 ACLNN 将 do 直接传给 Prepare/Dhu
+  进行原生 stride 读取，A2/A3 仍转置一次供两个小算子共用；普通 beta 转置一次供
+  Recompute/Finalize 共用，Finalize 收到的 beta 仍为 head-major，raw_g 按 token-major 直接读取。
 - `model_layout` 是内部可选 string 属性，默认空字符串表示 standalone；非空仅接受上述
   四个布局。op 定义的 `attr_num=11`，内部 L0 函数签名在末尾追加 `modelLayout`，
   独立 ACLNN 通过默认值继续走 standalone。

@@ -4,6 +4,9 @@
  */
 
 #include "kernel_operator.h"
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#include "arch22/chunk_gated_delta_rule_fwd_prepare_standalone.h"
+#else
 #include "arch35/chunk_gated_delta_rule_fwd_prepare.h"
 
 using namespace AscendC;
@@ -29,3 +32,4 @@ extern "C" __global__ __aicore__ void chunk_gated_delta_rule_fwd_prepare(
             workspace, tilingData);
     op.Process();
 }
+#endif

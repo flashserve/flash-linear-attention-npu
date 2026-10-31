@@ -34,6 +34,9 @@ V2 由三个阶段组成，保存中间量模式跳过前向重计算：
 | Finalize | 合并 dq/dk/dv/db，计算 Gate 与参数梯度；可融合 Q/K 归一化反向 |
 
 重计算模式先恢复 gk/w/qg/kg/v_new/h 等中间量，再执行同一反向链路。
+A2/A3 与 A5 V2 总接口直接将原始 dtype 的 raw_g 传给 Recompute；BF16 在其 Vector
+读入后转为 FP32，移除总接口的独立 Cast 及 FP32 GM 临时张量。FP32 输入路径、
+计算公式和 kernel 同步不变；回归覆盖 BF16/FP32、四种 layout、定长/变长及 L2Norm 开关。
 保存模式直接读取前向的 chunk-major h；Prepare 与 Finalize 使用对应偏移，
 Finalize 对 h、dh 分别寻址，Dhu 和内嵌 state_scan 均产生 NT-first dh。
 重计算模式由 ChunkFwdH 直接写出 chunk-major h，不再增加 Transpose/Contiguous；
@@ -121,7 +124,7 @@ CPU 公式不变；新增 BF16 db 的预期为旧 FP32 梯度按模型 beta dtyp
 | ACLNN V2 | 按 v 与 layout 解析维度；缓存固定 head-major；do 以原始 token-major 直接传给 Prepare/Dhu，普通 beta 转置一次供 Recompute/Finalize；A5 保留 sigmoid 参数并拒绝非默认值 |
 | Prepare | 接收原始 token-major do；四维变长通过 B=1 的 reshape view 进入现有 NTD kernel |
 | Dhu | 与 Prepare 共用原始 token-major do；内部可选标志控制实际行距，独立调用默认 head-major |
-| Recompute | reserved 位分别控制 raw_g、q/k、v 的 stride 读取；两条 Vector 分支一致，缓存写出不变；接收已转换的 head-major 普通 beta |
+| Recompute | reserved 位分别控制 raw_g、q/k、v 的 stride 读取；两条 Vector 分支一致，缓存写出不变；BF16 raw_g 片上升精度，接收已转换的 head-major 普通 beta |
 | Finalize | q/k、v、raw_g 分别按标志读取，有 rstd 时 q/k 固定 head-major；Cube 两处 v 读取同步调整；内部 beta 为 head-major，dq/dk/dv 随 layout，公开 dg/db 固定 token-major |
 
 公开 do/raw_g/beta 始终为 token-major，dg/db 同样固定 token-major；dg 跟随 raw_g
@@ -151,9 +154,9 @@ BF16 raw_g 的 Stage 11 转换使用 BF16 全掩码，覆盖全部 128 个元素
 新：do GM -- 原生 stride 读取 ----------> Prepare/Dhu L1/L0
 ```
 
-Prepare 用 vNew、Dhu 用 dv 推导规范 B/H/T/V，内部 L0 末尾的
-`doTokenMajor=false` 与 op_def optional attr 显式选择新寻址；独立小接口保持
-head-major，公开 Python 与总 ACLNN 签名不变。T==H 也只由该标志消歧。
+Prepare 用 vNew、Dhu 用 dv 推导规范 B/H/T/V，总接口内部 L0 末尾传入
+`doTokenMajor=true`，op_def optional attr 显式选择新寻址；独立小接口保持默认 false
+和 head-major，公开 Python 与总 ACLNN 签名不变。T==H 也只由该标志消歧。
 dense 地址为 `((b*T+t)*H+h)*V`，token 行距为 H*V，head 间距为 V；
 packed 的 b 为 0。四维变长 Prepare 去 B=1 view、Dhu 补 B=1 view，均不搬运数据。
 

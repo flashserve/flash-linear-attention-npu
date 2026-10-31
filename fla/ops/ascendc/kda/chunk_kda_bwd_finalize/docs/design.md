@@ -19,8 +19,8 @@ A5 的 GatePost 和 dBeta 写回复用 FinalizeOutputOffset，并按布局标记
 总接口内部将同一公开 layout 传给 `output_layout` 与 `model_layout`：
 
 - q/k/v 及 dq/dk/dv 随 layout；成对提供 rstd 时，q/k 固定为 head-major q_hat/k_hat。
-- 公开 do/raw_g/beta 及 dg/db 固定 token-major。do 由 ACLNN 转置一次供 Prepare/Dhu
-  共用；普通 beta 转置一次供 Recompute/Finalize 共用，因此 Finalize 的 beta 输入仍为
+- 公开 do/raw_g/beta 及 dg/db 固定 token-major。A5 do 由 ACLNN 直接传给 Prepare/Dhu
+  进行原生 stride 读取；普通 beta 转置一次供 Recompute/Finalize 共用，因此 Finalize 的 beta 输入仍为
   head-major，raw_g 则保持 token-major。
 - outputTokenMajor 控制 q/k/v 梯度，gateOutputTokenMajor 控制 db/dg；混合布局路径的
   Gate 梯度始终为 token-major，独立路径则由 `output_layout` 决定。
@@ -31,6 +31,13 @@ A5 的 GatePost 和 dBeta 写回复用 FinalizeOutputOffset，并按布局标记
 验证设计覆盖 dense/packed、独立调用的两种输出顺序、总接口四种 layout、非对齐尾块、
 奇数 head、H=T、raw_g/beta 四种 dtype 和 norm/sigmoid 分支。预期值由独立 CPU 数学
 标杆生成；比较布局转换只存在于测试侧，不改变数学公式、输入值域、精度阈值或公开契约。
+
+## 历史 A2/A3 布局定向验证
+
+2026-10-28，在 Ascend910B3 / CANN 9.2.0 上重建 wheel 后，24 组独立 Finalize
+用例的七个输出与旧实现按目标布局排列后的结果逐元素一致，12 组默认布局检查通过。
+覆盖 dense B=2、packed 含空序列、T=65 尾块、H=3、H=T=4、norm 开关及 BF16/FP32 beta。
+这是当时写回布局等价性验证，不替代当前实现的完整 ATK 或 A5 设备验收。
 
 ## Gradient dtype writeback
 
@@ -66,10 +73,10 @@ MTE2/V/MTE3 生命周期。A5 在 Stage11 VF 加载 BF16 寄存器后转换 FP32
 链式求导；BF16 全掩码覆盖全部 128 个元素，不能复用只覆盖一半 lane 的 FP32 掩码。
 Stage12 的参数跨 chunk 归约及写回均保持 FP32。
 
-总接口 saved 模式直接透传原始参数，不为 Finalize 插入 GM 输入 Cast。recompute 分支
-单独创建重算所需 FP32 参数，Finalize 仍接收原始输入；普通 beta 已在 ACLNN 中转换为
-内部 head-major。A5 legacy 单体实现保留原有支持范围，融合覆盖 A2/A3 staged 和
-A5 V2/独立 Finalize。
+总接口 saved/recompute 均直接透传原始 raw_g，不为其插入独立 GM FP32 Cast；
+Recompute 在 Vector 读入 BF16 raw_g 后升精度。Finalize 接收原始 raw_g，普通 beta 已在
+ACLNN 中转换为内部 head-major。A5 legacy 单体实现保留原有支持范围，融合覆盖
+A2/A3 staged 和 A5 V2/独立 Finalize。
 
 验证应覆盖 raw_g/beta 四种 dtype 组合、dense/packed、输出布局、saved/recompute、
 可选 bias、空序列和尾块，并检查 BF16 dg/db 写回及 FP32 参数梯度。性能结论必须来自

@@ -119,6 +119,10 @@ L1 填充指令及其 sanitizer 插桩路径。填充与后续 ND2NZ 均在 MTE2
 packed 元数据在 host 侧传递。ctypes 保留为参考与显式回退路径。
 ACLNN 参数检查使用 opbase 的 Error Message 宏；Stable-ABI 读取失败线程上的
 最近错误详情并将其附加到异常中，保留原始 ACLNN 返回码。
+按 SDK 宏是否存在选择错误上报：新 SDK 保留原生 `OP_LOGE_FOR_INVALID_*`；
+旧 SDK 使用已有的属性/类型结构化上报，保留参数名、实际值与期望值。
+缺失参数直接使用 `REPORT_PREDEFINED_ERR_MSG` 上报 EZ0004，绕过 CANN 9.0.0
+`OP_LOGE_WITH_INVALID_INPUT` 中的形参笔误，不改写 SDK 宏或头文件。
 950 注册继续保留；A5 适配设计见本文前节，其验证不属于原 A2/A3 结果。
 
 调用层与错误上报回归：32 组正常输入的 96 路输出逐位通过，Stable 后端无回退；

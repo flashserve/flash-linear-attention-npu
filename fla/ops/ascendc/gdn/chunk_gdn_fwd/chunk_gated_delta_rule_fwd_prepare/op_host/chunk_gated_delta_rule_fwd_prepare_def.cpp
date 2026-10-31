@@ -86,6 +86,8 @@ public:
             .ExtendCfgInfo("aclnnSupport.value", "support_aclnn");
 
         this->AICore().AddConfig("ascend950", aicoreConfig);
+        this->AICore().AddConfig("ascend910b", aicoreConfig);
+        this->AICore().AddConfig("ascend910_93", aicoreConfig);
     }
 };
 

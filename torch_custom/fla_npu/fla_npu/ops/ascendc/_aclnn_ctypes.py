@@ -1001,8 +1001,16 @@ def npu_chunk_gated_delta_rule_fwd_prepare(
         raise ValueError("K currently only supports 128.")
     if V not in (128, 256):
         raise ValueError("V must be 128 or 256.")
-    if HK <= 0 or HV % HK != 0 or HV // HK not in (1, 2, 3, 4):
-        raise ValueError("Hv must be divisible by Hk and Hv/Hk must be in {1,2,3,4}.")
+    if HK <= 0 or HV <= 0 or HV % HK != 0:
+        raise ValueError("Hv and Hk must be positive, and Hv must be divisible by Hk.")
+    if HV // HK > 4:
+        device_index = q.device.index
+        if device_index is None:
+            device_index = torch.npu.current_device()
+        device_name = str(torch.npu.get_device_name(device_index)).lower()
+        is_a2_a3 = device_name.startswith(("ascend910b", "ascend910_93"))
+        if not is_a2_a3 or HV // HK > 16:
+            raise ValueError("Hv/Hk must be in [1,16] on A2/A3 or [1,4] on Ascend950.")
     if any(tensor.dtype != q.dtype for tensor in (k, v)):
         raise ValueError("q, k and v must have the same dtype.")
     if q.dtype not in (torch.bfloat16,):
