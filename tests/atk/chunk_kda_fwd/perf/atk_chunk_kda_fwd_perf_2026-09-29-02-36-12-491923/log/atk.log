@@ -1,0 +1,45 @@
+[2026-09-28 18:36:12,622] [INFO] [MainProcess] [406684] [base.py:239]  task_output_path: ./atk_output/perf/atk_output/atk_chunk_kda_fwd_perf_2026-09-29-02-36-12-491923
+[2026-09-28 18:36:12,622] [INFO] [MainProcess] [406684] [celery_config.py:117]  clear celery filesystem storage before start. broker=atk_output/perf/atk_output/atk_chunk_kda_fwd_perf_2026-09-29-02-36-12-491923/db/celery/broker, processed=atk_output/perf/atk_output/atk_chunk_kda_fwd_perf_2026-09-29-02-36-12-491923/db/celery/processed, results=atk_output/perf/atk_output/atk_chunk_kda_fwd_perf_2026-09-29-02-36-12-491923/db/celery/results
+[2026-09-28 18:36:12,654] [INFO] [MainProcess] [406684] [registry.py:76]  executor_chunk_kda_fwd is already registered, repeated registration will coverage it, new module path is executor_chunk_kda_fwd
+[2026-09-28 18:36:12,655] [INFO] [MainProcess] [406684] [registry.py:76]  executor_chunk_kda_fwd is already registered, repeated registration will coverage it, new module path is executor_chunk_kda_fwd
+[2026-09-28 18:36:12,657] [INFO] [MainProcess] [406684] [single_process_main.py:236]  report api name: atk_chunk_kda_fwd_perf
+[2026-09-28 18:36:12,658] [INFO] [MainProcess] [406684] [opp_tasks.py:369]  [case 250] start CREATE DATASET.
+[2026-09-28 18:36:12,662] [INFO] [MainProcess] [406684] [opp_tasks.py:507]  [case 250] start run NPU OPP TASK.
+[2026-09-28 18:36:15,199] [INFO] [MainProcess] [406684] [patch_getenv.py:15]  get env ASCEND_CUSTOM_OPP_PATH = /workspace/venv/lib/python3.11/site-packages/fla_npu/opp/vendors/fla_npu_transformer:/workspace/venv/lib/python3.11/site-packages/fla_npu/opp/vendors/fla_npu_transformer/op_api/lib:/workspace/venv/lib64/python3.11/site-packages/fla_npu/opp:/workspace/venv/lib64/python3.11/site-packages/fla_npu/opp/vendors/fla_npu_transformer
+[2026-09-28 18:36:19,323] [INFO] [MainProcess] [406684] [npu_backend.py:567]  [case 250] Start parsing Profiling files.
+[2026-09-28 18:36:19,326] [INFO] [MainProcess] [406684] [npu_backend.py:169]  perf_fluctuation_check cqv: 4.9111318989709964, iqr: 0.3674999999999997, media: 7.4830000000000005
+[2026-09-28 18:36:19,327] [INFO] [MainProcess] [406684] [npu_backend.py:169]  perf_fluctuation_check cqv: 0.5617376417718691, iqr: 4.094999999999914, media: 728.988
+[2026-09-28 18:36:19,327] [INFO] [MainProcess] [406684] [npu_backend.py:169]  perf_fluctuation_check cqv: 94.52115029460911, iqr: 10.748000000000001, media: 11.370999999999999
+[2026-09-28 18:36:19,327] [INFO] [MainProcess] [406684] [npu_backend.py:149]  perf_fluctuation_result: False
+[2026-09-28 18:36:19,327] [INFO] [MainProcess] [406684] [npu_backend.py:611]  [case 250] End to parses training profiler. Duration:0.00 second.
+[2026-09-28 18:36:19,328] [INFO] [MainProcess] [406684] [npu_backend.py:653]  task_duration: 807.9158, aicore_time: 727.903, aic_mac_ratio: 0.1452
+[2026-09-28 18:36:19,328] [INFO] [MainProcess] [406684] [base_api.py:75]  cal_cube_computation() is not custom defined, TFlops_e2e,TFlops_cube,MFU return 0,0,0 as default.
+[2026-09-28 18:36:19,328] [INFO] [MainProcess] [406684] [npu_backend.py:371]  profiling result save in ./atk_output/perf/atk_output/atk_chunk_kda_fwd_perf_2026-09-29-02-36-12-491923/profile/npu_npu_dut/atk_chunk_kda_fwd_perf/250/334d1672ed35_406684_20260928183615555_ascend_pt
+[2026-09-28 18:36:19,328] [INFO] [MainProcess] [406684] [npu_backend.py:375]  [case 250] NPU AVG Profiler Time:807.9158 us, max memory allocated: 0 MB, max memory reserved: 842.4609375 MB, NPU std_deviation: 2.9459742862081284, TFlops_e2e: 0, TFlops_cube: 0, MFU: 0
+[2026-09-28 18:36:19,343] [WARNING] [MainProcess] [406684] [warnings.py:109]  /workspace/venv/lib64/python3.11/site-packages/pydantic/main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `OutputData` - serialized value may not be as expected [field_name='output_info_list', input_value={'dtype': 'torch.bfloat16...2582912, 12288, 128, 1]}, input_type=dict])
+  PydanticSerializationUnexpectedValue(Expected `list[definition-ref]` - serialized value may not be as expected [field_name='output_info_list', input_value={'dtype': 'torch.bfloat16...2582912, 12288, 128, 1]}, input_type=dict])
+  PydanticSerializationUnexpectedValue(Expected `OutputData` - serialized value may not be as expected [field_name='output_info_list', input_value={'dtype': 'torch.bfloat16...[6291456, 65536, 64, 1]}, input_type=dict])
+  PydanticSerializationUnexpectedValue(Expected `list[definition-ref]` - serialized value may not be as expected [field_name='output_info_list', input_value={'dtype': 'torch.bfloat16...[6291456, 65536, 64, 1]}, input_type=dict])
+  PydanticSerializationUnexpectedValue(Expected `OutputData` - serialized value may not be as expected [field_name='output_info_list', input_value={'dtype': 'torch.bfloat16...[6291456, 65536, 64, 1]}, input_type=dict])
+  PydanticSerializationUnexpectedValue(Expected `list[definition-ref]` - serialized value may not be as expected [field_name='output_info_list', input_value={'dtype': 'torch.bfloat16...[6291456, 65536, 64, 1]}, input_type=dict])
+  return self.__pydantic_serializer__.to_python(
+
+[2026-09-28 18:36:19,345] [INFO] [MainProcess] [406684] [opp_tasks.py:315]  [case 250] start POST PROCESS, task:['performance_device'].
+[2026-09-28 18:36:19,353] [INFO] [MainProcess] [406684] [reports.py:156]  
++-------------+-------------------------+--------------------------+---------------------------+------------------------------+---------------------------+--------------------------------+-----------------+---------------------+--------------------+
+|    id_250   | npu_npu_dut_input_bytes | npu_npu_dut_output_bytes | npu_npu_dut_std_deviation | npu_npu_dut_cube_computation | npu_npu_dut_api_statistic | npu_npu_dut_fluctuation_result | device_perf(us) | device_perf_min(us) | perf_device_result |
++-------------+-------------------------+--------------------------+---------------------------+------------------------------+---------------------------+--------------------------------+-----------------+---------------------+--------------------+
+| npu_npu_dut |           6.0           |        50331648.0        |     2.9459742862081284    |       [0.0, 0.0, 0.0]        |            None           |              None              |    807.915800   |                     |         -          |
++-------------+-------------------------+--------------------------+---------------------------+------------------------------+---------------------------+--------------------------------+-----------------+---------------------+--------------------+
+[2026-09-28 18:36:19,357] [INFO] [MainProcess] [406684] [csv_report.py:905]  
+++
+||
+++
+++
+[2026-09-28 18:36:19,357] [INFO] [MainProcess] [406684] [csv_report.py:743]  Total Task: 1, success 1, failed 0
+[2026-09-28 18:36:19,357] [INFO] [MainProcess] [406684] [csv_report.py:744]  Summary info: acc_pass_result:None	is_acc_dc_pass:None	is_e2e_perf_pass:None	is_benchmark_perf_pass:None	is_device_perf_pass:None	is_device_memory_pass:None	is_memory_check_pass:None .
+[2026-09-28 18:36:19,367] [INFO] [MainProcess] [406684] [csv_report.py:946]  save result excel file: ./atk_output/perf/atk_output/atk_chunk_kda_fwd_perf_2026-09-29-02-36-12-491923/report/atk_chunk_kda_fwd_perf_reports_2026-09-28-18-36-12.xlsx
+[2026-09-28 18:36:19,367] [INFO] [MainProcess] [406684] [base.py:299]  atk task success!
+[2026-09-28 18:36:19,375] [INFO] [MainProcess] [406684] [output_manager.py:173]  save profile path: ./atk_output/perf/atk_output/atk_chunk_kda_fwd_perf_2026-09-29-02-36-12-491923/profile
+[2026-09-28 18:36:19,375] [INFO] [MainProcess] [406684] [base.py:303]  atk task finish. cost time: 6 s
