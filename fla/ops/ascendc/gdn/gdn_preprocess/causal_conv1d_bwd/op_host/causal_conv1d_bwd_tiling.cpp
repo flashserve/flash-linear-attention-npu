@@ -77,6 +77,30 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     auto xDesc = context->GetInputDesc(X_INPUT_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, xDesc);
     auto xDtype = xDesc->GetDataType();
+    OP_CHECK_IF(xDtype != ge::DT_FLOAT && xDtype != ge::DT_FLOAT16 && xDtype != ge::DT_BF16,
+                OP_LOGE(context, "x dtype must be float32, float16 or bfloat16, got %d",
+                        static_cast<int>(xDtype)), return ge::GRAPH_FAILED);
+    const uint32_t requiredIndices[] = {WEIGHT_INPUT_INDEX, DY_INPUT_INDEX};
+    const char *requiredNames[] = {"weight", "dy"};
+    for (size_t i = 0; i < sizeof(requiredIndices) / sizeof(requiredIndices[0]); ++i) {
+        const auto *desc = context->GetInputDesc(requiredIndices[i]);
+        OP_CHECK_NULL_WITH_CONTEXT(context, desc);
+        OP_CHECK_IF(desc->GetDataType() != xDtype,
+                    OP_LOGE(context, "%s dtype must match x dtype %d, got %d", requiredNames[i],
+                            static_cast<int>(xDtype), static_cast<int>(desc->GetDataType())),
+                    return ge::GRAPH_FAILED);
+    }
+    const uint32_t optionalIndices[] = {Y_INPUT_INDEX, INITIAL_STATE_INPUT_INDEX, DHT_INPUT_INDEX};
+    const char *optionalNames[] = {"y", "initial_state", "dht"};
+    for (size_t i = 0; i < sizeof(optionalIndices) / sizeof(optionalIndices[0]); ++i) {
+        const auto *desc = context->GetOptionalInputDesc(optionalIndices[i]);
+        if (desc != nullptr) {
+            OP_CHECK_IF(desc->GetDataType() != xDtype,
+                        OP_LOGE(context, "%s dtype must match x dtype %d, got %d", optionalNames[i],
+                                static_cast<int>(xDtype), static_cast<int>(desc->GetDataType())),
+                        return ge::GRAPH_FAILED);
+        }
+    }
     bool isB16Input = (xDtype == ge::DT_BF16 || xDtype == ge::DT_FLOAT16);
     uint32_t B = 0;
     uint32_t T = 0;
@@ -90,7 +114,14 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     uint32_t activation = ACTIVATION_NONE;
     auto attrs = context->GetAttrs();
     if (attrs != nullptr && attrs->GetAttrNum() > ATTR_ACTIVATION_INDEX) {
-        activation = *(attrs->GetAttrPointer<uint32_t>(ATTR_ACTIVATION_INDEX));
+        const auto *activationAttr = attrs->GetAttrPointer<int64_t>(ATTR_ACTIVATION_INDEX);
+        OP_CHECK_NULL_WITH_CONTEXT(context, activationAttr);
+        const int64_t activationValue = *activationAttr;
+        OP_CHECK_IF(activationValue < static_cast<int64_t>(ACTIVATION_NONE) ||
+                        activationValue > static_cast<int64_t>(ACTIVATION_SWISH),
+                    OP_LOGE(context, "activation must be 0 (NONE), 1 (SiLU), or 2 (Swish), got %lld",
+                            static_cast<long long>(activationValue)), return ge::GRAPH_FAILED);
+        activation = static_cast<uint32_t>(activationValue);
     }
     const char *inputLayoutStr = "BSND";
     if (attrs != nullptr && attrs->GetAttrNum() > ATTR_INPUT_LAYOUT_INDEX) {
