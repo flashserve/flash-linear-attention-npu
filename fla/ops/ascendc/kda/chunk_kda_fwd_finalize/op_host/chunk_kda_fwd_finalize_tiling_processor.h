@@ -16,6 +16,8 @@ struct ChunkKdaFwdFinalizeScheduleContext {
     uint64_t totalVarLenChunks = 0;
     uint64_t aicCoreNum = 0;
     uint64_t libApiWorkspaceBytes = 0;
+    // 0 retains the A5 chunk-first schedule; A2/A3 use bounded head groups.
+    uint64_t headGroupSize = 0;
     bool isVarLen = false;
 };
 
@@ -37,6 +39,7 @@ public:
     {
         if (context_.batch == 0 || context_.valueHeadNum == 0 ||
             context_.aicCoreNum == 0 ||
+            context_.headGroupSize > 4 ||
             context_.valueHeadNum > std::numeric_limits<uint32_t>::max()) {
             return false;
         }
@@ -51,9 +54,11 @@ public:
             return false;
         }
 
-        const uint64_t headsPerPartition =
-            chunkItems < context_.aicCoreNum ? 1 : context_.valueHeadNum;
-        const uint64_t partitions = context_.valueHeadNum / headsPerPartition;
+        const uint64_t headsPerPartition = context_.headGroupSize != 0
+            ? std::min(context_.headGroupSize, context_.valueHeadNum)
+            : (chunkItems < context_.aicCoreNum ? 1 : context_.valueHeadNum);
+        const uint64_t partitions = context_.valueHeadNum / headsPerPartition +
+            (context_.valueHeadNum % headsPerPartition != 0);
         uint64_t workItems = 0;
         if (!CheckedMultiply(chunkItems, partitions, workItems) ||
             workItems > std::numeric_limits<uint32_t>::max()) {
