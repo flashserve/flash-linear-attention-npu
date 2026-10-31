@@ -299,86 +299,18 @@ def _find_staged_vendor_dir(opp_root):
 
 
 def _rewrite_set_env(vendor_dir):
-    vendor_dir = Path(vendor_dir)
-    bin_dir = vendor_dir / "bin"
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    set_env = bin_dir / "set_env.bash"
-    set_env.write_text(
-        "\n".join(
-            [
-                "#!/bin/bash",
-                '_FLA_NPU_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"',
-                '_FLA_NPU_VENDOR_DIR="$(cd "${_FLA_NPU_SCRIPT_DIR}/.." && pwd -P)"',
-                '_FLA_NPU_VENDORS_DIR="$(cd "${_FLA_NPU_VENDOR_DIR}/.." && pwd -P)"',
-                '_FLA_NPU_OPP_ROOT="$(cd "${_FLA_NPU_VENDORS_DIR}/.." && pwd -P)"',
-                "_FLA_NPU_VENDOR_ORDER=()",
-                "_fla_npu_add_vendor_name() {",
-                '    local name="$1" candidate existing',
-                '    case "${name}" in ""|"."|".."|*/*) return 0 ;; esac',
-                '    candidate="$(cd "${_FLA_NPU_VENDORS_DIR}/${name}" 2>/dev/null && pwd -P)" || return 0',
-                '    case "${candidate}" in "${_FLA_NPU_VENDORS_DIR}/"*) ;; *) return 0 ;; esac',
-                '    for existing in "${_FLA_NPU_VENDOR_ORDER[@]}"; do',
-                '        [[ "${existing}" == "${candidate}" ]] && return 0',
-                "    done",
-                '    _FLA_NPU_VENDOR_ORDER+=("${candidate}")',
-                "}",
-                "if [[ -f \"${_FLA_NPU_VENDORS_DIR}/config.ini\" ]]; then",
-                '    while IFS= read -r _FLA_NPU_LINE; do',
-                '        case "${_FLA_NPU_LINE}" in',
-                "            load_priority=*)",
-                '                IFS=\',\' read -r -a _FLA_NPU_NAMES <<< "${_FLA_NPU_LINE#load_priority=}"',
-                '                for _FLA_NPU_NAME in "${_FLA_NPU_NAMES[@]}"; do',
-                '                    _fla_npu_add_vendor_name "${_FLA_NPU_NAME}"',
-                "                done",
-                "                break",
-                "                ;;",
-                "        esac",
-                '    done < "${_FLA_NPU_VENDORS_DIR}/config.ini"',
-                "fi",
-                '_FLA_NPU_CURRENT_NAME="${_FLA_NPU_VENDOR_DIR##*/}"',
-                "_FLA_NPU_CURRENT_FOUND=0",
-                'for _FLA_NPU_ENTRY in "${_FLA_NPU_VENDOR_ORDER[@]}"; do',
-                '    [[ "${_FLA_NPU_ENTRY}" == "${_FLA_NPU_VENDOR_DIR}" ]] && _FLA_NPU_CURRENT_FOUND=1',
-                "done",
-                "if [[ ${_FLA_NPU_CURRENT_FOUND} -eq 0 ]]; then",
-                '    case "${_FLA_NPU_CURRENT_NAME}" in',
-                '        fla_npu_overlay_*) _FLA_NPU_VENDOR_ORDER=("${_FLA_NPU_VENDOR_DIR}" "${_FLA_NPU_VENDOR_ORDER[@]}") ;;',
-                '        *) _FLA_NPU_VENDOR_ORDER+=("${_FLA_NPU_VENDOR_DIR}") ;;',
-                "    esac",
-                "fi",
-                '_FLA_NPU_OLD_PATH="${ASCEND_CUSTOM_OPP_PATH-}"',
-                "_FLA_NPU_EXTERNAL_PATHS=()",
-                "_FLA_NPU_HAD_PACKAGE_PATH=0",
-                'IFS=\':\' read -r -a _FLA_NPU_CURRENT_PATHS <<< "${_FLA_NPU_OLD_PATH}"',
-                'for _FLA_NPU_ENTRY in "${_FLA_NPU_CURRENT_PATHS[@]}"; do',
-                '    [[ -z "${_FLA_NPU_ENTRY}" ]] && continue',
-                '    case "${_FLA_NPU_ENTRY}" in',
-                '        "${_FLA_NPU_OPP_ROOT}"|"${_FLA_NPU_OPP_ROOT}/"*)',
-                "            _FLA_NPU_HAD_PACKAGE_PATH=1",
-                "            continue",
-                "            ;;",
-                "    esac",
-                '    _FLA_NPU_EXTERNAL_PATHS+=("${_FLA_NPU_ENTRY}")',
-                "done",
-                '_FLA_NPU_PATH_ORDER=("${_FLA_NPU_VENDOR_ORDER[@]}" "${_FLA_NPU_EXTERNAL_PATHS[@]}")',
-                '_FLA_NPU_NEW_PATH="$(IFS=:; printf "%s" "${_FLA_NPU_PATH_ORDER[*]}")"',
-                'if [[ ${_FLA_NPU_HAD_PACKAGE_PATH} -eq 1 && "${_FLA_NPU_OLD_PATH}" != "${_FLA_NPU_NEW_PATH}" ]]; then',
-                '    printf "%s\\n" "[fla-npu] warning: normalized package-local ASCEND_CUSTOM_OPP_PATH to overlay-first vendor order." >&2',
-                "fi",
-                'export ASCEND_CUSTOM_OPP_PATH="${_FLA_NPU_NEW_PATH}"',
-                'export FLA_NPU_OPP_PATH="${_FLA_NPU_OPP_ROOT}"',
-                'export FLA_NPU_OP_API_LIB="${_FLA_NPU_VENDOR_DIR}/op_api/lib/libcust_opapi.so"',
-                "unset -f _fla_npu_add_vendor_name",
-                "unset _FLA_NPU_SCRIPT_DIR _FLA_NPU_VENDOR_DIR _FLA_NPU_VENDORS_DIR _FLA_NPU_OPP_ROOT",
-                "unset _FLA_NPU_VENDOR_ORDER _FLA_NPU_NAMES _FLA_NPU_NAME _FLA_NPU_LINE",
-                "unset _FLA_NPU_CURRENT_NAME _FLA_NPU_CURRENT_FOUND _FLA_NPU_CURRENT_PATHS",
-                "unset _FLA_NPU_ENTRY _FLA_NPU_EXTERNAL_PATHS _FLA_NPU_PATH_ORDER",
-                "unset _FLA_NPU_OLD_PATH _FLA_NPU_NEW_PATH _FLA_NPU_HAD_PACKAGE_PATH",
-                "",
-            ]
-        ),
-        encoding="utf-8",
+    # Reuse the run package's shell policy without importing fla_npu or CANN.
+    # This helper ships in the sdist; installed scripts remain self-contained.
+    writer_path = (
+        REPO_ROOT / "scripts" / "package" / "ops_transformer" / "scripts"
+        / "finalize_wheel_opp.py"
     )
+    spec = importlib.util.spec_from_file_location("fla_npu_build_set_env", writer_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load OPP environment writer: {writer_path}")
+    writer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(writer)
+    writer._write_set_env(Path(vendor_dir))
 
 
 def _write_vendors_config(vendor_dir):

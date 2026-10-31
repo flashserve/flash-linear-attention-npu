@@ -828,7 +828,8 @@ source {overlay_env!s}
     @unittest.skipUnless(shutil.which("bash"), "requires bash; exercised by Linux CI")
     def test_shell_pth_and_runtime_agree_on_overlay_selection(self) -> None:
         installer = runpy.run_path(str(RUNTIME_SOURCE.with_name("install_opp.py")))
-        generators = (installer["_write_set_env"], _load_run_package_finalizer()["_write_set_env"])
+        generators = (self.setup_globals["_rewrite_set_env"], installer["_write_set_env"],
+                      _load_run_package_finalizer()["_write_set_env"])
         with tempfile.TemporaryDirectory() as temp_dir:
             site = Path(temp_dir) / "site"
             runtime, base, _ = _create_runtime_package(site)
@@ -840,7 +841,8 @@ source {overlay_env!s}
             config = base.parent / "config.ini"
             external = str(Path(temp_dir) / "external")
             # Explicit expectations are independent of all three implementations.
-            cases = ((None, [b, a, base]), ("", [base]), (" \t:: ", [base]),
+            cases = ((None, [b, a, base]), ("", [base]), (" \t ", [base]),
+                     ("::", [base]), (" \t:: ", [base]),
                      (f"{b.name}:{a.name}:{b.name}", [b, a, base]),
                      (a.name, [a, base]), ("fla_npu_overlay_missing", [base]),
                      ("../fla_npu_overlay_a:fla_npu_transformer", [base]))
@@ -855,7 +857,9 @@ source {overlay_env!s}
                             config.write_text(f"load_priority={b.name},{base.name},{a.name}\n")
                             env = {k: v for k, v in os.environ.items() if not k.startswith("FLA_NPU_")}
                             env.update(ASCEND_HOME_PATH="/fake/cann", FLA_NPU_DISABLE_PTH="1",
-                                       ASCEND_CUSTOM_OPP_PATH=f"{base}:{external}:{a}:{base.parent.parent}")
+                                       ASCEND_CUSTOM_OPP_PATH=f"{base}:{external}:{a}:{base.parent.parent}",
+                                       FLA_NPU_OP_API_LIB=str(a / "op_api/lib/libcust_opapi.so"),
+                                       FLA_NPU_OP_API_LIBS=str(a / "op_api/lib/libcust_opapi.so"))
                             if selection is not None:
                                 env["FLA_NPU_OVERLAY_VENDOR"] = selection
                             keys = ("ASCEND_CUSTOM_OPP_PATH", "FLA_NPU_OP_API_LIB", "FLA_NPU_OP_API_LIBS")
@@ -896,7 +900,8 @@ source {overlay_env!s}
         installer = runpy.run_path(str(RUNTIME_SOURCE.with_name("install_opp.py")))
         with tempfile.TemporaryDirectory() as temp_dir:
             vendor = Path(temp_dir) / "opp/vendors/standalone_vendor"
-            for generate in (installer["_write_set_env"], _load_run_package_finalizer()["_write_set_env"]):
+            for generate in (self.setup_globals["_rewrite_set_env"], installer["_write_set_env"],
+                             _load_run_package_finalizer()["_write_set_env"]):
                 generate(vendor)
                 env = {k: v for k, v in os.environ.items() if not k.startswith("FLA_NPU_")}
                 env.update(FLA_NPU_OVERLAY_VENDOR="", ASCEND_CUSTOM_OPP_PATH="")
@@ -904,6 +909,54 @@ source {overlay_env!s}
                           + '\n[[ "$ASCEND_CUSTOM_OPP_PATH" == ' + shlex.quote(str(vendor)) + ' ]]'
                           + '\n[[ "$FLA_NPU_OP_API_LIB" == "$FLA_NPU_OP_API_LIBS" ]]')
                 subprocess.run(["bash", "-c", script], env=env, check=True)
+
+    @unittest.skipUnless(shutil.which("bash"), "requires bash; exercised by Linux CI")
+    def test_resourcing_scripts_updates_overlay_selection(self) -> None:
+        import shlex
+
+        installer = runpy.run_path(str(RUNTIME_SOURCE.with_name("install_opp.py")))
+        generators = (self.setup_globals["_rewrite_set_env"], installer["_write_set_env"],
+                      _load_run_package_finalizer()["_write_set_env"])
+        with tempfile.TemporaryDirectory() as temp_dir:
+            vendors = Path(temp_dir) / "opp/vendors"
+            base = vendors / "fla_npu_transformer"
+            overlay = vendors / "fla_npu_overlay_demo"
+            external = str(Path(temp_dir) / "external")
+            base.mkdir(parents=True)
+            overlay.mkdir()
+            (vendors / "config.ini").write_text(
+                f"load_priority={overlay.name},{base.name}\n", encoding="utf-8")
+            base_lib = str(base / "op_api/lib/libcust_opapi.so")
+            overlay_lib = str(overlay / "op_api/lib/libcust_opapi.so")
+            # A wheel-written base script and an installer-written overlay script
+            # must also agree when sourced in either order within one shell.
+            installer["_write_set_env"](overlay)
+            for generate in generators:
+                generate(base)
+                for order in ((base, overlay), (overlay, base)):
+                    with self.subTest(generator=generate.__code__.co_filename,
+                                      order=[vendor.name for vendor in order]):
+                        source = "\n".join(
+                            "source " + shlex.quote(str(vendor / "bin/set_env.bash"))
+                            for vendor in order)
+                        script = ["set -euo pipefail"]
+                        for selection, paths, libs in (
+                            ("unset FLA_NPU_OVERLAY_VENDOR", f"{overlay}:{base}:{external}",
+                             f"{overlay_lib}:{base_lib}"),
+                            ("export FLA_NPU_OVERLAY_VENDOR=''", f"{base}:{external}", base_lib),
+                            ("export FLA_NPU_OVERLAY_VENDOR=" + shlex.quote(overlay.name),
+                             f"{overlay}:{base}:{external}", f"{overlay_lib}:{base_lib}"),
+                        ):
+                            script.extend((selection, source,
+                                           '[[ "$ASCEND_CUSTOM_OPP_PATH" == ' + shlex.quote(paths) + ' ]]',
+                                           '[[ "$FLA_NPU_OP_API_LIBS" == ' + shlex.quote(libs) + ' ]]',
+                                           '[[ "$FLA_NPU_OP_API_LIB" == ' + shlex.quote(base_lib) + ' ]]',
+                                           '[[ "$LD_LIBRARY_PATH" == /external/cann/lib ]]'))
+                        env = {k: v for k, v in os.environ.items() if not k.startswith("FLA_NPU_")}
+                        env.update(ASCEND_CUSTOM_OPP_PATH=external,
+                                   LD_LIBRARY_PATH="/external/cann/lib")
+                        subprocess.run(["bash", "-c", "\n".join(script)], env=env,
+                                       check=True, capture_output=True, text=True)
 
     def test_external_opp_install_removes_conflicting_alias(self) -> None:
         install_opp_globals = runpy.run_path(

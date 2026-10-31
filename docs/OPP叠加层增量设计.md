@@ -21,6 +21,8 @@ KDA host 错误码及 KDA/KKT 测试修正是单独的回归修复，不是 over
 
 本设计不提供进程内热更新，不实现通用对象文件增量缓存，不以 overlay 发布新 Python 算子入口或修改公共 schema。KDA `implementation="legacy"` 是算法实现选项，保留为遗留事项，不属于本次删除的 legacy 扩展。
 
+**base 与 launcher 的兼容边界**：不支持保留已安装 wheel 的 Python/Stable launcher，仅通过 `.run --install`、`--full` 或手工覆盖，将 base 替换为 ACLNN ABI 已发生不兼容变化的产物。此类接口变更须配套更新 Python wrapper、Stable adapter 和 OPP，重新构建并安装完整 wheel。不承诺自动检测、拒绝或恢复这种不兼容混装，也不将拦截该组合列为 overlay 的验收要求。standalone wheel 的 OPP 骨架由配套完整 run 包补齐，仍属于支持的安装流程。
+
 ## 2. 架构与来源顺序
 
 ```mermaid
@@ -88,7 +90,9 @@ overlay 不携带另一份 launcher。接口不变的 host/tiling/kernel 更新�
 
 toolkit 的 `set_env.sh` 配置 CANN 工具链与运行依赖；vendor 的 `bin/set_env.bash` 配置本份自定义 OPP 的发现路径。两者均是环境准备，source 本身不等于设备运行时初始化。
 
-两处生成器的 `set_env.bash` 与 `.pth`/Python runtime 使用相同的 overlay 选择规则，显式禁用时即使 source overlay 脚本也只登记 base；重复 source 不改变结果。单数库变量固定指向 base，复数变量按选定顺序生成。关闭 `.pth` 时，在初始化 CANN 前 source 对应 vendor 脚本；环境选择必须在此之前确定。无 FLA base 的独立外部 vendor 保留原 source 导出能力，不因此成为 Python host 库的外部来源。
+`set_env.bash` 有三个生成入口：根目录 wheel 构建、overlay 安装、run 包安装后的 finalizer。根目录 `setup.py::_rewrite_set_env` 在构建时按源码路径加载并调用 `finalize_wheel_opp.py::_write_set_env`；overlay 安装器保留自己的生成实现。run 包使用自身携带的 finalizer，生成后的 Bash 脚本独立运行，二者均不要求目标 wheel 增加私有辅助模块。
+
+三个入口生成的 `set_env.bash` 与 `.pth`/Python runtime 使用相同的 overlay 选择规则，并由同一组 shell 行为测试校验。显式禁用时即使 source overlay 脚本也只登记 base，并覆盖遗留的包内 overlay 路径和 host 库列表；重复 source 不改变结果。单数库变量固定指向 base，复数变量按选定顺序生成。关闭 `.pth` 时，在初始化 CANN 前 source 对应 vendor 脚本；环境选择必须在此之前确定。无 FLA base 的独立外部 vendor 保留原 source 导出能力，不因此成为 Python host 库的外部来源。
 
 ### 3.1 仓内 ATK 用例的兼容方式
 
@@ -121,12 +125,14 @@ bash tests/atk/run_test_cpu.sh -op=<op> -scope=accuracy
 | CPack staging 后 | `nm -D` 枚举真实 aclnn 导出；检查公共头覆盖和两阶段配对；生成清单 |
 | `build.sh --pkg` 完成后 | 对生成的 public 头与 Stable adapter 调用参数做 ABI 比较；scoped 构建不能零检查成功 |
 | overlay 安装写盘前 | 校验清单、host 库/公共头 SHA256，以及 overlay/base 两阶段接口 |
-| import、加载 vendor 前 | 再次验证清单和契约，拒绝手工替换造成的漂移 |
+| import、加载 overlay vendor 前 | 再次验证 overlay 清单及其与当前 base 的契约，拒绝清单失效或 overlay/base ABI 漂移 |
 | Stable launcher 加载 | 检查构建戳；启用 overlay 时要求实际加载库的有序多库能力版本 ≥1 |
 
 类型解析保留每级指针，区分 `double`/`double*`、`aclTensor*`/`aclTensor**`，不猜测未知类型。参数名及 cv 限定不参与 C 调用 ABI 比较。仅保留两个显式例外：SolveTri 已核对源码的冻结契约；CausalConv1d 及 Bwd 的 Tensor 变体共用对应执行入口。
 
 `abi_manifest.json` 记录导出契约及 host 库、公共头的哈希。旧 base 无清单时允许以公共头为兼容基线；新 overlay 必须携带有效清单。缺头、未覆盖导出、阶段不配对、哈希不符、base 未声明接口或签名漂移均拒绝。
+
+overlay ABI 校验以当前 base 与 wheel 的 Python/Stable launcher 配套为前提。构建检查验证本次源码中的 adapter 与 OPP 头文件，overlay 安装及加载检查验证 overlay 与当前 base；这些检查不构成对另一版本 base 与旧 launcher 任意混装的兼容承诺。
 
 运行校验仅依赖 Python 标准库，不运行 `nm`。清单是完整性检查，不是数字签名，也不覆盖内部 tiling ABI 或 kernel 正确性。启用 overlay 会增加启动时读取头文件、计算 host 库哈希的开销。
 
