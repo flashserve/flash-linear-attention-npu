@@ -386,21 +386,6 @@ finalize_wheel_opp() {
     fi
 }
 
-validate_wheel_base_source() {
-    local wheel_opp_root="$1"
-    local src_vendor="$2"
-    local python_bin
-    local script_dir
-    python_bin=$(get_python_bin)
-    script_dir=$(dirname "$(readlink -f "$0")")
-    if [ -z "${python_bin}" ] || ! "${python_bin}" "${script_dir}/finalize_wheel_opp.py" \
-        --package-dir "$(dirname "${wheel_opp_root}")" \
-        --check-source-vendor "${src_vendor}"; then
-        log "[ERROR] Refusing to replace wheel base OPP: the run package is partial, stale, or ABI-incompatible. Use fla_npu_opp_manage --overlay for a scoped update."
-        exit 1
-    fi
-}
-
 update_wheel_vendors_config() {
     local vendors_root="$1"
     local config_file="${vendors_root}/config.ini"
@@ -450,10 +435,6 @@ install_wheel_opp_package() {
     log "[INFO] Source vendor ${src_vendor}"
     log "[INFO] Target vendor ${dst_vendor}"
 
-    # This gate runs before the first write.  A base replacement must contain
-    # the complete ABI set frozen by the installed wheel; scoped builds belong
-    # in an overlay and must never overwrite the shared base host library.
-    validate_wheel_base_source "${wheel_opp_root}" "${src_vendor}"
     confirm_partial_shared_lib_impact "${src_vendor}" "${dst_vendor}"
     merge_vendor_to_wheel_opp "${src_vendor}" "${dst_vendor}"
     update_wheel_vendors_config "${wheel_opp_root}/vendors"

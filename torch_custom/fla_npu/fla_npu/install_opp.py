@@ -24,21 +24,6 @@ except ImportError:  # run_path/direct-script tests have no package context
     _abi_spec.loader.exec_module(_abi_module)
     compare_overlay_to_base = _abi_module.compare_overlay_to_base
 
-try:
-    from ._opp_set_env import write_set_env as _write_set_env
-except ImportError:  # recovery CLI and run_path tests have no package context
-    _set_env_path = Path(__file__).with_name("_opp_set_env.py")
-    if not _set_env_path.is_file():
-        raise RuntimeError(f"OPP set_env writer is missing: {_set_env_path}")
-    _set_env_spec = importlib.util.spec_from_file_location(
-        "fla_npu_standalone_opp_set_env", _set_env_path
-    )
-    if _set_env_spec is None or _set_env_spec.loader is None:
-        raise RuntimeError(f"Unable to load OPP set_env writer: {_set_env_path}")
-    _set_env_module = importlib.util.module_from_spec(_set_env_spec)
-    _set_env_spec.loader.exec_module(_set_env_module)
-    _write_set_env = _set_env_module.write_set_env
-
 
 PACKAGE_DIR = Path(__file__).resolve().parent
 PACKAGE_OPP_ROOT = PACKAGE_DIR / "opp"
@@ -113,6 +98,118 @@ def overlay_vendor_names() -> list[str]:
 
 def _vendors_root() -> Path:
     return PACKAGE_OPP_ROOT / "vendors"
+
+
+def _write_set_env(vendor_dir: Path) -> None:
+    bin_dir = vendor_dir / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    (bin_dir / "set_env.bash").write_text(
+        "\n".join(
+            [
+                "#!/bin/bash",
+                '_FLA_NPU_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"',
+                '_FLA_NPU_VENDOR_DIR="$(cd "${_FLA_NPU_SCRIPT_DIR}/.." && pwd -P)"',
+                '_FLA_NPU_VENDORS_DIR="$(cd "${_FLA_NPU_VENDOR_DIR}/.." && pwd -P)"',
+                '_FLA_NPU_OPP_ROOT="$(cd "${_FLA_NPU_VENDORS_DIR}/.." && pwd -P)"',
+                "_FLA_NPU_VENDOR_ORDER=()",
+                "_fla_npu_add_vendor_name() {",
+                '    local name="$1" candidate existing',
+                '    case "${name}" in ""|"."|".."|*/*) return 0 ;; esac',
+                '    candidate="$(cd "${_FLA_NPU_VENDORS_DIR}/${name}" 2>/dev/null && pwd -P)" || return 0',
+                '    case "${candidate}" in "${_FLA_NPU_VENDORS_DIR}/"*) ;; *) return 0 ;; esac',
+                '    for existing in "${_FLA_NPU_VENDOR_ORDER[@]}"; do',
+                '        [[ "${existing}" == "${candidate}" ]] && return 0',
+                "    done",
+                '    _FLA_NPU_VENDOR_ORDER+=("${candidate}")',
+                "}",
+                "_fla_npu_add_overlay() {",
+                '    local name="$1"',
+                '    name="${name#"${name%%[![:space:]]*}"}"',
+                '    name="${name%"${name##*[![:space:]]}"}"',
+                '    [[ "${name}" =~ ^fla_npu_overlay_[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || return 0',
+                '    _fla_npu_add_vendor_name "${name}"',
+                "}",
+                "_fla_npu_discover_overlays() {",
+                "    local LC_ALL=C _FLA_NPU_ENTRY",
+                '    for _FLA_NPU_ENTRY in "${_FLA_NPU_VENDORS_DIR}"/fla_npu_overlay_*; do',
+                '        [[ -d "${_FLA_NPU_ENTRY}" ]] || continue',
+                '        _fla_npu_add_overlay "${_FLA_NPU_ENTRY##*/}"',
+                "    done",
+                "}",
+                'if [[ ${FLA_NPU_OVERLAY_VENDOR+x} ]]; then',
+                '    IFS=\':\' read -r -a _FLA_NPU_NAMES <<< "${FLA_NPU_OVERLAY_VENDOR}"',
+                '    for _FLA_NPU_NAME in "${_FLA_NPU_NAMES[@]}"; do',
+                '        _fla_npu_add_overlay "${_FLA_NPU_NAME}"',
+                "    done",
+                "else",
+                '    if [[ -f "${_FLA_NPU_VENDORS_DIR}/config.ini" ]]; then',
+                '        while IFS= read -r _FLA_NPU_LINE || [[ -n "${_FLA_NPU_LINE}" ]]; do',
+                '            _FLA_NPU_LINE="${_FLA_NPU_LINE#"${_FLA_NPU_LINE%%[![:space:]]*}"}"',
+                '            case "${_FLA_NPU_LINE}" in',
+                "                load_priority=*)",
+                '                    IFS=\',\' read -r -a _FLA_NPU_NAMES <<< "${_FLA_NPU_LINE#load_priority=}"',
+                '                    for _FLA_NPU_NAME in "${_FLA_NPU_NAMES[@]}"; do',
+                '                        _fla_npu_add_overlay "${_FLA_NPU_NAME}"',
+                "                    done",
+                "                    break",
+                "                    ;;",
+                "            esac",
+                '        done < "${_FLA_NPU_VENDORS_DIR}/config.ini"',
+                "    fi",
+                "    _fla_npu_discover_overlays",
+                "fi",
+                '_fla_npu_add_vendor_name "fla_npu_transformer"',
+                # Preserve standalone external vendor exports without a FLA base.
+                'if [[ ! -d "${_FLA_NPU_VENDORS_DIR}/fla_npu_transformer" ]]; then',
+                '    case "${_FLA_NPU_VENDOR_DIR##*/}" in',
+                '        fla_npu_overlay_*) ;;',
+                '        *) _fla_npu_add_vendor_name "${_FLA_NPU_VENDOR_DIR##*/}" ;;',
+                "    esac",
+                "fi",
+                '_FLA_NPU_OLD_PATH="${ASCEND_CUSTOM_OPP_PATH-}"',
+                "_FLA_NPU_EXTERNAL_PATHS=()",
+                "_FLA_NPU_HAD_PACKAGE_PATH=0",
+                'IFS=\':\' read -r -a _FLA_NPU_CURRENT_PATHS <<< "${_FLA_NPU_OLD_PATH}"',
+                'for _FLA_NPU_ENTRY in "${_FLA_NPU_CURRENT_PATHS[@]}"; do',
+                '    [[ -z "${_FLA_NPU_ENTRY}" ]] && continue',
+                '    case "${_FLA_NPU_ENTRY}" in',
+                '        "${_FLA_NPU_OPP_ROOT}"|"${_FLA_NPU_OPP_ROOT}/"*)',
+                "            _FLA_NPU_HAD_PACKAGE_PATH=1",
+                "            continue",
+                "            ;;",
+                "    esac",
+                '    _FLA_NPU_EXTERNAL_PATHS+=("${_FLA_NPU_ENTRY}")',
+                "done",
+                '_FLA_NPU_PATH_ORDER=("${_FLA_NPU_VENDOR_ORDER[@]}" "${_FLA_NPU_EXTERNAL_PATHS[@]}")',
+                '_FLA_NPU_NEW_PATH="$(IFS=:; printf "%s" "${_FLA_NPU_PATH_ORDER[*]}")"',
+                'if [[ ${_FLA_NPU_HAD_PACKAGE_PATH} -eq 1 && "${_FLA_NPU_OLD_PATH}" != "${_FLA_NPU_NEW_PATH}" ]]; then',
+                '    printf "%s\\n" "[fla-npu] warning: normalized package-local ASCEND_CUSTOM_OPP_PATH to overlay-first vendor order." >&2',
+                "fi",
+                'export ASCEND_CUSTOM_OPP_PATH="${_FLA_NPU_NEW_PATH}"',
+                'export FLA_NPU_OPP_PATH="${_FLA_NPU_OPP_ROOT}"',
+                '_FLA_NPU_LIB_ORDER=()',
+                'for _FLA_NPU_ENTRY in "${_FLA_NPU_VENDOR_ORDER[@]}"; do',
+                '    _FLA_NPU_LIB_ORDER+=("${_FLA_NPU_ENTRY}/op_api/lib/libcust_opapi.so")',
+                "done",
+                'export FLA_NPU_OP_API_LIBS="$(IFS=:; printf "%s" "${_FLA_NPU_LIB_ORDER[*]}")"',
+                'if [[ -d "${_FLA_NPU_VENDORS_DIR}/fla_npu_transformer" ]]; then',
+                '    export FLA_NPU_OP_API_LIB="${_FLA_NPU_VENDORS_DIR}/fla_npu_transformer/op_api/lib/libcust_opapi.so"',
+                'elif [[ ${#_FLA_NPU_LIB_ORDER[@]} -gt 0 ]]; then',
+                '    export FLA_NPU_OP_API_LIB="${_FLA_NPU_LIB_ORDER[0]}"',
+                "else",
+                '    unset FLA_NPU_OP_API_LIB',
+                "fi",
+                "unset -f _fla_npu_add_vendor_name _fla_npu_add_overlay _fla_npu_discover_overlays",
+                "unset _FLA_NPU_SCRIPT_DIR _FLA_NPU_VENDOR_DIR _FLA_NPU_VENDORS_DIR _FLA_NPU_OPP_ROOT",
+                "unset _FLA_NPU_VENDOR_ORDER _FLA_NPU_NAMES _FLA_NPU_NAME _FLA_NPU_LINE",
+                "unset _FLA_NPU_CURRENT_PATHS _FLA_NPU_LIB_ORDER",
+                "unset _FLA_NPU_ENTRY _FLA_NPU_EXTERNAL_PATHS _FLA_NPU_PATH_ORDER",
+                "unset _FLA_NPU_OLD_PATH _FLA_NPU_NEW_PATH _FLA_NPU_HAD_PACKAGE_PATH",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
 
 def _ordered_vendor_names(vendors_root: Path) -> list[str]:

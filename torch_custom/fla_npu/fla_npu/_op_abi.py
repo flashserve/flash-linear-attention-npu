@@ -28,7 +28,6 @@ _FUNCTION = re.compile(r"aclnnStatus\s+(aclnn\w+)\s*\((.*?)\)\s*;", re.S)
 _WORKSPACE_TAIL = ("uint64*", "executor**")
 _EXECUTE_SIGNATURE = ("void*", "uint64", "executor*", "stream")
 MANIFEST_NAME = "abi_manifest.json"
-BASE_CONTRACT_SNAPSHOT_NAME = "_base_opp_contract.json"
 LIBRARY = "op_api/lib/libcust_opapi.so"
 INCLUDE = "op_api/include/aclnnop"
 # Explicit, source-audited legacy contract. The public header contains only
@@ -243,95 +242,6 @@ def validated_contracts(vendor: Path, *, require_manifest: bool) -> dict[str, tu
     if any(actual.get(s) != sig for s, sig in contracts.items()):
         raise RuntimeError(f"ABI manifest disagrees with public headers: {path}")
     return contracts
-
-
-def contracts_fingerprint(contracts: dict[str, tuple[str, ...]]) -> str:
-    """Return a deterministic fingerprint for a public aclnn contract set."""
-
-    payload = {symbol: list(contracts[symbol]) for symbol in sorted(contracts)}
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def write_base_contract_snapshot(vendor: Path, target: Path) -> Path:
-    """Freeze the wheel's base ABI outside the replaceable OPP vendor tree."""
-
-    contracts = validated_contracts(vendor, require_manifest=True)
-    data = {
-        "schema_version": 1,
-        "fingerprint": contracts_fingerprint(contracts),
-        "contracts": {symbol: list(contracts[symbol]) for symbol in sorted(contracts)},
-    }
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_suffix(target.suffix + ".tmp")
-    temporary.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    temporary.replace(target)
-    return target
-
-
-def load_base_contract_snapshot(path: Path) -> dict[str, tuple[str, ...]]:
-    """Load and authenticate an immutable wheel-level base ABI snapshot."""
-
-    if not path.is_file():
-        raise RuntimeError(
-            f"Missing wheel base ABI snapshot: {path}. Reinstall a complete matching wheel."
-        )
-    data = json.loads(path.read_text(encoding="utf-8"))
-    recorded = data.get("contracts") if isinstance(data, dict) else None
-    if (
-        not isinstance(data, dict)
-        or data.get("schema_version") != 1
-        or not isinstance(recorded, dict)
-        or not recorded
-    ):
-        raise RuntimeError(f"Invalid wheel base ABI snapshot: {path}")
-    if any(
-        not isinstance(symbol, str)
-        or not isinstance(signature, list)
-        or not all(isinstance(kind, str) for kind in signature)
-        for symbol, signature in recorded.items()
-    ):
-        raise RuntimeError(f"Invalid contracts in wheel base ABI snapshot: {path}")
-    contracts = {symbol: tuple(signature) for symbol, signature in recorded.items()}
-    if data.get("fingerprint") != contracts_fingerprint(contracts):
-        raise RuntimeError(f"Stale or corrupted wheel base ABI snapshot: {path}")
-    return contracts
-
-
-def validate_vendor_against_snapshot(
-    vendor: Path,
-    snapshot: Path,
-    *,
-    require_exact: bool,
-) -> dict[str, tuple[str, ...]]:
-    """Validate a vendor manifest and its compatibility with the wheel ABI."""
-
-    expected = load_base_contract_snapshot(snapshot)
-    actual = validated_contracts(vendor, require_manifest=True)
-    if require_exact:
-        if actual != expected:
-            missing = sorted(expected.keys() - actual.keys())
-            extra = sorted(actual.keys() - expected.keys())
-            changed = sorted(
-                symbol
-                for symbol in expected.keys() & actual.keys()
-                if expected[symbol] != actual[symbol]
-            )
-            raise RuntimeError(
-                "Base OPP ABI does not exactly match the installed wheel "
-                f"(missing={missing}, extra={extra}, changed={changed}). "
-                "Use the overlay installer for a scoped operator update."
-            )
-    else:
-        problems = []
-        for symbol, signature in actual.items():
-            if expected.get(symbol) != signature:
-                problems.append(symbol)
-        if problems:
-            raise RuntimeError(
-                "OPP ABI is incompatible with the installed wheel: " + ", ".join(sorted(problems))
-            )
-    return actual
 
 
 def compare_overlay_to_base(overlay_dir: Path, base_dir: Path) -> list[str]:

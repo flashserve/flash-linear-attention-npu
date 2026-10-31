@@ -143,8 +143,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import contextlib
-import hashlib
 import json
 import os
 import re
@@ -160,11 +158,6 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-
-try:
-    import fcntl
-except ImportError:  # pragma: no cover - package builds run on Linux
-    fcntl = None
 
 SUPPORTED_SOCS = ("ascend910b", "ascend910_93", "ascend950")
 SUPPORTED_ARCHES = ("arm", "x86")
@@ -406,102 +399,6 @@ class BuildCleanupError(RuntimeError):
     """The build may still own writers; no subsequent build may clean its tree."""
 
 
-_DOCKER_MANAGED_LABEL = "com.flashserve.fla-npu-pkg.managed"
-_DOCKER_WORKSPACE_LABEL = "com.flashserve.fla-npu-pkg.workspace"
-
-
-def _docker_workspace_id(repo_root: Path) -> str:
-    canonical = str(repo_root.resolve()).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest()[:24]
-
-
-@contextlib.contextmanager
-def _workspace_build_lock(repo_root: Path):
-    """Prevent two live controllers from cleaning the same build tree."""
-
-    lock_path = Path(os.getenv("TMPDIR", "/tmp")) / (
-        f"fla-npu-package-build-{os.getuid() if hasattr(os, 'getuid') else os.getpid()}-"
-        f"{_docker_workspace_id(repo_root)}.lock"
-    )
-    handle = lock_path.open("a+", encoding="utf-8")
-    try:
-        if fcntl is not None:
-            try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError as exc:
-                raise BuildCleanupError(
-                    f"Another package build owns {repo_root}; refusing to clean its files"
-                ) from exc
-        yield
-    finally:
-        if fcntl is not None:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        handle.close()
-
-
-def _remove_owned_orphan_containers(repo_root: Path) -> None:
-    """Remove only labelled stale containers proven to mount this workspace."""
-
-    workspace_id = _docker_workspace_id(repo_root)
-    filters = [
-        "--filter", f"label={_DOCKER_MANAGED_LABEL}=1",
-        "--filter", f"label={_DOCKER_WORKSPACE_LABEL}={workspace_id}",
-    ]
-    def query_owned() -> list[str]:
-        query = subprocess.run(
-            ["docker", "ps", "-aq", *filters], capture_output=True, text=True
-        )
-        if query.returncode != 0:
-            raise BuildCleanupError(
-                "Cannot inspect prior build containers; refusing workspace cleanup: "
-                f"{query.stderr}"
-            )
-        return list(filter(None, query.stdout.splitlines()))
-
-    for container_id in query_owned():
-        inspected = subprocess.run(
-            ["docker", "inspect", container_id], capture_output=True, text=True
-        )
-        if inspected.returncode != 0:
-            raise BuildCleanupError(
-                f"Cannot verify prior build container {container_id}: {inspected.stderr}"
-            )
-        try:
-            record = json.loads(inspected.stdout)[0]
-            labels = record["Config"]["Labels"] or {}
-            mounts = record["Mounts"]
-            owns_workspace = any(
-                Path(mount.get("Source", "")).resolve() == repo_root.resolve()
-                and mount.get("Destination") == "/workspace/repo"
-                for mount in mounts
-            )
-        except (IndexError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise BuildCleanupError(
-                f"Invalid docker inspect data for prior build container {container_id}"
-            ) from exc
-        if (
-            labels.get(_DOCKER_MANAGED_LABEL) != "1"
-            or labels.get(_DOCKER_WORKSPACE_LABEL) != workspace_id
-            or not owns_workspace
-        ):
-            raise BuildCleanupError(
-                f"Container {container_id} did not pass ownership checks; refusing to remove it"
-            )
-        removed = subprocess.run(
-            ["docker", "rm", "-f", container_id], capture_output=True, text=True
-        )
-        if removed.returncode != 0 and "No such container" not in removed.stderr:
-            raise BuildCleanupError(
-                f"Cannot remove prior build container {container_id}: {removed.stderr}"
-            )
-    remaining = query_owned()
-    if remaining:
-        raise BuildCleanupError(
-            "Prior build containers are still present; refusing workspace cleanup: "
-            + ", ".join(remaining)
-        )
-
-
 def _process_group_alive(pgid: int) -> bool:
     """Ignore dead zombies but include descendants after the leader exits."""
     if sys.platform.startswith("linux"):
@@ -710,7 +607,6 @@ class Remote:
         """Terminate a detached remote build and its descendants."""
         out_q = shlex.quote(out_dir)
         script = f"""
-set -o pipefail
 for attempt in $(seq 1 30); do
     pgid=$(cat {out_q}/pgid 2>/dev/null || true)
     [[ -n "$pgid" ]] && break
@@ -728,30 +624,13 @@ if [[ -r /proc/$pgid/stat ]]; then
     }}
 fi
 group_alive() {{
-    local process_table
-    process_table=$(ps -eo pgid=,stat=) || {{
-        echo "Unable to inspect remote process groups; refusing cleanup" >&2
-        return 2
-    }}
-    awk -v wanted="$pgid" '$1 == wanted && $2 !~ /^[ZX]/ {{ alive=1 }} END {{ exit !alive }}' <<< "$process_table"
+    ps -eo pgid=,stat= | awk -v wanted="$pgid" '$1 == wanted && $2 !~ /^[ZX]/ {{ alive=1 }} END {{ exit !alive }}'
 }}
 for sig in INT TERM KILL; do
-    if group_alive; then
-        :
-    else
-        status=$?
-        [[ $status -eq 1 ]] && exit 0
-        exit $status
-    fi
+    group_alive || exit 0
     kill -"$sig" -- -"$pgid" 2>/dev/null || true
     for attempt in $(seq 1 30); do
-        if group_alive; then
-            :
-        else
-            status=$?
-            [[ $status -eq 1 ]] && exit 0
-            exit $status
-        fi
+        group_alive || exit 0
         sleep 0.1
     done
 done
@@ -770,9 +649,14 @@ exit 1
 # arm: 本地 Docker 容器编译
 # ---------------------------------------------------------------------------
 
-def _build_arm_locked(repo_root: Path, soc: str, wheel_dir: Path, log_file: Path,
-                      stop: "threading.Event | None" = None) -> list[Path]:
+def build_arm(repo_root: Path, soc: str, wheel_dir: Path, log_file: Path,
+              stop: "threading.Event | None" = None) -> list[Path]:
     image = env_or("FLA_PKG_DOCKER_IMAGE", DEFAULT_DOCKER_IMAGE)
+
+    # 每个组合编译前清掉仓库下的 build/ 与 third_party/: 不同 SOC /
+    # 分支的中间产物互相污染会导致编译偶发失败；third_party 由编译
+    # 脚本自动重新拉取，一律从干净状态开始
+    clean_build_state(repo_root)
 
     inspect = subprocess.run(["docker", "image", "inspect", image],
                               capture_output=True, text=True)
@@ -781,14 +665,8 @@ def _build_arm_locked(repo_root: Path, soc: str, wheel_dir: Path, log_file: Path
             f"Docker 镜像 {image} 不存在。请先构建 CI 镜像，例如:\n"
             f"  docker build -t {image} -f ci/Dockerfile .")
 
-    # A dead controller can leave dockerd writing to this bind mount.  Prove
-    # ownership by labels + mount before stopping it, then and only then clean.
-    _remove_owned_orphan_containers(repo_root)
-    clean_build_state(repo_root)
-
     wheel_dir.mkdir(parents=True, exist_ok=True)
     command = (
-        "mkdir -p \"$HOME\"\n"
         "source /usr/local/Ascend/ascend-toolkit/latest/set_env.sh 2>/dev/null "
         "|| source /usr/local/Ascend/ascend-toolkit/set_env.sh 2>/dev/null || true\n"
         "cd /workspace/repo\n"
@@ -799,15 +677,12 @@ def _build_arm_locked(repo_root: Path, soc: str, wheel_dir: Path, log_file: Path
     argv = [
         "docker", "run", "--rm",
         "--name", container_name,
-        "--user", f"{os.getuid()}:{os.getgid()}",
-        "--label", f"{_DOCKER_MANAGED_LABEL}=1",
-        "--label", f"{_DOCKER_WORKSPACE_LABEL}={_docker_workspace_id(repo_root)}",
         "--network", "host",
         "-v", f"{repo_root}:/workspace/repo",
         "-v", f"{wheel_dir}:/workspace/pkg-out",
         "-e", f"FLA_NPU_SOC={soc}",
         "-e", "TORCH_DEVICE_BACKEND_AUTOLOAD=0",
-        "-e", "HOME=/tmp/fla-npu-package-home",
+        "-e", "HOME=/root",
     ]
     for name in ("FLA_NPU_OPS", "FLA_NPU_BUILD_ARGS",
                  "FLA_NPU_BRANCH_NAME", "FLA_NPU_COMMIT_ID"):
@@ -835,12 +710,6 @@ def _build_arm_locked(repo_root: Path, soc: str, wheel_dir: Path, log_file: Path
     if not wheels:
         raise RuntimeError(f"arm 编译完成但未找到 wheel (soc={soc})，详见日志 {log_file}")
     return wheels
-
-
-def build_arm(repo_root: Path, soc: str, wheel_dir: Path, log_file: Path,
-              stop: "threading.Event | None" = None) -> list[Path]:
-    with _workspace_build_lock(repo_root):
-        return _build_arm_locked(repo_root, soc, wheel_dir, log_file, stop=stop)
 
 
 # ---------------------------------------------------------------------------
@@ -1683,11 +1552,7 @@ def main() -> int:
                 target = artifact_dir / wheel.name
                 if target.exists():
                     target.unlink()
-                # Docker commonly creates the wheel as uid 0. Linux
-                # fs.protected_hardlinks then rejects a non-root controller's
-                # hardlink even though the wheel is readable. A real copy also
-                # makes the artifact directory independent of later cleanup.
-                shutil.copy2(wheel, target)
+                target.hardlink_to(wheel)
                 record["wheels"].append(wheel.name)
             record["status"] = "success"
             log(f"{prefix} === 编译成功 "
@@ -1720,33 +1585,20 @@ def main() -> int:
     threads = [threading.Thread(target=arch_worker, args=(arch,),
                                 name=f"build-{arch}", daemon=True)
                for arch in arches]
-    previous_sigterm = signal.getsignal(signal.SIGTERM)
-
-    def request_sigterm_cleanup(signum, _frame):
-        nonlocal interrupted
-        if not interrupted:
-            interrupted = f"收到 {signal.Signals(signum).name}"
-            log("[中断] 已请求终止当前构建并停止后续组合，等待进程组和容器清理")
-        stop.set()
-
-    signal.signal(signal.SIGTERM, request_sigterm_cleanup)
+    for thread in threads:
+        thread.start()
     try:
         for thread in threads:
-            thread.start()
-        try:
-            for thread in threads:
-                thread.join()
-        except KeyboardInterrupt:
-            stop.set()
-            interrupted = "用户中断 (Ctrl-C)"
-            log("[中断] 已请求终止当前构建并停止后续组合，等待进程组和容器清理；"
-                "已完成的产物将在收尾时统一上传，未执行组合将注明'未执行'")
-            # Cleanup may take longer than ten seconds (INT, TERM, KILL and SSH).
-            # Daemon workers must finish cleanup before the main process exits.
-            for thread in threads:
-                thread.join()
-    finally:
-        signal.signal(signal.SIGTERM, previous_sigterm)
+            thread.join()
+    except KeyboardInterrupt:
+        stop.set()
+        interrupted = "用户中断 (Ctrl-C)"
+        log("[中断] 已请求终止当前构建并停止后续组合，等待进程组和容器清理；"
+            "已完成的产物将在收尾时统一上传，未执行组合将注明'未执行'")
+        # Cleanup may take longer than ten seconds (INT, TERM, KILL and SSH).
+        # Daemon workers must finish cleanup before the main process exits.
+        for thread in threads:
+            thread.join()
 
     # 收尾: 一次性上传所有成功组合的 wheel，描述注明失败 / 未执行原因
     release_info: dict | None = None
