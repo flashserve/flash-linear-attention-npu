@@ -92,7 +92,7 @@ host 测试通过 `static_assert` 固定 184 字节逻辑 ABI，并在 A5 成功
 raw size。typed getter `GetTilingData<T>()` 会重置 raw size，所以必须先读取并保存
 `GetRawTilingData()->GetDataSize()`，再使用 typed getter 检查布局字段。
 raw tiling 修复、DFX、host/ATK 资产和文档更新均属于正确性与可验证性工作，
-不作为 O1/O2 性能机制。
+不作为性能优化机制。
 
 ## 总接口内部 FP32 beta_eff / BF16 db
 

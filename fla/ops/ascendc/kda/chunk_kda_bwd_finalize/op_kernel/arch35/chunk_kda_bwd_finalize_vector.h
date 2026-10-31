@@ -122,7 +122,7 @@ __simd_callee__ inline void FinalizeStoreLocalRow(
 }
 
 // Stage0 emits paired NZ kE for contiguous UB-to-L1 copies. The raw log gates
-// stay resident in the g frame; consumers recompute Exp(g*LN2) inline.
+// stay resident in the g frame for the later exp2(g) factors.
 __simd_vf__ inline void FinalizeStage0VF(
     __ubuf__ bfloat16_t *kENd, __ubuf__ bfloat16_t *lowNd, __ubuf__ float *rH,
     __ubuf__ bfloat16_t *k, __ubuf__ float *gk,
@@ -327,7 +327,8 @@ __simd_vf__ inline void FinalizeStage2VF(
 // Stage3 StatePre.  One VF invocation consumes one 32-row band slice of a
 // head/chunk.  The two 64-lane FP32 register halves cover K/V=128 without a
 // second pass.  gk is the resident raw log-gate frame; the FP32 exp2(g)
-// factors are cached in the current band's not-yet-produced dg region for Stage4.
+// factors reuse the current band's dg region after Stage5's last dAqk read,
+// before Stage4 consumes them and writes dg_base.
 // gateState accumulates across bands through its persistent slot in the
 // original row order; the rH term is added by the last band only.
 template <typename BetaT>

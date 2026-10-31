@@ -104,7 +104,7 @@ A2/A3 使用 tiling key 101，归一化反向版本使用 102，支持 dense bat
 | op_host/ | 算子注册、形状推导、Tiling 与 ACLNN 接口 |
 | op_kernel/ | Ascend C kernel |
 | [输出布局与 dtype 设计](docs/design.md) | 布局直写、片上转换和 raw tiling |
-| [优化设计](../chunk_kda_bwd/docs/design.md) | 分带、精度、存储与 O1/O2 方案 |
+| [优化设计](../chunk_kda_bwd/docs/design.md) | 分带、精度、存储与 O1/O2/O4/O5 方案 |
 
 构建时设置 `FLA_NPU_SOC=ascend950 FLA_NPU_OPS=chunk_kda_bwd`，
 会包含 V1/V2 及优化链路依赖。
