@@ -357,6 +357,127 @@ def _payloads(specs: list[dict]) -> list[dict]:
     return [_case_payload(case_id, spec) for case_id, spec in enumerate(specs)]
 
 
+ARCH22_API = "executor_chunk_gated_delta_rule_bwd_finalize_arch22"
+ARCH22_SEEDS = (20261030, 20261031, 20261032)
+ARCH22_ACCURACY_ACC = {"cv_fused_double_benchmark": {
+    "max_re_ratio": 5, "avg_re_ratio": 1.5, "root_mean_squared_ratio": 1.5,
+}}
+
+
+def expected_arch22_key(spec: dict) -> int:
+    """静态预期；实际选择必须由 Host UT 或运行记录另行核对。"""
+    owner = spec["chunk_size"] == 64 and spec["V"] == 128 and spec["HK"] == spec["HV"]
+    return (10 | ((10 if spec["scalar_dtype"] == "bf16" else 30) << 8)
+            | (int(spec["use_qk_l2norm"]) << 16)
+            | (int(spec["use_beta_sigmoid"]) << 17)
+            | (int(spec["use_exp2"]) << 18) | (int(owner) << 19))
+
+
+def build_arch22_specs() -> list[dict]:
+    """68 个逻辑代表；不交叉展开所有 shape 和开关。"""
+    ordinary, boundary = [], []
+    for owner in BOOL_VALUES:
+        for gt in SCALAR_DTYPES:
+            for norm in BOOL_VALUES:
+                for sigmoid in BOOL_VALUES:
+                    for exp2 in BOOL_VALUES:
+                        suffix = f"o{int(owner)}_{gt}_n{int(norm)}_s{int(sigmoid)}_e{int(exp2)}"
+                        common = dict(B=1, HK=2 if owner else 1, HV=2, T=64, K=128, V=128,
+                                      chunk_size=64, scalar_dtype=gt, use_qk_l2norm=norm,
+                                      use_beta_sigmoid=sigmoid, use_exp2=exp2,
+                                      state_v_first=bool(norm != sigmoid), cu_seqlens=None)
+                        ordinary.append(dict(common, case_key="a23_regular_" + suffix))
+                        edge = dict(common, case_key="a23_boundary_" + suffix)
+                        if owner:
+                            # 奇数 head、31/33/1 尾块、合法空序列；owner key 内走 fallback。
+                            edge.update(HK=1, HV=1, T=65, cu_seqlens=[0, 0, 31, 64, 65, 65])
+                        else:
+                            edge.update(T=129, V=256, chunk_size=128,
+                                        cu_seqlens=[0, 0, 31, 129, 129])
+                        boundary.append(edge)
+    extras = [
+        dict(ordinary[0], case_key="a23_bt64_v256_ratio3_tail", HV=3, V=256, T=65),
+        dict(ordinary[15], case_key="a23_bt128_v128_batch2_tail", B=2, T=129, chunk_size=128),
+        dict(ordinary[16], case_key="a23_owner_even_heads_dense_tail", HK=2, HV=2, T=65),
+        dict(ordinary[31], case_key="a23_owner_multichunk_reordered", T=128,
+             cu_seqlens=[0, 0, 128], chunk_indices=[1, 1, 1, 0]),
+    ]
+    return ordinary + boundary + extras
+
+
+def _arch22_metadata(spec: dict):
+    cu = spec.get("cu_seqlens")
+    if cu is None:
+        return None, None, (spec["T"] + spec["chunk_size"] - 1) // spec["chunk_size"]
+    pairs = [value for seq, (begin, end) in enumerate(zip(cu, cu[1:]))
+             for local in range((end - begin + spec["chunk_size"] - 1) // spec["chunk_size"])
+             for value in (seq, local)]
+    return cu, spec.get("chunk_indices", pairs), len(pairs) // 2
+
+
+def _arch22_payload(case_id: int, spec: dict, seed: int) -> dict:
+    b, hk, hv, t, k, v, bt = (spec[n] for n in ("B", "HK", "HV", "T", "K", "V", "chunk_size"))
+    gt = spec["scalar_dtype"]
+    cu, pairs, nt = _arch22_metadata(spec)
+    state = [b, nt, hv, v, k] if spec["state_v_first"] else [b, nt, hv, k, v]
+    inputs = []
+    for name in ("q", "k", "v", "v_new", "do", "du", "g", "beta", "h", "dh", "a"):
+        shape = ([b, hk, t, k] if name in ("q", "k") else
+                 [b, hv, t, v] if name in ("v", "v_new", "do", "du") else
+                 [b, hv, t] if name in ("g", "beta") else
+                 state if name in ("h", "dh") else [b, hv, t, bt])
+        span = QK_RANGE if name in ("q", "k") else V_RANGE if name == "v" else SCALAR_RANGE if name in ("g", "beta") else VECTOR_GRAD_RANGE
+        inputs.append(_input(name, gt if name in ("g", "beta") else "bf16", span,
+                             input_type="tensor", shape=shape))
+    if spec["use_qk_l2norm"]:
+        for name in ("q_rstd", "k_rstd"):
+            inputs.append(_input(name, "fp32", [0.8, 1.2], input_type="tensor", shape=[b, hk, t]))
+    if spec["use_beta_sigmoid"]:
+        inputs.append(_input("beta_raw", gt, SCALAR_RANGE, input_type="tensor", shape=[b, hv, t]))
+    # 这两个字段就是公开参数；non_param 仅承载 JSON int64 列表，不承载 case 控制元数据。
+    if cu is not None:
+        inputs.extend((_input("cu_seqlens", "non_param", json.dumps(cu)),
+                       _input("chunk_indices", "non_param", json.dumps(pairs))))
+    attrs = dict(scale=128 ** -0.5, chunk_size=bt,
+                 use_qk_l2_norm_in_kernel=spec["use_qk_l2norm"],
+                 use_beta_sigmoid_in_kernel=spec["use_beta_sigmoid"], use_gate_in_kernel=False,
+                 state_v_first=spec["state_v_first"], use_exp2=spec["use_exp2"])
+    for name, value in attrs.items():
+        dtype = "bool" if isinstance(value, bool) else "int" if isinstance(value, int) else "float"
+        inputs.append(_input(name, dtype, value))
+    standard = deepcopy(STANDARD)
+    standard["acc"] = {"mixed_tolerance_bm": {"output_dtype_overrides": {
+        "0": "bf16", "1": "bf16", "2": "bf16", "3": gt, "4": gt,
+    }}}
+    return dict(id=case_id, default_seed=seed, name=f"{OP_NAME}_{case_id:04d}_{spec['case_key']}_seed{seed}",
+                aclnn_name=None, version="v2.1", api="pytorch", api_type=ARCH22_API,
+                expected_error_msg=None, backward=False, standard=standard,
+                outputs=None, inputs=inputs, save_name=OP_NAME)
+
+
+def formal_payloads(scope: str) -> list[dict]:
+    """原 A5 默认入口，只生成原 200/64/8 条资产。"""
+    builders = {"accuracy": build_accuracy_specs, "perf": build_perf_specs, "mss": build_mss_specs}
+    return _payloads(builders[scope]())
+
+
+def formal_arch22_payloads(scope: str) -> list[dict]:
+    """独立 A2/A3 资产；保留原源 ID，运行选择器另行从零编号。"""
+    source_id_start = {"accuracy": 200, "mss": 8}[scope]
+    specs = build_arch22_specs()
+    if scope == "mss":
+        # 每个 key 一条，另保留 4 种边界和 4 条 shape/runtime 分支。
+        specs = specs[:32] + [specs[i] for i in (32, 39, 48, 63, 64, 65, 66, 67)]
+    payloads = []
+    for spec in specs:
+        for seed in ARCH22_SEEDS if scope == "accuracy" else ARCH22_SEEDS[:1]:
+            payload = _arch22_payload(source_id_start + len(payloads), spec, seed)
+            if scope == "accuracy":
+                payload["standard"]["acc"] = deepcopy(ARCH22_ACCURACY_ACC)
+            payloads.append(payload)
+    return payloads
+
+
 if GENERATOR_REGISTRY is not None:
     @GENERATOR_REGISTRY.register("generator_chunk_gated_delta_rule_bwd_finalize")
     class Generator(CaseGenerator):
@@ -364,7 +485,7 @@ if GENERATOR_REGISTRY is not None:
             super().__init__(config)
             if CaseConfig is None:
                 raise RuntimeError("ATK is required to build CaseConfig objects")
-            self.cases = [CaseConfig(**payload) for payload in _payloads(build_accuracy_specs())]
+            self.cases = [CaseConfig(**payload) for payload in formal_payloads("accuracy")]
             self.length = len(self.cases)
             self.index = 0
 
@@ -387,14 +508,15 @@ def main() -> None:
     parser.add_argument("--summary", action="store_true")
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    accuracy = build_accuracy_specs()
-    perf = build_perf_specs()
-    mss = build_mss_specs()
-    _write(args.output_dir / f"atk_{OP_NAME}.json", accuracy)
-    _write(args.output_dir / f"atk_{OP_NAME}_perf.json", perf)
-    _write(args.output_dir / f"atk_{OP_NAME}_mss.json", mss)
+    accuracy, perf, mss = (formal_payloads(scope) for scope in ("accuracy", "perf", "mss"))
+    arch22_accuracy, arch22_mss = (formal_arch22_payloads(scope) for scope in ("accuracy", "mss"))
+    for suffix, payload in (("", accuracy), ("_perf", perf), ("_mss", mss),
+                            ("_arch22", arch22_accuracy), ("_arch22_mss", arch22_mss)):
+        (args.output_dir / f"atk_{OP_NAME}{suffix}.json").write_bytes(
+            (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
     if args.summary:
-        print(f"accuracy={len(accuracy)} perf={len(perf)} determinism={len(mss)} mss={len(mss)}")
+        print(f"accuracy={len(accuracy)} perf={len(perf)} determinism={len(mss)} mss={len(mss)} "
+              f"arch22_accuracy={len(arch22_accuracy)} arch22_mss={len(arch22_mss)}")
 
 
 if __name__ == "__main__":

@@ -1,16 +1,33 @@
+#ifndef GDN_FINALIZE_ENABLE_ARCH22
+#define GDN_FINALIZE_ENABLE_ARCH22 0
+#endif
+
 #include "aclnn_chunk_gated_delta_rule_bwd_finalize.h"
 #include "chunk_gated_delta_rule_bwd_finalize.h"
 
-#include "aclnn_kernels/common/op_error_check.h"
+#include <string>
+
 #include "aclnn_kernels/contiguous.h"
+#if GDN_FINALIZE_ENABLE_ARCH22
+#include "external/aclnn_kernels/aclnn_platform.h"
+#endif
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/tensor_view_utils.h"
 
+#if GDN_FINALIZE_ENABLE_ARCH22
+#include <cstring>
+
+#include "../arch22/aclnn_chunk_gated_delta_rule_bwd_finalize_arch22.h"
+#endif
+#include "op_common/log/log.h"
+
 using namespace op;
 
 namespace {
+
+constexpr const char *OP_NAME = "ChunkGatedDeltaRuleBwdFinalize";
 
 aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
 {
@@ -18,7 +35,10 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
         return ACLNN_SUCCESS;
     }
     tensor = l0op::Contiguous(tensor, executor);
-    CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (tensor == nullptr) {
+        OP_LOGE(OP_NAME, "Failed to create a contiguous input.");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -49,39 +69,73 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
                cuSeqlensOptional, chunkIndicesOptional),
         DFX_OUT(dqOut, dkOut, dvOut, dbetaOut, dgOut));
 
-    CHECK_COND(q != nullptr && k != nullptr && v != nullptr && vNew != nullptr &&
-                   dO != nullptr && du != nullptr && g != nullptr && beta != nullptr &&
-                   h != nullptr && dh != nullptr && a != nullptr,
-               ACLNN_ERR_PARAM_NULLPTR, "Required input must not be nullptr.");
-    CHECK_COND(dqOut != nullptr && dkOut != nullptr && dvOut != nullptr &&
-                   dbetaOut != nullptr && dgOut != nullptr &&
-                   workspaceSize != nullptr && executor != nullptr,
-               ACLNN_ERR_PARAM_NULLPTR, "Output, workspaceSize and executor must not be nullptr.");
-    CHECK_COND(chunkSize == 64, ACLNN_ERR_PARAM_INVALID, "chunkSize only supports 64.");
-    CHECK_COND(!useGateInKernel, ACLNN_ERR_PARAM_INVALID,
-               "useGateInKernel only supports false.");
-    CHECK_COND((cuSeqlensOptional == nullptr) == (chunkIndicesOptional == nullptr),
-               ACLNN_ERR_PARAM_INVALID,
-               "cuSeqlensOptional and chunkIndicesOptional must be both present or absent.");
+    const aclTensor *requiredInputs[] = {q, k, v, vNew, dO, du, g, beta, h, dh, a};
+    const char *requiredInputNames[] = {"q", "k", "v", "vNew", "dO", "du", "g", "beta", "h", "dh", "a"};
+    for (size_t index = 0; index < sizeof(requiredInputs) / sizeof(requiredInputs[0]); ++index) {
+        if (requiredInputs[index] == nullptr) {
+            const char *param_name = requiredInputNames[index];
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, param_name);
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
+    }
+    if (dqOut == nullptr || dkOut == nullptr || dvOut == nullptr || dbetaOut == nullptr ||
+        dgOut == nullptr || workspaceSize == nullptr || executor == nullptr) {
+        const char *param_name = dqOut == nullptr ? "dqOut" : dkOut == nullptr ? "dkOut" :
+            dvOut == nullptr ? "dvOut" : dbetaOut == nullptr ? "dbetaOut" : dgOut == nullptr ? "dgOut" :
+            workspaceSize == nullptr ? "workspaceSize" : "executor";
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, param_name);
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+#if GDN_FINALIZE_ENABLE_ARCH22
+    // A2/A3 使用私有 Host 路径；A5 保留原有校验条件、连续化和 executor 流程。
+    if (GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201) {
+        return gdn_finalize_arch22::GetWorkspaceSize(
+            q, k, v, vNew, dO, du, g, beta, h, dh, a,
+            qRstdOptional, kRstdOptional, betaRawOptional,
+            cuSeqlensOptional, chunkIndicesOptional,
+            scale, chunkSize, useQkL2NormInKernel,
+            useBetaSigmoidInKernel, useGateInKernel, stateVFirst, useExp2,
+            dqOut, dkOut, dvOut, dbetaOut, dgOut, workspaceSize, executor);
+    }
+    const char *socName = aclrtGetSocName();
+    if (socName == nullptr || std::strstr(socName, "Ascend950") == nullptr) {
+        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "soc", socName == nullptr ? "nullptr" : socName,
+                                 "Ascend910B, Ascend910C or Ascend950");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+#endif
+
+    if (chunkSize != 64) {
+        const std::string actual = std::to_string(chunkSize);
+        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "chunkSize", actual.c_str(), "64");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (useGateInKernel) {
+        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "useGateInKernel", "true", "false");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if ((cuSeqlensOptional == nullptr) != (chunkIndicesOptional == nullptr)) {
+        const char *actual = cuSeqlensOptional == nullptr ? "cuSeqlens absent; chunkIndices present" :
+            "cuSeqlens present; chunkIndices absent";
+        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "cuSeqlensOptional/chunkIndicesOptional", actual,
+                                 "both present or both absent");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    if (uniqueExecutor.get() == nullptr) {
+        OP_LOGE(OP_NAME, "Failed to create an executor.");
+        return ACLNN_ERR_INNER_CREATE_EXECUTOR;
+    }
     auto *executorPtr = uniqueExecutor.get();
 
-    CHECK_RET(MakeContiguous(q, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(v, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(vNew, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(dO, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(du, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(g, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(beta, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(h, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(dh, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(a, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(qRstdOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(kRstdOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(betaRawOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    const aclTensor **contiguousInputs[] = {&q, &k, &v, &vNew, &dO, &du, &g, &beta, &h, &dh, &a,
+                                            &qRstdOptional, &kRstdOptional, &betaRawOptional};
+    for (auto **tensor : contiguousInputs) {
+        if (MakeContiguous(*tensor, executorPtr) != ACLNN_SUCCESS) {
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+    }
 
     const auto result = l0op::ChunkGatedDeltaRuleBwdFinalize(
         q, k, v, vNew, dO, du, g, beta, h, dh, a,
@@ -92,13 +146,19 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
         dqOut, dkOut, dvOut, dbetaOut, dgOut,
         executorPtr);
     for (const aclTensor *tensor : result) {
-        CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (tensor == nullptr) {
+            OP_LOGE(OP_NAME, "Failed to create a Finalize output.");
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
 
     const aclTensor *outputs[] = {dqOut, dkOut, dvOut, dbetaOut, dgOut};
     for (size_t index = 0; index < result.size(); ++index) {
         const aclTensor *copied = l0op::ViewCopy(result[index], outputs[index], executorPtr);
-        CHECK_RET(copied != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (copied == nullptr) {
+            OP_LOGE(OP_NAME, "Failed to copy output[%zu] to the output view.", index);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
 
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
@@ -111,8 +171,10 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalize(
     aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkGatedDeltaRuleBwdFinalize);
-    CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS,
-               ACLNN_ERR_INNER, "ChunkGatedDeltaRuleBwdFinalize launch failed.");
+    if (CommonOpExecutorRun(workspace, workspaceSize, executor, stream) != ACLNN_SUCCESS) {
+        OP_LOGE(OP_NAME, "ChunkGatedDeltaRuleBwdFinalize launch failed.");
+        return ACLNN_ERR_INNER;
+    }
     return ACLNN_SUCCESS;
 }
 
