@@ -55,6 +55,11 @@ python3() {
         echo "injected environment contract failure" >&2
         return 23
     fi
+    if [[ "${CI_TEST_FAIL_STABLE_COVERAGE:-false}" == "true" && \
+          "$entrypoint" == "torch_custom/fla_npu/tools/stable_coverage.py" ]]; then
+        echo "injected Stable coverage failure" >&2
+        return 26
+    fi
     if [[ "$entrypoint" == "-" && -n "${CI_TEST_FAKE_PACKAGE_DIR:-}" ]]; then
         printf '%s\n' "$CI_TEST_FAKE_PACKAGE_DIR"
     elif [[ "$entrypoint" == "ci/run_example_st_cases.py" ]]; then
@@ -117,6 +122,7 @@ run_case() {
     local run_example_st="${7:-false}"
     local fail_stage="${8:-}"
     local fail_manager_init="${9:-false}"
+    local fail_stable_coverage="${10:-false}"
     local case_dir="$test_root/$name"
     local case_repo="$case_dir/repo"
     local report_file="${case_repo#"$repo_dir"/}/.ci-tmp/stage-report.json"
@@ -146,6 +152,7 @@ run_case() {
         CI_TEST_FAIL_STAGE_ONE="$fail_stage_one" \
         CI_TEST_FAIL_STAGE="$fail_stage" \
         CI_TEST_FAIL_MANAGER_INIT="$fail_manager_init" \
+        CI_TEST_FAIL_STABLE_COVERAGE="$fail_stable_coverage" \
         CI_TEST_FAKE_PACKAGE_DIR="$fake_package_dir" \
         CI_MODE=quick \
         CI_SOC=ascend910b \
@@ -175,6 +182,14 @@ run_case() {
         echo "CI control-plane contract tests ran inside the NPU stage." >&2
         return 1
     fi
+    if [[ "$expected_statuses" == success,* ]]; then
+        grep -Fqx \
+            'python3 torch_custom/fla_npu/tools/stable_coverage.py --strict' \
+            "$command_log"
+        grep -Fqx \
+            'python3 torch_custom/fla_npu/tools/op_abi_parity.py' \
+            "$command_log"
+    fi
 
     if [[ "$name" == "scoped" ]]; then
         grep -Fq 'bash ci/prepare_ci_cache.sh' "$command_log"
@@ -186,6 +201,21 @@ run_case() {
         fi
         grep -Fq '[CI][REPRO] CI_STAGE=environment-contracts' "$output_log"
         grep -Fq 'bash ci/run_ci_container.sh' "$output_log"
+    elif [[ "$name" == "stable-coverage-failure" ]]; then
+        grep -Fq \
+            'python3 torch_custom/fla_npu/tools/stable_coverage.py --strict' \
+            "$command_log"
+        if grep -Fq \
+                'python3 torch_custom/fla_npu/tools/op_abi_parity.py' \
+                "$command_log"; then
+            echo "ABI parity ran after Stable coverage failed." >&2
+            return 1
+        fi
+        if grep -Fq 'bash ci/prepare_ci_cache.sh' "$command_log"; then
+            echo "The OPP stage ran after Stable coverage failed." >&2
+            return 1
+        fi
+        grep -Fq '[CI][REPRO] CI_STAGE=environment-contracts' "$output_log"
     elif [[ "$name" == "opp-failure" ]]; then
         if grep -Fxq 'bash build.sh' "$command_log"; then
             echo "The PyTorch stage ran after the OPP stage failed." >&2
@@ -227,6 +257,18 @@ run_case \
     1 \
     failure \
     failure,skipped,skipped,skipped,skipped
+
+run_case \
+    stable-coverage-failure \
+    all \
+    false \
+    1 \
+    failure \
+    failure,skipped,skipped,skipped,skipped \
+    false \
+    '' \
+    false \
+    true
 
 run_case \
     opp-failure \

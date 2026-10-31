@@ -231,7 +231,7 @@ __aicore__ inline void RunFinalize(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR akk
         auto record = ub[85 * 1024].ReinterpretCast<int64_t>();
         ChunkKdaBwdFinalizeVector<BetaT> vector;
         if constexpr (LAST_STAGE >= 1) {
-            vector.Init(k, gk, h, dh, workspace, ub, &pipe);
+            vector.Init(k, gk, h, dh, workspace, ub, &pipe, tiling);
             if constexpr (LAST_STAGE >= 3) {
                 vector.template InitStage3<COMPACT_MASK>(v, beta, dv);
             }

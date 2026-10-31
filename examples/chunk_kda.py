@@ -477,55 +477,27 @@ def run_once(args: argparse.Namespace) -> int:
               f"(o absmax={o.detach().float().abs().max().item():.6g})", flush=True)
         return 0
 
-    # 反向：用前向保存量算梯度。反向的 q/k/v/beta 一律是 head-major
-    # （dense 为 [B,H,T,D]、packed 为 [H,T,D]），与前向的公开输入布局不同。
-    def to_head_major(x: torch.Tensor, is_beta: bool = False) -> torch.Tensor:
-        if packed:
-            return x.contiguous()
-        # 反向要求连续张量（permute 视图会被 optimized 路径拒绝）。
-        return (x.permute(0, 2, 1) if is_beta else x.permute(0, 2, 1, 3)).contiguous()
+    # 反向单 layout：模型量 token-major，前向缓存 head-major。
+    bwd_layout = "TND" if packed else "BSND"
+    def model_token(x: torch.Tensor) -> torch.Tensor:
+        return x.reshape(batch * tokens, *x.shape[2:]).contiguous() if packed else x.contiguous()
 
     grad_out = torch.ones_like(o)
-    # 反向 d_o 恒为 head-major：dense [B,H,T,V]、packed [H,T,V]。
-    grad_out = (grad_out.permute(1, 0, 2) if packed
-                else grad_out.permute(0, 2, 1, 3)).contiguous()
     bwd_kwargs = dict(
-        raw_g=to_head_major(g_op),
-        A_log=tensors["A_log"],
+        raw_g=model_token(g), A_log=tensors["A_log"],
         dt_bias=tensors["dt_bias"].reshape(hv, kd),
-        initial_state=None,
-        dht=None,
-        cu_seqlens=cu,
-        chunk_indices=None,
-        chunk_size=args.chunk_size,
-        safe_gate=True,
-        lower_bound=args.lower_bound,
-        use_gate_in_kernel=True,
-        disable_recompute=True,
-        use_exp2=True,
-        state_v_first=False,
+        cu_seqlens=cu, chunk_indices=None, chunk_size=args.chunk_size,
+        safe_gate=True, lower_bound=args.lower_bound, use_gate_in_kernel=True,
+        disable_recompute=True, use_exp2=True, state_v_first=False, layout=bwd_layout,
     )
-    # optimized（kernel 内 L2Norm 回代）反向只在 A5 可用；A2/A3 上退到 fused 反向，
-    # 由脚本按上游 `l2norm_bwd` 手工回代到原始 q/k。
-    use_optimized_bwd = bool(args.qk_l2norm) and kda_bwd_optimized_supported(device)
     if args.qk_l2norm:
         bwd_q, bwd_k = saved["q_hat"], saved["k_hat"]
-        if use_optimized_bwd:
-            bwd_kwargs.update(q_rstd=saved["q_rstd"], k_rstd=saved["k_rstd"])
+        bwd_kwargs.update(q_rstd=saved["q_rstd"], k_rstd=saved["k_rstd"])
     else:
-        bwd_q, bwd_k = to_head_major(q_op), to_head_major(k_op)
-    if args.qk_l2norm:
-        print(f"[info] backward path: "
-              f"{'optimized (in-kernel L2Norm)' if use_optimized_bwd else 'fused + l2norm_bwd'}; "
-              f"device={device}", flush=True)
-    bwd_v = to_head_major(v_op)
-    bwd_beta = to_head_major(beta_op, is_beta=True)
+        bwd_q, bwd_k = model_token(q), model_token(k)
     dq, dk, dv, dbeta, dg, _dh0, _da, _dbias = chunk_kda_bwd(
-        bwd_q, bwd_k, bwd_v, bwd_beta, gk, aqk, akk, w, qg, kg, v_new, hstate,
-        grad_out, scale, **bwd_kwargs)
-    if args.qk_l2norm and not use_optimized_bwd:
-        dq = l2norm_bwd(dq, to_head_major(q_op), saved["q_rstd"])
-        dk = l2norm_bwd(dk, to_head_major(k_op), saved["k_rstd"])
+        bwd_q, bwd_k, model_token(v), model_token(beta), gk, aqk, akk,
+        w, qg, kg, v_new, hstate, grad_out, scale, **bwd_kwargs)
     if torch_npu is not None and device.type == "npu":
         torch.npu.synchronize()
 
@@ -550,24 +522,12 @@ def run_once(args: argparse.Namespace) -> int:
     grads = torch.autograd.grad(loss, [leaves[name] for name in ("q", "k", "v", "beta", "raw_gate")])
     ref_dq, ref_dk, ref_dv, ref_dbeta, ref_dg_raw = grads
 
-    def to_bsnd(tensor: torch.Tensor, is_beta: bool = False) -> torch.Tensor:
-        # 反向输出恒为 head-major（dense [B,H,T,D] / packed [H,T,D]），
-        # 与参考的 BSND 口径对比时要转回来。
-        if not packed:
-            return (tensor.permute(0, 2, 1) if is_beta
-                    else tensor.permute(0, 2, 1, 3))
-        unflat = tensor.permute(1, 0) if is_beta else tensor.permute(1, 0, 2)
-        return unflat.reshape(batch, tokens, *unflat.shape[1:])
+    # layout=BSND/TND，五个 Token 梯度已是模型顺序。
+    def to_bsnd(x: torch.Tensor) -> torch.Tensor:
+        return x.detach().reshape(batch, tokens, *x.shape[1:]) if packed else x.detach()
 
-    # 前向 attn_out 恒为 sequence-major（dense BSND / packed TND），无需转置；
-    # 反向输出是 head-major，需要用 to_bsnd 转回 BSND。
-    o_bsnd = (o.detach().reshape(batch, tokens, *o.shape[1:]) if packed
-              else o.detach())
-    dq_bsnd = to_bsnd(dq.detach())
-    dk_bsnd = to_bsnd(dk.detach())
-    dv_bsnd = to_bsnd(dv.detach())
-    dbeta_bsnd = to_bsnd(dbeta.detach(), is_beta=True)
-    dg_bsnd = to_bsnd(dg.detach())
+    o_bsnd = to_bsnd(o)
+    dq_bsnd, dk_bsnd, dv_bsnd, dbeta_bsnd, dg_bsnd = map(to_bsnd, (dq, dk, dv, dbeta, dg))
 
     if args.qk_l2norm:
         # 反向返回的是对归一化 q/k 的梯度，参考也按同样口径（leaves 即归一化后的 q/k）。

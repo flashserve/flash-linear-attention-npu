@@ -72,7 +72,7 @@ _ENUM = {
     "npu_chunk_gated_delta_rule_fwd": {"layout": _LAYOUT_CODES},
     "npu_chunk_kda_bwd_intra": {"layout": {"BSND": 0, "BNSD": 1, "TND": 2}},
     "npu_chunk_kda_bwd_prepare": {"layout": _LAYOUT_CODES},
-    "npu_chunk_kda_bwd": {"input_layout": _LAYOUT_CODES, "output_layout": _LAYOUT_CODES},
+    "npu_chunk_kda_bwd": {"layout": _LAYOUT_CODES},
     "npu_chunk_kda_bwd_recompute": {"input_layout": _LAYOUT_CODES},
     "npu_chunk_kda_bwd_finalize": {"output_layout": _LAYOUT_CODES},
     "npu_chunk_kda_fwd": {"layout": _LAYOUT_CODES},
@@ -1442,8 +1442,11 @@ def npu_chunk_kda_bwd_finalize(
     q_rstd=None, k_rstd=None, cu_seqlens=None, chunk_indices=None,
     use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False, output_layout=None,
 ):
-    """Finalize KDA gradients; dBeta and dG always use token-major order.
+    """Finalize KDA gradients; output_layout controls dq/dk/dv/dBeta/dG.
 
+    raw_g/beta accept BF16/FP32; their gradients match each input.
+    a_log/dt_bias and their gradients are FP32.
+    Gate computation and parameter reductions remain FP32.
     On A5, use_beta_sigmoid_in_kernel is reserved and must remain False.
     """
     if allow_neg_eigval and not use_beta_sigmoid_in_kernel:
@@ -1875,42 +1878,23 @@ def _kda_bwd_single_launch(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h,
         True,  # disable_recompute is the only supported spelling
         True,  # use_exp2 likewise
         False,  # state_v_first likewise
-        False, None, None,  # legacy implementation, no norm backward
-        3 if cu_seqlens is not None else 1, 3 if cu_seqlens is not None else 1,
+        False, None, None, None,  # legacy implementation, no norm/beta cache
+        3 if cu_seqlens is not None else 1,
         False, False,
         _current_stream_ptr(),
     )
 
 
 def _kda_bwd_optimized_launch(args):
-    """Share input policy with the reference, but launch V2 through Stable ABI."""
-    from ._kda_policy import _prepare_kda_bwd_optimized
+    return _kda_bwd_arch22_launch(args, optimized=True)
+
+
+def _kda_bwd_arch22_launch(args, optimized=False):
+    """Share argument assembly; select original L2 on A2/A3 or V2 on A5."""
+    from ._kda_policy import _prepare_kda_bwd_arch22, _prepare_kda_bwd_optimized
 
     bias_shape = None if args["dt_bias"] is None else args["dt_bias"].shape
-    a = _prepare_kda_bwd_optimized(args)
-    outputs = _op("npu_chunk_kda_bwd")(
-        a["q"], a["k"], a["v"], a["beta"], a["gk"], a["Aqk"], a["Akk"],
-        a["w"], a["qg"], a["kg"], a["v_new"], a["h"], a["d_o"],
-        a["raw_g"], a["A_log"], a["dt_bias"],
-        _host_ints(a["cu_seqlens"]), _host_ints(a["chunk_indices"]),
-        float(a["scale"]), int(a["chunk_size"]), a["safe_gate"],
-        a["use_gate_in_kernel"], a["lower_bound"], a["disable_recompute"],
-        a["use_exp2"], a["state_v_first"], True, a["q_rstd"], a["k_rstd"],
-        3 if a["cu_seqlens"] is not None else 1, 3 if a["cu_seqlens"] is not None else 1,
-        False, False,
-        _current_stream_ptr(),
-    )
-    if bias_shape is not None:
-        outputs = (*outputs[:-1], outputs[-1].view(bias_shape))
-    return outputs
-
-
-def _kda_bwd_arch22_launch(args):
-    """A2/A3 always use the original total L2, including norm and recompute."""
-    from ._kda_policy import _prepare_kda_bwd_arch22
-
-    bias_shape = None if args["dt_bias"] is None else args["dt_bias"].shape
-    a = _prepare_kda_bwd_arch22(args)
+    a = (_prepare_kda_bwd_optimized if optimized else _prepare_kda_bwd_arch22)(args)
     outputs = _op("npu_chunk_kda_bwd")(
         a["q"], a["k"], a["v"], a["beta"], a["gk"], a["Aqk"], a["Akk"],
         a["w"], a["qg"], a["kg"], a["v_new"], a["h"], a["d_o"],
@@ -1918,9 +1902,8 @@ def _kda_bwd_arch22_launch(args):
         _host_ints(a["cu_seqlens"]), _host_ints(a["chunk_indices"]),
         a["scale"], a["chunk_size"], a["safe_gate"], a["use_gate_in_kernel"],
         a["lower_bound"], a["disable_recompute"], a["use_exp2"], a["state_v_first"],
-        False, a["q_rstd"], a["k_rstd"],
-        _char_code("npu_chunk_kda_bwd", "input_layout", a["input_layout"]),
-        _char_code("npu_chunk_kda_bwd", "output_layout", a["output_layout"]),
+        optimized, a["q_rstd"], a["k_rstd"], a["beta_eff"],
+        _char_code("npu_chunk_kda_bwd", "layout", a["layout"]),
         a["use_beta_sigmoid_in_kernel"], a["allow_neg_eigval"],
         _current_stream_ptr(),
     )
@@ -1936,35 +1919,18 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
                       lower_bound=-5.0, use_gate_in_kernel=True,
                       disable_recompute=True, use_exp2=True,
                       state_v_first=False, implementation="auto",
-                      q_rstd=None, k_rstd=None, input_layout="BNSD",
-                      output_layout="BNSD", use_beta_sigmoid_in_kernel=False,
-                      allow_neg_eigval=False):
-    """KDA backward, returning `(dq, dk, dv, db, dg, dh0, dA, dbias)`.
+                      q_rstd=None, k_rstd=None, layout="BNSD", use_beta_sigmoid_in_kernel=False,
+                      allow_neg_eigval=False, beta_eff=None):
+    """Return (dq, dk, dv, db, dg, dh0, dA, dbias), on A2/A3 and A5 V2.
 
-    Gate backward requires use_gate_in_kernel=True, raw_g and A_log.
-
-    A2/A3 use one total L2 composition for all implementation modes.
-    The legacy workarounds below remain on the A5 fused path.
-
-    Three shape-specific workarounds sit on top of the single launch, and they
-    are the reason this wrapper is longer than the others:
-
-    * a packed sequence whose last chunk is short on Atlas A2/A5 (or a packed
-      V=256 call on Atlas A2) is split into independent dense calls, because
-      the fused pipeline produces stale or non-finite values for those; Atlas
-      A3 keeps the fused packed launch, where its gradients match the split
-      path bitwise and the split costs about twice the runtime;
-    * a single packed sequence with a short tail is instead padded inside its
-      last chunk and the token gradients sliced back;
-    * on A2 an odd head count gets a duplicated partner head, because the
-      Intra pipeline processes heads in pairs.
-
-    The split/padding rules are the launcher's port of the reference strategy:
-    Atlas A5 splits every packed tail, Atlas A2 additionally splits packed
-    tails and V=256 calls and pads odd head counts, and Atlas A3 keeps the
-    fused packed launch, where its gradients already match the split path
-    bitwise.  The only other difference from the reference is that the dense
-    call goes to the launcher instead of to ctypes.
+    layout controls q/k/v and dq/dk/dv (BNSD/BSND/NTD/TND).
+    With q_rstd/k_rstd, q/k are saved head-major normalized tensors.
+    do/raw_g/beta and dg/db are always token-major. With fused sigmoid,
+    beta is original logits and beta_eff is required FP32 head-major cache.
+    Without fused sigmoid beta is effective beta and beta_eff must be None.
+    A5 V2 reserves fused sigmoid: beta_eff=None and both sigmoid flags False.
+    All saved Token caches are head-major. 4D varlen calls require B=1.
+    dg/db follow raw_g/beta dtypes; A_log/dt_bias and dA/dbias are FP32.
     """
 
     import torch

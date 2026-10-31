@@ -44,12 +44,35 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
     OP_CHECK_IF(!isAscend950 && context->GetOutputShape(4) == nullptr,
                 OP_LOGE(context->GetNodeName(), "gk output buffer is required on A2/A3."),
                 return ge::GRAPH_FAILED);
+    const char *modelLayout = attrPtr->GetStr(5);
+    const bool mixed = modelLayout && modelLayout[0];
+    const bool modelTm = mixed && (std::strcmp(modelLayout, "BSND") == 0 || std::strcmp(modelLayout, "TND") == 0);
+    const auto *qkHeadAttr = attrPtr->GetAttrPointer<bool>(6);
+    const bool qkTm = modelTm && !(qkHeadAttr && *qkHeadAttr);
+    OP_CHECK_IF(mixed && (!modelTm && std::strcmp(modelLayout, "BNSD") != 0 &&
+                    std::strcmp(modelLayout, "NTD") != 0),
+                OP_LOGE(context->GetNodeName(), "Unsupported Recompute model_layout on this platform."),
+                return ge::GRAPH_FAILED);
+    if (mixed) {
+        const auto &canonical = context->GetOutputShape(4)->GetStorageShape();
+        OP_CHECK_IF(canonical.GetDimNum() != 4, , return ge::GRAPH_FAILED);
+        for (size_t i = 0; i < 4; ++i) {
+            const auto *input = context->GetRequiredInputShape(i);
+            OP_CHECK_NULL_WITH_CONTEXT(context, input);
+            auto expected = canonical;
+            const bool tm = i < 2 ? qkTm : (i == 2 ? modelTm : true);
+            if (tm) { expected.SetDim(1, canonical.GetDim(2)); expected.SetDim(2, canonical.GetDim(1)); }
+            OP_CHECK_IF(input->GetStorageShape() != expected,
+                        OP_LOGE(context->GetNodeName(), "Invalid mixed-layout Recompute input."),
+                        return ge::GRAPH_FAILED);
+        }
+    }
     ChunkKdaBwdRecomputeTilingContext ctx{
         context->GetNodeName(),
-        context->GetRequiredInputShape(KDA_RECOMPUTE_Q_IDX),
-        context->GetRequiredInputShape(KDA_RECOMPUTE_K_IDX),
-        context->GetRequiredInputShape(KDA_RECOMPUTE_V_IDX),
-        context->GetRequiredInputShape(KDA_RECOMPUTE_G_IDX),
+        mixed ? context->GetOutputShape(4) : context->GetRequiredInputShape(KDA_RECOMPUTE_Q_IDX),
+        mixed ? context->GetOutputShape(4) : context->GetRequiredInputShape(KDA_RECOMPUTE_K_IDX),
+        mixed ? context->GetOutputShape(4) : context->GetRequiredInputShape(KDA_RECOMPUTE_V_IDX),
+        mixed ? context->GetOutputShape(4) : context->GetRequiredInputShape(KDA_RECOMPUTE_G_IDX),
         context->GetRequiredInputShape(KDA_RECOMPUTE_BETA_IDX),
         context->GetRequiredInputShape(KDA_RECOMPUTE_A_IDX),
         context->GetOptionalInputShape(KDA_RECOMPUTE_A_LOG_IDX),
@@ -72,6 +95,7 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
     ChunkKdaBwdRecomputeTilingProcessor processor(ctx, *tiling);
     OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
 
+    tiling->reserved = mixed ? (1 | (qkTm ? 2 : 0) | (modelTm ? 4 : 0)) : 0;
     context->SetTilingKey(processor.GetTilingKey());
     uint32_t aicNum = ascendcPlatform.GetCoreNumAic();
     uint32_t aivNum = ascendcPlatform.GetCoreNumAiv();
