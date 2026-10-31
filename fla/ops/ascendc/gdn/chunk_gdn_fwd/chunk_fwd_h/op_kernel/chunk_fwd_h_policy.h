@@ -84,6 +84,7 @@ struct FwdHSequenceSpan {
     uint32_t chunkPrefix = 0;
     uint32_t chunkCount = 0;
     uint32_t totalChunks = 0;
+    bool finalSequence = true;
 };
 
 struct FwdHChunkSpan {
@@ -93,6 +94,7 @@ struct FwdHChunkSpan {
     uint32_t validTokens = 0;
     bool first = false;
     bool last = false;
+    bool finalSequence = true;
 };
 
 struct FwdHHeadBinding {
@@ -151,6 +153,14 @@ struct FwdHRuntimeTiling {
     uint64_t vUpdateWorkspaceOffset = 0;
     uint64_t kDecayWorkspaceOffset = 0;
     uint64_t hWorkspaceOffset = 0;
+    bool fusedMode = false;
+    bool fusedSummaryMode = false;
+    uint64_t hmWorkspaceOffset = 0;
+    uint64_t k0ScratchWorkspaceOffset = 0;
+    uint64_t segmentInitWorkspaceOffset = 0;
+    uint64_t segmentDescWorkspaceOffset = 0;
+    uint64_t splitSeqDescWorkspaceOffset = 0;
+    uint32_t segmentCount = 0;
     bool useInitialState = false;
     bool storeFinalState = false;
     bool isVariedLen = false;

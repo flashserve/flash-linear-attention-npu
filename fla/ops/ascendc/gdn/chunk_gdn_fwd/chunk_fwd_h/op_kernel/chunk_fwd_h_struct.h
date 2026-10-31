@@ -37,6 +37,13 @@ struct ChunkFwdHPlainTilingData {
     int64_t vUpdateWorkspaceOffset;
     int64_t kDecayWorkspaceOffset;
     int64_t hWorkspaceOffset;
+    bool fusedMode;
+    int64_t hmWorkspaceOffset;
+    int64_t k0ScratchWorkspaceOffset;
+    int64_t segmentInitWorkspaceOffset;
+    int64_t segmentDescWorkspaceOffset;
+    int64_t splitSeqDescWorkspaceOffset;
+    int64_t segmentCount;
 };
 
 #endif // CHUNK_FWD_H_STRUCT_H

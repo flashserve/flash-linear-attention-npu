@@ -47,6 +47,8 @@ struct ChunkFwdHTilingContext {
     bool hasCuSeqlens;
     int64_t cuSeqlensDim0; // length of cu_seqlens (only used when hasCuSeqlens)
     bool useInitialState;
+    bool fusedMode;
+    int64_t segmentCount;
     // attrs
     bool storeFinalState;
     int64_t chunkSize;
@@ -88,6 +90,13 @@ public:
             (totalHeadTasks + physicalAicCores - 1) / physicalAicCores;
         blockDim = static_cast<uint32_t>(
             (totalHeadTasks + headsPerCore - 1) / headsPerCore);
+        if (ctx_.fusedMode) {
+            const uint64_t fusedTasks =
+                static_cast<uint64_t>(ctx_.segmentCount) *
+                static_cast<uint64_t>(ctx_.vNumHead);
+            blockDim = static_cast<uint32_t>(
+                fusedTasks < physicalAicCores ? fusedTasks : physicalAicCores);
+        }
         const int64_t activeAicCoreNum = static_cast<int64_t>(blockDim);
         constexpr int64_t chunkSize = CHUNK_FWD_H_CHUNK_SIZE;
         constexpr int64_t kHeadDim = CHUNK_FWD_H_K_DIM;
@@ -111,7 +120,21 @@ public:
         tiling.hWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
         workspaceOffset += AlignUp(static_cast<size_t>(activeAicCoreNum * CHUNK_FWD_H_ROUND_HEAD_SLOTS *
                                                         kHeadDim * vHeadDim * sizeof(float)));
+        if (ctx_.fusedMode) {
+            tiling.hmWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
+            workspaceOffset += AlignUp(static_cast<size_t>(ctx_.segmentCount * ctx_.vNumHead * 128 * 256 * sizeof(float)));
+            tiling.k0ScratchWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
+            workspaceOffset += AlignUp(static_cast<size_t>(activeAicCoreNum * 768 * 1024));
+            tiling.segmentInitWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
+            workspaceOffset += AlignUp(static_cast<size_t>(ctx_.segmentCount * ctx_.vNumHead * 128 * 128 * sizeof(float)));
+            tiling.segmentDescWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
+            workspaceOffset += AlignUp(static_cast<size_t>(ctx_.segmentCount * 64 * sizeof(int64_t)));
+            tiling.splitSeqDescWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
+            workspaceOffset += AlignUp(static_cast<size_t>(ctx_.segmentCount * 32 * sizeof(int64_t)));
+        }
 
+        tiling.fusedMode = ctx_.fusedMode;
+        tiling.segmentCount = ctx_.segmentCount;
         workspaceOffset += CHUNK_FWD_H_WORKSPACE_RSV_BYTE;
         workspaceSize = workspaceOffset;
 

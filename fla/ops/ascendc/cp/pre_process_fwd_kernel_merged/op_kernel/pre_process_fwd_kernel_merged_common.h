@@ -769,6 +769,26 @@ constexpr int32_t UB_VBLK_BF_ELEM = UB_VBLK_BF / 2;
 constexpr int32_t UB_SCR_F_ELEM = UB_SCR_F / 4;
 constexpr int32_t UB_SCR_BF_ELEM = UB_SCR_BF / 2;
 
+// Scalar-only A5 plan shared by standalone CP and ChunkFwdH K0.
+// Legacy TCubeTiling objects are deliberately excluded.
+struct PpFwdA5Plan {
+    int64_t B = 0;
+    int64_t Hk = 0;
+    int64_t Hv = 0;
+    int64_t hvPerHk = 0;
+    int64_t T = 0;
+    int64_t K = 0;
+    int64_t V = 0;
+    int64_t chunkSize = 0;
+    int64_t nSeq = 0;
+    int64_t gateMode = 0;
+    int64_t gateDtype = 0;
+    int64_t usedAicNum = 0;
+    int64_t colSplit = 1;
+    int64_t hybridS = 0;
+    int64_t hybridBase = 0;
+};
+
 struct PpFwdCtx {
     GM_ADDR k = nullptr;
     GM_ADDR w = nullptr;
@@ -780,6 +800,7 @@ struct PpFwdCtx {
     GM_ADDR hm = nullptr;
     GM_ADDR ws = nullptr;
     const PreProcessFwdKernelMergedTilingData *tiling = nullptr;
+    PpFwdA5Plan plan{};
 };
 
 // =====================================================================================
@@ -800,7 +821,8 @@ struct PpFwdChunkInfo {
     int32_t colEnd;   // 本任务列块结束列（= colBase + cb，便于边界判断）
 };
 
-__aicore__ inline PpFwdChunkInfo GetChunkInfo(const PreProcessFwdKernelMergedTilingData *t,
+template <typename PlanT>
+__aicore__ inline PpFwdChunkInfo GetChunkInfo(const PlanT *t,
                                                int32_t colSplit, int64_t task)
 {
     PpFwdChunkInfo r{0, 0, 0, (colSplit > 0) ? colSplit : 1, 0, 0, 0};

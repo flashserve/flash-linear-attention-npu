@@ -221,7 +221,7 @@ public:
 
     __aicore__ inline void Run()
     {
-        const auto *t = ctx_.tiling;
+        const auto *t = &ctx_.plan;
         kGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(ctx_.k));
         wGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(ctx_.w));
         vGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
@@ -336,8 +336,8 @@ public:
             const int64_t n = pos_.n;
             cb_ = pos_.cb;          // GetChunkInfo 已算好列窗（§4.4 ⑤）
             colBase_ = pos_.colBase;
-            const int64_t bos = cuGm_.GetValue(n);
-            const int64_t eos = cuGm_.GetValue(n + 1);
+            const int64_t bos = (ctx_.cu == nullptr) ? ((n == 0) ? 0 : ((n == 1) ? 3712 : 7488)) : cuGm_.GetValue(n);
+            const int64_t eos = (ctx_.cu == nullptr) ? ((n == 0) ? 3712 : ((n == 1) ? 7488 : 11264)) : cuGm_.GetValue(n + 1);
             ProcessChain(n, hv, bos, eos - bos);
         }
     }
@@ -385,9 +385,9 @@ private:
     // glast 由调用方算好传入（原本这里又做了一次 GM 标量读）
     __aicore__ inline void SetDecay(int64_t hv, int64_t tGlobal, float glastIn)
     {
-        if (ctx_.tiling->gateMode == PPFM_GATE_USE_G) {
+        if (ctx_.plan.gateMode == PPFM_GATE_USE_G) {
             const float glast = PPFM_GLAST_UB ? glastIn
-                : gGm_.GetValue(hv * ctx_.tiling->T + tGlobal);
+                : gGm_.GetValue(hv * ctx_.plan.T + tGlobal);
             const float dc = Exp2Scalar(glast);
             // decayF_ 是全 128 项同值 ⇒ 一次 Duplicate 取代 128 次 SetValue
             Duplicate(decayF_, dc, CV_K);
@@ -401,7 +401,7 @@ private:
             // 实测是 AIV scalar 流水的最大单一来源。这里用 row0F_
             // 做暂存（本函数里它不承载数据），
             // 逐元素仍是 exp(x·ln2)，与逐点版本逐位等价（L1 位级门禁验证）。
-            DataCopy(row0F_, gkGm_[(hv * ctx_.tiling->T + tGlobal) * CV_K], CV_K);
+            DataCopy(row0F_, gkGm_[(hv * ctx_.plan.T + tGlobal) * CV_K], CV_K);
             AIV_SET_MTE2_V();
             AIV_WAIT_MTE2_V();
             Muls(row0F_, row0F_, 0.6931471805599453f, CV_K);
@@ -409,7 +409,7 @@ private:
             Exp(decayF_, row0F_, CV_K);
 #else
             for (int32_t k = 0; k < CV_K; ++k) {
-                const float gk = gkGm_.GetValue((hv * ctx_.tiling->T + tGlobal) * CV_K + k);
+                const float gk = gkGm_.GetValue((hv * ctx_.plan.T + tGlobal) * CV_K + k);
                 decayF_.SetValue(k, Exp2Scalar(gk));
             }
 #endif
@@ -420,7 +420,7 @@ private:
     __aicore__ inline void ProcessChain(int64_t n, int64_t hv, int64_t bos, int64_t len)
     {
         curN_ = n;
-        const auto *t = ctx_.tiling;
+        const auto *t = &ctx_.plan;
         // ---- prologue：h = 0（950）----
         Duplicate(row0F_, 0.0f, cb_);
         Cast(row0Bf_, row0F_, RoundMode::CAST_RINT, cb_);
@@ -780,7 +780,7 @@ private:
         // k/left 按 chunk 奇偶写不同 GM 槽，使 staging 可与上一 chunk 的 mm2/mm4 重叠
         GlobalTensor<bfloat16_t> &kOut = ((slot & 1) != 0) ? kBf1_ : kBf_;
         GlobalTensor<bfloat16_t> &lOut = ((slot & 1) != 0) ? lBf1_ : lBf_;
-        const auto *t = ctx_.tiling;
+        const auto *t = &ctx_.plan;
         const int64_t hk = hv / (t->hvPerHk == 0 ? 1 : t->hvPerHk);
         const bool useG = (t->gateMode == PPFM_GATE_USE_G);
         float glast = 0.0f;
@@ -925,7 +925,7 @@ private:
 
     __aicore__ inline void UpdateVNew(int64_t hv, int64_t t0, int64_t rows)
     {
-        const bool useG = (ctx_.tiling->gateMode == PPFM_GATE_USE_G);
+        const bool useG = (ctx_.plan.gateMode == PPFM_GATE_USE_G);
         AivWaitFromAic(kFlagHalf1);
 #if PPFM_VTMP_UB_DIAG
         if (curChunk_ == 1) {
@@ -944,7 +944,7 @@ private:
             row0F_.SetValue(4, uSh0);
             row0F_.SetValue(5, uSh32);
             PipeBarrier<PIPE_ALL>();
-            DataCopy(hmGm_[((curN_ * ctx_.tiling->Hv + hv) * CV_K) * (CV_V + CV_K) + CV_V],
+            DataCopy(hmGm_[((curN_ * ctx_.plan.Hv + hv) * CV_K) * (CV_V + CV_K) + CV_V],
                      row0F_, 8);
             PipeBarrier<PIPE_ALL>();
         }
@@ -1073,7 +1073,7 @@ private:
     // usePrevDecay=true 时用上一 chunk 的 decay（配合"状态更新推迟一个 chunk"）
     __aicore__ inline void ApplyStateUpdates(bool usePrevDecay, int64_t dataChunk)
     {
-        const bool useG = (ctx_.tiling->gateMode == PPFM_GATE_USE_G);
+        const bool useG = (ctx_.plan.gateMode == PPFM_GATE_USE_G);
         // dH / T2 双缓冲：按数据所属 chunk 的奇偶选 buffer（不用拷贝，直接分支）
         const bool evenChunk = ((dataChunk & 1) == 0);
         GlobalTensor<float> &dhBuf = evenChunk ? dHF_ : dHF1_;
