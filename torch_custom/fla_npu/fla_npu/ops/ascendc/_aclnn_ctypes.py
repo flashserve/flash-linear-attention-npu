@@ -3157,10 +3157,13 @@ def npu_chunk_gated_delta_rule_fwd(
         raise RuntimeError(
             "npu_chunk_gated_delta_rule_fwd: Phase 6 GVA requires value heads divisible by key heads."
         )
+    if chunk_size not in (32, 64, 128):
+        raise RuntimeError("npu_chunk_gated_delta_rule_fwd: chunk_size must be 32, 64 or 128.")
+    is_chunk32 = chunk_size == 32
     if beta_shape != (batch, tokens, v_heads) or g_shape != beta_shape:
         raise RuntimeError("npu_chunk_gated_delta_rule_fwd: beta and g must have shape [B,T,Hv].")
-    if chunk_size not in (64, 128):
-        raise RuntimeError("npu_chunk_gated_delta_rule_fwd: chunk_size must be 64 or 128.")
+    if is_chunk32 and v_dim != 128:
+        raise RuntimeError("npu_chunk_gated_delta_rule_fwd: chunk_size=32 requires V=128.")
     if (cu_seqlens is None) != (chunk_indices is None):
         raise RuntimeError("npu_chunk_gated_delta_rule_fwd: cu_seqlens and chunk_indices must be provided together.")
     if cu_seqlens is not None:
@@ -3192,21 +3195,35 @@ def npu_chunk_gated_delta_rule_fwd(
         raise ValueError("use_gate_in_kernel=True is not supported.")
     if a_log is not None or dt_bias is not None:
         raise ValueError("a_log and dt_bias must be None while gate-in-kernel is unsupported.")
+    if is_chunk32:
+        if use_exp2 or not use_qk_l2norm_in_kernel or not use_beta_sigmoid_in_kernel:
+            raise ValueError(
+                "chunk_size=32 requires use_exp2=False, "
+                "use_qk_l2norm_in_kernel=True and use_beta_sigmoid_in_kernel=True."
+            )
+        if disable_recompute or return_intermediate_states:
+            raise ValueError(
+                "chunk_size=32 does not export g_cumsum, A or intermediate states; "
+                "set disable_recompute=False and return_intermediate_states=False."
+            )
+        if initial_state is not None and initial_state.dtype not in (torch.bfloat16, torch.float32):
+            raise ValueError("chunk_size=32 initial_state must be bfloat16 or float32.")
     scale = _optional_float(scale, float(k_dim) ** -0.5)
-    o = _empty((batch, tokens, v_heads, v_dim), v)
+    o_shape = (batch, tokens, v_heads, v_dim)
+    o = _empty(o_shape, v)
     g_cumsum = (
         _empty((batch, tokens, v_heads), g, dtype=torch.float32)
-        if disable_recompute
+        if disable_recompute and not is_chunk32
         else None
     )
     A = (
         _empty((batch, v_heads, tokens, int(chunk_size)), q)
-        if disable_recompute
+        if disable_recompute and not is_chunk32
         else None
     )
     beta_eff = (
         _empty((batch, tokens, v_heads), beta, dtype=torch.float32)
-        if use_beta_sigmoid_in_kernel
+        if use_beta_sigmoid_in_kernel and not is_chunk32
         else None
     )
     final_state = None
@@ -3232,11 +3249,19 @@ def npu_chunk_gated_delta_rule_fwd(
         h = _empty((batch, chunks, v_heads, *state_tail), q)
     layout_buffer = ctypes.create_string_buffer(layout.encode("utf-8"))
     # Hats alias the original inputs when normalization is disabled.
-    q_hat = _empty(q_shape, q) if use_qk_l2norm_in_kernel else q
-    k_hat = _empty(k_shape, k) if use_qk_l2norm_in_kernel else k
+    q_hat = _empty(q_shape, q) if use_qk_l2norm_in_kernel and not is_chunk32 else (None if is_chunk32 else q)
+    k_hat = _empty(k_shape, k) if use_qk_l2norm_in_kernel and not is_chunk32 else (None if is_chunk32 else k)
     norm_shape = (batch, k_heads, tokens)
-    q_rstd = _empty(norm_shape, q, dtype=torch.float32) if use_qk_l2norm_in_kernel else None
-    k_rstd = _empty(norm_shape, k, dtype=torch.float32) if use_qk_l2norm_in_kernel else None
+    q_rstd = (
+        _empty(norm_shape, q, dtype=torch.float32)
+        if use_qk_l2norm_in_kernel and not is_chunk32
+        else None
+    )
+    k_rstd = (
+        _empty(norm_shape, k, dtype=torch.float32)
+        if use_qk_l2norm_in_kernel and not is_chunk32
+        else None
+    )
     outputs = (o, final_state, g_cumsum, A, beta_eff, h, q_hat, k_hat, q_rstd, k_rstd)
     return _call_aclnn(
         "aclnnChunkGatedDeltaRuleFwd",

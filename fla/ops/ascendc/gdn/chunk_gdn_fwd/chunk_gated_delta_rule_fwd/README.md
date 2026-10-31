@@ -80,7 +80,7 @@ Python 接受 `a_log=None, dt_bias=None` 预留参数；当前仅支持
 | --- | --- | --- |
 | `layout` | 原 Phase6 路径支持 `BNSD/NTD`；A5 新路径支持 `BNSD/BSND/NTD/TND` | q/k/v 的输入布局；BSND/TND 输入在拼接路径内转为 head-first，o 固定输出 BSND |
 | `scale` | 通常为 `K**-0.5` | Query 缩放因子 |
-| `chunkSize` | `64`、`128` | 分块大小 |
+| `chunkSize` | `32`、`64`、`128` | 分块大小 |
 | `useExp2` | A5 新路径支持 `true/false` | 只控制门控累计和后续状态、输出阶段使用 `exp2` 或 `exp`，三个小算子均按新路径规格选择优化实现 |
 | `useQkL2norm` | A5 新路径支持 `true/false` | true 时由 prepare 生成归一化 Q/K；false 时 H/O 直接使用输入 Q/K |
 | `allowNegEigval` | A5 新路径支持 | 为 true 时必须提供 `betaEffOutOptional` |
@@ -92,7 +92,8 @@ Python 接受 `a_log=None, dt_bias=None` 预留参数；当前仅支持
 
 - A2（`ascend910b`）、A3（`ascend910_93`）、A5（`ascend950`）。
 - 原 Phase6 路径支持 FP16、BF16，`K=128`、`V=128/256`、`chunkSize=64/128`。
-- A5 新路径支持 `useExp2=true/false`、`useQkL2norm=true/false`、BF16、`K=V=128`、`chunkSize=64`、`Hv/Hk in {1,2,3,4}`。
+- A5 三算子路径支持 `useExp2=true/false`、`useQkL2norm=true/false`、BF16、`K=V=128`、`chunkSize=64`、`Hv/Hk in {1,2,3,4}`。
+- `chunkSize=32` 仅 A5，走独立融合 kernel。限制为 BF16 的 q/k/v/beta/o、FP32 的 g、`K=V=128`，并且必须 `useExp2=false`、`useQkL2norm=true`、核内 beta sigmoid。`allowNegEigval` 与 `stateVFirst` 均可为 true/false；前者为 true 时使用 `2*sigmoid(beta)`，不导出 `betaEff`。layout 支持 `BNSD/BSND/NTD/TND`：BSND/TND 的 q/k/v 在 ACLNN 转为 head-major 后进核，g/beta 由 `[B,T,Hv]` 转为 `[B,Hv,T]` 后进核，o 固定 BSND。不导出 g_cumsum、A、beta_eff、h、q_hat、k_hat 和 rstd，因此 `disable_recompute=false`、`return_intermediate_states=false`，aLog/dtBias 必须为空；稳定入口仍返回十元组，除 o 和可选 final_state 外均为 None。支持 MHA、GVA（`Hv` 能被 `Hk` 整除）、定长和变长，变长要求物理 `B=1`。初始状态可选，dtype 为 BF16 或 FP32：无初始状态或 FP32 初始状态时最终状态为 FP32，BF16 初始状态时最终状态为 BF16。
 - 支持 MHA、GVA、定长和变长序列。
 - A2/A3 使用 `arch22` 私有实现，A5 使用 `arch35` 私有实现；两套架构代码隔离维护。
 
