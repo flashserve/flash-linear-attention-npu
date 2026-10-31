@@ -56,6 +56,7 @@ static constexpr size_t ATTR_LOGICAL_K_HEADS_IDX = 7;
 static constexpr size_t ATTR_LOGICAL_V_HEADS_IDX = 8;
 static constexpr size_t ATTR_LOGICAL_K_DIM_IDX = 9;
 static constexpr size_t ATTR_LOGICAL_V_DIM_IDX = 10;
+static constexpr size_t ATTR_SEQ_CHUNK_COUNTS_IDX = 11;
 
 static constexpr int64_t V_DIM_128 = 128;
 static constexpr int64_t K_DIM_128 = 128;
@@ -151,7 +152,48 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tilingCtx.storeFinalState = storeFinalState;
     tilingCtx.chunkSize = chunkSize;
     tilingCtx.aicCoreNum = ascendcPlatform.GetCoreNumAic();
+    // gated 复用路径 dtype（gated tiling 约定：1=bf16, 2=fp32）
+    tilingCtx.gatedGateDtype = gateDtypeToken == CHUNK_FWD_H_TPL_FP32 ? 2 : 1;
+    tilingCtx.gatedStateDtype = stateDtypeToken == CHUNK_FWD_H_TPL_FP32 ? 2 : 1;
+    // gated 复用 eligible（与 kernel 谓词 FwdHGatedReusable 同条件镜像）：
+    // vfirst 条件 2026-10-26 收口轮补回（fe54077c 曾删）——gated 恒 [K,V]
+    // 产出，仅 vfirst=0 语义匹配；vfirst=1 由老路径 STATE_V_FIRST 模板处理
+    // （aclnn 层 varlen 感知路由：dense 翻译后进 gated / varlen 不翻译走老路径）。
+    // storeFinal 两值均放行（放宽轮①）：gated scheduler 运行时读
+    // storeFinalState 跳末段，与老路径同语义；性能上界实测 -26%/-47%。
+    // state fp32/bf16 均放行（放宽轮②）：gated update epilogue 原生支持
+    // bf16 final（CAST_RINT 量化同老路径），StateT 在 kernel 分流点选型。
+    // soc 门控（第四处白名单，2026-10-29 A5 零影响加固）：gated 引擎仅
+    // A2/A3（arch22）编译，A5/未来芯片 kernel 无 gated 分支——host 若置
+    // eligible 会强设 blockDim=全核并预留 gated workspace，造成 A5 与基线的
+    // 行为偏差（2af1ad58 起存在的已知偏差，本次按"PR 修改禁止影响 A5"收敛）。
+    tilingCtx.gatedEligible = useG && useExp2 && !stateVFirst &&
+        gateDtypeToken == CHUNK_FWD_H_TPL_FP32 &&
+        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
     tilingCtx.libApiWorkSpaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
+
+    // P1: per-sequence chunk counts (ListInt attr #11, built by l0op from the
+    // host-readable cu_seqlens). Empty/absent list keeps the uniform partition.
+    // 门控白名单（2026-10-29 用户裁定，原 !=ASCEND950 黑名单式改）：仅 DAV_2201
+    // （A2/A3 家族）启用均衡分区——A5（3510）与未来新芯片默认不进，专项验证后
+    // 加白（黑名单式会让未验证的新芯片误入本分支）。
+    tilingCtx.seqChunkCounts = nullptr;
+    tilingCtx.seqCount = 0;
+    const bool socSupportsBalanced =
+        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
+    if (socSupportsBalanced) {
+        const auto *seqChunkList = attrPtr->GetListInt(ATTR_SEQ_CHUNK_COUNTS_IDX);
+        if (seqChunkList != nullptr && seqChunkList->GetSize() > 0) {
+            tilingCtx.seqChunkCounts = seqChunkList->GetData();
+            tilingCtx.seqCount = static_cast<int64_t>(seqChunkList->GetSize());
+        }
+    }
+    // 链摊满 soc 门控（2026-10-29，用户约束"A2 的修改不能影响到 A5"+白名单裁定）：
+    // 仅 DAV_2201（A2/A3 家族——Ascend910B1~B4/B2C/910_93 同归本架构，运行时核数
+    // 经 GetCoreNumAic 自适应）启用；未来新芯片默认不进，待专项验证后加白。
+    // 勿用 !=ASCEND950 黑名单式（新芯片会误入未验证分支）。
+    tilingCtx.spreadChainsAllowed =
+        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
 
     if (tilingCtx.aicCoreNum == 0) {
         OP_LOGE(context->GetNodeName(), "Platform reports zero AIC cores; cannot build ChunkFwdH tiling.");
@@ -189,6 +231,19 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     ChunkFwdHTilingProcessor processor(tilingCtx);
     processor.Process(plainTiling, blockDim, workspaceSize);
 
+    // T16：dense 专用 TILE_ROWS=16 布局选择（arch22 A2/A3 限定）。仅同时满足
+    // ①非 varlen（无尾块、unit 恒切满头）②AIV 每 unit 单 head 链（unitHeads≤2，
+    // 即 slot1/FP32 state1 静态闲置，单 slot 大缓冲 UB 预算成立）时选 1；
+    // 其余形态（变长/4-head unit）恒走原 TILE_ROWS=8 双 slot 路径，行为不变。
+    // unitHeads 由每核 head 数对 FWD_H_AIC_HEAD_SLOTS=4 的切分决定：unit 头数
+    // ≤2 即 headsPerCore ≤2（均分口径 ceil(total/cores)≤2）。
+    // soc 门控白名单（2026-10-29 用户裁定，原 !=ASCEND950 黑名单式改）：仅
+    // DAV_2201（A2/A3）开 T16；A5（3510）arch35 路径零改动；未来新芯片默认
+    // 不进，专项验证后加白。
+    const bool denseT16Eligible = !plainTiling.isVariedLen &&
+        plainTiling.vNumHead <= 2 * static_cast<int64_t>(blockDim) && plainTiling.seqlen > 0 &&
+        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
+
     using namespace GDN;
     const uint64_t tilingKey = GET_TPL_TILING_KEY(
         gateDtypeToken,
@@ -196,7 +251,9 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
         static_cast<uint64_t>(useGk ? 1 : 0),
         static_cast<uint64_t>(useExp2 ? 1 : 0),
         static_cast<uint64_t>(stateDtypeToken == CHUNK_FWD_H_TPL_FP32 ? 1 : 0),
-        static_cast<uint64_t>(stateVFirst ? 1 : 0));
+        static_cast<uint64_t>(stateVFirst ? 1 : 0),
+        static_cast<uint64_t>(storeFinalState ? 1 : 0),
+        static_cast<uint64_t>(denseT16Eligible ? 1 : 0));
     context->SetTilingKey(tilingKey);
     OP_LOGD(context->GetNodeName(), "tilingKey: %lu", static_cast<unsigned long>(tilingKey));
 
@@ -221,6 +278,13 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tiling.set_vUpdateWorkspaceOffset(plainTiling.vUpdateWorkspaceOffset);
     tiling.set_kDecayWorkspaceOffset(plainTiling.kDecayWorkspaceOffset);
     tiling.set_hWorkspaceOffset(plainTiling.hWorkspaceOffset);
+    tiling.set_coreBoundCount(plainTiling.coreBoundCount);
+    tiling.set_coreTaskBounds(plainTiling.coreTaskBounds);
+    tiling.set_gatedGateDataType(plainTiling.gatedGateDataType);
+    tiling.set_gatedStateDataType(plainTiling.gatedStateDataType);
+    tiling.set_gatedTilingOffset(plainTiling.gatedTilingOffset);
+    tiling.set_gatedNumSeqOffset(plainTiling.gatedNumSeqOffset);
+    tiling.set_gatedNumChunksOffset(plainTiling.gatedNumChunksOffset);
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
 
