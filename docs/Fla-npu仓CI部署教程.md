@@ -289,7 +289,7 @@ Stage 耗时统一保存在每台服务器的 `${CI_ROOT}/results/ci-timings/sta
 
 A2 代理回退读取普通用户配置 `CI_PROXY_SCRIPT=${CI_ROOT}/vpn-proxy.sh`，调用 `proxyon`，校验变量不含 CR/LF，再通过 `GITHUB_ENV` 将代理地址与端口传递给后续步骤。管理员须提前在两台主机部署 `nelvko/clashctl` 到 `${CI_ROOT}/clashctl`，并将提供的 `vpn-proxy.sh` 适配副本放到上述位置：运行时配置和二进制路径指向该目录，日志写入 `${CI_ROOT}/tmp/mihomo.log`，权限允许 `ubuntu` 读取配置、执行二进制和写日志。脚本属于主机部署配置，不提交到仓库；workflow 不读取 `/root`、不修改 `HOME` 或全局 Git 配置。
 
-A2/A5 workflow 固定设置 `CI_JOBS=16` 和 `CI_CPACK_JOBS=16`，全量与局部 OPP 构建均使用 `-j16`。`ci/run_checks.sh` 的默认并行度也为 16，并将该值导出为 PyTorch/Ninja 使用的 `MAX_JOBS`；CPack、CMake 和 Make 使用同一并行度设置，cmake/scripts/prepare.sh 也遵循 CMAKE_BUILD_PARALLEL_LEVEL，避免内部 prepare 阶段重新按 CPU 数放大并行度。`FLA_NPU_BUILD_ARGS` 追加 `-j16`，覆盖 wheel 打包内部再次调用 `build.sh` 时的并行度。
+A2/A5 workflow 固定设置 `CI_JOBS=64` 和 `CI_CPACK_JOBS=64`，全量与局部 OPP 构建均使用 `-j64`。`ci/run_checks.sh` 的默认并行度也为 64，并将该值导出为 PyTorch/Ninja 使用的 `MAX_JOBS`；CPack、CMake 和 Make 使用同一并行度设置，cmake/scripts/prepare.sh 也遵循 CMAKE_BUILD_PARALLEL_LEVEL，避免内部 prepare 阶段重新按 CPU 数放大并行度。`FLA_NPU_BUILD_ARGS` 追加 `-j64`，覆盖 wheel 打包内部再次调用 `build.sh` 时的并行度。
 
 runner 使用普通 `ubuntu` 用户，workflow 全程不调用 `sudo`。[一键部署工具](https://github.com/alvazu/fla-npu-ci-deploy)负责创建基础数据目录及配置用户服务；在工具仓库中执行 `bash deploy.sh --platform a5 --ci-root "$CI_ROOT" --setup-host` 可显式启用首次主机准备，A2 将平台改为 `a2`。管理员须提前授予该用户 Docker daemon 访问权限、所列宿主机目录的读写权限及其父目录的遍历权限；手工准备时可执行以下命令，之后重新登录 `ubuntu`，使新组生效，再启动 runner 用户服务：
 

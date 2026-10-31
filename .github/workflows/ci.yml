@@ -396,8 +396,8 @@ jobs:
     env:
       CI_MODE: ${{ needs.prepare.outputs.ci_mode }}
       CI_OPS: ${{ needs.prepare.outputs.ops }}
-      CI_JOBS: '16'
-      CI_CPACK_JOBS: '16'
+      CI_JOBS: '64'
+      CI_CPACK_JOBS: '64'
       CI_PROXY_SCRIPT: /home/huangjunzhe/ci/vpn-proxy.sh
       CI_STAGE: ${{ needs.prepare.outputs.ops == '' && 'all' || 'opp-package' }}
       CI_SOC: ${{ matrix.soc }}
