@@ -14,9 +14,13 @@
 #include "chunk_kda_fwd_prepare_runtime_policy.h"
 #include "chunk_kda_fwd_prepare_struct.h"
 
+// A5（dav-c310）使用 arch35，A6（dav-920r1）使用独立的 arch92 实现。
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #include "arch35/chunk_kda_fwd_prepare_cube.h"
 #include "arch35/chunk_kda_fwd_prepare_vec.h"
+#elif defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+#include "arch92/chunk_kda_fwd_prepare_cube.h"
+#include "arch92/chunk_kda_fwd_prepare_vec.h"
 #else
 #include "arch22/chunk_kda_fwd_prepare_cube.h"
 #include "arch22/chunk_kda_fwd_prepare_vec.h"
@@ -40,7 +44,8 @@ struct PrepareStorageType<CHUNK_KDA_FWD_PREPARE_TPL_FP32> {
     using type = float;
 };
 
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310) && \
+    !(defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
 template <typename GateT, typename BetaT, typename CompilePolicy, bool BF16_RELAY>
 __aicore__ inline void RunArch22Generic(const PrepareKernelArgs &args, AscendC::TPipe *pipe)
 {
@@ -96,6 +101,10 @@ __aicore__ inline void RunPrepare(const PrepareKernelArgs &args)
         Arch35::ChunkKdaFwdPrepareVec<GateT, BetaT, CompilePolicy> vec;
         vec.Init(args);
         vec.Process();
+#elif defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+        Arch92::ChunkKdaFwdPrepareVec<GateT, BetaT, CompilePolicy> vec;
+        vec.Init(args);
+        vec.Process();
 #else
         AscendC::TPipe pipe;
         if constexpr (CompilePolicy::arch22FastLeaf) {
@@ -111,6 +120,10 @@ __aicore__ inline void RunPrepare(const PrepareKernelArgs &args)
     if ASCEND_IS_AIC {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         Arch35::ChunkKdaFwdPrepareCube<CompilePolicy> cube;
+        cube.Init(args);
+        cube.Process();
+#elif defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+        Arch92::ChunkKdaFwdPrepareCube<CompilePolicy> cube;
         cube.Init(args);
         cube.Process();
 #else

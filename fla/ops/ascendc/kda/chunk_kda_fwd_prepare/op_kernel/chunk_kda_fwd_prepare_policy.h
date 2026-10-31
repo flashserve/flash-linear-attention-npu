@@ -140,7 +140,17 @@ constexpr uint32_t kValueDim = 128;
 constexpr uint32_t kSubChunkRows = 16;
 constexpr uint32_t kSubChunkCount = 4;
 constexpr uint32_t kHeadsPerGroup = 4;
+#if (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
+constexpr uint32_t kAivPerAic = 1;
+constexpr uint32_t kHeadsPerAiv = 4;
+constexpr uint32_t kComputeSlotCount = 3;
+constexpr uint32_t kSlotWavesPerGroup = 2;
+#else
 constexpr uint32_t kAivPerAic = 2;
+constexpr uint32_t kHeadsPerAiv = 2;
+constexpr uint32_t kComputeSlotCount = 2;
+constexpr uint32_t kSlotWavesPerGroup = 1;
+#endif
 constexpr uint32_t kBf16MatrixBytes = 0x4000;    // [64,128] * BF16
 constexpr uint32_t kGateMatrixBytes = 0x8000;    // [64,128] * FP32
 constexpr uint32_t kScoreMatrixBytes = 0x4000;   // [64,64] * FP32
@@ -268,11 +278,20 @@ static_assert(kRhsLane[1] + 0x10000 <= L1::kCapacity);
 } // namespace Arch22L1
 
 namespace Arch35Ub {
+#if (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
+constexpr uint32_t kCapacity = 0x5E000; // 376 KiB
+#else
 constexpr uint32_t kCapacity = 0x3E000; // 248 KiB
+#endif
 constexpr uint32_t kComputeSlotBytes = 0x1C000;
 constexpr uint32_t kStateBytes = 0x03000;
+#if (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
+constexpr uint32_t kComputeSlotBase[3] = {0x00000, 0x1C000, 0x38000};
+constexpr uint32_t kStateBase[3] = {0x54000, 0x57000, 0x5A000};
+#else
 constexpr uint32_t kComputeSlotBase[2] = {0x00000, 0x1C000};
 constexpr uint32_t kStateBase[2] = {0x38000, 0x3B000};
+#endif
 
 // V0/V1 的主计算区。
 constexpr uint32_t kQ = 0x0000;
