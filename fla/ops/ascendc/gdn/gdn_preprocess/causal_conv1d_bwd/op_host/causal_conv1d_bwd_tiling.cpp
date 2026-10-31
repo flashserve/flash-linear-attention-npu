@@ -64,6 +64,40 @@ using Ops::Base::CeilAlign;
 using Ops::Base::CeilDiv;
 using namespace Ops::Transformer::OpTiling;
 
+static ge::graphStatus CheckDtypes(gert::TilingContext *context, ge::DataType xDtype)
+{
+    const uint32_t requiredInputIndices[] = {WEIGHT_INPUT_INDEX, DY_INPUT_INDEX};
+    const char *requiredInputNames[] = {"weight", "dy"};
+    for (size_t i = 0; i < sizeof(requiredInputIndices) / sizeof(requiredInputIndices[0]); i++) {
+        const auto *desc = context->GetInputDesc(requiredInputIndices[i]);
+        OP_CHECK_NULL_WITH_CONTEXT(context, desc);
+        OP_CHECK_IF(desc->GetDataType() != xDtype,
+                    OP_LOGE(context, "%s dtype %d must match x dtype %d", requiredInputNames[i],
+                            static_cast<int>(desc->GetDataType()), static_cast<int>(xDtype)),
+                    return ge::GRAPH_FAILED);
+    }
+
+    const uint32_t optionalInputIndices[] = {Y_INPUT_INDEX, INITIAL_STATE_INPUT_INDEX, DHT_INPUT_INDEX};
+    const char *optionalInputNames[] = {"y", "initial_state", "dht"};
+    for (size_t i = 0; i < sizeof(optionalInputIndices) / sizeof(optionalInputIndices[0]); i++) {
+        const auto *desc = context->GetOptionalInputDesc(optionalInputIndices[i]);
+        OP_CHECK_IF(desc != nullptr && desc->GetDataType() != xDtype,
+                    OP_LOGE(context, "%s dtype %d must match x dtype %d", optionalInputNames[i],
+                            static_cast<int>(desc->GetDataType()), static_cast<int>(xDtype)),
+                    return ge::GRAPH_FAILED);
+    }
+
+    const char *outputNames[] = {"dx", "dw", "db", "dh0"};
+    for (size_t i = 0; i < sizeof(outputNames) / sizeof(outputNames[0]); i++) {
+        const auto *desc = context->GetOutputDesc(i);
+        OP_CHECK_IF(desc != nullptr && desc->IsExist() && desc->GetDataType() != xDtype,
+                    OP_LOGE(context, "%s dtype %d must match x dtype %d", outputNames[i],
+                            static_cast<int>(desc->GetDataType()), static_cast<int>(xDtype)),
+                    return ge::GRAPH_FAILED);
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
 static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
 {
     CausalConv1dBwdTilingData *tiling = context->GetTilingData<CausalConv1dBwdTilingData>();
@@ -77,6 +111,9 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     auto xDesc = context->GetInputDesc(X_INPUT_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, xDesc);
     auto xDtype = xDesc->GetDataType();
+    if (CheckDtypes(context, xDtype) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     bool isB16Input = (xDtype == ge::DT_BF16 || xDtype == ge::DT_FLOAT16);
     uint32_t B = 0;
     uint32_t T = 0;
@@ -90,7 +127,14 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     uint32_t activation = ACTIVATION_NONE;
     auto attrs = context->GetAttrs();
     if (attrs != nullptr && attrs->GetAttrNum() > ATTR_ACTIVATION_INDEX) {
-        activation = *(attrs->GetAttrPointer<uint32_t>(ATTR_ACTIVATION_INDEX));
+        const int64_t *activationPtr = attrs->GetAttrPointer<int64_t>(ATTR_ACTIVATION_INDEX);
+        OP_CHECK_NULL_WITH_CONTEXT(context, activationPtr);
+        OP_CHECK_IF(*activationPtr != ACTIVATION_NONE && *activationPtr != ACTIVATION_SILU &&
+                        *activationPtr != ACTIVATION_SWISH,
+                    OP_LOGE(context, "unsupported activation %ld, expect 0 (None), 1 (SiLU) or 2 (Swish)",
+                            *activationPtr),
+                    return ge::GRAPH_FAILED);
+        activation = static_cast<uint32_t>(*activationPtr);
     }
     const char *inputLayoutStr = "BSND";
     if (attrs != nullptr && attrs->GetAttrNum() > ATTR_INPUT_LAYOUT_INDEX) {
