@@ -457,9 +457,6 @@ for name in (
     "torch_npu",
     "triton",
     "pybind11",
-    "torchnpugen.gen_op_plugin_functions",
-    "torchnpugen.gen_backend_stubs",
-    "torchnpugen.struct.gen_struct_opapi",
 ):
     try:
         importlib.import_module(name)
@@ -493,8 +490,8 @@ PY
         echo "[CI][ERROR] Installed fla_npu OPP is incomplete." >&2
         return 1
     fi
-    export ASCEND_CUSTOM_OPP_PATH="${vendor_dir}:${vendor_dir}/op_api/lib${ASCEND_CUSTOM_OPP_PATH:+:${ASCEND_CUSTOM_OPP_PATH}}"
-    export FLA_NPU_OPP_PATH="$vendor_dir"
+    export ASCEND_CUSTOM_OPP_PATH="${vendor_dir}${ASCEND_CUSTOM_OPP_PATH:+:${ASCEND_CUSTOM_OPP_PATH}}"
+    export FLA_NPU_OPP_PATH="${package_dir}/opp"
     export FLA_NPU_OP_API_LIB="${vendor_dir}/op_api/lib/libcust_opapi.so"
     export LD_LIBRARY_PATH="${vendor_dir}/op_api/lib:${LD_LIBRARY_PATH:-}"
 }
@@ -503,6 +500,11 @@ check_environment_contracts() {
     python3 tests/test_wheel_environment.py -b
     python3 torch_custom/fla_npu/tools/stable_coverage.py --strict
     python3 torch_custom/fla_npu/tools/op_abi_parity.py
+    python3 tests/test_opp_overlay.py -b
+    python3 tests/test_opp_abi_contract.py -b
+    python3 tests/test_stable_gates.py -b
+    python3 tests/test_stable_only_runtime.py -b
+    python3 tests/test_stable_build_policy.py -b
     python3 torch_custom/fla_npu/test/test_aclnn_ctypes_abi.py -b
     python3 torch_custom/fla_npu/test/test_runtime_device_guard.py -b
     python3 torch_custom/fla_npu/test/test_ascendc_mutation_contract.py -b
@@ -512,7 +514,6 @@ ops_arg=()
 if [[ -n "$ci_ops" ]]; then
     ops_arg=(--ops="$ci_ops")
 fi
-
 build_opp_run_package() {
     bash ci/prepare_ci_cache.sh
     case "$ci_mode" in

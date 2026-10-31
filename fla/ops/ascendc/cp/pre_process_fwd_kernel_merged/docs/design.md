@@ -1296,7 +1296,7 @@ GVA 只出现在 g-only 路径，DPLR 不支持、不进用例）。
 | `hm` 前导维（原第 10 项） | **链条数 `Nseq = len(cu_seqlens)-1`**；等价说法"我们第 i 份 == 竞品对第 i 段单独调用" | 竞品"跨卡每一次调用"是 `[HV,K,V+K]`（无前导维，`MULTI_SEQS=False`）、"卡内切段"是 `[S_split,HV,K,V+K]`（`MULTI_SEQS=True`）；我们保留前导维 = 两者并集，`Nseq=1` 时与竞品跨卡形态逐字节相同。见 1.1、1.4、`api.md` §2.3 |
 | 序列表达（2026-09-22 新增） | **只保留 varlen 打包窗口**：`B ≡ 1`、`cu_seqlens` 必给、`Nseq = len(cu_seqlens)-1`；等长 batch 由调用方打包成等长多段 | 与竞品 CP 契约一致（"CP expects `B == 1` for varlen"）；`B>1` 在 CP 下不可达（非 CP 下竞品 wrapper 直接 return）。见 `api.md` §2.1/§5、本文 1.1/1.2 |
 | UB/L1 口径 | **硬上限**取平台实测值（L1 512 / UB 248 KiB）；**设计预算**（448 / 224）只是本设计预留，实际占用按**目标芯片 + 目标 CANN 版本**的组件实测重算 | 见 3.1、3.5；换芯片必须重算地址图 |
-| Python 落地形态 | `from fla_npu.ops.ascendc import pre_process_fwd_kernel_merged`（同时导出 `npu_` 前缀），调用示例与接入落点见 `api.md` §3 | 与仓内 `_aclnn_ctypes.py` 的注册/调用约定一致 |
+| Python 落地形态 | `from fla_npu.ops.ascendc import pre_process_fwd_kernel_merged`（同时导出 `npu_` 前缀），调用示例与接入落点见 `api.md` §3 | 与仓内 `_stable.py` 和 Stable dispatcher 的注册/调用约定一致 |
 
 **已定稿（用户确认，2026-09-21）**：`K`、`V`、`chunk_size` 均写死为固定规格
 （128 / 128 / 64），host 拦截其它值，依据见 3.4。**GVA 保留**，因此 `HK` 与 `HV`

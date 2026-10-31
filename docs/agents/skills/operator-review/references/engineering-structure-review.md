@@ -27,7 +27,7 @@
 3. `arch22`、`arch35` 是否在规范位置，最终 include 是否只有一个；
 4. `op_kernel` 是否薄入口，平台实现是否按 struct/common/cube/vec 等角色拆分；
 5. 新增的 `.h` 是否能对应样例角色，是否存在空壳、重复声明或兼容转发文件；
-6. 稳定入口、ctypes、legacy 入口是否按仓库边界组织，不在主入口 import `torch_npu`；
+6. 算子是否统一经 Stable ABI 执行，旧 `torch.ops.npu` 调用是否仅使用显式安装的 Python 兼容别名，不在主入口 import `torch_npu`；标准库 ctypes 的库加载与能力查询不属于算子执行后端；
 7. 测试是否位于仓库既有 `tests/atk/<op>/` 或 `tests/operators/<op>/` 体系，而不是散落在算子目录。
 
 ## 3. 文件腐蚀

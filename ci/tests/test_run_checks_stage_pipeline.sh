@@ -79,6 +79,7 @@ bash() {
             return 24
         fi
         mkdir -p build_out
+        mkdir -p build/fake/packages/vendors/fla_npu_transformer/op_api/include/aclnnop
         printf '#!/usr/bin/env bash\nexit 0\n' >build_out/fla_npu_linux-stage-test.run
         chmod +x build_out/fla_npu_linux-stage-test.run
     fi

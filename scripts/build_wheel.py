@@ -26,10 +26,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# Lowest torch whose stable headers/symbols the launcher was verified against.
-# Built against 2.9 headers, loaded and run under 2.7.1 (241: py3.10 +
-# torch 2.7.1.post5 + torch_npu 2.7.1.post5, full Ascend950 scenario set).
-STABLE_ABI_MIN_TORCH = "2.7.1"
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+from stable_build_policy import (  # noqa: E402
+    LAUNCHER_FILES, RUNTIME_REQUIREMENTS, reject_legacy_artifacts,
+    validate_build_options, validate_launcher_payload, validate_build_stamp,
+)
 
 # 一键编包的阶段划分与权重。权重和实际耗时大致同量级：编译算子占大头。
 _PROGRESS_STAGES: tuple[tuple[str, float], ...] = (
@@ -416,63 +417,46 @@ def _install_command(wheel_path: Path) -> str:
 
 
 def _prepare_abi_free_launcher() -> None:
-    """Stage the ABI-free launcher the wheel will carry.
-
-    ``pip wheel`` builds in a temporary copy of the project, so preparing the
-    package directory here (before the wheel is built) is what actually decides
-    what ships: pure Python plus ``libfla_npu_stable.so``, with no CPython ABI
-    and no libtorch C++ ABI.  A pure-ctypes wheel is
-    ``FLA_NPU_BUILD_STABLE_ABI=0``.
-    """
-
+    """Stage the mandatory launcher and build stamp before pip copies sources."""
+    validate_build_options()
     package_dir = REPO_ROOT / "torch_custom" / "fla_npu" / "fla_npu"
-    if not package_dir.is_dir():
-        return
-    if os.getenv("FLA_NPU_BUILD_STABLE_ABI", "TRUE").upper() in {
-            "0", "FALSE", "NO", "OFF"}:
-        return
-    builder = (REPO_ROOT / "torch_custom" / "fla_npu" / "csrc"
-               / "build_stable.py")
+    reject_legacy_artifacts(package_dir)
+    builder = REPO_ROOT / "torch_custom" / "fla_npu" / "csrc" / "build_stable.py"
     if not builder.is_file():
-        # 老分支没有 Stable-ABI 源码（csrc/），此时按纯 ctypes wheel 处理，
-        # 不要因为缺少构建脚本直接失败。
-        print("[fla-npu build] stable-ABI launcher sources not found; "
-              "building a pure-ctypes wheel", flush=True)
-        return
+        raise RuntimeError(f"Required Stable-ABI builder is missing: {builder}")
     target = package_dir / "libfla_npu_stable.so"
     subprocess.run([sys.executable, str(builder), "--no-debug-probe",
                     "--out", str(target)], check=True)
+    validate_launcher_payload(package_dir)
     print(f"[fla-npu build] staged {target.name} ({target.stat().st_size} bytes)",
           flush=True)
 
 
 def _inject_runtime_pins(wheel_path: Path) -> None:
-    """Add Requires-Dist pins to a wheel that carries a compiled launcher.
+    """Validate mandatory launcher payload and normalize runtime metadata.
 
-    pyproject.toml owns ``[project]`` metadata, so ``install_requires`` in
-    setup.py is ignored; the pins have to be injected into the produced wheel.
-
-    The Stable-ABI wheel (``libfla_npu_stable.so``) only needs the
-    ``aoti_torch_*`` runtime symbols, which exist from 2.7.1 on, so it declares a
-    *lower bound*: one wheel then serves every torch/torch_npu above it.
+    Both setup.py entry points declare these requirements directly. Keep this
+    final wheel check for artifacts produced by external build backends, too.
     """
 
     with zipfile.ZipFile(wheel_path) as archive:
         infos = archive.infolist()
         blobs = {info.filename: archive.read(info.filename) for info in infos}
 
-    has_stable = any(name.endswith("libfla_npu_stable.so") for name in blobs)
-    if has_stable:
-        pins = [f"torch>={STABLE_ABI_MIN_TORCH}",
-                f"torch_npu>={STABLE_ABI_MIN_TORCH}"]
-    else:
-        return  # pure-ctypes wheel: nothing to declare
-    if not pins:
-        return
+    for required in LAUNCHER_FILES:
+        if not any(name.endswith("fla_npu/" + required) and blob
+                   for name, blob in blobs.items()):
+            raise RuntimeError(f"Wheel is missing required Stable-ABI payload: {required}")
+    if any("custom_aclnn_extension_lib" in name for name in blobs):
+        raise RuntimeError("Wheel contains an unsupported legacy extension")
+    validate_build_stamp(next(blob for name, blob in blobs.items()
+                              if name.endswith("fla_npu/ops/ascendc/_stable_hash.py")))
+    pins = RUNTIME_REQUIREMENTS
     meta_name = next(name for name in blobs
                      if name.endswith(".dist-info/METADATA"))
     meta = blobs[meta_name].decode("utf-8")
-    if any(f"Requires-Dist: {pin}" in meta for pin in pins):
+    pins = [pin for pin in pins if f"Requires-Dist: {pin}" not in meta]
+    if not pins:
         return
     lines = meta.splitlines()
     insert_at = len(lines)

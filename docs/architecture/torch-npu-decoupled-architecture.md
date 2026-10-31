@@ -52,9 +52,9 @@ Python 用户代码
 本仓的目标不是让任意 torch 与任意 torch_npu 自动兼容，也不是用 Python 替代 CANN，而是：
 
 - 默认 wheel 不包含 PyTorch C++ extension。
-- 默认构建不读取 torch、torch_npu、CPython extension 或 C++ ABI（Stable-ABI 适配层用 vendored 的 `torch/csrc/stable` 头编译，不引用已安装 torch 的 include 路径）。
+- launcher 构建优先使用仓内 vendored `torch/csrc/stable` 头，并链接已安装 torch 的 `libtorch_cpu` / `libc10` / `libtorch` 以解析 C ABI shim。torch include 仅作后备；不使用 torch_npu 代码生成或 CPython 扩展构建。
 - torch 和 torch_npu 只需在目标环境中共同提供可用的 Ascend PyTorch NPU 运行时能力。
-- 调用稳定的 `aclnn*` C 接口：默认走一层 Stable-ABI 适配层（`libfla_npu_stable.so`，只依赖 `torch/csrc/stable` 的 C 面），它注册进 torch dispatcher，但不绑 CPython ABI、也不绑 libtorch C++ ABI；Python `ctypes` 直调保留为参考实现与回退。
+- 调用稳定的 `aclnn*` C 接口：默认走一层 Stable-ABI 适配层（`libfla_npu_stable.so`，只依赖 `torch/csrc/stable` 的 C 面），它注册进 torch dispatcher，但不绑 CPython ABI、也不调用 libtorch C++ 接口；Stable 是唯一执行后端。
 - 用运行时能力探测和真实测试矩阵证明兼容范围，而不是用构建环境版本号锁死范围。
 
 ## 2. 如何完成解耦
@@ -66,7 +66,7 @@ Python 用户代码
 - **构建期依赖**：生成目标 SoC 的 OPP、op_api 动态库和 wheel 时必须存在。
 - **运行期依赖**：用户真正调用算子时，由目标 Python 环境提供。
 
-旧路径在构建期同时引入 CANN、PyTorch、torch_npu、CPython 和 C++ ABI。新路径的构建期只使用 CANN（外加一份 vendored 的 Stable-ABI 头用来编适配层）；torch tensor、NPU device、current stream、autograd 和可选图编译能力改为运行时读取，由适配层在运行期对接 torch 的 dispatcher。
+旧路径在构建期同时引入 CANN、PyTorch、torch_npu、CPython 和 C++ ABI。新路径的构建期使用 CANN、C++ 编译工具、vendored Stable 头文件和 torch 链接库；torch tensor、NPU device、current stream、autograd 和可选图编译能力改为运行时读取，由适配层在运行期对接 torch 的 dispatcher。
 
 ### 2.2 组件关系和上下游边界
 
@@ -83,7 +83,6 @@ Python 用户代码
 | torch Python tensor API | 目标环境中的 tensor 对象 | data pointer、shape、stride、dtype、device、输出分配 | 否，运行时读取 |
 | Ascend PyTorch NPU 运行时能力 | 通常由目标环境中的 torch_npu 提供 | NPU allocator、device guard、current stream 和 NPU tensor 执行能力 | 否，运行时读取 |
 | Stable-ABI 适配层 `libfla_npu_stable.so` | Python wrapper 整理后的参数，经 boxed schema 进入 C++ | `aclnn*GetWorkspaceSize` / `aclnn*` C 调用 | 是，但只对 `torch/csrc/stable` 的 C 面，不绑 CPython / libtorch C++ ABI |
-| Python ctypes bridge（参考实现 / 回退） | Python wrapper 整理后的 tensor metadata 和参数 | `aclnn*GetWorkspaceSize` / `aclnn*` C 调用 | 否，纯 Python 调用层 |
 | wheel 内嵌 OPP | 构建期生成的 op_api、op_host、tiling 和 kernel | CANN runtime 可发现、可加载的自定义算子 | 作为数据和动态库随 wheel 交付 |
 | CANN runtime / driver | aclnn executor、workspace、stream、OPP 注册信息 | 在指定 NPU stream 上 enqueue kernel | 否，由目标机器提供 |
 | torch autograd / `torch.library` / compiler | 用户选择的训练或图编译能力 | 可选正反向、schema、FakeTensor 和图捕获 | 否，按需在运行时适配 |
@@ -92,13 +91,13 @@ Python 用户代码
 
 | 旧构建步骤 | 新构建步骤 | 解耦效果 |
 | --- | --- | --- |
-| 运行 torchnpugen / op-plugin 生成 C++ dispatcher 代码 | 默认跳过；仅 legacy 构建显式启用 | 不绑定 torch_npu 生成代码和注册机制 |
-| `CppExtension` include/link ATen、c10、libtorch、libtorch_npu | 默认不构建该扩展 | 不绑定 torch minor、torch_npu 和 C++ ABI |
-| 生成 `custom_aclnn_extension_lib*.so` 并由 `torch.ops.load_library()` 加载 | 默认只加载 `libfla_npu_stable.so`：同样走 `load_library()`，但它是普通共享库，不是 CPython extension | 不绑定 CPython extension ABI，也不绑定 libtorch C++ ABI |
+| 运行 torchnpugen / op-plugin 生成 C++ dispatcher 代码 | 已删除代码生成入口和 legacy 配置 | 不绑定 torch_npu 生成代码和注册机制 |
+| `CppExtension` include/link ATen、c10、libtorch、libtorch_npu | 已删除该扩展构建 | 不绑定 torch minor、torch_npu 和 C++ ABI |
+| 生成 `custom_aclnn_extension_lib*.so` 并由 `torch.ops.load_library()` 加载 | 只加载 `libfla_npu_stable.so`：同样走 `load_library()`，但它是普通共享库，不是 CPython extension | 不绑定 CPython extension ABI，也不绑定 libtorch C++ ABI |
 | wheel tag 携带 `cp311`、平台和 C++ ABI 信息 | wheel tag 为 `py3-none-<platform>`：平台照实写，Python 与 ABI 留空 | 同一 host/SoC wheel 可覆盖多个 Python minor 和已验证框架组合 |
 | 每次框架升级重新编译桥接扩展 | 运行时做 capability probe 和测试 | 框架升级不再天然要求重编 OPP wheel |
 
-legacy `torch.ops.npu.*` 兼容路径仍可通过 `FLA_NPU_BUILD_LEGACY_EXTENSION=1` 构建，但它是显式 opt-in，不属于默认解耦交付。
+legacy 扩展构建、加载及 `torch.ops.npu` 注册已删除；`install_torch_npu_ops_compat()` 仍可显式安装调用 Stable 的纯 Python 别名。`FLA_NPU_BUILD_LEGACY_EXTENSION=1` 会报错，旧调用方必须迁移到 `fla_npu.ops.ascendc`。
 
 ### 2.4 依赖在哪个阶段确定
 
@@ -121,16 +120,16 @@ legacy `torch.ops.npu.*` 兼容路径仍可通过 `FLA_NPU_BUILD_LEGACY_EXTENSIO
 1. root import 验证 CANN 环境，只从当前 Python 包固定路径定位 custom OPP。
 2. runtime 以 `RTLD_LOCAL | RTLD_NOW | RTLD_NODELETE` 先加载 CANN `libopapi.so`，再通过绝对路径加载包内 `libcust_opapi.so`。
 3. runtime 保存 `[custom, CANN]` 两个句柄，后续逐句柄查找符号；同名 `aclnn*` 命中 custom，custom 没有的基础符号回退到 CANN。
-4. 公共入口逐算子选后端：适配层里有同名函数就走适配层，没有才回落 ctypes。当前 32 个公开算子全部走适配层；`BACKENDS` / `FALLBACKS` 记录每个算子实际用了哪条、为什么回落，`FLA_NPU_STABLE_TRACE=1` 打到 stderr，`stable_ctypes_fallbacks.py` 在离线门禁里禁止回退。
+4. 公共入口只解析 `_stable.py` 中的同名 wrapper；当前 38 个公开入口全部要求 Stable 实现。launcher 缺失、构建戳缺失/不匹配或注册缺失直接报错。`stable_coverage.py` 检查公开 API 到编译入口的覆盖，`stable_ctypes_fallbacks.py` 作为禁用旧后端的源码门禁保留文件名。
 5. 适配层路径：`_stable.py` 的真签名 wrapper 把参数整理成 dispatcher 认识的形式（`_host_ints` 把 host int 数组转成 CPU int64 tensor、`_char_code` 把 layout 字符串转 int code），调用 `torch.ops.fla_npu_stable.<op>`。
 6. `boxed_adapter<run_<op>>` 按 `kSchema_<op>` 从 boxed 栈上取出每个参数（`to<Tensor>` 消费栈引用），交给 `run_<op>`。
 7. `run_<op>` 按输出 shape 规则分配输出，再由一条 `FLA_STABLE_EXEC` 完成：从第一个 NPU 输入的 meta 推出 workspace 设备、解析 `aclnn*` 符号、建 RAII holder（aclTensor / aclIntArray / 字符串 / 标量，活到 launch 之后）、调用 `<aclnnOp>GetWorkspaceSize`、在该设备上分配 workspace、调用 `<aclnnOp>(workspace, size, executor, stream)`。
 8. 下发方式由库自己决定：解析得到 torch_npu 任务队列入口时把描述符交给队列（与 vLLM 的 `EXEC_NPU_CMD` 同路），否则内联直投。`stream` 由 `_current_stream_ptr()` 每次现取，用哪把 accessor 与下发方式配对，**不缓存**。
 9. 返回：`boxed_adapter` 把输出按返回值类型打回 boxed 栈（`Tensor?` 走 boxed optional）；输出 tensor 由返回值和调用方持有，workspace 在调用线程的帧内释放、由 caching allocator 按 stream 顺序复用，descriptor 在 launch 提交后销毁。
 
-ctypes 回退路径（`FLA_NPU_STABLE_ABI=ctypes`，或算子不在适配层里）仍是纯 Python：wrapper 按 `aclnn_*.h` 组织参数并分配输出 → `_runtime.py` 从输出 tensor 确定目标 device、进入 `torch.npu.device(target)` guard、读取 tensor 元信息建 ACL descriptor → ctypes 调用 `<aclnnOp>GetWorkspaceSize` → 分配 workspace → 读取 `torch.npu.current_stream(target)` 的 stream pointer → ctypes 调用 `<aclnnOp>(workspace, size, executor, stream)` → 销毁 descriptor、退出 guard。它的参数接受面更宽松，但每次调用都要在 Python 里重建一遍描述符，host 开销是适配层的数倍，所以只作参考与回退。
+Python ctypes 执行后端已删除；标准库 `ctypes.CDLL` 仍可用于加载动态库和读取能力/构建戳，不构成第二条算子执行路径。
 
-两条路径都不查找 `torch.ops.npu.<op>`，也都不加载 `custom_aclnn_extension_lib*.so`。适配层是 `torch.ops.load_library()` 加载的普通共享库：它用到 dispatcher，但不是 CPython extension。
+当前路径不查找 `torch.ops.npu.<op>`，也不加载 `custom_aclnn_extension_lib*.so`。适配层是 `torch.ops.load_library()` 加载的普通共享库：它用到 dispatcher，但不是 CPython extension。
 
 ### 2.6 wheel 中实际交付什么
 
@@ -144,8 +143,8 @@ site-packages/
         __init__.py
         _stable.py
         _stable_hash.py
-        _runtime.py
-        _aclnn_ctypes.py
+        _argument_utils.py
+        _kda_policy.py
       triton/
         __init__.py
         triton_core/
@@ -215,13 +214,13 @@ import 不会因此导入 `torch`、`torch_npu` 或注册 legacy dispatcher。
 
 | 原组件 | 原本提供的能力 | 解耦后的状态 | 能力类别 |
 | --- | --- | --- | --- |
-| `custom_aclnn_extension_lib*.so` | 把 torch tensor 转为 aclnn 参数；承接 C++ dispatcher 调用 | 默认不构建；改由 Stable-ABI 适配层完成，Python `ctypes` 作为参考实现与回退 | 基础调用 |
-| dispatcher schema | 可声明参数、返回值、alias、inplace mutation 和默认值；只有 schema 写准确才生效 | 适配层用 `STABLE_TORCH_LIBRARY` 注册 `kSchema_<op>`，schema 是真的；ctypes 回退路径没有 schema，靠 wrapper 声明加 `MUTATED_ARGUMENTS` 兜底 | 功能正确性 |
+| `custom_aclnn_extension_lib*.so` | 把 torch tensor 转为 aclnn 参数；承接 C++ dispatcher 调用 | 构建和加载入口已删除；由 Stable-ABI 适配层完成 | 基础调用 |
+| dispatcher schema | 可声明参数、返回值、alias、inplace mutation 和默认值；只有 schema 写准确才生效 | 适配层用 `STABLE_TORCH_LIBRARY` 注册 `kSchema_<op>`，schema 对 dispatcher 可见；Python `MUTATED_ARGUMENTS` 继续管理 eager 状态更新契约 | 功能正确性 |
 | Ascend PyTorch NPU 运行时能力（通常由 torch_npu 提供） | NPU device 注册、allocator、device guard、stream、NPU dispatch key 等运行时能力 | 仍由目标环境提供，但 fla_npu 不默认 import torch_npu，也不链接其 C++ ABI | 功能正确性 |
 | torch_npu derivatives / dispatcher autograd | 自动把 forward 和 backward 注册到 autograd | 默认不使用；改由 Python 公共入口绑定 | 易用性 |
 | dispatcher 的 FakeTensor / functionalization 接入 | 帮助 `torch.compile`、`torch.export` 和图变换理解算子 | schema 有了，但没有 FakeTensor / functionalization 实现，图编译仍不能直接吃；按需补 Python `torch.library` adapter | 易用性 + 正确性 |
 | dispatcher autocast / vmap 注册 | 自动混合精度和向量化批处理扩展点 | 默认缺失；有需求的算子按需注册 | 易用性 |
-| torch ops 命名空间 | `torch.ops.npu.<op>` 统一调用入口 | 仅保留 legacy opt-in；推荐 `fla_npu.ops.ascendc.<op>` | 易用性 |
+| torch ops 命名空间 | `torch.ops.npu.<op>` 统一调用入口 | 旧兼容入口已删除；使用 `fla_npu.ops.ascendc.<op>` | 易用性 |
 | CANN op_api / OPP | aclnn 两段式接口、op_host、tiling、kernel 注册和执行 | 完整保留并随 wheel 交付 | 基础调用 + 正确性 |
 
 ### 3.2 两类能力要用不同方法补回
@@ -230,7 +229,7 @@ import 不会因此导入 `torch`、`torch_npu` 或注册 legacy dispatcher。
 
 - 稳定 import 路径。
 - forward/backward 自动绑定。
-- legacy API 迁移提示。
+- 旧 API 的迁移说明与已删除模式的明确报错。
 - 可选 `torch.compile`、`torch.export`、autocast 和 vmap 集成。
 
 这些能力主要在 Python 公共入口或可选 `torch.library` adapter 中恢复，不应为了方便再次引入 PyTorch C++ extension。
@@ -257,13 +256,13 @@ from fla_npu.ops.ascendc import chunk_fwd_o
 from fla_npu.ops.triton import chunk_local_cumsum
 ```
 
-`fla_npu.ops.ascendc.__init__` 维护公开名字、raw op 和高层 wrapper 的映射。默认后端是 `csrc/` 编出的适配层：C++ 适配一个算子一个文件，写在 `csrc/src/stable_<op>.cpp`，Python 真签名 wrapper 放在 `_stable.py`；`_aclnn_ctypes.py` 是 ctypes 参考实现，公共 device/stream/descriptor 逻辑放在 `_runtime.py`。独立算子开发者只需要写自己那一个算子的适配，公共 runtime 不用复制。
+`fla_npu.ops.ascendc.__init__` 维护公开名字、raw op 和高层 wrapper 的映射。默认后端是 `csrc/` 编出的适配层：C++ 适配一个算子一个文件，写在 `csrc/src/stable_<op>.cpp`，Python 真签名 wrapper 放在 `_stable.py`；纯参数工具放在 `_argument_utils.py`，公共 descriptor/workspace 逻辑放在 `csrc/include/stable/`。独立算子开发者只需要写自己那一个算子的适配，公共 runtime 不用复制。
 
 ### 4.2 自动求导
 
 解耦后不使用 torch_npu derivatives 生成。高层入口通过 Python `torch.autograd.Function` 绑定 forward/backward：
 
-1. raw forward / raw backward 按 aclnn ABI 实现：默认是适配层（`csrc/src/stable_<op>.cpp` + `_stable.py`），ctypes 参考实现放在 `_aclnn_ctypes.py`。
+1. raw forward / raw backward 按 aclnn ABI 实现：仅通过适配层（`csrc/src/stable_<op>.cpp` + `_stable.py`）。
 2. `BACKWARD_OPS` 记录 forward 与 backward 的对应关系。
 3. 高层 wrapper 根据 run mode、optional 参数和 `requires_grad` 判断是否能安全绑定。
 4. forward 使用 `save_for_backward` 保存反向真正需要的 tensor。
@@ -293,23 +292,17 @@ from fla_npu.ops.triton import chunk_local_cumsum
 
 每增加一种扩展点，都必须进入对应 torch 版本测试矩阵；不能仅凭注册成功宣称数值和状态语义正确。
 
-### 4.5 legacy 调用兼容
+### 4.5 旧调用方迁移
 
-旧用户可以显式调用：
-
-```python
-import fla_npu
-
-fla_npu.load_legacy_torch_ops()
-```
-
-该函数加载 `custom_aclnn_extension_lib*.so`，注册 `torch.ops.npu.*`，并安装弃用提示。它重新引入 torch_npu dispatcher 和 C++ ABI 依赖，只用于迁移和兼容性测试，不是默认安装后的必需步骤。
+旧 `load_legacy_torch_ops()` 及 legacy 扩展已删除；`install_torch_npu_ops_compat()` 保留为纯 Python 别名安装器，全部调用 Stable。
+调用方和仓内测试统一使用 `fla_npu.ops.ascendc`；完整迁移表见[兼容与迁移指南](../兼容与迁移指南.md)。
+KDA `implementation="legacy"` 是 Stable 内部保留的原 fused 算法选择，与旧扩展无关。
 
 ## 5. 功能正确性能力如何保证
 
 ### 5.1 alias、inplace mutation 和 cache 状态
 
-dispatcher schema 可以用 `Tensor(a!)` 表示某个 tensor 会被原地修改，并通过 alias 标记表达返回值与输入共享 storage。适配层用 `STABLE_TORCH_LIBRARY` 把算子注册进 dispatcher，所以 schema 里写下的这些标记 dispatcher 能看到（`npu_recurrent_gated_delta_rule` / `npu_recurrent_kda` 的 state 就是这么标的）；ctypes 直接把 data pointer 交给 kernel，PyTorch 看不见写入，只能靠下面的 wrapper 契约补。
+dispatcher schema 可以用 `Tensor(a!)` 表示某个 tensor 会被原地修改，并通过 alias 标记表达返回值与输入共享 storage。适配层用 `STABLE_TORCH_LIBRARY` 把算子注册进 dispatcher，所以 schema 里写下的这些标记 dispatcher 能看到（`npu_recurrent_gated_delta_rule` / `npu_recurrent_kda` 的 state 就是这么标的）；未在 schema 中声明的状态修改仍需通过下面的 wrapper 契约补齐。
 
 ![状态修改的 wrapper 契约](../assets/fla-npu-mutation-contract.svg)
 
@@ -331,13 +324,12 @@ wrapper 必须明确选择以下一种语义：
 每次 aclnn 调用都遵守以下规则：
 
 1. 目标 NPU device 由输入/输出的 device meta 决定：适配层在 `acl_meta.h` 里直接读 tensor 的
-   `device_type` / `device_index`；ctypes 路径从非空输出 tensor 推导。
+   `device_type` / `device_index`。
 2. 所有输入和输出必须位于同一 device；不隐式跨卡拷贝。
 3. workspace 按目标 device 分配：适配层把 meta 里的 `device_type` / `device_index` 直接交给分配接口。
 4. stream 不做进程级缓存：适配层由 `_stable.py::_current_stream_ptr()` 每次现取当前 device 的 raw
-   stream，ctypes 路径走 `torch.npu.current_stream(target_index)`。
-5. ctypes 路径在 `torch.npu.device(target_index)` guard 内创建 descriptor、分配 workspace 和 launch，
-   退出后恢复调用方原 device；适配层不切 guard，descriptor 直接从 tensor meta 建。
+   stream。
+5. 适配层 descriptor 直接从 tensor meta 构造；调用方须保证当前 device 和输入所在 device 一致。
 
 因此，输入在 `npu:2` 时算子就在 `npu:2` 上执行。多卡场景请在调用前把当前 device 设为目标设备
 （`torch.npu.set_device()` 或 guard），适配层取的是当前 device 的 stream。跨卡输入必须由调用方提前搬运。
@@ -353,8 +345,7 @@ stream_ptr = int(stream.npu_stream)
 
 外部 executor 需要在调用 fla_npu 前，把自己的 ACL stream 设置为目标 device 的 current stream。之后 fla_npu 会把 aclnn kernel enqueue 到同一 stream。
 
-> **stable 路径的差异**：上面对应 ctypes 路径。stable/launcher 路径不再在 Python 里读
-> `current_stream().npu_stream`，而是把 stream 当普通参数交给 launcher，并由 `_stable.py` 按
+> **Stable stream 选择**：上述代码表达调用方的 current stream 约定。实际由 `_stable.py` 按
 > **下发方式**选 accessor：launch 交给 torch_npu task queue 时用 `_npu_getCurrentRawStreamNoWait`
 > （不排空队列，顺序由队列保证），内联直投时退回 `_npu_getCurrentRawStream`（先排空队列，保证
 > 内联 kernel 不掉到已入队任务前面）。两者的 stream 语义相同，差别只在要不要等待队列排空——
@@ -366,7 +357,7 @@ stream_ptr = int(stream.npu_stream)
 - 同一 stream：依赖 FIFO enqueue 顺序，不需要全局 synchronize。
 - 不同 stream：调用方或外部 executor 必须 record/wait event，建立 producer-consumer 关系。
 
-如果外部框架无法把自己的 stream 暴露为 `torch.npu.current_stream(device)`，应在 `_runtime.py` 增加统一 stream provider 或上下文管理器，不能给每个算子各自增加一套 stream 参数。
+如果外部框架无法把自己的 stream 暴露为 `torch.npu.current_stream(device)`，应在 `_stable.py` 的 stream provider 中统一适配 或上下文管理器，不能给每个算子各自增加一套 stream 参数。
 
 ### 5.4 异步 launch 的对象生命周期
 
@@ -390,13 +381,14 @@ runtime 创建 ACL tensor descriptor 时同时传入：
 - ACL format。
 - storage shape。
 
-wrapper 的原则是“透传描述，不自行解释私有 layout”。默认不得无理由 `.contiguous()`、转置或转成 ND，否则可能破坏 NZ 等私有格式。宿主进程已经加载 torch_npu 时，runtime 可以复用 `torch_npu.get_npu_format()`；未加载时按 tensor 维度回退到保守 format，这只是能力降级，不应把 torch_npu 变成默认 import 依赖。
-
-如果算子注册契约明确只接受 ND，wrapper 可以显式覆盖 descriptor format，但必须保留逻辑 shape、stride、storage offset 和非连续 storage 范围，并通过 ABI 单测验证每个输入输出 descriptor。`recurrent_gated_delta_rule` 使用这一例外，避免未加载 torch_npu 时按 rank 把三维/四维张量误判成 NCL/NCHW。
+wrapper 的原则是透传描述，不隐式改变布局。Stable 的 `AclTensorView` 读取 tensor 的逻辑
+shape、stride、storage offset、dtype 和 storage pointer；format/storage shape 按各 adapter 的
+明确契约构造，不保留已删除 ctypes runtime 的 `torch_npu.get_npu_format()` Python 探测逻辑。
+支持私有格式或非连续 view 必须由对应算子的 NPU 测试证明，不能从 descriptor 能构造就推断正确。
 
 ### 5.6 适配层与 aclnn C ABI 一致性
 
-每个算子的适配入口——适配层的 `FLA_STABLE_EXEC` 实参，以及 ctypes 参考实现——都必须逐项对应 `aclnn_*.h`：
+每个算子的 Stable 适配入口（`FLA_STABLE_EXEC` 或遗留手写 C++ 调用）必须逐项对应 `aclnn_*.h`：
 
 - 参数顺序和 C 类型。
 - required / optional / null 语义。
@@ -436,7 +428,7 @@ wrapper 的原则是“透传描述，不自行解释私有 layout”。默认�
 
 | 测试层 | 证明什么 | 典型检查 |
 | --- | --- | --- |
-| 纯 Python UT | wrapper 元数据、后端选择与公共 runtime 逻辑 | 后端切换、mutation 清单、version counter、错误分支 |
+| 纯 Python UT | wrapper 元数据、Stable 加载与公共参数逻辑 | 公开签名、mutation 清单、version counter、加载失败和旧参数拒绝 |
 | 适配层离线门禁 | 适配层与 schema、OPP 头文件自洽 | stable_coverage、op_abi_parity、stable_ctypes_fallbacks、op_abi_validate、test_stable_gates（都不需要 NPU） |
 | 动态加载 smoke | wheel 与 OPP 自洽 | OPP 定位、CDLL、aclnn 符号 |
 | 单算子 NPU 测试 | C ABI、tiling、kernel 和状态语义 | 输出精度、cache 更新、异常输入、多卡 |
@@ -535,7 +527,7 @@ payload 两个发行名、各自拥有一份 `fla_npu/`、卸载一个留下另�
 
 ### 是否完全不依赖 torch？
 
-不是。默认路径仍使用 torch Python tensor，并使用 torch autograd、device 和 stream Python API。解耦的是 PyTorch C++ extension ABI，而不是 torch tensor 本身。
+不是。构建 launcher 需要 torch 链接库，运行时需要 torch C ABI shim、tensor、autograd、device 和 stream 能力。解耦的是 PyTorch C++ extension ABI，而不是 torch tensor 本身。
 
 ### 是否完全不依赖 torch_npu？
 
@@ -543,15 +535,15 @@ fla_npu 默认不会主动 import、链接或注册 torch_npu dispatcher；目�
 
 ### 为什么一个 wheel 可以覆盖多个 torch 和 Python 版本？
 
-因为默认调用层是 Stable-ABI 适配层加纯 Python：适配层只用 vendored 的 `torch/csrc/stable` C 面编译，不引用已安装 torch 的头和库，也不进 CPython extension ABI；所以 wheel tag 是 `py3-none-<platform>`，Python 和 ABI 位留空，一个 wheel 覆盖多个 Python minor，平台位照实写、不会被装到别的架构上。torch 差异由适配层的构建戳校验、运行时 capability probe 和测试矩阵处理，而不是编译进 `custom_aclnn_extension_lib*.so`。
+因为默认调用层是 Stable-ABI 适配层加纯 Python：适配层优先用 vendored 的 `torch/csrc/stable` 头，并链接 torch 库中的 C ABI shim，不使用 CPython extension ABI；所以 wheel tag 是 `py3-none-<platform>`，Python 和 ABI 位留空，一个 wheel 覆盖多个 Python minor，平台位照实写、不会被装到别的架构上。torch 差异由适配层的构建戳校验、运行时 capability probe 和测试矩阵处理，而不是编译进 `custom_aclnn_extension_lib*.so`。
 
 ### 平台由 tag 承担，SoC 由文件名承担
 
-wheel 内仍有 host ELF（`libfla_npu_stable.so`）和目标 SoC 的 OPP，所以平台不能写成 `any`——那是默认构建早期的写法，会让 pip 把 aarch64 的包装到 x86_64 上。现在平台位来自 `sysconfig.get_platform()`，SoC 由文件名里的 build tag（`910b`、`950`）区分，测试矩阵照旧按两者分别记录。
+wheel 内仍有 host ELF（`libfla_npu_stable.so`）和目标 SoC 的 OPP，所以平台不能写成 `any`——那是默认构建早期的写法，会让 pip 把 aarch64 的包装到 x86_64 上。现在平台位为 `manylinux_2_34_<arch>`，SoC 由发行名后缀 a2/a3/a5 区分，测试矩阵照旧按两者分别记录。
 
 ### dispatcher 用上了多少？
 
-适配层用 `STABLE_TORCH_LIBRARY` 把算子注册进 dispatcher，所以 schema、alias/inplace mutation 标记、`torch.ops.fla_npu_stable.<op>` 这条调用面都是真的。还没补的是 FakeTensor、functionalization、autocast、vmap 和 dispatcher autograd 公式——这些仍然按需在 Python `torch.library` 层加。ctypes 回退路径则完全不经 dispatcher。
+适配层用 `STABLE_TORCH_LIBRARY` 把算子注册进 dispatcher，所以 schema、alias/inplace mutation 标记、`torch.ops.fla_npu_stable.<op>` 这条调用面都是真的。还没补的是 FakeTensor、functionalization、autocast、vmap 和 dispatcher autograd 公式——这些仍然按需在 Python `torch.library` 层加。所有公开 AscendC 入口均经 Stable dispatcher 调用。
 
 ### 为什么不把 stream 作为每个算子的参数？
 
@@ -583,7 +575,7 @@ wheel 内仍有 host ELF（`libfla_npu_stable.so`）和目标 SoC 的 OPP，所�
 | host | 运行 Python 和发起 NPU 任务的 CPU 侧系统 | 需要区分 aarch64 和 x86_64 ELF |
 | API | Application Programming Interface，源码层面如何调用一个功能 | Python 函数签名、`aclnn*` 函数签名 |
 | ABI | Application Binary Interface，已经编译好的二进制之间如何交换参数、调用符号和解释内存 | 旧 C++ extension 必须与 torch/torch_npu/C++ ABI 一致 |
-| ABI 一致性 | 两个二进制对参数宽度、顺序、类型布局、符号和调用约定的理解完全相同 | 适配层的参数声明必须逐项匹配 `aclnn_*.h`（适配层与 ctypes 都由 `op_abi_validate.py` 对拍） |
+| ABI 一致性 | 两个二进制对参数宽度、顺序、类型布局、符号和调用约定的理解完全相同 | 适配层的参数声明必须逐项匹配 `aclnn_*.h`（由 `op_abi_validate.py` 检查 Stable 调用点） |
 | ELF | Linux 上常见的可执行文件和动态库格式 | `.so`、host 可执行文件和部分 kernel 产物的容器格式 |
 | `.so` / 动态库 | 运行时加载的共享二进制库 | `libfla_npu_stable.so`、`libcust_opapi.so`、旧 `custom_aclnn_extension_lib*.so` |
 | 动态符号 | 动态库对外暴露或需要解析的函数/变量名字 | `aclnnXxxGetWorkspaceSize`、`aclnnXxx` |
@@ -592,24 +584,24 @@ wheel 内仍有 host ELF（`libfla_npu_stable.so`）和目标 SoC 的 OPP，所�
 | CPython ABI | Python 官方解释器的 C 扩展二进制约定 | 产生 `cp39`、`cp310`、`cp311` 等版本绑定 |
 | C++ ABI / cxx11abi | C++ 类型、符号修饰和标准库对象在二进制层的约定 | 旧 C++ extension 可能因 gcc/libstdc++ 差异无法加载 |
 | libstdc++ | GCC 常用的 C++ 标准库实现 | 提供 `GLIBCXX_*` 符号，旧扩展需要版本匹配 |
-| libtorch / libtorch_npu | libtorch 是 PyTorch 的 C++ 运行库；libtorch_npu 是昇腾 NPU 适配中的 C++ 运行库 | 旧 C++ extension 加载时需要匹配它们的版本和符号；默认路径（适配层与 ctypes）都不链接它们 |
+| libtorch / libtorch_npu | libtorch 是 PyTorch 的 C++ 运行库；libtorch_npu 是昇腾 NPU 适配中的 C++ 运行库 | 旧 C++ extension 加载时需要匹配它们的版本和符号；Stable launcher 仍链接 torch 共享库，但只引用 C ABI shim；不链接 libtorch_npu C++ 接口 |
 | wheel | Python 的可安装发布包，扩展名为 `.whl` | 一键编包的最终交付件 |
 | wheel compatibility tag | wheel 文件名中描述 Python、ABI 和平台兼容范围的标签 | `py3-none-<platform>`：`none` 表示 Python 层没有 CPython extension ABI，平台位照实写 |
 | `site-packages` | 当前 Python/conda 环境安装第三方包的目录 | wheel 安装后的 `fla_npu` 和内嵌 OPP 所在位置 |
-| build time / 构建期 | 编译和组装发布包的阶段 | 新架构只要求 CANN，不读取 torch C++ ABI |
+| build time / 构建期 | 编译和组装发布包的阶段 | 新架构要求 CANN、编译工具、vendored Stable 头和 torch 链接库 |
 | runtime / 运行期 | 用户 import 并真正调用算子的阶段 | 此时读取 torch tensor、device、stream 和 CANN runtime 能力 |
-| dispatcher | PyTorch 根据算子名、设备和 dispatch key 选择具体实现的分发系统 | 旧 `torch.ops.npu` 依赖它；适配层用 `STABLE_TORCH_LIBRARY` 注册到它，ctypes 回退路径绕过它 |
+| dispatcher | PyTorch 根据算子名、设备和 dispatch key 选择具体实现的分发系统 | 旧 `torch.ops.npu` 依赖它；适配层用 `STABLE_TORCH_LIBRARY` 注册到它；所有公开 AscendC 算子走 Stable 注册 |
 | schema | dispatcher 对算子参数、返回值、默认值、alias 和 mutation 的结构化声明 | `torch.library` 适配必须准确提供 |
 | dispatch key | PyTorch dispatcher 用来区分 CPU、CUDA、NPU、Autograd 等实现类别的键 | Ascend PyTorch NPU 运行时能力会提供 NPU 相关 key |
 | backend | 某种设备在 PyTorch 中的运行时实现集合，不只是一个 kernel；包含设备注册、内存、stream 和 dispatch 等能力 | 本文统一称“Ascend PyTorch NPU 运行时能力”，通常由 torch_npu 提供 |
-| op-plugin | torch_npu 中用于生成/适配 PyTorch 算子注册代码的一套机制 | 旧扩展构建依赖；默认解耦构建不使用 |
+| op-plugin | torch_npu 中用于生成/适配 PyTorch 算子注册代码的一套机制 | 旧扩展构建依赖；该构建路径现已删除 |
 | ATen / c10 | PyTorch C++ tensor、算子和基础运行时库 | 旧 C++ extension include/link 的主要组件 |
 | `CppExtension` | PyTorch 提供的 C++/Python extension 构建工具 | 旧路径生成 dispatcher 桥接 `.so`；默认路径禁用 |
 | `custom_aclnn_extension_lib*.so` | 旧路径中的 PyTorch/torch_npu dispatcher 桥接库 | 注册 `torch.ops.npu.*`，是多层 ABI 汇合点，不是 kernel 本身 |
-| ctypes | Python 标准库中直接调用 C 动态库函数的机制 | 参考实现与回退路径用它直接调用 `libcust_opapi.so` 中的 aclnn 符号 |
+| ctypes | Python 标准库中直接调用 C 动态库函数的机制 | 仅用于动态库加载、构建戳与能力探测；Python ctypes 执行后端已删除 |
 | C ABI | C 函数在二进制层的参数、返回值和调用约定 | 比 PyTorch C++ ABI 更窄、更稳定，但仍必须严格匹配 |
-| binding / wrapper / adapter | 把一种接口转换成另一种接口的小层；binding 偏底层绑定，wrapper 偏包装，adapter 偏兼容不同能力 | `_stable.py` / `_aclnn_ctypes.py` 是 binding，公共入口是 wrapper，版本差异放 adapter |
-| raw op / raw wrapper | 只完成参数整理和底层调用、不自动补 autograd 或图编译语义的原始入口 | `_stable.py` 与 `_aclnn_ctypes.py` 中的函数属于 raw wrapper |
+| binding / wrapper / adapter | 把一种接口转换成另一种接口的小层；binding 偏底层绑定，wrapper 偏包装，adapter 偏兼容不同能力 | `_stable.py` 是 binding，公共入口是 wrapper，版本差异放 adapter |
+| raw op / raw wrapper | 只完成参数整理和底层调用、不自动补 autograd 或图编译语义的原始入口 | `_stable.py` 中的函数属于 raw wrapper |
 | ACL | Ascend Computing Language，CANN 对设备、tensor descriptor 和算子调用提供的接口层 | runtime 用它创建 tensor/int-array descriptor |
 | aclrt | ACL 的 runtime 子接口，负责设备、stream、内存等运行时能力 | aclnn 最终在 aclrt stream 上 enqueue kernel |
 | aclnn | CANN 面向神经网络算子的 C 接口族 | fla_npu 默认调用的稳定底层接口 |
@@ -647,7 +639,7 @@ wheel 内仍有 host ELF（`libfla_npu_stable.so`）和目标 SoC 的 OPP，所�
 | mutation | 操作修改已有对象或 storage，而不是只返回新值 | cache 更新是典型 mutation |
 | inplace | mutation 的常见形式，直接修改传入 tensor | schema 常用 `Tensor(a!)` 表示 |
 | `mutates_args` | `torch.library.custom_op` 中列出哪些参数会被修改的字段 | 必须与适配层 schema / kernel 的真实写入完全一致 |
-| version counter | PyTorch 为 tensor 维护的修改次数，用于 autograd 检查保存值是否被改写 | 绕过 dispatcher 的路径（如 ctypes 回退）修改后需调用 `increment_version` 补记 |
+| version counter | PyTorch 为 tensor 维护的修改次数，用于 autograd 检查保存值是否被改写 | 状态更新由 schema 与 Python mutation 契约协调，必须避免重复或漏计 |
 | `increment_version()` | 主动推进 tensor version counter 的 Python API | 不经 dispatcher 的路径成功修改状态 tensor 后调用，让 autograd 看见这次修改 |
 | `ctx.mark_dirty()` | `autograd.Function` 告知 autograd“某个输入会被原地修改”的 API | 只适用于正确实现的 `autograd.Function`，不能替代 dispatcher mutation schema |
 | `MUTATED_ARGUMENTS` | 本仓维护的 mutable 参数清单，补适配层 schema 之外的原地契约 | 当前包含 `causal_conv1d.conv_states`、`recurrent_gated_delta_rule.state` 等原地更新参数 |
@@ -666,15 +658,15 @@ wheel 内仍有 host ELF（`libfla_npu_stable.so`）和目标 SoC 的 OPP，所�
 | Triton Ascend | 面向昇腾的 Triton Python/JIT 编程和运行能力 | 只影响 `fla_npu.ops.triton`，与 Ascend C OPP 分层 |
 | capability probe | 不看版本字符串，直接检查某个 API/行为是否存在 | 用于适配 torch storage、device、stream 等差异 |
 | preflight | 真正执行任务前的一次集中环境检查 | 提前报告缺失 tensor/NPU/aclnn 能力 |
-| legacy | 为旧用户暂时保留、但不推荐新代码继续使用的兼容路径 | `load_legacy_torch_ops()` 和 `torch.ops.npu.*` |
+| legacy | 为旧用户暂时保留、但不推荐新代码继续使用的兼容路径 | 旧 `load_legacy_torch_ops()` / `torch.ops.npu.*` 已删除；KDA 的同名算法选择仍保留 |
 | Python minor 版本 | Python 版本号中的次版本，例如 3.9、3.10、3.11 | CPython C extension 通常不能跨 minor 版本直接复用 |
 | CPU / aarch64 / x86_64 | CPU 是 host 处理器；aarch64 和 x86_64 是两类常见 CPU 指令集架构 | host ELF 必须按架构分别构建 |
 | gcc | Linux 常用的 C/C++ 编译器 | 旧 C++ extension 的 ABI 和 libstdc++ 版本可能受它影响 |
 | CMake | 组织 C/C++/Ascend C 编译规则和依赖关系的构建工具 | 调用 CANN 工具链生成 OPP 产物 |
 | compiler / 编译器 | 把源码转换成目标机器或设备可执行产物的程序 | host compiler 生成 `.so`，Ascend C compiler 生成 SoC kernel |
 | C++ extension | 让 Python 加载 C++ 机器码的扩展模块 | 旧路径使用；默认解耦路径不构建 |
-| torchnpugen | torch_npu 相关的算子适配代码生成工具 | 旧 dispatcher 扩展可能依赖；默认构建跳过 |
-| descriptor | 对 tensor 或 int-array 的形状、类型、地址等信息的 C 侧描述对象 | 适配层的 `FLA_STABLE_EXEC` 与 ctypes runtime 都调用 ACL 创建，并在 launch 提交后销毁 |
+| torchnpugen | torch_npu 相关的算子适配代码生成工具 | 旧 dispatcher 扩展曾依赖；当前构建和 CI 均不要求 |
+| descriptor | 对 tensor 或 int-array 的形状、类型、地址等信息的 C 侧描述对象 | 适配层的 `FLA_STABLE_EXEC` 调用 ACL 创建，并按 launch 生命周期销毁 |
 | int-array | 由一组整数构成的 aclnn 参数对象 | 用于传递变长序列索引等属性 |
 | metadata | 描述数据的数据，例如 shape、dtype、device，而不是 tensor 的数值内容 | wrapper 和 FakeTensor 都主要处理 metadata |
 | proto / config | proto 描述算子注册原型；config 记录 kernel、SoC 和加载配置 | 都属于 OPP vendor 树的一部分 |
@@ -697,7 +689,7 @@ wheel 内仍有 host ELF（`libfla_npu_stable.so`）和目标 SoC 的 OPP，所�
 | smoke test | 用最小输入确认安装、加载和基本调用链可工作的快速测试 | 先于全量精度和端到端测试执行 |
 | UT | Unit Test，针对一个函数或模块的单元测试 | 验证后端选择、mutation 元数据等纯 Python 逻辑 |
 | ST | System Test，验证多个模块组成的完整系统路径 | Example/ST 验证 GDN 端到端链路 |
-| opt-in | 默认关闭，用户必须显式打开的可选能力 | legacy dispatcher 构建和加载属于 opt-in |
+| opt-in | 默认关闭，用户必须显式打开的可选能力 | 如离线 third-party bundle，需通过构建开关显式开启 |
 | UML | Unified Modeling Language，用标准化图形表达组件、依赖和调用关系的方法 | 本文组件图借用 UML component diagram 的表达方式 |
 | conda 环境 | 一套彼此隔离的 Python 解释器和第三方包安装目录 | wheel 安装到当前激活环境的 `site-packages` |
 | driver / 驱动 | 连接用户态 runtime 与实际 NPU 设备的软件层 | CANN runtime 通过驱动提交设备任务 |

@@ -13,7 +13,7 @@ CP（context parallel）前处理算子：把一个 token 窗口压成仿射链 
 | 01 接口 / 02 标杆 / 03 设计 | ✅ 冻结（`docs/api.md`、`docs/design.md`；标杆 `tests/atk/pre_process_fwd_kernel_merged/scripts/pre_process_fwd_kernel_merged_cpu.py` 已与 H20 `ieee` 对齐） |
 | op_host | ✅ 已落地（`*_def.cpp` / `*_tiling.{h,cpp}` / `op_api/*`，含 aclnn 两段式） |
 | op_kernel | ✅ 已落地（Cube + Vector 双核流水；Stage/同步协议见 `op_kernel/*.cpp` 顶部与 `docs/design.md`） |
-| Python 接入 | ✅ ctypes（`_aclnn_ctypes.py`）+ stable ABI（`torch_custom/fla_npu/csrc/src/stable_pre_process_fwd_kernel_merged.cpp`）；`_stable.py` / `__init__.py` 已注册，11 条离线单测通过 |
+| Python 接入 | ✅ Stable ABI（`torch_custom/fla_npu/csrc/src/stable_pre_process_fwd_kernel_merged.cpp`）；`_stable.py` / `__init__.py` 已注册；接口回归见 `test_pre_process_fwd_kernel_merged.py` |
 | 单算子验证（A5 / A2-A3） | ✅ A5：L0 静态门禁、L1 位级 `BIT_IDENTICAL`、L2 smoke 10/10、L4 全量 41/41；A2/A3：单算子编译 + L0 + L2 10/10 + 位级复跑一致，性能无回退 |
 | ATK 交付件 | ✅ 已就绪（`tests/atk/pre_process_fwd_kernel_merged/`：111 条精度、4 条性能、5 条内存/确定性；支持 CPU 双标杆与 GPU 双标杆），待上机执行并回填 README 的验收表 |
 

@@ -92,6 +92,8 @@ bash tests/atk/run_test_cpu.sh -op=chunk_gated_delta_rule_fwd -npu_device_id=0 -
 
 ## 十项返回接口回归
 
+历史测试文件名保留，当前内容验证 Stable 参数转发和实际输出契约；ACLNN 原型由 `aclnn_abi_contract.py` 与共享 ABI 检查器验证。
+
 前向新增 q_hat、k_hat、q_rstd、k_rstd，追加在原六项之后。
 关闭核内 L2Norm 时 hats 为输入对象别名，rstd 为 None；开启时 rstd 固定为 FP32 `[B,Hk,T]`。
 
@@ -99,7 +101,7 @@ bash tests/atk/run_test_cpu.sh -op=chunk_gated_delta_rule_fwd -npu_device_id=0 -
 
 ```bash
 python torch_custom/fla_npu/test/test_aclnn_ctypes_abi.py
-python torch_custom/fla_npu/test/test_aclnn_ctypes_abi.py NormOutputsTest --npu
+python torch_custom/fla_npu/test/test_aclnn_ctypes_abi.py --npu
 ```
 
 开发回归结果（基于 main `e22e0bf4` 的接口修改）：

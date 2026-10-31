@@ -236,7 +236,7 @@ add_ops_compile_options(
 
 规则：
 
-1. L2 不解释上层的保留/重算策略本身：由 Python 与 legacy 包装层把策略翻译成"入参属性 + 哪些可选输出非空"，
+1. L2 不解释上层的保留/重算策略本身：由 Python 与 Stable 适配层把策略翻译成"入参属性 + 哪些可选输出非空"，
    策略名与语义不进入 L2。但**组合合法性必须由 L2 校验**：入参属性取值与可空输出指针（含"输出指针是否与
    状态输入同一 view"）的组合必须落在文档化档位内，非法组合返回 `ACLNN_ERR_PARAM_INVALID` 并打印实际组合
    （参考 `aclnn_chunk_kda_fwd_prepare.cpp` 的 `GetOutputMask`/`GetOutputMode`/`CheckOutputMode`，
@@ -495,10 +495,11 @@ add_ops_compile_options(
 ### 5.3 fla_npu 调用接口兼容性规范
 
 1. **入口唯一**：Ascend C 算子的主入口是 `fla_npu.ops.ascendc.<op>`；短名 `<op>` 由 `__init__.py` 的
-   `_ASCENDC_OPS` 一并导出。不新增其他主入口，`torch.ops.npu` 只是可选的 legacy 兼容路径。
+   `_ASCENDC_OPS` 一并导出。不新增其他主入口；旧 `torch.ops.npu` 调用仅可通过显式调用
+   `install_torch_npu_ops_compat()` 安装的 Python 别名进入同一 Stable 后端，不依赖 legacy 扩展。
 2. **只追加关键字参数**：新增参数一律加在参数表末尾并带默认值；默认值等于本算子的历史行为，已有调用结果不变。
 3. **返回 tuple 稳定**：返回值的个数、顺序、语义固定；新增输出只追加在末尾，未请求时返回 `None`（schema 的 `Tensor?`）。
-4. **可选输出的策略留在这层**：Python 与 legacy 包装层决定"要不要中间量、要不要最终状态"，并把它翻译成
+4. **可选输出的策略留在这层**：Python 与 Stable 适配层决定"要不要中间量、要不要最终状态"，并把它翻译成
    "设置哪些入参属性、给哪些可选输出指针"；策略本身不下沉到 L2，L2 只按 §3.4 校验"属性 + 指针组合"是否合法。
 5. **三处参数顺序一致**：`kSchema_<op>` 形参 = `run_<op>` 形参 = `FLA_STABLE_EXEC` 下发的 aclnn 实参顺序；
    由 `tools/op_abi_parity.py` 与 `tools/op_abi_validate.py` 离线门禁检查。
@@ -518,7 +519,7 @@ add_ops_compile_options(
      wrapper 判定为"不写回"时跳过 `requires_grad` 拒绝与 version 推进，判定为"写回"时拒绝
      `requires_grad=True` 并在成功后 `increment_version()`；被改写张量按上游语义原对象返回/透传。
      若契约已由 `_stable.py` 的 `_fla_npu_inplace_contract` 热路径 wrapper 自带，则不要再走中央包装（避免重复 bump）；
-   - 回归与边界：`tests/stable_abi/regression_mutation_contract.py`；ctypes 回退没有 schema，只靠登记兜底；
+   - 回归与边界：`tests/stable_abi/regression_mutation_contract.py`；Stable schema 与 Python 原地登记须一致；
      当前无 FakeTensor/functionalization，不能作为 compiler-visible op 入图。
    每个交付件里对这几种情况怎么写，见 `engineering-example/L2独立算子示例/` 下 `_def.cpp`、`aclnn_*.h/.cpp`、
    `stable_*.cpp`、`_stable.py`、`__init__.py` 与 `docs/api.md` 的注意事项。
@@ -529,7 +530,7 @@ add_ops_compile_options(
    `fla_npu/ops/ascendc/_stable.py`（真签名 wrapper，不要 `*args`/`**kwargs`）、
    `fla_npu/ops/ascendc/__init__.py`（`_ASCENDC_OPS` 加一行 public 名）。不要自造 `*.append.*`
    之类的中间文件名，直接改仓库中的同名文件。
-10. **不需要 ctypes**：新算子默认没有 ctypes 回退，`_LAUNCHER_ONLY_OPS` 自动推导；不得为了"兼容"回退到 ctypes。
+10. **单一执行后端**：所有算子必须有 Stable wrapper、schema 和 adapter；缺失时直接失败，不配置 ctypes/legacy 执行路径或自动回退。Stable 内部的标准库 ctypes 库加载与能力查询可以保留。
 11. **门禁**：`tools/stable_coverage.py`、`tools/op_abi_parity.py`、`tools/stable_ctypes_fallbacks.py`、
     `tests/test_stable_gates.py` 全部通过后才算接口交付完整。
 

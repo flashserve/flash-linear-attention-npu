@@ -64,24 +64,61 @@ Runtime& Runtime::instance() {
   return runtime;
 }
 
+namespace {
+
+// `os.pathsep`-separated path list, highest priority first.
+std::vector<std::string> split_path_list(const char* value) {
+  std::vector<std::string> paths;
+  std::string current;
+  for (const char* p = value;; ++p) {
+    if (*p == ':' || *p == '\0') {
+      if (!current.empty()) {
+        paths.push_back(current);
+      }
+      current.clear();
+      if (*p == '\0') {
+        break;
+      }
+    } else {
+      current.push_back(*p);
+    }
+  }
+  return paths;
+}
+
+}  // namespace
+
 void Runtime::init(const std::string& custom_lib_path) {
   std::lock_guard<std::mutex> guard(mutex_);
   if (initialized_) {
     return;
   }
-  std::string cust_path = custom_lib_path;
-  if (cust_path.empty()) {
-    const char* env = std::getenv("FLA_NPU_OP_API_LIB");
-    if (env != nullptr && *env != '\0') {
-      cust_path = env;
+  std::vector<std::string> custom_paths;
+  if (!custom_lib_path.empty()) {
+    custom_paths.push_back(custom_lib_path);
+  } else {
+    // FLA_NPU_OP_API_LIBS (plural) is an os.pathsep-separated list, highest
+    // priority first: overlay vendors first, the complete base library last.
+    // FLA_NPU_OP_API_LIB (singular) stays supported for single-library setups.
+    const char* plural = std::getenv("FLA_NPU_OP_API_LIBS");
+    if (plural != nullptr && *plural != '\0') {
+      custom_paths = split_path_list(plural);
+    }
+    if (custom_paths.empty()) {
+      const char* env = std::getenv("FLA_NPU_OP_API_LIB");
+      if (env != nullptr && *env != '\0') {
+        custom_paths.push_back(env);
+      }
     }
   }
-  if (cust_path.empty()) {
+  if (custom_paths.empty()) {
     throw std::runtime_error(
         "stable launcher: FLA_NPU_OP_API_LIB is not set; call "
         "fla_npu.load_ascendc_opapi_libraries() before using the stable launcher");
   }
-  custom_handle_ = open_custom_library(cust_path);
+  for (const std::string& path : custom_paths) {
+    custom_handles_.push_back(open_custom_library(path));
+  }
   cann_handle_ = dlopen_required("libopapi.so", "CANN opapi");
   initialized_ = true;
 }
@@ -98,8 +135,16 @@ void* Runtime::symbol(const std::string& name) {
     return it->second;
   }
   void* addr = nullptr;
-  if (custom_handle_ != nullptr) {
-    addr = dlsym(custom_handle_, name.c_str());
+  // Ordered search: the first custom library that exports the symbol wins, so an
+  // overlay vendor overrides the base vendor regardless of the backend choice.
+  for (void* handle : custom_handles_) {
+    if (handle == nullptr) {
+      continue;
+    }
+    addr = dlsym(handle, name.c_str());
+    if (addr != nullptr) {
+      break;
+    }
   }
   if (addr == nullptr && cann_handle_ != nullptr) {
     addr = dlsym(cann_handle_, name.c_str());
@@ -175,3 +220,9 @@ void Runtime::enqueue(const std::string& name, const std::function<int()>& fn) {
 }
 
 }  // namespace fla_npu_stable
+
+// Version 1 guarantees overlay -> base -> CANN lookup in this launcher.
+extern "C" __attribute__((visibility("default")))
+std::int32_t fla_npu_stable_overlay_order_version() {
+  return 1;
+}
