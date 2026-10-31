@@ -152,8 +152,21 @@ __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
     // StateT 按 CompilePolicy::STATE_FP32 选型，镜像 stateDataType 同步设置）。
     if constexpr (FwdHGatedReusable<GateT, CompilePolicy, STATE_V_FIRST>()) {
         using GatedStateT = std::conditional_t<CompilePolicy::STATE_FP32, float, bfloat16_t>;
-        RunFwdHGatedReuse<GateT, GatedStateT>(args);
-        return;
+        // gated 双流调度死锁规避（2026-10-31 实测）：varlen 多段且 head 组数
+        // vNumHead/kNumHead 为奇（kNumHead>1）的形态在 gated preload kernel 中
+        // 确定性死锁（kernel 驻留空转，host 侧 sync 600s 超时报 507014）。实测
+        // 边界：组奇 varlen 全挂；组偶 / HK=1 / 单段 varlen（host 翻译 dense）
+        // 不挂。该形态回落 arch22 老路径（全形态精度已验证）；安全形态保持
+        // gated 路径性能。
+        const int64_t group = args.tiling.kNumHead > 0
+            ? static_cast<int64_t>(args.tiling.vNumHead) / static_cast<int64_t>(args.tiling.kNumHead)
+            : 0;
+        const bool gatedDeadlockShape = args.tiling.isVariedLen != 0 &&
+            (group % 2) != 0 && args.tiling.kNumHead > 1;
+        if (!gatedDeadlockShape) {
+            RunFwdHGatedReuse<GateT, GatedStateT>(args);
+            return;
+        }
     }
 #endif
     if ASCEND_IS_AIC {
