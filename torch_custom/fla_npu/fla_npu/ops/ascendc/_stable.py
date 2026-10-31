@@ -84,7 +84,8 @@ _ENUM = {
     "npu_chunk_gated_delta_rule_bwd": {"layout": _LAYOUT_CODES},
     "npu_chunk_local_cumsum": {"output_dtype": {"float32": 0,
                                                 "bfloat16": 1}},
-    "npu_solve_tri": {"layout": {"bsnd": 0, "bnsd": 1, "tnd": 2, "ntd": 3}},
+    "npu_solve_tri": {"layout": {"bsnd": 0, "bnsd": 1, "tnd": 2, "ntd": 3,
+                                 "bhtd": 4}},  # bhtd: bnsd 兼容别名（追加在末尾，既有索引是 ABI 不可移动）
 }
 
 
@@ -1680,16 +1681,14 @@ def npu_solve_tri(x, *, cu_seqlens=None, chunk_indices=None, layout="bsnd"):
     The reference densifies `x` before the launch, so the same thing happens
     here: the kernel reads it as a contiguous block.
 
-    ``layout='tnd'`` is refused rather than forwarded.  Measured on 910B3 with
-    the OPP in this tree: the kernel kills the process for that spelling, with
-    and without cu_seqlens, so letting it through would turn an illegal input
-    into a crash on the stable path -- exactly the class of input the reference
-    rejects in Python.
-
-    ``ntd`` crashes the same way (re-measured: five of six shapes segfault, the
-    sixth is rejected 161001), and it is deliberately left unguarded to stay
-    behaviour-identical with the reference; refusing it is the operator owner's
-    call.  See the inventory's known limits for the measurement.
+    Supported layouts: ``bsnd``/``bnsd`` (``bhtd`` alias) for dense input and
+    ``tnd``/``ntd`` for varlen input.  The host aclnn entry validates the
+    layout/metadata combination (issue #819): ``cu_seqlens``/``chunk_indices``
+    must be provided together, are rejected for dense layouts (they would be
+    silently ignored and produce wrong results), and are required for
+    ``tnd``/``ntd`` (the varlen tiling dereferences them unconditionally).
+    Unknown layout strings are rejected instead of silently falling back to
+    ``bsnd``.
     """
 
     layout = str(layout)

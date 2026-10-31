@@ -9,9 +9,11 @@
 
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import random
+import re
 import sys
 from pathlib import Path
 from typing import Any, List
@@ -347,6 +349,54 @@ def run_npu(spec: dict[str, Any], input_data: InputDataset):
     return _mask_output(out, inputs, int(spec["chunk_size"])).detach().cpu()
 
 
+def run_negative(spec: dict[str, Any], device: torch.device):
+    """host 参数校验负向用例（issue #819）。
+
+    非法 layout/元数据组合必须在 GetWorkspaceSize 阶段被拦截并返回预期错误码，
+    不产生 kernel launch；x 用任意合法小 shape 即可（校验先于 shape 处理）。
+    """
+    from fla_npu.ops.ascendc._aclnn_ctypes import _call_aclnn
+
+    chunk_size = int(spec.get("chunk_size", 64))
+    dtype = _orig_dtype(str(spec.get("dtype", "bf16")))
+    x = torch.randn(1, 128, 2, chunk_size, dtype=dtype, device=device)
+    out = torch.empty_like(x)
+    cu_seqlens = [0, 64, 128] if _as_bool(spec.get("with_cu_seqlens")) else None
+    chunk_indices = [0, 0, 0, 1] if _as_bool(spec.get("with_chunk_indices")) else None
+    layout = str(spec.get("layout", "bsnd"))
+    try:
+        _call_aclnn(
+            "aclnnSolveTri",
+            lambda ctx: [
+                ctx.tensor(x, "x"),
+                ctx.int_array(cu_seqlens),
+                ctx.int_array(chunk_indices),
+                ctypes.c_char_p(layout.encode("utf-8")),
+                ctx.tensor(out, "out"),
+            ],
+            out,
+        )
+    except RuntimeError as exc:
+        match = re.search(r"aclnnStatus=(\d+)", str(exc))
+        actual_code = int(match.group(1)) if match else None
+        expected_code = int(spec["expected_return_code"])
+        if actual_code != expected_code:
+            raise RuntimeError(
+                f"negative interception returned {actual_code}, expected {expected_code}: {exc}"
+            ) from exc
+        # `_aclnn_error` 已把 CANN 报错文案拼进异常文本，按子串匹配期望信息。
+        expected_message = str(spec["expected_message"])
+        if expected_message not in str(exc):
+            raise RuntimeError(
+                f"negative interception code matched but message did not: "
+                f"expected {expected_message!r}, actual {exc!r}"
+            ) from exc
+        raise RuntimeError(
+            f"{spec['expected_code_name']}({expected_code}): {expected_message}"
+        ) from exc
+    raise RuntimeError("negative interception unexpectedly returned ACLNN_SUCCESS")
+
+
 @register("executor_solve_tri")
 class FunctionApi(BaseApi):
     def __init__(self, task_result: TaskResult):
@@ -356,6 +406,10 @@ class FunctionApi(BaseApi):
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
         spec = _case_spec(input_data, OP_NAME)
+        if _as_bool(spec.get("negative_case")):
+            if self.device not in {"npu", "pyaclnn"}:
+                raise RuntimeError("negative cases must run on the NPU aclnn route")
+            return run_negative(spec, _marker_device(input_data))
         if self.device in {"npu", "pyaclnn"}:
             outputs = run_npu(spec, input_data)
         elif self.device == "cpu":

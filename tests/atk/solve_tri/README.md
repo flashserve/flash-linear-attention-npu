@@ -17,7 +17,10 @@
 
 ## 默认用例
 
-`atk_solve_tri.json` 为 **200** 条中小 shape（`gen_solve_tri.py` 的 `iter_profiles`），标准为 `mixed_tolerance_bm`。
+`atk_solve_tri.json` 为 **200** 条中小 shape（`gen_solve_tri.py` 的 `iter_profiles`）+ **6** 条
+host 参数校验负向用例（`NEGATIVE_CASES`，issue #819：dense 布局传入变长元数据、varlen
+布局缺元数据、元数据不成对、未知 layout，均期望 `ACLNN_ERR_PARAM_INVALID(161002)`），
+标准为 `mixed_tolerance_bm`。
 
 | 维度 | 条数 |
 |---|---|

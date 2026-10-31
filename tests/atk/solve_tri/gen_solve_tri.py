@@ -1,7 +1,8 @@
 """solve_tri 混合容差用例生成器。
 
 生成 200 条中小 shape 双标杆精度用例（与 GPU 双标杆套同一套 profile），标准为
-``mixed_tolerance_bm``。同时写出 perf / mss 精简集。
+``mixed_tolerance_bm``，另附 6 条 host 参数校验负向用例（issue #819：layout 与
+cu_seqlens/chunk_indices 的非法组合必须被拒绝）。同时写出 perf / mss 精简集。
 
 覆盖维度：
   chunk 16/32/64/128、fp16/bf16、bsnd/bnsd/tnd/ntd、
@@ -234,6 +235,60 @@ def _nbytes(spec: dict) -> int:
 
 
 # ===========================================================================
+# 负向用例（host 参数校验，issue #819）
+# ===========================================================================
+
+# (用例名, layout, 是否传 cu_seqlens, 是否传 chunk_indices, 期望报错信息子串)
+NEGATIVE_CASES = [
+    # dense 布局传入变长元数据：tiling 不读，静默忽略产生错误结果，必须拒绝
+    ("bsnd_with_varlen_meta", "bsnd", True, True,
+     "does not support cu_seqlens/chunk_indices"),
+    ("bnsd_with_varlen_meta", "bnsd", True, True,
+     "does not support cu_seqlens/chunk_indices"),
+    # varlen 布局缺元数据：tiling 无条件解引用 chunk_indices/cu_seqlens，必须拒绝
+    ("tnd_missing_varlen_meta", "tnd", False, False,
+     "requires cu_seqlens and chunk_indices"),
+    ("ntd_missing_varlen_meta", "ntd", False, False,
+     "requires cu_seqlens and chunk_indices"),
+    # 元数据必须成对出现
+    ("unpaired_varlen_meta", "tnd", True, False,
+     "must be provided together"),
+    # 未知 layout：tiling 会静默落入 BSND，必须拒绝
+    ("unknown_layout", "abcd", False, False,
+     "layout must be one of"),
+]
+
+_NEGATIVE_CODE_NAME = "ACLNN_ERR_PARAM_INVALID"
+_NEGATIVE_RETURN_CODE = 161002
+
+
+def _negative_spec(index: int, entry: tuple) -> dict:
+    name, layout, with_cu, with_ci, message = entry
+    return {
+        "name": name,
+        "op": KERNEL_OP,
+        "case_id": index,
+        "seed": 20260817 + index,
+        "route": "ascendc",
+        "soc": "ascend950",
+        "dtype": "bf16",
+        "B": 1,
+        "H": 2,
+        "T": 128,
+        "chunk_size": 64,
+        "layout": layout,
+        "num_seqs": 1,
+        "aligned": True,
+        "negative_case": True,
+        "with_cu_seqlens": with_cu,
+        "with_chunk_indices": with_ci,
+        "expected_code_name": _NEGATIVE_CODE_NAME,
+        "expected_return_code": _NEGATIVE_RETURN_CODE,
+        "expected_message": message,
+    }
+
+
+# ===========================================================================
 # ATK 用例生成（mixed_tolerance_bm 标准）
 # ===========================================================================
 
@@ -266,7 +321,7 @@ def _spec(index: int, profile: dict) -> dict:
 
 
 def _case_json(index: int, profile: dict) -> dict:
-    spec = _spec(index, profile)
+    spec = profile if profile.get("negative_case") else _spec(index, profile)
     dtype = spec["dtype"]
     inputs = [
         {"name": "low_precision_marker", "type": "tensor", "required": True, "dtype": dtype, "shape": [1], "range_values": [0, 0], "backward": True, "align_32B": None, "outlier_values": None},
@@ -277,6 +332,8 @@ def _case_json(index: int, profile: dict) -> dict:
         "aligned": int(bool(spec["aligned"])),
         "seqlens": json.dumps(spec["seqlens"], separators=(",", ":")) if spec.get("seqlens") else "",
     }
+    if spec.get("negative_case"):
+        extra_attrs["negative_case"] = 1
     for key in ("dtype", "B", "H", "T", "chunk_size", "layout", "num_seqs", "case_id", "seed", "soc", "route"):
         value = spec[key]
         inputs.append(
@@ -306,6 +363,12 @@ def _case_json(index: int, profile: dict) -> dict:
                 "outlier_values": None,
             }
         )
+    expected_error_msg = None
+    if spec.get("negative_case"):
+        expected_error_msg = (
+            f"{spec['expected_code_name']}({spec['expected_return_code']}): "
+            f"{spec['expected_message']}"
+        )
     return {
         "id": index,
         "default_seed": spec["seed"],
@@ -314,7 +377,7 @@ def _case_json(index: int, profile: dict) -> dict:
         "triton_name": None,
         "kernel_name": None,
         "version": "v2.1",
-        "expected_error_msg": None,
+        "expected_error_msg": expected_error_msg,
         "api": "pytorch",
         "api_type": f"executor_{OP_NAME}",
         "aclnn_api_type": "aclnn_function",
@@ -345,6 +408,9 @@ def dump_json_files(out_dir: Path | None = None) -> None:
     out_dir = out_dir or OP_DIR
     profiles = iter_profiles()
     all_cases = [_case_json(index, profile) for index, profile in enumerate(profiles)]
+    for entry in NEGATIVE_CASES:
+        index = len(all_cases)
+        all_cases.append(_case_json(index, _negative_spec(index, entry)))
     (out_dir / f"atk_{OP_NAME}.json").write_text(
         json.dumps(all_cases, ensure_ascii=False) + "\n",
         encoding="utf-8",
@@ -381,7 +447,7 @@ def dump_json_files(out_dir: Path | None = None) -> None:
         encoding="utf-8",
     )
     sizes = [_nbytes(profile) for profile in profiles]
-    print(f"wrote {len(all_cases)} acc / {len(perf)} perf / {len(mss)} mss -> {out_dir}")
+    print(f"wrote {len(profiles)} acc + {len(NEGATIVE_CASES)} negative / {len(perf)} perf / {len(mss)} mss -> {out_dir}")
     print(f"tensor_bytes min={min(sizes)} max={max(sizes)}")
 
 
