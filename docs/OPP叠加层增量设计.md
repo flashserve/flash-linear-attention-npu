@@ -86,7 +86,9 @@ overlay 不携带另一份 launcher。接口不变的 host/tiling/kernel 更新�
 
 归一化会移除当前包遗留的 OPP root、`vendor/op_api/lib` 和旧 vendor 排序，再写入选定顺序；不应把 CANN built-in 填进 `ASCEND_CUSTOM_OPP_PATH`。vendor 及 host 库解析后的路径必须位于包内，拒绝通过软链把 host 来源引到包外。
 
-默认 `.pth` 在用户代码及通常的 `import torch_npu` 之前设置 OPP 路径。`import fla_npu` 重复选择与校验，并准备 host 库。CANN 初始化以后改变路径、安装或移除 overlay，都不能刷新已加载的索引、动态库句柄和符号缓存；必须启动新进程。
+默认 `.pth` 在用户代码及通常的 `import torch_npu` 之前设置 OPP 路径。关闭 `.pth` 时，调用方须在 CANN 初始化前手动 source vendor 的 `set_env.bash`。只要路径和 overlay 选择已提前配置正确，随后 `import fla_npu` 属于支持的启动流程。
+
+**不支持的时序**：CANN 已按旧路径或缺失的 OPP 路径初始化后，再安装、移除 overlay，改变其启用状态、名称或优先级，或依赖晚到的 `import fla_npu` 补齐路径。此时修改环境变量不能刷新已经加载的索引、动态库句柄和符号缓存，存在 host/kernel 来源不一致风险；须停止使用该安装目录的进程，完成安装和路径配置后启动新进程。不承诺自动检测或硬失败拦截这些时序，错误时序的自动拦截不属于验收要求；仅告警或 import 成功均不能证明来源一致。
 
 toolkit 的 `set_env.sh` 配置 CANN 工具链与运行依赖；vendor 的 `bin/set_env.bash` 配置本份自定义 OPP 的发现路径。两者均是环境准备，source 本身不等于设备运行时初始化。
 
@@ -200,7 +202,7 @@ Docker 进程由 daemon 管理，除本地客户端进程组外，还要按本�
 
 | 检视组 | 主要文件 | 必查条件 |
 | --- | --- | --- |
-| 来源顺序 | `fla_npu_opp_env.py`、`fla_npu/__init__.py`、`csrc/src/runtime.cpp` | 默认、禁用、多 overlay、缺项回落、CANN 初始化时序 |
+| 来源顺序 | `fla_npu_opp_env.py`、`fla_npu/__init__.py`、`csrc/src/runtime.cpp` | 默认、禁用、多 overlay、缺项回落；验证 `.pth` 或手动 source 在 CANN 初始化前配置正确 |
 | ABI/恢复 | `_op_abi.py`、`install_opp.py`、`fla_npu_opp_manage.py` | 两阶段类型漂移、缺/坏清单、哈希损坏、包外软链、独立移除 |
 | 日落/构建 | `_stable.py`、`ops/ascendc/__init__.py`、`stable_build_policy.py`、两套 setup | 无回退，实际 launcher 校验，旧选项拒绝，完整 wheel 检查 |
 | 测试迁移 | `stable_public_api.json`、`stable_coverage.py`、仓内调用方 | 签名与调用参数、返回及 mutation、枚举、负例和真实 NPU 结果 |
