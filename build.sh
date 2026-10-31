@@ -95,9 +95,14 @@ dotted_line="-------------------------------------------------------------------
 ########################################################################################################################
 
 function list_supported_ops() {
+    local experimental_args=()
+    if [[ "${ENABLE_EXPERIMENTAL}" == "TRUE" ]]; then
+        experimental_args+=(--experimental)
+    fi
     python3 "${CURRENT_DIR}/scripts/check_build_ops.py" \
         --repo-root "${CURRENT_DIR}" \
-        --list "$@"
+        --list "$@" \
+        "${experimental_args[@]}"
 }
 
 # 前置校验 --ops/-n 传入的算子名：必须在 CMake 配置之前完成（issue #482）
@@ -105,11 +110,16 @@ function check_ops_filter() {
     if [ -z "${OPS_FILTER_VALUE}" ]; then
         return 0
     fi
+    local experimental_args=()
+    if [[ "${ENABLE_EXPERIMENTAL}" == "TRUE" ]]; then
+        experimental_args+=(--experimental)
+    fi
     if ! python3 "${CURRENT_DIR}/scripts/check_build_ops.py" \
         --repo-root="${CURRENT_DIR}" \
         --ops="${OPS_FILTER_VALUE}" \
         --source="${OPS_FILTER_SOURCE}" \
-        --origin="${OPS_FILTER_SOURCE} parameter of build.sh"; then
+        --origin="${OPS_FILTER_SOURCE} parameter of build.sh" \
+        "${experimental_args[@]}"; then
         exit 1
     fi
 }
@@ -1020,9 +1030,11 @@ parse_changed_files() {
     echo $dotted_line
     cat $PR_CHANGED_FILES
     ops_names=$(python3 scripts/ci/parse_changed_ops.py $PR_CHANGED_FILES "$ENABLE_EXPERIMENTAL")
+    # 变更文件没有映射到任何算子时保持为空，交由调用方按「本次无可编算子」处理
+    # （见 --PR_PKG 分支的 -z 检查）。这里不能兜底成某个具体算子名：
+    # 参考仓兜底的 fused_infer_attention_score 在本仓不存在，会把编译指向一个空目录。
     if [[ -z $ops_names ]]; then
-            ops_names='fused_infer_attention_score'
-        echo "NO ops changed found,set op $ops_names as default."
+        echo "Info: no operator matched the changed files (experimental tree)."
     fi
 }
 set_example_opt() {

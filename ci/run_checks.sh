@@ -17,6 +17,12 @@ cd "$repo_dir"
 ci_mode="${CI_MODE:-quick}"
 ci_soc="${CI_SOC:-${NPU_SOC:-ascend910b}}"
 ci_ops="${CI_OPS:-}"
+ci_experimental="${CI_EXPERIMENTAL:-false}"
+requested_ascend_opp_path="${ASCEND_OPP_PATH:-}"
+if [[ "$ci_experimental" == "true" && "${CI_STAGE:-all}" != "opp-package" ]]; then
+    echo "[CI][ERROR] Experimental CI currently supports only CI_STAGE=opp-package; stable wheel, install, and runtime stages must not consume an experimental OPP." >&2
+    exit 2
+fi
 if [[ "$ci_soc" == "unknown" ]]; then
     ci_soc="ascend910b"
 fi
@@ -44,6 +50,9 @@ print_ci_reproduction() {
     fi
     if [[ -n "$ci_ops" ]]; then
         printf ' CI_OPS=%q' "$ci_ops" >&2
+    fi
+    if [[ "$ci_experimental" == "true" ]]; then
+        printf ' CI_EXPERIMENTAL=true' >&2
     fi
     printf ' bash ci/run_ci_container.sh\n' >&2
 }
@@ -196,6 +205,12 @@ if [[ -f /usr/local/Ascend/nnal/atb/set_env.sh ]]; then
     set +u
     source /usr/local/Ascend/nnal/atb/set_env.sh
     set -u
+fi
+
+# Toolkit set_env.sh may overwrite ASCEND_OPP_PATH. Preserve an explicit caller
+# value so CI tests and isolated OPP installs can point at their own staging tree.
+if [[ "$ci_experimental" == "true" && -n "$requested_ascend_opp_path" ]]; then
+    export ASCEND_OPP_PATH="$requested_ascend_opp_path"
 fi
 
 if command -v npu-smi >/dev/null 2>&1; then
@@ -515,9 +530,14 @@ fi
 
 build_opp_run_package() {
     bash ci/prepare_ci_cache.sh
+    local experimental_arg=()
+    if [[ "$ci_experimental" == "true" ]]; then
+        experimental_arg=(--experimental)
+    fi
     case "$ci_mode" in
         quick|full)
-            bash build.sh --pkg --soc="$ci_soc" --vendor_name=fla_npu "${ops_arg[@]}" -j"$ci_jobs"
+            bash build.sh --pkg --soc="$ci_soc" --vendor_name=fla_npu \
+                "${experimental_arg[@]}" "${ops_arg[@]}" -j"$ci_jobs"
             ;;
         *)
             echo "[CI][ERROR] Unsupported CI_MODE: $ci_mode" >&2
