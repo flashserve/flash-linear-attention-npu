@@ -8,6 +8,7 @@
 #include "register/op_impl_registry.h"
 #include "tiling/platform/platform_ascendc.h"
 #include "tiling_base/tiling_templates_registry.h"
+#include "arch22/chunk_gated_delta_rule_fwd_prepare_tiling_arch22.h"
 
 namespace optiling {
 
@@ -31,6 +32,9 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
 {
     auto platformInfo = context->GetPlatformInfo();
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
+    if (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201) {
+        return Tiling4ChunkGatedDeltaRuleFwdPrepareArch22(context);
+    }
     int64_t coreNum = ascendcPlatform.GetCoreNumAic();
     if (coreNum <= 0) {
         coreNum = ascendcPlatform.GetCoreNumAiv();
