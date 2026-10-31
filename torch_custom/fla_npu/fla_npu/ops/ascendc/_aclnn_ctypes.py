@@ -4442,11 +4442,14 @@ def npu_recurrent_kda(
     state_v_first=False,
 ):
     import torch
+    from ._recurrent_kda_compat import normalize_inputs, wait_for_metadata
 
+    q, k, v, g, beta, output_shape = normalize_inputs(q, k, v, g, beta, cu_seqlens)
+
+    # The public layout argument is retained for ABI compatibility.  Rank and
+    # sequence mode are determined exclusively by cu_seqlens presence.
     layout = str(layout)
-    if layout not in ("BSND", "TND"):
-        raise RuntimeError("npu_recurrent_kda: layout must be BSND or TND.")
-    is_tnd = layout == "TND"
+    is_tnd = cu_seqlens is not None
     q_shape, k_shape, v_shape = _shape(q), _shape(k), _shape(v)
     g_shape, beta_shape = _shape(g), _shape(beta)
     expected_q_rank = 3 if is_tnd else 4
@@ -4458,8 +4461,8 @@ def npu_recurrent_kda(
         or len(beta_shape) != (2 if is_tnd else 3)
     ):
         raise RuntimeError(
-            "npu_recurrent_kda: layout/rank mismatch. TND expects q/k [T,H,K], v [T,HV,V], "
-            "g [T,HV,K], beta [T,HV]; BSND expects q/k [B,T,H,K], v [B,T,HV,V], "
+            "npu_recurrent_kda: rank mismatch. With cu_seqlens q/k are [T,H,K], "
+            "v [T,HV,V], g [T,HV,K], beta [T,HV]; without it q/k are [B,T,H,K], "
             "g [B,T,HV,K], beta [B,T,HV]."
         )
     if q_shape != k_shape:
@@ -4501,7 +4504,7 @@ def npu_recurrent_kda(
         raise RuntimeError("npu_recurrent_kda: K/V currently support only K=128,V=128 or K=128,V=256.")
 
     if cu_seqlens is None:
-        seq_num = batch if not is_tnd else 1
+        seq_num = batch
     else:
         if (
             not isinstance(cu_seqlens, torch.Tensor)
@@ -4561,9 +4564,12 @@ def npu_recurrent_kda(
         if num_accepted_tokens.device != q.device:
             raise RuntimeError("npu_recurrent_kda: num_accepted_tokens must be on the same device as q.")
 
-    use_gate = _optional_bool(use_gate_in_kernel, False)
-    safe = _optional_bool(safe_gate, False)
-    lower = _optional_float(lower_bound, -5.0)
+    # A_log presence selects raw-gate mode; the legacy boolean is ignored.
+    use_gate = A_log is not None
+    safe = use_gate and _optional_bool(safe_gate, False)
+    lower = _optional_float(lower_bound, -5.0) if safe else -5.0
+    if not use_gate:
+        dt_bias = None
     if use_gate:
         if A_log is None or A_log.dtype != torch.float32 or _shape(A_log) != (value_heads,):
             raise RuntimeError("npu_recurrent_kda: A_log must be FP32 [HV] when use_gate_in_kernel=True.")
@@ -4577,8 +4583,6 @@ def npu_recurrent_kda(
                 raise RuntimeError("npu_recurrent_kda: dt_bias must be FP32 [HV*K] or [HV,K].")
             if dt_bias.device != q.device:
                 raise RuntimeError("npu_recurrent_kda: dt_bias must be on the same device as q.")
-    elif safe or A_log is not None or dt_bias is not None:
-        raise RuntimeError("npu_recurrent_kda: A_log, dt_bias and safe_gate require use_gate_in_kernel=True.")
 
     out = _empty_like(v)
     final_state_work = initial_state_work if inplace else _empty(state_shape, initial_state_work)
@@ -4615,13 +4619,14 @@ def npu_recurrent_kda(
             ctx.tensor(final_state_arg, "final_state"),
         ]
 
+    wait_for_metadata(q, cu_seqlens, ssm_state_indices)
     _call_aclnn(
         "aclnnRecurrentKda",
         build_args,
         (out, initial_state_work, final_state_arg),
     )
     final_state = final_state_work if output_final else None
-    return out, final_state
+    return (out.reshape(output_shape) if output_shape is not None else out), final_state
 
 # Dense BSND Host code transposes all ten inputs to BNSD. Its four internal
 # outputs alias the transposed gradient inputs, so bounding this input footprint

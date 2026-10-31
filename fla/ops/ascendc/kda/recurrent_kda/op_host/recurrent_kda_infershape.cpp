@@ -41,9 +41,18 @@ static ge::graphStatus InferShapeRecurrentKda(InferShapeContext *context)
     auto shapeOut = context->GetOutputShape(DIM_0);
     auto shapeInitialStateOut = context->GetOutputShape(DIM_1);
     auto shapeFinalState = context->GetOutputShape(DIM_2);
-    if (shapeValue == nullptr || shapeInitialState == nullptr || shapeOut == nullptr ||
-        shapeInitialStateOut == nullptr || shapeFinalState == nullptr) {
-        OP_LOGE(opName, "[InferShape] shape is null");
+    if (shapeValue == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(opName, "value");
+        return ge::GRAPH_FAILED;
+    }
+    if (shapeInitialState == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(opName, "initial_state");
+        return ge::GRAPH_FAILED;
+    }
+    if (shapeOut == nullptr || shapeInitialStateOut == nullptr || shapeFinalState == nullptr) {
+        OP_LOGE(opName, "InferShape: required output shape is null; attnOut=%p, initialStateOut=%p, finalState=%p",
+                static_cast<void *>(shapeOut), static_cast<void *>(shapeInitialStateOut),
+                static_cast<void *>(shapeFinalState));
         return ge::GRAPH_FAILED;
     }
 

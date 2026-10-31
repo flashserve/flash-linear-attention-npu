@@ -40,6 +40,7 @@ public:
             .IgnoreContiguous();
         this->Input("cu_seqlens")
             .ParamType(OPTIONAL)
+            .ValueDepend(OPTIONAL)
             .DataTypeList({ge::DT_INT32, ge::DT_INT64})
             .FormatList({ge::FORMAT_ND});
         this->Input("ssm_state_indices")

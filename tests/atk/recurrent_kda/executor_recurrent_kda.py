@@ -36,35 +36,136 @@ OP_NAME = "recurrent_kda"
 
 
 def build_inputs(spec: dict[str, Any], device: torch.device, high_precision: bool = False) -> dict[str, Any]:
-    calc_dtype = torch.float64 if high_precision else torch.bfloat16
+    calc = torch.float64 if high_precision else torch.bfloat16
+    aux = torch.float64 if high_precision else torch.float32
     seed = int(spec.get("seed", 20260817))
     B, T, H, HV, K, V = (int(spec[x]) for x in ("B", "T", "H", "HV", "K", "V"))
-    return {
-        "q": _randn((B, T, H, K), "bf16", calc_dtype, device, seed + 1),
-        "k": _randn((B, T, H, K), "bf16", calc_dtype, device, seed + 2),
-        "v": _randn((B, T, HV, V), "bf16", calc_dtype, device, seed + 3),
-        "g": _kda_gate((B, T, HV, K), "fp32", torch.float64 if high_precision else torch.float32, device, seed + 4),
-        "beta": _rand((B, T, HV), "fp32", torch.float64 if high_precision else torch.float32, device, seed + 5, 0.1, 0.9),
-        "initial_state": _zeros((B, HV, V, K), "fp32", torch.float64 if high_precision else torch.float32, device),
-        "cu_seqlens": _int_tensor([i * T for i in range(B + 1)], device, torch.int64),
-        "scale": float(spec.get("scale", 1.0 / math.sqrt(K))),
-        "layout": str(spec.get("layout", "BSND")),
-    }
+    lengths = spec.get("lengths", [T] * B)
+    capacity = sum(lengths) + int(spec.get("padding", 0))
+    # The operator infers the storage mode from cu_seqlens presence.  Keep
+    # layout in the case files only as a compatibility argument.
+    varlen = bool(spec.get("cu", True))
+    prefix = (capacity,) if varlen else (B, T)
+    g_dtype, beta_dtype = spec.get("g_dtype", "fp32"), spec.get("beta_dtype", "fp32")
+    gd = aux if high_precision or g_dtype == "fp32" else (
+        torch.float16 if g_dtype == "fp16" else torch.bfloat16)
+    bd = aux if high_precision or beta_dtype == "fp32" else (
+        torch.float16 if beta_dtype == "fp16" else torch.bfloat16)
+    q = _randn((*prefix, H, K), "bf16", calc, device, seed + 1)
+    k = _randn((*prefix, H, K), "bf16", calc, device, seed + 2)
+    v = _randn((*prefix, HV, V), "bf16", calc, device, seed + 3)
+    if spec.get("pattern") in {"zero", "small", "signal"}:
+        q.zero_(); k.zero_()
+        if spec["pattern"] == "small":
+            q[..., 0] = 2.0 ** -12; k[..., 0] = 2.0 ** -12
+        elif spec["pattern"] == "signal":
+            q[..., 0] = 1.0; k[..., 0] = 1.0; v.fill_(1.0)
+    has_a_log = bool(spec.get("a_log", spec.get("use_gate_in_kernel", False)))
+    if has_a_log:
+        g = _randn((*prefix, HV, K), g_dtype, gd, device, seed + 4, scale=0.3)
+        if spec.get("large_gate", False):
+            g[..., ::2] = 100.0; g[..., 1::2] = -100.0
+    else:
+        g = _kda_gate((*prefix, HV, K), g_dtype, gd, device, seed + 4)
+    beta = (_randn((*prefix, HV), beta_dtype, bd, device, seed + 5, scale=0.6)
+            if spec.get("use_beta_sigmoid_in_kernel", False) else
+            _rand((*prefix, HV), beta_dtype, bd, device, seed + 5, 0.1, 0.9))
+    if spec.get("pattern") == "signal":
+        g.zero_(); beta.fill_(0.5)
+    offsets = [0]
+    for length in lengths:
+        offsets.append(offsets[-1] + length)
+    metadata_dtype = torch.int32 if spec.get("metadata_dtype") == "int32" else torch.int64
+    indices, accepted = None, None
+    state_capacity = len(lengths)
+    if spec.get("indices"):
+        indices = torch.full((len(lengths), max(lengths) + 1), -1, dtype=metadata_dtype, device=device)
+        for seq, length in enumerate(lengths):
+            for step in range(length):
+                indices[seq, step] = seq * 3 + step % 3
+            if length > 1:
+                indices[seq, length - 2:length] = seq * 3
+        state_capacity = len(lengths) * 3 + 2
+        if spec["indices"] == "packed":
+            indices = torch.cat([indices[i, :length] for i, length in enumerate(lengths)])
+            # Packed metadata covers the physical token capacity, including
+            # the unused tail.  Only cu_seqlens' valid prefix is consumed.
+            if capacity > indices.numel():
+                indices = torch.cat([indices, torch.full(
+                    (capacity - indices.numel(),), -1, dtype=metadata_dtype, device=device)])
+        accepted = _int_tensor([min(int(spec.get("accepted", 1)), n) if n else 0 for n in lengths],
+                               device, metadata_dtype)
+    tail = (V, K) if spec.get("state_v_first", True) else (K, V)
+    state_dtype = spec.get("state_dtype", "fp32")
+    sd = aux if high_precision or state_dtype == "fp32" else torch.bfloat16
+    state = _randn((state_capacity, HV, *tail), state_dtype, sd, device, seed + 6, scale=0.02)
+    if spec.get("state_zero", False):
+        state.zero_()
+    view_kind = spec.get("qkv_view", "contiguous")
+    tensors = {"q": q, "k": k, "v": v}
+    if view_kind == "fused":
+        # dim-last causal_conv1d output split into Q/K/V, including nonzero offsets.
+        widths = [H * K, H * K, HV * V]
+        storage = torch.zeros((*prefix, sum(widths) + 16), dtype=calc, device=device)
+        cursor = 8
+        for name, width in zip(tensors, widths):
+            view = storage[..., cursor:cursor + width].view(*tensors[name].shape)
+            view.copy_(tensors[name]); tensors[name] = view; cursor += width
+    elif view_kind in {"head_gap", "feature_gap"}:
+        for name, tensor in tensors.items():
+            storage = torch.zeros((*tensor.shape[:-1], tensor.shape[-1] * 2), dtype=calc, device=device)
+            view = storage[..., ::2] if view_kind == "feature_gap" else storage[..., :tensor.shape[-1]]
+            view.copy_(tensor); tensors[name] = view
+    elif view_kind == "batch_gap":
+        for index, (name, tensor) in enumerate(tensors.items()):
+            storage = torch.zeros((B, T + index + 1, tensor.shape[-2], tensor.shape[-1]),
+                                  dtype=calc, device=device)
+            view = storage[:, :T]
+            view.copy_(tensor); tensors[name] = view
+    if spec.get("strided_state", False):
+        storage = torch.zeros((state_capacity, HV + 1, *tail), dtype=sd, device=device)
+        view = storage[:, :HV]; view.copy_(state); state = view
+    inputs = dict(**tensors, g=g, beta=beta, initial_state=None if spec.get("initial_none") else state,
+                  cu_seqlens=_int_tensor(offsets, device, metadata_dtype) if spec.get("cu", True) else None,
+                  ssm_state_indices=indices, num_accepted_tokens=accepted)
+    if has_a_log:
+        # Apply the shift before promotion so DUT and FP64 golden see exactly
+        # the same FP32 input bits (rather than two different rounding paths).
+        a_log = _randn((HV,), "fp32", torch.float32, torch.device("cpu"), seed + 7, scale=0.1) - 2.0
+        inputs["A_log"] = a_log.to(aux).to(device)
+        inputs["dt_bias"] = (None if spec.get("dt_bias_none", False) else
+                             _randn((HV, K), "fp32", aux, device, seed + 8, scale=0.05))
+    elif spec.get("ignored_gate_parameters"):
+        # Deliberately invalid raw-gate dtype/shape/device: inactive inputs are ignored.
+        inputs["dt_bias"] = torch.zeros(3, dtype=torch.int32)
+    return inputs
+
+
+def call_options(spec):
+    return dict(layout=spec.get("layout", "BSND"), scale=spec.get("scale", 128 ** -0.5),
+                output_final_state=True, inplace_final_state=bool(spec.get("inplace", False)),
+                state_v_first=bool(spec.get("state_v_first", True)),
+                use_qk_l2norm_in_kernel=bool(spec.get("use_qk_l2norm_in_kernel", False)),
+                use_gate_in_kernel=bool(spec.get("use_gate_in_kernel", False)),
+                use_beta_sigmoid_in_kernel=bool(spec.get("use_beta_sigmoid_in_kernel", False)),
+                allow_neg_eigval=bool(spec.get("allow_neg_eigval", False)),
+                safe_gate=bool(spec.get("safe_gate", False)),
+                lower_bound=spec.get("lower_bound", -5.0))
 
 
 # CPU reference copied from the operator PTA reference so this executor is self-contained.
 def _flatten_bsnd(x: torch.Tensor, layout: str) -> torch.Tensor:
-    if layout == "TND":
+    del layout
+    if x.ndim == 3:
         return x
-    if layout != "BSND":
-        raise ValueError("layout must be BSND or TND")
-    return x.reshape(x.shape[0] * x.shape[1], *x.shape[2:])
+    if x.ndim == 4:
+        return x.reshape(x.shape[0] * x.shape[1], *x.shape[2:])
+    raise ValueError("q/k/v/g must be rank 3 with cu_seqlens or rank 4 without it")
 
 
 def _restore_layout(x: torch.Tensor, ref: torch.Tensor, layout: str) -> torch.Tensor:
-    if layout == "TND":
-        return x
-    return x.reshape(ref.shape)
+    del layout
+    return x if ref.ndim == 3 else x.reshape(ref.shape)
 
 
 def _seq_ranges(total_tokens: int, cu_seqlens: Sequence[int]):
@@ -75,8 +176,8 @@ def _seq_ranges(total_tokens: int, cu_seqlens: Sequence[int]):
         raise ValueError("cu_seqlens must start at zero")
     if any(end < start for start, end in zip(offsets, offsets[1:])):
         raise ValueError("cu_seqlens must be nondecreasing")
-    if offsets[-1] != total_tokens:
-        raise ValueError("the last cu_seqlens offset must equal the packed token count")
+    if offsets[-1] > total_tokens:
+        raise ValueError("the last cu_seqlens offset must not exceed token capacity")
     return list(zip(offsets, offsets[1:]))
 
 
@@ -112,6 +213,7 @@ def recurrent_kda_reference(
     safe_gate: bool = False,
     lower_bound: float = -5.0,
     state_v_first: bool = True,
+    state_storage_dtype: Optional[torch.dtype] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     del output_final_state, inplace_final_state
 
@@ -120,7 +222,7 @@ def recurrent_kda_reference(
     k_flat = _flatten_bsnd(k, layout).to(work_dtype)
     v_flat = _flatten_bsnd(v, layout).to(work_dtype)
     g_flat = _flatten_bsnd(g, layout).to(work_dtype)
-    beta_flat = _flatten_bsnd(beta, layout).to(work_dtype)
+    beta_flat = beta.reshape(-1, beta.shape[-1]).to(work_dtype)
     total_tokens, h, dk = q_flat.shape
     _, hv, dv = v_flat.shape
     scale = (dk ** -0.5) if scale is None else scale
@@ -130,9 +232,7 @@ def recurrent_kda_reference(
         k_flat = k_flat / torch.sqrt((k_flat * k_flat).sum(dim=-1, keepdim=True) + 1e-6)
     q_flat = q_flat * scale
 
-    if use_gate_in_kernel:
-        if A_log is None:
-            raise ValueError("A_log is required when use_gate_in_kernel=True")
+    if A_log is not None:
         gate = g_flat
         if dt_bias is not None:
             gate = gate + dt_bias.to(work_dtype).reshape(hv, dk).unsqueeze(0)
@@ -152,11 +252,8 @@ def recurrent_kda_reference(
             beta_eff = beta_eff * 2.0
 
     if cu_seqlens is None:
-        if layout.upper() == "BSND":
-            dense_seq_len = q.shape[1]
-            cu_seqlens = [i * dense_seq_len for i in range(q.shape[0] + 1)]
-        else:
-            cu_seqlens = [0, total_tokens]
+        dense_seq_len = q.shape[1]
+        cu_seqlens = [i * dense_seq_len for i in range(q.shape[0] + 1)]
     ranges = _seq_ranges(total_tokens, cu_seqlens)
     state_dtype = initial_state.dtype if initial_state is not None else work_dtype
     if initial_state is None:
@@ -185,6 +282,10 @@ def recurrent_kda_reference(
                 delta = delta * beta_eff[token, hv_idx]
                 state_cur = state_cur + torch.outer(delta, k_flat[token, h_idx])
                 out_flat[token, hv_idx] = torch.mv(state_cur, q_flat[token, h_idx])
+                # A5 stores each recurrent update in the interface State dtype.
+                # Keep out based on the unrounded FP32/FP64 register result.
+                if state_storage_dtype == torch.bfloat16:
+                    state_cur = state_cur.to(torch.bfloat16).to(work_dtype)
                 out_slot = _state_slot(ssm_state_indices, seq_idx, start, token) if ssm_state_indices is not None else seq_idx
                 state[out_slot, hv_idx] = state_cur
 
@@ -193,45 +294,34 @@ def recurrent_kda_reference(
     return _restore_layout(out_flat.to(q.dtype), v, layout), state.to(state_dtype)
 
 
+def _visible_outputs(outputs, spec):
+    if not spec.get("padding"):
+        return outputs
+    valid = sum(spec["lengths"])
+    out, state = outputs
+    return (out[:valid] if spec.get("cu", True) else out[:, :valid]), state
+
+
 def run_cpu(spec: dict[str, Any], high_precision: bool = False):
-    """Run the CPU reference at original or fp64 precision."""
-    inputs = build_inputs(spec, torch.device("cpu"), high_precision=high_precision)
-    return recurrent_kda_reference(
-        inputs["q"],
-        inputs["k"],
-        inputs["v"],
-        inputs["g"],
-        inputs["beta"],
-        inputs["initial_state"],
-        cu_seqlens=inputs["cu_seqlens"],
-        layout=inputs["layout"],
-        scale=inputs["scale"],
-        output_final_state=True,
-        inplace_final_state=False,
-        state_v_first=bool(spec.get("state_v_first", True)),
-    )
+    torch.set_num_threads(1)
+    inputs = build_inputs(spec, torch.device("cpu"), high_precision)
+    storage_dtype = (torch.bfloat16 if spec.get("soc", "ascend950") == "ascend950"
+                     and spec.get("state_dtype", "fp32") == "bf16" and not spec.get("initial_none") else None)
+    return _visible_outputs(recurrent_kda_reference(**inputs, **call_options(spec),
+                                                   state_storage_dtype=storage_dtype), spec)
 
 
-def run_npu(spec: dict[str, Any], input_data: InputDataset):
-    """运行 NPU DUT。"""
-    inputs = build_inputs(spec, _marker_device(input_data), high_precision=False)
+def run_npu(spec: dict[str, Any], input_data: InputDataset, inputs=None):
+    if inputs is None:
+        inputs = build_inputs(spec, _marker_device(input_data))
     from fla_npu.ops import ascendc
-
-    return ascendc.recurrent_kda(
-        inputs["q"],
-        inputs["k"],
-        inputs["v"],
-        inputs["g"],
-        inputs["beta"],
-        inputs["initial_state"],
-        cu_seqlens=inputs["cu_seqlens"],
-        ssm_state_indices=None,
-        layout=inputs["layout"],
-        scale=inputs["scale"],
-        output_final_state=True,
-        inplace_final_state=False,
-        state_v_first=bool(spec.get("state_v_first", True)),
-    )
+    before = (inputs["initial_state"].clone() if not spec.get("inplace", False)
+              and inputs["initial_state"] is not None else None)
+    outputs = ascendc.recurrent_kda(**inputs, **call_options(spec))
+    if not spec.get("inplace", False) and before is not None:
+        if not torch.equal(inputs["initial_state"], before):
+            raise AssertionError("non-inplace recurrent_kda modified initial_state")
+    return _visible_outputs(outputs, spec)
 
 
 @register("executor_recurrent_kda")
@@ -241,10 +331,18 @@ class FunctionApi(BaseApi):
     def __init__(self, task_result: TaskResult):
         super(FunctionApi, self).__init__(task_result)
         self.high_precision = self.device == "cpu"
+        self._performance_inputs = None
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
         spec = _case_spec(input_data, OP_NAME)
         if self.device in {"npu", "pyaclnn"}:
+            if not with_output:
+                # Performance loops reuse bound inputs, excluding random input
+                # construction and output-validation kernels from device timing.
+                # Accuracy/determinism always rebuild the original state.
+                if self._performance_inputs is None:
+                    self._performance_inputs = build_inputs(spec, _marker_device(input_data))
+                return run_npu(spec, input_data, self._performance_inputs)
             outputs = run_npu(spec, input_data)
         elif self.device == "cpu":
             outputs = run_cpu(spec, self.high_precision)

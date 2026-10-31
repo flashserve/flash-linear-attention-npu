@@ -1,214 +1,65 @@
 # RecurrentKda 设计方案
 
-## 1. 背景
+方案设计规则版本：`V2`
 
-KDA recurrent 用于小步长 decode/MTP 场景，按 token 顺序更新 KDA 状态并生成输出。上游常用 API 支持
-raw gate、`A_log/dt_bias/lower_bound/safe_gate`、`beta sigmoid` 和两种 state 布局。该实现的目标
-是在一个 KDA 独立算子中完成这些语义，避免把 gate 预处理拆成 `KdaGateCumsum + recurrent` 两段公共实现，也不复用
-GDN recurrent 的函数接口。
+接口和输入约束见 [api.md](api.md)，精度、性能及各轮验证范围见[测试记录](../../../../../../tests/atk/recurrent_kda/README.md)。本文描述当前实现；开发过程记录和流水图不随 PR 提交。
 
-## 2. 目标与非目标
+## Host 与平台路径
 
-### 2.1 目标
+序列模式由是否传入 `cu_seqlens` 决定，gate 模式由是否传入 `A_log` 决定；未启用 raw gate 时忽略 `dt_bias`、`safe_gate` 和 `lower_bound`。A2/A3/A5 共用这些语义，保留各自的硬件计算和资源路径。
 
-- 提供 Ascend C 实现类型的 `recurrent_kda`，覆盖 `fla_npu.ops.ascendc`、aclnn 和 `<<<>>>` 入口；legacy 通路不属于支持范围。
-- 对齐常用上游 API：`raw gate`、`A_log`、`dt_bias`、`lower_bound`、`safe_gate`、`beta sigmoid`、`allow_neg_eigval`。
-- 支持 `BSND` 和 `TND`，支持 device `cu_seqlens` 变长序列、容量化 state pool 和 speculative slot 索引。
-- 保持 KDA recurrent 与 GDN recurrent 接口解耦。
+A5 面向 `K=V=128`。定长 X 按序列长度 S，变长按各请求最大有效长度选择，候选为1/2/4/8，上限8，全空取1。`cu_seqlens` 是 host 值依赖；改变元数据须重新 tiling。
 
-### 2.2 非目标
+所有平台的 packed 调用都在 host 校验 `cu_seqlens` 的首项、单调性和容量，保留 executor 自有快照，并禁用依赖旧元数据的 executor 缓存。A2/A3 的无 indices packed 路径也执行该校验，因此新增必要的 host 同步/D2H；固定长度且无 indices 不增加此开销。A5 还用快照计算最大有效长度及 X。
 
-- 不提供内部 state 矩阵任意转置或步长采样的低性能 gather/scatter 路径。
-- 不支持把 `KdaGateCumsum` 的输出流水作为公开前置步骤。
-- A2/A3 通过第 17 节的时间窗口支持长序列；保持逐 token recurrent 公式和 AIV-only 路径。A5 仍限制每段长度 <=8。
+Python stable/ctypes 入口在 CU/indices 存在时先等待当前 PyTorch NPU stream，补足框架生产者到 ACLNN host 快照的就绪依赖。该处理局限于 recurrent_kda，不修改公共 runtime。直接 ACLNN 的元数据就绪责任由调用方承担，详见 API。
 
-## 3. 能力边界
+在生产者已就绪的前提下，host 元数据读取使用同步 D2H，不调用全设备同步，不新增 stream、event 或 pinned staging 的逐调用分配；host placement 元数据直接复制。runtime 同步复制的跨流行为以 A5 实测为准，不扩展为所有 CANN 版本的保证。
 
-实现类型：`ascendc`
+公开 host 对活跃 indices/accepted 做范围校验并保存 executor 自有快照，空请求和 speculative padding 跳过；此路径禁用旧 executor 缓存。无 indices 不增加 slot/accepted 快照步骤，packed 调用仍执行 CU 校验和快照。State 的逻辑 view 复制由同一 helper 覆盖非原位初始化与原位独立输出。
 
-支持范围以当前公共接口和实现约束为准，Shape 符号引用 [KDA 模型符号表](../../README.md#model-shape-symbols)。
+## A5 调度与 UB
 
-| 维度 | 支持范围 |
-| --- | --- |
-| SOC | `ascend910b`、`ascend910_93`、`ascend950` |
-| Layout | `BSND`、`TND` |
-| Q/K/V dtype | BF16 |
-| K/V | `K=128,V=128` 或 `K=128,V=256` |
-| Heads | `1<=H_k,H_v<=256`，且 `H_v % H_k == 0` |
-| Gate/Beta dtype | FP32/BF16/FP16，kernel 在 UB 中转为 FP32 计算 |
-| State dtype | FP32/BF16 |
-| Gate 模式 | 预计算 step log gate；kernel 内 raw gate |
-| State layout | V-first `[state_capacity,H_v,V,K]`；K-first `[state_capacity,H_v,K,V]` |
+单 Vector Stage 按 tile → token 执行。每个任务根据 bank 当时的可用状态选出两个 bank 交替递推，另一个可复用 bank 预取下一任务初态，角色不固定绑定到物理 bank 编号。逐 token 快照覆盖源 bank 前必须等待对应 MTE3 完成。输入/out 双缓冲；当前 tile 必要同步后先 Dispatch VF，再提交另一槽输入和可用第三 bank 的预取，覆盖前等待与尾部排空保留。
 
-## 4. 数学与接口语义
+State 在 UB 保持接口 dtype，Cast 在寄存器中完成；BF16 写回使用 Cast_RINT，不保存 FP32 State 影子。当前 token 的 out 使用舍入前的 FP32 更新值。两个 FP32 out 寄存器保存完整 token，最后两次 Cast/Store 到 UB；整个 tile 完成后批量提交 MTE3。
 
-若 use_qk_l2norm_in_kernel=True，A2/A3 对每个 token/head 的 q/k 在最后一维
-按 FP32 计算 x / sqrt(sum(x*x) + 1e-6)，随后仅 q 乘以 scale。
-A5 保持现有无 epsilon 的实现。
-关闭该属性时不执行归一化。
+V-first 的四个 V 行归约结果作为 out 收集粒度，计算分组不受四行约束。K-first 全程保持 K-first，GM 接口布局不变，UB State 每行增加32B间隙：FP32 pitch=136、BF16 pitch=144，沿连续 V 方向 Load/Store。
 
-`use_gate_in_kernel=false` 时，`g` 已经是 step log gate。`use_gate_in_kernel=true` 时，kernel 内转换 raw gate：
+A5 资源峰值为 `199744+3072*X+2*max(128,32*X)` 字节；FP32 K-first 额外增加12288字节，BF16 K-first 与 V-first 无额外 bank 分配。不增加算法 workspace。
 
-```text
-gate = -exp(A_log) * softplus(g + dt_bias)                 # safe_gate=False
-gate = lower_bound * sigmoid(exp(A_log) * (g + dt_bias))   # safe_gate=True
-```
+V-first/K-first 复用 `[eventOffset+256,eventOffset+768)` 的512B尾部预留区，分别传递 delta 或 prediction 系数。事件字占前36B，与 scratch 不重叠；此区不与 DMA 输入/out、State bank 重叠，State 预取不使用此区。保留专用 VST→VLD 屏障和逐 token 复用条件，UB 总峰值公式不变。
 
-`use_beta_sigmoid_in_kernel=true` 时：
+## V-first 寄存器计算
 
-```text
-beta = sigmoid(beta)
-if allow_neg_eigval:
-    beta = 2 * beta
-```
+所有 X，包括 X=1 的 fused/general 分派，均采用两遍 State 读取。变长调用中的短请求和单 token 尾 tile 也执行两遍；公开 TilingKey 不变。每 token 将128个 v 批量转成 FP32，q 已包含归一化和 scale，alpha、beta 沿用门控及 sigmoid 规则。
 
-每个 token 的 recurrent 更新为：
+第一遍只读当前 State bank，计算 `prediction[v]=Σ_k State[v,k]*(alpha[k]*k[k])`，按四行收集到两个 FP32 寄存器，再批量形成 `delta=v-prediction`。将 delta 以两次 VST 写入512B scratch，经 VST→VLD 屏障由第二遍读取；本 token 最后一行消费完成后，下一个 token 才能覆盖。
 
-```text
-S = exp(gate_t) * S
-delta = beta_t * (v_t - S @ k_t)
-S = S + outer(delta, k_t)
-o_t = S @ q_t
-```
+第二遍重读同一源 bank，使用每 token 预计算的 `beta*k`，通过 MulAddDst 计算 `State_next=alpha*State+delta*(beta*k)`。先用未舍入的更新值计算 out，再以接口 dtype 写另一 bank；State Store 先于 out 收集。prediction/out 点积用一条 Mul 和一条 MulAddDst 合并两个64列片段，再按原归约树求和。
 
-`H_v % H_k == 0`，每个 value head 通过 `floor(h_v / (H_v / H_k))` 映射到一个 query/key head。
+BF16 第一遍将两行 Load/Cast、点积交错，再处理后两行；第二遍在寄存器读入后 Cast 为 FP32、写回前 Cast_RINT。FP32 第二遍以滚动双行更新，在生成低片段 out 乘积后提前 Store 并释放低片段 State，随后完成高片段点积和写回。两种调度均保留四个归约结果的收集方式、512B residual UB 传递及必要同步。
 
-## 5. 整体架构
+每 token State 有效 UB 读取量为 FP32 128KiB、BF16 64KiB，写入分别为64KiB/32KiB。两遍读取以增加 UB 读取和 BF16 转换换取更短的 State 寄存器生命周期，不减少逐行归约，不改变 GM 流量。乘法重排和 FMA 可能改变 FP32 舍入，按原 CPU 标杆、值域及混合容差验收。
 
-- `op_host/op_api/aclnn_recurrent_kda.cpp`：校验 dtype、layout、shape、可选输入组合；不读取 device metadata 的值；
-  对规则非连续 Q/K/V 保留 stride/storage offset，已验证布局回退连续化，token/head 置换或
-  正 stride 重叠 descriptor 明确拒绝；非连续 state 以
-  `CreateView` 保留真实存储信息；创建 L0 executor。
-- `op_host/recurrent_kda_tiling.cpp`：读取 Q/K/V 与输入/输出 state stride、shape、属性和可选输入存在性，
-  填充 `RecurrentKdaTilingData`，计算 block dim 与 UB 切分。
-- `op_kernel/recurrent_kda.cpp`：单个 AIV kernel 完成 q/k normalize、raw gate 转换、state decay、delta 更新、输出和最终状态写回。
-- `torch_custom/fla_npu/csrc/src/stable_recurrent_kda.cpp` + `fla_npu/ops/ascendc/_stable.py`：提供解耦的 Python 入口（Stable-ABI 适配层），不注册 legacy `torch.ops.npu`；`_aclnn_ctypes.py` 保留为参考实现与回退。
-- legacy `torch.ops.npu.npu_recurrent_kda` 不属于当前支持范围，不作为公共接口维护。
+## K-first 寄存器计算
 
-## 6. Tiling 设计
+FP32/BF16 均沿连续 V 方向两遍计算，每个 FP32 寄存器覆盖64个连续 V 元素；BF16 在 Load 后于寄存器转 FP32。两遍均从当前 State bank 读取，直接消费两个 FP32 v 寄存器，不需要 vFloat scratch。
 
-### 6.1 任务划分
+每 token 在寄存器计算完整 `alpha*k`，两次 VST 写入512B scratch，经专用 VST→VLD 屏障后，第一遍沿 K 从 UB 广播系数，替代128次寄存器 Gather 和128次 lane 自增，累计 `prediction=Σ State*(alpha*k)`。系数在第一遍结束前全部消费，第二遍不再读取此区；下一 token 在前一 token 更新和必要屏障后复用。
 
-Tiling 按逻辑序列和 value head 拆分任务。提供 `cu_seqlens` 时，`seq_num=len(cu_seqlens)-1`，使用与
-fla-org 一致的累计边界语义，第 `i` 条序列范围为 `[cu_seqlens[i], cu_seqlens[i+1])`；未提供时，
-BSND 按 batch 行划分序列，TND 视为一条序列。接口面向 decode / MTP 短序列：每个相邻 offset
-的差值表示 varlen 每段长度；A2/A3 不再限制为 8，A5 每段与 dense 单序列仍须 <=8。提供 cu_seqlens 时，末项表示有效 token 数，可小于图捕获的
-token capacity。
+随后两个向量计算 `delta=beta*(v-prediction)`。第二遍逐 K 计算 `State_next=alpha*State+delta*k`，先累计 `out=Σ State_next*q`，再以接口 dtype 写另一 bank；BF16 写回使用 Cast_RINT，不从已舍入的 BF16 结果计算当前 token 的 out。第二遍系数从 q/k/alpha 寄存器 Gather 广播。
 
-### 6.2 Tiling Data
+连续访问省去 State Gather/Scatter、逐行归约和四行 out 收集。每 token State 有效 UB 读取量为 FP32 128KiB、BF16 64KiB，写入分别为64KiB/32KiB；GM 流量、bank 所有权和整 tile out 批量搬出规则不变。FP32 顺序累计及 FMA 舍入变化按原 CPU 标准验收。
 
-| 字段 | 类型 | 含义 |
-| --- | --- | --- |
-| `vectorCoreNum` | `uint32_t` | 使用的 AIV core 数 |
-| `ubCalSize` | `uint32_t` | 平台 UB 预算上限 |
-| `ubRestBytes` | `uint32_t` | A2/A3 命名 scratch 实际字节数；A5 保持原剩余预算语义 |
-| `t` / `seqLen` | `uint32_t` | token 总数与输入物理序列轴长度 |
-| `nk` / `dk` | `uint32_t` | query/key head 数与 K 维 |
-| `nv` / `dv` | `uint32_t` | value head 数与 V 维 |
-| `sBlockNum` / `b` | `uint32_t` | state pool 容量与逻辑序列数 |
-| `ssmStateStride` | `uint32_t` | 二维 speculative state 索引的行 stride；packed 一维索引时为 0 |
-| `query/key/value TokenStride` | `uint64_t` | Q/K/V 相邻逻辑 token 的元素 stride |
-| `query/key/value HeadStride` | `uint64_t` | Q/K/V 相邻 head 的元素 stride |
-| `vStep` | `uint32_t` | 单次处理的 V 方向步长 |
-| `stateOutBufferNum` / `attnOutBufferNum` | `uint32_t` | UB ring buffer 数 |
-| `scale` / `lowerBound` | `float` | query scale 与 safe gate 下界 |
-| `layout` | `uint32_t` | BSND/TND 编码 |
-| `has*` | `uint32_t` | 可选输入存在性 |
-| `use*` / `safeGate` / `stateVFirst` | `uint32_t` | 属性分支 |
+## A2/A3 资源预算
 
-### 6.3 模板化方案与 tiling key
+A5 的计算分组、三 bank 容量及 X 预算不套用于 A2/A3。generic kernel 固定窗口 X=8，两槽 packed q/k/v/g 输入共 `2*X*(8*alignK+2*alignV)` 字节，beta 单槽为 `4*X*NV` 字节，另留64字节 scalarBuf 和2048字节 guard。
 
-当前 kernel 通过 `REGISTER_TILING_DEFAULT(RecurrentKdaTilingData)` 使用默认 tiling data，不引入额外 tiling key。
-dtype 固定为 BF16 QKV，state dtype 由编译宏 `DTYPE_INITIAL_STATE` 实例化；layout、gate/beta 分支和可选输入存在性由
-tiling data 驱动，避免把 runtime shape 组合扩张到 tiling key。
+具名 FP32 窗口工作区为 `X*(4*alignV+12*alignK+4*NV)` 字节；加上每个 V 行的 State、broadTmp 和两个行结果后得到 tmpBuff 所需容量。host 先验证 tmpBuff 不超过扣除真实输入及 State/out 队列后的剩余容量，再只分配所需字节。
 
-## 7. Kernel 设计
+## 代码组织与验证
 
-### 7.1 计算流程
+A5 纯数据 context 和集中布局常量在 `arch35/recurrent_kda_struct.h`；VF 启动/计算在 `recurrent_kda_vec.h`；任务、预取与写回在 `recurrent_kda_pipeline.h`，文件头给出 Stage、布局和同步表。
 
-1. 解析当前任务对应的逻辑序列、value head、query/key head 和状态槽。
-2. 加载初始状态到 UB 工作区；Python 仅在非原位模式下允许 `initial_state=None`，并预先创建全零状态。
-3. 按 Q/K/V 各自 token/head stride 计算 GM 首地址并二维搬运到紧凑 UB；随后按属性执行 q/k
-   normalize、raw gate 转换和 beta sigmoid。
-4. 对状态做 gate decay，计算 `S @ k`、delta 和 outer 更新。
-5. 计算 `S @ q` 写回 `out`，并把状态原位写回命中的 state pool 槽。
-
-### 7.2 内存规划
-
-| 内存层级 | Buffer | 生命周期 | 用途 |
-| --- | --- | --- | --- |
-| GM | 输入/输出 tensor | kernel 全程 | q/k/v/g/beta/state/out 与 device metadata |
-| GM | workspace | kernel 调用期间 | 无算法专用 GM 中转；按标准运行时预留 16 MiB system workspace |
-| UB | state 工作区 | 单任务内复用 | 保存 `[V,K]` 局部状态片段 |
-| UB | q/k/v/g/beta 临时区 | 单 head 内复用 | normalize、gate、beta 与输出计算 |
-
-### 7.3 流水与同步
-
-算子为 AIV-only recurrent 小步长 kernel，单任务内部按 token 串行维护状态依赖。调用侧保证不同活跃序列不共享写槽，
-任务分配保证每个 `(seq/value head)` 的输出区域独立。`--cce-auto-sync=off` 保持不变，UB 复用由本 kernel 内顺序和
-必要的 vector pipe barrier 维护，不依赖 GDN recurrent 的同步协议。
-
-### 7.4 边界处理
-
-- 提供 `cu_seqlens` 时，首项必须为 0，offset 必须单调不减，末项为有效 token 数且不得超过输入 token
-  capacity。host 只检查 rank/dtype，device kernel 校验值。
-- 相邻 offset 相等时表示空序列；该序列不产生 token 输出，也不读取 `ssm_state_indices/num_accepted_tokens` 或 state。
-- 末项小于 capacity 时，仅 `[0,cu_seqlens[-1])` 的有效输出和 state side effect 有定义；padding tail 输出不作保证。
-- 一维 `ssm_state_indices` 按 packed token 偏移读取；二维索引按 `[seq_idx,step]` 读取，第二维必须覆盖对应序列长度。
-- `num_accepted_tokens` 只在提供 `ssm_state_indices` 时有效，用于定位 MTP decode 的初始状态槽。
-
-## 8. 平台设计
-
-| 平台 | SOC | 实现策略 | 分支差异 |
-| --- | --- | --- | --- |
-| A2 | `ascend910b` | 公共 AIV kernel | 无 |
-| A3 | `ascend910_93` | 公共 AIV kernel | 无 |
-| A5 | `ascend950` | arch35 特化 AIV kernel | RegBase/DataCopy 路径，并对 `K=128` 使用融合归约实现 |
-
-## 9. 精度设计
-
-Q/K/V 公开输入为 BF16，gate/beta 保持 FP32/BF16/FP16 输入 dtype，并在 kernel 的 UB 中转为 FP32 计算。state 可为 FP32 或 BF16；推荐 FP32 状态以降低小步长多 token 更新中的累计误差。
-
-## 10. 性能设计
-
-目标场景是 decode/MTP recurrent 小步长，主要瓶颈是状态矩阵读写和每 token 的 `S @ k`、`outer(delta,k)`、`S @ q`。
-当前实现已使用输入/输出双缓冲，并在 arch35 的 `K=128` 路径采用融合归约和 repeat DataCopy；后续优化仍应以
-状态搬运、向量流水和同步开销为重点。
-
-## 11. 测试设计
-
-测试工程作为本地开发资产保留，不纳入版本控制，远程仓库文档不依赖其目录结构。本地验收矩阵覆盖：
-
-- BSND raw gate + unsafe gate + beta sigmoid。
-- BSND safe gate + `allow_neg_eigval`。
-- TND 预计算 log gate + 空 initial_state。
-- Kimi/KDA 关键泛化 shape：GVA head 映射、`K=128,V=128` dense raw gate、`K=128,V=256` TND safe gate。
-- Kimi K3 TP16：本地 head 数 6、`K=V=128`、BF16 Q/K/V、raw+safe gate、TND packed decode/MTP 1-8；
-  覆盖 `[0,1,4,4,5]` 非等长序列、二维 slot 索引、容量化 state pool、非连续槽更新和未命中槽保持不变。
-- 空序列覆盖 `[0,1,1,4,4,8]`，确认重复 offset 对应的空序列不读取索引或 state。
-- Kimi H96/D128 smoke：`H=H_v=96,K=V=128,safe_gate=True`，运行时生成非等距 `cu_seqlens`，
-  覆盖 cu_seqlens 长度和值泛化。
-- Kimi 完整长上下文 stress target：`T_total=12288,H=H_v=96,K=V=128,safe_gate=True` 作为本地 stress case，
-  因当前单 kernel 计算量较大，不纳入默认通过矩阵。
-- 非连续 state 覆盖 V-first/K-first、FP32/BF16、原位/非原位、slot pool guard 与未命中槽。
-- 负向参数组合：长序列、`safe_gate` 与 raw gate 组合、内部矩阵非稠密 stride 与外层重叠 stride。
-
-## 12. 验证修复记录
-
-A2/A5 精度验证过程中修复以下问题：
-
-- `scale/lower_bound` 的 aclnn 公开参数为 `double`，AICore attr 为 `float`；L0 加入显式 cast，避免 tiling 读取到错误标量。
-- A5 tiling 对 `GetOriginShape()` 返回对象生命周期更敏感；tiling context 改为持有 shape 副本，避免 optional/required shape 指针悬挂。
-- q/k L2 normalize 后从 UB 标量读取 norm 前补充 V->S 同步，避免 scalar 读到旧值导致 raw/safe gate case 精度偏差。
-
-## 13. 已知限制与演进计划
-
-- 当前仅支持 BF16 QKV。
-- Q/K/V 直接非连续访问仅支持 feature 致密、head/token 不重叠的正 stride；BSND `B>1` 还要求
-  batch 维可按 `T * tokenStride` 扁平化。已验证的 feature-gap、zero-stride、batch-gap view
-  自动回退连续化；token/head 置换或正 stride 重叠 descriptor 明确拒绝。
-- 当前 `K/V` 仅支持 `K=128,V=128` 或 `K=128,V=256`。
-- A2/A3 内部时间窗口容量为 8，支持多窗口序列；A5 每段仍限制为 <=8。
-- state 最后两维必须为行主序稠密矩阵；slot/head 维可有间隔但不得重叠。
-- 显式 slot 模式要求所有活跃序列的写槽互不冲突，且 slot 值位于 state pool 容量范围内。
-- 后续若扩展长序列或更多 dtype，需要同步更新 op_host 校验、tiling、kernel、本地测试 case 和 API 文档。
+[测试记录](../../../../../../tests/atk/recurrent_kda/README.md)区分各次提交、候选回退、双平台验收、msprof kernel 性能及 host 调用链测量，不能将历史全量验收当作每个后续提交均重跑全量。A3、旧 CANN、整体 Example/ST、正式 NPU CI 及内部故障注入的未覆盖范围按该记录说明。
