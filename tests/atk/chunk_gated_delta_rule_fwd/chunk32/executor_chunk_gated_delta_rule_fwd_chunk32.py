@@ -24,6 +24,7 @@ from atk.tasks.api_execute import register
 from atk.tasks.api_execute.base_api import BaseApi
 
 from _ascendc_common_executor import _case_spec, _finite_tuple, _marker_device
+from cpu_golden import RCP_LN2
 from cpu_golden_fwd_emu import cpu_chunk_gated_delta_rule_fwd_emu
 
 OP_NAME = "chunk_gated_delta_rule_fwd_chunk32"
@@ -44,14 +45,17 @@ def _state_count(spec: dict[str, Any], seqlens: Optional[list[int]]) -> int:
     return len(seqlens) if seqlens is not None else int(spec["B"])
 
 
-def _flags(spec: dict[str, Any]) -> tuple[str, bool, bool, bool]:
+def _flags(spec: dict[str, Any]) -> tuple[str, bool, bool, bool, bool, bool, bool]:
     layout = str(spec.get("layout", "BNSD")).upper()
     if layout not in {"BNSD", "BSND", "NTD", "TND"}:
         raise ValueError(f"layout must be BNSD, BSND, NTD or TND, got {layout}")
     sequence_major = layout in {"BSND", "TND"}
     allow_neg = bool(spec.get("allow_neg_eigval", False))
     state_v_first = bool(spec.get("state_v_first", False))
-    return layout, sequence_major, allow_neg, state_v_first
+    out_l2 = bool(spec.get("out_l2", False))
+    disable_recompute = bool(spec.get("disable_recompute", False))
+    out_h = bool(spec.get("out_h", False))
+    return layout, sequence_major, allow_neg, state_v_first, out_l2, disable_recompute, out_h
 
 
 def build_inputs(spec: dict[str, Any], device: torch.device) -> dict[str, Any]:
@@ -59,7 +63,7 @@ def build_inputs(spec: dict[str, Any], device: torch.device) -> dict[str, Any]:
 
     if str(spec.get("dtype", "bf16")).lower() != "bf16":
         raise ValueError("q/k/v/beta/o are BF16 only")
-    layout, sequence_major, allow_neg, state_v_first = _flags(spec)
+    layout, sequence_major, allow_neg, state_v_first, out_l2, disable_recompute, out_h = _flags(spec)
     batch = int(spec["B"])
     k_heads = int(spec["HK"])
     v_heads = int(spec["HV"])
@@ -124,6 +128,9 @@ def build_inputs(spec: dict[str, Any], device: torch.device) -> dict[str, Any]:
         "sequence_major": sequence_major,
         "allow_neg_eigval": allow_neg,
         "state_v_first": state_v_first,
+        "out_l2": out_l2,
+        "disable_recompute": disable_recompute,
+        "out_h": out_h,
     }
 
 
@@ -136,22 +143,87 @@ def _cu(seqlens: Optional[list[int]]) -> Optional[torch.Tensor]:
     return torch.tensor(values, dtype=torch.int64)
 
 
-def _contract(output: torch.Tensor, state: torch.Tensor, spec: dict[str, Any]) -> tuple[torch.Tensor, torch.Tensor]:
-    """Match the public dtypes the NPU writes: BF16 ``o``, and BF16 state only for a BF16 initial state."""
+def _cpu(tensor: Optional[torch.Tensor], dtype: Optional[torch.dtype] = None) -> Optional[torch.Tensor]:
+    if tensor is None:
+        return None
+    if dtype is not None:
+        tensor = tensor.to(dtype)
+    return tensor.detach().to(device="cpu").contiguous()
 
+
+def _state_dtype(spec: dict[str, Any]) -> torch.dtype:
     state_name = str(spec.get("state_dtype", "none")).lower()
-    state_dtype = torch.bfloat16 if state_name == "bf16" else torch.float32
+    return torch.bfloat16 if state_name == "bf16" else torch.float32
+
+
+def _l2_public(q: torch.Tensor, k: torch.Tensor, layout: str):
+    """Hats stay in the input layout. rstd is always ``[B, Hk, T]``."""
+
+    def one(x: torch.Tensor):
+        values = x.float()
+        rstd = torch.rsqrt(values.square().sum(dim=-1) + 1e-6)
+        hat = (values * rstd.unsqueeze(-1)).to(torch.bfloat16)
+        return hat, rstd
+
+    q_hat, q_rstd = one(q)
+    k_hat, k_rstd = one(k)
+    if layout in {"BSND", "TND"}:
+        q_rstd = q_rstd.permute(0, 2, 1)
+        k_rstd = k_rstd.permute(0, 2, 1)
+    return q_hat.contiguous(), k_hat.contiguous(), q_rstd.contiguous(), k_rstd.contiguous()
+
+
+def _beta_public(beta: torch.Tensor, layout: str, allow_neg: bool) -> torch.Tensor:
+    beta_bth = beta.transpose(1, 2) if layout in {"BNSD", "NTD"} else beta
+    scale = 2.0 if allow_neg else 1.0
+    return (scale * torch.sigmoid(beta_bth.float())).contiguous()
+
+
+def _pack(spec: dict[str, Any], o, state, g_cumsum=None, a=None, beta_eff=None,
+          h=None, q_hat=None, k_hat=None, q_rstd=None, k_rstd=None):
+    """Same slot order as the ten-tuple, with disabled exports left as None."""
+
+    out_l2 = bool(spec.get("out_l2", False))
+    export_ga = bool(spec.get("disable_recompute", False))
+    out_h = bool(spec.get("out_h", False))
+    state_dtype = _state_dtype(spec)
     return (
-        output.detach().to(device="cpu", dtype=torch.bfloat16).contiguous(),
-        state.detach().to(device="cpu", dtype=state_dtype).contiguous(),
+        _cpu(o, torch.bfloat16),
+        _cpu(state, state_dtype),
+        _cpu(g_cumsum, torch.float32) if export_ga else None,
+        _cpu(a, torch.bfloat16) if export_ga else None,
+        _cpu(beta_eff, torch.float32) if out_l2 else None,
+        _cpu(h, torch.bfloat16) if out_h else None,
+        _cpu(q_hat, torch.bfloat16) if out_l2 else None,
+        _cpu(k_hat, torch.bfloat16) if out_l2 else None,
+        _cpu(q_rstd, torch.float32) if out_l2 else None,
+        _cpu(k_rstd, torch.float32) if out_l2 else None,
     )
+
+
+def _exports_from_stages(inputs: dict[str, Any], stages: dict[str, torch.Tensor]):
+    """Public optional tensors from the Triton-equivalent emulation.
+
+    ``g_cumsum`` is the natural chunk-local sum. The Triton recurrence stores
+    that sum times ``RCP_LN2`` and then applies ``exp2``; the kernel writes the
+    sum itself and applies ``exp``, which is the same value.     ``h`` uses the same ``[V, K]`` layout as ``final_state`` when
+    ``state_v_first`` is set.
+    """
+
+    g_cumsum = (stages["g_cumsum"].float() / RCP_LN2).contiguous()
+    a = stages["A"].permute(0, 2, 1, 3).contiguous()
+    # The emulation already stores h as [V, K] when state_v_first, matching the kernel.
+    h = stages["h"]
+    q_hat, k_hat, q_rstd, k_rstd = _l2_public(inputs["q"], inputs["k"], inputs["layout"])
+    beta_eff = _beta_public(inputs["beta"], inputs["layout"], inputs["allow_neg_eigval"])
+    return g_cumsum, a, beta_eff, h.contiguous(), q_hat, k_hat, q_rstd, k_rstd
 
 
 def run_cpu(spec: dict[str, Any]):
     inputs = build_inputs(spec, torch.device("cpu"))
     # Public NTD/TND are rank-4 packed tensors, not the emulator's rank-3 names.
     golden_layout = "bsnd" if inputs["sequence_major"] else "bnsd"
-    o, final_state = cpu_chunk_gated_delta_rule_fwd_emu(
+    o, final_state, stages = cpu_chunk_gated_delta_rule_fwd_emu(
         inputs["q"],
         inputs["k"],
         inputs["v"],
@@ -166,10 +238,14 @@ def run_cpu(spec: dict[str, Any]):
         use_beta_sigmoid_in_kernel=True,
         allow_neg_eigval=inputs["allow_neg_eigval"],
         state_v_first=inputs["state_v_first"],
+        return_stages=True,
     )
     if not inputs["sequence_major"]:
         o = o.transpose(1, 2).contiguous()
-    return _contract(o, final_state, spec)
+    g_cumsum, a, beta_eff, h, q_hat, k_hat, q_rstd, k_rstd = _exports_from_stages(inputs, stages)
+    return _pack(
+        spec, o, final_state, g_cumsum, a, beta_eff, h, q_hat, k_hat, q_rstd, k_rstd,
+    )
 
 
 def _metadata(seqlens: Optional[list[int]]) -> tuple[Optional[list[int]], Optional[list[int]]]:
@@ -214,14 +290,14 @@ def run_npu(spec: dict[str, Any], input_data: InputDataset):
         use_qk_l2norm_in_kernel=True,
         use_beta_sigmoid_in_kernel=True,
         allow_neg_eigval=inputs["allow_neg_eigval"],
-        disable_recompute=False,
-        return_intermediate_states=False,
+        disable_recompute=inputs["disable_recompute"],
+        return_intermediate_states=inputs["out_h"],
         state_v_first=inputs["state_v_first"],
         layout=inputs["layout"],
-        is_out_l2norm=False,
+        is_out_l2norm=inputs["out_l2"],
     )
     torch.npu.synchronize()
-    return _contract(outputs[0], outputs[1], spec)
+    return _pack(spec, *outputs)
 
 
 def run_gpu(spec: dict[str, Any]):
@@ -229,13 +305,13 @@ def run_gpu(spec: dict[str, Any]):
 
     if not torch.cuda.is_available():
         raise RuntimeError("GPU Triton benchmark requires CUDA")
-    from gpu_triton_fwd import gpu_chunk_gated_delta_rule_fwd
+    from gpu_triton_fwd import gpu_chunk_gated_delta_rule_fwd_stages
 
     inputs = build_inputs(spec, torch.device("cuda"))
     # Public NTD/TND are rank-4 packed tensors, same as the CPU emulation.
     golden_layout = "bsnd" if inputs["sequence_major"] else "bnsd"
     cu = _cu(inputs["seqlens"])
-    output, final_state = gpu_chunk_gated_delta_rule_fwd(
+    stages = gpu_chunk_gated_delta_rule_fwd_stages(
         inputs["q"],
         inputs["k"],
         inputs["v"],
@@ -243,7 +319,6 @@ def run_gpu(spec: dict[str, Any]):
         inputs["beta"],
         scale=inputs["scale"],
         initial_state=inputs["initial_state"],
-        output_final_state=True,
         cu_seqlens=None if cu is None else cu.to(device="cuda"),
         chunk_size=32,
         layout=golden_layout,
@@ -253,9 +328,16 @@ def run_gpu(spec: dict[str, Any]):
         state_v_first=inputs["state_v_first"],
     )
     torch.cuda.synchronize()
+    output = stages["o"]
     if not inputs["sequence_major"]:
         output = output.transpose(1, 2).contiguous()
-    return _contract(output, final_state, spec)
+    # The stage dict is on CUDA. The public conversion below runs on CPU.
+    stages = {key: value.detach().to("cpu") for key, value in stages.items()}
+    inputs = {key: (value.detach().to("cpu") if torch.is_tensor(value) else value) for key, value in inputs.items()}
+    g_cumsum, a, beta_eff, h, q_hat, k_hat, q_rstd, k_rstd = _exports_from_stages(inputs, stages)
+    return _pack(
+        spec, output, stages["final_state"], g_cumsum, a, beta_eff, h, q_hat, k_hat, q_rstd, k_rstd,
+    )
 
 
 @register("executor_chunk_gated_delta_rule_fwd_chunk32")
