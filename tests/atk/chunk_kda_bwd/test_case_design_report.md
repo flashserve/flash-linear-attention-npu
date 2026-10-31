@@ -16,8 +16,9 @@ PR993 的布局与 dtype 契约如下：
   不随 q/k/v 的 head/token 顺序改变。
 - dq/dk/dv 为 BF16；dg 跟随 raw_g，可为 BF16/FP32；db 跟随 beta，可为 BF16/FP32；
   A_log/dt_bias 及其梯度固定 FP32。
-- ACLNN 将 do 转置一次供 Prepare/Dhu 共用；普通 beta 转置一次供 Recompute/Finalize
-  共用。Finalize 内部的 beta 仍为 head-major。
+- A5 ACLNN 将原始 do 直接传给 Prepare/Dhu，通过内部可选布局标志按 token-major 行距读取；
+  独立小接口仍默认 head-major。普通 beta 转置一次供 Recompute/Finalize 共用，
+  Finalize 内部的 beta 仍为 head-major。
 
 公开反向调用为：
 
