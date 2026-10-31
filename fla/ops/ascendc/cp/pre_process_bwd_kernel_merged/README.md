@@ -103,7 +103,7 @@ aclnn 接口见 [`docs/api.md`](docs/api.md)。
 | 设备侧精度（A2 / ascend910b） | 同一 12 条用例在同一实现上执行：**12/12 PASS**，误差量级与 A5 一致（`E ≤ 9.6e-3`、`P ≤ 7.2e-3`） |
 | 数值稳定性 | 关键用例（`pos_15` 96 head 多 task、`pos_13` 32 chunk 长链、`gate_gk`）重复执行结果逐位一致；此前出现过的"随负载时好时坏"已定位到跨核 wait 的 pipe 语义并修复 |
 | 设备侧性能 | ATK 性能矩阵（4 条）在最终代码上实测 device 耗时：A5 **77.1 / 55.4 / 283.2 / 135.1 µs**、A2 **132.5 / 92.8 / 481.0 / 360.8 µs**（dense 8 chunk / varlen `[0,300)` 5 chunk / 32 chunk 长链 / `Hv=96` 多 head 分核，口径与命令见测试 README）。模型场景（gva/h8/kda/long × CP 档）逐档 device 耗时与 H20 对照见 [`docs/design.md`](docs/design.md)：§11.7（A5 优化起点）、§28（A5/A2 逐档 + H20）、§31.2（A5 v23：主场景 0.96~1.19× H20）、§35（A2 v28：累计 1.85×，`gva_cp64` 2.32× H20） |
-| 设备侧反向拦截 | 按 `gen_pre_process_bwd_kernel_merged.py` 内联用例表的 13 条反向用例执行 `atk node --backend npu --devices <id> task -c ./atk_pre_process_bwd_kernel_merged.json --task run`：**13/13 PASS**，NPU 侧实际返回码与 `expected_return_code` 一致（`ACLNN_ERR_PARAM_INVALID`=161001），覆盖 `g`/`gk` 互斥、`K != 128`（64/256/512）、`V != 128`（96）、`Hv%Hk!=0`、dense/varlen `B>1`、`chunk_size!=64`、`g` shape 不匹配、`gk` FP32、`cu_seqlens` 过短、空 tensor |
+| 设备侧反向拦截 | 按 `gen_pre_process_bwd_kernel_merged.py` 内联用例表的 13 条反向用例执行 `atk node --backend npu --devices <id> task -c ./atk_pre_process_bwd_kernel_merged.json --task run`：**13/13 PASS**，NPU 侧实际返回码与 `expected_return_code` 一致（`ACLNN_ERR_PARAM_INVALID`=161002），并断言报错文本包含对应参数的实际值和期望值/原因；覆盖 `g`/`gk` 互斥、`K != 128`（64/256/512）、`V != 128`（96）、`Hv%Hk!=0`、dense/varlen `B>1`、`chunk_size!=64`、`g` shape 不匹配、`gk` FP32、`cu_seqlens` 过短、空 tensor |
 | A3 / ascend910_93 | `def.cpp` 已声明该平台配置，但**本版未在 A3 设备上执行验证**（无可用设备）；编译与精度结论只覆盖 A2/A5 |
 
 ### 尚未完成（下一步）
@@ -177,7 +177,7 @@ FLA_NPU_ENV=<custom opp>/bin/set_env.bash ATK_OUTPUT_ROOT=<output root> \
 - **`g` 为 FP32 时不能做 `Cast<float,float>`**：`USE_G` 且 `g` 是 FP32 时直接搬进 FP32 缓冲（`if constexpr` 分支），
   走 `Cast` 会得到错误数值（历史症状：`E_r` 相对误差 ~50%）。
 - **`gk` 的 dtype 校验必须取 `gk` 自己的输入描述**：`g` 缺失时 `g` 的 dtype 会落到缺省 FP32，用它校验 `gk` 会把
-  合法的 bf16/fp16 `gk` 拦成 `ACLNN_ERR_PARAM_INVALID`（161001）。
+  合法的 bf16/fp16 `gk` 拦成 `ACLNN_ERR_PARAM_INVALID`（161002）。
 - **aclnn 的 `cu_seqlens` 是 `aclIntArray`**，不是 `aclTensor`：取数程序里要用 `aclCreateIntArray` 传入，
   否则编译期类型不匹配、或运行期 varlen 语义不生效。
 - **取数程序用 sentinel 初始化输出缓冲**：用全 0 预清零无法区分"kernel 没写"和"kernel 写了 0"，改用非零 sentinel

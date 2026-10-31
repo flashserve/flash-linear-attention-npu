@@ -483,6 +483,33 @@ def _op(name: str):
     return op
 
 
+def _raise_with_recent_aclnn_error(exc: RuntimeError) -> None:
+    """Append CANN error details that arrive after the Stable-ABI call exits.
+
+    The launcher reads ``aclGetRecentErrMsg`` immediately after aclnn returns.
+    Some CANN paths populate that cache just after the Stable-ABI exception has
+    already crossed the dispatcher, but before Python receives the exception.
+    Preserve the status-bearing message and append the missing details here.
+
+    This helper runs only from an exception handler, so successful operator
+    calls keep the direct dispatcher path.
+    """
+
+    message = str(exc)
+    if (not message.startswith("fla_npu(stable): aclnn") or
+            "Error message:" in message):
+        return
+    try:
+        from . import _runtime
+
+        details = _runtime.runtime()._recent_error_message().strip()
+    except Exception:
+        return
+    if details:
+        raise RuntimeError(
+            f"{message}. Error message: {details}") from exc
+
+
 def _bound_op(name: str):
     """Op handle for a hot path: one dict lookup, resolved on the first call.
 
@@ -855,10 +882,14 @@ def npu_pre_process_bwd_kernel_merged(q, k, w, d_o, dv, scale, chunk_size, *,
     gate forms; ``cu_seqlens`` carries the single packed segment.
     """
 
-    return _op("npu_pre_process_bwd_kernel_merged")(
-        q, k, w, d_o, dv, g, gk, _host_ints(cu_seqlens),
-        float(scale), int(chunk_size), _current_stream_ptr(),
-    )
+    try:
+        return _op("npu_pre_process_bwd_kernel_merged")(
+            q, k, w, d_o, dv, g, gk, _host_ints(cu_seqlens),
+            float(scale), int(chunk_size), _current_stream_ptr(),
+        )
+    except RuntimeError as exc:
+        _raise_with_recent_aclnn_error(exc)
+        raise
 
 
 def npu_chunk_local_cumsum(g, chunk_size, *, cu_seqlens=None,
@@ -1417,21 +1448,25 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
 
     if cu_seqlens and not chunk_indices:
         chunk_indices = _canonical_chunk_indices(cu_seqlens, chunk_size)
-    result = _op("npu_chunk_kda_fwd")(
-        q, k, v, g, beta, A_log, dt_bias, initial_state,
-        _host_ints(cu_seqlens), _host_ints(chunk_indices),
-        _char_code("npu_chunk_kda_fwd", "layout", layout),
-        float(scale), chunk_size,
-        bool(safe_gate),
-        -5.0 if lower_bound is None else float(lower_bound),
-        bool(use_gate_in_kernel), bool(state_v_first),
-        epsilon, use_qk_l2norm_in_kernel, use_beta_sigmoid_in_kernel,
-        allow_neg_eigval, use_exp2,
-        bool(output_final_state), bool(disable_recompute),
-        bool(return_intermediate_states),
-        q_hat_out, k_hat_out, q_rstd_out, k_rstd_out, beta_eff_out,
-        _current_stream_ptr(),
-    )
+    try:
+        result = _op("npu_chunk_kda_fwd")(
+            q, k, v, g, beta, A_log, dt_bias, initial_state,
+            _host_ints(cu_seqlens), _host_ints(chunk_indices),
+            _char_code("npu_chunk_kda_fwd", "layout", layout),
+            float(scale), chunk_size,
+            bool(safe_gate),
+            -5.0 if lower_bound is None else float(lower_bound),
+            bool(use_gate_in_kernel), bool(state_v_first),
+            epsilon, use_qk_l2norm_in_kernel, use_beta_sigmoid_in_kernel,
+            allow_neg_eigval, use_exp2,
+            bool(output_final_state), bool(disable_recompute),
+            bool(return_intermediate_states),
+            q_hat_out, k_hat_out, q_rstd_out, k_rstd_out, beta_eff_out,
+            _current_stream_ptr(),
+        )
+    except RuntimeError as exc:
+        _raise_with_recent_aclnn_error(exc)
+        raise
     return (*result, initial_state)
 
 
