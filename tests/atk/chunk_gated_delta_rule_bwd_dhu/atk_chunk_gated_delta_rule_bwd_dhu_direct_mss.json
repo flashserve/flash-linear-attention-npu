@@ -1,0 +1,7670 @@
+[
+ {
+  "id": 9,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_009_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_009_hratio1\",\"dtype\":\"bf16\",\"B\":3,\"HK\":4,\"HV\":4,\"T\":65,\"K\":128,\"V\":128,\"chunk_size\":64,\"state_v_first\":false,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":9,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 3,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 65,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 9,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 21,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_021_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_021_hratio1\",\"dtype\":\"bf16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":213,\"K\":128,\"V\":128,\"chunk_size\":64,\"state_v_first\":false,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":21,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"cu_seqlens\":[0,65,82,213]}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 213,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 21,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 33,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_033_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_033_hratio1\",\"dtype\":\"bf16\",\"B\":3,\"HK\":4,\"HV\":4,\"T\":65,\"K\":128,\"V\":128,\"chunk_size\":64,\"state_v_first\":true,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":33,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 3,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 65,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 33,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 45,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_045_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_045_hratio1\",\"dtype\":\"bf16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":213,\"K\":128,\"V\":128,\"chunk_size\":64,\"state_v_first\":true,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":45,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"cu_seqlens\":[0,65,82,213]}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 213,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 45,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 57,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_057_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_057_hratio1\",\"dtype\":\"bf16\",\"B\":3,\"HK\":4,\"HV\":4,\"T\":129,\"K\":128,\"V\":128,\"chunk_size\":128,\"state_v_first\":false,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":57,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 3,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 129,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 57,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 69,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_069_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_069_hratio1\",\"dtype\":\"bf16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":405,\"K\":128,\"V\":128,\"chunk_size\":128,\"state_v_first\":false,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":69,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"cu_seqlens\":[0,129,146,405]}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 405,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 69,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 81,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_081_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_081_hratio1\",\"dtype\":\"bf16\",\"B\":3,\"HK\":4,\"HV\":4,\"T\":129,\"K\":128,\"V\":128,\"chunk_size\":128,\"state_v_first\":true,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":81,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 3,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 129,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 81,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 93,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_093_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_093_hratio1\",\"dtype\":\"bf16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":405,\"K\":128,\"V\":128,\"chunk_size\":128,\"state_v_first\":true,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":93,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"cu_seqlens\":[0,129,146,405]}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 405,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 93,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 105,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_105_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_105_hratio1\",\"dtype\":\"bf16\",\"B\":3,\"HK\":4,\"HV\":4,\"T\":65,\"K\":128,\"V\":256,\"chunk_size\":64,\"state_v_first\":false,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":105,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 3,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 65,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 105,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 117,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_117_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_117_hratio1\",\"dtype\":\"bf16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":213,\"K\":128,\"V\":256,\"chunk_size\":64,\"state_v_first\":false,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":117,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"cu_seqlens\":[0,65,82,213]}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 213,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 117,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 129,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_129_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_129_hratio1\",\"dtype\":\"bf16\",\"B\":3,\"HK\":4,\"HV\":4,\"T\":65,\"K\":128,\"V\":256,\"chunk_size\":64,\"state_v_first\":true,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":129,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 3,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 65,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 129,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 141,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_141_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_141_hratio1\",\"dtype\":\"bf16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":213,\"K\":128,\"V\":256,\"chunk_size\":64,\"state_v_first\":true,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":141,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"cu_seqlens\":[0,65,82,213]}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 213,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 141,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 153,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_153_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_153_hratio1\",\"dtype\":\"bf16\",\"B\":3,\"HK\":4,\"HV\":4,\"T\":129,\"K\":128,\"V\":256,\"chunk_size\":128,\"state_v_first\":false,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":153,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 3,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 129,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 153,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 165,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_165_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_165_hratio1\",\"dtype\":\"bf16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":405,\"K\":128,\"V\":256,\"chunk_size\":128,\"state_v_first\":false,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":165,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"cu_seqlens\":[0,129,146,405]}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 405,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 165,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 177,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_177_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_177_hratio1\",\"dtype\":\"bf16\",\"B\":3,\"HK\":4,\"HV\":4,\"T\":129,\"K\":128,\"V\":256,\"chunk_size\":128,\"state_v_first\":true,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":177,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 3,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 129,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 177,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 189,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_189_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_189_hratio1\",\"dtype\":\"bf16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":405,\"K\":128,\"V\":256,\"chunk_size\":128,\"state_v_first\":true,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":189,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"cu_seqlens\":[0,129,146,405]}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 405,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 189,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 201,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_201_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_201_hratio1\",\"dtype\":\"fp16\",\"B\":3,\"HK\":4,\"HV\":4,\"T\":65,\"K\":128,\"V\":128,\"chunk_size\":64,\"state_v_first\":false,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":201,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "fp16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 3,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 65,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 201,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 213,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_213_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_213_hratio1\",\"dtype\":\"fp16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":213,\"K\":128,\"V\":128,\"chunk_size\":64,\"state_v_first\":false,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":213,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"cu_seqlens\":[0,65,82,213]}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "fp16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 213,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 213,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 225,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_225_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_225_hratio1\",\"dtype\":\"fp16\",\"B\":3,\"HK\":4,\"HV\":4,\"T\":65,\"K\":128,\"V\":128,\"chunk_size\":64,\"state_v_first\":true,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":225,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "fp16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 3,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 65,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 225,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 237,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_237_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_237_hratio1\",\"dtype\":\"fp16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":213,\"K\":128,\"V\":128,\"chunk_size\":64,\"state_v_first\":true,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":237,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"cu_seqlens\":[0,65,82,213]}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "fp16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 213,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 237,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 249,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_249_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_249_hratio1\",\"dtype\":\"fp16\",\"B\":3,\"HK\":4,\"HV\":4,\"T\":129,\"K\":128,\"V\":128,\"chunk_size\":128,\"state_v_first\":false,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":249,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "fp16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 3,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 129,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 249,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 261,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_261_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_261_hratio1\",\"dtype\":\"fp16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":405,\"K\":128,\"V\":128,\"chunk_size\":128,\"state_v_first\":false,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":261,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"cu_seqlens\":[0,129,146,405]}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "fp16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 405,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 261,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 273,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_273_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_273_hratio1\",\"dtype\":\"fp16\",\"B\":3,\"HK\":4,\"HV\":4,\"T\":129,\"K\":128,\"V\":128,\"chunk_size\":128,\"state_v_first\":true,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":273,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "fp16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 3,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 129,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 273,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 285,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_285_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_285_hratio1\",\"dtype\":\"fp16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":405,\"K\":128,\"V\":128,\"chunk_size\":128,\"state_v_first\":true,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":285,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"cu_seqlens\":[0,129,146,405]}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "fp16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 405,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 285,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 297,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_297_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_297_hratio1\",\"dtype\":\"fp16\",\"B\":3,\"HK\":4,\"HV\":4,\"T\":65,\"K\":128,\"V\":256,\"chunk_size\":64,\"state_v_first\":false,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":297,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "fp16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 3,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 65,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 297,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 309,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_309_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_309_hratio1\",\"dtype\":\"fp16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":213,\"K\":128,\"V\":256,\"chunk_size\":64,\"state_v_first\":false,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":309,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"cu_seqlens\":[0,65,82,213]}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "fp16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 213,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 309,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 321,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_321_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_321_hratio1\",\"dtype\":\"fp16\",\"B\":3,\"HK\":4,\"HV\":4,\"T\":65,\"K\":128,\"V\":256,\"chunk_size\":64,\"state_v_first\":true,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":321,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "fp16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 3,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 65,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 321,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 333,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_333_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_333_hratio1\",\"dtype\":\"fp16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":213,\"K\":128,\"V\":256,\"chunk_size\":64,\"state_v_first\":true,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":333,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"cu_seqlens\":[0,65,82,213]}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "fp16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 213,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 333,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 345,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_345_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_345_hratio1\",\"dtype\":\"fp16\",\"B\":3,\"HK\":4,\"HV\":4,\"T\":129,\"K\":128,\"V\":256,\"chunk_size\":128,\"state_v_first\":false,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":345,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "fp16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 3,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 129,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 345,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 357,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_357_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_357_hratio1\",\"dtype\":\"fp16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":405,\"K\":128,\"V\":256,\"chunk_size\":128,\"state_v_first\":false,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":357,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"cu_seqlens\":[0,129,146,405]}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "fp16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 405,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 357,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 369,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_369_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_369_hratio1\",\"dtype\":\"fp16\",\"B\":3,\"HK\":4,\"HV\":4,\"T\":129,\"K\":128,\"V\":256,\"chunk_size\":128,\"state_v_first\":true,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":369,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "fp16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 3,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 129,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 369,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 381,
+  "default_seed": 20261020,
+  "name": "chunk_gated_delta_rule_bwd_dhu_dht_381_hratio1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"dht_381_hratio1\",\"dtype\":\"fp16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":405,\"K\":128,\"V\":256,\"chunk_size\":128,\"state_v_first\":true,\"use_gk\":true,\"with_h0\":true,\"with_dht\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"case_id\":381,\"seed\":20261020,\"route\":\"ascendc\",\"soc\":\"ascend950\",\"cu_seqlens\":[0,129,146,405]}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "fp16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 405,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 381,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261020,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 384,
+  "default_seed": 20261023,
+  "name": "chunk_gated_delta_rule_bwd_dhu_direct_h1_tail1",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"direct_h1_tail1\",\"dtype\":\"bf16\",\"B\":1,\"HK\":1,\"HV\":1,\"T\":65,\"K\":128,\"V\":128,\"chunk_size\":64,\"state_v_first\":false,\"case_id\":384,\"seed\":20261023,\"use_gk\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"route\":\"ascendc\",\"soc\":\"ascend950\",\"with_h0\":true,\"with_dht\":true}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 65,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 384,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261023,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 385,
+  "default_seed": 20261024,
+  "name": "chunk_gated_delta_rule_bwd_dhu_direct_h2_tail65_task_reuse",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"direct_h2_tail65_task_reuse\",\"dtype\":\"fp16\",\"B\":48,\"HK\":2,\"HV\":2,\"T\":65,\"K\":128,\"V\":128,\"chunk_size\":128,\"state_v_first\":true,\"case_id\":385,\"seed\":20261024,\"use_gk\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"route\":\"ascendc\",\"soc\":\"ascend950\",\"with_h0\":true,\"with_dht\":true}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "fp16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 48,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 2,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 2,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 65,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 385,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261024,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 386,
+  "default_seed": 20261025,
+  "name": "chunk_gated_delta_rule_bwd_dhu_direct_h3_v256_tail17_task_reuse",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"direct_h3_v256_tail17_task_reuse\",\"dtype\":\"bf16\",\"B\":65,\"HK\":3,\"HV\":3,\"T\":17,\"K\":128,\"V\":256,\"chunk_size\":64,\"state_v_first\":false,\"case_id\":386,\"seed\":20261025,\"use_gk\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"route\":\"ascendc\",\"soc\":\"ascend950\",\"with_h0\":true,\"with_dht\":true}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 65,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 3,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 3,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 17,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 256,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 386,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261025,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 387,
+  "default_seed": 20261026,
+  "name": "chunk_gated_delta_rule_bwd_dhu_direct_h4_tail1_task_reuse",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_chunk_gated_delta_rule_bwd_dhu",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "mixed_tolerance_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"name\":\"direct_h4_tail1_task_reuse\",\"dtype\":\"fp16\",\"B\":96,\"HK\":4,\"HV\":4,\"T\":1,\"K\":128,\"V\":128,\"chunk_size\":64,\"state_v_first\":true,\"with_h0\":false,\"with_dht\":false,\"case_id\":387,\"seed\":20261026,\"use_gk\":true,\"op\":\"chunk_gated_delta_rule_bwd_dhu\",\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "fp16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 96,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HK",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "HV",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 4,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "K",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "V",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 128,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 387,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261026,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend950",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ }
+]

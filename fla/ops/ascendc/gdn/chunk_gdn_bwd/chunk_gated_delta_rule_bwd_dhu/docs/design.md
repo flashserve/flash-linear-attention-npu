@@ -307,14 +307,14 @@ for headOffset = 0; headOffset < headCnt; ++headOffset:
 
 本节先描述完整递推版本的目标阶段划分；当前代码已经推进到三阶段递推首版，具体已实现范围见本节后面的“当前代码 stage 对齐状态”。
 
-每个 `(seq, hvBase, headOffset, vBase, chunk)` 的处理只拆为 `stage_0/stage_1/stage_2` 三个阶段。V tile 开始前的 `dH` 初始化、kernel 入口的可选 `dh0` 整体清零，以及 V tile 全部 chunk 结束后的 `dh0` 写回都只是循环入口/出口动作，不作为 stage。Cube/Vector 中间结果主要落 GM workspace，但 `dh` 和 `dv2` 这两个公开输出也作为 Cube 后续 GEMM 的输入，避免把同一份 DT 数据再镜像写一份 workspace。A5 `qgDt` 是仅供当前 Cube stage1 消费的内部量，当前通过四块 L1A slot 从 Vector UB 直接送入 Cube，不再经过 GM workspace；`g` 按 headOffset 独立映射，`gK` 在当前 window 内按共享 `hk` 映射到组首 slot。A2 继续使用 qg workspace 路径。4-head round 内每个 head 使用当前 window 的一个独立 workspace slot。A2/A5 中同一个 head 的 Vector 计算由 `headOffset % subBlockNum` 选中的 subblock 完整负责，另一个 subblock 只参与该 head 的跨核同步配平。
+每个 `(seq, hvBase, headOffset, vBase, chunk)` 的处理只拆为 `stage_0/stage_1/stage_2` 三个阶段。V tile 开始前的 `dH` 初始化、kernel 入口的可选 `dh0` 整体清零，以及 V tile 全部 chunk 结束后的 `dh0` 写回都只是循环入口/出口动作，不作为 stage。Cube/Vector 中间结果主要落 GM workspace，但 `dh` 和 `dv2` 这两个公开输出也作为 Cube 后续 GEMM 的输入，避免把同一份 DT 数据再镜像写一份 workspace。A5 `qgDt` 是仅供当前 Cube stage1 消费的内部量：`USE_GK=1 && HRatio==1` 时在当前 head 的 `DH_READY` 等待前由 AIC 直接 GM→L1A，复用原 qg slot 和本地 ready/free，跳过 AIV 的 UB/cast/staging；GVA 或 `USE_GK=0` 时仍从 Vector UB 写入同一组 slot。均不经过 GM workspace，`g` 按 headOffset 独立映射，GVA 的 `gK` 在当前 window 内按共享 `hk` 映射到组首 slot。A2 继续使用 qg workspace 路径。4-head round 内每个 head 使用当前 window 的一个独立 workspace slot。A2/A5 中同一个 head 的 Vector 计算由 `headOffset % subBlockNum` 选中的 subblock 完整负责，另一个 subblock 只参与该 head 的跨核同步配平。
 
 完整递推目标中，`stage_0` 的 Cube 和 Vector 都只依赖原始输入或当前 fp32 state row tile，不互相 wait。Vector 先把旧 `dH` 保存到公开输出 `dh`，再安全地预计算 `qgDt` 并对 `stateFp32` 中的 `dhState` 做 gate decay；后续 Cube 读取的是 GM 中已保存的 `dh[chunk]`，因此 `dvState=K@dH_old` 仍使用更新前的 `dH_old`，不会受到 state 原地 decay 影响。
 
 | 阶段 | Cube 做什么 | Vector 做什么 | 缓存/驻留产物 |
 |---|---|---|---|
-| `stage_0` | 不等待 Vector；读取或预取当前 chunk 的 `K_blk=k[seq,hk,bos:eos,:]`、`W=w[seq,hv,bos:eos,:]`、`dO=d_o[seq,hv,bos:eos,vBase:vBase+BV]` 到 Cube 侧 resident，或至少完成 GM offset/layout 准备 | 从 fp32 workspace state 段读取当前 AIV 的 `dhState=dH_old` row tile 到专用 `stateFp32` UB；写公开输出 `dh[chunk]=cast(dH_old)`；若传 `g`，将当前 chunk 的 `g[M]` 搬入当前 head 的 `gRaw` UB resident，向量化生成 `gateFactor=E_g(g[t])` 和 `dvGateFactor=E_g(g_last-g[t])` 并驻留，`qgDt=cast(q*gateFactor)`，并做 `dhState *= E_g(g_last)`；若传 `gK`，整行读取 `gK_last[K]` 并生成 `gkLastFactor=E_gK(gK_last[K])`，按 K 行做 state decay；A5 当前 window 内同一 `hk` 只由首个 V head 生成一次 `qgDt=cast(q)`，后续 V heads 复用该 L1A slot，`g` 分支仍按 head 独立生成；A2 继续写各 head 的 qg workspace；更新后的 fp32 state row tile 写回 workspace；每个 head 保持原有 `vecToCube` 通知 | A5 四块 qg L1A slot，`g` 按 head 独立使用，`gK` 按 window 内 `hk` 共享；A2 qg workspace；公开输出 `dh`；fp32 `dhState[K,V]` workspace 段；gate UB resident |
-| `stage_1` | 等 `dh/qgDt`；读取公开输出 `dh[chunk]` 作为 `dH_old`；A5 `g` 分支从 `l1AScratch[headOffset]` 读取，`gK` 分支从当前 window 内该 `hk` 首个 head 对应的共享 slot 读取；A2 从 qg workspace 搬入。复用或读取 `K_blk/dO`，计算 `dvState = K_blk @ dH_old`、`termQ = qgDt.T @ dO`；A5 bf16 将 `dvState` 按 row tile 写矩阵 CV，A2 和 fp16/fp32 写 GM workspace；`termQ` 写 GM workspace；A5 BF16 `V=128` 时，同一 `hk` 的连续 V heads 复用 K 的 L0A slot0，`termQ` 使用独立 slot1 | 等 `dvState` ready；A5 bf16 从矩阵 CV 消费，A2 和 fp16/fp32 从 workspace 消费；若传 `g`，复用 stage0 驻留的 `dvGateFactor` 计算 `dv2=cast(dvState*dvGateFactor+dv)`；若传 `gK`，计算 `dv2=cast(dvState+dv)`；只写公开输出 `dv2`，写完后通知 Cube | 矩阵 CV 或 workspace 中的 `dvState[M,BV]`，workspace `termQ[K,BV]`；A5 BF16 V128 的 K L0A resident；公开输出 `dv2` |
+| `stage_0` | 不等待 Vector；读取或预取当前 chunk 的 `K_blk=k[seq,hk,bos:eos,:]`、`W=w[seq,hv,bos:eos,:]`、`dO=d_o[seq,hv,bos:eos,vBase:vBase+BV]` 到 Cube 侧 resident，或至少完成 GM offset/layout 准备 | 从 fp32 workspace state 段读取当前 AIV 的 `dhState=dH_old` row tile 到专用 `stateFp32` UB；写公开输出 `dh[chunk]=cast(dH_old)`；若传 `g`，将当前 chunk 的 `g[M]` 搬入当前 head 的 `gRaw` UB resident，向量化生成 `gateFactor=E_g(g[t])` 和 `dvGateFactor=E_g(g_last-g[t])` 并驻留，`qgDt=cast(q*gateFactor)`，并做 `dhState *= E_g(g_last)`；若传 `gK`，整行读取 `gK_last[K]` 并生成 `gkLastFactor=E_gK(gK_last[K])`，按 K 行做 state decay；GVA（`USE_GK=1 && HRatio>1`）当前 window 内同一 `hk` 只由组首 V head 生成一次 `qgDt=cast(q)`，后续 V heads 复用该组共享 L1A slot；`USE_GK=1 && HRatio==1` 时 AIV 不再生成 qg，每个 head 改由 AIC 独立直接装载到自己的原 L1A slot，`g` 分支仍按 head 独立生成；A2 继续写各 head 的 qg workspace；更新后的 fp32 state row tile 写回 workspace；每个 head 保持原有 `vecToCube` 通知 | A5 四块 qg L1A slot，raw-gate 和 `HRatio==1` 的 `gK` direct 按 head 独立使用，GVA 的 `gK` 按 window 内 `hk` 共享；A2 qg workspace；公开输出 `dh`；fp32 `dhState[K,V]` workspace 段；gate UB resident |
+| `stage_1` | 等 `dh/qgDt`；读取公开输出 `dh[chunk]` 作为 `dH_old`；A5 `g` 分支从 `l1AScratch[headOffset]` 读取，GVA 的 `gK` 从当前 window 内该 `hk` 首个 head 对应的共享 slot 读取，`HRatio==1` 的 `gK` 从当前 headOffset 的 direct slot 读取；A2 从 qg workspace 搬入。复用或读取 `K_blk/dO`，计算 `dvState = K_blk @ dH_old`、`termQ = qgDt.T @ dO`；A5 bf16 将 `dvState` 按 row tile 写矩阵 CV，A2 和 fp16/fp32 写 GM workspace；`termQ` 写 GM workspace；A5 BF16 `V=128` 时，同一 `hk` 的连续 V heads 复用 K 的 L0A slot0，`termQ` 使用独立 slot1 | 等 `dvState` ready；A5 bf16 从矩阵 CV 消费，A2 和 fp16/fp32 从 workspace 消费；若传 `g`，复用 stage0 驻留的 `dvGateFactor` 计算 `dv2=cast(dvState*dvGateFactor+dv)`；若传 `gK`，计算 `dv2=cast(dvState+dv)`；只写公开输出 `dv2`，写完后通知 Cube | 矩阵 CV 或 workspace 中的 `dvState[M,BV]`，workspace `termQ[K,BV]`；A5 BF16 V128 的 K L0A resident；公开输出 `dv2` |
 | `stage_2` | 等 `dv2` ready；读取公开输出 `dv2`，并复用或读取 `W`；计算 `termW = W.T @ dv2`；A5 bf16 在首个 CV tile 前通知 Vector 可启动，再按 row tile 写矩阵 CV，A2 和 fp16/fp32 写 GM workspace 后通知 Vector | 等 stage2 可启动；读取 workspace `termQ`，A5 bf16 按 tile 等待矩阵 CV `termW`，A2 和 fp16/fp32 读取 workspace `termW`；同时把 fp32 workspace state row tile 搬入 `stateFp32`；计算 `dhState = dhState + termQ * scale - termW` 并写回 workspace | 矩阵 CV 或 workspace 中的 `termW[K,BV]`；fp32 `dhState[K,V]` workspace 段 |
 
 ### 5.1 三阶段首版记录
@@ -326,11 +326,11 @@ for headOffset = 0; headOffset < headCnt; ++headOffset:
 | `GetSeqInfo` / `GetChunkInfoBySeqChunk` | 参考 `prepare_wy_repr_bwd`，用 helper 同时处理定长和变长 offset；定长由 `seqIdx/localChunkIdx` 计算 batch 内 token 区间，变长由 `cu_seqlens` 得到 packed token 区间，并在 task 粒度计算 canonical flattened chunk 前缀，chunk 内 O(1) 校验 `chunk_indices`，非 canonical 输入才 fallback 线性反查 | 后续仍可继续减少 `cu_seqlens` 前缀计算的重复读取，但不能把主流程拆成定长/变长两套分支 |
 | Kernel 主循环 | Cube/Vector 都按相同 `taskIdx -> seqIdx/headWindowIdx/hvBase/headCnt` 映射处理；若 `hasDh0`，Vector 在进入 task 循环前用 CANN `AscendC::Fill` 对完整 `dh0` GM 做一次性清零，并用 `SyncAll<true>()` 做全 Vector 同步，不需要 Cube 参与；一个 task 最多覆盖四个 value head；task 内负责当前 head 的 AIV 初始化该 head 的完整 fp32 workspace state，再按 seq 内 chunk 倒序串行执行 stage0/stage1/stage2 | 当前 `dhState` 入口仍固定清零，尚未从 `dht` 初始化；`dh0` 仍未按上游 fp32 shape/dtype 完整输出 |
 | `ChunkGatedDeltaRuleBwdDhuVector` 调度 | A2/A5 中对每个 `headOffset`，`headOffset % subBlockNum` 选中的 subblock 执行当前 head 的完整 stage0/stage1/stage2 计算；另一个 subblock 不读写该 head 的 workspace/output，只参与同一 raw flag 的 set/wait 配平。一个 4-head window 内 subblock0 处理 `headOffset=0/2`，subblock1 处理 `headOffset=1/3` | 后续可继续优化四个 head 的跨阶段 overlap |
-| `ChunkGatedDeltaRuleBwdDhuVector::ProcessChunkStage0` | 负责当前 head 的 AIV 从 fp32 workspace state 段按 row tile 读取 `stateFp32`，写公开 `dh` 对应行，Cube stage1 直接从 `dh` 读取 state；stage 内直接按 token 生成 `qgDt`；`g` 分支整段搬入 `g[M]` 到当前 head 的 `gRaw`，用向量 `Exp` 生成 `gateFactor=exp(g_t)` 和 `dvGateFactor=exp(g_last-g_t)` 并驻留，复用当前 chunk 最后 token 的向量 gate 结果做统一 decay；`gK` 分支生成 `qgDt=q`，读取 `gK_last[K]` 并用向量 `Muls/Exp` 生成 K 行 `gkLastFactor=exp2(gK_last)`；A5 将 `qgDt` 从 output UB 通过 MTE3 直接写入 L1A，`g` 按当前 `headOffset` 映射，`gK` 按当前 window 内共享 `hk` 的组首 head 映射，省去 UB->GM workspace 和 Cube GM->L1 两段搬运，A2 保持 qg workspace 路径；decay 后的 fp32 state 写回 workspace | 还没有从 `dht` 初始化真实 `dhState`，当前入口仍从 0 初始化 |
+| `ChunkGatedDeltaRuleBwdDhuVector::ProcessChunkStage0` | 负责当前 head 的 AIV 从 fp32 workspace state 段按 row tile 读取 `stateFp32`，写公开 `dh` 对应行，Cube stage1 直接从 `dh` 读取 state；`g` 分支整段搬入 `g[M]` 到当前 head 的 `gRaw`，用向量 `Exp` 生成 `gateFactor=exp(g_t)` 和 `dvGateFactor=exp(g_last-g_t)` 并驻留，复用当前 chunk 最后 token 的向量 gate 结果做统一 decay；`gK` 的 `HRatio==1` 分支不再由 AIV 生产 qg，改由 AIC 直接装载 q，AIV 仍读取 `gK_last[K]` 并用向量 `Muls/Exp` 生成 K 行 `gkLastFactor=exp2(gK_last)`；raw-gate 和 GVA 将 `qgDt` 从 output UB 通过 MTE3 直接写入相应 L1A slot，省去 UB->GM workspace 和 Cube GM->L1 两段搬运，A2 保持 qg workspace 路径；decay 后的 fp32 state 写回 workspace | 还没有从 `dht` 初始化真实 `dhState`，当前入口仍从 0 初始化 |
 | `ChunkGatedDeltaRuleBwdDhuVector` copy helpers | 对齐 `prepare_wy_repr_bwd`：q 行输入、gate 输入、dv 行输入和输出写回拆成 `CopyIn/Cast/CopyOut` helper。q 输入、gate 输入和输出各自使用独立 ping-pong 事件组 | 当前调用顺序较直，但事件设计不要求 q/gate 固定串行 |
 | stage0 的 `USE_GK=0` 分支 | stage 内读取 `q/g`，`gRaw/gateFactor/dvGateFactor` 按当前 headOffset 在 UB 中驻留；用向量 `Exp` 生成自然指数系数，再用 `Brcb+Mul` 写出 `qgDt = q * exp(g_t)`；随后按当前 chunk 最后 token 做 `dhState *= exp(g_last)`；stage1 直接复用 `dvGateFactor=exp(g_last-g_t)` | `g` 分支代码和 golden 都使用自然指数；不通过 scalar 读 gate 系数生成向量 |
-| stage0 的 `USE_GK=1` 分支 | 每个 head 仍独立读取 `gK_last[K]`，生成 `exp2(gK_last[K])` 并完成 state decay；A5 当前 window 内同一 `hk` 只由首个 V head 读取和转换 q、写一次共享 qg L1A slot，后续 V heads 不重复 q 的 GM->UB、cast 和 UB->L1；`gK` 不参与 token gate 或 `qgDt` | 已对齐上游 gate 指数语义；继续保持 `gK` dtype/shape 与上游一致 |
-| `ChunkGatedDeltaRuleBwdDhuCube` | 先搬 `K/dO`，等待当前 `headOffset` 的 `vecToCube` flag；A5 `g` 分支按 headOffset 消费独立 qg slot，`gK` 分支按当前 window 内 `hk` 首 head 映射消费共享 qg slot，A2 从 qg workspace 搬入；用 tile 级 resident/双缓冲计算 `dvState = K @ dh[chunk]` 和 `termQ = qgDt.T @ d_o`；bf16 路径将 `dvState` 按 `vecRow` row tile 通过 CV 发给负责当前 head 的 Vector subblock；fp16/fp32 路径写 GM workspace；随后发布 `cubeToVec`；`K` 使用 L1 resident ping/pong 并在同 chunk shared-key heads 间复用；A5 BF16 `V=128` 进一步让同组 K 驻留 L0A slot0，`termQ` 使用 slot1 | 其它 dtype/V 档位保持 L1 resident 到 L0 ping/pong 路径 |
+| stage0 的 `USE_GK=1` 分支 | 每个 head 仍独立读取 `gK_last[K]`，生成 `exp2(gK_last[K])` 并完成 state decay；`HRatio==1` 时 AIC 在当前 head 的 `DH_READY` 等待前直接装载 q 到原 qg L1A slot，AIV 不再做 GM->UB、恒等 cast 和 UB->L1 staging，本地 ready/free 保证该 slot 在最后一个 K tile 消费后释放；GVA 仍只由组首 V head 生成并共享该 slot，`gK` 不参与 token gate 或 `qgDt` | 已对齐上游 gate 指数语义；继续保持 `gK` dtype/shape 与上游一致 |
+| `ChunkGatedDeltaRuleBwdDhuCube` | 先搬 `K/dO`，等待当前 `headOffset` 的 `vecToCube` flag；A5 `g` 分支按 headOffset 消费独立 qg slot，GVA 的 `gK` 按当前 window 内 `hk` 首 head 映射消费共享 qg slot，`HRatio==1` 的 `gK` 在 `DH_READY` 等待前由 AIC 直接 GM→L1A 并用本地事件消费，A2 从 qg workspace 搬入；用 tile 级 resident/双缓冲计算 `dvState = K @ dh[chunk]` 和 `termQ = qgDt.T @ d_o`；bf16 路径将 `dvState` 按 `vecRow` row tile 通过 CV 发给负责当前 head 的 Vector subblock；fp16/fp32 路径写 GM workspace；随后发布 `cubeToVec`；`K` 使用 L1 resident ping/pong 并在同 chunk shared-key heads 间复用；A5 BF16 `V=128` 进一步让同组 K 驻留 L0A slot0，`termQ` 使用 slot1 | 其它 dtype/V 档位保持 L1 resident 到 L0 ping/pong 路径 |
 | CrossCore 同步 | 当前使用 `prepare_wy_repr_bwd` 风格的两套 raw flag：`vecToCube=2`、`cubeToVec=4`。每个 head 的每个同步点两个 Vector subblock 都参与一次 `CrossCoreSetFlag<0x2, PIPE_MTE3>` 或 `CrossCoreWaitFlag`，Cube 侧按 head 串行等待/发布；A2/A5 head 交替分摊只改变实际 producer，不改变 raw flag 次数 | 后续可继续优化四个 head 的跨阶段 overlap |
 | `ChunkGatedDeltaRuleBwdDhuVector::ProcessChunkStage1` | 负责当前 head 的 subblock 消费 `dvState` 和输入 `dv`。A5 bf16 路径先发起 `dv` 的 GM->UB 搬运，再等待矩阵 CV ready、cast `dvState` 并立即归还 free；fp16/fp32 路径从 GM workspace 读回 `dvState`；`g` 分支复用 stage0 的 `dvGateFactor` UB resident，`gK` 分支直接相加；按 token row tile 只写公开 `dv2` | 后续精度对齐仍需确认 dht/h0 语义 |
 | `ChunkGatedDeltaRuleBwdDhuCube::ProcessChunkStage2` | 等待 Vector 的 `dv2` ready 后，用 tile 级 W resident/双缓冲计算 `termW = w.T @ dv2`；A5 bf16 在首个矩阵 CV tile 前发布 `cubeToVec`，逐 tile 使用 ready/free；fp16/fp32 写 GM workspace 后发布 `cubeToVec` | `W` 当前按 head resident，不做跨 chunk 复用 |
@@ -462,7 +462,7 @@ stateFloatBase = reinterpret_cast<float *>(workspace)
 
 | 名称 | Shape | dtype | 当前用途 |
 |---|---|---|---|
-| `qgDt` | `[BT, K]` | q dtype | 当前保留 workspace 布局；A5 运行时由 Vector UB 直接写四块独立 L1A qg slot，Cube 不读本段 |
+| `qgDt` | `[BT, K]` | q dtype | 当前保留 workspace 布局；A5 `HRatio==1` 的 raw-gate 路径及全部 GVA 路径由 Vector UB 直接写四块独立 L1A qg slot，`USE_GK=1 && HRatio==1` 由 AIC 直接 GM→L1A；A5 Cube 不读本段 |
 | `dhState` | `[K, V]` | fp32 | Vector 递推 carry；按 row tile 在 workspace 和 `stateFp32` UB 之间流转 |
 | `dvState` | `[BT, V]` | q dtype | A2 和 fp16/fp32 路径由 Cube stage1 写 `K @ dh[chunk]`；A5 bf16 仅保留布局，运行时走 CV |
 | `termQ` | `[K, V]` | q dtype | Cube stage1 写 `qgDt.T @ d_o`；Vector stage2 消费 |
@@ -473,7 +473,7 @@ stateFloatBase = reinterpret_cast<float *>(workspace)
 
 ### 6.2 完整递推目标 workspace
 
-完整递推版本中，Cube 和 Vector 交换以下中间产物，`stateDt` 复用公开输出 `dh`，`dv2Dt` 复用公开输出 `dv2`。A5 的 `qgDt` 按当前 UB->L1 方案直传，A2 的 `qgDt` 继续通过 GM workspace；其它中间量按表中 workspace 布局保存。当前 slot 粒度按每个 active head 复用；A2/A5 中同一 head 的 slot 由负责该 head 的 Vector subblock 完整读写。若后续引入同一 head 内 chunk 级流水、V tile 并行或 head 间并行，必须升级为 ring slot 并配套 ready/free 计数。
+完整递推版本中，Cube 和 Vector 交换以下中间产物，`stateDt` 复用公开输出 `dh`，`dv2Dt` 复用公开输出 `dv2`。A5 raw-gate/GVA 的 `qgDt` 按当前 UB->L1 方案直传；`USE_GK=1 && HRatio==1` 时由 AIC 从 GM 直接装载 q 到原 L1A slot；A2 的 `qgDt` 继续通过 GM workspace。其它中间量按表中 workspace 布局保存。当前 slot 粒度按每个 active head 复用；A2/A5 中同一 head 的 slot 由负责该 head 的 Vector subblock 完整读写。若后续引入同一 head 内 chunk 级流水、V tile 并行或 head 间并行，必须升级为 ring slot 并配套 ready/free 计数。
 
 | 名称 | Shape | dtype | 字节数 |
 |---|---|---|---|
@@ -526,7 +526,7 @@ total   128KB
 | `dvGateFactorAll` | `[4,max(chunkSize,K)]` | fp32 | `g` 分支按 headOffset 驻留 `exp(g_last-g_t)`，stage1 直接复用，不重复搬运或计算小 gate tensor；`gK` 分支不使用 |
 | `outFp32` | `[vecRow, max(K,V)]` | fp32 | 零行、`dvState/dv` 合并和 gate 缩放的计算区 |
 
-`vecRow` 由 host 根据 UB 剩余空间计算，至少按 8 行对齐。A2/A5 中两个 Vector subblock 先按 `headOffset % subBlockNum` 交替选择完整 head，负责当前 head 的 subblock 再按 `rowOffset += vecRow` 切连续 tile。这样能把 `dh/state/qg/dv2/termQ/termW` 从大量 128 元素小 DMA 合并为多行连续搬运，同时减少两个 subblock 重复生成 gate resident 小 tensor。A5 qg 预留四块 L1A slot：`g` 分支按 `headOffset` 一一映射；`gK` 分支将当前 window 内同一 `hk` 的 V heads 映射到该组首个 head 的 slot，由首个 head 对应的 subblock 生产一次。共享 slot 保持到该组最后一个 V head 的 `termQ` 消费完成，下一 chunk 在四个 head 的 stage2 `cubeToVec` 握手完成后整体复用，不增加 qg 专用 flag。
+`vecRow` 由 host 根据 UB 剩余空间计算，至少按 8 行对齐。A2/A5 中两个 Vector subblock 先按 `headOffset % subBlockNum` 交替选择完整 head，负责当前 head 的 subblock 再按 `rowOffset += vecRow` 切连续 tile。这样能把 `dh/state/qg/dv2/termQ/termW` 从大量 128 元素小 DMA 合并为多行连续搬运，同时减少两个 subblock 重复生成 gate resident 小 tensor。A5 qg 预留四块 L1A slot：raw-gate 按 `headOffset` 一一映射；GVA 的 `gK` 路径将当前 window 内同一 `hk` 的 V heads 映射到该组首个 head 的 slot，由首个 head 对应的 subblock 生产一次并共享到该组最后一个 V head 的 `termQ` 消费完成。`USE_GK=1 && HRatio==1` 时 AIC 在当前 head 的 `DH_READY` 等待前直接读取 q，写到该 head 自己的原 qg slot，不经 AIV；同奇偶 head 的复用由本地事件 `headOffset & 1` 对应的 MTE2→MTE1 ready 和 MTE1→MTE2 free 闭环，free 在最后一个 K tile 的 L1→L0A 后发布，初始化预置 free，Drain 闭合。direct 不增加跨核旗、跨 task 预取或 L1 峰值。
 
 A5 Vector 的 regbase 计算按连续依赖合成单趟向量循环：`gateFactor=exp(g)`、`dvGateFactor=exp(g_last-g)`、`dv2=dvState * dvGateFactor + dv`、`state += termQ * scale - termW` 都在各自 row tile 内一趟完成；`gK` 的 `exp2` 仍使用 `x * ln2` 后执行 `Exp`。每个 head/chunk 先计算 `stateBase/dvStateBase/termQBase/termWBase/qBase/dvBase`，row 循环内只保留 `base + rowOffset * stride` 的地址递推；qg 的目的地址由当前 `headOffset` 对应的 L1A slot 和 row offset 直接得到。
 
@@ -548,13 +548,13 @@ A5 Vector 的 regbase 计算按连续依赖合成单趟向量循环：`gateFacto
 2. `ProcessChunkStage0`
    - 按连续 K-row tile 从 fp32 workspace state 段搬入 `stateFp32`，写公开输出 `dh`，并在 decay 后把 fp32 state 写回 workspace。
    - 不在每个 chunk 内清零 `dh0`；若 `hasDh0`，完整 `dh0` 已在 kernel 入口由各 Vector 核按 tiling 切分用 `Fill` 清零。
-   - 不预清零 `dvState/termQ/termW` workspace。stage0 写完 `dh/qgDt` 后，通过原有 `CrossCoreSetFlag<..., PIPE_MTE3>` 发布 `vecToCube`，保证同一 MTE3 pipe 上的数据搬运完成后再通知 Cube。
-   - 按连续 token-row tile 遍历当前 chunk 有效 token，在 stage 内直接读取 q 多行并生成 `qgDt`；A5 将 cast 后的 q dtype tile 使用 `BLOCK_MODE_VECTOR` 从 UB 直接写 L1 NZ 布局，A2 写 qg workspace。
+   - 不预清零 `dvState/termQ/termW` workspace。stage0 写完 `dh` 以及需要 AIV staging 的 `qgDt` 后，通过原有 `CrossCoreSetFlag<..., PIPE_MTE3>` 发布 `vecToCube`，保证同一 MTE3 pipe 上的数据搬运完成后再通知 Cube。direct 下仍保留该握手，供 gate/state 顺序和后续 `dv2` 信用计数使用；q 的可见性由 AIC 本地事件保证。
+   - raw-gate/GVA 按连续 token-row tile 遍历当前 chunk 有效 token，在 stage 内读取 q 多行并生成 `qgDt`；A5 将 cast 后的 q dtype tile 使用 `BLOCK_MODE_VECTOR` 从 UB 直接写 L1 NZ 布局，A2 写 qg workspace。`USE_GK=1 && HRatio==1` 时 AIV 跳过这段 qg 生产，AIC 使用原 `LayoutTagQGT` 与实际 `chunkLen` 直接装载 q，dense/varlen 的 `bIdx/tokenStart` 与原路径相同。
 
 3. stage0 的 qg/gate 路径
-   - 两个分支都先读取 q 行并 cast 到 fp32。
+   - raw-gate 或 GVA 路径先读取 q 行并 cast 到 fp32。
    - `USE_GK=0`：读取当前 chunk 的 `g[M]` 到当前 head 的 `gRaw` resident，用向量指令生成 `gateFactor=exp(g_t)` 和 `dvGateFactor=exp(g_last-g_t)` 并驻留，再用 `Brcb+Mul` 生成 `qgDt = q * gateFactor[t]`；A5 直写当前 head 的 L1A slot，A2 写 qg workspace。
-   - `USE_GK=1`：不使用 `gK` 生成 qg；A5 当前 window 内同一 `hk` 只由首个 V head 生成 `qgDt = q` 并写共享 L1A slot，后续 V heads 复用，A2 仍按 head 写 qg workspace。
+   - `USE_GK=1`：不使用 `gK` 生成 qg；`HRatio==1` 时 AIC 直接 GM→L1A，AIV 不再执行 q 的 GM→UB 和恒等 cast，GVA 仍由组首 V head 生成 `qgDt = q` 并写共享 L1A slot，后续 V heads 复用，A2 仍按 head 写 qg workspace。
    - 不把 `qgDt/q` 镜像到 `dv2`；`dv2` 只从 stage1 输出路径写。
 
 4. `ProcessChunkStage1`
@@ -622,7 +622,7 @@ q、gate 输入和 stateFp32 参考 `prepare_wy_repr_bwd` 使用独立事件组�
    - 将 fp32 workspace state row tile 搬入 `stateFp32`，cast 为 DT 写 `dh` 对应 chunk。
    - 不再把同一份 cast 结果镜像写 workspace `stateDt`；Cube 直接从公开输出 `dh` 读取。
    - 若传 `g`，读取 `q/g`，`gRaw/gateFactor/dvGateFactor` 在当前 head 的 UB slot 内驻留，生成 `qgDt = q * E_g(g)`；A5 将 q dtype tile 直写当前 head 的 L1A slot，A2 写 qg workspace。随后对 `stateFp32` 做 `dhState *= E_g(g_last)` 并以 fp32 写回 workspace。
-   - 若传 `gK`，读取 `q`，生成 `qgDt = q`；A5 将 q dtype tile 直写当前 head 的 L1A slot，A2 写 qg workspace。再整行读取当前 chunk 最后一个有效 token 的 `gK_last[K]`，用向量指令生成 `E_gK(gK_last[K])`，对 `stateFp32` 按行做 `dhState[k, :] *= E_gK(gK_last[k])` 后以 fp32 写回 workspace；`gK` 不影响 `qgDt`。
+   - 若传 `gK`，A5 `HRatio==1` 由 AIC 直接读取 q 到当前 head 的原 L1A slot，AIV 不再生产 qg；GVA 由组首 AIV 读取 q 并将 `qgDt=q` 直写共享 L1A slot，A2 写 qg workspace。AIV 仍整行读取当前 chunk 最后一个有效 token 的 `gK_last[K]`，用向量指令生成 `E_gK(gK_last[K])`，对 `stateFp32` 按行做 `dhState[k, :] *= E_gK(gK_last[k])` 后以 fp32 写回 workspace；`gK` 不影响 `qgDt`。
    - `dh` 尾列 `vBase + col >= V` 不写。
 
 3. `Vector_Dv2`
@@ -637,7 +637,7 @@ q、gate 输入和 stateFp32 参考 `prepare_wy_repr_bwd` 使用独立事件组�
 
 ## 8. Cube L1/L0 设计
 
-当前 A5 代码中的 `ChunkGatedDeltaRuleBwdDhuCube` 保留了 stage0 命名，但已经接入 stage1/stage2 三个 Cube GEMM：完成 task 到 seq/head/chunk 的映射、`GetSeqInfo/GetChunkInfoBySeqChunk`、输入 GM offset 和 workspace slot 地址计算；等待 Vector 的 `dh/qgDt` ready 后计算 `dvState = K @ dh[chunk]` 与 `termQ = qgDt.T @ d_o`。`qgDt` 预留四块 `128x128xDT` L1A slot：`g` 分支按 `headOffset` 独立存放，`gK` 分支在当前 window 内按 `hk` 共享该组首个 head 的 slot。Vector UB->L1 的生产和 Cube L1->L0A 的消费继续复用原有每 head `vecToCube` ready。A5 BF16 `V=128` 的 `K @ dh` 将同一 `hk` 的 K 保持在 L0A slot0：首次 L1A->L0A 后即可归还 K resident L1 slot，连续 V heads 各自更新 L0B state 并独立执行 MMAD，最后一个共享 head 完成后才归还 L0A slot0；`termQ` 使用 L0A/L0B slot1。A5 bf16 的 `dvState/termW` 按各自 stage 生命周期复用同一套矩阵 CV ping/pong，从 L0C 按 row tile 直接发给负责当前 head 的 Vector subblock；A2 和 fp16/fp32 使用 GM workspace。Cube 侧保持 `prepare_wy_repr_bwd` 的 tile 级 resident/双缓冲流水。
+当前 A5 代码中的 `ChunkGatedDeltaRuleBwdDhuCube` 保留了 stage0 命名，但已经接入 stage1/stage2 三个 Cube GEMM：完成 task 到 seq/head/chunk 的映射、`GetSeqInfo/GetChunkInfoBySeqChunk`、输入 GM offset 和 workspace slot 地址计算；分别等待 dh 和 qgDt 的就绪条件后计算 `dvState = K @ dh[chunk]` 与 `termQ = qgDt.T @ d_o`。`qgDt` 预留四块 `128x128xDT` L1A slot：raw-gate 按 `headOffset` 独立存放；GVA 的 `gK` 路径在当前 window 内按 `hk` 共享该组首个 head 的 slot；`USE_GK=1 && HRatio==1` 由 AIC 在当前 head 的 `DH_READY` 等待前从 GM 直装到自己的 slot。Vector UB->L1 的生产和 Cube L1->L0A 的消费继续复用原有每 head `vecToCube` ready；direct 改用 AIC 本地 MTE2/MTE1 ready/free，§7 的最后一个 K tile 后释放规则同时覆盖 V256 的两片读取。A5 BF16 `V=128` 的 `K @ dh` 将同一 `hk` 的 K 保持在 L0A slot0：首次 L1A->L0A 后即可归还 K resident L1 slot，连续 V heads 各自更新 L0B state 并独立执行 MMAD，最后一个共享 head 完成后才归还 L0A slot0；`termQ` 使用 L0A/L0B slot1。A5 bf16 的 `dvState/termW` 按各自 stage 生命周期复用同一套矩阵 CV ping/pong，从 L0C 按 row tile 直接发给负责当前 head 的 Vector subblock；A2 和 fp16/fp32 使用 GM workspace。Cube 侧保持 `prepare_wy_repr_bwd` 的 tile 级 resident/双缓冲流水。
 
 完整递推 Cube 侧目标只做三个 GEMM：
 
@@ -659,7 +659,8 @@ GEMM2: termW   = w^T[K,M]    @ dv2[M,BV]
 
 ```text
 普通 GM operand: GM -> L1 -> L0A/L0B -> MMAD -> L0C -> GM workspace/output
-A5 qg operand:    Vector UB -> L1A -> L0A -> MMAD -> L0C -> GM workspace
+A5 staged qg:   Vector UB -> L1A -> L0A -> MMAD -> L0C -> GM workspace
+A5 direct qg:   GM -> L1A -> L0A -> MMAD -> L0C -> GM workspace
 A5 BF16 matrix:     GM/L1 -> L0A/L0B -> MMAD -> L0C -> AIV UB
 ```
 
@@ -667,7 +668,7 @@ A5 BF16 matrix:     GM/L1 -> L0A/L0B -> MMAD -> L0C -> AIV UB
 
 1. `TileMmadTla` 不手传显式 `m/n/k`，实际形状通过 L0A/L0B/L0C tensor layout 表达，调用点只传 `initC/unitFlag`。
 2. `K` 使用独立 L1 resident ping/pong，遇到同一 chunk 内多个 value head 共享同一个 key head 时复用已驻留的 `K_blk`。A5 BF16 `V=128` 在首次 L1A->L0A 后归还 L1 resident，并把 K 保持在 L0A slot0，直到同组最后一个 value head 的 `K @ dh` MMAD 完成。
-3. `W` 使用独立 L1 resident ping/pong；A5 `qgDt` 预留四块 L1A slot，`g` 按 headOffset 映射，`gK` 按当前 window 内 `hk` 首 head 映射和共享；`d_o`、公开输出 `dh/dv2` 使用 L1B scratch ping/pong。当前 A5 L1 总占用在 `V=128` 时为 320KiB，在 `V=256` 时为 384KiB，均在 512KiB 预算内。A2 `qgDt` 使用 workspace 到 L1A 的路径。
+3. `W` 使用独立 L1 resident ping/pong；A5 `qgDt` 预留四块 L1A slot，raw-gate 按 headOffset 映射，GVA 的 `gK` 按当前 window 内 `hk` 首 head 映射和共享，`HRatio==1` 的 `gK` 由 AIC 按当前 headOffset 直装；`d_o`、公开输出 `dh/dv2` 使用 L1B scratch ping/pong。当前 A5 L1 总占用在 `V=128` 时为 320KiB，在 `V=256` 时为 384KiB，均在 512KiB 预算内。A2 `qgDt` 使用 workspace 到 L1A 的路径；共享 kernel 入口给 A2/A3/A5 的 Cube `Init` 都传入 q，但 A2/A3 不使用该参数，其余数据路径不变。
 4. L0A/L0B 使用 ping/pong slot 和独立 `M_MTE1/MTE1_M` 事件闭环；A5 BF16 `V=128` 的 K resident 固定使用 slot0，`termQ` 使用 slot1，下一组 K 在 slot0 收到最后一个共享 head 发布的 free 后覆盖；`V_DIM=256` 时 K 方向按 `64` 拆 L0 MMAD 分片，中间分片使用 `unitFlag=0b10` 累加，最后分片使用 `0b11` 完成 copyout 语义。
 5. L0C 按架构容量启用 ping/pong：`V=128` 当前最大 tile 为 `128x128xfp32`，可开双槽；`V=256,chunk=128` 最大 tile 为 `128x256xfp32`，单槽已占满 A2/A3 L0C，只能保持单槽并在文档中说明容量原因。
 6. 同一个 L0C 结果只 Fixpipe 一次。调试输出不能和正式 workspace 双写同一 L0C。
@@ -821,7 +822,7 @@ dht/dh0 offset:
 
 1. Kernel 主流程不区分定长/变长两套分支，Cube/Vector 都通过相同 task 映射拿 chunk/head。
 2. 当前只使用两套 raw CrossCore flag：`vecToCube=2`、`cubeToVec=4`；四个 head 复用这对 flag，但每个 head 使用当前 window 内独立的 workspace slot。
-3. 负责当前 head 的 subblock 写完 `dh/qgDt` 后，两个 subblock 都参与当前 headOffset 的 `CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCube)`；非负责 subblock 只做同步配平。
+3. 负责当前 head 的 subblock 写完 `dh` 和需要 AIV staging 的 `qgDt` 后，两个 subblock 都参与当前 headOffset 的 `CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCube)`；非负责 subblock 只做同步配平。direct 下 AIV 不再生产 qg，但原握手和计数保持不变，AIC 只将 q 的 ready/free 改为本地 MTE2/MTE1 事件。
 4. Cube stage1 等待 `vecToCube` 并计算 `dvState/termQ`；bf16 CV 路径按 slot 等待矩阵 CV free，Fixpipe 写入后发布 CV ready，完成当前 head 后使用 `CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVec)` 通知 Vector。
 5. Vector stage1 等待 `cubeToVec` 后，负责当前 head 的 subblock 按 token row tile 读取 `dvState/dv` 并写公开 `dv2`，另一个 subblock 只参与 `cubeToVec/vecToCube` 配平。
 6. Cube stage2 等待 `vecToCube` 后计算 `termW`；A5 bf16 在首个 CV tile 前使用 `CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVec)` 发布 stage2 可启动信号，再按 row tile 等待 free、Fixpipe 写矩阵 CV 并发布 ready；A2 和 fp16/fp32 在 workspace copyout 完成后发布 `cubeToVec`。
@@ -902,8 +903,8 @@ Vector 内部同步遵循：
 
 当前 stage1/stage2：Cube/Vector 交换 `dvState/termQ/termW`，并复用公开输出 `dh/dv2`
 
-1. workspace 布局保留 `qgDt/dhState/dvState/termQ/termW` 五段，slot 粒度对齐 prepare 的每核 8 个 per-head slot：`coreIdx * 8 + windowStartSlot + headOffset`；A5 的 `qgDt` 通过四块独立 L1A slot 直传，bf16 `dvState/termW` 通过共用矩阵 CV 双缓冲直传，因此三段在 A5 bf16 仅保留布局，运行时 workspace 数据为 `dhState/termQ`。其中 `dhState` 段固定 fp32，`stateDt/dv2Dt` 不占 workspace。
-2. Cube 等 `dh/qgDt` ready 后，用 tile 级 resident/双缓冲计算 `dvState = K @ dh[chunk]` 和 `termQ = qgDt.T @ d_o`；A5 `g` 分支从当前 `headOffset` 的 L1A slot 消费 qg，`gK` 分支从当前 window 内 `hk` 首 head 对应的共享 slot 消费，省去 UB->GM workspace 和 GM->L1，并减少 GVA `gK` 重复 q 搬运、cast 和 UB->L1；A2 从 qg workspace 搬入。`K` 使用独立 L1 resident ping/pong，并在 shared-key heads 间复用；A5 BF16 `V=128` 还将 K 保持在 L0A slot0 供同组 heads 复用，`termQ` 使用 slot1。
+1. workspace 布局保留 `qgDt/dhState/dvState/termQ/termW` 五段，slot 粒度对齐 prepare 的每核 8 个 per-head slot：`coreIdx * 8 + windowStartSlot + headOffset`；A5 的 `qgDt` 通过四块独立 L1A slot 直传或由 AIC 直接装载，bf16 `dvState/termW` 通过共用矩阵 CV 双缓冲直传，因此三段在 A5 bf16 仅保留布局，运行时 workspace 数据为 `dhState/termQ`。其中 `dhState` 段固定 fp32，`stateDt/dv2Dt` 不占 workspace。
+2. Cube 分别等待 dh 与 qgDt 的就绪条件，用 tile 级 resident/双缓冲计算 `dvState = K @ dh[chunk]` 和 `termQ = qgDt.T @ d_o`；A5 `g` 分支从当前 `headOffset` 的 L1A slot 消费 qg，GVA 的 `gK` 从当前 window 内 `hk` 首 head 对应的共享 slot 消费，`HRatio==1` 的 `gK` 在当前 head 的 `DH_READY` 等待前直接 GM→L1A，并经本地 ready/free 从自己的原 slot 消费；A2 从 qg workspace 搬入。`K` 使用独立 L1 resident ping/pong，并在 shared-key heads 间复用；A5 BF16 `V=128` 还将 K 保持在 L0A slot0 供同组 heads 复用，`termQ` 使用 slot1。
 3. Vector 等 `dvState` ready 后读取 `dvState/dv`，`g` 分支乘 token gate，`gK` 分支直接相加，只写公开 `dv2`；A5 bf16 通过矩阵 CV 消费 `dvState`。
 4. Cube 等 `dv2` ready 后，用 tile 级 W resident/双缓冲计算 `termW = w.T @ dv2`；A5 bf16 通过复用的矩阵 CV 把 `termW` 交给 Vector，Vector 更新 fp32 workspace `dhState`。
 5. 保持 fixed/varlen 在同一个 `GetChunkInfo` helper 内处理，kernel 主流程不拆两套分支。
