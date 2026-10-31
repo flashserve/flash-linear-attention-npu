@@ -44,7 +44,7 @@ bool AppendKdaBwdStages(
     const auto *dvScan = executor->AllocTensor(valueShape, dtype, op::Format::FORMAT_ND);
     if (!dAqk || !dvLocal || !dqRaw || !dh || !dvScan) return false;
     const auto prepare = l0op::ChunkKdaBwdPrepare(
-        aqk, vNew, dO, h, cu, indices, scale, chunkSize, false,
+        aqk, vNew, dO, h, cu, indices, cu != nullptr ? "NTD" : "BNSD", scale, chunkSize, false,
         dAqk, dvLocal, dqRaw, executor);
     for (auto *output : prepare) if (!output) return false;
     const bool packed = cu != nullptr;

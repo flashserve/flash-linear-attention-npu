@@ -4902,6 +4902,54 @@ def npu_pre_process_bwd_kernel_merged(
     )
 
 
+def npu_chunk_kda_bwd_prepare(
+    aqk, v_new, d_o, h, *, scale, layout, chunk_size=64,
+    state_v_first=False, cu_seqlens=None, chunk_indices=None,
+):
+    """KernelA partial gradients; outputs always use head-major storage."""
+    import math
+    import torch
+    if layout not in {"BNSD", "BSND", "NTD", "TND"}:
+        raise RuntimeError("chunk_kda_bwd_prepare: invalid layout")
+    packed = layout in {"NTD", "TND"}
+    seq = layout in {"BSND", "TND"}
+    if cu_seqlens is None and chunk_indices is not None:
+        raise RuntimeError("chunk_kda_bwd_prepare: chunk_indices requires cu_seqlens")
+    if int(chunk_size) != 64 or not math.isfinite(float(scale)):
+        raise RuntimeError("chunk_kda_bwd_prepare: chunk_size must be 64 and scale finite")
+    rank = 3 if packed else 4
+    if any(x.dtype != torch.bfloat16 or x.ndim != rank or not x.is_contiguous()
+           for x in (aqk, v_new, d_o)) or h.dtype != torch.bfloat16 or not h.is_contiguous():
+        raise RuntimeError("chunk_kda_bwd_prepare: inputs must be contiguous BF16 with matching rank")
+    base = 0 if packed else 1
+    B = 1 if packed else int(aqk.shape[0])
+    if cu_seqlens is not None and B != 1:
+        raise RuntimeError("chunk_kda_bwd_prepare: variable lengths require B=1")
+    H = int(aqk.shape[base + int(seq)])
+    T = int(aqk.shape[base + int(not seq)])
+    if min(B, H, T) <= 0 or aqk.shape[-1] != 64:
+        raise RuntimeError("chunk_kda_bwd_prepare: invalid shape")
+    prefix = tuple(aqk.shape[:-1])
+    if any(tuple(x.shape[:-1]) != prefix or x.shape[-1] != 128 for x in (v_new, d_o)):
+        raise RuntimeError("chunk_kda_bwd_prepare: input shapes mismatch")
+    output = (H, T) if packed else (B, H, T)
+    d_aqk = _empty(output + (64,), aqk, dtype=torch.float32)
+    dv = _empty(output + (128,), aqk, dtype=torch.bfloat16)
+    dq_raw = _empty(output + (128,), aqk, dtype=torch.float32)
+    def build_args(ctx):
+        def descriptor(tensor, name):
+            return ctx.tensor(tensor, name, acl_format_override=2,
+                              storage_shape_override=tuple(tensor.shape))
+        return [descriptor(aqk, "aqk"), descriptor(v_new, "v_new"),
+                descriptor(d_o, "d_o"), descriptor(h, "h"),
+                ctx.int_array(cu_seqlens), ctx.int_array(chunk_indices),
+                ctypes.c_char_p(layout.encode("utf-8")), ctypes.c_double(float(scale)),
+                ctypes.c_int64(int(chunk_size)), ctypes.c_bool(bool(state_v_first)),
+                descriptor(d_aqk, "d_aqk"), descriptor(dv, "dv"), descriptor(dq_raw, "dq_raw")]
+    _call_aclnn("aclnnChunkKdaBwdPrepare", build_args, (d_aqk, dv, dq_raw))
+    return d_aqk, dv, dq_raw
+
+
 ASCENDC_CTYPES_OPS = {
     name: value
     for name, value in globals().items()

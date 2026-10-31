@@ -133,6 +133,14 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
                ACLNN_ERR_PARAM_INVALID,
                "dbias output is required when dt_bias is present.");
     const op::Shape &qShape = q->GetViewShape();
+#ifdef KDA_BWD_STAGES_ARCH22
+    CHECK_COND(aqk->GetDataType() == DataType::DT_BF16 &&
+                   vNewOptional->GetDataType() == DataType::DT_BF16 &&
+                   dO->GetDataType() == DataType::DT_BF16 &&
+                   hOptional->GetDataType() == DataType::DT_BF16,
+               ACLNN_ERR_PARAM_INVALID,
+               "optimized backward prepare requires BF16 aqk/v_new/d_o/h; FP16 is unsupported.");
+#endif
     const op::Shape &hShape = hOptional->GetViewShape();
     const bool isVarLen = cuSeqlensOptional != nullptr;
     CHECK_COND(qShape.GetDimNum() == (isVarLen ? 3U : 4U) &&
