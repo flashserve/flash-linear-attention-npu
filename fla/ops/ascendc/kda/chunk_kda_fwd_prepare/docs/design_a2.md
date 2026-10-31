@@ -168,7 +168,10 @@ workspace总量=平台libApiWorkspace+usedCoreNum×0x98000，由host checked mul
 
 ### Stage 0：Vector，输入、norm、gate prefix
 
-仅 DMA 有效 r 行，内部矩阵先补零。Identity 保留 Q/K，rstd=1；L2 在 FP32 执行
+仅 DMA 有效 r 行。Q/K 的有效行由 DMA 完整定义，g 的有效行由 FP32 DMA 或
+BF16 DMA 后的 Cast 完整定义；首次消费前只将三者的 [r,64) 行补零。
+beta 仍初始化全部64行。保持原 UB 地址、V→MTE2、MTE2→V 事件和完整64行内部矩阵，
+不使用上一 work 的残留内容。Identity 保留 Q/K，rstd=1；L2 在 FP32 执行
 sum(q²)+epsilon、sqrt、div、mul，再 CAST_RINT 到 BF16 q_hat/k_hat。
 仅 owner 写 HK checkpoint；每 HV 独立写 beta_eff。Raw beta 跳过非线性；Sigmoid 为
 1/(1+exp(-beta))，TwoSigmoid 在结果上乘2，不修改用户 allow_neg。
