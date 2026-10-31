@@ -48,39 +48,43 @@ constexpr uint32_t kUbState = 0;
 constexpr uint32_t kUbQ = 16 * 1024;
 constexpr uint32_t kUbK = 24 * 1024;
 constexpr uint32_t kUbV = 32 * 1024;
+// 32-row NZ pitch is 8 * (32*32 B + 32 B pad) = 8448. 16-row pitch is 8 * 544 = 4352.
+// The pad is the vsstb bank fix; L1 copies skip it. Slots after vnz move with it.
+constexpr uint32_t kNz32Pitch = 8448;
+constexpr uint32_t kNz16Pitch = 4352;
 constexpr uint32_t kUbQnz = 40 * 1024;
-constexpr uint32_t kUbKnz = 48 * 1024;
-constexpr uint32_t kUbKbg = 56 * 1024;
-constexpr uint32_t kUbQexp = 64 * 1024;
-constexpr uint32_t kUbVnz = 72 * 1024;
-constexpr uint32_t kUbG = 80 * 1024;
-constexpr uint32_t kUbBeta = 81 * 1024;
-constexpr uint32_t kUbBe = 82 * 1024;
-constexpr uint32_t kUbEg = 84 * 1024;
-constexpr uint32_t kUbKkt = 88 * 1024;
-constexpr uint32_t kUbQk = 92 * 1024;
-constexpr uint32_t kUbL = 96 * 1024;
-constexpr uint32_t kUbA = 100 * 1024;
-constexpr uint32_t kUbAbf = 104 * 1024;
-constexpr uint32_t kUbAttn = 106 * 1024;
-constexpr uint32_t kUbU = 108 * 1024;
-constexpr uint32_t kUbVn = 124 * 1024;
-constexpr uint32_t kUbVg = 128 * 1024;
-constexpr uint32_t kUbO = 132 * 1024;
+constexpr uint32_t kUbKnz = kUbQnz + kNz32Pitch;
+constexpr uint32_t kUbKbg = kUbKnz + kNz32Pitch;
+constexpr uint32_t kUbQexp = kUbKbg + kNz32Pitch;
+constexpr uint32_t kUbVnz = kUbQexp + kNz32Pitch;
+constexpr uint32_t kUbG = kUbVnz + kNz32Pitch;
+constexpr uint32_t kUbBeta = kUbG + 1024;
+constexpr uint32_t kUbBe = kUbBeta + 1024;
+constexpr uint32_t kUbEg = kUbBe + 2048;
+constexpr uint32_t kUbKkt = kUbEg + 4096;
+constexpr uint32_t kUbQk = kUbKkt + 4096;
+constexpr uint32_t kUbL = kUbQk + 4096;
+constexpr uint32_t kUbA = kUbL + 4096;
+constexpr uint32_t kUbAbf = kUbA + 4096;
+constexpr uint32_t kUbAttn = kUbAbf + 2048;
+constexpr uint32_t kUbU = kUbAttn + 2048;
+constexpr uint32_t kUbVn = 128256;
+constexpr uint32_t kUbVg = kUbVn + kNz16Pitch;
+constexpr uint32_t kUbO = kUbVg + kNz16Pitch;
 // Two 32-row D slices per AIV, so the cube can land both before the saxpy.
-constexpr uint32_t kUbD = 176 * 1024;
-// FP32 recurrence, 64x128, ends at 224KB. The BF16 cube image stays at kUbState.
-constexpr uint32_t kUbStateF = 192 * 1024;
+constexpr uint32_t kUbD = 182016;
+// FP32 recurrence, 64x128. The BF16 cube image stays at kUbState.
+constexpr uint32_t kUbStateF = 198400;
 // FP32 ND staging. Same bytes as the KKT tile; Init and the final store finish
 // before that tile is live. The scatter over-reads 48 floats past this range.
-constexpr uint32_t kUbNdF = 88 * 1024;
-constexpr uint32_t kUbEye = 144 * 1024;
-constexpr uint32_t kUbSh = 148 * 1024;
-constexpr uint32_t kUbScratch = 152 * 1024;
-constexpr uint32_t kUbG2 = 160 * 1024;
-constexpr uint32_t kUbEg2 = 162 * 1024;
+constexpr uint32_t kUbNdF = kUbKkt;
+constexpr uint32_t kUbEye = 149248;
+constexpr uint32_t kUbSh = 153344;
+constexpr uint32_t kUbScratch = 157440;
+constexpr uint32_t kUbG2 = 165632;
+constexpr uint32_t kUbEg2 = 167680;
 // ND image of this AIV's 64x128 state. UB ends at 248KB.
-constexpr uint32_t kUbHnd = 224 * 1024;
+constexpr uint32_t kUbHnd = 231168;
 
 constexpr uint32_t kL1H = 0;
 constexpr uint32_t kL1Slot = 40 * 1024;
@@ -538,7 +542,7 @@ private:
         const uint32_t slot = chunk & 1U;
         SetFlag<HardEvent::V_MTE3>(0);
         WaitFlag<HardEvent::V_MTE3>(0);
-        CopyNzToL1(l1K_[slot], ubKnz_, kBt, kDim);
+        CopyPaddedNz32ToL1(l1K_[slot], ubKnz_);
         CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagQk);
         if (outL2_ != 0 && KeyOwner()) {
             StoreHat(kHatGm_, kRstdGm_, ubK_, kRstdUb_, chunk);
@@ -581,11 +585,11 @@ private:
         const uint32_t slot = chunk & 1U;
         SetFlag<HardEvent::V_MTE3>(0);
         WaitFlag<HardEvent::V_MTE3>(0);
-        CopyNzToL1(l1Q_[slot], ubQnz_, kBt, kDim);
+        CopyPaddedNz32ToL1(l1Q_[slot], ubQnz_);
         CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagQ);
-        CopyNzToL1(l1Vb_[slot], ubVnz_, kBt, kDim);
-        CopyNzToL1(l1Kbg_[slot], ubKbg_, kBt, kDim);
-        CopyNzToL1(l1Qexp_[slot], ubQexp_, kBt, kDim);
+        CopyPaddedNz32ToL1(l1Vb_[slot], ubVnz_);
+        CopyPaddedNz32ToL1(l1Kbg_[slot], ubKbg_);
+        CopyPaddedNz32ToL1(l1Qexp_[slot], ubQexp_);
         if (outL2_ != 0 && KeyOwner()) {
             StoreHat(qHatGm_, qRstdGm_, ubQ_, qRstdUb_, chunk);
             SetFlag<HardEvent::MTE3_MTE2>(5);
@@ -664,13 +668,21 @@ private:
         }
     }
 
-    // 16 tight-NZ rows into a height-32 L1 panel. The other AIV's half is the dst gap.
+    // Padded 32-row NZ stays in UB. MTE3 skips the 32 B hole; L1 stays tight.
+    // Packing the hole on the vector pipe costs as much as the bank stall it removes.
+    __aicore__ inline void CopyPaddedNz32ToL1(LocalTensor<bfloat16_t> l1, LocalTensor<bfloat16_t> nz)
+    {
+        constexpr uint16_t nFrac = static_cast<uint16_t>(kDim / 16);
+        DataCopy(l1, nz, DataCopyParams(nFrac, static_cast<uint16_t>(kBt), 1, 0));
+    }
+
+    // 16 padded rows. Source gap is the bank pad; destination gap is the other AIV's half.
     __aicore__ inline void CopyHalfNz(LocalTensor<bfloat16_t> l1, LocalTensor<bfloat16_t> nz, uint32_t row0)
     {
         constexpr uint16_t nFrac = static_cast<uint16_t>(kDim / 16);
         constexpr uint16_t burst = static_cast<uint16_t>(16 * 16 * sizeof(bfloat16_t) / 32);
         constexpr uint16_t gap = static_cast<uint16_t>((kBt - 16) * 16 * sizeof(bfloat16_t) / 32);
-        DataCopy(l1[row0 * 16], nz, DataCopyParams(nFrac, burst, 0, gap));
+        DataCopy(l1[row0 * 16], nz, DataCopyParams(nFrac, burst, 1, gap));
     }
 
     __aicore__ inline void EmitV(LocalTensor<float> eg, bool useDiff)

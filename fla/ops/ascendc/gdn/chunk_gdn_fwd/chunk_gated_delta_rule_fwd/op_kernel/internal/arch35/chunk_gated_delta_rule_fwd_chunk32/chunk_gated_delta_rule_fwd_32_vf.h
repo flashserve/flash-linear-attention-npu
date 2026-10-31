@@ -18,10 +18,11 @@ constexpr CastTrait kCastB162B32Hi = {RegLayout::ONE, SatMode::UNKNOWN, MaskMerg
 constexpr CastTrait kCastB322B16 = {RegLayout::ZERO, SatMode::NO_SAT, MaskMergeMode::ZEROING, RoundMode::CAST_RINT};
 constexpr CastTrait kCastB322B16Hi = {RegLayout::ONE, SatMode::NO_SAT, MaskMergeMode::ZEROING, RoundMode::CAST_RINT};
 
-// even/odd float halves -> one bf16 row -> tight NZ.
+// even/odd float halves -> one bf16 row -> NZ with one datablock of pad.
 // layout ZERO and ONE split a row, Or puts it back, one block-copy stores it.
 // The cast uses the uint16 mask, in place, then Or. A float mask leaves the
 // odd lanes zero, which is what a split mask produced.
+// Block stride is kBt+1, not kBt: stride 32 puts all 8 datablocks in one bank group.
 __aicore__ inline void StoreNzEvenOdd(__ubuf__ bfloat16_t *nz, uint32_t row, RegTensor<float> &even,
                                       RegTensor<float> &odd, MaskReg &m16, MaskReg &m128)
 {
@@ -29,7 +30,7 @@ __aicore__ inline void StoreNzEvenOdd(__ubuf__ bfloat16_t *nz, uint32_t row, Reg
     Cast<bfloat16_t, float, kCastB322B16>(lo, even, m16);
     Cast<bfloat16_t, float, kCastB322B16Hi>(hi, odd, m16);
     Or((RegTensor<uint16_t> &)lo, (RegTensor<uint16_t> &)lo, (RegTensor<uint16_t> &)hi, m16);
-    StoreAlign<bfloat16_t, DataCopyMode::DATA_BLOCK_COPY>(nz + row * 16, lo, static_cast<uint32_t>(kBt), m128);
+    StoreAlign<bfloat16_t, DataCopyMode::DATA_BLOCK_COPY>(nz + row * 16, lo, static_cast<uint32_t>(kNzBlkStride), m128);
 }
 
 // Same even/odd bf16 row, written contiguously. Used only by the export VF.
@@ -708,9 +709,9 @@ __aicore__ inline void VnewHalfBody(LocalTensor<bfloat16_t> u, LocalTensor<float
             RegTensor<float> ri, gate;
             RegTensor<float> even, odd;
             LoadAlign(a, uAddr + static_cast<uint32_t>(r) * kDim);
-            // Tight NZ, panel height 16. Each column panel is 16 rows.
-            StoreAlign<bfloat16_t, DataCopyMode::DATA_BLOCK_COPY>(nAddr + static_cast<uint32_t>(r) * 16, a, 16,
-                                                                  m128);
+            // Panel height 16, plus one datablock so the 8 writes leave one bank group.
+            StoreAlign<bfloat16_t, DataCopyMode::DATA_BLOCK_COPY>(nAddr + static_cast<uint32_t>(r) * 16, a,
+                                                                  static_cast<uint32_t>(kHalfNzBlkStride), m128);
             if constexpr (kUseDiff) {
                 RegTensor<float> diff;
                 LoadAlign<float, LoadDist::DIST_BRC_B32>(ri, eAddr + kEgPrefix + rowBase + r);
@@ -727,8 +728,8 @@ __aicore__ inline void VnewHalfBody(LocalTensor<bfloat16_t> u, LocalTensor<float
             Cast<bfloat16_t, float, kCastB322B16>(glo, even, m16);
             Cast<bfloat16_t, float, kCastB322B16Hi>(ghi, odd, m16);
             Or((RegTensor<uint16_t> &)glo, (RegTensor<uint16_t> &)glo, (RegTensor<uint16_t> &)ghi, m16);
-            StoreAlign<bfloat16_t, DataCopyMode::DATA_BLOCK_COPY>(gAddr + static_cast<uint32_t>(r) * 16, glo, 16,
-                                                                  m128);
+            StoreAlign<bfloat16_t, DataCopyMode::DATA_BLOCK_COPY>(gAddr + static_cast<uint32_t>(r) * 16, glo,
+                                                                  static_cast<uint32_t>(kHalfNzBlkStride), m128);
         }
     }
 }

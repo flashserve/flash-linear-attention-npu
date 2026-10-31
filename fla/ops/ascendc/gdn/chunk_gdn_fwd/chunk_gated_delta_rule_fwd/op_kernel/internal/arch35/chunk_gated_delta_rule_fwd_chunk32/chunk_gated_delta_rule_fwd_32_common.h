@@ -62,6 +62,10 @@ private:
 using namespace AscendC;
 
 constexpr int kBt = 32;
+// vsstb splits a 256 B register into 8 datablocks. A block stride divisible by 8
+// keeps every write in one UB bank group (8 cycles). +1 puts them in 8 groups.
+constexpr int kNzBlkStride = kBt + 1;
+constexpr int kHalfNzBlkStride = 17;
 constexpr int kDim = 128;
 constexpr float kEps = 1e-6f;
 constexpr int32_t kVl = 64;
