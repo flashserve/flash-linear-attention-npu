@@ -100,6 +100,9 @@ constexpr uint32_t kOffW = 44 * 1024;
 constexpr uint32_t kL1Vn = 160 * 1024;
 constexpr uint32_t kL1Vg = 168 * 1024;
 
+// Fast inference is stateVFirst=0, allowNegEigval=0, and no exported
+// intermediates. Those tests then disappear from the per-chunk loop.
+template <bool kFastInfer>
 class Kernel {
 public:
     __aicore__ inline Kernel() {}
@@ -364,6 +367,15 @@ private:
         SetFlag<HardEvent::V_MTE3>(1);
     }
 
+    __aicore__ inline void RunCumsum(LocalTensor<float> &g, LocalTensor<float> &eg)
+    {
+        if constexpr (kFastInfer) {
+            CumsumExp2VF<false>(g, eg, ubSh_);
+        } else {
+            CumsumExp2VF<true>(g, eg, ubSh_);
+        }
+    }
+
     __aicore__ inline void LoadGate(uint32_t chunk)
     {
         const int64_t token = vTokenBase_ + static_cast<int64_t>(chunk) * kBt;
@@ -378,7 +390,7 @@ private:
         }
         SetFlag<HardEvent::MTE2_V>(2);
         WaitFlag<HardEvent::MTE2_V>(2);
-        CumsumExp2VF(ubG2_, ubEg2_, ubSh_);
+        RunCumsum(ubG2_, ubEg2_);
     }
 
     // The decay load already drains the vector pipe. The unsafe count is the
@@ -402,9 +414,11 @@ private:
     // GM loads only. Issued before the inverse VF so the L2 wait is not an MTE2 stall.
     __aicore__ inline void PrepareLoad(uint32_t chunk)
     {
-        if (hatCopyLive_ != 0) {
-            WaitFlag<HardEvent::MTE3_MTE2>(5);
-            hatCopyLive_ = 0;
+        if constexpr (!kFastInfer) {
+            if (hatCopyLive_ != 0) {
+                WaitFlag<HardEvent::MTE3_MTE2>(5);
+                hatCopyLive_ = 0;
+            }
         }
         const int64_t qToken = qTokenBase_ + static_cast<int64_t>(chunk) * kBt;
         const int64_t vToken = vTokenBase_ + static_cast<int64_t>(chunk) * kBt;
@@ -447,14 +461,16 @@ private:
         CopyGmToUbRelaxed(ubG2_, gGm_, token, rows);
         SetFlag<HardEvent::MTE2_V>(2);
         WaitFlag<HardEvent::MTE2_V>(2);
-        CumsumExp2VF(ubG2_, ubEg2_, ubSh_);
+        RunCumsum(ubG2_, ubEg2_);
     }
 
     __aicore__ inline void PrepareLoadVar(uint32_t chunk)
     {
-        if (hatCopyLive_ != 0) {
-            WaitFlag<HardEvent::MTE3_MTE2>(5);
-            hatCopyLive_ = 0;
+        if constexpr (!kFastInfer) {
+            if (hatCopyLive_ != 0) {
+                WaitFlag<HardEvent::MTE3_MTE2>(5);
+                hatCopyLive_ = 0;
+            }
         }
         const int64_t qToken = qTokenBase_ + static_cast<int64_t>(chunk) * kBt;
         const int64_t vToken = vTokenBase_ + static_cast<int64_t>(chunk) * kBt;
@@ -514,9 +530,11 @@ private:
     // so the copy and kFlagQk are PublishKFlag, after ApplyD.
     __aicore__ inline void PublishK()
     {
-        if (betaCopyLive_ != 0) {
-            WaitFlag<HardEvent::MTE3_V>(7);
-            betaCopyLive_ = 0;
+        if constexpr (!kFastInfer) {
+            if (betaCopyLive_ != 0) {
+                WaitFlag<HardEvent::MTE3_V>(7);
+                betaCopyLive_ = 0;
+            }
         }
         WaitFlag<HardEvent::MTE2_V>(0);
         // The previous publish may still be reading the NZ buffers this VF overwrites.
@@ -524,13 +542,17 @@ private:
             WaitFlag<HardEvent::MTE3_V>(3);
             nzArmed_ = 0;
         }
-        if (allowNegEigval_ != 0) {
+        if constexpr (kFastInfer) {
+            BetaSigmoidVF<false>(ubBeta_, ubBe_);
+        } else if (allowNegEigval_ != 0) {
             BetaSigmoidVF<true>(ubBeta_, ubBe_);
         } else {
             BetaSigmoidVF<false>(ubBeta_, ubBe_);
         }
-        CumsumExp2VF(ubG_, ubEg_, ubSh_);
-        if (outL2_ != 0 && KeyOwner()) {
+        RunCumsum(ubG_, ubEg_);
+        if constexpr (kFastInfer) {
+            L2NormKAndKbgVF(ubK_, ubKnz_, ubKbg_, ubBe_, ubEg_);
+        } else if (outL2_ != 0 && KeyOwner()) {
             L2NormKAndKbgExportVF(ubK_, ubKnz_, ubKbg_, ubBe_, ubEg_, kRstdUb_);
         } else {
             L2NormKAndKbgVF(ubK_, ubKnz_, ubKbg_, ubBe_, ubEg_);
@@ -544,27 +566,29 @@ private:
         WaitFlag<HardEvent::V_MTE3>(0);
         CopyPaddedNz32ToL1(l1K_[slot], ubKnz_);
         CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagQk);
-        if (outL2_ != 0 && KeyOwner()) {
-            StoreHat(kHatGm_, kRstdGm_, ubK_, kRstdUb_, chunk);
-        }
-        if (outGA_ != 0) {
-            const uint32_t rows = ChunkRows(chunk);
-            const int64_t token = vTokenBase_ + static_cast<int64_t>(chunk) * kBt;
-            // ubG_ holds the natural cumsum after CumsumExp2VF. The q-hat store
-            // later sets MTE3_MTE2(5) when this AIV also exports L2. Otherwise
-            // the next PrepareLoad must wait for this 32-wide copy itself.
-            CopyUbToGmCount(gCumsumGm_, ubG_, token, rows);
-            if (outL2_ == 0 || !KeyOwner()) {
-                SetFlag<HardEvent::MTE3_MTE2>(5);
-                hatCopyLive_ = 1;
+        if constexpr (!kFastInfer) {
+            if (outL2_ != 0 && KeyOwner()) {
+                StoreHat(kHatGm_, kRstdGm_, ubK_, kRstdUb_, chunk);
             }
-        }
-        if (outBeta_ != 0) {
-            const uint32_t rows = ChunkRows(chunk);
-            const int64_t token = vTokenBase_ + static_cast<int64_t>(chunk) * kBt;
-            CopyUbToGmCount(betaEffGm_, ubBe_, token, rows);
-            SetFlag<HardEvent::MTE3_V>(7);
-            betaCopyLive_ = 1;
+            if (outGA_ != 0) {
+                const uint32_t rows = ChunkRows(chunk);
+                const int64_t token = vTokenBase_ + static_cast<int64_t>(chunk) * kBt;
+                // ubG_ holds the natural cumsum after CumsumExp2VF. The q-hat store
+                // later sets MTE3_MTE2(5) when this AIV also exports L2. Otherwise
+                // the next PrepareLoad must wait for this 32-wide copy itself.
+                CopyUbToGmCount(gCumsumGm_, ubG_, token, rows);
+                if (outL2_ == 0 || !KeyOwner()) {
+                    SetFlag<HardEvent::MTE3_MTE2>(5);
+                    hatCopyLive_ = 1;
+                }
+            }
+            if (outBeta_ != 0) {
+                const uint32_t rows = ChunkRows(chunk);
+                const int64_t token = vTokenBase_ + static_cast<int64_t>(chunk) * kBt;
+                CopyUbToGmCount(betaEffGm_, ubBe_, token, rows);
+                SetFlag<HardEvent::MTE3_V>(7);
+                betaCopyLive_ = 1;
+            }
         }
     }
 
@@ -572,7 +596,9 @@ private:
     // so the L1 copies are PublishQFlag, after ApplyD.
     __aicore__ inline void PublishQ()
     {
-        if (outL2_ != 0 && KeyOwner()) {
+        if constexpr (kFastInfer) {
+            L2NormQAndQexpVF(ubQ_, ubQnz_, ubQexp_, ubEg_);
+        } else if (outL2_ != 0 && KeyOwner()) {
             L2NormQAndQexpExportVF(ubQ_, ubQnz_, ubQexp_, ubEg_, qRstdUb_);
         } else {
             L2NormQAndQexpVF(ubQ_, ubQnz_, ubQexp_, ubEg_);
@@ -590,10 +616,12 @@ private:
         CopyPaddedNz32ToL1(l1Vb_[slot], ubVnz_);
         CopyPaddedNz32ToL1(l1Kbg_[slot], ubKbg_);
         CopyPaddedNz32ToL1(l1Qexp_[slot], ubQexp_);
-        if (outL2_ != 0 && KeyOwner()) {
-            StoreHat(qHatGm_, qRstdGm_, ubQ_, qRstdUb_, chunk);
-            SetFlag<HardEvent::MTE3_MTE2>(5);
-            hatCopyLive_ = 1;
+        if constexpr (!kFastInfer) {
+            if (outL2_ != 0 && KeyOwner()) {
+                StoreHat(qHatGm_, qRstdGm_, ubQ_, qRstdUb_, chunk);
+                SetFlag<HardEvent::MTE3_MTE2>(5);
+                hatCopyLive_ = 1;
+            }
         }
         SetFlag<HardEvent::MTE3_V>(3);
         nzArmed_ = 1;
@@ -614,9 +642,11 @@ private:
     // chunk reuses the DecayOf drain from the previous iteration.
     __aicore__ inline void InverseL1(uint32_t chunk)
     {
-        if (aCopyLive_ != 0) {
-            WaitFlag<HardEvent::MTE3_V>(2);
-            aCopyLive_ = 0;
+        if constexpr (!kFastInfer) {
+            if (aCopyLive_ != 0) {
+                WaitFlag<HardEvent::MTE3_V>(2);
+                aCopyLive_ = 0;
+            }
         }
         GateAttnVF<1>(ubEg_, ubBe_, ubKkt_, ubQk_, ubL_, ubAttn_, egUseDiff_);
         InvertAVF(ubL_, ubA_, ubAbf_, ubEye_);
@@ -625,12 +655,14 @@ private:
         WaitFlag<HardEvent::V_MTE3>(0);
         CopyNdToL1(l1A_[slot], ubAbf_, kBt, kBt);
         CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagInv);
-        if (outGA_ != 0) {
-            const uint32_t rows = ChunkRows(chunk);
-            const int64_t token = vTokenBase_ + static_cast<int64_t>(chunk) * kBt;
-            CopyUbToGmCount(aGm_, ubAbf_, token * kBt, rows * static_cast<uint32_t>(kBt));
-            SetFlag<HardEvent::MTE3_V>(2);
-            aCopyLive_ = 1;
+        if constexpr (!kFastInfer) {
+            if (outGA_ != 0) {
+                const uint32_t rows = ChunkRows(chunk);
+                const int64_t token = vTokenBase_ + static_cast<int64_t>(chunk) * kBt;
+                CopyUbToGmCount(aGm_, ubAbf_, token * kBt, rows * static_cast<uint32_t>(kBt));
+                SetFlag<HardEvent::MTE3_V>(2);
+                aCopyLive_ = 1;
+            }
         }
     }
 
@@ -781,12 +813,16 @@ private:
             WaitFlag<HardEvent::V_MTE3>(2);
             CopyStatePanels(4, 4);
             CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagH);
-            if (outH_ != 0) {
-                SetFlag<HardEvent::MTE3_V>(6);
-                stateReadLive_ = 1;
+            if constexpr (!kFastInfer) {
+                if (outH_ != 0) {
+                    SetFlag<HardEvent::MTE3_V>(6);
+                    stateReadLive_ = 1;
+                }
             }
         }
-        FlushH();
+        if constexpr (!kFastInfer) {
+            FlushH();
+        }
     }
 
 
@@ -886,7 +922,9 @@ private:
     // runs while columns 64-127 are still being updated. W stays the full K.
     __aicore__ inline void MatmulWHCols0To63()
     {
-        if (stateVFirst_ != 0) {
+        if constexpr (kFastInfer) {
+            LoadL1NzHCols(l1H_, l0B_[0], 0);
+        } else if (stateVFirst_ != 0) {
             LoadL1NzHRows(l1H_, l0B_[0], 0);
         } else {
             LoadL1NzHCols(l1H_, l0B_[0], 0);
@@ -901,7 +939,9 @@ private:
     // columns of a [32, 128] tile start at 2048 floats.
     __aicore__ inline void MatmulWHCols64To127WriteVnew()
     {
-        if (stateVFirst_ != 0) {
+        if constexpr (kFastInfer) {
+            LoadL1NzHCols(l1H_, l0B_[1], 4);
+        } else if (stateVFirst_ != 0) {
             LoadL1NzHRows(l1H_, l0B_[1], 4);
         } else {
             LoadL1NzHCols(l1H_, l0B_[1], 4);
@@ -924,9 +964,13 @@ private:
     __aicore__ inline void ReloadHAndQexp(uint32_t slot)
     {
         WaitFlag<HardEvent::M_MTE1>(0);
-        // [K,V] H is already [k, n]. Physical [V,K] is [n, k], so the load
-        // transpose flips and q@H still produces [BT, V].
-        LoadL1ToL0B(l1H_, l0B_[0], kDim, kDim, stateVFirst_ == 0);
+        if constexpr (kFastInfer) {
+            LoadL1ToL0B(l1H_, l0B_[0], kDim, kDim, true);
+        } else {
+            // [K,V] H is already [k, n]. Physical [V,K] is [n, k], so the load
+            // transpose flips and q@H still produces [BT, V].
+            LoadL1ToL0B(l1H_, l0B_[0], kDim, kDim, stateVFirst_ == 0);
+        }
         LoadL1ToL0A(l1Qexp_[slot], l0A_[0], kBt, kDim, false);
     }
 
@@ -942,15 +986,21 @@ private:
         constexpr int kDm = 64;
         constexpr uint32_t kL0cD = 16 * 1024;
         WaitFlag<HardEvent::M_MTE1>(1);
-        if (stateVFirst_ != 0) {
+        LocalTensor<bfloat16_t> kSrc;
+        if constexpr (kFastInfer) {
+            kSrc = l1K_[slot];
+            LoadL1ToL0AB(l1K_[slot], l1Vg_, l0A_[1], l0B_[1], kDm, kDim, kBt, true, true);
+        } else if (stateVFirst_ != 0) {
             // D lands as [V,K]: each AIV owns 64 V-rows and the full K.
+            kSrc = l1Vg_;
             LoadL1ToL0AB(l1Vg_, l1K_[slot], l0A_[1], l0B_[1], kDm, kDim, kBt, true, true);
         } else {
+            kSrc = l1K_[slot];
             LoadL1ToL0AB(l1K_[slot], l1Vg_, l0A_[1], l0B_[1], kDm, kDim, kBt, true, true);
         }
         SetFlag<HardEvent::MTE1_M>(1);
         WaitFlag<HardEvent::M_MTE1>(0);
-        auto kPart = (stateVFirst_ != 0 ? l1Vg_ : l1K_[slot])[static_cast<uint32_t>(2 * 2 * kBt * 16)];
+        auto kPart = kSrc[static_cast<uint32_t>(2 * 2 * kBt * 16)];
         LoadL1ToL0A(kPart, l0A_[0], kDm, kBt, true);
         SetFlag<HardEvent::MTE1_M>(0);
         LocalTensor<float> l0cD = l0C0_[kL0cD];
@@ -1059,7 +1109,9 @@ private:
             for (uint32_t c = 0; c < nChunk_; ++c) {
                 const uint32_t chunkAiv = AivOf(c);
                 const bool onThisAiv = chunkAiv == sub_;
-                StoreH(c);
+                if constexpr (!kFastInfer) {
+                    StoreH(c);
+                }
                 if (!onThisAiv) {
                     LoadGate(c);
                 }
@@ -1128,7 +1180,9 @@ private:
                 }
             }
         }
-        DrainExport();
+        if constexpr (!kFastInfer) {
+            DrainExport();
+        }
     }
 
     __aicore__ inline int64_t StateElem() const
@@ -1289,7 +1343,9 @@ private:
         for (uint32_t c = 0; c < nChunk_; ++c) {
             const uint32_t chunkAiv = AivOf(c);
             const bool onThisAiv = chunkAiv == sub_;
-            StoreH(c);
+            if constexpr (!kFastInfer) {
+                StoreH(c);
+            }
             if (!onThisAiv) {
                 LoadGateVar(c);
             }
@@ -1391,7 +1447,9 @@ private:
                 }
             }
         }
-        DrainExport();
+        if constexpr (!kFastInfer) {
+            DrainExport();
+        }
     }
 
     __aicore__ inline void ProcessAicVarlen()
@@ -1533,6 +1591,9 @@ private:
 
     __aicore__ inline void DrainExport()
     {
+        if constexpr (kFastInfer) {
+            return;
+        }
         if (hatCopyLive_ != 0) {
             WaitFlag<HardEvent::MTE3_MTE2>(5);
             hatCopyLive_ = 0;
