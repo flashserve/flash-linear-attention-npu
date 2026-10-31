@@ -15,13 +15,13 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/tensor_view_utils.h"
-#include "op_common/log/log.h"
 
 #if GDN_FINALIZE_ENABLE_ARCH22
 #include <cstring>
 
 #include "../arch22/aclnn_chunk_gated_delta_rule_bwd_finalize_arch22.h"
 #endif
+#include "op_common/log/log.h"
 
 using namespace op;
 
