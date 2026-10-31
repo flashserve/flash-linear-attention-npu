@@ -155,6 +155,7 @@ def _create_runtime_package(site_root: Path) -> tuple[Path, Path, Path]:
 def _write_base_contract_snapshot(package_dir: Path, vendor_dir: Path) -> None:
     abi = runpy.run_path(str(OP_ABI_SOURCE))
     shutil.copy2(OP_ABI_SOURCE, package_dir / "_op_abi.py")
+    shutil.copy2(RUNTIME_SOURCE.with_name("_opp_set_env.py"), package_dir)
     abi["write_base_contract_snapshot"](
         vendor_dir, package_dir / abi["BASE_CONTRACT_SNAPSHOT_NAME"]
     )
@@ -921,6 +922,25 @@ source {overlay_env!s}
                     self.assertEqual(json.loads(result.stdout)["ASCEND_CUSTOM_OPP_PATH"].split(":"),
                                      [str(a), str(b), str(base), external])
 
+    @unittest.skipUnless(os.name == "posix", "set_env executable mode is a POSIX contract")
+    def test_set_env_generators_are_byte_identical_and_executable(self) -> None:
+        installer = runpy.run_path(str(RUNTIME_SOURCE.with_name("install_opp.py")))
+        generators = (
+            self.setup_globals["_rewrite_set_env"],
+            installer["_write_set_env"],
+            _load_run_package_finalizer()["_write_set_env"],
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _, vendor, _ = _create_runtime_package(Path(temp_dir) / "site")
+            outputs = []
+            for generate in generators:
+                generate(vendor)
+                set_env = vendor / "bin" / "set_env.bash"
+                outputs.append(set_env.read_bytes())
+                self.assertEqual(set_env.stat().st_mode & 0o777, 0o755)
+            self.assertTrue(outputs)
+            self.assertTrue(all(content == outputs[0] for content in outputs[1:]))
+
     @unittest.skipUnless(shutil.which("bash"), "requires bash; exercised by Linux CI")
     def test_set_env_preserves_standalone_external_vendor(self) -> None:
         import shlex
@@ -928,6 +948,7 @@ source {overlay_env!s}
         installer = runpy.run_path(str(RUNTIME_SOURCE.with_name("install_opp.py")))
         with tempfile.TemporaryDirectory() as temp_dir:
             vendor = Path(temp_dir) / "opp/vendors/standalone_vendor"
+            shutil.copy2(RUNTIME_SOURCE.with_name("_opp_set_env.py"), Path(temp_dir))
             for generate in (installer["_write_set_env"], _load_run_package_finalizer()["_write_set_env"]):
                 generate(vendor)
                 env = {k: v for k, v in os.environ.items() if not k.startswith("FLA_NPU_")}

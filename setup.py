@@ -299,21 +299,17 @@ def _find_staged_vendor_dir(opp_root):
 
 
 def _rewrite_set_env(vendor_dir):
-    # The wheel build and post-install finalizer must emit byte-identical shell
-    # policy.  Load the pure helper by path so setup never imports fla_npu (and
-    # therefore never initializes CANN) while building.
-    writer_path = (
-        REPO_ROOT
-        / "scripts"
-        / "package"
-        / "ops_transformer"
-        / "scripts"
-        / "finalize_wheel_opp.py"
-    )
+    # Build without importing fla_npu (and therefore without initializing CANN).
+    # The installer and run-package finalizer load the same helper from the wheel.
+    writer_path = FLA_NPU_PACKAGE_DIR / "_opp_set_env.py"
+    if not writer_path.is_file():
+        raise RuntimeError(f"OPP set_env writer is missing: {writer_path}")
     spec = importlib.util.spec_from_file_location("fla_npu_set_env_writer", writer_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load OPP set_env writer: {writer_path}")
     writer = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(writer)
-    writer._write_set_env(Path(vendor_dir))
+    writer.write_set_env(Path(vendor_dir))
 
 
 def _write_vendors_config(vendor_dir):

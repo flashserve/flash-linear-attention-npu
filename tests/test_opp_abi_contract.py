@@ -108,7 +108,7 @@ class ContractTest(unittest.TestCase):
             pkg = root/"fla_npu"
             pkg.mkdir()
             (pkg/"__init__.py").write_text("raise RuntimeError('broken vendor must not be loaded')\n")
-            for name in ["install_opp.py", "_op_abi.py"]:
+            for name in ["install_opp.py", "_op_abi.py", "_opp_set_env.py"]:
                 shutil.copy2(PACKAGE/"fla_npu"/name, pkg/name)
             shutil.copy2(PACKAGE/"fla_npu_opp_manage.py", root)
             vendors = pkg/"opp/vendors"
