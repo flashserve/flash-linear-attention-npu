@@ -78,3 +78,18 @@ bash tests/atk/run_test_cpu.sh -op=chunk_gated_delta_rule_bwd_finalize -scope=ge
 精度失败时必须使用 `--save_data output` 保存输出，并按 NPU 为 real、
 CPU 为 expect 运行 `ct viz`。本套泛化用例按上述分组值域生成，
 不得通过修改精度阈值或跳过失败用例制造通过结论。
+
+## 门控梯度相消回归
+
+单 token、初始状态为零时，门控仅作用于零状态，因此 `dg` 应为零。
+Stage 13 的三个 Cube 累加结果保留 FP32，供 Stage 14 计算门控点积；
+`dq/dk` 仍使用原有 BF16 partial。CPU 标杆遵循相同精度边界。
+
+```bash
+python tests/atk/chunk_gated_delta_rule_bwd_finalize/scripts/check_gate_precision.py --device cpu
+python tests/atk/chunk_gated_delta_rule_bwd_finalize/scripts/check_gate_precision.py --device npu
+```
+
+默认覆盖 32 个随机种子和 FP32/BF16 gate，共 64 个 GVA 用例。
+检查 `dg == 0`、全部输出有限，以及重复执行逐位一致。
+该回归不依赖 ATK，不替代上述完整验收矩阵。

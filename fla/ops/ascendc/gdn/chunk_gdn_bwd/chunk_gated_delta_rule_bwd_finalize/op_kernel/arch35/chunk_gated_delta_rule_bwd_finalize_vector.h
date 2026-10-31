@@ -1019,35 +1019,55 @@ __simd_vf__ inline void Stage12VF(
     }
 }
 
+// Gate gradients consume the FP32 Cube results before the BF16 dq/dk stores; the 16 KiB scratch is reused after each 32-row tile.
+template <typename DT>
+__simd_vf__ inline void GateDotVF(__ubuf__ float *dst, __ubuf__ float *matrix,
+                                __ubuf__ DT *operand, uint16_t rows)
+{
+    MaskReg all = CreateMask<float, MaskPattern::ALL>();
+    MaskReg one = CreateMask<float, MaskPattern::VL1>();
+    RegTensor<float> x, y, product, sum, partial;
+    RegTensor<DT> packed;
+    for (uint16_t row = 0; row < rows; ++row) {
+        Duplicate(sum, 0.0f, all);
+        for (uint16_t col = 0; col < 2; ++col) {
+            uint32_t offset = static_cast<uint32_t>(row) * K_SIZE_128 + col * CHUNK_SIZE_64;
+            LoadAlign(x, matrix + offset);
+            DataCopy<DT, LoadDist::DIST_UNPACK_B16>(packed, operand + offset);
+            Cast<float, DT, B16_TO_FP32>(y, packed, all);
+            Mul(product, x, y, all);
+            ReduceSum(partial, product, all);
+            Add(sum, sum, partial, one);
+        }
+        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dst + row, sum, one);
+    }
+    LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+}
+
 // Stage 14 每次 VF 处理一个完整 HV。dq_hv 保持不变并由 MTE3 写 W14；
 // dk_base 原位生成 dk_raw_hv；dgScratch 始终保存 FP32 dg，BF16 ABI
 // 只在最终写回前原位生成临时打包结果。
 template <typename DT, typename GT>
 __simd_vf__ inline void Stage14VF(
-    __ubuf__ DT *dkBase, __ubuf__ DT *dqHv, __ubuf__ DT *dkIntra,
-    __ubuf__ DT *dkPrepare, __ubuf__ DT *q, __ubuf__ DT *k,
+    __ubuf__ DT *dkBase, __ubuf__ DT *dkIntra,
+    __ubuf__ DT *dkPrepare,
     __ubuf__ float *dgPrepare, __ubuf__ float *stateTerm,
-    __ubuf__ float *dgScratch, uint16_t validRows)
+    __ubuf__ float *dgScratch, __ubuf__ float *gateDots, uint16_t validRows)
 {
     MaskReg floatMask = CreateMask<float, MaskPattern::ALL>();
     MaskReg scalarMask = CreateMask<float, MaskPattern::VL1>();
     RegTensor<DT> dataReg0;
     RegTensor<DT> dataReg1;
     RegTensor<DT> dataReg2;
-    RegTensor<DT> dataReg3;
-    RegTensor<float> dqReg;
-    RegTensor<float> qReg;
     RegTensor<float> dkBaseReg;
     RegTensor<float> dkIntraReg;
     RegTensor<float> dkPrepareReg;
-    RegTensor<float> kReg;
-    RegTensor<float> productReg;
     RegTensor<float> rowDqSumReg;
     RegTensor<float> rowDkBaseSumReg;
     RegTensor<float> rowDkIntraSumReg;
-    RegTensor<float> reducedReg;
     RegTensor<float> totalDkBaseReg;
     RegTensor<float> scalarReg;
+    RegTensor<float> reducedReg;
     RegTensor<float> suffixReg;
     uint16_t row = 0;
     uint16_t columnTile = 0;
@@ -1055,39 +1075,24 @@ __simd_vf__ inline void Stage14VF(
 
     Duplicate(totalDkBaseReg, 0.0f, floatMask);
     for (row = 0; row < validRows; ++row) {
-        Duplicate(rowDqSumReg, 0.0f, floatMask);
-        Duplicate(rowDkBaseSumReg, 0.0f, floatMask);
-        Duplicate(rowDkIntraSumReg, 0.0f, floatMask);
         for (columnTile = 0; columnTile < 2; ++columnTile) {
             vectorOffset = static_cast<uint32_t>(row) * K_SIZE_128 +
                 static_cast<uint32_t>(columnTile) * CHUNK_SIZE_64;
-            DataCopy<DT, LoadDist::DIST_UNPACK_B16>(dataReg0, dqHv + vectorOffset);
-            DataCopy<DT, LoadDist::DIST_UNPACK_B16>(dataReg1, q + vectorOffset);
             DataCopy<DT, LoadDist::DIST_UNPACK_B16>(dataReg2, dkBase + vectorOffset);
-            DataCopy<DT, LoadDist::DIST_UNPACK_B16>(dataReg3, k + vectorOffset);
-            Cast<float, DT, B16_TO_FP32>(dqReg, dataReg0, floatMask);
-            Cast<float, DT, B16_TO_FP32>(qReg, dataReg1, floatMask);
             Cast<float, DT, B16_TO_FP32>(dkBaseReg, dataReg2, floatMask);
-            Cast<float, DT, B16_TO_FP32>(kReg, dataReg3, floatMask);
-            Mul(productReg, dqReg, qReg, floatMask);
-            ReduceSum(reducedReg, productReg, floatMask);
-            Add(rowDqSumReg, rowDqSumReg, reducedReg, scalarMask);
-            Mul(productReg, dkBaseReg, kReg, floatMask);
-            ReduceSum(reducedReg, productReg, floatMask);
-            Add(rowDkBaseSumReg, rowDkBaseSumReg, reducedReg, scalarMask);
 
             DataCopy<DT, LoadDist::DIST_UNPACK_B16>(dataReg0, dkIntra + vectorOffset);
             DataCopy<DT, LoadDist::DIST_UNPACK_B16>(dataReg1, dkPrepare + vectorOffset);
             Cast<float, DT, B16_TO_FP32>(dkIntraReg, dataReg0, floatMask);
             Cast<float, DT, B16_TO_FP32>(dkPrepareReg, dataReg1, floatMask);
-            Mul(productReg, dkIntraReg, kReg, floatMask);
-            ReduceSum(reducedReg, productReg, floatMask);
-            Add(rowDkIntraSumReg, rowDkIntraSumReg, reducedReg, scalarMask);
             Add(dkBaseReg, dkBaseReg, dkIntraReg, floatMask);
             Add(dkBaseReg, dkBaseReg, dkPrepareReg, floatMask);
             Cast<DT, float, FP32_TO_B16_PACK>(dataReg2, dkBaseReg, floatMask);
             StoreAlign<DT, StoreDist::DIST_PACK_B32>(dkBase + vectorOffset, dataReg2, floatMask);
         }
+        DataCopy<float, LoadDist::DIST_BRC_B32>(rowDqSumReg, gateDots + row);
+        DataCopy<float, LoadDist::DIST_BRC_B32>(rowDkBaseSumReg, gateDots + CHUNK_SIZE_64 + row);
+        DataCopy<float, LoadDist::DIST_BRC_B32>(rowDkIntraSumReg, gateDots + 2 * CHUNK_SIZE_64 + row);
         Add(totalDkBaseReg, totalDkBaseReg, rowDkBaseSumReg, scalarMask);
         Sub(rowDqSumReg, rowDqSumReg, rowDkBaseSumReg, scalarMask);
         Sub(rowDqSumReg, rowDqSumReg, rowDkIntraSumReg, scalarMask);
@@ -1440,7 +1445,7 @@ public:
         GM_ADDR dkbIn, GM_ADDR dkbTIn, GM_ADDR doGOut,
         GM_ADDR betaRawIn, GM_ADDR dbetaOut, GM_ADDR dsOut,
         GM_ADDR dqStage12Out, GM_ADDR dkStage12Out, GM_ADDR dk0Stage13Out,
-        GM_ADDR workspace,
+        GM_ADDR workspace, GM_ADDR gateDq, GM_ADDR gateDkBase, GM_ADDR gateDkIntra,
         const ChunkGatedDeltaRuleBwdFinalizeTilingData *tiling, AscendC::TPipe *pipe)
     {
         qGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(q));
@@ -1475,6 +1480,9 @@ public:
         dkStage12OutGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dkStage12Out));
         dk0Stage13OutGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dk0Stage13Out));
         kbWorkspaceGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(workspace));
+        gateGm_[0].SetGlobalBuffer(reinterpret_cast<__gm__ float *>(gateDq));
+        gateGm_[1].SetGlobalBuffer(reinterpret_cast<__gm__ float *>(gateDkBase));
+        gateGm_[2].SetGlobalBuffer(reinterpret_cast<__gm__ float *>(gateDkIntra));
         cuSeqlens_ = cuSeqlens;
         chunkIndices_ = chunkIndices;
         tiling_ = tiling;
@@ -1494,6 +1502,8 @@ public:
         // 真实末次消费前保持固定地址；Stage 0 的两份 slot 轮转使用，
         // 每轮只搬入和计算当前 owner HV，不提前搬运下一 HV。
         pipe_->InitBuffer(ubBuf_, UB_TOTAL_BYTES);
+        gateScratch_ = ubBuf_.GetWithOffset<float>(GATE_TILE_ROWS * K_SIZE_128, GATE_SCRATCH_OFFSET);
+        gateDots_ = ubBuf_.GetWithOffset<float>(3 * CHUNK_SIZE_64, GATE_DOTS_OFFSET);
         k_[0] = ubBuf_.GetWithOffset<DT>(VECTOR_ELEMS, K_OFFSET);
         k_[1] = ubBuf_.GetWithOffset<DT>(VECTOR_ELEMS, K_OFFSET + VECTOR_BYTES);
         v_[0] = ubBuf_.GetWithOffset<DT>(VECTOR_ELEMS, V_OFFSET);
@@ -2060,16 +2070,31 @@ public:
                         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[qSlot]);
                         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[qSlot]);
                     }
+                    const int64_t gateOffset = GetWorkspaceHeadOffset(coreIdx_, workspaceGroupRound, headOffset);
+                    for (uint32_t term = 0; term < 3; ++term) {
+                        auto operand = term == 0 ? qStage14_[qSlot] : k_[streamSlot_];
+                        for (uint32_t begin = 0; begin < chunk.chunkLen; begin += GATE_TILE_ROWS) {
+                            const uint32_t rows = chunk.chunkLen - begin < GATE_TILE_ROWS ? chunk.chunkLen - begin : GATE_TILE_ROWS;
+                            AscendC::DataCopy(gateScratch_, gateGm_[term][gateOffset + begin * K_SIZE_128], rows * K_SIZE_128);
+                            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[qSlot]);
+                            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[qSlot]);
+                            GateDotVF<DT>(
+                                reinterpret_cast<__ubuf__ float *>(gateDots_.GetPhyAddr()) + term * CHUNK_SIZE_64 + begin,
+                                reinterpret_cast<__ubuf__ float *>(gateScratch_.GetPhyAddr()),
+                                reinterpret_cast<__ubuf__ DT *>(operand.GetPhyAddr()) + begin * K_SIZE_128,
+                                static_cast<uint16_t>(rows));
+                            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_[0]);
+                            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_[0]);
+                        }
+                    }
                     Stage14VF<DT, GT>(
                         reinterpret_cast<__ubuf__ DT *>(dk0Stage13_[streamSlot_].GetPhyAddr()),
-                        reinterpret_cast<__ubuf__ DT *>(dqIntraStage13_[streamSlot_].GetPhyAddr()),
                         reinterpret_cast<__ubuf__ DT *>(dkIntraStage13_[streamSlot_].GetPhyAddr()),
                         reinterpret_cast<__ubuf__ DT *>(dkbg0_[streamSlot_].GetPhyAddr()),
-                        reinterpret_cast<__ubuf__ DT *>(qStage14_[qSlot].GetPhyAddr()),
-                        reinterpret_cast<__ubuf__ DT *>(k_[streamSlot_].GetPhyAddr()),
                         reinterpret_cast<__ubuf__ float *>(dgPrepare_[streamSlot_].GetPhyAddr()),
                         reinterpret_cast<__ubuf__ float *>(gLast_[streamSlot_].GetPhyAddr()),
                         reinterpret_cast<__ubuf__ float *>(decay_[streamSlot_].GetPhyAddr()),
+                        reinterpret_cast<__ubuf__ float *>(gateDots_.GetPhyAddr()),
                         static_cast<uint16_t>(chunk.chunkLen));
                     AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[streamSlot_]);
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[streamSlot_]);
@@ -2275,6 +2300,10 @@ private:
     static constexpr uint32_t G_LAST_OFFSET = 246 * 1024 + 512;
     static constexpr uint32_t DECAY_OFFSET = 247 * 1024;
     static constexpr uint32_t BG_OFFSET = 247 * 1024 + 512;
+    // S8 scratch is dead before S14; dot results do not overlap the gate vectors.
+    static constexpr uint32_t GATE_TILE_ROWS = 32;
+    static constexpr uint32_t GATE_SCRATCH_OFFSET = 192 * 1024;
+    static constexpr uint32_t GATE_DOTS_OFFSET = 240 * 1024;
     static constexpr uint32_t UB_TOTAL_BYTES = 248 * 1024;
 
     static_assert(VECTOR_BYTES == 16 * 1024, "Stage 0 vector slot must be 16 KiB.");
@@ -2355,6 +2384,9 @@ private:
     AscendC::GlobalTensor<DT> a2OutGm_;
     AscendC::GlobalTensor<DT> dA0OutGm_;
     AscendC::GlobalTensor<DT> kbWorkspaceGm_;
+    AscendC::GlobalTensor<float> gateGm_[3];
+    AscendC::LocalTensor<float> gateScratch_;
+    AscendC::LocalTensor<float> gateDots_;
     AscendC::GlobalTensor<DT> dkbInGm_;
     AscendC::GlobalTensor<DT> dkbTInGm_;
     AscendC::GlobalTensor<DT> doGOutGm_;

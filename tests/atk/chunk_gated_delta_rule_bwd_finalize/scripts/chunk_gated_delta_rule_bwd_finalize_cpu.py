@@ -300,17 +300,16 @@ def chunk_gated_delta_rule_bwd_finalize_golden(
             ).to(work_dtype)
             v_decay[batch_idx, hv, token_start:token_end] = v_decay_chunk
             q_chunk = q[batch_idx, hv // head_ratio, token_start:token_end].float()
-            dq_hv[batch_idx, hv, token_start:token_end] = (
+            # Gate dots must consume FP32 accumulators before the BF16 dq/dk stores.
+            dq_gate = (
                 torch.matmul(do_g_chunk.float(), h_chunk.transpose(-1, -2))
                 + torch.matmul(ds_chunk.float(), k_chunk)
-            ).to(work_dtype)
-            dk_base[batch_idx, hv, token_start:token_end] = torch.matmul(
-                v_decay_chunk.float(),
-                dh_chunk.transpose(-1, -2),
-            ).to(work_dtype)
-            dk_intra[batch_idx, hv, token_start:token_end] = torch.matmul(
-                ds_chunk.float().transpose(-1, -2), q_chunk
-            ).to(work_dtype)
+            )
+            dk_base_gate = torch.matmul(v_decay_chunk.float(), dh_chunk.transpose(-1, -2))
+            dk_intra_gate = torch.matmul(ds_chunk.float().transpose(-1, -2), q_chunk)
+            dq_hv[batch_idx, hv, token_start:token_end] = dq_gate.to(work_dtype)
+            dk_base[batch_idx, hv, token_start:token_end] = dk_base_gate.to(work_dtype)
+            dk_intra[batch_idx, hv, token_start:token_end] = dk_intra_gate.to(work_dtype)
             dk_raw_chunk = (
                 dk_base[batch_idx, hv, token_start:token_end].float()
                 + dk_intra[batch_idx, hv, token_start:token_end].float()
@@ -318,12 +317,12 @@ def chunk_gated_delta_rule_bwd_finalize_golden(
             ).to(work_dtype)
             dk_raw_hv[batch_idx, hv, token_start:token_end] = dk_raw_chunk
             base_dot = (
-                dk_base[batch_idx, hv, token_start:token_end].float() * k_chunk
+                dk_base_gate * k_chunk
             ).sum(dim=-1)
             dg_chunk = (
-                (dq_hv[batch_idx, hv, token_start:token_end].float() * q_chunk).sum(dim=-1)
+                (dq_gate * q_chunk).sum(dim=-1)
                 - base_dot
-                - (dk_intra[batch_idx, hv, token_start:token_end].float() * k_chunk).sum(dim=-1)
+                - (dk_intra_gate * k_chunk).sum(dim=-1)
                 + dg_prepare[batch_idx, hv, token_start:token_end]
             )
             dg_chunk[-1] += state_term[batch_idx, hv, state_chunk_idx] + base_dot.sum()
