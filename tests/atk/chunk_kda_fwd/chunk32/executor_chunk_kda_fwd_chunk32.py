@@ -1084,17 +1084,12 @@ def _torch_same_precision(inputs: _PreparedInputs, spec: dict):
 
 
 def _load_triton_callable():
-    target = os.environ.get("KDA_ATK_TRITON_CALLABLE", _DEFAULT_TRITON_CALLABLE).strip()
-    module_name, separator, attribute = target.partition(":")
-    if not separator or not module_name or not attribute:
-        raise RuntimeError(
-            "KDA_ATK_TRITON_CALLABLE must use '<python_module>:<callable>' syntax"
-        )
+    module_name, _, attribute = _DEFAULT_TRITON_CALLABLE.partition(":")
     module = importlib.import_module(module_name)
     callable_obj = getattr(module, attribute, None)
     if not callable(callable_obj):
-        raise RuntimeError(f"configured Triton target is not callable: {target}")
-    return target, callable_obj
+        raise RuntimeError(f"configured Triton target is not callable: {_DEFAULT_TRITON_CALLABLE}")
+    return _DEFAULT_TRITON_CALLABLE, callable_obj
 
 
 def _cuda_long(values: Optional[list[int]], device, *, pairs: bool = False):

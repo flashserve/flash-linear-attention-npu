@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <string>
 #include "platform/soc_spec.h"
 #include <register/op_impl_registry.h>
 #include "op_common/log/log.h"
@@ -184,7 +185,7 @@ ge::graphStatus TilingForChunkKdaFwd32(gert::TilingContext *context)
     const auto qDesc = context->GetInputDesc(INPUT_Q_IDX);
     const auto attrs = context->GetAttrs();
     if (qDesc == nullptr || attrs == nullptr) {
-        OP_LOGE(context->GetNodeName(), "Chunk32 requires valid q and attr descriptors.");
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), qDesc == nullptr ? "q" : "attrs");
         return ge::GRAPH_FAILED;
     }
     const float scale = static_cast<float>(*attrs->GetAttrPointer<double>(ATTR_SCALE_IDX));
@@ -197,9 +198,11 @@ ge::graphStatus TilingForChunkKdaFwd32(gert::TilingContext *context)
     const auto vShape = context->GetInputShape(INPUT_V_IDX)->GetStorageShape();
     const auto aLogShape = context->GetInputShape(INPUT_A_LOG_IDX)->GetStorageShape();
     if (qShape.GetDimNum() != 3 || vShape.GetDimNum() != 3 || aLogShape.GetDimNum() != 1) {
-        OP_LOGE(context->GetNodeName(),
-                "Chunk32 expects rank-3 q/v and rank-1 a_log, got q=%zu v=%zu a_log=%zu.",
-                qShape.GetDimNum(), vShape.GetDimNum(), aLogShape.GetDimNum());
+        OP_LOGE_FOR_INVALID_VALUE(
+            context->GetNodeName(), "q/v/a_log rank",
+            std::to_string(qShape.GetDimNum()) + "/" + std::to_string(vShape.GetDimNum()) +
+                "/" + std::to_string(aLogShape.GetDimNum()),
+            "3/3/1");
         return ge::GRAPH_FAILED;
     }
     const bool headMajorVarlen = isVarlen && layout != nullptr && std::strcmp(layout, "NTD") == 0;
@@ -214,14 +217,24 @@ ge::graphStatus TilingForChunkKdaFwd32(gert::TilingContext *context)
                                            : isVarlen ? static_cast<uint64_t>(vShape.GetDim(1))
                                                       : static_cast<uint64_t>(vShape.GetDim(0));
     const uint64_t hvReal = static_cast<uint64_t>(aLogShape.GetDim(0));
-    if (kDim != KDA_FD32_HEAD_DIM || seqLen == 0 || headNum == 0 || hvReal == 0 ||
-        hvNum < headNum || hvNum % headNum != 0 || hvNum % hvReal != 0) {
-        OP_LOGE(context->GetNodeName(),
-                "Chunk32 invalid shape: K=%llu T=%llu H=%llu HV=%llu aLogHV=%llu; "
-                "expected K=128,T>0,H>0,HV>0,HV%H=0,HV%aLogHV=0.",
-                (unsigned long long)kDim, (unsigned long long)seqLen,
-                (unsigned long long)headNum, (unsigned long long)hvNum,
-                (unsigned long long)hvReal);
+    if (kDim != KDA_FD32_HEAD_DIM) {
+        OP_LOGE_FOR_INVALID_VALUE(context->GetNodeName(), "K", std::to_string(kDim), "128");
+        return ge::GRAPH_FAILED;
+    }
+    if (seqLen == 0) {
+        OP_LOGE_FOR_INVALID_VALUE(context->GetNodeName(), "T", "0", ">0");
+        return ge::GRAPH_FAILED;
+    }
+    if (headNum == 0 || hvNum < headNum || hvNum % headNum != 0) {
+        OP_LOGE_FOR_INVALID_VALUE(
+            context->GetNodeName(), "H/HV", std::to_string(headNum) + "/" + std::to_string(hvNum),
+            "H>0 and HV a positive multiple of H");
+        return ge::GRAPH_FAILED;
+    }
+    if (hvReal == 0 || hvNum % hvReal != 0) {
+        OP_LOGE_FOR_INVALID_VALUE(
+            context->GetNodeName(), "HV/aLogHV", std::to_string(hvNum) + "/" + std::to_string(hvReal),
+            "aLogHV>0 and HV%aLogHV=0");
         return ge::GRAPH_FAILED;
     }
 
@@ -232,17 +245,17 @@ ge::graphStatus TilingForChunkKdaFwd32(gert::TilingContext *context)
         const int64_t *cu = cuTensor->GetData<int64_t>();
         if (cu == nullptr || nSeq == 0 || nSeq > KDA_FD32_MAX_VARLEN_SEQ || cu[0] != 0 ||
             static_cast<uint64_t>(cu[nSeq]) != seqLen) {
-            OP_LOGE(context->GetNodeName(),
-                    "Chunk32 invalid cu_seqlens: nSeq=%llu, expected 1..1024 sequences "
-                    "with cu[0]=0 and cu[nSeq]=T=%llu.",
-                    (unsigned long long)nSeq, (unsigned long long)seqLen);
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                context->GetNodeName(), "cu_seqlens", "nSeq=" + std::to_string(nSeq),
+                "expected 1..1024 sequences with cu[0]=0 and cu[nSeq]=T=" +
+                    std::to_string(seqLen));
             return ge::GRAPH_FAILED;
         }
         for (uint64_t i = 0; i <= nSeq; ++i) {
             if (i > 0 && cu[i] < cu[i - 1]) {
-                OP_LOGE(context->GetNodeName(),
-                        "Chunk32 cu_seqlens is not nondecreasing at index %llu: %lld < %lld.",
-                        (unsigned long long)i, (long long)cu[i], (long long)cu[i - 1]);
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    context->GetNodeName(), "cu_seqlens",
+                    "decreasing at index " + std::to_string(i), "must be nondecreasing");
                 return ge::GRAPH_FAILED;
             }
             cuData[i] = static_cast<uint64_t>(cu[i]);
@@ -258,11 +271,12 @@ ge::graphStatus TilingForChunkKdaFwd32(gert::TilingContext *context)
             static_cast<uint64_t>(isShape.GetDim(0)) != stateHeads ||
             static_cast<uint64_t>(isShape.GetDim(1)) != KDA_FD32_HEAD_DIM ||
             static_cast<uint64_t>(isShape.GetDim(2)) != KDA_FD32_HEAD_DIM) {
-            OP_LOGE(context->GetNodeName(),
-                    "Chunk32 initial_state must be [%llu,128,128], got rank=%zu dims=[%lld,%lld,%lld].",
-                    (unsigned long long)stateHeads, isShape.GetDimNum(),
-                    (long long)isShape.GetDim(0), (long long)isShape.GetDim(1),
-                    (long long)isShape.GetDim(2));
+            OP_LOGE_FOR_INVALID_SHAPE(
+                context->GetNodeName(), "initial_state",
+                "rank=" + std::to_string(isShape.GetDimNum()) + ",dims=[" +
+                    std::to_string(isShape.GetDim(0)) + "," + std::to_string(isShape.GetDim(1)) +
+                    "," + std::to_string(isShape.GetDim(2)) + "]",
+                "[" + std::to_string(stateHeads) + ",128,128]");
             return ge::GRAPH_FAILED;
         }
     }
@@ -277,11 +291,12 @@ ge::graphStatus TilingForChunkKdaFwd32(gert::TilingContext *context)
                 static_cast<uint64_t>(fs.GetDim(0)) != stateHeads ||
                 static_cast<uint64_t>(fs.GetDim(1)) != KDA_FD32_HEAD_DIM ||
                 static_cast<uint64_t>(fs.GetDim(2)) != KDA_FD32_HEAD_DIM) {
-                OP_LOGE(context->GetNodeName(),
-                        "Chunk32 final_state must be [%llu,128,128], got rank=%zu dims=[%lld,%lld,%lld].",
-                        (unsigned long long)stateHeads, fs.GetDimNum(),
-                        (long long)fs.GetDim(0), (long long)fs.GetDim(1),
-                        (long long)fs.GetDim(2));
+                OP_LOGE_FOR_INVALID_SHAPE(
+                    context->GetNodeName(), "final_state",
+                    "rank=" + std::to_string(fs.GetDimNum()) + ",dims=[" +
+                        std::to_string(fs.GetDim(0)) + "," + std::to_string(fs.GetDim(1)) +
+                        "," + std::to_string(fs.GetDim(2)) + "]",
+                    "[" + std::to_string(stateHeads) + ",128,128]");
                 return ge::GRAPH_FAILED;
             }
             outputFinalState = true;

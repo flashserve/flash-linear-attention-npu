@@ -73,3 +73,20 @@ python3 tests/atk/chunk_kda_fwd/chunk32/negative_chunk32_zero_heads.py
 
 设备号由执行环境选择。输出默认写入本目录的 `atk_output/`，可用 `ATK_OUTPUT_ROOT` 改到其他位置；
 生成结果不得提交。性能结论以 device `Task Duration` 为准，不与 wall time 混用。
+
+### 测试环境变量契约
+
+这些变量只作用于当前 ATK 测试进程，不被 Torch 公开接口、host 或 kernel 读取。正式 accuracy
+矩阵覆盖 135 条用例，固定使用下表配置；performance 和 mssanitizer 使用同一执行器。它们是
+chunk64 executor 的既有测试约定，chunk32 不改变其优先级或回滚方式。
+
+| 变量 | 默认值及消费者 | 非法值行为 | 生命周期与回滚 |
+| --- | --- | --- | --- |
+| `KDA_ATK_REFERENCE_WORKERS` | 默认 `48`，控制 CPU 同精度 reference 的线程数；正式脚本固定为 `1` | 非整数在 import 时由 `int()` 报错；小于 1 在线程池创建时报错 | import 时读取；unset 恢复默认，正式脚本始终覆盖为 1 |
+| `KDA_ATK_REFERENCE_CACHE_ENTRIES` | 默认 `1`，限制进程内 legacy reference LRU 缓存条数；`0` 或负数禁用缓存 | 非整数在 import 时报错；非正数不报错，按禁用缓存处理 | import 时读取，进程退出即清空；unset 恢复默认 |
+| `KDA_ATK_VISIBLE_OUTPUTS` | 默认空，比较全部输出；正式脚本固定为 `attn_out,final_state` | 未知输出名抛出 `ValueError` | 每次执行读取；unset 恢复比较全部输出 |
+| `KDA_ATK_TRACE_SEED` | 默认关闭；仅 `1` 打印 device、输入 schema、case ID 和 seed | 其他值均视为关闭，不改变输入或精度结果 | 每次初始化读取；unset 关闭，仅用于定向调试 |
+| `KDA_ATK_ALLOW_NONFINITE_OUTPUT` | 默认关闭；仅 `1` 允许 NaN/Inf 落盘并打印数量，否则立即报错 | 其他值均视为关闭；开启只用于诊断，不属于验收配置 | 每次输出检查读取；unset 恢复失败即报错 |
+
+环境变量优先于内置默认值；`run_chunk32_atk.sh` 对 workers 和 visible outputs 的显式设置优先于
+外部环境。Triton 对照入口固定为 `fla.ops.kda.chunk_fwd:chunk_kda_fwd`，不再提供环境开关。
