@@ -2,9 +2,9 @@
 
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
-#include "opdev/op_log.h"
 #include "opdev/tensor_view_utils.h"
 #include "aclnn_kernels/contiguous.h"
+#include "op_common/log/log.h"
 
 using namespace op;
 
@@ -13,6 +13,8 @@ namespace l0op {
 OP_TYPE_REGISTER(ChunkGatedDeltaRuleBwdFinalize);
 
 namespace {
+
+constexpr const char *OP_NAME = "ChunkGatedDeltaRuleBwdFinalize";
 
 const aclTensor *ConvertIntArray(const aclIntArray *array, aclOpExecutor *executor)
 {
@@ -58,7 +60,7 @@ const std::array<const aclTensor *, 5> ChunkGatedDeltaRuleBwdFinalize(
     const aclTensor *chunkIndices = ConvertIntArray(chunkIndicesOptional, executor);
     if ((cuSeqlensOptional != nullptr && cuSeqlens == nullptr) ||
         (chunkIndicesOptional != nullptr && chunkIndices == nullptr)) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Convert varlen index array failed.");
+        OP_LOGE(OP_NAME, "Convert varlen index array failed.");
         return {nullptr, nullptr, nullptr, nullptr, nullptr};
     }
 
@@ -71,7 +73,7 @@ const std::array<const aclTensor *, 5> ChunkGatedDeltaRuleBwdFinalize(
         OP_ATTR(scale, chunkSize, useQkL2NormInKernel,
                 useBetaSigmoidInKernel, useGateInKernel, stateVFirst, useExp2));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE(OP_NAME, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return {nullptr, nullptr, nullptr, nullptr, nullptr};
     }
     return {dqOut, dkOut, dvOut, dbetaOut, dgOut};

@@ -13,33 +13,6 @@
 #include "opdev/op_executor.h"
 #include "opdev/tensor_view_utils.h"
 
-// opbase 日志仅用于 arch22 实现；结束后恢复 opdev 宏，保持外层 A5 路径不变。
-#pragma push_macro("OpLogSub")
-#undef OpLogSub
-#pragma push_macro("OpLogErrSub")
-#undef OpLogErrSub
-#pragma push_macro("D_OP_LOGI")
-#undef D_OP_LOGI
-#pragma push_macro("D_OP_LOGW")
-#undef D_OP_LOGW
-#pragma push_macro("D_OP_LOGE")
-#undef D_OP_LOGE
-#pragma push_macro("D_OP_LOGD")
-#undef D_OP_LOGD
-#pragma push_macro("OP_LOGI")
-#undef OP_LOGI
-#pragma push_macro("OP_LOGW")
-#undef OP_LOGW
-#pragma push_macro("OP_LOGE_WITHOUT_REPORT")
-#undef OP_LOGE_WITHOUT_REPORT
-#pragma push_macro("OP_LOGE")
-#undef OP_LOGE
-#pragma push_macro("OP_LOGD")
-#undef OP_LOGD
-#pragma push_macro("likely")
-#undef likely
-#pragma push_macro("unlikely")
-#undef unlikely
 #include "op_common/log/log.h"
 
 namespace {
@@ -407,19 +380,5 @@ aclnnStatus GetWorkspaceSize(
 
 } // namespace gdn_finalize_arch22
 } // namespace
-
-#pragma pop_macro("unlikely")
-#pragma pop_macro("likely")
-#pragma pop_macro("OP_LOGD")
-#pragma pop_macro("OP_LOGE")
-#pragma pop_macro("OP_LOGE_WITHOUT_REPORT")
-#pragma pop_macro("OP_LOGW")
-#pragma pop_macro("OP_LOGI")
-#pragma pop_macro("D_OP_LOGD")
-#pragma pop_macro("D_OP_LOGE")
-#pragma pop_macro("D_OP_LOGW")
-#pragma pop_macro("D_OP_LOGI")
-#pragma pop_macro("OpLogErrSub")
-#pragma pop_macro("OpLogSub")
 
 #endif
