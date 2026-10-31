@@ -1442,7 +1442,7 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
                 "the three-stage scenario (bfloat16 q/k/v, K=V=128, "
                 "chunk_size=64).")
 
-    # dense batch:chunk32 融合 kernel 原生支持(suggestion.md 建议八,2026-10-22)——
+    # dense batch:chunk32 融合 kernel 原生支持——
     # 单次启动内按任务(task = batch*HV + value_head)循环,替代逐 batch 递归+cat。
     # (历史:python 逐 b 拆分曾用于规避 kernel 只认 B=1 与图内多 launch 的
     # 1~3 ULP 地址敏感,见 runs/20261021-issue174;单启动任务化后两者均不复存在。)

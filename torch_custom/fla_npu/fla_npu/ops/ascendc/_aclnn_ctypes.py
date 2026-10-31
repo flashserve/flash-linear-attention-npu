@@ -3985,7 +3985,7 @@ def npu_chunk_kda_fwd(
     if not (float(epsilon) > 0.0):
         raise RuntimeError("npu_chunk_kda_fwd: epsilon must be a positive finite number.")
 
-    # dense batch:chunk32 融合 kernel 原生支持(建议八/九,2026-10-23)——单次启动。
+    # dense batch:chunk32 融合 kernel 原生支持单次启动。
     # BSND B>1 在 aclnn 内合成 cu 走 varlen 核内直读(零转置);BNSD 头连续直达。
 
     if allow_neg_eigval and not use_beta_sigmoid_in_kernel:
