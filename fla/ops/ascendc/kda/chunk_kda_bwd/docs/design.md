@@ -61,7 +61,10 @@ Finalize 对 h、dh 分别寻址，Dhu 和内嵌 state_scan 均产生 NT-first d
 - **O2**：Stage7 将 `exp2(g-center)` 的 FP32 bandExp 保存在已释放的 qPos 高位区
   [80,96) KiB，Stage9 按同布局复用；下一 band 才复用 qPos，UB 峰值、算术顺序和
   跨核旗均不变。
-- 本轮性能机制为上述 O1/O2，以及后文 O4 原生 token-major do 输入。A5 raw tiling、
+- **O5**：Stage3 计算 `exp2(g)` 后，将同一 FP32 结果暂存在当前 band 尚未产生最终结果的
+  dg 区，Stage4 直接读取，去掉重复的 `Muls(LN2)+Exp`。两个 band 的区间不相交，
+  Stage4 随后仍按原顺序写入最终 dg；不新增 UB，也不改变逐行计算和归约顺序。
+- 本轮性能机制为上述 O1/O2、O5，以及后文 O4 原生 token-major do 输入。A5 raw tiling、
   DFX、host/ATK 资产和文档调整均为非性能修改，不据此分配性能收益。普通 beta 的
   既有转置不属于 O4，也不计入其收益。
 - A5 host 的 `ChunkKdaBwdFinalizeTilingData` 逻辑大小为 184 字节，raw tiling size 设为
