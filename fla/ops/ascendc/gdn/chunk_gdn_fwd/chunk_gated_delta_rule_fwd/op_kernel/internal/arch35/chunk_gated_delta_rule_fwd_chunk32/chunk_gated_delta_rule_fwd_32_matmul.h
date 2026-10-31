@@ -160,8 +160,7 @@ __aicore__ inline void CopyNdToL1(LocalTensor<bfloat16_t> l1, LocalTensor<bfloat
 }
 
 
-// Tight NZ already sitting in UB (produced by the VF) -> one UB->L1 copy.
-// Caller orders the vector store with V_MTE3 before this.
+// Tight NZ in UB -> one contiguous UB->L1 burst. Padded stores are compacted first.
 __aicore__ inline void CopyNzToL1(LocalTensor<bfloat16_t> l1, LocalTensor<bfloat16_t> nz, uint32_t rows, uint32_t cols)
 {
     const uint32_t bytes = rows * cols * sizeof(bfloat16_t);
