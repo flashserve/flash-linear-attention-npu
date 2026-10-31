@@ -302,7 +302,7 @@ static __simd_vf__ inline void KdaRegbaseFinishScale(
     __ubuf__ float *rawDkUpper, __ubuf__ float *k,
     __ubuf__ float *gate, __ubuf__ float *lowerAnchor,
     __ubuf__ float *upperAnchor, __ubuf__ float *beta,
-    __ubuf__ float *dbAcc, __ubuf__ float *dqBaseRaw,
+    __ubuf__ float *dbAcc, __ubuf__ KdaBwdDqRawStoreT *dqBaseRaw,
     __ubuf__ float *anchorExp, __ubuf__ float *dqFinal, float scale,
     uint16_t rows, uint16_t cols)
 {
@@ -321,6 +321,7 @@ static __simd_vf__ inline void KdaRegbaseFinishScale(
     RegTensor<float> betaReg;
     RegTensor<float> dbReg;
     RegTensor<float> dqBaseReg;
+    RegTensor<KdaBwdDqRawStoreT> dqBaseRawReg;
     RegTensor<float> anchorExpReg;
     RegTensor<float> dqFinalReg;
     MaskReg fullMask = CreateMask<float, MaskPattern::ALL>();
@@ -359,7 +360,16 @@ static __simd_vf__ inline void KdaRegbaseFinishScale(
             Exp(negReg, negReg, mask);
             Mul(dqReg, dqReg, posReg, mask);
             if constexpr (FUSE_DQ_BASE) {
-                DataCopy(dqBaseReg, dqBaseRaw + row * cols + col);
+                if constexpr (std::is_same_v<KdaBwdDqRawStoreT, float>) {
+                    DataCopy(dqBaseReg, dqBaseRaw + row * cols + col);
+                } else {
+                    // dq_raw stores as BF16 in the workspace (H5-C1): unpack
+                    // and widen to FP32 in-register, then continue as before.
+                    LoadAlign<KdaBwdDqRawStoreT, LoadDist::DIST_UNPACK_B16>(
+                        dqBaseRawReg, dqBaseRaw + row * cols + col);
+                    Cast<float, KdaBwdDqRawStoreT, ctHalf2Fp32Zero>(
+                        dqBaseReg, dqBaseRawReg, fullMask);
+                }
                 DataCopy(anchorExpReg, anchorExp + col);
                 Mul(dqBaseReg, dqBaseReg, posReg, mask);
                 Mul(dqBaseReg, dqBaseReg, anchorExpReg, mask);

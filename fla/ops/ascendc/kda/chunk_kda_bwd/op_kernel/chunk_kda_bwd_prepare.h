@@ -155,7 +155,7 @@ private:
     using DvCopy = Catlass::Gemm::Tile::PackedTileCopyTla<
         ArchTag, T, ColumnMajor, T, RowMajor, T, RowMajor>;
     using DqCopy = Catlass::Gemm::Tile::PackedTileCopyTla<
-        ArchTag, T, RowMajor, T, ColumnMajor, float, RowMajor>;
+        ArchTag, T, RowMajor, T, ColumnMajor, KdaBwdDqRawStoreT, RowMajor>;
     using DACopy = Catlass::Gemm::Tile::PackedTileCopyTla<
         ArchTag, T, RowMajor, T, ColumnMajor, float, RowMajor>;
 
@@ -259,6 +259,11 @@ public:
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C1);
+        // Launch-constant per-head address strides (elements); see the
+        // affine-head argument on the cursor members below.
+        tokStrideV_ = static_cast<uint64_t>(tiling_.seqlen) * V_DIM;
+        tokStrideC_ = static_cast<uint64_t>(tiling_.seqlen) * KDA_BWD_A_C;
+        tokStrideK_ = static_cast<uint64_t>(tiling_.seqlen) * KDA_BWD_A_K;
 #endif
     }
 
@@ -278,15 +283,27 @@ public:
         const uint64_t taskGroupCount =
             static_cast<uint64_t>(tiling_.chunkNum) * headWindowCount;
         uint32_t ownerSlot = 0;
+        uint32_t taskIdxBook = 0;
+        uint32_t headRem = 0;
         if (core < taskGroupCount) {
             const uint32_t firstTaskIdx = core / headWindowCount;
             const uint32_t firstHead =
                 (core % headWindowCount) * KDA_BWD_A_HEADS_PER_WINDOW;
+            taskIdxBook = firstTaskIdx;
+            headRem = core % headWindowCount;
             ChunkKdaBwdATask firstTask;
             GetChunkKdaBwdATask(
                 cuSeqlens_, chunkIndices_, tiling_, firstTaskIdx, firstTask);
-            LoadOwner(firstTask, firstTaskIdx, firstHead, ownerSlot);
+            OwnerAddrSet(firstTask, firstTaskIdx, firstHead);
+            IssueOwner(firstTask, ownerSlot);
         }
+        // group == taskIdxBook * headWindowCount + headRem at every
+        // iteration; both are advanced by conditional adds (usedCoreNum
+        // decomposes once) instead of a per-window div/mod.
+        const uint32_t advanceQ = taskGroupCount == 0 ?
+            0 : static_cast<uint32_t>(tiling_.usedCoreNum) / headWindowCount;
+        const uint32_t advanceR = taskGroupCount == 0 ?
+            0 : static_cast<uint32_t>(tiling_.usedCoreNum) % headWindowCount;
         uint64_t windowIdx = 0;
         for (uint64_t group = core; group < taskGroupCount;
              group += tiling_.usedCoreNum, ++windowIdx) {
@@ -294,11 +311,8 @@ public:
                 Catlass::Arch::CrossCoreWaitFlag(
                     (windowIdx & 1U) == 0 ? freeFlag0_ : freeFlag1_);
             }
-            const uint32_t taskIdx =
-                static_cast<uint32_t>(group / headWindowCount);
-            const uint32_t headBase =
-                static_cast<uint32_t>(group % headWindowCount) *
-                KDA_BWD_A_HEADS_PER_WINDOW;
+            const uint32_t taskIdx = taskIdxBook;
+            const uint32_t headBase = headRem * KDA_BWD_A_HEADS_PER_WINDOW;
             const uint32_t headCount =
                 headBase + KDA_BWD_A_HEADS_PER_WINDOW <=
                         static_cast<uint32_t>(tiling_.headNum) ?
@@ -307,9 +321,13 @@ public:
             ChunkKdaBwdATask task;
             GetChunkKdaBwdATask(
                 cuSeqlens_, chunkIndices_, tiling_, taskIdx, task);
+            CurAddrSet(task, headBase);
 
             for (uint32_t headInWindow = 0;
                  headInWindow < headCount; ++headInWindow) {
+                if (headInWindow != 0) {
+                    CurAddrBump();
+                }
                 const uint32_t head = headBase + headInWindow;
                 ChunkKdaBwdATask nextTask{};
                 uint32_t nextTaskIdx = taskIdx;
@@ -319,11 +337,13 @@ public:
                     const uint64_t nextGroup = group + tiling_.usedCoreNum;
                     hasNext = nextGroup < taskGroupCount;
                     if (hasNext) {
-                        nextTaskIdx = static_cast<uint32_t>(
-                            nextGroup / headWindowCount);
-                        nextHead = static_cast<uint32_t>(
-                            nextGroup % headWindowCount) *
-                            KDA_BWD_A_HEADS_PER_WINDOW;
+                        uint32_t nextRem = headRem + advanceR;
+                        nextTaskIdx = taskIdx + advanceQ;
+                        if (nextRem >= headWindowCount) {
+                            nextRem -= headWindowCount;
+                            ++nextTaskIdx;
+                        }
+                        nextHead = nextRem * KDA_BWD_A_HEADS_PER_WINDOW;
                         GetChunkKdaBwdATask(
                             cuSeqlens_, chunkIndices_, tiling_,
                             nextTaskIdx, nextTask);
@@ -332,10 +352,11 @@ public:
                 if (hasNext) {
                     if (headInWindow + 1 < headCount) {
                         nextTask = task;
+                        OwnerAddrBump();
+                    } else {
+                        OwnerAddrSet(nextTask, nextTaskIdx, nextHead);
                     }
-                    LoadOwner(
-                        nextTask, nextTaskIdx, nextHead,
-                        ownerSlot ^ 1U);
+                    IssueOwner(nextTask, ownerSlot ^ 1U);
                 }
                 WaitDoReady(ownerSlot);
                 RunDv(task, taskIdx, head, ownerSlot, false);
@@ -349,6 +370,12 @@ public:
                 Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(
                     (windowIdx & 1U) == 0 ? readyFlag0_ : readyFlag1_);
                 ownerSlot ^= 1U;
+            }
+            taskIdxBook += advanceQ;
+            headRem += advanceR;
+            if (headRem >= headWindowCount) {
+                headRem -= headWindowCount;
+                ++taskIdxBook;
             }
         }
         const uint64_t firstOutstanding = windowIdx > 2 ? windowIdx - 2 : 0;
@@ -476,40 +503,68 @@ private:
     }
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-    __aicore__ inline void LoadOwner(
-        const ChunkKdaBwdATask &task, uint32_t taskIdx,
-        uint32_t head, uint32_t slot)
+    // Recompute the four owner GM cursors for (task, taskIdx, head); used at
+    // window boundaries so no bump chain ever crosses a task switch.
+    __aicore__ inline void OwnerAddrSet(
+        const ChunkKdaBwdATask &task, uint32_t taskIdx, uint32_t head)
     {
-        Catlass::Arch::Resource<ArchTag> resource;
+        gmDoNext_ = reinterpret_cast<__gm__ T *>(dO_) +
+                    KdaBwdAHeadTokenOffset(tiling_, task, head, V_DIM);
+        gmAqkNext_ = reinterpret_cast<__gm__ T *>(aqk_) +
+                     KdaBwdAHeadTokenOffset(tiling_, task, head, KDA_BWD_A_C);
+        gmHNext_ = reinterpret_cast<__gm__ T *>(h_) +
+                   KdaBwdAChunkHeadOffset(
+                       tiling_, task, taskIdx, head, KDA_BWD_A_K * V_DIM);
+        gmVNext_ = reinterpret_cast<__gm__ T *>(vNew_) +
+                   KdaBwdAHeadTokenOffset(tiling_, task, head, V_DIM);
+    }
+
+    // Advance the owner cursors from head to head + 1 within the same task.
+    __aicore__ inline void OwnerAddrBump()
+    {
+        gmDoNext_ += tokStrideV_;
+        gmAqkNext_ += tokStrideC_;
+        gmHNext_ += KDA_BWD_A_K * V_DIM;
+        gmVNext_ += tokStrideV_;
+    }
+
+    // Current head's dv/dq store cursors, same affine family.
+    __aicore__ inline void CurAddrSet(
+        const ChunkKdaBwdATask &task, uint32_t head)
+    {
+        gmDvCur_ = reinterpret_cast<__gm__ T *>(dv0_) +
+                   KdaBwdAHeadTokenOffset(tiling_, task, head, V_DIM);
+        gmDqCur_ = reinterpret_cast<__gm__ KdaBwdDqRawStoreT *>(dqRaw_) +
+                   KdaBwdAHeadTokenOffset(tiling_, task, head, KDA_BWD_A_K);
+    }
+
+    __aicore__ inline void CurAddrBump()
+    {
+        gmDvCur_ += tokStrideV_;
+        gmDqCur_ += tokStrideK_;
+    }
+
+    __aicore__ inline void IssueOwner(
+        const ChunkKdaBwdATask &task, uint32_t slot)
+    {
         const uint32_t slotBase = slot * OWNER_SLOT_BYTES;
-        auto doL1 = resource.l1Buf.template GetBufferByByte<T>(
+        auto doL1 = resource_.l1Buf.template GetBufferByByte<T>(
             slotBase + OWNER_DO_OFFSET);
-        auto aqkL1 = resource.l1Buf.template GetBufferByByte<T>(
+        auto aqkL1 = resource_.l1Buf.template GetBufferByByte<T>(
             slotBase + OWNER_AQK_OFFSET);
-        auto hL1 = resource.l1Buf.template GetBufferByByte<T>(
+        auto hL1 = resource_.l1Buf.template GetBufferByByte<T>(
             slotBase + OWNER_H_OFFSET);
-        auto vL1 = resource.l1Buf.template GetBufferByByte<T>(
+        auto vL1 = resource_.l1Buf.template GetBufferByByte<T>(
             slotBase + OWNER_V_OFFSET);
 
         AscendC::GlobalTensor<T> doGm;
         AscendC::GlobalTensor<T> aqkGm;
         AscendC::GlobalTensor<T> hGm;
         AscendC::GlobalTensor<T> vGm;
-        doGm.SetGlobalBuffer(
-            reinterpret_cast<__gm__ T *>(dO_) +
-            KdaBwdAHeadTokenOffset(tiling_, task, head, V_DIM));
-        aqkGm.SetGlobalBuffer(
-            reinterpret_cast<__gm__ T *>(aqk_) +
-            KdaBwdAHeadTokenOffset(
-                tiling_, task, head, KDA_BWD_A_C));
-        hGm.SetGlobalBuffer(
-            reinterpret_cast<__gm__ T *>(h_) +
-            KdaBwdAChunkHeadOffset(
-                tiling_, task, taskIdx, head,
-                KDA_BWD_A_K * V_DIM));
-        vGm.SetGlobalBuffer(
-            reinterpret_cast<__gm__ T *>(vNew_) +
-            KdaBwdAHeadTokenOffset(tiling_, task, head, V_DIM));
+        doGm.SetGlobalBuffer(gmDoNext_);
+        aqkGm.SetGlobalBuffer(gmAqkNext_);
+        hGm.SetGlobalBuffer(gmHNext_);
+        vGm.SetGlobalBuffer(gmVNext_);
 
         auto doTensor = tla::MakeTensor(
             doGm, tla::MakeLayout<T, RowMajor>(KDA_BWD_A_C, V_DIM),
@@ -579,21 +634,25 @@ private:
         uint32_t doSlot, bool waitDoReady)
     {
         (void)taskIdx;
-        Catlass::Arch::Resource<ArchTag> resource;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        (void)head;
         const uint32_t ownerBase = doSlot * OWNER_SLOT_BYTES;
-        auto l1A = resource.l1Buf.template GetBufferByByte<T>(
+        auto l1A = resource_.l1Buf.template GetBufferByByte<T>(
             ownerBase + OWNER_AQK_OFFSET);
-        auto l1B = resource.l1Buf.template GetBufferByByte<T>(
+        auto l1B = resource_.l1Buf.template GetBufferByByte<T>(
             ownerBase + OWNER_DO_OFFSET);
+        auto l0A = resource_.l0ABuf.template GetBufferByByte<T>(0);
+        auto l0B = resource_.l0BBuf.template GetBufferByByte<T>(0);
+        auto l0C = resource_.l0CBuf.template GetBufferByByte<float>(0);
 #else
+        Catlass::Arch::Resource<ArchTag> resource;
         auto l1A = resource.l1Buf.template GetBufferByByte<T>(SCRATCH_OFFSET);
         auto l1B = resource.l1Buf.template GetBufferByByte<T>(
             doSlot * DO_BYTES);
-#endif
         auto l0A = resource.l0ABuf.template GetBufferByByte<T>(0);
         auto l0B = resource.l0BBuf.template GetBufferByByte<T>(0);
         auto l0C = resource.l0CBuf.template GetBufferByByte<float>(0);
+#endif
 
 #if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
         AscendC::GlobalTensor<T> gmA;
@@ -674,9 +733,13 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
 
         AscendC::GlobalTensor<T> gmOut;
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        gmOut.SetGlobalBuffer(gmDvCur_);
+#else
         const uint64_t outOffset =
             KdaBwdAHeadTokenOffset(tiling_, task, head, V_DIM);
         gmOut.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(dv0_) + outOffset);
+#endif
         auto outLayout =
             tla::MakeLayout<T, RowMajor>(KDA_BWD_A_C, V_DIM);
         auto outTensor =
@@ -776,7 +839,7 @@ private:
     }
 
 #endif
-    template <typename Copy, typename Mmad>
+    template <typename Copy, typename Mmad, typename DstT>
     __aicore__ inline void RunDoLeft(
         GM_ADDR rightBase, uint32_t rightCols,
         GM_ADDR outBase, uint32_t outStride, uint32_t outCols,
@@ -862,10 +925,10 @@ private:
         }
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
 
-        AscendC::GlobalTensor<float> gmOut;
-        gmOut.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(outBase));
+        AscendC::GlobalTensor<DstT> gmOut;
+        gmOut.SetGlobalBuffer(reinterpret_cast<__gm__ DstT *>(outBase));
         auto outTensor = tla::MakeTensor(
-            gmOut, tla::MakeLayout<float, RowMajor>(
+            gmOut, tla::MakeLayout<DstT, RowMajor>(
                        KDA_BWD_A_C, outStride),
             Catlass::Arch::PositionGM{});
         auto blockOut = GetTile(
@@ -890,15 +953,15 @@ private:
         uint32_t ownerSlot, GM_ADDR dARawSlot)
     {
         (void)taskIdx;
-        Catlass::Arch::Resource<ArchTag> resource;
+        (void)head;
         const uint32_t ownerBase = ownerSlot * OWNER_SLOT_BYTES;
-        auto l1A = resource.l1Buf.template GetBufferByByte<T>(
+        auto l1A = resource_.l1Buf.template GetBufferByByte<T>(
             ownerBase + OWNER_DO_OFFSET);
-        auto l1B0 = resource.l1Buf.template GetBufferByByte<T>(
+        auto l1B0 = resource_.l1Buf.template GetBufferByByte<T>(
             ownerBase + OWNER_H_OFFSET);
-        auto l1B1 = resource.l1Buf.template GetBufferByByte<T>(
+        auto l1B1 = resource_.l1Buf.template GetBufferByByte<T>(
             ownerBase + OWNER_V_OFFSET);
-        auto l0C = resource.l0CBuf.template GetBufferByByte<float>(0);
+        auto l0C = resource_.l0CBuf.template GetBufferByByte<float>(0);
         constexpr uint32_t kPackedN = KDA_BWD_A_K + KDA_BWD_A_C;
         constexpr uint32_t kL0ATileBytes =
             KDA_BWD_A_C * 64 * sizeof(T);
@@ -954,9 +1017,9 @@ private:
                 l0Slot == 0 ? EVENT_L0B : EVENT_L0B1;
             const int32_t l0ReadyEvent =
                 l0Slot == 0 ? EVENT_L0_READY : EVENT_L0_READY1;
-            auto l0A = resource.l0ABuf.template GetBufferByByte<T>(
+            auto l0A = resource_.l0ABuf.template GetBufferByByte<T>(
                 l0Slot * kL0ATileBytes);
-            auto l0B = resource.l0BBuf.template GetBufferByByte<T>(
+            auto l0B = resource_.l0BBuf.template GetBufferByByte<T>(
                 l0Slot * kL0BTileBytes);
             auto l0ATensor = tla::MakeTensor(
                 l0A, tla::MakeLayout<T, typename DqCopy::LayoutTagL0A>(m, 64),
@@ -997,12 +1060,9 @@ private:
         }
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_L0C);
 
-        const uint64_t dqOffset = KdaBwdAHeadTokenOffset(
-            tiling_, task, head, KDA_BWD_A_K);
-        AscendC::GlobalTensor<float> dqGm;
+        AscendC::GlobalTensor<KdaBwdDqRawStoreT> dqGm;
         AscendC::GlobalTensor<float> dAGm;
-        dqGm.SetGlobalBuffer(
-            reinterpret_cast<__gm__ float *>(dqRaw_) + dqOffset);
+        dqGm.SetGlobalBuffer(gmDqCur_);
         // This tensor is a view into the fused operator workspace rather than
         // an aclTensor argument.  Publish its logical extent so device-side
         // bounds checking can validate the FixPipe store correctly.
@@ -1010,7 +1070,7 @@ private:
             reinterpret_cast<__gm__ float *>(dARawSlot),
             static_cast<uint64_t>(KDA_BWD_A_C) * KDA_BWD_A_C);
         auto dqTensor = tla::MakeTensor(
-            dqGm, tla::MakeLayout<float, RowMajor>(
+            dqGm, tla::MakeLayout<KdaBwdDqRawStoreT, RowMajor>(
                       KDA_BWD_A_C, KDA_BWD_A_K),
             Catlass::Arch::PositionGM{});
         auto dATensor = tla::MakeTensor(
@@ -1039,12 +1099,12 @@ private:
             tiling_, task, taskIdx, head, KDA_BWD_A_K * V_DIM);
         const uint64_t outOffset =
             KdaBwdAHeadTokenOffset(tiling_, task, head, KDA_BWD_A_K);
-        RunDoLeft<DqCopy, DqMmad>(
+        RunDoLeft<DqCopy, DqMmad, KdaBwdDqRawStoreT>(
             reinterpret_cast<GM_ADDR>(
                 reinterpret_cast<__gm__ T *>(h_) + hOffset),
             KDA_BWD_A_K,
             reinterpret_cast<GM_ADDR>(
-                reinterpret_cast<__gm__ float *>(dqRaw_) + outOffset),
+                reinterpret_cast<__gm__ KdaBwdDqRawStoreT *>(dqRaw_) + outOffset),
             KDA_BWD_A_K, KDA_BWD_A_K, task.validC, false);
     }
 
@@ -1057,7 +1117,7 @@ private:
         const uint64_t outOffset =
             KdaBwdAHeadTokenOffset(
                 tiling_, task, head, KDA_BWD_A_C);
-        RunDoLeft<DACopy, DAMmad>(
+        RunDoLeft<DACopy, DAMmad, float>(
             reinterpret_cast<GM_ADDR>(
                 reinterpret_cast<__gm__ T *>(vNew_) + vOffset),
             KDA_BWD_A_C,
@@ -1078,6 +1138,26 @@ private:
     GM_ADDR workspace_ = nullptr;
     ChunkKdaBwdATilingData tiling_{};
     ChunkKdaBwdCTilingData cTiling_{};
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    // One Resource per launch instead of one per helper call; the A5 loop
+    // only ever reads launch-constant buffer bases from it.
+    Catlass::Arch::Resource<ArchTag> resource_;
+    // Running GM cursors for the owner prefetch (next head) and for the
+    // current head's dv/dq stores, plus the launch-constant per-head strides
+    // in elements.  Both KdaBwdAHeadTokenOffset branches are affine in head
+    // with slope seqlen*dim and KdaBwdAChunkHeadOffset with slope
+    // elementsPerChunk, so within a window the cursors bump by the stride;
+    // at window boundaries they are recomputed from the decoded task.
+    __gm__ T *gmDoNext_ = nullptr;
+    __gm__ T *gmAqkNext_ = nullptr;
+    __gm__ T *gmHNext_ = nullptr;
+    __gm__ T *gmVNext_ = nullptr;
+    __gm__ T *gmDvCur_ = nullptr;
+    __gm__ KdaBwdDqRawStoreT *gmDqCur_ = nullptr;
+    uint64_t tokStrideV_ = 0;
+    uint64_t tokStrideC_ = 0;
+    uint64_t tokStrideK_ = 0;
+#endif
     Catlass::Arch::CrossCoreFlag readyFlag0_{KDA_BWD_A_READY_FLAG0};
     Catlass::Arch::CrossCoreFlag readyFlag1_{KDA_BWD_A_READY_FLAG1};
     Catlass::Arch::CrossCoreFlag freeFlag0_{KDA_BWD_A_FREE_FLAG0};

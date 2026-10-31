@@ -228,6 +228,15 @@ template <class TileCopy, class TensorC>
 using KdaBwdCopyL0CToDst =
     typename KdaBwdCopyL0CToDstSelector<TileCopy, TensorC>::Type;
 
+// dq_raw storage dtype in the cross-phase workspace: BF16 on A5 (halves the
+// largest PhaseA->PhaseC round trip), FP32 elsewhere.  Consumers convert to
+// FP32 at load; the FP32 GEMM accumulation is unchanged either way.
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+using KdaBwdDqRawStoreT = bfloat16_t;
+#else
+using KdaBwdDqRawStoreT = float;
+#endif
+
 // Cross-phase private workspace regions are handed to the device entry as
 // offsets inside ChunkKdaBwdTilingData.  The fused MIX entry has to keep its
 // whole tiling payload inside the proven A5 kernel-argument budget, so those
@@ -236,6 +245,11 @@ using KdaBwdCopyL0CToDst =
 // host tiling), which keeps the payload size unchanged while raising the
 // addressable single-launch workspace from 4 GiB to 2 TiB.
 constexpr uint64_t KDA_BWD_WORKSPACE_ALIGN = 512U;
+
+// FC-S1: compile-time switch for the PhaseC batch=2 lockstep orchestration.
+#ifndef KDA_FC_BATCH_LOCKSTEP
+#define KDA_FC_BATCH_LOCKSTEP 1
+#endif
 
 struct ChunkKdaBwdTilingData {
     GDN::ChunkGatedDeltaRuleBwdDhuTilingData kernelB;

@@ -76,6 +76,13 @@ WY 的逐行 Duplicate 使用两个 uint64_t 的位掩码数组，FP32 的高位
 将源 Plane 复制到输出队列；Adds 后执行 PIPE_V 屏障，再允许调用方覆写源
 Plane。输出队列的事件继续负责队列缓冲与 MTE3 之间的同步。
 
+A5（Ascend950）上 BuildZb 不再逐行构造掩码：16 KiB Plane 恰好容纳
+64×64 FP32 的整瓦 WY 块，两趟 32 行合并为单遍装载，随后由
+`KdaBwdCBuildZbA5` 以 regbase vf 形式逐行执行 Sub/Mul（列尺度 β[j]）与
+UpdateMask+Select 三角掩码（行 0 显式零填，不使用 UpdateMask(0)），
+最后整瓦 Store；掩码语义与逐行 Duplicate 逐位等价，GM 读写地址与尺寸
+不变。非 A5 平台保持逐行 Duplicate 路径。
+
 WY 的 EndFusedMmadPhase 消费最后一个 FIX_M 信号后，通过 M_FIX 的
 Set/Wait 将消费完成传回 FIX，再允许 BeginFusedMmadPhase 重发 FIX_M。
 这使阶段重置的发送端等待接收端消费完成，避免 FIX 流水连续发送同一事件。
