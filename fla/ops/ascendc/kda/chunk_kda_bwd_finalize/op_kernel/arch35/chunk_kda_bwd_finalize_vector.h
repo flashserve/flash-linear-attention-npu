@@ -326,10 +326,10 @@ __simd_vf__ inline void FinalizeStage2VF(
 
 // Stage3 StatePre.  One VF invocation consumes one 32-row band slice of a
 // head/chunk.  The two 64-lane FP32 register halves cover K/V=128 without a
-// second pass.  gk is the resident raw log-gate frame; exp2(g) factors are
-// recomputed inline with the same Muls(LN2)/Exp sequence Stage0 used to
-// materialize.  gateState accumulates across bands through its persistent
-// slot in the original row order; the rH term is added by the last band only.
+// second pass.  gk is the resident raw log-gate frame; the FP32 exp2(g)
+// factors are cached in the current band's not-yet-produced dg region for Stage4.
+// gateState accumulates across bands through its persistent slot in the
+// original row order; the rH term is added by the last band only.
 template <typename BetaT>
 __simd_vf__ inline void FinalizeStage3VF(
     __ubuf__ float *dkState, __ubuf__ float *dvb,
@@ -337,6 +337,7 @@ __simd_vf__ inline void FinalizeStage3VF(
     __ubuf__ float *dqRaw, __ubuf__ float *gk,
     __ubuf__ bfloat16_t *k, __ubuf__ bfloat16_t *v,
     __ubuf__ BetaT *beta, __ubuf__ float *gkLast, __ubuf__ float *rH,
+    __ubuf__ float *exp,
     float scale, uint16_t validRows, uint16_t rowBegin, uint16_t rows)
 {
     MaskReg fpMask = CreateMask<float, MaskPattern::ALL>();
@@ -425,6 +426,7 @@ __simd_vf__ inline void FinalizeStage3VF(
         Muls(exp1, g1, KDA_FINALIZE_LN2, fpMask);
         Exp(exp0, exp0, fpMask);
         Exp(exp1, exp1, fpMask);
+        StoreAlign<float, StoreDist::DIST_INTLV_B32>(exp + rowOffset, exp0, exp1, fpMask);
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(dq0, dq1, dqRaw + rowOffset);
         Mul(dq0, dq0, exp0, fpMask);
         Mul(dq1, dq1, exp1, fpMask);
@@ -460,12 +462,12 @@ __simd_vf__ inline void FinalizeStage3VF(
 // updated in place to dkBase and dbV to dbBase; dg is written straight to
 // its resident frame at 216 KiB (band offset applied by the caller).  dqBase
 // and the resident raw g frame stay live for later stages; the exp2(g)
-// factor is recomputed inline from g.  gateState joins dg only on the
-// chunk's global last row.
+// factor reuses Stage3's FP32 result cached in this band's dg region.
+// gateState joins dg only on the chunk's global last row.
 template <typename BetaT>
 __simd_vf__ inline void FinalizeStage4VF(
     __ubuf__ float *dkState, __ubuf__ float *dqBase,
-    __ubuf__ float *dKgbRaw, __ubuf__ float *dg, __ubuf__ float *g,
+    __ubuf__ float *dKgbRaw, __ubuf__ float *dg, __ubuf__ float *exp,
     __ubuf__ bfloat16_t *q,
     __ubuf__ bfloat16_t *k, __ubuf__ BetaT *beta,
     __ubuf__ float *gateState, __ubuf__ float *dbV,
@@ -494,11 +496,7 @@ __simd_vf__ inline void FinalizeStage4VF(
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
             dkg0, dkg1, dKgbRaw + rowOffset);
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
-            exp0, exp1, g + rowOffset);
-        Muls(exp0, exp0, KDA_FINALIZE_LN2, fpMask);
-        Muls(exp1, exp1, KDA_FINALIZE_LN2, fpMask);
-        Exp(exp0, exp0, fpMask);
-        Exp(exp1, exp1, fpMask);
+            exp0, exp1, exp + rowOffset);
 
         RegTensor<bfloat16_t> betaBf;
         RegTensor<float> betaFp;
@@ -1737,6 +1735,7 @@ private:
             reinterpret_cast<__ubuf__ DTYPE_BETA *>(beta[rowBegin].GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(gkLast.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(rH.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(dg[offset].GetPhyAddr()),
             tiling_->scale, static_cast<uint16_t>(chunk.validRows),
             static_cast<uint16_t>(rowBegin), static_cast<uint16_t>(rows));
         // The dv egress must drain before Stage8 may rewrite the right area.
@@ -1759,7 +1758,7 @@ private:
             reinterpret_cast<__ubuf__ float *>(dqRaw.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(dvb.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(dg[offset].GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(g[offset].GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(dg[offset].GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(q[offset].GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(k[offset].GetPhyAddr()),
             reinterpret_cast<__ubuf__ DTYPE_BETA *>(beta[rowBegin].GetPhyAddr()),
