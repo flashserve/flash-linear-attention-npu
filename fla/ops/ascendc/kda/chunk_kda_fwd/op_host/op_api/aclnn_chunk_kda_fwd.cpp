@@ -12,7 +12,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -676,63 +675,20 @@ bool IsAscend950()
 aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor *executor,
                                         const KdaShapeInfo &info);
 
-constexpr const char *KDA_FWD32_OP_NAME = "aclnnChunkKdaFwd";
-
-std::string KdaFwd32ShapeText(const op::Shape &shape)
-{
-    std::ostringstream text;
-    text << '[';
-    for (size_t i = 0; i < shape.GetDimNum(); ++i) {
-        if (i != 0) text << ',';
-        text << shape.GetDim(i);
-    }
-    text << ']';
-    return text.str();
-}
-
-aclnnStatus KdaFwd32Missing(const char *name)
-{
-    OP_LOGE_WITH_INVALID_INPUT(KDA_FWD32_OP_NAME, name);
-    return ACLNN_ERR_PARAM_NULLPTR;
-}
-
-aclnnStatus KdaFwd32InvalidValue(const char *name, const std::string &actual, const std::string &expected)
-{
-    OP_LOGE_FOR_INVALID_VALUE(KDA_FWD32_OP_NAME, name, actual, expected);
-    return ACLNN_ERR_PARAM_INVALID;
-}
-
-aclnnStatus KdaFwd32InvalidArgument(const char *name, const std::string &actual, const std::string &reason)
-{
-    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(KDA_FWD32_OP_NAME, name, actual, reason);
-    return ACLNN_ERR_PARAM_INVALID;
-}
-
-aclnnStatus KdaFwd32InvalidShape(const aclTensor *tensor, const char *name, const std::string &expected)
-{
-    const auto actual = KdaFwd32ShapeText(tensor->GetViewShape());
-    const auto shape = actual.substr(1, actual.size() - 2);
-    const auto correct = expected.size() >= 2 && expected.front() == '[' && expected.back() == ']'
-        ? expected.substr(1, expected.size() - 2) : expected;
-    OP_LOGE_FOR_INVALID_SHAPE(KDA_FWD32_OP_NAME, name, shape, correct);
-    return ACLNN_ERR_PARAM_INVALID;
-}
-
-aclnnStatus KdaFwd32InvalidDtype(const aclTensor *tensor, const char *name, const std::string &expected)
-{
-    OP_LOGE_FOR_INVALID_DTYPE(KDA_FWD32_OP_NAME, name,
-        ge::TypeUtils::DataTypeToSerialString(tensor->GetDataType()), expected);
-    return ACLNN_ERR_PARAM_INVALID;
-}
-
 aclnnStatus CheckChunkKdaFwd32Layout(const ChunkKdaFwdParams &params, KdaFwdLayout &layout)
 {
-    if (params.layout == nullptr) return KdaFwd32Missing("layout");
+    if (params.layout == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT("aclnnChunkKdaFwd", "layout");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     if (std::strcmp(params.layout, "BSND") == 0) layout = KdaFwdLayout::BSND;
     else if (std::strcmp(params.layout, "BNSD") == 0) layout = KdaFwdLayout::BNSD;
     else if (std::strcmp(params.layout, "TND") == 0) layout = KdaFwdLayout::TND;
     else if (std::strcmp(params.layout, "NTD") == 0) layout = KdaFwdLayout::NTD;
-    else return KdaFwd32InvalidValue("layout", params.layout, "BSND, BNSD, TND or NTD");
+    else {
+        OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "layout", params.layout, "BSND, BNSD, TND or NTD");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -746,12 +702,19 @@ aclnnStatus CheckChunkKdaFwd32Shapes(const ChunkKdaFwdParams &params, KdaFwdLayo
     const aclTensor *tokenTensors[] = {params.q, params.k, params.v, params.g};
     const char *tokenNames[] = {"q", "k", "v", "g"};
     for (size_t i = 0; i < 4; ++i) {
-        if (Rank(tokenTensors[i]) != rank) return KdaFwd32InvalidShape(tokenTensors[i], tokenNames[i], qExpected);
+        if (Rank(tokenTensors[i]) != rank) {
+            OP_LOGE_FOR_INVALID_SHAPE("aclnnChunkKdaFwd", tokenNames[i], op::ToString(tokenTensors[i]->GetViewShape()).GetString(), qExpected);
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     if (Rank(params.beta) != betaRank) {
-        return KdaFwd32InvalidShape(params.beta, "beta", info.isRank3 ? "[T,HV] or [HV,T]" : "[B,T,HV] or [B,HV,T]");
+        OP_LOGE_FOR_INVALID_SHAPE("aclnnChunkKdaFwd", "beta", op::ToString(params.beta->GetViewShape()).GetString(), info.isRank3 ? "[T,HV] or [HV,T]" : "[B,T,HV] or [B,HV,T]");
+        return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!SameShape(params.q, params.k)) return KdaFwd32InvalidShape(params.k, "k", KdaFwd32ShapeText(params.q->GetViewShape()));
+    if (!SameShape(params.q, params.k)) {
+        OP_LOGE_FOR_INVALID_SHAPE("aclnnChunkKdaFwd", "k", op::ToString(params.k->GetViewShape()).GetString(), op::ToString(params.q->GetViewShape()).GetString());
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     if (layout == KdaFwdLayout::TND) {
         info.batch = 1;
@@ -760,12 +723,18 @@ aclnnStatus CheckChunkKdaFwd32Shapes(const ChunkKdaFwdParams &params, KdaFwdLayo
         info.kDim = Dim(params.q, 2);
         info.hvNum = Dim(params.v, 1);
         info.vDim = Dim(params.v, 2);
-        if (!HasShape(params.v, {info.seqlen, info.hvNum, info.vDim}))
-            return KdaFwd32InvalidShape(params.v, "v", "[T,HV,V]");
-        if (!HasShape(params.g, {info.seqlen, info.hvNum, info.kDim}))
-            return KdaFwd32InvalidShape(params.g, "g", "[T,HV,K]");
-        if (!HasShape(params.beta, {info.seqlen, info.hvNum}))
-            return KdaFwd32InvalidShape(params.beta, "beta", "[T,HV]");
+        if (!HasShape(params.v, {info.seqlen, info.hvNum, info.vDim})) {
+            OP_LOGE_FOR_INVALID_SHAPE("aclnnChunkKdaFwd", "v", op::ToString(params.v->GetViewShape()).GetString(), "[T,HV,V]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (!HasShape(params.g, {info.seqlen, info.hvNum, info.kDim})) {
+            OP_LOGE_FOR_INVALID_SHAPE("aclnnChunkKdaFwd", "g", op::ToString(params.g->GetViewShape()).GetString(), "[T,HV,K]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (!HasShape(params.beta, {info.seqlen, info.hvNum})) {
+            OP_LOGE_FOR_INVALID_SHAPE("aclnnChunkKdaFwd", "beta", op::ToString(params.beta->GetViewShape()).GetString(), "[T,HV]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     } else if (layout == KdaFwdLayout::NTD) {
         info.batch = 1;
         info.seqlen = Dim(params.q, 1);
@@ -773,12 +742,18 @@ aclnnStatus CheckChunkKdaFwd32Shapes(const ChunkKdaFwdParams &params, KdaFwdLayo
         info.kDim = Dim(params.q, 2);
         info.hvNum = Dim(params.v, 0);
         info.vDim = Dim(params.v, 2);
-        if (!HasShape(params.v, {info.hvNum, info.seqlen, info.vDim}))
-            return KdaFwd32InvalidShape(params.v, "v", "[HV,T,V]");
-        if (!HasShape(params.g, {info.hvNum, info.seqlen, info.kDim}))
-            return KdaFwd32InvalidShape(params.g, "g", "[HV,T,K]");
-        if (!HasShape(params.beta, {info.hvNum, info.seqlen}))
-            return KdaFwd32InvalidShape(params.beta, "beta", "[HV,T]");
+        if (!HasShape(params.v, {info.hvNum, info.seqlen, info.vDim})) {
+            OP_LOGE_FOR_INVALID_SHAPE("aclnnChunkKdaFwd", "v", op::ToString(params.v->GetViewShape()).GetString(), "[HV,T,V]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (!HasShape(params.g, {info.hvNum, info.seqlen, info.kDim})) {
+            OP_LOGE_FOR_INVALID_SHAPE("aclnnChunkKdaFwd", "g", op::ToString(params.g->GetViewShape()).GetString(), "[HV,T,K]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (!HasShape(params.beta, {info.hvNum, info.seqlen})) {
+            OP_LOGE_FOR_INVALID_SHAPE("aclnnChunkKdaFwd", "beta", op::ToString(params.beta->GetViewShape()).GetString(), "[HV,T]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     } else if (layout == KdaFwdLayout::BSND) {
         info.batch = Dim(params.q, 0);
         info.seqlen = Dim(params.q, 1);
@@ -786,12 +761,18 @@ aclnnStatus CheckChunkKdaFwd32Shapes(const ChunkKdaFwdParams &params, KdaFwdLayo
         info.kDim = Dim(params.q, 3);
         info.hvNum = Dim(params.v, 2);
         info.vDim = Dim(params.v, 3);
-        if (!HasShape(params.v, {info.batch, info.seqlen, info.hvNum, info.vDim}))
-            return KdaFwd32InvalidShape(params.v, "v", "[B,T,HV,V]");
-        if (!HasShape(params.g, {info.batch, info.seqlen, info.hvNum, info.kDim}))
-            return KdaFwd32InvalidShape(params.g, "g", "[B,T,HV,K]");
-        if (!HasShape(params.beta, {info.batch, info.seqlen, info.hvNum}))
-            return KdaFwd32InvalidShape(params.beta, "beta", "[B,T,HV]");
+        if (!HasShape(params.v, {info.batch, info.seqlen, info.hvNum, info.vDim})) {
+            OP_LOGE_FOR_INVALID_SHAPE("aclnnChunkKdaFwd", "v", op::ToString(params.v->GetViewShape()).GetString(), "[B,T,HV,V]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (!HasShape(params.g, {info.batch, info.seqlen, info.hvNum, info.kDim})) {
+            OP_LOGE_FOR_INVALID_SHAPE("aclnnChunkKdaFwd", "g", op::ToString(params.g->GetViewShape()).GetString(), "[B,T,HV,K]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (!HasShape(params.beta, {info.batch, info.seqlen, info.hvNum})) {
+            OP_LOGE_FOR_INVALID_SHAPE("aclnnChunkKdaFwd", "beta", op::ToString(params.beta->GetViewShape()).GetString(), "[B,T,HV]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     } else {
         info.batch = Dim(params.q, 0);
         info.seqlen = Dim(params.q, 2);
@@ -799,12 +780,18 @@ aclnnStatus CheckChunkKdaFwd32Shapes(const ChunkKdaFwdParams &params, KdaFwdLayo
         info.kDim = Dim(params.q, 3);
         info.hvNum = Dim(params.v, 1);
         info.vDim = Dim(params.v, 3);
-        if (!HasShape(params.v, {info.batch, info.hvNum, info.seqlen, info.vDim}))
-            return KdaFwd32InvalidShape(params.v, "v", "[B,HV,T,V]");
-        if (!HasShape(params.g, {info.batch, info.hvNum, info.seqlen, info.kDim}))
-            return KdaFwd32InvalidShape(params.g, "g", "[B,HV,T,K]");
-        if (!HasShape(params.beta, {info.batch, info.hvNum, info.seqlen}))
-            return KdaFwd32InvalidShape(params.beta, "beta", "[B,HV,T]");
+        if (!HasShape(params.v, {info.batch, info.hvNum, info.seqlen, info.vDim})) {
+            OP_LOGE_FOR_INVALID_SHAPE("aclnnChunkKdaFwd", "v", op::ToString(params.v->GetViewShape()).GetString(), "[B,HV,T,V]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (!HasShape(params.g, {info.batch, info.hvNum, info.seqlen, info.kDim})) {
+            OP_LOGE_FOR_INVALID_SHAPE("aclnnChunkKdaFwd", "g", op::ToString(params.g->GetViewShape()).GetString(), "[B,HV,T,K]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (!HasShape(params.beta, {info.batch, info.hvNum, info.seqlen})) {
+            OP_LOGE_FOR_INVALID_SHAPE("aclnnChunkKdaFwd", "beta", op::ToString(params.beta->GetViewShape()).GetString(), "[B,HV,T]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     return ACLNN_SUCCESS;
 }
@@ -814,34 +801,50 @@ aclnnStatus CheckChunkKdaFwd32Metadata(const ChunkKdaFwdParams &params, KdaShape
     const aclIntArray *cu = params.cuSeqlensOptional;
     if (cu == nullptr) {
         info.seqNum = info.batch;
-        if (params.chunkIndicesOptional != nullptr)
-            return KdaFwd32InvalidArgument("chunkIndicesOptional", "provided", "requires cuSeqlensOptional");
+        if (params.chunkIndicesOptional != nullptr) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnChunkKdaFwd", "chunkIndicesOptional", "provided", "requires cuSeqlensOptional");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     } else {
-        if (cu->Size() < 2)
-            return KdaFwd32InvalidValue("cuSeqlensOptional.size", std::to_string(cu->Size()), ">=2");
-        if ((*cu)[0] != 0)
-            return KdaFwd32InvalidValue("cuSeqlensOptional[0]", std::to_string((*cu)[0]), "0");
-        if ((*cu)[cu->Size() - 1] != info.seqlen)
-            return KdaFwd32InvalidValue("cuSeqlensOptional[-1]", std::to_string((*cu)[cu->Size() - 1]), std::to_string(info.seqlen));
+        if (cu->Size() < 2) {
+            OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "cuSeqlensOptional.size", std::to_string(cu->Size()), ">=2");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if ((*cu)[0] != 0) {
+            OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "cuSeqlensOptional[0]", std::to_string((*cu)[0]), "0");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if ((*cu)[cu->Size() - 1] != info.seqlen) {
+            OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "cuSeqlensOptional[-1]", std::to_string((*cu)[cu->Size() - 1]), std::to_string(info.seqlen));
+            return ACLNN_ERR_PARAM_INVALID;
+        }
         for (size_t i = 0; i + 1 < cu->Size(); ++i) {
-            if ((*cu)[i] > (*cu)[i + 1])
-                return KdaFwd32InvalidArgument("cuSeqlensOptional", "decreasing at index " + std::to_string(i), "must be nondecreasing");
+            if ((*cu)[i] > (*cu)[i + 1]) {
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnChunkKdaFwd", "cuSeqlensOptional", "decreasing at index " + std::to_string(i), "must be nondecreasing");
+                return ACLNN_ERR_PARAM_INVALID;
+            }
         }
         info.seqNum = static_cast<int64_t>(cu->Size()) - 1;
-        if (info.seqNum > MAX_KDA_VARLEN_SEQUENCES)
-            return KdaFwd32InvalidValue("varlen sequence count", std::to_string(info.seqNum), "<=1024");
+        if (info.seqNum > MAX_KDA_VARLEN_SEQUENCES) {
+            OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "varlen sequence count", std::to_string(info.seqNum), "<=1024");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     info.totalChunks = CountChunks(cu, info.seqlen, params.chunkSize);
     const aclIntArray *indices = params.chunkIndicesOptional;
     if (indices != nullptr) {
-        if (indices->Size() != static_cast<size_t>(info.totalChunks) * 2)
-            return KdaFwd32InvalidValue("chunkIndicesOptional.size", std::to_string(indices->Size()), std::to_string(info.totalChunks * 2));
+        if (indices->Size() != static_cast<size_t>(info.totalChunks) * 2) {
+            OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "chunkIndicesOptional.size", std::to_string(indices->Size()), std::to_string(info.totalChunks * 2));
+            return ACLNN_ERR_PARAM_INVALID;
+        }
         size_t offset = 0;
         for (size_t seq = 0; seq + 1 < cu->Size(); ++seq) {
             const int64_t chunks = ((*cu)[seq + 1] - (*cu)[seq] + params.chunkSize - 1) / params.chunkSize;
             for (int64_t chunk = 0; chunk < chunks; ++chunk) {
-                if ((*indices)[offset] != static_cast<int64_t>(seq) || (*indices)[offset + 1] != chunk)
-                    return KdaFwd32InvalidArgument("chunkIndicesOptional", "non-canonical pair at " + std::to_string(offset / 2), "canonical sequence-major order");
+                if ((*indices)[offset] != static_cast<int64_t>(seq) || (*indices)[offset + 1] != chunk) {
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnChunkKdaFwd", "chunkIndicesOptional", "non-canonical pair at " + std::to_string(offset / 2), "canonical sequence-major order");
+                    return ACLNN_ERR_PARAM_INVALID;
+                }
                 offset += 2;
             }
         }
@@ -854,24 +857,36 @@ aclnnStatus CheckChunkKdaFwd32Dtypes(const ChunkKdaFwdParams &params)
     const aclTensor *qkvs[] = {params.q, params.k, params.v};
     const char *names[] = {"q", "k", "v"};
     for (size_t i = 0; i < 3; ++i) {
-        if (qkvs[i]->GetDataType() != DataType::DT_BF16)
-            return KdaFwd32InvalidDtype(qkvs[i], names[i], "BF16");
+        if (qkvs[i]->GetDataType() != DataType::DT_BF16) {
+            OP_LOGE_FOR_INVALID_DTYPE("aclnnChunkKdaFwd", names[i], ge::TypeUtils::DataTypeToSerialString(qkvs[i]->GetDataType()), "BF16");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     const aclTensor *gates[] = {params.g, params.beta};
     const char *gateNames[] = {"g", "beta"};
     for (size_t i = 0; i < 2; ++i) {
         const auto dtype = gates[i]->GetDataType();
-        if (dtype != DataType::DT_BF16 && dtype != DataType::DT_FLOAT)
-            return KdaFwd32InvalidDtype(gates[i], gateNames[i], "BF16 or FP32");
+        if (dtype != DataType::DT_BF16 && dtype != DataType::DT_FLOAT) {
+            OP_LOGE_FOR_INVALID_DTYPE("aclnnChunkKdaFwd", gateNames[i], ge::TypeUtils::DataTypeToSerialString(gates[i]->GetDataType()), "BF16 or FP32");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
-    if (params.aLogOptional->GetDataType() != DataType::DT_FLOAT)
-        return KdaFwd32InvalidDtype(params.aLogOptional, "aLogOptional", "FP32");
-    if (params.dtBiasOptional->GetDataType() != DataType::DT_FLOAT)
-        return KdaFwd32InvalidDtype(params.dtBiasOptional, "dtBiasOptional", "FP32");
-    if (params.initialStateOptional != nullptr && params.initialStateOptional->GetDataType() != DataType::DT_FLOAT)
-        return KdaFwd32InvalidDtype(params.initialStateOptional, "initialStateOptional", "FP32");
-    if (params.finalStateOut != nullptr && params.finalStateOut->GetDataType() != DataType::DT_FLOAT)
-        return KdaFwd32InvalidDtype(params.finalStateOut, "finalStateOut", "FP32");
+    if (params.aLogOptional->GetDataType() != DataType::DT_FLOAT) {
+        OP_LOGE_FOR_INVALID_DTYPE("aclnnChunkKdaFwd", "aLogOptional", ge::TypeUtils::DataTypeToSerialString(params.aLogOptional->GetDataType()), "FP32");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.dtBiasOptional->GetDataType() != DataType::DT_FLOAT) {
+        OP_LOGE_FOR_INVALID_DTYPE("aclnnChunkKdaFwd", "dtBiasOptional", ge::TypeUtils::DataTypeToSerialString(params.dtBiasOptional->GetDataType()), "FP32");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.initialStateOptional != nullptr && params.initialStateOptional->GetDataType() != DataType::DT_FLOAT) {
+        OP_LOGE_FOR_INVALID_DTYPE("aclnnChunkKdaFwd", "initialStateOptional", ge::TypeUtils::DataTypeToSerialString(params.initialStateOptional->GetDataType()), "FP32");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.finalStateOut != nullptr && params.finalStateOut->GetDataType() != DataType::DT_FLOAT) {
+        OP_LOGE_FOR_INVALID_DTYPE("aclnnChunkKdaFwd", "finalStateOut", ge::TypeUtils::DataTypeToSerialString(params.finalStateOut->GetDataType()), "FP32");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -880,10 +895,14 @@ aclnnStatus CheckChunkKdaFwd32Outputs(const ChunkKdaFwdParams &params, const Kda
     const bool attnValid = info.isRank3
         ? HasShape(params.attnOut, {info.seqlen, info.hvNum, info.vDim})
         : HasShape(params.attnOut, {info.batch, info.seqlen, info.hvNum, info.vDim});
-    if (!attnValid)
-        return KdaFwd32InvalidShape(params.attnOut, "attnOut", info.isRank3 ? "[T,HV,V]" : "[B,T,HV,V]");
-    if (params.attnOut->GetDataType() != params.q->GetDataType())
-        return KdaFwd32InvalidDtype(params.attnOut, "attnOut", "same as q (BF16)");
+    if (!attnValid) {
+        OP_LOGE_FOR_INVALID_SHAPE("aclnnChunkKdaFwd", "attnOut", op::ToString(params.attnOut->GetViewShape()).GetString(), info.isRank3 ? "[T,HV,V]" : "[B,T,HV,V]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.attnOut->GetDataType() != params.q->GetDataType()) {
+        OP_LOGE_FOR_INVALID_DTYPE("aclnnChunkKdaFwd", "attnOut", ge::TypeUtils::DataTypeToSerialString(params.attnOut->GetDataType()), "same as q (BF16)");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const aclTensor *matrices[] = {params.aqkOut, params.akkOut};
     const char *names[] = {"Aqk", "Akk"};
     for (size_t i = 0; i < 2; ++i) {
@@ -891,15 +910,22 @@ aclnnStatus CheckChunkKdaFwd32Outputs(const ChunkKdaFwdParams &params, const Kda
         const bool valid = info.isRank3
             ? HasShape(matrices[i], {info.hvNum, info.seqlen, params.chunkSize})
             : HasShape(matrices[i], {info.batch, info.hvNum, info.seqlen, params.chunkSize});
-        if (!valid) return KdaFwd32InvalidShape(matrices[i], names[i], info.isRank3 ? "[HV,T,32]" : "[B,HV,T,32]");
-        if (matrices[i]->GetDataType() != params.q->GetDataType())
-            return KdaFwd32InvalidDtype(matrices[i], names[i], "same as q (BF16)");
+        if (!valid) {
+            OP_LOGE_FOR_INVALID_SHAPE("aclnnChunkKdaFwd", names[i], op::ToString(matrices[i]->GetViewShape()).GetString(), info.isRank3 ? "[HV,T,32]" : "[B,HV,T,32]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (matrices[i]->GetDataType() != params.q->GetDataType()) {
+            OP_LOGE_FOR_INVALID_DTYPE("aclnnChunkKdaFwd", names[i], ge::TypeUtils::DataTypeToSerialString(matrices[i]->GetDataType()), "same as q (BF16)");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     const aclTensor *states[] = {params.initialStateOptional, params.finalStateOut};
     const char *stateNames[] = {"initialStateOptional", "finalStateOut"};
     for (size_t i = 0; i < 2; ++i) {
-        if (states[i] != nullptr && !HasShape(states[i], {info.seqNum, info.hvNum, info.kDim, info.vDim}))
-            return KdaFwd32InvalidShape(states[i], stateNames[i], "[N,HV,128,128] with stateVFirst=false");
+        if (states[i] != nullptr && !HasShape(states[i], {info.seqNum, info.hvNum, info.kDim, info.vDim})) {
+            OP_LOGE_FOR_INVALID_SHAPE("aclnnChunkKdaFwd", stateNames[i], op::ToString(states[i]->GetViewShape()).GetString(), "[N,HV,128,128] with stateVFirst=false");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     return ACLNN_SUCCESS;
 }
@@ -910,44 +936,76 @@ aclnnStatus CheckChunkKdaFwd32Params(const ChunkKdaFwdParams &params, KdaFwdLayo
     const aclTensor *required[] = {params.q, params.k, params.v, params.g, params.beta, params.attnOut};
     const char *names[] = {"q", "k", "v", "g", "beta", "attnOut"};
     for (size_t i = 0; i < 6; ++i) {
-        if (required[i] == nullptr) return KdaFwd32Missing(names[i]);
+        if (required[i] == nullptr) {
+            OP_LOGE_WITH_INVALID_INPUT("aclnnChunkKdaFwd", names[i]);
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
     }
-    if (!params.safeGate) return KdaFwd32InvalidValue("safeGate", "false", "true for chunkSize=32");
+    if (!params.safeGate) {
+        OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "safeGate", "false", "true for chunkSize=32");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     auto status = CheckChunkKdaFwd32Layout(params, layout);
     if (status != ACLNN_SUCCESS) return status;
     status = CheckChunkKdaFwd32Shapes(params, layout, info);
     if (status != ACLNN_SUCCESS) return status;
     status = CheckChunkKdaFwd32Metadata(params, info);
     if (status != ACLNN_SUCCESS) return status;
-    if (params.cuSeqlensOptional != nullptr && !info.isRank3 && info.batch != 1)
-        return KdaFwd32InvalidValue("B", std::to_string(info.batch), "1 for rank4 varlen");
+    if (params.cuSeqlensOptional != nullptr && !info.isRank3 && info.batch != 1) {
+        OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "B", std::to_string(info.batch), "1 for rank4 varlen");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const aclTensor *unsupported[] = {params.gkOut, params.wOut, params.uOut, params.qgOut,
         params.kgOut, params.vNewOut, params.hOut};
     const char *unsupportedNames[] = {"gkOut", "wOut", "uOut", "qgOut", "kgOut", "vNewOut", "hOut"};
     for (size_t i = 0; i < 7; ++i) {
-        if (unsupported[i] != nullptr)
-            return KdaFwd32InvalidArgument(unsupportedNames[i], "provided", "chunkSize=32 only exports attnOut/finalStateOut");
+        if (unsupported[i] != nullptr) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnChunkKdaFwd", unsupportedNames[i], "provided", "chunkSize=32 only exports attnOut/finalStateOut");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
-    if ((params.initialStateOptional != nullptr || params.finalStateOut != nullptr) && params.stateVFirst)
-        return KdaFwd32InvalidValue("stateVFirst", "true", "false for chunkSize=32 state IO");
-    if (!params.useGateInKernel)
-        return KdaFwd32InvalidValue("useGateInKernel", "false", "true for chunkSize=32");
-    if (params.aLogOptional == nullptr)
-        return KdaFwd32InvalidValue("aLogOptional", "null", "non-null when useGateInKernel=true");
-    if (params.dtBiasOptional == nullptr)
-        return KdaFwd32InvalidValue("dtBiasOptional", "null", "non-null for chunkSize=32");
-    if (!HasShape(params.aLogOptional, {info.hvNum}))
-        return KdaFwd32InvalidShape(params.aLogOptional, "aLogOptional", "[HV]");
-    if (!HasShape(params.dtBiasOptional, {info.hvNum * info.kDim}))
-        return KdaFwd32InvalidShape(params.dtBiasOptional, "dtBiasOptional", "[HV*K]");
+    if ((params.initialStateOptional != nullptr || params.finalStateOut != nullptr) && params.stateVFirst) {
+        OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "stateVFirst", "true", "false for chunkSize=32 state IO");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!params.useGateInKernel) {
+        OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "useGateInKernel", "false", "true for chunkSize=32");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.aLogOptional == nullptr) {
+        OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "aLogOptional", "null", "non-null when useGateInKernel=true");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.dtBiasOptional == nullptr) {
+        OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "dtBiasOptional", "null", "non-null for chunkSize=32");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!HasShape(params.aLogOptional, {info.hvNum})) {
+        OP_LOGE_FOR_INVALID_SHAPE("aclnnChunkKdaFwd", "aLogOptional", op::ToString(params.aLogOptional->GetViewShape()).GetString(), "[HV]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!HasShape(params.dtBiasOptional, {info.hvNum * info.kDim})) {
+        OP_LOGE_FOR_INVALID_SHAPE("aclnnChunkKdaFwd", "dtBiasOptional", op::ToString(params.dtBiasOptional->GetViewShape()).GetString(), "[HV*K]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     status = CheckChunkKdaFwd32Dtypes(params);
     if (status != ACLNN_SUCCESS) return status;
-    if (info.batch < 1) return KdaFwd32InvalidValue("B", std::to_string(info.batch), ">=1");
-    if (info.hNum <= 0 || info.hvNum < info.hNum || info.hvNum % info.hNum != 0)
-        return KdaFwd32InvalidValue("H/HV", std::to_string(info.hNum) + "/" + std::to_string(info.hvNum), "H>0 and HV a positive multiple of H");
-    if (info.kDim != KDA_FWD_KV_DIM_LARGE || info.vDim != KDA_FWD_KV_DIM_LARGE)
-        return KdaFwd32InvalidValue("K/V", std::to_string(info.kDim) + "/" + std::to_string(info.vDim), "128/128");
-    if (info.seqlen <= 0) return KdaFwd32InvalidValue("T", std::to_string(info.seqlen), ">0");
+    if (info.batch < 1) {
+        OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "B", std::to_string(info.batch), ">=1");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (info.hNum <= 0 || info.hvNum < info.hNum || info.hvNum % info.hNum != 0) {
+        OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "H/HV", std::to_string(info.hNum) + "/" + std::to_string(info.hvNum), "H>0 and HV a positive multiple of H");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (info.kDim != KDA_FWD_KV_DIM_LARGE || info.vDim != KDA_FWD_KV_DIM_LARGE) {
+        OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "K/V", std::to_string(info.kDim) + "/" + std::to_string(info.vDim), "128/128");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (info.seqlen <= 0) {
+        OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "T", std::to_string(info.seqlen), ">0");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return CheckChunkKdaFwd32Outputs(params, info);
 }
 
@@ -1020,7 +1078,8 @@ aclnnStatus RunChunkKdaFwd32FusedDense(ChunkKdaFwdParams &params, aclOpExecutor 
         } else if (!info.isRank3 && layout == KdaFwdLayout::BNSD) {
             // [B,H,S,*] 已是头连续,去 batch 维即可
         } else {
-            return KdaFwd32InvalidValue("layout/rank", params.layout, "a supported chunkSize=32 layout/rank combination");
+            OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "layout/rank", params.layout, "a supported chunkSize=32 layout/rank combination");
+            return ACLNN_ERR_PARAM_INVALID;
         }
         CHECK_RET(qNtd != nullptr && kNtd != nullptr && vNtd != nullptr && gNtd != nullptr &&
                       betaNtd != nullptr,
@@ -1198,7 +1257,8 @@ aclnnStatus RunChunkKdaFwd32Fused(ChunkKdaFwdParams &params, aclOpExecutor *exec
     // CheckParams,校验在此兜底(与通用路径同一语义:转 fp32 后有限且大于 0)
     const float epsilonFp32 = static_cast<float>(params.epsilon);
     if (!std::isfinite(epsilonFp32) || epsilonFp32 <= 0.0F) {
-        return KdaFwd32InvalidValue("epsilon", std::to_string(params.epsilon), "a positive finite FP32 value");
+        OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "epsilon", std::to_string(params.epsilon), "a positive finite FP32 value");
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.cuSeqlensOptional == nullptr) {
         return RunChunkKdaFwd32FusedDense(params, executor);
@@ -1209,7 +1269,8 @@ aclnnStatus RunChunkKdaFwd32Fused(ChunkKdaFwdParams &params, aclOpExecutor *exec
               ACLNN_ERR_PARAM_INVALID);
     // varlen 支持 BSND/TND 的 token-major 布局和 NTD 的 head-major 布局;BNSD 使用 chunk64 路径
     if (layout == KdaFwdLayout::BNSD) {
-        return KdaFwd32InvalidValue("layout", "BNSD with cuSeqlensOptional", "BSND, TND or NTD for chunkSize=32 varlen");
+        OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "layout", "BNSD with cuSeqlensOptional", "BSND, TND or NTD for chunkSize=32 varlen");
+        return ACLNN_ERR_PARAM_INVALID;
     }
     return RunChunkKdaFwd32FusedVarlen(params, executor, info);
 }
@@ -1562,18 +1623,26 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
         const char *savedNames[] = {"qHatOut", "kHatOut", "qRstdOut", "kRstdOut", "betaEffOut"};
         for (size_t i = 0; i < 5; ++i) {
             if (savedOutputs[i] != nullptr) {
-                return KdaFwd32InvalidArgument(savedNames[i], "provided",
-                    "chunkSize=32 does not export backward saved values");
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnChunkKdaFwd", savedNames[i], "provided", "chunkSize=32 does not export backward saved values");
+                return ACLNN_ERR_PARAM_INVALID;
             }
         }
-        if (!params.useQkL2normInKernel)
-            return KdaFwd32InvalidValue("useQkL2normInKernel", "false", "true for chunkSize=32");
-        if (!params.useBetaSigmoidInKernel)
-            return KdaFwd32InvalidValue("useBetaSigmoidInKernel", "false", "true for chunkSize=32");
-        if (params.allowNegEigval)
-            return KdaFwd32InvalidValue("allowNegEigval", "true", "false for chunkSize=32");
-        if (!params.useExp2)
-            return KdaFwd32InvalidValue("useExp2", "false", "true for chunkSize=32");
+        if (!params.useQkL2normInKernel) {
+            OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "useQkL2normInKernel", "false", "true for chunkSize=32");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (!params.useBetaSigmoidInKernel) {
+            OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "useBetaSigmoidInKernel", "false", "true for chunkSize=32");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (params.allowNegEigval) {
+            OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "allowNegEigval", "true", "false for chunkSize=32");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (!params.useExp2) {
+            OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "useExp2", "false", "true for chunkSize=32");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
         CHECK_RET(RunChunkKdaFwd32Fused(params, executorPtr) == ACLNN_SUCCESS,
                   ACLNN_ERR_PARAM_INVALID);
         *workspaceSize = uniqueExecutor->GetWorkspaceSize();
