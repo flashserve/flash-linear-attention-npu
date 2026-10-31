@@ -34,7 +34,7 @@ key 1/2 的旧 TilingData 或独立 fused 算子。
 
 | 文件 | 数量 | 覆盖 |
 | --- | ---: | --- |
-| `atk_chunk_kda_fwd_chunk32.json` | 40 | id 0–33：layout、长序列、尾块、initial/final state；id 34–35：FP32 g/beta + GVA + final_state；id 36–39：NTD/TND varlen、空序列、canonical indices、BF16/FP32 g/beta |
+| `atk_chunk_kda_fwd_chunk32.json` | 41 | id 0–33：layout、长序列、尾块、initial/final state；id 34–35：FP32 g/beta + GVA + final_state；id 36–39：NTD/TND varlen、空序列、canonical indices、BF16/FP32 g/beta；id 40：T=128、H=HV=96 单 group 同步回归 |
 | `atk_chunk_kda_fwd_chunk32_perf.json` | 2 | B=1、H=HV=96、K=V=128、T=8192，BF16/FP32 g/beta |
 | `atk_chunk_kda_fwd_chunk32_mss.json` | 5 | `ChunkKdaFwd` key 32 的 dense、state、尾块和两种 varlen layout 代表用例 |
 
@@ -42,12 +42,12 @@ key 1/2 的旧 TilingData 或独立 fused 算子。
 
 ```bash
 python3 tests/atk/chunk_kda_fwd/chunk32/gen_chunk_kda_fwd_chunk32.py --summary
-# accuracy=40 performance=2 mss=5
+# accuracy=41 performance=2 mss=5
 ```
 
 ### legacy marker 后续迁移
 
-当前 47 条冻结 case 均保持 `low_precision_marker`、`fp32_marker`、JSON 字符串
+当前 48 条冻结 case 均保持 `low_precision_marker`、`fp32_marker`、JSON 字符串
 `case_spec` 及其镜像属性，不与真实签名输入混用。后续应另开迁移，将 YAML、三份 JSON
 和生成器一起切换为 executor 已支持的 `q/k/v/g/beta`、可选 state/变长张量及真实属性；
 迁移时逐 case 核对 id、seed、shape、dtype、可选输入和标杆结果，再重跑完整验收。完成该

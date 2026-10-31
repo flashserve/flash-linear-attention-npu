@@ -73,8 +73,8 @@ public:
             vecSetState[i] = 0;
             hSQ[i] = 0;
             tSQ[i] = 0;
-            cnt[i] = 0;
         }
+        // cnt 记录硬件 CrossCore flag 的滚动相位，必须跨 task 保留。
         for(int i = 0; i < 8; i ++) {
             AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(i);
             AscendC::SetFlag<AscendC::HardEvent::FIX_M>(i);
@@ -165,8 +165,8 @@ public:
             vecSetState[i] = 0;
             hSQ[i] = 0;
             tSQ[i] = 0;
-            cnt[i] = 0;
         }
+        // cnt 记录硬件 CrossCore flag 的滚动相位，必须跨 task 保留。
         for(int i = 0; i < 8; i ++) {
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(i);
         }
