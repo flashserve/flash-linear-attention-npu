@@ -1083,7 +1083,7 @@ public:
 #if defined(__DAV_C310_CUBE__)
 #include "chunk_kda_fwd_32_matmul.h"
 #elif defined(__DAV_C310_VEC__)
-#include "chunk_kda_fwd_32_vf.h"
+#include "chunk_kda_fwd_32_vec.h"
 #endif
 
 #if defined(__DAV_C310_CUBE__)
