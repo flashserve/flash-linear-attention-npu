@@ -23,7 +23,7 @@ except ModuleNotFoundError as exc:
 
 OP_NAME = "chunk_kda_fwd_chunk32"
 SUITES = {
-    "accuracy": ("", 41),
+    "accuracy": ("", 135),
     "performance": ("_perf", 2),
     "mss": ("_mss", 5),
 }
