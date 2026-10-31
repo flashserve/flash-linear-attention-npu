@@ -1,3 +1,7 @@
+#if defined(TILING_KEY_VAR) && TILING_KEY_VAR == 32UL
+#undef ENABLE_CV_COMM_VIA_SSBUF
+#endif
+
 #include "kernel_operator.h"
 #include "lib/matmul_intf.h"
 
@@ -8,6 +12,14 @@
 #include "arch35/chunk_kda_fwd_impl.h"
 #else
 #define KDA_COMPILE_ARCH35_FAST_PATH 0
+#endif
+
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310 && \
+    defined(TILING_KEY_VAR) && TILING_KEY_VAR == 32UL
+#define KDA_COMPILE_CHUNK32 1
+#include "arch35/chunk_kda_fwd_chunk32/chunk_kda_fwd_32.h"
+#else
+#define KDA_COMPILE_CHUNK32 0
 #endif
 
 namespace KdaForward {
@@ -193,7 +205,17 @@ extern "C" __global__ __aicore__ void chunk_kda_fwd(
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
     KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
     KERNEL_TASK_TYPE(2, KERNEL_TYPE_MIX_AIC_1_2);
+    KERNEL_TASK_TYPE(32, KERNEL_TYPE_MIX_AIC_1_2);
     GM_ADDR userWorkspace = AscendC::GetUserWorkspace(workspace);
+    if (TILING_KEY_IS(32)) {
+#if KDA_COMPILE_CHUNK32
+        KdaForward::Chunk32::Run(
+            q, k, v, g, beta, a_log, dt_bias, initial_state, cu_seqlens,
+            chunk_indices, attn_out, final_state, gk, aqk, akk, w, u,
+            qg, kg, v_new, h, qg_scaled, u_seed, workspace, tiling);
+#endif
+        return;
+    }
     GET_TILING_DATA_WITH_STRUCT(ChunkKdaFwdTilingData, tilingData, tiling);
     if (TILING_KEY_IS(1)) {
         if (tilingData.stage != KdaForward::KDA_STAGE_FULL) {
@@ -234,3 +256,4 @@ extern "C" __global__ __aicore__ void chunk_kda_fwd(
 }
 
 #undef KDA_COMPILE_ARCH35_FAST_PATH
+#undef KDA_COMPILE_CHUNK32

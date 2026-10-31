@@ -71,5 +71,26 @@ END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(ChunkKdaFwd, ChunkKdaFwdTilingData)
 
+// chunk32 使用独立的内部布局；与 op_kernel/arch35/chunk_kda_fwd_chunk32 一致。
+BEGIN_TILING_DATA_DEF(ChunkKdaFwd32TilingData)
+TILING_DATA_FIELD_DEF(uint64_t, nChunks);
+TILING_DATA_FIELD_DEF(uint64_t, scaleBf16);
+TILING_DATA_FIELD_DEF(uint64_t, gateScaleBits);
+TILING_DATA_FIELD_DEF(uint64_t, headNum);
+TILING_DATA_FIELD_DEF(uint64_t, seqLen);
+TILING_DATA_FIELD_DEF(uint64_t, hasInitialState);
+TILING_DATA_FIELD_DEF(uint64_t, outputFinalState);
+TILING_DATA_FIELD_DEF(uint64_t, qkGroup);
+TILING_DATA_FIELD_DEF(uint64_t, taskCount);
+TILING_DATA_FIELD_DEF(uint64_t, hvNumReal);
+TILING_DATA_FIELD_DEF(uint64_t, blockNum);
+TILING_DATA_FIELD_DEF(uint64_t, varlenMode);
+TILING_DATA_FIELD_DEF(uint64_t, epsilonBits);
+TILING_DATA_FIELD_DEF(uint64_t, gateFlags);
+TILING_DATA_FIELD_DEF_ARR(uint64_t, 1025, cuData);
+END_TILING_DATA_DEF;
+
+REGISTER_TILING_DATA_CLASS(ChunkKdaFwd, ChunkKdaFwd32TilingData)
+
 struct ChunkKdaFwdCompileInfo {};
 } // namespace optiling

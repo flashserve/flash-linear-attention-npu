@@ -70,6 +70,17 @@ add_ops_compile_options(
     OP_NAME ChunkKdaFwd
     OPTIONS --cce-auto-sync=off
             -Wno-deprecated-declarations
+            -mllvm -cce-aicore-function-stack-size=0x4000
+            -mllvm -cce-aicore-addr-transform=true
+            -mllvm -cce-aicore-or-combine=false
+            -mllvm -instcombine-code-sinking=false
+            -Xclang -fcce-vf-vl=256
+            -mllvm -cce-aicore-jump-expand=true
+            -mllvm -cce-aicore-mask-opt=false
+            --cce-simd-vf-fusion=false
+            -DENABLE_MOVVP -DPERF_API_NORM
+            -mllvm -cce-aicore-dcci-before-kernel-end=false
+            -mllvm -cce-aicore-dcci-insert-for-scalar=false
 )
 if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
     add_ops_compile_options(

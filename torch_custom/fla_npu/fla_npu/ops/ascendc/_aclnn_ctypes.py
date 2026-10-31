@@ -3830,9 +3830,11 @@ _KDA_FWD_SUPPORTED_KV_DIMS = frozenset({64, 128})
 
 def _chunk_kda_fwd_use_v2(*, dtype, k_dim, v_dim, chunk_size, cu, work_items,
                           force_v2) -> bool:
-    """是否命中 aclnnChunkKdaFwdV2 的三算子组合场景判据。
+    """是否命中 aclnnChunkKdaFwdV2。
 
-    force_v2 用于非默认 gate/L2norm 开关：这些语义只有组合入口支持。
+    chunk64 使用三算子组合；chunk32 使用同一公开入口的大融合分支。
+    force_v2 用于这些分支独有的 gate/L2norm/epsilon 语义。空序列只有
+    chunk32 融合分支支持，chunk64 组合仍要求 cu 严格递增。
     """
 
     import torch
@@ -3841,14 +3843,14 @@ def _chunk_kda_fwd_use_v2(*, dtype, k_dim, v_dim, chunk_size, cu, work_items,
         return False
     if k_dim != 128 or v_dim != 128:
         return False
-    if chunk_size != 64:
+    if chunk_size not in {32, 64}:
         return False
-    if cu is not None:
+    if chunk_size == 64 and cu is not None:
         if any(begin >= end for begin, end in zip(cu, cu[1:])):
             return False
     if force_v2:
         return True
-    return work_items >= _CHUNK_KDA_FWD_V2_MIN_WORK_ITEMS
+    return chunk_size == 64 and work_items >= _CHUNK_KDA_FWD_V2_MIN_WORK_ITEMS
 
 
 def npu_chunk_kda_fwd(
@@ -3892,8 +3894,8 @@ def npu_chunk_kda_fwd(
     if layout not in {"BSND", "BNSD", "TND", "NTD"}:
         raise RuntimeError("npu_chunk_kda_fwd: layout must be uppercase and one of BSND, BNSD, TND, NTD.")
     chunk_size = int(chunk_size)
-    if chunk_size not in {64, 128}:
-        raise RuntimeError("npu_chunk_kda_fwd: chunk_size must be 64 or 128.")
+    if chunk_size not in {32, 64, 128}:
+        raise RuntimeError("npu_chunk_kda_fwd: chunk_size must be 32, 64 or 128.")
 
     is_rank3 = layout in {"TND", "NTD"}
     is_sequence_major = layout in {"BSND", "TND"}
@@ -3958,11 +3960,34 @@ def npu_chunk_kda_fwd(
     epsilon = _optional_float(epsilon, 1e-6)
     if not (float(epsilon) > 0.0):
         raise RuntimeError("npu_chunk_kda_fwd: epsilon must be a positive finite number.")
+
+    # dense batch:chunk32 融合 kernel 原生支持单次启动。
+    # BSND B>1 在 aclnn 内合成 cu 走 varlen 核内直读(零转置);BNSD 头连续直达。
+
     if allow_neg_eigval and not use_beta_sigmoid_in_kernel:
         raise RuntimeError(
             "npu_chunk_kda_fwd: allow_neg_eigval=True requires use_beta_sigmoid_in_kernel=True."
         )
-    if (
+    if chunk_size == 32:
+        if not safe_gate:
+            raise RuntimeError(
+                "npu_chunk_kda_fwd: chunk_size=32 currently requires safe_gate=True."
+            )
+        if not (
+            q.dtype == torch.bfloat16
+            and k_dim == 128
+            and v_dim == 128
+            and use_qk_l2norm_in_kernel
+            and use_beta_sigmoid_in_kernel
+            and not allow_neg_eigval
+            and use_exp2
+        ):
+            raise RuntimeError(
+                "npu_chunk_kda_fwd: chunk_size=32 requires bfloat16 q/k/v, K=V=128, "
+                "use_qk_l2norm_in_kernel=True, use_beta_sigmoid_in_kernel=True, "
+                "allow_neg_eigval=False and use_exp2=True."
+            )
+    elif (
         use_qk_l2norm_in_kernel or use_beta_sigmoid_in_kernel or allow_neg_eigval or not use_exp2
     ) and not (
         q.dtype == torch.bfloat16 and k_dim == 128 and v_dim == 128 and chunk_size == 64
@@ -3994,6 +4019,55 @@ def npu_chunk_kda_fwd(
     if indices is not None and indices != canonical_indices:
         raise RuntimeError("npu_chunk_kda_fwd: chunk_indices must use canonical sequence-major order.")
     total_chunks = _kda_total_chunks(batch, seqlen, chunk_size, cu, indices)
+
+    if chunk_size == 32:
+        # chunk32 走统一 chunk_kda_fwd 算子的 arch35 单 kernel 融合路径(issue #829)。
+        # 契约收紧(与 aclnn 层一致,提前在 Python 给出可读报错):
+        # BF16 q/k/v、K=V=128、任意 T>0(尾块核内钳制)、GVA、dense/varlen、
+        # safe_gate=true、核内 norm/sigmoid、use_exp2=true、不导出中间态。
+        if q.dtype != torch.bfloat16:
+            raise RuntimeError(
+                "npu_chunk_kda_fwd: chunk_size=32 (fused kernel) requires bfloat16 q/k/v."
+            )
+        if k_dim != 128 or v_dim != 128:
+            raise RuntimeError("npu_chunk_kda_fwd: chunk_size=32 (fused kernel) requires K == V == 128.")
+        if seqlen <= 0:
+            raise RuntimeError(
+                f"npu_chunk_kda_fwd: chunk_size=32 (fused kernel) requires T > 0, but got T={seqlen}."
+            )
+        # batch>1 由 host dispatcher 逐 batch 切片循环(2026-10-21,与 varlen 同构),
+        # python 侧不再拦截;rank3 无 batch 维,B 恒 1。
+        # GVA(issue #829):HV 是 H 的整数倍即可,kernel 按组映射 q/k 头
+        if hv_num < h_num or hv_num % h_num != 0:
+            raise RuntimeError(
+                "npu_chunk_kda_fwd: chunk_size=32 (fused kernel) requires HV to be a positive "
+                "multiple of H (GVA)."
+            )
+        if not use_gate_in_kernel or A_log is None:
+            raise RuntimeError(
+                "npu_chunk_kda_fwd: chunk_size=32 (fused kernel) requires use_gate_in_kernel=True "
+                "with A_log."
+            )
+        if dt_bias is None:
+            # issue #829 契约:dt_bias=None ⇔ dt≡0。host 补零张量(fp32 [HV*K]),
+            # kernel 内 raw = g + 0 与原语义逐位等价,无需改 kernel/dispatcher。
+            dt_bias = torch.zeros(hv_num * k_dim, dtype=torch.float32, device=q.device)
+        if disable_recompute or return_intermediate_states:
+            raise RuntimeError(
+                "npu_chunk_kda_fwd: chunk_size=32 (fused kernel) does not export intermediate states "
+                "(disable_recompute/return_intermediate_states must be False)."
+            )
+
+    # chunk32 融合 kernel 的 state IO 只有 K-first([seq,HV,K,V])一种形态;
+    # state_v_first=True 在 host 侧吸收:istate 末两维转置进、final_state 转置回,
+    # kernel/dispatcher 零改动。必须在 state_shape 之前翻转,让下游全部按 K-first 走。
+    svf_absorb = (chunk_size == 32 and state_v_first
+                  and (initial_state is not None or output_final_state))
+    caller_initial_state = initial_state
+    if svf_absorb:
+        if initial_state is not None:
+            initial_state = initial_state.transpose(-1, -2).contiguous()
+        state_v_first = False
 
     state_shape = (
         (seq_num, hv_num, v_dim, k_dim)
@@ -4039,9 +4113,18 @@ def npu_chunk_kda_fwd(
     )
     attn_out = _empty(attn_shape, q)
     final_state = _empty(state_shape, q, dtype=torch.float32) if output_mask[1] else None
+    if final_state is not None and cu is not None and chunk_size == 32:
+        # chunk32 varlen 走 host 逐序列循环,空序列(len==0)不进 kernel:
+        # 预填 final_state(空序列语义 final=initial;无 istate 则零态)
+        empty_ids = [i for i, (a, b) in enumerate(zip(cu, cu[1:])) if b == a]
+        if empty_ids:
+            final_state = (initial_state.clone() if initial_state is not None
+                           else torch.zeros_like(final_state))
     gk_out = _empty(k_shape_head, q, dtype=torch.float32) if output_mask[2] else None
-    aqk = _empty(matrix_shape, q)
-    akk = _empty(matrix_shape, q)
+    # chunk32 大融合只产出 attention/final_state。保留公开槽位但不分配、
+    # 不下发未写入的 Aqk/Akk；V1/V2 的 chunk32 分支都接受这两个空输出。
+    aqk = None if chunk_size == 32 else _empty(matrix_shape, q)
+    akk = None if chunk_size == 32 else _empty(matrix_shape, q)
     w = _empty(k_shape_head, q) if output_mask[5] else None
     u = _empty(v_shape_head, q) if output_mask[6] else None
     qg = _empty(k_shape_head, q) if output_mask[7] else None
@@ -4079,6 +4162,11 @@ def npu_chunk_kda_fwd(
     # 保存值出口由 L2 层用空指针表达：只有真正给了张量才算"请求导出"，
     # 而导出只在组合入口（V2）上支持。
     saved_outputs = (q_hat_out, k_hat_out, q_rstd_out, k_rstd_out, beta_eff_out)
+    if chunk_size == 32 and any(value is not None for value in saved_outputs):
+        raise RuntimeError(
+            "npu_chunk_kda_fwd: chunk_size=32 (fused kernel) does not export backward "
+            "saved values (q_hat/k_hat/q_rstd/k_rstd/beta_eff)."
+        )
     if any(value is not None for value in saved_outputs) and not use_v2:
         raise RuntimeError(
             "npu_chunk_kda_fwd: q_hat/k_hat/q_rstd/k_rstd/beta_eff are only exported by "
@@ -4140,7 +4228,12 @@ def npu_chunk_kda_fwd(
         return common
 
     _call_aclnn("aclnnChunkKdaFwdV2" if use_v2 else "aclnnChunkKdaFwd", build_args, outputs)
-    initial_state_out = initial_state
+    if svf_absorb and final_state is not None:
+        # 转回调用方期望的 V-first;clone 先落地再 copy_ 回同一存储
+        # (transpose 视图与原张量共享存储,直接 copy_ 是交叠自拷贝),
+        # 保持返回张量身份不变。chunk32 保证 K==V,形状不变。
+        final_state.copy_(final_state.transpose(-1, -2).clone())
+    initial_state_out = caller_initial_state
     return (*outputs, initial_state_out)
 
 

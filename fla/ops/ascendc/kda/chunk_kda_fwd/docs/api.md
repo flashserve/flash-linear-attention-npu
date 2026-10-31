@@ -46,7 +46,7 @@ outputs = chunk_kda_fwd(
 | `g` | 必选 | 去掉 V 维的 Shape（含 K 维）；FP32/BF16 | raw gate，或已激活的自然对数 gate |
 | `beta` | 必选 | 去掉 K 维的 Shape；FP32/BF16 | delta 系数 |
 | `scale` | 必选 | float | attention scale |
-| `chunk_size` | `64` | int | 分块长度；只支持 `64`，其它取值（含 `128`）参数校验阶段返回 `ACLNN_ERR_PARAM_INVALID` |
+| `chunk_size` | `64` | int | 分块长度；支持 `64`（三段式）与 `32`（单 kernel 大融合，见下），其它取值参数校验阶段返回 `ACLNN_ERR_PARAM_INVALID` |
 | `layout` | `"BSND"` | str | `BSND`/`BNSD`/`TND`/`NTD`，只解释输入 |
 | `initial_state` | `None` | `[N,H_v,K,V]` 或 `state_v_first=true` 时 `[N,H_v,V,K]`；FP32 | 算子就地更新，第 12 个返回值就是它本身 |
 | `output_final_state` | `False` | bool | 控制第 2 槽 `final_state` 是否返回 |
@@ -70,9 +70,29 @@ outputs = chunk_kda_fwd(
 | `beta_eff_out` | `None` | `[B,HV,T]`（packed `[HV,T]`）；FP32 | 传入即导出生效 beta；`use_beta_sigmoid_in_kernel=false` 时不产出 |
 
 `epsilon` / `use_qk_l2norm_in_kernel` / `use_beta_sigmoid_in_kernel` / `allow_neg_eigval` /
-`use_exp2` 取非默认值时，调用必须落在三算子组合场景（BF16 q/k/v、`K=V=128`、
-`chunk_size=64`），否则 Python 入口在发起调用前按 fla-org 参考实现拒绝，不会静默忽略；
-具体字段语义见 [归一化 / gate 开关](#归一化--gate-开关)。
+`use_exp2` 取非默认值时，chunk64 调用必须落在三算子组合场景（BF16 q/k/v、`K=V=128`、
+`chunk_size=64`）；chunk32 则必须取下文规定的 fused 固定组合。其它场景由 Python 入口在
+发起调用前按 fla-org 参考实现拒绝，不会静默忽略；具体字段语义见
+[归一化 / gate 开关](#归一化--gate-开关)。
+
+`chunk_size=32` 使用 `ChunkKdaFwd` 内 `op_kernel/arch35/chunk_kda_fwd_chunk32/` 的单 kernel 大融合实现（issue #829）。当前契约：
+
+- q/k/v 为 BF16，`K=V=128`；g/beta 各自可为 BF16 或 FP32，任一为 FP32 时 host 将两者
+  统一上转 FP32；`A_log`、`dt_bias` 和 state 为 FP32。
+- `T>0`，kernel 处理非 128 对齐尾块；支持 dense batch、varlen，以及 `HV` 为 `H` 正整数倍的 GVA。
+  varlen 支持 BSND（`B=1`）、TND、NTD，不支持 BNSD；最多 1024 个序列并允许空序列。
+- 支持可选 `initial_state` 和 `output_final_state`；`state_v_first=true` 由 host 转置适配。
+- 必须 `safe_gate=true`、`use_gate_in_kernel=true` 并提供 `A_log`；`dt_bias=None` 等价于零偏置。
+  gate 语义为 `lower_bound * sigmoid(exp(A_log) * (g + dt_bias))`。
+- 必须 `use_qk_l2norm_in_kernel=true`、`use_beta_sigmoid_in_kernel=true`、
+  `allow_neg_eigval=false`、`use_exp2=true`；chunk32 的 epsilon 固定为 `1e-6`，不支持自定义。
+- 不导出 recompute 中间态或反向保存值：`disable_recompute` 和
+  `return_intermediate_states` 必须为 `false`，`Aqk`/`Akk` 槽位返回 `None`，
+  `gk/w/u/qg/kg/v_new/h` 也为 `None`。
+- `chunk_indices` 仅接受与 `cu_seqlens` 对应的 canonical sequence-major 顺序。
+- Python 的 `dt_bias=None` 会补成 FP32 零张量；aclnn chunk32 路径本身要求
+  `aLogOptional/dtBiasOptional` 非空。Python 的 `state_v_first=true` 在调用前后转置，
+  传到 fused L2 的 state 固定为 K-first。
 
 ### 返回
 
@@ -86,11 +106,11 @@ outputs = chunk_kda_fwd(
 | --- | --- | --- | --- |
 | 0 | `attn_out` | 始终 | 固定 sequence-major（rank-4 为 BSND，rank-3 为 TND） |
 | 1 | `final_state` | `output_final_state=true` | `[N,H_v,K,V]`，`state_v_first=true` 时末两维交换 |
-| 2 | `gk` | `use_gate_in_kernel=false` 或 `disable_recompute=true` | head-major |
-| 3 | `Aqk` | 始终 | head-major |
-| 4 | `Akk` | 始终 | head-major |
-| 5–9 | `w` / `u` / `qg` / `kg` / `v_new` | `disable_recompute=true` | head-major |
-| 10 | `h` | `disable_recompute=true` 或 `return_intermediate_states=true` | sequence-major |
+| 2 | `gk` | chunk64 且 `use_gate_in_kernel=false` 或 `disable_recompute=true`；chunk32 返回 `None` | head-major |
+| 3 | `Aqk` | `chunk_size=64`；chunk32 不导出，返回 `None` | head-major |
+| 4 | `Akk` | `chunk_size=64`；chunk32 不导出，返回 `None` | head-major |
+| 5–9 | `w` / `u` / `qg` / `kg` / `v_new` | chunk64 且 `disable_recompute=true`；chunk32 返回 `None` | head-major |
+| 10 | `h` | chunk64 且 `disable_recompute=true` 或 `return_intermediate_states=true`；chunk32 返回 `None` | sequence-major |
 | 11 | `initial_state` | 始终 | Python 层对入参 `initial_state` 的原对象透传（算子就地更新），不是 aclnn 输出 |
 
 保留策略与 fla-org
@@ -153,7 +173,7 @@ fla-org 的 `l2norm_fwd` → `save_for_backward` → `l2norm_bwd` 一致。配�
 
 空 tensor 契约：`B` 或序列长度（TND/NTD 为总 token 数）为 0 时同样在参数校验阶段返回
 `ACLNN_ERR_PARAM_INVALID`，报错文本会指明是 batch 维还是序列维为 0；host 侧不会把空
-tensor 交给 tiling，因此调用方不会只拿到 561103 这类缺少上下文的错误码。
+tensor 交给 tiling，因此调用方不会只拿到缺少参数上下文的错误码。
 
 ## aclnn
 
@@ -201,8 +221,9 @@ aclnnStatus aclnnChunkKdaFwd(
 
 aclnn L2 只描述张量与算法契约，不接收或解释 autograd 重计算策略：
 
-- `attnOut/aqkOut` 是必选输出；`akkOut` 与 op def 一致为可选，传 `nullptr` 时算子内部
-  自建不导出的占位张量，三算子组合入口随之落到 Prepare 的 `none` 档（少一次 `Akk` 搬出）。
+- chunk64 的 `attnOut/aqkOut` 是必选输出；`akkOut` 与 op def 一致为可选，传 `nullptr`
+  时算子内部自建不导出的占位张量，三算子组合入口随之落到 Prepare 的 `none` 档
+  （少一次 `Akk` 搬出）。chunk32 只要求 `attnOut`，详见下面的 chunk32 输出契约。
 - `finalStateOut/gkOut/wOut/uOut/qgOut/kgOut/vNewOut/hOut` 均为相互独立的可选输出。
 - `w/u/qg/kg/vNew/h` 的 L0 阶段固定写内部 compute 张量；对应可选输出非空时，L2 通过
   `ViewCopy` 导出，为空时只保留前向内部生命周期。`gkOut` 非空时直接复用为 `gkCompute`，
@@ -215,26 +236,62 @@ aclnn L2 只描述张量与算法契约，不接收或解释 autograd 重计算�
 `output_final_state/disable_recompute/return_intermediate_states` 只存在于 Python 和 legacy torch
 包装层，由上层按 FLA 的保留策略决定向 L2 传入哪些输出指针。
 
-### 组合入口 `aclnnChunkKdaFwdV2`
+### V2 入口 `aclnnChunkKdaFwdV2`：chunk64 组合与 chunk32 融合分发
 
-`aclnnChunkKdaFwdV2GetWorkspaceSize/aclnnChunkKdaFwdV2` 在同一个 executor 内按
-`ChunkKdaFwdPrepare -> ChunkFwdH -> ChunkKdaFwdFinalize` 组合三个已交付算子，并接受
-归一化 / gate 开关。它与融合入口的关系：
+`aclnnChunkKdaFwdV2GetWorkspaceSize/aclnnChunkKdaFwdV2` 同时承接两类实现：chunk64 在
+同一个 executor 内组合 `ChunkKdaFwdPrepare -> ChunkFwdH -> ChunkKdaFwdFinalize`；chunk32
+则转入 `RunChunkKdaFwd32Fused`，由 `ChunkKdaFwd` 的 key 32 单次启动融合 kernel。入口关系如下：
 
-| 入口 | 实现 | 归一化 / gate 开关 |
+| 调用场景 | 公开入口 | 实际实现 |
 | --- | --- | --- |
-| `aclnnChunkKdaFwdGetWorkspaceSize` | 私有 L0 融合实现 | 固定默认组合（调用方预先归一化 q/k、预先 sigmoid beta、`exp2` 门控） |
-| `aclnnChunkKdaFwdV2GetWorkspaceSize` | 三个独立算子组合 | 由 5 个可选开关控制 |
+| chunk64 私有 L0 路径 | `aclnnChunkKdaFwdGetWorkspaceSize` | 外层 `ChunkKdaFwd`，固定默认组合（调用方预先归一化 q/k、预先 sigmoid beta、`exp2` 门控） |
+| chunk64 三算子组合 | `aclnnChunkKdaFwdV2GetWorkspaceSize` | `ChunkKdaFwdPrepare -> ChunkFwdH -> ChunkKdaFwdFinalize`，由 5 个可选开关控制 |
+| chunk32 大融合 | `aclnnChunkKdaFwdV2GetWorkspaceSize`（Python 主路径）；V1 也有同实现分支 | `RunChunkKdaFwd32Fused -> ChunkKdaFwd` key 32，核内 L2 norm/beta sigmoid/safe gate |
 
-V2 支持范围：`q/k/v` 为 BF16、`K=V=128`、`chunk_size=64`、公开输出连续、`cu_seqlens`
-严格递增；不满足时返回 `ACLNN_ERR_PARAM_INVALID`（提示改用融合入口）。
-场景选择由 Python 入口完成：`fla_npu.ops.ascendc.chunk_kda_fwd` 命中上述场景时优先调用 V2，
-其余场景（FP16、`K=V=64`、含空序列、输出非连续）回落到
-`aclnnChunkKdaFwd`。两个入口共用同一套参数校验、输出指针语义与返回码契约，公开输出布局一致。
+chunk64 V2 支持范围：`q/k/v` 为 BF16、`K=V=128`、`chunk_size=64`、公开输出连续、
+`cu_seqlens` 严格递增；不满足时返回 `ACLNN_ERR_PARAM_INVALID`（提示改用融合入口）。
+Python 在该场景按既有工作量/开关规则优先调用 V2，其余 chunk64 场景回落到
+`aclnnChunkKdaFwd`。chunk32 因强制核内 L2 norm 和 beta sigmoid，Python 总是选择 V2；
+V2 的 chunk32 分支不再套用 chunk64 的“输出连续、cu 严格递增”组合判据，而使用 fused
+专用校验，允许空序列。
 
-V2 入口的形参尾部另有 5 个可选输出指针 `qHatOut/kHatOut/qRstdOut/kRstdOut/betaEffOut`，
-用于导出反向 L2 norm 需要的保存值；传 `nullptr` 表示本次不导出（Prepare 档位由非空指针
-组合推导）。同一个输入下，传与不传这些指针的**计算结果逐位一致**，只有是否落盘的区别。
+V2 chunk64 的形参尾部另有 5 个可选输出指针
+`qHatOut/kHatOut/qRstdOut/kRstdOut/betaEffOut`，传 `nullptr` 表示不导出；同一个输入下，
+传与不传这些指针的计算结果逐位一致。chunk32 不实现这些出口，任一指针对应张量非空都
+直接返回 `ACLNN_ERR_PARAM_INVALID`。
+
+#### chunk32 aclnn 输出契约
+
+- `q/k/v/g/beta/attnOut` 必须非空；`aLogOptional/dtBiasOptional` 在 fused L2 同样必须非空。
+  Python 层的 `dt_bias=None` 零填充不属于 aclnn 的可空语义。
+- `initialStateOptional/finalStateOut` 可独立为空；请求 state IO 时 L2 要求
+  `stateVFirst=false`，shape 为 `[N,HV,128,128]`、dtype FP32。未请求 `finalStateOut` 时，
+  host 传 `[1,1,1]` 占位，tiling 将其识别为“不写出”。
+- `gkOut/wOut/uOut/qgOut/kgOut/vNewOut/hOut` 必须全部为 `nullptr`，以及 V2 的 5 个反向
+  保存值指针也必须全部为 `nullptr`；任一非空返回 `ACLNN_ERR_PARAM_INVALID`。
+- fused 不导出 `Aqk/Akk`，Python 对 `aqkOut/akkOut` 均传 `nullptr`，返回槽也为 `None`。
+  当前 L2 对非空 `Aqk/Akk` 仅检查 shape/dtype，不会由 fused kernel 写入；调用方不能把
+  非空指针理解为请求了有效中间输出。
+- `attnOut` 始终为 BF16 sequence-major（rank-4 BSND、rank-3 TND），包括 NTD 输入。
+
+#### chunk32 参数错误与返回码
+
+Python/stable 包装层会在发起 aclnn 前以自身异常拒绝不符合 chunk32 契约的调用。直接调用
+`aclnnChunkKdaFwdGetWorkspaceSize` 或 V2 时，fused guard 覆盖：必需指针缺失；非法 layout、
+rank/shape/dtype；`T<=0`、`K!=128` 或 `V!=128`、非 GVA；非递减 varlen 元数据或 canonical
+`chunkIndices` 不满足、序列数超过 1024、rank-4 varlen `B!=1`、BNSD varlen；非正/非有限
+`epsilon`；`safeGate/useGateInKernel` 未打开或缺少 `A_log/dt_bias`；L2 state V-first；以及
+上述不支持的中间输出/反向保存值。V2 还要求 `useQkL2normInKernel=true`、
+`useBetaSigmoidInKernel=true`、`allowNegEigval=false`、`useExp2=true`。
+
+guard 内部对 `q/k/v/g/beta/attnOut` 空指针使用 `ACLNN_ERR_PARAM_NULLPTR`，缺少
+`A_log/dt_bias` 及其它参数错误使用 `ACLNN_ERR_PARAM_INVALID`；但 V1/V2 外层 chunk32 分支
+通过 `CHECK_RET` 将 `RunChunkKdaFwd32Fused` 的非成功状态统一映射为
+`ACLNN_ERR_PARAM_INVALID`。因此公开 GetWorkspaceSize 的 chunk32 参数失败对外表现为
+`ACLNN_ERR_PARAM_INVALID`（161002），不能仅根据最内层空指针分支推断最终返回码。
+executor 创建等非 chunk32 guard 错误仍走原有 aclnn 状态契约。
+
+chunk32 只交付公开 V1/V2 入口；其 epsilon 固定为 `1e-6`，head/token-major 视图转换由 L2 完成。
 
 ### 归一化 / gate 开关
 
@@ -248,9 +305,10 @@ V2 入口新增五个可选开关，Python 侧以关键字参数暴露，默认�
 | `allowNegEigval` | `false` | `true` 时必须同时 `useBetaSigmoidInKernel=true` |
 | `useExp2` | `true` | 门控走 `exp2`；`false` 时走自然指数 |
 
-私有 L0 融合实现只实现默认组合，因此显式打开
+外层 `ChunkKdaFwd` 的 chunk64 私有 L0 只实现默认组合；chunk64 显式打开
 `useQkL2normInKernel`/`useBetaSigmoidInKernel`/`allowNegEigval` 或关闭 `useExp2` 时，
-调用必须落在 V2 的组合场景范围内，否则 Python 入口直接报错（提示场景要求），不会静默忽略开关。
+调用必须落在 V2 三算子组合范围内。chunk32 是独立例外：这些开关必须取 fused 规定的
+固定组合，并由 V2 路由到大融合实现；其它取值直接报错，不会静默忽略。
 
 `ChunkKdaFwdPrepare` 的编译期 `outputMask` 由公开输出指针组合推导：
 
@@ -319,9 +377,10 @@ assert final_state.shape == (B, H, K, V)
 
 | 路径 | 入口 |
 | --- | --- |
-| 稳定 Python | `fla_npu.ops.ascendc.chunk_kda_fwd` |
-| aclnn | `aclnnChunkKdaFwdGetWorkspaceSize/aclnnChunkKdaFwd` |
-| legacy | 显式加载后的 `torch.ops.npu.npu_chunk_kda_fwd` |
+| 稳定 Python | `fla_npu.ops.ascendc.chunk_kda_fwd`；chunk32 选择 V2，chunk64 按场景选择 V1/V2 |
+| aclnn 通用 | `aclnnChunkKdaFwdGetWorkspaceSize/aclnnChunkKdaFwd` |
+| aclnn V2 | `aclnnChunkKdaFwdV2GetWorkspaceSize/aclnnChunkKdaFwdV2`；chunk64 三算子组合或 chunk32 fused |
+| legacy | 显式加载后的 `torch.ops.npu.npu_chunk_kda_fwd`；当前 op_plugin 仅接受 chunk64/128，不路由 chunk32 |
 | 受限直调样例 | `torch.ops.ascend_ops.chunk_kda_fwd_direct` |
 
 直调样例仅覆盖 dense BNSD、K=128、V=128，并保留“调用方传入已累计 gk”的低层测试接口；
