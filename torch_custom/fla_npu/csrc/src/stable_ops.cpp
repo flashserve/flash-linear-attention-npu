@@ -42,6 +42,7 @@
 #include "stable_chunk_scaled_dot_kkt.cpp"
 #include "stable_fast_gelu_custom.cpp"
 #include "stable_fast_gelu_custom_backward.cpp"
+#include "stable_fused_recurrent_rwkv8.cpp"
 #include "stable_kda_gate_cumsum.cpp"
 #include "stable_merge_fwd_bwd_kernel.cpp"
 #include "stable_pre_process_fwd_kernel_merged.cpp"
@@ -134,6 +135,7 @@ STABLE_TORCH_LIBRARY(fla_npu_stable, m) {
   m.def(kSchema_merge_fwd_bwd_kernel);
   m.def(kSchema_pre_process_fwd_kernel_merged);
   m.def(kSchema_pre_process_bwd_kernel_merged);
+  m.def(kSchema_fused_recurrent_rwkv8);
 #ifndef FLA_STABLE_NO_DEBUG_PROBE
   m.def("_stream_probe(int device_index) -> (int, int)");
 #endif
@@ -233,6 +235,9 @@ STABLE_TORCH_LIBRARY_IMPL(fla_npu_stable, CompositeExplicitAutograd, m) {
       "npu_pre_process_bwd_kernel_merged",
       &fla_npu_stable::stable::boxed_adapter<
           run_npu_pre_process_bwd_kernel_merged>);
+  m.impl("npu_fused_recurrent_rwkv8",
+         &fla_npu_stable::stable::boxed_adapter<
+             run_npu_fused_recurrent_rwkv8>);
 #ifndef FLA_STABLE_NO_DEBUG_PROBE
   m.impl("_stream_probe", &boxed_stream_probe);
 #endif
