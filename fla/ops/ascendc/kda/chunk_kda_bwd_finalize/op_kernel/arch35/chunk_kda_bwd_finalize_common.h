@@ -76,8 +76,9 @@ constexpr uint32_t KDA_FINALIZE_UB_STAGE5_WORK = 144 * 1024;
 // uses the remaining UB as one phase-wide working set.
 constexpr uint32_t KDA_FINALIZE_UB_DQ_LOCAL_RAW = 0;
 // One head per AIV per window: these inputs survive phase transitions.
-// Q: Stage2 -> Stage9.  K and the raw log-gate frame: Stage0 -> Stage9
-// (exp factors recomputed inline).  Beta: Stage2 -> Stage9.
+// Q: Stage2 -> Stage9.  K: Stage0 -> Stage10.  Raw log gates: Stage0 -> Stage7;
+// Stage7 keeps their FP32 band factors in the released qPos range for Stage9.
+// Beta: Stage2 -> Stage9.
 // Stage11 reuses their dead regions for rawG and gate scratch.
 constexpr uint32_t KDA_FINALIZE_UB_Q = 144 * 1024;
 constexpr uint32_t KDA_FINALIZE_UB_K = 160 * 1024;

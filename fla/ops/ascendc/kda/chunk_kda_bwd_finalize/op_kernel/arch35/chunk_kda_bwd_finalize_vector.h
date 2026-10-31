@@ -122,7 +122,7 @@ __simd_callee__ inline void FinalizeStoreLocalRow(
 }
 
 // Stage0 emits paired NZ kE for contiguous UB-to-L1 copies. The raw log gates
-// stay resident in the g frame; consumers recompute Exp(g*LN2) inline.
+// stay resident in the g frame for the later exp2(g) factors.
 __simd_vf__ inline void FinalizeStage0VF(
     __ubuf__ bfloat16_t *kENd, __ubuf__ bfloat16_t *lowNd, __ubuf__ float *rH,
     __ubuf__ bfloat16_t *k, __ubuf__ float *gk,
@@ -261,7 +261,43 @@ __simd_vf__ inline void FinalizeStage2VF(
     ShiftRights(block, column, int16_t(4), indexMask);
     Muls(block, block, uint16_t(1008), indexMask);
     Add(nzIndex, column, block, indexMask);
-    for (uint16_t row = 0; row < validRows; ++row) {
+    // Interleave independent operations from two rows; handle an odd tail separately.
+    uint16_t row = 0;
+    for (; row + 1U < validRows; row += 2U) {
+        const uint32_t offsetA = static_cast<uint32_t>(row) * KDA_FINALIZE_CHUNK;
+        const uint32_t offsetB = static_cast<uint32_t>(row + 1U) * KDA_FINALIZE_CHUNK;
+        RegTensor<float> zvA, zwA, resultA;
+        RegTensor<float> zvB, zwB, resultB;
+        RegTensor<bfloat16_t> packedA, packedB;
+        LoadAlign(zvA, zV + offsetA);
+        LoadAlign(zvB, zV + offsetB);
+        LoadAlign(zwA, zW + offsetA);
+        LoadAlign(zwB, zW + offsetB);
+        Sub(resultA, zvA, zwA, fpMask);
+        Sub(resultB, zvB, zwB, fpMask);
+        Mul(resultA, resultA, betaFp, fpMask);
+        Mul(resultB, resultB, betaFp, fpMask);
+        uint32_t lowerCountA = row;
+        uint32_t lowerCountB = row + 1U;
+        MaskReg lowerA = UpdateMask<float>(lowerCountA);
+        MaskReg lowerB = UpdateMask<float>(lowerCountB);
+        Select(resultA, resultA, zero, lowerA);
+        Select(resultB, resultB, zero, lowerB);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedA, resultA, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedB, resultB, fpMask);
+        FinalizeStoreNz64(zbNd + row * 16, packedA, nzIndex);
+        FinalizeStoreNz64(zbNd + (row + 1U) * 16, packedB, nzIndex);
+        RegTensor<float> highA, highB;
+        Cast<float, bfloat16_t, ctHalf2Fp32Zero>(highA, packedA, fpMask);
+        Cast<float, bfloat16_t, ctHalf2Fp32Zero>(highB, packedB, fpMask);
+        Sub(highA, resultA, highA, fpMask);
+        Sub(highB, resultB, highB, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedA, highA, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedB, highB, fpMask);
+        FinalizeStoreNz64(zbNd + 4096 + row * 16, packedA, nzIndex);
+        FinalizeStoreNz64(zbNd + 4096 + (row + 1U) * 16, packedB, nzIndex);
+    }
+    if (row < validRows) {
         const uint32_t rowOffset = static_cast<uint32_t>(row) * KDA_FINALIZE_CHUNK;
         RegTensor<float> zv;
         RegTensor<float> zw;
@@ -290,10 +326,11 @@ __simd_vf__ inline void FinalizeStage2VF(
 
 // Stage3 StatePre.  One VF invocation consumes one 32-row band slice of a
 // head/chunk.  The two 64-lane FP32 register halves cover K/V=128 without a
-// second pass.  gk is the resident raw log-gate frame; exp2(g) factors are
-// recomputed inline with the same Muls(LN2)/Exp sequence Stage0 used to
-// materialize.  gateState accumulates across bands through its persistent
-// slot in the original row order; the rH term is added by the last band only.
+// second pass.  gk is the resident raw log-gate frame; the FP32 exp2(g)
+// factors reuse the current band's dg region after Stage5's last dAqk read,
+// before Stage4 consumes them and writes dg_base.
+// gateState accumulates across bands through its persistent slot in the
+// original row order; the rH term is added by the last band only.
 template <typename BetaT>
 __simd_vf__ inline void FinalizeStage3VF(
     __ubuf__ float *dkState, __ubuf__ float *dvb,
@@ -301,6 +338,7 @@ __simd_vf__ inline void FinalizeStage3VF(
     __ubuf__ float *dqRaw, __ubuf__ float *gk,
     __ubuf__ bfloat16_t *k, __ubuf__ bfloat16_t *v,
     __ubuf__ BetaT *beta, __ubuf__ float *gkLast, __ubuf__ float *rH,
+    __ubuf__ float *exp,
     float scale, uint16_t validRows, uint16_t rowBegin, uint16_t rows)
 {
     MaskReg fpMask = CreateMask<float, MaskPattern::ALL>();
@@ -389,6 +427,7 @@ __simd_vf__ inline void FinalizeStage3VF(
         Muls(exp1, g1, KDA_FINALIZE_LN2, fpMask);
         Exp(exp0, exp0, fpMask);
         Exp(exp1, exp1, fpMask);
+        StoreAlign<float, StoreDist::DIST_INTLV_B32>(exp + rowOffset, exp0, exp1, fpMask);
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(dq0, dq1, dqRaw + rowOffset);
         Mul(dq0, dq0, exp0, fpMask);
         Mul(dq1, dq1, exp1, fpMask);
@@ -424,12 +463,12 @@ __simd_vf__ inline void FinalizeStage3VF(
 // updated in place to dkBase and dbV to dbBase; dg is written straight to
 // its resident frame at 216 KiB (band offset applied by the caller).  dqBase
 // and the resident raw g frame stay live for later stages; the exp2(g)
-// factor is recomputed inline from g.  gateState joins dg only on the
-// chunk's global last row.
+// factor reuses Stage3's FP32 result cached in this band's dg region.
+// gateState joins dg only on the chunk's global last row.
 template <typename BetaT>
 __simd_vf__ inline void FinalizeStage4VF(
     __ubuf__ float *dkState, __ubuf__ float *dqBase,
-    __ubuf__ float *dKgbRaw, __ubuf__ float *dg, __ubuf__ float *g,
+    __ubuf__ float *dKgbRaw, __ubuf__ float *dg, __ubuf__ float *exp,
     __ubuf__ bfloat16_t *q,
     __ubuf__ bfloat16_t *k, __ubuf__ BetaT *beta,
     __ubuf__ float *gateState, __ubuf__ float *dbV,
@@ -458,11 +497,7 @@ __simd_vf__ inline void FinalizeStage4VF(
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
             dkg0, dkg1, dKgbRaw + rowOffset);
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
-            exp0, exp1, g + rowOffset);
-        Muls(exp0, exp0, KDA_FINALIZE_LN2, fpMask);
-        Muls(exp1, exp1, KDA_FINALIZE_LN2, fpMask);
-        Exp(exp0, exp0, fpMask);
-        Exp(exp1, exp1, fpMask);
+            exp0, exp1, exp + rowOffset);
 
         RegTensor<bfloat16_t> betaBf;
         RegTensor<float> betaFp;
@@ -661,7 +696,44 @@ __simd_vf__ inline void FinalizeStage5DaqkVF(
     ShiftRights(block, column, int16_t(4), indexMask);
     Muls(block, block, uint16_t(1008), indexMask);
     Add(nzIndex, column, block, indexMask);
-    for (uint16_t row = 0; row < validRows; ++row) {
+    // Interleave independent operations from two rows; handle an odd tail separately.
+    uint16_t row = 0;
+    for (; row + 1U < validRows; row += 2U) {
+        const uint32_t offsetA = static_cast<uint32_t>(row) * KDA_FINALIZE_CHUNK;
+        const uint32_t offsetB = static_cast<uint32_t>(row + 1U) * KDA_FINALIZE_CHUNK;
+        RegTensor<float> valueA, diagA;
+        RegTensor<float> valueB, diagB;
+        DataCopy<float, LoadDist::DIST_BRC_B32>(diagA, dAqk + offsetA + row);
+        DataCopy<float, LoadDist::DIST_BRC_B32>(diagB, dAqk + offsetB + row + 1U);
+        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(diagonal + row, diagA, one);
+        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(diagonal + row + 1U, diagB, one);
+        LoadAlign(valueA, dAqk + offsetA);
+        LoadAlign(valueB, dAqk + offsetB);
+        uint32_t countA = row;
+        uint32_t countB = row + 1U;
+        MaskReg strictA = UpdateMask<float>(countA);
+        MaskReg strictB = UpdateMask<float>(countB);
+        Select(valueA, valueA, zero, strictA);
+        Select(valueB, valueB, zero, strictB);
+        Muls(valueA, valueA, 65536.0f, fpMask);
+        Muls(valueB, valueB, 65536.0f, fpMask);
+        RegTensor<bfloat16_t> packedA, packedB;
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedA, valueA, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedB, valueB, fpMask);
+        FinalizeStoreNz64(dAqkOut + row * 16, packedA, nzIndex);
+        FinalizeStoreNz64(dAqkOut + (row + 1U) * 16, packedB, nzIndex);
+        RegTensor<float> highA, residualA;
+        RegTensor<float> highB, residualB;
+        Cast<float, bfloat16_t, ctHalf2Fp32Zero>(highA, packedA, fpMask);
+        Cast<float, bfloat16_t, ctHalf2Fp32Zero>(highB, packedB, fpMask);
+        Sub(residualA, valueA, highA, fpMask);
+        Sub(residualB, valueB, highB, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedA, residualA, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedB, residualB, fpMask);
+        FinalizeStoreNz64(dAqkOut + KDA_FINALIZE_MATRIX_ELEMS + row * 16, packedA, nzIndex);
+        FinalizeStoreNz64(dAqkOut + KDA_FINALIZE_MATRIX_ELEMS + (row + 1U) * 16, packedB, nzIndex);
+    }
+    if (row < validRows) {
         const uint32_t offset = static_cast<uint32_t>(row) * KDA_FINALIZE_CHUNK;
         RegTensor<float> value;
         RegTensor<float> diag;
@@ -672,19 +744,26 @@ __simd_vf__ inline void FinalizeStage5DaqkVF(
         MaskReg strict = UpdateMask<float>(count);
         Select(value, value, zero, strict);
         Muls(value, value, 65536.0f, fpMask);
-        FinalizeStoreLocalRow(dAqkOut + row * 16, value, fpMask, nzIndex);
+        RegTensor<bfloat16_t> packed;
+        RegTensor<float> high, residual;
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, value, fpMask);
+        FinalizeStoreNz64(dAqkOut + row * 16, packed, nzIndex);
+        Cast<float, bfloat16_t, ctHalf2Fp32Zero>(high, packed, fpMask);
+        Sub(residual, value, high, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, residual, fpMask);
+        FinalizeStoreNz64(dAqkOut + KDA_FINALIZE_MATRIX_ELEMS + row * 16, packed, nzIndex);
     }
 }
 
 // Stage7 consumes the FP32 Cube result, writes the final BF16 dq, and updates
 // dg_base in FP32 for the later K and gate stages.  The band factor is
-// recomputed inline from the resident raw gates and the band center.
+// computed once and retained in the band-local scratch for Stage9.
 __simd_vf__ inline void FinalizeStage7VF(
     __ubuf__ bfloat16_t *dqOut, __ubuf__ float *dgBase,
     __ubuf__ float *dqLocalRaw, __ubuf__ float *dqBase,
     __ubuf__ float *g, __ubuf__ float *center, __ubuf__ bfloat16_t *q,
     __ubuf__ float *qRstd, uint32_t hasQkL2Norm, uint16_t validRows,
-    __ubuf__ float *diagonal, __ubuf__ bfloat16_t *k)
+    __ubuf__ float *diagonal, __ubuf__ bfloat16_t *k, __ubuf__ float *bandExp)
 {
     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
     MaskReg fpMask = CreateMask<float, MaskPattern::ALL>();
@@ -711,6 +790,7 @@ __simd_vf__ inline void FinalizeStage7VF(
         Muls(exp1, exp1, KDA_FINALIZE_LN2, fpMask);
         Exp(exp0, exp0, fpMask);
         Exp(exp1, exp1, fpMask);
+        StoreAlign<float, StoreDist::DIST_INTLV_B32>(bandExp + offset, exp0, exp1, fpMask);
         Mul(raw0, raw0, exp0, fpMask);
         Mul(raw1, raw1, exp1, fpMask);
         Muls(raw0, raw0, 1.0f / 65536.0f, fpMask);
@@ -781,7 +861,7 @@ __simd_vf__ inline void FinalizeStage7VF(
 template <typename BetaT>
 __simd_vf__ inline void FinalizeStage9VF(
     __ubuf__ float *left, __ubuf__ float *right, __ubuf__ float *dbDelta,
-    __ubuf__ float *dg, __ubuf__ float *g, __ubuf__ float *center,
+    __ubuf__ float *dg, __ubuf__ float *bandExp,
     __ubuf__ bfloat16_t *k, __ubuf__ BetaT *beta, uint16_t rows,
     __ubuf__ float *diagonal, __ubuf__ bfloat16_t *q)
 {
@@ -789,22 +869,13 @@ __simd_vf__ inline void FinalizeStage9VF(
     MaskReg mask = CreateMask<float, MaskPattern::ALL>();
     MaskReg bfMask = CreateMask<half, MaskPattern::ALL>();
     MaskReg one = CreateMask<float, MaskPattern::VL1>();
-    RegTensor<float> center0;
-    RegTensor<float> center1;
-    LoadAlign<float, LoadDist::DIST_DINTLV_B32>(center0, center1, center);
     for (uint16_t row = 0; row < rows; ++row) {
         uint32_t offset = row * KDA_FINALIZE_DIM;
         RegTensor<float> l0, l1, r0, r1, e0, e1, k0, k1, g0, g1, b;
         RegTensor<bfloat16_t> kb, bb;
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(l0, l1, left + offset);
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(r0, r1, right + offset);
-        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(e0, e1, g + offset);
-        Sub(e0, e0, center0, mask);
-        Sub(e1, e1, center1, mask);
-        Muls(e0, e0, KDA_FINALIZE_LN2, mask);
-        Muls(e1, e1, KDA_FINALIZE_LN2, mask);
-        Exp(e0, e0, mask);
-        Exp(e1, e1, mask);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(e0, e1, bandExp + offset);
         Mul(l0, l0, e0, mask);
         Mul(l1, l1, e1, mask);
         Muls(l0, l0, 1.0f / 65536.0f, mask);
@@ -863,7 +934,66 @@ __simd_vf__ inline void FinalizeStage10VF(
     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
     MaskReg mask = CreateMask<float, MaskPattern::ALL>();
     MaskReg bfMask = CreateMask<half, MaskPattern::ALL>();
-    for (uint16_t row = 0; row < rows; ++row) {
+    // Interleave independent operations from two rows; handle an odd tail separately.
+    uint16_t row = 0;
+    for (; row + 1U < rows; row += 2U) {
+        uint32_t offsetA = row * KDA_FINALIZE_DIM;
+        uint32_t offsetB = (row + 1U) * KDA_FINALIZE_DIM;
+        RegTensor<float> dA0, dA1, bA0, bA1;
+        RegTensor<float> dB0, dB1, bB0, bB1;
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(dA0, dA1, delta + offsetA);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(dB0, dB1, delta + offsetB);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(bA0, bA1, base + offsetA);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(bB0, bB1, base + offsetB);
+        Add(dA0, dA0, bA0, mask);
+        Add(dB0, dB0, bB0, mask);
+        Add(dA1, dA1, bA1, mask);
+        Add(dB1, dB1, bB1, mask);
+        if (hasNorm != 0U) {
+            RegTensor<bfloat16_t> kbA, kbB;
+            RegTensor<float> kA0, kA1, pA0, pA1, dotA, rsA;
+            RegTensor<float> kB0, kB1, pB0, pB1, dotB, rsB;
+            LoadIn<bfloat16_t, false>(kbA, k + offsetA);
+            LoadIn<bfloat16_t, false>(kbB, k + offsetB);
+            CastHalf2Float<bfloat16_t>(kA0, kA1, kbA, bfMask);
+            CastHalf2Float<bfloat16_t>(kB0, kB1, kbB, bfMask);
+            Mul(pA0, dA0, kA0, mask);
+            Mul(pB0, dB0, kB0, mask);
+            Mul(pA1, dA1, kA1, mask);
+            Mul(pB1, dB1, kB1, mask);
+            Add(pA0, pA0, pA1, mask);
+            Add(pB0, pB0, pB1, mask);
+            ReduceSum(dotA, pA0, mask);
+            ReduceSum(dotB, pB0, mask);
+            DataCopy<float, LoadDist::DIST_BRC_B32>(rsA, rstd + row);
+            DataCopy<float, LoadDist::DIST_BRC_B32>(rsB, rstd + row + 1U);
+            // ReduceSum only guarantees lane 0; broadcast it in-register
+            // instead of a UB scratch round trip.
+            RegTensor<float> dotBrcA, dotBrcB;
+            Duplicate(dotBrcA, dotA, mask);
+            Duplicate(dotBrcB, dotB, mask);
+            Mul(pA0, kA0, dotBrcA, mask);
+            Mul(pB0, kB0, dotBrcB, mask);
+            Mul(pA1, kA1, dotBrcA, mask);
+            Mul(pB1, kB1, dotBrcB, mask);
+            Sub(dA0, dA0, pA0, mask);
+            Sub(dB0, dB0, pB0, mask);
+            Sub(dA1, dA1, pA1, mask);
+            Sub(dB1, dB1, pB1, mask);
+            Mul(dA0, dA0, rsA, mask);
+            Mul(dB0, dB0, rsB, mask);
+            Mul(dA1, dA1, rsA, mask);
+            Mul(dB1, dB1, rsB, mask);
+        }
+        RegTensor<bfloat16_t> packedA, packedB;
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE_ONE>(packedA, dA1, mask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE_ONE>(packedB, dB1, mask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedA, dA0, mask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedB, dB0, mask);
+        StoreAlign(out + offsetA, packedA, bfMask);
+        StoreAlign(out + offsetB, packedB, bfMask);
+    }
+    if (row < rows) {
         uint32_t offset = row * KDA_FINALIZE_DIM;
         RegTensor<float> d0, d1, b0, b1;
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(d0, d1, delta + offset);
@@ -892,7 +1022,8 @@ __simd_vf__ inline void FinalizeStage10VF(
             Mul(d1, d1, rs, mask);
         }
         RegTensor<bfloat16_t> packed;
-        FinalizeCastBf16(packed, d0, d1, mask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE_ONE>(packed, d1, mask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, d0, mask);
         StoreAlign(out + offset, packed, bfMask);
     }
     // One 32-byte UB row per scalar enables a single strided token-major DMA.
@@ -924,15 +1055,43 @@ __simd_vf__ inline void FinalizeDwResidualVF(
     ShiftRights(block, column, int16_t(4), bfMask);
     Muls(block, block, uint16_t(1008), bfMask);
     Add(nzIndex, column, block, bfMask);
-    for (uint16_t row = 0; row < KDA_FINALIZE_CHUNK; ++row) {
+    static_assert(KDA_FINALIZE_CHUNK % 2U == 0U, "unrolled pairs need an even trip");
+    // Interleave independent operations from two rows; keep the tail outside the loop.
+    uint16_t row = 0;
+    for (; row + 1U < KDA_FINALIZE_CHUNK; row += 2U) {
+        RegTensor<float> valueA0, valueA1, highA0, highA1;
+        RegTensor<float> valueB0, valueB1, highB0, highB1;
+        RegTensor<bfloat16_t> packedA, packedB;
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(valueA0, valueA1, src + row * 128);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(valueB0, valueB1, src + (row + 1U) * 128);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE_ONE>(packedA, valueA1, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE_ONE>(packedB, valueB1, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedA, valueA0, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedB, valueB0, fpMask);
+        CastHalf2Float<bfloat16_t>(highA0, highA1, packedA, bfMask);
+        CastHalf2Float<bfloat16_t>(highB0, highB1, packedB, bfMask);
+        Sub(valueA0, valueA0, highA0, fpMask);
+        Sub(valueB0, valueB0, highB0, fpMask);
+        Sub(valueA1, valueA1, highA1, fpMask);
+        Sub(valueB1, valueB1, highB1, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE_ONE>(packedA, valueA1, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE_ONE>(packedB, valueB1, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedA, valueA0, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedB, valueB0, fpMask);
+        Scatter(dst + row * 16, packedA, nzIndex, bfMask);
+        Scatter(dst + (row + 1U) * 16, packedB, nzIndex, bfMask);
+    }
+    if (row < KDA_FINALIZE_CHUNK) {
         RegTensor<float> value0, value1, high0, high1;
         RegTensor<bfloat16_t> packed;
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(value0, value1, src + row * 128);
-        FinalizeCastBf16(packed, value0, value1, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE_ONE>(packed, value1, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, value0, fpMask);
         CastHalf2Float<bfloat16_t>(high0, high1, packed, bfMask);
         Sub(value0, value0, high0, fpMask);
         Sub(value1, value1, high1, fpMask);
-        FinalizeCastBf16(packed, value0, value1, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE_ONE>(packed, value1, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, value0, fpMask);
         Scatter(dst + row * 16, packed, nzIndex, bfMask);
     }
 }
@@ -947,15 +1106,35 @@ __simd_vf__ inline void FinalizeResidualVF(
     ShiftRights(block, column, int16_t(4), indexMask);
     Muls(block, block, uint16_t(1008), indexMask);
     Add(nzIndex, column, block, indexMask);
-    for (uint16_t block = 0; block < blocks; ++block) {
+    // Interleave independent operations from two blocks; handle an odd tail separately.
+    // The loop variable is named blk to avoid redefining the function-scope RegTensor named block.
+    uint16_t blk = 0;
+    for (; blk + 1U < blocks; blk += 2U) {
+        RegTensor<float> valueA, highA;
+        RegTensor<float> valueB, highB;
+        RegTensor<bfloat16_t> packedA, packedB;
+        LoadAlign(valueA, src + blk * 64U);
+        LoadAlign(valueB, src + (blk + 1U) * 64U);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedA, valueA, mask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedB, valueB, mask);
+        Cast<float, bfloat16_t, ctHalf2Fp32Zero>(highA, packedA, mask);
+        Cast<float, bfloat16_t, ctHalf2Fp32Zero>(highB, packedB, mask);
+        Sub(valueA, valueA, highA, mask);
+        Sub(valueB, valueB, highB, mask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedA, valueA, mask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedB, valueB, mask);
+        FinalizeStoreNz64(dst + blk * 16U, packedA, nzIndex);
+        FinalizeStoreNz64(dst + (blk + 1U) * 16U, packedB, nzIndex);
+    }
+    if (blk < blocks) {
         RegTensor<float> value, high;
         RegTensor<bfloat16_t> packed;
-        LoadAlign(value, src + block * 64U);
+        LoadAlign(value, src + blk * 64U);
         Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, value, mask);
         Cast<float, bfloat16_t, ctHalf2Fp32Zero>(high, packed, mask);
         Sub(value, value, high, mask);
         Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, value, mask);
-        FinalizeStoreNz64(dst + block * 16U, packed, nzIndex);
+        FinalizeStoreNz64(dst + blk * 16U, packed, nzIndex);
     }
 }
 
@@ -1557,6 +1736,7 @@ private:
             reinterpret_cast<__ubuf__ DTYPE_BETA *>(beta[rowBegin].GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(gkLast.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(rH.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(dg[offset].GetPhyAddr()),
             tiling_->scale, static_cast<uint16_t>(chunk.validRows),
             static_cast<uint16_t>(rowBegin), static_cast<uint16_t>(rows));
         // The dv egress must drain before Stage8 may rewrite the right area.
@@ -1579,7 +1759,7 @@ private:
             reinterpret_cast<__ubuf__ float *>(dqRaw.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(dvb.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(dg[offset].GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(g[offset].GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(dg[offset].GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(q[offset].GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(k[offset].GetPhyAddr()),
             reinterpret_cast<__ubuf__ DTYPE_BETA *>(beta[rowBegin].GetPhyAddr()),
@@ -1619,10 +1799,11 @@ private:
         // egress reads before the next band's cube writes these ranges.
         auto dqOut = UbBytes(slot * 32 * 1024).ReinterpretCast<bfloat16_t>();
         auto dkOut = UbBytes(64 * 1024 + slot * 32 * 1024).ReinterpretCast<bfloat16_t>();
-        // The resident g frame holds the raw log gates; Stage7/9 recompute the
-        // band factor inline with this band's persistent center slot.
+        // The resident g frame holds the raw log gates; Stage7 computes the
+        // band factor once and Stage9 reuses it from the released qPos range.
         auto g = UbBytes(KDA_FINALIZE_UB_EXP2_GK).ReinterpretCast<float>()[offset];
         auto center = UbBytes(209 * 1024 + 512).ReinterpretCast<float>();
+        auto bandExp = UbBytes(80 * 1024).ReinterpretCast<float>();
         auto q = UbBytes(KDA_FINALIZE_UB_Q).ReinterpretCast<bfloat16_t>()[offset];
         auto k = UbBytes(KDA_FINALIZE_UB_K).ReinterpretCast<bfloat16_t>()[offset];
         auto beta = UbBytes(KDA_FINALIZE_UB_BETA).ReinterpretCast<DTYPE_BETA>()[rowBegin];
@@ -1656,7 +1837,8 @@ private:
             reinterpret_cast<__ubuf__ bfloat16_t *>(q.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(qRstd.GetPhyAddr()), tiling_->hasQkL2Norm, rows,
             reinterpret_cast<__ubuf__ float *>(diagonal.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()));
+            reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(bandExp.GetPhyAddr()));
         // Drain the slice's dv egress out of the right area before KE_READY
         // lets cube Stage8 rewrite it.
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
@@ -1667,8 +1849,7 @@ private:
             reinterpret_cast<__ubuf__ float *>(right.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(dbDelta.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(dg[offset].GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(g.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(center.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(bandExp.GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()),
             reinterpret_cast<__ubuf__ DTYPE_BETA *>(beta.GetPhyAddr()), rows,
             reinterpret_cast<__ubuf__ float *>(diagonal.GetPhyAddr()),

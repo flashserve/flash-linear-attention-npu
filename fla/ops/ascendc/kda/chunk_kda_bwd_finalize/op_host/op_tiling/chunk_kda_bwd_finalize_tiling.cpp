@@ -177,7 +177,11 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
     const char *modelLayout = attrs->GetStr(10);
     const bool mixed = modelLayout && modelLayout[0];
     const bool modelTm = mixed && (std::strcmp(modelLayout,"BSND") == 0 || std::strcmp(modelLayout,"TND") == 0);
-    if (mixed && !modelTm && std::strcmp(modelLayout,"BNSD") && std::strcmp(modelLayout,"NTD")) return ge::GRAPH_FAILED;
+    if (mixed && !modelTm && std::strcmp(modelLayout,"BNSD") && std::strcmp(modelLayout,"NTD")) {
+        OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "model_layout", modelLayout,
+                                  "BSND/BNSD/TND/NTD, or empty for standalone Finalize");
+        return ge::GRAPH_FAILED;
+    }
     ChunkKdaBwdFinalizeTilingContext ctx{
         context->GetNodeName(),
         context->GetRequiredInputShape(mixed ? INPUT_GK : INPUT_Q),
@@ -225,6 +229,9 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
     auto *tiling = context->GetTilingData<KDA::ChunkKdaBwdFinalizeTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
     *tiling = shape;
+    auto *rawTiling = context->GetRawTilingData();
+    OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);
+    rawTiling->SetDataSize(sizeof(KDA::ChunkKdaBwdFinalizeTilingData) + 8);
     context->SetTilingKey(processor.GetTilingKey());
     context->SetBlockDim(processor.GetBlockDim());
     context->GetWorkspaceSizes(1)[0] = processor.GetWorkspaceSize();
