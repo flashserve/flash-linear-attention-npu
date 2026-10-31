@@ -375,10 +375,12 @@ __aicore__ inline void GenAuxMatrixVF(LocalTensor<uint32_t> &shiftIdx, LocalTens
 // eg[0:32] = exp(prefix), eg[32:64] = 1/exp(prefix), eg[64:96] = prefix.
 // eg[96] is the count of lanes outside [-80, 80]. Zero keeps the multiply
 // exp(i) * (1/exp(j)). A nonzero count uses exp(prefix_i - prefix_j).
+// kKeepG writes the natural prefix back to g only when g_cumsum is exported.
 constexpr float kPrefixSafe = 80.0f;
 constexpr uint32_t kEgPrefix = 64;
 constexpr uint32_t kEgUnsafe = 96;
 
+template <bool kKeepG>
 __aicore__ inline void CumsumExp2VF(LocalTensor<float> &g, LocalTensor<float> &eg,
                                     LocalTensor<uint32_t> &shiftIdx)
 {
@@ -421,9 +423,10 @@ __aicore__ inline void CumsumExp2VF(LocalTensor<float> &g, LocalTensor<float> &e
         MaskReg lane0 = CreateMask<float, MaskPattern::VL1>();
         StoreAlign(egAddr + kEgUnsafe, unsafe, lane0);
         StoreAlign(egAddr + kEgPrefix, v, pregN);
-        // Natural chunk-local cumsum stays in g. PublishKFlag copies it when
-        // g_cumsum is requested. eg is exp(cumsum); the recurrence reads eg.
-        StoreAlign(gAddr, v, pregN);
+        // Natural chunk-local cumsum stays in g only when g_cumsum is exported.
+        if constexpr (kKeepG) {
+            StoreAlign(gAddr, v, pregN);
+        }
         Exp(v, v, pregN);
         StoreAlign(egAddr, v, pregN);
         RegTensor<float> oneR, rcp;

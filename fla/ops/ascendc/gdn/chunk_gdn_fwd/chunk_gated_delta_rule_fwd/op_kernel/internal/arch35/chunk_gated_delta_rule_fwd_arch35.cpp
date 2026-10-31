@@ -485,11 +485,21 @@ extern "C" __global__ __aicore__ void chunk_gated_delta_rule_fwd(
         KERNEL_TASK_TYPE(32, KERNEL_TYPE_MIX_AIC_1_2);
         GET_TILING_DATA_WITH_STRUCT(
             ChunkGatedDeltaRuleFwd32TilingData, chunk32Tiling, tiling);
-        GdnFwd32::Kernel op;
-        op.Init(q, k, v, raw_g, a_storage, initial_state, cu_seqlens,
-                o, final_state, g_cumsum_bth, A, q_hat, k_hat, q_rstd, k_rstd, h, beta_eff,
-                chunk32Tiling);
-        op.Process();
+        const bool fastInfer = chunk32Tiling.stateVFirst == 0 && chunk32Tiling.allowNegEigval == 0 &&
+                               (chunk32Tiling.seqNum & 0xf0000000u) == 0;
+        if (fastInfer) {
+            GdnFwd32::Kernel<true> op;
+            op.Init(q, k, v, raw_g, a_storage, initial_state, cu_seqlens,
+                    o, final_state, g_cumsum_bth, A, q_hat, k_hat, q_rstd, k_rstd, h, beta_eff,
+                    chunk32Tiling);
+            op.Process();
+        } else {
+            GdnFwd32::Kernel<false> op;
+            op.Init(q, k, v, raw_g, a_storage, initial_state, cu_seqlens,
+                    o, final_state, g_cumsum_bth, A, q_hat, k_hat, q_rstd, k_rstd, h, beta_eff,
+                    chunk32Tiling);
+            op.Process();
+        }
     } else if (TILING_KEY_IS(1)) {
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
         GDN::RunPhase6<DTYPE_Q, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
