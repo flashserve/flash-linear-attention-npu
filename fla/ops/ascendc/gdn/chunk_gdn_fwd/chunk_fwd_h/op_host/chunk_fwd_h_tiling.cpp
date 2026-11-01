@@ -240,8 +240,14 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     // soc 门控白名单（2026-10-29 用户裁定，原 !=ASCEND950 黑名单式改）：仅
     // DAV_2201（A2/A3）开 T16；A5（3510）arch35 路径零改动；未来新芯片默认
     // 不进，专项验证后加白。
+    // 2026-11-02 修复：条件必须按总 head 任务数（batch × vNumHead）判——原判
+    // vNumHead（每序列头数）在 B=1 恰与总任务相等故历史全绿；B>1 dense 时每核
+    // 可达 3+ 头，work unit 出现 slot1 链，其缓冲区（LocalBase(1)=32K 起）落入
+    // T16 单 slot 大缓冲区 [0,60K) 内被 calc 双份覆写——泛化集 acc_v2 88 例
+    // dense×B≥2×noexp2 形态 NaN/垃圾值的根因（二分定案：引入于 888449ca）。
     const bool denseT16Eligible = !plainTiling.isVariedLen &&
-        plainTiling.vNumHead <= 2 * static_cast<int64_t>(blockDim) && plainTiling.seqlen > 0 &&
+        plainTiling.batch * plainTiling.vNumHead <= 2 * static_cast<int64_t>(blockDim) &&
+        plainTiling.seqlen > 0 &&
         ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
 
     using namespace GDN;
