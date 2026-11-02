@@ -81,6 +81,6 @@ A5 的计算分组、三 bank 容量及 X 预算不套用于 A2/A3。generic ker
 
 ## 代码组织与验证
 
-A5 纯数据 context 和集中布局常量在 `arch35/recurrent_kda_struct.h`；VF 启动/计算在 `recurrent_kda_vec.h`；任务、预取与写回在 `recurrent_kda_pipeline.h`，文件头给出 Stage、布局和同步表。
+A5 纯数据 context 和集中布局常量在 `arch35/recurrent_kda_struct.h`；VF 启动/计算在 `recurrent_kda_vec.h`；任务、预取与写回在 `arch35/recurrent_kda.h`，文件头给出 Stage、布局和同步表。
 
 [测试记录](../../../../../../tests/atk/recurrent_kda/README.md)区分各次提交、候选回退、双平台验收、msprof kernel 性能及 host 调用链测量，不能将历史全量验收当作每个后续提交均重跑全量。A3、旧 CANN、整体 Example/ST、正式 NPU CI 及内部故障注入的未覆盖范围按该记录说明。
