@@ -289,7 +289,7 @@ Stage 耗时统一保存在每台服务器的 `${CI_ROOT}/results/ci-timings/sta
 
 A2 代理回退读取普通用户配置 `CI_PROXY_SCRIPT=${CI_ROOT}/vpn-proxy.sh`，调用 `proxyon`，校验变量不含 CR/LF，再通过 `GITHUB_ENV` 将代理地址与端口传递给后续步骤。管理员须提前在两台主机部署 `nelvko/clashctl` 到 `${CI_ROOT}/clashctl`，并将提供的 `vpn-proxy.sh` 适配副本放到上述位置：运行时配置和二进制路径指向该目录，日志写入 `${CI_ROOT}/tmp/mihomo.log`，权限允许 `ubuntu` 读取配置、执行二进制和写日志。脚本属于主机部署配置，不提交到仓库；workflow 不读取 `/root`、不修改 `HOME` 或全局 Git 配置。
 
-A2/A5 workflow 固定设置 `CI_JOBS=16` 和 `CI_CPACK_JOBS=16`，全量与局部 OPP 构建均使用 `-j16`。`ci/run_checks.sh` 的默认并行度也为 16，并将该值导出为 PyTorch/Ninja 使用的 `MAX_JOBS`；CPack、CMake 和 Make 使用同一并行度设置，cmake/scripts/prepare.sh 也遵循 CMAKE_BUILD_PARALLEL_LEVEL，避免内部 prepare 阶段重新按 CPU 数放大并行度。`FLA_NPU_BUILD_ARGS` 追加 `-j16`，覆盖 wheel 打包内部再次调用 `build.sh` 时的并行度。
+A2/A5 workflow 固定设置 `CI_JOBS=32` 和 `CI_CPACK_JOBS=32`，全量与局部 OPP 构建均使用 `-j32`。`ci/run_checks.sh` 的默认并行度也为 32，并将该值导出为 PyTorch/Ninja 使用的 `MAX_JOBS`；CPack、CMake 和 Make 使用同一并行度设置，cmake/scripts/prepare.sh 也遵循 CMAKE_BUILD_PARALLEL_LEVEL，避免内部 prepare 阶段重新按 CPU 数放大并行度。`FLA_NPU_BUILD_ARGS` 追加 `-j32`，覆盖 wheel 打包内部再次调用 `build.sh` 时的并行度。
 
 `ci/run_ci_container.sh` 另外限制运行时用核：从启动进程允许的 CPU 集合中选择至多 32 个逻辑 CPU，设置 Docker `--cpuset-cpus` 和对应的 `--cpus` 配额，使容器内构建、测试及其子进程共享该上限。同时设置 `OMP_NUM_THREADS`、`OMP_THREAD_LIMIT`、`MKL_NUM_THREADS`、`OPENBLAS_NUM_THREADS`、`NUMEXPR_NUM_THREADS` 为所选 CPU 数；启动进程可用核不足 32 时使用实际数量。该限制独立于编译 `-j` 参数，对新启动的 CI 容器生效，不会修改已有容器。直接在容器外执行测试不经过此限制。
 
