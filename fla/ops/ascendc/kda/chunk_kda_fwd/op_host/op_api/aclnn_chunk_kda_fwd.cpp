@@ -1254,11 +1254,13 @@ aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor
 
 aclnnStatus RunChunkKdaFwd32Fused(ChunkKdaFwdParams &params, aclOpExecutor *executor)
 {
-    // epsilon 用于 q/k 核内 L2 归一化并传递到 kernel;chunk32 路径不经过
-    // CheckParams,校验在此兜底(与通用路径同一语义:转 fp32 后有限且大于 0)
+    // chunk32 kernel 的 epsilon 由 tiling 固定写入 1e-6(KdaChunkForward32 无
+    // epsilon 参数,公开算子 def 也无此 attr);调用方提供其它值会被静默丢弃,
+    // 因此显式拒绝,与文档的"chunk32 epsilon 固定 1e-6"契约一致。
+    constexpr float KDA32_FIXED_EPSILON = 1.0e-6F;
     const float epsilonFp32 = static_cast<float>(params.epsilon);
-    if (!std::isfinite(epsilonFp32) || epsilonFp32 <= 0.0F) {
-        OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "epsilon", std::to_string(params.epsilon), "a positive finite FP32 value");
+    if (!std::isfinite(epsilonFp32) || epsilonFp32 != KDA32_FIXED_EPSILON) {
+        OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "epsilon", std::to_string(params.epsilon), "exactly 1e-6 for chunkSize=32");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.cuSeqlensOptional == nullptr) {

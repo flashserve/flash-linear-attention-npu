@@ -769,29 +769,43 @@ class ChunkKdaFwdWrapperContractTest(unittest.TestCase):
 
     def test_chunk32_v2_epsilon_and_output_contract(self):
         for backend in ("stable", "ctypes"):
-            for epsilon in (1e-6, 2e-6):
-                with self.subTest(backend=backend, epsilon=epsilon):
-                    fake_torch = self._torch()
-                    inputs = self._inputs(fake_torch)
-                    captured = {}
-                    options = self._options(32)
-                    options.update(output_final_state=True, epsilon=epsilon)
-                    outputs = self._call(
-                        backend, fake_torch, inputs, options, captured=captured
-                    )
-                    self.assertEqual(len(outputs), 12)
-                    self.assertIsNotNone(outputs[0])
-                    self.assertIsNotNone(outputs[1])
-                    self.assertTrue(all(value is None for value in outputs[2:11]))
-                    self.assertIs(outputs[11], inputs[-1])
-                    args = captured["args"]
-                    self.assertAlmostEqual(args[17].value if backend == "ctypes" else args[17], epsilon)
-                    self.assertEqual(args[12].value if backend == "ctypes" else args[12], 32)
-                    if backend == "ctypes":
-                        self.assertEqual(captured["launch"], "aclnnChunkKdaFwdV2")
-                        self.assertIsNone(captured["tensors"]["Aqk"])
-                        self.assertIsNone(captured["tensors"]["Akk"])
-                        self.assertNotIn((1, 2, 65, 32), captured["allocations"])
+            with self.subTest(backend=backend, epsilon=1e-6):
+                fake_torch = self._torch()
+                inputs = self._inputs(fake_torch)
+                captured = {}
+                options = self._options(32)
+                options.update(output_final_state=True, epsilon=1e-6)
+                outputs = self._call(
+                    backend, fake_torch, inputs, options, captured=captured
+                )
+                self.assertEqual(len(outputs), 12)
+                self.assertIsNotNone(outputs[0])
+                self.assertIsNotNone(outputs[1])
+                self.assertTrue(all(value is None for value in outputs[2:11]))
+                self.assertIs(outputs[11], inputs[-1])
+                args = captured["args"]
+                self.assertAlmostEqual(args[17].value if backend == "ctypes" else args[17], 1e-6)
+                self.assertEqual(args[12].value if backend == "ctypes" else args[12], 32)
+                if backend == "ctypes":
+                    self.assertEqual(captured["launch"], "aclnnChunkKdaFwdV2")
+                    self.assertIsNone(captured["tensors"]["Aqk"])
+                    self.assertIsNone(captured["tensors"]["Akk"])
+                    self.assertNotIn((1, 2, 65, 32), captured["allocations"])
+
+    def test_chunk32_rejects_non_default_epsilon_before_launch(self):
+        # chunk32 kernel 的 epsilon 由 tiling 固定为 1e-6;其它值必须在 Python
+        # 包装层被拒绝,不能透传到 aclnn 后被静默丢弃。
+        for backend in ("stable", "ctypes"):
+            with self.subTest(backend=backend, epsilon=2e-6):
+                fake_torch = self._torch()
+                inputs = self._inputs(fake_torch)
+                captured = {}
+                options = self._options(32)
+                options.update(output_final_state=True, epsilon=2e-6)
+                with self.assertRaises(RuntimeError) as ctx:
+                    self._call(backend, fake_torch, inputs, options, captured=captured)
+                self.assertIn("epsilon", str(ctx.exception))
+                self.assertNotIn("launch", captured)
 
     def test_chunk32_rejects_unsupported_switches_before_launch(self):
         negative_options = (

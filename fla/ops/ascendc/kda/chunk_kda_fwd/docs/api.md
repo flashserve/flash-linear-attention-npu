@@ -85,7 +85,8 @@ outputs = chunk_kda_fwd(
 - 必须 `safe_gate=true`、`use_gate_in_kernel=true` 并提供 `A_log`；`dt_bias=None` 等价于零偏置。
   gate 语义为 `lower_bound * sigmoid(exp(A_log) * (g + dt_bias))`。
 - 必须 `use_qk_l2norm_in_kernel=true`、`use_beta_sigmoid_in_kernel=true`、
-  `allow_neg_eigval=false`、`use_exp2=true`；chunk32 的 epsilon 固定为 `1e-6`，不支持自定义。
+  `allow_neg_eigval=false`、`use_exp2=true`；chunk32 的 epsilon 固定为 `1e-6`，Python、
+  Stable 与 aclnn V2 对其它值一律拒绝（返回 `ACLNN_ERR_PARAM_INVALID`），不会静默丢弃。
 - 不导出 recompute 中间态或反向保存值：`disable_recompute` 和
   `return_intermediate_states` 必须为 `false`，`Aqk`/`Akk` 槽位返回 `None`，
   `gk/w/u/qg/kg/v_new/h` 也为 `None`。

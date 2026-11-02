@@ -1411,6 +1411,11 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
         if not bool(safe_gate):
             raise RuntimeError(
                 "npu_chunk_kda_fwd: chunk_size=32 currently requires safe_gate=True.")
+        if float(epsilon) != 1e-6:
+            raise RuntimeError(
+                "npu_chunk_kda_fwd: chunk_size=32 fixes epsilon at 1e-6; "
+                "other values are not plumbed to the fused kernel and would be "
+                "silently dropped.")
         if not (q.dtype == torch.bfloat16 and k.dtype == torch.bfloat16
                 and v.dtype == torch.bfloat16 and key_dim == 128 and value_dim == 128
                 and use_qk_l2norm_in_kernel and use_beta_sigmoid_in_kernel
