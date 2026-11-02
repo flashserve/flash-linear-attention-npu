@@ -64,15 +64,10 @@ struct ChunkFwdHTilingContext {
     // gated 复用路径：gate/state dtype token（gated tiling 字段值：1=bf16, 2=fp32）
     int64_t gatedGateDtype = 1;
     int64_t gatedStateDtype = 2;
-    // gated 复用 eligible（与 kernel 侧 FwdHGatedReusable 同条件）：
-    // g 模式 + fp32 gate + fp32 state + storeFinal + useExp2 + vfirst=0。
-    // eligible 时 blockDim 恒 aicCoreNum（gated 调度器要求全核参与 mode2
-    // 配对——收缩 launch 会导致 flag 配对残缺损）。
+    // gated 复用 eligible（与 kernel 侧 FwdHGatedReusable 同条件）；eligible 时
+    // blockDim 恒 aicCoreNum（gated 调度要求全核参与，收缩会致 flag 配对残缺）。
     bool gatedEligible = false;
-    // 链摊满 soc 门控（2026-10-29，用户约束"A2 的修改不能影响到 A5"+白名单裁定）：
-    // tiling.cpp 注入 GetCurNpuArch()==DAV_2201（A2/A3 家族白名单）——A5/950 恒
-    // false，spread 分支不触发，blockDim 保持原公式（A5 行为不变）。默认 false
-    // （保守：未显式注入则不开）。
+    // 链摊满 soc 门控：由 tiling.cpp 注入（DAV_2201 白名单，A5 恒 false）。
     bool spreadChainsAllowed = false;
 };
 
@@ -107,17 +102,8 @@ public:
         const uint64_t physicalAicCores = static_cast<uint64_t>(ctx_.aicCoreNum);
         const uint64_t headsPerCore =
             (totalHeadTasks + physicalAicCores - 1) / physicalAicCores;
-        // ——链摊满试验（2026-10-29，§9.10.10 后续）：少任务形态（任务数 < 2×物理核）
-        // 放开 blockDim 到 min(cores, tasks)——pair 核每核 AIC 串行服务 2 链指令流，
-        // 若 AIC 段是 chunk 周期主体（画像 AIV vec 仅 52.6% 佐证），单链核把 AIC 段
-        // 砍半可缩短链周期。gated 路径不参与（blockDim 恒全核）；dense 不受影响
-        // （headsPerCore≥2 时走原公式）。1 任务/核的正确性有 fn_ 小 head 用例先例。
-        // soc 门控（A5 隔离，用户约束）：spreadChainsAllowed 恒 false 于 A5/950。
-        // 可行性预判前置（守卫回退空核修复）：只有 任务数>核数 的区间 blockDim 才
-        // 偏离原公式（≤核数时原公式本就每核 1 链）；该区间若链摊满表写不成（dense
-        // 无权重表 / 对齐守卫不满足），抬高的 blockDim 只会带尾部空核（gk 定长实测
-        // +2.4%）——预判不过则回原公式。预判与 FillBalancedCoreBounds 内守卫同条件
-        // （r=任务-核、s=2核-任务，须 s 为 vNumHead 倍数且 2r≤vNumHead）。
+        // 少任务形态（任务数 < 2×物理核且非 gated）放开 blockDim 至
+        // min(cores, tasks)——每核单链缩短 chunk 周期；链摊满表不可写时回原公式。
         bool spreadOk = ctx_.spreadChainsAllowed &&
             !ctx_.gatedEligible && totalHeadTasks < 2 * physicalAicCores;
         if (spreadOk && totalHeadTasks > physicalAicCores) {
@@ -162,10 +148,8 @@ public:
         workspaceOffset += AlignUp(static_cast<size_t>(activeAicCoreNum * CHUNK_FWD_H_ROUND_HEAD_SLOTS *
                                                         kHeadDim * vHeadDim * sizeof(float)));
 
-        // ===== gated 复用路径 workspace 追加段 =====
-        // gated tiling struct 镜像（kernel 现场构造后由 gated kernel 消费；
-        // 尺寸按 ChunkGatedDeltaRuleFwdHTilingData 上界 256B）+ numSeq/numChunks
-        // 前缀表（int64 × (tokenBatch+1)）——gated scheduler varlen 建表用。
+        // gated 复用 workspace 追加段：tiling 镜像（256B 上界）+
+        // numSeq/numChunks 前缀表（int64 × (tokenBatch+2)）。
         tiling.gatedTilingOffset = static_cast<int64_t>(workspaceOffset);
         workspaceOffset += 256;
         tiling.gatedNumSeqOffset = static_cast<int64_t>(workspaceOffset);
@@ -202,14 +186,8 @@ private:
     // sequence weights are unavailable or degenerate (dense / fewer tasks
     // than cores / greedy produced fewer spans than cores).
     //
-    // ——A 轮 pair 原子化（2026-10-29）：切分最小单元改为 (seq, head-pair)——
-    // 单任务粒度的贪心在"少任务 × 长序列"形态（case32 类：每核 ~≤2 任务）会跨
-    // 序列切 span，核内 round 配到跨序列 head 对，破坏 MIX_AIC_1_2 双 AIV 并行
-    // 前提（pair slot 需同序列 2 head 各扛一链，画像铁证：vector1 空转 +12.9%）。
-    // pair 原子化后 span 边界恒对齐 pair 边界——核内连续 2 任务恒同序列，每
-    // round 配对自然成立。奇 vNumHead 的末 head 退化为单任务单元（该 round 单
-    // AIV，仅奇 head 形态受影响）。大任务数形态（case2 类）均衡粒度 2 倍化，
-    // 段长大数定律下均衡收益不变。GreedySpanCount 只看权重序列，签名不变。
+    // 切分最小单元为 (seq, head-pair)：核内连续 2 任务恒同序列（MIX 双 AIV
+    // 的 round 配对前提）；奇 vNumHead 的末 head 为单任务单元。
     void FillBalancedCoreBounds(::ChunkFwdHPlainTilingData &tiling,
                                 uint32_t blockDim, uint64_t totalHeadTasks) const
     {
@@ -246,11 +224,8 @@ private:
         if (taskCursor != totalHeadTasks || units.empty()) {
             return;
         }
-        // ——链摊满分配（核多于 pair 数时，与 blockDim 放开分支配套）——
-        // r = 双任务核数（尾段），s = 单任务核数：s + r = blockDim 且 s + 2r = total。
-        // 双核区间 [s, s+2r) 须整段在一个序列内（连续 2 任务同序列 pair）——对齐守卫：
-        // s 为 vNumHead 倍数且 2r ≤ vNumHead；不满足则回退 pair 贪心（安全）。
-        // 尾段 = seq-major 最后序列区间，case32 恰为最短序列（双核扛轻链最优）。
+        // 核多于 pair 数时的链摊满分配：s 个单任务核 + r 个双任务核
+        // （s+2r=total）；双核区间须整段在同一序列内，对齐不满足则回退均分。
         if (static_cast<int64_t>(blockDim) > static_cast<int64_t>(units.size())) {
             const int64_t totalT = static_cast<int64_t>(totalHeadTasks);
             const int64_t r = totalT - static_cast<int64_t>(blockDim);

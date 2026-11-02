@@ -16,9 +16,7 @@ namespace GDN {
 
 constexpr float FWD_H_ARCH22_LN2 = 0.69314718055994530942f;
 
-// [R6 证伪 2026-10-10] A2 向量 API 间无硬件 RAW 追踪（A5 RegBase 才有），
-// S1/S3 计算路径 9 处中间屏障为必要保护——剪除后 quick 20/25 FAIL
-// （v_new/final_state 双杆，每 tile 竞态窗口）。勿再按 A5 特性平移剪除。
+// A2 向量 API 间无硬件 RAW 追踪，S1/S3 计算路径的中间屏障为必要保护，勿剪除。
 template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST>
 class ChunkFwdHVecArch22 {
 public:
@@ -120,9 +118,7 @@ public:
 
 private:
     using PType = std::conditional_t<CompilePolicy::STATE_FP32, float, bfloat16_t>;
-    // T16：dense 专用 TILE_ROWS=16（host tiling key 保证 dense+unitHeads≤2 才选）。
-    // 单 slot 大缓冲布局：per-tile 标量/旗标/MOVEMASK 开销减半（trace 实测该类
-    // 占 AIV busy ~52%）。TILE_ROWS 随 DENSE_T16 编译期定，非运行时开关。
+    // T16：dense 专用 TILE_ROWS=16（host tiling key 保证 dense 且每 AIV 单 head 链才选）。
     static constexpr uint32_t TILE_ROWS = CompilePolicy::DENSE_T16 ? 16 : 8;
     static constexpr uint32_t TILE_ELEMENTS = TILE_ROWS * FWD_H_V;
     static constexpr uint32_t LOCAL_SLOT_BYTES = 32 * 1024;
@@ -134,10 +130,8 @@ private:
     // [64K,192K)；该模板下 stateBf16_ 是死代码，不再初始化（BF16 路径布局不变）。
     static constexpr uint32_t FP32_STATE0_BASE = 64 * 1024;
     static constexpr uint32_t FP32_STATE1_BASE = 128 * 1024;
-    // tile 双缓冲布局（每 slot 32K 内）：raw_[0,8K) 双份（FP32 P tile 4K/份）、
-    // cast [8K,12K)、calc [12K,16K)、io [16K,20K) 双份（2K/份）、right [20K,24K)
-    // 双份（2K/份）、gate/alpha/share [24K,28K)。MTE2(t+1) 只需等 MTE3(t-1)
-    // 排空（同 buf 上一次消费者），与 V(t)/MTE3(t) 并行——解除 tile 链全串行。
+    // tile 双缓冲布局（每 slot 32K 内）：raw 双份 [0,8K)、cast [8K,12K)、calc
+    // [12K,16K)、io/right 双份 [16K,24K)、gate/alpha/share [24K,28K)。
     static constexpr uint32_t RAW_BASE = 0;
     static constexpr uint32_t RAW_BUF_BYTES = 4 * 1024;
     static constexpr uint32_t CAST_BASE = 8 * 1024;
@@ -150,15 +144,9 @@ private:
     static constexpr uint32_t GATE_FP32_BASE = 25 * 1024;
     static constexpr uint32_t ALPHA_BASE = 26 * 1024;
     static constexpr uint32_t SHARE_BASE = 27 * 1024;
-    // T16 布局（CompilePolicy::DENSE_T16）：host 保证每 AIV 单 head 链（slot1 与
-    // FP32 state1 静态闲置），单 slot 内放 tile 翻倍的大缓冲——raw 双份 8K/份、
-    // io/right 双份 4K/份、calc 双份 8K/份（跨 tile RAW 由 V pipe FIFO 保序的
-    // 论证在 T8 布局靠双 buf 完全规避；T16 tile 内单 buf 时 S1 的 Sub/P 广播读
-    // 与 calc 写同 buf 依赖向量指令源/目的交错，A2 无硬件 RAW 追踪（vec.h 头部
-    // R6 警示），双份 calc 维持"计算(t) 写 calc[buf] 与 计算(t+1) 写 calc[buf^1]
-    // 交错安全"。cast 8K、gate 4K（T16 的 validTokens=64 fp32 gate 需 256B，
-    // KEY_GK 128 元素 512B，均宽裕）、share 2K（Broadcast 临时空间随 dst 行数
-    // 放大保守加倍）。单 slot 合计 56K ≤64K；[64K,128K) 为本 head 的 FP32 state。
+    // T16 单 slot 大缓冲布局（slot1 与 FP32 state1 静态闲置）：raw 双份 8K/份、
+    // io/right 双份 4K/份、calc 双份 8K/份（跨 tile RAW 保护）、cast 8K；
+    // [64K,128K) 为本 head 的 FP32 state。
     static constexpr uint32_t T16_RAW_BASE = 0;
     static constexpr uint32_t T16_RAW_BUF_BYTES = 8 * 1024;
     static constexpr uint32_t T16_IO_BASE = 16 * 1024;
@@ -168,20 +156,14 @@ private:
     static constexpr uint32_t T16_CAST_BASE = 32 * 1024;
     static constexpr uint32_t T16_CALC_BASE = 40 * 1024;
     static constexpr uint32_t T16_CALC_BYTES = 8 * 1024;
-    // T16 尾部区 [56K,64K)：gateRaw/gateFp32/alpha 各 1K（+对齐余量）、share 4K。
-    // 布局警戒（第四轮精度实证）：calc 双份 [40K,56K) 与 gate 区不可重叠——
-    // 首版 gateRaw 放 48K 被 calc[buf1] 覆写，gate 错→alpha 错→final_state
-    // 全域错而 h/v_new 不受影响（single_chunk 症状完全吻合）。share 4K：
-    // Broadcast tmp 按 dst 元素数增长（T8@1024 元素 1K 已验证），T16@2048
-    // 元素给 2 倍余量。单 slot 合计 60K ≤64K；[64K,128K) 为本 head 的 FP32 state。
+    // T16 尾部区 [56K,64K)：gate/gateFp32/alpha 各 1K、share 4K——不得与 calc
+    // 双份 [40K,56K) 重叠（重叠会互相覆写）。
     static constexpr uint32_t T16_GATE_RAW_BASE = 56 * 1024;
     static constexpr uint32_t T16_GATE_FP32_BASE = 57 * 1024;
     static constexpr uint32_t T16_ALPHA_BASE = 58 * 1024;
     static constexpr uint32_t T16_SHARE_BASE = 59 * 1024;
     static constexpr uint32_t TILE_BUFS = 2;
-    // N3：g(scalar)+FP32 的 S3 融合开关——三步（state 拷贝→Muls(α)→Add(D)）压成
-    // 两步（calc=D→Axpy(state,α)，dst=src·scalar+dst）。仅此组合可融合：KEY_GK 的
-    // gate 是逐 k 向量、BF16 路径 state 须 Cast 加载，均不适用。
+    // N3：g(scalar)+FP32 的 S3 融合开关（三步压两步，Axpy dst=src·scalar+dst）。
     static constexpr bool G_FP32_AXPY =
         CompilePolicy::STATE_FP32 && (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G);
 
@@ -190,9 +172,7 @@ private:
         return (row / TILE_ROWS) & 1U;
     }
 
-    // calc 的 tile 寻址：T16 布局双份（跨 tile RAW 保护）；T8 布局单份——所有
-    // tile 恒用 [0]，[1] 不初始化不寻址（冒烟实证：T8 若按 buf 交替会读写未
-    // 初始化的 calc_[slot][1]，v_new/final_state 双杆爆 300+ 误差）。
+    // calc tile 寻址：T16 双份（跨 tile RAW 保护）；T8 恒用 [0]（[1] 未初始化）。
     __aicore__ inline AscendC::LocalTensor<float> CalcBuf(uint32_t slot,
                                                           uint32_t buf) const
     {
@@ -203,9 +183,7 @@ private:
         }
     }
 
-    // raw_ 双份的 per-buf 元素步进：T16 布局 8K/份、T8 布局 4K/份（精度实证：
-    // T16 若沿用 4K 步进，final_state 中转写越界覆盖邻区，dense 全爆——
-    // fn_dense_t64_single_chunk 仅 final_state 错的最小复现面）。
+    // raw_ 双份 per-buf 元素步进：T16 8K/份、T8 4K/份。
     static constexpr uint32_t RAW_BUF_ELEMS =
         (CompilePolicy::DENSE_T16 ? T16_RAW_BUF_BYTES : RAW_BUF_BYTES) / sizeof(float);
     static constexpr uint32_t T16_RAW_ELEMS_P =
@@ -228,9 +206,7 @@ private:
         GetTPipePtr()->InitBuffer(ubBuf_, 192 * 1024);
         AscendC::LocalTensor<uint8_t> ub = ubBuf_.Get<uint8_t>();
         if constexpr (CompilePolicy::DENSE_T16) {
-            // T16 单 slot 大缓冲：host 保证 unitHeads≤2（每 AIV 单 head 链），
-            // 本 AIV 绑定的 head 恒落 localSlot 0（roundHead≤1 时 aiv=roundHead、
-            // localSlot=0），slot1 区并给 calc 双份（跨 tile RAW 保护，见布局注释）。
+            // T16 单 slot 大缓冲：本 AIV 绑定的 head 恒落 localSlot 0。
             static_assert(T16_RAW_BASE == 0 && T16_IO_BASE == 16 * 1024 &&
                               T16_RIGHT_BASE == 24 * 1024 && T16_CAST_BASE == 32 * 1024 &&
                               T16_CALC_BASE == 40 * 1024 && T16_CALC_BYTES == 8 * 1024 &&
@@ -476,9 +452,8 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot, buf));
     }
 
-    // WAIT_READY 模板维已收掉：tile 0 的 IoReady wait 与 gate 预处理（读 MTE2 装载
-    // 的 gateRaw_，须在 wait 之后）一并内联进 Compute，实例 8→4——热段取指足迹减半；
-    // wait 总数与 set/wait 配对不变，仅挪位，不触 §6.5-2 的屏障语义。
+    // tile 0 的 IoReady wait 与 gate 预处理（读 MTE2 装载的 gateRaw_，须在 wait
+    // 之后）一并内联进 Compute；wait 总数与 set/wait 配对不变。
     template <bool HAS_P, bool WRITE_RIGHT>
     __aicore__ inline void ComputeStage1Tile(const FwdHWorkUnit &unit,
                                              const FwdHChunkSpan &chunk,
@@ -522,10 +497,8 @@ private:
             if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
                 uint32_t dstShape[2] = {rows, FWD_H_V};
                 uint32_t srcShape[2] = {rows, 1};
-                // Broadcast 的 gate 广播临时必须随 tile buf 走（P 已被上方 Sub 消费，
-                // 同 buf 复用安全）：双缓冲下 tile t 的 MTE2 与 compute(t-1) 并行，
-                // 固定写 buf0 会覆盖 tile t 的在途 P 数据（R3 冒烟 v_new/final_state
-                // 双杆爆错根因）。
+                // Broadcast 的 gate 广播临时须随 tile buf 走：双缓冲下 tile t 的
+                // MTE2 与 compute(t-1) 并行，固定写 buf0 会覆盖在途数据。
                 AscendC::Broadcast<float, 2, 1>(
                     raw_[slot].template ReinterpretCast<float>()[buf * RAW_BUF_ELEMS],
                     gateFp32_[slot][row], dstShape, srcShape, share_[slot]);
@@ -569,8 +542,7 @@ private:
         // Stage1：V_new=cast_BF16(fp32(U)-fp32(P))；g-only 同时生成
         // V_new_g=cast_BF16(E(g_last-g_i)*V_new_fp32)，gk-only 的 right 即 V_new。
         const uint32_t slot = head.localSlot;
-        // stateBf16_ 零化（V 写、不依赖 MTE2 装载、与 io_/gateRaw_ 区域不相交）在
-        // tile 0 进 Compute 前发射；gate 预处理已内联 ComputeStage1Tile 的 wait 之后。
+        // stateBf16_ 零化在 tile 0 进 Compute 前发射（与 io_/gateRaw_ 区域不相交）。
         if (chunk.first && args_.tiling.useInitialState == 0) {
             if constexpr (!CompilePolicy::STATE_FP32) {
                 AscendC::Duplicate(stateBf16_[slot], static_cast<bfloat16_t>(0), FWD_H_K * FWD_H_V);
@@ -592,11 +564,9 @@ private:
                 AscendC::DataCopy(h[HOffset(unit, chunk, head)], stateBf16_[slot], FWD_H_K * FWD_H_V);
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot, 0));
             } else {
-                // STATE_FP32：stateBf16_ 区已被常驻 state 占用，H0=0 的 h 输出改以
-                // raw_（P tile 缓冲，S1 结束后空闲且无在途 MTE3 读者）作零值中转：
-                // V 写 raw_ → V_MTE3 桥 → MTE3 写 h。禁止经 io_/calc_——末 tile 的
-                // v_new MTE3 仍在途，同核 WaitFlag 只装载对应 pipe、不阻塞 scalar，
-                // V 写 io_ 会与其竞态（冒烟实证：chunk 0 末 tile 的 v_new 整块清零）。
+                // STATE_FP32：stateBf16_ 区已被常驻 state 占用，H0=0 的 h 输出经
+                // raw_（S1 结束后空闲）作零值中转；禁止经 io_/calc_（末 tile 的
+                // v_new MTE3 仍在途，V 写会与其竞态）。
                 for (uint32_t row = 0; row < FWD_H_K; row += TILE_ROWS) {
                     AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot, 0));
                     AscendC::LocalTensor<bfloat16_t> zeroTile =
@@ -803,11 +773,8 @@ private:
                           TILE_ELEMENTS);
             if constexpr (!WRITE_H) {
                 if constexpr (CompilePolicy::STORE_FINAL) {
-                    // calc_ 不得直接作 MTE3 源：双缓冲后 Load(t+1) 只等 t-1 的 MTE3
-                    // 排空，V 写 calc_(t+1) 与 MTE3 读 calc_(t) 失去排序（末 chunk
-                    // final_state 竞态根因）。经 raw_ buf（4KB；其中 D 已被本 tile
-                    // 的 Add 消费完毕）中转：V 拷入 → 桥接 → MTE3 读出；raw_[buf] 的
-                    // 下一写者 Load(t+2) 由 free(buf) 门控在本拷贝排空之后。
+                    // calc_ 不得直接作 MTE3 源：双缓冲下 V 写 calc_(t+1) 与 MTE3 读
+                    // calc_(t) 失去排序，须经 raw_[buf] 中转（D 已被本 tile 消费完）。
                     AscendC::LocalTensor<float> rawF = raw_[slot].template ReinterpretCast<float>();
                     AscendC::Adds(rawF[buf * RAW_BUF_ELEMS],
                                   CalcBuf(slot, buf), 0.0f, TILE_ELEMENTS);
@@ -958,8 +925,7 @@ private:
                     FwdHAivLocalFlag(FWD_H_RIGHT_FREE_FLAG, pairSlot));
             }
         }
-        // 跨 head_round 前必须把本轮所有 VEC->MTE3 写回收口。AIC 收到 ROUND_DONE 后
-        // 才能开始下一轮 kg/H/W 的 MTE2，避免上一轮 MTE3 与下一轮预取跨 round 交叠。
+        // 跨 head_round 前把本轮所有 VEC->MTE3 写回收口，避免与下一轮 AIC 预取交叠。
         for (uint32_t slot = 0; slot < localHeads; ++slot) {
             for (uint32_t buf = 0; buf < TILE_BUFS; ++buf) {
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot, buf));

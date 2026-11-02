@@ -155,19 +155,8 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     // gated 复用路径 dtype（gated tiling 约定：1=bf16, 2=fp32）
     tilingCtx.gatedGateDtype = gateDtypeToken == CHUNK_FWD_H_TPL_FP32 ? 2 : 1;
     tilingCtx.gatedStateDtype = stateDtypeToken == CHUNK_FWD_H_TPL_FP32 ? 2 : 1;
-    // gated 复用 eligible（与 kernel 谓词 FwdHGatedReusable 同条件镜像）：
-    // vfirst 条件 2026-10-26 收口轮补回（fe54077c 曾删）——gated 恒 [K,V]
-    // 产出，仅 vfirst=0 语义匹配；vfirst=1 由老路径 STATE_V_FIRST 模板处理
-    // （aclnn 层 varlen 感知路由：dense 翻译后进 gated / varlen 不翻译走老路径）。
-    // storeFinal 两值均放行（放宽轮①）：gated scheduler 运行时读
-    // storeFinalState 跳末段，与老路径同语义；性能上界实测 -26%/-47%。
-    // state fp32/bf16 均放行（放宽轮②）：gated update epilogue 原生支持
-    // bf16 final（CAST_RINT 量化同老路径），StateT 在 kernel 分流点选型。
-    // gate fp32/bf16 均放行：bf16 走 kernel 内 Cast，数值等价。
-    // soc 门控（第四处白名单，2026-10-29 A5 零影响加固）：gated 引擎仅
-    // A2/A3（arch22）编译，A5/未来芯片 kernel 无 gated 分支——host 若置
-    // eligible 会强设 blockDim=全核并预留 gated workspace，造成 A5 与基线的
-    // 行为偏差（2af1ad58 起存在的已知偏差，本次按"PR 修改禁止影响 A5"收敛）。
+    // gated 复用 eligible（与 kernel 谓词 FwdHGatedReusable 同条件）；仅 DAV_2201
+    // ——其余芯片 kernel 无 gated 分支，置 eligible 反致 blockDim/workspace 偏差。
     tilingCtx.gatedEligible = useG && useExp2 && !stateVFirst &&
         (gateDtypeToken == CHUNK_FWD_H_TPL_FP32 || gateDtypeToken == CHUNK_FWD_H_TPL_BF16) &&
         ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
@@ -175,9 +164,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
 
     // P1: per-sequence chunk counts (ListInt attr #11, built by l0op from the
     // host-readable cu_seqlens). Empty/absent list keeps the uniform partition.
-    // 门控白名单（2026-10-29 用户裁定，原 !=ASCEND950 黑名单式改）：仅 DAV_2201
-    // （A2/A3 家族）启用均衡分区——A5（3510）与未来新芯片默认不进，专项验证后
-    // 加白（黑名单式会让未验证的新芯片误入本分支）。
+    // 均衡分区仅 DAV_2201 启用（白名单式，新芯片默认不进）。
     tilingCtx.seqChunkCounts = nullptr;
     tilingCtx.seqCount = 0;
     const bool socSupportsBalanced =
@@ -189,10 +176,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
             tilingCtx.seqCount = static_cast<int64_t>(seqChunkList->GetSize());
         }
     }
-    // 链摊满 soc 门控（2026-10-29，用户约束"A2 的修改不能影响到 A5"+白名单裁定）：
-    // 仅 DAV_2201（A2/A3 家族——Ascend910B1~B4/B2C/910_93 同归本架构，运行时核数
-    // 经 GetCoreNumAic 自适应）启用；未来新芯片默认不进，待专项验证后加白。
-    // 勿用 !=ASCEND950 黑名单式（新芯片会误入未验证分支）。
+    // 链摊满仅 DAV_2201 启用（白名单式）。
     tilingCtx.spreadChainsAllowed =
         ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
 
@@ -232,20 +216,8 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     ChunkFwdHTilingProcessor processor(tilingCtx);
     processor.Process(plainTiling, blockDim, workspaceSize);
 
-    // T16：dense 专用 TILE_ROWS=16 布局选择（arch22 A2/A3 限定）。仅同时满足
-    // ①非 varlen（无尾块、unit 恒切满头）②AIV 每 unit 单 head 链（unitHeads≤2，
-    // 即 slot1/FP32 state1 静态闲置，单 slot 大缓冲 UB 预算成立）时选 1；
-    // 其余形态（变长/4-head unit）恒走原 TILE_ROWS=8 双 slot 路径，行为不变。
-    // unitHeads 由每核 head 数对 FWD_H_AIC_HEAD_SLOTS=4 的切分决定：unit 头数
-    // ≤2 即 headsPerCore ≤2（均分口径 ceil(total/cores)≤2）。
-    // soc 门控白名单（2026-10-29 用户裁定，原 !=ASCEND950 黑名单式改）：仅
-    // DAV_2201（A2/A3）开 T16；A5（3510）arch35 路径零改动；未来新芯片默认
-    // 不进，专项验证后加白。
-    // 2026-11-02 修复：条件必须按总 head 任务数（batch × vNumHead）判——原判
-    // vNumHead（每序列头数）在 B=1 恰与总任务相等故历史全绿；B>1 dense 时每核
-    // 可达 3+ 头，work unit 出现 slot1 链，其缓冲区（LocalBase(1)=32K 起）落入
-    // T16 单 slot 大缓冲区 [0,60K) 内被 calc 双份覆写——泛化集 acc_v2 88 例
-    // dense×B≥2×noexp2 形态 NaN/垃圾值的根因（二分定案：引入于 888449ca）。
+    // T16：dense 且总 head 任务数（batch × vNumHead）≤ 2×blockDim 时选 1（每
+    // AIV 单 head 链，单 slot 大缓冲布局）；超限则 slot1 链缓冲与大缓冲重叠，走 T8。
     const bool denseT16Eligible = !plainTiling.isVariedLen &&
         plainTiling.batch * plainTiling.vNumHead <= 2 * static_cast<int64_t>(blockDim) &&
         plainTiling.seqlen > 0 &&
