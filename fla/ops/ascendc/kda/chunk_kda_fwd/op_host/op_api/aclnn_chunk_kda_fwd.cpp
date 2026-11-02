@@ -999,6 +999,17 @@ aclnnStatus CheckChunkKdaFwd32Params(const ChunkKdaFwdParams &params, KdaFwdLayo
         OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "H/HV", std::to_string(info.hNum) + "/" + std::to_string(info.hvNum), "H>0 and HV a positive multiple of H");
         return ACLNN_ERR_PARAM_INVALID;
     }
+    // 与通用路径同一上限:超出模型符号表约束的 H/HV 必须拒绝,不能放行进 kernel。
+    if (info.hNum > MAX_KDA_HEAD_NUM || info.hvNum > MAX_KDA_HEAD_NUM) {
+        OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "H/HV", std::to_string(info.hNum) + "/" + std::to_string(info.hvNum), "<=128");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    // safeGate=true 已在前置强制;lowerBound 必须有限且落在 [-5, 0),
+    // 正下界会翻转 safe gate 符号并可能造成核内指数溢出。
+    if (!std::isfinite(params.lowerBound) || params.lowerBound < -5.0 || params.lowerBound >= 0.0) {
+        OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "lowerBound", std::to_string(params.lowerBound), "a finite value in [-5, 0)");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     if (info.kDim != KDA_FWD_KV_DIM_LARGE || info.vDim != KDA_FWD_KV_DIM_LARGE) {
         OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "K/V", std::to_string(info.kDim) + "/" + std::to_string(info.vDim), "128/128");
         return ACLNN_ERR_PARAM_INVALID;
