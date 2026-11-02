@@ -29,8 +29,9 @@ PR 合入前仍需要 2 个 approval。该要求由 GitHub 分支保护原生能
 
 - `fla/ops/**/op_host/*_def.cpp` 中的 `Input` / `Output` / `Attr` / dtype / format / required / optional 等定义
 - `fla/ops/**/op_host/op_api/aclnn_*.h` 和 `aclnn_*.cpp` 中的 aclnn 接口签名、入参类型和返回相关声明
-- `torch_custom/fla_npu/npu_custom.yaml` 等 torch schema 文件中的 `func` 定义
-- `torch_custom/fla_npu/op_plugin/ops/opapi/**` 中的 torch 适配接口签名
+- `torch_custom/fla_npu/csrc/src/stable_*.cpp` 中的 dispatcher schema、适配函数及 ACLNN 调用
+- `torch_custom/fla_npu/csrc/include/stable/**` 中的公共 ABI、boxed 参数与 tensor 描述符契约
+- `torch_custom/fla_npu/fla_npu/ops/ascendc/_stable.py` 中的公共 Python 签名及参数转换
 
 如果 PR push 了新 commit，相关 ABI 检视也应重新确认。
 

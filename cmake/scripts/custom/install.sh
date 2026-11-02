@@ -682,6 +682,12 @@ if [ $? -ne 0 ];then
     exit 1
 fi
 
+log "[INFO] upgrade ABI manifest"
+upgrade_file abi_manifest.json
+if [ $? -ne 0 ];then
+    exit 1
+fi
+
 upgrade_proto
 if [ $? -ne 0 ];then
     exit 1

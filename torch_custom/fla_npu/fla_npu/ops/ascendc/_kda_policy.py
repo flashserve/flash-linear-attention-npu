@@ -120,7 +120,7 @@ def _validate_kda_recompute_layout(input_layout):
 
 
 def _validate_kda_bwd_a5_options(args):
-    from ._runtime import optional_bool
+    from ._parameters import optional_bool
 
     if args["implementation"] not in ("auto", "optimized"):
         raise ValueError("A5 single-layout backward supports auto/optimized; legacy is not supported")
@@ -135,7 +135,7 @@ def _prepare_kda_bwd_arch22(args):
     import math
     import torch
     import torch_npu
-    from ._runtime import (
+    from ._parameters import (
         optional_bool, optional_float, ACL_FORMAT_ND, ACL_FORMAT_NCHW,
         ACL_FORMAT_NCDHW, ACL_FORMAT_NCL,
     )

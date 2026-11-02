@@ -10,7 +10,7 @@
 
 flash-linear-attention-npu 算子库由天津大学主导开发，是一个面向昇腾架构的高性能线性注意力算子库，对标 Flash-Linear-Attention 项目，旨在为昇腾平台提供高效的线性注意力计算实现。
 
-本仓不自动安装 `torch`、`torch_npu`、`torchnpugen`、`triton-ascend`，这些包必须与 CANN 与 Python 版本匹配，需要使用者按环境自行安装；版本不匹配时，构建或运行会报错。依赖匹配关系与检查方式见下文 Step 1 / Step 2。
+所有 AscendC 算子统一通过 Stable ABI 调用。wheel 声明 `torch>=2.7.1`、`torch_npu>=2.7.1` 运行时依赖；源码构建不自动安装框架，使用 `--no-deps` 安装 wheel 时也需自行准备与 CANN/Python 配套的 torch、torch_npu 和 triton-ascend。Stable launcher 构建仍需要 torch 的链接库；不需要 torchnpugen 或 legacy 扩展。依赖匹配关系与检查方式见下文 Step 1 / Step 2。
 
 ## ⚡️快速上手
 
