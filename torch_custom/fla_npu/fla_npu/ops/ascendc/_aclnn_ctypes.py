@@ -4677,6 +4677,16 @@ def npu_chunk_kda_bwd_intra(
     Varlen uses zero-copy TND [T,H,D], with BSND [1,T,H,D] accepted as a
     storage-compatible form. q/k must be BF16; beta accepts BF16 or FP32.
     """
+    import warnings
+
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_chunk_kda_bwd_intra is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_kda_bwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
+
     import torch
 
     tensors = {
