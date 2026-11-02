@@ -2,84 +2,156 @@
 
 方案设计规则版本：`V2`
 
-接口和输入约束见 [api.md](api.md)，精度、性能及各轮验证范围见[测试记录](../../../../../../tests/atk/recurrent_kda/README.md)。本文描述当前实现；开发过程记录和流水图不随 PR 提交。
+本文依据 2026-11-02 修订的 `recurrent-kda-a5-regbase-redesign-20261026.md` 整理 A5 目标方案，接口基线为远程 main 提交 `5beac1e01cadce9f99d48d19b86f4cb5e2da32a1`。公开参数见 [api.md](api.md)，历史验证范围见[测试记录](../../../../../../tests/atk/recurrent_kda/README.md)。目标不等于已完成实现；当前代码的主要差异单列于文末，本次文档更新不代表重新构建或验收。
 
 ## Host 与平台路径
 
-`layout` 保持原接口语义：BSND 输入 rank4、TND 输入 rank3；是否传入 `cu_seqlens` 独立决定请求边界。无 CU 时 BSND 按 batch 行划分、TND 为单请求；有 CU 时均按展平 token 的 offset 划分。输出 shape 与 v 相同。`use_gate_in_kernel` 控制 raw gate，开启须传 A_log；关闭时 A_log、dt_bias 为空且 safe_gate=false。A2/A3/A5 共用这些公开语义。
+保留 Python、stable、ctypes、ACLNN、L0 和 schema 的原有签名、顺序、默认值及返回别名，不新增 `prepared_metadata`。`layout` 决定物理维度：BSND 为 rank4，TND 为 rank3；CU 独立决定请求边界。无 CU 时 BSND 按 batch 行划分、TND 为单请求；有 CU 时均在展平 token 上划分请求，输出 shape 与 v 相同。
 
-设备 CU、indices、accepted 在每次执行中读取，host 只检查 shape/dtype 和不依赖内容的约束。删除私有 prepared_metadata 属性、host 元数据快照及值依赖 tiling，不冻结捕获后的请求边界或状态槽位。kernel 保留边界、容量和活跃槽位的防御检查，非法设备内容不执行相应任务；它不是同步 host 报错承诺。元数据生产者与算子依靠调用 stream 或调用方显式跨 stream 事件建立依赖。
+`use_gate_in_kernel` 决定 g 的解释，不能由 A_log 是否存在替代：开启时须传 A_log，可传 dt_bias；关闭时 A_log、dt_bias 必须为空且 safe_gate=false。safe_gate 的 lower_bound 保留原约束。Nk、Nv 不超过256，Nv 是 Nk 的整数倍；这些公开语义由 A2/A3/A5 共用。
 
-A5 V=128 保留优化实现及长序列扩展，固定 X=8，有无 CU 均采用相同窗口容量。host 直接校验固定窗口所需 UB，不按长度枚举 X；kernel 的窗口、输入/参数/out/事件区偏移及槽间距均为编译期常量，不再统计最大请求长度、动态选择窗口或重建偏移。每个 tile 仍只计算实际有效 token，不补算到8个。每次执行及图回放仍读取当前 CU、indices、accepted，保留请求边界与槽位合法性检查，不增加 host 同步或元数据快照。A5 V=256 使用原 arch35 实现，每段长度不超过8。A2/A3 沿用 generic 计算及 UB 预算。
+host 校验 shape、dtype、stride 和不依赖设备内容的容量约束。CU、indices、accepted 在每次执行时从设备读取，不做 D2H、host 值快照或捕获后固定请求计划。kernel 保留请求边界和槽位合法性检查；设备非法内容的处理遵循原入口约定，不将设备防御检查描述为同步 host 报错。元数据生产者与算子使用调用 stream 或调用方显式跨 stream 事件建立依赖，ACLGraph replay 使用本轮数据。
 
-A5 tiling 预计算 head 比例和 VF 功能位；kernel 组合运行时 bank、slot 和有效 token 数启动 VF。参数槽保留完整地址。新增内部字段不改变公开 ACLNN/Python 参数，A2/A3 不使用 A5 功能位。
+A5 的 K=V=128 路径支持长序列，host/kernel 共用编译期常量 `RKDA_A5_WINDOW_TOKENS=8`。保留的 `tiling.windowSize` 固定写8，不按 layout、shape、最大请求长度或 CU 内容选窗，也不重建 UB 偏移。每 tile 有效长度为 `min(8,end-tileStart)`，不补算无效 token。A5 V=256 保留每段长度不超过8的原路径；A2/A3 保留原 generic 长序列路径和独立资源预算。
 
-Q/K 归一化统一使用 `x/sqrt(sum(x*x)+1e-6)`，零向量仍输出零。A5 V=128 的 BF16 State 仍跨 token 按 BF16 舍入、out 使用当前寄存器中的未舍入值。非原位入口保留已修复的初态复制，避免从未初始化的 scratch 递推。
+Q/K/V 使用各自真实 stride，支持原接口允许的 causal_conv1d 切片等非连续输入。直接读取、连续化及拒绝重叠 descriptor 的判定沿用原入口，不能将 BSND 有 CU 误作 TND 或弃用组合。tiling 可预计算 head 比例、功能位和不变搬运描述符；动态 bank 归属和 DMA 完成依赖仍由 kernel 管理，不引入全序列任务表或算法 workspace。
 
-## A5 调度与 UB
+## A5 Stage 与任务映射
 
-单 Vector Stage 按 tile → token 执行。A5 V=128 的仅末态、逐 token 快照及不写 State 路径统一每 token 启动一次 VF，V-first/K-first、FP32/BF16 使用相同执行粒度；VF 内不再循环多个 token。输入仍按固定 X=8 双缓冲，单 token VF 按任务内 token 偏移选择当前输入/out 槽中的行，整个 tile 完成后批量搬出 out。每个任务根据 bank 当时的可用状态选出两个 bank 交替递推，另一个可复用 bank 预取下一任务初态，角色不固定绑定到物理 bank 编号。逐 token 快照覆盖源 bank 前必须等待对应 MTE3 完成。当前 tile 首个 VF 启动后提交另一槽输入和可用第三 bank 的预取，覆盖前等待与尾部排空保留。
+单个 Vector Stage 覆盖预处理、State 递推和输出。任务为一个请求的一个 value head，共 `B_request*Nv` 个，按 AIV 数量作 grid-stride 分配；`hk=hv/(Nv/Nk)`，使用整数除法。同一 State 的 token 串行，不同任务由不同 AIV 或同核后续任务处理。
 
-State 搬出行描述符在每核任务循环外构建并复用。定长输入地址直接使用当前或预取任务已解析的 request 和起始 token，按各自 batch stride 与相对 token stride 计算 Q/K/V 地址，不再对展平 token 重复除余；packed 输入仍按全局 token stride 寻址。不新增按 token 展开的任务表或算法 workspace。
+目标循环为 `tile → token → V行块`：每个 tile 启动一次顶层 VF，VF 内处理该 tile 的全部有效 token。块行数 R 不固定为4，可分别为 V-first BF16、V-first FP32、K-first BF16、K-first FP32 选择寄存器组织；不能以改变分组为由改变数学语义。完整窗口和尾窗口均按有效 token 执行。
 
-A5 V=128 使用静态 Tensor 空间管理：直接以 UB 地址0和编译期总长度构造 `LocalTensor<uint8_t>`，不创建 TPipe/TBuf，不调用 InitBuffer。各 State bank、双缓冲输入/参数/out 和尾部 scratch 沿用上述固定偏移，地址范围为 `[0,eventOffset+2048)`；host 容量校验和编译器预留区保持不变。入口显式调用 `InitSocState()`，所有任务清理后调用 `PipeBarrier<PIPE_ALL>()`。A2/A3 generic 和 A5 V=256 在各自分支内保留 TPipe，执行时不与静态路径混用。接口和约束参考[静态 Tensor 编程](https://asc.gitcode.com/guide/programming_guide/programming_model/ai_core_simd_programming/cpp_tensor_programming/static_tensor_programming.html)。
+Main Scalar 读取元数据、准备描述符并提交 VF/DMA；Vector 完成所有数值计算。输入和 out 双缓冲，参数使用当前/后继任务双槽。算法 workspace、L1 和 L0 使用量均为0，系统 workspace 另计。性能口径为 msprof `op_summary` 的目标 kernel `Task Duration(us)`，调用链连续化等额外开销另列。
 
-A5 V=128 的核内跨流水同步使用 Mutex::Lock/Unlock，不使用 SetFlag/WaitFlag。12个 MutexID 通过独立于 TPipe 的 AllocMutexID/ReleaseMutexID 管理，不硬编码硬件编号。Lock/Unlock 在同一流水严格成对，同流水访存依赖继续用 LocalMemBar/PipeBarrier。接口参考 [Mutex](https://www.hiascend.com/document/detail/en/CANNCommunityEdition/910/API/ascendcopapi/docs/en/api/SIMD-API/basic_api/sync_control/intra_core_sync/Mutex_ISASI.md) 和 [Lock约束](https://www.hiascend.com/document/detail/en/CANNCommunityEdition/910/API/ascendcopapi/docs/en/api/SIMD-API/basic_api/sync_control/intra_core_sync/Lock.md)。A2/A3 generic 和 A5 V=256 不使用这套新 Mutex 调度。
+## 寄存器计算与输出
 
-| 资源 | ID份数 | 持锁范围与复用条件 |
-| --- | --- | --- |
-| State访问 | 3 | MTE2初始化目标bank；每个VF读源、写目标，两个bank均持锁至该VF结束；防止MTE2覆盖旧VF仍在读取的State |
-| State快照 | 3 | MTE2初始化、VF写目标、MTE3读快照；VF读源不持此锁，允许VF读与旧快照读重叠 |
-| 输入 | 2 | MTE2整tile搬入、V整tile消费；再次搬入相同槽前自动等待V读完 |
-| 参数 | 2 | MTE2任务参数搬入、V整任务消费；保留跨token读取所需生命周期 |
-| out | 2 | V整tile生成、MTE3整tile批量搬出；再次覆盖相同槽前自动等待DMA |
+Q/K、gate、beta 和 State 的数值中间结果均采用 FP32。目标 Q/K 归一化沿用固定接口基线 A5 的正范数除法、零范数不除：
 
-State初始化按“访问锁→快照锁”获取，DMA后反序释放，再按参数槽获取/释放参数锁。每个单token VF在外部先获取源访问锁、目标访问锁、目标快照锁，VF后反序释放。MTE3仅获取对应bank的快照锁，复制完成后释放。这样MTE2覆盖等待旧VF与旧DMA，Vector覆盖等待旧DMA，而Vector读源不等待同一bank上的旧DMA读。每个Mutex在所有者切换后建立对应流水依赖，不用同流水的连续Lock代替访存屏障。
+```text
+q_hat = FP32(q); k_hat = FP32(k)
+if use_qk_l2norm_in_kernel:
+    q_norm = sqrt(sum(q_hat*q_hat)); k_norm = sqrt(sum(k_hat*k_hat))
+    if q_norm > 0: q_hat /= q_norm
+    if k_norm > 0: k_hat /= k_norm
+q_scaled = scale*q_hat
+```
 
-indexed 路径当前任务校验后立即提交首态、参数和首tile输入，再解析下一任务。首VF由输入、参数和State访问锁等待MTE2就绪；下一任务非法时不启动当前任务VF，外层统一通过Scalar获取全部资源，排空已提交搬入。仅末态路径保留原lookahead和Scalar循环提交位置；两种模式均每token一次VF。下一初态预取继续选择当前两个递推bank以外的可用bank，未采用三bank轮换或末token才预取的候选。
+此目标不通过加入 epsilon 改变微小范数输入；与当前代码的差异见文末。beta 按开关执行 sigmoid，只有开启 sigmoid 且 allow_neg_eigval=true 时再乘2。预计算 gate 使用 `alpha=exp(g)`；raw gate 使用 `x=g+dt_bias`（无偏置时 x=g）、`a=exp(A_log)`，普通分支为 `alpha=exp(-a*softplus(x))`，safe 分支为 `alpha=exp(lower_bound*sigmoid(a*x))`，softplus/sigmoid 保留稳定实现。
 
-逐token快照由VF释放目标快照锁后交给MTE3，下一次Vector覆盖目标bank前重新获取该锁。相邻快照目标槽重复时保留MTE3单流水屏障；更早快照在其源bank再次被覆盖前完成。仅末态模式在最后一个token后搬出State；out始终在整个tile完成后批量搬出。末快照与out可跨任务在途，Scalar只更新已提交资源的逻辑预留；实际DMA完成由资源Mutex保护，不在Scalar上回收旧DMA后才提交当前快照。
+每个 V 行在寄存器内完成完整更新，行内 K 维归约：
 
-每tile开始V获取输入/out槽，结束释放输入/out槽；Scalar不等待tile计算结束即可继续提交搬出和后续任务。MTE3获取out槽锁后才实际搬出完整tile，后续MTE2搬入、Vector覆盖及参数槽复用由各自资源锁等待消费者释放。参数锁从任务首VF之前持有到末VF之后，VF保留VST→VLD屏障，保证递推State与scratch的同流水依赖。所有正常、全空、非法元数据和尾任务出口均回到统一清理：Scalar依次获取并释放12个资源，确认最终所有者完成后ReleaseMutexID，再退出UB生命周期。无State写回时不获取MTE3快照锁，但VF和初态搬入仍按相同访问规则保护bank。
+```text
+decayed[k] = State_prev[v,k]*alpha[k]
+prediction = sum_k(decayed[k]*k_hat[k])
+delta = beta_eff*(value[v]-prediction)
+State_new[k] = decayed[k]+delta*k_hat[k]
+out[v] = sum_k(State_new[k]*q_scaled[k])
+```
 
-State 在 UB 保持接口 dtype，Cast 在寄存器中完成；BF16 写回使用 Cast_RINT，不保存 FP32 State 影子。当前 token 的 out 使用舍入前的 FP32 更新值。两个 FP32 out 寄存器保存完整 token，最后两次 Cast/Store 到 UB；整个 tile 完成后批量提交 MTE3。
+每个 State 元素每 token 在 UB 中逻辑读一次、写一次，衰减、prediction、delta 和更新结果不写数值 scratch。跨行交错独立 Load/Cast、计算及 Store，控制寄存器生命周期；归约顺序和乘加重排需单独核验精度，不能仅依据静态指令数认定收益。
 
-V-first 的四个 V 行归约结果作为 out 收集粒度，计算分组不受四行约束。K-first 全程保持 K-first，GM 接口布局不变，UB State 每行增加32B间隙：FP32 pitch=136、BF16 pitch=144，沿连续 V 方向 Load/Store。
+BF16 State 在 GM 和 UB 中只保留 BF16。读入寄存器后 Cast 为 FP32，写 UB 前 Cast_RINT，不保存 FP32 State 影子；当前 token 的 out 使用舍入前的 FP32 更新值，后续 token 使用已经舍入的 State。FP32 State 直接加载和写回。
 
-A5 V=128 固定 X=8，资源峰值为 `199744+3072*8+2*256=224832` 字节；FP32 K-first 额外增加12288字节，即237120字节。BF16 K-first 与 V-first 无额外 bank 分配。不增加算法 workspace。
+128个 out 元素按 V 行位置收集在两个64元素 FP32 寄存器中，不限制每次处理四行。完整 token 计算结束后，两个寄存器分别转换为 BF16，以两次 Store 写入当前 tile 的 out 槽。整个 tile 的 VF 完成后再批量搬出有效 token 的 out，不逐 token 启动 out DMA。
 
-V-first/K-first 复用 `[eventOffset+256,eventOffset+768)` 的512B尾部预留区，分别传递 delta 或 prediction 系数。不再使用前36B的 token/done 事件字；此区不与 DMA 输入/out、State bank 重叠，State 预取不使用此区。保留专用 VST→VLD 屏障和逐 token 复用条件，UB 总峰值公式不变。
+## State 布局与槽位
 
-## V-first 寄存器计算
+V-first 始终使用 `[V,K]`，K-first 始终使用 `[K,V]`，初态、UB、快照和末态保持同一接口 layout，不设独立转置阶段。UB 使用紧凑布局：V-first 元素偏移为 `v*K+k`，K-first 为 `k*V+v`。
 
-完整8-token tile 和不足8个 token 的尾 tile 均采用单 token VF、两遍 State 读取。VF 分派仅区分融合功能和 State 布局，不按完整/尾 tile 分派多 token VF；公开 TilingKey 不变。每 token 将128个 v 批量转成 FP32，q 已包含归一化和 scale，alpha、beta 沿用门控及 sigmoid 规则。每次 VF 重新加载所需 head 参数，不能将历史每 tile 一个 VF 的参数复用收益沿用到当前结构。
+V-first 沿 K 连续加载/写回 V 行。K-first 沿 K 跨距 Gather 一个 V 行到寄存器，按同样公式更新，再 Scatter 到 next bank 的原 K-first 位置。BF16 相邻 V 元素成对按32位加载、解包及打包，更新在 FP32 寄存器完成，打包前按 RINT 转换；单元素或尾部写回须保留未更新的另一半，不能额外舍入。K-first 不增加布局转换、快照缓冲或每行 padding。
 
-第一遍只读当前 State bank，计算 `prediction[v]=Σ_k State[v,k]*(alpha[k]*k[k])`，按四行收集到两个 FP32 寄存器，再批量形成 `delta=v-prediction`。将 delta 以两次 VST 写入512B scratch，经 VST→VLD 屏障由第二遍读取；本 token 最后一行消费完成后，下一个 token 才能覆盖。
+初态和写回槽位遵循原接口：
 
-第二遍重读同一源 bank，使用每 token 预计算的 `beta*k`，通过 MulAddDst 计算 `State_next=alpha*State+delta*(beta*k)`。先用未舍入的更新值计算 out，再以接口 dtype 写另一 bank；State Store 先于 out 收集。prediction/out 点积用一条 Mul 和一条 MulAddDst 合并两个64列片段，再按原归约树求和。
+```text
+write_slot(t) = request                      # 无 indices
+                indices[t]                  # packed indices
+                indices[request,t-start]    # speculative indices
+initial_slot = request                      # 无 indices
+               write_slot(start)            # 有 indices、无 accepted
+               write_slot(start+accepted[request]-1) # 同时有 accepted
+write_state = (inplace_final_state or output_final_state)
+              and (has_indices or t == end-1)
+```
 
-BF16 第一遍将两行 Load/Cast、点积交错，再处理后两行；第二遍在寄存器读入后 Cast 为 FP32、写回前 Cast_RINT。FP32 第二遍以滚动双行更新，在生成低片段 out 乘积后提前 Store 并释放低片段 State，随后完成高片段点积和写回。两种调度均保留四个归约结果的收集方式、512B residual UB 传递及必要同步。
+accepted 仅影响初态选择，不截短 token 递推。空请求跳过，无 indices 时仅写末态，有 indices 且需要写 State 时逐 token 写快照。重复目标槽按 token 顺序提交并保护在途写；不同请求不得发生接口禁止的活跃槽冲突。非原位路径先完成原接口要求的初态复制，输出 shape、dtype 和 alias 规则不变。
 
-每 token State 有效 UB 读取量为 FP32 128KiB、BF16 64KiB，写入分别为64KiB/32KiB。两遍读取以增加 UB 读取和 BF16 转换换取更短的 State 寄存器生命周期，不减少逐行归约，不改变 GM 流量。乘法重排和 FMA 可能改变 FP32 舍入，按原 CPU 标杆、值域及混合容差验收。
+## UB 静态空间与生命周期
 
-## K-first 寄存器计算
+A5 V=128 使用静态 Tensor：按编译期字节地址、元素类型和元素数量构造 LocalTensor/子视图，不通过 TPipe、TBuf、TQue、TQueBind 或 TBufPool 分配，也不与独立静态地址混用。完成目标平台所需运行环境初始化，核对基础 API 的保留空间及 Mutex ID，guard 不能作为数值中间区。A2/A3 和 A5 V=256 不强制迁移。
 
-FP32/BF16 均沿连续 V 方向两遍计算，每个 FP32 寄存器覆盖64个连续 V 元素；BF16 在 Load 后于寄存器转 FP32。两遍均从当前 State bank 读取，直接消费两个 FP32 v 寄存器，不需要 vFloat scratch。
+固定 X=8，每个 State bank 预留完整 FP32 容量64 KiB；BF16 内容实际占32 KiB。两种 dtype、两种 layout 分支互斥，目标采用同一份地址布局，所有区间为32 B对齐的半开区间：
 
-每 token 在寄存器计算完整 `alpha*k`，两次 VST 写入512B scratch，经专用 VST→VLD 屏障后，第一遍沿 K 从 UB 广播系数，替代128次寄存器 Gather 和128次 lane 自增，累计 `prediction=Σ State*(alpha*k)`。系数在第一遍结束前全部消费，第二遍不再读取此区；下一 token 在前一 token 更新和必要屏障后复用。
+| UB 区间（KiB） | 大小 | 对象 | 生命周期 |
+| --- | ---: | --- | --- |
+| `[0,64)` | 64 KiB | State bank 0 | 递推、搬出或初态预取，旧访问结束后复用 |
+| `[64,128)` | 64 KiB | State bank 1 | 同上，不固定角色 |
+| `[128,192)` | 64 KiB | State bank 2 | 同上，不固定角色 |
+| `[192,196)` | 4 KiB | qIn 双槽 | MTE2 写入至 VF 最后一次读取 |
+| `[196,200)` | 4 KiB | kIn 双槽 | 同上 |
+| `[200,204)` | 4 KiB | vIn 双槽 | 同上 |
+| `[204,212)` | 8 KiB | gIn 双槽 | 原 dtype 输入，按最大4 B预留 |
+| `[212,212.5)` | 0.5 KiB | betaIn 双槽 | 每 token 占32 B行间隔，单槽256 B |
+| `[212.5,213.5625)` | 1.0625 KiB | A_log/dt_bias 双槽 | 当前及后继任务参数，各任务内全部 tile 复用 |
+| `[213.5625,217.5625)` | 4 KiB | out 双槽 | VF 写入至 MTE3 读取完成 |
+| `[217.5625,219.5625)` | 2 KiB | guard reserve | 对齐和实现安全边界，无数值 tensor |
 
-随后两个向量计算 `delta=beta*(v-prediction)`。第二遍逐 K 计算 `State_next=alpha*State+delta*k`，先累计 `out=Σ State_next*q`，再以接口 dtype 写另一 bank；BF16 写回使用 Cast_RINT，不从已舍入的 BF16 结果计算当前 token 的 out。第二遍系数从 q/k/alpha 寄存器 Gather 广播。
+A_log 单槽预留32 B，dt_bias 为 `128*4=512 B`，双槽共 `2*(32+512)=1088 B`。总峰值为 `196608+3072*8+512+1088+2048=224832 B=219.5625 KiB`。按历史可用248 KiB预算，连续余量为29120 B；host 必须核对实际可用容量。短请求、尾 tile 不缩减空间，K-first 不另增 bank 容量，算法 workspace 为0。
 
-连续访问省去 State Gather/Scatter、逐行归约和四行 out 收集。每 token State 有效 UB 读取量为 FP32 128KiB、BF16 64KiB，写入分别为64KiB/32KiB；GM 流量、bank 所有权和整 tile out 批量搬出规则不变。FP32 顺序累计及 FMA 舍入变化按原 CPU 标准验收。
+三个 bank 均参与当前任务递推。cur 是当前有效 State，next 是本次更新目标，正常按 `A→B→C→A` 轮换，初始编号由任务交接决定。只有当前任务最后一个 token 确定 cur/next 后，剩余 bank 才用于下一任务初态预取；非末 token 不提前占用专用预取 bank。覆盖前由实际覆盖流水等待旧 VF 和 MTE3 完成，预取初态保留到对应任务消费。
+
+下一任务以预取 bank 作为初始 cur，重新建立三 bank 轮换，不要求任务入口将所有 bank 统一排空。单 token 任务同样先确定源/目标，再选择第三个 bank；若其旧访问尚未结束，Scalar 仍可提交预取，MTE2 通过 Mutex 延迟覆盖。
+
+## Mutex 同步与提交顺序
+
+A5 优化路径统一使用 `Mutex::Lock<pipe>` / `Unlock<pipe>`，参考 [Mutex 接口](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/latest/API/ascendcopapi/docs/zh/api/SIMD-API/basic_api/sync_control/intra_core_sync/Mutex_ISASI.md)。Lock 等待指定流水，Unlock 在该流水前序操作完成后释放；Scalar 提交 Unlock 不代表访问已经完成。构建禁止启用 `--cce-auto-sync=on`，跨流水依赖手动管理，同流水保留必要访存屏障。
+
+| 资源 | 份数 | 使用与复用条件 |
+| --- | ---: | --- |
+| State 访问 | 3 | MTE2 覆盖等待旧 VF，Vector 源/目标访问保护至完成 |
+| State 快照 | 3 | Vector 写目标、MTE3 读快照、MTE2 覆盖；Vector 只读源不等待旧 MTE3 只读 |
+| 输入槽 | 2 | MTE2 写入后 Vector 读取，MTE2 再覆盖前等待消费完成 |
+| 参数槽 | 2 | MTE2 写入、Vector 整任务读取，任务末次读取后才可覆盖 |
+| out 槽 | 2 | Vector 整 tile 生成、MTE3 批量读取，Vector 再覆盖前等待 DMA |
+
+12份资源锁按生命周期映射，获取顺序固定、同流水 Lock/Unlock 配对，避免漏释放、过早释放和循环依赖。采用框架分配时 AllocMutexID/ReleaseMutexID 配套；自行管理时核对合法范围及系统保留，不能硬编码冲突 ID。不得以同流水连续 Lock 代替访存屏障。
+
+Scalar 不执行 `Lock<PIPE_S>`、V_S/MTE2_S/MTE3_S 等待、完成标志轮询或变相全流水等待。正常交接、无效任务清理和出口同样遵守该规则；由实际消费者/覆盖者的 Vector、MTE2、MTE3 等待。出口按平台要求保证已提交访问完成和锁配对，不在 Scalar 上先排空旧任务再提交当前任务。
+
+1. 当前任务必要检查完成后，尽早提交初态、参数和首 tile 输入，将下一任务准备与搬入重叠。已有预取初态由 Vector 等待就绪。
+2. 每 tile 一次 VF，输入/out 槽在整个 tile 使用期间受保护，参数跨该任务全部 tile 复用。Scalar 可向另一输入槽提交下一 tile；任务尾 tile 可提前搬入下一任务首 tile 的 q/k/v/g/beta。
+3. 下一任务参数预取独立使用另一参数槽，不等待下一初态预取。初态预取仅安排在末 token，目标为 cur/next 之外的 bank，由 MTE2 等待该 bank 的旧访问，尽量与末 token 计算重叠。
+4. Scalar 按逻辑顺序提交逐 token State DMA，MTE3 等待 Vector 完成相应结果；out DMA 等待整个 tile 的 VF 完成。旧末态/快照/out 可以与后继计算在途，覆盖它们的源地址前由覆盖流水等待。
+5. Scalar 按任务长度和轮换关系推导资源归属，不查询实时完成状态。不变 stride、行宽和 State 搬运描述符可在任务循环外缓存，每次仅更新 token 偏移、有效长度和槽位。
+
+顶层 tile VF 内的逐 token 资源交接必须在实际访问边界完成，不能将 tile 启动或结束当成所有 token 的 State 就绪时刻；多 token VF、快照和末 token 预取的 Mutex 编排需结合生成指令验证。
 
 ## A2/A3 资源预算
 
-A5 的计算分组、三 bank 容量及 X 预算不套用于 A2/A3。generic kernel 固定窗口 X=8，两槽 packed q/k/v/g 输入共 `2*X*(8*alignK+2*alignV)` 字节，beta 单槽为 `4*X*NV` 字节，另留64字节 scalarBuf 和2048字节 guard。
+A5 的三 bank、静态 Tensor、Mutex 和寄存器分组不套用于 A2/A3。generic kernel 固定窗口 X=8，两槽 packed q/k/v/g 输入共 `2*X*(8*alignK+2*alignV)` 字节，beta 单槽为 `4*X*NV` 字节，另留64字节 scalarBuf 和2048字节 guard。
 
-具名 FP32 窗口工作区为 `X*(4*alignV+12*alignK+4*NV)` 字节；加上每个 V 行的 State、broadTmp 和两个行结果后得到 tmpBuff 所需容量。host 先验证 tmpBuff 不超过扣除真实输入及 State/out 队列后的剩余容量，再只分配所需字节。
+具名 FP32 窗口工作区为 `X*(4*alignV+12*alignK+4*NV)` 字节；加上每个 V 行的 State、broadTmp 和两个行结果后得到 tmpBuff 所需容量。host 先验证 tmpBuff 不超过扣除真实输入及 State/out 队列后的剩余容量，再只分配所需字节。共用入口仍保留 A2/A3 的公开参数语义、长序列处理及真实 vStep，不能因 A5 预算调整减少 generic 实际需要的双槽或删除容量校验。
 
-## 代码组织与验证
+## 当前实现与目标的差异
 
-A5 纯数据 context 和集中布局常量在 `arch35/recurrent_kda_struct.h`；VF 启动/计算在 `recurrent_kda_vec.h`；任务、预取与写回在 `arch35/recurrent_kda.h`，文件头给出 Stage、布局和同步表。
+下表以本次文档修改前代码为准，仅说明落地状态，不以现实现反向修改目标：
 
-[测试记录](../../../../../../tests/atk/recurrent_kda/README.md)区分各次提交、候选回退、双平台验收、msprof kernel 性能及 host 调用链测量，不能将历史全量验收当作每个后续提交均重跑全量。A3、旧 CANN、整体 Example/ST、正式 NPU CI 及内部故障注入的未覆盖范围按该记录说明。
+| 项目 | 当前实现 | 本文目标 |
+| --- | --- | --- |
+| VF 粒度 | 仅末态、逐 token 快照及不写 State 均为每 token 一次 VF | 每 tile 一次顶层 VF，内部逐 token |
+| State 数值流程 | V-first/K-first 两遍读取 State，复用 guard 中512 B scratch 传递 residual 或系数 | 每元素逻辑读一次、写一次，中间结果驻留寄存器 |
+| K-first UB/计算 | 每行增加32 B间隙，FP32 pitch=136、BF16 pitch=144，沿连续 V 两遍计算 | 紧凑 K-first，按 V 行 Gather/Scatter，BF16 成对解包/打包 |
+| UB 峰值 | V-first/BF16 K-first 为224832 B；FP32 K-first 为237120 B | 两种 layout/dtype 统一预留224832 B，guard 不存数值中间结果 |
+| Q/K 归一化 | A5 与 A2/A3 使用 `x/sqrt(sum(x*x)+1e-6)` | A5 按固定接口基线正范数归一化、零范数不除 |
+
+三 bank 轮换、末 token 第三 bank 初态预取、参数与 State 预取分离、固定 X=8、静态 Tensor、资源 Mutex 和整 tile out 批量搬出已在当前代码中具备。原文中“两 bank 交替、第三 bank 提前预留”和 Scalar 清理等待的旧描述不再作为目标。
+
+## 代码组织与验证范围
+
+A5 纯数据 context 和集中布局常量在 `arch35/recurrent_kda_struct.h`；VF 启动/计算在 `recurrent_kda_vec.h`，寄存器辅助函数在 `recurrent_kda_regbase.h`；任务、预取与写回在 `arch35/recurrent_kda.h`。这些文件仍按当前实现组织，不能仅因文档修改宣称目标已经落地。
+
+后续实现对齐须分别验收四条 dtype/layout 路径，覆盖仅末态、逐 token 快照、无 State 写回，单 token、空请求、尾 tile、长序列和跨任务连续执行。重点核对三 bank 覆盖、旧快照在途、重复目标槽、末 token 预取、输入/参数槽回绕及退出的锁配对，并通过实际编译命令和生成指令确认没有自动同步或 Scalar 等待。
+
+以固定 main 接口基线做 BSND/TND × CU 有/无、gate 参数组合、零/微小范数、State dtype/layout、别名及非法输入差分；ACLGraph replay 改变 CU/indices/accepted 后须消费新值。K-first Gather/Scatter 地址、BF16 打包舍入、寄存器峰值和 State 逻辑读写量单独检查，A2/A3 长序列及 A5 V=256 兼容路径回归。
+
+性能按相同设备、软件、输入、开关和采样口径比较目标 kernel，快照与仅末态分别记录。历史测试结论不能替代以上目标变更后的验收；本次仅更新两份文档，不新增性能结论。
