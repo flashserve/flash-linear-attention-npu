@@ -12,6 +12,7 @@
  * \brief
  */
 #include "recurrent_kda_tiling.h"
+#include "../op_kernel/recurrent_kda_tiling_key.h"
 
 #include "err/ops_err.h"
 #include "op_common/log/log.h"
@@ -219,7 +220,16 @@ ge::graphStatus RecurrentKdaTiling::DoOpTiling()
 
 ge::graphStatus RecurrentKdaTiling::DoLibApiTiling()
 {
-    tilingKey_ = 0;
+    uint32_t kernelMode = RKDA_TPL_COMPAT;
+    if (compileInfo_.isA5 && tilingData_.dv == 128) {
+        if (tilingData_.stateVFirst) {
+            kernelMode = (tilingData_.a5VfFlags & RecurrentKda::RKDA_VF_FUSED) != 0
+                ? RKDA_TPL_V_FIRST_FUSED : RKDA_TPL_V_FIRST;
+        } else {
+            kernelMode = RKDA_TPL_K_FIRST;
+        }
+    }
+    tilingKey_ = GET_TPL_TILING_KEY(kernelMode);
     return ge::GRAPH_SUCCESS;
 };
 

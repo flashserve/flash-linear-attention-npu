@@ -27,8 +27,8 @@ using namespace AscendC;
 using namespace AscendC::MicroAPI;
 
 // 输入：GM地址和host tiling；只接线、预留容量，不提交DMA。
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void InitRecurrentKda(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, const RecurrentKdaTilingData *tiling, const RKDAInitParams &args)
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline void InitRecurrentKda(RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, const RecurrentKdaTilingData *tiling, const RKDAInitParams &args)
 {
     ctx.td_ = tiling;
     ctx.args_ = args;
@@ -67,8 +67,8 @@ __aicore__ inline void InitRecurrentKda(RKDAVectorContext<inType, outType, state
 }
 
 #ifdef RKDA_EXECUTION_TRACE
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void RecurrentKdaInitExecutionTrace(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, GM_ADDR records)
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline void RecurrentKdaInitExecutionTrace(RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, GM_ADDR records)
 {
     ctx.trace_.SetGlobalBuffer((__gm__ uint64_t *)records + GetBlockIdx() * 32768);
     ctx.traceCount_ = 0;
@@ -77,23 +77,23 @@ __aicore__ inline void RecurrentKdaInitExecutionTrace(RKDAVectorContext<inType, 
 }
 
 #endif
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void RecurrentKdaBeginBanks(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, uint32_t initial)
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline void RecurrentKdaBeginBanks(RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, uint32_t initial)
 {
     ctx.initialBank_ = initial;
     ctx.currentBank_ = initial;
     ctx.nextBank_ = initial == 2 ? 0 : initial + 1;
 }
 
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void RecurrentKdaAdvanceBank(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx)
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline void RecurrentKdaAdvanceBank(RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx)
 {
     ctx.currentBank_ = ctx.nextBank_;
     ctx.nextBank_ = ctx.nextBank_ == 2 ? 0 : ctx.nextBank_ + 1;
 }
 
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline int64_t RecurrentKdaMetadata(const RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, GM_ADDR address, uint32_t dtype, uint64_t index)
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline int64_t RecurrentKdaMetadata(const RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, GM_ADDR address, uint32_t dtype, uint64_t index)
 {
     if (dtype == 0) {
         GlobalTensor<int32_t> values;
@@ -106,16 +106,16 @@ __aicore__ inline int64_t RecurrentKdaMetadata(const RKDAVectorContext<inType, o
 
 }
 
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline int64_t RecurrentKdaSequence(const RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, uint64_t request)
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline int64_t RecurrentKdaSequence(const RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, uint64_t request)
 {
     return ctx.td_->hasCuSeqlens ? RecurrentKdaMetadata(ctx, ctx.args_.cuSeqlens, ctx.td_->cuSeqlensDtype, request) :
                                int64_t(request * ctx.td_->seqLen);
 
 }
 
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline uint64_t RecurrentKdaSlot(const RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, uint64_t request, int64_t begin, int64_t token)
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline uint64_t RecurrentKdaSlot(const RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, uint64_t request, int64_t begin, int64_t token)
 {
     if (!ctx.td_->hasSsmStateIndices) return request;
     const uint64_t offset = ctx.td_->ssmStateStride ?
@@ -125,8 +125,8 @@ __aicore__ inline uint64_t RecurrentKdaSlot(const RKDAVectorContext<inType, outT
 
 }
 
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline bool RecurrentKdaValidateSlots(const RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, uint64_t request, int64_t begin, int64_t end)
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline bool RecurrentKdaValidateSlots(const RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, uint64_t request, int64_t begin, int64_t end)
 {
     if (ctx.td_->hasAcceptedTokens) {
         int64_t accepted = RecurrentKdaMetadata(ctx, ctx.args_.numAcceptedTokens, ctx.td_->acceptedTokensDtype, request);
@@ -139,8 +139,8 @@ __aicore__ inline bool RecurrentKdaValidateSlots(const RKDAVectorContext<inType,
 
 }
 
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline bool RecurrentKdaPrepareTask(const RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, uint64_t &cursor, RKDATask &task, bool &valid)
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline bool RecurrentKdaPrepareTask(const RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, uint64_t &cursor, RKDATask &task, bool &valid)
 {
     const uint64_t count = uint64_t(ctx.td_->b) * ctx.td_->nv;
     while (cursor < count) {
@@ -167,8 +167,8 @@ __aicore__ inline bool RecurrentKdaPrepareTask(const RKDAVectorContext<inType, o
 }
 
 template <class T,
-          typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void RecurrentKdaCopyRows(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, GlobalTensor<T> &gm, uint64_t offset, uint64_t stride,
+          typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline void RecurrentKdaCopyRows(RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, GlobalTensor<T> &gm, uint64_t offset, uint64_t stride,
                                     uint32_t destination, uint32_t width, uint32_t rows,
                                     uint32_t rowGap = 0)
 {
@@ -181,8 +181,8 @@ __aicore__ inline void RecurrentKdaCopyRows(RKDAVectorContext<inType, outType, s
 }
 
 template <class T,
-          typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void RecurrentKdaCopyInputRows(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx,
+          typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline void RecurrentKdaCopyInputRows(RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx,
     GlobalTensor<T> &gm, uint64_t offset, uint32_t destination, uint32_t rows, DataCopyExtParams &copy)
 {
     copy.blockCount = static_cast<uint16_t>(rows);
@@ -191,8 +191,8 @@ __aicore__ inline void RecurrentKdaCopyInputRows(RKDAVectorContext<inType, outTy
 }
 
 template <class T,
-          typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void RecurrentKdaCopyAux(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, GM_ADDR address, uint64_t head, int64_t token,
+          typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline void RecurrentKdaCopyAux(RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, GM_ADDR address, uint64_t head, int64_t token,
                                    uint32_t slot, uint32_t rows, bool beta)
 {
     GlobalTensor<T> gm;
@@ -208,8 +208,8 @@ __aicore__ inline void RecurrentKdaCopyAux(RKDAVectorContext<inType, outType, st
 
 }
 
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline uint64_t RecurrentKdaInputOffset(const RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, const RKDATask &task,
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline uint64_t RecurrentKdaInputOffset(const RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, const RKDATask &task,
                                          uint64_t token, uint64_t tokenStride, uint64_t batchStride)
 {
     if (ctx.td_->hasCuSeqlens || ctx.td_->layout == 1) return token * tokenStride;
@@ -223,8 +223,8 @@ __aicore__ inline uint64_t RecurrentKdaInputOffset(const RKDAVectorContext<inTyp
 // 输出：指定UB输入槽。
 // 复用：覆盖前由编排层回收slot
 // 同步：输入槽Mutex由MTE2交给Vector。
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void Stage0PrefetchInputs(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, const RKDATask &task,
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline void Stage0PrefetchInputs(RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, const RKDATask &task,
                                          int64_t token, uint32_t rows, uint32_t slot)
 {
     Mutex::Lock<PIPE_MTE2>(ctx.mutex_[RKDA_MUTEX_INPUT + slot]);
@@ -252,8 +252,8 @@ __aicore__ inline void Stage0PrefetchInputs(RKDAVectorContext<inType, outType, s
 
 }
 
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline uint32_t RecurrentKdaValidTokens(const RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, int64_t begin, int64_t end)
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline uint32_t RecurrentKdaValidTokens(const RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, int64_t begin, int64_t end)
 {
     return uint64_t(end - begin) < ctx.x_ ? uint32_t(end - begin) : ctx.x_;
 
@@ -263,8 +263,8 @@ __aicore__ inline uint32_t RecurrentKdaValidTokens(const RKDAVectorContext<inTyp
 // 输出：GM out。
 // 复用：完成前保持源slot
 // 同步：out槽Mutex保护Vector生产、MTE3消费和再次覆盖。
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void Stage2WriteOutputTile(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, int64_t token, uint32_t rows, uint64_t head, uint32_t slot)
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline void Stage2WriteOutputTile(RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, int64_t token, uint32_t rows, uint64_t head, uint32_t slot)
 {
     Mutex::Lock<PIPE_MTE3>(ctx.mutex_[RKDA_MUTEX_OUT + slot]);
     // UB rows are contiguous; GM rows for one value head are Nv rows apart.
@@ -279,8 +279,8 @@ __aicore__ inline void Stage2WriteOutputTile(RKDAVectorContext<inType, outType, 
 // 输出：指定bank。
 // 复用：只写可用bank
 // 同步：State访问/快照Mutex保护初始化。
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void Stage0PrefetchState(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, const RKDATask &task, uint32_t bank)
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline void Stage0PrefetchState(RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, const RKDATask &task, uint32_t bank)
 {
     using StateLayout = RegBase::StateLayout<stateType, stateVFirst>;
     constexpr uint32_t BANK = StateLayout::BYTES;
@@ -296,8 +296,8 @@ __aicore__ inline void Stage0PrefetchState(RKDAVectorContext<inType, outType, st
 
 // 参数槽独立于State bank，在当前任务首token提交下一任务参数，
 // 避免参数搬入排在末token的State bank等待之后。
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void Stage0PrefetchParameters(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, const RKDATask &task, uint32_t parameterSlot)
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline void Stage0PrefetchParameters(RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, const RKDATask &task, uint32_t parameterSlot)
 {
     Mutex::Lock<PIPE_MTE2>(ctx.mutex_[RKDA_MUTEX_PARAM + parameterSlot]);
     const uint32_t parameter = ctx.paramOffset_ + parameterSlot * RKDA_PARAM_SLOT_BYTES_544;
@@ -309,8 +309,8 @@ __aicore__ inline void Stage0PrefetchParameters(RKDAVectorContext<inType, outTyp
 
 }
 
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void RecurrentKdaTrace(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, uint64_t event, uint64_t task, uint64_t token, uint64_t slot)
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline void RecurrentKdaTrace(RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, uint64_t event, uint64_t task, uint64_t token, uint64_t slot)
 {
 #ifdef RKDA_EXECUTION_TRACE
     const uint64_t row = 1 + ctx.traceCount_ * 8;
@@ -325,8 +325,8 @@ __aicore__ inline void RecurrentKdaTrace(RKDAVectorContext<inType, outType, stat
 
 }
 
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void Stage0PrefetchNextState(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, const RKDATask &next, uint32_t bank)
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline void Stage0PrefetchNextState(RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, const RKDATask &next, uint32_t bank)
 {
     ctx.prefetchedBank_ = bank;
     Stage0PrefetchState(ctx, next, bank);
@@ -335,21 +335,17 @@ __aicore__ inline void Stage0PrefetchNextState(RKDAVectorContext<inType, outType
 }
 
 template <class Gate, class Beta,
-          typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void RecurrentKdaDispatchLayout(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, uint32_t base, uint32_t slot,
+          typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline void RecurrentKdaDispatchLayout(RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, uint32_t base, uint32_t slot,
                                          uint32_t parameter)
 {
-    if constexpr (stateVFirst) {
-        if (ctx.vfFlags_ & RKDA_VF_FUSED)
-            Stage1LaunchRecurrentKdaVF<Gate, Beta, true, true>(ctx, base, slot, parameter);
-        else Stage1LaunchRecurrentKdaVF<Gate, Beta, true>(ctx, base, slot, parameter);
-    } else Stage1LaunchRecurrentKdaVF<Gate, Beta, false>(ctx, base, slot, parameter);
+    Stage1LaunchRecurrentKdaVF<Gate, Beta, stateVFirst, fusedMode>(ctx, base, slot, parameter);
 
 }
 
 template <class Gate,
-          typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void RecurrentKdaDispatchBeta(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, uint32_t base, uint32_t slot,
+          typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline void RecurrentKdaDispatchBeta(RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, uint32_t base, uint32_t slot,
                                        uint32_t parameter)
 {
     if (ctx.td_->betaDtype == 0) RecurrentKdaDispatchLayout<Gate, float>(ctx, base, slot, parameter);
@@ -358,8 +354,8 @@ __aicore__ inline void RecurrentKdaDispatchBeta(RKDAVectorContext<inType, outTyp
 
 }
 
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void RecurrentKdaDispatch(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, uint32_t base, uint32_t slot,
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline void RecurrentKdaDispatch(RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, uint32_t base, uint32_t slot,
                                     uint32_t parameter)
 {
     const uint32_t source = ctx.currentBank_;
@@ -388,8 +384,8 @@ __aicore__ inline void RecurrentKdaDispatch(RKDAVectorContext<inType, outType, s
 // 输出：完整tile out/末态。
 // 复用：交替输入/out槽和动态bank
 // 同步：输入/参数/out槽及State两类Mutex，Scalar可连续提交后续tile。
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void Stage1RunFinalStateTask(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, const RKDATask &current, const RKDATask *nextTask,
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline void Stage1RunFinalStateTask(RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, const RKDATask &current, const RKDATask *nextTask,
                                            bool prefetched, uint32_t parameterSlot,
                                            uint32_t &slot, bool &pending, uint64_t &cursor,
                                            RKDATask &following, bool &hasFollowing, bool &validTask,
@@ -467,8 +463,8 @@ __aicore__ inline void Stage1RunFinalStateTask(RKDAVectorContext<inType, outType
 // 输出：tile out及最终State。
 // 复用：旧末态DMA可跨任务，源bank完成前不得覆盖
 // 同步：资源Mutex保护实际覆盖，外层统一排空并释放ID。
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void RecurrentKdaProcessFinalState(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx)
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline void RecurrentKdaProcessFinalState(RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx)
 {
     using StateLayout = RegBase::StateLayout<stateType, stateVFirst>;
     constexpr uint32_t BANK = StateLayout::BYTES;
@@ -508,8 +504,8 @@ __aicore__ inline void RecurrentKdaProcessFinalState(RKDAVectorContext<inType, o
 
 }
 
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline bool RecurrentKdaValidateSequences(const RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx)
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline bool RecurrentKdaValidateSequences(const RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx)
 {
     if (!ctx.td_->hasCuSeqlens) return true;
     if (RecurrentKdaSequence(ctx, 0) != 0) return false;
@@ -528,8 +524,8 @@ __aicore__ inline bool RecurrentKdaValidateSequences(const RKDAVectorContext<inT
 // 输入：有indices任务；每token由VF更新State，MTE3写一份快照。
 // 复用：State快照Mutex保护递推目标，访问/快照两类Mutex保护第三bank预取。
 // out仍在整个tile计算完成后批量搬出，双槽使用独立完成事件。
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void Stage1RunIndexedTask(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, const RKDATask &current, const RKDATask *nextTask, bool prefetched,
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline void Stage1RunIndexedTask(RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, const RKDATask &current, const RKDATask *nextTask, bool prefetched,
                                   uint32_t parameterSlot, uint32_t &nextInitialBank, uint32_t &slot,
                                   uint32_t &pendingOut, const DataCopyExtParams &stateCopy)
 {
@@ -611,8 +607,8 @@ __aicore__ inline void Stage1RunIndexedTask(RKDAVectorContext<inType, outType, s
 // 输出：本核全部任务。
 // 复用：输入/out双槽、三个轮换递推bank，末token向空闲bank预取
 // 同步：各资源成对Lock/Unlock，外层统一排空。
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void RecurrentKdaProcessIndexed(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx)
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline void RecurrentKdaProcessIndexed(RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx)
 {
     uint64_t cursor = GetBlockIdx();
     bool valid = true;
@@ -653,8 +649,8 @@ __aicore__ inline void RecurrentKdaProcessIndexed(RKDAVectorContext<inType, outT
 // All error/empty/tail paths return here. Drain on Vector, without a Scalar
 // wait. ReleaseMutexID only frees allocator bookkeeping; no ID is reused in
 // this invocation. Kernel completion retains the queued Vector/DMA lifetime.
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void ProcessRecurrentKda(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx)
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline void ProcessRecurrentKda(RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx)
 {
     if (RecurrentKdaValidateSequences(ctx)) {
         if (ctx.td_->hasSsmStateIndices) RecurrentKdaProcessIndexed(ctx);

@@ -9,8 +9,8 @@ using namespace AscendC::MicroAPI;
 // 复用：原VF寄存器、512B scratch；同步：保留VST→VLD屏障；VF外以资源Mutex保护bank。
 template <class Gate, class Beta, bool vFirst, bool fused = false,
               bool twoPass = true,
-          typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void Stage1LaunchRecurrentKdaVF(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, uint32_t base, uint32_t slot,
+          typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline void Stage1LaunchRecurrentKdaVF(RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, uint32_t base, uint32_t slot,
                                 uint32_t parameter);
 
 template <class Gate, class Beta, bool vFirst, bool fused, bool twoPass,
@@ -168,8 +168,8 @@ __simd_vf__ inline void RecurrentKdaTokenVF(
 
 template <class Gate, class Beta, bool vFirst, bool fused,
               bool twoPass,
-          typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void Stage1LaunchRecurrentKdaVF(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, uint32_t base, uint32_t slot,
+          typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode>
+__aicore__ inline void Stage1LaunchRecurrentKdaVF(RKDAVectorContext<inType, outType, stateType, stateVFirst, fusedMode> &ctx, uint32_t base, uint32_t slot,
                                 uint32_t parameter)
 {
     auto memory = (__ubuf__ uint8_t *)ctx.ub_.GetPhyAddr();

@@ -16,6 +16,19 @@ A5 的 K=V=128 路径支持长序列，host/kernel 共用编译期常量 `RKDA_A
 
 Q/K/V 使用各自真实 stride，支持原接口允许的 causal_conv1d 切片等非连续输入。直接读取、连续化及拒绝重叠 descriptor 的判定沿用原入口，不能将 BSND 有 `cu_seqlens` 误作 TND 或弃用组合。tiling 可预计算 head 比例、功能位和不变搬运描述符；动态 bank 归属和 DMA 完成依赖仍由 kernel 管理，不引入全序列任务表或算法 workspace。
 
+## TilingKey 模板分派
+
+host 与 kernel 共用 `recurrent_kda_tiling_key.h`，以 `ASCENDC_TPL_ARGS_DECL/SEL` 声明两位 `KERNEL_MODE`，通过 `GET_TPL_TILING_KEY` 选择实例：
+
+| KERNEL_MODE | host 条件 | kernel 实例 |
+| --- | --- | --- |
+| 0 | A2/A3，或 A5 V=256 | 对应平台的原兼容路径 |
+| 1 | A5 V=128、V-first，未满足原融合条件 | V-first 通用 VF |
+| 2 | A5 V=128、K-first | K-first 通用 VF |
+| 3 | A5 V=128、V-first，满足原融合条件 | V-first 融合 VF |
+
+融合条件沿用 `a5VfFlags`：开启 Q/K L2 norm、raw gate、dt_bias、beta sigmoid，关闭 negative、safe gate 和 indices。State 是否写回不改变该条件。布局与融合选择由模板确定，不再在每个 token 提交 VF 时分派；State、gate、beta dtype 仍由原 OPP 编译类型确定，其余功能位保留通用处理。此次模板化不改变公开接口、tiling data 结构、数值运算、固定 X=8、三 bank 调度及 Mutex 同步。
+
 ## A5 Stage 与任务映射
 
 单个 Vector Stage 覆盖预处理、State 递推和输出。任务为一个请求的一个 value head，共 `B_request*Nv` 个，按 AIV 数量作 grid-stride 分配；`hk=hv/(Nv/Nk)`，使用整数除法。同一 State 的 token 串行，不同任务由不同 AIV 或同核后续任务处理。

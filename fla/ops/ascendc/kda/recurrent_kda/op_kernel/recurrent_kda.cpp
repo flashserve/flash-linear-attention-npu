@@ -18,13 +18,15 @@
 #include "recurrent_kda.h"
 #endif
 #include "recurrent_kda_tiling_data.h"
+#include "recurrent_kda_tiling_key.h"
 
 
 using namespace AscendC;
 using namespace RecurrentKda;
 
 
-extern "C" __global__ __aicore__ void
+template <uint32_t KERNEL_MODE>
+__global__ __aicore__ void
 recurrent_kda(GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR gate, GM_ADDR beta, GM_ADDR initialState,
               GM_ADDR cuSeqlens, GM_ADDR ssmStateIndices, GM_ADDR aLog, GM_ADDR dtBias, GM_ADDR numAcceptedTokens,
               GM_ADDR out, GM_ADDR initialStateOut, GM_ADDR finalState, GM_ADDR workspaceGM, GM_ADDR tilingGM)
@@ -36,27 +38,23 @@ recurrent_kda(GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR gate, GM_ADDR b
     RKDAInitParams initParams{query, key, value, gate, beta, initialState, cuSeqlens, ssmStateIndices,
                               aLog, dtBias, numAcceptedTokens, out, stateOutput};
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-    if (tilingData.dv == 256) {
+    if constexpr (KERNEL_MODE == RKDA_TPL_COMPAT) {
         TPipe pipe;
         RKDALegacyInitParams legacy{query, key, value, gate, beta, initialState, cuSeqlens,
             ssmStateIndices, aLog, dtBias, numAcceptedTokens, out, stateOutput};
         RKDALegacy<bfloat16_t, bfloat16_t, DTYPE_INITIAL_STATE> op(&tilingData);
         op.Init(legacy, &pipe);
         op.Process();
-        return;
-    }
-    // Static Tensor programming owns UB and synchronization without a TPipe.
-    InitSocState();
-    if (tilingData.stateVFirst) {
-        RKDAVectorContext<bfloat16_t, bfloat16_t, DTYPE_INITIAL_STATE, true> ctx;
-        InitRecurrentKda(ctx, &tilingData, initParams);
-        ProcessRecurrentKda(ctx);
     } else {
-        RKDAVectorContext<bfloat16_t, bfloat16_t, DTYPE_INITIAL_STATE, false> ctx;
+        // Static Tensor programming owns UB and synchronization without a TPipe.
+        InitSocState();
+        constexpr bool stateVFirst = KERNEL_MODE != RKDA_TPL_K_FIRST;
+        constexpr bool fusedMode = KERNEL_MODE == RKDA_TPL_V_FIRST_FUSED;
+        RKDAVectorContext<bfloat16_t, bfloat16_t, DTYPE_INITIAL_STATE, stateVFirst, fusedMode> ctx;
         InitRecurrentKda(ctx, &tilingData, initParams);
         ProcessRecurrentKda(ctx);
+        PipeBarrier<PIPE_ALL>();
     }
-    PipeBarrier<PIPE_ALL>();
 #else
     TPipe pipe;
     RKDA<bfloat16_t, bfloat16_t, DTYPE_INITIAL_STATE> op(&tilingData);

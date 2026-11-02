@@ -47,7 +47,7 @@ struct RKDAInitParams {
 };
 
 // Pure per-core data. Functions and event operations live outside this context.
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
+template <typename inType, typename outType, typename stateType, bool stateVFirst, bool fusedMode = false>
 struct RKDAVectorContext {
     const RecurrentKdaTilingData *td_;
     RKDAInitParams args_;
