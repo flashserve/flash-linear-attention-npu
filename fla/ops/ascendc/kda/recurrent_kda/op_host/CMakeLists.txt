@@ -24,7 +24,6 @@ add_ops_compile_options(
 if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
     add_ops_compile_options(
         OP_NAME RecurrentKda
-        COMPUTE_UNIT Ascend950PR_9599
         OPTIONS --cce-auto-sync=off
                 --cce-long-scbz=true
                 -mllvm=-cce-aicore-jump-expand=false
@@ -40,7 +39,6 @@ if (BUILD_OPS_RTY_KERNEL) # 回黄kernel
     if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
         add_ops_compile_options(
             OP_NAME RecurrentKda
-            COMPUTE_UNIT Ascend950PR_9599
             OPTIONS -mllvm -cce-aicore-dcci-before-kernel-end=false
         )
     endif()
