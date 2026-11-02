@@ -54,11 +54,11 @@ struct FwdHKernelTraits {
     // 以 false 进 kernel（独立算子门已做），否则回落老路径 STATE_V_FIRST 模板。
     static constexpr bool GATED_REUSABLE =
         !USE_GK && V_DIM == 128 &&
-        !STATE_V_FIRST && D_T_G == CHUNK_FWD_H_TPL_FP32;
+        !STATE_V_FIRST && (D_T_G == CHUNK_FWD_H_TPL_FP32 || D_T_G == CHUNK_FWD_H_TPL_BF16);
 };
 
 #if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
-// gated 复用谓词：g 模式 + gate fp32 + vfirst=0。
+// gated 复用谓词：g 模式 + gate fp32/bf16 + vfirst=0。
 // storeFinal 两值均放行（2026-10-26 放宽轮①）：gated scheduler 的
 // NeedProcessStage2 = storeFinalState || !isFinalState 与老路径跳末段同款语义
 // （运行时读 tiling，镜像已透传该字段）；storeFinal=false 时 l0op 层的 {0} 占位
@@ -74,7 +74,7 @@ struct FwdHKernelTraits {
 // 翻译层的 l0op 组合调用（gated 整链 chunk_gated_delta_rule_fwd 透传
 // stateVFirst=1 等）：vfirst=1 直达 gated 会产出 [K,V] 与调用方 [V,K] 契约
 // 错乱，须回落老路径。
-// （bf16 gate 首版不接入——gated 的 bf16 gate 路径未在本战役验证过；
+// （bf16 gate 走 kernel 内 Cast 转 fp32，数值与入口 cast 等价；
 //   vfirst=1 若要接入须调用方 aclnn 层转置配合——先例见 b+ 路线图归档。）
 template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST>
 __aicore__ inline constexpr bool FwdHGatedReusable()
@@ -86,7 +86,7 @@ __aicore__ inline constexpr bool FwdHGatedReusable()
     // 侧 gatedEligible（tiling.cpp）及 Traits::GATED_REUSABLE 三处同条件。
     return CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G &&
            CompilePolicy::USE_EXP2 && !STATE_V_FIRST &&
-           std::is_same_v<GateT, float>;
+           (std::is_same_v<GateT, float> || std::is_same_v<GateT, bfloat16_t>);
 }
 
 // gated 复用分支：从 ChunkFwdHTilingData + 模板参构造 gated tiling 镜像
@@ -118,7 +118,7 @@ __aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
         gtiling->useInitialState = args.tiling.useInitialState;
         gtiling->storeFinalState = args.tiling.storeFinalState;
         gtiling->dataType = 1; // bf16 输入
-        gtiling->gDataType = 2; // fp32 gate（GATED_REUSABLE 限定）
+        gtiling->gDataType = std::is_same_v<GateT, float> ? 2 : 1; // 1=bf16, 2=fp32
         gtiling->stateDataType = std::is_same_v<StateT, float> ? 2 : 1;
         gtiling->isVariedLen = args.tiling.isVariedLen;
         gtiling->shapeBatch = args.tiling.shapeBatch;
@@ -148,8 +148,8 @@ __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
 #if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
     // gated 复用分流（编译期折叠）：eligible 形态整体走 gated preload
     // kernel——其双流骨架/调度器/epilogue 为生产验证形态。非 eligible
-    // （gk/gate bf16/vfirst=1）回落原路径；state fp32/bf16 均放行（放宽轮②，
-    // StateT 按 CompilePolicy::STATE_FP32 选型，镜像 stateDataType 同步设置）。
+    // （gk/vfirst=1）回落原路径；gate/state fp32/bf16 均放行（StateT 按
+    // CompilePolicy::STATE_FP32 选型，镜像 stateDataType 同步设置）。
     if constexpr (FwdHGatedReusable<GateT, CompilePolicy, STATE_V_FIRST>()) {
         using GatedStateT = std::conditional_t<CompilePolicy::STATE_FP32, float, bfloat16_t>;
         // gated 双流调度死锁规避（2026-10-31 实测）：varlen 多段且 head 组数

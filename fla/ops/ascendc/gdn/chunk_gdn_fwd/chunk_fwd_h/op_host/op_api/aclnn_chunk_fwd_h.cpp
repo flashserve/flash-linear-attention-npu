@@ -17,7 +17,6 @@
 #include <vector>
 #include <algorithm>
 
-#include "aclnn_kernels/cast.h"
 #include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/transpose.h"
 #include "acl/acl.h"
@@ -365,18 +364,7 @@ static aclnnStatus ParamsDataContiguous(ChunkFwdHParams &params, aclOpExecutor *
         if (status != ACLNN_SUCCESS) {
             return status;
         }
-        // bf16 gate cast 翻译（放宽轮④，先例 gated 本尊整链对 beta/g 的同款处理）：
-        // gated 谓词要求 fp32 gate——bf16 g 在此 cast 到 fp32（无损），kernel 侧
-        // 恒见 float gate；数值与老路径"先 cast 再算"完全等价（gated 原生 bf16
-        // gate 会在 bf16 域算 decay，精度低，故必须选入口 cast 而非原生放行）。
-        // 仅 DAV_2201（A2/A3）cast——A5 无 gated 分支，保持基线 bf16 gate 实例。
-        if (params.gOptional->GetDataType() == DataType::DT_BF16 && SocSupportsGatedPath()) {
-            const aclTensor *gFp32 = l0op::Cast(params.gOptional, DataType::DT_FLOAT, executorPtr);
-            if (gFp32 == nullptr) {
-                return TranslationNullptr("g", "fp32 gate tensor after the bf16 -> fp32 entry cast");
-            }
-            params.gOptional = gFp32;
-        }
+        // bf16 g 不在入口 cast，由 kernel 内 Cast 转 fp32（数值等价）。
     }
     if (params.gkOptional != nullptr) {
         status = DataContiguous(params.gkOptional, executorPtr);
