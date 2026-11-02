@@ -17,7 +17,7 @@
 
 #include "../op_kernel/recurrent_kda_struct.h"
 #include "err/ops_err.h"
-#include "log/log.h"
+#include "op_common/log/log.h"
 #include "register/op_impl_registry.h"
 #include "tiling/tiling_api.h"
 #include "util/math_util.h"
@@ -145,9 +145,9 @@ public:
             {"RuleUpdateDynamicBlockDimByTaskUnits", &RecurrentKdaTilingProcessor::RuleUpdateDynamicBlockDimByTaskUnits},
         }};
         for (const auto &rule : shapeRules) {
-            OP_CHECK_IF((this->*(rule.fn))(tiling) != ge::GRAPH_SUCCESS,
-                        OP_LOGE_WITHOUT_REPORT(ctx_.nodeName, "ProcessShapes rule failed: %s", rule.name),
-                        return ge::GRAPH_FAILED);
+            if ((this->*(rule.fn))(tiling) != ge::GRAPH_SUCCESS) {
+                return ge::GRAPH_FAILED;
+            }
         }
         return ge::GRAPH_SUCCESS;
     }
@@ -172,9 +172,9 @@ public:
             {"RuleFinalizeVStepFromUb", &RecurrentKdaTilingProcessor::RuleFinalizeVStepFromUb},
         }};
         for (const auto &rule : ubRules) {
-            OP_CHECK_IF((this->*(rule.fn))(tiling, ubCalcCtx) != ge::GRAPH_SUCCESS,
-                        OP_LOGE_WITHOUT_REPORT(ctx_.nodeName, "ProcessUb rule failed: %s", rule.name),
-                        return ge::GRAPH_FAILED);
+            if ((this->*(rule.fn))(tiling, ubCalcCtx) != ge::GRAPH_SUCCESS) {
+                return ge::GRAPH_FAILED;
+            }
         }
         return ge::GRAPH_SUCCESS;
     }

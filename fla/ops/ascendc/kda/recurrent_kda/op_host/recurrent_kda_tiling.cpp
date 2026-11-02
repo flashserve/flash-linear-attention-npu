@@ -14,7 +14,7 @@
 #include "recurrent_kda_tiling.h"
 
 #include "err/ops_err.h"
-#include "log/log.h"
+#include "op_common/log/log.h"
 #include "platform/soc_spec.h"
 #include "platform/platform_infos_def.h"
 #include "register/op_def_registry.h"
@@ -57,7 +57,7 @@ void RecurrentKdaTiling::InitCompileInfo()
 {
     auto platformInfoPtr = context_->GetPlatformInfo();
     if (platformInfoPtr == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT(context_->GetNodeName(), "platformInfoPtr is null");
+        OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "platform_info");
         return;
     }
     const auto &ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
@@ -66,8 +66,9 @@ void RecurrentKdaTiling::InitCompileInfo()
     compileInfo_.isA5 = ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510;
 
     if (compileInfo_.aivNum <= 0) {
-        OP_LOGE_LIBOPAPI_REPORT(context_->GetNodeName(), "InitCompileInfo: no AIV cores available; aivNum=0, ubSize=%llu",
-                static_cast<unsigned long long>(compileInfo_.ubSize));
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "platform_info.aiv_num", "0",
+            "InitCompileInfo requires at least one AIV core; verify the target platform configuration. UB bytes=" +
+            std::to_string(compileInfo_.ubSize));
         return;
     }
     tilingData_.vectorCoreNum = static_cast<uint32_t>(compileInfo_.aivNum);
@@ -179,31 +180,38 @@ ge::graphStatus RecurrentKdaTiling::GetPlatformInfo()
 
 ge::graphStatus RecurrentKdaTiling::GetShapeAttrsInfo()
 {
-    OP_CHECK_IF(CheckContext() != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "Invalid context."),
-                return ge::GRAPH_FAILED);
+    if (CheckContext() != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
-    OP_CHECK_IF(GetOptionalInput() != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "Invalid optional input."),
-                return ge::GRAPH_FAILED);
+    if (GetOptionalInput() != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
-    OP_CHECK_IF(GetAttrsInfo() != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "Invalid attrs."),
-                return ge::GRAPH_FAILED);
+    if (GetAttrsInfo() != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
-    OP_CHECK_IF(AnalyzeDtype() != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "Invalid dtypes."),
-                return ge::GRAPH_FAILED);
+    if (AnalyzeDtype() != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
-    OP_CHECK_IF(AnalyzeShapes() != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "Invalid shapes."),
-                return ge::GRAPH_FAILED);
+    if (AnalyzeShapes() != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
-    OP_CHECK_IF(AnalyzeFormat() != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "Invalid format."),
-                return ge::GRAPH_FAILED);
+    if (AnalyzeFormat() != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
     return ge::GRAPH_SUCCESS;
 }
 
 ge::graphStatus RecurrentKdaTiling::DoOpTiling()
 {
-    OP_CHECK_IF(CalUbSize() != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "CalUbSize failed."),
-                return ge::GRAPH_FAILED);
+    if (CalUbSize() != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
     PrintTilingData();
     return ge::GRAPH_SUCCESS;
@@ -230,19 +238,25 @@ ge::graphStatus RecurrentKdaTiling::PostTiling()
 {
     context_->SetBlockDim(tilingData_.vectorCoreNum);
     auto tilingDataSize = sizeof(RecurrentKdaTilingData);
-    errno_t ret = memcpy_s(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity(),
+    auto *rawTilingData = context_->GetRawTilingData();
+    OP_CHECK_IF(rawTilingData == nullptr || rawTilingData->GetData() == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "raw_tiling_data"),
+                return ge::GRAPH_FAILED);
+    errno_t ret = memcpy_s(rawTilingData->GetData(), rawTilingData->GetCapacity(),
                            reinterpret_cast<void *>(&tilingData_), tilingDataSize);
     if (ret != EOK) {
-        OP_LOGE_LIBOPAPI_REPORT(context_->GetNodeName(), "PostTiling: memcpy_s failed; ret=%d, requiredBytes=%zu, capacityBytes=%zu, tilingKey=%llu",
-                ret, tilingDataSize, context_->GetRawTilingData()->GetCapacity(),
-                static_cast<unsigned long long>(tilingKey_));
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "raw_tiling_data",
+            "PostTiling serialization failed: memcpy_s rc=" + std::to_string(ret) +
+            "; requiredBytes=" + std::to_string(tilingDataSize) +
+            "; capacityBytes=" + std::to_string(rawTilingData->GetCapacity()) +
+            "; tilingKey=" + std::to_string(tilingKey_) +
+            ". Provide a writable tiling buffer with sufficient capacity.");
         return ge::GRAPH_FAILED;
     }
-    context_->GetRawTilingData()->SetDataSize(tilingDataSize);
+    rawTilingData->SetDataSize(tilingDataSize);
 
     size_t *workspaces = context_->GetWorkspaceSizes(1);
-    OP_CHECK_IF(workspaces == nullptr, OP_LOGE_LIBOPAPI_REPORT(context_->GetNodeName(), "PostTiling: GetWorkspaceSizes(1) returned null; tilingKey=%llu",
-                    static_cast<unsigned long long>(tilingKey_)),
+    OP_CHECK_IF(workspaces == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "workspace_sizes"),
                 return ge::GRAPH_FAILED);
     workspaces[0] = workspaceSize_;
 
@@ -469,22 +483,22 @@ ge::graphStatus RecurrentKdaTiling::CalUbSize()
 
 static ge::graphStatus RecurrentKdaTilingFunc(gert::TilingContext *context)
 {
-    OP_CHECK_IF(context == nullptr, OP_LOGE_LIBOPAPI_REPORT("RecurrentKda", "context is null"),
+    OP_CHECK_IF(context == nullptr, OP_LOGE_WITH_INVALID_INPUT("RecurrentKda", "tiling_context"),
                 return ge::GRAPH_FAILED);
     return Ops::Transformer::OpTiling::TilingRegistry::GetInstance().DoTilingImpl(context);
 }
 
 static ge::graphStatus TilingPrepareForRecurrentKda(gert::TilingParseContext *context)
 {
-    OP_CHECK_IF(context == nullptr, OP_LOGE_LIBOPAPI_REPORT("RecurrentKda", "context is null"),
+    OP_CHECK_IF(context == nullptr, OP_LOGE_WITH_INVALID_INPUT("RecurrentKda", "tiling_parse_context"),
                 return ge::GRAPH_FAILED);
 
     fe::PlatFormInfos *platformInfo = context->GetPlatformInfo();
-    OP_CHECK_IF(platformInfo == nullptr, OP_LOGE_LIBOPAPI_REPORT(context->GetNodeName(), "platformInfoPtr is null"),
+    OP_CHECK_IF(platformInfo == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "platform_info"),
                 return ge::GRAPH_FAILED);
 
     auto compileInfoPtr = context->GetCompiledInfo<RecurrentKdaCompileInfo>();
-    OP_CHECK_IF(compileInfoPtr == nullptr, OP_LOGE_LIBOPAPI_REPORT(context->GetNodeName(), "compileInfoPtr is null"),
+    OP_CHECK_IF(compileInfoPtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "compile_info"),
                 return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;

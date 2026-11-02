@@ -72,7 +72,6 @@ const std::array<const aclTensor *, 3> RecurrentKda(
                 useGateInKernel, useBetaSigmoidInKernel, allowNegEigval, safeGate, lowerBoundAttr,
                 stateVFirst));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE_LIBOPAPI_REPORT("RecurrentKda", "RecurrentKda ADD_TO_LAUNCHER_LIST_AICORE failed: %d.", ret);
         return {nullptr, nullptr, nullptr};
     }
 
