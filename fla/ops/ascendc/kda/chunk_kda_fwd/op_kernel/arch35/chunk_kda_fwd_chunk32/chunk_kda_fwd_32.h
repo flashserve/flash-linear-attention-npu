@@ -1086,28 +1086,6 @@ public:
 #include "chunk_kda_fwd_32_vec.h"
 #endif
 
-#if defined(__DAV_C310_CUBE__)
-extern "C" __global__ __aicore__ void kda32_mix_aic(uint64_t group_count, uint64_t scale, uint64_t gate_scale, __gm__ void *a,
-	__gm__ void *q, __gm__ void *k, __gm__ void *v, __gm__ void *g, __gm__ void *beta_slot, __gm__ void *dt,
-	__gm__ void *o, __gm__ void *tmp)
-{
-	Kernel<bfloat16_t> kda;   // 遗留测试入口,保持 bf16
-	kda.tmp_gm = tmp;
-	kda.Init();
-	kda.Process(group_count);
-}
-#elif defined(__DAV_C310_VEC__)
-extern "C" __global__ __aicore__ void kda32_mix_aiv(uint64_t group_count, uint64_t scale, uint64_t gate_scale, __gm__ void *a,
-	__gm__ void *q, __gm__ void *k, __gm__ void *v, __gm__ void *g, __gm__ void *beta, __gm__ void *dt,
-	__gm__ void *o, __gm__ void *tmp)
-{
-	Kernel<bfloat16_t, false, true> kda;   // 遗留测试入口,保持 bf16 dense + 尾块支持
-	//kda.Init(group_count, scale, q, k, q, v, g, beta, o, tmp);
-	kda.Init(group_count, scale, gate_scale, (GM_ADDR)a, (GM_ADDR)g, (GM_ADDR)q, (GM_ADDR)k, (GM_ADDR)v, (GM_ADDR)beta, (GM_ADDR)dt, (GM_ADDR)tmp, (GM_ADDR)o);
-	kda.Process(group_count);
-}
-#endif
-
 namespace KdaForward {
 namespace Chunk32 {
 
