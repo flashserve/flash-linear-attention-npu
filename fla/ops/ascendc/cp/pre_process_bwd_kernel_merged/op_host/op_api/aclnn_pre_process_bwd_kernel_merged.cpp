@@ -10,6 +10,9 @@
 #include "pre_process_bwd_kernel_merged.h"
 #include <dlfcn.h>
 #include <new>
+#include <limits>
+#include <sstream>
+#include "../dfx_report.h"
 
 #include "aclnn_kernels/transdata.h"
 #include "aclnn_kernels/contiguous.h"
@@ -49,48 +52,91 @@ struct PreProcessBwdKernelMergedParams {
 
 static aclnnStatus CheckNotNull(PreProcessBwdKernelMergedParams params)
 {
-    CHECK_COND(params.q != nullptr, ACLNN_ERR_PARAM_NULLPTR, "q is nullptr.");
-    CHECK_COND(params.k != nullptr, ACLNN_ERR_PARAM_NULLPTR, "k is nullptr.");
-    CHECK_COND(params.w != nullptr, ACLNN_ERR_PARAM_NULLPTR, "w is nullptr.");
-    CHECK_COND(params.dO != nullptr, ACLNN_ERR_PARAM_NULLPTR, "d_o is nullptr.");
-    CHECK_COND(params.dv != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dv is nullptr.");
-    CHECK_COND(params.dhmOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dhm is nullptr.");
+    const aclTensor *tensors[] = {params.q, params.k, params.w, params.dO, params.dv, params.dhmOut};
+    const char *names[] = {"q", "k", "w", "d_o", "dv", "dhm"};
+    for (size_t i = 0; i < 6; ++i) {
+        if (tensors[i] == nullptr) {
+            CP_DFX_NULL("aclnnPreProcessBwdKernelMerged", names[i]);
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
+    }
     return ACLNN_SUCCESS;
 }
 
 static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
 {
     tensor = l0op::Contiguous(tensor, executor);
-    CHECK_COND(tensor != nullptr, ACLNN_ERR_PARAM_NULLPTR, "Contiguous failed.");
+    if (tensor == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_NULLPTR, "PreProcessBwdKernelMerged: Contiguous returned nullptr.");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
 static aclnnStatus ParamsDataContiguous(PreProcessBwdKernelMergedParams &params, aclOpExecutor *executorPtr)
 {
-    CHECK_COND(DataContiguous(params.q, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR, "q Contiguous failed.");
-    CHECK_COND(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR, "k Contiguous failed.");
-    CHECK_COND(DataContiguous(params.w, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR, "w Contiguous failed.");
-    CHECK_COND(DataContiguous(params.dO, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR,
-               "d_o Contiguous failed.");
-    CHECK_COND(DataContiguous(params.dv, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR,
-               "dv Contiguous failed.");
-    if (params.gOptional != nullptr) {
-        CHECK_COND(DataContiguous(params.gOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR,
-                   "g Contiguous failed.");
-    }
-    if (params.gkOptional != nullptr) {
-        CHECK_COND(DataContiguous(params.gkOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR,
-                   "gk Contiguous failed.");
+    const aclTensor **tensors[] = {&params.q, &params.k, &params.w, &params.dO, &params.dv,
+                                  &params.gOptional, &params.gkOptional};
+    const char *names[] = {"q", "k", "w", "d_o", "dv", "g", "gk"};
+    for (size_t i = 0; i < 7; ++i) {
+        if (*tensors[i] != nullptr && DataContiguous(*tensors[i], executorPtr) != ACLNN_SUCCESS) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_NULLPTR, "PreProcessBwdKernelMerged: Contiguous parameter=%s.", names[i]);
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
     }
     return ACLNN_SUCCESS;
 }
 
-// shape/dtype 的完整约束由 host tiling 统一拦截（见 tiling_processor），此处只做非空与连续性检查，
-// 避免同一套规则在两处漂移。
+// Full input shape/dtype validation remains owned by the host tiling processor.
 static aclnnStatus CheckParams(PreProcessBwdKernelMergedParams params)
 {
     auto ret = CheckNotNull(params);
-    CHECK_RET(ret == ACLNN_SUCCESS, ret);
+    if (ret != ACLNN_SUCCESS) return ret;
+    return ACLNN_SUCCESS;
+}
+
+static aclnnStatus CheckBoundaryParams(const PreProcessBwdKernelMergedParams &params)
+{
+    const char *opName = "aclnnPreProcessBwdKernelMerged";
+    const auto &qShape = params.q->GetViewShape();
+    const auto &doShape = params.dO->GetViewShape();
+    // Validate the caller-owned output only once its expected dimensions exist.
+    if (qShape.GetDimNum() == 4 && doShape.GetDimNum() == 4) {
+        const auto &shape = params.dhmOut->GetViewShape();
+        const int64_t hv = doShape.GetDim(1), k = qShape.GetDim(3), v = doShape.GetDim(3);
+        if (shape.GetDimNum() != 3 || shape.GetDim(0) != hv || shape.GetDim(1) != k ||
+            k < 0 || v < 0 || v > std::numeric_limits<int64_t>::max() - k || shape.GetDim(2) != v + k) {
+            std::ostringstream actual;
+            for (size_t i = 0; i < shape.GetDimNum(); ++i) {
+                if (i != 0) actual << ',';
+                actual << shape.GetDim(i);
+            }
+            CP_DFX_SHAPE_REASON(opName, "dhm", actual.str(), "output must be [Hv,K,V+K] matching q and d_o");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (params.dhmOut->GetDataType() != DataType::DT_FLOAT) {
+            CP_DFX_DTYPE(opName, "dhm", std::to_string(params.dhmOut->GetDataType()), "dhm must be float32");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (!IsContiguous(params.dhmOut)) {
+            const auto &strides = params.dhmOut->GetViewStrides();
+            std::ostringstream actual;
+            for (size_t i = 0; i < shape.GetDimNum(); ++i) {
+                if (i != 0) actual << ',';
+                actual << strides[i];
+            }
+            CP_DFX_STRIDE(opName, "dhm", actual.str(), "contiguous [K*(V+K),V+K,1]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (params.cuSeqlensOptional != nullptr && params.cuSeqlensOptional->Size() >= 2) {
+            const int64_t bos = (*params.cuSeqlensOptional)[0], eos = (*params.cuSeqlensOptional)[1];
+            if (bos < 0 || eos < bos || eos > qShape.GetDim(2) || eos > std::numeric_limits<uint32_t>::max()) {
+                CP_DFX_VALUE_REASON(opName, "cu_seqlens[0:2]", std::to_string(bos) + "," + std::to_string(eos),
+                    "requires 0 <= bos <= eos <= T=" + std::to_string(qShape.GetDim(2)) + "; offsets must fit uint32");
+                return ACLNN_ERR_PARAM_INVALID;
+            }
+        }
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -109,21 +155,31 @@ aclnnStatus aclnnPreProcessBwdKernelMergedGetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
+    if (workspaceSize == nullptr || executor == nullptr) {
+        const char *parameter = workspaceSize == nullptr ? "workspaceSize" : "executor";
+        CP_DFX_ARGUMENT("aclnnPreProcessBwdKernelMerged", parameter,
+            "pass a writable output pointer for the two-stage ACLNN API");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     PreProcessBwdKernelMergedParams params{q, k, w, dO, dv, gOptional, gkOptional, cuSeqlensOptional, scale, chunkSize,
                                           dhmOut};
+    auto ret = CheckParams(params);
+    // Preserve the existing public errno mapping independently of the EZ code.
+    if (ret != ACLNN_SUCCESS) return ACLNN_ERR_PARAM_INVALID;
+    ret = CheckBoundaryParams(params);
+    if (ret != ACLNN_SUCCESS) return ret;
     L2_DFX_PHASE_1(aclnnPreProcessBwdKernelMerged,
                    DFX_IN(q, k, w, dO, dv, gOptional, gkOptional, cuSeqlensOptional), DFX_OUT(dhmOut));
+    // CREATE_EXECUTOR uses the allocator's exception path; a null check here
+    // cannot add a distinct root cause and would turn allocation failure into
+    // a generic internal report.
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
-    auto ret = CheckParams(params);
-    CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "ParamsDataContiguous failed.");
+    if (ParamsDataContiguous(params, executorPtr) != ACLNN_SUCCESS) return ACLNN_ERR_PARAM_INVALID;
     auto result = l0op::PreProcessBwdKernelMerged(params.q, params.k, params.w, params.dO, params.dv, params.gOptional,
                                                  params.gkOptional, params.cuSeqlensOptional, params.scale,
                                                  params.chunkSize, params.dhmOut, executorPtr);
-    CHECK_RET(result != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+    if (result == nullptr) return ACLNN_ERR_PARAM_NULLPTR;
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);
     return ACLNN_SUCCESS;
@@ -133,8 +189,11 @@ aclnnStatus aclnnPreProcessBwdKernelMerged(void *workspace, uint64_t workspaceSi
                                          aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnPreProcessBwdKernelMerged);
-    CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS, ACLNN_ERR_INNER,
-               "This is an error in aclnnPreProcessBwdKernelMerged launch aicore.");
+    const auto ret = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
+    if (ret != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(ret, "PreProcessBwdKernelMerged: CommonOpExecutorRun returned rc=%u.", ret);
+        return ACLNN_ERR_INNER;
+    }
     return ACLNN_SUCCESS;
 }
 

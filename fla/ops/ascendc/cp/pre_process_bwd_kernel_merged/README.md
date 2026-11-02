@@ -1,5 +1,9 @@
 # PreProcessBwdKernelMerged
 
+当前 DFX 整改、A2/A5 三种子模型矩阵、真实 TilingKey、原版/当前版性能对照和 sanitizer 未关闭项，
+统一见 [错误码整改报告](docs/error_code_return_status.md) 与 [ATK 验证说明](../../../../../tests/atk/pre_process_bwd_kernel_merged/README.md)。
+本文保留的历史精度/性能数字不替代该轮验收结果。
+
 ## 功能
 
 把本 rank 边界序列的反向状态递推压缩成仿射摘要：

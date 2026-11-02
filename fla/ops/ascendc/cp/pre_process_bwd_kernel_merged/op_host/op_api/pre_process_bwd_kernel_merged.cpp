@@ -37,6 +37,11 @@ const aclTensor *PreProcessBwdKernelMerged(
     const aclTensor *actualCuSeqlens = nullptr;
     if (cuSeqlensOptional != nullptr) {
         actualCuSeqlens = executor->ConvertToTensor(cuSeqlensOptional, DataType::DT_INT64);
+        if (actualCuSeqlens == nullptr) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_NULLPTR,
+                "PreProcessBwdKernelMerged: ConvertToTensor(cu_seqlens) returned nullptr.");
+            return nullptr;
+        }
         const_cast<aclTensor *>(actualCuSeqlens)->SetStorageFormat(Format::FORMAT_ND);
         const_cast<aclTensor *>(actualCuSeqlens)->SetViewFormat(Format::FORMAT_ND);
         const_cast<aclTensor *>(actualCuSeqlens)->SetOriginalFormat(Format::FORMAT_ND);
@@ -47,7 +52,7 @@ const aclTensor *PreProcessBwdKernelMerged(
         OP_OUTPUT(dhmOut),
         OP_ATTR(scale, chunkSize));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(ret, "PreProcessBwdKernelMerged: ADD_TO_LAUNCHER_LIST_AICORE returned rc=%u.", ret);
         return nullptr;
     }
     return dhmOut;
