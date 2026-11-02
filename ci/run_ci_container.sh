@@ -133,6 +133,22 @@ trap cleanup_ci EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# Build -j settings do not limit Python/OpenMP/BLAS test workers. Restrict the
+# whole CI container so every test and descendant shares at most 16 logical
+# CPUs, including on hosts whose allowed CPU IDs do not start at zero.
+cpu_ids="$(python3 - <<'PY'
+import os
+
+cpus = sorted(os.sched_getaffinity(0))[:16]
+if not cpus:
+    raise SystemExit("[CI][ERROR] No CPUs available to the CI launcher.")
+print(",".join(map(str, cpus)))
+PY
+)"
+IFS=',' read -r -a cpu_list <<< "$cpu_ids"
+cpu_count="${#cpu_list[@]}"
+echo "[CI] CPU limit: ${cpu_count} logical CPUs, cpuset=${cpu_ids}; OpenMP/BLAS threads=${cpu_count}"
+
 if [[ -n "$timing_root" ]]; then
     if [[ "$timing_root" != /* ]]; then
         echo "[CI][ERROR] CI_TIMING_ROOT must be an absolute persistent directory." >&2
@@ -254,6 +270,8 @@ container_id_dir="$(mktemp -d "${TMPDIR:-/tmp}/fla-npu-container.XXXXXX")"
 docker run --rm \
     --cidfile "$container_id_dir/id" \
     --name "$container_name" \
+    --cpus "$cpu_count" \
+    --cpuset-cpus "$cpu_ids" \
     --network host \
     --ipc host \
     "${device_args[@]}" \
@@ -271,6 +289,11 @@ docker run --rm \
     -e CI_OPS="${CI_OPS:-}" \
     -e CI_JOBS="${CI_JOBS:-}" \
     -e CI_CPACK_JOBS="${CI_CPACK_JOBS:-}" \
+    -e OMP_NUM_THREADS="$cpu_count" \
+    -e OMP_THREAD_LIMIT="$cpu_count" \
+    -e MKL_NUM_THREADS="$cpu_count" \
+    -e OPENBLAS_NUM_THREADS="$cpu_count" \
+    -e NUMEXPR_NUM_THREADS="$cpu_count" \
     -e CI_FORCE_CLEAN_CACHE="${CI_FORCE_CLEAN_CACHE:-false}" \
     -e CI_LOG_CLEANUP_ENABLED="${CI_LOG_CLEANUP_ENABLED:-true}" \
     -e CI_LOG_RETENTION_DAYS="${CI_LOG_RETENTION_DAYS:-7}" \
