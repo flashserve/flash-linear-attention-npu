@@ -346,11 +346,22 @@ private:
         CumsumExp2VF(ubG2_, ubEg2_, ubSh_);
     }
 
-    __aicore__ inline float DecayOf(LocalTensor<float> eg)
+    // The decay load already drains the vector pipe. The unsafe count is the
+    // next word in that same window, so v_new does not take a second drain.
+    __aicore__ inline float DecayOf(LocalTensor<float> eg, bool &useDiff)
     {
         SetFlag<HardEvent::V_S>(0);
         WaitFlag<HardEvent::V_S>(0);
+        useDiff = eg.GetValue(kEgUnsafe) != 0.0f;
         return eg.GetValue(kBt - 1);
+    }
+
+    // Prologue only. Later chunks reuse the DecayOf drain.
+    __aicore__ inline bool EgUseDiff(LocalTensor<float> eg)
+    {
+        SetFlag<HardEvent::V_S>(0);
+        WaitFlag<HardEvent::V_S>(0);
+        return eg.GetValue(kEgUnsafe) != 0.0f;
     }
 
     // GM loads only. Issued before the inverse VF so the L2 wait is not an MTE2 stall.
@@ -484,9 +495,11 @@ private:
 
     // L and the inverse stay in UB, then A goes to L1. The caller waits
     // kFlagAttn before AttnL1. A is 2KB; the cube starts A@v on kFlagInv.
+    // egUseDiff_ is already visible: the prologue drains once, and every later
+    // chunk reuses the DecayOf drain from the previous iteration.
     __aicore__ inline void InverseL1(uint32_t chunk)
     {
-        GateAttnVF<1>(ubEg_, ubBe_, ubKkt_, ubQk_, ubL_, ubAttn_);
+        GateAttnVF<1>(ubEg_, ubBe_, ubKkt_, ubQk_, ubL_, ubAttn_, egUseDiff_);
         InvertAVF(ubL_, ubA_, ubAbf_, ubEye_);
         const uint32_t slot = chunk & 1U;
         SetFlag<HardEvent::V_MTE3>(0);
@@ -498,7 +511,7 @@ private:
     __aicore__ inline void AttnL1(uint32_t chunk)
     {
         const uint32_t slot = chunk & 1U;
-        GateAttnVF<2>(ubEg_, ubBe_, ubKkt_, ubQk_, ubL_, ubAttn_);
+        GateAttnVF<2>(ubEg_, ubBe_, ubKkt_, ubQk_, ubL_, ubAttn_, egUseDiff_);
         SetFlag<HardEvent::V_MTE3>(0);
         WaitFlag<HardEvent::V_MTE3>(0);
         CopyNdToL1(l1Attn_[slot], ubAttn_, kBt, kBt);
@@ -534,10 +547,10 @@ private:
         DataCopy(l1[row0 * 16], nz, DataCopyParams(nFrac, burst, 0, gap));
     }
 
-    __aicore__ inline void EmitV(LocalTensor<float> eg)
+    __aicore__ inline void EmitV(LocalTensor<float> eg, bool useDiff)
     {
         const uint32_t row0 = sub_ * 16;
-        VnewHalfVF(ubU_, eg, ubVn_, ubVg_, row0, 0, 16);
+        VnewHalfVF(ubU_, eg, ubVn_, ubVg_, row0, 0, 16, useDiff);
         SetFlag<HardEvent::V_MTE3>(4);
         WaitFlag<HardEvent::V_MTE3>(4);
         CopyHalfNz(l1Vn_, ubVn_, row0);
@@ -848,6 +861,7 @@ private:
             // chunk 0's A@v. Later chunks are inverted one iteration early.
             if (AivOf(0) == sub_) {
                 CrossCoreWaitFlag<0x4, PIPE_V>(kFlagKkt);
+                egUseDiff_ = EgUseDiff(ubEg_);
                 InverseL1(0);
                 CrossCoreWaitFlag<0x4, PIPE_V>(kFlagAttn);
                 AttnL1(0);
@@ -855,6 +869,7 @@ private:
             UploadH();
             if (moreThanOneChunk && AivOf(1) == sub_) {
                 CrossCoreWaitFlag<0x4, PIPE_V>(kFlagKkt);
+                egUseDiff_ = EgUseDiff(ubEg_);
                 InverseL1(1);
                 CrossCoreWaitFlag<0x4, PIPE_V>(kFlagAttn);
                 AttnL1(1);
@@ -879,8 +894,10 @@ private:
                     PrepareLoad(nxt);
                 }
                 CrossCoreWaitFlag<0x4, PIPE_V>(kFlagP);
-                const float decay = DecayOf(egNow);
-                EmitV(egNow);
+                bool useDiff = false;
+                const float decay = DecayOf(egNow, useDiff);
+                egUseDiff_ = ubEg_.GetValue(kEgUnsafe) != 0.0f;
+                EmitV(egNow, useDiff);
                 // K flag before o / saxpy / H. The next cube's K@K sits behind it,
                 // and those three used to push the L2 past that wait.
                 if (onThisAiv && nxt < nChunk_) {
@@ -1064,6 +1081,7 @@ private:
         }
         if (AivOf(0) == sub_) {
             CrossCoreWaitFlag<0x4, PIPE_V>(kFlagKkt);
+            egUseDiff_ = EgUseDiff(ubEg_);
             InverseL1(0);
             CrossCoreWaitFlag<0x4, PIPE_V>(kFlagAttn);
             AttnL1(0);
@@ -1071,6 +1089,7 @@ private:
         UploadH();
         if (moreThanOneChunk && AivOf(1) == sub_) {
             CrossCoreWaitFlag<0x4, PIPE_V>(kFlagKkt);
+            egUseDiff_ = EgUseDiff(ubEg_);
             InverseL1(1);
             CrossCoreWaitFlag<0x4, PIPE_V>(kFlagAttn);
             AttnL1(1);
@@ -1091,8 +1110,10 @@ private:
                 PrepareLoadVar(nxt);
             }
             CrossCoreWaitFlag<0x4, PIPE_V>(kFlagP);
-            const float decay = DecayOf(egNow);
-            EmitV(egNow);
+            bool useDiff = false;
+            const float decay = DecayOf(egNow, useDiff);
+            egUseDiff_ = ubEg_.GetValue(kEgUnsafe) != 0.0f;
+            EmitV(egNow, useDiff);
             if (onThisAiv && nxt < nChunk_) {
                 PublishK();
             }
@@ -1315,6 +1336,7 @@ private:
     LocalTensor<bfloat16_t> l0A_[2], l0B_[2];
     LocalTensor<float> l0C0_, l0C1_;
 
+    bool egUseDiff_ = false;
     uint32_t sub_ = 0;
     uint32_t aicNum_ = 1;
     uint32_t headBegin_ = 0;
