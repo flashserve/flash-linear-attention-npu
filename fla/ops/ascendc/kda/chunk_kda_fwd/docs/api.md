@@ -271,8 +271,8 @@ V2 chunk64 的形参尾部另有 5 个可选输出指针
 - `gkOut/wOut/uOut/qgOut/kgOut/vNewOut/hOut` 必须全部为 `nullptr`，以及 V2 的 5 个反向
   保存值指针也必须全部为 `nullptr`；任一非空返回 `ACLNN_ERR_PARAM_INVALID`。
 - fused 不导出 `Aqk/Akk`，Python 对 `aqkOut/akkOut` 均传 `nullptr`，返回槽也为 `None`。
-  当前 L2 对非空 `Aqk/Akk` 仅检查 shape/dtype，不会由 fused kernel 写入；调用方不能把
-  非空指针理解为请求了有效中间输出。
+  当前 L2 对非空 `Aqk/Akk` 直接返回 `ACLNN_ERR_PARAM_INVALID`；调用方不能把非空指针
+  理解为请求了有效中间输出。
 - `attnOut` 始终为 BF16 sequence-major（rank-4 BSND、rank-3 TND），包括 NTD 输入。
 
 #### chunk32 参数错误与返回码

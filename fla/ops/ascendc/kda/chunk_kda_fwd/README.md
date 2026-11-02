@@ -6,7 +6,7 @@
 自然对数 gate。Gate、Prepare、PostWu、FwdH 和 Finalize 复用同一个私有 L0；A5 的非对齐多 chunk
 场景按四个阶段依次提交，其他场景保持单次提交。该内部调度不改变 ACLNN 或 Python 公共接口。
 
-Ascend950 的 `chunk_size=32` 使用本目录 `arch35/chunk32/` 中的单 kernel 融合实现，
+Ascend950 的 `chunk_size=32` 使用本目录 `op_kernel/arch35/chunk_kda_fwd_chunk32/` 中的单 kernel 融合实现，
 由公开 `ChunkKdaFwd` V2 路由调用；目录和构建依赖统一收口，chunk64 的公开接口不变。
 
 Shape 符号与布局约定见 [KDA 模型符号表](../README.md#model-shape-symbols)。
@@ -147,7 +147,7 @@ Python 入口 `fla_npu.ops.ascendc.npu_chunk_kda_fwd` 负责场景选择：
 
 | 场景 | 走的 aclnn 入口 | L0 实现 |
 | --- | --- | --- |
-| `chunk_size=32`、Ascend950 | `aclnnChunkKdaFwdV2` | 本算子的 arch35/chunk32 单 kernel 融合实现 |
+| `chunk_size=32`、Ascend950 | `aclnnChunkKdaFwdV2` | 本算子的 op_kernel/arch35/chunk_kda_fwd_chunk32 单 kernel 融合实现 |
 | `q/k/v` 为 BF16、`K=V=128`、`chunk_size=64`、`cu_seqlens` 严格递增、输出连续 | `aclnnChunkKdaFwdV2` | `ChunkKdaFwdPrepare -> ChunkFwdH -> ChunkKdaFwdFinalize` 三个独立算子组合 |
 | 其余场景（FP16、`K=V=64`、含空序列、输出非连续） | `aclnnChunkKdaFwd`（签名与 ABI 未变） | 本算子的私有 L0 融合实现 |
 
