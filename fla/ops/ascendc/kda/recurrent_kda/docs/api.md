@@ -55,8 +55,6 @@ Shape 符号统一引用 [KDA 模型符号表](../../README.md#model-shape-symbo
 | `lower_bound` | float? | `-5.0` | `[-5,0)` when `safe_gate=True` | safe gate 下界 |
 | `state_v_first` | bool | `false` | `{false, true}` | true 为 `[state_capacity,H_v,V,K]`，false 为 `[state_capacity,H_v,K,V]` |
 
-设备 CU、indices、accepted 在每次执行时读取，遵循调用 stream 的依赖；不在 GetWorkspaceSize 中冻结数值，不要求额外的 host 同步。layout 与 CU 相互独立，支持 BSND/TND 各自有 CU、无 CU 的四种组合。
-
 ## 3. aclnn API
 
 ### 3.1 接口签名
@@ -188,7 +186,6 @@ recurrent_kda<<<blockDim, nullptr, stream>>>(
 ## 7. 已知限制
 
 - `q/k/v/out` 当前仅支持 BF16。
-- `H/HV <=256`，且 `HV` 必须能被 `H` 整除。
 - `K/V` 当前仅支持 `K=128,V=128` 或 `K=128,V=256` 两档枚举。
 - Python/aclnn 入口支持符合 stride 约束的非连续 Q/K/V 与 `initial_state`。
 - Q/K/V 直接访问要求 feature stride=1、head/token 区间不重叠、stride 为正；BSND `B>1` 时
@@ -203,7 +200,7 @@ recurrent_kda<<<blockDim, nullptr, stream>>>(
 - 末项小于 capacity 时，kernel 仅处理有效前缀并逐行跳过零长度序列；padding tail 输出不作保证。
 - state 支持 V-first 与 K-first，支持 FP32/BF16，以及原位/非原位 final state。
 - 非连续 state 仅允许 slot/head 外层维存在间隔，最后两维必须为行主序稠密矩阵，且外层地址区间不得重叠。
-- A2/A3 支持超过 8 token 的 dense/varlen 序列，内部以最多 8 token 的窗口顺序递推；A5 的 V=128 路径支持长序列，内部 X 不超过8；V=256 保留每段长度不超过8的原路径。Token 容量和元数据宽度须能由现有 uint32 tiling 字段表示，地址计算使用 64 位并保留容量校验。
+- A2/A3 支持超过 8 token 的 dense/varlen 序列，内部以最多 8 token 的窗口顺序递推；A5 的 V=128 路径支持长序列，V=256仍只支持长度不超过8的原路径。Token 容量和元数据宽度须能由现有 uint32 tiling 字段表示，地址计算使用 64 位并保留容量校验。
 - 仅支持 `layout="BSND"` 和 `layout="TND"`。
 - `use_gate_in_kernel=false` 时 `A_log/dt_bias/safe_gate` 必须为空或 false。
 
