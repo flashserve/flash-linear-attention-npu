@@ -2,19 +2,19 @@
 
 方案设计规则版本：`V2`
 
-本文依据 2026-11-02 修订的 `recurrent-kda-a5-regbase-redesign-20261026.md` 整理 A5 目标方案，接口基线为远程 main 提交 `5beac1e01cadce9f99d48d19b86f4cb5e2da32a1`。公开参数见 [api.md](api.md)，历史验证范围见[测试记录](../../../../../../tests/atk/recurrent_kda/README.md)。目标不等于已完成实现；当前代码的主要差异单列于文末，本次文档更新不代表重新构建或验收。
+公开参数见 [api.md](api.md)
 
 ## Host 与平台路径
 
-保留 Python、stable、ctypes、ACLNN、L0 和 schema 的原有签名、顺序、默认值及返回别名，不新增 `prepared_metadata`。`layout` 决定物理维度：BSND 为 rank4，TND 为 rank3；CU 独立决定请求边界。无 CU 时 BSND 按 batch 行划分、TND 为单请求；有 CU 时均在展平 token 上划分请求，输出 shape 与 v 相同。
+保留 Python、stable、ctypes、ACLNN、L0 和 schema 的原有签名、顺序、默认值及返回别名，不新增 `prepared_metadata`。`layout` 决定物理维度：BSND 为四维，TND 为三维；`cu_seqlens` 独立决定请求边界。无 `cu_seqlens` 时 BSND 按 batch 行划分、TND 为单请求；有 `cu_seqlens` 时均在展平 token 上划分请求，输出 shape 与 v 相同。
 
 `use_gate_in_kernel` 决定 g 的解释，不能由 A_log 是否存在替代：开启时须传 A_log，可传 dt_bias；关闭时 A_log、dt_bias 必须为空且 safe_gate=false。safe_gate 的 lower_bound 保留原约束。Nk、Nv 不超过256，Nv 是 Nk 的整数倍；这些公开语义由 A2/A3/A5 共用。
 
-host 校验 shape、dtype、stride 和不依赖设备内容的容量约束。CU、indices、accepted 在每次执行时从设备读取，不做 D2H、host 值快照或捕获后固定请求计划。kernel 保留请求边界和槽位合法性检查；设备非法内容的处理遵循原入口约定，不将设备防御检查描述为同步 host 报错。元数据生产者与算子使用调用 stream 或调用方显式跨 stream 事件建立依赖，ACLGraph replay 使用本轮数据。
+host 校验 shape、dtype、stride 和不依赖设备内容的容量约束。`cu_seqlens`、indices、accepted 在每次执行时从设备读取，不做 D2H、host 值快照或捕获后固定请求计划。kernel 保留请求边界和槽位合法性检查；设备非法内容的处理遵循原入口约定，不将设备防御检查描述为同步 host 报错。元数据生产者与算子使用调用 stream 或调用方显式跨 stream 事件建立依赖，ACLGraph replay 使用本轮数据。
 
-A5 的 K=V=128 路径支持长序列，host/kernel 共用编译期常量 `RKDA_A5_WINDOW_TOKENS=8`。保留的 `tiling.windowSize` 固定写8，不按 layout、shape、最大请求长度或 CU 内容选窗，也不重建 UB 偏移。每 tile 有效长度为 `min(8,end-tileStart)`，不补算无效 token。A5 V=256 保留每段长度不超过8的原路径；A2/A3 保留原 generic 长序列路径和独立资源预算。
+A5 的 K=V=128 路径支持长序列，host/kernel 共用编译期常量 `RKDA_A5_WINDOW_TOKENS=8`。保留的 `tiling.windowSize` 固定写8，不按 layout、shape、最大请求长度或 `cu_seqlens` 内容选窗，也不重建 UB 偏移。每 tile 有效长度为 `min(8,end-tileStart)`，不补算无效 token。A5 V=256 保留每段长度不超过8的原路径；A2/A3 保留原 generic 长序列路径和独立资源预算。
 
-Q/K/V 使用各自真实 stride，支持原接口允许的 causal_conv1d 切片等非连续输入。直接读取、连续化及拒绝重叠 descriptor 的判定沿用原入口，不能将 BSND 有 CU 误作 TND 或弃用组合。tiling 可预计算 head 比例、功能位和不变搬运描述符；动态 bank 归属和 DMA 完成依赖仍由 kernel 管理，不引入全序列任务表或算法 workspace。
+Q/K/V 使用各自真实 stride，支持原接口允许的 causal_conv1d 切片等非连续输入。直接读取、连续化及拒绝重叠 descriptor 的判定沿用原入口，不能将 BSND 有 `cu_seqlens` 误作 TND 或弃用组合。tiling 可预计算 head 比例、功能位和不变搬运描述符；动态 bank 归属和 DMA 完成依赖仍由 kernel 管理，不引入全序列任务表或算法 workspace。
 
 ## A5 Stage 与任务映射
 
@@ -57,24 +57,11 @@ BF16 State 在 GM 和 UB 中只保留 BF16。读入寄存器后 Cast 为 FP32，
 
 ## State 布局与槽位
 
-V-first 始终使用 `[V,K]`，K-first 始终使用 `[K,V]`，初态、UB、快照和末态保持同一接口 layout，不设独立转置阶段。UB 使用紧凑布局：V-first 元素偏移为 `v*K+k`，K-first 为 `k*V+v`。
+State 在 GM 和 UB 中保持接口布局：V-first 为 `[V,K]`，K-first 为 `[K,V]`，均紧凑存放。V-first 连续读写 V 行；K-first 用 Gather 读入 V 行，在寄存器中计算后 Scatter 写回，不设置转置缓冲。BF16 相邻 V 元素成对解包、打包，写回不覆盖未更新元素。
 
-V-first 沿 K 连续加载/写回 V 行。K-first 沿 K 跨距 Gather 一个 V 行到寄存器，按同样公式更新，再 Scatter 到 next bank 的原 K-first 位置。BF16 相邻 V 元素成对按32位加载、解包及打包，更新在 FP32 寄存器完成，打包前按 RINT 转换；单元素或尾部写回须保留未更新的另一半，不能额外舍入。K-first 不增加布局转换、快照缓冲或每行 padding。
+无 indices 时，初态取当前请求对应的槽；有 indices 时，默认取首 token 对应的槽，传入 accepted 后改取第 accepted 个 token 对应的槽。accepted 只选择初态，不截短递推。
 
-初态和写回槽位遵循原接口：
-
-```text
-write_slot(t) = request                      # 无 indices
-                indices[t]                  # packed indices
-                indices[request,t-start]    # speculative indices
-initial_slot = request                      # 无 indices
-               write_slot(start)            # 有 indices、无 accepted
-               write_slot(start+accepted[request]-1) # 同时有 accepted
-write_state = (inplace_final_state or output_final_state)
-              and (has_indices or t == end-1)
-```
-
-accepted 仅影响初态选择，不截短 token 递推。空请求跳过，无 indices 时仅写末态，有 indices 且需要写 State 时逐 token 写快照。重复目标槽按 token 顺序提交并保护在途写；不同请求不得发生接口禁止的活跃槽冲突。非原位路径先完成原接口要求的初态复制，输出 shape、dtype 和 alias 规则不变。
+需要写 State 时，无 indices 仅写末态，有 indices 按 packed 或 speculative 索引逐 token 写回。重复槽按 token 顺序写入，覆盖前保护在途访问；空请求跳过。非原位初态复制及输出别名规则沿用原接口。
 
 ## UB 静态空间与生命周期
 
@@ -152,6 +139,6 @@ A5 纯数据 context 和集中布局常量在 `arch35/recurrent_kda_struct.h`；
 
 后续实现对齐须分别验收四条 dtype/layout 路径，覆盖仅末态、逐 token 快照、无 State 写回，单 token、空请求、尾 tile、长序列和跨任务连续执行。重点核对三 bank 覆盖、旧快照在途、重复目标槽、末 token 预取、输入/参数槽回绕及退出的锁配对，并通过实际编译命令和生成指令确认没有自动同步或 Scalar 等待。
 
-以固定 main 接口基线做 BSND/TND × CU 有/无、gate 参数组合、零/微小范数、State dtype/layout、别名及非法输入差分；ACLGraph replay 改变 CU/indices/accepted 后须消费新值。K-first Gather/Scatter 地址、BF16 打包舍入、寄存器峰值和 State 逻辑读写量单独检查，A2/A3 长序列及 A5 V=256 兼容路径回归。
+以固定 main 接口基线做 BSND/TND × `cu_seqlens` 有/无、gate 参数组合、零/微小范数、State dtype/layout、别名及非法输入差分；ACLGraph replay 改变 `cu_seqlens`/indices/accepted 后须消费新值。K-first Gather/Scatter 地址、BF16 打包舍入、寄存器峰值和 State 逻辑读写量单独检查，A2/A3 长序列及 A5 V=256 兼容路径回归。
 
 性能按相同设备、软件、输入、开关和采样口径比较目标 kernel，快照与仅末态分别记录。历史测试结论不能替代以上目标变更后的验收；本次仅更新两份文档，不新增性能结论。
