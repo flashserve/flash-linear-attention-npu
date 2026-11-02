@@ -283,6 +283,10 @@ A2/A5 job 统一设置 `CI_TMPDIR=/tmp/fla-npu-ci`。A5 Triton/BiShengIR 编译�
 
 缓存固定使用 `CI_CACHE_ROOT=${CI_ROOT}/cache_root`；NPU 锁固定使用 `${CI_ROOT}/tmp/npu-locks`，跨运行共享，不能按 run 分开。单次运行的收尾保留共享缓存与锁文件，不递归修改它们的所有权。
 
+当前 8 个 Example/ST 用例中，4 个 GDN 精度用例复用 `gdr_accuracy_golden`；2 个 KDA 精度用例复用 `kda_accuracy_golden`，另外 2 个 KDA 功能检查不计算 CPU 标杆。KDA 缓存默认位于 `${CI_CACHE_ROOT}/kda_accuracy_golden`，可用 `CI_KDA_ACCURACY_CACHE` 指定宿主目录；容器挂载到 `/workspace/kda_accuracy_golden`，通过 `KDA_ACCURACY_CACHE_DIR` 传入 example。手工运行时默认使用 `third_party/kda_accuracy_golden`，也可传 `--accuracy-cache-dir`。
+
+KDA 缓存保存 CPU 标杆输出及全部五项梯度，按 shape、dtype、seed、scale、gate 下界、L2Norm、序列分段、PyTorch 版本和标杆版本区分；修改输入生成配方或标杆数学实现时须递增 `ACCURACY_REFERENCE_VERSION`。缓存命中仍执行 NPU 正反向与原精度比较，不缓存测试通过结果。`--accuracy-force-regenerate` 可强制重算；结构无效或读取失败的缓存会重新生成，写入使用临时文件和原子替换，避免并发读取未完成的文件。
+
 Stage 耗时统一保存在每台服务器的 `${CI_ROOT}/results/ci-timings/stage-timings.csv`（workflow 通过 `CI_TIMING_ROOT` 配置）。总表每行对应一个 `(run_id, run_attempt, platform, stage)`，包含 commit、SOC、状态、退出码、UTC 起止时间和 `duration_seconds`，历史 CI 行持续保留。只记录当前 5 个执行 stage，`scoped-overlay` 已暂停；GitHub-hosted 汇总校验不在此表内。每次 stage 状态变化即加锁更新总表、同步落盘并原子替换，失败也保留，工作区与临时目录清理不会删除它。被强制终止的 stage 保留 `running` 和开始时间，耗时留空；`skipped/not_run` 耗时也留空，不写成 0。启用前须在 A2、A5 分别创建下述可写目录；总表由各自服务器维护，不自动跨机合并。
 
 源码获取保持原有顺序：A5 直接通过 GitHub API 准备源码；A2 第一次 checkout 先直连，只有失败后才执行原有“启动代理并获取端口”步骤，再按原顺序等待并重试。runner 服务的 GitHub 控制连接继续使用代理；A5 API 和 A2 首次 checkout 的步骤环境会清空继承的 HTTP/HTTPS/ALL/Git 代理变量，并设置 `NO_PROXY=*`，确保这两次源码访问直连。

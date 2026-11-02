@@ -134,6 +134,11 @@ class RunCiContainerTests(unittest.TestCase):
                 self.assertTrue(Path(env[name]).is_dir(), name)
             self.assertTrue((Path(env["CI_CACHE_ROOT"]) / "third_party").is_dir())
             self.assertTrue((Path(env["CI_CACHE_ROOT"]) / "gdr_accuracy_golden").is_dir())
+            kda_cache = Path(env["CI_CACHE_ROOT"]) / "kda_accuracy_golden"
+            self.assertTrue(kda_cache.is_dir())
+            run = next(call for call in calls if "--cidfile" in call)
+            self.assertIn(str(kda_cache) + ":/workspace/kda_accuracy_golden", run)
+            self.assertIn("KDA_ACCURACY_CACHE_DIR=/workspace/kda_accuracy_golden", run)
             self.assertIn(["rm", "-f", "owned-container-id"], calls)
             helper = calls[-1]
             self.assertEqual(helper[helper.index("--network") + 1], "none")
