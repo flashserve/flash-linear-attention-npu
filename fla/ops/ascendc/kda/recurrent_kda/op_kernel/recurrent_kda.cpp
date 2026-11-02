@@ -20,7 +20,6 @@
 
 
 using namespace AscendC;
-using namespace matmul;
 using namespace RecurrentKda;
 
 
@@ -33,10 +32,22 @@ recurrent_kda(GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR gate, GM_ADDR b
     GET_TILING_DATA(tilingData, tilingGM);
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
     TPipe pipe;
-    RKDA<bfloat16_t, bfloat16_t, DTYPE_INITIAL_STATE> op(&tilingData);
     GM_ADDR stateOutput = tilingData.inplaceFinalState == 1 ? initialStateOut : finalState;
     RKDAInitParams initParams{query, key, value, gate, beta, initialState, cuSeqlens, ssmStateIndices,
                               aLog, dtBias, numAcceptedTokens, out, stateOutput};
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    if (tilingData.stateVFirst) {
+        RKDAVectorContext<bfloat16_t, bfloat16_t, DTYPE_INITIAL_STATE, true> ctx;
+        InitRecurrentKda(ctx, &tilingData, initParams, &pipe);
+        ProcessRecurrentKda(ctx);
+    } else {
+        RKDAVectorContext<bfloat16_t, bfloat16_t, DTYPE_INITIAL_STATE, false> ctx;
+        InitRecurrentKda(ctx, &tilingData, initParams, &pipe);
+        ProcessRecurrentKda(ctx);
+    }
+#else
+    RKDA<bfloat16_t, bfloat16_t, DTYPE_INITIAL_STATE> op(&tilingData);
     op.Init(initParams, &pipe);
     op.Process();
+#endif
 }

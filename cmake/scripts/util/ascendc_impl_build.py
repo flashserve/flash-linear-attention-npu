@@ -616,6 +616,22 @@ class AdpBuilder(opdesc_parser.OpDesc):
             self.impl_mode_op_info = ", impl_mode = impl_mode"
 
     def _write_impl(self: any, fd: object, impl_path: str = ""):
+        # Explicit -mllvm=<option> overrides must follow CANN's platform defaults.
+        # Existing option spellings keep their original generated wrapper bytes.
+        if any(option.startswith('-mllvm=') for options in self.custom_compile_options.values()
+               for option in options):
+            compile_config = json.loads(self.op_compile_option)
+            normal_options = {}
+            for soc, options in self.custom_compile_options.items():
+                normal_options[soc] = []
+                for option in options:
+                    if option.startswith('-mllvm='):
+                        late = compile_config.setdefault('compile_options', {}).setdefault(soc, [])
+                        late.append('-mllvm ' + option[len('-mllvm='):])
+                    else:
+                        normal_options[soc].append(option)
+            self.custom_compile_options = normal_options
+            self.op_compile_option = json.dumps(compile_config)
         argsdef = self._build_paralist()
         argsval = self._build_paralist(False)
         pchk = self._build_parachk()

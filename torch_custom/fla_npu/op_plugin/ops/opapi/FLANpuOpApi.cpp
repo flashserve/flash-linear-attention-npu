@@ -773,9 +773,10 @@ at::Tensor npu_kda_gate_cumsum(
     c10::optional<bool> state_v_first)
 {
     const std::string layout_str(layout.data(), layout.size());
-    TORCH_CHECK(layout_str == "BSND" || layout_str == "TND",
-                "npu_recurrent_kda: layout must be BSND or TND.");
-    const bool is_tnd = layout_str == "TND";
+    // `layout` is retained for ABI compatibility.  Rank/mode is selected by
+    // cu_seqlens presence, matching the ACLNN path.
+    const bool has_cu = cu_seqlens.has_value() && cu_seqlens->defined();
+    const bool is_tnd = has_cu;
     TORCH_CHECK((is_tnd && q.dim() == 3 && k.dim() == 3 && v.dim() == 3 && g.dim() == 3 && beta.dim() == 2) ||
                     (!is_tnd && q.dim() == 4 && k.dim() == 4 && v.dim() == 4 && g.dim() == 4 && beta.dim() == 3),
                 "npu_recurrent_kda: input ranks do not match layout.");
@@ -807,7 +808,6 @@ at::Tensor npu_kda_gate_cumsum(
                      beta.size(2) == hv),
                 "npu_recurrent_kda: v/g/beta shape mismatch.");
 
-    const bool has_cu = cu_seqlens.has_value() && cu_seqlens->defined();
     if (has_cu) {
         TORCH_CHECK(cu_seqlens->dim() == 1 && cu_seqlens->size(0) >= 2 &&
                         (cu_seqlens->scalar_type() == at::kInt || cu_seqlens->scalar_type() == at::kLong),
@@ -832,7 +832,7 @@ at::Tensor npu_kda_gate_cumsum(
     at::Tensor final_state_work = at::empty_like(initial_state_work);
     at::Tensor out = at::empty_like(v);
 
-    const bool use_gate = use_gate_in_kernel.value_or(false);
+    const bool use_gate = A_log.has_value() && A_log->defined();
     const bool safe = safe_gate.value_or(false);
     const bool use_qk_l2norm = use_qk_l2norm_in_kernel.value_or(false);
     const bool use_beta_sigmoid = use_beta_sigmoid_in_kernel.value_or(false);

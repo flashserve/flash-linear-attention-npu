@@ -1,8 +1,8 @@
 // Stable-ABI launcher: npu_recurrent_kda (two outputs, optional inputs).
 //
 // Only torch/csrc/stable/* plus the shared acl_meta helper: no ATen/c10, no
-// libtorch C++ ABI.  `layout` is an int code because the stable value
-// conversions have no std::string support (0 = BSND, 1 = TND); Python maps it.
+// libtorch C++ ABI.  `layout` remains an int slot for ABI compatibility; the
+// recurrent operator derives its mode from cu_seqlens presence.
 // Pre-macro legacy for the same reason as stable_recurrent_gated_delta_rule.cpp
 // (read that header, and do not copy this shape): it submits the same way, and
 // the boxed entry point below consumes each required
@@ -61,9 +61,8 @@ constexpr const char* kSchemaRecurrentKda =
     "bool use_beta_sigmoid_in_kernel, bool allow_neg_eigval, bool safe_gate, "
     "float lower_bound, bool state_v_first, int stream) -> (Tensor, Tensor?)";
 
-// This operator only implements the two spellings the reference accepts, so its
-// table is the (BSND, TND) subset rather than the canonical four; the codes
-// must match _stable._ENUM["npu_recurrent_kda"]["layout"].
+// The table is retained for the stable ABI conversion helper.  The recurrent
+// operator ignores the selected spelling and derives mode from cu_seqlens.
 constexpr const char* kRecurrentKdaLayoutNames[] = {"BSND", "TND"};
 
 // Returns (attn_out, final_state).  Mirrors the ctypes wrapper:
@@ -134,7 +133,7 @@ void run_recurrent_kda(AtenTensorHandle q, AtenTensorHandle k,
   if (get_ret != 0) {
     throw std::runtime_error(
         "fla_npu(stable): aclnnRecurrentKdaGetWorkspaceSize failed: " +
-        std::to_string(get_ret));
+        std::to_string(get_ret) + "; " + rt.recent_error_message());
   }
 
   Tensor workspace;
@@ -163,7 +162,7 @@ void run_recurrent_kda(AtenTensorHandle q, AtenTensorHandle k,
   if (launch_ret != 0) {
     throw std::runtime_error(
         "fla_npu(stable): aclnnRecurrentKda failed: " +
-        std::to_string(launch_ret));
+        std::to_string(launch_ret) + "; " + rt.recent_error_message());
   }
   if (!output_final_state) {
     *final_state = Tensor();

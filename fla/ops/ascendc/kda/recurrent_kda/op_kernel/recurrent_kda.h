@@ -74,10 +74,13 @@ public:
         stateCapacity_ = tilingData->sBlockNum;
         queryTokenStride_ = tilingData->queryTokenStride;
         queryHeadStride_ = tilingData->queryHeadStride;
+        queryBatchStride_ = tilingData->queryBatchStride;
         keyTokenStride_ = tilingData->keyTokenStride;
         keyHeadStride_ = tilingData->keyHeadStride;
+        keyBatchStride_ = tilingData->keyBatchStride;
         valueTokenStride_ = tilingData->valueTokenStride;
         valueHeadStride_ = tilingData->valueHeadStride;
+        valueBatchStride_ = tilingData->valueBatchStride;
         ssmStateStride_ = tilingData->ssmStateStride;
         stateInStride0_ = tilingData->stateInStride0;
         stateInStride1_ = tilingData->stateInStride1;
@@ -95,7 +98,9 @@ public:
         hasALog_ = (tilingData->hasALog == 1);
         hasDtBias_ = (tilingData->hasDtBias == 1);
         useQkL2norm_ = (tilingData->useQkL2norm == 1);
-        useGateInKernel_ = (tilingData->useGateInKernel == 1);
+        // Gate semantics are selected by A_log presence.  The legacy
+        // use_gate_in_kernel attribute is kept only for ABI compatibility.
+        useGateInKernel_ = hasALog_;
         useBetaSigmoid_ = (tilingData->useBetaSigmoid == 1);
         allowNegEigval_ = (tilingData->allowNegEigval == 1);
         safeGate_ = (tilingData->safeGate == 1);
@@ -563,6 +568,13 @@ private:
         }
     }
 
+    __aicore__ inline uint64_t InputOffset(uint64_t token, uint64_t tokenStride,
+                                         uint64_t batchStride) const
+    {
+        if (hasCuSeqlens_) return token * tokenStride;
+        return (token / seqLen_) * batchStride + (token % seqLen_) * tokenStride;
+    }
+
     __aicore__ inline void PrefetchPackedInputs(int64_t seq0, int32_t seqLen, uint64_t head)
     {
         LocalTensor<inType> packed = packedInQueue_.AllocTensor<inType>();
@@ -582,9 +594,9 @@ private:
             static_cast<uint32_t>((valueTokenStride_ - realV_) * sizeof(inType)), 0, 0};
         DataCopyPadExtParams<inType> qkPad{true, 0, static_cast<uint8_t>(alignK_ - realK_), 0};
         DataCopyPadExtParams<inType> vPad{true, 0, static_cast<uint8_t>(alignV_ - realV_), 0};
-        DataCopyPad(qLocal, queryGm_[token * queryTokenStride_ + qkHead * queryHeadStride_], qParams, qkPad);
-        DataCopyPad(kLocal, keyGm_[token * keyTokenStride_ + qkHead * keyHeadStride_], kParams, qkPad);
-        DataCopyPad(vLocal, valueGm_[token * valueTokenStride_ + head * valueHeadStride_], vParams, vPad);
+        DataCopyPad(qLocal, queryGm_[InputOffset(token, queryTokenStride_, queryBatchStride_) + qkHead * queryHeadStride_], qParams, qkPad);
+        DataCopyPad(kLocal, keyGm_[InputOffset(token, keyTokenStride_, keyBatchStride_) + qkHead * keyHeadStride_], kParams, qkPad);
+        DataCopyPad(vLocal, valueGm_[InputOffset(token, valueTokenStride_, valueBatchStride_) + head * valueHeadStride_], vParams, vPad);
         uint64_t gateOffset = (token * NV_ + head) * realK_;
         if (gateDtype_ == 0) {
             CopyPackedGate<float>(packed, gateOffset, seqLen);
@@ -1255,10 +1267,13 @@ private:
     uint32_t ssmStateStride_;
     uint64_t queryTokenStride_;
     uint64_t queryHeadStride_;
+    uint64_t queryBatchStride_;
     uint64_t keyTokenStride_;
     uint64_t keyHeadStride_;
+    uint64_t keyBatchStride_;
     uint64_t valueTokenStride_;
     uint64_t valueHeadStride_;
+    uint64_t valueBatchStride_;
     uint64_t stateInStride0_;
     uint64_t stateInStride1_;
     uint64_t stateInStride2_;
