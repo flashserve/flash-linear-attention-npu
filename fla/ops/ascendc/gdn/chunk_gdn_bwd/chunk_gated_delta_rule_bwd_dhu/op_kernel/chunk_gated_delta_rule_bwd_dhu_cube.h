@@ -37,10 +37,11 @@ class ChunkGatedDeltaRuleBwdDhuCube {
 public:
     __aicore__ inline ChunkGatedDeltaRuleBwdDhuCube() = default;
 
-    __aicore__ inline void Init(GM_ADDR k, GM_ADDR w, GM_ADDR dO, GM_ADDR dh, GM_ADDR dv2,
+    __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR w, GM_ADDR dO, GM_ADDR dh, GM_ADDR dv2,
                                 GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR workspace,
                                 const ChunkGatedDeltaRuleBwdDhuTilingData *__restrict tilingData)
     {
+        (void)q;
         k_ = k;
         w_ = w;
         dO_ = dO;
