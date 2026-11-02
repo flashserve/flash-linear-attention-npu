@@ -34,7 +34,7 @@ def cases():
 
 
 def run_case(runtime, torch, device, item):
-    from fla_npu.ops.ascendc._runtime import _CallContext
+    from host_probe import HostDescriptors
     identifier, tokens, cu, pairs, nt, expected, fragments = item[:7]
     options = item[7] if len(item) > 7 else {}
     b, hk, hv, kd, vd = 1, options.get("HK", 1), options.get("HV", 1), options.get("K", 128), options.get("V", 128)
@@ -53,10 +53,9 @@ def run_case(runtime, torch, device, item):
     if options.get("sigmoid"):
         optional[2] = torch.zeros((b, hv, tokens - 1), dtype=fp32, device=device)
     outputs = [torch.empty_like(values[name]) for name in ("q", "k", "v", "beta", "g")]
-    context = _CallContext(runtime, torch.device(device))
+    context = HostDescriptors(runtime)
     try:
-        descriptor = lambda value, name: ctypes.c_void_p() if value is None else context.tensor(
-            value, name, acl_format_override=2, storage_shape_override=tuple(value.shape))
+        descriptor = lambda value, name: ctypes.c_void_p() if value is None else context.tensor(value, name)
         args = [descriptor(values[name], name) for name in
                 ("q", "k", "v", "v_new", "do", "du", "g", "beta", "h", "dh", "a")]
         args += [descriptor(value, name) for name, value in zip(("q_rstd", "k_rstd", "beta_raw"), optional)]
@@ -69,7 +68,7 @@ def run_case(runtime, torch, device, item):
         fn.argtypes = ([ctypes.c_void_p] * 16 + [ctypes.c_double, ctypes.c_int64] + [ctypes.c_bool] * 5
                        + [ctypes.c_void_p] * 5 + [ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_void_p)])
         fn.restype = ctypes.c_int
-        # 不调用 public wrapper 或 runtime.call：它们可能触发 launch/先行 Python 校验。
+        # 不调用 public wrapper：它可能触发 launch/先行 Python 校验。
         runtime._recent_error_message()  # 清除本线程先前消息（若 CANN 版本提供）。
         code = fn(*args, ctypes.byref(workspace), ctypes.byref(executor))
         message = runtime._recent_error_message()
@@ -97,10 +96,10 @@ def main():
     import torch
     import torch_npu  # noqa: F401
     import fla_npu
-    from fla_npu.ops.ascendc._runtime import runtime
+    from host_probe import HostProbe
     from arch22_identity import _arch22_runtime_identity
     torch.npu.set_device(a.device)
-    rt = runtime()
+    rt = HostProbe()
     pre_call_identity = _arch22_runtime_identity()
     records = [run_case(rt, torch, f"npu:{a.device}", item) for item in cases()]
     identity = _arch22_runtime_identity(require_tiling=True, refresh=True)
