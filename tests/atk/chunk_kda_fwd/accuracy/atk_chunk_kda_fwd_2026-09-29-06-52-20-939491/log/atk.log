@@ -1,0 +1,59 @@
+[2026-09-28 22:52:21,046] [INFO] [MainProcess] [472947] [base.py:239]  task_output_path: ./atk_output/accuracy/atk_output/atk_chunk_kda_fwd_2026-09-29-06-52-20-939491
+[2026-09-28 22:52:21,046] [INFO] [MainProcess] [472947] [celery_config.py:117]  clear celery filesystem storage before start. broker=atk_output/accuracy/atk_output/atk_chunk_kda_fwd_2026-09-29-06-52-20-939491/db/celery/broker, processed=atk_output/accuracy/atk_output/atk_chunk_kda_fwd_2026-09-29-06-52-20-939491/db/celery/processed, results=atk_output/accuracy/atk_output/atk_chunk_kda_fwd_2026-09-29-06-52-20-939491/db/celery/results
+[2026-09-28 22:52:21,077] [INFO] [MainProcess] [472947] [registry.py:76]  executor_chunk_kda_fwd is already registered, repeated registration will coverage it, new module path is executor_chunk_kda_fwd
+[2026-09-28 22:52:21,078] [INFO] [MainProcess] [472947] [registry.py:76]  executor_chunk_kda_fwd is already registered, repeated registration will coverage it, new module path is executor_chunk_kda_fwd
+[2026-09-28 22:52:21,080] [INFO] [MainProcess] [472947] [resource_utils.py:113]  bind_cpu_type auto resolved to 2 (reason=container_detected)
+[2026-09-28 22:52:21,112] [INFO] [127.0.0.1:9090@create_dataset] [473096] [patch_getenv.py:15]  get env ATK_CPU_INFO = {"cpu_ids_without_devices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111], "device_cpu_ids": {"0": [113, 112]}}
+[2026-09-28 22:52:21,146] [INFO] [ForkPoolWorker-1] [473098] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 22:52:21,158] [INFO] [ForkPoolWorker-2] [473100] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 22:52:21,168] [INFO] [ForkPoolWorker-3] [473102] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 22:52:21,178] [INFO] [ForkPoolWorker-4] [473104] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 22:52:21,229] [INFO] [127.0.0.1:9090@device_run_0] [473112] [patch_getenv.py:15]  get env ATK_CPU_INFO = {"cpu_ids_without_devices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111], "device_cpu_ids": {"0": [113, 112]}}
+[2026-09-28 22:52:21,345] [INFO] [127.0.0.1:9090@cpu_run] [473116] [patch_getenv.py:15]  get env ATK_CPU_INFO = {"cpu_ids_without_devices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111], "device_cpu_ids": {"0": [113, 112]}}
+[2026-09-28 22:52:21,379] [INFO] [ForkPoolWorker-1] [473118] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 22:52:21,391] [INFO] [ForkPoolWorker-2] [473120] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 22:52:21,403] [INFO] [ForkPoolWorker-3] [473122] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 22:52:21,413] [INFO] [ForkPoolWorker-4] [473124] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 22:52:21,462] [INFO] [127.0.0.1:9090@compare] [473132] [patch_getenv.py:15]  get env ATK_CPU_INFO = {"cpu_ids_without_devices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111], "device_cpu_ids": {"0": [113, 112]}}
+[2026-09-28 22:52:21,493] [INFO] [ForkPoolWorker-1] [473134] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 22:52:21,504] [INFO] [ForkPoolWorker-2] [473136] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 22:52:21,516] [INFO] [ForkPoolWorker-3] [473138] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 22:52:21,527] [INFO] [ForkPoolWorker-4] [473140] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 22:52:21,561] [INFO] [MainProcess] [472947] [patch_getenv.py:15]  get env ATK_CPU_INFO = {"cpu_ids_without_devices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111], "device_cpu_ids": {"0": [113, 112]}}
+[2026-09-28 22:52:21,591] [INFO] [MainProcess] [472947] [main.py:504]  create_tasks start!!!, case_config_name:chunk_kda_fwd, all_cases_num: 1
+[2026-09-28 22:52:21,605] [WARNING] [MainProcess] [472947] [warnings.py:109]  /workspace/venv/lib64/python3.11/site-packages/pydantic/main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `enum` - serialized value may not be as expected [field_name='cover_task', input_value=0, input_type=int])
+  return self.__pydantic_serializer__.to_python(
+
+[2026-09-28 22:52:21,609] [INFO] [MainProcess] [472947] [main.py:541]  create_tasks over!!!, case_config_name:chunk_kda_fwd, all_cases_num: 1
+[2026-09-28 22:52:22,179] [INFO] [ForkPoolWorker-1] [473098] [opp_tasks.py:369]  [case 292] start CREATE DATASET.
+[2026-09-28 22:52:22,251] [INFO] [127.0.0.1:9090@device_run_0] [473112] [opp_tasks.py:507]  [case 292] start run NPU OPP TASK.
+[2026-09-28 22:52:22,419] [INFO] [ForkPoolWorker-1] [473118] [opp_tasks.py:507]  [case 292] start run CPU OPP TASK.
+[2026-09-28 22:52:24,206] [INFO] [127.0.0.1:9090@device_run_0] [473112] [npu_backend.py:215]  [case 292] begin init gm data
+[2026-09-28 22:52:24,208] [INFO] [127.0.0.1:9090@device_run_0] [473112] [npu_backend.py:223]    Total: 123.02 GB
+[2026-09-28 22:52:24,208] [INFO] [127.0.0.1:9090@device_run_0] [473112] [npu_backend.py:224]    Used:  0.56 GB
+[2026-09-28 22:52:24,208] [INFO] [127.0.0.1:9090@device_run_0] [473112] [npu_backend.py:225]    Free:  122.46 GB
+[2026-09-28 22:52:24,208] [INFO] [127.0.0.1:9090@device_run_0] [473112] [npu_backend.py:237]    Reserve: 30.57 GB (gm_init_flag=0 MB)
+[2026-09-28 22:52:24,599] [INFO] [127.0.0.1:9090@device_run_0] [473112] [npu_backend.py:244]  [case 292] end init gm data, cost 0.39257025718688965 s
+[2026-09-28 22:52:29,302] [INFO] [127.0.0.1:9090@device_run_0] [473112] [patch_getenv.py:15]  get env ASCEND_CUSTOM_OPP_PATH = /workspace/venv/lib/python3.11/site-packages/fla_npu/opp/vendors/fla_npu_transformer:/workspace/venv/lib/python3.11/site-packages/fla_npu/opp/vendors/fla_npu_transformer/op_api/lib:/workspace/venv/lib64/python3.11/site-packages/fla_npu/opp:/workspace/venv/lib64/python3.11/site-packages/fla_npu/opp/vendors/fla_npu_transformer
+[2026-09-28 22:53:02,562] [INFO] [ForkPoolWorker-2] [473136] [opp_tasks.py:315]  [case 292] start POST PROCESS, task:['accuracy'].
+[2026-09-28 22:53:12,671] [INFO] [ResultProcess-5] [473150] [reports.py:156]  
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|     id_292     | npu_npu_dut_input_bytes | cpu_cpu_golden_input_bytes | npu_npu_dut_output_bytes | cpu_cpu_golden_output_bytes | accuracy |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|  npu_npu_dut   |           None          |            None            |           None           |             None            |    -     |
+| cpu_cpu_golden |                         |                            |                          |                             |   True   |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+[2026-09-28 22:53:12,680] [INFO] [ResultProcess-5] [473150] [csv_report.py:905]  
++----------------+----------+------------------+------------------+--------------+----------------------+--------+--------------+
+|      名称      | 总用例数 | 执行成功用例个数 | 执行失败用例个数 | 通过用例个数 | 错误信息匹配用例个数 | 通过率 | 精度是否达标 |
++----------------+----------+------------------+------------------+--------------+----------------------+--------+--------------+
+| cpu_cpu_golden |    1     |        1         |        0         |      1       |          0           | 100.0  |     Pass     |
++----------------+----------+------------------+------------------+--------------+----------------------+--------+--------------+
+[2026-09-28 22:53:12,681] [INFO] [ResultProcess-5] [473150] [csv_report.py:743]  Total Task: 1, success 1, failed 0
+[2026-09-28 22:53:12,681] [INFO] [ResultProcess-5] [473150] [csv_report.py:744]  Summary info: acc_pass_result:Pass	is_acc_dc_pass:None	is_e2e_perf_pass:None	is_benchmark_perf_pass:None	is_device_perf_pass:None	is_device_memory_pass:None	is_memory_check_pass:None .
+[2026-09-28 22:53:12,692] [INFO] [ResultProcess-5] [473150] [csv_report.py:946]  save result excel file: ./atk_output/accuracy/atk_output/atk_chunk_kda_fwd_2026-09-29-06-52-20-939491/report/atk_chunk_kda_fwd_reports_2026-09-28-22-52-21.xlsx
+[2026-09-28 22:53:12,692] [INFO] [ResultProcess-5] [473150] [patch_getenv.py:15]  get env ASCEND_CUSTOM_OPP_PATH = /workspace/venv/lib/python3.11/site-packages/fla_npu/opp/vendors/fla_npu_transformer:/workspace/venv/lib/python3.11/site-packages/fla_npu/opp/vendors/fla_npu_transformer/op_api/lib:/workspace/venv/lib64/python3.11/site-packages/fla_npu/opp:/workspace/venv/lib64/python3.11/site-packages/fla_npu/opp/vendors/fla_npu_transformer
+[2026-09-28 22:53:12,707] [INFO] [MainProcess] [472947] [base.py:299]  atk task success!
+[2026-09-28 22:53:13,163] [WARNING] [127.0.0.1:9090@device_run_0] [473112] [control.py:590]  Got shutdown from remote
+[2026-09-28 22:53:19,712] [INFO] [MainProcess] [472947] [base.py:303]  atk task finish. cost time: 58 s

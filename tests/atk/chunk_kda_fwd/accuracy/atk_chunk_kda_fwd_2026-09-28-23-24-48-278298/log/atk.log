@@ -1,0 +1,161 @@
+[2026-09-28 15:24:48,403] [INFO] [MainProcess] [232362] [base.py:239]  task_output_path: ./atk_output/accuracy/atk_output/atk_chunk_kda_fwd_2026-09-28-23-24-48-278298
+[2026-09-28 15:24:48,403] [INFO] [MainProcess] [232362] [celery_config.py:117]  clear celery filesystem storage before start. broker=atk_output/accuracy/atk_output/atk_chunk_kda_fwd_2026-09-28-23-24-48-278298/db/celery/broker, processed=atk_output/accuracy/atk_output/atk_chunk_kda_fwd_2026-09-28-23-24-48-278298/db/celery/processed, results=atk_output/accuracy/atk_output/atk_chunk_kda_fwd_2026-09-28-23-24-48-278298/db/celery/results
+[2026-09-28 15:24:48,435] [INFO] [MainProcess] [232362] [registry.py:76]  executor_chunk_kda_fwd is already registered, repeated registration will coverage it, new module path is executor_chunk_kda_fwd
+[2026-09-28 15:24:48,436] [INFO] [MainProcess] [232362] [registry.py:76]  executor_chunk_kda_fwd is already registered, repeated registration will coverage it, new module path is executor_chunk_kda_fwd
+[2026-09-28 15:24:48,438] [INFO] [MainProcess] [232362] [resource_utils.py:113]  bind_cpu_type auto resolved to 2 (reason=container_detected)
+[2026-09-28 15:24:48,474] [INFO] [127.0.0.1:9090@create_dataset] [232893] [patch_getenv.py:15]  get env ATK_CPU_INFO = {"cpu_ids_without_devices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111], "device_cpu_ids": {"0": [113, 112]}}
+[2026-09-28 15:24:48,512] [INFO] [ForkPoolWorker-1] [232895] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 15:24:48,528] [INFO] [ForkPoolWorker-2] [232897] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 15:24:48,533] [INFO] [ForkPoolWorker-3] [232899] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 15:24:48,543] [INFO] [ForkPoolWorker-4] [232901] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 15:24:48,595] [INFO] [127.0.0.1:9090@device_run_0] [232909] [patch_getenv.py:15]  get env ATK_CPU_INFO = {"cpu_ids_without_devices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111], "device_cpu_ids": {"0": [113, 112]}}
+[2026-09-28 15:24:48,710] [INFO] [127.0.0.1:9090@cpu_run] [232913] [patch_getenv.py:15]  get env ATK_CPU_INFO = {"cpu_ids_without_devices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111], "device_cpu_ids": {"0": [113, 112]}}
+[2026-09-28 15:24:48,747] [INFO] [ForkPoolWorker-1] [232915] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 15:24:48,756] [INFO] [ForkPoolWorker-2] [232917] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 15:24:48,769] [INFO] [ForkPoolWorker-3] [232919] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 15:24:48,782] [INFO] [ForkPoolWorker-4] [232921] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 15:24:48,858] [INFO] [127.0.0.1:9090@compare] [232929] [patch_getenv.py:15]  get env ATK_CPU_INFO = {"cpu_ids_without_devices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111], "device_cpu_ids": {"0": [113, 112]}}
+[2026-09-28 15:24:48,891] [INFO] [ForkPoolWorker-1] [232931] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 15:24:48,904] [INFO] [ForkPoolWorker-2] [232933] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 15:24:48,914] [INFO] [ForkPoolWorker-3] [232935] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 15:24:48,921] [INFO] [ForkPoolWorker-4] [232937] [patch_getenv.py:15]  get env CELERY_LOG_LEVEL = 30
+[2026-09-28 15:24:48,957] [INFO] [MainProcess] [232362] [patch_getenv.py:15]  get env ATK_CPU_INFO = {"cpu_ids_without_devices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111], "device_cpu_ids": {"0": [113, 112]}}
+[2026-09-28 15:24:48,996] [INFO] [MainProcess] [232362] [main.py:504]  create_tasks start!!!, case_config_name:chunk_kda_fwd, all_cases_num: 7
+[2026-09-28 15:24:49,013] [WARNING] [MainProcess] [232362] [warnings.py:109]  /workspace/venv/lib64/python3.11/site-packages/pydantic/main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `enum` - serialized value may not be as expected [field_name='cover_task', input_value=0, input_type=int])
+  return self.__pydantic_serializer__.to_python(
+
+[2026-09-28 15:24:49,061] [INFO] [MainProcess] [232362] [main.py:541]  create_tasks over!!!, case_config_name:chunk_kda_fwd, all_cases_num: 7
+[2026-09-28 15:24:49,545] [INFO] [ForkPoolWorker-3] [232899] [opp_tasks.py:369]  [case 252] start CREATE DATASET.
+[2026-09-28 15:24:49,545] [INFO] [ForkPoolWorker-1] [232895] [opp_tasks.py:369]  [case 250] start CREATE DATASET.
+[2026-09-28 15:24:49,547] [INFO] [ForkPoolWorker-2] [232897] [opp_tasks.py:369]  [case 251] start CREATE DATASET.
+[2026-09-28 15:24:49,547] [INFO] [ForkPoolWorker-4] [232901] [opp_tasks.py:369]  [case 253] start CREATE DATASET.
+[2026-09-28 15:24:49,564] [INFO] [ForkPoolWorker-3] [232899] [opp_tasks.py:369]  [case 254] start CREATE DATASET.
+[2026-09-28 15:24:49,566] [INFO] [ForkPoolWorker-1] [232895] [opp_tasks.py:369]  [case 255] start CREATE DATASET.
+[2026-09-28 15:24:49,567] [INFO] [ForkPoolWorker-2] [232897] [opp_tasks.py:369]  [case 256] start CREATE DATASET.
+[2026-09-28 15:24:49,613] [INFO] [127.0.0.1:9090@device_run_0] [232909] [opp_tasks.py:507]  [case 252] start run NPU OPP TASK.
+[2026-09-28 15:24:49,788] [INFO] [ForkPoolWorker-4] [232921] [opp_tasks.py:507]  [case 253] start run CPU OPP TASK.
+[2026-09-28 15:24:49,844] [INFO] [ForkPoolWorker-2] [232917] [opp_tasks.py:507]  [case 252] start run CPU OPP TASK.
+[2026-09-28 15:24:49,889] [INFO] [ForkPoolWorker-3] [232919] [opp_tasks.py:507]  [case 251] start run CPU OPP TASK.
+[2026-09-28 15:24:49,939] [INFO] [ForkPoolWorker-1] [232915] [opp_tasks.py:507]  [case 250] start run CPU OPP TASK.
+[2026-09-28 15:24:51,984] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:215]  [case 252] begin init gm data
+[2026-09-28 15:24:51,986] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:223]    Total: 123.02 GB
+[2026-09-28 15:24:51,986] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:224]    Used:  0.56 GB
+[2026-09-28 15:24:51,986] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:225]    Free:  122.46 GB
+[2026-09-28 15:24:51,986] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:237]    Reserve: 30.57 GB (gm_init_flag=0 MB)
+[2026-09-28 15:24:52,369] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:244]  [case 252] end init gm data, cost 0.38489723205566406 s
+[2026-09-28 15:24:58,650] [INFO] [ForkPoolWorker-1] [232915] [opp_tasks.py:507]  [case 254] start run CPU OPP TASK.
+[2026-09-28 15:24:58,672] [INFO] [ForkPoolWorker-2] [232917] [opp_tasks.py:507]  [case 255] start run CPU OPP TASK.
+[2026-09-28 15:25:00,544] [INFO] [127.0.0.1:9090@device_run_0] [232909] [patch_getenv.py:15]  get env ASCEND_CUSTOM_OPP_PATH = /workspace/venv/lib/python3.11/site-packages/fla_npu/opp/vendors/fla_npu_transformer:/workspace/venv/lib/python3.11/site-packages/fla_npu/opp/vendors/fla_npu_transformer/op_api/lib:/workspace/venv/lib64/python3.11/site-packages/fla_npu/opp:/workspace/venv/lib64/python3.11/site-packages/fla_npu/opp/vendors/fla_npu_transformer
+[2026-09-28 15:25:01,008] [INFO] [ForkPoolWorker-3] [232919] [opp_tasks.py:507]  [case 256] start run CPU OPP TASK.
+[2026-09-28 15:25:01,273] [INFO] [127.0.0.1:9090@device_run_0] [232909] [opp_tasks.py:507]  [case 250] start run NPU OPP TASK.
+[2026-09-28 15:25:01,275] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:215]  [case 250] begin init gm data
+[2026-09-28 15:25:01,276] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:223]    Total: 123.02 GB
+[2026-09-28 15:25:01,276] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:224]    Used:  0.58 GB
+[2026-09-28 15:25:01,276] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:225]    Free:  122.44 GB
+[2026-09-28 15:25:01,276] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:237]    Reserve: 30.56 GB (gm_init_flag=0 MB)
+[2026-09-28 15:25:01,583] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:244]  [case 250] end init gm data, cost 0.3084297180175781 s
+[2026-09-28 15:25:02,032] [INFO] [ForkPoolWorker-4] [232937] [opp_tasks.py:315]  [case 252] start POST PROCESS, task:['accuracy'].
+[2026-09-28 15:25:04,616] [INFO] [127.0.0.1:9090@device_run_0] [232909] [opp_tasks.py:507]  [case 251] start run NPU OPP TASK.
+[2026-09-28 15:25:04,617] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:215]  [case 251] begin init gm data
+[2026-09-28 15:25:04,618] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:223]    Total: 123.02 GB
+[2026-09-28 15:25:04,618] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:224]    Used:  0.58 GB
+[2026-09-28 15:25:04,618] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:225]    Free:  122.44 GB
+[2026-09-28 15:25:04,618] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:237]    Reserve: 30.56 GB (gm_init_flag=0 MB)
+[2026-09-28 15:25:04,900] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:244]  [case 251] end init gm data, cost 0.28236961364746094 s
+[2026-09-28 15:25:07,144] [INFO] [ResultProcess-5] [232948] [reports.py:156]  
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|     id_252     | npu_npu_dut_input_bytes | cpu_cpu_golden_input_bytes | npu_npu_dut_output_bytes | cpu_cpu_golden_output_bytes | accuracy |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|  npu_npu_dut   |           None          |            None            |           None           |             None            |    -     |
+| cpu_cpu_golden |                         |                            |                          |                             |   True   |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+[2026-09-28 15:25:07,744] [INFO] [ForkPoolWorker-4] [232937] [opp_tasks.py:315]  [case 250] start POST PROCESS, task:['accuracy'].
+[2026-09-28 15:25:16,334] [INFO] [127.0.0.1:9090@device_run_0] [232909] [opp_tasks.py:507]  [case 253] start run NPU OPP TASK.
+[2026-09-28 15:25:16,336] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:215]  [case 253] begin init gm data
+[2026-09-28 15:25:16,342] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:223]    Total: 123.02 GB
+[2026-09-28 15:25:16,342] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:224]    Used:  0.58 GB
+[2026-09-28 15:25:16,342] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:225]    Free:  122.44 GB
+[2026-09-28 15:25:16,342] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:237]    Reserve: 30.56 GB (gm_init_flag=0 MB)
+[2026-09-28 15:25:16,860] [INFO] [ResultProcess-5] [232948] [reports.py:156]  
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|     id_250     | npu_npu_dut_input_bytes | cpu_cpu_golden_input_bytes | npu_npu_dut_output_bytes | cpu_cpu_golden_output_bytes | accuracy |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|  npu_npu_dut   |           None          |            None            |           None           |             None            |    -     |
+| cpu_cpu_golden |                         |                            |                          |                             |   True   |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+[2026-09-28 15:25:17,999] [INFO] [ForkPoolWorker-1] [232931] [opp_tasks.py:315]  [case 251] start POST PROCESS, task:['accuracy'].
+[2026-09-28 15:25:18,152] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:244]  [case 253] end init gm data, cost 1.8162310123443604 s
+[2026-09-28 15:25:19,474] [INFO] [127.0.0.1:9090@device_run_0] [232909] [opp_tasks.py:507]  [case 254] start run NPU OPP TASK.
+[2026-09-28 15:25:19,475] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:215]  [case 254] begin init gm data
+[2026-09-28 15:25:19,476] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:223]    Total: 123.02 GB
+[2026-09-28 15:25:19,476] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:224]    Used:  0.58 GB
+[2026-09-28 15:25:19,476] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:225]    Free:  122.44 GB
+[2026-09-28 15:25:19,476] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:237]    Reserve: 30.56 GB (gm_init_flag=0 MB)
+[2026-09-28 15:25:19,841] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:244]  [case 254] end init gm data, cost 0.3660576343536377 s
+[2026-09-28 15:25:20,961] [INFO] [ForkPoolWorker-4] [232937] [opp_tasks.py:315]  [case 253] start POST PROCESS, task:['accuracy'].
+[2026-09-28 15:25:22,580] [INFO] [127.0.0.1:9090@device_run_0] [232909] [opp_tasks.py:507]  [case 255] start run NPU OPP TASK.
+[2026-09-28 15:25:22,582] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:215]  [case 255] begin init gm data
+[2026-09-28 15:25:22,583] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:223]    Total: 123.02 GB
+[2026-09-28 15:25:22,583] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:224]    Used:  0.58 GB
+[2026-09-28 15:25:22,583] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:225]    Free:  122.44 GB
+[2026-09-28 15:25:22,583] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:237]    Reserve: 30.56 GB (gm_init_flag=0 MB)
+[2026-09-28 15:25:22,941] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:244]  [case 255] end init gm data, cost 0.3592538833618164 s
+[2026-09-28 15:25:23,968] [INFO] [ForkPoolWorker-3] [232935] [opp_tasks.py:315]  [case 254] start POST PROCESS, task:['accuracy'].
+[2026-09-28 15:25:25,258] [INFO] [127.0.0.1:9090@device_run_0] [232909] [opp_tasks.py:507]  [case 256] start run NPU OPP TASK.
+[2026-09-28 15:25:25,260] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:215]  [case 256] begin init gm data
+[2026-09-28 15:25:25,261] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:223]    Total: 123.02 GB
+[2026-09-28 15:25:25,261] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:224]    Used:  0.58 GB
+[2026-09-28 15:25:25,261] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:225]    Free:  122.44 GB
+[2026-09-28 15:25:25,261] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:237]    Reserve: 30.56 GB (gm_init_flag=0 MB)
+[2026-09-28 15:25:25,641] [INFO] [127.0.0.1:9090@device_run_0] [232909] [npu_backend.py:244]  [case 256] end init gm data, cost 0.3811037540435791 s
+[2026-09-28 15:25:26,060] [INFO] [ForkPoolWorker-2] [232933] [opp_tasks.py:315]  [case 255] start POST PROCESS, task:['accuracy'].
+[2026-09-28 15:25:26,953] [INFO] [ResultProcess-5] [232948] [reports.py:156]  
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|     id_251     | npu_npu_dut_input_bytes | cpu_cpu_golden_input_bytes | npu_npu_dut_output_bytes | cpu_cpu_golden_output_bytes | accuracy |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|  npu_npu_dut   |           None          |            None            |           None           |             None            |    -     |
+| cpu_cpu_golden |                         |                            |                          |                             |   True   |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+[2026-09-28 15:25:27,968] [INFO] [ResultProcess-5] [232948] [reports.py:156]  
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|     id_254     | npu_npu_dut_input_bytes | cpu_cpu_golden_input_bytes | npu_npu_dut_output_bytes | cpu_cpu_golden_output_bytes | accuracy |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|  npu_npu_dut   |           None          |            None            |           None           |             None            |    -     |
+| cpu_cpu_golden |                         |                            |                          |                             |   True   |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+[2026-09-28 15:25:31,046] [INFO] [ForkPoolWorker-3] [232935] [opp_tasks.py:315]  [case 256] start POST PROCESS, task:['accuracy'].
+[2026-09-28 15:25:40,869] [INFO] [ResultProcess-5] [232948] [reports.py:156]  
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|     id_253     | npu_npu_dut_input_bytes | cpu_cpu_golden_input_bytes | npu_npu_dut_output_bytes | cpu_cpu_golden_output_bytes | accuracy |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|  npu_npu_dut   |           None          |            None            |           None           |             None            |    -     |
+| cpu_cpu_golden |                         |                            |                          |                             |   True   |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+[2026-09-28 15:25:40,873] [INFO] [ResultProcess-5] [232948] [reports.py:156]  
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|     id_256     | npu_npu_dut_input_bytes | cpu_cpu_golden_input_bytes | npu_npu_dut_output_bytes | cpu_cpu_golden_output_bytes | accuracy |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|  npu_npu_dut   |           None          |            None            |           None           |             None            |    -     |
+| cpu_cpu_golden |                         |                            |                          |                             |   True   |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+[2026-09-28 15:25:42,879] [INFO] [ResultProcess-5] [232948] [reports.py:156]  
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|     id_255     | npu_npu_dut_input_bytes | cpu_cpu_golden_input_bytes | npu_npu_dut_output_bytes | cpu_cpu_golden_output_bytes | accuracy |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+|  npu_npu_dut   |           None          |            None            |           None           |             None            |    -     |
+| cpu_cpu_golden |                         |                            |                          |                             |   True   |
++----------------+-------------------------+----------------------------+--------------------------+-----------------------------+----------+
+[2026-09-28 15:25:43,183] [INFO] [ResultProcess-5] [232948] [csv_report.py:905]  
++----------------+----------+------------------+------------------+--------------+----------------------+--------+--------------+
+|      名称      | 总用例数 | 执行成功用例个数 | 执行失败用例个数 | 通过用例个数 | 错误信息匹配用例个数 | 通过率 | 精度是否达标 |
++----------------+----------+------------------+------------------+--------------+----------------------+--------+--------------+
+| cpu_cpu_golden |    7     |        7         |        0         |      7       |          0           | 100.0  |     Pass     |
++----------------+----------+------------------+------------------+--------------+----------------------+--------+--------------+
+[2026-09-28 15:25:43,206] [INFO] [ResultProcess-5] [232948] [csv_report.py:743]  Total Task: 7, success 7, failed 0
+[2026-09-28 15:25:43,206] [INFO] [ResultProcess-5] [232948] [csv_report.py:744]  Summary info: acc_pass_result:Pass	is_acc_dc_pass:None	is_e2e_perf_pass:None	is_benchmark_perf_pass:None	is_device_perf_pass:None	is_device_memory_pass:None	is_memory_check_pass:None .
+[2026-09-28 15:25:43,267] [INFO] [ResultProcess-5] [232948] [csv_report.py:946]  save result excel file: ./atk_output/accuracy/atk_output/atk_chunk_kda_fwd_2026-09-28-23-24-48-278298/report/atk_chunk_kda_fwd_reports_2026-09-28-15-24-48.xlsx
+[2026-09-28 15:25:43,271] [INFO] [ResultProcess-5] [232948] [patch_getenv.py:15]  get env ASCEND_CUSTOM_OPP_PATH = /workspace/venv/lib/python3.11/site-packages/fla_npu/opp/vendors/fla_npu_transformer:/workspace/venv/lib/python3.11/site-packages/fla_npu/opp/vendors/fla_npu_transformer/op_api/lib:/workspace/venv/lib64/python3.11/site-packages/fla_npu/opp:/workspace/venv/lib64/python3.11/site-packages/fla_npu/opp/vendors/fla_npu_transformer
+[2026-09-28 15:25:43,288] [INFO] [MainProcess] [232362] [base.py:299]  atk task success!
+[2026-09-28 15:25:43,867] [WARNING] [127.0.0.1:9090@create_dataset] [232893] [control.py:590]  Got shutdown from remote
+[2026-09-28 15:25:49,955] [INFO] [MainProcess] [232362] [base.py:303]  atk task finish. cost time: 61 s
