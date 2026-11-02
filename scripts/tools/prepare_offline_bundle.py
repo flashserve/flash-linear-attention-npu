@@ -88,6 +88,24 @@ def _missing_components(cache: Path) -> list[str]:
     return missing
 
 
+# Component sources the *seed* has to carry. json / eigen / makeself are
+# unpacked from their archives by the build itself, so a caller that inspects
+# the cache before the build (the CI seed check) must not require those yet.
+_SEED_SOURCES = ("catlass/include", "opbase")
+
+
+def _missing_seed_inputs(cache: Path) -> list[str]:
+    """Return what a seeded cache must already provide for a complete bundle."""
+    missing: list[str] = []
+    for src_path in _SEED_SOURCES:
+        if not (cache / src_path).is_dir():
+            missing.append(f"source dir {src_path!r} ({cache / src_path})")
+    for archive in _ARCHIVES:
+        if not (cache / archive).is_file() and not (cache / "pkg" / archive).is_file():
+            missing.append(f"archive {archive!r} (cache root or cache/pkg)")
+    return missing
+
+
 def _verify_bundle(out: Path, pkg: Path) -> list[str]:
     """Re-check the produced bundle against the manifest before claiming success."""
     problems: list[str] = []
@@ -112,6 +130,12 @@ def main() -> int:
         default="offline_bundle",
         help="output bundle directory (default: offline_bundle/)",
     )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="only verify that the cache carries what the seed has to provide "
+             "(non-zero exit when something is missing); build nothing",
+    )
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parents[2]
@@ -125,6 +149,19 @@ def main() -> int:
 
     if not cache.is_dir():
         raise SystemExit(f"cache directory not found: {cache}")
+
+    # Callers that build the cache before the operator is available (the CI
+    # image seed) want the same verdict early, while a missing component still
+    # costs seconds instead of a full rebuild.
+    if args.check:
+        missing_seed = _missing_seed_inputs(cache)
+        if missing_seed:
+            raise SystemExit(
+                "third_party cache does not carry everything the offline bundle "
+                "seed has to provide:\n  - " + "\n  - ".join(missing_seed)
+            )
+        print(f"[fla-npu] offline bundle seed complete in {cache}")
+        return 0
 
     # Hard-fail on any missing required component so an incomplete bundle is
     # never treated as a valid self-contained offline release artifact.

@@ -13,6 +13,9 @@ ARG TORCH_NPU_WHL_URL=https://repo.huaweicloud.com/repository/pypi/packages/1b/f
 ARG TORCH_NPU_WHL_SHA256=acb39467b740c9dc24165b0002f3531521615d396d9386134689ce59221006c1
 ARG TRITON_ASCEND_VERSION=3.2.1
 ARG TRITON_ASCEND_INDEX_URL=https://triton-ascend.osinfra.cn/pypi/simple
+# Optional apt mirror: build hosts that cannot reach archive.ubuntu.com (the
+# usual case on the office network) rewrite the image's own sources with it.
+ARG APT_MIRROR=
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -21,11 +24,20 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTORCH_VERSION=${TORCH_VERSION} \
     TORCH_DEVICE_BACKEND_AUTOLOAD=0 \
     CI_LOG_CLEANUP_ENABLED=true \
-    CI_LOG_RETENTION_DAYS=7
+    CI_LOG_RETENTION_DAYS=7 \
+    FLA_NPU_CI_BASELINE="cann=9.1.0-950;ubuntu=22.04;gcc=11;torch=${TORCH_VERSION};torch_npu=${TORCH_NPU_VERSION};triton_ascend=${TRITON_ASCEND_VERSION}"
 
 SHELL ["/bin/bash", "-lc"]
 
-RUN test "$(uname -m)" = "x86_64" && \
+RUN if [[ -n "${APT_MIRROR}" ]]; then \
+      sed -i -e "s|http://archive.ubuntu.com/ubuntu|${APT_MIRROR}|g" \
+             -e "s|http://security.ubuntu.com/ubuntu|${APT_MIRROR}|g" \
+             -e "s|http://ports.ubuntu.com/ubuntu-ports|${APT_MIRROR}|g" \
+             /etc/apt/sources.list \
+             /etc/apt/sources.list.d/*.list 2>/dev/null || true; \
+      echo "[fla-ci] apt mirror: ${APT_MIRROR}"; \
+    fi; \
+    test "$(uname -m)" = "x86_64" && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
       bash \
@@ -49,6 +61,21 @@ RUN test "$(uname -m)" = "x86_64" && \
       valgrind && \
     rm -rf /var/lib/apt/lists/* && \
     git lfs install
+
+# The a5 wheel promises manylinux_2_34 / GLIBCXX <= 3.4.29 too, and that
+# watermark is a property of this image's toolchain: fail the build when the
+# base drifts to another gcc instead of letting the promise break on a user's
+# host later.
+RUN set -e; \
+    gcc_major="$(gcc -dumpversion | cut -d. -f1)"; \
+    echo "[fla-ci] arch=$(uname -m) release=$(. /etc/os-release; echo "$PRETTY_NAME") gcc=${gcc_major} ($(gcc --version | head -1))"; \
+    test "${gcc_major}" = "11" || { \
+      echo "[fla-ci][FATAL] this image must build with the gcc 11 toolchain: the a5 wheel carries a GLIBCXX_3.4.29 watermark that gcc ${gcc_major} raises to $(gcc -dumpversion)" >&2; \
+      exit 1; \
+    }
+
+LABEL org.fla-npu.ci.baseline="cann=9.1.0-950;ubuntu=22.04;gcc=11" \
+      org.fla-npu.ci.purpose="flash-linear-attention-npu a5 wheel builds (x86_64)"
 
 COPY requirements.txt /tmp/fla-ci/requirements.txt
 
@@ -156,6 +183,12 @@ RUN if [[ "${PREWARM_THIRD_PARTY}" == "true" ]]; then \
         /opt/fla-ci/third_party/pkg/makeself-release-2.5.0-patch1.tar.gz; \
       download "https://gitcode.com/cann-src-third-party/json/releases/download/v3.11.3/include.zip" \
         /opt/fla-ci/third_party/pkg/include.zip; \
+      # The offline bundle staged into release wheels lists this archive in its
+      # manifest and hard-fails without it, but gtest.cmake only fetches it when
+      # gtest is missing -- and the base image already has gtest.  Seed it here so
+      # a wheel built from this image can carry a complete bundle.
+      download "https://gitcode.com/cann-src-third-party/googletest/releases/download/v1.14.0/googletest-1.14.0.tar.gz" \
+        /opt/fla-ci/third_party/pkg/googletest-1.14.0.tar.gz; \
       clone_at "https://gitcode.com/cann/opbase.git" \
         c8d83f3e57a63a7375e89a2d6937452c0ae2e522 \
         /opt/fla-ci/third_party/opbase; \
