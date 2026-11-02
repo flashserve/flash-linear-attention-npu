@@ -35,6 +35,7 @@ static constexpr size_t RGDR_BETA_DIM_NUM = 2;
 static constexpr size_t RGDR_STATE_DIM_NUM = 4;
 static constexpr size_t RGDR_CUSEQLENS_DIM_NUM = 1;
 static constexpr size_t RGDR_SSM_STATE_INDICES_DIM_NUM = 1;
+static constexpr size_t RGDR_SSM_STATE_INDICES_TABLE_DIM_NUM = 2;
 
 static constexpr size_t RGDR_DIM_0 = 0;
 static constexpr size_t RGDR_DIM_1 = 1;
@@ -181,16 +182,33 @@ private:
         if (!CheckDim(queryShape, RGDR_QKV_DIM_NUM, "query") || !CheckDim(keyShape, RGDR_QKV_DIM_NUM, "key") ||
             !CheckDim(valueShape, RGDR_QKV_DIM_NUM, "value") || !CheckDim(betaShape, RGDR_BETA_DIM_NUM, "beta") ||
             !CheckDim(stateShape, RGDR_STATE_DIM_NUM, "state") ||
-            !CheckDim(cuSeqlensShape, RGDR_CUSEQLENS_DIM_NUM, "actual_seq_lengths") ||
-            !CheckDim(ssmStateShape, RGDR_SSM_STATE_INDICES_DIM_NUM, "ssm_state_indices")) {
+            !CheckDim(cuSeqlensShape, RGDR_CUSEQLENS_DIM_NUM, "actual_seq_lengths")) {
             return ge::GRAPH_FAILED;
+        }
+
+        const size_t stateIndexRank = ssmStateShape.GetDimNum();
+        if (stateIndexRank != RGDR_SSM_STATE_INDICES_DIM_NUM &&
+            stateIndexRank != RGDR_SSM_STATE_INDICES_TABLE_DIM_NUM) {
+            OP_LOGE(ctx_.nodeName, "ssm_state_indices must be [T] or [B, W], but got rank %zu", stateIndexRank);
+            return ge::GRAPH_FAILED;
+        }
+        if (stateIndexRank == RGDR_SSM_STATE_INDICES_TABLE_DIM_NUM) {
+            if (ssmStateShape.GetDim(RGDR_DIM_0) != cuSeqlensShape.GetDim(RGDR_DIM_0) - 1 ||
+                ssmStateShape.GetDim(RGDR_DIM_1) <= 0 ||
+                ssmStateShape.GetDim(RGDR_DIM_1) > static_cast<int64_t>(RGDR_MAX_MTP)) {
+                OP_LOGE(ctx_.nodeName, "Invalid state table batch or width, got [%ld, %ld] with B=%ld",
+                        ssmStateShape.GetDim(RGDR_DIM_0), ssmStateShape.GetDim(RGDR_DIM_1),
+                        cuSeqlensShape.GetDim(RGDR_DIM_0) - 1);
+                return ge::GRAPH_FAILED;
+            }
         }
 
         if (cuSeqlensShape.GetDim(RGDR_DIM_0) < 2) {
             OP_LOGE(ctx_.nodeName, "actual_seq_lengths must contain the prefix and at least one sequence length");
             return ge::GRAPH_FAILED;
         }
-        if (ssmStateShape.GetDim(RGDR_DIM_0) != queryShape.GetDim(RGDR_DIM_0)) {
+        if (stateIndexRank == RGDR_SSM_STATE_INDICES_DIM_NUM &&
+            ssmStateShape.GetDim(RGDR_DIM_0) != queryShape.GetDim(RGDR_DIM_0)) {
             OP_LOGE(ctx_.nodeName,
                     "ssm_state_indices length must equal T, but got %ld and T is %ld",
                     ssmStateShape.GetDim(RGDR_DIM_0), queryShape.GetDim(RGDR_DIM_0));
@@ -213,7 +231,8 @@ private:
     }
 
     void FillTilingShapeData(const gert::Shape &queryShape, const gert::Shape &valueShape, const gert::Shape &stateShape,
-                             const gert::Shape &cuSeqlensShape, RecurrentGatedDeltaRuleTilingData &tiling) const
+                             const gert::Shape &cuSeqlensShape, const gert::Shape &ssmStateShape,
+                             RecurrentGatedDeltaRuleTilingData &tiling) const
     {
         tiling.t = static_cast<uint32_t>(queryShape.GetDim(RGDR_DIM_0));
         tiling.nk = static_cast<uint32_t>(queryShape.GetDim(RGDR_DIM_1));
@@ -222,6 +241,12 @@ private:
         tiling.dv = static_cast<uint32_t>(valueShape.GetDim(RGDR_DIM_2));
         tiling.sBlockNum = static_cast<uint32_t>(stateShape.GetDim(RGDR_DIM_0));
         tiling.b = static_cast<uint32_t>(cuSeqlensShape.GetDim(RGDR_DIM_0) - 1);
+        // 0 means the legacy per-token [T] contract; otherwise W of the [B, W]
+        // request-row state table (see the recurrent kernel addressing).
+        tiling.stateIndicesStride =
+            (ssmStateShape.GetDimNum() == RGDR_SSM_STATE_INDICES_TABLE_DIM_NUM)
+                ? static_cast<uint32_t>(ssmStateShape.GetDim(RGDR_DIM_1))
+                : 0U;
     }
 
     ge::graphStatus CheckShapeValueRangeAndRule(const RecurrentGatedDeltaRuleTilingData &tiling) const
@@ -274,7 +299,8 @@ private:
     ge::graphStatus RuleFillTilingShapeData(RecurrentGatedDeltaRuleTilingData &tiling) const
     {
         (void)tiling;
-        FillTilingShapeData(*ctx_.queryShape, *ctx_.valueShape, *ctx_.stateShape, *ctx_.cuSeqlensShape, tiling);
+        FillTilingShapeData(*ctx_.queryShape, *ctx_.valueShape, *ctx_.stateShape, *ctx_.cuSeqlensShape,
+                            *ctx_.ssmStateShape, tiling);
         return ge::GRAPH_SUCCESS;
     }
 
