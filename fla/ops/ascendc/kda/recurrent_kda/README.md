@@ -92,4 +92,4 @@ o_t = S @ (q_t * scale)
 
 ## A5 优化实现
 
-V=128 保留动态 State bank 角色、两个 bank 交替递推、第三 bank 预取、逐 token State 搬出跨任务重叠及整 tile out 批量搬出。CU/indices/accepted 在每次设备执行时读取，不增加 host 快照或同步；四种 layout/CU 组合均遵循原接口。有无 CU 均使用固定 X=8 容量，只处理实际有效 token 和尾块。A5 的 L2 normalize 保留原零范数保护、无 epsilon；A2/A3 保留加1e-6的分母。
+V=128 保留动态 State bank 角色、两个 bank 交替递推、第三 bank 预取、逐 token State 搬出跨任务重叠及整 tile out 批量搬出。CU/indices/accepted 在每次设备执行时读取，不增加 host 快照或同步；四种 layout/CU 组合均遵循原接口。有无 CU 均使用固定 X=8 容量，只处理实际有效 token 和尾块。Q/K 的 L2 normalize 统一使用 `x/sqrt(sum(x*x)+1e-6)`。

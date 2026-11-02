@@ -510,6 +510,8 @@ private:
             PipeBarrier<PIPE_V>();
             ReduceSumDispatch(deltaInUb, broadTmpInUb, 1);
             PipeBarrier<PIPE_V>();
+            Adds(deltaInUb, deltaInUb, 1e-6f, 1);
+            PipeBarrier<PIPE_V>();
             Sqrt(deltaInUb, deltaInUb, 1);
             PipeBarrier<PIPE_V>();
             SyncVToS();

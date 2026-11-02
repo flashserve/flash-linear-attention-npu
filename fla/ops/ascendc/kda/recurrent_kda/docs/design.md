@@ -14,7 +14,7 @@ A5 V=128 保留优化实现及长序列扩展，固定 X=8，有无 CU 均采用
 
 A5 tiling 预计算 head 比例和 VF 功能位；kernel 组合运行时 bank、slot 和有效 token 数启动 VF。参数槽保留完整地址。新增内部字段不改变公开 ACLNN/Python 参数，A2/A3 不使用 A5 功能位。
 
-归一化按原平台行为：A5 用 x/sqrt(sum(x*x))，范数为0时保留零行；A2/A3 保留加1e-6的分母。A5 V=128 的 BF16 State 仍跨 token 按 BF16 舍入、out 使用当前寄存器中的未舍入值。非原位入口保留已修复的初态复制，避免从未初始化的 scratch 递推。
+Q/K 归一化统一使用 `x/sqrt(sum(x*x)+1e-6)`，零向量仍输出零。A5 V=128 的 BF16 State 仍跨 token 按 BF16 舍入、out 使用当前寄存器中的未舍入值。非原位入口保留已修复的初态复制，避免从未初始化的 scratch 递推。
 
 ## A5 调度与 UB
 

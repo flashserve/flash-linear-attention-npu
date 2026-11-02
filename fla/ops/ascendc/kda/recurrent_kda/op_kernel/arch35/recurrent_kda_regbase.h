@@ -603,13 +603,8 @@ __simd_callee__ inline void Normalize(RegTensor<float> &lo, RegTensor<float> &hi
     Mul(a, lo, lo, mask);
     Mul(b, hi, hi, mask);
     Sum128(norm, a, b, mask);
+    Adds(norm, norm, 1e-6f, mask);
     Sqrt(norm, norm, mask);
-    // Match the original A5 kernel: leave a zero row unchanged.
-    RegTensor<float> one;
-    MaskReg nonzero;
-    Duplicate(one, 1.0f);
-    CompareScalar<float, CMPMODE::GT>(nonzero, norm, 0.0f, mask);
-    Select(norm, norm, one, nonzero);
     Div(lo, lo, norm, mask);
     Div(hi, hi, norm, mask);
 }

@@ -47,7 +47,7 @@ Shape 符号统一引用 [KDA 模型符号表](../../README.md#model-shape-symbo
 | `scale` | float? | Python 为 `K ** -0.5`；aclnn 由调用方传入 | 浮点数 | 乘到 query 上 |
 | `output_final_state` | bool | `false` | `{false, true}` | Python 主入口是否返回最终状态 |
 | `inplace_final_state` | bool | `true` | `{false, true}` | 是否把最终状态写回 `initial_state` |
-| `use_qk_l2norm_in_kernel` | bool | `false` | `{false, true}` | 是否在 kernel 内对 q/k 做 L2 normalize；A5 为零范数保护的 x/sqrt(sum(x*x))，A2/A3 保留 sqrt(sum(x*x)+1e-6) |
+| `use_qk_l2norm_in_kernel` | bool | `false` | `{false, true}` | 是否在 kernel 内对 q/k 做 L2 normalize，公式为 `x/sqrt(sum(x*x)+1e-6)` |
 | `use_gate_in_kernel` | bool | `false` | `{false, true}` | 是否把 `g` 解释为 raw gate |
 | `use_beta_sigmoid_in_kernel` | bool | `false` | `{false, true}` | 是否在 kernel 内计算 `sigmoid(beta)` |
 | `allow_neg_eigval` | bool | `false` | `{false, true}` | beta sigmoid 后是否乘 2 |
