@@ -1503,12 +1503,36 @@ def npu_chunk_gated_delta_rule_fwd(q, k, v, g, beta, *, initial_state=None,
     h, q_hat, k_hat, q_rstd, k_rstd)` -- carrying `None` in the slots the flags
     switch off, exactly like the reference.  `q_hat`/`k_hat` are the caller's
     own q/k when the kernel is not asked to normalise them.
+
+    Chunk 32 runs L2 and beta sigmoid inside the kernel and returns `None` for
+    all eight intermediate slots. It requires ``use_exp2=False``,
+    ``use_qk_l2norm_in_kernel=True``, ``use_beta_sigmoid_in_kernel=True``,
+    ``disable_recompute=False`` and ``return_intermediate_states=False``.
     """
 
     # Gate-in-kernel is unsupported by this kernel build, and the reference
     # refuses the flag together with a_log/dt_bias before the launch.  Dropping
     # them here instead would turn a rejected call into a silently different
     # one, so the refusal is repeated.
+    if int(chunk_size) == 32:
+        if (bool(use_exp2) or not bool(use_qk_l2norm_in_kernel)
+                or not bool(use_beta_sigmoid_in_kernel)
+                or bool(disable_recompute)
+                or bool(return_intermediate_states)):
+            raise RuntimeError(
+                "npu_chunk_gated_delta_rule_fwd: chunk_size=32 requires "
+                "use_exp2=False, use_qk_l2norm_in_kernel=True, "
+                "use_beta_sigmoid_in_kernel=True, disable_recompute=False "
+                "and return_intermediate_states=False.")
+        if int(v.shape[-1]) != 128:
+            raise RuntimeError(
+                "npu_chunk_gated_delta_rule_fwd: chunk_size=32 requires V=128.")
+        torch = _modules()[0]
+        if initial_state is not None and initial_state.dtype not in (
+                torch.bfloat16, torch.float32):
+            raise RuntimeError(
+                "npu_chunk_gated_delta_rule_fwd: chunk_size=32 initial_state "
+                "must be bfloat16 or float32.")
     if use_gate_in_kernel:
         raise RuntimeError(
             "npu_chunk_gated_delta_rule_fwd: use_gate_in_kernel=True is not "

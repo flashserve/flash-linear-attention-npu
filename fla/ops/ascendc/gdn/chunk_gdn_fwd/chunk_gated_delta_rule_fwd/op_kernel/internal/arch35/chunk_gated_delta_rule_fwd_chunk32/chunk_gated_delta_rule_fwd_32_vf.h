@@ -260,10 +260,11 @@ __aicore__ inline void GenAuxMatrixVF(LocalTensor<uint32_t> &shiftIdx, LocalTens
     }
 }
 
-// g_cumsum stays in natural units (useExp2=false). eg = exp(g_cumsum).
+// g_cumsum stays in natural units (useExp2=false). eg[0:32] = exp(prefix).
 // Five gather-adds over the 32 live lanes. shiftIdx[s] gathers lane i from
-// i-2^s (0 when i < 2^s). 1/eg is written into the next 32 lanes so Gate and
-// v_new are multiplies.
+// i-2^s (0 when i < 2^s). The raw prefix is kept in the next 32 lanes so Gate
+// and v_new can compute exp(prefix_i - prefix_j). Multiplying exp by its
+// reciprocal underflows to 0 * Inf and becomes NaN when the decay is strong.
 __aicore__ inline void CumsumExp2VF(LocalTensor<float> &g, LocalTensor<float> &eg,
                                     LocalTensor<uint32_t> &shiftIdx)
 {
@@ -291,12 +292,9 @@ __aicore__ inline void CumsumExp2VF(LocalTensor<float> &g, LocalTensor<float> &e
             Xor(pregRange, pregHi, pregLo, pregAll);
             Add<float, MaskMergeMode::MERGING>(v, v, shifted, pregRange);
         }
+        StoreAlign(egAddr + 32, v, pregN);
         Exp(v, v, pregN);
         StoreAlign(egAddr, v, pregN);
-        RegTensor<float> oneR, rcp;
-        Duplicate(oneR, 1.0f, pregN);
-        Div(rcp, oneR, v, pregN);
-        StoreAlign(egAddr + 32, rcp, pregN);
     }
 }
 
@@ -332,10 +330,11 @@ __aicore__ inline void ScaleRowsVF(LocalTensor<bfloat16_t> &x, LocalTensor<float
 }
 
 
-// L[i,j] = (i>j) ? beta[i] * eg[i] / eg[j] * kkt : 0
-// attn[i,j] = (i>=j) ? eg[i] / eg[j] * qk : 0, stored as bf16.
-// eg = exp(g_cumsum), so the ratio is exp(g[i]-g[j]) without a per-row Exp.
-// Which: 0 both, 1 L only (kkt is ready, qk is not), 2 attn only.
+// L[i,j] = (i>j) ? beta[i] * exp(prefix_i - prefix_j) * kkt : 0
+// attn[i,j] = (i>=j) ? exp(prefix_i - prefix_j) * qk : 0, stored as bf16.
+// prefix lives at eg[32:64]. Lanes with j > i are cleared before Exp so a
+// positive difference on a non-causal pair cannot overflow. The store still
+// applies the causal mask. Which: 0 both, 1 L only, 2 attn only.
 template <int Which = 0>
 __aicore__ inline void GateAttnVF(LocalTensor<float> &eg, LocalTensor<float> &beta, LocalTensor<float> &kkt,
                                   LocalTensor<float> &qk, LocalTensor<float> &lower, LocalTensor<bfloat16_t> &attn)
@@ -349,12 +348,16 @@ __aicore__ inline void GateAttnVF(LocalTensor<float> &eg, LocalTensor<float> &be
     __VEC_SCOPE__
     {
         MaskReg preg32 = CreateMask<float, MaskPattern::VL32>();
-        RegTensor<float> invJ, eI, bI, gate, kk, qq, outL, outA, zero;
+        RegTensor<float> prefixJ, prefixI, diff, bI, gate, kk, qq, outL, outA, zero;
         Duplicate(zero, 0.0f, preg32);
-        LoadAlign(invJ, eAddr + 32);
+        LoadAlign(prefixJ, eAddr + 32);
         for (uint16_t i = 0; i < static_cast<uint16_t>(kBt); ++i) {
-            LoadAlign<float, LoadDist::DIST_BRC_B32>(eI, eAddr + static_cast<uint32_t>(i));
-            Mul(gate, eI, invJ, preg32);
+            LoadAlign<float, LoadDist::DIST_BRC_B32>(prefixI, eAddr + 32 + static_cast<uint32_t>(i));
+            Sub(diff, prefixI, prefixJ, preg32);
+            uint32_t causalCount = static_cast<uint32_t>(i) + 1U;
+            MaskReg causalMask = UpdateMask<float>(causalCount);
+            Select(diff, diff, zero, causalMask);
+            Exp(gate, diff, preg32);
             if constexpr (Which != 2) {
                 uint32_t lowerCount = static_cast<uint32_t>(i);
                 MaskReg lowerMask = UpdateMask<float>(lowerCount);
@@ -503,20 +506,22 @@ __aicore__ inline void VnewHalfVF(LocalTensor<bfloat16_t> u, LocalTensor<float> 
         MaskReg m16 = CreateMask<uint16_t, MaskPattern::ALL>();
         uint32_t n128 = 128;
         MaskReg m128 = UpdateMask<bfloat16_t>(n128);
-        RegTensor<float> last;
-        LoadAlign<float, LoadDist::DIST_BRC_B32>(last, eAddr + (kBt - 1));
+        RegTensor<float> prefixLast;
+        LoadAlign<float, LoadDist::DIST_BRC_B32>(prefixLast, eAddr + 32 + (kBt - 1));
         for (uint16_t k = 0; k < nRows; ++k) {
             const uint16_t r = static_cast<uint16_t>(r0 + k);
             RegTensor<bfloat16_t> a, glo, ghi;
-            RegTensor<float> ri, gate;
+            RegTensor<float> prefixI, diff, gate;
             RegTensor<float> even, odd;
             LoadAlign(a, uAddr + static_cast<uint32_t>(r) * kDim);
             // Tight NZ, panel height 16. Each column panel is 16 rows.
             StoreAlign<bfloat16_t, DataCopyMode::DATA_BLOCK_COPY>(nAddr + static_cast<uint32_t>(r) * 16, a, 16,
                                                                   m128);
-            // Gate stays fp32 through the multiply. One CAST_RINT writes v_new_g.
-            LoadAlign<float, LoadDist::DIST_BRC_B32>(ri, eAddr + 32 + rowBase + r);
-            Mul(gate, last, ri, pregAll);
+            // exp(prefix_last - prefix_i). A tail of zero-padded g leaves
+            // prefix[31] equal to the last valid token, same as eg[31].
+            LoadAlign<float, LoadDist::DIST_BRC_B32>(prefixI, eAddr + 32 + rowBase + r);
+            Sub(diff, prefixLast, prefixI, pregAll);
+            Exp(gate, diff, pregAll);
             Cast<float, bfloat16_t, kCastB162B32>(even, a, m16);
             Cast<float, bfloat16_t, kCastB162B32Hi>(odd, a, m16);
             Mul(even, even, gate, pregAll);
