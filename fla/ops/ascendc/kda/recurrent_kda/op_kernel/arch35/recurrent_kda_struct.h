@@ -25,9 +25,6 @@ enum RKDAMutexSlot : uint32_t {
     RKDA_MUTEX_OUT = 10,        // two tile output slots
     RKDA_MUTEX_COUNT = 12
 };
-enum RKDABankUse : uint32_t {
-    RKDA_BANK_FREE = 0, RKDA_BANK_RECURRENCE = 1, RKDA_BANK_PREFETCHED = 2, RKDA_BANK_MTE3_SOURCE = 4
-};
 struct RKDATask {
     uint64_t id, request, head;
     int64_t begin, end;
@@ -70,11 +67,11 @@ struct RKDAVectorContext {
     static constexpr uint32_t paramOffset_ = betaOffset_ + 2 * betaSlot_;
     static constexpr uint32_t outOffset_ = paramOffset_ + RKDA_PARAM_DOUBLE_BYTES_1088;
     static constexpr uint32_t eventOffset_ = outOffset_ + RKDA_ROW_FP32_BYTES_512 * x_;
-    uint32_t initialBank_, alternateBank_;
+    uint32_t initialBank_, currentBank_, nextBank_;
     uint32_t vfFlags_;
+    DataCopyExtParams queryCopy_, keyCopy_, valueCopy_, gateCopy_, betaCopy_, outputCopy_;
     MutexID mutex_[RKDA_MUTEX_COUNT];
-    uint32_t bankUse_[3] = {RKDA_BANK_FREE, RKDA_BANK_FREE, RKDA_BANK_FREE};
-    uint32_t prefetchedBank_ = RKDA_NO_BANK, pendingStateBank_ = RKDA_NO_BANK;
+    uint32_t prefetchedBank_ = RKDA_NO_BANK;
 #ifdef RKDA_EXECUTION_TRACE
     GlobalTensor<uint64_t> trace_;
     uint64_t traceCount_ = 0;

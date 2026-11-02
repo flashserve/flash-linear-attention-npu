@@ -28,7 +28,11 @@ __simd_vf__ inline void RecurrentKdaTokenVF(
     const bool norm = fused || (features & RKDA_VF_NORM), rawGate = fused || (features & RKDA_VF_RAW_GATE);
     const bool bias = fused || (features & RKDA_VF_BIAS), sigmoid = fused || (features & RKDA_VF_SIGMOID);
     const bool negative = !fused && (features & RKDA_VF_NEGATIVE), safe = !fused && (features & RKDA_VF_SAFE);
-    const uint32_t initialBank = config & 3, alternateBank = (config >> 2) & 3;
+    // Keep the captured descriptor invariant for a whole task. Rewriting a
+    // spilled capture every token otherwise makes the compiler insert V->S.
+    uint32_t cur = (config & 3) + base % 3;
+    if (cur >= 3) cur -= 3;
+    const uint32_t next = cur == 2 ? 0 : cur + 1;
     auto query = capturedQuery;
     auto key = capturedKey;
     auto value = capturedValue;
@@ -57,10 +61,7 @@ __simd_vf__ inline void RecurrentKdaTokenVF(
         RegBase::Broadcast(a, params, mask);
         Exp(a, a, mask);
     }
-    const uint32_t token = base;
     const uint32_t inputToken = base % RKDA_A5_WINDOW_TOKENS;
-    const uint32_t cur = (token & 1) ? alternateBank : initialBank;
-    const uint32_t next = (token & 1) ? initialBank : alternateBank;
     auto source = (__ubuf__ stateType *)(memory + cur * BANK);
     auto destination = (__ubuf__ stateType *)(memory + next * BANK);
     LocalMemBar<MemType::SCALAR_STORE, MemType::VEC_LOAD>();
@@ -182,7 +183,7 @@ __aicore__ inline void Stage1LaunchRecurrentKdaVF(RKDAVectorContext<inType, outT
     auto capturedEvents = (__ubuf__ volatile uint32_t *)(memory + ctx.eventOffset_);
     // One launch computes exactly one token. Input/output pointers already
     // select the tile slot; only the bank pair and semantic flags are packed.
-    const uint32_t launch = ctx.initialBank_ | (ctx.alternateBank_ << 2) | (ctx.vfFlags_ << 8);
+    const uint32_t launch = ctx.initialBank_ | (ctx.vfFlags_ << 8);
     const float scale = ctx.td_->scale, lower = ctx.td_->lowerBound;
     RecurrentKdaTokenVF<Gate, Beta, vFirst, fused, twoPass,
         inType, outType, stateType, stateVFirst>(memory, capturedQuery, capturedKey, capturedValue,
