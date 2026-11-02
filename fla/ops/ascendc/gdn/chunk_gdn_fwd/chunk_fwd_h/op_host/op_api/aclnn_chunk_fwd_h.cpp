@@ -297,16 +297,11 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
     return ACLNN_SUCCESS;
 }
 
-// state_v_first=true 的末两维转置辅助（照抄 chunk_gated_delta_rule_fwd_h 同名实现，
-// 第七轮方案③：gated 路径 kernel 恒 [K,V] 产出，aclnn 层做 [K,V]<->[V,K] 适配）
-// typed DFX 上报：内部翻译原语（l0op::Cast / TransposeLastTwo / AllocTensor）失败时
-// 携带参数名、实际值与期望值，替代裸 CHECK_RET 的无上下文状态码返回（报错宏惯例
-// 对齐 chunk_kda_bwd_prepare，返回码保持 ACLNN_ERR_INNER_NULLPTR 不变）。
+// state_v_first=true 的末两维转置辅助（gated kernel 恒 [K,V] 产出，aclnn 层做
+// [K,V]<->[V,K] 适配）。翻译原语失败时 typed 上报参数名/实际值/期望值，返回码不变。
 static constexpr const char *OP_NAME = "aclnnChunkFwdH";
 
-// gated 引擎与配套翻译链（TransposeLastTwo / bf16 gate Cast）仅在 A2/A3（DAV_2201）
-// 生效——A5 与未来芯片的 kernel 无 gated 分支，aclnn 层不翻译、不 cast，保持基线
-// 行为（arch 探测先例：chunk_gated_delta_rule_fwd.cpp 同款）。
+// gated 引擎与配套翻译仅 DAV_2201（A2/A3）生效，其余芯片保持基线行为。
 static bool SocSupportsGatedPath()
 {
     return GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201;
@@ -495,13 +490,8 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
     if (ret != ACLNN_SUCCESS) {
         return ret;
     }
-    // stateVFirst=true 的 aclnn 层翻译（第七轮方案③，照抄 gated）——varlen 感知
-    // （2026-10-26 分流路由收口轮）：dense 维持翻译（转 [K,V] 进 kernel + 传
-    // false 进 gated，含税端到端优于老路径）；varlen 不翻译（vfirst 原样直达，
-    // kernel 谓词送老路径 STATE_V_FIRST 模板——A/B 实测裁定：老路径 ~5939 优于
-    // gated 含税 ~7292，h 1GB 级 Transpose 税吞掉 gated 全部优势）。
-    // 翻译仅服务 gated 路径，故仅 DAV_2201（A2/A3）启用——A5/未来芯片 kernel 原生
-    // 解释 state_v_first（STATE_V_FIRST 模板），不付转置开销，保持基线行为。
+    // vfirst=1 dense 翻译（转 [K,V] 进 kernel + 传 false 进 gated）；varlen 不
+    // 翻译（vfirst 原样直达，由 kernel 谓词送老路径）。
     const bool translateVFirst = params.stateVFirst && params.cuSeqlensOptional == nullptr &&
         SocSupportsGatedPath();
     const aclTensor *initialStateCompute = params.initialStateOptional;

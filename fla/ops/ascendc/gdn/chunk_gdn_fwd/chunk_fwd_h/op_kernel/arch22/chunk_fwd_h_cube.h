@@ -592,13 +592,8 @@ private:
 
     __aicore__ inline void PrefetchNextW(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk)
     {
-        // W(c+1) 预取：在 S2 全部 right 装载发出之后发射（MTE2 FIFO 不越队，
-        // 不延迟关键路径上的 right），与 S2 计算及 S3 窗口重叠。槽位沿用
-        // WReady/WDone 事件对，消费侧 ComputeStage0Head 的等待语义零改动，
-        // 每 chunk 每 slot 的 wait/set 记账保持 1:1。此时各 WReady credit 均已
-        // 可用（kg 槽在 ComputeStage2Head 的 L1→L0A 后 set，非 kg 槽在 S0 计
-        // 算后 set），WaitFlag 不会阻塞 scalar。跨 work unit 边界不预取
-        // （ROUND_DONE/ACK 收口语义不变）。
+        // W(c+1) 预取：S2 right 装载发出后发射（MTE2 FIFO 不越队），与 S2 计算及
+        // S3 窗口重叠；wait/set 记账 1:1 不变，跨 work unit 边界不预取。
         const uint32_t nextChunk = chunk.chunk + 1U;
         if (nextChunk >= unit.sequence.chunkCount) {
             return;
