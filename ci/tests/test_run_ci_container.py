@@ -111,11 +111,11 @@ class RunCiContainerTests(unittest.TestCase):
                      "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
             self.assertEqual(environment[name], str(len(expected_cpus)))
 
-    def test_container_and_test_thread_pools_are_limited_to_16_cpus(self):
+    def test_container_and_test_thread_pools_are_limited_to_32_cpus(self):
         with tempfile.TemporaryDirectory() as temporary:
             result, calls, _ = self.run_ci(Path(temporary))
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assert_cpu_limit(calls, sorted(os.sched_getaffinity(0))[:16])
+            self.assert_cpu_limit(calls, sorted(os.sched_getaffinity(0))[:32])
 
     @unittest.skipUnless(shutil.which("taskset"), "taskset is required for restricted-affinity test")
     def test_restricted_nonzero_cpu_set_is_preserved(self):

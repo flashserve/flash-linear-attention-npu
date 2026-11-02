@@ -134,12 +134,12 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 # Build -j settings do not limit Python/OpenMP/BLAS test workers. Restrict the
-# whole CI container so every test and descendant shares at most 16 logical
+# whole CI container so every test and descendant shares at most 32 logical
 # CPUs, including on hosts whose allowed CPU IDs do not start at zero.
 cpu_ids="$(python3 - <<'PY'
 import os
 
-cpus = sorted(os.sched_getaffinity(0))[:16]
+cpus = sorted(os.sched_getaffinity(0))[:32]
 if not cpus:
     raise SystemExit("[CI][ERROR] No CPUs available to the CI launcher.")
 print(",".join(map(str, cpus)))

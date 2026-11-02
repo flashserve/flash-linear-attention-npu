@@ -291,7 +291,7 @@ A2 代理回退读取普通用户配置 `CI_PROXY_SCRIPT=${CI_ROOT}/vpn-proxy.sh
 
 A2/A5 workflow 固定设置 `CI_JOBS=16` 和 `CI_CPACK_JOBS=16`，全量与局部 OPP 构建均使用 `-j16`。`ci/run_checks.sh` 的默认并行度也为 16，并将该值导出为 PyTorch/Ninja 使用的 `MAX_JOBS`；CPack、CMake 和 Make 使用同一并行度设置，cmake/scripts/prepare.sh 也遵循 CMAKE_BUILD_PARALLEL_LEVEL，避免内部 prepare 阶段重新按 CPU 数放大并行度。`FLA_NPU_BUILD_ARGS` 追加 `-j16`，覆盖 wheel 打包内部再次调用 `build.sh` 时的并行度。
 
-`ci/run_ci_container.sh` 另外限制运行时用核：从启动进程允许的 CPU 集合中选择至多 16 个逻辑 CPU，设置 Docker `--cpuset-cpus` 和对应的 `--cpus` 配额，使容器内构建、测试及其子进程共享该上限。同时设置 `OMP_NUM_THREADS`、`OMP_THREAD_LIMIT`、`MKL_NUM_THREADS`、`OPENBLAS_NUM_THREADS`、`NUMEXPR_NUM_THREADS` 为所选 CPU 数；启动进程可用核不足 16 时使用实际数量。该限制独立于编译 `-j` 参数，对新启动的 CI 容器生效，不会修改已有容器。直接在容器外执行测试不经过此限制。
+`ci/run_ci_container.sh` 另外限制运行时用核：从启动进程允许的 CPU 集合中选择至多 32 个逻辑 CPU，设置 Docker `--cpuset-cpus` 和对应的 `--cpus` 配额，使容器内构建、测试及其子进程共享该上限。同时设置 `OMP_NUM_THREADS`、`OMP_THREAD_LIMIT`、`MKL_NUM_THREADS`、`OPENBLAS_NUM_THREADS`、`NUMEXPR_NUM_THREADS` 为所选 CPU 数；启动进程可用核不足 32 时使用实际数量。该限制独立于编译 `-j` 参数，对新启动的 CI 容器生效，不会修改已有容器。直接在容器外执行测试不经过此限制。
 
 runner 使用普通 `ubuntu` 用户，workflow 全程不调用 `sudo`。[一键部署工具](https://github.com/alvazu/fla-npu-ci-deploy)负责创建基础数据目录及配置用户服务；在工具仓库中执行 `bash deploy.sh --platform a5 --ci-root "$CI_ROOT" --setup-host` 可显式启用首次主机准备，A2 将平台改为 `a2`。管理员须提前授予该用户 Docker daemon 访问权限、所列宿主机目录的读写权限及其父目录的遍历权限；手工准备时可执行以下命令，之后重新登录 `ubuntu`，使新组生效，再启动 runner 用户服务：
 
