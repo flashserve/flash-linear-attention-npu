@@ -24,7 +24,7 @@ State 搬出行描述符在每核任务循环外构建并复用。定长输入�
 
 A5 V=128 使用静态 Tensor 空间管理：直接以 UB 地址0和编译期总长度构造 `LocalTensor<uint8_t>`，不创建 TPipe/TBuf，不调用 InitBuffer。各 State bank、双缓冲输入/参数/out 和尾部 scratch 沿用上述固定偏移，地址范围为 `[0,eventOffset+2048)`；host 容量校验和编译器预留区保持不变。入口显式调用 `InitSocState()`，所有任务清理后调用 `PipeBarrier<PIPE_ALL>()`。A2/A3 generic 和 A5 V=256 在各自分支内保留 TPipe，执行时不与静态路径混用。接口和约束参考[静态 Tensor 编程](https://asc.gitcode.com/guide/programming_guide/programming_model/ai_core_simd_programming/cpp_tensor_programming/static_tensor_programming.html)。
 
-A5 V=128 的核内跨流水同步使用 Mutex::Lock/Unlock，不使用 SetFlag/WaitFlag。13个 MutexID 通过独立于 TPipe 的 AllocMutexID/ReleaseMutexID 管理，不硬编码硬件编号。Lock/Unlock 在同一流水严格成对，同流水访存依赖继续用 LocalMemBar/PipeBarrier。接口参考 [Mutex](https://www.hiascend.com/document/detail/en/CANNCommunityEdition/910/API/ascendcopapi/docs/en/api/SIMD-API/basic_api/sync_control/intra_core_sync/Mutex_ISASI.md) 和 [Lock约束](https://www.hiascend.com/document/detail/en/CANNCommunityEdition/910/API/ascendcopapi/docs/en/api/SIMD-API/basic_api/sync_control/intra_core_sync/Lock.md)。A2/A3 generic 和 A5 V=256 不使用这套新 Mutex 调度。
+A5 V=128 的核内跨流水同步使用 Mutex::Lock/Unlock，不使用 SetFlag/WaitFlag。12个 MutexID 通过独立于 TPipe 的 AllocMutexID/ReleaseMutexID 管理，不硬编码硬件编号。Lock/Unlock 在同一流水严格成对，同流水访存依赖继续用 LocalMemBar/PipeBarrier。接口参考 [Mutex](https://www.hiascend.com/document/detail/en/CANNCommunityEdition/910/API/ascendcopapi/docs/en/api/SIMD-API/basic_api/sync_control/intra_core_sync/Mutex_ISASI.md) 和 [Lock约束](https://www.hiascend.com/document/detail/en/CANNCommunityEdition/910/API/ascendcopapi/docs/en/api/SIMD-API/basic_api/sync_control/intra_core_sync/Lock.md)。A2/A3 generic 和 A5 V=256 不使用这套新 Mutex 调度。
 
 | 资源 | ID份数 | 持锁范围与复用条件 |
 | --- | --- | --- |
@@ -33,7 +33,6 @@ A5 V=128 的核内跨流水同步使用 Mutex::Lock/Unlock，不使用 SetFlag/W
 | 输入 | 2 | MTE2整tile搬入、V整tile消费；再次搬入相同槽前自动等待V读完 |
 | 参数 | 2 | MTE2任务参数搬入、V整任务消费；保留跨token读取所需生命周期 |
 | out | 2 | V整tile生成、MTE3整tile批量搬出；再次覆盖相同槽前自动等待DMA |
-| tile控制 | 1 | V持锁覆盖完整tile，结束后Scalar获取并释放，保留原tile边界V→S依赖 |
 
 State初始化按“访问锁→快照锁”获取，DMA后反序释放，再按参数槽获取/释放参数锁。每个单token VF在外部先获取源访问锁、目标访问锁、目标快照锁，VF后反序释放。MTE3仅获取对应bank的快照锁，复制完成后释放。这样MTE2覆盖等待旧VF与旧DMA，Vector覆盖等待旧DMA，而Vector读源不等待同一bank上的旧DMA读。每个Mutex在所有者切换后建立对应流水依赖，不用同流水的连续Lock代替访存屏障。
 
@@ -41,7 +40,7 @@ indexed 路径当前任务校验后立即提交首态、参数和首tile输入�
 
 逐token快照由VF释放目标快照锁后交给MTE3，下一次Vector覆盖目标bank前重新获取该锁。相邻快照目标槽重复时保留MTE3单流水屏障；更早快照在其源bank再次被覆盖前完成。仅末态模式在最后一个token后搬出State；out始终在整个tile完成后批量搬出。末快照与out可跨任务在途，Scalar只更新已提交资源的逻辑预留；实际DMA完成由资源Mutex保护，不在Scalar上回收旧DMA后才提交当前快照。
 
-每tile开始V获取输入/out槽，结束释放输入/out槽及控制锁，再由Scalar获取/释放控制锁。参数锁从任务首VF之前持有到末VF之后。所有正常、全空、非法元数据和尾任务出口均回到统一清理：Scalar依次获取并释放13个资源，确认最终所有者完成后ReleaseMutexID，再退出UB生命周期。无State写回时不获取MTE3快照锁，但VF和初态搬入仍按相同访问规则保护bank。
+每tile开始V获取输入/out槽，结束释放输入/out槽；Scalar不等待tile计算结束即可继续提交搬出和后续任务。MTE3获取out槽锁后才实际搬出完整tile，后续MTE2搬入、Vector覆盖及参数槽复用由各自资源锁等待消费者释放。参数锁从任务首VF之前持有到末VF之后，VF保留VST→VLD屏障，保证递推State与scratch的同流水依赖。所有正常、全空、非法元数据和尾任务出口均回到统一清理：Scalar依次获取并释放12个资源，确认最终所有者完成后ReleaseMutexID，再退出UB生命周期。无State写回时不获取MTE3快照锁，但VF和初态搬入仍按相同访问规则保护bank。
 
 State 在 UB 保持接口 dtype，Cast 在寄存器中完成；BF16 写回使用 Cast_RINT，不保存 FP32 State 影子。当前 token 的 out 使用舍入前的 FP32 更新值。两个 FP32 out 寄存器保存完整 token，最后两次 Cast/Store 到 UB；整个 tile 完成后批量提交 MTE3。
 

@@ -23,8 +23,7 @@ enum RKDAMutexSlot : uint32_t {
     RKDA_MUTEX_INPUT = 6,       // two tile slots
     RKDA_MUTEX_PARAM = 8,       // two task parameter slots
     RKDA_MUTEX_OUT = 10,        // two tile output slots
-    RKDA_MUTEX_CONTROL = 12,    // tile Vector/Scalar boundary
-    RKDA_MUTEX_COUNT = 13
+    RKDA_MUTEX_COUNT = 12
 };
 enum RKDABankUse : uint32_t {
     RKDA_BANK_FREE = 0, RKDA_BANK_RECURRENCE = 1, RKDA_BANK_PREFETCHED = 2, RKDA_BANK_MTE3_SOURCE = 4

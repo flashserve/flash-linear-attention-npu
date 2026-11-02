@@ -18,8 +18,8 @@ State快照 | 3 | MTE2初始化、VF目标、MTE3搬出；VF源读取不持此�
 输入 | 2 | MTE2搬入、V消费完整tile；下次MTE2覆盖自动等待
 参数 | 2 | MTE2搬入、V消费完整任务
 out | 2 | V生成完整tile、MTE3批量搬出
-控制 | 1 | 保留tile结束的V→S依赖
-共13个ID由AllocMutexID申请，核尾部通过S获取所有资源后ReleaseMutexID。
+共12个ID由AllocMutexID申请，核尾部通过S获取所有资源后ReleaseMutexID。
+tile边界不等待Scalar；各消费流水通过资源Mutex等待生产完成。
 同流水的访存依赖仍使用LocalMemBar/PipeBarrier，不用Mutex替代。
 */
 namespace RecurrentKda {
@@ -386,7 +386,7 @@ __aicore__ inline void RecurrentKdaDispatch(RKDAVectorContext<inType, outType, s
 // 输入：当前任务及lookahead
 // 输出：完整tile out/末态。
 // 复用：交替输入/out槽和动态bank
-// 同步：输入/参数/out槽及State两类Mutex，保留tile的V→S边界。
+// 同步：输入/参数/out槽及State两类Mutex，Scalar可连续提交后续tile。
 template <typename inType, typename outType, typename stateType, bool stateVFirst>
 __aicore__ inline void Stage1RunFinalStateTask(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, const RKDATask &current, const RKDATask *nextTask,
                                            bool prefetched, uint32_t parameterSlot,
@@ -416,9 +416,6 @@ __aicore__ inline void Stage1RunFinalStateTask(RKDAVectorContext<inType, outType
     for (int64_t tile = begin; tile < end; tile += ctx.x_, slot ^= 1) {
         const uint32_t valid = RecurrentKdaValidTokens(ctx, tile, end), base = uint32_t(tile - begin);
         const bool lastTile = tile + valid == end;
-        Mutex::Lock<PIPE_S>(ctx.mutex_[RKDA_MUTEX_CONTROL]);
-        Mutex::Unlock<PIPE_S>(ctx.mutex_[RKDA_MUTEX_CONTROL]);
-        Mutex::Lock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_CONTROL]);
         Mutex::Lock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_INPUT + slot]);
         Mutex::Lock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_OUT + slot]);
         for (uint32_t t = 0; t < valid; ++t) {
@@ -450,9 +447,6 @@ __aicore__ inline void Stage1RunFinalStateTask(RKDAVectorContext<inType, outType
         }
         Mutex::Unlock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_INPUT + slot]);
         Mutex::Unlock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_OUT + slot]);
-        Mutex::Unlock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_CONTROL]);
-        Mutex::Lock<PIPE_S>(ctx.mutex_[RKDA_MUTEX_CONTROL]);
-        Mutex::Unlock<PIPE_S>(ctx.mutex_[RKDA_MUTEX_CONTROL]);
         RecurrentKdaTrace(ctx, 5, task, base + valid, slot);
         Stage2WriteOutputTile(ctx, tile, valid, head, slot);
         if (lastTile && writeState) {
@@ -560,7 +554,6 @@ __aicore__ inline void Stage1RunIndexedTask(RKDAVectorContext<inType, outType, s
     for (int64_t tile = begin; tile < end; tile += ctx.x_, slot ^= 1) {
         const uint32_t valid = RecurrentKdaValidTokens(ctx, tile, end), base = uint32_t(tile - begin);
         const bool lastTile = tile + valid == end;
-        Mutex::Lock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_CONTROL]);
         Mutex::Lock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_INPUT + slot]);
         Mutex::Lock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_OUT + slot]);
         if (pendingOut & (1U << slot)) {
@@ -608,13 +601,10 @@ __aicore__ inline void Stage1RunIndexedTask(RKDAVectorContext<inType, outType, s
                 RecurrentKdaTrace(ctx, 3, task, count, slot);
             }
         }
-        // Retain the tile boundary handshake before its input/parameter
-        // slots can be reused by a later MTE2 prefetch.
+        // Resource locks keep input/output slots alive while Scalar submits
+        // the next tile; MTE3 waits for all tile stores through the out lock.
         Mutex::Unlock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_INPUT + slot]);
         Mutex::Unlock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_OUT + slot]);
-        Mutex::Unlock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_CONTROL]);
-        Mutex::Lock<PIPE_S>(ctx.mutex_[RKDA_MUTEX_CONTROL]);
-        Mutex::Unlock<PIPE_S>(ctx.mutex_[RKDA_MUTEX_CONTROL]);
         Stage2WriteOutputTile(ctx, tile, valid, head, slot);
         pendingOut |= 1U << slot;
         RecurrentKdaTrace(ctx, 11, task, base + valid, slot);

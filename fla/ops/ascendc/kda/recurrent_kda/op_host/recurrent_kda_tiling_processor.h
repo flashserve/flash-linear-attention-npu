@@ -51,7 +51,6 @@ static constexpr size_t RKDA_DIM_3 = 3;
 static constexpr uint32_t RKDA_LAYOUT_BSND = 0;
 static constexpr uint32_t RKDA_LAYOUT_TND = 1;
 static constexpr size_t RKDA_MAX_MTP = 8;
-static constexpr size_t RKDA_A5_MAX_MTP = 8;
 static constexpr int64_t RKDA_INPUT_BUFFER_NUM = 2;
 static constexpr int64_t RKDA_UB_GUARD_BYTES = 2048;
 static constexpr size_t RKDA_SYS_WORKSPACE_SIZE = 16U * 1024U * 1024U;
@@ -828,18 +827,16 @@ private:
                                uint32_t attnOutBufferNum, const RecurrentKdaTilingData &tiling,
                                BufferProfile &profile) const
     {
-        const int64_t maxMtp = ctx_.isA5 != 0 ? static_cast<int64_t>(RKDA_A5_MAX_MTP) :
-                                               static_cast<int64_t>(RKDA_MAX_MTP);
         const int64_t vStepAlignment = ctx_.stateVFirst == 0 ? 16 : 8;
         int64_t coeff = CalcVStepCoeff(aDk, stateOutBufferNum, attnOutBufferNum);
         int64_t vStep = (ubSize - usedUbBytes) / coeff / vStepAlignment * vStepAlignment;
-        if (vStep < maxMtp) {
+        if (vStep < static_cast<int64_t>(RKDA_MAX_MTP)) {
             return false;
         }
         int64_t repeatTime = Ops::Base::CeilDiv(tiling.dv, static_cast<uint32_t>(vStep));
         vStep = Ops::Base::CeilAlign(Ops::Base::CeilDiv(tiling.dv, static_cast<uint32_t>(repeatTime)),
                                      static_cast<uint32_t>(vStepAlignment));
-        if (vStep < maxMtp) {
+        if (vStep < static_cast<int64_t>(RKDA_MAX_MTP)) {
             return false;
         }
         profile.stateOutBufferNum = stateOutBufferNum;
@@ -890,7 +887,7 @@ private:
 
         if (!selected.valid) {
             ReportInvalid("query/key/value/gate/beta", "vStep should be at least %zu, shape is too big",
-                    ctx_.isA5 != 0 ? RKDA_A5_MAX_MTP : RKDA_MAX_MTP);
+                    RKDA_MAX_MTP);
             return ge::GRAPH_FAILED;
         }
 
