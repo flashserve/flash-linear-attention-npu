@@ -104,6 +104,21 @@ __global__ __aicore__ void pre_process_fwd_kernel_merged(
     ctx.hm = hm;
     ctx.ws = userWS;
     ctx.tiling = &tilingData;
+    ctx.plan.B = tilingData.B;
+    ctx.plan.Hk = tilingData.Hk;
+    ctx.plan.Hv = tilingData.Hv;
+    ctx.plan.hvPerHk = tilingData.hvPerHk;
+    ctx.plan.T = tilingData.T;
+    ctx.plan.K = tilingData.K;
+    ctx.plan.V = tilingData.V;
+    ctx.plan.chunkSize = tilingData.chunkSize;
+    ctx.plan.nSeq = tilingData.nSeq;
+    ctx.plan.gateMode = tilingData.gateMode;
+    ctx.plan.gateDtype = tilingData.gateDtype;
+    ctx.plan.usedAicNum = tilingData.usedAicNum;
+    ctx.plan.colSplit = tilingData.colSplit;
+    ctx.plan.hybridS = tilingData.hybridS;
+    ctx.plan.hybridBase = tilingData.hybridBase;
     if ASCEND_IS_AIC {
         GDN::PpFwdCube cube(ctx);
         cube.Run();

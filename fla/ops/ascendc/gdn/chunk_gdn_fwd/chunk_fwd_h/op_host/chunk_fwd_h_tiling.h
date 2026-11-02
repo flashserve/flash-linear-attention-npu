@@ -38,6 +38,13 @@ TILING_DATA_FIELD_DEF(int64_t, vWorkspaceOffset);
 TILING_DATA_FIELD_DEF(int64_t, vUpdateWorkspaceOffset);
 TILING_DATA_FIELD_DEF(int64_t, kDecayWorkspaceOffset);
 TILING_DATA_FIELD_DEF(int64_t, hWorkspaceOffset);
+TILING_DATA_FIELD_DEF(bool, fusedMode);
+TILING_DATA_FIELD_DEF(int64_t, hmWorkspaceOffset);
+TILING_DATA_FIELD_DEF(int64_t, k0ScratchWorkspaceOffset);
+TILING_DATA_FIELD_DEF(int64_t, segmentInitWorkspaceOffset);
+TILING_DATA_FIELD_DEF(int64_t, segmentDescWorkspaceOffset);
+TILING_DATA_FIELD_DEF(int64_t, splitSeqDescWorkspaceOffset);
+TILING_DATA_FIELD_DEF(int64_t, segmentCount);
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(ChunkFwdH, ChunkFwdHTilingData)

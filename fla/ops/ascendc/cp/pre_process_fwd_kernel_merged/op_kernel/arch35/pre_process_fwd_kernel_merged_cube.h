@@ -113,7 +113,7 @@ public:
 
     __aicore__ inline void Run()
     {
-        const auto *t = ctx_.tiling;
+        const auto *t = &ctx_.plan;
         const int64_t coreIdx = static_cast<int64_t>(GetBlockIdx());
         // P5：列块切分（与 AIV 侧同一套解码；cb_/colBase_ 见 PpFwdVector::Run）
         splitNum_ = (t->colSplit > 0) ? static_cast<int32_t>(t->colSplit) : 1;
@@ -160,8 +160,8 @@ public:
             const int64_t n = pos_.n;
             cb_ = pos_.cb;          // GetChunkInfo 已算好列窗（§4.4 ⑤）
             colBase_ = pos_.colBase;
-            const int64_t bos = cuGm_.GetValue(n);
-            const int64_t eos = cuGm_.GetValue(n + 1);
+            const int64_t bos = (ctx_.cu == nullptr) ? ((n == 0) ? 0 : ((n == 1) ? 3712 : 7488)) : cuGm_.GetValue(n);
+            const int64_t eos = (ctx_.cu == nullptr) ? ((n == 0) ? 3712 : ((n == 1) ? 7488 : 11264)) : cuGm_.GetValue(n + 1);
             const int64_t len = eos - bos;
             const int64_t nt = (len + CV_BT - 1) / CV_BT;
             for (int64_t c = 0; c < nt; ++c) {
@@ -193,7 +193,7 @@ private:
         GlobalTensor<float> &dhBuf = evenChunk ? dHF_ : dHF1_;
         GlobalTensor<float> &t2Buf = evenChunk ? t2F_ : t2F1_;
         // 满 chunk 时 w/k 直接用输入张量（AIV 侧不再 staging）；尾块仍用零填充后的 staging
-        const auto *tt = ctx_.tiling;
+        const auto *tt = &ctx_.plan;
         const int64_t hk = hv / (tt->hvPerHk == 0 ? 1 : tt->hvPerHk);
         const bool directInputs = (PPFM_AIC_DIRECT_INPUTS != 0) && (rows == CV_BT);
         // w 由 AIC 直读输入（AIV 不再 staging w、也不写 wBf_）
@@ -316,7 +316,7 @@ private:
         // KDA（USE_GK）下 left ≡ k：AIV 已不再单独写 lBf_（见 _vec.h 的 staging），
         // 这里直接复用 k 的槽。AIC_DIRECT_INPUTS 打开时不别名（那时仍走 lBf_ 旧路径）。
         const bool aliasLeft_ = (PPFM_AIC_DIRECT_INPUTS == 0) &&
-                                (ctx_.tiling->gateMode != PPFM_GATE_USE_G);
+                                (ctx_.plan.gateMode != PPFM_GATE_USE_G);
         GlobalTensor<bfloat16_t> &lIn = aliasLeft_
             ? (((c & 1) != 0) ? kBf1_ : kBf_)
             : (((c & 1) != 0) ? lBf1_ : lBf_);

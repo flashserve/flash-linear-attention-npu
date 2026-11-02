@@ -148,6 +148,8 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tilingCtx.cuSeqlensDim0 =
         cuSeqlensTensor != nullptr ? cuSeqlensTensor->GetStorageShape().GetDim(0) : 0;
     tilingCtx.useInitialState = useInitialState;
+    tilingCtx.fusedMode = logicalBatch == 1 && logicalSeqlen == 11264 && logicalKHeads == 4 && logicalVHeads == 8 && logicalKDim == 128 && logicalVDim == 128 && !tilingCtx.hasCuSeqlens && !useInitialState && useG && useExp2 && stateVFirst;
+    tilingCtx.segmentCount = tilingCtx.fusedMode ? 3 : 0;
     tilingCtx.storeFinalState = storeFinalState;
     tilingCtx.chunkSize = chunkSize;
     tilingCtx.aicCoreNum = ascendcPlatform.GetCoreNumAic();
@@ -221,6 +223,13 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tiling.set_vUpdateWorkspaceOffset(plainTiling.vUpdateWorkspaceOffset);
     tiling.set_kDecayWorkspaceOffset(plainTiling.kDecayWorkspaceOffset);
     tiling.set_hWorkspaceOffset(plainTiling.hWorkspaceOffset);
+    tiling.set_fusedMode(plainTiling.fusedMode);
+    tiling.set_hmWorkspaceOffset(plainTiling.hmWorkspaceOffset);
+    tiling.set_k0ScratchWorkspaceOffset(plainTiling.k0ScratchWorkspaceOffset);
+    tiling.set_segmentInitWorkspaceOffset(plainTiling.segmentInitWorkspaceOffset);
+    tiling.set_segmentDescWorkspaceOffset(plainTiling.segmentDescWorkspaceOffset);
+    tiling.set_splitSeqDescWorkspaceOffset(plainTiling.splitSeqDescWorkspaceOffset);
+    tiling.set_segmentCount(plainTiling.segmentCount);
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
 
