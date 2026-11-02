@@ -1,8 +1,8 @@
 // Stable-ABI launcher: npu_recurrent_kda (two outputs, optional inputs).
 //
 // Only torch/csrc/stable/* plus the shared acl_meta helper: no ATen/c10, no
-// libtorch C++ ABI.  `layout` remains an int slot for ABI compatibility; the
-// recurrent operator derives its mode from cu_seqlens presence.
+// libtorch C++ ABI. Layout selects the physical rank; cu_seqlens independently
+// selects request boundaries. BSND=0 and TND=1 match the Python enum.
 // Pre-macro legacy for the same reason as stable_recurrent_gated_delta_rule.cpp
 // (read that header, and do not copy this shape): it submits the same way, and
 // the boxed entry point below consumes each required
@@ -61,8 +61,7 @@ constexpr const char* kSchemaRecurrentKda =
     "bool use_beta_sigmoid_in_kernel, bool allow_neg_eigval, bool safe_gate, "
     "float lower_bound, bool state_v_first, int stream) -> (Tensor, Tensor?)";
 
-// The table is retained for the stable ABI conversion helper.  The recurrent
-// operator ignores the selected spelling and derives mode from cu_seqlens.
+// Layout codes match the published Stable-ABI and Python enum.
 constexpr const char* kRecurrentKdaLayoutNames[] = {"BSND", "TND"};
 
 // Returns (attn_out, final_state).  Mirrors the ctypes wrapper:

@@ -51,7 +51,7 @@ static constexpr size_t RKDA_DIM_3 = 3;
 static constexpr uint32_t RKDA_LAYOUT_BSND = 0;
 static constexpr uint32_t RKDA_LAYOUT_TND = 1;
 static constexpr size_t RKDA_MAX_MTP = 8;
-static constexpr size_t RKDA_A5_MAX_MTP = 4;
+static constexpr size_t RKDA_A5_MAX_MTP = 8;
 static constexpr int64_t RKDA_INPUT_BUFFER_NUM = 2;
 static constexpr int64_t RKDA_UB_GUARD_BYTES = 2048;
 static constexpr size_t RKDA_SYS_WORKSPACE_SIZE = 16U * 1024U * 1024U;
@@ -106,7 +106,6 @@ struct RecurrentKdaTilingContext {
     uint64_t aivNum = 0;
     uint64_t ubSize = 0;
     uint32_t isA5 = 0;
-    const void *cuSeqlensData = nullptr; // Host value dependency, never a device pointer.
 };
 
 class RecurrentKdaTilingProcessor {
@@ -155,7 +154,9 @@ public:
 
     ge::graphStatus ProcessUb(RecurrentKdaTilingData &tiling) const
     {
-        if (ctx_.isA5 != 0) {
+        tiling.a5VfFlags = 0;
+        tiling.a5HeadRatio = 0;
+        if (ctx_.isA5 != 0 && tiling.dv == 128) {
             return PlanA5Ub(tiling);
         }
         struct RuleItem {
@@ -457,6 +458,12 @@ private:
 
     ge::graphStatus CheckOptionalGateShapes(int64_t hvNum, int64_t kDim) const
     {
+        OP_CHECK_IF(ctx_.useGateInKernel && !ctx_.hasALog,
+                    ReportInvalid("A_log", "use_gate_in_kernel=true requires A_log."),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(!ctx_.useGateInKernel && (ctx_.hasALog || ctx_.hasDtBias || ctx_.safeGate),
+                    ReportInvalid("use_gate_in_kernel", "A_log, dt_bias and safe_gate require use_gate_in_kernel=true."),
+                    return ge::GRAPH_FAILED);
         if (ctx_.hasALog) {
             if (!CheckDim(ctx_.aLogShape, RKDA_METADATA_RANK1, "A_log")) {
                 return ge::GRAPH_FAILED;
@@ -658,9 +665,8 @@ private:
 
     ge::graphStatus CheckShapeValueRangeAndRule(const RecurrentKdaTilingData &tiling) const
     {
-        OP_CHECK_IF(ctx_.isA5 != 0 && tiling.dv != 128,
-                    ReportInvalid("query/key/value/gate/beta", "A5 RegBase design requires K=V=128."),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(tiling.nk > 256 || tiling.nv > 256,
+                    ReportInvalid("query/value", "H/HV must be <=256."), return ge::GRAPH_FAILED);
         OP_CHECK_IF(tiling.dk != 128 || (tiling.dv != 128 && tiling.dv != 256),
                     ReportInvalid("query/key/value/gate/beta",
                             "K/V currently support only K=128,V=128 or K=128,V=256, but K=%u, V=%u.",
@@ -747,49 +753,28 @@ private:
     {
         // 3 full FP32 banks + raw input/output double slots + parameter slots + guard.
         const uint64_t capacity = std::min<uint64_t>(ctx_.ubSize, 248ULL * 1024);
-        uint64_t maxLength = tiling.seqLen;
-        if (ctx_.hasCuSeqlens) {
-            OP_CHECK_IF(ctx_.cuSeqlensData == nullptr,
-                        ReportInvalid("cu_seqlens", "A5 X selection requires host cu_seqlens values."),
-                        return ge::GRAPH_FAILED);
-            auto value = [&](uint32_t i) -> int64_t {
-                return ctx_.cuSeqlensDtype == ge::DT_INT32 ?
-                    static_cast<const int32_t *>(ctx_.cuSeqlensData)[i] :
-                    static_cast<const int64_t *>(ctx_.cuSeqlensData)[i];
-            };
-            int64_t previous = value(0);
-            OP_CHECK_IF(previous != 0, ReportInvalid("cu_seqlens", "cu_seqlens[0] must be zero; actual=%ld.", previous),
-                        return ge::GRAPH_FAILED);
-            maxLength = 0;
-            for (uint32_t b = 0; b < tiling.b; ++b) {
-                const int64_t end = value(b + 1);
-                OP_CHECK_IF(end < previous || end > tiling.t,
-                            ReportInvalid("cu_seqlens", "cu_seqlens must be monotonic within token capacity; "
-                                "index=%u, previous=%ld, actual=%ld, capacity=%u.", b + 1, previous, end, tiling.t),
-                            return ge::GRAPH_FAILED);
-                maxLength = std::max<uint64_t>(maxLength, static_cast<uint64_t>(end - previous));
-                previous = end;
-            }
-        }
-        const uint64_t selectionLength = std::min<uint64_t>(8, std::max<uint64_t>(1, maxLength));
-        uint64_t selected = 0, bytes = 0;
-        // Beta rows are padded to one 32-byte slot per token and double-buffered.
-        // X=8 is the largest A5 tile that fits with the three state banks.
-        for (uint64_t x : {1ULL, 2ULL, 4ULL, 8ULL}) {
-            const uint64_t betaSlot = std::max<uint64_t>(128, 32 * x);
-            const uint64_t beta = 2 * betaSlot;
-            // K-first FP32: three 128x136 banks instead of 128x128.
-            // BF16 padding fits in the existing 64 KiB bank allocation.
-            const uint64_t statePadding = !ctx_.stateVFirst && ctx_.stateDtype == ge::DT_FLOAT ? 12288 : 0;
-            const uint64_t peak = 199744 + statePadding + 3072 * x + beta;
-            if (x > selectionLength || 32 * x > betaSlot || peak > capacity) continue;
-            selected = x;
-            bytes = peak;
-        }
-        OP_CHECK_IF(selected == 0 || bytes > std::numeric_limits<uint32_t>::max(),
+        constexpr uint64_t x = RecurrentKda::RKDA_A5_WINDOW_TOKENS;
+        // K-first FP32: three 128x136 banks; BF16 padding fits in 64 KiB banks.
+        const uint64_t statePadding = !ctx_.stateVFirst && ctx_.stateDtype == ge::DT_FLOAT ? 12288 : 0;
+        const uint64_t bytes = 199744 + statePadding + 3072 * x + 2 * 32 * x;
+        OP_CHECK_IF(bytes > capacity,
                     ReportInvalid("UB/shape", "A5 UB cannot hold the specified recurrent KDA banks and raw slots."),
                     return ge::GRAPH_FAILED);
-        tiling.windowSize = static_cast<uint32_t>(selected);
+        tiling.windowSize = static_cast<uint32_t>(x);
+        using namespace RecurrentKda;
+        tiling.a5VfFlags = (tiling.useQkL2norm ? RKDA_VF_NORM : 0U) |
+            (tiling.useGateInKernel ? RKDA_VF_RAW_GATE : 0U) |
+            (tiling.hasDtBias ? RKDA_VF_BIAS : 0U) |
+            (tiling.useBetaSigmoid ? RKDA_VF_SIGMOID : 0U) |
+            (tiling.allowNegEigval ? RKDA_VF_NEGATIVE : 0U) |
+            (tiling.safeGate ? RKDA_VF_SAFE : 0U) |
+            ((tiling.inplaceFinalState || tiling.outputFinalState) ? RKDA_VF_WRITE_STATE : 0U) |
+            (tiling.hasSsmStateIndices ? RKDA_VF_INDEXED : 0U);
+        constexpr uint32_t fusedMask = RKDA_VF_NORM | RKDA_VF_RAW_GATE | RKDA_VF_BIAS |
+            RKDA_VF_SIGMOID | RKDA_VF_NEGATIVE | RKDA_VF_SAFE | RKDA_VF_INDEXED;
+        constexpr uint32_t fusedValue = RKDA_VF_NORM | RKDA_VF_RAW_GATE | RKDA_VF_BIAS | RKDA_VF_SIGMOID;
+        if ((tiling.a5VfFlags & fusedMask) == fusedValue) tiling.a5VfFlags |= RKDA_VF_FUSED;
+        tiling.a5HeadRatio = tiling.nv / tiling.nk;
         tiling.ubCalSize = static_cast<uint32_t>(capacity);
         tiling.ubRestBytes = static_cast<uint32_t>(bytes);
         tiling.vStep = 128;
@@ -828,15 +813,13 @@ private:
 
     int64_t CalcVStepCoeff(int64_t aDk, uint32_t stateOutBufferNum, uint32_t attnOutBufferNum) const
     {
-        const int64_t maxMtp = ctx_.isA5 != 0 ? static_cast<int64_t>(RKDA_A5_MAX_MTP) :
-                                               static_cast<int64_t>(RKDA_MAX_MTP);
         int64_t stateDtypeSize = (ctx_.stateDtype == ge::DT_FLOAT) ? 4 : 2;
-        int64_t coeff = (ctx_.isA5 != 0 ? 1 : RKDA_INPUT_BUFFER_NUM) * stateDtypeSize * aDk; // state input queue.
-        if (ctx_.stateVFirst == 0 && !(ctx_.isA5 != 0 && ctx_.stateDtype == ge::DT_FLOAT)) {
-            coeff += stateDtypeSize * aDk; // BF16 or non-A5 K-first transpose buffer.
+        int64_t coeff = RKDA_INPUT_BUFFER_NUM * stateDtypeSize * aDk; // state input queue.
+        if (ctx_.stateVFirst == 0) {
+            coeff += stateDtypeSize * aDk; // K-first state transpose buffer.
         }
         coeff += static_cast<int64_t>(stateOutBufferNum) * stateDtypeSize * aDk;
-        coeff += static_cast<int64_t>(attnOutBufferNum) * 2 * (ctx_.isA5 != 0 ? maxMtp : 1);
+        coeff += static_cast<int64_t>(attnOutBufferNum) * 2;
         coeff += CalcComputeUbCoeff(aDk);
         return coeff;
     }

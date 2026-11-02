@@ -57,7 +57,7 @@ void RecurrentKdaTiling::InitCompileInfo()
 {
     auto platformInfoPtr = context_->GetPlatformInfo();
     if (platformInfoPtr == nullptr) {
-        OP_LOGE(context_->GetNodeName(), "platformInfoPtr is null");
+        OP_LOGE_LIBOPAPI_REPORT(context_->GetNodeName(), "platformInfoPtr is null");
         return;
     }
     const auto &ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
@@ -66,7 +66,7 @@ void RecurrentKdaTiling::InitCompileInfo()
     compileInfo_.isA5 = ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510;
 
     if (compileInfo_.aivNum <= 0) {
-        OP_LOGE(context_->GetNodeName(), "InitCompileInfo: no AIV cores available; aivNum=0, ubSize=%llu",
+        OP_LOGE_LIBOPAPI_REPORT(context_->GetNodeName(), "InitCompileInfo: no AIV cores available; aivNum=0, ubSize=%llu",
                 static_cast<unsigned long long>(compileInfo_.ubSize));
         return;
     }
@@ -141,11 +141,6 @@ RecurrentKdaTilingContext RecurrentKdaTiling::BuildProcessorContext() const
     ctx.aivNum = compileInfo_.aivNum;
     ctx.ubSize = compileInfo_.ubSize;
     ctx.isA5 = compileInfo_.isA5 ? 1 : 0;
-    if (ctx.isA5 && tilingData_.hasCuSeqlens) {
-        const auto *cu = context_->GetOptionalInputTensor(CU_SEQLENS_INDEX);
-        if (cu != nullptr && gert::TensorPlacementUtils::IsOnHost(cu->GetPlacement()))
-            ctx.cuSeqlensData = cu->GetData<uint8_t>();
-    }
     ctx.stateDtype = context_->GetInputDesc(STATE_INDEX)->GetDataType();
     ctx.gateDtype = context_->GetInputDesc(GATE_INDEX)->GetDataType();
     ctx.betaDtype = context_->GetInputDesc(BETA_INDEX)->GetDataType();
@@ -161,13 +156,13 @@ RecurrentKdaTilingContext RecurrentKdaTiling::BuildProcessorContext() const
     ctx.scale = tilingData_.scale;
     ctx.lowerBound = tilingData_.lowerBound;
     ctx.hasCuSeqlens = tilingData_.hasCuSeqlens;
-    ctx.layout = ctx.hasCuSeqlens ? RKDA_LAYOUT_TND : RKDA_LAYOUT_BSND;
+    ctx.layout = tilingData_.layout;
     ctx.hasSsmStateIndices = tilingData_.hasSsmStateIndices;
     ctx.hasALog = tilingData_.hasALog;
     ctx.hasDtBias = tilingData_.hasDtBias;
     ctx.hasAcceptedTokens = tilingData_.hasAcceptedTokens;
     ctx.useQkL2norm = tilingData_.useQkL2norm;
-    ctx.useGateInKernel = ctx.hasALog;
+    ctx.useGateInKernel = tilingData_.useGateInKernel;
     ctx.useBetaSigmoid = tilingData_.useBetaSigmoid;
     ctx.allowNegEigval = tilingData_.allowNegEigval;
     ctx.safeGate = tilingData_.safeGate;
@@ -238,7 +233,7 @@ ge::graphStatus RecurrentKdaTiling::PostTiling()
     errno_t ret = memcpy_s(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity(),
                            reinterpret_cast<void *>(&tilingData_), tilingDataSize);
     if (ret != EOK) {
-        OP_LOGE(context_->GetNodeName(), "PostTiling: memcpy_s failed; ret=%d, requiredBytes=%zu, capacityBytes=%zu, tilingKey=%llu",
+        OP_LOGE_LIBOPAPI_REPORT(context_->GetNodeName(), "PostTiling: memcpy_s failed; ret=%d, requiredBytes=%zu, capacityBytes=%zu, tilingKey=%llu",
                 ret, tilingDataSize, context_->GetRawTilingData()->GetCapacity(),
                 static_cast<unsigned long long>(tilingKey_));
         return ge::GRAPH_FAILED;
@@ -246,7 +241,7 @@ ge::graphStatus RecurrentKdaTiling::PostTiling()
     context_->GetRawTilingData()->SetDataSize(tilingDataSize);
 
     size_t *workspaces = context_->GetWorkspaceSizes(1);
-    OP_CHECK_IF(workspaces == nullptr, OP_LOGE(context_->GetNodeName(), "PostTiling: GetWorkspaceSizes(1) returned null; tilingKey=%llu",
+    OP_CHECK_IF(workspaces == nullptr, OP_LOGE_LIBOPAPI_REPORT(context_->GetNodeName(), "PostTiling: GetWorkspaceSizes(1) returned null; tilingKey=%llu",
                     static_cast<unsigned long long>(tilingKey_)),
                 return ge::GRAPH_FAILED);
     workspaces[0] = workspaceSize_;
@@ -378,22 +373,26 @@ ge::graphStatus RecurrentKdaTiling::AnalyzeFormat()
 ge::graphStatus RecurrentKdaTiling::GetAttrsInfo()
 {
     auto attrs = context_->GetAttrs();
-    OP_CHECK_IF(attrs == nullptr, OP_LOGE(context_->GetNodeName(), "attrs is null"), return ge::GRAPH_FAILED);
-    // `layout` is retained in the public ABI for compatibility.  The
-    // physical mode is inferred from whether cu_seqlens was supplied.
-    // Fixed-length inputs use rank-4 BSND addressing; packed varlen inputs
-    // use rank-3 TND addressing regardless of the attribute value.
-    tilingData_.layout = tilingData_.hasCuSeqlens ? RKDA_LAYOUT_TND : RKDA_LAYOUT_BSND;
+    OP_CHECK_IF(attrs == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "attrs"),
+                return ge::GRAPH_FAILED);
+    const char *layout = attrs->GetAttrPointer<char>(ATTR_LAYOUT_INDEX);
+    if (layout == nullptr || std::strcmp(layout, "BSND") == 0) {
+        tilingData_.layout = RKDA_LAYOUT_BSND;
+    } else if (std::strcmp(layout, "TND") == 0) {
+        tilingData_.layout = RKDA_LAYOUT_TND;
+    } else {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "layout",
+            "layout must be BSND or TND");
+        return ge::GRAPH_FAILED;
+    }
     tilingData_.scale = *attrs->GetAttrPointer<float>(ATTR_SCALE_INDEX);
     tilingData_.outputFinalState = *attrs->GetAttrPointer<bool>(ATTR_OUTPUT_FINAL_STATE_INDEX) ? 1 : 0;
     tilingData_.inplaceFinalState = *attrs->GetAttrPointer<bool>(ATTR_INPLACE_FINAL_STATE_INDEX) ? 1 : 0;
     tilingData_.useQkL2norm = *attrs->GetAttrPointer<bool>(ATTR_USE_QK_L2NORM_INDEX) ? 1 : 0;
-    // A_log presence is the authoritative gate mode.  Keep the legacy
-    // attribute in the tiling record only as a compatibility field.
-    tilingData_.useGateInKernel = tilingData_.hasALog ? 1 : 0;
+    tilingData_.useGateInKernel = *attrs->GetAttrPointer<bool>(ATTR_USE_GATE_INDEX) ? 1 : 0;
     tilingData_.useBetaSigmoid = *attrs->GetAttrPointer<bool>(ATTR_USE_BETA_SIGMOID_INDEX) ? 1 : 0;
     tilingData_.allowNegEigval = *attrs->GetAttrPointer<bool>(ATTR_ALLOW_NEG_EIGVAL_INDEX) ? 1 : 0;
-    tilingData_.safeGate = tilingData_.hasALog && *attrs->GetAttrPointer<bool>(ATTR_SAFE_GATE_INDEX) ? 1 : 0;
+    tilingData_.safeGate = *attrs->GetAttrPointer<bool>(ATTR_SAFE_GATE_INDEX) ? 1 : 0;
     tilingData_.lowerBound = *attrs->GetAttrPointer<float>(ATTR_LOWER_BOUND_INDEX);
     tilingData_.stateVFirst = *attrs->GetAttrPointer<bool>(ATTR_STATE_V_FIRST_INDEX) ? 1 : 0;
     return ge::GRAPH_SUCCESS;
@@ -404,7 +403,7 @@ ge::graphStatus RecurrentKdaTiling::GetOptionalInput()
     tilingData_.hasCuSeqlens = (context_->GetOptionalInputDesc(CU_SEQLENS_INDEX) == nullptr) ? 0 : 1;
     tilingData_.hasSsmStateIndices = (context_->GetOptionalInputDesc(SSM_STATE_INDICES_INDEX) == nullptr) ? 0 : 1;
     tilingData_.hasALog = (context_->GetOptionalInputDesc(A_LOG_INDEX) == nullptr) ? 0 : 1;
-    tilingData_.hasDtBias = tilingData_.hasALog && context_->GetOptionalInputDesc(DT_BIAS_INDEX) != nullptr ? 1 : 0;
+    tilingData_.hasDtBias = context_->GetOptionalInputDesc(DT_BIAS_INDEX) != nullptr ? 1 : 0;
     tilingData_.hasAcceptedTokens = (context_->GetOptionalInputDesc(ACC_TOKEN_INDEX) == nullptr) ? 0 : 1;
     return ge::GRAPH_SUCCESS;
 }
@@ -470,29 +469,28 @@ ge::graphStatus RecurrentKdaTiling::CalUbSize()
 
 static ge::graphStatus RecurrentKdaTilingFunc(gert::TilingContext *context)
 {
-    OP_CHECK_IF(context == nullptr, OP_LOGE("RecurrentKda", "context is null"),
+    OP_CHECK_IF(context == nullptr, OP_LOGE_LIBOPAPI_REPORT("RecurrentKda", "context is null"),
                 return ge::GRAPH_FAILED);
     return Ops::Transformer::OpTiling::TilingRegistry::GetInstance().DoTilingImpl(context);
 }
 
 static ge::graphStatus TilingPrepareForRecurrentKda(gert::TilingParseContext *context)
 {
-    OP_CHECK_IF(context == nullptr, OP_LOGE("RecurrentKda", "context is null"),
+    OP_CHECK_IF(context == nullptr, OP_LOGE_LIBOPAPI_REPORT("RecurrentKda", "context is null"),
                 return ge::GRAPH_FAILED);
 
     fe::PlatFormInfos *platformInfo = context->GetPlatformInfo();
-    OP_CHECK_IF(platformInfo == nullptr, OP_LOGE(context->GetNodeName(), "platformInfoPtr is null"),
+    OP_CHECK_IF(platformInfo == nullptr, OP_LOGE_LIBOPAPI_REPORT(context->GetNodeName(), "platformInfoPtr is null"),
                 return ge::GRAPH_FAILED);
 
     auto compileInfoPtr = context->GetCompiledInfo<RecurrentKdaCompileInfo>();
-    OP_CHECK_IF(compileInfoPtr == nullptr, OP_LOGE(context->GetNodeName(), "compileInfoPtr is null"),
+    OP_CHECK_IF(compileInfoPtr == nullptr, OP_LOGE_LIBOPAPI_REPORT(context->GetNodeName(), "compileInfoPtr is null"),
                 return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
 }
 
 IMPL_OP_OPTILING(RecurrentKda)
-    .TilingInputsDataDependency({CU_SEQLENS_INDEX})
     .Tiling(RecurrentKdaTilingFunc)
     .TilingParse<RecurrentKdaCompileInfo>(TilingPrepareForRecurrentKda);
 } // namespace optiling

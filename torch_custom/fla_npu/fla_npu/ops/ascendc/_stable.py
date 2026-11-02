@@ -596,20 +596,12 @@ def npu_recurrent_kda(
 ):
     """Recurrent KDA forward via the Stable-ABI launcher.
 
-    ``layout`` is forwarded only for ABI compatibility.  The operator derives
-    fixed versus packed mode from ``cu_seqlens`` presence and derives raw gate
-    versus step-log gate from ``A_log`` presence.  Mutates ``initial_state`` in
-    place when ``inplace_final_state`` is true.
+    ``layout`` is mapped to an int code (BSND=0, TND=1) because the stable
+    argument conversions do not carry strings.  Mutates ``initial_state`` in
+    place when ``inplace_final_state`` is true, exactly like the ctypes path.
     """
 
-    # Stable ABI still carries an integer slot for the legacy attribute, but
-    # the recurrent kernel ignores its value.
-    from ._recurrent_kda_compat import normalize_inputs, wait_for_metadata
-
-    q, k, v, g, beta, output_shape = normalize_inputs(q, k, v, g, beta, cu_seqlens)
-    layout_code = 0
-    if A_log is None:
-        dt_bias, safe_gate, lower_bound = None, False, -5.0
+    layout_code = _char_code("npu_recurrent_kda", "layout", layout)
 
     # The contract only covers the in-place form: with
     # `inplace_final_state=False` the caller's tensor is not written (the
@@ -629,14 +621,11 @@ def npu_recurrent_kda(
         import torch
 
         if initial_state is None:
-            seq_num = (cu_seqlens.numel() - 1 if cu_seqlens is not None else q.shape[0])
-            state_tail = ((v.shape[-1], q.shape[-1]) if state_v_first else
-                          (q.shape[-1], v.shape[-1]))
-            scratch = torch.zeros((seq_num, v.shape[-2], *state_tail),
-                                  device=q.device, dtype=torch.float32)
+            seq_num = (int(cu_seqlens.numel()) - 1 if cu_seqlens is not None
+                       else (int(q.shape[0]) if layout == "BSND" else 1))
+            tail = (v.shape[-1], q.shape[-1]) if state_v_first else (q.shape[-1], v.shape[-1])
+            scratch = torch.zeros((seq_num, v.shape[-2], *tail), dtype=torch.float32, device=q.device)
         else:
-            # Every recurrence starts from the supplied state, including pool
-            # slots not written by this call. Never read an uninitialized scratch.
             scratch = initial_state.detach().clone()
         out, _ = npu_recurrent_kda(
             q, k, v, g, beta, scratch, cu_seqlens=cu_seqlens,
@@ -648,16 +637,15 @@ def npu_recurrent_kda(
             use_beta_sigmoid_in_kernel=use_beta_sigmoid_in_kernel,
             allow_neg_eigval=allow_neg_eigval, safe_gate=safe_gate,
             lower_bound=lower_bound, state_v_first=state_v_first)
-        return (out.reshape(output_shape) if output_shape is not None else out), (scratch if output_final_state else None)
+        return out, (scratch if output_final_state else None)
 
-    scale_value = (float(q.shape[-1]) ** -0.5) if scale is None else float(scale)
+    scale_value = (128.0 ** -0.5) if scale is None else float(scale)
     lower = -5.0 if lower_bound is None else float(lower_bound)
     # Hot path, same shape as npu_recurrent_gated_delta_rule above.
     stream = _current_stream_ptr()
     op = _OP_CACHE.get("npu_recurrent_kda")
     if op is None:
         op = _op("npu_recurrent_kda")
-    wait_for_metadata(q, cu_seqlens, ssm_state_indices)
     out, final_state = op(
         q,
         k,
@@ -675,7 +663,7 @@ def npu_recurrent_kda(
         bool(output_final_state),
         bool(inplace_final_state),
         bool(use_qk_l2norm_in_kernel),
-        bool(A_log is not None),
+        bool(use_gate_in_kernel),
         bool(use_beta_sigmoid_in_kernel),
         bool(allow_neg_eigval),
         bool(safe_gate),
@@ -696,7 +684,7 @@ def npu_recurrent_kda(
         if bump is None:
             bump = _increment_version()
         bump((initial_state,))
-    return (out.reshape(output_shape) if output_shape is not None else out), final_state
+    return out, final_state
 
 
 # ---------------------------------------------------------------------------

@@ -16,12 +16,23 @@ constexpr uint32_t RKDA_PARAM_DOUBLE_BYTES_1088 = 2 * RKDA_PARAM_SLOT_BYTES_544;
 constexpr uint32_t RKDA_GUARD_BYTES_2048 = 4 * RKDA_ROW_FP32_BYTES_512;
 constexpr uint64_t RKDA_INVALID_SLOT = static_cast<uint64_t>(-1);
 constexpr uint32_t RKDA_NO_BANK = 3;
+// Standalone Mutex allocator; never reserve numeric hardware IDs.
+enum RKDAMutexSlot : uint32_t {
+    RKDA_MUTEX_STATE_USE = 0,    // three banks: VF reads/writes versus MTE2 replacement
+    RKDA_MUTEX_STATE_DMA = 3,    // three banks: VF writes versus MTE3 snapshot reads
+    RKDA_MUTEX_INPUT = 6,       // two tile slots
+    RKDA_MUTEX_PARAM = 8,       // two task parameter slots
+    RKDA_MUTEX_OUT = 10,        // two tile output slots
+    RKDA_MUTEX_CONTROL = 12,    // tile Vector/Scalar boundary
+    RKDA_MUTEX_COUNT = 13
+};
 enum RKDABankUse : uint32_t {
     RKDA_BANK_FREE = 0, RKDA_BANK_RECURRENCE = 1, RKDA_BANK_PREFETCHED = 2, RKDA_BANK_MTE3_SOURCE = 4
 };
 struct RKDATask {
     uint64_t id, request, head;
     int64_t begin, end;
+    uint64_t initialSlot;
 };
 struct RKDAInitParams {
     GM_ADDR query;
@@ -44,14 +55,25 @@ template <typename inType, typename outType, typename stateType, bool stateVFirs
 struct RKDAVectorContext {
     const RecurrentKdaTilingData *td_;
     RKDAInitParams args_;
-    TBuf<TPosition::VECCALC> storage_;
     LocalTensor<uint8_t> ub_;
     GlobalTensor<inType> q_, k_, v_;
     GlobalTensor<stateType> stateIn_, stateOut_;
     GlobalTensor<outType> out_;
     GlobalTensor<float> aLog_, bias_;
-    uint32_t x_, betaSlot_, qOffset_, kOffset_, vOffset_, gateOffset_, betaOffset_, initialBank_, alternateBank_;
-    uint32_t paramOffset_, outOffset_, eventOffset_;
+    // Fixed A5 V=128 layout: no per-launch window or offset reconstruction.
+    static constexpr uint32_t x_ = RKDA_A5_WINDOW_TOKENS;
+    static constexpr uint32_t betaSlot_ = 32 * x_;
+    static constexpr uint32_t qOffset_ = 3 * RegBase::StateLayout<stateType, stateVFirst>::BYTES;
+    static constexpr uint32_t kOffset_ = qOffset_ + RKDA_ROW_FP32_BYTES_512 * x_;
+    static constexpr uint32_t vOffset_ = kOffset_ + RKDA_ROW_FP32_BYTES_512 * x_;
+    static constexpr uint32_t gateOffset_ = vOffset_ + RKDA_ROW_FP32_BYTES_512 * x_;
+    static constexpr uint32_t betaOffset_ = gateOffset_ + RKDA_GATE_DOUBLE_BYTES_1024 * x_;
+    static constexpr uint32_t paramOffset_ = betaOffset_ + 2 * betaSlot_;
+    static constexpr uint32_t outOffset_ = paramOffset_ + RKDA_PARAM_DOUBLE_BYTES_1088;
+    static constexpr uint32_t eventOffset_ = outOffset_ + RKDA_ROW_FP32_BYTES_512 * x_;
+    uint32_t initialBank_, alternateBank_;
+    uint32_t vfFlags_;
+    MutexID mutex_[RKDA_MUTEX_COUNT];
     uint32_t bankUse_[3] = {RKDA_BANK_FREE, RKDA_BANK_FREE, RKDA_BANK_FREE};
     uint32_t prefetchedBank_ = RKDA_NO_BANK, pendingStateBank_ = RKDA_NO_BANK;
 #ifdef RKDA_EXECUTION_TRACE

@@ -5,56 +5,37 @@
 
 /*
 Stage | 生产者/消费者 | 同步
-  0   | Scalar/MTE2 将输入、初态、参数搬到UB | MTE2_V EVENT0/1
-  1   | VF 消费UB并递推State、收集整tile out | S_V/V_S EVENT0，token发布/完成计数
-  2   | MTE3 搬出整tile out和需要的State   | S_MTE3 EVENT0，MTE3_S EVENT0/1
+  0   | MTE2 将输入、初态、参数搬到UB | 对应资源的Mutex Lock/Unlock
+  1   | VF 消费UB并递推State、收集out | 输入/参数/out按槽；State区分访问与快照
+  2   | MTE3 搬出整tile out和State   | out槽或State快照Mutex
 
-UB布局（B=StateLayout::BYTES，X<=8；偏移由Stage0初始化一次）
-区域     | 字节数                    | 生命周期
-State    | 3*B                       | 2个bank按状态交替，第三个可用bank预取
-Q/K/V    | 各512*X                   | 双槽，输入搬入到VF读完
-Gate     | 1024*X                    | 双槽，原dtype保存
-Beta     | 2*max(128,32*X)           | 双槽，短行按32B间隔
-Params   | 2*544                     | 双槽，各任务参数
-Out      | 512*X                     | 双槽，整tile完成后批量搬出
-Guard    | 2048                      | 前36B为事件字，+256..+768为scratch
+UB：3个State bank，两个bank交替递推、另一可用bank预取；固定X=8。
+输入、参数和out双缓冲，沿用原偏移与峰值；guard尾部保留512B数值scratch。
 
-协议 | 发布/消费 | 复用与背压
-输入 | MTE2_V0  | 覆盖slot前等待旧VF/out完成
-初态 | MTE2_V1  | 预取bank接管前wait；不得覆盖MTE3源bank
-快照 | events[0]/events[8] | VF发布token，Scalar在DMA完成后发布done；覆盖前poll
-out  | MTE3_S1（indexed）/MTE3_S0（final-only） | tile批量搬出完成后复用slot
-末态 | MTE3_S0  | DMA期间保留源bank，下一VF期间回收，最终排空
+资源 | Mutex份数 | 生命周期与反向依赖
+State访问 | 3 | MTE2初始化、VF源/目标；保护旧VF读完后才覆盖
+State快照 | 3 | MTE2初始化、VF目标、MTE3搬出；VF源读取不持此锁
+输入 | 2 | MTE2搬入、V消费完整tile；下次MTE2覆盖自动等待
+参数 | 2 | MTE2搬入、V消费完整任务
+out | 2 | V生成完整tile、MTE3批量搬出
+控制 | 1 | 保留tile结束的V→S依赖
+共13个ID由AllocMutexID申请，核尾部通过S获取所有资源后ReleaseMutexID。
+同流水的访存依赖仍使用LocalMemBar/PipeBarrier，不用Mutex替代。
 */
 namespace RecurrentKda {
 using namespace AscendC;
 using namespace AscendC::MicroAPI;
 
-// 输入：GM地址和host tiling
-// 输出：context与UB视图。
-// 复用：本核全生命周期
-// 同步：只接线，不提交DMA。
+// 输入：GM地址和host tiling；只接线、预留容量，不提交DMA。
 template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void InitRecurrentKda(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, const RecurrentKdaTilingData *tiling, const RKDAInitParams &args, TPipe *pipe)
+__aicore__ inline void InitRecurrentKda(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, const RecurrentKdaTilingData *tiling, const RKDAInitParams &args)
 {
-    using StateLayout = RegBase::StateLayout<stateType, stateVFirst>;
-    constexpr uint32_t BANK = StateLayout::BYTES;
     ctx.td_ = tiling;
     ctx.args_ = args;
-    ctx.x_ = ctx.td_->windowSize;
-    ctx.betaSlot_ = 32 * ctx.x_;
-    if (ctx.betaSlot_ < 128) ctx.betaSlot_ = 128;
-    // Keep V-first offsets unchanged; K-first FP32 banks include row padding.
-    ctx.qOffset_ = 3 * BANK;
-    ctx.kOffset_ = ctx.qOffset_ + RKDA_ROW_FP32_BYTES_512 * ctx.x_;
-    ctx.vOffset_ = ctx.kOffset_ + RKDA_ROW_FP32_BYTES_512 * ctx.x_;
-    ctx.gateOffset_ = ctx.vOffset_ + RKDA_ROW_FP32_BYTES_512 * ctx.x_;
-    ctx.betaOffset_ = ctx.gateOffset_ + RKDA_GATE_DOUBLE_BYTES_1024 * ctx.x_;
-    ctx.paramOffset_ = ctx.betaOffset_ + 2 * ctx.betaSlot_;
-    ctx.outOffset_ = ctx.paramOffset_ + RKDA_PARAM_DOUBLE_BYTES_1088;
-    ctx.eventOffset_ = ctx.outOffset_ + RKDA_ROW_FP32_BYTES_512 * ctx.x_;
-    pipe->InitBuffer(ctx.storage_, ctx.eventOffset_ + RKDA_GUARD_BYTES_2048);
-    ctx.ub_ = ctx.storage_.template Get<uint8_t>();
+    ctx.vfFlags_ = ctx.td_->a5VfFlags;
+    for (uint32_t i = 0; i < RKDA_MUTEX_COUNT; ++i) ctx.mutex_[i] = AllocMutexID();
+    // Fixed per-specialization UB ownership, without TPipe buffer allocation.
+    ctx.ub_ = LocalTensor<uint8_t>(TPosition::VECCALC, 0, ctx.eventOffset_ + RKDA_GUARD_BYTES_2048);
     ctx.q_.SetGlobalBuffer((__gm__ inType *)args.query);
     ctx.k_.SetGlobalBuffer((__gm__ inType *)args.key);
     ctx.v_.SetGlobalBuffer((__gm__ inType *)args.value);
@@ -91,9 +72,20 @@ __aicore__ inline void RecurrentKdaBeginBanks(RKDAVectorContext<inType, outType,
 {
     // A prefetched initial State stays reserved until its task takes ownership.
     ctx.initialBank_ = initial;
-    ctx.bankUse_[ctx.initialBank_] = RKDA_BANK_RECURRENCE;
+    ctx.bankUse_[ctx.initialBank_] =
+        (ctx.bankUse_[ctx.initialBank_] & RKDA_BANK_MTE3_SOURCE) | RKDA_BANK_RECURRENCE;
     ctx.alternateBank_ = RecurrentKdaFreeBank(ctx);
-    ctx.bankUse_[ctx.alternateBank_] = RKDA_BANK_RECURRENCE;
+    if (ctx.alternateBank_ == RKDA_NO_BANK) {
+        // Preserve the old final bank for the following State prefetch. The
+        // other old recurrence bank can be reused after its Vector wait.
+        for (uint32_t bank = 0; bank < 3; ++bank)
+            if (bank != ctx.initialBank_ && bank != ctx.pendingStateBank_ &&
+                !(ctx.bankUse_[bank] & (RKDA_BANK_RECURRENCE | RKDA_BANK_PREFETCHED))) {
+                ctx.alternateBank_ = bank;
+                break;
+            }
+    }
+    ctx.bankUse_[ctx.alternateBank_] |= RKDA_BANK_RECURRENCE;
 
 }
 
@@ -106,7 +98,7 @@ __aicore__ inline void RecurrentKdaReleaseBanks(RKDAVectorContext<inType, outTyp
 }
 
 template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void RecurrentKdaReleaseStateDma(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx)
+__aicore__ inline void RecurrentKdaReleaseStateReservation(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx)
 {
     if (ctx.pendingStateBank_ != RKDA_NO_BANK) {
         ctx.bankUse_[ctx.pendingStateBank_] &= ~RKDA_BANK_MTE3_SOURCE;
@@ -170,10 +162,19 @@ __aicore__ inline bool RecurrentKdaPrepareTask(const RKDAVectorContext<inType, o
         const uint64_t id = cursor;
         cursor += GetBlockNum();
         const uint64_t request = id / ctx.td_->nv;
-        const int64_t begin = RecurrentKdaSequence(ctx, request), end = RecurrentKdaSequence(ctx, request + 1);
+        const int64_t begin = RecurrentKdaSequence(ctx, request);
+        const int64_t end = RecurrentKdaSequence(ctx, request + 1);
         if (begin == end) continue;
-        if (!RecurrentKdaValidateSlots(ctx, request, begin, end)) { valid = false; return false; }
-        task = {id, request, id % ctx.td_->nv, begin, end};
+        if (!RecurrentKdaValidateSlots(ctx, request, begin, end)) {
+            valid = false; return false;
+        }
+        int64_t initialToken = begin;
+        if (ctx.td_->hasAcceptedTokens)
+            initialToken += RecurrentKdaMetadata(ctx, ctx.args_.numAcceptedTokens,
+                ctx.td_->acceptedTokensDtype, request) - 1;
+        const uint64_t initial = RecurrentKdaSlot(ctx, request, begin, initialToken);
+        if (initial == RKDA_INVALID_SLOT) { valid = false; return false; }
+        task = {id, request, id % ctx.td_->nv, begin, end, initial};
         return true;
     }
     return false;
@@ -213,27 +214,32 @@ __aicore__ inline void RecurrentKdaCopyAux(RKDAVectorContext<inType, outType, st
 }
 
 template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline uint64_t RecurrentKdaInputOffset(const RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, uint64_t token, uint64_t tokenStride,
-                                         uint64_t batchStride)
+__aicore__ inline uint64_t RecurrentKdaInputOffset(const RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, const RKDATask &task,
+                                         uint64_t token, uint64_t tokenStride, uint64_t batchStride)
 {
-    if (ctx.td_->hasCuSeqlens) return token * tokenStride;
-    return (token / ctx.td_->seqLen) * batchStride + (token % ctx.td_->seqLen) * tokenStride;
+    if (ctx.td_->hasCuSeqlens || ctx.td_->layout == 1) return token * tokenStride;
+    // Task preparation already resolved the request and its first token.
+    // Preserve independent batch strides without dividing the flat token again.
+    return task.request * batchStride + (token - uint64_t(task.begin)) * tokenStride;
 
 }
 
 // 输入：当前tile的GM输入
 // 输出：指定UB输入槽。
 // 复用：覆盖前由编排层回收slot
-// 同步：消费者使用前等待MTE2_V EVENT0。
+// 同步：输入槽Mutex由MTE2交给Vector。
 template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void Stage0PrefetchInputs(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, int64_t token, uint32_t rows, uint64_t head, uint32_t slot)
+__aicore__ inline void Stage0PrefetchInputs(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, const RKDATask &task,
+                                         int64_t token, uint32_t rows, uint32_t slot)
 {
-    const uint64_t hk = head / (ctx.td_->nv / ctx.td_->nk);
-    RecurrentKdaCopyRows(ctx, ctx.q_, RecurrentKdaInputOffset(ctx, uint64_t(token), ctx.td_->queryTokenStride, ctx.td_->queryBatchStride) + hk * ctx.td_->queryHeadStride,
+    Mutex::Lock<PIPE_MTE2>(ctx.mutex_[RKDA_MUTEX_INPUT + slot]);
+    const uint64_t head = task.head;
+    const uint64_t hk = head / ctx.td_->a5HeadRatio;
+    RecurrentKdaCopyRows(ctx, ctx.q_, RecurrentKdaInputOffset(ctx, task, uint64_t(token), ctx.td_->queryTokenStride, ctx.td_->queryBatchStride) + hk * ctx.td_->queryHeadStride,
              ctx.td_->queryTokenStride, ctx.qOffset_ + slot * RKDA_ROW_BF16_BYTES_256 * ctx.x_, RKDA_DIM_128, rows);
-    RecurrentKdaCopyRows(ctx, ctx.k_, RecurrentKdaInputOffset(ctx, uint64_t(token), ctx.td_->keyTokenStride, ctx.td_->keyBatchStride) + hk * ctx.td_->keyHeadStride,
+    RecurrentKdaCopyRows(ctx, ctx.k_, RecurrentKdaInputOffset(ctx, task, uint64_t(token), ctx.td_->keyTokenStride, ctx.td_->keyBatchStride) + hk * ctx.td_->keyHeadStride,
              ctx.td_->keyTokenStride, ctx.kOffset_ + slot * RKDA_ROW_BF16_BYTES_256 * ctx.x_, RKDA_DIM_128, rows);
-    RecurrentKdaCopyRows(ctx, ctx.v_, RecurrentKdaInputOffset(ctx, uint64_t(token), ctx.td_->valueTokenStride, ctx.td_->valueBatchStride) + head * ctx.td_->valueHeadStride,
+    RecurrentKdaCopyRows(ctx, ctx.v_, RecurrentKdaInputOffset(ctx, task, uint64_t(token), ctx.td_->valueTokenStride, ctx.td_->valueBatchStride) + head * ctx.td_->valueHeadStride,
              ctx.td_->valueTokenStride, ctx.vOffset_ + slot * RKDA_ROW_BF16_BYTES_256 * ctx.x_, RKDA_DIM_128, rows);
 #if defined(DTYPE_GATE) && defined(DTYPE_BETA)
     // The OPP binary's input types also determine the DMA width and strides.
@@ -247,6 +253,7 @@ __aicore__ inline void Stage0PrefetchInputs(RKDAVectorContext<inType, outType, s
     else if (ctx.td_->betaDtype == 1) RecurrentKdaCopyAux<bfloat16_t>(ctx, ctx.args_.beta, head, token, slot, rows, true);
     else RecurrentKdaCopyAux<half>(ctx, ctx.args_.beta, head, token, slot, rows, true);
 #endif
+    Mutex::Unlock<PIPE_MTE2>(ctx.mutex_[RKDA_MUTEX_INPUT + slot]);
 
 }
 
@@ -260,38 +267,43 @@ __aicore__ inline uint32_t RecurrentKdaValidTokens(const RKDAVectorContext<inTyp
 // 输入：完整tile的UB out
 // 输出：GM out。
 // 复用：完成前保持源slot
-// 同步：上游V_S/S_MTE3，完成后MTE3_S。
+// 同步：out槽Mutex保护Vector生产、MTE3消费和再次覆盖。
 template <typename inType, typename outType, typename stateType, bool stateVFirst>
 __aicore__ inline void Stage2WriteOutputTile(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, int64_t token, uint32_t rows, uint64_t head, uint32_t slot)
 {
+    Mutex::Lock<PIPE_MTE3>(ctx.mutex_[RKDA_MUTEX_OUT + slot]);
     // UB rows are contiguous; GM rows for one value head are Nv rows apart.
     DataCopyExtParams copy{static_cast<uint16_t>(rows), RKDA_DIM_128 * sizeof(outType), 0,
         static_cast<uint32_t>(uint64_t(ctx.td_->nv - 1) * RKDA_DIM_128 * sizeof(outType)), 0};
     DataCopyPad(ctx.out_[(uint64_t(token) * ctx.td_->nv + head) * RKDA_DIM_128],
                 ctx.ub_[ctx.outOffset_ + slot * ctx.x_ * RKDA_ROW_BF16_BYTES_256].template ReinterpretCast<outType>(), copy);
+    Mutex::Unlock<PIPE_MTE3>(ctx.mutex_[RKDA_MUTEX_OUT + slot]);
 
 }
 
 // 输入：任务初态和参数
 // 输出：指定bank/参数槽。
 // 复用：只写可用bank
-// 同步：消费者通过MTE2_V EVENT1等待。
+// 同步：State访问/快照Mutex保护初始化，参数槽Mutex保护任务参数。
 template <typename inType, typename outType, typename stateType, bool stateVFirst>
 __aicore__ inline void Stage0PrefetchState(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, const RKDATask &task, uint32_t bank, uint32_t parameterSlot)
 {
     using StateLayout = RegBase::StateLayout<stateType, stateVFirst>;
     constexpr uint32_t BANK = StateLayout::BYTES;
-    int64_t initialToken = task.begin;
-    if (ctx.td_->hasAcceptedTokens)
-        initialToken += RecurrentKdaMetadata(ctx, ctx.args_.numAcceptedTokens, ctx.td_->acceptedTokensDtype, task.request) - 1;
-    const uint64_t initial = RecurrentKdaSlot(ctx, task.request, task.begin, initialToken);
+    Mutex::Lock<PIPE_MTE2>(ctx.mutex_[RKDA_MUTEX_STATE_USE + bank]);
+    Mutex::Lock<PIPE_MTE2>(ctx.mutex_[RKDA_MUTEX_STATE_DMA + bank]);
+    const uint64_t initial = task.initialSlot;
     RecurrentKdaCopyRows(ctx, ctx.stateIn_, initial * ctx.td_->stateInStride0 + task.head * ctx.td_->stateInStride1,
              ctx.td_->stateInStride2, bank * BANK, RKDA_DIM_128, RKDA_DIM_128, StateLayout::ROW_GAP);
+    Mutex::Unlock<PIPE_MTE2>(ctx.mutex_[RKDA_MUTEX_STATE_DMA + bank]);
+    Mutex::Unlock<PIPE_MTE2>(ctx.mutex_[RKDA_MUTEX_STATE_USE + bank]);
+    Mutex::Lock<PIPE_MTE2>(ctx.mutex_[RKDA_MUTEX_PARAM + parameterSlot]);
     const uint32_t parameter = ctx.paramOffset_ + parameterSlot * RKDA_PARAM_SLOT_BYTES_544;
-    if (ctx.td_->hasALog) {
+    if (ctx.td_->useGateInKernel) {
         RecurrentKdaCopyRows(ctx, ctx.aLog_, task.head, 1, parameter, 1, 1);
         if (ctx.td_->hasDtBias) RecurrentKdaCopyRows(ctx, ctx.bias_, task.head * RKDA_DIM_128, RKDA_DIM_128, parameter + 32, RKDA_DIM_128, 1);
     }
+    Mutex::Unlock<PIPE_MTE2>(ctx.mutex_[RKDA_MUTEX_PARAM + parameterSlot]);
 
 }
 
@@ -304,9 +316,8 @@ __aicore__ inline void RecurrentKdaTrace(RKDAVectorContext<inType, outType, stat
     ctx.trace_.SetValue(row + 2, token); ctx.trace_.SetValue(row + 3, slot);
     ctx.trace_.SetValue(row + 4, GetBlockNum());
     ctx.trace_.SetValue(row + 5, event == 7 || event == 8 ? slot : ((token & 1) ? ctx.alternateBank_ : ctx.initialBank_));
-    auto events = (__ubuf__ volatile uint32_t *)ctx.ub_[ctx.eventOffset_].GetPhyAddr();
-    ctx.trace_.SetValue(row + 6, events[0]);
-    ctx.trace_.SetValue(row + 7, event == 1 ? ctx.alternateBank_ : events[8]);
+    ctx.trace_.SetValue(row + 6, ctx.bankUse_[0] | (ctx.bankUse_[1] << 3) | (ctx.bankUse_[2] << 6));
+    ctx.trace_.SetValue(row + 7, event == 1 ? ctx.alternateBank_ : ctx.pendingStateBank_);
     ctx.trace_.SetValue(0, ++ctx.traceCount_);
 #endif
 
@@ -315,72 +326,67 @@ __aicore__ inline void RecurrentKdaTrace(RKDAVectorContext<inType, outType, stat
 template <typename inType, typename outType, typename stateType, bool stateVFirst>
 __aicore__ inline void Stage0PrefetchNextState(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, const RKDATask &next, uint32_t parameterSlot, uint32_t bank)
 {
-    ctx.bankUse_[bank] = RKDA_BANK_PREFETCHED;
+    ctx.bankUse_[bank] |= RKDA_BANK_PREFETCHED;
     ctx.prefetchedBank_ = bank;
     Stage0PrefetchState(ctx, next, bank, parameterSlot ^ 1);
-    SetFlag<HardEvent::MTE2_V>(EVENT_ID1);
     RecurrentKdaTrace(ctx, 7, next.id, 0, bank);
 
 }
 
 template <class Gate, class Beta,
           typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void RecurrentKdaDispatchLayout(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, uint32_t base, uint32_t valid, uint32_t slot,
-                                         uint32_t parameter, bool last)
+__aicore__ inline void RecurrentKdaDispatchLayout(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, uint32_t base, uint32_t slot,
+                                         uint32_t parameter)
 {
     if constexpr (stateVFirst) {
-        if (ctx.x_ == 1) {
-            if (ctx.td_->useQkL2norm && ctx.td_->hasALog && ctx.td_->hasDtBias && ctx.td_->useBetaSigmoid &&
-                !ctx.td_->allowNegEigval && !ctx.td_->safeGate && !ctx.td_->hasSsmStateIndices) {
-                Stage1LaunchRecurrentKdaVF<Gate, Beta, true, true, 0, true>(ctx, base, valid, slot, parameter, last);
-            } else Stage1LaunchRecurrentKdaVF<Gate, Beta, true, false, 0, true>(ctx, base, valid, slot, parameter, last);
-            return;
-        }
-        // Specialize the common fused recurrence to retire runtime flags
-        // before the VF's State/out row loops. All other flags use the generic VF.
-        if (ctx.td_->useQkL2norm && ctx.td_->hasALog && ctx.td_->hasDtBias && ctx.td_->useBetaSigmoid &&
-            !ctx.td_->allowNegEigval && !ctx.td_->safeGate && !ctx.td_->hasSsmStateIndices) {
-            if (ctx.x_ == 4 && valid == 4) Stage1LaunchRecurrentKdaVF<Gate, Beta, true, true, 4>(ctx, base, valid, slot, parameter, last);
-            else if (ctx.x_ == 8 && valid == 8) Stage1LaunchRecurrentKdaVF<Gate, Beta, true, true, 8>(ctx, base, valid, slot, parameter, last);
-            else Stage1LaunchRecurrentKdaVF<Gate, Beta, true, true>(ctx, base, valid, slot, parameter, last);
-        } else if (ctx.x_ == 8 && valid == 8) {
-            Stage1LaunchRecurrentKdaVF<Gate, Beta, true, false, 8>(ctx, base, valid, slot, parameter, last);
-        } else Stage1LaunchRecurrentKdaVF<Gate, Beta, true>(ctx, base, valid, slot, parameter, last);
-    } else Stage1LaunchRecurrentKdaVF<Gate, Beta, false>(ctx, base, valid, slot, parameter, last);
+        if (ctx.vfFlags_ & RKDA_VF_FUSED)
+            Stage1LaunchRecurrentKdaVF<Gate, Beta, true, true>(ctx, base, slot, parameter);
+        else Stage1LaunchRecurrentKdaVF<Gate, Beta, true>(ctx, base, slot, parameter);
+    } else Stage1LaunchRecurrentKdaVF<Gate, Beta, false>(ctx, base, slot, parameter);
 
 }
 
 template <class Gate,
           typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void RecurrentKdaDispatchBeta(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, uint32_t base, uint32_t valid, uint32_t slot,
-                                       uint32_t parameter, bool last)
+__aicore__ inline void RecurrentKdaDispatchBeta(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, uint32_t base, uint32_t slot,
+                                       uint32_t parameter)
 {
-    if (ctx.td_->betaDtype == 0) RecurrentKdaDispatchLayout<Gate, float>(ctx, base, valid, slot, parameter, last);
-    else if (ctx.td_->betaDtype == 1) RecurrentKdaDispatchLayout<Gate, bfloat16_t>(ctx, base, valid, slot, parameter, last);
-    else RecurrentKdaDispatchLayout<Gate, half>(ctx, base, valid, slot, parameter, last);
+    if (ctx.td_->betaDtype == 0) RecurrentKdaDispatchLayout<Gate, float>(ctx, base, slot, parameter);
+    else if (ctx.td_->betaDtype == 1) RecurrentKdaDispatchLayout<Gate, bfloat16_t>(ctx, base, slot, parameter);
+    else RecurrentKdaDispatchLayout<Gate, half>(ctx, base, slot, parameter);
 
 }
 
 template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void RecurrentKdaDispatch(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, uint32_t base, uint32_t valid, uint32_t slot,
-                                    uint32_t parameter, bool last)
+__aicore__ inline void RecurrentKdaDispatch(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, uint32_t base, uint32_t slot,
+                                    uint32_t parameter)
 {
+    const uint32_t source = (base & 1U) ? ctx.alternateBank_ : ctx.initialBank_;
+    const uint32_t target = (base & 1U) ? ctx.initialBank_ : ctx.alternateBank_;
+    // VF reads may overlap an MTE3 read of the same source bank. Only its
+    // destination takes the snapshot lock; MTE2 takes both bank locks.
+    Mutex::Lock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_STATE_USE + source]);
+    Mutex::Lock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_STATE_USE + target]);
+    Mutex::Lock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_STATE_DMA + target]);
 #if defined(DTYPE_GATE) && defined(DTYPE_BETA)
     // OPP already selects a binary for each input dtype combination.
-    RecurrentKdaDispatchLayout<DTYPE_GATE, DTYPE_BETA>(ctx, base, valid, slot, parameter, last);
+    RecurrentKdaDispatchLayout<DTYPE_GATE, DTYPE_BETA>(ctx, base, slot, parameter);
 #else
     // Direct kernel callers may supply dtype codes only through tiling.
-    if (ctx.td_->gateDtype == 0) RecurrentKdaDispatchBeta<float>(ctx, base, valid, slot, parameter, last);
-    else if (ctx.td_->gateDtype == 1) RecurrentKdaDispatchBeta<bfloat16_t>(ctx, base, valid, slot, parameter, last);
-    else RecurrentKdaDispatchBeta<half>(ctx, base, valid, slot, parameter, last);
+    if (ctx.td_->gateDtype == 0) RecurrentKdaDispatchBeta<float>(ctx, base, slot, parameter);
+    else if (ctx.td_->gateDtype == 1) RecurrentKdaDispatchBeta<bfloat16_t>(ctx, base, slot, parameter);
+    else RecurrentKdaDispatchBeta<half>(ctx, base, slot, parameter);
 #endif
+    Mutex::Unlock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_STATE_DMA + target]);
+    Mutex::Unlock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_STATE_USE + target]);
+    Mutex::Unlock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_STATE_USE + source]);
 
 }
 
 // 输入：当前任务及lookahead
 // 输出：完整tile out/末态。
 // 复用：交替输入/out槽和动态bank
-// 同步：保留MTE2_V、S_V、V_S、S_MTE3和MTE3_S。
+// 同步：输入/参数/out槽及State两类Mutex，保留tile的V→S边界。
 template <typename inType, typename outType, typename stateType, bool stateVFirst>
 __aicore__ inline void Stage1RunFinalStateTask(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, const RKDATask &current, const RKDATask *nextTask,
                                            bool prefetched, uint32_t parameterSlot,
@@ -396,66 +402,70 @@ __aicore__ inline void Stage1RunFinalStateTask(RKDAVectorContext<inType, outType
     const bool writeState = ctx.td_->inplaceFinalState || ctx.td_->outputFinalState;
     const uint64_t stateOffset = current.request * ctx.td_->stateOutStride0 + head * ctx.td_->stateOutStride1;
     const uint32_t parameter = ctx.paramOffset_ + parameterSlot * RKDA_PARAM_SLOT_BYTES_544;
-    auto events = (__ubuf__ volatile uint32_t *)ctx.ub_[ctx.eventOffset_].GetPhyAddr();
-    events[0] = 0;
     hasFollowing = false;
     RecurrentKdaTrace(ctx, 0, task, 0, slot);
     if (prefetched) {
-        WaitFlag<HardEvent::MTE2_V>(EVENT_ID1);
         RecurrentKdaTrace(ctx, 8, task, 0, ctx.initialBank_);
     } else {
         Stage0PrefetchState(ctx, current, ctx.initialBank_, parameterSlot);
-        Stage0PrefetchInputs(ctx, begin, RecurrentKdaValidTokens(ctx, begin, end), head, slot);
+        Stage0PrefetchInputs(ctx, current, begin, RecurrentKdaValidTokens(ctx, begin, end), slot);
     }
+    Mutex::Lock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_PARAM + parameterSlot]);
     // The spare bank can still be read by the previous task's final DMA.
     bool deferStatePrefetch = nextTask && RecurrentKdaFreeBank(ctx) == RKDA_NO_BANK;
     for (int64_t tile = begin; tile < end; tile += ctx.x_, slot ^= 1) {
         const uint32_t valid = RecurrentKdaValidTokens(ctx, tile, end), base = uint32_t(tile - begin);
         const bool lastTile = tile + valid == end;
-        SetFlag<HardEvent::MTE2_V>(EVENT_ID0);
-        WaitFlag<HardEvent::MTE2_V>(EVENT_ID0);
-        SetFlag<HardEvent::S_V>(EVENT_ID0);
-        WaitFlag<HardEvent::S_V>(EVENT_ID0);
-        RecurrentKdaTrace(ctx, 1, task, base, slot);
-        RecurrentKdaDispatch(ctx, base, valid, slot, parameter, lastTile);
+        Mutex::Lock<PIPE_S>(ctx.mutex_[RKDA_MUTEX_CONTROL]);
+        Mutex::Unlock<PIPE_S>(ctx.mutex_[RKDA_MUTEX_CONTROL]);
+        Mutex::Lock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_CONTROL]);
+        Mutex::Lock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_INPUT + slot]);
+        Mutex::Lock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_OUT + slot]);
+        for (uint32_t t = 0; t < valid; ++t) {
+            const uint32_t token = base + t;
+            RecurrentKdaTrace(ctx, 1, task, token, slot);
+            RecurrentKdaDispatch(ctx, token, slot, parameter);
+        }
         // Enqueue future inputs while the current slot is consumed by VF.
         if (!lastTile) {
-            Stage0PrefetchInputs(ctx, tile + valid, RecurrentKdaValidTokens(ctx, tile + valid, end), head, slot ^ 1);
+            Stage0PrefetchInputs(ctx, current, tile + valid, RecurrentKdaValidTokens(ctx, tile + valid, end), slot ^ 1);
         } else if (nextTask) {
-            Stage0PrefetchInputs(ctx, nextTask->begin, RecurrentKdaValidTokens(ctx, nextTask->begin, nextTask->end), nextTask->head, slot ^ 1);
+            Stage0PrefetchInputs(ctx, *nextTask, nextTask->begin, RecurrentKdaValidTokens(ctx, nextTask->begin, nextTask->end), slot ^ 1);
             RecurrentKdaTrace(ctx, 9, nextTask->id, 0, slot ^ 1);
         }
         if (nextTask && base == 0 && !deferStatePrefetch)
             Stage0PrefetchNextState(ctx, *nextTask, parameterSlot, RecurrentKdaFreeBank(ctx));
         if (base == 0 && nextTask)
             hasFollowing = RecurrentKdaPrepareTask(ctx, cursor, following, validTask);
-        // The old batch belongs to the opposite out slot. Reclaim it while
-        // this VF runs, also releasing any old final-State DMA source bank.
+        // Release the old batch's Scalar reservation. Its actual source
+        // remains protected by the resource locks until the DMA completes.
         if (pending) {
-            WaitFlag<HardEvent::MTE3_S>(EVENT_ID0);
             pending = false;
-            RecurrentKdaReleaseStateDma(ctx);
+            RecurrentKdaReleaseStateReservation(ctx);
             RecurrentKdaTrace(ctx, 10, task, base, slot ^ 1);
         }
         if (deferStatePrefetch) {
             Stage0PrefetchNextState(ctx, *nextTask, parameterSlot, RecurrentKdaFreeBank(ctx));
             deferStatePrefetch = false;
         }
-        SetFlag<HardEvent::V_S>(EVENT_ID0);
-        WaitFlag<HardEvent::V_S>(EVENT_ID0);
+        Mutex::Unlock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_INPUT + slot]);
+        Mutex::Unlock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_OUT + slot]);
+        Mutex::Unlock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_CONTROL]);
+        Mutex::Lock<PIPE_S>(ctx.mutex_[RKDA_MUTEX_CONTROL]);
+        Mutex::Unlock<PIPE_S>(ctx.mutex_[RKDA_MUTEX_CONTROL]);
         RecurrentKdaTrace(ctx, 5, task, base + valid, slot);
-        SetFlag<HardEvent::S_MTE3>(EVENT_ID0);
-        WaitFlag<HardEvent::S_MTE3>(EVENT_ID0);
         Stage2WriteOutputTile(ctx, tile, valid, head, slot);
         if (lastTile && writeState) {
+            Mutex::Lock<PIPE_MTE3>(ctx.mutex_[RKDA_MUTEX_STATE_DMA + finalBank]);
             DataCopyPad(ctx.stateOut_[stateOffset], ctx.ub_[finalBank * BANK].template ReinterpretCast<stateType>(), stateCopy);
+            Mutex::Unlock<PIPE_MTE3>(ctx.mutex_[RKDA_MUTEX_STATE_DMA + finalBank]);
             ctx.bankUse_[finalBank] |= RKDA_BANK_MTE3_SOURCE;
             ctx.pendingStateBank_ = finalBank;
         }
-        SetFlag<HardEvent::MTE3_S>(EVENT_ID0);
         pending = true;
         RecurrentKdaTrace(ctx, 11, task, base + valid, slot);
     }
+    Mutex::Unlock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_PARAM + parameterSlot]);
     RecurrentKdaTrace(ctx, 6, task, uint32_t(end - begin), slot);
 
 }
@@ -463,7 +473,7 @@ __aicore__ inline void Stage1RunFinalStateTask(RKDAVectorContext<inType, outType
 // 输入：无indices任务
 // 输出：tile out及最终State。
 // 复用：旧末态DMA可跨任务，源bank完成前不得覆盖
-// 同步：MTE3_S回收及尾部排空。
+// 同步：资源Mutex保护实际覆盖，外层统一排空并释放ID。
 template <typename inType, typename outType, typename stateType, bool stateVFirst>
 __aicore__ inline void RecurrentKdaProcessFinalState(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx)
 {
@@ -480,22 +490,14 @@ __aicore__ inline void RecurrentKdaProcessFinalState(RKDAVectorContext<inType, o
     // The output State row shape is invariant across all tasks on this core.
     const DataCopyExtParams stateCopy{RKDA_DIM_128, RKDA_DIM_128 * sizeof(stateType), StateLayout::ROW_GAP,
         static_cast<uint32_t>((ctx.td_->stateOutStride2 - RKDA_DIM_128) * sizeof(stateType)), 0};
-#ifdef RKDA_EXECUTION_TRACE
-    auto events = (__ubuf__ volatile uint32_t *)ctx.ub_[ctx.eventOffset_].GetPhyAddr();
-    events[8] = 0; // No bank-done consumer on this path.
-#endif
     while (active) {
         if (!valid) {
-            if (prefetched) WaitFlag<HardEvent::MTE2_V>(EVENT_ID1);
-            if (pending) WaitFlag<HardEvent::MTE3_S>(EVENT_ID0);
             return;
         }
         RecurrentKdaBeginBanks(ctx, initial);
         Stage1RunFinalStateTask(ctx, current, hasNext ? &next : nullptr, prefetched,
                           parameterSlot, inputSlot, pending, cursor, following, hasFollowing, valid, stateCopy);
         if (!valid) {
-            if (hasNext) WaitFlag<HardEvent::MTE2_V>(EVENT_ID1);
-            if (pending) WaitFlag<HardEvent::MTE3_S>(EVENT_ID0);
             return;
         }
         RecurrentKdaReleaseBanks(ctx);
@@ -507,9 +509,8 @@ __aicore__ inline void RecurrentKdaProcessFinalState(RKDAVectorContext<inType, o
         parameterSlot ^= 1;
         prefetched = true;
     }
-    // The final DMA has no subsequent VF consumer; do not publish unused done.
+    // The outer Process drains all resource locks, including cold-start error exits.
     if (pending) {
-        WaitFlag<HardEvent::MTE3_S>(EVENT_ID0);
         RecurrentKdaTrace(ctx, 12, current.id, uint32_t(current.end - current.begin), inputSlot ^ 1);
     }
 
@@ -532,138 +533,129 @@ __aicore__ inline bool RecurrentKdaValidateSequences(const RKDAVectorContext<inT
 
 }
 
-template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void Stage2CompleteStateDma(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, uint32_t count, uint64_t task)
-{
-    WaitFlag<HardEvent::MTE3_S>(EVENT_ID0);
-    RecurrentKdaReleaseStateDma(ctx);
-    auto events = (__ubuf__ volatile uint32_t *)ctx.ub_[ctx.eventOffset_].GetPhyAddr();
-    events[8] = count;
-    RecurrentKdaTrace(ctx, 4, task, count, 0);
-
-}
-
-// 输入：有indices任务
-// 输出：逐token State快照及tile out。
-// 复用：两个递推bank、可用第三bank预取
-// 同步：token发布/完成计数及独立out完成事件。
+// 输入：有indices任务；每token由VF更新State，MTE3写一份快照。
+// 复用：State快照Mutex保护递推目标，访问/快照两类Mutex保护第三bank预取。
+// out仍在整个tile计算完成后批量搬出，双槽使用独立完成事件。
 template <typename inType, typename outType, typename stateType, bool stateVFirst>
 __aicore__ inline void Stage1RunIndexedTask(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx, const RKDATask &current, const RKDATask *nextTask, bool prefetched,
-                                  uint32_t parameterSlot, uint32_t &nextInitialBank, uint32_t &slot)
+                                  uint32_t parameterSlot, uint32_t &nextInitialBank, uint32_t &slot,
+                                  uint32_t &pendingOut, const DataCopyExtParams &stateCopy)
 {
     using StateLayout = RegBase::StateLayout<stateType, stateVFirst>;
     constexpr uint32_t BANK = StateLayout::BYTES;
     const uint64_t task = current.id, request = current.request, head = current.head;
     const int64_t begin = current.begin, end = current.end;
-    auto events = (__ubuf__ volatile uint32_t *)ctx.ub_[ctx.eventOffset_].GetPhyAddr();
-    events[0] = 0; // monotonically increasing VF publication count
-    events[8] = 0; // ordered MTE3 completion count, in a separate 32B block
-    RecurrentKdaTrace(ctx, 0, task, 0, 0);
+    const uint32_t previousBank = ctx.pendingStateBank_;
+    ctx.pendingStateBank_ = RKDA_NO_BANK;
+    RecurrentKdaTrace(ctx, 0, task, 0, slot);
     if (prefetched) {
-        WaitFlag<HardEvent::MTE2_V>(EVENT_ID1);
         RecurrentKdaTrace(ctx, 8, task, 0, ctx.initialBank_);
-    } else {
-        Stage0PrefetchState(ctx, current, ctx.initialBank_, parameterSlot);
     }
+    // Source readiness is covered by the first VF's State-use lock.
+    ctx.bankUse_[ctx.initialBank_] &= ~RKDA_BANK_MTE3_SOURCE;
+    Mutex::Lock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_PARAM + parameterSlot]);
     const uint32_t parameter = ctx.paramOffset_ + parameterSlot * RKDA_PARAM_SLOT_BYTES_544;
-    if (!prefetched) Stage0PrefetchInputs(ctx, begin, RecurrentKdaValidTokens(ctx, begin, end), head, slot);
-    uint32_t pending = 0;
-    bool pendingOut = false;
     const bool writeState = ctx.td_->inplaceFinalState || ctx.td_->outputFinalState;
-    const DataCopyExtParams stateCopy{RKDA_DIM_128, RKDA_DIM_128 * sizeof(stateType), StateLayout::ROW_GAP,
-        static_cast<uint32_t>((ctx.td_->stateOutStride2 - RKDA_DIM_128) * sizeof(stateType)), 0};
+    uint64_t previousSlot = RKDA_INVALID_SLOT;
     for (int64_t tile = begin; tile < end; tile += ctx.x_, slot ^= 1) {
         const uint32_t valid = RecurrentKdaValidTokens(ctx, tile, end), base = uint32_t(tile - begin);
-        SetFlag<HardEvent::MTE2_V>(EVENT_ID0);
-        WaitFlag<HardEvent::MTE2_V>(EVENT_ID0);
-        SetFlag<HardEvent::S_V>(EVENT_ID0);
-        WaitFlag<HardEvent::S_V>(EVENT_ID0);
         const bool lastTile = tile + valid == end;
-        RecurrentKdaTrace(ctx, 1, task, base, slot);
-        RecurrentKdaDispatch(ctx, base, valid, slot, parameter, lastTile);
-        // Only the opposite input slot and a free State bank are prefetched.
-        if (!lastTile) {
-            Stage0PrefetchInputs(ctx, tile + valid, RecurrentKdaValidTokens(ctx, tile + valid, end), head, slot ^ 1);
-        } else if (nextTask) {
-            Stage0PrefetchInputs(ctx, nextTask->begin, RecurrentKdaValidTokens(ctx, nextTask->begin, nextTask->end), nextTask->head, slot ^ 1);
-            RecurrentKdaTrace(ctx, 9, nextTask->id, 0, slot ^ 1);
+        Mutex::Lock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_CONTROL]);
+        Mutex::Lock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_INPUT + slot]);
+        Mutex::Lock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_OUT + slot]);
+        if (pendingOut & (1U << slot)) {
+            pendingOut &= ~(1U << slot);
+            RecurrentKdaTrace(ctx, 12, task, base, slot);
         }
-        // Two banks alternate throughout this task; the third belongs to the next task.
-        if (nextTask && base == 0) {
-            nextInitialBank = RecurrentKdaFreeBank(ctx);
-            Stage0PrefetchNextState(ctx, *nextTask, parameterSlot, nextInitialBank);
-        }
-        // State snapshots remain token-granular: the VF can need a bank
-        // released before it can finish the tile. Out has its own event.
-        for (uint32_t t = 0; writeState && t < valid; ++t) {
+        for (uint32_t t = 0; t < valid; ++t) {
             const uint32_t token = base + t, count = token + 1;
-            // Release an old snapshot before waiting for the next publication.
-            // The whole tile VF is already running asynchronously.
-            if (pending) { Stage2CompleteStateDma(ctx, pending, task); pending = 0; }
-            while (events[0] < count) {}
-            RecurrentKdaTrace(ctx, 2, task, count, slot);
-            SetFlag<HardEvent::S_MTE3>(EVENT_ID0);
-            WaitFlag<HardEvent::S_MTE3>(EVENT_ID0);
-            {
-                uint32_t bank = ((token + 1) & 1) ? ctx.alternateBank_ : ctx.initialBank_;
-                const uint64_t destination = RecurrentKdaSlot(ctx, request, begin, tile + t) * ctx.td_->stateOutStride0 +
+            const uint32_t bank = (count & 1) ? ctx.alternateBank_ : ctx.initialBank_;
+            ctx.bankUse_[bank] &= ~RKDA_BANK_MTE3_SOURCE;
+            RecurrentKdaTrace(ctx, 1, task, token, slot);
+            RecurrentKdaDispatch(ctx, token, slot, parameter);
+            if (t == 0) {
+                // Prefetch into the opposite input slot while the first VF runs.
+                if (!lastTile) {
+                    Stage0PrefetchInputs(ctx, current, tile + valid,
+                        RecurrentKdaValidTokens(ctx, tile + valid, end), slot ^ 1);
+                } else if (nextTask) {
+                    Stage0PrefetchInputs(ctx, *nextTask, nextTask->begin,
+                        RecurrentKdaValidTokens(ctx, nextTask->begin, nextTask->end), slot ^ 1);
+                    RecurrentKdaTrace(ctx, 9, nextTask->id, 0, slot ^ 1);
+                }
+                if (base == 0) {
+                    if (nextTask) {
+                        nextInitialBank = previousBank != RKDA_NO_BANK ? previousBank : RecurrentKdaFreeBank(ctx);
+                        Stage0PrefetchNextState(ctx, *nextTask, parameterSlot, nextInitialBank);
+                    }
+                }
+            }
+            if (writeState) {
+                // The snapshot mutex waits for this token's stores; Scalar continues
+                // issuing the next token instead of polling a done word in UB.
+                Mutex::Lock<PIPE_MTE3>(ctx.mutex_[RKDA_MUTEX_STATE_DMA + bank]);
+                const uint64_t destinationSlot = RecurrentKdaSlot(ctx, request, begin, tile + t);
+                if (destinationSlot == previousSlot) PipeBarrier<PIPE_MTE3>();
+                previousSlot = destinationSlot;
+                const uint64_t destination = destinationSlot * ctx.td_->stateOutStride0 +
                                              head * ctx.td_->stateOutStride1;
                 DataCopyPad(ctx.stateOut_[destination], ctx.ub_[bank * BANK].template ReinterpretCast<stateType>(), stateCopy);
+                Mutex::Unlock<PIPE_MTE3>(ctx.mutex_[RKDA_MUTEX_STATE_DMA + bank]);
                 ctx.bankUse_[bank] |= RKDA_BANK_MTE3_SOURCE;
-                ctx.pendingStateBank_ = bank;
+                if (lastTile && t + 1 == valid) {
+                    ctx.pendingStateBank_ = bank;
+                }
+                RecurrentKdaTrace(ctx, 3, task, count, slot);
             }
-            SetFlag<HardEvent::MTE3_S>(EVENT_ID0);
-            pending = count;
-            RecurrentKdaTrace(ctx, 3, task, count, slot);
         }
-        SetFlag<HardEvent::V_S>(EVENT_ID0);
-        WaitFlag<HardEvent::V_S>(EVENT_ID0);
-        RecurrentKdaTrace(ctx, 5, task, base + valid, slot);
-        // Reclaim the previous tile's out, never treating State-done as
-        // proof that an out slot is free. EVENT1 is distinct from State's 0.
-        if (pendingOut) {
-            WaitFlag<HardEvent::MTE3_S>(EVENT_ID1);
-            RecurrentKdaTrace(ctx, 12, task, base, slot ^ 1);
-        }
-        SetFlag<HardEvent::S_MTE3>(EVENT_ID0);
-        WaitFlag<HardEvent::S_MTE3>(EVENT_ID0);
+        // Retain the tile boundary handshake before its input/parameter
+        // slots can be reused by a later MTE2 prefetch.
+        Mutex::Unlock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_INPUT + slot]);
+        Mutex::Unlock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_OUT + slot]);
+        Mutex::Unlock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_CONTROL]);
+        Mutex::Lock<PIPE_S>(ctx.mutex_[RKDA_MUTEX_CONTROL]);
+        Mutex::Unlock<PIPE_S>(ctx.mutex_[RKDA_MUTEX_CONTROL]);
         Stage2WriteOutputTile(ctx, tile, valid, head, slot);
-        SetFlag<HardEvent::MTE3_S>(EVENT_ID1);
-        pendingOut = true;
+        pendingOut |= 1U << slot;
         RecurrentKdaTrace(ctx, 11, task, base + valid, slot);
     }
-    if (pending) Stage2CompleteStateDma(ctx, pending, task);
-    if (pendingOut) {
-        WaitFlag<HardEvent::MTE3_S>(EVENT_ID1);
-        RecurrentKdaTrace(ctx, 12, task, uint32_t(end - begin), slot ^ 1);
-    }
+    Mutex::Unlock<PIPE_V>(ctx.mutex_[RKDA_MUTEX_PARAM + parameterSlot]);
     RecurrentKdaTrace(ctx, 6, task, uint32_t(end - begin), slot);
-
 }
 
 // 输入：已初始化context
 // 输出：本核全部任务。
 // 复用：输入/out双槽、两递推bank及一个可用预取bank
-// 同步：各Stage内部成对事件与尾部排空。
+// 同步：各资源成对Lock/Unlock，外层统一排空。
 template <typename inType, typename outType, typename stateType, bool stateVFirst>
-__aicore__ inline void ProcessRecurrentKda(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx)
+__aicore__ inline void RecurrentKdaProcessIndexed(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx)
 {
-    if (ctx.x_ == 0 || 32 * ctx.x_ > ctx.betaSlot_ || !RecurrentKdaValidateSequences(ctx)) return;
-    if (!ctx.td_->hasSsmStateIndices) { RecurrentKdaProcessFinalState(ctx); return; }
     uint64_t cursor = GetBlockIdx();
     bool valid = true;
     RKDATask current{}, next{};
     bool active = RecurrentKdaPrepareTask(ctx, cursor, current, valid);
     uint32_t initialBank = 0, parameterSlot = 0, inputSlot = 0;
+    uint32_t pendingOut = 0;
     bool prefetched = false;
+    // Every task on this core uses the same State row descriptor.
+    using StateLayout = RegBase::StateLayout<stateType, stateVFirst>;
+    const DataCopyExtParams stateCopy{RKDA_DIM_128, RKDA_DIM_128 * sizeof(stateType), StateLayout::ROW_GAP,
+        static_cast<uint32_t>((ctx.td_->stateOutStride2 - RKDA_DIM_128) * sizeof(stateType)), 0};
+    if (active) {
+        // Current metadata is valid. Fill the first task's bank/input slot
+        // while Scalar prepares and validates the next task.
+        Stage0PrefetchState(ctx, current, initialBank, parameterSlot);
+        Stage0PrefetchInputs(ctx, current, current.begin,
+            RecurrentKdaValidTokens(ctx, current.begin, current.end), inputSlot);
+    }
     while (active) {
         const bool hasNext = RecurrentKdaPrepareTask(ctx, cursor, next, valid);
         if (!valid) {
-            if (prefetched) WaitFlag<HardEvent::MTE2_V>(EVENT_ID1);
-            return;
+            break;
         }
         RecurrentKdaBeginBanks(ctx, initialBank);
-        Stage1RunIndexedTask(ctx, current, hasNext ? &next : nullptr, prefetched, parameterSlot, initialBank, inputSlot);
+        Stage1RunIndexedTask(ctx, current, hasNext ? &next : nullptr, prefetched, parameterSlot, initialBank, inputSlot,
+            pendingOut, stateCopy);
         RecurrentKdaReleaseBanks(ctx);
         if (!hasNext) break;
         current = next;
@@ -671,6 +663,23 @@ __aicore__ inline void ProcessRecurrentKda(RKDAVectorContext<inType, outType, st
         prefetched = true;
     }
 
+
+}
+
+// All error/empty/tail paths return here. Acquiring on Scalar drains the
+// final owner of each resource before its ID and the UB storage are released.
+template <typename inType, typename outType, typename stateType, bool stateVFirst>
+__aicore__ inline void ProcessRecurrentKda(RKDAVectorContext<inType, outType, stateType, stateVFirst> &ctx)
+{
+    if (RecurrentKdaValidateSequences(ctx)) {
+        if (ctx.td_->hasSsmStateIndices) RecurrentKdaProcessIndexed(ctx);
+        else RecurrentKdaProcessFinalState(ctx);
+    }
+    for (uint32_t i = 0; i < RKDA_MUTEX_COUNT; ++i) {
+        Mutex::Lock<PIPE_S>(ctx.mutex_[i]);
+        Mutex::Unlock<PIPE_S>(ctx.mutex_[i]);
+        ReleaseMutexID(ctx.mutex_[i]);
+    }
 }
 
 } // namespace RecurrentKda

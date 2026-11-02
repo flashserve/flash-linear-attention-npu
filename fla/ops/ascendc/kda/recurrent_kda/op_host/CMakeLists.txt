@@ -15,7 +15,12 @@ if (BUILD_OPEN_PROJECT)
     )
 endif()
 
-# Both OPP packages and direct kernel builds instantiate the runtime dtype dispatch.
+add_modules_sources(OPTYPE recurrent_kda ACLNNTYPE aclnn_exclude)
+add_ops_compile_options(
+    OP_NAME RecurrentKda
+    OPTIONS -Wno-deprecated-declarations
+)
+
 if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
     add_ops_compile_options(
         OP_NAME RecurrentKda
@@ -30,7 +35,6 @@ if (BUILD_OPS_RTY_KERNEL) # 回黄kernel
     add_ops_compile_options(
         OP_NAME RecurrentKda
         OPTIONS --cce-auto-sync=off
-                -Wno-deprecated-declarations
                 -Werror
     )
     if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
@@ -40,6 +44,4 @@ if (BUILD_OPS_RTY_KERNEL) # 回黄kernel
             OPTIONS -mllvm -cce-aicore-dcci-before-kernel-end=false
         )
     endif()
-else()
-    add_modules_sources(OPTYPE recurrent_kda ACLNNTYPE aclnn_exclude)
 endif()

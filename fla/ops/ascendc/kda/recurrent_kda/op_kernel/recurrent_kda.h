@@ -98,9 +98,8 @@ public:
         hasALog_ = (tilingData->hasALog == 1);
         hasDtBias_ = (tilingData->hasDtBias == 1);
         useQkL2norm_ = (tilingData->useQkL2norm == 1);
-        // Gate semantics are selected by A_log presence.  The legacy
-        // use_gate_in_kernel attribute is kept only for ABI compatibility.
-        useGateInKernel_ = hasALog_;
+        // Preserve the public use_gate_in_kernel attribute semantics.
+        useGateInKernel_ = tilingData->useGateInKernel == 1;
         useBetaSigmoid_ = (tilingData->useBetaSigmoid == 1);
         allowNegEigval_ = (tilingData->allowNegEigval == 1);
         safeGate_ = (tilingData->safeGate == 1);
@@ -1161,10 +1160,8 @@ private:
                 // queue allocation to wait for the preceding MTE3 write.
                 if (seq1 - seq0 > 1 &&
                     pendingStateSlot == StateSlotForToken(batchIdx, seq0, seq1 - 2)) {
-                    int32_t eventId = GetTPipePtr()->AllocEventID<HardEvent::MTE3_S>();
-                    SetFlag<HardEvent::MTE3_S>(eventId);
-                    WaitFlag<HardEvent::MTE3_S>(eventId);
-                    GetTPipePtr()->ReleaseEventID<HardEvent::MTE3_S>(eventId);
+                    SyncMte3ToV();
+                    SyncVToMte3();
                 }
                 CopyOutState(pendingStateSlot, head_i, v_i, curSingleV);
             }
