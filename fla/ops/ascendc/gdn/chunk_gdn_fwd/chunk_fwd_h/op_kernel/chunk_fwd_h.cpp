@@ -45,11 +45,6 @@ struct FwdHKernelTraits {
         USE_GK ? FwdHGateMode::KEY_GK : FwdHGateMode::SCALAR_G, USE_EXP2, STATE_FP32,
         STORE_FINAL, DENSE_T16>;
     static constexpr bool STATE_V_FIRST_VALUE = STATE_V_FIRST;
-    // gated 复用的编译期判定（与 FwdHGatedReusable 同条件，代码零引用）：
-    // gated kernel 恒按 [K,V] 读写 state，仅匹配 state_v_first=False。
-    static constexpr bool GATED_REUSABLE =
-        !USE_GK && V_DIM == 128 &&
-        !STATE_V_FIRST && (D_T_G == CHUNK_FWD_H_TPL_FP32 || D_T_G == CHUNK_FWD_H_TPL_BF16);
 };
 
 #if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
@@ -58,8 +53,7 @@ struct FwdHKernelTraits {
 template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST>
 __aicore__ inline constexpr bool FwdHGatedReusable()
 {
-    // USE_EXP2 须 true（gated 按 log2 域 gate 计算）；与 host 侧 gatedEligible
-    // 及 Traits::GATED_REUSABLE 三处同条件。
+    // USE_EXP2 须 true（gated 按 log2 域 gate 计算）；与 host 侧 gatedEligible 两处同条件。
     return CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G &&
            CompilePolicy::USE_EXP2 && !STATE_V_FIRST &&
            (std::is_same_v<GateT, float> || std::is_same_v<GateT, bfloat16_t>);
@@ -207,8 +201,6 @@ __global__ __aicore__ void chunk_fwd_h(
     args.tiling.gatedTilingOffset = static_cast<uint64_t>(tilingData->gatedTilingOffset);
     args.tiling.gatedNumSeqOffset = static_cast<uint64_t>(tilingData->gatedNumSeqOffset);
     args.tiling.gatedNumChunksOffset = static_cast<uint64_t>(tilingData->gatedNumChunksOffset);
-    args.tiling.gatedGateDataType = static_cast<uint32_t>(tilingData->gatedGateDataType);
-    args.tiling.gatedStateDataType = static_cast<uint32_t>(tilingData->gatedStateDataType);
     using Traits = GDN::FwdHKernelTraits<
         D_T_G, V_DIM, USE_GK, USE_EXP2, STATE_FP32, STATE_V_FIRST, STORE_FINAL, DENSE_T16>;
     GDN::RunFwdHTyped<typename Traits::GateT, typename Traits::CompilePolicy,

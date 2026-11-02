@@ -61,9 +61,6 @@ struct ChunkFwdHTilingContext {
     // platform
     uint32_t aicCoreNum;
     size_t libApiWorkSpaceSize;
-    // gated 复用路径：gate/state dtype token（gated tiling 字段值：1=bf16, 2=fp32）
-    int64_t gatedGateDtype = 1;
-    int64_t gatedStateDtype = 2;
     // gated 复用 eligible（与 kernel 侧 FwdHGatedReusable 同条件）；eligible 时
     // blockDim 恒 aicCoreNum（gated 调度要求全核参与，收缩会致 flag 配对残缺）。
     bool gatedEligible = false;
@@ -159,9 +156,6 @@ public:
 
         workspaceOffset += CHUNK_FWD_H_WORKSPACE_RSV_BYTE;
         workspaceSize = workspaceOffset;
-
-        tiling.gatedGateDataType = ctx_.gatedGateDtype;
-        tiling.gatedStateDataType = ctx_.gatedStateDtype;
 
         tiling.batch = batch;
         tiling.seqlen = ctx_.seqlen;

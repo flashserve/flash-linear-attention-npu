@@ -44,11 +44,7 @@ TILING_DATA_FIELD_DEF_ARR(int64_t, 32, coreTaskBounds);
 // ===== gated 复用路径（GATED_REUSE）追加段 =====
 // gated kernel（chunk_gated_delta_rule_fwd_h preload）运行时分支复用：kernel
 // 入口在 workspace 现场构造 ChunkGatedDeltaRuleFwdHTilingData 后原样调用。
-// gateDataType：gated tiling 的 gDataType 字段值（1=bf16, 2=fp32，与上游
-// aclnn 约定一致）；gatedStateDataType：stateDataType（fp32 路径=2）。
 // 三个 offset 为 workspace 内的段偏移（8B 对齐）。
-TILING_DATA_FIELD_DEF(int64_t, gatedGateDataType);
-TILING_DATA_FIELD_DEF(int64_t, gatedStateDataType);
 TILING_DATA_FIELD_DEF(int64_t, gatedTilingOffset);
 TILING_DATA_FIELD_DEF(int64_t, gatedNumSeqOffset);
 TILING_DATA_FIELD_DEF(int64_t, gatedNumChunksOffset);
