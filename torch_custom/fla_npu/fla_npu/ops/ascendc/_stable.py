@@ -809,6 +809,14 @@ def npu_chunk_kda_bwd_intra(q, k, gk, beta, dAqk, dAkk, dq, dk, db, dg, *,
     Python-side message matters.
     """
 
+    warnings.warn(
+        "fla_npu.ops.ascendc.npu_chunk_kda_bwd_intra is a deprecated API "
+        "and will be removed on January 15, 2027 (v26.12.0). Use the fused "
+        "npu_chunk_kda_bwd instead.",
+        FutureWarning,
+        stacklevel=4,
+    )
+
     # `safe_gate=False` is reserved but not implemented, and the adapter passes
     # the value straight through, so it has to be refused here as well.
     if not safe_gate:

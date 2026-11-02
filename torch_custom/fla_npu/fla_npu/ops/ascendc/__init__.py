@@ -240,6 +240,7 @@ _DEPRECATED_OPS = frozenset({
     "npu_chunk_scaled_dot_kkt",
     "npu_recompute_w_u_fwd",
     "npu_kda_gate_cumsum",
+    "npu_chunk_kda_bwd_intra",
 })
 
 _DEPRECATED_OPS_REPLACEMENTS = {
@@ -252,6 +253,7 @@ _DEPRECATED_OPS_REPLACEMENTS = {
     "npu_chunk_scaled_dot_kkt": "the fused npu_chunk_gated_delta_rule_fwd",
     "npu_recompute_w_u_fwd": "the fused npu_chunk_gated_delta_rule_fwd / npu_chunk_gated_delta_rule_bwd",
     "npu_kda_gate_cumsum": "the fused npu_chunk_kda_fwd",
+    "npu_chunk_kda_bwd_intra": "the fused npu_chunk_kda_bwd",
 }
 
 _DIRECT_RUNTIME_READY = False
