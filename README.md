@@ -37,7 +37,32 @@ npu-smi info
 - `Ascend-cann-toolkit_<version>_linux-<arch>.run`
 - `Ascend-cann-<chip>-ops_<version>_linux-<arch>.run`
 
-### Step 2. 编译并安装 wheel
+### Step 2. 安装 wheel
+
+#### 从华为云镜像安装（免编译）
+
+先准备与 CANN / Python 匹配的 `torch`、`torch_npu`、`triton-ascend` 等运行时依赖，以下命令通过 `--no-deps` 保留已配置的依赖。以 A2 为例，A3 / A5 将包名改为 `flash-linear-attention-npu-a3` / `flash-linear-attention-npu-a5`；pip 自动匹配本机 ARM / x86 架构。
+
+```sh
+# Release：以正式版 26.9.1 为例
+python -m pip install --upgrade --no-deps \
+  --extra-index-url https://mirrors.huaweicloud.com/ascend/repos/pypi/ \
+  "flash-linear-attention-npu-a2==26.9.1"
+
+# main Daily：按版本号选择最新日期
+python -m pip install --upgrade --pre --no-deps \
+  --extra-index-url https://mirrors.huaweicloud.com/ascend/repos/pypi/nightly/ \
+  "flash-linear-attention-npu-a2==0.*"
+
+# v26.10.0 Daily：限定开发版本，排除正式版及旧格式包
+python -m pip install --upgrade --pre --no-deps \
+  --extra-index-url https://mirrors.huaweicloud.com/ascend/repos/pypi/nightly/ \
+  "flash-linear-attention-npu-a2>=26.10.0.dev0,<26.10.0a0"
+```
+
+Daily 仅发布到镜像 `nightly/`；Release 同时发布到镜像和 GitHub Releases。main 的版本格式为 `0.dev日期+main.<SHA前7位>`，v26.10.0 为 `26.10.0.dev日期+<SHA前7位>`。每个项目目录新增 `latest/`，保留各分支、各 CPU 架构最近一次成功发布的包；同日多次构建应从 `latest/` 选择当前包。按日期、固定提交和 `latest` 的安装命令见 [Daily 和 Release 包发布与安装说明](docs/Daily和Release包发布与安装说明.md)。
+
+安装预编译包后进入 Step 3；需要从源码构建时执行下面的 2.1–2.3。
 
 #### 2.1 环境检查
 
