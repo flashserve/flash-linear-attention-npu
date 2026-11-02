@@ -40,6 +40,22 @@ python examples/flash_gated_delta_rule.py
 
 该脚本会组装 GDN 相关前向/反向算子，覆盖 AscendC 与 Triton 调用链，输出各算子的运行结果与精度对比。
 
+### ChunkKDA 精度示例
+
+```sh
+python examples/chunk_kda.py --accuracy-check
+```
+
+CPU 前向参考和五个参考梯度在首次运行时生成缓存，相同输入和参考实现再次运行时直接复用。
+NPU 前向、反向和精度比较仍会每次执行。输入内容、shape、dtype、参考参数、参考实现或
+PyTorch 版本变化时会生成新的缓存；损坏的缓存会重新生成。
+
+默认目录为 `third_party/gdr_accuracy_golden/chunk_kda`；设置 `GDR_ACCURACY_CACHE_DIR` 时，
+使用其下的 `chunk_kda` 子目录，因此 CI 直接复用已有持久缓存挂载。也可以通过
+`--accuracy-cache-dir <目录>` 指定位置，或用 `--accuracy-force-regenerate` 强制重新生成。
+日志中的 `accuracy golden: generated` / `accuracy golden: reused` 表示本次生成或复用缓存。
+缓存无法写入时会提示警告，并使用本次计算的参考结果继续验证。
+
 ### add_example
 
 参考 `add_example/README.md` 与 `add_example/examples/test_aclnn_add_example.cpp`，以 `add_example` 为模板实现自定义 Ascend C 算子，并接入本仓 `torch_custom/fla_npu` 的 Python 接口（新增接口步骤见[开发者指南](../docs/开发者指南.md)的场景 3）。
