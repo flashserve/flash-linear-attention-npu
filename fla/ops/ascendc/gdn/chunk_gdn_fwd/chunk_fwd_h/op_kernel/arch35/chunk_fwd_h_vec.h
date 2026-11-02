@@ -194,6 +194,7 @@ __simd_vf__ inline void FwdHStage1Arch35Vf(__ubuf__ bfloat16_t *uAndVNew,
         if constexpr (SCALAR_G && WRITE_RIGHT) {
             LoadAlign<float, LoadDist::DIST_BRC_B32>(scaleReg, gateScale + row);
         }
+        #pragma unroll 2
         for (uint16_t col = 0; col < FWD_H_V; col += BF16_PER_REG) {
             const uint32_t bf16Offset = rowBf16Offset + col;
             const uint32_t fp32Offset = rowFp32Offset + col;
@@ -269,6 +270,7 @@ __simd_vf__ inline void FwdHStage3Arch35Vf(__ubuf__ bfloat16_t *stateBf16,
 
     #pragma unroll 2
     for (uint16_t row = 0; row < ROWS; ++row) {
+        #pragma unroll 2
         for (uint16_t col = 0; col < FWD_H_V; col += BF16_PER_REG) {
             const uint32_t bf16Offset = static_cast<uint32_t>(row) * FWD_H_V + col;
             const uint32_t fp32Offset = static_cast<uint32_t>(row) * FWD_H_V + col;
@@ -587,6 +589,10 @@ private:
         // S-1：H0=cast_BF16(initial_state)。输入输出保持 state_v_first 指定的物理顺序。
         const uint32_t slot = head.localSlot;
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoReadyEvent(slot));
+        if (FwdHSegmentReplay(args_.tiling)) {
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
+            return;
+        }
         AscendC::VF_CALL<FwdHSMinusOneArch35Vf>(
             reinterpret_cast<__ubuf__ float *>(SminusStateSlot(slot).GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(SminusHSlot(slot).GetPhyAddr()));
@@ -628,10 +634,13 @@ private:
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoFreeEvent(slot));
         }
-        for (uint32_t coreHeadId = 0; coreHeadId < localHeads; ++coreHeadId) {
-            const FwdHHeadBinding &head = unit.headRound.heads[aiv_ + 2 * coreHeadId];
-            AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
-                FwdHAivLocalFlag(FWD_H_H_READY_FLAG, head.localSlot));
+        if (!FwdHSegmentReplay(args_.tiling)) {
+            for (uint32_t coreHeadId = 0; coreHeadId < localHeads; ++coreHeadId) {
+                const FwdHHeadBinding &head =
+                    unit.headRound.heads[aiv_ + 2 * coreHeadId];
+                AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
+                    FwdHAivLocalFlag(FWD_H_H_READY_FLAG, head.localSlot));
+            }
         }
     }
 
@@ -698,8 +707,10 @@ private:
             AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
         }
-        AscendC::DataCopy(vNew[UOffset(unit, chunk, head)], WorkBf16Slot(inputSlot),
-                          chunk.validTokens * FWD_H_V);
+        if (!args_.tiling.fusedSummaryMode) {
+            AscendC::DataCopy(vNew[UOffset(unit, chunk, head)], WorkBf16Slot(inputSlot),
+                              chunk.validTokens * FWD_H_V);
+        }
         if constexpr (WRITE_RIGHT) {
             const uint64_t rightOffset = FwdHCoreSlotOffset(coreIdx_, head.roundHead,
                                                             FWD_H_CHUNK * FWD_H_V);
@@ -716,8 +727,11 @@ private:
                 WaitStateWritebackBeforeVectorReuse(slot);
             }
         } else if constexpr (ZERO_STATE) {
-            AscendC::DataCopy(h[HOffset(unit, chunk, head)], StateBf16Slot(slot), FWD_H_K * FWD_H_V);
-            // H0 临时区只在首 chunk 使用；对应 FP32 state 在 Stage3 以 ZERO_INIT 生成。
+            if (!args_.tiling.fusedSummaryMode) {
+                AscendC::DataCopy(h[HOffset(unit, chunk, head)], StateBf16Slot(slot),
+                                  FWD_H_K * FWD_H_V);
+            }
+            // H0 可在 summary 阶段省略，但 bank 复用仍必须等待当前 MTE3 尾部。
             WaitStateWritebackBeforeVectorReuse(slot);
         }
         if constexpr (SEPARATE_INPUT) {
@@ -763,7 +777,7 @@ private:
         // Stage1：V_new=cast_BF16(fp32(U)-fp32(P))；g-only 同时生成
         // V_new_g=cast_BF16(E(g_last-g_i)*V_new_fp32)，gk-only 的右矩阵就是 V_new。
         const bool hasP = !(chunk.first && args_.tiling.useInitialState == 0);
-        const bool writeRight = args_.tiling.storeFinalState != 0 || !chunk.last;
+        const bool writeRight = FwdHNeedsStageOutput(args_.tiling, chunk);
         const bool zeroState = chunk.first && args_.tiling.useInitialState == 0;
         const uint32_t localHeads = FwdHAivHeadCount(unit.headRound.activeHeadCount, aiv_);
         if constexpr (CompilePolicy::STATE_FP32) {
@@ -946,11 +960,11 @@ private:
             AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
                 FwdHAivLocalFlag(FWD_H_H_READY_FLAG, head.localSlot));
         } else {
-            if (args_.tiling.storeFinalState != 0) {
+            if (FwdHStoreFinalState(args_.tiling, chunk)) {
                 if constexpr (CompilePolicy::STATE_FP32) {
                     AscendC::GlobalTensor<float> finalState;
                     finalState.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.finalState));
-                    const uint64_t offset = FwdHStateOffset<STATE_V_FIRST>(
+                    const uint64_t offset = FwdHFinalStateOffset<STATE_V_FIRST>(
                         args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
                     AscendC::DataCopy(finalState[offset], StateFp32(stateSlot), FWD_H_K * FWD_H_V);
                     if constexpr (ZERO_INIT && !RESIDENT_FP32_STATE) {
@@ -959,7 +973,7 @@ private:
                 } else {
                     AscendC::GlobalTensor<bfloat16_t> finalState;
                     finalState.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.finalState));
-                    const uint64_t offset = FwdHStateOffset<STATE_V_FIRST>(
+                    const uint64_t offset = FwdHFinalStateOffset<STATE_V_FIRST>(
                         args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
                     AscendC::DataCopy(finalState[offset], StateBf16Slot(slot), FWD_H_K * FWD_H_V);
                 }
@@ -1101,7 +1115,7 @@ private:
 
     __aicore__ inline bool NeedsStage3(const FwdHChunkSpan &chunk) const
     {
-        return args_.tiling.storeFinalState != 0 || !chunk.last;
+        return FwdHNeedsStageOutput(args_.tiling, chunk);
     }
 
     __aicore__ inline void ProcessSingleHeadPipeline(const FwdHWorkUnit &unit)
@@ -1189,7 +1203,9 @@ private:
                 }
             }
         }
-        const bool lastHasStage2 = args_.tiling.storeFinalState != 0;
+        const bool lastHasStage2 = FwdHStoreFinalState(
+            args_.tiling, FwdHBuildChunk(unit.sequence,
+                                         unit.sequence.chunkCount - 1));
         if (lastHasStage2) {
             for (uint32_t coreHeadId = 0; coreHeadId < localHeads; ++coreHeadId) {
                 const FwdHHeadBinding &head = unit.headRound.heads[aiv_ + 2 * coreHeadId];

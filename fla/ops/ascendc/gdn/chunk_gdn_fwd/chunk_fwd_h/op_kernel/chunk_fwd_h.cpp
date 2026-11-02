@@ -6,6 +6,7 @@
 
 #include "chunk_fwd_h_tiling_key.h"
 #include "chunk_fwd_h_policy.h"
+#include "chunk_fwd_h_fused_a5.h"
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #include "arch35/chunk_fwd_h_cube.h"
@@ -116,8 +117,53 @@ __global__ __aicore__ void chunk_fwd_h(
     args.tiling.vUpdateWorkspaceOffset = static_cast<uint64_t>(tilingData->vUpdateWorkspaceOffset);
     args.tiling.kDecayWorkspaceOffset = static_cast<uint64_t>(tilingData->kDecayWorkspaceOffset);
     args.tiling.hWorkspaceOffset = static_cast<uint64_t>(tilingData->hWorkspaceOffset);
+    args.tiling.fusedMode = tilingData->fusedMode;
+    args.tiling.segmentInitWorkspaceOffset =
+        static_cast<uint64_t>(tilingData->segmentInitWorkspaceOffset);
+    args.tiling.segmentCount = static_cast<uint32_t>(tilingData->segmentCount);
+
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     using Traits = GDN::FwdHKernelTraits<
         D_T_G, V_DIM, USE_GK, USE_EXP2, STATE_FP32, STATE_V_FIRST>;
+    if (args.tiling.fusedMode) {
+        GDN::FwdHKernelArgs summaryArgs = args;
+        summaryArgs.finalState = args.workspace +
+            args.tiling.segmentInitWorkspaceOffset;
+        summaryArgs.tiling.useInitialState = false;
+        summaryArgs.tiling.storeFinalState = true;
+        summaryArgs.tiling.fusedSummaryMode = true;
+        summaryArgs.tiling.segmentCount = 2;
+        GDN::RunFwdHTyped<typename Traits::GateT,
+                          typename Traits::CompilePolicy,
+                          Traits::STATE_V_FIRST_VALUE>(summaryArgs);
+        if ASCEND_IS_AIV {
+            AscendC::DataSyncBarrier<AscendC::MemDsbT::DDR>();
+        }
+        AscendC::SyncAll<false>();
+        GDN::FwdHFusedA5 fused;
+        fused.Init(args);
+        fused.RunScalarPrefix();
+        if ASCEND_IS_AIV {
+            AscendC::DataSyncBarrier<AscendC::MemDsbT::DDR>();
+        }
+        AscendC::SyncAll<false>();
+        if (!fused.UseTruncatedSummary()) {
+            args.tiling.fusedMode = false;
+            args.tiling.fusedSummaryMode = false;
+            args.tiling.segmentCount = 0;
+            GDN::RunFwdHTyped<typename Traits::GateT,
+                              typename Traits::CompilePolicy,
+                              Traits::STATE_V_FIRST_VALUE>(args);
+            return;
+        }
+        args.initialState = args.workspace +
+            args.tiling.segmentInitWorkspaceOffset;
+        args.tiling.useInitialState = true;
+    }
+#else
+    using Traits = GDN::FwdHKernelTraits<
+        D_T_G, V_DIM, USE_GK, USE_EXP2, STATE_FP32, STATE_V_FIRST>;
+#endif
     GDN::RunFwdHTyped<typename Traits::GateT, typename Traits::CompilePolicy,
                       Traits::STATE_V_FIRST_VALUE>(args);
 }

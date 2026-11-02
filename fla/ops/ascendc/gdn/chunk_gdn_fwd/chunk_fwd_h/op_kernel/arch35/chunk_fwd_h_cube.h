@@ -343,7 +343,11 @@ private:
     {
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(HRightReadyEvent(hSlot));
         AscendC::GlobalTensor<bfloat16_t> gmH;
-        if (chunk.first && args_.tiling.useInitialState != 0 && !CompilePolicy::STATE_FP32) {
+        if (chunk.first && FwdHSegmentReplay(args_.tiling)) {
+            gmH.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.h) +
+                                HOffset(unit, chunk, head));
+        } else if (chunk.first && args_.tiling.useInitialState != 0 &&
+                   !CompilePolicy::STATE_FP32) {
             const uint64_t stateOffset = FwdHStateOffset<STATE_V_FIRST>(
                 args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
             gmH.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.initialState) + stateOffset);
@@ -428,8 +432,10 @@ private:
                                     tla::MakeShape(chunk.validTokens, FWD_H_V));
         CopyL0CToUbS0<decltype(blockUb)> copyP;
         copyP(blockUb, tensorL0C, static_cast<uint8_t>(head.aiv), 0);
-        AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
-            FwdHAicPeerFlag(FWD_H_P_READY_FLAG, head.localSlot, head.aiv));
+        if (!FwdHSegmentReplay(args_.tiling)) {
+            AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
+                FwdHAicPeerFlag(FWD_H_P_READY_FLAG, head.localSlot, head.aiv));
+        }
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FixFreeEvent(pipelineSlot));
     }
 
@@ -657,7 +663,7 @@ private:
 
     __aicore__ inline bool NeedsStage2(const FwdHChunkSpan &chunk) const
     {
-        return args_.tiling.storeFinalState != 0 || !chunk.last;
+        return FwdHNeedsStageOutput(args_.tiling, chunk);
     }
 
     __aicore__ inline FwdHKgBinding BuildSingleHeadKgBinding(
@@ -687,6 +693,12 @@ private:
             if (stage0Ran) {
                 LoadStage0H(unit, chunk, head, 0);
                 ComputeStage0Head(unit, chunk, head, 0, parity, 0);
+                if (FwdHSegmentReplay(args_.tiling)) {
+                    AscendC::PipeBarrier<PIPE_FIX>();
+                    AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
+                        FwdHAicPeerFlag(FWD_H_P_READY_FLAG,
+                                        head.localSlot, head.aiv));
+                }
             }
             if (!NeedsStage2(chunk)) {
                 continue;
@@ -740,7 +752,9 @@ private:
             }
         }
 
-        const bool terminalStage2 = args_.tiling.storeFinalState != 0;
+        const bool terminalStage2 = FwdHStoreFinalState(
+            args_.tiling, FwdHBuildChunk(unit.sequence,
+                                         unit.sequence.chunkCount - 1));
         const bool terminalStage0 = args_.tiling.useInitialState != 0 || unit.sequence.chunkCount > 1;
         if constexpr (CompilePolicy::STATE_FP32) {
             // 同一 AIV 的前一个 head 已在槽内复用点消费 free credit；round 尾只收最后一代。

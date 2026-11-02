@@ -21,10 +21,44 @@ __aicore__ inline uint32_t FwdHAlignCube(uint32_t value)
     return (value + 15U) & ~15U;
 }
 
+__aicore__ inline FwdHSequenceSpan FwdHResolveTargetFusedSequence(
+    const FwdHKernelArgs &args, uint32_t sequence)
+{
+    constexpr uint32_t FIRST_SEGMENT_TOKENS = 3712;
+    constexpr uint32_t FOLLOWING_SEGMENT_TOKENS = 3776;
+    FwdHSequenceSpan span{};
+    span.sequence = sequence;
+    span.physicalBatch = 0;
+    span.tokenBegin = sequence == 0
+        ? 0
+        : FIRST_SEGMENT_TOKENS + (sequence - 1) * FOLLOWING_SEGMENT_TOKENS;
+    span.length = sequence == 0
+        ? FIRST_SEGMENT_TOKENS
+        : FOLLOWING_SEGMENT_TOKENS;
+    span.chunkPrefix = span.tokenBegin / FWD_H_CHUNK;
+    span.chunkCount = span.length / FWD_H_CHUNK;
+    span.totalChunks = FwdHCeilDiv(
+        static_cast<uint32_t>(args.tiling.seqlen), FWD_H_CHUNK);
+    span.finalSequence = sequence + 1 == args.tiling.segmentCount;
+    if (args.tiling.fusedSummaryMode) {
+        constexpr uint32_t SUMMARY_CHUNKS = 24U;
+        const uint32_t skippedChunks = span.chunkCount - SUMMARY_CHUNKS;
+        span.tokenBegin += skippedChunks * FWD_H_CHUNK;
+        span.chunkPrefix += skippedChunks;
+        span.length = SUMMARY_CHUNKS * FWD_H_CHUNK;
+        span.chunkCount = SUMMARY_CHUNKS;
+    }
+    return span;
+}
+
 __aicore__ inline FwdHSequenceSpan FwdHResolveSequence(const FwdHKernelArgs &args, uint32_t sequence)
 {
     FwdHSequenceSpan span{};
     span.sequence = sequence;
+    span.finalSequence = true;
+    if (args.tiling.fusedMode) {
+        return FwdHResolveTargetFusedSequence(args, sequence);
+    }
     if (args.tiling.isVariedLen == 0) {
         span.physicalBatch = sequence;
         span.tokenBegin = 0;
@@ -177,8 +211,27 @@ __aicore__ inline FwdHChunkSpan FwdHBuildChunk(const FwdHSequenceSpan &sequence,
     }
     span.first = chunk == 0;
     span.last = chunk + 1 == sequence.chunkCount;
+    span.finalSequence = sequence.finalSequence;
     return span;
 }
+__aicore__ inline bool FwdHStoreFinalState(
+    const FwdHRuntimeTiling &tiling, const FwdHChunkSpan &chunk)
+{
+    return tiling.storeFinalState != 0 &&
+        (!tiling.fusedMode || tiling.fusedSummaryMode || chunk.finalSequence);
+}
+
+__aicore__ inline bool FwdHSegmentReplay(const FwdHRuntimeTiling &tiling)
+{
+    return tiling.fusedMode && !tiling.fusedSummaryMode;
+}
+
+__aicore__ inline bool FwdHNeedsStageOutput(
+    const FwdHRuntimeTiling &tiling, const FwdHChunkSpan &chunk)
+{
+    return !chunk.last || FwdHStoreFinalState(tiling, chunk);
+}
+
 
 template <FwdHGateMode GATE_MODE>
 __aicore__ inline FwdHWorkUnit FwdHResolveWorkUnit(const FwdHKernelArgs &args, uint32_t workUnitId)
@@ -192,14 +245,19 @@ __aicore__ inline FwdHWorkUnit FwdHResolveWorkUnit(const FwdHKernelArgs &args, u
 template <FwdHGateMode GATE_MODE>
 __aicore__ inline uint32_t FwdHTotalWorkUnits(const FwdHRuntimeTiling &tiling)
 {
-    const uint32_t sequenceCount = tiling.isVariedLen != 0
-                                       ? static_cast<uint32_t>(tiling.tokenBatch)
-                                       : static_cast<uint32_t>(tiling.shapeBatch);
+    const uint32_t sequenceCount = tiling.fusedMode
+        ? static_cast<uint32_t>(tiling.segmentCount)
+        : (tiling.isVariedLen != 0
+               ? static_cast<uint32_t>(tiling.tokenBatch)
+               : static_cast<uint32_t>(tiling.shapeBatch));
     return sequenceCount * FwdHHeadRoundsPerSequence<GATE_MODE>(tiling);
 }
 
 __aicore__ inline uint32_t FwdHSequenceCount(const FwdHRuntimeTiling &tiling)
 {
+    if (tiling.fusedMode) {
+        return tiling.segmentCount;
+    }
     return tiling.isVariedLen != 0 ? static_cast<uint32_t>(tiling.tokenBatch)
                                    : static_cast<uint32_t>(tiling.shapeBatch);
 }
@@ -246,6 +304,10 @@ __aicore__ inline uint64_t FwdHHOffset(const FwdHRuntimeTiling &tiling,
                                        const FwdHSequenceSpan &sequence, uint32_t hv,
                                        uint32_t globalChunk)
 {
+    if (tiling.fusedMode) {
+        return (static_cast<uint64_t>(globalChunk) * tiling.vNumHead + hv) *
+            FWD_H_K * FWD_H_V;
+    }
     if (tiling.isVariedLen != 0) {
         return (static_cast<uint64_t>(globalChunk) * tiling.vNumHead +
                 hv) * FWD_H_K * FWD_H_V;
@@ -264,6 +326,16 @@ __aicore__ inline uint64_t FwdHStateOffset(const FwdHRuntimeTiling &tiling,
         return base + static_cast<uint64_t>(v) * FWD_H_K + k;
     }
     return base + static_cast<uint64_t>(k) * FWD_H_V + v;
+}
+
+template <bool STATE_V_FIRST>
+__aicore__ inline uint64_t FwdHFinalStateOffset(
+    const FwdHRuntimeTiling &tiling, uint32_t sequence, uint32_t hv,
+    uint32_t k, uint32_t v)
+{
+    const uint32_t outputSequence = FwdHSegmentReplay(tiling) ? 0U : sequence;
+    return FwdHStateOffset<STATE_V_FIRST>(
+        tiling, outputSequence, hv, k, v);
 }
 
 __aicore__ inline uint64_t FwdHCoreSlotOffset(uint32_t core, uint32_t slot, uint32_t slotElements)
