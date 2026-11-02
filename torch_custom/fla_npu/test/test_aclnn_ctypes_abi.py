@@ -674,6 +674,11 @@ class ChunkKdaFwdWrapperContractTest(unittest.TestCase):
         fake_torch.bfloat16 = object()
         fake_torch.float32 = object()
         fake_torch.int64 = object()
+        # chunk32 包装层在发起 aclnn 前检查 SoC;默认模拟 Ascend950。
+        fake_torch.npu = types.SimpleNamespace(
+            current_device=mock.Mock(return_value=0),
+            get_device_name=mock.Mock(return_value="Ascend950DT_9584"),
+        )
         return fake_torch
 
     def _inputs(self, fake_torch, *, layout="BSND", seqlen=65, with_state=True):

@@ -26,6 +26,7 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
+#include "opdev/platform.h"
 #include "opdev/tensor_view_utils.h"
 #include "graph/utils/type_utils.h"
 
@@ -1265,6 +1266,14 @@ aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor
 
 aclnnStatus RunChunkKdaFwd32Fused(ChunkKdaFwdParams &params, aclOpExecutor *executor)
 {
+    // chunk32 单 kernel 只在 Ascend950(DAV_3510) 编译(op_kernel 由
+    // __CCE_AICORE__==310 门控);其它 SoC 若只按 chunkSize==32 路由,会在无实现
+    // 的情况下成功返回但输出未初始化,必须在 host 侧明确拒绝。
+    if (GetCurrentPlatformInfo().GetCurNpuArch() != NpuArch::DAV_3510) {
+        OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "chunkSize", "32",
+                                  "chunkSize=32 requires Ascend950 (DAV_3510)");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     // chunk32 kernel 的 epsilon 由 tiling 固定写入 1e-6(KdaChunkForward32 无
     // epsilon 参数,公开算子 def 也无此 attr);调用方提供其它值会被静默丢弃,
     // 因此显式拒绝,与文档的"chunk32 epsilon 固定 1e-6"契约一致。

@@ -1408,6 +1408,15 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
             "npu_chunk_kda_fwd: allow_neg_eigval=True requires "
             "use_beta_sigmoid_in_kernel=True.")
     if int(chunk_size) == 32:
+        # chunk32 单 kernel 只在 Ascend950 编译;Python 层提前给出可读报错,
+        # 避免 A2/A3 上路由到无实现的 TilingKey 32。
+        npu_ns = getattr(torch, "npu", None)
+        get_device_name = getattr(npu_ns, "get_device_name", None) if npu_ns is not None else None
+        device_name = str(get_device_name(q.device)) if get_device_name is not None else ""
+        if "Ascend950" not in device_name:
+            raise RuntimeError(
+                "npu_chunk_kda_fwd: chunk_size=32 (fused kernel) requires Ascend950, "
+                f"but got device '{device_name or 'unknown'}'.")
         if not bool(safe_gate):
             raise RuntimeError(
                 "npu_chunk_kda_fwd: chunk_size=32 currently requires safe_gate=True.")

@@ -277,22 +277,22 @@ V2 chunk64 的形参尾部另有 5 个可选输出指针
 
 #### chunk32 参数错误与返回码
 
-Python/stable 包装层会在发起 aclnn 前以自身异常拒绝不符合 chunk32 契约的调用。直接调用
-`aclnnChunkKdaFwdGetWorkspaceSize` 或 V2 时，fused guard 覆盖：必需指针缺失；非法 layout、
-rank/shape/dtype；`T<=0`、`K!=128` 或 `V!=128`、非 GVA；非递减 varlen 元数据或 canonical
-`chunkIndices` 不满足、序列数超过 1024、rank-4 varlen `B!=1`、BNSD varlen；非正/非有限
-`epsilon`；`safeGate/useGateInKernel` 未打开或缺少 `A_log/dt_bias`；L2 state V-first；以及
+Python/stable 包装层会在发起 aclnn 前以自身异常拒绝不符合 chunk32 契约的调用，包括
+非 Ascend950 SoC（chunk32 单 kernel 只在 DAV_3510 编译）。直接调用
+`aclnnChunkKdaFwdGetWorkspaceSize` 或 V2 时，fused guard 覆盖：非 Ascend950 平台；
+必需指针缺失；非法 layout、rank/shape/dtype；`T<=0`、`H/HV>128`、`K!=128` 或 `V!=128`、
+非 GVA；非递减 varlen 元数据或 canonical `chunkIndices` 不满足、序列数超过 1024、
+rank-4 varlen `B!=1`、BNSD varlen；非 `1e-6` 的 `epsilon`；`lowerBound` 非有限或不在
+`[-5, 0)`；`safeGate/useGateInKernel` 未打开或缺少 `A_log/dt_bias`；L2 state V-first；以及
 上述不支持的中间输出/反向保存值。V2 还要求 `useQkL2normInKernel=true`、
 `useBetaSigmoidInKernel=true`、`allowNegEigval=false`、`useExp2=true`。
 
-guard 内部对 `q/k/v/g/beta/attnOut` 空指针使用 `ACLNN_ERR_PARAM_NULLPTR`，缺少
-`A_log/dt_bias` 及其它参数错误使用 `ACLNN_ERR_PARAM_INVALID`；但 V1/V2 外层 chunk32 分支
-通过 `CHECK_RET` 将 `RunChunkKdaFwd32Fused` 的非成功状态统一映射为
-`ACLNN_ERR_PARAM_INVALID`。因此公开 GetWorkspaceSize 的 chunk32 参数失败对外表现为
-`ACLNN_ERR_PARAM_INVALID`（161002），不能仅根据最内层空指针分支推断最终返回码。
-executor 创建等非 chunk32 guard 错误仍走原有 aclnn 状态契约。
+guard 的参数校验失败返回 `ACLNN_ERR_PARAM_NULLPTR` 或 `ACLNN_ERR_PARAM_INVALID`
+（161002）并直接对外传播；输出分配、`l0op` 视图/类型转换和 launcher 等执行阶段失败
+同样按各自的内部状态原样返回，不再统一映射为参数错误。
 
-chunk32 只交付公开 V1/V2 入口；其 epsilon 固定为 `1e-6`，head/token-major 视图转换由 L2 完成。
+chunk32 只交付公开 V1/V2 入口，且仅在 Ascend950 上可用；其 epsilon 固定为 `1e-6`，
+head/token-major 视图转换由 L2 完成。
 
 ### 归一化 / gate 开关
 
