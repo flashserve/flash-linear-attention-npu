@@ -18,11 +18,20 @@ enum class FwdHGateMode : uint8_t {
     KEY_GK = 1,
 };
 
-template <FwdHGateMode GATE_MODE_, bool USE_EXP2_, bool STATE_FP32_>
+template <FwdHGateMode GATE_MODE_, bool USE_EXP2_, bool STATE_FP32_, bool STORE_FINAL_,
+          bool DENSE_T16_ = false>
 struct FwdHCompilePolicy {
     static constexpr FwdHGateMode GATE_MODE = GATE_MODE_;
     static constexpr bool USE_EXP2 = USE_EXP2_;
     static constexpr bool STATE_FP32 = STATE_FP32_;
+    // O4：storeFinalState 提为编译期维（host tiling key 与运行时 attr 同源，值恒等）。
+    // =true 时 S1 的 WRITE_RIGHT 恒真——WRITE_RIGHT=false 实例族整体消失、
+    // storeFinalState 运行时读全部常量折叠（A2 模板收敛同路线，热段 span 缩小）。
+    static constexpr bool STORE_FINAL = STORE_FINAL_;
+    // T16：dense 专用 TILE_ROWS=16 布局（host tiling key 依 isVariedLen==0 且
+    // 每 unit ≤2 head 才选 1；AIV 单 slot 大缓冲，per-tile 开销减半）。仅 arch22；
+    // 变长/多 head-per-unit 路径恒 0，行为与既有二进制一致。
+    static constexpr bool DENSE_T16 = DENSE_T16_;
 };
 
 constexpr uint32_t FWD_H_CHUNK = 64;
@@ -32,6 +41,9 @@ constexpr uint32_t FWD_H_AIC_HEAD_SLOTS = 4;
 constexpr uint32_t FWD_H_AIV_COUNT = 2;
 constexpr uint32_t FWD_H_AIV_HEAD_SLOTS = 2;
 constexpr uint32_t FWD_H_FLAG_SUBBLOCK_STRIDE = 16;
+// P1 varlen 均衡分区：per-core 任务边界表容量（与 host 侧 tiling 数组字段同宽；
+// 超容量回退均分，见 chunk_fwd_h_struct.h）
+constexpr uint32_t FWD_H_MAX_CORE_BOUNDS = 32;
 
 constexpr uint32_t FWD_H_TOKEN_MATRIX_BF16_BYTES = FWD_H_CHUNK * FWD_H_V * sizeof(bfloat16_t);
 constexpr uint32_t FWD_H_TOKEN_MATRIX_FP32_BYTES = FWD_H_CHUNK * FWD_H_V * sizeof(float);
@@ -154,6 +166,17 @@ struct FwdHRuntimeTiling {
     bool useInitialState = false;
     bool storeFinalState = false;
     bool isVariedLen = false;
+    // P1：host 注入的均衡分区表（varlen）。coreBoundCount=0 表示无表，走均分。
+    // 表本体留在 GM tiling data 内（不拷入 kernel 栈——260B 结构体膨胀曾致
+    // AIV 指令缓冲等待 +48us 的代码足迹税），此处仅持 GM 指针，每核读 2 个字。
+    uint32_t coreBoundCount = 0;
+    const __gm__ int64_t *coreBoundsGm = nullptr;
+    // gated 复用路径：workspace 内的 tiling 镜像/前缀表偏移与 dtype 字段值
+    uint64_t gatedTilingOffset = 0;
+    uint64_t gatedNumSeqOffset = 0;
+    uint64_t gatedNumChunksOffset = 0;
+    uint32_t gatedGateDataType = 2;
+    uint32_t gatedStateDataType = 2;
 };
 
 struct FwdHKernelArgs {

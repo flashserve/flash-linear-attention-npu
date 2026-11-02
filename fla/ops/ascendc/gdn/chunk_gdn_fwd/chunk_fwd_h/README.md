@@ -77,11 +77,35 @@ Stage0 和 Stage2 均使用 BF16 矩阵乘输入、FP32 累加。Stage0 在写�
 
 `state_v_first=false` 时 state 末两维为 `[K,V]`，为 `true` 时为 `[V,K]`。两种布局均由 kernel 原生处理，不依赖外部转置。
 
-当前仅支持 `K=V=128`、`chunk_size=64`、`save_new_value=true`，支持 A2、A3 和 A5。
-
 所有 aclnn tensor descriptor 必须使用非私有 ND storage/view format；输入可以是 ND view，
 host 会在需要时连续化，`h/v_new/final_state` 输出必须是连续 ND。Python 入口只接受标准物理
 布局并创建连续 ND 输出，不支持将私有 NPU format 伪装成 ND。
+
+## 支持范围
+
+- A2 (`ascend910b`)、A3 (`ascend910_93`)、A5 (`ascend950`)。
+- `K=V=128`、`chunk_size=64`、`save_new_value=true`；其它取值在参数校验阶段返回
+  `ACLNN_ERR_PARAM_INVALID`，不下沉到 tiling。
+- `g` 与 `gk` 必须且只能提供一个：g-only 要求 `HV % HK == 0`，gk-only 要求 `HK == HV`。
+- dtype：`k/w/u` 为 BF16；`g/gk`、`initial_state/final_state` 支持 BF16/FP32
+  （`StateT` 按上文优先级确定）。
+- 变长（BNSD）要求 `B=1`；`cu_seqlens` 从 0 开始、以 `T` 结束且非递减，相邻两项相等
+  表示零长度序列。
+- `state_v_first` 两值均支持，由 kernel 原生解释，不依赖外部转置。
+
+## 执行引擎与路由（A2/A3）
+
+满足 `g` 标量门控 + FP32 gate + `use_exp2=true` + `state_v_first=false` 的调用
+（issue 主形态，含 storeFinal 两值与 state/gate dtype 变体）在 A2/A3 上整体走
+gated preload 调度引擎（`op_kernel/gated_reuse/`，双流乒乓任务调度），其余形态由
+编译期谓词自动回落原路径；两条路径的输出语义与精度验收口径一致：
+
+- bf16 `g`：host 入口无损 cast 到 FP32 后进入 gated（数值与原路径"先 cast 再计算"等价）。
+- `state_v_first=true` 且 dense：host 入口经 TransposeLastTwo 翻译为 `[K,V]` 进 kernel，
+  产出后转置回 `[V,K]` 契约——转置算子开销计入端到端耗时，单算子 Task Duration 不含；
+  变长不翻译，由 kernel 谓词送原路径。
+- gk 模式与 `use_exp2=false`：恒走原路径。
+- A5 恒走原路径（gated 引擎仅 A2/A3 编译）。
 
 ## 变长序列
 
