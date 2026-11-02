@@ -69,14 +69,14 @@ offset、head gap、feature stride=2回退；非连续 state、两种布局/dtyp
 
 ## 输入校准与公开入口回归
 
+本节专项校准和下文 profiling 使用开发期本地脚本，脚本不随 PR 提交；标准 ATK 入口不变。
+
 随机输入沿用 QKV normal(0,0.05)、state normal(0,0.02)，raw gate normal(0,0.3)、
 raw beta normal(0,0.6)。小输出可能使全零结果被 BF16 atol 接受，故额外固定
 Q/K单坐标=1、V=1、beta=0.5、log gate=0 的 `norm_signal`；保留原随机值域和容差。
 独立解析检查覆盖 Q/K=0和2^-12、T=1/9/17，直接检查 epsilon 和每token递推。
 
 ```bash
-python tests/atk/recurrent_kda/scripts/check_reference_calibration.py --artifacts /tmp/kda-calibration
-python tests/atk/recurrent_kda/scripts/check_public_contract.py --device 6
 ct viz /tmp/kda-calibration/correct_0.npy /tmp/kda-calibration/golden_0.npy --out_dir /tmp/kda-viz --name correct_0 --spatial
 ct viz /tmp/kda-calibration/wrong_0.npy /tmp/kda-calibration/golden_0.npy --out_dir /tmp/kda-viz --name wrong_0 --spatial
 # 对 output_1/state 同样执行；不能用 out 代表 state。
@@ -98,12 +98,7 @@ bash tests/atk/run_test_cpu.sh -op=recurrent_kda -soc=ascend950 -npu_device_id=6
 ```
 
 `all` 包含精度/NaN（GM初始化）、ATK performance_device、50轮确定性和mssanitizer memcheck。
-性能另按预分配输入的脚本采修改前后 msprof Task Duration，区分目标kernel与辅助kernel：
-
-```bash
-msprof --output=/tmp/kda-prof --task-time=on \
-  python tests/atk/recurrent_kda/scripts/profile_model_cases.py --device 6 --warmup 10 --samples 20 --manifest /tmp/kda-manifest.json
-```
+性能另用开发期本地脚本，以预分配输入采集修改前后 msprof Task Duration，区分目标kernel与辅助kernel。
 
 常规采集按36组各30次 `RecurrentKda` task 对齐shape，舍弃前10次，统计后20次均值；
 最终交替复测统一预热30次、采样100次，逐组统计后100次均值。
@@ -424,13 +419,8 @@ A2/A3 本轮仅交叉编译，尚未通过运行验收。
 
 ### 复现与证据
 
-入口：[profile_kfirst_model_cases.py](scripts/profile_kfirst_model_cases.py)。
 分别选择远程/当前安装包，并在进程启动前设置匹配的 OPP、opapi 和 Stable-ABI 动态库路径，
-`FLA_NPU_DISABLE_PTH=1`、`ASCEND_RT_VISIBLE_DEVICES=4`。使用同一份当前输入生成器：
-
-```bash
-msprof --output="$result" --task-time=on python profile_kfirst_model_cases.py   --package "$package_root" --case-root "$case_root" --device 0   --warmup 3 --samples 5 --manifest "$manifest"
-```
+`FLA_NPU_DISABLE_PTH=1`、`ASCEND_RT_VISIBLE_DEVICES=4`。使用同一份当前输入生成器和开发期本地采集驱动。
 
 正式计时之前，两版分别通过4个小 shape 的 K-first FP32/BF16 调用及有限值检查；
 该检查不替代上一节的正式 CPU 精度验收，本轮不额外运行 ATK 性能任务。
@@ -720,7 +710,7 @@ A5_1物理卡4/逻辑0，同卡串行msprof，远程main为2bb7e74ecf4876acbc452
 | 三入口扩展 | 59正常、49负向 | 59正常、49负向 |
 | 元数据就绪专项 | 20项 | 20项 |
 
-两平台分别标准构建并核对安装产物。memcheck 使用独立 sanitizer wheel，72条设备编译命令和72个插桩对象均核验；未以正常构建替代。元数据专项 `python tests/atk/recurrent_kda/scripts/check_metadata_readiness.py --device 0` 在默认和独立 stream 中不手工预同步，覆盖 stable/ctypes 正常双输出及非法 accepted/CU；随后再次运行公开契约和三入口回归。
+两平台分别标准构建并核对安装产物。memcheck 使用独立 sanitizer wheel，72条设备编译命令和72个插桩对象均核验；未以正常构建替代。元数据专项在默认和独立 stream 中不手工预同步，覆盖 stable/ctypes 正常双输出及非法 accepted/CU；随后再次运行公开契约和三入口回归。
 
 A5 用 msprof 对最新 main `34851b76` 与 PR 采集 issue680 全36形状×四路径，每组3预热、5正式。首轮 PR/main 耗时比几何均值：V-first BF16 0.761890、V-first FP32 0.690407、K-first BF16 0.422191、K-first FP32 0.351471。main 的7组 V-first FP32 噪声较大，反序复核后最大 CV 0.74%；29组首轮加7组复核的诊断汇总为0.708479。原样本全部保留；这不是第二轮完整144组对比，也不是端到端调用耗时。
 
@@ -734,4 +724,4 @@ A5/A2 各重新通过20项元数据就绪、74项公开契约、59正常/49负�
 
 A5 同卡 msprof 对 issue680 ID0/7/35 × 四路径，每组3预热、5正式；12组耗时比几何均值0.997326，最大组内 CV 2.59%，设备计算无实质变化。额外测量8次连续 decode、两个独立 head stream 的调用链时间，并以无关 stream 的128次4096×4096 FP16 matmul 验证隔离。反序控制中，修改前5次返回时无关工作均完成、enqueue 47.207–57.724 ms；修改后5次返回时均未完成、enqueue 0.431–1.827 ms。微小负载双 head 仍有 host 调度开销和波动，未宣称所有端到端场景稳定加速。
 
-新增复现入口为 `scripts/check_metadata_stream_perf.py`，此脚本的 host/E2E 统计不替代 msprof kernel 耗时。
+该专项使用开发期本地脚本，host/E2E 统计不替代 msprof kernel 耗时。
