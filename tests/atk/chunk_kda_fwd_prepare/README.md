@@ -1,5 +1,18 @@
 # chunk_kda_fwd_prepare ATK 测试
 
+## 参数错误消息回归
+
+安装本轮构建的 wheel 后运行：
+
+```bash
+python tests/stable_abi/test_chunk_kda_fwd_prepare_errors.py --device 0
+```
+
+该脚本只调用 raw ACLNN 的 `GetWorkspaceSize`，覆盖 Python 自动分配无法表达的错误输出
+descriptor、必选参数空指针及非法属性/metadata。每例同时断言兼容返回状态、正式 Error Message、
+算子名和参数名，并确认失败调用没有返回 executor 或 workspace；不启动被拒绝的 kernel。
+该负向回归不替代数值精度、性能或 MSS 验收。
+
 本目录按 ATK 公开输入格式验证 `chunk_kda_fwd_prepare`。NPU 节点只调用稳定入口
 `fla_npu.ops.ascendc.chunk_kda_fwd_prepare`，不加载 `torch_npu` dispatcher。
 

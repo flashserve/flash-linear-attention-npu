@@ -166,17 +166,18 @@ descriptor 占位；空/非空组合必须恰好落在 `none/forward/recompute/s
 | layout 值或物理 format 错误 | `EZ0017` / `EZ0018` |
 | 单 tensor dtype 错误 | `EZ0019` |
 | chunk_size、元数据端点或明确标量值错误 | `EZ0024` |
-| chunk_indices 元素数错误 | `EZ0025` |
+| cu_seqlens / chunk_indices 元素数错误 | `EZ0025` |
 | 非有限/越界标量、FP32 转换后越界或 DMA 范围错误 | `EZ0026` / `EZ0027` |
 | GVA、gate/beta 属性、输出 mask 或 metadata 的组合约束错误 | `EZ0027` |
 | 必选参数为空、输出不连续或缺少配套输入 | `EZ0037` |
-| cu_seqlens 元素数不足 | `EZ0038` |
-| 合法输入下 TilingContext、平台数据、调度或 tiling 输出容器失败 | `EZ1008` |
-| InferShape 框架 shape 元数据缺失 | `EZ1014` |
+| 合法输入下 TilingContext、平台数据、调度或 tiling 输出容器失败 | `EZ1008`（需运行时已注册） |
+| InferShape 框架 shape 元数据缺失 | `EZ1014`（需运行时已注册） |
 
 opbase 消息目录在 op_api DSO 加载时注册，保证第一次 L2 参数校验也能上报，
 无需先成功执行一次 kernel。Contiguous、metadata 转换、launcher 和执行失败保留下层首错，
 外层仅追加不重新 report 的日志。真正的内部 executor 初始化失败保留内部错误语义。
+旧 CANN 消息目录若未注册 `EZ1008` / `EZ1014`，仅这两类真实框架故障回退到带阶段和
+具体原因的 `EZ9999`；参数错误不使用该回退，也不自行注册或编造阶段错误定义。
 
 | 返回码 | 触发条件 |
 | --- | --- |

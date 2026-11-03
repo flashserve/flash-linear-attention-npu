@@ -24,7 +24,10 @@ void ReportInferShapeError(gert::InferShapeContext *context, const char *reason)
     OP_LOGE_LIBOPAPI_REPORT(name, "%s", reason);
     const std::vector<const char *> keys = {"opName", "reason"};
     const std::vector<const char *> values = {name, reason};
-    REPORT_PREDEFINED_ERR_MSG("EZ1014", keys, values);
+    if (REPORT_PREDEFINED_ERR_MSG("EZ1014", keys, values) != 0) {
+        // A missing framework context/shape is not an invalid user tensor value.
+        REPORT_INNER_ERR_MSG("EZ9999", "ChunkKdaFwdPrepare InferShape framework failure: %s", reason);
+    }
 }
 
 enum class PrepareLayout {

@@ -96,7 +96,11 @@ void ReportTilingError(gert::TilingContext *context, const std::string &reason)
     OP_LOGE_LIBOPAPI_REPORT(name, "%s", reason.c_str());
     const std::vector<const char *> keys = {"opName", "reason"};
     const std::vector<const char *> values = {name, reason.c_str()};
-    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+    if (REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values) != 0) {
+        // Older catalogs do not register EZ1008. Only genuine framework failures
+        // reach this helper; user input failures use the registered EZ00xx macros.
+        REPORT_INNER_ERR_MSG("EZ9999", "ChunkKdaFwdPrepare Tiling framework failure: %s", reason.c_str());
+    }
 }
 
 bool ParseLayout(const char *layout, PrepareLayout &parsed)

@@ -115,7 +115,7 @@ def main():
         ("bias_shape", {"gate": True, "a_log": empty((2,), torch.float32), "dt_bias": empty((2, 128), torch.float32)}, "EZ0008", "dt_bias"),
         ("safe_bound", {"gate": True, "safe": True, "a_log": empty((2,), torch.float32), "lower_bound": -6}, "EZ0026", "lower_bound"),
         ("indices_without_cu", {"chunk_indices": [0, 0]}, "EZ0037", "chunk_indices"),
-        ("cu_size", {"cu_seqlens": [0]}, "EZ0038", "cu_seqlens"),
+        ("cu_size", {"cu_seqlens": [0]}, "EZ0025", "cu_seqlens"),
         ("cu_first", {"cu_seqlens": [1, 3]}, "EZ0024", "cu_seqlens[0]"),
         ("cu_last", {"cu_seqlens": [0, 2]}, "EZ0024", "cu_seqlens[-1]"),
         ("cu_order", {"cu_seqlens": [0, 2, 1, 3]}, "EZ0027", "cu_seqlens"),
@@ -124,7 +124,7 @@ def main():
         ("gva", {"q": empty((1, 3, 3, 128)), "k": empty((1, 3, 3, 128))}, "EZ0027", "HK,HV"),
     ]
     for case in cases:
-        reject(*case)
+        reject(*case, status=161001 if case[0] == "gate_missing_log" else 161002)
     for name in ("q", "k", "v", "g", "beta", "layout", "gkOut", "aqkOut", "wOut", "uOut", "kgOut", "qgScaledOut"):
         reject("missing_" + name, {name: None}, "EZ0037", name, status=161001)
     for name in ("workspaceSize", "executor"):

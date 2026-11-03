@@ -650,8 +650,8 @@ aclnnStatus CheckVariableLengthInputs(
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(params.cuSeqlensOptional->Size() >= 2)) {
-        OP_LOGE_FOR_INVALID_LISTSIZE_WITH_REASON(OP_NAME, "cu_seqlens", ToText(params.cuSeqlensOptional->Size()),
-                                                 "provide at least [0,total_tokens] (two elements)");
+        OP_LOGE_FOR_INVALID_LISTSIZE(OP_NAME, "cu_seqlens", ToText(params.cuSeqlensOptional->Size()),
+                                     ">=2 ([0,total_tokens])");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!((*params.cuSeqlensOptional)[0] == 0)) {
@@ -944,8 +944,10 @@ aclnnStatus aclnnChunkKdaFwdPrepareGetWorkspaceSize(
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
         // Genuine internal executor initialization failure; not a user argument error.
-        OP_LOGE(ACLNN_ERR_INNER_CREATE_EXECUTOR, "aclnnChunkKdaFwdPrepare: CREATE_EXECUTOR returned null; preserve "
-                                                 "executor allocation and initialization diagnostics.");
+        const char *reason = "aclnnChunkKdaFwdPrepare: CREATE_EXECUTOR returned null; preserve executor allocation "
+                             "and initialization diagnostics.";
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "%s", reason);
+        REPORT_INNER_ERR_MSG("EZ9999", "%s", reason);
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     aclOpExecutor *executorPtr = uniqueExecutor.get();
