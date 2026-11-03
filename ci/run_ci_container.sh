@@ -266,6 +266,16 @@ if [[ -n "${CI_CONTAINER_COMMAND:-}" ]]; then
     container_command=(bash -lc "$CI_CONTAINER_COMMAND")
 fi
 
+# Docker's host networking shares sockets, but it does not inherit the client
+# environment. Pass only the proxy allowlist and keep values out of argv/logs.
+proxy_env_args=()
+for proxy_name in http_proxy https_proxy all_proxy no_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY; do
+    if [[ -v "$proxy_name" ]]; then
+        export "$proxy_name"
+        proxy_env_args+=(-e "$proxy_name")
+    fi
+done
+
 container_id_dir="$(mktemp -d "${TMPDIR:-/tmp}/fla-npu-container.XXXXXX")"
 docker run --rm \
     --cidfile "$container_id_dir/id" \
@@ -274,6 +284,7 @@ docker run --rm \
     --ipc host \
     "${device_args[@]}" \
     "${mount_args[@]}" \
+    "${proxy_env_args[@]}" \
     -e ASCEND_RT_VISIBLE_DEVICES="${NPU_SELECTED_DEVICE}" \
     -e NPU_SELECTED_DEVICE="${NPU_SELECTED_DEVICE}" \
     -e NPU_SELECTED_NAME="${NPU_SELECTED_NAME}" \

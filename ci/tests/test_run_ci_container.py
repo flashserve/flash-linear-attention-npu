@@ -12,6 +12,8 @@ import unittest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+PROXY_NAMES = ("http_proxy", "https_proxy", "all_proxy", "no_proxy",
+               "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY")
 
 
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
@@ -41,6 +43,12 @@ class RunCiContainerTests(unittest.TestCase):
             "        os.kill(int(pid.read_text()), signal.SIGKILL)\n"
             "    sys.exit(0)\n"
             "if '--cidfile' in args:\n"
+            "    passed = {}\n"
+            "    for index, argument in enumerate(args[:-1]):\n"
+            "        if argument == '-e':\n"
+            "            key, separator, value = args[index + 1].partition('=')\n"
+            "            passed[key] = value if separator else os.environ.get(key)\n"
+            "    pathlib.Path(os.environ['DOCKER_ENV_RECORD']).write_text(json.dumps(passed))\n"
             "    if os.environ['WRITE_ID'] == 'true':\n"
             "        pathlib.Path(args[args.index('--cidfile') + 1]).write_text('owned-container-id')\n"
             "    if os.environ['RUN_WAIT'] == 'true':\n"
@@ -52,6 +60,8 @@ class RunCiContainerTests(unittest.TestCase):
         )
         (commands / "docker").chmod(0o755)
         env = dict(os.environ)
+        for name in PROXY_NAMES:
+            env.pop(name, None)
         env.update(
             PATH=str(commands) + os.pathsep + env["PATH"],
             TMPDIR=str(root / "storage/host"),
@@ -65,6 +75,7 @@ class RunCiContainerTests(unittest.TestCase):
             CI_REBUILD_IMAGE="false",
             CI_REQUIRE_HEALTHY_NPU="false",
             DOCKER_RECORD=str(root / "docker.jsonl"),
+            DOCKER_ENV_RECORD=str(root / "container-env.json"),
             RUN_STATUS=str(run_status),
             CLEANUP_STATUS=str(cleanup_status),
             WRITE_ID=str(write_id).lower(),
@@ -98,6 +109,37 @@ class RunCiContainerTests(unittest.TestCase):
             result = subprocess.run(command, cwd=repo, env=env, capture_output=True, text=True, check=False)
         calls = [json.loads(line) for line in (root / "docker.jsonl").read_text().splitlines()]
         return result, calls, env
+
+    def test_proxy_allowlist_reaches_container_without_values_in_argv_or_logs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            credentials = "fixture-user:fixture-secret@127.0.0.1:7890"
+            proxies = {name: ("localhost,127.0.0.1" if name.lower() == "no_proxy" else
+                              ("socks5h://" if name.lower() == "all_proxy" else "http://") + credentials)
+                       for name in PROXY_NAMES}
+            result, calls, env = self.run_ci(root, plan=dict(proxies, UNRELATED_SECRET="not-a-proxy"))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            run = next(call for call in calls if "--cidfile" in call)
+            passed = json.loads(Path(env["DOCKER_ENV_RECORD"]).read_text())
+            for name, value in proxies.items():
+                self.assertIn(name, run)
+                self.assertEqual(passed[name], value)
+                self.assertNotIn(name + "=" + value, run)
+            self.assertNotIn("UNRELATED_SECRET", passed)
+            visible = json.dumps(calls) + result.stdout + result.stderr
+            self.assertNotIn("fixture-secret", visible)
+
+    def test_unset_proxy_variables_are_not_forwarded(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            result, calls, env = self.run_ci(root, plan={"https_proxy": ""})
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            run = next(call for call in calls if "--cidfile" in call)
+            passed = json.loads(Path(env["DOCKER_ENV_RECORD"]).read_text())
+            self.assertEqual(passed["https_proxy"], "")
+            self.assertIn("https_proxy", run)
+            for name in set(PROXY_NAMES) - {"https_proxy"}:
+                self.assertNotIn(name, passed)
 
     def test_explicit_physical_device_and_build_plan_reach_container(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -256,7 +256,7 @@ jobs:
 
           # Checkout and all later fetches use the same direct-then-proxy policy.
           fetch_with_proxy_fallback() {
-            if env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
+            if timeout 180 env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
               -u all_proxy -u ALL_PROXY -u GIT_HTTP_PROXY -u GIT_HTTPS_PROXY \
               no_proxy='*' NO_PROXY='*' git -c http.proxy= -c https.proxy= fetch "$@"; then
               return 0
@@ -264,7 +264,7 @@ jobs:
             echo "[CI] Direct Git fetch failed; retrying through the runner proxy."
             source "$CI_PROXY_SCRIPT" || return $?
             proxyon || return $?
-            git fetch "$@"
+            timeout 600 git fetch "$@"
           }
 
           fetch_more_history() {
@@ -318,6 +318,11 @@ jobs:
           NPU_CI_HEAD_POLL_SECONDS: '60'
         run: |
           set -euo pipefail
+
+          # Fetch steps have separate shells. Load the host proxy again for
+          # container dependency/base-wheel downloads, even after direct checkout.
+          source "$CI_PROXY_SCRIPT"
+          proxyon
 
           mkdir -p "$(dirname "$CI_ACCURACY_REPORT_FILE")" "$(dirname "$CI_RAW_LOG_FILE")"
           rm -f \

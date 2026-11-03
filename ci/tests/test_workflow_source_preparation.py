@@ -36,6 +36,12 @@ class SharedSourcePreparationTest(unittest.TestCase):
         for removed in ("download_archive", "extract_archive", "replay_base_delta", "fla-npu-source-", "trusted_ci_sha", "use_pr_ci", "trusted-ci"):
             self.assertNotIn(removed, text)
 
+    def test_container_downloads_load_proxy_in_their_own_shell(self):
+        steps = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]["ascend-npu"]["steps"]
+        run = next(step["run"] for step in steps if step.get("id") == "npu_ci")
+        self.assertLess(run.index('source "$CI_PROXY_SCRIPT"'), run.index("proxyon"))
+        self.assertLess(run.index("proxyon"), run.index("bash ci/run_ci_container.sh"))
+
 
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell test")
 class SourceMergeBehaviorTest(unittest.TestCase):
@@ -69,7 +75,7 @@ if command == "rev-parse":
 elif command == "fetch":
     deepening = any(arg.startswith("--deepen=") or arg == "--unshallow" for arg in args)
     if os.getenv("FAIL_ALL_FETCHES") or (os.getenv("FAIL_DEEPEN") and deepening) or (os.getenv("FAIL_DIRECT") and not os.getenv("http_proxy")):
-        sys.exit(1)
+        sys.exit(int(os.getenv("FAIL_DIRECT") or "1"))
     if any(arg.startswith("--deepen=") or arg == "--unshallow" for arg in args):
         Path(os.environ["GIT_TEST_DEEPENED"]).touch()
 elif command == "merge-base":
@@ -116,6 +122,12 @@ elif command == "merge-base":
         self.assertEqual(len(fetches), 4)
         self.assertEqual([bool(record["proxy"]) for record in fetches], [False, True, False, True])
         self.assertTrue(any("--deepen=50" in record["args"] for record in fetches))
+
+    def test_direct_timeout_still_retries_through_proxy(self):
+        completed, records = self._run_merge(FAIL_DIRECT=124)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        fetches = [record for record in records if "fetch" in record["args"]]
+        self.assertEqual([bool(record["proxy"]) for record in fetches], [False, True])
 
     def test_failed_fetch_and_changed_head_never_merge(self):
         for settings in ({"FAIL_ALL_FETCHES": 1}, {"MISMATCH": 1}, {"MISMATCH": 1, "SHALLOW": 1}, {"FAIL_DEEPEN": 1, "SHALLOW": 1}):
