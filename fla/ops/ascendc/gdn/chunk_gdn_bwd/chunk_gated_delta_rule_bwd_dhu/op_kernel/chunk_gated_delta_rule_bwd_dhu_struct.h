@@ -105,6 +105,7 @@ struct ChunkGatedDeltaRuleBwdDhuTilingData {
     int64_t vecRow;
     int64_t stateResident;
     float scale;
+    uint32_t doTokenMajor = 0;
 };
 
 } // namespace GDN

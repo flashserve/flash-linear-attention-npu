@@ -24,6 +24,7 @@ constexpr size_t KDA_PREPARE_ATTR_SCALE = 0;
 constexpr size_t KDA_PREPARE_ATTR_CHUNK_SIZE = 1;
 constexpr size_t KDA_PREPARE_ATTR_STATE_V_FIRST = 2;
 constexpr size_t KDA_PREPARE_ATTR_LAYOUT = 3;
+constexpr size_t KDA_PREPARE_ATTR_DO_TOKEN_MAJOR = 4;
 
 } // namespace optiling
 

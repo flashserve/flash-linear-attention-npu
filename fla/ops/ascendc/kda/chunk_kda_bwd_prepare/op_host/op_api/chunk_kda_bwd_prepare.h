@@ -18,7 +18,7 @@ const std::array<const aclTensor *, 3> ChunkKdaBwdPrepare(
     const aclTensor *dAqkOut,
     const aclTensor *dvOut,
     const aclTensor *dqRawOut,
-    aclOpExecutor *executor);
+    aclOpExecutor *executor, bool doTokenMajor = false);
 } // namespace l0op
 
 #endif
