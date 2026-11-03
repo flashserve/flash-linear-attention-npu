@@ -173,7 +173,11 @@ descriptor 占位；空/非空组合必须恰好落在 `none/forward/recompute/s
 | 合法输入下 TilingContext、平台数据、调度或 tiling 输出容器失败 | `EZ1008`（需运行时已注册） |
 | InferShape 框架 shape 元数据缺失 | `EZ1014`（需运行时已注册） |
 
-opbase 消息目录在 op_api DSO 加载时注册，保证第一次 L2 参数校验也能上报，
+上表为实际 opbase 头文件提供 `OP_LOGE_FOR_*` 时的错误码。按宏存在性选择官方上报：
+旧头文件缺少这些宏时，shape/rank/value/组合约束使用 `EZ0002`，list size 使用 `EZ0003`，
+缺失必选参数使用 `EZ0004`，format 使用 `EZ0006`，dtype 使用 `EZ0007`。
+旧版路径仍保留参数名、实际值和期望值或约束，ACLNN 返回状态不变；不复制或重定义 SDK 宏。
+L2 加载时编入当前选定 opbase 的官方消息注册，保证第一次参数校验也能上报，
 无需先成功执行一次 kernel。Contiguous、metadata 转换、launcher 和执行失败保留下层首错，
 外层仅追加不重新 report 的日志。真正的内部 executor 初始化失败保留内部错误语义。
 旧 CANN 消息目录若未注册 `EZ1008` / `EZ1014`，仅这两类真实框架故障回退到带阶段和

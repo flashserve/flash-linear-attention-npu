@@ -10,9 +10,10 @@
 #include <string>
 #include <vector>
 
-#include "op_common/log/log.h"
 #include "chunk_kda_fwd_prepare_tiling.h"
 #include "register/op_impl_registry.h"
+
+#include "chunk_kda_fwd_prepare_error.h"
 
 namespace ops {
 namespace {
@@ -21,7 +22,7 @@ void ReportInferShapeError(gert::InferShapeContext *context, const char *reason)
 {
     const char *name =
         context == nullptr || context->GetNodeName() == nullptr ? "ChunkKdaFwdPrepare" : context->GetNodeName();
-    OP_LOGE_LIBOPAPI_REPORT(name, "%s", reason);
+    OP_LOGE_WITHOUT_REPORT(name, "%s", reason);
     const std::vector<const char *> keys = {"opName", "reason"};
     const std::vector<const char *> values = {name, reason};
     if (REPORT_PREDEFINED_ERR_MSG("EZ1014", keys, values) != 0) {
@@ -211,19 +212,19 @@ static ge::graphStatus InferShapeChunkKdaFwdPrepare(
         }
     }
     if (chunkSize != 64) {
-        OP_LOGE_FOR_INVALID_VALUE(Ops::Base::GetOpInfo(context), "chunk_size", std::to_string(chunkSize), "64");
+        KdaPrepareDfx::Value(Ops::Base::GetOpInfo(context), "chunk_size", std::to_string(chunkSize), "64");
         return ge::GRAPH_FAILED;
     }
 
     PrepareLayout parsedLayout;
     LogicalShape shape;
     if (!ParseLayout(layout, parsedLayout)) {
-        OP_LOGE_FOR_INVALID_FORMAT(Ops::Base::GetOpInfo(context), "layout", layout,
+        KdaPrepareDfx::Format(Ops::Base::GetOpInfo(context), "layout", layout,
                                    "BNSD, BSND, NTD or TND (case-sensitive)");
         return ge::GRAPH_FAILED;
     }
     if (!ResolveLogicalShape(*qShape, *vShape, parsedLayout, shape)) {
-        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+        KdaPrepareDfx::RanksReason(
             Ops::Base::GetOpInfo(context), "q,v",
             std::to_string(qShape->GetDimNum()) + "," + std::to_string(vShape->GetDimNum()),
             "layout=" + std::string(layout) + "; both ranks must be " +

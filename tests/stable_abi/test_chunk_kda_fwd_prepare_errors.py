@@ -8,6 +8,7 @@ rejected call or treats an arbitrary exception as a passing negative test.
 import argparse
 import ctypes
 from pathlib import Path
+import re
 import sys
 
 import torch
@@ -36,6 +37,9 @@ def fixture():
     for name in ("qRstdOut", "kRstdOut", "betaEffOut"):
         result[name] = empty((1, 2, 3), torch.float32)
     return result
+
+
+CATALOG = "native"
 
 
 def reject(name, updates, code, parameter, *, status=161002, null_pointer=None, detail=None):
@@ -70,8 +74,17 @@ def reject(name, updates, code, parameter, *, status=161002, null_pointer=None, 
         api._recent_error_message()
         observed = function(*args)
         message = api._recent_error_message()
+        if CATALOG == "legacy":
+            legacy = {"EZ0017": "EZ0006", "EZ0018": "EZ0006", "EZ0019": "EZ0007",
+                      "EZ0021": "EZ0007", "EZ0025": "EZ0003"}
+            code = "EZ0004" if status == 161001 else legacy.get(code, "EZ0002")
         assert observed == status, (name, observed, status, message)
         assert code in message and parameter in message and "aclnnChunkKdaFwdPrepare" in message, (name, message)
+        field = re.search(r"(?:Parameters?|Attribute|Input parameter) (.*?) of aclnnChunkKdaFwdPrepare", message)
+        assert field is not None, (name, message)
+        reported = field.group(1)
+        assert (reported == parameter or parameter in reported.split(",") or
+                reported.startswith(parameter + " ")), (name, parameter, reported)
         assert "EZ9999" not in message and "EZ1001" not in message, (name, message)
         if detail is not None:
             assert detail in message, (name, detail, message)
@@ -84,7 +97,10 @@ def reject(name, updates, code, parameter, *, status=161002, null_pointer=None, 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", type=int, default=0)
+    parser.add_argument("--catalog", choices=("native", "legacy"), default="native")
     arguments = parser.parse_args()
+    global CATALOG
+    CATALOG = arguments.catalog
     torch.npu.set_device(arguments.device)
     cases = [
         ("layout", {"layout": "bnsd"}, "EZ0017", "layout"),
