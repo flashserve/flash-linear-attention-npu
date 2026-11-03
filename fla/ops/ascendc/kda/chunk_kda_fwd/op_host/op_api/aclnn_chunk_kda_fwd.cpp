@@ -542,15 +542,16 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
 
 aclnnStatus ContiguousInputs(ChunkKdaFwdParams &params, aclOpExecutor *executor)
 {
-    CHECK_RET(MakeContiguous(params.q, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.k, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.v, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.g, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.beta, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.initialStateOptional, executor) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
+    // 执行阶段的连续化失败属于内部错误(l0op 失败时 MakeContiguous 返回
+    // ACLNN_ERR_INNER_NULLPTR),原样传播,不映射为参数错误。chunk64 调用点仍按
+    // 其既有契约自行映射为 PARAM_INVALID,对外行为不变。
+    const aclTensor **slots[] = {&params.q, &params.k, &params.v, &params.g, &params.beta,
+                                 &params.aLogOptional, &params.dtBiasOptional,
+                                 &params.initialStateOptional};
+    for (auto *slot : slots) {
+        aclnnStatus ret = MakeContiguous(*slot, executor);
+        CHECK_RET(ret == ACLNN_SUCCESS, ret);
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -1026,9 +1027,12 @@ aclnnStatus RunChunkKdaFwd32FusedDense(ChunkKdaFwdParams &params, aclOpExecutor 
 {
     KdaFwdLayout layout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
-    CHECK_RET(CheckChunkKdaFwd32Params(params, layout, info) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(ContiguousInputs(params, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    // 参数校验状态原样返回(PARAM_NULLPTR/PARAM_INVALID);ContiguousInputs 属于
+    // 执行阶段,内部失败不映射为参数错误。
+    aclnnStatus checkRet = CheckChunkKdaFwd32Params(params, layout, info);
+    CHECK_RET(checkRet == ACLNN_SUCCESS, checkRet);
+    aclnnStatus contRet = ContiguousInputs(params, executor);
+    CHECK_RET(contRet == ACLNN_SUCCESS, contRet);
 
     // dense BSND:等长 batch 可表示为整齐 varlen,合成
     // cu=[0,T,2T,...],[B,S,H,*] 连续视图零成本压成 packed [B*S,H,*],走 varlen
@@ -1191,7 +1195,8 @@ aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor
 {
     const int64_t nSeq = static_cast<int64_t>(params.cuSeqlensOptional->Size()) - 1;
 
-    CHECK_RET(ContiguousInputs(params, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    aclnnStatus contRet = ContiguousInputs(params, executor);
+    CHECK_RET(contRet == ACLNN_SUCCESS, contRet);
 
     // token-major 视图:BSND [1,T,*] 去 B 维;TND 直通
     const aclTensor *qTok = params.q;
@@ -1288,8 +1293,8 @@ aclnnStatus RunChunkKdaFwd32Fused(ChunkKdaFwdParams &params, aclOpExecutor *exec
     }
     KdaFwdLayout layout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
-    CHECK_RET(CheckChunkKdaFwd32Params(params, layout, info) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
+    aclnnStatus checkRet = CheckChunkKdaFwd32Params(params, layout, info);
+    CHECK_RET(checkRet == ACLNN_SUCCESS, checkRet);
     // varlen 支持 BSND/TND 的 token-major 布局和 NTD 的 head-major 布局;BNSD 使用 chunk64 路径
     if (layout == KdaFwdLayout::BNSD) {
         OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "layout", "BNSD with cuSeqlensOptional", "BSND, TND or NTD for chunkSize=32 varlen");
@@ -1352,8 +1357,10 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     if (params.chunkSize == 32) {
         // chunk32 → 单 kernel 大融合(issue #829),独立校验与执行路径;
         // 产出 attn_out + 可选 final_state,不产出中间量,契约不满足时由路由内部报错。
-        CHECK_RET(RunChunkKdaFwd32Fused(params, executorPtr) == ACLNN_SUCCESS,
-                  ACLNN_ERR_PARAM_INVALID);
+        // 返回码直接传播:参数校验返回 PARAM_* 状态,执行阶段的 l0op/launcher
+        // 等内部失败返回各自的 INNER 状态,不统一映射为 PARAM_INVALID。
+        aclnnStatus fusedRet = RunChunkKdaFwd32Fused(params, executorPtr);
+        CHECK_RET(fusedRet == ACLNN_SUCCESS, fusedRet);
         *workspaceSize = uniqueExecutor->GetWorkspaceSize();
         uniqueExecutor.ReleaseTo(executor);
         return ACLNN_SUCCESS;
@@ -1666,8 +1673,8 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
             OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "useExp2", "false", "true for chunkSize=32");
             return ACLNN_ERR_PARAM_INVALID;
         }
-        CHECK_RET(RunChunkKdaFwd32Fused(params, executorPtr) == ACLNN_SUCCESS,
-                  ACLNN_ERR_PARAM_INVALID);
+        aclnnStatus fusedRet = RunChunkKdaFwd32Fused(params, executorPtr);
+        CHECK_RET(fusedRet == ACLNN_SUCCESS, fusedRet);
         *workspaceSize = uniqueExecutor->GetWorkspaceSize();
         uniqueExecutor.ReleaseTo(executor);
         return ACLNN_SUCCESS;
