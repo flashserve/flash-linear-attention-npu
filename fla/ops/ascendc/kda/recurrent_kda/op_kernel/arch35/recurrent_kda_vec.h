@@ -64,7 +64,6 @@ __simd_vf__ inline void RecurrentKdaTokenVF(
     const uint32_t inputToken = base % RKDA_A5_WINDOW_TOKENS;
     auto source = (__ubuf__ stateType *)(memory + cur * BANK);
     auto destination = (__ubuf__ stateType *)(memory + next * BANK);
-    LocalMemBar<MemType::SCALAR_STORE, MemType::VEC_LOAD>();
     RegBase::Load(q0, query + inputToken * RKDA_DIM_128, mask);
     RegBase::Load(q1, query + inputToken * RKDA_DIM_128 + 64, mask);
     RegBase::Load(k0, key + inputToken * RKDA_DIM_128, mask);
@@ -104,40 +103,53 @@ __simd_vf__ inline void RecurrentKdaTokenVF(
         RegTensor<float> predictionLo, predictionHi, predictionKey0, predictionKey1;
         Mul(predictionKey0, alpha0, k0, mask);
         Mul(predictionKey1, alpha1, k1, mask);
-        Duplicate(predictionLo, 0.0f);
+        // Collect 128 reductions without four-row Interleave/Gather appends.
+        // Prediction -> residual -> output reuse the same 512-byte region.
+        // Output overwrites only residual elements already read by this pair.
+        auto valueFloat = (__ubuf__ float *)(events + 64);
         #pragma unroll 1
-        for (uint16_t row = 0; row < RegBase::LANES; row += 4) {
-            RegBase::PredictVFirstRows4(source, predictionLo, outputRotation, firstFour,
-                row, predictionKey0, predictionKey1, mask);
+        for (uint16_t row = 0; row < 64; row += 2) {
+            RegTensor<float> sum0, sum1;
+            RegBase::PredictIndependentPair(sum0, sum1, source + row * RegBase::DIM,
+                predictionKey0, predictionKey1, mask);
+            RegBase::Store<float, true>(valueFloat + row, sum0, mask);
+            RegBase::Store<float, true>(valueFloat + row + 1, sum1, mask);
         }
-        Duplicate(predictionHi, 0.0f);
         #pragma unroll 1
-        for (uint16_t row = RegBase::LANES; row < RKDA_DIM_128; row += 4) {
-            RegBase::PredictVFirstRows4(source, predictionHi, outputRotation, firstFour,
-                row, predictionKey0, predictionKey1, mask);
+        for (uint16_t row = 64; row < 128; row += 2) {
+            RegTensor<float> sum0, sum1;
+            RegBase::PredictIndependentPair(sum0, sum1, source + row * RegBase::DIM,
+                predictionKey0, predictionKey1, mask);
+            RegBase::Store<float, true>(valueFloat + row, sum0, mask);
+            RegBase::Store<float, true>(valueFloat + row + 1, sum1, mask);
         }
+        LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+        DataCopy(predictionLo, valueFloat);
+        DataCopy(predictionHi, valueFloat + RegBase::LANES);
         Sub(valueLo, valueLo, predictionLo, mask);
         Sub(valueHi, valueHi, predictionHi, mask);
-        // Reuse the existing RKDA_ROW_FP32_BYTES_512-byte scratch for residuals, not State.
-        auto valueFloat = (__ubuf__ float *)(events + 64);
         DataCopy(valueFloat, valueLo, mask);
         DataCopy(valueFloat + RegBase::LANES, valueHi, mask);
         LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
-        // Both layouts collect a full token in two FP32 output registers.
-        Duplicate(outLo, 0.0f);
         #pragma unroll 1
-        for (uint16_t row = 0; row < RegBase::LANES; row += 4) {
-            RegBase::UpdateVFirstRows4Second(
-                destination, source, valueFloat, outLo, outputRotation, firstFour, row,
+        for (uint16_t row = 0; row < 64; row += 2) {
+            RegTensor<float> sum0, sum1;
+            RegBase::UpdateIndependentPair(destination, source, valueFloat, sum0, sum1, row,
                 q0, q1, alpha0, alpha1, updateKey0, updateKey1, mask);
+            RegBase::Store<float, true>(valueFloat + row, sum0, mask);
+            RegBase::Store<float, true>(valueFloat + row + 1, sum1, mask);
         }
-        Duplicate(outHi, 0.0f);
         #pragma unroll 1
-        for (uint16_t row = RegBase::LANES; row < RKDA_DIM_128; row += 4) {
-            RegBase::UpdateVFirstRows4Second(
-                destination, source, valueFloat, outHi, outputRotation, firstFour, row,
+        for (uint16_t row = 64; row < 128; row += 2) {
+            RegTensor<float> sum0, sum1;
+            RegBase::UpdateIndependentPair(destination, source, valueFloat, sum0, sum1, row,
                 q0, q1, alpha0, alpha1, updateKey0, updateKey1, mask);
+            RegBase::Store<float, true>(valueFloat + row, sum0, mask);
+            RegBase::Store<float, true>(valueFloat + row + 1, sum1, mask);
         }
+        LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+        DataCopy(outLo, valueFloat);
+        DataCopy(outHi, valueFloat + RegBase::LANES);
     } else {
         auto valueFloat = (__ubuf__ float *)(events + 64);
         DataCopy(valueFloat, valueLo, mask);
@@ -162,7 +174,6 @@ __simd_vf__ inline void RecurrentKdaTokenVF(
     }
     RegBase::Store(output + inputToken * RKDA_DIM_128, outLo, mask);
     RegBase::Store(output + inputToken * RKDA_DIM_128 + RegBase::LANES, outHi, mask);
-    LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
 
 }
 
