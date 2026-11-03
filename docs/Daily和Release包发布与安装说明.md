@@ -1,6 +1,6 @@
 # Daily 和 Release 包发布与安装说明
 
-Daily 用于日常验证，只发布到华为云内源镜像的 `nightly/`；Release 用于正式交付，同时发布到 GitHub Releases 和镜像正式目录。
+Daily 用于日常验证，只发布到华为云内源镜像的 [nightly/](https://mirrors.huaweicloud.com/ascend/repos/pypi/nightly/)；Release 用于正式交付，同时发布到 GitHub Releases 和[镜像正式目录](https://mirrors.huaweicloud.com/ascend/repos/pypi/)。
 
 ## 1. 发布渠道与流程
 
