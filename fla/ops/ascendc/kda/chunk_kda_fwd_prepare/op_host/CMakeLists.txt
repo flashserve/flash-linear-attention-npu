@@ -13,6 +13,11 @@ if (BUILD_OPEN_PROJECT)
 endif()
 
 add_modules_sources(OPTYPE chunk_kda_fwd_prepare ACLNNTYPE aclnn_exclude)
+# Register opbase's predefined messages before L2 validation can reject a call.
+# The tiling DSO is loaded later, so its registration alone cannot serve L2.
+target_sources(${OPHOST_NAME}_opapi_obj PRIVATE
+    ${OPBASE_SOURCE_PATH}/src/op_common/log/log.cpp
+)
 add_ops_compile_options(
     OP_NAME ChunkKdaFwdPrepare
     OPTIONS --cce-auto-sync=off
