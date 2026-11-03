@@ -27,7 +27,7 @@ extern "C" {
  *     优先调用本接口，否则回落到 aclnnChunkKdaFwd。
  *
  * 支持范围：q/k/v 为 BF16、K=V=128、chunk_size=64、公开输出连续、cu_seqlens
- * 严格递增。不满足时返回 ACLNN_ERR_PARAM_INVALID。
+ * 非递减并允许零长序列。不满足时返回 ACLNN_ERR_PARAM_INVALID。
  *
  * 开关语义：
  *   epsilon                = 1e-6 默认；仅 useQkL2normInKernel=true 时参与 rsqrt

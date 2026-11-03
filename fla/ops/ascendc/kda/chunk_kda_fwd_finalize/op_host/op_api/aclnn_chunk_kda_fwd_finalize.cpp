@@ -164,10 +164,12 @@ aclnnStatus ResolveSequenceShape(const FinalizeParams &params,
         uint64_t total = 0;
         for (size_t seq = 0; seq + 1 < cu->Size(); ++seq) {
             const int64_t length = (*cu)[seq + 1] - (*cu)[seq];
-            CHECK_COND(length > 0 && (*cu)[seq + 1] <= shape.seqLen,
+            CHECK_COND(length >= 0 && (*cu)[seq + 1] <= shape.seqLen,
                        ACLNN_ERR_PARAM_INVALID,
-                       "cuSeqlensOptional 必须严格递增，错误位置=%zu。", seq);
-            total += static_cast<uint64_t>((length - 1) / FINALIZE_CHUNK_ROWS + 1);
+                       "cuSeqlensOptional 必须非递减，错误位置=%zu。", seq);
+            total += length == 0
+                         ? 0
+                         : static_cast<uint64_t>((length - 1) / FINALIZE_CHUNK_ROWS + 1);
             CHECK_COND(total <= std::numeric_limits<uint32_t>::max(),
                        ACLNN_ERR_PARAM_INVALID,
                        "变长 total_chunks 超出 uint32 范围。");
@@ -184,7 +186,8 @@ aclnnStatus ResolveSequenceShape(const FinalizeParams &params,
             size_t offset = 0;
             for (size_t seq = 0; seq + 1 < cu->Size(); ++seq) {
                 const int64_t length = (*cu)[seq + 1] - (*cu)[seq];
-                const int64_t chunks = (length - 1) / FINALIZE_CHUNK_ROWS + 1;
+                const int64_t chunks =
+                    length == 0 ? 0 : (length - 1) / FINALIZE_CHUNK_ROWS + 1;
                 for (int64_t chunk = 0; chunk < chunks; ++chunk) {
                     CHECK_COND((*params.chunkIndices)[offset] ==
                                    static_cast<int64_t>(seq) &&

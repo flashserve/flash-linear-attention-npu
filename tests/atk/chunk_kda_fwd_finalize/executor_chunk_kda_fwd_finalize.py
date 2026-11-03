@@ -119,8 +119,8 @@ def _prepare(values: dict[str, Any]) -> Inputs:
     if cu is not None:
         if batch != 1 or len(cu) < 2 or cu[0] != 0 or cu[-1] != tokens:
             raise ValueError("varlen requires B=1 and cu_seqlens from 0 to T")
-        if any(left >= right for left, right in zip(cu, cu[1:])):
-            raise ValueError("cu_seqlens must be strictly increasing")
+        if any(left > right for left, right in zip(cu, cu[1:])):
+            raise ValueError("cu_seqlens must be nondecreasing")
     if indices is not None:
         if cu is None:
             raise ValueError("chunk_indices requires cu_seqlens")

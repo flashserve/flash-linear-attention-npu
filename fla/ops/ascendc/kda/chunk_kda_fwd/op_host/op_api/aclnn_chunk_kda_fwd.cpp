@@ -572,8 +572,9 @@ bool AllOutputsContiguous(const ChunkKdaFwdParams &params)
     return true;
 }
 
-// V2 场景判据：三个独立算子的公共约束（BF16、K=V=128、chunk=64、输出可直接写回、
-// cu_seqlens 严格递增）全部满足时才允许走组合实现。
+// V2 场景判据：三个独立算子的公共约束（BF16、K=V=128、chunk=64、
+// 输出可直接写回）全部满足时才允许走组合实现。零长序列由 canonical
+// chunk_indices 跳过，不影响三个阶段的 chunk 数。
 bool CanUseKdaFwdV2Path(const ChunkKdaFwdParams &params, const KdaShapeInfo &info)
 {
     if (params.q->GetDataType() != DataType::DT_BF16) {
@@ -584,15 +585,6 @@ bool CanUseKdaFwdV2Path(const ChunkKdaFwdParams &params, const KdaShapeInfo &inf
     }
     if (params.chunkSize != 64) {
         return false;
-    }
-    // 本算子的 L2 允许 cuSeqlens 非递减（即空序列），三个独立算子要求严格递增。
-    if (params.cuSeqlensOptional != nullptr) {
-        const aclIntArray *cuSeqlens = params.cuSeqlensOptional;
-        for (size_t idx = 0; idx + 1 < cuSeqlens->Size(); ++idx) {
-            if ((*cuSeqlens)[idx] >= (*cuSeqlens)[idx + 1]) {
-                return false;
-            }
-        }
     }
     // 状态的 shape 与 FP32 约束已由 CheckParams 校验；三算子链沿用同一契约。
     return AllOutputsContiguous(params);
@@ -995,8 +987,8 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
     // V2 只实现三个独立算子的组合路径；场景不满足时由 Python 入口回落到
     // aclnnChunkKdaFwd，因此这里直接返回参数错误并说明要求。
     CHECK_COND(CanUseKdaFwdV2Path(params, info), ACLNN_ERR_PARAM_INVALID,
-               "ChunkKdaFwdV2 只支持三算子组合场景：q/k/v 为 BF16、K=V=128、chunk_size=64、"
-               "公开输出连续且 cu_seqlens 严格递增，请改用 aclnnChunkKdaFwd。");
+               "ChunkKdaFwdV2 只支持三算子组合场景：q/k/v 为 BF16、K=V=128、"
+               "chunk_size=64 且公开输出连续，请改用 aclnnChunkKdaFwd。");
     const aclnnStatus kdaFwdV2Status =
         l0op::KdaFwdV2(MakeKdaFwdV2Args(params, info), executorPtr);
     CHECK_RET(kdaFwdV2Status == ACLNN_SUCCESS, kdaFwdV2Status);

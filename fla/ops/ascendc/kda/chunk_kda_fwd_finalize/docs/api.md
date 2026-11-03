@@ -54,7 +54,7 @@ ND 格式；输入允许 L2 连续化，kernel 直接写的输出必须连续。
 [算子 README](../README.md#输入输出)。
 
 `stateVFirst=false` 时 `h` 表示 `[K,V]`；为 true 时表示 `[V,K]`。
-`cuSeqlensOptional` 是严格递增、首 0 末 T 的 host int array。
+`cuSeqlensOptional` 是非递减、首 0 末 T 的 host int array；相邻元素相等表示零长序列。
 有变长元数据时 rank-4 输入要求 `B=1`；`chunkIndicesOptional`
 若提供必须与 `cuSeqlensOptional` 同时存在，且为规范的
 sequence-major `(sequence_id,local_chunk_id)` 列表。

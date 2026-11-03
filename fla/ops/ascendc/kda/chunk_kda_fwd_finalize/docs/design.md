@@ -395,7 +395,7 @@ KDA V2 直接传入共享 FwdH 的 NT-first h，无额外 chunk/head 转置。
 `state_v_first=true` 时，读取 `h` 时交换末两维语义，避免变更公开
 输入的物理存储。
 
-变长 `cu_seqlens` 严格递增且覆盖全部 T token。若提供
+变长 `cu_seqlens` 非递减且覆盖全部 T token；零长序列不生成 chunk。若提供
 `chunk_indices`，它必须与 `cu_seqlens` 同时存在，且恰为所有
 `(sequence_id, local_chunk_id)` 的规范 sequence-major 枚举。输出
 始终保持输入 token 的相对顺序；`BSND/BNSD` 交换 rank-4 的

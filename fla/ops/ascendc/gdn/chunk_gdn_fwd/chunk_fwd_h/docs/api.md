@@ -65,7 +65,7 @@ aclnnStatus aclnnChunkFwdH(
 | `g` | BF16/FP32 | g-only `[B,HV,T]` |
 | `gk` | BF16/FP32 | gk-only `[B,HV,T,128]` |
 | `initial_state` | BF16/FP32 | 可空；`[N,HV,128,128]`，末两维物理顺序由 `state_v_first` 决定 |
-| `cu_seqlens` | host int array | 可空；变长时从 0 开始、以 T 结束且严格递增 |
+| `cu_seqlens` | host int array | 可空；变长时从 0 开始、以 T 结束且非递减，相邻相等表示零长序列 |
 | `chunk_indices` | host int array | 可空；必须为 canonical sequence-major pair 序列 |
 
 `g` 与 `gk` 必须且只能提供一个。g-only 要求 `HV%HK==0`；gk-only 要求 `k` 的 head 数等于
