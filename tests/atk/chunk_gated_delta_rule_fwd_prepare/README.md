@@ -1,5 +1,28 @@
 # ChunkGatedDeltaRuleFwdPrepare ATK 工程
 
+## Issue #965 阶段定位回归
+
+`scripts/check_issue965_wu.py` 是 W/U 同输入阶段定位工具，不能替代下述 ATK 正式验收。
+它从同一次 Prepare 的 A/K/g 独立重算 W/U，以每个 head/chunk 的最大幅值为基准检查
+局部误差（2% + 1e-12），避免小值域全局双标杆掩盖整块旧数据。默认种子 8253/17/29，
+同时覆盖 output_a=False/True；输入由脚本生成，无需原测试工程或 GPU。
+
+```bash
+python tests/atk/chunk_gated_delta_rule_fwd_prepare/scripts/check_issue965_wu.py --device 0
+python tests/atk/chunk_gated_delta_rule_fwd_prepare/scripts/check_issue965_wu.py --device 0 --exp2
+```
+
+默认 B=5、HK=HV=7、T=448 在 28 核设备上覆盖单任务末组、同核三轮复用和闲置 AIV1
+写回前一组。其他核数上出错位置可能变化，也可能需要用 `--batch/--heads/--tokens`
+扩大任务数以触发同核多轮。原实现会在第一个种子的 token 320..383 报 W 错误。
+公开接口、原有 CPU golden、ATK 阈值与用例均不改变。
+
+2026-11-03，A5 / CANN 9.3.0 定向验证：旧包在种子 8253 的上述两个块失败；修复包
+默认三个种子在 output_a=False/True 下均通过，exp2=True 亦通过。原始六例输入回放中，
+8253 的 U 与同 A 重算结果从 16368 个元素不一致降为逐位一致；其余五例 O 与旧包逐位一致。
+六例 CPU 分块/FP64 双标杆的 ATK 26.9.24 离线指标通过，但原 GPU 双标杆、测试方机器、
+完整 ATK 正式验收及 A2/A3 CI 尚待验证，不能据此宣布 issue #965 的原始失败已完全解决。
+
 本目录提供 `chunk_gated_delta_rule_fwd_prepare` 的 ATK 单算子工程：`executor_chunk_gated_delta_rule_fwd_prepare.py`、`gen_chunk_gated_delta_rule_fwd_prepare.py`、`chunk_gated_delta_rule_fwd_prepare.yaml`，以及精度 / 性能 / MSS / 精简四份 JSON。
 
 精度标准为 `mixed_tolerance_bm`（NPU DUT vs CPU 高精度 golden）。CPU 标杆为本目录 `scripts/cpu_golden.py` 的 `cpu_gdn_fwd_l2norm_to_recompute`。

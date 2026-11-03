@@ -1,5 +1,18 @@
 # ChunkGatedDeltaRuleFwdPrepare 算子说明
 
+### A5 单任务尾组的 W/U 写回同步
+
+Stage7 的 W/U 由 Fixpipe 写入 owner AIV 的 UB，下一组由 AIV 搬出到 GM。
+正常组通过下一组 Stage1/3 的依赖链保证前一组 Stage7 完成；下一组只有一个任务时，
+AIV1 没有任务，会跳过这条隐含等待链。因此进入单任务尾组前，AIC 必须发布 Stage7
+完成事件，两个 AIV 均消费该事件后才能搬出前一组 W/U。该条件与既有 token-tail
+等待条件共用 `NeedsStage7Wait`，保证通知/等待配对；正常满组的流水不变。
+
+例如 `B=5, HK=HV=7, T=448, BT=64` 有 245 个任务、62 个组。在 28 核调度下，
+core 5 依次执行组 5、33、61；最后一组只有任务 244。缺少等待时，AIV1 可能把组 5
+的旧 W/U 写到组 33 的地址，对应 batch 2、head 0/2、token 320..383。
+这是同步缺陷，不改变算子的数学公式、dtype 或公开接口。
+
 `ChunkGatedDeltaRuleFwdPrepare` 是分块门控 delta 规则（Chunk Gated Delta Rule）前向准备阶段的融合算子。它把 L2Norm(q/k)、chunk-local gate cumsum、beta sigmoid、KKT + 严格下三角求解 `A=(I+L)^{-1}`、以及 RecomputeWU 收进一个 MIX AIC:AIV 1:2 kernel。
 
 ---

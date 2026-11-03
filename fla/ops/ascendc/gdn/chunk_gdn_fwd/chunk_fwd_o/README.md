@@ -1,4 +1,14 @@
 # ChunkFwdO 算子说明
+
+### A5 Stage1 门控缓冲区边界
+
+优化路径的 `g_scratch` 每槽为 64 个 FP32，`gate_A` 每槽为 64×64 个 FP32。
+`Stage1Gate64VF` 使用单 FP32 寄存器加载 64 个 gate，以标量广播取得当前行 gate，
+计算 `exp(g_i-g_j)`（exp2 路径先乘 ln(2)），每行只存储 64 个 FP32。
+不能用 `DIST_DINTLV_B32` / `DIST_INTLV_B32` 双寄存器接口处理该行：其搬运宽度为
+128 个 FP32，会越读 scratch，并在矩阵末行越写 256 字节。缩小双寄存器 store
+的 mask 不能代替正确的搬运宽度。尾行继续沿用既有 padding 和后续有效区 mask。
+
 `ChunkFwdO` 是一个用于分块门控 delta 规则（Chunk Gated Delta Rule）前向传播过程中的自定义算子。该算子根据 Query、Key、Value、Gate 以及前向隐藏状态，计算并输出前向注意力输出张量 `o`。
 
 ---
