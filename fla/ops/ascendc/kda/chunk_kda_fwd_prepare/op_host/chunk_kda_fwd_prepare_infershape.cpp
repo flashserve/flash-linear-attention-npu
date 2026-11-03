@@ -7,12 +7,28 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <string>
+#include <vector>
 
+#include "op_common/log/log.h"
 #include "chunk_kda_fwd_prepare_tiling.h"
 #include "register/op_impl_registry.h"
 
 namespace ops {
 namespace {
+
+void ReportInferShapeError(gert::InferShapeContext *context, const char *reason)
+{
+    const char *name =
+        context == nullptr || context->GetNodeName() == nullptr ? "ChunkKdaFwdPrepare" : context->GetNodeName();
+    OP_LOGE_LIBOPAPI_REPORT(name, "%s", reason);
+    const std::vector<const char *> keys = {"opName", "reason"};
+    const std::vector<const char *> values = {name, reason};
+    if (REPORT_PREDEFINED_ERR_MSG("EZ1014", keys, values) != 0) {
+        // A missing framework context/shape is not an invalid user tensor value.
+        REPORT_INNER_ERR_MSG("EZ9999", "ChunkKdaFwdPrepare InferShape framework failure: %s", reason);
+    }
+}
 
 enum class PrepareLayout {
     BNSD,
@@ -169,9 +185,14 @@ void SetQkScalarShape(gert::Shape *output, const LogicalShape &shape)
 static ge::graphStatus InferShapeChunkKdaFwdPrepare(
     gert::InferShapeContext *context)
 {
+    if (context == nullptr) {
+        ReportInferShapeError(nullptr, "InferShapeChunkKdaFwdPrepare received a null InferShapeContext");
+        return ge::GRAPH_FAILED;
+    }
     const auto *qShape = context->GetInputShape(optiling::PREPARE_INPUT_Q);
     const auto *vShape = context->GetInputShape(optiling::PREPARE_INPUT_V);
     if (qShape == nullptr || vShape == nullptr) {
+        ReportInferShapeError(context, "mandatory q/v input shape metadata is missing from InferShapeContext");
         return ge::GRAPH_FAILED;
     }
 
@@ -190,13 +211,23 @@ static ge::graphStatus InferShapeChunkKdaFwdPrepare(
         }
     }
     if (chunkSize != 64) {
+        OP_LOGE_FOR_INVALID_VALUE(Ops::Base::GetOpInfo(context), "chunk_size", std::to_string(chunkSize), "64");
         return ge::GRAPH_FAILED;
     }
 
     PrepareLayout parsedLayout;
     LogicalShape shape;
-    if (!ParseLayout(layout, parsedLayout) ||
-        !ResolveLogicalShape(*qShape, *vShape, parsedLayout, shape)) {
+    if (!ParseLayout(layout, parsedLayout)) {
+        OP_LOGE_FOR_INVALID_FORMAT(Ops::Base::GetOpInfo(context), "layout", layout,
+                                   "BNSD, BSND, NTD or TND (case-sensitive)");
+        return ge::GRAPH_FAILED;
+    }
+    if (!ResolveLogicalShape(*qShape, *vShape, parsedLayout, shape)) {
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+            Ops::Base::GetOpInfo(context), "q,v",
+            std::to_string(qShape->GetDimNum()) + "," + std::to_string(vShape->GetDimNum()),
+            "layout=" + std::string(layout) + "; both ranks must be " +
+                std::to_string(parsedLayout == PrepareLayout::NTD || parsedLayout == PrepareLayout::TND ? 3 : 4));
         return ge::GRAPH_FAILED;
     }
 

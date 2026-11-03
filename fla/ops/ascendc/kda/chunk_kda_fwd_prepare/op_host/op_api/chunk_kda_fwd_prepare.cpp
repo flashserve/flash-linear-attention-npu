@@ -111,8 +111,10 @@ ChunkKdaFwdPrepareOutputs ChunkKdaFwdPrepare(
         ConvertIntArrayToTensor(chunkIndicesOptional, executor);
     if ((cuSeqlensOptional != nullptr && cuSeqlens == nullptr) ||
         (chunkIndicesOptional != nullptr && chunkIndices == nullptr)) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
-                "转换 cu_seqlens/chunk_indices 到 Tensor 失败。");
+        // ConvertToTensor owns the allocation/conversion error.
+        OP_LOGE_WITHOUT_REPORT(
+            ACLNN_ERR_INNER_NULLPTR,
+            "ConvertToTensor(cu_seqlens/chunk_indices) returned null; preserve the lower-level error.");
         return {};
     }
 
@@ -141,7 +143,9 @@ ChunkKdaFwdPrepareOutputs ChunkKdaFwdPrepare(
         qHatForKernel == nullptr || kHatForKernel == nullptr ||
         qRstdForKernel == nullptr || kRstdForKernel == nullptr ||
         betaEffForKernel == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "创建空输出 descriptor 失败。");
+        OP_LOGE_WITHOUT_REPORT(
+            ACLNN_ERR_INNER_NULLPTR,
+            "AllocTensor for an inactive output descriptor returned null; preserve the allocator error.");
         return {};
     }
 
@@ -156,8 +160,8 @@ ChunkKdaFwdPrepareOutputs ChunkKdaFwdPrepare(
                 useGateInKernel, useBetaSigmoidInKernel, allowNegEigval,
                 safeGate, lowerBoundAttr, useExp2, outputMode));
     if (status != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "添加 ChunkKdaFwdPrepare AI Core 任务失败。");
+        // Launcher failures can be Tiling/configuration failures, not bad user parameters.
+        OP_LOGE_WITHOUT_REPORT(status, "ADD_TO_LAUNCHER_LIST_AICORE(ChunkKdaFwdPrepare) failed, status=%d.", status);
         return {};
     }
 
