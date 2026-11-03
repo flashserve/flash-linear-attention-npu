@@ -80,7 +80,15 @@ def reject(name, updates, code, parameter, *, status=161002, null_pointer=None, 
             code = "EZ0004" if status == 161001 else legacy.get(code, "EZ0002")
         assert observed == status, (name, observed, status, message)
         assert code in message and parameter in message and "aclnnChunkKdaFwdPrepare" in message, (name, message)
-        field = re.search(r"(?:Parameters?|Attribute|Input parameter) (.*?) of aclnnChunkKdaFwdPrepare", message)
+        entity = re.escape("aclnnChunkKdaFwdPrepare")
+        patterns = (
+            rf"(?:Parameters?|Attribute|Input parameter) (.*?) of {entity}",
+            rf"OP\[{entity}\] attr\[: (.*?)\],",
+            rf"OP\[{entity}\] (.*?) has incorrect (?:dtype|format)",
+            rf"OP\[{entity}\] get \[(.*?)\] failed\.",
+        )
+        field = next((match for pattern in patterns
+                      if (match := re.search(pattern, message)) is not None), None)
         assert field is not None, (name, message)
         reported = field.group(1)
         assert (reported == parameter or parameter in reported.split(",") or
