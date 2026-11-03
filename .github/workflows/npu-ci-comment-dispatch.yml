@@ -17,8 +17,9 @@ on:
 permissions:
   actions: write
   contents: read
-  issues: read
+  issues: write
   pull-requests: read
+  statuses: write
 
 jobs:
   dispatch:
@@ -29,11 +30,25 @@ jobs:
       contains(github.event.comment.body, '/run-npu-ci')
     runs-on: ubuntu-latest
     steps:
+      - name: 检出 CI 权限检查脚本
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: ci-control
+          sparse-checkout: .github/scripts/npu_ci_authorization.js
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - name: 分发到 PR 目标分支
         uses: actions/github-script@v8
+        env:
+          NPU_CI_AUTH_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_authorization.js
+          NPU_CI_RUN_ATTEMPT: ${{ github.run_attempt }}
+          NPU_CI_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         with:
           github-token: ${{ github.token }}
           script: |
+            const auth = require(process.env.NPU_CI_AUTH_SCRIPT || './.github/scripts/npu_ci_authorization.js');
             const body = (context.payload.comment.body || '').trim();
             const command = body.match(/^\/run-npu-ci(?:\s+([\s\S]*))?$/);
             if (!command) {
@@ -47,6 +62,8 @@ jobs:
             let ops = '';
             let opsProvided = false;
             let requestedRef = '';
+            let ciModified = false;
+            let ciModifiedProvided = false;
             for (const part of parts) {
               if (part === 'quick' || part === 'full') {
                 if (modeProvided) {
@@ -62,6 +79,11 @@ jobs:
                 }
                 ops = part.slice('ops='.length);
                 opsProvided = true;
+              } else if (part.startsWith('ci_modified=')) {
+                if (ciModifiedProvided) throw new Error('ci_modified 参数只能指定一次。');
+                if (!part.slice('ci_modified='.length)) throw new Error('ci_modified 只接受 true 或 false。');
+                ciModified = auth.normalizeCiModified(part.slice('ci_modified='.length));
+                ciModifiedProvided = true;
               } else if (part.startsWith('ci_ref=') || part.startsWith('branch=')) {
                 if (requestedRef) {
                   core.setFailed('CI 定义分支只能指定一次。');
@@ -83,21 +105,7 @@ jobs:
             }
 
             const actor = context.actor;
-            let actorPermission = 'none';
-            try {
-              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                username: actor,
-              });
-              actorPermission = data.permission || 'none';
-            } catch (error) {
-              core.warning(`Unable to inspect repository permission for ${actor}: ${error.message}`);
-            }
-            if (actorPermission !== 'admin') {
-              core.setFailed(`${actor} 无权触发 NPU CI：需要仓库 Admin 权限，当前权限为 ${actorPermission}。`);
-              return;
-            }
+            const subjects = await auth.authorizeCiRequest({ github, context, requestedBy: actor });
 
             const prNumber = context.payload.issue.number;
             const { data: pr } = await github.rest.pulls.get({
@@ -108,6 +116,22 @@ jobs:
             if (pr.draft) {
               core.setFailed(`PR #${prNumber} 仍是草稿，请先标记为 ready for review 后再运行 NPU CI。`);
               return;
+            }
+
+            if (await auth.hasCiChanges({ github, context, pr })) {
+              try {
+                await auth.requireCiModificationApproval({ github, context, usernames: subjects, confirmed: ciModified });
+              } catch (error) {
+                const contexts = ops.trim() ? ['NPU CI / A2+A5 / 定向诊断'] : auth.CI_CHECK_CONTEXTS;
+                await Promise.all(contexts.map((statusContext) => github.rest.repos.createCommitStatus({
+                  ...context.repo, sha: pr.head.sha, state: 'failure', context: statusContext,
+                  description: 'CI 文件变更未经管理员 ci_modified=true 确认', target_url: pr.html_url,
+                })));
+                await github.rest.issues.createComment({ ...context.repo, issue_number: prNumber,
+                  body: `NPU CI 拒绝分发。\n\n原因及修改建议：${error.message}` });
+                core.setFailed(error.message);
+                return;
+              }
             }
 
             const targetRef = requestedRef || pr.base.ref;
@@ -157,6 +181,7 @@ jobs:
                 pr_number: String(prNumber),
                 ci_mode: ciMode,
                 ops,
+                ci_modified: String(ciModified),
                 requested_by: actor,
               },
             });

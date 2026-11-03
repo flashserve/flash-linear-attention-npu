@@ -37,7 +37,7 @@ PR 合入前仍需要 2 个 approval。该要求由 GitHub 分支保护原生能
 
 ## NPU CI 门禁
 
-NPU 资源有限，`NPU CI` 不会由 PR 新建、重开或 push 新 commit 自动执行。发生这些事件时，默认状态 workflow 会给当前 head commit 写入以下 6 个 pending 状态，描述为“未执行”，并在 PR 评论区提示可请求仓库 Admin 权限账号触发：
+NPU 资源有限，`NPU CI` 不会由 PR 新建、重开或 push 新 commit 自动执行。发生这些事件时，默认状态 workflow 会给当前 head commit 写入以下 6 个 pending 状态，描述为“未执行”，并在 PR 评论区提示可请求 CI 触发名单中的账号触发：
 
 1. `NPU CI / A2+A5 / 01 环境、wheel 与运行时契约`
 2. `NPU CI / A2+A5 / 02 全量 OPP 构建`
@@ -48,9 +48,17 @@ NPU 资源有限，`NPU CI` 不会由 PR 新建、重开或 push 新 commit 自�
 
 一次触发固定并行验证 A2（`ascend910b`）和 A5（`ascend950`）。每个平台内部按顺序执行前 5 个分项；任一分项失败时，后续分项标记为未执行，不再继续运行。任一平台 job 失败后，Actions 会取消仍在排队或运行的另一平台 job，避免继续占用 NPU；汇总结果仍按失败收敛。可执行分项失败时，关键诊断会给出 `CI_STAGE=<分项>`、CI 模式和目标 SOC 对应的 `bash ci/run_ci_container.sh` 复现命令。两个 self-hosted job 只上传带平台、SOC、commit、Actions run 和 attempt 身份的分项及精度结果；GitHub-hosted 汇总 job 校验两平台结果后发布 6 个 aggregate context，其中第 6 项负责报告完整性和 PR commit 一致性。6 个 context 必须来自同一次 A2+A5 Actions run；任一平台缺席、任一已执行分项失败、后续分项未执行、精度未通过或报告身份不匹配，都不能满足门禁。
 
-PR 合入前，当前 head commit 的 6 个 NPU 状态和自动执行的 `CI 契约测试` 必须全部成功；当 PR 更新 commit 后，旧 commit 上的 CI 成功状态自动失效，需要仓库 Admin 权限账号重新触发 NPU CI。
+PR 合入前，当前 head commit 的 6 个 NPU 状态和自动执行的 `CI 契约测试` 必须全部成功；当 PR 更新 commit 后，旧 commit 上的 CI 成功状态自动失效，需要 CI 触发名单中的账号重新触发 NPU CI。
 
-仓库 Admin 权限账号可以通过两种方式触发：
+默认分支的 [`.github/npu-ci-users.json`](../.github/npu-ci-users.json) 独立维护可触发用户名；仓库读写权限不直接赋予触发权。评论分发、手动执行和 Actions 重跑均校验名单，重跑使用 `github.triggering_actor`，PR 自身修改名单不会授予权限。
+
+`Re-run failed jobs` 即使复用成功的 prepare，每个设备任务仍会先校验实际重跑人的名单和按需 Admin 身份，并检查 PR 状态及固定 head/base；PR 或确认已变化时拒绝复用，需重新触发完整流程。
+
+PR 修改非 Markdown 的 `ci/` 或 `.github/` 文件时，默认状态直接失败，需要同时在名单中的仓库 Admin 使用 `/run-npu-ci quick ci_modified=true` 确认。只有原触发人和实际重跑人都满足对应要求才执行；`ci_modified` 只接受 `true/false`。文件检测读取完整列表并检查重命名两侧；列表不完整、权限读取失败均拒绝。确认绑定当前 PR、目标分支和 base/head commit，不会复用其他 PR 的确认；纯 CI 文件变更检测本身不新增编译规则。
+
+设备上的 A2/A5 一律使用当前 PR 合并结果中的 `ci/`，不再检出或叠加可信 CI 目录。Actions 调度、鉴权与最终状态发布仍固定为所选 workflow commit，不执行 PR 的 Actions 控制脚本。
+
+CI 触发名单中的账号可以通过两种方式触发：
 
 1. 在 GitHub `Actions` 页面选择 `NPU CI`，点击 `Run workflow`，填写 PR 编号和 `quick/full` 模式；正式门禁请求不填写 `ops`，仅在定向诊断时填写 `ops`。
 2. 在 PR 评论区发送命令：
@@ -62,13 +70,13 @@ PR 合入前，当前 head commit 的 6 个 NPU 状态和自动执行的 `CI 契
 /run-npu-ci quick ops=causal_conv1d,chunk_bwd_dv_local
 ```
 
-`NPU CI` 的实际 workflow 文件位于每个目标分支的 `.github/workflows/ci.yml`。评论事件不能直接按分支读取 workflow，因此默认分支上的 `NPU CI 评论分发` workflow 会先校验评论人的 Admin 权限，再通过 `workflow_dispatch.ref` 启动 PR 目标分支（`pr.base.ref`）上的 `ci.yml`。需要临时使用其他 CI 定义分支时，可由 Admin 在命令中追加 `ci_ref=<branch>`，例如：
+`NPU CI` 的实际 workflow 文件位于每个目标分支的 `.github/workflows/ci.yml`。评论事件不能直接按分支读取 workflow，因此默认分支上的 `NPU CI 评论分发` workflow 会先校验评论人在默认分支 `.github/npu-ci-users.json` 名单中，再通过 `workflow_dispatch.ref` 启动 PR 目标分支（`pr.base.ref`）上的 `ci.yml`。需要临时使用其他 CI 定义分支时，可由授权账号在命令中追加 `ci_ref=<branch>`，例如：
 
 ```text
 /run-npu-ci quick ci_ref=release-v2
 ```
 
-`ci_ref` 分支必须存在 `.github/workflows/ci.yml`，且该文件必须声明 `workflow_dispatch`；每个维护分支需要保持相同的 `pr_number`、`ci_mode`、`ops` 和 `requested_by` input 契约。Actions 页面手动运行时，直接在 `Run workflow` 的 `Branch` 下拉框选择 CI 定义分支，GitHub 会使用所选分支版本的 `ci.yml`。
+`ci_ref` 分支必须存在 `.github/workflows/ci.yml`，且该文件必须声明 `workflow_dispatch`；每个维护分支需要保持相同的 `pr_number`、`ci_mode`、`ops`、`ci_modified` 和 `requested_by` input 契约。Actions 页面手动运行时，直接在 `Run workflow` 的 `Branch` 下拉框选择 CI 定义分支，GitHub 会使用所选分支版本的 `ci.yml`。
 
 带 `ops=` 的触发是编译定向诊断：只顺序执行第 01 项环境契约和第 02 项指定算子 OPP 构建，不执行 GDR 精度或后续安装分项；它只发布 `NPU CI / A2+A5 / 定向诊断`，不会写入或覆盖 01-06 正式门禁状态。用于合入门禁的运行必须省略 `ops`。
 

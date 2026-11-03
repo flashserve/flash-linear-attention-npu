@@ -77,11 +77,13 @@ globalThis.context = {{
   repo: {{ owner: 'example', repo: 'repo' }},
 }};
 globalThis.github = {{
+  paginate: async () => [],
   rest: {{
     repos: {{
       getCollaboratorPermissionLevel: async () => ({{ data: {{ permission: 'admin' }} }}),
       getBranch: async (payload) => ({{ data: {{ name: payload.branch }} }}),
-      getContent: async () => ({{
+      get: async () => ({{ data: {{ default_branch: 'main' }} }}),
+      getContent: async (payload) => payload.path === '.github/npu-ci-users.json' ? ({{ data: {{ type: 'file', content: Buffer.from(JSON.stringify({{users:['ci-admin']}})).toString('base64') }} }}) : ({{
         data: {{
           type: 'file',
           encoding: 'base64',
@@ -92,8 +94,8 @@ globalThis.github = {{
     pulls: {{
       get: async () => ({{
         data: {{
-          draft: false,
-          base: {{ ref: 'main' }},
+          number: 527, changed_files: 0, draft: false,
+          base: {{ sha: 'c'.repeat(40), ref: 'main' }},
           head: {{ sha: 'a'.repeat(40) }},
         }},
       }}),
@@ -119,6 +121,8 @@ globalThis.core = {{
             record_file = Path(temp_dir) / "records.json"
             env = os.environ.copy()
             env["PR_COMMENT"] = comment
+            env["NPU_CI_RUN_ATTEMPT"] = '1'
+            env["NPU_CI_AUTH_SCRIPT"] = str(REPO_ROOT / '.github/scripts/npu_ci_authorization.js')
             env["RECORD_FILE"] = str(record_file)
             completed = subprocess.run(
                 ["node"],

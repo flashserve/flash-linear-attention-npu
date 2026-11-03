@@ -4,6 +4,9 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
   const fs = require('fs');
   const path = require('path');
   const mode = process.env.NPU_CI_MODE || '';
+  const approvalKey = process.env.NPU_CI_APPROVAL_KEY || '';
+  if (approvalKey && !/^[0-9a-f]{12}$/.test(approvalKey)) throw new Error('无效的 CI 修改确认标识，请由管理员重新触发');
+  const approvalMarker = approvalKey ? ` ci-ok=${approvalKey}` : '';
   const ops = process.env.NPU_OPS || '';
   const opsItems = ops.split(',').map((item) => item.trim());
   if (ops.trim() && opsItems.some((item) =>
@@ -902,7 +905,7 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
       sha,
       state: item.ok ? 'success' : 'failure',
       context: item.context,
-      description: truncateDescription(item.description),
+      description: `${truncateDescription(item.description).slice(0, 140 - approvalMarker.length)}${approvalMarker}`,
       target_url: targetUrl,
     })) : [];
   if (requestScope === 'all') {
@@ -912,7 +915,7 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
       sha,
       state: finalOk ? 'success' : 'failure',
       context: finalStatusDef.context,
-      description: truncateDescription(finalDescription),
+      description: `${truncateDescription(finalDescription).slice(0, 140 - approvalMarker.length)}${approvalMarker}`,
       target_url: targetUrl,
     });
   } else {

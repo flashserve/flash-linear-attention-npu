@@ -88,6 +88,7 @@ class WorkflowResultPresentationTest(unittest.TestCase):
         expected_run_attempt="1",
         platform_attempts=None,
         nested_artifacts=False,
+        approval_key="",
     ):
         sha = "a" * 40
         run_id = "42"
@@ -632,6 +633,7 @@ globalThis.core = {
                     "COMMENT_FILE": str(comment_file),
                     "RECORD_FILE": str(record_file),
                     "NPU_PUBLISH_SCRIPT_PATH": str(PUBLISH_SCRIPT_PATH),
+                    "NPU_CI_APPROVAL_KEY": approval_key,
                     "NPU_CI_MODE": "quick",
                     "NPU_OPS": ops,
                     "NPU_PR_NUMBER": "527",
@@ -710,14 +712,16 @@ globalThis.github = {
     },
     pulls: {
       get: async () => ({ data: {
-        draft: false,
-        base: { ref: 'main' },
+        number: 527, changed_files: 0, draft: false,
+        base: { sha: 'c'.repeat(40), ref: 'main' },
         head: { sha: process.env.PREPARE_HEAD_SHA, repo: { full_name: 'example/repo' } },
       } }),
     },
     repos: {
       createCommitStatus: async (payload) => record('status', payload),
       getBranch: async () => ({ data: { commit: { sha: 'c'.repeat(40) } } }),
+      get: async () => ({ data: { default_branch: 'main' } }),
+      getContent: async () => ({data:{type:'file',content:Buffer.from(JSON.stringify({users:['ci-admin']})).toString('base64')}}),
       getCollaboratorPermissionLevel: async () => ({ data: { permission: 'admin' } }),
       listCommitStatusesForRef: statusEndpoint,
     },
@@ -747,6 +751,8 @@ globalThis.core = {
                     "PREPARE_MODE": mode,
                     "PREPARE_OPS": ops,
                     "NPU_CI_RUN_ATTEMPT": run_attempt,
+                    "NPU_CI_TRIGGERING_ACTOR": "ci-admin",
+                    "NPU_CI_AUTH_SCRIPT": str(REPO_ROOT / ".github/scripts/npu_ci_authorization.js"),
                     "PREPARE_WORKFLOW_RUN_STATUS": workflow_run_status,
                     "PREPARE_STATUSES": json.dumps(statuses),
                     "RECORD_FILE": str(record_file),
@@ -1100,27 +1106,22 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
             self.assertEqual(removals, [env["CI_HOST_TMPDIR"]])
             self.assertNotIn(env["TMPDIR"], removals)
 
-    @unittest.skipUnless(os.name == "posix" and shutil.which("bash") and shutil.which("python3"), "Linux shell is required")
-    def test_a2_case_archive_is_removed_on_failure_without_cleaning_static_tmpdir(self):
-        step = next(step for step in self.matrix_steps if step["name"] == "使用可信 CI 脚本")
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            (root / "repo" / "ci").mkdir(parents=True)
-            (root / "repo" / "ci" / "example_st_cases.json").write_text("invalid JSON", encoding="utf-8")
-            scratch = root / "shared temporary root"
-            scratch.mkdir()
-            keep = scratch / "unrelated-run-data"
-            keep.write_text("keep", encoding="utf-8")
-            env = os.environ.copy()
-            env["TMPDIR"] = str(scratch)
-            completed = subprocess.run(
-                ["bash", "-e", "-o", "pipefail", "-c", step["run"]], cwd=root, env=env,
-                text=True, encoding="utf-8", capture_output=True, check=False,
-            )
-            self.assertNotEqual(completed.returncode, 0)
-            self.assertIn("JSONDecodeError", completed.stderr)
-            self.assertEqual(list(scratch.iterdir()), [keep])
-            self.assertEqual(keep.read_text(encoding="utf-8"), "keep")
+    def test_device_jobs_use_the_pr_ci_without_overlay(self):
+        device_source = "\n".join(step.get("run", "") for step in self.matrix_steps)
+        self.assertNotIn("trusted-ci", device_source)
+        self.assertNotIn("rm -rf repo/ci", device_source)
+        self.assertNotIn("cp -a", device_source)
+        self.assertTrue(any("git merge --no-ff" in step.get("run", "") for step in self.matrix_steps))
+        self.assertIn('extract_archive(archive_dir / "merge.tar.gz", Path("repo"))', device_source)
+
+    def test_publisher_keeps_admin_approval_on_each_final_status(self):
+        completed, _, records = self._run_finalize_script(approval_key="123456abcdef")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        statuses = [item["payload"] for item in records if item["kind"] == "status"]
+        self.assertEqual(len(statuses), 6)
+        for status in statuses:
+            self.assertTrue(status["description"].endswith(" ci-ok=123456abcdef"))
+            self.assertLessEqual(len(status["description"]), 140)
 
     @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
     def test_a5_archive_cleanup_rejects_a_different_tmpdir_before_removing_any_directory(self):

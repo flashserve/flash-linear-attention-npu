@@ -2,7 +2,7 @@ name: NPU CI 默认状态
 
 on:
   pull_request_target:
-    types: [opened, reopened, synchronize, ready_for_review]
+    types: [opened, reopened, synchronize, ready_for_review, edited]
 
 jobs:
   mark-not-run:
@@ -14,14 +14,30 @@ jobs:
       statuses: write
       contents: read
     steps:
+      - name: 检出 CI 权限检查脚本
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: ci-control
+          sparse-checkout: .github/scripts/npu_ci_authorization.js
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - name: 写入未执行状态并提示触发人
         uses: actions/github-script@v8
+        env:
+          NPU_CI_AUTH_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_authorization.js
         with:
           github-token: ${{ github.token }}
           script: |
+            const auth = require(process.env.NPU_CI_AUTH_SCRIPT || './.github/scripts/npu_ci_authorization.js');
             const pr = context.payload.pull_request;
             if (!pr) {
               core.notice('没有找到 Pull Request 事件信息。');
+              return;
+            }
+            if (context.payload.action === 'edited' && !context.payload.changes?.base) {
+              core.notice('PR 标题或说明更新不改变 NPU CI 确认。');
               return;
             }
 
@@ -80,11 +96,13 @@ jobs:
               return;
             }
 
+            const ciModified = await auth.hasCiChanges({ github, context, pr });
             const marker = `<!-- npu-ci:pr=${pr.number}:sha=${pr.head.sha} -->`;
             const isCommitUpdate = context.payload.action === 'synchronize';
-            const pendingDescription = isCommitUpdate
+            const pendingDescription = ciModified
+              ? '未确认：CI 文件变更须管理员添加 ci_modified=true 触发' : isCommitUpdate
               ? '未执行：commit 已变化，请重新触发 /run-npu-ci quick'
-              : '未执行：请仓库 Admin 评论 /run-npu-ci quick';
+              : '未执行：请授权 CI 账号评论 /run-npu-ci quick';
             const title = isCommitUpdate
               ? `PR commit 已变化，NPU CI 已重置为未执行：\`${pr.head.sha}\`。`
               : `NPU CI 暂未执行：\`${pr.head.sha}\`。`;
@@ -136,17 +154,21 @@ jobs:
               checkContexts.includes(status.context) &&
               /\/actions\/runs\/\d+/.test(status.target_url || '')
             );
-            if (executionStatus) {
+            if (ciModified && auth.hasApprovedRun({ statuses, contexts: checkContexts, context, pr })) {
+              core.notice('当前 PR、目标分支和 commit 已获得管理员确认，保留其 NPU CI 执行状态。');
+              return;
+            }
+            if (executionStatus && !ciModified && context.payload.action !== 'edited') {
               core.notice(`当前 head commit 已经有 NPU CI 执行状态：${executionStatus.state}。`);
               return;
             }
-            const missingContexts = checkContexts.filter((statusContext) => !latestByContext.has(statusContext));
+            const missingContexts = checkContexts.filter((statusContext) => ciModified || context.payload.action === 'edited' || !latestByContext.has(statusContext));
             const pendingResults = await Promise.allSettled(missingContexts.map((statusContext) =>
               github.rest.repos.createCommitStatus({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 sha: pr.head.sha,
-                state: 'pending',
+                state: ciModified ? 'failure' : 'pending',
                 context: statusContext,
                 description: pendingDescription,
                 target_url: pr.html_url,
@@ -171,8 +193,9 @@ jobs:
               baseRef === defaultBranch ? '' : `- CI 定义分支：\`${baseRef}\`（评论触发的 NPU CI 在该分支的定义上执行）`,
               requirementLine,
               isDefaultProfile ? '- 执行方式：按顺序执行；前置失败时后续项跳过' : '',
-              '- 触发命令：仓库 Admin 权限账号在本 PR 评论 `/run-npu-ci quick` 或 `/run-npu-ci full`',
-              '- 可请求触发的 CI 账号：仓库 Admin 权限账号',
+              '- 触发命令：授权账号在本 PR 评论 `/run-npu-ci quick` 或 `/run-npu-ci full`',
+              '- 可请求触发的 CI 账号：默认分支 `.github/npu-ci-users.json` 名单',
+              ciModified ? '- CI 文件变更尚未确认：需要同时在名单中的仓库 Admin 添加 `ci_modified=true`；设备直接执行当前 PR 的 ci/' : '',
               '- Example ST：必跑',
             ].filter(Boolean).join('\n');
 
