@@ -3,7 +3,7 @@
 const {
   REQUIRED_CHECKS, SCOPED_CHECK, requireAuthorizedCiUser, inspectChanges,
   requireCiModificationApproval, normalizeCiModified,
-  assertUnchangedPullRequest, normalizeOps, normalizeDeviceId, buildRequestKey, buildCiApprovalKey, createComment, writeStatuses,
+  assertUnchangedPullRequest, normalizeOps, normalizeAtkOps, normalizeDeviceId, buildRequestKey, buildCiApprovalKey, createComment, writeStatuses,
 } = require('./npu_ci_policy');
 
 function latestByContext(statuses) {
@@ -44,7 +44,7 @@ module.exports = async function prepareNpuCi({ github, context, core }) {
   const prNumber = Number(inputs.pr_number);
   const ciMode = inputs.ci_mode || 'quick';
   const ops = normalizeOps(inputs.ops || '');
-  const atkOps = normalizeOps(inputs.atk_ops || '');
+  const atkOps = normalizeAtkOps(inputs.atk_ops || '');
   const deviceId = normalizeDeviceId(inputs.device_id || '');
   const ciModifiedConfirmed = normalizeCiModified(inputs.ci_modified || 'false');
   if (!Number.isInteger(prNumber) || prNumber <= 0) throw new Error(`无效的 PR 编号：${inputs.pr_number}`);
@@ -81,7 +81,7 @@ module.exports = async function prepareNpuCi({ github, context, core }) {
     `- CI 定义分支：\`${process.env.NPU_CI_WORKFLOW_REF || ''}\``,
     '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
     `- 编译计划：\`${plan.build_kind}\`；增量算子：\`${plan.build_ops || '(无)'}\``,
-    `- ATK 算子：\`${plan.atk_ops || '(无)'}\`；设备：\`${plan.device_id || '自动选择'}\``,
+    `- ATK 算子：\`${plan.atk_ops || '(无)'}\`${atkOps === 'null' ? '（atk-ops=null，显式跳过 ATK）' : ''}；设备：\`${plan.device_id || '自动选择'}\``,
     ops ? `- 定向编译诊断：\`${ops}\`；仅执行 01-02，不改写正式门禁状态` : '',
   ].filter(Boolean);
   const comment = async (title, extra = []) => createComment({
@@ -106,7 +106,7 @@ module.exports = async function prepareNpuCi({ github, context, core }) {
     }
   }
 
-  if (plan.documentation_only && ciMode !== 'full' && !ops && !atkOps) {
+  if (plan.documentation_only && ciMode !== 'full' && !ops && !plan.atk_ops) {
     await writeStatuses({ github, context, pr, checks, state: 'success',
       description: '仅修改文档或 LICENSES，跳过 NPU CI', targetUrl: runUrl });
     await comment(`PR \`${pr.head.sha}\` 仅修改 .md、docs/ 或 LICENSES/，NPU CI 直接通过，不占用 NPU。`);

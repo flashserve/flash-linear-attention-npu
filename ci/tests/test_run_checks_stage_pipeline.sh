@@ -253,9 +253,10 @@ ENV
             else
                 ! grep -Fq 'bash test.sh' "$command_log"
             fi
-            if [[ -n "$atk_ops" ]]; then
+            if [[ -n "$atk_ops" && "$atk_ops" != null ]]; then
                 grep -Fq "atk ops=$atk_ops device=$device" "$command_log"
             elif [[ "$expected_top_status" == success ]]; then
+                ! grep -Fq 'bash ci/run_atk_checks.sh' "$command_log"
                 command "$CI_TEST_REAL_PYTHON3" -c 'import json,sys; p=json.load(open(sys.argv[1])); assert p["stages"]["atk-accuracy"]["reason"] == "no ATK operators selected", p' "$report_file"
             fi
         fi
@@ -265,6 +266,7 @@ ENV
 run_case scoped opp-package false 0 success success,success,skipped,skipped,skipped,skipped false '' false false incremental quick '' chunk_fwd_o
 run_case base all false 0 success success,success,success,success,success,skipped true
 run_case incremental-atk all false 0 success success,success,success,success,success,success true '' false false incremental quick chunk_fwd_o chunk_fwd_o 3
+run_case incremental-atk-disabled all false 0 success success,success,success,success,success,skipped true '' false false incremental quick null chunk_fwd_o
 run_case full all false 0 success success,success,success,success,success,skipped true '' false false base full
 run_case torch-only all false 0 success success,success,success,success,success,skipped true '' false false torch
 run_case quick-extra-torch all false 0 success success,success,success,success,success,skipped true '' false false base quick '' '' 0 true

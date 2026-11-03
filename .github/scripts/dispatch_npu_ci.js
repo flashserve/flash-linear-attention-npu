@@ -1,7 +1,7 @@
 'use strict';
 
 const {
-  REQUIRED_CHECKS, SCOPED_CHECK, requireAuthorizedCiUser, normalizeOps, normalizeDeviceId,
+  REQUIRED_CHECKS, SCOPED_CHECK, requireAuthorizedCiUser, normalizeOps, normalizeAtkOps, normalizeDeviceId,
   normalizeCiModified, changedFiles, changedPaths, isDocumentationPath,
   requireCiModificationApproval, createComment, writeStatuses, decodeFile,
 } = require('./npu_ci_policy');
@@ -22,8 +22,8 @@ function parseCommand(body) {
       result.ops = normalizeOps(part.slice(4));
     } else if (part.startsWith('atk-ops=')) {
       key = 'atkOps';
-      if (!part.slice(8)) throw new Error('atk-ops 参数不能为空，请提供逗号分隔的算子名。');
-      result.atkOps = normalizeOps(part.slice(8));
+      if (!part.slice(8)) throw new Error('atk-ops 参数不能为空，请提供逗号分隔的算子名，或使用 atk-ops=null 跳过。');
+      result.atkOps = normalizeAtkOps(part.slice(8));
     } else if (part.startsWith('device-id=')) {
       key = 'deviceId';
       if (!part.slice(10)) throw new Error('device-id 参数不能为空，请提供非负整数。');

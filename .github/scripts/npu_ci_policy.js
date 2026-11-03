@@ -86,13 +86,28 @@ function changedPaths(files) {
   return [...new Set(files.flatMap((file) => [file.filename, file.previous_filename].filter(Boolean)))];
 }
 
-async function allAtkOperators({ github, context, pr }) {
+async function headTree({ github, context, pr }) {
   const { data } = await github.rest.git.getTree({ ...context.repo, tree_sha: pr.head.sha, recursive: '1' });
   if (data.truncated || !Array.isArray(data.tree)) {
-    throw new Error('PR 目录树不完整，无法确定共享 ATK 修改的影响范围，请缩小 PR 或修复目录树读取。');
+    throw new Error('PR 目录树不完整，无法确定算子编译和 ATK 范围，请缩小 PR 或修复目录树读取。');
   }
+  return data.tree;
+}
+
+function operatorRoots(tree) {
+  const roots = new Set();
+  for (const entry of tree) {
+    const match = entry.path?.match(/^(fla\/ops\/ascendc\/.+)\/op_host\/CMakeLists\.txt$/);
+    if (match && !match[1].split('/').includes('tests')) roots.add(match[1]);
+  }
+  // A nested op_host is a build root only with its own CMakeLists.txt.
+  // Match the closest such root, including independently built internal operators.
+  return [...roots].sort((a, b) => b.length - a.length || a.localeCompare(b));
+}
+
+function allAtkOperators(tree) {
   const operators = new Set();
-  for (const entry of data.tree) {
+  for (const entry of tree) {
     const match = entry.path?.match(/^tests\/atk\/([^/]+)\//);
     if (match && match[1] !== 'common') operators.add(match[1]);
   }
@@ -100,26 +115,29 @@ async function allAtkOperators({ github, context, pr }) {
   return [...operators].sort();
 }
 
-function classifyChanges(files, { ciMode = 'quick', ops = '', atkOps = '', deviceId = '', allAtkOps = [] } = {}) {
+function classifyChanges(files, { ciMode = 'quick', ops = '', atkOps = '', deviceId = '', allAtkOps = [], opRoots = [] } = {}) {
   const paths = changedPaths(files);
   const documentationOnly = paths.length > 0 && paths.every(isDocumentationPath);
   let fullBuild = ciMode === 'full';
   let ciModified = false;
   let torchModified = false;
   let sharedAtkModified = false;
-  const compiledOps = new Set(normalizeOps(ops).split(',').filter(Boolean));
-  const testedOps = new Set(normalizeOps(atkOps).split(',').filter(Boolean));
+  const requestedOps = normalizeOps(ops);
+  const requestedAtkOps = normalizeAtkOps(atkOps);
+  const skipAtk = requestedAtkOps === 'null';
+  const compiledOps = new Set(requestedOps.split(',').filter(Boolean));
+  const testedOps = new Set(skipAtk ? [] : requestedAtkOps.split(',').filter(Boolean));
   for (const path of paths) {
     if (isDocumentationPath(path)) continue;
     if (/^(?:ci|\.github)(?:\/|$)/.test(path)) { ciModified = true; continue; }
     if (/^(?:common|cmake)(?:\/|$)/.test(path)) { fullBuild = true; continue; }
     if (path.startsWith('fla/ops/ascendc/')) {
-      const parts = path.slice('fla/ops/ascendc/'.length).split('/');
-      // Current operators live in cp|gdn|kda/<op>; direct <op>/ layouts are
-      // accepted too. Shared headers and group-level CMake/Python files need a full build.
-      const grouped = ['cp', 'gdn', 'kda'].includes(parts[0]);
-      const op = grouped ? parts[1] : parts[0];
-      if (op && op !== 'common' && parts.length >= (grouped ? 3 : 2)) {
+      if (requestedOps) continue;
+      // Discover roots in the fixed PR tree, rather than assuming group depth.
+      // Shared files and removed operators without an op_host require a full build.
+      const root = opRoots.find((candidate) => path.startsWith(`${candidate}/`));
+      if (root) {
+        const op = root.split('/').at(-1);
         compiledOps.add(op);
         testedOps.add(op);
       } else fullBuild = true;
@@ -136,30 +154,36 @@ function classifyChanges(files, { ciMode = 'quick', ops = '', atkOps = '', devic
     fullBuild = true;
   }
   for (const op of compiledOps) testedOps.add(op);
-  if (sharedAtkModified) for (const op of allAtkOps) testedOps.add(op);
+  if (sharedAtkModified && !skipAtk) for (const op of allAtkOps) testedOps.add(op);
+  // An OPP-only overlay would otherwise leave the Daily adapter installed.
+  if (compiledOps.size && torchModified) fullBuild = true;
   // The legacy ops= request is an isolated 01-02 diagnostic. It compiles only
   // explicitly named operators and never silently skips a requested ATK run.
-  if (ops) fullBuild = false;
+  if (requestedOps) fullBuild = false;
   const buildKind = fullBuild ? 'full' : compiledOps.size ? 'incremental' : torchModified ? 'torch' : 'base';
   return {
     documentation_only: documentationOnly,
     full_build: fullBuild,
-    build_ops: ops || (fullBuild ? '' : normalizeOps([...compiledOps].join(','))),
-    atk_ops: ops ? '' : normalizeOps([...testedOps].join(',')),
+    build_ops: requestedOps || (fullBuild ? '' : normalizeOps([...compiledOps].join(','))),
+    atk_ops: requestedOps || skipAtk ? '' : normalizeOps([...testedOps].join(',')),
     build_kind: buildKind,
     ci_modified: ciModified,
     device_id: normalizeDeviceId(deviceId),
-    shared_atk_modified: !ops && sharedAtkModified,
+    shared_atk_modified: !requestedOps && !skipAtk && sharedAtkModified,
   };
 }
 
 async function inspectChanges({ github, context, pr, ...options }) {
   const files = await changedFiles({ github, context, pr });
   const first = classifyChanges(files, options);
-  if (!first.shared_atk_modified) return first;
-  const allAtkOps = await allAtkOperators({ github, context, pr });
+  const needsOperatorTree = !normalizeOps(options.ops || '') && changedPaths(files).some((path) =>
+    !isDocumentationPath(path) && path.startsWith('fla/ops/ascendc/'));
+  if (!needsOperatorTree && !first.shared_atk_modified) return first;
+  const tree = await headTree({ github, context, pr });
+  const opRoots = needsOperatorTree ? operatorRoots(tree) : [];
+  const allAtkOps = first.shared_atk_modified ? allAtkOperators(tree) : [];
   await assertUnchangedPullRequest({ github, context, pr });
-  return classifyChanges(files, { ...options, allAtkOps });
+  return classifyChanges(files, { ...options, opRoots, allAtkOps });
 }
 
 function normalizeDeviceId(value = '') {
@@ -200,6 +224,15 @@ function normalizeOps(value = '') {
   return [...new Set(items)].sort().join(',');
 }
 
+function normalizeAtkOps(value = '') {
+  if (typeof value === 'string' && value.trim() === 'null') return 'null';
+  const ops = normalizeOps(value);
+  if (ops.split(',').includes('null')) {
+    throw new Error('atk-ops=null 必须单独使用，不能与算子名混合；请仅使用 null 跳过 ATK，或提供算子列表。');
+  }
+  return ops;
+}
+
 function buildCiApprovalKey({ prNumber, baseRef, baseSha, headSha }) {
   return createHash('sha256').update(JSON.stringify([prNumber, baseRef, baseSha, headSha])).digest('hex').slice(0, 12);
 }
@@ -230,5 +263,5 @@ module.exports = {
   loadCiUsers, requireAuthorizedCiUser, assertUnchangedPullRequest, changedFiles, changedPaths,
   isDocumentationPath,
   classifyChanges, inspectChanges, normalizeDeviceId, normalizeCiModified, requireCiModificationApproval,
-  normalizeOps, buildRequestKey, buildCiApprovalKey, createComment, writeStatuses,
+  normalizeOps, normalizeAtkOps, buildRequestKey, buildCiApprovalKey, createComment, writeStatuses,
 };

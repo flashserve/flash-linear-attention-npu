@@ -172,11 +172,19 @@ raise SystemExit(int(os.environ.get("ATK_TEST_EXIT", "0")))
         lines = self.log.read_text().splitlines()
         self.assertEqual(lines, [f"-op={op} -scope=accuracy -ci=true -npu_device_id=2 -soc=ascend950" for op in ("first", "second")])
         self.log.unlink()
-        for invalid in ("first,", "../bad", "first,,second"):
+        for invalid in ("first,", "../bad", "first,,second", "null,first", "first,null"):
             with self.subTest(invalid=invalid):
                 result = subprocess.run(["bash", str(ci_dir / "run_atk_checks.sh")],
                                         env={**environment, "CI_ATK_OPS": invalid}, capture_output=True, text=True)
                 self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(self.log.exists())
+        (self.atk_root / "run_test_cpu.sh").unlink()
+        for disabled in ("", "null"):
+            with self.subTest(disabled=disabled):
+                result = subprocess.run(["bash", str(ci_dir / "run_atk_checks.sh")],
+                                        env={**environment, "CI_ATK_OPS": disabled}, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("跳过 ATK", result.stdout)
                 self.assertFalse(self.log.exists())
 
 

@@ -4,7 +4,7 @@
 
 > PR 创建或更新后自动执行 `CI 契约测试`。只有 `.md`、`docs/` 或 `LICENSES/` 改动经完整文件列表检查后直接通过 6 项 NPU 门禁；其余 PR 由默认分支 [`.github/npu-ci-users.json`](.github/npu-ci-users.json) 名单中的用户触发 `/run-npu-ci quick`。非 Markdown 的 `ci/`、`.github/` 修改还必须由名单内仓库 Admin 带 `ci_modified=true` 确认；实际重跑人也须满足对应权限。
 >
-> 正式请求按差异选择全量、算子增量、仅 torch_custom 或 Daily 底包，并始终验证环境、已安装布局、GDR 及选中算子的 ATK 精度。`atk-ops=a,b` 追加 ATK，`device-id=N` 指定宿主机物理卡；`full` 强制全量 wheel，另加全部 PyTorch 适配测试。每个选中 ATK 算子须有至少 200 个独立精度 case、perf/mss 各至少 1 个；执行限制为最多 16 任务/16 CPU。
+> 正式请求按差异选择全量、算子增量、仅 torch_custom 或 Daily 底包，并始终验证环境、已安装布局、GDR 及选中算子的 ATK 精度。算子与 torch_custom 同时修改时完整构建 wheel。`atk-ops=a,b` 追加 ATK，`atk-ops=null` 显式跳过所有 ATK，`device-id=N` 指定宿主机物理卡；`full` 强制全量 wheel，另加全部 PyTorch 适配测试。每个选中 ATK 算子须有至少 200 个独立精度 case、perf/mss 各至少 1 个；执行限制为最多 16 任务/16 CPU。
 >
 > A2/A5 共用先直连、失败后代理的 Git 合并流程，一律执行当前 PR 的 `ci/`。ATK 作为独立设备阶段纳入第 06 项报告校验，缺失或失败不能放行；当前 head 的 6 项状态、`CI 契约测试` 及 2 个 approval 均满足后才能合入。`ops=...` 仅执行 01/02 编译诊断，无 ATK，不满足正式门禁，不能与 `full` 或 `atk-ops` 组合。请求先排队并按完整执行计划去重；触发和结果均新增评论。
 >

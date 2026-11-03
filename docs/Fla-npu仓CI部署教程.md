@@ -321,7 +321,7 @@ CI_ATK_OPS=chunk_fwd_o CI_DEVICE_ID=0 \
 bash ci/run_ci_container.sh
 ```
 
-仅验证 torch_custom 时使用 `CI_BUILD_KIND=torch`；底包验证使用 `CI_BUILD_KIND=base`，两者均清空 `CI_BUILD_OPS` 并填写 `CI_BASE_REF`。`CI_ATK_OPS` 为要完整验证的 ATK 算子列表，逗号分隔；为空则跳过 ATK。A5 同时设置对应 SOC、镜像和 `CI_REQUIRE_PRELOADED_IMAGE=true`。
+仅验证 torch_custom 时使用 `CI_BUILD_KIND=torch`；底包验证使用 `CI_BUILD_KIND=base`，两者均清空 `CI_BUILD_OPS` 并填写 `CI_BASE_REF`。同时修改算子代码和 torch_custom 时，线上计划使用 `CI_BUILD_KIND=full` 重建完整 wheel。`CI_ATK_OPS` 为要完整验证的 ATK 算子列表，逗号分隔；为空或 `null` 则跳过 ATK。A5 同时设置对应 SOC、镜像和 `CI_REQUIRE_PRELOADED_IMAGE=true`。
 
 正式 `quick`、`full` 都执行环境、已安装布局、适配环境和 GDR，并运行相同选中集合的 ATK；`full` 强制完整 wheel，且额外运行全部 PyTorch 适配测试。手工 `CI_RUN_TORCH_TESTS=true` 可在 quick 中启用该测试，正式 workflow 不设置这一覆盖。
 
@@ -566,7 +566,7 @@ bash scripts/github/apply_branch_protection.sh main
 2. 在普通代码 PR 上确认 6 项初始 pending；在包含非 Markdown 的 `ci/` 或 `.github/` 修改的 PR 上确认默认 failure 评论明确提示 Admin 追加 `ci_modified=true`。
 3. 用名单用户评论 `/run-npu-ci quick`，CI 修改则由名单内 Admin 评论 `/run-npu-ci quick ci_modified=true`；Actions 手动输入使用下划线名称 `atk_ops`、`device_id`、`ci_modified`。确认新增评论列出全量/增量/torch/底包计划及 ATK 集合，并分别调度 A2/A5。
 4. 验证普通单算子修改只编译对应算子并自动测试该算子 ATK；只有 ATK 算子目录修改时用底包运行 ATK；公共构建文件修改应全量。核对 artifact 中实际包准备方式和底包分支、SOC、CPU、Python、版本。
-5. 使用 `/run-npu-ci quick atk-ops=chunk_fwd_o device-id=0`，确认手动 ATK 与自动集合合并、物理设备选择生效，容器中的测试仍使用逻辑设备 `0`。缺少 200 个精度 case、perf/mss 各 1 个时，日志须列出期望/实际数量和补齐建议；ATK 日志须显示最多 16 任务/16 CPU。
+5. 使用 `/run-npu-ci quick atk-ops=chunk_fwd_o device-id=0`，确认手动 ATK 与自动集合合并、物理设备选择生效，容器中的测试仍使用逻辑设备 `0`。再用 `atk-ops=null` 确认覆盖自动集合，ATK 阶段明确 skipped，且不调用 ATK 入口；编译和其他验证照常。缺少 200 个精度 case、perf/mss 各 1 个时，日志须列出期望/实际数量和补齐建议；ATK 日志须显示最多 16 任务/16 CPU。
 6. 在两个平台日志确认源码先直连、失败后代理，并一律使用 PR 合并后的 `ci/`。`full` 应强制完整 wheel，且比 `quick` 额外执行全部 PyTorch 适配测试；GDR 和同一 ATK 集合的验证范围保持相同。
 7. 完成后确认新增独立结果评论及 6 个最终状态，ATK 显示为单独设备阶段并纳入第 06 项。缺少选中 ATK 报告不能通过；失败评论包含明确原因、修改建议及 `CI_STAGE` 复现命令。
 8. 再次触发相同请求，确认先排队、保留原任务，再去重并新增评论。head、目标分支名、base/workflow SHA、模式、编译计划、ATK 集合或设备号不同均应重新验证。

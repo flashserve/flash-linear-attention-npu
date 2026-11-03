@@ -47,6 +47,7 @@ PR 创建、重开或更新 commit 时，`CI 契约测试` 自动在 GitHub-host
 /run-npu-ci
 /run-npu-ci quick
 /run-npu-ci quick atk-ops=chunk_fwd_o,recurrent_kda device-id=0
+/run-npu-ci quick atk-ops=null
 /run-npu-ci full
 /run-npu-ci full atk-ops=chunk_fwd_o ci_modified=true
 /run-npu-ci quick ops=causal_conv1d,chunk_bwd_dv_local
@@ -57,6 +58,7 @@ PR 创建、重开或更新 commit 时，`CI 契约测试` 自动在 GitHub-host
 | `quick`（默认） | 按完整文件差异选择全量、增量、仅 torch_custom 或底包，不减少正式验证阶段 |
 | `full` | 强制全量 wheel 构建，并运行全部 PyTorch 适配测试 |
 | `atk-ops=a,b` | 追加 ATK 精度验证算子；与自动计算的 ATK 集合去重合并 |
+| `atk-ops=null` | 显式跳过所有 ATK 验证，覆盖算子代码、ATK 文件变化自动选中的集合；不改变编译、GDR 或其他阶段 |
 | `device-id=N` | 指定两个 runner 各自的宿主机物理 NPU 编号；须为非负整数，省略则自动择卡；容器内映射为逻辑设备 `0` |
 | `ci_modified=true` | 仓库 Admin 确认本次 PR 的 CI 文件变更；只接受 `true/false` |
 | `ops=a,b` | 独立编译诊断：仅编译显式算子，只执行 01/02，不运行 ATK，不满足正式门禁；不能与 `full` 或 `atk-ops` 组合 |
@@ -76,14 +78,14 @@ Actions → `NPU CI` → `Run workflow` 提供对应的 `pr_number`、`ci_mode`�
 | --- | --- | --- |
 | `common/`、`cmake/`，以及 AscendC 公共目录或组级文件 | 全量 | 保留其他规则选中的算子 |
 | 非 Markdown 的 `ci/`、`.github/` | 本身不触发编译；必须通过 Admin 确认 | 不自动增加算子 |
-| `fla/ops/ascendc/{cp,gdn,kda}/<op>/` 下非 Markdown 算子代码（兼容直接 `<op>/` 布局） | 无全量条件时增量编译该算子 | 始终验证该算子，包括因其他修改而转为全量时 |
+| `fla/ops/ascendc/` 下非 Markdown 算子代码，按 PR head 树中最近的有效 `op_host/CMakeLists.txt` 定位算子根 | 无全量条件时增量编译该算子；支持任意层分组，无法确定时全量 | 验证实际算子，包括因其他修改而转为全量时；`atk-ops=null` 可显式跳过 |
 | `tests/atk/<op>/` 下非 Markdown 文件 | 本身不触发编译 | 验证该算子 |
 | `tests/atk/common/`、`tests/atk/run_test_cpu.sh` 等根级共享文件 | 本身不触发编译 | 验证 PR 当前所有 ATK 算子目录 |
-| `torch_custom/` | 无全量或算子增量编译时，仅编译 torch_custom | 保留选中集合 |
+| `torch_custom/` | 与算子代码同时修改时完整 wheel 构建，确保当前 OPP 和 adapter 一起重建；无其他编译时仅编译 torch_custom | 保留选中集合 |
 | `examples/`、`tests/` 其他部分 | 本身不触发编译，使用底包 | 保留选中集合 |
 | 上述之外的其他非 Markdown 修改 | 全量 | 保留选中集合 |
 
-全量条件优先于增量算子，增量优先于仅 torch_custom。最终产生 `full_build`、`build_ops`、`atk_ops` 和 `build_kind=full/incremental/torch/base`：全量时 `build_ops` 为空；ATK 集合是修改算子代码、修改 ATK 算子目录及手动 `atk-ops` 的并集，可以为空。`full` 不会自动把 ATK 扩大为全仓测试。
+全量条件优先于增量算子；算子与 `torch_custom` 混合修改同样触发全量，避免沿用 Daily 中的旧 adapter。最终产生 `full_build`、`build_ops`、`atk_ops` 和 `build_kind=full/incremental/torch/base`：全量时 `build_ops` 为空；ATK 集合通常是修改算子代码、修改 ATK 算子目录及手动 `atk-ops` 的并集，可以为空。`atk-ops=null` 覆盖整个集合，且不能与算子名混写（如 `null,chunk_fwd_o`）。省略参数仍按差异自动选择。`full` 不会自动把 ATK 扩大为全仓测试；quick 因混合修改而全量构建时，仍保持 quick 的测试范围。
 
 PR 包含非 Markdown 的 `ci/` 或 `.github/` 修改时，默认状态直接 failure，评论说明需管理员确认。只有同时在 CI 名单中的仓库 Admin 带 `ci_modified=true` 才可分发和执行；重跑操作人也须同时满足名单及 Admin 要求。省略确认、权限不足或权限读取失败均拒绝运行，并给出管理员重试建议。待验证 PR 的作者是否为 Admin 不影响代码选择：**设备 runner 一律使用当前 PR 合并后的 `ci/`，不再检出或叠加可信 CI 目录。** Actions 调度及权限检查来自所选 CI 定义分支。
 

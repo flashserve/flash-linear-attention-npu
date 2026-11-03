@@ -18,6 +18,9 @@ ci_mode="${CI_MODE:-quick}"
 ci_soc="${CI_SOC:-${NPU_SOC:-ascend910b}}"
 ci_build_kind="${CI_BUILD_KIND:-full}"
 ci_build_ops="${CI_BUILD_OPS:-}"
+if [[ "${CI_ATK_OPS:-}" == null ]]; then
+    export CI_ATK_OPS=""
+fi
 if [[ "$ci_mode" == "full" ]]; then
     ci_build_kind=full
     ci_build_ops=""

@@ -27,7 +27,7 @@ on:
         required: false
         default: ''
       atk_ops:
-        description: "Additional comma-separated operators for ATK accuracy validation"
+        description: "Additional comma-separated ATK operators; use null to skip all ATK validation"
         required: false
         default: ''
       device_id:
