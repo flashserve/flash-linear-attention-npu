@@ -312,3 +312,22 @@ AIC 向两个 AIV 分别 set 基础 id 与 id+16，并在反向等待两个 id�
 ## V2 chunk64 序列数限制移除（规则 V2，局部复核）
 
 本次仅删除 CheckParams 的 seqNum<=1024 校验，Stage、tiling、workspace 与同步协议不变。V2 的 Prepare/ChunkFwdH/Finalize 使用动态序列元数据；ChunkFwdH 当前独立校验上限为 65536，本次专项验证通过至 4096，不声明无限序列支持。chunk32 使用独立校验，仍保留 1024 条限制。验证采用用户指定 GitCode executor，CPU FP64 golden 与同精度 control 保持不变；测试副本删除旧序列数拦截，DUT 经当前 Stable Python 包装调用；双标杆算法不变。
+
+### SAFE_GATE score reference
+
+The fused 32-row score group uses its first cumulative gate minus 112 in
+log2 units. With gate increments in [-5, 0], the maximum within-group span
+is 31 * 5 / ln(2), approximately 223.618. Centering it bounds both factor
+exponents by 112, providing more amplitude headroom than an offset of 104.
+The reference does not depend on future gates or tail length.
+The in-kernel gate uses the validated lower_bound; with precomputed gates,
+the caller supplies the increments. Outside [-5, 0] the centered-range
+argument does not apply. If a factor reaches the retained 2^120 ceiling,
+its FP32 amplitude headroom is about 2^8.
+
+For SAFE_GATE scores, historical factors may naturally underflow to zero.
+A lower exponent clamp would inflate small causal terms after multiplication
+by the rescaled query, so only the upper exponent clamp is retained.
+This does not guarantee exact preservation of very small historical terms.
+The ordinary gate clamps, non-SAFE_GATE path, Cube grouping and workspace
+are unchanged. The reference shift uses the existing FP32 Adds operation.
