@@ -16,13 +16,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
 class RunCiContainerTests(unittest.TestCase):
-    def run_ci(self, root, *, run_status=0, cleanup_status=0, write_id=True, interrupt=False, broad_tmp=False):
+    def run_ci(self, root, *, run_status=0, cleanup_status=0, write_id=True, interrupt=False, broad_tmp=False, device="", plan=None):
         repo = root / "repo"
         (repo / "ci").mkdir(parents=True)
         shutil.copyfile(REPO_ROOT / "ci/run_ci_container.sh", repo / "ci/run_ci_container.sh")
         (repo / "ci/detect_npu.sh").write_text(
-            'if [[ "$1" == --candidates ]]; then echo 0; else\n'
-            'echo "NPU_SELECTED_DEVICE=0 NPU_SELECTED_NAME=test '
+            'if [[ "$1" == --candidates ]]; then printf "0\\n7\\n"; else\n'
+            'echo "NPU_SELECTED_DEVICE=$2 NPU_SELECTED_NAME=test '
             'NPU_SELECTED_HEALTH=OK NPU_SELECTED_FREE=100 NPU_SOC=ascend950"\nfi\n'
         )
         commands = root / "bin"
@@ -71,6 +71,8 @@ class RunCiContainerTests(unittest.TestCase):
             RUN_WAIT=str(interrupt).lower(),
             WAIT_PID=str(root / "waiting-pid"),
         )
+        env["CI_DEVICE_ID"] = device
+        env.update(plan or {})
         if broad_tmp:
             env["CI_HOST_TMPDIR"] = env["TMPDIR"]
         command = ["bash", "ci/run_ci_container.sh"]
@@ -96,6 +98,27 @@ class RunCiContainerTests(unittest.TestCase):
             result = subprocess.run(command, cwd=repo, env=env, capture_output=True, text=True, check=False)
         calls = [json.loads(line) for line in (root / "docker.jsonl").read_text().splitlines()]
         return result, calls, env
+
+    def test_explicit_physical_device_and_build_plan_reach_container(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            plan = {"CI_BUILD_KIND": "incremental", "CI_BUILD_OPS": "foo,bar",
+                    "CI_ATK_OPS": "bar", "CI_BASE_REF": "v0.4.0"}
+            result, calls, env = self.run_ci(root, device="7", plan=plan)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            run = next(call for call in calls if "--cidfile" in call)
+            for key, value in dict(plan, ASCEND_RT_VISIBLE_DEVICES="7", CI_CONTAINER_DEVICE="0").items():
+                self.assertIn(f"{key}={value}", run)
+            self.assertTrue((Path(env["CI_NPU_LOCK_DIR"]) / "fla-npu-ci-npu-7.lock").exists())
+            self.assertFalse((Path(env["CI_NPU_LOCK_DIR"]) / "fla-npu-ci-npu-0.lock").exists())
+
+    def test_invalid_or_unavailable_device_never_starts_container(self):
+        for device in ("-1", "abc", "8"):
+            with self.subTest(device=device), tempfile.TemporaryDirectory() as temporary:
+                result, calls, _ = self.run_ci(Path(temporary), device=device)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertFalse(any("--cidfile" in call for call in calls))
+                self.assertIn("device-id", result.stderr)
 
     def test_missing_storage_is_created_and_only_owned_container_is_cleaned(self):
         with tempfile.TemporaryDirectory() as temporary:

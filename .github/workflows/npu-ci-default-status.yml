@@ -15,7 +15,7 @@ jobs:
       statuses: write
       contents: read
     steps:
-      - name: 检出可信状态脚本
+      - name: 检出状态脚本
         uses: actions/checkout@v6
         with:
           ref: ${{ github.workflow_sha }}

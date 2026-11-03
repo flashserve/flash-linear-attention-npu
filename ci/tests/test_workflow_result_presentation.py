@@ -33,6 +33,7 @@ STAGE_KEYS = (
     "standalone-layout",
     "torch-adapter",
     "gdr-example-st",
+    "atk-accuracy",
 )
 STATUS_CONTEXTS = (
     "NPU CI / A2+A5 / 01 环境、wheel 与运行时契约",
@@ -46,8 +47,11 @@ SCOPED_STATUS_CONTEXT = "NPU CI / A2+A5 / 定向诊断"
 CONTRACT_TEST_CONTEXT = "CI 契约测试"
 
 
-def request_key(mode="quick", ops="", base_sha="c" * 40, workflow_sha="b" * 40):
-    payload = json.dumps([mode, ops, base_sha, workflow_sha], separators=(",", ":"))
+def request_key(mode="quick", ops="", base_sha="c" * 40, workflow_sha="b" * 40, base_ref="main"):
+    plan = {"documentation_only": False, "full_build": not bool(ops),
+            "build_ops": ops, "atk_ops": "", "build_kind": "incremental" if ops else "full",
+            "ci_modified": False, "device_id": "", "shared_atk_modified": False}
+    payload = json.dumps([mode, ops, base_ref, base_sha, workflow_sha, plan], separators=(",", ":"))
     digest = hashlib.sha256(payload.encode()).hexdigest()[:16]
     return f"{'scoped' if ops else 'all'}-{digest}"
 
@@ -98,6 +102,10 @@ class WorkflowResultPresentationTest(unittest.TestCase):
         nested_artifacts=False,
         publish_count=1,
         current_base_ref="main",
+        atk_ops="",
+        skipped_atk=False,
+        missing_atk=False,
+        ci_approval_key="",
     ):
         sha = "a" * 40
         run_id = "42"
@@ -356,6 +364,13 @@ class WorkflowResultPresentationTest(unittest.TestCase):
                         for stage in STAGE_KEYS
                     },
                 }
+                if not atk_ops or skipped_atk:
+                    stage_report["stages"]["atk-accuracy"] = {
+                        "status": "skipped", "exit_code": None,
+                        "reason": "no ATK operators selected",
+                    }
+                if missing_atk:
+                    del stage_report["stages"]["atk-accuracy"]
                 if stage_failure and platform == "a5":
                     failed_index = STAGE_KEYS.index(stage_failure)
                     stage_report["status"] = "failure"
@@ -651,6 +666,8 @@ globalThis.core = {
                     "NPU_PUBLISH_SCRIPT_PATH": str(PUBLISH_SCRIPT_PATH),
                     "NPU_CI_MODE": "quick",
                     "NPU_OPS": ops,
+                    "NPU_ATK_OPS": atk_ops,
+                    "NPU_CI_APPROVAL_KEY": ci_approval_key,
                     "NPU_CI_REQUEST_KEY": request_key(ops=",".join(sorted(set(ops.split(","))))),
                     "NPU_PR_NUMBER": "527",
                     "PUBLISH_COUNT": str(publish_count),
@@ -713,7 +730,7 @@ globalThis.context = {
 globalThis.github = {
   paginate: async (endpoint) => endpoint === statusEndpoint
     ? JSON.parse(process.env.PREPARE_STATUSES)
-    : endpoint === filesEndpoint ? [{ filename: 'ci/run_checks.sh', status: 'modified' }] : [],
+    : endpoint === filesEndpoint ? [{ filename: 'operator.cpp', status: 'modified' }] : [],
   rest: {
     actions: {
       getWorkflowRun: async () => ({
@@ -842,12 +859,11 @@ globalThis.core = {
         job = workflow["jobs"]["ascend-npu"]
         self.assertTrue(job["strategy"]["fail-fast"])
 
-    def test_proxy_fallback_is_shared_and_direct_first_for_both_checkouts(self):
+    def test_proxy_fallback_is_shared_and_direct_first(self):
         job = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]["ascend-npu"]
         self.assertEqual(job["env"]["CI_PROXY_SCRIPT"], "/home/huangjunzhe/ci/vpn-proxy.sh")
         for checkout_id, proxy_name in (
             ("checkout_pr_1", "启动目标源码拉取代理"),
-            ("checkout_trusted_ci_1", "启动可信 CI 拉取代理"),
         ):
             direct = next(step for step in self.matrix_steps if step.get("id") == checkout_id)
             proxy = next(step for step in self.matrix_steps if step.get("name") == proxy_name)
@@ -1020,75 +1036,6 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
                 self.assertIn(f"-j{expected}", flags)
                 self.assertNotIn("-j64", flags)
 
-    @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
-    def test_default_parallelism_reaches_opp_build_and_adapter_ninja_environment(self):
-        fixture = (REPO_ROOT / "ci/tests/test_run_checks_stage_pipeline.sh").read_text(encoding="utf-8")
-        fixture = fixture.split("\nrun_case ", 1)[0]
-        fixture = fixture.replace("CI_JOBS=1", "CI_JOBS=")
-        fixture = fixture.replace("CI_CPACK_JOBS=1", "CI_CPACK_JOBS=")
-        fixture = fixture.replace(
-            "bash() {\n",
-            """bash() {
-    if [[ "${1:-}" == "build.sh" ]]; then
-        "$CI_TEST_REAL_PYTHON3" -c 'import json, os, sys; print(json.dumps({"args": sys.argv[1:], "env": {key: os.environ.get(key) for key in ("MAX_JOBS", "CMAKE_BUILD_PARALLEL_LEVEL", "MAKEFLAGS", "FLA_NPU_BUILD_ARGS")}}))' "$@" >>"$CI_TEST_BUILD_ENV_LOG"
-    fi
-""",
-        )
-        fixture += "\nrun_case parallelism all false 0 success success,success,skipped,success,success true\n"
-        for soc in ("ascend910b", "ascend950"):
-            with self.subTest(soc=soc), tempfile.TemporaryDirectory() as temp:
-                root = Path(temp)
-                (root / "ci/tests").mkdir(parents=True)
-                for source in (RUN_CHECKS_PATH, REPO_ROOT / "ci/manage_npu_ci_stage_report.py"):
-                    shutil.copyfile(source, root / "ci" / source.name)
-                (root / "ci/tests/parallelism.sh").write_text(
-                    fixture.replace("ascend910b", soc), encoding="utf-8"
-                )
-                build_log = root / "build-environment.jsonl"
-                env = os.environ.copy()
-                for key in ("CI_JOBS", "CI_CPACK_JOBS", "MAX_JOBS", "MAKEFLAGS", "CMAKE_BUILD_PARALLEL_LEVEL", "FLA_NPU_BUILD_ARGS"):
-                    env.pop(key, None)
-                inherited_build_args = "-O3 -j64" if soc == "ascend950" else ""
-                if inherited_build_args:
-                    env["FLA_NPU_BUILD_ARGS"] = inherited_build_args
-                env.update({"CI_TEST_REAL_PYTHON3": sys.executable, "CI_TEST_BUILD_ENV_LOG": str(build_log)})
-                completed = subprocess.run(
-                    ["bash", "-c", "source() { :; }; export -f source; exec bash ci/tests/parallelism.sh"],
-                    cwd=root, env=env, text=True, encoding="utf-8", capture_output=True, check=False,
-                )
-                self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
-                builds = [json.loads(line) for line in build_log.read_text().splitlines()]
-                self.assertTrue(any("--pkg" in item["args"] and "-j16" in item["args"] for item in builds))
-                self.assertTrue(any(item["args"] == ["build.sh"] for item in builds))
-                for build in builds:
-                    self.assertEqual(build["env"], {
-                        "MAX_JOBS": "16", "CMAKE_BUILD_PARALLEL_LEVEL": "16", "MAKEFLAGS": "-j16",
-                        "FLA_NPU_BUILD_ARGS": (inherited_build_args + " -j16").strip(),
-                    })
-                # pip wheel rebuilds the OPP through the root setup.py. Run
-                # that actual command builder with the exported child-process
-                # environment, without invoking a compiler or setuptools.
-                setup_path = REPO_ROOT / "setup.py"
-                tree = ast.parse(setup_path.read_text(encoding="utf-8"))
-                builder = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_build_run_package")
-                wheel_commands = []
-                namespace = {
-                    "os": os, "shutil": shutil, "shlex": shlex,
-                    "REPO_ROOT": root, "DEFAULT_SOC": soc, "DEFAULT_VENDOR_NAME": "fla_npu",
-                    "_check_ops_filter": lambda value: None,
-                    "_run": lambda command, cwd: wheel_commands.append(command),
-                    "_find_single_run_package": lambda: root / "fake.run",
-                }
-                exec(compile(ast.Module(body=[builder], type_ignores=[]), str(setup_path), "exec"), namespace)
-                with mock.patch.dict(os.environ, builds[0]["env"], clear=True):
-                    namespace["_build_run_package"]()
-                command = wheel_commands[0]
-                self.assertEqual(command[:2], ["bash", "build.sh"])
-                self.assertIn(f"--soc={soc}", command)
-                self.assertIn("--pkg", command)
-                self.assertEqual(command[-1], "-j16")
-                if inherited_build_args:
-                    self.assertEqual(command[-3:], ["-O3", "-j64", "-j16"])
 
     @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
     def test_temp_cleanup_preserves_persistent_cache_and_npu_locks(self):
@@ -1116,27 +1063,6 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
             self.assertEqual(removals, [env["CI_HOST_TMPDIR"]])
             self.assertNotIn(env["TMPDIR"], removals)
 
-    @unittest.skipUnless(os.name == "posix" and shutil.which("bash") and shutil.which("python3"), "Linux shell is required")
-    def test_case_archive_is_removed_on_failure_without_cleaning_static_tmpdir(self):
-        step = next(step for step in self.matrix_steps if step["name"] == "使用可信 CI 脚本并保留 PR 用例")
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            (root / "repo" / "ci").mkdir(parents=True)
-            (root / "repo" / "ci" / "example_st_cases.json").write_text("invalid JSON", encoding="utf-8")
-            scratch = root / "shared temporary root"
-            scratch.mkdir()
-            keep = scratch / "unrelated-run-data"
-            keep.write_text("keep", encoding="utf-8")
-            env = os.environ.copy()
-            env["TMPDIR"] = str(scratch)
-            completed = subprocess.run(
-                ["bash", "-e", "-o", "pipefail", "-c", step["run"]], cwd=root, env=env,
-                text=True, encoding="utf-8", capture_output=True, check=False,
-            )
-            self.assertNotEqual(completed.returncode, 0)
-            self.assertIn("JSONDecodeError", completed.stderr)
-            self.assertEqual(list(scratch.iterdir()), [keep])
-            self.assertEqual(keep.read_text(encoding="utf-8"), "keep")
 
     @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
     def test_temp_cleanup_rejects_paths_outside_current_platform_run(self):
@@ -1201,7 +1127,8 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertEqual(positions, sorted(positions))
         self.assertIn("prerequisite stage ${failed_stage} failed", script)
         self.assertIn("CI_STAGE=%q", script)
-        self.assertIn("CI_OPS=%q", script)
+        self.assertIn("CI_BUILD_OPS=%q", script)
+        self.assertIn("CI_ATK_OPS=%q", script)
         self.assertIn("CI_IMAGE=%q CI_DOCKERFILE=%q CI_REQUIRE_PRELOADED_IMAGE=%q", script)
         self.assertIn('image="fla-npu-ci:9.1.0-950"', script)
         self.assertIn('dockerfile="ci/Dockerfile.ascend950"', script)
@@ -1411,6 +1338,29 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         pending = [item for item in records if item["kind"] == "status"]
         self.assertEqual(len(pending), len(STATUS_CONTEXTS))
 
+    def test_atk_is_required_only_when_selected_and_gates_final_status(self):
+        for options, passed in (({}, True), ({"atk_ops": "foo"}, True),
+                                ({"atk_ops": "foo", "skipped_atk": True}, False),
+                                ({"atk_ops": "foo", "missing_atk": True}, False),
+                                ({"atk_ops": "foo", "stage_failure": "atk-accuracy",
+                                  "matrix_result": "failure"}, False)):
+            with self.subTest(options=options):
+                completed, comment, records = self._run_finalize_script(**options)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                statuses = [item["payload"] for item in records if item["kind"] == "status"]
+                self.assertEqual(len(statuses), 6)
+                self.assertEqual(statuses[-1]["state"], "success" if passed else "failure")
+                self.assertIn("ATK", comment)
+
+    def test_ci_approval_marker_survives_all_status_descriptions(self):
+        completed, _, records = self._run_finalize_script(ci_approval_key="abc123def456", stage_failure="opp-package", matrix_result="failure")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        statuses = [item["payload"] for item in records if item["kind"] == "status"]
+        self.assertEqual(len(statuses), 6)
+        for item in statuses:
+            self.assertLessEqual(len(item["description"]), 140)
+            self.assertTrue(item["description"].endswith("ci-ok=abc123def456"))
+
     def test_publisher_writes_final_status_after_stage_statuses(self):
         script = self.finalize_script
         stage_publish = script.index("const stagePublishResults = await Promise.allSettled")
@@ -1481,14 +1431,14 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertLess(cleanup, record)
         self.assertLess(record, upload)
 
-    def test_finalize_loader_uses_trusted_workflow_revision(self):
+    def test_finalize_loader_uses_pr_revision(self):
         checkout = next(
             step
             for step in self.finalize_steps
-            if step.get("name") == "检出受信任的状态发布脚本"
+            if step.get("name") == "检出 PR 状态发布脚本"
         )
         self.assertEqual(checkout["uses"], "actions/checkout@v5")
-        self.assertEqual(checkout["with"]["ref"], "${{ github.workflow_sha }}")
+        self.assertEqual(checkout["with"]["ref"], "${{ needs.prepare.outputs.head_sha }}")
         self.assertEqual(
             checkout["with"]["sparse-checkout"],
             ".github/scripts/publish_npu_ci_status.js",

@@ -2,11 +2,11 @@
 
 ## 合入门禁提醒
 
-> PR 创建或更新后自动执行 `CI 契约测试`。仅修改 `.md` 的 PR 经完整文件列表检查后直接通过 6 项 NPU 门禁；其余 PR 需要默认分支 [`.github/npu-ci-users.json`](.github/npu-ci-users.json) 名单中的用户触发 `/run-npu-ci quick` 或 `/run-npu-ci full`，也可从 Actions 手动运行。手动重跑的实际操作人也须在名单中；更换目标分支后重新判断门禁，纯文档结果不能跨 PR 复用。
+> PR 创建或更新后自动执行 `CI 契约测试`。只有 `.md`、`docs/` 或 `LICENSES/` 改动经完整文件列表检查后直接通过 6 项 NPU 门禁；其余 PR 由默认分支 [`.github/npu-ci-users.json`](.github/npu-ci-users.json) 名单中的用户触发 `/run-npu-ci quick`。非 Markdown 的 `ci/`、`.github/` 修改还必须由名单内仓库 Admin 带 `ci_modified=true` 确认；实际重跑人也须满足对应权限。
 >
-> 正式门禁覆盖 A2/A5 的 5 个顺序执行阶段及第 06 项报告/commit 校验。前置失败跳过后续，任一平台失败会取消另一平台；当前 head 的 6 项状态、`CI 契约测试` 及 2 个 approval 均满足要求后才能合入。`ops=...` 仅为编译诊断，不满足正式门禁。
+> 正式请求按差异选择全量、算子增量、仅 torch_custom 或 Daily 底包，并始终验证环境、已安装布局、GDR 及选中算子的 ATK 精度。`atk-ops=a,b` 追加 ATK，`device-id=N` 指定宿主机物理卡；`full` 强制全量 wheel，另加全部 PyTorch 适配测试。每个选中 ATK 算子须有至少 200 个独立精度 case、perf/mss 各至少 1 个；执行限制为最多 16 任务/16 CPU。
 >
-> 两个平台共用先直连、失败后代理重试的 Git 合并流程。Admin 作者的 PR 使用合并后的 `ci/`；其他作者使用固定可信脚本并保留 PR 用例配置。同一 PR 请求先排队，再按 head、模式、算子列表、base/workflow SHA 去重；触发结论和最终结果均新增评论，不改写历史评论。
+> A2/A5 共用先直连、失败后代理的 Git 合并流程，一律执行当前 PR 的 `ci/`。ATK 作为独立设备阶段纳入第 06 项报告校验，缺失或失败不能放行；当前 head 的 6 项状态、`CI 契约测试` 及 2 个 approval 均满足后才能合入。`ops=...` 仅执行 01/02 编译诊断，无 ATK，不满足正式门禁，不能与 `full` 或 `atk-ops` 组合。请求先排队并按完整执行计划去重；触发和结果均新增评论。
 >
 > 完整流程、精确状态名称及命令见 [仓库规则](docs/repository-rules.md#npu-ci-门禁)，部署排障见 [CI 部署教程](docs/Fla-npu仓CI部署教程.md)。ABI 敏感修改仍须由 `weinachuan` 检视。
 
@@ -152,7 +152,7 @@ bash build_and_test.sh
 python examples/flash_gated_delta_rule.py
 ```
 
-也可以由 CI 触发名单中的账号触发 CI 验证：`/run-npu-ci quick`。CI 会执行 `ci/example_st_cases.json` 中启用的 Example/ST 用例，默认覆盖当前 `case1_current_default`，仅覆盖容器内逻辑设备号 `--device`。
+也可以由 CI 触发名单中的账号触发 `/run-npu-ci quick`，按需追加 `atk-ops=<op_name>`；CI 文件变更需名单内 Admin 追加 `ci_modified=true`。正式流程运行 `ci/example_st_cases.json` 全部启用的 Example/ST 用例，以及文件差异和手动指定的 ATK 算子，容器内均使用逻辑设备 `0`。完整 wheel 和全部 PyTorch 适配测试使用 `/run-npu-ci full`。
 
 通过标准:
 

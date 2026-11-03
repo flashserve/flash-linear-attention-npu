@@ -14,16 +14,17 @@ export CI_ROOT="${CI_ROOT:-$HOME/ci}"
 
 ## 部署约定
 
-完整 CI 流程、6 项门禁、触发名单、纯 `.md` 放行规则及 CI 脚本信任规则统一见 [仓库规则：NPU CI 门禁](repository-rules.md#npu-ci-门禁)。本教程只说明 runner、镜像、网络和排障配置。
+完整 CI 流程、6 项门禁、文件分类、触发名单和 Admin 确认规则统一见 [仓库规则：NPU CI 门禁](repository-rules.md#npu-ci-门禁)。仅修改 `.md`、`docs/` 或 `LICENSES/` 自动放行；其他正式请求按差异选择包准备方式，并验证选中算子的 ATK 精度。本教程说明 runner、镜像、底包、网络和排障配置。
 
 - A2/A5 使用同一条 Git 源码准备路径：固定 base、拉取并核对 PR head、合并 PR；首次直连，失败后才启用宿主机代理重试。两台主机均需能直连或通过代理访问 GitHub Git 服务。
+- 两个平台一律运行 PR 合并后的 `ci/`，不叠加其他版本的 CI 目录。非 Markdown 的 `ci/` 或 `.github/` 修改必须由 CI 名单内的仓库 Admin 带 `ci_modified=true` 确认，重跑人也须满足相同权限。
 - runner 的 GitHub 控制连接可以使用代理。源码首次直连步骤会清空继承的 HTTP/HTTPS/ALL/Git 代理并设置 `NO_PROXY=*`；只有源码失败后才加载 `CI_PROXY_SCRIPT`。代理配置须在两台主机均提前部署。
 - runner 运行用户须能使用 Docker 和 Ascend 设备。`ci/run_ci_container.sh` 默认带 `--privileged`，否则可能出现 `npu-smi` 不可用或 `torch_npu.npu.device_count()` 为 `0`。
-- 宿主机物理设备号通过 `ASCEND_RT_VISIBLE_DEVICES` 选择，进入容器后通常映射为逻辑设备 `0`；Example/ST 默认使用 `CI_CONTAINER_DEVICE=0`。
+- `/run-npu-ci ... device-id=N` 对应 `CI_DEVICE_ID=N`，约束宿主机物理卡并对该卡加锁；省略时自动择卡。容器通过 `ASCEND_RT_VISIBLE_DEVICES` 只暴露选中卡，Example/ST、PyTorch 和 ATK 使用逻辑设备 `0`。
 - A2/A5 使用各自的镜像和 CANN/PyTorch 组合，不共用 wheel。A5 必须预置镜像，不能在 PR job 中临时构建。
 - 两个平台均只保留 `triton-ascend==3.2.1` 提供的 `triton` 模块，避免与社区版 `triton` 共存；当前 Stable-only 链路不要求 torchnpugen 或重新编译 op-plugin。
 - Example/ST 执行 `ci/example_st_cases.json` 中全部 `enabled=true` 用例；新增 shape 或行为必须在该文件显式配置。
-- 同一 PR 的请求以 `cancel-in-progress: false` 排队，准备阶段再按 head、模式、算子列表、base/workflow SHA 去重；所有任务和手工验证必须共用 `${CI_ROOT}/tmp/npu-locks`，防止抢占同一张卡。
+- 同一 PR 的请求以 `cancel-in-progress: false` 排队，准备阶段再按 head、目标分支名、base/workflow SHA、模式、编译计划、ATK 集合和设备号去重；所有任务和手工验证必须共用 `${CI_ROOT}/tmp/npu-locks`，防止抢占同一张卡。
 - 容器日志默认只保留 7 天；GitHub Actions 网页日志的保留时间由仓库/组织设置独立控制。
 
 runner 标签必须精确匹配：
@@ -165,15 +166,41 @@ A5 job 固定设置 `CI_REQUIRE_PRELOADED_IMAGE=true`。若 `fla-npu-ci:9.1.0-95
 
 A5 Dockerfile 对 PyTorch 和 `torch_npu` wheel 做 SHA256 校验。默认 Python 包源可通过 `PYPI_INDEX_URL` build arg 覆盖，但不能跳过 wheel 版本和校验和约束。
 
+### Daily 底包与 ATK 环境
+
+`ci/prepare_ci_package.py` 实现四种准备方式：`full` 通过 `python scripts/build_wheel.py` 构建完整 wheel；`incremental` 安装 Daily 底包后只构建选中算子并安全叠加 OPP；`torch` 安装底包后只重建 torch_custom；`base` 仅安装底包。后续布局、适配、GDR 和 ATK 均使用该次安装，不重复编译。
+
+底包沿用 [PR #1037](https://github.com/flashserve/flash-linear-attention-npu/pull/1037) 的发布源，默认 `CI_BASE_WHEEL_INDEX_URL=https://mirrors.huaweicloud.com/ascend/repos/pypi/nightly/`。按 PR 目标分支选择 `main` 的 `0.dev...+main.<SHA>` 或 `vX.Y.Z` 的 `X.Y.Z.dev...`，按 SOC 选择 A2/A5 包，再按当前 Python、CPU wheel 标签匹配。安装前还校验 METADATA、Stable 库和目标 SOC 的 kernel/config。不会回退到 PyPI 或其他分支、平台；如维护分支无映射、缺包或 ABI 不兼容，应补发匹配 Daily，或使用 `/run-npu-ci full`。维护者可用 `CI_BASE_WHEEL_VERSION` 固定同一分支的某个 Daily 版本。
+
+选中 ATK 算子的 runner 镜像还须预装可用的 ATK（`REQUIRED_ATK_VERSION` 默认最低版本为 26.8.8）、`taskset` 和对应依赖。仓库不假设公开 PyPI 上的同名包可用；维护者应获取受控 HTTPS 来源的 CPython 3.12 wheel，A2 使用 aarch64 wheel，A5 使用 x86_64 wheel，通过 Dockerfile 的 `ATK_WHL_URL`、`ATK_WHL_SHA256` 参数校验后安装，详见 [ATK 镜像依赖](../tests/atk/README.md#ci-镜像依赖)，例如：
+
+```sh
+# A2：替换为受控下载地址及对应 wheel 的完整 SHA256。
+docker build --platform=linux/arm64 \
+  --build-arg ATK_WHL_URL='<aarch64-ATK-wheel-URL>' \
+  --build-arg ATK_WHL_SHA256='<64位SHA256>' \
+  -t fla-npu-ci:9.1.0-910b -f ci/Dockerfile .
+
+# A5：需在维护窗口构建并预加载到实际 runner 使用的 Docker daemon。
+docker build --platform=linux/amd64 --network=host \
+  --build-arg ATK_WHL_URL='<x86_64-ATK-wheel-URL>' \
+  --build-arg ATK_WHL_SHA256='<64位SHA256>' \
+  -t fla-npu-ci:9.1.0-950 -f ci/Dockerfile.ascend950 .
+```
+
+两个参数默认留空可保留原镜像构建行为，但没有 ATK 的旧镜像不能完成选中算子的 ATK 验证；入口会明确失败，提示管理员升级镜像。新增测试流程不会自动部署受控 ATK 依赖，A5 也不会在 PR job 内重建镜像。
+
+CI 仅调用 `tests/atk/run_test_cpu.sh`，不直接读取 ATK 用例格式或调用 ATK 内部命令。该入口先检查每个选中算子有至少 200 个独立精度 case、perf/mss 各至少 1 个有效 case，再执行全部精度用例；perf/mss 在此只做资产检查。入口使用 `taskset` 将进程树限制到最多 16 个 CPU，并设置 ATK 最多 16 个任务、关闭自动绑核、数值库每任务 1 线程。镜像缺少 `taskset` 或无权设置 affinity 时应修复镜像/容器配置，不允许绕过限制。
+
 A2/A5 job 统一设置 `CI_TMPDIR=/tmp/fla-npu-ci`。A5 Triton/BiShengIR 编译器要求临时目录位于容器 `/tmp` 下；不要修改这个容器路径。`CI_HOST_TMPDIR` 把 `${CI_ROOT}/tmp/container-<platform>-<run>-<attempt>` bind mount 到该路径，由 `ci/run_ci_container.sh` 创建本次目录。宿主机 `TMPDIR` 固定为 `${CI_ROOT}/tmp`，基础目录由部署脚本提前创建，供源码准备阶段使用。容器中的 `/workspace/repo` 和 `/workspace/gdr_accuracy_golden` 是挂载目标，不要求宿主机存在 `/workspace`。
 
 `ci/run_ci_container.sh` 在宿主机注册 `EXIT` 收尾：通过 Docker `--cidfile` 记录本次创建的容器 ID，仅停止该容器，再用无网络 helper 容器将源码及本次 `CI_HOST_TMPDIR` 的所有权归还调用用户，最后释放设备锁。正常退出、失败、中断及 stale-commit 监控提前 `docker rm -f` 的路径均执行收尾；原始非零退出码保留，成功运行后的收尾失败也会使 CI 失败。目录准备与权限收尾都在入口脚本中完成，无需新增 workflow 步骤或宿主机 `sudo`。
 
-workflow 清理步骤仅删除本次 `CI_HOST_TMPDIR`，并校验目录边界及符号链接。两个平台的可信 CI 覆盖流程都使用 `TMPDIR` 下的独立 `mktemp` 目录临时保留 PR Example/ST 配置，由步骤自身的 `EXIT` trap 清理。静态 `TMPDIR` 根目录始终保留。
+workflow 清理步骤仅删除本次 `CI_HOST_TMPDIR`，并校验目录边界及符号链接。源码直接使用 PR 的 `ci/`，不再创建 CI 覆盖或用例暂存目录。静态 `TMPDIR` 根目录始终保留。
 
 缓存固定使用 `CI_CACHE_ROOT=${CI_ROOT}/cache_root`；NPU 锁固定使用 `${CI_ROOT}/tmp/npu-locks`，跨运行共享，不能按 run 分开。单次运行的收尾保留共享缓存与锁文件，不递归修改它们的所有权。
 
-Stage 耗时统一保存在每台服务器的 `${CI_ROOT}/results/ci-timings/stage-timings.csv`（workflow 通过 `CI_TIMING_ROOT` 配置）。总表每行对应一个 `(run_id, run_attempt, platform, stage)`，包含 commit、SOC、状态、退出码、UTC 起止时间和 `duration_seconds`，历史 CI 行持续保留。只记录当前 5 个设备执行 stage；GitHub-hosted 汇总校验不在此表内。每次 stage 状态变化即加锁更新总表、同步落盘并原子替换，失败也保留，工作区与临时目录清理不会删除它。被强制终止的 stage 保留 `running` 和开始时间，耗时留空；`skipped/not_run` 耗时也留空，不写成 0。启用前须在 A2、A5 分别创建下述可写目录；总表由各自服务器维护，不自动跨机合并。
+Stage 耗时统一保存在每台服务器的 `${CI_ROOT}/results/ci-timings/stage-timings.csv`（workflow 通过 `CI_TIMING_ROOT` 配置）。总表每行对应一个 `(run_id, run_attempt, platform, stage)`，包含 commit、SOC、状态、退出码、UTC 起止时间和 `duration_seconds`，历史 CI 行持续保留。记录设备执行阶段，包括 `atk-accuracy`；GitHub-hosted 汇总校验不在此表内。每次 stage 状态变化即加锁更新总表、同步落盘并原子替换，失败也保留，工作区与临时目录清理不会删除它。被强制终止的 stage 保留 `running` 和开始时间，耗时留空；`skipped/not_run` 耗时也留空，不写成 0。启用前须在 A2、A5 分别创建下述可写目录；总表由各自服务器维护，不自动跨机合并。
 
 A2/A5 的代理回退读取普通用户配置 `CI_PROXY_SCRIPT=${CI_ROOT}/vpn-proxy.sh`，调用 `proxyon`，校验变量不含 CR/LF，再通过 `GITHUB_ENV` 将代理地址与端口传递给后续步骤。管理员须提前在两台主机部署 `nelvko/clashctl` 到 `${CI_ROOT}/clashctl`，并将提供的 `vpn-proxy.sh` 适配副本放到上述位置：运行时配置和二进制路径指向该目录，日志写入 `${CI_ROOT}/tmp/mihomo.log`，权限允许 `ubuntu` 读取配置、执行二进制和写日志。脚本属于主机部署配置，不提交到仓库；workflow 不读取 `/root`、不修改 `HOME` 或全局 Git 配置。
 
@@ -260,8 +287,8 @@ export CI_NPU_LOCK_DIR="${CI_ROOT}/tmp/npu-locks"
 CI_IMAGE=fla-npu-ci:9.1.0-910b \
 CI_SOC=ascend910b \
 CI_MODE=quick \
+CI_BUILD_KIND=full \
 CI_RUN_EXAMPLE_ST=true \
-CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK=true \
 bash ci/run_ci_container.sh
 
 # A5：必须提前准备镜像
@@ -269,8 +296,8 @@ CI_IMAGE=fla-npu-ci:9.1.0-950 \
 CI_SOC=ascend950 \
 CI_REQUIRE_PRELOADED_IMAGE=true \
 CI_MODE=quick \
+CI_BUILD_KIND=full \
 CI_RUN_EXAMPLE_ST=true \
-CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK=true \
 bash ci/run_ci_container.sh
 ```
 
@@ -280,18 +307,31 @@ bash ci/run_ci_container.sh
 - 用 `--privileged` 启动容器
 - 挂载 `third_party` 缓存
 - 按顺序检查环境、wheel 配置及运行时契约
-- 为目标 SOC 构建全量 OPP run 包
-- 检查独立 `torch_custom` wheel 与 OPP 安装布局
-- 安装 OPP 并构建 PyTorch 适配
+- 通过 `python scripts/build_wheel.py` 构建并安装完整目标 SOC wheel
+- 检查已安装 wheel、OPP 布局和 PyTorch 适配环境
 - 执行 `ci/example_st_cases.json` 中启用的 GDR Example/ST 用例，仅覆盖容器内逻辑设备号 `--device 0`
 
-上述分项串行执行。一个分项失败后，脚本会停止实际测试并把后续分项标记为未执行；不会为了收集更多结果继续执行依赖已失败的步骤。失败日志和汇总诊断会给出类似下面的复现命令：
+上述命令显式使用 `CI_BUILD_KIND=full` 做镜像验收；Actions 会从 PR 文件差异注入执行计划。手工验证增量构建和 ATK 时，例如：
 
-`quick` 和 `full` 都只在第 02 项构建当前平台对应的目标 SOC，不会把其他安装或测试混入构建状态。未指定 `ops` 时，`full` 会在第 04 项追加全部 PyTorch 适配测试。
+```sh
+CI_IMAGE=fla-npu-ci:9.1.0-910b \
+CI_SOC=ascend910b CI_MODE=quick CI_BASE_REF=main \
+CI_BUILD_KIND=incremental CI_BUILD_OPS=chunk_fwd_o \
+CI_ATK_OPS=chunk_fwd_o CI_DEVICE_ID=0 \
+bash ci/run_ci_container.sh
+```
+
+仅验证 torch_custom 时使用 `CI_BUILD_KIND=torch`；底包验证使用 `CI_BUILD_KIND=base`，两者均清空 `CI_BUILD_OPS` 并填写 `CI_BASE_REF`。`CI_ATK_OPS` 为要完整验证的 ATK 算子列表，逗号分隔；为空则跳过 ATK。A5 同时设置对应 SOC、镜像和 `CI_REQUIRE_PRELOADED_IMAGE=true`。
+
+正式 `quick`、`full` 都执行环境、已安装布局、适配环境和 GDR，并运行相同选中集合的 ATK；`full` 强制完整 wheel，且额外运行全部 PyTorch 适配测试。手工 `CI_RUN_TORCH_TESTS=true` 可在 quick 中启用该测试，正式 workflow 不设置这一覆盖。
+
+上述分项串行执行。一个分项失败后，后续依赖分项标记未执行。失败日志和汇总诊断同时给出原因、修改建议及包含编译计划、ATK、分支和设备号的复现命令，例如：
 
 ```sh
 CI_STAGE=opp-package \
 CI_MODE=quick \
+CI_BUILD_KIND=incremental CI_BUILD_OPS=chunk_fwd_o CI_BASE_REF=main \
+CI_ATK_OPS=chunk_fwd_o CI_DEVICE_ID=0 \
 CI_SOC=ascend950 \
 FLA_NPU_SOC=ascend950 \
 CI_IMAGE=fla-npu-ci:9.1.0-950 \
@@ -300,7 +340,7 @@ CI_REQUIRE_PRELOADED_IMAGE=true \
 bash ci/run_ci_container.sh
 ```
 
-`CI_STAGE` 可取 `environment-contracts`、`opp-package`、`standalone-layout`、`torch-adapter` 或 `gdr-example-st`。脚本会先执行该分项所需的前置分项，再执行目标分项；应优先使用失败诊断中给出的完整命令。
+`CI_STAGE` 可取 `environment-contracts`、`opp-package`、`standalone-layout`、`torch-adapter`、`gdr-example-st` 或 `atk-accuracy`。脚本会先执行该分项所需的前置分项，再执行目标分项；应优先使用失败诊断中给出的完整命令。正式增量验证使用 `CI_BUILD_KIND=incremental` 和 `CI_BUILD_OPS`，并保留 `CI_STAGE=all`；命令 `ops=` 才使用仅 01/02 的诊断路径。
 
 本地排障时可以只跑某个用例：
 
@@ -518,18 +558,20 @@ bash scripts/github/apply_branch_protection.sh main
 
 ## 第 10 步：验证触发方式
 
-先确认触发用户名已加入默认分支的 [`.github/npu-ci-users.json`](../.github/npu-ci-users.json)。分发和执行准备会各自读取默认分支名单，待测 PR 中的名单变更不授予权限；名单用户无需具备仓库 Admin 权限。手动重新运行时，实际操作人 `github.triggering_actor` 也须在名单中。完整命令、去重及脚本选择规则见 [仓库规则](repository-rules.md#npu-ci-门禁)。
+先确认触发用户名已加入默认分支的 [`.github/npu-ci-users.json`](../.github/npu-ci-users.json)。分发和执行准备各自读取默认分支名单，待测 PR 的名单变更不授予权限；普通代码验证无需仓库 Admin 权限。CI 文件变更还须名单内 Admin 带 `ci_modified=true` 确认，实际重跑人也须满足对应权限。完整规则见 [仓库规则](repository-rules.md#npu-ci-门禁)。
 
 部署后的检查顺序：
 
-1. 新建或更新仅修改 `.md` 的 PR，确认 6 个 NPU context 自动 success，且没有 self-hosted NPU job。重命名需原、新路径均为 `.md`；文件列表不完整时不能跳过，同一 commit 在其他 PR 的纯文档结果不能代替本 PR 检查。
-2. 在包含代码修改的非草稿 PR 上，确认新 head 的 6 个 NPU 状态初始为 pending；旧 head 的成功结果不复用。
-3. 用名单用户在 PR 评论 `/run-npu-ci quick`，或在 `Actions` → `NPU CI` → `Run workflow` 选择 CI 定义分支、填写 `pr_number` 和 `ci_mode`。确认新增开始评论，并分别调度 A2/A5。
-4. 在两个平台日志确认先直连准备 Git 源码，失败后才启用代理；Admin 作者的 PR 保留合并后的 `ci/`，其他作者使用固定可信 `ci/` 并保留 PR 用例配置。
-5. 执行完成后确认新增独立结果评论及 6 个最终状态。历史开始/结果评论应保留；成功评论只列平台结论和精度计数，失败评论包含关键诊断及 `CI_STAGE` 复现命令。
-6. 对运行中的相同请求再次触发，确认先排队且保留原任务，进入准备阶段后再去重并新增评论。只有 head、模式、算子列表、base/workflow SHA 均相同才复用完整成功结果；改变其中一项应重新验证。
+1. 新建只修改 `.md`、`docs/` 或 `LICENSES/` 的 PR，确认 6 项自动 success 且没有 NPU job。重命名检查原、新路径；文件列表不完整时不能跳过，同一 commit 在其他 PR 的文档结果不能代替本 PR 检查。
+2. 在普通代码 PR 上确认 6 项初始 pending；在包含非 Markdown 的 `ci/` 或 `.github/` 修改的 PR 上确认默认 failure 评论明确提示 Admin 追加 `ci_modified=true`。
+3. 用名单用户评论 `/run-npu-ci quick`，CI 修改则由名单内 Admin 评论 `/run-npu-ci quick ci_modified=true`；Actions 手动输入使用下划线名称 `atk_ops`、`device_id`、`ci_modified`。确认新增评论列出全量/增量/torch/底包计划及 ATK 集合，并分别调度 A2/A5。
+4. 验证普通单算子修改只编译对应算子并自动测试该算子 ATK；只有 ATK 算子目录修改时用底包运行 ATK；公共构建文件修改应全量。核对 artifact 中实际包准备方式和底包分支、SOC、CPU、Python、版本。
+5. 使用 `/run-npu-ci quick atk-ops=chunk_fwd_o device-id=0`，确认手动 ATK 与自动集合合并、物理设备选择生效，容器中的测试仍使用逻辑设备 `0`。缺少 200 个精度 case、perf/mss 各 1 个时，日志须列出期望/实际数量和补齐建议；ATK 日志须显示最多 16 任务/16 CPU。
+6. 在两个平台日志确认源码先直连、失败后代理，并一律使用 PR 合并后的 `ci/`。`full` 应强制完整 wheel，且比 `quick` 额外执行全部 PyTorch 适配测试；GDR 和同一 ATK 集合的验证范围保持相同。
+7. 完成后确认新增独立结果评论及 6 个最终状态，ATK 显示为单独设备阶段并纳入第 06 项。缺少选中 ATK 报告不能通过；失败评论包含明确原因、修改建议及 `CI_STAGE` 复现命令。
+8. 再次触发相同请求，确认先排队、保留原任务，再去重并新增评论。head、目标分支名、base/workflow SHA、模式、编译计划、ATK 集合或设备号不同均应重新验证。
 
-正式门禁使用 `/run-npu-ci quick` 或 `/run-npu-ci full`。`ops=...` 仅用于 01/02 定向编译诊断，发布独立诊断状态，不满足 6 项合入门禁。评论默认使用 PR 目标分支的 `ci.yml`，`ci_ref=<branch>` 或 Actions 页面的 `Branch` 可选择其他 CI 定义分支。
+正式门禁使用 `/run-npu-ci quick` 或 `/run-npu-ci full`，按需追加 `atk-ops=...`。`ops=...` 只执行显式算子的 01/02 增量编译诊断，不运行 ATK、不满足正式门禁，不能和 `full`、`atk-ops` 组合。评论默认使用 PR 目标分支的 `ci.yml`，`ci_ref=<branch>` 或 Actions 页面的 `Branch` 可选择实现相同输入契约的其他 CI 定义分支。
 
 如果 Actions 有运行但 PR 没有评论，检查 `Settings` → `Actions` → `General` 的 workflow 写权限，以及组织策略是否允许 job 申请 `issues: write`、`statuses: write`。不同 PR 可同时调度；`ci/run_ci_container.sh` 通过共享物理 NPU 文件锁等待空闲卡：
 
@@ -558,7 +600,7 @@ bash scripts/github/apply_branch_protection.sh main
 1. 当前 head commit 的 6 个 NPU context 和 `CI 契约测试` 全部 success
 2. GitHub 分支保护要求的 2 个 approval 和 Code Owners review 已经满足
 
-如果 PR push 新 commit 或更换目标分支，门禁会重新检查：纯 `.md` 改动直接通过，其余需名单用户重新触发 NPU CI。旧 commit 或旧 base 的结果不能放行新的请求。
+如果 PR push 新 commit 或更换目标分支，门禁会重新检查：只有 `.md`、`docs/` 或 `LICENSES/` 改动直接通过，其余需名单用户重新触发；CI 文件变更还须 Admin 确认。旧 commit 或旧 base 的结果不能放行新的请求。
 
 `weinachuan` 如果需要紧急强行合入，可以走 GitHub branch protection bypass，但前提是第 9 步已经把 bypass allowance 配好。
 
@@ -616,15 +658,31 @@ docker image inspect fla-npu-ci:9.1.0-950 \
 
 检查是否同时安装了社区版 `triton` 和 `triton-ascend`。本仓 A2 CI 镜像只保留 `triton-ascend==3.2.1`，A5 CI 镜像只保留 `triton-ascend==3.2.1` 提供的 `triton` 模块。
 
-### `.run` 安装后 Python 调用找不到自定义 op
+### 安装后 Python 调用找不到自定义 op
 
 检查日志里是否设置了 custom OPP 的 op_api lib：
 
 ```text
-Custom OPP op_api lib: /usr/local/Ascend/.../opp/vendors/fla_npu_transformer/op_api/lib
+Custom OPP op_api lib: <已安装fla_npu>/opp/vendors/fla_npu_transformer/op_api/lib
 ```
 
-如果没有，需要确认 `.run` 包安装成功，并且 `LD_LIBRARY_PATH` 包含这个目录。
+如果没有，检查 `.ci-tmp/npu-ci-package.json` 与生成的环境文件，确认完整 wheel 已安装且在 Python 导入前加载其 `bin/set_env.bash`。增量模式还需启用 `fla_npu_overlay_transformer`，不能将部分 `.run` 直接覆盖完整底包；overlay ABI 不匹配时修复接口兼容性，或使用 `full` 构建完整 wheel。
+
+### Daily 底包下载或匹配失败
+
+核对 PR 目标分支是否为 `main` 或已有对应 Daily 的 `vX.Y.Z`，发布源中是否同时存在当前 SOC、CPU 架构、Python 版本对应 wheel。不能用 A2/aarch64 代替 A5/x86_64，也不能用 `main` 的包代替维护分支。应发布匹配底包，必要时设置同分支 `CI_BASE_WHEEL_VERSION`，或改用 `/run-npu-ci full`；不要增加其他 index 回退来掩盖缺包。
+
+### ATK 缺失、资产不足或精度失败
+
+日志会显示算子、失败阶段和修改建议。缺少 `atk` 时，管理员按上面的受控 wheel + SHA256 流程重建镜像，A5 预加载后再触发。缺少 `taskset`、无法设置 CPU affinity 或 ATK 版本过旧时，修复镜像依赖和容器权限。
+
+用例检查失败时，按日志中的 expected/actual 在该算子 ATK 目录补齐至少 200 个独立精度 case、perf/mss 各 1 个有效 case，修复格式或重复 id。执行失败或精度不通过时，从 artifact 查看首个失败 case，修复 executor、CPU 标杆、环境或算子实现，再通过同一入口复现：
+
+```sh
+bash tests/atk/run_test_cpu.sh -op=chunk_fwd_o -scope=accuracy -ci=true -npu_device_id=0 -soc=ascend910b
+```
+
+该命令需在已安装待测 wheel、加载正确环境且预装 ATK 的对应平台容器内运行。不得通过缩减 case 范围、关闭 CPU 限制或跳过选中 ATK 来满足门禁。
 
 ### 评论触发没有反应
 
@@ -633,6 +691,8 @@ Custom OPP op_api lib: /usr/local/Ascend/.../opp/vendors/fla_npu_transformer/op_
 - 评论是否发在 PR 页面，不是普通 Issue 页面
 - 命令是否以 `/run-npu-ci` 开头
 - 发送评论的人是否在默认分支 `.github/npu-ci-users.json` 名单中；文件是否为合法 JSON
+- PR 是否修改非 Markdown 的 `ci/`、`.github/`；如是，触发人必须同时为仓库 Admin 并显式添加 `ci_modified=true`
+- 是否错误组合了 `ops=` 与 `full` 或 `atk-ops`；需要 ATK 时使用正式 `quick atk-ops=...`
 - `NPU CI 评论分发` workflow 是否启用
 - PR 目标分支或 `ci_ref` 指定分支是否存在 `.github/workflows/ci.yml`
 - 目标分支的 `ci.yml` 是否声明 `workflow_dispatch`
@@ -640,7 +700,7 @@ Custom OPP op_api lib: /usr/local/Ascend/.../opp/vendors/fla_npu_transformer/op_
 
 ### PR 创建后没有 6 个 NPU CI 分项的未执行状态
 
-纯 `.md` PR 会直接显示 6 个 success。其他 PR 检查：
+只有 `.md`、`docs/` 或 `LICENSES/` 的 PR 直接显示 6 个 success。CI 文件变更在管理员确认前显示 failure；其他 PR 检查：
 
 - `NPU CI 默认状态` workflow 是否启用
 - PR 是否是新建、重开、ready for review，或刚 push 了新 commit
@@ -664,7 +724,7 @@ Custom OPP op_api lib: /usr/local/Ascend/.../opp/vendors/fla_npu_transformer/op_
 
 ### 多个 NPU CI 同时触发怎么办
 
-同一 PR 的后续请求先排队，保留当前正在执行的任务；进入准备阶段后，按 head、模式、算子列表、base/workflow SHA 去重，新增评论说明复用或重新运行的结论。
+同一 PR 的后续请求先排队，保留当前正在执行的任务；进入准备阶段后，按 head、目标分支名、base/workflow SHA、模式、编译计划、ATK 集合和设备号去重，新增评论说明复用或重新运行的结论。
 
 不同 PR 或不同 commit 同时触发时，GitHub Actions 可能把它们分配给不同 self-hosted runner。runner 宿主机会用 `flock` 给物理 NPU 加锁，避免多个任务抢同一张卡。workflow 使用的锁文件如下：
 
@@ -710,7 +770,7 @@ export CI_LOG_CLEANUP_ENABLED=false
 - Job Summary 只显示平台、SOC、执行结论和精度通过计数。失败时补充去重、限长并脱敏后的编译错误、运行异常、精度异常和复现命令。
 - 完整构建与测试输出保留在 Actions 原始日志的折叠区中。普通编译 warning、include 展开和构建进度不会重复出现在 Summary 或 PR 评论中；需要深入排障时再展开查看。
 
-平台 artifact 保留结构化执行结果、精度报告和关键诊断。成功报告中的逐 Tensor 指标仍可从精度 JSON 读取，但不会填满 PR 评论。精度报告只有在全部选中 case 已结束，或剩余 case 已明确记为 `not_run` 后才标记完整；进程中断留下的部分报告不会被计为精度通过。CI 不使用 `-w` 或其他方式关闭编译告警，避免丢失有价值的原始诊断。
+平台 artifact 保留结构化阶段结果、包准备信息、GDR/ATK 精度报告和关键诊断。成功报告中的逐 Tensor 指标仍可从精度 JSON 读取，不会填满 PR 评论。精度报告只有在全部选中 case 已结束，或剩余 case 已明确记为 `not_run` 后才标记完整；进程中断、缺少选中算子的 ATK 报告或存在未执行 case 均不能计为通过。CI 不使用 `-w` 或其他方式关闭编译告警。
 
 ## 参考链接
 

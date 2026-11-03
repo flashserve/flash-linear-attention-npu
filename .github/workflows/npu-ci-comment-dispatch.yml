@@ -17,7 +17,8 @@ on:
 permissions:
   actions: write
   contents: read
-  issues: read
+  issues: write
+  statuses: write
   pull-requests: read
 
 jobs:
@@ -29,7 +30,7 @@ jobs:
       contains(github.event.comment.body, '/run-npu-ci')
     runs-on: ubuntu-latest
     steps:
-      - name: 检出可信分发脚本
+      - name: 检出分发脚本
         uses: actions/checkout@v6
         with:
           ref: ${{ github.workflow_sha }}

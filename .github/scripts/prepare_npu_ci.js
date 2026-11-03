@@ -1,8 +1,9 @@
 'use strict';
 
 const {
-  REQUIRED_CHECKS, SCOPED_CHECK, requireAuthorizedCiUser, isMarkdownOnly,
-  assertUnchangedPullRequest, normalizeOps, buildRequestKey, createComment, writeStatuses,
+  REQUIRED_CHECKS, SCOPED_CHECK, requireAuthorizedCiUser, inspectChanges,
+  requireCiModificationApproval, normalizeCiModified,
+  assertUnchangedPullRequest, normalizeOps, normalizeDeviceId, buildRequestKey, buildCiApprovalKey, createComment, writeStatuses,
 } = require('./npu_ci_policy');
 
 function latestByContext(statuses) {
@@ -26,19 +27,6 @@ async function isActiveRun({ github, context, core, status }) {
   }
 }
 
-async function prAuthorIsAdmin({ github, context, core, pr }) {
-  try {
-    const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
-      ...context.repo, username: pr.user.login,
-    });
-    return data.permission === 'admin';
-  } catch (error) {
-    // An unavailable permission check must never grant the PR code CI privileges.
-    core.warning(`无法确认 PR 作者的 Admin 身份，使用可信 CI：${error.message}`);
-    return false;
-  }
-}
-
 module.exports = async function prepareNpuCi({ github, context, core }) {
   core.setOutput('should_run', 'false');
   const inputs = context.payload.inputs || {};
@@ -56,8 +44,13 @@ module.exports = async function prepareNpuCi({ github, context, core }) {
   const prNumber = Number(inputs.pr_number);
   const ciMode = inputs.ci_mode || 'quick';
   const ops = normalizeOps(inputs.ops || '');
+  const atkOps = normalizeOps(inputs.atk_ops || '');
+  const deviceId = normalizeDeviceId(inputs.device_id || '');
+  const ciModifiedConfirmed = normalizeCiModified(inputs.ci_modified || 'false');
   if (!Number.isInteger(prNumber) || prNumber <= 0) throw new Error(`无效的 PR 编号：${inputs.pr_number}`);
   if (!['quick', 'full'].includes(ciMode)) throw new Error(`不支持的 CI 模式：${ciMode}`);
+  if (ciMode === 'full' && ops) throw new Error('full 与 ops= 定向诊断不能同时使用；请使用 full 全量验证，或 quick ops=... 定向诊断。');
+  if (ops && atkOps) throw new Error('ops= 定向编译诊断与 atk-ops= 不能同时使用；需要 ATK 验证时请使用 /run-npu-ci quick atk-ops=...。');
 
   const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: prNumber });
   if (pr.state !== 'open') throw new Error(`PR #${prNumber} 已关闭。`);
@@ -66,15 +59,20 @@ module.exports = async function prepareNpuCi({ github, context, core }) {
   const baseSha = baseBranch.commit.sha;
   const workflowSha = process.env.NPU_CI_WORKFLOW_SHA || '';
   if (![baseSha, workflowSha, pr.head.sha].every((sha) => /^[0-9a-f]{40}$/.test(sha))) {
-    throw new Error('无法确定本次 NPU CI 的 base、head 或可信 CI commit。');
+    throw new Error('无法确定本次 NPU CI 的 base、head 或 workflow commit。');
   }
   if (!pr.head.repo?.full_name) throw new Error('无法确定 PR 源码仓库。');
 
-  // A previous success is reusable only for the same source merge and CI version.
-  const requestKey = buildRequestKey({ ciMode, ops, baseSha, workflowSha });
+  const plan = await inspectChanges({ github, context, pr, ciMode, ops, atkOps, deviceId });
+  // A previous success is reusable only for the same merge, workflow, build,
+  // ATK selection, and device. Always recompute the plan from this PR's diff.
+  const requestKey = buildRequestKey({ ciMode, ops, baseRef: pr.base.ref, baseSha, workflowSha, plan });
   const outputs = {
     pr_number: String(prNumber), base_ref: pr.base.ref, base_sha: baseSha, head_sha: pr.head.sha,
-    trusted_ci_sha: workflowSha, ci_mode: ciMode, ops, request_key: requestKey, use_pr_ci: 'false',
+    ci_mode: ciMode, ops, request_key: requestKey,
+    full_build: String(plan.full_build), build_kind: plan.build_kind, build_ops: plan.build_ops,
+    atk_ops: plan.atk_ops, ci_modified: String(plan.ci_modified), device_id: plan.device_id,
+    ci_approval_key: '',
   };
   const checks = ops ? [SCOPED_CHECK] : REQUIRED_CHECKS;
   const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
@@ -82,6 +80,8 @@ module.exports = async function prepareNpuCi({ github, context, core }) {
     `- 模式：\`${ciMode}\``, `- 触发人：@${requestedBy}`,
     `- CI 定义分支：\`${process.env.NPU_CI_WORKFLOW_REF || ''}\``,
     '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
+    `- 编译计划：\`${plan.build_kind}\`；增量算子：\`${plan.build_ops || '(无)'}\``,
+    `- ATK 算子：\`${plan.atk_ops || '(无)'}\`；设备：\`${plan.device_id || '自动选择'}\``,
     ops ? `- 定向编译诊断：\`${ops}\`；仅执行 01-02，不改写正式门禁状态` : '',
   ].filter(Boolean);
   const comment = async (title, extra = []) => createComment({
@@ -92,21 +92,38 @@ module.exports = async function prepareNpuCi({ github, context, core }) {
     core.setOutput('should_run', String(shouldRun));
   };
 
-  if (await isMarkdownOnly({ github, context, pr })) {
+  if (plan.ci_modified) {
+    try {
+      const usernames = [requestedBy];
+      if (Number(process.env.NPU_CI_RUN_ATTEMPT || '1') > 1) usernames.push(process.env.NPU_CI_TRIGGERING_ACTOR || '');
+      await requireCiModificationApproval({ github, context, usernames, confirmed: ciModifiedConfirmed });
+      outputs.ci_approval_key = buildCiApprovalKey({ prNumber, baseRef: pr.base.ref, baseSha, headSha: pr.head.sha });
+    } catch (error) {
+      await writeStatuses({ github, context, pr, checks, state: 'failure',
+        description: 'CI 文件变更未经管理员 ci_modified=true 确认', targetUrl: runUrl });
+      await comment('NPU CI 拒绝执行：CI 文件变更尚未获得管理员确认。', [`- 原因及修改建议：${error.message}`]);
+      throw error;
+    }
+  }
+
+  if (plan.documentation_only && ciMode !== 'full' && !ops && !atkOps) {
     await writeStatuses({ github, context, pr, checks, state: 'success',
-      description: '仅修改 Markdown，跳过 NPU CI', targetUrl: runUrl });
-    await comment(`PR \`${pr.head.sha}\` 仅修改 Markdown，NPU CI 直接通过，不占用 NPU。`);
+      description: '仅修改文档或 LICENSES，跳过 NPU CI', targetUrl: runUrl });
+    await comment(`PR \`${pr.head.sha}\` 仅修改 .md、docs/ 或 LICENSES/，NPU CI 直接通过，不占用 NPU。`);
     finish(false);
     return;
   }
 
   const signature = `(${ciMode},${requestKey},A2+A5)`;
+  const approvalMarker = outputs.ci_approval_key ? `ci-ok=${outputs.ci_approval_key}` : '';
   const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, {
     ...context.repo, ref: pr.head.sha, per_page: 100,
   });
   const latest = latestByContext(statuses);
   const finalStatus = latest.get(checks.at(-1)[0]);
-  const matchesRequest = finalStatus?.description?.includes(signature);
+  const matchesApproval = !approvalMarker || checks.every(([name]) =>
+    latest.get(name)?.description?.split(/\s+/).includes(approvalMarker));
+  const matchesRequest = finalStatus?.description?.includes(signature) && matchesApproval;
   const completeSuccess = finalStatus?.target_url && checks.every(([name]) =>
     latest.get(name)?.state === 'success' && latest.get(name)?.target_url === finalStatus.target_url);
   if (process.env.NPU_CI_RUN_ATTEMPT === '1' && matchesRequest && completeSuccess) {
@@ -122,12 +139,11 @@ module.exports = async function prepareNpuCi({ github, context, core }) {
     return;
   }
 
-  outputs.use_pr_ci = String(await prAuthorIsAdmin({ github, context, core, pr }));
   await assertUnchangedPullRequest({ github, context, pr });
   await writeStatuses({ github, context, pr, checks, state: 'pending',
-    description: (label) => `${label}等待执行 ${signature}`, targetUrl: runUrl });
+    description: (label) => `${label}等待执行 ${signature}${approvalMarker ? ` ${approvalMarker}` : ''}`, targetUrl: runUrl });
   await comment(`NPU CI 已开始验证 \`${pr.head.sha}\`。`, [
-    outputs.use_pr_ci === 'true' ? '- CI 脚本：PR 作者为仓库 Admin，使用当前 PR 中的 CI' : '- CI 脚本：使用固定 workflow commit 的可信 CI',
+    '- CI 脚本：使用当前 PR 合并后的 ci/；CI 文件变更已按需获得管理员确认',
     '- 执行方式：按顺序执行；前置失败时后续项跳过',
     `- 运行链接：[NPU CI #${context.runNumber}](${runUrl})`,
   ]);

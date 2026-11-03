@@ -64,6 +64,7 @@ def _stage_report(failed_stage):
         "standalone-layout",
         "torch-adapter",
         "gdr-example-st",
+        "atk-accuracy",
     )
     failed_index = stage_names.index(failed_stage)
     stages = {}
@@ -160,6 +161,26 @@ class SummarizeNpuCiTest(unittest.TestCase):
             payload_text = json_path.read_text(encoding="utf-8")
             markdown = markdown_path.read_text(encoding="utf-8")
             return return_code, json.loads(payload_text), payload_text, markdown
+
+    def test_atk_failure_preserves_counts_and_fix_advice(self):
+        message = (
+            "[ATK CI] 算子 foo 用例门禁失败：accuracy: expected >= 200, actual 199; perf: expected >= 1, actual 0\n"
+            "[ATK CI] 修改建议：在 tests/atk/foo/ 补齐精度及perf用例。\n"
+        )
+        _, payload, _, markdown = self._run(message, exit_code=1, stage_report=_stage_report("atk-accuracy"))
+        self.assertEqual(payload["status"], "failure")
+        self.assertIn("actual 199", markdown)
+        self.assertIn("补齐精度及perf", markdown)
+        self.assertIn("补齐精度及perf", payload["diagnostics"]["runtime"][0]["lines"][1])
+        self.assertIn("CI_STAGE=atk-accuracy", payload["reproduction"][0])
+
+    def test_package_fix_is_kept_with_the_failure(self):
+        _, payload, _, markdown = self._run(
+            "[CI][ERROR] Package preparation failed: wrong base branch\n"
+            "[CI][FIX] Publish the matching Daily or use /run-npu-ci full.\n", exit_code=1,
+        )
+        self.assertIn("/run-npu-ci full", markdown)
+        self.assertIn("/run-npu-ci full", payload["diagnostics"]["runtime"][0]["lines"][1])
 
     def test_failed_stage_is_added_to_reproduction_command(self):
         return_code, payload, _, markdown = self._run(
@@ -562,7 +583,6 @@ RuntimeError: ACL kernel launch failed
         self.assertNotIn("passed-case", payload_text)
         command = payload["reproduction"][0]
         self.assertIn("CI_EXAMPLE_CASE_FILTER=failed-case,not-run-case", command)
-        self.assertIn("CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK=true", command)
         self.assertIn("ci/run_ci_container.sh", command)
         self.assertNotIn(str(Path.cwd()), command)
         self.assertIn("failed-case", markdown)

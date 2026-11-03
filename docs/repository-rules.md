@@ -37,81 +37,118 @@ PR 合入前仍需要 2 个 approval。该要求由 GitHub 分支保护原生能
 
 ## NPU CI 门禁
 
-PR 创建、重开或更新 commit 时，`CI 契约测试` 自动在 GitHub-hosted runner 执行：运行 `ci/tests` 下的 Python/Node 契约测试和分阶段 Shell 集成测试，保护 CI 自身的权限、源码准备、调度和报告逻辑。
-
-`NPU CI 默认状态` 同时读取完整 PR 修改列表。**只有全部修改路径均为 `.md` 时，直接将下表 6 个状态置为 success，不调度 NPU。** 重命名同时检查原路径和新路径；列表不完整或读取失败时不能按纯文档改动放行。每个 PR 按自身 base/head 差异判断，其他 PR 对同一 commit 的纯文档放行不能复用。其他 PR 的新 head commit 初始写入 6 个 pending 状态，等待获授权用户触发；更换目标分支也会重新检查并重置门禁。
+PR 创建、重开或更新 commit 时，`CI 契约测试` 自动在 GitHub-hosted runner 执行 Python/Node 契约测试和分阶段 Shell 集成测试。`NPU CI 默认状态` 读取完整修改列表，按下面的规则计算设备验证范围。重命名同时检查原、新路径；文件列表缺失、重复或被 GitHub 截断时直接报错，不能按文档改动放行。每个 PR 按自身 base/head 差异判断，文档快捷成功不能跨 PR 复用，更换目标分支会重新判断。
 
 ### 触发权限与命令
 
-触发名单独立保存在默认分支的 [`.github/npu-ci-users.json`](../.github/npu-ci-users.json)。评论分发和实际执行准备均读取该文件校验用户名，**不要求触发人具有仓库 Admin 权限**。Actions 手动重新运行还会校验实际操作人 `github.triggering_actor`，该用户也必须在名单中。初始名单沿用原有 12 位管理员；后续可通过 PR 增删任何 GitHub 用户名，合入默认分支后生效。待测 PR 自身对名单的修改不会授予触发权限。
-
-名单中的用户可在 PR 评论区发送：
+默认分支的 [`.github/npu-ci-users.json`](../.github/npu-ci-users.json) 独立维护可触发用户名。评论分发、执行准备和 Actions 重跑分别校验名单；实际重跑人使用 `github.triggering_actor` 校验。PR 自身修改名单不会授予权限。普通代码验证只需在名单中，修改 CI 文件时还需要下文的 Admin 确认。
 
 ```text
 /run-npu-ci
 /run-npu-ci quick
+/run-npu-ci quick atk-ops=chunk_fwd_o,recurrent_kda device-id=0
 /run-npu-ci full
+/run-npu-ci full atk-ops=chunk_fwd_o ci_modified=true
 /run-npu-ci quick ops=causal_conv1d,chunk_bwd_dv_local
 ```
 
-也可在 GitHub `Actions` → `NPU CI` → `Run workflow` 选择 CI 定义分支、填写 PR 编号和 `quick/full` 模式。正式门禁不填写 `ops`。
+| 参数 | 行为 |
+| --- | --- |
+| `quick`（默认） | 按完整文件差异选择全量、增量、仅 torch_custom 或底包，不减少正式验证阶段 |
+| `full` | 强制全量 wheel 构建，并运行全部 PyTorch 适配测试 |
+| `atk-ops=a,b` | 追加 ATK 精度验证算子；与自动计算的 ATK 集合去重合并 |
+| `device-id=N` | 指定两个 runner 各自的宿主机物理 NPU 编号；须为非负整数，省略则自动择卡；容器内映射为逻辑设备 `0` |
+| `ci_modified=true` | 仓库 Admin 确认本次 PR 的 CI 文件变更；只接受 `true/false` |
+| `ops=a,b` | 独立编译诊断：仅编译显式算子，只执行 01/02，不运行 ATK，不满足正式门禁；不能与 `full` 或 `atk-ops` 组合 |
+| `ci_ref=<branch>`（别名 `branch=`） | 选择 Actions 调度定义分支；默认使用 PR 目标分支 |
 
-评论由默认分支的 `NPU CI 评论分发` 校验并转发到 PR 目标分支（`pr.base.ref`）的 `.github/workflows/ci.yml`。需要临时使用其他 CI 定义分支时，可追加：
+Actions → `NPU CI` → `Run workflow` 提供对应的 `pr_number`、`ci_mode`、`ops`、`atk_ops`、`device_id`、`ci_modified` 输入。评论分发还传递内部 `requested_by`，所选 CI 定义分支必须提供同一 `workflow_dispatch` 输入契约。
 
-```text
-/run-npu-ci quick ci_ref=release-v2
-```
+每次触发结论、拒绝原因及最终结果都新增评论，历史评论不覆盖。同一 PR 请求先排队，再按 head、目标分支名、base/workflow SHA、模式、编译计划、ATK 集合和设备号去重；仅完全相同的请求可复用完整双平台成功结果或正在执行的任务。目标分支名不同，即使暂时指向同一 SHA，也不能复用另一分支的 Daily 执行计划。
 
-所选分支必须提供 `workflow_dispatch` 及相同的 `pr_number`、`ci_mode`、`ops`、`requested_by` 输入契约。
+### 修改文件与执行计划
 
-每次触发在准备阶段追加一条评论，记录开始执行、已通过、已在运行或纯文档跳过的结论；执行结束再追加独立结果评论。历史评论不查找、不覆盖。同一 PR 的请求先排队，再由 `prepare` 去重；只有 head、模式、算子列表、base SHA、workflow SHA 均相同，才复用已有完整双平台成功结果或进行中的任务，并在新评论中链接已有运行。
+所有 `.md`（不区分扩展名大小写）、`docs/` 和 `LICENSES/` 下的修改都视为文档；这些路径与其他修改混合时，不扩大编译或 ATK 范围。只有文档改动的 PR 自动通过 6 项 NPU 状态，不调度设备；仍可通过显式 `full`、`atk-ops` 或诊断 `ops` 要求实际运行。
 
-### 源码准备与 CI 脚本选择
+普通 `quick` 正式请求依次汇总以下规则：
 
-`prepare` 再次校验权限、PR 状态和完整修改列表，固定 base SHA、PR head SHA、所选 workflow SHA。纯 `.md` 请求直接通过 6 项并结束；其余请求调度 A2、A5。
+| 修改路径 | 编译影响 | ATK 影响 |
+| --- | --- | --- |
+| `common/`、`cmake/`，以及 AscendC 公共目录或组级文件 | 全量 | 保留其他规则选中的算子 |
+| 非 Markdown 的 `ci/`、`.github/` | 本身不触发编译；必须通过 Admin 确认 | 不自动增加算子 |
+| `fla/ops/ascendc/{cp,gdn,kda}/<op>/` 下非 Markdown 算子代码（兼容直接 `<op>/` 布局） | 无全量条件时增量编译该算子 | 始终验证该算子，包括因其他修改而转为全量时 |
+| `tests/atk/<op>/` 下非 Markdown 文件 | 本身不触发编译 | 验证该算子 |
+| `tests/atk/common/`、`tests/atk/run_test_cpu.sh` 等根级共享文件 | 本身不触发编译 | 验证 PR 当前所有 ATK 算子目录 |
+| `torch_custom/` | 无全量或算子增量编译时，仅编译 torch_custom | 保留选中集合 |
+| `examples/`、`tests/` 其他部分 | 本身不触发编译，使用底包 | 保留选中集合 |
+| 上述之外的其他非 Markdown 修改 | 全量 | 保留选中集合 |
 
-**A2、A5 使用相同的 Git 流程：检出固定 base，拉取并核对 PR head，寻找 merge-base，合并 PR 后测试。第一次源码获取清空继承的代理配置并直连；失败后才启动宿主机代理，重试同一流程。** 任一 SHA 不匹配或合并冲突均失败。两平台不再分别实现 Git 与 API 归档路径。
+全量条件优先于增量算子，增量优先于仅 torch_custom。最终产生 `full_build`、`build_ops`、`atk_ops` 和 `build_kind=full/incremental/torch/base`：全量时 `build_ops` 为空；ATK 集合是修改算子代码、修改 ATK 算子目录及手动 `atk-ops` 的并集，可以为空。`full` 不会自动把 ATK 扩大为全仓测试。
 
-CI 脚本选择根据 **PR 作者** 的仓库权限判断，与触发名单分开：
+PR 包含非 Markdown 的 `ci/` 或 `.github/` 修改时，默认状态直接 failure，评论说明需管理员确认。只有同时在 CI 名单中的仓库 Admin 带 `ci_modified=true` 才可分发和执行；重跑操作人也须同时满足名单及 Admin 要求。省略确认、权限不足或权限读取失败均拒绝运行，并给出管理员重试建议。待验证 PR 的作者是否为 Admin 不影响代码选择：**设备 runner 一律使用当前 PR 合并后的 `ci/`，不再检出或叠加可信 CI 目录。** Actions 调度及权限检查来自所选 CI 定义分支。
 
-- PR 作者具有仓库 Admin 权限：直接保留合并后 PR 中的 `ci/`，使 CI 脚本变更可以在合入前验证。
-- 其他作者：使用固定 workflow SHA 中的可信 `ci/`；仅保留合并 PR 中的 `ci/example_st_cases.json`，让新增启用用例参与验证。
+CI 修改的确认和执行状态绑定当前 PR、目标分支及 base/head commit；同一 head 在其他 PR 或其他目标分支上的成功状态不能代替本次确认。默认状态检查会保留当前 PR 已获有效确认的正在执行或最终结果，避免延迟事件覆盖真实结果。
 
-该选择只影响 runner 执行的 `ci/`，Actions 调度定义仍来自所选 CI 分支。运行期间监控 PR head，最终发布前再次核对 head 和目标分支，旧提交或旧目标分支的结果不能放行当前 PR。
+### A2/A5 源码与包准备
 
-### A2/A5 执行与汇总
+`prepare` 固定 base SHA、PR head SHA 和所选 workflow SHA。A2、A5 共用同一 Git 流程：检出固定 base，拉取并核对 PR head，寻找 merge-base，合并 PR 后测试。首次清空继承的代理并直连，失败后启用宿主机代理重试；SHA 不匹配或合并冲突均失败。
+
+包准备按执行计划只做一次：
+
+| `build_kind` | 包准备方式 |
+| --- | --- |
+| `full` | 通过 `python scripts/build_wheel.py` 构建并安装当前 PR 的完整目标 SOC wheel，构建并行度上限 16 |
+| `incremental` | 下载匹配的完整 Daily 底包，使用 `build.sh --pkg --soc=<soc> --ops=<ops> -j16` 构建修改算子，通过 `fla_npu_opp_manage --overlay` 叠加 delta 并校验 ABI，保留未修改的完整底包内容 |
+| `torch` | 安装完整 Daily 底包，仅重新构建当前 PR 的 torch_custom wheel 并保留底包 OPP，校验 ABI |
+| `base` | 仅安装完整 Daily 底包，不编译 |
+
+Daily 下载沿用 [PR #1037](https://github.com/flashserve/flash-linear-attention-npu/pull/1037) 的华为云 nightly 发布源，按 PR **目标分支、SOC、CPU 架构和 Python wheel 标签**严格选择：`main` 使用 `0.dev...+main.<SHA>`，维护分支 `vX.Y.Z` 使用对应的 `X.Y.Z.dev...`；A2/A5 分别使用 `flash-linear-attention-npu-a2/a5`。下载禁用其他 index 回退，并检查版本、wheel 元数据、Stable 库及目标 SOC kernel/config。匹配版本缺失、分支无映射或 ABI 不兼容均失败，建议补发对应 Daily 或改用 `/run-npu-ci full`，不会使用其他分支或平台的包。
+
+包准备结果及选中的底包版本写入 artifact。后续 Python/ATK 进程启动前加载实际安装包的 `set_env.bash`；布局检查、适配检查和精度测试不再重复构建其他 wheel。
+
+### 验证阶段与汇总
 
 ```mermaid
 flowchart TD
     PR["PR 创建或更新"] --> CPU["自动执行 CI 契约测试"]
-    PR --> Files{"完整修改列表是否仅 .md"}
+    PR --> Files{"完整差异是否仅文档或 LICENSES"}
     Files -- "是" --> Docs["6 项 success；不占 NPU"]
-    Files -- "否" --> Pending["6 项 pending；等待名单用户触发"]
-    Pending --> Prepare["校验权限与 PR；固定 SHA；检查重复运行"]
-    Prepare --> Source["A2/A5 相同 Git 合并流程：先直连，失败后代理重试"]
-    Source --> Scripts["Admin 作者用 PR ci/；其他作者用可信 ci/"]
-    Scripts --> A2["A2 / ascend910b：顺序运行 01-05"]
-    Scripts --> A5["A5 / ascend950：顺序运行 01-05"]
-    A2 --> Report["06 校验双平台报告与 commit；发布状态并新增评论"]
-    A5 --> Report
+    Files -- "否" --> Trigger["名单鉴权；CI 修改须 Admin ci_modified=true"]
+    Trigger --> Plan["计算 full/build_ops/atk_ops；固定 SHA 与去重"]
+    Plan --> Source["A2/A5 Git 合并：先直连，失败后代理"]
+    Source --> Package["当前 PR ci/：全量 / 增量 / torch / 底包"]
+    Package --> Checks["环境、布局、PyTorch 适配、GDR Example/ST"]
+    Checks --> ATK["选中算子的 ATK 精度；无选中则跳过"]
+    ATK --> Report["06 强制校验双平台报告与 commit；新增结果评论"]
 ```
+
+保留以下 6 个 status context，以兼容现有分支保护；第 02 项名称中的“全量”是既有 context 名，实际执行按 `build_kind` 选择包准备方式。
 
 | 状态 context | 实际检查 |
 | --- | --- |
-| `NPU CI / A2+A5 / 01 环境、wheel 与运行时契约` | wheel 环境、Stable 覆盖与 ABI 一致性、OPP 布局/ABI、Stable runtime/build policy、ctypes ABI、设备与 mutation 契约 |
-| `NPU CI / A2+A5 / 02 全量 OPP 构建` | 准备依赖缓存，使用目标 SOC 构建 OPP `.run` 包，构建并行度 `-j16` |
-| `NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局` | 构建并检查独立 `torch_custom` wheel 及 OPP 安装布局 |
-| `NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配` | 安装 OPP、确认 Python 依赖、构建安装适配 wheel；`full` 追加全部 PyTorch 适配测试 |
-| `NPU CI / A2+A5 / 05 GDR Example/ST` | 执行 `ci/example_st_cases.json` 中启用的用例，生成完整精度报告 |
-| `NPU CI / A2+A5 / 06 报告与 commit 校验` | GitHub-hosted 汇总任务核对双平台报告、精度结果及平台/SOC/head/run/attempt 身份，发布最终状态 |
+| `NPU CI / A2+A5 / 01 环境、wheel 与运行时契约` | wheel 环境、Stable 覆盖与 ABI、OPP 布局/ABI、运行时设备和 mutation 契约 |
+| `NPU CI / A2+A5 / 02 全量 OPP 构建` | 执行计划指定的完整 wheel、增量 overlay、仅 torch_custom 或底包准备 |
+| `NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局` | 检查已安装 wheel 与 OPP/overlay 布局，不重复编译 |
+| `NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配` | 校验实际包环境和 Python 依赖；`full` 追加全部 PyTorch 适配测试 |
+| `NPU CI / A2+A5 / 05 GDR Example/ST` | 执行 `ci/example_st_cases.json` 中全部启用用例，生成完整精度报告 |
+| `NPU CI / A2+A5 / 06 报告与 commit 校验` | 核对 A2/A5 阶段、GDR 和选中 ATK 报告，校验平台/SOC/head/run/attempt 身份并发布最终状态 |
 
-`quick`、`full` 均执行这 5 个设备阶段和第 06 项汇总；`full` 在第 04 项增加单算子适配测试。带 `ops=` 时只执行 01 和 02 的指定算子构建，发布独立的 `NPU CI / A2+A5 / 定向诊断`，不执行后续安装/精度，也不改写 01-06 正式状态。
+ATK 是 GDR 后的独立设备阶段 `atk-accuracy`，结果并入第 06 项，不新增分支保护 context。CI 只通过 `tests/atk/run_test_cpu.sh -op=<op> -scope=accuracy -ci=true` 调用 ATK，参数、资产检查和报告格式由 ATK 入口维护。每个选中算子必须有至少 **200 个独立精度 case、1 个 perf case 和 1 个 mss case**；文件缺失、格式错误、case id 重复或数量不足直接失败。perf/mss 在此作为资产完备性门禁，CI 实际执行选中算子的全部精度用例。
 
-两个平台并行启动，每个平台内部顺序执行；前置阶段失败后，后续阶段标记未执行。矩阵启用 fail-fast，一个平台失败后取消另一平台仍在排队或运行的任务。汇总仍检查完整双平台结果：缺席、阶段失败/未执行、精度失败、报告身份不符均不能通过。失败评论和 Summary 给出关键错误及带 `CI_STAGE=<分项>`、模式和 SOC 的容器复现命令；详细日志及逐 Tensor 指标保留在 Actions 日志和 artifact。
+ATK 入口将进程树限制到最多 16 个 CPU，使用 `--max_task 16 --bind_cpu_type 0`，数值库每任务 1 线程，禁止 CI 用 case 子集缩减精度验证。失败评论和 Summary 展示具体算子、期望/实际数量或运行错误，并给出补齐用例、修复环境/实现及入口复现命令的建议；关键诊断和 ATK 报告保留在 artifact，完整执行日志可在 Actions job 中查看。
 
-同一 PR 使用 workflow concurrency 排队，`cancel-in-progress: false` 保留正在执行的任务；runner 通过共享 NPU 文件锁防止任务抢卡。A2 使用 ARM64 runner、`fla-npu-ci:9.1.0-910b`；A5 使用 x64 runner、`fla-npu-ci:9.1.0-950`，且必须预置镜像。平台版本、缓存/目录、代理、日志与设备配置见 [部署教程](Fla-npu仓CI部署教程.md)。
+| 正式流程差异 | `quick` | `full` |
+| --- | --- | --- |
+| 编译 | 按文件计划选择四种包准备方式 | 强制完整 wheel |
+| 环境、已安装布局、GDR Example/ST | 全部执行 | 相同 |
+| ATK 集合与门禁 | 自动集合加手动 `atk-ops` | 相同，不自动扩大集合 |
+| 全量 PyTorch 适配测试 | 默认不运行 | 额外运行 |
 
-PR 合入要求当前 head 的上述 6 项和 `CI 契约测试` 全部成功，以及 GitHub 分支保护要求的 2 个 approval。管理员应将这 7 个精确名称配置为必需检查。纯 `.md` PR 的 6 项由文件检查直接通过；其他 PR 更新 commit 或更换目标分支后需名单用户重新触发。旧版或单平台状态不满足双平台门禁。
+因此，除编译选择外，`full` 额外执行全部 PyTorch 适配测试；ATK 和 GDR 不因 quick/full 改变覆盖范围。`ops=` 诊断仅执行 01/02，发布独立的 `NPU CI / A2+A5 / 定向诊断`，不运行后续布局、适配、GDR 或 ATK，也不改写 01-06 正式状态。
+
+两个平台并行，每个平台内部顺序执行；前置阶段失败后，后续标记未执行。矩阵启用 fail-fast，一个平台失败会取消另一平台仍在排队或运行的任务；缺席、阶段失败、被选中 ATK 未执行、精度失败或报告身份不符均不能通过。运行期间监控 PR head，最终发布前再次核对 head 和目标分支，旧 commit/base 的结果不能放行当前 PR。
+
+同一 PR 以 `cancel-in-progress: false` 排队，runner 通过共享 NPU 文件锁防止抢卡。A2 使用 ARM64 runner、`fla-npu-ci:9.1.0-910b`；A5 使用 x64 runner、预置 `fla-npu-ci:9.1.0-950`。平台、目录、代理、Daily 源和 ATK 环境配置见 [部署教程](Fla-npu仓CI部署教程.md)。合入要求当前 head 的上述 6 项、`CI 契约测试` 及分支保护要求的 2 个 approval 全部满足。
 
 ## 强行合入
 

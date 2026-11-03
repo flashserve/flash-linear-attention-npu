@@ -35,6 +35,7 @@ STAGE_NAMES = (
     "standalone-layout",
     "torch-adapter",
     "gdr-example-st",
+    "atk-accuracy",
 )
 
 ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
@@ -132,6 +133,7 @@ INFRASTRUCTURE_RE = re.compile(
 )
 RUNTIME_RE = re.compile(
     r"(?i)(?:^\s*\[(?:ERROR|FAIL|FATAL|TIMEOUT)\]|\[CI\]\[ERROR\]|"
+    r"\[ATK CPU标杆验证\].*(?:错误|失败)|\[ATK CI\].*(?:error|失败)|"
     r"runtimeerror:|assertionerror:|valueerror:|typeerror:|"
     r"segmentation fault|core dumped|accuracy check failed|"
     r"\b(?:acl|aclnn|npu|kernel|device|stream)\b.*(?:error|failed)|"
@@ -415,6 +417,22 @@ def extract_diagnostics(log_file: Path, enabled: bool = True) -> dict[str, list[
             continue
 
         if unittest_result:
+            continue
+
+        if stripped.startswith(("[ATK CI] 修改建议：", "[CI][FIX]")):
+            # Keep advice with its failure so compact comments cannot drop it
+            # as a separate, lower-ranked diagnostic block.
+            candidates = [
+                block for category in diagnostics.values() for block in category
+                if any(marker in block["headline"] for marker in (
+                    "[ATK CI]", "[CI][ERROR] Package preparation failed",
+                ))
+            ]
+            if candidates:
+                candidates[-1]["lines"].insert(1, sanitize_text(line))
+                del candidates[-1]["lines"][MAX_LINES_PER_BLOCK:]
+            else:
+                _add_block(diagnostics["runtime"], seen["runtime"], stripped, [line], priority=True)
             continue
 
         if NONCOMPILER_ERROR_RE.match(stripped):
@@ -756,13 +774,15 @@ def build_reproduction(
     ops: str,
     failed_cases: list[dict[str, Any]],
     failed_stage: str = "",
+    build_plan: Optional[dict[str, str]] = None,
 ) -> list[str]:
     assignments = [
         _shell_assignment("CI_MODE", mode),
         _shell_assignment("CI_SOC", soc),
         _shell_assignment("FLA_NPU_SOC", soc),
-        _shell_assignment("CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK", "true"),
     ]
+    for name, value in (build_plan or {}).items():
+        assignments.append(_shell_assignment(name, value))
     reproduction_stage = failed_stage or ("opp-package" if ops else "")
     if reproduction_stage:
         assignments.append(_shell_assignment("CI_STAGE", reproduction_stage))
@@ -1113,6 +1133,13 @@ def summarize(args: argparse.Namespace) -> tuple[dict[str, Any], str]:
             metadata["ops"],
             accuracy["failures"],
             failed_stage,
+            {
+                "CI_BUILD_KIND": args.build_kind,
+                "CI_BUILD_OPS": args.build_ops,
+                "CI_ATK_OPS": args.atk_ops,
+                "CI_BASE_REF": args.base_ref,
+                "CI_DEVICE_ID": args.device_id,
+            },
         )
         if overall_failed
         else [],
@@ -1132,6 +1159,11 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument("--soc", required=True)
     parser.add_argument("--mode", required=True)
     parser.add_argument("--ops", default="")
+    parser.add_argument("--build-kind", default="full")
+    parser.add_argument("--build-ops", default="")
+    parser.add_argument("--atk-ops", default="")
+    parser.add_argument("--base-ref", default="main")
+    parser.add_argument("--device-id", default="")
     parser.add_argument("--exit-code", required=True, type=int)
     parser.add_argument("--head-sha", required=True)
     parser.add_argument("--run-id", required=True)

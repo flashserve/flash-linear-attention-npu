@@ -13,6 +13,9 @@ ARG TORCH_NPU_WHL_URL=https://repo.huaweicloud.com/repository/pypi/packages/1b/f
 ARG TORCH_NPU_WHL_SHA256=acb39467b740c9dc24165b0002f3531521615d396d9386134689ce59221006c1
 ARG TRITON_ASCEND_VERSION=3.2.1
 ARG TRITON_ASCEND_INDEX_URL=https://triton-ascend.osinfra.cn/pypi/simple
+ARG ATK_WHL_URL=
+ARG ATK_WHL_SHA256=
+ARG REQUIRED_ATK_VERSION=26.8.8
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -46,11 +49,14 @@ RUN test "$(uname -m)" = "x86_64" && \
       python3-pip \
       python3-setuptools \
       python3-wheel \
+      util-linux \
+      libgomp1 \
       valgrind && \
     rm -rf /var/lib/apt/lists/* && \
     git lfs install
 
 COPY requirements.txt /tmp/fla-ci/requirements.txt
+COPY ci/install_atk.sh /tmp/fla-ci/install_atk.sh
 
 RUN set -e; \
     pip_retry() { \
@@ -117,6 +123,9 @@ RUN set -e; \
     rm -rf /tmp/pybind11-target; \
     python3 -c 'import pybind11; print(pybind11.__file__)'; \
     python3 -c "from triton import Config; print('triton Config OK')"
+
+RUN ATK_WHL_URL="${ATK_WHL_URL}" ATK_WHL_SHA256="${ATK_WHL_SHA256}" \
+    REQUIRED_ATK_VERSION="${REQUIRED_ATK_VERSION}" bash /tmp/fla-ci/install_atk.sh
 
 RUN if [[ "${PREWARM_THIRD_PARTY}" == "true" ]]; then \
       mkdir -p /opt/fla-ci/third_party/pkg; \

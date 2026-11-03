@@ -24,18 +24,16 @@ def source_steps():
 
 
 class SharedSourcePreparationTest(unittest.TestCase):
-    def test_platforms_share_one_source_path_and_admin_prs_skip_trusted_ci(self):
+    def test_platforms_share_one_source_path_and_use_pr_ci(self):
         steps = source_steps()
         self.assertEqual(sum(step.get("working-directory") == "repo" for step in steps), 1)
         for step in steps:
             self.assertNotIn("matrix.platform", step.get("if", ""))
-            if "可信 CI" in step["name"]:
-                self.assertIn("needs.prepare.outputs.use_pr_ci != 'true'", step["if"])
-            if step.get("uses") == "actions/checkout@v5" and step["with"]["path"] in ("repo", "trusted-ci"):
-                expected = "trusted_ci_sha" if step["with"]["path"] == "trusted-ci" else "base_sha"
+            if step.get("uses") == "actions/checkout@v5" and step["with"]["path"] == "repo":
+                expected = "base_sha"
                 self.assertEqual(step["with"]["ref"], "${{ needs.prepare.outputs." + expected + " }}")
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
-        for removed in ("download_archive", "extract_archive", "replay_base_delta", "fla-npu-source-"):
+        for removed in ("download_archive", "extract_archive", "replay_base_delta", "fla-npu-source-", "trusted_ci_sha", "use_pr_ci", "trusted-ci"):
             self.assertNotIn(removed, text)
 
 

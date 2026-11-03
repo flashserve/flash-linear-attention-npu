@@ -21,6 +21,7 @@ STAGES = (
     "standalone-layout",
     "torch-adapter",
     "gdr-example-st",
+    "atk-accuracy",
 )
 STAGE_STATUSES = {"not_run", "running", "success", "failure", "skipped"}
 

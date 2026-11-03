@@ -102,16 +102,20 @@ globalThis.github = {{
       get: async () => ({{
         data: {{
           draft: false,
+          number: 527,
+          changed_files: 1,
           state: 'open',
-          base: {{ ref: 'main' }},
+          base: {{ ref: 'main', sha: 'b'.repeat(40) }},
           head: {{ sha: 'a'.repeat(40) }},
         }},
       }}),
+      listFiles: async () => ({{data: [{{filename: 'examples/example.py', status: 'modified'}}]}}),
     }},
     actions: {{
       createWorkflowDispatch: async (payload) => record('dispatch', payload),
     }},
   }},
+  paginate: async (method, params) => (await method(params)).data,
 }};
 globalThis.core = {{
   notice: (message) => record('notice', message),
@@ -156,15 +160,17 @@ globalThis.core = {{
 
     def test_comment_can_select_another_ci_definition_branch(self):
         completed, records = self._run_dispatch(
-            "/run-npu-ci full ci_ref=release-v2 ops=chunk_fwd_o"
+            "/run-npu-ci quick ci_ref=release-v2 ops=chunk_fwd_o device-id=1"
         )
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         dispatches = [item["payload"] for item in records if item["kind"] == "dispatch"]
         self.assertEqual(len(dispatches), 1)
         self.assertEqual(dispatches[0]["ref"], "release-v2")
-        self.assertEqual(dispatches[0]["inputs"]["ci_mode"], "full")
+        self.assertEqual(dispatches[0]["inputs"]["ci_mode"], "quick")
         self.assertEqual(dispatches[0]["inputs"]["ops"], "chunk_fwd_o")
+        self.assertEqual(dispatches[0]["inputs"]["atk_ops"], "")
+        self.assertEqual(dispatches[0]["inputs"]["device_id"], "1")
 
 
 if __name__ == "__main__":

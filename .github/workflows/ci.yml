@@ -26,6 +26,18 @@ on:
         description: "Optional comma-separated operator list for compile diagnostics only"
         required: false
         default: ''
+      atk_ops:
+        description: "Additional comma-separated operators for ATK accuracy validation"
+        required: false
+        default: ''
+      device_id:
+        description: "Optional physical NPU ID on each runner; empty selects automatically"
+        required: false
+        default: ''
+      ci_modified:
+        description: "Admin approval for changes to ci/ or .github/"
+        required: false
+        default: 'false'
       requested_by:
         description: "Original authorized requester; set by the PR comment dispatcher"
         required: false
@@ -53,17 +65,22 @@ jobs:
       base_ref: ${{ steps.prepare.outputs.base_ref }}
       base_sha: ${{ steps.prepare.outputs.base_sha }}
       head_sha: ${{ steps.prepare.outputs.head_sha }}
-      trusted_ci_sha: ${{ steps.prepare.outputs.trusted_ci_sha }}
       ci_mode: ${{ steps.prepare.outputs.ci_mode }}
       ops: ${{ steps.prepare.outputs.ops }}
+      full_build: ${{ steps.prepare.outputs.full_build }}
+      build_kind: ${{ steps.prepare.outputs.build_kind }}
+      build_ops: ${{ steps.prepare.outputs.build_ops }}
+      atk_ops: ${{ steps.prepare.outputs.atk_ops }}
+      ci_modified: ${{ steps.prepare.outputs.ci_modified }}
+      ci_approval_key: ${{ steps.prepare.outputs.ci_approval_key }}
+      device_id: ${{ steps.prepare.outputs.device_id }}
       request_key: ${{ steps.prepare.outputs.request_key }}
-      use_pr_ci: ${{ steps.prepare.outputs.use_pr_ci }}
     steps:
-      - name: 检出固定版本的 CI 调度脚本
+      - name: 检出 CI 调度脚本
         uses: actions/checkout@v5
         with:
           ref: ${{ github.workflow_sha }}
-          path: trusted-ci
+          path: ci-control
           sparse-checkout: .github/scripts
           persist-credentials: false
 
@@ -79,7 +96,7 @@ jobs:
           github-token: ${{ github.token }}
           script: |
             const prepareNpuCi = require(
-              `${process.env.GITHUB_WORKSPACE}/trusted-ci/.github/scripts/prepare_npu_ci.js`
+              `${process.env.GITHUB_WORKSPACE}/ci-control/.github/scripts/prepare_npu_ci.js`
             );
             await prepareNpuCi({ github, context, core });
 
@@ -115,6 +132,11 @@ jobs:
     env:
       CI_MODE: ${{ needs.prepare.outputs.ci_mode }}
       CI_OPS: ${{ needs.prepare.outputs.ops }}
+      CI_BUILD_KIND: ${{ needs.prepare.outputs.build_kind }}
+      CI_BUILD_OPS: ${{ needs.prepare.outputs.build_ops }}
+      CI_ATK_OPS: ${{ needs.prepare.outputs.atk_ops }}
+      CI_BASE_REF: ${{ needs.prepare.outputs.base_ref }}
+      CI_DEVICE_ID: ${{ needs.prepare.outputs.device_id }}
       CI_JOBS: '16'
       CI_CPACK_JOBS: '16'
       CI_PROXY_SCRIPT: /home/huangjunzhe/ci/vpn-proxy.sh
@@ -122,7 +144,6 @@ jobs:
       CI_SOC: ${{ matrix.soc }}
       FLA_NPU_SOC: ${{ matrix.soc }}
       CI_RUN_EXAMPLE_ST: 'true'
-      CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK: 'true'
       CI_ACCURACY_PLATFORM: ${{ matrix.platform }}
       CI_ACCURACY_REPORT_FILE: .ci-tmp/gdr_accuracy_report-${{ matrix.platform }}.json
       CI_STAGE_REPORT_FILE: .ci-tmp/npu-ci-stages-${{ matrix.platform }}.json
@@ -160,13 +181,18 @@ jobs:
         uses: actions/github-script@v8
         env:
           NPU_CI_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          NPU_CI_FILES_MODIFIED: ${{ needs.prepare.outputs.ci_modified }}
         with:
           github-token: ${{ github.token }}
           script: |
-            const { requireAuthorizedCiUser } = require(
+            const { requireAuthorizedCiUser, requireCiModificationApproval } = require(
               `${process.env.GITHUB_WORKSPACE}/rerun-policy/.github/scripts/npu_ci_policy.js`
             );
-            await requireAuthorizedCiUser({ github, context, username: process.env.NPU_CI_TRIGGERING_ACTOR });
+            const username = process.env.NPU_CI_TRIGGERING_ACTOR;
+            await requireAuthorizedCiUser({ github, context, username });
+            if (process.env.NPU_CI_FILES_MODIFIED === 'true') {
+              await requireCiModificationApproval({ github, context, usernames: [username], confirmed: true });
+            }
 
       # Both platforms test the same locally merged base/head commits.
       - name: 拉取当前目标分支代码（直连）
@@ -282,136 +308,6 @@ jobs:
           fi
           git merge --no-ff --no-edit "$NPU_CI_TARGET_SHA"
 
-      # Admin-authored PRs keep their merged ci/ so CI changes can be tested directly.
-      - name: 拉取可信 CI 脚本（直连）
-        id: checkout_trusted_ci_1
-        if: needs.prepare.outputs.use_pr_ci != 'true'
-        continue-on-error: true
-        timeout-minutes: 5
-        uses: actions/checkout@v5
-        env:
-          # Ignore inherited runner proxies for the first attempt.
-          http_proxy: ''
-          https_proxy: ''
-          all_proxy: ''
-          GIT_HTTP_PROXY: ''
-          GIT_HTTPS_PROXY: ''
-          no_proxy: '*'
-        with:
-          ref: ${{ needs.prepare.outputs.trusted_ci_sha }}
-          fetch-depth: 1
-          path: trusted-ci
-          sparse-checkout: ci
-          persist-credentials: false
-
-      - name: 启动可信 CI 拉取代理
-        if: needs.prepare.outputs.use_pr_ci != 'true' && steps.checkout_trusted_ci_1.outcome == 'failure'
-        run: |
-          set -euo pipefail
-          source "$CI_PROXY_SCRIPT"
-          proxyon
-          for variable in http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY \
-            no_proxy NO_PROXY GIT_HTTP_PROXY GIT_HTTPS_PROXY PROXY_HTTP_PORT PROXY_SOCKS_PORT PROXY_MIXED_PORT; do
-            value="${!variable-}"
-            if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
-              echo "[CI][ERROR] Proxy variable $variable contains a newline." >&2
-              exit 1
-            fi
-            printf '%s=%s\n' "$variable" "$value" >> "$GITHUB_ENV"
-          done
-          rm -rf -- trusted-ci
-
-      - name: 拉取可信 CI 脚本（代理重试）
-        if: needs.prepare.outputs.use_pr_ci != 'true' && steps.checkout_trusted_ci_1.outcome == 'failure'
-        timeout-minutes: 10
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ needs.prepare.outputs.trusted_ci_sha }}
-          fetch-depth: 1
-          path: trusted-ci
-          sparse-checkout: ci
-          persist-credentials: false
-
-      - name: 使用可信 CI 脚本并保留 PR 用例
-        if: needs.prepare.outputs.use_pr_ci != 'true'
-        run: |
-          set -euo pipefail
-          # Only scripts are trusted; Example/ST cases remain part of the tested PR.
-          case_archive="$(mktemp -d "${TMPDIR}/example-st-cases.XXXXXX")"
-          trap 'rm -rf -- "$case_archive"' EXIT
-          export NPU_CI_CASE_ARCHIVE="$case_archive"
-          python3 - <<'PY'
-          import json
-          import os
-          import stat
-          from pathlib import Path
-
-          def copy_case_file(repo_directory, destination):
-              nofollow = getattr(os, "O_NOFOLLOW", 0)
-              directory = getattr(os, "O_DIRECTORY", 0)
-              if not nofollow or not directory:
-                  raise RuntimeError("O_NOFOLLOW and O_DIRECTORY are required")
-
-              repo_fd = os.open(
-                  repo_directory, os.O_RDONLY | directory | nofollow
-              )
-              try:
-                  try:
-                      ci_fd = os.open(
-                          "ci", os.O_RDONLY | directory | nofollow, dir_fd=repo_fd
-                      )
-                  except FileNotFoundError:
-                      return False
-                  try:
-                      try:
-                          case_fd = os.open(
-                              "example_st_cases.json",
-                              os.O_RDONLY | os.O_NONBLOCK | nofollow,
-                              dir_fd=ci_fd,
-                          )
-                      except FileNotFoundError:
-                          return False
-                      with os.fdopen(case_fd, "rb") as case_file:
-                          if not stat.S_ISREG(os.fstat(case_file.fileno()).st_mode):
-                              raise RuntimeError("Example/ST case path is not a regular file")
-                          case_data = case_file.read()
-                  finally:
-                      os.close(ci_fd)
-              finally:
-                  os.close(repo_fd)
-
-              json.loads(case_data.decode("utf-8"))
-              parent_fd = os.open(
-                  destination.parent, os.O_RDONLY | directory | nofollow
-              )
-              try:
-                  output_fd = os.open(
-                      destination.name,
-                      os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow,
-                      0o600,
-                      dir_fd=parent_fd,
-                  )
-                  with os.fdopen(output_fd, "wb") as output:
-                      output.write(case_data)
-              finally:
-                  os.close(parent_fd)
-              return True
-
-          copy_case_file(
-              Path("repo"),
-              Path(os.environ["NPU_CI_CASE_ARCHIVE"])
-              / "example_st_cases.json",
-          )
-          PY
-
-          rm -rf repo/ci
-          cp -a trusted-ci/ci repo/ci
-
-          if [ -f "$case_archive/example_st_cases.json" ]; then
-            cp "$case_archive/example_st_cases.json" repo/ci/example_st_cases.json
-          fi
-          rm -rf -- trusted-ci
-
       - name: 运行 ${{ matrix.name }} NPU CI 容器
         id: npu_ci
         working-directory: repo
@@ -525,6 +421,11 @@ jobs:
             --soc "$CI_SOC" \
             --mode "$CI_MODE" \
             --ops "$CI_OPS" \
+            --build-kind "$CI_BUILD_KIND" \
+            --build-ops "$CI_BUILD_OPS" \
+            --atk-ops "$CI_ATK_OPS" \
+            --base-ref "$CI_BASE_REF" \
+            --device-id "$CI_DEVICE_ID" \
             --exit-code "$ci_status" \
             --head-sha "$CI_ACCURACY_HEAD_SHA" \
             --run-id "$CI_ACCURACY_RUN_ID" \
@@ -605,6 +506,8 @@ jobs:
             repo/${{ env.CI_STAGE_REPORT_FILE }}
             repo/${{ env.CI_DIAGNOSTIC_FILE }}
             repo/${{ env.CI_SUMMARY_FILE }}
+            repo/.ci-tmp/atk-results/
+            repo/.ci-tmp/npu-ci-package.json
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 7
@@ -621,11 +524,11 @@ jobs:
       pull-requests: write
       statuses: write
     steps:
-      - name: 检出受信任的状态发布脚本
+      - name: 检出 PR 状态发布脚本
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.workflow_sha }}
-          path: trusted-ci
+          ref: ${{ needs.prepare.outputs.head_sha }}
+          path: pr-ci
           sparse-checkout: .github/scripts/publish_npu_ci_status.js
           sparse-checkout-cone-mode: false
           persist-credentials: false
@@ -646,6 +549,11 @@ jobs:
         env:
           NPU_CI_MODE: ${{ needs.prepare.outputs.ci_mode }}
           NPU_OPS: ${{ needs.prepare.outputs.ops }}
+          NPU_ATK_OPS: ${{ needs.prepare.outputs.atk_ops }}
+          NPU_CI_BUILD_KIND: ${{ needs.prepare.outputs.build_kind }}
+          NPU_CI_APPROVAL_KEY: ${{ needs.prepare.outputs.ci_approval_key }}
+          NPU_CI_BUILD_OPS: ${{ needs.prepare.outputs.build_ops }}
+          NPU_CI_DEVICE_ID: ${{ needs.prepare.outputs.device_id }}
           NPU_CI_REQUEST_KEY: ${{ needs.prepare.outputs.request_key }}
           NPU_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
           NPU_MATRIX_RESULT: ${{ needs.ascend-npu.result }}
@@ -657,7 +565,7 @@ jobs:
           github-token: ${{ github.token }}
           script: |
             const publishNpuCiStatus = require(
-              `${process.env.GITHUB_WORKSPACE}/trusted-ci/.github/scripts/publish_npu_ci_status.js`
+              `${process.env.GITHUB_WORKSPACE}/pr-ci/.github/scripts/publish_npu_ci_status.js`
             );
             await publishNpuCiStatus({ github, context, core });
 

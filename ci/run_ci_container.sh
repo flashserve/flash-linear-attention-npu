@@ -94,6 +94,11 @@ acquire_npu_lock() {
     local lock_wait_seconds="${CI_NPU_LOCK_WAIT_SECONDS:-14400}"
     local lock_retry_seconds="${CI_NPU_LOCK_RETRY_SECONDS:-10}"
     local started_at="$SECONDS"
+    local requested_device="${CI_DEVICE_ID:-}"
+    if [[ -n "$requested_device" && ! "$requested_device" =~ ^[0-9]+$ ]]; then
+        echo "[CI][ERROR] CI_DEVICE_ID must be a nonnegative physical device ID; use device-id=0 or omit it for automatic selection." >&2
+        exit 2
+    fi
     mkdir -p "$lock_dir"
 
     while true; do
@@ -102,6 +107,17 @@ acquire_npu_lock() {
         if (( ${#candidates[@]} == 0 )); then
             echo "[CI][ERROR] No NPU device was found on host." >&2
             exit 1
+        fi
+        if [[ -n "$requested_device" ]]; then
+            local found=false
+            for id in "${candidates[@]}"; do
+                if [[ "$id" == "$requested_device" ]]; then found=true; fi
+            done
+            if [[ "$found" != true ]]; then
+                echo "[CI][ERROR] Requested NPU $requested_device is unavailable; detected IDs: ${candidates[*]}. Choose an available device-id or omit device-id." >&2
+                exit 2
+            fi
+            candidates=("$requested_device")
         fi
 
         local id
@@ -269,6 +285,13 @@ docker run --rm \
     -e CI_STAGE="${CI_STAGE:-all}" \
     -e CI_SOC="${CI_SOC:-${NPU_SOC}}" \
     -e CI_OPS="${CI_OPS:-}" \
+    -e CI_BUILD_KIND="${CI_BUILD_KIND:-}" \
+    -e CI_BUILD_OPS="${CI_BUILD_OPS:-}" \
+    -e CI_ATK_OPS="${CI_ATK_OPS:-}" \
+    -e CI_BASE_REF="${CI_BASE_REF:-main}" \
+    -e CI_BASE_WHEEL_INDEX_URL="${CI_BASE_WHEEL_INDEX_URL:-}" \
+    -e CI_BASE_WHEEL_VERSION="${CI_BASE_WHEEL_VERSION:-}" \
+    -e CI_DEVICE_ID="${CI_DEVICE_ID:-}" \
     -e CI_JOBS="${CI_JOBS:-}" \
     -e CI_CPACK_JOBS="${CI_CPACK_JOBS:-}" \
     -e CI_FORCE_CLEAN_CACHE="${CI_FORCE_CLEAN_CACHE:-false}" \
@@ -276,12 +299,10 @@ docker run --rm \
     -e CI_LOG_RETENTION_DAYS="${CI_LOG_RETENTION_DAYS:-7}" \
     -e CI_LOG_CLEANUP_DIRS="${CI_LOG_CLEANUP_DIRS:-}" \
     -e CI_SEED_THIRD_PARTY="${CI_SEED_THIRD_PARTY:-true}" \
-    -e CI_BUILD_TORCH_CUSTOM="${CI_BUILD_TORCH_CUSTOM:-false}" \
     -e CI_RUN_TORCH_TESTS="${CI_RUN_TORCH_TESTS:-false}" \
     -e CI_RUN_EXAMPLE_ST="${CI_RUN_EXAMPLE_ST:-true}" \
     -e CI_RUN_WHEEL_API_CHECK="${CI_RUN_WHEEL_API_CHECK:-false}" \
     -e CI_CHECK_TRITON_API="${CI_CHECK_TRITON_API:-false}" \
-    -e CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK="${CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK:-false}" \
     -e CI_EXAMPLE_CASES_FILE="${CI_EXAMPLE_CASES_FILE:-ci/example_st_cases.json}" \
     -e CI_EXAMPLE_CASE_FILTER="${CI_EXAMPLE_CASE_FILTER:-}" \
     -e CI_ACCURACY_REPORT_FILE="${CI_ACCURACY_REPORT_FILE:-output/gdr_accuracy_report.json}" \

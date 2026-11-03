@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Do not reuse Markdown shortcuts or execution results after a base change."""
 
+import hashlib
+import json
 from pathlib import Path
 import unittest
 
@@ -20,13 +22,18 @@ CONTEXTS = [
 ]
 
 
-def statuses(kind, *, contexts=CONTEXTS, newer=True):
+def approval_marker(*, pr_number=527, base_ref='main', base_sha='b' * 40, head_sha='a' * 40):
+    payload = json.dumps([pr_number, base_ref, base_sha, head_sha], separators=(',', ':'))
+    return 'ci-ok=' + hashlib.sha256(payload.encode()).hexdigest()[:12]
+
+
+def statuses(kind, *, contexts=CONTEXTS, newer=True, approval='', state='success'):
     markdown = kind == 'markdown'
     return [
         {
             'context': name,
-            'state': 'success',
-            'description': '仅修改 Markdown，跳过 NPU CI' if markdown else 'A2+A5 已通过',
+            'state': state,
+            'description': '仅修改 Markdown，跳过 NPU CI' if markdown else f'A2+A5 已通过 {approval}'.strip(),
             'target_url': ('https://github.com/example/repo/pull/526' if markdown
                            else 'https://github.com/example/repo/actions/runs/900'),
             'created_at': '2026-11-03T01:00:00Z' if newer else '2026-11-02T01:00:00Z',
@@ -54,6 +61,12 @@ class DefaultNpuCiStatusTest(unittest.TestCase):
         )
         self.assert_pending(records)
 
+    def test_non_documentation_diff_invalidates_extended_documentation_shortcut(self):
+        prior = statuses('markdown')
+        for item in prior:
+            item['description'] = '仅修改文档或 LICENSES，跳过 NPU CI'
+        self.assert_pending(run_policy('default', statuses=prior))
+
     def test_mixed_latest_results_reset_markdown_shortcuts_only(self):
         records = run_policy('default', statuses=(
             statuses('markdown', contexts=CONTEXTS[:2]) +
@@ -69,6 +82,55 @@ class DefaultNpuCiStatusTest(unittest.TestCase):
         self.assertFalse(values(records, 'status'))
         self.assertFalse(values(records, 'comment'))
         self.assertTrue(values(records, 'notice'))
+
+    def test_ci_changes_preserve_only_same_pr_base_approved_run(self):
+        for state in ('success', 'pending', 'failure'):
+            for action in ('opened', 'synchronize', 'edited'):
+                with self.subTest(state=state, action=action):
+                    records = run_policy('default', action=action,
+                                         files=[{'filename': 'ci/run_checks.sh'}],
+                                         statuses=statuses('execution', approval=approval_marker(), state=state))
+                    self.assertFalse(values(records, 'error'))
+                    self.assertFalse(values(records, 'status'))
+                    self.assertFalse(values(records, 'comment'))
+                    self.assertTrue(values(records, 'notice'))
+
+    def test_ci_changes_invalidate_other_pr_base_or_unapproved_shared_commit_results(self):
+        markers = ['', approval_marker(pr_number=526), approval_marker(base_ref='v26.9.1'),
+                   approval_marker(base_sha='c' * 40), approval_marker(head_sha='d' * 40)]
+        for marker in markers:
+            with self.subTest(marker=marker):
+                records = run_policy('default', files=[{'filename': 'ci/run_checks.sh'}],
+                                     statuses=statuses('execution', approval=marker))
+                self.assertFalse(values(records, 'error'))
+                self.assertEqual({s['state'] for s in values(records, 'status')}, {'failure'})
+                self.assertEqual(len(values(records, 'status')), 6)
+                self.assertIn('ci_modified=true', values(records, 'comment')[0]['body'])
+
+    def test_ci_approval_marker_cannot_be_mixed_between_runs_or_missing_stages(self):
+        for change in ('missing-marker', 'different-run', 'missing-stage', 'foreign-repo'):
+            with self.subTest(change=change):
+                prior = statuses('execution', approval=approval_marker())
+                if change == 'missing-marker':
+                    prior[0]['description'] = 'A2+A5 已通过'
+                elif change == 'different-run':
+                    prior[0]['target_url'] = 'https://github.com/example/repo/actions/runs/899'
+                elif change == 'missing-stage':
+                    prior.pop()
+                else:
+                    for status in prior:
+                        status['target_url'] = 'https://github.com/other/repo/actions/runs/900'
+                records = run_policy('default', files=[{'filename': '.github/workflows/ci.yml'}], statuses=prior)
+                self.assertEqual({s['state'] for s in values(records, 'status')}, {'failure'})
+                self.assertEqual(len(values(records, 'status')), 6)
+
+    def test_ci_changes_retargeted_to_same_sha_branch_require_its_own_approval(self):
+        records = run_policy('default', action='edited', baseRef='v26.9.1',
+                             branchWorkflow="const contexts = " + repr(CONTEXTS) + ';',
+                             files=[{'filename': 'ci/run_checks.sh'}],
+                             statuses=statuses('execution', approval=approval_marker()))
+        self.assertEqual({s['state'] for s in values(records, 'status')}, {'failure'})
+        self.assertEqual(len(values(records, 'status')), 6)
 
     def test_base_change_invalidates_all_old_execution_results(self):
         records = run_policy('default', action='edited', statuses=statuses('execution'))

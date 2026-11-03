@@ -16,9 +16,12 @@ show_usage() {
   -scope=all                     可选：all、accuracy、performance、determinism、mssanitizer、gen_cases
                                  all 包含 accuracy/performance/determinism/mssanitizer；
                                  gen_cases 只生成精度候选用例，不在 all 中
+  -ci=true                       CI 精度验证：accuracy >= 200，perf/mss 各 >= 1；
+                                 必须使用 -scope=accuracy，完整执行用例，并限制 CPU 并发到 16
 
 常用环境变量：
   ATK_ENV                        ATK 虚拟环境目录，设置后 source "$ATK_ENV/bin/activate"
+  ATK_BIN                        可选 ATK 可执行文件绝对路径；默认从 PATH 查找
   CANN_ENV                       CANN set_env.sh 路径，设置后 source
   FLA_NPU_ENV                    fla_npu_transformer set_env.bash 路径，设置后 source
   ATK_OUTPUT_ROOT                输出根目录，默认 ./atk_output
@@ -68,15 +71,20 @@ record_ran_type() {
 # 多项时输出每项结果 + 汇总行；单项时仅输出该项结果，不显示汇总行。
 print_result_summary() {
   if [[ ! -f "$RESULT_CHECK_PY" ]]; then
+    [[ "$CI_MODE" != true ]] || die "算子 ${OP} 缺少结果检查器 ${RESULT_CHECK_PY}；建议恢复 tests/atk/common/check_atk_result.py 后重试"
     log_info "跳过结果检查：找不到 ${RESULT_CHECK_PY}"
     return 0
   fi
   local fail=0 ran="${#RAN_TYPES[@]}"
+  local -a report_args=()
+  if [[ "$CI_MODE" == true ]]; then
+    report_args=(--require-report)
+  fi
   [[ $ran -gt 0 ]] || return 0
   local pass=0
   for t in "${RAN_TYPES[@]}"; do
     if python3 "$RESULT_CHECK_PY" --type "$t" \
-        --output-root "$ATK_OUTPUT_ROOT" --op "$OP"; then
+        --output-root "$ATK_OUTPUT_ROOT" --op "$OP" "${report_args[@]}"; then
       pass=$((pass + 1))
     else
       fail=$((fail + 1))
@@ -128,6 +136,56 @@ except (OSError, UnicodeError, json.JSONDecodeError) as error:
 if not isinstance(data, (dict, list)) or len(data) == 0:
     raise SystemExit(f"{label}没有可执行用例：{file_path}")
 PY
+}
+
+# CI 资产门禁属于 ATK 入口，调用方无需了解 ATK 用例文件或 JSON 格式。
+check_ci_cases() {
+  python3 - "$OP" "$CASE_FILE" "$PERFORMANCE_CASE_FILE" "$MSS_CASE_FILE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+op, *paths = sys.argv[1:]
+failures = []
+for label, minimum, value in zip(("accuracy", "perf", "mss"), (200, 1, 1), paths):
+    path = Path(value)
+    try:
+        cases = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(cases, list) or any(not isinstance(case, dict) or not case for case in cases):
+            raise ValueError("必须为 ATK case 对象数组")
+        ids = [str(case["id"]) for case in cases]
+        if len(set(ids)) != len(ids):
+            raise ValueError("case id 重复，无法作为独立用例计数")
+    except (OSError, UnicodeError, json.JSONDecodeError, KeyError, ValueError) as error:
+        failures.append(f"{label}: expected >= {minimum}, actual 0（{path.name}: {error}）")
+        continue
+    print(f"[ATK CI] {op} {label}: expected >= {minimum}, actual {len(cases)}", flush=True)
+    if len(cases) < minimum:
+        failures.append(f"{label}: expected >= {minimum}, actual {len(cases)}（{path.name}）")
+if failures:
+    print(f"[ATK CI] 算子 {op} 用例门禁失败：" + "; ".join(failures), file=sys.stderr)
+    print(f"[ATK CI] 修改建议：在 tests/atk/{op}/ 补齐或修复上述 JSON；精度主文件至少 200 个独立 case，"
+          "_perf.json 和 _mss.json 各至少 1 个有效 case。补齐覆盖和对应 README 后重新触发 CI。", file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
+configure_ci_limits() {
+  command -v taskset >/dev/null 2>&1 || die "CI 需要 taskset 限制 CPU 资源；建议在 CI 镜像安装 util-linux"
+  local cpus
+  cpus="$(python3 - <<'PY'
+import os
+print(",".join(map(str, sorted(os.sched_getaffinity(0))[:16])))
+PY
+)"
+  [[ -n "$cpus" ]] || die "无法读取 CI CPU affinity；建议检查 runner 的 CPU 配额"
+  taskset -pc "$cpus" "$$" >/dev/null || die "无法将 ATK 进程树限制到 16 个 CPU；建议检查容器 CPU affinity 权限"
+  # 每个 ATK 任务只使用一个数值库线程，避免 16 个任务各自再开一组线程。
+  export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 BLIS_NUM_THREADS=1
+  export NUMEXPR_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 OMP_THREAD_LIMIT=1
+  # ATK 默认自动绑核可能扩大继承的 affinity，CI 显式关闭其绑核并限制实际任务并发。
+  CI_TASK_ARGS=(--max_task 16 --bind_cpu_type 0)
+  log_info "CI CPU 限制：最多 16 个 CPU（${cpus}），ATK --max_task 16 --bind_cpu_type 0，数值库线程数 1"
 }
 
 set_case_range_args() {
@@ -189,6 +247,8 @@ resolve_gm_init_args() {
 }
 
 OP=""
+CI_MODE=false
+CI_TASK_ARGS=()
 NPU_DEVICE_ID="${NPU_DEVICE_ID:-0}"
 SOC="${SOC:-auto}"
 RUN_SCOPE="${RUN_SCOPE:-all}"
@@ -256,6 +316,7 @@ while [[ $# -gt 0 ]]; do
       [[ $# -gt 0 ]] || die "参数 --scope 需要取值"
       RUN_SCOPE="$1"
       ;;
+    -ci=*|--ci=*) CI_MODE="${1#*=}" ;;
     -h|--help)
       show_usage
       exit 0
@@ -269,6 +330,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$OP" ]] || die "必须传入 -op=<算子名>"
+[[ "$OP" =~ ^[A-Za-z0-9_]+$ ]] || die "无效算子目录名：${OP}；仅允许字母、数字和下划线"
+[[ "$NPU_DEVICE_ID" =~ ^[0-9]+$ ]] || die "无效 NPU 设备号：${NPU_DEVICE_ID}；建议使用单个非负整数卡号"
+[[ "$CI_MODE" == true || "$CI_MODE" == false ]] || die "-ci 只支持 true/false"
+if [[ "$CI_MODE" == true ]]; then
+  [[ "$RUN_SCOPE" == accuracy ]] || die "CI 只支持 -scope=accuracy；建议使用 -ci=true -scope=accuracy 完整精度验证"
+  [[ -z "$CASE_START$CASE_END${ACCURACY_START:-}${ACCURACY_END:-}" ]] || die "CI 必须执行全部精度用例，不能设置 CASE_START/CASE_END 或 ACCURACY_START/ACCURACY_END；建议取消范围变量后重试"
+fi
 
 case "$RUN_SCOPE" in
   all|accuracy|performance|determinism|mssanitizer|gen_cases) ;;
@@ -295,6 +363,10 @@ EXECUTOR_FILE="${OP_DIR}/executor_${OP}.py"
 YAML_FILE="${OP_DIR}/${OP}.yaml"
 GEN_FILE="${OP_DIR}/gen_${OP}.py"
 
+if [[ "$CI_MODE" == true ]]; then
+  check_ci_cases
+fi
+
 [[ -d "$OP_DIR" ]] || die "找不到 ATK 算子目录：${OP_DIR}"
 if should_run gen_cases; then
   [[ -f "$YAML_FILE" ]] || die "找不到 ATK YAML 文件：${YAML_FILE}"
@@ -313,8 +385,17 @@ if [[ -n "${FLA_NPU_ENV:-${FLA_NPU_OPP_ENV:-}}" ]]; then
   source_env_file "fla_npu_transformer环境" "${FLA_NPU_ENV:-${FLA_NPU_OPP_ENV:-}}"
 fi
 
-ATK_BIN="$(command -v atk || true)"
-[[ -n "$ATK_BIN" ]] || die "找不到 atk，请先安装并激活 ATK 环境"
+if [[ "$CI_MODE" == true ]]; then
+  configure_ci_limits
+fi
+
+ATK_BIN="${ATK_BIN:-$(command -v atk || true)}"
+if [[ -z "$ATK_BIN" || ! -x "$ATK_BIN" ]]; then
+  if [[ "$CI_MODE" == true ]]; then
+    die "算子 ${OP} 无法启动 ATK：CI 镜像中没有 atk；建议管理员使用对应 Python/CPU 架构的 ATK wheel 和 SHA256 重建预装 ATK 的 CI 镜像，再重新触发。详见 tests/atk/README.md 的 CI 镜像依赖"
+  fi
+  die "找不到 atk，请先安装并激活 ATK 环境"
+fi
 
 case "$RUN_SCOPE" in
   all)
@@ -357,6 +438,10 @@ fi
 
 cd "$OP_DIR"
 ATK_OUTPUT_ROOT="${ATK_OUTPUT_ROOT:-./atk_output}"
+if [[ "$CI_MODE" == true ]]; then
+  mkdir -p "$ATK_OUTPUT_ROOT"
+  ATK_OUTPUT_ROOT="$(mktemp -d "${ATK_OUTPUT_ROOT%/}/ci-XXXXXXXX")"
+fi
 mkdir -p "${ATK_OUTPUT_ROOT}/accuracy" "${ATK_OUTPUT_ROOT}/perf"
 # mssanitizer 日志路径：未显式指定时使用 ATK_OUTPUT_ROOT 下的带时间戳绝对路径
 # ATK celery worker 工作目录与脚本不同，必须用绝对路径，否则无法找到日志文件
@@ -386,7 +471,7 @@ fi
 if should_run accuracy; then
   log_info "开始精度与 NaN 检测：mixed_tolerance_bm + CPU单标杆 + GM 初始化"
   set_case_range_args "精度与 NaN 检测 case 范围" "$ACCURACY_START" "$ACCURACY_END"
-  "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
+  if "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
       --output_path "${ATK_OUTPUT_ROOT}/accuracy" \
     node --name cpu_golden --backend cpu \
       --output_path "${ATK_OUTPUT_ROOT}/accuracy" \
@@ -397,7 +482,12 @@ if should_run accuracy; then
       -p "./executor_${OP}.py" \
       "${CASE_RANGE_ARGS[@]}" \
       "${GM_INIT_ARGS[@]}" \
-      -to "$ATK_TIMEOUT"
+      "${CI_TASK_ARGS[@]}" \
+      -to "$ATK_TIMEOUT"; then
+    :
+  else
+    die "算子 ${OP} ATK 精度执行失败；建议先修复 ATK 日志中的首个环境、executor 或算子错误。复现：bash tests/atk/run_test_cpu.sh -op=${OP} -scope=accuracy -ci=${CI_MODE} -npu_device_id=${NPU_DEVICE_ID} -soc=${SOC}"
+  fi
   log_info "完成精度与 NaN 检测"
   record_ran_type accuracy
 fi
@@ -456,5 +546,8 @@ log_info "请求的 ATK 测试动作已执行完成"
 # 统一检查已跑阶段的结果；多项输出汇总，单项仅输出该项结果
 print_result_summary
 if [[ "$RESULT_FAIL_COUNT" -gt 0 ]]; then
+  if [[ "$CI_MODE" == true ]]; then
+    die "算子 ${OP} ATK 精度报告未通过；建议查看 ${ATK_OUTPUT_ROOT} 下报告中的失败 case，修复 executor、CPU 标杆或算子实现后重试。复现：bash tests/atk/run_test_cpu.sh -op=${OP} -scope=accuracy -ci=true -npu_device_id=${NPU_DEVICE_ID} -soc=${SOC}"
+  fi
   exit 1
 fi

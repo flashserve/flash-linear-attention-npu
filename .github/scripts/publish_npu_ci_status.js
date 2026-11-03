@@ -11,6 +11,11 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
     throw new Error('ops 参数必须是以逗号分隔的合法非空算子名');
   }
   const normalizedOps = [...new Set(opsItems.filter(Boolean))].sort().join(',');
+  const atkOps = process.env.NPU_ATK_OPS || '';
+  const approvalKey = process.env.NPU_CI_APPROVAL_KEY || '';
+  if (approvalKey && !/^[0-9a-f]{12}$/.test(approvalKey)) {
+    throw new Error('无效的 CI 修改确认标识，请由管理员重新触发');
+  }
   const requestScope = normalizedOps ? 'scoped' : 'all';
   const requestKey = process.env.NPU_CI_REQUEST_KEY || '';
   if (!new RegExp(`^${requestScope}-[0-9a-f]{16}$`).test(requestKey)) {
@@ -36,7 +41,7 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
     {
       key: 'opp-package',
       context: 'NPU CI / A2+A5 / 02 全量 OPP 构建',
-      label: '目标 SOC 全量 OPP run 包构建',
+      label: '目标 SOC 包准备（全量、增量或底包）',
     },
     {
       key: 'standalone-layout',
@@ -46,14 +51,21 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
     {
       key: 'torch-adapter',
       context: 'NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配',
-      label: 'OPP 安装与 PyTorch 适配构建',
+      label: 'OPP 与 PyTorch 适配验证',
     },
     {
       key: 'gdr-example-st',
       context: 'NPU CI / A2+A5 / 05 GDR Example/ST',
       label: 'GDR Example/ST（4 条精度用例）',
     },
+    { key: 'atk-accuracy', context: null, label: 'ATK 算子精度验证' },
   ];
+  const stageAccepted = (stage, key) => stage?.valid && (
+    stage.status === 'success' || (
+      key === 'atk-accuracy' && !atkOps && stage.status === 'skipped' &&
+      stage.reason === 'no ATK operators selected'
+    )
+  );
   const finalStatusDef = {
     context: 'NPU CI / A2+A5 / 06 报告与 commit 校验',
     label: '报告完整性与 PR commit 一致性',
@@ -137,7 +149,11 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
       sequenceCount: 3,
     },
   ];
-  const truncateDescription = (value) => value.length > 140 ? `${value.slice(0, 137)}...` : value;
+  const truncateDescription = (value) => {
+    const suffix = approvalKey ? ` ci-ok=${approvalKey}` : '';
+    const limit = 140 - suffix.length;
+    return (value.length > limit ? `${value.slice(0, limit - 3)}...` : value) + suffix;
+  };
   const formatValue = (value) => {
     if (typeof value === 'number') {
       return Number.isFinite(value) ? value.toExponential(3) : String(value);
@@ -205,8 +221,12 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
       ['CI_MODE', mode],
       ['CI_SOC', platform.soc],
       ['FLA_NPU_SOC', platform.soc],
-      ['CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK', 'true'],
       ['CI_STAGE', failedStage || 'all'],
+      ['CI_BUILD_KIND', process.env.NPU_CI_BUILD_KIND || 'full'],
+      ['CI_BUILD_OPS', process.env.NPU_CI_BUILD_OPS || ''],
+      ['CI_ATK_OPS', atkOps],
+      ['CI_BASE_REF', expectedBaseRef || 'main'],
+      ['CI_DEVICE_ID', process.env.NPU_CI_DEVICE_ID || ''],
     ];
     if (platform.key === 'a5') {
       assignments.push(
@@ -851,7 +871,7 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
         failures.push(`${platform.label} 分项报告无效`);
         continue;
       }
-      if (result.status !== 'success') {
+      if (!stageAccepted(result, stageDef.key)) {
         const reason = result.reason ? `（${result.reason}）` : '';
         failures.push(`${platform.label} ${result.status}${reason}`);
         continue;
@@ -902,7 +922,7 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
   const finalDescription = invalidReason || matrixFailureReason || (finalOk
     ? `报告与 commit 校验通过 (${mode},${requestKey},A2+A5)`
     : `报告或执行结果未通过 (${mode},${requestKey},A2+A5)`);
-  const statusPayloads = requestScope === 'all' ? stageOutcomes.map((item) => ({
+  const statusPayloads = requestScope === 'all' ? stageOutcomes.filter((item) => item.context).map((item) => ({
       owner: context.repo.owner,
       repo: context.repo.repo,
       sha,
@@ -1003,6 +1023,8 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
     `NPU CI ${executionOk && accuracyOk ? '通过' : '失败'}：\`${sha}\`。`,
     '',
     `- 模式：\`${sanitizeMarkdownInline(mode, 40)}\``,
+    `- 编译计划：\`${sanitizeMarkdownInline(process.env.NPU_CI_BUILD_KIND || 'full', 40)}\`；增量算子：\`${sanitizeMarkdownInline(process.env.NPU_CI_BUILD_OPS || '无', 500)}\``,
+    `- ATK 算子：\`${sanitizeMarkdownInline(atkOps || '无', 500)}\``,
     `- 触发人：@${context.actor}`,
     '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
     invalidReason ? `- 失效原因：${invalidReason}` : null,
@@ -1054,7 +1076,7 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
       );
     const hasIncompleteRequiredStage = requiredDefs.some((stageDef) => {
       const stage = platform.stageResults[stageDef.key];
-      return !stage || !stage.valid || stage.status !== 'success';
+      return !stageAccepted(stage, stageDef.key);
     });
     return !platform.executionOk || !platform.accuracyOk ||
       !platform.stageReportOk || hasIncompleteRequiredStage;

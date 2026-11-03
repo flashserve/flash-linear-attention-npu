@@ -115,6 +115,7 @@ npu-smi info
 | 变量                     | 说明                                                                                   |
 | ------------------------ | -------------------------------------------------------------------------------------- |
 | `ATK_ENV`              | ATK 虚拟环境目录；设置后脚本会 source`$ATK_ENV/bin/activate`                         |
+| `ATK_BIN`              | 可选 ATK 可执行文件绝对路径；未设置时从 `PATH` 查找                              |
 | `CANN_ENV`             | CANN`set_env.sh` 路径；设置后脚本会 source                                           |
 | `FLA_NPU_ENV`          | `fla_npu_transformer` 的 `set_env.bash` 路径；设置后脚本会 source                  |
 | `ATK_OUTPUT_ROOT`      | ATK 输出根目录，默认是算子目录下的`./atk_output`                                     |
@@ -143,9 +144,50 @@ bash tests/atk/run_test_cpu.sh -op=<op_name>
 | `-npu_device_id=<id>` | 传给`atk node --devices` 的 NPU 设备号，默认`0`；`gen_cases` 不需要                                       |
 | `-scope=<scope>`      | 执行动作，支持`all/accuracy/performance/determinism/mssanitizer/gen_cases`                                   |
 | `-soc=<soc>`          | SOC 标识，支持`ascend910b/A2`、`ascend910_93/A3`、`ascend950/A5`；默认 `auto`，由 `npu-smi` 自动探测 |
+| `-ci=true`            | CI 模式，必须配合 `-scope=accuracy`；检查用例数量、完整执行精度，并限制 CPU 并发 |
 
 `all` 包含 `accuracy`、`performance`、`determinism` 和 `mssanitizer`，并在运行前检查三份
 用例 JSON 均可解析且非空。`gen_cases` 不在 `all` 中，必须显式指定。
+
+CI 只通过本入口调用 ATK：
+
+```bash
+bash tests/atk/run_test_cpu.sh -op=causal_conv1d -scope=accuracy -ci=true -npu_device_id=0 -soc=A2
+```
+
+CI 在启动 ATK 前检查 `atk_<op>.json` 至少包含 200 个有效且 id 不重复的精度 case，
+`atk_<op>_perf.json` 与 `atk_<op>_mss.json` 各至少包含 1 个有效 case；缺失、格式错误或数量
+不足时报告算子、要求数量、实际数量和补齐建议。CI 仅执行全部精度 case，禁止指定 case 范围；
+perf/mss 在此模式只做资产检查。每次执行使用独立输出目录，避免历史报告影响结果。
+
+CI 将本脚本及其后代进程的 CPU affinity 限制到当前允许集合中的最多 16 个 CPU，向 ATK
+传入 `--max_task 16 --bind_cpu_type 0`，防止 ATK 自动绑核扩大资源范围；同时将 OMP、MKL、
+OpenBLAS 等数值库线程数设为 1，避免任务内部嵌套并行。镜像必须提供 `taskset`（util-linux）。
+ATK 返回失败或结果检查未通过时，本入口返回非零并给出报告路径及复现命令。
+
+### CI 镜像依赖
+
+`ci/Dockerfile`（A2）与 `ci/Dockerfile.ascend950`（A5）通过同一个 `ci/install_atk.sh`
+安装受控 ATK wheel，包含 Python 依赖、`taskset` 与 `libgomp1`。管理员须取得与镜像 Python
+和 CPU 架构匹配的 Ascend ATK wheel：当前为 Python 3.12，A2 为 aarch64，A5 为 x86_64。
+wheel 版本不低于 `26.8.8`，配置受控 HTTPS 下载地址和独立确认的 SHA256，例如：
+
+```bash
+docker build -f ci/Dockerfile -t fla-npu-ci:9.1.0-910b \
+  --build-arg ATK_WHL_URL="$ATK_A2_WHEEL_URL" \
+  --build-arg ATK_WHL_SHA256="$ATK_A2_WHEEL_SHA256" .
+docker build -f ci/Dockerfile.ascend950 -t fla-npu-ci:9.1.0-950 \
+  --build-arg ATK_WHL_URL="$ATK_A5_WHEEL_URL" \
+  --build-arg ATK_WHL_SHA256="$ATK_A5_WHEEL_SHA256" .
+```
+
+安装器先验证 SHA256、Ascend ATK 包身份、版本和 wheel 架构兼容性，再安装并确认 `atk`
+命令入口。仓库未配置可公开确认的 ATK 下载源；管理员需要维护上述受控构建输入。不要用
+未确认来源的同名 PyPI 包替代，不在 PR 触发命令中传入安装源，也不在设备测试时临时下载安装。
+Docker 构建参数会保留在构建历史中，构建输入请使用不含敏感数据的固定 wheel 地址。
+未提供 `ATK_WHL_URL` 时仍可构建原有镜像，但日志明确标记没有 ATK；这类镜像遇到 ATK 验证
+请求会直接失败并提示重建。修改 Dockerfile 不会自动升级已经部署的镜像，A2/A5 均须由
+管理员部署包含对应 wheel 的新镜像。
 
 示例：
 

@@ -18,7 +18,7 @@ const record = (kind, payload) => records.push({kind, payload});
 const head = 'a'.repeat(40);
 const files = config.files || [{filename: 'operator.cpp', status: 'modified'}];
 const pr = {
-  number: 527, state: config.state || 'open', draft: config.draft || false,
+  number: config.prNumber || 527, state: config.state || 'open', draft: config.draft || false,
   html_url: 'https://github.com/example/repo/pull/527', user: {login: 'pr-author'},
   changed_files: config.changed_files === undefined ? files.length : config.changed_files,
   base: {ref: config.baseRef || 'main', sha: config.baseSha || 'b'.repeat(40)},
@@ -29,8 +29,8 @@ const context = {
   runId: 901, runNumber: 23, serverUrl: 'https://github.com',
   payload: {
     repository: {default_branch: 'main'}, pull_request: pr, action: config.action || 'opened',
-    inputs: {pr_number: '527', ci_mode: 'quick', ...(config.inputs || {})},
-    issue: {number: 527}, comment: {body: config.comment || '/run-npu-ci quick'},
+    inputs: {pr_number: String(pr.number), ci_mode: 'quick', ...(config.inputs || {})},
+    issue: {number: pr.number}, comment: {body: config.comment || '/run-npu-ci quick'},
   },
 };
 if (config.noRepositoryPayload) delete context.payload.repository;
@@ -56,11 +56,18 @@ const github = {
       getCollaboratorPermissionLevel: async (params) => {
         record('author-permission', params);
         if (config.permissionError) throw new Error('permission API unavailable');
-        return {data: {permission: config.authorPermission || 'read'}};
+        return {data: {permission: config.permissions?.[params.username] || config.authorPermission || 'read'}};
       },
       listCommitStatusesForRef: async (params) => {record('statuses', params); return {data: config.statuses || []};},
       createCommitStatus: async (params) => {record('status', params); return {data: params};},
     },
+    git: {getTree: async (params) => {
+      record('tree', params);
+      return {data: {truncated: config.treeTruncated || false,
+        tree: config.tree || [{path: 'tests/atk/chunk_fwd_o/chunk_fwd_o.yaml'},
+                              {path: 'tests/atk/recurrent_kda/recurrent_kda.yaml'},
+                              {path: 'tests/atk/common/helper.py'}]}};
+    }},
     pulls: {
       get: async (params) => {
         record('pull', params);
@@ -68,6 +75,7 @@ const github = {
         const result = JSON.parse(JSON.stringify(pr));
         const afterInitial = getCalls > (config.mode === 'prepare' ? 1 : 0);
         if (config.headRace && afterInitial) result.head.sha = 'd'.repeat(40);
+        if (config.baseRefRace && afterInitial) result.base.ref = 'v26.9.1';
         return {data: result};
       },
       listFiles: async (params) => {
@@ -97,7 +105,8 @@ process.env.GITHUB_WORKSPACE = process.cwd();
   const policy = require('./.github/scripts/npu_ci_policy');
   try {
     let result;
-    if (config.mode === 'markdown') result = await policy.isMarkdownOnly({github, context, pr});
+    if (config.mode === 'markdown') result = (await policy.inspectChanges({github, context, pr})).documentation_only;
+    else if (config.mode === 'plan') result = await policy.inspectChanges({github, context, pr, ...(config.planOptions || {})});
     else if (config.mode === 'authorization') result = await policy.requireAuthorizedCiUser({github, context, username: context.actor});
     else if (config.mode === 'matrix-guard') {
       // Execute the workflow's exact script while mapping its trusted checkout
@@ -230,15 +239,15 @@ class NpuCiPolicyTest(unittest.TestCase):
 
     def test_empty_nonmarkdown_or_renamed_source_never_skip_npu(self):
         for files in ([], [{'filename': 'README.md', 'status': 'renamed', 'previous_filename': 'kernel.cpp'}],
-                      [{'filename': 'README.md', 'status': 'renamed'}],
-                      [{'filename': 'README.md', 'status': 'renamed', 'previous_filename': ''}],
                       [{'filename': 'README.md.bak', 'status': 'modified'}]):
             with self.subTest(files=files):
                 self.assertEqual(values(run_policy('markdown', files=files), 'result'), [False])
 
     def test_truncated_duplicate_or_failed_file_list_does_not_pass(self):
         for options in ({'changed_files': 3010}, {'filesError': True},
-                        {'files': [{'filename': 'a.md'}, {'filename': 'a.md'}]}):
+                        {'files': [{'filename': 'a.md'}, {'filename': 'a.md'}]},
+                        {'files': [{'filename': 'README.md', 'status': 'renamed'}]},
+                        {'files': [{'filename': 'README.md', 'status': 'renamed', 'previous_filename': ''}]}):
             with self.subTest(options=options):
                 records = run_policy('default', **options)
                 self.assertTrue(values(records, 'error'))
@@ -248,6 +257,14 @@ class NpuCiPolicyTest(unittest.TestCase):
         for mode in ('default', 'prepare'):
             with self.subTest(mode=mode):
                 records = run_policy(mode, files=[{'filename': 'README.md'}], headRace=True)
+                self.assertTrue(values(records, 'error'))
+                self.assertFalse(values(records, 'status'))
+                self.assertFalse(values(records, 'comment'))
+
+    def test_same_sha_base_branch_race_does_not_publish_success_or_schedule(self):
+        for mode in ('default', 'prepare'):
+            with self.subTest(mode=mode):
+                records = run_policy(mode, files=[{'filename': 'README.md'}], baseRefRace=True)
                 self.assertTrue(values(records, 'error'))
                 self.assertFalse(values(records, 'status'))
                 self.assertFalse(values(records, 'comment'))
@@ -269,25 +286,26 @@ class NpuCiPolicyTest(unittest.TestCase):
         statuses = values(records, 'status')
         self.assertEqual(len(statuses), 1)
         self.assertTrue(statuses[0]['context'].endswith('/ 定向诊断'))
-        self.assertEqual(statuses[0]['state'], 'success')
-        self.assertEqual(outputs(records)['should_run'], 'false')
+        self.assertEqual(statuses[0]['state'], 'pending')
+        self.assertEqual(outputs(records)['should_run'], 'true')
+        self.assertEqual(outputs(records)['build_ops'], 'chunk_fwd_o')
 
-    def test_prepare_trusts_only_admin_pr_author(self):
-        for permission, expected in [('admin', 'true'), ('write', 'false'), ('read', 'false')]:
+    def test_prepare_always_uses_pr_ci_without_author_permission_lookup(self):
+        for permission in ('admin', 'write', 'read'):
             with self.subTest(permission=permission):
                 records = run_policy('prepare', authorPermission=permission)
                 self.assertFalse(values(records, 'error'))
                 self.assertEqual(outputs(records)['should_run'], 'true')
-                self.assertEqual(outputs(records)['use_pr_ci'], expected)
-                self.assertEqual(values(records, 'author-permission')[0]['username'], 'pr-author')
+                self.assertNotIn('use_pr_ci', outputs(records))
+                self.assertNotIn('trusted_ci_sha', outputs(records))
+                self.assertFalse(values(records, 'author-permission'))
                 self.assertEqual(len(values(records, 'comment')), 1)
                 self.assertNotIn('comment_id', outputs(records))
 
-    def test_admin_lookup_failure_uses_trusted_ci(self):
+    def test_ordinary_pr_does_not_depend_on_repository_permission_api(self):
         records = run_policy('prepare', permissionError=True)
-        self.assertEqual(outputs(records)['use_pr_ci'], 'false')
         self.assertEqual(outputs(records)['should_run'], 'true')
-        self.assertTrue(values(records, 'warning'))
+        self.assertFalse(values(records, 'author-permission'))
 
     def test_prepare_reuses_success_only_for_identical_source_and_ci_request(self):
         for ops, prefix in [('', 'all-'), ('chunk_fwd_o', 'scoped-')]:
@@ -314,6 +332,34 @@ class NpuCiPolicyTest(unittest.TestCase):
                         self.assertNotEqual(outputs(rerun)['request_key'], request_key)
                         self.assertEqual({item['state'] for item in values(rerun, 'status')}, {'pending'})
 
+    def test_same_sha_different_base_branch_does_not_reuse_daily_request(self):
+        initial = run_policy('prepare', files=[{'filename': 'examples/example.py'}])
+        prior = [dict(item, state='success', target_url='https://github.com/example/repo/actions/runs/900')
+                 for item in values(initial, 'status')]
+        retargeted = run_policy('prepare', files=[{'filename': 'examples/example.py'}],
+                                baseRef='v26.9.1', statuses=prior)
+        self.assertFalse(values(retargeted, 'error'))
+        self.assertEqual(outputs(retargeted)['base_ref'], 'v26.9.1')
+        self.assertEqual(outputs(retargeted)['should_run'], 'true')
+        self.assertNotEqual(outputs(retargeted)['request_key'], outputs(initial)['request_key'])
+
+    def test_ci_approval_marker_is_pr_and_base_bound_before_reusing_statuses(self):
+        args = dict(files=[{'filename': 'ci/run_checks.sh'}], authorPermission='admin', inputs={'ci_modified': 'true'})
+        initial = run_policy('prepare', **args)
+        key = outputs(initial)['ci_approval_key']
+        self.assertRegex(key, r'^[a-f0-9]{12}$')
+        self.assertTrue(all('ci-ok=' + key in s['description'] for s in values(initial, 'status')))
+        self.assertTrue(all(len(s['description']) <= 100 for s in values(initial, 'status')))
+        prior = [dict(item, state='success', target_url='https://github.com/example/repo/actions/runs/900')
+                 for item in values(initial, 'status')]
+        same = run_policy('prepare', statuses=prior, **args)
+        self.assertEqual(outputs(same)['should_run'], 'false')
+        for changes in ({'prNumber': 528}, {'baseRef': 'v26.9.1'}):
+            with self.subTest(changes=changes):
+                other = run_policy('prepare', statuses=prior, **changes, **args)
+                self.assertEqual(outputs(other)['should_run'], 'true')
+                self.assertNotEqual(outputs(other)['ci_approval_key'], key)
+
     def test_default_nonmarkdown_pr_is_pending_and_appends_comment(self):
         records = run_policy('default')
         self.assertEqual(len(values(records, 'status')), 6)
@@ -325,12 +371,12 @@ class NpuCiPolicyTest(unittest.TestCase):
         self.assertEqual([item['context'] for item in values(records, 'status')], ['NPU CI / legacy / 01'])
 
     def test_dispatch_uses_allowlist_and_preserves_target_branch(self):
-        records = run_policy('dispatch', comment='/run-npu-ci full ci_ref=release ops=z,a')
+        records = run_policy('dispatch', comment='/run-npu-ci quick ci_ref=release ops=z,a')
         self.assertFalse(values(records, 'error'))
         self.assertFalse(values(records, 'author-permission'))
         dispatch = values(records, 'dispatch')[0]
         self.assertEqual(dispatch['ref'], 'release')
-        self.assertEqual(dispatch['inputs']['ci_mode'], 'full')
+        self.assertEqual(dispatch['inputs']['ci_mode'], 'quick')
         self.assertEqual(dispatch['inputs']['ops'], 'a,z')
         self.assertEqual(values(records, 'content')[0]['ref'], 'main')
 
@@ -355,11 +401,186 @@ class NpuCiPolicyTest(unittest.TestCase):
     def test_dispatch_rejects_duplicate_or_empty_command_arguments(self):
         for comment in ('/run-npu-ci quick full', '/run-npu-ci ops=',
                         '/run-npu-ci ci_ref=', '/run-npu-ci ops=a,,b',
-                        '/run-npu-ci ci_ref=main branch=release'):
+                        '/run-npu-ci ci_ref=main branch=release',
+                        '/run-npu-ci full ops=chunk_fwd_o',
+                        '/run-npu-ci ops=chunk_fwd_o atk-ops=recurrent_kda',
+                        '/run-npu-ci atk-ops=', '/run-npu-ci atk-ops=a,,b',
+                        '/run-npu-ci atk-ops=a atk-ops=b',
+                        '/run-npu-ci device-id=', '/run-npu-ci device-id=-1',
+                        '/run-npu-ci device-id=1.5', '/run-npu-ci device-id=9007199254740992',
+                        '/run-npu-ci ci_modified=yes', '/run-npu-ci ci_modified=',
+                        '/run-npu-ci ci_modified=true ci_modified=false'):
             with self.subTest(comment=comment):
                 records = run_policy('dispatch', comment=comment)
                 self.assertTrue(values(records, 'error'))
                 self.assertFalse(values(records, 'dispatch'))
+
+    def test_documentation_and_licenses_skip_for_nonmarkdown_assets(self):
+        files = [{'filename': path} for path in ('docs/diagram.svg', 'LICENSES/MIT.txt', 'ci/README.MD')]
+        for mode in ('default', 'prepare'):
+            with self.subTest(mode=mode):
+                records = run_policy(mode, files=files)
+                self.assertFalse(values(records, 'error'))
+                self.assertEqual({s['state'] for s in values(records, 'status')}, {'success'})
+                self.assertFalse(values(records, 'author-permission'))
+        # Moving code into docs is still a code change.
+        plan = values(run_policy('plan', files=[{
+            'filename': 'docs/kernel.txt', 'status': 'renamed', 'previous_filename': 'common/kernel.cpp',
+        }]), 'result')[0]
+        self.assertFalse(plan['documentation_only'])
+        self.assertTrue(plan['full_build'])
+
+    def test_scoped_diagnostic_only_compiles_explicit_ops_and_does_not_request_atk(self):
+        records = run_policy('prepare', files=[
+            {'filename': 'scripts/build_wheel.py'},
+            {'filename': 'fla/ops/ascendc/kda/recurrent_kda/op_kernel/kernel.cpp'},
+            {'filename': 'tests/atk/common/helper.py'},
+        ], inputs={'ops': 'chunk_fwd_o'})
+        self.assertFalse(values(records, 'error'))
+        self.assertEqual(outputs(records)['full_build'], 'false')
+        self.assertEqual(outputs(records)['build_kind'], 'incremental')
+        self.assertEqual(outputs(records)['build_ops'], 'chunk_fwd_o')
+        self.assertEqual(outputs(records)['atk_ops'], '')
+        self.assertFalse(values(records, 'tree'))
+        self.assertEqual(len(values(records, 'status')), 1)
+
+    def test_change_plan_classifies_build_and_atk_without_unnecessary_compilation(self):
+        cases = [
+            (['common/runtime.h'], 'full', '', ''),
+            (['cmake/dependencies.cmake'], 'full', '', ''),
+            (['fla/ops/ascendc/common/tensor.h'], 'full', '', ''),
+            (['fla/ops/ascendc/gdn/CMakeLists.txt'], 'full', '', ''),
+            (['fla/ops/ascendc/kda/chunk_kda_fwd/op_kernel/kernel.cpp'],
+             'incremental', 'chunk_kda_fwd', 'chunk_kda_fwd'),
+            (['fla/ops/ascendc/cp/causal_conv1d/op_host/tiling.cpp',
+              'fla/ops/ascendc/gdn/chunk_fwd_o/op_kernel/kernel.cpp'],
+             'incremental', 'causal_conv1d,chunk_fwd_o', 'causal_conv1d,chunk_fwd_o'),
+            (['fla/ops/ascendc/direct_op/op_kernel/kernel.cpp'], 'incremental', 'direct_op', 'direct_op'),
+            (['tests/atk/chunk_fwd_o/executor.py'], 'base', '', 'chunk_fwd_o'),
+            (['torch_custom/fla_npu/setup.py'], 'torch', '', ''),
+            (['torch_custom/fla_npu/setup.py', 'tests/atk/recurrent_kda/cases.json'], 'torch', '', 'recurrent_kda'),
+            (['examples/gdr.py', 'tests/test_runtime.py'], 'base', '', ''),
+            (['ci/run_checks.sh', '.github/workflows/ci.yml'], 'base', '', ''),
+            (['scripts/build_wheel.py'], 'full', '', ''),
+        ]
+        for paths, kind, compiled, tested in cases:
+            with self.subTest(paths=paths):
+                records = run_policy('plan', files=[{'filename': path} for path in paths])
+                self.assertFalse(values(records, 'error'))
+                plan = values(records, 'result')[0]
+                self.assertEqual(plan['build_kind'], kind)
+                self.assertEqual(plan['full_build'], kind == 'full')
+                self.assertEqual(plan['build_ops'], compiled)
+                self.assertEqual(plan['atk_ops'], tested)
+                self.assertEqual(plan['device_id'], '')
+
+    def test_full_build_retains_modified_operator_and_manual_atk_targets(self):
+        records = run_policy('prepare', files=[
+            {'filename': 'common/header.h'},
+            {'filename': 'fla/ops/ascendc/gdn/chunk_fwd_o/op_kernel/kernel.cpp'},
+            {'filename': 'tests/atk/recurrent_kda/cases.json'},
+        ], inputs={'atk_ops': 'solve_tri,chunk_fwd_o', 'device_id': '02'})
+        self.assertFalse(values(records, 'error'))
+        self.assertEqual(outputs(records)['full_build'], 'true')
+        self.assertEqual(outputs(records)['build_ops'], '')
+        self.assertEqual(outputs(records)['atk_ops'], 'chunk_fwd_o,recurrent_kda,solve_tri')
+        self.assertEqual(outputs(records)['device_id'], '2')
+
+    def test_manual_full_forces_full_build_even_for_example_or_documentation(self):
+        for path in ('examples/example.py', 'docs/guide.md'):
+            with self.subTest(path=path):
+                records = run_policy('prepare', files=[{'filename': path}], inputs={'ci_mode': 'full'})
+                self.assertEqual(outputs(records)['should_run'], 'true')
+                self.assertEqual(outputs(records)['full_build'], 'true')
+                self.assertEqual(outputs(records)['build_kind'], 'full')
+
+    def test_renames_compile_and_test_both_operators(self):
+        plan = values(run_policy('plan', files=[{
+            'filename': 'fla/ops/ascendc/gdn/new_op/op_kernel/kernel.cpp', 'status': 'renamed',
+            'previous_filename': 'fla/ops/ascendc/kda/old_op/op_kernel/kernel.cpp',
+        }]), 'result')[0]
+        self.assertEqual(plan['build_ops'], 'new_op,old_op')
+        self.assertEqual(plan['atk_ops'], 'new_op,old_op')
+
+    def test_shared_atk_changes_expand_all_current_atk_directories(self):
+        for path in ('tests/atk/run_test_cpu.sh', 'tests/atk/common/result.py'):
+            with self.subTest(path=path):
+                records = run_policy('plan', files=[{'filename': path}])
+                self.assertFalse(values(records, 'error'))
+                plan = values(records, 'result')[0]
+                self.assertEqual(plan['build_kind'], 'base')
+                self.assertEqual(plan['atk_ops'], 'chunk_fwd_o,recurrent_kda')
+                self.assertEqual(values(records, 'tree')[0]['tree_sha'], 'a' * 40)
+        records = run_policy('plan', files=[{'filename': 'tests/atk/common/result.py'}], treeTruncated=True)
+        self.assertTrue(values(records, 'error'))
+
+    def test_ci_modification_requires_admin_acknowledgment_at_dispatch_and_prepare(self):
+        files = [{'filename': 'ci/run_checks.sh'}]
+        for mode in ('dispatch', 'prepare'):
+            for confirmed, permission, allowed in [('true', 'admin', True), ('false', 'admin', False),
+                                                  ('true', 'write', False), ('true', 'read', False)]:
+                with self.subTest(mode=mode, confirmed=confirmed, permission=permission):
+                    records = run_policy(mode, files=files, authorPermission=permission,
+                                         inputs={'ci_modified': confirmed},
+                                         comment=f'/run-npu-ci ci_modified={confirmed}')
+                    self.assertEqual(not values(records, 'error'), allowed)
+                    if allowed:
+                        self.assertEqual(values(records, 'author-permission')[0]['username'], 'ci-user')
+                        if mode == 'prepare':
+                            self.assertEqual(outputs(records)['ci_modified'], 'true')
+                            self.assertEqual(outputs(records)['build_kind'], 'base')
+                    else:
+                        self.assertEqual(len(values(records, 'comment')), 1)
+                        self.assertIn('ci_modified=true', values(records, 'comment')[0]['body'])
+                        self.assertEqual({s['state'] for s in values(records, 'status')}, {'failure'})
+                        self.assertFalse(values(records, 'dispatch'))
+
+    def test_ci_modification_rerun_requires_actual_rerunner_to_be_admin(self):
+        for mode in ('prepare', 'dispatch'):
+            for actual_permission, allowed in [('admin', True), ('write', False)]:
+                with self.subTest(mode=mode, actual_permission=actual_permission):
+                    records = run_policy(mode, files=[{'filename': '.github/workflows/ci.yml'}],
+                                         allowlist={'users': ['ci-user', 'rerunner']}, attempt=2,
+                                         triggeringActor='rerunner',
+                                         permissions={'ci-user': 'admin', 'rerunner': actual_permission},
+                                         inputs={'ci_modified': 'true'}, comment='/run-npu-ci ci_modified=true')
+                    self.assertEqual(not values(records, 'error'), allowed)
+                    self.assertEqual([r['username'] for r in values(records, 'author-permission')],
+                                     ['ci-user', 'rerunner'])
+
+    def test_ci_permission_read_error_fails_with_actionable_comment(self):
+        records = run_policy('prepare', files=[{'filename': 'ci/run_checks.sh'}],
+                             permissionError=True, inputs={'ci_modified': 'true'})
+        self.assertTrue(values(records, 'error'))
+        self.assertIn('恢复权限读取', values(records, 'comment')[0]['body'])
+        self.assertEqual(outputs(records)['should_run'], 'false')
+
+    def test_default_ci_modification_fails_until_admin_confirmation(self):
+        records = run_policy('default', files=[{'filename': '.github/workflows/ci.yml'}])
+        self.assertFalse(values(records, 'error'))
+        self.assertEqual({s['state'] for s in values(records, 'status')}, {'failure'})
+        self.assertIn('ci_modified=true', values(records, 'comment')[0]['body'])
+
+    def test_command_forwards_normalized_atk_device_and_ci_acknowledgment(self):
+        records = run_policy('dispatch', comment='/run-npu-ci full atk-ops=z,a,z device-id=03 ci_modified=true')
+        self.assertFalse(values(records, 'error'))
+        inputs = values(records, 'dispatch')[0]['inputs']
+        self.assertEqual(inputs['ci_mode'], 'full')
+        self.assertEqual(inputs['atk_ops'], 'a,z')
+        self.assertEqual(inputs['device_id'], '3')
+        self.assertEqual(inputs['ci_modified'], 'true')
+
+    def test_changed_atk_device_or_compilation_plan_cannot_reuse_success(self):
+        initial = run_policy('prepare', files=[{'filename': 'examples/example.py'}])
+        succeeded = [dict(item, state='success', target_url='https://github.com/example/repo/actions/runs/900')
+                     for item in values(initial, 'status')]
+        for options in ({'inputs': {'device_id': '1'}}, {'inputs': {'atk_ops': 'chunk_fwd_o'}},
+                        {'files': [{'filename': 'torch_custom/setup.py'}]}):
+            with self.subTest(options=options):
+                options.setdefault('files', [{'filename': 'examples/example.py'}])
+                records = run_policy('prepare', statuses=succeeded, **options)
+                self.assertEqual(outputs(records)['should_run'], 'true')
+                self.assertNotEqual(outputs(records)['request_key'], outputs(initial)['request_key'])
 
 
 if __name__ == '__main__':
