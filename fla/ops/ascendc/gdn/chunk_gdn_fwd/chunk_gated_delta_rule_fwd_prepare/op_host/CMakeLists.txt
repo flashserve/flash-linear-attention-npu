@@ -16,6 +16,7 @@ add_ops_compile_options(
     OPTIONS --cce-auto-sync=off
             -Wno-deprecated-declarations
             -I${CMAKE_CURRENT_SOURCE_DIR}/../op_kernel
+            -I${CMAKE_CURRENT_SOURCE_DIR}/../op_kernel/arch22
             -I${CMAKE_CURRENT_SOURCE_DIR}/../op_kernel/arch35
 )
 

@@ -19,7 +19,7 @@ const std::array<const aclTensor *, 7> ChunkKdaBwdFinalize(
     const aclTensor *dqOut, const aclTensor *dkOut, const aclTensor *dvOut,
     const aclTensor *dBetaOut, const aclTensor *dGOut,
     const aclTensor *dALogOut, const aclTensor *dDtBiasOut,
-    aclOpExecutor *executor);
+    aclOpExecutor *executor, const char *modelLayout = "");
 } // namespace l0op
 
 #endif

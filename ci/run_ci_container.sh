@@ -22,6 +22,7 @@ container_name="${CI_CONTAINER_NAME:-fla-npu-ci-$(date +%s)}"
 cache_root="${CI_CACHE_ROOT:-}"
 container_tmpdir="${CI_TMPDIR:-}"
 host_tmpdir="${CI_HOST_TMPDIR:-}"
+timing_root="${CI_TIMING_ROOT:-}"
 npu_lock_fd=""
 npu_lock_file=""
 container_id_dir=""
@@ -132,6 +133,26 @@ trap cleanup_ci EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+if [[ -n "$timing_root" ]]; then
+    if [[ "$timing_root" != /* ]]; then
+        echo "[CI][ERROR] CI_TIMING_ROOT must be an absolute persistent directory." >&2
+        exit 2
+    fi
+    timing_root="$(realpath -m "$timing_root")"
+    for temporary_dir in "$repo_dir" /tmp "${TMPDIR:-/tmp}" "$host_tmpdir" "$cache_root"; do
+        [[ -n "$temporary_dir" ]] || continue
+        temporary_dir="$(realpath -m "$temporary_dir")"
+        if [[ "$timing_root" == "$temporary_dir" || "$timing_root" == "$temporary_dir/"* ]]; then
+            echo "[CI][ERROR] CI_TIMING_ROOT must be outside the workspace, tmp and cache." >&2
+            exit 2
+        fi
+    done
+    mkdir -p "$timing_root"
+    timing_probe="$(mktemp "$timing_root/.write-check.XXXXXX")"
+    rm -f "$timing_probe"
+    echo "[CI] Persistent stage timing table: $timing_root/stage-timings.csv"
+fi
+
 if [[ "$require_preloaded_image" == "true" ]]; then
     if [[ "$rebuild_image" == "true" ]]; then
         echo "[CI][ERROR] CI_REBUILD_IMAGE=true conflicts with CI_REQUIRE_PRELOADED_IMAGE=true." >&2
@@ -202,6 +223,9 @@ mount_args=(
 if [[ -n "$host_tmpdir" ]]; then
     mount_args+=(-v "$host_tmpdir:$container_tmpdir")
 fi
+if [[ -n "$timing_root" ]]; then
+    mount_args+=(-v "$timing_root:/ci-timings")
+fi
 for path in \
     /usr/local/dcmi \
     /usr/local/bin/npu-smi \
@@ -258,12 +282,11 @@ docker run --rm \
     -e CI_RUN_WHEEL_API_CHECK="${CI_RUN_WHEEL_API_CHECK:-false}" \
     -e CI_CHECK_TRITON_API="${CI_CHECK_TRITON_API:-false}" \
     -e CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK="${CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK:-false}" \
-    -e CI_RUN_SCOPED_WHEEL_INSTALL_CHECK="${CI_RUN_SCOPED_WHEEL_INSTALL_CHECK:-false}" \
-    -e CI_SCOPED_WHEEL_INSTALL_OP="${CI_SCOPED_WHEEL_INSTALL_OP:-chunk_fwd_o}" \
     -e CI_EXAMPLE_CASES_FILE="${CI_EXAMPLE_CASES_FILE:-ci/example_st_cases.json}" \
     -e CI_EXAMPLE_CASE_FILTER="${CI_EXAMPLE_CASE_FILTER:-}" \
     -e CI_ACCURACY_REPORT_FILE="${CI_ACCURACY_REPORT_FILE:-output/gdr_accuracy_report.json}" \
     -e CI_STAGE_REPORT_FILE="${CI_STAGE_REPORT_FILE:-.ci-tmp/npu-ci-stages.json}" \
+    -e CI_STAGE_TIMING_FILE="${timing_root:+/ci-timings/stage-timings.csv}" \
     -e CI_ACCURACY_PLATFORM="${CI_ACCURACY_PLATFORM:-}" \
     -e CI_ACCURACY_HEAD_SHA="${CI_ACCURACY_HEAD_SHA:-${NPU_CI_TARGET_SHA:-}}" \
     -e CI_ACCURACY_RUN_ID="${CI_ACCURACY_RUN_ID:-${GITHUB_RUN_ID:-}}" \

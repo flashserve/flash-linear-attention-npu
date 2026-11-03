@@ -65,7 +65,8 @@ public:
         CopyToL1(l1[L1_V_NEW].ReinterpretCast<bfloat16_t>(), vNew_[tokenOffset], CHUNK_SIZE, HEAD_DIM, rows, HEAD_DIM);
         CopyToL1(l1[L1_DV_SCAN].ReinterpretCast<bfloat16_t>(), dvScan_[tokenOffset], CHUNK_SIZE, HEAD_DIM, rows,
                  HEAD_DIM);
-        CopyToL1(l1[L1_V].ReinterpretCast<bfloat16_t>(), v_[tokenOffset], CHUNK_SIZE, HEAD_DIM, rows, HEAD_DIM);
+        CopyToL1(l1[L1_V].ReinterpretCast<bfloat16_t>(), v_[tiling.vTokenMajor ? ((batch * tiling.tokens + chunk.tokenStart) * tiling.heads + head) * HEAD_DIM : tokenOffset],
+                 CHUNK_SIZE, HEAD_DIM, rows, HEAD_DIM, tiling.vTokenMajor ? tiling.heads * HEAD_DIM : HEAD_DIM);
     }
 
     __aicore__ inline void LoadStage0Inputs(const FinalizeTilingData &tiling, const ChunkInfo &chunk, int64_t chunkIndex,
@@ -579,7 +580,7 @@ private:
     // Shared mechanics only: the Stage method owns the formula and result path.
     template <typename T>
     __aicore__ inline void CopyToL1(AscendC::LocalTensor<T> dst, AscendC::GlobalTensor<T> src, uint32_t rows,
-                                    uint32_t columns, uint32_t validRows, uint32_t validColumns)
+                                    uint32_t columns, uint32_t validRows, uint32_t validColumns, uint64_t rowStride = 0)
     {
         if (validRows != rows || validColumns != columns) {
             AscendC::InitConstValue(
@@ -591,10 +592,17 @@ private:
         copy.ndNum = 1;
         copy.nValue = validRows;
         copy.dValue = validColumns;
-        copy.srcDValue = columns;
+        const uint64_t stride = rowStride ? rowStride : columns;
+        copy.srcDValue = stride <= 65535 ? static_cast<uint16_t>(stride) : 0;
         copy.dstNzC0Stride = rows;
         copy.dstNzNStride = 1;
-        AscendC::DataCopy(dst, src, copy);
+        if (stride <= 65535) {
+            AscendC::DataCopy(dst, src, copy);
+        } else {
+            copy.nValue = 1;
+            for (uint32_t row = 0; row < validRows; ++row)
+                AscendC::DataCopy(dst[row * 16], src[row * stride], copy);
+        }
     }
 
     template <bool TRANSPOSE_A, bool TRANSPOSE_B, bool RESIDUAL = false>

@@ -13,6 +13,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -132,6 +133,68 @@ class InstalledOppManifestTest(unittest.TestCase):
         installed["fla_npu/opp/vendors/config.ini"] = b"load_priority=other\n"
         message = self._failure_for(_data_layout_entries(OPP_FILES), installed)
         self.assertIn("changed=['fla_npu/opp/vendors/config.ini']", message)
+
+
+class SetEnvContractTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.checker = runpy.run_path(str(CHECKER))
+
+    def _paths(self, root):
+        package_dir = root / "site-packages" / "fla_npu"
+        vendor_dir = package_dir / "opp" / "vendors" / "fla_npu_transformer"
+        set_env = vendor_dir / "bin" / "set_env.bash"
+        set_env.parent.mkdir(parents=True)
+        set_env.write_text("# test fixture\n", encoding="utf-8")
+        op_api_lib = str(vendor_dir / "op_api" / "lib" / "libcust_opapi.so")
+        return package_dir, vendor_dir, op_api_lib
+
+    def _check_snapshots(self, package_dir, first, second):
+        output = "\n".join([*first, *second]) + "\n"
+        with mock.patch.object(
+            self.checker["subprocess"], "check_output", return_value=output
+        ):
+            self.checker["_assert_set_env_idempotent"](
+                package_dir, {}, package_dir.parent
+            )
+
+    def test_accepts_current_root_based_contract(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            package_dir, vendor_dir, op_api_lib = self._paths(Path(temp_dir))
+            snapshot = [
+                f"{vendor_dir.parent.parent}:{vendor_dir}",
+                "",
+                str(vendor_dir.parent.parent),
+                op_api_lib,
+                "",
+            ]
+            self._check_snapshots(package_dir, snapshot, snapshot)
+
+    def test_accepts_ordered_vendor_contract(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            package_dir, vendor_dir, op_api_lib = self._paths(Path(temp_dir))
+            snapshot = [
+                str(vendor_dir),
+                "",
+                str(vendor_dir.parent.parent),
+                op_api_lib,
+                op_api_lib,
+            ]
+            self._check_snapshots(package_dir, snapshot, snapshot)
+
+    def test_rejects_second_source_change(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            package_dir, vendor_dir, op_api_lib = self._paths(Path(temp_dir))
+            first = [
+                str(vendor_dir),
+                "",
+                str(vendor_dir.parent.parent),
+                op_api_lib,
+                op_api_lib,
+            ]
+            second = [*first[:-1], "/wrong/libcust_opapi.so"]
+            with self.assertRaisesRegex(AssertionError, "not idempotent"):
+                self._check_snapshots(package_dir, first, second)
 
 
 if __name__ == "__main__":

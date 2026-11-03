@@ -28,6 +28,11 @@ inline ge::graphStatus TilingFinalizeArch22(
     t->outputTokenMajor = shape.outputTokenMajor;
     t->hasQkL2Norm = ctx.qRstd != nullptr;
     t->betaMode = shape.betaMode;
+    t->qkTokenMajor = shape.qkTokenMajor;
+    t->vTokenMajor = shape.vTokenMajor;
+    t->rawTokenMajor = shape.rawTokenMajor;
+    t->gateOutputTokenMajor = shape.gateOutputTokenMajor;
+
     t->scale = static_cast<float>(ctx.scale);
     t->lowerBound = static_cast<float>(ctx.lowerBound);
     t->partialOffset = static_cast<uint64_t>(t->usedCoreNum) * WS_CORE_BYTES;

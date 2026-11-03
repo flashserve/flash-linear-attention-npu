@@ -971,10 +971,10 @@ public:
         const ChunkKdaBwdFinalizeTilingData *tiling, AscendC::TPipe *pipe)
     {
         q_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(q));
-        rawG_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(rawG));
-        aLog_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_A_LOG *>(aLog));
+        rawG_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_RAW_G *>(rawG));
+        aLog_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(aLog));
         dtBias_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dtBias));
-        dG_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dG));
+        dG_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_D_G *>(dG));
         k_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(k));
         v_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(v));
         gk_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(gk));
@@ -1166,6 +1166,26 @@ public:
     }
 
 private:
+    // Load one head's model rows directly into the existing dense UB tile.
+    template <typename T>
+    __aicore__ inline void LoadModelRows(
+        AscendC::LocalTensor<T> dst, const AscendC::GlobalTensor<T> &src,
+        int64_t headOffset, uint32_t elems, bool tokenMajor)
+    {
+        if (!tokenMajor) {
+            AscendC::DataCopy(dst, src[headOffset], elems);
+            return;
+        }
+        const int64_t flat = headOffset / KDA_FINALIZE_DIM;
+        const int64_t batch = flat / (tiling_->NV * tiling_->T);
+        const int64_t head = (flat / tiling_->T) % tiling_->NV;
+        const int64_t offset = ((batch * tiling_->T + flat % tiling_->T) * tiling_->NV + head) * KDA_FINALIZE_DIM;
+        AscendC::DataCopyPad(dst, src[offset], AscendC::DataCopyExtParams{
+            static_cast<uint16_t>(elems / KDA_FINALIZE_DIM), KDA_FINALIZE_DIM * sizeof(T),
+            static_cast<uint32_t>((tiling_->NV - 1) * KDA_FINALIZE_DIM * sizeof(T)), 0, 0},
+            AscendC::DataCopyPadExtParams<T>{false, 0, 0, static_cast<T>(0)});
+    }
+
     __aicore__ inline void RunStage11(
         const FinalizeChunkInfo &chunk, int64_t chunkTask, int64_t head)
     {
@@ -1173,34 +1193,42 @@ private:
         // Both bands leave the complete dg frame resident at 216 KiB; scan it
         // in place for the unchanged full-chunk reverse scan.
         auto dg = UbBytes(KDA_FINALIZE_UB_DG).ReinterpretCast<float>();
-        auto raw = UbBytes(176 * 1024).ReinterpretCast<float>();
+        auto raw = UbBytes(176 * 1024).ReinterpretCast<DTYPE_RAW_G>();
         auto bias = UbBytes(160 * 1024).ReinterpretCast<float>();
-        auto log = UbBytes(161 * 1024).ReinterpretCast<DTYPE_A_LOG>();
+        auto log = UbBytes(161 * 1024).ReinterpretCast<float>();
         auto da = UbBytes(162 * 1024).ReinterpretCast<float>();
         auto db = UbBytes(163 * 1024).ReinterpretCast<float>();
         const int64_t token = FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_DIM);
         const uint32_t elems = chunk.validRows * KDA_FINALIZE_DIM;
-        AscendC::DataCopy(raw, rawG_[token], elems);
+        LoadModelRows(raw, rawG_, token, elems, tiling_->rawTokenMajor);
         AscendC::DataCopy(bias, dtBias_[head * KDA_FINALIZE_DIM], KDA_FINALIZE_DIM);
         AscendC::DataCopyPad(log, aLog_[head],
-            AscendC::DataCopyExtParams{1, sizeof(DTYPE_A_LOG), 0, 0, 0},
-            AscendC::DataCopyPadExtParams<DTYPE_A_LOG>{false, 0, 0, static_cast<DTYPE_A_LOG>(0)});
+            AscendC::DataCopyExtParams{1, sizeof(float), 0, 0, 0},
+            AscendC::DataCopyPadExtParams<float>{false, 0, 0, static_cast<float>(0)});
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[0]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[0]);
-        FinalizeStage11VF<DTYPE_A_LOG>(
+        FinalizeStage11VF<DTYPE_RAW_G>(
             reinterpret_cast<__ubuf__ float *>(dg.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(raw.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ DTYPE_RAW_G *>(raw.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(bias.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ DTYPE_A_LOG *>(log.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(log.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(da.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(db.GetPhyAddr()), chunk.validRows, tiling_->lowerBound);
+        // raw is dead after the chain rule; partials remain FP32.
+        auto packedG = raw.ReinterpretCast<DTYPE_D_G>();
+        if constexpr (sizeof(DTYPE_D_G) == 2) {
+            AscendC::Cast(packedG, dg, AscendC::RoundMode::CAST_RINT, elems);
+        } else {
+            packedG = dg.ReinterpretCast<DTYPE_D_G>();
+        }
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
         const int64_t partial = head * tiling_->totalChunkNum + chunkTask;
-        const uint64_t out = FinalizeOutputOffset(*tiling_, chunk, head, 0, KDA_FINALIZE_DIM, true);
-        AscendC::DataCopyPad(dG_[out], dg, AscendC::DataCopyExtParams{
-            static_cast<uint16_t>(chunk.validRows), KDA_FINALIZE_DIM * sizeof(float), 0,
-            static_cast<uint32_t>((tiling_->NV - 1) * KDA_FINALIZE_DIM * sizeof(float)), 0});
+        const bool tokenMajor = tiling_->gateOutputTokenMajor != 0U;
+        const uint64_t out = FinalizeOutputOffset(*tiling_, chunk, head, 0, KDA_FINALIZE_DIM, tokenMajor);
+        AscendC::DataCopyPad(dG_[out], packedG, AscendC::DataCopyExtParams{
+            static_cast<uint16_t>(chunk.validRows), KDA_FINALIZE_DIM * sizeof(DTYPE_D_G), 0,
+            tokenMajor ? static_cast<uint32_t>((tiling_->NV - 1) * KDA_FINALIZE_DIM * sizeof(DTYPE_D_G)) : 0U, 0});
         AscendC::DataCopyPad(workspace_[tiling_->gatePartialOffset].ReinterpretCast<float>()[partial * 8], da,
             AscendC::DataCopyExtParams{1, sizeof(float), 0, 0, 0});
         AscendC::DataCopy(
@@ -1280,7 +1308,7 @@ private:
         const int64_t token = FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_DIM);
         const int64_t hState = FinalizeHOffset(*tiling_, chunk, head);
         const int64_t state = FinalizeDhOffset(*tiling_, chunk, head);
-        AscendC::DataCopy(kUb, k_[token], chunk.validRows * KDA_FINALIZE_DIM);
+        LoadModelRows(kUb, k_, token, chunk.validRows * KDA_FINALIZE_DIM, tiling_->qkTokenMajor);
         AscendC::DataCopy(gkUb, gk_[token], chunk.validRows * KDA_FINALIZE_DIM);
         AscendC::DataCopy(hUb, h_[hState], KDA_FINALIZE_STATE_ELEMS);
         AscendC::DataCopy(dhUb, dh_[state], KDA_FINALIZE_STATE_ELEMS);
@@ -1340,7 +1368,7 @@ private:
             0,
             static_cast<DTYPE_BETA>(0)};
         AscendC::DataCopyPad(betaUb, beta_[betaOffset], betaCopy, betaPad);
-        AscendC::DataCopy(qUb, q_[token], chunk.validRows * KDA_FINALIZE_DIM);
+        LoadModelRows(qUb, q_, token, chunk.validRows * KDA_FINALIZE_DIM, tiling_->qkTokenMajor);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         FinalizeStage2VF(
@@ -1513,7 +1541,7 @@ private:
         AscendC::DataCopy(dkState, wsDkState[offset], elems);
         AscendC::DataCopy(dvb, wsDvb[offset], elems);
         AscendC::DataCopy(dqRaw, dqRaw_[token + offset], elems);
-        AscendC::DataCopy(v, v_[token + offset], elems);
+        LoadModelRows(v, v_, token + offset, elems, tiling_->vTokenMajor);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         FinalizeStage3VF(
@@ -1663,10 +1691,11 @@ private:
             tokenMajor ? static_cast<uint32_t>((tiling_->NV - 1) * KDA_FINALIZE_DIM * sizeof(bfloat16_t)) : 0U, 0};
         AscendC::DataCopyPad(dq_[out], dqOut, matrixCopy);
         AscendC::DataCopyPad(dk_[out], dkOut, matrixCopy);
-        const uint64_t betaOut = FinalizeOutputOffset(*tiling_, chunk, head, rowBegin, 1, true);
+        const bool gateTokenMajor = tiling_->gateOutputTokenMajor != 0U;
+        const uint64_t betaOut = FinalizeOutputOffset(*tiling_, chunk, head, rowBegin, 1, gateTokenMajor);
         AscendC::DataCopyPad(dBeta_[betaOut], dbOut, AscendC::DataCopyExtParams{
             static_cast<uint16_t>(rows), sizeof(DTYPE_BETA), 0,
-            static_cast<uint32_t>((tiling_->NV - 1) * sizeof(DTYPE_BETA)), 0});
+            gateTokenMajor ? static_cast<uint32_t>((tiling_->NV - 1) * sizeof(DTYPE_BETA)) : 0U, 0});
         // The next Stage5 uses these UB ranges. Preserve all output reads.
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
@@ -1675,8 +1704,10 @@ private:
 
 
     AscendC::GlobalTensor<float> kRstd_;
-    AscendC::GlobalTensor<float> rawG_, dtBias_, dG_;
-    AscendC::GlobalTensor<DTYPE_A_LOG> aLog_;
+    AscendC::GlobalTensor<DTYPE_RAW_G> rawG_;
+    AscendC::GlobalTensor<float> dtBias_;
+    AscendC::GlobalTensor<DTYPE_D_G> dG_;
+    AscendC::GlobalTensor<float> aLog_;
     AscendC::GlobalTensor<bfloat16_t> dk_;
     AscendC::GlobalTensor<DTYPE_BETA> dBeta_;
     AscendC::GlobalTensor<bfloat16_t> q_;

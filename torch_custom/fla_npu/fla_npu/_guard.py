@@ -161,8 +161,8 @@ def _check_versions(compat: dict) -> None:
         warnings.warn(
             f"fla_npu: detected torch {torch_version}, below the {min_torch} "
             "this wheel was built for. The Stable-ABI launcher cannot load "
-            "there, so fla_npu falls back to the ctypes reference: results "
-            "stay correct, the host-side speedup is lost. Import continues; "
+            "there, so Ascend C operator calls will fail. Install a supported "
+            "torch/torch_npu pair before calling operators. Import continues; "
             "see the README for the supported version matrix.",
             RuntimeWarning,
             stacklevel=2,

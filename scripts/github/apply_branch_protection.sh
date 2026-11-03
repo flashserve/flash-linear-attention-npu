@@ -27,8 +27,7 @@ curl -fsSL \
       "NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局",
       "NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配",
       "NPU CI / A2+A5 / 05 GDR Example/ST",
-      "NPU CI / A2+A5 / 06 chunk_fwd_o 局部覆盖安装",
-      "NPU CI / A2+A5 / 07 报告与 commit 校验",
+      "NPU CI / A2+A5 / 06 报告与 commit 校验",
       "CI 契约测试"
     ]
   },

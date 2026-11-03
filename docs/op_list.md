@@ -34,7 +34,7 @@ Ascend C 使用 `fla_npu.ops.ascendc`，同时提供带 `npu_` 前缀和不带�
 | KDA | [`npu_chunk_kda_fwd_finalize`](../fla/ops/ascendc/kda/chunk_kda_fwd_finalize/README.md) | `chunk_kda_fwd_finalize` | 前向收尾 | - |
 | KDA | `npu_chunk_kda_bwd` | `chunk_kda_bwd` | chunk 反向 | 暂缺README |
 | KDA | [`npu_chunk_kda_bwd_prepare`](../fla/ops/ascendc/kda/chunk_kda_bwd_prepare/README.md) | `chunk_kda_bwd_prepare` | 反向预处理 | - |
-| KDA | `npu_chunk_kda_bwd_intra` | `chunk_kda_bwd_intra` | chunk 内反向计算 | 暂缺README |
+| KDA | `npu_chunk_kda_bwd_intra` | `chunk_kda_bwd_intra` | chunk 内反向计算 | 暂缺README；已弃用（日落）；2027年1月15日（v26.12.0）移除；替代：`npu_chunk_kda_bwd` |
 | KDA | `npu_chunk_kda_bwd_recompute` | `chunk_kda_bwd_recompute` | 反向中间量重计算 | 暂缺README |
 | KDA | [`npu_chunk_kda_bwd_finalize`](../fla/ops/ascendc/kda/chunk_kda_bwd_finalize/README.md) | `chunk_kda_bwd_finalize` | 反向收尾 | - |
 | KDA | [`npu_recurrent_kda`](../fla/ops/ascendc/kda/recurrent_kda/README.md) | `recurrent_kda` | 递推推理 | - |

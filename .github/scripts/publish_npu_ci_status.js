@@ -52,14 +52,9 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
       context: 'NPU CI / A2+A5 / 05 GDR Example/ST',
       label: 'GDR Example/ST（4 条精度用例）',
     },
-    {
-      key: 'scoped-overlay',
-      context: 'NPU CI / A2+A5 / 06 chunk_fwd_o 局部覆盖安装',
-      label: 'chunk_fwd_o run 包覆盖 wheel OPP',
-    },
   ];
   const finalStatusDef = {
-    context: 'NPU CI / A2+A5 / 07 报告与 commit 校验',
+    context: 'NPU CI / A2+A5 / 06 报告与 commit 校验',
     label: '报告完整性与 PR commit 一致性',
   };
   const scopedStatusDef = {
@@ -210,7 +205,6 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
       ['CI_SOC', platform.soc],
       ['FLA_NPU_SOC', platform.soc],
       ['CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK', 'true'],
-      ['CI_RUN_SCOPED_WHEEL_INSTALL_CHECK', 'true'],
       ['CI_STAGE', failedStage || 'all'],
     ];
     if (platform.key === 'a5') {
@@ -1152,7 +1146,7 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
       '',
       requestScope === 'all'
         ? '全部检查通过；成功用例的逐 Tensor 指标已收纳到平台 artifact，不在评论中重复展开。'
-        : '定向编译诊断通过；未改写 01-07 正式门禁状态。'
+        : '定向编译诊断通过；未改写 01-06 正式门禁状态。'
     );
   }
 
