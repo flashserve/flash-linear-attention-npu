@@ -33,6 +33,7 @@ class WorkflowBranchDispatchTest(unittest.TestCase):
         cls.dispatch_workflow = yaml.safe_load(
             COMMENT_DISPATCH_PATH.read_text(encoding="utf-8")
         )
+        cls.dispatch_implementation = (REPO_ROOT / ".github/scripts/dispatch_npu_ci.js").read_text(encoding="utf-8")
         cls.dispatch_script = next(
             step["with"]["script"]
             for step in cls.dispatch_workflow["jobs"]["dispatch"]["steps"]
@@ -55,10 +56,16 @@ class WorkflowBranchDispatchTest(unittest.TestCase):
 
         self.assertEqual(triggers["issue_comment"]["types"], ["created"])
         self.assertEqual(permissions["actions"], "write")
-        self.assertIn("workflow_id: 'ci.yml'", self.dispatch_script)
-        self.assertIn("ref: targetRef", self.dispatch_script)
-        self.assertIn(".github/workflows/ci.yml", self.dispatch_script)
-        self.assertIn("workflow_dispatch", self.dispatch_script)
+        self.assertIn("workflow_id: 'ci.yml'", self.dispatch_implementation)
+        self.assertIn("ref: targetRef", self.dispatch_implementation)
+        self.assertIn(".github/workflows/ci.yml", self.dispatch_implementation)
+        self.assertIn("workflow_dispatch", self.dispatch_implementation)
+
+    def test_comment_dispatcher_passes_actual_rerun_identity(self):
+        step = next(step for step in self.dispatch_workflow["jobs"]["dispatch"]["steps"]
+                    if step.get("uses") == "actions/github-script@v8")
+        self.assertEqual(step["env"]["NPU_CI_RUN_ATTEMPT"], "${{ github.run_attempt }}")
+        self.assertEqual(step["env"]["NPU_CI_TRIGGERING_ACTOR"], "${{ github.triggering_actor }}")
 
     def _run_dispatch(self, comment):
         encoded_workflow = base64.b64encode(
@@ -79,13 +86,15 @@ globalThis.context = {{
 globalThis.github = {{
   rest: {{
     repos: {{
-      getCollaboratorPermissionLevel: async () => ({{ data: {{ permission: 'admin' }} }}),
+      get: async () => ({{ data: {{ default_branch: 'main' }} }}),
       getBranch: async (payload) => ({{ data: {{ name: payload.branch }} }}),
-      getContent: async () => ({{
+      getContent: async (payload) => ({{
         data: {{
           type: 'file',
           encoding: 'base64',
-          content: '{encoded_workflow}',
+          content: payload.path.endsWith('npu-ci-users.json')
+            ? Buffer.from(JSON.stringify({{ users: ['ci-admin'] }})).toString('base64')
+            : '{encoded_workflow}',
         }},
       }}),
     }},
@@ -93,6 +102,7 @@ globalThis.github = {{
       get: async () => ({{
         data: {{
           draft: false,
+          state: 'open',
           base: {{ ref: 'main' }},
           head: {{ sha: 'a'.repeat(40) }},
         }},

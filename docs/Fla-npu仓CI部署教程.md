@@ -12,138 +12,28 @@ export CI_ROOT="${CI_ROOT:-$HOME/ci}"
 
 `CI_ROOT` 是教程和部署命令使用的变量。设置它不会自动改变 `ci/run_ci_container.sh` 的默认值或 workflow：实际部署时，须让各 job 的绝对路径配置、临时目录清理校验与同一部署位置一致。一键部署工具也须显式传入 `--ci-root "$CI_ROOT"`。
 
-## 先看重点
+## 部署约定
 
-下面这些点最容易踩坑，建议先读完再操作。
+完整 CI 流程、6 项门禁、触发名单、纯 `.md` 放行规则及 CI 脚本信任规则统一见 [仓库规则：NPU CI 门禁](repository-rules.md#npu-ci-门禁)。本教程只说明 runner、镜像、网络和排障配置。
 
-1. **Docker 容器必须带 `--privileged`。**
-   本仓 `ci/run_ci_container.sh` 默认已经启用 `CI_DOCKER_PRIVILEGED=true`，最终会执行带 `--privileged` 的 `docker run`。如果没有它，容器里常见现象是 `npu-smi` 不可用，或者 `torch_npu.npu.device_count()` 返回 `0`。
+- A2/A5 使用同一条 Git 源码准备路径：固定 base、拉取并核对 PR head、合并 PR；首次直连，失败后才启用宿主机代理重试。两台主机均需能直连或通过代理访问 GitHub Git 服务。
+- runner 的 GitHub 控制连接可以使用代理。源码首次直连步骤会清空继承的 HTTP/HTTPS/ALL/Git 代理并设置 `NO_PROXY=*`；只有源码失败后才加载 `CI_PROXY_SCRIPT`。代理配置须在两台主机均提前部署。
+- runner 运行用户须能使用 Docker 和 Ascend 设备。`ci/run_ci_container.sh` 默认带 `--privileged`，否则可能出现 `npu-smi` 不可用或 `torch_npu.npu.device_count()` 为 `0`。
+- 宿主机物理设备号通过 `ASCEND_RT_VISIBLE_DEVICES` 选择，进入容器后通常映射为逻辑设备 `0`；Example/ST 默认使用 `CI_CONTAINER_DEVICE=0`。
+- A2/A5 使用各自的镜像和 CANN/PyTorch 组合，不共用 wheel。A5 必须预置镜像，不能在 PR job 中临时构建。
+- 两个平台均只保留 `triton-ascend==3.2.1` 提供的 `triton` 模块，避免与社区版 `triton` 共存；当前 Stable-only 链路不要求 torchnpugen 或重新编译 op-plugin。
+- Example/ST 执行 `ci/example_st_cases.json` 中全部 `enabled=true` 用例；新增 shape 或行为必须在该文件显式配置。
+- 同一 PR 的请求以 `cancel-in-progress: false` 排队，准备阶段再按 head、模式、算子列表、base/workflow SHA 去重；所有任务和手工验证必须共用 `${CI_ROOT}/tmp/npu-locks`，防止抢占同一张卡。
+- 容器日志默认只保留 7 天；GitHub Actions 网页日志的保留时间由仓库/组织设置独立控制。
 
-2. **宿主机物理 NPU 和容器内逻辑 NPU 不是同一个编号。**
-   脚本会在宿主机上自动选择一张物理卡，例如 `ASCEND_RT_VISIBLE_DEVICES=2`。进入容器后，这张卡通常映射成逻辑设备 `0`。所以 CI 中传给 PyTorch example 的设备号默认是 `CI_CONTAINER_DEVICE=0`。
+runner 标签必须精确匹配：
 
-3. **Example ST 必跑，shape 由用例文件统一管理。**
-   CI 默认执行 `ci/example_st_cases.json` 中 `enabled=true` 的用例。当前 `case1_current_default` 保持原始 shape；后续 GVA、`Vdim=256` 等场景通过新增用例显式配置 `B`、`T`、`chunk_size`、`query_head`、`value_head`、`Kdim`、`Vdim` 等 shape 字段，以及 `gate_source`、`gate_function`、`initial_state`、`output_final_state`、`qk_l2norm` 等行为字段。
+| 平台 | 必需标签 |
+| --- | --- |
+| A2 | `linux,arm64,npu,flash-linear-attention-npu` |
+| A5 | `linux,x64,npu,ascend950,flash-linear-attention-npu-a5` |
 
-4. **A2、A5 使用各自验证过的 CANN/PyTorch 组合。**
-   A2 保持 CANN 9.1.0、PyTorch 2.7.1、`torch_npu` 2.7.1.post5；A5 使用 CANN 9.1.0、PyTorch 2.12.0、`torch_npu` 2.12.0。不要在两个平台之间复用 wheel 或 CANN 镜像。
-
-5. **`triton-ascend` 和社区版 `triton` 不要共存。**
-   A2 镜像安装 `triton-ascend==3.2.1`，A5 镜像安装 `triton-ascend==3.2.1`，并清理社区版 `triton`。如果容器里又装了社区版 `triton`，可能出现 `torch_npu`/`triton` namespace 重复注册问题。
-
-6. **runner registration token 很短时效，且只能由 GitHub 管理员生成。**
-   如果下载 runner 很慢，token 可能在真正注册前过期。过期后回到 GitHub 页面重新生成一个 token，再重新执行注册脚本即可。
-
-7. **runner 标签必须和 workflow 完全匹配。**
-
-   | 平台 | 必需标签 |
-   | --- | --- |
-   | A2 | `linux,arm64,npu,flash-linear-attention-npu` |
-   | A5 | `linux,x64,npu,ascend950,flash-linear-attention-npu-a5` |
-
-   A5 必须使用独立产品标签，不能只注册成通用 `npu` runner，否则无法证明一次触发确实覆盖了两个平台。
-
-8. **NPU CI 不会因为 PR 新建、重新打开、push 新 commit 自动执行。**
-   PR 新建、重新打开、push 新 commit 后，会自动出现 6 个 pending 分项状态，描述为“未执行”，用于阻止未验证 commit 合入。真正执行 NPU CI 仍需要仓库 Admin 权限账号点击 GitHub Actions 按钮，或在 PR 评论里发送 `/run-npu-ci quick` / `/run-npu-ci full` 触发。PR 更新 commit 后，旧 commit 上的 CI 成功状态不会再满足合入门禁。
-
-9. **分支保护里的状态检查名称要完全一致。**
-
-   | 顺序 | 必需状态检查 | 可执行分项的 `CI_STAGE` |
-   | --- | --- | --- |
-   | 01 | `NPU CI / A2+A5 / 01 环境、wheel 与运行时契约` | `environment-contracts` |
-   | 02 | `NPU CI / A2+A5 / 02 全量 OPP 构建` | `opp-package` |
-   | 03 | `NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局` | `standalone-layout` |
-   | 04 | `NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配` | `torch-adapter` |
-   | 05 | `NPU CI / A2+A5 / 05 GDR Example/ST` | `gdr-example-st` |
-   | 06 | `NPU CI / A2+A5 / 06 报告与 commit 校验` | 不适用，由汇总 job 执行 |
-
-   每个平台按 01 到 05 顺序执行。前置分项失败后，后续分项会标记为未执行，不会继续运行；失败诊断会保留关键错误，并给出带对应 `CI_STAGE` 的复现命令。06 由双平台汇总 job 最后执行并发布。除这 6 项外，还应把自动执行的 `CI 契约测试` 配置为必需检查，用于验证 CI 代码本身。所有名称都必须精确匹配；名字写错、大小写不同或空格不同，GitHub 都会认为没有通过。
-
-10. **`weinachuan` 强行合入 bypass 不是写在代码里自动生效的。**
-    需要 GitHub 管理员用 `scripts/github/apply_branch_protection.sh` 应用到 GitHub 分支保护规则。
-
-11. **多个 NPU CI 同时触发时有两层保护。**
-    同一 PR 的触发先通过 workflow concurrency 串行化，再由 `prepare` 根据带 `A2+A5` 契约的状态去重。每台 runner 宿主机还会用 `${CI_ROOT}/tmp/npu-locks/fla-npu-ci-npu-<id>.lock` 对物理 NPU 加锁，避免多个任务抢同一张卡。
-
-12. **CI 容器内日志默认只保留 7 天。**
-    每次 NPU CI 容器启动时都会执行 `ci/cleanup_ci_logs.sh`，删除超过 7 天的 CI/Ascend/NPU 日志。这个策略只管理 CI 容器和仓库工作目录里的日志，不等同于 GitHub Actions 网页日志保留时间。
-
-13. **A5 源码通过 GitHub API 归档下载。**
-    A5 runner 不依赖 `github.com` 的 Git smart-HTTP：workflow 会从 `api.github.com` / `codeload.github.com` 下载精确 test-merge commit 和可信 CI commit，并校验 test-merge 的父提交必须对应 prepare 固定的 base/head。归档解包前会拒绝绝对路径、路径穿越、重复成员、链接和特殊文件。A5 网络策略至少需要允许这两个 HTTPS 域名。prepare 会读取目标分支当前 tip 并固定为不可变 SHA；评论触发由默认分支分发到选定的目标分支，可信 CI 脚本统一使用该分支的 `github.workflow_sha`，因此维护分支继续使用自身规则，CI 自身改动也能在合入前验证。
-
-    归档解包与用例文件读取的安全边界测试仅依赖 Python 和仓库 requirements，可在 Linux 环境执行：
-
-    ```sh
-    python3 ci/tests/test_workflow_archive_security.py
-    ```
-
-## 流程图
-
-PR 新建或更新默认状态流程：
-
-```mermaid
-flowchart TD
-    A["PR 新建、重开或 push 新 commit"] --> B["NPU CI 默认状态 workflow 运行"]
-    B --> C{"当前 head commit 是否已有执行结果"}
-    C -- "有通过、失败或运行中状态" --> D["保留已有 NPU CI 状态"]
-    C -- "没有执行结果" --> E["写入 6 个分项 pending 状态"]
-    E --> F["机器人评论：NPU CI 未执行"]
-    F --> G["提示可请求触发的 CI 账号和 /run-npu-ci 命令"]
-```
-
-评论触发总流程：
-
-```mermaid
-flowchart TD
-    A["仓库 Admin 在 PR 评论 /run-npu-ci"] --> B["默认分支评论分发 workflow"]
-    B --> C{"触发人是否具备仓库 Admin 权限"}
-    C -- "否" --> D["直接失败：无权触发"]
-    C -- "是" --> E["选择 ci_ref；未指定时使用 PR base.ref"]
-    E --> F["workflow_dispatch 到目标分支 ci.yml"]
-    F --> G["准备 NPU CI：解析 PR 和 head commit"]
-    G --> H{"当前 commit 是否已通过 NPU CI"}
-    H -- "是" --> I["更新机器人评论：已通过，不重复运行"]
-    H -- "否" --> J{"当前 commit 是否已有 NPU CI pending/running"}
-    J -- "是" --> K["更新机器人评论：已在运行，不重复启动"]
-    J -- "否" --> L["写入 6 个分项 pending 状态"]
-    L --> M["A2 runner / ascend910b"]
-    L --> N["A5 runner / ascend950：API 下载并校验源码归档"]
-    M --> O["A2 顺序执行 01-05；失败后跳过后续"]
-    N --> P["A5 顺序执行 01-05；失败后跳过后续"]
-    O --> Q["上传带本次 run 身份的分项和精度结果"]
-    P --> Q
-    Q --> R["GitHub-hosted finalize 校验并发布 6 个最终状态"]
-```
-
-同一 PR + 同一 commit 重复触发流程：
-
-```mermaid
-flowchart LR
-    A["第一次评论"] --> B["创建 pending 状态"]
-    B --> C["runner 开始或排队运行"]
-    D["第二次评论"] --> E["prepare 读取当前 head commit 状态"]
-    E --> F{"已有 active pending?"}
-    F -- "是" --> G["只更新同一条机器人评论"]
-    G --> H["不启动新的 runner job"]
-    F -- "否" --> I["允许重新触发"]
-```
-
-runner 宿主机 NPU 加锁流程：
-
-```mermaid
-flowchart TD
-    A["runner 进入 ci/run_ci_container.sh"] --> B["扫描 npu-smi，生成候选 NPU 顺序"]
-    B --> C["尝试 flock CI_NPU_LOCK_DIR/fla-npu-ci-npu-<id>.lock"]
-    C --> D{"是否拿到锁"}
-    D -- "是" --> E["设置 ASCEND_RT_VISIBLE_DEVICES=<id>"]
-    E --> F["启动 Docker 容器运行编译和 Example ST"]
-    F --> G["Docker 退出"]
-    G --> H["释放 NPU 锁"]
-    D -- "否" --> I{"是否还有候选卡"}
-    I -- "是" --> C
-    I -- "否" --> J["等待 CI_NPU_LOCK_RETRY_SECONDS 后重新扫描"]
-    J --> B
-```
+A5 的独立产品标签用于确保一次门禁覆盖两个平台。注册 token 和分支保护配置仍要求仓库管理员操作；日常 CI 触发权限由默认分支 [`.github/npu-ci-users.json`](../.github/npu-ci-users.json) 独立管理。
 
 ## 你需要准备什么
 
@@ -279,15 +169,13 @@ A2/A5 job 统一设置 `CI_TMPDIR=/tmp/fla-npu-ci`。A5 Triton/BiShengIR 编译�
 
 `ci/run_ci_container.sh` 在宿主机注册 `EXIT` 收尾：通过 Docker `--cidfile` 记录本次创建的容器 ID，仅停止该容器，再用无网络 helper 容器将源码及本次 `CI_HOST_TMPDIR` 的所有权归还调用用户，最后释放设备锁。正常退出、失败、中断及 stale-commit 监控提前 `docker rm -f` 的路径均执行收尾；原始非零退出码保留，成功运行后的收尾失败也会使 CI 失败。目录准备与权限收尾都在入口脚本中完成，无需新增 workflow 步骤或宿主机 `sudo`。
 
-现有 workflow 清理步骤只删除本次 `CI_HOST_TMPDIR` 和 A5 的精确源码归档目录 `${CI_ROOT}/tmp/fla-npu-source-<run>-<attempt>`，并校验目录边界及符号链接。A2 的 Example/ST 配置中转使用 `TMPDIR` 下的独立 `mktemp` 目录，由该步骤自己的 `EXIT` trap 清理。静态 `TMPDIR` 根目录始终保留。
+workflow 清理步骤仅删除本次 `CI_HOST_TMPDIR`，并校验目录边界及符号链接。两个平台的可信 CI 覆盖流程都使用 `TMPDIR` 下的独立 `mktemp` 目录临时保留 PR Example/ST 配置，由步骤自身的 `EXIT` trap 清理。静态 `TMPDIR` 根目录始终保留。
 
 缓存固定使用 `CI_CACHE_ROOT=${CI_ROOT}/cache_root`；NPU 锁固定使用 `${CI_ROOT}/tmp/npu-locks`，跨运行共享，不能按 run 分开。单次运行的收尾保留共享缓存与锁文件，不递归修改它们的所有权。
 
-Stage 耗时统一保存在每台服务器的 `${CI_ROOT}/results/ci-timings/stage-timings.csv`（workflow 通过 `CI_TIMING_ROOT` 配置）。总表每行对应一个 `(run_id, run_attempt, platform, stage)`，包含 commit、SOC、状态、退出码、UTC 起止时间和 `duration_seconds`，历史 CI 行持续保留。只记录当前 5 个执行 stage，`scoped-overlay` 已暂停；GitHub-hosted 汇总校验不在此表内。每次 stage 状态变化即加锁更新总表、同步落盘并原子替换，失败也保留，工作区与临时目录清理不会删除它。被强制终止的 stage 保留 `running` 和开始时间，耗时留空；`skipped/not_run` 耗时也留空，不写成 0。启用前须在 A2、A5 分别创建下述可写目录；总表由各自服务器维护，不自动跨机合并。
+Stage 耗时统一保存在每台服务器的 `${CI_ROOT}/results/ci-timings/stage-timings.csv`（workflow 通过 `CI_TIMING_ROOT` 配置）。总表每行对应一个 `(run_id, run_attempt, platform, stage)`，包含 commit、SOC、状态、退出码、UTC 起止时间和 `duration_seconds`，历史 CI 行持续保留。只记录当前 5 个设备执行 stage；GitHub-hosted 汇总校验不在此表内。每次 stage 状态变化即加锁更新总表、同步落盘并原子替换，失败也保留，工作区与临时目录清理不会删除它。被强制终止的 stage 保留 `running` 和开始时间，耗时留空；`skipped/not_run` 耗时也留空，不写成 0。启用前须在 A2、A5 分别创建下述可写目录；总表由各自服务器维护，不自动跨机合并。
 
-源码获取保持原有顺序：A5 直接通过 GitHub API 准备源码；A2 第一次 checkout 先直连，只有失败后才执行原有“启动代理并获取端口”步骤，再按原顺序等待并重试。runner 服务的 GitHub 控制连接继续使用代理；A5 API 和 A2 首次 checkout 的步骤环境会清空继承的 HTTP/HTTPS/ALL/Git 代理变量，并设置 `NO_PROXY=*`，确保这两次源码访问直连。
-
-A2 代理回退读取普通用户配置 `CI_PROXY_SCRIPT=${CI_ROOT}/vpn-proxy.sh`，调用 `proxyon`，校验变量不含 CR/LF，再通过 `GITHUB_ENV` 将代理地址与端口传递给后续步骤。管理员须提前在两台主机部署 `nelvko/clashctl` 到 `${CI_ROOT}/clashctl`，并将提供的 `vpn-proxy.sh` 适配副本放到上述位置：运行时配置和二进制路径指向该目录，日志写入 `${CI_ROOT}/tmp/mihomo.log`，权限允许 `ubuntu` 读取配置、执行二进制和写日志。脚本属于主机部署配置，不提交到仓库；workflow 不读取 `/root`、不修改 `HOME` 或全局 Git 配置。
+A2/A5 的代理回退读取普通用户配置 `CI_PROXY_SCRIPT=${CI_ROOT}/vpn-proxy.sh`，调用 `proxyon`，校验变量不含 CR/LF，再通过 `GITHUB_ENV` 将代理地址与端口传递给后续步骤。管理员须提前在两台主机部署 `nelvko/clashctl` 到 `${CI_ROOT}/clashctl`，并将提供的 `vpn-proxy.sh` 适配副本放到上述位置：运行时配置和二进制路径指向该目录，日志写入 `${CI_ROOT}/tmp/mihomo.log`，权限允许 `ubuntu` 读取配置、执行二进制和写日志。脚本属于主机部署配置，不提交到仓库；workflow 不读取 `/root`、不修改 `HOME` 或全局 Git 配置。
 
 A2/A5 workflow 固定设置 `CI_JOBS=16` 和 `CI_CPACK_JOBS=16`，全量与局部 OPP 构建均使用 `-j16`。`ci/run_checks.sh` 的默认并行度也为 16，并将该值导出为 PyTorch/Ninja 使用的 `MAX_JOBS`；CPack、CMake 和 Make 使用同一并行度设置，cmake/scripts/prepare.sh 也遵循 CMAKE_BUILD_PARALLEL_LEVEL，避免内部 prepare 阶段重新按 CPU 数放大并行度。`FLA_NPU_BUILD_ARGS` 追加 `-j16`，覆盖 wheel 打包内部再次调用 `build.sh` 时的并行度。
 
@@ -399,7 +287,7 @@ bash ci/run_ci_container.sh
 
 上述分项串行执行。一个分项失败后，脚本会停止实际测试并把后续分项标记为未执行；不会为了收集更多结果继续执行依赖已失败的步骤。失败日志和汇总诊断会给出类似下面的复现命令：
 
-`quick` 和 `full` 都只在第 02 项构建当前平台对应的目标 SOC，不会把其他安装或测试混入构建状态。未指定 `ops` 时，`full` 会在第 04 项追加全部 legacy PyTorch 适配测试。
+`quick` 和 `full` 都只在第 02 项构建当前平台对应的目标 SOC，不会把其他安装或测试混入构建状态。未指定 `ops` 时，`full` 会在第 04 项追加全部 PyTorch 适配测试。
 
 ```sh
 CI_STAGE=opp-package \
@@ -412,7 +300,7 @@ CI_REQUIRE_PRELOADED_IMAGE=true \
 bash ci/run_ci_container.sh
 ```
 
-`CI_STAGE` 可取 `environment-contracts`、`opp-package`、`standalone-layout`、`torch-adapter` 或 `gdr-example-st`。脚本会先执行该分项所需的前置分项，再执行目标分项；应优先使用失败诊断中给出的完整命令。`scoped-overlay` 分项暂时退出正式门禁，待安装流程修复后恢复。
+`CI_STAGE` 可取 `environment-contracts`、`opp-package`、`standalone-layout`、`torch-adapter` 或 `gdr-example-st`。脚本会先执行该分项所需的前置分项，再执行目标分项；应优先使用失败诊断中给出的完整命令。
 
 本地排障时可以只跑某个用例：
 
@@ -598,7 +486,7 @@ bash scripts/github/apply_branch_protection.sh main
 
 这个脚本会给 `main` 配置：
 
-- 必需状态检查：本教程“先看重点”第 9 项列出的 6 个精确 context
+- 必需状态检查：[仓库规则](repository-rules.md#npu-ci-门禁)列出的 6 个 NPU context 和 `CI 契约测试`
 - PR 至少 2 个 approval
 - 需要 Code Owners review；ABI 敏感路径的 code owner 是 `weinachuan`
 - Admin 也必须遵守分支保护
@@ -621,7 +509,7 @@ bash scripts/github/apply_branch_protection.sh main
 9. 勾选 `Require approval of the most recent reviewable push`
 10. 勾选 `Require status checks to pass before merging`
 11. 勾选 `Require branches to be up to date before merging`
-12. 添加本教程“先看重点”第 9 项列出的全部 6 个必需检查
+12. 添加[仓库规则](repository-rules.md#npu-ci-门禁)列出的 6 个 NPU context 和 `CI 契约测试`
 13. 勾选让 administrators 也遵守分支保护，或不要让普通 Admin 具备全局 bypass
 14. 在 bypass 或 pull request bypass allowance 中添加用户 `weinachuan`
 15. 保存规则
@@ -630,67 +518,20 @@ bash scripts/github/apply_branch_protection.sh main
 
 ## 第 10 步：验证触发方式
 
-本仓 NPU CI 不会被 PR 自动执行。PR 新建、重开或 push 新 commit 时，GitHub 会自动给当前 head commit 写入 6 个 pending 分项状态，描述为“未执行”。这些状态会出现在 PR checks 中，用来提醒该 commit 还没有完成双平台 NPU CI。
+先确认触发用户名已加入默认分支的 [`.github/npu-ci-users.json`](../.github/npu-ci-users.json)。分发和执行准备会各自读取默认分支名单，待测 PR 中的名单变更不授予权限；名单用户无需具备仓库 Admin 权限。手动重新运行时，实际操作人 `github.triggering_actor` 也须在名单中。完整命令、去重及脚本选择规则见 [仓库规则](repository-rules.md#npu-ci-门禁)。
 
-如果 PR push 了新 commit，默认状态会重新写到新的 head commit 上，描述为“commit 已变化，请重新触发”。旧 commit 的 NPU CI success 不会给新 commit 使用。
+部署后的检查顺序：
 
-机器人也会在 PR 评论区写入或更新一条提示，说明可以请求仓库 Admin 权限账号使用 `/run-npu-ci quick` / `/run-npu-ci full` 触发。
+1. 新建或更新仅修改 `.md` 的 PR，确认 6 个 NPU context 自动 success，且没有 self-hosted NPU job。重命名需原、新路径均为 `.md`；文件列表不完整时不能跳过，同一 commit 在其他 PR 的纯文档结果不能代替本 PR 检查。
+2. 在包含代码修改的非草稿 PR 上，确认新 head 的 6 个 NPU 状态初始为 pending；旧 head 的成功结果不复用。
+3. 用名单用户在 PR 评论 `/run-npu-ci quick`，或在 `Actions` → `NPU CI` → `Run workflow` 选择 CI 定义分支、填写 `pr_number` 和 `ci_mode`。确认新增开始评论，并分别调度 A2/A5。
+4. 在两个平台日志确认先直连准备 Git 源码，失败后才启用代理；Admin 作者的 PR 保留合并后的 `ci/`，其他作者使用固定可信 `ci/` 并保留 PR 用例配置。
+5. 执行完成后确认新增独立结果评论及 6 个最终状态。历史开始/结果评论应保留；成功评论只列平台结论和精度计数，失败评论包含关键诊断及 `CI_STAGE` 复现命令。
+6. 对运行中的相同请求再次触发，确认先排队且保留原任务，进入准备阶段后再去重并新增评论。只有 head、模式、算子列表、base/workflow SHA 均相同才复用完整成功结果；改变其中一项应重新验证。
 
-仓库 Admin 权限账号可以用两种方式手动触发真正的 NPU CI。
+正式门禁使用 `/run-npu-ci quick` 或 `/run-npu-ci full`。`ops=...` 仅用于 01/02 定向编译诊断，发布独立诊断状态，不满足 6 项合入门禁。评论默认使用 PR 目标分支的 `ci.yml`，`ci_ref=<branch>` 或 Actions 页面的 `Branch` 可选择其他 CI 定义分支。
 
-触发后，GitHub 机器人会在 PR 评论区写入一条 NPU CI 状态评论。刚触发时显示“已开始”，A2、A5 都结束后由 `finalize` 更新同一条评论为“通过”或“失败”，并给出双平台分项汇总。全部通过时只显示平台结论和精度用例计数，不重复展开成功 Tensor 的逐项指标；失败时才显示真实编译错误、运行异常、失败精度指标和带 `CI_STAGE` 的复现命令。每个平台的分项按顺序执行，前置失败后续标记为未执行。如果 Actions 页面能看到 workflow 已触发，但 PR 下没有机器人评论，检查仓库 `Settings -> Actions -> General` 中的 `Workflow permissions` 是否允许 workflow 请求写权限。本 workflow 通过 job 级 `permissions` 申请 PR 读取、issue comment 写入和 commit status 写入权限。
-
-方式一：GitHub Actions 按钮。
-
-1. 打开仓库 `Actions`
-2. 选择左侧 `NPU CI`
-3. 在 `Run workflow` 的 `Branch` 下拉框选择 CI 定义分支
-4. 点击右侧 `Run workflow`
-5. 填写：
-   - `pr_number`: PR 编号，例如 `23`
-   - `ci_mode`: `quick` 或 `full`
-   - `ops`: 可选，逗号分隔的算子列表，仅用于编译定向诊断；填写后只执行第 01、02 项并发布 `NPU CI / A2+A5 / 定向诊断`，不会执行 GDR 精度，也不会写入或覆盖 01-06 正式门禁状态
-6. 点击绿色 `Run workflow`
-
-方式二：在 PR 评论区发送命令。
-
-```text
-/run-npu-ci
-/run-npu-ci quick
-/run-npu-ci full
-/run-npu-ci quick ops=causal_conv1d,chunk_bwd_dv_local
-/run-npu-ci quick ci_ref=release-v2
-```
-
-带 `ops=` 的命令只顺序执行第 01 项环境契约和第 02 项指定算子 OPP 构建，并发布 `NPU CI / A2+A5 / 定向诊断`；它不执行 GDR 精度或后续安装分项，也不会写入或覆盖 01-06 正式门禁状态。用于合入门禁的运行必须省略 `ops`。
-
-评论触发由默认分支上的 `NPU CI 评论分发` workflow 处理：没有指定 `ci_ref` 时自动使用 PR 的目标分支 `pr.base.ref`，指定后使用该分支的 `.github/workflows/ci.yml`。目标分支必须存在对应的 `workflow_dispatch`。只有仓库 Admin 权限账号可以触发；分发 workflow 和实际 NPU CI 都会调用 GitHub API 校验请求人权限。手动运行时，`Branch` 下拉框就是实际使用的 CI 定义分支。
-
-PR 新建或 push 新 commit 后，当前 head commit 会先出现默认状态：
-
-```text
-NPU CI / A2+A5 / 01 环境、wheel 与运行时契约 pending
-NPU CI / A2+A5 / 02 全量 OPP 构建 pending
-NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局 pending
-NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配 pending
-NPU CI / A2+A5 / 05 GDR Example/ST pending
-NPU CI / A2+A5 / 06 报告与 commit 校验 pending
-未执行：请维护者评论 /run-npu-ci quick
-```
-
-如果是 push 新 commit，上述 6 个状态会重新变为 pending，并显示“未执行：commit 已变化，请重新触发 /run-npu-ci quick”。
-
-维护者触发执行后，上述 6 个状态仍会保持 pending，但描述会变成类似“等待执行 (quick,all,A2+A5)”。
-
-成功后，上述 6 个状态都会变成 success。发生失败时，真正失败的分项会显示关键原因，依赖它的后续分项显示未执行；PR 评论和 Actions Summary 给出对应 `CI_STAGE` 复现命令。
-
-PR 评论区也会出现或更新一条机器人评论，包含触发人、模式、Example ST 要求和 Actions run 链接。
-
-只有当前 head commit 的同一次 Actions run 已让 6 个 A2+A5 分项状态全部通过，重复触发才会跳过，不再占用 NPU。旧版状态或单平台状态不会命中该去重条件。
-
-如果当前 head commit 已经有 NPU CI 处于排队或运行中，重复评论也会跳过，不会再启动新的 self-hosted runner job。机器人评论会更新为“已在运行”，并指向已有 Actions run。
-
-不同 PR 或不同 commit 的 NPU CI 可以同时被触发。每次触发都会分别调度一个 A2 job 和一个 A5 job；真正到各 runner 宿主机执行时，`ci/run_ci_container.sh` 会为选中的物理 NPU 加文件锁，workflow 将锁目录设为 `${CI_ROOT}/tmp/npu-locks`。如果所有候选 NPU 都被锁住，job 会等待并重试。
+如果 Actions 有运行但 PR 没有评论，检查 `Settings` → `Actions` → `General` 的 workflow 写权限，以及组织策略是否允许 job 申请 `issues: write`、`statuses: write`。不同 PR 可同时调度；`ci/run_ci_container.sh` 通过共享物理 NPU 文件锁等待空闲卡：
 
 锁相关环境变量：
 
@@ -712,12 +553,12 @@ PR 评论区也会出现或更新一条机器人评论，包含触发人、模�
 
 ## 第 11 步：合入前怎么判断是否满足门禁
 
-合入 PR 前确认两件事：
+合入 PR 前确认：
 
-1. 当前 head commit 上本教程“先看重点”第 9 项列出的 6 个状态全部是 success
-2. GitHub 分支保护要求的 2 个 approval 已经满足
+1. 当前 head commit 的 6 个 NPU context 和 `CI 契约测试` 全部 success
+2. GitHub 分支保护要求的 2 个 approval 和 Code Owners review 已经满足
 
-如果 PR 又 push 了新 commit，需要重新跑 NPU CI。旧 commit 的成功结果不能给新 commit 使用。
+如果 PR push 新 commit 或更换目标分支，门禁会重新检查：纯 `.md` 改动直接通过，其余需名单用户重新触发 NPU CI。旧 commit 或旧 base 的结果不能放行新的请求。
 
 `weinachuan` 如果需要紧急强行合入，可以走 GitHub branch protection bypass，但前提是第 9 步已经把 bypass allowance 配好。
 
@@ -791,7 +632,7 @@ Custom OPP op_api lib: /usr/local/Ascend/.../opp/vendors/fla_npu_transformer/op_
 
 - 评论是否发在 PR 页面，不是普通 Issue 页面
 - 命令是否以 `/run-npu-ci` 开头
-- 发送评论的人是否具备仓库 Admin 权限
+- 发送评论的人是否在默认分支 `.github/npu-ci-users.json` 名单中；文件是否为合法 JSON
 - `NPU CI 评论分发` workflow 是否启用
 - PR 目标分支或 `ci_ref` 指定分支是否存在 `.github/workflows/ci.yml`
 - 目标分支的 `ci.yml` 是否声明 `workflow_dispatch`
@@ -799,7 +640,7 @@ Custom OPP op_api lib: /usr/local/Ascend/.../opp/vendors/fla_npu_transformer/op_
 
 ### PR 创建后没有 6 个 NPU CI 分项的未执行状态
 
-检查：
+纯 `.md` PR 会直接显示 6 个 success。其他 PR 检查：
 
 - `NPU CI 默认状态` workflow 是否启用
 - PR 是否是新建、重开、ready for review，或刚 push 了新 commit
@@ -823,7 +664,7 @@ Custom OPP op_api lib: /usr/local/Ascend/.../opp/vendors/fla_npu_transformer/op_
 
 ### 多个 NPU CI 同时触发怎么办
 
-同一 PR 的同一 head commit 如果已经有 NPU CI 在排队或运行，重复评论只会更新机器人评论，不会再启动新任务。
+同一 PR 的后续请求先排队，保留当前正在执行的任务；进入准备阶段后，按 head、模式、算子列表、base/workflow SHA 去重，新增评论说明复用或重新运行的结论。
 
 不同 PR 或不同 commit 同时触发时，GitHub Actions 可能把它们分配给不同 self-hosted runner。runner 宿主机会用 `flock` 给物理 NPU 加锁，避免多个任务抢同一张卡。workflow 使用的锁文件如下：
 

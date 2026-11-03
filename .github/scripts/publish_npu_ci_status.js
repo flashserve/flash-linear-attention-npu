@@ -12,12 +12,13 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
   }
   const normalizedOps = [...new Set(opsItems.filter(Boolean))].sort().join(',');
   const requestScope = normalizedOps ? 'scoped' : 'all';
-  const requestKey = requestScope === 'all'
-    ? 'all'
-    : require('crypto').createHash('sha256').update(normalizedOps).digest('hex').slice(0, 10);
+  const requestKey = process.env.NPU_CI_REQUEST_KEY || '';
+  if (!new RegExp(`^${requestScope}-[0-9a-f]{16}$`).test(requestKey)) {
+    throw new Error('缺少有效的 NPU CI 请求标识');
+  }
   const prNumber = process.env.NPU_PR_NUMBER || '';
-  const commentId = process.env.NPU_COMMENT_ID || '';
   const sha = process.env.NPU_EXPECTED_HEAD_SHA;
+  const expectedBaseRef = process.env.NPU_EXPECTED_BASE_REF;
   const expectedRunId = process.env.NPU_EXPECTED_RUN_ID;
   const expectedRunAttempt = process.env.NPU_EXPECTED_RUN_ATTEMPT;
   const matrixResult = process.env.NPU_MATRIX_RESULT || 'failure';
@@ -815,6 +816,7 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
   };
 
   let currentHeadSha = '';
+  let currentBaseRef = '';
   let headCheckError = '';
   try {
     const { data: currentPr } = await github.rest.pulls.get({
@@ -823,11 +825,15 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
       pull_number: Number(prNumber),
     });
     currentHeadSha = currentPr.head.sha;
+    currentBaseRef = currentPr.base?.ref || '';
+    if (!currentHeadSha || !currentBaseRef || !expectedBaseRef) {
+      throw new Error('PR head or base ref is unavailable');
+    }
   } catch (error) {
     headCheckError = error.message;
     core.warning(`Unable to inspect current PR head before publishing NPU CI status: ${error.message}`);
   }
-  const staleRun = Boolean(currentHeadSha) && currentHeadSha !== sha;
+  const staleRun = currentHeadSha !== sha || currentBaseRef !== expectedBaseRef;
   const platforms = platformDefs.map(validatePlatform);
   const matrixArtifactMismatch = matrixResult !== 'success' &&
     platforms.every((item) => item.executionOk && item.accuracyOk && item.stageReportOk);
@@ -835,8 +841,8 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
     ? `执行矩阵状态为 ${sanitizeMarkdownInline(matrixResult, 40)}，但双平台 artifact 均记录为通过；请查看失败 job 或 post-action。`
     : '';
   const invalidReason = headCheckError
-    ? '无法确认 PR head，本次 A2+A5 结果失效'
-    : (staleRun ? 'PR head 已变化，本次 A2+A5 结果失效' : '');
+    ? '无法确认 PR head/base，本次 A2+A5 结果失效'
+    : (staleRun ? 'PR head 或目标分支已变化，本次 A2+A5 结果失效' : '');
   const stageOutcomes = stageDefs.map((stageDef) => {
     const failures = [];
     for (const platform of platforms) {
@@ -1151,24 +1157,16 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
   }
 
   try {
-    const body = renderComment(commentBody);
-    if (commentId) {
-      await github.rest.issues.updateComment({
-        owner: context.repo.owner,
-        repo: context.repo.repo,
-        comment_id: Number(commentId),
-        body,
-      });
-    } else if (prNumber) {
+    if (prNumber) {
       await github.rest.issues.createComment({
         owner: context.repo.owner,
         repo: context.repo.repo,
         issue_number: Number(prNumber),
-        body,
+        body: renderComment(commentBody),
       });
     }
   } catch (error) {
-    core.warning(`Unable to create or update PR comment: ${error.message}`);
+    core.warning(`Unable to create PR comment: ${error.message}`);
   }
 
   if (!executionOk || !accuracyOk) {
