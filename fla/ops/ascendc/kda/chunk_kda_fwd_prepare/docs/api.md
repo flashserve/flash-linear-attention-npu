@@ -173,7 +173,9 @@ descriptor 占位；空/非空组合必须恰好落在 `none/forward/recompute/s
 | 合法输入下 TilingContext、平台数据、调度或 tiling 输出容器失败 | `EZ1008`（需运行时已注册） |
 | InferShape 框架 shape 元数据缺失 | `EZ1014`（需运行时已注册） |
 
-上表为实际 opbase 头文件提供 `OP_LOGE_FOR_*` 时的错误码。按宏存在性选择官方上报：
+上表为实际头文件提供对应 `OP_LOGE_FOR_*` 且所选 opbase 目录已注册该 code 时的错误码。
+构建从同一个官方 `log.cpp` 生成私有逐码能力配置，仅供 Prepare 的 L2/InferShape/Tiling 使用；
+头文件与目录版本不一致时也按该配置选择可上报的官方消息：
 旧头文件缺少这些宏时，shape/rank/value/组合约束使用 `EZ0002`，list size 使用 `EZ0003`，
 缺失必选参数使用 `EZ0004`，format 使用 `EZ0006`，dtype 使用 `EZ0007`。
 旧版路径仍保留参数名、实际值和期望值或约束，ACLNN 返回状态不变；不复制或重定义 SDK 宏。
