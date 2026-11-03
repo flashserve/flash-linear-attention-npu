@@ -9,6 +9,13 @@
 
 add_op_to_compiled_list()
 
+# Preserve the established FP32 evaluation order for both kernel versions.
+# Keep these options scoped to this operator.
+add_ops_compile_options(
+    OP_NAME RecurrentGatedDeltaRule
+    OPTIONS -ffp-contract=off -fno-fast-math
+)
+
 if (BUILD_OPEN_PROJECT)
     target_sources(op_host_aclnnExc PRIVATE
         recurrent_gated_delta_rule_def.cpp
