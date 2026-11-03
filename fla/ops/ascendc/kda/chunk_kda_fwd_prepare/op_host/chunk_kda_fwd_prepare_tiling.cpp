@@ -622,7 +622,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         outputMode);
     const auto pipeline = useArch22TargetVariant
         ? PreparePipeline::Target : PreparePipeline::Generic;
-    const uint64_t tilingKey = isAscend950 ? legacyTilingKey
+    const uint64_t tilingKey = isNonArch22 ? legacyTilingKey
         : RuntimeKey::Encode(gateDtypeToken, betaDtypeToken, pipeline);
 
     ChunkKdaFwdPrepareTilingData tiling;
