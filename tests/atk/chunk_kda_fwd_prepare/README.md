@@ -11,6 +11,9 @@ python tests/stable_abi/test_chunk_kda_fwd_prepare_errors.py --device 0
 该脚本只调用 raw ACLNN 的 `GetWorkspaceSize`，覆盖 Python 自动分配无法表达的错误输出
 descriptor、必选参数空指针及非法属性/metadata。每例同时断言兼容返回状态、正式 Error Message、
 算子名和参数名，并确认失败调用没有返回 executor 或 workspace；不启动被拒绝的 kernel。
+默认 `--catalog native` 精确检查新宏的错误码；当实际 OpApi 构建使用旧版宏时，显式传入
+`--catalog legacy`，精确检查 `EZ0002/0003/0004/0006/0007` 映射。按实际可见宏选择，
+不能仅按 CANN 版本号判断；两条路径都检查消息中的独立参数字段。
 该负向回归不替代数值精度、性能或 MSS 验收。
 
 本目录按 ATK 公开输入格式验证 `chunk_kda_fwd_prepare`。NPU 节点只调用稳定入口
