@@ -117,6 +117,12 @@ private:
     __aicore__ inline void ComputeDbPartial(uint32_t dyRowOffset);
     __aicore__ inline void ComputeDbRowsAccum(uint32_t dyRowOffset);
     __aicore__ inline void FinalizeDbRowsAccum();
+    // 两级归约（SILU/SWISH）：chunk 内把 BT 行只归约到 dwStageRows_ 行并累积到 stage，
+    // i_d 末再把 stage 的 dwStageRows_ 行归约到 1 行。
+    __aicore__ inline void AccumulateDwStage(uint32_t i_w, uint32_t dyRowOffset);
+    __aicore__ inline void FinalizeDwStage();
+    __aicore__ inline void AccumulateDbStage(uint32_t dyRowOffset);
+    __aicore__ inline void FinalizeDbStage();
     __aicore__ inline void ComputeDh0(uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t i_b, uint32_t seqLen);
     __aicore__ inline void CopyInDirectVectorTileRawAsync(uint64_t bos, uint32_t i_t, uint32_t i_d,
                                                           uint32_t seqLen, bool reuseHalo,
@@ -130,10 +136,17 @@ private:
                                                       uint32_t seqLen, uint32_t slot,
                                                       event_t mte3ToVEvent);
     __aicore__ inline void CopyOutDx(uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen);
+    __aicore__ inline __attribute__((noinline)) void ProcessDirectRegbaseIdSplit(uint32_t bIdx, uint32_t blockNum,
+                                                       event_t *mte2ToVEvent);
+    __aicore__ inline __attribute__((noinline)) void ProcessNormalIdSplit(uint32_t bIdx, uint32_t blockNum);
+    __aicore__ inline __attribute__((noinline)) void ProcessNormal2DSplit(uint32_t bIdx, uint32_t blockNum);
     __aicore__ inline void CopyOutDwDb(uint32_t i_d);
     __aicore__ inline void CopyOutPartialDwDb(uint32_t coreIdx, uint32_t i_d);
     __aicore__ inline void ReducePartialDwDb(uint32_t i_d);
+    __aicore__ inline void ReducePartialDwDb2D(uint32_t i_d);
     __aicore__ inline void ReduceRowsInplace(LocalTensor<float> tensor, uint32_t rows, uint32_t cols);
+    __aicore__ inline void ReduceRowsToInplace(LocalTensor<float> tensor, uint32_t rows, uint32_t cols,
+                                               uint32_t targetRows);
     __aicore__ inline bool ResolveChunk(uint32_t chunkIdx, uint32_t &i_b, uint32_t &i_t,
                                         uint64_t &bos, uint32_t &seqLen);
     __aicore__ inline bool Arch32UseDirectVector() const;
@@ -152,6 +165,8 @@ private:
     TBuf<TPosition::VECCALC> tempBuf_;
     TBuf<TPosition::VECCALC> dwRowsBuf_;
     TBuf<TPosition::VECCALC> dbRowsBuf_;
+    TBuf<TPosition::VECCALC> dwStageBuf_;
+    TBuf<TPosition::VECCALC> dbStageBuf_;
     TBuf<TPosition::VECCALC> sigmoidBuf_;
     TBuf<TPosition::VECCALC> dh0Buf_;
 
@@ -167,6 +182,9 @@ private:
     uint32_t BT_ = 0, BD_ = 0;
     uint32_t numBlksD_ = 0, numChunks_ = 0;
     uint32_t chunkPerCore_ = 0, tailChunk_ = 0;
+    uint32_t useIdSplit_ = 0;
+    uint32_t use2DSplit_ = 0;
+    uint32_t dwStageRows_ = 0;
     uint32_t btBdCount_ = 0, wBdCount_ = 0;
     uint32_t dyRows_ = 0, dyBdCount_ = 0;
 
@@ -207,6 +225,9 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitTilingData(
     numChunks_ = tilingData->numChunks;
     chunkPerCore_ = tilingData->chunkPerCore;
     tailChunk_ = tilingData->tailChunk;
+    useIdSplit_ = tilingData->useIdSplit;
+    use2DSplit_ = tilingData->use2DSplit;
+    dwStageRows_ = tilingData->dwStageRows;
     btBdCount_ = BT_ * BD_;
     wBdCount_ = W_ * BD_;
     dyRows_ = BT_ + W_ - 1;
@@ -263,24 +284,30 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitBuffer(TPipe *in
         }
         return;
     }
+#if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
     if (Arch35UseDirectRegbase()) {
+        // BD=16 时行宽仅 16 个元素，但 VF 内 DataCopy/LoadAlign 不带掩码、恒按一个完整 fp32 向量
+        // 寄存器（64 元素）发起读，会越过行末最多 3 行（48 个元素）。为不越出 UB，对末尾的行缓存
+        // 预留一个寄存器（64 元素）的余量；BD=64 时余量为 0，分配与改动前完全一致。
+        const uint32_t regPad = (BD_ < NsCausalConv1dBwd::BWD_DIRECT_BD) ? NsCausalConv1dBwd::BWD_DIRECT_BD : 0U;
         pipe_->InitBuffer(xBuf_, 2 * btBdCount_ * sizeof(inputT));
         pipe_->InitBuffer(dyBuf_, 2 * dyBdCount_ * sizeof(inputT));
         pipe_->InitBuffer(dxBuf_, btBdCount_ * FP32_DTYPE_SIZE);
         if constexpr (!IsSameType<inputT, float>::value) {
             pipe_->InitBuffer(castBuf_, btBdCount_ * sizeof(inputT));
         }
-        pipe_->InitBuffer(tempBuf_, dyBdCount_ * FP32_DTYPE_SIZE);
+        pipe_->InitBuffer(tempBuf_, (dyBdCount_ + regPad) * FP32_DTYPE_SIZE);
         pipe_->InitBuffer(yBuf_, 2 * dyBdCount_ * sizeof(inputT));
         if (hasWeight_) {
-            pipe_->InitBuffer(weightBuf_, wBdCount_ * sizeof(inputT));
-            pipe_->InitBuffer(dwBuf_, wBdCount_ * FP32_DTYPE_SIZE);
+            pipe_->InitBuffer(weightBuf_, (wBdCount_ + regPad) * sizeof(inputT));
+            pipe_->InitBuffer(dwBuf_, (wBdCount_ + regPad) * FP32_DTYPE_SIZE);
         }
         if (hasBias_) {
-            pipe_->InitBuffer(dbBuf_, BD_ * FP32_DTYPE_SIZE);
+            pipe_->InitBuffer(dbBuf_, ((BD_ > regPad) ? BD_ : regPad) * FP32_DTYPE_SIZE);
         }
         return;
     }
+#endif
 
     pipe_->InitBuffer(xBuf_, btBdCount_ * FP32_DTYPE_SIZE);
     pipe_->InitBuffer(dyBuf_, dyBdCount_ * FP32_DTYPE_SIZE);
@@ -310,6 +337,10 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitBuffer(TPipe *in
     if (activation_ == ACTIVATION_SILU || activation_ == ACTIVATION_SWISH) {
         pipe_->InitBuffer(yBuf_, dyBdCount_ * FP32_DTYPE_SIZE);
         pipe_->InitBuffer(sigmoidBuf_, dyBdCount_ * FP32_DTYPE_SIZE);
+        if (dwStageRows_ >= 1) {
+            pipe_->InitBuffer(dwStageBuf_, W_ * dwStageRows_ * BD_ * FP32_DTYPE_SIZE);
+            pipe_->InitBuffer(dbStageBuf_, dwStageRows_ * BD_ * FP32_DTYPE_SIZE);
+        }
     }
     if (useInitialState_ || useFinalState_)
         pipe_->InitBuffer(dh0Buf_, BD_ * FP32_DTYPE_SIZE);
@@ -796,6 +827,33 @@ template <typename inputT, typename calT>
 __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ApplySiluBackward(
     LocalTensor<float> dyLocal, LocalTensor<float> yLocal, uint32_t count)
 {
+#if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
+    // 原实现用 10 条向量指令求 silu'(y)=sigmoid(y)*(1 + y*(1-sigmoid(y)))。
+    // 这里用等价式 silu'(y) = (d + y*e) / d^2，其中 e=exp(-y)、d=1+e
+    // （因为 1-sigmoid = e/(1+e) = e/d），只需 8 条向量指令：
+    // 省去 Duplicate 与一次 Mul，且不新增 buffer（仍复用 sigmoidBuf_/tempBuf_）。
+    // 仅重排运算顺序，数值语义不变。
+    LocalTensor<float> e = sigmoidBuf_.Get<float>();
+    LocalTensor<float> d = tempBuf_.Get<float>();
+
+    Muls(e, yLocal, float(-1.0), count);
+    PipeBarrier<PIPE_V>();
+    Exp(e, e, count);
+    PipeBarrier<PIPE_V>();
+    Adds(d, e, float(1.0), count);
+    PipeBarrier<PIPE_V>();
+    Mul(e, e, yLocal, count);
+    PipeBarrier<PIPE_V>();
+    Add(e, d, e, count);
+    PipeBarrier<PIPE_V>();
+    Mul(d, d, d, count);
+    PipeBarrier<PIPE_V>();
+    Div(d, e, d, count);
+    PipeBarrier<PIPE_V>();
+    Mul(dyLocal, dyLocal, d, count);
+    PipeBarrier<PIPE_V>();
+#else
+    // 非 arch35（含 910B/arch32）沿用原 10 指令实现，保持既有行为不变。
     LocalTensor<float> sigmoidLocal = sigmoidBuf_.Get<float>();
     LocalTensor<float> t = tempBuf_.Get<float>();
 
@@ -820,6 +878,7 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ApplySiluBackward(
     PipeBarrier<PIPE_V>();
     Mul(dyLocal, dyLocal, t, count);
     PipeBarrier<PIPE_V>();
+#endif
 }
 
 template <typename inputT, typename calT>
@@ -922,17 +981,90 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeWdyAndAcc(
 }
 
 template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ReduceRowsInplace(
-    LocalTensor<float> tensor, uint32_t rows, uint32_t cols)
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ReduceRowsToInplace(
+    LocalTensor<float> tensor, uint32_t rows, uint32_t cols, uint32_t targetRows)
 {
     uint32_t remainRows = rows;
-    while (remainRows > 1) {
+    while (remainRows > targetRows) {
         uint32_t upperRows = (remainRows + 1) >> 1;
         uint32_t pairRows = remainRows >> 1;
         Add(tensor, tensor, tensor[upperRows * cols], pairRows * cols);
         PipeBarrier<PIPE_V>();
         remainRows = upperRows;
     }
+}
+
+template <typename inputT, typename calT>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ReduceRowsInplace(
+    LocalTensor<float> tensor, uint32_t rows, uint32_t cols)
+{
+    ReduceRowsToInplace(tensor, rows, cols, 1);
+}
+
+template <typename inputT, typename calT>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::AccumulateDwStage(
+    uint32_t i_w, uint32_t dyRowOffset)
+{
+    if (!hasWeight_) return;
+    LocalTensor<float> dyLocal = dyBuf_.Get<float>()[dyRowOffset * BD_];
+    LocalTensor<float> xLocal = xBuf_.Get<float>();
+    LocalTensor<float> t = tempBuf_.Get<float>();
+    LocalTensor<float> stage = dwStageBuf_.Get<float>();
+
+    Mul(t, dyLocal, xLocal, btBdCount_);
+    PipeBarrier<PIPE_V>();
+    // chunk 内只归约到 dwStageRows_ 行，R→1 留到 i_d 末统一做。
+    ReduceRowsToInplace(t, BT_, BD_, dwStageRows_);
+
+    uint32_t wIdx = W_ - i_w - 1;
+    uint32_t stageBase = wIdx * dwStageRows_ * BD_;
+    Add(stage[stageBase], stage[stageBase], t, dwStageRows_ * BD_);
+    PipeBarrier<PIPE_V>();
+}
+
+template <typename inputT, typename calT>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::FinalizeDwStage()
+{
+    if (!hasWeight_) return;
+    LocalTensor<float> stage = dwStageBuf_.Get<float>();
+    LocalTensor<float> dwLocal = dwBuf_.Get<float>();
+    // dwBuf_ 已在 i_d 起点清零（initial_state 修正也已就位），此处只累加 stage 的归约结果。
+    for (uint32_t w = 0; w < W_; w++) {
+        LocalTensor<float> stageBase = stage[w * dwStageRows_ * BD_];
+        ReduceRowsToInplace(stageBase, dwStageRows_, BD_, 1);
+        Add(dwLocal[w * BD_], dwLocal[w * BD_], stageBase, BD_);
+        PipeBarrier<PIPE_V>();
+    }
+    PipeBarrier<PIPE_V>();
+}
+
+template <typename inputT, typename calT>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::AccumulateDbStage(uint32_t dyRowOffset)
+{
+    if (!hasBias_) return;
+    LocalTensor<float> dyLocal = dyBuf_.Get<float>()[dyRowOffset * BD_];
+    LocalTensor<float> stage = dbStageBuf_.Get<float>();
+    LocalTensor<float> t = tempBuf_.Get<float>();
+
+    Adds(t, dyLocal, float(0), btBdCount_);
+    PipeBarrier<PIPE_V>();
+    ReduceRowsToInplace(t, BT_, BD_, dwStageRows_);
+    Add(stage, stage, t, dwStageRows_ * BD_);
+    PipeBarrier<PIPE_V>();
+}
+
+template <typename inputT, typename calT>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::FinalizeDbStage()
+{
+    if (!hasBias_) return;
+    LocalTensor<float> stage = dbStageBuf_.Get<float>();
+    LocalTensor<float> dbLocal = dbBuf_.Get<float>();
+    Duplicate(dbLocal, float(0), BD_);
+    PipeBarrier<PIPE_V>();
+
+    ReduceRowsToInplace(stage, dwStageRows_, BD_, 1);
+    Add(dbLocal, dbLocal, stage, BD_);
+    PipeBarrier<PIPE_V>();
 }
 
 template <typename inputT, typename calT>
@@ -1230,7 +1362,7 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeTileDirectReg
     NsCausalConv1dBwd::ComputeTileDirectRegbase<inputT>(
         xRaw, dyRaw, yRaw, weightBuf_.Get<inputT>(),
         tempBuf_.Get<float>(), dxBuf_.Get<float>(), dwBuf_.Get<float>(), dbBuf_.Get<float>(), dh0Local,
-        BT_, W_, dyRows_, activation_, validRows, useInit, computeDh0, hasBias_);
+        BT_, W_, dyRows_, activation_, validRows, useInit, computeDh0, hasBias_, BD_);
     PipeBarrier<PIPE_V>();
 #else
     (void)i_t;
@@ -1322,6 +1454,247 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutDx(
         event_t evMte3V = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_V));
         SetFlag<HardEvent::MTE3_V>(evMte3V);
         WaitFlag<HardEvent::MTE3_V>(evMte3V);
+    }
+}
+
+template <typename inputT, typename calT>
+__aicore__ inline __attribute__((noinline)) void CausalConv1dBwdKernel<inputT, calT>::ProcessDirectRegbaseIdSplit(
+    uint32_t bIdx, uint32_t blockNum, event_t *mte2ToVEvent)
+{
+#if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
+    // 按 i_d 切分核间任务：每个核以 grid-stride 独占若干 i_d 的全部 chunk。
+    // 因 dw/db 只依赖自身通道块 i_d，独占遍历后可直接写回 GM，
+    // 无需 partial workspace、无需 SyncAll 与第二趟归约；同时内层 chunk 循环变长，
+    // 使 ping-pong 预取真正生效。
+    for (uint32_t i_d = bIdx; i_d < numBlksD_; i_d += blockNum) {
+        if (hasWeight_) {
+            CopyInWeightRaw(i_d);
+            Duplicate(dwBuf_.Get<float>(), float(0), wBdCount_);
+        }
+        if (hasBias_) {
+            Duplicate(dbBuf_.Get<float>(), float(0), BD_);
+        }
+        PipeBarrier<PIPE_V>();
+
+        bool tilePrefetched = false;
+        for (uint32_t chunkIdx = 0; chunkIdx < numChunks_; chunkIdx++) {
+            uint32_t i_b = 0;
+            uint32_t i_t = 0;
+            uint32_t seqLen = 0;
+            uint64_t bos = 0;
+            if (!ResolveChunk(chunkIdx, i_b, i_t, bos, seqLen)) {
+                break;
+            }
+
+            uint32_t slot = chunkIdx & 1U;
+            if (!tilePrefetched) {
+                CopyInDirectTileRawAsync(bos, i_t, i_d, seqLen, slot, mte2ToVEvent[slot]);
+            }
+            WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent[slot]);
+            tilePrefetched = false;
+
+            if (chunkIdx + 1U < numChunks_) {
+                uint32_t nextB = 0;
+                uint32_t nextT = 0;
+                uint32_t nextSeqLen = 0;
+                uint64_t nextBos = 0;
+                if (ResolveChunk(chunkIdx + 1U, nextB, nextT, nextBos, nextSeqLen)) {
+                    uint32_t nextSlot = slot ^ 1U;
+                    CopyInDirectTileRawAsync(nextBos, nextT, i_d, nextSeqLen, nextSlot,
+                                             mte2ToVEvent[nextSlot]);
+                    tilePrefetched = true;
+                }
+            }
+
+            ComputeTileDirectRegbase(i_t, seqLen, slot);
+            AccumulateDhtDx(i_t, i_d, i_b, seqLen);
+            CopyOutDx(bos, i_t, i_d, seqLen);
+        }
+        CopyOutDwDb(i_d);
+    }
+#else
+    (void)bIdx;
+    (void)blockNum;
+    (void)mte2ToVEvent;
+#endif
+}
+
+template <typename inputT, typename calT>
+__aicore__ inline __attribute__((noinline)) void CausalConv1dBwdKernel<inputT, calT>::ProcessNormalIdSplit(
+    uint32_t bIdx, uint32_t blockNum)
+{
+    // 按 i_d 独占切核：每个核以 grid-stride 处理若干 i_d 的全部 chunk。
+    // dw/db 仅依赖自身通道块 i_d，独占遍历后可直接写回 GM（CopyOutDwDb），
+    // 无需 partial workspace、无需 SyncAll 与第二趟归约。
+    for (uint32_t i_d = bIdx; i_d < numBlksD_; i_d += blockNum) {
+        if (hasWeight_) {
+            CopyInWeight(i_d);
+            if (activation_ == ACTIVATION_NONE) {
+                Duplicate(dwRowsBuf_.Get<float>(), float(0), W_ * btBdCount_);
+            } else if (dwStageRows_ >= 1) {
+                // dwBuf_ 仍需清零：initial_state 的边界修正（AccumulateInitialStateDw）
+                // 会在 chunk 循环中直接累加进 dwBuf_，FinalizeDwStage 只做 stage 的 R→1 并累加。
+                Duplicate(dwBuf_.Get<float>(), float(0), wBdCount_);
+                Duplicate(dwStageBuf_.Get<float>(), float(0), W_ * dwStageRows_ * BD_);
+            } else {
+                Duplicate(dwBuf_.Get<float>(), float(0), wBdCount_);
+            }
+            PipeBarrier<PIPE_V>();
+        }
+        if (hasBias_) {
+            if (activation_ == ACTIVATION_NONE) {
+                Duplicate(dbRowsBuf_.Get<float>(), float(0), btBdCount_);
+            } else if (dwStageRows_ >= 1) {
+                Duplicate(dbStageBuf_.Get<float>(), float(0), dwStageRows_ * BD_);
+            } else {
+                Duplicate(dbBuf_.Get<float>(), float(0), BD_);
+            }
+            PipeBarrier<PIPE_V>();
+        }
+
+        for (uint32_t chunkIdx = 0; chunkIdx < numChunks_; chunkIdx++) {
+            uint32_t i_b = 0;
+            uint32_t i_t = 0;
+            uint32_t seqLen = 0;
+            uint64_t bos = 0;
+            if (!ResolveChunk(chunkIdx, i_b, i_t, bos, seqLen)) {
+                continue;
+            }
+
+            CopyInX(bos, i_t, i_d, seqLen);
+
+            Duplicate(dxBuf_.Get<float>(), float(0), btBdCount_);
+            PipeBarrier<PIPE_V>();
+
+            if (activation_ == ACTIVATION_SILU || activation_ == ACTIVATION_SWISH) {
+                CopyInDyWindow(bos, i_t, i_d, seqLen);
+                CopyInYWindow(bos, i_t, i_d, seqLen);
+                ApplySiluBackward(dyBuf_.Get<float>(), yBuf_.Get<float>(), dyBdCount_);
+                for (uint32_t i_w = 0; i_w < W_; i_w++) {
+                    ComputeWdyAndAcc(i_w, i_w);
+                    if (dwStageRows_ >= 1) {
+                        AccumulateDwStage(i_w, i_w);
+                    } else {
+                        ComputeDwPartial(i_w, i_w);
+                    }
+                    if (hasBias_ && i_w == 0) {
+                        if (dwStageRows_ >= 1) {
+                            AccumulateDbStage(0);
+                        } else {
+                            ComputeDbPartial(0);
+                        }
+                    }
+                }
+            } else {
+                CopyInDyWindow(bos, i_t, i_d, seqLen);
+                for (uint32_t i_w = 0; i_w < W_; i_w++) {
+                    ComputeWdyAndAcc(i_w, i_w);
+                    ComputeDwRowsAccum(i_w, i_w);
+                }
+                if (hasBias_) ComputeDbRowsAccum(0);
+            }
+
+            ComputeDh0(bos, i_t, i_d, i_b, seqLen);
+            AccumulateDhtDx(i_t, i_d, i_b, seqLen);
+            CopyOutDx(bos, i_t, i_d, seqLen);
+        }
+
+        if (hasWeight_ && activation_ == ACTIVATION_NONE) {
+            FinalizeDwRowsAccum();
+        }
+        if (hasBias_ && activation_ == ACTIVATION_NONE) {
+            FinalizeDbRowsAccum();
+        }
+        if (dwStageRows_ >= 1) {
+            FinalizeDwStage();
+            FinalizeDbStage();
+        }
+        CopyOutDwDb(i_d);
+    }
+}
+
+template <typename inputT, typename calT>
+__aicore__ inline __attribute__((noinline)) void CausalConv1dBwdKernel<inputT, calT>::ProcessNormal2DSplit(
+    uint32_t bIdx, uint32_t blockNum)
+{
+    // chunk × i_d 二维切分：核 c 负责 i_d = c / G、chunk 组 = c % G（G = blockNum / numBlksD）。
+    // 每个核只处理 1 个 i_d 的若干 chunk（启用条件保证每核 ≤ 1 个），从而消除「每核串行遍历
+    // 全部 i_d」的固定开销（权重搬运与清零、partial 回写、栅栏、ResolveChunk 标量），
+    // 这些固定开销在小 shape 下与 vec 近似串行，是主要瓶颈。
+    uint32_t splitG = blockNum / numBlksD_;
+    uint32_t i_d = bIdx / splitG;
+    uint32_t group = bIdx % splitG;
+
+    if (hasWeight_) {
+        CopyInWeight(i_d);
+        if (activation_ == ACTIVATION_NONE) {
+            Duplicate(dwRowsBuf_.Get<float>(), float(0), W_ * btBdCount_);
+        } else {
+            Duplicate(dwBuf_.Get<float>(), float(0), wBdCount_);
+        }
+        PipeBarrier<PIPE_V>();
+    }
+    if (hasBias_) {
+        if (activation_ == ACTIVATION_NONE) {
+            Duplicate(dbRowsBuf_.Get<float>(), float(0), btBdCount_);
+        } else {
+            Duplicate(dbBuf_.Get<float>(), float(0), BD_);
+        }
+        PipeBarrier<PIPE_V>();
+    }
+
+    for (uint32_t chunkIdx = group; chunkIdx < numChunks_; chunkIdx += splitG) {
+        uint32_t i_b = 0;
+        uint32_t i_t = 0;
+        uint32_t seqLen = 0;
+        uint64_t bos = 0;
+        if (!ResolveChunk(chunkIdx, i_b, i_t, bos, seqLen)) {
+            continue;
+        }
+
+        CopyInX(bos, i_t, i_d, seqLen);
+
+        Duplicate(dxBuf_.Get<float>(), float(0), btBdCount_);
+        PipeBarrier<PIPE_V>();
+
+        if (activation_ == ACTIVATION_SILU || activation_ == ACTIVATION_SWISH) {
+            CopyInDyWindow(bos, i_t, i_d, seqLen);
+            CopyInYWindow(bos, i_t, i_d, seqLen);
+            ApplySiluBackward(dyBuf_.Get<float>(), yBuf_.Get<float>(), dyBdCount_);
+            for (uint32_t i_w = 0; i_w < W_; i_w++) {
+                ComputeWdyAndAcc(i_w, i_w);
+                ComputeDwPartial(i_w, i_w);
+                if (hasBias_ && i_w == 0) {
+                    ComputeDbPartial(0);
+                }
+            }
+        } else {
+            CopyInDyWindow(bos, i_t, i_d, seqLen);
+            for (uint32_t i_w = 0; i_w < W_; i_w++) {
+                ComputeWdyAndAcc(i_w, i_w);
+                ComputeDwRowsAccum(i_w, i_w);
+            }
+            if (hasBias_) ComputeDbRowsAccum(0);
+        }
+
+        ComputeDh0(bos, i_t, i_d, i_b, seqLen);
+        AccumulateDhtDx(i_t, i_d, i_b, seqLen);
+        CopyOutDx(bos, i_t, i_d, seqLen);
+    }
+
+    if (hasWeight_ && activation_ == ACTIVATION_NONE) {
+        FinalizeDwRowsAccum();
+    }
+    if (hasBias_ && activation_ == ACTIVATION_NONE) {
+        FinalizeDbRowsAccum();
+    }
+    CopyOutPartialDwDb(bIdx, i_d);
+
+    SyncAll();
+
+    // 每个 i_d 的 partial 只来自核区间 [i_d*G, i_d*G+G)，归约范围与按 chunk 切分时相同。
+    for (uint32_t r = bIdx; r < numBlksD_; r += blockNum) {
+        ReducePartialDwDb2D(r);
     }
 }
 
@@ -1476,6 +1849,54 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ReducePartialDwDb(ui
 }
 
 template <typename inputT, typename calT>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ReducePartialDwDb2D(uint32_t i_d)
+{
+    // 二维切分下的第二趟归约：只累加核区间 [i_d*G, i_d*G+G) 的 partial，
+    // 这些核正是 i_d 对应的 G 个 chunk 组，写回的 partial 布局与按 chunk 切分时一致。
+    uint32_t splitG = blockNum_ / numBlksD_;
+    uint32_t coreBase = i_d * splitG;
+    LocalTensor<float> tmp = tempBuf_.Get<float>();
+    if (hasWeight_) {
+        LocalTensor<float> dwLocal = dwBuf_.Get<float>();
+        Duplicate(dwLocal, float(0), wBdCount_);
+        PipeBarrier<PIPE_V>();
+        for (uint32_t j = 0; j < splitG; j++) {
+            uint64_t partialIdx =
+                (static_cast<uint64_t>(coreBase + j) * numBlksD_ + i_d) * wBdCount_;
+            event_t vToMte2 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE2));
+            SetFlag<HardEvent::V_MTE2>(vToMte2);
+            WaitFlag<HardEvent::V_MTE2>(vToMte2);
+            DataCopy(tmp, partialDwGm_[partialIdx], wBdCount_);
+            event_t mte2ToV = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
+            SetFlag<HardEvent::MTE2_V>(mte2ToV);
+            WaitFlag<HardEvent::MTE2_V>(mte2ToV);
+            Add(dwLocal, dwLocal, tmp, wBdCount_);
+            PipeBarrier<PIPE_V>();
+        }
+    }
+
+    if (hasBias_) {
+        LocalTensor<float> dbLocal = dbBuf_.Get<float>();
+        Duplicate(dbLocal, float(0), BD_);
+        PipeBarrier<PIPE_V>();
+        for (uint32_t j = 0; j < splitG; j++) {
+            uint64_t partialIdx = (static_cast<uint64_t>(coreBase + j) * numBlksD_ + i_d) * BD_;
+            event_t vToMte2 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE2));
+            SetFlag<HardEvent::V_MTE2>(vToMte2);
+            WaitFlag<HardEvent::V_MTE2>(vToMte2);
+            DataCopy(tmp, partialDbGm_[partialIdx], BD_);
+            event_t mte2ToV = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
+            SetFlag<HardEvent::MTE2_V>(mte2ToV);
+            WaitFlag<HardEvent::MTE2_V>(mte2ToV);
+            Add(dbLocal, dbLocal, tmp, BD_);
+            PipeBarrier<PIPE_V>();
+        }
+    }
+
+    CopyOutDwDb(i_d);
+}
+
+template <typename inputT, typename calT>
 __aicore__ inline bool CausalConv1dBwdKernel<inputT, calT>::ResolveChunk(
     uint32_t chunkIdx, uint32_t &i_b, uint32_t &i_t, uint64_t &bos, uint32_t &seqLen)
 {
@@ -1539,11 +1960,12 @@ __aicore__ inline bool CausalConv1dBwdKernel<inputT, calT>::Arch35UseDirectRegba
     if constexpr (!IsSameType<inputT, half>::value && !IsSameType<inputT, bfloat16_t>::value) {
         return false;
     } else {
-        bool supportActivation = (activation_ == ACTIVATION_SILU &&
+        bool supportActivation = ((activation_ == ACTIVATION_SILU || activation_ == ACTIVATION_SWISH ||
+                                   activation_ == ACTIVATION_NONE) &&
                                   !useInitialState_ && !useFinalState_);
         return hasWeight_ &&
                supportActivation &&
-               BD_ == NsCausalConv1dBwd::BWD_DIRECT_BD &&
+               (BD_ == NsCausalConv1dBwd::BWD_DIRECT_BD || (BD_ == 16U && useIdSplit_ != 0U)) &&
                W_ > 0 && W_ <= NsCausalConv1dBwd::BWD_DIRECT_W_MAX;
     }
 #else
@@ -1558,6 +1980,12 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::Process()
     uint32_t blockNum = GetBlockNum();
     bool useDirectVector = Arch32UseDirectVector();
     bool useDirectRegbase = Arch35UseDirectRegbase();
+    // 普通路径的 id-split：与 regbase 快路径同思路，按 i_d 独占切核，
+    // 每个核遍历全部 chunk 后直接写回 dw/db，消除 partial workspace、
+    // SyncAll 与第二趟归约。
+    bool useNormalIdSplit = (useIdSplit_ != 0) && !useDirectRegbase && !useDirectVector;
+    // chunk × i_d 二维切分：与 id-split 互斥，仅普通路径生效（tiling 侧已保证）。
+    bool use2DSplit = (use2DSplit_ != 0) && !useDirectRegbase && !useDirectVector && !useNormalIdSplit;
 
     uint32_t loopC = (bIdx < tailChunk_) ? (chunkPerCore_ + 1) : chunkPerCore_;
 
@@ -1578,6 +2006,20 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::Process()
     if (useDirectRegbase) {
         directMte2ToVEvent[0] = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::MTE2_V>());
         directMte2ToVEvent[1] = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::MTE2_V>());
+    }
+    if (useDirectRegbase && useIdSplit_) {
+        ProcessDirectRegbaseIdSplit(bIdx, blockNum, directMte2ToVEvent);
+        GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_V>(directMte2ToVEvent[0]);
+        GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_V>(directMte2ToVEvent[1]);
+        return;
+    }
+    if (useNormalIdSplit) {
+        ProcessNormalIdSplit(bIdx, blockNum);
+        return;
+    }
+    if (use2DSplit) {
+        ProcessNormal2DSplit(bIdx, blockNum);
+        return;
     }
     for (uint32_t i_d = 0; i_d < numBlksD_; i_d++) {
         if (hasWeight_) {
