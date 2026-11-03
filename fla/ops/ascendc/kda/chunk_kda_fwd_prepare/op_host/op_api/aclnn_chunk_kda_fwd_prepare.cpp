@@ -4,7 +4,6 @@
  * CANN Open Software License Agreement Version 2.0 (the "License").
  */
 
-#include "op_common/log/log.h"
 #include "aclnn_chunk_kda_fwd_prepare.h"
 #include "chunk_kda_fwd_prepare.h"
 #include "../chunk_kda_fwd_prepare_output_mask.h"
@@ -28,6 +27,8 @@
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
 #include "opdev/tensor_view_utils.h"
+
+#include "../chunk_kda_fwd_prepare_error.h"
 
 using namespace op;
 
@@ -194,7 +195,7 @@ bool HasShape(const aclTensor *tensor,
 aclnnStatus ParseLayout(const char *layout, PrepareLayout &parsed)
 {
     if (!(layout != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "layout",
+        KdaPrepareDfx::Missing(OP_NAME, "layout",
                                                  "required pointer is null; pass BNSD, BSND, NTD or TND");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
@@ -208,7 +209,7 @@ aclnnStatus ParseLayout(const char *layout, PrepareLayout &parsed)
         parsed = PrepareLayout::TND;
     } else {
         if (!(false)) {
-            OP_LOGE_FOR_INVALID_FORMAT(OP_NAME, "layout", layout, "BNSD, BSND, NTD or TND (case-sensitive)");
+            KdaPrepareDfx::Format(OP_NAME, "layout", layout, "BNSD, BSND, NTD or TND (case-sensitive)");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
@@ -222,7 +223,7 @@ aclnnStatus CheckNotNull(const ChunkKdaFwdPrepareParams &params)
     const char *inputNames[] = {"q", "k", "v", "g", "beta"};
     for (size_t index = 0; index < sizeof(inputs) / sizeof(inputs[0]); ++index) {
         if (!(inputs[index] != nullptr)) {
-            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, inputNames[index],
+            KdaPrepareDfx::Missing(OP_NAME, inputNames[index],
                                                      "required input tensor is null; provide a valid aclTensor");
             return ACLNN_ERR_PARAM_NULLPTR;
         }
@@ -235,7 +236,7 @@ aclnnStatus CheckNotNull(const ChunkKdaFwdPrepareParams &params)
         "gkOut", "aqkOut", "wOut", "uOut", "kgOut", "qgScaledOut"};
     for (size_t index = 0; index < sizeof(outputs) / sizeof(outputs[0]); ++index) {
         if (!(outputs[index] != nullptr)) {
-            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            KdaPrepareDfx::Missing(
                 OP_NAME, outputNames[index],
                 "required output tensor is null; allocate this output in all four output modes");
             return ACLNN_ERR_PARAM_NULLPTR;
@@ -282,7 +283,7 @@ int64_t GetOutputMode(const ChunkKdaFwdPrepareParams &params)
 aclnnStatus CheckOutputMode(const ChunkKdaFwdPrepareParams &params)
 {
     if (!(GetOutputMode(params) >= 0)) {
-        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+        KdaPrepareDfx::ValuesReason(
             OP_NAME, "output pointers", ToText(GetOutputMask(params)),
             "outputMask must match none=219, forward=223, recompute=8159 or save=8191; keep the 13 ABI slots");
         return ACLNN_ERR_PARAM_INVALID;
@@ -316,7 +317,7 @@ aclnnStatus CheckFormat(const ChunkKdaFwdPrepareParams &params)
         // 只拦私有（分形）格式：ND/NCHW/NCL/NHWC 等非私有拼写在逻辑维度上等价，
         // 张量本身已由 CheckContiguous 保证连续，不能因为拼写不同就拒绝调用方。
         if (!(!IsPrivateFormat(storageFormat) && !IsPrivateFormat(viewFormat))) {
-            OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(OP_NAME, names[index],
+            KdaPrepareDfx::FormatsReason(OP_NAME, names[index],
                                                     "storage=" + ToText(static_cast<int>(storageFormat)) +
                                                         ",view=" + ToText(static_cast<int>(viewFormat)),
                                                     "use non-private storage/view formats such as ND/NCHW/NCL/NHWC; "
@@ -340,7 +341,7 @@ aclnnStatus CheckFormat(const ChunkKdaFwdPrepareParams &params)
             continue;
         }
         if (!(IsContiguous(outputs[index]))) {
-            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            KdaPrepareDfx::ArgumentReason(
                 OP_NAME, outputNames[index],
                 "output shape=" + ShapeText(outputs[index]) +
                     " is not contiguous; allocate contiguous output storage because the kernel writes it directly");
@@ -385,7 +386,7 @@ aclnnStatus CheckDtype(const ChunkKdaFwdPrepareParams &params)
             continue;
         const auto dtype = item.tensor->GetDataType();
         if (!((item.bf16 && dtype == DataType::DT_BF16) || (item.fp32 && dtype == DataType::DT_FLOAT))) {
-            OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, item.name, DtypeText(item.tensor),
+            KdaPrepareDfx::Dtype(OP_NAME, item.name, DtypeText(item.tensor),
                                       item.bf16 ? (item.fp32 ? "BF16 or FLOAT (FP32)" : "BF16") : "FLOAT (FP32)");
             return ACLNN_ERR_PARAM_INVALID;
         }
@@ -425,7 +426,7 @@ aclnnStatus CheckSequenceMajorDmaStride(
                             PREPARE_K_DIM * gateElementBytes) &&
         FitsDmaSourceStride(info.valueHeadNum, betaElementBytes);
     if (!(strideValid)) {
-        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+        KdaPrepareDfx::ValuesReason(
             OP_NAME, "HK,HV", ToText(info.qkHeadNum) + "," + ToText(info.valueHeadNum),
             "layout=" + std::string(params.layout) +
                 "; each (heads-1)*rowBytes DMA source stride must fit uint32; reduce the head counts");
@@ -438,7 +439,7 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
                          PrepareLayout layout, PrepareShapeInfo &info)
 {
     if (!(SameShape(params.q, params.k))) {
-        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(OP_NAME, "q,k", TensorShapes({params.q, params.k}),
+        KdaPrepareDfx::ShapesReason(OP_NAME, "q,k", TensorShapes({params.q, params.k}),
                                                "q and k must have identical shapes in layout=" +
                                                    std::string(params.layout));
         return ACLNN_ERR_PARAM_INVALID;
@@ -448,7 +449,7 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
     const size_t scalarRank = info.packed ? 2 : 3;
     if (!(Rank(params.q) == matrixRank && Rank(params.v) == matrixRank && Rank(params.g) == matrixRank &&
           Rank(params.beta) == scalarRank)) {
-        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(OP_NAME, "q,v,g,beta",
+        KdaPrepareDfx::RanksReason(OP_NAME, "q,v,g,beta",
                                                   ToText(Rank(params.q)) + "," + ToText(Rank(params.v)) + "," +
                                                       ToText(Rank(params.g)) + "," + ToText(Rank(params.beta)),
                                                   "layout=" + std::string(params.layout) + "; q/k/v/g rank=" +
@@ -466,7 +467,7 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
         if (!(HasShape(params.v, {info.seqLen, info.valueHeadNum, info.vDim}) &&
               HasShape(params.g, {info.seqLen, info.valueHeadNum, info.kDim}) &&
               HasShape(params.beta, {info.seqLen, info.valueHeadNum}))) {
-            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(OP_NAME, "v,g,beta", TensorShapes({params.v, params.g, params.beta}),
+            KdaPrepareDfx::ShapesReason(OP_NAME, "v,g,beta", TensorShapes({params.v, params.g, params.beta}),
                                                    "layout=TND; expected [T,HV,V], [T,HV,K], [T,HV]; " +
                                                        LogicalText(info));
             return ACLNN_ERR_PARAM_INVALID;
@@ -481,7 +482,7 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
         if (!(HasShape(params.v, {info.valueHeadNum, info.seqLen, info.vDim}) &&
               HasShape(params.g, {info.valueHeadNum, info.seqLen, info.kDim}) &&
               HasShape(params.beta, {info.valueHeadNum, info.seqLen}))) {
-            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(OP_NAME, "v,g,beta", TensorShapes({params.v, params.g, params.beta}),
+            KdaPrepareDfx::ShapesReason(OP_NAME, "v,g,beta", TensorShapes({params.v, params.g, params.beta}),
                                                    "layout=NTD; expected [HV,T,V], [HV,T,K], [HV,T]; " +
                                                        LogicalText(info));
             return ACLNN_ERR_PARAM_INVALID;
@@ -496,7 +497,7 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
         if (!(HasShape(params.v, {info.batch, info.seqLen, info.valueHeadNum, info.vDim}) &&
               HasShape(params.g, {info.batch, info.seqLen, info.valueHeadNum, info.kDim}) &&
               HasShape(params.beta, {info.batch, info.seqLen, info.valueHeadNum}))) {
-            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(OP_NAME, "v,g,beta", TensorShapes({params.v, params.g, params.beta}),
+            KdaPrepareDfx::ShapesReason(OP_NAME, "v,g,beta", TensorShapes({params.v, params.g, params.beta}),
                                                    "layout=BSND; expected [B,T,HV,V], [B,T,HV,K], [B,T,HV]; " +
                                                        LogicalText(info));
             return ACLNN_ERR_PARAM_INVALID;
@@ -511,7 +512,7 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
         if (!(HasShape(params.v, {info.batch, info.valueHeadNum, info.seqLen, info.vDim}) &&
               HasShape(params.g, {info.batch, info.valueHeadNum, info.seqLen, info.kDim}) &&
               HasShape(params.beta, {info.batch, info.valueHeadNum, info.seqLen}))) {
-            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(OP_NAME, "v,g,beta", TensorShapes({params.v, params.g, params.beta}),
+            KdaPrepareDfx::ShapesReason(OP_NAME, "v,g,beta", TensorShapes({params.v, params.g, params.beta}),
                                                    "layout=BNSD; expected [B,HV,T,V], [B,HV,T,K], [B,HV,T]; " +
                                                        LogicalText(info));
             return ACLNN_ERR_PARAM_INVALID;
@@ -522,18 +523,18 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
     const char *dimensionNames[] = {"B", "T", "HK", "HV"};
     for (size_t i = 0; i < 4; ++i) {
         if (!FitsUint32(dimensions[i])) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, dimensionNames[i], ToText(dimensions[i]),
+            KdaPrepareDfx::ValueReason(OP_NAME, dimensionNames[i], ToText(dimensions[i]),
                                                   "must be in [1,4294967295]; layout=" + std::string(params.layout));
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
     if (!(info.kDim == PREPARE_K_DIM && info.vDim == PREPARE_V_DIM)) {
-        OP_LOGE_FOR_INVALID_VALUE(OP_NAME, info.kDim != PREPARE_K_DIM ? "K" : "V",
+        KdaPrepareDfx::Value(OP_NAME, info.kDim != PREPARE_K_DIM ? "K" : "V",
                                   ToText(info.kDim != PREPARE_K_DIM ? info.kDim : info.vDim), "128");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(info.valueHeadNum >= info.qkHeadNum && info.valueHeadNum % info.qkHeadNum == 0)) {
-        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "HK,HV",
+        KdaPrepareDfx::ValuesReason(OP_NAME, "HK,HV",
                                                ToText(info.qkHeadNum) + "," + ToText(info.valueHeadNum),
                                                "GVA requires HV>=HK and HV%HK=0");
         return ACLNN_ERR_PARAM_INVALID;
@@ -545,7 +546,7 @@ aclnnStatus CheckModesAndOptionalInputs(
     const ChunkKdaFwdPrepareParams &params, const PrepareShapeInfo &info)
 {
     if (!(params.chunkSize == PREPARE_CHUNK_SIZE)) {
-        OP_LOGE_FOR_INVALID_VALUE(OP_NAME, "chunk_size", ToText(params.chunkSize), "64");
+        KdaPrepareDfx::Value(OP_NAME, "chunk_size", ToText(params.chunkSize), "64");
         return ACLNN_ERR_PARAM_INVALID;
     }
     // Tiling 和 kernel 均以 FP32 保存这些属性，必须按实际落盘精度校验。
@@ -553,25 +554,25 @@ aclnnStatus CheckModesAndOptionalInputs(
     const float epsilonFp32 = static_cast<float>(params.epsilon);
     const float lowerBoundFp32 = static_cast<float>(params.lowerBound);
     if (!std::isfinite(scaleFp32)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "scale", ToText(scaleFp32),
+        KdaPrepareDfx::ValueReason(OP_NAME, "scale", ToText(scaleFp32),
                                               "must remain finite after conversion to FP32; supplied=" +
                                                   ToText(params.scale));
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!std::isfinite(epsilonFp32) || epsilonFp32 <= 0.0F) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "epsilon", ToText(epsilonFp32),
+        KdaPrepareDfx::ValueReason(OP_NAME, "epsilon", ToText(epsilonFp32),
                                               "must be positive and finite after conversion to FP32; supplied=" +
                                                   ToText(params.epsilon));
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!std::isfinite(lowerBoundFp32)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "lower_bound", ToText(lowerBoundFp32),
+        KdaPrepareDfx::ValueReason(OP_NAME, "lower_bound", ToText(lowerBoundFp32),
                                               "must remain finite after conversion to FP32; supplied=" +
                                                   ToText(params.lowerBound));
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(!params.allowNegEigval || params.useBetaSigmoidInKernel)) {
-        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "allow_neg_eigval,use_beta_sigmoid_in_kernel",
+        KdaPrepareDfx::ValuesReason(OP_NAME, "allow_neg_eigval,use_beta_sigmoid_in_kernel",
                                                ToText(params.allowNegEigval) + "," +
                                                    ToText(params.useBetaSigmoidInKernel),
                                                "allow_neg_eigval=true requires use_beta_sigmoid_in_kernel=true");
@@ -580,7 +581,7 @@ aclnnStatus CheckModesAndOptionalInputs(
 
     if (!params.useGateInKernel) {
         if (!(params.aLogOptional == nullptr && params.dtBiasOptional == nullptr && !params.safeGate)) {
-            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "use_gate_in_kernel,a_log,dt_bias,safe_gate",
+            KdaPrepareDfx::ValuesReason(OP_NAME, "use_gate_in_kernel,a_log,dt_bias,safe_gate",
                                                    "false," + ToText(params.aLogOptional != nullptr) + "," +
                                                        ToText(params.dtBiasOptional != nullptr) + "," +
                                                        ToText(params.safeGate),
@@ -592,24 +593,24 @@ aclnnStatus CheckModesAndOptionalInputs(
     }
 
     if (!(params.aLogOptional != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+        KdaPrepareDfx::Missing(
             OP_NAME, "a_log", "required when use_gate_in_kernel=true; provide a FP32 tensor with shape [HV]");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!(HasShape(params.aLogOptional, {info.valueHeadNum}))) {
-        OP_LOGE_FOR_INVALID_SHAPE(OP_NAME, "a_log", ShapeText(params.aLogOptional), DimsText({info.valueHeadNum}));
+        KdaPrepareDfx::Shape(OP_NAME, "a_log", ShapeText(params.aLogOptional), DimsText({info.valueHeadNum}));
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.dtBiasOptional != nullptr) {
         if (!(HasShape(params.dtBiasOptional, {info.valueHeadNum * info.kDim}))) {
-            OP_LOGE_FOR_INVALID_SHAPE(OP_NAME, "dt_bias", ShapeText(params.dtBiasOptional),
+            KdaPrepareDfx::Shape(OP_NAME, "dt_bias", ShapeText(params.dtBiasOptional),
                                       DimsText({info.valueHeadNum * info.kDim}));
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
     if (params.safeGate) {
         if (!(lowerBoundFp32 >= -5.0F && lowerBoundFp32 < 0.0F)) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "lower_bound", ToText(lowerBoundFp32),
+            KdaPrepareDfx::ValueReason(OP_NAME, "lower_bound", ToText(lowerBoundFp32),
                                                   "safe_gate=true requires the FP32 value in [-5,0)");
             return ACLNN_ERR_PARAM_INVALID;
         }
@@ -636,7 +637,7 @@ aclnnStatus CheckVariableLengthInputs(
 {
     if (params.cuSeqlensOptional == nullptr) {
         if (!(params.chunkIndicesOptional == nullptr)) {
-            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            KdaPrepareDfx::ArgumentReason(
                 OP_NAME, "chunk_indices",
                 "provided while cu_seqlens is absent; provide cu_seqlens together with canonical chunk_indices");
             return ACLNN_ERR_PARAM_INVALID;
@@ -644,29 +645,29 @@ aclnnStatus CheckVariableLengthInputs(
         return ACLNN_SUCCESS;
     }
     if (!(info.packed || info.batch == 1)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "B", ToText(info.batch),
+        KdaPrepareDfx::ValueReason(OP_NAME, "B", ToText(info.batch),
                                               "rank-4 variable-length input requires B=1; layout=" +
                                                   std::string(params.layout));
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(params.cuSeqlensOptional->Size() >= 2)) {
-        OP_LOGE_FOR_INVALID_LISTSIZE(OP_NAME, "cu_seqlens", ToText(params.cuSeqlensOptional->Size()),
+        KdaPrepareDfx::ListSize(OP_NAME, "cu_seqlens", ToText(params.cuSeqlensOptional->Size()),
                                      ">=2 ([0,total_tokens])");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!((*params.cuSeqlensOptional)[0] == 0)) {
-        OP_LOGE_FOR_INVALID_VALUE(OP_NAME, "cu_seqlens[0]", ToText((*params.cuSeqlensOptional)[0]), "0");
+        KdaPrepareDfx::Value(OP_NAME, "cu_seqlens[0]", ToText((*params.cuSeqlensOptional)[0]), "0");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!((*params.cuSeqlensOptional)[params.cuSeqlensOptional->Size() - 1] == info.seqLen)) {
-        OP_LOGE_FOR_INVALID_VALUE(OP_NAME, "cu_seqlens[-1]",
+        KdaPrepareDfx::Value(OP_NAME, "cu_seqlens[-1]",
                                   ToText((*params.cuSeqlensOptional)[params.cuSeqlensOptional->Size() - 1]),
                                   ToText(info.seqLen));
         return ACLNN_ERR_PARAM_INVALID;
     }
     for (size_t seq = 0; seq + 1 < params.cuSeqlensOptional->Size(); ++seq) {
         if (!((*params.cuSeqlensOptional)[seq] <= (*params.cuSeqlensOptional)[seq + 1])) {
-            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            KdaPrepareDfx::ValuesReason(
                 OP_NAME, "cu_seqlens adjacent elements",
                 ToText((*params.cuSeqlensOptional)[seq]) + "," + ToText((*params.cuSeqlensOptional)[seq + 1]),
                 "must be nondecreasing; invalid pair starts at index=" + ToText(seq));
@@ -680,7 +681,7 @@ aclnnStatus CheckVariableLengthInputs(
     const int64_t totalChunks = CountChunks(
         params.cuSeqlensOptional, info.seqLen, params.chunkSize);
     if (!(params.chunkIndicesOptional->Size() == static_cast<size_t>(totalChunks) * 2)) {
-        OP_LOGE_FOR_INVALID_LISTSIZE(OP_NAME, "chunk_indices", ToText(params.chunkIndicesOptional->Size()),
+        KdaPrepareDfx::ListSize(OP_NAME, "chunk_indices", ToText(params.chunkIndicesOptional->Size()),
                                      ToText(totalChunks * 2));
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -693,7 +694,7 @@ aclnnStatus CheckVariableLengthInputs(
         for (int64_t chunk = 0; chunk < chunks; ++chunk) {
             if (!((*params.chunkIndicesOptional)[offset] == static_cast<int64_t>(seq) &&
                   (*params.chunkIndicesOptional)[offset + 1] == chunk)) {
-                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "chunk_indices pair",
+                KdaPrepareDfx::ValuesReason(OP_NAME, "chunk_indices pair",
                                                        ToText((*params.chunkIndicesOptional)[offset]) + "," +
                                                            ToText((*params.chunkIndicesOptional)[offset + 1]),
                                                        "at offset=" + ToText(offset) +
@@ -738,35 +739,35 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdPrepareParams &params,
     };
 
     if (!(valueMatrixValid(params.gkOut, info.kDim))) {
-        OP_LOGE_FOR_INVALID_SHAPE(OP_NAME, "gkOut", ShapeText(params.gkOut), ValueMatrixText(info, info.kDim));
+        KdaPrepareDfx::Shape(OP_NAME, "gkOut", ShapeText(params.gkOut), ValueMatrixText(info, info.kDim));
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(valueMatrixValid(params.aqkOut, params.chunkSize))) {
-        OP_LOGE_FOR_INVALID_SHAPE(OP_NAME, "aqkOut", ShapeText(params.aqkOut), ValueMatrixText(info, params.chunkSize));
+        KdaPrepareDfx::Shape(OP_NAME, "aqkOut", ShapeText(params.aqkOut), ValueMatrixText(info, params.chunkSize));
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(params.akkOut == nullptr || valueMatrixValid(params.akkOut, params.chunkSize))) {
-        OP_LOGE_FOR_INVALID_SHAPE(OP_NAME, "akkOut", ShapeText(params.akkOut), ValueMatrixText(info, params.chunkSize));
+        KdaPrepareDfx::Shape(OP_NAME, "akkOut", ShapeText(params.akkOut), ValueMatrixText(info, params.chunkSize));
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(valueMatrixValid(params.wOut, info.kDim) && valueMatrixValid(params.kgOut, info.kDim) &&
           valueMatrixValid(params.qgScaledOut, info.kDim))) {
-        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+        KdaPrepareDfx::ShapesReason(
             OP_NAME, "wOut,kgOut,qgScaledOut", TensorShapes({params.wOut, params.kgOut, params.qgScaledOut}),
             "each output must use fixed head-major shape=" + ValueMatrixText(info, info.kDim));
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(params.qgOut == nullptr || valueMatrixValid(params.qgOut, info.kDim))) {
-        OP_LOGE_FOR_INVALID_SHAPE(OP_NAME, "qgOut", ShapeText(params.qgOut), ValueMatrixText(info, info.kDim));
+        KdaPrepareDfx::Shape(OP_NAME, "qgOut", ShapeText(params.qgOut), ValueMatrixText(info, info.kDim));
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(valueMatrixValid(params.uOut, info.vDim))) {
-        OP_LOGE_FOR_INVALID_SHAPE(OP_NAME, "uOut", ShapeText(params.uOut), ValueMatrixText(info, info.vDim));
+        KdaPrepareDfx::Shape(OP_NAME, "uOut", ShapeText(params.uOut), ValueMatrixText(info, info.vDim));
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!((params.qHatOut == nullptr || qkMatrixValid(params.qHatOut)) &&
           (params.kHatOut == nullptr || qkMatrixValid(params.kHatOut)))) {
-        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+        KdaPrepareDfx::ShapesReason(
             OP_NAME, "qHatOut,kHatOut", TensorShapes({params.qHatOut, params.kHatOut}),
             "each non-null output must use fixed head-major shape=" +
                 (info.packed ? DimsText({info.qkHeadNum, info.seqLen, info.kDim}) :
@@ -775,7 +776,7 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdPrepareParams &params,
     }
     if (!((params.qRstdOut == nullptr || qkScalarValid(params.qRstdOut)) &&
           (params.kRstdOut == nullptr || qkScalarValid(params.kRstdOut)))) {
-        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(OP_NAME, "qRstdOut,kRstdOut",
+        KdaPrepareDfx::ShapesReason(OP_NAME, "qRstdOut,kRstdOut",
                                                TensorShapes({params.qRstdOut, params.kRstdOut}),
                                                "each non-null output must use fixed head-major shape=" +
                                                    (info.packed ? DimsText({info.qkHeadNum, info.seqLen}) :
@@ -783,7 +784,7 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdPrepareParams &params,
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(params.betaEffOut == nullptr || valueScalarValid(params.betaEffOut))) {
-        OP_LOGE_FOR_INVALID_SHAPE(OP_NAME, "betaEffOut", ShapeText(params.betaEffOut),
+        KdaPrepareDfx::Shape(OP_NAME, "betaEffOut", ShapeText(params.betaEffOut),
                                   info.packed ? DimsText({info.valueHeadNum, info.seqLen}) :
                                                 DimsText({info.batch, info.valueHeadNum, info.seqLen}));
         return ACLNN_ERR_PARAM_INVALID;
@@ -907,13 +908,13 @@ aclnnStatus aclnnChunkKdaFwdPrepareGetWorkspaceSize(
     aclOpExecutor **executor)
 {
     if (!(workspaceSize != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+        KdaPrepareDfx::Missing(
             OP_NAME, "workspaceSize",
             "required output pointer is null; pass the address of a writable uint64_t variable");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!(executor != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+        KdaPrepareDfx::Missing(
             OP_NAME, "executor",
             "required output pointer is null; pass the address of a writable aclOpExecutor* variable");
         return ACLNN_ERR_PARAM_NULLPTR;
