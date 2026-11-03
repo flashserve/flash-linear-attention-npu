@@ -50,6 +50,8 @@ namespace {
     constexpr uint32_t DIRECT_FAST_BT_STEP = 32U;
     constexpr uint32_t DIRECT_910B_BT_BD64 = 104U;
     constexpr uint32_t DIRECT_910B_BT_BD128 = 55U;
+    // 必须与 kernel 侧 NsCausalConv1dBwd::BWD_DIRECT_W_MAX 保持一致（arch35 regbase 快路径）。
+    constexpr uint32_t ARCH35_DIRECT_W_MAX = 8U;
     constexpr uint32_t ACTIVATION_NONE = 0;
     constexpr uint32_t ACTIVATION_SILU = 1;
     constexpr uint32_t ACTIVATION_SWISH = 2;
@@ -305,10 +307,21 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     }
     uint32_t numBlksD = D / BD;
 
+    // i_d 切分（useIdSplit）：每个核独占若干 i_d 的全部 chunk，核间无 dw/db 重叠。
+    // 该判定只依赖 isAscend950 / numBlksD，提前计算以便 UB 预算纳入两级归约 stage buffer。
+    bool useIdSplit = isAscend950 && numBlksD >= coreNum;
+
+    // A5(arch35) regbase 快路径：b16、BD∈{64,16}、W∈[1,8]、无 initial_state/dht。
+    // activation 支持 SILU/SWISH（同一套 SiLU 反向公式）与 NONE（dy 直读）。
+    // BD=64 时行宽已满一个向量寄存器；BD=16 仅当 useIdSplit 成立（核数按 i_d 铺满）才启用：
+    // 非 idSplit 下核间并行度只来自 chunk 数，而快路径 BT 最大 224 会把 chunk 数压得很低
+    // （例如 T=512、BT=224 只剩 3 个 chunk ⇒ 仅 3 个核），反而比普通路径 BT=64 更慢。
     bool useArch35DirectFast = isAscend950 && isB16Input &&
-                               activation == ACTIVATION_SILU &&
+                               (activation == ACTIVATION_SILU || activation == ACTIVATION_SWISH ||
+                                activation == ACTIVATION_NONE) &&
                                !useInitialState && !useFinalState &&
-                               W == 4 && BD == 64;
+                               W >= 1 && W <= ARCH35_DIRECT_W_MAX &&
+                               (BD == 64 || (BD == 16 && useIdSplit));
     bool use910BDirectFast = isAscend910B && isB16Input &&
                              activation == ACTIVATION_SILU &&
                              !useInitialState && !useFinalState &&
@@ -318,9 +331,13 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         uint32_t dyBdAl = CeilAlign((bt + W - 1) * BD, BLOCK_ALIGN_NUM);
         uint32_t wBdAl = CeilAlign(W * BD, BLOCK_ALIGN_NUM);
         uint32_t bdAl = CeilAlign(BD, BLOCK_ALIGN_NUM);
+        // BD=16 时行宽不足一个向量寄存器，VF 内无掩码读会越过行末；kernel 侧对 tempBuf/weightBuf/
+        // dwBuf 各预留 64 元素、dbBuf 至少 64 元素（见 InitBuffer）。此处同步计入以保持预算一致。
+        uint32_t regPad = (BD < 64U) ? 64U : 0U;
+        uint32_t dbAl = (BD < 64U) ? 64U : bdAl;
         uint32_t need = 0;
-        need += (3 * btBdAl + 4 * dyBdAl + wBdAl) * B16_DTYPE_SIZE;
-        need += (btBdAl + dyBdAl + wBdAl + bdAl) * FP32_DTYPE_SIZE;
+        need += (3 * btBdAl + 4 * dyBdAl + wBdAl + regPad) * B16_DTYPE_SIZE;
+        need += (btBdAl + dyBdAl + wBdAl + 2 * regPad + dbAl) * FP32_DTYPE_SIZE;
         return need;
     };
     auto Calc910BDirectNeed = [BD, W](uint32_t bt) -> uint32_t {
@@ -352,16 +369,69 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     OP_CHECK_IF(BT == 0 || totalTokens == 0,
                 OP_LOGE(context, "empty sequence is not supported: T %u totalTokens %u", T, totalTokens),
                 return ge::GRAPH_FAILED);
-    if (inputMode == 0) {
-        numChunks = 0;
-        const gert::Tensor *qslTensor = context->GetOptionalInputTensor(QUERY_START_LOC_INPUT_INDEX);
-        const int64_t *qslData = qslTensor->GetData<int64_t>();
-        for (uint32_t i = 0; i < B; i++) {
-            numChunks += CeilDiv(static_cast<uint32_t>(qslData[i + 1] - qslData[i]), BT);
+    auto CalcNumChunks = [&](uint32_t bt) -> uint32_t {
+        if (bt == 0) {
+            return 0;
         }
-    } else {
-        numChunks = CeilDiv(T, BT) * B;
+        if (inputMode == 0) {
+            const gert::Tensor *qslTensor = context->GetOptionalInputTensor(QUERY_START_LOC_INPUT_INDEX);
+            const int64_t *qslData = qslTensor->GetData<int64_t>();
+            uint32_t n = 0;
+            for (uint32_t i = 0; i < B; i++) {
+                n += CeilDiv(static_cast<uint32_t>(qslData[i + 1] - qslData[i]), bt);
+            }
+            return n;
+        }
+        return CeilDiv(T, bt) * B;
+    };
+    numChunks = CalcNumChunks(BT);
+
+    // 小 shape 核数填充：!useIdSplit 时核间并行度只来自 chunk 数，D 方向再多 i_d 也只能每核串行遍历。
+    // T 较小时 BT 取到接近 T，numChunks 很小（如 B1T128D256 只有 1 个 chunk ⇒ 仅 1 个核在跑）。
+    // 此处仅当 !useIdSplit 且 numBlksD >= 2 且 numChunks < target 时，按 BT_FILL_STEP 台阶减小 BT
+    // 以增加 chunk 数，直到达到 target 或触到 BT_FILL_FLOOR。
+    // 已满足 numChunks >= target 的 shape 完全不改 BT；useIdSplit 的大 shape（D 方向已铺满核）亦不受影响。
+    // numBlksD == 1（D=16/64）时单个 i_d 的 chunk 工作量本就极小，再切分只会增加每 chunk 的固定开销
+    // （partial 归约/同步），实测在 ATK 与 msprof 上均出现回归，故跳过。
+    constexpr uint32_t BT_FILL_STEP = 32U;
+    constexpr uint32_t BT_FILL_FLOOR = 16U;
+    constexpr uint32_t BT_FILL_CAP = 8U;
+    // 工作量感知的核数上限：目标核数默认仍取 CAP=8，但在 regbase VF「快路径」上再按总元素量
+    // totalTokens*D 收紧——快路径单位元素效率高，每核约 BT_FILL_ELEMS_PER_CORE 元素即可吃满并行收益，
+    // 工作量小的快路径 shape 不需要更多核。可避免"总工作量不大但 baseline 恰有 4 核"的快路径 shape
+    // 被推到 8 核而过切分（例：B4·T64·D128 32768 元素、快路径 BT=64 ⇒ 4 chunk；固定 CAP=8 会推到
+    // 8 核，kernel 中位由 ~8.14us 变慢到 ~8.79us/-8%，ATK 侧复现 -2.7%）。
+    // 普通路径是 latency-bound（每 chunk 固定开销大），更多核可直接摊薄单 chunk 延迟，其 CAP=8 行为
+    // 已由上一轮 ATK/探针验证无回归，故保持不变；下限 BT_FILL_MIN_TARGET 用以保留 1→4 核的最大收益。
+    constexpr uint32_t BT_FILL_ELEMS_PER_CORE = 8192U;
+    constexpr uint32_t BT_FILL_MIN_TARGET = 4U;
+    // 仅 ascend950 生效：910B 上保持改动前的 BT 选择，避免未经验证的 910B 行为漂移。
+    if (isAscend950 && !useIdSplit && numBlksD >= 2) {
+        uint32_t target = std::min(coreNum, BT_FILL_CAP);
+        if (useArch35DirectFast) {
+            uint64_t totalElems = static_cast<uint64_t>(totalTokens) * D;
+            uint64_t byWork = (totalElems >= BT_FILL_ELEMS_PER_CORE)
+                                  ? (totalElems / BT_FILL_ELEMS_PER_CORE) : 1ULL;
+            target = static_cast<uint32_t>(
+                std::min<uint64_t>(target, std::max<uint64_t>(BT_FILL_MIN_TARGET, byWork)));
+        }
+        while (BT > BT_FILL_FLOOR && numChunks < target) {
+            BT = (BT > BT_FILL_FLOOR + BT_FILL_STEP) ? (BT - BT_FILL_STEP) : BT_FILL_FLOOR;
+            numChunks = CalcNumChunks(BT);
+        }
     }
+
+    // chunk × i_d 二维切分：把 numBlksD 个 i_d 与 numChunks 个 chunk 一起铺到 AIV 核上
+    // （blockNum = numBlksD * numChunks），每个核只处理 1 个 i_d 的 1 个 chunk 组，
+    // 消除「每核串行遍历全部 i_d」的固定开销（每 i_d 的 CopyInWeight/Duplicate/partial 回写/栅栏）。
+    // 小 shape 下该固定开销是主瓶颈：B2T63D80W2 的 aiv_scalar+mte2 合计 ~12us，与 vec 近似串行。
+    // 仅当全部 (i_d, chunk) 工作单元数严格小于 AIV 核数时启用：恰好在等于核数（=coreNum）的边界
+    // 配置上（如 B8·T256·D32·W2 ⇒ numBlksD=2、numChunks=32、乘积=64）1D 路径本就用满 chunk 维
+    // 并行度，2D 再把 partial 写回/归约规模按 numBlksD 放大，反而相对原始基线回归（单算子 TD
+    // 实测 -4.4%/-6.1%）；严格小于可排除该边界，同时保留小 shape（乘积远小于核数）的收益。
+    bool use2DSplit = isAscend950 && !useIdSplit && !useArch35DirectFast &&
+                      numBlksD >= 2 && numChunks >= 1 &&
+                      static_cast<uint64_t>(numBlksD) * numChunks < coreNum;
 
     uint32_t btBdAl = CeilAlign(BT * BD, BLOCK_ALIGN_NUM);
     uint32_t dyBdAl = CeilAlign((BT + W - 1) * BD, BLOCK_ALIGN_NUM);
@@ -370,6 +440,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     uint32_t wBtBdAl = CeilAlign(W * BT * BD, BLOCK_ALIGN_NUM);
     uint32_t bdAl = CeilAlign(BD, BLOCK_ALIGN_NUM);
     uint32_t need = 0;
+    uint32_t dwStageRows = 0;
     if (useArch35DirectFast) {
         need = CalcArch35DirectNeed(BT);
     } else if (use910BDirectFast) {
@@ -388,6 +459,25 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         if (useInitialState || useFinalState) {
             need += bdAl * FP32_DTYPE_SIZE;
         }
+
+        // 两级归约：SILU/SWISH 分支下把 dw/db 的行归约从"每 chunk 全量归约到 1 行"改为
+        // "chunk 内只归约到 R 行并累积进 stage buffer，i_d 末再做 R→1"。
+        // 元素工作量基本不变，收益来自每 chunk 归约依赖链/屏障数由 log2(BT) 降到 log2(BT/R)。
+        // R 取 2 的幂、≤BT，在 UB 预算内取最大者；放不下则 R=0 退化为逐 chunk 全量归约。
+        if (useIdSplit && (activation == ACTIVATION_SILU || activation == ACTIVATION_SWISH)) {
+            uint32_t rMax = 1;
+            while ((rMax << 1) <= BT) rMax <<= 1;
+            for (uint32_t r = rMax; r >= 2; r >>= 1) {
+                uint32_t dwStageAl = CeilAlign(W * r * BD, BLOCK_ALIGN_NUM);
+                uint32_t dbStageAl = CeilAlign(r * BD, BLOCK_ALIGN_NUM);
+                uint32_t stageBytes = (dwStageAl + dbStageAl) * FP32_DTYPE_SIZE;
+                if (need + stageBytes <= ubSize) {
+                    dwStageRows = r;
+                    need += stageBytes;
+                    break;
+                }
+            }
+        }
     }
 
     OP_CHECK_IF(need > ubSize,
@@ -399,11 +489,23 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     uint64_t tilingKey = CAUSAL_CONV1D_BWD_TPL_ACTIVATION_NONE;
 
     // Compute block dimension
+    //
+    // A5(arch35) 上有两个核间切分方案：
+    //  - i_d 切分（useIdSplit）：每个核独占若干 i_d 的全部 chunk。由于每个 i_d 的 dw/db
+    //    只与自身通道相关，核间无重叠，可直接写回 GM，无需 partial 缓冲与第二趟归约。
+    //    该方案对 regbase 快路径与普通路径（含 fp32、W>4、存在 initial_state/dht 等）
+    //    均适用，要求 D 方向 block 数足以铺满 AIV 核。
+    //  - chunk 切分（原方案）：每个核负责部分 chunk、遍历全部 i_d，需要 partial 归约。
     uint32_t chunkPerCore = 0;
     uint32_t tailChunk = 0;
     uint32_t totalChunks = numChunks;
-    uint32_t mainCoreNum = std::min(coreNum, totalChunks);
-    if (totalChunks <= mainCoreNum) {
+    uint32_t mainCoreNum = useIdSplit ? coreNum
+                          : (use2DSplit ? (numBlksD * numChunks)
+                                        : std::min(coreNum, totalChunks));
+    if (useIdSplit || use2DSplit) {
+        chunkPerCore = 0;
+        tailChunk = 0;
+    } else if (totalChunks <= mainCoreNum) {
         chunkPerCore = 1;
         tailChunk = 0;
     } else {
@@ -439,9 +541,15 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     tiling->tailBatch = 0;
     tiling->chunkPerCore = chunkPerCore;
     tiling->tailChunk = tailChunk;
+    tiling->useIdSplit = useIdSplit ? 1 : 0;
+    tiling->use2DSplit = use2DSplit ? 1 : 0;
+    tiling->dwStageRows = dwStageRows;
 
-    uint64_t partialDwBytes = static_cast<uint64_t>(mainCoreNum) * numBlksD * wBdAl * FP32_DTYPE_SIZE;
-    uint64_t partialDbBytes = static_cast<uint64_t>(mainCoreNum) * numBlksD * bdAl * FP32_DTYPE_SIZE;
+    // useIdSplit 时每个核独占 i_d 并直接写回 dw/db，不再需要 partial 归约缓冲。
+    uint64_t partialDwBytes = useIdSplit ? 0ULL
+        : static_cast<uint64_t>(mainCoreNum) * numBlksD * wBdAl * FP32_DTYPE_SIZE;
+    uint64_t partialDbBytes = useIdSplit ? 0ULL
+        : static_cast<uint64_t>(mainCoreNum) * numBlksD * bdAl * FP32_DTYPE_SIZE;
     uint64_t wsSize = sysWorkspaceSize + partialDwBytes + partialDbBytes;
     tiling->workspaceSize = sysWorkspaceSize;
 
@@ -452,11 +560,12 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
             "Tiling result: B[%ld] T[%ld] totalTokens[%ld] D[%ld] W[%ld] inputMode[%ld] activation[%ld] "
             "inputLayout[%ld] inputN[%ld] inputHeadDim[%ld] "
             "BT[%ld] BD[%ld] numBlksD[%ld] numChunks[%ld] "
-            "mainCore[%d] chunkPerCore[%ld] tail[%ld] sysWs[%ld] wsSize[%ld]",
+            "mainCore[%d] chunkPerCore[%ld] tail[%ld] sysWs[%ld] wsSize[%ld] idSplit[%d] split2D[%d] dwStageRows[%u]",
             B, T, totalTokens, D, W, inputMode, activation,
             inputLayout, inputN, inputHeadDim,
             BT, BD, numBlksD, numChunks,
-            mainCoreNum, chunkPerCore, tailChunk, sysWorkspaceSize, wsSize);
+            mainCoreNum, chunkPerCore, tailChunk, sysWorkspaceSize, wsSize,
+            useIdSplit ? 1 : 0, use2DSplit ? 1 : 0, dwStageRows);
 
     return ge::GRAPH_SUCCESS;
 }
