@@ -556,6 +556,8 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     const bool isAscend950 =
         platform.GetCurNpuArch() == NpuArch::DAV_3510 ||
         platform.GetCurNpuArch() == NpuArch::DAV_9201;
+    const bool isAscend9201 =
+        platform.GetCurNpuArch() == NpuArch::DAV_9201;
     const bool useArch22TargetVariant =
         KdaPrepare::Arch22TargetConfig::Matches({
             static_cast<uint64_t>(shape.batch),
@@ -581,6 +583,8 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         : (useArch22TargetVariant
                ? KdaPrepare::Arch22TargetConfig::kSlotBytes
                : CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES);
+    scheduleContext.slotsPerWorkgroup =
+        isAscend9201 ? 3 : CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP;
     ChunkKdaFwdPrepareSchedule schedule;
     if (!ChunkKdaFwdPrepareTilingProcessor(scheduleContext).Process(schedule)) {
         OP_LOGE(context->GetNodeName(),

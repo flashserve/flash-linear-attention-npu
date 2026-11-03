@@ -975,8 +975,8 @@ private:
     __aicore__ inline void ProcessChunkHeadRange(
         const ChunkRange &chunk, uint32_t headBegin, uint32_t headEnd)
     {
-        // A6(1:1) 下唯一 AIV0 与 AIC 按 wave 锁步：4 个 local head 拆成
-        // wave0=head 0..2（占 slot 0..2）、wave1=head 3（复用 slot0）。
+        // A6(1:1) 下唯一 AIV0 独占 3 槽，每轮只做 kHeadsPerGroup=3 个 head，
+        // 3 个 local head 一一对应 3 个计算槽，head 数=槽数，无 wave 锁步。
         // AIV→AIC 一条通道 + AIC→AIV 三条通道都按 per-slot 3 项重编号，
         // 全部落在单 AIV 的 0..15 内（去 AIV1 的 +16）。
         constexpr uint16_t kAivToAicPayloadReadyFlagId[Shape::kComputeSlotCount] = {
@@ -986,54 +986,37 @@ private:
             if (activeHeads > Shape::kHeadsPerGroup) {
                 activeHeads = Shape::kHeadsPerGroup;
             }
-            // 与 AIC 同一 wave 边界锁步，保证 per-slot flag 的 set/wait 严格配对。
-            for (uint32_t wave = 0; wave < Shape::kSlotWavesPerGroup; ++wave) {
-                const uint32_t localHeadBase = wave * Shape::kComputeSlotCount;
-                if (localHeadBase >= activeHeads) {
-                    break;
-                }
-                uint32_t waveHeads = activeHeads - localHeadBase;
-                if (waveHeads > Shape::kComputeSlotCount) {
-                    waveHeads = Shape::kComputeSlotCount;
-                }
 
-                // V0 消耗上一组 C7 释放的 free（首轮为 AIC 预发布），V1 写
-                // 72 KiB score payload 后发布 ready。
-                for (uint32_t k = 0; k < waveHeads; ++k) {
-                    const uint32_t localHead = localHeadBase + k;
-                    const uint32_t localSlot =
-                        localHead % Shape::kComputeSlotCount;
-                    const uint32_t valueHead = groupBegin + localHead;
-                    usedLocalSlot_[localSlot] = true;
-                    StageV0(chunk, valueHead, localHead, localSlot);
-                    StageV1(chunk, localHead, localSlot);
-                    AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
-                        kAivToAicPayloadReadyFlagId[localSlot]);
-                }
+            // V0 消耗上一组 C7 释放的 free（首轮为 AIC 预发布），V1 写
+            // 72 KiB score payload 后发布 ready。
+            for (uint32_t localHead = 0; localHead < activeHeads; ++localHead) {
+                const uint32_t localSlot = localHead;
+                const uint32_t valueHead = groupBegin + localHead;
+                usedLocalSlot_[localSlot] = true;
+                StageV0(chunk, valueHead, localHead, localSlot);
+                StageV1(chunk, localHead, localSlot);
+                AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
+                    kAivToAicPayloadReadyFlagId[localSlot]);
+            }
 
-                // 等 C2 写回 raw Aqk/Akk，V3 写回后再次发布 ready。
-                for (uint32_t k = 0; k < waveHeads; ++k) {
-                    const uint32_t localHead = localHeadBase + k;
-                    const uint32_t localSlot =
-                        localHead % Shape::kComputeSlotCount;
-                    const uint32_t valueHead = groupBegin + localHead;
-                    AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
-                        kAicToAivScoreReadyFlagId[localSlot]);
-                    StageV3(chunk, valueHead, localHead, localSlot);
-                    AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
-                        kAivToAicPayloadReadyFlagId[localSlot]);
-                }
+            // 等 C2 写回 raw Aqk/Akk，V3 写回后再次发布 ready。
+            for (uint32_t localHead = 0; localHead < activeHeads; ++localHead) {
+                const uint32_t localSlot = localHead;
+                const uint32_t valueHead = groupBegin + localHead;
+                AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
+                    kAicToAivScoreReadyFlagId[localSlot]);
+                StageV3(chunk, valueHead, localHead, localSlot);
+                AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
+                    kAivToAicPayloadReadyFlagId[localSlot]);
+            }
 
-                // V6 等 C4 归还 payload 后原址写回，发布 ready 供 C7 消费。
-                for (uint32_t k = 0; k < waveHeads; ++k) {
-                    const uint32_t localHead = localHeadBase + k;
-                    const uint32_t localSlot =
-                        localHead % Shape::kComputeSlotCount;
-                    const uint32_t valueHead = groupBegin + localHead;
-                    StageV6(chunk, valueHead, localHead, localSlot);
-                    AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
-                        kAivToAicPayloadReadyFlagId[localSlot]);
-                }
+            // V6 等 C4 归还 payload 后原址写回，发布 ready 供 C7 消费。
+            for (uint32_t localHead = 0; localHead < activeHeads; ++localHead) {
+                const uint32_t localSlot = localHead;
+                const uint32_t valueHead = groupBegin + localHead;
+                StageV6(chunk, valueHead, localHead, localSlot);
+                AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
+                    kAivToAicPayloadReadyFlagId[localSlot]);
             }
             groupBegin += activeHeads;
         }
@@ -1044,7 +1027,7 @@ private:
                                     uint32_t localHead,
                                     uint32_t localSlot)
     {
-        const uint8_t mutex = static_cast<uint8_t>(localSlot); // slot0=0，slot1=1
+        const uint8_t mutex = static_cast<uint8_t>(localSlot); // slot0=0，slot1=1，slot2=2
         const uint32_t computeSlot = Arch35Ub::kComputeSlotBase[localSlot];
         const uint32_t state = Arch35Ub::kStateBase[localSlot];
         auto q = resource_.ubBuf.template GetBufferByByte<bfloat16_t>(
@@ -1178,7 +1161,7 @@ private:
         AscendC::Mutex::Unlock<PIPE_V>(mutex);
 
         const uint64_t slot = WorkspaceSlotBase(
-            workgroup_, localHead, Workspace::kArch35WorkgroupStride);
+            workgroup_, localHead, Workspace::kArch92WorkgroupStride);
         AscendC::GlobalTensor<bfloat16_t> qContext;
         AscendC::GlobalTensor<bfloat16_t> kContext;
         qContext.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
@@ -1237,7 +1220,7 @@ private:
                                     uint32_t localHead,
                                     uint32_t localSlot)
     {
-        const uint8_t mutex = static_cast<uint8_t>(localSlot); // slot0=0，slot1=1
+        const uint8_t mutex = static_cast<uint8_t>(localSlot); // slot0=0，slot1=1，slot2=2
         const uint32_t computeSlot = Arch35Ub::kComputeSlotBase[localSlot];
         const uint32_t state = Arch35Ub::kStateBase[localSlot];
         auto qPlus = resource_.ubBuf.template GetBufferByByte<bfloat16_t>(
@@ -1267,7 +1250,7 @@ private:
         AscendC::GlobalTensor<bfloat16_t> payload;
         payload.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + WorkspaceSlotBase(
-                workgroup_, localHead, Workspace::kArch35WorkgroupStride) +
+                workgroup_, localHead, Workspace::kArch92WorkgroupStride) +
             Workspace::kPayload));
         AscendC::Mutex::Lock<PIPE_MTE3>(mutex);
         AscendC::DataCopy(payload, qPlus,
@@ -1282,7 +1265,7 @@ private:
                                     uint32_t localHead,
                                     uint32_t localSlot)
     {
-        const uint8_t mutex = static_cast<uint8_t>(localSlot); // slot0=0，slot1=1
+        const uint8_t mutex = static_cast<uint8_t>(localSlot); // slot0=0，slot1=1，slot2=2
         const uint32_t computeSlot = Arch35Ub::kComputeSlotBase[localSlot];
         const uint32_t state = Arch35Ub::kStateBase[localSlot];
         auto rawScore = resource_.ubBuf.template GetBufferByByte<float>(
@@ -1338,7 +1321,7 @@ private:
         AscendC::GlobalTensor<float> payload;
         payload.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
             args_.workspace + WorkspaceSlotBase(
-                workgroup_, localHead, Workspace::kArch35WorkgroupStride) +
+                workgroup_, localHead, Workspace::kArch92WorkgroupStride) +
             Workspace::kPayload));
         AscendC::Mutex::Lock<PIPE_MTE3>(mutex);
         AscendC::DataCopy(aqkGm_[AOutputOffset(
@@ -1353,7 +1336,7 @@ private:
         AscendC::GlobalTensor<bfloat16_t> akkRelay;
         akkRelay.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
             args_.workspace + WorkspaceSlotBase(
-                workgroup_, localHead, Workspace::kArch35WorkgroupStride) +
+                workgroup_, localHead, Workspace::kArch92WorkgroupStride) +
             Workspace::kPayload + Workspace::kAkk));
         AscendC::DataCopy(akkRelay, akk,
             Shape::kChunkRows * Shape::kChunkRows);
@@ -1370,7 +1353,7 @@ private:
                                     uint32_t localHead,
                                     uint32_t localSlot)
     {
-        const uint8_t mutex = static_cast<uint8_t>(localSlot); // slot0=0，slot1=1
+        const uint8_t mutex = static_cast<uint8_t>(localSlot); // slot0=0，slot1=1，slot2=2
         const uint32_t computeSlot = Arch35Ub::kComputeSlotBase[localSlot];
         const uint32_t state = Arch35Ub::kStateBase[localSlot];
         auto qg = resource_.ubBuf.template GetBufferByByte<bfloat16_t>(
@@ -1390,7 +1373,7 @@ private:
         auto gLast = resource_.ubBuf.template GetBufferByByte<float>(
             state + Arch35Ub::kGLast);
         const uint64_t slot = WorkspaceSlotBase(
-            workgroup_, localHead, Workspace::kArch35WorkgroupStride);
+            workgroup_, localHead, Workspace::kArch92WorkgroupStride);
         AscendC::GlobalTensor<bfloat16_t> qContext;
         AscendC::GlobalTensor<bfloat16_t> kContext;
         qContext.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(

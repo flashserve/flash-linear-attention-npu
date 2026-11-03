@@ -139,8 +139,8 @@ private:
     __aicore__ inline void ProcessChunkHeadRange(
         const ChunkRange &chunk, uint32_t headBegin, uint32_t headEnd)
     {
-        // A6(1:1) 下 AIC 与唯一 AIV 按 wave 锁步：4 个 local head 拆成
-        // wave0=head 0..2（占 slot 0..2）、wave1=head 3（复用 slot0）。
+        // A6(1:1) 下唯一 AIV0 独占 3 槽，每轮只做 kHeadsPerGroup=3 个 head，
+        // 3 个 local head 一一对应 3 个计算槽，head 数=槽数，无 wave 锁步。
         // AIC→AIV 三条通道 + AIV→AIC 一条通道都按 per-slot 3 项重编号，
         // 全部落在单 AIV 的 0..15 内（去 AIV1 的 +16）。
         constexpr uint16_t kAivToAicPayloadReadyFlagId[Shape::kComputeSlotCount] = {
@@ -158,13 +158,8 @@ private:
             }
             // free[slot] 初始只发布一次。以后每一组的 V0 会消费
             // 上一组 C7 发布的 free，不能在组首重复 set 同一个计数器。
-            for (uint32_t localHead = 0;
-                 localHead < Shape::kHeadsPerGroup; ++localHead) {
-                if (localHead >= activeHeads) {
-                    continue;
-                }
-                const uint32_t localSlot =
-                    localHead % Shape::kComputeSlotCount;
+            for (uint32_t localHead = 0; localHead < activeHeads; ++localHead) {
+                const uint32_t localSlot = localHead;
                 if (freeInitialized_[localSlot]) {
                     continue;
                 }
@@ -173,60 +168,41 @@ private:
                 freeInitialized_[localSlot] = true;
             }
 
-            // 与 AIV 同一 wave 边界锁步，保证 per-slot flag 的 set/wait 严格配对。
-            for (uint32_t wave = 0; wave < Shape::kSlotWavesPerGroup; ++wave) {
-                const uint32_t localHeadBase = wave * Shape::kComputeSlotCount;
-                if (localHeadBase >= activeHeads) {
-                    break;
-                }
-                uint32_t waveHeads = activeHeads - localHeadBase;
-                if (waveHeads > Shape::kComputeSlotCount) {
-                    waveHeads = Shape::kComputeSlotCount;
-                }
+            // C2：逐 HEAD 等 V1 的 72 KiB 分数操作数。一次装入 L1 后，
+            // 尾块只提交有效 sub-chunk 的 32x128 @ 128xN MMAD。
+            for (uint32_t localHead = 0; localHead < activeHeads; ++localHead) {
+                const uint32_t localSlot = localHead;
+                AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
+                    kAivToAicPayloadReadyFlagId[localSlot]);
+                StageC2(chunk, localHead);
+                // C2 完成：raw Aqk/Akk 已写回 → 通知 V3。
+                AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
+                    kAicToAivScoreReadyFlagId[localSlot]);
+            }
 
-                // C2：逐 HEAD 等 V1 的 72 KiB 分数操作数。一次装入 L1 后，
-                // 尾块只提交有效 sub-chunk 的 32x128 @ 128xN MMAD。
-                for (uint32_t k = 0; k < waveHeads; ++k) {
-                    const uint32_t localHead = localHeadBase + k;
-                    const uint32_t localSlot =
-                        localHead % Shape::kComputeSlotCount;
-                    AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
-                        kAivToAicPayloadReadyFlagId[localSlot]);
-                    StageC2(chunk, localHead);
-                    // C2 完成：raw Aqk/Akk 已写回 → 通知 V3。
-                    AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
-                        kAicToAivScoreReadyFlagId[localSlot]);
-                }
+            // 先为所有有效 HEAD 提交 C4，再统一提交 C5。
+            for (uint32_t localHead = 0; localHead < activeHeads; ++localHead) {
+                const uint32_t localSlot = localHead;
+                AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
+                    kAivToAicPayloadReadyFlagId[localSlot]);
+                const uint32_t valueHead = groupBegin + localHead;
+                // C4 读完 payload 后归还 V6 通道（payload 可原址换义）。
+                StageC4(chunk, valueHead, localHead,
+                        kAicToAivPayloadRepurposeFlagId[localSlot]);
+            }
+            for (uint32_t localHead = 0; localHead < activeHeads; ++localHead) {
+                const uint32_t valueHead = groupBegin + localHead;
+                StageC5(chunk, valueHead, localHead);
+            }
 
-                // 先为所有有效 HEAD 提交 C4，再统一提交 C5。
-                for (uint32_t k = 0; k < waveHeads; ++k) {
-                    const uint32_t localHead = localHeadBase + k;
-                    const uint32_t localSlot =
-                        localHead % Shape::kComputeSlotCount;
-                    AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
-                        kAivToAicPayloadReadyFlagId[localSlot]);
-                    const uint32_t valueHead = groupBegin + localHead;
-                    // C4 读完 payload 后归还 V6 通道（payload 可原址换义）。
-                    StageC4(chunk, valueHead, localHead,
-                            kAicToAivPayloadRepurposeFlagId[localSlot]);
-                }
-                for (uint32_t k = 0; k < waveHeads; ++k) {
-                    const uint32_t localHead = localHeadBase + k;
-                    const uint32_t valueHead = groupBegin + localHead;
-                    StageC5(chunk, valueHead, localHead);
-                }
-
-                // C7：V6 已将两个 RHS 平面写入 workspace。
-                for (uint32_t k = 0; k < waveHeads; ++k) {
-                    const uint32_t localHead = localHeadBase + k;
-                    const uint32_t valueHead = groupBegin + localHead;
-                    const uint32_t localSlot =
-                        localHead % Shape::kComputeSlotCount;
-                    AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
-                        kAivToAicPayloadReadyFlagId[localSlot]);
-                    StageC7(chunk, valueHead, localHead,
-                            kAicToAivSlotReusableFlagId[localSlot]);
-                }
+            // C7：V6 已将两个 RHS 平面写入 workspace。
+            for (uint32_t localHead = 0; localHead < activeHeads; ++localHead) {
+                const uint32_t valueHead = groupBegin + localHead;
+                const uint32_t localSlot = localHead;
+                AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
+                    kAivToAicPayloadReadyFlagId[localSlot]);
+                StageC7(chunk, valueHead, localHead,
+                        kAicToAivSlotReusableFlagId[localSlot]);
             }
             groupBegin += activeHeads;
         }
@@ -236,13 +212,13 @@ private:
                                    uint32_t localHead)
     {
         const uint64_t slot = WorkspaceSlotBase(
-            workgroup_, localHead, Workspace::kArch35WorkgroupStride);
+            workgroup_, localHead, Workspace::kArch92WorkgroupStride);
         const uint32_t lane = L1::kHeadLane[localHead];
-        const uint8_t l1Mutex = static_cast<uint8_t>(localHead); // 0..3
+        const uint8_t l1Mutex = static_cast<uint8_t>(localHead); // 0..2
         const uint8_t operandMutex = 4;
-        const uint8_t l0cMutex = static_cast<uint8_t>(5 + localHead); // 5..8
+        const uint8_t l0cMutex = static_cast<uint8_t>(5 + localHead); // 5..7
         const uint8_t ownerAiv = 0;
-        const uint32_t localSlot = localHead % Shape::kComputeSlotCount;
+        const uint32_t localSlot = localHead;
         const uint32_t l0cLane = localHead * 64 * 1024;
 
         AscendC::GlobalTensor<bfloat16_t> payload;
@@ -295,8 +271,8 @@ private:
                 Shape::kSubChunkRows * 16 * sizeof(bfloat16_t));
         auto kMinusL0 =
             resource_.l0BBuf.template GetBufferByByte<bfloat16_t>(0);
-        // Ascend950 提供 256 KiB L0C。四个 HEAD 各占一条 64 KiB 通道，
-        // 与 Mutex 5..8/9..12 一一对应，独立流水不共享物理地址。
+        // Ascend950 提供 256 KiB L0C。三个 HEAD 各占一条 64 KiB 通道，
+        // 与 Mutex 5..7/9..11 一一对应，独立流水不共享物理地址。
         auto rawL0c =
             resource_.l0CBuf.template GetBufferByByte<float>(l0cLane);
         uint32_t stackedElements = 0;
@@ -389,11 +365,11 @@ private:
                                    uint16_t slotReusableFlagId)
     {
         const uint64_t slot = WorkspaceSlotBase(
-            workgroup_, localHead, Workspace::kArch35WorkgroupStride);
+            workgroup_, localHead, Workspace::kArch92WorkgroupStride);
         const uint32_t lane = L1::kHeadLane[localHead];
-        const uint8_t l1Mutex = static_cast<uint8_t>(localHead); // 0..3
+        const uint8_t l1Mutex = static_cast<uint8_t>(localHead); // 0..2
         const uint8_t operandMutex = 4;
-        const uint8_t l0cMutex = static_cast<uint8_t>(5 + localHead); // 5..8
+        const uint8_t l0cMutex = static_cast<uint8_t>(5 + localHead); // 5..7
         const uint32_t l0cLane = localHead * 64 * 1024;
 
         AscendC::GlobalTensor<float> payload;
@@ -528,9 +504,9 @@ private:
             return;
         }
 
-        const uint8_t l1Mutex = static_cast<uint8_t>(localHead); // 0..3
+        const uint8_t l1Mutex = static_cast<uint8_t>(localHead); // 0..2
         const uint8_t operandMutex = 4;
-        const uint8_t l0cMutex = static_cast<uint8_t>(5 + localHead); // 5..8
+        const uint8_t l0cMutex = static_cast<uint8_t>(5 + localHead); // 5..7
         const uint32_t l0cLane = localHead * 64 * 1024;
         auto negX1L1 = resource_.l1Buf.template GetBufferByByte<float>(
             L1::kNegX1 + localHead * L1::kQuadrantStride);
@@ -614,14 +590,14 @@ private:
     {
         const uint32_t m = chunk.validRows > 32 ? 64 : 32;
         const uint64_t slot = WorkspaceSlotBase(
-            workgroup_, localHead, Workspace::kArch35WorkgroupStride);
+            workgroup_, localHead, Workspace::kArch92WorkgroupStride);
         const uint32_t lane = L1::kHeadLane[localHead];
-        const uint8_t l1Mutex = static_cast<uint8_t>(localHead); // 0..3
+        const uint8_t l1Mutex = static_cast<uint8_t>(localHead); // 0..2
         const uint8_t operandMutex = 4;
         const uint8_t wL0cMutex =
-            static_cast<uint8_t>(5 + localHead); // 5..8
+            static_cast<uint8_t>(5 + localHead); // 5..7
         const uint8_t uL0cMutex =
-            static_cast<uint8_t>(9 + localHead); // 9..12
+            static_cast<uint8_t>(9 + localHead); // 9..11
         const uint32_t l0cLane = localHead * 64 * 1024;
 
         AscendC::GlobalTensor<bfloat16_t> kBetaRelay;

@@ -139,13 +139,16 @@ constexpr uint32_t kHeadDim = 128;
 constexpr uint32_t kValueDim = 128;
 constexpr uint32_t kSubChunkRows = 16;
 constexpr uint32_t kSubChunkCount = 4;
-constexpr uint32_t kHeadsPerGroup = 4;
 #if (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
+// A6(1:1)：单 AIV 三槽并行，3 个 head 一一对应 3 个计算槽，head 数=槽数，
+// 从源头消除 4 head > 3 槽的 slot-flag 环等待，不再需要 wave 锁步。
+constexpr uint32_t kHeadsPerGroup = 3;
 constexpr uint32_t kAivPerAic = 1;
-constexpr uint32_t kHeadsPerAiv = 4;
+constexpr uint32_t kHeadsPerAiv = 3;
 constexpr uint32_t kComputeSlotCount = 3;
-constexpr uint32_t kSlotWavesPerGroup = 2;
+constexpr uint32_t kSlotWavesPerGroup = 1;
 #else
+constexpr uint32_t kHeadsPerGroup = 4;
 constexpr uint32_t kAivPerAic = 2;
 constexpr uint32_t kHeadsPerAiv = 2;
 constexpr uint32_t kComputeSlotCount = 2;
@@ -219,6 +222,13 @@ static_assert(kArch22RhsVBeta + 64 * 128 * 2 <= kArch22AkkFp32);
 constexpr uint32_t kArch35SlotCount = 4;
 constexpr uint32_t kArch35WorkgroupStride =
     kArch35SlotCount * kSlotStride;
+// A6(1:1) 每 workgroup 只同时在途 3 个 head，slot 数从 4 收敛到 3，
+// 省掉第 4 个空闲 slot 的 GM relay。host 侧需同步使用 3（见 tiling.cpp）。
+#if (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
+constexpr uint32_t kArch92SlotCount = 3;
+constexpr uint32_t kArch92WorkgroupStride =
+    kArch92SlotCount * kSlotStride;
+#endif
 } // namespace Workspace
 
 namespace ScorePayload {
@@ -231,8 +241,14 @@ constexpr uint32_t kKMinus[Shape::kSubChunkCount] = {
 namespace L1 {
 constexpr uint32_t kCapacity = 0x80000;
 constexpr uint32_t kHeadLaneBytes = 0x12000;
+#if (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
+// A6 只有 3 个 local head，score lane 缩为 3 项；else 保留 4 项给 arch35/arch22。
+constexpr uint32_t kHeadLane[Shape::kHeadsPerGroup] = {
+    0x00000, 0x12000, 0x24000};
+#else
 constexpr uint32_t kHeadLane[Shape::kHeadsPerGroup] = {
     0x00000, 0x12000, 0x24000, 0x36000};
+#endif
 constexpr uint32_t kX0 = 0x48000;
 constexpr uint32_t kNegX1 = 0x4C000;
 constexpr uint32_t kT = 0x50000;
@@ -241,26 +257,6 @@ constexpr uint32_t kQuadrantStride = 0x1000;
 constexpr uint32_t kAkkStride = 0x2000;
 // BF16 NZ 为 [N1,M1,M0,N0]；q10=(row 32,col 0) 的元素偏移。
 constexpr uint32_t kAkkQ10Elements = 32 * 16;
-
-// C7 的 RHS（K_beta_g / V_beta）专用 L1 lane。
-//
-// 旧布局把这两份 RHS 直接放在 kHeadLane 上，而 C2 的 score 用的是同一条 lane
-// 的同两个偏移（kQPlus=0x0000 ↔ K_beta_g、kKPlus=0x4000 ↔ V_beta）。C7 刚把 RHS
-// 搬进 lane 就归还了 workspace，于是下一个 chunk 的 C2 一旦拿到 ready，就会用
-// MTE2 往同一条 lane 写 score，覆盖 C7 还没有用 MTE1 读完的 RHS——现场表现为同一
-// 个 Stage 里 U 整块错、W 逐位正常（K_beta_g 先读，V_beta 要隔一整个 Mmad+Fixpipe
-// 才读，暴露窗口更长）。
-//
-// 现在每个 head 各占一条 RHS lane，C2/C4 的 score/B 完全不碰它；pair 之间用的也是
-// 不同 lane，所以同一次 C7 内不存在 lane 换义。跨 chunk / 跨 pair 的写后读由显式的
-// MTE1_MTE2 event 保证（见 chunk_kda_fwd_prepare_cube.h 的 StageC7）：搬入前
-// WaitFlag，W/U 的 MTE1 取数全部下发之后再 SetFlag。C7 归还 workspace 的时机保持
-// "RHS 一离开 workspace 就归还"，好让下一个 chunk 的 V0/V1 与本次 W/U 重叠。
-constexpr uint32_t kRhsLaneBytes = 0x8000; // K_beta_g 0x4000 + V_beta 0x4000
-constexpr uint32_t kRhsLane[Shape::kHeadsPerGroup] = {
-    0x5C000, 0x64000, 0x6C000, 0x74000};
-constexpr uint32_t kRhsKBetaG = 0x0000;
-constexpr uint32_t kRhsVBeta = 0x4000;
 
 constexpr uint32_t kPeak = 0x7C000;
 } // namespace L1

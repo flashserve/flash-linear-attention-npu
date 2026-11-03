@@ -42,6 +42,9 @@ struct ChunkKdaFwdPrepareScheduleContext {
     bool isVarLen = false;
     // 调用方未显式识别平台时按较大的 Arch22 slot 保守分配。
     uint64_t workspaceSlotBytes = CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES;
+    // A6(9201) 每 workgroup 只 3 个在途 head，收敛为 3；其余架构保持 4。
+    // 该值必须与 kernel 侧 Workspace::kArch92SlotCount / kArch35SlotCount 一致。
+    uint64_t slotsPerWorkgroup = CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP;
     bool targetPipeline = false;
 };
 
@@ -130,7 +133,7 @@ public:
         uint64_t workgroupBytes = 0;
         uint64_t userWorkspaceBytes = 0;
         if (!CheckedMultiply(context_.workspaceSlotBytes,
-                             CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP,
+                             context_.slotsPerWorkgroup,
                              workgroupBytes) ||
             !CheckedMultiply(usedCoreNum, workgroupBytes,
                              userWorkspaceBytes) ||
