@@ -56,37 +56,7 @@ python scripts/check_npu_env.py            # 无 NPU 的纯构建环境可加 --
 
 ##### 2.2.1 预编译包安装（推荐）
 
-完成环境检查后，推荐从[华为云内源镜像站](https://mirrors.huaweicloud.com/ascend/repos/pypi/)直接安装，无需本地编译。以下以 **A2** 为例，A3 / A5 将包名和地址中的 `a2` 替换为 `a3` / `a5`；pip 自动匹配 ARM / x86。以下命令使用 `--no-deps`，运行时依赖需在 2.1 中准备好。
-
-**安装 latest：获取最近一次成功发布的 Daily，无需指定日期和提交号。**
-
-```sh
-# main 分支
-python -m pip install --pre --force-reinstall --no-cache-dir --no-deps --no-index \
-  --find-links https://mirrors.huaweicloud.com/ascend/repos/pypi/nightly/flash-linear-attention-npu-a2/latest/ \
-  "flash-linear-attention-npu-a2==0.*"
-```
-
-安装 v26.10.0 分支时，将最后的包版本条件替换为 `"flash-linear-attention-npu-a2==26.10.0.*"`。
-
-**安装指定日期的 Daily：适合验证或复现某天的版本。**
-
-```sh
-# 示例日期，请替换为镜像中已发布的日期
-DAILY_DATE=20261103
-
-# main 分支
-python -m pip install --upgrade --no-deps \
-  --extra-index-url https://mirrors.huaweicloud.com/ascend/repos/pypi/nightly/ \
-  "flash-linear-attention-npu-a2==0.dev${DAILY_DATE}"
-
-# v26.10.0 分支：与上面的 main 按需选择
-python -m pip install --upgrade --no-deps \
-  --extra-index-url https://mirrors.huaweicloud.com/ascend/repos/pypi/nightly/ \
-  "flash-linear-attention-npu-a2==26.10.0.dev${DAILY_DATE}"
-```
-
-**安装正式 Release：适合正式版本部署。**
+完成环境检查后，推荐从[华为云内源镜像站](https://mirrors.huaweicloud.com/ascend/repos/pypi/)直接安装正式 Release，无需本地编译。以下以 **A2** 为例，A3 / A5 将包名中的 `a2` 替换为 `a3` / `a5`；pip 自动匹配 ARM / x86。以下命令使用 `--no-deps`，运行时依赖需在 2.1 中准备好。
 
 ```sh
 # 以正式版 26.9.1 为例
@@ -95,7 +65,7 @@ python -m pip install --upgrade --no-deps \
   "flash-linear-attention-npu-a2==26.9.1"
 ```
 
-版本命名、固定提交安装及 `latest` 更新规则见 [Daily 和 Release 包发布与安装说明](docs/Daily和Release包发布与安装说明.md)。安装完成后进入 **Step 3 验证与测试**。
+Daily、`latest` 安装及版本命名等说明见 [Daily 和 Release 包发布与安装说明](docs/Daily和Release包发布与安装说明.md)。安装完成后进入 **Step 3 验证与测试**。
 
 ##### 2.2.2 手工编译安装
 
