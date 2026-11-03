@@ -4,6 +4,10 @@
  */
 #include "aclnn_chunk_gated_delta_rule_bwd.h"
 
+#ifndef GDN_BWD_ENABLE_ARCH22
+#define GDN_BWD_ENABLE_ARCH22 0
+#endif
+
 #include "../../../chunk_gdn_bwd_intra/op_host/op_api/chunk_gdn_bwd_intra.h"
 #include "../../../chunk_gated_delta_rule_bwd_dhu/op_host/op_api/chunk_gated_delta_rule_bwd_dhu.h"
 #include "../../../chunk_gated_delta_rule_bwd_finalize/op_host/op_api/chunk_gated_delta_rule_bwd_finalize.h"
@@ -24,6 +28,14 @@
 #include <cmath>
 #include <cstring>
 #include <initializer_list>
+
+#if GDN_BWD_ENABLE_ARCH22
+#include "../../../chunk_bwd_dv_local/op_host/op_api/chunk_bwd_dv_local.h"
+#include "../../../../chunk_gdn_fwd/recompute_w_u_fwd/op_host/op_api/recompute_w_u_fwd.h"
+#include "external/aclnn_kernels/aclnn_platform.h"
+#include "level0/muls.h"
+#include <vector>
+#endif
 
 using namespace op;
 
@@ -126,6 +138,13 @@ bool IsAscend950()
     const char *socName = aclrtGetSocName();
     return socName != nullptr && std::strstr(socName, "Ascend950") != nullptr;
 }
+
+#if GDN_BWD_ENABLE_ARCH22
+bool IsDav2201Device()
+{
+    return GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201;
+}
+#endif
 
 const aclIntArray *MakePerm(std::initializer_list<int64_t> dims, aclOpExecutor *executor)
 {
@@ -340,8 +359,14 @@ aclnnStatus CheckLayoutShapes(const Params &params, const ShapeInfo &info)
 
 aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
 {
-    CHECK_COND(IsAscend950(), ACLNN_ERR_PARAM_INVALID,
-               "ChunkGatedDeltaRuleBwd is supported on Ascend950 only.");
+#if GDN_BWD_ENABLE_ARCH22
+    if (!IsDav2201Device()) {
+#endif
+        CHECK_COND(IsAscend950(), ACLNN_ERR_PARAM_INVALID,
+                   "ChunkGatedDeltaRuleBwd is supported on Ascend950 only.");
+#if GDN_BWD_ENABLE_ARCH22
+    }
+#endif
     CHECK_COND(!params.useGateInKernel, ACLNN_ERR_PARAM_INVALID,
                "use_gate_in_kernel=true is not supported.");
     CHECK_COND(params.dALogOut == nullptr && params.dDtBiasOut == nullptr,
@@ -422,6 +447,97 @@ aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
     }
     return ACLNN_SUCCESS;
 }
+
+#if GDN_BWD_ENABLE_ARCH22
+bool HasEmptySequenceArch22(const Params &params)
+{
+    if (params.cuSeqlens == nullptr) {
+        return false;
+    }
+    for (size_t seq = 0; seq + 1 < params.cuSeqlens->Size(); ++seq) {
+        if ((*params.cuSeqlens)[seq] == (*params.cuSeqlens)[seq + 1]) {
+            return true;
+        }
+    }
+    return false;
+}
+
+aclnnStatus MakeOutputContiguousArch22(const aclTensor *&tensor, aclOpExecutor *executor)
+{
+    if (tensor != nullptr && !IsContiguous(tensor)) {
+        tensor = executor->AllocTensor(tensor->GetViewShape(), tensor->GetDataType(), Format::FORMAT_ND);
+        CHECK_COND(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR,
+                   "allocating A2/A3 contiguous output failed.");
+    }
+    return ACLNN_SUCCESS;
+}
+
+aclnnStatus CopyOutputArch22(const aclTensor *src, const aclTensor *dst, aclOpExecutor *executor)
+{
+    if (dst != nullptr && src != dst) {
+        return ViewCopy(src, dst, executor);
+    }
+    return ACLNN_SUCCESS;
+}
+
+aclnnStatus ComposeIntraArch22(
+    const Params &params, const aclTensor *qHead, const aclTensor *kHead,
+    const aclTensor *vHead, const aclTensor *dOHead, const aclTensor *gHead,
+    const aclTensor *betaHead, DataType gateType, const aclTensor *w,
+    const aclTensor *u, const aclTensor *dvLocal, aclOpExecutor *executor)
+{
+    // A2/A3 复用两个已注册的 L0 算子。它们的 gate 是 FP32 自然指数；
+    // 公共 use_exp2 仅在此内部桥接，后续算子仍接收原 g 和原 flag。
+    const aclTensor *naturalGate = gateType == DataType::DT_FLOAT
+                                       ? gHead
+                                       : l0op::Cast(gHead, DataType::DT_FLOAT, executor);
+    const aclTensor *naturalBeta = gateType == DataType::DT_FLOAT
+                                       ? betaHead
+                                       : l0op::Cast(betaHead, DataType::DT_FLOAT, executor);
+    if (naturalGate != nullptr && params.useExp2) {
+        naturalGate = l0op::Muls(naturalGate, 0.6931471805599453f, executor);
+    }
+    CHECK_COND(naturalGate != nullptr && naturalBeta != nullptr,
+               ACLNN_ERR_INNER_NULLPTR, "A2/A3 gate conversion failed.");
+    const aclIntArray *wuCuSeqlens = params.cuSeqlens;
+    const aclIntArray *wuChunkIndices = params.chunkIndices;
+    if (HasEmptySequenceArch22(params)) {
+        std::vector<int64_t> compactCu{0};
+        std::vector<int64_t> compactChunks;
+        int64_t compactSeq = 0;
+        for (size_t seq = 0; seq + 1 < params.cuSeqlens->Size(); ++seq) {
+            const int64_t begin = (*params.cuSeqlens)[seq];
+            const int64_t end = (*params.cuSeqlens)[seq + 1];
+            if (end == begin) {
+                continue;
+            }
+            compactCu.push_back(end);
+            const int64_t chunks = (end - begin + params.chunkSize - 1) / params.chunkSize;
+            for (int64_t chunk = 0; chunk < chunks; ++chunk) {
+                compactChunks.push_back(compactSeq);
+                compactChunks.push_back(chunk);
+            }
+            ++compactSeq;
+        }
+        wuCuSeqlens = executor->AllocIntArray(compactCu.data(), compactCu.size());
+        wuChunkIndices = executor->AllocIntArray(compactChunks.data(), compactChunks.size());
+        CHECK_COND(wuCuSeqlens != nullptr && wuChunkIndices != nullptr,
+                   ACLNN_ERR_INNER_NULLPTR, "allocating A2/A3 W/U nonempty metadata failed.");
+    }
+    const auto wuResult = l0op::RecomputeWUFwd(
+        kHead, vHead, naturalBeta, params.a, naturalGate, nullptr,
+        wuCuSeqlens, wuChunkIndices, params.chunkSize, w, u, executor);
+    CHECK_COND(wuResult[0] != nullptr && wuResult[1] != nullptr,
+               ACLNN_ERR_INNER_NULLPTR, "A2/A3 W/U composition failed.");
+    const aclTensor *localResult = l0op::ChunkBwdDvLocal(
+        qHead, kHead, dOHead, naturalGate, nullptr, nullptr,
+        params.cuSeqlens, params.chunkIndices, params.scale, params.chunkSize,
+        dvLocal, executor);
+    CHECK_COND(localResult != nullptr, ACLNN_ERR_INNER_NULLPTR,
+               "A2/A3 local dV composition failed.");
+    return ACLNN_SUCCESS;
+}
+#endif
 
 } // namespace
 
@@ -561,13 +677,32 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
                    dkHead != nullptr && dvHead != nullptr && dBetaHead != nullptr && dGHead != nullptr,
                ACLNN_ERR_INNER_NULLPTR, "allocating composite intermediate tensors failed.");
 
-    const auto intraResult = l0op::ChunkGdnBwdIntra(
-        qHead, kHead, vHead, gHead, betaHead, params.a, dOHead,
-        params.cuSeqlens, params.chunkIndices, params.scale, params.chunkSize,
-        params.useExp2, w, u, dvLocal, executorPtr);
-    CHECK_COND(intraResult[0] != nullptr && intraResult[1] != nullptr &&
-                   intraResult[2] != nullptr,
-               ACLNN_ERR_INNER_NULLPTR, "ChunkGdnBwdIntra composition failed.");
+#if GDN_BWD_ENABLE_ARCH22
+    if (IsDav2201Device()) {
+        CHECK_RET(MakeOutputContiguousArch22(dqHead, executorPtr) == ACLNN_SUCCESS,
+                  ACLNN_ERR_INNER_NULLPTR);
+        CHECK_RET(MakeOutputContiguousArch22(dkHead, executorPtr) == ACLNN_SUCCESS,
+                  ACLNN_ERR_INNER_NULLPTR);
+        CHECK_RET(MakeOutputContiguousArch22(dvHead, executorPtr) == ACLNN_SUCCESS,
+                  ACLNN_ERR_INNER_NULLPTR);
+        // params 是本次调用的私有副本；仅 A2/A3 用连续 dh0 暂存。
+        CHECK_RET(MakeOutputContiguousArch22(params.dh0Out, executorPtr) == ACLNN_SUCCESS,
+                  ACLNN_ERR_INNER_NULLPTR);
+        CHECK_RET(ComposeIntraArch22(params, qHead, kHead, vHead, dOHead, gHead,
+                                    betaHead, gateType, w, u, dvLocal, executorPtr) == ACLNN_SUCCESS,
+                  ACLNN_ERR_INNER_NULLPTR);
+    } else {
+#endif
+        const auto intraResult = l0op::ChunkGdnBwdIntra(
+            qHead, kHead, vHead, gHead, betaHead, params.a, dOHead,
+            params.cuSeqlens, params.chunkIndices, params.scale, params.chunkSize,
+            params.useExp2, w, u, dvLocal, executorPtr);
+        CHECK_COND(intraResult[0] != nullptr && intraResult[1] != nullptr &&
+                       intraResult[2] != nullptr,
+                   ACLNN_ERR_INNER_NULLPTR, "ChunkGdnBwdIntra composition failed.");
+#if GDN_BWD_ENABLE_ARCH22
+    }
+#endif
 
     const auto fwdHResult = l0op::ChunkFwdH(
         kHead, w, u, gHead, nullptr, initialStateKv,
@@ -608,6 +743,20 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
         CHECK_RET(ViewCopy(dvSequence, params.dvOut, executorPtr) == ACLNN_SUCCESS,
                   ACLNN_ERR_INNER_NULLPTR);
     }
+#if GDN_BWD_ENABLE_ARCH22
+    if (IsDav2201Device()) {
+        if (!info.sequenceMajor) {
+            CHECK_RET(CopyOutputArch22(dqHead, params.dqOut, executorPtr) == ACLNN_SUCCESS,
+                      ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(CopyOutputArch22(dkHead, params.dkOut, executorPtr) == ACLNN_SUCCESS,
+                      ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(CopyOutputArch22(dvHead, params.dvOut, executorPtr) == ACLNN_SUCCESS,
+                      ACLNN_ERR_INNER_NULLPTR);
+        }
+        CHECK_RET(CopyOutputArch22(params.dh0Out, dh0OutOptional, executorPtr) == ACLNN_SUCCESS,
+                  ACLNN_ERR_INNER_NULLPTR);
+    }
+#endif
     const aclTensor *dBetaSequence = TransposeContiguous(dBetaHead, {0, 2, 1}, executorPtr);
     const aclTensor *dGSequence = TransposeContiguous(dGHead, {0, 2, 1}, executorPtr);
     if (dBetaSequence != nullptr && dBetaSequence->GetDataType() != params.dBetaOut->GetDataType()) {

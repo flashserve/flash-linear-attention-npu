@@ -1,3 +1,7 @@
+#ifndef GDN_FINALIZE_ENABLE_ARCH22
+#define GDN_FINALIZE_ENABLE_ARCH22 0
+#endif
+
 #include "chunk_gated_delta_rule_bwd_finalize_tiling.h"
 
 #include <algorithm>
@@ -7,6 +11,11 @@
 #include <register/op_impl_registry.h>
 #include "platform/platform_ascendc.h"
 #include "tiling_base/tiling_templates_registry.h"
+#include "op_common/log/log.h"
+
+#if GDN_FINALIZE_ENABLE_ARCH22
+#include "../arch22/chunk_gated_delta_rule_bwd_finalize_tiling_arch22.h"
+#endif
 
 using namespace GDN;
 
@@ -156,6 +165,13 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
     const bool *stateVFirst = attrs->GetAttrPointer<bool>(5);
     const bool stateVFirstValue = stateVFirst == nullptr ? false : *stateVFirst;
+#if GDN_FINALIZE_ENABLE_ARCH22
+    // A2/A3 使用私有 tiling；A5 保留基线属性读取、shape 和 workspace 流程。
+    const platform_ascendc::PlatformAscendC routePlatform(context->GetPlatformInfo());
+    if (routePlatform.GetSocVersion() != platform_ascendc::SocVersion::ASCEND950) {
+        return gdn_finalize_arch22::Tiling(context, routePlatform);
+    }
+#endif
     OP_CHECK_IF(ValidateShapes(context, *tiling, stateVFirstValue) != ge::GRAPH_SUCCESS, ,
                 return ge::GRAPH_FAILED);
 
