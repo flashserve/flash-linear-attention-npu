@@ -843,7 +843,7 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
     tensor = l0op::Contiguous(tensor, executor);
     if (tensor == nullptr) {
         // Contiguous reports its own conversion/allocation failure.
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Contiguous returned null.");
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "Contiguous returned null.");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -947,7 +947,7 @@ aclnnStatus aclnnChunkKdaFwdPrepareGetWorkspaceSize(
         // Genuine internal executor initialization failure; not a user argument error.
         const char *reason = "aclnnChunkKdaFwdPrepare: CREATE_EXECUTOR returned null; preserve executor allocation "
                              "and initialization diagnostics.";
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "%s", reason);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s", reason);
         REPORT_INNER_ERR_MSG("EZ9999", "%s", reason);
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
@@ -977,7 +977,7 @@ aclnnStatus aclnnChunkKdaFwdPrepareGetWorkspaceSize(
     if (result[0] == nullptr || result[1] == nullptr || result[3] == nullptr || result[4] == nullptr ||
         result[6] == nullptr || result[7] == nullptr) {
         // L0/launcher owns the root cause; preserve its first structured report.
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ChunkKdaFwdPrepare L0 construction failed.");
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "ChunkKdaFwdPrepare L0 construction failed.");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -996,7 +996,7 @@ aclnnStatus aclnnChunkKdaFwdPrepare(
     const aclnnStatus status = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
     if (status != ACLNN_SUCCESS) {
         // CommonOpExecutorRun owns the first error; do not replace it with EZ9999.
-        OP_LOGE_WITHOUT_REPORT(status, "ChunkKdaFwdPrepare execution failed, status=%d.", status);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "ChunkKdaFwdPrepare execution failed, status=%d.", status);
         return ACLNN_ERR_INNER;
     }
     return ACLNN_SUCCESS;
