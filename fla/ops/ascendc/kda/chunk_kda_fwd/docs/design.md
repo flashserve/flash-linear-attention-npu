@@ -156,3 +156,22 @@ key2 下使用其对应单 launch 实现。tiling key 和私有 `stage` 均不�
 - Shape：`K=V=64` 或 `K=V=128`（两档且必须同档，混合档与其它取值由参数校验拒绝），
   chunk=64/128，dense/varlen/tail/GQA。
 - 属性：final state、重计算策略、`state_v_first`。
+
+### SAFE_GATE score reference
+
+The fused 32-row score group uses its first cumulative gate minus 112 in
+log2 units. With gate increments in [-5, 0], the maximum within-group span
+is 31 * 5 / ln(2), approximately 223.618. Centering it bounds both factor
+exponents by 112, providing more amplitude headroom than an offset of 104.
+The reference does not depend on future gates or tail length.
+The in-kernel gate uses the validated lower_bound; with precomputed gates,
+the caller supplies the increments. Outside [-5, 0] the centered-range
+argument does not apply. If a factor reaches the retained 2^120 ceiling,
+its FP32 amplitude headroom is about 2^8.
+
+For SAFE_GATE scores, historical factors may naturally underflow to zero.
+A lower exponent clamp would inflate small causal terms after multiplication
+by the rescaled query, so only the upper exponent clamp is retained.
+This does not guarantee exact preservation of very small historical terms.
+The ordinary gate clamps, non-SAFE_GATE path, Cube grouping and workspace
+are unchanged. The reference shift uses the existing FP32 Adds operation.
