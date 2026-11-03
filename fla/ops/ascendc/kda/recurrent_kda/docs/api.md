@@ -193,6 +193,7 @@ recurrent_kda<<<blockDim, nullptr, stream>>>(
   回退连续化；token/head 置换或正 stride 重叠 descriptor 返回参数错误。
 - 未传 `ssm_state_indices` 时 `state_capacity=seq_num`；传入后容量可大于序列数，所有有效 slot 必须位于 `[0,state_capacity)`。
 - `ssm_state_indices` 支持 packed `[T]` 和 speculative `[seq_num,max_step]`；活跃序列不得共享正在写入的 state slot。
+- `num_accepted_tokens` 是上一步的接受数。二维 speculative 索引下取值为 `[1,max_step]`，可以大于本步序列长度；packed 索引下不得超过当前序列长度。
 - 空序列不读取 `ssm_state_indices/num_accepted_tokens`，也不读写 state pool。
 - `cu_seqlens` 可选；为空时 BSND 按 batch 行划分，TND 视为一条序列。提供时首项必须为 0，offset
   必须单调不减，末项为有效 token 数且不得超过输入

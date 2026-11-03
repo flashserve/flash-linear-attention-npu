@@ -432,7 +432,8 @@ private:
         }
         if (hasAcceptedTokens_) {
             int64_t acceptedTokenNum = LoadAcceptedTokens(batchIdx);
-            if (acceptedTokenNum <= 0 || acceptedTokenNum > seqLen) {
+            const int64_t stateIndexCapacity = ssmStateStride_ > 0 ? ssmStateStride_ : seqLen;
+            if (acceptedTokenNum <= 0 || acceptedTokenNum > stateIndexCapacity) {
                 return false;
             }
         }
