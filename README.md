@@ -2,6 +2,7 @@
 
 ## 🔥Latest News
 
+- [2026/11] 新增 [Overlay 增量安装](docs/Overlay增量安装指南.md)：保留完整基础包，只更新指定算子，移除增量后恢复基础实现。
 - [2026/09] torch_npu 解耦；新增算子：KDA 正反向（`recurrent_kda` / `chunk_kda_fwd`）、GDN 大融合（fused forward / backward finalize）。
 - [2026/06] 发布 v26.6.0 预编译 wheel，覆盖 A2 / A3 / A5 目标，可在 [Release v26.6.0](https://github.com/flashserve/flash-linear-attention-npu/releases/tag/v26.6.0) 下载。
 - [2026/03] flash-linear-attention-npu 项目首次上线。
@@ -88,6 +89,26 @@ python -m pip install --force-reinstall --no-cache-dir --no-deps dist/<wheel文�
 
 需要单独编译一个或多个算子 run 包的开发者场景见[开发者指南](docs/开发者指南.md) 场景 1。
 
+### 可选：只更新部分算子（Overlay）
+
+**已经装好完整包，只想更新其中一个算子？** Overlay（增量叠加层）会把更新单独安装：例如完整包有 A、B 两个算子，增量包只更新 A，运行时 A 使用新实现，B 继续使用完整包，原有 Python 调用方式不变。
+
+先完成 Step 2，安装**支持 overlay 的完整 wheel（base）**，再准备与它匹配的增量 `.run` 包。旧版完整包不一定支持此功能，增量也不能用于新增 Python 接口或改变算子参数。安装前退出使用该环境的 Python 程序、Notebook 内核或测试 worker。
+
+以下命令在同一个终端、同一个 Python 环境执行，只需将 `OVERLAY_RUN` 换成实际文件路径：
+
+```sh
+OVERLAY_RUN=/path/to/operator-update.run
+STAGING_DIR="$(mktemp -d /tmp/fla-npu-overlay.XXXXXX)"
+
+# 先把增量包放到临时目录，再安装为 overlay；完整 base 保持不变
+bash "$OVERLAY_RUN" --install-path="$STAGING_DIR" --quiet
+python -m fla_npu_opp_manage --overlay --source "$STAGING_DIR/vendors"
+python -m fla_npu_opp_manage --status
+```
+
+状态中应看到 base、overlay 两类条目及 overlay 的 `ABI: OK`；随后**重新启动程序**使用更新。需要撤销时，退出程序后执行 `python -m fla_npu_opp_manage --remove-overlay`，再重新启动。此示例使用默认 overlay 选择，尚未自定义相关环境变量；已有同名增量的替换方法、如何自己编译增量包以及故障处理，见 **[Overlay 增量安装指南](docs/Overlay增量安装指南.md)**。
+
 ### Step 3. 验证与测试
 
 ```sh
@@ -109,6 +130,7 @@ bash tests/atk/run_test_cpu.sh -op=<算子名> -npu_device_id=0
 开发者相关操作（单独编译单算子、一键编包、增加新算子、确认 wheel 来自最新源码）按场景拆分为独立文档；测试单算子和端到端验证见上文 Step 3：
 
 - [开发者指南](docs/开发者指南.md)
+- [Overlay 增量安装指南](docs/Overlay增量安装指南.md)（准备基础包、安装 / 替换 / 移除增量、确认生效）
 - [在线 / 离线使用与编译指南](docs/离线编译与使用指南.md)（直接使用 wheel、在线编译后离线二次编译、全离线编译）
 
 旧版本（v26.6.0 及更早）用户升级与兼容迁移见[兼容与迁移指南](docs/兼容与迁移指南.md)。
