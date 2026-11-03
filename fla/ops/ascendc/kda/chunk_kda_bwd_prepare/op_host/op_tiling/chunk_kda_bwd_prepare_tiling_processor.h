@@ -26,6 +26,7 @@ struct ChunkKdaBwdPrepareTilingContext {
     uint32_t aicCoreNum;
     size_t sysWorkspaceSize;
     bool isA5 = false;
+    bool doTokenMajor = false;
 };
 class ChunkKdaBwdPrepareTilingProcessor {
 public:
@@ -44,17 +45,35 @@ public:
         const bool variable = ctx_.cuSeqlensShape != nullptr;
         if ((ctx_.cuSeqlensShape != nullptr) != variable ||
             (ctx_.chunkIndicesShape != nullptr) != variable) return Fail("metadata presence");
+        const auto vNewShape = ctx_.vNewShape->GetStorageShape();
+        const auto dOShape = ctx_.dOShape->GetStorageShape();
+        const size_t rank = vNewShape.GetDimNum();
+        const size_t base = rank == 3 ? 0 : 1;
+        const bool transposedNonSquare =
+            (rank == 3 || rank == 4) && dOShape.GetDimNum() == rank &&
+            (base == 0 || dOShape.GetDim(0) == vNewShape.GetDim(0)) &&
+            dOShape.GetDim(base) == vNewShape.GetDim(base + 1) &&
+            dOShape.GetDim(base + 1) == vNewShape.GetDim(base) &&
+            dOShape.GetDim(base + 2) == vNewShape.GetDim(base + 2) &&
+            vNewShape.GetDim(base) != vNewShape.GetDim(base + 1);
+        ctx_.doTokenMajor = ctx_.isA5 && transposedNonSquare &&
+            ((tiling_.inputLayout == KDA::BNSD && !variable) ||
+             (tiling_.inputLayout == KDA::NTD && variable));
         KDA::TokenShape a, v, o;
         if (!KDA::ParseTokenShape(ctx_.aqkShape->GetStorageShape(), tiling_.inputLayout, a) ||
-            !KDA::ParseTokenShape(ctx_.vNewShape->GetStorageShape(), tiling_.inputLayout, v) ||
-            !KDA::ParseTokenShape(ctx_.dOShape->GetStorageShape(), tiling_.inputLayout, o) ||
-            a.D != 64 || v.D != 128 || o.D != 128 || a.B != v.B || a.B != o.B ||
+            !KDA::ParseTokenShape(vNewShape, tiling_.inputLayout, v)) return Fail("token shapes");
+        if (ctx_.doTokenMajor) {
+            o = v;
+        } else if (!KDA::ParseTokenShape(dOShape, tiling_.inputLayout, o)) {
+            return Fail("token shapes");
+        }
+        if (a.D != 64 || v.D != 128 || o.D != 128 || a.B != v.B || a.B != o.B ||
             a.H != v.H || a.H != o.H || a.T != v.T || a.T != o.T) return Fail("token shapes");
         if (variable && a.B != 1) return Fail("variable lengths require B=1");
         if (ctx_.isA5 && (KDA::SequenceMajorLayout(tiling_.inputLayout) || variable != rank3))
             return Fail("A5 currently supports fixed BNSD and variable NTD only");
         // CATLASS A5 TileCopy currently narrows the GM row stride to uint32_t.
-        if (ctx_.isA5 && KDA::SequenceMajorLayout(tiling_.inputLayout) &&
+        if (ctx_.isA5 && (KDA::SequenceMajorLayout(tiling_.inputLayout) || ctx_.doTokenMajor) &&
             a.H > std::numeric_limits<uint32_t>::max() / 128) return Fail("A5 token row stride");
         auto h = ctx_.hShape->GetStorageShape();
         if (h.GetDimNum() != (rank3 ? 4 : 5)) return Fail("state rank");
@@ -88,7 +107,9 @@ public:
         tiling_.workTaskNum = tiling_.chunkTaskNum * tiling_.headWindowNum;
         if (ctx_.aicCoreNum == 0) return Fail("no AIC cores");
         blockDim_ = static_cast<uint32_t>(std::min<int64_t>(ctx_.aicCoreNum, tiling_.workTaskNum));
-        tilingKey_ = GET_TPL_TILING_KEY(tiling_.inputLayout, tiling_.isVariable);
+        tilingKey_ = GET_TPL_TILING_KEY(
+            tiling_.inputLayout, tiling_.isVariable,
+            static_cast<uint64_t>(ctx_.doTokenMajor ? 1 : 0));
         const size_t scratchSize = ctx_.isA5 ? 0 : static_cast<size_t>(blockDim_) * 65536;
         workspaceSize_ = ctx_.sysWorkspaceSize + scratchSize;
         OP_LOGD(ctx_.nodeName, "layout=%u variable=%u stateVFirst=%u key=%lu blocks=%u userScratch=%lu",

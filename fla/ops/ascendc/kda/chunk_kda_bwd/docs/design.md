@@ -147,23 +147,28 @@ BF16 raw_g 的 Stage 11 转换使用 BF16 全掩码，覆盖全部 128 个元素
 
 模型输入 do 始终为 BSND/TND，与 qkv 的 layout 无关。旧路径先在总接口执行
 `SwapHeadToken + Contiguous`，生成 head-major dOHead，再由 Prepare 和 Dhu 顺序共用。
-新路径直接下传原始 do，不再生成 dOHead：
+O4′ 在非方形 shape 上直接下传原始 do，不再生成 dOHead：
 
 ```text
 旧：do GM -> Transpose/Contiguous -> dOHead GM -> Prepare/Dhu L1/L0
 新：do GM -- 原生 stride 读取 ----------> Prepare/Dhu L1/L0
 ```
 
-Prepare 用 vNew、Dhu 用 dv 推导规范 B/H/T/V，总接口内部 L0 末尾传入
-`doTokenMajor=true`，op_def optional attr 显式选择新寻址；独立小接口保持默认 false
-和 head-major，公开 Python 与总 ACLNN 签名不变。T==H 也只由该标志消歧。
-dense 地址为 `((b*T+t)*H+h)*V`，token 行距为 H*V，head 间距为 V；
-packed 的 b 为 0。四维变长 Prepare 去 B=1 view、Dhu 补 B=1 view，均不搬运数据。
+Prepare 用 vNew、Dhu 用 dv 推导规范 B/H/T/V。仅在 A5、输入满足交换后的 shape
+且 H!=T 时，host 才能无歧义识别 token-major：Dhu 选择私有 `DO_TOKEN_MAJOR`
+TilingKey，Prepare 仅选择 `(BNSD,fixed)` 或 `(NTD,varlen)` 的 direct 实例。
+外层 kernel 将该编译期值传给 Cube 的内部 Init，按 `((b*T+t)*H+h)*V` 和 H*V
+行距读取，head 间距为 V；packed 的 b 为 0。四维变长 Prepare 去 B=1 view、Dhu
+补 B=1 view，均不搬运数据。
 
-L1/L0 tile、UB/workspace、cache hint、分核和事件协议保持不变。A5 host 分别设置
-Prepare/Dhu raw tiling 为 `sizeof(TilingData)+8`，并拒绝超出 uint32 行距的输入；
-不支持的平台和非法布局由带参数上下文的结构化报错拦截。默认 false 路径、A2/A3
-以及 legacy 的紧凑 tiling 不增加字段、不改变寻址。
+T==H 时两种布局具有相同 shape 和连续 stride，不能通过 shape 消歧。总 V2 仅在该
+情况下保留 `SwapHeadToken + Contiguous`，让独立小接口继续收到确定的 head-major 输入；
+非 direct 和非法 shape 仍按原校验处理，不能根据 shape 猜测布局。
+
+该方案不增加 op_def 属性、L0 尾参或 raw tiling 字段，公开 Python、总 ACLNN 和独立
+小接口契约均不改变。tiling 数据布局保持原样，A2/A3 与 legacy 保持原寻址；direct
+仅改变私有 TilingKey 和 GM 地址生成。L1/L0 tile、UB/workspace、cache hint、分核和
+事件协议保持不变，HV*V/NV*128 的 uint32 行距检查继续生效。
 
 普通 beta 仍由总接口转置一次为 head-major，供 Recompute/Finalize 共用；本项不改变
 该数据流，也不计入 beta 的性能或显存变化。do 的独立性能与显存结果以 ATK README

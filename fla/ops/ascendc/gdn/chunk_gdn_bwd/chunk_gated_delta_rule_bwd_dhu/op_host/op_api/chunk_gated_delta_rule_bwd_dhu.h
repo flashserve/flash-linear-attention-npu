@@ -35,7 +35,7 @@ const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleBwdDhu(
     const aclTensor *dhOut,
     const aclTensor *dh0Out,
     const aclTensor *dv2Out,
-    aclOpExecutor *executor, bool doTokenMajor = false);
+    aclOpExecutor *executor);
 
 } // namespace l0op
 

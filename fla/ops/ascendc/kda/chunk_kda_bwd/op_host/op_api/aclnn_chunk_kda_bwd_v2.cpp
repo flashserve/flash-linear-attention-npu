@@ -338,19 +338,25 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         }
         return l0op::Reshape(tensor, shape, ex);
     };
+    const aclTensor *dOInput = dO;
+    if (T == H) {
+        // Square shapes cannot distinguish token-major from head-major.
+        dOInput = SwapHeadToken(dO, packed, ex);
+        CHECK_RET(dOInput != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
     const auto prepare = l0op::ChunkKdaBwdPrepare(
-        prepareView(aqk), prepareView(vNew), prepareView(dO), prepareView(h),
+        prepareView(aqk), prepareView(vNew), prepareView(dOInput), prepareView(h),
         cuSeqlensOptional, chunkIndicesOptional, variable ? "NTD" : "BNSD", scale, chunkSize, stateVFirst,
-        prepareView(dAqk), prepareView(dvLocal), prepareView(dqRaw), ex, true);
+        prepareView(dAqk), prepareView(dvLocal), prepareView(dqRaw), ex);
     for (const auto *value : prepare) {
         CHECK_RET(value, ACLNN_ERR_INNER_NULLPTR);
     }
     const auto scan = l0op::ChunkGatedDeltaRuleBwdDhu(
         BatchView(qg, packed, ex), BatchView(kg, packed, ex), BatchView(w, packed, ex),
-        BatchView(dO, packed, ex), BatchView(dvLocal, packed, ex), nullptr,
+        BatchView(dOInput, packed, ex), BatchView(dvLocal, packed, ex), nullptr,
         BatchView(gk, packed, ex), nullptr, nullptr, cuSeqlensOptional, chunkIndicesOptional,
         scale, chunkSize, useExp2, false, BatchView(dh, packed, ex), nullptr,
-        BatchView(dvScan, packed, ex), ex, true);
+        BatchView(dvScan, packed, ex), ex);
     CHECK_RET(scan[0] && scan[2], ACLNN_ERR_INNER_NULLPTR);
     // Finalize converts original gate parameters on-chip.
     const auto *betaFinal = betaHead;

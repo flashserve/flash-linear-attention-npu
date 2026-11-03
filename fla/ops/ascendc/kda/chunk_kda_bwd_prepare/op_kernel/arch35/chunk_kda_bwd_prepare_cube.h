@@ -30,7 +30,7 @@ public:
         GM_ADDR aqk, GM_ADDR vNew, GM_ADDR dO, GM_ADDR h,
         GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
         GM_ADDR dAqk, GM_ADDR dv, GM_ADDR dqRaw,
-        const ChunkKdaBwdPrepareTilingData *tiling)
+        const ChunkKdaBwdPrepareTilingData *tiling, bool doTokenMajor = false)
     {
         aqk_ = aqk;
         vNew_ = vNew;
@@ -42,6 +42,7 @@ public:
         dv_ = dv;
         dqRaw_ = dqRaw;
         tiling_ = tiling;
+        doTokenMajor_ = doTokenMajor;
     }
 
     __aicore__ inline void Process()
@@ -245,7 +246,7 @@ private:
         AscendC::GlobalTensor<DT> gmDO;
         AscendC::GlobalTensor<DT> gmV;
         int64_t doOffset = tokenOffset;
-        if (tiling_->doTokenMajor) {
+        if (doTokenMajor_) {
             const int64_t flat = tokenOffset / KDA_PREPARE_DIM;
             const int64_t batch = flat / (tiling_->NV * tiling_->T);
             const int64_t head = (flat / tiling_->T) % tiling_->NV;
@@ -258,7 +259,7 @@ private:
         gmV.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         auto tensorDO = tla::MakeTensor(
             gmDO, tla::MakeLayout<DT, LayoutRM>(
-                rows, tiling_->doTokenMajor ? tiling_->NV * KDA_PREPARE_DIM :
+                rows, doTokenMajor_ ? tiling_->NV * KDA_PREPARE_DIM :
                     TokenInputRowStride<INPUT_LAYOUT>(*tiling_, KDA_PREPARE_DIM)), Catlass::Arch::PositionGM{});
         auto tensorV = tla::MakeTensor(
             gmV, tla::MakeLayout<DT, LayoutCM>(
@@ -281,7 +282,7 @@ private:
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1HeadFree_[headSlot + i]);
         }
         CopyHeads(copyDO, tensorL1DO, blockDO, headCount,
-                  tiling_->doTokenMajor ? KDA_PREPARE_DIM : tokenHeadStride);
+                  doTokenMajor_ ? KDA_PREPARE_DIM : tokenHeadStride);
         CopyHeads(copyV, tensorL1V, blockV, headCount, tokenHeadStride);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(
             static_cast<AscendC::TEventID>((headSlot / 2U) * STAGE_COUNT + STAGE_A));
@@ -493,6 +494,7 @@ private:
     AscendC::TEventID l0BFree_[L0_SLOT_COUNT];
     AscendC::TEventID l0cReady_[L0_SLOT_COUNT];
     AscendC::TEventID l0cFree_[L0_SLOT_COUNT];
+    bool doTokenMajor_ = false;
 };
 
 } // namespace KDA
