@@ -37,7 +37,7 @@ npu-smi info
 - `Ascend-cann-toolkit_<version>_linux-<arch>.run`
 - `Ascend-cann-<chip>-ops_<version>_linux-<arch>.run`
 
-### Step 2. 安装 wheel
+### Step 2. 编译并安装 wheel
 
 #### 2.1 环境检查
 
