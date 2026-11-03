@@ -1685,18 +1685,20 @@ def npu_chunk_gated_delta_rule_fwd(q, k, v, g, beta, *, initial_state=None,
     """Fused GDN forward: `o` plus the intermediates the backward consumes.
 
     ``is_out_l2norm=False`` is refused for chunk_size 64 and 128. Chunk 32
-    uses that setting for the inference launch, which returns only ``o`` and
-    an optional ``final_state``.
+    uses that setting, together with ``disable_recompute=False`` and
+    ``return_intermediate_states=False``, for the inference launch, which
+    returns only ``o`` and an optional ``final_state``. Setting any of those
+    three the other way exports the corresponding intermediate.
 
     The tuple is fixed at ten slots -- `(o, final_state, g_cumsum, A, beta_eff,
     h, q_hat, k_hat, q_rstd, k_rstd)` -- carrying `None` in the slots the flags
     switch off, exactly like the reference.  `q_hat`/`k_hat` are the caller's
     own q/k when the kernel is not asked to normalise them.
 
-    Chunk 32 runs L2 and beta sigmoid inside the kernel and returns `None` for
-    all eight intermediate slots. It requires ``use_exp2=False``,
-    ``use_qk_l2norm_in_kernel=True``, ``use_beta_sigmoid_in_kernel=True``,
-    ``disable_recompute=False`` and ``return_intermediate_states=False``.
+    Chunk 32 runs L2 and beta sigmoid inside the kernel. It requires
+    ``use_exp2=False``, ``use_qk_l2norm_in_kernel=True`` and
+    ``use_beta_sigmoid_in_kernel=True``. ``beta_eff`` is returned together
+    with the L2 hats, and stays `None` on the inference launch.
     """
 
     # Gate-in-kernel is unsupported by this kernel build, and the reference
@@ -1705,14 +1707,11 @@ def npu_chunk_gated_delta_rule_fwd(q, k, v, g, beta, *, initial_state=None,
     # one, so the refusal is repeated.
     if int(chunk_size) == 32:
         if (bool(use_exp2) or not bool(use_qk_l2norm_in_kernel)
-                or not bool(use_beta_sigmoid_in_kernel)
-                or bool(disable_recompute)
-                or bool(return_intermediate_states)):
+                or not bool(use_beta_sigmoid_in_kernel)):
             raise RuntimeError(
                 "npu_chunk_gated_delta_rule_fwd: chunk_size=32 requires "
-                "use_exp2=False, use_qk_l2norm_in_kernel=True, "
-                "use_beta_sigmoid_in_kernel=True, disable_recompute=False "
-                "and return_intermediate_states=False.")
+                "use_exp2=False, use_qk_l2norm_in_kernel=True and "
+                "use_beta_sigmoid_in_kernel=True.")
         if int(v.shape[-1]) != 128:
             raise RuntimeError(
                 "npu_chunk_gated_delta_rule_fwd: chunk_size=32 requires V=128.")
@@ -1745,6 +1744,7 @@ def npu_chunk_gated_delta_rule_fwd(q, k, v, g, beta, *, initial_state=None,
         bool(use_beta_sigmoid_in_kernel), bool(allow_neg_eigval),
         bool(disable_recompute), bool(output_final_state),
         bool(return_intermediate_states), bool(state_v_first),
+        bool(is_out_l2norm),
         _current_stream_ptr(),
     )
 
