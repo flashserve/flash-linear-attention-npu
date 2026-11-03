@@ -68,6 +68,7 @@ class RunCiContainerTests(unittest.TestCase):
             CI_TMPDIR="/tmp/fla-npu-ci",
             CI_HOST_TMPDIR=str(root / "storage/container"),
             CI_CACHE_ROOT=str(root / "storage/cache"),
+            CI_PACKAGE_CACHE=str(root / "storage/pkg-cache"),
             CI_NPU_LOCK_DIR=str(root / "storage/locks"),
             CI_IMAGE="test-image",
             CI_CONTAINER_NAME="ci-test",
@@ -161,6 +162,18 @@ class RunCiContainerTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                 self.assertFalse(any("--cidfile" in call for call in calls))
                 self.assertIn("device-id", result.stderr)
+
+    def test_package_cache_is_persistent_and_refresh_reaches_container(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            result, calls, env = self.run_ci(root, plan={"CI_UPDATE_PACKAGE": "true"})
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            run = next(call for call in calls if "--cidfile" in call)
+            self.assertIn(env["CI_PACKAGE_CACHE"] + ":/ci-pkg-cache", run)
+            self.assertIn("CI_PACKAGE_CACHE=/ci-pkg-cache", run)
+            self.assertIn("CI_UPDATE_PACKAGE=true", run)
+            self.assertTrue(Path(env["CI_PACKAGE_CACHE"]).is_dir())
+            self.assertNotIn("/ci-pkg-cache", calls[-1])
 
     def test_missing_storage_is_created_and_only_owned_container_is_cleaned(self):
         with tempfile.TemporaryDirectory() as temporary:

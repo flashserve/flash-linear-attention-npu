@@ -1,6 +1,7 @@
 'use strict';
 
 const { createHash } = require('crypto');
+const { requireAuthorizedCiUser } = require('./npu_ci_authorization');
 
 // Keep the status names shared by default-status and manual preparation.
 const REQUIRED_CHECKS = [
@@ -12,7 +13,6 @@ const REQUIRED_CHECKS = [
   ['NPU CI / A2+A5 / 06 报告与 commit 校验', '报告与 commit 校验'],
 ];
 const SCOPED_CHECK = ['NPU CI / A2+A5 / 定向诊断', '定向诊断'];
-const USERS_PATH = '.github/npu-ci-users.json';
 
 function decodeFile(file, path) {
   if (!file || Array.isArray(file) || file.type !== 'file' || !file.content) {
@@ -27,26 +27,6 @@ async function defaultBranch({ github, context }) {
   const { data } = await github.rest.repos.get(context.repo);
   if (!data.default_branch) throw new Error('无法确定仓库默认分支。');
   return data.default_branch;
-}
-
-async function loadCiUsers({ github, context }) {
-  // Never read the allowlist from the PR, workflow_dispatch ref, or local checkout.
-  const ref = await defaultBranch({ github, context });
-  const { data } = await github.rest.repos.getContent({ ...context.repo, path: USERS_PATH, ref });
-  const config = JSON.parse(decodeFile(data, USERS_PATH));
-  if (!Array.isArray(config.users) || !config.users.length ||
-      config.users.some((user) => typeof user !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(user))) {
-    throw new Error(`${USERS_PATH} 必须包含非空的合法 GitHub 用户名 users 数组。`);
-  }
-  return [...new Map(config.users.map((user) => [user.toLowerCase(), user])).values()];
-}
-
-async function requireAuthorizedCiUser({ github, context, username }) {
-  const users = await loadCiUsers({ github, context });
-  if (typeof username !== 'string' || !users.some((user) => user.toLowerCase() === username.toLowerCase())) {
-    throw new Error(`${username || '(空用户名)'} 无权触发 NPU CI：须列入默认分支的 ${USERS_PATH}。`);
-  }
-  return users;
 }
 
 async function assertUnchangedPullRequest({ github, context, pr }) {
@@ -119,7 +99,6 @@ function classifyChanges(files, { ciMode = 'quick', ops = '', atkOps = '', devic
   const paths = changedPaths(files);
   const documentationOnly = paths.length > 0 && paths.every(isDocumentationPath);
   let fullBuild = ciMode === 'full';
-  let ciModified = false;
   let torchModified = false;
   let sharedAtkModified = false;
   const requestedOps = normalizeOps(ops);
@@ -129,7 +108,7 @@ function classifyChanges(files, { ciMode = 'quick', ops = '', atkOps = '', devic
   const testedOps = new Set(skipAtk ? [] : requestedAtkOps.split(',').filter(Boolean));
   for (const path of paths) {
     if (isDocumentationPath(path)) continue;
-    if (/^(?:ci|\.github)(?:\/|$)/.test(path)) { ciModified = true; continue; }
+    if (/^(?:ci|\.github)(?:\/|$)/.test(path)) continue;
     if (/^(?:common|cmake)(?:\/|$)/.test(path)) { fullBuild = true; continue; }
     if (path.startsWith('fla/ops/ascendc/')) {
       if (requestedOps) continue;
@@ -167,7 +146,6 @@ function classifyChanges(files, { ciMode = 'quick', ops = '', atkOps = '', devic
     build_ops: requestedOps || (fullBuild ? '' : normalizeOps([...compiledOps].join(','))),
     atk_ops: requestedOps || skipAtk ? '' : normalizeOps([...testedOps].join(',')),
     build_kind: buildKind,
-    ci_modified: ciModified,
     device_id: normalizeDeviceId(deviceId),
     shared_atk_modified: !requestedOps && !skipAtk && sharedAtkModified,
   };
@@ -195,26 +173,6 @@ function normalizeDeviceId(value = '') {
   return String(Number(text));
 }
 
-function normalizeCiModified(value = 'false') {
-  if (value === true || value === 'true') return true;
-  if (value === false || value === 'false' || value === '') return false;
-  throw new Error('ci_modified 只接受 true 或 false；CI 文件变更须由管理员使用 ci_modified=true 确认。');
-}
-
-async function requireCiModificationApproval({ github, context, usernames, confirmed }) {
-  if (!confirmed) throw new Error('PR 修改了 ci/ 或 .github/，必须由仓库 Admin 使用 /run-npu-ci quick ci_modified=true 确认后重新触发。');
-  for (const username of [...new Set(usernames)]) {
-    let permission;
-    try {
-      const { data } = await github.rest.repos.getCollaboratorPermissionLevel({ ...context.repo, username });
-      permission = data.permission;
-    } catch (error) {
-      throw new Error(`无法确认 @${username} 的仓库 Admin 身份：${error.message}。请恢复权限读取后由管理员带 ci_modified=true 重新触发。`);
-    }
-    if (permission !== 'admin') throw new Error(`@${username} 不是仓库 Admin，不能确认 CI 文件变更。请由管理员使用 /run-npu-ci quick ci_modified=true 重新触发。`);
-  }
-}
-
 function normalizeOps(value = '') {
   if (typeof value !== 'string') throw new Error('ops 参数必须是字符串。');
   const items = value.trim() ? value.split(',').map((item) => item.trim()) : [];
@@ -231,10 +189,6 @@ function normalizeAtkOps(value = '') {
     throw new Error('atk-ops=null 必须单独使用，不能与算子名混合；请仅使用 null 跳过 ATK，或提供算子列表。');
   }
   return ops;
-}
-
-function buildCiApprovalKey({ prNumber, baseRef, baseSha, headSha }) {
-  return createHash('sha256').update(JSON.stringify([prNumber, baseRef, baseSha, headSha])).digest('hex').slice(0, 12);
 }
 
 function buildRequestKey({ ciMode, ops, baseRef, baseSha, workflowSha, plan }) {
@@ -259,9 +213,9 @@ async function writeStatuses({ github, context, pr, checks, state, description, 
 }
 
 module.exports = {
-  REQUIRED_CHECKS, SCOPED_CHECK, USERS_PATH, decodeFile, defaultBranch,
-  loadCiUsers, requireAuthorizedCiUser, assertUnchangedPullRequest, changedFiles, changedPaths,
+  REQUIRED_CHECKS, SCOPED_CHECK, decodeFile, defaultBranch,
+  requireAuthorizedCiUser, assertUnchangedPullRequest, changedFiles, changedPaths,
   isDocumentationPath,
-  classifyChanges, inspectChanges, normalizeDeviceId, normalizeCiModified, requireCiModificationApproval,
-  normalizeOps, normalizeAtkOps, buildRequestKey, buildCiApprovalKey, createComment, writeStatuses,
+  classifyChanges, inspectChanges, normalizeDeviceId,
+  normalizeOps, normalizeAtkOps, buildRequestKey, createComment, writeStatuses,
 };

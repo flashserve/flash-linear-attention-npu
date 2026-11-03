@@ -12,10 +12,6 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
   }
   const normalizedOps = [...new Set(opsItems.filter(Boolean))].sort().join(',');
   const atkOps = process.env.NPU_ATK_OPS || '';
-  const approvalKey = process.env.NPU_CI_APPROVAL_KEY || '';
-  if (approvalKey && !/^[0-9a-f]{12}$/.test(approvalKey)) {
-    throw new Error('无效的 CI 修改确认标识，请由管理员重新触发');
-  }
   const requestScope = normalizedOps ? 'scoped' : 'all';
   const requestKey = process.env.NPU_CI_REQUEST_KEY || '';
   if (!new RegExp(`^${requestScope}-[0-9a-f]{16}$`).test(requestKey)) {
@@ -150,9 +146,7 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
     },
   ];
   const truncateDescription = (value) => {
-    const suffix = approvalKey ? ` ci-ok=${approvalKey}` : '';
-    const limit = 140 - suffix.length;
-    return (value.length > limit ? `${value.slice(0, limit - 3)}...` : value) + suffix;
+    return value.length > 140 ? `${value.slice(0, 137)}...` : value;
   };
   const formatValue = (value) => {
     if (typeof value === 'number') {

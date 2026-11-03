@@ -34,10 +34,6 @@ on:
         description: "Optional physical NPU ID on each runner; empty selects automatically"
         required: false
         default: ''
-      ci_modified:
-        description: "Admin approval for changes to ci/ or .github/"
-        required: false
-        default: 'false'
       requested_by:
         description: "Original authorized requester; set by the PR comment dispatcher"
         required: false
@@ -71,8 +67,7 @@ jobs:
       build_kind: ${{ steps.prepare.outputs.build_kind }}
       build_ops: ${{ steps.prepare.outputs.build_ops }}
       atk_ops: ${{ steps.prepare.outputs.atk_ops }}
-      ci_modified: ${{ steps.prepare.outputs.ci_modified }}
-      ci_approval_key: ${{ steps.prepare.outputs.ci_approval_key }}
+      trusted_ci_sha: ${{ steps.prepare.outputs.trusted_ci_sha }}
       device_id: ${{ steps.prepare.outputs.device_id }}
       request_key: ${{ steps.prepare.outputs.request_key }}
     steps:
@@ -161,6 +156,7 @@ jobs:
       CI_TMPDIR: /tmp/fla-npu-ci
       CI_HOST_TMPDIR: /home/huangjunzhe/ci/tmp/container-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
       CI_CACHE_ROOT: /home/huangjunzhe/ci/cache_root
+      CI_PACKAGE_CACHE: /home/huangjunzhe/ci/pkg-cache
       CI_NPU_LOCK_DIR: /home/huangjunzhe/ci/tmp/npu-locks
       CI_TIMING_ROOT: /home/huangjunzhe/ci/results/ci-timings
       TMPDIR: /home/huangjunzhe/ci/tmp
@@ -181,18 +177,14 @@ jobs:
         uses: actions/github-script@v8
         env:
           NPU_CI_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
-          NPU_CI_FILES_MODIFIED: ${{ needs.prepare.outputs.ci_modified }}
         with:
           github-token: ${{ github.token }}
           script: |
-            const { requireAuthorizedCiUser, requireCiModificationApproval } = require(
+            const { requireAuthorizedCiUser } = require(
               `${process.env.GITHUB_WORKSPACE}/rerun-policy/.github/scripts/npu_ci_policy.js`
             );
             const username = process.env.NPU_CI_TRIGGERING_ACTOR;
             await requireAuthorizedCiUser({ github, context, username });
-            if (process.env.NPU_CI_FILES_MODIFIED === 'true') {
-              await requireCiModificationApproval({ github, context, usernames: [username], confirmed: true });
-            }
 
       # Both platforms test the same locally merged base/head commits.
       - name: 拉取当前目标分支代码（直连）
@@ -205,9 +197,13 @@ jobs:
           http_proxy: ''
           https_proxy: ''
           all_proxy: ''
+          HTTP_PROXY: ''
+          HTTPS_PROXY: ''
+          ALL_PROXY: ''
           GIT_HTTP_PROXY: ''
           GIT_HTTPS_PROXY: ''
           no_proxy: '*'
+          NO_PROXY: '*'
         with:
           repository: ${{ github.repository }}
           ref: ${{ needs.prepare.outputs.base_sha }}
@@ -307,6 +303,52 @@ jobs:
             exit 1
           fi
           git merge --no-ff --no-edit "$NPU_CI_TARGET_SHA"
+
+      - name: 检出可信 CI（直连）
+        id: trusted_ci_direct
+        continue-on-error: true
+        uses: actions/checkout@v5
+        env:
+          http_proxy: ''
+          https_proxy: ''
+          all_proxy: ''
+          HTTP_PROXY: ''
+          HTTPS_PROXY: ''
+          ALL_PROXY: ''
+          GIT_HTTP_PROXY: ''
+          GIT_HTTPS_PROXY: ''
+          no_proxy: '*'
+          NO_PROXY: '*'
+        with:
+          ref: ${{ needs.prepare.outputs.trusted_ci_sha }}
+          path: trusted-ci
+          sparse-checkout: ci
+          persist-credentials: false
+
+      - name: 加载可信 CI 拉取代理
+        if: steps.trusted_ci_direct.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          source "$CI_PROXY_SCRIPT"
+          proxyon
+          for variable in http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY \
+            no_proxy NO_PROXY GIT_HTTP_PROXY GIT_HTTPS_PROXY; do
+            value="${!variable-}"
+            if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then exit 1; fi
+            printf '%s=%s\n' "$variable" "$value" >> "$GITHUB_ENV"
+          done
+
+      - name: 检出可信 CI（代理重试）
+        if: steps.trusted_ci_direct.outcome == 'failure'
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.trusted_ci_sha }}
+          path: trusted-ci
+          sparse-checkout: ci
+          persist-credentials: false
+
+      - name: 应用固定版本的可信 CI
+        run: python3 trusted-ci/ci/apply_trusted_ci.py --repo repo --trusted-ci trusted-ci
 
       - name: 运行 ${{ matrix.name }} NPU CI 容器
         id: npu_ci
@@ -556,7 +598,6 @@ jobs:
           NPU_OPS: ${{ needs.prepare.outputs.ops }}
           NPU_ATK_OPS: ${{ needs.prepare.outputs.atk_ops }}
           NPU_CI_BUILD_KIND: ${{ needs.prepare.outputs.build_kind }}
-          NPU_CI_APPROVAL_KEY: ${{ needs.prepare.outputs.ci_approval_key }}
           NPU_CI_BUILD_OPS: ${{ needs.prepare.outputs.build_ops }}
           NPU_CI_DEVICE_ID: ${{ needs.prepare.outputs.device_id }}
           NPU_CI_REQUEST_KEY: ${{ needs.prepare.outputs.request_key }}

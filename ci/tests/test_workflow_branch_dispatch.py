@@ -87,14 +87,13 @@ globalThis.github = {{
   rest: {{
     repos: {{
       get: async () => ({{ data: {{ default_branch: 'main' }} }}),
+      getCollaboratorPermissionLevel: async () => ({{data: {{permission: 'admin'}}}}),
       getBranch: async (payload) => ({{ data: {{ name: payload.branch }} }}),
       getContent: async (payload) => ({{
         data: {{
           type: 'file',
           encoding: 'base64',
-          content: payload.path.endsWith('npu-ci-users.json')
-            ? Buffer.from(JSON.stringify({{ users: ['ci-admin'] }})).toString('base64')
-            : '{encoded_workflow}',
+          content: '{encoded_workflow}',
         }},
       }}),
     }},

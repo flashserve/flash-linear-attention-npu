@@ -24,7 +24,7 @@ def source_steps():
 
 
 class SharedSourcePreparationTest(unittest.TestCase):
-    def test_platforms_share_one_source_path_and_use_pr_ci(self):
+    def test_platforms_share_source_path_and_workflow_pinned_trusted_ci(self):
         steps = source_steps()
         self.assertEqual(sum(step.get("working-directory") == "repo" for step in steps), 1)
         for step in steps:
@@ -33,8 +33,19 @@ class SharedSourcePreparationTest(unittest.TestCase):
                 expected = "base_sha"
                 self.assertEqual(step["with"]["ref"], "${{ needs.prepare.outputs." + expected + " }}")
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
-        for removed in ("download_archive", "extract_archive", "replay_base_delta", "fla-npu-source-", "trusted_ci_sha", "use_pr_ci", "trusted-ci"):
+        for removed in ("download_archive", "extract_archive", "replay_base_delta", "fla-npu-source-", "use_pr_ci"):
             self.assertNotIn(removed, text)
+        trusted = [step for step in steps if step.get("uses") == "actions/checkout@v5"
+                   and step["with"]["path"] == "trusted-ci"]
+        self.assertTrue(trusted)
+        for step in trusted:
+            self.assertEqual(step["with"]["ref"], "${{ needs.prepare.outputs.trusted_ci_sha }}")
+            self.assertEqual(step["with"]["sparse-checkout"], "ci")
+            self.assertFalse(step["with"]["persist-credentials"])
+        apply = next(step for step in steps if "apply_trusted_ci.py" in step.get("run", ""))
+        self.assertNotIn("if", apply)
+        self.assertIn("--repo repo --trusted-ci trusted-ci", apply["run"])
+        self.assertIn("trusted-ci/ci/apply_trusted_ci.py", apply["run"])
 
     def test_container_downloads_load_proxy_in_their_own_shell(self):
         steps = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]["ascend-npu"]["steps"]

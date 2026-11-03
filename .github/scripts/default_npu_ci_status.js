@@ -1,8 +1,8 @@
 'use strict';
 
 const {
-  REQUIRED_CHECKS, USERS_PATH, decodeFile, defaultBranch, changedFiles, changedPaths, isDocumentationPath,
-  buildCiApprovalKey, createComment, writeStatuses,
+  REQUIRED_CHECKS, decodeFile, defaultBranch, changedFiles, changedPaths, isDocumentationPath,
+  createComment, writeStatuses,
 } = require('./npu_ci_policy');
 
 async function branchContexts({ github, context, core, pr }) {
@@ -51,28 +51,12 @@ module.exports = async function defaultNpuCiStatus({ github, context, core }) {
     !/\/actions\/runs\/\d+/.test(status.target_url || ''));
   await writeStatuses({ github, context, pr, checks: stale.map(([name]) => [name, name]), state: 'success',
     description: `不适用：base 分支 ${pr.base.ref} 的 NPU CI 不含此检查`, targetUrl: pr.html_url });
-  const ciModified = paths.some((path) => !isDocumentationPath(path) && /^(?:ci|\.github)(?:\/|$)/.test(path));
-  if (ciModified) {
-    // Commit statuses are shared by every PR pointing at the same head. An
-    // Actions URL alone proves neither this PR's Admin approval nor its base.
-    const marker = `ci-ok=${buildCiApprovalKey({ prNumber: pr.number, baseRef: pr.base.ref,
-      baseSha: pr.base.sha, headSha: pr.head.sha })}`;
-    const current = checks.map(([name]) => latest.get(name));
-    const runUrl = current[0]?.target_url || '';
-    const prefix = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/`;
-    const approvedRun = runUrl.startsWith(prefix) && /^\d+$/.test(runUrl.slice(prefix.length)) &&
-      current.every((status) => status?.target_url === runUrl && status.description?.split(/\s+/).includes(marker));
-    if (approvedRun) {
-      core.notice('本 PR、目标分支和 commit 已获得 Admin 确认，保留其 NPU CI 执行状态。');
-      return;
-    }
-  }
   // Statuses belong to a commit, so another PR/base may have marked this head
   // as Markdown-only. A non-Markdown diff must invalidate those shortcuts.
   const baseChanged = context.payload.action === 'edited';
   const pendingChecks = checks.filter(([name]) => {
     const status = latest.get(name);
-    return ciModified || baseChanged || !status ||
+    return baseChanged || !status ||
       (status.state === 'success' && ['仅修改 Markdown，跳过 NPU CI', '仅修改文档或 LICENSES，跳过 NPU CI'].includes(status.description));
   });
   if (!pendingChecks.length && [...latest.values()].some((status) =>
@@ -81,10 +65,10 @@ module.exports = async function defaultNpuCiStatus({ github, context, core }) {
     return;
   }
   const commitUpdated = context.payload.action === 'synchronize';
-  const description = ciModified ? '未确认：CI 文件变更须管理员添加 ci_modified=true 触发' : baseChanged
+  const description = baseChanged
     ? '未执行：PR 目标分支已变化，请重新触发 /run-npu-ci quick'
-    : (commitUpdated ? '未执行：commit 已变化，请重新触发 /run-npu-ci quick' : '未执行：请授权 CI 账号评论 /run-npu-ci quick');
-  await writeStatuses({ github, context, pr, checks: pendingChecks, state: ciModified ? 'failure' : 'pending', description,
+    : (commitUpdated ? '未执行：commit 已变化，请重新触发 /run-npu-ci quick' : '未执行：请仓库 Admin 评论 /run-npu-ci quick');
+  await writeStatuses({ github, context, pr, checks: pendingChecks, state: 'pending', description,
     targetUrl: pr.html_url });
   await createComment({ github, context, pr, body: [
     `NPU CI 暂未执行：\`${pr.head.sha}\`。`, '',
@@ -93,8 +77,6 @@ module.exports = async function defaultNpuCiStatus({ github, context, core }) {
     `- CI 定义分支：\`${pr.base.ref}\``,
     `- 合入要求：当前 commit 必须通过 ${contexts.length} 个 NPU CI 分项状态`,
     '- 执行方式：A2/A5 并行；平台内部顺序执行，前置失败时后续项跳过',
-    '- 触发命令：授权账号评论 `/run-npu-ci quick` 或 `/run-npu-ci full`',
-    ciModified ? '- CI 文件变更尚未确认：需要同时在 CI 名单中的仓库 Admin 评论 `/run-npu-ci quick ci_modified=true`；此变更本身不触发编译' : '',
-    `- 授权账号：由默认分支的 \`${USERS_PATH}\` 独立维护`,
+    '- 触发命令：仓库 Admin 评论 `/run-npu-ci quick` 或 `/run-npu-ci full`',
   ].filter(Boolean).join('\n') });
 };

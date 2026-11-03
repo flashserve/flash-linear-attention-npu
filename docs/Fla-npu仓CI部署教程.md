@@ -14,10 +14,10 @@ export CI_ROOT="${CI_ROOT:-$HOME/ci}"
 
 ## 部署约定
 
-完整 CI 流程、6 项门禁、文件分类、触发名单和 Admin 确认规则统一见 [仓库规则：NPU CI 门禁](repository-rules.md#npu-ci-门禁)。仅修改 `.md`、`docs/` 或 `LICENSES/` 自动放行；其他正式请求按差异选择包准备方式，并验证选中算子的 ATK 精度。本教程说明 runner、镜像、底包、网络和排障配置。
+完整 CI 流程、6 项门禁、文件分类、Admin 触发权限和可信 CI 来源规则统一见 [仓库规则：NPU CI 门禁](repository-rules.md#npu-ci-门禁)。仅修改 `.md`、`docs/` 或 `LICENSES/` 自动放行；其他正式请求按差异选择包准备方式，并验证选中算子的 ATK 精度。本教程说明 runner、镜像、底包、网络和排障配置。
 
 - A2/A5 使用同一条 Git 源码准备路径：固定 base、拉取并核对 PR head、合并 PR；首次直连，失败后才启用宿主机代理重试。两台主机均需能直连或通过代理访问 GitHub Git 服务。
-- 两个平台一律运行 PR 合并后的 `ci/`，不叠加其他版本的 CI 目录。非 Markdown 的 `ci/` 或 `.github/` 修改必须由 CI 名单内的仓库 Admin 带 `ci_modified=true` 确认，重跑人也须满足相同权限。
+- 两个平台执行本次固定 workflow SHA 的可信 `ci/`，保留合并后 PR 的 `ci/example_st_cases.json` 用例数据；PR 作者身份不改变脚本来源。触发和重跑均需仓库 Admin 权限。
 - runner 的 GitHub 控制连接可以使用代理。源码首次直连步骤会清空继承的 HTTP/HTTPS/ALL/Git 代理并设置 `NO_PROXY=*`；只有源码失败后才加载 `CI_PROXY_SCRIPT`。代理配置须在两台主机均提前部署。
 - runner 运行用户须能使用 Docker 和 Ascend 设备。`ci/run_ci_container.sh` 默认带 `--privileged`，否则可能出现 `npu-smi` 不可用或 `torch_npu.npu.device_count()` 为 `0`。
 - `/run-npu-ci ... device-id=N` 对应 `CI_DEVICE_ID=N`，约束宿主机物理卡并对该卡加锁；省略时自动择卡。容器通过 `ASCEND_RT_VISIBLE_DEVICES` 只暴露选中卡，Example/ST、PyTorch 和 ATK 使用逻辑设备 `0`。
@@ -34,7 +34,7 @@ runner 标签必须精确匹配：
 | A2 | `linux,arm64,npu,flash-linear-attention-npu` |
 | A5 | `linux,x64,npu,ascend950,flash-linear-attention-npu-a5` |
 
-A5 的独立产品标签用于确保一次门禁覆盖两个平台。注册 token 和分支保护配置仍要求仓库管理员操作；日常 CI 触发权限由默认分支 [`.github/npu-ci-users.json`](../.github/npu-ci-users.json) 独立管理。
+A5 的独立产品标签用于确保一次门禁覆盖两个平台。注册 token、分支保护配置、日常 CI 触发和重跑均要求仓库 Admin 权限。独立用户名触发名单、取消可信 CI 和 CI 文件修改需 Admin 显式确认由 [独立权限与 CI 来源策略 PR #1046](https://github.com/flashserve/flash-linear-attention-npu/pull/1046) 单独维护；使用其他 CI 定义分支时，以所选 workflow 的实际策略为准。
 
 ## 你需要准备什么
 
@@ -172,6 +172,20 @@ A5 Dockerfile 对 PyTorch 和 `torch_npu` wheel 做 SHA256 校验。默认 Pytho
 
 底包沿用 [PR #1037](https://github.com/flashserve/flash-linear-attention-npu/pull/1037) 的发布源，默认 `CI_BASE_WHEEL_INDEX_URL=https://mirrors.huaweicloud.com/ascend/repos/pypi/nightly/`。按 PR 目标分支选择 `main` 的 `0.dev...+main.<SHA>` 或 `vX.Y.Z` 的 `X.Y.Z.dev...`，按 SOC 选择 A2/A5 包，再按当前 Python、CPU wheel 标签匹配。安装前还校验 METADATA、Stable 库和目标 SOC 的 kernel/config。不会回退到 PyPI 或其他分支、平台；如维护分支无映射、缺包或 ABI 不兼容，应补发匹配 Daily，或使用 `/run-npu-ci full`。维护者可用 `CI_BASE_WHEEL_VERSION` 固定同一分支的某个 Daily 版本。
 
+Daily wheel 默认缓存在每台宿主 `/home/huangjunzhe/ci/pkg-cache`，由 `CI_PACKAGE_CACHE` 指定，容器挂载到 `/ci-pkg-cache`。缓存按目标分支、SOC、CPU、Python/ABI 标签、下载源和指定版本隔离。北京时间每日第一次需要底包的 CI 下载远程最新匹配包；日内复用前仍检查 SHA256、wheel 元数据和完整性。进程锁串行化同一兼容维度的刷新，临时下载校验完成后原子发布；下载失败时 CI 明确失败，不把当天标为已刷新，也不退回旧日包。全量编译不需要底包，不触发下载。
+
+Admin 在 PR 评论 `/update-package` 可强制刷新该 PR 目标分支；可选 `/update-package ci_ref=<CI定义分支>` 选择实现同一入口的 workflow，也可在 Actions 的 `更新 Daily 底包缓存` 中指定 `base_ref`。任务各调度一个 A2 和一个 A5 runner，只下载、校验被调度主机的缓存，不安装、不编译、不申请 NPU。存在多台同平台主机时，其他机器在其当天首次需要底包的 CI 中自动刷新。直接包准备可设置 `CI_UPDATE_PACKAGE=true`；已进入对应 CI 镜像时，`python ci/prepare_ci_package.py --update-package` 只刷新缓存并写 `CI_PACKAGE_INFO_FILE`。
+
+在单台宿主以镜像中的正确 Python 刷新缓存，可使用：
+
+```sh
+CI_PACKAGE_CACHE="${CI_ROOT}/pkg-cache" CI_BASE_REF=main \
+  CI_SOC=ascend950 CI_IMAGE=fla-npu-ci:9.1.0-950 \
+  bash ci/update_package_cache.sh
+```
+
+A2 改用 `CI_SOC=ascend910b CI_IMAGE=fla-npu-ci:9.1.0-910b`。先按网络环境加载代理；该入口使用预置镜像和只读源码挂载，无需设备。部署时预建 `pkg-cache` 为共享组可写的 `2775`；缓存中新目录为 `2775`、新文件为 `0664`，不递归更改已有文件的属主。
+
 选中 ATK 算子的 runner 镜像还须预装可用的 ATK（`REQUIRED_ATK_VERSION` 默认最低版本为 26.8.8）、`taskset` 和对应依赖。仓库不假设公开 PyPI 上的同名包可用；维护者应获取受控 HTTPS 来源的 CPython 3.12 wheel，A2 使用 aarch64 wheel，A5 使用 x86_64 wheel，通过 Dockerfile 的 `ATK_WHL_URL`、`ATK_WHL_SHA256` 参数校验后安装，详见 [ATK 镜像依赖](../tests/atk/README.md#ci-镜像依赖)，例如：
 
 ```sh
@@ -196,9 +210,9 @@ A2/A5 job 统一设置 `CI_TMPDIR=/tmp/fla-npu-ci`。A5 Triton/BiShengIR 编译�
 
 `ci/run_ci_container.sh` 在宿主机注册 `EXIT` 收尾：通过 Docker `--cidfile` 记录本次创建的容器 ID，仅停止该容器，再用无网络 helper 容器将源码及本次 `CI_HOST_TMPDIR` 的所有权归还调用用户，最后释放设备锁。正常退出、失败、中断及 stale-commit 监控提前 `docker rm -f` 的路径均执行收尾；原始非零退出码保留，成功运行后的收尾失败也会使 CI 失败。目录准备与权限收尾都在入口脚本中完成，无需新增 workflow 步骤或宿主机 `sudo`。
 
-workflow 清理步骤仅删除本次 `CI_HOST_TMPDIR`，并校验目录边界及符号链接。源码直接使用 PR 的 `ci/`，不再创建 CI 覆盖或用例暂存目录。静态 `TMPDIR` 根目录始终保留。
+workflow 在独立 `trusted-ci` checkout 中检出固定 workflow SHA，以可信脚本替换合并后源码的 `ci/`，仅保留 PR 的合法常规 JSON 文件 `ci/example_st_cases.json`。源码与可信 CI 的首次拉取均先直连、失败后代理。清理步骤仅删除本次 `CI_HOST_TMPDIR`，并校验目录边界及符号链接；静态 `TMPDIR` 根目录始终保留。
 
-缓存固定使用 `CI_CACHE_ROOT=${CI_ROOT}/cache_root`；NPU 锁固定使用 `${CI_ROOT}/tmp/npu-locks`，跨运行共享，不能按 run 分开。单次运行的收尾保留共享缓存与锁文件，不递归修改它们的所有权。
+编译缓存使用 `CI_CACHE_ROOT=${CI_ROOT}/cache_root`，Daily wheel 缓存使用 `CI_PACKAGE_CACHE=${CI_ROOT}/pkg-cache`；NPU 锁固定使用 `${CI_ROOT}/tmp/npu-locks`，三者均跨运行共享，不能按 run 分开。单次运行的收尾保留共享缓存与锁文件，不递归修改它们的所有权。
 
 Stage 耗时统一保存在每台服务器的 `${CI_ROOT}/results/ci-timings/stage-timings.csv`（workflow 通过 `CI_TIMING_ROOT` 配置）。总表每行对应一个 `(run_id, run_attempt, platform, stage)`，包含 commit、SOC、状态、退出码、UTC 起止时间和 `duration_seconds`，历史 CI 行持续保留。记录设备执行阶段，包括 `atk-accuracy`；GitHub-hosted 汇总校验不在此表内。每次 stage 状态变化即加锁更新总表、同步落盘并原子替换，失败也保留，工作区与临时目录清理不会删除它。被强制终止的 stage 保留 `running` 和开始时间，耗时留空；`skipped/not_run` 耗时也留空，不写成 0。启用前须在 A2、A5 分别创建下述可写目录；总表由各自服务器维护，不自动跨机合并。
 
@@ -212,7 +226,7 @@ runner 使用普通 `ubuntu` 用户，workflow 全程不调用 `sudo`。[一键�
 sudo groupadd -f fla-npu-ci
 sudo usermod -aG docker,HwHiAiUser,fla-npu-ci ubuntu
 sudo install -d -o ubuntu -g fla-npu-ci -m 2775 \
-  "${CI_ROOT}/tmp" "${CI_ROOT}/cache_root" \
+  "${CI_ROOT}/tmp" "${CI_ROOT}/cache_root" "${CI_ROOT}/pkg-cache" \
   "${CI_ROOT}/results" "${CI_ROOT}/results/ci-timings" \
   "${CI_ROOT}/actions-runner"
 ```
@@ -558,18 +572,19 @@ bash scripts/github/apply_branch_protection.sh main
 
 ## 第 10 步：验证触发方式
 
-先确认触发用户名已加入默认分支的 [`.github/npu-ci-users.json`](../.github/npu-ci-users.json)。分发和执行准备各自读取默认分支名单，待测 PR 的名单变更不授予权限；普通代码验证无需仓库 Admin 权限。CI 文件变更还须名单内 Admin 带 `ci_modified=true` 确认，实际重跑人也须满足对应权限。完整规则见 [仓库规则](repository-rules.md#npu-ci-门禁)。
+先确认触发人具备仓库 Admin 权限。评论分发、执行准备和实际重跑分别校验权限；权限读取失败时拒绝执行。设备任务固定使用所选 workflow SHA 的可信 CI，同时保留 PR 合并后的 Example/ST 用例数据。完整规则见 [仓库规则](repository-rules.md#npu-ci-门禁)。
 
 部署后的检查顺序：
 
 1. 新建只修改 `.md`、`docs/` 或 `LICENSES/` 的 PR，确认 6 项自动 success 且没有 NPU job。重命名检查原、新路径；文件列表不完整时不能跳过，同一 commit 在其他 PR 的文档结果不能代替本 PR 检查。
-2. 在普通代码 PR 上确认 6 项初始 pending；在包含非 Markdown 的 `ci/` 或 `.github/` 修改的 PR 上确认默认 failure 评论明确提示 Admin 追加 `ci_modified=true`。
-3. 用名单用户评论 `/run-npu-ci quick`，CI 修改则由名单内 Admin 评论 `/run-npu-ci quick ci_modified=true`；Actions 手动输入使用下划线名称 `atk_ops`、`device_id`、`ci_modified`。确认新增评论列出全量/增量/torch/底包计划及 ATK 集合，并分别调度 A2/A5。
+2. 在非文档 PR 上确认 6 项初始 pending；验证普通仓库成员触发被拒绝，Admin 可以触发。`ci/`、`.github/` 修改本身不触发编译，也不增加 ATK 算子。
+3. 用仓库 Admin 评论 `/run-npu-ci quick`；Actions 手动输入使用下划线名称 `atk_ops`、`device_id`。确认新增评论列出全量/增量/torch/底包计划及 ATK 集合，并分别调度 A2/A5。
 4. 验证普通单算子修改只编译对应算子并自动测试该算子 ATK；只有 ATK 算子目录修改时用底包运行 ATK；公共构建文件修改应全量。核对 artifact 中实际包准备方式和底包分支、SOC、CPU、Python、版本。
 5. 使用 `/run-npu-ci quick atk-ops=chunk_fwd_o device-id=0`，确认手动 ATK 与自动集合合并、物理设备选择生效，容器中的测试仍使用逻辑设备 `0`。再用 `atk-ops=null` 确认覆盖自动集合，ATK 阶段明确 skipped，且不调用 ATK 入口；编译和其他验证照常。缺少 200 个精度 case、perf/mss 各 1 个时，日志须列出期望/实际数量和补齐建议；ATK 日志须显示最多 16 任务/16 CPU。
-6. 在两个平台日志确认源码先直连、失败后代理，并一律使用 PR 合并后的 `ci/`。`full` 应强制完整 wheel，且比 `quick` 额外执行全部 PyTorch 适配测试；GDR 和同一 ATK 集合的验证范围保持相同。
+6. 在两个平台日志确认源码与可信 CI 拉取先直连、失败后代理，执行固定 workflow SHA 的可信 `ci/`，同时保留 PR 的 `ci/example_st_cases.json`。`full` 应强制完整 wheel，且比 `quick` 额外执行全部 PyTorch 适配测试；GDR 和同一 ATK 集合的验证范围保持相同。
 7. 完成后确认新增独立结果评论及 6 个最终状态，ATK 显示为单独设备阶段并纳入第 06 项。缺少选中 ATK 报告不能通过；失败评论包含明确原因、修改建议及 `CI_STAGE` 复现命令。
 8. 再次触发相同请求，确认先排队、保留原任务，再去重并新增评论。head、目标分支名、base/workflow SHA、模式、编译计划、ATK 集合或设备号不同均应重新验证。
+9. 首次需要底包时确认下载并写入宿主 `pkg-cache`；同一北京时间日、兼容维度相同的再次运行应命中缓存，次日首次使用重新检查远程最新包。用 `/update-package` 强制刷新，确认只调度各一个 A2/A5 runner、不编译、不安装或使用 NPU；其他机器等待各自首次 CI 自动刷新。
 
 正式门禁使用 `/run-npu-ci quick` 或 `/run-npu-ci full`，按需追加 `atk-ops=...`。`ops=...` 只执行显式算子的 01/02 增量编译诊断，不运行 ATK、不满足正式门禁，不能和 `full`、`atk-ops` 组合。评论默认使用 PR 目标分支的 `ci.yml`，`ci_ref=<branch>` 或 Actions 页面的 `Branch` 可选择实现相同输入契约的其他 CI 定义分支。
 
@@ -600,7 +615,7 @@ bash scripts/github/apply_branch_protection.sh main
 1. 当前 head commit 的 6 个 NPU context 和 `CI 契约测试` 全部 success
 2. GitHub 分支保护要求的 2 个 approval 和 Code Owners review 已经满足
 
-如果 PR push 新 commit 或更换目标分支，门禁会重新检查：只有 `.md`、`docs/` 或 `LICENSES/` 改动直接通过，其余需名单用户重新触发；CI 文件变更还须 Admin 确认。旧 commit 或旧 base 的结果不能放行新的请求。
+如果 PR push 新 commit 或更换目标分支，门禁会重新检查：只有 `.md`、`docs/` 或 `LICENSES/` 改动直接通过，其余需仓库 Admin 重新触发。旧 commit 或旧 base 的结果不能放行新的请求。
 
 `weinachuan` 如果需要紧急强行合入，可以走 GitHub branch protection bypass，但前提是第 9 步已经把 bypass allowance 配好。
 
@@ -670,6 +685,8 @@ Custom OPP op_api lib: <已安装fla_npu>/opp/vendors/fla_npu_transformer/op_api
 
 ### Daily 底包下载或匹配失败
 
+先核对宿主 `pkg-cache` 和 artifact 中 `cache` 的命中状态、北京时间刷新日期、SHA256 与兼容维度。日内损坏的缓存会重新下载；新一天或显式刷新失败不会沿用旧包。需要重新检查发布源时使用 `/update-package` 或在单机调用 `ci/update_package_cache.sh`。
+
 核对 PR 目标分支是否为 `main` 或已有对应 Daily 的 `vX.Y.Z`，发布源中是否同时存在当前 SOC、CPU 架构、Python 版本对应 wheel。不能用 A2/aarch64 代替 A5/x86_64，也不能用 `main` 的包代替维护分支。应发布匹配底包，必要时设置同分支 `CI_BASE_WHEEL_VERSION`，或改用 `/run-npu-ci full`；不要增加其他 index 回退来掩盖缺包。
 
 ### ATK 缺失、资产不足或精度失败
@@ -690,8 +707,7 @@ bash tests/atk/run_test_cpu.sh -op=chunk_fwd_o -scope=accuracy -ci=true -npu_dev
 
 - 评论是否发在 PR 页面，不是普通 Issue 页面
 - 命令是否以 `/run-npu-ci` 开头
-- 发送评论的人是否在默认分支 `.github/npu-ci-users.json` 名单中；文件是否为合法 JSON
-- PR 是否修改非 Markdown 的 `ci/`、`.github/`；如是，触发人必须同时为仓库 Admin 并显式添加 `ci_modified=true`
+- 发送评论和实际重跑的人是否具有仓库 Admin 权限；权限 API 是否可正常读取
 - 是否错误组合了 `ops=` 与 `full` 或 `atk-ops`；需要 ATK 时使用正式 `quick atk-ops=...`
 - `NPU CI 评论分发` workflow 是否启用
 - PR 目标分支或 `ci_ref` 指定分支是否存在 `.github/workflows/ci.yml`
@@ -700,7 +716,7 @@ bash tests/atk/run_test_cpu.sh -op=chunk_fwd_o -scope=accuracy -ci=true -npu_dev
 
 ### PR 创建后没有 6 个 NPU CI 分项的未执行状态
 
-只有 `.md`、`docs/` 或 `LICENSES/` 的 PR 直接显示 6 个 success。CI 文件变更在管理员确认前显示 failure；其他 PR 检查：
+只有 `.md`、`docs/` 或 `LICENSES/` 的 PR 直接显示 6 个 success；其他 PR 检查：
 
 - `NPU CI 默认状态` workflow 是否启用
 - PR 是否是新建、重开、ready for review，或刚 push 了新 commit

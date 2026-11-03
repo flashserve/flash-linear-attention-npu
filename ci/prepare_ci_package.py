@@ -2,11 +2,17 @@
 """Prepare a full wheel, or a branch-matched Daily base with a safe OPP delta.
 
 Inputs: CI_BUILD_KIND=full|incremental|torch|base, CI_BUILD_OPS, CI_BASE_REF,
-CI_SOC, CI_JOBS. Outputs: CI_PACKAGE_INFO_FILE and CI_PACKAGE_ENV_FILE.
+CI_SOC, CI_JOBS, CI_PACKAGE_CACHE, CI_UPDATE_PACKAGE=true|false.
+Outputs: CI_PACKAGE_INFO_FILE and CI_PACKAGE_ENV_FILE. --update-package only
+refreshes the compatible Daily cache; it never installs or compiles a package.
 No test process should import fla_npu before the generated env has been sourced.
 """
 from __future__ import annotations
 
+import argparse
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
+import hashlib
 import importlib.util
 import json
 import os
@@ -35,6 +41,64 @@ DAILY_INDEX = "https://mirrors.huaweicloud.com/ascend/repos/pypi/nightly/"
 TIERS = {"ascend910b": "a2", "ascend910_93": "a3", "ascend950": "a5"}
 OVERLAY = "fla_npu_overlay_transformer"
 VENDOR = "fla_npu_transformer"
+DEFAULT_PACKAGE_CACHE = "/home/huangjunzhe/ci/pkg-cache"
+BEIJING = timezone(timedelta(hours=8))
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def shared_directory(path: Path):
+    """Keep a setgid group on newly created cache directories only."""
+    try:
+        path.mkdir(mode=0o2775)
+    except FileExistsError:
+        return
+    if os.name != "nt":
+        path.chmod(0o2775)
+
+
+@contextmanager
+def package_cache_lock(path: Path):
+    """A persistent lock inode serializes readers, daily refresh and publication."""
+    shared_directory(path.parent)
+    try:
+        descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o664)
+        created = True
+        if os.name != "nt":
+            os.fchmod(descriptor, 0o664)
+    except FileExistsError:
+        descriptor = os.open(path, os.O_RDWR)
+        created = False
+    with os.fdopen(descriptor, "r+b") as handle:
+        if os.name == "nt":
+            import msvcrt
+            if created:
+                handle.write(b"0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def branch_version(base_ref: str) -> str:
@@ -63,6 +127,38 @@ def validate_daily_version(version: Version, base_ref: str) -> None:
         raise ValueError(f"Main Daily base cannot be used for {base_ref}: {version}")
 
 
+def installed_wheel_paths(archive: zipfile.ZipFile, stem: str) -> set[str]:
+    """Map only this wheel's root and library schemes to installed package paths."""
+    library_prefixes = (f"{stem}.data/purelib/", f"{stem}.data/platlib/")
+    paths = set()
+    for entry in archive.infolist():
+        # ZipInfo normalizes Windows separators and strips NUL suffixes from
+        # filename; validate the original ZIP name before trusting that view.
+        original = entry.orig_filename
+        archive_path = original[:-1] if original.endswith("/") else original
+        components = archive_path.split("/")
+        if ("\\" in original or "\0" in original or re.match(r"^[A-Za-z]:", archive_path)
+                or any(part in {"", ".", ".."} for part in components)):
+            raise ValueError(f"Daily base has an invalid ZIP path: {entry.filename}")
+        if (len(components) >= 3 and components[0].endswith(".data")
+                and components[1] in {"purelib", "platlib"} and components[2] == "fla_npu"
+                and components[0] != f"{stem}.data"):
+            raise ValueError(f"Daily base has a foreign data directory for fla_npu: {entry.filename}")
+        if entry.is_dir():
+            continue
+        relative = entry.filename
+        for prefix in library_prefixes:
+            if relative.startswith(prefix):
+                relative = relative[len(prefix):]
+                break
+        if not relative.startswith("fla_npu/"):
+            continue
+        if relative in paths:
+            raise ValueError(f"Daily base has conflicting installed package entries: {relative}")
+        paths.add(relative)
+    return paths
+
+
 def validate_base_wheel(wheel: Path, *, package: str, base_ref: str, soc: str) -> str:
     name, version, _build, tags = parse_wheel_filename(wheel.name)
     if canonicalize_name(name) != canonicalize_name(package):
@@ -77,7 +173,23 @@ def validate_base_wheel(wheel: Path, *, package: str, base_ref: str, soc: str) -
         )
     validate_daily_version(version, base_ref)
     with zipfile.ZipFile(wheel) as archive:
-        names = set(archive.namelist())
+        if archive.testzip() is not None:
+            raise ValueError("Daily base wheel has corrupt ZIP contents; download or publish it again.")
+        metadata_paths = [entry.filename for entry in archive.infolist()
+                          if not entry.is_dir() and entry.filename.endswith(".dist-info/METADATA")]
+        if len(metadata_paths) != 1 or not re.fullmatch(r"[^/]+\.dist-info/METADATA", metadata_paths[0]):
+            raise ValueError("Daily base must contain exactly one top-level wheel METADATA")
+        stem = metadata_paths[0][:-len(".dist-info/METADATA")]
+        distribution, separator, metadata_version = stem.rpartition("-")
+        if (not separator or canonicalize_name(distribution) != canonicalize_name(package)
+                or Version(metadata_version) != version):
+            raise ValueError("Daily filename and METADATA directory disagree; republish the Daily wheel.")
+        from email.parser import Parser
+        metadata = Parser().parsestr(archive.read(metadata_paths[0]).decode("utf-8"))
+        if (canonicalize_name(metadata.get("Name", "")) != canonicalize_name(package)
+                or Version(metadata.get("Version", "0")) != version):
+            raise ValueError("Daily filename and package METADATA disagree; republish the Daily wheel.")
+        names = installed_wheel_paths(archive, stem)
         prefix = f"fla_npu/opp/vendors/{VENDOR}/"
         required = {"fla_npu/libfla_npu_stable.so", prefix + "op_api/lib/libcust_opapi.so"}
         missing = sorted(required - names)
@@ -87,14 +199,6 @@ def validate_base_wheel(wheel: Path, *, package: str, base_ref: str, soc: str) -
                 missing.append(f"{soc} {section}")
         if missing:
             raise ValueError(f"Daily base is incomplete or has the wrong SOC: {', '.join(missing)}")
-        metadata_paths = [name for name in names if name.endswith(".dist-info/METADATA")]
-        if len(metadata_paths) != 1:
-            raise ValueError("Daily base must contain exactly one wheel METADATA")
-        from email.parser import Parser
-        metadata = Parser().parsestr(archive.read(metadata_paths[0]).decode("utf-8"))
-        if (canonicalize_name(metadata.get("Name", "")) != canonicalize_name(package)
-                or Version(metadata.get("Version", "0")) != version):
-            raise ValueError("Daily filename and package METADATA disagree; republish the Daily wheel.")
     return str(version)
 
 
@@ -128,6 +232,12 @@ class PackagePreparer:
         elif self.ops:
             raise ValueError(f"CI_BUILD_OPS must be empty for {self.kind} preparation")
         self.package = f"flash-linear-attention-npu-{TIERS[self.soc]}"
+        refresh = (self.env.get("CI_UPDATE_PACKAGE") or "false").strip().lower()
+        if refresh not in {"true", "false"}:
+            raise ValueError("CI_UPDATE_PACKAGE must be true or false")
+        self.refresh_package = refresh == "true"
+        self.package_cache = self.path(self.env.get("CI_PACKAGE_CACHE") or DEFAULT_PACKAGE_CACHE)
+        self.base_cache_info = {}
         self.info_file = self.path(self.env.get("CI_PACKAGE_INFO_FILE") or ".ci-tmp/npu-ci-package.json")
         self.env_file = self.path(self.env.get("CI_PACKAGE_ENV_FILE") or ".ci-tmp/npu-ci-package-env.sh")
         self.env.update(FLA_NPU_SOC=self.soc, FLA_NPU_BUILD_ARGS=f"-j{self.jobs}",
@@ -155,7 +265,7 @@ class PackagePreparer:
             raise RuntimeError(f"Expected exactly one new wheel under {directory}, found {len(wheels)}")
         return wheels[0]
 
-    def download_base(self, directory: Path) -> tuple[Path, str, str]:
+    def daily_source(self) -> tuple[str, str, str]:
         prefix = branch_version(self.base_ref)
         version = self.env.get("CI_BASE_WHEEL_VERSION", "").strip()
         if version:
@@ -164,6 +274,10 @@ class PackagePreparer:
         if not index.startswith("https://"):
             raise ValueError("CI_BASE_WHEEL_INDEX_URL must use HTTPS")
         url = f"{index}{self.package}/latest/"
+        return prefix, version, url
+
+    def download_base(self, directory: Path) -> tuple[Path, str, str]:
+        prefix, version, url = self.daily_source()
         # No index fallback: a missing branch/SOC/architecture must never pick PyPI
         # or a different release line. pip chooses the current Python/CPU tags.
         self.run([sys.executable, "-m", "pip", "download", "--no-index", "--find-links", url,
@@ -173,6 +287,116 @@ class PackagePreparer:
         selected_version = validate_base_wheel(wheel, package=self.package,
                                                base_ref=self.base_ref, soc=self.soc)
         return wheel, selected_version, url
+
+    def cached_base(self, directory: Path, *, force: bool = False) -> tuple[Path, str, str]:
+        """Copy a verified Daily into this run; refresh each Beijing day once.
+
+        Downloaded generations are immutable. Holding the lock until the copy
+        finishes lets publication prune old generations without racing installers.
+        A refresh failure propagates, even when an older manifest still exists.
+        """
+        _prefix, requested_version, url = self.daily_source()
+        identity = {
+            "schema": 1, "base_ref": self.base_ref, "soc": self.soc,
+            "package": self.package, "url": url, "requested_version": requested_version,
+            "cpu": {"amd64": "x86_64", "arm64": "aarch64"}.get(
+                platform.machine().lower(), platform.machine().lower()),
+            "python": f"{sys.version_info.major}.{sys.version_info.minor}",
+            "python_tags": [str(tag) for tag in sys_tags()],
+        }
+        key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+        self.package_cache.parent.mkdir(parents=True, exist_ok=True)
+        shared_directory(self.package_cache)
+        cache = self.package_cache / key
+        manifest = cache / "manifest.json"
+        requested_at = utc_now()
+        force = force or self.refresh_package
+        with package_cache_lock(cache / ".lock"):
+            today = utc_now().astimezone(BEIJING).date().isoformat()
+            cached = None
+            try:
+                metadata = json.loads(manifest.read_text(encoding="utf-8"))
+                filename, digest = metadata["wheel"], metadata["sha256"]
+                if (metadata["identity"] != identity or not isinstance(filename, str)
+                        or Path(filename).name != filename or "/" in filename or "\\" in filename
+                        or not re.fullmatch(r"[0-9a-f]{64}", digest)):
+                    raise ValueError("Daily cache identity or filename is invalid")
+                refreshed_at = datetime.fromisoformat(metadata["refreshed_at"])
+                started_at = datetime.fromisoformat(metadata["refresh_started_at"])
+                if (refreshed_at.tzinfo is None or started_at.tzinfo is None
+                        or started_at > refreshed_at or refreshed_at > utc_now()):
+                    raise ValueError("Daily cache refresh timestamp is invalid")
+                if started_at.astimezone(BEIJING).date().isoformat() != metadata["refreshed_date"]:
+                    raise ValueError("Daily cache refresh date disagrees with its timestamp")
+                wheel = cache / "wheels" / digest / filename
+                if not wheel.is_file() or sha256_file(wheel) != digest:
+                    raise ValueError("Daily cache wheel is missing or its SHA256 changed")
+                version = validate_base_wheel(wheel, package=self.package,
+                                              base_ref=self.base_ref, soc=self.soc)
+                if version != metadata["version"] or (requested_version and version != requested_version):
+                    raise ValueError("Daily cache version disagrees with its metadata")
+                if (metadata["refreshed_date"] == today
+                        and (not force or refreshed_at >= requested_at)):
+                    cached = (wheel, version, metadata)
+            except (OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile):
+                # Missing or damaged cache is repaired by a complete new download.
+                # No invalid or stale cache can become a successful fallback.
+                pass
+            cache_hit = cached is not None
+            if cached is None:
+                print(f"[CI][PACKAGE] Refresh Daily cache for {self.base_ref}/{self.soc} ({today})",
+                      flush=True)
+                with tempfile.TemporaryDirectory(prefix=".download-", dir=cache) as tmp:
+                    started_at = utc_now()
+                    wheel, version, _url = self.download_base(Path(tmp))
+                    digest = sha256_file(wheel)
+                    destination = cache / "wheels" / digest / wheel.name
+                    shared_directory(cache / "wheels")
+                    shared_directory(destination.parent)
+                    if os.name != "nt":
+                        wheel.chmod(0o664)
+                    wheel.replace(destination)
+                    refreshed_at = utc_now()
+                    metadata = {
+                        "identity": identity, "wheel": destination.name, "version": version,
+                        "sha256": digest, "refreshed_at": refreshed_at.isoformat(),
+                        "refresh_started_at": started_at.isoformat(),
+                        "refreshed_date": started_at.astimezone(BEIJING).date().isoformat(),
+                    }
+                    temporary_manifest = Path(tmp) / "manifest.json"
+                    temporary_manifest.write_text(json.dumps(metadata, sort_keys=True, indent=2) + "\n",
+                                                  encoding="utf-8")
+                    if os.name != "nt":
+                        temporary_manifest.chmod(0o664)
+                    temporary_manifest.replace(manifest)
+                    cached = (destination, version, metadata)
+            wheel, version, metadata = cached
+            directory.mkdir(parents=True, exist_ok=True)
+            copied = directory / wheel.name
+            shutil.copyfile(wheel, copied)
+            self.base_cache_info = {
+                "path": str(cache), "hit": cache_hit, "sha256": metadata["sha256"],
+                "refreshed_date": metadata["refreshed_date"],
+                "refreshed_at": metadata["refreshed_at"],
+            }
+            # Only per-run copies are installed; obsolete generations cannot be
+            # in use after obtaining this lock. Keep the current generation only.
+            for generation in (cache / "wheels").iterdir():
+                if generation.name != metadata["sha256"] and generation.is_dir():
+                    shutil.rmtree(generation)
+            return copied, version, url
+
+    def update_package(self):
+        """Refresh the compatible cache without pip install, build or NPU access."""
+        self.info_file.parent.mkdir(parents=True, exist_ok=True)
+        self.info_file.unlink(missing_ok=True)
+        with tempfile.TemporaryDirectory(prefix="ci-package-update-", dir=self.info_file.parent) as tmp:
+            wheel, version, url = self.cached_base(Path(tmp), force=True)
+            info = {"kind": "update", "base_ref": self.base_ref, "soc": self.soc,
+                    "base_version": version, "base_url": url, "wheel": wheel.name,
+                    "cache": self.base_cache_info}
+            self.info_file.write_text(json.dumps(info, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(f"[CI][PACKAGE] Updated Daily cache: {json.dumps(info, ensure_ascii=False)}", flush=True)
 
     def build_incremental(self, staging: Path):
         self.run(["bash", "ci/prepare_ci_cache.sh"])
@@ -227,8 +451,8 @@ class PackagePreparer:
                 wheel = self.one_wheel(work / "full-wheel")
                 self.pip_install(wheel)
             else:
-                wheel, version, url = self.download_base(work / "base-wheel")
-                info.update(base_version=version, base_url=url)
+                wheel, version, url = self.cached_base(work / "base-wheel")
+                info.update(base_version=version, base_url=url, cache=self.base_cache_info)
                 self.pip_install(wheel)
                 if self.kind == "incremental":
                     self.build_incremental(work / "delta-opp")
@@ -252,9 +476,17 @@ class PackagePreparer:
         print(f"[CI][PACKAGE] Prepared {self.kind}: {json.dumps(info, ensure_ascii=False)}", flush=True)
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--update-package", action="store_true",
+                        help="Refresh only the matching Daily cache; do not install or compile")
+    args = parser.parse_args(argv)
     try:
-        PackagePreparer().prepare()
+        preparer = PackagePreparer()
+        if args.update_package:
+            preparer.update_package()
+        else:
+            preparer.prepare()
     except (ValueError, RuntimeError, OSError, zipfile.BadZipFile, subprocess.CalledProcessError) as exc:
         print(f"[CI][ERROR] Package preparation failed: {exc}", file=sys.stderr)
         print("[CI][FIX] Check the matching Daily base/build log and ABI compatibility; "

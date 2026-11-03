@@ -47,6 +47,28 @@ jobs:
             const dispatch = require('./.github/scripts/dispatch_npu_ci.js');
             await dispatch({github, context, core});
 
+  update-package:
+    name: 分发 Daily 底包刷新
+    if: >-
+      github.event.issue.pull_request &&
+      github.actor != 'github-actions[bot]' &&
+      contains(github.event.comment.body, '/update-package')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.workflow_sha }}
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+      - uses: actions/github-script@v8
+        env:
+          NPU_CI_RUN_ATTEMPT: ${{ github.run_attempt }}
+          NPU_CI_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        with:
+          script: |
+            const dispatch = require('./.github/scripts/dispatch_update_package');
+            await dispatch({ github, context, core });
+
   dispatch-package:
     name: 分发 Package 编译
     if: >-

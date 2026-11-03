@@ -50,7 +50,7 @@ CONTRACT_TEST_CONTEXT = "CI 契约测试"
 def request_key(mode="quick", ops="", base_sha="c" * 40, workflow_sha="b" * 40, base_ref="main"):
     plan = {"documentation_only": False, "full_build": not bool(ops),
             "build_ops": ops, "atk_ops": "", "build_kind": "incremental" if ops else "full",
-            "ci_modified": False, "device_id": "", "shared_atk_modified": False}
+            "device_id": "", "shared_atk_modified": False}
     payload = json.dumps([mode, ops, base_ref, base_sha, workflow_sha, plan], separators=(",", ":"))
     digest = hashlib.sha256(payload.encode()).hexdigest()[:16]
     return f"{'scoped' if ops else 'all'}-{digest}"
@@ -105,7 +105,6 @@ class WorkflowResultPresentationTest(unittest.TestCase):
         atk_ops="",
         skipped_atk=False,
         missing_atk=False,
-        ci_approval_key="",
     ):
         sha = "a" * 40
         run_id = "42"
@@ -667,7 +666,6 @@ globalThis.core = {
                     "NPU_CI_MODE": "quick",
                     "NPU_OPS": ops,
                     "NPU_ATK_OPS": atk_ops,
-                    "NPU_CI_APPROVAL_KEY": ci_approval_key,
                     "NPU_CI_REQUEST_KEY": request_key(ops=",".join(sorted(set(ops.split(","))))),
                     "NPU_PR_NUMBER": "527",
                     "PUBLISH_COUNT": str(publish_count),
@@ -868,11 +866,11 @@ globalThis.core = {
             direct = next(step for step in self.matrix_steps if step.get("id") == checkout_id)
             proxy = next(step for step in self.matrix_steps if step.get("name") == proxy_name)
             self.assertIn(f"steps.{checkout_id}.outcome == 'failure'", proxy["if"])
-            for variable in ("http_proxy", "https_proxy", "all_proxy", "GIT_HTTP_PROXY", "GIT_HTTPS_PROXY"):
+            for variable in ("http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY",
+                             "ALL_PROXY", "GIT_HTTP_PROXY", "GIT_HTTPS_PROXY"):
                 self.assertEqual(direct["env"][variable], "", (checkout_id, variable))
             self.assertEqual(direct["env"]["no_proxy"], "*")
-            env_names = [name.casefold() for name in direct["env"]]
-            self.assertEqual(len(env_names), len(set(env_names)), checkout_id)
+            self.assertEqual(direct["env"]["NO_PROXY"], "*")
             self.assertIn('source "$CI_PROXY_SCRIPT"', proxy["run"])
             self.assertIn("proxyon", proxy["run"])
         scripts = "\n".join(step.get("run", "") for step in self.matrix_steps)
@@ -1352,14 +1350,13 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
                 self.assertEqual(statuses[-1]["state"], "success" if passed else "failure")
                 self.assertIn("ATK", comment)
 
-    def test_ci_approval_marker_survives_all_status_descriptions(self):
-        completed, _, records = self._run_finalize_script(ci_approval_key="abc123def456", stage_failure="opp-package", matrix_result="failure")
+    def test_status_descriptions_respect_github_length_limit(self):
+        completed, _, records = self._run_finalize_script(stage_failure="opp-package", matrix_result="failure")
         self.assertEqual(completed.returncode, 0, completed.stderr)
         statuses = [item["payload"] for item in records if item["kind"] == "status"]
         self.assertEqual(len(statuses), 6)
         for item in statuses:
             self.assertLessEqual(len(item["description"]), 140)
-            self.assertTrue(item["description"].endswith("ci-ok=abc123def456"))
 
     def test_publisher_writes_final_status_after_stage_statuses(self):
         script = self.finalize_script

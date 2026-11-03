@@ -20,6 +20,7 @@ require_preloaded_image="${CI_REQUIRE_PRELOADED_IMAGE:-false}"
 rebuild_image="${CI_REBUILD_IMAGE:-false}"
 container_name="${CI_CONTAINER_NAME:-fla-npu-ci-$(date +%s)}"
 cache_root="${CI_CACHE_ROOT:-}"
+package_cache="${CI_PACKAGE_CACHE:-/home/huangjunzhe/ci/pkg-cache}"
 container_tmpdir="${CI_TMPDIR:-}"
 host_tmpdir="${CI_HOST_TMPDIR:-}"
 timing_root="${CI_TIMING_ROOT:-}"
@@ -210,6 +211,10 @@ third_party_cache="${CI_THIRD_PARTY_CACHE:-$cache_root/third_party}"
 gdr_accuracy_cache="${CI_GDR_ACCURACY_CACHE:-$cache_root/gdr_accuracy_golden}"
 gdr_accuracy_cache_container="/workspace/gdr_accuracy_golden"
 mkdir -p "$third_party_cache" "$gdr_accuracy_cache"
+if [[ ! -d "$package_cache" ]]; then
+    mkdir -p "$package_cache"
+    chmod 2775 "$package_cache"
+fi
 
 if [[ -z "$host_tmpdir" && "$container_tmpdir" == /tmp/* ]]; then
     host_tmpdir="$repo_dir/.ci-tmp/container-tmp"
@@ -221,7 +226,7 @@ if [[ -n "$host_tmpdir" ]]; then
     fi
     mkdir -p "$host_tmpdir"
     host_tmpdir="$(realpath "$host_tmpdir")"
-    for protected_dir in / /tmp /home "${HOME:-/}" "$repo_dir" "$cache_root" "${TMPDIR:-/tmp}"; do
+    for protected_dir in / /tmp /home "${HOME:-/}" "$repo_dir" "$cache_root" "$package_cache" "${TMPDIR:-/tmp}"; do
         protected_dir="$(realpath -m "$protected_dir")"
         if [[ "$protected_dir" == "$host_tmpdir" || "$protected_dir" == "$host_tmpdir/"* ]]; then
             echo "[CI][ERROR] CI_HOST_TMPDIR must be a dedicated temporary subdirectory." >&2
@@ -234,6 +239,7 @@ mount_args=(
     -v "$repo_dir:/workspace/repo"
     -v "$third_party_cache:/workspace/repo/third_party"
     -v "$gdr_accuracy_cache:$gdr_accuracy_cache_container"
+    -v "$package_cache:/ci-pkg-cache"
     -w /workspace/repo
 )
 if [[ -n "$host_tmpdir" ]]; then
@@ -256,6 +262,7 @@ done
 echo "[CI] Running $container_name on NPU ${NPU_SELECTED_DEVICE} (${NPU_SELECTED_NAME}, health=${NPU_SELECTED_HEALTH}, free=${NPU_SELECTED_FREE})"
 echo "[CI] third_party cache: $third_party_cache"
 echo "[CI] GDR accuracy golden cache: $gdr_accuracy_cache"
+echo "[CI] Daily package cache: $package_cache"
 echo "[CI] container TMPDIR: ${CI_TMPDIR:-auto}"
 if [[ -n "$host_tmpdir" ]]; then
     echo "[CI] container TMPDIR uses bind-mounted host storage"
@@ -302,6 +309,8 @@ docker run --rm \
     -e CI_BASE_REF="${CI_BASE_REF:-main}" \
     -e CI_BASE_WHEEL_INDEX_URL="${CI_BASE_WHEEL_INDEX_URL:-}" \
     -e CI_BASE_WHEEL_VERSION="${CI_BASE_WHEEL_VERSION:-}" \
+    -e CI_PACKAGE_CACHE=/ci-pkg-cache \
+    -e CI_UPDATE_PACKAGE="${CI_UPDATE_PACKAGE:-false}" \
     -e CI_DEVICE_ID="${CI_DEVICE_ID:-}" \
     -e CI_JOBS="${CI_JOBS:-}" \
     -e CI_CPACK_JOBS="${CI_CPACK_JOBS:-}" \

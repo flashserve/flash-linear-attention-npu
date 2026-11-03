@@ -54,10 +54,7 @@ const github = {
       getContent: async (params) => {
         record('content', params);
         let content;
-        if (params.path.endsWith('npu-ci-users.json')) {
-          if (config.allowlistError) throw new Error('allowlist unavailable');
-          content = JSON.stringify(config.allowlist || {users: ['ci-user']});
-        } else if (params.path.endsWith('npu-ci-default-status.yml')) {
+        if (params.path.endsWith('npu-ci-default-status.yml')) {
           content = config.branchWorkflow || "const contexts = ['NPU CI / legacy / 01'];";
         } else {
           content = 'name: NPU CI\non:\n  workflow_dispatch:\n';
@@ -66,9 +63,9 @@ const github = {
       },
       getBranch: async (params) => {record('branch', params); return {data: {commit: {sha: config.baseSha || 'b'.repeat(40)}}};},
       getCollaboratorPermissionLevel: async (params) => {
-        record('author-permission', params);
+        record('permission', params);
         if (config.permissionError) throw new Error('permission API unavailable');
-        return {data: {permission: config.permissions?.[params.username] || config.authorPermission || 'read'}};
+        return {data: {permission: config.permissions?.[params.username] || config.authorPermission || (params.username.toLowerCase() === 'ci-user' ? 'admin' : 'read')}};
       },
       listCommitStatusesForRef: async (params) => {record('statuses', params); return {data: config.statuses || []};},
       createCommitStatus: async (params) => {record('status', params); return {data: params};},
@@ -162,40 +159,39 @@ def outputs(records):
 
 
 class NpuCiPolicyTest(unittest.TestCase):
-    def test_authorization_uses_default_branch_file_and_ignores_repository_role(self):
-        records = run_policy('authorization', actor='CI-USER', noRepositoryPayload=True)
-        self.assertFalse(values(records, 'error'))
-        self.assertEqual(values(records, 'content')[0]['ref'], 'main')
-        self.assertEqual(values(records, 'content')[0]['path'], '.github/npu-ci-users.json')
-        self.assertTrue(values(records, 'repository'))
-        self.assertFalse(values(records, 'author-permission'))
+    def test_authorization_requires_repository_admin(self):
+        for permission in ('admin', 'write', 'maintain', 'read', 'none'):
+            with self.subTest(permission=permission):
+                records = run_policy('authorization', authorPermission=permission)
+                self.assertEqual(not values(records, 'error'), permission == 'admin')
+                self.assertEqual(values(records, 'permission')[0]['username'], 'ci-user')
+                self.assertFalse(values(records, 'content'))
 
-    def test_repository_admin_outside_allowlist_cannot_trigger(self):
-        records = run_policy('prepare', actor='outside-admin', authorPermission='admin')
+    def test_repository_admin_can_trigger_without_separate_allowlist(self):
+        records = run_policy('prepare', actor='repository-admin', authorPermission='admin')
+        self.assertFalse(values(records, 'error'))
+        self.assertEqual(outputs(records)['should_run'], 'true')
+        self.assertFalse(values(records, 'content'))
+
+    def test_permission_api_errors_fail_before_accessing_pr(self):
+        records = run_policy('prepare', permissionError=True)
         self.assertTrue(values(records, 'error'))
+        self.assertIn('恢复权限读取', values(records, 'error')[0])
         self.assertFalse(values(records, 'pull'))
         self.assertFalse(values(records, 'status'))
-
-    def test_missing_or_invalid_allowlist_fails_closed(self):
-        for option in ({'allowlistError': True}, {'allowlist': {'users': []}},
-                       {'allowlist': {'users': ['bad user']}}):
-            with self.subTest(option=option):
-                records = run_policy('prepare', **option)
-                self.assertTrue(values(records, 'error'))
-                self.assertFalse(values(records, 'status'))
 
     def test_manual_actor_cannot_spoof_requester(self):
         records = run_policy('prepare', actor='outside-user', inputs={'requested_by': 'ci-user'})
         self.assertTrue(values(records, 'error'))
         self.assertFalse(values(records, 'status'))
 
-    def test_bot_dispatch_requires_listed_original_requester(self):
+    def test_bot_dispatch_requires_original_admin_requester(self):
         for requested, permitted in [('ci-user', True), ('outside-user', False), ('', False)]:
             with self.subTest(requested=requested):
                 records = run_policy('prepare', actor='github-actions[bot]', inputs={'requested_by': requested})
                 self.assertEqual(not values(records, 'error'), permitted)
 
-    def test_rerun_requires_actual_triggering_actor_in_allowlist(self):
+    def test_rerun_requires_actual_triggering_actor_to_be_admin(self):
         for user, allowed in [('ci-user', True), ('outside-user', False), ('', False)]:
             with self.subTest(user=user):
                 records = run_policy('prepare', attempt=2, triggeringActor=user)
@@ -235,8 +231,9 @@ class NpuCiPolicyTest(unittest.TestCase):
                                      policyCheckoutPath=checkout['with']['path'])
                 self.assertEqual(not values(records, 'error'), allowed)
                 self.assertEqual(values(records, 'result'), [None] if allowed else [])
-                self.assertEqual(values(records, 'content')[0]['ref'], 'main')
-                self.assertEqual(values(records, 'content')[0]['path'], '.github/npu-ci-users.json')
+                if triggering_actor:
+                    self.assertEqual(values(records, 'permission')[0]['username'], triggering_actor)
+                self.assertFalse(values(records, 'content'))
                 self.assertEqual(len(values(records, 'policy-require')), 1)
 
     def test_markdown_check_accepts_modified_deleted_and_markdown_rename(self):
@@ -289,7 +286,7 @@ class NpuCiPolicyTest(unittest.TestCase):
                 self.assertEqual(len(values(records, 'status')), 6)
                 self.assertEqual({item['state'] for item in values(records, 'status')}, {'success'})
                 self.assertEqual(len(values(records, 'comment')), 1)
-                self.assertFalse(values(records, 'author-permission'))
+                self.assertEqual(bool(values(records, 'permission')), mode == 'prepare')
                 if mode == 'prepare':
                     self.assertEqual(outputs(records)['should_run'], 'false')
 
@@ -302,22 +299,17 @@ class NpuCiPolicyTest(unittest.TestCase):
         self.assertEqual(outputs(records)['should_run'], 'true')
         self.assertEqual(outputs(records)['build_ops'], 'chunk_fwd_o')
 
-    def test_prepare_always_uses_pr_ci_without_author_permission_lookup(self):
+    def test_prepare_pins_trusted_ci_for_every_pr_author(self):
         for permission in ('admin', 'write', 'read'):
             with self.subTest(permission=permission):
-                records = run_policy('prepare', authorPermission=permission)
+                records = run_policy('prepare', permissions={'pr-author': permission})
                 self.assertFalse(values(records, 'error'))
                 self.assertEqual(outputs(records)['should_run'], 'true')
-                self.assertNotIn('use_pr_ci', outputs(records))
-                self.assertNotIn('trusted_ci_sha', outputs(records))
-                self.assertFalse(values(records, 'author-permission'))
+                self.assertEqual(outputs(records)['trusted_ci_sha'], 'c' * 40)
+                self.assertEqual([item['username'] for item in values(records, 'permission')], ['ci-user'])
                 self.assertEqual(len(values(records, 'comment')), 1)
                 self.assertNotIn('comment_id', outputs(records))
-
-    def test_ordinary_pr_does_not_depend_on_repository_permission_api(self):
-        records = run_policy('prepare', permissionError=True)
-        self.assertEqual(outputs(records)['should_run'], 'true')
-        self.assertFalse(values(records, 'author-permission'))
+                self.assertIn('可信 ci/', values(records, 'comment')[0]['body'])
 
     def test_prepare_reuses_success_only_for_identical_source_and_ci_request(self):
         for ops, prefix in [('', 'all-'), ('chunk_fwd_o', 'scoped-')]:
@@ -355,42 +347,25 @@ class NpuCiPolicyTest(unittest.TestCase):
         self.assertEqual(outputs(retargeted)['should_run'], 'true')
         self.assertNotEqual(outputs(retargeted)['request_key'], outputs(initial)['request_key'])
 
-    def test_ci_approval_marker_is_pr_and_base_bound_before_reusing_statuses(self):
-        args = dict(files=[{'filename': 'ci/run_checks.sh'}], authorPermission='admin', inputs={'ci_modified': 'true'})
-        initial = run_policy('prepare', **args)
-        key = outputs(initial)['ci_approval_key']
-        self.assertRegex(key, r'^[a-f0-9]{12}$')
-        self.assertTrue(all('ci-ok=' + key in s['description'] for s in values(initial, 'status')))
-        self.assertTrue(all(len(s['description']) <= 100 for s in values(initial, 'status')))
-        prior = [dict(item, state='success', target_url='https://github.com/example/repo/actions/runs/900')
-                 for item in values(initial, 'status')]
-        same = run_policy('prepare', statuses=prior, **args)
-        self.assertEqual(outputs(same)['should_run'], 'false')
-        for changes in ({'prNumber': 528}, {'baseRef': 'v26.9.1'}):
-            with self.subTest(changes=changes):
-                other = run_policy('prepare', statuses=prior, **changes, **args)
-                self.assertEqual(outputs(other)['should_run'], 'true')
-                self.assertNotEqual(outputs(other)['ci_approval_key'], key)
-
     def test_default_nonmarkdown_pr_is_pending_and_appends_comment(self):
         records = run_policy('default')
         self.assertEqual(len(values(records, 'status')), 6)
         self.assertEqual({item['state'] for item in values(records, 'status')}, {'pending'})
-        self.assertIn('.github/npu-ci-users.json', values(records, 'comment')[0]['body'])
+        self.assertIn('仓库 Admin', values(records, 'comment')[0]['body'])
 
     def test_default_preserves_maintenance_branch_contexts(self):
         records = run_policy('default', baseRef='release')
         self.assertEqual([item['context'] for item in values(records, 'status')], ['NPU CI / legacy / 01'])
 
-    def test_dispatch_uses_allowlist_and_preserves_target_branch(self):
+    def test_dispatch_requires_admin_and_preserves_target_branch(self):
         records = run_policy('dispatch', comment='/run-npu-ci quick ci_ref=release ops=z,a')
         self.assertFalse(values(records, 'error'))
-        self.assertFalse(values(records, 'author-permission'))
+        self.assertEqual(values(records, 'permission')[0]['username'], 'ci-user')
         dispatch = values(records, 'dispatch')[0]
         self.assertEqual(dispatch['ref'], 'release')
         self.assertEqual(dispatch['inputs']['ci_mode'], 'quick')
         self.assertEqual(dispatch['inputs']['ops'], 'a,z')
-        self.assertEqual(values(records, 'content')[0]['ref'], 'main')
+        self.assertEqual(values(records, 'content')[0]['ref'], 'release')
 
     def test_dispatch_rerun_checks_both_original_and_triggering_users(self):
         for actor, rerun_by, allowed in [
@@ -403,9 +378,7 @@ class NpuCiPolicyTest(unittest.TestCase):
                 records = run_policy('dispatch', actor=actor, attempt=2, triggeringActor=rerun_by)
                 self.assertEqual(bool(values(records, 'dispatch')), allowed)
                 self.assertEqual(not values(records, 'error'), allowed)
-                allowlist_reads = [item for item in values(records, 'content')
-                                   if item['path'] == '.github/npu-ci-users.json']
-                self.assertEqual(len(allowlist_reads), 1)
+                self.assertEqual(values(records, 'permission')[0]['username'], actor)
                 if not allowed:
                     self.assertFalse(values(records, 'pull'))
 
@@ -435,7 +408,7 @@ class NpuCiPolicyTest(unittest.TestCase):
                 records = run_policy(mode, files=files)
                 self.assertFalse(values(records, 'error'))
                 self.assertEqual({s['state'] for s in values(records, 'status')}, {'success'})
-                self.assertFalse(values(records, 'author-permission'))
+                self.assertEqual(bool(values(records, 'permission')), mode == 'prepare')
         # Moving code into docs is still a code change.
         plan = values(run_policy('plan', files=[{
             'filename': 'docs/kernel.txt', 'status': 'renamed', 'previous_filename': 'common/kernel.cpp',
@@ -718,61 +691,30 @@ class NpuCiPolicyTest(unittest.TestCase):
         records = run_policy('plan', files=[{'filename': 'tests/atk/common/result.py'}], treeTruncated=True)
         self.assertTrue(values(records, 'error'))
 
-    def test_ci_modification_requires_admin_acknowledgment_at_dispatch_and_prepare(self):
-        files = [{'filename': 'ci/run_checks.sh'}]
+    def test_ci_changes_use_regular_admin_authorization_without_extra_confirmation(self):
         for mode in ('dispatch', 'prepare'):
-            for confirmed, permission, allowed in [('true', 'admin', True), ('false', 'admin', False),
-                                                  ('true', 'write', False), ('true', 'read', False)]:
-                with self.subTest(mode=mode, confirmed=confirmed, permission=permission):
-                    records = run_policy(mode, files=files, authorPermission=permission,
-                                         inputs={'ci_modified': confirmed},
-                                         comment=f'/run-npu-ci ci_modified={confirmed}')
+            for permission, allowed in [('admin', True), ('write', False), ('read', False)]:
+                with self.subTest(mode=mode, permission=permission):
+                    records = run_policy(mode, files=[{'filename': 'ci/run_checks.sh'}],
+                                         authorPermission=permission)
                     self.assertEqual(not values(records, 'error'), allowed)
-                    if allowed:
-                        self.assertEqual(values(records, 'author-permission')[0]['username'], 'ci-user')
-                        if mode == 'prepare':
-                            self.assertEqual(outputs(records)['ci_modified'], 'true')
-                            self.assertEqual(outputs(records)['build_kind'], 'base')
-                    else:
-                        self.assertEqual(len(values(records, 'comment')), 1)
-                        self.assertIn('ci_modified=true', values(records, 'comment')[0]['body'])
-                        self.assertEqual({s['state'] for s in values(records, 'status')}, {'failure'})
-                        self.assertFalse(values(records, 'dispatch'))
+                    if allowed and mode == 'prepare':
+                        self.assertEqual(outputs(records)['build_kind'], 'base')
+                        self.assertEqual(outputs(records)['trusted_ci_sha'], 'c' * 40)
 
-    def test_ci_modification_rerun_requires_actual_rerunner_to_be_admin(self):
-        for mode in ('prepare', 'dispatch'):
-            for actual_permission, allowed in [('admin', True), ('write', False)]:
-                with self.subTest(mode=mode, actual_permission=actual_permission):
-                    records = run_policy(mode, files=[{'filename': '.github/workflows/ci.yml'}],
-                                         allowlist={'users': ['ci-user', 'rerunner']}, attempt=2,
-                                         triggeringActor='rerunner',
-                                         permissions={'ci-user': 'admin', 'rerunner': actual_permission},
-                                         inputs={'ci_modified': 'true'}, comment='/run-npu-ci ci_modified=true')
-                    self.assertEqual(not values(records, 'error'), allowed)
-                    self.assertEqual([r['username'] for r in values(records, 'author-permission')],
-                                     ['ci-user', 'rerunner'])
-
-    def test_ci_permission_read_error_fails_with_actionable_comment(self):
-        records = run_policy('prepare', files=[{'filename': 'ci/run_checks.sh'}],
-                             permissionError=True, inputs={'ci_modified': 'true'})
-        self.assertTrue(values(records, 'error'))
-        self.assertIn('恢复权限读取', values(records, 'comment')[0]['body'])
-        self.assertEqual(outputs(records)['should_run'], 'false')
-
-    def test_default_ci_modification_fails_until_admin_confirmation(self):
+    def test_default_ci_modification_is_pending_without_extra_confirmation(self):
         records = run_policy('default', files=[{'filename': '.github/workflows/ci.yml'}])
         self.assertFalse(values(records, 'error'))
-        self.assertEqual({s['state'] for s in values(records, 'status')}, {'failure'})
-        self.assertIn('ci_modified=true', values(records, 'comment')[0]['body'])
+        self.assertEqual({s['state'] for s in values(records, 'status')}, {'pending'})
+        self.assertIn('仓库 Admin', values(records, 'comment')[0]['body'])
 
-    def test_command_forwards_normalized_atk_device_and_ci_acknowledgment(self):
-        records = run_policy('dispatch', comment='/run-npu-ci full atk-ops=z,a,z device-id=03 ci_modified=true')
+    def test_command_forwards_normalized_atk_and_device(self):
+        records = run_policy('dispatch', comment='/run-npu-ci full atk-ops=z,a,z device-id=03')
         self.assertFalse(values(records, 'error'))
         inputs = values(records, 'dispatch')[0]['inputs']
         self.assertEqual(inputs['ci_mode'], 'full')
         self.assertEqual(inputs['atk_ops'], 'a,z')
         self.assertEqual(inputs['device_id'], '3')
-        self.assertEqual(inputs['ci_modified'], 'true')
 
     def test_changed_atk_device_or_compilation_plan_cannot_reuse_success(self):
         initial = run_policy('prepare', files=[{'filename': 'examples/example.py'}])

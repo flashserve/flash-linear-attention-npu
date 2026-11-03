@@ -41,7 +41,7 @@ PR 创建、重开或更新 commit 时，`CI 契约测试` 自动在 GitHub-host
 
 ### 触发权限与命令
 
-默认分支的 [`.github/npu-ci-users.json`](../.github/npu-ci-users.json) 独立维护可触发用户名。评论分发、执行准备和 Actions 重跑分别校验名单；实际重跑人使用 `github.triggering_actor` 校验。PR 自身修改名单不会授予权限。普通代码验证只需在名单中，修改 CI 文件时还需要下文的 Admin 确认。
+触发 NPU CI 需要仓库 Admin 权限。评论分发、执行准备和 Actions 重跑分别校验；实际重跑人使用 `github.triggering_actor` 校验。权限读取失败时拒绝执行。
 
 ```text
 /run-npu-ci
@@ -49,8 +49,10 @@ PR 创建、重开或更新 commit 时，`CI 契约测试` 自动在 GitHub-host
 /run-npu-ci quick atk-ops=chunk_fwd_o,recurrent_kda device-id=0
 /run-npu-ci quick atk-ops=null
 /run-npu-ci full
-/run-npu-ci full atk-ops=chunk_fwd_o ci_modified=true
+/run-npu-ci full atk-ops=chunk_fwd_o
 /run-npu-ci quick ops=causal_conv1d,chunk_bwd_dv_local
+/update-package
+/update-package ci_ref=<CI定义分支>
 ```
 
 | 参数 | 行为 |
@@ -60,11 +62,10 @@ PR 创建、重开或更新 commit 时，`CI 契约测试` 自动在 GitHub-host
 | `atk-ops=a,b` | 追加 ATK 精度验证算子；与自动计算的 ATK 集合去重合并 |
 | `atk-ops=null` | 显式跳过所有 ATK 验证，覆盖算子代码、ATK 文件变化自动选中的集合；不改变编译、GDR 或其他阶段 |
 | `device-id=N` | 指定两个 runner 各自的宿主机物理 NPU 编号；须为非负整数，省略则自动择卡；容器内映射为逻辑设备 `0` |
-| `ci_modified=true` | 仓库 Admin 确认本次 PR 的 CI 文件变更；只接受 `true/false` |
 | `ops=a,b` | 独立编译诊断：仅编译显式算子，只执行 01/02，不运行 ATK，不满足正式门禁；不能与 `full` 或 `atk-ops` 组合 |
 | `ci_ref=<branch>`（别名 `branch=`） | 选择 Actions 调度定义分支；默认使用 PR 目标分支 |
 
-Actions → `NPU CI` → `Run workflow` 提供对应的 `pr_number`、`ci_mode`、`ops`、`atk_ops`、`device_id`、`ci_modified` 输入。评论分发还传递内部 `requested_by`，所选 CI 定义分支必须提供同一 `workflow_dispatch` 输入契约。
+Actions → `NPU CI` → `Run workflow` 提供对应的 `pr_number`、`ci_mode`、`ops`、`atk_ops`、`device_id` 输入。评论分发还传递内部 `requested_by`，所选 CI 定义分支必须提供同一 `workflow_dispatch` 输入契约。`/update-package` 单独触发底包缓存刷新，详情见下文。
 
 每次触发结论、拒绝原因及最终结果都新增评论，历史评论不覆盖。同一 PR 请求先排队，再按 head、目标分支名、base/workflow SHA、模式、编译计划、ATK 集合和设备号去重；仅完全相同的请求可复用完整双平台成功结果或正在执行的任务。目标分支名不同，即使暂时指向同一 SHA，也不能复用另一分支的 Daily 执行计划。
 
@@ -77,7 +78,7 @@ Actions → `NPU CI` → `Run workflow` 提供对应的 `pr_number`、`ci_mode`�
 | 修改路径 | 编译影响 | ATK 影响 |
 | --- | --- | --- |
 | `common/`、`cmake/`，以及 AscendC 公共目录或组级文件 | 全量 | 保留其他规则选中的算子 |
-| 非 Markdown 的 `ci/`、`.github/` | 本身不触发编译；必须通过 Admin 确认 | 不自动增加算子 |
+| 非 Markdown 的 `ci/`、`.github/` | 本身不触发编译 | 不自动增加算子 |
 | `fla/ops/ascendc/` 下非 Markdown 算子代码，按 PR head 树中最近的有效 `op_host/CMakeLists.txt` 定位算子根 | 无全量条件时增量编译该算子；支持任意层分组，无法确定时全量 | 验证实际算子，包括因其他修改而转为全量时；`atk-ops=null` 可显式跳过 |
 | `tests/atk/<op>/` 下非 Markdown 文件 | 本身不触发编译 | 验证该算子 |
 | `tests/atk/common/`、`tests/atk/run_test_cpu.sh` 等根级共享文件 | 本身不触发编译 | 验证 PR 当前所有 ATK 算子目录 |
@@ -87,9 +88,9 @@ Actions → `NPU CI` → `Run workflow` 提供对应的 `pr_number`、`ci_mode`�
 
 全量条件优先于增量算子；算子与 `torch_custom` 混合修改同样触发全量，避免沿用 Daily 中的旧 adapter。最终产生 `full_build`、`build_ops`、`atk_ops` 和 `build_kind=full/incremental/torch/base`：全量时 `build_ops` 为空；ATK 集合通常是修改算子代码、修改 ATK 算子目录及手动 `atk-ops` 的并集，可以为空。`atk-ops=null` 覆盖整个集合，且不能与算子名混写（如 `null,chunk_fwd_o`）。省略参数仍按差异自动选择。`full` 不会自动把 ATK 扩大为全仓测试；quick 因混合修改而全量构建时，仍保持 quick 的测试范围。
 
-PR 包含非 Markdown 的 `ci/` 或 `.github/` 修改时，默认状态直接 failure，评论说明需管理员确认。只有同时在 CI 名单中的仓库 Admin 带 `ci_modified=true` 才可分发和执行；重跑操作人也须同时满足名单及 Admin 要求。省略确认、权限不足或权限读取失败均拒绝运行，并给出管理员重试建议。待验证 PR 的作者是否为 Admin 不影响代码选择：**设备 runner 一律使用当前 PR 合并后的 `ci/`，不再检出或叠加可信 CI 目录。** Actions 调度及权限检查来自所选 CI 定义分支。
+设备 runner 在合并固定 base/head 后，将 `ci/` 替换为本次固定 workflow SHA 中的可信 CI 脚本；仅保留合并后 PR 的 `ci/example_st_cases.json` 用例数据。该文件须为合法 JSON 常规文件，不能通过符号链接读取。PR 作者身份不改变脚本来源；修改 CI 执行逻辑时须选用包含该变更的 CI 定义分支。
 
-CI 修改的确认和执行状态绑定当前 PR、目标分支及 base/head commit；同一 head 在其他 PR 或其他目标分支上的成功状态不能代替本次确认。默认状态检查会保留当前 PR 已获有效确认的正在执行或最终结果，避免延迟事件覆盖真实结果。
+取消可信 CI、独立用户名触发名单，以及 CI 文件修改需 Admin 显式确认这三项策略变更在 [独立权限与 CI 来源策略 PR #1046](https://github.com/flashserve/flash-linear-attention-npu/pull/1046) 中维护。本文描述当前 Admin 权限和固定 workflow SHA 可信 CI 的流程；部署其他策略分支时，以所选 workflow 的实际实现为准。
 
 ### A2/A5 源码与包准备
 
@@ -100,11 +101,15 @@ CI 修改的确认和执行状态绑定当前 PR、目标分支及 base/head com
 | `build_kind` | 包准备方式 |
 | --- | --- |
 | `full` | 通过 `python scripts/build_wheel.py` 构建并安装当前 PR 的完整目标 SOC wheel，构建并行度上限 16 |
-| `incremental` | 下载匹配的完整 Daily 底包，使用 `build.sh --pkg --soc=<soc> --ops=<ops> -j16` 构建修改算子，通过 `fla_npu_opp_manage --overlay` 叠加 delta 并校验 ABI，保留未修改的完整底包内容 |
+| `incremental` | 获取缓存中的匹配完整 Daily 底包，使用 `build.sh --pkg --soc=<soc> --ops=<ops> -j16` 构建修改算子，通过 `fla_npu_opp_manage --overlay` 叠加 delta 并校验 ABI，保留未修改的完整底包内容 |
 | `torch` | 安装完整 Daily 底包，仅重新构建当前 PR 的 torch_custom wheel 并保留底包 OPP，校验 ABI |
 | `base` | 仅安装完整 Daily 底包，不编译 |
 
 Daily 下载沿用 [PR #1037](https://github.com/flashserve/flash-linear-attention-npu/pull/1037) 的华为云 nightly 发布源，按 PR **目标分支、SOC、CPU 架构和 Python wheel 标签**严格选择：`main` 使用 `0.dev...+main.<SHA>`，维护分支 `vX.Y.Z` 使用对应的 `X.Y.Z.dev...`；A2/A5 分别使用 `flash-linear-attention-npu-a2/a5`。下载禁用其他 index 回退，并检查版本、wheel 元数据、Stable 库及目标 SOC kernel/config。匹配版本缺失、分支无映射或 ABI 不兼容均失败，建议补发对应 Daily 或改用 `/run-npu-ci full`，不会使用其他分支或平台的包。
+
+底包缓存在每台宿主机的 `/home/huangjunzhe/ci/pkg-cache`，可通过 `CI_PACKAGE_CACHE` 指定；容器中挂载为 `/ci-pkg-cache`。按目标分支、SOC、CPU、Python/ABI 兼容标签、发布源和指定版本隔离。北京时间每日第一次需要底包的 CI 下载远程最新匹配包，日内校验 SHA256 和 wheel 元数据后复用；全量编译无需下载底包。刷新使用进程锁、临时下载和原子发布；失败不会记录当天刷新成功，也不会回退到旧日底包。
+
+仓库 Admin 可在 PR 评论 `/update-package` 强制刷新该 PR 目标分支的底包，可选 `ci_ref=<CI定义分支>`；也可在 Actions → `更新 Daily 底包缓存` 中指定 `base_ref`。任务分别调度一个 A2 runner 和一个 A5 runner，只下载、校验各自宿主缓存，不编译、不安装、不运行 NPU 测试。存在多台同平台机器时，此命令只刷新实际选中的 runner，其余机器在各自当天首次需要底包的 CI 中自动刷新。直接调用包准备时，`CI_UPDATE_PACKAGE=true` 强制刷新；仅刷新可运行 `python ci/prepare_ci_package.py --update-package`。
 
 包准备结果及选中的底包版本写入 artifact。后续 Python/ATK 进程启动前加载实际安装包的 `set_env.bash`；布局检查、适配检查和精度测试不再重复构建其他 wheel。
 
@@ -115,10 +120,10 @@ flowchart TD
     PR["PR 创建或更新"] --> CPU["自动执行 CI 契约测试"]
     PR --> Files{"完整差异是否仅文档或 LICENSES"}
     Files -- "是" --> Docs["6 项 success；不占 NPU"]
-    Files -- "否" --> Trigger["名单鉴权；CI 修改须 Admin ci_modified=true"]
+    Files -- "否" --> Trigger["仓库 Admin 鉴权"]
     Trigger --> Plan["计算 full/build_ops/atk_ops；固定 SHA 与去重"]
     Plan --> Source["A2/A5 Git 合并：先直连，失败后代理"]
-    Source --> Package["当前 PR ci/：全量 / 增量 / torch / 底包"]
+    Source --> Package["固定 workflow SHA 可信 CI：全量 / 增量 / torch / 缓存底包"]
     Package --> Checks["环境、布局、PyTorch 适配、GDR Example/ST"]
     Checks --> ATK["选中算子的 ATK 精度；无选中则跳过"]
     ATK --> Report["06 强制校验双平台报告与 commit；新增结果评论"]

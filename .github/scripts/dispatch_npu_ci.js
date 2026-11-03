@@ -1,15 +1,13 @@
 'use strict';
 
 const {
-  REQUIRED_CHECKS, SCOPED_CHECK, requireAuthorizedCiUser, normalizeOps, normalizeAtkOps, normalizeDeviceId,
-  normalizeCiModified, changedFiles, changedPaths, isDocumentationPath,
-  requireCiModificationApproval, createComment, writeStatuses, decodeFile,
+  requireAuthorizedCiUser, normalizeOps, normalizeAtkOps, normalizeDeviceId, decodeFile,
 } = require('./npu_ci_policy');
 
 function parseCommand(body) {
   const command = (body || '').trim().match(/^\/run-npu-ci(?:\s+([\s\S]*))?$/);
   if (!command) return null;
-  const result = { ciMode: 'quick', ops: '', atkOps: '', deviceId: '', ciModified: false, requestedRef: '' };
+  const result = { ciMode: 'quick', ops: '', atkOps: '', deviceId: '', requestedRef: '' };
   const seen = new Set();
   for (const part of (command[1] || '').trim().split(/\s+/).filter(Boolean)) {
     let key;
@@ -28,10 +26,6 @@ function parseCommand(body) {
       key = 'deviceId';
       if (!part.slice(10)) throw new Error('device-id 参数不能为空，请提供非负整数。');
       result.deviceId = normalizeDeviceId(part.slice(10));
-    } else if (part.startsWith('ci_modified=')) {
-      key = 'ciModified';
-      if (!part.slice(12)) throw new Error('ci_modified 只接受 true 或 false。');
-      result.ciModified = normalizeCiModified(part.slice(12));
     } else if (part.startsWith('ci_ref=') || part.startsWith('branch=')) {
       key = 'requestedRef';
       result.requestedRef = part.slice(part.indexOf('=') + 1);
@@ -57,34 +51,16 @@ module.exports = async function dispatchNpuCi({ github, context, core }) {
     core.notice('评论包含 /run-npu-ci，但命令格式不正确，跳过。');
     return;
   }
-  const users = await requireAuthorizedCiUser({ github, context, username: context.actor });
+  await requireAuthorizedCiUser({ github, context, username: context.actor });
   if (Number(process.env.NPU_CI_RUN_ATTEMPT || '1') > 1) {
     // A rerun preserves the original comment actor. Check the rerun requester
     // before creating a new workflow_dispatch (whose attempt starts at 1).
-    const rerunBy = process.env.NPU_CI_TRIGGERING_ACTOR || '';
-    if (!users.some((user) => user.toLowerCase() === rerunBy.toLowerCase())) {
-      throw new Error(`${rerunBy || '(空用户名)'} 无权重新运行 NPU CI 评论分发：须列入默认分支的 .github/npu-ci-users.json。`);
-    }
+    await requireAuthorizedCiUser({ github, context, username: process.env.NPU_CI_TRIGGERING_ACTOR || '' });
   }
   const prNumber = context.payload.issue.number;
   const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: prNumber });
   if (pr.state !== 'open') throw new Error(`PR #${prNumber} 已关闭。`);
   if (pr.draft) throw new Error(`PR #${prNumber} 仍是草稿，请先标记为 ready for review。`);
-  const files = await changedFiles({ github, context, pr });
-  const ciModified = changedPaths(files).some((path) =>
-    !isDocumentationPath(path) && /^(?:ci|\.github)(?:\/|$)/.test(path));
-  if (ciModified) {
-    try {
-      const usernames = [context.actor];
-      if (Number(process.env.NPU_CI_RUN_ATTEMPT || '1') > 1) usernames.push(process.env.NPU_CI_TRIGGERING_ACTOR || '');
-      await requireCiModificationApproval({ github, context, usernames, confirmed: command.ciModified });
-    } catch (error) {
-      await writeStatuses({ github, context, pr, checks: command.ops ? [SCOPED_CHECK] : REQUIRED_CHECKS,
-        state: 'failure', description: 'CI 文件变更未经管理员 ci_modified=true 确认', targetUrl: pr.html_url });
-      await createComment({ github, context, pr, body: `NPU CI 拒绝分发。\n\n- 原因及修改建议：${error.message}` });
-      throw error;
-    }
-  }
   const targetRef = command.requestedRef || pr.base.ref;
   await github.rest.repos.getBranch({ ...context.repo, branch: targetRef });
   const path = '.github/workflows/ci.yml';
@@ -97,7 +73,7 @@ module.exports = async function dispatchNpuCi({ github, context, core }) {
     inputs: {
       pr_number: String(prNumber), ci_mode: command.ciMode, ops: command.ops,
       atk_ops: command.atkOps, device_id: command.deviceId,
-      ci_modified: String(command.ciModified), requested_by: context.actor,
+      requested_by: context.actor,
     },
   });
   core.notice(`已将 PR #${prNumber} 的 NPU CI 分发到 \`${targetRef}\`，head=${pr.head.sha}，模式=${command.ciMode}。`);
