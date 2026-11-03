@@ -170,7 +170,7 @@ bool ResolveShape(gert::TilingContext *context, PrepareLayout layout,
         const bool packed = layout == PrepareLayout::NTD || layout == PrepareLayout::TND;
         const bool sequenceMajor = layout == PrepareLayout::BSND || layout == PrepareLayout::TND;
         OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
-            context, "q,k,v,g,beta", actual,
+            Ops::Base::GetOpInfo(context), "q,k,v,g,beta", actual,
             "q/k must match; q/k/v/g rank=" + ToText(packed ? 3 : 4) + ", beta rank=" + ToText(packed ? 2 : 3) +
                 "; shared B/T/K and value-head axes must agree; packed=" + ToText(packed) +
                 ", sequenceMajor=" + ToText(sequenceMajor));
@@ -298,7 +298,8 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
     if (!isVarLen) {
         if (chunkTensor != nullptr) {
             OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-                context, "chunk_indices", "present without cu_seqlens; provide both metadata inputs together");
+                Ops::Base::GetOpInfo(context), "chunk_indices",
+                "present without cu_seqlens; provide both metadata inputs together");
             return false;
         }
         seqNum = static_cast<uint64_t>(shape.batch);
@@ -308,13 +309,13 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
     }
 
     if (!shape.packed && shape.batch != 1) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context, "B", ToText(shape.batch),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(Ops::Base::GetOpInfo(context), "B", ToText(shape.batch),
                                               "rank-4 variable-length input requires B=1");
         return false;
     }
     const auto &cuShape = cuTensor->GetStorageShape();
     if (cuShape.GetDimNum() != 1 || cuShape.GetDim(0) < 2) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context, "cu_seqlens", ShapeText(cuShape),
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(Ops::Base::GetOpInfo(context), "cu_seqlens", ShapeText(cuShape),
                                               "expected a rank-1 tensor with at least two elements [0,total_tokens]");
         return false;
     }
@@ -326,7 +327,7 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
     }
     seqNum = static_cast<uint64_t>(cuShape.GetDim(0) - 1);
     if (cu[0] != 0 || cu[seqNum] != shape.seqLen) {
-        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context, "cu_seqlens endpoints",
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(Ops::Base::GetOpInfo(context), "cu_seqlens endpoints",
                                                ToText(cu[0]) + "," + ToText(cu[seqNum]),
                                                "expected 0," + ToText(shape.seqLen));
         return false;
@@ -336,15 +337,16 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
     for (uint64_t seq = 0; seq < seqNum; ++seq) {
         if (cu[seq] < 0 || cu[seq + 1] < cu[seq] ||
             cu[seq + 1] > shape.seqLen) {
-            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-                context, "cu_seqlens adjacent elements", ToText(cu[seq]) + "," + ToText(cu[seq + 1]),
-                "invalid pair at index=" + ToText(seq) + "; require 0<=begin<=end<=T=" + ToText(shape.seqLen));
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(Ops::Base::GetOpInfo(context), "cu_seqlens adjacent elements",
+                                                   ToText(cu[seq]) + "," + ToText(cu[seq + 1]),
+                                                   "invalid pair at index=" + ToText(seq) +
+                                                       "; require 0<=begin<=end<=T=" + ToText(shape.seqLen));
             return false;
         }
         const uint64_t length = static_cast<uint64_t>(cu[seq + 1] - cu[seq]);
         const uint64_t sequenceChunks = CeilDiv(length, PREPARE_CHUNK_SIZE);
         if (totalChunks > std::numeric_limits<uint64_t>::max() - sequenceChunks) {
-            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context, "total_chunks,sequence_chunks",
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(Ops::Base::GetOpInfo(context), "total_chunks,sequence_chunks",
                                                    ToText(totalChunks) + "," + ToText(sequenceChunks),
                                                    "their sum exceeds uint64");
             return false;
@@ -352,7 +354,7 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
         totalChunks += sequenceChunks;
     }
     if (totalChunks == 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context, "total_chunks", ToText(totalChunks),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(Ops::Base::GetOpInfo(context), "total_chunks", ToText(totalChunks),
                                               "provide at least one non-empty sequence");
         return false;
     }
@@ -363,7 +365,8 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
     const auto &chunkShape = chunkTensor->GetStorageShape();
     if (chunkShape.GetDimNum() != 1 ||
         static_cast<uint64_t>(chunkShape.GetDim(0)) != totalChunks * 2) {
-        OP_LOGE_FOR_INVALID_SHAPE(context, "chunk_indices", ShapeText(chunkShape), "[" + ToText(totalChunks * 2) + "]");
+        OP_LOGE_FOR_INVALID_SHAPE(Ops::Base::GetOpInfo(context), "chunk_indices", ShapeText(chunkShape),
+                                  "[" + ToText(totalChunks * 2) + "]");
         return false;
     }
     const int64_t *indices = chunkTensor->GetData<int64_t>();
@@ -379,10 +382,11 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
         for (uint64_t chunk = 0; chunk < chunks; ++chunk) {
             if (indices[offset] != static_cast<int64_t>(seq) ||
                 indices[offset + 1] != static_cast<int64_t>(chunk)) {
-                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-                    context, "chunk_indices pair", ToText(indices[offset]) + "," + ToText(indices[offset + 1]),
-                    "at offset=" + ToText(offset) + ", expected sequence-major pair=" + ToText(seq) + "," +
-                        ToText(chunk));
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(Ops::Base::GetOpInfo(context), "chunk_indices pair",
+                                                       ToText(indices[offset]) + "," + ToText(indices[offset + 1]),
+                                                       "at offset=" + ToText(offset) +
+                                                           ", expected sequence-major pair=" + ToText(seq) + "," +
+                                                           ToText(chunk));
                 return false;
             }
             offset += 2;
@@ -413,24 +417,24 @@ bool CheckOptionalInput(gert::TilingContext *context,
 
     if (!useGateInKernel) {
         if (hasALog || hasDtBias || safeGate) {
-            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context, "use_gate_in_kernel,a_log,dt_bias,safe_gate",
-                                                   "false," + ToText(hasALog) + "," + ToText(hasDtBias) + "," +
-                                                       ToText(safeGate),
-                                                   "with gate disabled, a_log/dt_bias must be absent and safe_gate "
-                                                   "must be false; pointer fields describe presence");
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                Ops::Base::GetOpInfo(context), "use_gate_in_kernel,a_log,dt_bias,safe_gate",
+                "false," + ToText(hasALog) + "," + ToText(hasDtBias) + "," + ToText(safeGate),
+                "with gate disabled, a_log/dt_bias must be absent and safe_gate "
+                "must be false; pointer fields describe presence");
             return false;
         }
         return true;
     }
     if (!hasALog) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context, "a_log",
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context), "a_log",
                                                  "required when use_gate_in_kernel=true; provide FP32 [HV]");
         return false;
     }
     if (aLogDesc->GetDataType() != ge::DT_FLOAT ||
         (dtBiasDesc != nullptr && dtBiasDesc->GetDataType() != ge::DT_FLOAT)) {
         OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
-            context, "a_log,dt_bias",
+            Ops::Base::GetOpInfo(context), "a_log,dt_bias",
             DtypeText(aLogDesc->GetDataType()) + "," +
                 (dtBiasDesc == nullptr ? "absent" : DtypeText(dtBiasDesc->GetDataType())),
             "each present tensor must have dtype FLOAT (FP32)");
@@ -438,13 +442,14 @@ bool CheckOptionalInput(gert::TilingContext *context,
     }
     const auto &aLog = aLogShape->GetStorageShape();
     if (!HasShape(aLog, {shape.valueHeadNum})) {
-        OP_LOGE_FOR_INVALID_SHAPE(context, "a_log", ShapeText(aLog), "[" + ToText(shape.valueHeadNum) + "]");
+        OP_LOGE_FOR_INVALID_SHAPE(Ops::Base::GetOpInfo(context), "a_log", ShapeText(aLog),
+                                  "[" + ToText(shape.valueHeadNum) + "]");
         return false;
     }
     if (hasDtBias) {
         const auto &dtBias = dtBiasShape->GetStorageShape();
         if (!HasShape(dtBias, {shape.valueHeadNum * shape.kDim})) {
-            OP_LOGE_FOR_INVALID_SHAPE(context, "dt_bias", ShapeText(dtBias),
+            OP_LOGE_FOR_INVALID_SHAPE(Ops::Base::GetOpInfo(context), "dt_bias", ShapeText(dtBias),
                                       "[" + ToText(shape.valueHeadNum * shape.kDim) + "] (flattened HV*K)");
             return false;
         }
@@ -525,30 +530,38 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
 
     PrepareLayout parsedLayout;
     if (!ParseLayout(layout, parsedLayout)) {
-        OP_LOGE_FOR_INVALID_FORMAT(context, "layout", layout == nullptr ? "<null>" : layout,
+        OP_LOGE_FOR_INVALID_FORMAT(Ops::Base::GetOpInfo(context), "layout", layout == nullptr ? "<null>" : layout,
                                    "BNSD, BSND, NTD or TND (case-sensitive)");
         return ge::GRAPH_FAILED;
     }
     if (*chunkSizePtr != PREPARE_CHUNK_SIZE) {
-        OP_LOGE_FOR_INVALID_VALUE(context, "chunk_size", ToText(*chunkSizePtr), "64");
+        OP_LOGE_FOR_INVALID_VALUE(Ops::Base::GetOpInfo(context), "chunk_size", ToText(*chunkSizePtr), "64");
         return ge::GRAPH_FAILED;
     }
-    if (!std::isfinite(*scalePtr) || !std::isfinite(*epsilonPtr) ||
-        *epsilonPtr <= 0.0F || !std::isfinite(*lowerBoundPtr)) {
-        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-            context, "scale,epsilon,lower_bound",
-            ToText(*scalePtr) + "," + ToText(*epsilonPtr) + "," + ToText(*lowerBoundPtr),
-            "FP32 scale/lower_bound must be finite and epsilon must be positive and finite");
+    if (!std::isfinite(*scalePtr)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(Ops::Base::GetOpInfo(context), "scale", ToText(*scalePtr),
+                                              "FP32 value must be finite");
+        return ge::GRAPH_FAILED;
+    }
+    if (!std::isfinite(*epsilonPtr) || *epsilonPtr <= 0.0F) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(Ops::Base::GetOpInfo(context), "epsilon", ToText(*epsilonPtr),
+                                              "FP32 value must be positive and finite");
+        return ge::GRAPH_FAILED;
+    }
+    if (!std::isfinite(*lowerBoundPtr)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(Ops::Base::GetOpInfo(context), "lower_bound", ToText(*lowerBoundPtr),
+                                              "FP32 value must be finite");
         return ge::GRAPH_FAILED;
     }
     if (*allowNegPtr && !*useBetaPtr) {
-        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context, "allow_neg_eigval,use_beta_sigmoid_in_kernel",
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(Ops::Base::GetOpInfo(context),
+                                               "allow_neg_eigval,use_beta_sigmoid_in_kernel",
                                                ToText(*allowNegPtr) + "," + ToText(*useBetaPtr),
                                                "allow_neg_eigval=true requires use_beta_sigmoid_in_kernel=true");
         return ge::GRAPH_FAILED;
     }
     if (*safeGatePtr && (*lowerBoundPtr < -5.0F || *lowerBoundPtr >= 0.0F)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context, "lower_bound", ToText(*lowerBoundPtr),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(Ops::Base::GetOpInfo(context), "lower_bound", ToText(*lowerBoundPtr),
                                               "safe_gate=true requires [-5,0)");
         return ge::GRAPH_FAILED;
     }
@@ -562,7 +575,8 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         attrs->GetAttrPointer<int64_t>(PREPARE_ATTR_OUTPUT_MODE);
     if (outputModePtr == nullptr || *outputModePtr < PREPARE_OUTPUT_MODE_NONE ||
         *outputModePtr > PREPARE_OUTPUT_MODE_FORWARD) {
-        OP_LOGE_FOR_INVALID_VALUE(context, "output_mode", outputModePtr == nullptr ? "<null>" : ToText(*outputModePtr),
+        OP_LOGE_FOR_INVALID_VALUE(Ops::Base::GetOpInfo(context), "output_mode",
+                                  outputModePtr == nullptr ? "<null>" : ToText(*outputModePtr),
                                   "0(none), 1(recompute), 2(save), 3(forward)");
         return ge::GRAPH_FAILED;
     }
@@ -573,7 +587,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         shape.valueHeadNum < shape.qkHeadNum ||
         shape.valueHeadNum % shape.qkHeadNum != 0) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-            context, "B,T,HK,HV,K,V", LogicalText(shape),
+            Ops::Base::GetOpInfo(context), "B,T,HK,HV,K,V", LogicalText(shape),
             "B/T/HK/HV must be in [1,4294967295], K=V=128, HV>=HK and HV%HK=0; layout=" +
                 std::string(layout == nullptr ? "BNSD" : layout));
         return ge::GRAPH_FAILED;
@@ -583,7 +597,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         vDesc->GetDataType() != ge::DT_BF16 ||
         !IsGateDtype(gDesc->GetDataType()) ||
         !IsGateDtype(betaDesc->GetDataType())) {
-        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context, "q,k,v,g,beta",
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(Ops::Base::GetOpInfo(context), "q,k,v,g,beta",
                                                DtypeText(qDesc->GetDataType()) + "," + DtypeText(kDesc->GetDataType()) +
                                                    "," + DtypeText(vDesc->GetDataType()) + "," +
                                                    DtypeText(gDesc->GetDataType()) + "," +
@@ -606,7 +620,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
             FitsDmaSourceStride(shape.valueHeadNum, betaElementBytes);
         if (!strideValid) {
             OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-                context, "HK,HV", ToText(shape.qkHeadNum) + "," + ToText(shape.valueHeadNum),
+                Ops::Base::GetOpInfo(context), "HK,HV", ToText(shape.qkHeadNum) + "," + ToText(shape.valueHeadNum),
                 "layout=" + std::string(layout) +
                     "; each (heads-1)*rowBytes DMA source stride must fit uint32; reduce the head counts");
             return ge::GRAPH_FAILED;
@@ -626,7 +640,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         return ge::GRAPH_FAILED; // Preserve the metadata discovery-point error.
     }
     if (seqNum > std::numeric_limits<uint32_t>::max() || totalChunks > std::numeric_limits<uint32_t>::max()) {
-        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context, "sequence_count,total_chunks",
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(Ops::Base::GetOpInfo(context), "sequence_count,total_chunks",
                                                ToText(seqNum) + "," + ToText(totalChunks),
                                                "each count must fit uint32");
         return ge::GRAPH_FAILED;
@@ -661,7 +675,8 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     if (chunkWorkItems > std::numeric_limits<uint32_t>::max() ||
         (chunkWorkItems != 0 && partitions > std::numeric_limits<uint32_t>::max() / chunkWorkItems)) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-            context, "chunk_work_items,head_partitions", ToText(chunkWorkItems) + "," + ToText(partitions),
+            Ops::Base::GetOpInfo(context), "chunk_work_items,head_partitions",
+            ToText(chunkWorkItems) + "," + ToText(partitions),
             "chunk work items and their product with head partitions must fit uint32; reduce B/T/HV");
         return ge::GRAPH_FAILED;
     }
@@ -739,9 +754,9 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
     if (schedule.workspaceBytes > std::numeric_limits<size_t>::max()) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context, "workspace_bytes", ToText(schedule.workspaceBytes),
-                                              "must fit platform size_t; maximum=" +
-                                                  ToText(std::numeric_limits<size_t>::max()));
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            Ops::Base::GetOpInfo(context), "workspace_bytes", ToText(schedule.workspaceBytes),
+            "must fit platform size_t; maximum=" + ToText(std::numeric_limits<size_t>::max()));
         return ge::GRAPH_FAILED;
     }
     auto *rawTiling = context->GetRawTilingData();

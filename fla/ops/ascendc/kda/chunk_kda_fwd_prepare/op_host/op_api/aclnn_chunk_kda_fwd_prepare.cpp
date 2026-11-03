@@ -518,16 +518,18 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
         }
     }
 
-    if (!(FitsUint32(info.batch) && FitsUint32(info.seqLen) && FitsUint32(info.qkHeadNum) &&
-          FitsUint32(info.valueHeadNum))) {
-        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "B,T,HK,HV", LogicalText(info),
-                                               "each dimension must be in [1,4294967295]; layout=" +
-                                                   std::string(params.layout));
-        return ACLNN_ERR_PARAM_INVALID;
+    const int64_t dimensions[] = {info.batch, info.seqLen, info.qkHeadNum, info.valueHeadNum};
+    const char *dimensionNames[] = {"B", "T", "HK", "HV"};
+    for (size_t i = 0; i < 4; ++i) {
+        if (!FitsUint32(dimensions[i])) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, dimensionNames[i], ToText(dimensions[i]),
+                                                  "must be in [1,4294967295]; layout=" + std::string(params.layout));
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     if (!(info.kDim == PREPARE_K_DIM && info.vDim == PREPARE_V_DIM)) {
-        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "K,V", ToText(info.kDim) + "," + ToText(info.vDim),
-                                               "this Prepare implementation requires K=V=128");
+        OP_LOGE_FOR_INVALID_VALUE(OP_NAME, info.kDim != PREPARE_K_DIM ? "K" : "V",
+                                  ToText(info.kDim != PREPARE_K_DIM ? info.kDim : info.vDim), "128");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(info.valueHeadNum >= info.qkHeadNum && info.valueHeadNum % info.qkHeadNum == 0)) {
@@ -550,12 +552,22 @@ aclnnStatus CheckModesAndOptionalInputs(
     const float scaleFp32 = static_cast<float>(params.scale);
     const float epsilonFp32 = static_cast<float>(params.epsilon);
     const float lowerBoundFp32 = static_cast<float>(params.lowerBound);
-    if (!(std::isfinite(scaleFp32) && std::isfinite(epsilonFp32) && epsilonFp32 > 0.0F &&
-          std::isfinite(lowerBoundFp32))) {
-        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-            OP_NAME, "scale,epsilon,lower_bound",
-            ToText(scaleFp32) + "," + ToText(epsilonFp32) + "," + ToText(lowerBoundFp32),
-            "after conversion to FP32, scale/lower_bound must be finite and epsilon must be positive and finite");
+    if (!std::isfinite(scaleFp32)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "scale", ToText(scaleFp32),
+                                              "must remain finite after conversion to FP32; supplied=" +
+                                                  ToText(params.scale));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!std::isfinite(epsilonFp32) || epsilonFp32 <= 0.0F) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "epsilon", ToText(epsilonFp32),
+                                              "must be positive and finite after conversion to FP32; supplied=" +
+                                                  ToText(params.epsilon));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!std::isfinite(lowerBoundFp32)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "lower_bound", ToText(lowerBoundFp32),
+                                              "must remain finite after conversion to FP32; supplied=" +
+                                                  ToText(params.lowerBound));
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(!params.allowNegEigval || params.useBetaSigmoidInKernel)) {

@@ -208,19 +208,21 @@ static ge::graphStatus InferShapeChunkKdaFwdPrepare(
         }
     }
     if (chunkSize != 64) {
-        OP_LOGE_FOR_INVALID_VALUE(context, "chunk_size", std::to_string(chunkSize), "64");
+        OP_LOGE_FOR_INVALID_VALUE(Ops::Base::GetOpInfo(context), "chunk_size", std::to_string(chunkSize), "64");
         return ge::GRAPH_FAILED;
     }
 
     PrepareLayout parsedLayout;
     LogicalShape shape;
     if (!ParseLayout(layout, parsedLayout)) {
-        OP_LOGE_FOR_INVALID_FORMAT(context, "layout", layout, "BNSD, BSND, NTD or TND (case-sensitive)");
+        OP_LOGE_FOR_INVALID_FORMAT(Ops::Base::GetOpInfo(context), "layout", layout,
+                                   "BNSD, BSND, NTD or TND (case-sensitive)");
         return ge::GRAPH_FAILED;
     }
     if (!ResolveLogicalShape(*qShape, *vShape, parsedLayout, shape)) {
         OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
-            context, "q,v", std::to_string(qShape->GetDimNum()) + "," + std::to_string(vShape->GetDimNum()),
+            Ops::Base::GetOpInfo(context), "q,v",
+            std::to_string(qShape->GetDimNum()) + "," + std::to_string(vShape->GetDimNum()),
             "layout=" + std::string(layout) + "; both ranks must be " +
                 std::to_string(parsedLayout == PrepareLayout::NTD || parsedLayout == PrepareLayout::TND ? 3 : 4));
         return ge::GRAPH_FAILED;
