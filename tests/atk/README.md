@@ -93,16 +93,46 @@ CPU 精度对比。
 
 ## 运行前准备
 
-调用脚本前需要在当前 shell 中准备好 ATK、CANN、OPP 和 Python 包路径：
+ATK 与匹配的完整 FLA wheel 应安装在同一个 Python 环境中。若使用 conda，先执行
+`conda activate <环境名>`；若使用 Python venv，执行 `source <venv>/bin/activate`。
+激活只切换当前 shell 使用的 Python 和命令路径，不编译或安装软件。已有可用的 conda
+环境时无需再创建 venv，也无需设置 `ATK_ENV`。
+
+激活环境后，在仓库根目录配置 CANN，并从当前安装的 wheel 定位 vendor 脚本：
 
 ```bash
-source "$ATK_ENV/bin/activate"
 source <cann_install_path>/set_env.sh
-source <fla_npu_install_path>/vendors/fla_npu_transformer/bin/set_env.bash
-which atk
+export FLA_NPU_ENV="$(python - <<'PY'
+import importlib.util
+from pathlib import Path
+
+spec = importlib.util.find_spec("fla_npu")
+if spec is None or spec.origin is None:
+    raise SystemExit("当前 Python 环境未安装 fla_npu wheel")
+print(Path(spec.origin).resolve().parent / "opp/vendors/fla_npu_transformer/bin/set_env.bash")
+PY
+)"
+test -f "$FLA_NPU_ENV"
+source "$FLA_NPU_ENV"
+command -v python
+command -v atk
 atk --version
 npu-smi info
 ```
+
+也可以把环境准备交给 `run_test_cpu.sh`：设置 `ATK_ENV=<venv目录>`、
+`CANN_ENV=<set_env.sh路径>` 和 `FLA_NPU_ENV=<vendor脚本路径>`，脚本依次加载它们。
+此时 `FLA_NPU_ENV` 必须属于 `ATK_ENV` 中安装的 wheel；不要混用另一 Python 环境的 OPP。
+
+统一脚本固定使用 `--backend npu`，executor 调用 FLA 公共 Python 接口，由 Stable
+launcher 查找 ACLNN 符号。它不依赖 ATK 通用 `pyaclnn` 后端的 `get_opp_lib_path()`，
+因此不要求设置 `ATK_CUSTOM_OPP_PATH`。后者在 ATK 26.9.8 中是单个 `.so` 文件路径，
+不是 vendor 目录或多库搜索列表，不能用它替代 FLA 的 overlay 查找链。
+
+使用 overlay 时，在启动 ATK 和 worker 前安装并选择 overlay，然后重新 source vendor
+脚本；`FLA_NPU_OP_API_LIBS` 按 overlay → base 排序，`ASCEND_CUSTOM_OPP_PATH` 保持相同
+vendor 顺序。单数 `FLA_NPU_OP_API_LIB` 仍指向 base。安装、移除或改变 overlay 选择后
+必须重启 worker。详见 [OPP 叠加层设计](../../docs/OPP叠加层增量设计.md#31-仓内-atk-用例的兼容方式)。
 
 如果环境需要仓内 Python 包路径，请在调用脚本前自行设置。`run_test_cpu.sh` 不会修改
 `PYTHONPATH`。
