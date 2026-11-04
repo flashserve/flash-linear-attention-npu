@@ -155,35 +155,9 @@ descriptor 占位；空/非空组合必须恰好落在 `none/forward/recompute/s
 
 ## 返回码
 
-参数校验使用 `op_common/log/log.h` 的正式消息宏。ACLNN 返回状态保持兼容，
-调用方可通过 `aclGetRecentErrMsg()` 获取参数名、实际值和期望值或约束：
-
-| 场景 | Error Message |
-| --- | --- |
-| 单个输出或可选输入 shape 错误 | `EZ0008` |
-| q/k 或 layout 下多个输入/输出的 shape 关系错误 | `EZ0010` |
-| layout 与输入 rank 不匹配 | `EZ0013` |
-| layout 值或物理 format 错误 | `EZ0017` / `EZ0018` |
-| 单 tensor dtype 错误 | `EZ0019` |
-| chunk_size、元数据端点或明确标量值错误 | `EZ0024` |
-| cu_seqlens / chunk_indices 元素数错误 | `EZ0025` |
-| 非有限/越界标量、FP32 转换后越界或 DMA 范围错误 | `EZ0026` / `EZ0027` |
-| GVA、gate/beta 属性、输出 mask 或 metadata 的组合约束错误 | `EZ0027` |
-| 必选参数为空、输出不连续或缺少配套输入 | `EZ0037` |
-| 合法输入下 TilingContext、平台数据、调度或 tiling 输出容器失败 | `EZ1008`（需运行时已注册） |
-| InferShape 框架 shape 元数据缺失 | `EZ1014`（需运行时已注册） |
-
-上表为实际头文件提供对应 `OP_LOGE_FOR_*` 且所选 opbase 目录已注册该 code 时的错误码。
-构建从同一个官方 `log.cpp` 生成私有逐码能力配置，仅供 Prepare 的 L2/InferShape/Tiling 使用；
-头文件与目录版本不一致时也按该配置选择可上报的官方消息：
-旧头文件缺少这些宏时，shape/rank/value/组合约束使用 `EZ0002`，list size 使用 `EZ0003`，
-缺失必选参数使用 `EZ0004`，format 使用 `EZ0006`，dtype 使用 `EZ0007`。
-旧版路径仍保留参数名、实际值和期望值或约束，ACLNN 返回状态不变；不复制或重定义 SDK 宏。
-L2 加载时编入当前选定 opbase 的官方消息注册，保证第一次参数校验也能上报，
-无需先成功执行一次 kernel。Contiguous、metadata 转换、launcher 和执行失败保留下层首错，
-外层仅追加不重新 report 的日志。真正的内部 executor 初始化失败保留内部错误语义。
-旧 CANN 消息目录若未注册 `EZ1008` / `EZ1014`，仅这两类真实框架故障回退到带阶段和
-具体原因的 `EZ9999`；参数错误不使用该回退，也不自行注册或编造阶段错误定义。
+参数错误通过 `op_common/log/log.h` 结构化上报，可用 `aclGetRecentErrMsg()`
+读取参数名、实际值和约束。按宏及配套 opbase 消息目录选择可用错误码；
+下层调用失败保留首错，ACLNN 返回状态保持兼容。
 
 | 返回码 | 触发条件 |
 | --- | --- |
