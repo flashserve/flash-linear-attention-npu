@@ -54,22 +54,22 @@ A5 job 使用 `self-hosted,linux,npu,ascend950,flash-linear-attention-npu-a5` �
 
 PR 合入前，当前 head commit 的 6 个 NPU 状态和自动执行的 `CI 契约测试` 必须全部成功；当 PR 更新 commit 后，旧 commit 上的 CI 成功状态自动失效，需要 CI 触发名单中的账号重新触发 NPU CI。
 
-默认分支的 [`.github/npu-ci-users.json`](../.github/npu-ci-users.json) 独立维护可触发用户名；仓库读写权限不直接赋予触发权。评论分发和手动执行均校验初次触发人的名单，PR 自身修改名单不会授予权限。
+默认分支的 [`.github/npu-ci-users.json`](../.github/npu-ci-users.json) 独立维护可触发用户名；仓库读写权限不直接赋予触发权。默认评论分发和新版手动执行均校验初次触发人的名单，PR 自身修改名单不会授予权限。
 
-Actions 重跑权限由 GitHub 平台控制，重跑仍检查 PR 状态及固定 head/base/workflow 版本。评论触发自动携带四个 `expected_*` 快照，版本未变化时可使用 `Re-run all jobs`。Actions 手动首次默认不填快照；此类运行重新执行 prepare（`Re-run all jobs` 或 prepare 失败后重跑）会被拒绝，应新建 `Run workflow`，避免取到新的 head。`Re-run failed jobs` 若复用已成功的 prepare，则可正常重试，设备仍检查原 PR 状态和固定版本。
+Actions 重跑权限由 GitHub 平台控制。新版 CI 重跑仍检查 PR 状态及固定 head/base/workflow 版本。目标 workflow 支持完整四个 `expected_*` 输入时，评论触发自动携带快照，版本未变化时可使用 `Re-run all jobs`。新版 Actions 手动首次默认不填快照；此类运行重新执行 prepare（`Re-run all jobs` 或 prepare 失败后重跑）会被拒绝，应新建 `Run workflow`，避免取到新的 head。`Re-run failed jobs` 若复用已成功的 prepare，则可正常重试，设备仍检查原 PR 状态和固定版本；旧 workflow 的重跑行为保持原样。
 
-PR 修改非 Markdown 的 `ci/` 或 `.github/` 文件时，只有 PR 创建者（`pr.user.login`）具有该仓库 Admin 权限才允许执行，否则门禁直接失败。PR 作者无需位于 CI 触发名单，初次触发人仍须在名单中：名单内只读用户可以触发 Admin 作者的 PR，名单内 Admin 不能替非 Admin 作者放行 CI 修改。文件检测读取完整列表并检查重命名两侧；列表不完整、作者权限读取失败均拒绝。纯 CI 文件变更检测本身不新增编译规则。
+默认评论入口和新版 CI 会检查非 Markdown 的 `ci/` 或 `.github/` 变更：只有 PR 创建者（`pr.user.login`）具有该仓库 Admin 权限才允许执行，否则门禁直接失败。PR 作者无需位于 CI 触发名单，初次触发人仍须在名单中：名单内只读用户在新版 CI 中可以触发 Admin 作者的 PR，名单内 Admin 不能替非 Admin 作者放行 CI 修改。文件检测读取完整列表并检查重命名两侧；列表不完整、作者权限读取失败均拒绝。纯 CI 文件变更检测本身不新增编译规则。
 
-设备上的 A2/A5 一律使用当前 PR 合并结果中的 `ci/`，不再检出或叠加可信 CI 目录。Actions 调度、鉴权与最终状态发布仍固定为所选 workflow commit，不执行 PR 的 Actions 控制脚本。
+新版 CI 设备上的 A2/A5 一律使用当前 PR 合并结果中的 `ci/`，不再检出或叠加可信 CI 目录。Actions 调度、鉴权与最终状态发布仍固定为所选 workflow commit，不执行 PR 的 Actions 控制脚本。
 
-不同入口的权限要求如下，CI 名单不会授予 GitHub 平台权限：
+默认评论入口和新版手动执行的权限要求如下，CI 名单不会授予 GitHub 平台权限：
 
 | 触发入口 | 所需权限 |
 | --- | --- |
 | PR 评论 `/run-npu-ci` | 默认分支 CI 名单；不要求仓库 write 权限 |
-| Actions 页面、CLI 或 REST 手动分发 | 默认分支 CI 名单，并具备仓库 write 权限 |
+| 新版 CI 的 Actions 页面、CLI 或 REST 手动分发 | 默认分支 CI 名单，并具备仓库 write 权限 |
 
-GitHub 要求[手动运行 workflow 的用户具有仓库 write 权限](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)；REST 的 fine-grained token 还须具有 `Actions: write`，classic PAT 或 OAuth token 须具有 `repo` scope，见[分发 API 权限要求](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event)。涉及 CI 文件修改时，所有入口均要求 PR 作者具有仓库 Admin 权限。
+GitHub 要求[手动运行 workflow 的用户具有仓库 write 权限](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)；REST 的 fine-grained token 还须具有 `Actions: write`，classic PAT 或 OAuth token 须具有 `repo` scope，见[分发 API 权限要求](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event)。涉及 CI 文件修改时，默认评论入口和新版 workflow 均要求 PR 作者具有仓库 Admin 权限。
 
 1. 在 GitHub `Actions` 页面选择 `NPU CI`，将 `Branch` 设为 PR 当前目标分支，点击 `Run workflow`，填写 PR 编号和 `quick/full` 模式；正式门禁请求不填写 `ops`，仅在定向诊断时填写 `ops`。
 2. 在 PR 评论区发送命令：
@@ -81,9 +81,11 @@ GitHub 要求[手动运行 workflow 的用户具有仓库 write 权限](https://
 /run-npu-ci quick ops=causal_conv1d,chunk_bwd_dv_local
 ```
 
-仅接受 open、未合并且非草稿的 PR，目标分支必须受 GitHub 分支保护。`NPU CI` 的 workflow 文件位于该目标分支的 `.github/workflows/ci.yml`。默认分支上的 `NPU CI 评论分发` workflow 校验请求人后，通过 `workflow_dispatch.ref` 启动 PR 当前目标分支（`pr.base.ref`）上的 `ci.yml`，不支持 `ci_ref` 或 `branch` 覆盖。Actions 页面、CLI 和 REST 手动分发也必须选择 PR 当前目标分支。
+默认评论入口和新版 CI 仅接受 open、未合并且非草稿的 PR，目标分支必须受 GitHub 分支保护。`NPU CI` 的 workflow 文件位于该目标分支的 `.github/workflows/ci.yml`。默认分支上的 `NPU CI 评论分发` workflow 校验请求人后，通过 `workflow_dispatch.ref` 启动 PR 当前目标分支（`pr.base.ref`）上的 `ci.yml`，不支持 `ci_ref` 或 `branch` 覆盖。新版 CI 的 Actions 页面、CLI 和 REST 手动分发也必须选择 PR 当前目标分支。
 
-评论分发时自动固定 PR head、目标分支、base commit 和 workflow commit，prepare 会逐项校验；用户无需手填版本快照。排队期间 PR 或目标分支发生变化会拒绝执行，需重新触发。每个维护分支必须同步完整的当前 v3 dispatch 输入及作者权限契约；旧分支缺失契约时会明确失败，应先同步 CI 流程再触发。
+评论分发读取目标分支 workflow 声明的输入，仅发送其支持的参数；旧分支无需更新 CI 或声明新版契约即可触发。分发器按目标声明自动附带支持的 `expected_*` 版本快照，由目标 prepare 校验，用户无需手填。
+
+名单及 CI 修改作者 Admin 规则在默认评论入口校验，旧分支仍执行自己的权限检查和 CI 流程。例如旧 workflow 仍要求 `requested_by` 为 Admin 时，默认入口通过后也须满足该要求；不会自动获得新版名单、快照或重跑行为。
 
 带 `ops=` 的触发是编译定向诊断：只顺序执行第 01 项环境契约和第 02 项指定算子 OPP 构建，不执行 GDR 精度或后续安装分项；它只发布 `NPU CI / A2+A5 / 定向诊断`，不会写入或覆盖 01-06 正式门禁状态。用于合入门禁的运行必须省略 `ops`。
 

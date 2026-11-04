@@ -84,7 +84,12 @@ const github = {
     },
     issues:{listComments,createComment:async (payload) => {record('comment',payload);return {data:{id:123}};},
       updateComment:async (payload) => record('comment',payload)},
-    actions:{createWorkflowDispatch:async (payload) => record('dispatch',payload),
+    actions:{createWorkflowDispatch:async (payload) => {
+        if (settings.accepted_inputs && Object.keys(payload.inputs).some((name) => !settings.accepted_inputs.includes(name))) {
+          throw new Error('422 Unexpected inputs: ' + Object.keys(payload.inputs).filter((name) => !settings.accepted_inputs.includes(name)).join(','));
+        }
+        record('dispatch',payload);
+      },
       getWorkflowRun:async () => ({data:{status:'in_progress'}})},
   },
 };
@@ -182,14 +187,58 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
                 self.assertEqual(self.records(result, "dispatch"), [])
                 self.assertEqual(self.records(result, "status"), [])
 
-    def test_legacy_or_partially_migrated_workflow_is_not_dispatched(self):
+    def test_legacy_workflow_dispatches_only_its_four_declared_inputs(self):
+        # These interfaces match the inspected v26.9.0, v26.9.1 and v26.10.0
+        # workflows; the first two also have issue_comment before dispatch.
+        declared = {"pr_number":{"required":True}, "ci_mode":{"required":False,"default":"quick"},
+                    "ops":{"required":False,"default":""}, "requested_by":{"required":False,"default":""}}
+        for branch, old_comments in (("v26.9.0",True), ("v26.9.1",True), ("v26.10.0",False)):
+            for contract in (None, "2"):
+                with self.subTest(branch=branch, contract=contract):
+                    events = {"issue_comment":{"types":["created"]}} if old_comments else {}
+                    events["workflow_dispatch"] = {"inputs":declared}
+                    workflow = {"on":events, "jobs":{}}
+                    if contract:
+                        workflow["env"] = {"NPU_CI_DISPATCH_CONTRACT":contract}
+                    result = self.run_entry("dispatch", base_ref=branch,
+                                            workflow_text=yaml.safe_dump(workflow,sort_keys=False),
+                                            accepted_inputs=list(declared))
+                    self.assertNotIn("error", result)
+                    dispatch = self.records(result, "dispatch")[0]
+                    self.assertEqual(dispatch["ref"], branch)
+                    self.assertEqual(dispatch["inputs"], {"pr_number":"527", "ci_mode":"quick", "ops":"", "requested_by":"ci-user"})
+
+    def test_partially_updated_workflow_receives_supported_snapshot_fields_only(self):
         current = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        for text in ("on:\n  workflow_dispatch:\n", current.replace("      expected_head_sha:", "      ignored_head_sha:"),
-                     current.replace("NPU_CI_DISPATCH_CONTRACT: '3'", "NPU_CI_DISPATCH_CONTRACT: '2'")):
-            with self.subTest(workflow=text[:40]):
-                result = self.run_entry("dispatch", workflow_text=text)
-                self.assertIn("同步完整", result["error"])
-                self.assertEqual(self.records(result, "dispatch"), [])
+        partial = current.replace("      expected_head_sha:", "      ignored_head_sha:")
+        allowed = ["pr_number", "ci_mode", "ops", "requested_by", "expected_base_ref", "expected_base_sha", "expected_workflow_sha"]
+        result = self.run_entry("dispatch", workflow_text=partial, accepted_inputs=allowed)
+        self.assertNotIn("error", result)
+        inputs = self.records(result, "dispatch")[0]["inputs"]
+        self.assertEqual(set(inputs), set(allowed))
+        self.assertNotIn("expected_head_sha", inputs)
+
+    def test_workflow_with_no_inputs_can_dispatch_without_new_contract(self):
+        for text in ("on:\n  workflow_dispatch:\n", "on:\n  workflow_dispatch: {}\n"):
+            with self.subTest(workflow=text):
+                result = self.run_entry("dispatch", workflow_text=text, accepted_inputs=[])
+                self.assertNotIn("error", result)
+                self.assertEqual(self.records(result, "dispatch")[0]["inputs"], {})
+
+    def test_missing_dispatch_entry_is_still_a_configuration_error(self):
+        result = self.run_entry("dispatch", workflow_text="on:\n  push:\n")
+        self.assertIn("workflow_dispatch", result["error"])
+        self.assertEqual(self.records(result, "dispatch"), [])
+
+    def test_legacy_target_keeps_current_entry_allowlist_and_author_policy(self):
+        legacy = "on:\n  workflow_dispatch:\n    inputs:\n      pr_number:\n        required: true\n"
+        unlisted = self.run_entry("dispatch", actor="outsider", permissions={"outsider":"admin"}, workflow_text=legacy)
+        self.assertIn("npu-ci-users.json", unlisted["error"])
+        self.assertEqual(self.records(unlisted, "dispatch"), [])
+        ci_author = self.run_entry("dispatch", files=["ci/run.sh"], actor="ci-admin",
+                                   permissions={"ci-admin":"admin"}, workflow_text=legacy)
+        self.assertIn("PR 作者", self.records(ci_author, "failed")[0])
+        self.assertEqual(self.records(ci_author, "dispatch"), [])
 
     def test_initial_dispatch_and_prepare_reject_closed_merged_or_draft_pr(self):
         for entry in ("dispatch", "prepare"):

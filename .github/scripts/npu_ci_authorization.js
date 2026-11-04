@@ -1,8 +1,6 @@
 "use strict";
 
 const USERS_PATH = '.github/npu-ci-users.json';
-const DISPATCH_INPUTS = ['pr_number', 'ci_mode', 'ops', 'requested_by',
-  'expected_head_sha', 'expected_base_ref', 'expected_base_sha', 'expected_workflow_sha'];
 
 function requireOpenPullRequest(pr) {
   if (pr.state !== 'open' || pr.merged || pr.merged_at) {
@@ -35,25 +33,28 @@ function requireDispatchIdentity({ pr, inputs, workflowSha, required = false, re
   }
 }
 
-function requireDispatchContract(text) {
-  // Parse only the fixed indentation of this repository's input declaration;
-  // maintenance branches must migrate the complete contract before dispatch.
+function selectDispatchInputs(text, inputs) {
+  // Current and maintenance workflows use this block-style YAML layout.
+  // Read only input names, so each branch can keep its own CI interface.
   const lines = text.split(/\r?\n/);
-  const start = lines.findIndex((line) => /^  workflow_dispatch:\s*$/.test(line));
+  const start = lines.findIndex((line) => /^  workflow_dispatch:\s*(?:\{\s*\})?\s*(?:#.*)?$/.test(line));
+  if (start < 0) throw new Error('目标分支的 CI workflow 没有可分发的 workflow_dispatch 入口。');
   const declared = new Set();
   let readingInputs = false;
   for (const line of lines.slice(start + 1)) {
-    if (start < 0 || (/\S/.test(line) && !/^ {4}/.test(line))) break;
-    if (/^    inputs:\s*$/.test(line)) readingInputs = true;
+    if (!line.trim() || line.trimStart().startsWith('#')) continue;
+    if (!/^ {4}/.test(line)) break;
+    if (/^    inputs:\s*(?:#.*)?$/.test(line)) {
+      readingInputs = true;
+      continue;
+    }
     if (readingInputs) {
-      const match = line.match(/^      ([a-z_]+):\s*$/);
+      if (!/^ {6}/.test(line)) break;
+      const match = line.match(/^      ['"]?([A-Za-z_][A-Za-z0-9_-]*)['"]?:/);
       if (match) declared.add(match[1]);
     }
   }
-  if (!/^  NPU_CI_DISPATCH_CONTRACT:\s*['"]?3['"]?\s*$/m.test(text) ||
-      DISPATCH_INPUTS.some((name) => !declared.has(name))) {
-    throw new Error('目标分支尚未支持安全 NPU CI 分发契约，请先同步完整的 workflow、权限脚本和 expected_* inputs；不会回退到旧版授权流程。');
-  }
+  return Object.fromEntries(Object.entries(inputs).filter(([name]) => declared.has(name)));
 }
 
 async function loadCiUsers({ github, context }) {
@@ -123,5 +124,5 @@ async function requireCiAuthorAdmin({ github, context, pr }) {
 }
 
 module.exports = { USERS_PATH, loadCiUsers, requireAuthorizedCiUser, authorizeCiRequest,
-  requireOpenPullRequest, requireProtectedBase, requireDispatchIdentity, requireDispatchContract,
+  requireOpenPullRequest, requireProtectedBase, requireDispatchIdentity, selectDispatchInputs,
   hasCiChanges, requireCiAuthorAdmin };

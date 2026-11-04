@@ -47,9 +47,6 @@ on:
         required: false
         default: ''
 
-env:
-  NPU_CI_DISPATCH_CONTRACT: '3'
-
 concurrency:
   group: npu-ci-${{ github.repository }}-${{ inputs.pr_number || github.run_id }}
   cancel-in-progress: true

@@ -145,14 +145,13 @@ jobs:
             const workflowText = Buffer
               .from(workflowFile.content, workflowFile.encoding || 'base64')
               .toString('utf8');
-            auth.requireDispatchContract(workflowText);
 
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner,
               repo: context.repo.repo,
               workflow_id: 'ci.yml',
               ref: targetRef,
-              inputs: {
+              inputs: auth.selectDispatchInputs(workflowText, {
                 pr_number: String(prNumber),
                 ci_mode: ciMode,
                 ops,
@@ -161,7 +160,7 @@ jobs:
                 expected_base_ref: pr.base.ref,
                 expected_base_sha: baseBranch.commit.sha,
                 expected_workflow_sha: baseBranch.commit.sha,
-              },
+              }),
             });
 
             core.notice(

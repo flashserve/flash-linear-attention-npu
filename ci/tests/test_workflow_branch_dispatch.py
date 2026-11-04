@@ -49,7 +49,6 @@ class WorkflowBranchDispatchTest(unittest.TestCase):
             "pr_number", "ci_mode", "ops", "requested_by", "expected_head_sha",
             "expected_base_ref", "expected_base_sha", "expected_workflow_sha",
         })
-        self.assertEqual(workflow["env"]["NPU_CI_DISPATCH_CONTRACT"], "3")
         self.assertIn("${{ github.ref_name }}", self.ci_text)
         self.assertIn("${{ github.workflow_sha }}", self.ci_text)
 
@@ -62,7 +61,7 @@ class WorkflowBranchDispatchTest(unittest.TestCase):
         self.assertIn("workflow_id: 'ci.yml'", self.dispatch_script)
         self.assertIn("ref: targetRef", self.dispatch_script)
         self.assertIn(".github/workflows/ci.yml", self.dispatch_script)
-        self.assertIn("requireDispatchContract(workflowText)", self.dispatch_script)
+        self.assertIn("auth.selectDispatchInputs(workflowText, {", self.dispatch_script)
 
     def _run_dispatch(self, comment):
         encoded_workflow = base64.b64encode(
