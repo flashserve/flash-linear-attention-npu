@@ -3,6 +3,23 @@
 设计规则版本：V3。接口见 [api.md](api.md)。布局直写、梯度 dtype 和参数片上转换
 共用原有 FP32 数学计算与 workspace。下面分别说明布局、写回和类型转换的实现。
 
+## 架构分派（Issue #1060）
+
+Host 从 tiling context 的平台信息查询 `GetCurNpuArch()`，显式选择
+`DAV_2201`（A2/A3）或 `DAV_3510`（A5）。平台信息为空或架构未知/不支持时返回失败，
+不再把“非 Ascend950”隐式归入 arch22。调用侧须向 tiling 提供有效的平台信息。
+已有 `GetCoreNumAic()` 为零时的 28/1 核回退暂时保留，仅改用架构判断；此回退不表示
+所有 DAV_3510 产品均有 28 个核，资源查询补齐需独立验证 direct-launch 路径。
+
+Kernel 优先使用 `__NPU_ARCH__` 的 2201/3510 值；新宏不存在时，在本算子入口集中映射
+旧 `__CCE_AICORE__` 的 220/310 值。新旧宏对已知架构描述冲突、或设备架构不支持时
+报编译错误。两个宏都不存在时保留原有 arch22 非设备/codegen 解析路径。
+该局部兼容代码待仓库公共兼容层落地后迁移，不影响其他算子。
+
+arch22/arch35 的数学实现、TilingKey、workspace 与 dtype/layout 约束保持不变。
+构建期 `ASCEND_COMPUTE_UNIT` 的产品配置与专用编译选项保持原状。
+此项修改的开发期验证与未完成项见 `docs/validation.md`。
+
 A2/A3 使用现有 outputTokenMajor：token-major 地址为 `(b*T+t)*H+h`，
 head-major 地址为 `(b*H+h)*T+t`。dg 按 D=128 展开，db 为标量。
 token-major 行间跳过 H-1 个 head；head-major 行间无间隔。

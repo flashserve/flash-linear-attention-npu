@@ -6,7 +6,32 @@
 // CANN uses this declaration in the generated MIX wrapper.
 #include "lib/matmul_intf.h"
 
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+// Prefer the architecture macro. Keep the legacy compiler mapping local until
+// the repository-wide compatibility layer in #1060 is available.
+#if defined(__NPU_ARCH__)
+#if __NPU_ARCH__ != 2201 && __NPU_ARCH__ != 3510
+#error "ChunkKdaBwdFinalize supports only NPU architectures 2201 and 3510"
+#endif
+#define KDA_BWD_FINALIZE_NPU_ARCH __NPU_ARCH__
+#elif defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#define KDA_BWD_FINALIZE_NPU_ARCH 2201
+#elif defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#define KDA_BWD_FINALIZE_NPU_ARCH 3510
+#elif !defined(__CCE_AICORE__)
+// Preserve the existing non-device/code-generation parsing path.
+#define KDA_BWD_FINALIZE_NPU_ARCH 0
+#else
+#error "Unsupported legacy architecture for ChunkKdaBwdFinalize"
+#endif
+
+#if defined(__NPU_ARCH__) && defined(__CCE_AICORE__)
+#if (__CCE_AICORE__ == 220 && __NPU_ARCH__ != 2201) || \
+    (__CCE_AICORE__ == 310 && __NPU_ARCH__ != 3510)
+#error "Conflicting architecture macros for ChunkKdaBwdFinalize"
+#endif
+#endif
+
+#if KDA_BWD_FINALIZE_NPU_ARCH == 0 || KDA_BWD_FINALIZE_NPU_ARCH == 2201
 #include "arch22/chunk_kda_bwd_finalize.h"
 
 extern "C" __global__ __aicore__ void chunk_kda_bwd_finalize(

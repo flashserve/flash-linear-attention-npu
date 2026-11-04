@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <string>
 #include <register/op_impl_registry.h>
 #include "platform/platform_ascendc.h"
 #include "chunk_kda_bwd_finalize_arch22.h"
@@ -165,12 +166,28 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
         OP_LOGE(context->GetNodeName(), "scale/lower_bound must be finite");
         return ge::GRAPH_FAILED;
     }
-    const auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
+    auto *platformInfo = context->GetPlatformInfo();
+    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    const auto platform = platform_ascendc::PlatformAscendC(platformInfo);
+    const auto npuArch = platform.GetCurNpuArch();
+    const bool arch22 = npuArch == NpuArch::DAV_2201;
+    const bool arch35 = npuArch == NpuArch::DAV_3510;
+    if (!arch22 && !arch35) {
+        const auto actual = std::to_string(static_cast<int32_t>(npuArch));
+#ifdef OP_LOGE_FOR_INVALID_VALUE
+        OP_LOGE_FOR_INVALID_VALUE(context->GetNodeName(), "NpuArch", actual,
+                                  std::string("DAV_2201 or DAV_3510"));
+#else
+        OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "NpuArch", actual.c_str(),
+                                 "DAV_2201 or DAV_3510");
+#endif
+        return ge::GRAPH_FAILED;
+    }
     uint32_t aicCoreNum = static_cast<uint32_t>(platform.GetCoreNumAic());
     if (aicCoreNum == 0) {
-        // The A5 aclnn direct-launch context may omit platform info.  This
-        // checkpoint is A5-only and must still expose all 28 physical AICs.
-        aicCoreNum = platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950 ? 28U : 1U;
+        // Preserve the legacy direct-launch fallback when the core count is
+        // absent. The architecture must still be known; do not infer it here.
+        aicCoreNum = arch35 ? 28U : 1U;
         OP_LOGW(context->GetNodeName(),
                 "platform info did not report AIC count; fallback to %u", aicCoreNum);
     }
@@ -218,7 +235,6 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
     shape.qkTokenMajor = modelTm && !ctx.qRstd;
     shape.vTokenMajor = modelTm;
     shape.rawTokenMajor = mixed;
-    const bool arch22 = platform.GetSocVersion() != platform_ascendc::SocVersion::ASCEND950;
     if (ValidateFinalize(context, ctx, shape, arch22, *useBetaSigmoid,
                          *allowNegEigval, outputLayout) != ge::GRAPH_SUCCESS) return ge::GRAPH_FAILED;
     if (arch22) return TilingFinalizeArch22(context, ctx, shape);
