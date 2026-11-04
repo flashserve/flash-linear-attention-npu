@@ -1,7 +1,7 @@
 /** Copyright (c) 2026 Tianjin University, Ltd.
  * Licensed under CANN Open Software License Agreement Version 2.0. */
-#ifndef RECURRENT_GDN_V2_CHECK_H
-#define RECURRENT_GDN_V2_CHECK_H
+#ifndef RECURRENT_GDN_CHECK_H
+#define RECURRENT_GDN_CHECK_H
 
 #include "../recurrent_gated_delta_rule_error.h"
 
@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 
-namespace rgdn_v2 {
+namespace rgdn_check {
 struct Params {
     const aclTensor *q, *k, *v, *beta;
     aclTensor *state;
@@ -291,5 +291,5 @@ inline bool Check(const Params &p)
     }
     return true;
 }
-} // namespace rgdn_v2
+} // namespace rgdn_check
 #endif

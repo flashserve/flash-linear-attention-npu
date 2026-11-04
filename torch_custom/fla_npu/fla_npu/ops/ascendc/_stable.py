@@ -519,7 +519,13 @@ def npu_recurrent_gated_delta_rule(
     use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False, A_log=None,
     dt_bias=None, use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False,
 ):
-    """Fused RecurrentGDN V2; preserves Q/K/V views and updates State in place."""
+    """Route every supported call to the fused RecurrentGDN implementation.
+
+    Fusion flags select arithmetic only; disabling them never selects the
+    historical kernel. The two ACLNN host ABIs share arch22 on A2/A3.
+    """
+    if gk is not None:
+        raise ValueError("gk is reserved; only scalar gate g is supported.")
     from ._recurrent_gdn import validate_recurrent_gdn
 
     scale = validate_recurrent_gdn(query, key, value, state, beta=beta, scale=scale,

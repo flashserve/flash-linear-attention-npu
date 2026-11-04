@@ -9,7 +9,7 @@
 
 add_op_to_compiled_list()
 
-# Preserve the established FP32 evaluation order for both kernel versions.
+# Preserve the established FP32 evaluation order for each architecture implementation.
 # Keep these options scoped to this operator.
 add_ops_compile_options(
     OP_NAME RecurrentGatedDeltaRule

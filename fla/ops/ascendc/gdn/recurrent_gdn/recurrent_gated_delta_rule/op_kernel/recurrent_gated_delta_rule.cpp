@@ -14,14 +14,12 @@
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #include "arch35/recurrent_gated_delta_rule.h"
 #else
-#include "recurrent_gated_delta_rule.h"
-#include "recurrent_gated_delta_rule_v2.h"
+#include "arch22/recurrent_gated_delta_rule.h"
 #endif
 #include "recurrent_gated_delta_rule_tiling_data.h"
 
 
 using namespace AscendC;
-using namespace matmul;
 using namespace RecurrentGatedDeltaRule;
 
 namespace RecurrentGatedDeltaRule {
@@ -54,22 +52,18 @@ recurrent_gated_delta_rule(GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR be
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
     TPipe pipe;
     using StateType = typename RGDRDTypeTraits<D_T_STATE>::type;
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
-    if (tilingData.useV2) {
-        using BetaType = typename RGDRDTypeTraits<D_T_BETA>::type;
-        using GateType = typename RGDRDTypeTraits<D_T_G>::type;
-        RGDRV2<StateType, BetaType, GateType> op(&tilingData);
-        RGDRV2InitParams params{query, key, value, beta, state, cuSeqlens, ssmStateIndices,
-                                g, numAcceptedTokens, aLog, dtBias, out};
-        op.Init(params, &pipe);
-        op.Process();
-        return;
-    }
-#endif
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     RGDR<bfloat16_t, bfloat16_t, StateType> op(&tilingData);
-    RGDRInitParams initParams{query, key, value, g, gk, beta, state, cuSeqlens,
-                              ssmStateIndices, numAcceptedTokens, out, stateOut};
-    op.Init(initParams, &pipe);
+    RGDRInitParams params{query, key, value, g, gk, beta, state, cuSeqlens,
+                          ssmStateIndices, numAcceptedTokens, out, stateOut};
+#else
+    using BetaType = typename RGDRDTypeTraits<D_T_BETA>::type;
+    using GateType = typename RGDRDTypeTraits<D_T_G>::type;
+    RGDR<StateType, BetaType, GateType> op(&tilingData);
+    RGDRInitParams params{query, key, value, beta, state, cuSeqlens, ssmStateIndices,
+                          g, numAcceptedTokens, aLog, dtBias, out};
+#endif
+    op.Init(params, &pipe);
     op.Process();
 }
 #endif

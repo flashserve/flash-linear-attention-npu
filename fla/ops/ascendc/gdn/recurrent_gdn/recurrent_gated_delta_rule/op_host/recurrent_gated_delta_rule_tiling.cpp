@@ -269,7 +269,7 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::AnalyzeShapes()
                 state.GetDim(3) != RGDR_REQUIRED_DIM) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "input shapes", "inconsistent dimensions: query="+rgdn_error::ShapeText(query)+", key="+rgdn_error::ShapeText(key)+", value="+rgdn_error::ShapeText(value)+", beta="+rgdn_error::ShapeText(beta)+", state="+rgdn_error::ShapeText(state)); return ge::GRAPH_FAILED; };
     const uint64_t keyHeads = static_cast<uint64_t>(query.GetDim(1));
     const uint64_t valueHeads = static_cast<uint64_t>(value.GetDim(1));
-    const bool legacyPath = !tilingData_.useV2 || compileInfo_.isA5;
+    const bool legacyPath = compileInfo_.isA5;
     if (valueHeads % keyHeads != 0 || (!legacyPath && valueHeads / keyHeads > 16)) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "query.HK,value.HV", "HK="+std::to_string(keyHeads)+", HV="+std::to_string(valueHeads)+"; HV must be a multiple of HK; V2 ratio must be in [1,16]"); return ge::GRAPH_FAILED; };
 
     tilingData_.totalTokens = static_cast<uint64_t>(query.GetDim(0));
@@ -287,7 +287,7 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::AnalyzeShapes()
     const uint64_t tasksPerCore = (tilingData_.taskCount - 1) / compileInfo_.aivNum + 1;
     tilingData_.vectorCoreNum = static_cast<uint32_t>((tilingData_.taskCount - 1) / tasksPerCore + 1);
 
-    // The old fields remain the ABI prefix for the legacy gk implementation.
+    // The prefix fields are used by the arch35 implementation.
     // The generic implementation uses the 64-bit dimensions and strides below.
     tilingData_.t = static_cast<uint32_t>(tilingData_.totalTokens);
     tilingData_.nk = static_cast<uint32_t>(keyHeads);
@@ -403,7 +403,7 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::GetStateStrides()
     const uint64_t stateBytes = context_->GetInputDesc(STATE_INDEX)->GetDataType() == ge::DT_FLOAT ? 4 : 2;
     if (tilingData_.stateStrides[3] != 1 || tilingData_.stateStrides[2] < RGDR_REQUIRED_DIM ||
                 tilingData_.stateStrides[2] - RGDR_REQUIRED_DIM > std::numeric_limits<uint32_t>::max() / stateBytes) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "input strides", rgdn_error::Format("State requires a contiguous K axis and a uint32 DMA row gap")); return ge::GRAPH_FAILED; };
-    if (!tilingData_.useV2 || compileInfo_.isA5) {
+    if (compileInfo_.isA5) {
         if (tilingData_.stateStrides[0] > std::numeric_limits<uint32_t>::max() ||
                     tilingData_.stateStrides[1] > std::numeric_limits<uint32_t>::max() ||
                     tilingData_.stateStrides[2] != RGDR_REQUIRED_DIM) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "input strides", rgdn_error::Format("legacy gk State strides are not supported")); return ge::GRAPH_FAILED; };
@@ -447,7 +447,7 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::GetOptionalInput()
         }
         if (!valid) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), index==G_INDEX ? "g" : index==GK_INDEX ? "gk" : index==ACC_TO_INDEX ? "num_accepted_tokens" : index==A_LOG_INDEX ? "A_log" : "dt_bias", "actual shape="+rgdn_error::ShapeText(shape)+"; expected "+(index==G_INDEX ? "[T,HV]" : index==GK_INDEX ? "[T,HV,128]" : index==ACC_TO_INDEX ? "[B]" : "[HV] FP32")); return ge::GRAPH_FAILED; };
     }
-    if (tilingData_.useV2 && tilingData_.hasGamaK) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "gk", rgdn_error::Format("V2 does not accept the legacy gk input")); return ge::GRAPH_FAILED; };
+    if (!compileInfo_.isA5 && tilingData_.hasGamaK) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "gk", rgdn_error::Format("A2/A3 does not accept gk")); return ge::GRAPH_FAILED; };
     if (!tilingData_.useV2 && (tilingData_.useQkL2NormInKernel || tilingData_.useGateInKernel ||
                                        tilingData_.useBetaSigmoidInKernel || tilingData_.allowNegEigval ||
                                        tilingData_.hasALog || tilingData_.hasDtBias ||
@@ -481,7 +481,7 @@ void RecurrentGatedDeltaRuleTiling::PrintTilingData()
 
 ge::graphStatus RecurrentGatedDeltaRuleTiling::CalUbSize()
 {
-    if (!tilingData_.useV2 || compileInfo_.isA5) {
+    if (compileInfo_.isA5) {
         RecurrentGatedDeltaRuleTilingProcessor processor(BuildProcessorContext());
         return processor.ProcessUb(tilingData_);
     }
