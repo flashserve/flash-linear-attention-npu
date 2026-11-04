@@ -2,16 +2,16 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * Licensed under CANN Open Software License Agreement Version 2.0.
  */
-#ifndef RECURRENT_GDN_A2A3_V2_H
-#define RECURRENT_GDN_A2A3_V2_H
+#ifndef RECURRENT_GATED_DELTA_RULE_ARCH22_H
+#define RECURRENT_GATED_DELTA_RULE_ARCH22_H
 
 #include "kernel_operator.h"
-#include "recurrent_gated_delta_rule_struct.h"
+#include "../recurrent_gated_delta_rule_struct.h"
 
 namespace RecurrentGatedDeltaRule {
 using namespace AscendC;
 
-struct RGDRV2InitParams {
+struct RGDRInitParams {
     GM_ADDR query;
     GM_ADDR key;
     GM_ADDR value;
@@ -29,7 +29,7 @@ struct RGDRV2InitParams {
 // Each physical region has one owner. In particular a BF16 snapshot lives in
 // the consumed source bank, never in the FP32 bank used by the next recurrence.
 template <typename State, typename Beta, typename Gate>
-class RGDRV2 {
+class RGDR {
     static constexpr uint32_t kHeadDim = 128;
     static constexpr uint32_t kWindowTokens = 8;
     static constexpr uint32_t kBufferCount = 2;
@@ -79,9 +79,9 @@ class RGDRV2 {
     static_assert(kWindowTokens == kFloatBlockElements, "Metadata window must fill one FP32 block");
 
 public:
-    __aicore__ inline RGDRV2(const RecurrentGatedDeltaRuleTilingData *td) : td_(*td) {}
+    __aicore__ inline RGDR(const RecurrentGatedDeltaRuleTilingData *td) : td_(*td) {}
 
-    __aicore__ inline void Init(const RGDRV2InitParams &p, TPipe *pipe)
+    __aicore__ inline void Init(const RGDRInitParams &p, TPipe *pipe)
     {
         pipe_ = pipe;
         q_.SetGlobalBuffer((__gm__ bfloat16_t *)p.query);

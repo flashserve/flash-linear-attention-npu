@@ -29,7 +29,7 @@
 #include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/reshape.h"
 #include "opdev/tensor_view_utils.h"
-#include "recurrent_gated_delta_rule_v2_check.h"
+#include "recurrent_gated_delta_rule_check.h"
 
 using namespace op;
 
@@ -91,26 +91,26 @@ static inline bool CheckNotNull(const RecurrentGatedDeltaRuleParams &params)
 static inline bool CheckDtypeVaild(const RecurrentGatedDeltaRuleParams &params)
 {
     // 检查必选参数数据类型
-    if (!rgdn_v2::Type(params.query, QKV_TYPE_SUPPORT_LIST, "query", op::ToString(QKV_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
-    if (!rgdn_v2::Type(params.key, QKV_TYPE_SUPPORT_LIST, "key", op::ToString(QKV_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
-    if (!rgdn_v2::Type(params.value, QKV_TYPE_SUPPORT_LIST, "value", op::ToString(QKV_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
-    if (!rgdn_v2::Type(params.state, STATE_TYPE_SUPPORT_LIST, "state", op::ToString(STATE_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
-    if (!rgdn_v2::Type(params.beta, BETA_TYPE_SUPPORT_LIST, "beta", op::ToString(BETA_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
-    if (!rgdn_v2::Type(params.actual_seq_lengths, SEQ_LENS_TYPE_SUPPORT_LIST, "actual_seq_lengths", op::ToString(SEQ_LENS_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
-    if (!rgdn_v2::Type(params.ssm_state_indices, SSM_TYPE_SUPPORT_LIST, "ssm_state_indices", op::ToString(SSM_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
+    if (!rgdn_check::Type(params.query, QKV_TYPE_SUPPORT_LIST, "query", op::ToString(QKV_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
+    if (!rgdn_check::Type(params.key, QKV_TYPE_SUPPORT_LIST, "key", op::ToString(QKV_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
+    if (!rgdn_check::Type(params.value, QKV_TYPE_SUPPORT_LIST, "value", op::ToString(QKV_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
+    if (!rgdn_check::Type(params.state, STATE_TYPE_SUPPORT_LIST, "state", op::ToString(STATE_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
+    if (!rgdn_check::Type(params.beta, BETA_TYPE_SUPPORT_LIST, "beta", op::ToString(BETA_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
+    if (!rgdn_check::Type(params.actual_seq_lengths, SEQ_LENS_TYPE_SUPPORT_LIST, "actual_seq_lengths", op::ToString(SEQ_LENS_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
+    if (!rgdn_check::Type(params.ssm_state_indices, SSM_TYPE_SUPPORT_LIST, "ssm_state_indices", op::ToString(SSM_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
 
     // 检查可选参数数据类型
     if (params.g != nullptr) {
-        if (!rgdn_v2::Type(params.g, G_TYPE_SUPPORT_LIST, "g", op::ToString(G_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
+        if (!rgdn_check::Type(params.g, G_TYPE_SUPPORT_LIST, "g", op::ToString(G_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
     }
     if (params.gk != nullptr) {
-        if (!rgdn_v2::Type(params.gk, G_TYPE_SUPPORT_LIST, "gk", op::ToString(G_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
+        if (!rgdn_check::Type(params.gk, G_TYPE_SUPPORT_LIST, "gk", op::ToString(G_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
     }
     if (params.num_accepted_tokens != nullptr) {
-        if (!rgdn_v2::Type(params.num_accepted_tokens, ACC_TO_TYPE_SUPPORT_LIST, "num_accepted_tokens", op::ToString(ACC_TO_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
+        if (!rgdn_check::Type(params.num_accepted_tokens, ACC_TO_TYPE_SUPPORT_LIST, "num_accepted_tokens", op::ToString(ACC_TO_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
     }
 
-    if (!rgdn_v2::Type(params.out, OUT_TYPE_SUPPORT_LIST, "out", op::ToString(OUT_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
+    if (!rgdn_check::Type(params.out, OUT_TYPE_SUPPORT_LIST, "out", op::ToString(OUT_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
     return true;
 }
 
@@ -242,10 +242,10 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleV2GetWorkspaceSize(
         OP_LOGE_WITH_INVALID_INPUT("aclnnRecurrentGatedDeltaRuleV2", "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
-    const rgdn_v2::Params params{query, key, value, beta, stateRef, actualSeqLengths,
+    const rgdn_check::Params params{query, key, value, beta, stateRef, actualSeqLengths,
         ssmStateIndices, g, gk, numAcceptedTokens, aLog, dtBias, scaleValue,
         useQkL2NormInKernel, useGateInKernel, useBetaSigmoidInKernel, allowNegEigval, out};
-    if (!(rgdn_v2::Check(params))) { return ACLNN_ERR_PARAM_INVALID; };
+    if (!(rgdn_check::Check(params))) { return ACLNN_ERR_PARAM_INVALID; };
 
     L2_DFX_PHASE_1(aclnnRecurrentGatedDeltaRuleV2,
                   DFX_IN(query, key, value, beta, stateRef, actualSeqLengths, ssmStateIndices,

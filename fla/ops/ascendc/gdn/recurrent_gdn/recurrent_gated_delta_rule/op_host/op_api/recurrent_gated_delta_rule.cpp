@@ -41,12 +41,22 @@ const aclTensor *RecurrentGatedDeltaRule(const aclTensor *query, const aclTensor
     auto out = executor->AllocTensor(outType, format, format);
     if (!(out != nullptr)) { REPORT_INNER_ERR_MSG("EZ9999", "RecurrentGatedDeltaRule: output allocation failed"); return nullptr; };
 
+    const auto stateStorageShape = stateRef->GetStorageShape();
+    const auto stateViewShape = stateRef->GetViewShape();
+    const auto stateViewStrides = stateRef->GetViewStrides();
+    const auto stateViewOffset = stateRef->GetViewOffset();
+
     auto ret = INFER_SHAPE(
         RecurrentGatedDeltaRule,
         OP_INPUT(query, key, value, beta, stateRef, actualSeqLengths, ssmStateIndices, g, gk, numAcceptedTokens,
                  static_cast<const aclTensor *>(nullptr), static_cast<const aclTensor *>(nullptr)),
         OP_OUTPUT(out, stateRef), OP_ATTR(scaleValue));
     if (ret != ACLNN_SUCCESS) { return nullptr; };
+
+    stateRef->SetViewShape(stateViewShape);
+    stateRef->SetViewStrides(stateViewStrides);
+    stateRef->SetViewOffset(stateViewOffset);
+    stateRef->SetStorageShape(stateStorageShape);
 
     // The shared kernel has two additional optional input slots. Preserve the
     // historical API while supplying their positions in the launch argument list.
