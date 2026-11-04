@@ -29,7 +29,7 @@ npu-smi info
 | A2   | `ascend910b`              |
 | A3   | `ascend910_93`            |
 | A5   | `ascend950`               |
-| A6（开发分支，当前仅 `chunk_fwd_h`） | `ascend960dt` |
+| A6（开发分支，支持 `chunk_fwd_h` 和 `chunk_gated_delta_rule_fwd_prepare`） | `ascend960dt` |
 
 ### Step 1. 部署 CANN 开发环境
 
@@ -58,8 +58,8 @@ python scripts/check_npu_env.py            # 无 NPU 的纯构建环境可加 --
 ```sh
 FLA_NPU_SOC=ascend910b python scripts/build_wheel.py            # A2；A3→ascend910_93，A5→ascend950
 
-# A6 开发分支当前只接入 chunk_fwd_h
-FLA_NPU_SOC=ascend960dt FLA_NPU_OPS=chunk_fwd_h python scripts/build_wheel.py
+# A6 开发分支，构建已接入的两个算子
+FLA_NPU_SOC=ascend960dt FLA_NPU_OPS=chunk_fwd_h,chunk_gated_delta_rule_fwd_prepare python scripts/build_wheel.py
 
 # 可选：只构建指定算子；其余环境变量见开发者指南
 FLA_NPU_OPS=chunk_fwd_o,chunk_bwd_dv_local FLA_NPU_SOC=ascend910b python scripts/build_wheel.py

@@ -13,6 +13,9 @@ namespace optiling {
 
 namespace {
 
+constexpr int64_t PREPARE_A6_TASK_SLOTS = 3; // A6: three tasks per pack.
+constexpr int64_t PREPARE_A5_TASK_SLOTS = 4; // Four allocated slots, including GVA=3.
+
 bool HasTensor(const gert::StorageShape *shape)
 {
     return shape != nullptr;
@@ -31,6 +34,9 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
 {
     auto platformInfo = context->GetPlatformInfo();
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
+    const bool isAscend9201 =
+        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_9201;
+    const int64_t taskSlots = isAscend9201 ? PREPARE_A6_TASK_SLOTS : PREPARE_A5_TASK_SLOTS;
     int64_t coreNum = ascendcPlatform.GetCoreNumAic();
     if (coreNum <= 0) {
         coreNum = ascendcPlatform.GetCoreNumAiv();
@@ -227,8 +233,8 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
         OP_LOGE(context->GetNodeName(), "workspace size buffer is null");
         return ge::GRAPH_FAILED;
     }
-    // Per-core user WS: gmWsY 4×16 KiB. Must match kWsPerCoreBytes.
-    ws[0] = sysWorkspaceSize + static_cast<size_t>(coreNum) * 64 * 1024;
+    // Per-core Y workspace: A6 three slots, A5 four; matches each common.h.
+    ws[0] = sysWorkspaceSize + static_cast<size_t>(coreNum) * taskSlots * 16 * 1024;
     OP_LOGD(context->GetNodeName(),"workspace = [%zu]", ws[0]);
     return ge::GRAPH_SUCCESS;
 }
