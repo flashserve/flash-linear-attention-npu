@@ -18,9 +18,13 @@ CLI 与 `ci/example_st_cases.json` 的字段映射保持一致（`--batch/--toke
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import math
 import os
+import pickle
 import sys
+import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -41,6 +45,8 @@ from fla_npu.ops.ascendc import chunk_kda_bwd, chunk_kda_fwd  # noqa: E402
 
 DTYPES = {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": torch.float32}
 ACCURACY_TENSORS = ("o", "dq", "dk", "dv", "dbeta", "dg")
+# Bump when the input recipe, reference math or gradient seed changes.
+ACCURACY_REFERENCE_VERSION = 1
 DEFAULT_TOLERANCES = {
     "output_tol": 5e-3,
     "grad_tol": 8e-3,
@@ -106,6 +112,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--demo-model", action="store_true", default=False)
     parser.add_argument("--legacy-unfused-core", action="store_true", default=False)
     parser.add_argument("--accuracy-check", action="store_true", default=False)
+    parser.add_argument("--accuracy-cache-dir",
+                        default=os.environ.get("KDA_ACCURACY_CACHE_DIR", "third_party/kda_accuracy_golden"))
+    parser.add_argument("--accuracy-force-regenerate", action="store_true")
     parser.add_argument("--check-finite", action="store_true", default=False,
                         help="任一前向输出出现非有限值即失败（尾块 workspace 看护）")
     parser.add_argument("--empty-seq-guard", action="store_true", default=False,
@@ -286,6 +295,75 @@ def recurrent_reference(
             out[batch_id, token_id] = torch.einsum(
                 "hvk,hk->hv", state, q_norm[batch_id, token_id] * scale)
     return out, gate, leaves
+
+
+def _accuracy_config(args, scale, cu_seqlens):
+    return {
+        "reference_version": ACCURACY_REFERENCE_VERSION,
+        "torch_version": str(torch.__version__),
+        **{name: getattr(args, name) for name in (
+            "batch", "tokens", "query_heads", "value_heads", "key_dim", "value_dim",
+            "chunk_size", "dtype", "seed", "qk_l2norm", "lower_bound", "layout",
+        )},
+        "scale": float(scale),
+        "cu_seqlens": None if cu_seqlens is None else list(cu_seqlens),
+        "grad_output": "ones",
+    }
+
+
+def _run_cpu_accuracy_reference(tensors, *, scale, lower_bound, cu_seqlens, qk_l2norm):
+    ref_o, _ref_gate, leaves = recurrent_reference(
+        *(tensors[name].cpu() for name in ("q", "k", "v", "g", "beta", "A_log", "dt_bias")),
+        scale=scale, lower_bound=lower_bound, cu_seqlens=cu_seqlens, qk_l2norm=qk_l2norm)
+    grads = torch.autograd.grad(
+        ref_o.sum(), [leaves[name] for name in ("q", "k", "v", "beta", "raw_gate")])
+    return {name: tensor.detach().cpu() for name, tensor in zip(ACCURACY_TENSORS, (ref_o, *grads))}
+
+
+def _load_or_create_accuracy_golden(args, tensors, *, scale, cu_seqlens):
+    # Keep the existing CPU reference/comparison thread policy on cache hits too.
+    try:
+        torch.set_num_threads(1)
+    except Exception:  # pragma: no cover - existing parallel-runtime protection
+        pass
+    config = _accuracy_config(args, scale, cu_seqlens)
+    digest = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()[:16]
+    path = Path(args.accuracy_cache_dir) / f"chunk_kda_{digest}.pt"
+    if path.exists() and not args.accuracy_force_regenerate:
+        try:
+            loaded = torch.load(path, map_location="cpu", weights_only=True)
+            golden = loaded["tensors"]
+            sources = ("v", "q", "k", "v", "beta", "g")
+            valid = loaded["config"] == config and set(golden) == set(ACCURACY_TENSORS)
+            valid = valid and all(
+                torch.is_tensor(golden[name])
+                and golden[name].shape == tensors[source].shape
+                and golden[name].dtype == torch.float32
+                for name, source in zip(ACCURACY_TENSORS, sources))
+            if valid:
+                print(f"accuracy golden: reused {path}", flush=True)
+                return golden
+        except (OSError, RuntimeError, EOFError, pickle.UnpicklingError, KeyError, TypeError, ValueError):
+            pass
+        print(f"accuracy golden: invalid cache, regenerating {path}", flush=True)
+
+    print(f"accuracy golden: generating {path}", flush=True)
+    golden = _run_cpu_accuracy_reference(
+        tensors, scale=scale, lower_bound=args.lower_bound,
+        cu_seqlens=cu_seqlens, qk_l2norm=bool(args.qk_l2norm))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Concurrent CI jobs may share this directory. Readers only see complete files.
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=path.name + ".", suffix=".tmp", delete=False) as stream:
+            temporary = Path(stream.name)
+            torch.save({"config": config, "tensors": golden}, stream)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+    print(f"accuracy golden: generated {path}", flush=True)
+    return golden
 
 
 def cosine_similarity(actual: torch.Tensor, expected: torch.Tensor) -> float:
@@ -507,20 +585,7 @@ def run_once(args: argparse.Namespace) -> int:
               f"dq absmax={dq.detach().float().abs().max().item():.6g})")
         return 0
 
-    # CPU 参考：同分布 fp32 recurrent + autograd。
-    # 参考实现是逐 token 的小张量循环：多线程 BLAS 在这里只会互相抢核，
-    # 高负载的 CI 机器上差异很大，固定单线程更稳定。
-    try:
-        torch.set_num_threads(1)
-    except Exception:  # pragma: no cover - 已有并行工作时的保护
-        pass
-    ref_o, _ref_gate, leaves = recurrent_reference(
-        q.cpu(), k.cpu(), v.cpu(), g.cpu(), beta.cpu(), tensors["A_log"].cpu(),
-        tensors["dt_bias"].cpu(), scale=scale, lower_bound=args.lower_bound,
-        cu_seqlens=cu, qk_l2norm=bool(args.qk_l2norm))
-    loss = ref_o.sum()
-    grads = torch.autograd.grad(loss, [leaves[name] for name in ("q", "k", "v", "beta", "raw_gate")])
-    ref_dq, ref_dk, ref_dv, ref_dbeta, ref_dg_raw = grads
+    golden = _load_or_create_accuracy_golden(args, tensors, scale=scale, cu_seqlens=cu)
 
     # layout=BSND/TND，五个 Token 梯度已是模型顺序。
     def to_bsnd(x: torch.Tensor) -> torch.Tensor:
@@ -529,24 +594,18 @@ def run_once(args: argparse.Namespace) -> int:
     o_bsnd = to_bsnd(o)
     dq_bsnd, dk_bsnd, dv_bsnd, dbeta_bsnd, dg_bsnd = map(to_bsnd, (dq, dk, dv, dbeta, dg))
 
-    if args.qk_l2norm:
-        # 反向返回的是对归一化 q/k 的梯度，参考也按同样口径（leaves 即归一化后的 q/k）。
-        ref_dg = ref_dg_raw
-    else:
-        ref_dg = ref_dg_raw
-
     selected = {item.strip() for item in args.accuracy_tensors.split(",") if item.strip()}
     unknown = selected.difference(ACCURACY_TENSORS)
     if unknown:
         raise ValueError(f"Unsupported accuracy tensor(s): {', '.join(sorted(unknown))}")
 
     pairs = {
-        "o": (o_bsnd, ref_o),
-        "dq": (dq_bsnd, ref_dq),
-        "dk": (dk_bsnd, ref_dk),
-        "dv": (dv_bsnd, ref_dv),
-        "dbeta": (dbeta_bsnd, ref_dbeta),
-        "dg": (dg_bsnd, ref_dg),
+        "o": (o_bsnd, golden["o"]),
+        "dq": (dq_bsnd, golden["dq"]),
+        "dk": (dk_bsnd, golden["dk"]),
+        "dv": (dv_bsnd, golden["dv"]),
+        "dbeta": (dbeta_bsnd, golden["dbeta"]),
+        "dg": (dg_bsnd, golden["dg"]),
     }
     failed = []
     for name in ACCURACY_TENSORS:

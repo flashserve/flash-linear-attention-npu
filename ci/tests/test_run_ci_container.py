@@ -16,7 +16,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
 class RunCiContainerTests(unittest.TestCase):
-    def run_ci(self, root, *, run_status=0, cleanup_status=0, write_id=True, interrupt=False, broad_tmp=False):
+    def run_ci(self, root, *, run_status=0, cleanup_status=0, write_id=True, interrupt=False, broad_tmp=False,
+               allowed_cpus=None):
         repo = root / "repo"
         (repo / "ci").mkdir(parents=True)
         shutil.copyfile(REPO_ROOT / "ci/run_ci_container.sh", repo / "ci/run_ci_container.sh")
@@ -74,6 +75,10 @@ class RunCiContainerTests(unittest.TestCase):
         if broad_tmp:
             env["CI_HOST_TMPDIR"] = env["TMPDIR"]
         command = ["bash", "ci/run_ci_container.sh"]
+        if allowed_cpus is not None:
+            # Constrain only the child; exercise real sched_getaffinity without
+            # changing the test runner's affinity or hard-coding CPU 0.
+            command = ["taskset", "--cpu-list", ",".join(map(str, allowed_cpus)), *command]
         if interrupt:
             process = subprocess.Popen(command, cwd=repo, env=env, start_new_session=True,
                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -97,6 +102,29 @@ class RunCiContainerTests(unittest.TestCase):
         calls = [json.loads(line) for line in (root / "docker.jsonl").read_text().splitlines()]
         return result, calls, env
 
+    def assert_cpu_limit(self, calls, expected_cpus):
+        run = next(call for call in calls if "--cidfile" in call)
+        self.assertEqual(run[run.index("--cpus") + 1], str(len(expected_cpus)))
+        self.assertEqual(run[run.index("--cpuset-cpus") + 1], ",".join(map(str, expected_cpus)))
+        environment = dict(run[i + 1].split("=", 1) for i, arg in enumerate(run) if arg == "-e")
+        for name in ("OMP_NUM_THREADS", "OMP_THREAD_LIMIT", "MKL_NUM_THREADS",
+                     "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+            self.assertEqual(environment[name], str(len(expected_cpus)))
+
+    def test_container_and_test_thread_pools_are_limited_to_32_cpus(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, calls, _ = self.run_ci(Path(temporary))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assert_cpu_limit(calls, sorted(os.sched_getaffinity(0))[:32])
+
+    @unittest.skipUnless(shutil.which("taskset"), "taskset is required for restricted-affinity test")
+    def test_restricted_nonzero_cpu_set_is_preserved(self):
+        allowed = sorted(os.sched_getaffinity(0))[-2:]
+        with tempfile.TemporaryDirectory() as temporary:
+            result, calls, _ = self.run_ci(Path(temporary), allowed_cpus=allowed)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assert_cpu_limit(calls, allowed)
+
     def test_missing_storage_is_created_and_only_owned_container_is_cleaned(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -106,6 +134,11 @@ class RunCiContainerTests(unittest.TestCase):
                 self.assertTrue(Path(env[name]).is_dir(), name)
             self.assertTrue((Path(env["CI_CACHE_ROOT"]) / "third_party").is_dir())
             self.assertTrue((Path(env["CI_CACHE_ROOT"]) / "gdr_accuracy_golden").is_dir())
+            kda_cache = Path(env["CI_CACHE_ROOT"]) / "kda_accuracy_golden"
+            self.assertTrue(kda_cache.is_dir())
+            run = next(call for call in calls if "--cidfile" in call)
+            self.assertIn(str(kda_cache) + ":/workspace/kda_accuracy_golden", run)
+            self.assertIn("KDA_ACCURACY_CACHE_DIR=/workspace/kda_accuracy_golden", run)
             self.assertIn(["rm", "-f", "owned-container-id"], calls)
             helper = calls[-1]
             self.assertEqual(helper[helper.index("--network") + 1], "none")

@@ -795,8 +795,8 @@ globalThis.core = {
             {item["platform"] for item in job["strategy"]["matrix"]["include"]},
             {"a2", "a5"},
         )
-        self.assertEqual(env["CI_JOBS"], "16")
-        self.assertEqual(env["CI_CPACK_JOBS"], "16")
+        self.assertEqual(env["CI_JOBS"], "32")
+        self.assertEqual(env["CI_CPACK_JOBS"], "32")
         self.assertEqual(env["CI_TMPDIR"], "/tmp/fla-npu-ci")
         identity = "${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}"
         self.assertEqual(
@@ -979,7 +979,7 @@ PY
 export -f cat cmake
 exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
 """
-        for parallelism, expected in ((None, 8), ("", 8), ("16", 16)):
+        for parallelism, expected in ((None, 8), ("", 8), ("32", 32)):
             with self.subTest(parallelism=parallelism), tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
                 make_log = root / "make-flags"
@@ -1042,12 +1042,12 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
                 )
                 self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
                 builds = [json.loads(line) for line in build_log.read_text().splitlines()]
-                self.assertTrue(any("--pkg" in item["args"] and "-j16" in item["args"] for item in builds))
+                self.assertTrue(any("--pkg" in item["args"] and "-j32" in item["args"] for item in builds))
                 self.assertTrue(any(item["args"] == ["build.sh"] for item in builds))
                 for build in builds:
                     self.assertEqual(build["env"], {
-                        "MAX_JOBS": "16", "CMAKE_BUILD_PARALLEL_LEVEL": "16", "MAKEFLAGS": "-j16",
-                        "FLA_NPU_BUILD_ARGS": (inherited_build_args + " -j16").strip(),
+                        "MAX_JOBS": "32", "CMAKE_BUILD_PARALLEL_LEVEL": "32", "MAKEFLAGS": "-j32",
+                        "FLA_NPU_BUILD_ARGS": (inherited_build_args + " -j32").strip(),
                     })
                 # pip wheel rebuilds the OPP through the root setup.py. Run
                 # that actual command builder with the exported child-process
@@ -1070,9 +1070,9 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
                 self.assertEqual(command[:2], ["bash", "build.sh"])
                 self.assertIn(f"--soc={soc}", command)
                 self.assertIn("--pkg", command)
-                self.assertEqual(command[-1], "-j16")
+                self.assertEqual(command[-1], "-j32")
                 if inherited_build_args:
-                    self.assertEqual(command[-3:], ["-O3", "-j64", "-j16"])
+                    self.assertEqual(command[-3:], ["-O3", "-j64", "-j32"])
 
     @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
     def test_temp_cleanup_preserves_persistent_cache_and_npu_locks(self):

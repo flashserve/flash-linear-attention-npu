@@ -133,6 +133,22 @@ trap cleanup_ci EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# Build -j settings do not limit Python/OpenMP/BLAS test workers. Restrict the
+# whole CI container so every test and descendant shares at most 32 logical
+# CPUs, including on hosts whose allowed CPU IDs do not start at zero.
+cpu_ids="$(python3 - <<'PY'
+import os
+
+cpus = sorted(os.sched_getaffinity(0))[:32]
+if not cpus:
+    raise SystemExit("[CI][ERROR] No CPUs available to the CI launcher.")
+print(",".join(map(str, cpus)))
+PY
+)"
+IFS=',' read -r -a cpu_list <<< "$cpu_ids"
+cpu_count="${#cpu_list[@]}"
+echo "[CI] CPU limit: ${cpu_count} logical CPUs, cpuset=${cpu_ids}; OpenMP/BLAS threads=${cpu_count}"
+
 if [[ -n "$timing_root" ]]; then
     if [[ "$timing_root" != /* ]]; then
         echo "[CI][ERROR] CI_TIMING_ROOT must be an absolute persistent directory." >&2
@@ -193,7 +209,9 @@ fi
 third_party_cache="${CI_THIRD_PARTY_CACHE:-$cache_root/third_party}"
 gdr_accuracy_cache="${CI_GDR_ACCURACY_CACHE:-$cache_root/gdr_accuracy_golden}"
 gdr_accuracy_cache_container="/workspace/gdr_accuracy_golden"
-mkdir -p "$third_party_cache" "$gdr_accuracy_cache"
+kda_accuracy_cache="${CI_KDA_ACCURACY_CACHE:-$cache_root/kda_accuracy_golden}"
+kda_accuracy_cache_container="/workspace/kda_accuracy_golden"
+mkdir -p "$third_party_cache" "$gdr_accuracy_cache" "$kda_accuracy_cache"
 
 if [[ -z "$host_tmpdir" && "$container_tmpdir" == /tmp/* ]]; then
     host_tmpdir="$repo_dir/.ci-tmp/container-tmp"
@@ -218,6 +236,7 @@ mount_args=(
     -v "$repo_dir:/workspace/repo"
     -v "$third_party_cache:/workspace/repo/third_party"
     -v "$gdr_accuracy_cache:$gdr_accuracy_cache_container"
+    -v "$kda_accuracy_cache:$kda_accuracy_cache_container"
     -w /workspace/repo
 )
 if [[ -n "$host_tmpdir" ]]; then
@@ -240,6 +259,7 @@ done
 echo "[CI] Running $container_name on NPU ${NPU_SELECTED_DEVICE} (${NPU_SELECTED_NAME}, health=${NPU_SELECTED_HEALTH}, free=${NPU_SELECTED_FREE})"
 echo "[CI] third_party cache: $third_party_cache"
 echo "[CI] GDR accuracy golden cache: $gdr_accuracy_cache"
+echo "[CI] KDA accuracy golden cache: $kda_accuracy_cache"
 echo "[CI] container TMPDIR: ${CI_TMPDIR:-auto}"
 if [[ -n "$host_tmpdir" ]]; then
     echo "[CI] container TMPDIR uses bind-mounted host storage"
@@ -254,6 +274,8 @@ container_id_dir="$(mktemp -d "${TMPDIR:-/tmp}/fla-npu-container.XXXXXX")"
 docker run --rm \
     --cidfile "$container_id_dir/id" \
     --name "$container_name" \
+    --cpus "$cpu_count" \
+    --cpuset-cpus "$cpu_ids" \
     --network host \
     --ipc host \
     "${device_args[@]}" \
@@ -271,6 +293,11 @@ docker run --rm \
     -e CI_OPS="${CI_OPS:-}" \
     -e CI_JOBS="${CI_JOBS:-}" \
     -e CI_CPACK_JOBS="${CI_CPACK_JOBS:-}" \
+    -e OMP_NUM_THREADS="$cpu_count" \
+    -e OMP_THREAD_LIMIT="$cpu_count" \
+    -e MKL_NUM_THREADS="$cpu_count" \
+    -e OPENBLAS_NUM_THREADS="$cpu_count" \
+    -e NUMEXPR_NUM_THREADS="$cpu_count" \
     -e CI_FORCE_CLEAN_CACHE="${CI_FORCE_CLEAN_CACHE:-false}" \
     -e CI_LOG_CLEANUP_ENABLED="${CI_LOG_CLEANUP_ENABLED:-true}" \
     -e CI_LOG_RETENTION_DAYS="${CI_LOG_RETENTION_DAYS:-7}" \
@@ -295,6 +322,7 @@ docker run --rm \
     -e GITHUB_RUN_ID="${GITHUB_RUN_ID:-}" \
     -e GITHUB_RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT:-}" \
     -e GDR_ACCURACY_CACHE_DIR="$gdr_accuracy_cache_container" \
+    -e KDA_ACCURACY_CACHE_DIR="$kda_accuracy_cache_container" \
     -e CI_TEST_OP="${CI_TEST_OP:-}" \
     -e CI_TMPDIR="${CI_TMPDIR:-}" \
     -e CI_TMPDIR_CANDIDATES="${CI_TMPDIR_CANDIDATES:-}" \
