@@ -38,7 +38,7 @@ const files = (settings.files || ['fla/example.cpp']).map((file) =>
   typeof file === 'string' ? {filename:file,status:'modified'} : file);
 const pr = {number:527, state:'open', draft:false, changed_files:settings.file_count ?? files.length,
   html_url:'https://github.com/example/repo/pull/527',
-  base:{ref:settings.base_ref || 'main',sha:'c'.repeat(40)},head:{sha:'a'.repeat(40),repo:{full_name:'example/fork'}}};
+  base:{ref:settings.base_ref || 'main',sha:'c'.repeat(40)},head:{sha:'a'.repeat(40),repo:{full_name:'example/fork'}},...settings.initial_pr};
 const context = {actor:settings.actor || 'ci-user',serverUrl:'https://github.com',runId:99,runNumber:12,
   repo:{owner:'example',repo:'repo'},payload:{repository:{default_branch:'main'},
     action:settings.action || 'synchronize',pull_request:pr,issue:{number:pr.number},
@@ -71,14 +71,14 @@ const github = {
             settings.branch_checks || require(process.env.NPU_CI_CHECKS_SCRIPT.replace(/\.js$/, '.json'))
           )).toString('base64')}};
         }
-        return {data:{type:'file',content:Buffer.from('on:\n  workflow_dispatch:\n').toString('base64')}};
+        return {data:{type:'file',content:Buffer.from(settings.workflow_text ?? require('fs').readFileSync('.github/workflows/ci.yml','utf8')).toString('base64')}};
       },
       getCollaboratorPermissionLevel:async ({username}) => {
         record('permission',username);
         if (settings.permission_error) throw new Error('permission unavailable');
         return {data:{permission:(settings.permissions || {})[username] || 'read'}};
       },
-      getBranch:async () => ({data:{commit:{sha:pr.base.sha}}}),
+      getBranch:async () => ({data:{protected:settings.protected !== false,commit:{sha:settings.branch_sha || pr.base.sha}}}),
       createCommitStatus:async (payload) => record('status',payload),
       listCommitStatusesForRef:listStatuses,
     },
@@ -103,7 +103,8 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
         env = os.environ.copy()
         env.update(TEST_OPTIONS=json.dumps(options), NPU_CI_AUTH_SCRIPT=str(HELPER),
                    NPU_CI_CHECKS_SCRIPT=str(ROOT / '.github/scripts/npu_ci_checks.js'),
-                   NPU_CI_WORKFLOW_SHA="b" * 40, NPU_CI_RUN_ATTEMPT=str(options.get("attempt", 1)),
+                   NPU_CI_WORKFLOW_SHA=options.get("workflow_sha", ("b" if entry == "guard" else "c") * 40),
+                   NPU_CI_WORKFLOW_REF=options.get("workflow_ref", options.get("base_ref", "main")), NPU_CI_RUN_ATTEMPT=str(options.get("attempt", 1)),
                    NPU_CI_TRIGGERING_ACTOR=options.get("rerun_by", ""),
                    NPU_CI_PR_NUMBER="527", NPU_CI_HEAD_SHA="a"*40, NPU_CI_BASE_SHA="c"*40,
                    NPU_CI_BASE_REF="main", NPU_CI_APPROVAL_KEY=options.get("approval_key", ""))
@@ -150,7 +151,9 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
         self.assertEqual(self.records(result, "status"), [])
 
     def test_bot_dispatch_validates_original_requester(self):
-        result = self.run_entry("prepare", actor="github-actions[bot]", inputs={"requested_by":"ci-user"})
+        result = self.run_entry("prepare", actor="github-actions[bot]", inputs={"requested_by":"ci-user", "expected_head_sha":"a"*40,
+                                        "expected_base_ref":"main", "expected_base_sha":"c"*40,
+                                        "expected_workflow_sha":"c"*40})
         self.assertNotIn("error", result)
         self.assertIn({"name":"should_run","value":"true"}, self.records(result, "output"))
 
@@ -167,18 +170,106 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
                 self.assertEqual(self.records(result, "dispatch"), [])
 
     def test_listed_non_admin_cannot_confirm_ci_changes(self):
-        result = self.run_entry("dispatch", files=[".github/workflows/ci.yml"], command="/run-npu-ci ci_modified=true")
+        result = self.run_entry("dispatch", files=[".github/workflows/ci.yml"], command="/run-npu-ci ci_modified=true head=" + "a"*40)
         self.assertIn("Admin", self.records(result, "failed")[0])
         self.assertEqual(self.records(result, "dispatch"), [])
 
     def test_admin_confirmation_is_forwarded(self):
         result = self.run_entry("dispatch", files=["ci/run_checks.sh"], actor="ci-admin",
-                                command="/run-npu-ci ci_modified=true", permissions={"ci-admin":"admin"})
+                                command="/run-npu-ci ci_modified=true head=" + "a"*40, permissions={"ci-admin":"admin"})
         self.assertEqual(self.records(result, "dispatch")[0]["inputs"]["ci_modified"], "true")
+
+    def test_dispatch_captures_complete_source_and_workflow_identity(self):
+        result = self.run_entry("dispatch")
+        self.assertNotIn("error", result)
+        inputs = self.records(result, "dispatch")[0]["inputs"]
+        self.assertEqual({name: inputs[name] for name in (
+            "expected_head_sha", "expected_base_ref", "expected_base_sha", "expected_workflow_sha")}, {
+                "expected_head_sha": "a"*40, "expected_base_ref": "main",
+                "expected_base_sha": "c"*40, "expected_workflow_sha": "c"*40})
+        workflow_read = next(item for item in self.records(result, "content")
+                             if item["path"] == ".github/workflows/ci.yml")
+        self.assertEqual(workflow_read["ref"], "c"*40)
+
+    def test_custom_ci_ref_cannot_select_an_unapproved_workflow(self):
+        for parameter in ("ci_ref=malicious", "branch=malicious", "ci_ref=main"):
+            with self.subTest(parameter=parameter):
+                result = self.run_entry("dispatch", command="/run-npu-ci " + parameter)
+                self.assertIn("不支持", self.records(result, "failed")[0])
+                self.assertEqual(self.records(result, "dispatch"), [])
+
+    def test_unprotected_pr_base_cannot_supply_executable_workflow(self):
+        for entry in ("dispatch", "prepare"):
+            with self.subTest(entry=entry):
+                result = self.run_entry(entry, base_ref="malicious", protected=False)
+                self.assertIn("受保护", result["error"])
+                self.assertEqual(self.records(result, "dispatch"), [])
+                self.assertEqual(self.records(result, "status"), [])
+
+    def test_legacy_or_partially_migrated_workflow_is_not_dispatched(self):
+        current = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        for text in ("on:\n  workflow_dispatch:\n", current.replace("      expected_head_sha:", "      ignored_head_sha:"),
+                     current.replace("NPU_CI_DISPATCH_CONTRACT: '2'", "NPU_CI_DISPATCH_CONTRACT: '1'")):
+            with self.subTest(workflow=text[:40]):
+                result = self.run_entry("dispatch", workflow_text=text)
+                self.assertIn("同步完整", result["error"])
+                self.assertEqual(self.records(result, "dispatch"), [])
+
+    def test_initial_dispatch_and_prepare_reject_closed_merged_or_draft_pr(self):
+        for entry in ("dispatch", "prepare"):
+            for change in ({"state":"closed"}, {"merged":True}, {"merged_at":"2026-11-04T00:00:00Z"}, {"draft":True}):
+                with self.subTest(entry=entry, change=change):
+                    result = self.run_entry(entry, initial_pr=change)
+                    self.assertIn("error", result)
+                    self.assertEqual(self.records(result, "dispatch"), [])
+                    self.assertEqual(self.records(result, "status"), [])
+
+    def test_ci_confirmation_requires_explicit_current_head_before_dispatch(self):
+        for head in (None, "d"*40, "a"*12):
+            with self.subTest(head=head):
+                command = "/run-npu-ci ci_modified=true" + (" head=" + head if head else "")
+                result = self.run_entry("dispatch", actor="ci-admin", files=["ci/run_checks.sh"],
+                                        permissions={"ci-admin":"admin"}, command=command)
+                self.assertEqual(self.records(result, "dispatch"), [])
+                self.assertTrue("error" in result or self.records(result, "failed"))
+                self.assertFalse(any(item["name"] == "ci_approval_key" for item in self.records(result, "output")))
+
+    def test_prepare_rejects_approval_if_head_or_base_changes_after_dispatch(self):
+        expected = {"requested_by":"ci-admin", "ci_modified":"true", "expected_head_sha":"a"*40,
+                    "expected_base_ref":"main", "expected_base_sha":"c"*40, "expected_workflow_sha":"c"*40}
+        for field, old_value in (("expected_head_sha", "d"*40), ("expected_base_ref", "release"),
+                                 ("expected_base_sha", "d"*40), ("expected_workflow_sha", "d"*40)):
+            with self.subTest(field=field):
+                result = self.run_entry("prepare", actor="github-actions[bot]", files=["ci/run_checks.sh"],
+                                        inputs={**expected, field:old_value}, permissions={"ci-admin":"admin"})
+                self.assertIn("触发快照", result["error"])
+                self.assertEqual(self.records(result, "status"), [])
+                self.assertFalse(any(item["name"] == "ci_approval_key" for item in self.records(result, "output")))
+
+    def test_bot_dispatch_cannot_omit_any_identity_field(self):
+        expected = {"requested_by":"ci-user", "expected_head_sha":"a"*40, "expected_base_ref":"main",
+                    "expected_base_sha":"c"*40, "expected_workflow_sha":"c"*40}
+        for field in ("expected_head_sha", "expected_base_ref", "expected_base_sha", "expected_workflow_sha"):
+            with self.subTest(field=field):
+                result = self.run_entry("prepare", actor="github-actions[bot]", inputs={**expected, field:""})
+                self.assertIn("触发快照", result["error"])
+
+    def test_manual_workflow_cannot_run_another_ref_or_outdated_base(self):
+        for options in ({"workflow_ref":"other"}, {"workflow_sha":"d"*40}, {"branch_sha":"d"*40}):
+            with self.subTest(options=options):
+                result = self.run_entry("prepare", **options)
+                self.assertIn("error", result)
+                self.assertEqual(self.records(result, "status"), [])
+
+    def test_manual_ci_confirmation_needs_explicit_head(self):
+        result = self.run_entry("prepare", actor="ci-admin", files=["ci/run_checks.sh"],
+                                inputs={"ci_modified":"true"}, permissions={"ci-admin":"admin"})
+        self.assertIn("expected_head_sha", self.records(result, "failed")[0])
+        self.assertFalse(any(item["name"] == "ci_approval_key" for item in self.records(result, "output")))
 
     def test_prepare_admin_confirmation_marks_all_pending_statuses(self):
         result = self.run_entry("prepare", files=["ci/run_checks.sh"], actor="ci-admin",
-                                inputs={"ci_modified":"true"}, permissions={"ci-admin":"admin"})
+                                inputs={"ci_modified":"true", "expected_head_sha":"a"*40}, permissions={"ci-admin":"admin"})
         self.assertNotIn("error", result)
         statuses = self.records(result, "status")
         self.assertEqual(len(statuses), 6)
@@ -187,11 +278,11 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
 
     def test_ci_rerun_also_requires_admin_for_actual_rerunner(self):
         result = self.run_entry("prepare", files=["ci/run_checks.sh"], actor="ci-admin", attempt=2,
-                                rerun_by="ci-user", inputs={"ci_modified":"true"}, permissions={"ci-admin":"admin"})
+                                rerun_by="ci-user", inputs={"ci_modified":"true", "expected_head_sha":"a"*40}, permissions={"ci-admin":"admin"})
         self.assertIn("ci-user", self.records(result, "failed")[0])
 
     def test_permission_api_failure_rejects_confirmation(self):
-        result = self.run_entry("prepare", files=["ci/run_checks.sh"], actor="ci-admin", inputs={"ci_modified":"true"}, permission_error=True)
+        result = self.run_entry("prepare", files=["ci/run_checks.sh"], actor="ci-admin", inputs={"ci_modified":"true", "expected_head_sha":"a"*40}, permission_error=True)
         self.assertIn("permission unavailable", self.records(result, "failed")[0])
 
     def test_ci_modified_rejects_values_other_than_true_false(self):
@@ -240,15 +331,15 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
         self.assertEqual((profile_read["path"], profile_read["ref"]),
                          (".github/scripts/npu_ci_checks.json", "c" * 40))
 
-    def test_default_status_skips_unknown_branch_profile(self):
+    def test_default_status_rejects_unknown_branch_profile(self):
         result = self.run_entry("default", base_ref="release", profile_error=403)
-        self.assertNotIn("error", result)
+        self.assertIn("无法确定", result["error"])
         self.assertEqual(self.records(result, "status"), [])
         self.assertIn("profile unavailable", self.records(result, "warning")[0])
 
     def test_default_status_preserves_only_this_pr_base_head_approval(self):
         prepared = self.run_entry("prepare", files=["ci/run_checks.sh"], actor="ci-admin",
-                                  inputs={"ci_modified":"true"}, permissions={"ci-admin":"admin"})
+                                  inputs={"ci_modified":"true", "expected_head_sha":"a"*40}, permissions={"ci-admin":"admin"})
         statuses = self.records(prepared, "status")
         approved = self.run_entry("default", files=["ci/run_checks.sh"], statuses=statuses)
         self.assertEqual(self.records(approved, "status"), [])

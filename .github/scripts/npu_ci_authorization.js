@@ -2,6 +2,63 @@
 
 const { createHash } = require('crypto');
 const USERS_PATH = '.github/npu-ci-users.json';
+const DISPATCH_INPUTS = ['pr_number', 'ci_mode', 'ops', 'ci_modified', 'requested_by',
+  'expected_head_sha', 'expected_base_ref', 'expected_base_sha', 'expected_workflow_sha'];
+
+function requireOpenPullRequest(pr) {
+  if (pr.state !== 'open' || pr.merged || pr.merged_at) {
+    throw new Error(`PR #${pr.number} 已关闭或已合入，不能触发 NPU CI。`);
+  }
+  if (pr.draft) throw new Error(`PR #${pr.number} 仍是草稿，请先标记为 ready for review。`);
+}
+
+function requireConfirmedHead({ pr, headSha }) {
+  if (!/^[0-9a-f]{40}$/.test(headSha || '') || headSha !== pr.head.sha) {
+    throw new Error(`CI 文件变更确认必须绑定当前 head；请由名单内 Admin 使用 ci_modified=true head=${pr.head.sha} 重新确认；Actions 页面填写 expected_head_sha。`);
+  }
+}
+
+function requireProtectedBase({ pr, branch, workflowRef = pr.base.ref, workflowSha = pr.base.sha }) {
+  requireOpenPullRequest(pr);
+  if (workflowRef !== pr.base.ref || branch.protected !== true) {
+    throw new Error('NPU CI 只允许在 PR 当前受保护的目标分支执行，不支持其他 CI 定义分支。');
+  }
+  if (![pr.head.sha, pr.base.sha, branch.commit?.sha, workflowSha].every((sha) => /^[0-9a-f]{40}$/.test(sha || '')) ||
+      branch.commit.sha !== pr.base.sha || workflowSha !== pr.base.sha) {
+    throw new Error('PR base 或 workflow commit 已变化，请重新触发 NPU CI。');
+  }
+}
+
+function requireDispatchIdentity({ pr, inputs, workflowSha, required = false }) {
+  const expected = { expected_head_sha: pr.head.sha, expected_base_ref: pr.base.ref,
+    expected_base_sha: pr.base.sha, expected_workflow_sha: workflowSha };
+  for (const [name, current] of Object.entries(expected)) {
+    if ((required && !inputs[name]) || (inputs[name] && inputs[name] !== current)) {
+      throw new Error(`NPU CI 触发快照 ${name} 缺失或已变化，请针对当前 head/base 重新触发。`);
+    }
+  }
+}
+
+function requireDispatchContract(text) {
+  // Parse only the fixed indentation of this repository's input declaration;
+  // maintenance branches must migrate the complete contract before dispatch.
+  const lines = text.split(/\r?\n/);
+  const start = lines.findIndex((line) => /^  workflow_dispatch:\s*$/.test(line));
+  const declared = new Set();
+  let readingInputs = false;
+  for (const line of lines.slice(start + 1)) {
+    if (start < 0 || (/\S/.test(line) && !/^ {4}/.test(line))) break;
+    if (/^    inputs:\s*$/.test(line)) readingInputs = true;
+    if (readingInputs) {
+      const match = line.match(/^      ([a-z_]+):\s*$/);
+      if (match) declared.add(match[1]);
+    }
+  }
+  if (!/^  NPU_CI_DISPATCH_CONTRACT:\s*['"]?2['"]?\s*$/m.test(text) ||
+      DISPATCH_INPUTS.some((name) => !declared.has(name))) {
+    throw new Error('目标分支尚未支持安全 NPU CI 分发契约，请先同步完整的 workflow、权限脚本和 expected_* inputs；不会回退到旧版授权流程。');
+  }
+}
 
 async function loadCiUsers({ github, context }) {
   let ref = context.payload.repository?.default_branch;
@@ -59,6 +116,7 @@ async function hasCiChanges({ github, context, pr }) {
     throw new Error(`PR #${pr.number} 修改文件列表不完整，无法确认 CI 文件变更；请缩小 PR 或修复文件列表读取后重试。`);
   }
   const { data: current } = await github.rest.pulls.get({ ...context.repo, pull_number: pr.number });
+  requireOpenPullRequest(current);
   if (current.head.sha !== pr.head.sha || current.base.sha !== pr.base.sha || current.base.ref !== pr.base.ref ||
       current.changed_files !== pr.changed_files) throw new Error(`PR #${pr.number} 在检查过程中已变化，请重新触发。`);
   return files.some((file) => [file.filename, file.previous_filename].filter(Boolean).some((path) =>
@@ -99,4 +157,5 @@ function hasApprovedRun({ statuses, contexts, context, pr }) {
 }
 
 module.exports = { USERS_PATH, loadCiUsers, requireAuthorizedCiUser, authorizeCiRequest,
+  requireOpenPullRequest, requireConfirmedHead, requireProtectedBase, requireDispatchIdentity, requireDispatchContract,
   normalizeCiModified, hasCiChanges, requireCiModificationApproval, buildCiApprovalKey, hasApprovedRun };

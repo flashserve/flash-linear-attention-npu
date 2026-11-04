@@ -110,6 +110,8 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
     },
   ];
   const truncateDescription = (value) => value.length > 140 ? `${value.slice(0, 137)}...` : value;
+  const statusDescription = (value) =>
+    `${truncateDescription(value).slice(0, 140 - approvalMarker.length)}${approvalMarker}`;
   const formatValue = (value) => {
     if (typeof value === 'number') {
       return Number.isFinite(value) ? value.toExponential(3) : String(value);
@@ -875,7 +877,7 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
       sha,
       state: item.ok ? 'success' : 'failure',
       context: item.context,
-      description: `${truncateDescription(item.description).slice(0, 140 - approvalMarker.length)}${approvalMarker}`,
+      description: statusDescription(item.description),
       target_url: targetUrl,
     })) : [];
   if (requestScope === 'all') {
@@ -885,7 +887,7 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
       sha,
       state: finalOk ? 'success' : 'failure',
       context: finalStatusDef.context,
-      description: `${truncateDescription(finalDescription).slice(0, 140 - approvalMarker.length)}${approvalMarker}`,
+      description: statusDescription(finalDescription),
       target_url: targetUrl,
     });
   } else {
@@ -895,7 +897,7 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
       sha,
       state: finalOk ? 'success' : 'failure',
       context: scopedStatusDef.context,
-      description: truncateDescription(
+      description: statusDescription(
         invalidReason || (finalOk
           ? `${scopedStatusDef.label}通过 (${mode},${requestKey},A2+A5)`
           : `${scopedStatusDef.label}未通过 (${mode},${requestKey},A2+A5)`)

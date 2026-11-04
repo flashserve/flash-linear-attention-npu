@@ -34,6 +34,25 @@ on:
         description: "Original authorized requester; set by the PR comment dispatcher"
         required: false
         default: ''
+      expected_head_sha:
+        description: "Fixed PR head SHA; required when ci_modified=true"
+        required: false
+        default: ''
+      expected_base_ref:
+        description: "PR target branch captured by the comment dispatcher"
+        required: false
+        default: ''
+      expected_base_sha:
+        description: "PR target commit captured by the comment dispatcher"
+        required: false
+        default: ''
+      expected_workflow_sha:
+        description: "Workflow commit captured by the comment dispatcher"
+        required: false
+        default: ''
+
+env:
+  NPU_CI_DISPATCH_CONTRACT: '2'
 
 concurrency:
   group: npu-ci-${{ github.repository }}-${{ inputs.pr_number || github.run_id }}
@@ -192,10 +211,7 @@ jobs:
               repo: context.repo.repo,
               pull_number: prNumber,
             });
-            if (pr.draft) {
-              core.setFailed(`PR #${prNumber} 仍是草稿，请先标记为 ready for review 后再运行 NPU CI。`);
-              return;
-            }
+            auth.requireOpenPullRequest(pr);
             const { data: baseBranch } = await github.rest.repos.getBranch({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -203,14 +219,14 @@ jobs:
             });
             const baseSha = baseBranch.commit.sha;
             const workflowSha = process.env.NPU_CI_WORKFLOW_SHA || '';
-            if (!/^[0-9a-f]{40}$/.test(baseSha) || !/^[0-9a-f]{40}$/.test(workflowSha)) {
-              core.setFailed('无法确定本次 NPU CI 的 base 或 workflow commit。');
-              return;
-            }
+            auth.requireProtectedBase({ pr, branch: baseBranch, workflowRef, workflowSha });
+            auth.requireDispatchIdentity({ pr, inputs: workflowInputs, workflowSha,
+              required: actor === 'github-actions[bot]' });
             core.setOutput('base_sha', baseSha);
             let approvalMarker = '';
             if (await auth.hasCiChanges({ github, context, pr })) {
               try {
+                if (ciModifiedConfirmed) auth.requireConfirmedHead({ pr, headSha: workflowInputs.expected_head_sha });
                 await auth.requireCiModificationApproval({ github, context, usernames: subjects, confirmed: ciModifiedConfirmed });
               } catch (error) {
                 await Promise.all((ops.trim() ? [scopedCheckContext] : requiredCheckContexts).map(([statusContext]) => github.rest.repos.createCommitStatus({
@@ -475,7 +491,7 @@ jobs:
             await auth.requireAuthorizedCiUser({ github, context, username });
             const prNumber = Number(process.env.NPU_CI_PR_NUMBER);
             const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: prNumber });
-            if (pr.state !== 'open' || pr.draft || pr.head.sha !== process.env.NPU_CI_HEAD_SHA ||
+            if (pr.state !== 'open' || pr.merged || pr.merged_at || pr.draft || pr.head.sha !== process.env.NPU_CI_HEAD_SHA ||
                 pr.base.ref !== process.env.NPU_CI_BASE_REF || pr.base.sha !== process.env.NPU_CI_BASE_SHA) {
               throw new Error('PR 的状态、head 或目标分支/base 已变化；请重新触发完整 NPU CI，不能复用旧 prepare。');
             }

@@ -66,7 +66,7 @@ jobs:
             let modeProvided = false;
             let ops = '';
             let opsProvided = false;
-            let requestedRef = '';
+            let confirmedHead = '';
             let ciModified = false;
             let ciModifiedProvided = false;
             for (const part of parts) {
@@ -89,12 +89,10 @@ jobs:
                 if (!part.slice('ci_modified='.length)) throw new Error('ci_modified 只接受 true 或 false。');
                 ciModified = auth.normalizeCiModified(part.slice('ci_modified='.length));
                 ciModifiedProvided = true;
-              } else if (part.startsWith('ci_ref=') || part.startsWith('branch=')) {
-                if (requestedRef) {
-                  core.setFailed('CI 定义分支只能指定一次。');
-                  return;
-                }
-                requestedRef = part.slice(part.indexOf('=') + 1);
+              } else if (part.startsWith('head=')) {
+                if (confirmedHead) throw new Error('head 参数只能指定一次。');
+                confirmedHead = part.slice('head='.length);
+                if (!/^[0-9a-f]{40}$/.test(confirmedHead)) throw new Error('head 必须是当前 PR 的完整 40 位 SHA。');
               } else {
                 core.setFailed(`不支持的 NPU CI 参数：${part}`);
                 return;
@@ -118,13 +116,15 @@ jobs:
               repo: context.repo.repo,
               pull_number: prNumber,
             });
-            if (pr.draft) {
-              core.setFailed(`PR #${prNumber} 仍是草稿，请先标记为 ready for review 后再运行 NPU CI。`);
-              return;
-            }
+            auth.requireOpenPullRequest(pr);
+            const targetRef = pr.base.ref;
+            const { data: baseBranch } = await github.rest.repos.getBranch({ ...context.repo, branch: targetRef });
+            auth.requireProtectedBase({ pr, branch: baseBranch });
+            if (confirmedHead && confirmedHead !== pr.head.sha) throw new Error('确认的 head 已变化，请重新检查当前 PR 后确认。');
 
             if (await auth.hasCiChanges({ github, context, pr })) {
               try {
+                if (ciModified) auth.requireConfirmedHead({ pr, headSha: confirmedHead });
                 await auth.requireCiModificationApproval({ github, context, usernames: subjects, confirmed: ciModified });
               } catch (error) {
                 const contexts = ops.trim() ? [checks.diagnostic.context] : checks.contexts;
@@ -139,25 +139,13 @@ jobs:
               }
             }
 
-            const targetRef = requestedRef || pr.base.ref;
-            try {
-              await github.rest.repos.getBranch({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                branch: targetRef,
-              });
-            } catch (error) {
-              core.setFailed(`找不到 CI 定义分支 \`${targetRef}\`：${error.message}`);
-              return;
-            }
-
             let workflowFile;
             try {
               ({ data: workflowFile } = await github.rest.repos.getContent({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 path: '.github/workflows/ci.yml',
-                ref: targetRef,
+                ref: baseBranch.commit.sha,
               }));
             } catch (error) {
               core.setFailed(`分支 \`${targetRef}\` 不包含 .github/workflows/ci.yml：${error.message}`);
@@ -172,10 +160,7 @@ jobs:
             const workflowText = Buffer
               .from(workflowFile.content, workflowFile.encoding || 'base64')
               .toString('utf8');
-            if (!/^\s*workflow_dispatch\s*:/m.test(workflowText)) {
-              core.setFailed(`分支 \`${targetRef}\` 的 ci.yml 没有声明 workflow_dispatch。`);
-              return;
-            }
+            auth.requireDispatchContract(workflowText);
 
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner,
@@ -188,6 +173,10 @@ jobs:
                 ops,
                 ci_modified: String(ciModified),
                 requested_by: actor,
+                expected_head_sha: pr.head.sha,
+                expected_base_ref: pr.base.ref,
+                expected_base_sha: baseBranch.commit.sha,
+                expected_workflow_sha: baseBranch.commit.sha,
               },
             });
 

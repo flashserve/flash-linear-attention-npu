@@ -17,15 +17,15 @@
 >
 > 触发方式：
 >
-> - GitHub `Actions` 页面选择 `NPU CI`，在 `Branch` 下拉框选择 CI 定义分支，点击 `Run workflow`，填写本 PR 编号。
-> - 在 PR 评论区发送 `/run-npu-ci quick` 或 `/run-npu-ci full`；默认使用 PR 目标分支的 `ci.yml`，必要时可追加 `ci_ref=<branch>`。
+> - 同时具有仓库 write 权限的 CI 名单账号可在 GitHub `Actions` 页面选择 `NPU CI`，将 `Branch` 设为本 PR 当前受保护的目标分支，点击 `Run workflow`，填写本 PR 编号。
+> - CI 名单账号可在 PR 评论区发送 `/run-npu-ci quick` 或 `/run-npu-ci full`，无需仓库 write 权限；仅使用 PR 当前受保护目标分支的 `ci.yml`，不支持 `ci_ref` 或 `branch` 覆盖。
 > - 同一 PR 的同一 commit 如果已有 NPU CI 在排队或运行，重复评论只会更新机器人评论，不会再次占用 NPU。
 > - NPU CI 会执行 `ci/example_st_cases.json` 中启用的 Example/ST 用例；当前 `case1_current_default` 保持原始 shape。新增 GVA、`Vdim=256` 等场景时，请在用例文件中显式填写 `B`、`T`、`chunk_size`、`query_head`、`value_head`、`Kdim`、`Vdim` 等 shape 字段，以及 `gate_source`、`gate_function`、`initial_state`、`output_final_state`、`qk_l2norm` 等行为字段。
 > - Example ST 必须使用与平台匹配的已验证 PyTorch/`torch_npu` 组合；A2 与 A5 不得混用 wheel、Python ABI 或 CANN 镜像，也不要拉取 `op-plugin` 重新编译。
 > - 修改算子 `def`、`aclnn` 接口入参类型，或修改 `torch` 接口入参类型等导致不满足 ABI 一致性的改动，必须由 `weinachuan` 在当前 head commit 上检视通过；ABI 敏感路径已由 CODEOWNERS 指向 `weinachuan`。
 > - NPU CI 部署与排障教程见 [`docs/Fla-npu仓CI部署教程.md`](docs/Fla-npu仓CI部署教程.md)。
 
-CI 触发权由默认分支 `.github/npu-ci-users.json` 名单管理。非 Markdown 的 `ci/` 或 `.github/` 变更必须由名单内仓库 Admin 追加 `ci_modified=true` 确认；实际重跑人同样校验。A2/A5 直接验证当前 PR 的 `ci/`，不覆盖可信 CI 目录。
+CI 触发权由默认分支 `.github/npu-ci-users.json` 名单管理。仅接受 open、未合并且非草稿的 PR。非 Markdown 的 `ci/` 或 `.github/` 变更必须由名单内仓库 Admin 追加 `ci_modified=true head=<当前完整40位head SHA>` 确认；Actions 手动运行对应填写 `ci_modified=true` 和 `expected_head_sha`。PR head、目标分支或 base commit 变化后须重新确认，实际重跑人同样校验。A2/A5 直接验证当前 PR 的 `ci/`，不覆盖可信 CI 目录。
 
 ## 关联 Issue / 背景
 

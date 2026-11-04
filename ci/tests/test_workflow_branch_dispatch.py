@@ -58,11 +58,11 @@ class WorkflowBranchDispatchTest(unittest.TestCase):
         self.assertIn("workflow_id: 'ci.yml'", self.dispatch_script)
         self.assertIn("ref: targetRef", self.dispatch_script)
         self.assertIn(".github/workflows/ci.yml", self.dispatch_script)
-        self.assertIn("workflow_dispatch", self.dispatch_script)
+        self.assertIn("requireDispatchContract(workflowText)", self.dispatch_script)
 
     def _run_dispatch(self, comment):
         encoded_workflow = base64.b64encode(
-            b"name: NPU CI\non:\n  workflow_dispatch:\n"
+            CI_WORKFLOW_PATH.read_bytes()
         ).decode("ascii")
         wrapper = f"""
 const fs = require('fs');
@@ -81,7 +81,7 @@ globalThis.github = {{
   rest: {{
     repos: {{
       getCollaboratorPermissionLevel: async () => ({{ data: {{ permission: 'admin' }} }}),
-      getBranch: async (payload) => ({{ data: {{ name: payload.branch }} }}),
+      getBranch: async (payload) => ({{ data: {{ name: payload.branch, protected: true, commit: {{sha: 'c'.repeat(40)}} }} }}),
       get: async () => ({{ data: {{ default_branch: 'main' }} }}),
       getContent: async (payload) => payload.path === '.github/npu-ci-users.json' ? ({{ data: {{ type: 'file', content: Buffer.from(JSON.stringify({{users:['ci-admin']}})).toString('base64') }} }}) : ({{
         data: {{
@@ -94,7 +94,7 @@ globalThis.github = {{
     pulls: {{
       get: async () => ({{
         data: {{
-          number: 527, changed_files: 0, draft: false,
+          number: 527, changed_files: 0, draft: false, state: 'open',
           base: {{ sha: 'c'.repeat(40), ref: 'main' }},
           head: {{ sha: 'a'.repeat(40) }},
         }},
@@ -110,7 +110,9 @@ globalThis.core = {{
   setFailed: (message) => record('failed', message),
 }};
 (async () => {{
+  await (async () => {{
 {self.dispatch_script}
+  }})();
   fs.writeFileSync(process.env.RECORD_FILE, JSON.stringify(records), 'utf8');
 }})().catch((error) => {{
   console.error(error && error.stack || error);
@@ -149,17 +151,16 @@ globalThis.core = {{
         self.assertEqual(dispatches[0]["inputs"]["ci_mode"], "quick")
         self.assertEqual(dispatches[0]["inputs"]["requested_by"], "ci-admin")
 
-    def test_comment_can_select_another_ci_definition_branch(self):
+    def test_comment_cannot_select_another_ci_definition_branch(self):
         completed, records = self._run_dispatch(
             "/run-npu-ci full ci_ref=release-v2 ops=chunk_fwd_o"
         )
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         dispatches = [item["payload"] for item in records if item["kind"] == "dispatch"]
-        self.assertEqual(len(dispatches), 1)
-        self.assertEqual(dispatches[0]["ref"], "release-v2")
-        self.assertEqual(dispatches[0]["inputs"]["ci_mode"], "full")
-        self.assertEqual(dispatches[0]["inputs"]["ops"], "chunk_fwd_o")
+        self.assertEqual(dispatches, [])
+        failures = [item["payload"] for item in records if item["kind"] == "failed"]
+        self.assertIn("不支持", failures[0])
 
 
 if __name__ == "__main__":
