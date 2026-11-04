@@ -141,7 +141,7 @@ aclnnStatus aclnnChunkFwdO(
   - 二者任意一个出现时进入变长模式，当前实现要求二者同时提供
   - 变长模式仅支持 `B = 1`
 - Torch 公开接口的 `use_exp2` 和 `output_layout` 默认值分别为 `False` 和 `"BNSD"`。
-- A5 上使用 `BSND/TND` 输出且满足 BF16、`K=V=128`、`chunkSize=64`、`HV/HK in [1,4]` 时，`useExp2=true/false` 均走优化实现。
+- A5 上使用 `BSND/TND` 输出且满足 BF16、`K=V=128`、`chunkSize=64`、`HV/HK in [1,16]` 时，`useExp2=true/false` 均走优化实现。
 - 非 exp2 的 `BNSD/NTD` 输出继续走兼容实现；`useExp2=true` 和 `stateVFirst=true` 仅支持上述 A5 优化实现。
 
 ### 4.2 形状约束（强约束）
