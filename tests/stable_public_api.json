@@ -55,8 +55,14 @@
           "num_accepted_tokens",
           "g",
           "gk",
-          "float(scale)",
-          "stream"
+          "A_log",
+          "dt_bias",
+          "scale",
+          "use_qk_l2norm_in_kernel",
+          "use_gate_in_kernel",
+          "use_beta_sigmoid_in_kernel",
+          "allow_neg_eigval",
+          "_current_stream_ptr()"
         ]
       }
     ],
@@ -1071,7 +1077,7 @@
       "return": null
     },
     "npu_recurrent_gated_delta_rule": {
-      "arguments": "query, key, value, state, *, beta, scale=1.0, actual_seq_lengths, ssm_state_indices, num_accepted_tokens=None, g=None, gk=None",
+      "arguments": "query, key, value, state, *, beta, scale=1.0, actual_seq_lengths, ssm_state_indices, num_accepted_tokens=None, g=None, gk=None, use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False, A_log=None, dt_bias=None, use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False",
       "return": null
     },
     "npu_chunk_gated_delta_rule_fwd": {
