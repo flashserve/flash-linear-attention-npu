@@ -20,6 +20,8 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
   const prNumber = process.env.NPU_PR_NUMBER || '';
   const commentId = process.env.NPU_COMMENT_ID || '';
   const sha = process.env.NPU_EXPECTED_HEAD_SHA;
+  const expectedBaseRef = process.env.NPU_EXPECTED_BASE_REF || '';
+  const expectedBaseSha = process.env.NPU_EXPECTED_BASE_SHA || '';
   const expectedRunId = process.env.NPU_EXPECTED_RUN_ID;
   const expectedRunAttempt = process.env.NPU_EXPECTED_RUN_ATTEMPT;
   const matrixResult = process.env.NPU_MATRIX_RESULT || 'failure';
@@ -784,29 +786,36 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
     };
   };
 
-  let currentHeadSha = '';
-  let headCheckError = '';
+  let invalidReason = '';
   try {
     const { data: currentPr } = await github.rest.pulls.get({
       owner: context.repo.owner,
       repo: context.repo.repo,
       pull_number: Number(prNumber),
     });
-    currentHeadSha = currentPr.head.sha;
+    if (!expectedBaseRef || !/^[0-9a-f]{40}$/.test(expectedBaseSha)) {
+      invalidReason = '缺少或无效的固定 PR base 信息，本次 A2+A5 结果失效';
+    } else if (currentPr.state !== 'open' || currentPr.merged || currentPr.merged_at) {
+      invalidReason = 'PR 已关闭或合入，本次 A2+A5 结果失效';
+    } else if (currentPr.draft) {
+      invalidReason = 'PR 已变为草稿，本次 A2+A5 结果失效';
+    } else if (currentPr.head?.sha !== sha) {
+      invalidReason = 'PR head 已变化，本次 A2+A5 结果失效';
+    } else if (currentPr.base?.ref !== expectedBaseRef) {
+      invalidReason = 'PR 目标分支已变化，本次 A2+A5 结果失效';
+    } else if (currentPr.base?.sha !== expectedBaseSha) {
+      invalidReason = 'PR base commit 已变化，本次 A2+A5 结果失效';
+    }
   } catch (error) {
-    headCheckError = error.message;
-    core.warning(`Unable to inspect current PR head before publishing NPU CI status: ${error.message}`);
+    invalidReason = '无法确认 PR 状态或 head/base，本次 A2+A5 结果失效';
+    core.warning(`Unable to inspect current PR state or head/base before publishing NPU CI status: ${error.message}`);
   }
-  const staleRun = Boolean(currentHeadSha) && currentHeadSha !== sha;
   const platforms = platformDefs.map(validatePlatform);
   const matrixArtifactMismatch = matrixResult !== 'success' &&
     platforms.every((item) => item.executionOk && item.accuracyOk && item.stageReportOk);
   const matrixFailureReason = matrixArtifactMismatch
     ? `执行矩阵状态为 ${sanitizeMarkdownInline(matrixResult, 40)}，但双平台 artifact 均记录为通过；请查看失败 job 或 post-action。`
     : '';
-  const invalidReason = headCheckError
-    ? '无法确认 PR head，本次 A2+A5 结果失效'
-    : (staleRun ? 'PR head 已变化，本次 A2+A5 结果失效' : '');
   const stageOutcomes = stageDefs.map((stageDef) => {
     const failures = [];
     for (const platform of platforms) {
@@ -833,13 +842,13 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
         : `${stageDef.label}：${failures.join('；') || '未通过'}`),
     };
   });
-  const accuracyOk = !headCheckError && !staleRun && platforms.every((item) => item.accuracyOk);
+  const accuracyOk = !invalidReason && platforms.every((item) => item.accuracyOk);
   const requiredStageOutcomes = requestScope === 'all'
     ? stageOutcomes
     : stageOutcomes.filter((item) =>
       ['environment-contracts', 'opp-package'].includes(item.key)
     );
-  const executionOk = !headCheckError && !staleRun && matrixResult === 'success' &&
+  const executionOk = !invalidReason && matrixResult === 'success' &&
     platforms.every((item) => item.executionOk && item.stageReportOk) &&
     requiredStageOutcomes.every((item) => item.ok);
   const accuracyTotals = platforms.reduce(

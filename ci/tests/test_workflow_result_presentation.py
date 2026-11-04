@@ -79,6 +79,10 @@ class WorkflowResultPresentationTest(unittest.TestCase):
         platform_attempts=None,
         nested_artifacts=False,
         publish_script_path=None,
+        current_pr=None,
+        pr_read_error=False,
+        expected_base_ref="main",
+        expected_base_sha="c" * 40,
     ):
         sha = "a" * 40
         run_id = "42"
@@ -592,7 +596,10 @@ const record = (kind, payload) => require('fs').appendFileSync(
   'utf8'
 );
 globalThis.github = { rest: {
-  pulls: { get: async () => ({ data: { head: { sha: process.env.NPU_EXPECTED_HEAD_SHA } } }) },
+  pulls: { get: async () => {
+    if (process.env.CURRENT_PR_READ_ERROR === '1') throw new Error('PR API unavailable');
+    return { data: JSON.parse(process.env.CURRENT_PR) };
+  } },
   repos: { createCommitStatus: async (payload) => record('status', payload) },
   issues: {
     updateComment: async (payload) => require('fs').writeFileSync(process.env.COMMENT_FILE, payload.body, 'utf8'),
@@ -628,6 +635,15 @@ globalThis.core = {
                     "NPU_PR_NUMBER": "527",
                     "NPU_COMMENT_ID": "123",
                     "NPU_EXPECTED_HEAD_SHA": sha,
+                    "NPU_EXPECTED_BASE_REF": expected_base_ref,
+                    "NPU_EXPECTED_BASE_SHA": expected_base_sha,
+                    "CURRENT_PR": json.dumps({
+                        "state": "open", "draft": False,
+                        "head": {"sha": sha},
+                        "base": {"ref": "main", "sha": "c" * 40},
+                        **(current_pr or {}),
+                    }),
+                    "CURRENT_PR_READ_ERROR": "1" if pr_read_error else "0",
                     "NPU_EXPECTED_RUN_ID": run_id,
                     "NPU_EXPECTED_RUN_ATTEMPT": run_attempt,
                     "NPU_MATRIX_RESULT": matrix_result,
@@ -656,6 +672,8 @@ globalThis.core = {
         mode="quick",
         ops="",
         workflow_run_status="completed",
+        workflow_run=None,
+        workflow_run_error=False,
         run_attempt="1",
         files=None,
         pr_author="ci-admin-author",
@@ -694,9 +712,11 @@ globalThis.github = {
     : endpoint === filesEndpoint ? files : [],
   rest: {
     actions: {
-      getWorkflowRun: async () => ({
-        data: { status: process.env.PREPARE_WORKFLOW_RUN_STATUS },
-      }),
+      getWorkflowRun: async (payload) => {
+        record('workflow_run', payload);
+        if (process.env.PREPARE_WORKFLOW_RUN_ERROR === '1') throw new Error('run API unavailable');
+        return { data: JSON.parse(process.env.PREPARE_WORKFLOW_RUN) };
+      },
     },
     issues: {
       createComment: async (payload) => {
@@ -760,7 +780,15 @@ globalThis.core = {
                     "NPU_CI_RUN_ATTEMPT": run_attempt,
                     "NPU_CI_AUTH_SCRIPT": str(REPO_ROOT / ".github/scripts/npu_ci_authorization.js"),
                     "NPU_CI_CHECKS_SCRIPT": str(CHECKS_SCRIPT_PATH),
-                    "PREPARE_WORKFLOW_RUN_STATUS": workflow_run_status,
+                    "PREPARE_WORKFLOW_RUN": json.dumps(workflow_run if workflow_run is not None else {
+                        "status": workflow_run_status,
+                        "event": "workflow_dispatch",
+                        "path": ".github/workflows/ci.yml",
+                        "head_sha": "c" * 40,
+                        "head_branch": "main",
+                        "repository": {"full_name": "example/repo"},
+                    }),
+                    "PREPARE_WORKFLOW_RUN_ERROR": "1" if workflow_run_error else "0",
                     "PREPARE_STATUSES": json.dumps(statuses),
                     "RECORD_FILE": str(record_file),
                 }
@@ -1439,6 +1467,86 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertFalse(any(item["kind"] == "status" for item in records))
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_prepare_reuse_requires_current_base_and_workflow_run_identity(self):
+        run = {
+            "status": "completed", "event": "workflow_dispatch",
+            "path": ".github/workflows/ci.yml", "head_sha": "c" * 40,
+            "head_branch": "main", "repository": {"full_name": "example/repo"},
+        }
+        variants = {
+            "old_base": {"workflow_run": {**run, "head_sha": "b" * 40}},
+            "old_base_branch": {"workflow_run": {**run, "head_branch": "maintenance"}},
+            "other_event": {"workflow_run": {**run, "event": "push"}},
+            "other_workflow": {"workflow_run": {**run, "path": ".github/workflows/package.yml"}},
+            "other_repository": {"workflow_run": {**run, "repository": {"full_name": "example/other"}}},
+            "missing_base": {"workflow_run": {key: value for key, value in run.items() if key != "head_sha"}},
+            "missing_branch": {"workflow_run": {key: value for key, value in run.items() if key != "head_branch"}},
+            "missing_identity": {"workflow_run": {"status": "completed"}},
+            "run_api_error": {"workflow_run_error": True},
+        }
+        for ops in ("", "chunk_fwd_o"):
+            key = hashlib.sha256(ops.encode()).hexdigest()[:10] if ops else "all"
+            contexts = [SCOPED_STATUS_CONTEXT] if ops else STATUS_CONTEXTS
+            for state in ("success", "pending"):
+                statuses = [{
+                    "id": index + 1, "context": status_context, "state": state,
+                    "description": f"result (quick,{key},A2+A5)",
+                    "target_url": "https://github.com/example/repo/actions/runs/88",
+                    "created_at": f"2026-09-14T00:00:{index:02d}Z",
+                } for index, status_context in enumerate(contexts)]
+                for name, options in variants.items():
+                    with self.subTest(scope=ops or "all", state=state, variant=name):
+                        run_options = dict(options)
+                        if "workflow_run" in run_options:
+                            run_options["workflow_run"] = {
+                                **run_options["workflow_run"],
+                                "status": "in_progress" if state == "pending" else "completed",
+                            }
+                        completed, records = self._run_prepare_script(
+                            statuses, ops=ops, workflow_run_status="in_progress", **run_options)
+                        self.assertEqual(completed.returncode, 0, completed.stderr)
+                        self.assertIn({"kind": "output", "payload": {"name": "should_run", "value": "true"}}, records)
+                        pending = [item["payload"] for item in records if item["kind"] == "status"]
+                        self.assertEqual(len(pending), len(contexts))
+                        self.assertTrue(all(item["state"] == "pending" for item in pending))
+                        self.assertEqual(sum(item["kind"] == "workflow_run" for item in records), 1)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_prepare_does_not_follow_other_repository_status_urls(self):
+        for target_url in (
+            "https://github.com/example/other/actions/runs/88",
+            "https://github.com.evil.example/example/repo/actions/runs/88",
+        ):
+            statuses = [{
+                "context": status_context, "state": "success",
+                "description": "result (quick,all,A2+A5)",
+                "target_url": target_url, "created_at": "2026-09-14T00:00:00Z",
+            } for status_context in STATUS_CONTEXTS]
+            with self.subTest(target_url=target_url):
+                completed, records = self._run_prepare_script(statuses)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertIn({"kind": "output", "payload": {"name": "should_run", "value": "true"}}, records)
+                self.assertFalse(any(item["kind"] == "workflow_run" for item in records))
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_prepare_reuses_same_base_pending_run_with_one_api_read(self):
+        for ops in ("", "chunk_fwd_o"):
+            key = hashlib.sha256(ops.encode()).hexdigest()[:10] if ops else "all"
+            statuses = [{
+                "context": SCOPED_STATUS_CONTEXT if ops else STATUS_CONTEXTS[-1],
+                "state": "pending", "description": f"result (quick,{key},A2+A5)",
+                "target_url": "https://github.com/example/repo/actions/runs/88",
+                "created_at": "2026-09-14T00:00:00Z",
+            }]
+            with self.subTest(scope=ops or "all"):
+                completed, records = self._run_prepare_script(
+                    statuses, ops=ops, workflow_run_status="in_progress")
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertIn({"kind": "output", "payload": {"name": "should_run", "value": "false"}}, records)
+                self.assertFalse(any(item["kind"] == "status" for item in records))
+                self.assertEqual(sum(item["kind"] == "workflow_run" for item in records), 1)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_prepare_reuses_published_scoped_success_for_admin_author_ci_changes(self):
         ops = "chunk_fwd_o"
         files = [{"filename": "ci/run_checks.sh", "status": "modified"}]
@@ -1754,6 +1862,42 @@ globalThis.core = { setFailed: (message) => records.push({ kind: 'failed', paylo
         self.assertIn("分项结果", comment)
         self.assertNotIn("case1_current_default", comment)
         self.assertLess(len(comment), 48000)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_publisher_rejects_changed_head_base_or_pr_lifecycle(self):
+        changes = {
+            "head_changed": {"head": {"sha": "d" * 40}},
+            "base_commit_changed": {"base": {"ref": "main", "sha": "b" * 40}},
+            "retargeted": {"base": {"ref": "maintenance", "sha": "c" * 40}},
+            "closed": {"state": "closed"},
+            "merged": {"merged": True},
+            "merged_at": {"merged_at": "2026-11-04T00:00:00Z"},
+            "draft": {"draft": True},
+        }
+        for ops in ("", "chunk_fwd_o"):
+            for name, current_pr in changes.items():
+                with self.subTest(scope=ops or "all", change=name):
+                    completed, comment, records = self._run_finalize_script(
+                        ops=ops, current_pr=current_pr)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    statuses = [item["payload"] for item in records if item["kind"] == "status"]
+                    self.assertEqual(len(statuses), 1 if ops else len(STATUS_CONTEXTS))
+                    self.assertTrue(all(item["state"] == "failure" for item in statuses))
+                    self.assertTrue(any(item["kind"] == "failed" for item in records))
+                    self.assertIn("失效", comment)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_publisher_fails_closed_without_current_pr_or_prepared_base_identity(self):
+        for options in (
+            {"pr_read_error": True},
+            {"expected_base_ref": ""},
+            {"expected_base_sha": ""},
+            {"expected_base_sha": "not-a-commit"},
+        ):
+            with self.subTest(options=options):
+                completed, _, records = self._run_finalize_script(**options)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self._assert_statuses(records, ["failure"] * len(STATUS_CONTEXTS))
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_scoped_diagnostic_does_not_overwrite_required_statuses(self):

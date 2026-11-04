@@ -158,29 +158,29 @@ jobs:
               }
             };
 
-            const isActivePendingStatus = async (status) => {
-              if (!status || status.state !== 'pending') {
-                return false;
-              }
-              const targetUrl = status.target_url || '';
-              const match = targetUrl.match(/\/actions\/runs\/(\d+)/);
-              if (!match) {
-                return false;
-              }
-              const pendingRunId = Number(match[1]);
-              if (pendingRunId === Number(context.runId)) {
-                return false;
-              }
+            const getMatchingExecutionRun = async (status, { pr, baseSha, workflowSha }) => {
+              const runPrefix = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/`;
+              const targetUrl = status?.target_url || '';
+              if (!targetUrl.startsWith(runPrefix)) return null;
+              const match = targetUrl.slice(runPrefix.length).match(/^(\d+)(?:\/attempts\/\d+)?\/?$/);
+              const runId = Number(match?.[1]);
+              if (!Number.isSafeInteger(runId) || runId <= 0 || runId === Number(context.runId)) return null;
               try {
                 const { data: run } = await github.rest.actions.getWorkflowRun({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  run_id: pendingRunId,
+                  run_id: runId,
                 });
-                return ['queued', 'in_progress', 'waiting', 'pending', 'requested'].includes(run.status);
+                // Commit statuses belong to the PR head. The workflow run also
+                // records the base commit, so head-only statuses cannot reuse
+                // a result built before the target branch or workflow changed.
+                if (run.head_sha !== baseSha || run.head_sha !== workflowSha || run.head_branch !== pr.base.ref ||
+                    run.event !== 'workflow_dispatch' || run.path !== '.github/workflows/ci.yml' ||
+                    run.repository?.full_name?.toLowerCase() !== `${context.repo.owner}/${context.repo.repo}`.toLowerCase()) return null;
+                return run;
               } catch (error) {
                 core.warning(`Unable to inspect NPU CI workflow run; allowing a replacement run: ${error.message}`);
-                return false;
+                return null;
               }
             };
 
@@ -264,6 +264,8 @@ jobs:
               latestExecutionCi &&
               (latestExecutionCi.description || '').includes(requestedModeSuffix)
             );
+            const matchingExecutionRun = latestExecutionMatchesRequest
+              ? await getMatchingExecutionRun(latestExecutionCi, { pr, baseSha, workflowSha }) : null;
             const allContextsPassedInSameRun = Boolean(
               latestExecutionCi &&
               latestExecutionCi.target_url &&
@@ -275,7 +277,7 @@ jobs:
               })
             );
             if (isInitialWorkflowAttempt &&
-                latestExecutionMatchesRequest && latestExecutionCi.state === 'success' &&
+                matchingExecutionRun && latestExecutionCi.state === 'success' &&
                 allContextsPassedInSameRun) {
               core.notice(`${pr.head.sha} 已经通过本次 NPU CI 请求，跳过重复运行。`);
               commentId = await upsertComment(
@@ -304,7 +306,8 @@ jobs:
               core.setOutput('requested_by', requestedBy);
               return;
             }
-            if (latestExecutionMatchesRequest && await isActivePendingStatus(latestExecutionCi)) {
+            if (matchingExecutionRun && latestExecutionCi.state === 'pending' &&
+                ['queued', 'in_progress', 'waiting', 'pending', 'requested'].includes(matchingExecutionRun.status)) {
               core.notice(`${pr.head.sha} 已经有 NPU CI 在排队或运行，跳过重复启动。`);
               commentId = await upsertComment(
                 pr,
@@ -1101,6 +1104,8 @@ jobs:
           NPU_COMMENT_ID: ${{ needs.prepare.outputs.comment_id }}
           NPU_MATRIX_RESULT: ${{ needs.ascend-npu.result }}
           NPU_EXPECTED_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+          NPU_EXPECTED_BASE_REF: ${{ needs.prepare.outputs.base_ref }}
+          NPU_EXPECTED_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
           NPU_EXPECTED_RUN_ID: ${{ github.run_id }}
           NPU_EXPECTED_RUN_ATTEMPT: ${{ github.run_attempt }}
         with:
