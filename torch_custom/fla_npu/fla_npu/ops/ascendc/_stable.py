@@ -644,7 +644,9 @@ def npu_recurrent_kda(
                 "initial_state (no shape to build the scratch from)")
         import torch
 
-        scratch = torch.empty_like(initial_state)
+        # The recurrent kernel reads the initial state before updating it.
+        # Preserve the full pool, including slots not written by this call.
+        scratch = initial_state.detach().clone()
         out, _ = npu_recurrent_kda(
             q, k, v, g, beta, scratch, cu_seqlens=cu_seqlens,
             ssm_state_indices=ssm_state_indices, A_log=A_log, dt_bias=dt_bias,
