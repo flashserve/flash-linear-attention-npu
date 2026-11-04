@@ -5,7 +5,9 @@
  * Fused GDN prepare (arch35 MIX AIC:AIV 1:2). Helpers in *_common/vf/datacopy/matmul.
  * Memory map: design/chunk_gated_delta_rule_fwd_prepare_ascendc-design.md.
  *
- * Pack: TG = 3 if G=3 else 4. AIV0 tasks 0,2; AIV1 1,3. kkt once per HK (OwnsHk).
+ * Pack: TG = 3 if G=3 else 4. AIV0 tasks 0,2; AIV1 1,3. kkt once per kkt
+ * group (OwnsHk): G in {1,2,3,4} keep the HK grouping; G>4 align to the
+ * pack of 4 when G % 4 == 0, else every task owns its own kkt (see KktGroup).
  * L1: Y [0,64); k' aliases NegL [64,128). Pack N+1 Stage1 waits pack N Stage4
  * before the k' L1 write so Stage5/6/7 of N can overlap next Stage1.
  * Do not gate Stage1 on Stage7: that kills the overlap and regresses G=1.
@@ -435,14 +437,15 @@ public:
     }
 
     // After one Cube kkt, wake every HV in this pack that shares the same
-    // (chunk, hk). G=1 notifies only the owner.
+    // (chunk, hk). KktGroup()==1 notifies only the owner.
     __aicore__ inline void NotifyKktSiblings(int64_t base, int64_t nThis, int64_t ownerTask)
     {
         const int64_t ownerWork = PackWorkId(base, nThis, ownerTask);
         const int64_t ownerChunk = ownerWork / HV;
         const int64_t ownerHv = ownerWork % HV;
-        const int64_t hvLo = ownerHv - ((HRatio <= 1) ? 0 : (ownerHv % HRatio));
-        const int64_t hvHi = hvLo + ((HRatio <= 1) ? 1 : HRatio);
+        const int64_t g = KktGroup();
+        const int64_t hvLo = ownerHv - ((g <= 1) ? 0 : (ownerHv % g));
+        const int64_t hvHi = hvLo + ((g <= 1) ? 1 : g);
         for (int64_t t2 = 0; t2 < nThis; ++t2) {
             const int64_t work2 = PackWorkId(base, nThis, t2);
             if ((work2 / HV) != ownerChunk) {
@@ -460,16 +463,17 @@ public:
     // Cube kkt = k' @ k'^T, once per HK after WaitAivStage1Done. Even tasks
     // use L0[0,16)/L0C[0,64); odd use L0[16,32)/L0C[64,128). Wait M_MTE1
     // (primed in ProcessAic). Inner Matmul Wait FIX_M matches V3. A full
-    // G=2 pack keeps each KKT on its owning AIV; G=3/4 and a partial G=2
-    // pack dump it to both AIVs. G=1 notifies here; G>1 siblings are
-    // notified from ProcessAic.
+    // G=2 pack keeps each KKT on its owning AIV; the other cases (G=3/4, a
+    // partial G=2 pack, and every G>4 pack) dump it to both AIVs.
+    // KktGroup()==1 notifies here; KktGroup()>1 siblings are notified from
+    // ProcessAic.
     __aicore__ inline void Stage2_AicOne(int64_t taskIdx, int64_t nThis)
     {
         const int32_t bt = static_cast<int32_t>(chunkSize);
         const int32_t kk = static_cast<int32_t>(K);
         const uint8_t bank = static_cast<uint8_t>(taskIdx & 1);
         const int32_t db = PingPongSlot(taskIdx);
-        const bool shareBothAiv = (HRatio > 2) || (HRatio == 2 && nThis < kTasksPerRound);
+        const bool shareBothAiv = (KktGroup() > 2) || (KktGroup() == 2 && nThis < kTasksPerRound);
         WaitFlag<HardEvent::M_MTE1>(bank);
         MatmulToL0C<InDtype>(l1KHat[taskIdx], l1KHat[taskIdx], l0A[bank], l0B[bank], l0CTask[bank], bt, bt, kk, true,
                              false, false, bank);
@@ -478,7 +482,7 @@ public:
         WaitFlag<HardEvent::M_FIX>(bank);
         DumpKktToUb(l0CTask[bank], db, bank, bank, shareBothAiv);
         SetFlag<HardEvent::FIX_M>(bank);
-        if (HRatio <= 1) {
+        if (KktGroup() <= 1) {
             NotifyAivKktDone(taskIdx);
         }
     }
@@ -846,7 +850,7 @@ public:
                 }
                 WaitAivStage1Done(t);
                 Stage2_AicOne(t, cur.nThis);
-                if (HRatio > 1) {
+                if (KktGroup() > 1) {
                     NotifyKktSiblings(cur.base, cur.nThis, t);
                 }
             }
