@@ -81,5 +81,7 @@ prepare_wy_repr_bwd_npu 编译时报 UB 超限（需要352.75 KiB）。一次缺
 而回退64 KiB资源预算的运行不作为有效标杆，不计算或宣称≤1.25×FLA。
 需在可运行该 FLA 提交的同设备环境补齐比较。
 
-MSS同步检测曾报告 intra 管线等待，未形成通过证据；正常执行精度通过不能代替
-MSS通过结论。本轮不扩展 sanitizer 排障或其他 shape 回归。
+MSS同步检测未通过：带行号调试包在 G=8 和既有 G=4 对照中，均报告 intra Vector
+共享 L1 复用的 CrossCoreWaitFlag（chunk_gdn_bwd_intra_vector.h:400）等待。
+该同步点未在本次变更中修改；现有证据不能区分工具兼容问题与既有同步缺陷，
+故不凭猜测改写流水，也不以正常精度通过代替 MSS 通过结论。
