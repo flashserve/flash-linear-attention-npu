@@ -770,7 +770,7 @@ private:
             WaitFlag<HardEvent::MTE3_V>(6);
             stateReadLive_ = 0;
         }
-        PanelsToNdH(ubHnd_, ubState_);
+        PanelsToNd(ubHnd_, ubState_);
         SetFlag<HardEvent::V_MTE3>(5);
         hFlushChunk_ = chunk;
     }
@@ -796,15 +796,15 @@ private:
 
     // upload queues the first four panels before the second saxpy is issued, so
     // MTE3 copies them while that saxpy runs. The last chunk leaves both flags
-    // for the epilogue.
-    __aicore__ inline void ApplyD(float decay, bool upload)
+    // for the epilogue. This is the inference body; the general path is separate
+    // so the extra h-export wait is not compiled into it.
+    __aicore__ inline void ApplyDFast(float decay, bool upload)
     {
         SaxpyStateVF(ubStateF_, ubState_, ubD_, decay, 0, 8);
         SetFlag<HardEvent::V_MTE3>(1);
         if (upload) {
             WaitFlag<HardEvent::V_MTE3>(1);
             CopyStatePanels(0, 4);
-            // Fires when those panels land, while the second saxpy is in flight.
             CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagH0);
         }
         SaxpyStateVF(ubStateF_, ubState_, ubD_, decay, 8, 8);
@@ -813,15 +813,50 @@ private:
             WaitFlag<HardEvent::V_MTE3>(2);
             CopyStatePanels(4, 4);
             CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagH);
-            if constexpr (!kFastInfer) {
-                if (outH_ != 0) {
-                    SetFlag<HardEvent::MTE3_V>(6);
-                    stateReadLive_ = 1;
-                }
+        }
+    }
+
+    // [V,K] keeps every row live until the h store finishes. Releasing H before
+    // that store lets the cube read L1 while MTE3 is still draining, and the
+    // first 64 rows come back wrong.
+    __aicore__ inline void ApplyDGeneral(float decay, bool upload)
+    {
+        const bool holdH = stateVFirst_ != 0 && outH_ != 0;
+        SaxpyStateVF(ubStateF_, ubState_, ubD_, decay, 0, 8);
+        SetFlag<HardEvent::V_MTE3>(1);
+        if (upload) {
+            WaitFlag<HardEvent::V_MTE3>(1);
+            CopyStatePanels(0, 4);
+            if (!holdH) {
+                CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagH0);
             }
         }
-        if constexpr (!kFastInfer) {
-            FlushH();
+        SaxpyStateVF(ubStateF_, ubState_, ubD_, decay, 8, 8);
+        SetFlag<HardEvent::V_MTE3>(2);
+        if (upload) {
+            WaitFlag<HardEvent::V_MTE3>(2);
+            CopyStatePanels(4, 4);
+            if (!holdH) {
+                CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagH);
+            }
+            if (outH_ != 0) {
+                SetFlag<HardEvent::MTE3_V>(6);
+                stateReadLive_ = 1;
+            }
+        }
+        FlushH();
+        if (upload && holdH) {
+            CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagH0);
+            CrossCoreSetFlag<0x4, PIPE_MTE3>(kFlagH);
+        }
+    }
+
+    __aicore__ inline void ApplyD(float decay, bool upload)
+    {
+        if constexpr (kFastInfer) {
+            ApplyDFast(decay, upload);
+        } else {
+            ApplyDGeneral(decay, upload);
         }
     }
 
@@ -918,6 +953,32 @@ private:
         SetFlag<HardEvent::MTE1_M>(0);
     }
 
+    // [K, V] H is split by columns, so the first w@H can start after panels 0-3.
+    // [V, K] H is split by rows and each row still needs every K panel, so both
+    // halves wait until the second saxpy has finished uploading.
+    __aicore__ inline void WaitHForWH(bool firstHalf)
+    {
+        if constexpr (!kFastInfer) {
+            if (stateVFirst_ != 0) {
+                if (!firstHalf) {
+                    return;
+                }
+                CrossCoreWaitFlag<0x4, PIPE_MTE1>(kFlagH0);
+                CrossCoreWaitFlag<0x4, PIPE_MTE1>(static_cast<uint16_t>(kFlagH0 + kAiv1));
+                CrossCoreWaitFlag<0x4, PIPE_MTE1>(kFlagH);
+                CrossCoreWaitFlag<0x4, PIPE_MTE1>(static_cast<uint16_t>(kFlagH + kAiv1));
+                return;
+            }
+        }
+        if (firstHalf) {
+            CrossCoreWaitFlag<0x4, PIPE_MTE1>(kFlagH0);
+            CrossCoreWaitFlag<0x4, PIPE_MTE1>(static_cast<uint16_t>(kFlagH0 + kAiv1));
+        } else {
+            CrossCoreWaitFlag<0x4, PIPE_MTE1>(kFlagH);
+            CrossCoreWaitFlag<0x4, PIPE_MTE1>(static_cast<uint16_t>(kFlagH + kAiv1));
+        }
+    }
+
     // Columns 0-63. Panels 0-3 are copied before the second saxpy, so this half
     // runs while columns 64-127 are still being updated. W stays the full K.
     __aicore__ inline void MatmulWHCols0To63()
@@ -974,14 +1035,48 @@ private:
         LoadL1ToL0A(l1Qexp_[slot], l0A_[0], kBt, kDim, false);
     }
 
+    // [V,K] H occupies the whole of L0B bank 0. K@K reuses bank 1 while that
+    // load is still in flight and overwrites the tail, so this path finishes
+    // the q@H mad before K@K is issued. Fast inference never enters here.
+    __aicore__ inline void QhMadBeforeKkt()
+    {
+        if constexpr (kFastInfer) {
+            return;
+        }
+        if (stateVFirst_ == 0) {
+            return;
+        }
+        WaitFlag<HardEvent::MTE1_M>(0);
+        WaitFlag<HardEvent::FIX_M>(0);
+        MmadL0ToL0C(l0A_[0], l0B_[0], l0C0_, kBt, kDim, kDim, true);
+        SetFlag<HardEvent::M_MTE1>(0);
+        qhDone_ = true;
+    }
+
+    __aicore__ inline void WaitQexpLoaded()
+    {
+        if constexpr (!kFastInfer) {
+            if (qhDone_) {
+                return;
+            }
+        }
+        WaitFlag<HardEvent::MTE1_M>(0);
+    }
+
     // q@H keeps bank 0 and the low 16KB of l0C0 for o. D's K and v_g load into
     // bank 1 under that mad. The second K tile reuses v_g and loads into bank 0
     // once q@H has released it. L0C for D is at 64KB.
     __aicore__ inline void MatmulQexpHAndD(uint32_t slot)
     {
-        WaitFlag<HardEvent::FIX_M>(0);
-        MmadL0ToL0C(l0A_[0], l0B_[0], l0C0_, kBt, kDim, kDim, true);
-        SetFlag<HardEvent::M_MTE1>(0);
+        bool skipQh = false;
+        if constexpr (!kFastInfer) {
+            skipQh = qhDone_;
+        }
+        if (!skipQh) {
+            WaitFlag<HardEvent::FIX_M>(0);
+            MmadL0ToL0C(l0A_[0], l0B_[0], l0C0_, kBt, kDim, kDim, true);
+            SetFlag<HardEvent::M_MTE1>(0);
+        }
 
         constexpr int kDm = 64;
         constexpr uint32_t kL0cD = 16 * 1024;
@@ -1479,24 +1574,28 @@ private:
                     CrossCoreWaitFlag<0x4, PIPE_MTE1>(static_cast<uint16_t>(kFlagInv + slot * kAiv1));
                     MatmulAvAndKbgLoadW(slot);
 
-                    CrossCoreWaitFlag<0x4, PIPE_MTE1>(kFlagH0);
-                    CrossCoreWaitFlag<0x4, PIPE_MTE1>(static_cast<uint16_t>(kFlagH0 + kAiv1));
+                    WaitHForWH(true);
                     MatmulWHCols0To63();
 
-                    CrossCoreWaitFlag<0x4, PIPE_MTE1>(kFlagH);
-                    CrossCoreWaitFlag<0x4, PIPE_MTE1>(static_cast<uint16_t>(kFlagH + kAiv1));
+                    WaitHForWH(false);
                     WaitFlag<HardEvent::M_MTE1>(1);
                     MatmulWHCols64To127WriteVnew();
 
                     ReloadHAndQexp(slot);
                     SetFlag<HardEvent::MTE1_M>(0);
+                    if constexpr (!kFastInfer) {
+                        QhMadBeforeKkt();
+                    }
                     if (c >= 1 && c + 1 < nChunk_) {
                         KktQk(c + 1, false);
                     }
                     CrossCoreWaitFlag<0x4, PIPE_MTE1>(kFlagV);
                     CrossCoreWaitFlag<0x4, PIPE_MTE1>(static_cast<uint16_t>(kFlagV + kAiv1));
-                    WaitFlag<HardEvent::MTE1_M>(0);
+                    WaitQexpLoaded();
                     MatmulQexpHAndD(slot);
+                    if constexpr (!kFastInfer) {
+                        qhDone_ = false;
+                    }
 
                     MatmulAttnVnew(slot);
                     if (c > 0) {
@@ -1539,24 +1638,28 @@ private:
                 CrossCoreWaitFlag<0x4, PIPE_MTE1>(static_cast<uint16_t>(kFlagInv + slot * kAiv1));
                 MatmulAvAndKbgLoadW(slot);
 
-                CrossCoreWaitFlag<0x4, PIPE_MTE1>(kFlagH0);
-                CrossCoreWaitFlag<0x4, PIPE_MTE1>(static_cast<uint16_t>(kFlagH0 + kAiv1));
+                WaitHForWH(true);
                 MatmulWHCols0To63();
 
-                CrossCoreWaitFlag<0x4, PIPE_MTE1>(kFlagH);
-                CrossCoreWaitFlag<0x4, PIPE_MTE1>(static_cast<uint16_t>(kFlagH + kAiv1));
+                WaitHForWH(false);
                 WaitFlag<HardEvent::M_MTE1>(1);
                 MatmulWHCols64To127WriteVnew();
 
                 ReloadHAndQexp(slot);
                 SetFlag<HardEvent::MTE1_M>(0);
+                if constexpr (!kFastInfer) {
+                    QhMadBeforeKkt();
+                }
                 if (c >= 1 && c + 1 < nChunk_) {
                     KktQk(c + 1, false);
                 }
                 CrossCoreWaitFlag<0x4, PIPE_MTE1>(kFlagV);
                 CrossCoreWaitFlag<0x4, PIPE_MTE1>(static_cast<uint16_t>(kFlagV + kAiv1));
-                WaitFlag<HardEvent::MTE1_M>(0);
+                WaitQexpLoaded();
                 MatmulQexpHAndD(slot);
+                if constexpr (!kFastInfer) {
+                    qhDone_ = false;
+                }
 
                 MatmulAttnVnew(slot);
                 if (c > 0) {
@@ -1651,6 +1754,7 @@ private:
     uint32_t initialFp32_ = 0;
     uint32_t finalFp32_ = 0;
     uint32_t stateVFirst_ = 0;
+    bool qhDone_ = false;
     uint32_t allowNegEigval_ = 0;
     uint32_t nzArmed_ = 0;
     float scale_ = 0.f;
