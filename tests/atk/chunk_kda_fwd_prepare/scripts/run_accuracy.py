@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the frozen Prepare cases through either ATK backend and check reports."""
+"""Run the frozen Prepare cases through ATK's npu backend and check reports."""
 from __future__ import annotations
 
 import argparse
@@ -8,8 +8,6 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-
-import openpyxl
 
 
 def main():
@@ -20,6 +18,11 @@ def main():
     parser.add_argument('--end', type=int, default=200)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
+    if args.backend == 'pyaclnn':
+        parser.error('chunk_kda_fwd_prepare 不支持 ATK pyaclnn；请改用 --backend npu（FLA Stable wrapper）')
+
+    import openpyxl
+
     op = Path(__file__).resolve().parents[1]
     cases = json.loads((op / 'atk_chunk_kda_fwd_prepare.json').read_text())
     if not 0 <= args.start < args.end <= len(cases):
@@ -30,29 +33,15 @@ def main():
         # Empty regex matches every exception in ATK. These are positive cases.
         if case.get('expected_error_msg') == '':
             case['expected_error_msg'] = None
-        if args.backend == 'pyaclnn':
-            case['aclnn_api_type'] = 'aclnn_chunk_kda_fwd_prepare'
     config = out / 'cases.json'
     config.write_text(json.dumps(cases, ensure_ascii=False, indent=2))
     env = os.environ.copy()
-    if args.backend == 'pyaclnn':
-        import fla_npu
-        symbols = ('aclnnChunkKdaFwdPrepareGetWorkspaceSize', 'aclnnChunkKdaFwdPrepare')
-        for lib in fla_npu.load_ascendc_opapi_libraries():
-            if all(hasattr(lib, s) for s in symbols):
-                env.update(os.environ)
-                env['ATK_CUSTOM_OPP_PATH'] = str(lib._name)
-                break
-        else:
-            raise RuntimeError('No selected FLA vendor exports both Prepare ACLNN stages')
     command = [sys.executable, '-m', 'atk', 'node', '--backend', args.backend, '--devices', str(args.device),
                '-o', str(out / 'accuracy'), 'node', '--backend', 'cpu', 'task',
                '-c', str(config), '--task', 'accuracy', '-p', str(op / 'executor_chunk_kda_fwd_prepare.py')]
-    if args.backend == 'pyaclnn':
-        command += ['-p', str(op / 'aclnn_executor.py')]
     command += ['-s', str(args.start), '-e', str(args.end), '-sp', '-to', '120']
     (out / 'command.json').write_text(json.dumps({'argv': command,
-        'library': env.get('ATK_CUSTOM_OPP_PATH'), 'backend': args.backend}, indent=2))
+        'backend': args.backend}, indent=2))
     result = subprocess.run(command, cwd=op, env=env)
     reports = list((out / 'accuracy').rglob('*.xlsx'))
     if len(reports) != 1:

@@ -1,8 +1,7 @@
 # chunk_kda_fwd_prepare ATK 测试
 
-本目录按 ATK 公开输入格式验证 `chunk_kda_fwd_prepare`。`npu` 后端调用稳定入口
-`fla_npu.ops.ascendc.chunk_kda_fwd_prepare`；`pyaclnn` 后端通过本目录的
-`aclnn_executor.py` 直接调用 ACLNN 两阶段接口。两条路径使用同一份输入和独立 CPU 标杆。
+本目录按 ATK 公开输入格式验证 `chunk_kda_fwd_prepare`。使用 `npu` 后端调用稳定入口
+`fla_npu.ops.ascendc.chunk_kda_fwd_prepare`，并与独立 CPU 标杆比较。
 
 ## 输入与输出
 
@@ -121,7 +120,7 @@ export OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 MKL_NUM_THREADS=4
 `--no-deps` 不替代 README 的依赖准备步骤。记录实际安装版本和 wheel 哈希；两个架构
 发布进度可能不同，不应把“最新可下载包”称为“当前 main 源码重构建”。
 
-### 分别验证 wrapper 和 pyaclnn
+### 验证 Stable wrapper
 
 选择健康且空闲的设备，输出目录必须不存在，避免读到上一轮的报告。以下默认验证全部
 200 个冻结精度用例；最小排障时可加 `--start 0 --end 1`。
@@ -130,28 +129,18 @@ export OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 MKL_NUM_THREADS=4
 ATK_RUN=$(mktemp -d)
 python tests/atk/chunk_kda_fwd_prepare/scripts/run_accuracy.py \
   --backend npu --device 0 --output "$ATK_RUN/npu"
-python tests/atk/chunk_kda_fwd_prepare/scripts/run_accuracy.py \
-  --backend pyaclnn --device 0 --output "$ATK_RUN/pyaclnn"
 ```
 
-两条命令均经 ATK `accuracy` 任务执行，使用 `mixed_tolerance_bm`；脚本不修改输入、
+命令经 ATK `accuracy` 任务执行，使用 `mixed_tolerance_bm`；脚本不修改输入、
 CPU 标杆或精度标准。ATK 单用例超时参数为 120 秒，外层作业仍应设置总时限，以处理
 设备故障导致的底层调用阻塞。`npu` executor 将测试字段 `a_log` 传给公共 wrapper 的
 `A_log` 参数，测试 JSON 的字段名不变。
 
-`pyaclnn` 不能直接将 Python wrapper 的 JSON 按顺序传给 C 接口。专用 adapter 按
-`aclnn_chunk_kda_fwd_prepare.h` 重排参数，将可选整数列表转成 `aclIntArray` 或空指针，
-将浮点属性传为 C `double`，并保留 13 个输出指针槽位。`backward_mode` 用于选择输出槽位，
-不是额外的 ACLNN 属性。CPU 标杆仍使用原 executor。
+本测试入口选择 `--backend pyaclnn` 会立即报错，并提示改用 `--backend npu`。
+`pyaclnn` 直接调用 C ACLNN 接口时，需要另行适配每个算子的库搜索、参数顺序及类型；
+该入口仅支持公共 Stable wrapper 的调用方式。
 
-脚本从 FLA 校验后的 op-api 库列表中按顺序寻找同时导出两个 ACLNN 符号的库，将该单个
-`.so` 路径设置为 ATK 子进程的 `ATK_CUSTOM_OPP_PATH`。因此无需手填 site-packages
-绝对路径；启用 overlay 时遵守 FLA 的 overlay → base 顺序及 ABI 校验，不绕过门禁。
-不能把 `FLA_NPU_OP_API_LIBS` 的冒号分隔列表直接赋给 `ATK_CUSTOM_OPP_PATH`；ATK 的
-默认目录搜索也不能替代 FLA 的 vendor 选择。此适配仅用于本算子的 ATK 测试，不增加
-FLA 的 ctypes 执行后端。
-
-每次运行保存 `command.json`（真实命令及选中的库）、`cases.json`、`summary.json` 和
+每次运行保存 `command.json`（真实命令）、`cases.json`、`summary.json` 和
 `accuracy/atk_output/**/report/*.xlsx`。运行副本把正常用例的空 `expected_error_msg`
 改为 `null`，防止空正则匹配任意异常。脚本检查进程退出码、报告唯一性、case ID 完整性、
 总数、通过数、执行失败数和最终精度结论；缺报告或少跑用例均失败。只有全部 200 个用例
@@ -162,21 +151,21 @@ FLA 的 ctypes 执行后端。
 以下使用下载的 main Daily wheel、CANN 9.2、Python 3.12 和 ATK 26.9.8，
 测试源码基于 `a13871e8` 加本目录的调用适配修复；未重新编译算子。
 
-| 平台 | main Daily 版本 | torch / torch_npu | wrapper (`npu`) | `pyaclnn` |
-| --- | --- | --- | --- | --- |
-| A5 / x86_64 / Ascend950 | `0.dev20261103+main.fb3d47d` | 2.13.0 / 2.13.0 | 200/200 PASS | 200/200 PASS |
-| A2 / aarch64 / Ascend910B2 | `0.dev20261104+main.8f6c77f` | 2.12.0 / 2.12.0 | 198/200，精度未通过 | 198/200，精度未通过 |
+| 平台 | main Daily 版本 | torch / torch_npu | Stable wrapper (`npu`) |
+| --- | --- | --- | --- |
+| A5 / x86_64 / Ascend950 | `0.dev20261103+main.fb3d47d` | 2.13.0 / 2.13.0 | 200/200 PASS |
+| A2 / aarch64 / Ascend910B2 | `0.dev20261104+main.8f6c77f` | 2.12.0 / 2.12.0 | 198/200，精度未通过 |
 
 每轮检查 200 个 case、2,096 个实际输出，覆盖 `none/recompute/save` 三种输出模式
 和 `BNSD/BSND/NTD/TND` 四种布局。两份 Daily 到测试基线间，本算子的 kernel、
 ACLNN 接口、Stable adapter 和冻结精度集合没有改动。
 
-A2 两条后端的失败项均为 case 123 的 `w/u`、case 195 的 `akk/w/u`。在另一张健康设备
-分别用 wrapper 和 pyaclnn 单例复跑均复现；两条路径的 18 个实际输出逐张量完全一致，
-CPU 标杆也一致。该现象属于当前 A2 包与既有精度标准不符，不能通过修改库搜索路径
-消除；具体算子数值根因待定位。本轮未放宽容差或修改标杆，不声明 A2 全量精度通过。
+A2 失败项为 case 123 的 `w/u`、case 195 的 `akk/w/u`。在另一张健康设备
+单例复跑均复现。此前还通过专用 `pyaclnn` 适配器作过诊断，两条路径的 18 个实际输出
+逐张量完全一致；该诊断路径现已从本目录移除。该现象属于当前 A2 包与既有精度标准
+不符，具体算子数值根因待定位。本轮未放宽容差或修改标杆，不声明 A2 全量精度通过。
 
-本记录仅覆盖该算子的双后端精度调用，不代表 performance、DC、MSS、A3 或 overlay
+本记录仅覆盖该算子的 Stable wrapper 精度调用，不代表 performance、DC、MSS、A3 或 overlay
 安装场景已完成验收。
 
 ## 性能
