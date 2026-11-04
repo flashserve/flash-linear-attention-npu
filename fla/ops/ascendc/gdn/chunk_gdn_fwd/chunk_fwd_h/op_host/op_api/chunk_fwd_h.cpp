@@ -109,9 +109,8 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
     // P1 varlen balanced partition: cu_seqlens is host-readable here, so the
     // per-sequence chunk counts travel to the tiling function as a ListInt
     // attr (attr #11). Dense calls pass an empty list and the tiling keeps the
-    // uniform head partition. The array is consumed synchronously inside
-    // ADD_TO_LAUNCHER_LIST (tiling runs during executor build), so the stack
-    // lifetime covers it.
+    // uniform head partition. The attr array is executor-owned (AllocIntArray)
+    // and freed with the executor.
     std::vector<int64_t> seqChunkCounts;
     if (cuSeqlensOptional != nullptr) {
         seqChunkCounts.reserve(cuSeqlensOptional->Size());
@@ -121,10 +120,9 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
         }
     }
     int64_t emptySeqChunkCounts = 0;
-    const aclIntArray *seqChunkCountsAttr =
-        seqChunkCounts.empty()
-            ? aclCreateIntArray(&emptySeqChunkCounts, 0)
-            : aclCreateIntArray(seqChunkCounts.data(), seqChunkCounts.size());
+    const aclIntArray *seqChunkCountsAttr = seqChunkCounts.empty()
+        ? executor->AllocIntArray(&emptySeqChunkCounts, 0)
+        : executor->AllocIntArray(seqChunkCounts.data(), seqChunkCounts.size());
 
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(ChunkFwdH,
         OP_INPUT(k, w, u, g, gkOptional, initialStateOptional, actualCuSeqlens, actualChunkIndices),
