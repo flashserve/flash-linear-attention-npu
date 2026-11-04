@@ -4,7 +4,7 @@ Overlay 用来在保留完整安装的前提下，只更新部分算子。完整
 
 例如，base 有 A、B 两个算子，overlay 只包含 A 的新实现：安装后调用 A 使用 overlay，调用 B 仍使用 base；移除 overlay 后，A、B 都恢复使用 base。应用继续使用原有 `fla_npu` Python 接口。
 
-本指南先演示“已有完整 wheel 和增量包，如何安装”，再说明如何自己编译增量包。架构和兼容规则见 [OPP 叠加层增量设计](OPP叠加层增量设计.md)。
+本指南先演示从镜像安装完整 wheel、再安装增量包，最后说明如何自己编译增量包。架构和兼容规则见 [OPP 叠加层增量设计](OPP叠加层增量设计.md)。
 
 ## 1. 开始前准备什么
 
@@ -15,7 +15,7 @@ Overlay 用来在保留完整安装的前提下，只更新部分算子。完整
 | 增量 `.run` 包 | 只包含要更新的算子，且与 base 的 NPU 型号、CPU 架构、CANN 环境和公开接口匹配 |
 | 安装目录写权限 | 使用安装 base 的同一 conda/venv 环境，并能写入该环境的包目录 |
 
-**Overlay 适合更新已有算子的实现，不能单独更新 Python 接口。** 如果新增算子入口，或改变参数、返回值、ACLNN 接口或 Python/Stable 适配代码，应重新构建并安装匹配的完整 wheel。不同分支、不同版本的 base 和增量不能仅凭“安装成功”推断全部兼容；初次使用建议从同一份源码构建 base，再在接口不变的前提下修改目标算子。
+**Overlay 适合更新已有算子的实现，不能单独更新 Python 接口。** 如果新增算子入口，或改变参数、返回值、ACLNN 接口或 Python/Stable 适配代码，应重新构建并安装匹配的完整 wheel。不同分支、不同版本的 base 和增量不能仅凭“安装成功”推断全部兼容；初次使用建议先安装镜像中的完整 base，再从该包对应的源码提交修改目标算子，保持接口不变。
 
 较早发布的 wheel（例如未包含此功能的原始 `26.9.1` 包）不能直接按此流程使用 overlay。版本号本身不代表功能齐全，先确认包的来源，并检查下面的管理命令可用。
 
@@ -23,13 +23,25 @@ Overlay 用来在保留完整安装的前提下，只更新部分算子。完整
 
 ## 2. 安装完整基础包
 
-激活目标 conda/venv 环境，加载 CANN 环境后安装完整 wheel。将两个路径换成实际位置：
+激活目标 conda/venv 环境，加载 CANN 环境后，直接从[华为云镜像](https://mirrors.huaweicloud.com/ascend/repos/pypi/nightly/)安装完整基础包，无需本地全量编译。以下以 A2 的 main Daily `0.dev20261103+main.fb3d47d` 为例，该提交已包含 overlay 功能。A3 / A5 将包名中的 `a2` 替换为 `a3` / `a5`，pip 自动选择匹配 CPU 架构的 wheel。CANN 路径需按实际环境调整：
 
 ```sh
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
+python -m pip install --force-reinstall --no-cache-dir --no-deps \
+  --extra-index-url https://mirrors.huaweicloud.com/ascend/repos/pypi/nightly/ \
+  "flash-linear-attention-npu-a2==0.dev20261103+main.fb3d47d"
+```
+
+如果已经从镜像下载了完整 wheel，继续使用原有本地安装命令即可，与上面的在线安装二选一：
+
+```sh
 BASE_WHEEL=/path/to/full-package.whl
 python -m pip install --force-reinstall --no-cache-dir --no-deps "$BASE_WHEEL"
+```
 
+其他日期、固定提交及 `latest` 安装方式见 [Daily 和 Release 包发布与安装说明](Daily和Release包发布与安装说明.md)。安装完成后检查：
+
+```sh
 # 确认当前 Python 能找到管理入口，并查看基础安装
 python -m fla_npu_opp_manage --help
 python -m fla_npu_opp_manage --status
@@ -122,20 +134,23 @@ python -m fla_npu_opp_manage --status
 
 ## 6. 没有增量包，如何自己编译
 
-在已准备构建环境的仓库根目录，先安装完整 base。没有完整 wheel 时，按 [README Step 2](../README.md) 构建；不要设置只选部分算子的 `FLA_NPU_OPS`：
+先按第 2 节从镜像安装完整 base，再准备其对应提交的源码；不需要重新编译完整 wheel。以下以第 2 节的 `fb3d47d` 为例，在独立目录准备源码。如果已有对应源码，直接进入其根目录即可：
 
 ```sh
-unset FLA_NPU_OPS
-FLA_NPU_SOC=ascend910b python scripts/build_wheel.py
+git clone https://github.com/flashserve/flash-linear-attention-npu.git fla-npu-overlay-demo
+cd fla-npu-overlay-demo
+git switch --detach fb3d47d
 ```
 
-用第 2 节的 pip 命令安装本轮生成的完整 wheel 后，修改目标算子的实现，保持公开接口不变。以下以 A2 的 `chunk_fwd_o` 为例，只构建它的 run 包：
+使用其他 base 时，将提交号替换为该包对应的提交；main Daily 版本号 `+main.` 后的短 SHA 可用于定位源码。修改目标算子的实现，保持公开接口不变。完成 [README](../README.md) 的构建环境准备后，在源码根目录只编译目标算子的 run 包，以下以 A2 的 `chunk_fwd_o` 为例：
 
 ```sh
 bash build.sh --pkg --soc=ascend910b --ops=chunk_fwd_o -j32
 ```
 
 `-j32` 是本次编译的并发数，可按机器资源调小。使用构建输出提示的本轮 `.run` 准确路径，代入第 3 节的 `OVERLAY_RUN`，完成安装和验证。
+
+只有需要自行定制完整 base 时，才按 [README 手工编译安装](../README.md#222-手工编译安装) 构建完整 wheel，并保持 `FLA_NPU_OPS` 未设置，避免只打包部分算子。
 
 | NPU 产品 | `--soc` / `FLA_NPU_SOC` |
 | --- | --- |

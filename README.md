@@ -93,31 +93,36 @@ python -m pip install --force-reinstall --no-cache-dir --no-deps dist/<wheel文�
 
 **已经装好完整包，只想更新其中一个算子？** Overlay（增量叠加层）会把更新单独安装：例如完整包有 A、B 两个算子，增量包只更新 A，运行时 A 使用新实现，B 继续使用完整包，原有 Python 调用方式不变。
 
-下面以 **A2 上更新 `chunk_fwd_o`** 为例，演示从准备基础包到撤销增量的完整流程。先完成 Step 0 / 1 和 2.1 的环境准备，在包含 overlay 功能的当前源码根目录、同一个 Bash 终端和 Python 环境中依次执行。每一步成功后再继续；安装或移除前退出相关 Python 程序、Notebook 内核和测试 worker。
+下面以 **A2 上更新 `chunk_fwd_o`** 为例，演示从镜像安装基础包到撤销增量的完整流程。先完成 Step 0 / 1 和 2.1 的环境准备，在同一个 Bash 终端和 Python 环境中依次执行。每一步成功后再继续；安装或移除前退出相关 Python 程序、Notebook 内核和测试 worker。
 
 **① 安装完整基础包（base）**
 
-已经安装支持 overlay 的完整 wheel，可跳过编译安装，直接执行最后两条检查命令。首次体验可从当前源码构建；不要将上面示例中的旧 `26.9.1` 正式包直接当作支持 overlay 的 base。
+**基础包直接从镜像安装，无需本地全量编译。** 以下固定使用已包含 overlay 功能的 main Daily `0.dev20261103+main.fb3d47d`，方便后续使用对应源码编译增量；A3 / A5 将包名中的 `a2` 替换为 `a3` / `a5`，pip 自动匹配 ARM / x86。已经安装合适的完整 wheel，可跳过 pip 安装，直接执行最后两条检查命令。
 
 ```sh
-SOC=ascend910b  # A3 改为 ascend910_93，A5 改为 ascend950；后续使用相同值
-unset FLA_NPU_OPS  # 基础包需要全部算子
-BASE_WHEEL_DIR="$(mktemp -d /tmp/fla-npu-base.XXXXXX)"
-FLA_NPU_SOC="$SOC" FLA_NPU_BUILD_ARGS=-j32 \
-  python scripts/build_wheel.py --wheel-dir "$BASE_WHEEL_DIR"
-python -m pip install --force-reinstall --no-cache-dir --no-deps "$BASE_WHEEL_DIR"/*.whl
+python -m pip install --force-reinstall --no-cache-dir --no-deps \
+  --extra-index-url https://mirrors.huaweicloud.com/ascend/repos/pypi/nightly/ \
+  "flash-linear-attention-npu-a2==0.dev20261103+main.fb3d47d"
 python -m fla_npu_opp_manage --help
 python -m fla_npu_opp_manage --status
 ```
 
-应能看到 `base` 条目。基础包只需安装一次，后续修改算子时从第 ② 步开始。
+应能看到 `base` 条目。基础包只需安装一次，后续修改算子时从第 ② 步开始。也可先从镜像下载完整 wheel，再使用 2.2.2 中的本地 pip 安装命令。其他日期或 `latest` 的选择方式见 [Daily 和 Release 包发布与安装说明](docs/Daily和Release包发布与安装说明.md)；上面示例中的旧 `26.9.1` 正式包不包含 overlay 功能。
 
 **② 修改算子，编译增量包**
+
+在独立目录准备与基础包对应的源码，本例为 `fb3d47d`；如果已有这份源码，直接进入其根目录即可：
+
+```sh
+git clone https://github.com/flashserve/flash-linear-attention-npu.git fla-npu-overlay-demo
+cd fla-npu-overlay-demo
+git switch --detach fb3d47d
+```
 
 修改 `fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/` 下的实现，保持参数和返回值等公开接口不变，再只编译该算子：
 
 ```sh
-SOC=ascend910b  # 与基础包一致；A3 / A5 按第 ① 步替换
+SOC=ascend910b  # 与基础包机型一致；A3 改为 ascend910_93，A5 改为 ascend950
 bash build.sh --pkg --soc="$SOC" --ops=chunk_fwd_o -j32
 OVERLAY_RUN="$PWD/build_out/fla_npu_linux-$(uname -m).run"
 test -f "$OVERLAY_RUN"
