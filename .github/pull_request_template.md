@@ -25,7 +25,7 @@
 > - 修改算子 `def`、`aclnn` 接口入参类型，或修改 `torch` 接口入参类型等导致不满足 ABI 一致性的改动，必须由 `weinachuan` 在当前 head commit 上检视通过；ABI 敏感路径已由 CODEOWNERS 指向 `weinachuan`。
 > - NPU CI 部署与排障教程见 [`docs/Fla-npu仓CI部署教程.md`](docs/Fla-npu仓CI部署教程.md)。
 
-CI 触发权由默认分支 `.github/npu-ci-users.json` 名单管理。仅接受 open、未合并且非草稿的 PR。非 Markdown 的 `ci/` 或 `.github/` 变更必须由名单内仓库 Admin 追加 `ci_modified=true head=<当前完整40位head SHA>` 确认；Actions 手动运行对应填写 `ci_modified=true` 和 `expected_head_sha`。PR head、目标分支或 base commit 变化后须重新确认，实际重跑人同样校验。A2/A5 直接验证当前 PR 的 `ci/`，不覆盖可信 CI 目录。
+CI 初次触发权由默认分支 `.github/npu-ci-users.json` 名单管理。仅接受 open、未合并且非草稿的 PR。非 Markdown 的 `ci/` 或 `.github/` 变更只允许仓库 Admin 创建的 PR；作者无需在名单中，初次触发人仍须在名单中。名单内只读用户可触发 Admin 作者的 PR，名单内 Admin 不能替非 Admin 作者放行。重跑保留 PR 状态和版本一致性检查。A2/A5 直接验证当前 PR 的 `ci/`，不覆盖可信 CI 目录。
 
 ## 关联 Issue / 背景
 

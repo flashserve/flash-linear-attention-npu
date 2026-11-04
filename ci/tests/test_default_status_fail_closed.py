@@ -26,7 +26,7 @@ const definition = JSON.parse(fs.readFileSync(process.env.TEST_DEFINITION, 'utf8
 const contexts = definition.required.map(item => item.context);
 const records = [];
 const record = (kind, payload) => records.push({kind, payload});
-const eventPr = {number:527,state:'open',draft:false,changed_files:1,
+const eventPr = {number:527,state:'open',draft:false,changed_files:1,user:{login:settings.author || 'contributor'},
   html_url:'https://github.com/example/repo/pull/527',head:{sha:'a'.repeat(40)},
   base:{ref:'main',sha:'c'.repeat(40)}};
 const pr = {...eventPr, ...settings.current_pr};
@@ -42,7 +42,7 @@ let normalFailed = false;
 const github = {paginate:async (endpoint) => {
   if (endpoint === listFiles) {
     if (settings.files_error) throw new Error('file list unavailable');
-    return [{filename:'fla/changed.cpp',status:'modified'}];
+    return [{filename:settings.file || 'fla/changed.cpp',status:'modified'}];
   }
   if (endpoint === listStatuses) {
     if (settings.history_error) throw new Error('status history unavailable');
@@ -52,7 +52,11 @@ const github = {paginate:async (endpoint) => {
 }, rest:{pulls:{listFiles,get:async () => {
   if (settings.pr_error) throw new Error('PR read unavailable');
   return {data:pr};
-}}, repos:{listCommitStatusesForRef:listStatuses,getContent:async request => {
+}}, repos:{listCommitStatusesForRef:listStatuses,getCollaboratorPermissionLevel:async request => {
+  record('permission',request.username);
+  if (settings.permission_error) throw new Error('permission unavailable');
+  return {data:{permission:(settings.permissions || {})[request.username] || 'read'}};
+},getContent:async request => {
   record('content',request);
   if (request.ref === pr.base.sha && settings.target_profile) {
     if (settings.legacy_profile && request.path.endsWith('.json')) {
@@ -70,7 +74,7 @@ const github = {paginate:async (endpoint) => {
 }, createCommitStatus:async payload => {
   record('status',payload);
   if (settings.status_error && !normalFailed) throw new Error('initial status write unavailable');
-}}, issues:{listComments,createComment:async () => ({data:{id:1}}),updateComment:async () => {}}}};
+}}, issues:{listComments,createComment:async payload => {record('comment',payload);return {data:{id:1}};},updateComment:async () => {}}}};
 const core = {notice:message => record('notice',message),warning:message => record('warning',message),
   setFailed:message => record('failed',message)};
 (async () => {
@@ -160,6 +164,38 @@ const core = {notice:message => record('notice',message),warning:message => reco
     def test_unrelated_title_edit_does_not_invalidate_success(self):
         records = self.run_workflow(checkout_error=True, title_edit=True)
         self.assertEqual(self.statuses(records), [])
+
+    def test_ci_changes_from_admin_author_need_no_confirmation(self):
+        records = self.run_workflow(file="ci/run_checks.sh", author="pr-admin",
+                                    permissions={"pr-admin": "admin"}, history=[])
+        self.assertEqual([item["state"] for item in self.statuses(records)], ["pending"] * 6)
+        self.assertEqual([item["payload"] for item in records if item["kind"] == "permission"], ["pr-admin"])
+        self.assertFalse(any(item["kind"] in ("normal_error", "fallback_error") for item in records))
+
+    def test_non_admin_ci_author_cannot_keep_old_success(self):
+        records = self.run_workflow(file=".github/workflows/ci.yml", author="contributor",
+                                    permissions={"ci-admin": "admin"})
+        self.assertEqual([item["state"] for item in self.statuses(records)], ["failure"] * 6)
+        body = next(item["payload"]["body"] for item in records if item["kind"] == "comment")
+        self.assertIn("作者", body)
+        self.assertIn("Admin", body)
+
+    def test_admin_ci_author_keeps_existing_execution_without_approval_marker(self):
+        records = self.run_workflow(file="ci/run_checks.sh", author="pr-admin",
+                                    permissions={"pr-admin": "admin"}, action="synchronize")
+        self.assertEqual(self.statuses(records), [])
+        self.assertFalse(any(item["kind"] in ("normal_error", "fallback_error") for item in records))
+
+    def test_author_permission_read_failure_blocks_ci_changes(self):
+        records = self.run_workflow(file="ci/run_checks.sh", permission_error=True)
+        self.assertEqual([item["state"] for item in self.statuses(records)], ["failure"] * 6)
+        body = next(item["payload"]["body"] for item in records if item["kind"] == "comment")
+        self.assertIn("permission unavailable", body)
+
+    def test_non_ci_change_does_not_read_author_permission(self):
+        records = self.run_workflow(permission_error=True, history=[])
+        self.assertEqual([item["state"] for item in self.statuses(records)], ["pending"] * 6)
+        self.assertFalse(any(item["kind"] == "permission" for item in records))
 
 
 if __name__ == "__main__":

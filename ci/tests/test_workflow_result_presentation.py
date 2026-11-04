@@ -78,7 +78,6 @@ class WorkflowResultPresentationTest(unittest.TestCase):
         expected_run_attempt="1",
         platform_attempts=None,
         nested_artifacts=False,
-        approval_key="",
         publish_script_path=None,
     ):
         sha = "a" * 40
@@ -624,7 +623,6 @@ globalThis.core = {
                     "COMMENT_FILE": str(comment_file),
                     "RECORD_FILE": str(record_file),
                     "NPU_PUBLISH_SCRIPT_PATH": str(publish_script_path or PUBLISH_SCRIPT_PATH),
-                    "NPU_CI_APPROVAL_KEY": approval_key,
                     "NPU_CI_MODE": "quick",
                     "NPU_OPS": ops,
                     "NPU_PR_NUMBER": "527",
@@ -659,8 +657,9 @@ globalThis.core = {
         ops="",
         workflow_run_status="completed",
         run_attempt="1",
-        ci_modified=False,
         files=None,
+        pr_author="ci-admin-author",
+        author_permission="admin",
     ):
         sha = "a" * 40
         wrapper = """
@@ -681,8 +680,6 @@ globalThis.context = {
     pr_number: '527',
     ci_mode: process.env.PREPARE_MODE,
     ops: process.env.PREPARE_OPS,
-    ci_modified: process.env.PREPARE_CI_MODIFIED,
-    expected_head_sha: process.env.PREPARE_CI_MODIFIED === 'true' ? process.env.PREPARE_HEAD_SHA : '',
   } },
   repo: { owner: 'example', repo: 'repo' },
   runId: 99,
@@ -711,6 +708,7 @@ globalThis.github = {
       listFiles: filesEndpoint,
       get: async () => ({ data: {
         number: 527, changed_files: files.length, state: 'open', draft: false,
+        user: { login: process.env.PREPARE_PR_AUTHOR },
         base: { sha: 'c'.repeat(40), ref: 'main' },
         head: { sha: process.env.PREPARE_HEAD_SHA, repo: { full_name: 'example/repo' } },
       } }),
@@ -720,7 +718,11 @@ globalThis.github = {
       getBranch: async () => ({ data: { name: 'main', protected: true, commit: { sha: 'c'.repeat(40) } } }),
       get: async () => ({ data: { default_branch: 'main' } }),
       getContent: async () => ({data:{type:'file',content:Buffer.from(JSON.stringify({users:['ci-admin']})).toString('base64')}}),
-      getCollaboratorPermissionLevel: async () => ({ data: { permission: 'admin' } }),
+      getCollaboratorPermissionLevel: async ({ username }) => {
+        record('permission', username);
+        return { data: { permission: username === process.env.PREPARE_PR_AUTHOR
+          ? process.env.PREPARE_AUTHOR_PERMISSION : 'read' } };
+      },
       listCommitStatusesForRef: statusEndpoint,
     },
   },
@@ -749,10 +751,10 @@ globalThis.core = {
                     "PREPARE_HEAD_SHA": sha,
                     "PREPARE_MODE": mode,
                     "PREPARE_OPS": ops,
-                    "PREPARE_CI_MODIFIED": str(ci_modified).lower(),
+                    "PREPARE_PR_AUTHOR": pr_author,
+                    "PREPARE_AUTHOR_PERMISSION": author_permission,
                     "PREPARE_FILES": json.dumps(files or []),
                     "NPU_CI_RUN_ATTEMPT": run_attempt,
-                    "NPU_CI_TRIGGERING_ACTOR": "ci-admin",
                     "NPU_CI_AUTH_SCRIPT": str(REPO_ROOT / ".github/scripts/npu_ci_authorization.js"),
                     "NPU_CI_CHECKS_SCRIPT": str(CHECKS_SCRIPT_PATH),
                     "PREPARE_WORKFLOW_RUN_STATUS": workflow_run_status,
@@ -1116,20 +1118,25 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertTrue(any("git merge --no-ff" in step.get("run", "") for step in self.matrix_steps))
         self.assertIn('extract_archive(archive_dir / "merge.tar.gz", Path("repo"))', device_source)
 
-    def test_publisher_keeps_admin_approval_on_each_final_status(self):
-        for ops, missing_report in (("", False), ("chunk_fwd_o", False), ("chunk_fwd_o", True)):
-            with self.subTest(ops=ops, missing_report=missing_report):
-                completed, _, records = self._run_finalize_script(
-                    ops=ops, missing_stage_report=missing_report, approval_key="123456abcdef")
-                self.assertEqual(completed.returncode, 0, completed.stderr)
-                statuses = [item["payload"] for item in records if item["kind"] == "status"]
-                self.assertEqual(len(statuses), 1 if ops else 6)
-                for status in statuses:
-                    self.assertTrue(status["description"].endswith(" ci-ok=123456abcdef"))
-                    self.assertLessEqual(len(status["description"]), 140)
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_admin_author_ci_changes_publish_without_confirmation_parameters(self):
+        prepared, initial_records = self._run_prepare_script(
+            [], files=[{"filename": ".github/workflows/ci.yml", "status": "modified"}])
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        self.assertIn({"kind": "output", "payload": {"name": "should_run", "value": "true"}}, initial_records)
+        self.assertEqual([item["payload"] for item in initial_records if item["kind"] == "permission"],
+                         ["ci-admin-author"])
+
+        completed, _, records = self._run_finalize_script()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self._assert_statuses(records, ["success"] * len(STATUS_CONTEXTS))
+        for item in records:
+            if item["kind"] == "status":
+                self.assertNotIn("ci-ok=", item["payload"]["description"])
+                self.assertLessEqual(len(item["payload"]["description"]), 140)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_scoped_publisher_reserves_description_space_for_admin_approval(self):
+    def test_scoped_publisher_truncates_long_status_descriptions(self):
         with tempfile.TemporaryDirectory() as temp:
             fixture = Path(temp)
             publisher = fixture / PUBLISH_SCRIPT_PATH.name
@@ -1139,14 +1146,14 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
             profile["diagnostic"]["label"] = "long diagnostic label " * 15
             (fixture / CHECKS_CONFIG_PATH.name).write_text(json.dumps(profile), encoding="utf-8")
             completed, _, records = self._run_finalize_script(
-                ops="chunk_fwd_o", approval_key="123456abcdef", publish_script_path=publisher)
+                ops="chunk_fwd_o", publish_script_path=publisher)
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         statuses = [item["payload"] for item in records if item["kind"] == "status"]
         self.assertEqual(len(statuses), 1)
         self.assertEqual(statuses[0]["context"], SCOPED_STATUS_CONTEXT)
         self.assertEqual(len(statuses[0]["description"]), 140)
-        self.assertTrue(statuses[0]["description"].endswith(" ci-ok=123456abcdef"))
+        self.assertTrue(statuses[0]["description"].endswith("..."))
 
     @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
     def test_a5_archive_cleanup_rejects_a_different_tmpdir_before_removing_any_directory(self):
@@ -1429,38 +1436,41 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertFalse(any(item["kind"] == "status" for item in records))
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_prepare_reuses_published_scoped_success_for_confirmed_ci_changes(self):
+    def test_prepare_reuses_published_scoped_success_for_admin_author_ci_changes(self):
         ops = "chunk_fwd_o"
         files = [{"filename": "ci/run_checks.sh", "status": "modified"}]
         prepared, initial_records = self._run_prepare_script(
-            [], ops=ops, ci_modified=True, files=files)
+            [], ops=ops, files=files)
         self.assertEqual(prepared.returncode, 0, prepared.stderr)
         outputs = {item["payload"]["name"]: item["payload"]["value"]
                    for item in initial_records if item["kind"] == "output"}
         self.assertEqual(outputs["should_run"], "true")
-        published, _, final_records = self._run_finalize_script(
-            ops=ops, approval_key=outputs["ci_approval_key"])
+        published, _, final_records = self._run_finalize_script(ops=ops)
         self.assertEqual(published.returncode, 0, published.stderr)
         statuses = [item["payload"] for item in final_records if item["kind"] == "status"]
         self.assertEqual(len(statuses), 1)
         self.assertEqual(statuses[0]["context"], SCOPED_STATUS_CONTEXT)
         self.assertEqual(statuses[0]["state"], "success")
+        self.assertNotIn("ci-ok=", statuses[0]["description"])
 
         completed, records = self._run_prepare_script(
-            statuses, ops=ops, ci_modified=True, files=files)
+            statuses, ops=ops, files=files)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn({"kind": "output", "payload": {"name": "should_run", "value": "false"}}, records)
         self.assertFalse(any(item["kind"] == "status" for item in records))
 
-        # Without the marker, this same success must not reuse an unconfirmed run.
-        unconfirmed = [{**status, "description": status["description"].split(" ci-ok=")[0]}
-                       for status in statuses]
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_authorized_requester_cannot_run_ci_changes_from_non_admin_author(self):
         completed, records = self._run_prepare_script(
-            unconfirmed, ops=ops, ci_modified=True, files=files)
+            [], files=[{"filename": "ci/run_checks.sh", "status": "modified"}],
+            author_permission="write")
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertIn({"kind": "output", "payload": {"name": "should_run", "value": "true"}}, records)
-        self.assertEqual([item["payload"]["context"] for item in records if item["kind"] == "status"],
-                         [SCOPED_STATUS_CONTEXT])
+        self.assertNotIn({"kind": "output", "payload": {"name": "should_run", "value": "true"}}, records)
+        self._assert_statuses(records, ["failure"] * len(STATUS_CONTEXTS))
+        failures = [item["payload"] for item in records if item["kind"] == "failed"]
+        self.assertTrue(any("ci-admin-author" in message and "Admin" in message for message in failures))
+        self.assertEqual([item["payload"] for item in records if item["kind"] == "permission"],
+                         ["ci-admin-author"])
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_prepare_does_not_reuse_older_scoped_success(self):

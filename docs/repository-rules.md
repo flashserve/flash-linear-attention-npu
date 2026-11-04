@@ -54,11 +54,11 @@ A5 job 使用 `self-hosted,linux,npu,ascend950,flash-linear-attention-npu-a5` �
 
 PR 合入前，当前 head commit 的 6 个 NPU 状态和自动执行的 `CI 契约测试` 必须全部成功；当 PR 更新 commit 后，旧 commit 上的 CI 成功状态自动失效，需要 CI 触发名单中的账号重新触发 NPU CI。
 
-默认分支的 [`.github/npu-ci-users.json`](../.github/npu-ci-users.json) 独立维护可触发用户名；仓库读写权限不直接赋予触发权。评论分发、手动执行和 Actions 重跑均校验名单，重跑使用 `github.triggering_actor`，PR 自身修改名单不会授予权限。
+默认分支的 [`.github/npu-ci-users.json`](../.github/npu-ci-users.json) 独立维护可触发用户名；仓库读写权限不直接赋予触发权。评论分发和手动执行均校验初次触发人的名单，PR 自身修改名单不会授予权限。
 
-`Re-run failed jobs` 即使复用成功的 prepare，每个设备任务仍会先校验实际重跑人的名单和按需 Admin 身份，并检查 PR 状态及固定 head/base；PR 或确认已变化时拒绝复用，需重新触发完整流程。
+Actions 重跑权限由 GitHub 平台控制，重跑仍检查 PR 状态及固定 head/base/workflow 版本。评论触发自动携带四个 `expected_*` 快照，版本未变化时可使用 `Re-run all jobs`。Actions 手动首次默认不填快照；此类运行重新执行 prepare（`Re-run all jobs` 或 prepare 失败后重跑）会被拒绝，应新建 `Run workflow`，避免取到新的 head。`Re-run failed jobs` 若复用已成功的 prepare，则可正常重试，设备仍检查原 PR 状态和固定版本。
 
-PR 修改非 Markdown 的 `ci/` 或 `.github/` 文件时，默认状态直接失败，需要名单中的仓库 Admin 使用 `/run-npu-ci quick ci_modified=true head=<当前完整40位head SHA>` 确认；Actions 手动运行须填写 `ci_modified=true` 和相同 SHA 的 `expected_head_sha`。只有原触发人和实际重跑人都满足对应要求才执行；`ci_modified` 只接受 `true/false`。文件检测读取完整列表并检查重命名两侧；列表不完整、权限读取失败均拒绝。确认绑定当前 PR、目标分支和 base/head commit，任一项变化均需重新确认；纯 CI 文件变更检测本身不新增编译规则。
+PR 修改非 Markdown 的 `ci/` 或 `.github/` 文件时，只有 PR 创建者（`pr.user.login`）具有该仓库 Admin 权限才允许执行，否则门禁直接失败。PR 作者无需位于 CI 触发名单，初次触发人仍须在名单中：名单内只读用户可以触发 Admin 作者的 PR，名单内 Admin 不能替非 Admin 作者放行 CI 修改。文件检测读取完整列表并检查重命名两侧；列表不完整、作者权限读取失败均拒绝。纯 CI 文件变更检测本身不新增编译规则。
 
 设备上的 A2/A5 一律使用当前 PR 合并结果中的 `ci/`，不再检出或叠加可信 CI 目录。Actions 调度、鉴权与最终状态发布仍固定为所选 workflow commit，不执行 PR 的 Actions 控制脚本。
 
@@ -69,7 +69,7 @@ PR 修改非 Markdown 的 `ci/` 或 `.github/` 文件时，默认状态直接失
 | PR 评论 `/run-npu-ci` | 默认分支 CI 名单；不要求仓库 write 权限 |
 | Actions 页面、CLI 或 REST 手动分发 | 默认分支 CI 名单，并具备仓库 write 权限 |
 
-GitHub 要求[手动运行 workflow 的用户具有仓库 write 权限](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)；REST 的 fine-grained token 还须具有 `Actions: write`，classic PAT 或 OAuth token 须具有 `repo` scope，见[分发 API 权限要求](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event)。涉及 CI 文件修改时，所有入口均额外要求上述名单内 Admin 确认。
+GitHub 要求[手动运行 workflow 的用户具有仓库 write 权限](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)；REST 的 fine-grained token 还须具有 `Actions: write`，classic PAT 或 OAuth token 须具有 `repo` scope，见[分发 API 权限要求](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event)。涉及 CI 文件修改时，所有入口均要求 PR 作者具有仓库 Admin 权限。
 
 1. 在 GitHub `Actions` 页面选择 `NPU CI`，将 `Branch` 设为 PR 当前目标分支，点击 `Run workflow`，填写 PR 编号和 `quick/full` 模式；正式门禁请求不填写 `ops`，仅在定向诊断时填写 `ops`。
 2. 在 PR 评论区发送命令：
@@ -83,7 +83,7 @@ GitHub 要求[手动运行 workflow 的用户具有仓库 write 权限](https://
 
 仅接受 open、未合并且非草稿的 PR，目标分支必须受 GitHub 分支保护。`NPU CI` 的 workflow 文件位于该目标分支的 `.github/workflows/ci.yml`。默认分支上的 `NPU CI 评论分发` workflow 校验请求人后，通过 `workflow_dispatch.ref` 启动 PR 当前目标分支（`pr.base.ref`）上的 `ci.yml`，不支持 `ci_ref` 或 `branch` 覆盖。Actions 页面、CLI 和 REST 手动分发也必须选择 PR 当前目标分支。
 
-评论分发时固定 PR head、目标分支、base commit 和 workflow commit，prepare 会逐项校验；排队期间 PR 或目标分支发生变化会拒绝执行，需重新触发。每个维护分支必须同步完整的当前 dispatch 输入及授权契约；旧分支缺失契约时会明确失败，应先同步 CI 流程再触发。
+评论分发时自动固定 PR head、目标分支、base commit 和 workflow commit，prepare 会逐项校验；用户无需手填版本快照。排队期间 PR 或目标分支发生变化会拒绝执行，需重新触发。每个维护分支必须同步完整的当前 v3 dispatch 输入及作者权限契约；旧分支缺失契约时会明确失败，应先同步 CI 流程再触发。
 
 带 `ops=` 的触发是编译定向诊断：只顺序执行第 01 项环境契约和第 02 项指定算子 OPP 构建，不执行 GDR 精度或后续安装分项；它只发布 `NPU CI / A2+A5 / 定向诊断`，不会写入或覆盖 01-06 正式门禁状态。用于合入门禁的运行必须省略 `ops`。
 

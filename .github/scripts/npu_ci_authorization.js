@@ -1,8 +1,7 @@
 "use strict";
 
-const { createHash } = require('crypto');
 const USERS_PATH = '.github/npu-ci-users.json';
-const DISPATCH_INPUTS = ['pr_number', 'ci_mode', 'ops', 'ci_modified', 'requested_by',
+const DISPATCH_INPUTS = ['pr_number', 'ci_mode', 'ops', 'requested_by',
   'expected_head_sha', 'expected_base_ref', 'expected_base_sha', 'expected_workflow_sha'];
 
 function requireOpenPullRequest(pr) {
@@ -10,12 +9,6 @@ function requireOpenPullRequest(pr) {
     throw new Error(`PR #${pr.number} 已关闭或已合入，不能触发 NPU CI。`);
   }
   if (pr.draft) throw new Error(`PR #${pr.number} 仍是草稿，请先标记为 ready for review。`);
-}
-
-function requireConfirmedHead({ pr, headSha }) {
-  if (!/^[0-9a-f]{40}$/.test(headSha || '') || headSha !== pr.head.sha) {
-    throw new Error(`CI 文件变更确认必须绑定当前 head；请由名单内 Admin 使用 ci_modified=true head=${pr.head.sha} 重新确认；Actions 页面填写 expected_head_sha。`);
-  }
 }
 
 function requireProtectedBase({ pr, branch, workflowRef = pr.base.ref, workflowSha = pr.base.sha }) {
@@ -29,9 +22,12 @@ function requireProtectedBase({ pr, branch, workflowRef = pr.base.ref, workflowS
   }
 }
 
-function requireDispatchIdentity({ pr, inputs, workflowSha, required = false }) {
+function requireDispatchIdentity({ pr, inputs, workflowSha, required = false, rerun = false }) {
   const expected = { expected_head_sha: pr.head.sha, expected_base_ref: pr.base.ref,
     expected_base_sha: pr.base.sha, expected_workflow_sha: workflowSha };
+  if (rerun && Object.keys(expected).some((name) => !inputs[name])) {
+    throw new Error('首次手动触发未保存可复用的完整版本输入，不能重新执行 prepare；请新建 Run workflow。已成功 prepare 的 Re-run failed jobs 可继续使用原版本。');
+  }
   for (const [name, current] of Object.entries(expected)) {
     if ((required && !inputs[name]) || (inputs[name] && inputs[name] !== current)) {
       throw new Error(`NPU CI 触发快照 ${name} 缺失或已变化，请针对当前 head/base 重新触发。`);
@@ -54,7 +50,7 @@ function requireDispatchContract(text) {
       if (match) declared.add(match[1]);
     }
   }
-  if (!/^  NPU_CI_DISPATCH_CONTRACT:\s*['"]?2['"]?\s*$/m.test(text) ||
+  if (!/^  NPU_CI_DISPATCH_CONTRACT:\s*['"]?3['"]?\s*$/m.test(text) ||
       DISPATCH_INPUTS.some((name) => !declared.has(name))) {
     throw new Error('目标分支尚未支持安全 NPU CI 分发契约，请先同步完整的 workflow、权限脚本和 expected_* inputs；不会回退到旧版授权流程。');
   }
@@ -86,22 +82,10 @@ async function requireAuthorizedCiUser({ github, context, username }) {
 }
 
 async function authorizeCiRequest({ github, context, requestedBy = context.actor }) {
-  const users = await requireAuthorizedCiUser({ github, context, username: requestedBy });
-  const subjects = [requestedBy];
-  if (Number(process.env.NPU_CI_RUN_ATTEMPT || '1') > 1) {
-    const rerunBy = process.env.NPU_CI_TRIGGERING_ACTOR || '';
-    if (!users.some((user) => user.toLowerCase() === rerunBy.toLowerCase())) {
-      throw new Error(`${rerunBy || '(空用户名)'} 无权重新运行 NPU CI：须列入默认分支的 ${USERS_PATH}。`);
-    }
-    subjects.push(rerunBy);
-  }
-  return [...new Set(subjects)];
-}
-
-function normalizeCiModified(value = 'false') {
-  if (value === true || value === 'true') return true;
-  if (value === false || value === 'false' || value === '') return false;
-  throw new Error('ci_modified 只接受 true 或 false；CI 文件变更须由管理员添加 ci_modified=true。');
+  // GitHub reruns continue the original authorized request. The device job
+  // independently checks that its PR state and prepared commits still match.
+  if (Number(process.env.NPU_CI_RUN_ATTEMPT || '1') > 1) return;
+  await requireAuthorizedCiUser({ github, context, username: requestedBy });
 }
 
 async function hasCiChanges({ github, context, pr }) {
@@ -123,39 +107,21 @@ async function hasCiChanges({ github, context, pr }) {
     !/\.md$/i.test(path) && /^(?:ci|\.github)(?:\/|$)/.test(path)));
 }
 
-async function requireCiModificationApproval({ github, context, usernames, confirmed }) {
-  if (!confirmed) throw new Error('PR 修改了 ci/ 或 .github/，必须由名单内仓库 Admin 使用 /run-npu-ci quick ci_modified=true 确认后重新触发。');
-  for (const username of [...new Set(usernames)]) {
-    let permission;
-    try {
-      const { data } = await github.rest.repos.getCollaboratorPermissionLevel({ ...context.repo, username });
-      permission = data.permission;
-    } catch (error) {
-      throw new Error(`无法确认 @${username} 的仓库 Admin 身份：${error.message}。请恢复权限读取后由管理员带 ci_modified=true 重新触发。`);
-    }
-    if (permission !== 'admin') throw new Error(`@${username} 不是仓库 Admin，不能确认 CI 文件变更；请由名单内管理员带 ci_modified=true 重新触发。`);
+async function requireCiAuthorAdmin({ github, context, pr }) {
+  const username = pr.user?.login;
+  if (!username) throw new Error('无法确定 PR 作者，拒绝执行 CI 文件变更。');
+  let permission;
+  try {
+    const { data } = await github.rest.repos.getCollaboratorPermissionLevel({ ...context.repo, username });
+    permission = data.permission;
+  } catch (error) {
+    throw new Error(`无法确认 PR 作者 @${username} 的仓库 Admin 身份：${error.message}。请恢复权限读取后重试。`);
   }
-}
-
-function buildCiApprovalKey({ prNumber, baseRef, baseSha, headSha }) {
-  return createHash('sha256').update(JSON.stringify([prNumber, baseRef, baseSha, headSha])).digest('hex').slice(0, 12);
-}
-
-function hasApprovedRun({ statuses, contexts, context, pr }) {
-  const marker = `ci-ok=${buildCiApprovalKey({ prNumber: pr.number, baseRef: pr.base.ref,
-    baseSha: pr.base.sha, headSha: pr.head.sha })}`;
-  const latest = new Map();
-  for (const status of [...statuses].sort((a, b) =>
-    new Date(b.created_at) - new Date(a.created_at) || Number(b.id || 0) - Number(a.id || 0))) {
-    if (!latest.has(status.context)) latest.set(status.context, status);
+  if (permission !== 'admin') {
+    throw new Error(`PR 作者 @${username} 不是仓库 Admin；只有 Admin 提起的 PR 可以修改 ci/ 或 .github/ 的非 Markdown 文件。请由仓库 Admin 提交这些 CI 改动。`);
   }
-  const current = contexts.map((name) => latest.get(name));
-  const runUrl = current[0]?.target_url || '';
-  const prefix = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/`;
-  return runUrl.startsWith(prefix) && /^\d+$/.test(runUrl.slice(prefix.length)) &&
-    current.every((status) => status?.target_url === runUrl && status.description?.split(/\s+/).includes(marker));
 }
 
 module.exports = { USERS_PATH, loadCiUsers, requireAuthorizedCiUser, authorizeCiRequest,
-  requireOpenPullRequest, requireConfirmedHead, requireProtectedBase, requireDispatchIdentity, requireDispatchContract,
-  normalizeCiModified, hasCiChanges, requireCiModificationApproval, buildCiApprovalKey, hasApprovedRun };
+  requireOpenPullRequest, requireProtectedBase, requireDispatchIdentity, requireDispatchContract,
+  hasCiChanges, requireCiAuthorAdmin };

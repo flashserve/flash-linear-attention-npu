@@ -43,7 +43,7 @@ jobs:
               return;
             }
             if (context.payload.action === 'edited' && !context.payload.changes?.base) {
-              core.notice('PR 标题或说明更新不改变 NPU CI 确认。');
+              core.notice('PR 标题或说明更新不改变 NPU CI 状态。');
               return;
             }
             const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: eventPr.number });
@@ -67,13 +67,21 @@ jobs:
             if (!checkContexts) throw new Error(`无法确定 base 分支 \`${baseRef}\` 的 NPU CI 门禁。`);
 
             const ciModified = await auth.hasCiChanges({ github, context, pr });
+            let ciAuthorError = '';
+            if (ciModified) {
+              try {
+                await auth.requireCiAuthorAdmin({ github, context, pr });
+              } catch (error) {
+                ciAuthorError = error.message;
+              }
+            }
             const marker = `<!-- npu-ci:pr=${pr.number}:sha=${pr.head.sha} -->`;
             const isCommitUpdate = context.payload.action === 'synchronize';
-            const pendingDescription = ciModified
-              ? '未确认：CI 文件变更须管理员确认当前 head 后触发' : isCommitUpdate
+            const pendingDescription = ciAuthorError
+              ? '拒绝：CI 代码变更仅允许仓库 Admin 创建的 PR' : isCommitUpdate
               ? '未执行：commit 已变化，请重新触发 /run-npu-ci quick'
               : '未执行：请授权 CI 账号评论 /run-npu-ci quick';
-            const title = isCommitUpdate
+            const title = ciAuthorError ? `NPU CI 拒绝执行：\`${pr.head.sha}\`。` : isCommitUpdate
               ? `PR commit 已变化，NPU CI 已重置为未执行：\`${pr.head.sha}\`。`
               : `NPU CI 暂未执行：\`${pr.head.sha}\`。`;
 
@@ -124,21 +132,17 @@ jobs:
               checkContexts.includes(status.context) &&
               /\/actions\/runs\/\d+/.test(status.target_url || '')
             );
-            if (ciModified && auth.hasApprovedRun({ statuses, contexts: checkContexts, context, pr })) {
-              core.notice('当前 PR、目标分支和 commit 已获得管理员确认，保留其 NPU CI 执行状态。');
-              return;
-            }
-            if (executionStatus && !ciModified && context.payload.action !== 'edited') {
+            if (executionStatus && !ciAuthorError && context.payload.action !== 'edited') {
               core.notice(`当前 head commit 已经有 NPU CI 执行状态：${executionStatus.state}。`);
               return;
             }
-            const missingContexts = checkContexts.filter((statusContext) => ciModified || context.payload.action === 'edited' || !latestByContext.has(statusContext));
+            const missingContexts = checkContexts.filter((statusContext) => ciAuthorError || context.payload.action === 'edited' || !latestByContext.has(statusContext));
             const pendingResults = await Promise.allSettled(missingContexts.map((statusContext) =>
               github.rest.repos.createCommitStatus({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 sha: pr.head.sha,
-                state: ciModified ? 'failure' : 'pending',
+                state: ciAuthorError ? 'failure' : 'pending',
                 context: statusContext,
                 description: pendingDescription,
                 target_url: pr.html_url,
@@ -158,14 +162,15 @@ jobs:
               marker,
               title,
               '',
-              '- 当前状态：未执行',
+              ciAuthorError ? '- 当前状态：拒绝执行' : '- 当前状态：未执行',
               isCommitUpdate ? '- 原因：PR head commit 已变化，旧 commit 的 NPU CI 结果不再生效' : '',
               baseRef === defaultBranch ? '' : `- CI 定义分支：\`${baseRef}\`（评论触发的 NPU CI 在该分支的定义上执行）`,
               requirementLine,
               isDefaultProfile ? '- 执行方式：按顺序执行；前置失败时后续项跳过' : '',
               '- 触发命令：授权账号在本 PR 评论 `/run-npu-ci quick` 或 `/run-npu-ci full`',
               '- 可请求触发的 CI 账号：默认分支 `.github/npu-ci-users.json` 名单',
-              ciModified ? `- CI 文件变更尚未确认：需要同时在名单中的仓库 Admin 评论 \`/run-npu-ci quick ci_modified=true head=${pr.head.sha}\`；设备直接执行当前 PR 的 ci/` : '',
+              ciAuthorError ? `- 原因及修改建议：${ciAuthorError}` : '',
+              ciModified && !ciAuthorError ? '- CI 代码变更：PR 作者为仓库 Admin，可由 CI 名单账号正常触发' : '',
               '- Example ST：必跑',
             ].filter(Boolean).join('\n');
 

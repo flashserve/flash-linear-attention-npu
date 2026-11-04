@@ -45,7 +45,11 @@ class WorkflowBranchDispatchTest(unittest.TestCase):
 
         self.assertEqual(list(triggers), ["workflow_dispatch"])
         self.assertNotIn("issue_comment:", self.ci_text)
-        self.assertIn("requested_by", triggers["workflow_dispatch"]["inputs"])
+        self.assertEqual(set(triggers["workflow_dispatch"]["inputs"]), {
+            "pr_number", "ci_mode", "ops", "requested_by", "expected_head_sha",
+            "expected_base_ref", "expected_base_sha", "expected_workflow_sha",
+        })
+        self.assertEqual(workflow["env"]["NPU_CI_DISPATCH_CONTRACT"], "3")
         self.assertIn("${{ github.ref_name }}", self.ci_text)
         self.assertIn("${{ github.workflow_sha }}", self.ci_text)
 

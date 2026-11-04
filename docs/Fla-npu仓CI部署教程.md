@@ -84,19 +84,19 @@ PR 新建或更新默认状态流程：
 ```mermaid
 flowchart TD
     A["PR 新建、重开、push 或切换目标分支"] --> B["NPU CI 默认状态 workflow 运行"]
-    B --> C{"当前 PR 是否仍有可复用的执行状态"}
-    C -- "是：CI 变更还须匹配当前 PR/base/head 确认" --> D["保留有效 NPU CI 状态"]
-    C -- "否" --> E{"CI 文件变更是否仍待 Admin 确认"}
-    E -- "是" --> F["写入 6 个分项 failure 状态"]
+    B --> C{"存在 CI 代码变更且 PR 作者非仓库 Admin"}
+    C -- "是" --> F["写入 6 个分项 failure 状态"]
+    C -- "否" --> E{"当前 PR/base/head 是否仍有可复用的执行状态"}
+    E -- "是" --> D["保留有效 NPU CI 状态"]
     E -- "否" --> G["写入 6 个分项 pending 状态"]
-    F --> H["机器人评论：提示名单账号及当前 head 的触发命令"]
-    G --> H
+    F --> H["机器人评论：需由仓库 Admin 创建包含该 CI 修改的 PR"]
+    G --> J["机器人评论：提示 CI 名单账号及触发命令"]
     B -- "检查或写入异常" --> I["workflow 失败，尽力将当前及历史 NPU 状态写为 failure"]
 ```
 
-切换 PR 目标分支会重新检查当前 base；CI 变更仅在确认匹配当前 PR、目标分支及 base/head 时保留执行状态。读取当前 PR、完整修改文件列表或目标分支门禁定义失败，以及状态写入异常，都不会成为保留旧 success 的理由。仅编辑 PR 标题或说明不重置确认。
+切换 PR 目标分支会重新检查当前 base；CI 代码变更先校验 PR 作者的仓库 Admin 身份。读取当前 PR、完整修改文件列表、作者权限或目标分支门禁定义失败，以及状态写入异常，都不会成为保留旧 success 的理由。仅编辑 PR 标题或说明不重置执行状态。
 
-触发权限独立保存在默认分支 `.github/npu-ci-users.json`，与仓库读写权限分离。评论、手动执行和重跑均校验名单；PR 自身修改名单不会生效。评论触发不要求仓库 write 权限，Actions 页面、CLI 或 REST 手动分发还须满足 GitHub 的仓库 write 权限要求。PR 修改非 Markdown 的 `ci/` 或 `.github/` 时，默认门禁直接失败，需名单内仓库 Admin 发送 `/run-npu-ci quick ci_modified=true head=<当前完整40位head SHA>`；Actions 页对应填写 `ci_modified=true` 和 `expected_head_sha`。原触发人和实际重跑人都须满足名单及按需 Admin 要求。设备一律执行 PR 合并后的 `ci/`，确认绑定 PR、目标分支和 base/head commit，任一项变化均需重新确认。
+触发权限独立保存在默认分支 `.github/npu-ci-users.json`，与仓库读写权限分离。评论和手动执行均校验初次触发人的名单；PR 自身修改名单不会生效。评论触发不要求仓库 write 权限，Actions 页面、CLI 或 REST 手动分发还须满足 GitHub 的仓库 write 权限要求。PR 修改非 Markdown 的 `ci/` 或 `.github/` 时，只允许具有仓库 Admin 权限的作者（`pr.user.login`）创建的 PR，否则门禁直接失败。作者无需在名单中，但初次触发人仍须在名单中；名单内只读用户可触发 Admin 作者的 PR，名单内 Admin 无法替非 Admin 作者放行。设备一律执行 PR 合并后的 `ci/`。Actions 重跑权限由 GitHub 平台控制，重跑仍校验 PR 状态和固定 head/base/workflow 版本。
 
 评论触发总流程：
 
@@ -664,7 +664,6 @@ bash scripts/github/apply_branch_protection.sh main
    - `pr_number`: PR 编号，例如 `23`
    - `ci_mode`: `quick` 或 `full`
    - `ops`: 可选，逗号分隔的算子列表，仅用于编译定向诊断；填写后只执行第 01、02 项并发布 `NPU CI / A2+A5 / 定向诊断`，不会执行 GDR 精度，也不会写入或覆盖 01-06 正式门禁状态
-   - PR 修改非 Markdown 的 `ci/` 或 `.github/` 文件时，仅名单内仓库 Admin 可运行，并须填写 `ci_modified=true` 和当前完整 40 位 head SHA 的 `expected_head_sha`
 6. 点击绿色 `Run workflow`
 
 方式二：在 PR 评论区发送命令。
@@ -674,14 +673,13 @@ bash scripts/github/apply_branch_protection.sh main
 /run-npu-ci quick
 /run-npu-ci full
 /run-npu-ci quick ops=causal_conv1d,chunk_bwd_dv_local
-/run-npu-ci quick ci_modified=true head=<当前完整40位head SHA>
 ```
 
 带 `ops=` 的命令只顺序执行第 01 项环境契约和第 02 项指定算子 OPP 构建，并发布 `NPU CI / A2+A5 / 定向诊断`；它不执行 GDR 精度或后续安装分项，也不会写入或覆盖 01-06 正式门禁状态。用于合入门禁的运行必须省略 `ops`。
 
-最后一条命令仅用于名单内仓库 Admin 确认 CI 文件修改，`head` 必须替换为当前完整 SHA；PR head、目标分支或 base commit 变化后需重新确认。
+评论触发由默认分支上的 `NPU CI 评论分发` workflow 处理，只分发到 PR 当前受保护的目标分支 `pr.base.ref`，不支持 `ci_ref` 或 `branch` 覆盖。分发时自动固定 head、base 和 workflow commit，prepare 逐项校验，用户无需手填版本快照；发生变化则拒绝执行并要求重新触发。目标分支必须同步完整的当前 v3 `workflow_dispatch` 输入及作者权限契约；旧维护分支缺失时应先同步 CI 流程，不能改选其他分支绕过。分发 workflow 和实际 NPU CI 都读取默认分支名单校验初次请求人；CI 代码变更另外校验 PR 作者的仓库 Admin 权限。Actions、CLI 或 REST 手动分发也必须选择 PR 当前目标分支。
 
-评论触发由默认分支上的 `NPU CI 评论分发` workflow 处理，只分发到 PR 当前受保护的目标分支 `pr.base.ref`，不支持 `ci_ref` 或 `branch` 覆盖。分发时固定 head、base 和 workflow commit，prepare 逐项校验，发生变化则拒绝执行并要求重新触发。目标分支必须同步完整的当前 `workflow_dispatch` 输入及授权契约；旧维护分支缺失时应先同步 CI 流程，不能改选其他分支绕过。分发 workflow 和实际 NPU CI 都读取默认分支名单校验请求人，重跑还校验实际重跑人。Actions、CLI 或 REST 手动分发也必须选择 PR 当前目标分支。
+评论触发自动携带四个 `expected_*` 快照，版本未变化时可使用 `Re-run all jobs`。Actions 手动首次默认不填快照；此类运行重新执行 prepare（`Re-run all jobs` 或 prepare 失败后重跑）会被拒绝，请新建 `Run workflow`。`Re-run failed jobs` 若复用已成功的 prepare，则可正常重试，设备仍校验原 PR 状态和固定 head/base。
 
 PR 新建或 push 新 commit 后，当前 head commit 会先出现默认状态：
 
@@ -811,8 +809,8 @@ Custom OPP op_api lib: /usr/local/Ascend/.../opp/vendors/fla_npu_transformer/op_
 - 发送评论的人是否在默认分支 CI 名单中
 - `NPU CI 评论分发` workflow 是否启用
 - PR 是否 open、未合并且非草稿，当前目标分支是否受分支保护
-- PR 目标分支是否存在 `.github/workflows/ci.yml` 并同步完整的当前 `workflow_dispatch` 输入及授权契约
-- 修改 CI 文件时，请求人是否为名单内仓库 Admin，`ci_modified=true head=<当前完整40位head SHA>` 是否匹配当前 PR
+- PR 目标分支是否存在 `.github/workflows/ci.yml` 并同步完整的当前 v3 `workflow_dispatch` 输入及作者权限契约
+- 修改非 Markdown 的 `ci/` 或 `.github/` 文件时，PR 创建者是否具有仓库 Admin 权限
 - Actions 页面是否先出现 `NPU CI 评论分发`，随后出现新的 `NPU CI` run
 
 ### PR 创建后没有 6 个 NPU CI 分项的未执行状态

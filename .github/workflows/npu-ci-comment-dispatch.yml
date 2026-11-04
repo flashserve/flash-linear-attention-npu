@@ -48,7 +48,6 @@ jobs:
           NPU_CI_AUTH_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_authorization.js
           NPU_CI_CHECKS_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_checks.js
           NPU_CI_RUN_ATTEMPT: ${{ github.run_attempt }}
-          NPU_CI_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         with:
           github-token: ${{ github.token }}
           script: |
@@ -66,9 +65,6 @@ jobs:
             let modeProvided = false;
             let ops = '';
             let opsProvided = false;
-            let confirmedHead = '';
-            let ciModified = false;
-            let ciModifiedProvided = false;
             for (const part of parts) {
               if (part === 'quick' || part === 'full') {
                 if (modeProvided) {
@@ -84,15 +80,6 @@ jobs:
                 }
                 ops = part.slice('ops='.length);
                 opsProvided = true;
-              } else if (part.startsWith('ci_modified=')) {
-                if (ciModifiedProvided) throw new Error('ci_modified 参数只能指定一次。');
-                if (!part.slice('ci_modified='.length)) throw new Error('ci_modified 只接受 true 或 false。');
-                ciModified = auth.normalizeCiModified(part.slice('ci_modified='.length));
-                ciModifiedProvided = true;
-              } else if (part.startsWith('head=')) {
-                if (confirmedHead) throw new Error('head 参数只能指定一次。');
-                confirmedHead = part.slice('head='.length);
-                if (!/^[0-9a-f]{40}$/.test(confirmedHead)) throw new Error('head 必须是当前 PR 的完整 40 位 SHA。');
               } else {
                 core.setFailed(`不支持的 NPU CI 参数：${part}`);
                 return;
@@ -108,7 +95,7 @@ jobs:
             }
 
             const actor = context.actor;
-            const subjects = await auth.authorizeCiRequest({ github, context, requestedBy: actor });
+            await auth.authorizeCiRequest({ github, context, requestedBy: actor });
 
             const prNumber = context.payload.issue.number;
             const { data: pr } = await github.rest.pulls.get({
@@ -120,17 +107,15 @@ jobs:
             const targetRef = pr.base.ref;
             const { data: baseBranch } = await github.rest.repos.getBranch({ ...context.repo, branch: targetRef });
             auth.requireProtectedBase({ pr, branch: baseBranch });
-            if (confirmedHead && confirmedHead !== pr.head.sha) throw new Error('确认的 head 已变化，请重新检查当前 PR 后确认。');
 
             if (await auth.hasCiChanges({ github, context, pr })) {
               try {
-                if (ciModified) auth.requireConfirmedHead({ pr, headSha: confirmedHead });
-                await auth.requireCiModificationApproval({ github, context, usernames: subjects, confirmed: ciModified });
+                await auth.requireCiAuthorAdmin({ github, context, pr });
               } catch (error) {
                 const contexts = ops.trim() ? [checks.diagnostic.context] : checks.contexts;
                 await Promise.all(contexts.map((statusContext) => github.rest.repos.createCommitStatus({
                   ...context.repo, sha: pr.head.sha, state: 'failure', context: statusContext,
-                  description: 'CI 文件变更未经管理员 ci_modified=true 确认', target_url: pr.html_url,
+                  description: 'CI 文件变更仅允许仓库 Admin 作者提交', target_url: pr.html_url,
                 })));
                 await github.rest.issues.createComment({ ...context.repo, issue_number: prNumber,
                   body: `NPU CI 拒绝分发。\n\n原因及修改建议：${error.message}` });
@@ -171,7 +156,6 @@ jobs:
                 pr_number: String(prNumber),
                 ci_mode: ciMode,
                 ops,
-                ci_modified: String(ciModified),
                 requested_by: actor,
                 expected_head_sha: pr.head.sha,
                 expected_base_ref: pr.base.ref,

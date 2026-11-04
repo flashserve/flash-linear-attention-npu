@@ -26,16 +26,12 @@ on:
         description: "Optional comma-separated operator list for compile diagnostics only"
         required: false
         default: ''
-      ci_modified:
-        description: "Admin approval for ci/ or .github/ changes (true/false)"
-        required: false
-        default: 'false'
       requested_by:
         description: "Original authorized requester; set by the PR comment dispatcher"
         required: false
         default: ''
       expected_head_sha:
-        description: "Fixed PR head SHA; required when ci_modified=true"
+        description: "PR head SHA captured automatically by the comment dispatcher"
         required: false
         default: ''
       expected_base_ref:
@@ -52,7 +48,7 @@ on:
         default: ''
 
 env:
-  NPU_CI_DISPATCH_CONTRACT: '2'
+  NPU_CI_DISPATCH_CONTRACT: '3'
 
 concurrency:
   group: npu-ci-${{ github.repository }}-${{ inputs.pr_number || github.run_id }}
@@ -76,7 +72,6 @@ jobs:
       base_sha: ${{ steps.prepare.outputs.base_sha }}
       head_repo: ${{ steps.prepare.outputs.head_repo }}
       head_sha: ${{ steps.prepare.outputs.head_sha }}
-      ci_approval_key: ${{ steps.prepare.outputs.ci_approval_key }}
       ci_mode: ${{ steps.prepare.outputs.ci_mode }}
       ops: ${{ steps.prepare.outputs.ops }}
       comment_id: ${{ steps.prepare.outputs.comment_id }}
@@ -101,7 +96,6 @@ jobs:
         env:
           NPU_CI_AUTH_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_authorization.js
           NPU_CI_CHECKS_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_checks.js
-          NPU_CI_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
           NPU_CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
           NPU_CI_WORKFLOW_REF: ${{ github.ref_name }}
           NPU_CI_RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -114,8 +108,7 @@ jobs:
             const workflowInputs = context.payload.inputs || {};
             const requestedBy = actor === 'github-actions[bot]' ? workflowInputs.requested_by : actor;
             const workflowRef = process.env.NPU_CI_WORKFLOW_REF || '';
-            const subjects = await auth.authorizeCiRequest({ github, context, requestedBy });
-            const ciModifiedConfirmed = auth.normalizeCiModified(workflowInputs.ci_modified || 'false');
+            await auth.authorizeCiRequest({ github, context, requestedBy });
 
             const requiredCheckContexts = checks.prepareChecks;
             const scopedCheckContext = [checks.diagnostic.context, checks.diagnostic.label];
@@ -221,25 +214,20 @@ jobs:
             const workflowSha = process.env.NPU_CI_WORKFLOW_SHA || '';
             auth.requireProtectedBase({ pr, branch: baseBranch, workflowRef, workflowSha });
             auth.requireDispatchIdentity({ pr, inputs: workflowInputs, workflowSha,
-              required: actor === 'github-actions[bot]' });
+              required: actor === 'github-actions[bot]', rerun: Number(process.env.NPU_CI_RUN_ATTEMPT || '1') > 1 });
             core.setOutput('base_sha', baseSha);
-            let approvalMarker = '';
             if (await auth.hasCiChanges({ github, context, pr })) {
               try {
-                if (ciModifiedConfirmed) auth.requireConfirmedHead({ pr, headSha: workflowInputs.expected_head_sha });
-                await auth.requireCiModificationApproval({ github, context, usernames: subjects, confirmed: ciModifiedConfirmed });
+                await auth.requireCiAuthorAdmin({ github, context, pr });
               } catch (error) {
                 await Promise.all((ops.trim() ? [scopedCheckContext] : requiredCheckContexts).map(([statusContext]) => github.rest.repos.createCommitStatus({
                   ...context.repo, sha: pr.head.sha, state: 'failure', context: statusContext,
-                  description: 'CI 文件变更未经管理员 ci_modified=true 确认', target_url: pr.html_url,
+                  description: 'CI 文件变更仅允许仓库 Admin 作者提交', target_url: pr.html_url,
                 })));
                 await upsertComment(pr, `NPU CI 拒绝执行。\n\n原因及修改建议：${error.message}`);
                 core.setFailed(error.message);
                 return;
               }
-              const approvalKey = auth.buildCiApprovalKey({ prNumber, baseRef: pr.base.ref, baseSha, headSha: pr.head.sha });
-              core.setOutput('ci_approval_key', approvalKey);
-              approvalMarker = ` ci-ok=${approvalKey}`;
             }
 
             const opsItems = ops.split(',').map((item) => item.trim());
@@ -277,9 +265,7 @@ jobs:
             const latestExecutionCi = finalCiStatuses[0];
             const latestExecutionMatchesRequest = Boolean(
               latestExecutionCi &&
-              (latestExecutionCi.description || '').includes(requestedModeSuffix) &&
-              (!approvalMarker || checkContexts.every(([name]) =>
-                latestStatusForContext(name)?.description?.split(/\s+/).includes(approvalMarker.trim())))
+              (latestExecutionCi.description || '').includes(requestedModeSuffix)
             );
             const allContextsPassedInSameRun = Boolean(
               latestExecutionCi &&
@@ -358,7 +344,7 @@ jobs:
                 sha: pr.head.sha,
                 state: 'pending',
                 context: statusContext,
-                description: `${label}等待执行 (${ciMode},${requestKey},A2+A5)${approvalMarker}`,
+                description: `${label}等待执行 (${ciMode},${requestKey},A2+A5)`,
                 target_url: targetUrl,
               })
             ));
@@ -458,49 +444,24 @@ jobs:
       TMPDIR: /home/huangjunzhe/ci/tmp
       CI_CONTAINER_NAME: fla-npu-ci-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
-      - name: 校验设备任务的实际重跑人
-        id: authorize_rerun
-        if: github.run_attempt > 1
+      - name: 校验设备任务的 PR 状态与固定版本
+        id: validate_pr
         uses: actions/github-script@v8
         env:
-          NPU_CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
-          NPU_CI_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
           NPU_CI_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
           NPU_CI_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
           NPU_CI_BASE_REF: ${{ needs.prepare.outputs.base_ref }}
           NPU_CI_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
-          NPU_CI_APPROVAL_KEY: ${{ needs.prepare.outputs.ci_approval_key }}
         with:
           github-token: ${{ github.token }}
           script: |
-            // Re-run failed jobs may reuse a successful prepare job. Recheck the
-            // actual requester before either platform reads or executes PR code.
-            // Fetch only the fixed control module; A5 need not use Git for this.
-            const workflowSha = process.env.NPU_CI_WORKFLOW_SHA || '';
-            if (!/^[0-9a-f]{40}$/.test(workflowSha)) throw new Error('无法确定固定的 CI 权限检查版本，请重新触发 NPU CI。');
-            const { data: file } = await github.rest.repos.getContent({ ...context.repo,
-              path: '.github/scripts/npu_ci_authorization.js', ref: workflowSha });
-            if (!file || Array.isArray(file) || file.type !== 'file' || !file.content) {
-              throw new Error('无法读取 CI 权限检查脚本，请重新触发 NPU CI。');
-            }
-            const Module = require('module');
-            const control = new Module('npu_ci_authorization');
-            control._compile(Buffer.from(file.content, file.encoding || 'base64').toString('utf8'), 'npu_ci_authorization.js');
-            const auth = control.exports;
-            const username = process.env.NPU_CI_TRIGGERING_ACTOR || '';
-            await auth.requireAuthorizedCiUser({ github, context, username });
+            // Reruns retain the original authorization, including when GitHub
+            // reuses a successful prepare job. PR identity must still match.
             const prNumber = Number(process.env.NPU_CI_PR_NUMBER);
             const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: prNumber });
             if (pr.state !== 'open' || pr.merged || pr.merged_at || pr.draft || pr.head.sha !== process.env.NPU_CI_HEAD_SHA ||
                 pr.base.ref !== process.env.NPU_CI_BASE_REF || pr.base.sha !== process.env.NPU_CI_BASE_SHA) {
               throw new Error('PR 的状态、head 或目标分支/base 已变化；请重新触发完整 NPU CI，不能复用旧 prepare。');
-            }
-            const approvalKey = process.env.NPU_CI_APPROVAL_KEY || '';
-            if (approvalKey) {
-              const currentKey = auth.buildCiApprovalKey({ prNumber, baseRef: pr.base.ref,
-                baseSha: pr.base.sha, headSha: pr.head.sha });
-              if (approvalKey !== currentKey) throw new Error('CI 文件变更确认已过期，请由名单内管理员带 ci_modified=true 重新触发。');
-              await auth.requireCiModificationApproval({ github, context, usernames: [username], confirmed: true });
             }
 
       - name: 通过 GitHub API 准备 A5 源码
@@ -1137,7 +1098,6 @@ jobs:
         if: always()
         uses: actions/github-script@v8
         env:
-          NPU_CI_APPROVAL_KEY: ${{ needs.prepare.outputs.ci_approval_key }}
           NPU_CI_MODE: ${{ needs.prepare.outputs.ci_mode }}
           NPU_OPS: ${{ needs.prepare.outputs.ops }}
           NPU_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
