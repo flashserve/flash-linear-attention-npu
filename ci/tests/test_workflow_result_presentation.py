@@ -660,6 +660,7 @@ globalThis.core = {
         files=None,
         pr_author="ci-admin-author",
         author_permission="admin",
+        expected_snapshot=None,
     ):
         sha = "a" * 40
         wrapper = """
@@ -680,6 +681,7 @@ globalThis.context = {
     pr_number: '527',
     ci_mode: process.env.PREPARE_MODE,
     ops: process.env.PREPARE_OPS,
+    ...JSON.parse(process.env.PREPARE_EXPECTED_SNAPSHOT),
   } },
   repo: { owner: 'example', repo: 'repo' },
   runId: 99,
@@ -753,6 +755,7 @@ globalThis.core = {
                     "PREPARE_OPS": ops,
                     "PREPARE_PR_AUTHOR": pr_author,
                     "PREPARE_AUTHOR_PERMISSION": author_permission,
+                    "PREPARE_EXPECTED_SNAPSHOT": json.dumps(expected_snapshot or {}),
                     "PREPARE_FILES": json.dumps(files or []),
                     "NPU_CI_RUN_ATTEMPT": run_attempt,
                     "NPU_CI_AUTH_SCRIPT": str(REPO_ROOT / ".github/scripts/npu_ci_authorization.js"),
@@ -1553,6 +1556,12 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         completed, records = self._run_prepare_script(
             previous_success,
             run_attempt="2",
+            expected_snapshot={
+                "expected_head_sha": "a" * 40,
+                "expected_base_ref": "main",
+                "expected_base_sha": "c" * 40,
+                "expected_workflow_sha": "c" * 40,
+            },
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         outputs = {
