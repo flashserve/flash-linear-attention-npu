@@ -95,7 +95,7 @@ public:
         this->Attr("activation").AttrType(OPTIONAL).String("none");
 
         this->Attr("padSlotId").AttrType(OPTIONAL).Int(-1);
-        this->Attr("nullBlockId").AttrType(OPTIONAL).Int(-1);
+        this->Attr("nullBlockId").AttrType(OPTIONAL).Int(0);
 
         this->Attr("runMode").AttrType(OPTIONAL).Int(0);
 
