@@ -398,7 +398,8 @@ jobs:
             require_preloaded_image: 'false'
           - platform: a5
             name: A5 / ascend950
-            runner_labels: '["self-hosted","linux","x64","npu","ascend950","flash-linear-attention-npu-a5"]'
+            # Either native x64 or ARM64 runner may execute the single A5 job.
+            runner_labels: '["self-hosted","linux","npu","ascend950","flash-linear-attention-npu-a5"]'
             soc: ascend950
             image: fla-npu-ci:9.1.0-950
             dockerfile: ci/Dockerfile.ascend950

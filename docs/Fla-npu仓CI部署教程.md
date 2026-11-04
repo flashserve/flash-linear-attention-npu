@@ -1,6 +1,6 @@
 # NPU CI 部署教程
 
-本文面向第一次接触 GitHub Actions self-hosted runner 的维护者，目标是部署本仓库按需触发的 A2 + A5 双平台 NPU CI。一次触发会并行创建 A2、A5 两个设备 job；每个平台内部按顺序执行分项检查，任一平台缺席或失败都不能通过汇总门禁。
+本文面向第一次接触 GitHub Actions self-hosted runner 的维护者，目标是部署本仓库按需触发的 A2 + A5 双平台 NPU CI。一次触发会并行创建 A2、A5 两个设备 job；A5 job 可由 x64 或 ARM64 原生 A5 runner 承接，不新增第三个设备 job，也不要求两种 A5 CPU 架构同时执行。每个平台内部按顺序执行分项检查，任一平台缺席或失败都不能通过汇总门禁。
 
 本文用 `CI_ROOT` 统一表示宿主机 CI 部署根目录。以 runner 服务账号登录每台主机后，先设置：
 
@@ -39,9 +39,9 @@ export CI_ROOT="${CI_ROOT:-$HOME/ci}"
    | 平台 | 必需标签 |
    | --- | --- |
    | A2 | `linux,arm64,npu,flash-linear-attention-npu` |
-   | A5 | `linux,x64,npu,ascend950,flash-linear-attention-npu-a5` |
+   | A5（x64 或 ARM64） | `linux,npu,ascend950,flash-linear-attention-npu-a5` |
 
-   A5 必须使用独立产品标签，不能只注册成通用 `npu` runner，否则无法证明一次触发确实覆盖了两个平台。
+   两者还需 GitHub 自动添加的 `self-hosted` 标签。A5 必须使用独立产品标签；workflow 不限制 A5 的 `x64`/`arm64` 标签，由任意空闲且匹配产品标签的原生 A5 runner 执行。注册页面仍会显示主机真实架构，不要给 ARM64 主机伪造 `x64` 标签。
 
 8. **NPU CI 不会因为 PR 新建、重新打开、push 新 commit 自动执行。**
    PR 新建、重新打开、push 新 commit 后，会自动出现 6 个 pending 分项状态，描述为“未执行”，用于阻止未验证 commit 合入。真正执行 NPU CI 仍需要 CI 触发名单中的账号点击 GitHub Actions 按钮，或在 PR 评论里发送 `/run-npu-ci quick` / `/run-npu-ci full` 触发。PR 更新 commit 后，旧 commit 上的 CI 成功状态不会再满足合入门禁。
@@ -150,7 +150,7 @@ flowchart TD
 ## 你需要准备什么
 
 - A2、A5 各一台可运行 self-hosted runner 的 Huawei Ascend NPU 服务器，例如 `<a2-ci-host>` 和 `<a5-ci-host>`
-- A2 服务器是 Linux/aarch64，A5 服务器是 Linux/x86_64；两者都已安装匹配的 Ascend 驱动，宿主机能执行 `npu-smi info`
+- A2 服务器是 Linux/aarch64，A5 服务器可以是 Linux/x86_64 或 Linux/aarch64；两者都已安装匹配的 Ascend 驱动，宿主机能执行 `npu-smi info`
 - 两台服务器都已安装 Docker，并且 runner 服务账号可以执行 `docker`
 - GitHub 仓库管理员权限
 - 一个能访问 GitHub 的网络环境
@@ -246,7 +246,7 @@ CI 会优先尝试健康且空闲的 NPU，然后尝试空闲但健康状态异�
 | 平台 | 镜像 | Dockerfile | 关键版本 |
 | --- | --- | --- | --- |
 | A2 | `fla-npu-ci:9.1.0-910b` | `ci/Dockerfile` | CANN 9.1.0、Python 3.12、PyTorch 2.7.1 |
-| A5 | `fla-npu-ci:9.1.0-950` | `ci/Dockerfile.ascend950` | CANN 9.1.0、Python 3.12、PyTorch 2.12.0 |
+| A5（x64 或 ARM64 原生） | `fla-npu-ci:9.1.0-950` | `ci/Dockerfile.ascend950` | CANN 9.1.0、Python 3.12、PyTorch 2.12.0、torch_npu 2.12.0 |
 
 推荐在 runner 维护窗口从受信任的默认分支构建或加载镜像，再启动 runner。构建命令如下：
 
@@ -258,8 +258,13 @@ docker build --platform=linux/arm64 \
   -t fla-npu-ci:9.1.0-910b \
   -f ci/Dockerfile .
 
-# A5 / x86_64
-docker build --platform=linux/amd64 \
+# A5：在实际承接 CI 的 A5 主机上按本机架构构建
+case "$(uname -m)" in
+  x86_64|amd64) a5_platform=linux/amd64 ;;
+  aarch64|arm64) a5_platform=linux/arm64 ;;
+  *) echo "Unsupported native A5 architecture" >&2; exit 1 ;;
+esac
+docker build --platform="$a5_platform" \
   --network=host \
   -t fla-npu-ci:9.1.0-950 \
   -f ci/Dockerfile.ascend950 .
@@ -273,9 +278,9 @@ docker image inspect <ci-image> \
   --format 'id={{.Id}} arch={{.Architecture}} created={{.Created}}'
 ```
 
-A5 job 固定设置 `CI_REQUIRE_PRELOADED_IMAGE=true`。若 `fla-npu-ci:9.1.0-950` 不存在，`ci/run_ci_container.sh` 会立即失败，不会在 PR job 中临时联网构建；同时设置 `CI_REBUILD_IMAGE=true` 也会被拒绝。镜像升级应在维护窗口完成构建、自检和原子换 tag，再触发 CI。A2 未设置该开关，保留原有的缺失时自动构建行为。
+A5 job 固定设置 `CI_REQUIRE_PRELOADED_IMAGE=true`。若 `fla-npu-ci:9.1.0-950` 不存在，`ci/run_ci_container.sh` 会立即失败，不会在 PR job 中临时联网构建；同时设置 `CI_REBUILD_IMAGE=true` 也会被拒绝。每台主机上的同一 tag 必须对应本机原生架构：x86_64 主机使用 `amd64` 镜像，aarch64 主机使用 `arm64` 镜像；不得用 QEMU 或跨架构容器替代原生设备验证。镜像升级应在维护窗口完成构建、自检和原子换 tag，再触发 CI。A2 未设置该开关，保留原有的缺失时自动构建行为。
 
-A5 Dockerfile 对 PyTorch 和 `torch_npu` wheel 做 SHA256 校验。默认 Python 包源可通过 `PYPI_INDEX_URL` build arg 覆盖，但不能跳过 wheel 版本和校验和约束。
+A5 Dockerfile 按构建容器的原生 CPU 架构选择 Python 3.12 对应的 PyTorch/`torch_npu` 2.12.0 wheel，并做 SHA256 校验。默认 Python 包源可通过 `PYPI_INDEX_URL` build arg 覆盖；自定义 wheel 源时，分别提供完整的 `TORCH_WHL`、`TORCH_WHL_URL`、`TORCH_WHL_SHA256` 或 `TORCH_NPU_WHL`、`TORCH_NPU_WHL_URL`、`TORCH_NPU_WHL_SHA256` 三元组，不能跳过架构、版本、Python 标签和校验和约束。
 
 A2/A5 job 统一设置 `CI_TMPDIR=/tmp/fla-npu-ci`。A5 Triton/BiShengIR 编译器要求临时目录位于容器 `/tmp` 下；不要修改这个容器路径。`CI_HOST_TMPDIR` 把 `${CI_ROOT}/tmp/container-<platform>-<run>-<attempt>` bind mount 到该路径，由 `ci/run_ci_container.sh` 创建本次目录。宿主机 `TMPDIR` 固定为 `${CI_ROOT}/tmp`，基础目录由部署脚本提前创建，供源码准备阶段使用。容器中的 `/workspace/repo` 和 `/workspace/gdr_accuracy_golden` 是挂载目标，不要求宿主机存在 `/workspace`。
 
@@ -437,7 +442,7 @@ bash ci/run_ci_container.sh
 4. 点击 `Runners`
 5. 点击 `New self-hosted runner`
 6. 选择操作系统 `Linux`
-7. A2 选择架构 `ARM64`，A5 选择架构 `X64`
+7. A2 选择架构 `ARM64`；A5 按主机真实架构选择 `X64` 或 `ARM64`
 8. 页面会显示一段安装命令，其中有一个 `--token xxxxxxxxx`，复制这个 token
 
 不要把 token 发到公开聊天、PR、Issue 或日志里。它过期后重新生成即可。
@@ -466,7 +471,7 @@ proxyon
 
 RUNNER_ROOT="${CI_ROOT}/actions-runner" \
 RUNNER_NAME="$(hostname)-flash-linear-attention-npu-a5" \
-RUNNER_LABELS=linux,x64,npu,ascend950,flash-linear-attention-npu-a5 \
+RUNNER_LABELS=linux,npu,ascend950,flash-linear-attention-npu-a5 \
 bash ci/setup_self_hosted_runner.sh \
   --url https://github.com/flashserve/flash-linear-attention-npu \
   --token <把刚才复制的 registration token 放这里>
@@ -490,11 +495,13 @@ ${CI_ROOT}/actions-runner
 linux,arm64,npu,flash-linear-attention-npu
 ```
 
-A5 labels 必须是：
+A5 必需产品 labels 为：
 
 ```text
-linux,x64,npu,ascend950,flash-linear-attention-npu-a5
+linux,npu,ascend950,flash-linear-attention-npu-a5
 ```
+
+`ci/setup_self_hosted_runner.sh` 按 `uname -m` 下载本机 `x64` 或 `arm64` runner，GitHub 添加 `self-hosted` 及真实架构标签。x64 和 ARM64 A5 使用相同产品标签、SOC 和镜像 tag，A5 job 从这个 runner 池中选择一台执行；无需为另一种 CPU 架构增加 job 或门禁状态。
 
 脚本自身的默认安装路径仍为 `/workspace/actions-runner/flash-linear-attention-npu`，部署时使用上面的 `RUNNER_ROOT` 覆盖。注册完成后，以 `ubuntu` 用户创建用户服务。下面使用可展开的 here-doc，在生成 unit 时写入绝对路径；systemd 运行时不依赖 shell 中的 `CI_ROOT`：
 
@@ -567,7 +574,7 @@ cd "${CI_ROOT}/actions-runner"
 
 - registration token 过期：回到 GitHub 重新生成 token，再执行 `ci/setup_self_hosted_runner.sh`
 - runner 下载太慢：等下载完成后重新生成 token，再执行注册
-- labels 不匹配：A2 设置 `RUNNER_LABELS=linux,arm64,npu,flash-linear-attention-npu`；A5 设置 `RUNNER_LABELS=linux,x64,npu,ascend950,flash-linear-attention-npu-a5`
+- labels 不匹配：A2 设置 `RUNNER_LABELS=linux,arm64,npu,flash-linear-attention-npu`；A5 设置 `RUNNER_LABELS=linux,npu,ascend950,flash-linear-attention-npu-a5`，保留 GitHub 自动识别的本机架构标签
 - 服务器不能访问 GitHub：检查 DNS、代理、防火墙
 - runner 已注册但离线：重启 runner 服务
 
@@ -731,7 +738,7 @@ PR 评论区也会出现或更新一条机器人评论，包含触发人、模�
 
 - runner 是否绿色 `Idle` 或 `Online`
 - A2 runner labels 是否包含 `linux,arm64,npu,flash-linear-attention-npu`
-- A5 runner labels 是否包含 `linux,x64,npu,ascend950,flash-linear-attention-npu-a5`
+- A5 runner labels 是否包含 `self-hosted,linux,npu,ascend950,flash-linear-attention-npu-a5`；`x64` 或 `arm64` 应与主机真实架构一致，workflow 无需限定其中一种
 - workflow 的 `runs-on` 是否被改过
 - runner 服务是否在运行
 
@@ -763,7 +770,7 @@ docker image inspect fla-npu-ci:9.1.0-950 \
   --format 'id={{.Id}} arch={{.Architecture}} created={{.Created}}'
 ```
 
-输出架构必须是 `amd64`。不要通过关闭 `CI_REQUIRE_PRELOADED_IMAGE` 临时绕过；应先修复 runner 的镜像或 Docker daemon 配置。
+输出架构必须与宿主机 `uname -m` 匹配：x86_64 对应 `amd64`，aarch64 对应 `arm64`。同时确认该原生镜像内的 CANN 9.1.0、Python 3.12、PyTorch 2.12.0、`torch_npu` 2.12.0 及其 wheel 架构一致。不要通过关闭 `CI_REQUIRE_PRELOADED_IMAGE` 或启用 QEMU 临时绕过；应先修复 runner 的原生镜像或 Docker daemon 配置。
 
 ### 报 `Invalid device ID`
 
