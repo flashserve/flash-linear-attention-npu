@@ -10,6 +10,9 @@ ARG TORCH_NPU_RELEASE_TAG=v26.1.0-beta.1-pytorch2.7.1
 ARG TORCH_NPU_WHL=torch_npu-2.7.1.post5-cp312-cp312-manylinux_2_28_aarch64.whl
 ARG TORCH_NPU_WHL_URL=
 ARG TRITON_ASCEND_VERSION=3.2.1
+ARG ATK_WHL_URL=
+ARG ATK_WHL_SHA256=
+ARG REQUIRED_ATK_VERSION=26.8.8
 
 ENV DEBIAN_FRONTEND=noninteractive \
     ASCEND_HOME_PATH=/usr/local/Ascend/ascend-toolkit/latest \
@@ -43,11 +46,14 @@ RUN apt-get update && \
       python3-pip \
       python3-setuptools \
       python3-wheel \
+      util-linux \
+      libgomp1 \
       valgrind && \
     rm -rf /var/lib/apt/lists/* && \
     git lfs install
 
 COPY requirements.txt /tmp/fla-ci/requirements.txt
+COPY ci/install_atk.sh /tmp/fla-ci/install_atk.sh
 
 RUN set -e; \
     python3 -m pip install --upgrade pip setuptools wheel; \
@@ -74,6 +80,9 @@ RUN set -e; \
     rm -rf /tmp/pybind11-target; \
     python3 -c "import pybind11; print(pybind11.__file__)"; \
     python3 -c "from triton import Config; print('triton Config OK')"
+
+RUN ATK_WHL_URL="${ATK_WHL_URL}" ATK_WHL_SHA256="${ATK_WHL_SHA256}" \
+    REQUIRED_ATK_VERSION="${REQUIRED_ATK_VERSION}" bash /tmp/fla-ci/install_atk.sh
 
 RUN if [[ "${PREWARM_THIRD_PARTY}" == "true" ]]; then \
       mkdir -p /opt/fla-ci/third_party/pkg; \

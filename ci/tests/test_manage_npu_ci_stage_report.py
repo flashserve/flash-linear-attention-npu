@@ -130,7 +130,7 @@ class ManageNpuCiStageReportTest(unittest.TestCase):
             output.unlink()
             with table.open(newline="") as stream:
                 rows = list(csv.DictReader(stream))
-            self.assertEqual(len(rows), 10)
+            self.assertEqual(len(rows), 12)
             self.assertNotIn("scoped-overlay", {row["stage"] for row in rows})
             failure = next(row for row in rows if row["run_id"] == "42" and row["stage"] == "opp-package")
             self.assertEqual(failure["status"], "failure")
@@ -150,8 +150,8 @@ class ManageNpuCiStageReportTest(unittest.TestCase):
                 self.assertEqual(list(pool.map(initialize_run, range(8))), [0] * 8)
             with table.open(newline="") as stream:
                 rows = list(csv.DictReader(stream))
-            self.assertEqual(len(rows), 40)
-            self.assertEqual(len({(row["run_id"], row["stage"]) for row in rows}), 40)
+            self.assertEqual(len(rows), 48)
+            self.assertEqual(len({(row["run_id"], row["stage"]) for row in rows}), 48)
 
 
 if __name__ == "__main__":

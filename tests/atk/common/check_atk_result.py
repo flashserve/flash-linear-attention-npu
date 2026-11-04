@@ -251,6 +251,8 @@ def main():
     parser.add_argument("--output-root", required=True,
                         help="ATK 输出根目录（如 ./atk_output）")
     parser.add_argument("--op", required=True, help="算子名（如 chunk_bwd_dqkwg）")
+    parser.add_argument("--require-report", action="store_true",
+                        help="缺少任一请求类型的报告时失败（CI 必须设置）")
     args = parser.parse_args()
 
     output_root = os.path.abspath(args.output_root)
@@ -264,8 +266,12 @@ def main():
         results[t] = r
         label = TYPE_LABELS[t]
         if not r["found"]:
-            status_str = "NO_REPORT"
-            print(f"[ATK结果检查] {label}: 未找到报告（跳过）")
+            if args.require_report:
+                any_fail = True
+                print(f"[ATK结果检查] {args.op} {label}: Failed（未找到报告）；"
+                      "建议检查 ATK 是否完整执行，并确认输出目录和报告生成依赖", file=sys.stderr)
+            else:
+                print(f"[ATK结果检查] {label}: 未找到报告（跳过）")
             continue
         status = "Pass" if r["all_pass"] else "Failed"
         if not r["all_pass"]:

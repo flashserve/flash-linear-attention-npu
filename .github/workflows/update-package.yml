@@ -1,0 +1,114 @@
+name: 更新 Daily 底包缓存
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: 'Daily target branch: main or vX.Y.Z'
+        required: true
+        default: main
+      requested_by:
+        description: 'Original authorized comment requester'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-package-${{ github.repository }}-${{ inputs.base_ref }}
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.workflow_sha }}
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+      - uses: actions/github-script@v8
+        env:
+          REQUESTED_BY: ${{ inputs.requested_by }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        with:
+          script: |
+            const { requireAuthorizedCiUser } = require('./.github/scripts/npu_ci_authorization');
+            const requestedBy = context.actor === 'github-actions[bot]' ? process.env.REQUESTED_BY : context.actor;
+            const usernames = new Set([requestedBy]);
+            if (Number(process.env.RUN_ATTEMPT) > 1) usernames.add(process.env.TRIGGERING_ACTOR);
+            for (const username of usernames) await requireAuthorizedCiUser({ github, context, username });
+
+  update:
+    needs: authorize
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: a2
+            soc: ascend910b
+            runner_labels: '["self-hosted","linux","arm64","npu","flash-linear-attention-npu"]'
+            image: fla-npu-ci:9.1.0-910b
+          - platform: a5
+            soc: ascend950
+            runner_labels: '["self-hosted","linux","x64","npu","ascend950","flash-linear-attention-npu-a5"]'
+            image: fla-npu-ci:9.1.0-950
+    runs-on: ${{ fromJSON(matrix.runner_labels) }}
+    timeout-minutes: 30
+    env:
+      CI_PACKAGE_CACHE: /home/huangjunzhe/ci/pkg-cache
+      CI_PROXY_SCRIPT: /home/huangjunzhe/ci/vpn-proxy.sh
+      CI_IMAGE: ${{ matrix.image }}
+      CI_SOC: ${{ matrix.soc }}
+      CI_BASE_REF: ${{ inputs.base_ref }}
+      TMPDIR: /home/huangjunzhe/ci/tmp
+    steps:
+      - name: 检出缓存工具（直连）
+        id: direct
+        continue-on-error: true
+        uses: actions/checkout@v6
+        env:
+          http_proxy: ''
+          https_proxy: ''
+          HTTP_PROXY: ''
+          HTTPS_PROXY: ''
+          all_proxy: ''
+          ALL_PROXY: ''
+          no_proxy: '*'
+          NO_PROXY: '*'
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: 加载重试代理
+        if: steps.direct.outcome == 'failure'
+        run: |
+          source "$CI_PROXY_SCRIPT"
+          proxyon
+          for name in http_proxy https_proxy all_proxy no_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY; do
+            value="${!name-}"
+            if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then exit 1; fi
+            printf '%s=%s\n' "$name" "$value" >> "$GITHUB_ENV"
+          done
+      - name: 检出缓存工具（代理重试）
+        if: steps.direct.outcome == 'failure'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: 校验刷新任务重跑权限
+        if: github.run_attempt > 1
+        uses: actions/github-script@v8
+        env:
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        with:
+          script: |
+            const { requireAuthorizedCiUser } = require('./.github/scripts/npu_ci_authorization');
+            await requireAuthorizedCiUser({ github, context, username: process.env.TRIGGERING_ACTOR });
+      - name: 刷新匹配平台的最新 Daily
+        run: |
+          set -euo pipefail
+          source "$CI_PROXY_SCRIPT"
+          proxyon
+          bash ci/update_package_cache.sh

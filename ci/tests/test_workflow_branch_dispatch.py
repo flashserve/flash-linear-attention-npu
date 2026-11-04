@@ -33,6 +33,7 @@ class WorkflowBranchDispatchTest(unittest.TestCase):
         cls.dispatch_workflow = yaml.safe_load(
             COMMENT_DISPATCH_PATH.read_text(encoding="utf-8")
         )
+        cls.dispatch_implementation = (REPO_ROOT / ".github/scripts/dispatch_npu_ci.js").read_text(encoding="utf-8")
         cls.dispatch_script = next(
             step["with"]["script"]
             for step in cls.dispatch_workflow["jobs"]["dispatch"]["steps"]
@@ -55,10 +56,16 @@ class WorkflowBranchDispatchTest(unittest.TestCase):
 
         self.assertEqual(triggers["issue_comment"]["types"], ["created"])
         self.assertEqual(permissions["actions"], "write")
-        self.assertIn("workflow_id: 'ci.yml'", self.dispatch_script)
-        self.assertIn("ref: targetRef", self.dispatch_script)
-        self.assertIn(".github/workflows/ci.yml", self.dispatch_script)
-        self.assertIn("workflow_dispatch", self.dispatch_script)
+        self.assertIn("workflow_id: 'ci.yml'", self.dispatch_implementation)
+        self.assertIn("ref: targetRef", self.dispatch_implementation)
+        self.assertIn(".github/workflows/ci.yml", self.dispatch_implementation)
+        self.assertIn("workflow_dispatch", self.dispatch_implementation)
+
+    def test_comment_dispatcher_passes_actual_rerun_identity(self):
+        step = next(step for step in self.dispatch_workflow["jobs"]["dispatch"]["steps"]
+                    if step.get("uses") == "actions/github-script@v8")
+        self.assertEqual(step["env"]["NPU_CI_RUN_ATTEMPT"], "${{ github.run_attempt }}")
+        self.assertEqual(step["env"]["NPU_CI_TRIGGERING_ACTOR"], "${{ github.triggering_actor }}")
 
     def _run_dispatch(self, comment):
         encoded_workflow = base64.b64encode(
@@ -79,9 +86,10 @@ globalThis.context = {{
 globalThis.github = {{
   rest: {{
     repos: {{
-      getCollaboratorPermissionLevel: async () => ({{ data: {{ permission: 'admin' }} }}),
+      get: async () => ({{ data: {{ default_branch: 'main' }} }}),
+      getCollaboratorPermissionLevel: async () => ({{data: {{permission: 'admin'}}}}),
       getBranch: async (payload) => ({{ data: {{ name: payload.branch }} }}),
-      getContent: async () => ({{
+      getContent: async (payload) => ({{
         data: {{
           type: 'file',
           encoding: 'base64',
@@ -93,15 +101,20 @@ globalThis.github = {{
       get: async () => ({{
         data: {{
           draft: false,
-          base: {{ ref: 'main' }},
+          number: 527,
+          changed_files: 1,
+          state: 'open',
+          base: {{ ref: 'main', sha: 'b'.repeat(40) }},
           head: {{ sha: 'a'.repeat(40) }},
         }},
       }}),
+      listFiles: async () => ({{data: [{{filename: 'examples/example.py', status: 'modified'}}]}}),
     }},
     actions: {{
       createWorkflowDispatch: async (payload) => record('dispatch', payload),
     }},
   }},
+  paginate: async (method, params) => (await method(params)).data,
 }};
 globalThis.core = {{
   notice: (message) => record('notice', message),
@@ -146,15 +159,17 @@ globalThis.core = {{
 
     def test_comment_can_select_another_ci_definition_branch(self):
         completed, records = self._run_dispatch(
-            "/run-npu-ci full ci_ref=release-v2 ops=chunk_fwd_o"
+            "/run-npu-ci quick ci_ref=release-v2 ops=chunk_fwd_o device-id=1"
         )
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         dispatches = [item["payload"] for item in records if item["kind"] == "dispatch"]
         self.assertEqual(len(dispatches), 1)
         self.assertEqual(dispatches[0]["ref"], "release-v2")
-        self.assertEqual(dispatches[0]["inputs"]["ci_mode"], "full")
+        self.assertEqual(dispatches[0]["inputs"]["ci_mode"], "quick")
         self.assertEqual(dispatches[0]["inputs"]["ops"], "chunk_fwd_o")
+        self.assertEqual(dispatches[0]["inputs"]["atk_ops"], "")
+        self.assertEqual(dispatches[0]["inputs"]["device_id"], "1")
 
 
 if __name__ == "__main__":

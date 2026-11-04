@@ -20,6 +20,7 @@ require_preloaded_image="${CI_REQUIRE_PRELOADED_IMAGE:-false}"
 rebuild_image="${CI_REBUILD_IMAGE:-false}"
 container_name="${CI_CONTAINER_NAME:-fla-npu-ci-$(date +%s)}"
 cache_root="${CI_CACHE_ROOT:-}"
+package_cache="${CI_PACKAGE_CACHE:-/home/huangjunzhe/ci/pkg-cache}"
 container_tmpdir="${CI_TMPDIR:-}"
 host_tmpdir="${CI_HOST_TMPDIR:-}"
 timing_root="${CI_TIMING_ROOT:-}"
@@ -94,6 +95,11 @@ acquire_npu_lock() {
     local lock_wait_seconds="${CI_NPU_LOCK_WAIT_SECONDS:-14400}"
     local lock_retry_seconds="${CI_NPU_LOCK_RETRY_SECONDS:-10}"
     local started_at="$SECONDS"
+    local requested_device="${CI_DEVICE_ID:-}"
+    if [[ -n "$requested_device" && ! "$requested_device" =~ ^[0-9]+$ ]]; then
+        echo "[CI][ERROR] CI_DEVICE_ID must be a nonnegative physical device ID; use device-id=0 or omit it for automatic selection." >&2
+        exit 2
+    fi
     mkdir -p "$lock_dir"
 
     while true; do
@@ -102,6 +108,17 @@ acquire_npu_lock() {
         if (( ${#candidates[@]} == 0 )); then
             echo "[CI][ERROR] No NPU device was found on host." >&2
             exit 1
+        fi
+        if [[ -n "$requested_device" ]]; then
+            local found=false
+            for id in "${candidates[@]}"; do
+                if [[ "$id" == "$requested_device" ]]; then found=true; fi
+            done
+            if [[ "$found" != true ]]; then
+                echo "[CI][ERROR] Requested NPU $requested_device is unavailable; detected IDs: ${candidates[*]}. Choose an available device-id or omit device-id." >&2
+                exit 2
+            fi
+            candidates=("$requested_device")
         fi
 
         local id
@@ -194,6 +211,10 @@ third_party_cache="${CI_THIRD_PARTY_CACHE:-$cache_root/third_party}"
 gdr_accuracy_cache="${CI_GDR_ACCURACY_CACHE:-$cache_root/gdr_accuracy_golden}"
 gdr_accuracy_cache_container="/workspace/gdr_accuracy_golden"
 mkdir -p "$third_party_cache" "$gdr_accuracy_cache"
+if [[ ! -d "$package_cache" ]]; then
+    mkdir -p "$package_cache"
+    chmod 2775 "$package_cache"
+fi
 
 if [[ -z "$host_tmpdir" && "$container_tmpdir" == /tmp/* ]]; then
     host_tmpdir="$repo_dir/.ci-tmp/container-tmp"
@@ -205,7 +226,7 @@ if [[ -n "$host_tmpdir" ]]; then
     fi
     mkdir -p "$host_tmpdir"
     host_tmpdir="$(realpath "$host_tmpdir")"
-    for protected_dir in / /tmp /home "${HOME:-/}" "$repo_dir" "$cache_root" "${TMPDIR:-/tmp}"; do
+    for protected_dir in / /tmp /home "${HOME:-/}" "$repo_dir" "$cache_root" "$package_cache" "${TMPDIR:-/tmp}"; do
         protected_dir="$(realpath -m "$protected_dir")"
         if [[ "$protected_dir" == "$host_tmpdir" || "$protected_dir" == "$host_tmpdir/"* ]]; then
             echo "[CI][ERROR] CI_HOST_TMPDIR must be a dedicated temporary subdirectory." >&2
@@ -218,6 +239,7 @@ mount_args=(
     -v "$repo_dir:/workspace/repo"
     -v "$third_party_cache:/workspace/repo/third_party"
     -v "$gdr_accuracy_cache:$gdr_accuracy_cache_container"
+    -v "$package_cache:/ci-pkg-cache"
     -w /workspace/repo
 )
 if [[ -n "$host_tmpdir" ]]; then
@@ -240,6 +262,7 @@ done
 echo "[CI] Running $container_name on NPU ${NPU_SELECTED_DEVICE} (${NPU_SELECTED_NAME}, health=${NPU_SELECTED_HEALTH}, free=${NPU_SELECTED_FREE})"
 echo "[CI] third_party cache: $third_party_cache"
 echo "[CI] GDR accuracy golden cache: $gdr_accuracy_cache"
+echo "[CI] Daily package cache: $package_cache"
 echo "[CI] container TMPDIR: ${CI_TMPDIR:-auto}"
 if [[ -n "$host_tmpdir" ]]; then
     echo "[CI] container TMPDIR uses bind-mounted host storage"
@@ -250,6 +273,16 @@ if [[ -n "${CI_CONTAINER_COMMAND:-}" ]]; then
     container_command=(bash -lc "$CI_CONTAINER_COMMAND")
 fi
 
+# Docker's host networking shares sockets, but it does not inherit the client
+# environment. Pass only the proxy allowlist and keep values out of argv/logs.
+proxy_env_args=()
+for proxy_name in http_proxy https_proxy all_proxy no_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY; do
+    if [[ -v "$proxy_name" ]]; then
+        export "$proxy_name"
+        proxy_env_args+=(-e "$proxy_name")
+    fi
+done
+
 container_id_dir="$(mktemp -d "${TMPDIR:-/tmp}/fla-npu-container.XXXXXX")"
 docker run --rm \
     --cidfile "$container_id_dir/id" \
@@ -258,6 +291,7 @@ docker run --rm \
     --ipc host \
     "${device_args[@]}" \
     "${mount_args[@]}" \
+    "${proxy_env_args[@]}" \
     -e ASCEND_RT_VISIBLE_DEVICES="${NPU_SELECTED_DEVICE}" \
     -e NPU_SELECTED_DEVICE="${NPU_SELECTED_DEVICE}" \
     -e NPU_SELECTED_NAME="${NPU_SELECTED_NAME}" \
@@ -269,6 +303,15 @@ docker run --rm \
     -e CI_STAGE="${CI_STAGE:-all}" \
     -e CI_SOC="${CI_SOC:-${NPU_SOC}}" \
     -e CI_OPS="${CI_OPS:-}" \
+    -e CI_BUILD_KIND="${CI_BUILD_KIND:-}" \
+    -e CI_BUILD_OPS="${CI_BUILD_OPS:-}" \
+    -e CI_ATK_OPS="${CI_ATK_OPS:-}" \
+    -e CI_BASE_REF="${CI_BASE_REF:-main}" \
+    -e CI_BASE_WHEEL_INDEX_URL="${CI_BASE_WHEEL_INDEX_URL:-}" \
+    -e CI_BASE_WHEEL_VERSION="${CI_BASE_WHEEL_VERSION:-}" \
+    -e CI_PACKAGE_CACHE=/ci-pkg-cache \
+    -e CI_UPDATE_PACKAGE="${CI_UPDATE_PACKAGE:-false}" \
+    -e CI_DEVICE_ID="${CI_DEVICE_ID:-}" \
     -e CI_JOBS="${CI_JOBS:-}" \
     -e CI_CPACK_JOBS="${CI_CPACK_JOBS:-}" \
     -e CI_FORCE_CLEAN_CACHE="${CI_FORCE_CLEAN_CACHE:-false}" \
@@ -276,12 +319,10 @@ docker run --rm \
     -e CI_LOG_RETENTION_DAYS="${CI_LOG_RETENTION_DAYS:-7}" \
     -e CI_LOG_CLEANUP_DIRS="${CI_LOG_CLEANUP_DIRS:-}" \
     -e CI_SEED_THIRD_PARTY="${CI_SEED_THIRD_PARTY:-true}" \
-    -e CI_BUILD_TORCH_CUSTOM="${CI_BUILD_TORCH_CUSTOM:-false}" \
     -e CI_RUN_TORCH_TESTS="${CI_RUN_TORCH_TESTS:-false}" \
     -e CI_RUN_EXAMPLE_ST="${CI_RUN_EXAMPLE_ST:-true}" \
     -e CI_RUN_WHEEL_API_CHECK="${CI_RUN_WHEEL_API_CHECK:-false}" \
     -e CI_CHECK_TRITON_API="${CI_CHECK_TRITON_API:-false}" \
-    -e CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK="${CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK:-false}" \
     -e CI_EXAMPLE_CASES_FILE="${CI_EXAMPLE_CASES_FILE:-ci/example_st_cases.json}" \
     -e CI_EXAMPLE_CASE_FILTER="${CI_EXAMPLE_CASE_FILTER:-}" \
     -e CI_ACCURACY_REPORT_FILE="${CI_ACCURACY_REPORT_FILE:-output/gdr_accuracy_report.json}" \
