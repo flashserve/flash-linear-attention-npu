@@ -8,6 +8,7 @@ standard selects the CPU path: ``mixed_tolerance_bm`` uses the emulation,
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -1118,6 +1119,35 @@ def run_gpu(spec: dict[str, Any]):
     )
 
 
+def _spec_from_case_config(case_config) -> dict[str, Any] | None:
+    """ATK drops non_param kwargs before the executor runs. Read the JSON there."""
+    inputs = getattr(case_config, "inputs", None) or []
+    for item in inputs:
+        if isinstance(item, list):
+            item = item[0] if item else None
+        if getattr(item, "name", None) != "case_spec":
+            continue
+        raw = getattr(item, "range_values", None)
+        if isinstance(raw, str) and raw.strip():
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else None
+        if isinstance(raw, dict):
+            return raw
+    return None
+
+
+def _load_spec(input_data: InputDataset, case_config) -> dict[str, Any]:
+    spec = _case_spec(input_data, OP_NAME)
+    if "out_l2" in spec and spec.get("case_id") is not None:
+        return spec
+    stored = _spec_from_case_config(case_config)
+    if stored is None:
+        return spec
+    stored.setdefault("op", OP_NAME)
+    stored.setdefault("dtype", "bf16")
+    return stored
+
+
 @register("executor_chunk_gated_delta_rule_fwd_chunk32")
 class FunctionApi(BaseApi):
     def __init__(self, task_result: TaskResult):
@@ -1126,32 +1156,37 @@ class FunctionApi(BaseApi):
         self.accuracy_standard = _accuracy_standard(task_result)
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
-        spec = _case_spec(input_data, OP_NAME)
+        spec = _load_spec(input_data, self.task_result.case_config)
         case_id = spec.get("case_id", "?")
+        export = (
+            f"l2={int(bool(spec.get('out_l2')))} "
+            f"ga={int(bool(spec.get('disable_recompute')))} "
+            f"h={int(bool(spec.get('out_h')))}"
+        )
         if self.device in {"npu", "pyaclnn"}:
             print(
                 f"[chunk32-atk] case={case_id} role=dut target=npu_chunk32 "
-                f"standard={self.accuracy_standard}",
+                f"standard={self.accuracy_standard} {export}",
                 flush=True,
             )
             outputs = run_npu(spec, input_data)
         elif self.device == "gpu":
             print(
                 f"[chunk32-atk] case={case_id} role=benchmark target=gpu_triton_chunk32 "
-                f"standard={self.accuracy_standard}",
+                f"standard={self.accuracy_standard} {export}",
                 flush=True,
             )
             outputs = run_gpu(spec)
         elif self.device == "cpu":
             if self.accuracy_standard == "cv_fused_double_benchmark":
                 print(
-                    f"[chunk32-atk] case={case_id} role=golden target=cpu_fp64_chunk32",
+                    f"[chunk32-atk] case={case_id} role=golden target=cpu_fp64_chunk32 {export}",
                     flush=True,
                 )
                 outputs = run_cpu_hp(spec)
             elif self.accuracy_standard == "mixed_tolerance_bm":
                 print(
-                    f"[chunk32-atk] case={case_id} role=golden target=cpu_emu_chunk32",
+                    f"[chunk32-atk] case={case_id} role=golden target=cpu_emu_chunk32 {export}",
                     flush=True,
                 )
                 outputs = run_cpu(spec)
