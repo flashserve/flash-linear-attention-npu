@@ -5,6 +5,7 @@ import numpy as np
 import random
 import ml_dtypes
 import torch
+from fla_npu.ops import ascendc as ascendc_ops
 import torch_npu
 from ml_dtypes import bfloat16
 from dataclasses import dataclass
@@ -320,7 +321,7 @@ if __name__ == "__main__":
 
     torch.npu.synchronize()
     # 与 npu_custom.yaml / FLA chunk_gated_delta_rule_fwd_h 对齐：k,w,u 为位置参数，g/gk 至少提供一个。
-    result = torch.ops.npu.npu_chunk_gated_delta_rule_fwd_h(
+    result = ascendc_ops.npu_chunk_gated_delta_rule_fwd_h(
         input_tensor.k.npu(),
         input_tensor.w.npu(),
         input_tensor.u.npu(),

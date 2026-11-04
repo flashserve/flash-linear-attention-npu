@@ -7,6 +7,8 @@ generate: generator_chunk_gated_delta_rule_bwd_finalize
 dtype_numbers: 1
 extra_numbers: 0
 standard:
+  # 原 A5 模板不改。arch22 独立精度资产用既有 cv 真双标杆 5/1.5/1.5；
+  # 独立 MSS/DC/keys 资产保留原 mixed 声明及 ABI dtype overrides。
   acc: mixed_tolerance_bm
   perf: not_key
 inputs:
@@ -223,3 +225,13 @@ inputs:
         values: [20260901]
       invalid:
         values: []
+  # A2/A3 生成器会直接构造公开签名参数；不新增 case_spec/shape 控制属性。
+  # 上方旧字段仅服务原 A5 200/64/8 资产；其 payload 和 seed 保持不变。
+  - {name: q_rstd, type: tensor, required: false, dtypes: {values: [fp32]}, ranges: {valid: {values: [[0.8, 1.2]]}, invalid: {values: []}}, shapes: {dim_numbers: {values: [3]}, dim_values: {values: [1, 2, 64]}}}
+  - {name: k_rstd, type: tensor, required: false, dtypes: {values: [fp32]}, ranges: {valid: {values: [[0.8, 1.2]]}, invalid: {values: []}}, shapes: {dim_numbers: {values: [3]}, dim_values: {values: [1, 2, 64]}}}
+  - {name: cu_seqlens, type: attr, required: false, dtypes: {values: [non_param]}, ranges: {valid: {values: ['[0, 0, 64]']}, invalid: {values: []}}}
+  - {name: chunk_indices, type: attr, required: false, dtypes: {values: [non_param]}, ranges: {valid: {values: ['[1, 0]']}, invalid: {values: []}}}
+  - {name: use_qk_l2_norm_in_kernel, type: attr, required: false, dtypes: {values: [bool]}, ranges: {valid: {values: [false, true]}, invalid: {values: []}}}
+  - {name: use_beta_sigmoid_in_kernel, type: attr, required: false, dtypes: {values: [bool]}, ranges: {valid: {values: [false, true]}, invalid: {values: []}}}
+  - {name: use_gate_in_kernel, type: attr, required: false, dtypes: {values: [bool]}, ranges: {valid: {values: [false]}, invalid: {values: []}}}
+  - {name: use_exp2, type: attr, required: false, dtypes: {values: [bool]}, ranges: {valid: {values: [false, true]}, invalid: {values: []}}}

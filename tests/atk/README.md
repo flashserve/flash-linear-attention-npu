@@ -270,7 +270,7 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=gen_cases
 | `chunk_kda_bwd_recompute`        | `fla_npu.ops.ascendc.chunk_kda_bwd_recompute`        | 见[`chunk_kda_bwd_recompute/README.md`](./chunk_kda_bwd_recompute/README.md)               |
 | `chunk_local_cumsum`             | `fla_npu.ops.ascendc.chunk_local_cumsum`             | 见[`chunk_local_cumsum/README.md`](./chunk_local_cumsum/README.md)                         |
 | `chunk_scaled_dot_kkt`           | `fla_npu.ops.ascendc.chunk_scaled_dot_kkt`           | 见[`chunk_scaled_dot_kkt/README.md`](./chunk_scaled_dot_kkt/README.md)                     |
-| `kda_gate_cumsum`                | `fla_npu.ops.ascendc.kda_gate_cumsum`                | 见[`kda_gate_cumsum/README.md`](./kda_gate_cumsum/README.md)                               |
+| `kda_gate_cumsum`                | `fla_npu.ops.ascendc.npu_kda_gate_cumsum`                | 见[`kda_gate_cumsum/README.md`](./kda_gate_cumsum/README.md)                               |
 | `prepare_wy_repr_bwd`            | `fla_npu.ops.ascendc.prepare_wy_repr_bwd`            | 见[`prepare_wy_repr_bwd/README.md`](./prepare_wy_repr_bwd/README.md)                       |
 | `prepare_wy_repr_bwd_da`         | `fla_npu.ops.ascendc.prepare_wy_repr_bwd_da`         | 见[`prepare_wy_repr_bwd_da/README.md`](./prepare_wy_repr_bwd_da/README.md)                 |
 | `prepare_wy_repr_bwd_full`       | `fla_npu.ops.ascendc.prepare_wy_repr_bwd_full`       | 见[`prepare_wy_repr_bwd_full/README.md`](./prepare_wy_repr_bwd_full/README.md)             |
@@ -279,6 +279,26 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=gen_cases
 | `recurrent_kda`                  | `fla_npu.ops.ascendc.recurrent_kda`                  | 见[`recurrent_kda/README.md`](./recurrent_kda/README.md)                                   |
 | `solve_tri`                      | `fla_npu.ops.ascendc.solve_tri`                      | 见[`solve_tri/README.md`](./solve_tri/README.md) |
 | `pre_process_fwd_kernel_merged`   | `fla_npu.ops.ascendc.pre_process_fwd_kernel_merged`   | 见[`pre_process_fwd_kernel_merged/README.md`](./pre_process_fwd_kernel_merged/README.md)；CP 前处理（h|m 融合），`B≡1` + host `cu_seqlens`，输出 `hm[Nseq,HV,K,V+K]` |
+
+| `chunk_kda_bwd` | `fla_npu.ops.ascendc.npu_chunk_kda_bwd` | [chunk_kda_bwd/README.md](./chunk_kda_bwd/README.md)；Phase A；legacy 零占位 |
+| `chunk_kda_bwd_prepare` | `fla_npu.ops.ascendc.npu_chunk_kda_bwd_prepare` | [chunk_kda_bwd_prepare/README.md](./chunk_kda_bwd_prepare/README.md)；Phase A；head-major 输出零占位 |
+| `chunk_kda_bwd_intra` | `fla_npu.ops.ascendc.npu_chunk_kda_bwd_intra` | [chunk_kda_bwd_intra/README.md](./chunk_kda_bwd_intra/README.md)；Phase A；零占位 |
+| `chunk_kda_bwd_finalize` | `fla_npu.ops.ascendc.npu_chunk_kda_bwd_finalize` | [chunk_kda_bwd_finalize/README.md](./chunk_kda_bwd_finalize/README.md)；Phase A；db/dg token-major 零占位 |
+| `kda_gate_bwd_post` | `ChunkKdaBwd` 内部 launcher | [kda_gate_bwd_post/README.md](./kda_gate_bwd_post/README.md)；Phase A；内部 launcher，无独立 ACLNN/Python 入口 |
+| `kda_gate_bwd_post_varlen` | `ChunkKdaBwd` 内部 launcher | [kda_gate_bwd_post_varlen/README.md](./kda_gate_bwd_post_varlen/README.md)；Phase A；内部 launcher，无独立 ACLNN/Python 入口 |
+| `merge_fwd_bwd_kernel` | `fla_npu.ops.ascendc.npu_merge_fwd_bwd_kernel` | [merge_fwd_bwd_kernel/README.md](./merge_fwd_bwd_kernel/README.md)；Phase A；独立 CPU 递推、inplace 输出 |
+
+2026-10-30 的 Phase A 补齐工作按 `fla/ops/ascendc/**/op_host/*_def.cpp` 的
+35 个 `OP_ADD` 注册算子逐项核对；新增 8 个对应目录（含 2 个内部 gate launcher），
+已有 `chunk_gated_delta_rule_bwd` 为额外公开组合接口。嵌入复合算子的 arch22 内部
+kernel/tiling 片段没有独立注册，不重复建立目录。
+
+新增工程中的 KDA backward / Prepare / Intra / Finalize / GatePost CPU 返回全零，
+仅验证 shape、dtype、可选输出和调用契约，**不能据此判断数值精度通过**。
+`kda_gate_cumsum` 和 `merge_fwd_bwd_kernel` 提供独立 CPU 数学实现，仍待 NPU 对齐。
+两个 GatePost 无独立公开 DUT，NPU executor 显式拒绝隔离执行；其设备计算由完整
+`chunk_kda_bwd` 组合路径承载。所有新增工程当前均为 Phase A 交付，尚非正式验收包；
+用户模型性能 case、实测 TilingKey 和相应 `_perf.json` / `_mss.json` 留待执行阶段补齐。
 
 ## 新增或维护算子
 

@@ -14,8 +14,9 @@ template <typename BetaT>
 class ChunkKdaBwdFinalizeVector {
 public:
     __aicore__ inline void Init(GM_ADDR k, GM_ADDR gk, GM_ADDR h, GM_ADDR dh, GM_ADDR workspace,
-                                AscendC::LocalTensor<uint8_t> ub, AscendC::TPipe *pipe)
+                                AscendC::LocalTensor<uint8_t> ub, AscendC::TPipe *pipe, const FinalizeTilingData &tiling)
     {
+        modelTiling_ = &tiling;
         k_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(k));
         gk_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(gk));
         h_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(h));
@@ -92,7 +93,7 @@ public:
 
         // Retain k, exp2_gk and gk_last in their final resident addresses.
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(inputFree_[0]);
-        AscendC::DataCopy(kSaved, k_[tokenOffset], rows * HEAD_DIM);
+        LoadModel(kSaved, k_, tokenOffset / HEAD_DIM, rows, modelTiling_->qkTokenMajor);
         AscendC::DataCopy(gLast, gk_[tokenOffset + (rows - 1) * HEAD_DIM], HEAD_DIM);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(inputReady_[0]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(inputReady_[0]);
@@ -336,8 +337,7 @@ public:
             const uint32_t active = first < rows ? (rows - first < ROWS ? rows - first : ROWS) : 0;
             AscendC::DataCopy(input, dvB[first * HEAD_DIM], ELEMENTS);
             if (active != 0) {
-                AscendC::DataCopy(input[ELEMENTS].ReinterpretCast<bfloat16_t>(), v_[(token + first) * HEAD_DIM],
-                                  active * HEAD_DIM);
+                LoadModel(input[ELEMENTS].ReinterpretCast<bfloat16_t>(), v_, token + first, active, modelTiling_->vTokenMajor);
             }
             AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(inputReady_[tile]);
         }
@@ -479,8 +479,8 @@ public:
                 AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(inputFree_[0]);
                 AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(inputFree_[0]);
             }
-            AscendC::DataCopy(ub_.ReinterpretCast<bfloat16_t>(), q_[token * HEAD_DIM], CHUNK_SIZE * HEAD_DIM);
-            AscendC::DataCopy(ub_[UB_K].ReinterpretCast<bfloat16_t>(), k_[token * HEAD_DIM], CHUNK_SIZE * HEAD_DIM);
+            LoadModel(ub_.ReinterpretCast<bfloat16_t>(), q_, token, CHUNK_SIZE, modelTiling_->qkTokenMajor);
+            LoadModel(ub_[UB_K].ReinterpretCast<bfloat16_t>(), k_, token, CHUNK_SIZE, modelTiling_->qkTokenMajor);
             AscendC::DataCopy(ub_[UB_EXP2_GK].ReinterpretCast<float>(), gk_[token * HEAD_DIM], CHUNK_SIZE * HEAD_DIM);
             for (uint32_t slot = 0; slot < 2; ++slot) {
                 slotFree[slot] = pipe_->AllocEventID<AscendC::HardEvent::MTE3_MTE2>();
@@ -727,8 +727,8 @@ public:
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(inputFree_[0]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(inputFree_[0]);
         if constexpr (!FULL_CHUNK || CAPTURE || !FINALIZE_K) {
-            AscendC::DataCopy(q, q_[token * HEAD_DIM], rows * HEAD_DIM);
-            AscendC::DataCopy(k, k_[token * HEAD_DIM], rows * HEAD_DIM);
+            LoadModel(q, q_, token, rows, modelTiling_->qkTokenMajor);
+            LoadModel(k, k_, token, rows, modelTiling_->qkTokenMajor);
             AscendC::DataCopy(g, gk_[token * HEAD_DIM], rows * HEAD_DIM);
         } // Full production chunks retain q/k/gk from Stage 5.
         AscendC::Brcb(broadcast, ub_[UB_BETA].ReinterpretCast<float>(), 8, {1, 8});
@@ -1258,13 +1258,13 @@ public:
     __aicore__ inline void InitStage11(const FinalizeTailArgs &tail)
     {
         tail_ = tail;
-        rawG_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(tail.rawG));
+        rawG_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_RAW_G *>(tail.rawG));
         aLog_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(tail.aLog));
         dtBias_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(tail.dtBias));
         kRstd_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(tail.kRstd));
         dk_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(tail.dk));
-        dg_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(tail.dg));
-        db_.SetGlobalBuffer(reinterpret_cast<__gm__ BetaT *>(tail.db));
+        dg_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_D_G *>(tail.dg));
+        db_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_D_BETA *>(tail.db));
         partial_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(tail.partial));
     }
 
@@ -1273,8 +1273,10 @@ public:
     {
         auto scalar = ub_[87 * 1024 + 256].ReinterpretCast<float>();
         auto factor = ub_[UB11_BETA_FACTOR].ReinterpretCast<float>();
-        AscendC::DataCopy(ub_[UB11_BIAS].ReinterpretCast<float>(), dtBias_[head * HEAD_DIM], HEAD_DIM);
-        AscendC::DataCopyPad(scalar, aLog_[head], {1, 4, 0, 0, 0}, {true, 0, 0, 0.0f});
+        auto bias = ub_[UB11_BIAS].ReinterpretCast<float>();
+        AscendC::DataCopy(bias, dtBias_[head * HEAD_DIM], HEAD_DIM);
+        AscendC::DataCopyPad(scalar, aLog_[head], {1, sizeof(float), 0, 0, 0},
+                             {true, 0, 0, 0.0f});
         if constexpr (K_NORM) {
             AscendC::DataCopyPad(ub_[UB11_RSTD].ReinterpretCast<float>(), kRstd_[token], {1, rows * 4, 0, 0, 0},
                                  {true, 0, 0, 0.0f});
@@ -1354,6 +1356,7 @@ public:
             auto raw = ub_[88 * 1024].ReinterpretCast<float>()[4 * E];
             constexpr uint32_t active = ROWS;
             constexpr uint32_t count = E;
+            ExpandRawGate<COMPACT>(raw, count);
             AscendC::Add(raw, raw, ub_[UB11_BIAS].ReinterpretCast<float>(), 64, active, {1, 1, 1, 16, 16, 0});
             AscendC::Add(raw[64], raw[64], ub_[UB11_BIAS].ReinterpretCast<float>()[64], 64, active,
                          {1, 1, 1, 16, 16, 0});
@@ -1412,6 +1415,11 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
             if (active != 0) {
                 const uint32_t count = active * HEAD_DIM;
+                if constexpr (FULL_CHUNK && !CAPTURE && K_NORM && ROWS == 8) {
+                    if (tile != 0) ExpandRawGate<COMPACT>(raw, count);
+                } else {
+                    ExpandRawGate<COMPACT>(raw, count);
+                }
                 auto exponent = ub_[160 * 1024].ReinterpretCast<float>()[(first - start) * HEAD_DIM];
                 if constexpr (!COMPACT) {
                     AscendC::Cast(queryTile, ub_.ReinterpretCast<bfloat16_t>()[first * HEAD_DIM],
@@ -1632,19 +1640,29 @@ public:
                 // The derivative's final read is complete; right now holds packed dk.
                 AscendC::Cast(packedDk, dk, AscendC::RoundMode::CAST_RINT, E);
             }
-            if constexpr (sizeof(BetaT) == sizeof(float)) {
+            if constexpr (sizeof(DTYPE_D_BETA) == sizeof(float)) {
                 AscendC::Brcb(packedDb, db, ROWS / 8, {1, 8});
             } else {
                 // Each dBeta row starts at a 32-byte boundary for strided GM writes.
                 AscendC::Brcb(rowScale, db, ROWS / 8, {1, 8});
                 AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Cast(packedDb.template ReinterpretCast<BetaT>(), rowScale,
+                AscendC::Cast(packedDb.template ReinterpretCast<DTYPE_D_BETA>(), rowScale,
                               AscendC::RoundMode::CAST_RINT, 8, ROWS, {1, 1, 1, 1});
+            }
+            // The raw-gate input slot is dead after the gate chain rule; reuse it
+            // for BF16 writeback without rounding parameter-reduction partials.
+            auto gatePacked = raw.template ReinterpretCast<DTYPE_D_G>();
+            if constexpr (sizeof(DTYPE_D_G) == 2) {
+                AscendC::Cast(gatePacked, gateOut, AscendC::RoundMode::CAST_RINT, E);
+            } else {
+                gatePacked = gateOut.template ReinterpretCast<DTYPE_D_G>();
             }
             AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
             if (active != 0) {
-                const int64_t outputToken = ((batch * tiling.tokens + chunk.tokenStart + first) * tiling.heads + head);
+                const int64_t outputToken = tiling.gateOutputTokenMajor ?
+                    ((batch * tiling.tokens + chunk.tokenStart + first) * tiling.heads + head) : token + first;
+                const uint32_t outputStride = tiling.gateOutputTokenMajor ? tiling.heads - 1 : 0;
                 if (tiling.outputTokenMajor) {
                     const uint64_t dst = (static_cast<uint64_t>(batch) * tiling.tokens + chunk.tokenStart + first) *
                                              tiling.heads * HEAD_DIM +
@@ -1656,22 +1674,14 @@ public:
                 } else {
                     AscendC::DataCopy(dk_[(token + first) * HEAD_DIM], packedDk, active * HEAD_DIM);
                 }
-                // dG rows are 512-byte aligned. DataCopy strides use 32-byte
-                // blocks; keep the byte-stride path when uint16_t would overflow.
-                if (!CAPTURE && tiling.heads <= 4096) {
-                    AscendC::DataCopy(
-                        dg_[outputToken * HEAD_DIM], gateOut,
-                        AscendC::DataCopyParams{static_cast<uint16_t>(active), HEAD_DIM / 8, 0,
-                                                static_cast<uint16_t>((tiling.heads - 1) * (HEAD_DIM / 8))});
-                } else {
-                    AscendC::DataCopyPad(dg_[outputToken * HEAD_DIM], gateOut,
-                                         {static_cast<uint16_t>(active), HEAD_DIM * 4, 0,
-                                          static_cast<uint32_t>((tiling.heads - 1) * HEAD_DIM * 4), 0});
-                }
+                constexpr uint32_t gateBytes = HEAD_DIM * sizeof(DTYPE_D_G);
+                AscendC::DataCopyPad(dg_[outputToken * HEAD_DIM], gatePacked,
+                    {static_cast<uint16_t>(active), gateBytes, 0,
+                     static_cast<uint32_t>(outputStride * gateBytes), 0});
                 AscendC::DataCopyPad(
-                    db_[outputToken], packedDb.template ReinterpretCast<BetaT>(),
-                    {static_cast<uint16_t>(active), sizeof(BetaT), 0,
-                     static_cast<uint32_t>((tiling.heads - 1) * sizeof(BetaT)), 0});
+                    db_[outputToken], packedDb.template ReinterpretCast<DTYPE_D_BETA>(),
+                    {static_cast<uint16_t>(active), sizeof(DTYPE_D_BETA), 0,
+                     static_cast<uint32_t>(outputStride * sizeof(DTYPE_D_BETA)), 0});
             }
             if constexpr (CAPTURE) {
                 AscendC::DataCopy(saved[CAPTURE_DK / 4 + first * HEAD_DIM], dk, E);
@@ -1680,8 +1690,8 @@ public:
                 AscendC::DataCopy(saved[CAPTURE_DB / 4 + first], db, ROWS);
             }
             AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
-            if constexpr (CAPTURE) {
-                // Snapshots read input slots too; only the debug build needs this drain.
+            if constexpr (CAPTURE || sizeof(DTYPE_D_G) == 2) {
+                // BF16 writeback and snapshots read input slots before MTE2 reuse.
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
             }
@@ -1726,6 +1736,33 @@ public:
     }
 
 private:
+    const FinalizeTilingData *modelTiling_ = nullptr;
+    template <typename T>
+    __aicore__ inline void LoadModel(AscendC::LocalTensor<T> dst, AscendC::GlobalTensor<T> src,
+                                     int64_t token, uint32_t rows, bool tokenMajor)
+    {
+        if (!rows) return;
+        if (!tokenMajor) { AscendC::DataCopy(dst, src[token * HEAD_DIM], rows * HEAD_DIM); return; }
+        const auto &t = *modelTiling_;
+        const int64_t batchHead = token / t.tokens, pos = token % t.tokens;
+        const int64_t off = ((batchHead / t.heads * t.tokens + pos) * t.heads + batchHead % t.heads) * HEAD_DIM;
+        AscendC::DataCopyPad(dst, src[off],
+            {static_cast<uint16_t>(rows), HEAD_DIM * sizeof(T),
+             static_cast<uint32_t>((t.heads - 1) * HEAD_DIM * sizeof(T)), 0, 0}, {false,0,0,static_cast<T>(0)});
+    }
+    template <bool COMPACT>
+    __aicore__ inline void ExpandRawGate(AscendC::LocalTensor<float> raw, uint32_t count)
+    {
+        if constexpr (sizeof(DTYPE_RAW_G) == 2) {
+            // Product (compact) or q scratch is not live yet; expanding Cast is disjoint.
+            auto expanded = ub_[(COMPACT ? 184 : 128) * 1024].ReinterpretCast<float>();
+            AscendC::Cast(expanded, raw.ReinterpretCast<DTYPE_RAW_G>(), AscendC::RoundMode::CAST_NONE, count);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Copy(raw, expanded, static_cast<uint64_t>(64), count / 64, {1, 1, 8, 8});
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+    }
+
     template <uint32_t ROWS = 8, bool COMPACT = false>
     __aicore__ inline void LoadStage11Tile(AscendC::GlobalTensor<float> ws, int64_t token, uint32_t first, uint32_t end,
                                            uint32_t slot)
@@ -1743,10 +1780,9 @@ private:
         const uint32_t active = first < end ? (end - first < ROWS ? end - first : ROWS) : 0;
         if constexpr (COMPACT) {
             // The bitmask frees the old [64,80) KiB triangle for two raw-gate tiles.
-            AscendC::DataCopy(ub_[(64 + slot * 8) * 1024].ReinterpretCast<float>(),
-                              rawG_[(token + first) * HEAD_DIM], E);
+            LoadModel(ub_[(64 + slot * 8) * 1024].ReinterpretCast<DTYPE_RAW_G>(), rawG_, token + first, ROWS, modelTiling_->rawTokenMajor);
         } else if (active != 0) {
-            AscendC::DataCopy(input[4 * E], rawG_[(token + first) * HEAD_DIM], active * HEAD_DIM);
+            LoadModel(input[4 * E].ReinterpretCast<DTYPE_RAW_G>(), rawG_, token + first, active, modelTiling_->rawTokenMajor);
         }
     }
     template <bool KEEP_INPUTS = false>
@@ -1765,10 +1801,8 @@ private:
             if (rows != 0) {
                 AscendC::DataCopy(input, gk_[(token + first) * HEAD_DIM], rows * HEAD_DIM);
                 AscendC::DataCopy(input[3 * ELEMENTS], dqRaw_[(token + first) * HEAD_DIM], rows * HEAD_DIM);
-                AscendC::DataCopy(input[4 * ELEMENTS].ReinterpretCast<bfloat16_t>(), k_[(token + first) * HEAD_DIM],
-                                  rows * HEAD_DIM);
-                AscendC::DataCopy(input[4 * ELEMENTS].ReinterpretCast<bfloat16_t>()[ELEMENTS],
-                                  q_[(token + first) * HEAD_DIM], rows * HEAD_DIM);
+                LoadModel(input[4 * ELEMENTS].ReinterpretCast<bfloat16_t>(), k_, token + first, rows, modelTiling_->qkTokenMajor);
+                LoadModel(input[4 * ELEMENTS].ReinterpretCast<bfloat16_t>()[ELEMENTS], q_, token + first, rows, modelTiling_->qkTokenMajor);
             }
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(inputReady_[slot]);
@@ -1778,10 +1812,15 @@ private:
     AscendC::LocalTensor<uint8_t> ub_;
     AscendC::GlobalTensor<bfloat16_t> k_, h_, dh_, v_, dv_;
     AscendC::GlobalTensor<float> gk_, dqRaw_, dAqk_;
-    AscendC::GlobalTensor<BetaT> beta_, db_;
+    AscendC::GlobalTensor<BetaT> beta_;
+    AscendC::GlobalTensor<DTYPE_D_BETA> db_;
     AscendC::GlobalTensor<bfloat16_t> q_, dq_;
     AscendC::GlobalTensor<float> qRstd_;
-    AscendC::GlobalTensor<float> rawG_, aLog_, dtBias_, kRstd_, dg_, partial_;
+    AscendC::GlobalTensor<DTYPE_RAW_G> rawG_;
+    AscendC::GlobalTensor<float> aLog_;
+    AscendC::GlobalTensor<float> dtBias_;
+    AscendC::GlobalTensor<float> kRstd_, partial_;
+    AscendC::GlobalTensor<DTYPE_D_G> dg_;
     AscendC::GlobalTensor<bfloat16_t> dk_;
     FinalizeTailArgs tail_;
     float scale_ = 1.0f;

@@ -11,6 +11,7 @@
 #include <register/op_impl_registry.h>
 #include "platform/platform_ascendc.h"
 #include "tiling_base/tiling_templates_registry.h"
+#include "op_common/log/log.h"
 
 #if GDN_FINALIZE_ENABLE_ARCH22
 #include "../arch22/chunk_gated_delta_rule_bwd_finalize_tiling_arch22.h"

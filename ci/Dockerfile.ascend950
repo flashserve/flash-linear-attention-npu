@@ -98,7 +98,6 @@ RUN set -e; \
       done; \
       rm -f "/tmp/${TORCH_NPU_WHL}"; \
       python3 -c 'from importlib import metadata; assert metadata.version("torch-npu") == "'"${TORCH_NPU_VERSION}"'"; print("torch-npu", metadata.version("torch-npu"))'; \
-      python3 -c 'import importlib; [importlib.import_module(name) for name in ("torchnpugen.gen_op_plugin_functions", "torchnpugen.gen_backend_stubs", "torchnpugen.struct.gen_struct_opapi")]; print("torchnpugen OK")'; \
     fi
 
 RUN set -e; \

@@ -16,7 +16,7 @@ _ASCENDC_OPS = (
   2. 算子会原地写参数时，在 `MUTATED_ARGUMENTS` 登记参数名（必要时再登记 `MUTATION_FLAGS`）；
      仓内既有条目把**短名与 npu_ 前缀名都登记**（例如 `"causal_conv1d"` 与 `"npu_causal_conv1d"`），
      新增时照做。
-  3. 没有 ctypes 回退不需要声明任何东西（`_LAUNCHER_ONLY_OPS` 自动推导）。
+  3. 所有公开算子都必须提供 Stable wrapper/schema/adapter；缺失时直接报错，没有 ctypes/legacy 自动回退。
   4. 本示例只展示本次新增的行；实际交付时改仓库中的 `_ASCENDC_OPS` 与 `MUTATED_ARGUMENTS`。
   5. 原地契约（登记后由 `_wrap_mutable_direct_op` 统一执行，不要自己再包一层）：
      - 被改写的参数必须在 `MUTATED_ARGUMENTS` 登记，短名与 `npu_` 前缀名都登记；
@@ -24,7 +24,7 @@ _ASCENDC_OPS = (
      - 登记后：mutated tensor 的 `requires_grad=True` 会在调用前被拒绝（提示改用 functional state API），
        调用成功后自动 `increment_version()`，补齐 eager autograd 的版本检查；
      - 改 mutation 语义要跑 `tests/stable_abi/regression_mutation_contract.py`；
-     - ctypes 回退路径没有 schema，原地契约只靠这份登记兜底；当前也没有 FakeTensor/functionalization，
+     - Stable schema 与 Python 原地登记须一致；当前也没有 FakeTensor/functionalization，
        暂不能作为 compiler-visible op 入图。
   6. 三张表的分工（`MUTATED_ARGUMENTS` / `MUTATION_FLAGS` / `MUTATION_PREDICATES`）：
      - `MUTATED_ARGUMENTS[name] = ("state", ...)` 回答「这个算子**可能**写回哪些参数」，与本次调用的参数值无关；

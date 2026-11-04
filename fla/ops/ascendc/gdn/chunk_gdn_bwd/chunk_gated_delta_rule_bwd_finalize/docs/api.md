@@ -99,6 +99,17 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalize(
 两种模式均支持不满一个 chunk 的尾块。
 A2/A3 的 B/HK/HV/T、逻辑序列数及总 chunk 数不能超出 uint32 调度范围；
 host 同时检查内部地址乘积和 workspace 大小，溢出时返回参数错误。
+每个非空序列的最后一个 chunk 还须满足 `chunkStart + BT <= UINT32_MAX`，
+避免 WY 在裁剪尾块前进行 uint32 加法时回绕；定长模式同样检查此条件。
+定长总 chunk 数 `B*ceil(T/BT)` 不得超过 `UINT32_MAX`；变长 pair 数不得超过
+`2^31`，以保证展平访问 `2*taskIdx+1` 仍能由 uint32 表示。
+
+A2/A3 在启动前检查变长元数据的内容：`cu_seqlens` 首项为 0、末项为 T，
+各项在 `[0,T]` 内且非递减。允许长度为 0 的序列，但它不产生 chunk。
+`chunk_indices` 必须完整、唯一地列出所有非空序列的 chunk；每个 pair 的序列编号
+及该序列内 chunk 编号均须有效。pair 顺序可以打乱，`h/dh` 的 NT 轴须与此顺序一致，
+不能只打乱 pair 而沿用旧顺序的 state。重复、缺漏、越界或指向空序列的 pair 返回
+`ACLNN_ERR_PARAM_INVALID`，不进入设备 kernel。
 
 `cu_seqlens` 和 `chunk_indices` 必须同时为空或同时提供。普通稠密格式的非连续输入
 view 会由 aclnn 层连续化。A2/A3 输出必须连续，并分别保持 q/k/v/beta/g 的 shape 和 dtype；

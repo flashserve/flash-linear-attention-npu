@@ -299,6 +299,10 @@ extern "C" aclnnStatus aclnnChunkKdaBwdIntraGetWorkspaceSize(
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     aclOpExecutor *executorPtr = uniqueExecutor.get();
 
+    OP_LOGW("npu_chunk_kda_bwd_intra",
+            "npu_chunk_kda_bwd_intra is deprecated and will be removed on "
+            "January 15, 2027 (v26.12.0); use the fused npu_chunk_kda_bwd instead.");
+
     const bool isVarLen = cuSeqlensOptional != nullptr;
     const bool isInternalLayout = parsedLayout == Layout::BNSD || isVarLen;
 
