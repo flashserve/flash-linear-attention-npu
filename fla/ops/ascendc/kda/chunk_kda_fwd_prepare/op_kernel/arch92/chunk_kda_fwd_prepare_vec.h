@@ -1457,7 +1457,7 @@ private:
     uint32_t workgroup_ = 0;
     uint32_t aiv_ = 0;
     bool usedLocalSlot_[Shape::kComputeSlotCount] = {false, false, false};
-    Catlass::Arch::Resource<Catlass::Arch::Ascend950> resource_{};
+    Catlass::Arch::Resource<Catlass::Arch::Ascend960DT> resource_{};
     AscendC::GlobalTensor<bfloat16_t> qGm_{};
     AscendC::GlobalTensor<bfloat16_t> kGm_{};
     AscendC::GlobalTensor<bfloat16_t> vGm_{};

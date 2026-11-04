@@ -271,8 +271,6 @@ private:
                 Shape::kSubChunkRows * 16 * sizeof(bfloat16_t));
         auto kMinusL0 =
             resource_.l0BBuf.template GetBufferByByte<bfloat16_t>(0);
-        // Ascend950 提供 256 KiB L0C。三个 HEAD 各占一条 64 KiB 通道，
-        // 与 Mutex 5..7/9..11 一一对应，独立流水不共享物理地址。
         auto rawL0c =
             resource_.l0CBuf.template GetBufferByByte<float>(l0cLane);
         uint32_t stackedElements = 0;
@@ -295,8 +293,6 @@ private:
             AscendC::LoadData(
                 qkL0,
                 qPlusL1, loadQ);
-            // Ascend950 的 L0A 为 zN。每个 K 分形内先放 Qplus 的 16 行，
-            // 再放 Kplus 的 16 行，因此第二个起点只偏移一个分形。
             AscendC::LoadData(
                 kPlusL0,
                 kPlusL1, loadQ);
@@ -483,8 +479,6 @@ private:
         fix.dstStride = 32 * 8;
         fix.quantPre = QuantMode_t::NoQuant;
         fix.isChannelSplit = true;
-        // Ascend950 的 FP32 L0C 不能以 channel-split 格式直写 L1。
-        // 先写 W 的临时中转区，再按相同 NZ 字节布局搬入 C5 的 L1 输入。
         AscendC::Fixpipe<float, float, kFixpipeNzL1>(tRelay, l0C, fix);
         AscendC::Mutex::Unlock<PIPE_FIX>(l1Mutex);
         AscendC::Mutex::Unlock<PIPE_FIX>(l0cMutex);
@@ -727,7 +721,7 @@ private:
     uint32_t workgroup_ = 0;
     bool freeInitialized_[Shape::kComputeSlotCount] = {
         false, false, false};
-    Catlass::Arch::Resource<Catlass::Arch::Ascend950> resource_{};
+    Catlass::Arch::Resource<Catlass::Arch::Ascend960DT> resource_{};
     AscendC::GlobalTensor<bfloat16_t> akkGm_{};
     AscendC::GlobalTensor<bfloat16_t> wGm_{};
     AscendC::GlobalTensor<bfloat16_t> uGm_{};
