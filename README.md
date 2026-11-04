@@ -104,8 +104,6 @@ bash tests/atk/run_test_cpu.sh -op=<算子名> -npu_device_id=0
 
 `-op` 使用 `tests/atk` 下的测试工程目录名；算子工程名及 ATK 使用说明见 [算子概览](docs/op_list.md#atk-op-options)。
 
-`chunk_kda_fwd_prepare` 使用 main Daily 包通过 ATK `npu` 后端验证 FLA Stable wrapper 的命令及报告检查，见[该算子的精度测试说明](tests/atk/chunk_kda_fwd_prepare/README.md#精度)。
-
 ## 开发者指引
 
 开发者相关操作（单独编译单算子、一键编包、增加新算子、确认 wheel 来自最新源码）按场景拆分为独立文档；测试单算子和端到端验证见上文 Step 3：
