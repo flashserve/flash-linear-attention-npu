@@ -234,8 +234,6 @@ def _derive_spec(
     if chunk_size not in {32, 64, 128}:
         raise ValueError("chunk_size must be 64 or 128")
     cu_seqlens = _normalize_int_list(values.get("cu_seqlens"), "cu_seqlens")
-    if layout in {"TND", "NTD"} and cu_seqlens is None:
-        raise ValueError(f"{layout} requires cu_seqlens")
     if cu_seqlens is not None:
         if len(cu_seqlens) < 2:
             raise ValueError("cu_seqlens must contain at least [0, total_tokens]")
@@ -307,6 +305,11 @@ def _derive_spec(
         "disable_recompute": _as_bool(values.get("disable_recompute", False)),
         "return_intermediate_states": _as_bool(values.get("return_intermediate_states", False)),
         "state_v_first": state_v_first,
+        "epsilon": float(values.get("epsilon", 1e-6)),
+        "use_qk_l2norm_in_kernel": _as_bool(values.get("use_qk_l2norm_in_kernel", True)),
+        "use_beta_sigmoid_in_kernel": _as_bool(values.get("use_beta_sigmoid_in_kernel", True)),
+        "allow_neg_eigval": _as_bool(values.get("allow_neg_eigval", False)),
+        "use_exp2": _as_bool(values.get("use_exp2", True)),
     }
     return spec, cu_seqlens, chunk_indices
 

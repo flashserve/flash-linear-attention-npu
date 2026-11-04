@@ -27,7 +27,7 @@ SUITES = {
     "performance": ("_perf", 2),
     "mss": ("_mss", 5),
 }
-LEGACY_MARKERS = ("low_precision_marker", "fp32_marker", "case_spec")
+DIRECT_MARKERS = ("q", "k", "v", "g", "beta")
 
 
 @lru_cache(maxsize=3)
@@ -60,22 +60,24 @@ def _cases(suite: str) -> list[dict]:
         input_names = [_input_name(item) for item in inputs]
         if expected_inputs is None:
             expected_inputs = input_names
-            if tuple(input_names[:3]) != LEGACY_MARKERS:
+            if tuple(input_names[:5]) != DIRECT_MARKERS:
                 raise ValueError(
-                    f"{path.name}: frozen cases must keep the legacy marker schema"
+                    f"{path.name}: frozen cases must keep the direct signature schema"
                 )
         elif input_names != expected_inputs:
             raise ValueError(
                 f"{path.name}: case {index} input order differs from case 0"
             )
 
-        case_spec = next(
-            item for item in inputs if _input_name(item) == "case_spec"
+        chunk_size_attr = next(
+            item for item in inputs if _input_name(item) == "chunk_size"
         )
-        spec = json.loads(case_spec["range_values"])
-        if not isinstance(spec, dict) or spec.get("chunk_size") != 32:
+        chunk_size_value = (
+            chunk_size_attr[0] if isinstance(chunk_size_attr, list) else chunk_size_attr
+        )["range_values"]
+        if chunk_size_value != 32:
             raise ValueError(
-                f"{path.name}: case {index} case_spec must describe chunk_size=32"
+                f"{path.name}: case {index} chunk_size attr must be 32"
             )
         if suite == "accuracy":
             benchmark = case.get("standard", {}).get("acc", {}).get(

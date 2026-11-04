@@ -28,7 +28,9 @@ key 1/2 的旧 TilingData 或独立 fused 算子。
 
 ## ATK 元数据与冻结用例
 
-`chunk_kda_fwd_chunk32.yaml` 沿用父套件的 legacy marker 输入形式；
+`chunk_kda_fwd_chunk32.yaml` 与三份冻结 JSON 均为真实签名输入：q/k/v/g/beta 真实
+张量（dtype/range/shape），可选 initial_state/A_log/dt_bias、cu_seqlens/chunk_indices
+与 scale/layout/各开关属性直接承载公开接口语义，不使用 marker/case_spec。
 `gen_chunk_kda_fwd_chunk32.py` 只读加载并校验下列正式 JSON，accuracy 生成入口逐项复用
 冻结内容，performance 和 mss 仅校验、不重新生成。三份 JSON 不由生成器重写。
 
@@ -44,14 +46,6 @@ key 1/2 的旧 TilingData 或独立 fused 算子。
 python3 tests/atk/chunk_kda_fwd/chunk32/gen_chunk_kda_fwd_chunk32.py --summary
 # accuracy=135 performance=2 mss=5
 ```
-
-### legacy marker 后续迁移
-
-当前 142 条冻结 case 均保持 `low_precision_marker`、`fp32_marker`、JSON 字符串
-`case_spec` 及其镜像属性，不与真实签名输入混用。后续应另开迁移，将 YAML、三份 JSON
-和生成器一起切换为 executor 已支持的 `q/k/v/g/beta`、可选 state/变长张量及真实属性；
-迁移时逐 case 核对 id、seed、shape、dtype、可选输入和标杆结果，再重跑完整验收。完成该
-整体迁移前，任何 case 都不得单独改用真实签名输入。
 
 精度使用官方 `cv_fused_double_benchmark`：`max<=5`、`avg<=1.5`、`rmse<=1.5`。
 报告必须包含真实 NPU 输出及误差记录；`cpu_cpu_reference: []` 表示没有形成比较，

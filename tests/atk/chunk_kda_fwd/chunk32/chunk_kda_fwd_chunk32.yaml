@@ -4,8 +4,9 @@ version: v2.1
 name: chunk_kda_fwd_chunk32
 aclnn_name: ChunkKdaFwd
 generate: generator_chunk_kda_fwd_chunk32
-dtype_numbers: 40
+dtype_numbers: 135
 extra_numbers: 0
+shape_distributions: [[0, 1.0]]
 standard:
   acc:
     cv_fused_double_benchmark:
@@ -15,124 +16,103 @@ standard:
   perf: not_key
   mem: 1.1
 inputs:
-  - name: low_precision_marker
+  - name: q
     type: tensor
     required: true
     dtypes:
       values: [bf16]
     ranges:
       valid:
-        values: [[0, 0]]
+        values: [[-0.08, 0.08]]
       invalid:
         values: []
     shapes:
       dim_numbers:
-        values: [1]
+        values: [4]
       dim_values:
-        values: [1]
-  - name: fp32_marker
+        - values: [1]
+        - values: [1]
+        - values: [1]
+        - values: [16]
+  - name: k
     type: tensor
     required: true
     dtypes:
-      values: [fp32]
+      values: [bf16]
     ranges:
       valid:
-        values: [[0, 0]]
+        values: [[-0.08, 0.08]]
       invalid:
         values: []
     shapes:
       dim_numbers:
-        values: [1]
+        values: [4]
       dim_values:
-        values: [1]
-  - name: case_spec
-    type: attr
+        - values: [1]
+        - values: [1]
+        - values: [1]
+        - values: [16]
+  - name: v
+    type: tensor
     required: true
     dtypes:
-      values: [non_param]
+      values: [bf16]
     ranges:
       valid:
-        values: ['{"profile":"frozen_by_gen"}']
+        values: [[-0.08, 0.08]]
       invalid:
         values: []
-  - name: soc
-    type: attr
+    shapes:
+      dim_numbers:
+        values: [4]
+      dim_values:
+        - values: [1]
+        - values: [1]
+        - values: [1]
+        - values: [16]
+  - name: g
+    type: tensor
     required: true
     dtypes:
-      values: [string]
+      values: [bf16, fp32]
     ranges:
       valid:
-        values: [ascend950]
+        values: [[-1.0, 1.0]]
       invalid:
         values: []
-  - name: route
-    type: attr
+    shapes:
+      dim_numbers:
+        values: [4]
+      dim_values:
+        - values: [1]
+        - values: [1]
+        - values: [1]
+        - values: [16]
+  - name: beta
+    type: tensor
     required: true
     dtypes:
-      values: [string]
+      values: [bf16, fp32]
     ranges:
       valid:
-        values: [ascendc]
+        values: [[0.0, 1.0]]
       invalid:
         values: []
-  - name: batch
+    shapes:
+      dim_numbers:
+        values: [3]
+      dim_values:
+        - values: [1]
+        - values: [1]
+        - values: [1]
+  - name: scale
     type: attr
     required: true
     dtypes:
-      values: [int]
+      values: [float]
     ranges:
       valid:
-        values: [1]
-      invalid:
-        values: []
-  - name: head
-    type: attr
-    required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [1, 2, 4, 8, 16, 32, 96]
-      invalid:
-        values: []
-  - name: value_head
-    type: attr
-    required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [1, 2, 4, 8, 16, 32, 96]
-      invalid:
-        values: []
-  - name: total_tokens
-    type: attr
-    required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [96, 128, 129, 193, 194, 512, 1024, 1040, 4096, 8192, 11264, 16384, 65536]
-      invalid:
-        values: []
-  - name: key_dim
-    type: attr
-    required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [128]
-      invalid:
-        values: []
-  - name: value_dim
-    type: attr
-    required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [128]
+        values: [0.125]
       invalid:
         values: []
   - name: chunk_size
@@ -155,46 +135,24 @@ inputs:
         values: [BSND, BNSD, TND, NTD]
       invalid:
         values: []
-  - name: q_dtype
-    type: attr
-    required: true
-    dtypes:
-      values: [string]
-    ranges:
-      valid:
-        values: [bf16]
-      invalid:
-        values: []
-  - name: g_dtype
-    type: attr
-    required: true
-    dtypes:
-      values: [string]
-    ranges:
-      valid:
-        values: [bf16, fp32]
-      invalid:
-        values: []
-  - name: beta_dtype
-    type: attr
-    required: true
-    dtypes:
-      values: [string]
-    ranges:
-      valid:
-        values: [bf16, fp32]
-      invalid:
-        values: []
   - name: initial_state
-    type: attr
-    required: true
+    type: tensor
+    required: false
     dtypes:
-      values: [bool]
+      values: [fp32]
     ranges:
       valid:
-        values: [false, true]
+        values: [[-0.02, 0.02]]
       invalid:
         values: []
+    shapes:
+      dim_numbers:
+        values: [4]
+      dim_values:
+        - values: [1]
+        - values: [1]
+        - values: [16]
+        - values: [16]
   - name: output_final_state
     type: attr
     required: true
@@ -205,16 +163,30 @@ inputs:
         values: [false, true]
       invalid:
         values: []
-  - name: varlen
-    type: attr
-    required: true
+  - name: cu_seqlens
+    type: attrs
+    required: false
     dtypes:
-      values: [bool]
+      values: [int]
     ranges:
       valid:
-        values: [false, true]
+        values: [0]
       invalid:
         values: []
+    tuple_numbers:
+      values: [1]
+  - name: chunk_indices
+    type: attrs
+    required: false
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [0]
+      invalid:
+        values: []
+    tuple_numbers:
+      values: [1]
   - name: safe_gate
     type: attr
     required: true
@@ -245,26 +217,36 @@ inputs:
         values: [true]
       invalid:
         values: []
-  - name: use_beta_sigmoid_in_kernel
-    type: attr
-    required: true
+  - name: A_log
+    type: tensor
+    required: false
     dtypes:
-      values: [bool]
+      values: [fp32]
     ranges:
       valid:
-        values: [true]
+        values: [[-6.0, -2.0]]
       invalid:
         values: []
-  - name: use_qk_l2norm_in_kernel
-    type: attr
-    required: true
+    shapes:
+      dim_numbers:
+        values: [1]
+      dim_values:
+        - values: [1]
+  - name: dt_bias
+    type: tensor
+    required: false
     dtypes:
-      values: [bool]
+      values: [fp32]
     ranges:
       valid:
-        values: [true]
+        values: [[-2.0, 2.0]]
       invalid:
         values: []
+    shapes:
+      dim_numbers:
+        values: [1]
+      dim_values:
+        - values: [16]
   - name: disable_recompute
     type: attr
     required: true
@@ -292,16 +274,6 @@ inputs:
       values: [bool]
     ranges:
       valid:
-        values: [false]
-      invalid:
-        values: []
-  - name: negative_case
-    type: attr
-    required: true
-    dtypes:
-      values: [bool]
-    ranges:
-      valid:
-        values: [false]
+        values: [false, true]
       invalid:
         values: []
