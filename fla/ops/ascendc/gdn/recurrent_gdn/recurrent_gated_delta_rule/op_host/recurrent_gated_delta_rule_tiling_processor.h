@@ -17,7 +17,7 @@
 
 #include "../op_kernel/recurrent_gated_delta_rule_struct.h"
 #include "err/ops_err.h"
-#include "log/log.h"
+#include "recurrent_gated_delta_rule_error.h"
 #include "register/op_impl_registry.h"
 #include "tiling/tiling_api.h"
 #include "util/math_util.h"
@@ -82,9 +82,7 @@ public:
             {"RuleUpdateDynamicBlockDimByTaskUnits", &RecurrentGatedDeltaRuleTilingProcessor::RuleUpdateDynamicBlockDimByTaskUnits},
         }};
         for (const auto &rule : shapeRules) {
-            OP_CHECK_IF((this->*(rule.fn))(tiling) != ge::GRAPH_SUCCESS,
-                        OP_LOGE(ctx_.nodeName, "ProcessShapes rule failed: %s", rule.name),
-                        return ge::GRAPH_FAILED);
+            if ((this->*(rule.fn))(tiling) != ge::GRAPH_SUCCESS) { return ge::GRAPH_FAILED; };
         }
         return ge::GRAPH_SUCCESS;
     }
@@ -105,23 +103,21 @@ public:
             {"RuleFinalizeVStepFromUb", &RecurrentGatedDeltaRuleTilingProcessor::RuleFinalizeVStepFromUb},
         }};
         for (const auto &rule : ubRules) {
-            OP_CHECK_IF((this->*(rule.fn))(tiling, ubCalcCtx) != ge::GRAPH_SUCCESS,
-                        OP_LOGE(ctx_.nodeName, "ProcessUb rule failed: %s", rule.name),
-                        return ge::GRAPH_FAILED);
+            if ((this->*(rule.fn))(tiling, ubCalcCtx) != ge::GRAPH_SUCCESS) { return ge::GRAPH_FAILED; };
         }
         return ge::GRAPH_SUCCESS;
     }
 
     ge::graphStatus Process(RecurrentGatedDeltaRuleTilingData &tiling, uint32_t &blockDim, size_t &workspaceSize) const
     {
-        OP_CHECK_IF(ProcessShapes(tiling) != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
+        if (ProcessShapes(tiling) != ge::GRAPH_SUCCESS) { return ge::GRAPH_FAILED; };
 
         tiling.scale = ctx_.scale;
         tiling.hasGama = ctx_.hasGama;
         tiling.hasGamaK = ctx_.hasGamaK;
         tiling.hasAcceptedTokens = ctx_.hasAcceptedTokens;
 
-        OP_CHECK_IF(ProcessUb(tiling) != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
+        if (ProcessUb(tiling) != ge::GRAPH_SUCCESS) { return ge::GRAPH_FAILED; };
 
         blockDim = tiling.vectorCoreNum;
         workspaceSize = RGDR_SYS_WORKSPACE_SIZE;
@@ -155,9 +151,8 @@ private:
                        const std::string &nameA, const std::string &nameB, const std::string &dimDesc) const
     {
         if (a.GetDim(dimA) != b.GetDim(dimB)) {
-            OP_LOGE(ctx_.nodeName, "The %s of %s and %s should be the same, but %s is %ld while %s is %ld",
-                    dimDesc.c_str(), nameA.c_str(), nameB.c_str(), nameA.c_str(), a.GetDim(dimA), nameB.c_str(),
-                    b.GetDim(dimB));
+            OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(ctx_.nodeName,nameA+","+nameB,
+                std::to_string(a.GetDim(dimA))+","+std::to_string(b.GetDim(dimB)),dimDesc+" dimensions must match");
             return false;
         }
         return true;
@@ -166,8 +161,7 @@ private:
     bool CheckDim(const gert::Shape shape, const size_t dim, const std::string &dimDesc) const
     {
         if (shape.GetDimNum() != dim) {
-            OP_LOGE(ctx_.nodeName, "The number of dimensons of %s should be %zu, but it is %zu", dimDesc.c_str(), dim,
-                    shape.GetDimNum());
+            OP_LOGE_FOR_INVALID_SHAPEDIM(ctx_.nodeName,dimDesc,std::to_string(shape.GetDimNum()),std::to_string(dim));
             return false;
         }
         return true;
@@ -187,13 +181,11 @@ private:
         }
 
         if (cuSeqlensShape.GetDim(RGDR_DIM_0) < 2) {
-            OP_LOGE(ctx_.nodeName, "actual_seq_lengths must contain the prefix and at least one sequence length");
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(ctx_.nodeName, "actual_seq_lengths", "actual shape="+rgdn_error::ShapeText(cuSeqlensShape)+"; expected [B+1] with B>=1");
             return ge::GRAPH_FAILED;
         }
         if (ssmStateShape.GetDim(RGDR_DIM_0) != queryShape.GetDim(RGDR_DIM_0)) {
-            OP_LOGE(ctx_.nodeName,
-                    "ssm_state_indices length must equal T, but got %ld and T is %ld",
-                    ssmStateShape.GetDim(RGDR_DIM_0), queryShape.GetDim(RGDR_DIM_0));
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(ctx_.nodeName, "ssm_state_indices", rgdn_error::Format("length must equal T, but got %ld and T is %ld", ssmStateShape.GetDim(RGDR_DIM_0), queryShape.GetDim(RGDR_DIM_0)));
             return ge::GRAPH_FAILED;
         }
 
@@ -226,23 +218,12 @@ private:
 
     ge::graphStatus CheckShapeValueRangeAndRule(const RecurrentGatedDeltaRuleTilingData &tiling) const
     {
-        OP_CHECK_IF(tiling.t == 0 || tiling.nk == 0 || tiling.nv == 0 || tiling.sBlockNum == 0,
-                    OP_LOGE(ctx_.nodeName,
-                            "T, nk, nv and BlockNum must be positive, but got T=%u, nk=%u, nv=%u, BlockNum=%u",
-                            tiling.t, tiling.nk, tiling.nv, tiling.sBlockNum),
-                    return ge::GRAPH_FAILED);
+        if (tiling.t == 0 || tiling.nk == 0 || tiling.nv == 0 || tiling.sBlockNum == 0) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(ctx_.nodeName, "input shapes", rgdn_error::Format("T, nk, nv and BlockNum must be positive, but got T=%u, nk=%u, nv=%u, BlockNum=%u", tiling.t, tiling.nk, tiling.nv, tiling.sBlockNum)); return ge::GRAPH_FAILED; };
 
-        OP_CHECK_IF(tiling.nk > 256 || tiling.nv > 256 || tiling.dk != RGDR_REQUIRED_DIM || tiling.dv != RGDR_REQUIRED_DIM,
-                    OP_LOGE(ctx_.nodeName,
-                            "nk and nv should no bigger than 256, dk and dv should be exactly %u, but nk is %u, "
-                            "nv is %u, dk is %u, dv is %u",
-                            RGDR_REQUIRED_DIM, tiling.nk, tiling.nv, tiling.dk, tiling.dv),
-                    return ge::GRAPH_FAILED);
+        if (tiling.nk > 256 || tiling.nv > 256 || tiling.dk != RGDR_REQUIRED_DIM || tiling.dv != RGDR_REQUIRED_DIM) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(ctx_.nodeName, "query.HK,value.HV,query.K,value.V", rgdn_error::Format("nk and nv should no bigger than 256, dk and dv should be exactly %u, but nk is %u, "
+                            "nv is %u, dk is %u, dv is %u", RGDR_REQUIRED_DIM, tiling.nk, tiling.nv, tiling.dk, tiling.dv)); return ge::GRAPH_FAILED; };
 
-        OP_CHECK_IF(tiling.nv % tiling.nk != 0,
-                    OP_LOGE(ctx_.nodeName, "nv should be an integer multiple of nk, but nv is %u, nk is %u", tiling.nv,
-                            tiling.nk),
-                    return ge::GRAPH_FAILED);
+        if (tiling.nv % tiling.nk != 0) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(ctx_.nodeName, "query.HK,value.HV", rgdn_error::Format("nv should be an integer multiple of nk, but nv is %u, nk is %u", tiling.nv, tiling.nk)); return ge::GRAPH_FAILED; };
 
         return ge::GRAPH_SUCCESS;
     }
@@ -263,10 +244,9 @@ private:
     ge::graphStatus RuleCheckShapeDimAndRelation(RecurrentGatedDeltaRuleTilingData &tiling) const
     {
         (void)tiling;
-        OP_CHECK_IF(ctx_.queryShape == nullptr || ctx_.keyShape == nullptr || ctx_.valueShape == nullptr ||
+        if (ctx_.queryShape == nullptr || ctx_.keyShape == nullptr || ctx_.valueShape == nullptr ||
                         ctx_.betaShape == nullptr || ctx_.stateShape == nullptr || ctx_.cuSeqlensShape == nullptr ||
-                        ctx_.ssmStateShape == nullptr,
-                    OP_LOGE(ctx_.nodeName, "Required shape pointer is null."), return ge::GRAPH_FAILED);
+                        ctx_.ssmStateShape == nullptr) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(ctx_.nodeName, "input shapes", rgdn_error::Format("Required shape pointer is null.")); return ge::GRAPH_FAILED; };
         return CheckShapeDimAndRelation(*ctx_.queryShape, *ctx_.keyShape, *ctx_.valueShape, *ctx_.betaShape,
                                         *ctx_.stateShape, *ctx_.cuSeqlensShape, *ctx_.ssmStateShape);
     }
@@ -388,7 +368,7 @@ private:
                 selected.valid);
 
         if (!selected.valid) {
-            OP_LOGE(ctx_.nodeName, "vStep should be bigger than 8, shape is too big");
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(ctx_.nodeName, "input shapes", rgdn_error::Format("vStep should be bigger than 8, shape is too big"));
             return ge::GRAPH_FAILED;
         }
 
@@ -397,7 +377,7 @@ private:
                              static_cast<int64_t>(4 * selected.attnOutBufferNum);
         int64_t ubRestBytes = ubSize - ubCalcCtx.fixedUbBytes - queueCoeff * static_cast<int64_t>(selected.vStep);
         if (ubRestBytes < 0) {
-            OP_LOGE(ctx_.nodeName, "ubRestBytes should be non-negative, but got %ld", ubRestBytes);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(ctx_.nodeName, "UB capacity", rgdn_error::Format("ubRestBytes should be non-negative, but got %ld", ubRestBytes));
             return ge::GRAPH_FAILED;
         }
         tiling.ubCalSize = static_cast<uint32_t>(ctx_.ubSize);

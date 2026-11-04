@@ -1,85 +1,51 @@
 # RecurrentGatedDeltaRule ATK 工程
 
-本目录提供 `recurrent_gated_delta_rule` 的 ATK 单算子工程，包含 `executor_recurrent_gated_delta_rule.py`、`gen_recurrent_gated_delta_rule.py`、`recurrent_gated_delta_rule.yaml`、`atk_recurrent_gated_delta_rule.json`。测试通过稳定入口 `fla_npu.ops.ascendc.recurrent_gated_delta_rule` 调用算子。
+## A2/A3 arch22 验证
 
-## 输入约束
+稳定入口为 `fla_npu.ops.ascendc.recurrent_gated_delta_rule`。A2/A3 的两个 ACLNN host 接口共用 `op_kernel/arch22/recurrent_gated_delta_rule.h`；所有融合开关关闭时也使用同一实现。`gk` 是保留参数，必须拒绝，不能作为合法精度用例。
 
-- `query/key` 的 shape 为 `(T, Nk, Dk)`，`value/out` 的 shape 为 `(T, Nv, Dv)`。
-- `beta` 的 shape 为 `(T, Nv)`；`stateRef` 为原地输入输出，shape 为 `(BlockNum, Nv, Dv, Dk)`。
-- `query/key/value/beta/out` 为 BF16；`stateRef` 支持 BF16 和 FP32。
-- `actualSeqLengths` 为 `(B+1,)` 的 INT32 张量，首元素是不参与计算的无效前缀长度，所有元素之和等于 `T`。
-- `ssmStateIndices` 为 `(T,)` 的 INT32 张量，取值范围为 `[0, BlockNum)`，且所有元素互不重复。
-- `g` 如提供，shape 为 `(T, Nv)`；`gk` 如提供，shape 为 `(T, Nv, Dk)`。两者均为 FP32，且至少提供一个。
-- `numAcceptedTokens` 如提供，shape 为 `(B,)`，每项取值范围为 `[1, actualSeqLengths[i+1]]`。
-- `Nv` 必须是 `Nk` 的整数倍；`Nk <= 256`、`Nv <= 256`、`Dk=128`、`Dv=128`；每条有效序列长度不超过 8。
-- 泛化矩阵覆盖连续 state、transpose 非连续 state、head padding、block padding、复合 padding 和 storage offset；同时覆盖 Q/K/V/gate/metadata 的合法非连续视图。
+### 输入和标杆
 
-## 标杆来源
+- Q/K 为 `[T,HK,128]`，V/out 为 `[T,HV,128]`，均为 BF16，最内轴连续，允许合法行 padding。
+- beta 和可选标量 gate g 为 `[T,HV]`，分别支持 BF16/FP32。State 为 `[BlockNum,HV,128,128]`，支持 BF16/FP32，以及内轴连续、非重叠的合法正 stride 视图。
+- `HV/HK` 必须是 1 到 16 的整数。实际序列长度、索引和 accepted-token 参数沿用接口文档定义。
+- 融合开关覆盖 Q/K L2 归一化、原始 gate 变换、beta sigmoid、允许负特征值。最后一项只能和 beta sigmoid 一起开启。
+- CPU 标杆在 `reference_recurrent_gated_delta_rule.py` 中按 FP32 执行递推；executor 独立执行对应的归一化、gate 和 beta 前处理。输入值域沿用原用例生成器，精度标准保持 YAML 中 ATK 原生的 `mixed_tolerance_bm`。
+- 比较 out 和原地更新的完整 State；无效前缀 out 没有数值语义，比较前统一置零。
 
-`tests/atk/recurrent_gated_delta_rule/reference_recurrent_gated_delta_rule.py`；`fla/ops/ascendc/gdn/recurrent_gdn/recurrent_gated_delta_rule/README.md`
+### 用例矩阵
 
-CPU 标杆在本目录的 `reference_recurrent_gated_delta_rule.py` 中实现，输入构造、`run_cpu`、`run_npu` 和 `FunctionApi` 在 `executor_recurrent_gated_delta_rule.py` 中实现；公共文件只提供基础工具函数。CPU golden 与算子语义一致，按 batch 分段使用 FP32 执行递推，覆盖 GQA 头映射、`g/gk` 衰减、接受 token 对初始状态索引的选择，以及逐 token 状态写回。精度检查统一使用 ATK 原生 `mixed_tolerance_bm`。
+当前 A2/A3 规格文件为 `recurrent_gated_delta_rule_arch22.yaml`；旧 YAML 仅保留历史规格。
 
-ATK 比较以下两个结果：
+运行 `python gen_arch22_cases.py` 可确定性生成以下矩阵：
 
-- `out`：`(T, Nv, Dv)` 的注意力输出；无效前缀没有公开数值语义，比较前统一置零。
-- `stateRef`：算子执行后原地更新的完整状态张量。
+| 文件 | 数量 | 用途 |
+|---|---:|---|
+| `atk_recurrent_gated_delta_rule_arch22.json` | 200 | 正向精度；8 种 State/beta/g dtype 组合、12 种合法融合开关组合、GVA、变长、prefix、accepted token、合法非连续视图及连续调用 |
+| `atk_recurrent_gated_delta_rule_arch22_mss.json` | 50 | 确定性和内存；覆盖全部 dtype/开关组合，包含跨 8-token 窗口回绕 |
+| `atk_recurrent_gated_delta_rule_arch22_perf.json` | 8 | 性能；覆盖全部 dtype 组合 |
 
-## SOC 支持
+新矩阵的设计 ID 为 `RGDR-A001` 到 `RGDR-A200`，保留原矩阵的数值 profile 和精度阈值。最后 8 条补充 9、16、17 token 和含零长度序列的窗口回绕场景。原 `gen_recurrent_gated_delta_rule.py` 及旧 JSON 保留用于历史用例追溯；含 gk 的旧矩阵不代表当前 A2/A3 合法规格。
 
-YAML 元信息覆盖 `ascend910b`、`ascend910_93` 和 `ascend950`，可配合统一脚本的 `-soc=ascend910b|ascend910_93|ascend950` 使用。提交的 JSON 用例使用 `soc=all`，同一矩阵用于 A2、A3、A5。
+### 执行方式
 
-## 默认用例
-
-`atk_recurrent_gated_delta_rule.json` 由 `gen_recurrent_gated_delta_rule.py` 确定性生成，固定包含 200 条正向用例。每条 `case_spec` 都携带详细设计 `design_id`，映射关系如下：
-
-| ATK Case ID | 详细设计 ID | 数量 | 覆盖范围 |
-|---:|---|---:|---|
-| 0-5 | RGDR-P001-P006 | 6 | gate 组合、BF16/FP32 state、A2/A3 归约路径 |
-| 6-21 | RGDR-P007-P022 | 16 | 变长、prefix、零长度逻辑序列、accepted token |
-| 22 | RGDR-P023 | 1 | `Dk=Dv=128` 的对齐维度、UB profile |
-| 23-38 | RGDR-P024-P039 | 16 | `Nk/Nv=1..256`、GVA group size |
-| 39-54 | RGDR-P040-P055 | 16 | state stride/layout、稀疏/逆序/置换 index |
-| 55-69 | RGDR-P056-P070 | 15 | 平台、调用通路代表 shape、非连续输入、连续调用与回归 |
-| 70-81 | RGDR-P071-P082 | 12 | gate、state dtype/layout 与非连续输入交叉组合 |
-| 82-90 | RGDR-P083-P091 | 9 | 长变长链、accepted token、state index 置换与 scale |
-| 91-95 | RGDR-P092-P096 | 5 | 补充可整除的 `Nk/Nv` 头映射 |
-| 96-99 | RGDR-P097-P100 | 4 | 连续调用与 gate/beta 数值分布 |
-| 100-115 | RGDR-G001-G016 | 16 | GVA head 映射与 group size |
-| 116-131 | RGDR-G017-G032 | 16 | GVA gate、state dtype、可追踪 head 数据 |
-| 132-147 | RGDR-G033-G048 | 16 | GVA varlen、prefix、accepted 与稀疏 block |
-| 148 | RGDR-G049 | 1 | GVA 对齐维度、UB 分片（`Dk=Dv=128`） |
-| 149-164 | RGDR-G050-G065 | 16 | GVA state layout、index、非连续输入与复杂视图 |
-| 165-174 | RGDR-G066-G075 | 10 | 补充 GVA ratio 与大 head 边界 |
-| 175-182 | RGDR-G076-G083 | 8 | GVA gate、state layout 与数值 profile 交叉 |
-| 183-190 | RGDR-G084-G091 | 8 | GVA 长变长、accepted token 与 state index 链 |
-| 191-198 | RGDR-G092-G099 | 8 | GVA 复合非连续视图与连续调用 |
-| 199 | RGDR-G100 | 1 | prefix、varlen、accepted、GVA 与复合 layout 回归 |
-
-ATK DUT 统一通过 `fla_npu.ops.ascendc.recurrent_gated_delta_rule` 执行。`design_routes` 只保留详细设计中 P/A/D/F 的来源追溯，不表示本 JSON 已执行 aclnn C++ example 或快速拉起通路；这些通路仍由各自专用测试验证。
-
-正向 JSON 只包含 `Dk=Dv=128` 的合法 shape。任何不等于 128 的维度属于非法输入，由 `fla_npu` wrapper 和 op_host tiling 共同拦截；对应拦截由 op_host UT 覆盖。
-
-## 执行方式
+先安装与源码一致的 wheel 并加载配套 CANN 环境。ATK 必须提供原生 `mixed_tolerance_bm`；本次验证使用 ATK 26.9.8。切换工具版本不改变标准、阈值或输入范围。
 
 ```bash
-bash tests/atk/run_test_cpu.sh -op=recurrent_gated_delta_rule -npu_device_id=0
-bash tests/atk/run_test_cpu.sh -op=recurrent_gated_delta_rule -npu_device_id=0 -scope=accuracy
-bash tests/atk/run_test_cpu.sh -op=recurrent_gated_delta_rule -npu_device_id=0 -scope=performance
-bash tests/atk/run_test_cpu.sh -op=recurrent_gated_delta_rule -npu_device_id=0 -scope=determinism
-bash tests/atk/run_test_cpu.sh -op=recurrent_gated_delta_rule -npu_device_id=0 -scope=mssanitizer
-bash tests/atk/run_test_cpu.sh -op=recurrent_gated_delta_rule -scope=gen_cases
+cd tests/atk/recurrent_gated_delta_rule
+python gen_arch22_cases.py
+NPU_DEVICE_ID=0 ATK_OUTPUT_ROOT=./arch22_results/accuracy bash scripts/run_arch22_validation.sh accuracy
+NPU_DEVICE_ID=0 ATK_OUTPUT_ROOT=./arch22_results/determinism bash scripts/run_arch22_validation.sh determinism
+NPU_DEVICE_ID=0 ATK_OUTPUT_ROOT=./arch22_results/memory bash scripts/run_arch22_validation.sh memory
+NPU_DEVICE_ID=0 ATK_OUTPUT_ROOT=./arch22_results/performance bash scripts/run_arch22_validation.sh performance
 ```
 
-提交的 200 条 JSON 可通过以下命令重新生成并复核：
+如通过 `ASCEND_RT_VISIBLE_DEVICES` 只暴露一张卡，`NPU_DEVICE_ID` 使用进程可见编号 0。确定性每条重复 50 次；内存使用 mssanitizer memcheck，以 `--kernel-name=RecurrentGatedDeltaRule` 匹配目标算子的全部模板并开启泄漏检查；性能使用设备 profiler，正式耗时读取 `op_summary` 的 `Task Duration(us)`，不使用 Python wall time。
 
-```bash
-python3 tests/atk/recurrent_gated_delta_rule/gen_recurrent_gated_delta_rule.py --summary
-```
+### 结果检查
 
-统一脚本的 `gen_cases` 默认传入 `-dt 100 -en 0`。需要通过 ATK case generator 生成完整矩阵时，显式设置：
+精度报告应为 200 条执行成功且精度达标。确定性和内存报告各为 50 条通过；内存还需检查 sanitizer 原始日志。性能交付保留 profiler CSV 和用例映射。若出现精度失败，必须保存输出并用 CT 可视化定位，不能缩小输入范围、调整阈值或删除失败用例。
 
-```bash
-GEN_CASES_DTYPE_NUMBERS=200 \
-bash tests/atk/run_test_cpu.sh -op=recurrent_gated_delta_rule -scope=gen_cases
-```
+完整接口和实现约束见算子目录的 `docs/api.md`、`docs/design.md`。测试结果以转测交付中的原始报告为准。
+
+精度脚本显式传入 `--gm_init_flag 512`；可用 `GM_INIT_MB` 配置工具初始化参数，避免默认策略尝试填充接近整卡的显存。该选项只影响测试前的 GM 初始化，不改变算子输入值域、shape 或精度标准。

@@ -256,10 +256,12 @@ class AbiParityGateTest(unittest.TestCase):
         report = self.tool.evaluate()
         self.assertEqual(report["problems"], [])
         self.assertGreater(report["checked"], 25)
-        # The two hand-written recurrent entry points consume 13 required
-        # tensor slots between them; a drop here means a slot stopped being
-        # unboxed into an owning Tensor and is leaking again.
+        # Count both generic typed unboxing and explicit stack reads. The
+        # recurrent entry points still own seven GDN and six KDA input slots.
         self.assertGreaterEqual(report["owned_slots"], 13)
+        self.assertEqual(
+            report["owned_slots_by_op"]["npu_recurrent_gated_delta_rule"], 7)
+        self.assertEqual(report["owned_slots_by_op"]["npu_recurrent_kda"], 6)
 
     def test_parameter_reorder_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -287,20 +289,21 @@ class AbiParityGateTest(unittest.TestCase):
                             report["problems"])
 
     def test_unconsumed_stack_slot_is_reported(self) -> None:
+        original_owned_slots = self.tool.evaluate()["owned_slots"]
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "src"
             src.mkdir()
             for path in SRC_DIR.glob("stable_*.cpp"):
                 (src / path.name).write_text(path.read_text(encoding="utf-8"),
                                              encoding="utf-8")
-            target = src / "stable_recurrent_gated_delta_rule.cpp"
+            target = src / "stable_recurrent_kda.cpp"
             text = target.read_text(encoding="utf-8")
             # The leak that OOMed the conc32 service: reading a required tensor
             # slot as a raw handle consumes nothing (library.h expects the kernel
             # to steal it).
             changed = text.replace(
-                "const Tensor t_query = to<Tensor>(stack[0]);",
-                "const AtenTensorHandle query = "
+                "const Tensor t_q = to<Tensor>(stack[0]);",
+                "const AtenTensorHandle t_q = "
                 "to<AtenTensorHandle>(stack[0]);")
             self.assertNotEqual(changed, text, "test setup did not apply")
             target.write_text(changed, encoding="utf-8")
@@ -309,7 +312,41 @@ class AbiParityGateTest(unittest.TestCase):
             self.assertTrue(
                 any("AtenTensorHandle" in item for item in report["problems"]),
                 report["problems"])
-            self.assertEqual(report["owned_slots"], 12)
+            self.assertEqual(report["owned_slots"], original_owned_slots - 1)
+            self.assertEqual(report["owned_slots_by_op"]["npu_recurrent_kda"], 5)
+
+    def test_generic_raw_tensor_parameter_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "src"
+            shutil.copytree(SRC_DIR, src)
+            target = src / "stable_recurrent_gated_delta_rule.cpp"
+            text = target.read_text(encoding="utf-8")
+            changed = text.replace(
+                "    Tensor query, Tensor key, Tensor value, Tensor state, Tensor beta,",
+                "    AtenTensorHandle query, Tensor key, Tensor value, Tensor state, Tensor beta,")
+            self.assertNotEqual(changed, text, "test setup did not apply")
+            target.write_text(changed, encoding="utf-8")
+            with mock.patch.object(self.tool, "SRC_DIR", src):
+                report = self.tool.evaluate()
+            self.assertTrue(any("owning Tensor" in item and "'query'" in item
+                                for item in report["problems"]), report["problems"])
+            self.assertEqual(
+                report["owned_slots_by_op"]["npu_recurrent_gated_delta_rule"], 6)
+
+    def test_generic_unbox_must_consume_tensor_references(self) -> None:
+        original = self.tool.BOXED_HEADER.read_text(encoding="utf-8")
+        for declared, replacement in (
+                ("Tensor", "return to<AtenTensorHandle>(value);"),
+                ("std::optional<Tensor>", "return std::nullopt;")):
+            with self.subTest(declared=declared), tempfile.TemporaryDirectory() as tmp:
+                changed = original.replace(f"return to<{declared}>(value);", replacement)
+                self.assertNotEqual(changed, original, "test setup did not apply")
+                header = Path(tmp) / "boxed.h"
+                header.write_text(changed, encoding="utf-8")
+                with mock.patch.object(self.tool, "BOXED_HEADER", header):
+                    report = self.tool.evaluate()
+                self.assertTrue(any(f"unbox<{declared}>" in item
+                                    for item in report["problems"]), report["problems"])
 
 
 class FallbackGateTest(unittest.TestCase):
