@@ -227,8 +227,8 @@ static aclnnStatus CheckShape(const ChunkGatedDeltaRuleFwdPrepareParams &params)
     CHECK_COND(V == 128 || V == 256, ACLNN_ERR_PARAM_INVALID, "V must be 128 or 256.");
     CHECK_COND(HK > 0 && HV % HK == 0, ACLNN_ERR_PARAM_INVALID, "Hv must be divisible by Hk.");
     const int64_t ratio = HV / HK;
-    CHECK_COND(ratio >= 1 && ratio <= (IsA2PrepareSoc() ? 16 : 4), ACLNN_ERR_PARAM_INVALID,
-               "Hv/Hk must be in [1,16] on A2/A3 or [1,4] on Ascend950.");
+    CHECK_COND(ratio >= 1 && ratio <= 16, ACLNN_ERR_PARAM_INVALID,
+               "Hv/Hk must be in [1,16].");
 
     if (params.aLogOptional != nullptr) {
         const op::Shape aLogShape = params.aLogOptional->GetViewShape();
