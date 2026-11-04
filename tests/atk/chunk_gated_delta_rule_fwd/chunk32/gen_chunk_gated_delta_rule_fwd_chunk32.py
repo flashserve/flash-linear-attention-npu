@@ -60,9 +60,10 @@ def _spec(
     g_mode: str = "normal",
     tags: str = "accuracy",
     seed: int,
+    max_tokens: int = 8192,
 ) -> dict:
-    if tokens > 8192:
-        raise ValueError(f"T={tokens} exceeds 8192")
+    if tokens > max_tokens:
+        raise ValueError(f"T={tokens} exceeds {max_tokens}")
     return {
         "case_key": case_key,
         "tags": tags,
@@ -378,40 +379,8 @@ def slim_specs() -> list[dict]:
     return specs
 
 
-def _group_key(row: dict) -> tuple:
-    return (
-        row["layout"], row["g_mode"], row["B"], row["T"], row["seqlens"],
-        row["out_l2"], row["disable_recompute"], row["out_h"],
-    )
-
-
-def _take(rows: list[dict], pattern: list[tuple]) -> list[dict]:
-    """Pick one row per (state, gva, neg, sv). ``pattern`` entries must exist."""
-
-    chosen = []
-    used: set[int] = set()
-    for state, gva, neg, sv in pattern:
-        found = None
-        for index, row in enumerate(rows):
-            if index in used:
-                continue
-            if (
-                row["state_dtype"] == state
-                and (row["HV"] > row["HK"]) == gva
-                and bool(row["allow_neg_eigval"]) == neg
-                and bool(row["state_v_first"]) == sv
-            ):
-                found = index
-                break
-        if found is None:
-            raise RuntimeError(f"double subset missing {state} gva={gva} neg={neg} sv={sv}")
-        used.add(found)
-        chosen.append(rows[found])
-    return chosen
-
-
-# state, GVA, allow_neg, state_v_first. Each factor's values all appear.
-_COVER_STATES = [
+# state, GVA, allow_neg, state_v_first. Every factor value appears.
+_COVER8 = (
     ("none", False, False, False),
     ("bf16", True, False, False),
     ("fp32", False, True, False),
@@ -420,79 +389,123 @@ _COVER_STATES = [
     ("bf16", False, True, True),
     ("fp32", True, False, True),
     ("zero", False, True, True),
-]
-_COVER_FP32_ZERO = [
-    ("fp32", False, False, False),
-    ("zero", True, False, False),
-    ("fp32", True, True, False),
-    ("zero", False, True, False),
-    ("fp32", False, False, True),
-    ("zero", True, False, True),
-    ("fp32", True, True, True),
-    ("zero", False, True, True),
-]
-_COVER_STRONG = [
-    ("none", False, False, False),
-    ("bf16", True, True, True),
-    ("none", True, True, False),
-    ("bf16", False, False, True),
-]
+)
 
 
 def double_specs() -> list[dict]:
-    """About 600 cases. The original 300 stay; later shapes keep a covering subset.
+    """About 1000 double-benchmark cases with 2048 < T < 16384.
 
-    Every layout, length, packed pattern, export switch and ``g_mode`` in the
-    full matrix still appears. Inside a new shape, the kept rows still include
-    every initial-state dtype, MHA and GVA, and both ``allow_neg_eigval`` and
-    ``state_v_first``. Seeds match ``accuracy_specs``.
+    Every shape gets the full state × head × neg × state_v_first cross with all
+    three exports on. A thinner cross keeps the inference launch, the other
+    export combinations, and strong/spike/mix.
     """
 
-    specs = accuracy_specs()
-    grouped: dict[tuple, list[int]] = {}
-    for index, row in enumerate(specs[300:], start=300):
-        grouped.setdefault(_group_key(row), []).append(index)
-    keep = set(range(300))
-    for indexes in grouped.values():
-        rows = [specs[index] for index in indexes]
-        if len(rows) <= 8:
-            keep.update(indexes)
-            continue
-        states = {row["state_dtype"] for row in rows}
-        if states <= {"fp32", "zero"}:
-            pattern = _COVER_FP32_ZERO
-        elif rows[0]["g_mode"] == "strong":
-            pattern = _COVER_STRONG
-        else:
-            pattern = _COVER_STATES
-        picked = {id(row) for row in _take(rows, pattern)}
-        keep.update(index for index in indexes if id(specs[index]) in picked)
-    chosen = [row for index, row in enumerate(specs) if index in keep]
-    full_groups = {_group_key(row) for row in specs}
-    got_groups = {_group_key(row) for row in chosen}
-    if got_groups != full_groups:
-        raise RuntimeError(f"double subset drops {len(full_groups - got_groups)} scenarios")
-    for key in full_groups:
-        src = [row for row in specs if _group_key(row) == key]
-        dst = [row for row in chosen if _group_key(row) == key]
-        for field, values in (
-            ("state_dtype", {row["state_dtype"] for row in src}),
-            ("head", {(row["HV"] > row["HK"]) for row in src}),
-            ("neg", {bool(row["allow_neg_eigval"]) for row in src}),
-            ("sv", {bool(row["state_v_first"]) for row in src}),
-        ):
-            got = {
-                "state_dtype": {row["state_dtype"] for row in dst},
-                "head": {(row["HV"] > row["HK"]) for row in dst},
-                "neg": {bool(row["allow_neg_eigval"]) for row in dst},
-                "sv": {bool(row["state_v_first"]) for row in dst},
-            }[field]
-            if got != values:
-                raise RuntimeError(f"double subset drops {field} on {key}: {values - got}")
-    keys = [row["case_key"] for row in chosen]
+    # layout, B, T, seqlens. Packed lengths sum to T.
+    shapes = (
+        ("BNSD", 1, 4096, ""),
+        ("BNSD", 1, 4100, ""),
+        ("BNSD", 1, 12288, ""),
+        ("BNSD", 1, 16340, ""),
+        ("BNSD", 2, 3072, ""),
+        ("BSND", 1, 8192, ""),
+        ("BSND", 1, 8204, ""),
+        ("BSND", 2, 2560, ""),
+        ("BSND", 1, 16352, ""),
+        ("NTD", 1, 8192, "4096,4096"),
+        ("NTD", 1, 8000, "3000,5000"),
+        ("NTD", 1, 4128, "32,4096"),
+        ("NTD", 1, 4116, "20,4096"),
+        ("TND", 1, 6144, ""),
+        ("TND", 1, 12288, "4096,8192"),
+        ("TND", 1, 10000, "4000,6000"),
+        ("TND", 1, 16000, "7000,9000"),
+        ("TND", 1, 7168, "1024,2048,4096"),
+    )
+    states = ("none", "bf16", "fp32", "zero")
+    heads = ((4, 4), (2, 8))
+    flags = ((False, False), (False, True), (True, False), (True, True))
+    export_modes = (
+        (True, False, False),
+        (False, True, False),
+        (False, False, True),
+        (True, True, False),
+        (True, False, True),
+        (False, True, True),
+        (True, True, True),
+    )
+    specs: list[dict] = []
+
+    def add(layout, batch, tokens, seqlens, hk, hv, state, neg, sv, l2, ga, out_h, g_mode) -> None:
+        specs.append(
+            _spec(
+                case_key=_key(
+                    layout, hk, hv, tokens, state, seqlens, neg, sv, batch, l2, ga, out_h, g_mode,
+                ),
+                tags="double", layout=layout, batch=batch, k_heads=hk, v_heads=hv,
+                tokens=tokens, state=state, seqlens=seqlens, allow_neg=neg,
+                state_v_first=sv, out_l2=l2, disable_recompute=ga, out_h=out_h,
+                g_mode=g_mode, seed=SEED_BASE + 8000 + len(specs), max_tokens=16383,
+            )
+        )
+
+    for layout, batch, tokens, seqlens in shapes:
+        for state in states:
+            for hk, hv in heads:
+                for neg, sv in flags:
+                    add(layout, batch, tokens, seqlens, hk, hv, state, neg, sv, True, True, True, "normal")
+        for state, gva, neg, sv in _COVER8:
+            hk, hv = (2, 8) if gva else (4, 4)
+            add(layout, batch, tokens, seqlens, hk, hv, state, neg, sv, False, False, False, "normal")
+
+    partial_shapes = (
+        ("BNSD", 1, 4096, ""),
+        ("BSND", 1, 8192, ""),
+        ("NTD", 1, 8000, "3000,5000"),
+        ("TND", 1, 6144, ""),
+        ("BNSD", 2, 3072, ""),
+        ("NTD", 1, 4128, "32,4096"),
+    )
+    for layout, batch, tokens, seqlens in partial_shapes:
+        for l2, ga, out_h in export_modes:
+            if (l2, ga, out_h) == (True, True, True):
+                continue
+            for state, gva, neg, sv in _COVER8[:4]:
+                hk, hv = (2, 8) if gva else (4, 4)
+                add(layout, batch, tokens, seqlens, hk, hv, state, neg, sv, l2, ga, out_h, "normal")
+
+    gate_shapes = (
+        ("BNSD", 1, 4096, ""),
+        ("BNSD", 1, 4100, ""),
+        ("BSND", 1, 8192, ""),
+        ("BSND", 2, 2560, ""),
+        ("NTD", 1, 8000, "3000,5000"),
+        ("NTD", 1, 4128, "32,4096"),
+        ("TND", 1, 10000, "4000,6000"),
+        ("TND", 1, 6144, ""),
+    )
+    for g_mode in ("strong", "spike", "mix"):
+        for layout, batch, tokens, seqlens in gate_shapes:
+            for state, gva, neg, sv in _COVER8:
+                hk, hv = (2, 8) if gva else (4, 4)
+                add(
+                    layout, batch, tokens, seqlens, hk, hv, state, neg, sv,
+                    True, True, True, g_mode,
+                )
+
+    for row in specs:
+        if not 2048 < row["T"] < 16384:
+            raise RuntimeError(f"double T out of range: {row['T']}")
+        if row["seqlens"]:
+            lengths = [int(item) for item in row["seqlens"].split(",")]
+            if sum(lengths) != row["T"] or row["B"] != 1:
+                raise RuntimeError(f"bad varlen {row['case_key']}")
+    keys = [row["case_key"] for row in specs]
     if len(keys) != len(set(keys)):
         raise RuntimeError("duplicate double case_key")
-    return chosen
+    full = sum(row["out_l2"] and row["disable_recompute"] and row["out_h"] for row in specs)
+    if full < 400:
+        raise RuntimeError(f"too few full-export cases: {full}")
+    return specs
 
 
 def perf_specs() -> list[dict]:
