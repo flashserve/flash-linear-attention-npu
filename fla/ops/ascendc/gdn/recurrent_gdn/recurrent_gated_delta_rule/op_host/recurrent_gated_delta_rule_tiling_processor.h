@@ -41,7 +41,7 @@ static constexpr size_t RGDR_DIM_1 = 1;
 static constexpr size_t RGDR_DIM_2 = 2;
 static constexpr size_t RGDR_DIM_3 = 3;
 
-static constexpr size_t RGDR_MAX_MTP = 8;
+static constexpr size_t RGDR_MAX_MTP = 16;
 static constexpr size_t RGDR_SYS_WORKSPACE_SIZE = 16U * 1024U * 1024U;
 static constexpr uint32_t RGDR_REQUIRED_DIM = 128;
 
