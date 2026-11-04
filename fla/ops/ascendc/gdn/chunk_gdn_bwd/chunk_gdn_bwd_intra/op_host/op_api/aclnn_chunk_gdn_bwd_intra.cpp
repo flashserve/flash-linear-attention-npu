@@ -6,6 +6,8 @@
 #include "chunk_gdn_bwd_intra.h"
 
 #include <array>
+#include "external/aclnn_kernels/aclnn_platform.h"
+#include "../chunk_gdn_bwd_intra_schedule.h"
 #include <set>
 #include <utility>
 #include "aclnn_kernels/common/op_error_check.h"
@@ -93,8 +95,11 @@ aclnnStatus Check(const Params &p)
                "K and V must both be 128.");
     CHECK_COND(vShape.GetDim(0) == b && vShape.GetDim(2) == t,
                ACLNN_ERR_PARAM_INVALID, "q/k and value tensors must share B and T.");
-    CHECK_COND(hv % hk == 0 && hv / hk <= 4, ACLNN_ERR_PARAM_INVALID,
-               "HV/HK must be an integer in [1, 4].");
+    const bool isA5 = GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510;
+    CHECK_COND(hv % hk == 0 && hv / hk <= (isA5 ? optiling::kA5PublishedMaxG : 4),
+               ACLNN_ERR_PARAM_INVALID, "HV/HK exceeds the platform support range.");
+    CHECK_COND(hv / hk <= 4 || p.q->GetDataType() == DataType::DT_BF16,
+               ACLNN_ERR_PARAM_INVALID, "HV/HK > 4 requires BF16 main tensors.");
     CHECK_COND(gShape.GetDim(0) == b && gShape.GetDim(1) == hv && gShape.GetDim(2) == t,
                ACLNN_ERR_PARAM_INVALID, "g/beta shape must be [B, HV, T].");
     CHECK_COND(aShape.GetDim(0) == b && aShape.GetDim(1) == hv &&

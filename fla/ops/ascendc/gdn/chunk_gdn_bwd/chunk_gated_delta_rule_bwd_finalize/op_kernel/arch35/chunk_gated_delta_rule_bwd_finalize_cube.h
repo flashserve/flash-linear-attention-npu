@@ -61,6 +61,16 @@ public:
 
     __aicore__ inline void Process()
     {
+        if (tiling_->headRatio > 4) {
+            ProcessImpl<true>();
+        } else {
+            ProcessImpl<false>();
+        }
+    }
+
+    template <bool GVA_GT4>
+    __aicore__ inline void ProcessImpl()
+    {
         Catlass::Arch::Resource<ArchTag> resource;
 
         // L1 只由 AIC 写入。AIV 结果先落 GM，AIC 在对应 Stage 内再搬入
@@ -177,6 +187,7 @@ public:
         int64_t chunkTaskIdx = 0;
         int64_t headGroupIdx = 0;
         int64_t taskRound = 0;
+        int64_t windowBank = 0;
         int64_t hvBase = 0;
         int64_t taskCount = 0;
         int64_t headOffset = 0;
@@ -205,10 +216,19 @@ public:
             if (!chunk.valid) {
                 continue;
             }
-            hvBase = headGroupIdx * tiling_->taskGroupSize;
-            taskCount = Min(tiling_->taskGroupSize, tiling_->HV - hvBase);
-            taskRound = (taskIdx - coreIdx_) / coreNum_;
-            workspaceGroupRound_ = taskRound;
+            const int64_t windowCount = GVA_GT4 ?
+                tiling_->headRatio / 4 + (tiling_->headRatio % 4 != 0) : 1;
+            for (int64_t window = 0; window < windowCount; ++window) {
+                if constexpr (GVA_GT4) {
+                    hvBase = headGroupIdx * tiling_->headRatio + window * 4;
+                    taskCount = Min(int64_t(4), tiling_->headRatio - window * 4);
+                    workspaceGroupRound_ = windowBank;
+                } else {
+                    hvBase = headGroupIdx * tiling_->taskGroupSize;
+                    taskCount = Min(tiling_->taskGroupSize, tiling_->HV - hvBase);
+                    taskRound = (taskIdx - coreIdx_) / coreNum_;
+                    workspaceGroupRound_ = taskRound;
+                }
                 // 一个 AIC 顺序承包当前 chunk/task group 的全部 HEAD。du/h 的
                 // MTE2 在等待 Stage 0 vb 前发射，可与两个 AIV 的 Stage 0 重叠。
                 for (headOffset = 0; headOffset < taskCount; ++headOffset) {
@@ -292,6 +312,8 @@ public:
                 // Vector->Cube 有序链。两个 AIV 只有完成本组 Stage 4 后才会
                 // 顺序进入下一组 Stage 0，因此该天然依赖已经保护跨组 UB 复用，
                 // 这里不再增加任务组边界 wait。
+                windowBank ^= 1;
+            }
         }
 
         // kernel 退出前消费所有初始/末轮事件，使每套 Set/Wait 都完整闭环。

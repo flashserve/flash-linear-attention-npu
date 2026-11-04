@@ -61,7 +61,7 @@ reference，避免 DUT 与标杆复用同一 kernel。
 `layout` 只控制 q/k/v 和 dq/dk/dv。g、beta 固定为 BSN；可选的 q/k rstd 固定为 BNS；
 dO 固定为 BSND，可选的 betaRaw 固定为 BSN，与 q/k/v 的 `layout` 无关。
 
-`Hv` 必须能被 `Hk` 整除。变长模式要求物理 `B=1`；`cuSeqlensOptional` 必须从 0 开始、
+`Hv` 必须能被 `Hk` 整除；A5 支持比例 1～16，A2/A3 保持 1～4。变长模式要求物理 `B=1`；`cuSeqlensOptional` 必须从 0 开始、
 以 `T` 结束且单调不降，`chunkIndicesOptional` 按逻辑序列和 chunk 顺序排列。
 相邻相等的累计长度表示空序列，不产生 chunk。A2/A3 仅为无状态 W/U 重计算准备剔除空序列并
 重编号的内部 metadata；其它阶段保留原序列编号和状态布局。提供 initial state 时，空序列

@@ -333,15 +333,29 @@ def chunk_gated_delta_rule_bwd_finalize_golden(
 
         for hk in range(key_heads):
             hv_start = hk * head_ratio
-            dq_acc = dq_hv[batch_idx, hv_start, token_start:token_end].clone()
-            dk_acc = dk_raw_hv[batch_idx, hv_start, token_start:token_end].clone()
-            for hv in range(hv_start + 1, min(hv_start + head_ratio, value_heads)):
-                dq_acc = (
-                    dq_acc.float() + dq_hv[batch_idx, hv, token_start:token_end].float()
-                ).to(work_dtype)
-                dk_acc = (
-                    dk_acc.float() + dk_raw_hv[batch_idx, hv, token_start:token_end].float()
-                ).to(work_dtype)
+            if head_ratio > 4 and work_dtype == torch.bfloat16:
+                # A5 G>4 contract: preserve S13/S14 BF16 partials, sum each
+                # group-relative parity in FP32, then merge and round once.
+                sums_q = [torch.zeros_like(dq_hv[batch_idx, hv_start, token_start:token_end],
+                                           dtype=torch.float32) for _ in range(2)]
+                sums_k = [torch.zeros_like(sums_q[0]) for _ in range(2)]
+                for local_hv in range(head_ratio):
+                    hv = hv_start + local_hv
+                    parity = local_hv % 2
+                    sums_q[parity] += dq_hv[batch_idx, hv, token_start:token_end].float()
+                    sums_k[parity] += dk_raw_hv[batch_idx, hv, token_start:token_end].float()
+                dq_acc = (sums_q[0] + sums_q[1]).to(work_dtype)
+                dk_acc = (sums_k[0] + sums_k[1]).to(work_dtype)
+            else:
+                dq_acc = dq_hv[batch_idx, hv_start, token_start:token_end].clone()
+                dk_acc = dk_raw_hv[batch_idx, hv_start, token_start:token_end].clone()
+                for hv in range(hv_start + 1, min(hv_start + head_ratio, value_heads)):
+                    dq_acc = (
+                        dq_acc.float() + dq_hv[batch_idx, hv, token_start:token_end].float()
+                    ).to(work_dtype)
+                    dk_acc = (
+                        dk_acc.float() + dk_raw_hv[batch_idx, hv, token_start:token_end].float()
+                    ).to(work_dtype)
             dq[batch_idx, hk, token_start:token_end] = dq_acc
             dk[batch_idx, hk, token_start:token_end] = dk_acc
 

@@ -41,6 +41,8 @@ using namespace op;
 
 namespace {
 
+constexpr int64_t kA5PublishedMaxG = 16;
+
 constexpr int64_t DIM_128 = 128;
 constexpr int64_t CHUNK_64 = 64;
 
@@ -381,8 +383,8 @@ aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
                ACLNN_ERR_PARAM_INVALID, "B/HK/HV/T must be positive.");
     CHECK_COND(info.keyDim == DIM_128 && info.valueDim == DIM_128,
                ACLNN_ERR_PARAM_INVALID, "K and V must both be 128.");
-    CHECK_COND(info.hv % info.hk == 0 && info.hv / info.hk <= 4,
-               ACLNN_ERR_PARAM_INVALID, "HV/HK must be an integer in [1, 4].");
+    CHECK_COND(info.hv % info.hk == 0 && info.hv / info.hk <= (IsAscend950() ? kA5PublishedMaxG : 4),
+               ACLNN_ERR_PARAM_INVALID, "HV/HK must be an integer within the platform support range.");
     CHECK_RET(CheckLayoutShapes(params, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckMetadata(params, info.tokens) == ACLNN_SUCCESS,
               ACLNN_ERR_PARAM_INVALID);

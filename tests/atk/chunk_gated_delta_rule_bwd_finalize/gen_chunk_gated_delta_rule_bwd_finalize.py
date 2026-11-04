@@ -254,6 +254,12 @@ def _state_chunk_num(spec: dict) -> int:
     chunk_size = int(spec["chunk_size"])
     if not bool(spec.get("varlen", False)):
         return (total_tokens + chunk_size - 1) // chunk_size
+    if spec.get("cu_seqlens") is not None:
+        boundaries = spec["cu_seqlens"]
+        if boundaries[0] != 0 or boundaries[-1] != total_tokens:
+            raise ValueError("cu_seqlens must span T")
+        return sum((end - begin + chunk_size - 1) // chunk_size
+                   for begin, end in zip(boundaries, boundaries[1:]))
     rng = random.Random(20260822)
     cuts = sorted(rng.sample(range(1, total_tokens), 63))
     boundaries = [0, *cuts, total_tokens]

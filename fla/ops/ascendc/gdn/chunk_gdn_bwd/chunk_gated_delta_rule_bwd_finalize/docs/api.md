@@ -1,5 +1,9 @@
 # ChunkGatedDeltaRuleBwdFinalize API
 
+A5 G>4 保留 S0～S14 的 BF16 partial，按 GVA 组内偶/奇 HV 各自以 FP32
+顺序累加，最后固定相加并一次转 BF16，再执行可选 Q/K norm。
+G≤4 和 A2/A3 的既有数值契约保持。
+
 ## Python
 
 ```python
@@ -93,7 +97,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalize(
 | 平台 | V | BT（chunk_size） | HV/HK | g/beta dtype |
 | --- | --- | --- | --- | --- |
 | A2 / A3 | 128、256 | 64、128 | 正整数 | 同为 BF16 或同为 FP32 |
-| A5 | 128 | 64 | 1 到 4 | 同为 BF16 或同为 FP32 |
+| A5 | 128 | 64 | 1 到 16 | 同为 BF16 或同为 FP32 |
 
 定长模式下 `NT=ceil(T/BT)`；变长模式下 `B=1`，`NT` 为所有序列的 chunk 总数。
 两种模式均支持不满一个 chunk 的尾块。

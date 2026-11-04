@@ -45,7 +45,9 @@ __aicore__ inline void DispatchKernel(
     GM_ADDR dvLocal, GM_ADDR workspace,
     const ChunkGdnBwdIntraTilingData *__restrict tiling)
 {
-    static_assert(G_KEY >= 1 && G_KEY <= 4, "G must be in [1, 4].");
+    static_assert((G_KEY >= 1 && G_KEY <= 4) || G_KEY == G_KEY_GT4, "Invalid G group.");
+    static_assert(G_KEY != G_KEY_GT4 || MAIN_KEY == CHUNK_GDN_BWD_INTRA_MAIN_BF16,
+                  "The generic G group requires BF16.");
     using MainT = typename IntraMainType<MAIN_KEY>::type;
     using GateT = typename IntraAuxType<GATE_KEY>::type;
     using BetaT = typename IntraAuxType<BETA_KEY>::type;
@@ -65,6 +67,7 @@ __aicore__ inline void DispatchKernel(
         kernel.Process();
     }
 #else
+    if constexpr (G_KEY <= 4) {
     if ASCEND_IS_AIC {
         Arch22::ChunkGdnBwdIntraCube<MainT, G_KEY> kernel;
         kernel.Init(q, k, a, dO, w, u, dvLocal, workspace, cuSeqlens, chunkIndices, tiling);
@@ -74,6 +77,7 @@ __aicore__ inline void DispatchKernel(
         Arch22::ChunkGdnBwdIntraVector<MainT, GateT, BetaT, G_KEY> kernel;
         kernel.Init(k, v, g, beta, workspace, cuSeqlens, chunkIndices, tiling);
         kernel.Process();
+    }
     }
 #endif
 }

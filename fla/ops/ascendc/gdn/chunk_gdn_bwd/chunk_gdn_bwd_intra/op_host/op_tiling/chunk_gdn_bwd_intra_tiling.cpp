@@ -98,8 +98,8 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
                 OP_LOGE(context->GetNodeName(), "B/T/HK/HV must be positive."),
                 return ge::GRAPH_FAILED);
     const int64_t headRatio = valueHeads / qkHeads;
-    OP_CHECK_IF(valueHeads % qkHeads != 0 || headRatio > 4,
-                OP_LOGE(context->GetNodeName(), "unsupported HV/HK head ratio, must be 1/2/3/4."),
+    OP_CHECK_IF(valueHeads % qkHeads != 0,
+                OP_LOGE(context->GetNodeName(), "HV must be divisible by HK."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(keyDim != 128 || valueDim != 128,
                 OP_LOGE(context->GetNodeName(), "K and V dims must be 128."),
@@ -147,6 +147,10 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     OP_CHECK_IF(!arch22 && arch != NpuArch::DAV_3510,
                 OP_LOGE(context->GetNodeName(), "only DAV_2201 and DAV_3510 are supported."),
                 return ge::GRAPH_FAILED);
+    OP_CHECK_IF(headRatio > (arch22 ? 4 : kA5PublishedMaxG) ||
+                    (headRatio > 4 && mainDtype != ge::DT_BF16),
+                OP_LOGE(context->GetNodeName(), "unsupported platform/dtype for HV/HK."),
+                return ge::GRAPH_FAILED);
     const uint32_t aicCores = platform.GetCoreNumAic();
     IntraSchedule schedule;
     OP_CHECK_IF(!BuildIntraSchedule(chunkCount, valueHeads, qkHeads, aicCores,
@@ -189,9 +193,9 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     tiling->useExp2 = *useExp2 ? 1 : 0;
     tiling->scale = static_cast<float>(*scale);
     tiling->reserved = arch22 ? 2201 : 0;
-    const uint64_t strategyKey = isVarlen ?
+    const uint64_t strategyKey = headRatio <= 4 && isVarlen ?
         CHUNK_GDN_BWD_INTRA_VARLEN : CHUNK_GDN_BWD_INTRA_FIXED;
-    const uint64_t gKey = static_cast<uint64_t>(headRatio);
+    const uint64_t gKey = headRatio <= 4 ? static_cast<uint64_t>(headRatio) : G_KEY_GT4;
     const uint64_t mainKey = mainDtype == ge::DT_BF16 ?
         CHUNK_GDN_BWD_INTRA_MAIN_BF16 : CHUNK_GDN_BWD_INTRA_MAIN_FP16;
     const uint64_t gateKey = DataTypeKey(

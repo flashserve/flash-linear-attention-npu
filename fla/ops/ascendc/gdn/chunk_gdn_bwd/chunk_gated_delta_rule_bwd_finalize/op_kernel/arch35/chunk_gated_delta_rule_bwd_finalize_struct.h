@@ -9,6 +9,9 @@
 
 namespace GDN {
 
+// Two [64,128] FP32 gradients per core and per AIV.
+constexpr int64_t GVA_ACC_CORE_BYTES = 2 * 64 * 128 * sizeof(float);
+
 #define TPL_BF16 10
 #define TPL_FP32 30
 
@@ -72,7 +75,8 @@ struct ChunkGatedDeltaRuleBwdFinalizeTilingData {
     int64_t isVariable;
     int64_t stateVFirst;
 
-    // taskGroupSize 是不超过 4 的 GVA 整数倍，且选择时保证无尾组；
+    // G<=4: taskGroupSize 是不超过 4 的 GVA 整数倍，无尾组；
+    // G>4: taskGroupSize=4 是物理窗口宽度，headGroupNum=HK。
     // headGroupNum 是每个 chunk 的 HV 方向逻辑任务数。
     // 两个 AIV 按任务序号交错承包完整 HV：AIV0 处理偶数任务，AIV1 处理奇数任务。
     int64_t headRatio;

@@ -127,7 +127,7 @@ const std::array<const aclTensor *, 3> ChunkGdnBwdIntra(
 
 `q/k/v/A/d_o` 使用同一主 dtype；`g` 与 `beta` 可以分别选择 BF16 或 FP32，均不支持
 FP16。当前版本固定 `K=V=128`、`chunk_size=64`，要求 `HV % HK == 0` 且
-`G=HV/HK` 属于 `{1,2,3,4}`。
+A5 的 `G=HV/HK` 为 1～16 整数，其中 G>4 仅支持 BF16 主输入。A2/A3 仍为 1～4。
 
 ## 支持范围
 
@@ -137,7 +137,7 @@ layout              BNSD [B,H,T,D]
 B/HK/HV/T           正整数
 K/V                 固定为 128/128
 chunk_size          固定为 64
-G=HV/HK             1、2、3 或 4
+G=HV/HK             A5: 1～16（G>4 仅 BF16）；A2/A3: 1～4
 ```
 
 定长场景支持任意正 `B`；变长场景使用 `B=1` 的输入容器，由 `cu_seqlens` 描述多个

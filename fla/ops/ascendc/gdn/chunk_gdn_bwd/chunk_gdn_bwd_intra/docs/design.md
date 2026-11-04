@@ -66,7 +66,7 @@ dtype。`g/beta` 进入 Vector 计算后统一转 FP32。上述 W/U 变换来自
 hv = hv_begin + r                              当前切片中第 r 个 value head
 hk = floor(hv/G)                               当前 value head 读取的 q/k head
 valid_r = min(CG,HV-hv_begin)                  当前切片的有效 value head 数
-leader = r - (r mod G)                         当前 hk 共用的 S_hk 和 k 槽
+leader = min{s in [0,r] : floor((hv_begin+s)/G)=hk}  当前 work 内首次出现的 hk 槽
 leaders = [0,valid_r) 内所有不同的 leader，按升序排列
 
 Nchunk = B * ceil(T/BT),         fixed length
@@ -82,8 +82,11 @@ blockDim = min(AIC_CORE_NUM,Nwork)
 `BT/2` 行，因此两个 AIV 都遍历全部 `r=0..valid_r-1`。Stage 0 按唯一 `hk` 计算
 Score，同一 `hk` 对应的连续 `hv` 顺序复用 leader 槽中的同一份结果。
 
-TilingKey 直接编码输入确定的 `G=1/2/3/4`，Kernel 由模板参数 `G` 计算 `hk`、leader
-和最后消费者。所有 `G` 使用同一调度：work 按 chunk 优先、value-head 切片次序编号，
+G≤4 的 TilingKey 和常量除法保持。G>4 使用 G_KEY_GT4=5、MAIN=BF16、
+STRATEGY=0，定长和变长共用入口（由 isVarlen 解码）；只增加 g/beta 的四种组合。
+新组使用 int64_t 真实 HV/HK 计算 hk、leader 和最后消费者，不能用模板组标识作除数。
+同一 work 内共享 Score，跨 work 重算；无新增 GM Score 缓存，原 UB/L1 和 ready/free 不变。
+所有 `G` 使用同一调度：work 按 chunk 优先、value-head 切片次序编号，
 并按 `work_id=block_idx+n*blockDim` 网格步进。每个 work 始终包含完整的 `valid_r`，
 末轮也保持相同任务粒度；`G` 只影响 `hv -> hk` 映射和 Score/k 的复用次数。
 
