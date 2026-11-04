@@ -953,9 +953,8 @@ private:
         SetFlag<HardEvent::MTE1_M>(0);
     }
 
-    // [K, V] H is split by columns, so the first w@H can start after panels 0-3.
-    // [V, K] H is split by rows and each row still needs every K panel, so both
-    // halves wait until the second saxpy has finished uploading.
+    // [K,V] can start the first half after panels 0-3. [V,K] rows need every K
+    // panel, so both halves wait until the second saxpy has uploaded.
     __aicore__ inline void WaitHForWH(bool firstHalf)
     {
         if constexpr (!kFastInfer) {
@@ -1035,48 +1034,14 @@ private:
         LoadL1ToL0A(l1Qexp_[slot], l0A_[0], kBt, kDim, false);
     }
 
-    // [V,K] H occupies the whole of L0B bank 0. K@K reuses bank 1 while that
-    // load is still in flight and overwrites the tail, so this path finishes
-    // the q@H mad before K@K is issued. Fast inference never enters here.
-    __aicore__ inline void QhMadBeforeKkt()
-    {
-        if constexpr (kFastInfer) {
-            return;
-        }
-        if (stateVFirst_ == 0) {
-            return;
-        }
-        WaitFlag<HardEvent::MTE1_M>(0);
-        WaitFlag<HardEvent::FIX_M>(0);
-        MmadL0ToL0C(l0A_[0], l0B_[0], l0C0_, kBt, kDim, kDim, true);
-        SetFlag<HardEvent::M_MTE1>(0);
-        qhDone_ = true;
-    }
-
-    __aicore__ inline void WaitQexpLoaded()
-    {
-        if constexpr (!kFastInfer) {
-            if (qhDone_) {
-                return;
-            }
-        }
-        WaitFlag<HardEvent::MTE1_M>(0);
-    }
-
     // q@H keeps bank 0 and the low 16KB of l0C0 for o. D's K and v_g load into
     // bank 1 under that mad. The second K tile reuses v_g and loads into bank 0
     // once q@H has released it. L0C for D is at 64KB.
     __aicore__ inline void MatmulQexpHAndD(uint32_t slot)
     {
-        bool skipQh = false;
-        if constexpr (!kFastInfer) {
-            skipQh = qhDone_;
-        }
-        if (!skipQh) {
-            WaitFlag<HardEvent::FIX_M>(0);
-            MmadL0ToL0C(l0A_[0], l0B_[0], l0C0_, kBt, kDim, kDim, true);
-            SetFlag<HardEvent::M_MTE1>(0);
-        }
+        WaitFlag<HardEvent::FIX_M>(0);
+        MmadL0ToL0C(l0A_[0], l0B_[0], l0C0_, kBt, kDim, kDim, true);
+        SetFlag<HardEvent::M_MTE1>(0);
 
         constexpr int kDm = 64;
         constexpr uint32_t kL0cD = 16 * 1024;
@@ -1583,19 +1548,13 @@ private:
 
                     ReloadHAndQexp(slot);
                     SetFlag<HardEvent::MTE1_M>(0);
-                    if constexpr (!kFastInfer) {
-                        QhMadBeforeKkt();
-                    }
                     if (c >= 1 && c + 1 < nChunk_) {
                         KktQk(c + 1, false);
                     }
                     CrossCoreWaitFlag<0x4, PIPE_MTE1>(kFlagV);
                     CrossCoreWaitFlag<0x4, PIPE_MTE1>(static_cast<uint16_t>(kFlagV + kAiv1));
-                    WaitQexpLoaded();
+                    WaitFlag<HardEvent::MTE1_M>(0);
                     MatmulQexpHAndD(slot);
-                    if constexpr (!kFastInfer) {
-                        qhDone_ = false;
-                    }
 
                     MatmulAttnVnew(slot);
                     if (c > 0) {
@@ -1647,19 +1606,13 @@ private:
 
                 ReloadHAndQexp(slot);
                 SetFlag<HardEvent::MTE1_M>(0);
-                if constexpr (!kFastInfer) {
-                    QhMadBeforeKkt();
-                }
                 if (c >= 1 && c + 1 < nChunk_) {
                     KktQk(c + 1, false);
                 }
                 CrossCoreWaitFlag<0x4, PIPE_MTE1>(kFlagV);
                 CrossCoreWaitFlag<0x4, PIPE_MTE1>(static_cast<uint16_t>(kFlagV + kAiv1));
-                WaitQexpLoaded();
+                WaitFlag<HardEvent::MTE1_M>(0);
                 MatmulQexpHAndD(slot);
-                if constexpr (!kFastInfer) {
-                    qhDone_ = false;
-                }
 
                 MatmulAttnVnew(slot);
                 if (c > 0) {
@@ -1754,7 +1707,6 @@ private:
     uint32_t initialFp32_ = 0;
     uint32_t finalFp32_ = 0;
     uint32_t stateVFirst_ = 0;
-    bool qhDone_ = false;
     uint32_t allowNegEigval_ = 0;
     uint32_t nzArmed_ = 0;
     float scale_ = 0.f;
