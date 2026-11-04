@@ -38,7 +38,7 @@ const files = (settings.files || ['fla/example.cpp']).map((file) =>
   typeof file === 'string' ? {filename:file,status:'modified'} : file);
 const pr = {number:527, state:'open', draft:false, changed_files:settings.file_count ?? files.length,
   html_url:'https://github.com/example/repo/pull/527',
-  base:{ref:'main',sha:'c'.repeat(40)},head:{sha:'a'.repeat(40),repo:{full_name:'example/fork'}}};
+  base:{ref:settings.base_ref || 'main',sha:'c'.repeat(40)},head:{sha:'a'.repeat(40),repo:{full_name:'example/fork'}}};
 const context = {actor:settings.actor || 'ci-user',serverUrl:'https://github.com',runId:99,runNumber:12,
   repo:{owner:'example',repo:'repo'},payload:{repository:{default_branch:'main'},
     action:settings.action || 'synchronize',pull_request:pr,issue:{number:pr.number},
@@ -64,6 +64,12 @@ const github = {
         }
         if (request.path === '.github/scripts/npu_ci_authorization.js') {
           return {data:{type:'file',encoding:'base64',content:require('fs').readFileSync(process.env.NPU_CI_AUTH_SCRIPT).toString('base64')}};
+        }
+        if (request.path === '.github/scripts/npu_ci_checks.json') {
+          if (settings.profile_error) throw Object.assign(new Error('profile unavailable'), {status:settings.profile_error});
+          return {data:{type:'file',encoding:'base64',content:Buffer.from(JSON.stringify(
+            settings.branch_checks || require(process.env.NPU_CI_CHECKS_SCRIPT.replace(/\.js$/, '.json'))
+          )).toString('base64')}};
         }
         return {data:{type:'file',content:Buffer.from('on:\n  workflow_dispatch:\n').toString('base64')}};
       },
@@ -96,6 +102,7 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
 """.replace("SCRIPT_BODY", scripts[entry])
         env = os.environ.copy()
         env.update(TEST_OPTIONS=json.dumps(options), NPU_CI_AUTH_SCRIPT=str(HELPER),
+                   NPU_CI_CHECKS_SCRIPT=str(ROOT / '.github/scripts/npu_ci_checks.js'),
                    NPU_CI_WORKFLOW_SHA="b" * 40, NPU_CI_RUN_ATTEMPT=str(options.get("attempt", 1)),
                    NPU_CI_TRIGGERING_ACTOR=options.get("rerun_by", ""),
                    NPU_CI_PR_NUMBER="527", NPU_CI_HEAD_SHA="a"*40, NPU_CI_BASE_SHA="c"*40,
@@ -222,6 +229,22 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
     def test_title_edit_keeps_existing_status(self):
         result = self.run_entry("default", files=["ci/run_checks.sh"], action="edited", changes={"title":{"from":"old"}})
         self.assertEqual(self.records(result, "status"), [])
+
+    def test_default_status_uses_target_branch_profile_at_fixed_sha(self):
+        contexts = ["NPU CI / release / build", "NPU CI / release / test"]
+        result = self.run_entry("default", base_ref="release",
+                                branch_checks={"required":[{"context":item} for item in contexts]})
+        self.assertNotIn("error", result)
+        self.assertEqual([status["context"] for status in self.records(result, "status")], contexts)
+        profile_read = self.records(result, "content")[0]
+        self.assertEqual((profile_read["path"], profile_read["ref"]),
+                         (".github/scripts/npu_ci_checks.json", "c" * 40))
+
+    def test_default_status_skips_unknown_branch_profile(self):
+        result = self.run_entry("default", base_ref="release", profile_error=403)
+        self.assertNotIn("error", result)
+        self.assertEqual(self.records(result, "status"), [])
+        self.assertIn("profile unavailable", self.records(result, "warning")[0])
 
     def test_default_status_preserves_only_this_pr_base_head_approval(self):
         prepared = self.run_entry("prepare", files=["ci/run_checks.sh"], actor="ci-admin",

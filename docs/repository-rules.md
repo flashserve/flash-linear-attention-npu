@@ -37,6 +37,8 @@ PR 合入前仍需要 2 个 approval。该要求由 GitHub 分支保护原生能
 
 ## NPU CI 门禁
 
+检查项的 context 名称、顺序和阶段映射统一维护在 `.github/scripts/npu_ci_checks.json`；触发、默认状态、结果发布、异常收敛和分支保护配置均读取这份定义。非默认目标分支按固定 base commit 读取其定义，尚未迁移的旧分支兼容读取原 workflow 中的 context。
+
 NPU 资源有限，`NPU CI` 不会由 PR 新建、重开或 push 新 commit 自动执行。发生这些事件时，默认状态 workflow 会给当前 head commit 写入以下 6 个 pending 状态，描述为“未执行”，并在 PR 评论区提示可请求 CI 触发名单中的账号触发：
 
 1. `NPU CI / A2+A5 / 01 环境、wheel 与运行时契约`

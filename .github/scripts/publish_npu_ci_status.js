@@ -1,5 +1,7 @@
 'use strict';
 
+const checks = require('./npu_ci_checks');
+
 module.exports = async function publishNpuCiStatus({ github, context, core }) {
   const fs = require('fs');
   const path = require('path');
@@ -29,41 +31,9 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
     { key: 'a2', label: 'A2', soc: 'ascend910b' },
     { key: 'a5', label: 'A5', soc: 'ascend950' },
   ];
-  const stageDefs = [
-    {
-      key: 'environment-contracts',
-      context: 'NPU CI / A2+A5 / 01 环境、wheel 与运行时契约',
-      label: '环境、wheel 配置及运行时契约',
-    },
-    {
-      key: 'opp-package',
-      context: 'NPU CI / A2+A5 / 02 全量 OPP 构建',
-      label: '目标 SOC 全量 OPP run 包构建',
-    },
-    {
-      key: 'standalone-layout',
-      context: 'NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局',
-      label: '独立 torch_custom wheel 与 OPP 安装布局',
-    },
-    {
-      key: 'torch-adapter',
-      context: 'NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配',
-      label: 'OPP 安装与 PyTorch 适配构建',
-    },
-    {
-      key: 'gdr-example-st',
-      context: 'NPU CI / A2+A5 / 05 GDR Example/ST',
-      label: 'GDR Example/ST（4 条精度用例）',
-    },
-  ];
-  const finalStatusDef = {
-    context: 'NPU CI / A2+A5 / 06 报告与 commit 校验',
-    label: '报告完整性与 PR commit 一致性',
-  };
-  const scopedStatusDef = {
-    context: 'NPU CI / A2+A5 / 定向诊断',
-    label: '定向诊断',
-  };
+  const stageDefs = checks.required.slice(0, -1);
+  const finalStatusDef = checks.required.at(-1);
+  const scopedStatusDef = checks.diagnostic;
   const accuracyThresholdContract = {
     output_tol: 5e-3,
     grad_tol: 8e-3,

@@ -25,23 +25,13 @@ BRANCH_PROTECTION_PATH = REPO_ROOT / "scripts" / "github" / "apply_branch_protec
 RUN_CHECKS_PATH = REPO_ROOT / "ci" / "run_checks.sh"
 RUN_CONTAINER_PATH = REPO_ROOT / "ci" / "run_ci_container.sh"
 CONTRACT_TEST_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "ci-contract-tests.yml"
-STAGE_KEYS = (
-    "environment-contracts",
-    "opp-package",
-    "standalone-layout",
-    "torch-adapter",
-    "gdr-example-st",
-)
-STATUS_CONTEXTS = (
-    "NPU CI / A2+A5 / 01 环境、wheel 与运行时契约",
-    "NPU CI / A2+A5 / 02 全量 OPP 构建",
-    "NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局",
-    "NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配",
-    "NPU CI / A2+A5 / 05 GDR Example/ST",
-    "NPU CI / A2+A5 / 06 报告与 commit 校验",
-)
-SCOPED_STATUS_CONTEXT = "NPU CI / A2+A5 / 定向诊断"
-CONTRACT_TEST_CONTEXT = "CI 契约测试"
+CHECKS_CONFIG_PATH = REPO_ROOT / ".github" / "scripts" / "npu_ci_checks.json"
+CHECKS_SCRIPT_PATH = CHECKS_CONFIG_PATH.with_suffix(".js")
+CHECKS_CONFIG = json.loads(CHECKS_CONFIG_PATH.read_text(encoding="utf-8"))
+STAGE_KEYS = tuple(check["key"] for check in CHECKS_CONFIG["required"][:-1])
+STATUS_CONTEXTS = tuple(check["context"] for check in CHECKS_CONFIG["required"])
+SCOPED_STATUS_CONTEXT = CHECKS_CONFIG["diagnostic"]["context"]
+CONTRACT_TEST_CONTEXT = CHECKS_CONFIG["contract_test"]
 
 
 class WorkflowResultPresentationTest(unittest.TestCase):
@@ -89,6 +79,7 @@ class WorkflowResultPresentationTest(unittest.TestCase):
         platform_attempts=None,
         nested_artifacts=False,
         approval_key="",
+        publish_script_path=None,
     ):
         sha = "a" * 40
         run_id = "42"
@@ -632,7 +623,7 @@ globalThis.core = {
                 {
                     "COMMENT_FILE": str(comment_file),
                     "RECORD_FILE": str(record_file),
-                    "NPU_PUBLISH_SCRIPT_PATH": str(PUBLISH_SCRIPT_PATH),
+                    "NPU_PUBLISH_SCRIPT_PATH": str(publish_script_path or PUBLISH_SCRIPT_PATH),
                     "NPU_CI_APPROVAL_KEY": approval_key,
                     "NPU_CI_MODE": "quick",
                     "NPU_OPS": ops,
@@ -753,6 +744,7 @@ globalThis.core = {
                     "NPU_CI_RUN_ATTEMPT": run_attempt,
                     "NPU_CI_TRIGGERING_ACTOR": "ci-admin",
                     "NPU_CI_AUTH_SCRIPT": str(REPO_ROOT / ".github/scripts/npu_ci_authorization.js"),
+                    "NPU_CI_CHECKS_SCRIPT": str(CHECKS_SCRIPT_PATH),
                     "PREPARE_WORKFLOW_RUN_STATUS": workflow_run_status,
                     "PREPARE_STATUSES": json.dumps(statuses),
                     "RECORD_FILE": str(record_file),
@@ -1179,11 +1171,16 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
             WORKFLOW_PATH.read_text(encoding="utf-8"),
             DEFAULT_STATUS_WORKFLOW_PATH.read_text(encoding="utf-8"),
             self.finalize_script,
-            BRANCH_PROTECTION_PATH.read_text(encoding="utf-8"),
         )
+        self.assertEqual(len(STATUS_CONTEXTS), 6)
+        self.assertEqual(len(set(STATUS_CONTEXTS)), len(STATUS_CONTEXTS))
+        self.assertEqual(CHECKS_CONFIG["required"][-1]["key"], "report-integrity")
         for status_context in STATUS_CONTEXTS:
             for source in sources:
-                self.assertIn(status_context, source)
+                self.assertNotIn(status_context, source)
+        self.assertIn("require('./npu_ci_checks')", self.finalize_script)
+        self.assertIn("checks.prepareChecks", self.prepare_script)
+        self.assertIn("npu_ci_checks.js", sources[1])
         for retired_context in (
             "NPU CI / A2+A5 " + "手动验证",
             "NPU CI / A2+A5 " + "精度检查",
@@ -1191,8 +1188,93 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
             for source in sources:
                 self.assertNotIn(retired_context, source)
         self.assertIn(CONTRACT_TEST_CONTEXT, CONTRACT_TEST_WORKFLOW_PATH.read_text(encoding="utf-8"))
-        self.assertIn(CONTRACT_TEST_CONTEXT, BRANCH_PROTECTION_PATH.read_text(encoding="utf-8"))
         self.assertIn(CONTRACT_TEST_CONTEXT, (REPO_ROOT / "docs" / "repository-rules.md").read_text(encoding="utf-8"))
+
+    def _run_branch_protection(self, *, fallback_token=False, missing_token=False, malformed_checks=False, empty_required=False):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            fixture_repo = root / "checkout with spaces"
+            script = fixture_repo / "scripts/github/apply_branch_protection.sh"
+            script.parent.mkdir(parents=True)
+            script.write_bytes(BRANCH_PROTECTION_PATH.read_bytes())
+            profile = json.loads((REPO_ROOT / ".github/scripts/npu_ci_checks.json").read_text(encoding="utf-8"))
+            # Use different values to prove the runtime reads the profile next
+            # to its script instead of embedding names or reading from cwd.
+            profile["required"][0]["context"] = "fixture / first required check"
+            profile["contract_test"] = "fixture / contract check"
+            if empty_required:
+                profile["required"] = []
+            checks = fixture_repo / ".github/scripts/npu_ci_checks.json"
+            checks.parent.mkdir(parents=True)
+            checks.write_text("not JSON" if malformed_checks else json.dumps(profile), encoding="utf-8")
+            mock_bin = root / "mock-bin"
+            mock_bin.mkdir()
+            curl = mock_bin / "curl"
+            curl.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, os, sys\n"
+                "from pathlib import Path\n"
+                "Path(os.environ['CI_TEST_CURL_RECORD']).write_text(json.dumps({"
+                "'args':sys.argv[1:], 'payload':json.load(sys.stdin)}), encoding='utf-8')\n",
+                encoding="utf-8",
+            )
+            curl.chmod(0o755)
+            cwd = root / "unrelated working directory"
+            cwd.mkdir()
+            record_file = root / "curl-request.json"
+            env = os.environ.copy()
+            env.update(PATH=str(mock_bin) + os.pathsep + env.get("PATH", ""),
+                       CI_TEST_CURL_RECORD=str(record_file),
+                       GITHUB_REPOSITORY="fixture/project", GITHUB_API_URL="https://github.invalid/api")
+            env.pop("GITHUB_TOKEN", None)
+            env.pop("GH_TOKEN", None)
+            if not missing_token:
+                env["GH_TOKEN" if fallback_token else "GITHUB_TOKEN"] = "fixture-token"
+            completed = subprocess.run(["bash", str(script), "release-v2"], cwd=cwd, env=env,
+                                       text=True, encoding="utf-8", capture_output=True, check=False)
+            record = json.loads(record_file.read_text(encoding="utf-8")) if record_file.exists() else None
+            return completed, record, profile
+
+    @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
+    def test_branch_protection_payload_uses_shared_profile_from_unrelated_cwd(self):
+        completed, record, profile = self._run_branch_protection()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIsNotNone(record)
+        payload = record["payload"]
+        self.assertEqual(payload["required_status_checks"], {
+            "strict": True,
+            "contexts": [item["context"] for item in profile["required"]] + [profile["contract_test"]],
+        })
+        self.assertNotIn(profile["diagnostic"]["context"], payload["required_status_checks"]["contexts"])
+        self.assertEqual(payload["required_pull_request_reviews"], {
+            "dismissal_restrictions": {}, "dismiss_stale_reviews": True,
+            "require_code_owner_reviews": True, "require_last_push_approval": True,
+            "required_approving_review_count": 2,
+            "bypass_pull_request_allowances": {"users":["weinachuan"], "teams":[], "apps":[]},
+        })
+        self.assertEqual({key: value for key, value in payload.items()
+                          if key not in {"required_status_checks", "required_pull_request_reviews"}}, {
+            "enforce_admins": True, "restrictions": None, "required_conversation_resolution": True,
+            "allow_force_pushes": False, "allow_deletions": False, "block_creations": False,
+        })
+        self.assertIn("https://github.invalid/api/repos/fixture/project/branches/release-v2/protection", record["args"])
+        self.assertIn("Authorization: Bearer fixture-token", record["args"])
+        self.assertIn("PUT", record["args"])
+        self.assertIn("Applied branch protection to fixture/project:release-v2.", completed.stdout)
+
+    @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
+    def test_branch_protection_preserves_gh_token_fallback(self):
+        completed, record, _ = self._run_branch_protection(fallback_token=True)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("Authorization: Bearer fixture-token", record["args"])
+
+    @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
+    def test_branch_protection_missing_token_or_invalid_profile_never_calls_curl(self):
+        for options in ({"missing_token": True}, {"malformed_checks": True}, {"empty_required": True}):
+            with self.subTest(options=options):
+                completed, record, _ = self._run_branch_protection(**options)
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertIsNone(record)
 
     def test_stage_order_and_reproduction_selector_are_explicit(self):
         script = RUN_CHECKS_PATH.read_text(encoding="utf-8")
@@ -1418,9 +1500,83 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
             if step.get("name") == "状态发布异常时收敛全部分项"
         )
         self.assertIn("statuses_published != 'true'", fallback["if"])
-        for status_context in STATUS_CONTEXTS:
-            self.assertIn(status_context, fallback["with"]["script"])
+        self.assertEqual(fallback["env"]["NPU_CI_WORKFLOW_SHA"], "${{ github.workflow_sha }}")
+        self.assertIn("github.rest.repos.getContent", fallback["with"]["script"])
+        self.assertIn(".github/scripts/npu_ci_checks.json", fallback["with"]["script"])
+        self.assertIn("ref: workflowSha", fallback["with"]["script"])
+        self.assertNotIn("require(", fallback["with"]["script"])
         self.assertIn("state: 'failure'", fallback["with"]["script"])
+
+    def _run_terminal_fallback(self, *, checks_config=CHECKS_CONFIG, ops=""):
+        fallback = next(step for step in self.finalize_steps
+                        if step.get("name") == "状态发布异常时收敛全部分项")
+        wrapper = """
+const records = [];
+globalThis.context = {
+  serverUrl: 'https://github.com', repo: { owner: 'example', repo: 'repo' }, runId: 42,
+};
+globalThis.github = { rest: { repos: {
+  getContent: async (payload) => {
+    records.push({ kind: 'checks-read', payload });
+    return { data: { type: 'file', encoding: 'base64',
+      content: Buffer.from(process.env.CHECKS_CONFIG_FIXTURE).toString('base64') } };
+  },
+  createCommitStatus: async (payload) => records.push({ kind: 'status', payload }),
+} } };
+globalThis.core = { setFailed: (message) => records.push({ kind: 'failed', payload: message }) };
+(async () => {
+""" + fallback["with"]["script"] + """
+  process.stdout.write(JSON.stringify(records));
+})().catch((error) => { console.error(error.stack || error); process.exitCode = 1; });
+"""
+        with tempfile.TemporaryDirectory() as temp:
+            # Checkout failed: neither ci-control nor any helper/config file is
+            # present locally. The workflow-pinned Content API remains usable.
+            self.assertFalse((Path(temp) / "ci-control").exists())
+            env = os.environ.copy()
+            env.pop("NPU_CI_CHECKS_SCRIPT", None)
+            env.update(GITHUB_WORKSPACE=temp, NPU_CI_WORKFLOW_SHA="b" * 40,
+                       CHECKS_CONFIG_FIXTURE=json.dumps(checks_config),
+                       NPU_EXPECTED_HEAD_SHA="a" * 40, NPU_OPS=ops)
+            completed = subprocess.run(["node"], input=wrapper, cwd=temp, env=env,
+                                       text=True, encoding="utf-8", capture_output=True, check=False)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        records = json.loads(completed.stdout)
+        self.assertEqual([item["payload"] for item in records if item["kind"] == "checks-read"], [{
+            "owner": "example", "repo": "repo", "path": ".github/scripts/npu_ci_checks.json",
+            "ref": "b" * 40,
+        }])
+        return records
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_publisher_and_terminal_fallback_share_changed_context_definitions(self):
+        with tempfile.TemporaryDirectory() as temp:
+            fixture = Path(temp)
+            publisher = fixture / PUBLISH_SCRIPT_PATH.name
+            publisher.write_bytes(PUBLISH_SCRIPT_PATH.read_bytes())
+            helper = fixture / CHECKS_SCRIPT_PATH.name
+            helper.write_bytes(CHECKS_SCRIPT_PATH.read_bytes())
+            profile = json.loads(CHECKS_CONFIG_PATH.read_text(encoding="utf-8"))
+            for index, check in enumerate(profile["required"]):
+                check["context"] = f"NPU CI / fixture / required {index}"
+                check["label"] = f"fixture stage {index}"
+            profile["diagnostic"]["context"] = "NPU CI / fixture / diagnostic"
+            (fixture / CHECKS_CONFIG_PATH.name).write_text(json.dumps(profile), encoding="utf-8")
+            for ops in ("", "chunk_fwd_o"):
+                with self.subTest(ops=ops):
+                    completed, comment, records = self._run_finalize_script(
+                        ops=ops, publish_script_path=publisher)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    published = [item["payload"]["context"] for item in records if item["kind"] == "status"]
+                    fallback = self._run_terminal_fallback(checks_config=profile, ops=ops)
+                    terminal = [item["payload"]["context"] for item in fallback if item["kind"] == "status"]
+                    expected = ([profile["diagnostic"]["context"]] if ops else
+                                [check["context"] for check in profile["required"]])
+                    self.assertEqual(published, expected)
+                    self.assertEqual(terminal, expected)
+                    self.assertTrue(all(item["payload"]["state"] == "failure" for item in fallback
+                                        if item["kind"] == "status"))
+                    self.assertIn(profile["required"][0]["label"], comment)
 
     def test_platform_artifact_contains_structured_diagnostics(self):
         upload = next(
@@ -1473,8 +1629,9 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertEqual(checkout["uses"], "actions/checkout@v5")
         self.assertEqual(checkout["with"]["ref"], "${{ github.workflow_sha }}")
         self.assertEqual(
-            checkout["with"]["sparse-checkout"],
-            ".github/scripts/publish_npu_ci_status.js",
+            set(checkout["with"]["sparse-checkout"].splitlines()),
+            {".github/scripts/publish_npu_ci_status.js", ".github/scripts/npu_ci_checks.js",
+             ".github/scripts/npu_ci_checks.json"},
         )
         self.assertFalse(checkout["with"]["persist-credentials"])
         self.assertIn("publish_npu_ci_status.js", self.finalize_loader)

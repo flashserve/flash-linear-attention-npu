@@ -35,7 +35,10 @@ jobs:
         with:
           ref: ${{ github.workflow_sha }}
           path: ci-control
-          sparse-checkout: .github/scripts/npu_ci_authorization.js
+          sparse-checkout: |
+            .github/scripts/npu_ci_authorization.js
+            .github/scripts/npu_ci_checks.js
+            .github/scripts/npu_ci_checks.json
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
@@ -43,12 +46,14 @@ jobs:
         uses: actions/github-script@v8
         env:
           NPU_CI_AUTH_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_authorization.js
+          NPU_CI_CHECKS_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_checks.js
           NPU_CI_RUN_ATTEMPT: ${{ github.run_attempt }}
           NPU_CI_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         with:
           github-token: ${{ github.token }}
           script: |
             const auth = require(process.env.NPU_CI_AUTH_SCRIPT || './.github/scripts/npu_ci_authorization.js');
+            const checks = require(process.env.NPU_CI_CHECKS_SCRIPT || './.github/scripts/npu_ci_checks.js');
             const body = (context.payload.comment.body || '').trim();
             const command = body.match(/^\/run-npu-ci(?:\s+([\s\S]*))?$/);
             if (!command) {
@@ -122,7 +127,7 @@ jobs:
               try {
                 await auth.requireCiModificationApproval({ github, context, usernames: subjects, confirmed: ciModified });
               } catch (error) {
-                const contexts = ops.trim() ? ['NPU CI / A2+A5 / 定向诊断'] : auth.CI_CHECK_CONTEXTS;
+                const contexts = ops.trim() ? [checks.diagnostic.context] : checks.contexts;
                 await Promise.all(contexts.map((statusContext) => github.rest.repos.createCommitStatus({
                   ...context.repo, sha: pr.head.sha, state: 'failure', context: statusContext,
                   description: 'CI 文件变更未经管理员 ci_modified=true 确认', target_url: pr.html_url,

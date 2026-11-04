@@ -69,7 +69,10 @@ jobs:
         with:
           ref: ${{ github.workflow_sha }}
           path: ci-control
-          sparse-checkout: .github/scripts/npu_ci_authorization.js
+          sparse-checkout: |
+            .github/scripts/npu_ci_authorization.js
+            .github/scripts/npu_ci_checks.js
+            .github/scripts/npu_ci_checks.json
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
@@ -78,6 +81,7 @@ jobs:
         uses: actions/github-script@v8
         env:
           NPU_CI_AUTH_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_authorization.js
+          NPU_CI_CHECKS_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_checks.js
           NPU_CI_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
           NPU_CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
           NPU_CI_WORKFLOW_REF: ${{ github.ref_name }}
@@ -86,6 +90,7 @@ jobs:
           github-token: ${{ github.token }}
           script: |
             const auth = require(process.env.NPU_CI_AUTH_SCRIPT || './.github/scripts/npu_ci_authorization.js');
+            const checks = require(process.env.NPU_CI_CHECKS_SCRIPT || './.github/scripts/npu_ci_checks.js');
             const actor = context.actor;
             const workflowInputs = context.payload.inputs || {};
             const requestedBy = actor === 'github-actions[bot]' ? workflowInputs.requested_by : actor;
@@ -93,15 +98,8 @@ jobs:
             const subjects = await auth.authorizeCiRequest({ github, context, requestedBy });
             const ciModifiedConfirmed = auth.normalizeCiModified(workflowInputs.ci_modified || 'false');
 
-            const requiredCheckContexts = [
-              ['NPU CI / A2+A5 / 01 环境、wheel 与运行时契约', '环境、wheel 与运行时契约'],
-              ['NPU CI / A2+A5 / 02 全量 OPP 构建', '全量 OPP 构建'],
-              ['NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局', 'torch_custom wheel 与 OPP 布局'],
-              ['NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配', 'OPP 安装与 PyTorch 适配'],
-              ['NPU CI / A2+A5 / 05 GDR Example/ST', 'GDR Example/ST'],
-              ['NPU CI / A2+A5 / 06 报告与 commit 校验', '报告与 commit 校验'],
-            ];
-            const scopedCheckContext = ['NPU CI / A2+A5 / 定向诊断', '定向诊断'];
+            const requiredCheckContexts = checks.prepareChecks;
+            const scopedCheckContext = [checks.diagnostic.context, checks.diagnostic.label];
             let prNumber;
             let ciMode = 'quick';
             let ops = '';
@@ -1101,7 +1099,10 @@ jobs:
         with:
           ref: ${{ github.workflow_sha }}
           path: ci-control
-          sparse-checkout: .github/scripts/publish_npu_ci_status.js
+          sparse-checkout: |
+            .github/scripts/publish_npu_ci_status.js
+            .github/scripts/npu_ci_checks.js
+            .github/scripts/npu_ci_checks.json
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
@@ -1142,23 +1143,28 @@ jobs:
         env:
           NPU_EXPECTED_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
           NPU_OPS: ${{ needs.prepare.outputs.ops }}
+          NPU_CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
         with:
           github-token: ${{ github.token }}
           script: |
             const sha = process.env.NPU_EXPECTED_HEAD_SHA;
-            const contexts = [
-              'NPU CI / A2+A5 / 01 环境、wheel 与运行时契约',
-              'NPU CI / A2+A5 / 02 全量 OPP 构建',
-              'NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局',
-              'NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配',
-              'NPU CI / A2+A5 / 05 GDR Example/ST',
-              'NPU CI / A2+A5 / 06 报告与 commit 校验',
-            ];
-            const scopedContext = 'NPU CI / A2+A5 / 定向诊断';
+            // This fallback must also work when checkout of ci-control failed.
+            const workflowSha = process.env.NPU_CI_WORKFLOW_SHA || '';
+            if (!/^[0-9a-f]{40}$/.test(workflowSha)) throw new Error('无法确定固定的检查项定义版本。');
+            const { data: file } = await github.rest.repos.getContent({ ...context.repo,
+              path: '.github/scripts/npu_ci_checks.json', ref: workflowSha });
+            if (!file || Array.isArray(file) || file.type !== 'file' || !file.content) {
+              throw new Error('无法读取 NPU CI 检查项定义。');
+            }
+            const checks = JSON.parse(Buffer.from(file.content, file.encoding || 'base64').toString('utf8'));
             const normalizedOps = [...new Set(
               (process.env.NPU_OPS || '').split(',').map((item) => item.trim()).filter(Boolean)
             )].sort().join(',');
-            const statusContexts = normalizedOps ? [scopedContext] : contexts;
+            const statusContexts = normalizedOps ? [checks.diagnostic.context] : checks.required.map((item) => item.context);
+            if (!statusContexts.length || new Set(statusContexts).size !== statusContexts.length ||
+                statusContexts.some((name) => typeof name !== 'string' || !name.startsWith('NPU CI / '))) {
+              throw new Error('NPU CI 检查项定义无效。');
+            }
             const targetUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             if (!/^[0-9a-f]{40}$/.test(sha || '')) {
               core.setFailed('无法确定要收敛的 PR head commit。');

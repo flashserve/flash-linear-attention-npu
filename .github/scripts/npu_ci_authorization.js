@@ -2,14 +2,6 @@
 
 const { createHash } = require('crypto');
 const USERS_PATH = '.github/npu-ci-users.json';
-const CI_CHECK_CONTEXTS = [
-  'NPU CI / A2+A5 / 01 环境、wheel 与运行时契约',
-  'NPU CI / A2+A5 / 02 全量 OPP 构建',
-  'NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局',
-  'NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配',
-  'NPU CI / A2+A5 / 05 GDR Example/ST',
-  'NPU CI / A2+A5 / 06 报告与 commit 校验',
-];
 
 async function loadCiUsers({ github, context }) {
   let ref = context.payload.repository?.default_branch;
@@ -106,5 +98,5 @@ function hasApprovedRun({ statuses, contexts, context, pr }) {
     current.every((status) => status?.target_url === runUrl && status.description?.split(/\s+/).includes(marker));
 }
 
-module.exports = { USERS_PATH, CI_CHECK_CONTEXTS, loadCiUsers, requireAuthorizedCiUser, authorizeCiRequest,
+module.exports = { USERS_PATH, loadCiUsers, requireAuthorizedCiUser, authorizeCiRequest,
   normalizeCiModified, hasCiChanges, requireCiModificationApproval, buildCiApprovalKey, hasApprovedRun };

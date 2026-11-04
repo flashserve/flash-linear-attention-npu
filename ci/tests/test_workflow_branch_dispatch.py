@@ -123,6 +123,7 @@ globalThis.core = {{
             env["PR_COMMENT"] = comment
             env["NPU_CI_RUN_ATTEMPT"] = '1'
             env["NPU_CI_AUTH_SCRIPT"] = str(REPO_ROOT / '.github/scripts/npu_ci_authorization.js')
+            env["NPU_CI_CHECKS_SCRIPT"] = str(REPO_ROOT / '.github/scripts/npu_ci_checks.js')
             env["RECORD_FILE"] = str(record_file)
             completed = subprocess.run(
                 ["node"],

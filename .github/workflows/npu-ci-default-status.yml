@@ -19,7 +19,10 @@ jobs:
         with:
           ref: ${{ github.workflow_sha }}
           path: ci-control
-          sparse-checkout: .github/scripts/npu_ci_authorization.js
+          sparse-checkout: |
+            .github/scripts/npu_ci_authorization.js
+            .github/scripts/npu_ci_checks.js
+            .github/scripts/npu_ci_checks.json
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
@@ -27,10 +30,12 @@ jobs:
         uses: actions/github-script@v8
         env:
           NPU_CI_AUTH_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_authorization.js
+          NPU_CI_CHECKS_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_checks.js
         with:
           github-token: ${{ github.token }}
           script: |
             const auth = require(process.env.NPU_CI_AUTH_SCRIPT || './.github/scripts/npu_ci_authorization.js');
+            const checks = require(process.env.NPU_CI_CHECKS_SCRIPT || './.github/scripts/npu_ci_checks.js');
             const pr = context.payload.pull_request;
             if (!pr) {
               core.notice('没有找到 Pull Request 事件信息。');
@@ -43,52 +48,18 @@ jobs:
 
             const defaultBranch = context.payload.repository.default_branch;
             const baseRef = pr.base.ref;
-            const defaultContexts = [
-              'NPU CI / A2+A5 / 01 环境、wheel 与运行时契约',
-              'NPU CI / A2+A5 / 02 全量 OPP 构建',
-              'NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局',
-              'NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配',
-              'NPU CI / A2+A5 / 05 GDR Example/ST',
-              'NPU CI / A2+A5 / 06 报告与 commit 校验',
-            ];
-            // pull_request_target 只执行默认分支上的 workflow，任何 base 分支的 PR
-            // 都由本 workflow 写入“未执行”占位状态。为了让每个分支的 PR 显示各自的
-            // 流程，非默认分支的门禁 context 从该分支自己的 npu-ci-default-status.yml
-            // 中提取（与该分支 ci.yml 会更新的状态一一对应），避免老分支 PR 一直
-            // 停留在新版门禁的 pending（Waiting for status to be reported）。
+            const defaultContexts = checks.contexts;
+            // Read maintenance profiles as data at the event's fixed base SHA;
+            // the shared reader also supports branches using the older YAML profile.
             let checkContexts = null;
             if (baseRef === defaultBranch) {
               checkContexts = defaultContexts;
             } else {
               try {
-                const { data: branchStatusWorkflow } = await github.rest.repos.getContent({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  path: '.github/workflows/npu-ci-default-status.yml',
-                  ref: baseRef,
-                });
-                if (!Array.isArray(branchStatusWorkflow) &&
-                    branchStatusWorkflow.type === 'file' &&
-                    branchStatusWorkflow.content) {
-                  const branchStatusText = Buffer
-                    .from(branchStatusWorkflow.content, branchStatusWorkflow.encoding || 'base64')
-                    .toString('utf8');
-                  const extracted = [];
-                  const seen = new Set();
-                  for (const match of branchStatusText.matchAll(/'NPU CI \/ [^']+'/g)) {
-                    const statusContext = match[0].slice(1, -1);
-                    if (!seen.has(statusContext)) {
-                      seen.add(statusContext);
-                      extracted.push(statusContext);
-                    }
-                  }
-                  if (extracted.length > 0) {
-                    checkContexts = extracted;
-                    core.notice(`base 分支 \`${baseRef}\` 的 NPU CI 门禁：${extracted.join('、')}`);
-                  }
-                }
+                checkContexts = await checks.readBranchContexts({ github, context, pr });
+                core.notice(`base 分支 \`${baseRef}\` 的 NPU CI 门禁：${checkContexts.join('、')}`);
               } catch (error) {
-                core.warning(`无法读取 \`${baseRef}\` 分支的 npu-ci-default-status.yml：${error.message}`);
+                core.warning(`无法读取 \`${baseRef}\` 分支的 NPU CI 检查项定义：${error.message}`);
               }
             }
             if (!checkContexts) {

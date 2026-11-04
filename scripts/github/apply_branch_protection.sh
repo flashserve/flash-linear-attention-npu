@@ -11,47 +11,48 @@ if [[ -z "$token" ]]; then
     exit 2
 fi
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+checks_file="${script_dir}/../../.github/scripts/npu_ci_checks.json"
+payload="$(python3 - "$checks_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+checks = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if not isinstance(checks["required"], list) or not checks["required"]:
+    raise SystemExit("The CI profile must define required checks.")
+contexts = [item["context"] for item in checks["required"]] + [checks["contract_test"]]
+if any(not isinstance(name, str) or not name.strip() for name in contexts) or len(set(contexts)) != len(contexts):
+    raise SystemExit("CI required check names must be nonempty, unique strings.")
+
+print(json.dumps({
+    "required_status_checks": {"strict": True, "contexts": contexts},
+    "enforce_admins": True,
+    "required_pull_request_reviews": {
+        "dismissal_restrictions": {},
+        "dismiss_stale_reviews": True,
+        "require_code_owner_reviews": True,
+        "require_last_push_approval": True,
+        "required_approving_review_count": 2,
+        "bypass_pull_request_allowances": {
+            "users": ["weinachuan"], "teams": [], "apps": [],
+        },
+    },
+    "restrictions": None,
+    "required_conversation_resolution": True,
+    "allow_force_pushes": False,
+    "allow_deletions": False,
+    "block_creations": False,
+}, ensure_ascii=False))
+PY
+)"
+
 curl -fsSL \
     -X PUT \
     -H "Authorization: Bearer ${token}" \
     -H "Accept: application/vnd.github+json" \
     -H "X-GitHub-Api-Version: 2022-11-28" \
     "${api_url}/repos/${repo}/branches/${branch}/protection" \
-    -d @- <<'JSON'
-{
-  "required_status_checks": {
-    "strict": true,
-    "contexts": [
-      "NPU CI / A2+A5 / 01 环境、wheel 与运行时契约",
-      "NPU CI / A2+A5 / 02 全量 OPP 构建",
-      "NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局",
-      "NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配",
-      "NPU CI / A2+A5 / 05 GDR Example/ST",
-      "NPU CI / A2+A5 / 06 报告与 commit 校验",
-      "CI 契约测试"
-    ]
-  },
-  "enforce_admins": true,
-  "required_pull_request_reviews": {
-    "dismissal_restrictions": {},
-    "dismiss_stale_reviews": true,
-    "require_code_owner_reviews": true,
-    "require_last_push_approval": true,
-    "required_approving_review_count": 2,
-    "bypass_pull_request_allowances": {
-      "users": [
-        "weinachuan"
-      ],
-      "teams": [],
-      "apps": []
-    }
-  },
-  "restrictions": null,
-  "required_conversation_resolution": true,
-  "allow_force_pushes": false,
-  "allow_deletions": false,
-  "block_creations": false
-}
-JSON
+    -d @- <<<"$payload"
 
 echo "Applied branch protection to ${repo}:${branch}."
