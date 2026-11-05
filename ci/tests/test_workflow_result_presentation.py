@@ -1875,10 +1875,9 @@ globalThis.core = { setFailed: (message) => records.push({ kind: 'failed', paylo
         self.assertLess(len(comment), 48000)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_publisher_rejects_changed_head_base_or_pr_lifecycle(self):
+    def test_publisher_rejects_changed_head_or_pr_lifecycle(self):
         changes = {
             "head_changed": {"head": {"sha": "d" * 40}},
-            "base_commit_changed": {"base": {"ref": "main", "sha": "b" * 40}},
             "retargeted": {"base": {"ref": "maintenance", "sha": "c" * 40}},
             "closed": {"state": "closed"},
             "merged": {"merged": True},
@@ -1898,12 +1897,18 @@ globalThis.core = { setFailed: (message) => records.push({ kind: 'failed', paylo
                     self.assertIn("失效", comment)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_publisher_fails_closed_without_current_pr_or_prepared_base_identity(self):
+    def test_publisher_accepts_a_base_commit_advance(self):
+        completed, _, records = self._run_finalize_script(
+            current_pr={"base": {"ref": "main", "sha": "b" * 40}}
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self._assert_statuses(records, ["success"] * len(STATUS_CONTEXTS))
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_publisher_fails_closed_without_current_pr_or_target_identity(self):
         for options in (
             {"pr_read_error": True},
             {"expected_base_ref": ""},
-            {"expected_base_sha": ""},
-            {"expected_base_sha": "not-a-commit"},
         ):
             with self.subTest(options=options):
                 completed, _, records = self._run_finalize_script(**options)

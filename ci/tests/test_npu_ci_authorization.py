@@ -246,32 +246,38 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
                     self.assertEqual(self.records(result, "dispatch"), [])
                     self.assertEqual(self.records(result, "status"), [])
 
-    def test_prepare_rejects_head_base_or_workflow_changes_after_dispatch(self):
+    def test_prepare_rejects_head_or_target_changes_but_allows_base_advance(self):
         expected = {"requested_by":"ci-user", "expected_head_sha":"a"*40,
                     "expected_base_ref":"main", "expected_base_sha":"c"*40, "expected_workflow_sha":"c"*40}
-        for field, old_value in (("expected_head_sha", "d"*40), ("expected_base_ref", "release"),
-                                 ("expected_base_sha", "d"*40), ("expected_workflow_sha", "d"*40)):
+        for field, old_value in (("expected_head_sha", "d"*40), ("expected_base_ref", "release")):
             with self.subTest(field=field):
                 result = self.run_entry("prepare", actor="github-actions[bot]", files=["ci/run_checks.sh"],
                                         inputs={**expected, field:old_value}, permissions={"ci-admin":"admin"})
                 self.assertIn("触发快照", result["error"])
                 self.assertEqual(self.records(result, "status"), [])
                 self.assertFalse(any(item["name"] == "ci_approval_key" for item in self.records(result, "output")))
+        result = self.run_entry("prepare", actor="github-actions[bot]", files=["fla/example.cpp"],
+                                workflow_sha="d"*40, branch_sha="d"*40,
+                                inputs=expected)
+        self.assertNotIn("error", result)
+        self.assertIn({"name":"should_run","value":"true"}, self.records(result, "output"))
 
-    def test_bot_dispatch_cannot_omit_any_identity_field(self):
+    def test_bot_dispatch_requires_head_and_target_identity(self):
         expected = {"requested_by":"ci-user", "expected_head_sha":"a"*40, "expected_base_ref":"main",
                     "expected_base_sha":"c"*40, "expected_workflow_sha":"c"*40}
-        for field in ("expected_head_sha", "expected_base_ref", "expected_base_sha", "expected_workflow_sha"):
+        for field in ("expected_head_sha", "expected_base_ref"):
             with self.subTest(field=field):
                 result = self.run_entry("prepare", actor="github-actions[bot]", inputs={**expected, field:""})
                 self.assertIn("触发快照", result["error"])
 
-    def test_manual_workflow_cannot_run_another_ref_or_outdated_base(self):
-        for options in ({"workflow_ref":"other"}, {"workflow_sha":"d"*40}, {"branch_sha":"d"*40}):
+    def test_manual_workflow_cannot_run_another_ref_but_allows_outdated_base(self):
+        result = self.run_entry("prepare", workflow_ref="other")
+        self.assertIn("error", result)
+        self.assertEqual(self.records(result, "status"), [])
+        for options in ({"workflow_sha":"d"*40}, {"branch_sha":"d"*40}):
             with self.subTest(options=options):
                 result = self.run_entry("prepare", **options)
-                self.assertIn("error", result)
-                self.assertEqual(self.records(result, "status"), [])
+                self.assertNotIn("error", result)
 
     def test_ci_documentation_does_not_need_admin_author(self):
         result = self.run_entry("dispatch", files=["ci/README.MD", ".github/notes.md"])
@@ -334,10 +340,10 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
                 else:
                     self.assertIn({"name":"should_run","value":"true"}, self.records(result, "output"))
 
-    def test_manual_rerun_without_complete_snapshot_refuses_new_prepare(self):
+    def test_manual_rerun_without_head_or_target_snapshot_refuses_new_prepare(self):
         snapshot = {"expected_head_sha":"a"*40, "expected_base_ref":"main",
                     "expected_base_sha":"c"*40, "expected_workflow_sha":"c"*40}
-        for inputs in ({}, *({**snapshot, name:""} for name in snapshot)):
+        for inputs in ({}, {**snapshot, "expected_head_sha":""}, {**snapshot, "expected_base_ref":""}):
             with self.subTest(inputs=inputs):
                 result = self.run_entry("prepare", attempt=2, list_error=True, inputs=inputs)
                 self.assertIn("新建 Run workflow", result["error"])
