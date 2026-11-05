@@ -24,7 +24,6 @@ jobs:
             const repository = `${context.repo.owner}/${context.repo.repo}`;
             if (context.payload.repository?.full_name !== repository ||
                 run?.repository?.full_name !== repository ||
-                run?.head_repository?.full_name !== repository ||
                 run.event !== 'workflow_dispatch' || run.status !== 'completed') {
               core.notice('不是本仓库已完成的 NPU CI 手动运行，保留所有引用。');
               return;

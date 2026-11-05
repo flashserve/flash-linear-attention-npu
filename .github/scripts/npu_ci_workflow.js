@@ -55,8 +55,11 @@ async function findMergeCommit({ github, context, pr, wait }) {
 
 async function selectWorkflowExecution({ github, context, pr, baseBranch, files, inputs,
   wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)) }) {
-  const modifiesWorkflow = auth.containsWorkflowChanges(files);
-  if (!modifiesWorkflow) {
+  // Any non-Markdown file under ci/ or .github/ can change how the workflow
+  // prepares or executes the PR. Select the fixed PR merge workflow for the
+  // whole CI control surface, not only when ci.yml itself changed.
+  const modifiesCi = auth.containsCiChanges(files);
+  if (!modifiesCi) {
     const text = await readWorkflow({ github, context, ref: baseBranch.commit.sha });
     return { ref: pr.base.ref, source: 'base', workflowSha: baseBranch.commit.sha,
       inputs: auth.selectDispatchInputs(text, { ...inputs, workflow_source: 'base' }) };

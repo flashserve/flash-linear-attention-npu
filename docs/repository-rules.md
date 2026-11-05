@@ -64,6 +64,8 @@ Actions 重跑权限由 GitHub 平台控制。新版 CI 重跑仍检查 PR 状�
 
 新版 CI 设备上的 A2/A5 一律使用当前 PR 合并结果中的 `ci/`，不再检出或叠加可信 CI 目录。Actions 调度、鉴权与最终状态发布仍固定为所选 workflow commit，不执行 PR 的 Actions 控制脚本。
 
+当 PR 作者是仓库 Admin 且修改了非 Markdown 的 `ci/` 或 `.github/` 文件时，默认评论分发器会读取该 PR 的固定 merge commit，并创建临时 tag `npu-ci/pr-<编号>/<merge SHA>`，从该 tag 启动 PR 自己的 `ci.yml`。这样设备任务开始前的 checkout、代理和准备步骤也会使用 PR 版本；缺少新版 `workflow_source`/`expected_*` 契约的旧 CI 会明确失败。未修改 CI 控制文件的旧分支仍直接使用目标分支 workflow。`NPU CI 临时 workflow 引用清理` 会在对应运行完成且没有同 tag 的其他运行后删除精确 tag。
+
 默认评论入口和新版手动执行的权限要求如下，CI 名单不会授予 GitHub 平台权限：
 
 | 触发入口 | 所需权限 |
@@ -83,9 +85,9 @@ GitHub 要求[手动运行 workflow 的用户具有仓库 write 权限](https://
 /run-npu-ci quick ops=causal_conv1d,chunk_bwd_dv_local
 ```
 
-默认评论入口和新版 CI 仅接受 open、未合并且非草稿的 PR，目标分支必须受 GitHub 分支保护。`NPU CI` 的 workflow 文件位于该目标分支的 `.github/workflows/ci.yml`。默认分支上的 `NPU CI 评论分发` workflow 校验请求人后，通过 `workflow_dispatch.ref` 启动 PR 当前目标分支（`pr.base.ref`）上的 `ci.yml`，不支持 `ci_ref` 或 `branch` 覆盖。新版 CI 的 Actions 页面、CLI 和 REST 手动分发也必须选择 PR 当前目标分支。
+默认评论入口和新版 CI 仅接受 open、未合并且非草稿的 PR，目标分支必须受 GitHub 分支保护。`NPU CI` 的 workflow 文件位于该目标分支的 `.github/workflows/ci.yml`。默认分支上的 `NPU CI 评论分发` workflow 校验请求人后，未修改 CI 控制文件时通过 `workflow_dispatch.ref` 启动 PR 当前目标分支（`pr.base.ref`）上的 `ci.yml`；Admin 作者修改 CI 控制文件时改为启动固定 PR merge tag 上的 `ci.yml`，不支持 `ci_ref` 或 `branch` 覆盖。新版 CI 的 Actions 页面、CLI 和 REST 手动分发也必须选择 PR 当前目标分支。
 
-评论分发读取目标分支 workflow 声明的输入，仅发送其支持的参数；旧分支无需更新 CI 或声明新版契约即可触发。分发器按目标声明自动附带支持的 `expected_*` 版本快照，由目标 prepare 校验，用户无需手填。
+评论分发读取所选 workflow 声明的输入，仅发送其支持的参数；未修改 CI 控制文件的旧分支无需更新 CI 或声明新版契约即可触发。Admin 作者修改 CI 控制文件时，PR workflow 必须声明新版契约，分发器自动附带支持的 `expected_*` 版本快照，由目标 prepare 校验，用户无需手填。
 
 名单及 CI 修改作者 Admin 规则在默认评论入口校验，旧分支仍执行自己的权限检查和 CI 流程。例如旧 workflow 仍要求 `requested_by` 为 Admin 时，默认入口通过后也须满足该要求；不会自动获得新版名单、快照或重跑行为。
 

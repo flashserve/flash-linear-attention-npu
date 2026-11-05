@@ -677,7 +677,7 @@ bash scripts/github/apply_branch_protection.sh main
 
 带 `ops=` 的命令只顺序执行第 01 项环境契约和第 02 项指定算子 OPP 构建，并发布 `NPU CI / A2+A5 / 定向诊断`；它不执行 GDR 精度或后续安装分项，也不会写入或覆盖 01-06 正式门禁状态。用于合入门禁的运行必须省略 `ops`。
 
-评论触发由默认分支上的 `NPU CI 评论分发` workflow 处理，只分发到 PR 当前受保护的目标分支 `pr.base.ref`，不支持 `ci_ref` 或 `branch` 覆盖。分发器读取目标 workflow 声明的输入，仅发送其支持的参数；旧维护分支无需更新 CI 或声明新版契约即可触发。分发器按目标声明自动附带支持的 `expected_*` 版本快照，由目标 prepare 校验，用户无需手填。Actions、CLI 或 REST 手动分发也应选择 PR 当前目标分支。
+评论触发由默认分支上的 `NPU CI 评论分发` workflow 处理。未修改非 Markdown 的 `ci/` 或 `.github/` 文件时，分发到 PR 当前受保护的目标分支 `pr.base.ref`；当 PR 作者是仓库 Admin 且修改了这些 CI 控制文件时，分发器先固定 PR merge commit，创建 `npu-ci/pr-<编号>/<merge SHA>` 临时 tag，再从 tag 启动 PR 自己的 `ci.yml`。临时 tag 在对应 NPU CI 完成且没有同 tag 的其他运行后自动删除。分发器不支持 `ci_ref` 或 `branch` 覆盖，读取所选 workflow 声明的输入，仅发送其支持的参数；未修改 CI 控制文件的旧维护分支无需更新 CI 或声明新版契约即可触发，修改 CI 控制文件的 PR 则必须声明新版 `workflow_source` 和 `expected_*` 契约。Actions、CLI 或 REST 手动分发仍应选择 PR 当前目标分支。
 
 名单和 CI 修改作者 Admin 规则由默认评论入口检查。旧分支仍执行自己的权限检查及 CI 流程，例如仍要求 `requested_by` 为 Admin 的分支，还须满足该要求；默认分发通过不会替换旧 workflow 的规则。
 

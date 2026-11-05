@@ -91,7 +91,7 @@ const refGithub = {rest:{git:{
         return [record["payload"] for record in result["records"] if record["kind"] == kind]
 
     def test_unchanged_legacy_workflow_uses_target_without_new_contract(self):
-        result = self.run_dispatch(files=[{"filename":"ci/run_checks.sh"}], legacy=True,
+        result = self.run_dispatch(files=[{"filename":"src/feature.cpp"}], legacy=True,
                                    base_ref="release-v1")
         self.assertNotIn("error", result)
         dispatch = self.records(result,"dispatch")[0]
@@ -128,6 +128,16 @@ const refGithub = {rest:{git:{
         result = self.run_dispatch(legacy=True)
         self.assertIn("workflow_source",result["error"])
         self.assertEqual(self.records(result,"dispatch"),[])
+
+    def test_modified_ci_control_script_also_requires_pr_workflow_contract(self):
+        result = self.run_dispatch(legacy=True, files=[{"filename":".github/scripts/changed.js"}])
+        self.assertIn("workflow_source", result["error"])
+        self.assertEqual(self.records(result, "dispatch"), [])
+
+    def test_markdown_under_ci_control_path_keeps_target_workflow(self):
+        result = self.run_dispatch(legacy=True, files=[{"filename":".github/scripts/README.md"}])
+        self.assertNotIn("error", result)
+        self.assertEqual(self.records(result, "dispatch")[0]["ref"], "main")
 
     def test_merge_must_have_exact_base_and_head_parents(self):
         for parents in (("a"*40,"d"*40),("b"*40,"a"*40),("a"*40,),

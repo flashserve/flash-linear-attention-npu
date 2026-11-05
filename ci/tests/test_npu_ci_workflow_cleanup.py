@@ -85,6 +85,10 @@ const core = {notice: () => {}};
         calls = self.run_cleanup(run={'path': f'.github/workflows/ci.yml@{TAG}'})
         self.assertEqual(calls[-1][0], 'delete')
 
+    def test_missing_head_repository_metadata_does_not_block_cleanup(self):
+        calls = self.run_cleanup(run={'head_repository': None})
+        self.assertEqual(calls[-1][0], 'delete')
+
     def test_unrelated_events_repositories_paths_and_refs_are_untouched(self):
         cases = [
             {'run': {'event': 'pull_request'}}, {'run': {'status': 'in_progress'}},
@@ -93,7 +97,6 @@ const core = {notice: () => {}};
             {'run': {'path': f'.github/workflows/ci.yml@{TAG}-other'}},
             {'run': {'path': f'.github/workflows/other.yml@{TAG}'}},
             {'run': {'repository': {'full_name': 'fork/repo'}}},
-            {'run': {'head_repository': {'full_name': 'fork/repo'}}},
             {'repository': 'fork/repo'}, {'run': {'head_branch': 'main'}},
             {'run': {'head_branch': f'npu-ci/pr-0/{SHA}'}},
             {'run': {'head_branch': TAG + '-extra'}}, {'run': {'head_sha': 'b' * 40}},
