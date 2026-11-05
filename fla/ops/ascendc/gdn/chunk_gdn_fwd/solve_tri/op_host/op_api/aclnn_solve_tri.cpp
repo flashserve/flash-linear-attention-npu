@@ -42,8 +42,7 @@
     auto nullStatus = CheckNotNull(params);
     CHECK_RET(nullStatus == ACLNN_SUCCESS, nullStatus);
      const auto dtype = params.x->GetDataType();
-     CHECK_COND(dtype == DataType::DT_FLOAT16 || dtype == DataType::DT_BF16 ||
-                dtype == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
+     CHECK_COND(dtype == DataType::DT_FLOAT16 || dtype == DataType::DT_BF16, ACLNN_ERR_PARAM_INVALID,
                 "SolveTri requires FP16, BF16 or FP32 input.");
      CHECK_COND(params.xOut->GetDataType() == dtype, ACLNN_ERR_PARAM_INVALID,
                 "SolveTri input and output dtype must match.");
