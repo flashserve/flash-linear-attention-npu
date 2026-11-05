@@ -13,15 +13,20 @@
  */
 #ifndef __OP_HOST_RECURRENT_GETED_DELTA_RULE_TILING_H__
 #define __OP_HOST_RECURRENT_GETED_DELTA_RULE_TILING_H__
+#include <cstddef>
+#include <cstdint>
+
 #include <tiling/tiling_api.h>
 #include "register/tilingdata_base.h"
 #include "tiling_base/tiling_base.h"
 #include "err/ops_err.h"
 #include "../op_kernel/recurrent_gated_delta_rule_tiling_data.h"
-#include "recurrent_gated_delta_rule_tiling_processor.h"
 
 namespace optiling {
 using namespace RecurrentGatedDeltaRule;
+
+static constexpr size_t RGDR_SYS_WORKSPACE_SIZE = 16U * 1024U * 1024U;
+static constexpr uint32_t RGDR_REQUIRED_DIM = 128U;
 
 struct RecurrentGatedDeltaRuleCompileInfo {
     uint64_t aivNum{0UL};
@@ -59,8 +64,6 @@ protected:
 protected:
     void InitCompileInfo();
     void PrintTilingData();
-    RecurrentGatedDeltaRuleTilingContext BuildProcessorContext() const;
-
     ge::graphStatus CheckContext();
     ge::graphStatus GetVersion();
     ge::graphStatus AnalyzeDtype();

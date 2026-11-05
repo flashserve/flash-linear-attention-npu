@@ -47,23 +47,30 @@ recurrent_gated_delta_rule(GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR be
                            GM_ADDR aLog, GM_ADDR dtBias, GM_ADDR out,
                            GM_ADDR stateOut, GM_ADDR workspaceGM, GM_ADDR tilingGM)
 {
+    (void)gk;
     REGISTER_TILING_DEFAULT(RecurrentGatedDeltaRuleTilingData);
     GET_TILING_DATA(tilingData, tilingGM);
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
-    TPipe pipe;
     using StateType = typename RGDRDTypeTraits<D_T_STATE>::type;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-    RGDR<bfloat16_t, bfloat16_t, StateType> op(&tilingData);
-    RGDRInitParams params{query, key, value, g, gk, beta, state, cuSeqlens,
-                          ssmStateIndices, numAcceptedTokens, out, stateOut};
+    using BetaType = typename RGDRDTypeTraits<D_T_BETA>::type;
+    using GateType = typename RGDRDTypeTraits<D_T_G>::type;
+    RecurrentGatedDeltaRuleV2::RGDRV2<
+        bfloat16_t, bfloat16_t, StateType, GateType, BetaType> op(&tilingData);
+    RecurrentGatedDeltaRuleV2::RGDRV2InitParams params{
+        query, key, value, g, beta, state, cuSeqlens, ssmStateIndices,
+        aLog, dtBias, numAcceptedTokens, out, stateOut};
+    op.Init(params);
+    op.Process();
 #else
+    TPipe pipe;
     using BetaType = typename RGDRDTypeTraits<D_T_BETA>::type;
     using GateType = typename RGDRDTypeTraits<D_T_G>::type;
     RGDR<StateType, BetaType, GateType> op(&tilingData);
     RGDRInitParams params{query, key, value, beta, state, cuSeqlens, ssmStateIndices,
                           g, numAcceptedTokens, aLog, dtBias, out};
-#endif
     op.Init(params, &pipe);
     op.Process();
+#endif
 }
 #endif

@@ -69,7 +69,6 @@ struct alignas(8) RecurrentGatedDeltaRuleTilingData {
     uint32_t attnOutBufferNum;
     float scale;
     uint32_t hasGama;
-    uint32_t hasGamaK;
     uint32_t hasAcceptedTokens;
     uint32_t stateStride0;
  	uint32_t stateStride1;

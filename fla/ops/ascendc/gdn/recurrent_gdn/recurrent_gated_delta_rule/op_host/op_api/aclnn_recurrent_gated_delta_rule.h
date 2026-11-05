@@ -27,7 +27,7 @@ extern "C" {
  * @param [in] actualSeqLengths: 数据类型支持：int32。
  * @param [in] ssmStateIndices: 数据类型支持：int32。
  * @param [in] g: 数据类型支持：float32。
- * @param [in] gk: 数据类型支持：float32。
+ * @param [in] gk: ABI 保留参数，必须为 nullptr。
  * @param [in] numAcceptedTokens: 数据类型支持：int32。
  * @param [in] scaleValue: 数据类型支持：float32。
  * @param [out] out: 数据类型支持：bfloat16。

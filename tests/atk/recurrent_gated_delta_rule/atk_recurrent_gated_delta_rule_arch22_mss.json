@@ -7540,7 +7540,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "{\"B\":2,\"HK\":2,\"HV\":4,\"K\":128,\"T\":3,\"V\":128,\"allow_neg_eigval\":true,\"arch22\":true,\"beta_dtype\":\"bf16\",\"block_num\":3,\"case_id\":65,\"data_profile\":\"random\",\"design_id\":\"RGDR-A066\",\"design_routes\":\"P\",\"dtype\":\"bf16\",\"g_dtype\":\"fp32\",\"gate_mode\":\"g\",\"input_layout\":\"noncontiguous_gk_metadata\",\"name\":\"arch22_065\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"ascend910b,ascend910_93\",\"route\":\"ascendc\",\"scale\":0.08838834764831843,\"seed\":20260891,\"seq_lengths\":[2,1],\"soc\":\"all\",\"state_dtype\":\"fp32\",\"state_indices\":[0,1,2],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,positive\",\"use_beta_sigmoid_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_qk_l2norm_in_kernel\":true}",
+        "range_values": "{\"B\":2,\"HK\":2,\"HV\":4,\"K\":128,\"T\":3,\"V\":128,\"allow_neg_eigval\":true,\"arch22\":true,\"beta_dtype\":\"bf16\",\"block_num\":3,\"case_id\":65,\"data_profile\":\"random\",\"design_id\":\"RGDR-A066\",\"design_routes\":\"P\",\"dtype\":\"bf16\",\"g_dtype\":\"fp32\",\"gate_mode\":\"g\",\"input_layout\":\"noncontiguous_metadata\",\"name\":\"arch22_065\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"ascend910b,ascend910_93\",\"route\":\"ascendc\",\"scale\":0.08838834764831843,\"seed\":20260891,\"seq_lengths\":[2,1],\"soc\":\"all\",\"state_dtype\":\"fp32\",\"state_indices\":[0,1,2],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,positive\",\"use_beta_sigmoid_in_kernel\":true,\"use_gate_in_kernel\":false,\"use_qk_l2norm_in_kernel\":true}",
         "backward": false
       },
       {
@@ -7585,7 +7585,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "noncontiguous_gk_metadata",
+        "range_values": "noncontiguous_metadata",
         "backward": false
       },
       {
@@ -8675,7 +8675,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":2,\"HV\":6,\"K\":128,\"T\":2,\"V\":128,\"allow_neg_eigval\":false,\"arch22\":true,\"beta_dtype\":\"fp32\",\"block_num\":2,\"case_id\":78,\"data_profile\":\"random\",\"design_id\":\"RGDR-A079\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"g_dtype\":\"bf16\",\"gate_mode\":\"g\",\"input_layout\":\"noncontiguous_v_gates\",\"name\":\"arch22_078\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"ascend910b,ascend910_93\",\"route\":\"ascendc\",\"scale\":0.08838834764831843,\"seed\":20260904,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,positive\",\"use_beta_sigmoid_in_kernel\":false,\"use_gate_in_kernel\":true,\"use_qk_l2norm_in_kernel\":true}",
+        "range_values": "{\"B\":1,\"HK\":2,\"HV\":6,\"K\":128,\"T\":2,\"V\":128,\"allow_neg_eigval\":false,\"arch22\":true,\"beta_dtype\":\"fp32\",\"block_num\":2,\"case_id\":78,\"data_profile\":\"random\",\"design_id\":\"RGDR-A079\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"g_dtype\":\"bf16\",\"gate_mode\":\"g\",\"input_layout\":\"noncontiguous_v_beta_g\",\"name\":\"arch22_078\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"ascend910b,ascend910_93\",\"route\":\"ascendc\",\"scale\":0.08838834764831843,\"seed\":20260904,\"seq_lengths\":[2],\"soc\":\"all\",\"state_dtype\":\"bf16\",\"state_indices\":[0,1],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,positive\",\"use_beta_sigmoid_in_kernel\":false,\"use_gate_in_kernel\":true,\"use_qk_l2norm_in_kernel\":true}",
         "backward": false
       },
       {
@@ -8720,7 +8720,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "noncontiguous_v_gates",
+        "range_values": "noncontiguous_v_beta_g",
         "backward": false
       },
       {
@@ -9356,7 +9356,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "{\"B\":1,\"HK\":2,\"HV\":6,\"K\":128,\"T\":3,\"V\":128,\"accepted_tokens\":[2],\"allow_neg_eigval\":false,\"arch22\":true,\"beta_dtype\":\"bf16\",\"block_num\":3,\"case_id\":81,\"data_profile\":\"random\",\"design_id\":\"RGDR-A082\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"g_dtype\":\"fp32\",\"gate_mode\":\"g\",\"input_layout\":\"noncontiguous_gk_metadata\",\"name\":\"arch22_081\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"ascend910b,ascend910_93\",\"route\":\"ascendc\",\"scale\":0.08838834764831843,\"seed\":20260907,\"seq_lengths\":[3],\"soc\":\"all\",\"state_dtype\":\"fp32\",\"state_indices\":[0,1,2],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,positive\",\"use_beta_sigmoid_in_kernel\":true,\"use_gate_in_kernel\":true,\"use_qk_l2norm_in_kernel\":true}",
+        "range_values": "{\"B\":1,\"HK\":2,\"HV\":6,\"K\":128,\"T\":3,\"V\":128,\"accepted_tokens\":[2],\"allow_neg_eigval\":false,\"arch22\":true,\"beta_dtype\":\"bf16\",\"block_num\":3,\"case_id\":81,\"data_profile\":\"random\",\"design_id\":\"RGDR-A082\",\"design_routes\":\"P+A\",\"dtype\":\"bf16\",\"g_dtype\":\"fp32\",\"gate_mode\":\"g\",\"input_layout\":\"noncontiguous_metadata\",\"name\":\"arch22_081\",\"op\":\"recurrent_gated_delta_rule\",\"platform_focus\":\"ascend910b,ascend910_93\",\"route\":\"ascendc\",\"scale\":0.08838834764831843,\"seed\":20260907,\"seq_lengths\":[3],\"soc\":\"all\",\"state_dtype\":\"fp32\",\"state_indices\":[0,1,2],\"state_layout\":\"contiguous\",\"tags\":\"accuracy,generalization,positive\",\"use_beta_sigmoid_in_kernel\":true,\"use_gate_in_kernel\":true,\"use_qk_l2norm_in_kernel\":true}",
         "backward": false
       },
       {
@@ -9401,7 +9401,7 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "noncontiguous_gk_metadata",
+        "range_values": "noncontiguous_metadata",
         "backward": false
       },
       {
