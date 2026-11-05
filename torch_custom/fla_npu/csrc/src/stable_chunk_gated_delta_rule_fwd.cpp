@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstring>
 #include <optional>
+#include <stdexcept>
 #include <tuple>
 #include <vector>
 
@@ -81,6 +82,11 @@ run_npu_chunk_gated_delta_rule_fwd(
     bool allow_neg_eigval, bool disable_recompute, bool output_final_state,
     bool return_intermediate_states, bool state_v_first, bool is_out_l2norm,
     int64_t stream) {
+  if ((chunk_size == 64 || chunk_size == 128) && !is_out_l2norm) {
+    throw std::runtime_error(
+        "npu_chunk_gated_delta_rule_fwd: is_out_l2norm=False is not supported "
+        "when chunk_size is 64 or 128.");
+  }
   namespace layout_math = fla_npu_stable::stable::layout_math;
   const TensorMeta q_meta = meta_of(q);
   const TensorMeta k_meta = meta_of(k);

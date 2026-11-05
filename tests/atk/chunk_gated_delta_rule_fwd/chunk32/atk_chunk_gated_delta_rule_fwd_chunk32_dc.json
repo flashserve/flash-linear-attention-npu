@@ -1,0 +1,166 @@
+[
+  {
+    "id": 0,
+    "default_seed": 20261105,
+    "name": "chunk_gated_delta_rule_fwd_chunk32_0000_dc_bnsd_mha_fix_B1_H28x28_T8192_none_neg1_sv1_l21_ga1_h1",
+    "aclnn_name": null,
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"B\":1,\"HK\":28,\"HV\":28,\"K\":128,\"T\":8192,\"V\":128,\"allow_neg_eigval\":true,\"case_id\":0,\"case_key\":\"dc_bnsd_mha_fix_B1_H28x28_T8192_none_neg1_sv1_l21_ga1_h1\",\"disable_recompute\":true,\"dtype\":\"bf16\",\"g_mode\":\"normal\",\"layout\":\"BNSD\",\"out_h\":true,\"out_l2\":true,\"output_final_state\":true,\"route\":\"ascendc\",\"scale\":0.08838834764831845,\"seed\":20261105,\"seqlens\":\"\",\"soc\":\"ascend950\",\"state_dtype\":\"none\",\"state_v_first\":true,\"tags\":\"determinism\"}",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BNSD",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "HK",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 28,
+        "backward": false
+      },
+      {
+        "name": "HV",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 28,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 8192,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "state_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "none",
+        "backward": false
+      },
+      {
+        "name": "seqlens",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend950",
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261105,
+        "backward": false
+      }
+    ],
+    "save_name": "chunk_gated_delta_rule_fwd_chunk32"
+  }
+]

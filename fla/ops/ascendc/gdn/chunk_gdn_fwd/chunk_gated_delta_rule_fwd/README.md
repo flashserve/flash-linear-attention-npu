@@ -82,7 +82,8 @@ Python 接受 `a_log=None, dt_bias=None` 预留参数；当前仅支持
 | `scale` | 通常为 `K**-0.5` | Query 缩放因子 |
 | `chunkSize` | `32`、`64`、`128` | 分块大小 |
 | `useExp2` | A5 新路径支持 `true/false` | 只控制门控累计和后续状态、输出阶段使用 `exp2` 或 `exp`，三个小算子均按新路径规格选择优化实现 |
-| `useQkL2norm` | A5 新路径支持 `true/false` | true 时由 prepare 生成归一化 Q/K；false 时 H/O 直接使用输入 Q/K |
+| `useQkL2norm` | A5 新路径支持 `true/false` | true 时由 prepare 生成归一化 Q/K；false 时 H/O 直接使用输入 Q/K。chunk32 必须为 true |
+| `isOutL2norm` | 公开入口可省略，chunk32 按 `false`；算子定义缺省 `false` | 只决定 chunk32 是否把 L2Norm 结果交给调用方。chunk64/128 省略时不把缺省当成 false，导出仍只看 `useQkL2norm`。显式 `false` 仅 chunk32 接受 |
 | `allowNegEigval` | A5 新路径支持 | 为 true 时必须提供 `betaEffOutOptional` |
 | `stateVFirst` | A5 新路径支持 `true/false` | 控制初始状态、分块状态和最终状态的末两维采用 `[V,K]` 或 `[K,V]` |
 
@@ -93,9 +94,19 @@ Python 接受 `a_log=None, dt_bias=None` 预留参数；当前仅支持
 - A2（`ascend910b`）、A3（`ascend910_93`）、A5（`ascend950`）。
 - 原 Phase6 路径支持 FP16、BF16，`K=128`、`V=128/256`、`chunkSize=64/128`。
 - A5 三算子路径支持 `useExp2=true/false`、`useQkL2norm=true/false`、BF16、`K=V=128`、`chunkSize=64`、`Hv/Hk in {1,2,3,4}`。
-- `chunkSize=32` 仅 A5，走独立融合 kernel。限制为 BF16 的 q/k/v/beta/o、FP32 的 g、`K=V=128`，并且必须 `useExp2=false`、`useQkL2norm=true`、核内 beta sigmoid。`allowNegEigval` 与 `stateVFirst` 均可为 true/false；前者为 true 时使用 `2*sigmoid(beta)`，不导出 `betaEff`。layout 支持 `BNSD/BSND/NTD/TND`：BSND/TND 的 q/k/v 在 ACLNN 转为 head-major 后进核，g/beta 由 `[B,T,Hv]` 转为 `[B,Hv,T]` 后进核，o 固定 BSND。`useExp2` 只接受 false。`return_intermediate_states=true` 时导出 h，false 时不写 h。`use_beta_sigmoid_in_kernel` 必须为 true，并导出 FP32 `beta_eff`（`allowNegEigval=true` 时为 `2*sigmoid`）。`is_out_l2norm=true` 时导出 q_hat/k_hat/rstd；`disable_recompute=true` 时导出自然底数的 g_cumsum 和 A。aLog/dtBias 必须为空。稳定入口仍返回十元组。支持 MHA、GVA（`Hv` 能被 `Hk` 整除）、定长和变长，变长要求物理 `B=1`。初始状态可选，dtype 为 BF16 或 FP32：无初始状态或 FP32 初始状态时最终状态为 FP32，BF16 初始状态时最终状态为 BF16。
+- `chunkSize=32` 仅 A5，走独立融合 kernel。限制为 BF16 的 q/k/v/beta/o、FP32 的 g、`K=V=128`，并且必须 `useExp2=false`、`useQkL2norm=true`、核内 beta sigmoid。`allowNegEigval` 与 `stateVFirst` 均可为 true/false；前者为 true 时使用 `2*sigmoid(beta)`。layout 支持 `BNSD/BSND/NTD/TND`：BSND/TND 的 q/k/v 在 ACLNN 转为 head-major 后进核，g/beta 由 `[B,T,Hv]` 转为 `[B,Hv,T]` 后进核，o 固定 BSND。`return_intermediate_states=true` 时导出 h，false 时不写 h。`disable_recompute=true` 时导出自然底数的 g_cumsum 和 A。aLog/dtBias 必须为空。稳定入口仍返回十元组。支持 MHA、GVA（`Hv` 能被 `Hk` 整除）、定长和变长，变长要求物理 `B=1`。初始状态可选，dtype 为 BF16 或 FP32：无初始状态或 FP32 初始状态时最终状态为 FP32，BF16 初始状态时最终状态为 BF16。
 - 支持 MHA、GVA、定长和变长序列。
 - A2/A3 使用 `arch22` 私有实现，A5 使用 `arch35` 私有实现；两套架构代码隔离维护。
+
+### `is_out_l2norm`
+
+稳定入口 `npu_chunk_gated_delta_rule_fwd` 和 ctypes 入口都增加了可选参数 `is_out_l2norm`。不传时，chunk32 按 `false`，不把 L2Norm 结果交给调用方。它只决定 chunk32 是否写出核内已经算好的结果。
+
+- `chunk_size=32` 且省略或 `is_out_l2norm=false`：不导出 q_hat、k_hat、rstd 和 `beta_eff`，这四项为 None。核内仍然做 L2Norm 和 beta sigmoid。再配合 `disable_recompute=false`、`return_intermediate_states=false` 就是只返回 `o` 和可选 `final_state` 的推理启动。
+- `chunk_size=32` 且 `is_out_l2norm=true`：导出 q_hat、k_hat 和两个 rstd，并一并导出 FP32 `beta_eff`（`allow_neg_eigval=true` 时为 `2*sigmoid`）。
+- `chunk_size=64` 或 `128`：参数不参与导出。省略时不会被当成 `false`，是否导出 L2 结果仍只由 `use_qk_l2norm_in_kernel` 决定，和增加该参数之前相同。显式传入 `false` 时，Python 稳定入口、ctypes 入口和 stable C++ 适配都会在进核前拒绝，错误信息是 `is_out_l2norm=False is not supported when chunk_size is 64 or 128`。
+
+算子定义里该属性省略时仍是 `false`，已有图不带这个属性时保持原样。chunk64/128 的 aclnn 实现写死传 `false`，A2/A3 的 arch22 和 A5 非 chunk32 的 tiling 都不读它。公开入口仍走 stable 适配，不会因为这个参数退回 ctypes。
 
 ## 验证
 
@@ -112,7 +123,7 @@ python3 tests/atk/chunk_gated_delta_rule_fwd/aclnn_abi_contract.py
 ## 归一化结果导出与反向复用
 
 归一化沿用 prepare 的公式：`rstd = rsqrt(sum(x**2, dim=-1) + 1e-6)`，
-`hat = cast(x * rstd, input_dtype)`。关闭归一化时 hats 与原始输入共享对象及存储，修改任一对象会影响另一个。
+`hat = cast(x * rstd, input_dtype)`。chunk64/128 关闭 `useQkL2norm` 时 hats 与原始输入共享对象及存储，修改任一对象会影响另一个。chunk32 不能关闭核内归一化；`is_out_l2norm=false` 时 q_hat、k_hat 和两个 rstd 是 None，不是输入别名。
 反向传入返回的 hats/rstd 和与前向一致的归一化开关，返回的 dq/dk 对应归一化前的原始输入。
 
 ACLNN 参数数量和顺序不变；关闭归一化时四个可选输出 descriptor 仍为空。
