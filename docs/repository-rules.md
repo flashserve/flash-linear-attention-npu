@@ -62,7 +62,7 @@ Actions 重跑权限由 GitHub 平台控制。新版 CI 重跑仍检查 PR 状�
 
 默认评论入口和新版 CI 会检查非 Markdown 的 `ci/` 或 `.github/` 变更：只有 PR 创建者（`pr.user.login`）具有该仓库 Admin 权限才允许执行，否则门禁直接失败。PR 作者无需位于 CI 触发名单，初次触发人仍须在名单中：名单内只读用户在新版 CI 中可以触发 Admin 作者的 PR，名单内 Admin 不能替非 Admin 作者放行 CI 修改。文件检测读取完整列表并检查重命名两侧；列表不完整、作者权限读取失败均拒绝。纯 CI 文件变更检测本身不新增编译规则。
 
-新版 CI 设备上的 A2/A5 一律使用当前 PR 合并结果中的 `ci/`，不再检出或叠加可信 CI 目录。Actions 调度、鉴权与最终状态发布仍固定为所选 workflow commit，不执行 PR 的 Actions 控制脚本。
+评论入口始终由默认分支上的 `NPU CI 评论分发` workflow 接收，因为 GitHub 的 `issue_comment` 事件不会从 PR 分支加载 workflow。完成权限和固定版本校验后，tag 模式的 NPU CI 会执行 PR 合并结果中的 `ci.yml` 及其 `.github/scripts` 控制脚本；默认分支只负责安全分发和最终状态发布，不会把默认分支的 CI 目录覆盖到设备任务。
 
 当 PR 作者是仓库 Admin 且修改了非 Markdown 的 `ci/` 或 `.github/` 文件时，默认评论分发器会读取该 PR 的固定 merge commit，并创建临时 tag `npu-ci/pr-<编号>/<merge SHA>`，从该 tag 启动 PR 自己的 `ci.yml`。这样设备任务开始前的 checkout、代理和准备步骤也会使用 PR 版本；缺少新版 `workflow_source`/`expected_*` 契约的旧 CI 会明确失败。未修改 CI 控制文件的旧分支仍直接使用目标分支 workflow。`NPU CI 临时 workflow 引用清理` 会在对应运行完成且没有同 tag 的其他运行后删除精确 tag。
 
