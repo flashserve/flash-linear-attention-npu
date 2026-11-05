@@ -52,13 +52,15 @@ NPU 资源有限，`NPU CI` 不会由 PR 新建、重开或 push 新 commit 自�
 
 A5 job 使用 `self-hosted,linux,npu,ascend950,flash-linear-attention-npu-a5` 标签，不限制 CPU 架构，可由 x64 或 ARM64 原生 A5 runner 承接。一次触发仍只有 A2、A5 两个设备 job；A5 只选择一台匹配 runner，不增加第三项架构门禁。每台 A5 需预置 `fla-npu-ci:9.1.0-950` 的本机原生架构镜像，并使用配套 CANN 9.1.0、Python 3.12、PyTorch/torch_npu 2.12.0；不得用 QEMU 或跨架构镜像替代原生 NPU 验证。
 
+A2/A5 统一使用 Git 获取源码：先直连 checkout prepare 固定的 base commit，失败后调用主机 `CI_PROXY_SCRIPT` 的 `proxyon` 并重试；随后获取目标分支与 PR head 的 Git ref，并在固定 base 上本地合并 PR。fetch 同样支持直连失败后启用代理重试。设备端的版本校验位于源码获取之后，只用本地 Git 核对 ref、固定 base/head commit 和合并结果祖先，不调用 GitHub API。PR 是否仍 open、非草稿、未合并，以及是否切换目标分支，由 GitHub-hosted prepare 和 finalize 联网检查；设备端离线检查不能判断这些 GitHub 元数据。
+
 PR 合入前，当前 head commit 的 6 个 NPU 状态和自动执行的 `CI 契约测试` 必须全部成功；当 PR 更新 commit 后，旧 commit 上的 CI 成功状态自动失效，需要 CI 触发名单中的账号重新触发 NPU CI。
 
 新版 CI 在复用成功结果或等待已有任务前，还会读取该任务的运行信息，确认目标分支及 base commit 与本次请求一致；无法确认时启动新验证。最终发布结果前再次检查 PR 状态和 head/base，运行期间目标分支切换或 base commit 更新会使本次结果失效。
 
 默认分支的 [`.github/npu-ci-users.json`](../.github/npu-ci-users.json) 独立维护可触发用户名；仓库读写权限不直接赋予触发权。默认评论分发和新版手动执行均校验初次触发人的名单，PR 自身修改名单不会授予权限。
 
-Actions 重跑权限由 GitHub 平台控制。新版 CI 重跑仍检查 PR 状态及固定 head/base/workflow 版本。目标 workflow 支持完整四个 `expected_*` 输入时，评论触发自动携带快照，版本未变化时可使用 `Re-run all jobs`。新版 Actions 手动首次默认不填快照；此类运行重新执行 prepare（`Re-run all jobs` 或 prepare 失败后重跑）会被拒绝，应新建 `Run workflow`，避免取到新的 head。`Re-run failed jobs` 若复用已成功的 prepare，则可正常重试，设备仍检查原 PR 状态和固定版本；旧 workflow 的重跑行为保持原样。
+Actions 重跑权限由 GitHub 平台控制。新版 CI 重跑仍检查 PR 状态及固定 head/base/workflow 版本。目标 workflow 支持完整四个 `expected_*` 输入时，评论触发自动携带快照，版本未变化时可使用 `Re-run all jobs`。新版 Actions 手动首次默认不填快照；此类运行重新执行 prepare（`Re-run all jobs` 或 prepare 失败后重跑）会被拒绝，应新建 `Run workflow`，避免取到新的 head。`Re-run failed jobs` 若复用已成功的 prepare，则可正常重试，设备仍离线检查固定版本，finalize 再检查当前 PR 元数据；旧 workflow 的重跑行为保持原样。已创建的 Actions run 重跑仍使用原 workflow，不会切换到修复后的流程；源码获取或校验流程修复须合入 PR 目标分支后重新触发新 run。
 
 默认评论入口和新版 CI 会检查非 Markdown 的 `ci/` 或 `.github/` 变更：只有 PR 创建者（`pr.user.login`）具有该仓库 Admin 权限才允许执行，否则门禁直接失败。PR 作者无需位于 CI 触发名单，初次触发人仍须在名单中：名单内只读用户在新版 CI 中可以触发 Admin 作者的 PR，名单内 Admin 不能替非 Admin 作者放行 CI 修改。文件检测读取完整列表并检查重命名两侧；列表不完整、作者权限读取失败均拒绝。纯 CI 文件变更检测本身不新增编译规则。
 

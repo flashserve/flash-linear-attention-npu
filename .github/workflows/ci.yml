@@ -444,287 +444,13 @@ jobs:
       TMPDIR: /home/huangjunzhe/ci/tmp
       CI_CONTAINER_NAME: fla-npu-ci-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
-      - name: 校验设备任务的 PR 状态与固定版本
-        id: validate_pr
-        uses: actions/github-script@v8
-        env:
-          NPU_CI_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
-          NPU_CI_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
-          NPU_CI_BASE_REF: ${{ needs.prepare.outputs.base_ref }}
-          NPU_CI_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
-        with:
-          github-token: ${{ github.token }}
-          script: |
-            // Reruns retain the original authorization, including when GitHub
-            // reuses a successful prepare job. PR identity must still match.
-            const prNumber = Number(process.env.NPU_CI_PR_NUMBER);
-            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: prNumber });
-            if (pr.state !== 'open' || pr.merged || pr.merged_at || pr.draft || pr.head.sha !== process.env.NPU_CI_HEAD_SHA ||
-                pr.base.ref !== process.env.NPU_CI_BASE_REF || pr.base.sha !== process.env.NPU_CI_BASE_SHA) {
-              throw new Error('PR 的状态、head 或目标分支/base 已变化；请重新触发完整 NPU CI，不能复用旧 prepare。');
-            }
-
-      - name: 通过 GitHub API 准备 A5 源码
-        if: matrix.platform == 'a5'
-        env:
-          # Runner services inherit proxyon; this source path stays direct.
-          # GitHub env keys are case-insensitive; no_proxy also bypasses inherited proxies.
-          http_proxy: ''
-          https_proxy: ''
-          all_proxy: ''
-          GIT_HTTP_PROXY: ''
-          GIT_HTTPS_PROXY: ''
-          no_proxy: '*'
-          GITHUB_TOKEN: ${{ github.token }}
-          NPU_CI_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
-          NPU_CI_BASE_REF: ${{ needs.prepare.outputs.base_ref }}
-          NPU_CI_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
-          NPU_CI_TARGET_SHA: ${{ needs.prepare.outputs.head_sha }}
-        run: |
-          set -euo pipefail
-
-          archive_dir="${TMPDIR}/fla-npu-source-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          rm -rf repo "$archive_dir"
-          mkdir -p repo "$archive_dir"
-          export NPU_CI_ARCHIVE_DIR="$archive_dir"
-
-          python3 - <<'PY'
-          import hashlib
-          import json
-          import os
-          import shutil
-          import stat
-          import tarfile
-          import time
-          import urllib.request
-          from pathlib import Path, PurePosixPath
-
-          api_url = os.environ["GITHUB_API_URL"]
-          repository = os.environ["GITHUB_REPOSITORY"]
-          token = os.environ["GITHUB_TOKEN"]
-          pr_number = os.environ["NPU_CI_PR_NUMBER"]
-          expected_base_ref = os.environ["NPU_CI_BASE_REF"]
-          expected_base_sha = os.environ["NPU_CI_BASE_SHA"]
-          expected_head_sha = os.environ["NPU_CI_TARGET_SHA"]
-          archive_dir = Path(os.environ["NPU_CI_ARCHIVE_DIR"])
-          headers = {
-              "Accept": "application/vnd.github+json",
-              "Authorization": f"Bearer {token}",
-              "X-GitHub-Api-Version": "2022-11-28",
-          }
-
-          def get_json(path):
-              request = urllib.request.Request(
-                  f"{api_url}/repos/{repository}/{path}", headers=headers
-              )
-              with urllib.request.urlopen(request, timeout=30) as response:
-                  return json.load(response)
-
-          merge_sha = ""
-          stale_base_sha = ""
-          stale_merge_sha = ""
-          base_sha = expected_base_sha
-          last_error = "GitHub has not produced a current test merge commit"
-          for attempt in range(12):
-              pr = get_json(f"pulls/{pr_number}")
-              head_sha = pr["head"]["sha"]
-              base_ref = pr["base"]["ref"]
-              if head_sha != expected_head_sha:
-                  raise RuntimeError(
-                      f"PR head changed before archive download: expected={expected_head_sha}, actual={head_sha}"
-                  )
-              if base_ref != expected_base_ref:
-                  raise RuntimeError(
-                      f"PR base changed before archive download: expected={expected_base_ref}, actual={base_ref}"
-                  )
-              merge_sha = pr.get("merge_commit_sha") or ""
-              if merge_sha:
-                  merge_commit = get_json(f"commits/{merge_sha}")
-                  parents = [parent["sha"] for parent in merge_commit.get("parents", [])]
-                  if parents == [base_sha, head_sha]:
-                      break
-                  if len(parents) == 2 and parents[1] == head_sha:
-                      # GitHub keeps serving the test merge computed before the base
-                      # branch advanced.  Keep that merge (the PR head side is already
-                      # resolved in it) so the base delta can be replayed later.
-                      stale_merge_sha = merge_sha
-                      stale_base_sha = parents[0]
-                  last_error = (
-                      "test merge parents do not match the current base and head: "
-                      f"merge={merge_sha}, parents={parents}"
-                  )
-              if attempt < 11:
-                  time.sleep(5)
-          else:
-              if not stale_merge_sha:
-                  raise RuntimeError(last_error)
-              merge_sha = stale_merge_sha
-
-          def download_archive(sha, destination):
-              request = urllib.request.Request(
-                  f"{api_url}/repos/{repository}/tarball/{sha}", headers=headers
-              )
-              with urllib.request.urlopen(request, timeout=120) as response:
-                  with destination.open("wb") as output:
-                      shutil.copyfileobj(response, output)
-
-          def extract_archive(archive_path, destination):
-              if not stat.S_ISDIR(destination.lstat().st_mode):
-                  raise RuntimeError(f"archive destination is not a directory: {destination}")
-              if any(destination.iterdir()):
-                  raise RuntimeError(f"archive destination is not empty: {destination}")
-
-              checked_members = []
-              seen_paths = set()
-              root_name = None
-              root_entry_seen = False
-              with tarfile.open(archive_path, "r:gz") as archive:
-                  for member in archive.getmembers():
-                      member_path = PurePosixPath(member.name)
-                      parts = member_path.parts
-                      if (
-                          not parts
-                          or member_path.is_absolute()
-                          or any(part in {"", ".."} for part in parts)
-                      ):
-                          raise RuntimeError(f"unsafe archive member path: {member.name!r}")
-
-                      if root_name is None:
-                          root_name = parts[0]
-                      elif parts[0] != root_name:
-                          raise RuntimeError("archive contains multiple top-level directories")
-
-                      if len(parts) == 1:
-                          if not member.isdir():
-                              raise RuntimeError("archive top-level member is not a directory")
-                          if root_entry_seen:
-                              raise RuntimeError("duplicate archive top-level directory")
-                          root_entry_seen = True
-                          continue
-
-                      relative_parts = parts[1:]
-                      if relative_parts in seen_paths:
-                          raise RuntimeError(f"duplicate archive member: {member.name!r}")
-                      seen_paths.add(relative_parts)
-                      if not (member.isdir() or member.isfile()):
-                          raise RuntimeError(
-                              f"unsupported archive member type: {member.name!r}"
-                          )
-                      checked_members.append((member, relative_parts))
-
-                  if root_name is None:
-                      raise RuntimeError("archive is empty")
-
-                  directory_modes = []
-                  nofollow = getattr(os, "O_NOFOLLOW", 0)
-                  if not nofollow:
-                      raise RuntimeError("O_NOFOLLOW is required for safe archive extraction")
-                  for member, relative_parts in checked_members:
-                      target = destination.joinpath(*relative_parts)
-                      if member.isdir():
-                          target.mkdir(parents=True, exist_ok=True)
-                          directory_modes.append((target, member.mode & 0o777))
-                          continue
-
-                      target.parent.mkdir(parents=True, exist_ok=True)
-                      source = archive.extractfile(member)
-                      if source is None:
-                          raise RuntimeError(f"cannot read archive member: {member.name!r}")
-                      flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow
-                      output_fd = os.open(target, flags, member.mode & 0o777)
-                      with source, os.fdopen(output_fd, "wb") as output:
-                          shutil.copyfileobj(source, output)
-                      os.chmod(target, member.mode & 0o777)
-
-                  for target, mode in reversed(directory_modes):
-                      os.chmod(target, mode)
-
-          def tree_digests(root):
-              digests = {}
-              for path in sorted(root.rglob("*")):
-                  if path.is_file():
-                      relative = path.relative_to(root).as_posix()
-                      digests[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
-              return digests
-
-          def replay_base_delta(repo_dir, source_tree, target_tree):
-              """Apply the base branch delta between two commits onto a merged tree.
-
-              ``repo_dir`` holds the PR head merged with ``source_tree``'s commit.
-              Replaying ``source_tree -> target_tree`` turns it into the tree for
-              the base commit the run recorded.  Paths that the PR and the base
-              changed differently cannot be replayed without a rebase, so they are
-              returned instead of being guessed.
-              """
-
-              source_digests = tree_digests(source_tree)
-              target_digests = tree_digests(target_tree)
-              repo_digests = tree_digests(repo_dir)
-              conflicts = []
-              for relative in sorted(set(source_digests) | set(target_digests)):
-                  before = source_digests.get(relative)
-                  after = target_digests.get(relative)
-                  if before == after:
-                      continue
-                  current = repo_digests.get(relative)
-                  if current == after:
-                      continue
-                  if current != before:
-                      conflicts.append(relative)
-                      continue
-                  destination = repo_dir / relative
-                  if after is None:
-                      destination.unlink()
-                      continue
-                  destination.parent.mkdir(parents=True, exist_ok=True)
-                  shutil.copy2(target_tree / relative, destination)
-              return conflicts
-
-          download_archive(merge_sha, archive_dir / "merge.tar.gz")
-          extract_archive(archive_dir / "merge.tar.gz", Path("repo"))
-
-          if stale_merge_sha and merge_sha == stale_merge_sha:
-              relation = get_json(f"compare/{stale_base_sha}...{base_sha}")
-              if relation.get("status") not in {"ahead", "behind"}:
-                  raise RuntimeError(last_error)
-              source_tree = archive_dir / "stale-base-tree"
-              target_tree = archive_dir / "current-base-tree"
-              source_tree.mkdir()
-              target_tree.mkdir()
-              download_archive(stale_base_sha, archive_dir / "stale-base.tar.gz")
-              download_archive(base_sha, archive_dir / "current-base.tar.gz")
-              extract_archive(archive_dir / "stale-base.tar.gz", source_tree)
-              extract_archive(archive_dir / "current-base.tar.gz", target_tree)
-              conflicts = replay_base_delta(Path("repo"), source_tree, target_tree)
-              if conflicts:
-                  shown = ", ".join(conflicts[:5])
-                  if len(conflicts) > 5:
-                      shown = f"{shown} 等 {len(conflicts)} 个路径"
-                  raise RuntimeError(
-                      "PR 与最新 base 修改了同一批文件，无法在缓存的 test merge 上重放 base 改动："
-                      f"{shown}。请先将 PR 与 main 同步后重新触发 NPU CI。"
-                  )
-              print(
-                  "[A5][WARN] GitHub 缓存的 test merge 基于过期 base "
-                  f"{stale_base_sha[:8]}，已按当前 base {base_sha[:8]} 重放 base 侧改动。"
-              )
-
-          print(
-              "Validated A5 source archive: "
-              f"merge={merge_sha}, base={base_sha}, head={expected_head_sha}"
-          )
-          PY
-
-          rm -rf "$archive_dir"
-
       - name: 拉取当前目标分支代码（第 1 次）
         id: checkout_pr_1
-        if: matrix.platform == 'a2'
         continue-on-error: true
         timeout-minutes: 5
         uses: actions/checkout@v5
         env:
-          # Try direct access before enabling the existing A2 proxy fallback.
+          # Both platforms try direct access before enabling the proxy fallback.
           # GitHub env keys are case-insensitive; no_proxy also bypasses inherited proxies.
           http_proxy: ''
           https_proxy: ''
@@ -739,7 +465,8 @@ jobs:
           path: repo
 
       - name: 启动代理并获取端口
-        if: steps.checkout_pr_1.outcome == 'failure' && matrix.platform == 'a2'
+        id: enable_proxy
+        if: steps.checkout_pr_1.outcome == 'failure'
         run: |
           set -euo pipefail
           source "$CI_PROXY_SCRIPT"
@@ -753,16 +480,17 @@ jobs:
             fi
             printf '%s=%s\n' "$variable" "$value" >> "$GITHUB_ENV"
           done
+          echo "NPU_CI_PROXY_ENABLED=true" >> "$GITHUB_ENV"
 
       - name: 等待后重试拉取目标分支代码
-        if: matrix.platform == 'a2' && steps.checkout_pr_1.outcome == 'failure'
+        if: steps.checkout_pr_1.outcome == 'failure'
         run: |
           rm -rf repo
           sleep 15
 
       - name: 拉取当前目标分支代码（第 2 次）
         id: checkout_pr_2
-        if: matrix.platform == 'a2' && steps.checkout_pr_1.outcome == 'failure'
+        if: steps.checkout_pr_1.outcome == 'failure'
         continue-on-error: true
         timeout-minutes: 10
         uses: actions/checkout@v5
@@ -773,13 +501,13 @@ jobs:
           path: repo
 
       - name: 再次等待后重试拉取目标分支代码
-        if: matrix.platform == 'a2' && steps.checkout_pr_1.outcome == 'failure' && steps.checkout_pr_2.outcome == 'failure'
+        if: steps.checkout_pr_1.outcome == 'failure' && steps.checkout_pr_2.outcome == 'failure'
         run: |
           rm -rf repo
           sleep 30
 
       - name: 拉取当前目标分支代码（第 3 次）
-        if: matrix.platform == 'a2' && steps.checkout_pr_1.outcome == 'failure' && steps.checkout_pr_2.outcome == 'failure'
+        if: steps.checkout_pr_1.outcome == 'failure' && steps.checkout_pr_2.outcome == 'failure'
         timeout-minutes: 10
         uses: actions/checkout@v5
         with:
@@ -789,29 +517,63 @@ jobs:
           path: repo
 
       - name: 现场合并 PR 代码
-        if: matrix.platform == 'a2'
         working-directory: repo
+        timeout-minutes: 20
         run: |
           set -euo pipefail
+          if [[ "$(git rev-parse HEAD)" != "$NPU_CI_BASE_SHA" ]]; then
+            echo "[CI][ERROR] Checkout does not match the fixed base commit; start a new NPU CI run." >&2
+            exit 1
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           pr_head_ref="refs/remotes/pull/${NPU_CI_PR_NUMBER}/head"
+          source_refs=(
+            "+refs/heads/${NPU_CI_BASE_REF}:refs/remotes/origin/${NPU_CI_BASE_REF}"
+            "+refs/pull/${NPU_CI_PR_NUMBER}/head:${pr_head_ref}"
+          )
 
-          retry_fetch_pr_head() {
-            local delay="$1"
-            if [ "$delay" != "0" ]; then
-              sleep "$delay"
+          # A runner service may inherit a proxy. Keep fetching direct until a
+          # checkout/fetch actually fails, then reuse the proxy for later steps.
+          if [[ "${NPU_CI_PROXY_ENABLED:-false}" != true ]]; then
+            unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
+            unset GIT_HTTP_PROXY GIT_HTTPS_PROXY
+            export no_proxy='*' NO_PROXY='*'
+          fi
+
+          fetch_with_retry() {
+            if git fetch "$@"; then
+              return 0
             fi
-            git fetch --no-tags --prune --no-recurse-submodules --depth=50 origin \
-              "+refs/pull/${NPU_CI_PR_NUMBER}/head:${pr_head_ref}"
+            echo "[CI][WARN] Git fetch failed; enabling the proxy before retrying." >&2
+            source "$CI_PROXY_SCRIPT" || return
+            proxyon || return
+            for variable in http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY \
+              no_proxy NO_PROXY GIT_HTTP_PROXY GIT_HTTPS_PROXY PROXY_HTTP_PORT PROXY_SOCKS_PORT PROXY_MIXED_PORT; do
+              value="${!variable-}"
+              if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
+                echo "[CI][ERROR] Proxy variable $variable contains a newline." >&2
+                return 1
+              fi
+              printf '%s=%s\n' "$variable" "$value" >> "$GITHUB_ENV"
+            done
+            export NPU_CI_PROXY_ENABLED=true
+            echo "NPU_CI_PROXY_ENABLED=true" >> "$GITHUB_ENV"
+            for delay in 15 30; do
+              sleep "$delay"
+              if git fetch "$@"; then
+                return 0
+              fi
+            done
+            echo "[CI][ERROR] Git fetch failed after proxy retries; check the runner proxy and GitHub connectivity." >&2
+            return 1
           }
 
           fetch_more_history() {
             local deepen_by="$1"
             echo "[CI] Merge base not found in shallow history; deepening by ${deepen_by} commits."
-            git fetch --no-tags --prune --no-recurse-submodules --deepen="${deepen_by}" origin \
-              "+refs/heads/${NPU_CI_BASE_REF}:refs/remotes/origin/${NPU_CI_BASE_REF}" \
-              "+refs/pull/${NPU_CI_PR_NUMBER}/head:${pr_head_ref}"
+            fetch_with_retry --atomic --no-tags --prune --no-recurse-submodules --deepen="${deepen_by}" \
+              origin "${source_refs[@]}"
           }
 
           ensure_merge_base() {
@@ -819,21 +581,21 @@ jobs:
               return 0
             fi
             for deepen_by in 50 100 200 400 800 1600 3200; do
-              fetch_more_history "${deepen_by}"
+              fetch_more_history "${deepen_by}" || return
               if git merge-base HEAD "${pr_head_ref}" >/dev/null; then
                 return 0
               fi
             done
             if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
               echo "[CI] Merge base still not found; unshallowing repository as final probe."
-              git fetch --no-tags --prune --no-recurse-submodules --unshallow origin \
-                "+refs/heads/${NPU_CI_BASE_REF}:refs/remotes/origin/${NPU_CI_BASE_REF}" \
-                "+refs/pull/${NPU_CI_PR_NUMBER}/head:${pr_head_ref}"
+              fetch_with_retry --atomic --no-tags --prune --no-recurse-submodules --unshallow \
+                origin "${source_refs[@]}" || return
             fi
             git merge-base HEAD "${pr_head_ref}" >/dev/null
           }
 
-          retry_fetch_pr_head 0 || retry_fetch_pr_head 15 || retry_fetch_pr_head 30
+          fetch_with_retry --atomic --no-tags --prune --no-recurse-submodules --depth=50 \
+            origin "${source_refs[@]}"
           fetched_head="$(git rev-parse "${pr_head_ref}")"
           if [ "$fetched_head" != "$NPU_CI_TARGET_SHA" ]; then
             echo "[CI][ERROR] PR head changed before merge; target=${NPU_CI_TARGET_SHA}, fetched=${fetched_head}."
@@ -844,17 +606,44 @@ jobs:
             exit 1
           fi
 
-          git merge --no-ff --no-edit "${pr_head_ref}"
+          git merge --no-ff --no-edit "$NPU_CI_TARGET_SHA"
         env:
           NPU_CI_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
           NPU_CI_BASE_REF: ${{ needs.prepare.outputs.base_ref }}
+          NPU_CI_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
           NPU_CI_TARGET_SHA: ${{ needs.prepare.outputs.head_sha }}
+
+      - name: 离线校验设备任务的固定版本
+        id: validate_pr
+        working-directory: repo
+        env:
+          NPU_CI_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
+          NPU_CI_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+          NPU_CI_BASE_REF: ${{ needs.prepare.outputs.base_ref }}
+          NPU_CI_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+          # PR state/draft/target metadata is checked by GitHub-hosted prepare
+          # and finalize. Device validation only reads the fetched Git objects.
+          fetched_base="$(git rev-parse "refs/remotes/origin/${NPU_CI_BASE_REF}^{commit}")"
+          fetched_head="$(git rev-parse "refs/remotes/pull/${NPU_CI_PR_NUMBER}/head^{commit}")"
+          if [[ "$fetched_base" != "$NPU_CI_BASE_SHA" || "$fetched_head" != "$NPU_CI_HEAD_SHA" ]]; then
+            echo "[CI][ERROR] PR head or target branch advanced; start a new NPU CI run instead of reusing prepare." >&2
+            echo "[CI][ERROR] base: expected=$NPU_CI_BASE_SHA fetched=$fetched_base; head: expected=$NPU_CI_HEAD_SHA fetched=$fetched_head" >&2
+            exit 1
+          fi
+          for commit in "$NPU_CI_BASE_SHA" "$NPU_CI_HEAD_SHA"; do
+            if ! git merge-base --is-ancestor "$commit" HEAD; then
+              echo "[CI][ERROR] Merged source does not contain the fixed commit $commit; fetch and merge the PR again." >&2
+              exit 1
+            fi
+          done
+          echo "[CI] Offline source validation passed: base=$fetched_base head=$fetched_head merged=$(git rev-parse HEAD)"
 
       - name: 运行 ${{ matrix.name }} NPU CI 容器
         id: npu_ci
         working-directory: repo
         env:
-          GITHUB_TOKEN: ${{ github.token }}
           NPU_CI_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
           NPU_CI_TARGET_SHA: ${{ needs.prepare.outputs.head_sha }}
           NPU_CI_HEAD_POLL_SECONDS: '60'
@@ -870,27 +659,21 @@ jobs:
             "$CI_SUMMARY_FILE"
 
           get_pr_head_sha() {
-            python3 - <<'PY'
-          import json
-          import os
-          import urllib.request
-
-          repo = os.environ["GITHUB_REPOSITORY"]
-          pr_number = os.environ["NPU_CI_PR_NUMBER"]
-          token = os.environ["GITHUB_TOKEN"]
-          url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}"
-          request = urllib.request.Request(
-              url,
-              headers={
-                  "Accept": "application/vnd.github+json",
-                  "Authorization": f"Bearer {token}",
-                  "X-GitHub-Api-Version": "2022-11-28",
-              },
-          )
-          with urllib.request.urlopen(request, timeout=30) as response:
-              data = json.load(response)
-          print(data["head"]["sha"])
-          PY
+            local result sha ref fetched_ref
+            ref="refs/pull/${NPU_CI_PR_NUMBER}/head"
+            if ! result="$(timeout 30 git ls-remote --exit-code origin "$ref")"; then
+              source "$CI_PROXY_SCRIPT" || return
+              proxyon >&2 || return
+              result="$(timeout 30 git ls-remote --exit-code origin "$ref")" || return
+            fi
+            # ls-remote also matches suffixes such as refs/original/.../head.
+            while read -r sha fetched_ref; do
+              if [[ "$fetched_ref" == "$ref" && "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+                printf '%s\n' "$sha"
+                return 0
+              fi
+            done <<< "$result"
+            return 1
           }
 
           mark_stale() {
@@ -904,15 +687,6 @@ jobs:
             } >>"$GITHUB_ENV"
             docker rm -f "$CI_CONTAINER_NAME" >/dev/null 2>&1 || true
           }
-
-          if current_sha="$(get_pr_head_sha)"; then
-            if [[ "$current_sha" != "$NPU_CI_TARGET_SHA" ]]; then
-              mark_stale "$current_sha"
-              exit 1
-            fi
-          else
-            echo "[CI][WARN] Unable to check PR head before starting NPU CI; continuing."
-          fi
 
           echo "::group::${{ matrix.name }} 完整构建与测试日志（默认折叠）"
           (
@@ -1000,14 +774,6 @@ jobs:
             exit 1
           fi
           cleanup_directories=("$CI_HOST_TMPDIR")
-          if [[ "$CI_ACCURACY_PLATFORM" == a5 ]]; then
-            archive_dir="${TMPDIR}/fla-npu-source-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-            if [[ "$archive_dir" != "/home/huangjunzhe/ci/tmp/fla-npu-source-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" ]]; then
-              echo "[CI][ERROR] Refusing to clean an unexpected source archive directory." >&2
-              exit 1
-            fi
-            cleanup_directories+=("$archive_dir")
-          fi
           for directory in "${cleanup_directories[@]}"; do
             [[ ! -L "$directory" ]] || { echo "[CI][ERROR] Refusing to clean a symlink." >&2; exit 1; }
           done

@@ -26,7 +26,6 @@ class CiAuthorizationTest(unittest.TestCase):
             "dispatch": workflow_script("npu-ci-comment-dispatch.yml", "dispatch"),
             "prepare": workflow_script("ci.yml", "prepare", "prepare"),
             "default": workflow_script("npu-ci-default-status.yml", "mark-not-run"),
-            "guard": workflow_script("ci.yml", "ascend-npu", "validate_pr"),
             "helper": "result = await auth[settings.method]({github, context, pr, ...settings.args});",
         }
         wrapper = r"""
@@ -322,16 +321,6 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
         self.assertEqual(self.records(result, "status"), [])
         self.assertIn("profile unavailable", self.records(result, "warning")[0])
 
-    def test_device_version_guard_rejects_stale_head_base_or_closed_pr(self):
-        current = {"number":527,"state":"open","draft":False,
-                   "head":{"sha":"a"*40},"base":{"ref":"main","sha":"c"*40}}
-        for change in ({"head":{"sha":"d"*40}}, {"base":{"ref":"release","sha":"c"*40}},
-                       {"base":{"ref":"main","sha":"d"*40}}, {"state":"closed"}, {"draft":True}, {"merged":True}, {"merged_at":"2026-11-04T00:00:00Z"}):
-            with self.subTest(change=change):
-                result = self.run_entry("guard", current_pr={**current,**change})
-                self.assertIn("prepare", result["error"])
-
-
     def test_rerun_preserves_initial_authorization_without_reloading_allowlist(self):
         for entry in ("dispatch", "prepare"):
             with self.subTest(entry=entry):
@@ -414,21 +403,21 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
         rejected = self.run_entry("default", files=["ci/run_checks.sh"], statuses=statuses)
         self.assertEqual([status["state"] for status in self.records(rejected, "status")], ["failure"] * 6)
 
-    def test_device_version_guard_precedes_all_source_steps_on_both_platforms(self):
+    def test_device_version_guard_runs_offline_after_source_merge(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
-        guard = workflow["jobs"]["ascend-npu"]["steps"][0]
-        self.assertEqual(guard["id"], "validate_pr")
+        steps = workflow["jobs"]["ascend-npu"]["steps"]
+        guard_index = next(index for index, step in enumerate(steps) if step.get("id") == "validate_pr")
+        merge_index = next(index for index, step in enumerate(steps) if step.get("name") == "现场合并 PR 代码")
+        container_index = next(index for index, step in enumerate(steps)
+                               if "bash ci/run_ci_container.sh" in step.get("run", ""))
+        self.assertLess(merge_index, guard_index)
+        self.assertLess(guard_index, container_index)
+        guard = steps[guard_index]
+        self.assertEqual(guard["working-directory"], "repo")
         self.assertNotIn("if", guard)
+        self.assertNotIn("uses", guard)
         self.assertNotIn("NPU_CI_TRIGGERING_ACTOR", guard["env"])
-
-    def test_device_version_guard_keeps_authorization_without_permission_reads(self):
-        for attempt in (1, 2):
-            with self.subTest(attempt=attempt):
-                result = self.run_entry("guard", attempt=attempt, actor="outside-list", list_error=True,
-                                        permission_error=True, files=["ci/run.sh"])
-                self.assertNotIn("error", result)
-                self.assertEqual(self.records(result, "content"), [])
-                self.assertEqual(self.records(result, "permission"), [])
+        self.assertFalse(any(step.get("uses", "").startswith("actions/github-script@") for step in steps))
 
 
 if __name__ == "__main__":
