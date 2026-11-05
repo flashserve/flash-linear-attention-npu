@@ -2861,11 +2861,7 @@ template<uint16_t unroll_id, uint16_t iter_id, bool varlen, bool tail>
 
 		__VEC_SCOPE__{
 			MaskReg preg_all = CreateMask<uint8_t, MaskPattern::ALL>();
-			RegTensor<float> vreg_b0;   // T=1:fp32 beta_eff[0](打包前捕获)
 			if constexpr (iter_id == 0) {
-				if (seq_len == 1 && !task_empty && subid == 0) {
-					DataCopy<float, LoadDist::DIST_BRC_B32>(vreg_b0, (__ubuf__ float *)beta_ub);
-				}
 				RegTensor<float> vreg_b32;
 				RegTensor<T> vreg_b16;
 				DataCopy(vreg_b32, (__ubuf__ float *)beta_ub);
@@ -2876,39 +2872,42 @@ template<uint16_t unroll_id, uint16_t iter_id, bool varlen, bool tail>
 			}
 			for(uint16_t i = 0; i < (uint16_t)(chunk_half_rows / row_pair); i ++) {
 				RegTensor<T> vreg_beta1, vreg_beta2, vreg_v1, vreg_v2, vreg_kplus_score1, vreg_kplus_score2, vreg_v_corr1, vreg_v_corr2;
+				// v_corr=(v−kds)·beta:sub/mul 全程 fp32 寄存器,单次 BF16 舍入写回
+				RegTensor<float> vreg_v1l, vreg_v1h, vreg_v2l, vreg_v2h;
+				RegTensor<float> vreg_s1l, vreg_s1h, vreg_s2l, vreg_s2h;
+				RegTensor<float> vreg_beta1f, vreg_beta2f;
 				DataCopy(vreg_kplus_score1, (__ubuf__ T *)kplus_score_ub + i*(row_pair*value_dim));
 				DataCopy(vreg_kplus_score2, (__ubuf__ T *)kplus_score_ub + i*(row_pair*value_dim) + value_dim);
 				DataCopy(vreg_v1, (__ubuf__ T *)v_ub[vid] + i*(row_pair*value_dim));
 				DataCopy(vreg_v2, (__ubuf__ T *)v_ub[vid] + i*(row_pair*value_dim) + value_dim);
-				Sub(vreg_v_corr1, vreg_v1, vreg_kplus_score1, preg_all);
-				Sub(vreg_v_corr2, vreg_v2, vreg_kplus_score2, preg_all);
 				DataCopy<T, LoadDist::DIST_BRC_B16>(vreg_beta1, (__ubuf__ T *)beta_ub + i*row_pair + iter_id*chunk_size + subid*chunk_half_rows);
 				DataCopy<T, LoadDist::DIST_BRC_B16>(vreg_beta2, (__ubuf__ T *)beta_ub + i*row_pair + 1 + iter_id*chunk_size + subid*chunk_half_rows);
-				Mul(vreg_v_corr1, vreg_v_corr1, vreg_beta1, preg_all);
-				Mul(vreg_v_corr2, vreg_v_corr2, vreg_beta2, preg_all);
+				Cast<float, T, bf2fZero>(vreg_v1l, vreg_v1, preg_all);
+				Cast<float, T, bf2fOne >(vreg_v1h, vreg_v1, preg_all);
+				Cast<float, T, bf2fZero>(vreg_s1l, vreg_kplus_score1, preg_all);
+				Cast<float, T, bf2fOne >(vreg_s1h, vreg_kplus_score1, preg_all);
+				Cast<float, T, bf2fZero>(vreg_beta1f, vreg_beta1, preg_all);
+				Sub(vreg_v1l, vreg_v1l, vreg_s1l, preg_all);
+				Sub(vreg_v1h, vreg_v1h, vreg_s1h, preg_all);
+				Mul(vreg_v1l, vreg_v1l, vreg_beta1f, preg_all);
+				Mul(vreg_v1h, vreg_v1h, vreg_beta1f, preg_all);
+				Cast<T, float, f2bfZero>((RegTensor<T> &)vreg_v1l, vreg_v1l, preg_all);
+				Cast<T, float, f2bfOne >((RegTensor<T> &)vreg_v1h, vreg_v1h, preg_all);
+				Or((RegTensor<uint16_t> &)vreg_v_corr1, (RegTensor<uint16_t> &)vreg_v1l, (RegTensor<uint16_t> &)vreg_v1h, preg_all);
+				Cast<float, T, bf2fZero>(vreg_v2l, vreg_v2, preg_all);
+				Cast<float, T, bf2fOne >(vreg_v2h, vreg_v2, preg_all);
+				Cast<float, T, bf2fZero>(vreg_s2l, vreg_kplus_score2, preg_all);
+				Cast<float, T, bf2fOne >(vreg_s2h, vreg_kplus_score2, preg_all);
+				Cast<float, T, bf2fZero>(vreg_beta2f, vreg_beta2, preg_all);
+				Sub(vreg_v2l, vreg_v2l, vreg_s2l, preg_all);
+				Sub(vreg_v2h, vreg_v2h, vreg_s2h, preg_all);
+				Mul(vreg_v2l, vreg_v2l, vreg_beta2f, preg_all);
+				Mul(vreg_v2h, vreg_v2h, vreg_beta2f, preg_all);
+				Cast<T, float, f2bfZero>((RegTensor<T> &)vreg_v2l, vreg_v2l, preg_all);
+				Cast<T, float, f2bfOne >((RegTensor<T> &)vreg_v2h, vreg_v2h, preg_all);
+				Or((RegTensor<uint16_t> &)vreg_v_corr2, (RegTensor<uint16_t> &)vreg_v2l, (RegTensor<uint16_t> &)vreg_v2h, preg_all);
 				DataCopy<T, MicroAPI::DataCopyMode::DATA_BLOCK_COPY>((__ubuf__ T *)v_corr_ub + i*(row_pair*block_elems_16b), (RegTensor<T> &)vreg_v_corr1, 17, preg_all);
 				DataCopy<T, MicroAPI::DataCopyMode::DATA_BLOCK_COPY>((__ubuf__ T *)v_corr_ub + i*(row_pair*block_elems_16b) + block_elems_16b, (RegTensor<T> &)vreg_v_corr2, 17, preg_all);
-			}
-			// T=1:v_corr 行 0 用 fp32 寄存器计算,单次 BF16 舍入写回
-			if constexpr (iter_id == 0) {
-				if (seq_len == 1 && !task_empty && subid == 0) {
-					RegTensor<T> vreg_v0, vreg_s0;
-					RegTensor<float> vreg_v0l, vreg_v0h, vreg_s0l, vreg_s0h;
-					DataCopy(vreg_v0, (__ubuf__ T *)v_ub[vid]);
-					DataCopy(vreg_s0, (__ubuf__ T *)kplus_score_ub);
-					Cast<float, T, bf2fZero>(vreg_v0l, vreg_v0, preg_all);
-					Cast<float, T, bf2fOne >(vreg_v0h, vreg_v0, preg_all);
-					Cast<float, T, bf2fZero>(vreg_s0l, vreg_s0, preg_all);
-					Cast<float, T, bf2fOne >(vreg_s0h, vreg_s0, preg_all);
-					Sub(vreg_v0l, vreg_v0l, vreg_s0l, preg_all);
-					Sub(vreg_v0h, vreg_v0h, vreg_s0h, preg_all);
-					Mul(vreg_v0l, vreg_v0l, vreg_b0, preg_all);
-					Mul(vreg_v0h, vreg_v0h, vreg_b0, preg_all);
-					Cast<T, float, f2bfZero>((RegTensor<T> &)vreg_v0l, vreg_v0l, preg_all);
-					Cast<T, float, f2bfOne >((RegTensor<T> &)vreg_v0h, vreg_v0h, preg_all);
-					Or((RegTensor<uint16_t> &)vreg_v0, (RegTensor<uint16_t> &)vreg_v0l, (RegTensor<uint16_t> &)vreg_v0h, preg_all);
-					DataCopy<T, MicroAPI::DataCopyMode::DATA_BLOCK_COPY>((__ubuf__ T *)v_corr_ub, vreg_v0, 17, preg_all);
-				}
 			}
 		}
 		AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(vid + 2);
