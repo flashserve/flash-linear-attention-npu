@@ -81,7 +81,47 @@ prepare_wy_repr_bwd_npu 编译时报 UB 超限（需要352.75 KiB）。一次缺
 而回退64 KiB资源预算的运行不作为有效标杆，不计算或宣称≤1.25×FLA。
 需在可运行该 FLA 提交的同设备环境补齐比较。
 
-MSS同步检测未通过：带行号调试包在 G=8 和既有 G=4 对照中，均报告 intra Vector
-共享 L1 复用的 CrossCoreWaitFlag（chunk_gdn_bwd_intra_vector.h:400）等待。
-该同步点未在本次变更中修改；现有证据不能区分工具兼容问题与既有同步缺陷，
-故不凭猜测改写流水，也不以正常精度通过代替 MSS 通过结论。
+MSS 同步问题于 2026-11-05 完成基线定界。独立构建原始提交
+`2fb57c34750a046594c903586e970be5e3ca9d7b`，使用独立安装环境和同一冻结典型
+G4 输入（HK=32，其余同定长典型 shape）：普通运行成功，MSS 下复现等待。
+底层 plog 同时记录 AI Core 非法指令地址异常（错误码 256 / runtime 507015），
+因此报告中的 Vector 等待是执行中断后的现象，不能据此修改同步流水。
+
+在相同 `-O2 -g --sanitizer`、单 TilingKey=102 的基线对照中，仅增加
+`-fno-jump-tables` 后，内核完整执行、输出有限且 synccheck 无错误。
+本轮使用 CANN 9.2.0-beta.2 / MSS 26.2.0；检测构建已有
+`--cce-enable-sanitizer` 和调试信息，但缺少禁用跳转表的选项。此结果与
+[CANN 官方 Ascend 950 检测构建说明](https://gitcode.com/cann/ops-transformer/blob/master/docs/zh/debug/op_debug_prof.md)
+一致（核对文档 blob `fc2ef34a1e6d969b2dd0c59c3fbd995fc25fd890`）。本问题
+定界为当前工具链的跳转表插桩兼容问题，此次 GVA 扩展未引入该异常。
+最终修复未修改算子源码或共享 CANN 安装。
+
+本次最小修复限定于 MSS 检测包的构建参数：
+
+```bash
+FLA_NPU_SOC=ascend950 FLA_NPU_OPS=chunk_gdn_bwd_intra \
+  FLA_NPU_BUILD_ARGS='-j16 -O2 --ops-compile-options -fno-jump-tables' \
+  python scripts/build_wheel.py -g --sanitizer
+```
+
+当前版本不裁剪 TilingKey，完整构建并安装至独立检测环境，安装产物 MD5 核验通过。
+synccheck 使用 `--block-id=0 --kernel-name=ChunkGdnBwdIntra`；只有内核及程序完整
+结束、存在有效检测记录且无错误时才记为通过。MSS 检测包的耗时包含插桩编译，
+不作为性能数据。原普通包的 8/8 精度和性能记录仍按上文解释。
+
+| 当前版本典型输入 | 普通运行 | synccheck | memcheck | CPU 混合容差精度 |
+| --- | --- | --- | --- | --- |
+| G4 定长，T=11264，HK=32 | 通过 | 通过 | 未扩展 | 未扩展 |
+| G8 定长，T=11264，HK=16 | 通过 | 通过 | 通过 | 通过 |
+| G8 变长，T=16384，16×1024，HK=16 | 通过 | 通过 | 通过 | 通过 |
+
+检测目标均为 intra，MSS 只检查 block 0；memcheck 按工具说明设置
+`PYTORCH_NO_NPU_MEMORY_CACHING=1`。同步记录分别为 G4/G8 定长各 225168 条、
+G8 变长 327568 条，均包含 `KERNEL_FINISH` 和服务正常退出记录。
+两例精度沿用原 ATK CPU 标杆及 mixed_tolerance_bm，比较完整 `w/u/dv_local`，
+通过 2/2；未增加其他 shape、属性或硬件平台验证。
+
+当前检测 wheel SHA256：
+`bb18cdf37dd145c76db8c31ee9930122d7dbfc1c0b233c2ca5213b4b2436a52f`；
+基线禁用跳转表 wheel SHA256：
+`f8319632b86efbbdfb1d0c30e69653227a42d0cf7b54f009ec0df99570fb6635`。
