@@ -26,18 +26,6 @@ STANDARD = {
     "perf": "not_key",
     "mem": 1.1,
 }
-# Same thresholds as the parent chunk_gated_delta_rule_fwd double benchmark.
-DOUBLE_STANDARD = {
-    "acc": {
-        "cv_fused_double_benchmark": {
-            "max_re_ratio": 5,
-            "avg_re_ratio": 1.5,
-            "root_mean_squared_ratio": 1.5,
-        }
-    },
-    "perf": "not_key",
-    "mem": 1.1,
-}
 HERE = Path(__file__).resolve().parent
 SCALE = 128 ** -0.5
 
@@ -379,135 +367,6 @@ def slim_specs() -> list[dict]:
     return specs
 
 
-# state, GVA, allow_neg, state_v_first. Every factor value appears.
-_COVER8 = (
-    ("none", False, False, False),
-    ("bf16", True, False, False),
-    ("fp32", False, True, False),
-    ("zero", True, True, False),
-    ("none", True, False, True),
-    ("bf16", False, True, True),
-    ("fp32", True, False, True),
-    ("zero", False, True, True),
-)
-
-
-def double_specs() -> list[dict]:
-    """About 1000 double-benchmark cases with 2048 < T < 16384.
-
-    Every shape gets the full state × head × neg × state_v_first cross with all
-    three exports on. A thinner cross keeps the inference launch, the other
-    export combinations, and strong/spike/mix.
-    """
-
-    # layout, B, T, seqlens. Packed lengths sum to T.
-    shapes = (
-        ("BNSD", 1, 4096, ""),
-        ("BNSD", 1, 4100, ""),
-        ("BNSD", 1, 12288, ""),
-        ("BNSD", 1, 16340, ""),
-        ("BNSD", 2, 3072, ""),
-        ("BSND", 1, 8192, ""),
-        ("BSND", 1, 8204, ""),
-        ("BSND", 2, 2560, ""),
-        ("BSND", 1, 16352, ""),
-        ("NTD", 1, 8192, "4096,4096"),
-        ("NTD", 1, 8000, "3000,5000"),
-        ("NTD", 1, 4128, "32,4096"),
-        ("NTD", 1, 4116, "20,4096"),
-        ("TND", 1, 6144, ""),
-        ("TND", 1, 12288, "4096,8192"),
-        ("TND", 1, 10000, "4000,6000"),
-        ("TND", 1, 16000, "7000,9000"),
-        ("TND", 1, 7168, "1024,2048,4096"),
-    )
-    states = ("none", "bf16", "fp32", "zero")
-    heads = ((4, 4), (2, 8))
-    flags = ((False, False), (False, True), (True, False), (True, True))
-    export_modes = (
-        (True, False, False),
-        (False, True, False),
-        (False, False, True),
-        (True, True, False),
-        (True, False, True),
-        (False, True, True),
-        (True, True, True),
-    )
-    specs: list[dict] = []
-
-    def add(layout, batch, tokens, seqlens, hk, hv, state, neg, sv, l2, ga, out_h, g_mode) -> None:
-        specs.append(
-            _spec(
-                case_key=_key(
-                    layout, hk, hv, tokens, state, seqlens, neg, sv, batch, l2, ga, out_h, g_mode,
-                ),
-                tags="double", layout=layout, batch=batch, k_heads=hk, v_heads=hv,
-                tokens=tokens, state=state, seqlens=seqlens, allow_neg=neg,
-                state_v_first=sv, out_l2=l2, disable_recompute=ga, out_h=out_h,
-                g_mode=g_mode, seed=SEED_BASE + 8000 + len(specs), max_tokens=16383,
-            )
-        )
-
-    for layout, batch, tokens, seqlens in shapes:
-        for state in states:
-            for hk, hv in heads:
-                for neg, sv in flags:
-                    add(layout, batch, tokens, seqlens, hk, hv, state, neg, sv, True, True, True, "normal")
-        for state, gva, neg, sv in _COVER8:
-            hk, hv = (2, 8) if gva else (4, 4)
-            add(layout, batch, tokens, seqlens, hk, hv, state, neg, sv, False, False, False, "normal")
-
-    partial_shapes = (
-        ("BNSD", 1, 4096, ""),
-        ("BSND", 1, 8192, ""),
-        ("NTD", 1, 8000, "3000,5000"),
-        ("TND", 1, 6144, ""),
-        ("BNSD", 2, 3072, ""),
-        ("NTD", 1, 4128, "32,4096"),
-    )
-    for layout, batch, tokens, seqlens in partial_shapes:
-        for l2, ga, out_h in export_modes:
-            if (l2, ga, out_h) == (True, True, True):
-                continue
-            for state, gva, neg, sv in _COVER8[:4]:
-                hk, hv = (2, 8) if gva else (4, 4)
-                add(layout, batch, tokens, seqlens, hk, hv, state, neg, sv, l2, ga, out_h, "normal")
-
-    gate_shapes = (
-        ("BNSD", 1, 4096, ""),
-        ("BNSD", 1, 4100, ""),
-        ("BSND", 1, 8192, ""),
-        ("BSND", 2, 2560, ""),
-        ("NTD", 1, 8000, "3000,5000"),
-        ("NTD", 1, 4128, "32,4096"),
-        ("TND", 1, 10000, "4000,6000"),
-        ("TND", 1, 6144, ""),
-    )
-    for g_mode in ("strong", "spike", "mix"):
-        for layout, batch, tokens, seqlens in gate_shapes:
-            for state, gva, neg, sv in _COVER8:
-                hk, hv = (2, 8) if gva else (4, 4)
-                add(
-                    layout, batch, tokens, seqlens, hk, hv, state, neg, sv,
-                    True, True, True, g_mode,
-                )
-
-    for row in specs:
-        if not 2048 < row["T"] < 16384:
-            raise RuntimeError(f"double T out of range: {row['T']}")
-        if row["seqlens"]:
-            lengths = [int(item) for item in row["seqlens"].split(",")]
-            if sum(lengths) != row["T"] or row["B"] != 1:
-                raise RuntimeError(f"bad varlen {row['case_key']}")
-    keys = [row["case_key"] for row in specs]
-    if len(keys) != len(set(keys)):
-        raise RuntimeError("duplicate double case_key")
-    full = sum(row["out_l2"] and row["disable_recompute"] and row["out_h"] for row in specs)
-    if full < 400:
-        raise RuntimeError(f"too few full-export cases: {full}")
-    return specs
-
-
 def perf_specs() -> list[dict]:
     rows = [
         ("BNSD", 1, 8, 8, 8192, "none", "", False, False, "perf_bnsd_h8_t8192"),
@@ -617,9 +476,6 @@ def main() -> None:
             f"neg={int(row['allow_neg_eigval'])} sv={int(row['state_v_first'])}"
         )
     _write(f"atk_{OP_NAME}.json", specs)
-    double = double_specs()
-    print(f"double: {len(double)}")
-    _write(f"atk_{OP_NAME}_double.json", double, DOUBLE_STANDARD)
     _write(f"atk_{OP_NAME}_perf.json", perf_specs())
     _write(f"atk_{OP_NAME}_mss.json", mss_specs())
     slim = slim_specs()

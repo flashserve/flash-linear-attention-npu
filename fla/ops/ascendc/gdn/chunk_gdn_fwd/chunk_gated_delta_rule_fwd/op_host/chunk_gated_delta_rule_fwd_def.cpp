@@ -75,6 +75,11 @@ public:
         this->Attr("o_layout").AttrType(OPTIONAL).Int(0);
         this->Attr("state_v_first").AttrType(OPTIONAL).Bool(false);
         this->Attr("allow_neg_eigval").AttrType(OPTIONAL).Bool(false);
+        // Omitted stays false, matching graphs built before this attribute.
+        // The public wrappers default the argument to true and always pass it.
+        // Chunk 64/128 aclnn passes false here and does not read the attribute;
+        // only chunk 32 tiling consumes it. Those wrappers reject false for
+        // chunk 64 and 128 before launch.
         this->Attr("is_out_l2norm").AttrType(OPTIONAL).Bool(false);
         this->Attr("output_h").AttrType(OPTIONAL).Bool(false);
         this->Attr("output_beta_eff").AttrType(OPTIONAL).Bool(false);

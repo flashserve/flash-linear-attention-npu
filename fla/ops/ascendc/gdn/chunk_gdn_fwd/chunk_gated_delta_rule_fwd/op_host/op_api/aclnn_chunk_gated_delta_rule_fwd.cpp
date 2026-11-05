@@ -616,11 +616,12 @@ static aclnnStatus CheckChunk32Params(const ChunkGatedDeltaRuleFwdParams &params
     if (params.hOutOptional != nullptr) {
         const op::Shape &hShape = params.hOutOptional->GetViewShape();
         CHECK_COND(hShape.GetDimNum() == 5 && hShape.GetDim(0) == batch &&
+                       hShape.GetDim(1) == ExpectedChunks(params, tokens) &&
                        hShape.GetDim(2) == valueHeads && hShape.GetDim(3) == HEAD_DIM_128 &&
                        hShape.GetDim(4) == HEAD_DIM_128 &&
                        params.hOutOptional->GetDataType() == DataType::DT_BF16,
                    ACLNN_ERR_PARAM_INVALID,
-                   "chunkSize=32 h is BF16 [B,NT,Hv,128,128].");
+                   "chunkSize=32 h is BF16 [B,NT,Hv,128,128], NT is the chunk count.");
     }
     if (params.gCumsumOutOptional != nullptr) {
         CHECK_COND(HasShape(params.gCumsumOutOptional, {batch, tokens, valueHeads}) &&

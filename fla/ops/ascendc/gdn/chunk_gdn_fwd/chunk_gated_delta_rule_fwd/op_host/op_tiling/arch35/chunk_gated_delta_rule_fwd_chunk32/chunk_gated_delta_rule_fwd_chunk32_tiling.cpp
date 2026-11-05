@@ -8,6 +8,7 @@
 #include "register/op_impl_registry.h"
 #include "tiling_base/tiling_templates_registry.h"
 #include <algorithm>
+#include <cstdint>
 
 namespace optiling {
 namespace {
@@ -110,9 +111,32 @@ ge::graphStatus TilingForChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *cont
                 OP_LOGE(context->GetNodeName(),
                         "Chunk32 requires positive B/H/T, Hv divisible by Hk, and K=V=128."),
                 return ge::GRAPH_FAILED);
+    constexpr int64_t kU32Max = static_cast<int64_t>(UINT32_MAX);
+    // seqNum keeps export flags in the top nibble, so the sequence count
+    // itself has to fit in the low 28 bits.
+    constexpr int64_t kSeqCountMax = 0x0FFFFFFFLL;
+    const uint64_t headTasks =
+        static_cast<uint64_t>(batch) * static_cast<uint64_t>(valueHeads);
+    OP_CHECK_IF(batch > kU32Max || keyHeads > kU32Max || valueHeads > kU32Max ||
+                    tokens > kU32Max || headTasks > static_cast<uint64_t>(kU32Max),
+                OP_LOGE(context->GetNodeName(),
+                        "Chunk32 B/Hk/Hv/T or B*Hv does not fit in uint32."),
+                return ge::GRAPH_FAILED);
     // A caller-owned contiguous o can arrive with its storage collapsed to
     // numel. The logical BNSD layout is already checked in ACLNN.
-    const int64_t oNumel = batch * valueHeads * tokens * valueDim;
+    uint64_t numel = headTasks;
+    OP_CHECK_IF(tokens > 0 && numel > UINT64_MAX / static_cast<uint64_t>(tokens),
+                OP_LOGE(context->GetNodeName(), "Chunk32 o numel overflows."),
+                return ge::GRAPH_FAILED);
+    numel *= static_cast<uint64_t>(tokens);
+    OP_CHECK_IF(valueDim > 0 && numel > UINT64_MAX / static_cast<uint64_t>(valueDim),
+                OP_LOGE(context->GetNodeName(), "Chunk32 o numel overflows."),
+                return ge::GRAPH_FAILED);
+    numel *= static_cast<uint64_t>(valueDim);
+    OP_CHECK_IF(numel > static_cast<uint64_t>(INT64_MAX),
+                OP_LOGE(context->GetNodeName(), "Chunk32 o numel overflows."),
+                return ge::GRAPH_FAILED);
+    const int64_t oNumel = static_cast<int64_t>(numel);
     const gert::Shape &oStorage = oShape->GetStorageShape();
     const bool oFlat = oStorage.GetDimNum() == 1 && oStorage.GetDim(0) == oNumel;
     OP_CHECK_IF(!IsShape(kShape, {batch, keyHeads, tokens, keyDim}) ||
@@ -152,6 +176,10 @@ ge::graphStatus TilingForChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *cont
                     OP_LOGE(context->GetNodeName(), "Chunk32 varlen metadata descriptor is invalid."),
                     return ge::GRAPH_FAILED);
         stateBatch = cu.GetDim(0) - 1;
+        OP_CHECK_IF(stateBatch < 0 || stateBatch > kSeqCountMax,
+                    OP_LOGE(context->GetNodeName(),
+                            "Chunk32 sequence count does not fit beside the export flags."),
+                    return ge::GRAPH_FAILED);
         seqNum = static_cast<uint32_t>(stateBatch);
     }
     // ACLNN validates the logical state shape. Executor-owned/output tensors
@@ -226,7 +254,7 @@ ge::graphStatus TilingForChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *cont
     workspaceBytes = platform.GetLibApiWorkSpaceSize();
     aicNum = std::max<uint32_t>(static_cast<uint32_t>(platform.GetCoreNumAic()), 1U);
     const uint32_t blockDim =
-        std::min<uint32_t>(static_cast<uint32_t>(batch * valueHeads), aicNum);
+        std::min<uint32_t>(static_cast<uint32_t>(headTasks), aicNum);
     tiling->coreNum = blockDim;
     size_t *workspace = context->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context, workspace);

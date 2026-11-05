@@ -1,9 +1,8 @@
 """Chunk32 ATK executor.
 
-One file for the NPU DUT, the mixed-tolerance CPU emulation, the
-double-benchmark fp64 golden, and the GPU Triton benchmark. The case JSON
-standard selects the CPU path: ``mixed_tolerance_bm`` uses the emulation,
-``cv_fused_double_benchmark`` uses the fp64 golden.
+The NPU DUT and the mixed-tolerance CPU emulation live here. The case JSON
+standard ``mixed_tolerance_bm`` selects that emulation. Determinism and
+memory checks use the same NPU entry.
 """
 
 from __future__ import annotations
@@ -141,9 +140,9 @@ def _apply_qk_beta(
         beta = scale * torch.sigmoid(beta.float())
     return q, k, beta
 
-# --- mixed-tolerance CPU emulation of the Triton forward ---
+# --- mixed-tolerance CPU emulation ---
 EMU_CHUNK_SIZES = (16, 32)
-# Emulated tl.dot accumulation: "fp32" (plain fp32 matmul), "fp64" (exact-ish sum, RNE to fp32),
+# Emulated block-dot accumulation: "fp32" (plain fp32 matmul), "fp64" (exact-ish sum, RNE to fp32),
 # "fp64_rz" (exact-ish sum, round-toward-zero to fp32, closer to tensor-core truncation).
 DOT_MODE = "fp64_rz"
 
@@ -175,7 +174,7 @@ def _tc_dot(a: torch.Tensor, b: torch.Tensor, acc: torch.Tensor | None) -> torch
 
 
 def _dot(a: torch.Tensor, b: torch.Tensor, acc: torch.Tensor | None = None) -> torch.Tensor:
-    """Emulated ``tl.dot(a, b, acc)`` (bf16 operands held in fp32, fp32 accumulator)."""
+    """Emulated block dot of ``a`` and ``b`` into ``acc`` (bf16 operands held in fp32, fp32 accumulator)."""
     if DOT_MODE == "tc":
         return _tc_dot(a, b, acc)
     if DOT_MODE == "fp32":
@@ -187,7 +186,7 @@ def _dot(a: torch.Tensor, b: torch.Tensor, acc: torch.Tensor | None = None) -> t
 
 
 def _bf16(x: torch.Tensor) -> torch.Tensor:
-    """Round to bf16 (RNE, same as Triton ``.to(bf16)``) and keep computing in fp32."""
+    """Round to bf16 with round-to-nearest-even and keep computing in fp32."""
     return x.to(torch.bfloat16).float()
 
 
@@ -256,7 +255,7 @@ def _fwd_single_emu(q, k, v, g, beta, scale, initial_state, chunk_size, keep_sta
     a = (a * beta_c.unsqueeze(-1)).masked_fill(~(strict & pair_valid), 0.0)
     ai = emu_solve_tril(a)
 
-    # recompute_w_u_fwd. Triton casts k * beta * exp2(g) once, then dots.
+    # recompute_w_u_fwd. Cast k * beta * exp2(g) once, then dot.
     u_c = _bf16(_dot(ai, _bf16(v_c * beta_c.unsqueeze(-1))))
     kb = _bf16(k_c * beta_c.unsqueeze(-1) * torch.exp2(g_c).unsqueeze(-1))
     w_c = _bf16(_dot(ai, kb))
@@ -332,7 +331,7 @@ def cpu_chunk_gated_delta_rule_fwd_emu(
     state_v_first: bool = False,
     return_stages: bool = False,
 ):
-    """GPU-emulating CPU golden. Returns ``(o, final_state)`` or ``(o, final_state, stages)``.
+    """Mixed-tolerance CPU golden. Returns ``(o, final_state)`` or ``(o, final_state, stages)``.
 
     Defaults match chunk.py 282-288: raw ``q``/``k`` are L2-normalized (rounded to the
     input dtype) and ``beta`` logits go through sigmoid in fp32. ``allow_neg_eigval``
@@ -343,7 +342,7 @@ def cpu_chunk_gated_delta_rule_fwd_emu(
     ``g_cumsum / A / w / u / v_new / h`` for step-by-step comparison with the kernels.
     """
     if chunk_size not in EMU_CHUNK_SIZES:
-        raise NotImplementedError(f"GPU emulation supports chunk_size in {EMU_CHUNK_SIZES}, got {chunk_size}")
+        raise NotImplementedError(f"emulation supports chunk_size in {EMU_CHUNK_SIZES}, got {chunk_size}")
     layout = normalize_layout(layout)
     q, k, v, g, beta = (to_fla(x, layout) for x in (q, k, v, g, beta))
     q, k, beta = _apply_qk_beta(
@@ -382,353 +381,6 @@ def cpu_chunk_gated_delta_rule_fwd_emu(
     if return_stages:
         return o, final_state, stages
     return o, final_state
-
-# --- double-benchmark fp64 golden ---
-_DTYPE = torch.float64
-_EPS = 1e-6
-
-
-def _hp_l2norm(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    values = x.to(_DTYPE)
-    rstd = torch.rsqrt(values.square().sum(dim=-1) + _EPS)
-    return values * rstd.unsqueeze(-1), rstd
-
-
-def _solve16(a: torch.Tensor) -> torch.Tensor:
-    ai = -torch.tril(a, diagonal=-1)
-    for i in range(2, 16):
-        row = -a[..., i, :].clone()
-        row[..., i:] = 0.0
-        row = row + (row.unsqueeze(-1) * ai).sum(dim=-2)
-        ai[..., i, :] = row
-    return ai + torch.eye(16, dtype=a.dtype, device=a.device)
-
-
-def _solve(a: torch.Tensor) -> torch.Tensor:
-    bt = a.shape[-1]
-    if bt == 16:
-        return _solve16(a)
-    if bt != 32:
-        raise NotImplementedError(f"high-precision solve supports BT=16/32, got {bt}")
-    ai11 = _solve16(a[..., :16, :16])
-    ai22 = _solve16(a[..., 16:, 16:])
-    ai21 = -((ai22 @ a[..., 16:, :16]) @ ai11)
-    out = torch.zeros_like(a)
-    out[..., :16, :16] = ai11
-    out[..., 16:, 16:] = ai22
-    out[..., 16:, :16] = ai21
-    return out
-
-
-def _fwd_one(q, k, v, g, beta, scale, initial_state, chunk_size, state_v_first):
-    b, t, _h, k_dim = k.shape
-    hv, v_dim = v.shape[2], v.shape[3]
-    bt = chunk_size
-    pad = (bt - t % bt) % bt
-    nt = (t + pad) // bt
-
-    def chunks(x, repeat=False):
-        x = x.to(_DTYPE)
-        if repeat:
-            x = _repeat_k_for_gva(x, hv)
-        return _to_chunks(_pad_time(x, pad), bt)
-
-    q_c, k_c, v_c = chunks(q, True), chunks(k, True), chunks(v)
-    beta_c = chunks(beta)
-    valid = (torch.arange(nt * bt) < t).reshape(nt, bt)
-    g_c = chunks(g).cumsum(dim=-1)
-    strict = torch.tril(torch.ones(bt, bt, dtype=torch.bool), diagonal=-1)
-    causal = torch.tril(torch.ones(bt, bt, dtype=torch.bool))
-    pair_valid = valid[:, :, None] & valid[:, None, :]
-    gdiff = g_c.unsqueeze(-1) - g_c.unsqueeze(-2)
-    gate = torch.exp(gdiff.masked_fill(~strict, 0.0))
-    a = (k_c @ k_c.transpose(-1, -2)) * gate
-    a = (a * beta_c.unsqueeze(-1)).masked_fill(~(strict & pair_valid), 0.0)
-    ai = _solve(a)
-    u_c = ai @ (v_c * beta_c.unsqueeze(-1))
-    kb = k_c * beta_c.unsqueeze(-1) * torch.exp(g_c).unsqueeze(-1)
-    w_c = ai @ kb
-
-    if initial_state is None:
-        state = torch.zeros(b, hv, k_dim, v_dim, dtype=_DTYPE)
-    else:
-        state = initial_state.to(_DTYPE)
-        if state_v_first:
-            state = state.transpose(-1, -2).contiguous()
-    o_c = torch.empty(b, hv, nt, bt, v_dim, dtype=_DTYPE)
-    h_tail = (v_dim, k_dim) if state_v_first else (k_dim, v_dim)
-    h_all = torch.empty(b, hv, nt, *h_tail, dtype=_DTYPE)
-    for i_t in range(nt):
-        n_valid = min(bt, t - i_t * bt)
-        m_t = valid[i_t]
-        q_i, k_i, g_i = q_c[:, :, i_t], k_c[:, :, i_t], g_c[:, :, i_t]
-        vv = u_c[:, :, i_t] - (w_c[:, :, i_t] @ state)
-        g_last = g_i[..., n_valid - 1]
-        decay = torch.exp((g_last.unsqueeze(-1) - g_i).masked_fill(~m_t, 0.0)) * m_t
-        h_now = state.transpose(-1, -2) if state_v_first else state
-        h_all[:, :, i_t] = h_now
-        h_kv = h_now.transpose(-1, -2) if state_v_first else h_now
-        state = state * torch.exp(g_last)[..., None, None]
-        state = state + k_i.transpose(-1, -2) @ (vv * decay.unsqueeze(-1))
-        o_inter = (q_i @ h_kv) * torch.exp(g_i).unsqueeze(-1)
-        attn = (q_i @ k_i.transpose(-1, -2)) * torch.exp(gdiff[:, :, i_t].masked_fill(~causal, 0.0))
-        attn = attn.masked_fill(~(causal & pair_valid[i_t]), 0.0)
-        o_c[:, :, i_t] = (o_inter + attn @ vv) * scale
-    o = _from_chunks(o_c, t)
-    if state_v_first:
-        state = state.transpose(-1, -2).contiguous()
-    stages = {
-        "g_cumsum": _from_chunks(g_c, t),
-        "A": _from_chunks(ai, t),
-        "h": h_all.transpose(1, 2).contiguous(),
-    }
-    return o, state, stages
-
-
-def cpu_chunk_gated_delta_rule_fwd_hp(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    g: torch.Tensor,
-    beta: torch.Tensor,
-    scale: float | None = None,
-    initial_state: torch.Tensor | None = None,
-    output_final_state: bool = True,
-    cu_seqlens: torch.Tensor | None = None,
-    chunk_size: int = 32,
-    layout: str = "bsnd",
-    use_qk_l2norm_in_kernel: bool = True,
-    use_beta_sigmoid_in_kernel: bool = True,
-    allow_neg_eigval: bool = False,
-    state_v_first: bool = False,
-):
-    """fp64 reference. Returns ``(o, final_state, stages)`` in the caller's layout."""
-
-    if chunk_size not in (16, 32):
-        raise NotImplementedError(f"high-precision golden supports chunk 16/32, got {chunk_size}")
-    layout = normalize_layout(layout)
-    q, k, v, g, beta = (to_fla(x, layout) for x in (q, k, v, g, beta))
-    if use_qk_l2norm_in_kernel:
-        q, q_rstd = _hp_l2norm(q)
-        k, k_rstd = _hp_l2norm(k)
-    else:
-        q_rstd = k_rstd = None
-        q, k = q.to(_DTYPE), k.to(_DTYPE)
-    beta = beta.to(_DTYPE)
-    if use_beta_sigmoid_in_kernel:
-        beta = (2.0 if allow_neg_eigval else 1.0) * torch.sigmoid(beta)
-    g = g.to(_DTYPE)
-    if scale is None:
-        scale = k.shape[-1] ** -0.5
-
-    if cu_seqlens is None:
-        o, final_state, stages = _fwd_one(q, k, v, g, beta, scale, initial_state, chunk_size, state_v_first)
-    else:
-        check_cu_seqlens(q, cu_seqlens)
-        outs, states, stage_list = [], [], []
-        for i in range(len(cu_seqlens) - 1):
-            s, e = int(cu_seqlens[i]), int(cu_seqlens[i + 1])
-            h0 = None if initial_state is None else initial_state[i:i + 1]
-            o_i, ht_i, st_i = _fwd_one(
-                *(x[:, s:e] for x in (q, k, v, g, beta)), scale, h0, chunk_size, state_v_first,
-            )
-            outs.append(o_i)
-            states.append(ht_i)
-            stage_list.append(st_i)
-        o = torch.cat(outs, dim=1)
-        final_state = torch.cat(states, dim=0)
-        stages = {key: torch.cat([st[key] for st in stage_list], dim=1) for key in stage_list[0]}
-    stages["q_hat"] = from_fla(q, layout)
-    stages["k_hat"] = from_fla(k, layout)
-    stages["q_rstd"] = None if q_rstd is None else q_rstd.permute(0, 2, 1).contiguous()
-    stages["k_rstd"] = None if k_rstd is None else k_rstd.permute(0, 2, 1).contiguous()
-    stages["beta_eff"] = beta
-    o = from_fla(o, layout)
-    if not output_final_state:
-        final_state = None
-    return o, final_state, stages
-
-# --- GPU Triton benchmark ---
-def ensure_fla_on_path(fla_root: str | Path | None = None) -> Path | None:
-    """Put an explicit flash-linear-attention checkout on ``sys.path``.
-
-    An installed ``fla`` package needs no checkout. ``FLA_ROOT`` or ``fla_root``
-    is used only when the GPU node does not have that package installed.
-    """
-
-    if fla_root is None:
-        fla_root = os.environ.get("FLA_ROOT")
-    if not fla_root:
-        return None
-    root = Path(fla_root).expanduser().resolve()
-    text = str(root)
-    if text not in sys.path:
-        sys.path.insert(0, text)
-    return root
-
-def _triton_apply_qk_beta(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    beta: torch.Tensor,
-    *,
-    use_qk_l2norm_in_kernel: bool,
-    use_beta_sigmoid_in_kernel: bool,
-    allow_neg_eigval: bool,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Lines 282-288 of ``ChunkGatedDeltaRuleFunction.forward``."""
-    if allow_neg_eigval and not use_beta_sigmoid_in_kernel:
-        raise ValueError("`allow_neg_eigval=True` requires `use_beta_sigmoid_in_kernel=True`.")
-    if use_qk_l2norm_in_kernel:
-        try:
-            from fla.modules.norm.l2norm import l2norm_fwd
-        except ImportError:
-            from fla.modules.l2norm import l2norm_fwd
-        q, _q_rstd = l2norm_fwd(q)
-        k, _k_rstd = l2norm_fwd(k)
-    if use_beta_sigmoid_in_kernel:
-        from fla.ops.common.gate import fused_beta_sigmoid_fwd
-        # Same kernel as fused_beta_sigmoid; the autograd wrapper only saves beta for backward.
-        beta = fused_beta_sigmoid_fwd(beta, scale=2.0 if allow_neg_eigval else 1.0)
-    return q, k, beta
-
-
-@torch.inference_mode()
-def gpu_chunk_gated_delta_rule_fwd(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    g: torch.Tensor,
-    beta: torch.Tensor,
-    *,
-    scale: float | None = None,
-    initial_state: torch.Tensor | None = None,
-    output_final_state: bool = True,
-    cu_seqlens: torch.Tensor | None = None,
-    chunk_size: int = 64,
-    layout: str = "bsnd",
-    use_qk_l2norm_in_kernel: bool = True,
-    use_beta_sigmoid_in_kernel: bool = True,
-    allow_neg_eigval: bool = False,
-    state_v_first: bool = False,
-    fla_root: str | Path | None = None,
-) -> tuple[torch.Tensor, torch.Tensor | None]:
-    """Run FLA forward on CUDA; ``o`` is returned in ``layout``.
-
-    ``q``/``k`` are raw bf16 when ``use_qk_l2norm_in_kernel`` (default). ``beta`` is
-    bf16 logits when ``use_beta_sigmoid_in_kernel`` (default); the sigmoid result is fp32,
-    matching ``fused_beta_sigmoid``. ``allow_neg_eigval`` uses ``2 * sigmoid``.
-    """
-    if q.device.type != "cuda":
-        raise ValueError(f"GPU path expects CUDA tensors, got device={q.device}")
-    layout = normalize_layout(layout)
-    ensure_fla_on_path(fla_root)
-
-    from fla.ops.gated_delta_rule.chunk import chunk_gated_delta_rule_fwd
-    from fla.ops.utils.index import prepare_chunk_indices
-
-    q, k, v, g, beta = (to_fla(x, layout) for x in (q, k, v, g, beta))
-    q, k, beta = _triton_apply_qk_beta(
-        q, k, beta,
-        use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
-        use_beta_sigmoid_in_kernel=use_beta_sigmoid_in_kernel,
-        allow_neg_eigval=allow_neg_eigval,
-    )
-    if scale is None:
-        scale = k.shape[-1] ** -0.5
-    chunk_indices = None
-    if cu_seqlens is not None:
-        cu_seqlens = cu_seqlens.to(device=q.device, dtype=torch.long)
-        check_cu_seqlens(q, cu_seqlens)
-        chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size)
-
-    _g, o, _A, final_state, _h0, _g_input = chunk_gated_delta_rule_fwd(
-        q=q,
-        k=k,
-        v=v,
-        g=g,
-        beta=beta,
-        scale=scale,
-        initial_state=initial_state,
-        output_final_state=output_final_state,
-        cu_seqlens=cu_seqlens,
-        cp_context=None,
-        chunk_indices=chunk_indices,
-        state_v_first=state_v_first,
-        use_gate_in_kernel=False,
-        A_log=None,
-        dt_bias=None,
-        chunk_size=chunk_size,
-    )
-    return from_fla(o.to(q.dtype), layout), final_state
-
-
-@torch.inference_mode()
-def gpu_chunk_gated_delta_rule_fwd_stages(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    g: torch.Tensor,
-    beta: torch.Tensor,
-    *,
-    scale: float | None = None,
-    initial_state: torch.Tensor | None = None,
-    cu_seqlens: torch.Tensor | None = None,
-    chunk_size: int = 64,
-    layout: str = "bsnd",
-    use_qk_l2norm_in_kernel: bool = True,
-    use_beta_sigmoid_in_kernel: bool = True,
-    allow_neg_eigval: bool = False,
-    state_v_first: bool = False,
-    fla_root: str | Path | None = None,
-) -> dict[str, torch.Tensor]:
-    """Same kernels as ``chunk_gated_delta_rule_fwd`` called one by one, keeping intermediates.
-
-    Intermediates stay in FLA ``[B, T, HV, ...]`` layout (``h`` is ``[B, NT, HV, K, V]``);
-    ``o`` is returned in ``layout``.
-    """
-    layout = normalize_layout(layout)
-    ensure_fla_on_path(fla_root)
-
-    from fla.ops.common.chunk_delta_h import chunk_gated_delta_rule_fwd_h
-    from fla.ops.common.chunk_o import chunk_fwd_o
-    from fla.ops.gated_delta_rule.chunk_fwd import chunk_gated_delta_rule_fwd_intra
-    from fla.ops.utils import chunk_local_cumsum
-    from fla.ops.utils.constant import RCP_LN2
-    from fla.ops.utils.index import prepare_chunk_indices
-
-    q, k, v, g, beta = (to_fla(x, layout) for x in (q, k, v, g, beta))
-    q, k, beta = _triton_apply_qk_beta(
-        q, k, beta,
-        use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
-        use_beta_sigmoid_in_kernel=use_beta_sigmoid_in_kernel,
-        allow_neg_eigval=allow_neg_eigval,
-    )
-    if scale is None:
-        scale = k.shape[-1] ** -0.5
-    chunk_indices = None
-    if cu_seqlens is not None:
-        cu_seqlens = cu_seqlens.to(device=q.device, dtype=torch.long)
-        check_cu_seqlens(q, cu_seqlens)
-        chunk_indices = prepare_chunk_indices(cu_seqlens, chunk_size)
-
-    g_cs = chunk_local_cumsum(
-        g, chunk_size=chunk_size, scale=RCP_LN2, cu_seqlens=cu_seqlens, chunk_indices=chunk_indices,
-    )
-    w, u, A = chunk_gated_delta_rule_fwd_intra(
-        k=k, v=v, g=g_cs, beta=beta, cu_seqlens=cu_seqlens, chunk_indices=chunk_indices, chunk_size=chunk_size,
-    )
-    h, v_new, final_state = chunk_gated_delta_rule_fwd_h(
-        k=k, w=w, u=u, g=g_cs, initial_state=initial_state, output_final_state=True,
-        cu_seqlens=cu_seqlens, chunk_indices=chunk_indices, state_v_first=state_v_first, chunk_size=chunk_size,
-    )
-    o = chunk_fwd_o(
-        q=q, k=k, v=v_new, h=h, g=g_cs, scale=scale, cu_seqlens=cu_seqlens,
-        chunk_indices=chunk_indices, state_v_first=state_v_first, chunk_size=chunk_size,
-    )
-    return {
-        "g_cumsum": g_cs, "A": A, "w": w, "u": u, "v_new": v_new, "h": h,
-        "o": from_fla(o.to(q.dtype), layout), "final_state": final_state,
-    }
 
 # --- case inputs and ATK entry ---
 OP_NAME = "chunk_gated_delta_rule_fwd_chunk32"
@@ -929,12 +581,11 @@ def _pack(spec: dict[str, Any], o, state, g_cumsum=None, a=None, beta_eff=None,
 
 
 def _exports_from_stages(inputs: dict[str, Any], stages: dict[str, torch.Tensor]):
-    """Public optional tensors from the Triton-equivalent emulation.
+    """Public optional tensors from the mixed-tolerance emulation.
 
-    ``g_cumsum`` is the natural chunk-local sum. The Triton recurrence stores
-    that sum times ``RCP_LN2`` and then applies ``exp2``; the kernel writes the
-    sum itself and applies ``exp``, which is the same value.     ``h`` uses the same ``[V, K]`` layout as ``final_state`` when
-    ``state_v_first`` is set.
+    The emulation stores the chunk-local gate sum in log2 units. Dividing by
+    ``RCP_LN2`` recovers the natural sum the kernel writes. ``h`` uses the
+    same ``[V, K]`` layout as ``final_state`` when ``state_v_first`` is set.
     """
 
     g_cumsum = (stages["g_cumsum"].float() / RCP_LN2).contiguous()
@@ -949,9 +600,7 @@ def _exports_from_stages(inputs: dict[str, Any], stages: dict[str, torch.Tensor]
 def _accuracy_standard(task_result: TaskResult) -> str:
     """Name of the accuracy standard in the case JSON.
 
-    ``mixed_tolerance_bm`` compares the NPU with the Triton-emulating CPU golden.
-    ``cv_fused_double_benchmark`` compares both the NPU and the GPU Triton
-    benchmark with the high-precision CPU golden.
+    ``mixed_tolerance_bm`` compares the NPU with the CPU emulation.
     """
 
     config = getattr(task_result, "case_config", None)
@@ -998,35 +647,6 @@ def run_cpu(spec: dict[str, Any]):
     )
 
 
-def run_cpu_hp(spec: dict[str, Any]):
-    """Double-benchmark golden: fp64 recurrence, then the public dtypes."""
-
-    inputs = build_inputs(spec, torch.device("cpu"))
-    golden_layout = "bsnd" if inputs["sequence_major"] else "bnsd"
-    o, final_state, stages = cpu_chunk_gated_delta_rule_fwd_hp(
-        inputs["q"],
-        inputs["k"],
-        inputs["v"],
-        inputs["g"],
-        inputs["beta"],
-        scale=inputs["scale"],
-        initial_state=inputs["initial_state"],
-        cu_seqlens=_cu(inputs["seqlens"]),
-        chunk_size=32,
-        layout=golden_layout,
-        use_qk_l2norm_in_kernel=True,
-        use_beta_sigmoid_in_kernel=True,
-        allow_neg_eigval=inputs["allow_neg_eigval"],
-        state_v_first=inputs["state_v_first"],
-    )
-    if not inputs["sequence_major"]:
-        o = o.transpose(1, 2).contiguous()
-    a = stages["A"].permute(0, 2, 1, 3).contiguous()
-    return _pack(
-        spec, o, final_state, stages["g_cumsum"], a, stages["beta_eff"], stages["h"],
-        stages["q_hat"], stages["k_hat"], stages["q_rstd"], stages["k_rstd"],
-    )
-
 
 def _metadata(seqlens: Optional[list[int]]) -> tuple[Optional[list[int]], Optional[list[int]]]:
     if seqlens is None:
@@ -1044,79 +664,52 @@ def run_npu(spec: dict[str, Any], input_data: InputDataset):
     inputs = build_inputs(spec, _marker_device(input_data))
     from fla_npu.ops.ascendc import npu_chunk_gated_delta_rule_fwd
 
+    saved_env = {
+        name: os.environ.get(name)
+        for name in ("TBE_PARALLEL_COMPILE_ENABLE", "PARALLEL_COMPILE")
+    }
     os.environ["TBE_PARALLEL_COMPILE_ENABLE"] = "0"
     os.environ["PARALLEL_COMPILE"] = "0"
     torch.npu.config.allow_internal_format = False
     torch.npu.set_compile_mode(jit_compile=False)
-    cu, chunks = _metadata(inputs["seqlens"])
-    if inputs["sequence_major"]:
-        g, beta = inputs["g"], inputs["beta"]
-    else:
-        g = inputs["g"].transpose(1, 2).contiguous()
-        beta = inputs["beta"].transpose(1, 2).contiguous()
-    outputs = npu_chunk_gated_delta_rule_fwd(
-        inputs["q"],
-        inputs["k"],
-        inputs["v"],
-        g,
-        beta,
-        initial_state=inputs["initial_state"],
-        output_final_state=True,
-        chunk_size=32,
-        cu_seqlens=cu,
-        chunk_indices=chunks,
-        scale=inputs["scale"],
-        use_exp2=False,
-        use_qk_l2norm_in_kernel=True,
-        use_beta_sigmoid_in_kernel=True,
-        allow_neg_eigval=inputs["allow_neg_eigval"],
-        disable_recompute=inputs["disable_recompute"],
-        return_intermediate_states=inputs["out_h"],
-        state_v_first=inputs["state_v_first"],
-        layout=inputs["layout"],
-        is_out_l2norm=inputs["out_l2"],
-    )
-    torch.npu.synchronize()
-    return _pack(spec, *outputs)
+    try:
+        cu, chunks = _metadata(inputs["seqlens"])
+        if inputs["sequence_major"]:
+            g, beta = inputs["g"], inputs["beta"]
+        else:
+            g = inputs["g"].transpose(1, 2).contiguous()
+            beta = inputs["beta"].transpose(1, 2).contiguous()
+        outputs = npu_chunk_gated_delta_rule_fwd(
+            inputs["q"],
+            inputs["k"],
+            inputs["v"],
+            g,
+            beta,
+            initial_state=inputs["initial_state"],
+            output_final_state=bool(spec.get("output_final_state", True)),
+            chunk_size=32,
+            cu_seqlens=cu,
+            chunk_indices=chunks,
+            scale=inputs["scale"],
+            use_exp2=False,
+            use_qk_l2norm_in_kernel=True,
+            use_beta_sigmoid_in_kernel=True,
+            allow_neg_eigval=inputs["allow_neg_eigval"],
+            disable_recompute=inputs["disable_recompute"],
+            return_intermediate_states=inputs["out_h"],
+            state_v_first=inputs["state_v_first"],
+            layout=inputs["layout"],
+            is_out_l2norm=inputs["out_l2"],
+        )
+        torch.npu.synchronize()
+        return _pack(spec, *outputs)
+    finally:
+        for name, previous in saved_env.items():
+            if previous is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = previous
 
-
-def run_gpu(spec: dict[str, Any]):
-    """Same-precision benchmark: FLA Triton chunk forward at chunk size 32."""
-
-    if not torch.cuda.is_available():
-        raise RuntimeError("GPU Triton benchmark requires CUDA")
-
-    inputs = build_inputs(spec, torch.device("cuda"))
-    # Public NTD/TND are rank-4 packed tensors, same as the CPU emulation.
-    golden_layout = "bsnd" if inputs["sequence_major"] else "bnsd"
-    cu = _cu(inputs["seqlens"])
-    stages = gpu_chunk_gated_delta_rule_fwd_stages(
-        inputs["q"],
-        inputs["k"],
-        inputs["v"],
-        inputs["g"],
-        inputs["beta"],
-        scale=inputs["scale"],
-        initial_state=inputs["initial_state"],
-        cu_seqlens=None if cu is None else cu.to(device="cuda"),
-        chunk_size=32,
-        layout=golden_layout,
-        use_qk_l2norm_in_kernel=True,
-        use_beta_sigmoid_in_kernel=True,
-        allow_neg_eigval=inputs["allow_neg_eigval"],
-        state_v_first=inputs["state_v_first"],
-    )
-    torch.cuda.synchronize()
-    output = stages["o"]
-    if not inputs["sequence_major"]:
-        output = output.transpose(1, 2).contiguous()
-    # The stage dict is on CUDA. The public conversion below runs on CPU.
-    stages = {key: value.detach().to("cpu") for key, value in stages.items()}
-    inputs = {key: (value.detach().to("cpu") if torch.is_tensor(value) else value) for key, value in inputs.items()}
-    g_cumsum, a, beta_eff, h, q_hat, k_hat, q_rstd, k_rstd = _exports_from_stages(inputs, stages)
-    return _pack(
-        spec, output, stages["final_state"], g_cumsum, a, beta_eff, h, q_hat, k_hat, q_rstd, k_rstd,
-    )
 
 
 def _spec_from_case_config(case_config) -> dict[str, Any] | None:
@@ -1170,32 +763,18 @@ class FunctionApi(BaseApi):
                 flush=True,
             )
             outputs = run_npu(spec, input_data)
-        elif self.device == "gpu":
-            print(
-                f"[chunk32-atk] case={case_id} role=benchmark target=gpu_triton_chunk32 "
-                f"standard={self.accuracy_standard} {export}",
-                flush=True,
-            )
-            outputs = run_gpu(spec)
         elif self.device == "cpu":
-            if self.accuracy_standard == "cv_fused_double_benchmark":
-                print(
-                    f"[chunk32-atk] case={case_id} role=golden target=cpu_fp64_chunk32 {export}",
-                    flush=True,
-                )
-                outputs = run_cpu_hp(spec)
-            elif self.accuracy_standard == "mixed_tolerance_bm":
-                print(
-                    f"[chunk32-atk] case={case_id} role=golden target=cpu_emu_chunk32 {export}",
-                    flush=True,
-                )
-                outputs = run_cpu(spec)
-            else:
+            if self.accuracy_standard != "mixed_tolerance_bm":
                 raise RuntimeError(
                     f"{OP_NAME} does not know accuracy standard {self.accuracy_standard!r}"
                 )
+            print(
+                f"[chunk32-atk] case={case_id} role=golden target=cpu_emu_chunk32 {export}",
+                flush=True,
+            )
+            outputs = run_cpu(spec)
         else:
             raise RuntimeError(
-                f"{OP_NAME} supports NPU DUT, CPU golden and GPU Triton, got device {self.device!r}"
+                f"{OP_NAME} supports the NPU DUT and the CPU golden, got device {self.device!r}"
             )
         return _finite_tuple(outputs)

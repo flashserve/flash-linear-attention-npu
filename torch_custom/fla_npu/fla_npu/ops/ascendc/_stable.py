@@ -1681,14 +1681,17 @@ def npu_chunk_gated_delta_rule_fwd(q, k, v, g, beta, *, initial_state=None,
                                    return_intermediate_states=False,
                                    state_v_first=False, a_log=None,
                                    dt_bias=None, layout="BNSD",
-                                   is_out_l2norm=True):
+                                   is_out_l2norm=None):
     """Fused GDN forward: `o` plus the intermediates the backward consumes.
 
-    ``is_out_l2norm=False`` is refused for chunk_size 64 and 128. Chunk 32
-    uses that setting, together with ``disable_recompute=False`` and
-    ``return_intermediate_states=False``, for the inference launch, which
-    returns only ``o`` and an optional ``final_state``. Setting any of those
-    three the other way exports the corresponding intermediate.
+    ``is_out_l2norm`` defaults to false for chunk 32: the L2 results stay
+    inside the kernel. Chunk 64 and 128 ignore an omitted value and keep
+    exporting from ``use_qk_l2norm_in_kernel``. Passing false explicitly is
+    refused for those two sizes. Chunk 32 uses false, together with
+    ``disable_recompute=False`` and ``return_intermediate_states=False``, for
+    the inference launch, which returns only ``o`` and an optional
+    ``final_state``. Setting any of those three the other way exports the
+    corresponding intermediate.
 
     The tuple is fixed at ten slots -- `(o, final_state, g_cumsum, A, beta_eff,
     h, q_hat, k_hat, q_rstd, k_rstd)` -- carrying `None` in the slots the flags
@@ -1729,7 +1732,11 @@ def npu_chunk_gated_delta_rule_fwd(q, k, v, g, beta, *, initial_state=None,
         raise RuntimeError(
             "npu_chunk_gated_delta_rule_fwd: a_log and dt_bias must be None "
             "while gate-in-kernel is unsupported.")
-    if int(chunk_size) in (64, 128) and not bool(is_out_l2norm):
+    if is_out_l2norm is None:
+        # Omitted. Chunk 32 stays inside the kernel. Chunk 64/128 must not see
+        # this omission as an explicit false, or every existing call is refused.
+        is_out_l2norm = int(chunk_size) != 32
+    elif int(chunk_size) in (64, 128) and not bool(is_out_l2norm):
         raise RuntimeError(
             "npu_chunk_gated_delta_rule_fwd: is_out_l2norm=False is not supported "
             "when chunk_size is 64 or 128.")
