@@ -450,7 +450,7 @@ jobs:
         uses: actions/checkout@v5
         env:
           # Both platforms try direct access before enabling the proxy fallback.
-          # GitHub env keys are case-insensitive; no_proxy also bypasses inherited proxies.
+          # Workflow env mappings reject case-only duplicate keys; use lowercase proxy names.
           http_proxy: ''
           https_proxy: ''
           all_proxy: ''
@@ -468,17 +468,25 @@ jobs:
         if: steps.checkout_pr_1.outcome == 'failure'
         run: |
           set -euo pipefail
+          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+          unset GIT_HTTP_PROXY GIT_HTTPS_PROXY
           source "$CI_PROXY_SCRIPT"
           proxyon
-          for variable in http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY \
-            no_proxy NO_PROXY GIT_HTTP_PROXY GIT_HTTPS_PROXY PROXY_HTTP_PORT PROXY_SOCKS_PORT PROXY_MIXED_PORT; do
+          for variable in http_proxy https_proxy all_proxy no_proxy \
+            GIT_HTTP_PROXY GIT_HTTPS_PROXY PROXY_HTTP_PORT PROXY_SOCKS_PORT PROXY_MIXED_PORT; do
+            uppercase="${variable^^}"
             value="${!variable-}"
+            value="${value:-${!uppercase-}}"
+            # Optional variables may be absent; clear only the direct-mode bypass.
+            if [[ -z "$value" && "$variable" != no_proxy ]]; then continue; fi
             if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
               echo "[CI][ERROR] Proxy variable $variable contains a newline." >&2
               exit 1
             fi
+            export "$variable=$value"
             printf '%s=%s\n' "$variable" "$value" >> "$GITHUB_ENV"
           done
+          unset HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY
           echo "NPU_CI_PROXY_ENABLED=true" >> "$GITHUB_ENV"
 
       - name: 等待后重试拉取目标分支代码
@@ -546,17 +554,25 @@ jobs:
               return 0
             fi
             echo "[CI][WARN] Git fetch failed; enabling the proxy before retrying." >&2
+            unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+            unset GIT_HTTP_PROXY GIT_HTTPS_PROXY
             source "$CI_PROXY_SCRIPT" || return
             proxyon || return
-            for variable in http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY \
-              no_proxy NO_PROXY GIT_HTTP_PROXY GIT_HTTPS_PROXY PROXY_HTTP_PORT PROXY_SOCKS_PORT PROXY_MIXED_PORT; do
+            for variable in http_proxy https_proxy all_proxy no_proxy \
+              GIT_HTTP_PROXY GIT_HTTPS_PROXY PROXY_HTTP_PORT PROXY_SOCKS_PORT PROXY_MIXED_PORT; do
+              uppercase="${variable^^}"
               value="${!variable-}"
+              value="${value:-${!uppercase-}}"
+              # Optional variables may be absent; clear only the direct-mode bypass.
+              if [[ -z "$value" && "$variable" != no_proxy ]]; then continue; fi
               if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
                 echo "[CI][ERROR] Proxy variable $variable contains a newline." >&2
                 return 1
               fi
+              export "$variable=$value"
               printf '%s=%s\n' "$variable" "$value" >> "$GITHUB_ENV"
             done
+            unset HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY
             export NPU_CI_PROXY_ENABLED=true
             echo "NPU_CI_PROXY_ENABLED=true" >> "$GITHUB_ENV"
             for delay in 15 30; do
@@ -662,6 +678,7 @@ jobs:
             local result sha ref fetched_ref
             ref="refs/pull/${NPU_CI_PR_NUMBER}/head"
             if ! result="$(timeout --kill-after=5 30 git ls-remote --exit-code origin "$ref")"; then
+              unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
               source "$CI_PROXY_SCRIPT" >&2 || return
               proxyon >&2 || return
               result="$(timeout --kill-after=5 30 git ls-remote --exit-code origin "$ref")" || return

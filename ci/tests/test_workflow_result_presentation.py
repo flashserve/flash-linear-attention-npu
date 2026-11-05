@@ -859,48 +859,89 @@ globalThis.core = {
     @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell test")
     def test_proxy_values_reach_later_steps_and_reject_newlines(self):
         step = next(step for step in self.matrix_steps if step.get("name") == "启动代理并获取端口")
-        values = dict.fromkeys(
-            ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "GIT_HTTP_PROXY", "GIT_HTTPS_PROXY"),
-            "http://user:password@127.0.0.1:7899",
+        merge_script = next(
+            step["run"] for step in self.matrix_steps if step.get("name") == "现场合并 PR 代码"
         )
-        values.update(
-            all_proxy="socks5h://127.0.0.1:7891", ALL_PROXY="socks5h://127.0.0.1:7891",
-            no_proxy="localhost,127.0.0.1,::1", NO_PROXY="localhost,127.0.0.1,::1",
-            PROXY_HTTP_PORT="7899", PROXY_SOCKS_PORT="7891", PROXY_MIXED_PORT="7898",
-        )
-        for bad_value in (None, "http://127.0.0.1:7899\nINJECTED=value", "http://127.0.0.1:7899\rINJECTED=value"):
-            with self.subTest(bad_value=bad_value), tempfile.TemporaryDirectory() as temp_dir:
-                root = Path(temp_dir)
-                proxy_script = root / "proxy script.sh"
-                proxy_values = dict(values)
-                if bad_value is not None:
-                    proxy_values["http_proxy"] = bad_value
-                proxy_script.write_text(
-                    "proxyon() {\n" + "".join(
-                        f"  export {name}={shlex.quote(value)}\n"
-                        for name, value in proxy_values.items()
-                    ) + "}\n",
-                    encoding="utf-8",
-                )
-                github_env = root / "github-env"
-                env = os.environ.copy()
-                env.update(CI_PROXY_SCRIPT=str(proxy_script), GITHUB_ENV=str(github_env))
-                completed = subprocess.run(
-                    ["bash", "-c", step["run"]], env=env,
-                    text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                )
-                output = github_env.read_text(encoding="utf-8") if github_env.exists() else ""
-                if bad_value is None:
-                    self.assertEqual(completed.returncode, 0, completed.stderr)
-                    self.assertEqual(
-                        dict(line.split("=", 1) for line in output.splitlines()),
-                        {**values, "NPU_CI_PROXY_ENABLED": "true"},
+        fetch_function = merge_script[
+            merge_script.index("fetch_with_retry() {"):merge_script.index("fetch_more_history() {")
+        ]
+        scripts = {
+            "checkout fallback": step["run"],
+            "fetch fallback": (
+                "set -euo pipefail\ncalls=0\n"
+                "timeout() { calls=$((calls + 1)); [[ $calls -gt 1 ]]; }\n"
+                "sleep() { :; }\n"
+                + fetch_function + "\nfetch_with_retry origin test-ref\n"
+            ),
+        }
+        values = {
+            "http_proxy": "http://127.0.0.1:7899",
+            "https_proxy": "http://user:password@127.0.0.1:7899",
+            "all_proxy": "socks5h://127.0.0.1:7891",
+            "no_proxy": "localhost,127.0.0.1,::1",
+            "GIT_HTTP_PROXY": "http://127.0.0.1:7899",
+            "GIT_HTTPS_PROXY": "http://127.0.0.1:7899",
+            "PROXY_HTTP_PORT": "7899", "PROXY_SOCKS_PORT": "7891", "PROXY_MIXED_PORT": "7898",
+        }
+        mixed = {**values, **{name.upper(): "http://stale.invalid:1" for name in values if name.islower()}}
+        mixed["http_proxy"] = ""
+        mixed["HTTP_PROXY"] = values["http_proxy"]
+        cases = [
+            ("lowercase", values, values, False),
+            ("uppercase", {name.upper(): value for name, value in values.items()}, values, False),
+            ("mixed lowercase wins and empty lowercase falls back", mixed, values, False),
+            ("missing optional variables", {}, {"no_proxy": ""}, False),
+            ("line feed", {"http_proxy": "http://127.0.0.1:7899\nINJECTED=value"}, {}, True),
+            ("carriage return in uppercase", {"HTTPS_PROXY": "http://127.0.0.1:7899\rINJECTED=value"}, {}, True),
+        ]
+        proxy_names = {*values, "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"}
+        for script_name, script in scripts.items():
+            for case_name, proxy_values, expected, invalid in cases:
+                with self.subTest(script=script_name, case=case_name), tempfile.TemporaryDirectory() as temp_dir:
+                    root = Path(temp_dir)
+                    proxy_script = root / "proxy script.sh"
+                    # A missing setting must not resurrect an inherited proxy or
+                    # the wildcard bypass used during the direct fetch attempt.
+                    inherited = {
+                        name: "*" if name.lower() == "no_proxy" else "http://inherited.invalid:1"
+                        for name in proxy_names if not name.startswith("PROXY_")
+                    }
+                    proxy_script.write_text(
+                        "proxyon() {\n  :\n" + "".join(
+                            f"  export {name}={shlex.quote(value)}\n"
+                            for name, value in proxy_values.items()
+                        ) + "}\n",
+                        encoding="utf-8",
                     )
-                else:
-                    self.assertNotEqual(completed.returncode, 0)
-                    self.assertIn("contains a newline", completed.stderr)
-                    self.assertNotIn("INJECTED", output)
-                    self.assertNotIn("NPU_CI_PROXY_ENABLED", output)
+                    github_env = root / "github-env"
+                    env = {name: value for name, value in os.environ.items() if name not in proxy_names}
+                    env.update(inherited, CI_PROXY_SCRIPT=str(proxy_script), GITHUB_ENV=str(github_env))
+                    shell_checks = "\n" + "\n".join(
+                        f'[[ "${{{name}-}}" == {shlex.quote(expected.get(name, ""))} ]] || '
+                        f'{{ echo "Canonical {name} unavailable to subprocess" >&2; exit 1; }}'
+                        for name in values
+                    )
+                    shell_checks += (
+                        "\nfor alias in HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY; do\n"
+                        '  [[ ! -v "$alias" ]] || { echo "Uppercase proxy alias retained" >&2; exit 1; }\n'
+                        "done\n"
+                    )
+                    completed = subprocess.run(
+                        ["bash", "-c", script + "\nbash -c " + shlex.quote(shell_checks)], env=env,
+                        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    )
+                    output = github_env.read_text(encoding="utf-8") if github_env.exists() else ""
+                    if invalid:
+                        self.assertNotEqual(completed.returncode, 0)
+                        self.assertIn("contains a newline", completed.stderr)
+                        self.assertNotIn("INJECTED", output)
+                        self.assertNotIn("NPU_CI_PROXY_ENABLED", output)
+                    else:
+                        self.assertEqual(completed.returncode, 0, completed.stderr)
+                        pairs = [line.split("=", 1) for line in output.splitlines()]
+                        keys = [name.casefold() for name, _ in pairs]
+                        self.assertEqual(len(keys), len(set(keys)), "Duplicate case-insensitive environment key")
+                        self.assertEqual(dict(pairs), {**expected, "NPU_CI_PROXY_ENABLED": "true"})
 
     def _run_matrix_storage_step(self, name, root, overrides=None):
         step = next(step for step in self.matrix_steps if step["name"].startswith(name))

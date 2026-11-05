@@ -213,7 +213,9 @@ class WorkflowSourceCheckoutTest(unittest.TestCase):
         persisted = dict(line.split("=", 1) for line in self.github_env.read_text().splitlines())
         self.assertEqual(persisted["NPU_CI_PROXY_ENABLED"], "true")
         self.assertEqual(persisted["https_proxy"], "http://127.0.0.1:17890")
-        self.assertEqual(persisted["NO_PROXY"], "localhost,127.0.0.1")
+        self.assertEqual(persisted["no_proxy"], "localhost,127.0.0.1")
+        self.assertEqual(len(persisted), len({name.casefold() for name in persisted}))
+        self.assertNotIn("HTTP_PROXY", persisted)
         self.assert_succeeded(self.validate_offline())
 
     def test_exhausted_proxy_retries_fail_with_connectivity_advice(self):
