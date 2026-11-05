@@ -96,7 +96,7 @@ flowchart TD
 
 切换 PR 目标分支会重新检查当前 base；CI 代码变更先校验 PR 作者的仓库 Admin 身份。读取当前 PR、完整修改文件列表、作者权限或目标分支门禁定义失败，以及状态写入异常，都不会成为保留旧 success 的理由。仅编辑 PR 标题或说明不重置执行状态。
 
-触发权限独立保存在默认分支 `.github/npu-ci-users.json`，与仓库读写权限分离。默认评论入口和新版手动执行均校验初次触发人的名单；PR 自身修改名单不会生效。评论触发不要求仓库 write 权限，Actions 页面、CLI 或 REST 手动分发还须满足 GitHub 的仓库 write 权限要求。默认评论入口和新版 CI 对非 Markdown 的 `ci/` 或 `.github/` 变更校验 PR 作者（`pr.user.login`）的仓库 Admin 权限，否则门禁直接失败。作者无需在名单中，但初次触发人仍须在名单中；名单内只读用户在新版 CI 中可触发 Admin 作者的 PR，名单内 Admin 无法替非 Admin 作者放行。新版设备流程一律执行 PR 合并后的 `ci/`。Actions 重跑权限由 GitHub 平台控制，新版 CI 重跑仍校验 PR 状态和固定 head/base/workflow 版本。
+触发权限独立保存在默认分支 `.github/npu-ci-users.json`，与仓库读写权限分离。默认评论入口和新版手动执行均校验初次触发人的名单；PR 自身修改名单不会生效。评论触发不要求仓库 write 权限，Actions 页面、CLI 或 REST 手动分发还须满足 GitHub 的仓库 write 权限要求。默认评论入口和新版 CI 对非 Markdown 的 `ci/` 或 `.github/` 变更校验 PR 作者（`pr.user.login`）的仓库 Admin 权限，否则门禁直接失败。作者无需在名单中，但初次触发人仍须在名单中；名单内只读用户在新版 CI 中可触发 Admin 作者的 PR，名单内 Admin 无法替非 Admin 作者放行。评论入口始终由默认分支 workflow 接收；tag 模式随后执行 PR 合并结果中的 `ci.yml` 及其 `.github/scripts` 控制脚本。Actions 重跑权限由 GitHub 平台控制，新版 CI 重跑仍校验 PR 状态和固定 head/base/workflow 版本。
 
 评论触发总流程，下图设备执行和汇总部分以新版 CI 为例，旧分支按自己的 workflow 执行：
 
