@@ -7,7 +7,6 @@ memory checks use the same NPU entry.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
@@ -23,7 +22,7 @@ from atk.configs.results_config import TaskResult
 from atk.tasks.api_execute import register
 from atk.tasks.api_execute.base_api import BaseApi
 
-from _ascendc_common_executor import _case_spec, _finite_tuple, _marker_device
+from _ascendc_common_executor import _finite_tuple
 
 # --- layout ---
 LAYOUTS = ("bsnd", "bnsd", "tnd", "ntd")
@@ -414,22 +413,132 @@ def _flags(spec: dict[str, Any]) -> tuple[str, bool, bool, bool, bool, bool, boo
     return layout, sequence_major, allow_neg, state_v_first, out_l2, disable_recompute, out_h
 
 
-def build_inputs(spec: dict[str, Any], device: torch.device) -> dict[str, Any]:
-    """Quantize once on CPU, then move. CPU and NPU nodes share the seed."""
+def _scalar(value: Any) -> Any:
+    if isinstance(value, torch.Tensor):
+        if value.numel() != 1:
+            raise TypeError(f"expected a scalar, got shape {tuple(value.shape)}")
+        return value.detach().cpu().item()
+    return value
 
-    if str(spec.get("dtype", "bf16")).lower() != "bf16":
-        raise ValueError("q/k/v/beta/o are BF16 only")
+
+def _bool(value: Any) -> bool:
+    value = _scalar(value)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _text(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(_scalar(value)).strip()
+
+
+def _spec_from_inputs(input_data: InputDataset) -> dict[str, Any]:
+    """Read the typed attributes. Tensors stay with the caller."""
+
+    values = input_data.kwargs
+    chunk_size = int(_scalar(values["chunk_size"]))
+    if chunk_size != 32:
+        raise ValueError(f"chunk32 suite only runs chunk_size 32, got {chunk_size}")
+    seqlens = _text(values["seqlens"])
+    if seqlens.lower() == "none":
+        seqlens = ""
+    return {
+        "layout": _text(values["layout"]).upper(),
+        "state_dtype": _text(values["state_dtype"]).lower(),
+        "seqlens": seqlens,
+        "allow_neg_eigval": _bool(values["allow_neg_eigval"]),
+        "state_v_first": _bool(values["state_v_first"]),
+        "out_l2": _bool(values["out_l2"]),
+        "disable_recompute": _bool(values["disable_recompute"]),
+        "out_h": _bool(values["out_h"]),
+        "g_mode": _text(values["g_mode"]).lower(),
+        "scale": float(_scalar(values["scale"])),
+        "output_final_state": _bool(values["output_final_state"]),
+        "chunk_size": chunk_size,
+    }
+
+
+def _apply_gate(g: torch.Tensor, g_mode: str, sequence_major: bool) -> torch.Tensor:
+    """``normal`` keeps the sampled gate. The other modes write a fixed pattern."""
+
+    if g_mode == "normal":
+        return g
+    if g_mode == "strong":
+        return torch.full_like(g, -4.0)
+    tokens = int(g.shape[1] if sequence_major else g.shape[2])
+    if g_mode == "spike":
+        if tokens < 2:
+            raise ValueError("spike decay needs at least two tokens")
+        g = g.clone()
+        if sequence_major:
+            g[:, 0, :] = -100.0
+            g[:, 1, :] = 1.0
+        else:
+            g[:, :, 0] = -100.0
+            g[:, :, 1] = 1.0
+        return g
+    if g_mode == "mix":
+        if tokens < 64:
+            raise ValueError("mixed decay needs a second chunk, T>=64")
+        g = g.clone()
+        if sequence_major:
+            g[:, 32:64, :] = -4.0
+        else:
+            g[:, :, 32:64] = -4.0
+        return g
+    raise ValueError(f"g_mode must be normal/strong/spike/mix, got {g_mode!r}")
+
+
+def _initial_state(state_name: str, shape: tuple[int, ...]) -> Optional[torch.Tensor]:
+    if state_name in {"", "none"}:
+        return None
+    if state_name == "zero":
+        return torch.zeros(shape, dtype=torch.float32)
+    if state_name not in {"bf16", "fp32"}:
+        raise ValueError(f"state_dtype must be none/bf16/fp32/zero, got {state_name!r}")
+    count = 1
+    for dim in shape:
+        count *= int(dim)
+    values = torch.arange(count, dtype=torch.float32)
+    data = ((values.remainder(257) - 128) * 1.0e-4).reshape(shape).contiguous()
+    if state_name == "bf16":
+        return data.to(torch.bfloat16)
+    return data
+
+
+def build_inputs(spec: dict[str, Any], tensors: tuple, device: torch.device) -> dict[str, Any]:
+    """Use the tensors ATK sampled. Both nodes see the same values."""
+
+    q, k, v, g, beta = tensors
+    q = q.detach().to(device="cpu", dtype=torch.bfloat16).contiguous()
+    k = k.detach().to(device="cpu", dtype=torch.bfloat16).contiguous()
+    v = v.detach().to(device="cpu", dtype=torch.bfloat16).contiguous()
+    g = g.detach().to(device="cpu", dtype=torch.float32).contiguous()
+    beta = beta.detach().to(device="cpu", dtype=torch.bfloat16).contiguous()
     layout, sequence_major, allow_neg, state_v_first, out_l2, disable_recompute, out_h = _flags(spec)
-    batch = int(spec["B"])
-    k_heads = int(spec["HK"])
-    v_heads = int(spec["HV"])
-    tokens = int(spec["T"])
-    key = int(spec["K"])
-    value = int(spec["V"])
+    if sequence_major:
+        batch, tokens, k_heads, key = (int(dim) for dim in q.shape)
+        batch_v, tokens_v, v_heads, value = (int(dim) for dim in v.shape)
+        gate_shape = (batch, tokens, v_heads)
+    else:
+        batch, k_heads, tokens, key = (int(dim) for dim in q.shape)
+        batch_v, v_heads, tokens_v, value = (int(dim) for dim in v.shape)
+        gate_shape = (batch, v_heads, tokens)
+    if k.shape != q.shape or (batch_v, tokens_v) != (batch, tokens):
+        raise ValueError(
+            f"q/k/v disagree: q={tuple(q.shape)} k={tuple(k.shape)} v={tuple(v.shape)}"
+        )
+    if tuple(g.shape) != gate_shape or tuple(beta.shape) != gate_shape:
+        raise ValueError(
+            f"g/beta must be {gate_shape}, got g={tuple(g.shape)} beta={tuple(beta.shape)}"
+        )
     if key != 128 or value != 128:
         raise ValueError(f"K and V must be 128, got K={key} V={value}")
     if k_heads <= 0 or v_heads % k_heads != 0:
         raise ValueError(f"Hv must be a positive multiple of Hk, got Hk={k_heads} Hv={v_heads}")
+    spec["B"] = batch
     seqlens = _seqlens(spec)
     if seqlens is None:
         if batch < 1 or tokens < 1:
@@ -439,56 +548,12 @@ def build_inputs(spec: dict[str, Any], device: torch.device) -> dict[str, Any]:
             raise ValueError("packed input requires B=1")
         if sum(seqlens) != tokens:
             raise ValueError(f"sum(seqlens)={sum(seqlens)} != T={tokens}")
-    generator = torch.Generator(device="cpu")
-    generator.manual_seed(int(spec.get("seed", 20261027)))
-    g_mode = str(spec.get("g_mode", "normal")).lower()
-    if g_mode not in {"normal", "strong", "spike", "mix"}:
-        raise ValueError(f"g_mode must be normal/strong/spike/mix, got {g_mode!r}")
-    if g_mode == "spike" and tokens < 2:
-        raise ValueError("spike decay needs at least two tokens")
-    if g_mode == "mix" and tokens < 64:
-        raise ValueError("mixed decay needs a second chunk, T>=64")
-    if sequence_major:
-        q = (torch.randn(batch, tokens, k_heads, key, generator=generator) * 0.05).to(torch.bfloat16)
-        k = (torch.randn(batch, tokens, k_heads, key, generator=generator) * 0.05).to(torch.bfloat16)
-        v = (torch.randn(batch, tokens, v_heads, value, generator=generator) * 0.05).to(torch.bfloat16)
-        if g_mode == "strong":
-            g = torch.full((batch, tokens, v_heads), -4.0)
-        else:
-            g = torch.randn(batch, tokens, v_heads, generator=generator) * 0.02
-            if g_mode == "spike":
-                g[:, 0, :] = -100.0
-                g[:, 1, :] = 1.0
-            elif g_mode == "mix":
-                g[:, 32:64, :] = -4.0
-        beta = torch.randn(batch, tokens, v_heads, generator=generator).to(torch.bfloat16)
-    else:
-        q = (torch.randn(batch, k_heads, tokens, key, generator=generator) * 0.05).to(torch.bfloat16)
-        k = (torch.randn(batch, k_heads, tokens, key, generator=generator) * 0.05).to(torch.bfloat16)
-        v = (torch.randn(batch, v_heads, tokens, value, generator=generator) * 0.05).to(torch.bfloat16)
-        if g_mode == "strong":
-            g = torch.full((batch, v_heads, tokens), -4.0)
-        else:
-            g = torch.randn(batch, v_heads, tokens, generator=generator) * 0.02
-            if g_mode == "spike":
-                g[:, :, 0] = -100.0
-                g[:, :, 1] = 1.0
-            elif g_mode == "mix":
-                g[:, :, 32:64] = -4.0
-        beta = torch.randn(batch, v_heads, tokens, generator=generator).to(torch.bfloat16)
+    g = _apply_gate(g, str(spec.get("g_mode", "normal")).lower(), sequence_major)
     state_name = str(spec.get("state_dtype", "none")).lower()
     count = _state_count(spec, seqlens)
     state_shape = (count, v_heads, value, key) if state_v_first else (count, v_heads, key, value)
-    if state_name in {"", "none"}:
-        initial = None
-    elif state_name == "bf16":
-        initial = (torch.randn(state_shape, generator=generator) * 0.05).to(torch.bfloat16)
-    elif state_name == "fp32":
-        initial = torch.randn(state_shape, generator=generator) * 0.05
-    elif state_name == "zero":
-        initial = torch.zeros(state_shape, dtype=torch.float32)
-    else:
-        raise ValueError(f"state_dtype must be none/bf16/fp32/zero, got {state_name!r}")
+    initial = _initial_state(state_name, state_shape)
+
     def move(tensor):
         if tensor is None or device.type == "cpu":
             return tensor
@@ -618,8 +683,8 @@ def _accuracy_standard(task_result: TaskResult) -> str:
     return "mixed_tolerance_bm"
 
 
-def run_cpu(spec: dict[str, Any]):
-    inputs = build_inputs(spec, torch.device("cpu"))
+def run_cpu(spec: dict[str, Any], tensors: tuple):
+    inputs = build_inputs(spec, tensors, torch.device("cpu"))
     # Public NTD/TND are rank-4 packed tensors, not the emulator's rank-3 names.
     golden_layout = "bsnd" if inputs["sequence_major"] else "bnsd"
     o, final_state, stages = cpu_chunk_gated_delta_rule_fwd_emu(
@@ -660,8 +725,8 @@ def _metadata(seqlens: Optional[list[int]]) -> tuple[Optional[list[int]], Option
     return cu, chunks
 
 
-def run_npu(spec: dict[str, Any], input_data: InputDataset):
-    inputs = build_inputs(spec, _marker_device(input_data))
+def run_npu(spec: dict[str, Any], tensors: tuple):
+    inputs = build_inputs(spec, tensors, tensors[0].device)
     from fla_npu.ops.ascendc import npu_chunk_gated_delta_rule_fwd
 
     saved_env = {
@@ -712,33 +777,9 @@ def run_npu(spec: dict[str, Any], input_data: InputDataset):
 
 
 
-def _spec_from_case_config(case_config) -> dict[str, Any] | None:
-    """ATK drops non_param kwargs before the executor runs. Read the JSON there."""
-    inputs = getattr(case_config, "inputs", None) or []
-    for item in inputs:
-        if isinstance(item, list):
-            item = item[0] if item else None
-        if getattr(item, "name", None) != "case_spec":
-            continue
-        raw = getattr(item, "range_values", None)
-        if isinstance(raw, str) and raw.strip():
-            parsed = json.loads(raw)
-            return parsed if isinstance(parsed, dict) else None
-        if isinstance(raw, dict):
-            return raw
-    return None
-
-
-def _load_spec(input_data: InputDataset, case_config) -> dict[str, Any]:
-    spec = _case_spec(input_data, OP_NAME)
-    if "out_l2" in spec and spec.get("case_id") is not None:
-        return spec
-    stored = _spec_from_case_config(case_config)
-    if stored is None:
-        return spec
-    stored.setdefault("op", OP_NAME)
-    stored.setdefault("dtype", "bf16")
-    return stored
+def _tensors(input_data: InputDataset) -> tuple:
+    values = input_data.kwargs
+    return values["q"], values["k"], values["v"], values["g"], values["beta"]
 
 
 @register("executor_chunk_gated_delta_rule_fwd_chunk32")
@@ -749,8 +790,10 @@ class FunctionApi(BaseApi):
         self.accuracy_standard = _accuracy_standard(task_result)
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
-        spec = _load_spec(input_data, self.task_result.case_config)
-        case_id = spec.get("case_id", "?")
+        spec = _spec_from_inputs(input_data)
+        spec["case_id"] = getattr(self.task_result.case_config, "id", "?")
+        tensors = _tensors(input_data)
+        case_id = spec["case_id"]
         export = (
             f"l2={int(bool(spec.get('out_l2')))} "
             f"ga={int(bool(spec.get('disable_recompute')))} "
@@ -762,7 +805,7 @@ class FunctionApi(BaseApi):
                 f"standard={self.accuracy_standard} {export}",
                 flush=True,
             )
-            outputs = run_npu(spec, input_data)
+            outputs = run_npu(spec, tensors)
         elif self.device == "cpu":
             if self.accuracy_standard != "mixed_tolerance_bm":
                 raise RuntimeError(
@@ -772,7 +815,7 @@ class FunctionApi(BaseApi):
                 f"[chunk32-atk] case={case_id} role=golden target=cpu_emu_chunk32 {export}",
                 flush=True,
             )
-            outputs = run_cpu(spec)
+            outputs = run_cpu(spec, tensors)
         else:
             raise RuntimeError(
                 f"{OP_NAME} supports the NPU DUT and the CPU golden, got device {self.device!r}"

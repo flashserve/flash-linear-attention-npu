@@ -1,33 +1,30 @@
-"""Build the chunk32 ATK matrices.
+"""Constrain chunk32 ATK cases for ``atk case``.
 
+The YAML declares ``q/k/v/g/beta`` and one typed attribute per switch.
+``after_case_config`` writes the shape and the attribute value for each row.
 Accuracy covers the combinations chunk32 accepts: BNSD/BSND/NTD/TND, MHA/GVA,
 aligned and tail lengths, packed sequences, ``allow_neg_eigval``,
 ``state_v_first``, initial state none/bf16/fp32/zero, and the optional
 exports (L2 hats and rstd, beta_eff, g_cumsum and A, h). ``use_exp2`` stays
 false and the in-kernel L2 and beta sigmoid stay on. T is at most 8192.
-``g_mode`` is ``normal`` (``randn * 0.02``), ``strong`` (every token -4),
-``spike`` (prefix -100 then -99) or ``mix`` (chunk 0 normal, chunk 1 strong).
+``g_mode`` is ``normal``, ``strong`` (every token -4), ``spike`` (first token
+-100, second token 1) or ``mix`` (chunk 0 sampled, chunk 1 set to -4).
+The executor applies those three patterns; ``normal`` keeps the sampled ``g``.
 """
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
+import os
+
+from atk.case_generator.generator.base_generator import CaseGenerator
+from atk.case_generator.generator.generate_types import GENERATOR_REGISTRY
+from atk.configs.case_config import CaseConfig
 
 
 OP_NAME = "chunk_gated_delta_rule_fwd_chunk32"
 SEED_BASE = 20261028
-STANDARD = {
-    "acc": {
-        "mixed_tolerance_bm": {
-            "output_dtype_overrides": {"0": "bf16", "1": "bf16"}
-        }
-    },
-    "perf": "not_key",
-    "mem": 1.1,
-}
-HERE = Path(__file__).resolve().parent
 SCALE = 128 ** -0.5
+SUITES = ("accuracy", "slim", "perf", "mss", "dc")
 
 
 def _spec(
@@ -46,6 +43,7 @@ def _spec(
     disable_recompute: bool = False,
     out_h: bool = False,
     g_mode: str = "normal",
+    output_final_state: bool = True,
     tags: str = "accuracy",
     seed: int,
     max_tokens: int = 8192,
@@ -73,6 +71,7 @@ def _spec(
         "disable_recompute": disable_recompute,
         "out_h": out_h,
         "g_mode": g_mode,
+        "output_final_state": output_final_state,
         "scale": SCALE,
         "seed": seed,
     }
@@ -385,104 +384,186 @@ def perf_specs() -> list[dict]:
 
 
 def mss_specs() -> list[dict]:
+    """The 60 sanitizer rows. ``seqlens`` is empty when the length is fixed."""
+
+    # key, layout, B, HK, HV, T, state, seqlens, neg, sv, l2, ga, h, final
     rows = [
-        ("BNSD", 1, 4, 4, 64, "none", "", False, False),
-        ("BSND", 1, 2, 4, 96, "bf16", "", True, True),
-        ("NTD", 1, 2, 4, 96, "fp32", "64,32", False, False),
-        ("TND", 1, 2, 4, 80, "zero", "48,32", True, True),
+        ("mss_src00_bsnd_dense_T8192", "BSND", 1, 16, 32, 8192, "none", "", False, False, False, True, False, False),
+        ("mss_src01_bsnd_varlen_T8088", "BSND", 1, 32, 32, 8088, "none", "83,219,1069,249,1126,5342", False, False, False, True, False, False),
+        ("mss_src02_bnsd_state_zero_final_T1", "BNSD", 1, 1, 1, 1, "zero", "1", True, True, False, False, False, True),
+        ("mss_src03_ntd_state_initial_final_T1", "NTD", 1, 1, 1, 1, "fp32", "", True, False, False, False, True, True),
+        ("mss_src04_bsnd_varlen_T1", "BSND", 1, 1, 2, 1, "none", "1", True, True, True, False, True, False),
+        ("mss_src05_ntd_state_initial_final_T1", "NTD", 1, 1, 2, 1, "fp32", "1", True, True, True, False, False, True),
+        ("mss_src06_bsnd_state_zero_final_T1", "BSND", 1, 1, 2, 1, "zero", "1", False, True, False, True, True, True),
+        ("mss_src07_ntd_varlen_T1", "NTD", 1, 1, 2, 1, "none", "1", False, False, True, False, True, True),
+        ("mss_src08_bsnd_state_zero_final_T1", "BSND", 1, 1, 2, 1, "zero", "1", True, False, False, True, True, True),
+        ("mss_src09_ntd_varlen_T1", "NTD", 1, 1, 2, 1, "none", "1", False, True, False, True, True, True),
+        ("mss_src10_tnd_state_initial_final_T1", "TND", 1, 1, 2, 1, "fp32", "1", False, True, False, False, True, True),
+        ("mss_src11_tnd_state_initial_only_T1", "TND", 1, 1, 2, 1, "fp32", "1", False, True, False, True, True, True),
+        ("mss_src12_tnd_state_initial_final_T1", "TND", 1, 1, 2, 1, "fp32", "1", False, True, False, False, False, False),
+        ("mss_src13_bnsd_state_initial_only_T1", "BNSD", 1, 1, 3, 1, "fp32", "1", False, False, True, False, False, True),
+        ("mss_src14_ntd_dense_T1", "NTD", 1, 1, 3, 1, "none", "", True, False, False, True, False, True),
+        ("mss_src15_tnd_state_zero_final_T1", "TND", 1, 1, 3, 1, "zero", "1", False, False, False, False, False, True),
+        ("mss_src16_ntd_varlen_T1", "NTD", 1, 2, 2, 1, "none", "1", True, True, True, True, True, False),
+        ("mss_src17_tnd_state_zero_final_T1", "TND", 2, 1, 1, 1, "zero", "", True, False, True, False, False, False),
+        ("mss_src18_tnd_varlen_T1", "TND", 1, 2, 2, 1, "none", "1", False, False, True, False, True, True),
+        ("mss_src19_bsnd_varlen_T2", "BSND", 1, 1, 1, 2, "none", "2", False, True, True, False, True, False),
+        ("mss_src20_ntd_varlen_T2", "NTD", 1, 1, 1, 2, "none", "2", True, False, False, True, True, False),
+        ("mss_src21_tnd_state_initial_final_T1", "TND", 1, 2, 2, 1, "fp32", "1", False, False, True, True, False, True),
+        ("mss_src22_bsnd_state_zero_final_T1", "BSND", 1, 2, 2, 1, "zero", "1", False, True, True, False, True, False),
+        ("mss_src23_bsnd_state_initial_only_T1", "BSND", 2, 1, 1, 1, "fp32", "", False, False, False, True, True, True),
+        ("mss_src24_tnd_dense_T2", "TND", 1, 1, 1, 2, "none", "", True, False, True, True, True, False),
+        ("mss_src25_ntd_varlen_T1", "NTD", 1, 2, 2, 1, "none", "1", False, True, True, True, False, False),
+        ("mss_src26_tnd_state_initial_final_T1", "TND", 1, 2, 2, 1, "fp32", "1", True, False, False, True, True, True),
+        ("mss_src27_bsnd_varlen_T2", "BSND", 1, 1, 1, 2, "none", "2", True, True, False, True, True, True),
+        ("mss_src28_bsnd_varlen_T2", "BSND", 1, 1, 1, 2, "none", "2", False, True, False, False, True, False),
+        ("mss_src29_bnsd_state_zero_final_T1", "BNSD", 1, 2, 2, 1, "zero", "1", False, False, True, True, True, True),
+        ("mss_src30_ntd_varlen_T1", "NTD", 1, 2, 2, 1, "none", "1", False, False, False, False, True, False),
+        ("mss_src31_bnsd_state_initial_only_T2", "BNSD", 1, 1, 1, 2, "fp32", "2", False, False, False, False, True, True),
+        ("mss_src32_bnsd_state_initial_only_T2", "BNSD", 1, 1, 1, 2, "fp32", "1,1", False, False, False, True, True, False),
+        ("mss_src33_bnsd_varlen_T1", "BNSD", 1, 1, 4, 1, "none", "1", True, True, True, True, False, False),
+        ("mss_src34_ntd_varlen_T1", "NTD", 1, 1, 4, 1, "none", "1", True, False, False, False, True, False),
+        ("mss_src35_ntd_state_initial_only_T1", "NTD", 1, 1, 4, 1, "fp32", "1", False, True, False, False, False, False),
+        ("mss_src36_bsnd_varlen_T1", "BSND", 1, 1, 4, 1, "none", "1", False, False, True, False, False, True),
+        ("mss_src37_bnsd_varlen_T1", "BNSD", 1, 2, 4, 1, "none", "1", True, False, True, True, False, True),
+        ("mss_src38_bnsd_state_initial_final_T1", "BNSD", 1, 2, 4, 1, "fp32", "1", False, True, False, False, False, True),
+        ("mss_src39_bsnd_varlen_T2", "BSND", 1, 1, 2, 2, "none", "2", False, True, False, True, False, False),
+        ("mss_src40_ntd_state_initial_only_T2", "NTD", 1, 1, 2, 2, "fp32", "2", False, False, False, True, True, True),
+        ("mss_src41_bnsd_state_zero_final_T2", "BNSD", 1, 1, 2, 2, "zero", "1,1", False, False, False, False, False, True),
+        ("mss_src42_ntd_state_initial_only_T2", "NTD", 1, 1, 2, 2, "fp32", "1,1", False, False, True, False, True, True),
+        ("mss_src43_ntd_varlen_T2", "NTD", 1, 1, 2, 2, "none", "2", False, True, True, False, True, True),
+        ("mss_src44_bsnd_state_zero_final_T1", "BSND", 1, 2, 4, 1, "zero", "1", False, False, False, False, True, True),
+        ("mss_src45_tnd_varlen_T1", "TND", 1, 3, 3, 1, "none", "1", True, False, False, True, True, True),
+        ("mss_src46_bsnd_state_initial_final_T1", "BSND", 1, 3, 3, 1, "fp32", "1", True, True, True, False, False, False),
+        ("mss_src47_bsnd_state_initial_only_T1", "BSND", 1, 3, 3, 1, "fp32", "1", True, True, False, False, False, False),
+        ("mss_src48_tnd_state_initial_final_T1", "TND", 1, 3, 3, 1, "fp32", "1", False, False, False, True, False, False),
+        ("mss_src49_tnd_state_initial_final_T1", "TND", 1, 3, 3, 1, "fp32", "1", True, True, False, True, True, True),
+        ("mss_src50_tnd_state_zero_final_T1", "TND", 1, 3, 3, 1, "zero", "1", False, True, False, True, True, True),
+        ("mss_src51_tnd_state_initial_only_T1", "TND", 1, 3, 3, 1, "fp32", "1", False, False, True, True, True, True),
+        ("mss_src52_bsnd_varlen_T1", "BSND", 1, 3, 3, 1, "none", "1", False, False, False, True, False, False),
+        ("mss_src53_tnd_state_zero_final_T1", "TND", 1, 3, 3, 1, "zero", "1", True, False, False, True, False, False),
+        ("mss_src54_tnd_state_initial_final_T1", "TND", 1, 2, 6, 1, "fp32", "1", False, False, False, True, True, False),
+        ("mss_src55_tnd_varlen_T1", "TND", 1, 2, 6, 1, "none", "1", False, True, False, False, False, True),
+        ("mss_src56_bsnd_varlen_T2", "BSND", 1, 1, 3, 2, "none", "1,1", True, True, False, False, True, True),
+        ("mss_src57_bsnd_state_initial_final_T2", "BSND", 1, 1, 3, 2, "fp32", "1,1", False, True, False, False, True, False),
+        ("mss_src58_tnd_varlen_T2", "TND", 1, 1, 3, 2, "none", "1,1", False, True, True, True, False, False),
+        ("mss_src59_ntd_varlen_T1", "NTD", 1, 2, 6, 1, "none", "1", False, True, True, False, False, True),
     ]
     specs = []
-    for index, (layout, batch, hk, hv, tokens, state, seqlens, allow_neg, state_v_first) in enumerate(rows):
+    for index, row in enumerate(rows):
+        key, layout, batch, hk, hv, tokens, state, seqlens, neg, sv, l2, ga, out_h, final = row
         specs.append(
             _spec(
-                case_key=_key(layout, hk, hv, tokens, state, seqlens, allow_neg, state_v_first, batch),
-                tags="mss", layout=layout, batch=batch, k_heads=hk, v_heads=hv, tokens=tokens,
-                state=state, seqlens=seqlens, allow_neg=allow_neg, state_v_first=state_v_first,
+                case_key=key, tags="mss", layout=layout, batch=batch, k_heads=hk, v_heads=hv,
+                tokens=tokens, state=state, seqlens=seqlens, allow_neg=neg, state_v_first=sv,
+                out_l2=l2, disable_recompute=ga, out_h=out_h, output_final_state=final,
                 seed=SEED_BASE + 2000 + index,
             )
         )
     return specs
 
 
-def _input(name: str, dtype: str, value, *, input_type: str = "attr", shape=None) -> dict:
+def dc_specs() -> list[dict]:
+    return [
+        _spec(
+            case_key="dc_bnsd_mha_fix_B1_H28x28_T8192_none_neg1_sv1_l21_ga1_h1",
+            tags="determinism", layout="BNSD", batch=1, k_heads=28, v_heads=28, tokens=8192,
+            state="none", allow_neg=True, state_v_first=True, out_l2=True, disable_recompute=True,
+            out_h=True, output_final_state=True, seed=20261105,
+        )
+    ]
+
+
+def suite_specs(name: str) -> list[dict]:
+    builders = {
+        "accuracy": accuracy_specs,
+        "slim": slim_specs,
+        "perf": perf_specs,
+        "mss": mss_specs,
+        "dc": dc_specs,
+    }
+    try:
+        specs = builders[name]()
+    except KeyError as exc:
+        raise ValueError(f"CHUNK32_ATK_SUITE must be one of {SUITES}, got {name!r}") from exc
+    keys = [row["case_key"] for row in specs]
+    if len(keys) != len(set(keys)):
+        raise RuntimeError(f"duplicate case_key in {name}")
+    return specs
+
+
+Q, K, V, G, BETA = 0, 1, 2, 3, 4
+SCALE_I, CHUNK, LAYOUT, STATE, SEQLENS = 5, 6, 7, 8, 9
+NEG, SV, OUT_L2, GA, OUT_H, G_MODE, FINAL = 10, 11, 12, 13, 14, 15, 16
+
+
+def _tensor_shapes(spec: dict) -> dict[str, list[int]]:
+    batch, k_heads, v_heads = int(spec["B"]), int(spec["HK"]), int(spec["HV"])
+    tokens, key, value = int(spec["T"]), int(spec["K"]), int(spec["V"])
+    if str(spec["layout"]).upper() in {"BSND", "TND"}:
+        return {
+            "q": [batch, tokens, k_heads, key],
+            "k": [batch, tokens, k_heads, key],
+            "v": [batch, tokens, v_heads, value],
+            "g": [batch, tokens, v_heads],
+            "beta": [batch, tokens, v_heads],
+        }
     return {
-        "name": name,
-        "type": input_type,
-        "required": True,
-        "dtype": dtype,
-        "shape": shape,
-        "range_values": value,
-        "backward": False,
+        "q": [batch, k_heads, tokens, key],
+        "k": [batch, k_heads, tokens, key],
+        "v": [batch, v_heads, tokens, value],
+        "g": [batch, v_heads, tokens],
+        "beta": [batch, v_heads, tokens],
     }
 
 
-def _case_payload(case_id: int, spec: dict, standard: dict | None = None) -> dict:
-    metadata = dict(spec)
-    metadata["case_id"] = case_id
-    inputs = [
-        _input("low_precision_marker", "bf16", [0, 0], input_type="tensor", shape=[1]),
-        _input("fp32_marker", "fp32", [0, 0], input_type="tensor", shape=[1]),
-        _input(
-            "case_spec",
-            "non_param",
-            json.dumps(metadata, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
-        ),
-        _input("layout", "string", metadata["layout"]),
-        _input("dtype", "string", metadata["dtype"]),
-        _input("B", "int", metadata["B"]),
-        _input("HK", "int", metadata["HK"]),
-        _input("HV", "int", metadata["HV"]),
-        _input("T", "int", metadata["T"]),
-        _input("K", "int", metadata["K"]),
-        _input("V", "int", metadata["V"]),
-        _input("state_dtype", "string", metadata["state_dtype"]),
-        _input("seqlens", "string", metadata["seqlens"]),
-        _input("soc", "string", metadata["soc"]),
-        _input("seed", "int", metadata["seed"]),
-    ]
-    return {
-        "id": case_id,
-        "default_seed": metadata["seed"],
-        "name": f"{OP_NAME}_{case_id:04d}_{metadata['case_key']}",
-        "aclnn_name": None,
-        "version": "v2.1",
-        "api": "pytorch",
-        "api_type": "executor_chunk_gated_delta_rule_fwd_chunk32",
-        "expected_error_msg": None,
-        "backward": False,
-        "standard": STANDARD if standard is None else standard,
-        "outputs": None,
-        "inputs": inputs,
-        "save_name": OP_NAME,
-    }
+@GENERATOR_REGISTRY.register("generator_chunk_gated_delta_rule_fwd_chunk32")
+class ChunkGatedDeltaRuleFwdChunk32Generator(CaseGenerator):
+    def __init__(self, config) -> None:
+        super().__init__(config)
+        suite = os.environ.get("CHUNK32_ATK_SUITE", "accuracy")
+        self._specs = suite_specs(suite)
+        self._case_index = 0
 
-
-def _write(name: str, specs: list[dict], standard: dict | None = None) -> None:
-    payloads = [
-        _case_payload(case_id, spec, standard) for case_id, spec in enumerate(specs)
-    ]
-    path = HERE / name
-    path.write_text(json.dumps(payloads, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"{name}: {len(payloads)} cases")
+    def after_case_config(self, case_config: CaseConfig) -> CaseConfig:
+        if self._case_index >= len(self._specs):
+            raise RuntimeError(
+                f"CHUNK32_ATK_SUITE has {len(self._specs)} rows, "
+                f"but ATK asked for case {self._case_index}"
+            )
+        spec = self._specs[self._case_index]
+        shapes = _tensor_shapes(spec)
+        case_config.inputs[Q].shape = shapes["q"]
+        case_config.inputs[K].shape = shapes["k"]
+        case_config.inputs[K].dtype = case_config.inputs[Q].dtype
+        case_config.inputs[V].shape = shapes["v"]
+        case_config.inputs[V].dtype = case_config.inputs[Q].dtype
+        case_config.inputs[G].shape = shapes["g"]
+        case_config.inputs[G].dtype = "fp32"
+        case_config.inputs[BETA].shape = shapes["beta"]
+        case_config.inputs[BETA].dtype = case_config.inputs[Q].dtype
+        case_config.inputs[SCALE_I].range_values = float(spec["scale"])
+        case_config.inputs[CHUNK].range_values = 32
+        case_config.inputs[LAYOUT].range_values = str(spec["layout"]).upper()
+        case_config.inputs[STATE].range_values = str(spec["state_dtype"])
+        case_config.inputs[SEQLENS].range_values = str(spec["seqlens"])
+        case_config.inputs[NEG].range_values = bool(spec["allow_neg_eigval"])
+        case_config.inputs[SV].range_values = bool(spec["state_v_first"])
+        case_config.inputs[OUT_L2].range_values = bool(spec["out_l2"])
+        case_config.inputs[GA].range_values = bool(spec["disable_recompute"])
+        case_config.inputs[OUT_H].range_values = bool(spec["out_h"])
+        case_config.inputs[G_MODE].range_values = str(spec["g_mode"])
+        case_config.inputs[FINAL].range_values = bool(spec["output_final_state"])
+        case_config.name = f"{OP_NAME}_{self._case_index:04d}_{spec['case_key']}"
+        if spec["tags"] == "determinism":
+            case_config.standard.acc = None
+        self._case_index += 1
+        return case_config
 
 
 def main() -> None:
-    specs = accuracy_specs()
-    print(f"accuracy: {len(specs)}")
-    for row in specs:
-        print(
-            f"  {row['layout']} B={row['B']} H={row['HK']}x{row['HV']} T={row['T']} "
-            f"state={row['state_dtype']} seq={row['seqlens'] or '-'} "
-            f"neg={int(row['allow_neg_eigval'])} sv={int(row['state_v_first'])}"
-        )
-    _write(f"atk_{OP_NAME}.json", specs)
-    _write(f"atk_{OP_NAME}_perf.json", perf_specs())
-    _write(f"atk_{OP_NAME}_mss.json", mss_specs())
-    slim = slim_specs()
-    print(f"slim: {len(slim)}")
-    for row in slim:
-        print(f"  {row['case_key']}")
-    _write(f"atk_{OP_NAME}_slim.json", slim)
+    for name in SUITES:
+        print(f"{name}: {len(suite_specs(name))}")
 
 
 if __name__ == "__main__":
