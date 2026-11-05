@@ -227,11 +227,10 @@ class WorkflowSourceCheckoutTest(unittest.TestCase):
         self.assertEqual((self.root / "sleep-log").read_text(), "15\n30\n")
         self.assertEqual(self.git(self.repo, "rev-parse", "HEAD").stdout.strip(), self.base_sha)
 
-    def test_fixed_checkout_base_mismatch_fails_before_fetch(self):
+    def test_checkout_does_not_reject_a_changed_base_snapshot(self):
         result = self.run_script(self.merge_script, NPU_CI_BASE_SHA=self.root_sha)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Checkout does not match the fixed base commit", result.stderr)
-        self.assertEqual(self.fetches(), [])
+        self.assert_succeeded(result)
+        self.assertTrue(self.fetches())
 
     def test_changed_pr_head_is_rejected_before_merge(self):
         result = self.run_script(self.merge_script, NPU_CI_TARGET_SHA=self.root_sha)
@@ -239,19 +238,17 @@ class WorkflowSourceCheckoutTest(unittest.TestCase):
         self.assertIn("PR head changed before merge", result.stdout + result.stderr)
         self.assertEqual(self.git(self.repo, "rev-parse", "HEAD").stdout.strip(), self.base_sha)
 
-    def test_offline_guard_rejects_advanced_target_branch(self):
+    def test_offline_guard_allows_advanced_target_branch(self):
         self.git(self.root, "--git-dir", str(self.remote), "update-ref", "refs/heads/main", self.next_base_sha)
         self.assert_succeeded(self.run_script(self.merge_script))
         result = self.validate_offline()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("PR head or target branch advanced", result.stderr)
-        self.assertIn(f"expected={self.base_sha} fetched={self.next_base_sha}", result.stderr)
+        self.assert_succeeded(result)
 
     def test_offline_guard_rejects_changed_head_snapshot(self):
         self.assert_succeeded(self.run_script(self.merge_script))
         result = self.validate_offline(NPU_CI_HEAD_SHA=self.root_sha)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("PR head or target branch advanced", result.stderr)
+        self.assertIn("PR head changed before validation", result.stderr)
 
     def test_offline_guard_rejects_fetched_but_unmerged_pr(self):
         self.git(self.repo, "fetch", "--unshallow", "origin",
@@ -259,7 +256,7 @@ class WorkflowSourceCheckoutTest(unittest.TestCase):
                  "+refs/pull/17/head:refs/remotes/pull/17/head")
         result = self.validate_offline()
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn(f"Merged source does not contain the fixed commit {self.head_sha}", result.stderr)
+        self.assertIn("Merged source does not contain the PR head", result.stderr)
         self.assertIn("fetch and merge the PR again", result.stderr)
 
     def test_running_head_monitor_reads_the_pr_git_ref(self):

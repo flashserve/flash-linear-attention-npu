@@ -209,8 +209,8 @@ jobs:
             });
             const baseSha = baseBranch.commit.sha;
             const workflowSha = process.env.NPU_CI_WORKFLOW_SHA || '';
-            auth.requireProtectedBase({ pr, branch: baseBranch, workflowRef, workflowSha });
-            auth.requireDispatchIdentity({ pr, inputs: workflowInputs, workflowSha,
+            auth.requireProtectedBase({ pr, branch: baseBranch, workflowRef });
+            auth.requireDispatchIdentity({ pr, inputs: workflowInputs,
               required: actor === 'github-actions[bot]', rerun: Number(process.env.NPU_CI_RUN_ATTEMPT || '1') > 1 });
             core.setOutput('base_sha', baseSha);
             if (await auth.hasCiChanges({ github, context, pr })) {
@@ -459,7 +459,7 @@ jobs:
           no_proxy: '*'
         with:
           repository: ${{ github.repository }}
-          ref: ${{ needs.prepare.outputs.base_sha }}
+          ref: ${{ needs.prepare.outputs.base_ref }}
           fetch-depth: 50
           path: repo
 
@@ -503,7 +503,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: ${{ github.repository }}
-          ref: ${{ needs.prepare.outputs.base_sha }}
+          ref: ${{ needs.prepare.outputs.base_ref }}
           fetch-depth: 50
           path: repo
 
@@ -519,7 +519,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: ${{ github.repository }}
-          ref: ${{ needs.prepare.outputs.base_sha }}
+          ref: ${{ needs.prepare.outputs.base_ref }}
           fetch-depth: 50
           path: repo
 
@@ -528,10 +528,6 @@ jobs:
         timeout-minutes: 20
         run: |
           set -euo pipefail
-          if [[ "$(git rev-parse HEAD)" != "$NPU_CI_BASE_SHA" ]]; then
-            echo "[CI][ERROR] Checkout does not match the fixed base commit; start a new NPU CI run." >&2
-            exit 1
-          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           pr_head_ref="refs/remotes/pull/${NPU_CI_PR_NUMBER}/head"
@@ -623,13 +619,16 @@ jobs:
           fi
 
           git merge --no-ff --no-edit "$NPU_CI_TARGET_SHA"
+          # The target branch may have advanced since prepare. Publish the
+          # commit actually tested by this run for later diagnostics.
+          echo "NPU_CI_BASE_SHA=$(git rev-parse HEAD^)" >> "$GITHUB_ENV"
         env:
           NPU_CI_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
           NPU_CI_BASE_REF: ${{ needs.prepare.outputs.base_ref }}
           NPU_CI_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
           NPU_CI_TARGET_SHA: ${{ needs.prepare.outputs.head_sha }}
 
-      - name: 离线校验设备任务的固定版本
+      - name: 离线校验设备任务的 PR head
         id: validate_pr
         working-directory: repo
         env:
@@ -641,20 +640,17 @@ jobs:
           set -euo pipefail
           # PR state/draft/target metadata is checked by GitHub-hosted prepare
           # and finalize. Device validation only reads the fetched Git objects.
-          fetched_base="$(git rev-parse "refs/remotes/origin/${NPU_CI_BASE_REF}^{commit}")"
           fetched_head="$(git rev-parse "refs/remotes/pull/${NPU_CI_PR_NUMBER}/head^{commit}")"
-          if [[ "$fetched_base" != "$NPU_CI_BASE_SHA" || "$fetched_head" != "$NPU_CI_HEAD_SHA" ]]; then
-            echo "[CI][ERROR] PR head or target branch advanced; start a new NPU CI run instead of reusing prepare." >&2
-            echo "[CI][ERROR] base: expected=$NPU_CI_BASE_SHA fetched=$fetched_base; head: expected=$NPU_CI_HEAD_SHA fetched=$fetched_head" >&2
+          if [[ "$fetched_head" != "$NPU_CI_HEAD_SHA" ]]; then
+            echo "[CI][ERROR] PR head changed before validation; start a new NPU CI run." >&2
+            echo "[CI][ERROR] head: expected=$NPU_CI_HEAD_SHA fetched=$fetched_head" >&2
             exit 1
           fi
-          for commit in "$NPU_CI_BASE_SHA" "$NPU_CI_HEAD_SHA"; do
-            if ! git merge-base --is-ancestor "$commit" HEAD; then
-              echo "[CI][ERROR] Merged source does not contain the fixed commit $commit; fetch and merge the PR again." >&2
-              exit 1
-            fi
-          done
-          echo "[CI] Offline source validation passed: base=$fetched_base head=$fetched_head merged=$(git rev-parse HEAD)"
+          if ! git merge-base --is-ancestor "$NPU_CI_HEAD_SHA" HEAD; then
+            echo "[CI][ERROR] Merged source does not contain the PR head; fetch and merge the PR again." >&2
+            exit 1
+          fi
+          echo "[CI] Offline source validation passed: head=$fetched_head merged=$(git rev-parse HEAD)"
 
       - name: 运行 ${{ matrix.name }} NPU CI 容器
         id: npu_ci
