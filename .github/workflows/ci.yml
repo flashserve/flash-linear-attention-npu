@@ -46,6 +46,10 @@ on:
         description: "Workflow commit captured by the comment dispatcher"
         required: false
         default: ''
+      workflow_source:
+        description: "Internal workflow source: base or pr-merge"
+        required: false
+        default: base
 
 concurrency:
   group: npu-ci-${{ github.repository }}-${{ inputs.pr_number || github.run_id }}
@@ -158,7 +162,7 @@ jobs:
               }
             };
 
-            const getMatchingExecutionRun = async (status, { pr, baseSha, workflowSha }) => {
+            const getMatchingExecutionRun = async (status, { workflowRef, workflowSha }) => {
               const runPrefix = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/`;
               const targetUrl = status?.target_url || '';
               if (!targetUrl.startsWith(runPrefix)) return null;
@@ -171,11 +175,11 @@ jobs:
                   repo: context.repo.repo,
                   run_id: runId,
                 });
-                // Commit statuses belong to the PR head. The workflow run also
-                // records the base commit, so head-only statuses cannot reuse
-                // a result built before the target branch or workflow changed.
-                if (run.head_sha !== baseSha || run.head_sha !== workflowSha || run.head_branch !== pr.base.ref ||
-                    run.event !== 'workflow_dispatch' || run.path !== '.github/workflows/ci.yml' ||
+                // A PR workflow runs at its fixed merge commit, while ordinary
+                // runs use the base commit. Both identities are validated below.
+                if (run.head_sha !== workflowSha || run.head_branch !== workflowRef ||
+                    run.event !== 'workflow_dispatch' ||
+                    !['.github/workflows/ci.yml', `.github/workflows/ci.yml@${workflowRef}`].includes(run.path) ||
                     run.repository?.full_name?.toLowerCase() !== `${context.repo.owner}/${context.repo.repo}`.toLowerCase()) return null;
                 return run;
               } catch (error) {
@@ -209,11 +213,18 @@ jobs:
             });
             const baseSha = baseBranch.commit.sha;
             const workflowSha = process.env.NPU_CI_WORKFLOW_SHA || '';
-            auth.requireProtectedBase({ pr, branch: baseBranch, workflowRef, workflowSha });
+            const workflowSource = workflowInputs.workflow_source || 'base';
+            let workflowCommit;
+            if (workflowSource === 'pr-merge') {
+              ({ data: workflowCommit } = await github.rest.repos.getCommit({ ...context.repo, ref: workflowSha }));
+            }
+            auth.requireProtectedBase({ pr, branch: baseBranch, workflowRef, workflowSha, workflowSource, workflowCommit });
             auth.requireDispatchIdentity({ pr, inputs: workflowInputs, workflowSha,
-              required: actor === 'github-actions[bot]', rerun: Number(process.env.NPU_CI_RUN_ATTEMPT || '1') > 1 });
+              required: actor === 'github-actions[bot]' || workflowSource === 'pr-merge',
+              rerun: Number(process.env.NPU_CI_RUN_ATTEMPT || '1') > 1 });
             core.setOutput('base_sha', baseSha);
-            if (await auth.hasCiChanges({ github, context, pr })) {
+            const changedFiles = await auth.listPrFiles({ github, context, pr });
+            if (auth.containsCiChanges(changedFiles) || workflowSource === 'pr-merge') {
               try {
                 await auth.requireCiAuthorAdmin({ github, context, pr });
               } catch (error) {
@@ -226,6 +237,10 @@ jobs:
                 return;
               }
             }
+            if (auth.containsWorkflowChanges(changedFiles) && workflowSource !== 'pr-merge') {
+              throw new Error('PR 修改了 .github/workflows/ci.yml；当前运行仍使用目标分支定义。请使用更新后的 /run-npu-ci 分发器，从固定 PR 合并提交启动，不能用旧 workflow 验证新 YAML。');
+            }
+            core.info(`CI workflow source=${workflowSource}; ref=${workflowRef}; workflow=${workflowSha}; base=${baseSha}; head=${pr.head.sha}`);
 
             const opsItems = ops.split(',').map((item) => item.trim());
             if (ops.trim() && opsItems.some((item) =>
@@ -265,7 +280,7 @@ jobs:
               (latestExecutionCi.description || '').includes(requestedModeSuffix)
             );
             const matchingExecutionRun = latestExecutionMatchesRequest
-              ? await getMatchingExecutionRun(latestExecutionCi, { pr, baseSha, workflowSha }) : null;
+              ? await getMatchingExecutionRun(latestExecutionCi, { workflowRef, workflowSha }) : null;
             const allContextsPassedInSameRun = Boolean(
               latestExecutionCi &&
               latestExecutionCi.target_url &&
@@ -287,7 +302,7 @@ jobs:
                   '',
                   `- 请求模式：\`${ciMode}\``,
                   `- 触发人：@${requestedBy}`,
-                  `- CI 定义分支：\`${workflowRef}\``,
+                  `- CI 定义来源：\`${workflowSource}\` · \`${workflowRef}\` · \`${workflowSha}\``,
                   '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
                   requestScope === 'all'
                     ? '- 分项结果：6/6 通过'
@@ -316,7 +331,7 @@ jobs:
                   '',
                   `- 请求模式：\`${ciMode}\``,
                   `- 触发人：@${requestedBy}`,
-                  `- CI 定义分支：\`${workflowRef}\``,
+                  `- CI 定义来源：\`${workflowSource}\` · \`${workflowRef}\` · \`${workflowSha}\``,
                   '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
                   '- 当前状态：排队或运行中',
                   '- 执行方式：按顺序执行；前置失败时后续项跳过',
@@ -359,7 +374,7 @@ jobs:
                 '',
                 `- 模式：\`${ciMode}\``,
                 `- 触发人：@${requestedBy}`,
-                `- CI 定义分支：\`${workflowRef}\``,
+                `- CI 定义来源：\`${workflowSource}\` · \`${workflowRef}\` · \`${workflowSha}\``,
                 '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
                 requestScope === 'all'
                   ? '- 分项：6 项按顺序执行'

@@ -16,14 +16,14 @@ on:
 
 permissions:
   actions: write
-  contents: read
+  contents: write
   issues: write
   pull-requests: read
   statuses: write
 
 jobs:
   dispatch:
-    name: 选择目标分支 NPU CI
+    name: 选择 NPU CI workflow 版本
     if: >-
       github.event.issue.pull_request &&
       github.actor != 'github-actions[bot]' &&
@@ -37,22 +37,26 @@ jobs:
           path: ci-control
           sparse-checkout: |
             .github/scripts/npu_ci_authorization.js
+            .github/scripts/npu_ci_workflow.js
             .github/scripts/npu_ci_checks.js
             .github/scripts/npu_ci_checks.json
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
-      - name: 分发到 PR 目标分支
+      - name: 分发固定版本的 NPU CI
         uses: actions/github-script@v8
         env:
           NPU_CI_AUTH_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_authorization.js
           NPU_CI_CHECKS_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_checks.js
+          NPU_CI_WORKFLOW_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_workflow.js
+          NPU_CI_DISPATCH_TOKEN: ${{ secrets.NPU_CI_DISPATCH_TOKEN }}
           NPU_CI_RUN_ATTEMPT: ${{ github.run_attempt }}
         with:
           github-token: ${{ github.token }}
           script: |
             const auth = require(process.env.NPU_CI_AUTH_SCRIPT || './.github/scripts/npu_ci_authorization.js');
             const checks = require(process.env.NPU_CI_CHECKS_SCRIPT || './.github/scripts/npu_ci_checks.js');
+            const workflow = require(process.env.NPU_CI_WORKFLOW_SCRIPT || './.github/scripts/npu_ci_workflow.js');
             const body = (context.payload.comment.body || '').trim();
             const command = body.match(/^\/run-npu-ci(?:\s+([\s\S]*))?$/);
             if (!command) {
@@ -108,7 +112,8 @@ jobs:
             const { data: baseBranch } = await github.rest.repos.getBranch({ ...context.repo, branch: targetRef });
             auth.requireProtectedBase({ pr, branch: baseBranch });
 
-            if (await auth.hasCiChanges({ github, context, pr })) {
+            const files = await auth.listPrFiles({ github, context, pr });
+            if (auth.containsCiChanges(files)) {
               try {
                 await auth.requireCiAuthorAdmin({ github, context, pr });
               } catch (error) {
@@ -124,34 +129,13 @@ jobs:
               }
             }
 
-            let workflowFile;
-            try {
-              ({ data: workflowFile } = await github.rest.repos.getContent({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                path: '.github/workflows/ci.yml',
-                ref: baseBranch.commit.sha,
-              }));
-            } catch (error) {
-              core.setFailed(`分支 \`${targetRef}\` 不包含 .github/workflows/ci.yml：${error.message}`);
-              return;
-            }
-            if (Array.isArray(workflowFile) ||
-                workflowFile.type !== 'file' ||
-                !workflowFile.content) {
-              core.setFailed(`分支 \`${targetRef}\` 的 .github/workflows/ci.yml 不是可读取的文件。`);
-              return;
-            }
-            const workflowText = Buffer
-              .from(workflowFile.content, workflowFile.encoding || 'base64')
-              .toString('utf8');
-
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'ci.yml',
-              ref: targetRef,
-              inputs: auth.selectDispatchInputs(workflowText, {
+            // Use this optional credential only for refs here. Never forward
+            // it through workflow inputs or the PR job environment.
+            const refGithub = process.env.NPU_CI_DISPATCH_TOKEN
+              ? new github.constructor({ auth: process.env.NPU_CI_DISPATCH_TOKEN }) : github;
+            const execution = await workflow.dispatchNpuWorkflow({
+              github, refGithub, context, pr, baseBranch, files,
+              inputs: {
                 pr_number: String(prNumber),
                 ci_mode: ciMode,
                 ops,
@@ -160,11 +144,12 @@ jobs:
                 expected_base_ref: pr.base.ref,
                 expected_base_sha: baseBranch.commit.sha,
                 expected_workflow_sha: baseBranch.commit.sha,
-              }),
+              },
             });
 
             core.notice(
-              `已将 PR #${prNumber} 的 NPU CI 分发到 \`${targetRef}\`，` +
+              `已将 PR #${prNumber} 的 NPU CI 分发到 \`${execution.ref}\`，` +
+              `workflow_source=${execution.source}，workflow=${execution.workflowSha}，` +
               `head=${pr.head.sha}，模式=${ciMode}。`
             );
 
