@@ -108,6 +108,7 @@ public:
             outFree_[bank] = pipe_->AllocEventID<HardEvent::MTE3_V>();
         }
         scalarToVector_ = pipe_->AllocEventID<HardEvent::S_V>();
+        vectorToScalar_ = pipe_->AllocEventID<HardEvent::V_S>();
         taskUbFree_ = pipe_->AllocEventID<HardEvent::V_MTE2>();
         taskGmFree_ = pipe_->AllocEventID<HardEvent::MTE3_MTE2>();
     }
@@ -210,6 +211,7 @@ private:
         const uint32_t vectorCount = kWindowTokens;
         if constexpr (std::is_same<Beta, float>::value) DataCopy(beta, betaRaw, vectorCount);
         else Cast(beta, betaRaw, RoundMode::CAST_NONE, vectorCount);
+        PipeBarrier<PIPE_V>();
         if (td_.useBetaSigmoidInKernel) {
             // Both exponent arguments are nonpositive. This preserves sigmoid
             // tails without a packed-mask select for the short metadata window.
@@ -220,24 +222,26 @@ private:
             Exp(tmp1, tmp1, vectorCount);
             PipeBarrier<PIPE_V>();
             Exp(tmp0, tmp0, vectorCount);
+            if (td_.allowNegEigval) {
+                Muls(tmp1, tmp1, 2.0f, vectorCount);
+            }
             PipeBarrier<PIPE_V>();
             Adds(tmp0, tmp0, 1.0f, vectorCount);
             PipeBarrier<PIPE_V>();
             Div(beta, tmp1, tmp0, vectorCount);
-            if (td_.allowNegEigval) {
-                PipeBarrier<PIPE_V>();
-                Muls(beta, beta, 2.0f, vectorCount);
-            }
         }
         if (td_.hasGama) {
             if constexpr (std::is_same<Gate, float>::value) DataCopy(gate, gateRaw, vectorCount);
             else Cast(gate, gateRaw, RoundMode::CAST_NONE, vectorCount);
+            PipeBarrier<PIPE_V>();
             if (td_.useGateInKernel) {
                 Adds(gate, gate, bias, vectorCount);
                 PipeBarrier<PIPE_V>();
                 Maxs(tmp0, gate, 0.0f, vectorCount);
                 Abs(tmp1, gate, vectorCount);
+                PipeBarrier<PIPE_V>();
                 Muls(tmp1, tmp1, -1.0f, vectorCount);
+                PipeBarrier<PIPE_V>();
                 Exp(tmp1, tmp1, vectorCount);
                 PipeBarrier<PIPE_V>();
                 Adds(tmp2, tmp1, 1.0f, vectorCount);
@@ -256,9 +260,11 @@ private:
                 PipeBarrier<PIPE_V>();
                 Add(gate, tmp0, gate, vectorCount);
                 Duplicate(tmp1, aLog, vectorCount);
+                PipeBarrier<PIPE_V>();
                 Exp(tmp1, tmp1, vectorCount);
                 PipeBarrier<PIPE_V>();
                 Mul(gate, gate, tmp1, vectorCount);
+                PipeBarrier<PIPE_V>();
                 Muls(gate, gate, -1.0f, vectorCount);
                 PipeBarrier<PIPE_V>();
                 Exp(gate, gate, vectorCount);
@@ -280,6 +286,9 @@ private:
         }
         Muls(q, q, td_.scale, count * kHeadDim);
         PipeBarrier<PIPE_V>();
+        // ProcessToken reads the vector-produced beta/alpha through GetValue (S pipe).
+        SetFlag<HardEvent::V_S>(vectorToScalar_);
+        WaitFlag<HardEvent::V_S>(vectorToScalar_);
     }
 
     __aicore__ inline void NormalizeWindow(LocalTensor<float> vector, uint32_t rows)
@@ -293,6 +302,7 @@ private:
         for (uint32_t row = 0; row < rows; ++row) {
             Add(product[row * kHeadDim + kFloatVectorElements], product[row * kHeadDim],
                 product[row * kHeadDim + kFloatVectorElements], kFloatVectorElements);
+            PipeBarrier<PIPE_V>();
             WholeReduceSum(sum[row], product[row * kHeadDim + kFloatVectorElements],
                            kFloatVectorElements, 1, 1, 1, kVectorBytes / kBlockBytes);
         }
@@ -511,6 +521,7 @@ private:
             pipe_->ReleaseEventID<HardEvent::MTE3_V>(outFree_[bank]);
         }
         pipe_->ReleaseEventID<HardEvent::S_V>(scalarToVector_);
+        pipe_->ReleaseEventID<HardEvent::V_S>(vectorToScalar_);
         pipe_->ReleaseEventID<HardEvent::V_MTE2>(taskUbFree_);
         pipe_->ReleaseEventID<HardEvent::MTE3_MTE2>(taskGmFree_);
     }
@@ -526,7 +537,7 @@ private:
     GlobalTensor<float> aLog_, bias_;
     TEventID ready_[kBufferCount][kQkvInputCount], rawFree_[kBufferCount];
     TEventID stateReady_[kBufferCount], stateFree_[kBufferCount], outReady_[kBufferCount], outFree_[kBufferCount];
-    TEventID scalarToVector_, taskUbFree_, taskGmFree_;
+    TEventID scalarToVector_, vectorToScalar_, taskUbFree_, taskGmFree_;
     bool rawPending_[kBufferCount] = {false, false};
     bool statePending_[kBufferCount] = {false, false};
     bool outPending_[kBufferCount] = {false, false};
