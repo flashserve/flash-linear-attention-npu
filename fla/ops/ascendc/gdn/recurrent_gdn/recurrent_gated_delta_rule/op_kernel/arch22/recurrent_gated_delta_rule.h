@@ -300,8 +300,7 @@ private:
         const uint32_t vectorRows = kWindowTokens;
         Adds(sum, sum, kNormEpsilon, vectorRows);
         PipeBarrier<PIPE_V>();
-        Adds(inverse, sum, 0.0f, vectorRows);
-        Rsqrt(inverse, inverse, vectorRows);
+        Rsqrt(inverse, sum, vectorRows);
         PipeBarrier<PIPE_V>();
         for (uint32_t iteration = 0; iteration < kNormNewtonIterations; ++iteration) {
             Mul(correction, inverse, inverse, vectorRows);
@@ -309,6 +308,7 @@ private:
             Mul(correction, correction, sum, vectorRows);
             PipeBarrier<PIPE_V>();
             Muls(correction, correction, -0.5f, vectorRows);
+            PipeBarrier<PIPE_V>();
             Adds(correction, correction, 1.5f, vectorRows);
             PipeBarrier<PIPE_V>();
             Mul(inverse, inverse, correction, vectorRows);
@@ -372,7 +372,7 @@ private:
         PipeBarrier<PIPE_V>();
     }
 
-    __aicore__ inline void EmitState(uint32_t bank, uint64_t slot, uint64_t head)
+    __aicore__ inline void CopyOutState(uint32_t bank, uint64_t slot, uint64_t head)
     {
         SetFlag<HardEvent::V_MTE3>(stateReady_[bank]);
         WaitFlag<HardEvent::V_MTE3>(stateReady_[bank]);
@@ -389,7 +389,7 @@ private:
         statePending_[bank] = true;
     }
 
-    __aicore__ inline void Token(uint32_t token, uint64_t head,
+    __aicore__ inline void ProcessToken(uint32_t token, uint64_t head,
                                   uint64_t globalToken, uint32_t src, uint32_t dst)
     {
         auto query = ub_.GetWithOffset<float>(kHeadDim, kQueryOffset + token * kFloatRowBytes);
@@ -434,14 +434,14 @@ private:
         Cast(outputBf16, output, RoundMode::CAST_RINT, kHeadDim);
         const int32_t writeSlot = ub_.GetWithOffset<int32_t>(kWindowTokens, kWriteSlotsOffset).GetValue(token);
         if constexpr (std::is_same<State, float>::value) {
-            EmitState(dst, static_cast<uint64_t>(writeSlot), head);
+            CopyOutState(dst, static_cast<uint64_t>(writeSlot), head);
         } else {
             // Source was reclaimed on its preceding turn as a destination.
             // All V reads above must finish before its upper half is reused.
             PipeBarrier<PIPE_V>();
             Cast(ub_.GetWithOffset<State>(kStateElements, src * kStateBankBytes + kSnapshotOffset), target,
                  RoundMode::CAST_RINT, kStateElements);
-            EmitState(src, static_cast<uint64_t>(writeSlot), head);
+            CopyOutState(src, static_cast<uint64_t>(writeSlot), head);
         }
         SetFlag<HardEvent::V_MTE3>(outReady_[outBank]);
         WaitFlag<HardEvent::V_MTE3>(outReady_[outBank]);
@@ -480,7 +480,7 @@ private:
                 CopyInput(nextBank, kQueryInput, start + position + count, keyHead, nextCount);
             }
             for (uint32_t token = 0; token < count; ++token) {
-                Token(token, head, start + position + token, src, 1 - src);
+                ProcessToken(token, head, start + position + token, src, 1 - src);
                 src = 1 - src;
             }
         }
