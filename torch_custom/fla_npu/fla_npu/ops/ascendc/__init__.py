@@ -54,6 +54,7 @@ _ASCENDC_OPS = (
     "npu_chunk_kda_fwd_prepare",
     "npu_recompute_w_u_fwd",
     "npu_recurrent_gated_delta_rule",
+    "npu_recurrent_gated_delta_rule_v2",
     "npu_chunk_gated_delta_rule_fwd",
     "npu_chunk_local_cumsum",
     "npu_chunk_scaled_dot_kkt",
@@ -90,6 +91,7 @@ MUTATED_ARGUMENTS = {
     "npu_recurrent_kda": ("initial_state",),
     "recurrent_gated_delta_rule": ("state",),
     "npu_recurrent_gated_delta_rule": ("state",),
+    "npu_recurrent_gated_delta_rule_v2": ("state",),
     "npu_merge_fwd_bwd_kernel": ("h",),
 }
 

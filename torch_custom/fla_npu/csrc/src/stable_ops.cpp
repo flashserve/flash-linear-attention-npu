@@ -50,6 +50,7 @@
 #include "stable_prepare_wy_repr_bwd_full.cpp"
 #include "stable_recompute_w_u_fwd.cpp"
 #include "stable_recurrent_gated_delta_rule.cpp"
+#include "stable_recurrent_gated_delta_rule_v2.cpp"
 #include "stable_recurrent_kda.cpp"
 #include "stable_solve_tri.cpp"
 
@@ -97,6 +98,7 @@ int64_t fla_npu_stable_last_launch_stream() {
 // them by position).
 STABLE_TORCH_LIBRARY(fla_npu_stable, m) {
   m.def(kSchemaRecurrentGdr);
+  m.def(kSchemaRecurrentGdrV2);
   m.def(kSchemaRecurrentKda);
   m.def(kSchema_npu_fast_gelu_custom);
   m.def(kSchema_npu_fast_gelu_custom_backward);
@@ -142,6 +144,9 @@ STABLE_TORCH_LIBRARY(fla_npu_stable, m) {
 STABLE_TORCH_LIBRARY_IMPL(fla_npu_stable, CompositeExplicitAutograd, m) {
   m.impl("npu_recurrent_gated_delta_rule",
          &fla_npu_stable::stable::boxed_adapter<run_recurrent_gated_delta_rule>);
+  m.impl("npu_recurrent_gated_delta_rule_v2",
+         &fla_npu_stable::stable::boxed_adapter<
+             run_recurrent_gated_delta_rule_v2>);
   m.impl("npu_recurrent_kda", &boxed_recurrent_kda);
   m.impl("npu_fast_gelu_custom",
          &fla_npu_stable::stable::boxed_adapter<run_npu_fast_gelu_custom>);
