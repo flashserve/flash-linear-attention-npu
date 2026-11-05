@@ -123,7 +123,9 @@ solve_tri/
 │   ├── solve_tri.cpp
 │   ├── solve_tri_common.h
 │   ├── solve_tri_cube.h
-│   └── solve_tri_vector.h
+│   ├── solve_tri_fp32.h
+│   ├── solve_tri_vector.h
+│   └── solve_tri_vector_fp32.h
 ├── test/
 │   └── test.py
 ├── CMakeLists.txt

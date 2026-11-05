@@ -12,9 +12,10 @@
      {
          this->Input("x")
              .ParamType(REQUIRED)
-             .DataType({ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT})
+             .DataType({ge::DT_FLOAT16, ge::DT_BF16})
              .FormatList({ge::FORMAT_ND})
              .AutoContiguous();
+
          this->Input("cu_seqlens")
              .ParamType(OPTIONAL)
              .DataTypeList({ge::DT_INT64})
@@ -29,7 +30,7 @@
  
          this->Output("x_out")
              .ParamType(REQUIRED)
-             .DataType({ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT})
+             .DataType({ge::DT_FLOAT16, ge::DT_BF16})
              .FormatList({ge::FORMAT_ND})
              .AutoContiguous();
  
