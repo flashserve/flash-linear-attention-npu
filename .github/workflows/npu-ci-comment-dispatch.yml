@@ -24,6 +24,7 @@ permissions:
 jobs:
   dispatch:
     name: 选择 NPU CI workflow 版本
+    environment: npu-ci-dispatch
     if: >-
       github.event.issue.pull_request &&
       github.actor != 'github-actions[bot]' &&

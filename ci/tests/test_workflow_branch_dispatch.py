@@ -60,6 +60,9 @@ class WorkflowBranchDispatchTest(unittest.TestCase):
         self.assertEqual(triggers["issue_comment"]["types"], ["created"])
         self.assertEqual(permissions["actions"], "write")
         self.assertEqual(permissions["contents"], "write")
+        self.assertEqual(self.dispatch_workflow["jobs"]["dispatch"]["environment"], "npu-ci-dispatch")
+        self.assertTrue(all("environment" not in job for job in
+                            yaml.safe_load(self.ci_text)["jobs"].values()))
         self.assertIn("workflow.dispatchNpuWorkflow({", self.dispatch_script)
         self.assertIn("github, refGithub, context, pr, baseBranch, files", self.dispatch_script)
         self.assertIn("new github.constructor({ auth: process.env.NPU_CI_DISPATCH_TOKEN })", self.dispatch_script)

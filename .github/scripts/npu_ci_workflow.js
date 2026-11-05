@@ -76,7 +76,7 @@ async function selectWorkflowExecution({ github, context, pr, baseBranch, files,
 }
 
 async function createWorkflowTag({ github, context, ref, sha }) {
-  const permissionAdvice = '请配置 Actions secret NPU_CI_DISPATCH_TOKEN，授予本仓库 Contents 和 Workflows 写权限，并允许 npu-ci/ tags。';
+  const permissionAdvice = '请在仅允许 main 分支的 npu-ci-dispatch Environment 中配置 secret NPU_CI_DISPATCH_TOKEN，授予本仓库 Contents 和 Workflows 写权限，并允许 npu-ci/ tags。';
   try {
     await github.rest.git.createRef({ ...context.repo, ref: `refs/tags/${ref}`, sha });
     return;

@@ -69,7 +69,7 @@ Actions 重跑权限由 GitHub 平台控制。新版 CI 重跑仍检查 PR 状�
 - 未修改 `.github/workflows/ci.yml` 时，继续使用 PR 目标分支的 workflow；仅修改 `ci/` 也走这条路径。未更新 CI 的旧目标分支保持兼容。
 - 修改 `.github/workflows/ci.yml` 时，使用固定 base/head 的 PR merge commit，创建指向该 commit 的临时 tag `npu-ci/pr-<编号>/<40 位 merge SHA>`，并从这个 tag 分发 PR 自身的 workflow。PR YAML 中必须声明 `workflow_source` 和完整 `expected_*` 输入，分发值为 `workflow_source=pr-merge`；缺少契约时明确失败，提示先补齐当前 PR 的 workflow。设备任务开始前的 checkout、代理回退等 Actions 步骤也会采用 PR 修改。
 
-默认分发器通过可选仓库 secret `NPU_CI_DISPATCH_TOKEN` 创建临时引用；它需要仓库 Contents 和 Workflows 写权限。未配置时使用当前 workflow 的 `GITHUB_TOKEN`，若仓库策略不允许创建指向修改 workflow 的 commit 的引用，需由管理员配置该 secret。分发器不会通过 inputs 或 job 环境将此 token 转交给 PR 运行。新的分发器须先合入默认分支一次，之后即可在 CI 修改合入前验证 PR YAML；仅更新 PR 不能改变默认分支正在执行的分发器。
+默认分发器使用 `npu-ci-dispatch` Environment，通过其中的可选 secret `NPU_CI_DISPATCH_TOKEN` 创建临时引用；该凭据需要仓库 Contents 和 Workflows 写权限。管理员须预先创建此环境，将部署规则设为自定义规则，仅允许 branch 类型的 `main`，不允许任何 tag，再添加 secret。不要将同名凭据放入仓库级或组织级 Actions secrets：PR workflow 通过主仓库 tag 执行，可能显式引用这些凭据。分发器不会通过 inputs 或 job 环境将此 token 转交给 PR 运行，设备和汇总 job 不使用此 Environment。未配置凭据时尝试当前 workflow 的 `GITHUB_TOKEN`，权限不足会明确报错。新的分发器须先合入默认分支一次，之后即可在 CI 修改合入前验证 PR YAML；仅更新 PR 不能改变默认分支正在执行的分发器。
 
 默认分支的 `NPU CI 临时 workflow 引用清理` 在 `NPU CI` 完成后清理对应 tag。它只校验 GitHub 运行信息和精确 tag 目标，不检出或执行 PR 代码；同一 tag 仍有其他运行排队或执行时保留引用。清理与 PR 后续是否新增 commit 无关，不删除其他 tag。
 

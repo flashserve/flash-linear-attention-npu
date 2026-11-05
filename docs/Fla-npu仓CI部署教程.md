@@ -686,7 +686,14 @@ bash scripts/github/apply_branch_protection.sh main
 
 未修改 CI YAML 的旧维护分支无需更新 CI 或声明新版契约即可触发。分发器按所选 workflow 的声明自动附带支持的版本快照，用户无需手填，也不能用 `ci_ref` 或 `branch` 覆盖。Actions、CLI 或 REST 普通手动分发仍选择 PR 当前目标分支；验证 PR 自身修改的 YAML 使用评论入口。
 
-默认分发器创建临时引用时优先使用仓库 secret `NPU_CI_DISPATCH_TOKEN`，需要仓库 Contents 和 Workflows 写权限；未配置时尝试 `GITHUB_TOKEN`。若仓库策略禁止当前 token 创建 workflow 引用，由管理员配置该 secret 后重新评论触发。分发器不会通过 inputs 或 job 环境将此 token 转交给 PR 运行。首次启用须先将分发器合入默认分支一次；之后 PR 的 workflow 修改无需先合入目标分支即可验证。
+默认分发器的 job 使用 `npu-ci-dispatch` Environment，创建临时引用时优先使用其中的 secret `NPU_CI_DISPATCH_TOKEN`，需要仓库 Contents 和 Workflows 写权限；未配置凭据时尝试 `GITHUB_TOKEN`，权限不足时明确报错。环境须在启用新版分发器之前创建并限制来源：
+
+1. 打开仓库 `Settings → Environments`，创建 `npu-ci-dispatch`。
+2. 在 `Deployment branches and tags` 中选择 `Selected branches and tags`，仅添加 branch 类型的 `main`，不添加 tag 规则。
+3. 在该环境的 `Environment secrets` 中添加 `NPU_CI_DISPATCH_TOKEN`；凭据仅经加密上传，不写入 Git 文件、日志或 Actions artifacts。
+4. 不在仓库级或组织级 Actions secrets 中保存同名凭据。PR workflow 运行在主仓库的临时 tag 上，可能显式读取这些 Secret；仅“不主动传递”不足以隔离凭据。专用环境的来源限制用于阻止 PR tag job 直接取得它。
+
+分发器不会通过 inputs 或 job 环境将此 token 转交给 PR 运行，设备和汇总 job 不使用该环境。此限制不替代对管理员及默认分支 workflow 的信任：有管理权限的人仍可能修改环境规则。首次启用须先将分发器合入默认分支一次；之后 PR 的 workflow 修改无需先合入目标分支即可验证。
 
 默认分支另有 `NPU CI 临时 workflow 引用清理` workflow，收到 `NPU CI` 完成事件后，只通过 GitHub API 核对本仓库运行、精确 tag 名和目标 SHA，再删除对应临时 tag；不检出或执行 PR 代码。同一 tag 仍有其他运行排队或执行时暂不删除，PR 后续更新不妨碍旧运行清理，也不会删除无关引用。
 
@@ -828,7 +835,7 @@ Custom OPP op_api lib: /usr/local/Ascend/.../opp/vendors/fla_npu_transformer/op_
 - PR 是否 open、未合并且非草稿，当前目标分支是否受分支保护
 - 未修改 CI YAML 时，PR 目标分支是否存在声明 `workflow_dispatch` 的 `.github/workflows/ci.yml`；旧分支无需同步新版输入或契约
 - 修改 CI YAML 时，PR merge 版本是否支持 `workflow_source=pr-merge` 和完整 `expected_*` 输入；默认分支是否已启用新的分发器
-- 创建临时引用是否被 token 权限拒绝；需要时配置仅供默认分发器使用的 `NPU_CI_DISPATCH_TOKEN`
+- `npu-ci-dispatch` Environment 是否已创建且仅允许 branch 类型的 `main`，环境 secret `NPU_CI_DISPATCH_TOKEN` 是否具有临时引用所需权限
 - 目标旧 workflow 是否还有自己的权限要求，例如 `requested_by` 必须为 Admin
 - 修改非 Markdown 的 `ci/` 或 `.github/` 文件时，PR 创建者是否具有仓库 Admin 权限
 - Actions 页面是否先出现 `NPU CI 评论分发`，随后出现新的 `NPU CI` run
