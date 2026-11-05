@@ -68,13 +68,15 @@ export CI_ROOT="${CI_ROOT:-$HOME/ci}"
 12. **CI 容器内日志默认只保留 7 天。**
     每次 NPU CI 容器启动时都会执行 `ci/cleanup_ci_logs.sh`，删除超过 7 天的 CI/Ascend/NPU 日志。这个策略只管理 CI 容器和仓库工作目录里的日志，不等同于 GitHub Actions 网页日志保留时间。
 
-13. **A5 源码通过 GitHub API 归档下载。**
-    A5 runner 不依赖 `github.com` 的 Git smart-HTTP：workflow 会从 `api.github.com` / `codeload.github.com` 下载精确 test-merge commit，并校验 test-merge 的父提交必须对应 prepare 固定的 base/head。归档解包前会拒绝绝对路径、路径穿越、重复成员、链接和特殊文件。A5 网络策略至少需要允许这两个 HTTPS 域名。prepare 会读取目标分支当前 tip 并固定为不可变 SHA；评论触发由默认分支分发到 PR 当前受保护的目标分支，Actions 调度及权限检查使用该分支固定的 `github.workflow_sha`；A2/A5 设备一律执行 PR 合并结果中的 `ci/`，不会覆盖成其他 commit 的 CI 目录。
+13. **A2/A5 统一拉取 Git 源码，之后离线校验版本。**
+    两个平台都先直连 checkout prepare 固定的 base SHA，失败后启用 `CI_PROXY_SCRIPT` 的 `proxyon` 重试；fetch 目标分支与 PR head、浅克隆补历史也支持代理回退，每次 fetch 限时 120 秒，整个合并步骤限时 20 分钟。源码固定合并后再执行“离线校验设备任务的固定版本”，仅用本地 Git 核对 base/head ref、固定 SHA 及合并祖先，不访问 GitHub API。删除 A5 专用 API 归档下载、解包和过期 merge 重放路径。
 
-    归档解包与用例文件读取的安全边界测试仅依赖 Python 和仓库 requirements，可在 Linux 环境执行：
+    PR open/draft/merged、当前目标分支等实时状态由 GitHub-hosted prepare/finalize 检查。设备运行期间的 Git ref 监控只作尽力检查，首次失败启用代理重试，仍失败只告警并继续；finalize 无法确认当前版本时拒绝发布成功。源码下载和结果上传仍需网络，不能承诺整个 CI 完全离线。
+
+    本地 Git 及网络失败回归不使用真实 GitHub，可在 Linux 执行：
 
     ```sh
-    python3 ci/tests/test_workflow_archive_security.py
+    python3 ci/tests/test_workflow_source_checkout.py
     ```
 
 ## 流程图
@@ -113,8 +115,8 @@ flowchart TD
     H -- "否" --> J{"当前 commit 是否已有 NPU CI pending/running"}
     J -- "是" --> K["更新机器人评论：已在运行，不重复启动"]
     J -- "否" --> L["写入 6 个分项 pending 状态"]
-    L --> M["A2 runner / ascend910b"]
-    L --> N["A5 runner / ascend950：API 下载并校验源码归档"]
+    L --> M["A2 runner / ascend910b：Git 拉取、合并后离线校验"]
+    L --> N["A5 runner / ascend950：Git 拉取、合并后离线校验"]
     M --> O["A2 顺序执行 01-05；失败后跳过后续"]
     N --> P["A5 顺序执行 01-05；失败后跳过后续"]
     O --> Q["上传带本次 run 身份的分项和精度结果"]
@@ -291,15 +293,15 @@ A2/A5 job 统一设置 `CI_TMPDIR=/tmp/fla-npu-ci`。A5 Triton/BiShengIR 编译�
 
 `ci/run_ci_container.sh` 在宿主机注册 `EXIT` 收尾：通过 Docker `--cidfile` 记录本次创建的容器 ID，仅停止该容器，再用无网络 helper 容器将源码及本次 `CI_HOST_TMPDIR` 的所有权归还调用用户，最后释放设备锁。正常退出、失败、中断及 stale-commit 监控提前 `docker rm -f` 的路径均执行收尾；原始非零退出码保留，成功运行后的收尾失败也会使 CI 失败。目录准备与权限收尾都在入口脚本中完成，无需新增 workflow 步骤或宿主机 `sudo`。
 
-现有 workflow 清理步骤只删除本次 `CI_HOST_TMPDIR` 和 A5 的精确源码归档目录 `${CI_ROOT}/tmp/fla-npu-source-<run>-<attempt>`，并校验目录边界及符号链接。A2 的 Example/ST 配置中转使用 `TMPDIR` 下的独立 `mktemp` 目录，由该步骤自己的 `EXIT` trap 清理。静态 `TMPDIR` 根目录始终保留。
+workflow 清理步骤只删除本次 `CI_HOST_TMPDIR`，并校验目录边界及符号链接。静态 `TMPDIR` 根目录始终保留；不再创建 A5 源码归档目录。
 
 缓存固定使用 `CI_CACHE_ROOT=${CI_ROOT}/cache_root`；NPU 锁固定使用 `${CI_ROOT}/tmp/npu-locks`，跨运行共享，不能按 run 分开。单次运行的收尾保留共享缓存与锁文件，不递归修改它们的所有权。
 
 Stage 耗时统一保存在每台服务器的 `${CI_ROOT}/results/ci-timings/stage-timings.csv`（workflow 通过 `CI_TIMING_ROOT` 配置）。总表每行对应一个 `(run_id, run_attempt, platform, stage)`，包含 commit、SOC、状态、退出码、UTC 起止时间和 `duration_seconds`，历史 CI 行持续保留。只记录当前 5 个执行 stage，`scoped-overlay` 已暂停；GitHub-hosted 汇总校验不在此表内。每次 stage 状态变化即加锁更新总表、同步落盘并原子替换，失败也保留，工作区与临时目录清理不会删除它。被强制终止的 stage 保留 `running` 和开始时间，耗时留空；`skipped/not_run` 耗时也留空，不写成 0。启用前须在 A2、A5 分别创建下述可写目录；总表由各自服务器维护，不自动跨机合并。
 
-源码获取保持原有顺序：A5 直接通过 GitHub API 准备源码；A2 第一次 checkout 先直连，只有失败后才执行原有“启动代理并获取端口”步骤，再按原顺序等待并重试。runner 服务的 GitHub 控制连接继续使用代理；A5 API 和 A2 首次 checkout 的步骤环境会清空继承的 HTTP/HTTPS/ALL/Git 代理变量，并设置 `NO_PROXY=*`，确保这两次源码访问直连。
+A2/A5 共用源码获取顺序：首次 checkout 直连，只有失败后才启用代理，等待并重试。首次步骤清空继承的 HTTP/HTTPS/ALL/Git 代理变量并设置 `NO_PROXY=*`。后续 fetch 默认同样直连；如果 checkout 或 fetch 已启用代理，则复用代理。每次必需的网络操作都可能失败，重试耗尽会给出明确连通性建议，不使用不完整源码继续验证。
 
-A2 代理回退读取普通用户配置 `CI_PROXY_SCRIPT=${CI_ROOT}/vpn-proxy.sh`，调用 `proxyon`，校验变量不含 CR/LF，再通过 `GITHUB_ENV` 将代理地址与端口传递给后续步骤。管理员须提前在两台主机部署 `nelvko/clashctl` 到 `${CI_ROOT}/clashctl`，并将提供的 `vpn-proxy.sh` 适配副本放到上述位置：运行时配置和二进制路径指向该目录，日志写入 `${CI_ROOT}/tmp/mihomo.log`，权限允许 `ubuntu` 读取配置、执行二进制和写日志。脚本属于主机部署配置，不提交到仓库；workflow 不读取 `/root`、不修改 `HOME` 或全局 Git 配置。
+A2/A5 代理回退读取普通用户配置 `CI_PROXY_SCRIPT=${CI_ROOT}/vpn-proxy.sh`，调用 `proxyon`，校验变量不含 CR/LF，再通过 `GITHUB_ENV` 将代理地址与端口传递给后续步骤。管理员须提前在两台主机部署 `nelvko/clashctl` 到 `${CI_ROOT}/clashctl`，并将提供的 `vpn-proxy.sh` 适配副本放到上述位置：运行时配置和二进制路径指向该目录，日志写入 `${CI_ROOT}/tmp/mihomo.log`，权限允许 `ubuntu` 读取配置、执行二进制和写日志。脚本属于主机部署配置，不提交到仓库；workflow 不读取 `/root`、不修改 `HOME` 或全局 Git 配置。 跨步骤只保存一套小写代理名，兼容代理脚本仅设置大写变量；可选变量缺失不报错。启用代理前清除直连阶段的大小写代理别名，未设置 no_proxy 时写空值，防止遗留 NO_PROXY=* 继续绕过代理。
 
 A2/A5 workflow 固定设置 `CI_JOBS=16` 和 `CI_CPACK_JOBS=16`，全量与局部 OPP 构建均使用 `-j16`。`ci/run_checks.sh` 的默认并行度也为 16，并将该值导出为 PyTorch/Ninja 使用的 `MAX_JOBS`；CPack、CMake 和 Make 使用同一并行度设置，cmake/scripts/prepare.sh 也遵循 CMAKE_BUILD_PARALLEL_LEVEL，避免内部 prepare 阶段重新按 CPU 数放大并行度。`FLA_NPU_BUILD_ARGS` 追加 `-j16`，覆盖 wheel 打包内部再次调用 `build.sh` 时的并行度。
 

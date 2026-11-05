@@ -26,7 +26,6 @@ class CiAuthorizationTest(unittest.TestCase):
             "dispatch": workflow_script("npu-ci-comment-dispatch.yml", "dispatch"),
             "prepare": workflow_script("ci.yml", "prepare", "prepare"),
             "default": workflow_script("npu-ci-default-status.yml", "mark-not-run"),
-            "guard": workflow_script("ci.yml", "ascend-npu", "validate_pr"),
             "helper": "result = await auth[settings.method]({github, context, pr, ...settings.args});",
         }
         wrapper = r"""
@@ -109,9 +108,7 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
         env.update(TEST_OPTIONS=json.dumps(options), NPU_CI_AUTH_SCRIPT=str(HELPER),
                    NPU_CI_CHECKS_SCRIPT=str(ROOT / '.github/scripts/npu_ci_checks.js'),
                    NPU_CI_WORKFLOW_SHA=options.get("workflow_sha", "c" * 40),
-                   NPU_CI_WORKFLOW_REF=options.get("workflow_ref", options.get("base_ref", "main")), NPU_CI_RUN_ATTEMPT=str(options.get("attempt", 1)),
-                   NPU_CI_PR_NUMBER="527", NPU_CI_HEAD_SHA="a"*40, NPU_CI_BASE_SHA="c"*40,
-                   NPU_CI_BASE_REF="main")
+                   NPU_CI_WORKFLOW_REF=options.get("workflow_ref", options.get("base_ref", "main")), NPU_CI_RUN_ATTEMPT=str(options.get("attempt", 1)))
         completed = subprocess.run(["node"], input=wrapper, text=True, encoding="utf-8",
                                    capture_output=True, cwd=ROOT, env=env, check=False)
         self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -322,16 +319,6 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
         self.assertEqual(self.records(result, "status"), [])
         self.assertIn("profile unavailable", self.records(result, "warning")[0])
 
-    def test_device_version_guard_rejects_stale_head_base_or_closed_pr(self):
-        current = {"number":527,"state":"open","draft":False,
-                   "head":{"sha":"a"*40},"base":{"ref":"main","sha":"c"*40}}
-        for change in ({"head":{"sha":"d"*40}}, {"base":{"ref":"release","sha":"c"*40}},
-                       {"base":{"ref":"main","sha":"d"*40}}, {"state":"closed"}, {"draft":True}, {"merged":True}, {"merged_at":"2026-11-04T00:00:00Z"}):
-            with self.subTest(change=change):
-                result = self.run_entry("guard", current_pr={**current,**change})
-                self.assertIn("prepare", result["error"])
-
-
     def test_rerun_preserves_initial_authorization_without_reloading_allowlist(self):
         for entry in ("dispatch", "prepare"):
             with self.subTest(entry=entry):
@@ -413,23 +400,6 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
         self.assertEqual(self.records(allowed, "status"), [])
         rejected = self.run_entry("default", files=["ci/run_checks.sh"], statuses=statuses)
         self.assertEqual([status["state"] for status in self.records(rejected, "status")], ["failure"] * 6)
-
-    def test_device_version_guard_precedes_all_source_steps_on_both_platforms(self):
-        workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
-        guard = workflow["jobs"]["ascend-npu"]["steps"][0]
-        self.assertEqual(guard["id"], "validate_pr")
-        self.assertNotIn("if", guard)
-        self.assertNotIn("NPU_CI_TRIGGERING_ACTOR", guard["env"])
-
-    def test_device_version_guard_keeps_authorization_without_permission_reads(self):
-        for attempt in (1, 2):
-            with self.subTest(attempt=attempt):
-                result = self.run_entry("guard", attempt=attempt, actor="outside-list", list_error=True,
-                                        permission_error=True, files=["ci/run.sh"])
-                self.assertNotIn("error", result)
-                self.assertEqual(self.records(result, "content"), [])
-                self.assertEqual(self.records(result, "permission"), [])
-
 
 if __name__ == "__main__":
     unittest.main()
