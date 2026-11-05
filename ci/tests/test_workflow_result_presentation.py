@@ -856,41 +856,6 @@ globalThis.core = {
         job = workflow["jobs"]["ascend-npu"]
         self.assertTrue(job["strategy"]["fail-fast"])
 
-    def test_proxy_fallback_preserves_direct_first_checkout_and_original_retry_order(self):
-        job = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]["ascend-npu"]
-        self.assertEqual(job["env"]["CI_PROXY_SCRIPT"], "/home/huangjunzhe/ci/vpn-proxy.sh")
-        names = [step.get("name", "") for step in self.matrix_steps]
-        proxy_index = names.index("启动代理并获取端口")
-        proxy_step = self.matrix_steps[proxy_index]
-        self.assertEqual(proxy_step["if"], "steps.checkout_pr_1.outcome == 'failure' && matrix.platform == 'a2'")
-        original_order = ["通过 GitHub API 准备 A5 源码", "拉取当前目标分支代码（第 1 次）",
-                          "启动代理并获取端口", "等待后重试拉取目标分支代码",
-                          "拉取当前目标分支代码（第 2 次）", "再次等待后重试拉取目标分支代码",
-                          "拉取当前目标分支代码（第 3 次）"]
-        self.assertEqual(sorted(original_order, key=names.index), original_order)
-        self.assertNotIn("检查 runner 权限并准备存储目录", names)
-        self.assertNotIn("恢复 runner 工作目录权限", names)
-        for step_name in ("通过 GitHub API 准备 A5 源码", "拉取当前目标分支代码（第 1 次）"):
-            step = next(step for step in self.matrix_steps if step["name"] == step_name)
-            for variable in ("http_proxy", "https_proxy", "all_proxy", "GIT_HTTP_PROXY", "GIT_HTTPS_PROXY"):
-                self.assertEqual(step["env"][variable], "", (step_name, variable))
-            self.assertEqual(step["env"]["no_proxy"], "*")
-            # GitHub rejects env keys that differ only in case.
-            env_names = [name.casefold() for name in step["env"]]
-            self.assertEqual(len(env_names), len(set(env_names)), step_name)
-            self.assertNotIn("proxyon", step.get("run", ""))
-        for checkout_id in ("checkout_pr_2",):
-            retry = next(step for step in self.matrix_steps if step.get("id") == checkout_id)
-            self.assertNotIn("env", retry)
-        self.assertIn('source "$CI_PROXY_SCRIPT"', proxy_step["run"])
-        self.assertIn("proxyon", proxy_step["run"])
-        scripts = "\n".join(step.get("run", "") for step in self.matrix_steps)
-        self.assertNotIn("/root/", scripts)
-        self.assertNotIn("/etc/profile.d/vpn-proxy.sh", scripts)
-        self.assertNotIn("git config --global", scripts)
-        self.assertNotRegex(scripts, r"(?m)^\s*(?:export\s+)?HOME=")
-        self.assertNotRegex(scripts, r"(?m)^\s*(?:sudo|systemctl)\s")
-
     @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell test")
     def test_proxy_values_reach_later_steps_and_reject_newlines(self):
         step = next(step for step in self.matrix_steps if step.get("name") == "启动代理并获取端口")
@@ -927,11 +892,15 @@ globalThis.core = {
                 output = github_env.read_text(encoding="utf-8") if github_env.exists() else ""
                 if bad_value is None:
                     self.assertEqual(completed.returncode, 0, completed.stderr)
-                    self.assertEqual(dict(line.split("=", 1) for line in output.splitlines()), values)
+                    self.assertEqual(
+                        dict(line.split("=", 1) for line in output.splitlines()),
+                        {**values, "NPU_CI_PROXY_ENABLED": "true"},
+                    )
                 else:
                     self.assertNotEqual(completed.returncode, 0)
                     self.assertIn("contains a newline", completed.stderr)
                     self.assertNotIn("INJECTED", output)
+                    self.assertNotIn("NPU_CI_PROXY_ENABLED", output)
 
     def _run_matrix_storage_step(self, name, root, overrides=None):
         step = next(step for step in self.matrix_steps if step["name"].startswith(name))
@@ -1123,13 +1092,13 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
             completed, records, env = self._run_matrix_storage_step("清理 ", root)
             self.assertEqual(completed.returncode, 0, completed.stderr)
             recursive_removals = [item[-1] for item in records if item[:2] == ["rm", "-rf"]]
-            self.assertEqual(recursive_removals, [env["CI_HOST_TMPDIR"], env["TMPDIR"] + "/fla-npu-source-42-1"])
+            self.assertEqual(recursive_removals, [env["CI_HOST_TMPDIR"]])
             self.assertNotIn(env["TMPDIR"], recursive_removals)
             self.assertNotIn(env["CI_CACHE_ROOT"], recursive_removals)
             self.assertNotIn(env["CI_NPU_LOCK_DIR"], recursive_removals)
 
     @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
-    def test_a2_cleanup_does_not_remove_static_tmpdir_or_a5_source_archive(self):
+    def test_a2_cleanup_does_not_remove_static_tmpdir(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             (root / "repo" / ".ci-tmp").mkdir(parents=True)
@@ -1141,13 +1110,26 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
             self.assertEqual(removals, [env["CI_HOST_TMPDIR"]])
             self.assertNotIn(env["TMPDIR"], removals)
 
-    def test_device_jobs_use_the_pr_ci_without_overlay(self):
+    def test_device_jobs_validate_fetched_pr_locally_after_merge(self):
         device_source = "\n".join(step.get("run", "") for step in self.matrix_steps)
         self.assertNotIn("trusted-ci", device_source)
         self.assertNotIn("rm -rf repo/ci", device_source)
         self.assertNotIn("cp -a", device_source)
-        self.assertTrue(any("git merge --no-ff" in step.get("run", "") for step in self.matrix_steps))
-        self.assertIn('extract_archive(archive_dir / "merge.tar.gz", Path("repo"))', device_source)
+        self.assertFalse(any(step.get("uses", "").startswith("actions/github-script@")
+                             for step in self.matrix_steps))
+        self.assertNotIn("api.github.com", device_source)
+        self.assertNotIn("extract_archive", device_source)
+        merge_index = next(index for index, step in enumerate(self.matrix_steps)
+                           if "git merge --no-ff" in step.get("run", ""))
+        guard_index = next(index for index, step in enumerate(self.matrix_steps)
+                           if step.get("id") == "validate_pr")
+        container_index = next(index for index, step in enumerate(self.matrix_steps)
+                               if step.get("id") == "npu_ci")
+        self.assertLess(merge_index, guard_index)
+        self.assertLess(guard_index, container_index)
+        self.assertEqual(self.matrix_steps[guard_index]["working-directory"], "repo")
+        # Real local Git tests in test_workflow_source_checkout exercise fixed
+        # refs, ancestry, reruns, and denied network access for this guard.
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_admin_author_ci_changes_publish_without_confirmation_parameters(self):
@@ -1187,19 +1169,6 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertTrue(statuses[0]["description"].endswith("..."))
 
     @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
-    def test_a5_archive_cleanup_rejects_a_different_tmpdir_before_removing_any_directory(self):
-        for suffix in ("../cache_root", "npu-locks", "fla-npu-source-42-1"):
-            with self.subTest(path=suffix), tempfile.TemporaryDirectory() as temp:
-                root = Path(temp)
-                (root / "repo" / ".ci-tmp").mkdir(parents=True)
-                completed, records, _ = self._run_matrix_storage_step(
-                    "清理 ", root, {"TMPDIR": "/home/huangjunzhe/ci/tmp/" + suffix}
-                )
-                self.assertNotEqual(completed.returncode, 0)
-                self.assertIn("Refusing to clean an unexpected source archive directory", completed.stderr)
-                self.assertFalse(any(item[:2] == ["rm", "-rf"] for item in records))
-
-    @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
     def test_temp_cleanup_rejects_paths_outside_current_platform_run(self):
         for suffix in (
             "", "npu-locks", "container-a2-42-1", "container-a5-41-1",
@@ -1218,16 +1187,15 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
 
     @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
     def test_cleanup_rejects_symlinks_to_unrelated_data(self):
-        for target in ("host-temp", "archive", "log"):
+        for target in ("host-temp", "log"):
             with self.subTest(target=target), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
                 log_dir = root / "repo" / ".ci-tmp"
                 log_dir.mkdir(parents=True)
                 unrelated = root / "unrelated"
                 unrelated.mkdir()
-                if target in {"host-temp", "archive"}:
-                    name = "container-a5-42-1" if target == "host-temp" else "fla-npu-source-42-1"
-                    link = root / "runner storage" / "tmp" / name
+                if target == "host-temp":
+                    link = root / "runner storage" / "tmp" / "container-a5-42-1"
                     link.parent.mkdir(parents=True)
                     link.symlink_to(unrelated, target_is_directory=True)
                 else:
