@@ -62,7 +62,7 @@
     "required": true,
     "dtype": "non_param",
     "shape": null,
-    "range_values": "{\"dtype\":\"bf16\",\"B\":1,\"H\":1,\"T\":32,\"chunk_size\":16,\"layout\":\"bsnd\",\"num_seqs\":1,\"aligned\":true,\"name\":\"bf16_bsnd_fixed_align_B1_H1_T32_C16\",\"op\":\"solve_tri\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "range_values": "{\"dtype\":\"bf16\",\"B\":1,\"H\":1,\"T\":32,\"chunk_size\":16,\"layout\":\"bsnd\",\"num_seqs\":1,\"aligned\":true,\"name\":\"bf16_bsnd_fixed_align_B1_H1_T32_C16\",\"op\":\"solve_tri\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}",
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -172,7 +172,7 @@
     "required": true,
     "dtype": "string",
     "shape": null,
-    "range_values": "ascend950",
+    "range_values": "ascend910b",
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -286,7 +286,7 @@
     "required": true,
     "dtype": "non_param",
     "shape": null,
-    "range_values": "{\"dtype\":\"bf16\",\"B\":1,\"H\":1,\"T\":80,\"chunk_size\":32,\"layout\":\"bnsd\",\"num_seqs\":1,\"aligned\":false,\"name\":\"bf16_bnsd_fixed_unalign_B1_H1_T80_C32\",\"op\":\"solve_tri\",\"case_id\":11,\"seed\":20260828,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "range_values": "{\"dtype\":\"bf16\",\"B\":1,\"H\":1,\"T\":80,\"chunk_size\":32,\"layout\":\"bnsd\",\"num_seqs\":1,\"aligned\":false,\"name\":\"bf16_bnsd_fixed_unalign_B1_H1_T80_C32\",\"op\":\"solve_tri\",\"case_id\":11,\"seed\":20260828,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}",
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -396,7 +396,7 @@
     "required": true,
     "dtype": "string",
     "shape": null,
-    "range_values": "ascend950",
+    "range_values": "ascend910b",
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -510,7 +510,7 @@
     "required": true,
     "dtype": "non_param",
     "shape": null,
-    "range_values": "{\"dtype\":\"bf16\",\"B\":1,\"H\":1,\"T\":128,\"chunk_size\":64,\"layout\":\"tnd\",\"num_seqs\":2,\"aligned\":true,\"seqlens\":[64,64],\"name\":\"bf16_tnd_varlen_align_NS2_H1_T128_C64\",\"op\":\"solve_tri\",\"case_id\":97,\"seed\":20260914,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "range_values": "{\"dtype\":\"bf16\",\"B\":1,\"H\":1,\"T\":128,\"chunk_size\":64,\"layout\":\"tnd\",\"num_seqs\":2,\"aligned\":true,\"seqlens\":[64,64],\"name\":\"bf16_tnd_varlen_align_NS2_H1_T128_C64\",\"op\":\"solve_tri\",\"case_id\":97,\"seed\":20260914,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}",
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -620,7 +620,7 @@
     "required": true,
     "dtype": "string",
     "shape": null,
-    "range_values": "ascend950",
+    "range_values": "ascend910b",
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -734,7 +734,7 @@
     "required": true,
     "dtype": "non_param",
     "shape": null,
-    "range_values": "{\"dtype\":\"bf16\",\"B\":1,\"H\":1,\"T\":256,\"chunk_size\":128,\"layout\":\"ntd\",\"num_seqs\":2,\"aligned\":true,\"seqlens\":[128,128],\"name\":\"bf16_ntd_varlen_align_NS2_H1_T256_C128\",\"op\":\"solve_tri\",\"case_id\":117,\"seed\":20260934,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "range_values": "{\"dtype\":\"bf16\",\"B\":1,\"H\":1,\"T\":256,\"chunk_size\":128,\"layout\":\"ntd\",\"num_seqs\":2,\"aligned\":true,\"seqlens\":[128,128],\"name\":\"bf16_ntd_varlen_align_NS2_H1_T256_C128\",\"op\":\"solve_tri\",\"case_id\":117,\"seed\":20260934,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}",
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -844,7 +844,7 @@
     "required": true,
     "dtype": "string",
     "shape": null,
-    "range_values": "ascend950",
+    "range_values": "ascend910b",
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -958,7 +958,7 @@
     "required": true,
     "dtype": "non_param",
     "shape": null,
-    "range_values": "{\"dtype\":\"fp16\",\"B\":1,\"H\":2,\"T\":17,\"chunk_size\":16,\"layout\":\"bsnd\",\"num_seqs\":1,\"aligned\":false,\"name\":\"fp16_bsnd_fixed_unalign_B1_H2_T17_C16\",\"op\":\"solve_tri\",\"case_id\":192,\"seed\":20261009,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "range_values": "{\"dtype\":\"fp16\",\"B\":1,\"H\":2,\"T\":17,\"chunk_size\":16,\"layout\":\"bsnd\",\"num_seqs\":1,\"aligned\":false,\"name\":\"fp16_bsnd_fixed_unalign_B1_H2_T17_C16\",\"op\":\"solve_tri\",\"case_id\":192,\"seed\":20261009,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}",
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -1068,7 +1068,7 @@
     "required": true,
     "dtype": "string",
     "shape": null,
-    "range_values": "ascend950",
+    "range_values": "ascend910b",
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -1182,7 +1182,7 @@
     "required": true,
     "dtype": "non_param",
     "shape": null,
-    "range_values": "{\"dtype\":\"bf16\",\"B\":1,\"H\":1,\"T\":321,\"chunk_size\":128,\"layout\":\"ntd\",\"num_seqs\":3,\"aligned\":false,\"seqlens\":[128,64,129],\"name\":\"bf16_ntd_varlen_unalign_NS3_H1_T321_C128\",\"op\":\"solve_tri\",\"case_id\":199,\"seed\":20261016,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
+    "range_values": "{\"dtype\":\"bf16\",\"B\":1,\"H\":1,\"T\":321,\"chunk_size\":128,\"layout\":\"ntd\",\"num_seqs\":3,\"aligned\":false,\"seqlens\":[128,64,129],\"name\":\"bf16_ntd_varlen_unalign_NS3_H1_T321_C128\",\"op\":\"solve_tri\",\"case_id\":199,\"seed\":20261016,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}",
     "backward": false,
     "align_32B": null,
     "outlier_values": null
@@ -1292,7 +1292,7 @@
     "required": true,
     "dtype": "string",
     "shape": null,
-    "range_values": "ascend950",
+    "range_values": "ascend910b",
     "backward": false,
     "align_32B": null,
     "outlier_values": null

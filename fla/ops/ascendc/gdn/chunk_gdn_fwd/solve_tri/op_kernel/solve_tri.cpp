@@ -3,6 +3,7 @@
  * BSD 3-Clause License.
  */
 #include "kernel_operator.h"
+#include <type_traits>
 
 #ifndef CATLASS_ARCH
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -22,41 +23,52 @@
 #include "solve_tri_cube.h"
 #include "solve_tri_vector.h"
 #include "solve_tri_fp32.h"
+#include "solve_tri_vector_fp32.h"
 #endif
 
 using namespace AscendC;
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-__global__ __aicore__ void solve_tri(GM_ADDR x, GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR x_out,
+template <typename T>
+__aicore__ inline void RunSolveTriArch35(GM_ADDR x, GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR x_out,
                                      GM_ADDR workspace, GM_ADDR tiling)
 {
     // tilingKey = chunkSize ∈ {16,32,64,128}
     // TILING_KEY_IS / KERNEL_TASK_TYPE 必须使用整型字面量，不能传 constexpr 变量
+    if constexpr (std::is_same_v<T, float>) {
+        return; // Host rejects FP32 on arch35.
+    } else {
     if (TILING_KEY_IS(64)) {
         KERNEL_TASK_TYPE(64, KERNEL_TYPE_MIX_AIC_1_2);
         GET_TILING_DATA(tilingData, tiling);
-        SolveTri64<DTYPE_X, DTYPE_X> op;
+        SolveTri64<T, T> op;
         op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
         op.Process();
     } else if (TILING_KEY_IS(128)) {
         KERNEL_TASK_TYPE(128, KERNEL_TYPE_MIX_AIC_1_2);
         GET_TILING_DATA(tilingData, tiling);
-        SolveTri128<DTYPE_X, DTYPE_X> op;
+        SolveTri128<T, T> op;
         op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
         op.Process();
     } else if (TILING_KEY_IS(16)) {
         KERNEL_TASK_TYPE(16, KERNEL_TYPE_MIX_AIC_1_2);
         GET_TILING_DATA(tilingData, tiling);
-        SolveTri16<DTYPE_X, DTYPE_X> op;
+        SolveTri16<T, T> op;
         op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
         op.Process();
     } else if (TILING_KEY_IS(32)) {
         KERNEL_TASK_TYPE(32, KERNEL_TYPE_MIX_AIC_1_2);
         GET_TILING_DATA(tilingData, tiling);
-        SolveTri32<DTYPE_X, DTYPE_X> op;
+        SolveTri32<T, T> op;
         op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
         op.Process();
     }
+    }
+}
+__global__ __aicore__ void solve_tri(GM_ADDR x, GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR x_out,
+                                     GM_ADDR workspace, GM_ADDR tiling)
+{
+    RunSolveTriArch35<DTYPE_X>(x, cu_seqlens, chunk_indices, x_out, workspace, tiling);
 }
 #else
 extern "C" __global__ __aicore__ void solve_tri(GM_ADDR x, GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR x_out,
@@ -77,86 +89,30 @@ extern "C" __global__ __aicore__ void solve_tri(GM_ADDR x, GM_ADDR cu_seqlens, G
             KERNEL_TASK_TYPE(128, KERNEL_TYPE_MIX_AIC_1_2);
         }
 
-        int64_t ms = tilingData.matrixSize;
-        int64_t totalTiles = tilingData.totalTiles;
-        int64_t tilesPerCore = tilingData.tilesPerCore;
-        int64_t dtypeMode = tilingData.dtypeMode; // 0=fp16, 1=bf16
-
-        if ASCEND_IS_AIC {
-            if (dtypeMode == 0) {
-                if (ms == 16) {
-                    NsSolveTri::SolveTriCube<16, half> op;
-                    op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
-                    op.Process();
-                } else if (ms == 32) {
-                    NsSolveTri::SolveTriCube<32, half> op;
-                    op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
-                    op.Process();
-                } else if (ms == 64) {
-                    NsSolveTri::SolveTriCubeFp32<half> op;
-                    op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
-                    op.Process();
-                } else if (ms == 128) {
-                    NsSolveTri::SolveTriCube<128, half> op;
-                    op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
-                    op.Process();
-                }
-            } else {
-                if (ms == 16) {
-                    NsSolveTri::SolveTriCube<16, bfloat16_t> op;
-                    op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
-                    op.Process();
-                } else if (ms == 32) {
-                    NsSolveTri::SolveTriCube<32, bfloat16_t> op;
-                    op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
-                    op.Process();
-                } else if (ms == 64) {
-                    NsSolveTri::SolveTriCubeFp32<bfloat16_t> op;
-                    op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
-                    op.Process();
-                } else if (ms == 128) {
-                    NsSolveTri::SolveTriCube<128, bfloat16_t> op;
-                    op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
-                    op.Process();
-                }
+        if (tilingData.matrixSize == 64) {
+            if ASCEND_IS_AIC {
+                NsSolveTri::SolveTriCubeFp32<DTYPE_X> op;
+                op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
+                op.Process();
             }
-        }
-
-        if ASCEND_IS_AIV {
-            if (dtypeMode == 0) {
-                if (ms == 16) {
-                    NsSolveTri::SolveTriVector<16, half> op;
-                    op.Init(workspace, totalTiles, ms);
+            if ASCEND_IS_AIV {
+                NsSolveTri::SolveTriVectorFp32<DTYPE_X> op;
+                op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
+                op.Process();
+            }
+        } else {
+            if ASCEND_IS_AIV {
+                if (tilingData.matrixSize == 16) {
+                    NsSolveTri::SolveTriVectorFullFp32<DTYPE_X, 16> op;
+                    op.Init(x, cu_seqlens, chunk_indices, x_out, &tilingData);
                     op.Process();
-                } else if (ms == 32) {
-                    NsSolveTri::SolveTriVector<32, half> op;
-                    op.Init(workspace, totalTiles, ms);
+                } else if (tilingData.matrixSize == 32) {
+                    NsSolveTri::SolveTriVectorFullFp32<DTYPE_X, 32> op;
+                    op.Init(x, cu_seqlens, chunk_indices, x_out, &tilingData);
                     op.Process();
-                } else if (ms == 64) {
-                    NsSolveTri::SolveTriVectorFp32<half> op;
-                    op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
-                    op.Process();
-                } else if (ms == 128) {
-                    NsSolveTri::SolveTriVector<128, half> op;
-                    op.Init(workspace, totalTiles, ms);
-                    op.Process();
-                }
-            } else {
-                if (ms == 16) {
-                    NsSolveTri::SolveTriVector<16, bfloat16_t> op;
-                    op.Init(workspace, totalTiles, ms);
-                    op.Process();
-                } else if (ms == 32) {
-                    NsSolveTri::SolveTriVector<32, bfloat16_t> op;
-                    op.Init(workspace, totalTiles, ms);
-                    op.Process();
-                } else if (ms == 64) {
-                    NsSolveTri::SolveTriVectorFp32<bfloat16_t> op;
-                    op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
-                    op.Process();
-                } else if (ms == 128) {
-                    NsSolveTri::SolveTriVector<128, bfloat16_t> op;
-                    op.Init(workspace, totalTiles, ms);
+                } else if (tilingData.matrixSize == 128) {
+                    NsSolveTri::SolveTriVectorFullFp32<DTYPE_X, 128> op;
+                    op.Init(x, cu_seqlens, chunk_indices, x_out, &tilingData);
                     op.Process();
                 }
             }
