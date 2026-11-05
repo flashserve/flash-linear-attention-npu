@@ -3,10 +3,10 @@
 
 覆盖 `fla_npu.ops.ascendc.chunk_kda_fwd` / `chunk_kda_bwd` 的正反向链路：
 
-- 前向：raw gate（`A_log` / `dt_bias` + `safe_gate` + `use_exp2`）走 `disable_recompute=True`
-  路径，取回反向需要的保存量；`use_qk_l2norm_in_kernel=True` 时同时校验导出的
+- 前向：raw gate（`A_log` / `dt_bias` + `safe_gate` + `use_exp2`）默认走
+  `disable_recompute=True`，`--recompute` 选择重计算路径；`use_qk_l2norm_in_kernel=True` 时同时校验导出的
   `q_hat/k_hat/q_rstd/k_rstd`（与 `rsqrt(sum(q^2)+eps)` 对比）。
-- 反向：用前向保存量调 `chunk_kda_bwd`，得到 `dq/dk/dv/dbeta/dg`。
+- 反向：saved 使用保存缓存，recompute 不传入这些缓存，得到 `dq/dk/dv/dbeta/dg`。
 - 精度：CPU fp32 recurrent 参考（`o`）+ autograd 参考梯度，逐 tensor 打印看护指标，
   格式与 `ci/run_example_st_cases.py` 解析的一致（`o/dq/dk/dv/dbeta/dg`）。
 
@@ -106,6 +106,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--demo-model", action="store_true", default=False)
     parser.add_argument("--legacy-unfused-core", action="store_true", default=False)
     parser.add_argument("--accuracy-check", action="store_true", default=False)
+    parser.add_argument("--recompute", action="store_true", default=False)
     parser.add_argument("--check-finite", action="store_true", default=False,
                         help="任一前向输出出现非有限值即失败（尾块 workspace 看护）")
     parser.add_argument("--empty-seq-guard", action="store_true", default=False,
@@ -380,7 +381,7 @@ def run_once(args: argparse.Namespace) -> int:
         use_gate_in_kernel=True,
         A_log=tensors["A_log"],
         dt_bias=tensors["dt_bias"],
-        disable_recompute=True,
+        disable_recompute=not args.recompute,
         return_intermediate_states=False,
         state_v_first=False,
         use_qk_l2norm_in_kernel=bool(args.qk_l2norm),
@@ -482,13 +483,15 @@ def run_once(args: argparse.Namespace) -> int:
     def model_token(x: torch.Tensor) -> torch.Tensor:
         return x.reshape(batch * tokens, *x.shape[2:]).contiguous() if packed else x.contiguous()
 
-    grad_out = torch.ones_like(o)
+    grad_out = torch.randn(
+        o.shape, generator=torch.Generator(device="cpu").manual_seed(args.seed + 1),
+        dtype=torch.float32).to(device=o.device, dtype=o.dtype)
     bwd_kwargs = dict(
         raw_g=model_token(g), A_log=tensors["A_log"],
         dt_bias=tensors["dt_bias"].reshape(hv, kd),
         cu_seqlens=cu, chunk_indices=None, chunk_size=args.chunk_size,
         safe_gate=True, lower_bound=args.lower_bound, use_gate_in_kernel=True,
-        disable_recompute=True, use_exp2=True, state_v_first=False, layout=bwd_layout,
+        disable_recompute=not args.recompute, use_exp2=True, state_v_first=False, layout=bwd_layout,
     )
     if args.qk_l2norm:
         bwd_q, bwd_k = saved["q_hat"], saved["k_hat"]
@@ -518,7 +521,7 @@ def run_once(args: argparse.Namespace) -> int:
         q.cpu(), k.cpu(), v.cpu(), g.cpu(), beta.cpu(), tensors["A_log"].cpu(),
         tensors["dt_bias"].cpu(), scale=scale, lower_bound=args.lower_bound,
         cu_seqlens=cu, qk_l2norm=bool(args.qk_l2norm))
-    loss = ref_o.sum()
+    loss = (ref_o * grad_out.cpu()).sum()
     grads = torch.autograd.grad(loss, [leaves[name] for name in ("q", "k", "v", "beta", "raw_gate")])
     ref_dq, ref_dk, ref_dv, ref_dbeta, ref_dg_raw = grads
 

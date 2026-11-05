@@ -15,7 +15,7 @@
 #include "arch22/chunk_kda_bwd_prepare_vector.h"
 #endif
 
-template <uint32_t INPUT_LAYOUT, bool IS_VARIABLE>
+template <uint32_t INPUT_LAYOUT, bool IS_VARIABLE, bool DO_TOKEN_MAJOR>
 __global__ __aicore__ void chunk_kda_bwd_prepare(
     GM_ADDR aqk, GM_ADDR vNew, GM_ADDR dO, GM_ADDR h,
     GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR dAqk, GM_ADDR dv, GM_ADDR dqRaw,
@@ -30,12 +30,12 @@ __global__ __aicore__ void chunk_kda_bwd_prepare(
         if (tilingData.stateVFirst != 0) {
             KDA::ChunkKdaBwdPrepareCube<INPUT_LAYOUT, true> cube;
             cube.Init(aqk, vNew, dO, h, cuSeqlens, chunkIndices,
-                      dAqk, dv, dqRaw, &tilingData);
+                      dAqk, dv, dqRaw, &tilingData, DO_TOKEN_MAJOR);
             cube.Process();
         } else {
             KDA::ChunkKdaBwdPrepareCube<INPUT_LAYOUT, false> cube;
             cube.Init(aqk, vNew, dO, h, cuSeqlens, chunkIndices,
-                      dAqk, dv, dqRaw, &tilingData);
+                      dAqk, dv, dqRaw, &tilingData, DO_TOKEN_MAJOR);
             cube.Process();
         }
     }
@@ -51,11 +51,11 @@ __global__ __aicore__ void chunk_kda_bwd_prepare(
     if ASCEND_IS_AIC {
         if (tilingData.stateVFirst != 0) {
             KDA::ChunkKdaBwdPrepareCube<INPUT_LAYOUT, true> cube;
-            cube.Init(aqk, vNew, dO, h, cuSeqlens, chunkIndices, dv, dqRaw, scratch, &tilingData, &pipe);
+            cube.Init(aqk, vNew, dO, h, cuSeqlens, chunkIndices, dv, dqRaw, scratch, &tilingData, &pipe, DO_TOKEN_MAJOR);
             cube.Process();
         } else {
             KDA::ChunkKdaBwdPrepareCube<INPUT_LAYOUT, false> cube;
-            cube.Init(aqk, vNew, dO, h, cuSeqlens, chunkIndices, dv, dqRaw, scratch, &tilingData, &pipe);
+            cube.Init(aqk, vNew, dO, h, cuSeqlens, chunkIndices, dv, dqRaw, scratch, &tilingData, &pipe, DO_TOKEN_MAJOR);
             cube.Process();
         }
     }
