@@ -9,18 +9,55 @@ function requireOpenPullRequest(pr) {
   if (pr.draft) throw new Error(`PR #${pr.number} 仍是草稿，请先标记为 ready for review。`);
 }
 
-function requireProtectedBase({ pr, branch, workflowRef = pr.base.ref }) {
+function buildPrWorkflowTag(prNumber, workflowSha) {
+  if (!Number.isSafeInteger(prNumber) || prNumber < 1 || typeof workflowSha !== 'string' ||
+      !/^[0-9a-f]{40}$/.test(workflowSha)) {
+    throw new Error('无法生成固定的 PR workflow 标签：PR 编号或 workflow commit 无效。');
+  }
+  return `npu-ci/pr-${prNumber}/${workflowSha}`;
+}
+
+function requirePullRequestBase({ pr, branch, workflowRef = pr.base.ref, workflowSha = '',
+  workflowSource = 'base', workflowCommit, expectedBaseSha = '' }) {
   requireOpenPullRequest(pr);
-  if (workflowRef !== pr.base.ref || branch.protected !== true) {
+  if (branch.protected !== true) {
     throw new Error('NPU CI 只允许在 PR 当前受保护的目标分支执行，不支持其他 CI 定义分支。');
+  }
+  if (workflowSource === 'base') {
+    if (workflowRef !== pr.base.ref) {
+      throw new Error('目标分支模式的 workflow 必须来自 PR 当前目标分支。');
+    }
+    return;
+  }
+  if (workflowSource !== 'pr-merge') {
+    throw new Error(`不支持的 NPU CI workflow 来源：${workflowSource}`);
+  }
+  if (!/^[0-9a-f]{40}$/.test(workflowSha) || !/^[0-9a-f]{40}$/.test(expectedBaseSha) ||
+      workflowRef !== buildPrWorkflowTag(pr.number, workflowSha) ||
+      workflowCommit?.sha !== workflowSha || !Array.isArray(workflowCommit.parents) ||
+      workflowCommit.parents.length !== 2 || workflowCommit.parents[0]?.sha !== expectedBaseSha ||
+      workflowCommit.parents[1]?.sha !== pr.head.sha) {
+    throw new Error('PR workflow 标签或合并版本不匹配；必须使用当前 PR head 对应的固定合并 commit，请重新触发 NPU CI。');
   }
 }
 
-function requireDispatchIdentity({ pr, inputs, required = false, rerun = false }) {
+// Kept as a compatibility alias for maintenance branches that still call the
+// pre-source-selection helper name.
+function requireProtectedBase(args) {
+  return requirePullRequestBase(args);
+}
+
+function requireDispatchIdentity({ pr, inputs, workflowSha = '', workflowSource = 'base', required = false, rerun = false }) {
   // The PR head and target branch identify the request. The target branch
   // commit may advance while a run is queued or being rerun; the device job
   // merges the current branch and lets Git report any real conflict.
   const expected = { expected_head_sha: pr.head.sha, expected_base_ref: pr.base.ref };
+  if (workflowSource === 'pr-merge') {
+    expected.expected_workflow_sha = workflowSha;
+    if (!/^[0-9a-f]{40}$/.test(inputs.expected_base_sha || '')) {
+      throw new Error('NPU CI 触发快照 expected_base_sha 缺失或格式无效，请重新触发。');
+    }
+  }
   if (rerun && Object.keys(expected).some((name) => !inputs[name])) {
     throw new Error('首次手动触发未保存可复用的完整版本输入，不能重新执行 prepare；请新建 Run workflow。已成功 prepare 的 Re-run failed jobs 可继续使用原版本。');
   }
@@ -87,7 +124,7 @@ async function authorizeCiRequest({ github, context, requestedBy = context.actor
   await requireAuthorizedCiUser({ github, context, username: requestedBy });
 }
 
-async function hasCiChanges({ github, context, pr }) {
+async function listPrFiles({ github, context, pr }) {
   const files = await github.paginate(github.rest.pulls.listFiles, {
     ...context.repo, pull_number: pr.number, per_page: 100,
   });
@@ -102,8 +139,16 @@ async function hasCiChanges({ github, context, pr }) {
   requireOpenPullRequest(current);
   if (current.head.sha !== pr.head.sha || current.base.ref !== pr.base.ref ||
       current.changed_files !== pr.changed_files) throw new Error(`PR #${pr.number} 在检查过程中已变化，请重新触发。`);
+  return files;
+}
+
+function containsCiChanges(files) {
   return files.some((file) => [file.filename, file.previous_filename].filter(Boolean).some((path) =>
-    !/\.md$/i.test(path) && /^(?:ci|\.github)(?:\/|$)/.test(path)));
+    /^(?:ci|\.github)(?:\/|$)/.test(path)));
+}
+
+async function hasCiChanges(request) {
+  return containsCiChanges(await listPrFiles(request));
 }
 
 async function requireCiAuthorAdmin({ github, context, pr }) {
@@ -117,10 +162,11 @@ async function requireCiAuthorAdmin({ github, context, pr }) {
     throw new Error(`无法确认 PR 作者 @${username} 的仓库 Admin 身份：${error.message}。请恢复权限读取后重试。`);
   }
   if (permission !== 'admin') {
-    throw new Error(`PR 作者 @${username} 不是仓库 Admin；只有 Admin 提起的 PR 可以修改 ci/ 或 .github/ 的非 Markdown 文件。请由仓库 Admin 提交这些 CI 改动。`);
+    throw new Error(`PR 作者 @${username} 不是仓库 Admin；只有 Admin 提起的 PR 可以修改 ci/ 或 .github/ 中的文件。请由仓库 Admin 提交这些 CI 改动。`);
   }
 }
 
 module.exports = { USERS_PATH, loadCiUsers, requireAuthorizedCiUser, authorizeCiRequest,
-  requireOpenPullRequest, requireProtectedBase, requireDispatchIdentity, selectDispatchInputs,
+  requireOpenPullRequest, buildPrWorkflowTag, requirePullRequestBase, requireProtectedBase,
+  requireDispatchIdentity, selectDispatchInputs, listPrFiles, containsCiChanges,
   hasCiChanges, requireCiAuthorAdmin };
