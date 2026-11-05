@@ -48,6 +48,7 @@ class WorkflowBranchDispatchTest(unittest.TestCase):
         self.assertEqual(set(triggers["workflow_dispatch"]["inputs"]), {
             "pr_number", "ci_mode", "ops", "requested_by", "expected_head_sha",
             "expected_base_ref", "expected_base_sha", "expected_workflow_sha",
+            "workflow_source",
         })
         self.assertIn("${{ github.ref_name }}", self.ci_text)
         self.assertIn("${{ github.workflow_sha }}", self.ci_text)
@@ -58,10 +59,10 @@ class WorkflowBranchDispatchTest(unittest.TestCase):
 
         self.assertEqual(triggers["issue_comment"]["types"], ["created"])
         self.assertEqual(permissions["actions"], "write")
-        self.assertIn("workflow_id: 'ci.yml'", self.dispatch_script)
-        self.assertIn("ref: targetRef", self.dispatch_script)
-        self.assertIn(".github/workflows/ci.yml", self.dispatch_script)
-        self.assertIn("auth.selectDispatchInputs(workflowText, {", self.dispatch_script)
+        self.assertEqual(permissions["contents"], "write")
+        self.assertIn("workflow.dispatchNpuWorkflow({", self.dispatch_script)
+        self.assertIn("github, refGithub, context, pr, baseBranch, files", self.dispatch_script)
+        self.assertIn("new github.constructor({ auth: process.env.NPU_CI_DISPATCH_TOKEN })", self.dispatch_script)
 
     def _run_dispatch(self, comment):
         encoded_workflow = base64.b64encode(
@@ -129,6 +130,8 @@ globalThis.core = {{
             env["NPU_CI_RUN_ATTEMPT"] = '1'
             env["NPU_CI_AUTH_SCRIPT"] = str(REPO_ROOT / '.github/scripts/npu_ci_authorization.js')
             env["NPU_CI_CHECKS_SCRIPT"] = str(REPO_ROOT / '.github/scripts/npu_ci_checks.js')
+            env["NPU_CI_WORKFLOW_SCRIPT"] = str(REPO_ROOT / '.github/scripts/npu_ci_workflow.js')
+            env.pop("NPU_CI_DISPATCH_TOKEN", None)
             env["RECORD_FILE"] = str(record_file)
             completed = subprocess.run(
                 ["node"],

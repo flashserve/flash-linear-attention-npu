@@ -1,0 +1,77 @@
+name: NPU CI 临时 workflow 引用清理
+
+on:
+  workflow_run:
+    workflows: [NPU CI]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  cleanup:
+    name: 清理本次 PR workflow 临时 tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: 校验已完成运行并删除对应引用
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            // This default-branch workflow never checks out or executes PR code.
+            const run = context.payload.workflow_run;
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            if (context.payload.repository?.full_name !== repository ||
+                run?.repository?.full_name !== repository ||
+                run?.head_repository?.full_name !== repository ||
+                run.event !== 'workflow_dispatch' || run.status !== 'completed') {
+              core.notice('不是本仓库已完成的 NPU CI 手动运行，保留所有引用。');
+              return;
+            }
+            const match = /^npu-ci\/pr-([1-9][0-9]*)\/([a-f0-9]{40})$/.exec(run.head_branch || '');
+            if (!match || run.head_sha !== match[2]) {
+              core.notice('运行未使用固定 PR workflow 临时 tag，保留所有引用。');
+              return;
+            }
+            const workflowPath = '.github/workflows/ci.yml';
+            if (![workflowPath, `${workflowPath}@${run.head_branch}`].includes(run.path)) {
+              core.notice('运行的 workflow 路径或 ref 后缀不匹配，保留所有引用。');
+              return;
+            }
+            const tagName = run.head_branch;
+            const ref = `tags/${tagName}`;
+            let target;
+            try {
+              ({ data: target } = await github.rest.git.getRef({ ...context.repo, ref }));
+            } catch (error) {
+              if (error.status === 404) {
+                core.notice('临时 workflow tag 已清理。');
+                return;
+              }
+              throw error;
+            }
+            if (target.ref !== `refs/${ref}` || target.object?.type !== 'commit' ||
+                target.object.sha !== run.head_sha) {
+              core.notice('临时 tag 的当前目标与本次运行不一致，保留引用。');
+              return;
+            }
+            // Duplicate requests can share this immutable tag. Keep it while any
+            // other run still needs it, even if the PR has since received commits.
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              ...context.repo, workflow_id: 'ci.yml', event: 'workflow_dispatch',
+              head_sha: run.head_sha, per_page: 100,
+            });
+            if (runs.some((other) => other.id !== run.id &&
+                other.event === 'workflow_dispatch' && other.head_branch === tagName &&
+                other.head_sha === run.head_sha && other.status !== 'completed')) {
+              core.notice('同一临时 workflow tag 仍有其他运行排队或执行，暂不清理。');
+              return;
+            }
+            try {
+              await github.rest.git.deleteRef({ ...context.repo, ref });
+              core.notice(`已清理本次固定 workflow 引用：${tagName}`);
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              core.notice('临时 workflow tag 已由其他清理任务删除。');
+            }

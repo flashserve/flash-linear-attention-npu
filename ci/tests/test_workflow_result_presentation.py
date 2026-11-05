@@ -679,8 +679,16 @@ globalThis.core = {
         pr_author="ci-admin-author",
         author_permission="admin",
         expected_snapshot=None,
+        workflow_source="base",
+        workflow_sha=None,
+        workflow_ref=None,
     ):
         sha = "a" * 40
+        workflow_sha = workflow_sha or ("d" * 40 if workflow_source == "pr-merge" else "c" * 40)
+        workflow_ref = workflow_ref or (f"npu-ci/pr-527/{workflow_sha}" if workflow_source == "pr-merge" else "main")
+        if workflow_source == "pr-merge" and expected_snapshot is None:
+            expected_snapshot = {"expected_head_sha": sha, "expected_base_ref": "main",
+                                 "expected_base_sha": "c" * 40, "expected_workflow_sha": workflow_sha}
         wrapper = """
 const fs = require('fs');
 const record = (kind, payload) => fs.appendFileSync(
@@ -699,6 +707,7 @@ globalThis.context = {
     pr_number: '527',
     ci_mode: process.env.PREPARE_MODE,
     ops: process.env.PREPARE_OPS,
+    workflow_source: process.env.PREPARE_WORKFLOW_SOURCE,
     ...JSON.parse(process.env.PREPARE_EXPECTED_SNAPSHOT),
   } },
   repo: { owner: 'example', repo: 'repo' },
@@ -738,6 +747,8 @@ globalThis.github = {
     repos: {
       createCommitStatus: async (payload) => record('status', payload),
       getBranch: async () => ({ data: { name: 'main', protected: true, commit: { sha: 'c'.repeat(40) } } }),
+      getCommit: async () => ({ data: { sha: process.env.NPU_CI_WORKFLOW_SHA,
+        parents: [{sha:'c'.repeat(40)}, {sha:process.env.PREPARE_HEAD_SHA}] } }),
       get: async () => ({ data: { default_branch: 'main' } }),
       getContent: async () => ({data:{type:'file',content:Buffer.from(JSON.stringify({users:['ci-admin']})).toString('base64')}}),
       getCollaboratorPermissionLevel: async ({ username }) => {
@@ -750,6 +761,7 @@ globalThis.github = {
   },
 };
 globalThis.core = {
+  info: (message) => record('info', message),
   notice: (message) => record('notice', message),
   setFailed: (message) => record('failed', message),
   setOutput: (name, value) => record('output', { name, value }),
@@ -768,8 +780,9 @@ globalThis.core = {
             env = os.environ.copy()
             env.update(
                 {
-                    "NPU_CI_WORKFLOW_SHA": "c" * 40,
-                    "NPU_CI_WORKFLOW_REF": "main",
+                    "NPU_CI_WORKFLOW_SHA": workflow_sha,
+                    "NPU_CI_WORKFLOW_REF": workflow_ref,
+                    "PREPARE_WORKFLOW_SOURCE": workflow_source,
                     "PREPARE_HEAD_SHA": sha,
                     "PREPARE_MODE": mode,
                     "PREPARE_OPS": ops,
@@ -784,8 +797,8 @@ globalThis.core = {
                         "status": workflow_run_status,
                         "event": "workflow_dispatch",
                         "path": ".github/workflows/ci.yml",
-                        "head_sha": "c" * 40,
-                        "head_branch": "main",
+                        "head_sha": workflow_sha,
+                        "head_branch": workflow_ref,
                         "repository": {"full_name": "example/repo"},
                     }),
                     "PREPARE_WORKFLOW_RUN_ERROR": "1" if workflow_run_error else "0",
@@ -1163,7 +1176,8 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_admin_author_ci_changes_publish_without_confirmation_parameters(self):
         prepared, initial_records = self._run_prepare_script(
-            [], files=[{"filename": ".github/workflows/ci.yml", "status": "modified"}])
+            [], workflow_source="pr-merge",
+            files=[{"filename": ".github/workflows/ci.yml", "status": "modified"}])
         self.assertEqual(prepared.returncode, 0, prepared.stderr)
         self.assertIn({"kind": "output", "payload": {"name": "should_run", "value": "true"}}, initial_records)
         self.assertEqual([item["payload"] for item in initial_records if item["kind"] == "permission"],
@@ -1464,6 +1478,32 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertFalse(any(item["kind"] == "status" for item in records))
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_prepare_pr_workflow_reuse_requires_same_merge_execution(self):
+        statuses = [{
+            "context": name, "state": "success",
+            "description": "result (quick,all,A2+A5)",
+            "target_url": "https://github.com/example/repo/actions/runs/88",
+            "created_at": "2026-09-14T00:00:00Z",
+        } for name in STATUS_CONTEXTS]
+        for source in ("pr-merge", "pr-merge-suffixed", "base"):
+            with self.subTest(previous_source=source):
+                is_merge = source.startswith("pr-merge")
+                run = {
+                    "status": "completed", "event": "workflow_dispatch",
+                    "path": ".github/workflows/ci.yml" + (
+                        "@npu-ci/pr-527/" + "d" * 40 if source == "pr-merge-suffixed" else ""),
+                    "head_sha": ("d" if is_merge else "c") * 40,
+                    "head_branch": "npu-ci/pr-527/" + "d" * 40 if is_merge else "main",
+                    "repository": {"full_name": "example/repo"},
+                }
+                completed, records = self._run_prepare_script(
+                    statuses, workflow_source="pr-merge", workflow_run=run)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertIn({"kind": "output", "payload": {
+                    "name": "should_run", "value": "false" if is_merge else "true",
+                }}, records)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_prepare_reuse_requires_current_base_and_workflow_run_identity(self):
         run = {
             "status": "completed", "event": "workflow_dispatch",
@@ -1475,6 +1515,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
             "old_base_branch": {"workflow_run": {**run, "head_branch": "maintenance"}},
             "other_event": {"workflow_run": {**run, "event": "push"}},
             "other_workflow": {"workflow_run": {**run, "path": ".github/workflows/package.yml"}},
+            "other_workflow_ref": {"workflow_run": {**run, "path": ".github/workflows/ci.yml@other"}},
             "other_repository": {"workflow_run": {**run, "repository": {"full_name": "example/other"}}},
             "missing_base": {"workflow_run": {key: value for key, value in run.items() if key != "head_sha"}},
             "missing_branch": {"workflow_run": {key: value for key, value in run.items() if key != "head_branch"}},

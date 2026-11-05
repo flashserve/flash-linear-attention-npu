@@ -60,11 +60,20 @@ PR 合入前，当前 head commit 的 6 个 NPU 状态和自动执行的 `CI 契
 
 默认分支的 [`.github/npu-ci-users.json`](../.github/npu-ci-users.json) 独立维护可触发用户名；仓库读写权限不直接赋予触发权。默认评论分发和新版手动执行均校验初次触发人的名单，PR 自身修改名单不会授予权限。
 
-Actions 重跑权限由 GitHub 平台控制。新版 CI 重跑仍检查 PR 状态及固定 head/base/workflow 版本。目标 workflow 支持完整四个 `expected_*` 输入时，评论触发自动携带快照，版本未变化时可使用 `Re-run all jobs`。新版 Actions 手动首次默认不填快照；此类运行重新执行 prepare（`Re-run all jobs` 或 prepare 失败后重跑）会被拒绝，应新建 `Run workflow`，避免取到新的 head。`Re-run failed jobs` 若复用已成功的 prepare，则可正常重试，设备仍离线检查固定版本，finalize 再检查当前 PR 元数据；旧 workflow 的重跑行为保持原样。已创建的 Actions run 重跑仍使用原 workflow，不会切换到修复后的流程；源码获取或校验流程修复须合入 PR 目标分支后重新触发新 run。
+Actions 重跑权限由 GitHub 平台控制。新版 CI 重跑仍检查 PR 状态及固定 head/base/workflow 版本。目标 workflow 支持完整四个 `expected_*` 输入时，评论触发自动携带快照，版本未变化时可使用 `Re-run all jobs`。新版 Actions 手动首次默认不填快照；此类运行重新执行 prepare（`Re-run all jobs` 或 prepare 失败后重跑）会被拒绝，应新建 `Run workflow`，避免取到新的 head。`Re-run failed jobs` 若复用已成功的 prepare，则可正常重试，设备仍离线检查固定版本，finalize 再检查当前 PR 元数据；旧 workflow 的重跑行为保持原样。已创建的 Actions run 重跑仍使用原 workflow，不会切换到修复后的流程。需要验证 PR 中的 `.github/workflows/ci.yml` 修改时，使用下述评论入口创建新的 PR workflow 运行。
 
 默认评论入口和新版 CI 会检查非 Markdown 的 `ci/` 或 `.github/` 变更：只有 PR 创建者（`pr.user.login`）具有该仓库 Admin 权限才允许执行，否则门禁直接失败。PR 作者无需位于 CI 触发名单，初次触发人仍须在名单中：名单内只读用户在新版 CI 中可以触发 Admin 作者的 PR，名单内 Admin 不能替非 Admin 作者放行 CI 修改。文件检测读取完整列表并检查重命名两侧；列表不完整、作者权限读取失败均拒绝。纯 CI 文件变更检测本身不新增编译规则。
 
-新版 CI 设备上的 A2/A5 一律使用当前 PR 合并结果中的 `ci/`，不再检出或叠加可信 CI 目录。Actions 调度、鉴权与最终状态发布仍固定为所选 workflow commit，不执行 PR 的 Actions 控制脚本。
+新版 CI 设备上的 A2/A5 一律使用当前 PR 合并结果中的 `ci/`，不再检出或叠加可信 CI 目录。默认分支的评论分发器先完成触发名单、PR 作者 Admin、目标分支及固定版本检查，再选择实际 workflow 来源：
+
+- 未修改 `.github/workflows/ci.yml` 时，继续使用 PR 目标分支的 workflow；仅修改 `ci/` 也走这条路径。未更新 CI 的旧目标分支保持兼容。
+- 修改 `.github/workflows/ci.yml` 时，使用固定 base/head 的 PR merge commit，创建指向该 commit 的临时 tag `npu-ci/pr-<编号>/<40 位 merge SHA>`，并从这个 tag 分发 PR 自身的 workflow。PR YAML 中必须声明 `workflow_source` 和完整 `expected_*` 输入，分发值为 `workflow_source=pr-merge`；缺少契约时明确失败，提示先补齐当前 PR 的 workflow。设备任务开始前的 checkout、代理回退等 Actions 步骤也会采用 PR 修改。
+
+默认分发器通过可选仓库 secret `NPU_CI_DISPATCH_TOKEN` 创建临时引用；它需要仓库 Contents 和 Workflows 写权限。未配置时使用当前 workflow 的 `GITHUB_TOKEN`，若仓库策略不允许创建指向修改 workflow 的 commit 的引用，需由管理员配置该 secret。分发器不会通过 inputs 或 job 环境将此 token 转交给 PR 运行。新的分发器须先合入默认分支一次，之后即可在 CI 修改合入前验证 PR YAML；仅更新 PR 不能改变默认分支正在执行的分发器。
+
+默认分支的 `NPU CI 临时 workflow 引用清理` 在 `NPU CI` 完成后清理对应 tag。它只校验 GitHub 运行信息和精确 tag 目标，不检出或执行 PR 代码；同一 tag 仍有其他运行排队或执行时保留引用。清理与 PR 后续是否新增 commit 无关，不删除其他 tag。
+
+若创建 tag 后分发失败，保留该固定引用供重试，避免删除并发请求正在使用的 tag。放弃重试时，管理员确认没有相关运行后可删除错误消息中给出的精确 tag。
 
 默认评论入口和新版手动执行的权限要求如下，CI 名单不会授予 GitHub 平台权限：
 
@@ -85,9 +94,9 @@ GitHub 要求[手动运行 workflow 的用户具有仓库 write 权限](https://
 /run-npu-ci quick ops=causal_conv1d,chunk_bwd_dv_local
 ```
 
-默认评论入口和新版 CI 仅接受 open、未合并且非草稿的 PR，目标分支必须受 GitHub 分支保护。`NPU CI` 的 workflow 文件位于该目标分支的 `.github/workflows/ci.yml`。默认分支上的 `NPU CI 评论分发` workflow 校验请求人后，通过 `workflow_dispatch.ref` 启动 PR 当前目标分支（`pr.base.ref`）上的 `ci.yml`，不支持 `ci_ref` 或 `branch` 覆盖。新版 CI 的 Actions 页面、CLI 和 REST 手动分发也必须选择 PR 当前目标分支。
+默认评论入口和新版 CI 仅接受 open、未合并且非草稿的 PR，目标分支必须受 GitHub 分支保护。默认分支上的 `NPU CI 评论分发` 校验请求后，按上述规则选择目标分支或固定 PR merge tag 上的 `.github/workflows/ci.yml`，不支持用户通过 `ci_ref` 或 `branch` 覆盖。Actions 页面、CLI 和 REST 的普通手动分发选择 PR 当前目标分支；验证 PR 修改后的 YAML 应使用评论入口，由分发器创建固定引用。
 
-评论分发读取目标分支 workflow 声明的输入，仅发送其支持的参数；旧分支无需更新 CI 或声明新版契约即可触发。分发器按目标声明自动附带支持的 `expected_*` 版本快照，由目标 prepare 校验，用户无需手填。
+评论分发读取所选 workflow 声明的输入，仅发送其支持的参数。未修改 CI YAML 的旧分支无需更新 CI 或声明新版契约即可触发；修改 CI YAML 的 PR 则须满足 `pr-merge` 契约。分发器自动附带支持的 `expected_*` 版本快照，由 prepare 校验，用户无需手填。
 
 名单及 CI 修改作者 Admin 规则在默认评论入口校验，旧分支仍执行自己的权限检查和 CI 流程。例如旧 workflow 仍要求 `requested_by` 为 Admin 时，默认入口通过后也须满足该要求；不会自动获得新版名单、快照或重跑行为。
 
