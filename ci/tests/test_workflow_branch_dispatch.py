@@ -60,10 +60,12 @@ class WorkflowBranchDispatchTest(unittest.TestCase):
         self.assertIn(".github/workflows/ci.yml", self.dispatch_script)
         self.assertIn("workflow_dispatch", self.dispatch_script)
 
-    def _run_dispatch(self, comment):
+    def _run_dispatch(self, comment, available_workflows=None):
         encoded_workflow = base64.b64encode(
             b"name: NPU CI\non:\n  workflow_dispatch:\n"
         ).decode("ascii")
+        default_workflows = ".github/workflows/ci.yml"
+        available = available_workflows or default_workflows
         wrapper = f"""
 const fs = require('fs');
 const records = [];
@@ -81,13 +83,24 @@ globalThis.github = {{
     repos: {{
       getCollaboratorPermissionLevel: async () => ({{ data: {{ permission: 'admin' }} }}),
       getBranch: async (payload) => ({{ data: {{ name: payload.branch }} }}),
-      getContent: async () => ({{
-        data: {{
-          type: 'file',
-          encoding: 'base64',
-          content: '{encoded_workflow}',
-        }},
-      }}),
+      getContent: async (payload) => {{
+        const available = (process.env.AVAILABLE_WORKFLOWS || '{default_workflows}')
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean);
+        if (!available.includes(payload.path)) {{
+          const error = new Error('Not Found');
+          error.status = 404;
+          throw error;
+        }}
+        return {{
+          data: {{
+            type: 'file',
+            encoding: 'base64',
+            content: '{encoded_workflow}',
+          }},
+        }};
+      }},
     }},
     pulls: {{
       get: async () => ({{
@@ -120,6 +133,7 @@ globalThis.core = {{
             env = os.environ.copy()
             env["PR_COMMENT"] = comment
             env["RECORD_FILE"] = str(record_file)
+            env["AVAILABLE_WORKFLOWS"] = available
             completed = subprocess.run(
                 ["node"],
                 input=wrapper,
@@ -155,6 +169,38 @@ globalThis.core = {{
         self.assertEqual(dispatches[0]["ref"], "release-v2")
         self.assertEqual(dispatches[0]["inputs"]["ci_mode"], "full")
         self.assertEqual(dispatches[0]["inputs"]["ops"], "chunk_fwd_o")
+
+
+    def test_comment_dispatches_split_platform_workflows_when_available(self):
+        completed, records = self._run_dispatch(
+            "/run-npu-ci quick",
+            available_workflows=(
+                ".github/workflows/ci.yml,"
+                ".github/workflows/npu-ci-a2.yml,"
+                ".github/workflows/npu-ci-a5.yml"
+            ),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        dispatches = [item["payload"] for item in records if item["kind"] == "dispatch"]
+        self.assertEqual(
+            [item["workflow_id"] for item in dispatches],
+            ["npu-ci-a2.yml", "npu-ci-a5.yml"],
+        )
+        for item in dispatches:
+            self.assertEqual(item["ref"], "main")
+            self.assertEqual(item["inputs"]["pr_number"], "527")
+            self.assertEqual(item["inputs"]["ci_mode"], "quick")
+
+    def test_comment_falls_back_to_legacy_combined_workflow(self):
+        completed, records = self._run_dispatch(
+            "/run-npu-ci quick",
+            available_workflows=".github/workflows/ci.yml",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        dispatches = [item["payload"] for item in records if item["kind"] == "dispatch"]
+        self.assertEqual([item["workflow_id"] for item in dispatches], ["ci.yml"])
 
 
 if __name__ == "__main__":

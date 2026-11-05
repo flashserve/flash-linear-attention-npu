@@ -46,13 +46,19 @@ NPU 资源有限，`NPU CI` 不会由 PR 新建、重开或 push 新 commit 自�
 5. `NPU CI / A2+A5 / 05 GDR Example/ST`
 6. `NPU CI / A2+A5 / 06 报告与 commit 校验`
 
-一次触发固定并行验证 A2（`ascend910b`）和 A5（`ascend950`）。每个平台内部按顺序执行前 5 个分项；任一分项失败时，后续分项标记为未执行，不再继续运行。任一平台 job 失败后，Actions 会取消仍在排队或运行的另一平台 job，避免继续占用 NPU；汇总结果仍按失败收敛。可执行分项失败时，关键诊断会给出 `CI_STAGE=<分项>`、CI 模式和目标 SOC 对应的 `bash ci/run_ci_container.sh` 复现命令。两个 self-hosted job 只上传带平台、SOC、commit、Actions run 和 attempt 身份的分项及精度结果；GitHub-hosted 汇总 job 校验两平台结果后发布 6 个 aggregate context，其中第 6 项负责报告完整性和 PR commit 一致性。6 个 context 必须来自同一次 A2+A5 Actions run；任一平台缺席、任一已执行分项失败、后续分项未执行、精度未通过或报告身份不匹配，都不能满足门禁。
+一次触发会同时启动 `NPU CI · A2`（`ascend910b`）和 `NPU CI · A5`（`ascend950`）两个**独立 workflow**。两个平台各自排队、各自执行前 5 个分项，**互不取消**：任一平台失败都不会打断另一平台，另一个平台仍会跑完并留下结果。每个平台内部按顺序执行前 5 个分项；任一分项失败时，该平台后续分项标记为未执行。
+
+每个平台 job 结束时会在 PR head commit 上写一条辅助状态 `NPU CI / A2 平台执行` / `NPU CI / A5 平台执行`（含跑 ID 与请求模式，**不是**合入门禁 context）。`NPU CI 汇总`（`workflow_run` 触发）在两个平台都产出终态后下载两边 artifact，校验平台、SOC、commit、run 身份后发布 6 个 aggregate context，并更新 PR 评论。第 6 项负责报告完整性和 PR commit 一致性。6 个 context 必须来自**同一次请求**（同 head commit、同 `ci_mode`、同 `ops`）；任一平台缺席、被取消、任一已执行分项失败、后续分项未执行、精度未通过或报告身份不匹配，都不能满足门禁。
+
+重跑时按平台跳过：如果某个平台在当前 head commit 上已经用相同请求通过过，它的 workflow 会直接跳过并沿用上次的 artifact，只补跑另一个平台；需要强制重跑时在评论命令里追加 `force=true`。旧维护分支如果没有拆分后的 `npu-ci-a2.yml` / `npu-ci-a5.yml`，评论分发会自动回退到该分支的 `.github/workflows/ci.yml`（旧的合并流程）。可执行分项失败时，关键诊断会给出 `CI_STAGE=<分项>`、CI 模式和目标 SOC 对应的 `bash ci/run_ci_container.sh` 复现命令。
+
+NPU 设备初始化失败（`ERR00100 PTA call acl api failed`、`aclrtSetDevice` 失败、锁文件权限不足等）会被归到「CI 环境异常」，不再混入运行异常；平台 workflow 默认带 `CI_REQUIRE_HEALTHY_NPU=true`，`npu-smi` 报 Health 异常时会在启动容器前直接失败并给出明确原因。
 
 PR 合入前，当前 head commit 的 6 个 NPU 状态和自动执行的 `CI 契约测试` 必须全部成功；当 PR 更新 commit 后，旧 commit 上的 CI 成功状态自动失效，需要仓库 Admin 权限账号重新触发 NPU CI。
 
 仓库 Admin 权限账号可以通过两种方式触发：
 
-1. 在 GitHub `Actions` 页面选择 `NPU CI`，点击 `Run workflow`，填写 PR 编号和 `quick/full` 模式；正式门禁请求不填写 `ops`，仅在定向诊断时填写 `ops`。
+1. 在 GitHub `Actions` 页面选择 `NPU CI · A2` 或 `NPU CI · A5`（需要两个平台都跑时各点一次；旧维护分支仍显示合并的 `NPU CI`），点击 `Run workflow`，填写 PR 编号和 `quick/full` 模式；正式门禁请求不填写 `ops`，仅在定向诊断时填写 `ops`。也可以在评论命令里用 `force=true` 强制重跑已通过的平台。
 2. 在 PR 评论区发送命令：
 
 ```text

@@ -20,6 +20,25 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
   const sha = process.env.NPU_EXPECTED_HEAD_SHA;
   const expectedRunId = process.env.NPU_EXPECTED_RUN_ID;
   const expectedRunAttempt = process.env.NPU_EXPECTED_RUN_ATTEMPT;
+  // A2 and A5 can now run in separate workflows, so each platform may come from
+  // a different Actions run. NPU_PLATFORM_RUNS maps platform -> {run_id, run_attempt}.
+  const parseJsonEnv = (raw, fallback) => {
+    if (!raw) {
+      return fallback;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : fallback;
+    } catch (error) {
+      return fallback;
+    }
+  };
+  const platformRuns = parseJsonEnv(process.env.NPU_PLATFORM_RUNS, {});
+  const platformConclusions = parseJsonEnv(process.env.NPU_PLATFORM_CONCLUSIONS, {});
+  const runIdFor = (def) =>
+    String((platformRuns[def.key] && platformRuns[def.key].run_id) || expectedRunId || '');
+  const runAttemptFor = (def, fallback) =>
+    String((platformRuns[def.key] && platformRuns[def.key].run_attempt) || fallback || '');
   const matrixResult = process.env.NPU_MATRIX_RESULT || 'failure';
   const targetUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
   const platformDefs = [
@@ -276,8 +295,8 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
       platform: def.key,
       soc: def.soc,
       head_sha: sha,
-      run_id: expectedRunId,
-      run_attempt: artifactRunAttempt,
+      run_id: runIdFor(def),
+      run_attempt: runAttemptFor(def, artifactRunAttempt),
     };
     for (const [key, value] of Object.entries(expected)) {
       if (String(metadata[key] || '') !== String(value)) {
@@ -287,12 +306,14 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
   };
   const reportsRoot = 'accuracy-reports';
   const resolvePlatformArtifact = (def) => {
+    const platformRunId = runIdFor(def);
+    const platformRunAttempt = runAttemptFor(def, expectedRunAttempt);
     const flatResult = path.join(reportsRoot, `npu-ci-result-${def.key}.json`);
     if (fs.existsSync(flatResult)) {
-      return { directory: reportsRoot, runAttempt: expectedRunAttempt };
+      return { directory: reportsRoot, runAttempt: platformRunAttempt };
     }
 
-    const expectedAttemptNumber = Number.parseInt(expectedRunAttempt, 10);
+    const expectedAttemptNumber = Number.parseInt(platformRunAttempt, 10);
     let entries = [];
     try {
       entries = fs.readdirSync(reportsRoot, { withFileTypes: true });
@@ -303,7 +324,7 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
       .filter((entry) => entry.isDirectory())
       .map((entry) => {
         const match = entry.name.match(/^npu-ci-result-(a2|a5)-(\d+)-(\d+)$/);
-        if (!match || match[1] !== def.key || match[2] !== expectedRunId) {
+        if (!match || match[1] !== def.key || match[2] !== platformRunId) {
           return null;
         }
         const attempt = Number.parseInt(match[3], 10);
@@ -325,9 +346,9 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
     return {
       directory: path.join(
         reportsRoot,
-        `npu-ci-result-${def.key}-${expectedRunId}-${expectedRunAttempt}`
+        `npu-ci-result-${def.key}-${platformRunId}-${platformRunAttempt}`
       ),
-      runAttempt: expectedRunAttempt,
+      runAttempt: platformRunAttempt,
     };
   };
   const validatePlatform = (def) => {
@@ -795,6 +816,15 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
       }
     }
     errors.push(...executionErrors, ...accuracyErrors, ...diagnosticErrors, ...stageReportErrors);
+    const platformConclusion = String(platformConclusions[def.key] || '').toLowerCase();
+    if (['cancelled', 'skipped'].includes(platformConclusion)) {
+      errors.length = 0;
+      errors.push(
+        platformConclusion === 'cancelled'
+          ? '平台执行被取消（未产出结果，请重新触发）'
+          : '平台执行被跳过（未产出结果）'
+      );
+    }
     return {
       ...def,
       execution,
@@ -842,7 +872,14 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
     for (const platform of platforms) {
       const result = platform.stageResults[stageDef.key];
       if (!platform.stageReportOk || !result || !result.valid) {
-        failures.push(`${platform.label} 分项报告无效`);
+        const conclusion = String(platformConclusions[platform.key] || '').toLowerCase();
+        if (conclusion === 'cancelled') {
+          failures.push(`${platform.label} 被取消（未产出结果，请重新触发）`);
+        } else if (conclusion === 'skipped') {
+          failures.push(`${platform.label} 被跳过（未产出结果）`);
+        } else {
+          failures.push(`${platform.label} 分项报告无效`);
+        }
         continue;
       }
       if (result.status !== 'success') {

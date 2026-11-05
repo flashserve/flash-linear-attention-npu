@@ -122,49 +122,82 @@ jobs:
               return;
             }
 
-            let workflowFile;
-            try {
-              ({ data: workflowFile } = await github.rest.repos.getContent({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                path: '.github/workflows/ci.yml',
-                ref: targetRef,
-              }));
-            } catch (error) {
-              core.setFailed(`分支 \`${targetRef}\` 不包含 .github/workflows/ci.yml：${error.message}`);
-              return;
+            const readWorkflow = async (workflowPath) => {
+              try {
+                const { data } = await github.rest.repos.getContent({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  path: workflowPath,
+                  ref: targetRef,
+                });
+                if (Array.isArray(data) || data.type !== 'file' || !data.content) {
+                  return null;
+                }
+                const text = Buffer
+                  .from(data.content, data.encoding || 'base64')
+                  .toString('utf8');
+                if (!/^\s*workflow_dispatch\s*:/m.test(text)) {
+                  core.setFailed(`分支 \`${targetRef}\` 的 ${workflowPath} 没有声明 workflow_dispatch。`);
+                  return null;
+                }
+                return text;
+              } catch (error) {
+                return null;
+              }
+            };
+
+            // Split layout: each platform runs as its own workflow so a failure on
+            // one platform never cancels the other. Older maintenance branches only
+            // carry the legacy combined ci.yml, which is still supported.
+            const splitWorkflows = ['npu-ci-a2.yml', 'npu-ci-a5.yml'];
+            const splitAvailability = [];
+            for (const workflowPath of splitWorkflows) {
+              splitAvailability.push(await readWorkflow(`.github/workflows/${workflowPath}`) !== null);
             }
-            if (Array.isArray(workflowFile) ||
-                workflowFile.type !== 'file' ||
-                !workflowFile.content) {
-              core.setFailed(`分支 \`${targetRef}\` 的 .github/workflows/ci.yml 不是可读取的文件。`);
-              return;
-            }
-            const workflowText = Buffer
-              .from(workflowFile.content, workflowFile.encoding || 'base64')
-              .toString('utf8');
-            if (!/^\s*workflow_dispatch\s*:/m.test(workflowText)) {
-              core.setFailed(`分支 \`${targetRef}\` 的 ci.yml 没有声明 workflow_dispatch。`);
+            const useSplitWorkflows = splitAvailability.every(Boolean);
+            const legacyWorkflow = useSplitWorkflows
+              ? null
+              : await readWorkflow('.github/workflows/ci.yml');
+            if (!useSplitWorkflows && legacyWorkflow === null) {
+              core.setFailed(
+                `分支 \`${targetRef}\` 既没有 \`npu-ci-a2.yml\`/\`npu-ci-a5.yml\`，` +
+                '也没有可用的 `.github/workflows/ci.yml`。'
+              );
               return;
             }
 
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'ci.yml',
-              ref: targetRef,
-              inputs: {
-                pr_number: String(prNumber),
-                ci_mode: ciMode,
-                ops,
-                requested_by: actor,
-              },
-            });
+            const dispatchInputs = {
+              pr_number: String(prNumber),
+              ci_mode: ciMode,
+              ops,
+              requested_by: actor,
+            };
+            if (useSplitWorkflows) {
+              for (const workflowPath of splitWorkflows) {
+                await github.rest.actions.createWorkflowDispatch({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  workflow_id: workflowPath,
+                  ref: targetRef,
+                  inputs: dispatchInputs,
+                });
+              }
+            } else {
+              await github.rest.actions.createWorkflowDispatch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'ci.yml',
+                ref: targetRef,
+                inputs: dispatchInputs,
+              });
+            }
 
             core.notice(
               `已将 PR #${prNumber} 的 NPU CI 分发到 \`${targetRef}\`，` +
-              `head=${pr.head.sha}，模式=${ciMode}。`
+              `head=${pr.head.sha}，模式=${ciMode}，` +
+              (useSplitWorkflows ? '平台=A2/A5（独立 workflow）' : '平台=A2+A5（合并 workflow）') + '。'
             );
+
 
   dispatch-package:
     name: 分发 Package 编译

@@ -1,0 +1,70 @@
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Tianjin University, Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
+name: NPU CI · A5
+
+run-name: 'NPU CI · A5 · PR #${{ inputs.pr_number }}'
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull request number to run NPU CI for"
+        required: true
+      ci_mode:
+        description: "CI mode: quick or full"
+        required: false
+        default: quick
+      ops:
+        description: "Optional comma-separated operator list for compile diagnostics only"
+        required: false
+        default: ''
+      requested_by:
+        description: "Original Admin requester; set by the PR comment dispatcher"
+        required: false
+        default: ''
+      force:
+        description: "Force a rerun even if A2 already passed on this commit"
+        required: false
+        default: 'false'
+      require_healthy_npu:
+        description: "Require a healthy NPU (npu-smi Health=OK) before running"
+        required: false
+        default: 'true'
+
+concurrency:
+  group: npu-ci-a5-${{ github.repository }}-${{ inputs.pr_number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  a5:
+    name: A5 分项执行
+    uses: ./.github/workflows/npu-ci-platform.yml
+    with:
+      platform: a5
+      name: A5 / ascend950
+      soc: ascend950
+      image: fla-npu-ci:9.1.0-950
+      dockerfile: ci/Dockerfile.ascend950
+      require_preloaded_image: 'true'
+      runner_labels: '["self-hosted","linux","x64","npu","ascend950","flash-linear-attention-npu-a5"]'
+      pr_number: ${{ inputs.pr_number }}
+      ci_mode: ${{ inputs.ci_mode }}
+      ops: ${{ inputs.ops }}
+      requested_by: ${{ inputs.requested_by }}
+      force: ${{ inputs.force }}
+      require_healthy_npu: ${{ inputs.require_healthy_npu }}
