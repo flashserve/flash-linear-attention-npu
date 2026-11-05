@@ -49,3 +49,19 @@ NPU_DEVICE_ID=0 ATK_OUTPUT_ROOT=./arch22_results/performance bash scripts/run_ar
 完整接口和实现约束见算子目录的 `docs/api.md`、`docs/design.md`。测试结果以转测交付中的原始报告为准。
 
 精度脚本显式传入 `--gm_init_flag 512`；可用 `GM_INIT_MB` 配置工具初始化参数，避免默认策略尝试填充接近整卡的显存。该选项只影响测试前的 GM 初始化，不改变算子输入值域、shape 或精度标准。
+
+## A5 arch35 V2
+
+A5 独立 V2 算子的稳定入口为
+`fla_npu.ops.ascendc.npu_recurrent_gated_delta_rule_v2`。该实现使用
+三组 State bank 和 4-token tile；每个 task 只启动一次 `ComputeOne`，并根据
+token-per-batch 选择 V 到 MTE2 的释放时机。`gk` 为保留槽位，任何非空值都会被拒绝。
+
+新增用例位于 `gen_recurrent_gated_delta_rule.py` 生成的 `RGDR-V` 系列，覆盖无 gate、
+Q/K L2Norm、raw gate、beta sigmoid、二维 State 索引、accepted token、prefix、零长度序列、
+GVA、BF16/FP32 State/g/beta，以及合法的非连续 Q/K/V 和 State 视图。ATK 精度标准仍使用
+YAML 中配置的原生 `mixed_tolerance_bm`。
+
+Issue 679 的 36 组典型 shape 已完成 A5 精度与性能采集。36 组输出均与基准二进制一致；
+性能结论以 profiler 的 `Task Duration(us)` 为准。A2/A3 与整体 Example ST 的补充验证由
+仓库 NPU CI 执行。

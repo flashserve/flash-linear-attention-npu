@@ -553,6 +553,13 @@ def stream_probe(device_index: int) -> tuple[int, int]:
     return int(raw), int(stream_id)
 
 
+def _is_ascend950(device_index: int | None) -> bool:
+    import torch
+
+    index = torch.npu.current_device() if device_index is None else device_index
+    return str(torch.npu.get_device_name(index)).startswith("Ascend950")
+
+
 def npu_recurrent_gated_delta_rule(
     query, key, value, state, *, beta, scale=1.0, actual_seq_lengths,
     ssm_state_indices, num_accepted_tokens=None, g=None, gk=None,
@@ -562,8 +569,20 @@ def npu_recurrent_gated_delta_rule(
     """Route every supported call to the fused RecurrentGDN implementation.
 
     Fusion flags select arithmetic only; disabling them never selects the
-    historical kernel. The two ACLNN host ABIs share arch22 on A2/A3.
+    historical kernel. A2/A3 use arch22, while A5 selects the arch35 V2
+    operator.
     """
+    if _is_ascend950(query.device.index):
+        return npu_recurrent_gated_delta_rule_v2(
+            query, key, value, state, beta=beta, scale=scale,
+            actual_seq_lengths=actual_seq_lengths,
+            ssm_state_indices=ssm_state_indices,
+            num_accepted_tokens=num_accepted_tokens, g=g, gk=gk,
+            use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
+            use_gate_in_kernel=use_gate_in_kernel, A_log=A_log,
+            dt_bias=dt_bias,
+            use_beta_sigmoid_in_kernel=use_beta_sigmoid_in_kernel,
+            allow_neg_eigval=allow_neg_eigval)
     if gk is not None:
         raise ValueError("gk is reserved; only scalar gate g is supported.")
     from ._recurrent_gdn import validate_recurrent_gdn
@@ -578,6 +597,36 @@ def npu_recurrent_gated_delta_rule(
     if state.requires_grad:
         _refuse_grad_state("npu_recurrent_gated_delta_rule", state)
     result = _op("npu_recurrent_gated_delta_rule")(
+        query, key, value, state, beta, actual_seq_lengths, ssm_state_indices,
+        num_accepted_tokens, g, gk, A_log, dt_bias, scale,
+        use_qk_l2norm_in_kernel, use_gate_in_kernel,
+        use_beta_sigmoid_in_kernel, allow_neg_eigval, _current_stream_ptr())
+    bump = _INC_VERSION
+    if bump is None:
+        bump = _increment_version()
+    bump((state,))
+    return result
+
+
+def npu_recurrent_gated_delta_rule_v2(
+    query, key, value, state, *, beta, scale=1.0, actual_seq_lengths,
+    ssm_state_indices, num_accepted_tokens=None, g=None, gk=None,
+    use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False, A_log=None,
+    dt_bias=None, use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False,
+):
+    """Run the separately registered A5 RecurrentGDN V2 operator."""
+    from ._recurrent_gdn import validate_recurrent_gdn
+
+    scale = validate_recurrent_gdn(query, key, value, state, beta=beta, scale=scale,
+        actual_seq_lengths=actual_seq_lengths, ssm_state_indices=ssm_state_indices,
+        num_accepted_tokens=num_accepted_tokens, g=g, gk=gk, A_log=A_log,
+        dt_bias=dt_bias, use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
+        use_gate_in_kernel=use_gate_in_kernel,
+        use_beta_sigmoid_in_kernel=use_beta_sigmoid_in_kernel,
+        allow_neg_eigval=allow_neg_eigval)
+    if state.requires_grad:
+        _refuse_grad_state("npu_recurrent_gated_delta_rule_v2", state)
+    result = _op("npu_recurrent_gated_delta_rule_v2")(
         query, key, value, state, beta, actual_seq_lengths, ssm_state_indices,
         num_accepted_tokens, g, gk, A_log, dt_bias, scale,
         use_qk_l2norm_in_kernel, use_gate_in_kernel,

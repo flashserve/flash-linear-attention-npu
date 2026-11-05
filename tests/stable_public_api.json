@@ -26,6 +26,7 @@
     "npu_chunk_kda_fwd_prepare",
     "npu_recompute_w_u_fwd",
     "npu_recurrent_gated_delta_rule",
+    "npu_recurrent_gated_delta_rule_v2",
     "npu_chunk_gated_delta_rule_fwd",
     "npu_chunk_local_cumsum",
     "npu_chunk_scaled_dot_kkt",
@@ -44,6 +45,54 @@
     "npu_recurrent_gated_delta_rule": [
       {
         "op": "npu_recurrent_gated_delta_rule",
+        "expressions": [
+          "query",
+          "key",
+          "value",
+          "state",
+          "beta",
+          "actual_seq_lengths",
+          "ssm_state_indices",
+          "num_accepted_tokens",
+          "g",
+          "gk",
+          "A_log",
+          "dt_bias",
+          "scale",
+          "use_qk_l2norm_in_kernel",
+          "use_gate_in_kernel",
+          "use_beta_sigmoid_in_kernel",
+          "allow_neg_eigval",
+          "_current_stream_ptr()"
+        ]
+      },
+      {
+        "op": "npu_recurrent_gated_delta_rule_v2",
+        "expressions": [
+          "query",
+          "key",
+          "value",
+          "state",
+          "beta",
+          "actual_seq_lengths",
+          "ssm_state_indices",
+          "num_accepted_tokens",
+          "g",
+          "gk",
+          "A_log",
+          "dt_bias",
+          "scale",
+          "use_qk_l2norm_in_kernel",
+          "use_gate_in_kernel",
+          "use_beta_sigmoid_in_kernel",
+          "allow_neg_eigval",
+          "_current_stream_ptr()"
+        ]
+      }
+    ],
+    "npu_recurrent_gated_delta_rule_v2": [
+      {
+        "op": "npu_recurrent_gated_delta_rule_v2",
         "expressions": [
           "query",
           "key",
@@ -1080,6 +1129,10 @@
       "arguments": "query, key, value, state, *, beta, scale=1.0, actual_seq_lengths, ssm_state_indices, num_accepted_tokens=None, g=None, gk=None, use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False, A_log=None, dt_bias=None, use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False",
       "return": null
     },
+    "npu_recurrent_gated_delta_rule_v2": {
+      "arguments": "query, key, value, state, *, beta, scale=1.0, actual_seq_lengths, ssm_state_indices, num_accepted_tokens=None, g=None, gk=None, use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False, A_log=None, dt_bias=None, use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False",
+      "return": null
+    },
     "npu_chunk_gated_delta_rule_fwd": {
       "arguments": "q, k, v, g, beta, *, initial_state=None, output_final_state=False, chunk_size=64, cu_seqlens=None, chunk_indices=None, scale=None, use_exp2=False, use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False, use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False, disable_recompute=True, return_intermediate_states=False, state_v_first=False, a_log=None, dt_bias=None, layout='BNSD'",
       "return": null
@@ -1183,6 +1236,7 @@
     "npu_recompute_w_u_fwd": "(k, v, beta, A, chunk_size, *, g=None, gk=None, cu_seqlens=None, chunk_indices=None)",
     "recompute_w_u_fwd": "(k, v, beta, A, chunk_size, *, g=None, gk=None, cu_seqlens=None, chunk_indices=None)",
     "npu_recurrent_gated_delta_rule": "(query, key, value, state, *, beta, scale=1.0, actual_seq_lengths, ssm_state_indices, num_accepted_tokens=None, g=None, gk=None, use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False, A_log=None, dt_bias=None, use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False)",
+    "npu_recurrent_gated_delta_rule_v2": "(query, key, value, state, *, beta, scale=1.0, actual_seq_lengths, ssm_state_indices, num_accepted_tokens=None, g=None, gk=None, use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False, A_log=None, dt_bias=None, use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False)",
     "recurrent_gated_delta_rule": "(query, key, value, state, *, beta, scale=1.0, actual_seq_lengths, ssm_state_indices, num_accepted_tokens=None, g=None, gk=None, use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False, A_log=None, dt_bias=None, use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False)",
     "npu_chunk_gated_delta_rule_fwd": "(q, k, v, g, beta, *, initial_state=None, output_final_state=False, chunk_size=64, cu_seqlens=None, chunk_indices=None, scale=None, use_exp2=False, use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False, use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False, disable_recompute=True, return_intermediate_states=False, state_v_first=False, a_log=None, dt_bias=None, layout='BNSD')",
     "chunk_gated_delta_rule_fwd": "(q, k, v, g, beta, *, initial_state=None, output_final_state=False, chunk_size=64, cu_seqlens=None, chunk_indices=None, scale=None, use_exp2=False, use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False, use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False, disable_recompute=True, return_intermediate_states=False, state_v_first=False, a_log=None, dt_bias=None, layout='BNSD')",
