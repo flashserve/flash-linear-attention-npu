@@ -324,6 +324,59 @@ class WheelEnvironmentTest(unittest.TestCase):
                         f"flash_linear_attention_npu_{tier}-{version}-py3-none-"
                         f"manylinux_2_34_{arch}.whl")
 
+    def test_soc_case_matches_between_wheel_metadata_and_build_command(self) -> None:
+        for soc, tier in (("ascend910b", "a2"), ("ascend910_93", "a3"), ("ascend950", "a5")):
+            for spelling in (soc, soc.capitalize(), soc.upper()):
+                with self.subTest(soc=spelling), tempfile.TemporaryDirectory() as tmp, \
+                        mock.patch.dict(os.environ, {
+                            "FLA_NPU_SOC": spelling, "FLA_NPU_OPS": "", "FLA_NPU_BUILD_ARGS": "",
+                        }):
+                    loaded, metadata = _load_setup()
+                    build = loaded["_build_run_package"]
+                    run = mock.Mock()
+                    artifact = Path(tmp) / "fla_npu_linux-x86_64.run"
+                    with mock.patch.dict(build.__globals__, {
+                        "REPO_ROOT": Path(tmp), "_run": run,
+                        "_find_single_run_package": lambda: artifact,
+                    }):
+                        self.assertEqual(build(), artifact)
+                    self.assertEqual(metadata["name"], f"flash-linear-attention-npu-{tier}")
+                    command = run.call_args.args[0]
+                    self.assertEqual([arg for arg in command if arg.startswith("--soc=")],
+                                     [f"--soc={soc}"])
+
+    def test_a5_triton_preflight_is_case_insensitive(self) -> None:
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        try:
+            loaded = runpy.run_path(str(REPO_ROOT / "scripts/check_npu_env.py"))
+        finally:
+            sys.path.pop(0)
+        check = loaded["_check_triton_ascend_a5_compat"]
+        for spelling in ("ascend950", "Ascend950", "ASCEND950"):
+            for version, rejected in (("3.2.0", True), ("3.2.1", False), ("unknown", True)):
+                with self.subTest(soc=spelling, version=version), \
+                        mock.patch.dict(os.environ, {"FLA_NPU_SOC": spelling}):
+                    failures = []
+                    check(failures, version)
+                    self.assertEqual(bool(failures), rejected)
+                    if rejected:
+                        self.assertIn("FLA_NPU_SOC=ascend950", failures[0])
+        for spelling in ("Ascend910B", "ASCEND910_93"):
+            with self.subTest(soc=spelling), mock.patch.dict(os.environ, {"FLA_NPU_SOC": spelling}):
+                failures = []
+                check(failures, "3.2.0")
+                self.assertEqual(failures, [])
+
+    def test_soc_normalization_preserves_default_and_rejects_unknown_tier(self) -> None:
+        artifacts = self._artifacts_globals()
+        with mock.patch.dict(os.environ):
+            os.environ.pop("FLA_NPU_SOC", None)
+            self.assertEqual(artifacts["get_soc"](), "ascend910b")
+            os.environ["FLA_NPU_SOC"] = "Ascend999"
+            self.assertEqual(artifacts["get_soc"](), "ascend999")
+            with self.assertRaisesRegex(ValueError, "no published product tier"):
+                artifacts["get_tier"]()
+
     def test_local_build_matches_the_published_name_and_tag(self) -> None:
         """An un-flagged build produces the published distribution identity.
 
