@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import ctypes
 import re
+import sys
+from pathlib import Path
 
 import torch
 
@@ -13,7 +15,8 @@ try:
 except ImportError as exc:
     raise SystemExit("torch_npu is required") from exc
 
-from fla_npu.ops.ascendc._aclnn_ctypes import _call_aclnn
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "common"))
+import aclnn_error_probe as _raw_abi
 
 
 def _check_zero_heads(varlen: bool) -> None:
@@ -37,7 +40,7 @@ def _check_zero_heads(varlen: bool) -> None:
     layout_buffer = ctypes.create_string_buffer(layout.encode("utf-8"))
 
     try:
-        _call_aclnn(
+        _raw_abi.reject_workspace(
             "aclnnChunkKdaFwdV2",
             lambda ctx: [
                 ctx.tensor(q, "q"), ctx.tensor(k, "k"), ctx.tensor(v, "v"),
